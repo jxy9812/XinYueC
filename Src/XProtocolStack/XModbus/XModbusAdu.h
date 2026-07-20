@@ -1,4 +1,4 @@
-#ifndef XMODBUSADU_H
+ï»¿#ifndef XMODBUSADU_H
 #define XMODBUSADU_H
 
 #include <stdint.h>
@@ -13,30 +13,30 @@ extern "C" {
 
 /**
  * @file XModbusAdu.h
- * @brief Modbus ADU£¨Ó¦ÓÃÊı¾İµ¥Ôª£©¹¤¾ß
- * @details Ìá¹©Modbus´®ĞĞÁ´Â·ADUÖ¡µÄ·â×°¡¢½âÎöºÍĞ£Ñé¹¦ÄÜ¡£
- *          Ö§³ÖRTUºÍASCIIÁ½ÖÖ´«ÊäÄ£Ê½£¬¶ÔÆëQt QModbusSerialAdu¡£
+ * @brief Modbus ADUï¼ˆåº”ç”¨æ•°æ®å•å…ƒï¼‰å·¥å…·
+ * @details æä¾›Modbusä¸²è¡Œé“¾è·¯ADUå¸§çš„å°è£…ã€è§£æå’Œæ ¡éªŒåŠŸèƒ½ã€‚
+ *          æ”¯æŒRTUå’ŒASCIIä¸¤ç§ä¼ è¾“æ¨¡å¼ï¼Œå¯¹é½Qt QModbusSerialAduã€‚
  *
- * @par ÄÚ´æÓÅ»¯ËµÃ÷
- * - ½á¹¹Ìå´óĞ¡£º64Î»24×Ö½Ú£¬32Î»12×Ö½Ú£¨Ô­°æÔ¼48×Ö½Ú£©
- * - Ê¹ÓÃÎ»ÓòºÏ²¢ m_type(1bit) + m_serverAddress(8bit) + m_checksumValid(1bit)
- * - È¥³ıÈßÓàµÄ m_pdu Ö¸Õë×Ö¶Î£¨°´Ğè´Ó m_data ½âÎö£¬¶ÔÆëQt£©
- * - m_data ÓïÒå¶ÔÆëQt£ºµØÖ· + PDU + Ğ£ÑéÂë
+ * @par å†…å­˜ä¼˜åŒ–è¯´æ˜
+ * - ç»“æ„ä½“å¤§å°ï¼š64ä½24å­—èŠ‚ï¼Œ32ä½12å­—èŠ‚ï¼ˆåŸç‰ˆçº¦48å­—èŠ‚ï¼‰
+ * - ä½¿ç”¨ä½åŸŸåˆå¹¶ m_type(1bit) + m_serverAddress(8bit) + m_checksumValid(1bit)
+ * - å»é™¤å†—ä½™çš„ m_pdu æŒ‡é’ˆå­—æ®µï¼ˆæŒ‰éœ€ä» m_data è§£æï¼Œå¯¹é½Qtï¼‰
+ * - m_data è¯­ä¹‰å¯¹é½Qtï¼šåœ°å€ + PDU + æ ¡éªŒç 
  *
- * @par ¹¦ÄÜÌØĞÔ
- * - RTUÄ£Ê½£ºCRCĞ£Ñé¡¢Ö¡×é×°/½âÎö
- * - ASCIIÄ£Ê½£ºLRCĞ£Ñé¡¢Ö¡×é×°/½âÎö
- * - Ö¡ÑéÖ¤£ºĞ£ÑéºÍ¼ì²é¡¢µØÖ·ÌáÈ¡
+ * @par åŠŸèƒ½ç‰¹æ€§
+ * - RTUæ¨¡å¼ï¼šCRCæ ¡éªŒã€å¸§ç»„è£…/è§£æ
+ * - ASCIIæ¨¡å¼ï¼šLRCæ ¡éªŒã€å¸§ç»„è£…/è§£æ
+ * - å¸§éªŒè¯ï¼šæ ¡éªŒå’Œæ£€æŸ¥ã€åœ°å€æå–
  *
- * @par Ê¹ÓÃÊ¾Àı
+ * @par ä½¿ç”¨ç¤ºä¾‹
  * @code
- * // ´´½¨RTU ADUÖ¡
+ * // åˆ›å»ºRTU ADUå¸§
  * XModbusRequest* request = XModbusRequest_create_with_code(XModbusPdu_ReadHoldingRegisters);
  * uint8_t data[] = {0x00, 0x00, 0x00, 0x0A};
  * XModbusPdu_setData((XModbusPdu*)request, data, 4);
  * XByteArray* aduFrame = XModbusAdu_createRtuFrame(1, (const XModbusPdu*)request);
  *
- * // ½âÎö½ÓÊÕµ½µÄADUÖ¡£¨¶Ñ·ÖÅä£©
+ * // è§£ææ¥æ”¶åˆ°çš„ADUå¸§ï¼ˆå †åˆ†é…ï¼‰
  * XModbusAdu* adu = XModbusAdu_parseRtu(frameData, frameLen);
  * if (adu && XModbusAdu_matchingChecksum(adu)) {
  *     int serverAddr = XModbusAdu_serverAddress(adu);
@@ -47,210 +47,210 @@ extern "C" {
  * }
  * XModbusAdu_delete(adu);
  *
- * // Õ»·ÖÅäÊ¾Àı
+ * // æ ˆåˆ†é…ç¤ºä¾‹
  * XModbusAdu adu;
  * XModbusAdu_init(&adu);
- * // ... Ê¹ÓÃ adu ...
+ * // ... ä½¿ç”¨ adu ...
  * XModbusAdu_deinit(&adu);
  * @endcode
  */
 
 /******************************************************************************************
- * Ã¶¾ÙÀàĞÍ¶¨Òå
+ * æšä¸¾ç±»å‹å®šä¹‰
  ******************************************************************************************/
 
 /**
- * @brief ADU´«ÊäÄ£Ê½Ã¶¾Ù
+ * @brief ADUä¼ è¾“æ¨¡å¼æšä¸¾
  */
 typedef enum {
-    XModbusAdu_Rtu,     ///< RTUÄ£Ê½£¨¶ş½øÖÆ£¬CRCĞ£Ñé£©
-    XModbusAdu_Ascii    ///< ASCIIÄ£Ê½£¨ÎÄ±¾£¬LRCĞ£Ñé£©
+    XModbusAdu_Rtu,     ///< RTUæ¨¡å¼ï¼ˆäºŒè¿›åˆ¶ï¼ŒCRCæ ¡éªŒï¼‰
+    XModbusAdu_Ascii    ///< ASCIIæ¨¡å¼ï¼ˆæ–‡æœ¬ï¼ŒLRCæ ¡éªŒï¼‰
 } XModbusAdu_Type;
 
 /******************************************************************************************
- * ½á¹¹Ìå¶¨Òå£¨ÄÚ´æÓÅ»¯°æ£©
+ * ç»“æ„ä½“å®šä¹‰ï¼ˆå†…å­˜ä¼˜åŒ–ç‰ˆï¼‰
  ******************************************************************************************/
 
 /**
- * @brief Modbus ADU½á¹¹Ìå
- * @details ·â×°ÁËÒ»¸öÍêÕûµÄADUÖ¡£¬¶ÔÆëQt QModbusSerialAduÓïÒå¡£
+ * @brief Modbus ADUç»“æ„ä½“
+ * @details å°è£…äº†ä¸€ä¸ªå®Œæ•´çš„ADUå¸§ï¼Œå¯¹é½Qt QModbusSerialAduè¯­ä¹‰ã€‚
  *
- * @par m_data ´æ´¢²¼¾Ö£¨¶ÔÆëQt£©
+ * @par m_data å­˜å‚¨å¸ƒå±€ï¼ˆå¯¹é½Qtï¼‰
  * @code
- * RTU:  [µØÖ·(1)] [PDU(n)] [CRC_Lo(1)] [CRC_Hi(1)]
+ * RTU:  [åœ°å€(1)] [PDU(n)] [CRC_Lo(1)] [CRC_Hi(1)]
  *        |________ size() _________|
- *        |____ data() ____|         <- Ğ£Ñé·¶Î§
- * ASCII:[µØÖ·(1)] [PDU(n)] [LRC(1)]
+ *        |____ data() ____|         <- æ ¡éªŒèŒƒå›´
+ * ASCII:[åœ°å€(1)] [PDU(n)] [LRC(1)]
  *        |____ size() ____|
- *        |____ data() ____|         <- Ğ£Ñé·¶Î§
+ *        |____ data() ____|         <- æ ¡éªŒèŒƒå›´
  * @endcode
  *
- * @par ÄÚ´æ²¼¾Ö£¨64Î»£©
+ * @par å†…å­˜å¸ƒå±€ï¼ˆ64ä½ï¼‰
  * offset 0: m_rawData  (XByteArray*, 8B)
  * offset 8: m_data     (XByteArray*, 8B)
  * offset 16: m_type(1bit) + m_serverAddress(8bit) + m_checksumValid(1bit)  (uint16_t, 2B)
- * ×Ü¼Æ: 18B ÓĞĞ§Êı¾İ£¬¶ÔÆëµ½ 24B
+ * æ€»è®¡: 18B æœ‰æ•ˆæ•°æ®ï¼Œå¯¹é½åˆ° 24B
  *
- * @par ÄÚ´æ²¼¾Ö£¨32Î»Ç¶ÈëÊ½£©
+ * @par å†…å­˜å¸ƒå±€ï¼ˆ32ä½åµŒå…¥å¼ï¼‰
  * offset 0: m_rawData  (XByteArray*, 4B)
  * offset 4: m_data     (XByteArray*, 4B)
  * offset 8: m_type(1bit) + m_serverAddress(8bit) + m_checksumValid(1bit)  (uint16_t, 2B)
- * ×Ü¼Æ: 10B ÓĞĞ§Êı¾İ£¬¶ÔÆëµ½ 12B
+ * æ€»è®¡: 10B æœ‰æ•ˆæ•°æ®ï¼Œå¯¹é½åˆ° 12B
  */
 typedef struct XModbusAdu {
-    XByteArray* m_rawData;          ///< Ô­Ê¼Ö¡Êı¾İ£¨º¬Ö¡Í·Î²£¬ÈçASCIIµÄ":"ºÍ"\r\n"£©
-    XByteArray* m_data;             ///< µØÖ· + PDU + Ğ£ÑéÂë£¨¶ÔÆëQtÓïÒå£©
-    uint16_t m_type : 1;            ///< ´«ÊäÄ£Ê½£º0=RTU, 1=ASCII
-    uint16_t m_serverAddress : 8;   ///< ´ÓÕ¾µØÖ·£¨0-247£¬0xFF=ÎŞĞ§£©
-    uint16_t m_checksumValid : 1;   ///< Ğ£ÑéºÍÊÇ·ñÆ¥Åä
+    XByteArray* m_rawData;          ///< åŸå§‹å¸§æ•°æ®ï¼ˆå«å¸§å¤´å°¾ï¼Œå¦‚ASCIIçš„":"å’Œ"\r\n"ï¼‰
+    XByteArray* m_data;             ///< åœ°å€ + PDU + æ ¡éªŒç ï¼ˆå¯¹é½Qtè¯­ä¹‰ï¼‰
+    uint16_t m_type : 1;            ///< ä¼ è¾“æ¨¡å¼ï¼š0=RTU, 1=ASCII
+    uint16_t m_serverAddress : 8;   ///< ä»ç«™åœ°å€ï¼ˆ0-247ï¼Œ0xFF=æ— æ•ˆï¼‰
+    uint16_t m_checksumValid : 1;   ///< æ ¡éªŒå’Œæ˜¯å¦åŒ¹é…
 } XModbusAdu;
 
 /******************************************************************************************
- * ÉúÃüÖÜÆÚ¹ÜÀí£¨¶ÔÆëÏîÄ¿·ç¸ñ£ºinit/delete/deinit£©
+ * ç”Ÿå‘½å‘¨æœŸç®¡ç†ï¼ˆå¯¹é½é¡¹ç›®é£æ ¼ï¼šinit/delete/deinitï¼‰
  ******************************************************************************************/
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄADUÊµÀı£¨Õ»»òÇ¶ÈëÊ¹ÓÃ£©
- * @param adu XModbusAduÖ¸Õë£¨·ÇNULL£©
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„ADUå®ä¾‹ï¼ˆæ ˆæˆ–åµŒå…¥ä½¿ç”¨ï¼‰
+ * @param adu XModbusAduæŒ‡é’ˆï¼ˆéNULLï¼‰
  */
 void XModbusAdu_init(XModbusAdu* adu);
 
 /**
- * @brief ÊÍ·ÅADU¶ÔÏó£¨¶Ñ·ÖÅä¶ÔÏóµÄÍêÕûÊÍ·Å£©
- * @param adu ´ıÊÍ·ÅµÄXModbusAduÖ¸Õë
+ * @brief é‡Šæ”¾ADUå¯¹è±¡ï¼ˆå †åˆ†é…å¯¹è±¡çš„å®Œæ•´é‡Šæ”¾ï¼‰
+ * @param adu å¾…é‡Šæ”¾çš„XModbusAduæŒ‡é’ˆ
  */
 void XModbusAdu_delete(XModbusAdu* adu);
 
 /**
- * @brief Îö¹¹ADUÄÚ²¿×ÊÔ´£¨²»ÊÍ·Å½á¹¹Ìå±¾Éí£¬ÓÃÓÚÕ»/Ç¶Èë¶ÔÏó£©
- * @param adu XModbusAduÖ¸Õë
+ * @brief ææ„ADUå†…éƒ¨èµ„æºï¼ˆä¸é‡Šæ”¾ç»“æ„ä½“æœ¬èº«ï¼Œç”¨äºæ ˆ/åµŒå…¥å¯¹è±¡ï¼‰
+ * @param adu XModbusAduæŒ‡é’ˆ
  */
 void XModbusAdu_deinit(XModbusAdu* adu);
 
 /******************************************************************************************
- * ADUÖ¡´´½¨½Ó¿Ú
+ * ADUå¸§åˆ›å»ºæ¥å£
  ******************************************************************************************/
 
 /**
- * @brief ´´½¨RTUÄ£Ê½µÄADUÖ¡
- * @param serverAddress ´ÓÕ¾µØÖ·
- * @param pdu Modbus PDUÖ¸Õë
- * @return ×é×°ºÃµÄRTUÖ¡Êı¾İ£¨µØÖ· + PDU + CRC16£©£¬µ÷ÓÃÕß¸ºÔğÊÍ·Å
- * @note CRC16Ê¹ÓÃXCrc_get16¼ÆËã£¬ÒÔĞ¡¶ËĞò¸½¼Ó
+ * @brief åˆ›å»ºRTUæ¨¡å¼çš„ADUå¸§
+ * @param serverAddress ä»ç«™åœ°å€
+ * @param pdu Modbus PDUæŒ‡é’ˆ
+ * @return ç»„è£…å¥½çš„RTUå¸§æ•°æ®ï¼ˆåœ°å€ + PDU + CRC16ï¼‰ï¼Œè°ƒç”¨è€…è´Ÿè´£é‡Šæ”¾
+ * @note CRC16ä½¿ç”¨XCrc_get16è®¡ç®—ï¼Œä»¥å°ç«¯åºé™„åŠ 
  */
 XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu);
 
 /**
- * @brief ´´½¨ASCIIÄ£Ê½µÄADUÖ¡
- * @param serverAddress ´ÓÕ¾µØÖ·
- * @param pdu Modbus PDUÖ¸Õë
- * @param delimiter ½áÊø·Ö¸ô·û£¨Ä¬ÈÏÎª'\n'£¬´«Èë0Ê¹ÓÃÄ¬ÈÏÖµ£©
- * @return ×é×°ºÃµÄASCIIÖ¡Êı¾İ£¨":" + Ê®Áù½øÖÆ + "\r" + delimiter£©£¬µ÷ÓÃÕß¸ºÔğÊÍ·Å
- * @note LRCĞ£ÑéÂë»á±»×Ô¶¯¼ÆËã²¢¸½¼Ó
+ * @brief åˆ›å»ºASCIIæ¨¡å¼çš„ADUå¸§
+ * @param serverAddress ä»ç«™åœ°å€
+ * @param pdu Modbus PDUæŒ‡é’ˆ
+ * @param delimiter ç»“æŸåˆ†éš”ç¬¦ï¼ˆé»˜è®¤ä¸º'\n'ï¼Œä¼ å…¥0ä½¿ç”¨é»˜è®¤å€¼ï¼‰
+ * @return ç»„è£…å¥½çš„ASCIIå¸§æ•°æ®ï¼ˆ":" + åå…­è¿›åˆ¶ + "\r" + delimiterï¼‰ï¼Œè°ƒç”¨è€…è´Ÿè´£é‡Šæ”¾
+ * @note LRCæ ¡éªŒç ä¼šè¢«è‡ªåŠ¨è®¡ç®—å¹¶é™„åŠ 
  */
 XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu, char delimiter);
 
 /******************************************************************************************
- * ADU½âÎö½Ó¿Ú
+ * ADUè§£ææ¥å£
  ******************************************************************************************/
 
 /**
- * @brief ½âÎöRTU¸ñÊ½µÄADUÖ¡
- * @param data Ô­Ê¼Ö¡Êı¾İ£¨º¬CRC£©
- * @param size Êı¾İ´óĞ¡
- * @return ½âÎöºóµÄXModbusAdu¶ÔÏó£¬µ÷ÓÃÕß¸ºÔğXModbusAdu_deleteÊÍ·Å
- * @note ·µ»ØNULL±íÊ¾Êı¾İ²»×ãÒÔ½âÎö
+ * @brief è§£æRTUæ ¼å¼çš„ADUå¸§
+ * @param data åŸå§‹å¸§æ•°æ®ï¼ˆå«CRCï¼‰
+ * @param size æ•°æ®å¤§å°
+ * @return è§£æåçš„XModbusAduå¯¹è±¡ï¼Œè°ƒç”¨è€…è´Ÿè´£XModbusAdu_deleteé‡Šæ”¾
+ * @note è¿”å›NULLè¡¨ç¤ºæ•°æ®ä¸è¶³ä»¥è§£æ
  */
 XModbusAdu* XModbusAdu_parseRtu(const uint8_t* data, size_t size);
 
 /**
- * @brief ½âÎöASCII¸ñÊ½µÄADUÖ¡
- * @param data Ô­Ê¼Ö¡Êı¾İ£¨º¬":"Ç°×ººÍ"\r\n"ºó×º£©
- * @param size Êı¾İ´óĞ¡
- * @return ½âÎöºóµÄXModbusAdu¶ÔÏó£¬µ÷ÓÃÕß¸ºÔğXModbusAdu_deleteÊÍ·Å
- * @note ·µ»ØNULL±íÊ¾Êı¾İ²»×ãÒÔ½âÎö
+ * @brief è§£æASCIIæ ¼å¼çš„ADUå¸§
+ * @param data åŸå§‹å¸§æ•°æ®ï¼ˆå«":"å‰ç¼€å’Œ"\r\n"åç¼€ï¼‰
+ * @param size æ•°æ®å¤§å°
+ * @return è§£æåçš„XModbusAduå¯¹è±¡ï¼Œè°ƒç”¨è€…è´Ÿè´£XModbusAdu_deleteé‡Šæ”¾
+ * @note è¿”å›NULLè¡¨ç¤ºæ•°æ®ä¸è¶³ä»¥è§£æ
  */
 XModbusAdu* XModbusAdu_parseAscii(const uint8_t* data, size_t size);
 
 /******************************************************************************************
- * ADU²éÑ¯½Ó¿Ú£¨¶ÔÆëQt QModbusSerialAdu£©
+ * ADUæŸ¥è¯¢æ¥å£ï¼ˆå¯¹é½Qt QModbusSerialAduï¼‰
  ******************************************************************************************/
 
 /**
- * @brief »ñÈ¡ADUÊı¾İ²¿·Ö´óĞ¡£¨µØÖ· + PDU£¬²»º¬Ğ£ÑéÂë£©
- * @param adu ADUÖ¸Õë
- * @return Êı¾İ²¿·Ö´óĞ¡£¬-1±íÊ¾ÎŞĞ§
- * @note ¶ÔÆëQt£ºm_data.size() - checksumBytes
- *       RTU¼õÈ¥2×Ö½ÚCRC£¬ASCII¼õÈ¥1×Ö½ÚLRC
+ * @brief è·å–ADUæ•°æ®éƒ¨åˆ†å¤§å°ï¼ˆåœ°å€ + PDUï¼Œä¸å«æ ¡éªŒç ï¼‰
+ * @param adu ADUæŒ‡é’ˆ
+ * @return æ•°æ®éƒ¨åˆ†å¤§å°ï¼Œ-1è¡¨ç¤ºæ— æ•ˆ
+ * @note å¯¹é½Qtï¼šm_data.size() - checksumBytes
+ *       RTUå‡å»2å­—èŠ‚CRCï¼ŒASCIIå‡å»1å­—èŠ‚LRC
  */
 int XModbusAdu_size(const XModbusAdu* adu);
 
 /**
- * @brief »ñÈ¡ADUÊı¾İ£¨µØÖ· + PDU£¬²»º¬Ğ£ÑéÂë£©
- * @param adu ADUÖ¸Õë
- * @return Êı¾İ²¿·ÖµÄ¿½±´£¨µØÖ· + PDU£©£¬µ÷ÓÃÕß¸ºÔğÊÍ·Å£¬NULL±íÊ¾ÎŞĞ§
- * @note ¶ÔÆëQt£ºm_data.left(size())
+ * @brief è·å–ADUæ•°æ®ï¼ˆåœ°å€ + PDUï¼Œä¸å«æ ¡éªŒç ï¼‰
+ * @param adu ADUæŒ‡é’ˆ
+ * @return æ•°æ®éƒ¨åˆ†çš„æ‹·è´ï¼ˆåœ°å€ + PDUï¼‰ï¼Œè°ƒç”¨è€…è´Ÿè´£é‡Šæ”¾ï¼ŒNULLè¡¨ç¤ºæ— æ•ˆ
+ * @note å¯¹é½Qtï¼šm_data.left(size())
  */
 XByteArray* XModbusAdu_data(const XModbusAdu* adu);
 
 /**
- * @brief »ñÈ¡Ô­Ê¼Ö¡´óĞ¡
- * @param adu ADUÖ¸Õë
- * @return Ô­Ê¼Ö¡´óĞ¡
+ * @brief è·å–åŸå§‹å¸§å¤§å°
+ * @param adu ADUæŒ‡é’ˆ
+ * @return åŸå§‹å¸§å¤§å°
  */
 int XModbusAdu_rawSize(const XModbusAdu* adu);
 
 /**
- * @brief »ñÈ¡Ô­Ê¼Ö¡Êı¾İ
- * @param adu ADUÖ¸Õë
- * @return Ô­Ê¼Ö¡Êı¾İµÄ¿½±´£¬µ÷ÓÃÕß¸ºÔğÊÍ·Å
+ * @brief è·å–åŸå§‹å¸§æ•°æ®
+ * @param adu ADUæŒ‡é’ˆ
+ * @return åŸå§‹å¸§æ•°æ®çš„æ‹·è´ï¼Œè°ƒç”¨è€…è´Ÿè´£é‡Šæ”¾
  */
 XByteArray* XModbusAdu_rawData(const XModbusAdu* adu);
 
 /**
- * @brief »ñÈ¡´ÓÕ¾µØÖ·
- * @param adu ADUÖ¸Õë
- * @return ´ÓÕ¾µØÖ·£¬-1±íÊ¾ÎŞĞ§
+ * @brief è·å–ä»ç«™åœ°å€
+ * @param adu ADUæŒ‡é’ˆ
+ * @return ä»ç«™åœ°å€ï¼Œ-1è¡¨ç¤ºæ— æ•ˆ
  */
 int XModbusAdu_serverAddress(const XModbusAdu* adu);
 
 /**
- * @brief »ñÈ¡½âÎö³öµÄPDU£¨¶ÔÆëQt£ºÁã¶Ñ·ÖÅä£¬Ìî³äµ÷ÓÃÕßÌá¹©µÄÕ»¶ÔÏó£©
- * @param adu ADUÖ¸Õë
- * @param out [out] Êä³ö²ÎÊı£¬µ÷ÓÃÕßÌá¹©µÄXModbusPdu¶ÔÏó
- * @return true±íÊ¾³É¹¦£¬false±íÊ¾²ÎÊıÎŞĞ§
- * @note ¶ÔÆëQt QModbusSerialAdu::pdu()£¬·µ»ØÕ»ÉÏ¹¹ÔìµÄQModbusPdu
- *       µ÷ÓÃÕßĞèÔÚ²»ÔÙÊ¹ÓÃÊ±µ÷ÓÃ XModbusPdu_deinit_base(out)
+ * @brief è·å–è§£æå‡ºçš„PDUï¼ˆå¯¹é½Qtï¼šé›¶å †åˆ†é…ï¼Œå¡«å……è°ƒç”¨è€…æä¾›çš„æ ˆå¯¹è±¡ï¼‰
+ * @param adu ADUæŒ‡é’ˆ
+ * @param out [out] è¾“å‡ºå‚æ•°ï¼Œè°ƒç”¨è€…æä¾›çš„XModbusPduå¯¹è±¡
+ * @return trueè¡¨ç¤ºæˆåŠŸï¼Œfalseè¡¨ç¤ºå‚æ•°æ— æ•ˆ
+ * @note å¯¹é½Qt QModbusSerialAdu::pdu()ï¼Œè¿”å›æ ˆä¸Šæ„é€ çš„QModbusPdu
+ *       è°ƒç”¨è€…éœ€åœ¨ä¸å†ä½¿ç”¨æ—¶è°ƒç”¨ XModbusPdu_deinit_base(out)
  */
 bool XModbusAdu_pdu(const XModbusAdu* adu, XModbusPdu* out);
 
 /**
- * @brief ¼ì²éĞ£ÑéºÍÊÇ·ñÆ¥Åä
- * @param adu ADUÖ¸Õë
- * @return true±íÊ¾Ğ£ÑéºÍÆ¥Åä
+ * @brief æ£€æŸ¥æ ¡éªŒå’Œæ˜¯å¦åŒ¹é…
+ * @param adu ADUæŒ‡é’ˆ
+ * @return trueè¡¨ç¤ºæ ¡éªŒå’ŒåŒ¹é…
  */
 bool XModbusAdu_matchingChecksum(const XModbusAdu* adu);
 
 /******************************************************************************************
- * Ğ£ÑéºÍ¼ÆËã½Ó¿Ú£¨¾²Ì¬¹¤¾ßº¯Êı£©
+ * æ ¡éªŒå’Œè®¡ç®—æ¥å£ï¼ˆé™æ€å·¥å…·å‡½æ•°ï¼‰
  ******************************************************************************************/
 
 /**
- * @brief ¼ÆËãLRCĞ£ÑéÂë
- * @param data Êı¾İÖ¸Õë
- * @param len Êı¾İ³¤¶È
- * @return LRCĞ£ÑéÂë
- * @note LRC = -(ÀÛ¼ÓºÍ)£¬È¡µÍ8Î»
+ * @brief è®¡ç®—LRCæ ¡éªŒç 
+ * @param data æ•°æ®æŒ‡é’ˆ
+ * @param len æ•°æ®é•¿åº¦
+ * @return LRCæ ¡éªŒç 
+ * @note LRC = -(ç´¯åŠ å’Œ)ï¼Œå–ä½8ä½
  */
 uint8_t XModbusAdu_calculateLRC(const uint8_t* data, int len);
 
 /**
- * @brief ¼ÆËãModbus RTU CRC16Ğ£ÑéÂë
- * @param data Êı¾İÖ¸Õë
- * @param len Êı¾İ³¤¶È
- * @return CRC16Ğ£ÑéÂë
- * @note Ê¹ÓÃ±ê×¼Modbus CRC16Ëã·¨£¨¶àÏîÊ½0x8005£©
- *       ´Ëº¯ÊıÓëXCrc_get16¹¦ÄÜÏàÍ¬£¬Ìá¹©±ã½İ·â×°
+ * @brief è®¡ç®—Modbus RTU CRC16æ ¡éªŒç 
+ * @param data æ•°æ®æŒ‡é’ˆ
+ * @param len æ•°æ®é•¿åº¦
+ * @return CRC16æ ¡éªŒç 
+ * @note ä½¿ç”¨æ ‡å‡†Modbus CRC16ç®—æ³•ï¼ˆå¤šé¡¹å¼0x8005ï¼‰
+ *       æ­¤å‡½æ•°ä¸XCrc_get16åŠŸèƒ½ç›¸åŒï¼Œæä¾›ä¾¿æ·å°è£…
  */
 uint16_t XModbusAdu_calculateCRC(const uint8_t* data, int len);
 

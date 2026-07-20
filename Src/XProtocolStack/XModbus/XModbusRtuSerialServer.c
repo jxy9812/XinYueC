@@ -2,6 +2,7 @@
 #include "XModbusRtuSerialServer_Protected.h"
 #include "XModbusServer_Protected.h"
 #include "XModbusDevice_Protected.h"
+#include "XModbusAdu.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include "XCrc.h"
@@ -10,11 +11,18 @@
 #include "XSignalSlot.h"
 #include "string.h"
 
+// =============== 常量定义 ================
+/** @brief 帧间延迟计算因子（3.5字符 * 11位/字符 * 1000000微秒） */
+#define MODBUS_RTU_INTER_FRAME_FACTOR      38500000
+/** @brief 最小帧间延迟（微秒），对应最低波特率 */
+#define MODBUS_RTU_INTER_FRAME_DELAY_MIN_US 1750
+/** @brief 接收缓冲区最大大小（字节），超过此值视为无效数据并清除 */
+#define MODBUS_RTU_RECEIVE_BUFFER_MAX_SIZE  1024
+
 // =============== 虚函数前置声明 ================
 static bool VXModbusRtuSerialServer_open(XModbusDevice* device);
 static void VXModbusRtuSerialServer_close(XModbusDevice* device);
 static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server);
-static XModbusResponse* VXModbusRtuSerialServer_processRequest(XModbusServer* server, const XModbusRequest* request);
 static bool VXModbusRtuSerialServer_processesBroadcast(const XModbusServer* server);
 static void VXModbusRtuSerialServer_timerEvent(XObject* obj, XTimerEvent* event);
 
@@ -25,34 +33,6 @@ static void XModbusRtuSerialServer_onErrorOccurred(XObject* receiver, XVarList* 
 // =============== 辅助函数 ================
 
 /**
- * @brief 计算CRC16校验值
- */
-static inline uint16_t calculateCrc16(const uint8_t* data, size_t len)
-{
-    return XCrc_get16((uint8_t*)data, len);
-}
-
-/**
- * @brief 验证RTU帧的CRC校验
- * @param frame 帧数据
- * @param frameLen 帧长度（包含CRC的2字节）
- * @return 校验通过返回true，否则返回false
- */
-static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen)
-{
-    if (!frame || frameLen < 4) return false;
-
-    uint16_t calculatedCrc = calculateCrc16(frame, frameLen - 2);
-
-    // Modbus RTU CRC 是小端序
-    uint16_t receivedCrc;
-    XMemory_read_data(frame + frameLen - 2, XBYTE_ORDER_LITTLE_ENDIAN,
-        (uint8_t*)&receivedCrc, sizeof(uint16_t));
-
-    return calculatedCrc == receivedCrc;
-}
-
-/**
  * @brief 计算帧间延迟（基于波特率）
  * @param baudRate 波特率
  * @return 帧间延迟（微秒）
@@ -60,10 +40,10 @@ static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen)
  */
 static inline int calculateInterFrameDelay(int baudRate)
 {
-    if (baudRate <= 0) return 1750;
+    if (baudRate <= 0) return MODBUS_RTU_INTER_FRAME_DELAY_MIN_US;
     // 3.5个字符 * 11位/字符 * 1000000微秒/秒 / 波特率
-    int delay = (int)(38500000 / baudRate);
-    return delay < 1750 ? 1750 : delay;
+    int delay = (int)(MODBUS_RTU_INTER_FRAME_FACTOR / baudRate);
+    return delay < MODBUS_RTU_INTER_FRAME_DELAY_MIN_US ? MODBUS_RTU_INTER_FRAME_DELAY_MIN_US : delay;
 }
 
 /**
@@ -138,7 +118,7 @@ static inline void turnaroundTimerStart(XModbusRtuSerialServer* server)
 }
 
 /**
- * @brief 构建RTU响应帧并发送
+ * @brief 构建RTU响应帧并发送（使用 XModbusAdu 封装）
  * @param server XModbusRtuSerialServer实例指针
  * @param serverAddress 从站地址
  * @param response 响应PDU
@@ -148,79 +128,88 @@ static void sendRtuResponse(XModbusRtuSerialServer* server,
 {
     if (!server || !response) return;
 
-    // 获取PDU数据
-    XByteArray* pduData = ((XModbusPdu*)response)->m_data;
-    size_t pduDataSize = XByteArray_size_base(pduData);
-
-    // 构建帧：地址(1) + 功能码(1) + 数据(N) + CRC(2)
-    size_t frameSize = 1 + 1 + pduDataSize + 2;
-    uint8_t* frame = (uint8_t*)XMalloc_System(frameSize);
+    // 使用 XModbusAdu 创建 RTU 响应帧
+    XByteArray* frame = XModbusAdu_createRtuFrame(serverAddress, (const XModbusPdu*)response);
     if (!frame) return;
 
-    frame[0] = serverAddress;
-    frame[1] = (uint8_t)XModbusPdu_functionCode(&response->m_base);
-    if (pduDataSize > 0) {
-        memcpy(frame + 2, XContainerDataAddr(pduData), pduDataSize);
-    }
-
-    // 计算并追加CRC
-    uint16_t crc = calculateCrc16(frame, frameSize - 2);
-    XMemory_write_data(frame + frameSize - 2, XBYTE_ORDER_LITTLE_ENDIAN,
-        (const uint8_t*)&crc, sizeof(uint16_t));
-
     // 通过串口发送
-    XIODevice_write_1((XIODevice*)server->m_serialPort, (const char*)frame, frameSize);
+    XIODevice_write_1((XIODevice*)server->m_serialPort,
+        (const char*)XByteArray_data(frame), XByteArray_size_base(frame));
 
-    XFree_System(frame);
+    XByteArray_delete_base(frame);
 }
 
 /**
- * @brief 处理接收到的完整RTU帧
+ * @brief 处理接收到的完整RTU帧（使用 XModbusAdu 解析）
  */
 static void processRtuFrame(XModbusRtuSerialServer* server,
     const uint8_t* frame, size_t frameLen)
 {
     if (!server || !frame || frameLen < 4) return;
 
-    // 验证CRC
-    if (!validateRtuFrame(frame, frameLen)) {
+    // 使用 XModbusAdu 解析RTU帧
+    XModbusAdu* adu = XModbusAdu_parseRtu(frame, frameLen);
+    if (!adu) return;
+
+    // 校验CRC
+    if (!XModbusAdu_matchingChecksum(adu)) {
+        XModbusAdu_delete(adu);
         return;
     }
 
     // 提取地址
-    uint8_t serverAddress = frame[0];
+    int serverAddress = XModbusAdu_serverAddress(adu);
+    if (serverAddress < 0) {
+        XModbusAdu_delete(adu);
+        return;
+    }
 
     // 检查是否广播或发给自己的
     int myAddress = XModbusServer_serverAddress((XModbusServer*)server);
     bool isBroadcast = (serverAddress == 0);
-    bool isForMe = (serverAddress == (uint8_t)myAddress);
+    bool isForMe = (serverAddress == myAddress);
 
     if (!isBroadcast && !isForMe) {
+        XModbusAdu_delete(adu);
         return;
     }
 
-    // 提取PDU：功能码(1) + 数据(N)
-    size_t pduLen = frameLen - 3; // 减去地址(1)和CRC(2)
-    if (pduLen < 1) return;
-
-    // 创建请求PDU
-    XModbusRequest* request = XModbusRequest_create();
-    if (!request) return;
-
-    XModbusPdu_setFunctionCode(request, (XModbusPdu_FunctionCode)frame[1]);
-    if (pduLen > 1) {
-        XModbusPdu_setData(request, frame + 2, pduLen - 1);
+    // 提取PDU
+    XModbusPdu pdu;
+    if (!XModbusAdu_pdu(adu, &pdu)) {
+        XModbusAdu_delete(adu);
+        return;
     }
+
+    // 创建请求PDU对象
+    XModbusRequest* request = XModbusRequest_create();
+    if (!request) {
+        XModbusPdu_deinit_base(&pdu);
+        XModbusAdu_delete(adu);
+        return;
+    }
+
+    // 设置功能码
+    XModbusPdu_setFunctionCode(request, XModbusPdu_functionCodeRaw(&pdu));
+
+    // 设置数据
+    XByteArray* pduData = XModbusPdu_data(&pdu);
+    if (pduData) {
+        XModbusPdu_setData((XModbusPdu*)request,
+            XByteArray_data(pduData), XByteArray_size_base(pduData));
+        XByteArray_delete_base(pduData);
+    }
+    XModbusPdu_deinit_base(&pdu);
 
     // 广播请求不发送响应
     if (isBroadcast) {
-        // 处理请求但不发送响应
         XModbusResponse* response = XModbusServer_processRequest_base(
             (XModbusServer*)server, request);
         if (response) {
             XModbusResponse_delete_base(response);
         }
         XModbusRequest_delete_base(request);
+        XModbusAdu_delete(adu);
         return;
     }
 
@@ -229,15 +218,64 @@ static void processRtuFrame(XModbusRtuSerialServer* server,
         (XModbusServer*)server, request);
 
     if (response) {
-        sendRtuResponse(server, serverAddress, response);
+        sendRtuResponse(server, (uint8_t)serverAddress, response);
         XModbusResponse_delete_base(response);
     }
 
     XModbusRequest_delete_base(request);
+    XModbusAdu_delete(adu);
 }
 
 /**
- * @brief 处理接收缓冲区中的所有完整帧
+ * @brief 根据 Modbus RTU 帧结构计算帧长度（取代遍历查找）
+ * @param data 帧数据起始指针
+ * @param dataSize 可用数据大小
+ * @return 完整帧长度，-1 表示无法确定（未知功能码或数据不足）
+ * @note 通过功能码直接计算 PDU 长度，避免 O(N²) 的遍历解析
+ */
+static int calculateRtuFrameLength(const uint8_t* data, size_t dataSize)
+{
+    if (!data || dataSize < 4) return -1;  // 最小帧：地址(1) + 功能码(1) + CRC(2)
+
+    uint8_t functionCode = data[1];
+
+    switch (functionCode) {
+    case 0x01: case 0x02: case 0x03: case 0x04:
+    case 0x05: case 0x06:
+        // 地址(1) + 功能码(1) + 数据(4) + CRC(2) = 8
+        // 读请求：起始地址(2) + 数量(2)
+        // 写单个：地址(2) + 值(2)
+        return 8;
+
+    case 0x07: case 0x0B: case 0x0C: case 0x11:
+        // 地址(1) + 功能码(1) + CRC(2) = 4
+        // 读异常状态/事件计数器/事件日志/服务器ID
+        return 4;
+
+    case 0x0F: case 0x10:
+        // 写多个线圈/寄存器：
+        // 地址(1) + 功能码(1) + 起始地址(2) + 数量(2) + 字节数(1) + 数据(byteCount) + CRC(2) = 9+byteCount
+        if (dataSize < 7) return -1;  // 至少需要读到字节数字段
+        return 9 + data[6];
+
+    case 0x16:
+        // 掩码写寄存器：地址(1) + 功能码(1) + 参考地址(2) + 与掩码(2) + 或掩码(2) + CRC(2) = 10
+        return 10;
+
+    case 0x18:
+        // 读FIFO队列：地址(1) + 功能码(1) + 指针地址(2) + CRC(2) = 6
+        return 6;
+
+    default:
+        // 未知功能码，无法确定帧长度，需回退到扫描方式
+        return -1;
+    }
+}
+
+/**
+ * @brief 处理接收缓冲区中的所有完整帧（使用帧长度计算优化）
+ * @note 通过 calculateRtuFrameLength 直接计算帧长度，常见功能码为 O(1)，
+ *       未知功能码回退到有限范围扫描（最多256字节），避免 O(N²) 遍历
  */
 static void processReceiveBuffer(XModbusRtuSerialServer* server)
 {
@@ -248,37 +286,52 @@ static void processReceiveBuffer(XModbusRtuSerialServer* server)
     size_t dataSize = XByteArray_size_base(buffer);
 
     // 持续处理缓冲区中的完整帧
-    // 最小RTU帧：地址(1) + 功能码(1) + CRC(2) = 4字节
     while (dataSize >= 4) {
-        // 验证帧完整性（通过CRC验证）
-        // 从最小4字节开始，逐步增大尝试
-        bool frameFound = false;
-        size_t frameLen = 0;
+        int frameLen = calculateRtuFrameLength(data, dataSize);
 
-        // 尝试从当前位置到缓冲区末尾查找完整帧
-        // 遍历可能的帧长度（从4字节到dataSize）
-        for (size_t len = 4; len <= dataSize; len++) {
-            if (validateRtuFrame(data, len)) {
-                frameFound = true;
-                frameLen = len;
+        if (frameLen < 0) {
+            // 未知功能码或无法确定长度，回退到有限范围扫描
+            size_t maxScan = dataSize > 256 ? 256 : dataSize;
+            bool found = false;
+            for (size_t len = 4; len <= maxScan; len++) {
+                XModbusAdu* adu = XModbusAdu_parseRtu(data, len);
+                if (adu) {
+                    if (XModbusAdu_matchingChecksum(adu)) {
+                        processRtuFrame(server, data, len);
+                        XByteArray_remove_base(buffer, 0, len);
+                        found = true;
+                    }
+                    XModbusAdu_delete(adu);
+                    if (found) break;
+                }
+            }
+            if (!found) {
+                // 未找到有效帧，若缓冲区过大则清除
+                if (dataSize > MODBUS_RTU_RECEIVE_BUFFER_MAX_SIZE) {
+                    XContainer_clear_base((XContainer*)buffer);
+                }
                 break;
             }
-        }
-
-        if (!frameFound) {
-            // 没有找到完整帧，等待更多数据
-            // 但如果数据量太大，可能是无效数据，清除
-            if (dataSize > 1024) {
+        } else if ((size_t)frameLen <= dataSize) {
+            // 已知帧长度，用 XModbusAdu 验证 CRC
+            XModbusAdu* adu = XModbusAdu_parseRtu(data, (size_t)frameLen);
+            if (adu && XModbusAdu_matchingChecksum(adu)) {
+                processRtuFrame(server, data, (size_t)frameLen);
+                XModbusAdu_delete(adu);
+                XByteArray_remove_base(buffer, 0, (size_t)frameLen);
+            } else {
+                // CRC 校验失败，移除第一个字节后重试
+                if (adu) XModbusAdu_delete(adu);
+                XByteArray_remove_base(buffer, 0, 1);
+            }
+        } else {
+            // 数据不足，等待更多数据
+            if (dataSize > MODBUS_RTU_RECEIVE_BUFFER_MAX_SIZE) {
                 XContainer_clear_base((XContainer*)buffer);
             }
             break;
         }
 
-        // 处理找到的完整帧
-        processRtuFrame(server, data, frameLen);
-
-        // 移除已处理的数据
-        XByteArray_remove_base(buffer, 0, frameLen);
         data = XContainerDataAddr(buffer);
         dataSize = XByteArray_size_base(buffer);
     }
@@ -299,7 +352,6 @@ XVtable* XModbusRtuSerialServer_class_init(void)
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusRtuSerialServer_open);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Close, VXModbusRtuSerialServer_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXModbusServer_ProcessRequest, VXModbusRtuSerialServer_processRequest);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusServer_ProcessesBroadcast, VXModbusRtuSerialServer_processesBroadcast);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusRtuSerialServer_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusRtuSerialServer_deinit);
@@ -457,14 +509,6 @@ static void VXModbusRtuSerialServer_close(XModbusDevice* device)
 
     // 设置设备状态
     XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
-}
-
-static XModbusResponse* VXModbusRtuSerialServer_processRequest(
-    XModbusServer* baseServer, const XModbusRequest* request)
-{
-    // RTU Server 的 processRequest 委托给基类实现
-    // 基类 XModbusServer_processRequest_base 会处理标准功能码
-    return XModbusServer_processRequest_base(baseServer, request);
 }
 
 static bool VXModbusRtuSerialServer_processesBroadcast(const XModbusServer* server)
