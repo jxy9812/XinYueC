@@ -25,8 +25,8 @@ extern "C" {
  */
 typedef struct XMqttStringPair {
     XClass m_class;           ///< 基类
-    XString* m_name;          ///< 键名
-    XString* m_value;         ///< 键值
+    XString m_name;           ///< 键名（内嵌，减少一次内存分配）
+    XString m_value;          ///< 键值（内嵌，减少一次内存分配）
 } XMqttStringPair;
 
 /**

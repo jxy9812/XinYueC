@@ -552,8 +552,8 @@ void XMqttUserPropertiesTest(void)
                 XMqttStringPair** got1 = (XMqttStringPair**)XVector_at_base(props, 0);
                 XMqttStringPair** got2 = (XMqttStringPair**)XVector_at_base(props, 1);
                 if (got1 && got2 &&
-                    XString_equals_utf8((*got1)->m_name, "k1", XChar_CaseSensitive) &&
-                    XString_equals_utf8((*got2)->m_name, "k2", XChar_CaseSensitive)) {
+                    XString_equals_utf8(&(*got1)->m_name, "k1", XChar_CaseSensitive) &&
+                    XString_equals_utf8(&(*got2)->m_name, "k2", XChar_CaseSensitive)) {
                     XPrintf("  [通过] UserProperties 创建和添加正确\n"); pass++;
                 } else { XPrintf("  [失败] UserProperties 内容不正确\n"); fail++; }
             } else { XPrintf("  [失败] UserProperties size 期望 2, 实际 %zu\n", sz); fail++; }

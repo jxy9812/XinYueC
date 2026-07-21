@@ -41,73 +41,81 @@ void XMqttStringPair_init(XMqttStringPair* pair, const char* name, const char* v
     memset(pair, 0, sizeof(XMqttStringPair));
     XClass_init((XClass*)pair);
     XClassGetVtable(pair) = XMqttStringPair_class_init();
-    if (name) pair->m_name = XString_create_utf8(name);
-    if (value) pair->m_value = XString_create_utf8(value);
+    XString_init(&pair->m_name);
+    XString_init(&pair->m_value);
+    if (name) XString_assign_utf8(&pair->m_name, name);
+    if (value) XString_assign_utf8(&pair->m_value, value);
 }
 
 static void VXMqttStringPair_deinit(XMqttStringPair* pair)
 {
     if (!pair) return;
-    if (pair->m_name) { XString_delete_base(pair->m_name); pair->m_name = NULL; }
-    if (pair->m_value) { XString_delete_base(pair->m_value); pair->m_value = NULL; }
+    XString_deinit_base(&pair->m_name);
+    XString_deinit_base(&pair->m_value);
     XClass_Deinit_Parent(XClass, pair);
 }
 
 static void VXMqttStringPair_copy(XMqttStringPair* dest, const XMqttStringPair* src)
 {
     if (!dest || !src) return;
-    if (src->m_name) dest->m_name = XString_create_copy(src->m_name);
-    if (src->m_value) dest->m_value = XString_create_copy(src->m_value);
+    XString_assign(&dest->m_name, &src->m_name);
+    XString_assign(&dest->m_value, &src->m_value);
 }
 
 static void VXMqttStringPair_move(XMqttStringPair* dest, XMqttStringPair* src)
 {
     if (!dest || !src) return;
-    dest->m_name = src->m_name; src->m_name = NULL;
-    dest->m_value = src->m_value; src->m_value = NULL;
+    XString_swap(&dest->m_name, &src->m_name);
+    XString_swap(&dest->m_value, &src->m_value);
 }
 
 const XString* XMqttStringPair_name_const(const XMqttStringPair* pair)
 {
-    return pair ? pair->m_name : NULL;
+    return pair ? &pair->m_name : NULL;
 }
 
 XString* XMqttStringPair_name(const XMqttStringPair* pair)
 {
-    if (!pair || !pair->m_name) return NULL;
-    return XString_create_copy(pair->m_name);
+    if (!pair) return NULL;
+    return XString_create_copy(&pair->m_name);
 }
 
 void XMqttStringPair_setName(XMqttStringPair* pair, const char* n)
 {
     if (!pair) return;
-    if (pair->m_name) { XString_delete_base(pair->m_name); pair->m_name = NULL; }
-    if (n) pair->m_name = XString_create_utf8(n);
+    if (n) {
+        XString_assign_utf8(&pair->m_name, n);
+    } else {
+        XString_clear_base(&pair->m_name);
+    }
 }
 
 const XString* XMqttStringPair_value_const(const XMqttStringPair* pair)
 {
-    return pair ? pair->m_value : NULL;
+    return pair ? &pair->m_value : NULL;
 }
 
 XString* XMqttStringPair_value(const XMqttStringPair* pair)
 {
-    if (!pair || !pair->m_value) return NULL;
-    return XString_create_copy(pair->m_value);
+    if (!pair) return NULL;
+    return XString_create_copy(&pair->m_value);
 }
 
 void XMqttStringPair_setValue(XMqttStringPair* pair, const char* v)
 {
     if (!pair) return;
-    if (pair->m_value) { XString_delete_base(pair->m_value); pair->m_value = NULL; }
-    if (v) pair->m_value = XString_create_utf8(v);
+    if (v) {
+        XString_assign_utf8(&pair->m_value, v);
+    } else {
+        XString_clear_base(&pair->m_value);
+    }
 }
 
 bool XMqttStringPair_equal(const XMqttStringPair* a, const XMqttStringPair* b)
 {
     if (a == b) return true;
     if (!a || !b) return false;
-    return XString_equals(a->m_name, b->m_name, XChar_CaseSensitive) && XString_equals(a->m_value, b->m_value, XChar_CaseSensitive);
+    return XString_equals(&a->m_name, &b->m_name, XChar_CaseSensitive) && XString_equals(&a->m_value, &b->m_value, XChar_CaseSensitive);
 }
 
 // ==================== XMqttUserProperties ====================
