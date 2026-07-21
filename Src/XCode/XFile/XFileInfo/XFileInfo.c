@@ -11,6 +11,8 @@
 static void VXFileInfo_copy(XFileInfo* self, const XFileInfo* other)
 {
     if (!self || !other) return;
+    if (XClassIsVtableNull(self))
+        XFileInfo_init_1(self);
     
     // 拷贝路径
     if (self->m_filePath) {
@@ -26,6 +28,8 @@ static void VXFileInfo_copy(XFileInfo* self, const XFileInfo* other)
 static void VXFileInfo_move(XFileInfo* self, XFileInfo* other)
 {
     if (!self || !other) return;
+    if (XClassIsVtableNull(self))
+        XFileInfo_init_1(self);
     
     // 移动路径
     if (self->m_filePath) {

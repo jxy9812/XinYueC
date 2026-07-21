@@ -58,6 +58,11 @@ static void VXMqttStringPair_deinit(XMqttStringPair* pair)
 static void VXMqttStringPair_copy(XMqttStringPair* dest, const XMqttStringPair* src)
 {
     if (!dest || !src) return;
+    /* 兼容两种调用场景：
+     * 1) vtable copy（EXClass_Copy）：dest 已初始化，直接 assign
+     * 2) 容器回调（通过 _base 宏）：dest 是零内存，先 init 再 assign */
+    if (XClassIsVtableNull(dest))
+        XMqttStringPair_init(dest, NULL, NULL);
     XString_assign(&dest->m_name, &src->m_name);
     XString_assign(&dest->m_value, &src->m_value);
 }
@@ -65,6 +70,11 @@ static void VXMqttStringPair_copy(XMqttStringPair* dest, const XMqttStringPair* 
 static void VXMqttStringPair_move(XMqttStringPair* dest, XMqttStringPair* src)
 {
     if (!dest || !src) return;
+    /* 兼容两种调用场景：
+     * 1) vtable move（EXClass_Move）：dest 已初始化，直接 swap
+     * 2) 容器回调（通过 _base 宏）：dest 是零内存，先 init 再 swap */
+    if (XClassIsVtableNull(dest))
+        XMqttStringPair_init(dest, NULL, NULL);
     XString_swap(&dest->m_name, &src->m_name);
     XString_swap(&dest->m_value, &src->m_value);
 }
@@ -122,5 +132,12 @@ bool XMqttStringPair_equal(const XMqttStringPair* a, const XMqttStringPair* b)
 
 XMqttUserProperties* XMqttUserProperties_create(void)
 {
-    return XVector_create_ex(sizeof(XMqttStringPair), true);
+    XMqttUserProperties* props = XVector_create_ex(sizeof(XMqttStringPair), true);
+    if (props) {
+        /* 直接用 XMqttStringPair 的虚函数 copy/move/deinit 作为容器元素回调 */
+        XContainerSetDataCopyMethod(props, (XCDataCopyMethod)XMqttStringPair_copy_base);
+        XContainerSetDataMoveMethod(props, (XCDataMoveMethod)XMqttStringPair_move_base);
+        XContainerSetDataDeinitMethod(props, (XCDataDeinitMethod)XMqttStringPair_deinit_base);
+    }
+    return props;
 }

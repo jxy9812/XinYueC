@@ -53,12 +53,16 @@ static void VXMqttTopicFilter_deinit(XMqttTopicFilter* filter)
 static void VXMqttTopicFilter_copy(XMqttTopicFilter* dest, const XMqttTopicFilter* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttTopicFilter_init(dest, NULL);
     if (src->m_filter) dest->m_filter = XString_create_copy(src->m_filter);
 }
 
 static void VXMqttTopicFilter_move(XMqttTopicFilter* dest, XMqttTopicFilter* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttTopicFilter_init(dest, NULL);
     dest->m_filter = src->m_filter; src->m_filter = NULL;
 }
 

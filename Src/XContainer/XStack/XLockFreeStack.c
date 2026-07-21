@@ -258,6 +258,9 @@ bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer)
 
 void VXClass_copy(XLockFreeStack* object, const XLockFreeStack* src)
 {
+    if (!object || !src) return;
+    if (XClassIsVtableNull(object))
+        XLockFreeStack_init(object, XContainerTypeSize(src), XContainerCapacity(src));
     XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*, const XVector*))(object, src);
     object->m_top = src->m_top;
     object->m_index_bits = src->m_index_bits;

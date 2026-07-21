@@ -112,7 +112,8 @@ static bool isIPv6Global(const uint8_t ip6[16]) {
 
 static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
     if (!self || !other) return;
-    XClassEnsureVtable(self, XHostAddress);
+    if (XClassIsVtableNull(self))
+        XHostAddress_init(self);
     self->protocol = other->protocol;
     self->isNull = other->isNull;
     if (other->protocol == XHostAddress_IPv4Protocol) {
@@ -124,7 +125,8 @@ static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
 
 static void VXHostAddress_move(XHostAddress* self, XHostAddress* other) {
     if (!self || !other) return;
-    XClassEnsureVtable(self, XHostAddress);
+    if (XClassIsVtableNull(self))
+        XHostAddress_init(self);
     memcpy(self, other, sizeof(XHostAddress));
 }
 

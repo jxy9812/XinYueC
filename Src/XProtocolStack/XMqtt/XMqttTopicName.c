@@ -58,12 +58,16 @@ static void VXMqttTopicName_deinit(XMqttTopicName* name)
 static void VXMqttTopicName_copy(XMqttTopicName* dest, const XMqttTopicName* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttTopicName_init(dest, NULL);
     if (src->m_name) dest->m_name = XString_create_copy(src->m_name);
 }
 
 static void VXMqttTopicName_move(XMqttTopicName* dest, XMqttTopicName* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttTopicName_init(dest, NULL);
     dest->m_name = src->m_name; src->m_name = NULL;
 }
 

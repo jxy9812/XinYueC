@@ -63,7 +63,8 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (!dest || !src) return;
     
     // 检查目标对象是否已初始化，如果未初始化则先初始化
-    XClassEnsureVtable(dest, XNetworkInterface);
+    if (XClassIsVtableNull(dest))
+        XNetworkInterface_init(dest);
     // 复制基本字段
     dest->index = src->index;
     dest->mtu = src->mtu;
@@ -111,7 +112,8 @@ static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* 
     if (!dest || !src) return;
     
     // 检查目标对象是否已初始化，如果未初始化则先初始化
-    XClassEnsureVtable(dest, XNetworkInterface);
+    if (XClassIsVtableNull(dest))
+        XNetworkInterface_init(dest);
     
     XSwap(dest, src,sizeof(XNetworkInterface));
 

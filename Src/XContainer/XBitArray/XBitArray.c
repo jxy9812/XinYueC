@@ -85,6 +85,8 @@ static void VXBitArrayDataDelete(void* data, XBitArray* array)
 void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XBitArray_init(dest, 0, false);
 
     // 释放目标原有数据
     if (XContainerIsCow(dest)) {
@@ -130,6 +132,8 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 void VXBitArray_move(XBitArray* dest, XBitArray* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XBitArray_init(dest, 0, false);
 
     // 释放目标原有数据
     if (XContainerIsCow(dest)) {

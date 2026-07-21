@@ -60,6 +60,8 @@ static void V_deinit(XMqttPublishProperties* prop)
 static void V_copy(XMqttPublishProperties* dest, const XMqttPublishProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttPublishProperties_init(dest);
     dest->m_availableProperties = src->m_availableProperties;
     dest->m_payloadFormatIndicator = src->m_payloadFormatIndicator;
     dest->m_messageExpiryInterval = src->m_messageExpiryInterval;
@@ -74,6 +76,8 @@ static void V_copy(XMqttPublishProperties* dest, const XMqttPublishProperties* s
 static void V_move(XMqttPublishProperties* dest, XMqttPublishProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttPublishProperties_init(dest);
     memcpy(dest, src, sizeof(XMqttPublishProperties));
     memset(src, 0, sizeof(XMqttPublishProperties));
 }
@@ -161,6 +165,8 @@ static void VMS_deinit(XMqttMessageStatusProperties* prop)
 static void VMS_copy(XMqttMessageStatusProperties* dest, const XMqttMessageStatusProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttMessageStatusProperties_init(dest);
     dest->m_reasonCode = src->m_reasonCode;
     if (src->m_reason) dest->m_reason = XString_create_copy(src->m_reason);
     if (src->m_userProperties) dest->m_userProperties = (XMqttUserProperties*)XVector_create_copy((XVector*)src->m_userProperties);
@@ -169,6 +175,8 @@ static void VMS_copy(XMqttMessageStatusProperties* dest, const XMqttMessageStatu
 static void VMS_move(XMqttMessageStatusProperties* dest, XMqttMessageStatusProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttMessageStatusProperties_init(dest);
     memcpy(dest, src, sizeof(XMqttMessageStatusProperties));
     memset(src, 0, sizeof(XMqttMessageStatusProperties));
 }

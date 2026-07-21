@@ -81,6 +81,9 @@ void VXContainer_clear(XContainer* Object)
 
 void VXClass_copy(XContainer* dst, const XContainer* src)
 {
+    if (!dst || !src) return;
+    if (XClassIsVtableNull(dst))
+        XContainer_init(dst, 0, false);
     // 1. 释放目标原有资源
     if (XContainerIsCow(dst))
     {
@@ -119,6 +122,9 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
 
 void VXClass_move(XContainer* dst, XContainer* src)
 {
+    if (!dst || !src) return;
+    if (XClassIsVtableNull(dst))
+        XContainer_init(dst, 0, false);
     // 1. 释放目标原有资源
     if (XContainerIsCow(dst)) {
         if (dst->m_data)

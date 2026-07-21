@@ -23,7 +23,8 @@ static void VXNetworkAddressEntry_copy(XNetworkAddressEntry* dest, const XNetwor
     if (!dest || !src) return;
     
     // 检查目标对象是否已初始化，如果未初始化则先初始化
-    XClassEnsureVtable(dest, XNetworkAddressEntry);
+    if (XClassIsVtableNull(dest))
+        XNetworkAddressEntry_init(dest);
     
     // 先释放目标对象的旧值
     XHostAddress_deinit_base(&dest->ip);
@@ -49,7 +50,8 @@ static void VXNetworkAddressEntry_move(XNetworkAddressEntry* dest, XNetworkAddre
     if (!dest || !src) return;
     
     // 检查目标对象是否已初始化，如果未初始化则先初始化
-    XClassEnsureVtable(dest, XNetworkAddressEntry);
+    if (XClassIsVtableNull(dest))
+        XNetworkAddressEntry_init(dest);
    
     // 移动语义：转移资源
     XHostAddress_move_base(&dest->ip, &src->ip);

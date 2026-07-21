@@ -538,22 +538,27 @@ void XMqttUserPropertiesTest(void)
 
     XPrintf("========== XMqttUserProperties 单元测试开始 ==========\n");
 
-    /* ---------- 1. 创建和添加元素 ---------- */
+    /* ---------- 1. 创建和添加元素（按值存储，容器管理内存） ---------- */
     {
         XMqttUserProperties* props = XMqttUserProperties_create();
         if (props) {
-            XMqttStringPair* pair1 = XMqttStringPair_create("k1", "v1");
-            XMqttStringPair* pair2 = XMqttStringPair_create("k2", "v2");
+            /* 栈上初始化，按值推入，容器通过回调深拷贝 */
+            XMqttStringPair pair1, pair2;
+            XMqttStringPair_init(&pair1, "k1", "v1");
+            XMqttStringPair_init(&pair2, "k2", "v2");
             XVector_push_back_1_base(props, &pair1);
             XVector_push_back_1_base(props, &pair2);
+            /* 容器已拥有深拷贝副本，释放原栈对象 */
+            XMqttStringPair_deinit_base(&pair1);
+            XMqttStringPair_deinit_base(&pair2);
 
             size_t sz = XVector_size(props);
             if (sz == 2) {
-                XMqttStringPair** got1 = (XMqttStringPair**)XVector_at_base(props, 0);
-                XMqttStringPair** got2 = (XMqttStringPair**)XVector_at_base(props, 1);
+                XMqttStringPair* got1 = (XMqttStringPair*)XVector_at_base(props, 0);
+                XMqttStringPair* got2 = (XMqttStringPair*)XVector_at_base(props, 1);
                 if (got1 && got2 &&
-                    XString_equals_utf8(&(*got1)->m_name, "k1", XChar_CaseSensitive) &&
-                    XString_equals_utf8(&(*got2)->m_name, "k2", XChar_CaseSensitive)) {
+                    XString_equals_utf8(&got1->m_name, "k1", XChar_CaseSensitive) &&
+                    XString_equals_utf8(&got2->m_name, "k2", XChar_CaseSensitive)) {
                     XPrintf("  [通过] UserProperties 创建和添加正确\n"); pass++;
                 } else { XPrintf("  [失败] UserProperties 内容不正确\n"); fail++; }
             } else { XPrintf("  [失败] UserProperties size 期望 2, 实际 %zu\n", sz); fail++; }

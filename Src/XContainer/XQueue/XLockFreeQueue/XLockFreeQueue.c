@@ -296,6 +296,9 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 }
 void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
 {
+    if (!object || !src) return;
+    if (XClassIsVtableNull(object))
+        XLockFreeQueue_init(object, XContainerTypeSize(src), XContainerCapacity(src) - 1);
     XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*, const XVector*))(object, src);
     object->m_head = src->m_head;
     object->m_tail = src->m_tail;

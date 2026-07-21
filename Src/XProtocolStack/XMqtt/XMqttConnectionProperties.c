@@ -59,6 +59,8 @@ static void VLW_deinit(XMqttLastWillProperties* prop)
 static void VLW_copy(XMqttLastWillProperties* dest, const XMqttLastWillProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttLastWillProperties_init(dest);
     dest->m_willDelayInterval = src->m_willDelayInterval;
     dest->m_payloadFormatIndicator = src->m_payloadFormatIndicator;
     dest->m_messageExpiryInterval = src->m_messageExpiryInterval;
@@ -71,6 +73,8 @@ static void VLW_copy(XMqttLastWillProperties* dest, const XMqttLastWillPropertie
 static void VLW_move(XMqttLastWillProperties* dest, XMqttLastWillProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttLastWillProperties_init(dest);
     memcpy(dest, src, sizeof(XMqttLastWillProperties));
     memset(src, 0, sizeof(XMqttLastWillProperties));
 }
@@ -150,6 +154,8 @@ static void VCP_deinit(XMqttConnectionProperties* prop)
 static void VCP_copy(XMqttConnectionProperties* dest, const XMqttConnectionProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttConnectionProperties_init(dest);
     dest->m_sessionExpiryInterval = src->m_sessionExpiryInterval;
     dest->m_maximumReceive = src->m_maximumReceive;
     dest->m_maximumPacketSize = src->m_maximumPacketSize;
@@ -164,6 +170,8 @@ static void VCP_copy(XMqttConnectionProperties* dest, const XMqttConnectionPrope
 static void VCP_move(XMqttConnectionProperties* dest, XMqttConnectionProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttConnectionProperties_init(dest);
     memcpy(dest, src, sizeof(XMqttConnectionProperties));
     memset(src, 0, sizeof(XMqttConnectionProperties));
 }
@@ -246,6 +254,8 @@ static void VSCP_deinit(XMqttServerConnectionProperties* prop)
 static void VSCP_copy(XMqttServerConnectionProperties* dest, const XMqttServerConnectionProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttServerConnectionProperties_init(dest);
     XMqttConnectionProperties_copy_base((XMqttConnectionProperties*)dest, (const XMqttConnectionProperties*)src);
     dest->m_availableProperties = src->m_availableProperties;
     dest->m_maximumQoS = src->m_maximumQoS;
@@ -264,6 +274,8 @@ static void VSCP_copy(XMqttServerConnectionProperties* dest, const XMqttServerCo
 static void VSCP_move(XMqttServerConnectionProperties* dest, XMqttServerConnectionProperties* src)
 {
     if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XMqttServerConnectionProperties_init(dest);
     memcpy(dest, src, sizeof(XMqttServerConnectionProperties));
     memset(src, 0, sizeof(XMqttServerConnectionProperties));
 }

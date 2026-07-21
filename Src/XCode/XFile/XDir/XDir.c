@@ -13,6 +13,8 @@
 static void VXDir_copy(XDir* self, const XDir* other)
 {
     if (!self || !other) return;
+    if (XClassIsVtableNull(self))
+        XDir_init_1(self);
     
     if (self->m_path) {
         XString_delete_base(self->m_path);
@@ -31,6 +33,8 @@ static void VXDir_copy(XDir* self, const XDir* other)
 static void VXDir_move(XDir* self, XDir* other)
 {
     if (!self || !other) return;
+    if (XClassIsVtableNull(self))
+        XDir_init_1(self);
     
     if (self->m_path) {
         XString_delete_base(self->m_path);
