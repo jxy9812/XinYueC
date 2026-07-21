@@ -1,4 +1,4 @@
-#include "XCanBus.h"
+﻿#include "XCanBus.h"
 #include "XMemory.h"
 #include "XString.h"
 #include <string.h>

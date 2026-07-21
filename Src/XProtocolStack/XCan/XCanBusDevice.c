@@ -1,4 +1,4 @@
-#include "XCanBusDevice.h"
+﻿#include "XCanBusDevice.h"
 #include "XCanBusDevice_Protected.h"
 #include "XMemory.h"
 #include "XString.h"
