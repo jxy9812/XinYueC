@@ -4,6 +4,7 @@
 #include "XString.h"
 #include "XVariant.h"
 #include "XMutex.h"
+#include "XThread.h"
 #include <string.h>
 
 // =============== 虚函数前置声明 ===============
@@ -476,8 +477,7 @@ bool XCanBusDevice_waitForFramesWritten(XCanBusDevice* dev, int msecs)
             result = true;
             break;
         }
-        struct timespec ts = {0, 10 * 1000000};
-        nanosleep(&ts, NULL);
+        XThread_msleep(10);
         elapsed += 10;
     }
 
@@ -520,8 +520,7 @@ bool XCanBusDevice_waitForFramesReceived(XCanBusDevice* dev, int msecs)
             result = true;
             break;
         }
-        struct timespec ts = {0, 10 * 1000000};
-        nanosleep(&ts, NULL);
+        XThread_msleep(10);
         elapsed += 10;
     }
 

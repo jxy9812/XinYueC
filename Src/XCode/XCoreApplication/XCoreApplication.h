@@ -65,6 +65,8 @@ typedef struct XCoreApplication
     XString* m_orgDomain;//组织域名
     XBitArray m_attribute;//属性位数组
     XStringList* m_paths;//库搜索路径列表
+    bool m_in_exec;                // 是否正在执行 exec()（对标 QCoreApplicationPrivate::in_exec）
+    bool m_aboutToQuitEmitted;     // aboutToQuit 信号是否已发出（对标 QCoreApplicationPrivate::aboutToQuitEmitted）
 } XCoreApplication;
 
 #define xApp XCoreApplication_instance()
@@ -202,12 +204,18 @@ int64_t XCoreApplication_applicationPid(void);
  */
 void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags);
 /**
- * @brief 处理事件，但最多只运行指定的毫秒数。
+ * @brief 处理事件，但最多只运行指定的毫秒数（对标 Qt 6.8 QCoreApplication::processEvents(flags, int ms)）
  *
  * @param flags 事件处理标志。
  * @param maxtime 最大处理时间（毫秒）。
  */
-void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime);
+void XCoreApplication_processEventsTimed(XEventLoopProcessEventsFlags flags, int maxtime);
+
+/**
+ * @brief 处理事件，但最多只运行指定的毫秒数（兼容旧名，对标 Qt 6.8 QCoreApplication::processEvents(flags, int ms)）
+ * @deprecated 请使用 XCoreApplication_processEventsTimed
+ */
+#define XCoreApplication_processEventsWithMaxTime(flags, maxtime) XCoreApplication_processEventsTimed(flags, maxtime)
 
 /**
  * @brief 安装原生事件过滤器。
@@ -318,6 +326,59 @@ void* XCoreApplication_applicationVersionChanged_signal(XCoreApplication* app);
 void* XCoreApplication_organizationDomainChanged_signal(XCoreApplication* app);
 
 void* XCoreApplication_organizationNameChanged_signal(XCoreApplication* app);
+
+/* ==================== 应用状态（对标 Qt QCoreApplication::startingUp / closingDown） ==================== */
+
+/**
+ * @brief 检查应用程序是否正在启动过程中。
+ * @return 如果应用程序尚未完全启动（即事件循环尚未开始），返回 true。
+ */
+bool XCoreApplication_startingUp(void);
+
+/**
+ * @brief 检查应用程序是否正在关闭过程中。
+ * @return 如果应用程序正在关闭，返回 true。
+ */
+bool XCoreApplication_closingDown(void);
+
+/* ==================== setuid 安全（对标 Qt QCoreApplication::setSetuidAllowed / isSetuidAllowed） ==================== */
+
+/**
+ * @brief 设置是否允许在 setuid 环境下运行。
+ * @param allow 是否允许。
+ */
+void XCoreApplication_setSetuidAllowed(bool allow);
+
+/**
+ * @brief 检查是否允许在 setuid 环境下运行。
+ * @return 是否允许。
+ */
+bool XCoreApplication_isSetuidAllowed(void);
+
+/* ==================== 自发事件发送（对标 Qt QCoreApplication::sendSpontaneousEvent） ==================== */
+
+/**
+ * @brief 向指定接收者发送一个自发事件（标记 event->spontaneous = true）。
+ *
+ * @param receiver 事件接收者的指针。
+ * @param event 要发送的事件。
+ * @return 如果事件被成功处理，则返回 true；否则返回 false。
+ */
+bool XCoreApplication_sendSpontaneousEvent(XObject* receiver, XEvent* event);
+
+/* ==================== quitLock 管理（对标 Qt QCoreApplication::isQuitLockEnabled / setQuitLockEnabled） ==================== */
+
+/**
+ * @brief 检查 quit lock 是否启用。
+ * @return 如果 quit lock 启用，返回 true。
+ */
+bool XCoreApplication_isQuitLockEnabled(void);
+
+/**
+ * @brief 设置 quit lock 是否启用。
+ * @param enabled 是否启用。
+ */
+void XCoreApplication_setQuitLockEnabled(bool enabled);
 #ifdef __cplusplus
 }
 #endif

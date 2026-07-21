@@ -15,9 +15,14 @@
 #include "XTimer.h"
 #include "XMultiPool.h"
 #include <string.h>
+#include <stdlib.h>
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 static XThread* g_mainThread = NULL; // Qt: QCoreApplicationPrivate::theMainThread
+static bool is_app_running = false;   // Qt: QCoreApplicationPrivate::is_app_running
+static bool is_app_closing = false;   // Qt: QCoreApplicationPrivate::is_app_closing
+static bool setuidAllowed = false;    // Qt: QCoreApplicationPrivate::setuidAllowed
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
+bool VXCoreApplication_event(XObject* self, XEvent* e);
 //static void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event);
 static void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
@@ -31,6 +36,7 @@ XVtable* XCoreApplication_class_init() {
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { VXCoreApplication_notify };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXCoreApplication_event);
     //XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCoreApplication_deinit);
 #if SHOWCONTAINERSIZE
@@ -89,6 +95,11 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
 
     // 设置全局实例
     g_app = app;
+
+    // Qt: 标记应用正在运行
+    is_app_running = true;
+    app->m_in_exec = false;
+    app->m_aboutToQuitEmitted = false;
 }
 
 
@@ -212,14 +223,54 @@ int64_t XCoreApplication_applicationPid(void)
 void XCoreApplication_exit(int returnCode)
 {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app)
-        XThread_exit(g_mainThread, returnCode);
+    if (!app)
+        return;
+
+    // Qt 6.8: 发出 aboutToQuit 信号（仅第一次）
+    if (!app->m_aboutToQuitEmitted) {
+        app->m_aboutToQuitEmitted = true;
+        XCoreApplication_aboutToQuit_signal(app);
+    }
+
+    // Qt 6.8: 设置 quitNow 标志，通知所有事件循环退出
+    XThreadData* data = XObject_threadData((XObject*)app);
+    if (data) {
+        data->m_quitNow = true;
+        // Qt 6.8: 遍历所有嵌套 event loop 调用 exit()
+        // XThreadData 中的 m_eventLoops 栈
+        for (size_t i = 0; i < XStack_size_base(&data->m_eventLoops); ++i) {
+            XEventLoop** pLoop = (XEventLoop**)XVector_at_base(&data->m_eventLoops, i);
+            if (pLoop && *pLoop) {
+                XEventLoop_exit(*pLoop, returnCode);
+            }
+        }
+    }
 }
 
-void XCoreApplication_quit() {
+void XCoreApplication_quit()
+{
     XCoreApplication* app = XCoreApplication_instance();
-    if (app)
-        XThread_quit(g_mainThread);
+    if (!app)
+        return;
+
+    // Qt 6.8: quit() 在没有 exec 时不执行任何操作
+    if (!app->m_in_exec)
+        return;
+
+    // Qt 6.8: quit() 通过 QEvent::Quit 事件机制
+    // 主线程: sendEvent(self, QEvent::Quit) → event() → exit(0)
+    // 其他线程: postEvent(self, QEvent::Quit)
+    if (XThread_currentThread() == g_mainThread) {
+        // 主线程: 直接发送 Quit 事件
+        XEvent quitEvent;
+        XEvent_init(&quitEvent, XEVENT_TYPE_QUIT);
+        XCoreApplication_sendEvent((XObject*)app, &quitEvent);
+    } else {
+        // 其他线程: 投递 Quit 事件
+        XEvent* quitEvent = XEvent_create(XEVENT_TYPE_QUIT);
+        if (quitEvent)
+            XCoreApplication_postEvent((XObject*)app, quitEvent, XEVENT_PRIORITY_HIGHEST);
+    }
 }
 
 void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) 
@@ -229,7 +280,7 @@ void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags)
         XAbstractEventDispatcher_processEvents_base(data->m_eventDispatcher, flags);
 }
 
-void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)
+void XCoreApplication_processEventsTimed(XEventLoopProcessEventsFlags flags, int maxtime)
 {
     XTimer* timer = XTimer_create();
     XTimer_setInterval(timer,maxtime);
@@ -264,12 +315,40 @@ bool XCoreApplication_notify_base(XObject* receiver, XEvent* e)
 int XCoreApplication_exec() 
 {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app == NULL )
+    if (app == NULL)
         return -1;
-    int result = XThread_exec(g_mainThread);
-    // 发送即将退出信号
-    XCoreApplication_aboutToQuit_signal(app);
-    XCoreApplication_processEvents(XEventLoop_AllEvents);//处理事件，保证退出信号可以被调用
+
+    // Qt 6.8: 检查是否在主线程
+    XThread* currentThread = XThread_currentThread();
+    if (currentThread != g_mainThread) {
+        XERROR_PRINTF("XCoreApplication::exec: Must be called from the main thread\n");
+        return -1;
+    }
+
+    // Qt 6.8: 检查事件循环是否已在运行
+    XThreadData* data = XObject_threadData((XObject*)app);
+    if (data && XStack_size_base(&data->m_eventLoops) > 0) {
+        XERROR_PRINTF("XCoreApplication::exec: The event loop is already running\n");
+        return -1;
+    }
+
+    // Qt 6.8: 重置退出标志
+    if (data)
+        data->m_quitNow = false;
+    app->m_in_exec = true;
+    app->m_aboutToQuitEmitted = false;
+
+    // Qt 6.8: 创建 QEventLoop 并调用 exec(ApplicationExec)
+    XEventLoop eventLoop;
+    XEventLoop_init(&eventLoop);
+    int result = XEventLoop_exec(&eventLoop, XEventLoop_ApplicationExec);
+
+    // Qt 6.8: execCleanup - 发送 DeferredDelete 事件
+    if (data)
+        data->m_quitNow = false;
+    app->m_in_exec = false;
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+
     return result;
 }
 
@@ -278,13 +357,63 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event)
     if (!receiver || !event) {
         return false;
     }
+    // Qt 6.8: 标记为非自发事件（对标 event->m_spont = false）
+    event->spontaneous = false;
     // 【核心】将事件分发工作交给 notify
     return XCoreApplication_notify_base(receiver, event);
 }
 
 void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
 {
-    XThreadData_postEvent(receiver,event,priority);
+    if (!receiver || !event)
+        return;
+
+    // Qt 6.8: 事件压缩 — 相同 timerId 的 Timer 事件合并
+    if (event->type == XEVENT_TYPE_TIMER && XAtomic_load_int32(&receiver->m_posted_events, XAtomic_MemoryOrder_Relaxed) > 0) {
+        XThreadData* td = XThreadData_lockPostEventList(receiver);
+        if (td) {
+            XTimerEvent* newTimerEvent = (XTimerEvent*)event;
+            bool compressed = false;
+            for (size_t i = 0; i < XVector_size_base(&td->m_postEventList); ++i) {
+                XPostEvent* pe = (XPostEvent*)XVector_at_base(&td->m_postEventList, i);
+                if (pe && pe->event && pe->receiver == receiver
+                    && pe->event->type == XEVENT_TYPE_TIMER) {
+                    XTimerEvent* existing = (XTimerEvent*)pe->event;
+                    if (existing->timerId == newTimerEvent->timerId) {
+                        // 压缩：删除新事件，保留旧的
+                        XEvent_delete_base(event);
+                        compressed = true;
+                        break;
+                    }
+                }
+            }
+            XMutex_unlock(td->m_mutex);
+            if (compressed)
+                return;
+        }
+    }
+
+    // Qt 6.8: 事件压缩 — 相同接收者的 Quit 事件去重
+    if (event->type == XEVENT_TYPE_QUIT && XAtomic_load_int32(&receiver->m_posted_events, XAtomic_MemoryOrder_Relaxed) > 0) {
+        XThreadData* td = XThreadData_lockPostEventList(receiver);
+        if (td) {
+            bool compressed = false;
+            for (size_t i = 0; i < XVector_size_base(&td->m_postEventList); ++i) {
+                XPostEvent* pe = (XPostEvent*)XVector_at_base(&td->m_postEventList, i);
+                if (pe && pe->event && pe->receiver == receiver
+                    && pe->event->type == XEVENT_TYPE_QUIT) {
+                    XEvent_delete_base(event);
+                    compressed = true;
+                    break;
+                }
+            }
+            XMutex_unlock(td->m_mutex);
+            if (compressed)
+                return;
+        }
+    }
+
+    XThreadData_postEvent(receiver, event, priority);
 }
 
 bool XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priority)
@@ -294,30 +423,56 @@ bool XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priorit
 
 void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
 {
+    XThreadData* data = XThreadData_current();
+    if (!data) return;
+
     XVector* events = XThreadData_takePostedEvents();
-    if (!events)return;
+    if (!events) return;
     if (!XThreadData_pushActivePostedEvents(events)) {
         XThreadData_push_front_list(events);
         XVector_delete_base(events);
         return;
     }
-    for_each_iterator(events, XVector, it)
-    {
-        XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost|| !ePost->event) continue;
-        if (receiver && ePost->receiver != receiver)
-            continue;//如果有指定的接收者，跳过其他接收者
-        if(eventType&& eventType!=ePost->event->type)
-            continue;//如果有指定的事件类型，跳过其他事件
 
-        if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE
-            && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->event,
-                                                    XThreadData_current(),
-                                                    eventType == XEVENT_TYPE_DEFERRED_DELETE))
+    // Qt 6.8: 记录插入偏移，防止活锁
+    size_t insertionOffset = XVector_size_base(events);
+    size_t i = 0;
+    while (i < XVector_size_base(events)) {
+        if (i >= insertionOffset) break;
+
+        XPostEvent* ePost = (XPostEvent*)XVector_at_base(events, i);
+        ++i;
+
+        if (!ePost || !ePost->event) continue;
+        if (receiver && ePost->receiver != receiver) {
+            XAtomic_store_bool(&data->m_canWait, false, XAtomic_MemoryOrder_Release);
             continue;
+        }
+        if (eventType && eventType != ePost->event->type) {
+            XAtomic_store_bool(&data->m_canWait, false, XAtomic_MemoryOrder_Release);
+            continue;
+        }
+
+        // Qt 6.8: DeferredDelete 事件处理 — 不可投递时重新投递
+        if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE) {
+            if (!XDeferredDeleteEvent_shouldDeliver(
+                    (XDeferredDeleteEvent*)ePost->event,
+                    data,
+                    eventType == XEVENT_TYPE_DEFERRED_DELETE)) {
+                // Qt 6.8: 重新投递 — 复制事件，原位置置空，追加到列表末尾
+                XPostEvent pe_copy = *ePost;
+                ePost->event = NULL;
+                if (!XVector_push_back_1_base(events, &pe_copy)) {
+                    // 无法重新投递，丢弃
+                    XThreadData_discardPostedEvent(&pe_copy);
+                }
+                continue;
+            }
+        }
 
         XThreadData_deliverPostedEvent(ePost);
     }
+
     XThreadData_popActivePostedEvents(events);
     XThreadData_push_front_list(events);
     XVector_delete_base(events);
@@ -345,51 +500,33 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)
 {
     XCoreApplication* app = XCoreApplication_instance();
-    return XObject_threadData((XObject*)app)->m_eventDispatcher;
+    if (!app) return NULL;
+    XThreadData* td = XObject_threadData((XObject*)app);
+    return td ? td->m_eventDispatcher : NULL;
 }
 
 void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
 {
-    // 1. 获取全局应用实例和其关联的主线程数据
-    XCoreApplication* app = XCoreApplication_instance();
-    if (!app) {
-        // 如果应用实例不存在，无法设置分发器
+    // Qt 6.8: setEventDispatcher 委托给主线程
+    if (!g_mainThread) {
+        g_mainThread = XThread_currentThread();
+    }
+    XThreadData* data = XObject_threadData((XObject*)g_mainThread);
+    if (!data) return;
+
+    // Qt 6.8: 如果已有事件分发器，打印警告并忽略（对标 QThread::setEventDispatcher 行为）
+    if (data->m_eventDispatcher != NULL && dispatcher != NULL) {
+        XERROR_PRINTF("XCoreApplication::setEventDispatcher: "
+                       "Cannot set event dispatcher when one is already installed\n");
         return;
     }
 
-    XThreadData* data = XObject_threadData((XObject*)app);
-    if (!data) {
-        // 理论上主线程的 m_data 不应为空，但做安全检查
-        return;
-    }
-
-    // 2. 参数校验：允许传入 NULL 来清除分发器
-    //    但通常不建议这样做，因为事件循环需要一个有效的分发器。
-    //    如果传入 NULL，我们只是清理旧的，不设置新的。
-    if (dispatcher == NULL) {
-        // 可选：打印警告，因为这通常不是一个好主意
-         printf("Warning: Setting event dispatcher to NULL.\n");
-    }
-
-    // 3. 清理旧的事件分发器
-    if (data->m_eventDispatcher != NULL) {
-        // 使用 deleteLater 确保在当前事件循环迭代结束后再销毁，
-        // 避免在处理事件时删除正在使用的分发器。
+    // Qt 6.8: 清理旧的事件分发器
+    if (data->m_eventDispatcher != NULL && dispatcher == NULL) {
         XObject_deleteLater((XObject*)(data->m_eventDispatcher));
-        data->m_eventDispatcher = NULL; // 立即置空指针，防止悬空指针
     }
 
-    // 4. 设置新的事件分发器并建立所有权关系
-    if (dispatcher != NULL) {
-        data->m_eventDispatcher = dispatcher;
-
-        // --- 关键改进：设置父对象 ---
-        // 将新的分发器的父对象设置为应用程序实例。
-        // 这样，当应用程序实例被销毁时，分发器也会被自动清理，
-        // 防止了内存泄漏，并明确了对象的生命周期。
-        XObject_setParent((XObject*)dispatcher, (XObject*)app);
-    }
-
+    data->m_eventDispatcher = dispatcher;
 }
 
 void XCoreApplication_setLibraryPaths(const XStringList* paths)
@@ -448,7 +585,11 @@ void* XCoreApplication_organizationNameChanged_signal(XCoreApplication* app)
 
 bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
 {
-    if (!receiver || !event) return false;
+    if (!receiver || !event) return true;
+
+    // Qt 6.8: 应用关闭中不派发事件
+    if (is_app_closing)
+        return true;
 
     XThreadData* currentData = XThreadData_current();
     XThreadData* receiverData = XObject_threadData(receiver);
@@ -456,6 +597,21 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
         return false;
     if (receiverData)
         ++receiverData->m_scopeLevel;
+
+    // Qt 6.8: 应用级事件过滤器（对标 QCoreApplicationPrivate::sendThroughApplicationEventFilters）
+    // 仅在主线程中执行
+    if (XThread_currentThread() == g_mainThread && g_app) {
+        XVector* appFilters = ((XObject*)g_app)->m_filters;
+        if (appFilters) {
+            for_each_iterator(appFilters, XVector, it)
+            {
+                XObject* filter = *((XObject**)XVector_iterator_data(&it));
+                if (!filter) continue;
+                if (XObject_eventFilter_base(filter, receiver, event))
+                    return true;
+            }
+        }
+    }
 
     bool handled = false;
 
@@ -488,7 +644,81 @@ done:
     return handled;
 }
 
+/* ==================== sendSpontaneousEvent（对标 Qt 6.8 QCoreApplication::sendSpontaneousEvent） ==================== */
+
+bool XCoreApplication_sendSpontaneousEvent(XObject* receiver, XEvent* event)
+{
+    if (!receiver || !event) {
+        return false;
+    }
+    // Qt 6.8: 标记为自发事件（对标 event->m_spont = true）
+    event->spontaneous = true;
+    // 通过 notify 分发
+    return XCoreApplication_notify_base(receiver, event);
+}
+
+/* ==================== quitLock 管理（对标 Qt 6.8 QCoreApplication::isQuitLockEnabled / setQuitLockEnabled） ==================== */
+
+static int quitLockRef = 1;  // Qt 默认 quitLockEnabled = true
+static bool quitLockEnabled = true;
+
+bool XCoreApplication_isQuitLockEnabled(void)
+{
+    return quitLockEnabled;
+}
+
+void XCoreApplication_setQuitLockEnabled(bool enabled)
+{
+    quitLockEnabled = enabled;
+    if (!enabled && quitLockRef <= 0) {
+        // Qt 6.8: 如果 quitLock 被禁用且没有引用，自动退出
+        XCoreApplication_quit();
+    }
+}
+
 //void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event)
+//{
+//    app->m_quit = true;//XCoreApplication_processEventsWithMaxTime 定时简单处理，如果类中有多个定时就要添加标志位单独处理
+//}
+
+/* ==================== QCoreApplication::event 实现（对标 Qt 6.8 QCoreApplication::event） ==================== */
+
+bool VXCoreApplication_event(XObject* self, XEvent* e)
+{
+    // Qt 6.8: 处理 QEvent::Quit → exit(0)
+    if (e->type == XEVENT_TYPE_QUIT) {
+        XCoreApplication_exit(0);
+        return true;
+    }
+    // Qt 6.8: 其他事件交给父类处理（使用 XClass_Parent 避免递归）
+    return XClass_Parent(XObject, EXObject_Event, bool(*)(XObject*, XEvent*))(self, e);
+}
+
+/* ==================== 应用状态（对标 Qt QCoreApplication::startingUp / closingDown） ==================== */
+
+bool XCoreApplication_startingUp(void)
+{
+    return !is_app_running;
+}
+
+bool XCoreApplication_closingDown(void)
+{
+    return is_app_closing;
+}
+
+/* ==================== setuid 安全（对标 Qt QCoreApplication::setSetuidAllowed / isSetuidAllowed） ==================== */
+
+void XCoreApplication_setSetuidAllowed(bool allow)
+{
+    setuidAllowed = allow;
+}
+
+bool XCoreApplication_isSetuidAllowed(void)
+{
+    return setuidAllowed;
+}
+
+
 //{
 //    app->m_quit = true;//XCoreApplication_processEventsWithMaxTime 定时简单处理，如果类中有多个定时就要添加标志位单独处理
 //}
@@ -497,6 +727,9 @@ void VXCoreApplication_deinit(XCoreApplication* app)
 {
     if (!app) return;
 
+    // Qt 6.8: 标记应用正在关闭
+    is_app_closing = true;
+    is_app_running = false;
 
     // 释放事件循环
    /* if (app->m_eventLoop)

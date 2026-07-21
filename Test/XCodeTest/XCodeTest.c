@@ -12,4 +12,5 @@ void XMenu_XCodeTest(XMenu* root)
 	XMenu_XDateTimeTest(menu);
 	XMenu_XCryptographicHashTest(menu);
 	XMenu_XRandomGeneratorTest(menu);
+XMenu_XCoreApplicationTest(menu);
 }
