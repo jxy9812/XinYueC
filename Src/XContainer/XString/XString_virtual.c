@@ -214,7 +214,7 @@ static void VXStringDataDelete(void* data, XString* str)
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XString_init(object);
     }
@@ -238,7 +238,7 @@ static void VXClass_copy(XString* object, const XString* src)
 // 类方法：移动
 static void VXClass_move(XString* object, XString* src) 
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XString_init(object);
     }

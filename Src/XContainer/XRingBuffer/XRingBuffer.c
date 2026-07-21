@@ -515,7 +515,7 @@ void VXRingBuffer_deinit(XRingBuffer* buffer)
 
 static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         // 如果目标对象未初始化，先用源对象的第一个chunk大小来初始化它
         XRingChunk** firstChunkPtr = (XRingChunk**)XVector_at_base(src->m_chunks, 0);

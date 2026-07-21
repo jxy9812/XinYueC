@@ -351,7 +351,7 @@ static void VXRingChunk_clear(XRingChunk* chunk)
 
 static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XRingChunk_init(object, XContainerCapacity(src));
     }

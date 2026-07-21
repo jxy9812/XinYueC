@@ -547,7 +547,7 @@ static void VXModbusPdu_deinit(XModbusPdu* pdu) {
 
 void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src)
 {
-    if (((XClass*)pdu)->m_vtable == NULL)
+    if (XClassIsVtableNull(pdu))
         XModbusPdu_init(pdu);
     pdu->m_code = src->m_code;
     XByteArray_copy_base(pdu->m_data,src->m_data);
@@ -555,7 +555,7 @@ void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src)
 
 void VXModbusPdu_move(XModbusPdu * pdu, XModbusPdu * src)
 {
-    if (((XClass*)pdu)->m_vtable == NULL)
+    if (XClassIsVtableNull(pdu))
         XModbusPdu_init(pdu);
     XSwap(pdu,src,sizeof(XModbusPdu));
 }

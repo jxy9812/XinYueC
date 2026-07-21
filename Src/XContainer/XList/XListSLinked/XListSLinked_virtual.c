@@ -721,7 +721,7 @@ void VXList_sort(XListSLinked* this_list, XSortOrder order)
 void VXClass_copy(XListSLinked* object, const XListSLinked* src)
 {
     // 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XListSLinked_init(object, XContainerTypeSize(src), XContainerIsCow(src));
     }
@@ -803,7 +803,7 @@ void VXClass_copy(XListSLinked* object, const XListSLinked* src)
 void VXClass_move(XListSLinked* object, XListSLinked* src)
 {
     // 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         bool useCow = XContainerIsCow(src);
         XListSLinked_init(object, XContainerTypeSize(src), useCow);

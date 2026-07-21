@@ -111,7 +111,7 @@ bool VXQueue_receive(XQueue* this_queue, void* pvBuffer)
 
 void VXClass_copy(XQueue* object, const XQueue* src)
 {
-	if (((XClass*)object)->m_vtable == NULL)
+	if (XClassIsVtableNull(object))
 	{
 		XQueue_init(object, XContainerTypeSize(src));
 	}
@@ -130,7 +130,7 @@ void VXClass_copy(XQueue* object, const XQueue* src)
 
 void VXClass_move(XQueue* object, XQueue* src)
 {
-	if (((XClass*)object)->m_vtable == NULL)
+	if (XClassIsVtableNull(object))
 	{
 		XQueue_init(object, XContainerTypeSize(src));
 	}

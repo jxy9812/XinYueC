@@ -305,7 +305,7 @@ void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
 }
 void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XLockFreeQueue_init(object, XContainerTypeSize(src), XContainerCapacity(src)-1);
     }

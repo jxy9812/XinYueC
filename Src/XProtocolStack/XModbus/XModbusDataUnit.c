@@ -314,7 +314,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 	if (!unit || !src) return;
 	
 	// 检查是否需要初始化
-	if (((XClass*)unit)->m_vtable == NULL) {
+	if (XClassIsVtableNull(unit)) {
 		unit->m_type = src->m_type;
 		unit->m_startAddress = src->m_startAddress;
 		//unit->m_valueCount = src->m_valueCount;
@@ -342,7 +342,7 @@ void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src)
 	if (!unit || !src) return;
 	
 	// 检查是否需要初始化
-	if (((XClass*)unit)->m_vtable == NULL) {
+	if (XClassIsVtableNull(unit)) {
 		XModbusDataUnit_init(unit);
 	}
 	

@@ -208,7 +208,7 @@ static void VXListDLinkedDataDelete(void* data, XListDLinked* this_list)
 void VXClass_copy(XListDLinked* object, const XListDLinked* src)
 {
     // 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         bool useCow = XContainerIsCow(src);
         XListDLinked_init(object, XContainerTypeSize(src), useCow);
     }
@@ -298,7 +298,7 @@ void VXClass_copy(XListDLinked* object, const XListDLinked* src)
 void VXClass_move(XListDLinked* object, XListDLinked* src)
 {
     // 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         bool useCow = XContainerIsCow(src);
         XListDLinked_init(object, XContainerTypeSize(src), useCow);
     }

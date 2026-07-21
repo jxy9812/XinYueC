@@ -253,7 +253,7 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
     size_t count = VXCircularQueue_size(src);
 
     // 如果目标未初始化
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XCircularQueue_init(object, typeSize, capacity > 0 ? capacity - 1 : 0);
     }
@@ -302,7 +302,7 @@ static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
     if (!object || !src) return;
 
     // 如果目标未初始化
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XContainer_init(object, XContainerTypeSize(src), false);
         XClassGetVtable(object) = XCircularQueue_class_init();

@@ -153,7 +153,7 @@ void VXSet_clear(XSet* this_set)
 
 void VXClass_copy(XSet* object, const XSet* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XSet_init(object, XContainerTypeSize(src), XContainerCompare(src), XContainerIsCow(src));
     }
@@ -206,7 +206,7 @@ void VXClass_copy(XSet* object, const XSet* src)
 
 void VXClass_move(XSet* object, XSet* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XSet_init(object, XContainerTypeSize(src), XContainerCompare(src), XContainerIsCow(src));
     }

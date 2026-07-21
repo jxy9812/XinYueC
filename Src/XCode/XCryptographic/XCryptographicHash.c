@@ -1230,6 +1230,9 @@ static void VXCryptographicHash_copy(XCryptographicHash* dest, const XCryptograp
     if (!dest || !src) return;
     
     // 先调用基类拷贝
+    if (XClassIsVtableNull(dest))
+        XCryptographicHash_init(dest, src->algorithm);
+    
     XClass_Parent(XClass, EXClass_Copy, void(*)(XClass*, const XClass*))(dest, src);
     
     // 拷贝成员
@@ -1269,6 +1272,9 @@ static void VXCryptographicHash_move(XCryptographicHash* dest, XCryptographicHas
     if (!dest || !src) return;
     
     // 先调用基类移动
+    if (XClassIsVtableNull(dest))
+        XCryptographicHash_init(dest, src->algorithm);
+    
     XClass_Parent(XClass, EXClass_Move, void(*)(XClass*, XClass*))(dest, src);
     
     // 移动成员

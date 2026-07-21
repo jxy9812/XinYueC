@@ -338,7 +338,7 @@ void VXSet_clear(XHashSet* this_set)
 
 void VXClass_copy(XHashSet* object, const XHashSet* src)
 {
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XHashSet_init(object, XContainerTypeSize(src), src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     }
     else {
@@ -415,7 +415,7 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
 void VXClass_move(XHashSet* object, XHashSet* src)
 {
     // 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XHashSet_init(object, XContainerTypeSize(src), src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     }
     else {

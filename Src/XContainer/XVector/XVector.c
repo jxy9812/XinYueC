@@ -209,7 +209,7 @@ static void VXVectorDataDelete(void* data, XVector* this_vector)
 void VXClass_copy(XVector* object, const XVector* src)
 {
     // 如果目标还未初始化，先初始化
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
     }
@@ -238,7 +238,7 @@ void VXClass_copy(XVector* object, const XVector* src)
 
 void VXClass_move(XVector* object, XVector* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
     }
@@ -578,7 +578,7 @@ void VXVector_clear(XVector* this_vector)
 // ========================
 void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
 {
-    if (((XClass*)this_One)->m_vtable == NULL) {
+    if (XClassIsVtableNull(this_One)) {
         // 目标未初始化，使用源的模式初始化
         bool useCow = XContainerIsCow((XVector*)this_Two);
         XVector_init(this_One, XContainerTypeSize(this_Two), useCow);

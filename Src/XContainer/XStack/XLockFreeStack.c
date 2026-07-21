@@ -270,7 +270,7 @@ void VXClass_copy(XLockFreeStack* object, const XLockFreeStack* src)
 
 void VXClass_move(XLockFreeStack* object, XLockFreeStack* src)
 {
-    if (((XClass*)object)->m_vtable == NULL)
+    if (XClassIsVtableNull(object))
     {
         XLockFreeStack_init(object, XContainerTypeSize(src), XContainerCapacity(src));
     }

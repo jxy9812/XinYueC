@@ -1480,7 +1480,7 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
-	if (((XClass*)var)->m_vtable == NULL)
+	if (XClassIsVtableNull(var))
 	{
 		XVariant_init(var, NULL,0, XVariantType_NULL);
 	}
@@ -1553,7 +1553,7 @@ void VXVariant_move(XVariant* var, XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
-	if (((XClass*)var)->m_vtable == NULL)
+	if (XClassIsVtableNull(var))
 	{
 		XVariant_init(var, NULL, 0, XVariantType_NULL);
 	}

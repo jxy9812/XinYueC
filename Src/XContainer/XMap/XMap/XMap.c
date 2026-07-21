@@ -331,7 +331,7 @@ void VXMap_clear(XMap* this_map)
 
 void VXClass_copy(XMap* object, const XMap* src)
 {
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(src), XContainerIsCow(src));
     }
     else {
@@ -411,7 +411,7 @@ void VXClass_copy(XMap* object, const XMap* src)
 void VXClass_move(XMap* object, XMap* src)
 {
     // 1. 如果目标未初始化，先初始化（模式与源相同）
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src),
             XContainerCompare(src), XContainerIsCow(src));
         // 注意：初始化后直接转移资源？不，下面会交换，所以初始化是必要的

@@ -121,7 +121,7 @@ bool VXStack_receive(XStack* stack, void* pvBuffer)
 
 void VXClass_copy(XStack* object, const XStack* src)
 {
-	if (((XClass*)object)->m_vtable == NULL)
+	if (XClassIsVtableNull(object))
 	{
 		XStack_init(object, XContainerTypeSize(src));
 	}
@@ -140,7 +140,7 @@ void VXClass_copy(XStack* object, const XStack* src)
 
 void VXClass_move(XStack * object, XStack * src)
 {
-	if (((XClass*)object)->m_vtable == NULL)
+	if (XClassIsVtableNull(object))
 	{
 		XStack_init(object, XContainerTypeSize(src));
 	}

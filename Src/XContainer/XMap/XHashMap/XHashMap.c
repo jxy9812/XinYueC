@@ -417,7 +417,7 @@ void VXMap_clear(XHashMap* this_hash)
 // ======================== 拷贝 ========================
 void VXClass_copy(XHashMap* object, const XHashMap* src)
 {
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XHashMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src),
                       src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     } else {
@@ -505,7 +505,7 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
 // ======================== 移动 ========================
 void VXClass_move(XHashMap* object, XHashMap* src)
 {
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XHashMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src),
             src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     }

@@ -851,7 +851,7 @@ static size_t VXList_removeIf(XLockFreeList* this_list,
 static void VXClass_copy(XLockFreeList* object, const XLockFreeList* src)
 {
     if (object == NULL || src == NULL) return;
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XLockFreeList_init(object, XContainerTypeSize(src));
     } else if (!XListBase_isEmpty_base(object)) {
         XListBase_clear_base(object);
@@ -867,7 +867,7 @@ static void VXClass_copy(XLockFreeList* object, const XLockFreeList* src)
 static void VXClass_move(XLockFreeList* object, XLockFreeList* src)
 {
     if (object == NULL || src == NULL) return;
-    if (((XClass*)object)->m_vtable == NULL) {
+    if (XClassIsVtableNull(object)) {
         XLockFreeList_init(object, XContainerTypeSize(src));
     } else if (!XListBase_isEmpty_base(object)) {
         XListBase_clear_base(object);
