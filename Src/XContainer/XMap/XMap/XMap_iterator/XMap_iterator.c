@@ -11,6 +11,8 @@ XMap_iterator XMap_begin(XMap* this_map)
 {
     XMap_iterator it = { 0 };
     if (!this_map) return it;
+    /* 空 map 时 m_data 为 NULL，直接返回空迭代器 */
+    if (!XContainerDataPtr(this_map)) return it;
     XRBTreeNode* root = *XMap_RootPtr(this_map);
     if (!root) return it;
     XRBTreeNode* current = root;
