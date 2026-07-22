@@ -1,4 +1,4 @@
-﻿#include"XContainerTest.h"
+#include"XContainerTest.h"
 #include"XMenu.h"
 #include"XAction.h"
 
@@ -18,6 +18,9 @@ void XMenu_XContainerTest(XMenu* root)
 
 	XMenu_XRingChunkTest(menu);
 	XMenu_XRingBufferTest(menu);
+
+	// 视图测试
+	XMenu_XViewTest(menu);
 }
 void XMenu_VectorTest(XMenu* root)
 {
@@ -60,4 +63,15 @@ void XMenu_SetTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_XSetTest(menu);
 	XMenu_XHashSetTest(menu);
+}
+
+void XMenu_XViewTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("View(视图)");
+	XMenu_addMenu(root, menu);
+	XMenu_XByteArrayViewTest(menu);
+	XMenu_XStringViewTest(menu);
+	XMenu_XLatin1StringViewTest(menu);
+	XMenu_XUtf8StringViewTest(menu);
+	XMenu_XAnyStringViewTest(menu);
 }

@@ -114,9 +114,8 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     app->m_argc = argc;
     app->m_argv = argv;
     g_mainThread = XThread_createMainThread(app);
-    XThreadData* td = XObject_threadData((XObject*)app);
-    if (td)
-        td->m_eventDispatcher = XEventDispatcher_create(NULL);
+    /* XThread_createMainThread 内部已通过 ensureEventDispatcher 创建事件分发器 */
+    /* 不需要再手动创建，否则会泄漏前一个分发器 */
 
     g_app = app;
     is_app_running = true;
@@ -768,6 +767,36 @@ void VXCoreApplication_deinit(XCoreApplication* app)
 
     is_app_closing = true;
     is_app_running = false;
+
+    /* 释放应用程序元信息字符串 */
+    if (app->m_applicationName) {
+        XString_delete_base(app->m_applicationName);
+        app->m_applicationName = NULL;
+    }
+    if (app->m_version) {
+        XString_delete_base(app->m_version);
+        app->m_version = NULL;
+    }
+    if (app->m_orgName) {
+        XString_delete_base(app->m_orgName);
+        app->m_orgName = NULL;
+    }
+    if (app->m_orgDomain) {
+        XString_delete_base(app->m_orgDomain);
+        app->m_orgDomain = NULL;
+    }
+    if (app->m_paths) {
+        XStringList_delete_base(app->m_paths);
+        app->m_paths = NULL;
+    }
+    XBitArray_deinit_base(&app->m_attribute);
+
+    /* 释放事件分发器 */
+    XThreadData* td = XObject_threadData((XObject*)app);
+    if (td && td->m_eventDispatcher) {
+        XClass_delete_base(td->m_eventDispatcher);
+        td->m_eventDispatcher = NULL;
+    }
 
     XClass_Deinit_Parent(XObject, app);
 

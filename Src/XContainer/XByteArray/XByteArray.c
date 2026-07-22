@@ -1,6 +1,7 @@
 ﻿#include "XByteArray.h"
 #if XByteArray_ON
 #include "XString.h"
+#include "XByteArrayView.h"
 #include <string.h>
 uint8_t * XByteArray_data(XByteArray* other);
 XByteArray* XByteArray_create_ex(bool useCow)
@@ -96,18 +97,10 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 
 int32_t XByteArray_compare(const XByteArray* lhs, const XByteArray* rhs)
 {
-	if(XContainerSize(lhs)< XContainerSize(rhs))
-		return XCompare_Less;
-	if (XContainerSize(lhs) > XContainerSize(rhs))
-		return XCompare_Greater;
-	if (XByteArray_isEmpty_base(lhs) && XByteArray_isEmpty_base(rhs))
-		return XCompare_Equality;
-	int cmp = memcmp(XByteArray_data(lhs), XByteArray_data(rhs), XContainerSize(lhs));
-	if(cmp==0)
-		return XCompare_Equality;
-	if(cmp<0)
-		return XCompare_Less;
-	return XCompare_Greater;
+    /* 委托给 XByteArrayView_compare（大小写敏感） */
+    XByteArrayView lv = XByteArrayView_create_bytearray(lhs);
+    XByteArrayView rv = XByteArrayView_create_bytearray(rhs);
+    return XByteArrayView_compare(&lv, &rv, 1);
 }
 
 XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
@@ -308,37 +301,36 @@ void XByteArray_chop(XByteArray* array, int64_t n)
 XByteArray* XByteArray_left(const XByteArray* array, int64_t n)
 {
     if (array == NULL) return NULL;
-    int64_t cur = (int64_t)XByteArray_size_base(array);
-    if (n < 0 || n > cur) n = cur;
+    /* 委托给 XByteArrayView_first_n 获取子视图，再拷贝到新容器 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    XByteArrayView sub = XByteArrayView_first_n(&view, n);
     XByteArray* out = XByteArray_create();
-    if (!out || n == 0) return out;
-    XByteArray_push_back_2(out, (const char*)XByteArray_data((XByteArray*)array), (size_t)n);
+    if (!out || sub.m_size == 0) return out;
+    XByteArray_push_back_2(out, (const char*)sub.m_data, (size_t)sub.m_size);
     return out;
 }
 
 XByteArray* XByteArray_right(const XByteArray* array, int64_t n)
 {
     if (array == NULL) return NULL;
-    int64_t cur = (int64_t)XByteArray_size_base(array);
-    if (n < 0 || n > cur) n = cur;
+    /* 委托给 XByteArrayView_last_n 获取子视图，再拷贝到新容器 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    XByteArrayView sub = XByteArrayView_last_n(&view, n);
     XByteArray* out = XByteArray_create();
-    if (!out || n == 0) return out;
-    const uint8_t* src = XByteArray_data((XByteArray*)array) + (cur - n);
-    XByteArray_push_back_2(out, (const char*)src, (size_t)n);
+    if (!out || sub.m_size == 0) return out;
+    XByteArray_push_back_2(out, (const char*)sub.m_data, (size_t)sub.m_size);
     return out;
 }
 
 XByteArray* XByteArray_mid(const XByteArray* array, int64_t pos, int64_t n)
 {
     if (array == NULL) return NULL;
-    int64_t cur = (int64_t)XByteArray_size_base(array);
-    if (pos < 0) pos = 0;
-    if (pos >= cur) return XByteArray_create();
-    int64_t remain = cur - pos;
-    if (n < 0 || n > remain) n = remain;
+    /* 委托给 XByteArrayView_mid 获取子视图，再拷贝到新容器 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    XByteArrayView sub = XByteArrayView_mid(&view, pos, n);
     XByteArray* out = XByteArray_create();
-    if (!out || n == 0) return out;
-    XByteArray_push_back_2(out, (const char*)(XByteArray_data((XByteArray*)array) + pos), (size_t)n);
+    if (!out || sub.m_size == 0) return out;
+    XByteArray_push_back_2(out, (const char*)sub.m_data, (size_t)sub.m_size);
     return out;
 }
 
@@ -416,14 +408,13 @@ static int xba_is_space(uint8_t c) {
 
 XByteArray* XByteArray_trimmed(const XByteArray* array)
 {
+    if (!array) return XByteArray_create();
+    /* 委托给 XByteArrayView_trimmed 获取修剪后的子视图，再拷贝到新容器 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    XByteArrayView sub = XByteArrayView_trimmed(&view);
     XByteArray* out = XByteArray_create();
-    if (!array || !out) return out;
-    size_t n = XByteArray_size_base((XByteArray*)array);
-    const uint8_t* d = XByteArray_data((XByteArray*)array);
-    size_t a = 0, b = n;
-    while (a < b && xba_is_space(d[a])) ++a;
-    while (b > a && xba_is_space(d[b-1])) --b;
-    if (b > a) XByteArray_push_back_2(out, (const char*)(d + a), b - a);
+    if (!out || sub.m_size == 0) return out;
+    XByteArray_push_back_2(out, (const char*)sub.m_data, (size_t)sub.m_size);
     return out;
 }
 
@@ -477,55 +468,23 @@ XByteArray* XByteArray_toLower(XByteArray* array)
 /* ---- toLongLong / toInt / toDouble ---- */
 int64_t XByteArray_toLongLong(const XByteArray* array, bool* ok, int base)
 {
-    if (ok) *ok = false;
-    if (!array) return 0;
-    size_t n = XByteArray_size_base((XByteArray*)array);
-    if (n == 0) return 0;
-    /* 复制到栈缓冲以确保 NUL 终止 */
-    char buf[128];
-    char* p = (n < sizeof(buf) - 1) ? buf : (char*)malloc(n + 1);
-    if (!p) return 0;
-    memcpy(p, XByteArray_data((XByteArray*)array), n);
-    p[n] = 0;
-    char* end = NULL;
-    long long v = strtoll(p, &end, base);
-    if (end && end != p) {
-        /* 尾部允许空白 */
-        while (*end && xba_is_space((uint8_t)*end)) ++end;
-        if (*end == 0 && ok) *ok = true;
-    }
-    if (p != buf) free(p);
-    return (int64_t)v;
+    /* 委托给 XByteArrayView_toLongLong，消除重复的 strtoll 实现 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    return XByteArrayView_toLongLong(&view, ok, base);
 }
 
 int32_t XByteArray_toInt(const XByteArray* array, bool* ok, int base)
 {
-    bool tmp = false;
-    int64_t v = XByteArray_toLongLong(array, &tmp, base);
-    if (tmp && (v < INT32_MIN || v > INT32_MAX)) tmp = false;
-    if (ok) *ok = tmp;
-    return (int32_t)v;
+    /* 委托给 XByteArrayView_toInt，消除重复的数值转换代码 */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    return XByteArrayView_toInt(&view, ok, base);
 }
 
 double XByteArray_toDouble(const XByteArray* array, bool* ok)
 {
-    if (ok) *ok = false;
-    if (!array) return 0.0;
-    size_t n = XByteArray_size_base((XByteArray*)array);
-    if (n == 0) return 0.0;
-    char buf[128];
-    char* p = (n < sizeof(buf) - 1) ? buf : (char*)malloc(n + 1);
-    if (!p) return 0.0;
-    memcpy(p, XByteArray_data((XByteArray*)array), n);
-    p[n] = 0;
-    char* end = NULL;
-    double v = strtod(p, &end);
-    if (end && end != p) {
-        while (*end && xba_is_space((uint8_t)*end)) ++end;
-        if (*end == 0 && ok) *ok = true;
-    }
-    if (p != buf) free(p);
-    return v;
+    /* 委托给 XByteArrayView_toDouble */
+    XByteArrayView view = XByteArrayView_create_bytearray(array);
+    return XByteArrayView_toDouble(&view, ok);
 }
 
 /* ---- setNum ---- */
@@ -635,26 +594,10 @@ XByteArray* XByteArray_fromPercentEncoding(const XByteArray* array)
 /* ---- compare with case sensitivity ---- */
 int32_t XByteArray_compareCS(const XByteArray* lhs, const XByteArray* rhs, int cs)
 {
-    if (lhs == rhs) return 0;
-    if (!lhs) return -1;
-    if (!rhs) return 1;
-    size_t na = XByteArray_size_base((XByteArray*)lhs);
-    size_t nb = XByteArray_size_base((XByteArray*)rhs);
-    size_t nm = na < nb ? na : nb;
-    const uint8_t* a = XByteArray_data((XByteArray*)lhs);
-    const uint8_t* b = XByteArray_data((XByteArray*)rhs);
-    for (size_t i = 0; i < nm; ++i) {
-        uint8_t x = a[i], y = b[i];
-        if (!cs) {
-            if (x >= 'A' && x <= 'Z') x = (uint8_t)(x - 'A' + 'a');
-            if (y >= 'A' && y <= 'Z') y = (uint8_t)(y - 'A' + 'a');
-        }
-        if (x < y) return -1;
-        if (x > y) return 1;
-    }
-    if (na < nb) return -1;
-    if (na > nb) return 1;
-    return 0;
+    /* 委托给 XByteArrayView_compare */
+    XByteArrayView lv = XByteArrayView_create_bytearray(lhs);
+    XByteArrayView rv = XByteArrayView_create_bytearray(rhs);
+    return XByteArrayView_compare(&lv, &rv, cs);
 }
 
 #endif

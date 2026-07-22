@@ -1,6 +1,7 @@
 #include"XDataStructTest.h"
 #if DEMOTEST
 #include"XByteArray.h"
+#include"XByteArrayView.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -294,7 +295,156 @@ static void XByteArrayTest_QtHeavy(void)
     }
 }
 
+/* ==================== 委托给 XByteArrayView 验证 ==================== */
+static void XByteArrayTest_ViewDelegation(void)
+{
+    XPrintf("\n[XByteArray][View委托验证] 验证委托给 XByteArrayView 的函数行为一致性\n");
+
+    /* 准备测试数据 */
+    XByteArray* ba = XByteArray_create_utf8("  Hello World!  ");
+    XByteArray* empty = XByteArray_create();
+    XByteArray* num = XByteArray_create_utf8("  -1234  ");
+    XByteArray* hex = XByteArray_create_utf8("FF");
+    XByteArray* fp = XByteArray_create_utf8("3.14159");
+    XByteArray* a = XByteArray_create_utf8("Hello");
+    XByteArray* b = XByteArray_create_utf8("hello");
+
+    /* 直接创建 View 作为参考 */
+    XByteArrayView refView = XByteArrayView_create_bytearray(ba);
+    XByteArrayView emptyView = XByteArrayView_create_bytearray(empty);
+
+    /* ---- left/right/mid 委托验证 ---- */
+    {
+        XByteArray* l = XByteArray_left(ba, 5);
+        XByteArrayView lv = XByteArrayView_first_n(&refView, 5);
+        bool l_ok = (l && XByteArray_size_base(l) == (size_t)lv.m_size
+            && memcmp(XByteArray_data(l), lv.m_data, (size_t)lv.m_size) == 0);
+        XPrintf("  left(5) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            l_ok ? "通过" : "失败", l ? XByteArray_size_base(l) : 0, (long long)lv.m_size);
+        XByteArray_delete_base(l);
+    }
+    {
+        XByteArray* r = XByteArray_right(ba, 6);
+        XByteArrayView rv = XByteArrayView_last_n(&refView, 6);
+        bool r_ok = (r && XByteArray_size_base(r) == (size_t)rv.m_size
+            && memcmp(XByteArray_data(r), rv.m_data, (size_t)rv.m_size) == 0);
+        XPrintf("  right(6) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            r_ok ? "通过" : "失败", r ? XByteArray_size_base(r) : 0, (long long)rv.m_size);
+        XByteArray_delete_base(r);
+    }
+    {
+        XByteArray* m = XByteArray_mid(ba, 2, 5);
+        XByteArrayView mv = XByteArrayView_mid(&refView, 2, 5);
+        bool m_ok = (m && XByteArray_size_base(m) == (size_t)mv.m_size
+            && memcmp(XByteArray_data(m), mv.m_data, (size_t)mv.m_size) == 0);
+        XPrintf("  mid(2,5) 委托验证: %s (data=%.*s, 期望 %.*s)\n",
+            m_ok ? "通过" : "失败",
+            (int)(m ? XByteArray_size_base(m) : 0), (const char*)(m ? XByteArray_data(m) : (uint8_t*)"NULL"),
+            (int)mv.m_size, (const char*)mv.m_data);
+        XByteArray_delete_base(m);
+    }
+    /* ---- trimmed 委托验证 ---- */
+    {
+        XByteArray* t = XByteArray_trimmed(ba);
+        XByteArrayView tv = XByteArrayView_trimmed(&refView);
+        bool t_ok = (t && XByteArray_size_base(t) == (size_t)tv.m_size
+            && memcmp(XByteArray_data(t), tv.m_data, (size_t)tv.m_size) == 0);
+        XPrintf("  trimmed() 委托验证: %s (data=%.*s, 期望 %.*s)\n",
+            t_ok ? "通过" : "失败",
+            (int)(t ? XByteArray_size_base(t) : 0), (const char*)(t ? XByteArray_data(t) : (uint8_t*)"NULL"),
+            (int)tv.m_size, (const char*)tv.m_data);
+        XByteArray_delete_base(t);
+    }
+    /* ---- trimmed(empty) 委托验证 ---- */
+    {
+        XByteArray* t = XByteArray_trimmed(empty);
+        XByteArrayView tv = XByteArrayView_trimmed(&emptyView);
+        bool t_ok = (t && XByteArray_size_base(t) == (size_t)tv.m_size);
+        XPrintf("  trimmed(empty) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            t_ok ? "通过" : "失败", t ? XByteArray_size_base(t) : 0, (long long)tv.m_size);
+        XByteArray_delete_base(t);
+    }
+    /* ---- compare 委托验证 ---- */
+    {
+        int32_t cmp = XByteArray_compare(ba, ba);
+        XByteArrayView bv = XByteArrayView_create_bytearray(ba);
+        int32_t cmp_ref = XByteArrayView_compare(&bv, &bv, 1);
+        XPrintf("  compare(self,self) 委托验证: %s (got %d, 期望 %d)\n",
+            cmp == cmp_ref ? "通过" : "失败", cmp, cmp_ref);
+    }
+    /* ---- compareCS 委托验证 ---- */
+    {
+        int32_t cs1 = XByteArray_compareCS(a, b, 1);
+        int32_t cs0 = XByteArray_compareCS(a, b, 0);
+        XByteArrayView av = XByteArrayView_create_bytearray(a);
+        XByteArrayView bv = XByteArrayView_create_bytearray(b);
+        int32_t cs1_ref = XByteArrayView_compare(&av, &bv, 1);
+        int32_t cs0_ref = XByteArrayView_compare(&av, &bv, 0);
+        XPrintf("  compareCS(cs=1) 委托验证: %s (got %d, 期望 %d)\n",
+            cs1 == cs1_ref ? "通过" : "失败", cs1, cs1_ref);
+        XPrintf("  compareCS(cs=0) 委托验证: %s (got %d, 期望 %d)\n",
+            cs0 == cs0_ref ? "通过" : "失败", cs0, cs0_ref);
+    }
+    /* ---- toLongLong 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        int64_t v1 = XByteArray_toLongLong(num, &ok1, 10);
+        XByteArrayView nv = XByteArrayView_create_bytearray(num);
+        int64_t v2 = XByteArrayView_toLongLong(&nv, &ok2, 10);
+        XPrintf("  toLongLong 委托验证: %s (got %lld ok=%d, 期望 %lld ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败",
+            (long long)v1, ok1, (long long)v2, ok2);
+    }
+    /* ---- toInt 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        int32_t v1 = XByteArray_toInt(num, &ok1, 10);
+        XByteArrayView nv = XByteArrayView_create_bytearray(num);
+        int32_t v2 = XByteArrayView_toInt(&nv, &ok2, 10);
+        XPrintf("  toInt 委托验证: %s (got %d ok=%d, 期望 %d ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toInt(hex) 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        int32_t v1 = XByteArray_toInt(hex, &ok1, 16);
+        XByteArrayView hv = XByteArrayView_create_bytearray(hex);
+        int32_t v2 = XByteArrayView_toInt(&hv, &ok2, 16);
+        XPrintf("  toInt(hex,16) 委托验证: %s (got %d ok=%d, 期望 %d ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toDouble 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        double v1 = XByteArray_toDouble(fp, &ok1);
+        XByteArrayView fv = XByteArrayView_create_bytearray(fp);
+        double v2 = XByteArrayView_toDouble(&fv, &ok2);
+        XPrintf("  toDouble 委托验证: %s (got %f ok=%d, 期望 %f ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toInt(NULL) 委托验证 ---- */
+    {
+        bool ok1 = false;
+        int32_t v1 = XByteArray_toInt(NULL, &ok1, 10);
+        XByteArrayView nv = XByteArrayView_create_bytearray(NULL);
+        bool ok2 = false;
+        int32_t v2 = XByteArrayView_toInt(&nv, &ok2, 10);
+        XPrintf("  toInt(NULL) 委托验证: %s (got %d ok=%d, 期望 %d ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+
+    /* 清理 */
+    XByteArray_delete_base(ba);
+    XByteArray_delete_base(empty);
+    XByteArray_delete_base(num);
+    XByteArray_delete_base(hex);
+    XByteArray_delete_base(fp);
+    XByteArray_delete_base(a);
+    XByteArray_delete_base(b);
+}
+
 static void XByteArrayTest_All(void)
+
 {
 #if XByteArray_ON
     XPrintf("XByteArray 全量测试 (Qt QByteArray 对齐)\n");

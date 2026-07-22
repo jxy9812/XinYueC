@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include "XStringList.h"
+#include "XStringView.h"
 
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
@@ -1274,84 +1275,18 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
 
 int64_t XString_indexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
-    if (!str || !substr) return -1;
-
-    size_t str_len = XString_length_base(str);
-    size_t substr_len = XString_length_base(substr);
-
-    // 处理空模式串
-    if (substr_len == 0) {
-        return (from <= str_len) ? (int64_t)from : -1;
-    }
-
-    // 模式串长于主串时直接返回-1
-    if (substr_len > str_len) {
-        return -1;
-    }
-
-    const XChar* text = XString_cdata(str);       // 主串XChar数组
-    const XChar* pattern = XString_cdata(substr);  // 模式串XChar数组
-
-    // 分配并计算前缀表
-    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
-    if (!prefix) {
-        return -1;
-    }
-    compute_prefix(pattern, substr_len, prefix, cs);
-
-    // 执行KMP搜索
-    int64_t result = kmp_search(text, str_len, pattern, substr_len, prefix, cs, from);
-
-    // 清理资源
-    XFree_System(prefix);
-    return result;
+    /* 委托给 XStringView_indexOf */
+    XStringView sv = XStringView_create_string(str);
+    XStringView subv = XStringView_create_string(substr);
+    return XStringView_indexOf(&sv, &subv, (int64_t)from, (int)cs);
 }
 
 int64_t XString_lastIndexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
-    // 空指针检查
-    if (!str || !substr) return -1;
-
-    // 获取字符串长度
-    size_t str_len = XString_length_base(str);
-    size_t substr_len = XString_length_base(substr);
-
-    // 子串为空的特殊处理（返回from对应的实际索引）
-    if (substr_len == 0) {
-        // from=0对应最后一个字符的下一个位置（插入点），与标准库行为一致
-        size_t pos = (from >= str_len) ? 0 : (str_len - from);
-        return (int64_t)pos;
-    }
-
-    // 子串长于主串时无匹配可能
-    if (substr_len > str_len) {
-        return -1;
-    }
-
-    // 计算子串可匹配的最大起始索引（主串中能放下子串的最左位置）
-    size_t max_start = str_len - substr_len;
-
-    // 将from（尾部偏移）转换为主串实际索引（头部偏移）
-    // from=0 → 主串最后一个字符位置（str_len-1），但需确保子串能放下
-    size_t start_idx;
-    if (from >= str_len) {
-        // from超出主串长度，从主串最左侧可匹配位置开始
-        start_idx = max_start;
-    }
-    else {
-        // 从尾部偏移from对应的位置开始，不超过max_start
-        start_idx = (str_len - 1 - from);
-        if (start_idx > max_start) {
-            start_idx = max_start; // 确保子串能完整放下
-        }
-    }
-
-    // 获取字符数据指针
-    const XChar* text = XString_cdata(str);
-    const XChar* pattern = XString_cdata(substr);
-
-    // 调用修正后的KMP反向搜索
-    return kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
+    /* 委托给 XStringView_lastIndexOf */
+    XStringView sv = XStringView_create_string(str);
+    XStringView subv = XStringView_create_string(substr);
+    return XStringView_lastIndexOf(&sv, &subv, (int64_t)from, (int)cs);
 }
 
 int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
@@ -1407,34 +1342,10 @@ int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t 
 
 bool XString_contains(const XString* str, const XString* substr, XChar_CaseSensitivity cs)
 {
-    if (!str || !substr) return false;
-
-    size_t str_len = XString_length_base(str);
-    size_t substr_len = XString_length_base(substr);
-
-    // 子串为空时，任何字符串都视为包含空串
-    if (substr_len == 0) return true;
-    // 子串长于源字符串时，不可能包含
-    if (substr_len > str_len) return false;
-
-    const XChar* text = XString_cdata(str);       // 源字符串的XChar数组
-    const XChar* pattern = XString_cdata(substr); // 子串的XChar数组
-
-    // 分配KMP算法所需的前缀表
-    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
-    if (!prefix) return false;
-
-    // 计算前缀表（用于KMP搜索）
-    compute_prefix(pattern, substr_len, prefix, cs);
-
-    // 执行KMP搜索，从位置0开始查找
-    int64_t found_pos = kmp_search(text, str_len, pattern, substr_len, prefix, cs, 0);
-
-    // 释放前缀表内存
-    XFree_System(prefix);
-
-    // 找到匹配位置则返回true
-    return found_pos != -1;
+    /* 委托给 XStringView_contains */
+    XStringView sv = XStringView_create_string(str);
+    XStringView subv = XStringView_create_string(substr);
+    return XStringView_contains(&sv, &subv, (int)cs);
 }
 
 bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_CaseSensitivity cs)
@@ -1455,27 +1366,10 @@ bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_Ca
 
 int32_t XString_compare(const XString* str1, const XString* str2) 
 {
-    if (!str1 && !str2) 
-        return 0;
-    if (!str1)
-        return -1;
-    if (!str2)
-        return 1;
-
-    size_t len1 = XString_length_base(str1);
-    size_t len2 = XString_length_base(str2);
-    size_t min_len = len1 < len2 ? len1 : len2;
-
-    if (min_len > 0) {
-        const XChar* data1 = XString_cdata(str1);
-        const XChar* data2 = XString_cdata(str2);
-        for (size_t i = 0; i < min_len; i++) {
-            if (data1[i] < data2[i]) return -1;
-            if (data1[i] > data2[i]) return 1;
-        }
-    }
-
-    return len1 < len2 ? -1 : len1 > len2 ? 1 : 0;
+    /* 委托给 XStringView_compare（大小写敏感） */
+    XStringView v1 = XStringView_create_string(str1);
+    XStringView v2 = XStringView_create_string(str2);
+    return (int32_t)XStringView_compare(&v1, &v2, 1);
 }
 
 bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs)
@@ -1504,28 +1398,10 @@ bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitiv
 }
 
 bool XString_startsWith(const XString* str, const XString* prefix, XChar_CaseSensitivity cs) {
-    if (!str || !prefix) return false;
-
-    size_t str_len = XString_length_base(str);
-    size_t prefix_len = XString_length_base(prefix);
-
-    // 前缀长度大于字符串长度时直接返回false
-    if (prefix_len > str_len) return false;
-
-    // 前缀为空字符串时默认匹配成功
-    if (prefix_len == 0) return true;
-
-    const XChar* str_data = XString_cdata(str);
-    const XChar* prefix_data = XString_cdata(prefix);
-
-    // 逐个字符比较前缀
-    for (size_t i = 0; i < prefix_len; i++) {
-        if (!XChar_equals(str_data[i], prefix_data[i], cs)) {
-            return false;
-        }
-    }
-
-    return true;
+    /* 委托给 XStringView_startsWith */
+    XStringView sv = XStringView_create_string(str);
+    XStringView pv = XStringView_create_string(prefix);
+    return XStringView_startsWith(&sv, &pv, (int)cs);
 }
 const bool XLess_XString(const XString* str1, const XString* str2)
 {
@@ -1546,29 +1422,10 @@ bool XString_startsWith_utf8(const XString* str, const char* prefix, XChar_CaseS
 }
 
 bool XString_endsWith(const XString* str, const XString* suffix, XChar_CaseSensitivity cs) {
-    if (!str || !suffix) return false;
-
-    size_t str_len = XString_length_base(str);
-    size_t suffix_len = XString_length_base(suffix);
-
-    // 后缀长度大于字符串长度时直接返回false
-    if (suffix_len > str_len) return false;
-
-    // 空后缀默认匹配任何字符串的后缀
-    if (suffix_len == 0) return true;
-
-    const XChar* str_data = XString_cdata(str);
-    const XChar* suffix_data = XString_cdata(suffix);
-
-    // 从字符串末尾开始比较后缀长度的字符
-    size_t start_pos = str_len - suffix_len;
-    for (size_t i = 0; i < suffix_len; i++) {
-        if (!XChar_equals(str_data[start_pos + i], suffix_data[i], cs)) {
-            return false;
-        }
-    }
-
-    return true;
+    /* 委托给 XStringView_endsWith */
+    XStringView sv = XStringView_create_string(str);
+    XStringView suv = XStringView_create_string(suffix);
+    return XStringView_endsWith(&sv, &suv, (int)cs);
 }
 
 bool XString_endsWith_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs)
@@ -1768,77 +1625,74 @@ XString* XString_toUpper(const XString* str) {
 }
 
 XString* XString_trimmed(const XString* str) {
-    if (!str || XString_isEmpty_base(str)) return XString_create_copy(str);
-
-    const XChar* data = XContainerSharedDataPtr(str);
-    size_t start = 0;
-    size_t end = XString_length_base(str) - 1;
-
-    // 跳过前导空白
-    while (start <= end && XChar_isSpace(data[start])) start++;
-    // 跳过后导空白
-    while (end >= start && XChar_isSpace(data[end])) end--;
-
-    if (start > end) return XString_create();  // 全是空白
-    return XString_mid(str, start, end - start + 1);
+    /* 委托给 XStringView_trimmed + XStringView_toString */
+    XStringView view = XStringView_create_string(str);
+    XStringView trimmed = XStringView_trimmed(&view);
+    return XStringView_toString(&trimmed);
 }
 
 unsigned short XString_toUShort(const XString* str, bool* ok, int base)
 {
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    // 无需提前设置ok为false，后续成功时再赋值
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    unsigned long val = strtoul(utf8, &endptr, base);
-
-    // 额外检查转换有效性：必须有有效字符、完全转换且值在unsigned short范围内
-    const bool success = (endptr != utf8 && *endptr == '\0' && val <= USHRT_MAX);
-    if (ok) *ok = success;
-    return success ? (unsigned short)val : 0;
+    /* 委托给 XStringView_toUShort */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toUShort(&sv, ok, base);
 }
 
 unsigned int XString_toUInt(const XString* str, bool* ok, int base)
 {
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    unsigned long val = strtoul(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0' && val <= UINT_MAX);
-    if (ok) *ok = success;
-    return success ? (unsigned int)val : 0;
+    /* 委托给 XStringView_toUInt */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toUInt(&sv, ok, base);
 }
 
-DEFINE_TO_NUM(XString_toShort, short, XChar_toShort, 0)
-DEFINE_TO_NUM(XString_toInt, int, XChar_toInt, 0)
-DEFINE_TO_NUM(XString_toLong, long, XChar_toLong, 0)
-DEFINE_TO_NUM(XString_toLongLong, long long, XChar_toLongLong, 0)
-DEFINE_TO_NUM(XString_toULong, unsigned long, XChar_toULong, 0)
-DEFINE_TO_NUM(XString_toULongLong, unsigned long long, XChar_toULongLong, 0)
+short XString_toShort(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toShort */
+    XStringView sv = XStringView_create_string(str);
+    return (short)XStringView_toShort(&sv, ok, base);
+}
+int XString_toInt(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toInt */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toInt(&sv, ok, base);
+}
+long XString_toLong(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toLong */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toLong(&sv, ok, base);
+}
+long long XString_toLongLong(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toLongLong */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toLongLong(&sv, ok, base);
+}
+unsigned long XString_toULong(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toULong */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toULong(&sv, ok, base);
+}
+unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
+{
+    /* 委托给 XStringView_toULongLong */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toULongLong(&sv, ok, base);
+}
 
 float XString_toFloat(const XString* str, bool* ok)
 {
-    if (!str) {
-        if (ok) *ok = false;
-        return 0.0f;
-    }
-    return XChar_toFloat(XContainerSharedDataPtr(str), XContainerSize(str), ok);
+    /* 委托给 XStringView_toFloat */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toFloat(&sv, ok);
 }
 
 double XString_toDouble(const XString* str, bool* ok) {
-    if (!str) {
-        if (ok) *ok = false;
-        return 0.0;
-    }
-    return XChar_toDouble(XContainerSharedDataPtr(str), XContainerSize(str), ok);
+    /* 委托给 XStringView_toDouble */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_toDouble(&sv, ok);
 }
 
 DEFINE_SETNUM_INT(XString_setNum_int, XChar_fromInt, int)
@@ -1863,26 +1717,12 @@ XString* XString_right(const XString* str, size_t n) {
     n = (n > len) ? len : n;
     return XString_mid(str, len - n, n);
 }
-
 XString* XString_mid(const XString* str, size_t pos, size_t n)
 {
-    if (!str || pos >= XString_length_base(str) || n == 0) return XString_create_utf8("");
-
-    size_t len = XString_length_base(str);
-    size_t actual_len = (pos + n > len) ? (len - pos) : n;
-    XString* result = XString_create_utf8("");
-    if (!result) return NULL;
-
-    XString_detach(result);
-    XString_reserve(result, actual_len);  // 自动预留结束符空间
-
-    const XChar* src = XString_cdata(str) + pos;
-    XChar* dest = XString_data(result);
-    memcpy(dest, src, actual_len * sizeof(XChar));
-    result->parent.m_size = actual_len;
-    dest[actual_len] = (XChar){ 0 };  // 设置结束符
-
-    return result;
+    /* 委托给 XStringView_sliced_2 + XStringView_toString */
+    XStringView view = XStringView_create_string(str);
+    XStringView sub = XStringView_sliced_2(&view, (int64_t)pos, (int64_t)n);
+    return XStringView_toString(&sub);
 }
 
 // 预分配空间（额外+1存储结束符）
@@ -2533,29 +2373,10 @@ XString* XString_repeated(const XString* str, size_t times)
 
 size_t XString_count(const XString* str, const XString* sub, XChar_CaseSensitivity cs)
 {
-    if (!str || !sub) return 0;
-    size_t sub_len = XString_length_base(sub);
-    if (sub_len == 0) return 0;
-
-    size_t count = 0;
-    size_t str_len = XString_length_base(str);
-    const XChar* text = XString_cdata(str);
-    const XChar* pattern = XString_cdata(sub);
-
-    int* prefix = (int*)XMalloc_System(sub_len * sizeof(int));
-    if (!prefix) return 0;
-    compute_prefix(pattern, sub_len, prefix, cs);
-
-    size_t from = 0;
-    while (from < str_len) {
-        int64_t pos = kmp_search(text, str_len, pattern, sub_len, prefix, cs, from);
-        if (pos == -1) break;
-        count++;
-        from = (size_t)pos + 1;
-    }
-
-    XFree_System(prefix);
-    return count;
+    /* 委托给 XStringView_count */
+    XStringView sv = XStringView_create_string(str);
+    XStringView subv = XStringView_create_string(sub);
+    return (size_t)XStringView_count(&sv, &subv, (int)cs);
 }
 
 size_t XString_count_utf8(const XString* str, const char* sub, XChar_CaseSensitivity cs)
@@ -2570,14 +2391,9 @@ size_t XString_count_utf8(const XString* str, const char* sub, XChar_CaseSensiti
 
 size_t XString_count_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)
 {
-    if (!str) return 0;
-    size_t len = XString_length_base(str);
-    const XChar* data = XString_cdata(str);
-    size_t count = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (XChar_equals(data[i], ch, cs)) count++;
-    }
-    return count;
+    /* 委托给 XStringView_count_char */
+    XStringView sv = XStringView_create_string(str);
+    return (size_t)XStringView_count_char(&sv, ch, (int)cs);
 }
 
 /* ========================================================================== */
@@ -2665,26 +2481,16 @@ bool XString_setUtf16(XString* str, const uint16_t* unicode, size_t size)
 
 int64_t XString_indexOf_char(const XString* str, XChar ch, size_t from, XChar_CaseSensitivity cs)
 {
-    if (!str) return -1;
-    size_t len = XString_length_base(str);
-    if (from >= len) return -1;
-    const XChar* data = XString_cdata(str);
-    for (size_t i = from; i < len; i++) {
-        if (XChar_equals(data[i], ch, cs)) return (int64_t)i;
-    }
-    return -1;
+    /* 委托给 XStringView_indexOf_char */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_indexOf_char(&sv, ch, (int64_t)from, (int)cs);
 }
 
 int64_t XString_lastIndexOf_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)
 {
-    if (!str) return -1;
-    size_t len = XString_length_base(str);
-    if (len == 0) return -1;
-    const XChar* data = XString_cdata(str);
-    for (size_t i = len; i > 0; i--) {
-        if (XChar_equals(data[i - 1], ch, cs)) return (int64_t)(i - 1);
-    }
-    return -1;
+    /* 委托给 XStringView_lastIndexOf_char */
+    XStringView sv = XStringView_create_string(str);
+    return XStringView_lastIndexOf_char(&sv, ch, -1, (int)cs);
 }
 
 bool XString_contains_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)

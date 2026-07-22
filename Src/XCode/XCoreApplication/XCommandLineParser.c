@@ -21,6 +21,21 @@ static char* xStrDup(const char* str)
     return copy;
 }
 
+/* 哈希表键/值释放辅助函数 */
+static void free_name_hash_key(void* data)
+{
+    /* m_nameHash 的键类型为 char*，pair 中存储的是 char* 指针值 */
+    char** p = (char**)data;
+    if (p && *p) XFree_System(*p);
+}
+
+static void free_option_values_value(void* data)
+{
+    /* m_optionValuesHash 的值类型为 XStringList*，pair 中存储的是 XStringList* 指针 */
+    XStringList** p = (XStringList**)data;
+    if (p && *p) XStringList_delete_base(*p);
+}
+
 static int stringHash(const void* key)
 {
     const char* s = *(const char**)key;
@@ -60,7 +75,9 @@ XCommandLineParser* XCommandLineParser_create(void)
     parser->m_errorText = XString_create();
     parser->m_commandLineOptionList = XVector_create(sizeof(XCommandLineOption*));
     parser->m_nameHash = XHashMap_create(sizeof(char*), sizeof(int), XHash_string, stringCompare);
+    XMapBaseSetKeyDeinitMethod(parser->m_nameHash, free_name_hash_key);
     parser->m_optionValuesHash = XHashMap_create(sizeof(int), sizeof(XStringList*), XHash_xxhash64, int_compare);
+    XContainerSetDataDeinitMethod(parser->m_optionValuesHash, free_option_values_value);
     parser->m_optionNames = XStringList_create();
     parser->m_positionalArgumentList = XStringList_create();
     parser->m_unknownOptionNames = XStringList_create();
@@ -95,9 +112,8 @@ void XCommandLineParser_delete(XCommandLineParser* parser)
         XVector_delete_base(parser->m_commandLineOptionList);
     }
     XHashMap_delete_base(parser->m_nameHash);
-    // 释放选项值哈希表中的值列表
+    // 释放选项值哈希表（deinit 方法会自动释放 XStringList* 值）
     if (parser->m_optionValuesHash) {
-        // TODO: free XStringList* values if needed
         XHashMap_delete_base(parser->m_optionValuesHash);
     }
     XStringList_delete_base(parser->m_optionNames);

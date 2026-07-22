@@ -1,4 +1,4 @@
-﻿#ifndef XCONTAINERTEST_H
+#ifndef XCONTAINERTEST_H
 #define XCONTAINERTEST_H
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +66,20 @@ extern "C" {
 
 	void XJsonArrayTest();
 	void XJsonObjectTest();
+
+	// ==================== 视图测试 ====================
+	void XMenu_XViewTest(XMenu* root);
+	void XMenu_XByteArrayViewTest(XMenu* root);
+	void XMenu_XStringViewTest(XMenu* root);
+	void XMenu_XLatin1StringViewTest(XMenu* root);
+	void XMenu_XUtf8StringViewTest(XMenu* root);
+	void XMenu_XAnyStringViewTest(XMenu* root);
+
+	void XByteArrayViewTest(void);
+	void XStringViewTest(void);
+	void XLatin1StringViewTest(void);
+	void XUtf8StringViewTest(void);
+	void XAnyStringViewTest(void);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

@@ -1,6 +1,7 @@
 #include"XDataStructTest.h"
 #if DEMOTEST
 #include"XString.h"
+#include"XStringView.h"
 #include"XStringList.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -798,27 +799,338 @@ static void XStringSafetyTest(void)
 }
 
 // ==================== 总入口 ====================
+/* ==================== 委托给 XStringView 验证 ==================== */
+static void XStringViewDelegationTest(void)
+{
+    XPrintf("\n===== XString -> XStringView 委托验证 =====\n");
+
+    /* 准备测试数据 */
+    XString* str = XString_create_utf8("  Hello World!  ");
+    XString* empty = XString_create();
+    XString* num = XString_create_utf8("  -1234  ");
+    XString* hex = XString_create_utf8("FF");
+    XString* fp = XString_create_utf8("3.14159");
+    XString* a = XString_create_utf8("Hello");
+    XString* b = XString_create_utf8("hello");
+    XString* search = XString_create_utf8("abXcdXef");
+    XString* sub = XString_create_utf8("X");
+
+    /* 直接创建 View 作为参考 */
+    XStringView refView = XStringView_create_string(str);
+    XStringView emptyView = XStringView_create_string(empty);
+    XStringView searchView = XStringView_create_string(search);
+    XStringView subView = XStringView_create_string(sub);
+
+    /* ---- left 委托验证 ---- */
+    {
+        XString* l = XString_left(str, 5);
+        XStringView lv = XStringView_first_n(&refView, 5);
+        bool ok = (l && XString_length_base(l) == (size_t)lv.m_size);
+        XPrintf("  left(5) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", l ? XString_length_base(l) : 0, (long long)lv.m_size);
+        XString_delete_base(l);
+    }
+    /* ---- right 委托验证 ---- */
+    {
+        XString* r = XString_right(str, 6);
+        XStringView rv = XStringView_last_n(&refView, 6);
+        bool ok = (r && XString_length_base(r) == (size_t)rv.m_size);
+        XPrintf("  right(6) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", r ? XString_length_base(r) : 0, (long long)rv.m_size);
+        XString_delete_base(r);
+    }
+    /* ---- mid 委托验证 ---- */
+    {
+        XString* m = XString_mid(str, 2, 5);
+        XStringView mv = XStringView_sliced_2(&refView, 2, 5);
+        bool ok = (m && XString_length_base(m) == (size_t)mv.m_size);
+        XPrintf("  mid(2,5) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", m ? XString_length_base(m) : 0, (long long)mv.m_size);
+        XString_delete_base(m);
+    }
+    /* ---- sliced 委托验证 ---- */
+    {
+        XString* s = XString_sliced(str, 2);
+        XStringView sv = XStringView_sliced(&refView, 2);
+        bool ok = (s && XString_length_base(s) == (size_t)sv.m_size);
+        XPrintf("  sliced(2) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", s ? XString_length_base(s) : 0, (long long)sv.m_size);
+        XString_delete_base(s);
+    }
+    /* ---- first 委托验证 ---- */
+    {
+        XString* f = XString_first(str, 5);
+        XStringView fv = XStringView_first_n(&refView, 5);
+        bool ok = (f && XString_length_base(f) == (size_t)fv.m_size);
+        XPrintf("  first(5) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", f ? XString_length_base(f) : 0, (long long)fv.m_size);
+        XString_delete_base(f);
+    }
+    /* ---- last 委托验证 ---- */
+    {
+        XString* l = XString_last(str, 6);
+        XStringView lv = XStringView_last_n(&refView, 6);
+        bool ok = (l && XString_length_base(l) == (size_t)lv.m_size);
+        XPrintf("  last(6) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", l ? XString_length_base(l) : 0, (long long)lv.m_size);
+        XString_delete_base(l);
+    }
+    /* ---- chopped 委托验证 ---- */
+    {
+        XString* c = XString_chopped(str, 3);
+        XStringView cv = XStringView_chopped(&refView, 3);
+        bool ok = (c && XString_length_base(c) == (size_t)cv.m_size);
+        XPrintf("  chopped(3) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", c ? XString_length_base(c) : 0, (long long)cv.m_size);
+        XString_delete_base(c);
+    }
+    /* ---- trimmed 委托验证 ---- */
+    {
+        XString* t = XString_trimmed(str);
+        XStringView tv = XStringView_trimmed(&refView);
+        bool ok = (t && XString_length_base(t) == (size_t)tv.m_size);
+        XPrintf("  trimmed() 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", t ? XString_length_base(t) : 0, (long long)tv.m_size);
+        XString_delete_base(t);
+    }
+    /* ---- trimmed(empty) 委托验证 ---- */
+    {
+        XString* t = XString_trimmed(empty);
+        XStringView tv = XStringView_trimmed(&emptyView);
+        bool ok = (t && XString_length_base(t) == (size_t)tv.m_size);
+        XPrintf("  trimmed(empty) 委托验证: %s (size=%zu, 期望 %lld)\n",
+            ok ? "通过" : "失败", t ? XString_length_base(t) : 0, (long long)tv.m_size);
+        XString_delete_base(t);
+    }
+    /* ---- compare 委托验证 ---- */
+    {
+        int32_t cmp = XString_compare(str, str);
+        int32_t cmp_ref = XStringView_compare(&refView, &refView, 1);
+        XPrintf("  compare(self,self) 委托验证: %s (got %d, 期望 %d)\n",
+            cmp == cmp_ref ? "通过" : "失败", cmp, cmp_ref);
+    }
+    /* ---- indexOf 委托验证 ---- */
+    {
+        int64_t pos = XString_indexOf(search, sub, 0, XChar_CaseSensitive);
+        int64_t pos_ref = XStringView_indexOf(&searchView, &subView, 0, 1);
+        XPrintf("  indexOf('X') 委托验证: %s (got %lld, 期望 %lld)\n",
+            pos == pos_ref ? "通过" : "失败", (long long)pos, (long long)pos_ref);
+    }
+    /* ---- lastIndexOf 委托验证 ---- */
+    {
+        int64_t pos = XString_lastIndexOf(search, sub, -1, XChar_CaseSensitive);
+        int64_t pos_ref = XStringView_lastIndexOf(&searchView, &subView, -1, 1);
+        XPrintf("  lastIndexOf('X') 委托验证: %s (got %lld, 期望 %lld)\n",
+            pos == pos_ref ? "通过" : "失败", (long long)pos, (long long)pos_ref);
+    }
+    /* ---- contains 委托验证 ---- */
+    {
+        bool c = XString_contains(search, sub, XChar_CaseSensitive);
+        bool c_ref = XStringView_contains(&searchView, &subView, 1);
+        XPrintf("  contains('X') 委托验证: %s (got %d, 期望 %d)\n",
+            c == c_ref ? "通过" : "失败", c, c_ref);
+    }
+    /* ---- startsWith 委托验证 ---- */
+    {
+        XString* prefix = XString_create_utf8("  He");
+        bool sw = XString_startsWith(str, prefix, XChar_CaseSensitive);
+        XStringView pv = XStringView_create_string(prefix);
+        bool sw_ref = XStringView_startsWith(&refView, &pv, 1);
+        XPrintf("  startsWith('  He') 委托验证: %s (got %d, 期望 %d)\n",
+            sw == sw_ref ? "通过" : "失败", sw, sw_ref);
+        XString_delete_base(prefix);
+    }
+    /* ---- endsWith 委托验证 ---- */
+    {
+        XString* suffix = XString_create_utf8("!  ");
+        bool ew = XString_endsWith(str, suffix, XChar_CaseSensitive);
+        XStringView suv = XStringView_create_string(suffix);
+        bool ew_ref = XStringView_endsWith(&refView, &suv, 1);
+        XPrintf("  endsWith('!  ') 委托验证: %s (got %d, 期望 %d)\n",
+            ew == ew_ref ? "通过" : "失败", ew, ew_ref);
+        XString_delete_base(suffix);
+    }
+    /* ---- count 委托验证 ---- */
+    {
+        size_t cnt = XString_count(search, sub, XChar_CaseSensitive);
+        int64_t cnt_ref = XStringView_count(&searchView, &subView, 1);
+        XPrintf("  count('X') 委托验证: %s (got %zu, 期望 %lld)\n",
+            (int64_t)cnt == cnt_ref ? "通过" : "失败", cnt, (long long)cnt_ref);
+    }
+    /* ---- indexOf_char 委托验证 ---- */
+    {
+        int64_t pos = XString_indexOf_char(search, 'X', 0, XChar_CaseSensitive);
+        int64_t pos_ref = XStringView_indexOf_char(&searchView, 'X', 0, 1);
+        XPrintf("  indexOf_char('X') 委托验证: %s (got %lld, 期望 %lld)\n",
+            pos == pos_ref ? "通过" : "失败", (long long)pos, (long long)pos_ref);
+    }
+    /* ---- lastIndexOf_char 委托验证 ---- */
+    {
+        int64_t pos = XString_lastIndexOf_char(search, 'X', XChar_CaseSensitive);
+        int64_t pos_ref = XStringView_lastIndexOf_char(&searchView, 'X', -1, 1);
+        XPrintf("  lastIndexOf_char('X') 委托验证: %s (got %lld, 期望 %lld)\n",
+            pos == pos_ref ? "通过" : "失败", (long long)pos, (long long)pos_ref);
+    }
+    /* ---- contains_char 委托验证 ---- */
+    {
+        bool c = XString_contains_char(search, 'X', XChar_CaseSensitive);
+        bool c_ref = XStringView_contains_char(&searchView, 'X', 1);
+        XPrintf("  contains_char('X') 委托验证: %s (got %d, 期望 %d)\n",
+            c == c_ref ? "通过" : "失败", c, c_ref);
+    }
+    /* ---- count_char 委托验证 ---- */
+    {
+        size_t cnt = XString_count_char(search, 'X', XChar_CaseSensitive);
+        int64_t cnt_ref = XStringView_count_char(&searchView, 'X', 1);
+        XPrintf("  count_char('X') 委托验证: %s (got %zu, 期望 %lld)\n",
+            (int64_t)cnt == cnt_ref ? "通过" : "失败", cnt, (long long)cnt_ref);
+    }
+    /* ---- toInt 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        int v1 = XString_toInt(num, &ok1, 10);
+        XStringView nv = XStringView_create_string(num);
+        int v2 = XStringView_toInt(&nv, &ok2, 10);
+        XPrintf("  toInt 委托验证: %s (got %d ok=%d, 期望 %d ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toLongLong 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        long long v1 = XString_toLongLong(num, &ok1, 10);
+        XStringView nv = XStringView_create_string(num);
+        int64_t v2 = XStringView_toLongLong(&nv, &ok2, 10);
+        XPrintf("  toLongLong 委托验证: %s (got %lld ok=%d, 期望 %lld ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败",
+            (long long)v1, ok1, (long long)v2, ok2);
+    }
+    /* ---- toDouble 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        double v1 = XString_toDouble(fp, &ok1);
+        XStringView fv = XStringView_create_string(fp);
+        double v2 = XStringView_toDouble(&fv, &ok2);
+        XPrintf("  toDouble 委托验证: %s (got %f ok=%d, 期望 %f ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toFloat 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        float v1 = XString_toFloat(fp, &ok1);
+        XStringView fv = XStringView_create_string(fp);
+        float v2 = XStringView_toFloat(&fv, &ok2);
+        XPrintf("  toFloat 委托验证: %s (got %f ok=%d, 期望 %f ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toLong 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        long v1 = XString_toLong(num, &ok1, 10);
+        XStringView nv = XStringView_create_string(num);
+        long v2 = XStringView_toLong(&nv, &ok2, 10);
+        XPrintf("  toLong 委托验证: %s (got %ld ok=%d, 期望 %ld ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toULong 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        unsigned long v1 = XString_toULong(hex, &ok1, 16);
+        XStringView hv = XStringView_create_string(hex);
+        unsigned long v2 = XStringView_toULong(&hv, &ok2, 16);
+        XPrintf("  toULong(hex,16) 委托验证: %s (got %lu ok=%d, 期望 %lu ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toUInt 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        unsigned int v1 = XString_toUInt(hex, &ok1, 16);
+        XStringView hv = XStringView_create_string(hex);
+        unsigned int v2 = XStringView_toUInt(&hv, &ok2, 16);
+        XPrintf("  toUInt(hex,16) 委托验证: %s (got %u ok=%d, 期望 %u ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", v1, ok1, v2, ok2);
+    }
+    /* ---- toShort 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        short v1 = XString_toShort(num, &ok1, 10);
+        XStringView nv = XStringView_create_string(num);
+        short v2 = XStringView_toShort(&nv, &ok2, 10);
+        XPrintf("  toShort 委托验证: %s (got %d ok=%d, 期望 %d ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", (int)v1, ok1, (int)v2, ok2);
+    }
+    /* ---- toUShort 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        unsigned short v1 = XString_toUShort(hex, &ok1, 16);
+        XStringView hv = XStringView_create_string(hex);
+        unsigned short v2 = XStringView_toUShort(&hv, &ok2, 16);
+        XPrintf("  toUShort(hex,16) 委托验证: %s (got %u ok=%d, 期望 %u ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败", (unsigned)v1, ok1, (unsigned)v2, ok2);
+    }
+    /* ---- toULongLong 委托验证 ---- */
+    {
+        bool ok1 = false, ok2 = false;
+        unsigned long long v1 = XString_toULongLong(hex, &ok1, 16);
+        XStringView hv = XStringView_create_string(hex);
+        uint64_t v2 = XStringView_toULongLong(&hv, &ok2, 16);
+        XPrintf("  toULongLong(hex,16) 委托验证: %s (got %llu ok=%d, 期望 %llu ok=%d)\n",
+            (v1 == v2 && ok1 == ok2) ? "通过" : "失败",
+            (unsigned long long)v1, ok1, (unsigned long long)v2, ok2);
+    }
+    /* ---- NULL 安全验证 ---- */
+    {
+        bool ok = false;
+        int v = XString_toInt(NULL, &ok, 10);
+        XPrintf("  toInt(NULL) 委托验证: %s (got %d ok=%d, 期望 0 ok=0)\n",
+            (v == 0 && ok == false) ? "通过" : "失败", v, ok);
+    }
+    {
+        int64_t pos = XString_indexOf(NULL, sub, 0, XChar_CaseSensitive);
+        XPrintf("  indexOf(NULL) 委托验证: %s (got %lld, 期望 -1)\n",
+            pos == -1 ? "通过" : "失败", (long long)pos);
+    }
+    {
+        bool c = XString_contains(NULL, sub, XChar_CaseSensitive);
+        XPrintf("  contains(NULL) 委托验证: %s (got %d, 期望 0)\n",
+            c == false ? "通过" : "失败", c);
+    }
+
+    /* 清理 */
+    XString_delete_base(str);
+    XString_delete_base(empty);
+    XString_delete_base(num);
+    XString_delete_base(hex);
+    XString_delete_base(fp);
+    XString_delete_base(a);
+    XString_delete_base(b);
+    XString_delete_base(search);
+    XString_delete_base(sub);
+}
+
+
+
 static void XStringAllTest(void)
 {
-	XPrintf("========== XString 全部测试开始 ==========\n\n");
-	XStringCreateTest();
-	XStringCapacityTest();
-	XStringAccessTest();
-	XStringAppendPrependInsertTest();
-	XStringRemoveTest();
-	XStringReplaceTest();
-	XStringFindCompareTest();
-	XStringConvertTest();
-	XStringNumTest();
-	XStringSubstringTest();
-	XStringInplaceTest();
-	XStringSplitJoinTest();
-	XStringQtAdvancedTest();
-	XStringAssignTest();
-	XStringIteratorTest();
-	XStringSafetyTest();
-	XPrintf("========== XString 全部测试结束 ==========\n");
-	XCoreApplication_quit();
+    XPrintf("========== XString全部测试开始 ==========\n\n");
+    XStringCreateTest();
+    XStringCapacityTest();
+    XStringAccessTest();
+    XStringAppendPrependInsertTest();
+    XStringRemoveTest();
+    XStringReplaceTest();
+    XStringFindCompareTest();
+    XStringConvertTest();
+    XStringNumTest();
+    XStringSubstringTest();
+    XStringInplaceTest();
+    XStringSplitJoinTest();
+    XStringQtAdvancedTest();
+    XStringAssignTest();
+    XStringIteratorTest();
+    XStringSafetyTest();
+    XStringViewDelegationTest();
+    XPrintf("========== XString全部测试结束 ==========\n");
+    XCoreApplication_quit();
 }
 
 void XMenu_XStringTest(XMenu* root)

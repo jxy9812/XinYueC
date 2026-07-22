@@ -12,7 +12,7 @@ extern "C" {
 
 // =============== 虚函数表枚举 ==================
 XCLASS_DEFINE_BEGING(XAbstractNativeEventFilter)
-XCLASS_DEFINE_ENUM(XAbstractNativeEventFilter, NativeEventFilter) = 0, // 从 0 开始（无基类）
+XCLASS_DEFINE_ENUM(XAbstractNativeEventFilter, NativeEventFilter) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_END(XAbstractNativeEventFilter)
 
 // =============== 结构体 =======================
