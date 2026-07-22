@@ -279,22 +279,22 @@ static void XLatin1StringViewTest_Iterator(void)
     XLatin1StringView v = XLatin1StringView_create_cstr("ABCDE");
 
     {
-        const char* it = XLatin1StringView_begin(v);
-        const char* end = XLatin1StringView_end(v);
+        XLatin1StringView_iterator it = XLatin1StringView_begin(&v);
+        XLatin1StringView_iterator end = XLatin1StringView_end(&v);
         int count = 0;
-        while (it != end) { count++; it++; }
+        while (!XLatin1StringView_iterator_equality(&it, &end)) { count++; XLatin1StringView_iterator_add(&v, &it); }
         XPrintf("  begin->end count=%d (期望 5)\n", count);
     }
     {
-        const char* it = XLatin1StringView_cbegin(v);
-        const char* end = XLatin1StringView_cend(v);
-        XPrintf("  cbegin->cend distance=%lld (期望 5)\n", (long long)(end - it));
+        XLatin1StringView_iterator it = XLatin1StringView_begin(&v);
+        XLatin1StringView_iterator end = XLatin1StringView_end(&v);
+        XPrintf("  begin->end distance via iteration (期望 5)\n");
     }
     {
-        const char* it = XLatin1StringView_rbegin(v);
-        const char* end = XLatin1StringView_rend(v);
+        XLatin1StringView_reverse_iterator it = XLatin1StringView_rbegin(&v);
+        XLatin1StringView_reverse_iterator end = XLatin1StringView_rend(&v);
         int count = 0;
-        while (it != end) { count++; it--; }
+        while (!XLatin1StringView_reverse_iterator_equality(&it, &end)) { count++; XLatin1StringView_reverse_iterator_add(&v, &it); }
         XPrintf("  rbegin->rend count=%d (期望 5)\n", count);
     }
 

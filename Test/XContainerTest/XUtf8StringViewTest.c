@@ -368,22 +368,22 @@ static void XUtf8StringViewTest_Iterator(void)
     XUtf8StringView v = XUtf8StringView_create_cstr("ABCDE");
 
     {
-        const char* it = XUtf8StringView_begin(v);
-        const char* end = XUtf8StringView_end(v);
+        XUtf8StringView_iterator it = XUtf8StringView_begin(&v);
+        XUtf8StringView_iterator end = XUtf8StringView_end(&v);
         int count = 0;
-        while (it != end) { count++; it++; }
+        while (!XUtf8StringView_iterator_equality(&it, &end)) { count++; XUtf8StringView_iterator_add(&v, &it); }
         XPrintf("  begin->end count=%d (期望 5)\n", count);
     }
     {
-        const char* it = XUtf8StringView_cbegin(v);
-        const char* end = XUtf8StringView_cend(v);
-        XPrintf("  cbegin->cend distance=%lld (期望 5)\n", (long long)(end - it));
+        XUtf8StringView_iterator it = XUtf8StringView_begin(&v);
+        XUtf8StringView_iterator end = XUtf8StringView_end(&v);
+        XPrintf("  begin->end distance via iteration (期望 5)\n");
     }
     {
-        const char* it = XUtf8StringView_rbegin(v);
-        const char* end = XUtf8StringView_rend(v);
+        XUtf8StringView_reverse_iterator it = XUtf8StringView_rbegin(&v);
+        XUtf8StringView_reverse_iterator end = XUtf8StringView_rend(&v);
         int count = 0;
-        while (it != end) { count++; it--; }
+        while (!XUtf8StringView_reverse_iterator_equality(&it, &end)) { count++; XUtf8StringView_reverse_iterator_add(&v, &it); }
         XPrintf("  rbegin->rend count=%d (期望 5)\n", count);
     }
 

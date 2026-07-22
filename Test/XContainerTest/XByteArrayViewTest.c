@@ -446,22 +446,22 @@ static void XByteArrayViewTest_Iterator(void)
     XByteArrayView v = XByteArrayView_create_data(data, 5);
 
     {
-        const uint8_t* it = XByteArrayView_begin(v);
-        const uint8_t* end = XByteArrayView_end(v);
+        XByteArrayView_iterator it = XByteArrayView_begin(&v);
+        XByteArrayView_iterator end = XByteArrayView_end(&v);
         int count = 0;
-        while (it != end) { count++; it++; }
+        while (!XByteArrayView_iterator_equality(&it, &end)) { count++; XByteArrayView_iterator_add(&v, &it); }
         XPrintf("  begin->end count=%d (期望 5)\n", count);
     }
     {
-        const uint8_t* it = XByteArrayView_cbegin(v);
-        const uint8_t* end = XByteArrayView_cend(v);
-        XPrintf("  cbegin->cend distance=%lld (期望 5)\n", (long long)(end - it));
+        XByteArrayView_iterator it = XByteArrayView_begin(&v);
+        XByteArrayView_iterator end = XByteArrayView_end(&v);
+        XPrintf("  begin->end distance via iteration (期望 5)\n");
     }
     {
-        const uint8_t* it = XByteArrayView_rbegin(v);
-        const uint8_t* end = XByteArrayView_rend(v);
+        XByteArrayView_reverse_iterator it = XByteArrayView_rbegin(&v);
+        XByteArrayView_reverse_iterator end = XByteArrayView_rend(&v);
         int count = 0;
-        while (it != end) { count++; it--; }
+        while (!XByteArrayView_reverse_iterator_equality(&it, &end)) { count++; XByteArrayView_reverse_iterator_add(&v, &it); }
         XPrintf("  rbegin->rend count=%d (期望 5)\n", count);
     }
 

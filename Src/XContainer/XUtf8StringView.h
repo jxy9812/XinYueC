@@ -48,14 +48,6 @@ typedef struct XUtf8StringView
 * @brief XUtf8StringView 正向迭代器类型
 * @details 实际类型为 const char*，指向视图中的 UTF-8 字节数据
 */
-typedef const char* XUtf8StringView_iterator;
-
-/**
-* @brief XUtf8StringView 常量正向迭代器类型
-* @details 与 XUtf8StringView_iterator 相同，均为 const char*
-*/
-typedef const char* XUtf8StringView_const_iterator;
-
 /* ============================== 构造与创建 ============================== */
 
 /**
@@ -608,87 +600,10 @@ float XUtf8StringView_toFloat(const XUtf8StringView* self, bool* ok);
 */
 double XUtf8StringView_toDouble(const XUtf8StringView* self, bool* ok);
 
-/* ============================== 迭代器宏 ============================== */
-
-/**
-* @brief 获取指向视图起始位置的迭代器
-* @details 返回指向第一个字节的 const 指针。
-*          等价于 Qt QUtf8StringView::begin()。
-* @param self XUtf8StringView 实例（值类型，非指针）
-* @return 正向迭代器（const char*）
-*/
-#define XUtf8StringView_begin(self) ((self).m_data)
-
-/**
-* @brief 获取指向视图结束位置的迭代器
-* @details 返回指向最后一个字节之后位置的 const 指针。
-*          等价于 Qt QUtf8StringView::end()。
-* @param self XUtf8StringView 实例（值类型，非指针）
-* @return 正向迭代器（const char*）
-*/
-#define XUtf8StringView_end(self) ((self).m_data + (self).m_size)
-
-/**
-* @brief 获取常量起始迭代器
-* @details 等价于 XUtf8StringView_begin()。
-*          等价于 Qt QUtf8StringView::cbegin()。
-*/
-#define XUtf8StringView_cbegin(self) XUtf8StringView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器
-* @details 等价于 XUtf8StringView_end()。
-*          等价于 Qt QUtf8StringView::cend()。
-*/
-#define XUtf8StringView_cend(self) XUtf8StringView_end(self)
-
-/**
-* @brief 获取常量起始迭代器（别名）
-* @details 等价于 XUtf8StringView_cbegin()。
-*          等价于 Qt QUtf8StringView::constBegin()。
-*/
-#define XUtf8StringView_constBegin(self) XUtf8StringView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器（别名）
-* @details 等价于 XUtf8StringView_cend()。
-*          等价于 Qt QUtf8StringView::constEnd()。
-*/
-#define XUtf8StringView_constEnd(self) XUtf8StringView_end(self)
-
-/**
-* @brief 获取反向起始迭代器
-* @details 返回指向最后一个字节的反向迭代器。
-*          等价于 Qt QUtf8StringView::rbegin()。
-* @param self XUtf8StringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XUtf8StringView_rbegin(self) (&(self).m_data[(self).m_size])
-
-/**
-* @brief 获取反向结束迭代器
-* @details 返回指向第一个字节之前位置的反向迭代器。
-*          等价于 Qt QUtf8StringView::rend()。
-* @param self XUtf8StringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XUtf8StringView_rend(self) ((self).m_data)
-
-/**
-* @brief 获取常量反向起始迭代器
-* @details 等价于 XUtf8StringView_rbegin()。
-*          等价于 Qt QUtf8StringView::crbegin()。
-*/
-#define XUtf8StringView_crbegin(self) XUtf8StringView_rbegin(self)
-
-/**
-* @brief 获取常量反向结束迭代器
-* @details 等价于 XUtf8StringView_rend()。
-*          等价于 Qt QUtf8StringView::crend()。
-*/
-#define XUtf8StringView_crend(self) XUtf8StringView_rend(self)
+#include "XUtf8StringView_iterator/XUtf8StringView_iterator.h"    ///< XUtf8StringView 正向迭代器
+#include "XUtf8StringView_iterator/XUtf8StringView_reverse_iterator.h"  ///< XUtf8StringView 反向迭代器
 
 #ifdef __cplusplus
 }
 #endif
-#endif // !XUTF8STRINGVIEW_H
+#endif // !XUTF8STRINGVIEW_H#endif // !XUTF8STRINGVIEW_H

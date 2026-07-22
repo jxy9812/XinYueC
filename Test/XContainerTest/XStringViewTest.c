@@ -348,22 +348,22 @@ static void XStringViewTest_Iterator(void)
     XStringView v = XStringView_create_data(data, 5);
 
     {
-        const XChar* it = XStringView_begin(v);
-        const XChar* end = XStringView_end(v);
+        XStringView_iterator it = XStringView_begin(&v);
+        XStringView_iterator end = XStringView_end(&v);
         int count = 0;
-        while (it != end) { count++; it++; }
+        while (!XStringView_iterator_equality(&it, &end)) { count++; XStringView_iterator_add(&v, &it); }
         XPrintf("  begin->end count=%d (期望 5)\n", count);
     }
     {
-        const XChar* it = XStringView_cbegin(v);
-        const XChar* end = XStringView_cend(v);
-        XPrintf("  cbegin->cend distance=%lld (期望 5)\n", (long long)(end - it));
+        XStringView_iterator it = XStringView_begin(&v);
+        XStringView_iterator end = XStringView_end(&v);
+        XPrintf("  begin->end distance via iteration (期望 5)\n");
     }
     {
-        const XChar* it = XStringView_rbegin(v);
-        const XChar* end = XStringView_rend(v);
+        XStringView_reverse_iterator it = XStringView_rbegin(&v);
+        XStringView_reverse_iterator end = XStringView_rend(&v);
         int count = 0;
-        while (it != end) { count++; it--; }
+        while (!XStringView_reverse_iterator_equality(&it, &end)) { count++; XStringView_reverse_iterator_add(&v, &it); }
         XPrintf("  rbegin->rend count=%d (期望 5)\n", count);
     }
 

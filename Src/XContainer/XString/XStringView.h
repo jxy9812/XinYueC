@@ -45,14 +45,6 @@ typedef struct XStringView
 * @brief XStringView 正向迭代器类型
 * @details 实际类型为 const XChar*，指向视图中的 UTF-16 字符数据
 */
-typedef const XChar* XStringView_iterator;
-
-/**
-* @brief XStringView 常量正向迭代器类型
-* @details 与 XStringView_iterator 相同，均为 const XChar*
-*/
-typedef const XChar* XStringView_const_iterator;
-
 /* ============================== 构造与创建 ============================== */
 
 /**
@@ -600,71 +592,8 @@ float XStringView_toFloat(const XStringView* self, bool* ok);
 */
 double XStringView_toDouble(const XStringView* self, bool* ok);
 
-/* ============================== 迭代器宏 ============================== */
-
-/**
-* @brief 获取指向视图起始位置的迭代器
-* @details 返回指向第一个 XChar 的 const 指针。
-*          等价于 Qt QStringView::begin()。
-* @param self XStringView 实例（值类型，非指针）
-* @return 正向迭代器（const XChar*）
-*/
-#define XStringView_begin(self) ((self).m_data)
-
-/**
-* @brief 获取指向视图结束位置的迭代器
-* @details 返回指向最后一个字符之后位置的 const 指针。
-*          等价于 Qt QStringView::end()。
-* @param self XStringView 实例（值类型，非指针）
-* @return 正向迭代器（const XChar*）
-*/
-#define XStringView_end(self) ((self).m_data + (self).m_size)
-
-/**
-* @brief 获取常量起始迭代器
-* @details 等价于 XStringView_begin()。
-*          等价于 Qt QStringView::cbegin()。
-*/
-#define XStringView_cbegin(self) XStringView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器
-* @details 等价于 XStringView_end()。
-*          等价于 Qt QStringView::cend()。
-*/
-#define XStringView_cend(self) XStringView_end(self)
-
-/**
-* @brief 获取反向起始迭代器
-* @details 返回指向最后一个 XChar 的反向迭代器。
-*          等价于 Qt QStringView::rbegin()。
-* @param self XStringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XStringView_rbegin(self) (&(self).m_data[(self).m_size])
-
-/**
-* @brief 获取反向结束迭代器
-* @details 返回指向第一个字符之前位置的反向迭代器。
-*          等价于 Qt QStringView::rend()。
-* @param self XStringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XStringView_rend(self) ((self).m_data)
-
-/**
-* @brief 获取常量反向起始迭代器
-* @details 等价于 XStringView_rbegin()。
-*          等价于 Qt QStringView::crbegin()。
-*/
-#define XStringView_crbegin(self) XStringView_rbegin(self)
-
-/**
-* @brief 获取常量反向结束迭代器
-* @details 等价于 XStringView_rend()。
-*          等价于 Qt QStringView::crend()。
-*/
-#define XStringView_crend(self) XStringView_rend(self)
+#include "XStringView_iterator/XStringView_iterator.h"    ///< XStringView 正向迭代器
+#include "XStringView_iterator/XStringView_reverse_iterator.h"  ///< XStringView 反向迭代器
 
 #ifdef __cplusplus
 }

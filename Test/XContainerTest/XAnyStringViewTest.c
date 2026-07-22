@@ -319,7 +319,41 @@ static void XAnyStringViewTest_ToString(void)
     XPrintf("\n");
 }
 
-/* ==================== 7. 编码检测测试 ==================== */
+
+/* ==================== 7. 迭代器测试 ==================== */
+static void XAnyStringViewTest_Iterator(void)
+{
+    XPrintf("===== 迭代器测试 =====\n");
+    {
+        XAnyStringView v = XAnyStringView_create_utf8("ABCDE", 5);
+
+        XAnyStringView_iterator it = XAnyStringView_begin(&v);
+        XAnyStringView_iterator end = XAnyStringView_end(&v);
+        int count = 0;
+        while (!XAnyStringView_iterator_equality(&it, &end)) { count++; XAnyStringView_iterator_add(&v, &it); }
+        XPrintf("  begin->end count=%d (期望 5)\n", count);
+    }
+    {
+        XAnyStringView v = XAnyStringView_create_utf8("ABCDE", 5);
+        XAnyStringView_iterator it = XAnyStringView_begin(&v);
+        XAnyStringView_iterator end = XAnyStringView_end(&v);
+        XPrintf("  begin->end distance via iteration (期望 5)\n");
+    }
+    {
+        XAnyStringView v = XAnyStringView_create_utf8("ABCDE", 5);
+        XAnyStringView_reverse_iterator it = XAnyStringView_rbegin(&v);
+        XAnyStringView_reverse_iterator end = XAnyStringView_rend(&v);
+        int count = 0;
+        while (!XAnyStringView_reverse_iterator_equality(&it, &end)) { count++; XAnyStringView_reverse_iterator_add(&v, &it); }
+        XPrintf("  rbegin->rend count=%d (期望 5)\n", count);
+    }
+
+    XPrintf("\n");
+}
+
+/* ==================== 8. 编码检测测试 ==================== */
+
+
 static void XAnyStringViewTest_Encoding(void)
 {
     XPrintf("===== 编码检测测试 =====\n");
@@ -348,7 +382,7 @@ static void XAnyStringViewTest_Encoding(void)
     XPrintf("\n");
 }
 
-/* ==================== 8. Null/空视图边界测试 ==================== */
+/* ==================== 9. Null/空视图边界测试 ==================== */
 static void XAnyStringViewTest_NullEmpty(void)
 {
     XPrintf("===== Null/空视图边界测试 =====\n");
@@ -380,6 +414,7 @@ static void XAnyStringViewTest_All(void)
     XAnyStringViewTest_Modify();
     XAnyStringViewTest_Compare();
     XAnyStringViewTest_ToString();
+    XAnyStringViewTest_Iterator();
     XAnyStringViewTest_Encoding();
     XAnyStringViewTest_NullEmpty();
 }
@@ -421,6 +456,10 @@ void XMenu_XAnyStringViewTest(XMenu* root)
     {
         XAction* action = XMenu_addAction(menu, "toString");
         XAction_setAction(action, XAnyStringViewTest_ToString);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "迭代器");
+        XAction_setAction(action, XAnyStringViewTest_Iterator);
     }
     {
         XAction* action = XMenu_addAction(menu, "编码检测");

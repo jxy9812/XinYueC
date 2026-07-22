@@ -46,14 +46,6 @@ typedef struct XLatin1StringView
 * @brief XLatin1StringView 正向迭代器类型
 * @details 实际类型为 const char*，指向视图中的 Latin-1 字符数据
 */
-typedef const char* XLatin1StringView_iterator;
-
-/**
-* @brief XLatin1StringView 常量正向迭代器类型
-* @details 与 XLatin1StringView_iterator 相同，均为 const char*
-*/
-typedef const char* XLatin1StringView_const_iterator;
-
 /* ============================== 构造与创建 ============================== */
 
 /**
@@ -473,87 +465,10 @@ XLatin1StringView XLatin1StringView_trimmed(const XLatin1StringView* self);
 */
 XString* XLatin1StringView_toString(const XLatin1StringView* self);
 
-/* ============================== 迭代器宏 ============================== */
-
-/**
-* @brief 获取指向视图起始位置的迭代器
-* @details 返回指向第一个字符的 const 指针。
-*          等价于 Qt QLatin1StringView::begin()。
-* @param self XLatin1StringView 实例（值类型，非指针）
-* @return 正向迭代器（const char*）
-*/
-#define XLatin1StringView_begin(self) ((self).m_data)
-
-/**
-* @brief 获取指向视图结束位置的迭代器
-* @details 返回指向最后一个字符之后位置的 const 指针。
-*          等价于 Qt QLatin1StringView::end()。
-* @param self XLatin1StringView 实例（值类型，非指针）
-* @return 正向迭代器（const char*）
-*/
-#define XLatin1StringView_end(self) ((self).m_data + (self).m_size)
-
-/**
-* @brief 获取常量起始迭代器
-* @details 等价于 XLatin1StringView_begin()。
-*          等价于 Qt QLatin1StringView::cbegin() / constBegin()。
-*/
-#define XLatin1StringView_cbegin(self) XLatin1StringView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器
-* @details 等价于 XLatin1StringView_end()。
-*          等价于 Qt QLatin1StringView::cend() / constEnd()。
-*/
-#define XLatin1StringView_cend(self) XLatin1StringView_end(self)
-
-/**
-* @brief 获取常量起始迭代器（别名）
-* @details 等价于 XLatin1StringView_cbegin()。
-*          等价于 Qt QLatin1StringView::constBegin()。
-*/
-#define XLatin1StringView_constBegin(self) XLatin1StringView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器（别名）
-* @details 等价于 XLatin1StringView_cend()。
-*          等价于 Qt QLatin1StringView::constEnd()。
-*/
-#define XLatin1StringView_constEnd(self) XLatin1StringView_end(self)
-
-/**
-* @brief 获取反向起始迭代器
-* @details 返回指向最后一个字符的反向迭代器。
-*          等价于 Qt QLatin1StringView::rbegin()。
-* @param self XLatin1StringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XLatin1StringView_rbegin(self) (&(self).m_data[(self).m_size])
-
-/**
-* @brief 获取反向结束迭代器
-* @details 返回指向第一个字符之前位置的反向迭代器。
-*          等价于 Qt QLatin1StringView::rend()。
-* @param self XLatin1StringView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XLatin1StringView_rend(self) ((self).m_data)
-
-/**
-* @brief 获取常量反向起始迭代器
-* @details 等价于 XLatin1StringView_rbegin()。
-*          等价于 Qt QLatin1StringView::crbegin()。
-*/
-#define XLatin1StringView_crbegin(self) XLatin1StringView_rbegin(self)
-
-/**
-* @brief 获取常量反向结束迭代器
-* @details 等价于 XLatin1StringView_rend()。
-*          等价于 Qt QLatin1StringView::crend()。
-*/
-#define XLatin1StringView_crend(self) XLatin1StringView_rend(self)
+#include "XLatin1StringView_iterator/XLatin1StringView_iterator.h"    ///< XLatin1StringView 正向迭代器
+#include "XLatin1StringView_iterator/XLatin1StringView_reverse_iterator.h"  ///< XLatin1StringView 反向迭代器
 
 #ifdef __cplusplus
 }
 #endif
-#endif // !XLATIN1STRINGVIEW_H
+#endif // !XLATIN1STRINGVIEW_H#endif // !XLATIN1STRINGVIEW_H

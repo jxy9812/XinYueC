@@ -44,14 +44,6 @@ typedef struct XByteArrayView
 * @brief XByteArrayView 正向迭代器类型
 * @details 实际类型为 const uint8_t*，指向视图中的字节数据
 */
-typedef const uint8_t* XByteArrayView_iterator;
-
-/**
-* @brief XByteArrayView 常量正向迭代器类型
-* @details 与 XByteArrayView_iterator 相同，均为 const uint8_t*
-*/
-typedef const uint8_t* XByteArrayView_const_iterator;
-
 /* ============================== 构造与创建 ============================== */
 
 /**
@@ -643,71 +635,8 @@ double XByteArrayView_toDouble(const XByteArrayView* self, bool* ok);
 */
 bool XByteArrayView_isValidUtf8(const XByteArrayView* self);
 
-/* ============================== 迭代器宏 ============================== */
-
-/**
-* @brief 获取指向视图起始位置的迭代器
-* @details 返回指向第一个字节的 const 指针。
-*          等价于 Qt QByteArrayView::begin()。
-* @param self XByteArrayView 实例（值类型，非指针）
-* @return 正向迭代器（const uint8_t*）
-*/
-#define XByteArrayView_begin(self) ((self).m_data)
-
-/**
-* @brief 获取指向视图结束位置的迭代器
-* @details 返回指向最后一个字节之后位置的 const 指针。
-*          等价于 Qt QByteArrayView::end()。
-* @param self XByteArrayView 实例（值类型，非指针）
-* @return 正向迭代器（const uint8_t*）
-*/
-#define XByteArrayView_end(self) ((self).m_data + (self).m_size)
-
-/**
-* @brief 获取常量起始迭代器
-* @details 等价于 XByteArrayView_begin()。
-*          等价于 Qt QByteArrayView::cbegin()。
-*/
-#define XByteArrayView_cbegin(self) XByteArrayView_begin(self)
-
-/**
-* @brief 获取常量结束迭代器
-* @details 等价于 XByteArrayView_end()。
-*          等价于 Qt QByteArrayView::cend()。
-*/
-#define XByteArrayView_cend(self) XByteArrayView_end(self)
-
-/**
-* @brief 获取反向起始迭代器
-* @details 返回指向最后一个字节的反向迭代器。
-*          等价于 Qt QByteArrayView::rbegin()。
-* @param self XByteArrayView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XByteArrayView_rbegin(self) (&(self).m_data[(self).m_size])
-
-/**
-* @brief 获取反向结束迭代器
-* @details 返回指向第一个字节之前位置的反向迭代器。
-*          等价于 Qt QByteArrayView::rend()。
-* @param self XByteArrayView 实例（值类型，非指针）
-* @return 反向迭代器
-*/
-#define XByteArrayView_rend(self) ((self).m_data)
-
-/**
-* @brief 获取常量反向起始迭代器
-* @details 等价于 XByteArrayView_rbegin()。
-*          等价于 Qt QByteArrayView::crbegin()。
-*/
-#define XByteArrayView_crbegin(self) XByteArrayView_rbegin(self)
-
-/**
-* @brief 获取常量反向结束迭代器
-* @details 等价于 XByteArrayView_rend()。
-*          等价于 Qt QByteArrayView::crend()。
-*/
-#define XByteArrayView_crend(self) XByteArrayView_rend(self)
+#include "XByteArrayView_iterator/XByteArrayView_iterator.h"    ///< XByteArrayView 正向迭代器
+#include "XByteArrayView_iterator/XByteArrayView_reverse_iterator.h"  ///< XByteArrayView 反向迭代器
 
 #ifdef __cplusplus
 }
