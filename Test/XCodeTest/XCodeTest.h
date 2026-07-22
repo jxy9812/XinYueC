@@ -16,6 +16,7 @@ void XMenu_XDateTimeTest(XMenu* root);
 void XMenu_XCryptographicHashTest(XMenu* root);
 void XMenu_XRandomGeneratorTest(XMenu* root);
 void XMenu_XCoreApplicationTest(XMenu* root);
+void XMenu_XCommandLineParserTest(XMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
 void XHistoryState_Test();

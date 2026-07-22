@@ -134,7 +134,7 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 {
 	if(manager==NULL||slot_func==NULL)
 		return NULL;
-	if (receiver == NULL && ((type & XConnectionType_Queued) || (type & XConnectionType_BlockingQueued)))
+	if (receiver == NULL && ((type & 0x3) == XConnectionType_Queued || (type & 0x3) == XConnectionType_BlockingQueued))
 		return NULL;//没有接收对象不允许用队列的方式
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj= XMapBase_value_base(manager->signalMap,&signal);

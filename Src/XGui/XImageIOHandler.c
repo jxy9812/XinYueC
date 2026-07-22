@@ -9,6 +9,7 @@
 #include "XMemory/XMemory.h"
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 /**
  * @brief      XImageIOHandler 私有数据

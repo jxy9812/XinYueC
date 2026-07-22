@@ -60,6 +60,15 @@ static void VXPicture_copy(XPicture* dest, const XPicture* src)
     XPicturePrivate_ref(dest->m_data);
 }
 
+static void VXPicture_move(XPicture* dest, XPicture* src)
+{
+    if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
+    if (dest->m_data)
+        XPicturePrivate_unref(dest->m_data);
+    dest->m_data = src->m_data;
+    src->m_data = NULL;
+}
+
 static void VXPicture_deinit(XPicture* self)
 {
     if (ISNULL(self, "XPicture")) return;
@@ -75,6 +84,8 @@ XVtable* XPicture_class_init()
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XPicture));
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPicture_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPicture_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPicture_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -97,13 +108,39 @@ void XPicture_init(XPicture* self, int formatVersion)
     self->m_data = XPicturePrivate_create(formatVersion);
 }
 
-void XPicture_copy(XPicture* self, const XPicture* other) { XPicture_copy_base(self, other); }
+void XPicture_copy(XPicture* self, const XPicture* other)
+{
+    if (ISNULL(self, "XPicture") || ISNULL(other, "XPicture")) return;
+    if (!XClassIsVtableNull(self))
+        XPicture_deinit_base(self);
+    XPicture_init(self, -1);
+    XPicture_copy_base(self, other);
+}
 void XPicture_deinit(XPicture* self) { XPicture_deinit_base(self); }
-void XPicture_copy_base(XPicture* dest, const XPicture* src) { VXPicture_copy(dest, src); }
+void XPicture_copy_base(XPicture* dest, const XPicture* src)
+{
+    if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
+    VXPicture_copy(dest, src);
+}
+void XPicture_move(XPicture* self, XPicture* other)
+{
+    if (ISNULL(self, "XPicture") || ISNULL(other, "XPicture")) return;
+    if (!XClassIsVtableNull(self))
+        XPicture_deinit_base(self);
+    XPicture_init(self, -1);
+    XPicture_move_base(self, other);
+}
+
+void XPicture_move_base(XPicture* dest, XPicture* src)
+{
+    if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
+    VXPicture_move(dest, src);
+}
+
 void XPicture_deinit_base(XPicture* self)
 {
-    if (ISNULL(self, "XPicture") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XPicture*))(self);
+    if (ISNULL(self, "XPicture")) return;
+    VXPicture_deinit(self);
 }
 
 

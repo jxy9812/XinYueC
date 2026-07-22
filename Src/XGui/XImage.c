@@ -187,6 +187,8 @@ XVtable* XImage_class_init()
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XImage));
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXImage_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXImage_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImage_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -233,6 +235,8 @@ void XImage_init_file(XImage* self, const char* fileName, const char* format)
 void XImage_copy(XImage* self, const XImage* other)
 {
     if (ISNULL(self, "XImage") || ISNULL(other, "XImage")) return;
+    if (!XClassIsVtableNull(self))
+        XImage_deinit_base(self);
     XImage_init(self);
     XImage_copy_base(self, other);
 }
@@ -240,6 +244,8 @@ void XImage_copy(XImage* self, const XImage* other)
 void XImage_move(XImage* self, XImage* other)
 {
     if (ISNULL(self, "XImage") || ISNULL(other, "XImage")) return;
+    if (!XClassIsVtableNull(self))
+        XImage_deinit_base(self);
     XImage_init(self);
     XImage_move_base(self, other);
 }
@@ -251,18 +257,20 @@ void XImage_deinit(XImage* self)
 
 void XImage_copy_base(XImage* dest, const XImage* src)
 {
+    if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
     VXImage_copy(dest, src);
 }
 
 void XImage_move_base(XImage* dest, XImage* src)
 {
+    if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
     VXImage_move(dest, src);
 }
 
 void XImage_deinit_base(XImage* self)
 {
-    if (ISNULL(self, "XImage") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XImage*))(self);
+    if (ISNULL(self, "XImage")) return;
+    VXImage_deinit(self);
 }
 
 
@@ -510,6 +518,7 @@ bool XImage_valid(const XImage* self, int x, int y)
 void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
 {
     if (!self || !self->m_data || !out) return;
+    XImage_init(out);
     int w = self->m_data->m_width;
     int h = self->m_data->m_height;
     int rx = 0, ry = 0, rw = w, rh = h;

@@ -110,6 +110,8 @@ XVtable* XPixmap_class_init()
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XPixmap));
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPixmap_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPixmap_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPixmap_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -163,6 +165,8 @@ void XPixmap_init_image(XPixmap* self, const XImage* image, uint32_t flags)
 void XPixmap_copy(XPixmap* self, const XPixmap* other)
 {
     if (ISNULL(self, "XPixmap") || ISNULL(other, "XPixmap")) return;
+    if (!XClassIsVtableNull(self))
+        XPixmap_deinit_base(self);
     XPixmap_init(self);
     XPixmap_copy_base(self, other);
 }
@@ -170,6 +174,8 @@ void XPixmap_copy(XPixmap* self, const XPixmap* other)
 void XPixmap_move(XPixmap* self, XPixmap* other)
 {
     if (ISNULL(self, "XPixmap") || ISNULL(other, "XPixmap")) return;
+    if (!XClassIsVtableNull(self))
+        XPixmap_deinit_base(self);
     XPixmap_init(self);
     XPixmap_move_base(self, other);
 }
@@ -179,13 +185,21 @@ void XPixmap_deinit(XPixmap* self)
     XPixmap_deinit_base(self);
 }
 
-void XPixmap_copy_base(XPixmap* dest, const XPixmap* src) { VXPixmap_copy(dest, src); }
-void XPixmap_move_base(XPixmap* dest, XPixmap* src) { VXPixmap_move(dest, src); }
+void XPixmap_copy_base(XPixmap* dest, const XPixmap* src)
+{
+    if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
+    VXPixmap_copy(dest, src);
+}
+void XPixmap_move_base(XPixmap* dest, XPixmap* src)
+{
+    if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
+    VXPixmap_move(dest, src);
+}
 
 void XPixmap_deinit_base(XPixmap* self)
 {
-    if (ISNULL(self, "XPixmap") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XPixmap*))(self);
+    if (ISNULL(self, "XPixmap")) return;
+    VXPixmap_deinit(self);
 }
 
 
@@ -329,7 +343,8 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
 void XPixmap_toImage(const XPixmap* self, XImage* out)
 {
     if (!self || !self->m_data || !out) return;
-    XImage_copy(out, &self->m_data->m_image);
+    XImage_init(out);
+    XImage_copy_base(out, &self->m_data->m_image);
 }
 
 void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out)

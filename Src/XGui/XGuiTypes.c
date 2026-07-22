@@ -1,11 +1,13 @@
-/******************************************************************************
+ï»¿/******************************************************************************
  * @file       XGuiTypes.c
- * @brief      XGui »ù´¡¼¸ºÎÀàÐÍÊµÏÖ
- * @author     XinYueC ÍÅ¶Ó
+ * @brief      XGui åŸºç¡€å‡ ä½•ç±»åž‹å®žçŽ°
+ * @author     XinYueC å›¢é˜Ÿ
  ******************************************************************************/
 #include "XGuiTypes.h"
 #include <stdlib.h>
 #include <string.h>
+#include "XCompare.h"
+
 
 void XPoint_init(XPoint* self, int x, int y)
 {
@@ -79,4 +81,14 @@ void XRegion_addRect(XRegion* self, const XRect* rect)
         self->capacity = newCap;
     }
     self->rects[self->count++] = *rect;
+}
+
+
+int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs)
+{
+    if (lhs->x == rhs->x && lhs->y == rhs->y)
+        return XCompare_Equality;
+    if (lhs->x * lhs->y < rhs->x * rhs->y)
+        return XCompare_Less;
+    return XCompare_Greater;
 }

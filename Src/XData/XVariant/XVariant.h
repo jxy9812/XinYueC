@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 #include"XClass.h"
-#include"XPoint.h"
+#include"XGui/XGuiTypes.h"
 #include"XCompare.h"
 #include"XContainer.h"
 #include<stdio.h>

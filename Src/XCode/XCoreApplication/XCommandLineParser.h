@@ -1,4 +1,4 @@
-﻿#ifndef XCOMMANDLINEPARSER_H
+#ifndef XCOMMANDLINEPARSER_H
 #define XCOMMANDLINEPARSER_H
 #ifdef __cplusplus
 extern "C" {
@@ -8,149 +8,280 @@ extern "C" {
 #include "XVector.h"
 #include "XHashMap.h"
 #include "XString.h"
-#include "XCommandLineOptionGroup.h"
+#include "XStringList.h"
+#include "XCommandLineOption.h"
 
 /**
- * @brief 命令行解析结果结构体
- * 存储解析后的所有信息，包括选项值、位置参数等
+ * @brief 命令行解析器（对标 QCommandLineParser）
  */
-typedef struct {
-    XVector* positionalArgs;        // 位置参数列表（char* 类型）
-    XHashMap* optionMap;            // 选项键值对（key: char*, value: char*）
-    XHashMap* optionCounts;         // 选项出现次数（key: char*, value: int）
-    XVector* unrecognizedOpts;      // 未识别的选项（char* 类型）
-    XVector* exclusiveGroupConflicts; // 互斥组冲突选项列表
-    XVector* allocatedStrings;      // 跟踪动态分配的字符串，用于释放
-} XCommandLineParseResult;
 
 /**
- * @brief 命令行解析器结构体
- * 管理命令行选项定义和解析过程
+ * @brief 单破折号单词选项模式枚举（对标 QCommandLineParser::SingleDashWordOptionMode）
+ */
+typedef enum {
+    XCOMMANDLINE_PARSER_PARSE_AS_COMPACTED_SHORT_OPTIONS = 0,  ///< 将单破折号单词解析为多个短选项（如 -abc = -a -b -c）
+    XCOMMANDLINE_PARSER_PARSE_AS_LONG_OPTIONS = 1              ///< 将单破折号单词解析为长选项（如 -abc 作为选项名）
+} XCommandLineParserSingleDashWordOptionMode;
+
+/**
+ * @brief 位置参数后的选项处理模式枚举（对标 QCommandLineParser::OptionsAfterPositionalArgumentsMode）
+ */
+typedef enum {
+    XCOMMANDLINE_PARSER_PARSE_AS_OPTIONS = 0,              ///< 位置参数后的参数仍解析为选项
+    XCOMMANDLINE_PARSER_PARSE_AS_POSITIONAL_ARGUMENTS = 1  ///< 位置参数后的参数解析为位置参数
+} XCommandLineParserOptionsAfterPositionalArgumentsMode;
+
+/**
+ * @brief 位置参数定义结构体
  */
 typedef struct {
-    XVector* options;               // 所有选项列表（XCommandLineOption类型）
-    XVector* groups;                // 选项组列表（XCommandLineOptionGroup*类型）
-    XCommandLineParseResult* result; // 解析结果
-    const char* programName;        // 程序名称（来自argv[0]）
-    const char* applicationDescription; // 应用程序描述
+    XString* name;         ///< 参数名称
+    XString* description;  ///< 参数描述
+    XString* syntax;       ///< 参数语法（如 "[file]"）
+} XPositionalArgumentDefinition;
+
+/**
+ * @brief 命令行解析器结构体（对标 QCommandLineParser）
+ */
+typedef struct XCommandLineParser {
+    XString* m_errorText;                                        ///< 解析错误文本
+    XVector* m_commandLineOptionList;                            ///< 已注册的选项列表
+    XHashMap* m_nameHash;                                        ///< 选项名称到索引的哈希表
+    XHashMap* m_optionValuesHash;                                ///< 选项索引到值的哈希表
+    XStringList* m_optionNames;                                  ///< 解析到的选项名称列表
+    XStringList* m_positionalArgumentList;                       ///< 位置参数列表
+    XStringList* m_unknownOptionNames;                           ///< 未知选项名称列表
+    XString* m_description;                                      ///< 应用程序描述
+    XVector* m_positionalArgumentDefinitions;                    ///< 位置参数定义列表
+    XCommandLineParserSingleDashWordOptionMode m_singleDashWordOptionMode;          ///< 单破折号单词选项模式
+    XCommandLineParserOptionsAfterPositionalArgumentsMode m_optionsAfterPositionalArgumentsMode;  ///< 位置参数后选项处理模式
+    bool m_builtinVersionOption;                                 ///< 是否已添加内置版本选项
+    bool m_builtinHelpOption;                                    ///< 是否已添加内置帮助选项
+    bool m_needsParsing;                                         ///< 是否需要重新解析
 } XCommandLineParser;
 
-/**
- * @brief 创建命令行解析器
- * @return 新创建的解析器实例，内存分配失败返回NULL
- */
-XCommandLineParser* XCommandLineParser_create();
+/* ==================== 构造/析构 ==================== */
 
 /**
- * @brief 销毁命令行解析器
- * @param parser 要销毁的解析器实例，传NULL无操作
+ * @brief 创建命令行解析器（对标 QCommandLineParser 构造函数）
+ * @return 新创建的解析器指针，内存分配失败返回 NULL
+ */
+XCommandLineParser* XCommandLineParser_create(void);
+
+/**
+ * @brief 销毁命令行解析器（对标 QCommandLineParser 析构函数）
+ * @param parser 要销毁的解析器指针，传 NULL 无操作
  */
 void XCommandLineParser_delete(XCommandLineParser* parser);
 
-/**
- * @brief 向解析器添加选项
- * @param parser 解析器实例
- * @param shortName 短选项名（如"h"），NULL表示无短选项
- * @param longName 长选项名（如"help"），NULL表示无长选项
- * @param description 选项描述
- * @param requiresValue 该选项是否需要参数值
- * @param isHidden 是否在帮助信息中隐藏该选项
- * @param defaultValue 选项的默认值
- * @note 至少需要提供短选项名或长选项名中的一个
- */
-void XCommandLineParser_addOption(XCommandLineParser* parser,
-    const char* shortName,
-    const char* longName,
-    const char* description,
-    bool requiresValue,
-    bool isHidden,
-    const char* defaultValue);
+/* ==================== 模式设置 ==================== */
 
 /**
- * @brief 向解析器添加选项组
- * @param parser 解析器实例
- * @param group 要添加的选项组
+ * @brief 设置单破折号单词选项模式（对标 QCommandLineParser::setSingleDashWordOptionMode）
+ * @param parser 解析器指针
+ * @param mode 模式枚举值
  */
-void XCommandLineParser_addOptionGroup(XCommandLineParser* parser,
-    XCommandLineOptionGroup* group);
+void XCommandLineParser_setSingleDashWordOptionMode(XCommandLineParser* parser,
+    XCommandLineParserSingleDashWordOptionMode mode);
 
 /**
- * @brief 解析命令行参数
- * @param parser 解析器实例
- * @param argc 参数数量（来自main函数）
- * @param argv 参数数组（来自main函数）
- * @return 解析成功返回true，否则返回false
+ * @brief 设置位置参数后的选项处理模式（对标 QCommandLineParser::setOptionsAfterPositionalArgumentsMode）
+ * @param parser 解析器指针
+ * @param mode 模式枚举值
  */
-bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv);
+void XCommandLineParser_setOptionsAfterPositionalArgumentsMode(XCommandLineParser* parser,
+    XCommandLineParserOptionsAfterPositionalArgumentsMode mode);
+
+/* ==================== 选项定义 ==================== */
 
 /**
- * @brief 检查是否存在指定选项
- * @param parser 解析器实例
- * @param option 选项名（短选项或长选项）
- * @return 存在返回true，否则返回false
+ * @brief 添加命令行选项（对标 QCommandLineParser::addOption）
+ * @param parser 解析器指针
+ * @param option 要添加的选项指针
+ * @return true 添加成功，false 失败（如名称重复）
  */
-bool XCommandLineParser_hasOption(XCommandLineParser* parser, const char* option);
+bool XCommandLineParser_addOption(XCommandLineParser* parser, const XCommandLineOption* option);
 
 /**
- * @brief 获取选项的值
- * @param parser 解析器实例
- * @param option 选项名（短选项或长选项）
- * @return 选项的值，未找到时返回默认值，无默认值返回NULL
+ * @brief 批量添加命令行选项（对标 QCommandLineParser::addOptions）
+ * @param parser 解析器指针
+ * @param options 选项指针数组
+ * @param count 选项数量
+ * @return true 全部添加成功，false 有失败
  */
-const char* XCommandLineParser_getOptionValue(XCommandLineParser* parser, const char* option);
+bool XCommandLineParser_addOptions(XCommandLineParser* parser, const XCommandLineOption** options, size_t count);
 
 /**
- * @brief 获取位置参数列表
- * @param parser 解析器实例
- * @return 位置参数向量（char*类型），解析器为NULL时返回NULL
+ * @brief 添加内置版本选项（对标 QCommandLineParser::addVersionOption）
+ * @param parser 解析器指针
+ * @return 创建的版本选项指针
  */
-XVector* XCommandLineParser_positionalArguments(XCommandLineParser* parser);
+XCommandLineOption* XCommandLineParser_addVersionOption(XCommandLineParser* parser);
 
 /**
- * @brief 获取未识别的选项列表
- * @param parser 解析器实例
- * @return 未识别选项向量（char*类型），解析器为NULL时返回NULL
+ * @brief 添加内置帮助选项（对标 QCommandLineParser::addHelpOption）
+ * @param parser 解析器指针
+ * @return 创建的帮助选项指针
  */
-XVector* XCommandLineParser_unrecognizedOptions(XCommandLineParser* parser);
+XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser);
 
 /**
- * @brief 获取选项出现的次数
- * @param parser 解析器实例
- * @param option 选项名
- * @return 选项出现的次数，未出现返回0
+ * @brief 设置应用程序描述（对标 QCommandLineParser::setApplicationDescription）
+ * @param parser 解析器指针
+ * @param description 描述字符串
  */
-int XCommandLineParser_optionCount(XCommandLineParser* parser, const char* option);
+void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const char* description);
 
 /**
- * @brief 获取互斥组冲突的选项列表
- * @param parser 解析器实例
- * @return 冲突选项向量，无冲突或解析器为NULL时返回NULL
+ * @brief 获取应用程序描述（对标 QCommandLineParser::applicationDescription）
+ * @param parser 解析器指针
+ * @return 描述字符串
  */
-XVector* XCommandLineParser_exclusiveGroupConflicts(XCommandLineParser* parser);
+const char* XCommandLineParser_applicationDescription(const XCommandLineParser* parser);
 
 /**
- * @brief 设置应用程序描述
- * @param parser 解析器实例
- * @param description 描述文本，NULL表示清空描述
+ * @brief 添加位置参数定义（对标 QCommandLineParser::addPositionalArgument）
+ * @param parser 解析器指针
+ * @param name 参数名称
+ * @param description 参数描述
+ * @param syntax 参数语法（如 "[file]"），可为 NULL
  */
-void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser,
-    const char* description);
+void XCommandLineParser_addPositionalArgument(XCommandLineParser* parser, const char* name,
+    const char* description, const char* syntax);
 
 /**
- * @brief 生成帮助信息文本
- * @param parser 解析器实例
- * @param description 应用程序描述，若已通过set方法设置则可传NULL
- * @return 包含帮助信息的XString实例，需调用者释放
+ * @brief 清除所有位置参数定义（对标 QCommandLineParser::clearPositionalArguments）
+ * @param parser 解析器指针
  */
-XString* XCommandLineParser_helpText(XCommandLineParser* parser, const char* description);
+void XCommandLineParser_clearPositionalArguments(XCommandLineParser* parser);
+
+/* 前向声明 */
+typedef struct XCoreApplication XCoreApplication;
+
+/* ==================== 解析 ==================== */
 
 /**
- * @brief 生成版本信息文本
- * @param parser 解析器实例
- * @param version 版本字符串
- * @return 包含版本信息的XString实例，需调用者释放
+ * @brief 解析命令行参数并处理内置选项（对标 QCommandLineParser::process）
+ * @param parser 解析器指针
+ * @param args 参数字符串列表
  */
-XString* XCommandLineParser_versionText(XCommandLineParser* parser, const char* version);
+void XCommandLineParser_process(XCommandLineParser* parser, const XStringList* args);
+
+/**
+ * @brief 从 XCoreApplication 获取参数并解析（对标 QCommandLineParser::process(const QCoreApplication &)）
+ * @param parser 解析器指针
+ * @param app XCoreApplication 实例指针
+ */
+void XCommandLineParser_processApplication(XCommandLineParser* parser, const XCoreApplication* app);
+
+/**
+ * @brief 解析命令行参数（对标 QCommandLineParser::parse）
+ * @param parser 解析器指针
+ * @param args 参数字符串列表
+ * @return true 解析成功，false 解析失败
+ */
+bool XCommandLineParser_parse(XCommandLineParser* parser, const XStringList* args);
+
+/**
+ * @brief 获取解析错误文本（对标 QCommandLineParser::errorText）
+ * @param parser 解析器指针
+ * @return 错误文本字符串
+ */
+const char* XCommandLineParser_errorText(const XCommandLineParser* parser);
+
+/* ==================== 查询 ==================== */
+
+/**
+ * @brief 检查选项是否已设置（按名称）（对标 QCommandLineParser::isSet）
+ * @param parser 解析器指针
+ * @param name 选项名称
+ * @return true 已设置，false 未设置
+ */
+bool XCommandLineParser_isSet(XCommandLineParser* parser, const char* name);
+
+/**
+ * @brief 检查选项是否已设置（按选项对象）（对标 QCommandLineParser::isSet）
+ * @param parser 解析器指针
+ * @param option 选项指针
+ * @return true 已设置，false 未设置
+ */
+bool XCommandLineParser_isSetOption(XCommandLineParser* parser, const XCommandLineOption* option);
+
+/**
+ * @brief 获取选项值（按名称）（对标 QCommandLineParser::value）
+ * @param parser 解析器指针
+ * @param name 选项名称
+ * @return 选项值字符串，未设置返回 NULL
+ */
+const char* XCommandLineParser_value(XCommandLineParser* parser, const char* name);
+
+/**
+ * @brief 获取选项值（按选项对象）（对标 QCommandLineParser::value）
+ * @param parser 解析器指针
+ * @param option 选项指针
+ * @return 选项值字符串，未设置返回 NULL
+ */
+const char* XCommandLineParser_valueOption(XCommandLineParser* parser, const XCommandLineOption* option);
+
+/**
+ * @brief 获取选项值列表（按名称）（对标 QCommandLineParser::values）
+ * @param parser 解析器指针
+ * @param name 选项名称
+ * @return 选项值字符串列表指针
+ */
+const XStringList* XCommandLineParser_values(XCommandLineParser* parser, const char* name);
+
+/**
+ * @brief 获取选项值列表（按选项对象）（对标 QCommandLineParser::values）
+ * @param parser 解析器指针
+ * @param option 选项指针
+ * @return 选项值字符串列表指针
+ */
+const XStringList* XCommandLineParser_valuesOption(XCommandLineParser* parser, const XCommandLineOption* option);
+
+/**
+ * @brief 获取位置参数列表（对标 QCommandLineParser::positionalArguments）
+ * @param parser 解析器指针
+ * @return 位置参数字符串列表指针
+ */
+const XStringList* XCommandLineParser_positionalArguments(const XCommandLineParser* parser);
+
+/**
+ * @brief 获取已解析的选项名称列表（对标 QCommandLineParser::optionNames）
+ * @param parser 解析器指针
+ * @return 选项名称字符串列表指针
+ */
+const XStringList* XCommandLineParser_optionNames(const XCommandLineParser* parser);
+
+/**
+ * @brief 获取未知选项名称列表（对标 QCommandLineParser::unknownOptionNames）
+ * @param parser 解析器指针
+ * @return 未知选项名称字符串列表指针
+ */
+const XStringList* XCommandLineParser_unknownOptionNames(const XCommandLineParser* parser);
+
+/* ==================== 显示 ==================== */
+
+/**
+ * @brief 显示版本信息并退出（对标 QCommandLineParser::showVersion）
+ * @param parser 解析器指针
+ */
+void XCommandLineParser_showVersion(XCommandLineParser* parser);
+
+/**
+ * @brief 显示帮助信息并退出（对标 QCommandLineParser::showHelp）
+ * @param parser 解析器指针
+ * @param exitCode 退出码
+ */
+void XCommandLineParser_showHelp(XCommandLineParser* parser, int exitCode);
+
+/**
+ * @brief 生成帮助文本（对标 QCommandLineParser::helpText）
+ * @param parser 解析器指针
+ * @return 帮助文本字符串，调用者负责释放
+ */
+XString* XCommandLineParser_helpText(const XCommandLineParser* parser);
+
 
 #ifdef __cplusplus
 }

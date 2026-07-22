@@ -1,7 +1,7 @@
 ﻿#include"XCompare.h"
 #include<string.h>
 #include"XString.h"
-#include"XPoint.h"
+#include"XGui/XGuiTypes.h"
 int32_t bool_compare(const _Bool* lhs, const _Bool* rhs) {
     if ((*lhs)<(*rhs))return -1; else if ((*lhs)>(*rhs))return 1; return 0;
 };

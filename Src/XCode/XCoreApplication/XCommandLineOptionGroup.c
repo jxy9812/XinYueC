@@ -1,22 +1,22 @@
-﻿#include "XCommandLineOptionGroup.h"
-//#include "XCommandLineParser.h"
+#include "XCommandLineOptionGroup.h"
 #include "XMemory.h"
+#include "XString.h"
 
-XCommandLineOptionGroup* XCommandLineOptionGroup_create(const char* name,
-    const char* description,
-    bool isExclusive) {
-    // 检查内存分配
+XCommandLineOptionGroup* XCommandLineOptionGroup_create(const XString* name,
+    const XString* description,
+    bool isExclusive)
+{
     XCommandLineOptionGroup* group = XMalloc_System(sizeof(XCommandLineOptionGroup));
     if (!group) return NULL;
 
-    // 初始化成员变量
-    group->name = name;
-    group->description = description;
+    group->name = name ? XString_create_copy(name) : NULL;
+    group->description = description ? XString_create_copy(description) : NULL;
     group->isExclusive = isExclusive;
     group->options = XVector_create(sizeof(XCommandLineOption*));
 
-    // 检查向量创建是否成功
     if (!group->options) {
+        XString_delete_base(group->name);
+        XString_delete_base(group->description);
         XFree_System(group);
         return NULL;
     }
@@ -24,16 +24,30 @@ XCommandLineOptionGroup* XCommandLineOptionGroup_create(const char* name,
     return group;
 }
 
-void XCommandLineOptionGroup_delete(XCommandLineOptionGroup* group) {
+void XCommandLineOptionGroup_delete(XCommandLineOptionGroup* group)
+{
     if (!group) return;
-
-    // 释放向量资源（不释放选项本身，因为选项由解析器管理）
+    XString_delete_base(group->name);
+    XString_delete_base(group->description);
     XVector_delete_base(group->options);
     XFree_System(group);
 }
 
 void XCommandLineOptionGroup_addOption(XCommandLineOptionGroup* group,
-    const XCommandLineOption* option) {
+    const XCommandLineOption* option)
+{
     if (!group || !option) return;
     XVector_push_back_1_base(group->options, &option);
+}
+
+size_t XCommandLineOptionGroup_optionCount(const XCommandLineOptionGroup* group)
+{
+    return group ? XVector_size_base(group->options) : 0;
+}
+
+const XCommandLineOption* XCommandLineOptionGroup_optionAt(const XCommandLineOptionGroup* group, size_t index)
+{
+    if (!group || index >= XVector_size_base(group->options)) return NULL;
+    XCommandLineOption** opt = (XCommandLineOption**)XVector_at_base(group->options, index);
+    return opt ? *opt : NULL;
 }

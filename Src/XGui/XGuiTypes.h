@@ -1,8 +1,8 @@
-/******************************************************************************
+ï»¿/******************************************************************************
  * @file       XGuiTypes.h
- * @brief      XGui »ù´¡¼¸ºÎÀàĞÍ¶¨Òå£¨¶Ô±ê Qt 6.8 QPoint/QSize/QRect/QRegion£©
- * @author     XinYueC ÍÅ¶Ó
- * @note       Ìá¹© GUI Ä£¿é³£ÓÃµÄµã¡¢³ß´ç¡¢¾ØĞÎ¡¢ÇøÓòµÈ»ù´¡¼¸ºÎÀàĞÍ
+ * @brief      XGui åŸºç¡€å‡ ä½•ç±»å‹å®šä¹‰ï¼ˆå¯¹æ ‡ Qt 6.8 QPoint/QSize/QRect/QRegionï¼‰
+ * @author     XinYueC å›¢é˜Ÿ
+ * @note       æä¾› GUI æ¨¡å—å¸¸ç”¨çš„ç‚¹ã€å°ºå¯¸ã€çŸ©å½¢ã€åŒºåŸŸç­‰åŸºç¡€å‡ ä½•ç±»å‹
  ******************************************************************************/
 #ifndef XGUITYPES_H
 #define XGUITYPES_H
@@ -12,125 +12,153 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XData/XGeometry/XPoint.h"
 
-/* ========== »ù´¡¼¸ºÎÀàĞÍ ========== */
+/* ========== ç‚¹åæ ‡ç±»å‹ï¼ˆå¯¹æ ‡ Qt 6.8 QPointï¼‰ ========== */
 
 /**
- * @brief      ¶şÎ¬ÕûÊı³ß´ç£¨¶Ô±ê Qt 6.8 QSize£©
- * @note       Ê¹ÓÃÕûÊı±íÊ¾µÄ¿í¶ÈºÍ¸ß¶È
+ * @brief      äºŒç»´ç‚¹åæ ‡ï¼ˆå¯¹æ ‡ Qt 6.8 QPointï¼‰
+ * @note       ä½¿ç”¨æ•´æ•°è¡¨ç¤º x/y åæ ‡
+ */
+typedef struct XPoint
+{
+    int x;      /**< X åæ ‡ */
+    int y;      /**< Y åæ ‡ */
+} XPoint;
+
+/**
+ * @brief      æ¯”è¾ƒä¸¤ä¸ª XPoint
+ * @param lhs  å·¦æ“ä½œæ•°
+ * @param rhs  å³æ“ä½œæ•°
+ * @return     XCompare_Equality / XCompare_Less / XCompare_Greater
+ */
+int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs);
+
+/**
+ * @brief      åˆå§‹åŒ– XPoint å¯¹è±¡
+ * @param self ç›®æ ‡ XPoint å¯¹è±¡æŒ‡é’ˆ
+ * @param x    X åæ ‡
+ * @param y    Y åæ ‡
+ */
+void XPoint_init(XPoint* self, int x, int y);
+
+
+/* ========== åŸºç¡€å‡ ä½•ç±»å‹ ========== */
+
+/**
+ * @brief      äºŒç»´æ•´æ•°å°ºå¯¸ï¼ˆå¯¹æ ‡ Qt 6.8 QSizeï¼‰
+ * @note       ä½¿ç”¨æ•´æ•°è¡¨ç¤ºçš„å®½åº¦å’Œé«˜åº¦
  */
 typedef struct XSize
 {
-    int width;   /**< ¿í¶È */
-    int height;  /**< ¸ß¶È */
+    int width;   /**< å®½åº¦ */
+    int height;  /**< é«˜åº¦ */
 }XSize;
 
 /**
- * @brief      ¶şÎ¬¸¡µã³ß´ç£¨¶Ô±ê Qt 6.8 QSizeF£©
- * @note       Ê¹ÓÃ¸¡µãÊı±íÊ¾µÄ¿í¶ÈºÍ¸ß¶È
+ * @brief      äºŒç»´æµ®ç‚¹å°ºå¯¸ï¼ˆå¯¹æ ‡ Qt 6.8 QSizeFï¼‰
+ * @note       ä½¿ç”¨æµ®ç‚¹æ•°è¡¨ç¤ºçš„å®½åº¦å’Œé«˜åº¦
  */
 typedef struct XSizeF
 {
-    float width;   /**< ¿í¶È */
-    float height;  /**< ¸ß¶È */
+    float width;   /**< å®½åº¦ */
+    float height;  /**< é«˜åº¦ */
 }XSizeF;
 
 /**
- * @brief      ¶şÎ¬ÕûÊı¾ØĞÎ£¨¶Ô±ê Qt 6.8 QRect£©
- * @note       Ê¹ÓÃÕûÊı×ø±ê±íÊ¾µÄ¾ØĞÎÇøÓò£¬°üº¬×óÉÏ½Ç×ø±êºÍ¿í¸ß
+ * @brief      äºŒç»´æ•´æ•°çŸ©å½¢ï¼ˆå¯¹æ ‡ Qt 6.8 QRectï¼‰
+ * @note       ä½¿ç”¨æ•´æ•°åæ ‡è¡¨ç¤ºçš„çŸ©å½¢åŒºåŸŸï¼ŒåŒ…å«å·¦ä¸Šè§’åæ ‡å’Œå®½é«˜
  */
 typedef struct XRect
 {
-    int x;      /**< ×óÉÏ½Ç X ×ø±ê */
-    int y;      /**< ×óÉÏ½Ç Y ×ø±ê */
-    int width;  /**< ¿í¶È */
-    int height; /**< ¸ß¶È */
+    int x;      /**< å·¦ä¸Šè§’ X åæ ‡ */
+    int y;      /**< å·¦ä¸Šè§’ Y åæ ‡ */
+    int width;  /**< å®½åº¦ */
+    int height; /**< é«˜åº¦ */
 }XRect;
 
 /**
- * @brief      ¶şÎ¬¸¡µã¾ØĞÎ£¨¶Ô±ê Qt 6.8 QRectF£©
- * @note       Ê¹ÓÃ¸¡µãÊı×ø±ê±íÊ¾µÄ¾ØĞÎÇøÓò
+ * @brief      äºŒç»´æµ®ç‚¹çŸ©å½¢ï¼ˆå¯¹æ ‡ Qt 6.8 QRectFï¼‰
+ * @note       ä½¿ç”¨æµ®ç‚¹æ•°åæ ‡è¡¨ç¤ºçš„çŸ©å½¢åŒºåŸŸ
  */
 typedef struct XRectF
 {
-    float x;      /**< ×óÉÏ½Ç X ×ø±ê */
-    float y;      /**< ×óÉÏ½Ç Y ×ø±ê */
-    float width;  /**< ¿í¶È */
-    float height; /**< ¸ß¶È */
+    float x;      /**< å·¦ä¸Šè§’ X åæ ‡ */
+    float y;      /**< å·¦ä¸Šè§’ Y åæ ‡ */
+    float width;  /**< å®½åº¦ */
+    float height; /**< é«˜åº¦ */
 }XRectF;
 
 /**
- * @brief      ÇøÓòÀàĞÍ£¨¶Ô±ê Qt 6.8 QRegion£©
- * @note       ±íÊ¾Ò»¸ö¸´ÔÓÇøÓò£¬ÓÉ¾ØĞÎÁĞ±í×é³É
+ * @brief      åŒºåŸŸç±»å‹ï¼ˆå¯¹æ ‡ Qt 6.8 QRegionï¼‰
+ * @note       è¡¨ç¤ºä¸€ä¸ªå¤æ‚åŒºåŸŸï¼Œç”±çŸ©å½¢åˆ—è¡¨ç»„æˆ
  */
 typedef struct XRegion
 {
-    XRect* rects;     /**< ¾ØĞÎÊı×é */
-    int    count;     /**< ¾ØĞÎÊıÁ¿ */
-    int    capacity;  /**< ¾ØĞÎÊı×éÈİÁ¿ */
+    XRect* rects;     /**< çŸ©å½¢æ•°ç»„ */
+    int    count;     /**< çŸ©å½¢æ•°é‡ */
+    int    capacity;  /**< çŸ©å½¢æ•°ç»„å®¹é‡ */
 }XRegion;
 
-/* ========== ¸¨Öúº¯Êı ========== */
+/* ========== è¾…åŠ©å‡½æ•° ========== */
 
 /**
- * @brief      ³õÊ¼»¯ XSize ¶ÔÏó
- * @param self   Ä¿±ê XSize ¶ÔÏóÖ¸Õë
- * @param w  ¿í¶È
- * @param h ¸ß¶È
+ * @brief      åˆå§‹åŒ– XSize å¯¹è±¡
+ * @param self   ç›®æ ‡ XSize å¯¹è±¡æŒ‡é’ˆ
+ * @param w  å®½åº¦
+ * @param h é«˜åº¦
  */
 void XSize_init(XSize* self, int w, int h);
 
 /**
- * @brief      ³õÊ¼»¯ XRect ¶ÔÏó
- * @param self   Ä¿±ê XRect ¶ÔÏóÖ¸Õë
- * @param x      X ×ø±ê
- * @param y      Y ×ø±ê
- * @param w  ¿í¶È
- * @param h ¸ß¶È
+ * @brief      åˆå§‹åŒ– XRect å¯¹è±¡
+ * @param self   ç›®æ ‡ XRect å¯¹è±¡æŒ‡é’ˆ
+ * @param x      X åæ ‡
+ * @param y      Y åæ ‡
+ * @param w  å®½åº¦
+ * @param h é«˜åº¦
  */
 void XRect_init(XRect* self, int x, int y, int w, int h);
 
 /**
- * @brief      ÅĞ¶Ï¾ØĞÎÊÇ·ñÎª¿Õ£¨¿í¶È»ò¸ß¶È <= 0£©
- * @param self Ä¿±ê XRect ¶ÔÏóÖ¸Õë
- * @return Îª¿Õ·µ»Ø true
+ * @brief      åˆ¤æ–­çŸ©å½¢æ˜¯å¦ä¸ºç©ºï¼ˆå®½åº¦æˆ–é«˜åº¦ <= 0ï¼‰
+ * @param self ç›®æ ‡ XRect å¯¹è±¡æŒ‡é’ˆ
+ * @return ä¸ºç©ºè¿”å› true
  */
 bool XRect_isEmpty(const XRect* self);
 
 /**
- * @brief      ÅĞ¶Ï¾ØĞÎÊÇ·ñ°üº¬Ö¸¶¨µã
- * @param self Ä¿±ê XRect ¶ÔÏóÖ¸Õë
- * @param x    µãµÄ X ×ø±ê
- * @param y    µãµÄ Y ×ø±ê
- * @return °üº¬·µ»Ø true
+ * @brief      åˆ¤æ–­çŸ©å½¢æ˜¯å¦åŒ…å«æŒ‡å®šç‚¹
+ * @param self ç›®æ ‡ XRect å¯¹è±¡æŒ‡é’ˆ
+ * @param x    ç‚¹çš„ X åæ ‡
+ * @param y    ç‚¹çš„ Y åæ ‡
+ * @return åŒ…å«è¿”å› true
  */
 bool XRect_contains(const XRect* self, int x, int y);
 
 /**
- * @brief      ³õÊ¼»¯ XSizeF ¶ÔÏó
- * @param self   Ä¿±ê XSizeF ¶ÔÏóÖ¸Õë
- * @param w  ¿í¶È
- * @param h ¸ß¶È
+ * @brief      åˆå§‹åŒ– XSizeF å¯¹è±¡
+ * @param self   ç›®æ ‡ XSizeF å¯¹è±¡æŒ‡é’ˆ
+ * @param w  å®½åº¦
+ * @param h é«˜åº¦
  */
 void XSizeF_init(XSizeF* self, float w, float h);
 
 /**
- * @brief      ³õÊ¼»¯ XRegion ¶ÔÏó
- * @param self Ä¿±ê XRegion ¶ÔÏóÖ¸Õë
+ * @brief      åˆå§‹åŒ– XRegion å¯¹è±¡
+ * @param self ç›®æ ‡ XRegion å¯¹è±¡æŒ‡é’ˆ
  */
 void XRegion_init(XRegion* self);
 
 /**
- * @brief      ÊÍ·Å XRegion ×ÊÔ´
- * @param self Ä¿±ê XRegion ¶ÔÏóÖ¸Õë
+ * @brief      é‡Šæ”¾ XRegion èµ„æº
+ * @param self ç›®æ ‡ XRegion å¯¹è±¡æŒ‡é’ˆ
  */
 void XRegion_deinit(XRegion* self);
 
 /**
- * @brief      ÏòÇøÓòÖĞÌí¼Ó¾ØĞÎ
- * @param self Ä¿±ê XRegion ¶ÔÏóÖ¸Õë
- * @param rect ´ıÌí¼ÓµÄ¾ØĞÎÖ¸Õë
+ * @brief      å‘åŒºåŸŸä¸­æ·»åŠ çŸ©å½¢
+ * @param self ç›®æ ‡ XRegion å¯¹è±¡æŒ‡é’ˆ
+ * @param rect å¾…æ·»åŠ çš„çŸ©å½¢æŒ‡é’ˆ
  */
 void XRegion_addRect(XRegion* self, const XRect* rect);
 

@@ -12,7 +12,7 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XAtomic.h"
 #include"XSocketDescriptor.h"
-#include"XPoint.h"
+#include"XGui/XGuiTypes.h"
 typedef struct XThreadData XThreadData;
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);

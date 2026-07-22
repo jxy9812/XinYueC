@@ -124,6 +124,8 @@ XVtable* XIcon_class_init()
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XIcon));
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXIcon_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXIcon_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIcon_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -163,15 +165,37 @@ void XIcon_init_file(XIcon* self, const char* fileName)
 }
 
 void XIcon_init_engine(XIcon* self, void* engine) { (void)engine; XIcon_init(self); }
-void XIcon_copy(XIcon* self, const XIcon* other) { XIcon_copy_base(self, other); }
-void XIcon_move(XIcon* self, XIcon* other) { XIcon_move_base(self, other); }
+void XIcon_copy(XIcon* self, const XIcon* other)
+{
+    if (ISNULL(self, "XIcon") || ISNULL(other, "XIcon")) return;
+    if (!XClassIsVtableNull(self))
+        XIcon_deinit_base(self);
+    XIcon_init(self);
+    XIcon_copy_base(self, other);
+}
+void XIcon_move(XIcon* self, XIcon* other)
+{
+    if (ISNULL(self, "XIcon") || ISNULL(other, "XIcon")) return;
+    if (!XClassIsVtableNull(self))
+        XIcon_deinit_base(self);
+    XIcon_init(self);
+    XIcon_move_base(self, other);
+}
 void XIcon_deinit(XIcon* self) { XIcon_deinit_base(self); }
-void XIcon_copy_base(XIcon* dest, const XIcon* src) { VXIcon_copy(dest, src); }
-void XIcon_move_base(XIcon* dest, XIcon* src) { VXIcon_move(dest, src); }
+void XIcon_copy_base(XIcon* dest, const XIcon* src)
+{
+    if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
+    VXIcon_copy(dest, src);
+}
+void XIcon_move_base(XIcon* dest, XIcon* src)
+{
+    if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
+    VXIcon_move(dest, src);
+}
 void XIcon_deinit_base(XIcon* self)
 {
-    if (ISNULL(self, "XIcon") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XIcon*))(self);
+    if (ISNULL(self, "XIcon")) return;
+    VXIcon_deinit(self);
 }
 
 

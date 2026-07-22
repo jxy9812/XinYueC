@@ -32,6 +32,7 @@ XVtable* XBitmap_class_init()
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XBitmap));
     XVTABLE_INHERIT_XCLASS(XPixmap);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBitmap_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBitmap_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -98,6 +99,10 @@ void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other)
 
 void XBitmap_copy(XBitmap* self, const XBitmap* other)
 {
+    if (ISNULL(self, "XBitmap") || ISNULL(other, "XBitmap")) return;
+    if (!XClassIsVtableNull(self))
+        XBitmap_deinit_base(self);
+    XBitmap_init(self);
     XBitmap_copy_base(self, other);
 }
 
@@ -108,13 +113,14 @@ void XBitmap_deinit(XBitmap* self)
 
 void XBitmap_copy_base(XBitmap* dest, const XBitmap* src)
 {
+    if (ISNULL(dest, "XBitmap") || ISNULL(src, "XBitmap")) return;
     VXBitmap_copy(dest, src);
 }
 
 void XBitmap_deinit_base(XBitmap* self)
 {
-    if (ISNULL(self, "XBitmap") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XBitmap*))(self);
+    if (ISNULL(self, "XBitmap")) return;
+    VXBitmap_deinit(self);
 }
 
 

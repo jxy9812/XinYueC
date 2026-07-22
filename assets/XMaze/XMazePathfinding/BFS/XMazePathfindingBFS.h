@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 #include"XMaze.h"
-#include"XPoint.h"
+#include"XGui/XGuiTypes.h"
 #include"XBinaryTree.h"
 //typedef struct BFSNode 
 //{

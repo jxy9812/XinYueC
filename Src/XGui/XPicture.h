@@ -13,7 +13,8 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XClass/XClass.h"
-#include "XGuiTypes.h"\n#include "XClass/XTypes.h"
+#include "XGuiTypes.h"
+#include "XClass/XTypes.h"
 
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -60,6 +61,13 @@ void XPicture_init(XPicture* self, int formatVersion);
 void XPicture_copy(XPicture* self, const XPicture* other);
 
 /**
+ * @brief      移动构造函数
+ * @param self 目标 XPicture 对象指针
+ * @param other 源 XPicture 对象指针（移动后源对象变为空）
+ */
+void XPicture_move(XPicture* self, XPicture* other);
+
+/**
  * @brief      释放 XPicture 资源
  * @param self 待释放的 XPicture 对象指针
  */
@@ -71,6 +79,13 @@ void XPicture_deinit(XPicture* self);
  * @param src  源对象指针
  */
 void XPicture_copy_base(XPicture* dest, const XPicture* src);
+
+/**
+ * @brief      虚函数调度：移动
+ * @param dest 目标对象指针
+ * @param src  源对象指针（移动后源对象变为空）
+ */
+void XPicture_move_base(XPicture* dest, XPicture* src);
 
 /**
  * @brief      虚函数调度：释放
