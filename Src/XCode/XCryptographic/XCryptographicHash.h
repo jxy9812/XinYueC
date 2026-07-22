@@ -40,13 +40,7 @@ typedef struct XByteArray XByteArray;
 typedef struct XString XString;
 typedef struct XIODevice XIODevice;
 
-/**
- * @brief 字节数组视图（类似Qt的QByteArrayView，不拥有数据）
- */
-typedef struct XByteArrayView {
-    const char* data;       ///< 数据指针
-    size_t size;            ///< 数据长度
-} XByteArrayView;
+#include "XByteArrayView.h"   ///< 使用项目中真正的XByteArrayView（非拥有型只读视图）
 
 // =============== 算法枚举（对齐Qt 6.8）==============
 

@@ -1352,10 +1352,10 @@ void XCryptographicHash_addData(XCryptographicHash* hash, const char* data, size
 
 void XCryptographicHash_addData_2(XCryptographicHash* hash, XByteArrayView bytes)
 {
-    if (!hash || !bytes.data || bytes.size == 0 || hash->finalized) return;
+    if (!hash || !bytes.m_data || bytes.m_size == 0 || hash->finalized) return;
     
-    XByteArray_push_back_2(hash->buffer, bytes.data, bytes.size);
-    hash->totalLen += bytes.size;
+    XByteArray_push_back_2(hash->buffer, bytes.m_data, bytes.m_size);
+    hash->totalLen += bytes.m_size;
 }
 
 void XCryptographicHash_addData_3(XCryptographicHash* hash, const XByteArray* data)
@@ -1611,7 +1611,7 @@ XByteArrayView XCryptographicHash_resultView(XCryptographicHash* hash)
     computeHash(hash, (uint8_t*)data);
     hash->finalized = true;
     
-    XByteArrayView view = { data, (size_t)hashLen };
+    XByteArrayView view = { (const uint8_t*)data, (int64_t)hashLen };
     return view;
 }
 
@@ -1643,7 +1643,7 @@ XByteArray* XCryptographicHash_hash(const char* data, size_t len, XCryptographic
 
 XByteArray* XCryptographicHash_hash_2(XByteArrayView data, XCryptographicHash_Algorithm method)
 {
-    return XCryptographicHash_hash(data.data, data.size, method);
+    return XCryptographicHash_hash(data.m_data, data.m_size, method);
 }
 
 XByteArray* XCryptographicHash_hash_3(const XByteArray* data, XCryptographicHash_Algorithm method)
@@ -1677,7 +1677,7 @@ XByteArrayView XCryptographicHash_hashInto(
     
     XCryptographicHash_delete_base(ctx);
     
-    XByteArrayView result = { buffer, (size_t)hashLen };
+    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
     return result;
 }
 
@@ -1705,7 +1705,7 @@ XByteArrayView XCryptographicHash_hashInto_1(
     
     XCryptographicHash_delete_base(ctx);
     
-    XByteArrayView result = { buffer, (size_t)hashLen };
+    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
     return result;
 }
 
@@ -1908,7 +1908,7 @@ XByteArrayView XCryptographicHash_hmacInto(
     XFree_System(opad);
     XFree_System(kkey);
     
-    XByteArrayView result = { buffer, (size_t)hashLen };
+    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
     return result;
 }
 
@@ -1927,7 +1927,7 @@ XByteArray* XCryptographicHash_hmac(
     
     XByteArrayView view = XCryptographicHash_hmacInto(data, hashLen, key, keyLen, message, msgLen, method);
     
-    if (!view.data) {
+    if (!view.m_data) {
         XByteArray_delete_base(result);
         return NULL;
     }
@@ -1941,7 +1941,7 @@ XByteArray* XCryptographicHash_hmac_2(
     XCryptographicHash_Algorithm method
 )
 {
-    return XCryptographicHash_hmac(key.data, key.size, message.data, message.size, method);
+    return XCryptographicHash_hmac(key.m_data, key.m_size, message.m_data, message.m_size, method);
 }
 
 XByteArray* XCryptographicHash_hmac_3(

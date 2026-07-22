@@ -288,8 +288,8 @@ static void test_hash_into(void)
     char buffer[64];
     XByteArrayView view = XCryptographicHash_hashInto(buffer, sizeof(buffer), "test", 4, XCryptographicHash_Sha256);
     
-    if (view.data) {
-        print_hash_hex("hashInto SHA256(\"test\")", (const uint8_t*)view.data, (int)view.size);
+    if (view.m_data) {
+        print_hash_hex("hashInto SHA256(\"test\")", (const uint8_t*)view.m_data, (int)view.m_size);
         XPrintf("Expected: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n");
     }
 }
