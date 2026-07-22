@@ -254,10 +254,8 @@ XCommandLineOption* XCommandLineParser_addVersionOption(XCommandLineParser* pars
     // 创建 -v/--version 选项
     XStringList* names = XStringList_create();
     if (!names) return NULL;
-    XString* v = XString_create_utf8("v");
-    XString* version = XString_create_utf8("version");
-    if (v) XStringList_push_back_utf8(names, v);
-    if (version) XStringList_push_back_utf8(names, version);
+    XStringList_push_back_utf8(names, "v");
+    XStringList_push_back_utf8(names, "version");
 
     XCommandLineOption* opt = XCommandLineOption_createFullWithNames(names,
         "显示版本信息。", NULL, NULL);
@@ -281,10 +279,8 @@ XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser)
     // 创建 -h/--help 选项
     XStringList* names = XStringList_create();
     if (!names) return NULL;
-    XString* h = XString_create_utf8("h");
-    XString* help = XString_create_utf8("help");
-    if (h) XStringList_push_back_utf8(names, h);
-    if (help) XStringList_push_back_utf8(names, help);
+    XStringList_push_back_utf8(names, "h");
+    XStringList_push_back_utf8(names, "help");
 
     XCommandLineOption* opt = XCommandLineOption_createFullWithNames(names,
         "显示命令行选项的帮助信息。", NULL, NULL);
