@@ -1,50 +1,50 @@
-/******************************************************************************
+ï»¿/******************************************************************************
  * @file       XPixmapCache.c
- * @brief      XPixmapCache È«¾ÖÏñËØÍ¼»º´æÀàÊµÏÖ£¨¶Ô±ê Qt 6.8 QPixmapCache£©
- * @author     XinYueC ÍÅ¶Ó
+ * @brief      XPixmapCache å…¨å±€åƒç´ å›¾ç¼“å­˜ç±»å®ç°ï¼ˆå¯¹æ ‡ Qt 6.8 QPixmapCacheï¼‰
+ * @author     XinYueC å›¢é˜Ÿ
  ******************************************************************************/
 #include "XPixmapCache.h"
-#include "XMemory/XMemory.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
 
-/* ========== »º´æÊı¾İ½á¹¹ ========== */
+/* ========== ç¼“å­˜æ•°æ®ç»“æ„ ========== */
 
 /**
- * @brief      »º´æÌõÄ¿
+ * @brief      ç¼“å­˜æ¡ç›®
  */
 typedef struct XCacheEntry
 {
-    char*            m_key;       /**< ×Ö·û´®¼ü£¨¿ÉÎª NULL£© */
-    XPixmapCacheKey* m_keyObj;    /**< Key ¶ÔÏóÖ¸Õë£¨¿ÉÎª NULL£© */
-    XPixmap          m_pixmap;    /**< »º´æµÄÏñËØÍ¼ */
-    struct XCacheEntry* m_next;   /**< Á´±íÏÂÒ»Ïî */
-    int              m_size;      /**< »º´æÏî´óĞ¡¹À¼Æ */
-    bool             m_hasStringKey; /**< ÊÇ·ñÓĞ×Ö·û´®¼ü */
+    char*            m_key;       /**< å­—ç¬¦ä¸²é”®ï¼ˆå¯ä¸º NULLï¼‰ */
+    XPixmapCacheKey* m_keyObj;    /**< Key å¯¹è±¡æŒ‡é’ˆï¼ˆå¯ä¸º NULLï¼‰ */
+    XPixmap          m_pixmap;    /**< ç¼“å­˜çš„åƒç´ å›¾ */
+    struct XCacheEntry* m_next;   /**< é“¾è¡¨ä¸‹ä¸€é¡¹ */
+    int              m_size;      /**< ç¼“å­˜é¡¹å¤§å°ä¼°è®¡ */
+    bool             m_hasStringKey; /**< æ˜¯å¦æœ‰å­—ç¬¦ä¸²é”® */
 }XCacheEntry;
 
 /**
- * @brief      È«¾Ö»º´æ×´Ì¬
+ * @brief      å…¨å±€ç¼“å­˜çŠ¶æ€
  */
 static struct
 {
-    XCacheEntry* m_head;      /**< Á´±íÍ· */
-    int          m_cacheSize; /**< µ±Ç°»º´æ×Ü´óĞ¡£¨¹À¼ÆÖµ£¬KB£© */
-    int          m_cacheLimit;/**< »º´æ´óĞ¡ÏŞÖÆ£¨KB£© */
-    int          m_entryCount;/**< ÌõÄ¿ÊıÁ¿ */
-} g_cache = {NULL, 0, 10240, 0};  // Ä¬ÈÏÏŞÖÆ 10MB
+    XCacheEntry* m_head;      /**< é“¾è¡¨å¤´ */
+    int          m_cacheSize; /**< å½“å‰ç¼“å­˜æ€»å¤§å°ï¼ˆä¼°è®¡å€¼ï¼ŒKBï¼‰ */
+    int          m_cacheLimit;/**< ç¼“å­˜å¤§å°é™åˆ¶ï¼ˆKBï¼‰ */
+    int          m_entryCount;/**< æ¡ç›®æ•°é‡ */
+} g_cache = {NULL, 0, 10240, 0};  // é»˜è®¤é™åˆ¶ 10MB
 
-/* ========== XPixmapCacheKey ÊµÏÖ ========== */
+/* ========== XPixmapCacheKey å®ç° ========== */
 
 /**
- * @brief      XPixmapCacheKey Ë½ÓĞÊı¾İ
+ * @brief      XPixmapCacheKey ç§æœ‰æ•°æ®
  */
 typedef struct XPixmapCacheKeyData
 {
-    XAtomic_int32_t  m_refCount;    /**< ÒıÓÃ¼ÆÊı */
-    int64_t          m_cacheKey;    /**< ÏñËØÍ¼»º´æ¼üÖµ */
-    int              m_serial;      /**< ĞòÁĞºÅ */
-    bool             m_isValid;     /**< ÊÇ·ñÓĞĞ§ */
+    XAtomic_int32_t  m_refCount;    /**< å¼•ç”¨è®¡æ•° */
+    int64_t          m_cacheKey;    /**< åƒç´ å›¾ç¼“å­˜é”®å€¼ */
+    int              m_serial;      /**< åºåˆ—å· */
+    bool             m_isValid;     /**< æ˜¯å¦æœ‰æ•ˆ */
 }XPixmapCacheKeyData;
 
 static int g_keySerialCounter = 0;
@@ -111,10 +111,10 @@ void XPixmapCacheKey_swap(XPixmapCacheKey* a, XPixmapCacheKey* b)
     b->m_data = tmp;
 }
 
-/* ========== »º´æ¹ÜÀí ========== */
+/* ========== ç¼“å­˜ç®¡ç† ========== */
 
 /**
- * @brief      ¹ÀËãÏñËØÍ¼´óĞ¡
+ * @brief      ä¼°ç®—åƒç´ å›¾å¤§å°
  */
 static int estimateSize(const XPixmap* pixmap)
 {
@@ -123,7 +123,7 @@ static int estimateSize(const XPixmap* pixmap)
 }
 
 /**
- * @brief      ÒÆ³ı»º´æÏî£¬ÊÍ·Å¿Õ¼ä
+ * @brief      ç§»é™¤ç¼“å­˜é¡¹ï¼Œé‡Šæ”¾ç©ºé—´
  */
 static void trimCache()
 {

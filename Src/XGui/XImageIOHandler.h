@@ -14,8 +14,8 @@ extern "C" {
 #include <stdbool.h>
 #include "XImage.h"
 #include "XImageFormat.h"
-#include "XClass/XClass.h"
-#include "XIO/XIODevice/XIODevice.h"
+#include "XClass.h"
+#include "XIODevice.h"
 
 /**
  * @brief      XImageIOHandler 图像选项枚举（对标 Qt 6.8 QImageIOHandler::ImageOption）

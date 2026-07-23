@@ -4,9 +4,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImageWriter.h"
-#include "XClass/XClass.h"
-#include "XClass/XVtable/XVtable.h"
-#include "XMemory/XMemory.h"
+#include "XClass.h"
+#include "XVtable.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>

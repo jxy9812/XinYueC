@@ -13,8 +13,8 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XPixmap.h"
-#include "XClass/XClass.h"
-#include "XClass/XTypes.h"
+#include "XClass.h"
+#include "XTypes.h"
 
 
 /* ========== XIcon 虚函数表枚举 ========== */

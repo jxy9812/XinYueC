@@ -510,13 +510,13 @@ void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* outpu
     size_t len = XString_toUtf8_length(str);
 
     // 添加引号
-    XByteArray_push_back_2(output, "\"", 1);
+    XByteArray_push_back_2(output, """, 1);
 
     // 转义特殊字符
     for (size_t i = 0; i < len; i++) {
         switch (utf8_str[i]) {
-        case '\"': XByteArray_push_back_2(output, "\\\"", 2); break;
-        case '\\': XByteArray_push_back_2(output, "\\\\", 2); break;
+        case '"': XByteArray_push_back_2(output, "\\"", 2); break;
+        case '\\': XByteArray_push_back_2(output, "\\\", 2); break;
         case '\b': XByteArray_push_back_2(output, "\\b", 2); break;
         case '\f': XByteArray_push_back_2(output, "\\f", 2); break;
         case '\n': XByteArray_push_back_2(output, "\\n", 2); break;
@@ -530,7 +530,7 @@ void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* outpu
     }
 
     // 添加结束引号
-    XByteArray_push_back_2(output, "\"", 1);
+    XByteArray_push_back_2(output, """, 1);
 }
 
 void XJson_append_indent(XJsonDocumentFormat format, XStack* stack, XByteArray* output)

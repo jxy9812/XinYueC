@@ -1,23 +1,23 @@
-/******************************************************************************
+ï»¿/******************************************************************************
  * @file       XImageFormat.c
- * @brief      XImage ¸ñÊ½Ã¶¾ÙÊµÏÖ
- * @author     XinYueC ÍÅ¶Ó
- * @note       Ìá¹©ÏñËØ¸ñÊ½µÄÎ»Éî¶È¡¢Alpha Í¨µÀÅĞ¶ÏµÈ¸¨Öúº¯Êı
+ * @brief      XImage æ ¼å¼æšä¸¾å®ç°
+ * @author     XinYueC å›¢é˜Ÿ
+ * @note       æä¾›åƒç´ æ ¼å¼çš„ä½æ·±åº¦ã€Alpha é€šé“åˆ¤æ–­ç­‰è¾…åŠ©å‡½æ•°
  ******************************************************************************/
 #include "XImageFormat.h"
 #include <stddef.h>
 
 /**
- * @brief      ÏñËØ¸ñÊ½ĞÅÏ¢±í
+ * @brief      åƒç´ æ ¼å¼ä¿¡æ¯è¡¨
  */
 typedef struct XImageFormatInfo
 {
-    XImageFormat format;       /**< ¸ñÊ½Ã¶¾Ù */
-    int          bitDepth;     /**< Ã¿ÏñËØÎ»Êı */
-    bool         hasAlpha;     /**< ÊÇ·ñ°üº¬ Alpha */
-    bool         premultiplied;/**< ÊÇ·ñÔ¤³Ë */
-    const char*  name;         /**< ¸ñÊ½Ãû³Æ */
-    int          alignment;    /**< ĞĞ¶ÔÆë×Ö½ÚÊı */
+    XImageFormat format;       /**< æ ¼å¼æšä¸¾ */
+    int          bitDepth;     /**< æ¯åƒç´ ä½æ•° */
+    bool         hasAlpha;     /**< æ˜¯å¦åŒ…å« Alpha */
+    bool         premultiplied;/**< æ˜¯å¦é¢„ä¹˜ */
+    const char*  name;         /**< æ ¼å¼åç§° */
+    int          alignment;    /**< è¡Œå¯¹é½å­—èŠ‚æ•° */
 }XImageFormatInfo;
 
 static const XImageFormatInfo g_formatInfo[] = {
@@ -63,9 +63,9 @@ static const XImageFormatInfo g_formatInfo[] = {
 #define XIMAGEFORMAT_COUNT (sizeof(g_formatInfo) / sizeof(g_formatInfo[0]))
 
 /**
- * @brief      »ñÈ¡¸ñÊ½ĞÅÏ¢
- * @param format ÏñËØ¸ñÊ½
- * @return ¸ñÊ½ĞÅÏ¢Ö¸Õë£¬ÎŞĞ§¸ñÊ½·µ»Ø NULL
+ * @brief      è·å–æ ¼å¼ä¿¡æ¯
+ * @param format åƒç´ æ ¼å¼
+ * @return æ ¼å¼ä¿¡æ¯æŒ‡é’ˆï¼Œæ— æ•ˆæ ¼å¼è¿”å› NULL
  */
 static const XImageFormatInfo* XImageFormat_info(XImageFormat format)
 {
@@ -111,9 +111,9 @@ int XImageFormat_bytesPerLine(int width, XImageFormat format)
 
     int bitsPerLine = width * info->bitDepth;
     int alignment = info->alignment;
-    // ¶ÔÆëµ½ alignment ×Ö½Ú
+    // å¯¹é½åˆ° alignment å­—èŠ‚
     int bytesPerLine = (bitsPerLine + 7) / 8;
-    // ÏòÉÏ¶ÔÆë
+    // å‘ä¸Šå¯¹é½
     int mod = bytesPerLine % alignment;
     if (mod != 0)
         bytesPerLine += alignment - mod;

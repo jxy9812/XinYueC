@@ -6,7 +6,7 @@
 #include "XPixmap.h"
 #include "XImage.h"
 #include "XImageFormat.h"
-#include "XCode/XAtomic/XAtomic.h"
+#include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"

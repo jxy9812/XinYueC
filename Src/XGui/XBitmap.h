@@ -13,7 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XPixmap.h"
-#include "XClass/XClass.h"
+#include "XClass.h"
 
 
 /* ========== XBitmap 虚函数表枚举 ========== */

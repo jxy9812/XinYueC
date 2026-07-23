@@ -14,8 +14,8 @@ extern "C" {
 #include <stdbool.h>
 #include "XImage.h"
 #include "XImageFormat.h"
-#include "XClass/XClass.h"
-#include "XClass/XTypes.h"
+#include "XClass.h"
+#include "XTypes.h"
 
 
 /* ========== XPixmap 虚函数表枚举 ========== */

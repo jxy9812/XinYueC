@@ -14,9 +14,9 @@ extern "C" {
 #include <stdbool.h>
 #include "XImageFormat.h"
 #include "XGuiTypes.h"
-#include "XClass/XClass.h"
-#include "XClass/XTypes.h"
-#include "XMemory/XMemory.h"
+#include "XClass.h"
+#include "XTypes.h"
+#include "XMemory.h"
 
 
 /* ========== XImage 虚函数表枚举 ========== */

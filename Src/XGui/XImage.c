@@ -5,10 +5,10 @@
  ******************************************************************************/
 #include "XImage.h"
 #include "XImageFormat.h"
-#include "XCode/XAtomic/XAtomic.h"
-#include "XClass/XClass.h"
-#include "XClass/XVtable/XVtable.h"
-#include "XMemory/XMemory.h"
+#include "XAtomic.h"
+#include "XClass.h"
+#include "XVtable.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
 

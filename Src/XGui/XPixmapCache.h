@@ -13,7 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XPixmap.h"
-#include "XCode/XAtomic/XAtomic.h"
+#include "XAtomic.h"
 
 /* 前向声明 */
 typedef struct XPixmapCacheKeyData XPixmapCacheKeyData;

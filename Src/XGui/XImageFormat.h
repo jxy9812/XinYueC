@@ -1,8 +1,8 @@
-/******************************************************************************
+ï»¿/******************************************************************************
  * @file       XImageFormat.h
- * @brief      XImage ¸ñÊ½Ã¶¾Ù¶¨Òå£¨¶Ô±ê Qt 6.8 QImage::Format£©
- * @author     XinYueC ÍÅ¶Ó
- * @note       ±¾ÎÄ¼ş¶¨Òå XImage Ö§³ÖµÄËùÓĞÏñËØ¸ñÊ½Ã¶¾Ù£¬¹© XImage¡¢XImageIOHandler µÈÀàÊ¹ÓÃ
+ * @brief      XImage æ ¼å¼æšä¸¾å®šä¹‰ï¼ˆå¯¹æ ‡ Qt 6.8 QImage::Formatï¼‰
+ * @author     XinYueC å›¢é˜Ÿ
+ * @note       æœ¬æ–‡ä»¶å®šä¹‰ XImage æ”¯æŒçš„æ‰€æœ‰åƒç´ æ ¼å¼æšä¸¾ï¼Œä¾› XImageã€XImageIOHandler ç­‰ç±»ä½¿ç”¨
  ******************************************************************************/
 #ifndef XIMAGEFORMAT_H
 #define XIMAGEFORMAT_H
@@ -14,93 +14,93 @@ extern "C" {
 #include <stdbool.h>
 
 /**
- * @brief      XImage ÏñËØ¸ñÊ½Ã¶¾Ù£¨¶Ô±ê Qt 6.8 QImage::Format£©
- * @note       Ã¶¾ÙÖµ±£³ÖÓë Qt 6.8 ÍêÈ«Ò»ÖÂ£¬±ãÓÚ¸ñÊ½×ª»»ºÍ¼æÈİ
+ * @brief      XImage åƒç´ æ ¼å¼æšä¸¾ï¼ˆå¯¹æ ‡ Qt 6.8 QImage::Formatï¼‰
+ * @note       æšä¸¾å€¼ä¿æŒä¸ Qt 6.8 å®Œå…¨ä¸€è‡´ï¼Œä¾¿äºæ ¼å¼è½¬æ¢å’Œå…¼å®¹
  */
 typedef enum XImageFormat
 {
-    XImageFormat_Invalid,                     /**< ÎŞĞ§¸ñÊ½ */
-    XImageFormat_Mono,                        /**< µ¥É«£¨1 Î»£¬Ã¿×Ö½Ú 8 ÏñËØ£¬MSB ÓÅÏÈ£© */
-    XImageFormat_MonoLSB,                     /**< µ¥É«£¨1 Î»£¬Ã¿×Ö½Ú 8 ÏñËØ£¬LSB ÓÅÏÈ£© */
-    XImageFormat_Indexed8,                    /**< Ë÷Òı 8 Î»£¨Ê¹ÓÃÑÕÉ«±í£© */
-    XImageFormat_RGB32,                       /**< 32 Î» RGB£¨0x00RRGGBB£© */
-    XImageFormat_ARGB32,                      /**< 32 Î» ARGB£¨0xAARRGGBB£© */
-    XImageFormat_ARGB32_Premultiplied,        /**< 32 Î»Ô¤³Ë Alpha ARGB */
-    XImageFormat_RGB16,                       /**< 16 Î» RGB£¨5-6-5£© */
-    XImageFormat_ARGB8565_Premultiplied,      /**< 16 Î» RGB + 8 Î»Ô¤³Ë Alpha */
-    XImageFormat_RGB666,                      /**< 18 Î» RGB£¨6-6-6£© */
-    XImageFormat_ARGB6666_Premultiplied,      /**< 24 Î»Ô¤³Ë Alpha RGB£¨6-6-6-6£© */
-    XImageFormat_RGB555,                      /**< 16 Î» RGB£¨5-5-5£¬¸ßÎ»Î´Ê¹ÓÃ£© */
-    XImageFormat_ARGB8555_Premultiplied,      /**< 24 Î»Ô¤³Ë Alpha RGB£¨8-5-5-5£© */
-    XImageFormat_RGB888,                      /**< 24 Î» RGB£¨8-8-8£© */
-    XImageFormat_RGB444,                      /**< 12 Î» RGB£¨4-4-4£© */
-    XImageFormat_ARGB4444_Premultiplied,      /**< 16 Î»Ô¤³Ë Alpha ARGB£¨4-4-4-4£© */
-    XImageFormat_RGBX8888,                    /**< 32 Î» RGB£¨8-8-8-8£¬Alpha Î´Ê¹ÓÃ£© */
-    XImageFormat_RGBA8888,                    /**< 32 Î» RGBA£¨8-8-8-8£© */
-    XImageFormat_RGBA8888_Premultiplied,      /**< 32 Î»Ô¤³Ë Alpha RGBA£¨8-8-8-8£© */
-    XImageFormat_BGR30,                       /**< 32 Î» BGR£¨2 Î»Î´Ê¹ÓÃ£¬10-10-10£© */
-    XImageFormat_A2BGR30_Premultiplied,       /**< 32 Î»Ô¤³Ë Alpha BGR£¨2-10-10-10£© */
-    XImageFormat_RGB30,                       /**< 32 Î» RGB£¨2 Î»Î´Ê¹ÓÃ£¬10-10-10£© */
-    XImageFormat_A2RGB30_Premultiplied,       /**< 32 Î»Ô¤³Ë Alpha RGB£¨2-10-10-10£© */
-    XImageFormat_Alpha8,                      /**< 8 Î» Alpha£¨»Ò¶È£© */
-    XImageFormat_Grayscale8,                  /**< 8 Î»»Ò¶È */
-    XImageFormat_RGBX64,                      /**< 64 Î» RGB£¨16-16-16£¬Alpha Î´Ê¹ÓÃ£© */
-    XImageFormat_RGBA64,                      /**< 64 Î» RGBA£¨16-16-16-16£© */
-    XImageFormat_RGBA64_Premultiplied,        /**< 64 Î»Ô¤³Ë Alpha RGBA£¨16-16-16-16£© */
-    XImageFormat_Grayscale16,                 /**< 16 Î»»Ò¶È */
-    XImageFormat_BGR888,                      /**< 24 Î» BGR£¨8-8-8£© */
-    XImageFormat_RGBX16FPx4,                  /**< 64 Î»°ë¾«¶È¸¡µã RGB£¨16-16-16-16£¬Alpha Î´Ê¹ÓÃ£© */
-    XImageFormat_RGBA16FPx4,                  /**< 64 Î»°ë¾«¶È¸¡µã RGBA£¨16-16-16-16£© */
-    XImageFormat_RGBA16FPx4_Premultiplied,    /**< 64 Î»Ô¤³Ë°ë¾«¶È¸¡µã RGBA */
-    XImageFormat_RGBX32FPx4,                  /**< 128 Î»µ¥¾«¶È¸¡µã RGB£¨32-32-32-32£¬Alpha Î´Ê¹ÓÃ£© */
-    XImageFormat_RGBA32FPx4,                  /**< 128 Î»µ¥¾«¶È¸¡µã RGBA£¨32-32-32-32£© */
-    XImageFormat_RGBA32FPx4_Premultiplied,    /**< 128 Î»Ô¤³Ëµ¥¾«¶È¸¡µã RGBA */
-    XImageFormat_CMYK8888,                    /**< 32 Î» CMYK£¨8-8-8-8£© */
-    XImageFormat_NImageFormats                /**< ¸ñÊ½¼ÆÊı£¨ÄÚ²¿Ê¹ÓÃ£© */
+    XImageFormat_Invalid,                     /**< æ— æ•ˆæ ¼å¼ */
+    XImageFormat_Mono,                        /**< å•è‰²ï¼ˆ1 ä½ï¼Œæ¯å­—èŠ‚ 8 åƒç´ ï¼ŒMSB ä¼˜å…ˆï¼‰ */
+    XImageFormat_MonoLSB,                     /**< å•è‰²ï¼ˆ1 ä½ï¼Œæ¯å­—èŠ‚ 8 åƒç´ ï¼ŒLSB ä¼˜å…ˆï¼‰ */
+    XImageFormat_Indexed8,                    /**< ç´¢å¼• 8 ä½ï¼ˆä½¿ç”¨é¢œè‰²è¡¨ï¼‰ */
+    XImageFormat_RGB32,                       /**< 32 ä½ RGBï¼ˆ0x00RRGGBBï¼‰ */
+    XImageFormat_ARGB32,                      /**< 32 ä½ ARGBï¼ˆ0xAARRGGBBï¼‰ */
+    XImageFormat_ARGB32_Premultiplied,        /**< 32 ä½é¢„ä¹˜ Alpha ARGB */
+    XImageFormat_RGB16,                       /**< 16 ä½ RGBï¼ˆ5-6-5ï¼‰ */
+    XImageFormat_ARGB8565_Premultiplied,      /**< 16 ä½ RGB + 8 ä½é¢„ä¹˜ Alpha */
+    XImageFormat_RGB666,                      /**< 18 ä½ RGBï¼ˆ6-6-6ï¼‰ */
+    XImageFormat_ARGB6666_Premultiplied,      /**< 24 ä½é¢„ä¹˜ Alpha RGBï¼ˆ6-6-6-6ï¼‰ */
+    XImageFormat_RGB555,                      /**< 16 ä½ RGBï¼ˆ5-5-5ï¼Œé«˜ä½æœªä½¿ç”¨ï¼‰ */
+    XImageFormat_ARGB8555_Premultiplied,      /**< 24 ä½é¢„ä¹˜ Alpha RGBï¼ˆ8-5-5-5ï¼‰ */
+    XImageFormat_RGB888,                      /**< 24 ä½ RGBï¼ˆ8-8-8ï¼‰ */
+    XImageFormat_RGB444,                      /**< 12 ä½ RGBï¼ˆ4-4-4ï¼‰ */
+    XImageFormat_ARGB4444_Premultiplied,      /**< 16 ä½é¢„ä¹˜ Alpha ARGBï¼ˆ4-4-4-4ï¼‰ */
+    XImageFormat_RGBX8888,                    /**< 32 ä½ RGBï¼ˆ8-8-8-8ï¼ŒAlpha æœªä½¿ç”¨ï¼‰ */
+    XImageFormat_RGBA8888,                    /**< 32 ä½ RGBAï¼ˆ8-8-8-8ï¼‰ */
+    XImageFormat_RGBA8888_Premultiplied,      /**< 32 ä½é¢„ä¹˜ Alpha RGBAï¼ˆ8-8-8-8ï¼‰ */
+    XImageFormat_BGR30,                       /**< 32 ä½ BGRï¼ˆ2 ä½æœªä½¿ç”¨ï¼Œ10-10-10ï¼‰ */
+    XImageFormat_A2BGR30_Premultiplied,       /**< 32 ä½é¢„ä¹˜ Alpha BGRï¼ˆ2-10-10-10ï¼‰ */
+    XImageFormat_RGB30,                       /**< 32 ä½ RGBï¼ˆ2 ä½æœªä½¿ç”¨ï¼Œ10-10-10ï¼‰ */
+    XImageFormat_A2RGB30_Premultiplied,       /**< 32 ä½é¢„ä¹˜ Alpha RGBï¼ˆ2-10-10-10ï¼‰ */
+    XImageFormat_Alpha8,                      /**< 8 ä½ Alphaï¼ˆç°åº¦ï¼‰ */
+    XImageFormat_Grayscale8,                  /**< 8 ä½ç°åº¦ */
+    XImageFormat_RGBX64,                      /**< 64 ä½ RGBï¼ˆ16-16-16ï¼ŒAlpha æœªä½¿ç”¨ï¼‰ */
+    XImageFormat_RGBA64,                      /**< 64 ä½ RGBAï¼ˆ16-16-16-16ï¼‰ */
+    XImageFormat_RGBA64_Premultiplied,        /**< 64 ä½é¢„ä¹˜ Alpha RGBAï¼ˆ16-16-16-16ï¼‰ */
+    XImageFormat_Grayscale16,                 /**< 16 ä½ç°åº¦ */
+    XImageFormat_BGR888,                      /**< 24 ä½ BGRï¼ˆ8-8-8ï¼‰ */
+    XImageFormat_RGBX16FPx4,                  /**< 64 ä½åŠç²¾åº¦æµ®ç‚¹ RGBï¼ˆ16-16-16-16ï¼ŒAlpha æœªä½¿ç”¨ï¼‰ */
+    XImageFormat_RGBA16FPx4,                  /**< 64 ä½åŠç²¾åº¦æµ®ç‚¹ RGBAï¼ˆ16-16-16-16ï¼‰ */
+    XImageFormat_RGBA16FPx4_Premultiplied,    /**< 64 ä½é¢„ä¹˜åŠç²¾åº¦æµ®ç‚¹ RGBA */
+    XImageFormat_RGBX32FPx4,                  /**< 128 ä½å•ç²¾åº¦æµ®ç‚¹ RGBï¼ˆ32-32-32-32ï¼ŒAlpha æœªä½¿ç”¨ï¼‰ */
+    XImageFormat_RGBA32FPx4,                  /**< 128 ä½å•ç²¾åº¦æµ®ç‚¹ RGBAï¼ˆ32-32-32-32ï¼‰ */
+    XImageFormat_RGBA32FPx4_Premultiplied,    /**< 128 ä½é¢„ä¹˜å•ç²¾åº¦æµ®ç‚¹ RGBA */
+    XImageFormat_CMYK8888,                    /**< 32 ä½ CMYKï¼ˆ8-8-8-8ï¼‰ */
+    XImageFormat_NImageFormats                /**< æ ¼å¼è®¡æ•°ï¼ˆå†…éƒ¨ä½¿ç”¨ï¼‰ */
 } XImageFormat;
 
 /**
- * @brief      XImage ·´É«Ä£Ê½Ã¶¾Ù£¨¶Ô±ê Qt 6.8 QImage::InvertMode£©
+ * @brief      XImage åè‰²æ¨¡å¼æšä¸¾ï¼ˆå¯¹æ ‡ Qt 6.8 QImage::InvertModeï¼‰
  */
 typedef enum XImageInvertMode
 {
-    XImageInvertMode_InvertRgb,   /**< ·´É« RGB ·ÖÁ¿£¬±£³Ö Alpha ²»±ä */
-    XImageInvertMode_InvertRgba   /**< ·´É«ËùÓĞ·ÖÁ¿£¨°üÀ¨ Alpha£© */
+    XImageInvertMode_InvertRgb,   /**< åè‰² RGB åˆ†é‡ï¼Œä¿æŒ Alpha ä¸å˜ */
+    XImageInvertMode_InvertRgba   /**< åè‰²æ‰€æœ‰åˆ†é‡ï¼ˆåŒ…æ‹¬ Alphaï¼‰ */
 } XImageInvertMode;
 
 /**
- * @brief      »ñÈ¡ÏñËØ¸ñÊ½µÄÎ»Éî¶È
- * @param format ÏñËØ¸ñÊ½
- * @return Ã¿¸öÏñËØµÄÎ»Êı£¬ÎŞĞ§¸ñÊ½·µ»Ø 0
+ * @brief      è·å–åƒç´ æ ¼å¼çš„ä½æ·±åº¦
+ * @param format åƒç´ æ ¼å¼
+ * @return æ¯ä¸ªåƒç´ çš„ä½æ•°ï¼Œæ— æ•ˆæ ¼å¼è¿”å› 0
  */
 int XImageFormat_bitDepth(XImageFormat format);
 
 /**
- * @brief      ÅĞ¶ÏÏñËØ¸ñÊ½ÊÇ·ñ°üº¬ Alpha Í¨µÀ
- * @param format ÏñËØ¸ñÊ½
- * @return °üº¬ Alpha Í¨µÀ·µ»Ø true£¬·ñÔò·µ»Ø false
+ * @brief      åˆ¤æ–­åƒç´ æ ¼å¼æ˜¯å¦åŒ…å« Alpha é€šé“
+ * @param format åƒç´ æ ¼å¼
+ * @return åŒ…å« Alpha é€šé“è¿”å› trueï¼Œå¦åˆ™è¿”å› false
  */
 bool XImageFormat_hasAlpha(XImageFormat format);
 
 /**
- * @brief      ÅĞ¶ÏÏñËØ¸ñÊ½ÊÇ·ñÎªÔ¤³Ë Alpha ¸ñÊ½
- * @param format ÏñËØ¸ñÊ½
- * @return Ô¤³Ë Alpha ¸ñÊ½·µ»Ø true£¬·ñÔò·µ»Ø false
+ * @brief      åˆ¤æ–­åƒç´ æ ¼å¼æ˜¯å¦ä¸ºé¢„ä¹˜ Alpha æ ¼å¼
+ * @param format åƒç´ æ ¼å¼
+ * @return é¢„ä¹˜ Alpha æ ¼å¼è¿”å› trueï¼Œå¦åˆ™è¿”å› false
  */
 bool XImageFormat_isPremultiplied(XImageFormat format);
 
 /**
- * @brief      »ñÈ¡ÏñËØ¸ñÊ½Ã¿ĞĞÏñËØµÄ×îĞ¡×Ö½Ú¶ÔÆëÊı
- * @param format ÏñËØ¸ñÊ½
- * @return ×Ö½Ú¶ÔÆëÊı£¨Í¨³£Îª 4£©
+ * @brief      è·å–åƒç´ æ ¼å¼æ¯è¡Œåƒç´ çš„æœ€å°å­—èŠ‚å¯¹é½æ•°
+ * @param format åƒç´ æ ¼å¼
+ * @return å­—èŠ‚å¯¹é½æ•°ï¼ˆé€šå¸¸ä¸º 4ï¼‰
  */
 int XImageFormat_bytesPerLineAlignment(XImageFormat format);
 
 /**
- * @brief      ¼ÆËã¸ø¶¨¿í¶ÈºÍ¸ñÊ½ÏÂÃ¿ĞĞĞèÒªµÄ×Ö½ÚÊı
- * @param width  Í¼Ïñ¿í¶È£¨ÏñËØ£©
- * @param format ÏñËØ¸ñÊ½
- * @return Ã¿ĞĞ×Ö½ÚÊı
+ * @brief      è®¡ç®—ç»™å®šå®½åº¦å’Œæ ¼å¼ä¸‹æ¯è¡Œéœ€è¦çš„å­—èŠ‚æ•°
+ * @param width  å›¾åƒå®½åº¦ï¼ˆåƒç´ ï¼‰
+ * @param format åƒç´ æ ¼å¼
+ * @return æ¯è¡Œå­—èŠ‚æ•°
  */
 int XImageFormat_bytesPerLine(int width, XImageFormat format);
 

@@ -12,9 +12,9 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XClass/XClass.h"
+#include "XClass.h"
 #include "XGuiTypes.h"
-#include "XClass/XTypes.h"
+#include "XTypes.h"
 
 
 /* ========== XPicture 虚函数表枚举 ========== */

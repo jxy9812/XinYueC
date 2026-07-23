@@ -15,9 +15,9 @@ extern "C" {
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XImageIOHandler.h"
-#include "XIO/XIODevice/XIODevice.h"
-#include "XClass/XClass.h"
-#include "XClass/XTypes.h"
+#include "XIODevice.h"
+#include "XClass.h"
+#include "XTypes.h"
 
 
 /* ========== XImageReader 虚函数表枚举 ========== */

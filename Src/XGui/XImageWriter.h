@@ -14,8 +14,8 @@ extern "C" {
 #include <stdbool.h>
 #include "XImage.h"
 #include "XImageIOHandler.h"
-#include "XIO/XIODevice/XIODevice.h"
-#include "XClass/XClass.h"
+#include "XIODevice.h"
+#include "XClass.h"
 
 
 /* ========== XImageWriter 虚函数表枚举 ========== */
