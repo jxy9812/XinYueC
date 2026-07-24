@@ -1935,6 +1935,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
                 XStringList_push_back_move_base(result, substr);
                 split_count++;
             }
+            XString_delete_base(substr);
         }
         return result;
     }
@@ -1951,6 +1952,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
                 XStringList_push_back_move_base(result, substr);
                 split_count++;
             }
+            XString_delete_base(substr);
         }
 
         // 达到最大拆分次数，终止循环
@@ -1972,6 +1974,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
         if (substr) {
             XStringList_push_back_move_base(result, substr);
         }
+        XString_delete_base(substr);
     }
 
     return result;

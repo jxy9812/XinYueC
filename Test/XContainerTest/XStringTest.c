@@ -160,7 +160,9 @@ static void XStringAppendPrependInsertTest(void)
 	XPrintf("===== 追加/前置/插入测试 =====\n");
 	{
 		XString* s = XString_create_utf8("Hello");
-		XString_append(s, XString_create_utf8(" World"));
+		XString* tmp = XString_create_utf8(" World");
+		XString_append(s, tmp);
+		XString_delete_base(tmp);
 		XPrintStr("append: ", s);
 		XString_append_utf8(s, " !");
 		XPrintStr("append_utf8: ", s);
@@ -172,7 +174,9 @@ static void XStringAppendPrependInsertTest(void)
 	}
 	{
 		XString* s = XString_create_utf8("World");
-		XString_prepend(s, XString_create_utf8("Hello "));
+		XString* tmp = XString_create_utf8("Hello ");
+		XString_prepend(s, tmp);
+		XString_delete_base(tmp);
 		XPrintStr("prepend: ", s);
 		XString_prepend_utf8(s, "!! ");
 		XPrintStr("prepend_utf8: ", s);
@@ -180,7 +184,9 @@ static void XStringAppendPrependInsertTest(void)
 	}
 	{
 		XString* s = XString_create_utf8("你好");
-		XString_insert(s, 1, XString_create_utf8("非常"));
+		XString* tmp = XString_create_utf8("非常");
+		XString_insert(s, 1, tmp);
+		XString_delete_base(tmp);
 		XPrintStr("insert(1,'非常'): ", s);
 		XString_insert_utf8(s, 2, "的");
 		XPrintStr("insert_utf8(2,'的'): ", s);
@@ -235,7 +241,11 @@ static void XStringReplaceTest(void)
 	XPrintf("===== 替换测试 =====\n");
 	{
 		XString* s = XString_create_utf8("Hello World");
-		XString_replace(s, XString_create_utf8("World"), XString_create_utf8("XinYueC"), XChar_CaseSensitive);
+		XString* from1 = XString_create_utf8("World");
+		XString* to1 = XString_create_utf8("XinYueC");
+		XString_replace(s, from1, to1, XChar_CaseSensitive);
+		XString_delete_base(from1);
+		XString_delete_base(to1);
 		XPrintStr("replace('World'->'XinYueC'): ", s);
 		XString_replace_utf8(s, "Hello", "Hi", XChar_CaseSensitive);
 		XPrintStr("replace_utf8('Hello'->'Hi'): ", s);
@@ -251,7 +261,11 @@ static void XStringReplaceTest(void)
 	// replace(大小写不敏感)
 	{
 		XString* s = XString_create_utf8("abcABCabc");
-		XString_replace(s, XString_create_utf8("abc"), XString_create_utf8("XYZ"), XChar_CaseInsensitive);
+		XString* from2 = XString_create_utf8("abc");
+		XString* to2 = XString_create_utf8("XYZ");
+		XString_replace(s, from2, to2, XChar_CaseInsensitive);
+		XString_delete_base(from2);
+		XString_delete_base(to2);
 		XPrintStr("replace(abc->XYZ,ci): ", s);
 		XString_delete_base(s);
 	}
@@ -264,24 +278,31 @@ static void XStringFindCompareTest(void)
 	XPrintf("===== 查找与比较测试 =====\n");
 	{
 		XString* s = XString_create_utf8("ababcababc");
-		int64_t idx = XString_indexOf(s, XString_create_utf8("abc"), 0, XChar_CaseSensitive);
+		XString* pat = XString_create_utf8("abc");
+		int64_t idx = XString_indexOf(s, pat, 0, XChar_CaseSensitive);
 		XPrintf("indexOf('abc',0)=%lld\n", (long long)idx);
-		idx = XString_indexOf(s, XString_create_utf8("abc"), 3, XChar_CaseSensitive);
+		idx = XString_indexOf(s, pat, 3, XChar_CaseSensitive);
 		XPrintf("indexOf('abc',3)=%lld\n", (long long)idx);
-		idx = XString_lastIndexOf(s, XString_create_utf8("abc"), -1, XChar_CaseSensitive);
+		idx = XString_lastIndexOf(s, pat, -1, XChar_CaseSensitive);
 		XPrintf("lastIndexOf('abc',-1)=%lld\n", (long long)idx);
-		idx = XString_lastIndexOf(s, XString_create_utf8("abc"), 5, XChar_CaseSensitive);
+		idx = XString_lastIndexOf(s, pat, 5, XChar_CaseSensitive);
 		XPrintf("lastIndexOf('abc',5)=%lld\n", (long long)idx);
-		idx = XString_indexOf(s, XString_create_utf8("xyz"), 0, XChar_CaseSensitive);
+		XString* pat2 = XString_create_utf8("xyz");
+		idx = XString_indexOf(s, pat2, 0, XChar_CaseSensitive);
 		XPrintf("indexOf('xyz')=%lld (期望-1)\n", (long long)idx);
+		XString_delete_base(pat2);
 		// indexOf_utf8 / lastIndexOf_utf8
 		idx = XString_indexOf_utf8(s, "abc", 0, XChar_CaseSensitive);
 		XPrintf("indexOf_utf8('abc')=%lld\n", (long long)idx);
 		idx = XString_lastIndexOf_utf8(s, "abc", -1, XChar_CaseSensitive);
 		XPrintf("lastIndexOf_utf8('abc')=%lld\n", (long long)idx);
+		XString* pat3 = XString_create_utf8("abc");
+		XString* pat4 = XString_create_utf8("xyz");
 		XPrintf("contains('abc')=%s, contains('xyz')=%s\n",
-			XString_contains(s, XString_create_utf8("abc"), XChar_CaseSensitive) ? "是" : "否",
-			XString_contains(s, XString_create_utf8("xyz"), XChar_CaseSensitive) ? "是" : "否");
+			XString_contains(s, pat3, XChar_CaseSensitive) ? "是" : "否",
+			XString_contains(s, pat4, XChar_CaseSensitive) ? "是" : "否");
+		XString_delete_base(pat3);
+		XString_delete_base(pat4);
 		XPrintf("contains_utf8('abc')=%s, contains_utf8('xyz')=%s\n",
 			XString_contains_utf8(s, "abc", XChar_CaseSensitive) ? "是" : "否",
 			XString_contains_utf8(s, "xyz", XChar_CaseSensitive) ? "是" : "否");
@@ -293,21 +314,30 @@ static void XStringFindCompareTest(void)
 		XPrintf("contains_char('a')=%s, contains_char('z')=%s\n",
 			XString_contains_char(s, XChar_from('a'), XChar_CaseSensitive) ? "是" : "否",
 			XString_contains_char(s, XChar_from('z'), XChar_CaseSensitive) ? "是" : "否");
+		XString_delete_base(pat);
 		XString_delete_base(s);
 	}
 	// startsWith / endsWith
 	{
 		XString* s = XString_create_utf8("Hello World");
+		XString* pre = XString_create_utf8("Hello");
+		XString* pre2 = XString_create_utf8("World");
+		XString* suf = XString_create_utf8("World");
+		XString* suf2 = XString_create_utf8("Hello");
 		XPrintf("startsWith('Hello')=%s, startsWith('World')=%s\n",
-			XString_startsWith(s, XString_create_utf8("Hello"), XChar_CaseSensitive) ? "是" : "否",
-			XString_startsWith(s, XString_create_utf8("World"), XChar_CaseSensitive) ? "是" : "否");
+			XString_startsWith(s, pre, XChar_CaseSensitive) ? "是" : "否",
+			XString_startsWith(s, pre2, XChar_CaseSensitive) ? "是" : "否");
 		XPrintf("startsWith_utf8('Hello')=%s\n",
 			XString_startsWith_utf8(s, "Hello", XChar_CaseSensitive) ? "是" : "否");
 		XPrintf("endsWith('World')=%s, endsWith('Hello')=%s\n",
-			XString_endsWith(s, XString_create_utf8("World"), XChar_CaseSensitive) ? "是" : "否",
-			XString_endsWith(s, XString_create_utf8("Hello"), XChar_CaseSensitive) ? "是" : "否");
+			XString_endsWith(s, suf, XChar_CaseSensitive) ? "是" : "否",
+			XString_endsWith(s, suf2, XChar_CaseSensitive) ? "是" : "否");
 		XPrintf("endsWith_utf8('World')=%s\n",
 			XString_endsWith_utf8(s, "World", XChar_CaseSensitive) ? "是" : "否");
+		XString_delete_base(pre);
+		XString_delete_base(pre2);
+		XString_delete_base(suf);
+		XString_delete_base(suf2);
 		XString_delete_base(s);
 	}
 	// isLower / isUpper / compare / equals / localeAwareCompare / XLess
@@ -526,7 +556,9 @@ static void XStringInplaceTest(void)
 		XString_assign_utf8(s, "test");
 		XString_resize_fill(s, 8, XChar_from('_'));
 		XPrintStr("resize_fill(8,'_'): ", s);
-		XString_swap(s, XString_create_utf8("SWAPPED"));
+		XString* swp = XString_create_utf8("SWAPPED");
+		XString_swap(s, swp);
+		XString_delete_base(swp);
 		XPrintStr("swap后: ", s);
 		XString_delete_base(s);
 	}
@@ -552,6 +584,7 @@ static void XStringSplitJoinTest(void)
 			XPrintf("split size=%zu\n", XStringList_size_base(list));
 			XStringList_delete_base(list);
 		}
+		XString_delete_base(s);
 	}
 	// split_limit
 	{
@@ -562,11 +595,14 @@ static void XStringSplitJoinTest(void)
 			XPrintf("split_limit_utf8(3): size=%zu\n", XStringList_size_base(list));
 			XStringList_delete_base(list);
 		}
+		XString_delete_base(s);
 	}
 	// count / repeated
 	{
 		XString* s = XString_create_utf8("ababab");
-		size_t c = XString_count(s, XString_create_utf8("ab"), XChar_CaseSensitive);
+		XString* pat = XString_create_utf8("ab");
+		size_t c = XString_count(s, pat, XChar_CaseSensitive);
+		XString_delete_base(pat);
 		XPrintf("count('ab')=%zu (期望3)\n", c);
 		c = XString_count_utf8(s, "ab", XChar_CaseSensitive);
 		XPrintf("count_utf8('ab')=%zu (期望3)\n", c);
@@ -587,7 +623,9 @@ static void XStringQtAdvancedTest(void)
 	// section
 	{
 		XString* s = XString_create_utf8("a|b|c|d|e");
-		XString* sec = XString_section(s, XString_create_utf8("|"), 1, 3, 0);
+		XString* sep = XString_create_utf8("|");
+		XString* sec = XString_section(s, sep, 1, 3, 0);
+		XString_delete_base(sep);
 		XPrintStr("section(pipe,1,3): ", sec);
 		XString_delete_base(sec);
 		sec = XString_section_utf8(s, "|", 0, 0, 0);
@@ -601,7 +639,9 @@ static void XStringQtAdvancedTest(void)
 	// arg
 	{
 		XString* s = XString_create_utf8("%1 and %2");
-		XString* r = XString_arg(s, XString_create_utf8("Hello"), 0, XChar_from(' '));
+		XString* argVal = XString_create_utf8("Hello");
+		XString* r = XString_arg(s, argVal, 0, XChar_from(' '));
+		XString_delete_base(argVal);
 		XPrintStr("arg('Hello'): ", r);
 		XString_delete_base(r);
 		XString_delete_base(s);
@@ -762,7 +802,11 @@ static void XStringIteratorTest(void)
 static void XStringSafetyTest(void)
 {
 	XPrintf("===== NULL安全测试 =====\n");
-	XPrintf("create_utf8(NULL)=%s\n", XString_create_utf8(NULL) ? "非空" : "空");
+	{
+		XString* t = XString_create_utf8(NULL);
+		XPrintf("create_utf8(NULL)=%s\n", t ? "非空" : "空");
+		XString_delete_base(t);
+	}
 	XString_at(NULL, 0);
 	XPrintf("at(NULL)=不崩溃\n");
 	XPrintf("unicode(NULL)=%s\n", XString_unicode(NULL) ? "非空" : "空");
@@ -776,19 +820,53 @@ static void XStringSafetyTest(void)
 	XPrintf("append(NULL)=%s\n", XString_append(NULL, NULL) ? "是" : "否");
 	XPrintf("remove(NULL)=%s\n", XString_remove_base(NULL, 0, 1) ? "是" : "否");
 	XPrintf("replace(NULL)=%s\n", XString_replace(NULL, NULL, NULL, XChar_CaseSensitive) ? "是" : "否");
-	XPrintf("split(NULL)=%s\n", XString_split(NULL, ",", XChar_CaseSensitive) ? "非空" : "空");
-	XPrintf("sliced(NULL)=%s\n", XString_sliced(NULL, 0) ? "非空" : "空");
-	XPrintf("section(NULL)=%s\n", XString_section(NULL, NULL, 0, 0, 0) ? "非空" : "空");
-	XPrintf("arg(NULL)=%s\n", XString_arg(NULL, NULL, 0, XChar_from(' ')) ? "非空" : "空");
-	XPrintf("leftJustified(NULL)=%s, rightJustified(NULL)=%s\n",
-		XString_leftJustified(NULL, 5, XChar_from('.'), false) ? "非空" : "空",
-		XString_rightJustified(NULL, 5, XChar_from('.'), false) ? "非空" : "空");
-	XPrintf("toLower(NULL)=%s, toUpper(NULL)=%s\n",
-		XString_toLower(NULL) ? "非空" : "空",
-		XString_toUpper(NULL) ? "非空" : "空");
-	XPrintf("trimmed(NULL)=%s, simplified(NULL)=%s\n",
-		XString_trimmed(NULL) ? "非空" : "空",
-		XString_simplified(NULL) ? "非空" : "空");
+	{
+		XString* t = XString_split(NULL, ",", XChar_CaseSensitive);
+		XPrintf("split(NULL)=%s\n", t ? "非空" : "空");
+		XStringList_delete_base(t);
+	}
+	{
+		XString* t = XString_sliced(NULL, 0);
+		XPrintf("sliced(NULL)=%s\n", t ? "非空" : "空");
+		XString_delete_base(t);
+	}
+	{
+		XString* t = XString_section(NULL, NULL, 0, 0, 0);
+		XPrintf("section(NULL)=%s\n", t ? "非空" : "空");
+		XString_delete_base(t);
+	}
+	{
+		XString* t = XString_arg(NULL, NULL, 0, XChar_from(' '));
+		XPrintf("arg(NULL)=%s\n", t ? "非空" : "空");
+		XString_delete_base(t);
+	}
+	{
+		XString* t1 = XString_leftJustified(NULL, 5, XChar_from('.'), false);
+		XString* t2 = XString_rightJustified(NULL, 5, XChar_from('.'), false);
+		XPrintf("leftJustified(NULL)=%s, rightJustified(NULL)=%s\n",
+			t1 ? "非空" : "空",
+			t2 ? "非空" : "空");
+		XString_delete_base(t1);
+		XString_delete_base(t2);
+	}
+	{
+		XString* t1 = XString_toLower(NULL);
+		XString* t2 = XString_toUpper(NULL);
+		XPrintf("toLower(NULL)=%s, toUpper(NULL)=%s\n",
+			t1 ? "非空" : "空",
+			t2 ? "非空" : "空");
+		XString_delete_base(t1);
+		XString_delete_base(t2);
+	}
+	{
+		XString* t1 = XString_trimmed(NULL);
+		XString* t2 = XString_simplified(NULL);
+		XPrintf("trimmed(NULL)=%s, simplified(NULL)=%s\n",
+			t1 ? "非空" : "空",
+			t2 ? "非空" : "空");
+		XString_delete_base(t1);
+		XString_delete_base(t2);
+	}
 	XString_reserve(NULL, 10);
 	XPrintf("reserve(NULL)=无崩溃\n");
 	XString_resize(NULL, 5);
