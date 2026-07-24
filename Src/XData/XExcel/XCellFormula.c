@@ -6,7 +6,9 @@
 #include "XCellFormula.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 XCellFormula* XCellFormula_create(void)
 {
@@ -15,7 +17,7 @@ XCellFormula* XCellFormula_create(void)
     memset(self, 0, sizeof(XCellFormula));
     self->m_sharedIndex = -1;
     self->m_type = XCellFormula_Normal;
-    XCellReference_init(&self->m_reference);
+    XCellRange_init(&self->m_reference);
     return self;
 }
 
@@ -30,6 +32,24 @@ XCellFormula* XCellFormula_create_ex(const char* text)
             XString_append_utf8(str, text);
             self->m_text = str;
         }
+    }
+    return self;
+}
+
+XCellFormula* XCellFormula_create_typed(const char* text, XCellFormula_Type type)
+{
+    XCellFormula* self = XCellFormula_create_ex(text);
+    if (self) self->m_type = type;
+    return self;
+}
+
+XCellFormula* XCellFormula_create_withRef(const char* text, const XCellRange* ref, XCellFormula_Type type)
+{
+    XCellFormula* self = XCellFormula_create_ex(text);
+    if (self)
+    {
+        self->m_type = type;
+        if (ref) self->m_reference = *ref;
     }
     return self;
 }
@@ -49,9 +69,25 @@ bool XCellFormula_isValid(const XCellFormula* self)
     return self && self->m_text && XString_size_base(self->m_text) > 0;
 }
 
-const char* XCellFormula_text(const XCellFormula* self)
+XCellFormula_Type XCellFormula_formulaType(const XCellFormula* self)
 {
-    return (self && self->m_text) ? XString_toUtf8_const(self->m_text) : "";
+    return self ? self->m_type : XCellFormula_Normal;
+}
+
+const char* XCellFormula_formulaText(const XCellFormula* self)
+{
+    return (self && self->m_text) ? XString_toUtf8(self->m_text) : "";
+}
+
+XCellRange XCellFormula_reference(const XCellFormula* self)
+{
+    if (!self) { XCellRange r; XCellRange_init(&r); return r; }
+    return self->m_reference;
+}
+
+int XCellFormula_sharedIndex(const XCellFormula* self)
+{
+    return self ? self->m_sharedIndex : -1;
 }
 
 void XCellFormula_setText(XCellFormula* self, const char* text)
@@ -66,12 +102,52 @@ void XCellFormula_setText(XCellFormula* self, const char* text)
     if (text) XString_append_utf8(self->m_text, text);
 }
 
-XCellFormula_Type XCellFormula_type(const XCellFormula* self)
-{
-    return self ? self->m_type : XCellFormula_Normal;
-}
-
 void XCellFormula_setType(XCellFormula* self, XCellFormula_Type type)
 {
     if (self) self->m_type = type;
+}
+
+void XCellFormula_setReference(XCellFormula* self, const XCellRange* ref)
+{
+    if (self && ref) self->m_reference = *ref;
+}
+
+void XCellFormula_setSharedIndex(XCellFormula* self, int index)
+{
+    if (self) self->m_sharedIndex = index;
+}
+
+/* ========== 拷贝 ========== */
+
+XCellFormula* XCellFormula_copy(const XCellFormula* src)
+{
+    if (!src) return NULL;
+    XCellFormula* self = XCellFormula_create();
+    if (!self) return NULL;
+    if (src->m_text) self->m_text = XString_create_copy(src->m_text);
+    self->m_type = src->m_type;
+    self->m_sharedIndex = src->m_sharedIndex;
+    self->m_reference = src->m_reference;
+    if (src->m_ca) self->m_ca = XString_create_copy(src->m_ca);
+    return self;
+}
+
+/* ========== 比较 ========== */
+
+bool XCellFormula_equals(const XCellFormula* a, const XCellFormula* b)
+{
+    if (a == b) return true;
+    if (!a || !b) return false;
+    if (a->m_type != b->m_type) return false;
+    if (a->m_sharedIndex != b->m_sharedIndex) return false;
+    if (!XCellRange_equals(&a->m_reference, &b->m_reference)) return false;
+    /* 比较文本 */
+    const char* ta = (a->m_text) ? XString_toUtf8(a->m_text) : "";
+    const char* tb = (b->m_text) ? XString_toUtf8(b->m_text) : "";
+    return strcmp(ta, tb) == 0;
+}
+
+bool XCellFormula_notEquals(const XCellFormula* a, const XCellFormula* b)
+{
+    return !XCellFormula_equals(a, b);
 }

@@ -9,8 +9,11 @@
 extern "C" {
 #endif
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XVector.h"
 #include "XCellRange.h"

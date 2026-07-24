@@ -168,7 +168,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<?xml")) {
             TEST_PASS("writeStartDocument(1.0)");
@@ -183,7 +183,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex(w, "1.0", "UTF-8");
+        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "UTF-8")) {
             TEST_PASS("writeStartDocument_ex(1.0, UTF-8)");
@@ -198,7 +198,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument_ex_2", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex_2(w, "1.0", "UTF-8", true);
+        XXmlStreamWriter_writeStartDocument_ex_2(w, "1.0", true);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "standalone")) {
             TEST_PASS("writeStartDocument_ex_2(1.0, UTF-8, standalone)");
@@ -213,7 +213,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument version", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "version=\"1.0\"")) {
             TEST_PASS("writeStartDocument 版本号1.0");
@@ -236,7 +236,7 @@ static bool test_write_end_document(void)
     XXmlStreamWriter* w = XXmlStreamWriter_create();
     if (!w) { TEST_FAIL("writeEndDocument", "创建失败"); return false; }
 
-    XXmlStreamWriter_writeStartDocument(w, "1.0");
+    XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
     XXmlStreamWriter_writeStartElement(w, "root");
     XXmlStreamWriter_writeEndElement(w);
     XXmlStreamWriter_writeEndDocument(w);
@@ -1015,7 +1015,7 @@ static bool test_auto_formatting(void)
         if (!w) { TEST_FAIL("格式化输出", "创建失败"); return false; }
         XXmlStreamWriter_setAutoFormatting(w, true);
         XXmlStreamWriter_setAutoFormattingIndent(w, 4);
-        XXmlStreamWriter_writeStartDocument(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
         XXmlStreamWriter_writeStartElement(w, "root");
         XXmlStreamWriter_writeStartElement(w, "child");
         XXmlStreamWriter_writeEndElement(w);
@@ -1119,7 +1119,7 @@ static bool test_copy_move(void)
         /* 使用XClass框架的拷贝 */
         XClass* cls1 = (XClass*)w1;
         XClass* cls2 = (XClass*)&w2;
-        XClass_copy(cls2, cls1);
+        XClass_copy_base(cls2, cls1);
         TEST_PASS("XClass_copy 拷贝成功");
 
         XXmlStreamWriter_deinit(&w2);
@@ -1139,7 +1139,7 @@ static bool test_copy_move(void)
 
         XClass* cls1 = (XClass*)w1;
         XClass* cls2 = (XClass*)&w2;
-        XClass_move(cls2, cls1);
+        XClass_move_base(cls2, cls1);
         TEST_PASS("XClass_move 移动成功");
 
         XXmlStreamWriter_deinit(&w2);
@@ -1159,7 +1159,7 @@ static bool test_copy_move(void)
         memset(&w2, 0, sizeof(w2));
         XXmlStreamWriter_init(&w2);
 
-        XClass_copy((XClass*)&w2, (XClass*)w1);
+        XClass_copy_base((XClass*)&w2, (XClass*)w1);
 
         const char* original = XXmlStreamWriter_toString(w1);
         const char* copied = XXmlStreamWriter_toString(&w2);
@@ -1195,7 +1195,7 @@ static bool test_complex_document(void)
     if (!w) { TEST_FAIL("复杂文档", "创建失败"); return false; }
 
     /* 生成一个完整的XHTML文档 */
-    XXmlStreamWriter_writeStartDocument(w, "1.0");
+    XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
     XXmlStreamWriter_writeComment(w, "这是一个复杂文档测试");
     XXmlStreamWriter_writeProcessingInstruction(w, "xml-stylesheet", "type=\"text/xsl\"");
     XXmlStreamWriter_writeDTD(w, "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\">");
@@ -1311,7 +1311,7 @@ static bool test_write_current_token(void)
 
         /* 添加数据到reader */
         XByteArray* ba = XByteArray_create();
-        XByteArray_append(ba, xml, strlen(xml));
+        XByteArray_append_utf8(ba, xml);
 
         /* 开始读取并写入 */
         XXmlStreamReader_addData(r, ba);
@@ -1354,13 +1354,13 @@ static bool test_null_safety(void)
     bool all_pass = true;
 
     /* 向NULL writer传参的各种函数 */
-    XXmlStreamWriter_writeStartDocument(NULL, "1.0");
+    XXmlStreamWriter_writeStartDocument_ex(NULL, "1.0");
     TEST_PASS("writeStartDocument(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeStartDocument_ex(NULL, "1.0", "UTF-8");
+    XXmlStreamWriter_writeStartDocument_ex(NULL, "1.0");
     TEST_PASS("writeStartDocument_ex(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeStartDocument_ex_2(NULL, "1.0", "UTF-8", true);
+    XXmlStreamWriter_writeStartDocument_ex_2(NULL, "1.0", true);
     TEST_PASS("writeStartDocument_ex_2(NULL, ...) 安全");
 
     XXmlStreamWriter_writeEndDocument(NULL);

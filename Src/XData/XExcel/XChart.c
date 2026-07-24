@@ -1,7 +1,9 @@
 #include "XChart.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 XChart* XChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag) {
     (void)parent;
     XChart* self = (XChart*)XMalloc_System(sizeof(XChart));
@@ -21,13 +23,13 @@ void XChart_delete(XChart* self) {
     if (self->m_axisTitleRight) { XString_deinit_base(self->m_axisTitleRight); XFree_System(self->m_axisTitleRight); }
     if (self->m_axisTitleTop) { XString_deinit_base(self->m_axisTitleTop); XFree_System(self->m_axisTitleTop); }
     if (self->m_axisTitleBottom) { XString_deinit_base(self->m_axisTitleBottom); XFree_System(self->m_axisTitleBottom); }
-    if (self->m_series) XFree_System(self->m_series);
+    if (self->m_series) { XVector_deinit_base(self->m_series); XFree_System(self->m_series); }
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
 void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders) {
     if (!self || !range) return;
     XChart_Series s; memset(&s, 0, sizeof(s)); s.m_range = *range; s.m_headerH = headerH; s.m_headerV = headerV; s.m_swapHeaders = swapHeaders;
-    XVector_push_back_base(self->m_series, &s, sizeof(XChart_Series));
+    XVector_push_back_2(self->m_series, &s, 1);
 }
 void XChart_setChartType(XChart* self, XChart_ChartType type) { if (self) self->m_chartType = type; }
 void XChart_setChartStyle(XChart* self, int id) { if (self) self->m_chartStyle = id; }

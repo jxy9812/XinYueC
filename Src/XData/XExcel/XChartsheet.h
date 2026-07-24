@@ -8,7 +8,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdint.h>#include <stdbool.h>#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "XAbstractSheet.h"
 #include "XChart.h"
 typedef struct XChartsheet {

@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 #include "XColor.h"
@@ -193,7 +196,8 @@ typedef enum XFormat_PropertyId
  */
 typedef struct XFormat
 {
-    XMap* m_properties;         /**< 属性映射（int->XVariant） */
+    XMap* m_properties;         /**< 属性映射（int->
+XVariant） */
     int m_fontIndex;            /**< 字体索引 */
     int m_borderIndex;          /**< 边框索引 */
     int m_fillIndex;            /**< 填充索引 */
@@ -402,6 +406,85 @@ void XFormat_setBorderIndex(XFormat* self, int index);
 void XFormat_setFillIndex(XFormat* self, int index);
 void XFormat_setXfIndex(XFormat* self, int index);
 void XFormat_setDxfIndex(XFormat* self, int index);
+
+/* ========== 键生成（用于样式去重） ========== */
+
+/**
+ * @brief      生成字体属性的唯一键
+ * @param self 指针
+ * @param outKey 输出键数据
+ * @param outLen 输出键长度
+ */
+void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen);
+
+/**
+ * @brief      生成边框属性的唯一键
+ * @param self 指针
+ * @param outKey 输出键数据
+ * @param outLen 输出键长度
+ */
+void XFormat_borderKey(const XFormat* self, uint8_t** outKey, size_t* outLen);
+
+/**
+ * @brief      生成填充属性的唯一键
+ * @param self 指针
+ * @param outKey 输出键数据
+ * @param outLen 输出键长度
+ */
+void XFormat_fillKey(const XFormat* self, uint8_t** outKey, size_t* outLen);
+
+/**
+ * @brief      生成完整格式的唯一键
+ * @param self 指针
+ * @param outKey 输出键数据
+ * @param outLen 输出键长度
+ */
+void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen);
+
+/* ========== 数字格式修正 ========== */
+
+/**
+ * @brief      修正数字格式（设置自定义格式 ID 和格式代码）
+ * @param self   指针
+ * @param id     格式 ID
+ * @param format 格式代码
+ */
+void XFormat_fixNumberFormat(XFormat* self, int id, const char* format);
+
+/* ========== 主题 ========== */
+
+/**
+ * @brief      获取主题颜色索引
+ * @param self 指针
+ * @return     主题颜色索引
+ */
+int XFormat_theme(const XFormat* self);
+
+/* ========== 类型化属性访问 ========== */
+
+bool XFormat_boolProperty(const XFormat* self, int propertyId, bool defaultValue);
+int XFormat_intProperty(const XFormat* self, int propertyId, int defaultValue);
+double XFormat_doubleProperty(const XFormat* self, int propertyId, double defaultValue);
+const char* XFormat_stringProperty(const XFormat* self, int propertyId, const char* defaultValue);
+XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue);
+
+/* ========== 比较运算符 ========== */
+
+/**
+ * @brief      判断两个格式是否相等
+ * @param a 格式 A
+ * @param b 格式 B
+ * @return    相等返回 true
+ */
+bool XFormat_equals(const XFormat* a, const XFormat* b);
+
+/**
+ * @brief      判断两个格式是否不相等
+ * @param a 格式 A
+ * @param b 格式 B
+ * @return    不相等返回 true
+ */
+bool XFormat_notEquals(const XFormat* a, const XFormat* b);
 
 #ifdef __cplusplus
 }

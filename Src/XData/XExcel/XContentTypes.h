@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XStringList.h"
 #include "XMap.h"
@@ -25,8 +28,17 @@ extern "C" {
  */
 typedef struct XContentTypes
 {
-    XMap* m_defaults;    /**< 默认类型映射（后缀->MIME类型） */
-    XMap* m_overrides;   /**< 覆盖类型映射（路径->MIME类型） */
+    XMap* m_defaults;    /**< 默认类型映射（后缀->
+MIME类型） */
+    XMap* m_overrides;
+    int m_worksheetCount;
+    int m_chartsheetCount;
+    int m_chartCount;
+    int m_drawingCount;
+    int m_commentCount;
+    int m_tableCount;
+    int m_externalLinkCount;
+    int m_vmlCount;   /**< 覆盖类型映射（路径->MIME类型） */
 } XContentTypes;
 
 XContentTypes* XContentTypes_create(void);
@@ -51,6 +63,8 @@ void XContentTypes_addCalcChain(XContentTypes* self);
 void XContentTypes_addVbaProject(XContentTypes* self);
 void XContentTypes_clearOverrides(XContentTypes* self);
 bool XContentTypes_saveToXmlFile(const XContentTypes* self, const char* filePath);
+bool XContentTypes_saveToXmlData(const XContentTypes* self, uint8_t** outData, size_t* outLen);
+bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, size_t len);
 bool XContentTypes_loadFromXmlFile(XContentTypes* self, const char* filePath);
 
 #ifdef __cplusplus

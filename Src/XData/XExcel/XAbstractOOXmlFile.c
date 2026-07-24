@@ -1,7 +1,9 @@
 #include "XAbstractOOXmlFile.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 void XAbstractOOXmlFile_init(XAbstractOOXmlFile* self, XAbstractOOXmlFile_CreateFlag flag)
 {
@@ -29,4 +31,4 @@ void XAbstractOOXmlFile_setFilePath(XAbstractOOXmlFile* self, const char* path)
 }
 
 const char* XAbstractOOXmlFile_filePath(const XAbstractOOXmlFile* self)
-{ return (self && self->m_filePath) ? XString_toUtf8_const(self->m_filePath) : ""; }
+{ return (self && self->m_filePath) ? XString_toUtf8(self->m_filePath) : ""; }

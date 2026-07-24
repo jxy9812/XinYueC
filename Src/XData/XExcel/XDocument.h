@@ -9,12 +9,19 @@
 #define XDOCUMENT_H
 #ifdef __cplusplus
 extern "C" {
+
+/* ========== CSV 导出 ========== */
+bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName);
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include <stdio.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 #include "XVector.h"
@@ -54,6 +61,7 @@ typedef struct XDocument {
 /* ========== 创建与初始化 ========== */
 XDocument* XDocument_create(void);
 XDocument* XDocument_createFromFile(const char* xlsxName);
+XDocument* XDocument_createFromDevice(struct XIODevice* device);
 void XDocument_delete(XDocument* self);
 
 /* ========== 单元格写入 ========== */
@@ -70,7 +78,7 @@ XCell* XDocument_cellAtRef(const XDocument* self, const XCellReference* cell);
 int XDocument_insertImage(XDocument* self, int row, int col, const char* imagePath);
 bool XDocument_getImage(const XDocument* self, int imageIndex, XByteArray* imgData);
 bool XDocument_getImageAt(const XDocument* self, int row, int col, XByteArray* imgData);
-uint XDocument_getImageCount(const XDocument* self);
+unsigned int XDocument_getImageCount(const XDocument* self);
 
 /* ========== 图表 ========== */
 XChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height);
@@ -134,6 +142,7 @@ XWorksheet* XDocument_currentWorksheet(const XDocument* self);
 /* ========== 保存和加载 ========== */
 bool XDocument_save(const XDocument* self);
 bool XDocument_saveAs(const XDocument* self, const char* xlsxName);
+bool XDocument_saveAsDevice(const XDocument* self, struct XIODevice* device);
 bool XDocument_isLoadPackage(const XDocument* self);
 bool XDocument_load(XDocument* self);
 
@@ -149,3 +158,24 @@ bool XDocument_autosizeColumnWidthAll(XDocument* self);
 }
 #endif
 #endif /* XDOCUMENT_H */
+
+/* ========== 样式复制 ========== */
+/**
+ * @brief      从源文件复制样式到目标文件（静态方法）
+ * @param fromPath 源 XLSX 文件路径
+ * @param toPath   目标 XLSX 文件路径
+ * @return     成功返回 true
+ * @note       对标 QXlsx::Document::copyStyle
+ */
+bool XDocument_copyStyle(const char* fromPath, const char* toPath);
+
+/* ========== 图片修改 ========== */
+/**
+ * @brief      修改文档中的图片
+ * @param self           文档指针
+ * @param imageIndex     图片索引
+ * @param newImagePath   新图片路径
+ * @return              成功返回 true
+ * @note       对标 QXlsx::Document::changeimage
+ */
+bool XDocument_changeImage(XDocument* self, int imageIndex, const char* newImagePath);

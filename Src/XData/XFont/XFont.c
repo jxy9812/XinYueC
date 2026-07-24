@@ -13,9 +13,9 @@
 static void VXFont_deinit(XFont* self)
 {
     if (!self) return;
-    XString_delete(self->m_family);
+    XString_delete_base(self->m_family);
     self->m_family = NULL;
-    XString_delete(self->m_styleName);
+    XString_delete_base(self->m_styleName);
     self->m_styleName = NULL;
 }
 
@@ -221,7 +221,7 @@ const char* XFont_family(const XFont* self)
 void XFont_setFamily(XFont* self, const char* family)
 {
     if (!self) return;
-    if (self->m_family) XString_delete(self->m_family);
+    if (self->m_family) XString_delete_base(self->m_family);
     if (family && family[0]) {
         self->m_family = XString_create_utf8(family);
     } else {
@@ -238,7 +238,7 @@ const char* XFont_styleName(const XFont* self)
 void XFont_setStyleName(XFont* self, const char* styleName)
 {
     if (!self) return;
-    if (self->m_styleName) XString_delete(self->m_styleName);
+    if (self->m_styleName) XString_delete_base(self->m_styleName);
     if (styleName && styleName[0]) {
         self->m_styleName = XString_create_utf8(styleName);
     } else {

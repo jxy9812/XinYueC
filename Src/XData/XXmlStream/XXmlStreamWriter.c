@@ -96,9 +96,23 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
 {
     if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
     
-    /* ========== 调用父类 copy ========== */
-    XClass_copy_base((XClass*)obj, (const XClass*)src);
-    
+    /* ========== 释放目标对象已有资源 ========== */
+    if (obj->m_elementNameStack) {
+        for (int i = 0; i < obj->m_elementNameStackSize; i++) {
+            if (obj->m_elementNameStack[i]) {
+                XString_delete_base(obj->m_elementNameStack[i]);
+                obj->m_elementNameStack[i] = NULL;
+            }
+        }
+        XFree_System(obj->m_elementNameStack);
+    }
+    if (obj->m_buffer) {
+        XByteArray_delete_base(obj->m_buffer);
+    }
+    if (obj->m_deviceString) {
+        XString_delete_base(obj->m_deviceString);
+    }
+
     /* ========== 复制元素名栈 ========== */
     obj->m_elementNameStack = NULL;
     obj->m_elementNameStackSize = 0;
@@ -141,10 +155,24 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
 {
     if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
     
-    /* ????? move */
-    XClass_move_base((XClass*)obj, (const XClass*)src);
-    
-    /* ????? */
+    /* ========== 释放目标对象已有资源 ========== */
+    if (obj->m_elementNameStack) {
+        for (int i = 0; i < obj->m_elementNameStackSize; i++) {
+            if (obj->m_elementNameStack[i]) {
+                XString_delete_base(obj->m_elementNameStack[i]);
+                obj->m_elementNameStack[i] = NULL;
+            }
+        }
+        XFree_System(obj->m_elementNameStack);
+    }
+    if (obj->m_buffer) {
+        XByteArray_delete_base(obj->m_buffer);
+    }
+    if (obj->m_deviceString) {
+        XString_delete_base(obj->m_deviceString);
+    }
+
+    /* ========== 转移所有权 ========== */
     obj->m_buffer = src->m_buffer;
     obj->m_deviceString = src->m_deviceString;
     obj->m_autoFormatting = src->m_autoFormatting;
@@ -487,6 +515,7 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
     self->m_elementStack = 0;
     self->m_hasError = false;
     self->m_inStartElement = false;
+    self->m_device = NULL;
 }
 
 /**
@@ -666,10 +695,10 @@ void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const char* 
     /* ????????????? */
     close_start_element(self, false);
     
-    /* ?? <?xml version="version"?> */
+    /* ?? <?xml version="version" encoding="UTF-8"?> */
     write_raw_str(self, "<?xml version=\"");
     write_raw_str(self, version);
-    write_raw_str(self, "\"?>");
+    write_raw_str(self, "\" encoding=\"UTF-8\"?>");
 }
 
 /**
@@ -748,10 +777,9 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
         return;
     }
     
+    /* 如果当前在开始标签内，先关闭开始标签 */
     if (self->m_inStartElement) {
-        /* ========== 如果当前在开始标签内，直接关闭为自闭合标签 ========== */
-        close_start_element(self, true);
-        return;
+        close_start_element(self, false);
     }
     
     if (self->m_elementStack <= 0) {
@@ -1323,4 +1351,15 @@ bool XXmlStreamWriter_hasError(const XXmlStreamWriter* self)
 {
     if (!self) return true;
     return self->m_hasError;
+}
+
+/**
+ * @brief      设置输出设备（对标 QXmlStreamWriter::setDevice）
+ * @param self   目标 XXmlStreamWriter 对象指针
+ * @param device XIODevice 设备（可为 NULL）
+ */
+void XXmlStreamWriter_setDevice(XXmlStreamWriter* self, XIODevice* device)
+{
+    if (ISNULL(self, "XXmlStreamWriter")) return;
+    self->m_device = device;
 }

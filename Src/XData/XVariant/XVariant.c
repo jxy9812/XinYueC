@@ -92,8 +92,11 @@ XVtable* XVariant_class_init()
 
 XVariant* XVariant_create(void* data, size_t dataSize, int type)
 {
-	XVariant* var = XMalloc_System(sizeof(XVariant));
-	XVariant_init(var,data,dataSize,type);
+	XVariant* var = (XVariant*)XMalloc_System(sizeof(XVariant));
+	if (!var) return NULL;
+	/* 重要：必须先把 var 清零，避免 XVariant_init 读到未初始化的 m_data 等指针 */
+	memset(var, 0, sizeof(XVariant));
+	XVariant_init(var, data, dataSize, type);
 	Set_Class_MemoryFree(var, XFree_System);
 	return var;
 }
@@ -118,19 +121,29 @@ XVariant* XVariant_create_move(XVariant* move)
 void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
 {
 	if (var == NULL)
-		return NULL;
+		return;
+	/* 1) 初始化基类虚函数表 */
 	XClass_init(var);
 	XClassGetVtable(var) = XVariant_class_init();
+	/* 2) 调整 type/data 之前先把旧的 m_data 释放（避免泄漏） */
+	if (var->m_data && var->m_dataSize > 0)
+	{
+		XFree_System(var->m_data);
+		var->m_data = NULL;
+		var->m_dataSize = 0;
+	}
 	if (dataSize > 0)
 	{
 		var->m_data = XMalloc_System(dataSize);
 		if (var->m_data == NULL)
 		{
-			XFree_System(var);
-			return NULL;
+			/* 分配失败：保持 m_data=NULL，绝不释放 var —— 它是调用方传入的 */
+			var->m_dataSize = 0;
+			var->m_type = type;
+			return;
 		}
 		if (data != NULL)
-			memcpy(XVariant_DataPtr(var), data, dataSize);
+			memcpy(var->m_data, data, dataSize);
 	}
 	else
 	{

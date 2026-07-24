@@ -246,6 +246,16 @@ typedef struct XXmlStreamNamespaceDeclaration
 } XXmlStreamNamespaceDeclaration;
 
 /**
+ * @brief      命名空间声明数组（对标 QXmlStreamNamespaceDeclarations）
+ * @note       addExtraNamespaceDeclarations 接收的元素数组类型
+ */
+typedef struct XXmlStreamNamespaceDeclarations
+{
+    const XXmlStreamNamespaceDeclaration* m_items;
+    int m_count;
+} XXmlStreamNamespaceDeclarations;
+
+/**
  * @brief      创建命名空间声明
  * @param prefix       前缀
  * @param namespaceUri 命名空间 URI
@@ -280,6 +290,11 @@ const char* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNamespac
  * @note       前向只读 XML 解析器，支持流式读取 XML Token
  *             内部使用简单的手写 SAX 解析器
  */
+/* 前向声明 */
+typedef struct XXmlStreamNotationDeclarations XXmlStreamNotationDeclarations;
+typedef struct XXmlStreamEntityDeclarations XXmlStreamEntityDeclarations;
+typedef struct XXmlStreamEntityResolver XXmlStreamEntityResolver;
+
 typedef struct XXmlStreamReader
 {
     XClass    m_class;           /**< 继承的基类成员 */
@@ -308,6 +323,9 @@ typedef struct XXmlStreamReader
     int       m_nsDeclCount;     /**< 命名空间声明数量 */
     int       m_entityExpansionLimit; /**< 实体扩展限制 */
     bool      m_isEndOfDocument;  /**< 是否到达文档末尾 */
+    XXmlStreamNotationDeclarations* m_notationDeclarations; /**< DTD 符号声明列表 */
+    XXmlStreamEntityDeclarations* m_entityDeclarations; /**< DTD 实体声明列表 */
+    XXmlStreamEntityResolver* m_entityResolver; /**< 实体解析器 */
 } XXmlStreamReader;
 
 /* ========== 虚函数表初始化 ========== */
@@ -467,6 +485,13 @@ bool XXmlStreamReader_isCharacters(const XXmlStreamReader* self);
 bool XXmlStreamReader_isWhitespace(const XXmlStreamReader* self);
 
 /**
+ * @brief      判断当前字符数据是否为 CDATA 段
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     是 CDATA 返回 true
+ */
+bool XXmlStreamReader_isCDATA(const XXmlStreamReader* self);
+
+/**
  * @brief      判断是否为注释
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     是注释返回 true
@@ -606,6 +631,90 @@ const char* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self);
  */
 bool XXmlStreamReader_isStandaloneDocument(const XXmlStreamReader* self);
 
+/**
+ * @brief      判断 XML 声明中是否包含 standalone 关键字
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     含 standalone 声明返回 true
+ * @note       对标 QXmlStreamReader::hasStandaloneDeclaration；
+ *             即便 standalone="yes"/"no"，只要出现 standalone 关键字即返回 true。
+ */
+bool XXmlStreamReader_hasStandaloneDeclaration(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取当前 Token 的源行号（从 1 开始）
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     行号（>=1）
+ * @note       对标 QXmlStreamReader::lineNumber
+ */
+int64_t XXmlStreamReader_lineNumber(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取当前 Token 的源列号（从 1 开始）
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     列号（>=1）
+ * @note       对标 QXmlStreamReader::columnNumber
+ */
+int64_t XXmlStreamReader_columnNumber(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取当前 Token 在整个输入中的字符偏移
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     字符偏移（>=0）
+ * @note       对标 QXmlStreamReader::characterOffset
+ */
+int64_t XXmlStreamReader_characterOffset(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取处理指令的目标（target）
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     PI 目标字符串；非 PI Token 时返回空字符串
+ * @note       对标 QXmlStreamReader::processingInstructionTarget
+ */
+const char* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取处理指令的数据（data）
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     PI 数据字符串；无数据时返回空字符串
+ * @note       对标 QXmlStreamReader::processingInstructionData
+ */
+const char* XXmlStreamReader_processingInstructionData(const XXmlStreamReader* self);
+
+/**
+ * @brief      设置是否启用命名空间处理
+ * @param self   目标 XXmlStreamReader 对象指针
+ * @param enable true 启用（默认），false 关闭
+ * @note       对标 QXmlStreamReader::setNamespaceProcessing
+ */
+void XXmlStreamReader_setNamespaceProcessing(XXmlStreamReader* self, bool enable);
+
+/**
+ * @brief      获取命名空间处理开关
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     true 表示启用
+ * @note       对标 QXmlStreamReader::namespaceProcessing
+ */
+bool XXmlStreamReader_namespaceProcessing(const XXmlStreamReader* self);
+
+/**
+ * @brief      添加一个额外的命名空间声明（影响后续元素的 prefix -> uri 解析）
+ * @param self       目标 XXmlStreamReader 对象指针
+ * @param extraDecl  命名空间声明（不可为空；可复用前缀以覆盖默认声明）
+ * @note       对标 QXmlStreamReader::addExtraNamespaceDeclaration
+ */
+void XXmlStreamReader_addExtraNamespaceDeclaration(XXmlStreamReader* self,
+    const XXmlStreamNamespaceDeclaration* extraDecl);
+
+/**
+ * @brief      批量添加额外的命名空间声明
+ * @param self      目标 XXmlStreamReader 对象指针
+ * @param extraDecls 声明数组（不可为空；每个元素均为 prefix/uri 对）
+ * @param count     数组元素数量
+ * @note       对标 QXmlStreamReader::addExtraNamespaceDeclarations
+ */
+void XXmlStreamReader_addExtraNamespaceDeclarations(XXmlStreamReader* self,
+    const XXmlStreamNamespaceDeclaration* extraDecls, int count);
+
 /* ========== 错误处理 ========== */
 
 /**
@@ -649,8 +758,328 @@ int XXmlStreamReader_entityExpansionLimit(const XXmlStreamReader* self);
  * @param limit 实体扩展限制
  */
 void XXmlStreamReader_setEntityExpansionLimit(XXmlStreamReader* self, int limit);
+/**
+ * @brief      设置输入设备（替代 addData）
+ * @param self   目标 XXmlStreamReader 对象指针
+ * @param device XFileDevice 指针（可为 NULL）
+ */
+void XXmlStreamReader_setDevice(XXmlStreamReader* self, struct XIODevice* device);
+
+/**
+ * @brief      获取当前关联的输入设备
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     XIODevice 指针，未设置返回 NULL
+ * @note       对标 QXmlStreamReader::device
+ */
+struct XIODevice* XXmlStreamReader_device(const XXmlStreamReader* self);
+
 
 #ifdef __cplusplus
 }
 #endif
+
+/* ========== DTD 符号声明（对标 QXmlStreamNotationDeclaration） ========== */
+
+/**
+ * @brief      DTD 符号声明结构体（对标 Qt 6.8 QXmlStreamNotationDeclaration）
+ * @note       表示 DTD 中的 NOTATION 声明
+ */
+typedef struct XXmlStreamNotationDeclaration
+{
+    XString* m_name;       /**< 符号名称 */
+    XString* m_systemId;   /**< 系统标识符 */
+    XString* m_publicId;   /**< 公共标识符 */
+} XXmlStreamNotationDeclaration;
+
+/**
+ * @brief      创建 DTD 符号声明
+ * @return     指向新创建的 XXmlStreamNotationDeclaration 的指针
+ */
+XXmlStreamNotationDeclaration* XXmlStreamNotationDeclaration_create(void);
+
+/**
+ * @brief      初始化 DTD 符号声明
+ * @param self 目标 XXmlStreamNotationDeclaration 指针
+ */
+void XXmlStreamNotationDeclaration_init(XXmlStreamNotationDeclaration* self);
+
+/**
+ * @brief      销毁 DTD 符号声明
+ * @param self 目标 XXmlStreamNotationDeclaration 指针
+ */
+void XXmlStreamNotationDeclaration_delete(XXmlStreamNotationDeclaration* self);
+
+/**
+ * @brief      获取符号名称
+ * @param self 目标 XXmlStreamNotationDeclaration 指针
+ * @return     符号名称
+ */
+const char* XXmlStreamNotationDeclaration_name(const XXmlStreamNotationDeclaration* self);
+
+/**
+ * @brief      获取系统标识符
+ * @param self 目标 XXmlStreamNotationDeclaration 指针
+ * @return     系统标识符
+ */
+const char* XXmlStreamNotationDeclaration_systemId(const XXmlStreamNotationDeclaration* self);
+
+/**
+ * @brief      获取公共标识符
+ * @param self 目标 XXmlStreamNotationDeclaration 指针
+ * @return     公共标识符
+ */
+const char* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDeclaration* self);
+
+/* ========== DTD 实体声明（对标 QXmlStreamEntityDeclaration） ========== */
+
+/**
+ * @brief      DTD 实体声明结构体（对标 Qt 6.8 QXmlStreamEntityDeclaration）
+ * @note       表示 DTD 中的 ENTITY 声明
+ */
+typedef struct XXmlStreamEntityDeclaration
+{
+    XString* m_name;         /**< 实体名称 */
+    XString* m_notationName;  /**< 符号名称（用于未解析实体）*/
+    XString* m_systemId;      /**< 系统标识符 */
+    XString* m_publicId;      /**< 公共标识符 */
+    XString* m_value;         /**< 实体值（用于解析实体）*/
+} XXmlStreamEntityDeclaration;
+
+/**
+ * @brief      创建 DTD 实体声明
+ * @return     指向新创建的 XXmlStreamEntityDeclaration 的指针
+ */
+XXmlStreamEntityDeclaration* XXmlStreamEntityDeclaration_create(void);
+
+/**
+ * @brief      初始化 DTD 实体声明
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ */
+void XXmlStreamEntityDeclaration_init(XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      销毁 DTD 实体声明
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ */
+void XXmlStreamEntityDeclaration_delete(XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      获取实体名称
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ * @return     实体名称
+ */
+const char* XXmlStreamEntityDeclaration_name(const XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      获取符号名称
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ * @return     符号名称
+ */
+const char* XXmlStreamEntityDeclaration_notationName(const XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      获取系统标识符
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ * @return     系统标识符
+ */
+const char* XXmlStreamEntityDeclaration_systemId(const XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      获取公共标识符
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ * @return     公共标识符
+ */
+const char* XXmlStreamEntityDeclaration_publicId(const XXmlStreamEntityDeclaration* self);
+
+/**
+ * @brief      获取实体值
+ * @param self 目标 XXmlStreamEntityDeclaration 指针
+ * @return     实体值
+ */
+const char* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclaration* self);
+
+/* ========== DTD 声明列表 ========== */
+
+/**
+ * @brief      DTD 符号声明列表
+ */
+typedef struct XXmlStreamNotationDeclarations
+{
+    XXmlStreamNotationDeclaration* m_declarations;
+    size_t m_count;
+    size_t m_capacity;
+} XXmlStreamNotationDeclarations;
+
+/**
+ * @brief      DTD 实体声明列表
+ */
+typedef struct XXmlStreamEntityDeclarations
+{
+    XXmlStreamEntityDeclaration* m_declarations;
+    size_t m_count;
+    size_t m_capacity;
+} XXmlStreamEntityDeclarations;
+
+/* ========== DTD 声明列表管理 ========== */
+
+/**
+ * @brief      创建 DTD 符号声明列表
+ * @return     指向新创建的列表的指针
+ */
+XXmlStreamNotationDeclarations* XXmlStreamNotationDeclarations_create(void);
+
+/**
+ * @brief      销毁 DTD 符号声明列表
+ * @param self 目标列表指针
+ */
+void XXmlStreamNotationDeclarations_delete(XXmlStreamNotationDeclarations* self);
+
+/**
+ * @brief      获取声明数量
+ * @param self 目标列表指针
+ * @return     声明数量
+ */
+size_t XXmlStreamNotationDeclarations_size(const XXmlStreamNotationDeclarations* self);
+
+/**
+ * @brief      按索引获取声明
+ * @param self  目标列表指针
+ * @param index 索引
+ * @return     指向声明的指针，越界返回 NULL
+ */
+const XXmlStreamNotationDeclaration* XXmlStreamNotationDeclarations_at(const XXmlStreamNotationDeclarations* self, size_t index);
+
+/**
+ * @brief      创建 DTD 实体声明列表
+ * @return     指向新创建的列表的指针
+ */
+XXmlStreamEntityDeclarations* XXmlStreamEntityDeclarations_create(void);
+
+/**
+ * @brief      销毁 DTD 实体声明列表
+ * @param self 目标列表指针
+ */
+void XXmlStreamEntityDeclarations_delete(XXmlStreamEntityDeclarations* self);
+
+/**
+ * @brief      获取声明数量
+ * @param self 目标列表指针
+ * @return     声明数量
+ */
+size_t XXmlStreamEntityDeclarations_size(const XXmlStreamEntityDeclarations* self);
+
+/**
+ * @brief      按索引获取声明
+ * @param self  目标列表指针
+ * @param index 索引
+ * @return     指向声明的指针，越界返回 NULL
+ */
+const XXmlStreamEntityDeclaration* XXmlStreamEntityDeclarations_at(const XXmlStreamEntityDeclarations* self, size_t index);
+
+/* ========== 实体解析器（对标 QXmlStreamEntityResolver） ========== */
+
+/**
+ * @brief      实体解析器回调函数类型
+ */
+typedef const char* (*XXmlStreamEntityResolver_ResolveEntityCallback)(
+    const char* publicId, const char* systemId, void* userData);
+
+/**
+ * @brief      未声明实体解析回调函数类型
+ */
+typedef const char* (*XXmlStreamEntityResolver_ResolveUndeclaredEntityCallback)(
+    const char* name, void* userData);
+
+/**
+ * @brief      实体解析器结构体（对标 Qt 6.8 QXmlStreamEntityResolver）
+ * @note       用于解析自定义实体
+ */
+typedef struct XXmlStreamEntityResolver
+{
+    XClass m_class;
+    void* m_userData;
+    XXmlStreamEntityResolver_ResolveEntityCallback m_resolveEntityCallback;
+    XXmlStreamEntityResolver_ResolveUndeclaredEntityCallback m_resolveUndeclaredEntityCallback;
+} XXmlStreamEntityResolver;
+
+/**
+ * @brief      创建实体解析器
+ * @return     指向新创建的 XXmlStreamEntityResolver 的指针
+ */
+XXmlStreamEntityResolver* XXmlStreamEntityResolver_create(void);
+
+/**
+ * @brief      初始化实体解析器
+ * @param self 目标 XXmlStreamEntityResolver 指针
+ */
+void XXmlStreamEntityResolver_init(XXmlStreamEntityResolver* self);
+
+/**
+ * @brief      销毁实体解析器
+ * @param self 目标 XXmlStreamEntityResolver 指针
+ */
+void XXmlStreamEntityResolver_delete(XXmlStreamEntityResolver* self);
+
+/**
+ * @brief      解析实体
+ * @param self      目标 XXmlStreamEntityResolver 指针
+ * @param publicId 公共标识符
+ * @param systemId 系统标识符
+ * @return          解析后的实体值，未找到返回 NULL
+ */
+const char* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,
+    const char* publicId, const char* systemId);
+
+/**
+ * @brief      解析未声明实体
+ * @param self 目标 XXmlStreamEntityResolver 指针
+ * @param name 实体名称
+ * @return      解析后的实体值，未找到返回 NULL
+ */
+const char* XXmlStreamEntityResolver_resolveUndeclaredEntity(XXmlStreamEntityResolver* self,
+    const char* name);
+
+/**
+ * @brief      设置用户数据
+ * @param self     目标 XXmlStreamEntityResolver 指针
+ * @param userData 用户数据
+ */
+void XXmlStreamEntityResolver_setUserData(XXmlStreamEntityResolver* self, void* userData);
+
+/**
+ * @brief      获取用户数据
+ * @param self 目标 XXmlStreamEntityResolver 指针
+ * @return     用户数据
+ */
+void* XXmlStreamEntityResolver_userData(XXmlStreamEntityResolver* self);
+
+/* ========== XXmlStreamReader DTD 相关 API ========== */
+
+/**
+ * @brief      获取 DTD 符号声明列表
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     DTD 符号声明列表（调用者不负责释放）
+ */
+XXmlStreamNotationDeclarations* XXmlStreamReader_notationDeclarations(const XXmlStreamReader* self);
+
+/**
+ * @brief      获取 DTD 实体声明列表
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     DTD 实体声明列表（调用者不负责释放）
+ */
+XXmlStreamEntityDeclarations* XXmlStreamReader_entityDeclarations(const XXmlStreamReader* self);
+
+/**
+ * @brief      设置实体解析器
+ * @param self     目标 XXmlStreamReader 对象指针
+ * @param resolver 实体解析器（可为空）
+ */
+void XXmlStreamReader_setEntityResolver(XXmlStreamReader* self, XXmlStreamEntityResolver* resolver);
+
+/**
+ * @brief      获取实体解析器
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @return     实体解析器（无则返回 NULL）
+ */
+XXmlStreamEntityResolver* XXmlStreamReader_entityResolver(const XXmlStreamReader* self);
 #endif /* XXMLSTREAMREADER_H */

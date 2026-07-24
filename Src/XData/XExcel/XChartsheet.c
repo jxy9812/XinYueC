@@ -1,7 +1,9 @@
 #include "XChartsheet.h"
 #include "XWorkbook.h"
 #include "XMemory.h"
-#include <stdlib.h>#include <string.h>
+#include <stdlib.h>
+#include <string.h>
+
 XChartsheet* XChartsheet_create(const char* sheetName, int sheetId, void* book, XAbstractOOXmlFile_CreateFlag flag) {
     XChartsheet* self = (XChartsheet*)XMalloc_System(sizeof(XChartsheet));
     if (!self) return NULL; memset(self, 0, sizeof(XChartsheet));

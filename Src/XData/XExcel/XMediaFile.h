@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 
@@ -73,6 +76,14 @@ int XMediaFile_index(const XMediaFile* self);
 void XMediaFile_setIndex(XMediaFile* self, int idx);
 void XMediaFile_setFileName(XMediaFile* self, const char* name);
 const char* XMediaFile_fileName(const XMediaFile* self);
+
+/**
+ * @brief      获取内容的哈希键（用于去重）
+ * @param self    指针
+ * @param outKey  输出哈希键数据
+ * @param outLen  输出哈希键长度
+ */
+void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen);
 
 #ifdef __cplusplus
 }

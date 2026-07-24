@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 
 /**
@@ -138,7 +141,8 @@ XString XCellReference_toString(const XCellReference* self, bool row_abs, bool c
 /* ========== 静态工具方法 ========== */
 
 /**
- * @brief      将列号转换为列名字符串（如 1->"A"，27->"AA"）
+ * @brief      将列号转换为列名字符串（如 1->
+"A"，27->"AA"）
  * @param column 列号（1 索引）
  * @return     列名字符串（需要调用 XString_deinit_base 释放）
  */

@@ -5,8 +5,11 @@
  ******************************************************************************/
 #include "XCellRange.h"
 #include <string.h>
+
 #include <stdio.h>
+
 #include <stdlib.h>
+
 
 /**
  * @brief      从字符串解析范围
@@ -175,11 +178,47 @@ XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs)
     XString_init(&result);
     if (!self || !XCellRange_isValid(self)) return result;
 
-    XString tl = XCellReference_toString(&(XCellReference){self->m_firstRow, self->m_firstColumn}, row_abs, col_abs);
+        XCellReference tlRef;
+    XCellReference_init_ex(&tlRef, self->m_firstRow, self->m_firstColumn);
+    XString tl = XCellReference_toString(&tlRef, row_abs, col_abs);
+    XString_append_utf8(&result, XString_toUtf8(&tl));
     XString_append_utf8(&result, ":");
-    XString br = XCellReference_toString(&(XCellReference){self->m_lastRow, self->m_lastColumn}, row_abs, col_abs);
-    XString_append_utf8(&result, XString_toUtf8_const(&br));
+    XCellReference brRef;
+    XCellReference_init_ex(&brRef, self->m_lastRow, self->m_lastColumn);
+    XString br = XCellReference_toString(&brRef, row_abs, col_abs);
+    XString_append_utf8(&result, XString_toUtf8(&br));
     XString_deinit_base(&br);
     XString_deinit_base(&tl);
     return result;
+}
+
+/* ========== 便捷设置方法 ========== */
+
+void XCellRange_setCell(XCellRange* self, int row, int col)
+{
+    if (!self) return;
+    self->m_firstRow = row;
+    self->m_firstColumn = col;
+    self->m_lastRow = row;
+    self->m_lastColumn = col;
+}
+
+void XCellRange_setCellReference(XCellRange* self, const XCellReference* cell)
+{
+    if (!self || !cell) return;
+    int r = XCellReference_row(cell);
+    int c = XCellReference_column(cell);
+    self->m_firstRow = r;
+    self->m_firstColumn = c;
+    self->m_lastRow = r;
+    self->m_lastColumn = c;
+}
+
+void XCellRange_setFullRange(XCellRange* self, int firstRow, int firstCol, int lastRow, int lastCol)
+{
+    if (!self) return;
+    self->m_firstRow = firstRow;
+    self->m_firstColumn = firstCol;
+    self->m_lastRow = lastRow;
+    self->m_lastColumn = lastCol;
 }

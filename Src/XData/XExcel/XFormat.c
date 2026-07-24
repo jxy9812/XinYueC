@@ -9,45 +9,164 @@
 #include "XColor.h"
 #include "XFont.h"
 #include "XMap.h"
-#include "XMap/XMap.h"
 #include "XPair.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 #include <stdio.h>
+
+
+/* XMap 存储方案：键为 int（属性ID），值为 int
+ * 对于 bool：存储 0/1
+ * 对于字符串：存储为 intptr_t（指针转型）
+ * 对于颜色：存储为 ARGB 打包 int
+ */
 
 /* ========== 辅助函数：获取/设置属性 ========== */
 
-static void* getProperty(const XFormat* self, int propertyId)
+static int getPropertyInt(const XFormat* self, int propertyId, int defaultValue)
 {
-    if (!self || !self->m_properties) return NULL;
-    void* val = NULL;
-    /* XMap 查找 */
-    XMapIterator it = XMap_find_base(self->m_properties, &propertyId, sizeof(int));
-    if (it != XMap_end_base(self->m_properties))
+    if (!self || !self->m_properties) return defaultValue;
+    XMap_iterator it;
+    if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
     {
-        XPair* pair = XMapIterator_toPair(it);
-        if (pair) val = pair->m_value;
+        XPair* pair = XMap_iterator_data(&it);
+        if (pair) return *(int*)XPair_second(pair);
     }
-    return val;
+    return defaultValue;
 }
 
-static void setProperty(XFormat* self, int propertyId, void* value, size_t valueSize)
+static void setPropertyInt(XFormat* self, int propertyId, int value)
 {
     if (!self) return;
     if (!self->m_properties)
     {
-        self->m_properties = XMap_create();
+        self->m_properties = XMap_Create(int, intptr_t, int_compare);
         if (!self->m_properties) return;
     }
-    XMap_insert_base(self->m_properties, &propertyId, sizeof(int), value, valueSize);
+    intptr_t val = value;
+    XMapBase_insert_base((XMapBase*)self->m_properties, &propertyId, &val);
+    self->m_dirty = true;
+}
+
+static bool getPropertyBool(const XFormat* self, int propertyId, bool defaultValue)
+{
+    return getPropertyInt(self, propertyId, defaultValue ? 1 : 0) != 0;
+}
+
+static void setPropertyBool(XFormat* self, int propertyId, bool value)
+{
+    setPropertyInt(self, propertyId, value ? 1 : 0);
+}
+
+/* 颜色打包/解包 */
+static int packColor(const XColor* c)
+{
+    if (!c) return 0;
+    return ((int)c->m_alpha << 24) | ((int)c->m_comp1 << 16) | ((int)c->m_comp2 << 8) | (int)c->m_comp3;
+}
+
+static XColor unpackColor(int packed)
+{
+    XColor c;
+    c = XColor_create_rgb(        (uint8_t)((packed >> 16) & 0xFF),
+        (uint8_t)((packed >> 8) & 0xFF),
+        (uint8_t)(packed & 0xFF),
+        (uint8_t)((packed >> 24) & 0xFF));
+    return c;
+}
+
+static XColor getPropertyColor(const XFormat* self, int propertyId)
+{
+    int packed = getPropertyInt(self, propertyId, 0);
+    return unpackColor(packed);
+}
+
+static void setPropertyColor(XFormat* self, int propertyId, const XColor* color)
+{
+    if (color) setPropertyInt(self, propertyId, packColor(color));
+}
+
+/* 字符串属性存储：使用 intptr_t 存储 XString* 指针 */
+static const char* getPropertyString(const XFormat* self, int propertyId)
+{
+    if (!self || !self->m_properties) return "";
+    XMap_iterator it;
+    if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
+    {
+        XPair* pair = XMap_iterator_data(&it);
+        if (pair)
+        {
+            intptr_t ptr = *(intptr_t*)XPair_second(pair);
+            if (ptr)
+            {
+                XString* str = (XString*)ptr;
+                return XString_toUtf8(str);
+            }
+        }
+    }
+    return "";
+}
+
+static void setPropertyString(XFormat* self, int propertyId, const char* value)
+{
+    if (!self || !value) return;
+    if (!self->m_properties)
+    {
+        self->m_properties = XMap_Create(int, intptr_t, int_compare);
+        if (!self->m_properties) return;
+    }
+    /* 先释放旧字符串 */
+    {
+        XMap_iterator it;
+        if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair)
+            {
+                intptr_t oldPtr = *(intptr_t*)XPair_second(pair);
+                if (oldPtr) { XString_deinit_base((XString*)oldPtr); XFree_System((XString*)oldPtr); }
+            }
+        }
+    }
+    XString* str = XString_create();
+    if (str) XString_append_utf8(str, value);
+    intptr_t ptr = (intptr_t)str;
+    intptr_t val = ptr;
+    XMapBase_insert_base((XMapBase*)self->m_properties, &propertyId, &val);
     self->m_dirty = true;
 }
 
 static bool hasProperty(const XFormat* self, int propertyId)
 {
     if (!self || !self->m_properties) return false;
-    XMapIterator it = XMap_find_base(self->m_properties, &propertyId, sizeof(int));
-    return it != XMap_end_base(self->m_properties);
+    XMap_iterator it;
+    return XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it);
+}
+
+/* 释放所有字符串属性 */
+static void freeStringProperties(XFormat* self)
+{
+    if (!self || !self->m_properties) return;
+    int stringProps[] = {
+        XFormat_P_NumFmt_FormatCode,
+        XFormat_P_Font_Name,
+        -1
+    };
+    for (int i = 0; stringProps[i] >= 0; i++)
+    {
+        XMap_iterator it;
+        if (XMapBase_find_base((XMapBase*)self->m_properties, &stringProps[i], (XMapBase_iterator*)&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair)
+            {
+                intptr_t ptr = *(intptr_t*)XPair_second(pair);
+                if (ptr) { XString_deinit_base((XString*)ptr); XFree_System((XString*)ptr); }
+            }
+        }
+    }
 }
 
 /* ========== 创建与初始化 ========== */
@@ -72,18 +191,36 @@ void XFormat_copy(XFormat* self, const XFormat* other)
     if (other->m_properties)
     {
         if (!self->m_properties)
-            self->m_properties = XMap_create();
+            self->m_properties = XMap_Create(int, intptr_t, int_compare);
         if (self->m_properties)
-            XMap_clear_base(self->m_properties);
-        /* 复制所有属性 */
-        XMapIterator it = XMap_begin_base(other->m_properties);
-        XMapIterator end = XMap_end_base(other->m_properties);
-        for (; XMapIterator_notEqual(it, end); it = XMapIterator_next(it))
         {
-            XPair* pair = XMapIterator_toPair(it);
-            if (pair)
-                XMap_insert_base(self->m_properties, XPair_getKey(pair), XPair_getKeySize(pair),
-                                 XPair_getValue(pair), XPair_getValueSize(pair));
+            XMap_clear_base((XMapBase*)self->m_properties);
+            /* 复制所有属性 */
+            XMap_iterator it = XMap_begin(other->m_properties);
+            XMap_iterator end = XMap_end(other->m_properties);
+            while (!XMap_iterator_isEnd(&it))
+            {
+                XPair* pair = XMap_iterator_data(&it);
+                if (pair)
+                {
+                    int key = *(int*)XPair_first(pair);
+                    intptr_t val = *(intptr_t*)XPair_second(pair);
+                    /* 如果是字符串属性，深拷贝 */
+                    if (key == XFormat_P_NumFmt_FormatCode || key == XFormat_P_Font_Name)
+                    {
+                        intptr_t oldPtr = (intptr_t)val;
+                        if (oldPtr)
+                        {
+                            XString* str = XString_create();
+                            if (str) XString_append_utf8(str, XString_toUtf8((XString*)oldPtr));
+                            intptr_t newPtr = (intptr_t)str;
+                            val = (int)newPtr;
+                        }
+                    }
+                    XMapBase_insert_base((XMapBase*)self->m_properties, &key, &val);
+                }
+                XMap_iterator_add(other->m_properties, &it);
+            }
         }
     }
     self->m_fontIndex = other->m_fontIndex;
@@ -105,7 +242,12 @@ void XFormat_delete(XFormat* self)
 {
     if (self)
     {
-        if (self->m_properties) { XMap_clear_base(self->m_properties); XMap_deinit_base(self->m_properties); XFree_System(self->m_properties); }
+        if (self->m_properties)
+        {
+            freeStringProperties(self);
+            XMap_deinit_base((XMapBase*)self->m_properties);
+            XFree_System(self->m_properties);
+        }
         XFree_System(self);
     }
 }
@@ -114,25 +256,23 @@ void XFormat_delete(XFormat* self)
 
 int XFormat_numberFormatIndex(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_NumFmt_Id);
-    return val ? *(int*)val : 0;
+    return getPropertyInt(self, XFormat_P_NumFmt_Id, 0);
 }
 
 void XFormat_setNumberFormatIndex(XFormat* self, int format)
 {
-    setProperty(self, XFormat_P_NumFmt_Id, &format, sizeof(int));
+    setPropertyInt(self, XFormat_P_NumFmt_Id, format);
 }
 
 const char* XFormat_numberFormat(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_NumFmt_FormatCode);
-    return val ? (const char*)val : "";
+    return getPropertyString(self, XFormat_P_NumFmt_FormatCode);
 }
 
 void XFormat_setNumberFormat(XFormat* self, const char* format)
 {
     if (format)
-        setProperty(self, XFormat_P_NumFmt_FormatCode, (void*)format, strlen(format) + 1);
+        setPropertyString(self, XFormat_P_NumFmt_FormatCode, format);
 }
 
 void XFormat_setNumberFormat_ex(XFormat* self, int id, const char* format)
@@ -153,7 +293,8 @@ bool XFormat_isDateTimeFormat(const XFormat* self)
     {
         if (strstr(fmt, "y") || strstr(fmt, "m") || strstr(fmt, "d") ||
             strstr(fmt, "h") || strstr(fmt, "s") || strstr(fmt, "Y") ||
-            strstr(fmt, "M") || strstr(fmt, "D") || strstr(fmt, "H") || strstr(fmt, "S"))
+            strstr(fmt, "M") || strstr(fmt, "D") || strstr(fmt, "H") ||
+            strstr(fmt, "S"))
             return true;
     }
     return false;
@@ -163,268 +304,168 @@ bool XFormat_isDateTimeFormat(const XFormat* self)
 
 int XFormat_fontSize(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Size);
-    return val ? *(int*)val : 0;
+    return getPropertyInt(self, XFormat_P_Font_Size, 0);
 }
 
 void XFormat_setFontSize(XFormat* self, int size)
 {
-    setProperty(self, XFormat_P_Font_Size, &size, sizeof(int));
+    setPropertyInt(self, XFormat_P_Font_Size, size);
 }
 
 bool XFormat_fontItalic(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Italic);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Font_Italic, false);
 }
 
 void XFormat_setFontItalic(XFormat* self, bool italic)
 {
-    setProperty(self, XFormat_P_Font_Italic, &italic, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Font_Italic, italic);
 }
 
 bool XFormat_fontStrikeOut(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_StrikeOut);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Font_StrikeOut, false);
 }
 
 void XFormat_setFontStrikeOut(XFormat* self, bool strikeOut)
 {
-    setProperty(self, XFormat_P_Font_StrikeOut, &strikeOut, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Font_StrikeOut, strikeOut);
 }
 
 XColor XFormat_fontColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Color);
-    if (val) return *(XColor*)val;
-    return XColor_create(); /* 无效颜色 */
+    return getPropertyColor(self, XFormat_P_Font_Color);
 }
 
 void XFormat_setFontColor(XFormat* self, const XColor* color)
 {
-    if (color)
-        setProperty(self, XFormat_P_Font_Color, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Font_Color, color);
 }
 
 bool XFormat_fontBold(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Bold);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Font_Bold, false);
 }
 
 void XFormat_setFontBold(XFormat* self, bool bold)
 {
-    setProperty(self, XFormat_P_Font_Bold, &bold, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Font_Bold, bold);
 }
 
 XFormat_FontScript XFormat_fontScript(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Script);
-    return val ? *(XFormat_FontScript*)val : XFormat_FontScriptNormal;
+    return (XFormat_FontScript)getPropertyInt(self, XFormat_P_Font_Script, XFormat_FontScriptNormal);
 }
 
 void XFormat_setFontScript(XFormat* self, XFormat_FontScript script)
 {
-    setProperty(self, XFormat_P_Font_Script, &script, sizeof(XFormat_FontScript));
+    setPropertyInt(self, XFormat_P_Font_Script, (int)script);
 }
 
 XFormat_FontUnderline XFormat_fontUnderline(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Underline);
-    return val ? *(XFormat_FontUnderline*)val : XFormat_FontUnderlineNone;
+    return (XFormat_FontUnderline)getPropertyInt(self, XFormat_P_Font_Underline, XFormat_FontUnderlineNone);
 }
 
 void XFormat_setFontUnderline(XFormat* self, XFormat_FontUnderline underline)
 {
-    setProperty(self, XFormat_P_Font_Underline, &underline, sizeof(XFormat_FontUnderline));
+    setPropertyInt(self, XFormat_P_Font_Underline, (int)underline);
 }
 
 bool XFormat_fontOutline(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Outline);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Font_Outline, false);
 }
 
 void XFormat_setFontOutline(XFormat* self, bool outline)
 {
-    setProperty(self, XFormat_P_Font_Outline, &outline, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Font_Outline, outline);
+}
+
+bool XFormat_fontShadow(const XFormat* self)
+{
+    return getPropertyBool(self, XFormat_P_Font_Shadow, false);
+}
+
+void XFormat_setFontShadow(XFormat* self, bool shadow)
+{
+    setPropertyBool(self, XFormat_P_Font_Shadow, shadow);
 }
 
 const char* XFormat_fontName(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Font_Name);
-    return val ? (const char*)val : "";
+    return getPropertyString(self, XFormat_P_Font_Name);
 }
 
 void XFormat_setFontName(XFormat* self, const char* name)
 {
-    if (name)
-        setProperty(self, XFormat_P_Font_Name, (void*)name, strlen(name) + 1);
-}
-
-XFont* XFormat_font(const XFormat* self)
-{
-    /* 创建 XFont 对象并从格式属性填充 */
-    XFont* font = XFont_create();
-    if (!font) return NULL;
-    if (XFormat_fontBold(self)) XFont_setBold(font, true);
-    if (XFormat_fontItalic(self)) XFont_setItalic(font, true);
-    int size = XFormat_fontSize(self);
-    if (size > 0) XFont_setPointSize(font, (double)size);
-    const char* name = XFormat_fontName(self);
-    if (name && *name) XFont_setFamily(font, name);
-    XColor color = XFormat_fontColor(self);
-    if (XColor_isValid(&color)) XFont_setColor(font, &color);
-    return font;
-}
-
-void XFormat_setFont(XFormat* self, const XFont* font)
-{
-    if (!self || !font) return;
-    XFormat_setFontBold(self, XFont_isBold(font));
-    XFormat_setFontItalic(self, XFont_isItalic(font));
-    XFormat_setFontSize(self, (int)XFont_pointSize(font));
-    XFormat_setFontName(self, XFont_family(font));
-    XColor color = XFont_color(font);
-    XFormat_setFontColor(self, &color);
+    if (name) setPropertyString(self, XFormat_P_Font_Name, name);
 }
 
 /* ========== 对齐属性 ========== */
 
-/**
- * @brief      获取水平对齐方式
- * @param self 指针
- * @return     水平对齐枚举值
- */
 XFormat_HorizontalAlignment XFormat_horizontalAlignment(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_AlignH);
-    return val ? *(XFormat_HorizontalAlignment*)val : XFormat_AlignHGeneral;
+    return (XFormat_HorizontalAlignment)getPropertyInt(self, XFormat_P_Alignment_AlignH, XFormat_AlignHGeneral);
 }
 
-/**
- * @brief      设置水平对齐方式
- * @param self  指针
- * @param align 水平对齐枚举值
- */
 void XFormat_setHorizontalAlignment(XFormat* self, XFormat_HorizontalAlignment align)
 {
-    setProperty(self, XFormat_P_Alignment_AlignH, &align, sizeof(XFormat_HorizontalAlignment));
+    setPropertyInt(self, XFormat_P_Alignment_AlignH, (int)align);
 }
 
-/**
- * @brief      获取垂直对齐方式
- * @param self 指针
- * @return     垂直对齐枚举值
- */
 XFormat_VerticalAlignment XFormat_verticalAlignment(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_AlignV);
-    return val ? *(XFormat_VerticalAlignment*)val : XFormat_AlignBottom;
+    return (XFormat_VerticalAlignment)getPropertyInt(self, XFormat_P_Alignment_AlignV, XFormat_AlignBottom);
 }
 
-/**
- * @brief      设置垂直对齐方式
- * @param self  指针
- * @param align 垂直对齐枚举值
- */
 void XFormat_setVerticalAlignment(XFormat* self, XFormat_VerticalAlignment align)
 {
-    setProperty(self, XFormat_P_Alignment_AlignV, &align, sizeof(XFormat_VerticalAlignment));
+    setPropertyInt(self, XFormat_P_Alignment_AlignV, (int)align);
 }
 
-/**
- * @brief      获取文本自动换行标志
- * @param self 指针
- * @return     启用返回 true
- */
 bool XFormat_textWrap(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_Wrap);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Alignment_Wrap, false);
 }
 
-/**
- * @brief      设置文本自动换行
- * @param self     指针
- * @param textWrap 是否启用自动换行
- */
-void XFormat_setTextWrap(XFormat* self, bool textWrap)
+void XFormat_setTextWrap(XFormat* self, bool wrap)
 {
-    setProperty(self, XFormat_P_Alignment_Wrap, &textWrap, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Alignment_Wrap, wrap);
 }
 
-/**
- * @brief      获取文本旋转角度
- * @param self 指针
- * @return     旋转角度（0-180，或 255 表示垂直）
- */
 int XFormat_rotation(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_Rotation);
-    return val ? *(int*)val : 0;
+    return getPropertyInt(self, XFormat_P_Alignment_Rotation, 0);
 }
 
-/**
- * @brief      设置文本旋转角度
- * @param self     指针
- * @param rotation 旋转角度（0-180，或 255 表示垂直）
- */
 void XFormat_setRotation(XFormat* self, int rotation)
 {
-    setProperty(self, XFormat_P_Alignment_Rotation, &rotation, sizeof(int));
+    setPropertyInt(self, XFormat_P_Alignment_Rotation, rotation);
 }
 
-/**
- * @brief      获取缩进量
- * @param self 指针
- * @return     缩进级别
- */
 int XFormat_indent(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_Indent);
-    return val ? *(int*)val : 0;
+    return getPropertyInt(self, XFormat_P_Alignment_Indent, 0);
 }
 
-/**
- * @brief      设置缩进量
- * @param self   指针
- * @param indent 缩进级别
- */
 void XFormat_setIndent(XFormat* self, int indent)
 {
-    setProperty(self, XFormat_P_Alignment_Indent, &indent, sizeof(int));
+    setPropertyInt(self, XFormat_P_Alignment_Indent, indent);
 }
 
-/**
- * @brief      获取是否缩小字体以适应单元格
- * @param self 指针
- * @return     启用返回 true
- */
 bool XFormat_shrinkToFit(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Alignment_ShinkToFit);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Alignment_ShinkToFit, false);
 }
 
-/**
- * @brief      设置是否缩小字体以适应单元格
- * @param self  指针
- * @param shink 是否启用
- */
-void XFormat_setShrinkToFit(XFormat* self, bool shink)
+void XFormat_setShrinkToFit(XFormat* self, bool shrink)
 {
-    setProperty(self, XFormat_P_Alignment_ShinkToFit, &shink, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Alignment_ShinkToFit, shrink);
 }
 
 /* ========== 边框属性 ========== */
 
-/**
- * @brief      设置所有边框样式（统一设置）
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
     XFormat_setLeftBorderStyle(self, style);
@@ -433,523 +474,275 @@ void XFormat_setBorderStyle(XFormat* self, XFormat_BorderStyle style)
     XFormat_setBottomBorderStyle(self, style);
 }
 
-/**
- * @brief      设置所有边框颜色（统一设置）
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setBorderColor(XFormat* self, const XColor* color)
 {
-    XFormat_setLeftBorderColor(self, color);
-    XFormat_setRightBorderColor(self, color);
-    XFormat_setTopBorderColor(self, color);
-    XFormat_setBottomBorderColor(self, color);
+    if (color)
+    {
+        XFormat_setLeftBorderColor(self, color);
+        XFormat_setRightBorderColor(self, color);
+        XFormat_setTopBorderColor(self, color);
+        XFormat_setBottomBorderColor(self, color);
+    }
 }
 
-/**
- * @brief      获取左边框样式
- * @param self 指针
- * @return     边框样式
- */
 XFormat_BorderStyle XFormat_leftBorderStyle(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_LeftStyle);
-    return val ? *(XFormat_BorderStyle*)val : XFormat_BorderNone;
+    return (XFormat_BorderStyle)getPropertyInt(self, XFormat_P_Border_LeftStyle, XFormat_BorderNone);
 }
 
-/**
- * @brief      设置左边框样式
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setLeftBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
-    setProperty(self, XFormat_P_Border_LeftStyle, &style, sizeof(XFormat_BorderStyle));
+    setPropertyInt(self, XFormat_P_Border_LeftStyle, (int)style);
 }
 
-/**
- * @brief      获取左边框颜色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_leftBorderColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_LeftColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Border_LeftColor);
 }
 
-/**
- * @brief      设置左边框颜色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setLeftBorderColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Border_LeftColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Border_LeftColor, color);
 }
 
-/**
- * @brief      获取右边框样式
- * @param self 指针
- * @return     边框样式
- */
 XFormat_BorderStyle XFormat_rightBorderStyle(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_RightStyle);
-    return val ? *(XFormat_BorderStyle*)val : XFormat_BorderNone;
+    return (XFormat_BorderStyle)getPropertyInt(self, XFormat_P_Border_RightStyle, XFormat_BorderNone);
 }
 
-/**
- * @brief      设置右边框样式
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setRightBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
-    setProperty(self, XFormat_P_Border_RightStyle, &style, sizeof(XFormat_BorderStyle));
+    setPropertyInt(self, XFormat_P_Border_RightStyle, (int)style);
 }
 
-/**
- * @brief      获取右边框颜色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_rightBorderColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_RightColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Border_RightColor);
 }
 
-/**
- * @brief      设置右边框颜色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setRightBorderColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Border_RightColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Border_RightColor, color);
 }
 
-/**
- * @brief      获取上边框样式
- * @param self 指针
- * @return     边框样式
- */
 XFormat_BorderStyle XFormat_topBorderStyle(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_TopStyle);
-    return val ? *(XFormat_BorderStyle*)val : XFormat_BorderNone;
+    return (XFormat_BorderStyle)getPropertyInt(self, XFormat_P_Border_TopStyle, XFormat_BorderNone);
 }
 
-/**
- * @brief      设置上边框样式
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setTopBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
-    setProperty(self, XFormat_P_Border_TopStyle, &style, sizeof(XFormat_BorderStyle));
+    setPropertyInt(self, XFormat_P_Border_TopStyle, (int)style);
 }
 
-/**
- * @brief      获取上边框颜色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_topBorderColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_TopColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Border_TopColor);
 }
 
-/**
- * @brief      设置上边框颜色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setTopBorderColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Border_TopColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Border_TopColor, color);
 }
 
-/**
- * @brief      获取下边框样式
- * @param self 指针
- * @return     边框样式
- */
 XFormat_BorderStyle XFormat_bottomBorderStyle(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_BottomStyle);
-    return val ? *(XFormat_BorderStyle*)val : XFormat_BorderNone;
+    return (XFormat_BorderStyle)getPropertyInt(self, XFormat_P_Border_BottomStyle, XFormat_BorderNone);
 }
 
-/**
- * @brief      设置下边框样式
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setBottomBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
-    setProperty(self, XFormat_P_Border_BottomStyle, &style, sizeof(XFormat_BorderStyle));
+    setPropertyInt(self, XFormat_P_Border_BottomStyle, (int)style);
 }
 
-/**
- * @brief      获取下边框颜色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_bottomBorderColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_BottomColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Border_BottomColor);
 }
 
-/**
- * @brief      设置下边框颜色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setBottomBorderColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Border_BottomColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Border_BottomColor, color);
 }
 
-/**
- * @brief      获取对角线边框样式
- * @param self 指针
- * @return     边框样式
- */
 XFormat_BorderStyle XFormat_diagonalBorderStyle(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_DiagonalStyle);
-    return val ? *(XFormat_BorderStyle*)val : XFormat_BorderNone;
+    return (XFormat_BorderStyle)getPropertyInt(self, XFormat_P_Border_DiagonalStyle, XFormat_BorderNone);
 }
 
-/**
- * @brief      设置对角线边框样式
- * @param self  指针
- * @param style 边框样式
- */
 void XFormat_setDiagonalBorderStyle(XFormat* self, XFormat_BorderStyle style)
 {
-    setProperty(self, XFormat_P_Border_DiagonalStyle, &style, sizeof(XFormat_BorderStyle));
+    setPropertyInt(self, XFormat_P_Border_DiagonalStyle, (int)style);
 }
 
-/**
- * @brief      获取对角线边框类型
- * @param self 指针
- * @return     对角线边框类型
- */
 XFormat_DiagonalBorderType XFormat_diagonalBorderType(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_DiagonalType);
-    return val ? *(XFormat_DiagonalBorderType*)val : XFormat_DiagonalBorderNone;
+    return (XFormat_DiagonalBorderType)getPropertyInt(self, XFormat_P_Border_DiagonalType, XFormat_DiagonalBorderNone);
 }
 
-/**
- * @brief      设置对角线边框类型
- * @param self 指针
- * @param type 对角线边框类型
- */
 void XFormat_setDiagonalBorderType(XFormat* self, XFormat_DiagonalBorderType type)
 {
-    setProperty(self, XFormat_P_Border_DiagonalType, &type, sizeof(XFormat_DiagonalBorderType));
+    setPropertyInt(self, XFormat_P_Border_DiagonalType, (int)type);
 }
 
-/**
- * @brief      获取对角线边框颜色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_diagonalBorderColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Border_DiagonalColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Border_DiagonalColor);
 }
 
-/**
- * @brief      设置对角线边框颜色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setDiagonalBorderColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Border_DiagonalColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Border_DiagonalColor, color);
 }
 
 /* ========== 填充属性 ========== */
 
-/**
- * @brief      获取填充图案类型
- * @param self 指针
- * @return     填充图案
- */
 XFormat_FillPattern XFormat_fillPattern(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Fill_Pattern);
-    return val ? *(XFormat_FillPattern*)val : XFormat_PatternNone;
+    return (XFormat_FillPattern)getPropertyInt(self, XFormat_P_Fill_Pattern, XFormat_PatternNone);
 }
 
-/**
- * @brief      设置填充图案类型
- * @param self    指针
- * @param pattern 填充图案
- */
 void XFormat_setFillPattern(XFormat* self, XFormat_FillPattern pattern)
 {
-    setProperty(self, XFormat_P_Fill_Pattern, &pattern, sizeof(XFormat_FillPattern));
+    setPropertyInt(self, XFormat_P_Fill_Pattern, (int)pattern);
 }
 
-/**
- * @brief      获取前景色（图案颜色）
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_patternForegroundColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Fill_FgColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Fill_FgColor);
 }
 
-/**
- * @brief      设置前景色（图案颜色）
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setPatternForegroundColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Fill_FgColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Fill_FgColor, color);
 }
 
-/**
- * @brief      获取背景色
- * @param self 指针
- * @return     颜色
- */
 XColor XFormat_patternBackgroundColor(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Fill_BgColor);
-    if (val) return *(XColor*)val;
-    XColor c; XColor_create_init(&c, 0, 0, 0, 0); return c;
+    return getPropertyColor(self, XFormat_P_Fill_BgColor);
 }
 
-/**
- * @brief      设置背景色
- * @param self  指针
- * @param color 颜色
- */
 void XFormat_setPatternBackgroundColor(XFormat* self, const XColor* color)
 {
-    if (color) setProperty(self, XFormat_P_Fill_BgColor, (void*)color, sizeof(XColor));
+    setPropertyColor(self, XFormat_P_Fill_BgColor, color);
 }
 
 /* ========== 保护属性 ========== */
 
-/**
- * @brief      获取锁定状态
- * @param self 指针
- * @return     锁定返回 true
- */
 bool XFormat_locked(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Protection_Locked);
-    return val ? *(bool*)val : true;
+    return getPropertyBool(self, XFormat_P_Protection_Locked, true);
 }
 
-/**
- * @brief      设置锁定状态
- * @param self   指针
- * @param locked 是否锁定
- */
 void XFormat_setLocked(XFormat* self, bool locked)
 {
-    setProperty(self, XFormat_P_Protection_Locked, &locked, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Protection_Locked, locked);
 }
 
-/**
- * @brief      获取隐藏状态
- * @param self 指针
- * @return     隐藏返回 true
- */
 bool XFormat_hidden(const XFormat* self)
 {
-    void* val = getProperty(self, XFormat_P_Protection_Hidden);
-    return val ? *(bool*)val : false;
+    return getPropertyBool(self, XFormat_P_Protection_Hidden, false);
 }
 
-/**
- * @brief      设置隐藏状态
- * @param self   指针
- * @param hidden 是否隐藏
- */
 void XFormat_setHidden(XFormat* self, bool hidden)
 {
-    setProperty(self, XFormat_P_Protection_Hidden, &hidden, sizeof(bool));
+    setPropertyBool(self, XFormat_P_Protection_Hidden, hidden);
 }
 
 /* ========== 格式操作 ========== */
 
-/**
- * @brief      合并格式（将 modifier 中设置的属性应用到当前格式）
- * @param self     目标格式
- * @param modifier 源格式
- */
 void XFormat_mergeFormat(XFormat* self, const XFormat* modifier)
 {
     if (!self || !modifier || !modifier->m_properties) return;
     if (!self->m_properties)
     {
-        self->m_properties = XMap_create();
+        self->m_properties = XMap_Create(int, intptr_t, int_compare);
         if (!self->m_properties) return;
     }
-    /* 遍历 modifier 的所有属性，复制到 self */
-    XMapIterator it = XMap_begin_base(modifier->m_properties);
-    XMapIterator end = XMap_end_base(modifier->m_properties);
-    for (; XMapIterator_notEqual(it, end); it = XMapIterator_next(it))
+    XMap_iterator it = XMap_begin(modifier->m_properties);
+    XMap_iterator end = XMap_end(modifier->m_properties);
+    while (!XMap_iterator_isEnd(&it))
     {
-        XPair* pair = XMapIterator_toPair(it);
+        XPair* pair = XMap_iterator_data(&it);
         if (pair)
         {
-            void* key = XPair_getKey(pair);
-            size_t keySize = XPair_getKeySize(pair);
-            void* value = XPair_getValue(pair);
-            size_t valueSize = XPair_getValueSize(pair);
-            XMap_insert_base(self->m_properties, key, keySize, value, valueSize);
+            int key = *(int*)XPair_first(pair);
+            intptr_t val = *(intptr_t*)XPair_second(pair);
+            /* 如果是字符串属性，深拷贝 */
+            if (key == XFormat_P_NumFmt_FormatCode || key == XFormat_P_Font_Name)
+            {
+                intptr_t oldPtr = val;  /* BUG FIX: 之前是 (intptr_t)val 多余 */
+                if (oldPtr)
+                {
+                    XString* str = XString_create();
+                    if (str) XString_append_utf8(str, XString_toUtf8((XString*)oldPtr));
+                    val = (intptr_t)str;  /* BUG FIX: 之前是 (int)newPtr 会截断为 32 位 */
+                }
+            }
+            XMapBase_insert_base((XMapBase*)self->m_properties, &key, &val);
         }
+        XMap_iterator_add(modifier->m_properties, &it);
     }
     self->m_dirty = true;
 }
 
-/**
- * @brief      判断格式是否有效（有属性映射或索引有效）
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_isValid(const XFormat* self)
 {
-    if (!self) return false;
-    if (self->m_properties && !XMap_empty_base(self->m_properties)) return true;
-    if (self->m_xfIndex >= 0) return true;
-    if (self->m_dxfIndex >= 0) return true;
-    return false;
+    return self != NULL;
 }
 
-/**
- * @brief      判断格式是否为空（无属性设置）
- * @param self 指针
- * @return     为空返回 true
- */
 bool XFormat_isEmpty(const XFormat* self)
 {
     if (!self) return true;
-    if (self->m_properties && !XMap_empty_base(self->m_properties)) return false;
+    if (self->m_properties && XMap_size_base((XMapBase*)self->m_properties) > 0) return false;
     return true;
 }
 
 /* ========== 属性访问（通用） ========== */
 
-/**
- * @brief      获取属性值
- * @param self         指针
- * @param propertyId   属性 ID
- * @return     属性值指针，未找到返回 NULL
- */
 void* XFormat_property(const XFormat* self, int propertyId)
 {
-    return getProperty(self, propertyId);
+    if (!self || !self->m_properties) return NULL;
+    XMap_iterator it;
+    if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
+    {
+        XPair* pair = XMap_iterator_data(&it);
+        if (pair) return XPair_second(pair);
+    }
+    return NULL;
 }
 
-/**
- * @brief      设置属性值
- * @param self        指针
- * @param propertyId  属性 ID
- * @param value       值指针
- */
 void XFormat_setProperty(XFormat* self, int propertyId, void* value)
 {
     if (!self || !value) return;
-    /* 根据属性类型确定大小 */
-    size_t size = 0;
-    if (propertyId >= XFormat_P_Font_Size && propertyId <= XFormat_P_Font_Scheme)
-    {
-        if (propertyId == XFormat_P_Font_Size || propertyId == XFormat_P_Font_Family ||
-            propertyId == XFormat_P_Font_Charset)
-            size = sizeof(int);
-        else if (propertyId == XFormat_P_Font_Color)
-            size = sizeof(XColor);
-        else if (propertyId == XFormat_P_Font_Name || propertyId == XFormat_P_Font_Scheme)
-            size = strlen((const char*)value) + 1;
-        else
-            size = sizeof(bool);
-    }
-    else if (propertyId >= XFormat_P_Border_LeftStyle && propertyId <= XFormat_P_Border_DiagonalType)
-    {
-        if (propertyId >= XFormat_P_Border_LeftColor && propertyId <= XFormat_P_Border_DiagonalColor)
-            size = sizeof(XColor);
-        else if (propertyId == XFormat_P_Border_DiagonalType)
-            size = sizeof(XFormat_DiagonalBorderType);
-        else
-            size = sizeof(XFormat_BorderStyle);
-    }
-    else if (propertyId >= XFormat_P_Fill_Pattern && propertyId <= XFormat_P_Fill_FgColor)
-    {
-        if (propertyId == XFormat_P_Fill_Pattern)
-            size = sizeof(XFormat_FillPattern);
-        else
-            size = sizeof(XColor);
-    }
-    else if (propertyId >= XFormat_P_Alignment_AlignH && propertyId <= XFormat_P_Alignment_ShinkToFit)
-    {
-        if (propertyId == XFormat_P_Alignment_AlignH)
-            size = sizeof(XFormat_HorizontalAlignment);
-        else if (propertyId == XFormat_P_Alignment_AlignV)
-            size = sizeof(XFormat_VerticalAlignment);
-        else if (propertyId == XFormat_P_Alignment_Rotation || propertyId == XFormat_P_Alignment_Indent)
-            size = sizeof(int);
-        else
-            size = sizeof(bool);
-    }
-    else if (propertyId == XFormat_P_NumFmt_Id)
-        size = sizeof(int);
-    else if (propertyId == XFormat_P_NumFmt_FormatCode)
-        size = strlen((const char*)value) + 1;
-    else if (propertyId == XFormat_P_Protection_Locked || propertyId == XFormat_P_Protection_Hidden)
-        size = sizeof(bool);
-    else
-        size = sizeof(int);
-
-    if (size > 0)
-        setProperty(self, propertyId, value, size);
+    setPropertyInt(self, propertyId, *(int*)value);
 }
 
-/**
- * @brief      清除属性
- * @param self        指针
- * @param propertyId  属性 ID
- */
 void XFormat_clearProperty(XFormat* self, int propertyId)
 {
     if (!self || !self->m_properties) return;
-    XMapIterator it = XMap_find_base(self->m_properties, &propertyId, sizeof(int));
-    if (it != XMap_end_base(self->m_properties))
+    /* 如果是字符串属性，先释放 */
+    if (propertyId == XFormat_P_NumFmt_FormatCode || propertyId == XFormat_P_Font_Name)
     {
-        XMap_erase_base(self->m_properties, it);
+        XMap_iterator it;
+        if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair)
+            {
+                intptr_t ptr = *(intptr_t*)XPair_second(pair);
+                if (ptr) { XString_deinit_base((XString*)ptr); XFree_System((XString*)ptr); }
+            }
+        }
+    }
+    XMap_iterator it;
+    if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
+    {
+        XMapBase_erase_base((XMapBase*)self->m_properties, (XMapBase_iterator*)&it, NULL);
         self->m_dirty = true;
     }
 }
 
-/**
- * @brief      判断是否有指定属性
- * @param self        指针
- * @param propertyId  属性 ID
- * @return     有返回 true
- */
 bool XFormat_hasProperty(const XFormat* self, int propertyId)
 {
     return hasProperty(self, propertyId);
@@ -957,38 +750,26 @@ bool XFormat_hasProperty(const XFormat* self, int propertyId)
 
 /* ========== 键/索引管理 ========== */
 
-/**
- * @brief      判断是否有数字格式数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasNumFmtData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_NumFmt_Id) || hasProperty(self, XFormat_P_NumFmt_FormatCode);
+    return hasProperty(self, XFormat_P_NumFmt_Id) ||
+           hasProperty(self, XFormat_P_NumFmt_FormatCode);
 }
 
-/**
- * @brief      判断是否有字体数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasFontData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Font_Size) || hasProperty(self, XFormat_P_Font_Bold) ||
-           hasProperty(self, XFormat_P_Font_Italic) || hasProperty(self, XFormat_P_Font_Name) ||
-           hasProperty(self, XFormat_P_Font_Color) || hasProperty(self, XFormat_P_Font_Underline) ||
-           hasProperty(self, XFormat_P_Font_Script) || hasProperty(self, XFormat_P_Font_StrikeOut) ||
-           hasProperty(self, XFormat_P_Font_Outline) || hasProperty(self, XFormat_P_Font_Shadow) ||
-           hasProperty(self, XFormat_P_Font_Family) || hasProperty(self, XFormat_P_Font_Charset) ||
-           hasProperty(self, XFormat_P_Font_Scheme) || hasProperty(self, XFormat_P_Font_Condense) ||
-           hasProperty(self, XFormat_P_Font_Extend);
+    return hasProperty(self, XFormat_P_Font_Size) ||
+           hasProperty(self, XFormat_P_Font_Italic) ||
+           hasProperty(self, XFormat_P_Font_StrikeOut) ||
+           hasProperty(self, XFormat_P_Font_Color) ||
+           hasProperty(self, XFormat_P_Font_Bold) ||
+           hasProperty(self, XFormat_P_Font_Script) ||
+           hasProperty(self, XFormat_P_Font_Underline) ||
+           hasProperty(self, XFormat_P_Font_Outline) ||
+           hasProperty(self, XFormat_P_Font_Shadow) ||
+           hasProperty(self, XFormat_P_Font_Name);
 }
 
-/**
- * @brief      判断是否有填充数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasFillData(const XFormat* self)
 {
     return hasProperty(self, XFormat_P_Fill_Pattern) ||
@@ -996,11 +777,6 @@ bool XFormat_hasFillData(const XFormat* self)
            hasProperty(self, XFormat_P_Fill_BgColor);
 }
 
-/**
- * @brief      判断是否有边框数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasBorderData(const XFormat* self)
 {
     return hasProperty(self, XFormat_P_Border_LeftStyle) ||
@@ -1016,11 +792,6 @@ bool XFormat_hasBorderData(const XFormat* self)
            hasProperty(self, XFormat_P_Border_DiagonalType);
 }
 
-/**
- * @brief      判断是否有对齐数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasAlignmentData(const XFormat* self)
 {
     return hasProperty(self, XFormat_P_Alignment_AlignH) ||
@@ -1031,163 +802,257 @@ bool XFormat_hasAlignmentData(const XFormat* self)
            hasProperty(self, XFormat_P_Alignment_ShinkToFit);
 }
 
-/**
- * @brief      判断是否有保护数据
- * @param self 指针
- * @return     有返回 true
- */
 bool XFormat_hasProtectionData(const XFormat* self)
 {
     return hasProperty(self, XFormat_P_Protection_Locked) ||
            hasProperty(self, XFormat_P_Protection_Hidden);
 }
 
-/**
- * @brief      判断字体索引是否有效
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_fontIndexValid(const XFormat* self)
 {
     return self ? self->m_fontIndexValid : false;
 }
 
-/**
- * @brief      获取字体索引
- * @param self 指针
- * @return     字体索引，无效返回 -1
- */
 int XFormat_fontIndex(const XFormat* self)
 {
     return self ? self->m_fontIndex : -1;
 }
 
-/**
- * @brief      判断边框索引是否有效
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_borderIndexValid(const XFormat* self)
 {
     return self ? self->m_borderIndexValid : false;
 }
 
-/**
- * @brief      获取边框索引
- * @param self 指针
- * @return     边框索引，无效返回 -1
- */
 int XFormat_borderIndex(const XFormat* self)
 {
     return self ? self->m_borderIndex : -1;
 }
 
-/**
- * @brief      判断填充索引是否有效
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_fillIndexValid(const XFormat* self)
 {
     return self ? self->m_fillIndexValid : false;
 }
 
-/**
- * @brief      获取填充索引
- * @param self 指针
- * @return     填充索引，无效返回 -1
- */
 int XFormat_fillIndex(const XFormat* self)
 {
     return self ? self->m_fillIndex : -1;
 }
 
-/**
- * @brief      判断格式索引是否有效
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_xfIndexValid(const XFormat* self)
 {
     return self ? self->m_xfIndexValid : false;
 }
 
-/**
- * @brief      获取格式索引
- * @param self 指针
- * @return     格式索引，无效返回 -1
- */
 int XFormat_xfIndex(const XFormat* self)
 {
     return self ? self->m_xfIndex : -1;
 }
 
-/**
- * @brief      判断 dxf 索引是否有效
- * @param self 指针
- * @return     有效返回 true
- */
 bool XFormat_dxfIndexValid(const XFormat* self)
 {
     return self ? self->m_dxfIndexValid : false;
 }
 
-/**
- * @brief      获取 dxf 索引
- * @param self 指针
- * @return     dxf 索引，无效返回 -1
- */
 int XFormat_dxfIndex(const XFormat* self)
 {
     return self ? self->m_dxfIndex : -1;
 }
 
-/**
- * @brief      设置字体索引
- * @param self  指针
- * @param index 字体索引
- */
 void XFormat_setFontIndex(XFormat* self, int index)
 {
     if (self) { self->m_fontIndex = index; self->m_fontIndexValid = true; }
 }
 
-/**
- * @brief      设置边框索引
- * @param self  指针
- * @param index 边框索引
- */
 void XFormat_setBorderIndex(XFormat* self, int index)
 {
     if (self) { self->m_borderIndex = index; self->m_borderIndexValid = true; }
 }
 
-/**
- * @brief      设置填充索引
- * @param self  指针
- * @param index 填充索引
- */
 void XFormat_setFillIndex(XFormat* self, int index)
 {
     if (self) { self->m_fillIndex = index; self->m_fillIndexValid = true; }
 }
 
-/**
- * @brief      设置格式索引
- * @param self  指针
- * @param index 格式索引
- */
 void XFormat_setXfIndex(XFormat* self, int index)
 {
     if (self) { self->m_xfIndex = index; self->m_xfIndexValid = true; }
 }
 
-/**
- * @brief      设置 dxf 索引
- * @param self  指针
- * @param index dxf 索引
- */
 void XFormat_setDxfIndex(XFormat* self, int index)
 {
     if (self) { self->m_dxfIndex = index; self->m_dxfIndexValid = true; }
+}
+
+/* ========== 键生成（用于样式去重） ========== */
+
+/* 简单键生成：将相关属性序列化为字节数组 */
+static void appendInt(uint8_t** buf, size_t* len, size_t* cap, int val)
+{
+    if (*len + 4 > *cap) { *cap = (*cap + 4) * 2; *buf = (uint8_t*)XRealloc_System(*buf, *cap); }
+    memcpy(*buf + *len, &val, 4); *len += 4;
+}
+
+void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
+{
+    size_t cap = 64, len = 0;
+    uint8_t* buf = (uint8_t*)XMalloc_System(cap);
+    if (!buf) { *outKey = NULL; *outLen = 0; return; }
+    appendInt(&buf, &len, &cap, XFormat_fontSize(self));
+    appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, XFormat_fontStrikeOut(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, (int)XFormat_fontScript(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self));
+    appendInt(&buf, &len, &cap, XFormat_fontOutline(self) ? 1 : 0);
+    XColor fc = XFormat_fontColor(self);
+    appendInt(&buf, &len, &cap, packColor(&fc));
+    /* 字体名称 */
+    const char* name = XFormat_fontName(self);
+    int nameLen = name ? (int)strlen(name) : 0;
+    appendInt(&buf, &len, &cap, nameLen);
+    if (nameLen > 0) {
+        if (len + (size_t)nameLen > cap) { cap = (len + nameLen) * 2; buf = (uint8_t*)XRealloc_System(buf, cap); }
+        memcpy(buf + len, name, nameLen); len += nameLen;
+    }
+    *outKey = buf; *outLen = len;
+}
+
+void XFormat_borderKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
+{
+    size_t cap = 64, len = 0;
+    uint8_t* buf = (uint8_t*)XMalloc_System(cap);
+    if (!buf) { *outKey = NULL; *outLen = 0; return; }
+    appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderType(self));
+    XColor lc = XFormat_leftBorderColor(self); appendInt(&buf, &len, &cap, packColor(&lc));
+    XColor rc = XFormat_rightBorderColor(self); appendInt(&buf, &len, &cap, packColor(&rc));
+    XColor tc = XFormat_topBorderColor(self); appendInt(&buf, &len, &cap, packColor(&tc));
+    XColor bc = XFormat_bottomBorderColor(self); appendInt(&buf, &len, &cap, packColor(&bc));
+    XColor dc = XFormat_diagonalBorderColor(self); appendInt(&buf, &len, &cap, packColor(&dc));
+    *outKey = buf; *outLen = len;
+}
+
+void XFormat_fillKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
+{
+    size_t cap = 32, len = 0;
+    uint8_t* buf = (uint8_t*)XMalloc_System(cap);
+    if (!buf) { *outKey = NULL; *outLen = 0; return; }
+    appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self));
+    XColor fg = XFormat_patternForegroundColor(self); appendInt(&buf, &len, &cap, packColor(&fg));
+    XColor bg = XFormat_patternBackgroundColor(self); appendInt(&buf, &len, &cap, packColor(&bg));
+    *outKey = buf; *outLen = len;
+}
+
+void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
+{
+    size_t cap = 128, len = 0;
+    uint8_t* buf = (uint8_t*)XMalloc_System(cap);
+    if (!buf) { *outKey = NULL; *outLen = 0; return; }
+    /* 数字格式 */
+    appendInt(&buf, &len, &cap, XFormat_numberFormatIndex(self));
+    const char* nf = XFormat_numberFormat(self);
+    int nfLen = nf ? (int)strlen(nf) : 0;
+    appendInt(&buf, &len, &cap, nfLen);
+    if (nfLen > 0) {
+        if (len + (size_t)nfLen > cap) { cap = (len + nfLen) * 2; buf = (uint8_t*)XRealloc_System(buf, cap); }
+        memcpy(buf + len, nf, nfLen); len += nfLen;
+    }
+    /* 字体 */
+    appendInt(&buf, &len, &cap, XFormat_fontSize(self));
+    appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self));
+    /* 对齐 */
+    appendInt(&buf, &len, &cap, (int)XFormat_horizontalAlignment(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_verticalAlignment(self));
+    appendInt(&buf, &len, &cap, XFormat_textWrap(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, XFormat_rotation(self));
+    appendInt(&buf, &len, &cap, XFormat_indent(self));
+    appendInt(&buf, &len, &cap, XFormat_shrinkToFit(self) ? 1 : 0);
+    /* 填充 */
+    appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self));
+    /* 边框 */
+    appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self));
+    appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self));
+    /* 保护 */
+    appendInt(&buf, &len, &cap, XFormat_locked(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap, XFormat_hidden(self) ? 1 : 0);
+    *outKey = buf; *outLen = len;
+}
+
+/* ========== 数字格式修正 ========== */
+
+void XFormat_fixNumberFormat(XFormat* self, int id, const char* format)
+{
+    if (!self) return;
+    setPropertyInt(self, XFormat_P_NumFmt_Id, id);
+    if (format) setPropertyString(self, XFormat_P_NumFmt_FormatCode, format);
+    self->m_dirty = true;
+}
+
+/* ========== 主题 ========== */
+
+int XFormat_theme(const XFormat* self)
+{
+    return self ? self->m_theme : 0;
+}
+
+/* ========== 类型化属性访问 ========== */
+
+bool XFormat_boolProperty(const XFormat* self, int propertyId, bool defaultValue)
+{
+    return getPropertyBool(self, propertyId, defaultValue);
+}
+
+int XFormat_intProperty(const XFormat* self, int propertyId, int defaultValue)
+{
+    return getPropertyInt(self, propertyId, defaultValue);
+}
+
+double XFormat_doubleProperty(const XFormat* self, int propertyId, double defaultValue)
+{
+    int v = getPropertyInt(self, propertyId, (int)(defaultValue * 1000.0));
+    return (double)v / 1000.0;
+}
+
+const char* XFormat_stringProperty(const XFormat* self, int propertyId, const char* defaultValue)
+{
+    const char* s = getPropertyString(self, propertyId);
+    return (s && s[0]) ? s : defaultValue;
+}
+
+XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue)
+{
+    if (!hasProperty(self, propertyId)) {
+        return defaultValue ? *defaultValue : XColor_create_rgb(0, 0, 0, 255);
+    }
+    return getPropertyColor(self, propertyId);
+}
+
+/* ========== 比较运算符 ========== */
+
+bool XFormat_equals(const XFormat* a, const XFormat* b)
+{
+    if (a == b) return true;
+    if (!a || !b) return false;
+    /* 使用 formatKey 进行比较 */
+    uint8_t *keyA = NULL, *keyB = NULL;
+    size_t lenA = 0, lenB = 0;
+    XFormat_formatKey(a, &keyA, &lenA);
+    XFormat_formatKey(b, &keyB, &lenB);
+    bool eq = (lenA == lenB) && (lenA == 0 || memcmp(keyA, keyB, lenA) == 0);
+    XFree_System(keyA);
+    XFree_System(keyB);
+    return eq;
+}
+
+bool XFormat_notEquals(const XFormat* a, const XFormat* b)
+{
+    return !XFormat_equals(a, b);
 }

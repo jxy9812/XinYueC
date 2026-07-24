@@ -30,14 +30,15 @@ typedef struct XXmlStreamWriter
     XClass     m_class;           /**< 继承的基类成员 */
     XByteArray* m_buffer;         /**< 内部输出缓冲区 */
     XString*   m_deviceString;    /**< 输出到字符串的缓冲区 */
+    struct XIODevice* m_device;   /**< 可选输出设备（对标 Qt QIODevice） */
     bool       m_autoFormatting;   /**< 是否启用自动格式化（缩进） */
     int        m_autoFormattingIndent; /**< 缩进空格数 */
     int        m_elementStack;    /**< 元素嵌套深度 */
     bool       m_hasError;        /**< 是否有错误 */
     bool       m_inStartElement;  /**< 是否在开始标签内部（等待属性） */
-    XString**  m_elementNameStack; /**< ???????? writeEndElement ??????? */
-    int        m_elementNameStackSize;  /**< ??????? */
-    int        m_elementNameStackCapacity; /**< ??????? */
+    XString**  m_elementNameStack; /**< 记录每个 writeStartElement 的限定名（writeEndElement 时匹配） */
+    int        m_elementNameStackSize;  /**< 元素名栈大小 */
+    int        m_elementNameStackCapacity; /**< 元素名栈容量 */
 } XXmlStreamWriter;
 
 /* ========== 虚函数表初始化 ========== */
@@ -309,6 +310,24 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
  * @return     有错误返回 true
  */
 bool XXmlStreamWriter_hasError(const XXmlStreamWriter* self);
+
+/* ========== 设备管理 ========== */
+
+/**
+ * @brief      设置输出设备
+ * @param self   目标 XXmlStreamWriter 对象指针
+ * @param device XIODevice 指针（可为 NULL）
+ * @note       对标 QXmlStreamWriter::setDevice
+ */
+void XXmlStreamWriter_setDevice(XXmlStreamWriter* self, struct XIODevice* device);
+
+/**
+ * @brief      获取输出设备
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @return     XIODevice 指针，无设备返回 NULL
+ * @note       对标 QXmlStreamWriter::device
+ */
+struct XIODevice* XXmlStreamWriter_device(const XXmlStreamWriter* self);
 
 #ifdef __cplusplus
 }

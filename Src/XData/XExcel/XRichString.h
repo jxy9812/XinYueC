@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XStringList.h"
 #include "XVector.h"
@@ -146,6 +149,22 @@ const char* XRichString_fragmentText(const XRichString* self, int index);
  * @return     指向片段格式的指针
  */
 const XFormat* XRichString_fragmentFormat(const XRichString* self, int index);
+
+/* ========== 便捷方法（XSharedStrings 使用） ========== */
+
+/**
+ * @brief      设置纯文本（便捷方法）
+ * @param self 指针
+ * @param text 文本
+ */
+void XRichString_setText(XRichString* self, const char* text);
+
+/**
+ * @brief      获取纯文本（便捷方法）
+ * @param self 指针
+ * @return     文本字符串，无文本返回 ""
+ */
+const char* XRichString_text(const XRichString* self);
 
 #ifdef __cplusplus
 }

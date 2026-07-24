@@ -4,20 +4,59 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XContentTypes.h"
+#include "XByteArray.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
+
+/* 字符串比较函数 */
+static int32_t str_compare(const void* lhs, const void* rhs)
+{
+    return strcmp(*(const char**)lhs, *(const char**)rhs);
+}
 
 void XContentTypes_addDefault(XContentTypes* self, const char* key, const char* value)
 {
-    if (!self) return;
-    XMap_insert_base(self->m_defaults, key, strlen(key) + 1, (void*)value, strlen(value) + 1);
+    if (!self || !key || !value) return;
+    /* 同 addOverride：在堆上 XString 持有字符串副本，避免调用方栈失效 */
+    XString* kstr = XString_create();
+    if (!kstr) return;
+    XString_append_utf8(kstr, key);
+    XString* vstr = XString_create();
+    if (!vstr) { XString_deinit_base(kstr); XFree_System(kstr); return; }
+    XString_append_utf8(vstr, value);
+    intptr_t pk = (intptr_t)kstr;
+    intptr_t pv = (intptr_t)vstr;
+    XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv);
+}
+
+/* 释放 map entry 中存的 XString* 副本（被 XMap_deinit 通过 setKeyDeinit/setDataDeinit 回调） */
+static void XStringContainer_deinit(void* p)
+{
+    if (!p) return;
+    /* 这里 p 是 intptr_t 字节（sizeof(intptr_t) 大小），不是 XString* 指针 */
+    intptr_t v;
+    memcpy(&v, p, sizeof(v));
+    XString* s = (XString*)v;
+    if (s) { XString_deinit_base(s); XFree_System(s); }
 }
 
 void XContentTypes_addOverride(XContentTypes* self, const char* key, const char* value)
-{
-    if (!self) return;
-    XMap_insert_base(self->m_overrides, key, strlen(key) + 1, (void*)value, strlen(value) + 1);
+{    if (!self || !key || !value) return;
+    /* 关键修复：栈上 char[256] 的字符串不能直接存指针（dangling）。
+       在堆上创建 XString 持有值的副本，map 用 intptr_t 存 XString*。删除时
+       在 XContentTypes_delete 里统一释放这些 XString*。*/
+    XString* kstr = XString_create();
+    if (!kstr) return;
+    XString_append_utf8(kstr, key);
+    XString* vstr = XString_create();
+    if (!vstr) { XString_deinit_base(kstr); XFree_System(kstr); return; }
+    XString_append_utf8(vstr, value);
+    intptr_t pk = (intptr_t)kstr;
+    intptr_t pv = (intptr_t)vstr;
+    XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv);
 }
 
 void XContentTypes_addDocPropCore(XContentTypes* self)
@@ -111,4 +150,204 @@ void XContentTypes_addVbaProject(XContentTypes* self)
 void XContentTypes_clearOverrides(XContentTypes* self)
 {
     if (self) { XMap_clear_base(self->m_overrides); }
+}
+
+/* ========== 创建与销毁 ========== */
+
+XContentTypes* XContentTypes_create(void)
+{
+    XContentTypes* self = (XContentTypes*)XMalloc_System(sizeof(XContentTypes));
+    if (!self) return NULL;
+    memset(self, 0, sizeof(XContentTypes));
+    /* 用 sizeof(intptr_t) 存 XString*，并注册 deinit 方法让 XMap_delete_base 自动清理 */
+    self->m_defaults = XMap_create_ex(sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
+    self->m_overrides = XMap_create_ex(sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
+    /* 通知 map 在清空条目时调用的 deinit 方法（按 key、按 value 各一次） */
+    XMapBaseSetKeyDeinitMethod(self->m_defaults, XStringContainer_deinit);
+    XContainerSetDataDeinitMethod(self->m_defaults, XStringContainer_deinit);
+    XMapBaseSetKeyDeinitMethod(self->m_overrides, XStringContainer_deinit);
+    XContainerSetDataDeinitMethod(self->m_overrides, XStringContainer_deinit);
+    self->m_worksheetCount = 0;
+    self->m_chartsheetCount = 0;
+    self->m_chartCount = 0;
+    self->m_drawingCount = 0;
+    self->m_commentCount = 0;
+    self->m_tableCount = 0;
+    self->m_externalLinkCount = 0;
+    self->m_vmlCount = 0;
+    return self;
+}
+
+void XContentTypes_delete(XContentTypes* self)
+{
+    if (!self) return;
+    /* map 创建时已设置 KeyDeinit/DataDeinit 为 XStringContainer_deinit，
+       XMap_delete_base 会自动调用它们释放每个 entry 中的 XString* */
+    if (self->m_defaults) XMap_delete_base(self->m_defaults);
+    if (self->m_overrides) XMap_delete_base(self->m_overrides);
+    XFree_System(self);
+}
+
+/* ========== XML 序列化 ========== */
+
+bool XContentTypes_saveToXmlData(const XContentTypes* self, uint8_t** outData, size_t* outLen)
+{
+    if (!self || !outData || !outLen) return false;
+    *outData = NULL;
+    *outLen = 0;
+    
+    XByteArray* buf = XByteArray_create();
+    if (!buf) return false;
+    
+    XByteArray_append_utf8(buf, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    XByteArray_append_utf8(buf, "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n");
+    
+    /* 写入默认类型 */
+    if (self->m_defaults && XMap_size_base(self->m_defaults) > 0) {
+        XMap_iterator it = XMap_begin(self->m_defaults);
+        XMap_iterator end = XMap_end(self->m_defaults);
+        for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_defaults, &it)) {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair) {
+                intptr_t kptr = *(intptr_t*)XPair_first(pair);
+                intptr_t vptr = *(intptr_t*)XPair_second(pair);
+                XString* ks = (XString*)kptr;
+                XString* vs = (XString*)vptr;
+                char entry[512];
+                snprintf(entry, sizeof(entry), 
+                    "  <Default Extension=\"%s\" ContentType=\"%s\"/>\n",
+                    XString_toUtf8(ks), XString_toUtf8(vs));
+                XByteArray_append_utf8(buf, entry);
+            }
+        }
+    }
+    
+    /* 写入覆盖类型 */
+    if (self->m_overrides && XMap_size_base(self->m_overrides) > 0) {
+        XMap_iterator it = XMap_begin(self->m_overrides);
+        XMap_iterator end = XMap_end(self->m_overrides);
+        for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_overrides, &it)) {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair) {
+                intptr_t kptr = *(intptr_t*)XPair_first(pair);
+                intptr_t vptr = *(intptr_t*)XPair_second(pair);
+                XString* ks = (XString*)kptr;
+                XString* vs = (XString*)vptr;
+                char entry[512];
+                snprintf(entry, sizeof(entry), 
+                    "  <Override PartName=\"%s\" ContentType=\"%s\"/>\n",
+                    XString_toUtf8(ks), XString_toUtf8(vs));
+                XByteArray_append_utf8(buf, entry);
+            }
+        }
+    }
+    
+    XByteArray_append_utf8(buf, "</Types>\n");
+    
+    *outData = (uint8_t*)XMalloc_System(XByteArray_size_base(buf) + 1);
+    if (*outData) {
+        memcpy(*outData, XByteArray_data(buf), XByteArray_size_base(buf));
+        *outLen = XByteArray_size_base(buf);
+    }
+    XByteArray_delete_base(buf);
+    return *outData != NULL;
+}
+
+bool XContentTypes_saveToXmlFile(const XContentTypes* self, const char* filePath)
+{
+    uint8_t* data = NULL;
+    size_t len = 0;
+    if (!XContentTypes_saveToXmlData(self, &data, &len)) return false;
+    
+    FILE* fp = fopen(filePath, "wb");
+    if (!fp) { XFree_System(data); return false; }
+    fwrite(data, 1, len, fp);
+    fclose(fp);
+    XFree_System(data);
+    return true;
+}
+
+/* 简单的 XML 解析辅助：跳过空白 */
+static const char* skip_ws(const char* p) {
+    while (*p && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
+    return p;
+}
+
+/* 解析 XML 标签属性 */
+static bool parse_attr(const char* xml, const char* attr, char* out, size_t outSize) {
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "%s=\"", attr);
+    const char* p = strstr(xml, pattern);
+    if (!p) return false;
+    p += strlen(pattern);
+    const char* end = p;
+    while (*end && *end != '"') end++;
+    size_t len = end - p;
+    if (len >= outSize) len = outSize - 1;
+    memcpy(out, p, len);
+    out[len] = '\0';
+    return true;
+}
+
+bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, size_t len) {
+    if (!self || !data || len == 0) return false;
+    
+    char* xml = (char*)XMalloc_System(len + 1);
+    if (!xml) return false;
+    memcpy(xml, data, len);
+    xml[len] = '\0';
+    
+    /* 解析 Override 标签 */
+    const char* p = xml;
+    while ((p = strstr(p, "<Override")) != NULL) {
+        char partName[256] = {0};
+        char contentType[256] = {0};
+        
+        if (parse_attr(p, "PartName", partName, sizeof(partName)) &&
+            parse_attr(p, "ContentType", contentType, sizeof(contentType))) {
+            XContentTypes_addOverride(self, partName, contentType);
+        }
+        
+        p = strchr(p, '>');
+        if (p) p++;
+    }
+    
+    /* 解析 Default 标签 */
+    p = xml;
+    while ((p = strstr(p, "<Default")) != NULL) {
+        char ext[64] = {0};
+        char type[256] = {0};
+        
+        if (parse_attr(p, "Extension", ext, sizeof(ext)) &&
+            parse_attr(p, "ContentType", type, sizeof(type))) {
+            XContentTypes_addDefault(self, ext, type);
+        }
+        
+        p = strchr(p, '>');
+        if (p) p++;
+    }
+    
+    XFree_System(xml);
+    return true;
+}
+
+bool XContentTypes_loadFromXmlFile(XContentTypes* self, const char* filePath) {
+    if (!self || !filePath) return false;
+    
+    FILE* fp = fopen(filePath, "rb");
+    if (!fp) return false;
+    
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    
+    uint8_t* data = (uint8_t*)XMalloc_System(size + 1);
+    if (!data) { fclose(fp); return false; }
+    
+    fread(data, 1, size, fp);
+    fclose(fp);
+    
+    bool result = XContentTypes_loadFromXmlData(self, data, size);
+    XFree_System(data);
+    return result;
 }

@@ -6,7 +6,9 @@
 #include "XMediaFile.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 XMediaFile* XMediaFile_create(const char* fileName)
 {
@@ -54,13 +56,13 @@ void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, con
 }
 
 const char* XMediaFile_suffix(const XMediaFile* self)
-{ return (self && self->m_suffix) ? XString_toUtf8_const(self->m_suffix) : ""; }
+{ return (self && self->m_suffix) ? XString_toUtf8(self->m_suffix) : ""; }
 
 const char* XMediaFile_mimeType(const XMediaFile* self)
-{ return (self && self->m_mimeType) ? XString_toUtf8_const(self->m_mimeType) : ""; }
+{ return (self && self->m_mimeType) ? XString_toUtf8(self->m_mimeType) : ""; }
 
 const uint8_t* XMediaFile_contents(const XMediaFile* self)
-{ return (self && self->m_contents) ? (const uint8_t*)XByteArray_data_const(self->m_contents) : NULL; }
+{ return (self && self->m_contents) ? (const uint8_t*)XByteArray_data(self->m_contents) : NULL; }
 
 size_t XMediaFile_contentsSize(const XMediaFile* self)
 { return (self && self->m_contents) ? XByteArray_size_base(self->m_contents) : 0; }
@@ -75,4 +77,18 @@ void XMediaFile_setFileName(XMediaFile* self, const char* name)
     if (self->m_fileName) { XString_clear_base(self->m_fileName); XString_append_utf8(self->m_fileName, name); }
 }
 const char* XMediaFile_fileName(const XMediaFile* self)
-{ return (self && self->m_fileName) ? XString_toUtf8_const(self->m_fileName) : ""; }
+{ return (self && self->m_fileName) ? XString_toUtf8(self->m_fileName) : ""; }
+
+void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen)
+{
+    if (!self || !outKey || !outLen) { if (outKey) *outKey = NULL; if (outLen) *outLen = 0; return; }
+    const uint8_t* contents = XMediaFile_contents(self);
+    size_t size = XMediaFile_contentsSize(self);
+    if (!contents || size == 0) { *outKey = NULL; *outLen = 0; return; }
+    /* 简单哈希：使用内容的直接拷贝作为键（与 QXlsx 的 QCryptographicHash 对齐） */
+    uint8_t* key = (uint8_t*)XMalloc_System(size);
+    if (!key) { *outKey = NULL; *outLen = 0; return; }
+    memcpy(key, contents, size);
+    *outKey = key;
+    *outLen = size;
+}

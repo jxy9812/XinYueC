@@ -104,13 +104,13 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
     if (!self || !urlString) return;
     
     /* 清除旧数据 */
-    if (self->m_scheme) XString_clear(self->m_scheme);
-    if (self->m_userName) XString_clear(self->m_userName);
-    if (self->m_password) XString_clear(self->m_password);
-    if (self->m_host) XString_clear(self->m_host);
-    if (self->m_path) XString_clear(self->m_path);
-    if (self->m_query) XString_clear(self->m_query);
-    if (self->m_fragment) XString_clear(self->m_fragment);
+    if (self->m_scheme) XString_clear_base(self->m_scheme);
+    if (self->m_userName) XString_clear_base(self->m_userName);
+    if (self->m_password) XString_clear_base(self->m_password);
+    if (self->m_host) XString_clear_base(self->m_host);
+    if (self->m_path) XString_clear_base(self->m_path);
+    if (self->m_query) XString_clear_base(self->m_query);
+    if (self->m_fragment) XString_clear_base(self->m_fragment);
     self->m_port = -1;
     self->m_isValid = true;
 
@@ -298,13 +298,13 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
 static void VXUrl_deinit(XUrl* self)
 {
     if (!self) return;
-    XString_delete(self->m_scheme);   self->m_scheme = NULL;
-    XString_delete(self->m_userName); self->m_userName = NULL;
-    XString_delete(self->m_password); self->m_password = NULL;
-    XString_delete(self->m_host);     self->m_host = NULL;
-    XString_delete(self->m_path);     self->m_path = NULL;
-    XString_delete(self->m_query);    self->m_query = NULL;
-    XString_delete(self->m_fragment); self->m_fragment = NULL;
+    XString_delete_base(self->m_scheme);   self->m_scheme = NULL;
+    XString_delete_base(self->m_userName); self->m_userName = NULL;
+    XString_delete_base(self->m_password); self->m_password = NULL;
+    XString_delete_base(self->m_host);     self->m_host = NULL;
+    XString_delete_base(self->m_path);     self->m_path = NULL;
+    XString_delete_base(self->m_query);    self->m_query = NULL;
+    XString_delete_base(self->m_fragment); self->m_fragment = NULL;
 }
 
 static void VXUrl_copy(XUrl* dest, const XUrl* src)
@@ -455,13 +455,13 @@ void XUrl_setUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
 {
     if (!self) return;
     if (!urlString || !urlString[0]) {
-        XString_clear(self->m_scheme);
-        XString_clear(self->m_userName);
-        XString_clear(self->m_password);
-        XString_clear(self->m_host);
-        XString_clear(self->m_path);
-        XString_clear(self->m_query);
-        XString_clear(self->m_fragment);
+        XString_clear_base(self->m_scheme);
+        XString_clear_base(self->m_userName);
+        XString_clear_base(self->m_password);
+        XString_clear_base(self->m_host);
+        XString_clear_base(self->m_path);
+        XString_clear_base(self->m_query);
+        XString_clear_base(self->m_fragment);
         self->m_port = -1;
         self->m_isValid = false;
         return;
@@ -516,7 +516,7 @@ const char* XUrl_scheme(const XUrl* self)
 void XUrl_setScheme(XUrl* self, const char* scheme)
 {
     if (!self) return;
-    XString_clear(self->m_scheme);
+    XString_clear_base(self->m_scheme);
     if (scheme) XString_append_utf8(self->m_scheme, scheme);
 }
 
@@ -528,7 +528,7 @@ const char* XUrl_userName(const XUrl* self)
 void XUrl_setUserName(XUrl* self, const char* userName)
 {
     if (!self) return;
-    XString_clear(self->m_userName);
+    XString_clear_base(self->m_userName);
     if (userName) XString_append_utf8(self->m_userName, userName);
 }
 
@@ -540,7 +540,7 @@ const char* XUrl_password(const XUrl* self)
 void XUrl_setPassword(XUrl* self, const char* password)
 {
     if (!self) return;
-    XString_clear(self->m_password);
+    XString_clear_base(self->m_password);
     if (password) XString_append_utf8(self->m_password, password);
 }
 
@@ -552,7 +552,7 @@ const char* XUrl_host(const XUrl* self)
 void XUrl_setHost(XUrl* self, const char* host)
 {
     if (!self) return;
-    XString_clear(self->m_host);
+    XString_clear_base(self->m_host);
     if (host) XString_append_utf8(self->m_host, host);
 }
 
@@ -574,7 +574,7 @@ const char* XUrl_path(const XUrl* self)
 void XUrl_setPath(XUrl* self, const char* path)
 {
     if (!self) return;
-    XString_clear(self->m_path);
+    XString_clear_base(self->m_path);
     if (path) XString_append_utf8(self->m_path, path);
 }
 
@@ -586,7 +586,7 @@ const char* XUrl_query(const XUrl* self)
 void XUrl_setQuery(XUrl* self, const char* query)
 {
     if (!self) return;
-    XString_clear(self->m_query);
+    XString_clear_base(self->m_query);
     if (query) XString_append_utf8(self->m_query, query);
 }
 
@@ -598,7 +598,7 @@ const char* XUrl_fragment(const XUrl* self)
 void XUrl_setFragment(XUrl* self, const char* fragment)
 {
     if (!self) return;
-    XString_clear(self->m_fragment);
+    XString_clear_base(self->m_fragment);
     if (fragment) XString_append_utf8(self->m_fragment, fragment);
 }
 
@@ -621,8 +621,8 @@ const char* XUrl_userInfo(const XUrl* self)
 void XUrl_setUserInfo(XUrl* self, const char* userInfo)
 {
     if (!self) return;
-    XString_clear(self->m_userName);
-    XString_clear(self->m_password);
+    XString_clear_base(self->m_userName);
+    XString_clear_base(self->m_password);
     if (!userInfo) return;
     const char* colon = strchr(userInfo, ':');
     if (colon) {

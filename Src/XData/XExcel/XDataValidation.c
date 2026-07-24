@@ -8,8 +8,11 @@
 #include "XCellRange.h"
 #include "XCellReference.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 #include <stdio.h>
+
 
 /* ========== 创建与初始化 ========== */
 
@@ -65,8 +68,8 @@ XDataValidation* XDataValidation_copy(const XDataValidation* other)
         XVector_clear_base(self->m_ranges);
         for (size_t i = 0; i < XVector_size_base(other->m_ranges); ++i) {
             XCellRange* r = (XCellRange*)XVector_at_base(other->m_ranges, i);
-            XCellRange_copy(r);
-            XVector_push_back_base(self->m_ranges, r, sizeof(XCellRange));
+            XCellRange_copy(r, r);
+            XVector_push_back_2(self->m_ranges, r, 1);
         }
     }
     return self;
@@ -93,13 +96,13 @@ XDataValidation_ValidationOperator XDataValidation_validationOperator(const XDat
 void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self) self->m_validationOperator = op; }
 XDataValidation_ErrorStyle XDataValidation_errorStyle(const XDataValidation* self) { return self ? self->m_errorStyle : XDataValidation_Stop; }
 void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self) self->m_errorStyle = es; }
-const char* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? XString_toUtf8_const(self->m_formula1) : ""; }
+const char* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? XString_toUtf8(self->m_formula1) : ""; }
 void XDataValidation_setFormula1(XDataValidation* self, const char* formula) {
     if (!self) return;
     if (!self->m_formula1) self->m_formula1 = XString_create();
     if (self->m_formula1) { XString_clear_base(self->m_formula1); XString_append_utf8(self->m_formula1, formula); }
 }
-const char* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? XString_toUtf8_const(self->m_formula2) : ""; }
+const char* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? XString_toUtf8(self->m_formula2) : ""; }
 void XDataValidation_setFormula2(XDataValidation* self, const char* formula) {
     if (!self) return;
     if (!self->m_formula2) self->m_formula2 = XString_create();
@@ -107,10 +110,10 @@ void XDataValidation_setFormula2(XDataValidation* self, const char* formula) {
 }
 bool XDataValidation_allowBlank(const XDataValidation* self) { return self ? self->m_allowBlank : false; }
 void XDataValidation_setAllowBlank(XDataValidation* self, bool enable) { if (self) self->m_allowBlank = enable; }
-const char* XDataValidation_errorMessage(const XDataValidation* self) { return (self && self->m_errorMessage) ? XString_toUtf8_const(self->m_errorMessage) : ""; }
-const char* XDataValidation_errorMessageTitle(const XDataValidation* self) { return (self && self->m_errorMessageTitle) ? XString_toUtf8_const(self->m_errorMessageTitle) : ""; }
-const char* XDataValidation_promptMessage(const XDataValidation* self) { return (self && self->m_promptMessage) ? XString_toUtf8_const(self->m_promptMessage) : ""; }
-const char* XDataValidation_promptMessageTitle(const XDataValidation* self) { return (self && self->m_promptMessageTitle) ? XString_toUtf8_const(self->m_promptMessageTitle) : ""; }
+const char* XDataValidation_errorMessage(const XDataValidation* self) { return (self && self->m_errorMessage) ? XString_toUtf8(self->m_errorMessage) : ""; }
+const char* XDataValidation_errorMessageTitle(const XDataValidation* self) { return (self && self->m_errorMessageTitle) ? XString_toUtf8(self->m_errorMessageTitle) : ""; }
+const char* XDataValidation_promptMessage(const XDataValidation* self) { return (self && self->m_promptMessage) ? XString_toUtf8(self->m_promptMessage) : ""; }
+const char* XDataValidation_promptMessageTitle(const XDataValidation* self) { return (self && self->m_promptMessageTitle) ? XString_toUtf8(self->m_promptMessageTitle) : ""; }
 bool XDataValidation_isPromptMessageVisible(const XDataValidation* self) { return self ? self->m_promptMessageVisible : false; }
 bool XDataValidation_isErrorMessageVisible(const XDataValidation* self) { return self ? self->m_errorMessageVisible : false; }
 void XDataValidation_setErrorMessage(XDataValidation* self, const char* error, const char* title) {
@@ -132,30 +135,30 @@ void XDataValidation_addCell(XDataValidation* self, const XCellReference* cell) 
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCellReference(&range, cell);
-    XVector_push_back_base(self->m_ranges, &range, sizeof(XCellRange));
+    XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addCellRc(XDataValidation* self, int row, int col) {
     if (!self || !self->m_ranges) return;
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCell(&range, row, col);
-    XVector_push_back_base(self->m_ranges, &range, sizeof(XCellRange));
+    XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addRange(XDataValidation* self, int firstRow, int firstCol, int lastRow, int lastCol) {
     if (!self || !self->m_ranges) return;
     XCellRange range;
     XCellRange_init(&range);
-    XCellRange_setRange(&range, firstRow, firstCol, lastRow, lastCol);
-    XVector_push_back_base(self->m_ranges, &range, sizeof(XCellRange));
+    XCellRange_init_ex(&range, firstRow, firstCol, lastRow, lastCol);
+    XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addRangeEx(XDataValidation* self, const XCellRange* range) {
     if (!self || !range || !self->m_ranges) return;
-    XVector_push_back_base(self->m_ranges, (void*)range, sizeof(XCellRange));
+    XVector_push_back_2(self->m_ranges, (void*)range, 1);
 }
 int XDataValidation_rangesCount(const XDataValidation* self) {
     return (self && self->m_ranges) ? (int)XVector_size_base(self->m_ranges) : 0;
 }
 XCellRange* XDataValidation_ranges(const XDataValidation* self, int* count) {
     if (count) *count = XDataValidation_rangesCount(self);
-    return (self && self->m_ranges) ? (XCellRange*)XVector_data_base(self->m_ranges) : NULL;
+    return (self && self->m_ranges) ? (XCellRange*)XVector_data(self->m_ranges) : NULL;
 }

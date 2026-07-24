@@ -1,6 +1,8 @@
 #include "XNumFormatParser.h"
 #include <string.h>
+
 #include <ctype.h>
+
 static const char* s_dateTokens[] = {
     "yyyy", "yy", "mmmm", "mmm", "mm", "m", "dddd", "ddd", "dd", "d",
     "hh", "h", "ss", "s", "AM/PM", "A/P", "am/pm", "a/p",

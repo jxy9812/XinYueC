@@ -10,8 +10,11 @@
 extern "C" {
 #endif
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XStringList.h"
 #include "XVector.h"
@@ -40,3 +43,7 @@ XVector* XSharedStrings_getSharedStrings(XSharedStrings* self);
 }
 #endif
 #endif
+bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData, size_t* outLen);
+bool XSharedStrings_saveToXmlFile(XSharedStrings* self, const char* filePath);
+bool XSharedStrings_loadFromXmlData(XSharedStrings* self, const uint8_t* data, size_t len);
+bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const char* filePath);

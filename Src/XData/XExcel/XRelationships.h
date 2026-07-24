@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XStringList.h"
 #include "XVector.h"
@@ -119,6 +122,60 @@ bool XRelationships_saveToXmlFile(const XRelationships* self, const char* filePa
  * @return     成功返回 true
  */
 bool XRelationships_loadFromXmlFile(XRelationships* self, const char* filePath);
+
+/* ========== 按类型查询关系 ========== */
+
+/**
+ * @brief      获取指定类型的文档关系列表
+ * @param self         指针
+ * @param relativeType 关系类型
+ * @param outCount     输出数量
+ * @return     关系数组（调用者不需释放，内部持有）
+ */
+XlsxRelationship** XRelationships_documentRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+
+/**
+ * @brief      获取指定类型的包关系列表
+ */
+XlsxRelationship** XRelationships_packageRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+
+/**
+ * @brief      获取指定类型的 MS 包关系列表
+ */
+XlsxRelationship** XRelationships_msPackageRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+
+/**
+ * @brief      获取指定类型的工作表关系列表
+ */
+XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+
+/**
+ * @brief      添加 MS 包关系
+ * @param self         指针
+ * @param relativeType 关系类型
+ * @param target       目标路径
+ */
+void XRelationships_addMsPackageRelationship(XRelationships* self, const char* relativeType, const char* target);
+
+/* ========== XML 数据读写 ========== */
+
+/**
+ * @brief      将关系保存为 XML 数据
+ * @param self    指针
+ * @param outData 输出数据
+ * @param outLen  输出长度
+ * @return     成功返回 true
+ */
+bool XRelationships_saveToXmlData(const XRelationships* self, uint8_t** outData, size_t* outLen);
+
+/**
+ * @brief      从 XML 数据加载关系
+ * @param self 指针
+ * @param data XML 数据
+ * @param len  数据长度
+ * @return     成功返回 true
+ */
+bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, size_t len);
 
 #ifdef __cplusplus
 }

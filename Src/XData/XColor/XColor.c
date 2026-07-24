@@ -229,9 +229,9 @@ XColor XColor_create_hsl(int h, int s, int l, int a)
         int tmp3_g = (hh + 255 * 0) % (255 * 6);
         int tmp3_b = (hh + 255 * 2) % (255 * 6);
         /* 辅助函数 */
-        #define hsl_hue_to_rgb(t1, t2, t3) \\
-            (t3 < 255 ? t1 + ((t2 - t1) * t3) / 255 : \\
-             t3 < 255*3 ? t2 : \\
+        #define hsl_hue_to_rgb(t1, t2, t3) \
+            (t3 < 255 ? t1 + ((t2 - t1) * t3) / 255 : \
+             t3 < 255*3 ? t2 : \
              t3 < 255*4 ? t1 + ((t2 - t1) * (255*4 - t3)) / 255 : t1)
         r = hsl_hue_to_rgb(tmp1, tmp2, tmp3_r);
         g = hsl_hue_to_rgb(tmp1, tmp2, tmp3_g);

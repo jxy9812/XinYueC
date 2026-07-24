@@ -10,7 +10,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdint.h>#include <stdbool.h>#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "XAbstractOOXmlFile.h"
 #include "XVector.h"
 typedef struct XDrawingAnchor XDrawingAnchor;

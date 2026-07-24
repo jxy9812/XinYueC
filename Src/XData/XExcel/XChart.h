@@ -11,11 +11,15 @@
 extern "C" {
 #endif
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XAbstractOOXmlFile.h"
 #include "XCellRange.h"
+typedef struct XAbstractSheet XAbstractSheet;
 
 typedef enum XChart_ChartType {
     XChart_NoStatementChart = 0,
@@ -66,4 +70,22 @@ bool XChart_saveToXmlFile(XChart* self, const char* filePath);
 #ifdef __cplusplus
 }
 #endif
+
+/* ========== XML 序列化 ========== */
+/**
+ * @brief     保存图表 XML 到文件
+ * @param self     XChart 指针
+ * @param filePath 文件路径
+ * @return    成功返回true
+ */
+bool XChart_saveToXmlFile(XChart* self, const char* filePath);
+/**
+ * @brief     从文件加载图表 XML
+ * @param self     XChart 指针
+ * @param filePath 文件路径
+ * @return    成功返回true
+ */
+bool XChart_loadFromXmlFile(XChart* self, const char* filePath);
+
 #endif
+

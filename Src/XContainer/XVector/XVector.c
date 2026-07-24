@@ -934,6 +934,16 @@ bool XVector_push_back_3(XVector* this_vector, const XVector* pvValue)
     return XVector_insert_1_base(this_vector, XContainerSize(this_vector), XVector_front_base(pvValue), XContainerSize(pvValue));
 }
 
+void* XVector_emplace_back(XVector* this_vector)
+{
+    if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
+        return NULL;
+    size_t oldSize = XContainerSize(this_vector);
+    if (!XVector_resize_base(this_vector, oldSize + 1))
+        return NULL;
+    return XVector_at_base(this_vector, (int64_t)oldSize);
+}
+
 bool XVector_push_back_move_1_base(XVector* this_vector, void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))

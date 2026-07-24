@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 #include "XVector.h"
@@ -133,6 +136,11 @@ bool XWorksheet_writeBoolRef(XWorksheet* self, const XCellReference* cell, bool 
 bool XWorksheet_writeDateTime(XWorksheet* self, int row, int column, int64_t timestampMs, const XFormat* format);
 bool XWorksheet_writeDateTimeRef(XWorksheet* self, const XCellReference* cell, int64_t timestampMs, const XFormat* format);
 
+bool XWorksheet_writeDate(XWorksheet* self, int row, int column, int year, int month, int day, const XFormat* format);
+bool XWorksheet_writeDateRef(XWorksheet* self, const XCellReference* cell, int year, int month, int day, const XFormat* format);
+bool XWorksheet_writeTime(XWorksheet* self, int row, int column, int hour, int minute, double second, const XFormat* format);
+bool XWorksheet_writeTimeRef(XWorksheet* self, const XCellReference* cell, int hour, int minute, double second, const XFormat* format);
+
 bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const char* url, const XFormat* format, const char* display, const char* tip);
 bool XWorksheet_writeHyperlinkRef(XWorksheet* self, const XCellReference* cell, const char* url, const XFormat* format, const char* display, const char* tip);
 
@@ -150,7 +158,7 @@ bool XWorksheet_addConditionalFormatting(XWorksheet* self, XConditionalFormattin
 int XWorksheet_insertImage(XWorksheet* self, int row, int column, const char* imagePath);
 bool XWorksheet_getImage(XWorksheet* self, int imageIndex, XByteArray* imgData);
 bool XWorksheet_getImageAt(XWorksheet* self, int row, int column, XByteArray* imgData);
-uint XWorksheet_getImageCount(const XWorksheet* self);
+unsigned int XWorksheet_getImageCount(const XWorksheet* self);
 XChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height);
 
 /* ========== 合并单元格 ========== */
@@ -166,6 +174,7 @@ double XWorksheet_columnWidth(const XWorksheet* self, int column);
 XFormat* XWorksheet_columnFormat(const XWorksheet* self, int column);
 bool XWorksheet_isColumnHidden(const XWorksheet* self, int column);
 bool XWorksheet_groupColumns(XWorksheet* self, int colFirst, int colLast, bool collapsed);
+bool XWorksheet_groupColumnsRange(XWorksheet* self, const XCellRange* range, bool collapsed);
 
 /* ========== 行操作 ========== */
 bool XWorksheet_setRowHeight(XWorksheet* self, int rowFirst, int rowLast, double height);
@@ -211,3 +220,7 @@ bool XWorksheet_loadFromXmlFile(XWorksheet* self, const char* filePath);
 }
 #endif
 #endif /* XWORKSHEET_H */
+bool XWorksheet_saveToXmlData(const XWorksheet* self, uint8_t** outData, size_t* outLen);
+bool XWorksheet_saveToXmlFile(XWorksheet* self, const char* filePath);
+bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t len);
+bool XWorksheet_loadFromXmlFile(XWorksheet* self, const char* filePath);

@@ -154,6 +154,13 @@ bool XVector_push_back_1_base(XVector* this_vector, void* pvValue);
 bool XVector_push_back_2(XVector* this_vector, const void* begin, size_t n);
 bool XVector_push_back_3(XVector* this_vector, const XVector* pvValue);
 /**
+ * @brief 在XVector尾部原地构造一个元素（对齐C++ std::vector::emplace_back）
+ * @param this_vector 目标XVector
+ * @return 成功返回新元素的指针，失败返回NULL
+ * @note 仅扩展size并返回新槽位指针，不初始化元素内容，由调用者负责赋值
+ */
+void* XVector_emplace_back(XVector* this_vector);
+/**
  * @brief 宏定义：向XVector尾部添加指定类型的元素（拷贝语义）
  * @param this_vector 目标XVector
  * @param type 元素类型

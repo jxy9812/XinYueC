@@ -5,8 +5,11 @@
  ******************************************************************************/
 #include "XCell.h"
 #include "XMemory.h"
+#include "XUtility.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 /* ========== 创建与初始化 ========== */
 
@@ -49,8 +52,11 @@ XCell* XCell_copy(const XCell* other)
         if (self->m_value) XString_copy_base(self->m_value, other->m_value);
     }
     if (other->m_format) self->m_format = other->m_format;
-    if (other->m_formula) self->m_formula = other->m_formula;
-    if (other->m_richString) self->m_richString = other->m_richString;
+    if (other->m_formula) self->m_formula = XCellFormula_copy(other->m_formula);
+    if (other->m_richString) {
+        self->m_richString = XRichString_create();
+        XRichString_copy(self->m_richString, other->m_richString);
+    }
     return self;
 }
 
@@ -59,6 +65,8 @@ void XCell_delete(XCell* self)
     if (self)
     {
         if (self->m_value) { XString_deinit_base(self->m_value); XFree_System(self->m_value); }
+        if (self->m_formula) XCellFormula_delete(self->m_formula);
+        if (self->m_richString) XRichString_delete(self->m_richString);
         XFree_System(self);
     }
 }
@@ -69,7 +77,11 @@ XCell_CellType XCell_cellType(const XCell* self) { return self ? self->m_cellTyp
 void XCell_setCellType(XCell* self, XCell_CellType type) { if (self) self->m_cellType = type; }
 
 const char* XCell_value(const XCell* self)
-{ return (self && self->m_value) ? XString_toUtf8_const(self->m_value) : ""; }
+{
+    if (!self || !self->m_value) return "";
+    const char* utf8 = XString_toUtf8(self->m_value);
+    return utf8 ? utf8 : "";
+}
 
 void XCell_setValue(XCell* self, const char* value)
 {
@@ -91,6 +103,23 @@ bool XCell_isDateTime(const XCell* self)
     if (self->m_cellType == XCell_DateType) return true;
     if (self->m_format) return XFormat_isDateTimeFormat(self->m_format);
     return false;
+}
+
+int64_t XCell_dateTime(const XCell* self, bool date1904)
+{
+    if (!self) return 0;
+    if (!XCell_isDateTime(self)) return 0;
+    /* 值为 Excel 序列号（浮点），转换为毫秒时间戳 */
+    const char* val = XCell_value(self);
+    if (!val || !val[0]) return 0;
+    double serial = strtod(val, NULL);
+    return XUtility_excelSerialToDateTime(serial, date1904);
+}
+
+const char* XCell_readValue(const XCell* self)
+{
+    /* 在 C 移植中，值已经以字符串形式存储，readValue 与 value 行为一致 */
+    return XCell_value(self);
 }
 
 bool XCell_isRichString(const XCell* self) { return self && self->m_richString != NULL; }

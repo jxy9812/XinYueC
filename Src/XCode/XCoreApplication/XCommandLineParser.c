@@ -310,7 +310,9 @@ XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser)
     }
 
     parser->m_builtinHelpOption = true;
-    return opt;
+    /* addOption 内部已复制，释放原始对象 */
+    XCommandLineOption_delete(opt);
+    return NULL;
 }
 
 void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const char* description)
@@ -868,4 +870,3 @@ XString* XCommandLineParser_helpText(const XCommandLineParser* parser)
 
     return text;
 }
-

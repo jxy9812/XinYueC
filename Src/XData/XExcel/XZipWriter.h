@@ -10,12 +10,17 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdint.h>#include <stdbool.h>#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 typedef struct XZipWriter {
     void* m_zipHandle;
     XString* m_fileName;
+    void* m_entries;  /* XVector<ZipFileEntry>
+ */
 } XZipWriter;
 XZipWriter* XZipWriter_create(const char* fileName);
 void XZipWriter_delete(XZipWriter* self);

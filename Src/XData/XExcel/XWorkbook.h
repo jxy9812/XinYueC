@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XVector.h"
 #include "XAbstractOOXmlFile.h"
@@ -110,3 +113,5 @@ bool XWorkbook_loadFromXmlFile(XWorkbook* self, const char* filePath);
 }
 #endif
 #endif /* XWORKBOOK_H */
+bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* outLen);
+bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len);

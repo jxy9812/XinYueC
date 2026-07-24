@@ -1,7 +1,9 @@
 #include "XAbstractSheet.h"
 #include "XMemory.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 void XAbstractSheet_init(XAbstractSheet* self, const char* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag)
 {
@@ -26,7 +28,7 @@ void XAbstractSheet_deinit(XAbstractSheet* self)
 }
 
 const char* XAbstractSheet_sheetName(const XAbstractSheet* self)
-{ return (self && self->m_sheetName) ? XString_toUtf8_const(self->m_sheetName) : ""; }
+{ return (self && self->m_sheetName) ? XString_toUtf8(self->m_sheetName) : ""; }
 XAbstractSheet_SheetType XAbstractSheet_sheetType(const XAbstractSheet* self) { return self ? self->m_sheetType : XAbstractSheet_ST_WorkSheet; }
 XAbstractSheet_SheetState XAbstractSheet_sheetState(const XAbstractSheet* self) { return self ? self->m_sheetState : XAbstractSheet_SS_Visible; }
 void XAbstractSheet_setSheetState(XAbstractSheet* self, XAbstractSheet_SheetState ss) { if (self) self->m_sheetState = ss; }

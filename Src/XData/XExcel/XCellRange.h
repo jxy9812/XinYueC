@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XCellReference.h"
 
@@ -163,7 +166,8 @@ XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs);
 
 static inline bool XCellRange_equals(const XCellRange* a, const XCellRange* b)
 {
-    return a->m_firstRow == b->m_firstRow && a->m_firstColumn == b->m_firstColumn
+    return a->
+m_firstRow == b->m_firstRow && a->m_firstColumn == b->m_firstColumn
         && a->m_lastRow == b->m_lastRow && a->m_lastColumn == b->m_lastColumn;
 }
 
@@ -176,3 +180,30 @@ static inline bool XCellRange_notEquals(const XCellRange* a, const XCellRange* b
 }
 #endif
 #endif /* XCELLRANGE_H */
+
+/* ========== 便捷设置方法 ========== */
+
+/**
+ * @brief      设置范围为单个单元格
+ * @param self 指针
+ * @param row  行号
+ * @param col  列号
+ */
+void XCellRange_setCell(XCellRange* self, int row, int col);
+
+/**
+ * @brief      使用 CellReference 设置范围为单个单元格
+ * @param self 指针
+ * @param cell 单元格引用
+ */
+void XCellRange_setCellReference(XCellRange* self, const XCellReference* cell);
+
+/**
+ * @brief      设置范围为完整矩形区域
+ * @param self        指针
+ * @param firstRow    起始行
+ * @param firstCol    起始列
+ * @param lastRow     结束行
+ * @param lastCol     结束列
+ */
+void XCellRange_setFullRange(XCellRange* self, int firstRow, int firstCol, int lastRow, int lastCol);

@@ -9,8 +9,11 @@
 extern "C" {
 #endif
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 #include "XColor.h"
@@ -42,3 +45,5 @@ XColor XStyles_getColorByIndex(XStyles* self, int idx);
 }
 #endif
 #endif
+bool XStyles_saveToXmlData(const XStyles* self, uint8_t** outData, size_t* outLen);
+bool XStyles_saveToXmlFile(XStyles* self, const char* filePath);

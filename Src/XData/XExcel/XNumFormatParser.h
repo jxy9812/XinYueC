@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 #include <stdbool.h>
+
 #include "XString.h"
 bool XNumFormatParser_isDateTime(const char* formatCode);
 #ifdef __cplusplus

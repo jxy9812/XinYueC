@@ -12,8 +12,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 #include <stdbool.h>
+
 #include <stddef.h>
+
 #include "XString.h"
 #include "XByteArray.h"
 #include "XColor.h"
@@ -157,6 +160,21 @@ void XCell_setFormula(XCell* self, XCellFormula* formula);
  * @return     是日期时间返回 true
  */
 bool XCell_isDateTime(const XCell* self);
+
+/**
+ * @brief      获取日期时间值（毫秒时间戳）
+ * @param self 指针
+ * @param date1904 是否使用1904日期系统
+ * @return     毫秒时间戳，非日期类型返回 0
+ */
+int64_t XCell_dateTime(const XCell* self, bool date1904);
+
+/**
+ * @brief      获取单元格的读取值（解析共享字符串等后的值）
+ * @param self 指针
+ * @return     值字符串指针
+ */
+const char* XCell_readValue(const XCell* self);
 
 /**
  * @brief      判断是否为富文本

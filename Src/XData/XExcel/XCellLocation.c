@@ -5,7 +5,9 @@
  ******************************************************************************/
 #include "XCellLocation.h"
 #include <stdlib.h>
+
 #include <string.h>
+
 
 XCellLocation XCellLocation_create(void)
 {
