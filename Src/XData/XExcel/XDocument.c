@@ -126,7 +126,7 @@ int XDocument_insertImage(XDocument* self, int row, int col, const char* imagePa
 }
 bool XDocument_getImage(const XDocument* self, int imageIndex, XByteArray* imgData) { (void)self; (void)imageIndex; (void)imgData; return false; }
 bool XDocument_getImageAt(const XDocument* self, int row, int col, XByteArray* imgData) { (void)self; (void)row; (void)col; (void)imgData; return false; }
-uint XDocument_getImageCount(const XDocument* self) { return 0; }
+unsigned int XDocument_getImageCount(const XDocument* self) { return 0; }
 
 /* ========== 图表 ========== */
 XChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height)

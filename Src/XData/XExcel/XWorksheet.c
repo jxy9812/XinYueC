@@ -534,7 +534,7 @@ int XWorksheet_insertImage(XWorksheet* self, int row, int column, const char* im
 
 bool XWorksheet_getImage(XWorksheet* self, int imageIndex, XByteArray* imgData) { (void)self; (void)imageIndex; (void)imgData; return false; }
 bool XWorksheet_getImageAt(XWorksheet* self, int row, int column, XByteArray* imgData) { (void)self; (void)row; (void)column; (void)imgData; return false; }
-uint XWorksheet_getImageCount(const XWorksheet* self) { return self ? (uint)XVector_size_base((XContainer*)self->m_mediaFiles) : 0; }
+unsigned int XWorksheet_getImageCount(const XWorksheet* self) { return self ? (unsigned int)XVector_size_base((XContainer*)self->m_mediaFiles) : 0; }
 
 XChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height)
 {
