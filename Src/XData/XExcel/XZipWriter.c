@@ -1,6 +1,7 @@
 #include "XZipWriter.h"
 #include "XMemory.h"
 #include "XFile.h"
+#include "XClass.h"
 #include "zlib.h"
 #include <string.h>
 
@@ -138,7 +139,7 @@ bool XZipWriter_close(XZipWriter* self) {
     XFile* file = XFile_create_2(self->m_fileName);
     if (!file) return false;
     if (!XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        XFile_deleteLater(file);
+        XClass_delete_base((XClass*)file);
         return false;
     }
 
@@ -147,7 +148,7 @@ bool XZipWriter_close(XZipWriter* self) {
     uint32_t* offsets = (uint32_t*)XMalloc_System(sizeof(uint32_t) * (entry_count ? entry_count : 1));
     if (!offsets) {
         XIODevice_close_base((XIODevice*)file);
-        XFile_deleteLater(file);
+        XClass_delete_base((XClass*)file);
         return false;
     }
 
@@ -231,6 +232,6 @@ bool XZipWriter_close(XZipWriter* self) {
 
     XFree_System(offsets);
     XIODevice_close_base((XIODevice*)file);
-    XFile_deleteLater(file);
+    XClass_delete_base((XClass*)file);
     return true;
 }

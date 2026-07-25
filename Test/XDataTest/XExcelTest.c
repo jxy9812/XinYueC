@@ -1696,12 +1696,10 @@ static bool test_document_dimension(void)
     if (!doc) return false;
     /* 写入一些数据 */
     XFormat* fmt = XFormat_create();
-    XVariant v;
-    XVariant_init(&v, NULL, 0, 0);
-    XVariant_setValue_int(&v, 42);
-    XDocument_write(doc, 1, 1, &v, fmt);
-    XDocument_write(doc, 5, 3, &v, fmt);
-    XVariant_deinit_base((XClass*)&v);
+    XVariant* v = XVariant_create_int(42);
+    XDocument_write(doc, 1, 1, v, fmt);
+    XDocument_write(doc, 5, 3, v, fmt);
+    XVariant_delete_base(v);
     XCellRange dim = XDocument_dimension(doc);
     if (dim.m_firstRow == 1 && dim.m_lastRow == 5 &&
         dim.m_firstColumn == 1 && dim.m_lastColumn == 3) TEST_PASS("dimension 正确 (1,1)-(5,3)");
