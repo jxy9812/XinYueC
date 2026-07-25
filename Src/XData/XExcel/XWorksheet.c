@@ -11,11 +11,8 @@
 #include "XSharedStrings.h"
 #include "XVariant.h"
 #include "XStyles.h"
-#include <stdlib.h>
-
+#include "XFile.h"
 #include <string.h>
-
-#include <stdio.h>
 
 #include <math.h>
 
@@ -29,7 +26,7 @@ static uint64_t cellKey(int row, int col) { return ((uint64_t)(uint32_t)row << 3
 
 /* ========== 创建与初始化 ========== */
 
-XWorksheet* XWorksheet_create(const char* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag)
+XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag)
 {
     XWorksheet* self = (XWorksheet*)XMalloc_System(sizeof(XWorksheet));
     if (!self) return NULL;
@@ -57,10 +54,10 @@ XWorksheet* XWorksheet_create(const char* sheetName, int sheetId, XWorkbook* boo
     return self;
 }
 
-XWorksheet* XWorksheet_copy(const XWorksheet* self, const char* distName, int distId)
+XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int distId)
 {
     if (!self) return NULL;
-    XWorksheet* ws = XWorksheet_create(distName ? distName : "", distId, 
+    XWorksheet* ws = XWorksheet_create(distName, distId, 
         (XWorkbook*)self->m_base.m_workbook, XAbstractOOXmlFile_F_NewFromScratch);
     if (!ws) return NULL;
     /* 复制单元格 */
@@ -213,23 +210,24 @@ bool XWorksheet_write(XWorksheet* self, int row, int column, const XVariant* val
     int type = XVariant_type(value);
     if (type == XVariantType_ByteArray || type == XVariantType_String || type == XVariantType_StringList) {
         XString* tmpStr = XVariant_toString(value);
-        const char* str = XString_toUtf8(tmpStr);
-        XCell_setValue(cell, str);
+        XCell_setValue(cell, tmpStr);
         cell->m_cellType = XCell_SharedStringType;
         XString_delete_base(tmpStr);
     } else if (type == XVariantType_Int || type == XVariantType_Double || type == XVariantType_Uint32 || type == XVariantType_Int64 || type == XVariantType_Uint64) {
         double dval = XVariant_toDouble(value);
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%.15g", dval);
-        XCell_setValue(cell, buf);
+        XString* numStr = XString_create_fmt_utf8("%.15g", dval);
+        XCell_setValue(cell, numStr);
+        if (numStr) XString_delete_base(numStr);
         cell->m_cellType = XCell_NumberType;
     } else if (type == XVariantType_Bool) {
-        XCell_setValue(cell, XVariant_toBool(value) ? "1" : "0");
+        XString* boolStr = XString_create_utf8(XVariant_toBool(value) ? "1" : "0");
+        XCell_setValue(cell, boolStr);
+        if (boolStr) XString_delete_base(boolStr);
         cell->m_cellType = XCell_BooleanType;
     } else if (type == XVariantType_Double || type == XVariantType_Double || type == XVariantType_Double) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%.15g", XVariant_toDouble(value));
-        XCell_setValue(cell, buf);
+        XString* dateStr = XString_create_fmt_utf8("%.15g", XVariant_toDouble(value));
+        XCell_setValue(cell, dateStr);
+        if (dateStr) XString_delete_base(dateStr);
         cell->m_cellType = XCell_DateType;
     }
     return true;
@@ -241,7 +239,7 @@ bool XWorksheet_writeRef(XWorksheet* self, const XCellReference* cell, const XVa
     return XWorksheet_write(self, XCellReference_row(cell), XCellReference_column(cell), value, format);
 }
 
-bool XWorksheet_writeString(XWorksheet* self, int row, int column, const char* value, const XFormat* format)
+bool XWorksheet_writeString(XWorksheet* self, int row, int column, const XString* value, const XFormat* format)
 {
     if (!self || !value) return false;
     XCell* cell = getOrCreateCell(self, row, column);
@@ -252,7 +250,7 @@ bool XWorksheet_writeString(XWorksheet* self, int row, int column, const char* v
     return true;
 }
 
-bool XWorksheet_writeStringRef(XWorksheet* self, const XCellReference* cell, const char* value, const XFormat* format)
+bool XWorksheet_writeStringRef(XWorksheet* self, const XCellReference* cell, const XString* value, const XFormat* format)
 {
     if (!cell) return false;
     return XWorksheet_writeString(self, XCellReference_row(cell), XCellReference_column(cell), value, format);
@@ -264,7 +262,7 @@ bool XWorksheet_writeRichString(XWorksheet* self, int row, int column, const XRi
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     if (format) cell->m_format = (XFormat*)format;
-    const char* plain = XRichString_toPlainString(value);
+    const XString* plain = XRichString_toPlainString(value);
     if (plain) {
         XCell_setValue(cell, plain);
         cell->m_cellType = XCell_SharedStringType;
@@ -284,7 +282,7 @@ bool XWorksheet_writeRichStringRef(XWorksheet* self, const XCellReference* cell,
     return XWorksheet_writeRichString(self, XCellReference_row(cell), XCellReference_column(cell), value, format);
 }
 
-bool XWorksheet_writeInlineString(XWorksheet* self, int row, int column, const char* value, const XFormat* format)
+bool XWorksheet_writeInlineString(XWorksheet* self, int row, int column, const XString* value, const XFormat* format)
 {
     if (!self || !value) return false;
     XCell* cell = getOrCreateCell(self, row, column);
@@ -295,7 +293,7 @@ bool XWorksheet_writeInlineString(XWorksheet* self, int row, int column, const c
     return true;
 }
 
-bool XWorksheet_writeInlineStringRef(XWorksheet* self, const XCellReference* cell, const char* value, const XFormat* format)
+bool XWorksheet_writeInlineStringRef(XWorksheet* self, const XCellReference* cell, const XString* value, const XFormat* format)
 {
     if (!cell) return false;
     return XWorksheet_writeInlineString(self, XCellReference_row(cell), XCellReference_column(cell), value, format);
@@ -307,9 +305,9 @@ bool XWorksheet_writeNumeric(XWorksheet* self, int row, int column, double value
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     if (format) cell->m_format = (XFormat*)format;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%.15g", value);
-    XCell_setValue(cell, buf);
+    XString* numStr = XString_create_fmt_utf8("%.15g", value);
+    XCell_setValue(cell, numStr);
+    if (numStr) XString_delete_base(numStr);
     cell->m_cellType = XCell_NumberType;
     return true;
 }
@@ -328,9 +326,9 @@ bool XWorksheet_writeFormula(XWorksheet* self, int row, int column, const XCellF
     if (format) cell->m_format = (XFormat*)format;
     cell->m_formula = XCellFormula_copy(formula);
     if (cell->m_formula) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%.15g", result);
-        XCell_setValue(cell, buf);
+        XString* resStr = XString_create_fmt_utf8("%.15g", result);
+        XCell_setValue(cell, resStr);
+        if (resStr) XString_delete_base(resStr);
     }
     return true;
 }
@@ -347,7 +345,7 @@ bool XWorksheet_writeBlank(XWorksheet* self, int row, int column, const XFormat*
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     if (format) cell->m_format = (XFormat*)format;
-    XCell_setValue(cell, "");
+    XCell_setValue(cell, NULL);
     cell->m_cellType = XCell_CustomType;
     return true;
 }
@@ -364,7 +362,9 @@ bool XWorksheet_writeBool(XWorksheet* self, int row, int column, bool value, con
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     if (format) cell->m_format = (XFormat*)format;
-    XCell_setValue(cell, value ? "1" : "0");
+    XString* boolStr = XString_create_utf8(value ? "1" : "0");
+    XCell_setValue(cell, boolStr);
+    if (boolStr) XString_delete_base(boolStr);
     cell->m_cellType = XCell_BooleanType;
     return true;
 }
@@ -384,9 +384,9 @@ bool XWorksheet_writeDateTime(XWorksheet* self, int row, int column, int64_t tim
     /* Excel 日期序列号：从1900-01-01开始 */
     double excelSerial = (double)timestampMs / 86400000.0 + 25569.0; /* 1970-01-01到1900-01-01的偏移 */
     if (excelSerial < 60.0) excelSerial -= 1.0; /* Excel 1900年闰年bug */
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%.15g", excelSerial);
-    XCell_setValue(cell, buf);
+    XString* dtStr = XString_create_fmt_utf8("%.15g", excelSerial);
+    XCell_setValue(cell, dtStr);
+    if (dtStr) XString_delete_base(dtStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -408,9 +408,9 @@ bool XWorksheet_writeDate(XWorksheet* self, int row, int column, int year, int m
     if (m <= 2) { y--; m += 12; }
     double excelSerial = (double)(365*y + y/4 - y/100 + y/400 + (153*m - 457)/5 + d - 1461) - 1.0;
     if (excelSerial < 60.0) excelSerial -= 1.0; /* Excel 1900年闰年bug */
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%.15g", excelSerial);
-    XCell_setValue(cell, buf);
+    XString* dStr = XString_create_fmt_utf8("%.15g", excelSerial);
+    XCell_setValue(cell, dStr);
+    if (dStr) XString_delete_base(dStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -429,9 +429,9 @@ bool XWorksheet_writeTime(XWorksheet* self, int row, int column, int hour, int m
     if (format) cell->m_format = (XFormat*)format;
     /* 时间序列号：一天的小数部分 */
     double excelSerial = (hour * 3600.0 + minute * 60.0 + second) / 86400.0;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%.15g", excelSerial);
-    XCell_setValue(cell, buf);
+    XString* tStr = XString_create_fmt_utf8("%.15g", excelSerial);
+    XCell_setValue(cell, tStr);
+    if (tStr) XString_delete_base(tStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -442,7 +442,7 @@ bool XWorksheet_writeTimeRef(XWorksheet* self, const XCellReference* cell, int h
     return XWorksheet_writeTime(self, XCellReference_row(cell), XCellReference_column(cell), hour, minute, second, format);
 }
 
-bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const char* url, const XFormat* format, const char* display, const char* tip)
+bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const XString* url, const XFormat* format, const XString* display, const XString* tip)
 {
     if (!self) return false;
     XCell* cell = getOrCreateCell(self, row, column);
@@ -453,14 +453,14 @@ bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const char
     XWorksheet_Hyperlink hl;
     memset(&hl, 0, sizeof(hl));
     XCellRange_setCell(&hl.m_range, row, column);
-    hl.m_url = XString_create(); if (url) XString_append_utf8(hl.m_url, url);
-    if (display) { hl.m_display = XString_create(); XString_append_utf8(hl.m_display, display); }
-    if (tip) { hl.m_tip = XString_create(); XString_append_utf8(hl.m_tip, tip); }
+    hl.m_url = url ? XString_create_copy(url) : XString_create();
+    if (display) { hl.m_display = XString_create_copy(display); }
+    if (tip) { hl.m_tip = XString_create_copy(tip); }
     XVector_push_back_2(self->m_hyperlinks, &hl, 1);
     return true;
 }
 
-bool XWorksheet_writeHyperlinkRef(XWorksheet* self, const XCellReference* cell, const char* url, const XFormat* format, const char* display, const char* tip)
+bool XWorksheet_writeHyperlinkRef(XWorksheet* self, const XCellReference* cell, const XString* url, const XFormat* format, const XString* display, const XString* tip)
 {
     if (!cell) return false;
     return XWorksheet_writeHyperlink(self, XCellReference_row(cell), XCellReference_column(cell), url, format, display, tip);
@@ -490,11 +490,11 @@ XVariant* XWorksheet_read(XWorksheet* self, int row, int column)
 {
     XCell* cell = XWorksheet_cellAt(self, row, column);
     if (!cell) return NULL;
-    const char* val = XCell_value(cell);
-    if (!val || strlen(val) == 0) return NULL;
+    const XString* val = XCell_value(cell);
+    if (!val || XString_isEmpty_base(val)) return NULL;
     XVariant* v = XVariant_create_null();
     if (!v) return NULL;
-    XVariant_setValue_utf8_str(v, val);
+    XVariant_setValue_String(v, val);
     return v;
 }
 
@@ -522,7 +522,7 @@ bool XWorksheet_addConditionalFormatting(XWorksheet* self, XConditionalFormattin
 
 /* ========== 图片与图表 ========== */
 
-int XWorksheet_insertImage(XWorksheet* self, int row, int column, const char* imagePath)
+int XWorksheet_insertImage(XWorksheet* self, int row, int column, const XString* imagePath)
 {
     if (!self || !imagePath) return -1;
     XMediaFile* media = XMediaFile_create(imagePath);
@@ -1034,16 +1034,21 @@ bool XWorksheet_saveToXmlData(const XWorksheet* self, uint8_t** outData, size_t*
     return *outData != NULL;
 }
 
-bool XWorksheet_saveToXmlFile(XWorksheet* self, const char* filePath)
+bool XWorksheet_saveToXmlFile(XWorksheet* self, const XString* filePath)
 {
     uint8_t* data = NULL;
     size_t len = 0;
     if (!XWorksheet_saveToXmlData(self, &data, &len)) return false;
     
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) { XFree_System(data); return false; }
-    fwrite(data, 1, len, fp);
-    fclose(fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        XFree_System(data);
+        return false;
+    }
+    XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XFree_System(data);
     return true;
 }
@@ -1055,7 +1060,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
     return false;
 }
 
-bool XWorksheet_loadFromXmlFile(XWorksheet* self, const char* filePath)
+bool XWorksheet_loadFromXmlFile(XWorksheet* self, const XString* filePath)
 {
     (void)self; (void)filePath;
     /* TODO: 实现 XML 文件解析 */

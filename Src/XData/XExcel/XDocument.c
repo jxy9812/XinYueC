@@ -16,11 +16,45 @@
 #include "XReadSax.h"
 #include "XVector.h"
 #include "XChartsheet.h"
-#include <stdlib.h>
-
+#include "XFile.h"
+#include "XSaveFile.h"
+#include "XChar.h"
 #include <string.h>
 
-#include <stdio.h>
+/* ========== 内部辅助：将 C 字符串字面量包装为 XString 传递给其他模块 ========== */
+static void addDefault_cstr(XContentTypes* ct, const char* key, const char* value) {
+    XString* k = XString_create_utf8(key);
+    XString* v = XString_create_utf8(value);
+    XContentTypes_addDefault(ct, k, v);
+    XString_delete_base(k);
+    XString_delete_base(v);
+}
+static void addOverride_cstr(XContentTypes* ct, const char* key, const char* value) {
+    XString* k = XString_create_utf8(key);
+    XString* v = XString_create_utf8(value);
+    XContentTypes_addOverride(ct, k, v);
+    XString_delete_base(k);
+    XString_delete_base(v);
+}
+static void addDocRel_cstr(XRelationships* rels, const char* type, const char* target) {
+    XString* t = XString_create_utf8(type);
+    XString* tg = XString_create_utf8(target);
+    XRelationships_addDocumentRelationship(rels, t, tg);
+    XString_delete_base(t);
+    XString_delete_base(tg);
+}
+static void addPkgRel_cstr(XRelationships* rels, const char* type, const char* target) {
+    XString* t = XString_create_utf8(type);
+    XString* tg = XString_create_utf8(target);
+    XRelationships_addPackageRelationship(rels, t, tg);
+    XString_delete_base(t);
+    XString_delete_base(tg);
+}
+static void zipAddFile_cstr(XZipWriter* zip, const char* path, const uint8_t* data, size_t size) {
+    XString* p = XString_create_utf8(path);
+    XZipWriter_addFile(zip, p, data, size);
+    XString_delete_base(p);
+}
 
 
 /* ========== 辅助：获取当前工作表 ========== */
@@ -46,18 +80,19 @@ XDocument* XDocument_create(void)
     self->m_isModified = false;
     /* 默认添加一个工作表 */
     if (self->m_workbook) {
-        XWorkbook_addSheet(self->m_workbook, "Sheet1", XAbstractSheet_ST_WorkSheet);
+        XString* sheet1Name = XString_create_utf8("Sheet1");
+        XWorkbook_addSheet(self->m_workbook, sheet1Name, XAbstractSheet_ST_WorkSheet);
+        XString_delete_base(sheet1Name);
     }
     return self;
 }
 
-XDocument* XDocument_createFromFile(const char* xlsxName)
+XDocument* XDocument_createFromFile(const XString* xlsxName)
 {
     if (!xlsxName) return NULL;
     XDocument* self = XDocument_create();
     if (!self) return NULL;
-    self->m_filePath = XString_create();
-    if (self->m_filePath) XString_append_utf8(self->m_filePath, xlsxName);
+    self->m_filePath = XString_create_copy(xlsxName);
     /* 加载文件 - 暂未实现 */
     return self;
 }
@@ -117,7 +152,7 @@ XCell* XDocument_cellAtRef(const XDocument* self, const XCellReference* cell)
 }
 
 /* ========== 图片 ========== */
-int XDocument_insertImage(XDocument* self, int row, int col, const char* imagePath)
+int XDocument_insertImage(XDocument* self, int row, int col, const XString* imagePath)
 {
     XWorksheet* ws = getCurrentWorksheet(self);
     if (!ws) return -1;
@@ -258,7 +293,7 @@ bool XDocument_addConditionalFormatting(XDocument* self, XConditionalFormatting*
 }
 
 /* ========== 定义名称 ========== */
-bool XDocument_defineName(XDocument* self, const char* name, const char* formula, const char* comment, const char* scope)
+bool XDocument_defineName(XDocument* self, const XString* name, const XString* formula, const XString* comment, const XString* scope)
 {
     return self ? XWorkbook_defineName(self->m_workbook, name, formula, comment, scope) : false;
 }
@@ -273,11 +308,11 @@ XCellRange XDocument_dimension(const XDocument* self)
 }
 
 /* ========== 文档属性 ========== */
-const char* XDocument_documentProperty(const XDocument* self, const char* name) {
-    if (!self || !name) return "";
+const XString* XDocument_documentProperty(const XDocument* self, const XString* name) {
+    if (!self || !name) return NULL;
     return XDocPropsCore_property(self->m_docPropsCore, name);
 }
-void XDocument_setDocumentProperty(XDocument* self, const char* name, const char* property) {
+void XDocument_setDocumentProperty(XDocument* self, const XString* name, const XString* property) {
     if (!self || !name || !property) return;
     XDocPropsCore_setProperty(self->m_docPropsCore, name, property);
 }
@@ -306,17 +341,17 @@ int XDocument_sheetNames(const XDocument* self, XString*** names) {
     *names = arr;
     return count;
 }
-bool XDocument_addSheet(XDocument* self, const char* name, XAbstractSheet_SheetType type) {
+bool XDocument_addSheet(XDocument* self, const XString* name, XAbstractSheet_SheetType type) {
     return self ? XWorkbook_addSheet(self->m_workbook, name, type) != NULL : false;
 }
-bool XDocument_insertSheet(XDocument* self, int index, const char* name, XAbstractSheet_SheetType type) {
+bool XDocument_insertSheet(XDocument* self, int index, const XString* name, XAbstractSheet_SheetType type) {
     return self ? XWorkbook_insertSheet(self->m_workbook, index, name, type) != NULL : false;
 }
-bool XDocument_selectSheet(XDocument* self, const char* name) {
+bool XDocument_selectSheet(XDocument* self, const XString* name) {
     if (!self || !self->m_workbook || !name) return false;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), name) == 0)
+        if (s->m_sheetName && XString_equals(s->m_sheetName, name, XChar_CaseSensitive))
             return XWorkbook_setActiveSheet(self->m_workbook, (int)i);
     }
     return false;
@@ -324,38 +359,38 @@ bool XDocument_selectSheet(XDocument* self, const char* name) {
 bool XDocument_selectSheetByIndex(XDocument* self, int index) {
     return self ? XWorkbook_setActiveSheet(self->m_workbook, index) : false;
 }
-bool XDocument_renameSheet(XDocument* self, const char* oldName, const char* newName) {
+bool XDocument_renameSheet(XDocument* self, const XString* oldName, const XString* newName) {
     if (!self || !self->m_workbook || !oldName || !newName) return false;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), oldName) == 0)
+        if (s->m_sheetName && XString_equals(s->m_sheetName, oldName, XChar_CaseSensitive))
             return XWorkbook_renameSheet(self->m_workbook, (int)i, newName);
     }
     return false;
 }
-bool XDocument_copySheet(XDocument* self, const char* srcName, const char* distName) {
+bool XDocument_copySheet(XDocument* self, const XString* srcName, const XString* distName) {
     if (!self || !self->m_workbook || !srcName) return false;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), srcName) == 0)
+        if (s->m_sheetName && XString_equals(s->m_sheetName, srcName, XChar_CaseSensitive))
             return XWorkbook_copySheet(self->m_workbook, (int)i, distName);
     }
     return false;
 }
-bool XDocument_moveSheet(XDocument* self, const char* srcName, int distIndex) {
+bool XDocument_moveSheet(XDocument* self, const XString* srcName, int distIndex) {
     if (!self || !self->m_workbook || !srcName) return false;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), srcName) == 0)
+        if (s->m_sheetName && XString_equals(s->m_sheetName, srcName, XChar_CaseSensitive))
             return XWorkbook_moveSheet(self->m_workbook, (int)i, distIndex);
     }
     return false;
 }
-bool XDocument_deleteSheet(XDocument* self, const char* name) {
+bool XDocument_deleteSheet(XDocument* self, const XString* name) {
     if (!self || !self->m_workbook || !name) return false;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), name) == 0)
+        if (s->m_sheetName && XString_equals(s->m_sheetName, name, XChar_CaseSensitive))
             return XWorkbook_deleteSheet(self->m_workbook, (int)i);
     }
     return false;
@@ -363,11 +398,11 @@ bool XDocument_deleteSheet(XDocument* self, const char* name) {
 
 /* ========== 工作簿访问 ========== */
 XWorkbook* XDocument_workbook(const XDocument* self) { return self ? self->m_workbook : NULL; }
-XAbstractSheet* XDocument_sheet(const XDocument* self, const char* sheetName) {
+XAbstractSheet* XDocument_sheet(const XDocument* self, const XString* sheetName) {
     if (!self || !self->m_workbook || !sheetName) return NULL;
     for (size_t i = 0; i < XVector_size_base(self->m_workbook->m_sheets); ++i) {
         XAbstractSheet* s = *(XAbstractSheet**)XVector_at_base(self->m_workbook->m_sheets, i);
-        if (s->m_sheetName && strcmp(XString_toUtf8(s->m_sheetName), sheetName) == 0) return s;
+        if (s->m_sheetName && XString_equals(s->m_sheetName, sheetName, XChar_CaseSensitive)) return s;
     }
     return NULL;
 }
@@ -383,12 +418,11 @@ XWorksheet* XDocument_currentWorksheet(const XDocument* self) {
 
 bool XDocument_save(const XDocument* self) {
     if (!self) return false;
-    const char* path = self->m_filePath ? XString_toUtf8(self->m_filePath) : NULL;
-    if (!path || strlen(path) == 0) return false;
-    return XDocument_saveAs(self, path);
+    if (!self->m_filePath || XString_size_base(self->m_filePath) == 0) return false;
+    return XDocument_saveAs(self, self->m_filePath);
 }
 
-bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
+bool XDocument_saveAs(const XDocument* self, const XString* xlsxName) {
     if (!self || !xlsxName || !self->m_workbook) return false;
     
     XZipWriter* zip = XZipWriter_create(xlsxName);
@@ -403,8 +437,8 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     XContentTypes* contentTypes = XContentTypes_create();
     
     /* 添加默认类型 */
-    XContentTypes_addDefault(contentTypes, "rels", "application/vnd.openxmlformats-package.relationships+xml");
-    XContentTypes_addDefault(contentTypes, "xml", "application/xml");
+    addDefault_cstr(contentTypes, "rels", "application/vnd.openxmlformats-package.relationships+xml");
+    addDefault_cstr(contentTypes, "xml", "application/xml");
     
     /* 添加工作表 */
     int sheetCount = XWorkbook_sheetCount(wb);
@@ -413,22 +447,22 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     }
     
     /* 添加覆盖类型 */
-    XContentTypes_addOverride(contentTypes, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml");
-    XContentTypes_addOverride(contentTypes, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml");
-    XContentTypes_addOverride(contentTypes, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
-    XContentTypes_addOverride(contentTypes, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml");
-    XContentTypes_addOverride(contentTypes, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml");
+    addOverride_cstr(contentTypes, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml");
+    addOverride_cstr(contentTypes, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml");
+    addOverride_cstr(contentTypes, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
+    addOverride_cstr(contentTypes, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml");
+    addOverride_cstr(contentTypes, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml");
     
     /* 添加共享字符串 */
     if (!XSharedStrings_isEmpty(sharedStrings)) {
-        XContentTypes_addOverride(contentTypes, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml");
+        addOverride_cstr(contentTypes, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml");
     }
     
     /* 写入 [Content_Types].xml */
     uint8_t* ctData = NULL;
     size_t ctLen = 0;
     if (XContentTypes_saveToXmlData(contentTypes, &ctData, &ctLen)) {
-        XZipWriter_addFile(zip, "[Content_Types].xml", ctData, ctLen);
+        zipAddFile_cstr(zip, "[Content_Types].xml", ctData, ctLen);
         XFree_System(ctData);
     }
     XContentTypes_delete(contentTypes);
@@ -439,14 +473,14 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     memset(&rootRels, 0, sizeof(rootRels));
     rootRels.m_relationships = XVector_Create(XlsxRelationship);
     
-    XRelationships_addDocumentRelationship(&rootRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "xl/workbook.xml");
-    XRelationships_addPackageRelationship(&rootRels, "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml");
-    XRelationships_addDocumentRelationship(&rootRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", "docProps/app.xml");
+    addDocRel_cstr(&rootRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "xl/workbook.xml");
+    addPkgRel_cstr(&rootRels, "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml");
+    addDocRel_cstr(&rootRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", "docProps/app.xml");
     
     uint8_t* relData = NULL;
     size_t relLen = 0;
     if (XRelationships_saveToXmlData(&rootRels, &relData, &relLen)) {
-        XZipWriter_addFile(zip, "_rels/.rels", relData, relLen);
+        zipAddFile_cstr(zip, "_rels/.rels", relData, relLen);
         XFree_System(relData);
     }
     /* 手动清理，不释放栈变量 */ XRelationships_clear(&rootRels); if (rootRels.m_relationships) { XVector_delete_base(rootRels.m_relationships); rootRels.m_relationships = NULL; }
@@ -456,23 +490,23 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     memset(&workbookRels, 0, sizeof(workbookRels));
     workbookRels.m_relationships = XVector_Create(XlsxRelationship);
     
-    XRelationships_addDocumentRelationship(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles", "styles.xml");
+    addDocRel_cstr(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles", "styles.xml");
     if (!XSharedStrings_isEmpty(sharedStrings)) {
-        XRelationships_addDocumentRelationship(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings", "sharedStrings.xml");
+        addDocRel_cstr(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings", "sharedStrings.xml");
     }
-    XRelationships_addDocumentRelationship(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "theme/theme1.xml");
+    addDocRel_cstr(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "theme/theme1.xml");
     
     /* 添加工作表关系 */
     for (int i = 0; i < sheetCount; i++) {
         char sheetPath[64];
         snprintf(sheetPath, sizeof(sheetPath), "worksheets/sheet%d.xml", i + 1);
-        XRelationships_addDocumentRelationship(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet", sheetPath);
+        addDocRel_cstr(&workbookRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet", sheetPath);
     }
     
     relData = NULL;
     relLen = 0;
     if (XRelationships_saveToXmlData(&workbookRels, &relData, &relLen)) {
-        XZipWriter_addFile(zip, "xl/_rels/workbook.xml.rels", relData, relLen);
+        zipAddFile_cstr(zip, "xl/_rels/workbook.xml.rels", relData, relLen);
         XFree_System(relData);
     }
     /* 手动清理，不释放栈变量 */ XRelationships_clear(&workbookRels); if (workbookRels.m_relationships) { XVector_delete_base(workbookRels.m_relationships); workbookRels.m_relationships = NULL; }
@@ -481,7 +515,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     uint8_t* wbData = NULL;
     size_t wbLen = 0;
     if (XWorkbook_saveToXmlData(wb, &wbData, &wbLen)) {
-        XZipWriter_addFile(zip, "xl/workbook.xml", wbData, wbLen);
+        zipAddFile_cstr(zip, "xl/workbook.xml", wbData, wbLen);
         XFree_System(wbData);
     }
     
@@ -489,7 +523,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     uint8_t* styleData = NULL;
     size_t styleLen = 0;
     if (XStyles_saveToXmlData(styles, &styleData, &styleLen)) {
-        XZipWriter_addFile(zip, "xl/styles.xml", styleData, styleLen);
+        zipAddFile_cstr(zip, "xl/styles.xml", styleData, styleLen);
         XFree_System(styleData);
     }
     
@@ -498,7 +532,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
         uint8_t* ssData = NULL;
         size_t ssLen = 0;
         if (XSharedStrings_saveToXmlData(sharedStrings, &ssData, &ssLen)) {
-            XZipWriter_addFile(zip, "xl/sharedStrings.xml", ssData, ssLen);
+            zipAddFile_cstr(zip, "xl/sharedStrings.xml", ssData, ssLen);
             XFree_System(ssData);
         }
     }
@@ -514,7 +548,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
         if (XWorksheet_saveToXmlData(ws, &wsData, &wsLen)) {
             char wsPath[64];
             snprintf(wsPath, sizeof(wsPath), "xl/worksheets/sheet%d.xml", i + 1);
-            XZipWriter_addFile(zip, wsPath, wsData, wsLen);
+            zipAddFile_cstr(zip, wsPath, wsData, wsLen);
             XFree_System(wsData);
         }
         
@@ -528,7 +562,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
         if (XRelationships_saveToXmlData(&wsRels, &relData, &relLen)) {
             char wsRelPath[64];
             snprintf(wsRelPath, sizeof(wsRelPath), "xl/worksheets/_rels/sheet%d.xml.rels", i + 1);
-            XZipWriter_addFile(zip, wsRelPath, relData, relLen);
+            zipAddFile_cstr(zip, wsRelPath, relData, relLen);
             XFree_System(relData);
         }
         /* 手动清理，不释放栈变量 */ XRelationships_clear(&wsRels); if (wsRels.m_relationships) { XVector_delete_base(wsRels.m_relationships); wsRels.m_relationships = NULL; }
@@ -563,7 +597,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     XByteArray_append_utf8(themeBuf, "  </a:themeElements>\n");
     XByteArray_append_utf8(themeBuf, "</a:theme>\n");
     
-    XZipWriter_addFile(zip, "xl/theme/theme1.xml", (const uint8_t*)XByteArray_data(themeBuf), XByteArray_size_base(themeBuf));
+    zipAddFile_cstr(zip, "xl/theme/theme1.xml", (const uint8_t*)XByteArray_data(themeBuf), XByteArray_size_base(themeBuf));
     XByteArray_delete_base(themeBuf);
     
     /* ========== 写入 docProps/core.xml ========== */
@@ -572,7 +606,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     XByteArray_append_utf8(coreBuf, "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n");
     XByteArray_append_utf8(coreBuf, "  <dc:creator>XinYueC</dc:creator>\n");
     XByteArray_append_utf8(coreBuf, "</cp:coreProperties>\n");
-    XZipWriter_addFile(zip, "docProps/core.xml", (const uint8_t*)XByteArray_data(coreBuf), XByteArray_size_base(coreBuf));
+    zipAddFile_cstr(zip, "docProps/core.xml", (const uint8_t*)XByteArray_data(coreBuf), XByteArray_size_base(coreBuf));
     XByteArray_delete_base(coreBuf);
     
     /* ========== 写入 docProps/app.xml ========== */
@@ -593,7 +627,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     }
     XByteArray_append_utf8(appBuf, "</vt:variant></TitlesOfParts>\n");
     XByteArray_append_utf8(appBuf, "</Properties>\n");
-    XZipWriter_addFile(zip, "docProps/app.xml", (const uint8_t*)XByteArray_data(appBuf), XByteArray_size_base(appBuf));
+    zipAddFile_cstr(zip, "docProps/app.xml", (const uint8_t*)XByteArray_data(appBuf), XByteArray_size_base(appBuf));
     XByteArray_delete_base(appBuf);
     
     /* 关闭 ZIP 文件 */
@@ -603,7 +637,7 @@ bool XDocument_saveAs(const XDocument* self, const char* xlsxName) {
     /* 更新文档状态 */
     if (result && self->m_filePath) {
         XString_clear_base(self->m_filePath);
-        XString_append_utf8(self->m_filePath, xlsxName);
+        XString_append(self->m_filePath, xlsxName);
         ((XDocument*)self)->m_isModified = false;
     }
     
@@ -624,7 +658,9 @@ bool XDocument_load(XDocument* self) {
 static char* find_sheet_path_in_zip(const char* zipPath, const char* sheetName, int sheetIndex)
 {
     if (!zipPath) return NULL;
-    XZipReader* zip = XZipReader_create(zipPath);
+    XString* zipPathStr = XString_create_utf8(zipPath);
+    XZipReader* zip = XZipReader_create(zipPathStr);
+    XString_delete_base(zipPathStr);
     if (!zip) return NULL;
 
     /* 读取 workbook.xml.rels 获取 rId -> path */
@@ -633,7 +669,9 @@ static char* find_sheet_path_in_zip(const char* zipPath, const char* sheetName, 
     int relCount = 0;
     memset(rels, 0, sizeof(rels));
 
-    XByteArray* relXml = XZipReader_fileData(zip, "xl/_rels/workbook.xml.rels");
+    XString* relsPathStr = XString_create_utf8("xl/_rels/workbook.xml.rels");
+    XByteArray* relXml = XZipReader_fileData(zip, relsPathStr);
+    XString_delete_base(relsPathStr);
     if (relXml) {
         char* relStr = (char*)XByteArray_data(relXml);
         size_t relLen = XByteArray_size_base(relXml);
@@ -666,7 +704,9 @@ static char* find_sheet_path_in_zip(const char* zipPath, const char* sheetName, 
     }
 
     /* 读取 workbook.xml 找 sheet */
-    XByteArray* wbXml = XZipReader_fileData(zip, "xl/workbook.xml");
+    XString* wbPathStr = XString_create_utf8("xl/workbook.xml");
+    XByteArray* wbXml = XZipReader_fileData(zip, wbPathStr);
+    XString_delete_base(wbPathStr);
     XZipReader_delete(zip);
     if (!wbXml) return NULL;
 
@@ -696,7 +736,9 @@ static char* find_sheet_path_in_zip(const char* zipPath, const char* sheetName, 
                     if (match) {
                         for (int i = 0; i < relCount; i++) {
                             if (strcmp(rels[i].rid, tmpRid) == 0) {
-                                result = strdup(rels[i].path);
+                                size_t pathLen = strlen(rels[i].path);
+                                result = (char*)XMalloc_System(pathLen + 1);
+                                if (result) { memcpy(result, rels[i].path, pathLen + 1); }
                                 break;
                             }
                         }
@@ -712,7 +754,7 @@ static char* find_sheet_path_in_zip(const char* zipPath, const char* sheetName, 
 }
 
 /* ========== SAX 读取 ========== */
-bool XDocument_readSheetSax(XDocument* self, const char* sheetName,
+bool XDocument_readSheetSax(XDocument* self, const XString* sheetName,
                             const XReadSax_Options* opt,
                             XReadSax_CellCallback onCell, void* userData)
 {
@@ -725,7 +767,8 @@ bool XDocument_readSheetSax(XDocument* self, const char* sheetName,
     XReadSax_loadSharedStringsFromZip(zipPath, sharedStrings);
 
     /* 查找 sheet path */
-    char* sheetPath = find_sheet_path_in_zip(zipPath, sheetName, -1);
+    const char* sheetNameCstr = sheetName ? XString_toUtf8(sheetName) : NULL;
+    char* sheetPath = find_sheet_path_in_zip(zipPath, sheetNameCstr, -1);
     if (!sheetPath) {
         XStringList_delete_base(sharedStrings);
         return false;
@@ -743,7 +786,7 @@ bool XDocument_readSheetSax(XDocument* self, const char* sheetName,
         }
     }
     XStringList_delete_base(sharedStrings);
-    free(sheetPath);
+    XFree_System(sheetPath);
     (void)self;  /* suppress unused warning */
     return ok;
 }
@@ -775,7 +818,7 @@ bool XDocument_readSheetSaxByIndex(XDocument* self, int sheetIndex,
         }
     }
     XStringList_delete_base(sharedStrings);
-    free(sheetPath);
+    XFree_System(sheetPath);
     return ok;
 }
 
@@ -788,7 +831,7 @@ bool XDocument_readSheetSaxByIndex(XDocument* self, int sheetIndex,
  * @return    成功返回true
  * @note      导出第一个工作表的数据，以逗号为分隔符
  */
-bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName)
+bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName)
 {
     if (!self || !csvFileName || !self->m_workbook) return false;
 
@@ -807,10 +850,12 @@ bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName)
     }
 
     /* 构建值矩阵（1索引 -> 0索引） */
-    char*** matrix = (char***)calloc((size_t)maxRow, sizeof(char**));
+    char*** matrix = (char***)XMalloc_System((size_t)maxRow * sizeof(char**));
     if (!matrix) { XFree_System(locs); return false; }
+    memset(matrix, 0, (size_t)maxRow * sizeof(char**));
     for (int r = 0; r < maxRow; r++) {
-        matrix[r] = (char**)calloc((size_t)maxCol, sizeof(char*));
+        matrix[r] = (char**)XMalloc_System((size_t)maxCol * sizeof(char*));
+        if (matrix[r]) memset(matrix[r], 0, (size_t)maxCol * sizeof(char*));
     }
 
     for (int i = 0; i < count; i++) {
@@ -818,28 +863,35 @@ bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName)
         int c = locs[i].m_col - 1;
         if (r >= 0 && r < maxRow && c >= 0 && c < maxCol) {
             XCell* cell = locs[i].m_cell;
-            const char* val = XCell_readValue(cell);
-            if (val) matrix[r][c] = strdup(val);
+            const XString* val = XCell_readValue(cell);
+            if (val) {
+                const char* valCstr = XString_toUtf8(val);
+                size_t vlen = strlen(valCstr);
+                matrix[r][c] = (char*)XMalloc_System(vlen + 1);
+                if (matrix[r][c]) memcpy(matrix[r][c], valCstr, vlen + 1);
+            }
         }
     }
     XFree_System(locs);
 
     /* 打开文件 */
-    FILE* fp = fopen(csvFileName, "w");
-    if (!fp) {
+    XFile* csvFile = XFile_create_2((XString*)csvFileName);
+    if (!csvFile || !XIODevice_open_base((XIODevice*)csvFile, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (csvFile) XFile_deleteLater(csvFile);
         for (int r = 0; r < maxRow; r++) {
             if (matrix[r]) {
                 for (int c = 0; c < maxCol; c++) {
-                    if (matrix[r][c]) free(matrix[r][c]);
+                    if (matrix[r][c]) XFree_System(matrix[r][c]);
                 }
-                free(matrix[r]);
+                XFree_System(matrix[r]);
             }
         }
-        free(matrix);
+        XFree_System(matrix);
         return false;
     }
 
     /* 写入 CSV */
+    XByteArray* csvBuf = XByteArray_create();
     for (int r = 0; r < maxRow; r++) {
         for (int c = 0; c < maxCol; c++) {
             char* val = matrix[r][c];
@@ -847,31 +899,34 @@ bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName)
                 /* 检查是否需要加引号（包含逗号、引号、换行） */
                 bool needsQuote = false;
                 for (const char* p = val; *p; p++) {
-                    if (*p == '\",' || *p == '"' || *p == '\n' || *p == '\r') {
+                    if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r') {
                         needsQuote = true;
                         break;
                     }
                 }
                 if (needsQuote) {
                     /* 双引号转义 */
-                    fputc('"', fp);
+                    XByteArray_append_1(csvBuf, (uint8_t)'"');
                     for (const char* p = val; *p; p++) {
-                        if (*p == '"') fputc('"', fp);
-                        fputc(*p, fp);
+                        if (*p == '"') XByteArray_append_1(csvBuf, (uint8_t)'"');
+                        XByteArray_append_1(csvBuf, (uint8_t)*p);
                     }
-                    fputc('"', fp);
+                    XByteArray_append_1(csvBuf, (uint8_t)'"');
                 } else {
-                    fputs(val, fp);
+                    XByteArray_append_utf8(csvBuf, val);
                 }
             }
-            if (c < maxCol - 1) fputc(',', fp);
-            if (val) free(val);
+            if (c < maxCol - 1) XByteArray_append_1(csvBuf, (uint8_t)',');
+            if (val) XFree_System(val);
         }
-        fputc('\n', fp);
-        free(matrix[r]);
+        XByteArray_append_1(csvBuf, (uint8_t)'\n');
+        XFree_System(matrix[r]);
     }
-    fclose(fp);
-    free(matrix);
+    XIODevice_write_1((XIODevice*)csvFile, XByteArray_data(csvBuf), XByteArray_size_base(csvBuf));
+    XByteArray_delete_base(csvBuf);
+    XIODevice_close_base((XIODevice*)csvFile);
+    XFile_deleteLater(csvFile);
+    XFree_System(matrix);
     (void)self;  /* suppress unused */
     return true;
 }
@@ -902,17 +957,18 @@ bool XDocument_autosizeColumnWidth(XDocument* self, int colFirst, int colLast)
     if (colLast > maxCol) colLast = maxCol;
 
     /* 初始化每列最大宽度为8（默认宽度） */
-    double* maxWidth = (double*)calloc((size_t)(colLast - colFirst + 1), sizeof(double));
+    double* maxWidth = (double*)XMalloc_System((size_t)(colLast - colFirst + 1) * sizeof(double));
     if (!maxWidth) { XFree_System(locs); return false; }
+    memset(maxWidth, 0, (size_t)(colLast - colFirst + 1) * sizeof(double));
     for (int c = colFirst; c <= colLast; c++) maxWidth[c - colFirst] = 8.0;
 
     for (int i = 0; i < count; i++) {
         int col = locs[i].m_col;
         if (col < colFirst || col > colLast) continue;
         XCell* cell = locs[i].m_cell;
-        const char* val = XCell_readValue(cell);
-        if (val && strlen(val) > 0) {
-            double len = (double)strlen(val);
+        const XString* val = XCell_readValue(cell);
+        if (val && !XString_isEmpty_base(val)) {
+            double len = (double)XString_toUtf8_length(val);
             int idx = col - colFirst;
             if (len > maxWidth[idx]) maxWidth[idx] = len;
         }
@@ -928,7 +984,7 @@ bool XDocument_autosizeColumnWidth(XDocument* self, int colFirst, int colLast)
     }
 
     XFree_System(locs);
-    free(maxWidth);
+    XFree_System(maxWidth);
     return ok;
 }
 
@@ -949,17 +1005,18 @@ bool XDocument_autosizeColumnWidthAll(XDocument* self)
     int count = XWorksheet_getFullCells(ws, &locs, &maxRow, &maxCol);
     if (count <= 0 || maxCol <= 0) { if (locs) XFree_System(locs); return false; }
 
-    double* maxWidth = (double*)calloc((size_t)maxCol, sizeof(double));
+    double* maxWidth = (double*)XMalloc_System((size_t)maxCol * sizeof(double));
     if (!maxWidth) { XFree_System(locs); return false; }
+    memset(maxWidth, 0, (size_t)maxCol * sizeof(double));
     for (int c = 0; c < maxCol; c++) maxWidth[c] = 8.0;
 
     for (int i = 0; i < count; i++) {
         int col = locs[i].m_col;
         if (col < 1 || col > maxCol) continue;
         XCell* cell = locs[i].m_cell;
-        const char* val = XCell_readValue(cell);
-        if (val && strlen(val) > 0) {
-            double len = (double)strlen(val);
+        const XString* val = XCell_readValue(cell);
+        if (val && !XString_isEmpty_base(val)) {
+            double len = (double)XString_toUtf8_length(val);
             if (len > maxWidth[col - 1]) maxWidth[col - 1] = len;
         }
     }
@@ -973,7 +1030,7 @@ bool XDocument_autosizeColumnWidthAll(XDocument* self)
     }
 
     XFree_System(locs);
-    free(maxWidth);
+    XFree_System(maxWidth);
     return ok;
 }
 
@@ -987,7 +1044,7 @@ bool XDocument_autosizeColumnWidthAll(XDocument* self)
  * @note       对标 QXlsx::Document::copyStyle
  *             使用临时文件实现，因为 ZipWriter 无法直接修改已存在的文件
  */
-bool XDocument_copyStyle(const char* fromPath, const char* toPath)
+bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
 {
     if (!fromPath || !toPath) return false;
 
@@ -999,16 +1056,22 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath)
     if (!toZip) { XZipReader_delete(fromZip); return false; }
 
     /* 创建临时文件用于写入 */
-    char tempPath[] = "/tmp/xlsx_style_copy_XXXXXX";
-    int tempFd = mkstemp(tempPath);
-    if (tempFd < 0) { XZipReader_delete(fromZip); XZipReader_delete(toZip); return false; }
-    close(tempFd);
-
-    XZipWriter* tempZip = XZipWriter_create(tempPath);
+    XString* toPathStr = XString_create_copy(toPath);
+    XString* tempPathStr = XString_create();
+    if (!toPathStr || !tempPathStr || !XSaveFile_generateTempFileName(toPathStr, tempPathStr)) {
+        if (toPathStr) XString_delete_base(toPathStr);
+        if (tempPathStr) XString_delete_base(tempPathStr);
+        XZipReader_delete(fromZip);
+        XZipReader_delete(toZip);
+        return false;
+    }
+    XZipWriter* tempZip = XZipWriter_create(tempPathStr);
     if (!tempZip) { 
         XZipReader_delete(fromZip); 
         XZipReader_delete(toZip); 
-        unlink(tempPath);
+        XFile_remove_static(tempPathStr);
+        XString_delete_base(toPathStr);
+        XString_delete_base(tempPathStr);
         return false; 
     }
 
@@ -1040,8 +1103,8 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath)
 
         /* 1. 复制 styles.xml */
         if (strstr(toFilePath, "xl/styles") != NULL) {
-            if (XZipReader_fileData(fromZip, toFilePath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, toFilePath);
+            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
+                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
                 if (data) {
                     content = (const char*)XByteArray_data(data);
                     contentLen = XByteArray_size_base(data);
@@ -1051,8 +1114,8 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath)
         }
         /* 2. 复制 workbook.xml 中的 workbookPr */
         else if (strstr(toFilePath, "xl/workbook") != NULL) {
-            if (XZipReader_fileData(fromZip, toFilePath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, toFilePath);
+            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
+                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
                 if (data) {
                     content = (const char*)XByteArray_data(data);
                     contentLen = XByteArray_size_base(data);
@@ -1062,8 +1125,8 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath)
         }
         /* 3. 复制 worksheets 中的相关样式 */
         else if (strstr(toFilePath, "xl/worksheets/sheet") != NULL) {
-            if (XZipReader_fileData(fromZip, toFilePath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, toFilePath);
+            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
+                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
                 if (data) {
                     content = (const char*)XByteArray_data(data);
                     contentLen = XByteArray_size_base(data);
@@ -1074,18 +1137,18 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath)
 
         if (needCopy && content && contentLen > 0) {
             /* 直接复制源文件的内容到临时文件 */
-            XZipWriter_addFile(tempZip, toFilePath, (const uint8_t*)content, contentLen);
+            XZipWriter_addFile(tempZip, *ppPath, (const uint8_t*)content, contentLen);
         } else {
             /* 复制目标文件的原始内容 */
-            XByteArray* origData = XZipReader_fileData(toZip, toFilePath);
+            XByteArray* origData = XZipReader_fileData(toZip, *ppPath);
             if (origData) {
                 const uint8_t* d = XByteArray_data(origData);
                 size_t dlen = XByteArray_size_base(origData);
-                XZipWriter_addFile(tempZip, toFilePath, d, dlen);
+                XZipWriter_addFile(tempZip, *ppPath, d, dlen);
                 XByteArray_delete_base(origData);
             } else {
                 /* 如果目标文件中没有，使用空数据 */
-                XZipWriter_addFile(tempZip, toFilePath, (const uint8_t*)"", 0);
+                XZipWriter_addFile(tempZip, *ppPath, (const uint8_t*)"", 0);
             }
         }
     }
@@ -1099,11 +1162,13 @@ cleanup:
 
     if (ok) {
         /* 用临时文件替换目标文件 */
-        ok = (rename(tempPath, toPath) == 0);
+        ok = XFile_rename_static(tempPathStr, toPathStr);
     } else {
-        unlink(tempPath);
+        XFile_remove_static(tempPathStr);
     }
 
+    XString_delete_base(toPathStr);
+    XString_delete_base(tempPathStr);
     return ok;
 }
 
@@ -1116,7 +1181,7 @@ cleanup:
  * @return              成功返回 true
  * @note       对标 QXlsx::Document::changeimage
  */
-bool XDocument_changeImage(XDocument* self, int imageIndex, const char* newImagePath)
+bool XDocument_changeImage(XDocument* self, int imageIndex, const XString* newImagePath)
 {
     if (!self || !self->m_workbook || imageIndex < 0 || !newImagePath) return false;
 
@@ -1132,49 +1197,57 @@ bool XDocument_changeImage(XDocument* self, int imageIndex, const char* newImage
     if (!mediaFile) { XFree_System(mediaFiles); return false; }
 
     /* 获取新图片的文件扩展名 */
-    const char* ext = strrchr(newImagePath, '.');
+    const char* newImagePathCstr = XString_toUtf8(newImagePath);
+    if (!newImagePathCstr) { XFree_System(mediaFiles); return false; }
+    const char* ext = strrchr(newImagePathCstr, '.');
     if (!ext) { XFree_System(mediaFiles); return false; }
     ext++; /* 跳过点 */
 
     /* 确定 MIME 类型 */
     const char* mimeType = "image/png";
-    if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0) {
+    XString* extStr = XString_create_utf8(ext);
+    if (!extStr) { XFree_System(mediaFiles); return false; }
+    if (XString_equals_utf8(extStr, "jpg", XChar_CaseInsensitive) ||
+        XString_equals_utf8(extStr, "jpeg", XChar_CaseInsensitive)) {
         mimeType = "image/jpeg";
-    } else if (strcasecmp(ext, "bmp") == 0) {
+    } else if (XString_equals_utf8(extStr, "bmp", XChar_CaseInsensitive)) {
         mimeType = "image/bmp";
-    } else if (strcasecmp(ext, "gif") == 0) {
+    } else if (XString_equals_utf8(extStr, "gif", XChar_CaseInsensitive)) {
         mimeType = "image/gif";
-    } else if (strcasecmp(ext, "png") == 0) {
+    } else if (XString_equals_utf8(extStr, "png", XChar_CaseInsensitive)) {
         mimeType = "image/png";
     }
+    XString_delete_base(extStr);
 
     /* 读取新图片文件 */
-    FILE* fp = fopen(newImagePath, "rb");
-    if (!fp) { XFree_System(mediaFiles); return false; }
-
-    fseek(fp, 0, SEEK_END);
-    long fileSize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (fileSize <= 0) { fclose(fp); XFree_System(mediaFiles); return false; }
-
-    uint8_t* imageData = (uint8_t*)malloc((size_t)fileSize);
-    if (!imageData) { fclose(fp); XFree_System(mediaFiles); return false; }
-
-    size_t readSize = fread(imageData, 1, (size_t)fileSize, fp);
-    fclose(fp);
-
-    if (readSize != (size_t)fileSize) {
-        free(imageData);
+    XFile* imgFile = XFile_create_2((XString*)newImagePath);
+    if (!imgFile || !XIODevice_open_base((XIODevice*)imgFile, XIODevice_ReadOnly)) {
+        if (imgFile) XFile_deleteLater(imgFile);
         XFree_System(mediaFiles);
         return false;
     }
+    XByteArray* imgData = XIODevice_readAll_3((XIODevice*)imgFile);
+    XIODevice_close_base((XIODevice*)imgFile);
+    XFile_deleteLater(imgFile);
+    if (!imgData || XByteArray_size_base(imgData) == 0) {
+        if (imgData) XByteArray_delete_base(imgData);
+        XFree_System(mediaFiles);
+        return false;
+    }
+    uint8_t* imageData = XByteArray_data(imgData);
+    size_t fileSize = XByteArray_size_base(imgData);
 
     /* 更新媒体文件内容 */
-    XMediaFile_set(mediaFile, imageData, (size_t)fileSize, ext, mimeType);
+    {
+        XString* extXStr = XString_create_utf8(ext);
+        XString* mimeXStr = XString_create_utf8(mimeType);
+        XMediaFile_set(mediaFile, imageData, fileSize, extXStr, mimeXStr);
+        XString_delete_base(extXStr);
+        XString_delete_base(mimeXStr);
+    }
     XMediaFile_setFileName(mediaFile, newImagePath);
 
-    free(imageData);
+    XByteArray_delete_base(imgData);
     XFree_System(mediaFiles);
     return true;
 }

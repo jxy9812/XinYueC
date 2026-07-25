@@ -8,10 +8,11 @@ static const char* s_dateTokens[] = {
     "hh", "h", "ss", "s", "AM/PM", "A/P", "am/pm", "a/p",
     NULL
 };
-bool XNumFormatParser_isDateTime(const char* formatCode) {
-    if (!formatCode || strlen(formatCode) == 0) return false;
+bool XNumFormatParser_isDateTime(const XString* formatCode) {
+    const char* fc = formatCode ? XString_toUtf8(formatCode) : NULL;
+    if (!fc || strlen(fc) == 0) return false;
     /* 检查内置日期格式 */
-    int code = atoi(formatCode);
+    int code = atoi(fc);
     if ((code >= 14 && code <= 22) || (code >= 27 && code <= 36) || (code >= 45 && code <= 47) ||
         (code >= 50 && code <= 58) || (code >= 71 && code <= 81) || code == 164 || code == 165 ||
         code == 166 || code == 167 || code == 168 || code == 169 || code == 170 ||
@@ -29,7 +30,7 @@ bool XNumFormatParser_isDateTime(const char* formatCode) {
     }
     /* 检查自定义格式中的日期/时间标记 */
     for (int i = 0; s_dateTokens[i] != NULL; ++i) {
-        if (strstr(formatCode, s_dateTokens[i]) != NULL) return true;
+        if (strstr(fc, s_dateTokens[i]) != NULL) return true;
     }
     return false;
 }

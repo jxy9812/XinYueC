@@ -7,11 +7,8 @@
 #include "XWorksheet.h"
 #include "XChartsheet.h"
 #include "XMemory.h"
-#include <stdlib.h>
-
+#include "XFile.h"
 #include <string.h>
-
-#include <stdio.h>
 
 
 /* ========== 创建与初始化 ========== */
@@ -82,22 +79,24 @@ XAbstractSheet* XWorkbook_sheet(const XWorkbook* self, int index)
     return *(XAbstractSheet**)XVector_at_base(self->m_sheets, (size_t)index);
 }
 
-XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const char* name, XAbstractSheet_SheetType type)
+XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstractSheet_SheetType type)
 {
     if (!self) return NULL;
     XAbstractSheet* sheet = NULL;
-    char buf[64];
-    if (!name || strlen(name) == 0) {
-        snprintf(buf, sizeof(buf), "Sheet%d", self->m_nextSheetId);
-        name = buf;
+    XString* tempName = NULL;
+    const XString* useName = name;
+    if (!name || XString_size_base((XString*)name) == 0) {
+        tempName = XString_create_fmt_utf8("Sheet%d", self->m_nextSheetId);
+        useName = tempName;
     }
     if (type == XAbstractSheet_ST_ChartSheet) {
-        XChartsheet* cs = XChartsheet_create(name, self->m_nextSheetId, self, XAbstractOOXmlFile_F_NewFromScratch);
+        XChartsheet* cs = XChartsheet_create(useName, self->m_nextSheetId, self, XAbstractOOXmlFile_F_NewFromScratch);
         sheet = (XAbstractSheet*)cs;
     } else {
-        XWorksheet* ws = XWorksheet_create(name, self->m_nextSheetId, self, XAbstractOOXmlFile_F_NewFromScratch);
+        XWorksheet* ws = XWorksheet_create(useName, self->m_nextSheetId, self, XAbstractOOXmlFile_F_NewFromScratch);
         sheet = (XAbstractSheet*)ws;
     }
+    if (tempName) XString_delete_base(tempName);
     if (!sheet) return NULL;
     sheet->m_sheetType = type;
     XVector_push_back_2(self->m_sheets, &sheet, 1);
@@ -105,7 +104,7 @@ XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const char* name, XAbstractS
     return sheet;
 }
 
-XAbstractSheet* XWorkbook_insertSheet(XWorkbook* self, int index, const char* name, XAbstractSheet_SheetType type)
+XAbstractSheet* XWorkbook_insertSheet(XWorkbook* self, int index, const XString* name, XAbstractSheet_SheetType type)
 {
     if (!self || index < 0) return NULL;
     XAbstractSheet* sheet = XWorkbook_addSheet(self, name, type);
@@ -122,7 +121,7 @@ XAbstractSheet* XWorkbook_insertSheet(XWorkbook* self, int index, const char* na
     return sheet;
 }
 
-bool XWorkbook_renameSheet(XWorkbook* self, int index, const char* name)
+bool XWorkbook_renameSheet(XWorkbook* self, int index, const XString* name)
 {
     XAbstractSheet* sheet = XWorkbook_sheet(self, index);
     if (!sheet) return false;
@@ -141,17 +140,20 @@ bool XWorkbook_deleteSheet(XWorkbook* self, int index)
     return true;
 }
 
-bool XWorkbook_copySheet(XWorkbook* self, int index, const char* newName)
+bool XWorkbook_copySheet(XWorkbook* self, int index, const XString* newName)
 {
     XAbstractSheet* src = XWorkbook_sheet(self, index);
     if (!src) return false;
-    char buf[64];
-    const char* name = newName;
-    if (!name || strlen(name) == 0) {
-        snprintf(buf, sizeof(buf), "%s_copy", XAbstractSheet_sheetName(src));
-        name = buf;
+    XString* tempName = NULL;
+    const XString* useName = newName;
+    if (!newName || XString_size_base((XString*)newName) == 0) {
+        tempName = XString_create();
+        if (src->m_sheetName) XString_append(tempName, src->m_sheetName);
+        XString_append_utf8(tempName, "_copy");
+        useName = tempName;
     }
-    XAbstractSheet* newSheet = XWorkbook_addSheet(self, name, src->m_sheetType);
+    XAbstractSheet* newSheet = XWorkbook_addSheet(self, useName, src->m_sheetType);
+    if (tempName) XString_delete_base(tempName);
     if (!newSheet) return false;
     newSheet->m_sheetState = src->m_sheetState;
     return true;
@@ -191,15 +193,15 @@ bool XWorkbook_setActiveSheet(XWorkbook* self, int index)
 
 /* ========== 定义名称 ========== */
 
-bool XWorkbook_defineName(XWorkbook* self, const char* name, const char* formula, const char* comment, const char* scope)
+bool XWorkbook_defineName(XWorkbook* self, const XString* name, const XString* formula, const XString* comment, const XString* scope)
 {
     if (!self || !name || !formula) return false;
     XWorkbook_DefineName dn;
     memset(&dn, 0, sizeof(dn));
-    dn.m_name = XString_create(); XString_append_utf8(dn.m_name, name);
-    dn.m_formula = XString_create(); XString_append_utf8(dn.m_formula, formula);
-    if (comment) { dn.m_comment = XString_create(); XString_append_utf8(dn.m_comment, comment); }
-    if (scope) { dn.m_scope = XString_create(); XString_append_utf8(dn.m_scope, scope); }
+    dn.m_name = XString_create_copy(name);
+    dn.m_formula = XString_create_copy(formula);
+    if (comment) { dn.m_comment = XString_create_copy(comment); }
+    if (scope) { dn.m_scope = XString_create_copy(scope); }
     XVector_push_back_2(self->m_defineNames, &dn, 1);
     return true;
 }
@@ -213,11 +215,11 @@ bool XWorkbook_isStringsToHyperlinksEnabled(const XWorkbook* self) { return self
 void XWorkbook_setStringsToHyperlinksEnabled(XWorkbook* self, bool enable) { if (self) self->m_stringsToHyperlinks = enable; }
 bool XWorkbook_isHtmlToRichStringEnabled(const XWorkbook* self) { return self ? self->m_htmlToRichString : false; }
 void XWorkbook_setHtmlToRichStringEnabled(XWorkbook* self, bool enable) { if (self) self->m_htmlToRichString = enable; }
-const char* XWorkbook_defaultDateFormat(const XWorkbook* self) { return (self && self->m_defaultDateFormat) ? XString_toUtf8(self->m_defaultDateFormat) : ""; }
-void XWorkbook_setDefaultDateFormat(XWorkbook* self, const char* format) {
+const XString* XWorkbook_defaultDateFormat(const XWorkbook* self) { return (self && self->m_defaultDateFormat) ? self->m_defaultDateFormat : NULL; }
+void XWorkbook_setDefaultDateFormat(XWorkbook* self, const XString* format) {
     if (!self) return;
     if (!self->m_defaultDateFormat) self->m_defaultDateFormat = XString_create();
-    if (self->m_defaultDateFormat) { XString_clear_base(self->m_defaultDateFormat); XString_append_utf8(self->m_defaultDateFormat, format); }
+    if (self->m_defaultDateFormat) { XString_clear_base(self->m_defaultDateFormat); if (format) XString_append(self->m_defaultDateFormat, format); }
 }
 void XWorkbook_setWriteDatesAsText(XWorkbook* self, bool enable) { if (self) self->m_writeDatesAsText = enable; }
 bool XWorkbook_writeDatesAsText(const XWorkbook* self) { return self ? self->m_writeDatesAsText : false; }
@@ -291,8 +293,9 @@ XString** XWorkbook_worksheetNames(const XWorkbook* self, int* count)
     return result;
 }
 
-XAbstractSheet* XWorkbook_addSheetEx(XWorkbook* self, const char* name, int sheetId, XAbstractSheet_SheetType type)
+XAbstractSheet* XWorkbook_addSheetEx(XWorkbook* self, const XString* name, int sheetId, XAbstractSheet_SheetType type)
 {
+    (void)sheetId;
     return XWorkbook_addSheet(self, name, type);
 }
 
@@ -364,16 +367,21 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
     return *outData != NULL;
 }
 
-bool XWorkbook_saveToXmlFile(XWorkbook* self, const char* filePath)
+bool XWorkbook_saveToXmlFile(XWorkbook* self, const XString* filePath)
 {
     uint8_t* data = NULL;
     size_t len = 0;
     if (!XWorkbook_saveToXmlData(self, &data, &len)) return false;
     
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) { XFree_System(data); return false; }
-    fwrite(data, 1, len, fp);
-    fclose(fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        XFree_System(data);
+        return false;
+    }
+    XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XFree_System(data);
     return true;
 }
@@ -385,7 +393,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
     return false;
 }
 
-bool XWorkbook_loadFromXmlFile(XWorkbook* self, const char* filePath)
+bool XWorkbook_loadFromXmlFile(XWorkbook* self, const XString* filePath)
 {
     (void)self; (void)filePath;
     /* TODO: 实现 XML 文件解析 */

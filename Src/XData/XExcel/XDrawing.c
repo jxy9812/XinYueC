@@ -6,12 +6,11 @@
 #include "XDrawing.h"
 #include "XMemory.h"
 #include "XByteArray.h"
+#include "XFile.h"
 #include "XXmlStreamWriter.h"
 #include "XXmlStreamReader.h"
 #include "XDrawingAnchor.h"
-#include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 XDrawing* XDrawing_create(XAbstractSheet* sheet, XAbstractOOXmlFile_CreateFlag flag) {
     XDrawing* self = (XDrawing*)XMalloc_System(sizeof(XDrawing));
@@ -38,14 +37,11 @@ void XDrawing_delete(XDrawing* self) {
     XFree_System(self);
 }
 
-bool XDrawing_saveToXmlFile(XDrawing* self, const char* filePath) {
+bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
     if (!self || !filePath) return false;
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) return false;
-    fclose(fp);
-    /* 使用 XXmlStreamWriter 写字符串到文件 */
+
+    /* 使用 XXmlStreamWriter 生成 XML 内容 */
     XXmlStreamWriter* writer = XXmlStreamWriter_create();
-    XByteArray* buf = XByteArray_create();
     XXmlStreamWriter_setAutoFormatting(writer, true);
     XXmlStreamWriter_setAutoFormattingIndent(writer, 1);
     XXmlStreamWriter_writeStartDocument_ex(writer, "1.0");
@@ -54,6 +50,7 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const char* filePath) {
     XXmlStreamWriter_writeAttribute(writer, "xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main");
     XXmlStreamWriter_writeNamespace(writer, "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "xdr");
     XXmlStreamWriter_writeNamespace(writer, "http://schemas.openxmlformats.org/drawingml/2006/main", "a");
+
     /* 写入每个锚点 */
     size_t n = XVector_size_base(self->m_anchors);
     for (size_t i = 0; i < n; i++) {
@@ -65,33 +62,55 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const char* filePath) {
     XXmlStreamWriter_writeEndElement(writer); /* xdr:wsDr */
     XXmlStreamWriter_writeEndDocument(writer);
     const char* xml = XXmlStreamWriter_toString(writer);
-    FILE* f = fopen(filePath, "wb");
-    if (f) {
-        fputs(xml ? xml : "", f);
-        fclose(f);
+
+    /* 通过 XFile 写入文件 */
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file) { XXmlStreamWriter_delete(writer); return false; }
+
+    if (!XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        XFile_deleteLater(file);
+        XXmlStreamWriter_delete(writer);
+        return false;
     }
+
+    if (xml) {
+        XIODevice_write_1((XIODevice*)file, xml, (int64_t)strlen(xml));
+    }
+
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XXmlStreamWriter_delete(writer);
-    XByteArray_delete_base(buf);
     return true;
 }
 
-bool XDrawing_loadFromXmlFile(XDrawing* self, const char* filePath) {
+bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
     if (!self || !filePath) return false;
-    FILE* fp = fopen(filePath, "rb");
-    if (!fp) return false;
-    fseek(fp, 0, SEEK_END);
-    long fsize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (fsize <= 0) { fclose(fp); return false; }
-    char* xml = (char*)XMalloc_System((size_t)fsize + 1);
-    if (!xml) { fclose(fp); return false; }
-    size_t r = fread(xml, 1, (size_t)fsize, fp);
-    fclose(fp);
-    if (r != (size_t)fsize) { XFree_System(xml); return false; }
-    xml[fsize] = '\0';
+
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file) return false;
+
+    if (!XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        XFile_deleteLater(file);
+        return false;
+    }
+
+    XByteArray* xmlData = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
+
+    if (!xmlData || XByteArray_size_base(xmlData) == 0) {
+        if (xmlData) XByteArray_delete_base(xmlData);
+        return false;
+    }
+
+    /* 追加 NUL 终止符 */
+    XByteArray_append_1(xmlData, 0);
+    const char* xml = (const char*)XByteArray_data(xmlData);
+
     XXmlStreamReader* reader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(reader, xml);
-    XFree_System(xml);
+    XByteArray_delete_base(xmlData);
+
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {

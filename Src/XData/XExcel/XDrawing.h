@@ -25,10 +25,35 @@ typedef struct XDrawing {
     XWorkbook* m_workbook;
     XVector* m_anchors;
 } XDrawing;
+/**
+ * @brief  创建绘图容器对象
+ * @param  sheet  所属工作表指针
+ * @param  flag   创建标志（F_NewFromScratch / F_LoadFromExists）
+ * @return 新对象指针，失败返回 NULL
+ */
 XDrawing* XDrawing_create(XAbstractSheet* sheet, XAbstractOOXmlFile_CreateFlag flag);
+
+/**
+ * @brief  销毁绘图容器并释放所有锚点资源
+ * @param  self  绘图容器指针
+ */
 void XDrawing_delete(XDrawing* self);
-bool XDrawing_saveToXmlFile(XDrawing* self, const char* filePath);
-bool XDrawing_loadFromXmlFile(XDrawing* self, const char* filePath);
+
+/**
+ * @brief  将绘图容器保存为 XML 文件（xl/drawings/drawingN.xml）
+ * @param  self      绘图容器指针
+ * @param  filePath  输出文件路径
+ * @return 成功返回 true
+ */
+bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath);
+
+/**
+ * @brief  从 XML 文件加载绘图容器
+ * @param  self      绘图容器指针
+ * @param  filePath  输入文件路径
+ * @return 成功返回 true
+ */
+bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif

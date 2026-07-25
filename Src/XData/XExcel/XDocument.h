@@ -11,7 +11,7 @@
 extern "C" {
 
 /* ========== CSV 导出 ========== */
-bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName);
+bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName);
 #endif
 
 #include <stdint.h>
@@ -19,8 +19,6 @@ bool XDocument_saveAsCsv(const XDocument* self, const char* csvFileName);
 #include <stdbool.h>
 
 #include <stddef.h>
-
-#include <stdio.h>
 
 #include "XString.h"
 #include "XByteArray.h"
@@ -60,7 +58,7 @@ typedef struct XDocument {
 
 /* ========== 创建与初始化 ========== */
 XDocument* XDocument_create(void);
-XDocument* XDocument_createFromFile(const char* xlsxName);
+XDocument* XDocument_createFromFile(const XString* xlsxName);
 XDocument* XDocument_createFromDevice(struct XIODevice* device);
 void XDocument_delete(XDocument* self);
 
@@ -75,7 +73,7 @@ XCell* XDocument_cellAt(const XDocument* self, int row, int col);
 XCell* XDocument_cellAtRef(const XDocument* self, const XCellReference* cell);
 
 /* ========== 图片 ========== */
-int XDocument_insertImage(XDocument* self, int row, int col, const char* imagePath);
+int XDocument_insertImage(XDocument* self, int row, int col, const XString* imagePath);
 bool XDocument_getImage(const XDocument* self, int imageIndex, XByteArray* imgData);
 bool XDocument_getImageAt(const XDocument* self, int row, int col, XByteArray* imgData);
 unsigned int XDocument_getImageCount(const XDocument* self);
@@ -112,42 +110,42 @@ bool XDocument_addDataValidation(XDocument* self, XDataValidation* validation);
 bool XDocument_addConditionalFormatting(XDocument* self, XConditionalFormatting* cf);
 
 /* ========== 定义名称 ========== */
-bool XDocument_defineName(XDocument* self, const char* name, const char* formula, const char* comment, const char* scope);
+bool XDocument_defineName(XDocument* self, const XString* name, const XString* formula, const XString* comment, const XString* scope);
 
 /* ========== 维度 ========== */
 XCellRange XDocument_dimension(const XDocument* self);
 
 /* ========== 文档属性 ========== */
-const char* XDocument_documentProperty(const XDocument* self, const char* name);
-void XDocument_setDocumentProperty(XDocument* self, const char* name, const char* property);
+const XString* XDocument_documentProperty(const XDocument* self, const XString* name);
+void XDocument_setDocumentProperty(XDocument* self, const XString* name, const XString* property);
 int XDocument_documentPropertyNames(const XDocument* self, XString*** names);
 
 /* ========== 工作表管理 ========== */
 int XDocument_sheetNames(const XDocument* self, XString*** names);
-bool XDocument_addSheet(XDocument* self, const char* name, XAbstractSheet_SheetType type);
-bool XDocument_insertSheet(XDocument* self, int index, const char* name, XAbstractSheet_SheetType type);
-bool XDocument_selectSheet(XDocument* self, const char* name);
+bool XDocument_addSheet(XDocument* self, const XString* name, XAbstractSheet_SheetType type);
+bool XDocument_insertSheet(XDocument* self, int index, const XString* name, XAbstractSheet_SheetType type);
+bool XDocument_selectSheet(XDocument* self, const XString* name);
 bool XDocument_selectSheetByIndex(XDocument* self, int index);
-bool XDocument_renameSheet(XDocument* self, const char* oldName, const char* newName);
-bool XDocument_copySheet(XDocument* self, const char* srcName, const char* distName);
-bool XDocument_moveSheet(XDocument* self, const char* srcName, int distIndex);
-bool XDocument_deleteSheet(XDocument* self, const char* name);
+bool XDocument_renameSheet(XDocument* self, const XString* oldName, const XString* newName);
+bool XDocument_copySheet(XDocument* self, const XString* srcName, const XString* distName);
+bool XDocument_moveSheet(XDocument* self, const XString* srcName, int distIndex);
+bool XDocument_deleteSheet(XDocument* self, const XString* name);
 
 /* ========== 工作簿和当前工作表访问 ========== */
 XWorkbook* XDocument_workbook(const XDocument* self);
-XAbstractSheet* XDocument_sheet(const XDocument* self, const char* sheetName);
+XAbstractSheet* XDocument_sheet(const XDocument* self, const XString* sheetName);
 XAbstractSheet* XDocument_currentSheet(const XDocument* self);
 XWorksheet* XDocument_currentWorksheet(const XDocument* self);
 
 /* ========== 保存和加载 ========== */
 bool XDocument_save(const XDocument* self);
-bool XDocument_saveAs(const XDocument* self, const char* xlsxName);
+bool XDocument_saveAs(const XDocument* self, const XString* xlsxName);
 bool XDocument_saveAsDevice(const XDocument* self, struct XIODevice* device);
 bool XDocument_isLoadPackage(const XDocument* self);
 bool XDocument_load(XDocument* self);
 
 /* ========== SAX 读取 ========== */
-bool XDocument_readSheetSax(XDocument* self, const char* sheetName, const XReadSax_Options* opt, XReadSax_CellCallback onCell, void* userData);
+bool XDocument_readSheetSax(XDocument* self, const XString* sheetName, const XReadSax_Options* opt, XReadSax_CellCallback onCell, void* userData);
 bool XDocument_readSheetSaxByIndex(XDocument* self, int sheetIndex, const XReadSax_Options* opt, XReadSax_CellCallback onCell, void* userData);
 
 /* ========== 自动列宽 ========== */
@@ -167,7 +165,7 @@ bool XDocument_autosizeColumnWidthAll(XDocument* self);
  * @return     成功返回 true
  * @note       对标 QXlsx::Document::copyStyle
  */
-bool XDocument_copyStyle(const char* fromPath, const char* toPath);
+bool XDocument_copyStyle(const XString* fromPath, const XString* toPath);
 
 /* ========== 图片修改 ========== */
 /**
@@ -178,4 +176,4 @@ bool XDocument_copyStyle(const char* fromPath, const char* toPath);
  * @return              成功返回 true
  * @note       对标 QXlsx::Document::changeimage
  */
-bool XDocument_changeImage(XDocument* self, int imageIndex, const char* newImagePath);
+bool XDocument_changeImage(XDocument* self, int imageIndex, const XString* newImagePath);

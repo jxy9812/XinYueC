@@ -19,14 +19,50 @@ extern "C" {
 #include "XAbstractOOXmlFile.h"
 typedef struct XSimpleOOXmlFile {
     XAbstractOOXmlFile m_base;
-    XByteArray* m_xmlData;
+    XString* m_xmlData;
 } XSimpleOOXmlFile;
+/**
+ * @brief  创建简单 OOXML 文件对象
+ * @param  flag  创建标志（F_NewFromScratch / F_LoadFromExists）
+ * @return 新对象指针，失败返回 NULL
+ */
 XSimpleOOXmlFile* XSimpleOOXmlFile_create(XAbstractOOXmlFile_CreateFlag flag);
+
+/**
+ * @brief  销毁简单 OOXML 文件对象并释放资源
+ * @param  self  对象指针
+ */
 void XSimpleOOXmlFile_delete(XSimpleOOXmlFile* self);
-void XSimpleOOXmlFile_setXmlData(XSimpleOOXmlFile* self, const char* data, size_t len);
-const char* XSimpleOOXmlFile_xmlData(const XSimpleOOXmlFile* self, size_t* len);
-bool XSimpleOOXmlFile_saveToXmlFile(XSimpleOOXmlFile* self, const char* filePath);
-bool XSimpleOOXmlFile_loadFromXmlFile(XSimpleOOXmlFile* self, const char* filePath);
+
+/**
+ * @brief  设置 XML 数据内容
+ * @param  self  对象指针
+ * @param  data  XML 数据字符串
+ */
+void XSimpleOOXmlFile_setXmlData(XSimpleOOXmlFile* self, const XString* data);
+
+/**
+ * @brief  获取 XML 数据内容
+ * @param  self  对象指针
+ * @return XML 数据字符串，无数据返回 NULL
+ */
+const XString* XSimpleOOXmlFile_xmlData(const XSimpleOOXmlFile* self);
+
+/**
+ * @brief  将 XML 数据保存到文件
+ * @param  self      对象指针
+ * @param  filePath  输出文件路径
+ * @return 成功返回 true
+ */
+bool XSimpleOOXmlFile_saveToXmlFile(XSimpleOOXmlFile* self, const XString* filePath);
+
+/**
+ * @brief  从文件加载 XML 数据
+ * @param  self      对象指针
+ * @param  filePath  输入文件路径
+ * @return 成功返回 true
+ */
+bool XSimpleOOXmlFile_loadFromXmlFile(XSimpleOOXmlFile* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif

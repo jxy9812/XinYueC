@@ -120,14 +120,14 @@ XCellReference XCellReference_create_ex(int row, int column)
     return ref;
 }
 
-XCellReference XCellReference_create_str(const char* cell)
+XCellReference XCellReference_create_str(const XString* cell)
 {
     XCellReference ref;
     XCellReference_init_str(&ref, cell);
     return ref;
 }
 
-XCellReference XCellReference_create_char(const char* cell)
+XCellReference XCellReference_create_char(const XString* cell)
 {
     return XCellReference_create_str(cell);
 }
@@ -159,11 +159,11 @@ void XCellReference_init_ex(XCellReference* self, int row, int column)
     }
 }
 
-void XCellReference_init_str(XCellReference* self, const char* cell)
+void XCellReference_init_str(XCellReference* self, const XString* cell)
 {
     if (self)
     {
-        parseCellReference(cell, &self->m_row, &self->m_column);
+        parseCellReference(cell ? XString_toUtf8(cell) : NULL, &self->m_row, &self->m_column);
     }
 }
 
@@ -229,7 +229,7 @@ XString XCellReference_columnToName(int column)
     return result;
 }
 
-int XCellReference_nameToColumn(const char* colName)
+int XCellReference_nameToColumn(const XString* colName)
 {
-    return columnNameToNumber(colName);
+    return columnNameToNumber(colName ? XString_toUtf8(colName) : NULL);
 }

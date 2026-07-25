@@ -78,8 +78,8 @@ XDrawingAnchor* XDrawingAnchor_create(XDrawing* drawing, XDrawingAnchor_ObjectTy
 void XDrawingAnchor_delete(XDrawingAnchor* self);
 
 /* ========== 对象设置 ========== */
-void XDrawingAnchor_setPicture(XDrawingAnchor* self, const char* imagePath);
-bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data, size_t len, const char* mimeType);
+void XDrawingAnchor_setPicture(XDrawingAnchor* self, const XString* imagePath);
+bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data, size_t len, const XString* mimeType);
 void XDrawingAnchor_setChart(XDrawingAnchor* self, XChart* chart);
 bool XDrawingAnchor_getPicture(XDrawingAnchor* self, XByteArray* outData);
 

@@ -21,13 +21,59 @@ typedef struct XDocPropsCore {
     XAbstractOOXmlFile m_base;
     XMap* m_properties;
 } XDocPropsCore;
+/**
+ * @brief  创建核心属性对象
+ * @param  flag  创建标志（F_NewFromScratch / F_LoadFromExists）
+ * @return 新对象指针，失败返回 NULL
+ */
 XDocPropsCore* XDocPropsCore_create(XAbstractOOXmlFile_CreateFlag flag);
+
+/**
+ * @brief  销毁核心属性对象并释放资源
+ * @param  self  核心属性对象指针
+ */
 void XDocPropsCore_delete(XDocPropsCore* self);
-bool XDocPropsCore_setProperty(XDocPropsCore* self, const char* name, const char* value);
-const char* XDocPropsCore_property(const XDocPropsCore* self, const char* name);
+
+/**
+ * @brief  设置核心属性
+ * @param  self   核心属性对象指针
+ * @param  name   属性名称（如 "title"、"creator"、"created"）
+ * @param  value  属性值
+ * @return 成功返回 true
+ */
+bool XDocPropsCore_setProperty(XDocPropsCore* self, const XString* name, const XString* value);
+
+/**
+ * @brief  获取核心属性值
+ * @param  self  核心属性对象指针
+ * @param  name  属性名称
+ * @return 属性值字符串，不存在返回 NULL
+ */
+const XString* XDocPropsCore_property(const XDocPropsCore* self, const XString* name);
+
+/**
+ * @brief  获取所有属性名称列表
+ * @param  self   核心属性对象指针
+ * @param  names  [out] 接收属性名称数组的指针
+ * @return 属性数量
+ */
 int XDocPropsCore_propertyNames(const XDocPropsCore* self, XString*** names);
-bool XDocPropsCore_saveToXmlFile(XDocPropsCore* self, const char* filePath);
-bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const char* filePath);
+
+/**
+ * @brief  将核心属性保存为 XML 文件（docProps/core.xml）
+ * @param  self      核心属性对象指针
+ * @param  filePath  输出文件路径
+ * @return 成功返回 true
+ */
+bool XDocPropsCore_saveToXmlFile(XDocPropsCore* self, const XString* filePath);
+
+/**
+ * @brief  从 XML 文件加载核心属性
+ * @param  self      核心属性对象指针
+ * @param  filePath  输入文件路径
+ * @return 成功返回 true
+ */
+bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif

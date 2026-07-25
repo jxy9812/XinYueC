@@ -21,29 +21,24 @@ XCellFormula* XCellFormula_create(void)
     return self;
 }
 
-XCellFormula* XCellFormula_create_ex(const char* text)
+XCellFormula* XCellFormula_create_ex(const XString* text)
 {
     XCellFormula* self = XCellFormula_create();
     if (self && text)
     {
-        XString* str = XString_create();
-        if (str)
-        {
-            XString_append_utf8(str, text);
-            self->m_text = str;
-        }
+        self->m_text = XString_create_copy(text);
     }
     return self;
 }
 
-XCellFormula* XCellFormula_create_typed(const char* text, XCellFormula_Type type)
+XCellFormula* XCellFormula_create_typed(const XString* text, XCellFormula_Type type)
 {
     XCellFormula* self = XCellFormula_create_ex(text);
     if (self) self->m_type = type;
     return self;
 }
 
-XCellFormula* XCellFormula_create_withRef(const char* text, const XCellRange* ref, XCellFormula_Type type)
+XCellFormula* XCellFormula_create_withRef(const XString* text, const XCellRange* ref, XCellFormula_Type type)
 {
     XCellFormula* self = XCellFormula_create_ex(text);
     if (self)
@@ -74,9 +69,9 @@ XCellFormula_Type XCellFormula_formulaType(const XCellFormula* self)
     return self ? self->m_type : XCellFormula_Normal;
 }
 
-const char* XCellFormula_formulaText(const XCellFormula* self)
+const XString* XCellFormula_formulaText(const XCellFormula* self)
 {
-    return (self && self->m_text) ? XString_toUtf8(self->m_text) : "";
+    return (self && self->m_text) ? self->m_text : NULL;
 }
 
 XCellRange XCellFormula_reference(const XCellFormula* self)
@@ -90,7 +85,7 @@ int XCellFormula_sharedIndex(const XCellFormula* self)
     return self ? self->m_sharedIndex : -1;
 }
 
-void XCellFormula_setText(XCellFormula* self, const char* text)
+void XCellFormula_setText(XCellFormula* self, const XString* text)
 {
     if (!self) return;
     if (!self->m_text)
@@ -99,7 +94,7 @@ void XCellFormula_setText(XCellFormula* self, const char* text)
         if (!self->m_text) return;
     }
     XString_clear_base(self->m_text);
-    if (text) XString_append_utf8(self->m_text, text);
+    if (text) XString_append(self->m_text, text);
 }
 
 void XCellFormula_setType(XCellFormula* self, XCellFormula_Type type)

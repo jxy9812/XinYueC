@@ -34,16 +34,79 @@ typedef struct XStyles {
     XColor m_indexedColors[64];
     bool m_emptyFormatAdded;
 } XStyles;
+/**
+ * @brief  创建样式管理器对象
+ * @param  flag  创建标志（F_NewFromScratch / F_LoadFromExists）
+ * @return 新对象指针，失败返回 NULL
+ */
 XStyles* XStyles_create(XAbstractOOXmlFile_CreateFlag flag);
+
+/**
+ * @brief  销毁样式管理器并释放所有格式资源
+ * @param  self  样式管理器指针
+ */
 void XStyles_delete(XStyles* self);
+
+/**
+ * @brief  添加单元格格式（xf 类型）到样式表
+ * @param  self    样式管理器指针
+ * @param  format  要添加的格式对象
+ * @param  force   为 true 时强制添加（即使已存在相同格式）
+ */
 void XStyles_addXfFormat(XStyles* self, const XFormat* format, bool force);
+
+/**
+ * @brief  按索引获取单元格格式（xf 类型）
+ * @param  self  样式管理器指针
+ * @param  idx   格式索引
+ * @return 格式对象指针，索引无效返回 NULL
+ */
 XFormat* XStyles_xfFormat(XStyles* self, int idx);
+
+/**
+ * @brief  添加差异格式（dxf 类型）到样式表
+ * @param  self    样式管理器指针
+ * @param  format  要添加的格式对象
+ * @param  force   为 true 时强制添加（即使已存在相同格式）
+ */
 void XStyles_addDxfFormat(XStyles* self, const XFormat* format, bool force);
+
+/**
+ * @brief  按索引获取差异格式（dxf 类型）
+ * @param  self  样式管理器指针
+ * @param  idx   格式索引
+ * @return 格式对象指针，索引无效返回 NULL
+ */
 XFormat* XStyles_dxfFormat(XStyles* self, int idx);
+
+/**
+ * @brief  按索引获取调色板颜色
+ * @param  self  样式管理器指针
+ * @param  idx   颜色索引（0~63）
+ * @return 对应的颜色值
+ */
 XColor XStyles_getColorByIndex(XStyles* self, int idx);
 #ifdef __cplusplus
 }
 #endif
-#endif
+/**
+ * @brief  将样式表序列化为 XML 数据
+ * @param  self    样式管理器指针
+ * @param  outData [out] 接收 XML 数据缓冲区的指针，调用者负责释放
+ * @param  outLen  [out] 接收数据长度
+ * @return 成功返回 true
+ */
 bool XStyles_saveToXmlData(const XStyles* self, uint8_t** outData, size_t* outLen);
-bool XStyles_saveToXmlFile(XStyles* self, const char* filePath);
+
+/**
+ * @brief  将样式表保存为 XML 文件（xl/styles.xml）
+ * @param  self      样式管理器指针
+ * @param  filePath  输出文件路径
+ * @return 成功返回 true
+ */
+bool XStyles_saveToXmlFile(XStyles* self, const XString* filePath);
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* XSTYLES_H */

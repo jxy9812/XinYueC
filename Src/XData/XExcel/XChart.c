@@ -33,23 +33,23 @@ void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool 
 }
 void XChart_setChartType(XChart* self, XChart_ChartType type) { if (self) self->m_chartType = type; }
 void XChart_setChartStyle(XChart* self, int id) { if (self) self->m_chartStyle = id; }
-void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const char* axisTitle) {
+void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const XString* axisTitle) {
     if (!self) return;
     XString** target = NULL;
     if (pos == XChart_AxisPosLeft) target = &self->m_axisTitleLeft;
     else if (pos == XChart_AxisPosRight) target = &self->m_axisTitleRight;
     else if (pos == XChart_AxisPosTop) target = &self->m_axisTitleTop;
     else if (pos == XChart_AxisPosBottom) target = &self->m_axisTitleBottom;
-    if (target) { if (!*target) *target = XString_create(); if (*target) { XString_clear_base(*target); XString_append_utf8(*target, axisTitle); } }
+    if (target) { if (!*target) *target = XString_create(); if (*target) { XString_clear_base(*target); if (axisTitle) XString_append(*target, axisTitle); } }
 }
-void XChart_setChartTitle(XChart* self, const char* title) {
+void XChart_setChartTitle(XChart* self, const XString* title) {
     if (!self) return;
     if (!self->m_chartTitle) self->m_chartTitle = XString_create();
-    if (self->m_chartTitle) { XString_clear_base(self->m_chartTitle); XString_append_utf8(self->m_chartTitle, title); }
+    if (self->m_chartTitle) { XString_clear_base(self->m_chartTitle); if (title) XString_append(self->m_chartTitle, title); }
 }
 void XChart_setChartLegend(XChart* self, XChart_ChartAxisPos legendPos, bool overlap) { if (self) { self->m_legendPos = legendPos; self->m_legendOverlay = overlap; } }
 void XChart_setGridlinesEnable(XChart* self, bool majorEnable, bool minorEnable) { if (self) { self->m_majorGridlinesEnable = majorEnable; self->m_minorGridlinesEnable = minorEnable; } }
 void XChart_setSize(XChart* self, int width, int height) { if (self) { self->m_width = width; self->m_height = height; } }
 void XChart_setPosition(XChart* self, int row, int col, int rowOff, int colOff) { if (self) { self->m_row = row; self->m_col = col; self->m_rowOffset = rowOff; self->m_colOffset = colOff; } }
-bool XChart_loadFromXmlFile(XChart* self, const char* filePath) { (void)self; (void)filePath; return false; }
-bool XChart_saveToXmlFile(XChart* self, const char* filePath) { (void)self; (void)filePath; return false; }
+bool XChart_loadFromXmlFile(XChart* self, const XString* filePath) { (void)self; (void)filePath; return false; }
+bool XChart_saveToXmlFile(XChart* self, const XString* filePath) { (void)self; (void)filePath; return false; }

@@ -96,7 +96,7 @@ bool XConditionalFormatting_addHighlightCellsRule(XConditionalFormatting* self,
 }
 
 bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
-    XConditionalFormatting_HighlightRuleType type, const char* formula1,
+    XConditionalFormatting_HighlightRuleType type, const XString* formula1,
     const XFormat* format, bool stopIfTrue)
 {
     if (!self) return false;
@@ -106,13 +106,13 @@ bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
     rule.m_highlightType = type;
     rule.m_format = (XFormat*)format;
     rule.m_stopIfTrue = stopIfTrue;
-    if (formula1) { rule.m_formula1 = XString_create(); XString_append_utf8(rule.m_formula1, formula1); }
+    if (formula1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, formula1); }
     XVector_push_back_2(self->m_rules, &rule, 1);
     return true;
 }
 
 bool XConditionalFormatting_addHighlightCellsRule3(XConditionalFormatting* self,
-    XConditionalFormatting_HighlightRuleType type, const char* formula1, const char* formula2,
+    XConditionalFormatting_HighlightRuleType type, const XString* formula1, const XString* formula2,
     const XFormat* format, bool stopIfTrue)
 {
     if (!self) return false;
@@ -122,8 +122,8 @@ bool XConditionalFormatting_addHighlightCellsRule3(XConditionalFormatting* self,
     rule.m_highlightType = type;
     rule.m_format = (XFormat*)format;
     rule.m_stopIfTrue = stopIfTrue;
-    if (formula1) { rule.m_formula1 = XString_create(); XString_append_utf8(rule.m_formula1, formula1); }
-    if (formula2) { rule.m_formula2 = XString_create(); XString_append_utf8(rule.m_formula2, formula2); }
+    if (formula1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, formula1); }
+    if (formula2) { rule.m_formula2 = XString_create(); XString_append(rule.m_formula2, formula2); }
     XVector_push_back_2(self->m_rules, &rule, 1);
     return true;
 }
@@ -145,8 +145,8 @@ bool XConditionalFormatting_addDataBarRule(XConditionalFormatting* self,
 }
 
 bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
-    const XColor* color, XConditionalFormatting_ValueObjectType type1, const char* val1,
-    XConditionalFormatting_ValueObjectType type2, const char* val2,
+    const XColor* color, XConditionalFormatting_ValueObjectType type1, const XString* val1,
+    XConditionalFormatting_ValueObjectType type2, const XString* val2,
     bool showData, bool stopIfTrue)
 {
     if (!self) return false;
@@ -158,8 +158,8 @@ bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
     rule.m_valType2 = type2;
     rule.m_showData = showData;
     rule.m_stopIfTrue = stopIfTrue;
-    if (val1) { rule.m_formula1 = XString_create(); XString_append_utf8(rule.m_formula1, val1); }
-    if (val2) { rule.m_formula2 = XString_create(); XString_append_utf8(rule.m_formula2, val2); }
+    if (val1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, val1); }
+    if (val2) { rule.m_formula2 = XString_create(); XString_append(rule.m_formula2, val2); }
     XVector_push_back_2(self->m_rules, &rule, 1);
     return true;
 }

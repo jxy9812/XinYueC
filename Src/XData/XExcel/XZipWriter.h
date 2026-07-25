@@ -22,10 +22,42 @@ typedef struct XZipWriter {
     void* m_entries;  /* XVector<ZipFileEntry>
  */
 } XZipWriter;
-XZipWriter* XZipWriter_create(const char* fileName);
+/**
+ * @brief  创建 ZIP 写入器并打开目标文件
+ * @param  fileName  输出 ZIP 文件路径
+ * @return 成功返回 XZipWriter 指针，失败返回 NULL
+ */
+XZipWriter* XZipWriter_create(const XString* fileName);
+
+/**
+ * @brief  销毁 ZIP 写入器并释放资源（未关闭时自动关闭）
+ * @param  self  XZipWriter 指针
+ */
 void XZipWriter_delete(XZipWriter* self);
-bool XZipWriter_addFile(XZipWriter* self, const char* path, const uint8_t* data, size_t size);
-bool XZipWriter_addDirectory(XZipWriter* self, const char* path);
+
+/**
+ * @brief  向 ZIP 中添加一个文件
+ * @param  self  XZipWriter 指针
+ * @param  path  ZIP 内文件路径（如 "xl/workbook.xml"）
+ * @param  data  文件数据
+ * @param  size  数据长度（字节）
+ * @return 成功返回 true
+ */
+bool XZipWriter_addFile(XZipWriter* self, const XString* path, const uint8_t* data, size_t size);
+
+/**
+ * @brief  向 ZIP 中添加一个目录条目
+ * @param  self  XZipWriter 指针
+ * @param  path  目录路径
+ * @return 成功返回 true
+ */
+bool XZipWriter_addDirectory(XZipWriter* self, const XString* path);
+
+/**
+ * @brief  关闭 ZIP 文件（写入中央目录并刷新）
+ * @param  self  XZipWriter 指针
+ * @return 成功返回 true
+ */
 bool XZipWriter_close(XZipWriter* self);
 #ifdef __cplusplus
 }

@@ -23,7 +23,7 @@ XCell* XCell_create(void)
     return self;
 }
 
-XCell* XCell_create_ex(const char* value, XCell_CellType type, XFormat* format)
+XCell* XCell_create_ex(const XString* value, XCell_CellType type, XFormat* format)
 {
     XCell* self = XCell_create();
     if (!self) return NULL;
@@ -31,7 +31,7 @@ XCell* XCell_create_ex(const char* value, XCell_CellType type, XFormat* format)
     if (value)
     {
         self->m_value = XString_create();
-        if (self->m_value) XString_append_utf8(self->m_value, value);
+        if (self->m_value && value) XString_append(self->m_value, value);
     }
     if (format) self->m_format = format;
     return self;
@@ -76,18 +76,17 @@ void XCell_delete(XCell* self)
 XCell_CellType XCell_cellType(const XCell* self) { return self ? self->m_cellType : XCell_CustomType; }
 void XCell_setCellType(XCell* self, XCell_CellType type) { if (self) self->m_cellType = type; }
 
-const char* XCell_value(const XCell* self)
+const XString* XCell_value(const XCell* self)
 {
-    if (!self || !self->m_value) return "";
-    const char* utf8 = XString_toUtf8(self->m_value);
-    return utf8 ? utf8 : "";
+    if (!self || !self->m_value) return NULL;
+    return self->m_value;
 }
 
-void XCell_setValue(XCell* self, const char* value)
+void XCell_setValue(XCell* self, const XString* value)
 {
     if (!self) return;
     if (!self->m_value) self->m_value = XString_create();
-    if (self->m_value) { XString_clear_base(self->m_value); XString_append_utf8(self->m_value, value); }
+    if (self->m_value) { XString_clear_base(self->m_value); if (value) XString_append(self->m_value, value); }
 }
 
 XFormat* XCell_format(const XCell* self) { return self ? self->m_format : NULL; }
@@ -110,13 +109,13 @@ int64_t XCell_dateTime(const XCell* self, bool date1904)
     if (!self) return 0;
     if (!XCell_isDateTime(self)) return 0;
     /* 值为 Excel 序列号（浮点），转换为毫秒时间戳 */
-    const char* val = XCell_value(self);
-    if (!val || !val[0]) return 0;
-    double serial = strtod(val, NULL);
+    const XString* val = XCell_value(self);
+    if (!val || XString_isEmpty_base(val)) return 0;
+    double serial = strtod(XString_toUtf8(val), NULL);
     return XUtility_excelSerialToDateTime(serial, date1904);
 }
 
-const char* XCell_readValue(const XCell* self)
+const XString* XCell_readValue(const XCell* self)
 {
     /* 在 C 移植中，值已经以字符串形式存储，readValue 与 value 行为一致 */
     return XCell_value(self);

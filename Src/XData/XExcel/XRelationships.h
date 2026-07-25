@@ -60,7 +60,7 @@ void XRelationships_delete(XRelationships* self);
  * @param relativeType 关系类型
  * @param target       目标路径
  */
-void XRelationships_addDocumentRelationship(XRelationships* self, const char* relativeType, const char* target);
+void XRelationships_addDocumentRelationship(XRelationships* self, const XString* relativeType, const XString* target);
 
 /**
  * @brief      添加包关系
@@ -68,7 +68,7 @@ void XRelationships_addDocumentRelationship(XRelationships* self, const char* re
  * @param relativeType 关系类型
  * @param target       目标路径
  */
-void XRelationships_addPackageRelationship(XRelationships* self, const char* relativeType, const char* target);
+void XRelationships_addPackageRelationship(XRelationships* self, const XString* relativeType, const XString* target);
 
 /**
  * @brief      添加工作表关系
@@ -77,7 +77,7 @@ void XRelationships_addPackageRelationship(XRelationships* self, const char* rel
  * @param target       目标路径
  * @param targetMode   目标模式
  */
-void XRelationships_addWorksheetRelationship(XRelationships* self, const char* relativeType, const char* target, const char* targetMode);
+void XRelationships_addWorksheetRelationship(XRelationships* self, const XString* relativeType, const XString* target, const XString* targetMode);
 
 /**
  * @brief      通过 ID 获取关系
@@ -85,7 +85,7 @@ void XRelationships_addWorksheetRelationship(XRelationships* self, const char* r
  * @param id   关系 ID
  * @return     指向 XlsxRelationship 的指针，未找到返回 NULL
  */
-XlsxRelationship* XRelationships_getRelationshipById(const XRelationships* self, const char* id);
+XlsxRelationship* XRelationships_getRelationshipById(const XRelationships* self, const XString* id);
 
 /**
  * @brief      清空所有关系
@@ -113,7 +113,7 @@ bool XRelationships_isEmpty(const XRelationships* self);
  * @param device 输出设备（文件路径）
  * @return     成功返回 true
  */
-bool XRelationships_saveToXmlFile(const XRelationships* self, const char* filePath);
+bool XRelationships_saveToXmlFile(const XRelationships* self, const XString* filePath);
 
 /**
  * @brief      从 XML 文件加载关系
@@ -121,7 +121,7 @@ bool XRelationships_saveToXmlFile(const XRelationships* self, const char* filePa
  * @param filePath 文件路径
  * @return     成功返回 true
  */
-bool XRelationships_loadFromXmlFile(XRelationships* self, const char* filePath);
+bool XRelationships_loadFromXmlFile(XRelationships* self, const XString* filePath);
 
 /* ========== 按类型查询关系 ========== */
 
@@ -132,22 +132,22 @@ bool XRelationships_loadFromXmlFile(XRelationships* self, const char* filePath);
  * @param outCount     输出数量
  * @return     关系数组（调用者不需释放，内部持有）
  */
-XlsxRelationship** XRelationships_documentRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+XlsxRelationship** XRelationships_documentRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
  * @brief      获取指定类型的包关系列表
  */
-XlsxRelationship** XRelationships_packageRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+XlsxRelationship** XRelationships_packageRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
  * @brief      获取指定类型的 MS 包关系列表
  */
-XlsxRelationship** XRelationships_msPackageRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+XlsxRelationship** XRelationships_msPackageRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
  * @brief      获取指定类型的工作表关系列表
  */
-XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* self, const char* relativeType, int* outCount);
+XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
  * @brief      添加 MS 包关系
@@ -155,7 +155,7 @@ XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* s
  * @param relativeType 关系类型
  * @param target       目标路径
  */
-void XRelationships_addMsPackageRelationship(XRelationships* self, const char* relativeType, const char* target);
+void XRelationships_addMsPackageRelationship(XRelationships* self, const XString* relativeType, const XString* target);
 
 /* ========== XML 数据读写 ========== */
 

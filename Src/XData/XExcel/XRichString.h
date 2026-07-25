@@ -58,7 +58,7 @@ XRichString* XRichString_create(void);
  * @param text 纯文本
  * @return     指向新创建的 XRichString 的指针
  */
-XRichString* XRichString_create_utf8(const char* text);
+XRichString* XRichString_create_utf8(const XString* text);
 
 /**
  * @brief      复制 XRichString 对象
@@ -101,7 +101,7 @@ bool XRichString_isEmpty(const XRichString* self);
  * @param self 指针
  * @return     纯文本字符串
  */
-const char* XRichString_toPlainString(const XRichString* self);
+const XString* XRichString_toPlainString(const XRichString* self);
 
 /**
  * @brief      将富文本转换为 HTML 字符串
@@ -115,7 +115,7 @@ XString XRichString_toHtml(const XRichString* self);
  * @param self 指针
  * @param text HTML 字符串
  */
-void XRichString_setHtml(XRichString* self, const char* text);
+void XRichString_setHtml(XRichString* self, const XString* text);
 
 /* ========== 片段管理 ========== */
 
@@ -132,7 +132,7 @@ int XRichString_fragmentCount(const XRichString* self);
  * @param text   片段文本
  * @param format 片段格式
  */
-void XRichString_addFragment(XRichString* self, const char* text, const XFormat* format);
+void XRichString_addFragment(XRichString* self, const XString* text, const XFormat* format);
 
 /**
  * @brief      获取指定索引的片段文本
@@ -140,7 +140,7 @@ void XRichString_addFragment(XRichString* self, const char* text, const XFormat*
  * @param index 索引
  * @return     片段文本字符串
  */
-const char* XRichString_fragmentText(const XRichString* self, int index);
+const XString* XRichString_fragmentText(const XRichString* self, int index);
 
 /**
  * @brief      获取指定索引的片段格式
@@ -157,14 +157,14 @@ const XFormat* XRichString_fragmentFormat(const XRichString* self, int index);
  * @param self 指针
  * @param text 文本
  */
-void XRichString_setText(XRichString* self, const char* text);
+void XRichString_setText(XRichString* self, const XString* text);
 
 /**
  * @brief      获取纯文本（便捷方法）
  * @param self 指针
  * @return     文本字符串，无文本返回 ""
  */
-const char* XRichString_text(const XRichString* self);
+const XString* XRichString_text(const XRichString* self);
 
 #ifdef __cplusplus
 }

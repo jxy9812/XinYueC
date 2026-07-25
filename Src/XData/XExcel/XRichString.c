@@ -22,7 +22,7 @@ XRichString* XRichString_create(void)
     return self;
 }
 
-XRichString* XRichString_create_utf8(const char* text)
+XRichString* XRichString_create_utf8(const XString* text)
 {
     XRichString* self = XRichString_create();
     if (!self) return NULL;
@@ -30,7 +30,7 @@ XRichString* XRichString_create_utf8(const char* text)
     {
         self->m_plainText = XString_create();
         if (self->m_plainText)
-            XString_append_utf8(self->m_plainText, text);
+            XString_append(self->m_plainText, text);
     }
     return self;
 }
@@ -55,7 +55,7 @@ void XRichString_copy(XRichString* self, const XRichString* other)
             {
                 XRichStringFragment* src = (XRichStringFragment*)XVector_at_base(other->m_fragments, i);
                 if (src)
-                    XRichString_addFragment(self, XString_toUtf8(src->m_text), src->m_format);
+                    XRichString_addFragment(self, src->m_text, src->m_format);
             }
         }
     }
@@ -101,28 +101,28 @@ bool XRichString_isEmpty(const XRichString* self)
     return true;
 }
 
-const char* XRichString_toPlainString(const XRichString* self)
+const XString* XRichString_toPlainString(const XRichString* self)
 {
-    if (!self) return "";
-    if (self->m_plainText) return XString_toUtf8(self->m_plainText);
+    if (!self) return NULL;
+    if (self->m_plainText) return self->m_plainText;
     /* 从片段拼接 */
     if (self->m_fragments && XVector_size_base(self->m_fragments) > 0)
     {
         /* 创建临时字符串 */
         XString* tmp = XString_create();
-        if (!tmp) return "";
+        if (!tmp) return NULL;
         int count = (int)XVector_size_base(self->m_fragments);
         for (int i = 0; i < count; i++)
         {
             XRichStringFragment* frag = (XRichStringFragment*)XVector_at_base(self->m_fragments, i);
             if (frag && frag->m_text)
-                XString_append_utf8(tmp, XString_toUtf8(frag->m_text));
+                XString_append(tmp, frag->m_text);
         }
         /* 缓存到 plainText */
         ((XRichString*)self)->m_plainText = tmp;
-        return XString_toUtf8(tmp);
+        return tmp;
     }
-    return "";
+    return NULL;
 }
 
 XString XRichString_toHtml(const XRichString* self)
@@ -150,11 +150,11 @@ XString XRichString_toHtml(const XRichString* self)
                     snprintf(buf, sizeof(buf), "font-size:%dpt;", size);
                     XString_append_utf8(&result, buf);
                 }
-                const char* name = XFormat_fontName(frag->m_format);
-                if (name && *name)
+                const XString* name = XFormat_fontName(frag->m_format);
+                if (name && XString_size_base(name) > 0)
                 {
                     XString_append_utf8(&result, "font-family:");
-                    XString_append_utf8(&result, name);
+                    XString_append(&result, name);
                     XString_append_utf8(&result, ";");
                 }
                 XString_append_utf8(&result, "'>");
@@ -174,11 +174,11 @@ XString XRichString_toHtml(const XRichString* self)
     return result;
 }
 
-void XRichString_setHtml(XRichString* self, const char* text)
+void XRichString_setHtml(XRichString* self, const XString* text)
 {
     if (!self) return;
     if (!self->m_plainText) self->m_plainText = XString_create();
-    if (self->m_plainText && text) XString_append_utf8(self->m_plainText, text);
+    if (self->m_plainText && text) XString_append(self->m_plainText, text);
 }
 
 int XRichString_fragmentCount(const XRichString* self)
@@ -187,7 +187,7 @@ int XRichString_fragmentCount(const XRichString* self)
     return (int)XVector_size_base(self->m_fragments);
 }
 
-void XRichString_addFragment(XRichString* self, const char* text, const XFormat* format)
+void XRichString_addFragment(XRichString* self, const XString* text, const XFormat* format)
 {
     if (!self || !text) return;
     if (!self->m_fragments)
@@ -197,7 +197,7 @@ void XRichString_addFragment(XRichString* self, const char* text, const XFormat*
     XRichStringFragment frag;
     memset(&frag, 0, sizeof(frag));
     frag.m_text = XString_create();
-    if (frag.m_text) XString_append_utf8(frag.m_text, text);
+    if (frag.m_text) XString_append(frag.m_text, text);
     if (format)
     {
         frag.m_format = XFormat_create();
@@ -206,11 +206,11 @@ void XRichString_addFragment(XRichString* self, const char* text, const XFormat*
     XVector_push_back_1_base(self->m_fragments, &frag);
 }
 
-const char* XRichString_fragmentText(const XRichString* self, int index)
+const XString* XRichString_fragmentText(const XRichString* self, int index)
 {
-    if (!self || !self->m_fragments) return "";
+    if (!self || !self->m_fragments) return NULL;
     XRichStringFragment* frag = (XRichStringFragment*)XVector_at_base(self->m_fragments, index);
-    return (frag && frag->m_text) ? XString_toUtf8(frag->m_text) : "";
+    return (frag && frag->m_text) ? frag->m_text : NULL;
 }
 
 const XFormat* XRichString_fragmentFormat(const XRichString* self, int index)
@@ -222,7 +222,7 @@ const XFormat* XRichString_fragmentFormat(const XRichString* self, int index)
 
 /* ========== 便捷方法实现 ========== */
 
-void XRichString_setText(XRichString* self, const char* text)
+void XRichString_setText(XRichString* self, const XString* text)
 {
     if (!self) return;
     /* 1) 更新 m_plainText */
@@ -230,7 +230,7 @@ void XRichString_setText(XRichString* self, const char* text)
     if (self->m_plainText)
     {
         XString_clear_base(self->m_plainText);
-        if (text) XString_append_utf8(self->m_plainText, text);
+        if (text) XString_append(self->m_plainText, text);
     }
     /* 2) 同时清空并重写第一个 fragment，对齐 QXlsx::RichString::setText */
     if (!self->m_fragments)
@@ -252,15 +252,15 @@ void XRichString_setText(XRichString* self, const char* text)
         XRichStringFragment frag;
         memset(&frag, 0, sizeof(frag));
         frag.m_text = XString_create();
-        if (frag.m_text && text) XString_append_utf8(frag.m_text, text);
+        if (frag.m_text && text) XString_append(frag.m_text, text);
         /* 不复制格式引用，setText 不带格式 */
         XVector_push_back_1_base(self->m_fragments, &frag);
     }
 }
 
-const char* XRichString_text(const XRichString* self)
+const XString* XRichString_text(const XRichString* self)
 {
-    if (!self) return "";
-    if (self->m_plainText) return XString_toUtf8(self->m_plainText);
+    if (!self) return NULL;
+    if (self->m_plainText) return self->m_plainText;
     return XRichString_toPlainString(self);
 }

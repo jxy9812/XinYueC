@@ -111,16 +111,16 @@ void XConditionalFormatting_delete(XConditionalFormatting* self);
 bool XConditionalFormatting_addHighlightCellsRule(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XFormat* format, bool stopIfTrue);
 bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
-    XConditionalFormatting_HighlightRuleType type, const char* formula1,
+    XConditionalFormatting_HighlightRuleType type, const XString* formula1,
     const XFormat* format, bool stopIfTrue);
 bool XConditionalFormatting_addHighlightCellsRule3(XConditionalFormatting* self,
-    XConditionalFormatting_HighlightRuleType type, const char* formula1, const char* formula2,
+    XConditionalFormatting_HighlightRuleType type, const XString* formula1, const XString* formula2,
     const XFormat* format, bool stopIfTrue);
 bool XConditionalFormatting_addDataBarRule(XConditionalFormatting* self,
     const XColor* color, bool showData, bool stopIfTrue);
 bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
-    const XColor* color, XConditionalFormatting_ValueObjectType type1, const char* val1,
-    XConditionalFormatting_ValueObjectType type2, const char* val2,
+    const XColor* color, XConditionalFormatting_ValueObjectType type1, const XString* val1,
+    XConditionalFormatting_ValueObjectType type2, const XString* val2,
     bool showData, bool stopIfTrue);
 bool XConditionalFormatting_add2ColorScaleRule(XConditionalFormatting* self,
     const XColor* minColor, const XColor* maxColor, bool stopIfTrue);

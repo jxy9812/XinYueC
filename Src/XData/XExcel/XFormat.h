@@ -238,9 +238,9 @@ void XFormat_delete(XFormat* self);
 
 int XFormat_numberFormatIndex(const XFormat* self);
 void XFormat_setNumberFormatIndex(XFormat* self, int format);
-const char* XFormat_numberFormat(const XFormat* self);
-void XFormat_setNumberFormat(XFormat* self, const char* format);
-void XFormat_setNumberFormat_ex(XFormat* self, int id, const char* format);
+const XString* XFormat_numberFormat(const XFormat* self);
+void XFormat_setNumberFormat(XFormat* self, const XString* format);
+void XFormat_setNumberFormat_ex(XFormat* self, int id, const XString* format);
 bool XFormat_isDateTimeFormat(const XFormat* self);
 
 /* ========== 字体属性 ========== */
@@ -261,8 +261,8 @@ XFormat_FontUnderline XFormat_fontUnderline(const XFormat* self);
 void XFormat_setFontUnderline(XFormat* self, XFormat_FontUnderline underline);
 bool XFormat_fontOutline(const XFormat* self);
 void XFormat_setFontOutline(XFormat* self, bool outline);
-const char* XFormat_fontName(const XFormat* self);
-void XFormat_setFontName(XFormat* self, const char* name);
+const XString* XFormat_fontName(const XFormat* self);
+void XFormat_setFontName(XFormat* self, const XString* name);
 XFont* XFormat_font(const XFormat* self);
 void XFormat_setFont(XFormat* self, const XFont* font);
 
@@ -449,7 +449,7 @@ void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen);
  * @param id     格式 ID
  * @param format 格式代码
  */
-void XFormat_fixNumberFormat(XFormat* self, int id, const char* format);
+void XFormat_fixNumberFormat(XFormat* self, int id, const XString* format);
 
 /* ========== 主题 ========== */
 
@@ -465,7 +465,7 @@ int XFormat_theme(const XFormat* self);
 bool XFormat_boolProperty(const XFormat* self, int propertyId, bool defaultValue);
 int XFormat_intProperty(const XFormat* self, int propertyId, int defaultValue);
 double XFormat_doubleProperty(const XFormat* self, int propertyId, double defaultValue);
-const char* XFormat_stringProperty(const XFormat* self, int propertyId, const char* defaultValue);
+const XString* XFormat_stringProperty(const XFormat* self, int propertyId, const XString* defaultValue);
 XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue);
 
 /* ========== 比较运算符 ========== */

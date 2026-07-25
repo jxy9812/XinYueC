@@ -1,7 +1,6 @@
 #include "XStyles.h"
 #include "XMemory.h"
-#include <stdlib.h>
-
+#include "XFile.h"
 #include "XByteArray.h"
 #include <string.h>
 
@@ -267,16 +266,21 @@ bool XStyles_saveToXmlData(const XStyles* self, uint8_t** outData, size_t* outLe
     return *outData != NULL;
 }
 
-bool XStyles_saveToXmlFile(XStyles* self, const char* filePath)
+bool XStyles_saveToXmlFile(XStyles* self, const XString* filePath)
 {
     uint8_t* data = NULL;
     size_t len = 0;
     if (!XStyles_saveToXmlData(self, &data, &len)) return false;
     
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) { XFree_System(data); return false; }
-    fwrite(data, 1, len, fp);
-    fclose(fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        XFree_System(data);
+        return false;
+    }
+    XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XFree_System(data);
     return true;
 }
@@ -287,7 +291,7 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len) {
     return true;
 }
 
-bool XStyles_loadFromXmlFile(XStyles* self, const char* filePath) {
+bool XStyles_loadFromXmlFile(XStyles* self, const XString* filePath) {
     (void)self; (void)filePath;
     return true;
 }

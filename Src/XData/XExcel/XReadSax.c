@@ -32,12 +32,13 @@ const XReadSax_Options XReadSax_DefaultOptions = { 0, 0, 0, 0, true, true };
  * @param lettersLen 输出参数，接收消耗的字符数（可为NULL）
  * @return    列号（从1开始），解析失败返回0
  */
-int XReadSax_parseColLetters(const char* letters, int* lettersLen)
+int XReadSax_parseColLetters(const XString* letters, int* lettersLen)
 {
-    if (!letters || !letters[0]) return 0;
+    const char* lettersUtf8 = letters ? XString_toUtf8(letters) : NULL;
+    if (!lettersUtf8 || !lettersUtf8[0]) return 0;
     int col = 0;
     int len = 0;
-    const char* p = letters;
+    const char* p = lettersUtf8;
     while (*p && isalpha((unsigned char)*p)) {
         col = col * 26 + (toupper((unsigned char)*p) - 'A' + 1);
         ++p;
@@ -54,13 +55,14 @@ int XReadSax_parseColLetters(const char* letters, int* lettersLen)
  * @param outCol  输出参数，接收列号（1索引）
  * @return    成功返回true，失败返回false
  */
-bool XReadSax_parseCellRef(const char* ref, int* outRow, int* outCol)
+bool XReadSax_parseCellRef(const XString* ref, int* outRow, int* outCol)
 {
-    if (!ref || !outRow || !outCol) return false;
+    const char* refUtf8 = ref ? XString_toUtf8(ref) : NULL;
+    if (!refUtf8 || !outRow || !outCol) return false;
     int lettersLen = 0;
     int col = XReadSax_parseColLetters(ref, &lettersLen);
     if (col <= 0 || lettersLen == 0) return false;
-    const char* rowPart = ref + lettersLen;
+    const char* rowPart = refUtf8 + lettersLen;
     char* end = NULL;
     errno = 0;
     long row = strtol(rowPart, &end, 10);
@@ -78,13 +80,15 @@ bool XReadSax_parseCellRef(const char* ref, int* outRow, int* outCol)
  * @return    成功返回true（即使文件不存在也返回true，列表为空）
  * @note      调用者负责释放 outList 中每个 XString* 并销毁列表
  */
-bool XReadSax_loadSharedStringsFromZip(const char* zipPath, XStringList* outList)
+bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outList)
 {
     if (!zipPath || !outList) return false;
 
     XZipReader* zip = XZipReader_create(zipPath);
     if (!zip) return false;
-    XByteArray* xmlData = XZipReader_fileData(zip, "xl/sharedStrings.xml");
+    XString* ssPath = XString_create_utf8("xl/sharedStrings.xml");
+    XByteArray* xmlData = XZipReader_fileData(zip, ssPath);
+    XString_delete_base(ssPath);
     XZipReader_delete(zip);
     if (!xmlData) return true;  /* 文件不存在，视为成功（空列表）*/
 
@@ -293,8 +297,8 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
  * @param userData      用户数据
  * @return    成功返回true
  */
-bool XReadSax_readSheetFromZip(const char* zipPath,
-                                const char* sheetPath,
+bool XReadSax_readSheetFromZip(const XString* zipPath,
+                                const XString* sheetPath,
                                 const XStringList* sharedStrings,
                                 const XReadSax_Options* opt,
                                 XReadSax_CellCallback onCell,

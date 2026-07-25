@@ -59,14 +59,14 @@ void XChart_delete(XChart* self);
 void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders);
 void XChart_setChartType(XChart* self, XChart_ChartType type);
 void XChart_setChartStyle(XChart* self, int id);
-void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const char* axisTitle);
-void XChart_setChartTitle(XChart* self, const char* title);
+void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const XString* axisTitle);
+void XChart_setChartTitle(XChart* self, const XString* title);
 void XChart_setChartLegend(XChart* self, XChart_ChartAxisPos legendPos, bool overlap);
 void XChart_setGridlinesEnable(XChart* self, bool majorEnable, bool minorEnable);
 void XChart_setSize(XChart* self, int width, int height);
 void XChart_setPosition(XChart* self, int row, int col, int rowOff, int colOff);
-bool XChart_loadFromXmlFile(XChart* self, const char* filePath);
-bool XChart_saveToXmlFile(XChart* self, const char* filePath);
+bool XChart_loadFromXmlFile(XChart* self, const XString* filePath);
+bool XChart_saveToXmlFile(XChart* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif
@@ -78,14 +78,14 @@ bool XChart_saveToXmlFile(XChart* self, const char* filePath);
  * @param filePath 文件路径
  * @return    成功返回true
  */
-bool XChart_saveToXmlFile(XChart* self, const char* filePath);
+bool XChart_saveToXmlFile(XChart* self, const XString* filePath);
 /**
  * @brief     从文件加载图表 XML
  * @param self     XChart 指针
  * @param filePath 文件路径
  * @return    成功返回true
  */
-bool XChart_loadFromXmlFile(XChart* self, const char* filePath);
+bool XChart_loadFromXmlFile(XChart* self, const XString* filePath);
 
 #endif
 

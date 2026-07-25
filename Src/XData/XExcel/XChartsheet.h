@@ -18,9 +18,34 @@ typedef struct XChartsheet {
     XAbstractSheet m_base;
     XChart* m_chart;
 } XChartsheet;
-XChartsheet* XChartsheet_create(const char* sheetName, int sheetId, void* book, XAbstractOOXmlFile_CreateFlag flag);
+/**
+ * @brief  创建图表工作表
+ * @param  sheetName  工作表名称
+ * @param  sheetId    工作表 ID
+ * @param  book       所属工作簿指针
+ * @param  flag       创建标志
+ * @return 成功返回 XChartsheet 指针，失败返回 NULL
+ */
+XChartsheet* XChartsheet_create(const XString* sheetName, int sheetId, void* book, XAbstractOOXmlFile_CreateFlag flag);
+
+/**
+ * @brief  销毁图表工作表并释放资源
+ * @param  self  XChartsheet 指针
+ */
 void XChartsheet_delete(XChartsheet* self);
+
+/**
+ * @brief  设置图表工作表关联的图表对象
+ * @param  self   XChartsheet 指针
+ * @param  chart  图表对象（所有权不转移）
+ */
 void XChartsheet_setChart(XChartsheet* self, XChart* chart);
+
+/**
+ * @brief  获取图表工作表关联的图表对象
+ * @param  self  XChartsheet 指针
+ * @return 图表对象指针，未设置返回 NULL
+ */
 XChart* XChartsheet_chart(const XChartsheet* self);
 #ifdef __cplusplus
 }

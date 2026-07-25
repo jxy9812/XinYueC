@@ -6,15 +6,15 @@
 #include <string.h>
 
 
-/* const char* 比较函数 */
+/* XString* 比较函数（比较两个 XString* 的 UTF-8 内容） */
 static int32_t str_compare(const void* lhs, const void* rhs)
 {
-    const char* a = *(const char**)lhs;
-    const char* b = *(const char**)rhs;
+    XString* a = *(XString**)lhs;
+    XString* b = *(XString**)rhs;
     if (!a && !b) return XCompare_Equality;
     if (!a) return XCompare_Less;
     if (!b) return XCompare_Greater;
-    int ret = strcmp(a, b);
+    int ret = strcmp(XString_toUtf8(a), XString_toUtf8(b));
     return (ret < 0) ? XCompare_Less : (ret > 0) ? XCompare_Greater : XCompare_Equality;
 }
 
@@ -24,7 +24,7 @@ XDocPropsCore* XDocPropsCore_create(XAbstractOOXmlFile_CreateFlag flag)
     if (!self) return NULL;
     memset(self, 0, sizeof(XDocPropsCore));
     XAbstractOOXmlFile_init(&self->m_base, flag);
-    self->m_properties = XMap_create(sizeof(const char*), sizeof(XString*), str_compare);
+    self->m_properties = XMap_create(sizeof(XString*), sizeof(XString*), str_compare);
     return self;
 }
 
@@ -40,6 +40,8 @@ void XDocPropsCore_delete(XDocPropsCore* self)
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
+                XString* key = *(XString**)XPair_first(pair);
+                if (key) { XString_deinit_base(key); XFree_System(key); }
                 XString* val = *(XString**)XPair_second(pair);
                 if (val) { XString_deinit_base(val); XFree_System(val); }
             }
@@ -51,19 +53,20 @@ void XDocPropsCore_delete(XDocPropsCore* self)
     XFree_System(self);
 }
 
-bool XDocPropsCore_setProperty(XDocPropsCore* self, const char* name, const char* value)
+bool XDocPropsCore_setProperty(XDocPropsCore* self, const XString* name, const XString* value)
 {
     if (!self || !name || !value) return false;
-    XString* valStr = XString_create();
-    if (!valStr) return false;
-    XString_append_utf8(valStr, value);
-    XMap_insert_base(self->m_properties, &name, &valStr);
+    XString* keyStr = XString_create_copy(name);
+    if (!keyStr) return false;
+    XString* valStr = XString_create_copy(value);
+    if (!valStr) { XString_deinit_base(keyStr); XFree_System(keyStr); return false; }
+    XMap_insert_base(self->m_properties, &keyStr, &valStr);
     return true;
 }
 
-const char* XDocPropsCore_property(const XDocPropsCore* self, const char* name)
+const XString* XDocPropsCore_property(const XDocPropsCore* self, const XString* name)
 {
-    if (!self || !name) return "";
+    if (!self || !name) return NULL;
     XMap* map = (XMap*)self->m_properties;
     XMap_iterator it = XMap_begin(map);
     XMap_iterator end = XMap_end(map);
@@ -72,15 +75,15 @@ const char* XDocPropsCore_property(const XDocPropsCore* self, const char* name)
         XPair* pair = XMap_iterator_data(&it);
         if (pair)
         {
-            const char* key = *(const char**)XPair_first(pair);
-            if (key && strcmp(key, name) == 0)
+            XString* key = *(XString**)XPair_first(pair);
+            if (key && XString_equals(key, name, XChar_CaseSensitive))
             {
                 XString* val = *(XString**)XPair_second(pair);
-                if (val) return XString_toUtf8(val);
+                return val;
             }
         }
     }
-    return "";
+    return NULL;
 }
 
 int XDocPropsCore_propertyNames(const XDocPropsCore* self, XString*** names)
@@ -98,22 +101,21 @@ int XDocPropsCore_propertyNames(const XDocPropsCore* self, XString*** names)
     for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(map, &it)) {
         XPair* pair = XMap_iterator_data(&it);
         if (pair) {
-            const char* key = *(const char**)XPair_first(pair);
-            XString* ks = XString_create();
-            if (ks) XString_append_utf8(ks, key);
+            XString* key = *(XString**)XPair_first(pair);
+            XString* ks = XString_create_copy(key);
             (*names)[idx++] = ks;
         }
     }
     return count;
 }
 
-bool XDocPropsCore_saveToXmlFile(XDocPropsCore* self, const char* filePath)
+bool XDocPropsCore_saveToXmlFile(XDocPropsCore* self, const XString* filePath)
 {
     (void)self; (void)filePath;
     return false;
 }
 
-bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const char* filePath)
+bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const XString* filePath)
 {
     (void)self; (void)filePath;
     return false;

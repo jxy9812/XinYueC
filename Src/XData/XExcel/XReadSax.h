@@ -19,7 +19,7 @@ extern "C" {
 /* ========== 前向声明 ========== */
 typedef struct XStringList XStringList;
 typedef struct XReadSax_Options XReadSax_Options;
-typedef bool (*XReadSax_CellCallback)(int row, int col, const char* value, const char* type, void* userData);
+typedef bool (*XReadSax_CellCallback)(int row, int col, const XString* value, const XString* type, void* userData);
 
 /* ========== 选项结构体 ========== */
 struct XReadSax_Options {
@@ -42,7 +42,7 @@ extern const XReadSax_Options XReadSax_DefaultOptions;
  * @param lettersLen 输出参数，接收消耗的字符数（可为NULL）
  * @return    列号（从1开始），失败返回0
  */
-int XReadSax_parseColLetters(const char* letters, int* lettersLen);
+int XReadSax_parseColLetters(const XString* letters, int* lettersLen);
 
 /**
  * @brief     解析单元格引用字符串
@@ -51,7 +51,7 @@ int XReadSax_parseColLetters(const char* letters, int* lettersLen);
  * @param outCol  输出列号（1索引）
  * @return    成功返回true
  */
-bool XReadSax_parseCellRef(const char* ref, int* outRow, int* outCol);
+bool XReadSax_parseCellRef(const XString* ref, int* outRow, int* outCol);
 
 /**
  * @brief     从 XLSX ZIP 文件加载共享字符串表
@@ -59,7 +59,7 @@ bool XReadSax_parseCellRef(const char* ref, int* outRow, int* outCol);
  * @param outList   输出共享字符串列表（调用者负责释放每个XString*）
  * @return    成功返回true
  */
-bool XReadSax_loadSharedStringsFromZip(const char* zipPath, XStringList* outList);
+bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outList);
 
 /**
  * @brief     SAX 方式解析工作表 XML 数据
@@ -87,8 +87,8 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
  * @param userData      用户数据
  * @return    成功返回true
  */
-bool XReadSax_readSheetFromZip(const char* zipPath,
-                                const char* sheetPath,
+bool XReadSax_readSheetFromZip(const XString* zipPath,
+                                const XString* sheetPath,
                                 const XStringList* sharedStrings,
                                 const XReadSax_Options* opt,
                                 XReadSax_CellCallback onCell,

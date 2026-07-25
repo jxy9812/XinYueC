@@ -10,7 +10,7 @@
 #include <string.h>
 
 
-XMediaFile* XMediaFile_create(const char* fileName)
+XMediaFile* XMediaFile_create(const XString* fileName)
 {
     XMediaFile* self = (XMediaFile*)XMalloc_System(sizeof(XMediaFile));
     if (!self) return NULL;
@@ -20,7 +20,7 @@ XMediaFile* XMediaFile_create(const char* fileName)
     return self;
 }
 
-XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const char* suffix, const char* mimeType)
+XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType)
 {
     XMediaFile* self = XMediaFile_create(NULL);
     if (!self) return NULL;
@@ -38,7 +38,7 @@ void XMediaFile_delete(XMediaFile* self)
     XFree_System(self);
 }
 
-void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const char* suffix, const char* mimeType)
+void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType)
 {
     if (!self) return;
     if (self->m_contents) { XByteArray_deinit_base(self->m_contents); XFree_System(self->m_contents); }
@@ -46,20 +46,20 @@ void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, con
     if (suffix)
     {
         if (!self->m_suffix) self->m_suffix = XString_create();
-        if (self->m_suffix) { XString_clear_base(self->m_suffix); XString_append_utf8(self->m_suffix, suffix); }
+        if (self->m_suffix) { XString_clear_base(self->m_suffix); XString_append(self->m_suffix, suffix); }
     }
     if (mimeType)
     {
         if (!self->m_mimeType) self->m_mimeType = XString_create();
-        if (self->m_mimeType) { XString_clear_base(self->m_mimeType); XString_append_utf8(self->m_mimeType, mimeType); }
+        if (self->m_mimeType) { XString_clear_base(self->m_mimeType); XString_append(self->m_mimeType, mimeType); }
     }
 }
 
-const char* XMediaFile_suffix(const XMediaFile* self)
-{ return (self && self->m_suffix) ? XString_toUtf8(self->m_suffix) : ""; }
+const XString* XMediaFile_suffix(const XMediaFile* self)
+{ return (self && self->m_suffix) ? self->m_suffix : NULL; }
 
-const char* XMediaFile_mimeType(const XMediaFile* self)
-{ return (self && self->m_mimeType) ? XString_toUtf8(self->m_mimeType) : ""; }
+const XString* XMediaFile_mimeType(const XMediaFile* self)
+{ return (self && self->m_mimeType) ? self->m_mimeType : NULL; }
 
 const uint8_t* XMediaFile_contents(const XMediaFile* self)
 { return (self && self->m_contents) ? (const uint8_t*)XByteArray_data(self->m_contents) : NULL; }
@@ -70,14 +70,14 @@ size_t XMediaFile_contentsSize(const XMediaFile* self)
 bool XMediaFile_isIndexValid(const XMediaFile* self) { return self && self->m_indexValid; }
 int XMediaFile_index(const XMediaFile* self) { return self ? self->m_index : -1; }
 void XMediaFile_setIndex(XMediaFile* self, int idx) { if (self) { self->m_index = idx; self->m_indexValid = true; } }
-void XMediaFile_setFileName(XMediaFile* self, const char* name)
+void XMediaFile_setFileName(XMediaFile* self, const XString* name)
 {
     if (!self) return;
     if (!self->m_fileName) self->m_fileName = XString_create();
-    if (self->m_fileName) { XString_clear_base(self->m_fileName); XString_append_utf8(self->m_fileName, name); }
+    if (self->m_fileName) { XString_clear_base(self->m_fileName); if (name) XString_append(self->m_fileName, name); }
 }
-const char* XMediaFile_fileName(const XMediaFile* self)
-{ return (self && self->m_fileName) ? XString_toUtf8(self->m_fileName) : ""; }
+const XString* XMediaFile_fileName(const XMediaFile* self)
+{ return (self && self->m_fileName) ? self->m_fileName : NULL; }
 
 void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen)
 {

@@ -64,14 +64,14 @@ XCellRange XCellRange_create_ref(const XCellReference* topLeft, const XCellRefer
  * @param range 范围字符串
  * @return     解析后的 XCellRange 对象
  */
-XCellRange XCellRange_create_str(const char* range);
+XCellRange XCellRange_create_str(const XString* range);
 
 /**
  * @brief      从 C 字符串字面量创建 XCellRange 对象
  * @param range 范围字符串
  * @return     解析后的 XCellRange 对象
  */
-XCellRange XCellRange_create_char(const char* range);
+XCellRange XCellRange_create_char(const XString* range);
 
 /**
  * @brief      复制 XCellRange 对象
@@ -101,7 +101,7 @@ void XCellRange_init_ex(XCellRange* self, int firstRow, int firstColumn, int las
  * @param self  待初始化的指针
  * @param range 范围字符串
  */
-void XCellRange_init_str(XCellRange* self, const char* range);
+void XCellRange_init_str(XCellRange* self, const XString* range);
 
 /* ========== 访问方法 ========== */
 

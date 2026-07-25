@@ -69,7 +69,7 @@ typedef struct XAbstractSheet
  * @param book      所属工作簿
  * @param flag      创建标志
  */
-void XAbstractSheet_init(XAbstractSheet* self, const char* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag);
+void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag);
 
 /**
  * @brief      释放资源
@@ -77,7 +77,7 @@ void XAbstractSheet_init(XAbstractSheet* self, const char* sheetName, int sheetI
  */
 void XAbstractSheet_deinit(XAbstractSheet* self);
 
-const char* XAbstractSheet_sheetName(const XAbstractSheet* self);
+const XString* XAbstractSheet_sheetName(const XAbstractSheet* self);
 XAbstractSheet_SheetType XAbstractSheet_sheetType(const XAbstractSheet* self);
 XAbstractSheet_SheetState XAbstractSheet_sheetState(const XAbstractSheet* self);
 void XAbstractSheet_setSheetState(XAbstractSheet* self, XAbstractSheet_SheetState ss);
@@ -85,7 +85,7 @@ bool XAbstractSheet_isHidden(const XAbstractSheet* self);
 bool XAbstractSheet_isVisible(const XAbstractSheet* self);
 void XAbstractSheet_setHidden(XAbstractSheet* self, bool hidden);
 void XAbstractSheet_setVisible(XAbstractSheet* self, bool visible);
-void XAbstractSheet_setSheetName(XAbstractSheet* self, const char* sheetName);
+void XAbstractSheet_setSheetName(XAbstractSheet* self, const XString* sheetName);
 void XAbstractSheet_setSheetType(XAbstractSheet* self, XAbstractSheet_SheetType type);
 int XAbstractSheet_sheetId(const XAbstractSheet* self);
 XWorkbook* XAbstractSheet_workbook(const XAbstractSheet* self);

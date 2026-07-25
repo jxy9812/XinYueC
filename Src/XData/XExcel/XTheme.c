@@ -1,6 +1,7 @@
 #include "XTheme.h"
 #include "XMemory.h"
-#include <stdlib.h>
+#include "XFile.h"
+#include "XByteArray.h"
 #include <string.h>
 
 XTheme* XTheme_create(XAbstractOOXmlFile_CreateFlag flag) {
@@ -12,24 +13,23 @@ XTheme* XTheme_create(XAbstractOOXmlFile_CreateFlag flag) {
 void XTheme_delete(XTheme* self) {
     if (!self) return;
     if (self->m_themeName) { XString_deinit_base(self->m_themeName); XFree_System(self->m_themeName); }
-    if (self->m_themeXmlData) { XByteArray_deinit_base(self->m_themeXmlData); XFree_System(self->m_themeXmlData); }
+    if (self->m_themeXmlData) { XString_deinit_base(self->m_themeXmlData); XFree_System(self->m_themeXmlData); }
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
-void XTheme_setThemeName(XTheme* self, const char* name) {
+void XTheme_setThemeName(XTheme* self, const XString* name) {
     if (!self) return;
     if (!self->m_themeName) self->m_themeName = XString_create();
-    if (self->m_themeName) { XString_clear_base(self->m_themeName); XString_append_utf8(self->m_themeName, name); }
+    if (self->m_themeName) { XString_clear_base(self->m_themeName); if (name) XString_append(self->m_themeName, name); }
 }
-const char* XTheme_themeName(const XTheme* self) { return (self && self->m_themeName) ? XString_toUtf8(self->m_themeName) : ""; }
-void XTheme_setThemeXmlData(XTheme* self, const char* data, size_t len) {
+const XString* XTheme_themeName(const XTheme* self) { return (self && self->m_themeName) ? self->m_themeName : NULL; }
+void XTheme_setThemeXmlData(XTheme* self, const XString* data) {
     if (!self) return;
-    if (!self->m_themeXmlData) self->m_themeXmlData = XByteArray_create();
-    if (self->m_themeXmlData) { XByteArray_clear_base(self->m_themeXmlData); XByteArray_append_2(self->m_themeXmlData, (const uint8_t*)data, len); }
+    if (!self->m_themeXmlData) self->m_themeXmlData = XString_create();
+    if (self->m_themeXmlData) { XString_clear_base(self->m_themeXmlData); if (data) XString_append(self->m_themeXmlData, data); }
 }
-const char* XTheme_themeXmlData(const XTheme* self, size_t* len) {
-    if (!self || !self->m_themeXmlData) { if (len) *len = 0; return NULL; }
-    if (len) *len = XByteArray_size_base(self->m_themeXmlData);
-    return (const char*)XByteArray_data(self->m_themeXmlData);
+const XString* XTheme_themeXmlData(const XTheme* self) {
+    if (!self || !self->m_themeXmlData) return NULL;
+    return self->m_themeXmlData;
 }
 /**
  * @brief     保存主题 XML 到文件
@@ -37,16 +37,19 @@ const char* XTheme_themeXmlData(const XTheme* self, size_t* len) {
  * @param filePath 文件路径
  * @return    成功返回true
  */
-bool XTheme_saveToXmlFile(XTheme* self, const char* filePath) {
+bool XTheme_saveToXmlFile(XTheme* self, const XString* filePath) {
     if (!self || !filePath) return false;
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) return false;
-    if (self->m_themeXmlData && XByteArray_size_base(self->m_themeXmlData) > 0) {
-        size_t len = XByteArray_size_base(self->m_themeXmlData);
-        const uint8_t* data = XByteArray_data(self->m_themeXmlData);
-        fwrite(data, 1, len, fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        return false;
     }
-    fclose(fp);
+    if (self->m_themeXmlData && XString_size_base(self->m_themeXmlData) > 0) {
+        const char* data = XString_toUtf8(self->m_themeXmlData);
+        XIODevice_write_1((XIODevice*)file, data, (int64_t)XString_size_base(self->m_themeXmlData));
+    }
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     return true;
 }
 
@@ -56,20 +59,22 @@ bool XTheme_saveToXmlFile(XTheme* self, const char* filePath) {
  * @param filePath 文件路径
  * @return    成功返回true
  */
-bool XTheme_loadFromXmlFile(XTheme* self, const char* filePath) {
+bool XTheme_loadFromXmlFile(XTheme* self, const XString* filePath) {
     if (!self || !filePath) return false;
-    FILE* fp = fopen(filePath, "rb");
-    if (!fp) return false;
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (size <= 0) { fclose(fp); return false; }
-    uint8_t* data = (uint8_t*)XMalloc_System((size_t)size);
-    if (!data) { fclose(fp); return false; }
-    size_t read = fread(data, 1, (size_t)size, fp);
-    fclose(fp);
-    if (read != (size_t)size) { XFree_System(data); return false; }
-    XTheme_setThemeXmlData(self, (const char*)data, (size_t)size);
-    XFree_System(data);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        if (file) XFile_deleteLater(file);
+        return false;
+    }
+    XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
+    if (!allData || XByteArray_size_base(allData) == 0) {
+        if (allData) XByteArray_delete_base(allData);
+        return false;
+    }
+    if (!self->m_themeXmlData) self->m_themeXmlData = XString_create();
+    if (self->m_themeXmlData) { XString_clear_base(self->m_themeXmlData); XString_append_utf8(self->m_themeXmlData, (const char*)XByteArray_data(allData)); }
+    XByteArray_delete_base(allData);
     return true;
 }

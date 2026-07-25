@@ -74,7 +74,7 @@ XCell* XCell_create(void);
  * @param format   单元格格式（可为 NULL）
  * @return     指向新创建的 XCell 的指针，失败返回 NULL
  */
-XCell* XCell_create_ex(const char* value, XCell_CellType type, XFormat* format);
+XCell* XCell_create_ex(const XString* value, XCell_CellType type, XFormat* format);
 
 /**
  * @brief      复制单元格
@@ -110,14 +110,14 @@ void XCell_setCellType(XCell* self, XCell_CellType type);
  * @param self 指针
  * @return     值字符串指针
  */
-const char* XCell_value(const XCell* self);
+const XString* XCell_value(const XCell* self);
 
 /**
  * @brief      设置单元格值
  * @param self  指针
  * @param value 值字符串
  */
-void XCell_setValue(XCell* self, const char* value);
+void XCell_setValue(XCell* self, const XString* value);
 
 /**
  * @brief      获取单元格格式
@@ -174,7 +174,7 @@ int64_t XCell_dateTime(const XCell* self, bool date1904);
  * @param self 指针
  * @return     值字符串指针
  */
-const char* XCell_readValue(const XCell* self);
+const XString* XCell_readValue(const XCell* self);
 
 /**
  * @brief      判断是否为富文本

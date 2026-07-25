@@ -34,15 +34,15 @@ XDataValidation* XDataValidation_create(void)
 
 /// @brief 创建带参数的数据验证对象
 XDataValidation* XDataValidation_create_ex(XDataValidation_ValidationType type,
-    XDataValidation_ValidationOperator op, const char* formula1, const char* formula2, bool allowBlank)
+    XDataValidation_ValidationOperator op, const XString* formula1, const XString* formula2, bool allowBlank)
 {
     XDataValidation* self = XDataValidation_create();
     if (!self) return NULL;
     self->m_validationType = type;
     self->m_validationOperator = op;
     self->m_allowBlank = allowBlank;
-    if (formula1) { self->m_formula1 = XString_create(); XString_append_utf8(self->m_formula1, formula1); }
-    if (formula2) { self->m_formula2 = XString_create(); XString_append_utf8(self->m_formula2, formula2); }
+    if (formula1) { self->m_formula1 = XString_create(); XString_append(self->m_formula1, formula1); }
+    if (formula2) { self->m_formula2 = XString_create(); XString_append(self->m_formula2, formula2); }
     return self;
 }
 
@@ -96,35 +96,35 @@ XDataValidation_ValidationOperator XDataValidation_validationOperator(const XDat
 void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self) self->m_validationOperator = op; }
 XDataValidation_ErrorStyle XDataValidation_errorStyle(const XDataValidation* self) { return self ? self->m_errorStyle : XDataValidation_Stop; }
 void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self) self->m_errorStyle = es; }
-const char* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? XString_toUtf8(self->m_formula1) : ""; }
-void XDataValidation_setFormula1(XDataValidation* self, const char* formula) {
+const XString* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? self->m_formula1 : NULL; }
+void XDataValidation_setFormula1(XDataValidation* self, const XString* formula) {
     if (!self) return;
     if (!self->m_formula1) self->m_formula1 = XString_create();
-    if (self->m_formula1) { XString_clear_base(self->m_formula1); XString_append_utf8(self->m_formula1, formula); }
+    if (self->m_formula1) { XString_clear_base(self->m_formula1); if (formula) XString_append(self->m_formula1, formula); }
 }
-const char* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? XString_toUtf8(self->m_formula2) : ""; }
-void XDataValidation_setFormula2(XDataValidation* self, const char* formula) {
+const XString* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? self->m_formula2 : NULL; }
+void XDataValidation_setFormula2(XDataValidation* self, const XString* formula) {
     if (!self) return;
     if (!self->m_formula2) self->m_formula2 = XString_create();
-    if (self->m_formula2) { XString_clear_base(self->m_formula2); XString_append_utf8(self->m_formula2, formula); }
+    if (self->m_formula2) { XString_clear_base(self->m_formula2); if (formula) XString_append(self->m_formula2, formula); }
 }
 bool XDataValidation_allowBlank(const XDataValidation* self) { return self ? self->m_allowBlank : false; }
 void XDataValidation_setAllowBlank(XDataValidation* self, bool enable) { if (self) self->m_allowBlank = enable; }
-const char* XDataValidation_errorMessage(const XDataValidation* self) { return (self && self->m_errorMessage) ? XString_toUtf8(self->m_errorMessage) : ""; }
-const char* XDataValidation_errorMessageTitle(const XDataValidation* self) { return (self && self->m_errorMessageTitle) ? XString_toUtf8(self->m_errorMessageTitle) : ""; }
-const char* XDataValidation_promptMessage(const XDataValidation* self) { return (self && self->m_promptMessage) ? XString_toUtf8(self->m_promptMessage) : ""; }
-const char* XDataValidation_promptMessageTitle(const XDataValidation* self) { return (self && self->m_promptMessageTitle) ? XString_toUtf8(self->m_promptMessageTitle) : ""; }
+const XString* XDataValidation_errorMessage(const XDataValidation* self) { return (self && self->m_errorMessage) ? self->m_errorMessage : NULL; }
+const XString* XDataValidation_errorMessageTitle(const XDataValidation* self) { return (self && self->m_errorMessageTitle) ? self->m_errorMessageTitle : NULL; }
+const XString* XDataValidation_promptMessage(const XDataValidation* self) { return (self && self->m_promptMessage) ? self->m_promptMessage : NULL; }
+const XString* XDataValidation_promptMessageTitle(const XDataValidation* self) { return (self && self->m_promptMessageTitle) ? self->m_promptMessageTitle : NULL; }
 bool XDataValidation_isPromptMessageVisible(const XDataValidation* self) { return self ? self->m_promptMessageVisible : false; }
 bool XDataValidation_isErrorMessageVisible(const XDataValidation* self) { return self ? self->m_errorMessageVisible : false; }
-void XDataValidation_setErrorMessage(XDataValidation* self, const char* error, const char* title) {
+void XDataValidation_setErrorMessage(XDataValidation* self, const XString* error, const XString* title) {
     if (!self) return;
-    if (error) { if (!self->m_errorMessage) self->m_errorMessage = XString_create(); if (self->m_errorMessage) { XString_clear_base(self->m_errorMessage); XString_append_utf8(self->m_errorMessage, error); } }
-    if (title) { if (!self->m_errorMessageTitle) self->m_errorMessageTitle = XString_create(); if (self->m_errorMessageTitle) { XString_clear_base(self->m_errorMessageTitle); XString_append_utf8(self->m_errorMessageTitle, title); } }
+    if (error) { if (!self->m_errorMessage) self->m_errorMessage = XString_create(); if (self->m_errorMessage) { XString_clear_base(self->m_errorMessage); XString_append(self->m_errorMessage, error); } }
+    if (title) { if (!self->m_errorMessageTitle) self->m_errorMessageTitle = XString_create(); if (self->m_errorMessageTitle) { XString_clear_base(self->m_errorMessageTitle); XString_append(self->m_errorMessageTitle, title); } }
 }
-void XDataValidation_setPromptMessage(XDataValidation* self, const char* prompt, const char* title) {
+void XDataValidation_setPromptMessage(XDataValidation* self, const XString* prompt, const XString* title) {
     if (!self) return;
-    if (prompt) { if (!self->m_promptMessage) self->m_promptMessage = XString_create(); if (self->m_promptMessage) { XString_clear_base(self->m_promptMessage); XString_append_utf8(self->m_promptMessage, prompt); } }
-    if (title) { if (!self->m_promptMessageTitle) self->m_promptMessageTitle = XString_create(); if (self->m_promptMessageTitle) { XString_clear_base(self->m_promptMessageTitle); XString_append_utf8(self->m_promptMessageTitle, title); } }
+    if (prompt) { if (!self->m_promptMessage) self->m_promptMessage = XString_create(); if (self->m_promptMessage) { XString_clear_base(self->m_promptMessage); XString_append(self->m_promptMessage, prompt); } }
+    if (title) { if (!self->m_promptMessageTitle) self->m_promptMessageTitle = XString_create(); if (self->m_promptMessageTitle) { XString_clear_base(self->m_promptMessageTitle); XString_append(self->m_promptMessageTitle, title); } }
 }
 void XDataValidation_setPromptMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_promptMessageVisible = visible; }
 void XDataValidation_setErrorMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_errorMessageVisible = visible; }

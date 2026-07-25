@@ -39,7 +39,7 @@ typedef struct XMediaFile
  * @param fileName 文件名
  * @return     指向新创建的 XMediaFile 的指针，失败返回 NULL
  */
-XMediaFile* XMediaFile_create(const char* fileName);
+XMediaFile* XMediaFile_create(const XString* fileName);
 
 /**
  * @brief      从二进制数据创建 XMediaFile 对象
@@ -49,7 +49,7 @@ XMediaFile* XMediaFile_create(const char* fileName);
  * @param mimeType MIME 类型
  * @return     指向新创建的 XMediaFile 的指针
  */
-XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const char* suffix, const char* mimeType);
+XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType);
 
 /**
  * @brief      在堆上删除 XMediaFile 实例
@@ -65,17 +65,17 @@ void XMediaFile_delete(XMediaFile* self);
  * @param suffix   后缀
  * @param mimeType MIME 类型
  */
-void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const char* suffix, const char* mimeType);
+void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType);
 
-const char* XMediaFile_suffix(const XMediaFile* self);
-const char* XMediaFile_mimeType(const XMediaFile* self);
+const XString* XMediaFile_suffix(const XMediaFile* self);
+const XString* XMediaFile_mimeType(const XMediaFile* self);
 const uint8_t* XMediaFile_contents(const XMediaFile* self);
 size_t XMediaFile_contentsSize(const XMediaFile* self);
 bool XMediaFile_isIndexValid(const XMediaFile* self);
 int XMediaFile_index(const XMediaFile* self);
 void XMediaFile_setIndex(XMediaFile* self, int idx);
-void XMediaFile_setFileName(XMediaFile* self, const char* name);
-const char* XMediaFile_fileName(const XMediaFile* self);
+void XMediaFile_setFileName(XMediaFile* self, const XString* name);
+const XString* XMediaFile_fileName(const XMediaFile* self);
 
 /**
  * @brief      获取内容的哈希键（用于去重）

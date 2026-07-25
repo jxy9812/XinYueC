@@ -57,7 +57,7 @@ XCellFormula* XCellFormula_create(void);
  * @param text 公式文本
  * @return     指向新创建的 XCellFormula 的指针
  */
-XCellFormula* XCellFormula_create_ex(const char* text);
+XCellFormula* XCellFormula_create_ex(const XString* text);
 
 /**
  * @brief      使用公式文本和类型创建 XCellFormula 对象
@@ -65,7 +65,7 @@ XCellFormula* XCellFormula_create_ex(const char* text);
  * @param type 公式类型
  * @return     指向新创建的 XCellFormula 的指针
  */
-XCellFormula* XCellFormula_create_typed(const char* text, XCellFormula_Type type);
+XCellFormula* XCellFormula_create_typed(const XString* text, XCellFormula_Type type);
 
 /**
  * @brief      使用公式文本、引用范围和类型创建 XCellFormula 对象
@@ -74,7 +74,7 @@ XCellFormula* XCellFormula_create_typed(const char* text, XCellFormula_Type type
  * @param type 公式类型
  * @return     指向新创建的 XCellFormula 的指针
  */
-XCellFormula* XCellFormula_create_withRef(const char* text, const XCellRange* ref, XCellFormula_Type type);
+XCellFormula* XCellFormula_create_withRef(const XString* text, const XCellRange* ref, XCellFormula_Type type);
 
 /**
  * @brief      在堆上删除 XCellFormula 实例
@@ -101,7 +101,7 @@ XCellFormula_Type XCellFormula_formulaType(const XCellFormula* self);
  * @param self 指针
  * @return     公式文本字符串
  */
-const char* XCellFormula_formulaText(const XCellFormula* self);
+const XString* XCellFormula_formulaText(const XCellFormula* self);
 
 /**
  * @brief      获取公式引用范围
@@ -122,7 +122,7 @@ int XCellFormula_sharedIndex(const XCellFormula* self);
  * @param self 指针
  * @param text 公式文本
  */
-void XCellFormula_setText(XCellFormula* self, const char* text);
+void XCellFormula_setText(XCellFormula* self, const XString* text);
 
 /**
  * @brief      设置公式类型

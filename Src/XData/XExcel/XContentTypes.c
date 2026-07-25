@@ -6,21 +6,22 @@
 #include "XContentTypes.h"
 #include "XByteArray.h"
 #include "XMemory.h"
-#include <stdlib.h>
-
+#include "XFile.h"
 #include <string.h>
 
 
-/* 字符串比较函数 */
+/* 字符串比较函数（比较两个 XString* 的 UTF-8 内容） */
 static int32_t str_compare(const void* lhs, const void* rhs)
 {
-    return strcmp(*(const char**)lhs, *(const char**)rhs);
+    XString* ls = (XString*)(*(const intptr_t*)lhs);
+    XString* rs = (XString*)(*(const intptr_t*)rhs);
+    return strcmp(XString_toUtf8(ls), XString_toUtf8(rs));
 }
 
-void XContentTypes_addDefault(XContentTypes* self, const char* key, const char* value)
+/* 内部辅助：接受 const char* 的 addDefault */
+static void addDefault_cstr(XContentTypes* self, const char* key, const char* value)
 {
     if (!self || !key || !value) return;
-    /* 同 addOverride：在堆上 XString 持有字符串副本，避免调用方栈失效 */
     XString* kstr = XString_create();
     if (!kstr) return;
     XString_append_utf8(kstr, key);
@@ -30,6 +31,12 @@ void XContentTypes_addDefault(XContentTypes* self, const char* key, const char* 
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
     XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv);
+}
+
+void XContentTypes_addDefault(XContentTypes* self, const XString* key, const XString* value)
+{
+    if (!self || !key || !value) return;
+    addDefault_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
 }
 
 /* 释放 map entry 中存的 XString* 副本（被 XMap_deinit 通过 setKeyDeinit/setDataDeinit 回调） */
@@ -43,11 +50,10 @@ static void XStringContainer_deinit(void* p)
     if (s) { XString_deinit_base(s); XFree_System(s); }
 }
 
-void XContentTypes_addOverride(XContentTypes* self, const char* key, const char* value)
-{    if (!self || !key || !value) return;
-    /* 关键修复：栈上 char[256] 的字符串不能直接存指针（dangling）。
-       在堆上创建 XString 持有值的副本，map 用 intptr_t 存 XString*。删除时
-       在 XContentTypes_delete 里统一释放这些 XString*。*/
+/* 内部辅助：接受 const char* 的 addOverride */
+static void addOverride_cstr(XContentTypes* self, const char* key, const char* value)
+{
+    if (!self || !key || !value) return;
     XString* kstr = XString_create();
     if (!kstr) return;
     XString_append_utf8(kstr, key);
@@ -59,93 +65,106 @@ void XContentTypes_addOverride(XContentTypes* self, const char* key, const char*
     XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv);
 }
 
+void XContentTypes_addOverride(XContentTypes* self, const XString* key, const XString* value)
+{
+    if (!self || !key || !value) return;
+    addOverride_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
+}
+
 void XContentTypes_addDocPropCore(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"); }
+{ addOverride_cstr(self, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"); }
 
 void XContentTypes_addDocPropApp(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"); }
+{ addOverride_cstr(self, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"); }
 
 void XContentTypes_addStyles(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"); }
+{ addOverride_cstr(self, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"); }
 
 void XContentTypes_addTheme(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml"); }
+{ addOverride_cstr(self, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml"); }
 
 void XContentTypes_addWorkbook(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"); }
+{ addOverride_cstr(self, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"); }
 
-void XContentTypes_addWorksheetName(XContentTypes* self, const char* name)
+void XContentTypes_addWorksheetName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/worksheets/sheet%d.xml", self->m_worksheetCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
     self->m_worksheetCount++;
 }
 
-void XContentTypes_addChartsheetName(XContentTypes* self, const char* name)
+void XContentTypes_addChartsheetName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/chartsheets/sheet%d.xml", self->m_chartsheetCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.chartshhet+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.chartshhet+xml");
     self->m_chartsheetCount++;
 }
 
-void XContentTypes_addChartName(XContentTypes* self, const char* name)
+void XContentTypes_addChartName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/charts/chart%d.xml", self->m_chartCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.drawingml.chart+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.drawingml.chart+xml");
     self->m_chartCount++;
 }
 
-void XContentTypes_addDrawingName(XContentTypes* self, const char* name)
+void XContentTypes_addDrawingName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/drawings/drawing%d.xml", self->m_drawingCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.drawing+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.drawing+xml");
     self->m_drawingCount++;
 }
 
-void XContentTypes_addCommentName(XContentTypes* self, const char* name)
+void XContentTypes_addCommentName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/comments%d.xml", self->m_commentCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml");
     self->m_commentCount++;
 }
 
-void XContentTypes_addTableName(XContentTypes* self, const char* name)
+void XContentTypes_addTableName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/tables/table%d.xml", self->m_tableCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml");
     self->m_tableCount++;
 }
 
-void XContentTypes_addExternalLinkName(XContentTypes* self, const char* name)
+void XContentTypes_addExternalLinkName(XContentTypes* self, const XString* name)
 {
+    (void)name;
     char key[256];
     snprintf(key, sizeof(key), "/xl/externalLinks/externalLink%d.xml", self->m_externalLinkCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml");
     self->m_externalLinkCount++;
 }
 
 void XContentTypes_addSharedString(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"); }
+{ addOverride_cstr(self, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"); }
 
 void XContentTypes_addVmlName(XContentTypes* self)
 {
     char key[256];
     snprintf(key, sizeof(key), "/xl/drawings/vmlDrawing%d.vml", self->m_vmlCount + 1);
-    XContentTypes_addOverride(self, key, "application/vnd.openxmlformats-officedocument.vmlDrawing");
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.vmlDrawing");
     self->m_vmlCount++;
 }
 
 void XContentTypes_addCalcChain(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/calcChain.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"); }
+{ addOverride_cstr(self, "/xl/calcChain.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"); }
 
 void XContentTypes_addVbaProject(XContentTypes* self)
-{ XContentTypes_addOverride(self, "/xl/vbaProject.bin", "application/vnd.ms-office.vbaProject"); }
+{ addOverride_cstr(self, "/xl/vbaProject.bin", "application/vnd.ms-office.vbaProject"); }
 
 void XContentTypes_clearOverrides(XContentTypes* self)
 {
@@ -253,16 +272,21 @@ bool XContentTypes_saveToXmlData(const XContentTypes* self, uint8_t** outData, s
     return *outData != NULL;
 }
 
-bool XContentTypes_saveToXmlFile(const XContentTypes* self, const char* filePath)
+bool XContentTypes_saveToXmlFile(const XContentTypes* self, const XString* filePath)
 {
     uint8_t* data = NULL;
     size_t len = 0;
     if (!XContentTypes_saveToXmlData(self, &data, &len)) return false;
     
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) { XFree_System(data); return false; }
-    fwrite(data, 1, len, fp);
-    fclose(fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        XFree_System(data);
+        return false;
+    }
+    XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XFree_System(data);
     return true;
 }
@@ -305,7 +329,7 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
         
         if (parse_attr(p, "PartName", partName, sizeof(partName)) &&
             parse_attr(p, "ContentType", contentType, sizeof(contentType))) {
-            XContentTypes_addOverride(self, partName, contentType);
+            addOverride_cstr(self, partName, contentType);
         }
         
         p = strchr(p, '>');
@@ -320,7 +344,7 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
         
         if (parse_attr(p, "Extension", ext, sizeof(ext)) &&
             parse_attr(p, "ContentType", type, sizeof(type))) {
-            XContentTypes_addDefault(self, ext, type);
+            addDefault_cstr(self, ext, type);
         }
         
         p = strchr(p, '>');
@@ -331,23 +355,20 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
     return true;
 }
 
-bool XContentTypes_loadFromXmlFile(XContentTypes* self, const char* filePath) {
+bool XContentTypes_loadFromXmlFile(XContentTypes* self, const XString* filePath) {
     if (!self || !filePath) return false;
     
-    FILE* fp = fopen(filePath, "rb");
-    if (!fp) return false;
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        if (file) XFile_deleteLater(file);
+        return false;
+    }
+    XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
+    if (!allData) return false;
     
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    
-    uint8_t* data = (uint8_t*)XMalloc_System(size + 1);
-    if (!data) { fclose(fp); return false; }
-    
-    fread(data, 1, size, fp);
-    fclose(fp);
-    
-    bool result = XContentTypes_loadFromXmlData(self, data, size);
-    XFree_System(data);
+    bool result = XContentTypes_loadFromXmlData(self, XByteArray_data(allData), XByteArray_size_base(allData));
+    XByteArray_delete_base(allData);
     return result;
 }

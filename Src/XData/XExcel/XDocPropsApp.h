@@ -26,13 +26,13 @@ typedef struct XDocPropsApp {
 } XDocPropsApp;
 XDocPropsApp* XDocPropsApp_create(XAbstractOOXmlFile_CreateFlag flag);
 void XDocPropsApp_delete(XDocPropsApp* self);
-void XDocPropsApp_addPartTitle(XDocPropsApp* self, const char* title);
-void XDocPropsApp_addHeadingPair(XDocPropsApp* self, const char* name, int value);
-bool XDocPropsApp_setProperty(XDocPropsApp* self, const char* name, const char* value);
-const char* XDocPropsApp_property(const XDocPropsApp* self, const char* name);
+void XDocPropsApp_addPartTitle(XDocPropsApp* self, const XString* title);
+void XDocPropsApp_addHeadingPair(XDocPropsApp* self, const XString* name, int value);
+bool XDocPropsApp_setProperty(XDocPropsApp* self, const XString* name, const XString* value);
+const XString* XDocPropsApp_property(const XDocPropsApp* self, const XString* name);
 int XDocPropsApp_propertyNames(const XDocPropsApp* self, XString*** names);
-bool XDocPropsApp_saveToXmlFile(XDocPropsApp* self, const char* filePath);
-bool XDocPropsApp_loadFromXmlFile(XDocPropsApp* self, const char* filePath);
+bool XDocPropsApp_saveToXmlFile(XDocPropsApp* self, const XString* filePath);
+bool XDocPropsApp_loadFromXmlFile(XDocPropsApp* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif

@@ -38,8 +38,8 @@ typedef enum XAbstractOOXmlFile_CreateFlag
  */
 typedef struct XAbstractOOXmlFile_Vtable
 {
-    bool (*saveToXmlFile)(XAbstractOOXmlFile* self, const char* filePath);
-    bool (*loadFromXmlFile)(XAbstractOOXmlFile* self, const char* filePath);
+    bool (*saveToXmlFile)(XAbstractOOXmlFile* self, const XString* filePath);
+    bool (*loadFromXmlFile)(XAbstractOOXmlFile* self, const XString* filePath);
     void (*delete)(XAbstractOOXmlFile* self);
 } XAbstractOOXmlFile_Vtable;
 
@@ -81,14 +81,14 @@ XRelationships* XAbstractOOXmlFile_relationships(const XAbstractOOXmlFile* self)
  * @param self 指针
  * @param path 文件路径
  */
-void XAbstractOOXmlFile_setFilePath(XAbstractOOXmlFile* self, const char* path);
+void XAbstractOOXmlFile_setFilePath(XAbstractOOXmlFile* self, const XString* path);
 
 /**
  * @brief      获取文件路径
  * @param self 指针
  * @return     文件路径字符串
  */
-const char* XAbstractOOXmlFile_filePath(const XAbstractOOXmlFile* self);
+const XString* XAbstractOOXmlFile_filePath(const XAbstractOOXmlFile* self);
 
 #ifdef __cplusplus
 }

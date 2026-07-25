@@ -89,9 +89,9 @@ static void setPropertyColor(XFormat* self, int propertyId, const XColor* color)
 }
 
 /* 字符串属性存储：使用 intptr_t 存储 XString* 指针 */
-static const char* getPropertyString(const XFormat* self, int propertyId)
+static const XString* getPropertyXString(const XFormat* self, int propertyId)
 {
-    if (!self || !self->m_properties) return "";
+    if (!self || !self->m_properties) return NULL;
     XMap_iterator it;
     if (XMapBase_find_base((XMapBase*)self->m_properties, &propertyId, (XMapBase_iterator*)&it))
     {
@@ -99,14 +99,16 @@ static const char* getPropertyString(const XFormat* self, int propertyId)
         if (pair)
         {
             intptr_t ptr = *(intptr_t*)XPair_second(pair);
-            if (ptr)
-            {
-                XString* str = (XString*)ptr;
-                return XString_toUtf8(str);
-            }
+            if (ptr) return (const XString*)ptr;
         }
     }
-    return "";
+    return NULL;
+}
+
+static const char* getPropertyString(const XFormat* self, int propertyId)
+{
+    const XString* s = getPropertyXString(self, propertyId);
+    return s ? XString_toUtf8(s) : "";
 }
 
 static void setPropertyString(XFormat* self, int propertyId, const char* value)
@@ -264,18 +266,18 @@ void XFormat_setNumberFormatIndex(XFormat* self, int format)
     setPropertyInt(self, XFormat_P_NumFmt_Id, format);
 }
 
-const char* XFormat_numberFormat(const XFormat* self)
+const XString* XFormat_numberFormat(const XFormat* self)
 {
-    return getPropertyString(self, XFormat_P_NumFmt_FormatCode);
+    return getPropertyXString(self, XFormat_P_NumFmt_FormatCode);
 }
 
-void XFormat_setNumberFormat(XFormat* self, const char* format)
+void XFormat_setNumberFormat(XFormat* self, const XString* format)
 {
     if (format)
-        setPropertyString(self, XFormat_P_NumFmt_FormatCode, format);
+        setPropertyString(self, XFormat_P_NumFmt_FormatCode, XString_toUtf8(format));
 }
 
-void XFormat_setNumberFormat_ex(XFormat* self, int id, const char* format)
+void XFormat_setNumberFormat_ex(XFormat* self, int id, const XString* format)
 {
     XFormat_setNumberFormatIndex(self, id);
     XFormat_setNumberFormat(self, format);
@@ -288,7 +290,8 @@ bool XFormat_isDateTimeFormat(const XFormat* self)
     if ((id >= 14 && id <= 22) || (id >= 27 && id <= 36) ||
         (id >= 45 && id <= 47) || (id >= 50 && id <= 58))
         return true;
-    const char* fmt = XFormat_numberFormat(self);
+    const XString* fmtX = XFormat_numberFormat(self);
+    const char* fmt = fmtX ? XString_toUtf8(fmtX) : NULL;
     if (fmt && *fmt)
     {
         if (strstr(fmt, "y") || strstr(fmt, "m") || strstr(fmt, "d") ||
@@ -392,14 +395,14 @@ void XFormat_setFontShadow(XFormat* self, bool shadow)
     setPropertyBool(self, XFormat_P_Font_Shadow, shadow);
 }
 
-const char* XFormat_fontName(const XFormat* self)
+const XString* XFormat_fontName(const XFormat* self)
 {
-    return getPropertyString(self, XFormat_P_Font_Name);
+    return getPropertyXString(self, XFormat_P_Font_Name);
 }
 
-void XFormat_setFontName(XFormat* self, const char* name)
+void XFormat_setFontName(XFormat* self, const XString* name)
 {
-    if (name) setPropertyString(self, XFormat_P_Font_Name, name);
+    if (name) setPropertyString(self, XFormat_P_Font_Name, XString_toUtf8(name));
 }
 
 /* ========== 对齐属性 ========== */
@@ -907,7 +910,8 @@ void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     XColor fc = XFormat_fontColor(self);
     appendInt(&buf, &len, &cap, packColor(&fc));
     /* 字体名称 */
-    const char* name = XFormat_fontName(self);
+    const XString* nameX = XFormat_fontName(self);
+    const char* name = nameX ? XString_toUtf8(nameX) : NULL;
     int nameLen = name ? (int)strlen(name) : 0;
     appendInt(&buf, &len, &cap, nameLen);
     if (nameLen > 0) {
@@ -954,7 +958,8 @@ void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     if (!buf) { *outKey = NULL; *outLen = 0; return; }
     /* 数字格式 */
     appendInt(&buf, &len, &cap, XFormat_numberFormatIndex(self));
-    const char* nf = XFormat_numberFormat(self);
+    const XString* nfX = XFormat_numberFormat(self);
+    const char* nf = nfX ? XString_toUtf8(nfX) : NULL;
     int nfLen = nf ? (int)strlen(nf) : 0;
     appendInt(&buf, &len, &cap, nfLen);
     if (nfLen > 0) {
@@ -988,11 +993,11 @@ void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
 
 /* ========== 数字格式修正 ========== */
 
-void XFormat_fixNumberFormat(XFormat* self, int id, const char* format)
+void XFormat_fixNumberFormat(XFormat* self, int id, const XString* format)
 {
     if (!self) return;
     setPropertyInt(self, XFormat_P_NumFmt_Id, id);
-    if (format) setPropertyString(self, XFormat_P_NumFmt_FormatCode, format);
+    if (format) setPropertyString(self, XFormat_P_NumFmt_FormatCode, XString_toUtf8(format));
     self->m_dirty = true;
 }
 
@@ -1021,10 +1026,10 @@ double XFormat_doubleProperty(const XFormat* self, int propertyId, double defaul
     return (double)v / 1000.0;
 }
 
-const char* XFormat_stringProperty(const XFormat* self, int propertyId, const char* defaultValue)
+const XString* XFormat_stringProperty(const XFormat* self, int propertyId, const XString* defaultValue)
 {
-    const char* s = getPropertyString(self, propertyId);
-    return (s && s[0]) ? s : defaultValue;
+    const XString* s = getPropertyXString(self, propertyId);
+    return (s && XString_size_base(s) > 0) ? s : defaultValue;
 }
 
 XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue)

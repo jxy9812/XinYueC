@@ -85,14 +85,14 @@ XCellRange XCellRange_create_ref(const XCellReference* topLeft, const XCellRefer
     return r;
 }
 
-XCellRange XCellRange_create_str(const char* range)
+XCellRange XCellRange_create_str(const XString* range)
 {
     XCellRange r;
     XCellRange_init_str(&r, range);
     return r;
 }
 
-XCellRange XCellRange_create_char(const char* range)
+XCellRange XCellRange_create_char(const XString* range)
 {
     return XCellRange_create_str(range);
 }
@@ -124,10 +124,10 @@ void XCellRange_init_ex(XCellRange* self, int firstRow, int firstColumn, int las
     }
 }
 
-void XCellRange_init_str(XCellRange* self, const char* range)
+void XCellRange_init_str(XCellRange* self, const XString* range)
 {
     XCellRange_init(self);
-    parseRange(self, range);
+    if (range) parseRange(self, XString_toUtf8(range));
 }
 
 void XCellRange_setFirstRow(XCellRange* self, int row) { if (self) self->m_firstRow = row; }

@@ -1,22 +1,21 @@
 #include "XSharedStrings.h"
 #include "XXmlStreamReader.h"
 #include "XMemory.h"
-#include <stdlib.h>
-
+#include "XFile.h"
 #include "XByteArray.h"
 #include "XString.h"
 #include <string.h>
 
 
-/* const char* 比较函数 */
+/* XString* 比较函数 */
 static int32_t str_compare(const void* lhs, const void* rhs)
 {
-    const char* a = *(const char**)lhs;
-    const char* b = *(const char**)rhs;
+    XString* a = *(XString**)lhs;
+    XString* b = *(XString**)rhs;
     if (!a && !b) return XCompare_Equality;
     if (!a) return XCompare_Less;
     if (!b) return XCompare_Greater;
-    int ret = strcmp(a, b);
+    int ret = strcmp(XString_toUtf8(a), XString_toUtf8(b));
     return (ret < 0) ? XCompare_Less : (ret > 0) ? XCompare_Greater : XCompare_Equality;
 }
 
@@ -26,7 +25,7 @@ XSharedStrings* XSharedStrings_create(XAbstractOOXmlFile_CreateFlag flag)
     if (!self) return NULL;
     memset(self, 0, sizeof(XSharedStrings));
     XAbstractOOXmlFile_init(&self->m_base, flag);
-    self->m_stringTable = XMap_create(sizeof(const char*), sizeof(int), str_compare);
+    self->m_stringTable = XMap_create(sizeof(XString*), sizeof(int), str_compare);
     self->m_stringList = XVector_create(sizeof(XRichString*));
     self->m_stringCount = 0;
     return self;
@@ -61,7 +60,7 @@ bool XSharedStrings_isEmpty(const XSharedStrings* self)
     return self ? XVector_isEmpty_base(self->m_stringList) : true;
 }
 
-int XSharedStrings_addSharedString(XSharedStrings* self, const char* string)
+int XSharedStrings_addSharedString(XSharedStrings* self, const XString* string)
 {
     if (!self || !string) return -1;
     int idx = XSharedStrings_getSharedStringIndex(self, string);
@@ -87,7 +86,7 @@ int XSharedStrings_addSharedRichString(XSharedStrings* self, const XRichString* 
     return idx;
 }
 
-void XSharedStrings_removeSharedString(XSharedStrings* self, const char* string)
+void XSharedStrings_removeSharedString(XSharedStrings* self, const XString* string)
 {
     if (!self || !string) return;
     int idx = XSharedStrings_getSharedStringIndex(self, string);
@@ -103,15 +102,15 @@ void XSharedStrings_incRefByStringIndex(XSharedStrings* self, int idx)
     if (self && idx >= 0) self->m_stringCount++;
 }
 
-int XSharedStrings_getSharedStringIndex(XSharedStrings* self, const char* string)
+int XSharedStrings_getSharedStringIndex(XSharedStrings* self, const XString* string)
 {
     if (!self || !string || !self->m_stringList) return -1;
     size_t count = XVector_size_base(self->m_stringList);
     for (size_t i = 0; i < count; i++) {
         XRichString* rich = *(XRichString**)XVector_at_base(self->m_stringList, i);
         if (rich) {
-            const char* text = XRichString_text(rich);
-            if (text && strcmp(text, string) == 0) return (int)i;
+            const XString* text = XRichString_text(rich);
+            if (text && XString_equals(text, string, XChar_CaseSensitive)) return (int)i;
         }
     }
     return -1;
@@ -160,7 +159,8 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
         if (XRichString_isRichString(rich)) {
             /* 富文本 */
             for (int j = 0; j < XRichString_fragmentCount(rich); j++) {
-                const char* text = XRichString_fragmentText(rich, j);
+                const XString* textX = XRichString_fragmentText(rich, j);
+                const char* text = textX ? XString_toUtf8(textX) : NULL;
                 if (!text) continue;
                 
                 XByteArray_append_utf8(buf, "<r><t");
@@ -183,7 +183,8 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
             }
         } else {
             /* 纯文本 */
-            const char* text = XRichString_text(rich);
+            const XString* textX = XRichString_text(rich);
+            const char* text = textX ? XString_toUtf8(textX) : NULL;
             if (text) {
                 XByteArray_append_utf8(buf, "<t");
                 if (text[0] == ' ' || (text[0] && text[strlen(text)-1] == ' ')) {
@@ -218,16 +219,21 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
     return *outData != NULL;
 }
 
-bool XSharedStrings_saveToXmlFile(XSharedStrings* self, const char* filePath)
+bool XSharedStrings_saveToXmlFile(XSharedStrings* self, const XString* filePath)
 {
     uint8_t* data = NULL;
     size_t len = 0;
     if (!XSharedStrings_saveToXmlData(self, &data, &len)) return false;
     
-    FILE* fp = fopen(filePath, "wb");
-    if (!fp) { XFree_System(data); return false; }
-    fwrite(data, 1, len, fp);
-    fclose(fp);
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
+        if (file) XFile_deleteLater(file);
+        XFree_System(data);
+        return false;
+    }
+    XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
     XFree_System(data);
     return true;
 }
@@ -276,8 +282,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
             } else if (strcmp(name, "si") == 0) {
                 in_si = false;
                 /* 如果 acc 为空但有文本，也添加 */
-                const char* str = XString_toUtf8(acc);
-                XSharedStrings_addSharedString(self, str ? str : "");
+                XSharedStrings_addSharedString(self, acc);
                 XString_clear_base(acc);
             }
         }
@@ -296,23 +301,20 @@ bool XSharedStrings_loadFromXmlData(XSharedStrings* self, const uint8_t* data, s
     return ok;
 }
 
-bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const char* filePath) {
+bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const XString* filePath) {
     if (!self || !filePath) return false;
     
-    FILE* fp = fopen(filePath, "rb");
-    if (!fp) return false;
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        if (file) XFile_deleteLater(file);
+        return false;
+    }
+    XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
+    if (!allData) return false;
     
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    
-    uint8_t* data = (uint8_t*)XMalloc_System(size + 1);
-    if (!data) { fclose(fp); return false; }
-    
-    fread(data, 1, size, fp);
-    fclose(fp);
-    
-    bool result = XSharedStrings_loadFromXmlData(self, data, size);
-    XFree_System(data);
+    bool result = XSharedStrings_loadFromXmlData(self, XByteArray_data(allData), XByteArray_size_base(allData));
+    XByteArray_delete_base(allData);
     return result;
 }

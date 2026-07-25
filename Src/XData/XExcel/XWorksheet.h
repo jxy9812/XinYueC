@@ -105,21 +105,21 @@ typedef struct XWorksheet {
 } XWorksheet;
 
 /* ========== 创建与初始化 ========== */
-XWorksheet* XWorksheet_create(const char* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag);
+XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag);
 void XWorksheet_delete(XWorksheet* self);
-XWorksheet* XWorksheet_copy(const XWorksheet* self, const char* distName, int distId);
+XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int distId);
 
 /* ========== 单元格写入 ========== */
 bool XWorksheet_write(XWorksheet* self, int row, int column, const XVariant* value, const XFormat* format);
 bool XWorksheet_writeRef(XWorksheet* self, const XCellReference* cell, const XVariant* value, const XFormat* format);
 
-bool XWorksheet_writeString(XWorksheet* self, int row, int column, const char* value, const XFormat* format);
-bool XWorksheet_writeStringRef(XWorksheet* self, const XCellReference* cell, const char* value, const XFormat* format);
+bool XWorksheet_writeString(XWorksheet* self, int row, int column, const XString* value, const XFormat* format);
+bool XWorksheet_writeStringRef(XWorksheet* self, const XCellReference* cell, const XString* value, const XFormat* format);
 bool XWorksheet_writeRichString(XWorksheet* self, int row, int column, const XRichString* value, const XFormat* format);
 bool XWorksheet_writeRichStringRef(XWorksheet* self, const XCellReference* cell, const XRichString* value, const XFormat* format);
 
-bool XWorksheet_writeInlineString(XWorksheet* self, int row, int column, const char* value, const XFormat* format);
-bool XWorksheet_writeInlineStringRef(XWorksheet* self, const XCellReference* cell, const char* value, const XFormat* format);
+bool XWorksheet_writeInlineString(XWorksheet* self, int row, int column, const XString* value, const XFormat* format);
+bool XWorksheet_writeInlineStringRef(XWorksheet* self, const XCellReference* cell, const XString* value, const XFormat* format);
 
 bool XWorksheet_writeNumeric(XWorksheet* self, int row, int column, double value, const XFormat* format);
 bool XWorksheet_writeNumericRef(XWorksheet* self, const XCellReference* cell, double value, const XFormat* format);
@@ -141,8 +141,8 @@ bool XWorksheet_writeDateRef(XWorksheet* self, const XCellReference* cell, int y
 bool XWorksheet_writeTime(XWorksheet* self, int row, int column, int hour, int minute, double second, const XFormat* format);
 bool XWorksheet_writeTimeRef(XWorksheet* self, const XCellReference* cell, int hour, int minute, double second, const XFormat* format);
 
-bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const char* url, const XFormat* format, const char* display, const char* tip);
-bool XWorksheet_writeHyperlinkRef(XWorksheet* self, const XCellReference* cell, const char* url, const XFormat* format, const char* display, const char* tip);
+bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const XString* url, const XFormat* format, const XString* display, const XString* tip);
+bool XWorksheet_writeHyperlinkRef(XWorksheet* self, const XCellReference* cell, const XString* url, const XFormat* format, const XString* display, const XString* tip);
 
 /* ========== 单元格读取 ========== */
 XCell* XWorksheet_cellAt(XWorksheet* self, int row, int column);
@@ -155,7 +155,7 @@ bool XWorksheet_addDataValidation(XWorksheet* self, XDataValidation* validation)
 bool XWorksheet_addConditionalFormatting(XWorksheet* self, XConditionalFormatting* cf);
 
 /* ========== 图片与图表 ========== */
-int XWorksheet_insertImage(XWorksheet* self, int row, int column, const char* imagePath);
+int XWorksheet_insertImage(XWorksheet* self, int row, int column, const XString* imagePath);
 bool XWorksheet_getImage(XWorksheet* self, int imageIndex, XByteArray* imgData);
 bool XWorksheet_getImageAt(XWorksheet* self, int row, int column, XByteArray* imgData);
 unsigned int XWorksheet_getImageCount(const XWorksheet* self);
@@ -213,14 +213,14 @@ bool XWorksheet_setStartPage(XWorksheet* self, int spagen);
 int XWorksheet_getFullCells(const XWorksheet* self, XCellLocation** locations, int* maxRow, int* maxCol);
 
 /* ========== XML 读写 ========== */
-bool XWorksheet_saveToXmlFile(XWorksheet* self, const char* filePath);
-bool XWorksheet_loadFromXmlFile(XWorksheet* self, const char* filePath);
+bool XWorksheet_saveToXmlFile(XWorksheet* self, const XString* filePath);
+bool XWorksheet_loadFromXmlFile(XWorksheet* self, const XString* filePath);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* XWORKSHEET_H */
 bool XWorksheet_saveToXmlData(const XWorksheet* self, uint8_t** outData, size_t* outLen);
-bool XWorksheet_saveToXmlFile(XWorksheet* self, const char* filePath);
+bool XWorksheet_saveToXmlFile(XWorksheet* self, const XString* filePath);
 bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t len);
-bool XWorksheet_loadFromXmlFile(XWorksheet* self, const char* filePath);
+bool XWorksheet_loadFromXmlFile(XWorksheet* self, const XString* filePath);

@@ -13,7 +13,12 @@ extern "C" {
 #include <stdbool.h>
 
 #include "XString.h"
-bool XNumFormatParser_isDateTime(const char* formatCode);
+/**
+ * @brief  判断数字格式代码是否为日期时间格式
+ * @param  formatCode  数字格式代码字符串（如 "yyyy-mm-dd"、"hh:mm:ss"）
+ * @return 是日期时间格式返回 true，否则返回 false
+ */
+bool XNumFormatParser_isDateTime(const XString* formatCode);
 #ifdef __cplusplus
 }
 #endif
