@@ -53,3 +53,12 @@ void XChart_setSize(XChart* self, int width, int height) { if (self) { self->m_w
 void XChart_setPosition(XChart* self, int row, int col, int rowOff, int colOff) { if (self) { self->m_row = row; self->m_col = col; self->m_rowOffset = rowOff; self->m_colOffset = colOff; } }
 bool XChart_loadFromXmlFile(XChart* self, const XString* filePath) { (void)self; (void)filePath; return false; }
 bool XChart_saveToXmlFile(XChart* self, const XString* filePath) { (void)self; (void)filePath; return false; }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+void XChart_setChartTitle_utf8(XChart* self, const char* title)
+{
+    XString* s = title ? XString_create_utf8(title) : NULL;
+    XChart_setChartTitle(self, s);
+    if (s) XString_delete_base(s);
+}

@@ -233,3 +233,26 @@ int XCellReference_nameToColumn(const XString* colName)
 {
     return columnNameToNumber(colName ? XString_toUtf8(colName) : NULL);
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+XCellReference XCellReference_create_str_utf8(const char* cell)
+{
+    XString* s = cell ? XString_create_utf8(cell) : NULL;
+    XCellReference result = XCellReference_create_str(s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+int XCellReference_nameToColumn_utf8(const char* colName)
+{
+    return columnNameToNumber(colName);
+}
+
+void XCellReference_init_str_utf8(XCellReference* self, const char* cell)
+{
+    if (self)
+    {
+        parseCellReference(cell, &self->m_row, &self->m_column);
+    }
+}

@@ -264,3 +264,19 @@ const XString* XRichString_text(const XRichString* self)
     if (self->m_plainText) return self->m_plainText;
     return XRichString_toPlainString(self);
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+void XRichString_setText_utf8(XRichString* self, const char* text)
+{
+    XString* s = text ? XString_create_utf8(text) : NULL;
+    XRichString_setText(self, s);
+    if (s) XString_delete_base(s);
+}
+
+void XRichString_addFragment_utf8(XRichString* self, const char* text, const XFormat* format)
+{
+    XString* s = text ? XString_create_utf8(text) : NULL;
+    XRichString_addFragment(self, s, format);
+    if (s) XString_delete_base(s);
+}

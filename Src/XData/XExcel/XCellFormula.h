@@ -58,6 +58,7 @@ XCellFormula* XCellFormula_create(void);
  * @return     指向新创建的 XCellFormula 的指针
  */
 XCellFormula* XCellFormula_create_ex(const XString* text);
+XCellFormula* XCellFormula_create_ex_utf8(const char* text);
 
 /**
  * @brief      使用公式文本和类型创建 XCellFormula 对象
@@ -123,6 +124,7 @@ int XCellFormula_sharedIndex(const XCellFormula* self);
  * @param text 公式文本
  */
 void XCellFormula_setText(XCellFormula* self, const XString* text);
+void XCellFormula_setText_utf8(XCellFormula* self, const char* text);
 
 /**
  * @brief      设置公式类型

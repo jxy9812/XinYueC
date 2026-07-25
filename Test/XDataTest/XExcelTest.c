@@ -135,7 +135,7 @@ static bool test_cell_reference(void)
     }
 
     /* 使用字符串创建 A1 */
-    XCellReference ref3 = XCellReference_create_str("A1");
+    XCellReference ref3 = XCellReference_create_str_utf8("A1");
     if (XCellReference_isValid(&ref3) && XCellReference_row(&ref3) == 1 && XCellReference_column(&ref3) == 1) {
         TEST_PASS("XCellReference_create_str(A1)");
     } else {
@@ -144,7 +144,7 @@ static bool test_cell_reference(void)
     }
 
     /* 使用字符串创建 Z100 */
-    XCellReference ref4 = XCellReference_create_str("Z100");
+    XCellReference ref4 = XCellReference_create_str_utf8("Z100");
     if (XCellReference_isValid(&ref4) && XCellReference_row(&ref4) == 100 && XCellReference_column(&ref4) == 26) {
         TEST_PASS("XCellReference_create_str(Z100)");
     } else {
@@ -153,7 +153,7 @@ static bool test_cell_reference(void)
     }
 
     /* 使用字符串创建 AA1 */
-    XCellReference ref5 = XCellReference_create_str("AA1");
+    XCellReference ref5 = XCellReference_create_str_utf8("AA1");
     if (XCellReference_isValid(&ref5) && XCellReference_column(&ref5) == 27) {
         TEST_PASS("XCellReference_create_str(AA1)");
     } else {
@@ -162,7 +162,7 @@ static bool test_cell_reference(void)
     }
 
     /* 列名转数字 */
-    int col = XCellReference_nameToColumn("A");
+    int col = XCellReference_nameToColumn_utf8("A");
     if (col == 1) {
         TEST_PASS("XCellReference_nameToColumn(A) = 1");
     } else {
@@ -170,7 +170,7 @@ static bool test_cell_reference(void)
         all_pass = false;
     }
 
-    col = XCellReference_nameToColumn("Z");
+    col = XCellReference_nameToColumn_utf8("Z");
     if (col == 26) {
         TEST_PASS("XCellReference_nameToColumn(Z) = 26");
     } else {
@@ -178,7 +178,7 @@ static bool test_cell_reference(void)
         all_pass = false;
     }
 
-    col = XCellReference_nameToColumn("AA");
+    col = XCellReference_nameToColumn_utf8("AA");
     if (col == 27) {
         TEST_PASS("XCellReference_nameToColumn(AA) = 27");
     } else {
@@ -264,7 +264,7 @@ static bool test_cell_range(void)
     }
 
     /* 使用字符串创建 */
-    XCellRange range3 = XCellRange_create_str("A1:C3");
+    XCellRange range3 = XCellRange_create_str_utf8("A1:C3");
     if (XCellRange_isValid(&range3)) {
         TEST_PASS("XCellRange_create_str(A1:C3)");
     } else {
@@ -331,10 +331,10 @@ static bool test_cell_formula(void)
     XCellFormula_delete(f);
 
     /* 创建带文本的公式 */
-    XCellFormula* f2 = XCellFormula_create_ex("SUM(A1:A10)");
+    XCellFormula* f2 = XCellFormula_create_ex_utf8("SUM(A1:A10)");
     if (f2) {
-        const char* text = XCellFormula_formulaText(f2);
-        if (text && strcmp(text, "SUM(A1:A10)") == 0) {
+        const XString* text = XCellFormula_formulaText(f2);
+        if (text && XString_equals_utf8(text, "SUM(A1:A10)", XChar_CaseSensitive)) {
             TEST_PASS("XCellFormula_create_ex(SUM)");
         } else {
             TEST_FAIL("XCellFormula_create_ex(SUM)", "公式文本不正确");
@@ -359,7 +359,7 @@ static bool test_cell_formula(void)
     XCellFormula_delete(f2);
 
     /* 设置类型 */
-    XCellFormula* f3 = XCellFormula_create_ex("A1+B1");
+    XCellFormula* f3 = XCellFormula_create_ex_utf8("A1+B1");
     if (f3) {
         XCellFormula_setType(f3, XCellFormula_Array);
         if (XCellFormula_formulaType(f3) == XCellFormula_Array) {
@@ -368,9 +368,9 @@ static bool test_cell_formula(void)
             TEST_FAIL("XCellFormula_setType(Array)", "类型未改变");
             all_pass = false;
         }
-        XCellFormula_setText(f3, "A1*B1");
-        const char* text = XCellFormula_formulaText(f3);
-        if (text && strcmp(text, "A1*B1") == 0) {
+        XCellFormula_setText_utf8(f3, "A1*B1");
+        const XString* text = XCellFormula_formulaText(f3);
+        if (text && XString_equals_utf8(text, "A1*B1", XChar_CaseSensitive)) {
             TEST_PASS("XCellFormula_setText");
         } else {
             TEST_FAIL("XCellFormula_setText", "文本未更新");
@@ -437,10 +437,10 @@ static bool test_cell_create(void)
     XCell_delete(cell);
 
     /* 创建带值和类型的单元格 */
-    XCell* cell2 = XCell_create_ex("42", XCell_NumberType, NULL);
+    XCell* cell2 = XCell_create_ex_utf8("42", XCell_NumberType, NULL);
     if (cell2) {
-        const char* val = XCell_value(cell2);
-        if (val && strcmp(val, "42") == 0) {
+        const XString* val = XCell_value(cell2);
+        if (val && XString_equals_utf8(val, "42", XChar_CaseSensitive)) {
             TEST_PASS("XCell_create_ex 值=42");
         } else {
             TEST_FAIL("XCell_create_ex", "值不正确");
@@ -459,11 +459,11 @@ static bool test_cell_create(void)
     XCell_delete(cell2);
 
     /* 拷贝单元格 */
-    XCell* cell3 = XCell_create_ex("Hello", XCell_StringType, NULL);
+    XCell* cell3 = XCell_create_ex_utf8("Hello", XCell_StringType, NULL);
     XCell* cell4 = XCell_copy(cell3);
     if (cell4) {
-        const char* val = XCell_value(cell4);
-        if (val && strcmp(val, "Hello") == 0) {
+        const XString* val = XCell_value(cell4);
+        if (val && XString_equals_utf8(val, "Hello", XChar_CaseSensitive)) {
             TEST_PASS("XCell_copy");
         } else {
             TEST_FAIL("XCell_copy", "拷贝值不正确");
@@ -493,9 +493,9 @@ static bool test_cell_value(void)
     if (!cell) { TEST_FAIL("XCell值操作", "创建失败"); return false; }
 
     /* 设置字符串值 */
-    XCell_setValue(cell, "Test Value");
-    const char* val = XCell_value(cell);
-    if (val && strcmp(val, "Test Value") == 0) {
+    XCell_setValue_utf8(cell, "Test Value");
+    const XString* val = XCell_value(cell);
+    if (val && XString_equals_utf8(val, "Test Value", XChar_CaseSensitive)) {
         TEST_PASS("XCell_setValue / XCell_value");
     } else {
         TEST_FAIL("XCell_setValue", "值不正确");
@@ -503,9 +503,9 @@ static bool test_cell_value(void)
     }
 
     /* 更新值 */
-    XCell_setValue(cell, "Updated");
+    XCell_setValue_utf8(cell, "Updated");
     val = XCell_value(cell);
-    if (val && strcmp(val, "Updated") == 0) {
+    if (val && XString_equals_utf8(val, "Updated", XChar_CaseSensitive)) {
         TEST_PASS("XCell_setValue 更新");
     } else {
         TEST_FAIL("XCell_setValue 更新", "值未更新");
@@ -513,9 +513,9 @@ static bool test_cell_value(void)
     }
 
     /* 设置空值 */
-    XCell_setValue(cell, "");
+    XCell_setValue_utf8(cell, "");
     val = XCell_value(cell);
-    if (val && val[0] == '\0') {
+    if (val && XString_isEmpty_base(val)) {
         TEST_PASS("XCell_setValue 空字符串");
     } else {
         TEST_FAIL("XCell_setValue 空字符串", "应为空字符串");
@@ -604,7 +604,7 @@ static bool test_cell_format(void)
     }
 
     /* 设置公式 */
-    XCellFormula* formula = XCellFormula_create_ex("SUM(A1:A10)");
+    XCellFormula* formula = XCellFormula_create_ex_utf8("SUM(A1:A10)");
     if (formula) {
         XCell_setFormula(cell, formula);
         if (XCell_hasFormula(cell)) {
@@ -615,8 +615,8 @@ static bool test_cell_format(void)
         }
         XCellFormula* f2 = XCell_formula(cell);
         if (f2) {
-            const char* text = XCellFormula_formulaText(f2);
-            if (text && strcmp(text, "SUM(A1:A10)") == 0) {
+            const XString* text = XCellFormula_formulaText(f2);
+            if (text && XString_equals_utf8(text, "SUM(A1:A10)", XChar_CaseSensitive)) {
                 TEST_PASS("XCell_formula 文本正确");
             } else {
                 TEST_FAIL("XCell_formula", "公式文本不正确");
@@ -663,7 +663,7 @@ static bool test_cell_formula_integration(void)
     }
 
     /* 设置公式后 */
-    XCellFormula* f = XCellFormula_create_ex("A1+B1");
+    XCellFormula* f = XCellFormula_create_ex_utf8("A1+B1");
     if (f) {
         XCell_setFormula(cell, f);
         if (XCell_hasFormula(cell)) {
@@ -756,8 +756,8 @@ static bool test_format_font(void)
     if (!fmt) { TEST_FAIL("字体测试", "创建失败"); return false; }
 
     /* 字体名称 */
-    XFormat_setFontName(fmt, "Arial");
-    const char* name = XFormat_fontName(fmt);
+    XFormat_setFontName_utf8(fmt, "Arial");
+    const char* name = XFormat_fontName_utf8(fmt);
     if (name && strcmp(name, "Arial") == 0) {
         TEST_PASS("XFormat_setFontName(Arial)");
     } else {
@@ -1209,7 +1209,7 @@ static bool test_format_merge(void)
     XFormat* src = XFormat_create();
     XFormat* dst = XFormat_create();
     XFormat_setFontBold(src, true);
-    XFormat_setFontName(src, "Arial");
+    XFormat_setFontName_utf8(src, "Arial");
 
     /* 触发 mergeFormat - 之前会因为 val = (int)newPtr 截断指针触发 double-free */
     XFormat_mergeFormat(dst, src);
@@ -1219,7 +1219,7 @@ static bool test_format_merge(void)
 
     /* 字符串属性必须保持可读（合并后的 dst.m_format == src.m_format 也得能 delete）
      * 现在合并后会创建独立的 XString，不会与 src 共享 string ptr */
-    XFormat_setFontName(dst, "Times");  /* 不应崩溃 */
+    XFormat_setFontName_utf8(dst, "Times");  /* 不应崩溃 */
 
     /* 释放 src（之前会 double-free dst 的 XString） */
     XFormat_delete(src);
@@ -1331,9 +1331,9 @@ static bool test_content_types_add(void)
     XContentTypes* ct = XContentTypes_create();
 
     /* 修复前这两行传入的是 const char*，被 map 当作 const char** 解释，导致崩溃 */
-    XContentTypes_addDefault(ct, "rels", "application/vnd.openxmlformats-package.relationships+xml");
-    XContentTypes_addDefault(ct, "xml", "application/xml");
-    XContentTypes_addOverride(ct, "/xl/workbook.xml",
+    XContentTypes_addDefault_utf8(ct, "rels", "application/vnd.openxmlformats-package.relationships+xml");
+    XContentTypes_addDefault_utf8(ct, "xml", "application/xml");
+    XContentTypes_addOverride_utf8(ct, "/xl/workbook.xml",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.workbook+xml");
     TEST_PASS("addDefault/addOverride 不再崩溃");
 
@@ -1342,8 +1342,8 @@ static bool test_content_types_add(void)
     XContentTypes_addStyles(ct);
     XContentTypes_addTheme(ct);
     XContentTypes_addWorkbook(ct);
-    XContentTypes_addWorksheetName(ct, "Sheet1");
-    XContentTypes_addWorksheetName(ct, "Sheet2");
+    XContentTypes_addWorksheetName_utf8(ct, "Sheet1");
+    XContentTypes_addWorksheetName_utf8(ct, "Sheet2");
     TEST_PASS("addDocPropCore/App/Styles/Theme/Workbook + addWorksheetName x 2");
 
     XContentTypes_delete(ct);
@@ -1460,7 +1460,7 @@ static bool test_document_save_load(void)
     
     /* 保存到文件 */
     const char* filename = "/tmp/test_output.xlsx";
-    if (XDocument_saveAs(doc, filename)) {
+    if (XDocument_saveAs_utf8(doc, filename)) {
         TEST_PASS("XDocument_saveAs 成功");
     } else {
         TEST_FAIL("saveAs", "失败");
@@ -1491,7 +1491,7 @@ static bool test_rich_string_settext(void)
     TEST_INFO("===== 测试 26: XRichString_setText 同步 addFragment (修复 fragmentCount) =====");
     bool all_pass = true;
     XRichString* rs = XRichString_create();
-    XRichString_setText(rs, "Plain");
+    XRichString_setText_utf8(rs, "Plain");
 
     /* 修复后: setText 应该添加 1 个 fragment (对齐 QXlsx 行为) */
     int cnt1 = XRichString_fragmentCount(rs);
@@ -1499,8 +1499,8 @@ static bool test_rich_string_settext(void)
     else { char _ebuf1[64]; snprintf(_ebuf1, sizeof(_ebuf1), "应=1, 实=%d", cnt1); TEST_FAIL("setText fragmentCount", _ebuf1); all_pass = false; }
 
     /* 再 addFragment x 2，应该 = 3 */
-    XRichString_addFragment(rs, " Red", NULL);
-    XRichString_addFragment(rs, " Bold", NULL);
+    XRichString_addFragment_utf8(rs, " Red", NULL);
+    XRichString_addFragment_utf8(rs, " Bold", NULL);
     int cnt2 = XRichString_fragmentCount(rs);
     if (cnt2 == 3) TEST_PASS("setText + addFragment x 2 = 3");
     else { char _ebuf2[64]; snprintf(_ebuf2, sizeof(_ebuf2), "应=3, 实=%d", cnt2); TEST_FAIL("total fragmentCount", _ebuf2); all_pass = false; }
@@ -1518,10 +1518,10 @@ static bool test_cell_formula_basic(void)
     XCellFormula* f = XCellFormula_create();
     if (f && !XCellFormula_isValid(f)) TEST_PASS("空公式无效");
     else TEST_FAIL("空公式", "应无效");
-    XCellFormula_setText(f, "SUM(A1:A10)");
+    XCellFormula_setText_utf8(f, "SUM(A1:A10)");
     if (XCellFormula_isValid(f)) TEST_PASS("setText 后有效");
     else TEST_FAIL("setText", "应有效");
-    if (strcmp(XCellFormula_formulaText(f), "SUM(A1:A10)") == 0) TEST_PASS("text() 返回正确");
+    if (XString_equals_utf8(XCellFormula_formulaText(f), "SUM(A1:A10)", XChar_CaseSensitive)) TEST_PASS("text() 返回正确");
     else TEST_FAIL("text", "错");
     XCellFormula_setType(f, XCellFormula_Array);
     if (XCellFormula_formulaType(f) == XCellFormula_Array) TEST_PASS("type=Array");
@@ -1555,13 +1555,13 @@ static bool test_chart_basic(void)
     TEST_INFO("===== 测试 29: XChart 创建/系列/属性 =====");
     bool all_pass = true;
     XWorkbook* wb = XWorkbook_create(XAbstractOOXmlFile_F_NewFromScratch);
-    XAbstractSheet* s = XWorkbook_addSheet(wb, "S", XAbstractSheet_ST_WorkSheet);
+    XAbstractSheet* s = XWorkbook_addSheet_utf8(wb, "S", XAbstractSheet_ST_WorkSheet);
 
     XChart* ch = XChart_create(s, XAbstractOOXmlFile_F_NewFromScratch);
     if (ch) TEST_PASS("XChart_create");
     else TEST_FAIL("create", "失败");
     XChart_setChartType(ch, XChart_BarChart);
-    XChart_setChartTitle(ch, "我的图表");
+    XChart_setChartTitle_utf8(ch, "我的图表");
     XChart_setChartStyle(ch, 10);
     TEST_PASS("setChartType/Title/Style");
 
@@ -1571,7 +1571,7 @@ static bool test_chart_basic(void)
     XChart_addSeries(ch, &range, false, true, false);
     TEST_PASS("addSeries");
 
-    XChartsheet* cs = XChartsheet_create("ChartSheet1", 5, wb, XAbstractOOXmlFile_F_NewFromScratch);
+    XChartsheet* cs = XChartsheet_create_utf8("ChartSheet1", 5, wb, XAbstractOOXmlFile_F_NewFromScratch);
     if (cs) TEST_PASS("XChartsheet_create");
     else TEST_FAIL("cs create", "失败");
     XChartsheet_setChart(cs, ch);
@@ -1610,18 +1610,18 @@ static bool test_document_property(void)
     XDocument* doc = XDocument_create();
     if (!doc) { TEST_FAIL("create", ""); return false; }
     /* set */
-    XDocument_setDocumentProperty(doc, "title", "Test");
-    XDocument_setDocumentProperty(doc, "author", "XinYueC");
+    XDocument_setDocumentProperty_utf8(doc, "title", "Test");
+    XDocument_setDocumentProperty_utf8(doc, "author", "XinYueC");
     /* 取出来比对 */
-    const char* t = XDocument_documentProperty(doc, "title");
-    if (!t || strcmp(t, "Test") != 0) { TEST_FAIL("title get", ""); all_pass = false; }
+    const XString* t = XDocument_documentProperty_utf8(doc, "title");
+    if (!t || !XString_equals_utf8(t, "Test", XChar_CaseSensitive)) { TEST_FAIL("title get", ""); all_pass = false; }
     else TEST_PASS("title get");
-    const char* a = XDocument_documentProperty(doc, "author");
-    if (!a || strcmp(a, "XinYueC") != 0) { TEST_FAIL("author get", ""); all_pass = false; }
+    const XString* a = XDocument_documentProperty_utf8(doc, "author");
+    if (!a || !XString_equals_utf8(a, "XinYueC", XChar_CaseSensitive)) { TEST_FAIL("author get", ""); all_pass = false; }
     else TEST_PASS("author get");
     /* 取不存在的属性 -> 应返回空字符串或 NULL */
-    const char* none = XDocument_documentProperty(doc, "nonexistent");
-    if (none && *none == '\0') TEST_PASS("不存在属性返回空");
+    const XString* none = XDocument_documentProperty_utf8(doc, "nonexistent");
+    if (!none || XString_isEmpty_base(none)) TEST_PASS("不存在属性返回空");
     else { TEST_FAIL("nonexistent", "应返回空字符串"); all_pass = false; }
     /* documentPropertyNames 至少包含我们设置的 */
     XString** names = NULL;
@@ -1645,9 +1645,9 @@ static bool test_document_sheet_management(void)
     XDocument* doc = XDocument_create();
     if (!doc) return false;
     /* 添加工作表 */
-    if (!XDocument_addSheet(doc, "Sheet2", 0 /*WorkSheet*/)) { TEST_FAIL("addSheet", ""); all_pass = false; }
+    if (!XDocument_addSheet_utf8(doc, "Sheet2", 0 /*WorkSheet*/)) { TEST_FAIL("addSheet", ""); all_pass = false; }
     else TEST_PASS("addSheet Sheet2");
-    if (!XDocument_addSheet(doc, "Sheet3", 0)) { TEST_FAIL("addSheet3", ""); all_pass = false; }
+    if (!XDocument_addSheet_utf8(doc, "Sheet3", 0)) { TEST_FAIL("addSheet3", ""); all_pass = false; }
     else TEST_PASS("addSheet Sheet3");
     /* 列出所有工作表 */
     XString** names = NULL;
@@ -1659,15 +1659,15 @@ static bool test_document_sheet_management(void)
         XFree_System(names);
     }
     /* 选择工作表 */
-    if (!XDocument_selectSheet(doc, "Sheet2")) { TEST_FAIL("selectSheet", ""); all_pass = false; }
+    if (!XDocument_selectSheet_utf8(doc, "Sheet2")) { TEST_FAIL("selectSheet", ""); all_pass = false; }
     else TEST_PASS("selectSheet Sheet2");
     if (!XDocument_selectSheetByIndex(doc, 0)) { TEST_FAIL("selectSheetByIndex", ""); all_pass = false; }
     else TEST_PASS("selectSheetByIndex 0");
     /* 重命名工作表 */
-    if (!XDocument_renameSheet(doc, "Sheet2", "Renamed")) { TEST_FAIL("renameSheet", ""); all_pass = false; }
+    if (!XDocument_renameSheet_utf8(doc, "Sheet2", "Renamed")) { TEST_FAIL("renameSheet", ""); all_pass = false; }
     else TEST_PASS("renameSheet Sheet2 -> Renamed");
     /* 删除工作表 */
-    if (!XDocument_deleteSheet(doc, "Sheet3")) { TEST_FAIL("deleteSheet", ""); all_pass = false; }
+    if (!XDocument_deleteSheet_utf8(doc, "Sheet3")) { TEST_FAIL("deleteSheet", ""); all_pass = false; }
     else TEST_PASS("deleteSheet Sheet3");
     XDocument_delete(doc);
     return all_pass;
@@ -1680,7 +1680,7 @@ static bool test_document_define_name(void)
     bool all_pass = true;
     XDocument* doc = XDocument_create();
     if (!doc) return false;
-    if (!XDocument_defineName(doc, "MyName", "Sheet1!$A$1", "comment", NULL)) {
+    if (!XDocument_defineName_utf8(doc, "MyName", "Sheet1!$A$1", "comment", NULL)) {
         TEST_FAIL("defineName", ""); all_pass = false;
     } else TEST_PASS("defineName 成功");
     XDocument_delete(doc);
@@ -1719,7 +1719,7 @@ static bool test_document_change_image(void)
     XDocument* doc = XDocument_create();
     if (!doc) return false;
     /* 用占位符写入无效路径 -> 应该返回错误但不崩溃 */
-    int idx = XDocument_insertImage(doc, 1, 1, "/nonexistent/path.png");
+    int idx = XDocument_insertImage_utf8(doc, 1, 1, "/nonexistent/path.png");
     /* 占位实现可能成功或失败，我们只检查不崩溃 */
     TEST_INFO("insertImage 返回 %d（占位）", idx);
     /* getImage 应安全处理 */
@@ -1757,7 +1757,7 @@ static bool test_worksheet_string_writes(void)
     if (!doc) return false;
     XWorksheet* ws = XDocument_currentWorksheet(doc);
     XFormat* fmt = XFormat_create();
-    if (!XWorksheet_writeString(ws, 1, 1, "hello", fmt)) { TEST_FAIL("writeString", ""); all_pass = false; }
+    if (!XWorksheet_writeString_utf8(ws, 1, 1, "hello", fmt)) { TEST_FAIL("writeString", ""); all_pass = false; }
     else TEST_PASS("writeString");
     if (!XWorksheet_writeNumeric(ws, 2, 1, 3.14, fmt)) { TEST_FAIL("writeNumeric", ""); all_pass = false; }
     else TEST_PASS("writeNumeric");

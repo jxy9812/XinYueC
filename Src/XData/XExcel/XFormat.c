@@ -1061,3 +1061,16 @@ bool XFormat_notEquals(const XFormat* a, const XFormat* b)
 {
     return !XFormat_equals(a, b);
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+void XFormat_setFontName_utf8(XFormat* self, const char* name)
+{
+    if (name) setPropertyString(self, XFormat_P_Font_Name, name);
+}
+
+const char* XFormat_fontName_utf8(const XFormat* self)
+{
+    const XString* s = XFormat_fontName(self);
+    return s ? XString_toUtf8(s) : NULL;
+}

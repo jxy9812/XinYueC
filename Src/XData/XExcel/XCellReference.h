@@ -53,6 +53,7 @@ XCellReference XCellReference_create_ex(int row, int column);
  * @return     解析后的 XCellReference 对象，无效字符串返回无效对象
  */
 XCellReference XCellReference_create_str(const XString* cell);
+XCellReference XCellReference_create_str_utf8(const char* cell);
 
 /**
  * @brief      从 C 字符串字面量创建 XCellReference 对象
@@ -89,6 +90,7 @@ void XCellReference_init_ex(XCellReference* self, int row, int column);
  * @param cell 单元格引用字符串（如 "A1"）
  */
 void XCellReference_init_str(XCellReference* self, const XString* cell);
+void XCellReference_init_str_utf8(XCellReference* self, const char* cell);
 
 /* ========== 访问方法 ========== */
 
@@ -154,6 +156,7 @@ XString XCellReference_columnToName(int column);
  * @return     列号（1 索引），无效时返回 -1
  */
 int XCellReference_nameToColumn(const XString* colName);
+int XCellReference_nameToColumn_utf8(const char* colName);
 
 /* ========== 比较运算符（内联函数） ========== */
 

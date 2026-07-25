@@ -100,6 +100,7 @@ XAbstractSheet* XWorkbook_sheet(const XWorkbook* self, int index);
  * @return 新工作表指针，失败返回 NULL
  */
 XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstractSheet_SheetType type);
+XAbstractSheet* XWorkbook_addSheet_utf8(XWorkbook* self, const char* name, XAbstractSheet_SheetType type);
 
 /**
  * @brief  在指定位置插入工作表

@@ -1271,3 +1271,86 @@ bool XDocument_saveAsDevice(const XDocument* self, struct XIODevice* device)
     /* TODO: 将 XLSX ZIP 数据写入 device */
     return false;
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+void XDocument_setDocumentProperty_utf8(XDocument* self, const char* name, const char* property)
+{
+    XString* n = name ? XString_create_utf8(name) : NULL;
+    XString* p = property ? XString_create_utf8(property) : NULL;
+    XDocument_setDocumentProperty(self, n, p);
+    if (n) XString_delete_base(n);
+    if (p) XString_delete_base(p);
+}
+
+bool XDocument_addSheet_utf8(XDocument* self, const char* name, XAbstractSheet_SheetType type)
+{
+    XString* s = name ? XString_create_utf8(name) : NULL;
+    bool result = XDocument_addSheet(self, s, type);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+bool XDocument_selectSheet_utf8(XDocument* self, const char* name)
+{
+    XString* s = name ? XString_create_utf8(name) : NULL;
+    bool result = XDocument_selectSheet(self, s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+bool XDocument_renameSheet_utf8(XDocument* self, const char* oldName, const char* newName)
+{
+    XString* o = oldName ? XString_create_utf8(oldName) : NULL;
+    XString* n = newName ? XString_create_utf8(newName) : NULL;
+    bool result = XDocument_renameSheet(self, o, n);
+    if (o) XString_delete_base(o);
+    if (n) XString_delete_base(n);
+    return result;
+}
+
+bool XDocument_deleteSheet_utf8(XDocument* self, const char* name)
+{
+    XString* s = name ? XString_create_utf8(name) : NULL;
+    bool result = XDocument_deleteSheet(self, s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+bool XDocument_defineName_utf8(XDocument* self, const char* name, const char* formula, const char* comment, const char* scope)
+{
+    XString* n = name ? XString_create_utf8(name) : NULL;
+    XString* f = formula ? XString_create_utf8(formula) : NULL;
+    XString* c = comment ? XString_create_utf8(comment) : NULL;
+    XString* s = scope ? XString_create_utf8(scope) : NULL;
+    bool result = XDocument_defineName(self, n, f, c, s);
+    if (n) XString_delete_base(n);
+    if (f) XString_delete_base(f);
+    if (c) XString_delete_base(c);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+bool XDocument_saveAs_utf8(const XDocument* self, const char* xlsxName)
+{
+    XString* s = xlsxName ? XString_create_utf8(xlsxName) : NULL;
+    bool result = XDocument_saveAs(self, s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+int XDocument_insertImage_utf8(XDocument* self, int row, int col, const char* imagePath)
+{
+    XString* s = imagePath ? XString_create_utf8(imagePath) : NULL;
+    int result = XDocument_insertImage(self, row, col, s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+const XString* XDocument_documentProperty_utf8(const XDocument* self, const char* name)
+{
+    XString* s = name ? XString_create_utf8(name) : NULL;
+    const XString* result = XDocument_documentProperty(self, s);
+    if (s) XString_delete_base(s);
+    return result;
+}

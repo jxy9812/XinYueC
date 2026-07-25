@@ -146,3 +146,20 @@ bool XCellFormula_notEquals(const XCellFormula* a, const XCellFormula* b)
 {
     return !XCellFormula_equals(a, b);
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+XCellFormula* XCellFormula_create_ex_utf8(const char* text)
+{
+    XString* s = text ? XString_create_utf8(text) : NULL;
+    XCellFormula* result = XCellFormula_create_ex(s);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+void XCellFormula_setText_utf8(XCellFormula* self, const char* text)
+{
+    XString* s = text ? XString_create_utf8(text) : NULL;
+    XCellFormula_setText(self, s);
+    if (s) XString_delete_base(s);
+}

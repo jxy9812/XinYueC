@@ -104,6 +104,9 @@ void XContentTypes_addWorkbook(XContentTypes* self);
  * @param  name  工作表部件路径
  */
 void XContentTypes_addWorksheetName(XContentTypes* self, const XString* name);
+void XContentTypes_addDefault_utf8(XContentTypes* self, const char* key, const char* value);
+void XContentTypes_addOverride_utf8(XContentTypes* self, const char* key, const char* value);
+void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name);
 
 /**
  * @brief  按名称注册图表工作表部件的内容类型

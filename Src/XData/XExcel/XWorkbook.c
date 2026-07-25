@@ -399,3 +399,13 @@ bool XWorkbook_loadFromXmlFile(XWorkbook* self, const XString* filePath)
     /* TODO: 实现 XML 文件解析 */
     return false;
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+XAbstractSheet* XWorkbook_addSheet_utf8(XWorkbook* self, const char* name, XAbstractSheet_SheetType type)
+{
+    XString* s = name ? XString_create_utf8(name) : NULL;
+    XAbstractSheet* result = XWorkbook_addSheet(self, s, type);
+    if (s) XString_delete_base(s);
+    return result;
+}

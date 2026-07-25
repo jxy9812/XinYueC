@@ -75,6 +75,7 @@ XCell* XCell_create(void);
  * @return     指向新创建的 XCell 的指针，失败返回 NULL
  */
 XCell* XCell_create_ex(const XString* value, XCell_CellType type, XFormat* format);
+XCell* XCell_create_ex_utf8(const char* value, XCell_CellType type, XFormat* format);
 
 /**
  * @brief      复制单元格
@@ -118,6 +119,7 @@ const XString* XCell_value(const XCell* self);
  * @param value 值字符串
  */
 void XCell_setValue(XCell* self, const XString* value);
+void XCell_setValue_utf8(XCell* self, const char* value);
 
 /**
  * @brief      获取单元格格式

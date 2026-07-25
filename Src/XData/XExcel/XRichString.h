@@ -133,6 +133,7 @@ int XRichString_fragmentCount(const XRichString* self);
  * @param format 片段格式
  */
 void XRichString_addFragment(XRichString* self, const XString* text, const XFormat* format);
+void XRichString_addFragment_utf8(XRichString* self, const char* text, const XFormat* format);
 
 /**
  * @brief      获取指定索引的片段文本
@@ -158,6 +159,7 @@ const XFormat* XRichString_fragmentFormat(const XRichString* self, int index);
  * @param text 文本
  */
 void XRichString_setText(XRichString* self, const XString* text);
+void XRichString_setText_utf8(XRichString* self, const char* text);
 
 /**
  * @brief      获取纯文本（便捷方法）

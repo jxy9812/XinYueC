@@ -115,12 +115,12 @@ static bool test_raise_error(void)
     TEST_INFO("===== 引发错误测试 =====");
     bool all_pass = true;
     XXmlStreamReader* r = XXmlStreamReader_create();
-    XXmlStreamReader_raiseError(r, "test error");
+    XXmlStreamReader_raiseError_utf8(r, "test error");
     if (XXmlStreamReader_hasError(r)) TEST_PASS("hasError=true after raiseError");
     else { TEST_FAIL("hasError", "应为true"); all_pass = false; }
     if (XXmlStreamReader_error(r) == XXmlStream_CustomError) TEST_PASS("error=CustomError");
-    const char* err = XXmlStreamReader_errorString_const(r);
-    if (err && strcmp(err, "test error") == 0) TEST_PASS("errorString match");
+    const XString* err = XXmlStreamReader_errorString_const(r);
+    if (err && XString_equals_utf8(err, "test error", XChar_CaseSensitive)) TEST_PASS("errorString match");
     XXmlStreamReader_delete_base(r);
     return all_pass;
 }
@@ -340,12 +340,12 @@ static bool test_processing_instruction_fields(void)
         if (type == XXmlStream_ProcessingInstruction) break;
     }
     if (type == XXmlStream_ProcessingInstruction) {
-        const char* target = XXmlStreamReader_processingInstructionTarget_const(r);
-        const char* data = XXmlStreamReader_processingInstructionData_const(r);
-        if (target && strcmp(target, "xml-stylesheet") == 0) TEST_PASS("PI target = xml-stylesheet");
+        const XString* target = XXmlStreamReader_processingInstructionTarget_const(r);
+        const XString* data = XXmlStreamReader_processingInstructionData_const(r);
+        if (target && XString_equals_utf8(target, "xml-stylesheet", XChar_CaseSensitive)) TEST_PASS("PI target = xml-stylesheet");
         else { TEST_FAIL("PI target", "应为 xml-stylesheet"); all_pass = false; }
         /* data 解析为 type="text/xsl" href="style.xsl"，至少应非空且包含 text/xsl */
-        if (data && strstr(data, "text/xsl") != NULL) TEST_PASS("PI data 包含 text/xsl");
+        if (data && XString_toUtf8(data) && strstr(XString_toUtf8(data), "text/xsl") != NULL) TEST_PASS("PI data 包含 text/xsl");
         else { TEST_FAIL("PI data", "应包含 text/xsl"); all_pass = false; }
     } else {
         TEST_FAIL("PI token", "未找到 PI Token");
@@ -430,9 +430,9 @@ static bool test_basic_xml_parse(void)
     int t = XXmlStreamReader_readNext(r); /* StartDocument */
     if (t == XXmlStream_StartDocument) TEST_PASS("StartDocument");
     else { TEST_FAIL("StartDocument", ""); all_pass = false; }
-    if (strcmp(XXmlStreamReader_documentVersion_const(r), "1.0") == 0) TEST_PASS("documentVersion=1.0");
+    if (XString_equals_utf8(XXmlStreamReader_documentVersion_const(r), "1.0", XChar_CaseSensitive)) TEST_PASS("documentVersion=1.0");
     else { TEST_FAIL("doc ver", ""); all_pass = false; }
-    if (strcmp(XXmlStreamReader_documentEncoding_const(r), "UTF-8") == 0) TEST_PASS("documentEncoding=UTF-8");
+    if (XString_equals_utf8(XXmlStreamReader_documentEncoding_const(r), "UTF-8", XChar_CaseSensitive)) TEST_PASS("documentEncoding=UTF-8");
     else { TEST_FAIL("doc enc", ""); all_pass = false; }
     t = XXmlStreamReader_readNext(r); /* StartElement root */
     if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name_const(r), "root", XChar_CaseSensitive)) TEST_PASS("StartElement root");
@@ -443,7 +443,7 @@ static bool test_basic_xml_parse(void)
     else { TEST_FAIL("属性数量", "应为 1"); all_pass = false; }
     if (attrs) {
         XString_Init_Utf8(attrName, "attr");
-        const XString* attrVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, &attrName);
+        const XString* attrVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, attrName);
         if (attrVal && XString_equals_utf8(attrVal, "v", XChar_CaseSensitive)) TEST_PASS("属性 attr=v");
         else { TEST_FAIL("属性值", "应为 v"); all_pass = false; }
     }
@@ -495,10 +495,10 @@ static bool test_attributes_navigation(void)
         XString_Init_Utf8(bName, "b");
         XString_Init_Utf8(cName, "c");
         XString_Init_Utf8(zName, "z");
-        if (XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, &aName)
-         && XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, &bName)
-         && XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, &cName)
-         && !XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, &zName))
+        if (XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, aName)
+         && XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, bName)
+         && XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, cName)
+         && !XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, zName))
             TEST_PASS("hasAttribute 检查存在/不存在");
         else { TEST_FAIL("hasAttribute", ""); all_pass = false; }
     }
@@ -512,7 +512,7 @@ static bool test_attributes_navigation(void)
     /* value 通过 name 查 */
     {
         XString_Init_Utf8(bName, "b");
-        const XString* bVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, &bName);
+        const XString* bVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, bName);
         if (bVal && XString_equals_utf8(bVal, "2", XChar_CaseSensitive)) TEST_PASS("value by name");
         else { TEST_FAIL("value by name", ""); all_pass = false; }
     }
@@ -521,8 +521,8 @@ static bool test_attributes_navigation(void)
     XXmlStreamAttributes_size(NULL);
     {
         XString_Init_Utf8(xName, "x");
-        XXmlStreamAttributes_value(NULL, &xName);
-        XXmlStreamAttributes_hasAttribute(NULL, &xName);
+        XXmlStreamAttributes_value(NULL, xName);
+        XXmlStreamAttributes_hasAttribute(NULL, xName);
     }
     XXmlStreamAttribute_namespaceUri(NULL);
     XXmlStreamAttribute_name(NULL);
@@ -572,14 +572,14 @@ static bool test_cdata_comment(void)
         int t = XXmlStreamReader_readNext(r);
         if (t == XXmlStream_Comment) {
             sawComment = 1;
-            const char* tx = XXmlStreamReader_text_const(r);
-            if (tx && strstr(tx, "a comment") != NULL) TEST_PASS("注释内容解析");
+            const XString* tx = XXmlStreamReader_text_const(r);
+            if (tx && XString_toUtf8(tx) && strstr(XString_toUtf8(tx), "a comment") != NULL) TEST_PASS("注释内容解析");
             else { TEST_FAIL("comment text", ""); all_pass = false; }
         }
         else if (t == XXmlStream_Characters && XXmlStreamReader_isCDATA(r)) {
             sawCdata = 1;
-            const char* tx = XXmlStreamReader_text_const(r);
-            if (tx && strstr(tx, "<x>raw</x>") != NULL) TEST_PASS("CDATA 内容解析（含 < >）");
+            const XString* tx = XXmlStreamReader_text_const(r);
+            if (tx && XString_toUtf8(tx) && strstr(XString_toUtf8(tx), "<x>raw</x>") != NULL) TEST_PASS("CDATA 内容解析（含 < >）");
             else { TEST_FAIL("cdata text", ""); all_pass = false; }
         }
     }
@@ -606,7 +606,8 @@ static bool test_entity_reference(void)
     while (!XXmlStreamReader_atEnd(r) && safety++ < 16) {
         int t = XXmlStreamReader_readNext(r);
         if (t == XXmlStream_Characters) {
-            const char* txt = XXmlStreamReader_text_const(r);
+            const XString* txtX = XXmlStreamReader_text_const(r);
+            const char* txt = txtX ? XString_toUtf8(txtX) : NULL;
             sawText = 1;
             if (txt) {
                 if (strchr(txt, '&')) gotAmp = 1;
@@ -636,14 +637,14 @@ static bool test_dtd_declaration(void)
     int t = XXmlStreamReader_readNext(r); /* 没有 XML 声明 -> 第一个 token 是 DTD */
     if (t == XXmlStream_DTD) TEST_PASS("DTD token");
     else { TEST_FAIL("DTD token", ""); all_pass = false; }
-    const char* dn = XXmlStreamReader_dtdName_const(r);
-    const char* dpi = XXmlStreamReader_dtdPublicId_const(r);
-    const char* dsi = XXmlStreamReader_dtdSystemId_const(r);
-    if (dn && strcmp(dn, "html") == 0) TEST_PASS("dtdName=html");
+    const XString* dn = XXmlStreamReader_dtdName_const(r);
+    const XString* dpi = XXmlStreamReader_dtdPublicId_const(r);
+    const XString* dsi = XXmlStreamReader_dtdSystemId_const(r);
+    if (dn && XString_equals_utf8(dn, "html", XChar_CaseSensitive)) TEST_PASS("dtdName=html");
     else { TEST_FAIL("dtdName", "应为 html"); all_pass = false; }
-    if (dpi && strstr(dpi, "W3C") != NULL) TEST_PASS("dtdPublicId 包含 W3C");
+    if (dpi && XString_toUtf8(dpi) && strstr(XString_toUtf8(dpi), "W3C") != NULL) TEST_PASS("dtdPublicId 包含 W3C");
     else { TEST_FAIL("dtdPublicId", ""); all_pass = false; }
-    if (dsi && strstr(dsi, "w3.org") != NULL) TEST_PASS("dtdSystemId 包含 w3.org");
+    if (dsi && XString_toUtf8(dsi) && strstr(XString_toUtf8(dsi), "w3.org") != NULL) TEST_PASS("dtdSystemId 包含 w3.org");
     else { TEST_FAIL("dtdSystemId", ""); all_pass = false; }
     XXmlStreamReader_delete_base(r);
     return all_pass;
@@ -660,10 +661,10 @@ static bool test_skip_current_element(void)
         XXmlStreamReader_addData_utf8(r, "<a><b>x</b><c>y</c></a>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        if (XXmlStreamReader_isStartElement(r) && strcmp(XXmlStreamReader_name_const(r), "a") == 0) {
+        if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "a", XChar_CaseSensitive)) {
             TEST_PASS("找到 root StartElement");
             XXmlStreamReader_skipCurrentElement(r);
-            if (XXmlStreamReader_isEndElement(r) && strcmp(XXmlStreamReader_name_const(r), "a") == 0)
+            if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "a", XChar_CaseSensitive))
                 TEST_PASS("skip 后停在 EndElement a");
             else { TEST_FAIL("skip result", "应停在 EndElement a"); all_pass = false; }
         } else { TEST_FAIL("find a", ""); all_pass = false; }
@@ -682,15 +683,15 @@ static bool test_read_next_start_element(void)
         "<root>   <!--c-->  <child id=\"1\">v</child>  text  <child2/> </root>");
     /* 第一个 StartElement 应该是 root */
     if (XXmlStreamReader_readNextStartElement(r)
-        && strcmp(XXmlStreamReader_name_const(r), "root") == 0) TEST_PASS("readNextStartElement -> root");
+        && XString_equals_utf8(XXmlStreamReader_name_const(r), "root", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> root");
     else { TEST_FAIL("first start", ""); all_pass = false; }
     /* 第二个应是 child */
     if (XXmlStreamReader_readNextStartElement(r)
-        && strcmp(XXmlStreamReader_name_const(r), "child") == 0) TEST_PASS("readNextStartElement -> child");
+        && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> child");
     else { TEST_FAIL("second start", ""); all_pass = false; }
     /* child2 */
     if (XXmlStreamReader_readNextStartElement(r)
-        && strcmp(XXmlStreamReader_name_const(r), "child2") == 0) TEST_PASS("readNextStartElement -> child2");
+        && XString_equals_utf8(XXmlStreamReader_name_const(r), "child2", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> child2");
     else { TEST_FAIL("third start", ""); all_pass = false; }
     /* 越过 child2 后再调用应失败（已到 root EndElement） */
     if (!XXmlStreamReader_readNextStartElement(r)) TEST_PASS("无更多 StartElement 返回 false");
@@ -710,9 +711,9 @@ static bool test_read_element_text(void)
         XXmlStreamReader_addData_utf8(r, "<g>hello world</g>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        const char* txt = XXmlStreamReader_readElementText_const(r,
+        const XString* txt = XXmlStreamReader_readElementText_const(r,
             XXmlStream_ReadElementTextBehaviour_ErrorOnUnexpectedElement);
-        if (txt && strcmp(txt, "hello world") == 0) TEST_PASS("readElementText = 'hello world'");
+        if (txt && XString_equals_utf8(txt, "hello world", XChar_CaseSensitive)) TEST_PASS("readElementText = 'hello world'");
         else { TEST_FAIL("readElementText", ""); all_pass = false; }
         XXmlStreamReader_delete_base(r);
     }
@@ -722,9 +723,9 @@ static bool test_read_element_text(void)
         XXmlStreamReader_addData_utf8(r, "<g>before<x/>after</g>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        const char* txt = XXmlStreamReader_readElementText_const(r,
+        const XString* txt = XXmlStreamReader_readElementText_const(r,
             XXmlStream_ReadElementTextBehaviour_SkipChildElements);
-        if (txt && (strstr(txt, "before") != NULL || strstr(txt, "after") != NULL))
+        if (txt && XString_toUtf8(txt) && (strstr(XString_toUtf8(txt), "before") != NULL || strstr(XString_toUtf8(txt), "after") != NULL))
             TEST_PASS("SkipChildElements 读取拼接文本");
         else { TEST_FAIL("SkipChildElements", ""); all_pass = false; }
         XXmlStreamReader_delete_base(r);

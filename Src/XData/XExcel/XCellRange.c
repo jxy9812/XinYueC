@@ -32,8 +32,8 @@ static void parseRange(XCellRange* self, const char* range)
         cell2[sizeof(cell2) - 1] = '\0';
 
         XCellReference tl, br;
-        XCellReference_init_str(&tl, cell1);
-        XCellReference_init_str(&br, cell2);
+        XCellReference_init_str_utf8(&tl, cell1);
+        XCellReference_init_str_utf8(&br, cell2);
 
         if (XCellReference_isValid(&tl) && XCellReference_isValid(&br))
         {
@@ -47,7 +47,7 @@ static void parseRange(XCellRange* self, const char* range)
     {
         /* 单个单元格 "A1" 格式 */
         XCellReference ref;
-        XCellReference_init_str(&ref, range);
+        XCellReference_init_str_utf8(&ref, range);
         if (XCellReference_isValid(&ref))
         {
             int r = XCellReference_row(&ref);
@@ -221,4 +221,14 @@ void XCellRange_setFullRange(XCellRange* self, int firstRow, int firstCol, int l
     self->m_firstColumn = firstCol;
     self->m_lastRow = lastRow;
     self->m_lastColumn = lastCol;
+}
+
+/* ========== UTF-8 便捷变体 ========== */
+
+XCellRange XCellRange_create_str_utf8(const char* range)
+{
+    XString* s = range ? XString_create_utf8(range) : NULL;
+    XCellRange result = XCellRange_create_str(s);
+    if (s) XString_delete_base(s);
+    return result;
 }

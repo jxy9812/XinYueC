@@ -28,6 +28,7 @@ typedef struct XChartsheet {
  * @return 成功返回 XChartsheet 指针，失败返回 NULL
  */
 XChartsheet* XChartsheet_create(const XString* sheetName, int sheetId, void* book, XAbstractOOXmlFile_CreateFlag flag);
+XChartsheet* XChartsheet_create_utf8(const char* sheetName, int sheetId, void* book, XAbstractOOXmlFile_CreateFlag flag);
 
 /**
  * @brief  销毁图表工作表并释放资源

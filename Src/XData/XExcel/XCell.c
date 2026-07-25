@@ -140,3 +140,20 @@ bool XCell_isDateType(XCell_CellType cellType, const XFormat* format)
     if (cellType == XCell_NumberType && format) return XFormat_isDateTimeFormat(format);
     return false;
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+XCell* XCell_create_ex_utf8(const char* value, XCell_CellType type, XFormat* format)
+{
+    XString* s = value ? XString_create_utf8(value) : NULL;
+    XCell* result = XCell_create_ex(s, type, format);
+    if (s) XString_delete_base(s);
+    return result;
+}
+
+void XCell_setValue_utf8(XCell* self, const char* value)
+{
+    XString* s = value ? XString_create_utf8(value) : NULL;
+    XCell_setValue(self, s);
+    if (s) XString_delete_base(s);
+}

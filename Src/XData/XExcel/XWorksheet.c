@@ -1066,3 +1066,13 @@ bool XWorksheet_loadFromXmlFile(XWorksheet* self, const XString* filePath)
     /* TODO: 实现 XML 文件解析 */
     return false;
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+bool XWorksheet_writeString_utf8(XWorksheet* self, int row, int column, const char* value, const XFormat* format)
+{
+    XString* s = value ? XString_create_utf8(value) : NULL;
+    bool result = XWorksheet_writeString(self, row, column, s, format);
+    if (s) XString_delete_base(s);
+    return result;
+}

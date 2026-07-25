@@ -743,7 +743,7 @@ static bool parse_attributes(XXmlStreamReaderPrivate* d, const char** ptr, const
                     }
                 }
             }
-            XXmlStreamAttributes_append(d->m_attributes, ns_uri, local_name, XString_toUtf8(&attrValue));
+            XXmlStreamAttributes_append_utf8(d->m_attributes, ns_uri, local_name, XString_toUtf8(&attrValue));
         }
         /* 解析命名空间声明 */
         if (name_utf8 && (strcmp(name_utf8, "xmlns") == 0 || strncmp(name_utf8, "xmlns:", 6) == 0))
@@ -2327,6 +2327,28 @@ void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const XString* q
         self->m_capacity = newCap;
     }
     self->m_items[self->m_count++] = attr;
+}
+
+void XXmlStreamAttributes_append_utf8(XXmlStreamAttributes* self, const char* namespaceUri, const char* name, const char* value)
+{
+    if (!self || !name) return;
+    XString* ns = namespaceUri ? XString_create_utf8(namespaceUri) : NULL;
+    XString* nm = XString_create_utf8(name);
+    XString* val = value ? XString_create_utf8(value) : NULL;
+    XXmlStreamAttributes_append(self, ns, nm, val);
+    if (ns) XString_delete_base(ns);
+    if (nm) XString_delete_base(nm);
+    if (val) XString_delete_base(val);
+}
+
+void XXmlStreamAttributes_append_ex_utf8(XXmlStreamAttributes* self, const char* qualifiedName, const char* value)
+{
+    if (!self || !qualifiedName) return;
+    XString* qn = XString_create_utf8(qualifiedName);
+    XString* val = value ? XString_create_utf8(value) : NULL;
+    XXmlStreamAttributes_append_ex(self, qn, val);
+    if (qn) XString_delete_base(qn);
+    if (val) XString_delete_base(val);
 }
 
 /* ============================================================================

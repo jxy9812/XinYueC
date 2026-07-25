@@ -134,6 +134,7 @@ void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const XString* a
  * @param title 标题
  */
 void XChart_setChartTitle(XChart* self, const XString* title);
+void XChart_setChartTitle_utf8(XChart* self, const char* title);
 
 /**
  * @brief      设置图表图例

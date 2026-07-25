@@ -74,6 +74,7 @@ XCell* XDocument_cellAtRef(const XDocument* self, const XCellReference* cell);
 
 /* ========== 图片 ========== */
 int XDocument_insertImage(XDocument* self, int row, int col, const XString* imagePath);
+int XDocument_insertImage_utf8(XDocument* self, int row, int col, const char* imagePath);
 bool XDocument_getImage(const XDocument* self, int imageIndex, XByteArray* imgData);
 bool XDocument_getImageAt(const XDocument* self, int row, int col, XByteArray* imgData);
 unsigned int XDocument_getImageCount(const XDocument* self);
@@ -117,19 +118,25 @@ XCellRange XDocument_dimension(const XDocument* self);
 
 /* ========== 文档属性 ========== */
 const XString* XDocument_documentProperty(const XDocument* self, const XString* name);
+const XString* XDocument_documentProperty_utf8(const XDocument* self, const char* name);
 void XDocument_setDocumentProperty(XDocument* self, const XString* name, const XString* property);
+void XDocument_setDocumentProperty_utf8(XDocument* self, const char* name, const char* property);
 int XDocument_documentPropertyNames(const XDocument* self, XString*** names);
 
 /* ========== 工作表管理 ========== */
 int XDocument_sheetNames(const XDocument* self, XString*** names);
 bool XDocument_addSheet(XDocument* self, const XString* name, XAbstractSheet_SheetType type);
+bool XDocument_addSheet_utf8(XDocument* self, const char* name, XAbstractSheet_SheetType type);
 bool XDocument_insertSheet(XDocument* self, int index, const XString* name, XAbstractSheet_SheetType type);
 bool XDocument_selectSheet(XDocument* self, const XString* name);
+bool XDocument_selectSheet_utf8(XDocument* self, const char* name);
 bool XDocument_selectSheetByIndex(XDocument* self, int index);
 bool XDocument_renameSheet(XDocument* self, const XString* oldName, const XString* newName);
+bool XDocument_renameSheet_utf8(XDocument* self, const char* oldName, const char* newName);
 bool XDocument_copySheet(XDocument* self, const XString* srcName, const XString* distName);
 bool XDocument_moveSheet(XDocument* self, const XString* srcName, int distIndex);
 bool XDocument_deleteSheet(XDocument* self, const XString* name);
+bool XDocument_deleteSheet_utf8(XDocument* self, const char* name);
 
 /* ========== 工作簿和当前工作表访问 ========== */
 XWorkbook* XDocument_workbook(const XDocument* self);
@@ -140,6 +147,7 @@ XWorksheet* XDocument_currentWorksheet(const XDocument* self);
 /* ========== 保存和加载 ========== */
 bool XDocument_save(const XDocument* self);
 bool XDocument_saveAs(const XDocument* self, const XString* xlsxName);
+bool XDocument_saveAs_utf8(const XDocument* self, const char* xlsxName);
 bool XDocument_saveAsDevice(const XDocument* self, struct XIODevice* device);
 bool XDocument_isLoadPackage(const XDocument* self);
 bool XDocument_load(XDocument* self);

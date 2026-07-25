@@ -372,3 +372,24 @@ bool XContentTypes_loadFromXmlFile(XContentTypes* self, const XString* filePath)
     XByteArray_delete_base(allData);
     return result;
 }
+
+/* ========== UTF-8 便捷变体 ========== */
+
+void XContentTypes_addDefault_utf8(XContentTypes* self, const char* key, const char* value)
+{
+    addDefault_cstr(self, key, value);
+}
+
+void XContentTypes_addOverride_utf8(XContentTypes* self, const char* key, const char* value)
+{
+    addOverride_cstr(self, key, value);
+}
+
+void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name)
+{
+    (void)name;
+    char key[256];
+    snprintf(key, sizeof(key), "/xl/worksheets/sheet%d.xml", self->m_worksheetCount + 1);
+    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
+    self->m_worksheetCount++;
+}

@@ -168,7 +168,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<?xml")) {
             TEST_PASS("writeStartDocument(1.0)");
@@ -183,7 +183,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "UTF-8")) {
             TEST_PASS("writeStartDocument_ex(1.0, UTF-8)");
@@ -198,7 +198,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument_ex_2", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex_2(w, "1.0", true);
+        XXmlStreamWriter_writeStartDocument_ex_2_utf8(w, "1.0", true);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "standalone")) {
             TEST_PASS("writeStartDocument_ex_2(1.0, UTF-8, standalone)");
@@ -213,7 +213,7 @@ static bool test_write_start_document(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument version", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
+        XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "version=\"1.0\"")) {
             TEST_PASS("writeStartDocument 版本号1.0");
@@ -236,8 +236,8 @@ static bool test_write_end_document(void)
     XXmlStreamWriter* w = XXmlStreamWriter_create();
     if (!w) { TEST_FAIL("writeEndDocument", "创建失败"); return false; }
 
-    XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
-    XXmlStreamWriter_writeStartElement(w, "root");
+    XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
+    XXmlStreamWriter_writeStartElement_utf8(w, "root");
     XXmlStreamWriter_writeEndElement(w);
     XXmlStreamWriter_writeEndDocument(w);
 
@@ -273,7 +273,7 @@ static bool test_write_start_end_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartElement", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<root>") && strstr(result, "</root>")) {
@@ -289,7 +289,7 @@ static bool test_write_start_end_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartElement_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement_ex(w, "http://example.com", "root");
+        XXmlStreamWriter_writeStartElement_ex_utf8(w, "http://example.com", "root");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "root")) {
@@ -305,8 +305,8 @@ static bool test_write_start_end_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("嵌套元素", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "root");
-        XXmlStreamWriter_writeStartElement(w, "child");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w, "child");
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
@@ -323,9 +323,9 @@ static bool test_write_start_end_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("深层嵌套", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "a");
-        XXmlStreamWriter_writeStartElement(w, "b");
-        XXmlStreamWriter_writeStartElement(w, "c");
+        XXmlStreamWriter_writeStartElement_utf8(w, "a");
+        XXmlStreamWriter_writeStartElement_utf8(w, "b");
+        XXmlStreamWriter_writeStartElement_utf8(w, "c");
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
@@ -352,7 +352,7 @@ static bool test_write_empty_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeEmptyElement", "创建失败"); return false; }
-        XXmlStreamWriter_writeEmptyElement(w, "br");
+        XXmlStreamWriter_writeEmptyElement_utf8(w, "br");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<br/>")) {
             TEST_PASS("writeEmptyElement(br)");
@@ -367,7 +367,7 @@ static bool test_write_empty_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeEmptyElement_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeEmptyElement_ex(w, "http://ns.com", "item");
+        XXmlStreamWriter_writeEmptyElement_ex_utf8(w, "http://ns.com", "item");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "item")) {
             TEST_PASS("writeEmptyElement_ex 带命名空间");
@@ -382,8 +382,8 @@ static bool test_write_empty_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("多个空元素", "创建失败"); return false; }
-        XXmlStreamWriter_writeEmptyElement(w, "br");
-        XXmlStreamWriter_writeEmptyElement(w, "hr");
+        XXmlStreamWriter_writeEmptyElement_utf8(w, "br");
+        XXmlStreamWriter_writeEmptyElement_utf8(w, "hr");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<br/>") && strstr(result, "<hr/>")) {
             TEST_PASS("多个空元素");
@@ -406,8 +406,8 @@ static bool test_write_attribute(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeAttribute", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "elem");
-        XXmlStreamWriter_writeAttribute(w, "id", "123");
+        XXmlStreamWriter_writeStartElement_utf8(w, "elem");
+        XXmlStreamWriter_writeAttribute_utf8(w, "id", "123");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "id=\"123\"")) {
@@ -423,8 +423,8 @@ static bool test_write_attribute(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeAttribute_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "elem");
-        XXmlStreamWriter_writeAttribute_ex(w, "http://ns.com", "attr", "val");
+        XXmlStreamWriter_writeStartElement_utf8(w, "elem");
+        XXmlStreamWriter_writeAttribute_ex_utf8(w, "http://ns.com", "attr", "val");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "val")) {
@@ -440,9 +440,13 @@ static bool test_write_attribute(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeAttribute_attr", "创建失败"); return false; }
-        XXmlStreamAttribute* attr = XXmlStreamAttribute_create("name", "value");
+        XString* qname = XString_create_utf8("name");
+        XString* qval = XString_create_utf8("value");
+        XXmlStreamAttribute* attr = XXmlStreamAttribute_create(qname, qval);
+        XString_delete_base(qname);
+        XString_delete_base(qval);
         if (attr) {
-            XXmlStreamWriter_writeStartElement(w, "elem");
+            XXmlStreamWriter_writeStartElement_utf8(w, "elem");
             XXmlStreamWriter_writeAttribute_attr(w, attr);
             XXmlStreamWriter_writeEndElement(w);
             const char* result = XXmlStreamWriter_toString(w);
@@ -461,9 +465,9 @@ static bool test_write_attribute(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("多个属性", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "elem");
-        XXmlStreamWriter_writeAttribute(w, "id", "1");
-        XXmlStreamWriter_writeAttribute(w, "class", "main");
+        XXmlStreamWriter_writeStartElement_utf8(w, "elem");
+        XXmlStreamWriter_writeAttribute_utf8(w, "id", "1");
+        XXmlStreamWriter_writeAttribute_utf8(w, "class", "main");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "id=\"1\"") && strstr(result, "class=\"main\"")) {
@@ -479,8 +483,8 @@ static bool test_write_attribute(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("属性特殊字符", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "elem");
-        XXmlStreamWriter_writeAttribute(w, "desc", "a & b < c > d");
+        XXmlStreamWriter_writeStartElement_utf8(w, "elem");
+        XXmlStreamWriter_writeAttribute_utf8(w, "desc", "a & b < c > d");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "&amp;") && strstr(result, "&lt;") && strstr(result, "&gt;")) {
@@ -511,10 +515,18 @@ static bool test_write_attributes(void)
     }
 
     /* 创建属性并添加到列表 */
-    XXmlStreamAttribute* a1 = XXmlStreamAttribute_create("id", "42");
-    XXmlStreamAttribute* a2 = XXmlStreamAttribute_create("type", "test");
+    XString* a1_name = XString_create_utf8("id");
+    XString* a1_val = XString_create_utf8("42");
+    XString* a2_name = XString_create_utf8("type");
+    XString* a2_val = XString_create_utf8("test");
+    XXmlStreamAttribute* a1 = XXmlStreamAttribute_create(a1_name, a1_val);
+    XXmlStreamAttribute* a2 = XXmlStreamAttribute_create(a2_name, a2_val);
+    XString_delete_base(a1_name);
+    XString_delete_base(a1_val);
+    XString_delete_base(a2_name);
+    XString_delete_base(a2_val);
     if (a1 && a2) {
-        XXmlStreamWriter_writeStartElement(w, "elem");
+        XXmlStreamWriter_writeStartElement_utf8(w, "elem");
         /* 由于XXmlStreamAttributes没有add方法，直接调用writeAttributes */
         XXmlStreamWriter_writeAttributes(w, attrs);
         XXmlStreamWriter_writeEndElement(w);
@@ -543,8 +555,8 @@ static bool test_write_characters(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCharacters", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "p");
-        XXmlStreamWriter_writeCharacters(w, "Hello World");
+        XXmlStreamWriter_writeStartElement_utf8(w, "p");
+        XXmlStreamWriter_writeCharacters_utf8(w, "Hello World");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "Hello World")) {
@@ -560,8 +572,8 @@ static bool test_write_characters(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCharacters 空", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "p");
-        XXmlStreamWriter_writeCharacters(w, "");
+        XXmlStreamWriter_writeStartElement_utf8(w, "p");
+        XXmlStreamWriter_writeCharacters_utf8(w, "");
         XXmlStreamWriter_writeEndElement(w);
         TEST_PASS("writeCharacters 空字符串安全");
         XXmlStreamWriter_delete_base(w);
@@ -571,8 +583,8 @@ static bool test_write_characters(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCharacters 转义", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "p");
-        XXmlStreamWriter_writeCharacters(w, "a & b < c > d \" e ' f");
+        XXmlStreamWriter_writeStartElement_utf8(w, "p");
+        XXmlStreamWriter_writeCharacters_utf8(w, "a & b < c > d \" e ' f");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "&amp;") && strstr(result, "&lt;") && strstr(result, "&gt;")) {
@@ -588,8 +600,8 @@ static bool test_write_characters(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCharacters 中文", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "p");
-        XXmlStreamWriter_writeCharacters(w, "你好，世界！");
+        XXmlStreamWriter_writeStartElement_utf8(w, "p");
+        XXmlStreamWriter_writeCharacters_utf8(w, "你好，世界！");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "你好")) {
@@ -614,8 +626,8 @@ static bool test_write_cdata(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCDATA", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "script");
-        XXmlStreamWriter_writeCDATA(w, "if (a < b && b > c)");
+        XXmlStreamWriter_writeStartElement_utf8(w, "script");
+        XXmlStreamWriter_writeCDATA_utf8(w, "if (a < b && b > c)");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<![CDATA[") && strstr(result, "if (a < b && b > c)")) {
@@ -631,8 +643,8 @@ static bool test_write_cdata(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeCDATA 空", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "script");
-        XXmlStreamWriter_writeCDATA(w, "");
+        XXmlStreamWriter_writeStartElement_utf8(w, "script");
+        XXmlStreamWriter_writeCDATA_utf8(w, "");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<![CDATA[]]>")) {
@@ -656,7 +668,7 @@ static bool test_write_comment(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeComment", "创建失败"); return false; }
-        XXmlStreamWriter_writeComment(w, "This is a comment");
+        XXmlStreamWriter_writeComment_utf8(w, "This is a comment");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<!--") && strstr(result, "This is a comment") && strstr(result, "-->")) {
             TEST_PASS("writeComment");
@@ -671,7 +683,7 @@ static bool test_write_comment(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeComment 空", "创建失败"); return false; }
-        XXmlStreamWriter_writeComment(w, "");
+        XXmlStreamWriter_writeComment_utf8(w, "");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<!---->")) {
             TEST_PASS("writeComment 空字符串");
@@ -686,7 +698,7 @@ static bool test_write_comment(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeComment 中文", "创建失败"); return false; }
-        XXmlStreamWriter_writeComment(w, "这是一个注释");
+        XXmlStreamWriter_writeComment_utf8(w, "这是一个注释");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "这是一个注释")) {
             TEST_PASS("writeComment 中文注释");
@@ -710,7 +722,7 @@ static bool test_write_processing_instruction(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeProcessingInstruction", "创建失败"); return false; }
-        XXmlStreamWriter_writeProcessingInstruction(w, "xml-stylesheet", "type=\"text/xsl\" href=\"style.xsl\"");
+        XXmlStreamWriter_writeProcessingInstruction_utf8(w, "xml-stylesheet", "type=\"text/xsl\" href=\"style.xsl\"");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<?xml-stylesheet") && strstr(result, "?>")) {
             TEST_PASS("writeProcessingInstruction");
@@ -725,7 +737,7 @@ static bool test_write_processing_instruction(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeProcessingInstruction 无数据", "创建失败"); return false; }
-        XXmlStreamWriter_writeProcessingInstruction(w, "target", NULL);
+        XXmlStreamWriter_writeProcessingInstruction_utf8(w, "target", NULL);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<?target?>")) {
             TEST_PASS("writeProcessingInstruction 无数据");
@@ -748,7 +760,7 @@ static bool test_write_entity_reference(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeEntityReference", "创建失败"); return false; }
-        XXmlStreamWriter_writeEntityReference(w, "amp");
+        XXmlStreamWriter_writeEntityReference_utf8(w, "amp");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "&amp;")) {
             TEST_PASS("writeEntityReference(amp)");
@@ -763,7 +775,7 @@ static bool test_write_entity_reference(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeEntityReference 自定义", "创建失败"); return false; }
-        XXmlStreamWriter_writeEntityReference(w, "myentity");
+        XXmlStreamWriter_writeEntityReference_utf8(w, "myentity");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "&myentity;")) {
             TEST_PASS("writeEntityReference(myentity)");
@@ -786,7 +798,7 @@ static bool test_write_dtd(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeDTD", "创建失败"); return false; }
-        XXmlStreamWriter_writeDTD(w, "<!DOCTYPE root PUBLIC \"-//Test//DTD//EN\">");
+        XXmlStreamWriter_writeDTD_utf8(w, "<!DOCTYPE root PUBLIC \"-//Test//DTD//EN\">");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<!DOCTYPE")) {
             TEST_PASS("writeDTD");
@@ -801,7 +813,7 @@ static bool test_write_dtd(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeDTD 简单", "创建失败"); return false; }
-        XXmlStreamWriter_writeDTD(w, "<!DOCTYPE root>");
+        XXmlStreamWriter_writeDTD_utf8(w, "<!DOCTYPE root>");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<!DOCTYPE root>")) {
             TEST_PASS("writeDTD 简单");
@@ -824,8 +836,8 @@ static bool test_write_namespace(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeNamespace", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "root");
-        XXmlStreamWriter_writeNamespace(w, "http://ns.com", "ns");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeNamespace_utf8(w, "http://ns.com", "ns");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result) {
@@ -841,8 +853,8 @@ static bool test_write_namespace(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeDefaultNamespace", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "root");
-        XXmlStreamWriter_writeDefaultNamespace(w, "http://default.com");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeDefaultNamespace_utf8(w, "http://default.com");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result) {
@@ -858,7 +870,7 @@ static bool test_write_namespace(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartElement_ex 命名空间", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement_ex(w, "http://ns.com", "item");
+        XXmlStreamWriter_writeStartElement_ex_utf8(w, "http://ns.com", "item");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "item")) {
@@ -882,8 +894,8 @@ static bool test_write_default_namespace(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeDefaultNamespace", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w, "root");
-        XXmlStreamWriter_writeDefaultNamespace(w, "http://default.com");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeDefaultNamespace_utf8(w, "http://default.com");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
         if (result) {
@@ -908,7 +920,7 @@ static bool test_write_text_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeTextElement", "创建失败"); return false; }
-        XXmlStreamWriter_writeTextElement(w, "title", "Hello");
+        XXmlStreamWriter_writeTextElement_utf8(w, "title", "Hello");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<title>") && strstr(result, "Hello") && strstr(result, "</title>")) {
             TEST_PASS("writeTextElement(title, Hello)");
@@ -923,7 +935,7 @@ static bool test_write_text_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeTextElement_ex", "创建失败"); return false; }
-        XXmlStreamWriter_writeTextElement_ex(w, "http://ns.com", "item", "value");
+        XXmlStreamWriter_writeTextElement_ex_utf8(w, "http://ns.com", "item", "value");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "item") && strstr(result, "value")) {
             TEST_PASS("writeTextElement_ex 带命名空间");
@@ -938,7 +950,7 @@ static bool test_write_text_element(void)
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeTextElement 空文本", "创建失败"); return false; }
-        XXmlStreamWriter_writeTextElement(w, "empty", "");
+        XXmlStreamWriter_writeTextElement_utf8(w, "empty", "");
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "<empty>") && strstr(result, "</empty>")) {
             TEST_PASS("writeTextElement 空文本");
@@ -1015,9 +1027,9 @@ static bool test_auto_formatting(void)
         if (!w) { TEST_FAIL("格式化输出", "创建失败"); return false; }
         XXmlStreamWriter_setAutoFormatting(w, true);
         XXmlStreamWriter_setAutoFormattingIndent(w, 4);
-        XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
-        XXmlStreamWriter_writeStartElement(w, "root");
-        XXmlStreamWriter_writeStartElement(w, "child");
+        XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w, "child");
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
@@ -1042,7 +1054,7 @@ static bool test_to_string_bytearray(void)
     XXmlStreamWriter* w = XXmlStreamWriter_create();
     if (!w) { TEST_FAIL("toString/ByteArray", "创建失败"); return false; }
 
-    XXmlStreamWriter_writeStartElement(w, "root");
+    XXmlStreamWriter_writeStartElement_utf8(w, "root");
     XXmlStreamWriter_writeEndElement(w);
 
     /* 测试toString */
@@ -1108,7 +1120,7 @@ static bool test_copy_move(void)
     {
         XXmlStreamWriter* w1 = XXmlStreamWriter_create();
         if (!w1) { TEST_FAIL("拷贝测试", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w1, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w1, "root");
         XXmlStreamWriter_writeEndElement(w1);
 
         /* 栈上初始化并拷贝 */
@@ -1130,7 +1142,7 @@ static bool test_copy_move(void)
     {
         XXmlStreamWriter* w1 = XXmlStreamWriter_create();
         if (!w1) { TEST_FAIL("移动测试", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w1, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w1, "root");
         XXmlStreamWriter_writeEndElement(w1);
 
         XXmlStreamWriter w2;
@@ -1150,8 +1162,8 @@ static bool test_copy_move(void)
     {
         XXmlStreamWriter* w1 = XXmlStreamWriter_create();
         if (!w1) { TEST_FAIL("深拷贝验证", "创建失败"); return false; }
-        XXmlStreamWriter_writeStartElement(w1, "root");
-        XXmlStreamWriter_writeStartElement(w1, "child");
+        XXmlStreamWriter_writeStartElement_utf8(w1, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w1, "child");
         XXmlStreamWriter_writeEndElement(w1);
         XXmlStreamWriter_writeEndElement(w1);
 
@@ -1195,34 +1207,34 @@ static bool test_complex_document(void)
     if (!w) { TEST_FAIL("复杂文档", "创建失败"); return false; }
 
     /* 生成一个完整的XHTML文档 */
-    XXmlStreamWriter_writeStartDocument_ex(w, "1.0");
-    XXmlStreamWriter_writeComment(w, "这是一个复杂文档测试");
-    XXmlStreamWriter_writeProcessingInstruction(w, "xml-stylesheet", "type=\"text/xsl\"");
-    XXmlStreamWriter_writeDTD(w, "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\">");
+    XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
+    XXmlStreamWriter_writeComment_utf8(w, "这是一个复杂文档测试");
+    XXmlStreamWriter_writeProcessingInstruction_utf8(w, "xml-stylesheet", "type=\"text/xsl\"");
+    XXmlStreamWriter_writeDTD_utf8(w, "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\">");
 
-    XXmlStreamWriter_writeStartElement(w, "html");
-    XXmlStreamWriter_writeStartElement(w, "head");
-    XXmlStreamWriter_writeStartElement(w, "title");
-    XXmlStreamWriter_writeCharacters(w, "Test Document");
+    XXmlStreamWriter_writeStartElement_utf8(w, "html");
+    XXmlStreamWriter_writeStartElement_utf8(w, "head");
+    XXmlStreamWriter_writeStartElement_utf8(w, "title");
+    XXmlStreamWriter_writeCharacters_utf8(w, "Test Document");
     XXmlStreamWriter_writeEndElement(w);
     XXmlStreamWriter_writeEndElement(w);
 
-    XXmlStreamWriter_writeStartElement(w, "body");
-    XXmlStreamWriter_writeAttribute(w, "class", "main");
+    XXmlStreamWriter_writeStartElement_utf8(w, "body");
+    XXmlStreamWriter_writeAttribute_utf8(w, "class", "main");
 
-    XXmlStreamWriter_writeStartElement(w, "h1");
-    XXmlStreamWriter_writeCharacters(w, "Hello World");
+    XXmlStreamWriter_writeStartElement_utf8(w, "h1");
+    XXmlStreamWriter_writeCharacters_utf8(w, "Hello World");
     XXmlStreamWriter_writeEndElement(w);
 
-    XXmlStreamWriter_writeStartElement(w, "p");
-    XXmlStreamWriter_writeAttribute(w, "id", "p1");
-    XXmlStreamWriter_writeCharacters(w, "This is a paragraph with <special> & characters.");
+    XXmlStreamWriter_writeStartElement_utf8(w, "p");
+    XXmlStreamWriter_writeAttribute_utf8(w, "id", "p1");
+    XXmlStreamWriter_writeCharacters_utf8(w, "This is a paragraph with <special> & characters.");
     XXmlStreamWriter_writeEndElement(w);
 
-    XXmlStreamWriter_writeEmptyElement(w, "br");
+    XXmlStreamWriter_writeEmptyElement_utf8(w, "br");
 
-    XXmlStreamWriter_writeStartElement(w, "script");
-    XXmlStreamWriter_writeCDATA(w, "if (a < b) { alert('test'); }");
+    XXmlStreamWriter_writeStartElement_utf8(w, "script");
+    XXmlStreamWriter_writeCDATA_utf8(w, "if (a < b) { alert('test'); }");
     XXmlStreamWriter_writeEndElement(w);
 
     XXmlStreamWriter_writeEndElement(w); /* body */
@@ -1354,70 +1366,70 @@ static bool test_null_safety(void)
     bool all_pass = true;
 
     /* 向NULL writer传参的各种函数 */
-    XXmlStreamWriter_writeStartDocument_ex(NULL, "1.0");
+    XXmlStreamWriter_writeStartDocument_ex_utf8(NULL, "1.0");
     TEST_PASS("writeStartDocument(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeStartDocument_ex(NULL, "1.0");
+    XXmlStreamWriter_writeStartDocument_ex_utf8(NULL, "1.0");
     TEST_PASS("writeStartDocument_ex(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeStartDocument_ex_2(NULL, "1.0", true);
+    XXmlStreamWriter_writeStartDocument_ex_2_utf8(NULL, "1.0", true);
     TEST_PASS("writeStartDocument_ex_2(NULL, ...) 安全");
 
     XXmlStreamWriter_writeEndDocument(NULL);
     TEST_PASS("writeEndDocument(NULL) 安全");
 
-    XXmlStreamWriter_writeStartElement(NULL, "root");
+    XXmlStreamWriter_writeStartElement_utf8(NULL, "root");
     TEST_PASS("writeStartElement(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeStartElement_ex(NULL, "ns", "root");
+    XXmlStreamWriter_writeStartElement_ex_utf8(NULL, "ns", "root");
     TEST_PASS("writeStartElement_ex(NULL, ...) 安全");
 
     XXmlStreamWriter_writeEndElement(NULL);
     TEST_PASS("writeEndElement(NULL) 安全");
 
-    XXmlStreamWriter_writeEmptyElement(NULL, "br");
+    XXmlStreamWriter_writeEmptyElement_utf8(NULL, "br");
     TEST_PASS("writeEmptyElement(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeEmptyElement_ex(NULL, "ns", "br");
+    XXmlStreamWriter_writeEmptyElement_ex_utf8(NULL, "ns", "br");
     TEST_PASS("writeEmptyElement_ex(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeAttribute(NULL, "id", "1");
+    XXmlStreamWriter_writeAttribute_utf8(NULL, "id", "1");
     TEST_PASS("writeAttribute(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeAttribute_ex(NULL, "ns", "id", "1");
+    XXmlStreamWriter_writeAttribute_ex_utf8(NULL, "ns", "id", "1");
     TEST_PASS("writeAttribute_ex(NULL, ...) 安全");
 
     XXmlStreamWriter_writeAttribute_attr(NULL, NULL);
     TEST_PASS("writeAttribute_attr(NULL, NULL) 安全");
 
-    XXmlStreamWriter_writeCharacters(NULL, "text");
+    XXmlStreamWriter_writeCharacters_utf8(NULL, "text");
     TEST_PASS("writeCharacters(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeCDATA(NULL, "cdata");
+    XXmlStreamWriter_writeCDATA_utf8(NULL, "cdata");
     TEST_PASS("writeCDATA(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeComment(NULL, "comment");
+    XXmlStreamWriter_writeComment_utf8(NULL, "comment");
     TEST_PASS("writeComment(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeProcessingInstruction(NULL, "target", "data");
+    XXmlStreamWriter_writeProcessingInstruction_utf8(NULL, "target", "data");
     TEST_PASS("writeProcessingInstruction(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeEntityReference(NULL, "amp");
+    XXmlStreamWriter_writeEntityReference_utf8(NULL, "amp");
     TEST_PASS("writeEntityReference(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeDTD(NULL, "<!DOCTYPE root>");
+    XXmlStreamWriter_writeDTD_utf8(NULL, "<!DOCTYPE root>");
     TEST_PASS("writeDTD(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeNamespace(NULL, "uri", "prefix");
+    XXmlStreamWriter_writeNamespace_utf8(NULL, "uri", "prefix");
     TEST_PASS("writeNamespace(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeDefaultNamespace(NULL, "uri");
+    XXmlStreamWriter_writeDefaultNamespace_utf8(NULL, "uri");
     TEST_PASS("writeDefaultNamespace(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeTextElement(NULL, "elem", "text");
+    XXmlStreamWriter_writeTextElement_utf8(NULL, "elem", "text");
     TEST_PASS("writeTextElement(NULL, ...) 安全");
 
-    XXmlStreamWriter_writeTextElement_ex(NULL, "ns", "elem", "text");
+    XXmlStreamWriter_writeTextElement_ex_utf8(NULL, "ns", "elem", "text");
     TEST_PASS("writeTextElement_ex(NULL, ...) 安全");
 
     /* setAutoFormatting */

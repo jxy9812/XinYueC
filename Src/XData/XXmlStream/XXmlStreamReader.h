@@ -233,6 +233,23 @@ void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const XString* name
  */
 void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const XString* qualifiedName, const XString* value);
 
+/**
+ * @brief      追加属性（UTF-8 版本）
+ * @param self          目标 XXmlStreamAttributes 指针
+ * @param namespaceUri  命名空间 URI（UTF-8 编码，可为 NULL）
+ * @param name          属性名（UTF-8 编码）
+ * @param value         属性值（UTF-8 编码）
+ */
+void XXmlStreamAttributes_append_utf8(XXmlStreamAttributes* self, const char* namespaceUri, const char* name, const char* value);
+
+/**
+ * @brief      追加属性（带限定名，UTF-8 版本）
+ * @param self          目标 XXmlStreamAttributes 指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ * @param value         属性值（UTF-8 编码）
+ */
+void XXmlStreamAttributes_append_ex_utf8(XXmlStreamAttributes* self, const char* qualifiedName, const char* value);
+
 /* ========== XXmlStreamNamespaceDeclaration 结构体（对标 QXmlStreamNamespaceDeclaration） ========== */
 
 /**

@@ -114,6 +114,7 @@ bool XWorksheet_write(XWorksheet* self, int row, int column, const XVariant* val
 bool XWorksheet_writeRef(XWorksheet* self, const XCellReference* cell, const XVariant* value, const XFormat* format);
 
 bool XWorksheet_writeString(XWorksheet* self, int row, int column, const XString* value, const XFormat* format);
+bool XWorksheet_writeString_utf8(XWorksheet* self, int row, int column, const char* value, const XFormat* format);
 bool XWorksheet_writeStringRef(XWorksheet* self, const XCellReference* cell, const XString* value, const XFormat* format);
 bool XWorksheet_writeRichString(XWorksheet* self, int row, int column, const XRichString* value, const XFormat* format);
 bool XWorksheet_writeRichStringRef(XWorksheet* self, const XCellReference* cell, const XRichString* value, const XFormat* format);

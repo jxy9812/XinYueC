@@ -406,6 +406,8 @@ const XString* XFormat_fontName(const XFormat* self);
  * @param name 字体名称
  */
 void XFormat_setFontName(XFormat* self, const XString* name);
+void XFormat_setFontName_utf8(XFormat* self, const char* name);
+const char* XFormat_fontName_utf8(const XFormat* self);
 
 /**
  * @brief      获取字体对象

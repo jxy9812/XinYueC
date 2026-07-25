@@ -65,6 +65,7 @@ XCellRange XCellRange_create_ref(const XCellReference* topLeft, const XCellRefer
  * @return     解析后的 XCellRange 对象
  */
 XCellRange XCellRange_create_str(const XString* range);
+XCellRange XCellRange_create_str_utf8(const char* range);
 
 /**
  * @brief      从 C 字符串字面量创建 XCellRange 对象
