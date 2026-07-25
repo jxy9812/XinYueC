@@ -105,12 +105,26 @@ XVtable* XUrl_class_init(void);
 XUrl* XUrl_create(void);
 
 /**
+ * @brief      在堆上拷贝创建 XUrl 实例（深拷贝）
+ * @param other 源 XUrl 对象指针
+ * @return     指向新创建的 XUrl 对象的指针，失败返回 NULL
+ */
+XUrl* XUrl_create_copy(const XUrl* other);
+
+/**
+ * @brief      在堆上移动创建 XUrl 实例（转移 other 资源所有权）
+ * @param other 源 XUrl 对象指针（移动后被置空）
+ * @return     指向新创建的 XUrl 对象的指针，失败返回 NULL
+ */
+XUrl* XUrl_create_move(XUrl* other);
+
+/**
  * @brief      在堆上创建 XUrl 实例（从字符串）
  * @param urlString URL 字符串
  * @param mode      解析模式
  * @return     指向新创建的 XUrl 对象的指针，失败返回 NULL
  */
-XUrl* XUrl_create_ex(const char* urlString, XUrl_ParsingMode mode);
+XUrl* XUrl_create_ex(const XString* urlString, XUrl_ParsingMode mode);
 
 /**
  * @brief      初始化 XUrl 实例
@@ -124,40 +138,14 @@ void XUrl_init(XUrl* self);
  * @param urlString URL 字符串
  * @param mode      解析模式
  */
-void XUrl_init_ex(XUrl* self, const char* urlString, XUrl_ParsingMode mode);
-
-/**
- * @brief      复制构造函数
- * @param self 目标 XUrl 对象指针
- * @param other 源 XUrl 对象指针
- */
-void XUrl_copy(XUrl* self, const XUrl* other);
-
-/**
- * @brief      移动构造函数
- * @param self 目标 XUrl 对象指针
- * @param other 源 XUrl 对象指针（移动后源对象变为空）
- */
-void XUrl_move(XUrl* self, XUrl* other);
-
-/**
- * @brief      释放 XUrl 资源
- * @param self 待释放的 XUrl 对象指针
- */
-void XUrl_deinit(XUrl* self);
-
-/**
- * @brief      在堆上删除 XUrl 实例
- * @param self 待删除的 XUrl 对象指针
- */
-void XUrl_delete(XUrl* self);
+void XUrl_init_ex(XUrl* self, const XString* urlString, XUrl_ParsingMode mode);
 
 /* ========== 虚函数调度 ========== */
 
-void XUrl_copy_base(XUrl* dest, const XUrl* src);
-void XUrl_move_base(XUrl* dest, XUrl* src);
-void XUrl_deinit_base(XUrl* self);
-void XUrl_delete_base(XUrl* self);
+#define  XUrl_copy_base            XClass_copy_base
+#define  XUrl_move_base            XClass_move_base
+#define  XUrl_deinit_base          XClass_deinit_base
+#define  XUrl_delete_base          XClass_delete_base
 
 /* ========== 设置 URL ========== */
 
@@ -167,7 +155,7 @@ void XUrl_delete_base(XUrl* self);
  * @param urlString URL 字符串
  * @param mode      解析模式
  */
-void XUrl_setUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode);
+void XUrl_setUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode);
 
 /**
  * @brief      从编码后的字符串设置 URL
@@ -175,7 +163,7 @@ void XUrl_setUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode);
  * @param urlString 编码后的 URL 字符串
  * @param mode      解析模式
  */
-void XUrl_setEncodedUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode);
+void XUrl_setEncodedUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode);
 
 /* ========== 查询方法 ========== */
 
@@ -212,58 +200,58 @@ bool XUrl_isLocalFile(const XUrl* self);
 /**
  * @brief      获取方案
  * @param self 目标 XUrl 对象指针
- * @return     方案字符串
+ * @return     方案字符串（XString，需调用方按需使用）
  */
-const char* XUrl_scheme(const XUrl* self);
+const XString* XUrl_scheme_const(const XUrl* self);
 
 /**
  * @brief      设置方案
  * @param self   目标 XUrl 对象指针
  * @param scheme 方案字符串
  */
-void XUrl_setScheme(XUrl* self, const char* scheme);
+void XUrl_setScheme(XUrl* self, const XString* scheme);
 
 /**
  * @brief      获取用户名
  * @param self 目标 XUrl 对象指针
- * @return     用户名字符串
+ * @return     用户名字符串（XString）
  */
-const char* XUrl_userName(const XUrl* self);
+const XString* XUrl_userName_const(const XUrl* self);
 
 /**
  * @brief      设置用户名
  * @param self     目标 XUrl 对象指针
  * @param userName 用户名字符串
  */
-void XUrl_setUserName(XUrl* self, const char* userName);
+void XUrl_setUserName(XUrl* self, const XString* userName);
 
 /**
  * @brief      获取密码
  * @param self 目标 XUrl 对象指针
- * @return     密码字符串
+ * @return     密码字符串（XString）
  */
-const char* XUrl_password(const XUrl* self);
+const XString* XUrl_password_const(const XUrl* self);
 
 /**
  * @brief      设置密码
  * @param self     目标 XUrl 对象指针
  * @param password 密码字符串
  */
-void XUrl_setPassword(XUrl* self, const char* password);
+void XUrl_setPassword(XUrl* self, const XString* password);
 
 /**
  * @brief      获取主机名
  * @param self 目标 XUrl 对象指针
- * @return     主机名字符串
+ * @return     主机名字符串（XString）
  */
-const char* XUrl_host(const XUrl* self);
+const XString* XUrl_host_const(const XUrl* self);
 
 /**
  * @brief      设置主机名
  * @param self 目标 XUrl 对象指针
  * @param host 主机名字符串
  */
-void XUrl_setHost(XUrl* self, const char* host);
+void XUrl_setHost(XUrl* self, const XString* host);
 
 /**
  * @brief      获取端口号
@@ -282,95 +270,89 @@ void XUrl_setPort(XUrl* self, int port);
 /**
  * @brief      获取路径
  * @param self 目标 XUrl 对象指针
- * @return     路径字符串
+ * @return     路径字符串（XString）
  */
-const char* XUrl_path(const XUrl* self);
+const XString* XUrl_path_const(const XUrl* self);
 
 /**
  * @brief      设置路径
  * @param self 目标 XUrl 对象指针
  * @param path 路径字符串
  */
-void XUrl_setPath(XUrl* self, const char* path);
+void XUrl_setPath(XUrl* self, const XString* path);
 
 /**
  * @brief      获取查询字符串
  * @param self 目标 XUrl 对象指针
- * @return     查询字符串
+ * @return     查询字符串（XString）
  */
-const char* XUrl_query(const XUrl* self);
+const XString* XUrl_query_const(const XUrl* self);
 
 /**
  * @brief      设置查询字符串
  * @param self  目标 XUrl 对象指针
  * @param query 查询字符串
  */
-void XUrl_setQuery(XUrl* self, const char* query);
+void XUrl_setQuery(XUrl* self, const XString* query);
 
 /**
  * @brief      获取片段标识符
  * @param self 目标 XUrl 对象指针
- * @return     片段标识符
+ * @return     片段标识符（XString）
  */
-const char* XUrl_fragment(const XUrl* self);
+const XString* XUrl_fragment_const(const XUrl* self);
 
 /**
  * @brief      设置片段标识符
  * @param self     目标 XUrl 对象指针
  * @param fragment 片段标识符
  */
-void XUrl_setFragment(XUrl* self, const char* fragment);
+void XUrl_setFragment(XUrl* self, const XString* fragment);
 
 /**
  * @brief      获取用户信息（username:password）
  * @param self 目标 XUrl 对象指针
- * @return     用户信息字符串
+ * @return     用户信息字符串（XString）
  */
-const char* XUrl_userInfo(const XUrl* self);
+const XString* XUrl_userInfo_const(const XUrl* self);
 
 /**
  * @brief      设置用户信息
  * @param self     目标 XUrl 对象指针
  * @param userInfo 用户信息字符串（username:password 格式）
  */
-void XUrl_setUserInfo(XUrl* self, const char* userInfo);
+void XUrl_setUserInfo(XUrl* self, const XString* userInfo);
 
 /**
  * @brief      获取权限部分（userinfo@host:port）
  * @param self 目标 XUrl 对象指针
- * @return     权限字符串
+ * @return     权限字符串（XString）
  */
-const char* XUrl_authority(const XUrl* self);
+const XString* XUrl_authority_const(const XUrl* self);
 
 /* ========== 转换方法 ========== */
 
 /**
  * @brief      将 URL 转换为字符串
  * @param self   目标 XUrl 对象指针
- * @param out    输出字符串缓冲区
- * @param size   缓冲区大小
- * @return      指向 out 的指针
+ * @return      新分配的 XString 字符串（调用方负责释放）
  */
-char* XUrl_toString(const XUrl* self, char* out, size_t size);
+XString* XUrl_toString(const XUrl* self);
 
 /**
  * @brief      将 URL 转换为编码后的字符串
  * @param self   目标 XUrl 对象指针
- * @param out    输出字符串缓冲区
- * @param size   缓冲区大小
- * @return      指向 out 的指针
+ * @return      新分配的 XString 字符串（调用方负责释放）
  */
-char* XUrl_toEncoded(const XUrl* self, char* out, size_t size);
+XString* XUrl_toEncoded(const XUrl* self);
 
 /**
  * @brief      将 URL 转换为显示字符串（考虑格式化选项）
  * @param self   目标 XUrl 对象指针
  * @param options 格式化选项（位标志组合）
- * @param out    输出字符串缓冲区
- * @param size   缓冲区大小
- * @return      指向 out 的指针
+ * @return      新分配的 XString 字符串（调用方负责释放）
  */
-char* XUrl_toDisplayString(const XUrl* self, int options, char* out, size_t size);
+XString* XUrl_toDisplayString(const XUrl* self, int options);
 
 /* ========== 静态方法 ========== */
 
@@ -379,14 +361,14 @@ char* XUrl_toDisplayString(const XUrl* self, int options, char* out, size_t size
  * @param localfile 本地文件路径
  * @return     指向新 XUrl 的指针，调用者负责释放
  */
-XUrl* XUrl_fromLocalFile(const char* localfile);
+XUrl* XUrl_fromLocalFile(const XString* localfile);
 
 /**
  * @brief      将 URL 转换为本地文件路径
  * @param self 目标 XUrl 对象指针
- * @return     本地文件路径字符串（内部缓冲区，每次调用覆盖）
+ * @return     新分配的本地文件路径 XString（调用方负责释放），非本地文件返回 NULL
  */
-const char* XUrl_toLocalFile(const XUrl* self);
+const XString* XUrl_toLocalFile_const(const XUrl* self);
 
 /**
  * @brief      解析相对 URL
@@ -394,7 +376,7 @@ const char* XUrl_toLocalFile(const XUrl* self);
  * @param relative 相对 URL 字符串
  * @param out      输出 XUrl 对象指针
  */
-void XUrl_resolved(const XUrl* self, const char* relative, XUrl* out);
+void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out);
 
 /**
  * @brief      URL 编码
@@ -403,14 +385,14 @@ void XUrl_resolved(const XUrl* self, const char* relative, XUrl* out);
  * @param include 强制编码的字符
  * @return     指向新 XString 的指针，调用者负责释放
  */
-XString* XUrl_toPercentEncoding(const char* input, const char* exclude, const char* include);
+XString* XUrl_toPercentEncoding(const XString* input, const XString* exclude, const XString* include);
 
 /**
  * @brief      URL 解码
  * @param input 编码后的输入字符串
  * @return     指向新 XString 的指针，调用者负责释放
  */
-XString* XUrl_fromPercentEncoding(const char* input);
+XString* XUrl_fromPercentEncoding(const XString* input);
 
 /**
  * @brief      判断两个 URL 是否相等

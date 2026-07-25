@@ -14,6 +14,9 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "XString.h"
+#include "XStringList.h"
+
 /* ========== 颜色规格枚举（对标 Qt 6.8 QColor::Spec） ========== */
 
 /**
@@ -203,17 +206,16 @@ XColor_Spec XColor_spec(const XColor* self);
  * @brief      将颜色转换为字符串名称（如 "#RRGGBB" 或 "#AARRGGBB"）
  * @param self   目标 XColor 对象指针
  * @param format 名称格式（HexRgb 或 HexArgb）
- * @param out    输出字符串缓冲区（至少 10 字节）
- * @return       指向 out 的指针
+ * @return       颜色名称字符串
  */
-char* XColor_toHexString(const XColor* self, XColor_NameFormat format, char* out);
+XString XColor_toHexString(const XColor* self, XColor_NameFormat format);
 
 /**
  * @brief      从字符串名称解析颜色（如 "#FF8800"、"red"、"lightblue"）
  * @param name 颜色名称字符串
  * @return     解析成功返回对应的 XColor 对象，否则返回无效颜色
  */
-XColor XColor_fromString(const char* name);
+XColor XColor_fromString(const XString* name);
 
 /* ========== RGB 分量访问 ========== */
 
@@ -735,17 +737,16 @@ bool XColor_equals(const XColor* a, const XColor* b);
 
 /**
  * @brief      获取所有 SVG 命名颜色名称列表
- * @param outCount 输出颜色数量指针
- * @return     颜色名称字符串数组（以 NULL 结尾），由调用者 free
+ * @return     XStringList 指针，包含所有颜色名称，由调用者 XStringList_delete
  */
-const char** XColor_colorNames(int* outCount);
+XStringList* XColor_colorNames(void);
 
 /**
  * @brief      按名称获取 SVG 命名颜色
  * @param name 颜色名称（不区分大小写）
  * @return     对应的颜色，未找到返回无效颜色
  */
-XColor XColor_fromName(const char* name);
+XColor XColor_fromName(const XString* name);
 
 /* ========== 预定义常用颜色常量 ========== */
 

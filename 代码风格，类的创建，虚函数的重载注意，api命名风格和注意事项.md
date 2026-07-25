@@ -241,24 +241,28 @@ static void VXExample_deinit(XExample* obj)
 static void VXExample_copy(XExample* dest, const XExample* src)
 {
     if (!dest || !src) return;
-    
-    // 确保目标对象已初始化
-    XClassEnsureVtable(dest, XExample);
-    
+
+    // 确保目标对象已初始化：
+    // 如果 vtable 为空（调用方忘了 init），自动调用 init 完整初始化
+    // 这样 copy_base / move_base 可以在未 init 的目标上安全调用
+    if (XClassIsVtableNull(dest)) {
+        XExample_init(dest);
+    }
+
     // 先释放目标对象的旧值
     if (dest->m_data) {
         XFree_System(dest->m_data);
         dest->m_data = NULL;
     }
-    
+
     // 复制基本类型成员
     dest->m_value = src->m_value;
-    
+
     // 深拷贝动态分配的成员
     if (src->m_data) {
         dest->m_data = XStrdup(src->m_data);
     }
-    
+
     //对于成员也是类的，可以直接调用成员的拷贝函数，而无需先释放.
     //成员未初始化的时候可以直接调用成员的拷贝构造.
 }
@@ -266,10 +270,12 @@ static void VXExample_copy(XExample* dest, const XExample* src)
 static void VXExample_move(XExample* dest, XExample* src)
 {
     if (!dest || !src) return;
-    
-    // 确保目标对象已初始化
-    XClassEnsureVtable(dest, XExample);
-    
+
+    // 同 copy：vtable 为空就调 init 完整初始化
+    if (XClassIsVtableNull(dest)) {
+        XExample_init(dest);
+    }
+
     // 转移资源
     dest->m_value = src->m_value;
     dest->m_data = src->m_data;
@@ -1319,21 +1325,53 @@ XVTABLE_INHERIT_XCLASS(XClass);
 XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXExample_deinit);
 ```
 
-### 5. copy_base 前未初始化目标对象
+### 5. copy / move 虚函数必须支持未初始化目标的安全调用
+
+**规则**：所有 `VXxxx_copy` / `VXxxx_move` 虚函数实现，第一行参数检查之后，**必须**用 `XClassIsVtableNull(dest)` 检查目标对象 vtable 是否为空。如果为空，必须调用 `XType_init(dest)` 完整初始化对象（包括分配资源、设置 vtable）。这样 `copy_base` / `move_base` 可以安全地在未 init 的目标上调用。
 
 ```c
-// ❌ 错误
-XExample dest, src;
-XExample_init(&src);
-XExample_copy_base(&dest, &src);  // dest 未初始化！
+static void VXExample_copy(XExample* dest, const XExample* src)
+{
+    if (!dest || !src) return;
 
-// ✅ 正确
+    // ✅ 强制：vtable 为空就自动 init，让 copy_base 可以在未 init 的目标上安全调用
+    if (XClassIsVtableNull(dest)) {
+        XExample_init(dest);
+    }
+
+    // ... 实际的拷贝逻辑 ...
+}
+```
+
+**为什么**：
+- `XClassEnsureVtable` 只设置 vtable，不会分配成员资源，对 copy/move 来说不够
+- 让 copy/move 自动 init 目标，可以让 `XType_create_copy(src)` 这种便捷 API 不用关心 dest 是否已 init
+- 调用方也可以更灵活：先 `XType_init(&dest)` 再 `copy_base`，或者直接 `copy_base` 让虚函数自己 init
+
+**之前错误的写法**：
+```c
+// ❌ 错误：只 set vtable，没分配成员
+if (XClassIsVtableNull(dest)) {
+    XClassSetVtable(dest, XExample);  // 错误！成员还未分配
+}
+```
+
+**简化后的 copy_base / move_base 调用**：
+```c
+// ✅ 正确：目标不需要预先 init
 XExample dest, src;
 XExample_init(&src);
-XExample_init(&dest);             // 必须先 init
-XExample_copy_base(&dest, &src);
-XExample_deinit_base(&src);
+XExample_copy_base(&dest, &src);   // 自动 init dest
 XExample_deinit_base(&dest);
+XExample_deinit_base(&src);
+
+// ✅ 也支持预先 init
+XExample dest, src;
+XExample_init(&dest);
+XExample_init(&src);
+XExample_copy_base(&dest, &src);   // 检测到 vtable 非空，不会重复 init
+XExample_deinit_base(&dest);
+XExample_deinit_base(&src);
 ```
 
 ### 6. 使用 memcpy 代替 copy_base

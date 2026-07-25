@@ -28,17 +28,16 @@ extern "C" {
  */
 typedef struct XContentTypes
 {
-    XMap* m_defaults;    /**< 默认类型映射（后缀->
-MIME类型） */
-    XMap* m_overrides;
-    int m_worksheetCount;
-    int m_chartsheetCount;
-    int m_chartCount;
-    int m_drawingCount;
-    int m_commentCount;
-    int m_tableCount;
-    int m_externalLinkCount;
-    int m_vmlCount;   /**< 覆盖类型映射（路径->MIME类型） */
+    XMap* m_defaults;    /**< 默认类型映射（后缀->MIME类型） */
+    XMap* m_overrides;   /**< 覆盖类型映射（路径->MIME类型） */
+    int m_worksheetCount;      /**< 工作表数量 */
+    int m_chartsheetCount;     /**< 图表工作表数量 */
+    int m_chartCount;          /**< 图表数量 */
+    int m_drawingCount;        /**< 绘图数量 */
+    int m_commentCount;        /**< 批注数量 */
+    int m_tableCount;          /**< 表格数量 */
+    int m_externalLinkCount;   /**< 外部链接数量 */
+    int m_vmlCount;            /**< VML数量 */
 } XContentTypes;
 
 /**

@@ -18,28 +18,51 @@ extern "C" {
 #include "XVector.h"
 #include "XCellRange.h"
 #include "XCellReference.h"
+/** @brief 数据验证类型枚举 */
 typedef enum XDataValidation_ValidationType {
-    XDataValidation_None, XDataValidation_Whole, XDataValidation_Decimal,
-    XDataValidation_List, XDataValidation_Date, XDataValidation_Time,
-    XDataValidation_TextLength, XDataValidation_Custom
+    XDataValidation_None,           /**< 无验证 */
+    XDataValidation_Whole,          /**< 整数验证 */
+    XDataValidation_Decimal,        /**< 小数验证 */
+    XDataValidation_List,           /**< 下拉列表验证 */
+    XDataValidation_Date,           /**< 日期验证 */
+    XDataValidation_Time,          /**< 时间验证 */
+    XDataValidation_TextLength,     /**< 文本长度验证 */
+    XDataValidation_Custom          /**< 自定义公式验证 */
 } XDataValidation_ValidationType;
+
+/** @brief 数据验证运算符枚举 */
 typedef enum XDataValidation_ValidationOperator {
-    XDataValidation_Between, XDataValidation_NotBetween, XDataValidation_Equal,
-    XDataValidation_NotEqual, XDataValidation_LessThan, XDataValidation_LessThanOrEqual,
-    XDataValidation_GreaterThan, XDataValidation_GreaterThanOrEqual
+    XDataValidation_Between,                 /**< 介于 */
+    XDataValidation_NotBetween,              /**< 不介于 */
+    XDataValidation_Equal,                   /**< 等于 */
+    XDataValidation_NotEqual,                /**< 不等于 */
+    XDataValidation_LessThan,                /**< 小于 */
+    XDataValidation_LessThanOrEqual,         /**< 小于或等于 */
+    XDataValidation_GreaterThan,              /**< 大于 */
+    XDataValidation_GreaterThanOrEqual       /**< 大于或等于 */
 } XDataValidation_ValidationOperator;
+
+/** @brief 数据验证错误样式枚举 */
 typedef enum XDataValidation_ErrorStyle {
-    XDataValidation_Stop, XDataValidation_Warning, XDataValidation_Information
+    XDataValidation_Stop,          /**< 停止（禁止输入） */
+    XDataValidation_Warning,        /**< 警告 */
+    XDataValidation_Information     /**< 信息提示 */
 } XDataValidation_ErrorStyle;
+/** @brief 数据验证结构体 */
 typedef struct XDataValidation {
-    XDataValidation_ValidationType m_validationType;
-    XDataValidation_ValidationOperator m_validationOperator;
-    XDataValidation_ErrorStyle m_errorStyle;
-    XString* m_formula1; XString* m_formula2;
-    XString* m_errorMessage; XString* m_errorMessageTitle;
-    XString* m_promptMessage; XString* m_promptMessageTitle;
-    bool m_allowBlank; bool m_promptMessageVisible; bool m_errorMessageVisible;
-    XVector* m_ranges;
+    XDataValidation_ValidationType m_validationType;       /**< 验证类型 */
+    XDataValidation_ValidationOperator m_validationOperator; /**< 验证运算符 */
+    XDataValidation_ErrorStyle m_errorStyle;               /**< 错误样式 */
+    XString* m_formula1;                                   /**< 公式1 */
+    XString* m_formula2;                                   /**< 公式2 */
+    XString* m_errorMessage;                               /**< 错误消息 */
+    XString* m_errorMessageTitle;                          /**< 错误消息标题 */
+    XString* m_promptMessage;                               /**< 提示消息 */
+    XString* m_promptMessageTitle;                         /**< 提示消息标题 */
+    bool m_allowBlank;                                     /**< 是否允许空值 */
+    bool m_promptMessageVisible;                            /**< 提示消息是否可见 */
+    bool m_errorMessageVisible;                             /**< 错误消息是否可见 */
+    XVector* m_ranges;                                     /**< 验证范围列表 */
 } XDataValidation;
 /**
  * @brief  创建默认数据验证对象

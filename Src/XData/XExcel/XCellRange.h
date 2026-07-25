@@ -105,15 +105,74 @@ void XCellRange_init_str(XCellRange* self, const XString* range);
 
 /* ========== 访问方法 ========== */
 
+/**
+ * @brief      设置起始行号
+ * @param self 指针
+ * @param row  行号
+ */
 void XCellRange_setFirstRow(XCellRange* self, int row);
+
+/**
+ * @brief      设置结束行号
+ * @param self 指针
+ * @param row  行号
+ */
 void XCellRange_setLastRow(XCellRange* self, int row);
+
+/**
+ * @brief      设置起始列号
+ * @param self 指针
+ * @param col  列号
+ */
 void XCellRange_setFirstColumn(XCellRange* self, int col);
+
+/**
+ * @brief      设置结束列号
+ * @param self 指针
+ * @param col  列号
+ */
 void XCellRange_setLastColumn(XCellRange* self, int col);
+
+/**
+ * @brief      获取起始行号
+ * @param self 指针
+ * @return     起始行号
+ */
 int XCellRange_firstRow(const XCellRange* self);
+
+/**
+ * @brief      获取结束行号
+ * @param self 指针
+ * @return     结束行号
+ */
 int XCellRange_lastRow(const XCellRange* self);
+
+/**
+ * @brief      获取起始列号
+ * @param self 指针
+ * @return     起始列号
+ */
 int XCellRange_firstColumn(const XCellRange* self);
+
+/**
+ * @brief      获取结束列号
+ * @param self 指针
+ * @return     结束列号
+ */
 int XCellRange_lastColumn(const XCellRange* self);
+
+/**
+ * @brief      获取行数
+ * @param self 指针
+ * @return     行数
+ */
 int XCellRange_rowCount(const XCellRange* self);
+
+/**
+ * @brief      获取列数
+ * @param self 指针
+ * @return     列数
+ */
 int XCellRange_columnCount(const XCellRange* self);
 
 /**

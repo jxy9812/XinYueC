@@ -1476,6 +1476,268 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
 /* ---- 虚函数表 ---- */
 
 /**
+ * @brief      XXmlStreamReader 虚 deinit 函数（清理私有数据）
+ * @param obj   目标对象（XXmlStreamReader 指针）
+ */
+static void VXXmlStreamReader_deinit(XXmlStreamReader* obj)
+{
+    if (ISNULL(obj, "XXmlStreamReader")) return;
+    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(obj + 1);
+    private_deinit(d);
+}
+
+/* ========== 复制私有数据（深拷贝） ========== */
+static void private_copy(XXmlStreamReaderPrivate* dest, const XXmlStreamReaderPrivate* src)
+{
+    if (!dest || !src) return;
+
+    /* 释放目标已有资源（如果之前有） */
+    private_deinit(dest);
+
+    /* 深拷贝所有 XString 字段 */
+    if (src->m_name)                         dest->m_name = XString_create_copy(src->m_name);
+    if (src->m_qualifiedName)                dest->m_qualifiedName = XString_create_copy(src->m_qualifiedName);
+    if (src->m_prefix)                       dest->m_prefix = XString_create_copy(src->m_prefix);
+    if (src->m_namespaceUri)                 dest->m_namespaceUri = XString_create_copy(src->m_namespaceUri);
+    if (src->m_text)                         dest->m_text = XString_create_copy(src->m_text);
+    if (src->m_documentVersion)              dest->m_documentVersion = XString_create_copy(src->m_documentVersion);
+    if (src->m_documentEncoding)             dest->m_documentEncoding = XString_create_copy(src->m_documentEncoding);
+    if (src->m_dtdName)                      dest->m_dtdName = XString_create_copy(src->m_dtdName);
+    if (src->m_dtdPublicId)                  dest->m_dtdPublicId = XString_create_copy(src->m_dtdPublicId);
+    if (src->m_dtdSystemId)                  dest->m_dtdSystemId = XString_create_copy(src->m_dtdSystemId);
+    if (src->m_processingInstructionTarget)  dest->m_processingInstructionTarget = XString_create_copy(src->m_processingInstructionTarget);
+    if (src->m_processingInstructionData)    dest->m_processingInstructionData = XString_create_copy(src->m_processingInstructionData);
+    if (src->m_errorString)                  dest->m_errorString = XString_create_copy(src->m_errorString);
+    if (src->m_buffer)                       dest->m_buffer = XString_create_copy(src->m_buffer);
+
+    /* 深拷贝 attributes */
+    if (src->m_attributes) {
+        dest->m_attributes = XXmlStreamAttributes_create();
+        if (dest->m_attributes) {
+            int count = src->m_attributes->m_count;
+            for (int i = 0; i < count; i++) {
+                XXmlStreamAttribute* srcAttr = src->m_attributes->m_items[i];
+                if (srcAttr) {
+                    XXmlStreamAttribute* newAttr = XXmlStreamAttribute_create_ex(
+                        srcAttr->m_namespaceUri, srcAttr->m_name, srcAttr->m_value);
+                    if (newAttr && srcAttr->m_qualifiedName) {
+                        if (newAttr->m_qualifiedName) XString_delete_base(newAttr->m_qualifiedName);
+                        newAttr->m_qualifiedName = XString_create_copy(srcAttr->m_qualifiedName);
+                        newAttr->m_isDefault = srcAttr->m_isDefault;
+                    }
+                    if (newAttr && dest->m_attributes->m_count < dest->m_attributes->m_capacity) {
+                        dest->m_attributes->m_items[dest->m_attributes->m_count++] = newAttr;
+                    } else {
+                        XXmlStreamAttribute_delete(newAttr);
+                    }
+                }
+            }
+        }
+    }
+
+    /* 深拷贝 namespaceDeclarations 数组 */
+    if (src->m_namespaceDeclarations && src->m_namespaceDeclarationCount > 0) {
+        dest->m_namespaceDeclarationCapacity = src->m_namespaceDeclarationCapacity;
+        dest->m_namespaceDeclarations = (XmlNamespaceDeclaration*)XMalloc_System(
+            sizeof(XmlNamespaceDeclaration) * dest->m_namespaceDeclarationCapacity);
+        if (dest->m_namespaceDeclarations) {
+            for (int i = 0; i < src->m_namespaceDeclarationCount; i++) {
+                if (src->m_namespaceDeclarations[i].m_prefix)
+                    dest->m_namespaceDeclarations[i].m_prefix = XString_create_copy(src->m_namespaceDeclarations[i].m_prefix);
+                if (src->m_namespaceDeclarations[i].m_namespaceUri)
+                    dest->m_namespaceDeclarations[i].m_namespaceUri = XString_create_copy(src->m_namespaceDeclarations[i].m_namespaceUri);
+            }
+            dest->m_namespaceDeclarationCount = src->m_namespaceDeclarationCount;
+        }
+    }
+
+    /* 深拷贝 extraNamespaceDeclarations 数组 */
+    if (src->m_extraNamespaceDeclarations && src->m_extraNamespaceDeclarationCount > 0) {
+        dest->m_extraNamespaceDeclarationCapacity = src->m_extraNamespaceDeclarationCapacity;
+        dest->m_extraNamespaceDeclarations = (XmlNamespaceDeclaration*)XMalloc_System(
+            sizeof(XmlNamespaceDeclaration) * dest->m_extraNamespaceDeclarationCapacity);
+        if (dest->m_extraNamespaceDeclarations) {
+            for (int i = 0; i < src->m_extraNamespaceDeclarationCount; i++) {
+                if (src->m_extraNamespaceDeclarations[i].m_prefix)
+                    dest->m_extraNamespaceDeclarations[i].m_prefix = XString_create_copy(src->m_extraNamespaceDeclarations[i].m_prefix);
+                if (src->m_extraNamespaceDeclarations[i].m_namespaceUri)
+                    dest->m_extraNamespaceDeclarations[i].m_namespaceUri = XString_create_copy(src->m_extraNamespaceDeclarations[i].m_namespaceUri);
+            }
+            dest->m_extraNamespaceDeclarationCount = src->m_extraNamespaceDeclarationCount;
+        }
+    }
+
+    /* 深拷贝 tagStack 数组 */
+    if (src->m_tagStack && src->m_tagStackSize > 0) {
+        dest->m_tagStackCapacity = src->m_tagStackCapacity;
+        dest->m_tagStack = (XmlTag*)XMalloc_System(sizeof(XmlTag) * dest->m_tagStackCapacity);
+        if (dest->m_tagStack) {
+            for (int i = 0; i < src->m_tagStackSize; i++) {
+                if (src->m_tagStack[i].m_name)          dest->m_tagStack[i].m_name = XString_create_copy(src->m_tagStack[i].m_name);
+                if (src->m_tagStack[i].m_qualifiedName) dest->m_tagStack[i].m_qualifiedName = XString_create_copy(src->m_tagStack[i].m_qualifiedName);
+                if (src->m_tagStack[i].m_prefix)        dest->m_tagStack[i].m_prefix = XString_create_copy(src->m_tagStack[i].m_prefix);
+                if (src->m_tagStack[i].m_namespaceUri)  dest->m_tagStack[i].m_namespaceUri = XString_create_copy(src->m_tagStack[i].m_namespaceUri);
+            }
+            dest->m_tagStackSize = src->m_tagStackSize;
+        }
+    }
+
+    /* 简单类型字段 */
+    dest->m_type = src->m_type;
+    dest->m_error = src->m_error;
+    dest->m_lineNumber = src->m_lineNumber;
+    dest->m_lastLineStart = src->m_lastLineStart;
+    dest->m_characterOffset = src->m_characterOffset;
+    dest->m_tokenColumn = src->m_tokenColumn;
+    dest->m_atEnd = src->m_atEnd;
+    dest->m_isCDATA = src->m_isCDATA;
+    dest->m_isWhitespace = src->m_isWhitespace;
+    dest->m_isEmptyElement = src->m_isEmptyElement;
+    dest->m_lockEncoding = src->m_lockEncoding;
+    dest->m_entityExpansionLimit = src->m_entityExpansionLimit;
+    dest->m_namespaceProcessing = src->m_namespaceProcessing;
+    dest->m_isStandaloneDocument = src->m_isStandaloneDocument;
+    dest->m_hasStandalone = src->m_hasStandalone;
+
+    /* 设备/解析器等外部资源只复制指针（不深拷贝） */
+    dest->m_device = src->m_device;
+    dest->m_deleteDevice = false;  /* 复制时新对象不负责删除 */
+    dest->m_data = src->m_data;
+    dest->m_dataLength = src->m_dataLength;
+    dest->m_readPtr = src->m_data;
+    dest->m_endPtr = src->m_data ? src->m_data + src->m_dataLength : NULL;
+    dest->m_isDataFromDevice = src->m_isDataFromDevice;
+    dest->m_notationDeclarations = src->m_notationDeclarations;
+    dest->m_entityDeclarations = src->m_entityDeclarations;
+    dest->m_entityResolver = src->m_entityResolver;
+}
+
+/* ========== 移动私有数据（转移所有权） ========== */
+static void private_move(XXmlStreamReaderPrivate* dest, XXmlStreamReaderPrivate* src)
+{
+    if (!dest || !src) return;
+
+    /* 释放目标已有资源 */
+    private_deinit(dest);
+
+    /* 转移所有 XString 字段 */
+    dest->m_name = src->m_name;                         src->m_name = NULL;
+    dest->m_qualifiedName = src->m_qualifiedName;       src->m_qualifiedName = NULL;
+    dest->m_prefix = src->m_prefix;                     src->m_prefix = NULL;
+    dest->m_namespaceUri = src->m_namespaceUri;         src->m_namespaceUri = NULL;
+    dest->m_text = src->m_text;                         src->m_text = NULL;
+    dest->m_documentVersion = src->m_documentVersion;   src->m_documentVersion = NULL;
+    dest->m_documentEncoding = src->m_documentEncoding; src->m_documentEncoding = NULL;
+    dest->m_dtdName = src->m_dtdName;                   src->m_dtdName = NULL;
+    dest->m_dtdPublicId = src->m_dtdPublicId;           src->m_dtdPublicId = NULL;
+    dest->m_dtdSystemId = src->m_dtdSystemId;           src->m_dtdSystemId = NULL;
+    dest->m_processingInstructionTarget = src->m_processingInstructionTarget; src->m_processingInstructionTarget = NULL;
+    dest->m_processingInstructionData = src->m_processingInstructionData;     src->m_processingInstructionData = NULL;
+    dest->m_errorString = src->m_errorString;           src->m_errorString = NULL;
+    dest->m_buffer = src->m_buffer;                     src->m_buffer = NULL;
+
+    /* 转移 attributes */
+    dest->m_attributes = src->m_attributes;             src->m_attributes = NULL;
+
+    /* 转移 namespaceDeclarations 数组 */
+    dest->m_namespaceDeclarations = src->m_namespaceDeclarations;
+    dest->m_namespaceDeclarationCount = src->m_namespaceDeclarationCount;
+    dest->m_namespaceDeclarationCapacity = src->m_namespaceDeclarationCapacity;
+    src->m_namespaceDeclarations = NULL;
+    src->m_namespaceDeclarationCount = 0;
+    src->m_namespaceDeclarationCapacity = 0;
+
+    /* 转移 extraNamespaceDeclarations 数组 */
+    dest->m_extraNamespaceDeclarations = src->m_extraNamespaceDeclarations;
+    dest->m_extraNamespaceDeclarationCount = src->m_extraNamespaceDeclarationCount;
+    dest->m_extraNamespaceDeclarationCapacity = src->m_extraNamespaceDeclarationCapacity;
+    src->m_extraNamespaceDeclarations = NULL;
+    src->m_extraNamespaceDeclarationCount = 0;
+    src->m_extraNamespaceDeclarationCapacity = 0;
+
+    /* 转移 tagStack 数组 */
+    dest->m_tagStack = src->m_tagStack;
+    dest->m_tagStackSize = src->m_tagStackSize;
+    dest->m_tagStackCapacity = src->m_tagStackCapacity;
+    src->m_tagStack = NULL;
+    src->m_tagStackSize = 0;
+    src->m_tagStackCapacity = 0;
+
+    /* 简单类型字段 */
+    dest->m_type = src->m_type;
+    dest->m_error = src->m_error;
+    dest->m_lineNumber = src->m_lineNumber;
+    dest->m_lastLineStart = src->m_lastLineStart;
+    dest->m_characterOffset = src->m_characterOffset;
+    dest->m_tokenColumn = src->m_tokenColumn;
+    dest->m_atEnd = src->m_atEnd;
+    dest->m_isCDATA = src->m_isCDATA;
+    dest->m_isWhitespace = src->m_isWhitespace;
+    dest->m_isEmptyElement = src->m_isEmptyElement;
+    dest->m_lockEncoding = src->m_lockEncoding;
+    dest->m_entityExpansionLimit = src->m_entityExpansionLimit;
+    dest->m_namespaceProcessing = src->m_namespaceProcessing;
+    dest->m_isStandaloneDocument = src->m_isStandaloneDocument;
+    dest->m_hasStandalone = src->m_hasStandalone;
+
+    /* 转移设备/解析器所有权 */
+    dest->m_device = src->m_device;
+    dest->m_deleteDevice = src->m_deleteDevice;
+    dest->m_data = src->m_data;
+    dest->m_dataLength = src->m_dataLength;
+    dest->m_readPtr = src->m_readPtr;
+    dest->m_endPtr = src->m_endPtr;
+    dest->m_isDataFromDevice = src->m_isDataFromDevice;
+    dest->m_notationDeclarations = src->m_notationDeclarations;
+    dest->m_entityDeclarations = src->m_entityDeclarations;
+    dest->m_entityResolver = src->m_entityResolver;
+    src->m_device = NULL;
+    src->m_data = NULL;
+    src->m_readPtr = NULL;
+    src->m_endPtr = NULL;
+    src->m_dataLength = 0;
+    src->m_deleteDevice = false;
+    src->m_isDataFromDevice = false;
+    src->m_notationDeclarations = NULL;
+    src->m_entityDeclarations = NULL;
+    src->m_entityResolver = NULL;
+}
+
+/**
+ * @brief      XXmlStreamReader 虚拷贝函数（深拷贝私有数据）
+ * @param dest  目标对象
+ * @param src   源对象
+ */
+static void VXXmlStreamReader_copy(XXmlStreamReader* dest, const XXmlStreamReader* src)
+{
+    if (!dest || !src) return;
+    /* 目标未 init 则自动 init */
+    if (XClassIsVtableNull(dest)) {
+        XXmlStreamReader_init(dest);
+    }
+    XXmlStreamReaderPrivate* dest_d = (XXmlStreamReaderPrivate*)(dest + 1);
+    const XXmlStreamReaderPrivate* src_d = (const XXmlStreamReaderPrivate*)(src + 1);
+    private_copy(dest_d, src_d);
+}
+
+/**
+ * @brief      XXmlStreamReader 虚移动函数（转移所有权）
+ * @param dest  目标对象
+ * @param src   源对象（移动后被清空）
+ */
+static void VXXmlStreamReader_move(XXmlStreamReader* dest, XXmlStreamReader* src)
+{
+    if (!dest || !src) return;
+    /* 目标未 init 则自动 init */
+    if (XClassIsVtableNull(dest)) {
+        XXmlStreamReader_init(dest);
+    }
+    XXmlStreamReaderPrivate* dest_d = (XXmlStreamReaderPrivate*)(dest + 1);
+    XXmlStreamReaderPrivate* src_d = (XXmlStreamReaderPrivate*)(src + 1);
+    private_move(dest_d, src_d);
+}
+
+/**
  * @brief      初始化 XXmlStreamReader 类的虚函数表
  * @return     指向初始化完成的 XVtable 的指针
  */
@@ -1484,6 +1746,9 @@ XVtable* XXmlStreamReader_class_init(void)
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_SIZE);
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXXmlStreamReader_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy,   VXXmlStreamReader_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move,   VXXmlStreamReader_move);
     return XVTABLE_DEFAULT;
 }
 
@@ -1503,6 +1768,24 @@ XXmlStreamReader* XXmlStreamReader_create(void)
     return self;
 }
 
+XXmlStreamReader* XXmlStreamReader_create_copy(const XXmlStreamReader* other)
+{
+    if (!other) return NULL;
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (!self) return NULL;
+    XXmlStreamReader_copy_base(self, other);
+    return self;
+}
+
+XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other)
+{
+    if (!other) return NULL;
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (!self) return NULL;
+    XXmlStreamReader_move_base(self, other);
+    return self;
+}
+
 /**
  * @brief      初始化 XXmlStreamReader 实例
  * @param self 待初始化的 XXmlStreamReader 对象指针
@@ -1517,52 +1800,6 @@ void XXmlStreamReader_init(XXmlStreamReader* self)
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     private_init(d);
 }
-
-/**
- * @brief      释放 XXmlStreamReader 内部资源
- * @param self 待释放的 XXmlStreamReader 对象指针
- */
-void XXmlStreamReader_deinit(XXmlStreamReader* self)
-{
-    if (ISNULL(self, "XXmlStreamReader"))
-        return;
-    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    private_deinit(d);
-    XClass_deinit_base(&self->m_class);
-}
-
-/**
- * @brief      在堆上删除 XXmlStreamReader 实例
- * @param self 待删除的 XXmlStreamReader 对象指针
- */
-void XXmlStreamReader_delete(XXmlStreamReader* self)
-{
-    if (ISNULL(self, "XXmlStreamReader"))
-        return;
-    XXmlStreamReader_deinit(self);
-    /* 使用 m_free 释放 */
-    if (self->m_class.m_free)
-        self->m_class.m_free(self);
-}
-
-/* ---- 虚函数调度 ---- */
-
-void XXmlStreamReader_deinit_base(XXmlStreamReader* self)
-{
-    if (ISNULL(self, "XXmlStreamReader") || ISNULL(XClassGetVtable(self), "Vtable"))
-        return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XXmlStreamReader*))(self);
-}
-
-void XXmlStreamReader_delete_base(XXmlStreamReader* self)
-{
-    if (ISNULL(self, "XXmlStreamReader") || ISNULL(XClassGetVtable(self), "Vtable"))
-        return;
-    XXmlStreamReader_deinit(self);
-    if (self->m_class.m_free)
-        self->m_class.m_free(self);
-}
-
 /* ---- 设备设置 ---- */
 
 /**
@@ -1696,26 +1933,30 @@ int XXmlStreamReader_tokenType(const XXmlStreamReader* self)
     return d->m_type;
 }
 
-const char* XXmlStreamReader_tokenString(const XXmlStreamReader* self)
+/* token 名称字符串用 const char* 静态存储，节省内存 */
+static const char* s_tokenStrings[12] = {
+    "NoToken",
+    "StartDocument",
+    "EndDocument",
+    "StartElement",
+    "EndElement",
+    "Characters",
+    "Comment",
+    "DTD",
+    "EntityReference",
+    "ProcessingInstruction",
+    "Invalid",
+    "Unknown"
+};
+
+const char* XXmlStreamReader_tokenString_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader"))
-        return "Invalid";
-    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    switch (d->m_type)
-    {
-        case XXmlStream_NoToken: return "NoToken";
-        case XXmlStream_StartDocument: return "StartDocument";
-        case XXmlStream_EndDocument: return "EndDocument";
-        case XXmlStream_StartElement: return "StartElement";
-        case XXmlStream_EndElement: return "EndElement";
-        case XXmlStream_Characters: return "Characters";
-        case XXmlStream_Comment: return "Comment";
-        case XXmlStream_DTD: return "DTD";
-        case XXmlStream_EntityReference: return "EntityReference";
-        case XXmlStream_ProcessingInstruction: return "ProcessingInstruction";
-        case XXmlStream_Invalid: return "Invalid";
-        default: return "Unknown";
+    if (ISNULL(self, "XXmlStreamReader")) {
+        return s_tokenStrings[10]; /* Invalid */
     }
+    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
+    if (d->m_type < 0 || d->m_type > 10) return s_tokenStrings[11]; /* Unknown */
+    return s_tokenStrings[d->m_type];
 }
 
 /* ---- 位置信息 ---- */
@@ -1753,20 +1994,20 @@ bool XXmlStreamReader_hasStandaloneDeclaration(const XXmlStreamReader* self)
     return d->m_hasStandalone;
 }
 
-const char* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader"))
-        return "";
+        return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_processingInstructionTarget ? XString_toUtf8(d->m_processingInstructionTarget) : "";
+    return d->m_processingInstructionTarget;
 }
 
-const char* XXmlStreamReader_processingInstructionData(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_processingInstructionData_const(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader"))
-        return "";
+        return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_processingInstructionData ? XString_toUtf8(d->m_processingInstructionData) : "";
+    return d->m_processingInstructionData;
 }
 
 void XXmlStreamReader_setNamespaceProcessing(XXmlStreamReader* self, bool enable)
@@ -1890,26 +2131,26 @@ bool XXmlStreamReader_isProcessingInstruction(const XXmlStreamReader* self)
  * XXmlStreamAttribute 实现
  * ============================================================================ */
 
-XXmlStreamAttribute* XXmlStreamAttribute_create(const char* qualifiedName, const char* value)
+XXmlStreamAttribute* XXmlStreamAttribute_create(const XString* qualifiedName, const XString* value)
 {
     XXmlStreamAttribute* self = (XXmlStreamAttribute*)XMalloc_System(sizeof(XXmlStreamAttribute));
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamAttribute));
-    self->m_qualifiedName = XString_create_utf8(qualifiedName);
-    self->m_value = XString_create_utf8(value);
+    self->m_qualifiedName = qualifiedName ? XString_create_copy(qualifiedName) : NULL;
+    self->m_value = value ? XString_create_copy(value) : NULL;
     return self;
 }
 
-XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const char* namespaceUri, const char* name, const char* value)
+XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const XString* namespaceUri, const XString* name, const XString* value)
 {
     XXmlStreamAttribute* self = (XXmlStreamAttribute*)XMalloc_System(sizeof(XXmlStreamAttribute));
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamAttribute));
-    self->m_namespaceUri = XString_create_utf8(namespaceUri);
-    self->m_name = XString_create_utf8(name);
+    self->m_namespaceUri = namespaceUri ? XString_create_copy(namespaceUri) : NULL;
+    self->m_name = name ? XString_create_copy(name) : NULL;
     /* 无前缀时，qualifiedName 等于 name（带前缀时上层负责补齐） */
-    self->m_qualifiedName = XString_create_utf8(name);
-    self->m_value = XString_create_utf8(value);
+    self->m_qualifiedName = name ? XString_create_copy(name) : NULL;
+    self->m_value = value ? XString_create_copy(value) : NULL;
     return self;
 }
 
@@ -1948,43 +2189,55 @@ void XXmlStreamAttributes_delete(XXmlStreamAttributes* self)
  * XXmlStreamAttribute getter 实现
  * ============================================================================ */
 
-const char* XXmlStreamAttribute_namespaceUri(const XXmlStreamAttribute* self)
+const XString* XXmlStreamAttribute_namespaceUri(const XXmlStreamAttribute* self)
 {
-    if (!self) return "";
-    return self->m_namespaceUri ? XString_toUtf8(self->m_namespaceUri) : "";
+    if (!self) return NULL;
+    return self->m_namespaceUri;
 }
 
-const char* XXmlStreamAttribute_name(const XXmlStreamAttribute* self)
+const XString* XXmlStreamAttribute_name(const XXmlStreamAttribute* self)
 {
-    if (!self) return "";
-    return self->m_name ? XString_toUtf8(self->m_name) : "";
+    if (!self) return NULL;
+    return self->m_name;
 }
 
-const char* XXmlStreamAttribute_qualifiedName(const XXmlStreamAttribute* self)
+const XString* XXmlStreamAttribute_qualifiedName(const XXmlStreamAttribute* self)
 {
-    if (!self) return "";
-    return self->m_qualifiedName ? XString_toUtf8(self->m_qualifiedName) : "";
+    if (!self) return NULL;
+    return self->m_qualifiedName;
 }
 
-const char* XXmlStreamAttribute_prefix(const XXmlStreamAttribute* self)
+const XString* XXmlStreamAttribute_prefix(const XXmlStreamAttribute* self)
 {
-    if (!self || !self->m_qualifiedName) return "";
-    const char* qn = XString_toUtf8(self->m_qualifiedName);
-    const char* colon = strchr(qn, ':');
-    if (!colon) return "";
-    // Use thread-local static buffer
-    static __thread char s_prefixBuf[256];
-    size_t len = (size_t)(colon - qn);
-    if (len >= sizeof(s_prefixBuf)) len = sizeof(s_prefixBuf) - 1;
-    memcpy(s_prefixBuf, qn, len);
-    s_prefixBuf[len] = '\0';
-    return s_prefixBuf;
+    if (!self || !self->m_qualifiedName) return NULL;
+    /* 提取前缀：qualifiedName 格式为 "prefix:localName" */
+    const XChar* unicode = XString_unicode(self->m_qualifiedName);
+    if (!unicode) return NULL;
+    /* 查找冒号位置 */
+    size_t colonPos = 0;
+    while (unicode[colonPos] != 0) {
+        if (unicode[colonPos] == (XChar)':') break;
+        colonPos++;
+    }
+    if (unicode[colonPos] != (XChar)':') return NULL;
+    /* 返回冒号前的前缀 */
+    static XString s_prefix = {0};
+    XString_Init_Utf8(tmpPrefix, "");
+    if (colonPos > 0) {
+        /* 提取前缀部分 */
+        XString_Init_Utf8(prefixResult, "");
+        for (size_t i = 0; i < colonPos && unicode[i] != 0; i++) {
+            XString_push_back_base(&_prefixResult, unicode[i]);
+        }
+        s_prefix = _prefixResult;
+    }
+    return &s_prefix;
 }
 
-const char* XXmlStreamAttribute_value(const XXmlStreamAttribute* self)
+const XString* XXmlStreamAttribute_value(const XXmlStreamAttribute* self)
 {
-    if (!self) return "";
-    return self->m_value ? XString_toUtf8(self->m_value) : "";
+    if (!self) return NULL;
+    return self->m_value;
 }
 
 bool XXmlStreamAttribute_isDefault(const XXmlStreamAttribute* self)
@@ -2007,46 +2260,46 @@ const XXmlStreamAttribute* XXmlStreamAttributes_at(const XXmlStreamAttributes* s
     return self->m_items[index];
 }
 
-const char* XXmlStreamAttributes_value(const XXmlStreamAttributes* self, const char* qualifiedName)
+const XString* XXmlStreamAttributes_value(const XXmlStreamAttributes* self, const XString* qualifiedName)
 {
-    if (!self || !qualifiedName) return "";
+    if (!self || !qualifiedName) return NULL;
     for (int i = 0; i < self->m_count; i++) {
         if (self->m_items[i] && self->m_items[i]->m_qualifiedName) {
-            if (strcmp(XString_toUtf8(self->m_items[i]->m_qualifiedName), qualifiedName) == 0)
-                return self->m_items[i]->m_value ? XString_toUtf8(self->m_items[i]->m_value) : "";
+            if (XString_equals(self->m_items[i]->m_qualifiedName, qualifiedName, XChar_CaseSensitive))
+                return self->m_items[i]->m_value;
         }
     }
-    return "";
+    return NULL;
 }
 
-const char* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, const char* namespaceUri, const char* name)
+const XString* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, const XString* namespaceUri, const XString* name)
 {
-    if (!self || !name) return "";
+    if (!self || !name) return NULL;
     for (int i = 0; i < self->m_count; i++) {
         if (!self->m_items[i]) continue;
-        if (self->m_items[i]->m_name && strcmp(XString_toUtf8(self->m_items[i]->m_name), name) == 0) {
-            if (!namespaceUri || !namespaceUri[0]) 
-                return self->m_items[i]->m_value ? XString_toUtf8(self->m_items[i]->m_value) : "";
-            if (self->m_items[i]->m_namespaceUri && strcmp(XString_toUtf8(self->m_items[i]->m_namespaceUri), namespaceUri) == 0)
-                return self->m_items[i]->m_value ? XString_toUtf8(self->m_items[i]->m_value) : "";
+        if (self->m_items[i]->m_name && XString_equals(self->m_items[i]->m_name, name, XChar_CaseSensitive)) {
+            if (!namespaceUri || XString_isEmpty_base(namespaceUri))
+                return self->m_items[i]->m_value;
+            if (self->m_items[i]->m_namespaceUri && XString_equals(self->m_items[i]->m_namespaceUri, namespaceUri, XChar_CaseSensitive))
+                return self->m_items[i]->m_value;
         }
     }
-    return "";
+    return NULL;
 }
 
-bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const char* qualifiedName)
+bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const XString* qualifiedName)
 {
     if (!self || !qualifiedName) return false;
     for (int i = 0; i < self->m_count; i++) {
         if (self->m_items[i] && self->m_items[i]->m_qualifiedName) {
-            if (strcmp(XString_toUtf8(self->m_items[i]->m_qualifiedName), qualifiedName) == 0)
+            if (XString_equals(self->m_items[i]->m_qualifiedName, qualifiedName, XChar_CaseSensitive))
                 return true;
         }
     }
     return false;
 }
 
-void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const char* namespaceUri, const char* name, const char* value)
+void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const XString* namespaceUri, const XString* name, const XString* value)
 {
     if (!self) return;
     XXmlStreamAttribute* attr = XXmlStreamAttribute_create_ex(namespaceUri, name, value);
@@ -2061,7 +2314,7 @@ void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const char* namespa
     self->m_items[self->m_count++] = attr;
 }
 
-void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const char* qualifiedName, const char* value)
+void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const XString* qualifiedName, const XString* value)
 {
     if (!self) return;
     XXmlStreamAttribute* attr = XXmlStreamAttribute_create(qualifiedName, value);
@@ -2080,13 +2333,13 @@ void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const char* qual
  * XXmlStreamNamespaceDeclaration 实现
  * ============================================================================ */
 
-XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const char* prefix, const char* namespaceUri)
+XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const XString* prefix, const XString* namespaceUri)
 {
     XXmlStreamNamespaceDeclaration* self = (XXmlStreamNamespaceDeclaration*)XMalloc_System(sizeof(XXmlStreamNamespaceDeclaration));
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamNamespaceDeclaration));
-    self->m_prefix = XString_create_utf8(prefix);
-    self->m_namespaceUri = XString_create_utf8(namespaceUri);
+    self->m_prefix = prefix ? XString_create_copy(prefix) : NULL;
+    self->m_namespaceUri = namespaceUri ? XString_create_copy(namespaceUri) : NULL;
     return self;
 }
 
@@ -2098,55 +2351,55 @@ void XXmlStreamNamespaceDeclaration_delete(XXmlStreamNamespaceDeclaration* self)
     XFree_System(self);
 }
 
-const char* XXmlStreamNamespaceDeclaration_prefix(const XXmlStreamNamespaceDeclaration* self)
+const XString* XXmlStreamNamespaceDeclaration_prefix(const XXmlStreamNamespaceDeclaration* self)
 {
-    if (!self) return "";
-    return self->m_prefix ? XString_toUtf8(self->m_prefix) : "";
+    if (!self) return NULL;
+    return self->m_prefix;
 }
 
-const char* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNamespaceDeclaration* self)
+const XString* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNamespaceDeclaration* self)
 {
-    if (!self) return "";
-    return self->m_namespaceUri ? XString_toUtf8(self->m_namespaceUri) : "";
+    if (!self) return NULL;
+    return self->m_namespaceUri;
 }
 
 /* ============================================================================
  * XXmlStreamReader getter 实现
  * ============================================================================ */
 
-const char* XXmlStreamReader_namespaceUri(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_namespaceUri_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_namespaceUri ? XString_toUtf8(d->m_namespaceUri) : "";
+    return d->m_namespaceUri;
 }
 
-const char* XXmlStreamReader_name(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_name_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_name ? XString_toUtf8(d->m_name) : "";
+    return d->m_name;
 }
 
-const char* XXmlStreamReader_qualifiedName(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_qualifiedName_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_qualifiedName ? XString_toUtf8(d->m_qualifiedName) : "";
+    return d->m_qualifiedName;
 }
 
-const char* XXmlStreamReader_prefix(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_prefix_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_prefix ? XString_toUtf8(d->m_prefix) : "";
+    return d->m_prefix;
 }
 
-const char* XXmlStreamReader_text(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_text_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_text ? XString_toUtf8(d->m_text) : "";
+    return d->m_text;
 }
 
 const XXmlStreamAttributes* XXmlStreamReader_attributes(const XXmlStreamReader* self)
@@ -2178,39 +2431,39 @@ bool XXmlStreamReader_hasNamespaceDeclarations(const XXmlStreamReader* self)
     return d->m_namespaceDeclarationCount > 0;
 }
 
-const char* XXmlStreamReader_dtdName(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdName_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdName ? XString_toUtf8(d->m_dtdName) : "";
+    return d->m_dtdName;
 }
 
-const char* XXmlStreamReader_dtdPublicId(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdPublicId_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdPublicId ? XString_toUtf8(d->m_dtdPublicId) : "";
+    return d->m_dtdPublicId;
 }
 
-const char* XXmlStreamReader_dtdSystemId(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdSystemId_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdSystemId ? XString_toUtf8(d->m_dtdSystemId) : "";
+    return d->m_dtdSystemId;
 }
 
-const char* XXmlStreamReader_documentVersion(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_documentVersion_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_documentVersion ? XString_toUtf8(d->m_documentVersion) : "";
+    return d->m_documentVersion;
 }
 
-const char* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_documentEncoding_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_documentEncoding ? XString_toUtf8(d->m_documentEncoding) : "";
+    return d->m_documentEncoding;
 }
 
 bool XXmlStreamReader_isStandaloneDocument(const XXmlStreamReader* self)
@@ -2228,11 +2481,11 @@ int XXmlStreamReader_error(const XXmlStreamReader* self)
     return (int)d->m_error;
 }
 
-const char* XXmlStreamReader_errorString(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_errorString_const(const XXmlStreamReader* self)
 {
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_errorString ? XString_toUtf8(d->m_errorString) : "";
+    return d->m_errorString;
 }
 
 bool XXmlStreamReader_hasError(const XXmlStreamReader* self)
@@ -2242,7 +2495,14 @@ bool XXmlStreamReader_hasError(const XXmlStreamReader* self)
     return d->m_error != XXmlStream_NoError;
 }
 
-void XXmlStreamReader_raiseError(XXmlStreamReader* self, const char* message)
+void XXmlStreamReader_raiseError(XXmlStreamReader* self, const XString* message)
+{
+    if (ISNULL(self, "XXmlStreamReader")) return;
+    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
+    set_error(d, XXmlStream_CustomError, message ? XString_toUtf8(message) : "");
+}
+
+void XXmlStreamReader_raiseError_utf8(XXmlStreamReader* self, const char* message)
 {
     if (ISNULL(self, "XXmlStreamReader")) return;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
@@ -2283,21 +2543,21 @@ void XXmlStreamReader_skipCurrentElement(XXmlStreamReader* self)
     }
 }
 
-const char* XXmlStreamReader_readElementText(XXmlStreamReader* self, int behaviour)
+const XString* XXmlStreamReader_readElementText_const(XXmlStreamReader* self, int behaviour)
 {
     (void)behaviour;
-    if (ISNULL(self, "XXmlStreamReader")) return "";
+    if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     // Read until we get characters or end element
     while (XXmlStreamReader_readNext(self) != XXmlStream_Invalid) {
         if (XXmlStreamReader_isCharacters(self))
-            return d->m_text ? XString_toUtf8(d->m_text) : "";
+            return d->m_text;
         if (XXmlStreamReader_isEndElement(self))
-            return "";
+            return NULL;
         if (XXmlStreamReader_isStartElement(self)) {
             if (behaviour == XXmlStream_ReadElementTextBehaviour_ErrorOnUnexpectedElement) {
                 set_error(d, XXmlStream_UnexpectedElementError, "Unexpected element while reading element text");
-                return "";
+                return NULL;
             }
             if (behaviour == XXmlStream_ReadElementTextBehaviour_SkipChildElements) {
                 XXmlStreamReader_skipCurrentElement(self);
@@ -2307,7 +2567,7 @@ const char* XXmlStreamReader_readElementText(XXmlStreamReader* self, int behavio
             break;
         }
     }
-    return "";
+    return NULL;
 }
 
 /* ============================================================================
@@ -2340,22 +2600,22 @@ void XXmlStreamNotationDeclaration_delete(XXmlStreamNotationDeclaration* self)
     XFree_System(self);
 }
 
-const char* XXmlStreamNotationDeclaration_name(const XXmlStreamNotationDeclaration* self)
+const XString* XXmlStreamNotationDeclaration_name(const XXmlStreamNotationDeclaration* self)
 {
-    if (!self || !self->m_name) return "";
-    return XString_toUtf8(self->m_name);
+    if (!self) return NULL;
+    return self->m_name;
 }
 
-const char* XXmlStreamNotationDeclaration_systemId(const XXmlStreamNotationDeclaration* self)
+const XString* XXmlStreamNotationDeclaration_systemId(const XXmlStreamNotationDeclaration* self)
 {
-    if (!self || !self->m_systemId) return "";
-    return XString_toUtf8(self->m_systemId);
+    if (!self) return NULL;
+    return self->m_systemId;
 }
 
-const char* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDeclaration* self)
+const XString* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDeclaration* self)
 {
-    if (!self || !self->m_publicId) return "";
-    return XString_toUtf8(self->m_publicId);
+    if (!self) return NULL;
+    return self->m_publicId;
 }
 
 /* ============================================================================
@@ -2392,34 +2652,34 @@ void XXmlStreamEntityDeclaration_delete(XXmlStreamEntityDeclaration* self)
     XFree_System(self);
 }
 
-const char* XXmlStreamEntityDeclaration_name(const XXmlStreamEntityDeclaration* self)
+const XString* XXmlStreamEntityDeclaration_name(const XXmlStreamEntityDeclaration* self)
 {
-    if (!self || !self->m_name) return "";
-    return XString_toUtf8(self->m_name);
+    if (!self) return NULL;
+    return self->m_name;
 }
 
-const char* XXmlStreamEntityDeclaration_notationName(const XXmlStreamEntityDeclaration* self)
+const XString* XXmlStreamEntityDeclaration_notationName(const XXmlStreamEntityDeclaration* self)
 {
-    if (!self || !self->m_notationName) return "";
-    return XString_toUtf8(self->m_notationName);
+    if (!self) return NULL;
+    return self->m_notationName;
 }
 
-const char* XXmlStreamEntityDeclaration_systemId(const XXmlStreamEntityDeclaration* self)
+const XString* XXmlStreamEntityDeclaration_systemId(const XXmlStreamEntityDeclaration* self)
 {
-    if (!self || !self->m_systemId) return "";
-    return XString_toUtf8(self->m_systemId);
+    if (!self) return NULL;
+    return self->m_systemId;
 }
 
-const char* XXmlStreamEntityDeclaration_publicId(const XXmlStreamEntityDeclaration* self)
+const XString* XXmlStreamEntityDeclaration_publicId(const XXmlStreamEntityDeclaration* self)
 {
-    if (!self || !self->m_publicId) return "";
-    return XString_toUtf8(self->m_publicId);
+    if (!self) return NULL;
+    return self->m_publicId;
 }
 
-const char* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclaration* self)
+const XString* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclaration* self)
 {
-    if (!self || !self->m_value) return "";
-    return XString_toUtf8(self->m_value);
+    if (!self) return NULL;
+    return self->m_value;
 }
 
 /* ============================================================================
@@ -2518,15 +2778,15 @@ void XXmlStreamEntityResolver_delete(XXmlStreamEntityResolver* self)
     XFree_System(self);
 }
 
-const char* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,
-    const char* publicId, const char* systemId)
+const XString* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,
+    const XString* publicId, const XString* systemId)
 {
     if (!self || !self->m_resolveEntityCallback) return NULL;
     return self->m_resolveEntityCallback(publicId, systemId, self->m_userData);
 }
 
-const char* XXmlStreamEntityResolver_resolveUndeclaredEntity(XXmlStreamEntityResolver* self,
-    const char* name)
+const XString* XXmlStreamEntityResolver_resolveUndeclaredEntity(XXmlStreamEntityResolver* self,
+    const XString* name)
 {
     if (!self || !self->m_resolveUndeclaredEntityCallback) return NULL;
     return self->m_resolveUndeclaredEntityCallback(name, self->m_userData);

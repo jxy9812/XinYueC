@@ -1,4 +1,4 @@
-#include "XSharedStrings.h"
+﻿#include "XSharedStrings.h"
 #include "XXmlStreamReader.h"
 #include "XMemory.h"
 #include "XFile.h"
@@ -256,13 +256,13 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
         if (XXmlStreamReader_hasError(reader)) break;
 
         if (tt == XXmlStream_StartElement) {
-            const char* name = XXmlStreamReader_name(reader);
+            const XString* name = XXmlStreamReader_name_const(reader);
             if (!name) continue;
 
-            if (strcmp(name, "si") == 0) {
+            if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = true;
                 XString_clear_base(acc);
-            } else if (in_si && strcmp(name, "t") == 0) {
+            } else if (in_si && XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
                 /* 纯文本片段：<t>text</t> */
                 in_t = true;
             }
@@ -270,16 +270,16 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
             (void)in_t;
         } else if (tt == XXmlStream_Characters ) {
             if (in_si) {
-                const char* txt = XXmlStreamReader_text(reader);
-                if (txt) XString_append_utf8(acc, txt);
+                const XString* txt = XXmlStreamReader_text_const(reader);
+                if (txt) XString_append(acc, txt);
             }
         } else if (tt == XXmlStream_EndElement) {
-            const char* name = XXmlStreamReader_name(reader);
+            const XString* name = XXmlStreamReader_name_const(reader);
             if (!name) continue;
 
-            if (in_si && strcmp(name, "t") == 0) {
+            if (in_si && XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
                 in_t = false;
-            } else if (strcmp(name, "si") == 0) {
+            } else if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = false;
                 /* 如果 acc 为空但有文本，也添加 */
                 XSharedStrings_addSharedString(self, acc);
@@ -297,7 +297,7 @@ bool XSharedStrings_loadFromXmlData(XSharedStrings* self, const uint8_t* data, s
     XXmlStreamReader* reader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(reader, (const char*)data);
     bool ok = sharedStrings_loadFromReader(self, reader);
-    XXmlStreamReader_delete(reader);
+    XXmlStreamReader_delete_base(reader);
     return ok;
 }
 

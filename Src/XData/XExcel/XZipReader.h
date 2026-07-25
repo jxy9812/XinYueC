@@ -17,10 +17,11 @@ extern "C" {
 #include "XString.h"
 #include "XStringList.h"
 #include "XByteArray.h"
+/** @brief XZipReader ZIP 读取器结构体 */
 typedef struct XZipReader {
-    void* m_zipHandle;
-    XStringList* m_filePaths;
-    XString* m_fileName;
+    void* m_zipHandle;       /**< ZIP 句柄 */
+    XStringList* m_filePaths; /**< 文件路径列表 */
+    XString* m_fileName;     /**< 文件名 */
 } XZipReader;
 /**
  * @brief  通过文件路径创建 ZIP 读取器

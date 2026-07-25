@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XDrawing.c
  * @brief      XDrawing 绘图容器类实现
  *             对齐 QXlsx::Drawing 全部功能
@@ -44,12 +44,12 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
     XXmlStreamWriter* writer = XXmlStreamWriter_create();
     XXmlStreamWriter_setAutoFormatting(writer, true);
     XXmlStreamWriter_setAutoFormattingIndent(writer, 1);
-    XXmlStreamWriter_writeStartDocument_ex(writer, "1.0");
-    XXmlStreamWriter_writeStartElement(writer, "xdr:wsDr");
-    XXmlStreamWriter_writeAttribute(writer, "xmlns:xdr", "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing");
-    XXmlStreamWriter_writeAttribute(writer, "xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main");
-    XXmlStreamWriter_writeNamespace(writer, "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "xdr");
-    XXmlStreamWriter_writeNamespace(writer, "http://schemas.openxmlformats.org/drawingml/2006/main", "a");
+    XXmlStreamWriter_writeStartDocument_ex_utf8(writer, "1.0");
+    XXmlStreamWriter_writeStartElement_utf8(writer, "xdr:wsDr");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:xdr", "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main");
+    XXmlStreamWriter_writeNamespace_utf8(writer, "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "xdr");
+    XXmlStreamWriter_writeNamespace_utf8(writer, "http://schemas.openxmlformats.org/drawingml/2006/main", "a");
 
     /* 写入每个锚点 */
     size_t n = XVector_size_base(self->m_anchors);
@@ -65,11 +65,11 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
 
     /* 通过 XFile 写入文件 */
     XFile* file = XFile_create_2((XString*)filePath);
-    if (!file) { XXmlStreamWriter_delete(writer); return false; }
+    if (!file) { XXmlStreamWriter_delete_base(writer); return false; }
 
     if (!XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
         XFile_deleteLater(file);
-        XXmlStreamWriter_delete(writer);
+        XXmlStreamWriter_delete_base(writer);
         return false;
     }
 
@@ -79,7 +79,7 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
 
     XIODevice_close_base((XIODevice*)file);
     XFile_deleteLater(file);
-    XXmlStreamWriter_delete(writer);
+    XXmlStreamWriter_delete_base(writer);
     return true;
 }
 
@@ -114,11 +114,11 @@ bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {
-            const char* name = XXmlStreamReader_name(reader);
+            const XString* name = XXmlStreamReader_name_const(reader);
             if (!name) continue;
-            if (strcmp(name, "xdr:twoCellAnchor") == 0 ||
-                strcmp(name, "xdr:oneCellAnchor") == 0 ||
-                strcmp(name, "xdr:absoluteAnchor") == 0) {
+            if (XString_equals_utf8(name, "xdr:twoCellAnchor", XChar_CaseSensitive) ||
+                XString_equals_utf8(name, "xdr:oneCellAnchor", XChar_CaseSensitive) ||
+                XString_equals_utf8(name, "xdr:absoluteAnchor", XChar_CaseSensitive)) {
                 XDrawingAnchor* anchor = XDrawingAnchor_create(self, XDAnchor_Unknown);
                 if (anchor) {
                     XDrawingAnchor_loadFromXml(anchor, reader);
@@ -128,6 +128,6 @@ bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
             }
         }
     }
-    XXmlStreamReader_delete(reader);
+    XXmlStreamReader_delete_base(reader);
     return true;
 }

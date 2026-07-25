@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <ctype.h>
 
 /* ========== 内部辅助函数 ========== */
 
@@ -294,37 +295,39 @@ XColor_Spec XColor_spec(const XColor* self)
     return self ? self->m_spec : XColor_Invalid;
 }
 
-char* XColor_toHexString(const XColor* self, XColor_NameFormat format, char* out)
+XString XColor_toHexString(const XColor* self, XColor_NameFormat format)
 {
-    if (!self || !out) return out;
-    if (self->m_spec == XColor_Invalid) {
-        out[0] = '\\0';
-        return out;
+    XString_Init_Utf8(result, "");
+    if (!self || self->m_spec == XColor_Invalid) {
+        return _result;
     }
     int r = u16ToInt(self->m_comp1);
     int g = u16ToInt(self->m_comp2);
     int b = u16ToInt(self->m_comp3);
     int a = u16ToInt(self->m_alpha);
     if (format == XColor_HexArgb)
-        sprintf(out, "#%02X%02X%02X%02X", a, r, g, b);
+        XString_assign_fmt_utf8(&_result, "#%02X%02X%02X%02X", a, r, g, b);
     else
-        sprintf(out, "#%02X%02X%02X", r, g, b);
-    return out;
+        XString_assign_fmt_utf8(&_result, "#%02X%02X%02X", r, g, b);
+    return _result;
 }
 
-XColor XColor_fromString(const char* name)
+XColor XColor_fromString(const XString* name)
 {
     if (!name) return XColor_create();
+    /* 获取 UTF-8 字符串 */
+    const char* utf8Str = XString_toUtf8(name);
+    if (!utf8Str) return XColor_create();
     /* 尝试解析 #RRGGBB 或 #AARRGGBB */
-    if (name[0] == '#') {
-        int len = (int)strlen(name);
+    if (utf8Str[0] == '#') {
+        size_t len = XString_size(name);
         if (len == 7) {
             unsigned int r, g, b;
-            if (sscanf(name + 1, "%02x%02x%02x", &r, &g, &b) == 3)
+            if (sscanf(utf8Str + 1, "%02x%02x%02x", &r, &g, &b) == 3)
                 return XColor_create_rgb((int)r, (int)g, (int)b, 255);
         } else if (len == 9) {
             unsigned int a, r, g, b;
-            if (sscanf(name + 1, "%02x%02x%02x%02x", &a, &r, &g, &b) == 4)
+            if (sscanf(utf8Str + 1, "%02x%02x%02x%02x", &a, &r, &g, &b) == 4)
                 return XColor_create_rgb((int)r, (int)g, (int)b, (int)a);
         }
         return XColor_create();
@@ -917,24 +920,23 @@ static const XColorNamedEntry s_namedColors[] = {
 
 static const int s_namedColorCount = sizeof(s_namedColors) / sizeof(s_namedColors[0]);
 
-XColor XColor_fromName(const char* name)
+XColor XColor_fromName(const XString* name)
 {
     if (!name) return XColor_create();
     for (int i = 0; i < s_namedColorCount; i++) {
-        if (strcasecmp(name, s_namedColors[i].name) == 0) {
+        if (XString_equals_utf8(name, s_namedColors[i].name, XChar_CaseInsensitive)) {
             return XColor_create_rgb(s_namedColors[i].r, s_namedColors[i].g, s_namedColors[i].b, 255);
         }
     }
     return XColor_create();
 }
 
-const char** XColor_colorNames(int* outCount)
+XStringList* XColor_colorNames(void)
 {
-    if (outCount) *outCount = s_namedColorCount;
-    const char** names = (const char**)malloc((size_t)s_namedColorCount * sizeof(char*));
-    if (!names) return NULL;
+    XStringList* list = XStringList_create();
+    if (!list) return NULL;
     for (int i = 0; i < s_namedColorCount; i++) {
-        names[i] = s_namedColors[i].name;
+        XStringList_push_back_utf8(list, s_namedColors[i].name);
     }
-    return names;
+    return list;
 }

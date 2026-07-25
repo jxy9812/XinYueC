@@ -236,92 +236,519 @@ void XFormat_delete(XFormat* self);
 
 /* ========== 数字格式 ========== */
 
+/**
+ * @brief      获取数字格式索引
+ * @param self 指针
+ * @return     格式索引
+ */
 int XFormat_numberFormatIndex(const XFormat* self);
+
+/**
+ * @brief      设置数字格式索引
+ * @param self   指针
+ * @param format 格式索引
+ */
 void XFormat_setNumberFormatIndex(XFormat* self, int format);
+
+/**
+ * @brief      获取数字格式字符串
+ * @param self 指针
+ * @return     格式字符串
+ */
 const XString* XFormat_numberFormat(const XFormat* self);
+
+/**
+ * @brief      设置数字格式
+ * @param self   指针
+ * @param format 格式字符串
+ */
 void XFormat_setNumberFormat(XFormat* self, const XString* format);
+
+/**
+ * @brief      设置数字格式（带ID）
+ * @param self   指针
+ * @param id    格式ID
+ * @param format 格式字符串
+ */
 void XFormat_setNumberFormat_ex(XFormat* self, int id, const XString* format);
+
+/**
+ * @brief      判断是否为日期时间格式
+ * @param self 指针
+ * @return     是日期时间格式返回 true
+ */
 bool XFormat_isDateTimeFormat(const XFormat* self);
 
 /* ========== 字体属性 ========== */
 
+/**
+ * @brief      获取字体大小
+ * @param self 指针
+ * @return     字体大小
+ */
 int XFormat_fontSize(const XFormat* self);
+
+/**
+ * @brief      设置字体大小
+ * @param self  指针
+ * @param size  字体大小
+ */
 void XFormat_setFontSize(XFormat* self, int size);
+
+/**
+ * @brief      获取斜体状态
+ * @param self 指针
+ * @return     斜体返回 true
+ */
 bool XFormat_fontItalic(const XFormat* self);
+
+/**
+ * @brief      设置斜体
+ * @param self   指针
+ * @param italic 是否斜体
+ */
 void XFormat_setFontItalic(XFormat* self, bool italic);
+
+/**
+ * @brief      获取删除线状态
+ * @param self 指针
+ * @return     删除线返回 true
+ */
 bool XFormat_fontStrikeOut(const XFormat* self);
+
+/**
+ * @brief      设置删除线
+ * @param self      指针
+ * @param strikeOut 是否删除线
+ */
 void XFormat_setFontStrikeOut(XFormat* self, bool strikeOut);
+
+/**
+ * @brief      获取字体颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_fontColor(const XFormat* self);
+
+/**
+ * @brief      设置字体颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setFontColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取粗体状态
+ * @param self 指针
+ * @return     粗体返回 true
+ */
 bool XFormat_fontBold(const XFormat* self);
+
+/**
+ * @brief      设置粗体
+ * @param self  指针
+ * @param bold  是否粗体
+ */
 void XFormat_setFontBold(XFormat* self, bool bold);
+
+/**
+ * @brief      获取字体脚本
+ * @param self 指针
+ * @return     字体脚本
+ */
 XFormat_FontScript XFormat_fontScript(const XFormat* self);
+
+/**
+ * @brief      设置字体脚本
+ * @param self   指针
+ * @param script 脚本类型
+ */
 void XFormat_setFontScript(XFormat* self, XFormat_FontScript script);
+
+/**
+ * @brief      获取字体下划线
+ * @param self 指针
+ * @return     下划线类型
+ */
 XFormat_FontUnderline XFormat_fontUnderline(const XFormat* self);
+
+/**
+ * @brief      设置字体下划线
+ * @param self      指针
+ * @param underline 下划线类型
+ */
 void XFormat_setFontUnderline(XFormat* self, XFormat_FontUnderline underline);
+
+/**
+ * @brief      获取轮廓状态
+ * @param self 指针
+ * @return     轮廓返回 true
+ */
 bool XFormat_fontOutline(const XFormat* self);
+
+/**
+ * @brief      设置轮廓
+ * @param self   指针
+ * @param outline 是否轮廓
+ */
 void XFormat_setFontOutline(XFormat* self, bool outline);
+
+/**
+ * @brief      获取字体名称
+ * @param self 指针
+ * @return     字体名称
+ */
 const XString* XFormat_fontName(const XFormat* self);
+
+/**
+ * @brief      设置字体名称
+ * @param self 指针
+ * @param name 字体名称
+ */
 void XFormat_setFontName(XFormat* self, const XString* name);
+
+/**
+ * @brief      获取字体对象
+ * @param self 指针
+ * @return     字体指针
+ */
 XFont* XFormat_font(const XFormat* self);
+
+/**
+ * @brief      设置字体
+ * @param self 指针
+ * @param font 字体指针
+ */
 void XFormat_setFont(XFormat* self, const XFont* font);
 
 /* ========== 对齐属性 ========== */
 
+/**
+ * @brief      获取水平对齐
+ * @param self 指针
+ * @return     水平对齐方式
+ */
 XFormat_HorizontalAlignment XFormat_horizontalAlignment(const XFormat* self);
+
+/**
+ * @brief      设置水平对齐
+ * @param self  指针
+ * @param align 对齐方式
+ */
 void XFormat_setHorizontalAlignment(XFormat* self, XFormat_HorizontalAlignment align);
+
+/**
+ * @brief      获取垂直对齐
+ * @param self 指针
+ * @return     垂直对齐方式
+ */
 XFormat_VerticalAlignment XFormat_verticalAlignment(const XFormat* self);
+
+/**
+ * @brief      设置垂直对齐
+ * @param self  指针
+ * @param align 对齐方式
+ */
 void XFormat_setVerticalAlignment(XFormat* self, XFormat_VerticalAlignment align);
+
+/**
+ * @brief      获取文本换行状态
+ * @param self 指针
+ * @return     换行返回 true
+ */
 bool XFormat_textWrap(const XFormat* self);
+
+/**
+ * @brief      设置文本换行
+ * @param self      指针
+ * @param textWrap 是否换行
+ */
 void XFormat_setTextWrap(XFormat* self, bool textWrap);
+
+/**
+ * @brief      获取旋转角度
+ * @param self 指针
+ * @return     角度
+ */
 int XFormat_rotation(const XFormat* self);
+
+/**
+ * @brief      设置旋转角度
+ * @param self     指针
+ * @param rotation 角度
+ */
 void XFormat_setRotation(XFormat* self, int rotation);
+
+/**
+ * @brief      获取缩进级别
+ * @param self 指针
+ * @return     缩进级别
+ */
 int XFormat_indent(const XFormat* self);
+
+/**
+ * @brief      设置缩进级别
+ * @param self  指针
+ * @param indent 缩进级别
+ */
 void XFormat_setIndent(XFormat* self, int indent);
+
+/**
+ * @brief      获取缩小填充状态
+ * @param self 指针
+ * @return     缩小填充返回 true
+ */
 bool XFormat_shrinkToFit(const XFormat* self);
+
+/**
+ * @brief      设置缩小填充
+ * @param self  指针
+ * @param shrink 是否缩小填充
+ */
 void XFormat_setShrinkToFit(XFormat* self, bool shrink);
 
 /* ========== 边框属性 ========== */
 
+/**
+ * @brief      设置所有边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      设置所有边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setBorderColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取左边框样式
+ * @param self 指针
+ * @return     边框样式
+ */
 XFormat_BorderStyle XFormat_leftBorderStyle(const XFormat* self);
+
+/**
+ * @brief      设置左边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setLeftBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      获取左边框颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_leftBorderColor(const XFormat* self);
+
+/**
+ * @brief      设置左边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setLeftBorderColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取右边框样式
+ * @param self 指针
+ * @return     边框样式
+ */
 XFormat_BorderStyle XFormat_rightBorderStyle(const XFormat* self);
+
+/**
+ * @brief      设置右边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setRightBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      获取右边框颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_rightBorderColor(const XFormat* self);
+
+/**
+ * @brief      设置右边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setRightBorderColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取上边框样式
+ * @param self 指针
+ * @return     边框样式
+ */
 XFormat_BorderStyle XFormat_topBorderStyle(const XFormat* self);
+
+/**
+ * @brief      设置上边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setTopBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      获取上边框颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_topBorderColor(const XFormat* self);
+
+/**
+ * @brief      设置上边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setTopBorderColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取下边框样式
+ * @param self 指针
+ * @return     边框样式
+ */
 XFormat_BorderStyle XFormat_bottomBorderStyle(const XFormat* self);
+
+/**
+ * @brief      设置下边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setBottomBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      获取下边框颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_bottomBorderColor(const XFormat* self);
+
+/**
+ * @brief      设置下边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setBottomBorderColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取对角线边框样式
+ * @param self 指针
+ * @return     边框样式
+ */
 XFormat_BorderStyle XFormat_diagonalBorderStyle(const XFormat* self);
+
+/**
+ * @brief      设置对角线边框样式
+ * @param self  指针
+ * @param style 边框样式
+ */
 void XFormat_setDiagonalBorderStyle(XFormat* self, XFormat_BorderStyle style);
+
+/**
+ * @brief      获取对角线边框类型
+ * @param self 指针
+ * @return     对角线类型
+ */
 XFormat_DiagonalBorderType XFormat_diagonalBorderType(const XFormat* self);
+
+/**
+ * @brief      设置对角线边框类型
+ * @param self  指针
+ * @param type  对角线类型
+ */
 void XFormat_setDiagonalBorderType(XFormat* self, XFormat_DiagonalBorderType type);
+
+/**
+ * @brief      获取对角线边框颜色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_diagonalBorderColor(const XFormat* self);
+
+/**
+ * @brief      设置对角线边框颜色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setDiagonalBorderColor(XFormat* self, const XColor* color);
 
 /* ========== 填充属性 ========== */
 
+/**
+ * @brief      获取填充图案
+ * @param self 指针
+ * @return     填充图案
+ */
 XFormat_FillPattern XFormat_fillPattern(const XFormat* self);
+
+/**
+ * @brief      设置填充图案
+ * @param self    指针
+ * @param pattern 填充图案
+ */
 void XFormat_setFillPattern(XFormat* self, XFormat_FillPattern pattern);
+
+/**
+ * @brief      获取图案前景色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_patternForegroundColor(const XFormat* self);
+
+/**
+ * @brief      设置图案前景色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setPatternForegroundColor(XFormat* self, const XColor* color);
+
+/**
+ * @brief      获取图案背景色
+ * @param self 指针
+ * @return     颜色
+ */
 XColor XFormat_patternBackgroundColor(const XFormat* self);
+
+/**
+ * @brief      设置图案背景色
+ * @param self  指针
+ * @param color 颜色
+ */
 void XFormat_setPatternBackgroundColor(XFormat* self, const XColor* color);
 
 /* ========== 保护属性 ========== */
 
+/**
+ * @brief      获取锁定状态
+ * @param self 指针
+ * @return     锁定返回 true
+ */
 bool XFormat_locked(const XFormat* self);
+
+/**
+ * @brief      设置锁定
+ * @param self    指针
+ * @param locked 是否锁定
+ */
 void XFormat_setLocked(XFormat* self, bool locked);
+
+/**
+ * @brief      获取隐藏状态
+ * @param self 指针
+ * @return     隐藏返回 true
+ */
 bool XFormat_hidden(const XFormat* self);
+
+/**
+ * @brief      设置隐藏
+ * @param self   指针
+ * @param hidden 是否隐藏
+ */
 void XFormat_setHidden(XFormat* self, bool hidden);
 
 /* ========== 格式操作 ========== */
@@ -383,28 +810,151 @@ bool XFormat_hasProperty(const XFormat* self, int propertyId);
 
 /* ========== 键/索引管理 ========== */
 
+/**
+ * @brief      判断是否有数字格式数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasNumFmtData(const XFormat* self);
+
+/**
+ * @brief      判断是否有字体数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasFontData(const XFormat* self);
+
+/**
+ * @brief      判断是否有填充数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasFillData(const XFormat* self);
+
+/**
+ * @brief      判断是否有边框数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasBorderData(const XFormat* self);
+
+/**
+ * @brief      判断是否有对齐数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasAlignmentData(const XFormat* self);
+
+/**
+ * @brief      判断是否有保护数据
+ * @param self 指针
+ * @return     有返回 true
+ */
 bool XFormat_hasProtectionData(const XFormat* self);
 
+/**
+ * @brief      判断字体索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XFormat_fontIndexValid(const XFormat* self);
+
+/**
+ * @brief      获取字体索引
+ * @param self 指针
+ * @return     字体索引
+ */
 int XFormat_fontIndex(const XFormat* self);
+
+/**
+ * @brief      判断边框索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XFormat_borderIndexValid(const XFormat* self);
+
+/**
+ * @brief      获取边框索引
+ * @param self 指针
+ * @return     边框索引
+ */
 int XFormat_borderIndex(const XFormat* self);
+
+/**
+ * @brief      判断填充索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XFormat_fillIndexValid(const XFormat* self);
+
+/**
+ * @brief      获取填充索引
+ * @param self 指针
+ * @return     填充索引
+ */
 int XFormat_fillIndex(const XFormat* self);
+
+/**
+ * @brief      判断 XF 索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XFormat_xfIndexValid(const XFormat* self);
+
+/**
+ * @brief      获取 XF 索引
+ * @param self 指针
+ * @return     XF 索引
+ */
 int XFormat_xfIndex(const XFormat* self);
+
+/**
+ * @brief      判断 DXF 索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XFormat_dxfIndexValid(const XFormat* self);
+
+/**
+ * @brief      获取 DXF 索引
+ * @param self 指针
+ * @return     DXF 索引
+ */
 int XFormat_dxfIndex(const XFormat* self);
 
+/**
+ * @brief      设置字体索引
+ * @param self  指针
+ * @param index 索引
+ */
 void XFormat_setFontIndex(XFormat* self, int index);
+
+/**
+ * @brief      设置边框索引
+ * @param self  指针
+ * @param index 索引
+ */
 void XFormat_setBorderIndex(XFormat* self, int index);
+
+/**
+ * @brief      设置填充索引
+ * @param self  指针
+ * @param index 索引
+ */
 void XFormat_setFillIndex(XFormat* self, int index);
+
+/**
+ * @brief      设置 XF 索引
+ * @param self  指针
+ * @param index 索引
+ */
 void XFormat_setXfIndex(XFormat* self, int index);
+
+/**
+ * @brief      设置 DXF 索引
+ * @param self  指针
+ * @param index 索引
+ */
 void XFormat_setDxfIndex(XFormat* self, int index);
 
 /* ========== 键生成（用于样式去重） ========== */
@@ -462,10 +1012,49 @@ int XFormat_theme(const XFormat* self);
 
 /* ========== 类型化属性访问 ========== */
 
+/**
+ * @brief      获取布尔类型属性
+ * @param self         指针
+ * @param propertyId   属性ID
+ * @param defaultValue 默认值
+ * @return             属性值
+ */
 bool XFormat_boolProperty(const XFormat* self, int propertyId, bool defaultValue);
+
+/**
+ * @brief      获取整数类型属性
+ * @param self         指针
+ * @param propertyId   属性ID
+ * @param defaultValue 默认值
+ * @return             属性值
+ */
 int XFormat_intProperty(const XFormat* self, int propertyId, int defaultValue);
+
+/**
+ * @brief      获取双精度类型属性
+ * @param self         指针
+ * @param propertyId   属性ID
+ * @param defaultValue 默认值
+ * @return             属性值
+ */
 double XFormat_doubleProperty(const XFormat* self, int propertyId, double defaultValue);
+
+/**
+ * @brief      获取字符串类型属性
+ * @param self         指针
+ * @param propertyId   属性ID
+ * @param defaultValue 默认值
+ * @return             属性值
+ */
 const XString* XFormat_stringProperty(const XFormat* self, int propertyId, const XString* defaultValue);
+
+/**
+ * @brief      获取颜色类型属性
+ * @param self         指针
+ * @param propertyId   属性ID
+ * @param defaultValue 默认值
+ * @return             属性值
+ */
 XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue);
 
 /* ========== 比较运算符 ========== */

@@ -17,9 +17,10 @@ extern "C" {
 #include "XString.h"
 #include "XMap.h"
 #include "XAbstractOOXmlFile.h"
+/** @brief XDocPropsCore 核心属性结构体 */
 typedef struct XDocPropsCore {
-    XAbstractOOXmlFile m_base;
-    XMap* m_properties;
+    XAbstractOOXmlFile m_base;     /**< 基类 */
+    XMap* m_properties;           /**< 属性映射 */
 } XDocPropsCore;
 /**
  * @brief  创建核心属性对象

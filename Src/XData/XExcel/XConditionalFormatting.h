@@ -103,39 +103,174 @@ typedef struct XConditionalFormatting {
 } XConditionalFormatting;
 
 /* ========== 创建与初始化 ========== */
+
+/**
+ * @brief      创建条件格式对象
+ * @return     新创建的条件格式对象指针
+ */
 XConditionalFormatting* XConditionalFormatting_create(void);
+
+/**
+ * @brief      复制条件格式对象
+ * @param other 源条件格式对象
+ * @return     新创建的条件格式对象副本
+ */
 XConditionalFormatting* XConditionalFormatting_copy(const XConditionalFormatting* other);
+
+/**
+ * @brief      销毁条件格式对象并释放资源
+ * @param self 条件格式对象指针
+ */
 void XConditionalFormatting_delete(XConditionalFormatting* self);
 
 /* ========== 规则添加 ========== */
+
+/**
+ * @brief      添加高亮单元格规则（简单版）
+ * @param self        条件格式对象指针
+ * @param type        高亮规则类型
+ * @param format      格式
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_addHighlightCellsRule(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XFormat* format, bool stopIfTrue);
+
+/**
+ * @brief      添加高亮单元格规则（单公式版）
+ * @param self        条件格式对象指针
+ * @param type        高亮规则类型
+ * @param formula1    公式1
+ * @param format      格式
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XString* formula1,
     const XFormat* format, bool stopIfTrue);
+
+/**
+ * @brief      添加高亮单元格规则（双公式版）
+ * @param self        条件格式对象指针
+ * @param type        高亮规则类型
+ * @param formula1    公式1
+ * @param formula2    公式2
+ * @param format      格式
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_addHighlightCellsRule3(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XString* formula1, const XString* formula2,
     const XFormat* format, bool stopIfTrue);
+
+/**
+ * @brief      添加数据条规则（简单版）
+ * @param self        条件格式对象指针
+ * @param color       数据条颜色
+ * @param showData    是否显示数据值
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_addDataBarRule(XConditionalFormatting* self,
     const XColor* color, bool showData, bool stopIfTrue);
+
+/**
+ * @brief      添加数据条规则（完整版）
+ * @param self        条件格式对象指针
+ * @param color       数据条颜色
+ * @param type1       值类型1
+ * @param val1        值1
+ * @param type2       值类型2
+ * @param val2        值2
+ * @param showData    是否显示数据值
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
     const XColor* color, XConditionalFormatting_ValueObjectType type1, const XString* val1,
     XConditionalFormatting_ValueObjectType type2, const XString* val2,
     bool showData, bool stopIfTrue);
+
+/**
+ * @brief      添加双色阶规则
+ * @param self        条件格式对象指针
+ * @param minColor    最小值颜色
+ * @param maxColor    最大值颜色
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_add2ColorScaleRule(XConditionalFormatting* self,
     const XColor* minColor, const XColor* maxColor, bool stopIfTrue);
+
+/**
+ * @brief      添加三色阶规则
+ * @param self        条件格式对象指针
+ * @param minColor    最小值颜色
+ * @param midColor    中间值颜色
+ * @param maxColor    最大值颜色
+ * @param stopIfTrue  如果为真则停止
+ * @return            成功返回 true
+ */
 bool XConditionalFormatting_add3ColorScaleRule(XConditionalFormatting* self,
     const XColor* minColor, const XColor* midColor, const XColor* maxColor, bool stopIfTrue);
 
 /* ========== 范围管理 ========== */
+
+/**
+ * @brief      获取所有验证范围
+ * @param self  条件格式对象指针
+ * @param count [out] 输出范围数量
+ * @return     范围数组指针
+ */
 XCellRange* XConditionalFormatting_ranges(const XConditionalFormatting* self, int* count);
+
+/**
+ * @brief      添加单元格到条件格式范围
+ * @param self 条件格式对象指针
+ * @param cell 单元格引用
+ */
 void XConditionalFormatting_addCell(XConditionalFormatting* self, const XCellReference* cell);
+
+/**
+ * @brief      通过行列号添加单元格到条件格式范围
+ * @param self 条件格式对象指针
+ * @param row  行号（从1开始）
+ * @param col  列号（从1开始）
+ */
 void XConditionalFormatting_addCellRc(XConditionalFormatting* self, int row, int col);
+
+/**
+ * @brief      添加矩形区域到条件格式范围
+ * @param self      条件格式对象指针
+ * @param firstRow  起始行号（从1开始）
+ * @param firstCol  起始列号（从1开始）
+ * @param lastRow   结束行号（从1开始）
+ * @param lastCol   结束列号（从1开始）
+ */
 void XConditionalFormatting_addRange(XConditionalFormatting* self, int firstRow, int firstCol, int lastRow, int lastCol);
+
+/**
+ * @brief      添加单元格范围对象到条件格式范围
+ * @param self 条件格式对象指针
+ * @param range 单元格范围对象
+ */
 void XConditionalFormatting_addRangeEx(XConditionalFormatting* self, const XCellRange* range);
 
 /* ========== 内部接口 ========== */
+
+/**
+ * @brief      获取规则数量
+ * @param self 条件格式对象指针
+ * @return     规则数量
+ */
 int XConditionalFormatting_rulesCount(const XConditionalFormatting* self);
+
+/**
+ * @brief      获取指定索引的规则
+ * @param self  条件格式对象指针
+ * @param index 规则索引
+ * @return     规则指针，无效索引返回 NULL
+ */
 XConditionalFormatting_Rule* XConditionalFormatting_rule(const XConditionalFormatting* self, int index);
 
 #ifdef __cplusplus

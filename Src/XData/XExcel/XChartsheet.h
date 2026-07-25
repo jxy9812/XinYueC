@@ -14,9 +14,10 @@ extern "C" {
 
 #include "XAbstractSheet.h"
 #include "XChart.h"
+/** @brief XChartsheet 图表工作表结构体 */
 typedef struct XChartsheet {
-    XAbstractSheet m_base;
-    XChart* m_chart;
+    XAbstractSheet m_base;         /**< 基类 */
+    XChart* m_chart;              /**< 关联的图表 */
 } XChartsheet;
 /**
  * @brief  创建图表工作表

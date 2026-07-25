@@ -19,11 +19,12 @@ extern "C" {
 typedef struct XDrawingAnchor XDrawingAnchor;
 typedef struct XAbstractSheet XAbstractSheet;
 typedef struct XWorkbook XWorkbook;
+/** @brief XDrawing 绘图容器结构体 */
 typedef struct XDrawing {
-    XAbstractOOXmlFile m_base;
-    XAbstractSheet* m_sheet;
-    XWorkbook* m_workbook;
-    XVector* m_anchors;
+    XAbstractOOXmlFile m_base;      /**< 基类 */
+    XAbstractSheet* m_sheet;         /**< 所属工作表 */
+    XWorkbook* m_workbook;          /**< 所属工作簿 */
+    XVector* m_anchors;            /**< 锚点列表 */
 } XDrawing;
 /**
  * @brief  创建绘图容器对象

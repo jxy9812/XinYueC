@@ -310,6 +310,10 @@ static void VXUrl_deinit(XUrl* self)
 static void VXUrl_copy(XUrl* dest, const XUrl* src)
 {
     if (!dest || !src) return;
+    /* 目标未 init 则自动 init，让 copy_base 可在未初始化目标上安全调用 */
+    if (XClassIsVtableNull(dest)) {
+        XUrl_init(dest);
+    }
     if (src->m_scheme)   dest->m_scheme   = XString_create_copy(src->m_scheme);
     if (src->m_userName) dest->m_userName = XString_create_copy(src->m_userName);
     if (src->m_password) dest->m_password = XString_create_copy(src->m_password);
@@ -324,6 +328,10 @@ static void VXUrl_copy(XUrl* dest, const XUrl* src)
 static void VXUrl_move(XUrl* dest, XUrl* src)
 {
     if (!dest || !src) return;
+    /* 目标未 init 则自动 init */
+    if (XClassIsVtableNull(dest)) {
+        XUrl_init(dest);
+    }
     /* 转移字符串所有权 */
     dest->m_scheme   = src->m_scheme;   src->m_scheme = NULL;
     dest->m_userName = src->m_userName; src->m_userName = NULL;
@@ -362,7 +370,25 @@ XUrl* XUrl_create(void)
     return self;
 }
 
-XUrl* XUrl_create_ex(const char* urlString, XUrl_ParsingMode mode)
+XUrl* XUrl_create_copy(const XUrl* other)
+{
+    if (!other) return NULL;
+    XUrl* self = XUrl_create();
+    if (!self) return NULL;
+    XUrl_copy_base(self, other);
+    return self;
+}
+
+XUrl* XUrl_create_move(XUrl* other)
+{
+    if (!other) return NULL;
+    XUrl* self = XUrl_create();
+    if (!self) return NULL;
+    XUrl_move_base(self, other);
+    return self;
+}
+
+XUrl* XUrl_create_ex(const XString* urlString, XUrl_ParsingMode mode)
 {
     XUrl* self = XUrl_create();
     if (!self) return NULL;
@@ -387,74 +413,24 @@ void XUrl_init(XUrl* self)
     self->m_isValid = false;
 }
 
-void XUrl_init_ex(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
+void XUrl_init_ex(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
 {
     XUrl_init(self);
     XUrl_setUrl(self, urlString, mode);
 }
 
-void XUrl_copy(XUrl* self, const XUrl* other)
-{
-    if (!self) return;
-    XUrl_init(self);
-    XUrl_copy_base(self, other);
-}
-
-void XUrl_move(XUrl* self, XUrl* other)
-{
-    if (!self) return;
-    XUrl_init(self);
-    XUrl_move_base(self, other);
-}
-
-void XUrl_deinit(XUrl* self)
-{
-    if (!self) return;
-    VXUrl_deinit(self);
-    XClass_deinit_base((XClass*)self);
-}
-
-void XUrl_delete(XUrl* self)
-{
-    if (self) XUrl_delete_base(self);
-}
+/* XUrl_copy / XUrl_move / XUrl_copy_base / XUrl_move_base / XUrl_deinit_base / XUrl_delete_base
+   通过宏映射到 XClass_*_base，使用前需确保目标已初始化（XUrl_init） */
 
 /* ========== 虚函数调度 ========== */
-
-void XUrl_copy_base(XUrl* dest, const XUrl* src)
-{
-    if (ISNULL(dest, "XUrl") || ISNULL(src, "XUrl")) return;
-    void (*func)(XUrl*, const XUrl*) = XClassGetVirtualFunc(dest, EXClass_Copy, void(*)(XUrl*, const XUrl*));
-    if (func) func(dest, src);
-}
-
-void XUrl_move_base(XUrl* dest, XUrl* src)
-{
-    if (ISNULL(dest, "XUrl") || ISNULL(src, "XUrl")) return;
-    void (*func)(XUrl*, XUrl*) = XClassGetVirtualFunc(dest, EXClass_Move, void(*)(XUrl*, XUrl*));
-    if (func) func(dest, src);
-}
-
-void XUrl_deinit_base(XUrl* self)
-{
-    if (ISNULL(self, "XUrl")) return;
-    void (*func)(XUrl*) = XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XUrl*));
-    if (func) func(self);
-}
-
-void XUrl_delete_base(XUrl* self)
-{
-    if (ISNULL(self, "XUrl")) return;
-    XUrl_deinit_base(self);
-    XClass_delete_base((XClass*)self);
-}
+/* copy_base / move_base / deinit_base / delete_base 全部通过宏映射到 XClass_*_base */
 
 /* ========== 设置 URL ========== */
 
-void XUrl_setUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
+void XUrl_setUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
 {
     if (!self) return;
-    if (!urlString || !urlString[0]) {
+    if (!urlString || XString_isEmpty_base(urlString)) {
         XString_clear_base(self->m_scheme);
         XString_clear_base(self->m_userName);
         XString_clear_base(self->m_password);
@@ -466,15 +442,16 @@ void XUrl_setUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
         self->m_isValid = false;
         return;
     }
-    parseUrl(self, urlString, mode);
+    parseUrl(self, XString_toUtf8(urlString), mode);
 }
 
-void XUrl_setEncodedUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
+void XUrl_setEncodedUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
 {
+    if (!urlString) return;
     /* 先解码再设置 */
     char decoded[4096];
-    percentDecode(urlString, decoded);
-    XUrl_setUrl(self, decoded, mode);
+    percentDecode(XString_toUtf8(urlString), decoded);
+    XUrl_setUrl(self, urlString, mode);
 }
 
 /* ========== 查询方法 ========== */
@@ -502,58 +479,58 @@ bool XUrl_isRelative(const XUrl* self)
 bool XUrl_isLocalFile(const XUrl* self)
 {
     if (!self) return false;
-    const char* scheme = XUrl_scheme(self);
-    return strcmp(scheme, "file") == 0;
+    const XString* scheme = XUrl_scheme_const(self);
+    return XString_equals_utf8(scheme, "file", XChar_CaseSensitive);
 }
 
 /* ========== 组件访问 ========== */
 
-const char* XUrl_scheme(const XUrl* self)
+const XString* XUrl_scheme_const(const XUrl* self)
 {
-    return (self && self->m_scheme) ? XString_data(self->m_scheme) : "";
+    return self ? self->m_scheme : NULL;
 }
 
-void XUrl_setScheme(XUrl* self, const char* scheme)
+void XUrl_setScheme(XUrl* self, const XString* scheme)
 {
     if (!self) return;
     XString_clear_base(self->m_scheme);
-    if (scheme) XString_append_utf8(self->m_scheme, scheme);
+    if (scheme) XString_append(self->m_scheme, scheme);
 }
 
-const char* XUrl_userName(const XUrl* self)
+const XString* XUrl_userName_const(const XUrl* self)
 {
-    return (self && self->m_userName) ? XString_data(self->m_userName) : "";
+    return self ? self->m_userName : NULL;
 }
 
-void XUrl_setUserName(XUrl* self, const char* userName)
+void XUrl_setUserName(XUrl* self, const XString* userName)
 {
     if (!self) return;
     XString_clear_base(self->m_userName);
-    if (userName) XString_append_utf8(self->m_userName, userName);
+    if (userName) XString_append(self->m_userName, userName);
 }
 
-const char* XUrl_password(const XUrl* self)
+const XString* XUrl_password_const(const XUrl* self)
 {
-    return (self && self->m_password) ? XString_data(self->m_password) : "";
+    return self ? self->m_password : NULL;
 }
 
-void XUrl_setPassword(XUrl* self, const char* password)
+void XUrl_setPassword(XUrl* self, const XString* password)
 {
     if (!self) return;
     XString_clear_base(self->m_password);
-    if (password) XString_append_utf8(self->m_password, password);
+    if (password) XString_append(self->m_password, password);
 }
 
-const char* XUrl_host(const XUrl* self)
+const XString* XUrl_host_const(const XUrl* self)
 {
-    return (self && self->m_host) ? XString_data(self->m_host) : "";
+    return self ? self->m_host : NULL;
 }
 
-void XUrl_setHost(XUrl* self, const char* host)
+void XUrl_setHost(XUrl* self, const XString* host)
 {
     if (!self) return;
     XString_clear_base(self->m_host);
-    if (host) XString_append_utf8(self->m_host, host);
+    if (host) XString_append(self->m_host, host);
 }
 
 int XUrl_port(const XUrl* self)
@@ -566,167 +543,165 @@ void XUrl_setPort(XUrl* self, int port)
     if (self) self->m_port = port;
 }
 
-const char* XUrl_path(const XUrl* self)
+const XString* XUrl_path_const(const XUrl* self)
 {
-    return (self && self->m_path) ? XString_data(self->m_path) : "";
+    return self ? self->m_path : NULL;
 }
 
-void XUrl_setPath(XUrl* self, const char* path)
+void XUrl_setPath(XUrl* self, const XString* path)
 {
     if (!self) return;
     XString_clear_base(self->m_path);
-    if (path) XString_append_utf8(self->m_path, path);
+    if (path) XString_append(self->m_path, path);
 }
 
-const char* XUrl_query(const XUrl* self)
+const XString* XUrl_query_const(const XUrl* self)
 {
-    return (self && self->m_query) ? XString_data(self->m_query) : "";
+    return self ? self->m_query : NULL;
 }
 
-void XUrl_setQuery(XUrl* self, const char* query)
+void XUrl_setQuery(XUrl* self, const XString* query)
 {
     if (!self) return;
     XString_clear_base(self->m_query);
-    if (query) XString_append_utf8(self->m_query, query);
+    if (query) XString_append(self->m_query, query);
 }
 
-const char* XUrl_fragment(const XUrl* self)
+const XString* XUrl_fragment_const(const XUrl* self)
 {
-    return (self && self->m_fragment) ? XString_data(self->m_fragment) : "";
+    return self ? self->m_fragment : NULL;
 }
 
-void XUrl_setFragment(XUrl* self, const char* fragment)
+void XUrl_setFragment(XUrl* self, const XString* fragment)
 {
     if (!self) return;
     XString_clear_base(self->m_fragment);
-    if (fragment) XString_append_utf8(self->m_fragment, fragment);
+    if (fragment) XString_append(self->m_fragment, fragment);
 }
 
-const char* XUrl_userInfo(const XUrl* self)
+
+const XString* XUrl_userInfo_const(const XUrl* self)
 {
-    if (!self) return "";
-    static char buf[512];
-    const char* user = XUrl_userName(self);
-    const char* pass = XUrl_password(self);
-    if (user[0] && pass[0]) {
-        snprintf(buf, sizeof(buf), "%s:%s", user, pass);
-    } else if (user[0]) {
-        strncpy(buf, user, sizeof(buf));
-    } else {
-        buf[0] = '\\0';
-    }
-    return buf;
+    if (!self) return NULL;
+    XString* result = XString_create();
+    if (!result) return NULL;
+    const XString* user = XUrl_userName_const(self);
+    const XString* pass = XUrl_password_const(self);
+    bool hasUser = user && !XString_isEmpty_base(user);
+    bool hasPass = pass && !XString_isEmpty_base(pass);
+    if (hasUser) XString_append(result, user);
+    if (hasUser && hasPass) XString_append_utf8(result, ":");
+    if (hasPass) XString_append(result, pass);
+    return result;
 }
 
-void XUrl_setUserInfo(XUrl* self, const char* userInfo)
+void XUrl_setUserInfo(XUrl* self, const XString* userInfo)
 {
     if (!self) return;
     XString_clear_base(self->m_userName);
     XString_clear_base(self->m_password);
     if (!userInfo) return;
-    const char* colon = strchr(userInfo, ':');
+    const char* utf8 = XString_toUtf8(userInfo);
+    const char* colon = strchr(utf8, ':');
     if (colon) {
         char user[256];
-        size_t ulen = (size_t)(colon - userInfo);
+        size_t ulen = (size_t)(colon - utf8);
         if (ulen < sizeof(user)) {
-            strncpy(user, userInfo, ulen); user[ulen] = '\\0';
+            strncpy(user, utf8, ulen); user[ulen] = '\0';
             XString_append_utf8(self->m_userName, user);
         }
         XString_append_utf8(self->m_password, colon + 1);
     } else {
-        XString_append_utf8(self->m_userName, userInfo);
+        XString_append(self->m_userName, userInfo);
     }
 }
 
-const char* XUrl_authority(const XUrl* self)
+const XString* XUrl_authority_const(const XUrl* self)
 {
-    if (!self) return "";
-    static char buf[1024];
-    buf[0] = '\\0';
-    const char* user = XUrl_userName(self);
-    const char* pass = XUrl_password(self);
-    const char* host = XUrl_host(self);
+    if (!self) return NULL;
+    XString* result = XString_create();
+    if (!result) return NULL;
+    const XString* user = XUrl_userName_const(self);
+    const XString* pass = XUrl_password_const(self);
+    const XString* host = XUrl_host_const(self);
     int port = XUrl_port(self);
-    
-    if (user[0] || pass[0]) {
-        if (pass[0])
-            snprintf(buf, sizeof(buf), "%s:%s@", user, pass);
-        else
-            snprintf(buf, sizeof(buf), "%s@", user);
+    bool hasUser = user && !XString_isEmpty_base(user);
+    bool hasPass = pass && !XString_isEmpty_base(pass);
+    bool hasHost = host && !XString_isEmpty_base(host);
+    if (hasUser) {
+        XString_append(result, user);
+        if (hasPass) {
+            XString_append_utf8(result, ":");
+            XString_append(result, pass);
+        }
+        XString_append_utf8(result, "@");
     }
-    size_t len = strlen(buf);
-    if (host[0]) {
-        strncat(buf, host, sizeof(buf) - len - 1);
-        len = strlen(buf);
+    if (hasHost) {
+        XString_append(result, host);
     }
     if (port >= 0) {
-        snprintf(buf + len, sizeof(buf) - len, ":%d", port);
+        char portBuf[16];
+        snprintf(portBuf, sizeof(portBuf), ":%d", port);
+        XString_append_utf8(result, portBuf);
     }
-    return buf;
+    return result;
 }
 
-/* ========== 转换方法 ========== */
-
-char* XUrl_toString(const XUrl* self, char* out, size_t size)
+XString* XUrl_toString(const XUrl* self)
 {
-    if (!self || !out || size == 0) return out;
-    out[0] = '\\0';
-    const char* scheme = XUrl_scheme(self);
-    const char* authority = XUrl_authority(self);
-    const char* path = XUrl_path(self);
-    const char* query = XUrl_query(self);
-    const char* fragment = XUrl_fragment(self);
-    
-    if (scheme[0]) {
-        snprintf(out, size, "%s://%s%s", scheme, authority, path);
-    } else {
-        snprintf(out, size, "%s%s", authority, path);
+    if (!self) return NULL;
+    XString* result = XString_create();
+    if (!result) return NULL;
+    const XString* scheme = XUrl_scheme_const(self);
+    const XString* authority = XUrl_authority_const(self);
+    const XString* path = XUrl_path_const(self);
+    const XString* query = XUrl_query_const(self);
+    const XString* fragment = XUrl_fragment_const(self);
+    bool hasScheme = scheme && !XString_isEmpty_base(scheme);
+    if (hasScheme) {
+        XString_append(result, scheme);
+        XString_append_utf8(result, "://");
     }
-    size_t len = strlen(out);
-    if (query[0] && len < size - 1) {
-        snprintf(out + len, size - len, "?%s", query);
-        len = strlen(out);
+    if (authority) XString_append(result, authority);
+    if (path) XString_append(result, path);
+    if (query && !XString_isEmpty_base(query)) {
+        XString_append_utf8(result, "?");
+        XString_append(result, query);
     }
-    if (fragment[0] && len < size - 1) {
-        snprintf(out + len, size - len, "#%s", fragment);
+    if (fragment && !XString_isEmpty_base(fragment)) {
+        XString_append_utf8(result, "#");
+        XString_append(result, fragment);
     }
-    return out;
+    return result;
 }
 
-char* XUrl_toEncoded(const XUrl* self, char* out, size_t size)
+XString* XUrl_toEncoded(const XUrl* self)
 {
-    /* 先获取普通字符串，再编码 */
-    char plain[4096];
-    XUrl_toString(self, plain, sizeof(plain));
-    if (!out || size == 0) return out;
-    int j = 0;
-    for (int i = 0; plain[i] && j < (int)size - 4; i++) {
+    if (!self) return NULL;
+    XString* plain = XUrl_toString(self);
+    if (!plain) return NULL;
+    XString* result = XString_create();
+    if (!result) { XString_delete_base(plain); return NULL; }
+    const char* utf8 = XString_toUtf8(plain);
+    for (int i = 0; utf8[i]; i++) {
         char enc[4];
-        int n = percentEncode(plain[i], enc);
-        if (j + n < (int)size) {
-            memcpy(out + j, enc, (size_t)n);
-            j += n;
-        } else break;
+        int n = percentEncode(utf8[i], enc);
+        XString_append_utf8(result, enc);
     }
-    out[j] = '\\0';
-    return out;
+    XString_delete_base(plain);
+    return result;
 }
 
-char* XUrl_toDisplayString(const XUrl* self, int options, char* out, size_t size)
+XString* XUrl_toDisplayString(const XUrl* self, int options)
 {
-    if (!self || !out || size == 0) return out;
-    /* 对于简单实现，先获取 toString，再根据选项处理 */
-    char buf[4096];
-    XUrl_toString(self, buf, sizeof(buf));
-    
-    /* 应用选项 */
-    char temp[4096];
-    strncpy(temp, buf, sizeof(temp));
-    temp[sizeof(temp) - 1] = '\\0';
-    
+    if (!self) return NULL;
+    XString* result = XUrl_toString(self);
+    if (!result) return NULL;
+    char* temp = strdup(XString_toUtf8(result));
+    if (!temp) { XString_delete_base(result); return NULL; }
     if (options & XUrl_RemoveScheme) {
-        const char* scheme = XUrl_scheme(self);
-        if (scheme[0]) {
+        const XString* scheme = XUrl_scheme_const(self);
+        if (scheme && !XString_isEmpty_base(scheme)) {
             char* sp = strstr(temp, "://");
             if (sp) {
                 size_t remain = strlen(sp + 3) + 1;
@@ -744,101 +719,104 @@ char* XUrl_toDisplayString(const XUrl* self, int options, char* out, size_t size
     }
     if (options & XUrl_RemoveFragment) {
         char* hash = strchr(temp, '#');
-        if (hash) *hash = '\\0';
+        if (hash) *hash = '\0';
     }
     if (options & XUrl_RemoveQuery) {
         char* qm = strchr(temp, '?');
-        if (qm) *qm = '\\0';
+        if (qm) *qm = '\0';
     }
     if (options & XUrl_StripTrailingSlash) {
         size_t len = strlen(temp);
-        if (len > 0 && temp[len-1] == '/') temp[len-1] = '\\0';
+        if (len > 0 && temp[len-1] == '/') temp[len-1] = '\0';
     }
-    
-    strncpy(out, temp, size);
-    out[size-1] = '\\0';
-    return out;
+    XString_assign_utf8(result, temp);
+    free(temp);
+    return result;
 }
-
-/* ========== 静态方法 ========== */
-
-XUrl* XUrl_fromLocalFile(const char* localfile)
+XUrl* XUrl_fromLocalFile(const XString* localfile)
 {
     if (!localfile) return NULL;
-    char urlBuf[4096];
-    snprintf(urlBuf, sizeof(urlBuf), "file:///%s", localfile);
-    return XUrl_create_ex(urlBuf, XUrl_TolerantMode);
+    XString* urlBuf = XString_create();
+    XString_append_utf8(urlBuf, "file:///");
+    XString_append(urlBuf, localfile);
+    XUrl* url = XUrl_create_ex(urlBuf, XUrl_TolerantMode);
+    XString_delete_base(urlBuf);
+    return url;
 }
 
-const char* XUrl_toLocalFile(const XUrl* self)
+
+const XString* XUrl_toLocalFile_const(const XUrl* self)
 {
-    if (!self) return "";
-    static char buf[4096];
-    buf[0] = '\\0';
-    if (!XUrl_isLocalFile(self)) return buf;
-    const char* path = XUrl_path(self);
-    if (path[0] == '/') path++;
-    strncpy(buf, path, sizeof(buf));
-    buf[sizeof(buf) - 1] = '\\0';
-    return buf;
+    if (!self) return NULL;
+    if (!XUrl_isLocalFile(self)) return NULL;
+    const XString* path = XUrl_path_const(self);
+    if (!path) return NULL;
+    const char* utf8 = XString_toUtf8(path);
+    if (utf8[0] == '/') utf8++;
+    return XString_create_utf8(utf8);
 }
 
-void XUrl_resolved(const XUrl* self, const char* relative, XUrl* out)
+void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
 {
     if (!self || !out) return;
-    if (!relative || !relative[0]) {
-        XUrl_copy(out, self);
+    if (!relative || XString_isEmpty_base(relative)) {
+        XUrl_init(out);
+        XUrl_copy_base(out, self);
         return;
     }
-    /* 简单实现：如果 relative 以 http:// 等开头，直接解析 */
-    if (strstr(relative, "://")) {
+    const char* relUtf8 = XString_toUtf8(relative);
+    if (strstr(relUtf8, "://")) {
         XUrl_setUrl(out, relative, XUrl_TolerantMode);
         return;
     }
-    /* 否则拼接路径 */
-    char base[4096];
-    XUrl_toString(self, base, sizeof(base));
-    /* 移除末尾的路径部分 */
-    char* lastSlash = strrchr(base, '/');
-    if (lastSlash && lastSlash > base + 6) {
-        *(lastSlash + 1) = '\\0';
+    XString* base = XUrl_toString(self);
+    if (!base) return;
+    char* baseUtf8 = strdup(XString_toUtf8(base));
+    XString_delete_base(base);
+    if (!baseUtf8) return;
+    char* lastSlash = strrchr(baseUtf8, '/');
+    if (lastSlash && lastSlash > baseUtf8 + 6) {
+        *(lastSlash + 1) = '\0';
     } else {
-        strcat(base, "/");
+        strcat(baseUtf8, "/");
     }
-    strncat(base, relative, sizeof(base) - strlen(base) - 1);
-    XUrl_setUrl(out, base, XUrl_TolerantMode);
+    strncat(baseUtf8, relUtf8, 4096 - strlen(baseUtf8) - 1);
+    XString* combined = XString_create_utf8(baseUtf8);
+    free(baseUtf8);
+    XUrl_setUrl(out, combined, XUrl_TolerantMode);
+    XString_delete_base(combined);
 }
 
-XString* XUrl_toPercentEncoding(const char* input, const char* exclude, const char* include)
+XString* XUrl_toPercentEncoding(const XString* input, const XString* exclude, const XString* include)
 {
     if (!input) return NULL;
     XString* result = XString_create();
     if (!result) return NULL;
-    
-    for (int i = 0; input[i]; i++) {
-        char c = input[i];
+    const char* inUtf8 = XString_toUtf8(input);
+    const char* exUtf8 = exclude ? XString_toUtf8(exclude) : NULL;
+    const char* inUtf8Inc = include ? XString_toUtf8(include) : NULL;
+    for (int i = 0; inUtf8[i]; i++) {
+        char c = inUtf8[i];
         bool shouldEncode = true;
         if (isUnreservedChar(c)) shouldEncode = false;
-        if (exclude && strchr(exclude, c)) shouldEncode = false;
-        if (include && strchr(include, c)) shouldEncode = true;
-        
+        if (exUtf8 && strchr(exUtf8, c)) shouldEncode = false;
+        if (inUtf8Inc && strchr(inUtf8Inc, c)) shouldEncode = true;
         if (shouldEncode) {
             char enc[4];
             percentEncode(c, enc);
             XString_append_utf8(result, enc);
         } else {
-            char str[2] = {c, '\\0'};
+            char str[2] = {c, '\0'};
             XString_append_utf8(result, str);
         }
     }
     return result;
 }
-
-XString* XUrl_fromPercentEncoding(const char* input)
+XString* XUrl_fromPercentEncoding(const XString* input)
 {
     if (!input) return NULL;
     char decoded[4096];
-    percentDecode(input, decoded);
+    percentDecode(XString_toUtf8(input), decoded);
     return XString_create_utf8(decoded);
 }
 
@@ -848,13 +826,13 @@ bool XUrl_equals(const XUrl* a, const XUrl* b)
     if (!a || !b) return false;
     if (a->m_port != b->m_port) return false;
     if (a->m_isValid != b->m_isValid) return false;
-    return strcmp(XUrl_scheme(a), XUrl_scheme(b)) == 0 &&
-           strcmp(XUrl_host(a), XUrl_host(b)) == 0 &&
-           strcmp(XUrl_path(a), XUrl_path(b)) == 0 &&
-           strcmp(XUrl_query(a), XUrl_query(b)) == 0 &&
-           strcmp(XUrl_fragment(a), XUrl_fragment(b)) == 0 &&
-           strcmp(XUrl_userName(a), XUrl_userName(b)) == 0 &&
-           strcmp(XUrl_password(a), XUrl_password(b)) == 0;
+    return XString_equals(XUrl_scheme_const(a), XUrl_scheme_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_host_const(a), XUrl_host_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_path_const(a), XUrl_path_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_query_const(a), XUrl_query_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_fragment_const(a), XUrl_fragment_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_userName_const(a), XUrl_userName_const(b), XChar_CaseSensitive) &&
+           XString_equals(XUrl_password_const(a), XUrl_password_const(b), XChar_CaseSensitive);
 }
 
 void XUrl_swap(XUrl* a, XUrl* b)

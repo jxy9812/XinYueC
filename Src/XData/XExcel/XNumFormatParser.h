@@ -10,7 +10,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "XString.h"
 /**

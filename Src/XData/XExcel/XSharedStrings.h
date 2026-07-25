@@ -21,12 +21,18 @@ extern "C" {
 #include "XMap.h"
 #include "XRichString.h"
 #include "XAbstractOOXmlFile.h"
-typedef struct XlsxSharedStringInfo { int m_index; int m_count; } XlsxSharedStringInfo;
+/** @brief 共享字符串信息结构体 */
+typedef struct XlsxSharedStringInfo { 
+    int m_index;    /**< 索引 */
+    int m_count;    /**< 引用计数 */
+} XlsxSharedStringInfo;
+
+/** @brief XSharedStrings 共享字符串表结构体 */
 typedef struct XSharedStrings {
-    XAbstractOOXmlFile m_base;
-    XMap* m_stringTable;
-    XVector* m_stringList;
-    int m_stringCount;
+    XAbstractOOXmlFile m_base;     /**< 基类 */
+    XMap* m_stringTable;           /**< 字符串表（用于去重） */
+    XVector* m_stringList;         /**< 字符串列表 */
+    int m_stringCount;             /**< 字符串数量 */
 } XSharedStrings;
 /**
  * @brief  创建共享字符串表对象

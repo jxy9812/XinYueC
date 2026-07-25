@@ -95,7 +95,12 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
 static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter* src)
 {
     if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
-    
+
+    /* 目标未 init 则自动 init（vtable 为空时），让 copy_base 可在未初始化目标上安全调用 */
+    if (XClassIsVtableNull(obj)) {
+        XXmlStreamWriter_init(obj);
+    }
+
     /* ========== 释放目标对象已有资源 ========== */
     if (obj->m_elementNameStack) {
         for (int i = 0; i < obj->m_elementNameStackSize; i++) {
@@ -154,7 +159,12 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
 static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
 {
     if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
-    
+
+    /* 目标未 init 则自动 init */
+    if (XClassIsVtableNull(obj)) {
+        XXmlStreamWriter_init(obj);
+    }
+
     /* ========== 释放目标对象已有资源 ========== */
     if (obj->m_elementNameStack) {
         for (int i = 0; i < obj->m_elementNameStackSize; i++) {
@@ -465,9 +475,27 @@ XXmlStreamWriter* XXmlStreamWriter_create(void)
 {
     XXmlStreamWriter* self = (XXmlStreamWriter*)XMalloc_System(sizeof(XXmlStreamWriter));
     if (!self) return NULL;
-    
+
     XXmlStreamWriter_init(self);
     Set_Class_MemoryFree(self, XFree_System);
+    return self;
+}
+
+XXmlStreamWriter* XXmlStreamWriter_create_copy(const XXmlStreamWriter* other)
+{
+    if (!other) return NULL;
+    XXmlStreamWriter* self = XXmlStreamWriter_create();
+    if (!self) return NULL;
+    XXmlStreamWriter_copy_base(self, other);
+    return self;
+}
+
+XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other)
+{
+    if (!other) return NULL;
+    XXmlStreamWriter* self = XXmlStreamWriter_create();
+    if (!self) return NULL;
+    XXmlStreamWriter_move_base(self, other);
     return self;
 }
 
@@ -518,62 +546,6 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
     self->m_device = NULL;
 }
 
-/**
- * @brief      ?? XXmlStreamWriter ??
- * @param self ???? XXmlStreamWriter ????
- */
-void XXmlStreamWriter_deinit(XXmlStreamWriter* self)
-{
-    if (ISNULL(self, "XXmlStreamWriter")) return;
-    if (XClassIsVtableNull(self)) {
-        XClassSetVtable(self, XXmlStreamWriter);
-    }
-    XXmlStreamWriter_deinit_base(self);
-}
-
-/**
- * @brief      ????? XXmlStreamWriter ??
- * @param self ???? XXmlStreamWriter ????
- */
-void XXmlStreamWriter_delete(XXmlStreamWriter* self)
-{
-    if (ISNULL(self, "XXmlStreamWriter")) return;
-    if (XClassIsVtableNull(self)) {
-        XClassSetVtable(self, XXmlStreamWriter);
-    }
-    XXmlStreamWriter_delete_base(self);
-}
-
-/* ============================================================================
- * ?????
- * ============================================================================ */
-
-/**
- * @brief      XXmlStreamWriter deinit ?????
- * @param self ?? XXmlStreamWriter ????
- */
-void XXmlStreamWriter_deinit_base(XXmlStreamWriter* self)
-{
-    if (ISNULL(self, "XXmlStreamWriter") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XXmlStreamWriter*))(self);
-}
-
-/**
- * @brief      XXmlStreamWriter delete ?????
- * @param self ?? XXmlStreamWriter ????
- */
-void XXmlStreamWriter_delete_base(XXmlStreamWriter* self)
-{
-    if (ISNULL(self, "XXmlStreamWriter") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XXmlStreamWriter_deinit_base(self);
-    if (Class_MemoryFree(self)) {
-        Class_MemoryFree(self)(self);
-    }
-}
-
-/* ============================================================================
- * ????
- * ============================================================================ */
 
 /**
  * @brief      ??????????
@@ -583,19 +555,30 @@ void XXmlStreamWriter_delete_base(XXmlStreamWriter* self)
 const char* XXmlStreamWriter_toString(const XXmlStreamWriter* self)
 {
     if (!self || !self->m_buffer) return "";
-    
-    /* ???????????????? */
+
     size_t size = XByteArray_size_base((XByteArray*)self->m_buffer);
     if (size == 0) return "";
-    
-    /* ??????? */
+
     if (self->m_deviceString) {
         const uint8_t* data = (const uint8_t*)XByteArray_data((XByteArray*)self->m_buffer);
         XString_assign_with_length_utf8(self->m_deviceString, (const char*)data, size);
         return XString_toUtf8(self->m_deviceString);
     }
-    
+
     return (const char*)XByteArray_data((XByteArray*)self->m_buffer);
+}
+
+XString* XXmlStreamWriter_toString_x(const XXmlStreamWriter* self)
+{
+    if (!self || !self->m_buffer) return NULL;
+
+    size_t size = XByteArray_size_base((XByteArray*)self->m_buffer);
+    if (size == 0) {
+        return XString_create();
+    }
+
+    const uint8_t* data = (const uint8_t*)XByteArray_data((XByteArray*)self->m_buffer);
+    return XString_create_with_length_utf8((const char*)data, size);
 }
 
 /**
@@ -681,21 +664,34 @@ void XXmlStreamWriter_writeStartDocument(XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ?????????????
- * @param self    ?? XXmlStreamWriter ????
- * @param version ???
+ * @brief      写入文档开始声明（带版本）XString 版本
+ * @param self    目标 XXmlStreamWriter 对象指针
+ * @param version 版本号
  */
-void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const char* version)
+void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const XString* version)
 {
     if (!self || !version || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? <?xml version="version" encoding="UTF-8"?> */
+    write_raw_str(self, "<?xml version=\"");
+    write_raw_str(self, XString_toUtf8(version));
+    write_raw_str(self, "\" encoding=\"UTF-8\"?>");
+}
+
+/**
+ * @brief      写入文档开始声明（带版本）UTF-8 版本
+ * @param self    目标 XXmlStreamWriter 对象指针
+ * @param version 版本号（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeStartDocument_ex_utf8(XXmlStreamWriter* self, const char* version)
+{
+    if (!self || !version || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     write_raw_str(self, "<?xml version=\"");
     write_raw_str(self, version);
     write_raw_str(self, "\" encoding=\"UTF-8\"?>");
@@ -707,28 +703,46 @@ void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const char* 
  * @param version    ???
  * @param standalone ??????
  */
-void XXmlStreamWriter_writeStartDocument_ex_2(XXmlStreamWriter* self, const char* version, bool standalone)
+
+/**
+ * @brief      写入文档开始声明（带版本和独立标志）XString 版本
+ * @param self       目标 XXmlStreamWriter 对象指针
+ * @param version    版本号
+ * @param standalone 是否独立文档
+ */
+void XXmlStreamWriter_writeStartDocument_ex_2(XXmlStreamWriter* self, const XString* version, bool standalone)
 {
     if (!self || !version || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? <?xml version="version" standalone="yes/no"?> */
     write_raw_str(self, "<?xml version=\"");
-    write_raw_str(self, version);
+    write_raw_str(self, XString_toUtf8(version));
     write_raw_str(self, "\" standalone=\"");
     write_raw_str(self, standalone ? "yes" : "no");
     write_raw_str(self, "\"?>");
 }
 
 /**
- * @brief      ????????
- * @param self ?? XXmlStreamWriter ????
+ * @brief      写入文档开始声明（带版本和独立标志）UTF-8 版本
+ * @param self       目标 XXmlStreamWriter 对象指针
+ * @param version    版本号（UTF-8 编码）
+ * @param standalone 是否独立文档
  */
+void XXmlStreamWriter_writeStartDocument_ex_2_utf8(XXmlStreamWriter* self, const char* version, bool standalone)
+{
+    if (!self || !version || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
+    write_raw_str(self, "<?xml version=\"");
+    write_raw_str(self, version);
+    write_raw_str(self, "\" standalone=\"");
+    write_raw_str(self, standalone ? "yes" : "no");
+    write_raw_str(self, "\"?>");
+}
 void XXmlStreamWriter_writeEndDocument(XXmlStreamWriter* self)
 {
     if (!self || !self->m_buffer) {
@@ -750,18 +764,47 @@ void XXmlStreamWriter_writeEndDocument(XXmlStreamWriter* self)
  * @param self          ?? XXmlStreamWriter ????
  * @param qualifiedName ???
  */
-void XXmlStreamWriter_writeStartElement(XXmlStreamWriter* self, const char* qualifiedName)
+
+/**
+ * @brief      写入开始标签
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名
+ */
+void XXmlStreamWriter_writeStartElement(XXmlStreamWriter* self, const XString* qualifiedName)
 {
-    write_start_element_impl(self, NULL, qualifiedName);
+    if (!self || !qualifiedName) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    write_start_element_impl(self, NULL, XString_toUtf8(qualifiedName));
 }
 
 /**
- * @brief      ?????????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
- * @param name         ???
+ * @brief      写入开始标签（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
  */
-void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
+void XXmlStreamWriter_writeStartElement_utf8(XXmlStreamWriter* self, const char* qualifiedName)
+{
+    write_start_element_impl(self, NULL, qualifiedName);
+}
+void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name)
+{
+    if (!self || !name) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    const char* ns = namespaceUri ? XString_toUtf8(namespaceUri) : NULL;
+    write_start_element_impl(self, ns, XString_toUtf8(name));
+}
+
+/**
+ * @brief      写入开始标签（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeStartElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
     write_start_element_impl(self, namespaceUri, name);
 }
@@ -814,11 +857,25 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ???????
- * @param self          ?? XXmlStreamWriter ????
- * @param qualifiedName ???
+ * @brief      写入空元素标签
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名
  */
-void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const char* qualifiedName)
+void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const XString* qualifiedName)
+{
+    if (!self || !qualifiedName) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    write_empty_element_impl(self, NULL, XString_toUtf8(qualifiedName));
+}
+
+/**
+ * @brief      写入空元素标签（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEmptyElement_utf8(XXmlStreamWriter* self, const char* qualifiedName)
 {
     write_empty_element_impl(self, NULL, qualifiedName);
 }
@@ -829,85 +886,140 @@ void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const char* qual
  * @param namespaceUri ???? URI
  * @param name         ???
  */
-void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
+
+/**
+ * @brief      写入空元素标签（带命名空间）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI
+ * @param name         本地名
+ */
+void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name)
+{
+    if (!self || !name) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    const char* ns = namespaceUri ? XString_toUtf8(namespaceUri) : NULL;
+    write_empty_element_impl(self, ns, XString_toUtf8(name));
+}
+
+/**
+ * @brief      写入空元素标签（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEmptyElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
     write_empty_element_impl(self, namespaceUri, name);
 }
 
 /**
- * @brief      ????
- * @param self          ?? XXmlStreamWriter ????
- * @param qualifiedName ???
- * @param value         ???
+ * @brief      写入属性
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名
+ * @param value         属性值
  */
-void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const char* qualifiedName, const char* value)
+void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const XString* qualifiedName, const XString* value)
 {
     if (!self || !qualifiedName || !value || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     if (!self->m_inStartElement) {
-        /* ????????????? */
         self->m_hasError = true;
         return;
     }
-    
-    /* ???? */
     XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
-    
-    /* ????? */
-    write_raw_str(self, qualifiedName);
-    
-    /* ?? =" */
+    write_raw_str(self, XString_toUtf8(qualifiedName));
     write_raw_str(self, "=\"");
-    
-    /* ???????? */
-    write_escaped(self, value, true);
-    
-    /* ?? " */
+    write_escaped(self, XString_toUtf8(value), true);
     XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
 }
 
 /**
- * @brief      ???????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
- * @param name         ???
- * @param value        ???
+ * @brief      写入属性（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ * @param value         属性值（UTF-8 编码）
  */
-void XXmlStreamWriter_writeAttribute_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* value)
+void XXmlStreamWriter_writeAttribute_utf8(XXmlStreamWriter* self, const char* qualifiedName, const char* value)
+{
+    if (!self || !qualifiedName || !value || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
+    write_raw_str(self, qualifiedName);
+    write_raw_str(self, "=\"");
+    write_escaped(self, value, true);
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
+}
+
+/**
+ * @brief      写入属性（带命名空间）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI
+ * @param name         本地名
+ * @param value        属性值
+ */
+void XXmlStreamWriter_writeAttribute_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name, const XString* value)
 {
     if (!self || !name || !value || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     if (!self->m_inStartElement) {
         self->m_hasError = true;
         return;
     }
-    
-    /* ???? */
     XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
-    
-    /* ????????:??? */
+    if (namespaceUri && XString_size(namespaceUri) > 0) {
+        write_raw_str(self, XString_toUtf8(namespaceUri));
+        XByteArray_push_back_1(self->m_buffer, (uint8_t)':');
+    }
+    write_raw_str(self, XString_toUtf8(name));
+    write_raw_str(self, "=\"");
+    write_escaped(self, XString_toUtf8(value), true);
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
+}
+
+/**
+ * @brief      写入属性（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ * @param value        属性值（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeAttribute_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* value)
+{
+    if (!self || !name || !value || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
     if (namespaceUri && namespaceUri[0]) {
         write_raw_str(self, namespaceUri);
         XByteArray_push_back_1(self->m_buffer, (uint8_t)':');
     }
     write_raw_str(self, name);
-    
-    /* ?? ="value" */
     write_raw_str(self, "=\"");
     write_escaped(self, value, true);
     XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
 }
 
 /**
- * @brief      ?????? XXmlStreamAttribute ???
- * @param self      ?? XXmlStreamWriter ????
- * @param attribute ??????
+ * @brief      写入属性（从 XXmlStreamAttribute 对象）
+ * @param self      目标 XXmlStreamWriter 对象指针
+ * @param attribute 属性对象指针
  */
 void XXmlStreamWriter_writeAttribute_attr(XXmlStreamWriter* self, const XXmlStreamAttribute* attribute)
 {
@@ -915,37 +1027,29 @@ void XXmlStreamWriter_writeAttribute_attr(XXmlStreamWriter* self, const XXmlStre
         if (self) self->m_hasError = true;
         return;
     }
-    
     if (!self->m_inStartElement) {
         self->m_hasError = true;
         return;
     }
-    
-    /* ????? */
-    const char* qualifiedName = XXmlStreamAttribute_qualifiedName(attribute);
-    const char* namespaceUri = XXmlStreamAttribute_namespaceUri(attribute);
-    const char* name = XXmlStreamAttribute_name(attribute);
-    const char* value = XXmlStreamAttribute_value(attribute);
-    
+    const char* qualifiedName = XXmlStreamAttribute_qualifiedName(attribute)
+        ? XString_toUtf8(XXmlStreamAttribute_qualifiedName(attribute)) : NULL;
+    const char* namespaceUri = XXmlStreamAttribute_namespaceUri(attribute)
+        ? XString_toUtf8(XXmlStreamAttribute_namespaceUri(attribute)) : NULL;
+    const char* name = XXmlStreamAttribute_name(attribute)
+        ? XString_toUtf8(XXmlStreamAttribute_name(attribute)) : NULL;
+    const char* value = XXmlStreamAttribute_value(attribute)
+        ? XString_toUtf8(XXmlStreamAttribute_value(attribute)) : NULL;
+
     if (!qualifiedName && (!namespaceUri || !name)) {
         self->m_hasError = true;
         return;
     }
-    
     if (qualifiedName && qualifiedName[0] && (!namespaceUri || !namespaceUri[0])) {
-        /* ????? */
-        XXmlStreamWriter_writeAttribute(self, qualifiedName, value);
+        XXmlStreamWriter_writeAttribute_utf8(self, qualifiedName, value);
     } else {
-        /* ??????+??? */
-        XXmlStreamWriter_writeAttribute_ex(self, namespaceUri, name, value);
+        XXmlStreamWriter_writeAttribute_ex_utf8(self, namespaceUri, name, value);
     }
 }
-
-/**
- * @brief      ??????
- * @param self       ?? XXmlStreamWriter ????
- * @param attributes ??????
- */
 void XXmlStreamWriter_writeAttributes(XXmlStreamWriter* self, const XXmlStreamAttributes* attributes)
 {
     if (!self || !attributes) {
@@ -968,82 +1072,142 @@ void XXmlStreamWriter_writeAttributes(XXmlStreamWriter* self, const XXmlStreamAt
  * @param self ?? XXmlStreamWriter ????
  * @param text ????
  */
-void XXmlStreamWriter_writeCharacters(XXmlStreamWriter* self, const char* text)
+
+/**
+ * @brief      写入字符数据
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 字符数据
+ */
+void XXmlStreamWriter_writeCharacters(XXmlStreamWriter* self, const XString* text)
 {
     if (!self || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ??????? */
+    write_escaped(self, XString_toUtf8(text), false);
+}
+
+/**
+ * @brief      写入字符数据（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 字符数据（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeCharacters_utf8(XXmlStreamWriter* self, const char* text)
+{
+    if (!self || !text || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     write_escaped(self, text, false);
 }
 
 /**
- * @brief      ?? CDATA ?
- * @param self ?? XXmlStreamWriter ????
- * @param text CDATA ??
+ * @brief      写入 CDATA 段
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text CDATA 文本
  */
-void XXmlStreamWriter_writeCDATA(XXmlStreamWriter* self, const char* text)
+void XXmlStreamWriter_writeCDATA(XXmlStreamWriter* self, const XString* text)
 {
     if (!self || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? <![CDATA[...]]> */
+    write_raw_str(self, "<![CDATA[");
+    write_raw_str(self, XString_toUtf8(text));
+    write_raw_str(self, "]]>");
+}
+
+/**
+ * @brief      写入 CDATA 段（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text CDATA 文本（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeCDATA_utf8(XXmlStreamWriter* self, const char* text)
+{
+    if (!self || !text || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     write_raw_str(self, "<![CDATA[");
     write_raw_str(self, text);
     write_raw_str(self, "]]>");
 }
 
 /**
- * @brief      ????
- * @param self ?? XXmlStreamWriter ????
- * @param text ????
+ * @brief      写入注释
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 注释文本
  */
-void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const char* text)
+void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const XString* text)
 {
     if (!self || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ???? */
     write_indent(self);
-    
-    /* ?? <!-- ... --> */
+    write_raw_str(self, "<!--");
+    write_raw_str(self, XString_toUtf8(text));
+    write_raw_str(self, "-->");
+}
+
+/**
+ * @brief      写入注释（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 注释文本（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeComment_utf8(XXmlStreamWriter* self, const char* text)
+{
+    if (!self || !text || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
+    write_indent(self);
     write_raw_str(self, "<!--");
     write_raw_str(self, text);
     write_raw_str(self, "-->");
 }
 
 /**
- * @brief      ??????
- * @param self   ?? XXmlStreamWriter ????
- * @param target ????
- * @param data   ??????? NULL?
+ * @brief      写入处理指令
+ * @param self   目标 XXmlStreamWriter 对象指针
+ * @param target 指令目标
+ * @param data   指令数据（可为 NULL）
  */
-void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const char* target, const char* data)
+void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const XString* target, const XString* data)
 {
     if (!self || !target || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? <?target ...?> */
+    write_raw_str(self, "<?");
+    write_raw_str(self, XString_toUtf8(target));
+    if (data && XString_size(data) > 0) {
+        XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
+        write_raw_str(self, XString_toUtf8(data));
+    }
+    write_raw_str(self, "?>");
+}
+
+/**
+ * @brief      写入处理指令（UTF-8 版本）
+ * @param self   目标 XXmlStreamWriter 对象指针
+ * @param target 指令目标（UTF-8 编码）
+ * @param data   指令数据（UTF-8 编码，可为 NULL）
+ */
+void XXmlStreamWriter_writeProcessingInstruction_utf8(XXmlStreamWriter* self, const char* target, const char* data)
+{
+    if (!self || !target || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     write_raw_str(self, "<?");
     write_raw_str(self, target);
     if (data && data[0]) {
@@ -1054,67 +1218,113 @@ void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const c
 }
 
 /**
- * @brief      ??????
- * @param self ?? XXmlStreamWriter ????
- * @param name ????
+ * @brief      写入实体引用
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param name 实体名称
  */
-void XXmlStreamWriter_writeEntityReference(XXmlStreamWriter* self, const char* name)
+void XXmlStreamWriter_writeEntityReference(XXmlStreamWriter* self, const XString* name)
 {
     if (!self || !name || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? &name; */
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)'&');
+    write_raw_str(self, XString_toUtf8(name));
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)';');
+}
+
+/**
+ * @brief      写入实体引用（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param name 实体名称（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEntityReference_utf8(XXmlStreamWriter* self, const char* name)
+{
+    if (!self || !name || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     XByteArray_push_back_1(self->m_buffer, (uint8_t)'&');
     write_raw_str(self, name);
     XByteArray_push_back_1(self->m_buffer, (uint8_t)';');
 }
 
 /**
- * @brief      ?? DTD ??
- * @param self ?? XXmlStreamWriter ????
- * @param dtd  DTD ???
+ * @brief      写入 DTD 声明
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param dtd  DTD 字符串
  */
-void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const char* dtd)
+void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const XString* dtd)
 {
     if (!self || !dtd || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ????????????? */
     close_start_element(self, false);
-    
-    /* ?? DTD ??? */
+    write_raw_str(self, XString_toUtf8(dtd));
+}
+
+/**
+ * @brief      写入 DTD 声明（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param dtd  DTD 字符串（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeDTD_utf8(XXmlStreamWriter* self, const char* dtd)
+{
+    if (!self || !dtd || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    close_start_element(self, false);
     write_raw_str(self, dtd);
 }
 
 /**
- * @brief      ????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
- * @param prefix       ??????????????
+ * @brief      写入命名空间声明
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI
+ * @param prefix       命名空间前缀（可为空字符串）
  */
-void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const char* namespaceUri, const char* prefix)
+void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const XString* namespaceUri, const XString* prefix)
 {
     if (!self || !namespaceUri || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     if (!self->m_inStartElement) {
         self->m_hasError = true;
         return;
     }
-    
-    /* ???? */
     XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
-    
-    /* ?? xmlns:prefix="namespaceUri" */
+    write_raw_str(self, "xmlns");
+    if (prefix && XString_size(prefix) > 0) {
+        XByteArray_push_back_1(self->m_buffer, (uint8_t)':');
+        write_raw_str(self, XString_toUtf8(prefix));
+    }
+    write_raw_str(self, "=\"");
+    write_escaped(self, XString_toUtf8(namespaceUri), true);
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
+}
+
+/**
+ * @brief      写入命名空间声明（UTF-8 版本）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param prefix       命名空间前缀（UTF-8 编码，可为空字符串）
+ */
+void XXmlStreamWriter_writeNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* prefix)
+{
+    if (!self || !namespaceUri || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
     write_raw_str(self, "xmlns");
     if (prefix && prefix[0]) {
         XByteArray_push_back_1(self->m_buffer, (uint8_t)':');
@@ -1126,122 +1336,161 @@ void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const char* namespa
 }
 
 /**
- * @brief      ??????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
+ * @brief      写入默认命名空间声明
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI
  */
-void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const char* namespaceUri)
+void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const XString* namespaceUri)
 {
     if (!self || !namespaceUri || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     if (!self->m_inStartElement) {
         self->m_hasError = true;
         return;
     }
-    
-    /* ???? */
     XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
-    
-    /* ?? xmlns="namespaceUri" */
+    write_raw_str(self, "xmlns=\"");
+    write_escaped(self, XString_toUtf8(namespaceUri), true);
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
+}
+
+/**
+ * @brief      写入默认命名空间声明（UTF-8 版本）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeDefaultNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri)
+{
+    if (!self || !namespaceUri || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    XByteArray_push_back_1(self->m_buffer, (uint8_t)' ');
     write_raw_str(self, "xmlns=\"");
     write_escaped(self, namespaceUri, true);
     XByteArray_push_back_1(self->m_buffer, (uint8_t)'"');
 }
 
 /**
- * @brief      ??????????????????????
- * @param self          ?? XXmlStreamWriter ????
- * @param qualifiedName ???
- * @param text          ????
+ * @brief      写入文本元素（包含开始标签、文本、结束标签）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名
+ * @param text          文本内容
  */
-void XXmlStreamWriter_writeTextElement(XXmlStreamWriter* self, const char* qualifiedName, const char* text)
+void XXmlStreamWriter_writeTextElement(XXmlStreamWriter* self, const XString* qualifiedName, const XString* text)
 {
     if (!self || !qualifiedName || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     XXmlStreamWriter_writeStartElement(self, qualifiedName);
     XXmlStreamWriter_writeCharacters(self, text);
     XXmlStreamWriter_writeEndElement(self);
 }
 
 /**
- * @brief      ?????????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
- * @param name         ???
- * @param text         ????
+ * @brief      写入文本元素（包含开始标签、文本、结束标签）UTF-8 版本
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ * @param text          文本内容（UTF-8 编码）
  */
-void XXmlStreamWriter_writeTextElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* text)
+void XXmlStreamWriter_writeTextElement_utf8(XXmlStreamWriter* self, const char* qualifiedName, const char* text)
+{
+    if (!self || !qualifiedName || !text || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    XXmlStreamWriter_writeStartElement_utf8(self, qualifiedName);
+    XXmlStreamWriter_writeCharacters_utf8(self, text);
+    XXmlStreamWriter_writeEndElement(self);
+}
+
+/**
+ * @brief      写入文本元素（带命名空间）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI
+ * @param name         本地名
+ * @param text         文本内容
+ */
+void XXmlStreamWriter_writeTextElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name, const XString* text)
 {
     if (!self || !name || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
     XXmlStreamWriter_writeStartElement_ex(self, namespaceUri, name);
     XXmlStreamWriter_writeCharacters(self, text);
     XXmlStreamWriter_writeEndElement(self);
 }
 
 /**
- * @brief      ???? Token????????? Token ?????
- * @param self   ?? XXmlStreamWriter ????
- * @param reader ? XXmlStreamReader ????
+ * @brief      写入文本元素（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ * @param text         文本内容（UTF-8 编码）
  */
+void XXmlStreamWriter_writeTextElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* text)
+{
+    if (!self || !name || !text || !self->m_buffer) {
+        if (self) self->m_hasError = true;
+        return;
+    }
+    XXmlStreamWriter_writeStartElement_ex_utf8(self, namespaceUri, name);
+    XXmlStreamWriter_writeCharacters_utf8(self, text);
+    XXmlStreamWriter_writeEndElement(self);
+}
+
 void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStreamReader* reader)
 {
     if (!self || !reader || !self->m_buffer) {
         if (self) self->m_hasError = true;
         return;
     }
-    
-    /* ???? Token ?? */
+
     int tokenType = XXmlStreamReader_tokenType(reader);
-    
+
     switch (tokenType) {
         case XXmlStream_StartDocument: {
-            /* ???????? */
-            const char* version = XXmlStreamReader_documentVersion(reader);
+            const XString* version = XXmlStreamReader_documentVersion_const(reader);
             bool standalone = XXmlStreamReader_isStandaloneDocument(reader);
-            if (version && version[0]) {
+            if (version && XString_size(version) > 0) {
                 XXmlStreamWriter_writeStartDocument_ex_2(self, version, standalone);
             } else {
                 XXmlStreamWriter_writeStartDocument(self);
             }
             break;
         }
-        
+
         case XXmlStream_EndDocument: {
-            /* ?????? */
             XXmlStreamWriter_writeEndDocument(self);
             break;
         }
-        
+
         case XXmlStream_StartElement: {
-            /* ?????? */
-            const char* namespaceUri = XXmlStreamReader_namespaceUri(reader);
-            const char* name = XXmlStreamReader_name(reader);
-            if (namespaceUri && namespaceUri[0]) {
+            const XString* namespaceUri = XXmlStreamReader_namespaceUri_const(reader);
+            const XString* name = XXmlStreamReader_name_const(reader);
+            if (namespaceUri && XString_size(namespaceUri) > 0) {
                 XXmlStreamWriter_writeStartElement_ex(self, namespaceUri, name);
             } else {
-                const char* qname = XXmlStreamReader_qualifiedName(reader);
+                const XString* qname = XXmlStreamReader_qualifiedName_const(reader);
                 XXmlStreamWriter_writeStartElement(self, qname ? qname : name);
             }
-            
-            /* ???????? */
+
             if (XXmlStreamReader_hasNamespaceDeclarations(reader)) {
                 int nsCount = XXmlStreamReader_namespaceDeclarationsCount(reader);
                 for (int i = 0; i < nsCount; i++) {
                     const XXmlStreamNamespaceDeclaration* ns = XXmlStreamReader_namespaceDeclaration(reader, i);
                     if (ns) {
-                        const char* nsPrefix = XXmlStreamNamespaceDeclaration_prefix(ns);
-                        const char* nsUri = XXmlStreamNamespaceDeclaration_namespaceUri(ns);
-                        if (nsPrefix && nsPrefix[0]) {
+                        const XString* nsPrefix = XXmlStreamNamespaceDeclaration_prefix(ns);
+                        const XString* nsUri = XXmlStreamNamespaceDeclaration_namespaceUri(ns);
+                        if (nsPrefix && XString_size(nsPrefix) > 0) {
                             XXmlStreamWriter_writeNamespace(self, nsUri, nsPrefix);
                         } else {
                             XXmlStreamWriter_writeDefaultNamespace(self, nsUri);
@@ -1249,103 +1498,91 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
                     }
                 }
             }
-            
-            /* ???? */
+
             const XXmlStreamAttributes* attrs = XXmlStreamReader_attributes(reader);
             if (attrs) {
                 XXmlStreamWriter_writeAttributes(self, attrs);
             }
             break;
         }
-        
+
         case XXmlStream_EndElement: {
-            /* ?????? */
             XXmlStreamWriter_writeEndElement(self);
             break;
         }
-        
-                case XXmlStream_Characters: {
-            /* 写入字符数据 */
-            const char* text = XXmlStreamReader_text(reader);
+
+        case XXmlStream_Characters: {
+            const XString* text = XXmlStreamReader_text_const(reader);
             if (text) {
-                /* 直接使用 writeCharacters 写入 */
                 XXmlStreamWriter_writeCharacters(self, text);
             }
             break;
         }
 
         case XXmlStream_Comment: {
-            /* ???? */
-            const char* text = XXmlStreamReader_text(reader);
+            const XString* text = XXmlStreamReader_text_const(reader);
             if (text) {
                 XXmlStreamWriter_writeComment(self, text);
             }
             break;
         }
-        
+
         case XXmlStream_DTD: {
-            /* ?? DTD */
-            const char* dtdName = XXmlStreamReader_dtdName(reader);
-            const char* dtdPublicId = XXmlStreamReader_dtdPublicId(reader);
-            const char* dtdSystemId = XXmlStreamReader_dtdSystemId(reader);
-            
-            /* ?? DTD ??? */
+            const XString* dtdName = XXmlStreamReader_dtdName_const(reader);
+            const XString* dtdPublicId = XXmlStreamReader_dtdPublicId_const(reader);
+            const XString* dtdSystemId = XXmlStreamReader_dtdSystemId_const(reader);
+
             XString* dtdStr = XString_create();
             if (dtdStr) {
                 XString_append_utf8(dtdStr, "<!DOCTYPE ");
-                XString_append_utf8(dtdStr, dtdName ? dtdName : "");
-                if (dtdPublicId && dtdPublicId[0]) {
+                XString_append_utf8(dtdStr, dtdName ? XString_toUtf8(dtdName) : "");
+                if (dtdPublicId && XString_size(dtdPublicId) > 0) {
                     XString_append_utf8(dtdStr, " PUBLIC \"");
-                    XString_append_utf8(dtdStr, dtdPublicId);
+                    XString_append_utf8(dtdStr, XString_toUtf8(dtdPublicId));
                     XString_append_utf8(dtdStr, "\"");
                 }
-                if (dtdSystemId && dtdSystemId[0]) {
-                    if (!dtdPublicId || !dtdPublicId[0]) {
+                if (dtdSystemId && XString_size(dtdSystemId) > 0) {
+                    if (!dtdPublicId || XString_size(dtdPublicId) == 0) {
                         XString_append_utf8(dtdStr, " SYSTEM");
                     }
                     XString_append_utf8(dtdStr, " \"");
-                    XString_append_utf8(dtdStr, dtdSystemId);
+                    XString_append_utf8(dtdStr, XString_toUtf8(dtdSystemId));
                     XString_append_utf8(dtdStr, "\"");
                 }
                 XString_append_utf8(dtdStr, ">");
-                
-                const char* dtdResult = XString_toUtf8(dtdStr);
-                XXmlStreamWriter_writeDTD(self, dtdResult);
+                XXmlStreamWriter_writeDTD(self, dtdStr);
                 XString_delete_base(dtdStr);
             }
             break;
         }
-        
+
         case XXmlStream_EntityReference: {
-            /* ?????? */
-            const char* name = XXmlStreamReader_name(reader);
+            const XString* name = XXmlStreamReader_name_const(reader);
             if (name) {
                 XXmlStreamWriter_writeEntityReference(self, name);
             }
             break;
         }
-        
+
         case XXmlStream_ProcessingInstruction: {
-            /* ?????? */
-            const char* target = XXmlStreamReader_processingInstructionTarget(reader);
-            const char* data = XXmlStreamReader_processingInstructionData(reader);
+            const XString* target = XXmlStreamReader_processingInstructionTarget_const(reader);
+            const XString* data = XXmlStreamReader_processingInstructionData_const(reader);
             if (target) {
                 XXmlStreamWriter_writeProcessingInstruction(self, target, data);
             }
             break;
         }
-        
+
         case XXmlStream_Invalid:
         default:
-            /* ?? Token??????? */
             break;
     }
 }
 
 /**
- * @brief      ???????
- * @param self ?? XXmlStreamWriter ????
- * @return     ????? true
+ * @brief      判断是否有错误
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @return     有错误返回 true
  */
 bool XXmlStreamWriter_hasError(const XXmlStreamWriter* self)
 {
@@ -1353,13 +1590,13 @@ bool XXmlStreamWriter_hasError(const XXmlStreamWriter* self)
     return self->m_hasError;
 }
 
-/**
- * @brief      设置输出设备（对标 QXmlStreamWriter::setDevice）
- * @param self   目标 XXmlStreamWriter 对象指针
- * @param device XIODevice 设备（可为 NULL）
- */
 void XXmlStreamWriter_setDevice(XXmlStreamWriter* self, XIODevice* device)
 {
     if (ISNULL(self, "XXmlStreamWriter")) return;
     self->m_device = device;
+}
+
+XIODevice* XXmlStreamWriter_device(const XXmlStreamWriter* self)
+{
+    return self? self->m_device:NULL;
 }

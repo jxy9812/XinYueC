@@ -67,14 +67,67 @@ void XMediaFile_delete(XMediaFile* self);
  */
 void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType);
 
+/**
+ * @brief      获取文件后缀
+ * @param self 指针
+ * @return     文件后缀
+ */
 const XString* XMediaFile_suffix(const XMediaFile* self);
+
+/**
+ * @brief      获取 MIME 类型
+ * @param self 指针
+ * @return     MIME 类型
+ */
 const XString* XMediaFile_mimeType(const XMediaFile* self);
+
+/**
+ * @brief      获取文件内容
+ * @param self 指针
+ * @return     内容数据指针
+ */
 const uint8_t* XMediaFile_contents(const XMediaFile* self);
+
+/**
+ * @brief      获取内容大小
+ * @param self 指针
+ * @return     内容大小
+ */
 size_t XMediaFile_contentsSize(const XMediaFile* self);
+
+/**
+ * @brief      判断索引是否有效
+ * @param self 指针
+ * @return     有效返回 true
+ */
 bool XMediaFile_isIndexValid(const XMediaFile* self);
+
+/**
+ * @brief      获取索引
+ * @param self 指针
+ * @return     索引
+ */
 int XMediaFile_index(const XMediaFile* self);
+
+/**
+ * @brief      设置索引
+ * @param self 指针
+ * @param idx  索引
+ */
 void XMediaFile_setIndex(XMediaFile* self, int idx);
+
+/**
+ * @brief      设置文件名
+ * @param self 指针
+ * @param name 文件名
+ */
 void XMediaFile_setFileName(XMediaFile* self, const XString* name);
+
+/**
+ * @brief      获取文件名
+ * @param self 指针
+ * @return     文件名
+ */
 const XString* XMediaFile_fileName(const XMediaFile* self);
 
 /**

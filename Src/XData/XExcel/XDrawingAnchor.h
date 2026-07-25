@@ -45,12 +45,12 @@ typedef enum XDrawingAnchor_Type {
 
 /** @brief XDrawingAnchor 锚点基类*/
 typedef struct XDrawingAnchor {
-    XDrawing* m_drawing;
-    XDrawingAnchor_ObjectType m_objectType; /**< 对象类型*/
-    XDrawingAnchor_Type m_anchorType;       /**< 锚点类型*/
-    XMediaFile* m_pictureFile;
-    XChart* m_chartFile;
-    int m_id;
+    XDrawing* m_drawing;                         /**< 所属绘图 */
+    XDrawingAnchor_ObjectType m_objectType;     /**< 对象类型*/
+    XDrawingAnchor_Type m_anchorType;           /**< 锚点类型*/
+    XMediaFile* m_pictureFile;                  /**< 图片文件 */
+    XChart* m_chartFile;                       /**< 图表文件 */
+    int m_id;                                   /**< ID */
 
     /* 位置信息 */
     int m_col;        /**< 列号（单/双单元格锚点）*/
@@ -74,19 +74,83 @@ typedef struct XDrawingAnchor {
 } XDrawingAnchor;
 
 /* ========== 创建与删除 ========== */
+
+/**
+ * @brief      创建锚点对象
+ * @param drawing    所属绘图
+ * @param objectType 对象类型
+ * @return           锚点指针
+ */
 XDrawingAnchor* XDrawingAnchor_create(XDrawing* drawing, XDrawingAnchor_ObjectType objectType);
+
+/**
+ * @brief      销毁锚点对象
+ * @param self 锚点指针
+ */
 void XDrawingAnchor_delete(XDrawingAnchor* self);
 
 /* ========== 对象设置 ========== */
+
+/**
+ * @brief      设置锚点关联的图片
+ * @param self       锚点指针
+ * @param imagePath 图片路径
+ */
 void XDrawingAnchor_setPicture(XDrawingAnchor* self, const XString* imagePath);
+
+/**
+ * @brief      从数据设置锚点关联的图片
+ * @param self      锚点指针
+ * @param data      图片数据
+ * @param len       数据长度
+ * @param mimeType  MIME类型
+ * @return           成功返回 true
+ */
 bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data, size_t len, const XString* mimeType);
+
+/**
+ * @brief      设置锚点关联的图表
+ * @param self  锚点指针
+ * @param chart 图表
+ */
 void XDrawingAnchor_setChart(XDrawingAnchor* self, XChart* chart);
+
+/**
+ * @brief      获取锚点关联的图片数据
+ * @param self    锚点指针
+ * @param outData 输出数据
+ * @return         成功返回 true
+ */
 bool XDrawingAnchor_getPicture(XDrawingAnchor* self, XByteArray* outData);
 
 /* ========== 位置查询 ========== */
+
+/**
+ * @brief      获取行号
+ * @param self 锚点指针
+ * @return     行号
+ */
 int XDrawingAnchor_row(const XDrawingAnchor* self);
+
+/**
+ * @brief      获取列号
+ * @param self 锚点指针
+ * @return     列号
+ */
 int XDrawingAnchor_col(const XDrawingAnchor* self);
+
+/**
+ * @brief      获取ID
+ * @param self 锚点指针
+ * @return     ID
+ */
 int XDrawingAnchor_id(const XDrawingAnchor* self);
+
+/**
+ * @brief      获取锚点类型
+ * @param self 锚点指针
+ * @return     锚点类型
+ */
 XDrawingAnchor_Type XDrawingAnchor_anchorType(const XDrawingAnchor* self);
 
 /* ========== XML 序列化 ========== */

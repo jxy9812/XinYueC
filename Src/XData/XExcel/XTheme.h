@@ -17,10 +17,11 @@ extern "C" {
 #include "XString.h"
 #include "XByteArray.h"
 #include "XAbstractOOXmlFile.h"
+/** @brief XTheme 主题结构体 */
 typedef struct XTheme {
-    XAbstractOOXmlFile m_base;
-    XString* m_themeName;
-    XString* m_themeXmlData;
+    XAbstractOOXmlFile m_base;      /**< 基类 */
+    XString* m_themeName;          /**< 主题名称 */
+    XString* m_themeXmlData;       /**< 主题 XML 数据 */
 } XTheme;
 /**
  * @brief  创建主题对象

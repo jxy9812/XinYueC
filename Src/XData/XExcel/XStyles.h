@@ -21,18 +21,24 @@ extern "C" {
 #include "XMap.h"
 #include "XFormat.h"
 #include "XAbstractOOXmlFile.h"
-typedef struct XlsxFormatNumberData { int m_formatIndex; XString* m_formatString; } XlsxFormatNumberData;
+/** @brief 格式数字数据结构 */
+typedef struct XlsxFormatNumberData { 
+    int m_formatIndex;       /**< 格式索引 */
+    XString* m_formatString;  /**< 格式字符串 */
+} XlsxFormatNumberData;
+
+/** @brief XStyles 样式管理器结构体 */
 typedef struct XStyles {
-    XAbstractOOXmlFile m_base;
-    XVector* m_fontsList;
-    XVector* m_fillsList;
-    XVector* m_bordersList;
-    XVector* m_xfFormatsList;
-    XVector* m_dxfFormatsList;
-    XMap* m_customNumFmtIdMap;
-    int m_nextCustomNumFmtId;
-    XColor m_indexedColors[64];
-    bool m_emptyFormatAdded;
+    XAbstractOOXmlFile m_base;             /**< 基类 */
+    XVector* m_fontsList;                 /**< 字体列表 */
+    XVector* m_fillsList;                 /**< 填充列表 */
+    XVector* m_bordersList;                /**< 边框列表 */
+    XVector* m_xfFormatsList;              /**< XF格式列表 */
+    XVector* m_dxfFormatsList;             /**< DXF格式列表（差分格式） */
+    XMap* m_customNumFmtIdMap;             /**< 自定义数字格式ID映射 */
+    int m_nextCustomNumFmtId;              /**< 下一个自定义格式ID */
+    XColor m_indexedColors[64];            /**< 索引颜色数组 */
+    bool m_emptyFormatAdded;                /**< 是否已添加空格式 */
 } XStyles;
 /**
  * @brief  创建样式管理器对象

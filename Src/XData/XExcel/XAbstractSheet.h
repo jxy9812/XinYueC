@@ -77,18 +77,95 @@ void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int she
  */
 void XAbstractSheet_deinit(XAbstractSheet* self);
 
+/**
+ * @brief      获取工作表名称
+ * @param self 指针
+ * @return     工作表名称
+ */
 const XString* XAbstractSheet_sheetName(const XAbstractSheet* self);
+
+/**
+ * @brief      获取工作表类型
+ * @param self 指针
+ * @return     工作表类型
+ */
 XAbstractSheet_SheetType XAbstractSheet_sheetType(const XAbstractSheet* self);
+
+/**
+ * @brief      获取工作表状态
+ * @param self 指针
+ * @return     工作表状态
+ */
 XAbstractSheet_SheetState XAbstractSheet_sheetState(const XAbstractSheet* self);
+
+/**
+ * @brief      设置工作表状态
+ * @param self 指针
+ * @param ss   工作表状态
+ */
 void XAbstractSheet_setSheetState(XAbstractSheet* self, XAbstractSheet_SheetState ss);
+
+/**
+ * @brief      判断工作表是否隐藏
+ * @param self 指针
+ * @return     隐藏返回 true
+ */
 bool XAbstractSheet_isHidden(const XAbstractSheet* self);
+
+/**
+ * @brief      判断工作表是否可见
+ * @param self 指针
+ * @return     可见返回 true
+ */
 bool XAbstractSheet_isVisible(const XAbstractSheet* self);
+
+/**
+ * @brief      设置工作表隐藏状态
+ * @param self   指针
+ * @param hidden 是否隐藏
+ */
 void XAbstractSheet_setHidden(XAbstractSheet* self, bool hidden);
+
+/**
+ * @brief      设置工作表可见状态
+ * @param self    指针
+ * @param visible 是否可见
+ */
 void XAbstractSheet_setVisible(XAbstractSheet* self, bool visible);
+
+/**
+ * @brief      设置工作表名称
+ * @param self       指针
+ * @param sheetName  新名称
+ */
 void XAbstractSheet_setSheetName(XAbstractSheet* self, const XString* sheetName);
+
+/**
+ * @brief      设置工作表类型
+ * @param self 指针
+ * @param type 工作表类型
+ */
 void XAbstractSheet_setSheetType(XAbstractSheet* self, XAbstractSheet_SheetType type);
+
+/**
+ * @brief      获取工作表 ID
+ * @param self 指针
+ * @return     工作表 ID
+ */
 int XAbstractSheet_sheetId(const XAbstractSheet* self);
+
+/**
+ * @brief      获取所属工作簿
+ * @param self 指针
+ * @return     工作簿指针
+ */
 XWorkbook* XAbstractSheet_workbook(const XAbstractSheet* self);
+
+/**
+ * @brief      获取绘图对象
+ * @param self 指针
+ * @return     绘图对象指针
+ */
 XDrawing* XAbstractSheet_drawing(const XAbstractSheet* self);
 
 #ifdef __cplusplus

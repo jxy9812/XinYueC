@@ -92,7 +92,7 @@ typedef struct XXmlStreamAttribute
  * @param value        属性值
  * @return     指向新 XXmlStreamAttribute 的指针
  */
-XXmlStreamAttribute* XXmlStreamAttribute_create(const char* qualifiedName, const char* value);
+XXmlStreamAttribute* XXmlStreamAttribute_create(const XString* qualifiedName, const XString* value);
 
 /**
  * @brief      创建 XML 属性对象（带命名空间）
@@ -101,7 +101,7 @@ XXmlStreamAttribute* XXmlStreamAttribute_create(const char* qualifiedName, const
  * @param value       属性值
  * @return     指向新 XXmlStreamAttribute 的指针
  */
-XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const char* namespaceUri, const char* name, const char* value);
+XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const XString* namespaceUri, const XString* name, const XString* value);
 
 /**
  * @brief      释放 XML 属性对象
@@ -114,35 +114,35 @@ void XXmlStreamAttribute_delete(XXmlStreamAttribute* self);
  * @param self 目标 XXmlStreamAttribute 指针
  * @return     命名空间 URI 字符串
  */
-const char* XXmlStreamAttribute_namespaceUri(const XXmlStreamAttribute* self);
+const XString* XXmlStreamAttribute_namespaceUri(const XXmlStreamAttribute* self);
 
 /**
  * @brief      获取属性名称（本地名）
  * @param self 目标 XXmlStreamAttribute 指针
  * @return     属性名
  */
-const char* XXmlStreamAttribute_name(const XXmlStreamAttribute* self);
+const XString* XXmlStreamAttribute_name(const XXmlStreamAttribute* self);
 
 /**
  * @brief      获取限定名（前缀:本地名）
  * @param self 目标 XXmlStreamAttribute 指针
  * @return     限定名
  */
-const char* XXmlStreamAttribute_qualifiedName(const XXmlStreamAttribute* self);
+const XString* XXmlStreamAttribute_qualifiedName(const XXmlStreamAttribute* self);
 
 /**
  * @brief      获取前缀
  * @param self 目标 XXmlStreamAttribute 指针
  * @return     前缀字符串
  */
-const char* XXmlStreamAttribute_prefix(const XXmlStreamAttribute* self);
+const XString* XXmlStreamAttribute_prefix(const XXmlStreamAttribute* self);
 
 /**
  * @brief      获取属性值
  * @param self 目标 XXmlStreamAttribute 指针
  * @return     属性值字符串
  */
-const char* XXmlStreamAttribute_value(const XXmlStreamAttribute* self);
+const XString* XXmlStreamAttribute_value(const XXmlStreamAttribute* self);
 
 /**
  * @brief      判断是否为默认值
@@ -197,7 +197,7 @@ const XXmlStreamAttribute* XXmlStreamAttributes_at(const XXmlStreamAttributes* s
  * @param qualifiedName 限定名
  * @return     属性值字符串，未找到返回空字符串
  */
-const char* XXmlStreamAttributes_value(const XXmlStreamAttributes* self, const char* qualifiedName);
+const XString* XXmlStreamAttributes_value(const XXmlStreamAttributes* self, const XString* qualifiedName);
 
 /**
  * @brief      按命名空间和名称查找属性值
@@ -206,7 +206,7 @@ const char* XXmlStreamAttributes_value(const XXmlStreamAttributes* self, const c
  * @param name         属性名
  * @return     属性值字符串，未找到返回空字符串
  */
-const char* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, const char* namespaceUri, const char* name);
+const XString* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, const XString* namespaceUri, const XString* name);
 
 /**
  * @brief      判断是否包含指定属性
@@ -214,7 +214,7 @@ const char* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, cons
  * @param qualifiedName 限定名
  * @return     包含返回 true
  */
-bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const char* qualifiedName);
+bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const XString* qualifiedName);
 
 /**
  * @brief      追加属性
@@ -223,7 +223,7 @@ bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const c
  * @param name          属性名
  * @param value         属性值
  */
-void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const char* namespaceUri, const char* name, const char* value);
+void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const XString* namespaceUri, const XString* name, const XString* value);
 
 /**
  * @brief      追加属性（带限定名）
@@ -231,7 +231,7 @@ void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const char* namespa
  * @param qualifiedName 限定名
  * @param value         属性值
  */
-void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const char* qualifiedName, const char* value);
+void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const XString* qualifiedName, const XString* value);
 
 /* ========== XXmlStreamNamespaceDeclaration 结构体（对标 QXmlStreamNamespaceDeclaration） ========== */
 
@@ -261,7 +261,7 @@ typedef struct XXmlStreamNamespaceDeclarations
  * @param namespaceUri 命名空间 URI
  * @return     指向新 XXmlStreamNamespaceDeclaration 的指针
  */
-XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const char* prefix, const char* namespaceUri);
+XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const XString* prefix, const XString* namespaceUri);
 
 /**
  * @brief      释放命名空间声明
@@ -274,14 +274,14 @@ void XXmlStreamNamespaceDeclaration_delete(XXmlStreamNamespaceDeclaration* self)
  * @param self 目标 XXmlStreamNamespaceDeclaration 指针
  * @return     前缀字符串
  */
-const char* XXmlStreamNamespaceDeclaration_prefix(const XXmlStreamNamespaceDeclaration* self);
+const XString* XXmlStreamNamespaceDeclaration_prefix(const XXmlStreamNamespaceDeclaration* self);
 
 /**
  * @brief      获取命名空间 URI
  * @param self 目标 XXmlStreamNamespaceDeclaration 指针
  * @return     命名空间 URI
  */
-const char* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNamespaceDeclaration* self);
+const XString* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNamespaceDeclaration* self);
 
 /* ========== XXmlStreamReader 结构体 ========== */
 
@@ -345,27 +345,29 @@ XVtable* XXmlStreamReader_class_init(void);
 XXmlStreamReader* XXmlStreamReader_create(void);
 
 /**
+ * @brief      在堆上拷贝创建 XXmlStreamReader 实例（深拷贝私有数据）
+ * @param other 源 XXmlStreamReader 对象指针
+ * @return     指向新创建的 XXmlStreamReader 对象的指针，失败返回 NULL
+ */
+XXmlStreamReader* XXmlStreamReader_create_copy(const XXmlStreamReader* other);
+
+/**
+ * @brief      在堆上移动创建 XXmlStreamReader 实例（转移 other 资源所有权）
+ * @param other 源 XXmlStreamReader 对象指针（移动后被置空）
+ * @return     指向新创建的 XXmlStreamReader 对象的指针，失败返回 NULL
+ */
+XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other);
+
+/**
  * @brief      初始化 XXmlStreamReader 实例
  * @param self 待初始化的 XXmlStreamReader 对象指针
  */
 void XXmlStreamReader_init(XXmlStreamReader* self);
 
-/**
- * @brief      释放 XXmlStreamReader 资源
- * @param self 待释放的 XXmlStreamReader 对象指针
- */
-void XXmlStreamReader_deinit(XXmlStreamReader* self);
-
-/**
- * @brief      在堆上删除 XXmlStreamReader 实例
- * @param self 待删除的 XXmlStreamReader 对象指针
- */
-void XXmlStreamReader_delete(XXmlStreamReader* self);
-
-/* ========== 虚函数调度 ========== */
-
-void XXmlStreamReader_deinit_base(XXmlStreamReader* self);
-void XXmlStreamReader_delete_base(XXmlStreamReader* self);
+#define  XXmlStreamReader_copy_base             XClass_copy_base
+#define  XXmlStreamReader_move_base             XClass_move_base
+#define  XXmlStreamReader_deinit_base           XClass_deinit_base
+#define  XXmlStreamReader_delete_base           XClass_delete_base
 
 /* ========== 数据设置 ========== */
 
@@ -382,6 +384,13 @@ void XXmlStreamReader_addData(XXmlStreamReader* self, const XByteArray* data);
  * @param data XML 数据字符串
  */
 void XXmlStreamReader_addData_utf8(XXmlStreamReader* self, const char* data);
+
+/**
+ * @brief      设置输入数据（从 XByteArray）
+ * @param self 目标 XXmlStreamReader 对象指针
+ * @param data XML 数据字符串
+ */
+void XXmlStreamReader_addData(XXmlStreamReader* self, const XByteArray* data);
 
 /**
  * @brief      清除读取器状态
@@ -424,7 +433,7 @@ void XXmlStreamReader_skipCurrentElement(XXmlStreamReader* self);
  * @param behaviour 子元素处理行为
  * @return     文本内容字符串
  */
-const char* XXmlStreamReader_readElementText(XXmlStreamReader* self, int behaviour);
+const XString* XXmlStreamReader_readElementText_const(XXmlStreamReader* self, int behaviour);
 
 /* ========== Token 查询 ========== */
 
@@ -438,9 +447,9 @@ int XXmlStreamReader_tokenType(const XXmlStreamReader* self);
 /**
  * @brief      获取当前 Token 的字符串描述
  * @param self 目标 XXmlStreamReader 对象指针
- * @return     Token 类型名称字符串
+ * @return     Token 类型名称字符串（UTF-8 编码，内部静态存储，无需释放）
  */
-const char* XXmlStreamReader_tokenString(const XXmlStreamReader* self);
+const char* XXmlStreamReader_tokenString_const(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否为文档开始
@@ -526,35 +535,35 @@ bool XXmlStreamReader_isProcessingInstruction(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     命名空间 URI 字符串
  */
-const char* XXmlStreamReader_namespaceUri(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_namespaceUri_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的本地名
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     本地名
  */
-const char* XXmlStreamReader_name(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_name_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的限定名
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     限定名
  */
-const char* XXmlStreamReader_qualifiedName(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_qualifiedName_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的前缀
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     前缀字符串
  */
-const char* XXmlStreamReader_prefix(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_prefix_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前字符数据或注释文本
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文本内容
  */
-const char* XXmlStreamReader_text(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_text_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素的属性列表
@@ -592,21 +601,21 @@ bool XXmlStreamReader_hasNamespaceDeclarations(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 名称
  */
-const char* XXmlStreamReader_dtdName(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdName_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取 DTD 公共标识符
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 公共标识符
  */
-const char* XXmlStreamReader_dtdPublicId(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdPublicId_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取 DTD 系统标识符
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 系统标识符
  */
-const char* XXmlStreamReader_dtdSystemId(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdSystemId_const(const XXmlStreamReader* self);
 
 /* ========== 文档信息 ========== */
 
@@ -615,14 +624,14 @@ const char* XXmlStreamReader_dtdSystemId(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文档版本字符串
  */
-const char* XXmlStreamReader_documentVersion(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_documentVersion_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取文档编码
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文档编码字符串
  */
-const char* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_documentEncoding_const(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否为独立文档
@@ -670,7 +679,7 @@ int64_t XXmlStreamReader_characterOffset(const XXmlStreamReader* self);
  * @return     PI 目标字符串；非 PI Token 时返回空字符串
  * @note       对标 QXmlStreamReader::processingInstructionTarget
  */
-const char* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStreamReader* self);
 
 /**
  * @brief      获取处理指令的数据（data）
@@ -678,7 +687,7 @@ const char* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader*
  * @return     PI 数据字符串；无数据时返回空字符串
  * @note       对标 QXmlStreamReader::processingInstructionData
  */
-const char* XXmlStreamReader_processingInstructionData(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_processingInstructionData_const(const XXmlStreamReader* self);
 
 /**
  * @brief      设置是否启用命名空间处理
@@ -729,7 +738,7 @@ int XXmlStreamReader_error(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     错误描述字符串
  */
-const char* XXmlStreamReader_errorString(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_errorString_const(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否有错误
@@ -743,7 +752,14 @@ bool XXmlStreamReader_hasError(const XXmlStreamReader* self);
  * @param self    目标 XXmlStreamReader 对象指针
  * @param message 错误描述
  */
-void XXmlStreamReader_raiseError(XXmlStreamReader* self, const char* message);
+void XXmlStreamReader_raiseError(XXmlStreamReader* self, const XString* message);
+
+/**
+ * @brief      手动引发错误（UTF-8 版本）
+ * @param self    目标 XXmlStreamReader 对象指针
+ * @param message 错误描述（UTF-8 字符串）
+ */
+void XXmlStreamReader_raiseError_utf8(XXmlStreamReader* self, const char* message);
 
 /**
  * @brief      获取实体扩展限制
@@ -814,21 +830,21 @@ void XXmlStreamNotationDeclaration_delete(XXmlStreamNotationDeclaration* self);
  * @param self 目标 XXmlStreamNotationDeclaration 指针
  * @return     符号名称
  */
-const char* XXmlStreamNotationDeclaration_name(const XXmlStreamNotationDeclaration* self);
+const XString* XXmlStreamNotationDeclaration_name(const XXmlStreamNotationDeclaration* self);
 
 /**
  * @brief      获取系统标识符
  * @param self 目标 XXmlStreamNotationDeclaration 指针
  * @return     系统标识符
  */
-const char* XXmlStreamNotationDeclaration_systemId(const XXmlStreamNotationDeclaration* self);
+const XString* XXmlStreamNotationDeclaration_systemId(const XXmlStreamNotationDeclaration* self);
 
 /**
  * @brief      获取公共标识符
  * @param self 目标 XXmlStreamNotationDeclaration 指针
  * @return     公共标识符
  */
-const char* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDeclaration* self);
+const XString* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDeclaration* self);
 
 /* ========== DTD 实体声明（对标 QXmlStreamEntityDeclaration） ========== */
 
@@ -868,35 +884,35 @@ void XXmlStreamEntityDeclaration_delete(XXmlStreamEntityDeclaration* self);
  * @param self 目标 XXmlStreamEntityDeclaration 指针
  * @return     实体名称
  */
-const char* XXmlStreamEntityDeclaration_name(const XXmlStreamEntityDeclaration* self);
+const XString* XXmlStreamEntityDeclaration_name(const XXmlStreamEntityDeclaration* self);
 
 /**
  * @brief      获取符号名称
  * @param self 目标 XXmlStreamEntityDeclaration 指针
  * @return     符号名称
  */
-const char* XXmlStreamEntityDeclaration_notationName(const XXmlStreamEntityDeclaration* self);
+const XString* XXmlStreamEntityDeclaration_notationName(const XXmlStreamEntityDeclaration* self);
 
 /**
  * @brief      获取系统标识符
  * @param self 目标 XXmlStreamEntityDeclaration 指针
  * @return     系统标识符
  */
-const char* XXmlStreamEntityDeclaration_systemId(const XXmlStreamEntityDeclaration* self);
+const XString* XXmlStreamEntityDeclaration_systemId(const XXmlStreamEntityDeclaration* self);
 
 /**
  * @brief      获取公共标识符
  * @param self 目标 XXmlStreamEntityDeclaration 指针
  * @return     公共标识符
  */
-const char* XXmlStreamEntityDeclaration_publicId(const XXmlStreamEntityDeclaration* self);
+const XString* XXmlStreamEntityDeclaration_publicId(const XXmlStreamEntityDeclaration* self);
 
 /**
  * @brief      获取实体值
  * @param self 目标 XXmlStreamEntityDeclaration 指针
  * @return     实体值
  */
-const char* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclaration* self);
+const XString* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclaration* self);
 
 /* ========== DTD 声明列表 ========== */
 
@@ -981,14 +997,14 @@ const XXmlStreamEntityDeclaration* XXmlStreamEntityDeclarations_at(const XXmlStr
 /**
  * @brief      实体解析器回调函数类型
  */
-typedef const char* (*XXmlStreamEntityResolver_ResolveEntityCallback)(
-    const char* publicId, const char* systemId, void* userData);
+typedef const XString* (*XXmlStreamEntityResolver_ResolveEntityCallback)(
+    const XString* publicId, const XString* systemId, void* userData);
 
 /**
  * @brief      未声明实体解析回调函数类型
  */
-typedef const char* (*XXmlStreamEntityResolver_ResolveUndeclaredEntityCallback)(
-    const char* name, void* userData);
+typedef const XString* (*XXmlStreamEntityResolver_ResolveUndeclaredEntityCallback)(
+    const XString* name, void* userData);
 
 /**
  * @brief      实体解析器结构体（对标 Qt 6.8 QXmlStreamEntityResolver）
@@ -1027,8 +1043,8 @@ void XXmlStreamEntityResolver_delete(XXmlStreamEntityResolver* self);
  * @param systemId 系统标识符
  * @return          解析后的实体值，未找到返回 NULL
  */
-const char* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,
-    const char* publicId, const char* systemId);
+const XString* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,
+    const XString* publicId, const XString* systemId);
 
 /**
  * @brief      解析未声明实体
@@ -1036,8 +1052,8 @@ const char* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* sel
  * @param name 实体名称
  * @return      解析后的实体值，未找到返回 NULL
  */
-const char* XXmlStreamEntityResolver_resolveUndeclaredEntity(XXmlStreamEntityResolver* self,
-    const char* name);
+const XString* XXmlStreamEntityResolver_resolveUndeclaredEntity(XXmlStreamEntityResolver* self,
+    const XString* name);
 
 /**
  * @brief      设置用户数据

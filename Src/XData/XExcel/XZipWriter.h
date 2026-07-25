@@ -16,11 +16,11 @@ extern "C" {
 
 #include "XString.h"
 #include "XByteArray.h"
+/** @brief XZipWriter ZIP 写入器结构体 */
 typedef struct XZipWriter {
-    void* m_zipHandle;
-    XString* m_fileName;
-    void* m_entries;  /* XVector<ZipFileEntry>
- */
+    void* m_zipHandle;       /**< ZIP 句柄 */
+    XString* m_fileName;     /**< 文件名 */
+    void* m_entries;        /**< 条目列表 */
 } XZipWriter;
 /**
  * @brief  创建 ZIP 写入器并打开目标文件

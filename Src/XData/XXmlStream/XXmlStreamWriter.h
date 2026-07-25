@@ -58,27 +58,31 @@ XVtable* XXmlStreamWriter_class_init(void);
 XXmlStreamWriter* XXmlStreamWriter_create(void);
 
 /**
+ * @brief      在堆上拷贝创建 XXmlStreamWriter 实例（深拷贝 buffer/deviceString/element 栈）
+ * @param other 源 XXmlStreamWriter 对象指针
+ * @return     指向新创建的 XXmlStreamWriter 对象的指针，失败返回 NULL
+ */
+XXmlStreamWriter* XXmlStreamWriter_create_copy(const XXmlStreamWriter* other);
+
+/**
+ * @brief      在堆上移动创建 XXmlStreamWriter 实例（转移 other 资源所有权）
+ * @param other 源 XXmlStreamWriter 对象指针（移动后被置空）
+ * @return     指向新创建的 XXmlStreamWriter 对象的指针，失败返回 NULL
+ */
+XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other);
+
+/**
  * @brief      初始化 XXmlStreamWriter 实例
  * @param self 待初始化的 XXmlStreamWriter 对象指针
  */
 void XXmlStreamWriter_init(XXmlStreamWriter* self);
 
-/**
- * @brief      释放 XXmlStreamWriter 资源
- * @param self 待释放的 XXmlStreamWriter 对象指针
- */
-void XXmlStreamWriter_deinit(XXmlStreamWriter* self);
-
-/**
- * @brief      在堆上删除 XXmlStreamWriter 实例
- * @param self 待删除的 XXmlStreamWriter 对象指针
- */
-void XXmlStreamWriter_delete(XXmlStreamWriter* self);
-
 /* ========== 虚函数调度 ========== */
 
-void XXmlStreamWriter_deinit_base(XXmlStreamWriter* self);
-void XXmlStreamWriter_delete_base(XXmlStreamWriter* self);
+#define  XXmlStreamWriter_copy_base             XClass_copy_base
+#define  XXmlStreamWriter_move_base             XClass_move_base
+#define  XXmlStreamWriter_deinit_base           XClass_deinit_base
+#define  XXmlStreamWriter_delete_base           XClass_delete_base
 
 /* ========== 设备设置 ========== */
 
@@ -88,6 +92,13 @@ void XXmlStreamWriter_delete_base(XXmlStreamWriter* self);
  * @return     输出字符串（以 UTF-8 编码）
  */
 const char* XXmlStreamWriter_toString(const XXmlStreamWriter* self);
+
+/**
+ * @brief      获取输出缓冲区字符串（XString 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @return     输出字符串（XString，需调用方删除）
+ */
+XString* XXmlStreamWriter_toString_x(const XXmlStreamWriter* self);
 
 /**
  * @brief      获取输出缓冲区
@@ -139,7 +150,14 @@ void XXmlStreamWriter_writeStartDocument(XXmlStreamWriter* self);
  * @param self    目标 XXmlStreamWriter 对象指针
  * @param version 版本号
  */
-void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const char* version);
+void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const XString* version);
+
+/**
+ * @brief      写入文档开始声明（带版本）UTF-8 版本
+ * @param self    目标 XXmlStreamWriter 对象指针
+ * @param version 版本号（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeStartDocument_ex_utf8(XXmlStreamWriter* self, const char* version);
 
 /**
  * @brief      写入文档开始声明（带版本和独立标志）
@@ -147,7 +165,15 @@ void XXmlStreamWriter_writeStartDocument_ex(XXmlStreamWriter* self, const char* 
  * @param version    版本号
  * @param standalone 是否独立文档
  */
-void XXmlStreamWriter_writeStartDocument_ex_2(XXmlStreamWriter* self, const char* version, bool standalone);
+void XXmlStreamWriter_writeStartDocument_ex_2(XXmlStreamWriter* self, const XString* version, bool standalone);
+
+/**
+ * @brief      写入文档开始声明（带版本和独立标志）UTF-8 版本
+ * @param self       目标 XXmlStreamWriter 对象指针
+ * @param version    版本号（UTF-8 编码）
+ * @param standalone 是否独立文档
+ */
+void XXmlStreamWriter_writeStartDocument_ex_2_utf8(XXmlStreamWriter* self, const char* version, bool standalone);
 
 /**
  * @brief      写入文档结束
@@ -160,7 +186,14 @@ void XXmlStreamWriter_writeEndDocument(XXmlStreamWriter* self);
  * @param self          目标 XXmlStreamWriter 对象指针
  * @param qualifiedName 限定名
  */
-void XXmlStreamWriter_writeStartElement(XXmlStreamWriter* self, const char* qualifiedName);
+void XXmlStreamWriter_writeStartElement(XXmlStreamWriter* self, const XString* qualifiedName);
+
+/**
+ * @brief      写入开始标签（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeStartElement_utf8(XXmlStreamWriter* self, const char* qualifiedName);
 
 /**
  * @brief      写入开始标签（带命名空间）
@@ -168,7 +201,15 @@ void XXmlStreamWriter_writeStartElement(XXmlStreamWriter* self, const char* qual
  * @param namespaceUri 命名空间 URI
  * @param name         本地名
  */
-void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
+void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name);
+
+/**
+ * @brief      写入开始标签（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeStartElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
 
 /**
  * @brief      写入结束标签
@@ -181,7 +222,14 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self);
  * @param self          目标 XXmlStreamWriter 对象指针
  * @param qualifiedName 限定名
  */
-void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const char* qualifiedName);
+void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const XString* qualifiedName);
+
+/**
+ * @brief      写入空元素标签（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEmptyElement_utf8(XXmlStreamWriter* self, const char* qualifiedName);
 
 /**
  * @brief      写入空元素标签（带命名空间）
@@ -189,7 +237,15 @@ void XXmlStreamWriter_writeEmptyElement(XXmlStreamWriter* self, const char* qual
  * @param namespaceUri 命名空间 URI
  * @param name         本地名
  */
-void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
+void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name);
+
+/**
+ * @brief      写入空元素标签（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEmptyElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
 
 /**
  * @brief      写入属性
@@ -197,7 +253,15 @@ void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const char* n
  * @param qualifiedName 限定名
  * @param value         属性值
  */
-void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const char* qualifiedName, const char* value);
+void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const XString* qualifiedName, const XString* value);
+
+/**
+ * @brief      写入属性（UTF-8 版本）
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ * @param value         属性值（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeAttribute_utf8(XXmlStreamWriter* self, const char* qualifiedName, const char* value);
 
 /**
  * @brief      写入属性（带命名空间）
@@ -206,7 +270,16 @@ void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const char* qualifi
  * @param name         本地名
  * @param value        属性值
  */
-void XXmlStreamWriter_writeAttribute_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* value);
+void XXmlStreamWriter_writeAttribute_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name, const XString* value);
+
+/**
+ * @brief      写入属性（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ * @param value        属性值（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeAttribute_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* value);
 
 /**
  * @brief      写入属性（从 XXmlStreamAttribute 对象）
@@ -227,21 +300,42 @@ void XXmlStreamWriter_writeAttributes(XXmlStreamWriter* self, const XXmlStreamAt
  * @param self 目标 XXmlStreamWriter 对象指针
  * @param text 字符数据
  */
-void XXmlStreamWriter_writeCharacters(XXmlStreamWriter* self, const char* text);
+void XXmlStreamWriter_writeCharacters(XXmlStreamWriter* self, const XString* text);
+
+/**
+ * @brief      写入字符数据（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 字符数据（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeCharacters_utf8(XXmlStreamWriter* self, const char* text);
 
 /**
  * @brief      写入 CDATA 段
  * @param self 目标 XXmlStreamWriter 对象指针
  * @param text CDATA 文本
  */
-void XXmlStreamWriter_writeCDATA(XXmlStreamWriter* self, const char* text);
+void XXmlStreamWriter_writeCDATA(XXmlStreamWriter* self, const XString* text);
+
+/**
+ * @brief      写入 CDATA 段（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text CDATA 文本（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeCDATA_utf8(XXmlStreamWriter* self, const char* text);
 
 /**
  * @brief      写入注释
  * @param self 目标 XXmlStreamWriter 对象指针
  * @param text 注释文本
  */
-void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const char* text);
+void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const XString* text);
+
+/**
+ * @brief      写入注释（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param text 注释文本（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeComment_utf8(XXmlStreamWriter* self, const char* text);
 
 /**
  * @brief      写入处理指令
@@ -249,21 +343,43 @@ void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const char* text);
  * @param target 指令目标
  * @param data   指令数据（可为 NULL）
  */
-void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const char* target, const char* data);
+void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const XString* target, const XString* data);
+
+/**
+ * @brief      写入处理指令（UTF-8 版本）
+ * @param self   目标 XXmlStreamWriter 对象指针
+ * @param target 指令目标（UTF-8 编码）
+ * @param data   指令数据（UTF-8 编码，可为 NULL）
+ */
+void XXmlStreamWriter_writeProcessingInstruction_utf8(XXmlStreamWriter* self, const char* target, const char* data);
 
 /**
  * @brief      写入实体引用
  * @param self 目标 XXmlStreamWriter 对象指针
  * @param name 实体名称
  */
-void XXmlStreamWriter_writeEntityReference(XXmlStreamWriter* self, const char* name);
+void XXmlStreamWriter_writeEntityReference(XXmlStreamWriter* self, const XString* name);
+
+/**
+ * @brief      写入实体引用（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param name 实体名称（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeEntityReference_utf8(XXmlStreamWriter* self, const char* name);
 
 /**
  * @brief      写入 DTD 声明
  * @param self 目标 XXmlStreamWriter 对象指针
  * @param dtd  DTD 字符串
  */
-void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const char* dtd);
+void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const XString* dtd);
+
+/**
+ * @brief      写入 DTD 声明（UTF-8 版本）
+ * @param self 目标 XXmlStreamWriter 对象指针
+ * @param dtd  DTD 字符串（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeDTD_utf8(XXmlStreamWriter* self, const char* dtd);
 
 /**
  * @brief      写入命名空间声明
@@ -271,14 +387,29 @@ void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const char* dtd);
  * @param namespaceUri 命名空间 URI
  * @param prefix       命名空间前缀（可为空字符串）
  */
-void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const char* namespaceUri, const char* prefix);
+void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const XString* namespaceUri, const XString* prefix);
+
+/**
+ * @brief      写入命名空间声明（UTF-8 版本）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param prefix       命名空间前缀（UTF-8 编码，可为空字符串）
+ */
+void XXmlStreamWriter_writeNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* prefix);
 
 /**
  * @brief      写入默认命名空间声明
  * @param self         目标 XXmlStreamWriter 对象指针
  * @param namespaceUri 命名空间 URI
  */
-void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const char* namespaceUri);
+void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const XString* namespaceUri);
+
+/**
+ * @brief      写入默认命名空间声明（UTF-8 版本）
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeDefaultNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri);
 
 /**
  * @brief      写入文本元素（包含开始标签、文本、结束标签）
@@ -286,7 +417,15 @@ void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const char* 
  * @param qualifiedName 限定名
  * @param text          文本内容
  */
-void XXmlStreamWriter_writeTextElement(XXmlStreamWriter* self, const char* qualifiedName, const char* text);
+void XXmlStreamWriter_writeTextElement(XXmlStreamWriter* self, const XString* qualifiedName, const XString* text);
+
+/**
+ * @brief      写入文本元素（包含开始标签、文本、结束标签）UTF-8 版本
+ * @param self          目标 XXmlStreamWriter 对象指针
+ * @param qualifiedName 限定名（UTF-8 编码）
+ * @param text          文本内容（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeTextElement_utf8(XXmlStreamWriter* self, const char* qualifiedName, const char* text);
 
 /**
  * @brief      写入文本元素（带命名空间）
@@ -295,7 +434,16 @@ void XXmlStreamWriter_writeTextElement(XXmlStreamWriter* self, const char* quali
  * @param name         本地名
  * @param text         文本内容
  */
-void XXmlStreamWriter_writeTextElement_ex(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* text);
+void XXmlStreamWriter_writeTextElement_ex(XXmlStreamWriter* self, const XString* namespaceUri, const XString* name, const XString* text);
+
+/**
+ * @brief      写入文本元素（带命名空间）UTF-8 版本
+ * @param self         目标 XXmlStreamWriter 对象指针
+ * @param namespaceUri 命名空间 URI（UTF-8 编码）
+ * @param name         本地名（UTF-8 编码）
+ * @param text         文本内容（UTF-8 编码）
+ */
+void XXmlStreamWriter_writeTextElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name, const char* text);
 
 /**
  * @brief      写入当前 Token（从读取器复制当前 Token 到写入器）
