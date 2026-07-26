@@ -66,7 +66,7 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 	// 澶勭悊濂楁帴瀛楁椿鍔ㄤ簨浠?
 	if (e->type == XEVENT_TYPE_SOCK_ACT) {
 		XEventSockAct* sockAct = (XEventSockAct*)e;
-		
+
 		// 妫€鏌ユ槸鍚︿负璇讳簨浠讹紙鏂拌繛鎺ュ埌杈撅級
 		if (sockAct->actType & XSocketAct_Accept) {
 			// 濡傛灉鏆傚仠鎺ュ彈杩炴帴锛屼笉澶勭悊
@@ -302,16 +302,12 @@ void XTcpServer_close(XTcpServer* server)
 	if (!server) return;
 	if (!server->listening) return;
 
-	// 閲婃斁鏈嶅姟鍣ㄥ鎺ュ瓧鐨?XNetworkSocketPrivate锛堜細鑷姩浠庝簨浠跺惊鐜敞閿€锛?
-	// 关闭平台服务器（在释放 priv 之前，需要 priv 来关闭服务器句柄）
 	XNetwork_serverClose(server->d_ptr, XTcpServer_socketDescriptor(server));
 
-	// 释放服务器套接字的 XNetworkSocketPrivate（会自动从事件循环注销）
 	if (server->d_ptr) {
 		XNetwork_deleteSocketPrivate(server->d_ptr);
 		server->d_ptr = NULL;
 	}
-	//server->serverHandle = XSocketDescriptor_Invalid();
 	server->listening = false;
 	server->serverPort = 0;
 	XHostAddress_deinit_base(&server->serverAddress);
@@ -444,12 +440,14 @@ bool XTcpServer_waitForNewConnection(XTcpServer* server, int msec, bool* timedOu
 
 bool XTcpServer_hasPendingConnections_base(const XTcpServer* server)
 {
+	if (!server) return false;
 	return XClassGetVirtualFunc(server, EXTcpServer_HasPendingConnections,
 		bool(*)(const XTcpServer*))(server);
 }
 
 XTcpSocket* XTcpServer_nextPendingConnection_base(XTcpServer* server)
 {
+	if (!server) return NULL;
 	return XClassGetVirtualFunc(server, EXTcpServer_NextPendingConnection,
 		XTcpSocket*(*)(XTcpServer*))(server);
 }

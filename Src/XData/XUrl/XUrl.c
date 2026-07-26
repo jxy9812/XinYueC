@@ -61,7 +61,7 @@ static int percentEncode(char c, char* out)
 {
     if (isUnreservedChar(c)) {
         out[0] = c;
-        out[1] = '\\0';
+        out[1] = '\0';
         return 1;
     }
     snprintf(out, 4, "%%%02X", (unsigned char)c);
@@ -89,7 +89,7 @@ static int percentDecode(const char* src, char* dst)
         }
         dst[j++] = src[i++];
     }
-    dst[j] = '\\0';
+    dst[j] = '\0';
     return j;
 }
 
@@ -124,7 +124,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
         size_t len = (size_t)(schemeEnd - p);
         if (len < sizeof(scheme)) {
             strncpy(scheme, p, len);
-            scheme[len] = '\\0';
+            scheme[len] = '\0';
             XString_append_utf8(self->m_scheme, scheme);
         }
         p = schemeEnd + 3;
@@ -174,8 +174,8 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 size_t ulen = (size_t)(colonPos - p);
                 size_t plen = (size_t)(atPos - colonPos - 1);
                 if (ulen < sizeof(userName) && plen < sizeof(password)) {
-                    strncpy(userName, p, ulen); userName[ulen] = '\\0';
-                    strncpy(password, colonPos + 1, plen); password[plen] = '\\0';
+                    strncpy(userName, p, ulen); userName[ulen] = '\0';
+                    strncpy(password, colonPos + 1, plen); password[plen] = '\0';
                     XString_append_utf8(self->m_userName, userName);
                     XString_append_utf8(self->m_password, password);
                 }
@@ -184,7 +184,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char userName[256];
                 size_t ulen = (size_t)(atPos - p);
                 if (ulen < sizeof(userName)) {
-                    strncpy(userName, p, ulen); userName[ulen] = '\\0';
+                    strncpy(userName, p, ulen); userName[ulen] = '\0';
                     XString_append_utf8(self->m_userName, userName);
                 }
             }
@@ -202,7 +202,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char host[256];
                 size_t hlen = (size_t)(bracketEnd - hostStart - 1);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart + 1, hlen); host[hlen] = '\\0';
+                    strncpy(host, hostStart + 1, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
                 hostStart = bracketEnd + 1;
@@ -224,7 +224,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char host[256];
                 size_t hlen = (size_t)(portColon - hostStart);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart, hlen); host[hlen] = '\\0';
+                    strncpy(host, hostStart, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
             }
@@ -235,7 +235,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char host[256];
                 size_t hlen = (size_t)(hostEnd - hostStart);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart, hlen); host[hlen] = '\\0';
+                    strncpy(host, hostStart, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
             }
@@ -250,7 +250,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char path[4096];
             size_t plen = (size_t)(pathEnd - p);
             if (plen < sizeof(path)) {
-                strncpy(path, p, plen); path[plen] = '\\0';
+                strncpy(path, p, plen); path[plen] = '\0';
                 XString_append_utf8(self->m_path, path);
             }
         }
@@ -262,7 +262,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char path[4096];
             size_t plen = (size_t)(pathEnd - p);
             if (plen < sizeof(path)) {
-                strncpy(path, p, plen); path[plen] = '\\0';
+                strncpy(path, p, plen); path[plen] = '\0';
                 XString_append_utf8(self->m_path, path);
             }
         }
@@ -276,7 +276,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char query[4096];
             size_t qlen = (size_t)(qEnd - queryPos - 1);
             if (qlen < sizeof(query)) {
-                strncpy(query, queryPos + 1, qlen); query[qlen] = '\\0';
+                strncpy(query, queryPos + 1, qlen); query[qlen] = '\0';
                 XString_append_utf8(self->m_query, query);
             }
         }
@@ -287,7 +287,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
         char fragment[4096];
         size_t flen = strlen(fragPos + 1);
         if (flen < sizeof(fragment)) {
-            strncpy(fragment, fragPos + 1, flen); fragment[flen] = '\\0';
+            strncpy(fragment, fragPos + 1, flen); fragment[flen] = '\0';
             XString_append_utf8(self->m_fragment, fragment);
         }
     }

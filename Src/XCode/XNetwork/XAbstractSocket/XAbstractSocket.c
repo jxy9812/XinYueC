@@ -298,18 +298,24 @@ void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
 void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
 {
     if (!sock) return;
-  
-    // 释放旧的代理配置资源
-    XNetworkProxy_deinit_base(&sock->proxy);
-  
+
+    // 释放旧的代理配置资源（inline 释放，避开 vtable 调度：
+    // sock->proxy 是值类型成员，XAbstractSocket_init 时没给它设 vtable，
+    // 走 XNetworkProxy_deinit_base 会读 garbage m_class.m_vtable 崩溃）
+    if (sock->proxy.hostName) { XString_delete_base(sock->proxy.hostName); sock->proxy.hostName = NULL; }
+    if (sock->proxy.user)     { XString_delete_base(sock->proxy.user);     sock->proxy.user = NULL;     }
+    if (sock->proxy.password) { XString_delete_base(sock->proxy.password); sock->proxy.password = NULL; }
+
     if (proxy) {
-        // 深拷贝代理配置
+        // 深拷贝代理配置（之前用 XStrdup(proxy->hostName) 是 bug：
+        // XStrdup 接收 char*，但 hostName 是 XString*，强转后 strlen
+        // 会把 XString struct 的前几个字节当长度读，得到 garbage）
         sock->proxy.type = proxy->type;
         sock->proxy.capabilities = proxy->capabilities;
         sock->proxy.port = proxy->port;
-        sock->proxy.hostName = proxy->hostName ? XStrdup(proxy->hostName) : NULL;
-        sock->proxy.user = proxy->user ? XStrdup(proxy->user) : NULL;
-        sock->proxy.password = proxy->password ? XStrdup(proxy->password) : NULL;
+        sock->proxy.hostName = proxy->hostName ? XString_create_copy(proxy->hostName) : NULL;
+        sock->proxy.user     = proxy->user     ? XString_create_copy(proxy->user)     : NULL;
+        sock->proxy.password = proxy->password ? XString_create_copy(proxy->password) : NULL;
     } else {
         // 使用默认代理配置
         XNetworkProxy_init(&sock->proxy);

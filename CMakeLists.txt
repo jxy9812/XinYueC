@@ -108,5 +108,16 @@ else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs)
 endif()
 
+# ==================== XFtp 端到端真服务器联调测试 ====================
+# 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试
+add_executable(FtpE2E_Test
+    "./ftp_e2e_test.c"
+)
+if(UNIX)
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs)
+else()
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs)
+endif()
+
 #安装
 include(CMake_Install.cmake)

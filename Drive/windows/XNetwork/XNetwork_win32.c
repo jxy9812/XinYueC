@@ -31,6 +31,7 @@
 #include "XVector.h"
 #include "XString.h"
 #include "XFileDescriptor.h"
+#include "XAbstractNetIoRing.h"
 
 /* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
@@ -272,6 +273,10 @@ typedef struct XNetworkSocketPrivateWin32 {
     bool isServer;                          ///< 是否为服务器套接字
     bool acceptPending;                     ///< 是否有待处理的 Accept
 
+    /* 服务器专用：为 XFd_alloc 预分配的 fd，acceptContext.base.fd 使用。
+     * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd。 */
+    XFd serverFd;
+
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
     int fromAddrLen;
@@ -314,6 +319,7 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
     if (!p) return NULL;
 
     p->socket = INVALID_SOCKET;
+    p->serverFd = XFD_INVALID;
     p->base.owner = owner;
     p->autoRead = true;
 
@@ -333,7 +339,20 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
         p->socket = INVALID_SOCKET;
     }
 
-    if (priv->owner) {
+    /* 释放 XFd。
+     * 客户端路径：通过 XIODevice_fd((XIODevice*)priv->owner) 获取（owner 是 XAbstractSocket 子类）。
+     * 服务器路径：通过 W32(priv)->serverFd（owner 是 XTcpServer，不继承 XIODevice）。 */
+    if (W32(priv)->isServer) {
+        if (W32(priv)->serverFd != XFD_INVALID) {
+            /* 先注销 NetIoRing 事件源，再释放 fd */
+            XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+            if (ring) {
+                XAbstractNetIoRing_unregisterEvent_base(ring, W32(priv)->serverFd);
+            }
+            XFd_free(W32(priv)->serverFd);
+            W32(priv)->serverFd = XFD_INVALID;
+        }
+    } else if (priv->owner) {
         XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
         if (xfd >= 0) {
             XFd_free(xfd);
@@ -375,21 +394,25 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
     buf.len = XNETWORK_READ_BUFFER_SIZE;
 
     DWORD flags = 0;
+    DWORD bytesTransferred = 0;
     int result;
 
     if (isUdp) {
         p->fromAddrLen = sizeof(p->fromAddr);
-        result = WSARecvFrom(p->socket, &buf, 1, NULL, &flags,
+        result = WSARecvFrom(p->socket, &buf, 1, &bytesTransferred, &flags,
             (struct sockaddr*)&p->fromAddr, &p->fromAddrLen,
             (OVERLAPPED*)&p->readContext, NULL);
     }
     else {
-        result = WSARecv(p->socket, &buf, 1, NULL, &flags,
+        result = WSARecv(p->socket, &buf, 1, &bytesTransferred, &flags,
             (OVERLAPPED*)&p->readContext, NULL);
     }
 
     if (result == 0) {
-        /* 立即完成 */
+        /* 立即完成：把字节数写入 readContext，dispatchCQEntry 才能读到正确值。
+         * 之前传 NULL 给 bytesTransferred，processOneCompletion 时 bytes=0 被误判为 FIN。
+         * bytesTransferred=0 仍表示 close（正常关闭），dispatchCQEntry 仍走 SockClose 路径。 */
+        p->readContext.finishedBytes = bytesTransferred;
         p->readPending = true;
     }
     else if (WSAGetLastError() == WSA_IO_PENDING) {
@@ -859,7 +882,9 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
 
     memset(&p->acceptContext, 0, sizeof(XEventContext_IOCP));
     p->acceptContext.base.type = XEventContextType_Type_Socket;
-    p->acceptContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
+    /* 关键：使用 serverFd 而不是 XIODevice_fd((XIODevice*)priv->owner)，
+     * 因为 priv->owner (XTcpServer) 不继承 XIODevice。 */
+    p->acceptContext.base.fd = p->serverFd;
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->acceptContext.eventMask = FD_ACCEPT;
 
@@ -919,10 +944,31 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
         return -1;
     }
 
-    iocp_assoc(s, priv->owner);
+    if (!iocp_assoc(s, priv->owner)) {
+        closesocket(s);
+        return -1;
+    }
     p->socket = s;
     p->isServer = true;
     p->connected = true;
+
+    /* 关键：分配 XFd 并保存到 serverFd 字段。
+     * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd，
+     * 必须自己存。acceptContext.base.fd 使用 serverFd。
+     * dispatchCQEntry 通过 desc->ctx 找回 owner (XTcpServer) 并投递 XEventSockAct(Accept)。 */
+    {
+        XFd xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        if (xfd == XFD_INVALID) {
+            closesocket(s);
+            return -1;
+        }
+        p->serverFd = xfd;
+        /* 注册到 NetIoRing：建立 owner 关联，让 delete 时能正确注销 */
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring) {
+            XAbstractNetIoRing_registerEvent_base(ring, xfd);
+        }
+    }
 
     return (XServerHandle)s;
 }
@@ -945,8 +991,9 @@ uint16_t XNetwork_serverPort(XServerHandle server)
     return 0;
 }
 
-void XNetwork_serverClose(XServerHandle server)
+void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
 {
+    (void)priv;
     if (server != -1) {
         closesocket((SOCKET)server);
     }
