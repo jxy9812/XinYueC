@@ -1,8 +1,8 @@
 ﻿/******************************************************************************
  * @file       XXmlStreamWriter.c
- * @brief      XXmlStreamWriter XML ?????????? Qt 6.8 QXmlStreamWriter?
- * @author     XinYueC ??
- * @note       ???? XML ??????????????
+ * @brief      XXmlStreamWriter 的 XML 写入实现，行为参考 Qt 6.8 QXmlStreamWriter。
+ * @author     XinYueC
+ * @note       输出 UTF-8 编码的 XML，并支持写入内存缓冲区或关联设备。
  ******************************************************************************/
 #include "XXmlStreamWriter.h"
 #include "XString.h"
@@ -14,47 +14,47 @@
 #include <stdio.h>
 
 /* ============================================================================
- * ??????
+ * 默认配置
  * ============================================================================ */
 
-/** @brief ??????? */
+/** @brief 自动缩进使用的默认缩进宽度。 */
 #define DEFAULT_INDENT 4
 
 /* ============================================================================
- * ??????????
+ * 内部辅助函数
  * ============================================================================ */
 
-/** @brief ????????????? > ? />? */
+/** @brief 关闭当前开始标签，按需写入 `>` 或 `/>`。 */
 static void close_start_element(XXmlStreamWriter* self, bool empty);
 
-/** @brief ???? */
+/** @brief 按当前嵌套层级写入自动格式化缩进。 */
 static void write_indent(XXmlStreamWriter* self);
 
-/** @brief ? UTF-8 ????????? */
+/** @brief 将指定长度的 UTF-8 原始字节写入输出。 */
 static void write_raw(XXmlStreamWriter* self, const char* data, size_t len);
 
 /** @brief 写入单个字节到缓冲区和关联设备 */
 static void write_byte(XXmlStreamWriter* self, uint8_t value);
 
-/** @brief ? UTF-8 ????????????????? */
+/** @brief 将以空字符结尾的 UTF-8 字符串写入输出。 */
 static void write_raw_str(XXmlStreamWriter* self, const char* str);
 
-/** @brief ????? XML ???? */
+/** @brief 写入 XML 文本并转义保留字符。 */
 static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute);
 
-/** @brief ???????????? */
+/** @brief 写入开始元素标签并更新元素栈状态。 */
 static void write_start_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
 
-/** @brief ????????????? */
+/** @brief 写入空元素标签并标记待关闭状态。 */
 static void write_empty_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
 
 /* ============================================================================
- * ???????
+ * 生命周期和复制移动
  * ============================================================================ */
 
 /**
- * @brief      ????XXmlStreamWriter ? deinit ??
- * @param obj  ??????
+ * @brief      释放 XXmlStreamWriter 及其拥有的资源。
+ * @param obj  待释放的 writer 对象。
  */
 static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
 {
@@ -91,9 +91,9 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
 }
 
 /**
- * @brief      ????XXmlStreamWriter ? copy ??
- * @param obj  ??????
- * @param src  ?????
+ * @brief      深拷贝 XXmlStreamWriter 的状态和缓冲区。
+ * @param obj  拷贝目标对象。
+ * @param src  拷贝源对象。
  */
 static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter* src)
 {
@@ -201,7 +201,7 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     obj->m_elementNameStackSize = src->m_elementNameStackSize;
     obj->m_elementNameStackCapacity = src->m_elementNameStackCapacity;
     
-    /* ????? */
+    /* 将源对象恢复为可安全释放的空状态。 */
     src->m_buffer = NULL;
     src->m_deviceString = NULL;
     src->m_autoFormatting = false;
@@ -217,14 +217,14 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
 }
 
 /* ============================================================================
- * ????????
+ * 输出辅助函数
  * ============================================================================ */
 
 /**
- * @brief      ? UTF-8 ??????????????
- * @param self ?????????
- * @param data ????
- * @param len  ????
+ * @brief      将指定长度的 UTF-8 字节写入缓冲区和关联设备。
+ * @param self writer 对象。
+ * @param data 待写入的字节数据。
+ * @param len  数据长度（字节数）。
  */
 static void write_raw(XXmlStreamWriter* self, const char* data, size_t len)
 {
@@ -245,9 +245,9 @@ static void write_byte(XXmlStreamWriter* self, uint8_t value)
 }
 
 /**
- * @brief      ? UTF-8 ?????????????????
- * @param self ?????????
- * @param str  ???
+ * @brief      将以空字符结尾的 UTF-8 字符串写入输出。
+ * @param self writer 对象。
+ * @param str  待写入的字符串。
  */
 static void write_raw_str(XXmlStreamWriter* self, const char* str)
 {
@@ -256,17 +256,17 @@ static void write_raw_str(XXmlStreamWriter* self, const char* str)
 }
 
 /**
- * @brief      ????
- * @param self ?????????
+ * @brief      按嵌套层级写入自动格式化缩进。
+ * @param self writer 对象。
  */
 static void write_indent(XXmlStreamWriter* self)
 {
     if (!self || !self->m_autoFormatting || !self->m_buffer) return;
     
-    /* ???? */
+    /* 自动格式化时先换行。 */
     write_byte(self, (uint8_t)'\n');
     
-    /* ?????? */
+    /* 负缩进表示使用制表符，否则使用空格。 */
     int indent = self->m_elementStack * self->m_autoFormattingIndent;
     uint8_t indentCharacter = indent < 0 ? (uint8_t)'\t' : (uint8_t)' ';
     if (indent < 0) indent = -indent;
@@ -276,9 +276,9 @@ static void write_indent(XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ??????????
- * @param self  ?????????
- * @param empty ???????/> ? >?
+ * @brief      关闭当前开始标签并维护元素栈。
+ * @param self  writer 对象。
+ * @param empty 是否强制使用空元素形式 `/>`。
  */
 static void close_start_element(XXmlStreamWriter* self, bool empty)
 {
@@ -307,10 +307,10 @@ static void close_start_element(XXmlStreamWriter* self, bool empty)
 }
 
 /**
- * @brief      ????? XML ????
- * @param self        ?????????
- * @param text        ????
- * @param isAttribute ??????????????????
+ * @brief      写入 XML 文本并转义特殊字符。
+ * @param self        writer 对象。
+ * @param text        待写入的文本。
+ * @param isAttribute 是否按 XML 属性值规则转义换行、回车和制表符。
  */
 static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute)
 {
@@ -365,7 +365,7 @@ static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttri
                 break;
             default:
                 if (c < 0x20) {
-                    /* ?????????? */
+                    /* XML 1.0 不允许的控制字符使用十六进制字符引用。 */
                     char hex[8];
                     snprintf(hex, sizeof(hex), "&#x%02X;", c);
                     write_raw_str(self, hex);
@@ -378,10 +378,10 @@ static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttri
 }
 
 /**
- * @brief      ????????????
- * @param self         ?????????
- * @param namespaceUri ???? URI??? NULL?
- * @param name         ???
+ * @brief      写入开始元素标签并更新元素栈。
+ * @param self         writer 对象。
+ * @param namespaceUri 命名空间前缀，可为 NULL。
+ * @param name         元素名称。
  */
 static void write_start_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
@@ -390,22 +390,22 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
         return;
     }
     
-    /* ????????????? */
+    /* 先关闭上一个尚未完成的开始标签。 */
     close_start_element(self, false);
     
-    /* ???? */
+    /* 自动格式化缩进。 */
     write_indent(self);
     
-    /* ?? < */
+    /* 写入开始标签左尖括号。 */
     write_byte(self, (uint8_t)'<');
     
-    /* ???????? */
+    /* 有命名空间前缀时写入前缀和分隔符。 */
     if (namespaceUri && namespaceUri[0]) {
         write_raw_str(self, namespaceUri);
         write_byte(self, (uint8_t)':');
     }
     
-    /* ????? */
+    /* 写入元素名称。 */
     write_raw_str(self, name);
     
     /* ========== 将元素名压入栈 ========== */
@@ -429,10 +429,10 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
 }
 
 /**
- * @brief      ?????????????
- * @param self         ?????????
- * @param namespaceUri ???? URI??? NULL?
- * @param name         ???
+ * @brief      写入空元素标签并标记待关闭状态。
+ * @param self         writer 对象。
+ * @param namespaceUri 命名空间前缀，可为 NULL。
+ * @param name         元素名称。
  */
 static void write_empty_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
@@ -441,22 +441,22 @@ static void write_empty_element_impl(XXmlStreamWriter* self, const char* namespa
 }
 
 /* ============================================================================
- * ???????
+ * 类初始化
  * ============================================================================ */
 
 /**
- * @brief      ??? XXmlStreamWriter ??????
- * @return     ???????? XVtable ???
+ * @brief      初始化 XXmlStreamWriter 的虚函数表。
+ * @return     已初始化的类虚函数表指针。
  */
 XVtable* XXmlStreamWriter_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT;
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_SIZE);
     
-    /* ???????? */
+    /* 继承 XClass 的基础行为。 */
     XVTABLE_INHERIT_XCLASS(XClass);
     
-    /* ????? */
+    /* 注册生命周期和复制移动重载。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXXmlStreamWriter_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXXmlStreamWriter_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXXmlStreamWriter_move);
@@ -465,12 +465,12 @@ XVtable* XXmlStreamWriter_class_init(void)
 }
 
 /* ============================================================================
- * ??????
+ * 创建和初始化
  * ============================================================================ */
 
 /**
- * @brief      ????? XXmlStreamWriter ??
- * @return     ?????? XXmlStreamWriter ?????????? NULL
+ * @brief      创建一个动态分配的 XXmlStreamWriter。
+ * @return     成功返回对象指针，内存不足时返回 NULL。
  */
 XXmlStreamWriter* XXmlStreamWriter_create(void)
 {
@@ -501,20 +501,20 @@ XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other)
 }
 
 /**
- * @brief      ??? XXmlStreamWriter ??
- * @param self ????? XXmlStreamWriter ????
+ * @brief      初始化 XXmlStreamWriter 对象。
+ * @param self 待初始化的 XXmlStreamWriter 对象。
  */
 void XXmlStreamWriter_init(XXmlStreamWriter* self)
 {
     if (ISNULL(self, "XXmlStreamWriter")) return;
     
-    /* ?????? */
+    /* 清零对象字段，建立确定的初始状态。 */
     memset(self, 0, sizeof(XXmlStreamWriter));
     
-    /* ??????? */
+    /* 初始化继承的 XClass 基类。 */
     XClass_init((XClass*)self);
     
-    /* ?????? */
+    /* 设置 XXmlStreamWriter 对应的虚函数表。 */
     XClassSetVtable(self, XXmlStreamWriter);
     
     /* ========== 初始化元素名栈 ========== */
@@ -529,7 +529,7 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
         return;
     }
     
-    /* ??????? */
+    /* 创建设备字符串缓存。 */
     self->m_deviceString = XString_create();
     if (!self->m_deviceString) {
         XByteArray_delete_base(self->m_buffer);
@@ -538,7 +538,7 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
         return;
     }
     
-    /* ????? */
+    /* 初始化格式化、栈和错误状态。 */
     self->m_autoFormatting = false;
     self->m_autoFormattingIndent = DEFAULT_INDENT;
     self->m_elementStack = 0;
@@ -551,9 +551,9 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
 
 
 /**
- * @brief      ??????????
- * @param self ?? XXmlStreamWriter ????
- * @return     ??????? UTF-8 ???
+ * @brief      获取当前 XML 输出内容。
+ * @param self XXmlStreamWriter 对象。
+ * @return     以空字符结尾的 UTF-8 字符串；对象无效时返回空字符串。
  */
 const char* XXmlStreamWriter_toString(const XXmlStreamWriter* self)
 {
@@ -587,9 +587,9 @@ XString* XXmlStreamWriter_toString_x(const XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ???????
- * @param self ?? XXmlStreamWriter ????
- * @return     ?? XByteArray ???
+ * @brief      获取当前 XML 输出缓冲区。
+ * @param self XXmlStreamWriter 对象。
+ * @return     内部 XByteArray 指针；对象无效时返回 NULL。
  */
 XByteArray* XXmlStreamWriter_toByteArray(const XXmlStreamWriter* self)
 {
@@ -599,13 +599,13 @@ XByteArray* XXmlStreamWriter_toByteArray(const XXmlStreamWriter* self)
 }
 
 /* ============================================================================
- * ?????
+ * 格式化设置
  * ============================================================================ */
 
 /**
- * @brief      ???????????
- * @param self   ?? XXmlStreamWriter ????
- * @param enable ????
+ * @brief      设置是否启用自动格式化。
+ * @param self   XXmlStreamWriter 对象。
+ * @param enable true 启用自动换行和缩进，false 保持紧凑输出。
  */
 void XXmlStreamWriter_setAutoFormatting(XXmlStreamWriter* self, bool enable)
 {
@@ -614,9 +614,9 @@ void XXmlStreamWriter_setAutoFormatting(XXmlStreamWriter* self, bool enable)
 }
 
 /**
- * @brief      ???????????
- * @param self ?? XXmlStreamWriter ????
- * @return     ???? true
+ * @brief      查询是否启用了自动格式化。
+ * @param self XXmlStreamWriter 对象。
+ * @return     已启用返回 true，否则返回 false。
  */
 bool XXmlStreamWriter_autoFormatting(const XXmlStreamWriter* self)
 {
@@ -625,9 +625,9 @@ bool XXmlStreamWriter_autoFormatting(const XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ???????
- * @param self   ?? XXmlStreamWriter ????
- * @param indent ?????
+ * @brief      设置自动格式化的缩进宽度。
+ * @param self   XXmlStreamWriter 对象。
+ * @param indent 缩进宽度；负值表示使用制表符，非负值表示空格数。
  */
 void XXmlStreamWriter_setAutoFormattingIndent(XXmlStreamWriter* self, int indent)
 {
@@ -636,9 +636,9 @@ void XXmlStreamWriter_setAutoFormattingIndent(XXmlStreamWriter* self, int indent
 }
 
 /**
- * @brief      ???????
- * @param self ?? XXmlStreamWriter ????
- * @return     ?????
+ * @brief      获取自动格式化的缩进宽度。
+ * @param self XXmlStreamWriter 对象。
+ * @return     当前缩进宽度；对象无效时返回默认值 4。
  */
 int XXmlStreamWriter_autoFormattingIndent(const XXmlStreamWriter* self)
 {
@@ -647,12 +647,12 @@ int XXmlStreamWriter_autoFormattingIndent(const XXmlStreamWriter* self)
 }
 
 /* ============================================================================
- * ????
+ * 文档节点
  * ============================================================================ */
 
 /**
- * @brief      ?????????<?xml version="1.0"?>?
- * @param self ?? XXmlStreamWriter ????
+ * @brief      写入默认版本为 1.0 的 XML 声明。
+ * @param self XXmlStreamWriter 对象。
  */
 void XXmlStreamWriter_writeStartDocument(XXmlStreamWriter* self)
 {
@@ -661,7 +661,7 @@ void XXmlStreamWriter_writeStartDocument(XXmlStreamWriter* self)
         return;
     }
     
-    /* ????????????? */
+    /* 先关闭上一个尚未完成的开始标签。 */
     close_start_element(self, false);
     
     XXmlStreamWriter_writeStartDocument_ex_utf8(self, "1.0");
@@ -704,10 +704,10 @@ void XXmlStreamWriter_writeStartDocument_ex_utf8(XXmlStreamWriter* self, const c
 }
 
 /**
- * @brief      ??????????????????
- * @param self       ?? XXmlStreamWriter ????
- * @param version    ???
- * @param standalone ??????
+ * @brief      写入带版本和独立标志的 XML 声明。
+ * @param self       XXmlStreamWriter 对象。
+ * @param version    XML 版本号。
+ * @param standalone 是否标记为独立文档。
  */
 
 /**
@@ -767,9 +767,9 @@ void XXmlStreamWriter_writeEndDocument(XXmlStreamWriter* self)
 }
 
 /**
- * @brief      ??????
- * @param self          ?? XXmlStreamWriter ????
- * @param qualifiedName ???
+ * @brief      写入开始元素标签。
+ * @param self          XXmlStreamWriter 对象。
+ * @param qualifiedName 限定元素名称。
  */
 
 /**
@@ -822,8 +822,8 @@ void XXmlStreamWriter_writeStartElement_ex_utf8(XXmlStreamWriter* self, const ch
 }
 
 /**
- * @brief      ??????
- * @param self ?? XXmlStreamWriter ????
+ * @brief      写入结束元素标签。
+ * @param self XXmlStreamWriter 对象。
  */
 void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
 {
@@ -833,6 +833,14 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
     }
     
     /* Qt 在没有内容时使用空元素形式。 */
+    /* writeEmptyElement() 已经代表完整子元素；调用方随后结束父元素时，
+       先关闭该空子元素，再继续关闭仍在栈中的父元素。 */
+    if (self->m_inStartElement && self->m_pendingEmptyElement) {
+        close_start_element(self, true);
+        if (self->m_elementStack > 0)
+            XXmlStreamWriter_writeEndElement(self);
+        return;
+    }
     if (self->m_inStartElement) {
         close_start_element(self, true);
         return;
@@ -894,10 +902,10 @@ void XXmlStreamWriter_writeEmptyElement_utf8(XXmlStreamWriter* self, const char*
 }
 
 /**
- * @brief      ??????????????
- * @param self         ?? XXmlStreamWriter ????
- * @param namespaceUri ???? URI
- * @param name         ???
+ * @brief      写入带命名空间的空元素标签。
+ * @param self         XXmlStreamWriter 对象。
+ * @param namespaceUri 命名空间 URI。
+ * @param name         本地元素名称。
  */
 
 /**
@@ -1072,7 +1080,7 @@ void XXmlStreamWriter_writeAttributes(XXmlStreamWriter* self, const XXmlStreamAt
         return;
     }
     
-    /* ?????? */
+    /* 按顺序写入属性集合中的每个属性。 */
     int count = XXmlStreamAttributes_size(attributes);
     for (int i = 0; i < count; i++) {
         const XXmlStreamAttribute* attr = XXmlStreamAttributes_at(attributes, i);
@@ -1083,9 +1091,9 @@ void XXmlStreamWriter_writeAttributes(XXmlStreamWriter* self, const XXmlStreamAt
 }
 
 /**
- * @brief      ??????
- * @param self ?? XXmlStreamWriter ????
- * @param text ????
+ * @brief      写入字符数据。
+ * @param self XXmlStreamWriter 对象。
+ * @param text 要写入的字符数据。
  */
 
 /**

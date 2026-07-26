@@ -43,6 +43,25 @@
 #include <string.h>
 #include <math.h>
 
+static const char* xexcel_asset_path(const char* name)
+{
+    static char path[512];
+    XString candidate;
+    if (!name) return "";
+    snprintf(path, sizeof(path), "assets/%s", name);
+    XString_init(&candidate);
+    XString_assign_utf8(&candidate, path);
+    if (XFile_exists_static(&candidate)) {
+        XString_deinit_base(&candidate);
+        return path;
+    }
+    snprintf(path, sizeof(path), "../assets/%s", name);
+    XString_assign_utf8(&candidate, path);
+    bool exists = XFile_exists_static(&candidate);
+    XString_deinit_base(&candidate);
+    return exists ? path : "";
+}
+
 static int g_checks;
 static int g_failures;
 
@@ -1493,7 +1512,7 @@ static bool test_document_device_and_images(void)
     bool groupOk = true;
     XPrintf("[INFO] 扩展测试：Document 设备与图片包往返\n");
     XString_Init_Utf8(packagePath, "/tmp/xinyue_excel_device.xlsx");
-    XString_Init_Utf8(imagePath, "assets/配置cmake.png");
+    XString_Init_Utf8(imagePath, xexcel_asset_path("配置cmake.png"));
     XDocument* document = XDocument_create();
     XDocument_setDocumentProperty_utf8(document, "title", "Device & image <roundtrip>");
     XString_Init_Utf8(customTheme,

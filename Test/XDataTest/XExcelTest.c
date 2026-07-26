@@ -15,6 +15,7 @@
 #include"XFormat.h"
 #include"XColor.h"
 #include"XFont.h"
+#include"XFile.h"
 #include"XWorksheet.h"
 #include"XWorkbook.h"
 #include"XContentTypes.h"
@@ -28,6 +29,25 @@
 /* forward decl for memory tracking globals (defined later in this file) */
 static long g_allocCount;
 static long g_freeCount;
+
+static const char* xexcel_asset_path(const char* name)
+{
+    static char path[512];
+    XString candidate;
+    if (!name) return "";
+    snprintf(path, sizeof(path), "assets/%s", name);
+    XString_init(&candidate);
+    XString_assign_utf8(&candidate, path);
+    if (XFile_exists_static(&candidate)) {
+        XString_deinit_base(&candidate);
+        return path;
+    }
+    snprintf(path, sizeof(path), "../assets/%s", name);
+    XString_assign_utf8(&candidate, path);
+    bool exists = XFile_exists_static(&candidate);
+    XString_deinit_base(&candidate);
+    return exists ? path : "";
+}
 #include"XRelationships.h"
 #include"XCellFormula.h"
 #include"XSharedStrings.h"
@@ -1888,14 +1908,14 @@ static bool test_document_change_image(void)
     bool all_pass = true;
     XDocument* doc = XDocument_create();
     if (!doc) return false;
-    int idx = XDocument_insertImage_utf8(doc, 1, 1, "assets/配置cmake.png");
+    int idx = XDocument_insertImage_utf8(doc, 1, 1, xexcel_asset_path("配置cmake.png"));
     if (idx == 0) TEST_PASS("insertImage 加载真实 PNG");
     else { TEST_FAIL("insertImage", "应返回首图片索引 0"); all_pass = false; }
     XByteArray* ba = XByteArray_create();
     bool ok = XDocument_getImage(doc, 0, ba);
     if (ok && XByteArray_size_base((XContainer*)ba) > 0) TEST_PASS("getImage 返回图片字节");
     else { TEST_FAIL("getImage", "未返回图片数据"); all_pass = false; }
-    XString_Init_Utf8(replacement, "assets/https.png");
+    XString_Init_Utf8(replacement, xexcel_asset_path("https.png"));
     if (XDocument_changeImage(doc, 0, replacement)) TEST_PASS("changeImage 替换图片");
     else { TEST_FAIL("changeImage", "替换真实 PNG 失败"); all_pass = false; }
     XString_deinit_base(replacement);
