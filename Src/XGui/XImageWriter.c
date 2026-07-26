@@ -9,7 +9,6 @@
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
 
 /**
  * @brief      XImageWriter 私有数据
@@ -28,6 +27,19 @@ typedef struct XImageWriterPrivate
     XImageWriterError m_error;       /**< 错误码 */
     char*       m_errorString;       /**< 错误描述 */
 }XImageWriterPrivate;
+
+static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, const char* message)
+{
+    if (!self || !self->m_data) return;
+    if (self->m_data->m_errorString) XFree_System(self->m_data->m_errorString);
+    self->m_data->m_errorString = NULL;
+    self->m_data->m_error = error;
+    if (message)
+    {
+        self->m_data->m_errorString = (char*)XMalloc_System(strlen(message) + 1);
+        if (self->m_data->m_errorString) strcpy(self->m_data->m_errorString, message);
+    }
+}
 
 static void VXImageWriter_deinit(XImageWriter* self)
 {
@@ -72,6 +84,8 @@ void XImageWriter_init(XImageWriter* self)
     {
         memset(self->m_data, 0, sizeof(XImageWriterPrivate));
         self->m_data->m_quality = -1;
+        self->m_data->m_compression = -1;
+        self->m_data->m_error = XImageWriterError_UnknownError;
     }
 }
 
@@ -84,12 +98,7 @@ void XImageWriter_init_device(XImageWriter* self, XIODevice* device, const char*
         if (format && format[0])
         {
             self->m_data->m_format = (char*)XMalloc_System(strlen(format) + 1);
-            if (self->m_data->m_format)
-            {
-                char* p = self->m_data->m_format;
-                strcpy(p, format);
-                while (*p) { *p = (char)toupper(*p); p++; }
-            }
+            if (self->m_data->m_format) strcpy(self->m_data->m_format, format);
         }
     }
 }
@@ -104,12 +113,7 @@ void XImageWriter_init_file(XImageWriter* self, const char* fileName, const char
         if (format && format[0])
         {
             self->m_data->m_format = (char*)XMalloc_System(strlen(format) + 1);
-            if (self->m_data->m_format)
-            {
-                char* p = self->m_data->m_format;
-                strcpy(p, format);
-                while (*p) { *p = (char)toupper(*p); p++; }
-            }
+            if (self->m_data->m_format) strcpy(self->m_data->m_format, format);
         }
     }
 }
@@ -126,19 +130,19 @@ void XImageWriter_setFormat(XImageWriter* self, const char* format)
     if (!self || !self->m_data) return;
     if (self->m_data->m_format) XFree_System(self->m_data->m_format);
     self->m_data->m_format = format ? (char*)XMalloc_System(strlen(format) + 1) : NULL;
-    if (format && self->m_data->m_format)
-    {
-        char* p = self->m_data->m_format;
-        strcpy(p, format);
-        while (*p) { *p = (char)toupper(*p); p++; }
-    }
+    if (format && self->m_data->m_format) strcpy(self->m_data->m_format, format);
 }
 
 const char* XImageWriter_format(const XImageWriter* self)
 { return (self && self->m_data) ? self->m_data->m_format : NULL; }
 
 void XImageWriter_setDevice(XImageWriter* self, XIODevice* device)
-{ if (self && self->m_data) self->m_data->m_device = device; }
+{
+    if (!self || !self->m_data) return;
+    self->m_data->m_device = device;
+    if (self->m_data->m_fileName) XFree_System(self->m_data->m_fileName);
+    self->m_data->m_fileName = NULL;
+}
 
 XIODevice* XImageWriter_device(const XImageWriter* self)
 { return (self && self->m_data) ? self->m_data->m_device : NULL; }
@@ -149,6 +153,7 @@ void XImageWriter_setFileName(XImageWriter* self, const char* fileName)
     if (self->m_data->m_fileName) XFree_System(self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? (char*)XMalloc_System(strlen(fileName) + 1) : NULL;
     if (fileName && self->m_data->m_fileName) strcpy(self->m_data->m_fileName, fileName);
+    self->m_data->m_device = NULL;
 }
 
 const char* XImageWriter_fileName(const XImageWriter* self)
@@ -164,7 +169,7 @@ void XImageWriter_setCompression(XImageWriter* self, int compression)
 { if (self && self->m_data) self->m_data->m_compression = compression; }
 
 int XImageWriter_compression(const XImageWriter* self)
-{ return (self && self->m_data) ? self->m_data->m_compression : 0; }
+{ return (self && self->m_data) ? self->m_data->m_compression : -1; }
 
 void XImageWriter_setSubType(XImageWriter* self, const char* type)
 {
@@ -203,13 +208,21 @@ void XImageWriter_setText(XImageWriter* self, const char* key, const char* text)
 bool XImageWriter_canWrite(const XImageWriter* self)
 {
     if (!self || !self->m_data) return false;
-    return self->m_data->m_fileName != NULL || self->m_data->m_device != NULL;
+    return false;
 }
 
 bool XImageWriter_write(XImageWriter* self, const XImage* image)
 {
-    if (!self || !self->m_data || !image) return false;
-    // 暂未实现实际编码，返回 false
+    if (!self || !self->m_data || !image || XImage_isNull(image))
+    {
+        if (self && self->m_data)
+            XImageWriter_setError(self, XImageWriterError_InvalidImageError, "Cannot write a null image");
+        return false;
+    }
+    if (!self->m_data->m_fileName && !self->m_data->m_device)
+        XImageWriter_setError(self, XImageWriterError_DeviceError, "No image destination is set");
+    else
+        XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError, "No image encoder is registered");
     return false;
 }
 

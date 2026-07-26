@@ -85,6 +85,9 @@ void XPixmap_init_file(XPixmap* self, const char* fileName, const char* format, 
  */
 void XPixmap_init_image(XPixmap* self, const XImage* image, uint32_t flags);
 
+/** @internal Constructs a pixmap backed by a one-bit bitmap image. */
+void XPixmap_init_bitmap_image(XPixmap* self, const XImage* image, uint32_t flags);
+
 /**
  * @brief      复制构造函数
  * @param self 目标 XPixmap 对象指针

@@ -9,7 +9,6 @@
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
 
 /**
  * @brief      XImageIOHandler 私有数据
@@ -94,8 +93,7 @@ static int VXImageIOHandler_loopCount(const XImageIOHandler* self)
 
 static int VXImageIOHandler_imageCount(const XImageIOHandler* self)
 {
-    (void)self;
-    return 0;
+    return XImageIOHandler_canRead_base(self) ? 1 : 0;
 }
 
 static int VXImageIOHandler_nextImageDelay(const XImageIOHandler* self)
@@ -182,13 +180,7 @@ void XImageIOHandler_setFormat(XImageIOHandler* self, const char* format)
     if (!self || !self->m_data) return;
     if (self->m_data->m_format) XFree_System(self->m_data->m_format);
     self->m_data->m_format = format ? (char*)XMalloc_System(strlen(format) + 1) : NULL;
-    if (format && self->m_data->m_format)
-    {
-        // 转换为大写
-        char* p = self->m_data->m_format;
-        strcpy(p, format);
-        while (*p) { *p = (char)toupper(*p); p++; }
-    }
+    if (format && self->m_data->m_format) strcpy(self->m_data->m_format, format);
 }
 
 const char* XImageIOHandler_format(const XImageIOHandler* self)
@@ -210,7 +202,8 @@ bool XImageIOHandler_read_base(XImageIOHandler* self, XImage* image)
 
 bool XImageIOHandler_write_base(XImageIOHandler* self, const XImage* image)
 {
-    if (ISNULL(self, "XImageIOHandler") || ISNULL(XClassGetVtable(self), "Vtable")) return false;
+    if (ISNULL(self, "XImageIOHandler") || ISNULL(XClassGetVtable(self), "Vtable") ||
+        ISNULL(image, "XImage")) return false;
     return XClassGetVirtualFunc(self, EXImageIOHandler_Write, bool(*)(XImageIOHandler*, const XImage*))(self, image);
 }
 

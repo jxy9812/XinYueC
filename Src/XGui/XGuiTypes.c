@@ -86,9 +86,12 @@ void XRegion_addRect(XRegion* self, const XRect* rect)
 
 int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs)
 {
-    if (lhs->x == rhs->x && lhs->y == rhs->y)
-        return XCompare_Equality;
-    if (lhs->x * lhs->y < rhs->x * rhs->y)
-        return XCompare_Less;
-    return XCompare_Greater;
+    if (lhs == rhs) return XCompare_Equality;
+    if (!lhs) return XCompare_Less;
+    if (!rhs) return XCompare_Greater;
+    if (lhs->x < rhs->x) return XCompare_Less;
+    if (lhs->x > rhs->x) return XCompare_Greater;
+    if (lhs->y < rhs->y) return XCompare_Less;
+    if (lhs->y > rhs->y) return XCompare_Greater;
+    return XCompare_Equality;
 }

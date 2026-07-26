@@ -10,6 +10,20 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
+
+static int g_imageReaderAllocationLimitMb = 256;
+
+static const char* XImageReader_detectSignature(const unsigned char* data, size_t size)
+{
+    static const unsigned char png[] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+    if (size >= sizeof(png) && memcmp(data, png, sizeof(png)) == 0) return "png";
+    if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff) return "jpeg";
+    if (size >= 2 && data[0] == 'B' && data[1] == 'M') return "bmp";
+    if (size >= 6 && (memcmp(data, "GIF87a", 6) == 0 || memcmp(data, "GIF89a", 6) == 0)) return "gif";
+    if (size >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WEBP", 4) == 0) return "webp";
+    return NULL;
+}
 
 /**
  * @brief      XImageReader 私有数据
@@ -42,6 +56,19 @@ typedef struct XImageReaderPrivate
     char*       m_errorString;       /**< 错误描述 */
     XImageIOHandler* m_handler;      /**< 内部 IO 处理器 */
 }XImageReaderPrivate;
+
+static void XImageReader_setError(XImageReader* self, XImageReaderError error, const char* message)
+{
+    if (!self || !self->m_data) return;
+    if (self->m_data->m_errorString) XFree_System(self->m_data->m_errorString);
+    self->m_data->m_errorString = NULL;
+    self->m_data->m_error = error;
+    if (message)
+    {
+        self->m_data->m_errorString = (char*)XMalloc_System(strlen(message) + 1);
+        if (self->m_data->m_errorString) strcpy(self->m_data->m_errorString, message);
+    }
+}
 
 static void VXImageReader_deinit(XImageReader* self)
 {
@@ -87,6 +114,7 @@ void XImageReader_init(XImageReader* self)
         memset(self->m_data, 0, sizeof(XImageReaderPrivate));
         self->m_data->m_autoDetectFormat = true;
         self->m_data->m_quality = -1;
+        self->m_data->m_error = XImageReaderError_UnknownError;
     }
 }
 
@@ -150,7 +178,12 @@ bool XImageReader_decideFormatFromContent(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_decideFromContent : false; }
 
 void XImageReader_setDevice(XImageReader* self, XIODevice* device)
-{ if (self && self->m_data) self->m_data->m_device = device; }
+{
+    if (!self || !self->m_data) return;
+    self->m_data->m_device = device;
+    if (self->m_data->m_fileName) XFree_System(self->m_data->m_fileName);
+    self->m_data->m_fileName = NULL;
+}
 
 XIODevice* XImageReader_device(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_device : NULL; }
@@ -161,6 +194,7 @@ void XImageReader_setFileName(XImageReader* self, const char* fileName)
     if (self->m_data->m_fileName) XFree_System(self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? (char*)XMalloc_System(strlen(fileName) + 1) : NULL;
     if (fileName && self->m_data->m_fileName) strcpy(self->m_data->m_fileName, fileName);
+    self->m_data->m_device = NULL;
 }
 
 const char* XImageReader_fileName(const XImageReader* self)
@@ -263,15 +297,35 @@ void* XImageReader_supportedSubTypes(const XImageReader* self) { (void)self; ret
 bool XImageReader_canRead(const XImageReader* self)
 {
     if (!self || !self->m_data) return false;
-    // 检查是否有文件名或设备
-    return self->m_data->m_fileName != NULL || self->m_data->m_device != NULL;
+    if (self->m_data->m_handler) return XImageIOHandler_canRead_base(self->m_data->m_handler);
+    return false;
 }
 
 bool XImageReader_read(XImageReader* self, XImage* out)
 {
     if (!self || !self->m_data || !out) return false;
-    // 暂未实现实际解码，返回空图像
     XImage_init(out);
+    if (self->m_data->m_handler)
+    {
+        if (XImageIOHandler_read_base(self->m_data->m_handler, out)) return true;
+        XImageReader_setError(self, XImageReaderError_InvalidDataError, "Image handler failed to read data");
+        return false;
+    }
+    if (self->m_data->m_fileName)
+    {
+        FILE* file = fopen(self->m_data->m_fileName, "rb");
+        if (!file)
+            XImageReader_setError(self, XImageReaderError_FileNotFoundError, "Image file could not be opened");
+        else
+        {
+            fclose(file);
+            XImageReader_setError(self, XImageReaderError_UnsupportedFormatError, "No image decoder is registered");
+        }
+    }
+    else if (self->m_data->m_device)
+        XImageReader_setError(self, XImageReaderError_UnsupportedFormatError, "No image decoder is registered");
+    else
+        XImageReader_setError(self, XImageReaderError_DeviceError, "No image source is set");
     return false;
 }
 
@@ -302,8 +356,15 @@ bool XImageReader_supportsOption(const XImageReader* self, XImageIOHandlerOption
 
 const char* XImageReader_imageFormat(const char* fileName)
 {
-    (void)fileName;
-    return NULL;
+    unsigned char signature[16];
+    size_t size;
+    FILE* file;
+    if (!fileName) return NULL;
+    file = fopen(fileName, "rb");
+    if (!file) return NULL;
+    size = fread(signature, 1, sizeof(signature), file);
+    fclose(file);
+    return XImageReader_detectSignature(signature, size);
 }
 
 const char* XImageReader_imageFormatDevice(XIODevice* device)
@@ -315,6 +376,9 @@ const char* XImageReader_imageFormatDevice(XIODevice* device)
 void* XImageReader_supportedImageFormats() { return NULL; }
 void* XImageReader_supportedMimeTypes() { return NULL; }
 void* XImageReader_imageFormatsForMimeType(const char* mimeType) { (void)mimeType; return NULL; }
-int XImageReader_allocationLimit() { return 0; }
-void XImageReader_setAllocationLimit(int mbLimit) { (void)mbLimit; }
+int XImageReader_allocationLimit() { return g_imageReaderAllocationLimitMb; }
+void XImageReader_setAllocationLimit(int mbLimit)
+{
+    g_imageReaderAllocationLimitMb = mbLimit < 0 ? 0 : mbLimit;
+}
 

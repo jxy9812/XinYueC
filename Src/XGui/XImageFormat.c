@@ -6,6 +6,7 @@
  ******************************************************************************/
 #include "XImageFormat.h"
 #include <stddef.h>
+#include <limits.h>
 
 /**
  * @brief      像素格式信息表
@@ -28,15 +29,15 @@ static const XImageFormatInfo g_formatInfo[] = {
     {XImageFormat_RGB32,                       32,  false, false, "RGB32",                        4},
     {XImageFormat_ARGB32,                      32,  true,  false, "ARGB32",                       4},
     {XImageFormat_ARGB32_Premultiplied,         32,  true,  true,  "ARGB32_Premultiplied",         4},
-    {XImageFormat_RGB16,                       16,  false, false, "RGB16",                        2},
+    {XImageFormat_RGB16,                       16,  false, false, "RGB16",                        4},
     {XImageFormat_ARGB8565_Premultiplied,       24,  true,  true,  "ARGB8565_Premultiplied",       4},
-    {XImageFormat_RGB666,                      18,  false, false, "RGB666",                       4},
+    {XImageFormat_RGB666,                      24,  false, false, "RGB666",                       4},
     {XImageFormat_ARGB6666_Premultiplied,       24,  true,  true,  "ARGB6666_Premultiplied",       4},
-    {XImageFormat_RGB555,                      16,  false, false, "RGB555",                       2},
+    {XImageFormat_RGB555,                      16,  false, false, "RGB555",                       4},
     {XImageFormat_ARGB8555_Premultiplied,       24,  true,  true,  "ARGB8555_Premultiplied",       4},
     {XImageFormat_RGB888,                      24,  false, false, "RGB888",                       4},
-    {XImageFormat_RGB444,                      12,  false, false, "RGB444",                       2},
-    {XImageFormat_ARGB4444_Premultiplied,       16,  true,  true,  "ARGB4444_Premultiplied",       2},
+    {XImageFormat_RGB444,                      16,  false, false, "RGB444",                       4},
+    {XImageFormat_ARGB4444_Premultiplied,       16,  true,  true,  "ARGB4444_Premultiplied",       4},
     {XImageFormat_RGBX8888,                    32,  false, false, "RGBX8888",                     4},
     {XImageFormat_RGBA8888,                    32,  true,  false, "RGBA8888",                     4},
     {XImageFormat_RGBA8888_Premultiplied,       32,  true,  true,  "RGBA8888_Premultiplied",       4},
@@ -46,17 +47,17 @@ static const XImageFormatInfo g_formatInfo[] = {
     {XImageFormat_A2RGB30_Premultiplied,        32,  true,  true,  "A2RGB30_Premultiplied",        4},
     {XImageFormat_Alpha8,                       8,  true,  false, "Alpha8",                       4},
     {XImageFormat_Grayscale8,                   8,  false, false, "Grayscale8",                    4},
-    {XImageFormat_RGBX64,                      64,  false, false, "RGBX64",                       8},
-    {XImageFormat_RGBA64,                      64,  true,  false, "RGBA64",                       8},
-    {XImageFormat_RGBA64_Premultiplied,         64,  true,  true,  "RGBA64_Premultiplied",         8},
-    {XImageFormat_Grayscale16,                 16,  false, false, "Grayscale16",                  8},
+    {XImageFormat_RGBX64,                      64,  false, false, "RGBX64",                       4},
+    {XImageFormat_RGBA64,                      64,  true,  false, "RGBA64",                       4},
+    {XImageFormat_RGBA64_Premultiplied,         64,  true,  true,  "RGBA64_Premultiplied",         4},
+    {XImageFormat_Grayscale16,                 16,  false, false, "Grayscale16",                  4},
     {XImageFormat_BGR888,                      24,  false, false, "BGR888",                       4},
-    {XImageFormat_RGBX16FPx4,                  64,  false, false, "RGBX16FPx4",                   8},
-    {XImageFormat_RGBA16FPx4,                  64,  true,  false, "RGBA16FPx4",                   8},
-    {XImageFormat_RGBA16FPx4_Premultiplied,     64,  true,  true,  "RGBA16FPx4_Premultiplied",     8},
-    {XImageFormat_RGBX32FPx4,                 128,  false, false, "RGBX32FPx4",                  16},
-    {XImageFormat_RGBA32FPx4,                 128,  true,  false, "RGBA32FPx4",                  16},
-    {XImageFormat_RGBA32FPx4_Premultiplied,    128,  true,  true,  "RGBA32FPx4_Premultiplied",    16},
+    {XImageFormat_RGBX16FPx4,                  64,  false, false, "RGBX16FPx4",                   4},
+    {XImageFormat_RGBA16FPx4,                  64,  true,  false, "RGBA16FPx4",                   4},
+    {XImageFormat_RGBA16FPx4_Premultiplied,     64,  true,  true,  "RGBA16FPx4_Premultiplied",     4},
+    {XImageFormat_RGBX32FPx4,                 128,  false, false, "RGBX32FPx4",                   4},
+    {XImageFormat_RGBA32FPx4,                 128,  true,  false, "RGBA32FPx4",                   4},
+    {XImageFormat_RGBA32FPx4_Premultiplied,    128,  true,  true,  "RGBA32FPx4_Premultiplied",     4},
     {XImageFormat_CMYK8888,                    32,  false, false, "CMYK8888",                     4},
 };
 
@@ -109,13 +110,9 @@ int XImageFormat_bytesPerLine(int width, XImageFormat format)
     if (!info || width <= 0)
         return 0;
 
-    int bitsPerLine = width * info->bitDepth;
-    int alignment = info->alignment;
-    // 对齐到 alignment 字节
-    int bytesPerLine = (bitsPerLine + 7) / 8;
-    // 向上对齐
-    int mod = bytesPerLine % alignment;
-    if (mod != 0)
-        bytesPerLine += alignment - mod;
-    return bytesPerLine;
+    /* QImage-owned buffers use 32-bit aligned scanlines. Keep the
+       calculation wide so hostile dimensions cannot wrap to a small size. */
+    const int64_t bitsPerLine = (int64_t)width * info->bitDepth;
+    const int64_t bytesPerLine = ((bitsPerLine + 31) / 32) * 4;
+    return bytesPerLine > 0 && bytesPerLine <= INT_MAX ? (int)bytesPerLine : 0;
 }

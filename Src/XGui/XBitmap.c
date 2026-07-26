@@ -57,11 +57,10 @@ void XBitmap_init(XBitmap* self)
 void XBitmap_init_ex(XBitmap* self, int width, int height)
 {
     if (ISNULL(self, "XBitmap")) return;
-    XBitmap_init(self);
-    // 位图使用 Mono 格式
     XImage img;
     XImage_init_ex(&img, width, height, XImageFormat_Mono);
-    XPixmap_init_image((XPixmap*)self, &img, 0);
+    XPixmap_init_bitmap_image((XPixmap*)self, &img, 0);
+    XClassSetVtable(self, XBitmap);
     XImage_deinit_base(&img);
 }
 
@@ -83,7 +82,8 @@ void XBitmap_init_file(XBitmap* self, const char* fileName, const char* format)
     {
         XImage mono;
         XImage_convertToFormat(&img, XImageFormat_Mono, 0, &mono);
-        XPixmap_init_image((XPixmap*)self, &mono, 0);
+        XPixmap_init_bitmap_image((XPixmap*)self, &mono, 0);
+        XClassSetVtable(self, XBitmap);
         XImage_deinit_base(&mono);
     }
     XImage_deinit_base(&img);
@@ -143,17 +143,33 @@ void XBitmap_transformed(const XBitmap* self, float m00, float m01, float m02,
 void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out)
 {
     if (!image || !out) return;
+    if (XImage_isNull(image))
+    {
+        XBitmap_init(out);
+        return;
+    }
     XImage mono;
+    XImage_init(&mono);
     XImage_convertToFormat(image, XImageFormat_MonoLSB, flags, &mono);
-    XPixmap_init_image((XPixmap*)out, &mono, 0);
+    XPixmap_init_bitmap_image((XPixmap*)out, &mono, 0);
+    XClassSetVtable(out, XBitmap);
     XImage_deinit_base(&mono);
 }
 
 void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoFormat, XBitmap* out)
 {
-    if (!size || !bits || !out) return;
+    if (!out) return;
+    if (!size || !bits || size->width <= 0 || size->height <= 0 ||
+        (monoFormat != XImageFormat_Mono && monoFormat != XImageFormat_MonoLSB))
+    {
+        XBitmap_init(out);
+        return;
+    }
     XImage img;
-    XImage_init_ex_2(&img, size->width, size->height, monoFormat, 0, (uint8_t*)bits, NULL, NULL);
+    XImage_init_ex(&img, size->width, size->height, monoFormat);
+    const int sourceStride = (size->width + 7) / 8;
+    for (int y = 0; y < size->height; ++y)
+        memcpy(XImage_scanLine(&img, y), bits + y * sourceStride, (size_t)sourceStride);
     XBitmap_fromImage(&img, 0, out);
     XImage_deinit_base(&img);
 }

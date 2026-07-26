@@ -5,6 +5,7 @@
 #include "XMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
+#include <assert.h>
 
 /* ==================== XPixmapCache 测试 ==================== */
 
@@ -18,7 +19,7 @@ static void XPixmapCacheKeyTest(void)
     {
         XPixmapCacheKey key;
         XPixmapCacheKey_init(&key);
-        XPrintf("init: isValid=%s (期望:是)\n", XPixmapCacheKey_isValid(&key) ? "是" : "否");
+        XPrintf("init: isValid=%s (期望:否)\n", XPixmapCacheKey_isValid(&key) ? "是" : "否");
         XPixmapCacheKey_deinit(&key);
     }
     /* copy */
@@ -38,7 +39,7 @@ static void XPixmapCacheKeyTest(void)
         XPixmapCacheKey a, b;
         XPixmapCacheKey_init(&a);
         XPixmapCacheKey_init(&b);
-        XPrintf("equals: %s (期望:否,因为不同键)\n", XPixmapCacheKey_equals(&a, &b) ? "是" : "否");
+        XPrintf("equals: %s (期望:是,两个空键)\n", XPixmapCacheKey_equals(&a, &b) ? "是" : "否");
         XPixmapCacheKey_deinit(&a);
         XPixmapCacheKey_deinit(&b);
     }
@@ -55,6 +56,49 @@ static void XPixmapCacheKeyTest(void)
         XPixmapCacheKey_deinit(&b);
     }
     XPrintf("\n");
+}
+
+static void XPixmapCacheRegressionTest(void)
+{
+    int oldLimit = XPixmapCache_cacheLimit();
+    XPixmap p10, p20, p32, out;
+    XPixmapCacheKey key, copy;
+    XPixmap_init_ex(&p10, 10, 10);
+    XPixmap_init_ex(&p20, 20, 20);
+    XPixmap_init_ex(&p32, 32, 32);
+    XPixmap_init(&out);
+    XPixmapCacheKey_init(&key);
+    XPixmapCacheKey_init(&copy);
+    assert(!XPixmapCacheKey_isValid(&key));
+    XPixmapCache_setCacheLimit(64);
+    assert(XPixmapCache_insertKey(&p10, &key));
+    XPixmapCacheKey_copy(&copy, &key);
+    XPixmapCache_removeKey(&key);
+    assert(!XPixmapCacheKey_isValid(&key) && !XPixmapCacheKey_isValid(&copy));
+    assert(XPixmapCache_insert("duplicate", &p10));
+    assert(XPixmapCache_insert("duplicate", &p20));
+    assert(XPixmapCache_find("duplicate", &out) && XPixmap_width(&out) == 20);
+    XPixmapCache_clear();
+    XPixmapCache_setCacheLimit(8);
+    assert(XPixmapCache_insert("a", &p32));
+    assert(XPixmapCache_insert("b", &p32));
+    assert(XPixmapCache_find("a", NULL));
+    assert(XPixmapCache_insert("c", &p32));
+    assert(XPixmapCache_find("a", NULL));
+    assert(!XPixmapCache_find("b", NULL));
+    assert(XPixmapCache_find("c", NULL));
+    XPixmapCache_setCacheLimit(-1);
+    assert(!XPixmapCache_find("a", NULL));
+    assert(!XPixmapCache_insert("rejected", &p10));
+    XPixmapCache_clear();
+    XPixmapCache_setCacheLimit(oldLimit);
+    XPixmapCacheKey_deinit(&copy);
+    XPixmapCacheKey_deinit(&key);
+    XPixmap_deinit_base(&out);
+    XPixmap_deinit_base(&p32);
+    XPixmap_deinit_base(&p20);
+    XPixmap_deinit_base(&p10);
+    XPrintf("XPixmapCache lifecycle/LRU regression: PASS\n");
 }
 
 /**
@@ -172,6 +216,9 @@ void XMenu_XPixmapCacheTest(XMenu* root)
 
     action = XMenu_addAction(menu, "缓存操作测试");
     XAction_setAction(action, XPixmapCacheOperationTest);
+
+    action = XMenu_addAction(menu, "生命周期与LRU回归测试");
+    XAction_setAction(action, XPixmapCacheRegressionTest);
 }
 #endif // DEMOTEST
 

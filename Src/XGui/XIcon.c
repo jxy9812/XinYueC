@@ -37,7 +37,13 @@ typedef struct XIconPrivate
     int              m_serialNumber;/**< 序列号 */
 }XIconPrivate;
 
-static int g_iconSerialCounter = 0;
+static int g_iconSerialCounter = 1;
+
+static void XIconPrivate_touch(XIconPrivate* d)
+{
+    if (d)
+        d->m_cacheKey = (int64_t)(uint32_t)g_iconSerialCounter++ << 32;
+}
 
 static XIconPrivate* XIconPrivate_create()
 {
@@ -45,8 +51,8 @@ static XIconPrivate* XIconPrivate_create()
     if (!d) return NULL;
     memset(d, 0, sizeof(XIconPrivate));
     XAtomic_init(d->m_refCount, 1);
-    d->m_serialNumber = (g_iconSerialCounter++);
-    d->m_cacheKey = ((int64_t)d->m_serialNumber << 32) | (int64_t)(uintptr_t)d;
+    d->m_serialNumber = g_iconSerialCounter;
+    XIconPrivate_touch(d);
     return d;
 }
 
@@ -66,7 +72,7 @@ static void XIconPrivate_unref(XIconPrivate* d)
 
 static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconMode mode, XIconState state)
 {
-    if (!d || !pixmap) return;
+    if (!d || !pixmap || XPixmap_isNull(pixmap)) return;
     if (d->m_entryCount >= d->m_entryCapacity)
     {
         int newCap = d->m_entryCapacity ? d->m_entryCapacity * 2 : 8;
@@ -85,6 +91,7 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
     d->m_entries[d->m_entryCount].m_mode = mode;
     d->m_entries[d->m_entryCount].m_state = state;
     d->m_entryCount++;
+    XIconPrivate_touch(d);
 }
 
 /* ========== 虚函数实现 ========== */
@@ -92,6 +99,7 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
 static void VXIcon_copy(XIcon* dest, const XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
+    if (dest == src) return;
     if (dest->m_data)
         XIconPrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -101,6 +109,7 @@ static void VXIcon_copy(XIcon* dest, const XIcon* src)
 static void VXIcon_move(XIcon* dest, XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
+    if (dest == src) return;
     if (dest->m_data)
         XIconPrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -168,6 +177,7 @@ void XIcon_init_engine(XIcon* self, void* engine) { (void)engine; XIcon_init(sel
 void XIcon_copy(XIcon* self, const XIcon* other)
 {
     if (ISNULL(self, "XIcon") || ISNULL(other, "XIcon")) return;
+    if (self == other) return;
     if (!XClassIsVtableNull(self))
         XIcon_deinit_base(self);
     XIcon_init(self);
@@ -176,6 +186,7 @@ void XIcon_copy(XIcon* self, const XIcon* other)
 void XIcon_move(XIcon* self, XIcon* other)
 {
     if (ISNULL(self, "XIcon") || ISNULL(other, "XIcon")) return;
+    if (self == other) return;
     if (!XClassIsVtableNull(self))
         XIcon_deinit_base(self);
     XIcon_init(self);
@@ -226,36 +237,48 @@ void XIcon_detach(XIcon* self)
     }
 }
 
-int64_t XIcon_cacheKey(const XIcon* self) { return (self && self->m_data) ? self->m_data->m_cacheKey : 0; }
+int64_t XIcon_cacheKey(const XIcon* self)
+{
+    return (self && self->m_data && self->m_data->m_entryCount > 0) ? self->m_data->m_cacheKey : 0;
+}
+
+static const XIconEntry* XIconPrivate_bestEntry(const XIconPrivate* d, int width, int height,
+                                                XIconMode mode, XIconState state)
+{
+    const XIconEntry* best = NULL;
+    int bestModeScore = -1;
+    int bestSizeScore = 0x7fffffff;
+    for (int i = 0; d && i < d->m_entryCount; ++i)
+    {
+        const XIconEntry* e = &d->m_entries[i];
+        int modeScore = (e->m_mode == mode ? 2 : 0) + (e->m_state == state ? 1 : 0);
+        int ew = XPixmap_width(&e->m_pixmap);
+        int eh = XPixmap_height(&e->m_pixmap);
+        int sizeScore = abs(ew - width) + abs(eh - height);
+        if (!best || modeScore > bestModeScore || (modeScore == bestModeScore && sizeScore < bestSizeScore))
+        {
+            best = e;
+            bestModeScore = modeScore;
+            bestSizeScore = sizeScore;
+        }
+    }
+    return best;
+}
 
 void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XPixmap* out)
 {
-    if (!self || !self->m_data || !out) return;
-    // 查找最佳匹配条目
-    XIconEntry* best = NULL;
-    for (int i = 0; i < self->m_data->m_entryCount; i++)
-    {
-        XIconEntry* e = &self->m_data->m_entries[i];
-        if (!best)
-        {
-            best = e;
-            continue;
-        }
-        // 优先匹配模式和状态
-        if (e->m_mode == mode && e->m_state == state)
-        {
-            best = e;
-            break;
-        }
-        if (e->m_mode == mode && best->m_mode != mode) { best = e; continue; }
-        if (e->m_state == state && best->m_state != state) { best = e; continue; }
-    }
+    if (!out) return;
+    XPixmap_init(out);
+    if (!self || !self->m_data || width <= 0 || height <= 0) return;
+    const XIconEntry* best = XIconPrivate_bestEntry(self->m_data, width, height, mode, state);
     if (best)
     {
-        if (XPixmap_width(&best->m_pixmap) == width && XPixmap_height(&best->m_pixmap) == height)
+        XSize actual;
+        XIcon_actualSize(self, width, height, mode, state, &actual);
+        if (XPixmap_width(&best->m_pixmap) == actual.width && XPixmap_height(&best->m_pixmap) == actual.height)
             XPixmap_copy_base(out, &best->m_pixmap);
         else
-            XPixmap_scaled(&best->m_pixmap, width, height, 0, 0, out);
+            XPixmap_scaled(&best->m_pixmap, actual.width, actual.height, 0, 0, out);
     }
 }
 
@@ -267,12 +290,36 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
 void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out)
 {
-    XIcon_pixmap(self, (int)(width * devicePixelRatio), (int)(height * devicePixelRatio), mode, state, out);
+    if (!out) return;
+    if (devicePixelRatio <= 0.0f) devicePixelRatio = 1.0f;
+    XIcon_pixmap(self, (int)(width * devicePixelRatio + 0.5f),
+                 (int)(height * devicePixelRatio + 0.5f), mode, state, out);
+    if (!XPixmap_isNull(out))
+        XPixmap_setDevicePixelRatio(out, devicePixelRatio);
 }
 
 void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XSize* out)
 {
-    if (out) { out->width = width; out->height = height; }
+    if (!out) return;
+    out->width = 0;
+    out->height = 0;
+    if (!self || !self->m_data || width <= 0 || height <= 0) return;
+    const XIconEntry* best = XIconPrivate_bestEntry(self->m_data, width, height, mode, state);
+    if (!best) return;
+    int sourceWidth = XPixmap_width(&best->m_pixmap);
+    int sourceHeight = XPixmap_height(&best->m_pixmap);
+    if (sourceWidth <= 0 || sourceHeight <= 0) return;
+    if (sourceWidth <= width && sourceHeight <= height)
+    {
+        out->width = sourceWidth;
+        out->height = sourceHeight;
+        return;
+    }
+    float scale = (float)width / sourceWidth;
+    float heightScale = (float)height / sourceHeight;
+    if (heightScale < scale) scale = heightScale;
+    out->width = (int)(sourceWidth * scale + 0.5f);
+    out->height = (int)(sourceHeight * scale + 0.5f);
 }
 
 void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
@@ -283,7 +330,7 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
 
 void XIcon_addPixmap(XIcon* self, const XPixmap* pixmap, XIconMode mode, XIconState state)
 {
-    if (!self || !self->m_data || !pixmap) return;
+    if (!self || !self->m_data || !pixmap || XPixmap_isNull(pixmap)) return;
     XIcon_detach(self);
     XIconPrivate_addEntry(self->m_data, pixmap, mode, state);
 }
@@ -311,8 +358,10 @@ void XIcon_availableSizes(const XIcon* self, XIconMode mode, XIconState state, v
 void XIcon_setIsMask(XIcon* self, bool isMask)
 {
     if (!self || !self->m_data) return;
+    if (self->m_data->m_isMask == isMask) return;
     XIcon_detach(self);
     self->m_data->m_isMask = isMask;
+    XIconPrivate_touch(self->m_data);
 }
 
 bool XIcon_isMask(const XIcon* self) { return (self && self->m_data) ? self->m_data->m_isMask : false; }
@@ -320,10 +369,10 @@ bool XIcon_isMask(const XIcon* self) { return (self && self->m_data) ? self->m_d
 void XIcon_fromTheme(const char* name, const XIcon* fallback, XIcon* out)
 {
     (void)name;
+    if (!out) return;
+    XIcon_init(out);
     if (fallback)
         XIcon_copy_base(out, fallback);
-    else
-        XIcon_init(out);
 }
 
 bool XIcon_hasThemeIcon(const char* name) { (void)name; return false; }
