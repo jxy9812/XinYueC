@@ -12,6 +12,8 @@
 
 #include <ctype.h>
 
+#define XLSX_ROW_MAX 1048576
+#define XLSX_COLUMN_MAX 16384
 
 /* ========== 内部辅助函数 ========== */
 
@@ -28,6 +30,7 @@ static int columnNameToNumber(const char* colName)
     {
         if (!isalpha((unsigned char)*p)) return -1;
         result = result * 26 + (toupper((unsigned char)*p) - 'A' + 1);
+        if (result > XLSX_COLUMN_MAX) return -1;
     }
     return result;
 }
@@ -90,7 +93,7 @@ static bool parseCellReference(const char* cell, int* row, int* col)
     colName[colLen] = '\0';
 
     *col = columnNameToNumber(colName);
-    if (*col < 1) return false;
+    if (*col < 1 || *col > XLSX_COLUMN_MAX) return false;
 
     /* 处理行绝对引用 $ */
     if (*p == '$') { rowAbs = true; p++; }
@@ -100,8 +103,8 @@ static bool parseCellReference(const char* cell, int* row, int* col)
     char* end = NULL;
     long r = strtol(p, &end, 10);
     if (end == p || *end != '\0') return false;
+    if (r < 1 || r > XLSX_ROW_MAX) return false;
     *row = (int)r;
-    if (*row < 1) return false;
 
     return true;
 }
@@ -193,7 +196,8 @@ int XCellReference_column(const XCellReference* self)
 
 bool XCellReference_isValid(const XCellReference* self)
 {
-    return self && self->m_row > 0 && self->m_column > 0;
+    return self && self->m_row > 0 && self->m_row <= XLSX_ROW_MAX
+        && self->m_column > 0 && self->m_column <= XLSX_COLUMN_MAX;
 }
 
 XString XCellReference_toString(const XCellReference* self, bool row_abs, bool col_abs)

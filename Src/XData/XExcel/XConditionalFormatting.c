@@ -21,7 +21,33 @@ XConditionalFormatting* XConditionalFormatting_create(void)
     memset(self, 0, sizeof(XConditionalFormatting));
     self->m_rules = XVector_create_ex(sizeof(XConditionalFormatting_Rule), true);
     self->m_ranges = XVector_create_ex(sizeof(XCellRange), true);
+    if (!self->m_rules || !self->m_ranges) {
+        XConditionalFormatting_delete(self);
+        return NULL;
+    }
     return self;
+}
+
+static void rule_deinit(XConditionalFormatting_Rule* rule)
+{
+    if (!rule) return;
+    if (rule->m_formula1) XString_delete_base(rule->m_formula1);
+    if (rule->m_formula2) XString_delete_base(rule->m_formula2);
+    if (rule->m_formula3) XString_delete_base(rule->m_formula3);
+    if (rule->m_text) XString_delete_base(rule->m_text);
+    if (rule->m_timePeriod) XString_delete_base(rule->m_timePeriod);
+    if (rule->m_format) XFormat_delete(rule->m_format);
+    memset(rule, 0, sizeof(*rule));
+}
+
+static bool append_rule(XConditionalFormatting* self, XConditionalFormatting_Rule* rule)
+{
+    if (!self || !self->m_rules || !rule ||
+        !XVector_push_back_2(self->m_rules, rule, 1)) {
+        rule_deinit(rule);
+        return false;
+    }
+    return true;
 }
 
 XConditionalFormatting* XConditionalFormatting_copy(const XConditionalFormatting* other)
@@ -49,16 +75,33 @@ XConditionalFormatting* XConditionalFormatting_copy(const XConditionalFormatting
         dst.m_color3 = src->m_color3;
         dst.m_valType1 = src->m_valType1;
         dst.m_valType2 = src->m_valType2;
+        dst.m_valType3 = src->m_valType3;
+        dst.m_rank = src->m_rank;
+        dst.m_stdDev = src->m_stdDev;
         dst.m_showData = src->m_showData;
         dst.m_stopIfTrue = src->m_stopIfTrue;
         if (src->m_formula1) { dst.m_formula1 = XString_create(); XString_copy_base(dst.m_formula1, src->m_formula1); }
         if (src->m_formula2) { dst.m_formula2 = XString_create(); XString_copy_base(dst.m_formula2, src->m_formula2); }
-        XVector_push_back_2(self->m_rules, &dst, 1);
+        if (src->m_formula3) { dst.m_formula3 = XString_create(); XString_copy_base(dst.m_formula3, src->m_formula3); }
+        if (src->m_text) dst.m_text = XString_create_copy(src->m_text);
+        if (src->m_timePeriod) dst.m_timePeriod = XString_create_copy(src->m_timePeriod);
+        bool copied = (!src->m_format || dst.m_format) &&
+            (!src->m_formula1 || dst.m_formula1) && (!src->m_formula2 || dst.m_formula2) &&
+            (!src->m_formula3 || dst.m_formula3) && (!src->m_text || dst.m_text) &&
+            (!src->m_timePeriod || dst.m_timePeriod);
+        if (!copied || !append_rule(self, &dst)) {
+            if (!copied) rule_deinit(&dst);
+            XConditionalFormatting_delete(self);
+            return NULL;
+        }
     }
     /* 复制范围 */
     for (size_t i = 0; i < XVector_size_base(other->m_ranges); ++i) {
         XCellRange* r = (XCellRange*)XVector_at_base(other->m_ranges, i);
-        XVector_push_back_2(self->m_ranges, r, 1);
+        if (!XVector_push_back_2(self->m_ranges, r, 1)) {
+            XConditionalFormatting_delete(self);
+            return NULL;
+        }
     }
     return self;
 }
@@ -67,81 +110,105 @@ void XConditionalFormatting_delete(XConditionalFormatting* self)
 {
     if (!self) return;
     /* 释放规则中的字符串与 XFormat 副本 */
-    for (size_t i = 0; i < XVector_size_base(self->m_rules); ++i) {
+    for (size_t i = 0; self->m_rules && i < XVector_size_base(self->m_rules); ++i) {
         XConditionalFormatting_Rule* r = (XConditionalFormatting_Rule*)XVector_at_base(self->m_rules, i);
-        if (r->m_formula1) { XString_deinit_base(r->m_formula1); XFree_System(r->m_formula1); }
-        if (r->m_formula2) { XString_deinit_base(r->m_formula2); XFree_System(r->m_formula2); }
-        /* BUG FIX: delete 释放 copy 时深拷贝得到的 XFormat 副本 */
-        if (r->m_format) XFormat_delete(r->m_format);
+        rule_deinit(r);
     }
-    if (self->m_rules) { XVector_deinit_base(self->m_rules); XFree_System(self->m_rules); }
-    if (self->m_ranges) { XVector_deinit_base(self->m_ranges); XFree_System(self->m_ranges); }
+    if (self->m_rules) XVector_delete_base(self->m_rules);
+    if (self->m_ranges) XVector_delete_base(self->m_ranges);
     XFree_System(self);
 }
 
 /* ========== 规则添加 ========== */
 
+static XFormat* copy_rule_format(const XFormat* format)
+{
+    if (!format) return NULL;
+    XFormat* copy = XFormat_create();
+    if (copy) XFormat_copy(copy, format);
+    return copy;
+}
+
 bool XConditionalFormatting_addHighlightCellsRule(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XFormat* format, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || type < XCF_Highlight_LessThan ||
+        type > XCF_Highlight_Expression) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_HighlightCellsRule;
     rule.m_highlightType = type;
-    rule.m_format = (XFormat*)format;
+    rule.m_format = copy_rule_format(format);
+    if (format && !rule.m_format) return false;
     rule.m_stopIfTrue = stopIfTrue;
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XString* formula1,
     const XFormat* format, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || type < XCF_Highlight_LessThan ||
+        type > XCF_Highlight_Expression) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_HighlightCellsRule;
     rule.m_highlightType = type;
-    rule.m_format = (XFormat*)format;
+    rule.m_format = copy_rule_format(format);
+    if (format && !rule.m_format) return false;
     rule.m_stopIfTrue = stopIfTrue;
-    if (formula1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, formula1); }
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    if (formula1) rule.m_formula1 = XString_create_copy(formula1);
+    if (formula1 && (type == XCF_Highlight_ContainsText ||
+        type == XCF_Highlight_NotContainsText || type == XCF_Highlight_BeginsWith ||
+        type == XCF_Highlight_EndsWith)) rule.m_text = XString_create_copy(formula1);
+    if (formula1 && type == XCF_Highlight_TimePeriod)
+        rule.m_timePeriod = XString_create_copy(formula1);
+    if (formula1 && type >= XCF_Highlight_Top && type <= XCF_Highlight_BottomPercent)
+        rule.m_rank = atoi(XString_toUtf8(formula1));
+    if ((formula1 && !rule.m_formula1) ||
+        (formula1 && type >= XCF_Highlight_ContainsText && type <= XCF_Highlight_EndsWith &&
+         !rule.m_text) || (formula1 && type == XCF_Highlight_TimePeriod && !rule.m_timePeriod)) {
+        rule_deinit(&rule);
+        return false;
+    }
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_addHighlightCellsRule3(XConditionalFormatting* self,
     XConditionalFormatting_HighlightRuleType type, const XString* formula1, const XString* formula2,
     const XFormat* format, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || type < XCF_Highlight_LessThan ||
+        type > XCF_Highlight_Expression) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_HighlightCellsRule;
     rule.m_highlightType = type;
-    rule.m_format = (XFormat*)format;
+    rule.m_format = copy_rule_format(format);
+    if (format && !rule.m_format) return false;
     rule.m_stopIfTrue = stopIfTrue;
-    if (formula1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, formula1); }
-    if (formula2) { rule.m_formula2 = XString_create(); XString_append(rule.m_formula2, formula2); }
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    if (formula1) rule.m_formula1 = XString_create_copy(formula1);
+    if (formula2) rule.m_formula2 = XString_create_copy(formula2);
+    if ((formula1 && !rule.m_formula1) || (formula2 && !rule.m_formula2)) {
+        rule_deinit(&rule);
+        return false;
+    }
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_addDataBarRule(XConditionalFormatting* self,
     const XColor* color, bool showData, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || !color || !XColor_isValid(color)) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_DataBar;
-    rule.m_color1 = color ? *color : XColor_create();
+    rule.m_color1 = *color;
     rule.m_showData = showData;
     rule.m_stopIfTrue = stopIfTrue;
     rule.m_valType1 = XCF_VOT_Min;
     rule.m_valType2 = XCF_VOT_Max;
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
@@ -149,52 +216,61 @@ bool XConditionalFormatting_addDataBarRuleEx(XConditionalFormatting* self,
     XConditionalFormatting_ValueObjectType type2, const XString* val2,
     bool showData, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || !color || !XColor_isValid(color) ||
+        type1 < XCF_VOT_Formula || type1 > XCF_VOT_Percentile ||
+        type2 < XCF_VOT_Formula || type2 > XCF_VOT_Percentile) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_DataBar;
-    rule.m_color1 = color ? *color : XColor_create();
+    rule.m_color1 = *color;
     rule.m_valType1 = type1;
     rule.m_valType2 = type2;
     rule.m_showData = showData;
     rule.m_stopIfTrue = stopIfTrue;
-    if (val1) { rule.m_formula1 = XString_create(); XString_append(rule.m_formula1, val1); }
-    if (val2) { rule.m_formula2 = XString_create(); XString_append(rule.m_formula2, val2); }
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    if (val1) rule.m_formula1 = XString_create_copy(val1);
+    if (val2) rule.m_formula2 = XString_create_copy(val2);
+    if ((val1 && !rule.m_formula1) || (val2 && !rule.m_formula2)) {
+        rule_deinit(&rule);
+        return false;
+    }
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_add2ColorScaleRule(XConditionalFormatting* self,
     const XColor* minColor, const XColor* maxColor, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || !minColor || !maxColor ||
+        !XColor_isValid(minColor) || !XColor_isValid(maxColor)) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_ColorScale2;
-    rule.m_color1 = minColor ? *minColor : XColor_create();
-    rule.m_color2 = maxColor ? *maxColor : XColor_create();
+    rule.m_color1 = *minColor;
+    rule.m_color2 = *maxColor;
     rule.m_stopIfTrue = stopIfTrue;
     rule.m_valType1 = XCF_VOT_Min;
     rule.m_valType2 = XCF_VOT_Max;
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    return append_rule(self, &rule);
 }
 
 bool XConditionalFormatting_add3ColorScaleRule(XConditionalFormatting* self,
     const XColor* minColor, const XColor* midColor, const XColor* maxColor, bool stopIfTrue)
 {
-    if (!self) return false;
+    if (!self || !self->m_rules || !minColor || !midColor || !maxColor ||
+        !XColor_isValid(minColor) || !XColor_isValid(midColor) ||
+        !XColor_isValid(maxColor)) return false;
     XConditionalFormatting_Rule rule;
     memset(&rule, 0, sizeof(rule));
     rule.m_ruleType = XCF_Rule_ColorScale3;
-    rule.m_color1 = minColor ? *minColor : XColor_create();
-    rule.m_color2 = midColor ? *midColor : XColor_create();
-    rule.m_color3 = maxColor ? *maxColor : XColor_create();
+    rule.m_color1 = *minColor;
+    rule.m_color2 = *midColor;
+    rule.m_color3 = *maxColor;
     rule.m_stopIfTrue = stopIfTrue;
     rule.m_valType1 = XCF_VOT_Min;
-    rule.m_valType2 = XCF_VOT_Max;
-    XVector_push_back_2(self->m_rules, &rule, 1);
-    return true;
+    rule.m_valType2 = XCF_VOT_Percentile;
+    rule.m_valType3 = XCF_VOT_Max;
+    rule.m_formula2 = XString_create_utf8("50");
+    if (!rule.m_formula2) return false;
+    return append_rule(self, &rule);
 }
 
 /* ========== 范围管理 ========== */
@@ -211,7 +287,7 @@ void XConditionalFormatting_addCell(XConditionalFormatting* self, const XCellRef
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCellReference(&range, cell);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 
 void XConditionalFormatting_addCellRc(XConditionalFormatting* self, int row, int col)
@@ -220,7 +296,7 @@ void XConditionalFormatting_addCellRc(XConditionalFormatting* self, int row, int
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCell(&range, row, col);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 
 void XConditionalFormatting_addRange(XConditionalFormatting* self, int firstRow, int firstCol, int lastRow, int lastCol)
@@ -229,13 +305,13 @@ void XConditionalFormatting_addRange(XConditionalFormatting* self, int firstRow,
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setFullRange(&range, firstRow, firstCol, lastRow, lastCol);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 
 void XConditionalFormatting_addRangeEx(XConditionalFormatting* self, const XCellRange* range)
 {
     if (!self || !range || !self->m_ranges) return;
-    XVector_push_back_2(self->m_ranges, (void*)range, 1);
+    if (XCellRange_isValid(range)) XVector_push_back_2(self->m_ranges, (void*)range, 1);
 }
 
 int XConditionalFormatting_rulesCount(const XConditionalFormatting* self)

@@ -33,16 +33,16 @@ typedef struct XXmlStreamNamespaceDeclaration XXmlStreamNamespaceDeclaration;
 typedef enum XXmlStreamTokenType
 {
     XXmlStream_NoToken = 0,                 /**< 无 Token */
-    XXmlStream_StartDocument = 1,           /**< 文档开始 */
-    XXmlStream_EndDocument = 2,             /**< 文档结束 */
-    XXmlStream_StartElement = 3,            /**< 元素开始标签 */
-    XXmlStream_EndElement = 4,              /**< 元素结束标签 */
-    XXmlStream_Characters = 5,              /**< 字符数据 */
-    XXmlStream_Comment = 6,                 /**< 注释 */
-    XXmlStream_DTD = 7,                     /**< DTD 声明 */
-    XXmlStream_EntityReference = 8,         /**< 实体引用 */
-    XXmlStream_ProcessingInstruction = 9,   /**< 处理指令 */
-    XXmlStream_Invalid = 10                 /**< 无效 Token */
+    XXmlStream_Invalid = 1,                 /**< 无效 Token */
+    XXmlStream_StartDocument = 2,           /**< 文档开始 */
+    XXmlStream_EndDocument = 3,             /**< 文档结束 */
+    XXmlStream_StartElement = 4,            /**< 元素开始标签 */
+    XXmlStream_EndElement = 5,              /**< 元素结束标签 */
+    XXmlStream_Characters = 6,              /**< 字符数据 */
+    XXmlStream_Comment = 7,                 /**< 注释 */
+    XXmlStream_DTD = 8,                     /**< DTD 声明 */
+    XXmlStream_EntityReference = 9,         /**< 实体引用 */
+    XXmlStream_ProcessingInstruction = 10  /**< 处理指令 */
 } XXmlStreamTokenType;
 
 /* ========== 错误类型枚举（对标 Qt 6.8 QXmlStreamReader::Error） ========== */
@@ -82,6 +82,7 @@ typedef struct XXmlStreamAttribute
     XString* m_namespaceUri;   /**< 命名空间 URI */
     XString* m_name;           /**< 属性名称（本地名） */
     XString* m_qualifiedName;  /**< 限定名（前缀:本地名） */
+    XString* m_prefix;         /**< 属性前缀 */
     XString* m_value;          /**< 属性值 */
     bool     m_isDefault;      /**< 是否为默认值 */
 } XXmlStreamAttribute;
@@ -215,6 +216,16 @@ const XString* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, c
  * @return     包含返回 true
  */
 bool XXmlStreamAttributes_hasAttribute(const XXmlStreamAttributes* self, const XString* qualifiedName);
+
+/**
+ * @brief      判断是否包含指定命名空间和本地名的属性
+ * @param self         目标 XXmlStreamAttributes 指针
+ * @param namespaceUri 命名空间 URI
+ * @param name         属性本地名
+ * @return     包含返回 true
+ */
+bool XXmlStreamAttributes_hasAttribute_ex(const XXmlStreamAttributes* self,
+    const XString* namespaceUri, const XString* name);
 
 /**
  * @brief      追加属性
@@ -401,13 +412,6 @@ void XXmlStreamReader_addData(XXmlStreamReader* self, const XByteArray* data);
  * @param data XML 数据字符串
  */
 void XXmlStreamReader_addData_utf8(XXmlStreamReader* self, const char* data);
-
-/**
- * @brief      设置输入数据（从 XByteArray）
- * @param self 目标 XXmlStreamReader 对象指针
- * @param data XML 数据字符串
- */
-void XXmlStreamReader_addData(XXmlStreamReader* self, const XByteArray* data);
 
 /**
  * @brief      清除读取器状态

@@ -30,24 +30,22 @@ void XDrawing_delete(XDrawing* self) {
             XDrawingAnchor** pp = (XDrawingAnchor**)XVector_at_base(self->m_anchors, i);
             if (pp && *pp) XDrawingAnchor_delete(*pp);
         }
-        XVector_deinit_base(self->m_anchors);
-        XFree_System(self->m_anchors);
+        XVector_delete_base(self->m_anchors);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
 }
 
-bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
-    if (!self || !filePath) return false;
-
-    /* 使用 XXmlStreamWriter 生成 XML 内容 */
+bool XDrawing_saveToXmlData(const XDrawing* self, uint8_t** data, size_t* length) {
+    if (!self || !data || !length || !self->m_anchors) return false;
+    *data = NULL;
+    *length = 0;
     XXmlStreamWriter* writer = XXmlStreamWriter_create();
+    if (!writer) return false;
     XXmlStreamWriter_setAutoFormatting(writer, true);
     XXmlStreamWriter_setAutoFormattingIndent(writer, 1);
     XXmlStreamWriter_writeStartDocument_ex_utf8(writer, "1.0");
     XXmlStreamWriter_writeStartElement_utf8(writer, "xdr:wsDr");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:xdr", "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main");
     XXmlStreamWriter_writeNamespace_utf8(writer, "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "xdr");
     XXmlStreamWriter_writeNamespace_utf8(writer, "http://schemas.openxmlformats.org/drawingml/2006/main", "a");
 
@@ -62,72 +60,99 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
     XXmlStreamWriter_writeEndElement(writer); /* xdr:wsDr */
     XXmlStreamWriter_writeEndDocument(writer);
     const char* xml = XXmlStreamWriter_toString(writer);
+    bool result = xml && !XXmlStreamWriter_hasError(writer);
+    if (result) {
+        size_t byteLength = strlen(xml);
+        uint8_t* copy = (uint8_t*)XMalloc_System(byteLength + 1);
+        if (!copy) result = false;
+        else {
+            memcpy(copy, xml, byteLength + 1);
+            *data = copy;
+            *length = byteLength;
+        }
+    }
+    XXmlStreamWriter_delete_base(writer);
+    return result;
+}
+
+bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
+    if (!self || !filePath) return false;
+    uint8_t* xml = NULL;
+    size_t length = 0;
+    if (!XDrawing_saveToXmlData(self, &xml, &length)) return false;
 
     /* 通过 XFile 写入文件 */
     XFile* file = XFile_create_2((XString*)filePath);
-    if (!file) { XXmlStreamWriter_delete_base(writer); return false; }
+    if (!file) { XFree_System(xml); return false; }
 
     if (!XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        XFile_deleteLater(file);
-        XXmlStreamWriter_delete_base(writer);
+        XClass_delete_base((XClass*)file);
+        XFree_System(xml);
         return false;
     }
-
-    if (xml) {
-        XIODevice_write_1((XIODevice*)file, xml, (int64_t)strlen(xml));
-    }
-
+    bool result = length == 0 || XIODevice_write_1((XIODevice*)file,
+        (const char*)xml, (int64_t)length) == (int64_t)length;
     XIODevice_close_base((XIODevice*)file);
-    XFile_deleteLater(file);
-    XXmlStreamWriter_delete_base(writer);
-    return true;
+    XClass_delete_base((XClass*)file);
+    XFree_System(xml);
+    return result;
 }
 
-bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
-    if (!self || !filePath) return false;
-
-    XFile* file = XFile_create_2((XString*)filePath);
-    if (!file) return false;
-
-    if (!XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        XFile_deleteLater(file);
-        return false;
-    }
-
-    XByteArray* xmlData = XIODevice_readAll_3((XIODevice*)file);
-    XIODevice_close_base((XIODevice*)file);
-    XFile_deleteLater(file);
-
-    if (!xmlData || XByteArray_size_base(xmlData) == 0) {
+bool XDrawing_loadFromXmlData(XDrawing* self, const uint8_t* data, size_t length) {
+    if (!self || !self->m_anchors || !data || length == 0) return false;
+    XByteArray* xmlData = XByteArray_create();
+    if (!xmlData || !XByteArray_push_back_2(xmlData, data, length)) {
         if (xmlData) XByteArray_delete_base(xmlData);
         return false;
     }
-
-    /* 追加 NUL 终止符 */
-    XByteArray_append_1(xmlData, 0);
-    const char* xml = (const char*)XByteArray_data(xmlData);
-
     XXmlStreamReader* reader = XXmlStreamReader_create();
-    XXmlStreamReader_addData_utf8(reader, xml);
+    if (!reader) { XByteArray_delete_base(xmlData); return false; }
+    XXmlStreamReader_addData(reader, xmlData);
     XByteArray_delete_base(xmlData);
+
+    for (size_t i = 0; i < XVector_size_base(self->m_anchors); ++i) {
+        XDrawingAnchor* anchor = *(XDrawingAnchor**)XVector_at_base(self->m_anchors, i);
+        if (anchor) XDrawingAnchor_delete(anchor);
+    }
+    XVector_clear_base(self->m_anchors);
 
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {
             const XString* name = XXmlStreamReader_name_const(reader);
             if (!name) continue;
-            if (XString_equals_utf8(name, "xdr:twoCellAnchor", XChar_CaseSensitive) ||
+            if (XString_equals_utf8(name, "twoCellAnchor", XChar_CaseSensitive) ||
+                XString_equals_utf8(name, "oneCellAnchor", XChar_CaseSensitive) ||
+                XString_equals_utf8(name, "absoluteAnchor", XChar_CaseSensitive) ||
+                XString_equals_utf8(name, "xdr:twoCellAnchor", XChar_CaseSensitive) ||
                 XString_equals_utf8(name, "xdr:oneCellAnchor", XChar_CaseSensitive) ||
                 XString_equals_utf8(name, "xdr:absoluteAnchor", XChar_CaseSensitive)) {
                 XDrawingAnchor* anchor = XDrawingAnchor_create(self, XDAnchor_Unknown);
                 if (anchor) {
-                    XDrawingAnchor_loadFromXml(anchor, reader);
-                    XDrawingAnchor** pp = &anchor;
-                    XVector_push_back_1_base(self->m_anchors, pp);
+                    if (!XDrawingAnchor_loadFromXml(anchor, reader) ||
+                        !XVector_push_back_2(self->m_anchors, &anchor, 1))
+                        XDrawingAnchor_delete(anchor);
                 }
             }
         }
     }
+    bool ok = !XXmlStreamReader_hasError(reader);
     XXmlStreamReader_delete_base(reader);
-    return true;
+    return ok;
+}
+
+bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
+    if (!self || !filePath) return false;
+    XFile* file = XFile_create_2((XString*)filePath);
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        if (file) XClass_delete_base((XClass*)file);
+        return false;
+    }
+    XByteArray* xmlData = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XClass_delete_base((XClass*)file);
+    bool result = xmlData && XDrawing_loadFromXmlData(self, XByteArray_data(xmlData),
+        XByteArray_size_base((XContainer*)xmlData));
+    if (xmlData) XByteArray_delete_base(xmlData);
+    return result;
 }

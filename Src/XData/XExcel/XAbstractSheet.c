@@ -12,6 +12,8 @@ void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int she
     self->m_sheetType = XAbstractSheet_ST_WorkSheet;
     self->m_sheetState = XAbstractSheet_SS_Visible;
     self->m_sheetId = sheetId;
+    /* 默认 -1 表示 rId 未分配，由 XDocument_saveAs 在生成 rels 时回填 */
+    self->m_rid = -1;
     self->m_workbook = book;
     if (sheetName)
     {
@@ -20,10 +22,16 @@ void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int she
     }
 }
 
+void XAbstractSheet_setRid(XAbstractSheet* self, int rid)
+{
+    if (!self) return;
+    self->m_rid = rid;
+}
+
 void XAbstractSheet_deinit(XAbstractSheet* self)
 {
     if (!self) return;
-    if (self->m_sheetName) { XString_deinit_base(self->m_sheetName); XFree_System(self->m_sheetName); }
+    if (self->m_sheetName) XString_delete_base(self->m_sheetName);
     XAbstractOOXmlFile_deinit(&self->m_base);
 }
 

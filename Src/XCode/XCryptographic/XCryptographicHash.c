@@ -121,8 +121,10 @@ static void md5_transform(MD5_CTX* ctx, const uint8_t* block)
     int i;
     
     for (i = 0; i < 16; i++) {
-        m[i] = block[i * 4] | (block[i * 4 + 1] << 8) | 
-               (block[i * 4 + 2] << 16) | (block[i * 4 + 3] << 24);
+        m[i] = (uint32_t)block[i * 4] |
+               ((uint32_t)block[i * 4 + 1] << 8) |
+               ((uint32_t)block[i * 4 + 2] << 16) |
+               ((uint32_t)block[i * 4 + 3] << 24);
     }
     
     for (i = 0; i < 64; i++) {
@@ -261,8 +263,10 @@ static void sha256_transform(SHA256_CTX* ctx, const uint8_t* block)
     int i;
     
     for (i = 0; i < 16; i++) {
-        W[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) |
-               (block[i * 4 + 2] << 8) | block[i * 4 + 3];
+        W[i] = ((uint32_t)block[i * 4] << 24) |
+               ((uint32_t)block[i * 4 + 1] << 16) |
+               ((uint32_t)block[i * 4 + 2] << 8) |
+               (uint32_t)block[i * 4 + 3];
     }
     
     for (i = 16; i < 64; i++) {
@@ -566,8 +570,10 @@ static void sha1_transform(SHA1_CTX* ctx, const uint8_t* block)
     int i;
     
     for (i = 0; i < 16; i++) {
-        W[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) |
-               (block[i * 4 + 2] << 8) | block[i * 4 + 3];
+        W[i] = ((uint32_t)block[i * 4] << 24) |
+               ((uint32_t)block[i * 4 + 1] << 16) |
+               ((uint32_t)block[i * 4 + 2] << 8) |
+               (uint32_t)block[i * 4 + 3];
     }
     
     for (i = 16; i < 80; i++) {
@@ -691,8 +697,10 @@ static void md4_transform(MD4_CTX* ctx, const uint8_t* block)
     int i;
     
     for (i = 0; i < 16; i++) {
-        m[i] = block[i * 4] | (block[i * 4 + 1] << 8) | 
-               (block[i * 4 + 2] << 16) | (block[i * 4 + 3] << 24);
+        m[i] = (uint32_t)block[i * 4] |
+               ((uint32_t)block[i * 4 + 1] << 8) |
+               ((uint32_t)block[i * 4 + 2] << 16) |
+               ((uint32_t)block[i * 4 + 3] << 24);
     }
     
     /* Round 1 */

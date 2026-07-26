@@ -57,6 +57,7 @@ typedef struct XAbstractSheet
     XAbstractSheet_SheetType m_sheetType;   /**< 工作表类型 */
     XAbstractSheet_SheetState m_sheetState; /**< 工作表状态 */
     int m_sheetId;                          /**< 工作表 ID */
+    int m_rid;                              /**< workbook.xml.rels 中的 rId；-1 表示未分配 */
     XWorkbook* m_workbook;                  /**< 所属工作簿 */
     XDrawing* m_drawing;                    /**< 绘图对象 */
 } XAbstractSheet;
@@ -76,6 +77,16 @@ void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int she
  * @param self 指针
  */
 void XAbstractSheet_deinit(XAbstractSheet* self);
+
+/**
+ * @brief      设置工作表在 workbook.xml.rels 中的 rId
+ * @param self  XAbstractSheet 实例指针
+ * @param rid   rId 值；负值表示清空
+ * @return      无
+ * @note       由 XDocument_saveAs 在生成 rels 时分配并写入，避免 sheet 的
+ *             r:id 属性硬编码为 rId1 与 rels 中实际 rId 不一致。
+ */
+void XAbstractSheet_setRid(XAbstractSheet* self, int rid);
 
 /**
  * @brief      获取工作表名称

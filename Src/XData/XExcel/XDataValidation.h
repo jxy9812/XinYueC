@@ -147,7 +147,7 @@ const XString* XDataValidation_formula1(const XDataValidation* self);
 /**
  * @brief  设置公式1
  * @param  self    数据验证对象指针
- * @param  formula 公式字符串（内容被拷贝）
+ * @param  formula 公式字符串（内容被拷贝）；NULL 清除当前公式
  */
 void XDataValidation_setFormula1(XDataValidation* self, const XString* formula);
 
@@ -161,7 +161,7 @@ const XString* XDataValidation_formula2(const XDataValidation* self);
 /**
  * @brief  设置公式2
  * @param  self    数据验证对象指针
- * @param  formula 公式字符串（内容被拷贝）
+ * @param  formula 公式字符串（内容被拷贝）；NULL 清除当前公式
  */
 void XDataValidation_setFormula2(XDataValidation* self, const XString* formula);
 
@@ -224,16 +224,16 @@ bool XDataValidation_isErrorMessageVisible(const XDataValidation* self);
 /**
  * @brief  设置错误消息及标题
  * @param  self  数据验证对象指针
- * @param  error 错误消息内容（内容被拷贝）
- * @param  title 错误消息标题（内容被拷贝）
+ * @param  error 错误消息内容（内容被拷贝）；NULL 清除当前内容
+ * @param  title 错误消息标题（内容被拷贝）；NULL 清除当前标题
  */
 void XDataValidation_setErrorMessage(XDataValidation* self, const XString* error, const XString* title);
 
 /**
  * @brief  设置提示消息及标题
  * @param  self   数据验证对象指针
- * @param  prompt 提示消息内容（内容被拷贝）
- * @param  title  提示消息标题（内容被拷贝）
+ * @param  prompt 提示消息内容（内容被拷贝）；NULL 清除当前内容
+ * @param  title  提示消息标题（内容被拷贝）；NULL 清除当前标题
  */
 void XDataValidation_setPromptMessage(XDataValidation* self, const XString* prompt, const XString* title);
 

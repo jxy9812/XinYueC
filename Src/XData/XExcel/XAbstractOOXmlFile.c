@@ -16,7 +16,7 @@ void XAbstractOOXmlFile_init(XAbstractOOXmlFile* self, XAbstractOOXmlFile_Create
 void XAbstractOOXmlFile_deinit(XAbstractOOXmlFile* self)
 {
     if (!self) return;
-    if (self->m_filePath) { XString_deinit_base(self->m_filePath); XFree_System(self->m_filePath); }
+    if (self->m_filePath) XString_delete_base(self->m_filePath);
     if (self->m_relationships) XRelationships_delete(self->m_relationships);
 }
 

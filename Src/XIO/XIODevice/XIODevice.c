@@ -79,19 +79,19 @@ bool XIODevice_isSequential(const XIODevice* self) {
 // 但在单通道模型下，它们的行为是固定的。
 
 int XIODevice_readChannelCount(const XIODevice* self) {
-	if (!self || !self->m_d || !self->m_d->readBuffers) {
-		return 0;
-	}
-	// readBuffers 的大小即为已创建的读通道数量
-	return (int)XVector_size_base(self->m_d->readBuffers);
+	/* Qt 行为: XIODevice 默认至少有 1 个读通道 (即使尚未创建缓冲区) */
+	if (!self) return 0;
+	if (!self->m_d || !self->m_d->readBuffers) return 1;
+	int n = (int)XVector_size_base(self->m_d->readBuffers);
+	return n > 0 ? n : 1;
 }
 
 int XIODevice_writeChannelCount(const XIODevice* self) {
-	if (!self || !self->m_d || !self->m_d->writeBuffers) {
-		return 0;
-	}
-	// writeBuffers 的大小即为已创建的写通道数量
-	return (int)XVector_size_base(self->m_d->writeBuffers);
+	/* Qt 行为: XIODevice 默认至少有 1 个写通道 */
+	if (!self) return 0;
+	if (!self->m_d || !self->m_d->writeBuffers) return 1;
+	int n = (int)XVector_size_base(self->m_d->writeBuffers);
+	return n > 0 ? n : 1;
 }
 
 int XIODevice_currentReadChannel(const XIODevice* self) {
@@ -240,9 +240,14 @@ int64_t XIODevice_readLine_1(XIODevice* self, char* data, int64_t maxlen)
 int64_t XIODevice_readLine_2(XIODevice* self, XByteArray* buff)
 {
 	if (!self || !buff) return 0;
-	int64_t maxLen=XIODevice_bytesAvailable_base(self);
+	int64_t maxLen = XIODevice_bytesAvailable_base(self);
+	if (maxLen <= 0) return 0;
 	XByteArray_resize_base(buff, maxLen);
-	return XIODevice_readLine_1(self, XContainerDataAddr(buff), maxLen);
+	/* Qt 行为：readLine_2 读出 maxLen 字节或直到换行符；
+	   直接 read_1 走底层 readData，绕过 XByteArray 自身的 NUL 终止。 */
+	int64_t n = XIODevice_read_1(self, XContainerDataAddr(buff), maxLen);
+	XContainerSize(buff) = n > 0 ? n : 0;
+	return n;
 }
 
 XByteArray* XIODevice_readLine_3(XIODevice* self)

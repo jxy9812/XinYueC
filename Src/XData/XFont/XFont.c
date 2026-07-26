@@ -215,7 +215,7 @@ void XFont_delete_base(XFont* self)
 const char* XFont_family(const XFont* self)
 {
     if (!self) return "";
-    return self->m_family ? XString_data(self->m_family) : "";
+    return self->m_family ? XString_toUtf8(self->m_family) : "";
 }
 
 void XFont_setFamily(XFont* self, const char* family)
@@ -232,7 +232,7 @@ void XFont_setFamily(XFont* self, const char* family)
 const char* XFont_styleName(const XFont* self)
 {
     if (!self) return "";
-    return self->m_styleName ? XString_data(self->m_styleName) : "";
+    return self->m_styleName ? XString_toUtf8(self->m_styleName) : "";
 }
 
 void XFont_setStyleName(XFont* self, const char* styleName)
@@ -487,7 +487,7 @@ XString* XFont_toString(const XFont* self)
     if (!self) return NULL;
     char buf[256];
     const char* family = XFont_family(self);
-    if (family[0] == '\\0') family = "Unknown";
+    if (family[0] == '\0') family = "Unknown";
     snprintf(buf, sizeof(buf), "%s,%d,%d,%d", family,
              (int)self->m_pointSizeF, self->m_weight, self->m_style);
     return XString_create_utf8(buf);

@@ -28,7 +28,6 @@
 #include <sys/mman.h>
 #include <dirent.h>
 #include <errno.h>
-#include <utime.h>
 #include <limits.h>
 #include <pwd.h>
 #include <sys/statvfs.h>
@@ -143,12 +142,6 @@ int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return -1;
 
-#ifdef __linux__
-    /* 使用 io_uring 异步读取（同步等待完成） */
-    if (XAbstractNetIoRing_global()) {
-        return ioUringSyncIO(fd, IORING_OP_READ, buf, (uint64_t)len, -1);
-    }
-#endif
     ssize_t n = read(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
 }
@@ -157,12 +150,6 @@ int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return -1;
 
-#ifdef __linux__
-    /* 使用 io_uring 异步写入（同步等待完成） */
-    if (XAbstractNetIoRing_global()) {
-        return ioUringSyncIO(fd, IORING_OP_WRITE, (void*)buf, (uint64_t)len, -1);
-    }
-#endif
     ssize_t n = write(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
 }
@@ -171,12 +158,6 @@ bool XFileSystem_flush(XFd fdx) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
 
-#ifdef __linux__
-    /* 使用 io_uring fsync（同步等待完成） */
-    if (XAbstractNetIoRing_global()) {
-        return ioUringSyncIO(fd, IORING_OP_FSYNC, NULL, 0, -1) >= 0;
-    }
-#endif
     return fsync(fd) == 0;
 }
 
@@ -190,6 +171,36 @@ bool XFileSystem_resize(XFd fdx, int64_t size) {
  * 二、文件属性操作
  * ============================================================================ */
 
+/* Unix 权限位 -> Qt XFilePermissions 转换 */
+static XFilePermissions unixModeToXPerms(mode_t mode) {
+    XFilePermissions p = 0;
+    if (mode & S_IRUSR) p |= XFile_ReadOwner | XFile_ReadUser;
+    if (mode & S_IWUSR) p |= XFile_WriteOwner | XFile_WriteUser;
+    if (mode & S_IXUSR) p |= XFile_ExeOwner | XFile_ExeUser;
+    if (mode & S_IRGRP) p |= XFile_ReadGroup;
+    if (mode & S_IWGRP) p |= XFile_WriteGroup;
+    if (mode & S_IXGRP) p |= XFile_ExeGroup;
+    if (mode & S_IROTH) p |= XFile_ReadOther;
+    if (mode & S_IWOTH) p |= XFile_WriteOther;
+    if (mode & S_IXOTH) p |= XFile_ExeOther;
+    return p;
+}
+
+/* Qt XFilePermissions -> Unix 权限位 转换 */
+static mode_t xPermsToUnixMode(XFilePermissions perms) {
+    mode_t mode = 0;
+    if (perms & (XFile_ReadOwner | XFile_ReadUser))  mode |= S_IRUSR;
+    if (perms & (XFile_WriteOwner | XFile_WriteUser)) mode |= S_IWUSR;
+    if (perms & (XFile_ExeOwner | XFile_ExeUser))    mode |= S_IXUSR;
+    if (perms & XFile_ReadGroup)  mode |= S_IRGRP;
+    if (perms & XFile_WriteGroup) mode |= S_IWGRP;
+    if (perms & XFile_ExeGroup)   mode |= S_IXGRP;
+    if (perms & XFile_ReadOther)  mode |= S_IROTH;
+    if (perms & XFile_WriteOther) mode |= S_IWOTH;
+    if (perms & XFile_ExeOther)   mode |= S_IXOTH;
+    return mode;
+}
+
 static void fillStat(struct stat* st, XFileStat* out) {
     memset(out, 0, sizeof(*out));
     out->exists = true;
@@ -200,7 +211,7 @@ static void fillStat(struct stat* st, XFileStat* out) {
     out->isDir = S_ISDIR(st->st_mode);
     out->isFile = S_ISREG(st->st_mode);
     out->isSymLink = S_ISLNK(st->st_mode);
-    out->permissions = st->st_mode & 0777;
+    out->permissions = unixModeToXPerms(st->st_mode);
 #ifdef __APPLE__
     out->birthTime = st->st_birthtime;
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
@@ -240,6 +251,77 @@ bool XFileSystem_fstat(XFd fdx, XFileStat* out) {
  * 三、文件系统操作
  * ============================================================================ */
 
+/* ============================================================================
+ * 回收站 (XDG Trash 规范)
+ * ============================================================================ */
+
+static bool ensureTrashDir(const char* trashDir, const char* infoDir)
+{
+    (void)infoDir;
+    if (mkdir(trashDir, 0700) == 0) return true;
+    return errno == EEXIST;
+}
+
+bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
+    if (!fileName) return false;
+    const char* src = XString_toUtf8(fileName);
+    if (!src) return false;
+
+    /* 1. 解析 $XDG_DATA_HOME 或 $HOME/.local/share */
+    char trashRoot[4096];
+    const char* xdg = getenv("XDG_DATA_HOME");
+    if (xdg && *xdg) {
+        snprintf(trashRoot, sizeof(trashRoot), "%s/Trash", xdg);
+    } else {
+        const char* home = getenv("HOME");
+        if (!home) {
+            struct passwd* pw = getpwuid(getuid());
+            home = pw ? pw->pw_dir : NULL;
+        }
+        if (!home) return XFileSystem_remove(fileName);
+        snprintf(trashRoot, sizeof(trashRoot), "%s/.local/share/Trash", home);
+    }
+
+    char filesDir[4200];
+    char infoDir[4200];
+    snprintf(filesDir, sizeof(filesDir), "%s/files", trashRoot);
+    snprintf(infoDir, sizeof(infoDir), "%s/info", trashRoot);
+    if (!ensureTrashDir(filesDir, infoDir) && errno != EEXIST) return XFileSystem_remove(fileName);
+    if (!ensureTrashDir(infoDir, NULL) && errno != EEXIST) return XFileSystem_remove(fileName);
+
+    /* 2. 解析原文件 basename, 必要时按 XDateTime 时间戳去重 */
+    const char* base = strrchr(src, '/');
+    base = base ? base + 1 : src;
+
+    char dest[4200];
+    snprintf(dest, sizeof(dest), "%s/%s", filesDir, base);
+    struct stat st;
+    if (stat(dest, &st) == 0) {
+        XDateTime nowDt = XDateTime_currentDateTime();
+        int64_t nowSec = XDateTime_toSecsSinceEpoch(&nowDt);
+        snprintf(dest, sizeof(dest), "%s/%s.%lld", filesDir, base, (long long)nowSec);
+    }
+
+    /* 3. rename(2) 跨同文件系统时原子; 跨设备时退化为 copy+unlink */
+    if (rename(src, dest) == 0) {
+        if (pathInTrash) XString_assign_utf8(pathInTrash, dest);
+        return true;
+    }
+    int sfd = open(src, O_RDONLY);
+    if (sfd < 0) return XFileSystem_remove(fileName);
+    int dfd = open(dest, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (dfd < 0) { close(sfd); return XFileSystem_remove(fileName); }
+    char buf[8192]; ssize_t n; bool ok = true;
+    while ((n = read(sfd, buf, sizeof(buf))) > 0) {
+        if (write(dfd, buf, (size_t)n) != n) { ok = false; break; }
+    }
+    close(sfd); close(dfd);
+    if (!ok) { unlink(dest); return XFileSystem_remove(fileName); }
+    if (unlink(src) != 0) { unlink(dest); return false; }
+    if (pathInTrash) XString_assign_utf8(pathInTrash, dest);
+    return true;
+}
+
 bool XFileSystem_remove(const XString* path) {
     if (!path) return false;
     return unlink(XString_toUtf8(path)) == 0;
@@ -247,35 +329,25 @@ bool XFileSystem_remove(const XString* path) {
 
 bool XFileSystem_rename(const XString* oldPath, const XString* newPath) {
     if (!oldPath || !newPath) return false;
+    /* Qt 行为: 目标文件已存在时 rename 失败 */
+    if (XFileSystem_exists(newPath)) return false;
     return rename(XString_toUtf8(oldPath), XString_toUtf8(newPath)) == 0;
 }
 
 bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
     if (!srcPath || !dstPath) return false;
+    /* Qt 行为: 目标文件已存在时 copy 失败 */
+    if (XFileSystem_exists(dstPath)) return false;
     const char* src = XString_toUtf8(srcPath);
     const char* dst = XString_toUtf8(dstPath);
     int sfd = open(src, O_RDONLY);
     if (sfd < 0) return false;
-    int dfd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    int dfd = open(dst, O_WRONLY | O_CREAT | O_EXCL, 0666);
     if (dfd < 0) { close(sfd); return false; }
 
     char buf[8192];
     bool ok = true;
 
-#ifdef __linux__
-    if (XAbstractNetIoRing_global()) {
-        /* 使用 io_uring 异步复制 */
-        int64_t offset = 0;
-        while (1) {
-            int64_t nr = ioUringSyncIO(sfd, IORING_OP_READ, buf, sizeof(buf), offset);
-            if (nr <= 0) { ok = (nr == 0); break; }
-            int64_t nw = ioUringSyncIO(dfd, IORING_OP_WRITE, buf, (uint64_t)nr, offset);
-            if (nw != nr) { ok = false; break; }
-            offset += nr;
-        }
-        ioUringSyncIO(dfd, IORING_OP_FSYNC, NULL, 0, -1);
-    } else
-#endif
     {
         ssize_t n;
         while ((n = read(sfd, buf, sizeof(buf))) > 0) {
@@ -463,25 +535,44 @@ bool XFileSystem_readLink(const XString* path, XString* target) {
 
 bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions) {
     if (!path) return false;
-    return chmod(XString_toUtf8(path), permissions) == 0;
+    return chmod(XString_toUtf8(path), xPermsToUnixMode(permissions)) == 0;
 }
 
 /* ============================================================================
  * 九、内存映射
  * ============================================================================ */
 
-void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, bool writable) {
+/* Linux mmap 要求 offset 与 size 都按页大小对齐.
+   对非页对齐的 offset/size, 我们做向下对齐 offset 并扩张 size, 然后返回偏移后的用户指针. */
+#include <unistd.h>
+#define XFILE_PAGE_SIZE 4096
+#define XFILE_PAGE_MASK (XFILE_PAGE_SIZE - 1)
+
+void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, int flags) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return NULL;
     int prot = PROT_READ;
-    if (writable) prot |= PROT_WRITE;
-    void* addr = mmap(NULL, size, prot, MAP_SHARED, fd, offset);
-    return (addr == MAP_FAILED) ? NULL : addr;
+    if (flags & 0x2) prot |= PROT_WRITE;
+    int mmapFlags = (flags & 0x1) ? MAP_PRIVATE : MAP_SHARED;
+
+    /* 内部按页对齐的 offset / size */
+    int64_t pageOff = offset & ~XFILE_PAGE_MASK;
+    int64_t delta = offset - pageOff;
+    int64_t mapSize = size + delta;
+
+    void* base = mmap(NULL, (size_t)mapSize, prot, mmapFlags, fd, (off_t)pageOff);
+    if (base == MAP_FAILED) return NULL;
+    return (char*)base + delta;
 }
 
 bool XFileSystem_unmap(void* addr, int64_t size) {
     if (!addr) return false;
-    return munmap(addr, size) == 0;
+    /* 同样需要将用户指针向下对齐到页, 并使用对齐后的 size */
+    uintptr_t p = (uintptr_t)addr;
+    uintptr_t base = p & ~XFILE_PAGE_MASK;
+    int64_t delta = (int64_t)(p - base);
+    int64_t total = size + delta;
+    return munmap((void*)base, (size_t)total) == 0;
 }
 
 /* ============================================================================
@@ -492,7 +583,7 @@ bool XFileSystem_unmap(void* addr, int64_t size) {
  * @brief 通过文件描述符设置文件时间
  * @param fdx 文件描述符（XFileDescriptor 表索引）
  * @param timeType 时间类型（访问时间/修改时间/创建时间）
- * @param timeValue 时间值（Unix时间戳，秒）
+ * @param newDate 新的 XDateTime 时间值（使用 XinYueC 自己的日期时间类型，不再使用 C time API）
  * @return 成功返回true
  * @note 使用 futimens 直接操作已打开的 fd。
  *       路径版需求由上层通过 open→setFileTime→close 组合实现。

@@ -22,6 +22,7 @@ typedef struct XZipReader {
     void* m_zipHandle;       /**< ZIP 句柄 */
     XStringList* m_filePaths; /**< 文件路径列表 */
     XString* m_fileName;     /**< 文件名 */
+    XByteArray* m_archiveData; /**< ZIP 原始数据；内存创建时持有副本，文件创建时按需加载 */
 } XZipReader;
 /**
  * @brief  通过文件路径创建 ZIP 读取器
@@ -54,7 +55,7 @@ bool XZipReader_exists(const XZipReader* self);
 /**
  * @brief  获取 ZIP 内所有文件路径列表
  * @param  self  XZipReader 指针
- * @return 文件路径列表（XStringList*），调用者负责释放
+ * @return 文件路径列表（XStringList*），由 XZipReader 持有，调用者不得释放
  */
 XStringList* XZipReader_filePaths(const XZipReader* self);
 

@@ -36,6 +36,8 @@ typedef struct XXmlStreamWriter
     int        m_elementStack;    /**< 元素嵌套深度 */
     bool       m_hasError;        /**< 是否有错误 */
     bool       m_inStartElement;  /**< 是否在开始标签内部（等待属性） */
+    bool       m_pendingEmptyElement; /**< 当前开始标签应以 /> 结束 */
+    unsigned int m_namespacePrefixCounter; /**< 自动生成命名空间属性前缀的计数器 */
     XString**  m_elementNameStack; /**< 记录每个 writeStartElement 的限定名（writeEndElement 时匹配） */
     int        m_elementNameStackSize;  /**< 元素名栈大小 */
     int        m_elementNameStackCapacity; /**< 元素名栈容量 */

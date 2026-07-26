@@ -40,6 +40,7 @@ typedef struct XlsxRelationship
 typedef struct XRelationships
 {
     XVector* m_relationships;  /**< 关系列表（XlsxRelationship 数组） */
+    int m_lastAssignedRid;     /**< 本集合最近分配的 rId 数字 */
 } XRelationships;
 
 /**
@@ -61,6 +62,21 @@ void XRelationships_delete(XRelationships* self);
  * @param target       目标路径
  */
 void XRelationships_addDocumentRelationship(XRelationships* self, const XString* relativeType, const XString* target);
+
+/**
+ * @brief      获取上一次 addRel 分配的 rId 整数值
+ * @return     返回 rId 数字（如 rId7 返回 7）；如果还没有关系返回 0
+ * @note       用于在 XDocument_saveAs 中把 rels 中实际分配的 rId 回填到
+ *             XAbstractSheet.m_rid，确保 workbook.xml 与 rels 中的 r:id 一致。
+ */
+int XRelationships_lastAssignedRid(void);
+
+/**
+ * @brief 获取指定关系集合最近分配的 rId 数字。
+ * @param self 关系集合指针。
+ * @return 最近分配的数字；没有关系时返回 0。
+ */
+int XRelationships_lastAssignedRidFor(const XRelationships* self);
 
 /**
  * @brief      添加包关系
@@ -110,7 +126,7 @@ bool XRelationships_isEmpty(const XRelationships* self);
 /**
  * @brief      将关系保存到 XML 文件
  * @param self 指针
- * @param device 输出设备（文件路径）
+ * @param filePath 目标 XML 文件路径
  * @return     成功返回 true
  */
 bool XRelationships_saveToXmlFile(const XRelationships* self, const XString* filePath);
@@ -130,22 +146,34 @@ bool XRelationships_loadFromXmlFile(XRelationships* self, const XString* filePat
  * @param self         指针
  * @param relativeType 关系类型
  * @param outCount     输出数量
- * @return     关系数组（调用者不需释放，内部持有）
+ * @return     关系指针数组（关系对象由 self 持有，调用者需用 XFree_System 释放数组）
  */
 XlsxRelationship** XRelationships_documentRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
- * @brief      获取指定类型的包关系列表
+ * @brief      获取指定类型的包关系列表。
+ * @param self         关系集合指针。
+ * @param relativeType 关系类型；可为完整 URI 或相对类型名。
+ * @param outCount     输出关系数量地址。
+ * @return 关系指针数组；关系对象由 self 持有，调用方使用 XFree_System 释放数组。
  */
 XlsxRelationship** XRelationships_packageRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
- * @brief      获取指定类型的 MS 包关系列表
+ * @brief      获取指定类型的 MS 包关系列表。
+ * @param self         关系集合指针。
+ * @param relativeType 关系类型；可为完整 URI 或相对类型名。
+ * @param outCount     输出关系数量地址。
+ * @return 关系指针数组；关系对象由 self 持有，调用方使用 XFree_System 释放数组。
  */
 XlsxRelationship** XRelationships_msPackageRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 
 /**
- * @brief      获取指定类型的工作表关系列表
+ * @brief      获取指定类型的工作表关系列表。
+ * @param self         关系集合指针。
+ * @param relativeType 关系类型；可为完整 URI 或相对类型名。
+ * @param outCount     输出关系数量地址。
+ * @return 关系指针数组；关系对象由 self 持有，调用方使用 XFree_System 释放数组。
  */
 XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* self, const XString* relativeType, int* outCount);
 

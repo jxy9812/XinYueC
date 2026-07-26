@@ -28,7 +28,7 @@ struct XReadSax_Options {
     int m_minCol;              /**< 最小列号，0表示不限制 */
     int m_maxCol;              /**< 最大列号，0表示不限制 */
     bool m_skipEmptyRows;      /**< 跳过空行 */
-    bool m_skipEmptyColumns;   /**< 跳过空列（暂未实现）*/
+    bool m_skipEmptyColumns;   /**< 跳过没有显式单元格节点的空列 */
 };
 
 /** @brief 默认 SAX 选项 */
@@ -60,6 +60,15 @@ bool XReadSax_parseCellRef(const XString* ref, int* outRow, int* outCol);
  * @return    成功返回true
  */
 bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outList);
+
+/**
+ * @brief     从 sharedStrings.xml 原始数据加载共享字符串表
+ * @param xmlData XML 数据
+ * @param xmlLen  XML 数据长度
+ * @param outList 输出共享字符串列表
+ * @return    解析成功返回 true
+ */
+bool XReadSax_loadSharedStringsXml(const uint8_t* xmlData, size_t xmlLen, XStringList* outList);
 
 /**
  * @brief     SAX 方式解析工作表 XML 数据

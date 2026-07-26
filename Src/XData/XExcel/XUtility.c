@@ -4,6 +4,9 @@
 #include <ctype.h>
 #include <stdio.h>
 
+#define XLSX_ROW_MAX 1048576
+#define XLSX_COLUMN_MAX 16384
+
 double XUtility_dateTimeToExcelSerial(int64_t timestampMs, bool date1904) {
     double offset = date1904 ? 24107.0 : 25569.0;
     double serial = (double)timestampMs / 86400000.0 + offset;
@@ -43,7 +46,10 @@ XString XUtility_safeSheetName(const XString* src) {
 bool XUtility_isValidSheetName(const XString* name) {
     if (!name) return false;
     const char* cstr = XString_toUtf8(name);
-    if (!cstr || strlen(cstr) == 0 || strlen(cstr) > 31) return false;
+    size_t length = XString_size_base((const XContainer*)name);
+    if (!cstr || length == 0 || length > 31) return false;
+    size_t byteLength = strlen(cstr);
+    if (cstr[0] == '\'' || (byteLength > 0 && cstr[byteLength - 1] == '\'')) return false;
     for (const char* p = cstr; *p; ++p) {
         if (*p == '\\' || *p == '/' || *p == '?' || *p == '*' || *p == '[' || *p == ']' || *p == ':')
             return false;
@@ -150,10 +156,10 @@ void XUtility_excelToEpoch(double serial, int* year, int* month, int* day, int* 
 bool XUtility_parseXsdBoolean(const XString* value, bool defaultValue)
 {
     if (!value) return defaultValue;
-    const char* cstr = XString_toUtf8(value);
-    if (!cstr || !cstr[0]) return defaultValue;
-    if (strcmp(cstr, "true") == 0 || strcmp(cstr, "1") == 0) return true;
-    if (strcmp(cstr, "false") == 0 || strcmp(cstr, "0") == 0) return false;
+    if (XString_equals_utf8(value, "true", XChar_CaseSensitive) ||
+        XString_equals_utf8(value, "1", XChar_CaseSensitive)) return true;
+    if (XString_equals_utf8(value, "false", XChar_CaseSensitive) ||
+        XString_equals_utf8(value, "0", XChar_CaseSensitive)) return false;
     return defaultValue;
 }
 
@@ -289,14 +295,25 @@ static bool parseCellRef(const char* s, size_t* pos, bool* colAbs, int* col, boo
 
     if (s[i] == '$') { *colAbs = true; i++; }
     bool hasCol = false;
-    while (s[i] >= 'A' && s[i] <= 'Z') { *col = *col * 26 + (s[i] - 'A' + 1); hasCol = true; i++; }
-    while (s[i] >= 'a' && s[i] <= 'z') { *col = *col * 26 + (s[i] - 'a' + 1); hasCol = true; i++; }
+    while (isalpha((unsigned char)s[i])) {
+        int digit = toupper((unsigned char)s[i]) - 'A' + 1;
+        if (*col > (XLSX_COLUMN_MAX - digit) / 26) return false;
+        *col = *col * 26 + digit;
+        hasCol = true;
+        i++;
+    }
     if (!hasCol) return false;
 
     if (s[i] == '$') { *rowAbs = true; i++; }
     bool hasRow = false;
-    while (s[i] >= '0' && s[i] <= '9') { *row = *row * 10 + (s[i] - '0'); hasRow = true; i++; }
-    if (!hasRow) return false;
+    while (s[i] >= '0' && s[i] <= '9') {
+        int digit = s[i] - '0';
+        if (*row > (XLSX_ROW_MAX - digit) / 10) return false;
+        *row = *row * 10 + digit;
+        hasRow = true;
+        i++;
+    }
+    if (!hasRow || *row < 1 || *col < 1) return false;
 
     *pos = i;
     return true;
@@ -348,7 +365,9 @@ XString XUtility_convertSharedFormula(const XString* rootFormula, const XCellRef
                     int newCol = colAbs ? col : col + colDelta;
                     int newRow = rowAbs ? row : row + rowDelta;
                     if (newCol < 1) newCol = 1;
+                    else if (newCol > XLSX_COLUMN_MAX) newCol = XLSX_COLUMN_MAX;
                     if (newRow < 1) newRow = 1;
+                    else if (newRow > XLSX_ROW_MAX) newRow = XLSX_ROW_MAX;
                     char ref[64];
                     int pos = 0;
                     if (colAbs) ref[pos++] = '$';

@@ -13,6 +13,47 @@
 
 #include <stdio.h>
 
+static bool validation_type_is_valid(XDataValidation_ValidationType type)
+{
+    return type >= XDataValidation_None && type <= XDataValidation_Custom;
+}
+
+static bool validation_operator_is_valid(XDataValidation_ValidationOperator op)
+{
+    return op >= XDataValidation_Between && op <= XDataValidation_GreaterThanOrEqual;
+}
+
+static bool error_style_is_valid(XDataValidation_ErrorStyle style)
+{
+    return style >= XDataValidation_Stop && style <= XDataValidation_Information;
+}
+
+static bool copy_optional_string(XString** target, const XString* source)
+{
+    if (!target) return false;
+    if (!source) {
+        *target = NULL;
+        return true;
+    }
+    *target = XString_create_copy(source);
+    return *target != NULL;
+}
+
+static void assign_optional_string(XString** target, const XString* value)
+{
+    if (!target) return;
+    if (!value) {
+        if (*target) XString_delete_base(*target);
+        *target = NULL;
+        return;
+    }
+
+    XString* copy = XString_create_copy(value);
+    if (!copy) return;
+    if (*target) XString_delete_base(*target);
+    *target = copy;
+}
+
 
 /* ========== 创建与初始化 ========== */
 
@@ -29,6 +70,10 @@ XDataValidation* XDataValidation_create(void)
     self->m_promptMessageVisible = true;
     self->m_errorMessageVisible = true;
     self->m_ranges = XVector_Create(XCellRange);
+    if (!self->m_ranges) {
+        XFree_System(self);
+        return NULL;
+    }
     return self;
 }
 
@@ -36,13 +81,17 @@ XDataValidation* XDataValidation_create(void)
 XDataValidation* XDataValidation_create_ex(XDataValidation_ValidationType type,
     XDataValidation_ValidationOperator op, const XString* formula1, const XString* formula2, bool allowBlank)
 {
+    if (!validation_type_is_valid(type) || !validation_operator_is_valid(op)) return NULL;
     XDataValidation* self = XDataValidation_create();
     if (!self) return NULL;
     self->m_validationType = type;
     self->m_validationOperator = op;
     self->m_allowBlank = allowBlank;
-    if (formula1) { self->m_formula1 = XString_create(); XString_append(self->m_formula1, formula1); }
-    if (formula2) { self->m_formula2 = XString_create(); XString_append(self->m_formula2, formula2); }
+    if (!copy_optional_string(&self->m_formula1, formula1) ||
+        !copy_optional_string(&self->m_formula2, formula2)) {
+        XDataValidation_delete(self);
+        return NULL;
+    }
     return self;
 }
 
@@ -58,18 +107,23 @@ XDataValidation* XDataValidation_copy(const XDataValidation* other)
     self->m_allowBlank = other->m_allowBlank;
     self->m_promptMessageVisible = other->m_promptMessageVisible;
     self->m_errorMessageVisible = other->m_errorMessageVisible;
-    if (other->m_formula1) { self->m_formula1 = XString_create(); XString_copy_base(self->m_formula1, other->m_formula1); }
-    if (other->m_formula2) { self->m_formula2 = XString_create(); XString_copy_base(self->m_formula2, other->m_formula2); }
-    if (other->m_errorMessage) { self->m_errorMessage = XString_create(); XString_copy_base(self->m_errorMessage, other->m_errorMessage); }
-    if (other->m_errorMessageTitle) { self->m_errorMessageTitle = XString_create(); XString_copy_base(self->m_errorMessageTitle, other->m_errorMessageTitle); }
-    if (other->m_promptMessage) { self->m_promptMessage = XString_create(); XString_copy_base(self->m_promptMessage, other->m_promptMessage); }
-    if (other->m_promptMessageTitle) { self->m_promptMessageTitle = XString_create(); XString_copy_base(self->m_promptMessageTitle, other->m_promptMessageTitle); }
+    if (!copy_optional_string(&self->m_formula1, other->m_formula1) ||
+        !copy_optional_string(&self->m_formula2, other->m_formula2) ||
+        !copy_optional_string(&self->m_errorMessage, other->m_errorMessage) ||
+        !copy_optional_string(&self->m_errorMessageTitle, other->m_errorMessageTitle) ||
+        !copy_optional_string(&self->m_promptMessage, other->m_promptMessage) ||
+        !copy_optional_string(&self->m_promptMessageTitle, other->m_promptMessageTitle)) {
+        XDataValidation_delete(self);
+        return NULL;
+    }
     if (other->m_ranges) {
         XVector_clear_base(self->m_ranges);
         for (size_t i = 0; i < XVector_size_base(other->m_ranges); ++i) {
             XCellRange* r = (XCellRange*)XVector_at_base(other->m_ranges, i);
-            XCellRange_copy(r, r);
-            XVector_push_back_2(self->m_ranges, r, 1);
+            if (r && !XVector_push_back_2(self->m_ranges, r, 1)) {
+                XDataValidation_delete(self);
+                return NULL;
+            }
         }
     }
     return self;
@@ -79,34 +133,34 @@ XDataValidation* XDataValidation_copy(const XDataValidation* other)
 void XDataValidation_delete(XDataValidation* self)
 {
     if (!self) return;
-    if (self->m_formula1) { XString_deinit_base(self->m_formula1); XFree_System(self->m_formula1); }
-    if (self->m_formula2) { XString_deinit_base(self->m_formula2); XFree_System(self->m_formula2); }
-    if (self->m_errorMessage) { XString_deinit_base(self->m_errorMessage); XFree_System(self->m_errorMessage); }
-    if (self->m_errorMessageTitle) { XString_deinit_base(self->m_errorMessageTitle); XFree_System(self->m_errorMessageTitle); }
-    if (self->m_promptMessage) { XString_deinit_base(self->m_promptMessage); XFree_System(self->m_promptMessage); }
-    if (self->m_promptMessageTitle) { XString_deinit_base(self->m_promptMessageTitle); XFree_System(self->m_promptMessageTitle); }
-    if (self->m_ranges) { XFree_System(self->m_ranges); }
+    if (self->m_formula1) { XString_delete_base(self->m_formula1);  }
+    if (self->m_formula2) { XString_delete_base(self->m_formula2);  }
+    if (self->m_errorMessage) { XString_delete_base(self->m_errorMessage);  }
+    if (self->m_errorMessageTitle) { XString_delete_base(self->m_errorMessageTitle); }
+    if (self->m_promptMessage) { XString_delete_base(self->m_promptMessage); }
+    if (self->m_promptMessageTitle) { XString_delete_base(self->m_promptMessageTitle);  }
+    if (self->m_ranges) {
+        XVector_delete_base(self->m_ranges);
+    }
     XFree_System(self);
 }
 
 /* ========== 属性访问方法 ========== */
 XDataValidation_ValidationType XDataValidation_validationType(const XDataValidation* self) { return self ? self->m_validationType : XDataValidation_None; }
-void XDataValidation_setValidationType(XDataValidation* self, XDataValidation_ValidationType type) { if (self) self->m_validationType = type; }
+void XDataValidation_setValidationType(XDataValidation* self, XDataValidation_ValidationType type) { if (self && validation_type_is_valid(type)) self->m_validationType = type; }
 XDataValidation_ValidationOperator XDataValidation_validationOperator(const XDataValidation* self) { return self ? self->m_validationOperator : XDataValidation_Between; }
-void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self) self->m_validationOperator = op; }
+void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self && validation_operator_is_valid(op)) self->m_validationOperator = op; }
 XDataValidation_ErrorStyle XDataValidation_errorStyle(const XDataValidation* self) { return self ? self->m_errorStyle : XDataValidation_Stop; }
-void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self) self->m_errorStyle = es; }
+void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self && error_style_is_valid(es)) self->m_errorStyle = es; }
 const XString* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? self->m_formula1 : NULL; }
 void XDataValidation_setFormula1(XDataValidation* self, const XString* formula) {
     if (!self) return;
-    if (!self->m_formula1) self->m_formula1 = XString_create();
-    if (self->m_formula1) { XString_clear_base(self->m_formula1); if (formula) XString_append(self->m_formula1, formula); }
+    assign_optional_string(&self->m_formula1, formula);
 }
 const XString* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? self->m_formula2 : NULL; }
 void XDataValidation_setFormula2(XDataValidation* self, const XString* formula) {
     if (!self) return;
-    if (!self->m_formula2) self->m_formula2 = XString_create();
-    if (self->m_formula2) { XString_clear_base(self->m_formula2); if (formula) XString_append(self->m_formula2, formula); }
+    assign_optional_string(&self->m_formula2, formula);
 }
 bool XDataValidation_allowBlank(const XDataValidation* self) { return self ? self->m_allowBlank : false; }
 void XDataValidation_setAllowBlank(XDataValidation* self, bool enable) { if (self) self->m_allowBlank = enable; }
@@ -118,41 +172,41 @@ bool XDataValidation_isPromptMessageVisible(const XDataValidation* self) { retur
 bool XDataValidation_isErrorMessageVisible(const XDataValidation* self) { return self ? self->m_errorMessageVisible : false; }
 void XDataValidation_setErrorMessage(XDataValidation* self, const XString* error, const XString* title) {
     if (!self) return;
-    if (error) { if (!self->m_errorMessage) self->m_errorMessage = XString_create(); if (self->m_errorMessage) { XString_clear_base(self->m_errorMessage); XString_append(self->m_errorMessage, error); } }
-    if (title) { if (!self->m_errorMessageTitle) self->m_errorMessageTitle = XString_create(); if (self->m_errorMessageTitle) { XString_clear_base(self->m_errorMessageTitle); XString_append(self->m_errorMessageTitle, title); } }
+    assign_optional_string(&self->m_errorMessage, error);
+    assign_optional_string(&self->m_errorMessageTitle, title);
 }
 void XDataValidation_setPromptMessage(XDataValidation* self, const XString* prompt, const XString* title) {
     if (!self) return;
-    if (prompt) { if (!self->m_promptMessage) self->m_promptMessage = XString_create(); if (self->m_promptMessage) { XString_clear_base(self->m_promptMessage); XString_append(self->m_promptMessage, prompt); } }
-    if (title) { if (!self->m_promptMessageTitle) self->m_promptMessageTitle = XString_create(); if (self->m_promptMessageTitle) { XString_clear_base(self->m_promptMessageTitle); XString_append(self->m_promptMessageTitle, title); } }
+    assign_optional_string(&self->m_promptMessage, prompt);
+    assign_optional_string(&self->m_promptMessageTitle, title);
 }
 void XDataValidation_setPromptMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_promptMessageVisible = visible; }
 void XDataValidation_setErrorMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_errorMessageVisible = visible; }
 
 /* ========== 范围管理 ========== */
 void XDataValidation_addCell(XDataValidation* self, const XCellReference* cell) {
-    if (!self || !cell || !self->m_ranges) return;
+    if (!self || !cell || !self->m_ranges || !XCellReference_isValid(cell)) return;
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCellReference(&range, cell);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addCellRc(XDataValidation* self, int row, int col) {
     if (!self || !self->m_ranges) return;
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_setCell(&range, row, col);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addRange(XDataValidation* self, int firstRow, int firstCol, int lastRow, int lastCol) {
     if (!self || !self->m_ranges) return;
     XCellRange range;
     XCellRange_init(&range);
     XCellRange_init_ex(&range, firstRow, firstCol, lastRow, lastCol);
-    XVector_push_back_2(self->m_ranges, &range, 1);
+    if (XCellRange_isValid(&range)) XVector_push_back_2(self->m_ranges, &range, 1);
 }
 void XDataValidation_addRangeEx(XDataValidation* self, const XCellRange* range) {
-    if (!self || !range || !self->m_ranges) return;
+    if (!self || !range || !self->m_ranges || !XCellRange_isValid(range)) return;
     XVector_push_back_2(self->m_ranges, (void*)range, 1);
 }
 int XDataValidation_rangesCount(const XDataValidation* self) {

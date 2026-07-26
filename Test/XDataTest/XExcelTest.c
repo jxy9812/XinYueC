@@ -5,6 +5,7 @@
  * @note       覆盖 XExcel 主要模块的公开API
  ******************************************************************************/
 #include"XExcelTest.h"
+#include"XExcelExtendedTest.h"
 #include"XDocument.h"
 #include"XCell.h"
 #include"XCellReference.h"
@@ -23,6 +24,10 @@
 #include"XRichString.h"
 #include"XConditionalFormatting.h"
 #include"XDataValidation.h"
+
+/* forward decl for memory tracking globals (defined later in this file) */
+static long g_allocCount;
+static long g_freeCount;
 #include"XRelationships.h"
 #include"XCellFormula.h"
 #include"XSharedStrings.h"
@@ -34,6 +39,8 @@
 #include"XCoreApplication.h"
 #include"XPrintf.h"
 #include"XMemory.h"
+#include"XFile.h"
+#include"XFileInfo.h"
 #include"XString.h"
 #include"XByteArray.h"
 #include"XVector.h"
@@ -90,6 +97,8 @@ static bool test_content_types_add(void);
 static bool test_document_create_full(void);
 static bool test_document_xvariant_writes(void);
 static bool test_document_columns_rows(void);
+
+
 static bool test_document_save_load(void);
 static bool test_rich_string_settext(void);
 static bool test_cell_formula_basic(void);
@@ -635,6 +644,7 @@ static bool test_cell_format(void)
     }
 
     XCell_delete(cell);
+    if (fmt) XFormat_delete(fmt);
     return all_pass;
 }
 
@@ -1015,14 +1025,17 @@ static bool test_format_number(void)
     if (!fmt) { TEST_FAIL("数字格式", "创建失败"); return false; }
 
     /* 数字格式字符串 */
-    XFormat_setNumberFormat(fmt, "#,##0.00");
-    const char* nf = XFormat_numberFormat(fmt);
+    XString_Init_Utf8(numberFormat, "#,##0.00");
+    XFormat_setNumberFormat(fmt, numberFormat);
+    const XString* numberFormatValue = XFormat_numberFormat(fmt);
+    const char* nf = numberFormatValue ? XString_toUtf8(numberFormatValue) : NULL;
     if (nf && strcmp(nf, "#,##0.00") == 0) {
         TEST_PASS("XFormat_setNumberFormat(#,##0.00)");
     } else {
         TEST_FAIL("XFormat_setNumberFormat", "数字格式不正确");
         all_pass = false;
     }
+    XString_deinit_base(numberFormat);
 
     /* 数字格式索引 */
     XFormat_setNumberFormatIndex(fmt, 4);
@@ -1106,6 +1119,7 @@ static void test_worksheet_protection_flags_wrapper(XVariant* d) { (void)d; test
 static void test_worksheet_merged_cells_wrapper(XVariant* d) { (void)d; test_worksheet_merged_cells(); }
 static void test_format_pattern_wrapper(XVariant* d) { (void)d; test_format_pattern(); }
 static void test_run_all_wrapper(XVariant* d) { (void)d; test_run_all(); }
+static void test_extended_wrapper(XVariant* d) { (void)d; XExcelExtendedTest_runAll(); }
 
 void XMenu_XExcelTest(XMenu* root)
 {
@@ -1165,7 +1179,7 @@ void XMenu_XExcelTest(XMenu* root)
     XAction_setAction(action, test_document_xvariant_writes_wrapper);
     action = XMenu_addAction(menu, "24 Document 列/行/分组");
     XAction_setAction(action, test_document_columns_rows_wrapper);
-    action = XMenu_addAction(menu, "25 Document save/load 占位");
+    action = XMenu_addAction(menu, "25 Document save/load 往返");
     XAction_setAction(action, test_document_save_load_wrapper);
     action = XMenu_addAction(menu, "26 RichString setText 同步片段");
     XAction_setAction(action, test_rich_string_settext_wrapper);
@@ -1185,7 +1199,7 @@ void XMenu_XExcelTest(XMenu* root)
     XAction_setAction(action, test_document_dimension_wrapper);
     action = XMenu_addAction(menu, "34 changeImage/getImage");
     XAction_setAction(action, test_document_change_image_wrapper);
-    action = XMenu_addAction(menu, "35 getImage 安全");
+    action = XMenu_addAction(menu, "35 getImage 边界");
     XAction_setAction(action, test_document_get_image_wrapper);
     action = XMenu_addAction(menu, "36 Worksheet 写方法");
     XAction_setAction(action, test_worksheet_string_writes_wrapper);
@@ -1197,6 +1211,8 @@ void XMenu_XExcelTest(XMenu* root)
     XAction_setAction(action, test_format_pattern_wrapper);
     action = XMenu_addAction(menu, "40 RunAll 综合");
     XAction_setAction(action, test_run_all_wrapper);
+    action = XMenu_addAction(menu, "41 扩展往返/边界/设备测试");
+    XAction_setAction(action, test_extended_wrapper);
 }
 
 
@@ -1365,6 +1381,40 @@ static bool test_document_create_full(void)
     else { TEST_FAIL("current", "空"); all_pass = false; }
     if (XDocument_currentSheet(doc)) TEST_PASS("currentSheet 不为空");
     else { TEST_FAIL("currentSheet", "空"); all_pass = false; }
+
+    /* 写入一个单元格，然后 saveAs 到磁盘，验证文件确实生成 */
+    XVariant* v = XVariant_create_null();
+    XVariant_setValue_utf8_str(v, "Hello XDocument");
+    XDocument_write(doc, 1, 1, v, NULL);
+    XClass_delete_base((XClass*)v);
+
+    const char* path22 = "test22_create.xlsx";
+    if (XDocument_saveAs_utf8(doc, path22)) {
+        TEST_PASS("XDocument_saveAs 落盘成功");
+    } else {
+        TEST_FAIL("saveAs", "写入文件失败");
+        all_pass = false;
+    }
+
+    XString* pathStr22 = XString_create_utf8(path22);
+    if (XFile_exists_static(pathStr22)) {
+        XFileInfo* fi22 = XFileInfo_create_2(pathStr22);
+        int64_t sz = XFileInfo_size(fi22);
+        if (sz > 100) TEST_PASS("xlsx 文件已生成且大小合理");
+        else { TEST_FAIL("xlsx 文件", "太小"); all_pass = false; }
+        XString* absPath22 = XFileInfo_absoluteFilePath(fi22);
+        if (absPath22) {
+            TEST_INFO("文件路径: %s", XString_toUtf8(absPath22));
+            XString_delete_base(absPath22);
+        }
+        XFileInfo_delete_base((XClass*)fi22);
+        XFile_remove_static(pathStr22);
+    } else {
+        TEST_FAIL("xlsx 文件", "不存在");
+        all_pass = false;
+    }
+    XString_delete_base(pathStr22);
+
     XDocument_delete(doc);
     return all_pass;
 }
@@ -1416,32 +1466,42 @@ static bool test_document_columns_rows(void)
     XFormat_setFontBold(fmt, true);
 
     if (XDocument_setColumnWidth(doc, 1, 5, 18.5)) TEST_PASS("setColumnWidth");
-    else TEST_FAIL("setColumnWidth", "失败");
+    else { TEST_FAIL("setColumnWidth", "失败"); all_pass = false; }
     if (fabs(XDocument_columnWidth(doc, 3) - 18.5) < 0.001) TEST_PASS("columnWidth(3)=18.5");
-    else TEST_FAIL("columnWidth", "应 18.5");
+    else { TEST_FAIL("columnWidth", "应 18.5"); all_pass = false; }
 
     if (XDocument_setColumnFormat(doc, 1, 5, fmt)) TEST_PASS("setColumnFormat");
-    else TEST_FAIL("setColumnFormat", "失败");
-    if (XDocument_columnFormat(doc, 1) == fmt) TEST_PASS("columnFormat(1) 返回 fmt");
-    else TEST_FAIL("columnFormat", "错");
+    else { TEST_FAIL("setColumnFormat", "失败"); all_pass = false; }
+    XFormat* columnFormat = XDocument_columnFormat(doc, 1);
+    if (columnFormat && columnFormat != fmt && XFormat_fontBold(columnFormat))
+        TEST_PASS("columnFormat(1) 返回工作簿持有的等值格式副本");
+    else { TEST_FAIL("columnFormat", "未返回独立的等值格式"); all_pass = false; }
 
     if (XDocument_setColumnHidden(doc, 1, 5, true)) TEST_PASS("setColumnHidden");
+    else { TEST_FAIL("setColumnHidden", "失败"); all_pass = false; }
     if (XDocument_isColumnHidden(doc, 2)) TEST_PASS("isColumnHidden(2)");
-    else TEST_FAIL("isColumnHidden", "错");
+    else { TEST_FAIL("isColumnHidden", "错"); all_pass = false; }
 
     if (XDocument_setRowHeight(doc, 1, 5, 22.0)) TEST_PASS("setRowHeight");
+    else { TEST_FAIL("setRowHeight", "失败"); all_pass = false; }
     if (fabs(XDocument_rowHeight(doc, 3) - 22.0) < 0.001) TEST_PASS("rowHeight(3)=22");
-    else TEST_FAIL("rowHeight", "应 22");
+    else { TEST_FAIL("rowHeight", "应 22"); all_pass = false; }
 
     if (XDocument_setRowFormat(doc, 1, 5, fmt)) TEST_PASS("setRowFormat");
+    else { TEST_FAIL("setRowFormat", "失败"); all_pass = false; }
+    XFormat* rowFormat = XDocument_rowFormat(doc, 1);
+    if (rowFormat && rowFormat != fmt && XFormat_fontBold(rowFormat))
+        TEST_PASS("rowFormat(1) 返回工作簿持有的等值格式副本");
+    else { TEST_FAIL("rowFormat", "未返回独立的等值格式"); all_pass = false; }
     if (XDocument_setRowHidden(doc, 1, 5, true)) TEST_PASS("setRowHidden");
+    else { TEST_FAIL("setRowHidden", "失败"); all_pass = false; }
     if (XDocument_isRowHidden(doc, 3)) TEST_PASS("isRowHidden(3)");
-    else TEST_FAIL("isRowHidden", "错");
+    else { TEST_FAIL("isRowHidden", "错"); all_pass = false; }
 
     if (XDocument_groupRows(doc, 1, 5, true)) TEST_PASS("groupRows");
-    else TEST_FAIL("groupRows", "失败");
+    else { TEST_FAIL("groupRows", "失败"); all_pass = false; }
     if (XDocument_groupColumns(doc, 1, 5, true)) TEST_PASS("groupColumns");
-    else TEST_FAIL("groupColumns", "失败");
+    else { TEST_FAIL("groupColumns", "失败"); all_pass = false; }
 
     XFormat_delete(fmt);
     XDocument_delete(doc);
@@ -1450,41 +1510,152 @@ static bool test_document_columns_rows(void)
 
 static bool test_document_save_load(void)
 {
-    TEST_INFO("===== 测试 25: XDocument save/saveAs/load =====");
+    TEST_INFO("===== 测试 25: XDocument 创建→写入→保存→加载→读取→验证 =====");
+    bool all_pass = true;
+    const char* filename = "test25_roundtrip.xlsx";
+    long _alloc0 = g_allocCount, _free0 = g_freeCount;
+
+    /* ===== 阶段1: 创建文档并写入数据 ===== */
     XDocument* doc = XDocument_create();
     if (!doc) {
         TEST_FAIL("XDocument_create", "创建失败");
         return false;
     }
     TEST_PASS("XDocument_create");
-    
-    /* 保存到文件 */
-    const char* filename = "/tmp/test_output.xlsx";
+
+    /* 写入字符串 */
+    XVariant* vs = XVariant_create_null();
+    XVariant_setValue_utf8_str(vs, "Hello XinYueC");
+    if (XDocument_write(doc, 1, 1, vs, NULL)) TEST_PASS("写入字符串 (1,1)");
+    else { TEST_FAIL("写入字符串", "失败"); all_pass = false; }
+    XClass_delete_base((XClass*)vs);
+
+    /* 写入整数 */
+    XVariant* vi = XVariant_create_null();
+    XVariant_setValue_int(vi, 42);
+    if (XDocument_write(doc, 2, 1, vi, NULL)) TEST_PASS("写入整数 (2,1)");
+    else { TEST_FAIL("写入整数", "失败"); all_pass = false; }
+    XClass_delete_base((XClass*)vi);
+
+    /* 写入浮点数 */
+    XVariant* vd = XVariant_create_null();
+    XVariant_setValue_double(vd, 3.14);
+    if (XDocument_write(doc, 3, 1, vd, NULL)) TEST_PASS("写入浮点数 (3,1)");
+    else { TEST_FAIL("写入浮点数", "失败"); all_pass = false; }
+    XClass_delete_base((XClass*)vd);
+
+    /* 写入第二列 */
+    XVariant* vs2 = XVariant_create_null();
+    XVariant_setValue_utf8_str(vs2, "第二列数据");
+    if (XDocument_write(doc, 1, 2, vs2, NULL)) TEST_PASS("写入字符串 (1,2)");
+    else { TEST_FAIL("写入字符串(1,2)", "失败"); all_pass = false; }
+    XClass_delete_base((XClass*)vs2);
+
+    /* ===== 阶段2: 保存到文件 ===== */
     if (XDocument_saveAs_utf8(doc, filename)) {
         TEST_PASS("XDocument_saveAs 成功");
     } else {
         TEST_FAIL("saveAs", "失败");
+        XDocument_delete(doc);
+        return false;
     }
-    
     XDocument_delete(doc);
     doc = NULL;
-    
-    /* 检查文件是否存在 */
-    FILE* f = fopen(filename, "rb");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        fclose(f);
-        if (size > 100) {
-            TEST_PASS("xlsx 文件已生成");
-        } else {
-            TEST_FAIL("xlsx 文件", "太小");
-        }
+    {
+        long _da = g_allocCount - _alloc0, _df = g_freeCount - _free0;
+        printf("[LEAK dbg]   save phase net=%ld (alloc=%ld, free=%ld)\n", _da-_df, _da, _df);
+        long _a2 = g_allocCount, _f2 = g_freeCount;
+        _alloc0 = _a2; _free0 = _f2;
+    }
+
+    /* 验证文件存在 */
+    XString* pathStr25 = XString_create_utf8(filename);
+    if (XFile_exists_static(pathStr25)) {
+        TEST_PASS("xlsx 文件已生成");
     } else {
         TEST_FAIL("xlsx 文件", "不存在");
+        XString_delete_base(pathStr25);
+        return false;
     }
-    
-    return true;
+
+    /* ===== 阶段3: 从文件加载 ===== */
+    XDocument* doc2 = XDocument_createFromFile(pathStr25);
+    XString_delete_base(pathStr25);
+    if (!doc2) {
+        TEST_FAIL("XDocument_createFromFile", "加载失败");
+        return false;
+    }
+    TEST_PASS("XDocument_createFromFile 加载成功");
+
+    /* 验证工作表存在 */
+    XWorksheet* ws = XDocument_currentWorksheet(doc2);
+    if (ws) TEST_PASS("加载后 currentWorksheet 存在");
+    else { TEST_FAIL("currentWorksheet", "空"); all_pass = false; }
+
+    /* ===== 阶段4: 读取并验证数据 ===== */
+    /* 验证字符串 (1,1) */
+    XVariant* r1 = XDocument_read(doc2, 1, 1);
+    if (r1) {
+        XString* s1 = XVariant_toString(r1);
+        if (s1 && XString_equals_utf8(s1, "Hello XinYueC", XChar_CaseSensitive))
+            TEST_PASS("读取 (1,1) == \"Hello XinYueC\"");
+        else { TEST_FAIL("读取 (1,1)", "值不匹配"); all_pass = false; }
+        if (s1) XString_delete_base(s1);
+        XClass_delete_base((XClass*)r1);
+    } else { TEST_FAIL("读取 (1,1)", "返回NULL"); all_pass = false; }
+
+    /* 验证整数 (2,1) */
+    XVariant* r2 = XDocument_read(doc2, 2, 1);
+    if (r2) {
+        XString* s2 = XVariant_toString(r2);
+        const char* u2 = s2 ? XString_toUtf8(s2) : NULL;
+        if (u2 && strstr(u2, "42"))
+            TEST_PASS("读取 (2,1) 包含 \"42\"");
+        else { TEST_FAIL("读取 (2,1)", "值不匹配"); all_pass = false; }
+        if (s2) XString_delete_base(s2);
+        XClass_delete_base((XClass*)r2);
+    } else { TEST_FAIL("读取 (2,1)", "返回NULL"); all_pass = false; }
+
+    /* 验证浮点数 (3,1) */
+    XVariant* r3 = XDocument_read(doc2, 3, 1);
+    if (r3) {
+        XString* s3 = XVariant_toString(r3);
+        const char* u3 = s3 ? XString_toUtf8(s3) : NULL;
+        if (u3 && strstr(u3, "3.14"))
+            TEST_PASS("读取 (3,1) 包含 \"3.14\"");
+        else { TEST_FAIL("读取 (3,1)", "值不匹配"); all_pass = false; }
+        if (s3) XString_delete_base(s3);
+        XClass_delete_base((XClass*)r3);
+    } else { TEST_FAIL("读取 (3,1)", "返回NULL"); all_pass = false; }
+
+    /* 验证第二列 (1,2) */
+    XVariant* r4 = XDocument_read(doc2, 1, 2);
+    if (r4) {
+        XString* s4 = XVariant_toString(r4);
+        if (s4 && XString_equals_utf8(s4, "第二列数据", XChar_CaseSensitive))
+            TEST_PASS("读取 (1,2) == \"第二列数据\"");
+        else { TEST_FAIL("读取 (1,2)", "值不匹配"); all_pass = false; }
+        if (s4) XString_delete_base(s4);
+        XClass_delete_base((XClass*)r4);
+    } else { TEST_FAIL("读取 (1,2)", "返回NULL"); all_pass = false; }
+
+    /* ===== 阶段5: 清理 ===== */
+    XDocument_delete(doc2);
+    {
+        long _da = g_allocCount - _alloc0, _df = g_freeCount - _free0;
+        printf("[LEAK dbg]   load phase net=%ld (alloc=%ld, free=%ld)\n", _da-_df, _da, _df);
+        long _a2 = g_allocCount, _f2 = g_freeCount;
+        _alloc0 = _a2; _free0 = _f2;
+    }
+    long _da = g_allocCount - _alloc0, _df = g_freeCount - _free0;
+    printf("[LEAK dbg]   final phase net=%ld (alloc=%ld, free=%ld)\n", _da-_df, _da, _df);
+
+    XString* cleanPath = XString_create_utf8(filename);
+    XFile_remove_static(cleanPath);
+    XString_delete_base(cleanPath);
+
+    if (all_pass) TEST_PASS("全流程 创建→写入→保存→加载→读取→验证 通过");
+    return all_pass;
 }
 static bool test_rich_string_settext(void)
 {
@@ -1586,6 +1757,7 @@ static bool test_chart_basic(void)
 
 
 /* ========== 内存泄露检测钩子 ========== */
+/* real definition is below */
 static long g_allocCount = 0;
 static long g_freeCount  = 0;
 static void* tracking_malloc(size_t size) { void* p = malloc(size); if (p) g_allocCount++; return p; }
@@ -1716,14 +1888,17 @@ static bool test_document_change_image(void)
     bool all_pass = true;
     XDocument* doc = XDocument_create();
     if (!doc) return false;
-    /* 用占位符写入无效路径 -> 应该返回错误但不崩溃 */
-    int idx = XDocument_insertImage_utf8(doc, 1, 1, "/nonexistent/path.png");
-    /* 占位实现可能成功或失败，我们只检查不崩溃 */
-    TEST_INFO("insertImage 返回 %d（占位）", idx);
-    /* getImage 应安全处理 */
+    int idx = XDocument_insertImage_utf8(doc, 1, 1, "assets/配置cmake.png");
+    if (idx == 0) TEST_PASS("insertImage 加载真实 PNG");
+    else { TEST_FAIL("insertImage", "应返回首图片索引 0"); all_pass = false; }
     XByteArray* ba = XByteArray_create();
     bool ok = XDocument_getImage(doc, 0, ba);
-    TEST_INFO("getImage(0) 返回 %d（占位）", ok);
+    if (ok && XByteArray_size_base((XContainer*)ba) > 0) TEST_PASS("getImage 返回图片字节");
+    else { TEST_FAIL("getImage", "未返回图片数据"); all_pass = false; }
+    XString_Init_Utf8(replacement, "assets/https.png");
+    if (XDocument_changeImage(doc, 0, replacement)) TEST_PASS("changeImage 替换图片");
+    else { TEST_FAIL("changeImage", "替换真实 PNG 失败"); all_pass = false; }
+    XString_deinit_base(replacement);
     XByteArray_delete_base((XClass*)ba);
     XDocument_delete(doc);
     return all_pass;
@@ -1731,7 +1906,7 @@ static bool test_document_change_image(void)
 
 static bool test_document_get_image(void)
 {
-    TEST_INFO("===== getImage(占位) 测试 =====");
+    TEST_INFO("===== getImage 边界测试 =====");
     bool all_pass = true;
     XDocument* doc = XDocument_create();
     if (!doc) return false;
@@ -1861,9 +2036,22 @@ static bool test_run_all(void)
     bool overall = true;
     RUN_TRACKED(test_cell_reference);
     RUN_TRACKED(test_cell_range);
+    RUN_TRACKED(test_cell_formula);
+    RUN_TRACKED(test_cell_location);
+    RUN_TRACKED(test_cell_create);
+    RUN_TRACKED(test_cell_value);
+    RUN_TRACKED(test_cell_type);
+    RUN_TRACKED(test_cell_format);
+    RUN_TRACKED(test_cell_formula_integration);
+    RUN_TRACKED(test_format_create);
+    RUN_TRACKED(test_format_font);
+    RUN_TRACKED(test_format_alignment);
+    RUN_TRACKED(test_format_border);
+    RUN_TRACKED(test_format_fill);
+    RUN_TRACKED(test_format_number);
+    RUN_TRACKED(test_format_protection);
     RUN_TRACKED(test_cell_formula_basic);
     RUN_TRACKED(test_cell_create_basic);
-    RUN_TRACKED(test_format_create);
     RUN_TRACKED(test_format_merge);
     RUN_TRACKED(test_format_property);
     RUN_TRACKED(test_xvariant_setvalue);
@@ -1885,8 +2073,10 @@ static bool test_run_all(void)
     RUN_TRACKED(test_worksheet_protection_flags);
     RUN_TRACKED(test_worksheet_merged_cells);
     RUN_TRACKED(test_format_pattern);
+    RUN_TRACKED(XExcelExtendedTest_runAll);
 #undef RUN_TRACKED
-    TEST_INFO("RunAll：16 个综合测试 %s (内存泄露统计如下)", overall ? "全部通过" : "有失败");
+    TEST_INFO("RunAll：全部基础、回归及扩展测试 %s (内存泄露统计如下)",
+              overall ? "全部通过" : "有失败");
 
     long leaked = g_allocCount - g_freeCount;
     if (leaked == 0) {

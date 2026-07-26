@@ -1237,39 +1237,21 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
 int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, size_t m,
     XChar_CaseSensitivity cs, size_t start_idx)
 {
-    // 计算前缀表（正向匹配用，与子串方向一致）
-    int* prefix = (int*)XMalloc_System(m * sizeof(int));
-    if (!prefix) return -1;
-    compute_prefix(pattern, m, prefix, cs);
+    if (!text || !pattern || m == 0 || n < m) return -1;
+    size_t max_start = n - m;
+    if (start_idx > max_start) start_idx = max_start;
 
-    int i = (int)start_idx;  // 主串当前起始位置（从start_idx开始）
-    int j = 0;               // 模式串匹配进度（从0开始，正向匹配）
-
-    // 从start_idx向前搜索，直到主串起始位置>=0
-    while (i >= 0) {
-        // 检查当前主串位置(i+j)与模式串位置j是否匹配
-        if (XChar_equals(text[i + j], pattern[j], cs)) {
-            j++;
-            if (j == (int)m) {
-                // 找到完整匹配，返回起始索引i
-                XFree_System(prefix);
-                return i;
+    /* 反向扫描候选起点，避免失配回退时停留在同一位置。 */
+    for (size_t i = start_idx + 1; i-- > 0;) {
+        bool match = true;
+        for (size_t j = 0; j < m; ++j) {
+            if (!XChar_equals(text[i + j], pattern[j], cs)) {
+                match = false;
+                break;
             }
         }
-        else {
-            if (j > 0) {
-                // 利用前缀表回溯模式串（减少重复比较）
-                j = prefix[j - 1];
-            }
-            else {
-                // j=0时不匹配，主串起始位置向前移一位
-                i--;
-            }
-        }
+        if (match) return (int64_t)i;
     }
-
-    // 未找到匹配
-    XFree_System(prefix);
     return -1;
 }
 
@@ -1438,7 +1420,7 @@ bool XString_endsWith_utf8(const XString* str, const char* suffix, XChar_CaseSen
     size_t str_len = XString_length_base(str);
     size_t suffix_len = XString_length_base(suffix_str);
     bool result = (suffix_len <= str_len) &&
-        (XString_lastIndexOf_utf8(str, suffix, str_len - suffix_len,cs) == (int64_t)(str_len - suffix_len));
+        (XString_lastIndexOf_utf8(str, suffix, 0, cs) == (int64_t)(str_len - suffix_len));
 
     XString_delete_base(suffix_str);
     return result;

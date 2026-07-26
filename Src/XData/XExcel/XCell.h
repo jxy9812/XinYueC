@@ -75,6 +75,13 @@ XCell* XCell_create(void);
  * @return     指向新创建的 XCell 的指针，失败返回 NULL
  */
 XCell* XCell_create_ex(const XString* value, XCell_CellType type, XFormat* format);
+/**
+ * @brief 使用 UTF-8 文本创建指定类型的单元格。
+ * @param value  UTF-8 单元格文本，可为 NULL。
+ * @param type   单元格类型。
+ * @param format 初始格式指针，可为 NULL；单元格按实现规则复制或引用格式。
+ * @return 新单元格指针；失败返回 NULL，调用方负责释放。
+ */
 XCell* XCell_create_ex_utf8(const char* value, XCell_CellType type, XFormat* format);
 
 /**
@@ -117,8 +124,14 @@ const XString* XCell_value(const XCell* self);
  * @brief      设置单元格值
  * @param self  指针
  * @param value 值字符串
+ * @note       值会被复制；已有公式和富文本会被清除。
  */
 void XCell_setValue(XCell* self, const XString* value);
+/**
+ * @brief 使用 UTF-8 文本设置单元格值。
+ * @param self  单元格指针。
+ * @param value UTF-8 文本，可为 NULL 表示空值。
+ */
 void XCell_setValue_utf8(XCell* self, const char* value);
 
 /**
@@ -152,7 +165,7 @@ XCellFormula* XCell_formula(const XCell* self);
 /**
  * @brief      设置公式
  * @param self    指针
- * @param formula 公式指针
+ * @param formula 公式指针；所有权转移给单元格，传入 NULL 可清除公式
  */
 void XCell_setFormula(XCell* self, XCellFormula* formula);
 
@@ -195,7 +208,7 @@ XRichString* XCell_richString(const XCell* self);
 /**
  * @brief      设置富文本字符串
  * @param self  指针
- * @param rich  富文本指针
+ * @param rich  富文本指针；所有权转移给单元格，传入 NULL 可清除富文本
  */
 void XCell_setRichString(XCell* self, XRichString* rich);
 

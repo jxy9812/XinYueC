@@ -8,6 +8,7 @@
 #include "XXmlStreamReader.h"
 #include "XString.h"
 #include "XByteArray.h"
+#include "XFile.h"
 #include "XMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
@@ -31,6 +32,10 @@ static bool test_null_safety(void);
 static bool test_notation_declarations_api(void);
 static bool test_entity_declarations_api(void);
 static bool test_entity_resolver(void);
+static bool test_dtd_declaration_values(void);
+static bool test_device_input(void);
+static bool test_dtd_copy_move(void);
+static bool test_incremental_device_input(void);
 
 /* New API coverage tests */
 static bool test_line_column_offset(void);
@@ -61,6 +66,10 @@ static void test_null_safety_wrapper(XVariant* d) { (void)d; test_null_safety();
 static void test_notation_declarations_api_wrapper(XVariant* d) { (void)d; test_notation_declarations_api(); }
 static void test_entity_declarations_api_wrapper(XVariant* d) { (void)d; test_entity_declarations_api(); }
 static void test_entity_resolver_wrapper(XVariant* d) { (void)d; test_entity_resolver(); }
+static void test_dtd_declaration_values_wrapper(XVariant* d) { (void)d; test_dtd_declaration_values(); }
+static void test_device_input_wrapper(XVariant* d) { (void)d; test_device_input(); }
+static void test_dtd_copy_move_wrapper(XVariant* d) { (void)d; test_dtd_copy_move(); }
+static void test_incremental_device_input_wrapper(XVariant* d) { (void)d; test_incremental_device_input(); }
 
 static void test_line_column_offset_wrapper(XVariant* d) { (void)d; test_line_column_offset(); }
 static void test_standalone_declaration_wrapper(XVariant* d) { (void)d; test_standalone_declaration(); }
@@ -87,6 +96,13 @@ static bool test_create_delete(void)
     XXmlStreamReader* r = XXmlStreamReader_create();
     if (r) { TEST_PASS("XXmlStreamReader_create"); }
     else { TEST_FAIL("XXmlStreamReader_create", "创建失败"); return false; }
+    if (XXmlStream_NoToken == 0 && XXmlStream_Invalid == 1 &&
+        XXmlStream_StartDocument == 2 && XXmlStream_ProcessingInstruction == 10)
+        TEST_PASS("TokenType 数值与 Qt 对齐");
+    else { TEST_FAIL("TokenType 数值", "与 Qt 枚举值不一致"); }
+    if (strcmp(XXmlStreamReader_tokenString_const(r), "NoToken") == 0)
+        TEST_PASS("tokenString(NoToken)");
+    else TEST_FAIL("tokenString(NoToken)", "Token 文本映射错误");
     XXmlStreamReader_delete_base(r);
     XXmlStreamReader_delete_base(NULL);
     TEST_PASS("XXmlStreamReader_delete NULL安全");
@@ -144,9 +160,60 @@ static bool test_entity_expansion_limit(void)
     XXmlStreamReader* r = XXmlStreamReader_create();
     int limit = XXmlStreamReader_entityExpansionLimit(r);
     TEST_INFO("default limit: %d", limit);
+    if (limit == 4096) TEST_PASS("默认实体扩展限制为 Qt 的 4096");
+    else { TEST_FAIL("默认实体扩展限制", "应为 4096"); all_pass = false; }
     XXmlStreamReader_setEntityExpansionLimit(r, 100);
     if (XXmlStreamReader_entityExpansionLimit(r) == 100) TEST_PASS("setEntityExpansionLimit(100)");
     else { TEST_FAIL("set", "设置失败"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_setEntityExpansionLimit(r, 6);
+    XXmlStreamReader_addData_utf8(r,
+        "<!DOCTYPE doc [<!ENTITY a \"0123456789\">]><doc>&a;</doc>");
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+        XXmlStreamReader_readNext(r);
+    if (XXmlStreamReader_hasError(r) &&
+        XXmlStreamReader_error(r) == XXmlStream_NotWellFormedError)
+        TEST_PASS("实体扩展超限报告 NotWellFormedError");
+    else { TEST_FAIL("实体扩展限制", "未按限制报告错误"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+
+    /* 与 Qt tst_qxmlstream::entityExpansionLimit 相同的递归实体边界。 */
+    const char* nestedEntities =
+        "<!DOCTYPE foo ["
+        "<!ENTITY a \"0123456789\">"
+        "<!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">"
+        "<!ENTITY c \"&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;\">"
+        "<!ENTITY d \"&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;\">"
+        "]><foo>&d;&d;&d;</foo>";
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(r, nestedEntities);
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+        XXmlStreamReader_readNext(r);
+    if (XXmlStreamReader_error(r) == XXmlStream_NotWellFormedError)
+        TEST_PASS("默认限制拒绝递归实体扩展");
+    else { TEST_FAIL("默认递归实体限制", "应报告 NotWellFormedError"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_setEntityExpansionLimit(r, 9996);
+    XXmlStreamReader_addData_utf8(r, nestedEntities);
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+        XXmlStreamReader_readNext(r);
+    if (XXmlStreamReader_error(r) == XXmlStream_NotWellFormedError)
+        TEST_PASS("递归实体限制 9996 拒绝");
+    else { TEST_FAIL("实体限制 9996", "应报告 NotWellFormedError"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_setEntityExpansionLimit(r, 9997);
+    XXmlStreamReader_addData_utf8(r, nestedEntities);
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+        XXmlStreamReader_readNext(r);
+    if (XXmlStreamReader_error(r) == XXmlStream_NoError)
+        TEST_PASS("递归实体限制 9997 通过");
+    else { TEST_FAIL("实体限制 9997", "不应报告错误"); all_pass = false; }
     XXmlStreamReader_delete_base(r);
     return all_pass;
 }
@@ -240,6 +307,283 @@ static bool test_entity_resolver(void)
     TEST_PASS("EntityResolver_delete");
 
     XXmlStreamReader_delete_base(r);
+    return all_pass;
+}
+
+static const XString* test_resolve_undeclared_entity(const XString* name, void* userData)
+{
+    if (!name || !userData) return NULL;
+    return XString_equals_utf8(name, "external", XChar_CaseSensitive)
+        ? (const XString*)userData : NULL;
+}
+
+static const XString* test_resolve_declared_entity(
+    const XString* publicId, const XString* systemId, void* userData)
+{
+    if (!userData || !systemId || !XString_equals_utf8(
+            systemId, "external-system", XChar_CaseSensitive))
+        return NULL;
+    const char* publicIdUtf8 = publicId ? XString_toUtf8(publicId) : NULL;
+    if (publicIdUtf8 && *publicIdUtf8) return NULL;
+    return (const XString*)userData;
+}
+
+/* ==================== 测试: DTD 声明内容与实体解析器 ==================== */
+static bool test_dtd_declaration_values(void)
+{
+    TEST_INFO("===== DTD 声明内容/实体解析器测试 =====");
+    bool all_pass = true;
+    XXmlStreamReader* r = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(r,
+        "<!DOCTYPE doc ["
+        "<!NOTATION image PUBLIC \"image-public\">"
+        "<!NOTATION binary SYSTEM \"binary-system\">"
+        "<!ENTITY internal \"hello\">"
+        "<!ENTITY external SYSTEM \"external-system\">"
+        "<!ENTITY publicEntity PUBLIC \"entity-public\" \"entity-system\">"
+        "<!ENTITY unparsed SYSTEM \"binary-system\" NDATA image>"
+        "]><doc>&internal;&external;</doc>");
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+        XXmlStreamReader_readNext(r);
+    XXmlStreamNotationDeclarations* notations = XXmlStreamReader_notationDeclarations(r);
+    XXmlStreamEntityDeclarations* entities = XXmlStreamReader_entityDeclarations(r);
+    const XXmlStreamNotationDeclaration* notation =
+        XXmlStreamNotationDeclarations_at(notations, 0);
+    const XXmlStreamNotationDeclaration* systemNotation =
+        XXmlStreamNotationDeclarations_at(notations, 1);
+    const XXmlStreamEntityDeclaration* internal =
+        XXmlStreamEntityDeclarations_at(entities, 0);
+    const XXmlStreamEntityDeclaration* external = XXmlStreamEntityDeclarations_at(entities, 1);
+    const XXmlStreamEntityDeclaration* publicEntity = XXmlStreamEntityDeclarations_at(entities, 2);
+    const XXmlStreamEntityDeclaration* unparsed = XXmlStreamEntityDeclarations_at(entities, 3);
+    if (!XXmlStreamReader_hasError(r) && notations &&
+        XXmlStreamNotationDeclarations_size(notations) == 2 && notation &&
+        XString_equals_utf8(notation->m_name, "image", XChar_CaseSensitive) &&
+        XString_equals_utf8(notation->m_publicId, "image-public", XChar_CaseSensitive))
+        TEST_PASS("NOTATION 声明内容");
+    else { TEST_FAIL("NOTATION 声明内容", "解析结果不完整"); all_pass = false; }
+    if (!XXmlStreamReader_hasError(r) && systemNotation &&
+        XString_equals_utf8(systemNotation->m_name, "binary", XChar_CaseSensitive) &&
+        XString_equals_utf8(systemNotation->m_systemId, "binary-system", XChar_CaseSensitive))
+        TEST_PASS("NOTATION SYSTEM 声明内容");
+    else { TEST_FAIL("NOTATION SYSTEM 声明内容", "解析结果不完整"); all_pass = false; }
+    if (!XXmlStreamReader_hasError(r) && entities &&
+        XXmlStreamEntityDeclarations_size(entities) == 4 && internal && external &&
+        publicEntity && unparsed &&
+        XString_equals_utf8(internal->m_name, "internal", XChar_CaseSensitive) &&
+        XString_equals_utf8(internal->m_value, "hello", XChar_CaseSensitive) &&
+        XString_equals_utf8(external->m_systemId, "external-system", XChar_CaseSensitive) &&
+        XString_equals_utf8(publicEntity->m_publicId, "entity-public", XChar_CaseSensitive) &&
+        XString_equals_utf8(publicEntity->m_systemId, "entity-system", XChar_CaseSensitive) &&
+        XString_equals_utf8(unparsed->m_notationName, "image", XChar_CaseSensitive))
+        TEST_PASS("ENTITY SYSTEM/PUBLIC/NDATA 声明内容");
+    else { TEST_FAIL("ENTITY 高级声明内容", "解析结果不完整"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+
+    XString* replacement = XString_create_utf8("resolved");
+    XXmlStreamEntityResolver* resolver = XXmlStreamEntityResolver_create();
+    if (!replacement || !resolver) {
+        if (replacement) XString_delete_base(replacement);
+        if (resolver) XXmlStreamEntityResolver_delete(resolver);
+        return false;
+    }
+    resolver->m_userData = replacement;
+    resolver->m_resolveUndeclaredEntityCallback = test_resolve_undeclared_entity;
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_setEntityResolver(r, resolver);
+    XXmlStreamReader_addData_utf8(r, "<doc>&external;</doc>");
+    bool resolved = false;
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r)) {
+        if (XXmlStreamReader_readNext(r) == XXmlStream_Characters &&
+            XString_equals_utf8(XXmlStreamReader_text_const(r), "resolved", XChar_CaseSensitive)) {
+            resolved = true;
+            break;
+        }
+    }
+    if (resolved) TEST_PASS("未知实体通过 resolver 解析");
+    else { TEST_FAIL("未知实体 resolver", "未得到替换文本"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+    XXmlStreamEntityResolver_delete(resolver);
+    XString_delete_base(replacement);
+
+    replacement = XString_create_utf8("declared-resolved");
+    resolver = XXmlStreamEntityResolver_create();
+    if (!replacement || !resolver) {
+        if (replacement) XString_delete_base(replacement);
+        if (resolver) XXmlStreamEntityResolver_delete(resolver);
+        return false;
+    }
+    XXmlStreamEntityResolver_setUserData(resolver, replacement);
+    resolver->m_resolveEntityCallback = test_resolve_declared_entity;
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_setEntityResolver(r, resolver);
+    XXmlStreamReader_addData_utf8(r,
+        "<!DOCTYPE doc [<!ENTITY external SYSTEM \"external-system\">]><doc>&external;</doc>");
+    resolved = false;
+    while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r)) {
+        if (XXmlStreamReader_readNext(r) == XXmlStream_Characters &&
+            XString_equals_utf8(XXmlStreamReader_text_const(r), "declared-resolved", XChar_CaseSensitive)) {
+            resolved = true;
+            break;
+        }
+    }
+    if (resolved) TEST_PASS("已声明外部实体通过 resolveEntity 解析");
+    else { TEST_FAIL("已声明实体 resolver", "未得到替换文本"); all_pass = false; }
+    XXmlStreamReader_delete_base(r);
+    XXmlStreamEntityResolver_delete(resolver);
+    XString_delete_base(replacement);
+    return all_pass;
+}
+
+/* ==================== 测试: QIODevice 输入 ==================== */
+static bool test_device_input(void)
+{
+    TEST_INFO("===== QIODevice 输入测试 =====");
+    bool all_pass = true;
+    XString* path = XString_create_utf8("xmlstream_reader_device_test.xml");
+    XFile_remove_static(path);
+    XFile* writerFile = XFile_create_2(path);
+    if (!path || !writerFile || !XFile_open_2(writerFile,
+            XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
+            XFile_ReadOwner | XFile_WriteOwner)) {
+        TEST_FAIL("Reader setDevice", "无法创建临时输入文件");
+        if (writerFile) XFile_deleteLater(writerFile);
+        if (path) { XFile_remove_static(path); XString_delete_base(path); }
+        return false;
+    }
+    XIODevice_write_3((XIODevice*)writerFile, "<device><value>ok</value></device>");
+    XIODevice_close_base((XIODevice*)writerFile);
+    XFile_deleteLater(writerFile);
+
+    XFile* input = XFile_create_2(path);
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    bool opened = input && XFile_open_2(input, XIODevice_ReadOnly | XIODevice_Existing,
+        XFile_ReadOwner | XFile_WriteOwner);
+    XXmlStreamReader_addData_utf8(reader, "<old/>");
+    XXmlStreamReader_readNext(reader);
+    XXmlStreamReader_readNext(reader);
+    XXmlStreamReader_setDevice(reader, (XIODevice*)input);
+    bool found = false;
+    if (XXmlStreamReader_device(reader) == (XIODevice*)input) TEST_PASS("device() 返回关联设备");
+    else { TEST_FAIL("device()", "关联设备不一致"); all_pass = false; }
+    if (opened && XIODevice_pos_base((XIODevice*)input) == 0)
+        TEST_PASS("setDevice 不提前读取设备数据");
+    else { TEST_FAIL("setDevice 延迟读取", "设置设备时不应消耗输入数据"); all_pass = false; }
+    if (XXmlStreamReader_tokenType(reader) == XXmlStream_NoToken &&
+        !XXmlStreamReader_hasError(reader))
+        TEST_PASS("setDevice 清除旧解析状态");
+    else { TEST_FAIL("setDevice 状态重置", "仍保留旧输入状态"); all_pass = false; }
+    if (opened) {
+        while (!XXmlStreamReader_atEnd(reader) && !XXmlStreamReader_hasError(reader)) {
+            if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
+                XString_equals_utf8(XXmlStreamReader_name_const(reader), "value", XChar_CaseSensitive)) {
+                found = true;
+                break;
+            }
+        }
+    }
+    if (found) TEST_PASS("setDevice 输入解析");
+    else { TEST_FAIL("setDevice 输入解析", "未读到 value 元素"); all_pass = false; }
+    XXmlStreamReader_delete_base(reader);
+    if (input) { XIODevice_close_base((XIODevice*)input); XFile_deleteLater(input); }
+    XFile_remove_static(path);
+    XString_delete_base(path);
+    return all_pass;
+}
+
+/* ==================== 测试: DTD 拷贝与移动所有权 ==================== */
+static bool test_dtd_copy_move(void)
+{
+    TEST_INFO("===== DTD 拷贝/移动测试 =====");
+    bool all_pass = true;
+    const char* xml = "<!DOCTYPE doc [<!ENTITY item \"value\">]><doc>&item;</doc>";
+    XXmlStreamReader* source = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(source, xml);
+    while (!XXmlStreamReader_atEnd(source) && !XXmlStreamReader_hasError(source))
+        XXmlStreamReader_readNext(source);
+
+    XXmlStreamReader* copy = XXmlStreamReader_create_copy(source);
+    XXmlStreamReader_delete_base(source);
+    XXmlStreamEntityDeclarations* declarations =
+        copy ? XXmlStreamReader_entityDeclarations(copy) : NULL;
+    const XXmlStreamEntityDeclaration* declaration =
+        XXmlStreamEntityDeclarations_at(declarations, 0);
+    if (declaration && XString_equals_utf8(declaration->m_value, "value", XChar_CaseSensitive))
+        TEST_PASS("DTD 列表深拷贝独立于源对象");
+    else { TEST_FAIL("DTD 深拷贝", "源对象销毁后声明内容失效"); all_pass = false; }
+    if (copy) XXmlStreamReader_delete_base(copy);
+
+    source = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(source, xml);
+    while (!XXmlStreamReader_atEnd(source) && !XXmlStreamReader_hasError(source))
+        XXmlStreamReader_readNext(source);
+    XXmlStreamReader* moved = XXmlStreamReader_create_move(source);
+    declarations = moved ? XXmlStreamReader_entityDeclarations(moved) : NULL;
+    declaration = XXmlStreamEntityDeclarations_at(declarations, 0);
+    if (declaration && XString_equals_utf8(declaration->m_name, "item", XChar_CaseSensitive))
+        TEST_PASS("DTD 列表移动后仍可访问");
+    else { TEST_FAIL("DTD 移动", "移动后声明内容失效"); all_pass = false; }
+    if (source) XXmlStreamReader_delete_base(source);
+    if (moved) XXmlStreamReader_delete_base(moved);
+    return all_pass;
+}
+
+/* ==================== 测试: 设备分块输入 ==================== */
+static bool test_incremental_device_input(void)
+{
+    TEST_INFO("===== QIODevice 分块输入测试 =====");
+    bool all_pass = true;
+    XString* path = XString_create_utf8("xmlstream_reader_incremental_test.xml");
+    XFile_remove_static(path);
+    XFile* initial = XFile_create_2(path);
+    if (!path || !initial || !XFile_open_2(initial,
+            XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
+            XFile_ReadOwner | XFile_WriteOwner)) {
+        TEST_FAIL("分块设备准备", "无法创建临时文件");
+        if (initial) XFile_deleteLater(initial);
+        if (path) { XFile_remove_static(path); XString_delete_base(path); }
+        return false;
+    }
+    XIODevice_write_3((XIODevice*)initial, "<device");
+    XIODevice_close_base((XIODevice*)initial);
+    XFile_deleteLater(initial);
+
+    XFile* input = XFile_create_2(path);
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    bool opened = input && XFile_open_2(input, XIODevice_ReadOnly | XIODevice_Existing,
+        XFile_ReadOwner | XFile_WriteOwner);
+    XXmlStreamReader_setDevice(reader, (XIODevice*)input);
+    int firstToken = opened ? XXmlStreamReader_readNext(reader) : XXmlStream_Invalid;
+    if (firstToken == XXmlStream_Invalid &&
+        XXmlStreamReader_error(reader) == XXmlStream_PrematureEndOfDocumentError)
+        TEST_PASS("不完整设备标记等待后续数据");
+    else { TEST_FAIL("分块设备初始读取", "未报告文档提前结束"); all_pass = false; }
+
+    XFile* appended = XFile_create_2(path);
+    bool appendedOk = appended && XFile_open_2(appended,
+        XIODevice_Append | XIODevice_Existing, XFile_ReadOwner | XFile_WriteOwner);
+    if (appendedOk) {
+        XIODevice_write_3((XIODevice*)appended, "><value>ok</value></device>");
+        XIODevice_close_base((XIODevice*)appended);
+    }
+    if (appended) XFile_deleteLater(appended);
+
+    /* 续读调用会清除 PrematureEndOfDocumentError 并拉取文件新增字节。 */
+    if (appendedOk) XXmlStreamReader_readNext(reader);
+    bool found = false;
+    while (appendedOk && !XXmlStreamReader_atEnd(reader) && !XXmlStreamReader_hasError(reader)) {
+        if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
+            XString_equals_utf8(XXmlStreamReader_name_const(reader), "value", XChar_CaseSensitive)) {
+            found = true;
+            break;
+        }
+    }
+    if (found) TEST_PASS("不完整标记追加数据后继续解析");
+    else { TEST_FAIL("分块设备续读", "未读取追加后的 value 元素"); all_pass = false; }
+    if (reader) XXmlStreamReader_delete_base(reader);
+    if (input) { XIODevice_close_base((XIODevice*)input); XFile_deleteLater(input); }
+    XFile_remove_static(path);
+    XString_delete_base(path);
     return all_pass;
 }
 
@@ -516,6 +860,44 @@ static bool test_attributes_navigation(void)
         if (bVal && XString_equals_utf8(bVal, "2", XChar_CaseSensitive)) TEST_PASS("value by name");
         else { TEST_FAIL("value by name", ""); all_pass = false; }
     }
+    {
+        XString_Init_Utf8(aNameEx, "a");
+        if (XXmlStreamAttributes_hasAttribute_ex((XXmlStreamAttributes*)attrs,
+                NULL, aNameEx)) TEST_PASS("hasAttribute(namespace,name)");
+        else { TEST_FAIL("hasAttribute(namespace,name)", "未找到无命名空间属性"); all_pass = false; }
+    }
+    XXmlStreamReader_delete_base(r);
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(r, "<e a=\"it&apos;s\"/>");
+    XXmlStreamReader_readNext(r);
+    XXmlStreamReader_readNext(r);
+    XString* aposName = XString_create_utf8("a");
+    const XString* aposValue = XXmlStreamAttributes_value(
+        (const XXmlStreamAttributes*)XXmlStreamReader_attributes(r), aposName);
+    if (aposValue && XString_equals_utf8(aposValue, "it's", XChar_CaseSensitive))
+        TEST_PASS("属性 &apos; 展开");
+    else { TEST_FAIL("属性 &apos; 展开", "属性实体值解析错误"); all_pass = false; }
+    if (aposName) XString_delete_base(aposName);
+    XXmlStreamReader_delete_base(r);
+
+    r = XXmlStreamReader_create();
+    XXmlStreamReader_addData_utf8(r, "<e xmlns:p=\"urn:attrs\" p:a=\"1\" a=\"2\"/>");
+    XXmlStreamReader_readNext(r);
+    XXmlStreamReader_readNext(r);
+    XString* namespaceUri = XString_create_utf8("urn:attrs");
+    XString* localName = XString_create_utf8("a");
+    XString* wrongNamespace = XString_create_utf8("urn:other");
+    attrs = XXmlStreamReader_attributes(r);
+    if (namespaceUri && localName && wrongNamespace &&
+        XXmlStreamAttributes_hasAttribute_ex(attrs, namespaceUri, localName) &&
+        !XXmlStreamAttributes_hasAttribute_ex(attrs, wrongNamespace, localName))
+        TEST_PASS("hasAttribute(namespace,name) 命名空间匹配/不匹配");
+    else { TEST_FAIL("hasAttribute 命名空间", "命名空间筛选结果错误"); all_pass = false; }
+    if (namespaceUri) XString_delete_base(namespaceUri);
+    if (localName) XString_delete_base(localName);
+    if (wrongNamespace) XString_delete_base(wrongNamespace);
+    XXmlStreamReader_delete_base(r);
+    r = NULL;
     /* NULL 安全 */
     XXmlStreamAttributes_delete(NULL);
     XXmlStreamAttributes_size(NULL);
@@ -762,6 +1144,57 @@ static bool test_invalid_xml(void)
         else { TEST_FAIL("unclosed", "应报错"); all_pass = false; }
         XXmlStreamReader_delete_base(r);
     }
+    /* 多根元素：Qt 的 QXmlStreamReader 必须报告格式错误。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r, "<a/><b/>");
+        while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+            XXmlStreamReader_readNext(r);
+        if (XXmlStreamReader_hasError(r)) TEST_PASS("多根元素 -> hasError=true");
+        else { TEST_FAIL("multiple roots", "应报错"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
+    /* XML 声明之后没有根元素同样不是完整 XML 文档。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r, "<?xml version=\"1.0\"?>");
+        while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+            XXmlStreamReader_readNext(r);
+        if (XXmlStreamReader_hasError(r)) TEST_PASS("缺少根元素 -> hasError=true");
+        else { TEST_FAIL("missing root", "应报错"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
+    /* 根元素外的非空白文本不合法。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r, "text<root/>");
+        while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+            XXmlStreamReader_readNext(r);
+        if (XXmlStreamReader_hasError(r)) TEST_PASS("根元素外文本 -> hasError=true");
+        else { TEST_FAIL("text outside root", "应报错"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
+    /* DTD 内部子集未闭合。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r, "<!DOCTYPE doc [<!ENTITY item \"value\">]<doc/>");
+        while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+            XXmlStreamReader_readNext(r);
+        if (XXmlStreamReader_hasError(r)) TEST_PASS("DTD 语法错误 -> hasError=true");
+        else { TEST_FAIL("DTD malformed", "应报错"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
+    /* DTD 内部声明类型非法，覆盖 parse_dtd_subset 的错误分支。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r,
+            "<!DOCTYPE doc [<!ENTITY item BOGUS \"value\">]><doc/>");
+        while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r))
+            XXmlStreamReader_readNext(r);
+        if (XXmlStreamReader_hasError(r)) TEST_PASS("DTD 内部声明错误 -> hasError=true");
+        else { TEST_FAIL("DTD subset malformed", "应报错"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
     return all_pass;
 }
 
@@ -778,11 +1211,17 @@ static bool test_run_all(void)
     bool result = true;
     result = test_create_delete() && result;
     result = test_init_deinit() && result;
+    result = test_raise_error() && result;
     result = test_has_error() && result;
     result = test_entity_expansion_limit() && result;
     result = test_null_safety() && result;
     result = test_notation_declarations_api() && result;
     result = test_entity_declarations_api() && result;
+    result = test_entity_resolver() && result;
+    result = test_dtd_declaration_values() && result;
+    result = test_device_input() && result;
+    result = test_dtd_copy_move() && result;
+    result = test_incremental_device_input() && result;
     /* 新 API 与功能覆盖 */
     result = test_line_column_offset() && result;
     result = test_standalone_declaration() && result;
@@ -833,6 +1272,14 @@ void XMenu_XXmlStreamReaderTest(XMenu* root)
     XAction_setAction(action, test_entity_declarations_api_wrapper);
     action = XMenu_addAction(menu, "实体解析器");
     XAction_setAction(action, test_entity_resolver_wrapper);
+    action = XMenu_addAction(menu, "DTD 声明内容/实体解析器");
+    XAction_setAction(action, test_dtd_declaration_values_wrapper);
+    action = XMenu_addAction(menu, "QIODevice 输入");
+    XAction_setAction(action, test_device_input_wrapper);
+    action = XMenu_addAction(menu, "DTD 拷贝/移动");
+    XAction_setAction(action, test_dtd_copy_move_wrapper);
+    action = XMenu_addAction(menu, "QIODevice 分块输入");
+    XAction_setAction(action, test_incremental_device_input_wrapper);
     action = XMenu_addAction(menu, "行/列/字符偏移");
     XAction_setAction(action, test_line_column_offset_wrapper);
     action = XMenu_addAction(menu, "standalone 声明");

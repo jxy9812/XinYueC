@@ -40,6 +40,8 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
     file->m_parent.m_error = XFileDevice_NoError;
     device->m_openMode = mode;
+    /* Qt 行为: 打开时根据 Text 标志设置文本模式 */
+    XIODevice_setTextModeEnabled(device, (mode & XIODevice_Text) != 0);
     XFileDevice_registerAsync(&file->m_parent);
     return true;
 }
@@ -165,8 +167,11 @@ void XFile_init_2(XFile* file, const XString* name)
 void XFile_setFileName(XFile* file, const XString* name)
 {
     if (!file || !name) return;
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) return;
-    
+    /* Qt 行为: 文件已打开时, setFileName 会先关闭再更新名 */
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
+
     if (file->m_fileName) XString_delete_base(file->m_fileName);
     file->m_fileName = XString_create_copy(name);
 }
@@ -177,21 +182,32 @@ void XFile_setFileName(XFile* file, const XString* name)
 
 bool XFile_open_2(XFile* file, XIODeviceBaseMode mode, XFilePermissions permissions)
 {
+    /* Qt 行为: Append/NewOnly 隐含 WriteOnly */
+    if (mode & (XIODevice_Append | XIODevice_NewOnly)) {
+        mode |= XIODevice_WriteOnly;
+    }
     if (!XFile_open_base(file, mode)) return false;
-    if (permissions != 0) return XFile_setPermissions_base(file, permissions);
+    if (permissions != 0) XFile_setPermissions_base(file, permissions);
     return true;
 }
 
 bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHandleFlags handleFlags)
 {
     if (!file || fd < 0) return false;
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
-        XIODevice_close_base(&file->m_parent.m_parent);
+    /* Qt 行为: Append/NewOnly 隐含 WriteOnly */
+    if (mode & (XIODevice_Append | XIODevice_NewOnly)) {
+        mode |= XIODevice_WriteOnly;
     }
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
+    /* 关闭传入 fd 的 AutoClose: open_3 不会自动关闭外部传入的 fd, 由 handleFlags 控制 */
     XIODevice_setFd(&file->m_parent.m_parent, (XFd)fd);
     file->m_parent.m_handleFlags = handleFlags;
     file->m_parent.m_error = XFileDevice_NoError;
     file->m_parent.m_parent.m_openMode = mode;
+    /* Qt 行为: 打开时根据 Text 标志设置文本模式 */
+    XIODevice_setTextModeEnabled((XIODevice*)&file->m_parent.m_parent, (mode & XIODevice_Text) != 0);
     XFileDevice_registerAsync(&file->m_parent);
     return true;
 }
@@ -215,6 +231,10 @@ bool XFile_exists_static(const XString* fileName)
 bool XFile_remove(XFile* file)
 {
     if (!file || !file->m_fileName) return false;
+    /* Qt 行为: 成员 remove 先关闭文件再删除 */
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
     return XFile_remove_static(file->m_fileName);
 }
 
@@ -227,6 +247,10 @@ bool XFile_remove_static(const XString* fileName)
 bool XFile_rename(XFile* file, const XString* newName)
 {
     if (!file || !file->m_fileName || !newName) return false;
+    /* Qt 行为: 成员 rename 先关闭再改名 */
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
     return XFile_rename_static(file->m_fileName, newName);
 }
 
@@ -239,6 +263,10 @@ bool XFile_rename_static(const XString* oldName, const XString* newName)
 bool XFile_copy(XFile* file, const XString* newName)
 {
     if (!file || !file->m_fileName || !newName) return false;
+    /* Qt 行为: 成员 copy 先关闭 */
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
     return XFile_copy_static(file->m_fileName, newName);
 }
 
@@ -263,14 +291,22 @@ bool XFile_link_static(const XString* fileName, const XString* linkName)
 bool XFile_moveToTrash(XFile* file)
 {
     if (!file || !file->m_fileName) return false;
+    /* Qt 行为: 成员 moveToTrash 先关闭文件再放入回收站 */
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
+    }
     return XFile_moveToTrash_static(file->m_fileName, NULL);
 }
 
 bool XFile_moveToTrash_static(const XString* fileName, XString* pathInTrash)
 {
-    (void)pathInTrash;
-    if (!fileName) return false;
-    return XFileSystem_remove(fileName);
+    /*
+     * Qt 行为: QFile::moveToTrash() 在 Windows 上用 SHFileOperation(FO_DELETE|FOF_ALLOWUNDO),
+     * 在 Unix 上 (Freedesktop.org Trash v1.0) 把文件 move 到 ~/.local/share/Trash/files.
+     * 平台层已经实现 XFileSystem_moveToTrash, 这里仅做一次抽象调用;
+     * 不可用时平台层自行退化到 XFileSystem_remove.
+     */
+    return XFileSystem_moveToTrash(fileName, pathInTrash);
 }
 
 XString* XFile_symLinkTarget(const XFile* file)
@@ -300,8 +336,12 @@ bool XFile_resize_static(const XString* fileName, int64_t sz)
 {
     XFile file;
     XFile_init_2(&file, fileName);
-    bool result = XFile_resize_base(&file, sz);
-    //XFile_deinit_base(&file);
+    /* Qt 行为: 静态 resize 内部打开文件再调整大小 */
+    bool result = false;
+    if (XIODevice_open_base((XIODevice*)&file, XIODevice_ReadWrite)) {
+        result = XFile_resize_base((XFileDevice*)&file, sz);
+        XIODevice_close_base((XIODevice*)&file);
+    }
     XClass_deinit_base(&file);
     return result;
 }
@@ -339,9 +379,18 @@ XByteArray* XFile_encodeName(const XString* fileName)
 XString* XFile_decodeName(const XByteArray* localFileName)
 {
     if (!localFileName) return XString_create();
+    int64_t sz = XByteArray_size_base((XByteArray*)localFileName);
+    if (sz <= 0) return XString_create();
     const char* data = (const char*)XByteArray_data((XByteArray*)localFileName);
     if (!data) return XString_create();
-    return XString_create_utf8(data);
+    /* XByteArray 不保证 NUL 终止, 拷贝到临时 NUL 终止缓冲再 assign */
+    char* tmp = (char*)XMalloc_System((size_t)sz + 1);
+    if (!tmp) return XString_create();
+    memcpy(tmp, data, (size_t)sz);
+    tmp[sz] = '\0';
+    XString* s = XString_create_utf8(tmp);
+    XFree_System(tmp);
+    return s;
 }
 
 XString* XFile_decodeName_2(const char* localFileName)

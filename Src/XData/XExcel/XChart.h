@@ -91,6 +91,14 @@ typedef struct XChart {
 XChart* XChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag);
 
 /**
+ * @brief 创建图表的深拷贝。
+ * @param source 源图表指针。
+ * @param parent 副本所属的父工作表指针。
+ * @return 新图表指针；失败返回 NULL，调用方负责释放。
+ */
+XChart* XChart_copy(const XChart* source, XAbstractSheet* parent);
+
+/**
  * @brief      销毁图表对象并释放资源
  * @param self 图表对象指针
  */
@@ -134,6 +142,11 @@ void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const XString* a
  * @param title 标题
  */
 void XChart_setChartTitle(XChart* self, const XString* title);
+/**
+ * @brief 使用 UTF-8 文本设置图表标题。
+ * @param self  图表指针。
+ * @param title UTF-8 标题文本；可为 NULL 清除标题。
+ */
 void XChart_setChartTitle_utf8(XChart* self, const char* title);
 
 /**
@@ -179,15 +192,32 @@ void XChart_setPosition(XChart* self, int row, int col, int rowOff, int colOff);
 bool XChart_loadFromXmlFile(XChart* self, const XString* filePath);
 
 /**
+ * @brief 从内存中的图表 XML 加载图表。
+ * @param self 图表对象指针。
+ * @param data XML 数据地址，数据无需 NUL 终止。
+ * @param len XML 数据长度（字节）。
+ * @return 加载成功返回 true，否则返回 false。
+ */
+bool XChart_loadFromXmlData(XChart* self, const uint8_t* data, size_t len);
+
+/**
  * @brief      保存图表 XML 到文件
  * @param self     图表对象指针
  * @param filePath 文件路径
  * @return         成功返回 true
  */
 bool XChart_saveToXmlFile(XChart* self, const XString* filePath);
+
+/**
+ * @brief 将图表序列化为 XML 内存。
+ * @param self    图表对象指针。
+ * @param outData 输出数据地址；成功后调用方使用 XFree_System 释放。
+ * @param outLen  输出数据长度地址。
+ * @return 序列化成功返回 true，否则返回 false。
+ */
+bool XChart_saveToXmlData(XChart* self, uint8_t** outData, size_t* outLen);
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* XCHART_H */
-

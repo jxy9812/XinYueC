@@ -49,6 +49,24 @@ void XSimpleOOXmlFile_setXmlData(XSimpleOOXmlFile* self, const XString* data);
 const XString* XSimpleOOXmlFile_xmlData(const XSimpleOOXmlFile* self);
 
 /**
+ * @brief  将 XML 内容复制到新分配的 UTF-8 字节缓冲区
+ * @param  self    对象指针
+ * @param  data    输出缓冲区，调用者使用 XFree_System 释放
+ * @param  length  输出字节数，不包含结尾 NUL
+ * @return 成功返回 true
+ */
+bool XSimpleOOXmlFile_saveToXmlData(const XSimpleOOXmlFile* self, uint8_t** data, size_t* length);
+
+/**
+ * @brief  从指定长度的 UTF-8 字节缓冲区加载 XML 内容
+ * @param  self    对象指针
+ * @param  data    输入字节缓冲区，不要求以 NUL 结尾
+ * @param  length  输入字节数
+ * @return 成功返回 true
+ */
+bool XSimpleOOXmlFile_loadFromXmlData(XSimpleOOXmlFile* self, const uint8_t* data, size_t length);
+
+/**
  * @brief  将 XML 数据保存到文件
  * @param  self      对象指针
  * @param  filePath  输出文件路径

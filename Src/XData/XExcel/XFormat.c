@@ -8,6 +8,7 @@
 #include "XString.h"
 #include "XColor.h"
 #include "XFont.h"
+#include "XNumFormatParser.h"
 #include "XMap.h"
 #include "XPair.h"
 #include <stdlib.h>
@@ -24,6 +25,13 @@
  */
 
 /* ========== 辅助函数：获取/设置属性 ========== */
+
+static intptr_t pairIntptrValue(const XPair* pair)
+{
+    intptr_t value = 0;
+    if (pair) memcpy(&value, XPair_second((XPair*)pair), sizeof(value));
+    return value;
+}
 
 static int getPropertyInt(const XFormat* self, int propertyId, int defaultValue)
 {
@@ -64,7 +72,12 @@ static void setPropertyBool(XFormat* self, int propertyId, bool value)
 static int packColor(const XColor* c)
 {
     if (!c) return 0;
-    return ((int)c->m_alpha << 24) | ((int)c->m_comp1 << 16) | ((int)c->m_comp2 << 8) | (int)c->m_comp3;
+    uint32_t packed = ((uint32_t)XColor_alpha(c) << 24) |
+        ((uint32_t)XColor_red(c) << 16) |
+        ((uint32_t)XColor_green(c) << 8) | (uint32_t)XColor_blue(c);
+    int result = 0;
+    memcpy(&result, &packed, sizeof(result));
+    return result;
 }
 
 static XColor unpackColor(int packed)
@@ -98,7 +111,7 @@ static const XString* getPropertyXString(const XFormat* self, int propertyId)
         XPair* pair = XMap_iterator_data(&it);
         if (pair)
         {
-            intptr_t ptr = *(intptr_t*)XPair_second(pair);
+            intptr_t ptr = pairIntptrValue(pair);
             if (ptr) return (const XString*)ptr;
         }
     }
@@ -127,8 +140,8 @@ static void setPropertyString(XFormat* self, int propertyId, const char* value)
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
-                intptr_t oldPtr = *(intptr_t*)XPair_second(pair);
-                if (oldPtr) { XString_deinit_base((XString*)oldPtr); XFree_System((XString*)oldPtr); }
+                intptr_t oldPtr = pairIntptrValue(pair);
+                if (oldPtr) XString_delete_base((XString*)oldPtr);
             }
         }
     }
@@ -164,8 +177,8 @@ static void freeStringProperties(XFormat* self)
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
-                intptr_t ptr = *(intptr_t*)XPair_second(pair);
-                if (ptr) { XString_deinit_base((XString*)ptr); XFree_System((XString*)ptr); }
+                intptr_t ptr = pairIntptrValue(pair);
+                if (ptr) XString_delete_base((XString*)ptr);
             }
         }
     }
@@ -189,14 +202,17 @@ XFormat* XFormat_create(void)
 
 void XFormat_copy(XFormat* self, const XFormat* other)
 {
-    if (!self || !other) return;
+    if (!self || !other || self == other) return;
+    if (self->m_properties) {
+        freeStringProperties(self);
+        XMap_clear_base((XMapBase*)self->m_properties);
+    }
     if (other->m_properties)
     {
         if (!self->m_properties)
             self->m_properties = XMap_Create(int, intptr_t, int_compare);
         if (self->m_properties)
         {
-            XMap_clear_base((XMapBase*)self->m_properties);
             /* 复制所有属性 */
             XMap_iterator it = XMap_begin(other->m_properties);
             XMap_iterator end = XMap_end(other->m_properties);
@@ -206,7 +222,7 @@ void XFormat_copy(XFormat* self, const XFormat* other)
                 if (pair)
                 {
                     int key = *(int*)XPair_first(pair);
-                    intptr_t val = *(intptr_t*)XPair_second(pair);
+                    intptr_t val = pairIntptrValue(pair);
                     /* 如果是字符串属性，深拷贝 */
                     if (key == XFormat_P_NumFmt_FormatCode || key == XFormat_P_Font_Name)
                     {
@@ -215,8 +231,7 @@ void XFormat_copy(XFormat* self, const XFormat* other)
                         {
                             XString* str = XString_create();
                             if (str) XString_append_utf8(str, XString_toUtf8((XString*)oldPtr));
-                            intptr_t newPtr = (intptr_t)str;
-                            val = (int)newPtr;
+                            val = (intptr_t)str;
                         }
                     }
                     XMapBase_insert_base((XMapBase*)self->m_properties, &key, &val);
@@ -247,8 +262,7 @@ void XFormat_delete(XFormat* self)
         if (self->m_properties)
         {
             freeStringProperties(self);
-            XMap_deinit_base((XMapBase*)self->m_properties);
-            XFree_System(self->m_properties);
+            XMap_delete_base(self->m_properties);
         }
         XFree_System(self);
     }
@@ -290,17 +304,7 @@ bool XFormat_isDateTimeFormat(const XFormat* self)
     if ((id >= 14 && id <= 22) || (id >= 27 && id <= 36) ||
         (id >= 45 && id <= 47) || (id >= 50 && id <= 58))
         return true;
-    const XString* fmtX = XFormat_numberFormat(self);
-    const char* fmt = fmtX ? XString_toUtf8(fmtX) : NULL;
-    if (fmt && *fmt)
-    {
-        if (strstr(fmt, "y") || strstr(fmt, "m") || strstr(fmt, "d") ||
-            strstr(fmt, "h") || strstr(fmt, "s") || strstr(fmt, "Y") ||
-            strstr(fmt, "M") || strstr(fmt, "D") || strstr(fmt, "H") ||
-            strstr(fmt, "S"))
-            return true;
-    }
-    return false;
+    return XNumFormatParser_isDateTime(XFormat_numberFormat(self));
 }
 
 /* ========== 字体属性 ========== */
@@ -403,6 +407,38 @@ const XString* XFormat_fontName(const XFormat* self)
 void XFormat_setFontName(XFormat* self, const XString* name)
 {
     if (name) setPropertyString(self, XFormat_P_Font_Name, XString_toUtf8(name));
+}
+
+XFont* XFormat_font(const XFormat* self)
+{
+    if (!self) return NULL;
+    XFont* font = XFont_create();
+    if (!font) return NULL;
+    const char* family = XFormat_fontName_utf8(self);
+    if (family && family[0]) XFont_setFamily(font, family);
+    int pointSize = XFormat_fontSize(self);
+    if (pointSize > 0) XFont_setPointSize(font, pointSize);
+    XFont_setBold(font, XFormat_fontBold(self));
+    XFont_setItalic(font, XFormat_fontItalic(self));
+    XFont_setStrikeOut(font, XFormat_fontStrikeOut(self));
+    XFont_setUnderline(font, XFormat_fontUnderline(self) != XFormat_FontUnderlineNone);
+    return font;
+}
+
+void XFormat_setFont(XFormat* self, const XFont* font)
+{
+    if (!self || !font) return;
+    const char* family = XFont_family(font);
+    if (family && family[0]) setPropertyString(self, XFormat_P_Font_Name, family);
+    else XFormat_clearProperty(self, XFormat_P_Font_Name);
+    int pointSize = XFont_pointSize(font);
+    if (pointSize > 0) XFormat_setFontSize(self, pointSize);
+    else XFormat_clearProperty(self, XFormat_P_Font_Size);
+    XFormat_setFontBold(self, XFont_bold(font));
+    XFormat_setFontItalic(self, XFont_italic(font));
+    XFormat_setFontStrikeOut(self, XFont_strikeOut(font));
+    XFormat_setFontUnderline(self, XFont_underline(font)
+        ? XFormat_FontUnderlineSingle : XFormat_FontUnderlineNone);
 }
 
 /* ========== 对齐属性 ========== */
@@ -656,7 +692,7 @@ void XFormat_setHidden(XFormat* self, bool hidden)
 
 void XFormat_mergeFormat(XFormat* self, const XFormat* modifier)
 {
-    if (!self || !modifier || !modifier->m_properties) return;
+    if (!self || !modifier || self == modifier || !modifier->m_properties) return;
     if (!self->m_properties)
     {
         self->m_properties = XMap_Create(int, intptr_t, int_compare);
@@ -670,10 +706,19 @@ void XFormat_mergeFormat(XFormat* self, const XFormat* modifier)
         if (pair)
         {
             int key = *(int*)XPair_first(pair);
-            intptr_t val = *(intptr_t*)XPair_second(pair);
+            intptr_t val = pairIntptrValue(pair);
             /* 如果是字符串属性，深拷贝 */
             if (key == XFormat_P_NumFmt_FormatCode || key == XFormat_P_Font_Name)
             {
+                XMap_iterator existing;
+                if (XMapBase_find_base((XMapBase*)self->m_properties, &key,
+                                       (XMapBase_iterator*)&existing)) {
+                    XPair* existingPair = XMap_iterator_data(&existing);
+                    intptr_t existingPtr = pairIntptrValue(existingPair);
+                    if (existingPtr) {
+                        XString_delete_base((XString*)existingPtr);
+                    }
+                }
                 intptr_t oldPtr = val;  /* BUG FIX: 之前是 (intptr_t)val 多余 */
                 if (oldPtr)
                 {
@@ -733,8 +778,8 @@ void XFormat_clearProperty(XFormat* self, int propertyId)
             XPair* pair = XMap_iterator_data(&it);
             if (pair)
             {
-                intptr_t ptr = *(intptr_t*)XPair_second(pair);
-                if (ptr) { XString_deinit_base((XString*)ptr); XFree_System((XString*)ptr); }
+                intptr_t ptr = pairIntptrValue(pair);
+                if (ptr) XString_delete_base((XString*)ptr);
             }
         }
     }
@@ -907,6 +952,16 @@ void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     appendInt(&buf, &len, &cap, (int)XFormat_fontScript(self));
     appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self));
     appendInt(&buf, &len, &cap, XFormat_fontOutline(self) ? 1 : 0);
+    appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Shadow, false) ? 1 : 0);
+    appendInt(&buf, &len, &cap,
+        XFormat_intProperty(self, XFormat_P_Font_Family, 0));
+    appendInt(&buf, &len, &cap,
+        XFormat_intProperty(self, XFormat_P_Font_Charset, 0));
+    appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Condense, false) ? 1 : 0);
+    appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Extend, false) ? 1 : 0);
     XColor fc = XFormat_fontColor(self);
     appendInt(&buf, &len, &cap, packColor(&fc));
     /* 字体名称 */

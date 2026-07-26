@@ -61,6 +61,24 @@ const XString* XDocPropsCore_property(const XDocPropsCore* self, const XString* 
 int XDocPropsCore_propertyNames(const XDocPropsCore* self, XString*** names);
 
 /**
+ * @brief  将核心属性序列化为 XML 数据
+ * @param  self    核心属性对象指针
+ * @param  outData [out] XML 数据，调用者使用 XFree_System 释放
+ * @param  outLen  [out] XML 数据长度
+ * @return 成功返回 true
+ */
+bool XDocPropsCore_saveToXmlData(const XDocPropsCore* self, uint8_t** outData, size_t* outLen);
+
+/**
+ * @brief  从 XML 数据加载核心属性
+ * @param  self 核心属性对象指针
+ * @param  data XML 数据
+ * @param  len  XML 数据长度
+ * @return 成功返回 true
+ */
+bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, size_t len);
+
+/**
  * @brief  将核心属性保存为 XML 文件（docProps/core.xml）
  * @param  self      核心属性对象指针
  * @param  filePath  输出文件路径

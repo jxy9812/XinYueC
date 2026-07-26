@@ -65,6 +65,11 @@ XCellRange XCellRange_create_ref(const XCellReference* topLeft, const XCellRefer
  * @return     解析后的 XCellRange 对象
  */
 XCellRange XCellRange_create_str(const XString* range);
+/**
+ * @brief 从 UTF-8 范围文本创建单元格范围值对象。
+ * @param range UTF-8 范围文本，例如 "A1:C3"。
+ * @return 解析后的范围值对象；文本无效时返回无效范围。
+ */
 XCellRange XCellRange_create_str_utf8(const char* range);
 
 /**
@@ -226,8 +231,9 @@ XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs);
 
 static inline bool XCellRange_equals(const XCellRange* a, const XCellRange* b)
 {
-    return a->
-m_firstRow == b->m_firstRow && a->m_firstColumn == b->m_firstColumn
+    if (a == b) return true;
+    if (!a || !b) return false;
+    return a->m_firstRow == b->m_firstRow && a->m_firstColumn == b->m_firstColumn
         && a->m_lastRow == b->m_lastRow && a->m_lastColumn == b->m_lastColumn;
 }
 
@@ -235,11 +241,6 @@ static inline bool XCellRange_notEquals(const XCellRange* a, const XCellRange* b
 {
     return !XCellRange_equals(a, b);
 }
-
-#ifdef __cplusplus
-}
-#endif
-#endif /* XCELLRANGE_H */
 
 /* ========== 便捷设置方法 ========== */
 
@@ -267,3 +268,8 @@ void XCellRange_setCellReference(XCellRange* self, const XCellReference* cell);
  * @param lastCol     结束列
  */
 void XCellRange_setFullRange(XCellRange* self, int firstRow, int firstCol, int lastRow, int lastCol);
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* XCELLRANGE_H */

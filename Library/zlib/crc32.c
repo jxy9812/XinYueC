@@ -168,8 +168,21 @@ unsigned long crc;
 const unsigned char FAR* buf;
 z_size_t len;
 {
-    if (buf == Z_NULL) return 0UL;  // 空指针输入，返回0
-    return XCrc32_update(crc,buf,len);
+    if (buf == Z_NULL) return 0UL;
+
+    /*
+     * zlib 的流式 CRC 接口以最终 CRC 作为下一次调用的输入，因此每次调用
+     * 都要先撤销最终异或，处理完后再恢复。XCrc32_update() 只执行表更新，
+     * 直接返回它的结果会让所有 ZIP 条目的 CRC 与标准 CRC-32 不一致。
+     * 这里使用标准反射多项式独立计算，避免受 XCrc 全局多项式状态影响。
+     */
+    uint32_t value = (uint32_t)crc ^ 0xffffffffu;
+    while (len--) {
+        value ^= *buf++;
+        for (int bit = 0; bit < 8; ++bit)
+            value = (value >> 1) ^ (0xedb88320u & (uint32_t)-(int32_t)(value & 1u));
+    }
+    return (unsigned long)(value ^ 0xffffffffu);
 //#ifdef DYNAMIC_CRC_TABLE
 //    if (crc_table_empty)  // 确保CRC表格已初始化
 //        make_crc_table();

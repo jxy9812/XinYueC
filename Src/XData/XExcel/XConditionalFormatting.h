@@ -86,12 +86,18 @@ typedef struct XConditionalFormatting_Rule {
     XConditionalFormatting_HighlightRuleType m_highlightType; /**< 高亮类型 */
     XString* m_formula1;                              /**< 公式1 */
     XString* m_formula2;                              /**< 公式2 */
+    XString* m_formula3;                              /**< 公式3/三色阶最大阈值 */
+    XString* m_text;                                  /**< 文本匹配规则的文本 */
+    XString* m_timePeriod;                            /**< 时间周期规则名称 */
+    int m_rank;                                       /**< Top/Bottom 规则数量 */
+    int m_stdDev;                                     /**< 平均值规则标准差数量 */
     XFormat* m_format;                                /**< 格式 */
     XColor m_color1;                                  /**< 颜色1（色阶/数据条） */
     XColor m_color2;                                  /**< 颜色2 */
     XColor m_color3;                                  /**< 颜色3 */
     XConditionalFormatting_ValueObjectType m_valType1; /**< 值类型1 */
     XConditionalFormatting_ValueObjectType m_valType2; /**< 值类型2 */
+    XConditionalFormatting_ValueObjectType m_valType3; /**< 值类型3（三色阶） */
     bool m_showData;                                   /**< 是否显示数据条 */
     bool m_stopIfTrue;                                 /**< 如果为真则停止 */
 } XConditionalFormatting_Rule;

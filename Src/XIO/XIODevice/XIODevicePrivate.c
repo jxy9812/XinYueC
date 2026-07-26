@@ -75,6 +75,8 @@ void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q)
     d->readBuffers = XVector_Create(struct XRingBuffer*);
     d->writeBuffers = XVector_Create(struct XRingBuffer*);
     d->q_ptr = q;
+    d->ungetCount = 0;
+    memset(d->ungetStack, 0, sizeof(d->ungetStack));
     //d->xfd = XFD_INVALID;
 }
 
@@ -144,21 +146,34 @@ struct XRingBuffer* XIODevicePrivate_getOrCreateWriteBuffer(XIODevicePrivate* d,
 // --- Single-Channel Compatibility Layer ---
 
 void XIODevicePrivate_putChar(XIODevicePrivate* d, char c) {
+    /* Qt 行为: ungetChar 将字符放回输入流, 之后 getChar 应立即读到该字符.
+       优先使用 unget 栈, 这样不受 XRingChunk 物理位置约束. */
+    if (d && d->ungetCount < (int)sizeof(d->ungetStack)) {
+        d->ungetStack[d->ungetCount++] = c;
+        return;
+    }
     struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
     if (defaultReadBuf) {
         if (defaultReadBuf->m_currentReadChunk < XVector_size_base(defaultReadBuf->m_chunks)) {
             XRingChunk** chunkPtr = (XRingChunk**)XVector_at_base(defaultReadBuf->m_chunks, defaultReadBuf->m_currentReadChunk);
             if (chunkPtr && *chunkPtr) {
-                XRingChunk_unget(*chunkPtr, &c, 1);
-                //defaultReadBuf->m_totalSize += 1;
-                XContainerSize(defaultReadBuf) += 1;
+                if (XRingChunk_unget(*chunkPtr, &c, 1) == 1) {
+                    XContainerSize(defaultReadBuf) += 1;
+                    return;
+                }
             }
         }
+        XRingBuffer_write(defaultReadBuf, &c, 1);
     }
 }
 
 bool XIODevicePrivate_getChar(XIODevicePrivate* d, char* c) {
     if (!c) return false;
+    /* 优先消费 unget 栈 */
+    if (d && d->ungetCount > 0) {
+        *c = d->ungetStack[--d->ungetCount];
+        return true;
+    }
     struct XRingBuffer* defaultReadBuf = XIODevicePrivate_getOrCreateReadBuffer(d, d->q_ptr->m_currentReadChannel);
     if (defaultReadBuf && XRingBuffer_available(defaultReadBuf) > 0) {
         return XRingBuffer_read(defaultReadBuf, c, 1) == 1;

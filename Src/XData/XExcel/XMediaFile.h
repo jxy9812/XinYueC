@@ -47,7 +47,7 @@ XMediaFile* XMediaFile_create(const XString* fileName);
  * @param dataSize 数据大小
  * @param suffix   文件后缀
  * @param mimeType MIME 类型
- * @return     指向新创建的 XMediaFile 的指针
+ * @return     指向新创建的 XMediaFile 的指针，参数非法或分配失败返回 NULL
  */
 XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType);
 
@@ -60,10 +60,10 @@ void XMediaFile_delete(XMediaFile* self);
 /**
  * @brief      设置文件内容
  * @param self     指针
- * @param bytes    数据
+ * @param bytes    数据；dataSize 大于 0 时不可为 NULL
  * @param dataSize 数据大小
- * @param suffix   后缀
- * @param mimeType MIME 类型
+ * @param suffix   后缀，为 NULL 时清除旧后缀
+ * @param mimeType MIME 类型，为 NULL 时清除旧 MIME 类型
  */
 void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType);
 
@@ -119,7 +119,7 @@ void XMediaFile_setIndex(XMediaFile* self, int idx);
 /**
  * @brief      设置文件名
  * @param self 指针
- * @param name 文件名
+ * @param name 文件名，为 NULL 时清除旧文件名
  */
 void XMediaFile_setFileName(XMediaFile* self, const XString* name);
 
@@ -131,10 +131,10 @@ void XMediaFile_setFileName(XMediaFile* self, const XString* name);
 const XString* XMediaFile_fileName(const XMediaFile* self);
 
 /**
- * @brief      获取内容的哈希键（用于去重）
+ * @brief      获取内容的 MD5 哈希键（用于去重）
  * @param self    指针
  * @param outKey  输出哈希键数据
- * @param outLen  输出哈希键长度
+ * @param outLen  输出哈希键长度（成功时为 16 字节）
  */
 void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen);
 

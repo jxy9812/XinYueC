@@ -133,6 +133,12 @@ int XRichString_fragmentCount(const XRichString* self);
  * @param format 片段格式
  */
 void XRichString_addFragment(XRichString* self, const XString* text, const XFormat* format);
+/**
+ * @brief 使用 UTF-8 文本追加富文本片段。
+ * @param self   富文本对象指针。
+ * @param text   UTF-8 片段文本。
+ * @param format 可选片段格式；函数只读取，不接管所有权。
+ */
 void XRichString_addFragment_utf8(XRichString* self, const char* text, const XFormat* format);
 
 /**
@@ -159,6 +165,11 @@ const XFormat* XRichString_fragmentFormat(const XRichString* self, int index);
  * @param text 文本
  */
 void XRichString_setText(XRichString* self, const XString* text);
+/**
+ * @brief 使用 UTF-8 文本设置富文本内容。
+ * @param self 富文本对象指针。
+ * @param text UTF-8 文本，可为 NULL 表示空内容。
+ */
 void XRichString_setText_utf8(XRichString* self, const char* text);
 
 /**

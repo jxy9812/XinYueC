@@ -100,6 +100,13 @@ XAbstractSheet* XWorkbook_sheet(const XWorkbook* self, int index);
  * @return 新工作表指针，失败返回 NULL
  */
 XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstractSheet_SheetType type);
+/**
+ * @brief 使用 UTF-8 名称在工作簿末尾添加工作表。
+ * @param self 工作簿指针。
+ * @param name UTF-8 工作表名称；NULL 时自动生成。
+ * @param type 工作表类型。
+ * @return 新工作表指针；失败返回 NULL，工作簿持有成功添加的对象。
+ */
 XAbstractSheet* XWorkbook_addSheet_utf8(XWorkbook* self, const char* name, XAbstractSheet_SheetType type);
 
 /**
@@ -287,7 +294,7 @@ XTheme* XWorkbook_theme(const XWorkbook* self);
 /**
  * @brief  添加媒体文件（图片等）
  * @param  self   工作簿指针
- * @param  media  媒体文件对象（所有权转移）
+ * @param  media  媒体文件对象（非拥有引用，资源由所属工作表管理）
  * @param  force  为 true 时强制添加（即使已存在相同文件）
  */
 void XWorkbook_addMediaFile(XWorkbook* self, XMediaFile* media, bool force);
@@ -303,7 +310,7 @@ XMediaFile** XWorkbook_mediaFiles(const XWorkbook* self, int* count);
 /**
  * @brief  添加图表文件
  * @param  self       工作簿指针
- * @param  chartFile  图表对象（所有权转移）
+ * @param  chartFile  图表对象（非拥有引用，资源由所属工作表管理）
  */
 void XWorkbook_addChartFile(XWorkbook* self, XChart* chartFile);
 

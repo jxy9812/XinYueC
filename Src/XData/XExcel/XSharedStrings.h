@@ -30,9 +30,9 @@ typedef struct XlsxSharedStringInfo {
 /** @brief XSharedStrings 共享字符串表结构体 */
 typedef struct XSharedStrings {
     XAbstractOOXmlFile m_base;     /**< 基类 */
-    XMap* m_stringTable;           /**< 字符串表（用于去重） */
+    XMap* m_stringTable;           /**< 普通字符串到 XlsxSharedStringInfo 的映射 */
     XVector* m_stringList;         /**< 字符串列表 */
-    int m_stringCount;             /**< 字符串数量 */
+    int m_stringCount;             /**< 含重复引用的字符串总数 */
 } XSharedStrings;
 /**
  * @brief  创建共享字符串表对象
@@ -48,9 +48,9 @@ XSharedStrings* XSharedStrings_create(XAbstractOOXmlFile_CreateFlag flag);
 void XSharedStrings_delete(XSharedStrings* self);
 
 /**
- * @brief  获取共享字符串数量
+ * @brief  获取共享字符串总引用数
  * @param  self  共享字符串表指针
- * @return 字符串条目数
+ * @return 包含重复引用的字符串总数；唯一条目数可从 getSharedStrings 的向量大小取得
  */
 int XSharedStrings_count(const XSharedStrings* self);
 

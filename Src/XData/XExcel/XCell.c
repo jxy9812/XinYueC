@@ -64,7 +64,7 @@ void XCell_delete(XCell* self)
 {
     if (self)
     {
-        if (self->m_value) { XString_deinit_base(self->m_value); XFree_System(self->m_value); }
+        if (self->m_value) XString_delete_base(self->m_value);
         if (self->m_formula) XCellFormula_delete(self->m_formula);
         if (self->m_richString) XRichString_delete(self->m_richString);
         XFree_System(self);
@@ -85,6 +85,9 @@ const XString* XCell_value(const XCell* self)
 void XCell_setValue(XCell* self, const XString* value)
 {
     if (!self) return;
+    /* 写入普通值会替换此前的公式或富文本负载。 */
+    XCell_setFormula(self, NULL);
+    XCell_setRichString(self, NULL);
     if (!self->m_value) self->m_value = XString_create();
     if (self->m_value) { XString_clear_base(self->m_value); if (value) XString_append(self->m_value, value); }
 }
@@ -94,7 +97,12 @@ void XCell_setFormat(XCell* self, XFormat* format) { if (self) self->m_format = 
 
 bool XCell_hasFormula(const XCell* self) { return self && self->m_formula != NULL; }
 XCellFormula* XCell_formula(const XCell* self) { return self ? self->m_formula : NULL; }
-void XCell_setFormula(XCell* self, XCellFormula* formula) { if (self) self->m_formula = formula; }
+void XCell_setFormula(XCell* self, XCellFormula* formula)
+{
+    if (!self || self->m_formula == formula) return;
+    if (self->m_formula) XCellFormula_delete(self->m_formula);
+    self->m_formula = formula;
+}
 
 bool XCell_isDateTime(const XCell* self)
 {
@@ -123,7 +131,12 @@ const XString* XCell_readValue(const XCell* self)
 
 bool XCell_isRichString(const XCell* self) { return self && self->m_richString != NULL; }
 XRichString* XCell_richString(const XCell* self) { return self ? self->m_richString : NULL; }
-void XCell_setRichString(XCell* self, XRichString* rich) { if (self) self->m_richString = rich; }
+void XCell_setRichString(XCell* self, XRichString* rich)
+{
+    if (!self || self->m_richString == rich) return;
+    if (self->m_richString) XRichString_delete(self->m_richString);
+    self->m_richString = rich;
+}
 
 int XCell_styleNumber(const XCell* self) { return self ? self->m_styleNumber : -1; }
 void XCell_setStyleNumber(XCell* self, int style) { if (self) self->m_styleNumber = style; }

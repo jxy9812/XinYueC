@@ -1,8 +1,11 @@
 #include "XFileDevice.h"
 #include "XFileSystem_platform.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
+#include "XIODevicePrivate.h"   /* XIODevicePrivate_getOrCreateReadBuffer */
+#include "XRingBuffer.h"        /* XRingBuffer_available */
 #include "XFileDescriptor.h"   /* XFd_setCtx */
 #include "XAbstractNetIoRing.h"  /* XAbstractNetIoRing_global, registerEvent_base */
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,7 +47,18 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
     if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return 0;
     }
-    return XFileSystem_pos(XIODevice_fd(&device->m_parent));
+    int64_t rawPos = XFileSystem_pos(XIODevice_fd(&device->m_parent));
+    /* Qt 行为: pos 需要减去读缓冲区中尚未消费的数据量 */
+    XIODevice* io = (XIODevice*)&device->m_parent;
+    if (io->m_d) {
+        struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(io->m_d, io->m_currentReadChannel);
+        if (readBuf) {
+            int64_t buffered = (int64_t)XRingBuffer_available(readBuf);
+            rawPos -= buffered;
+            if (rawPos < 0) rawPos = 0;
+        }
+    }
+    return rawPos;
 }
 
 /**
@@ -55,15 +69,10 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
     if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return -1;
     }
-    
-    // 如果有缓存的大小（包括0），直接返回
-    if (device->m_cachedSize >= 0) {
-        return device->m_cachedSize;
-    }
-    
-
+    /* 外部进程可在设备保持打开时追加文件，不能以旧缓存作为当前大小。 */
     XFileStat stat;
     if (!XFileSystem_fstat(XIODevice_fd(&device->m_parent), &stat)) return -1;
+    ((XFileDevice*)device)->m_cachedSize = stat.size;
     return stat.size;
 }
 
@@ -265,6 +274,48 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     }
     
     return actualSkip;
+}
+
+/* ============================================================================
+ * mmap 跟踪: 维护 address -> size 映射
+ * 注: 真实 Qt 用 QFileEnginePrivate 跟踪, 这里使用进程级简单线性表
+ * ============================================================================ */
+#define XFILE_MMAP_TRACK_MAX 32
+typedef struct XFileMmapEntry { void* addr; int64_t size; bool inUse; } XFileMmapEntry;
+static XFileMmapEntry g_mmapEntries[XFILE_MMAP_TRACK_MAX] = {0};
+
+static void mmapTrack(void* addr, int64_t size) {
+    if (!addr) return;
+    for (int i = 0; i < XFILE_MMAP_TRACK_MAX; ++i) {
+        if (!g_mmapEntries[i].inUse) {
+            g_mmapEntries[i].addr = addr;
+            g_mmapEntries[i].size = size;
+            g_mmapEntries[i].inUse = true;
+            return;
+        }
+    }
+}
+
+static int64_t mmapLookupSize(void* addr) {
+    if (!addr) return 0;
+    for (int i = 0; i < XFILE_MMAP_TRACK_MAX; ++i) {
+        if (g_mmapEntries[i].inUse && g_mmapEntries[i].addr == addr) {
+            return g_mmapEntries[i].size;
+        }
+    }
+    return 0;
+}
+
+static void mmapUntrack(void* addr) {
+    if (!addr) return;
+    for (int i = 0; i < XFILE_MMAP_TRACK_MAX; ++i) {
+        if (g_mmapEntries[i].inUse && g_mmapEntries[i].addr == addr) {
+            g_mmapEntries[i].inUse = false;
+            g_mmapEntries[i].addr = NULL;
+            g_mmapEntries[i].size = 0;
+            return;
+        }
+    }
 }
 
 /* ============================================================================
@@ -508,6 +559,9 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time)
 bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time)
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0 || !newDate) return false;
+    /* 平台层 XFileSystem_setFileTime 接受 Unix 时间戳 (int64_t 秒).
+       XDateTime 的语义值 (秒数) 由 XDateTime_toSecsSinceEpoch 派生,
+       上层调到这里仍然是 XDateTime*, 转换在边界一次性完成. */
     int64_t timestamp = XDateTime_toSecsSinceEpoch(newDate);
     XFd fd = XIODevice_fd(&device->m_parent);
 
@@ -531,15 +585,21 @@ bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFil
 void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDeviceMemoryMapFlags flags)
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0) return NULL;
+    /* Qt 行为: mapping 的可写性继承自打开模式, 但 MapPrivateOption 强制可写 */
     bool writable = (device->m_parent.m_openMode & XIODevice_WriteOnly) != 0;
-    (void)flags;  // MapPrivateOption 暂时不支持
-    return XFileSystem_map(XIODevice_fd(&device->m_parent), offset, size, writable);
+    int mapFlags = (flags & XFileDevice_MapPrivateOption) ? 0x1 : 0x0;
+    if (flags & XFileDevice_MapPrivateOption) writable = true;
+    if (writable) mapFlags |= 0x2;
+    void* addr = XFileSystem_map(XIODevice_fd(&device->m_parent), offset, size, mapFlags);
+    if (addr) mmapTrack(addr, size);
+    return addr;
 }
 
 bool XFileDevice_unmap(XFileDevice* device, void* address)
 {
     if (!device || !address) return false;
-    // 注意：XFileSystem_unmap 需要 size 参数，但 XFileDevice_unmap 不提供
-    // 这里使用一个变通方案，获取映射大小
-    return XFileSystem_unmap(address, 0);  // TODO: 需要跟踪映射大小
+    int64_t sz = mmapLookupSize(address);
+    bool ok = XFileSystem_unmap(address, sz);
+    if (ok) mmapUntrack(address);
+    return ok;
 }

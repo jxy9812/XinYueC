@@ -41,6 +41,24 @@ XDrawing* XDrawing_create(XAbstractSheet* sheet, XAbstractOOXmlFile_CreateFlag f
 void XDrawing_delete(XDrawing* self);
 
 /**
+ * @brief  将绘图容器保存为 UTF-8 XML 数据
+ * @param  self    绘图容器指针
+ * @param  data    输出缓冲区，调用者使用 XFree_System 释放
+ * @param  length  输出字节数，不包含结尾 NUL
+ * @return 成功返回 true
+ */
+bool XDrawing_saveToXmlData(const XDrawing* self, uint8_t** data, size_t* length);
+
+/**
+ * @brief  从指定长度的 UTF-8 XML 数据加载绘图容器
+ * @param  self    绘图容器指针
+ * @param  data    输入缓冲区，不要求以 NUL 结尾
+ * @param  length  输入字节数
+ * @return 成功返回 true
+ */
+bool XDrawing_loadFromXmlData(XDrawing* self, const uint8_t* data, size_t length);
+
+/**
  * @brief  将绘图容器保存为 XML 文件（xl/drawings/drawingN.xml）
  * @param  self      绘图容器指针
  * @param  filePath  输出文件路径

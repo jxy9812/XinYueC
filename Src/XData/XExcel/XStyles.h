@@ -92,9 +92,6 @@ XFormat* XStyles_dxfFormat(XStyles* self, int idx);
  * @return 对应的颜色值
  */
 XColor XStyles_getColorByIndex(XStyles* self, int idx);
-#ifdef __cplusplus
-}
-#endif
 /**
  * @brief  将样式表序列化为 XML 数据
  * @param  self    样式管理器指针
@@ -111,6 +108,23 @@ bool XStyles_saveToXmlData(const XStyles* self, uint8_t** outData, size_t* outLe
  * @return 成功返回 true
  */
 bool XStyles_saveToXmlFile(XStyles* self, const XString* filePath);
+
+/**
+ * @brief  从 styles.xml 数据加载样式表
+ * @param  self 样式管理器指针
+ * @param  data XML 数据
+ * @param  len  数据长度
+ * @return 成功返回 true
+ */
+bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len);
+
+/**
+ * @brief  从 styles.xml 文件加载样式表
+ * @param  self     样式管理器指针
+ * @param  filePath 文件路径
+ * @return 成功返回 true
+ */
+bool XStyles_loadFromXmlFile(XStyles* self, const XString* filePath);
 
 #ifdef __cplusplus
 }

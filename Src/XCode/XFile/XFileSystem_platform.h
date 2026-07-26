@@ -31,6 +31,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "XDateTime.h"
 #include "XFileInfo.h"
 #include "XFileSystem_config.h"
 #include "XStorageInfo.h"  /* XStorageInfoData定义 */
@@ -174,7 +175,14 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * 九、内存映射（2个）- 可选
  * ============================================================================ */
 
-void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable);
+/**
+ * @brief 内存映射
+ * @param fd XFd 描述符
+ * @param offset 偏移
+ * @param size 大小
+ * @param flags XFileDeviceMemoryMapFlags (bit0=MapPrivateOption, bit1=视为可写)
+ */
+void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags);
 bool XFileSystem_unmap(void* addr, int64_t size);
 
 /* ============================================================================
@@ -205,6 +213,19 @@ bool XFileSystem_drives_at(int index, XString* path);
  * ============================================================================ */
 
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info);
+
+/**
+ * @brief 将文件移动到回收站（XDG Trash / Windows Shell / macOS Trash）
+ * @param fileName 源文件路径
+ * @param pathInTrash 回收站中的目标路径（可选，输出）
+ * @return 成功返回 true，失败返回 false
+ * @note POSIX 端按 FreeDesktop Trash 规范实现；Windows 端调用 SHFileOperationW；
+ *       若平台不可用可退化为直接 unlink/DeleteFile。
+ *       这与 XFileSystem_remove (XFile::remove) 的语义不同:
+ *         remove     = 立即从文件系统中删除, 不可恢复
+ *         moveToTrash = 移动到 OS 回收站, 用户可恢复
+ */
+bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash);
 
 /* ============================================================================
  * 十三、磁盘格式化（1个）- 可选

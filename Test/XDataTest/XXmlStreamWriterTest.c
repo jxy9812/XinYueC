@@ -10,6 +10,7 @@
 #include"XClass.h"
 #include"XString.h"
 #include"XByteArray.h"
+#include"XFile.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -48,6 +49,8 @@ static bool test_copy_move(void);
 static bool test_complex_document(void);
 static bool test_write_current_token(void);
 static bool test_null_safety(void);
+static bool test_device_output(void);
+static bool test_qt_edge_semantics(void);
 
 /* ==================== 包装函数 ==================== */
 static void test_create_delete_wrapper(XVariant* d) { (void)d; test_create_delete(); }
@@ -74,6 +77,8 @@ static void test_copy_move_wrapper(XVariant* d) { (void)d; test_copy_move(); }
 static void test_complex_document_wrapper(XVariant* d) { (void)d; test_complex_document(); }
 static void test_write_current_token_wrapper(XVariant* d) { (void)d; test_write_current_token(); }
 static void test_null_safety_wrapper(XVariant* d) { (void)d; test_null_safety(); }
+static void test_device_output_wrapper(XVariant* d) { (void)d; test_device_output(); }
+static void test_qt_edge_semantics_wrapper(XVariant* d) { (void)d; test_qt_edge_semantics(); }
 /* ==================== 测试1: 创建和删除测试 ==================== */
 static bool test_create_delete(void)
 {
@@ -179,19 +184,47 @@ static bool test_write_start_document(void)
         XXmlStreamWriter_delete_base(w);
     }
 
-    /* 测试 writeStartDocument_ex - 带编码 */
+    /* 内存输出与 Qt 的 QString 输出一致，不自动添加 encoding。 */
     {
         XXmlStreamWriter* w = XXmlStreamWriter_create();
         if (!w) { TEST_FAIL("writeStartDocument_ex", "创建失败"); return false; }
         XXmlStreamWriter_writeStartDocument_ex_utf8(w, "1.0");
         const char* result = XXmlStreamWriter_toString(w);
-        if (result && strstr(result, "UTF-8")) {
-            TEST_PASS("writeStartDocument_ex(1.0, UTF-8)");
+        if (result && strstr(result, "version=\"1.0\"") && !strstr(result, "encoding=")) {
+            TEST_PASS("writeStartDocument_ex(1.0) 内存输出");
         } else {
-            TEST_FAIL("writeStartDocument_ex(1.0, UTF-8)", "缺少UTF-8编码声明");
+            TEST_FAIL("writeStartDocument_ex(1.0)", "内存输出不符合 Qt 语义");
             all_pass = false;
         }
         XXmlStreamWriter_delete_base(w);
+    }
+
+    /* 直接调用默认重载时，内存输出同样不包含 encoding。 */
+    {
+        XXmlStreamWriter* w = XXmlStreamWriter_create();
+        if (!w) { TEST_FAIL("writeStartDocument 默认重载", "创建失败"); return false; }
+        XXmlStreamWriter_writeStartDocument(w);
+        const char* result = XXmlStreamWriter_toString(w);
+        if (result && strcmp(result, "<?xml version=\"1.0\"?>") == 0)
+            TEST_PASS("writeStartDocument 默认内存输出");
+        else { TEST_FAIL("writeStartDocument 默认重载", "输出不符合 Qt 语义"); all_pass = false; }
+        XXmlStreamWriter_delete_base(w);
+    }
+
+    /* XString 重载必须与 UTF-8 重载保持相同的内存输出语义。 */
+    {
+        XString version;
+        XString_init(&version);
+        XString_assign_utf8(&version, "1.1");
+        XXmlStreamWriter* w = XXmlStreamWriter_create();
+        if (!w) { XString_deinit_base(&version); TEST_FAIL("writeStartDocument XString", "创建失败"); return false; }
+        XXmlStreamWriter_writeStartDocument_ex(w, &version);
+        const char* result = XXmlStreamWriter_toString(w);
+        if (result && strcmp(result, "<?xml version=\"1.1\"?>") == 0)
+            TEST_PASS("writeStartDocument_ex XString 内存输出");
+        else { TEST_FAIL("writeStartDocument_ex XString", "输出不符合 Qt 语义"); all_pass = false; }
+        XXmlStreamWriter_delete_base(w);
+        XString_deinit_base(&version);
     }
 
     /* 测试 writeStartDocument_ex_2 - 带编码和独立标志 */
@@ -201,12 +234,27 @@ static bool test_write_start_document(void)
         XXmlStreamWriter_writeStartDocument_ex_2_utf8(w, "1.0", true);
         const char* result = XXmlStreamWriter_toString(w);
         if (result && strstr(result, "standalone")) {
-            TEST_PASS("writeStartDocument_ex_2(1.0, UTF-8, standalone)");
+            TEST_PASS("writeStartDocument_ex_2(1.0, standalone)");
         } else {
-            TEST_FAIL("writeStartDocument_ex_2(1.0, UTF-8, standalone)", "缺少standalone属性");
+            TEST_FAIL("writeStartDocument_ex_2(1.0, standalone)", "缺少standalone属性");
             all_pass = false;
         }
         XXmlStreamWriter_delete_base(w);
+    }
+
+    {
+        XString version;
+        XString_init(&version);
+        XString_assign_utf8(&version, "1.1");
+        XXmlStreamWriter* w = XXmlStreamWriter_create();
+        if (!w) { XString_deinit_base(&version); TEST_FAIL("writeStartDocument_ex_2 XString", "创建失败"); return false; }
+        XXmlStreamWriter_writeStartDocument_ex_2(w, &version, false);
+        const char* result = XXmlStreamWriter_toString(w);
+        if (result && strcmp(result, "<?xml version=\"1.1\" standalone=\"no\"?>") == 0)
+            TEST_PASS("writeStartDocument_ex_2 XString 内存输出");
+        else { TEST_FAIL("writeStartDocument_ex_2 XString", "输出不符合 Qt 语义"); all_pass = false; }
+        XXmlStreamWriter_delete_base(w);
+        XString_deinit_base(&version);
     }
 
     /* 测试 writeStartDocument - 带版本号验证 */
@@ -276,10 +324,10 @@ static bool test_write_start_end_element(void)
         XXmlStreamWriter_writeStartElement_utf8(w, "root");
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
-        if (result && strstr(result, "<root>") && strstr(result, "</root>")) {
+        if (result && strstr(result, "<root/>")) {
             TEST_PASS("writeStartElement/writeEndElement");
         } else {
-            TEST_FAIL("writeStartElement/writeEndElement", "缺少<root></root>标记");
+            TEST_FAIL("writeStartElement/writeEndElement", "未按 Qt 语义写成空元素");
             all_pass = false;
         }
         XXmlStreamWriter_delete_base(w);
@@ -310,7 +358,7 @@ static bool test_write_start_end_element(void)
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
-        if (result && strstr(result, "<root>") && strstr(result, "<child>") && strstr(result, "</root>")) {
+        if (result && strstr(result, "<root>") && strstr(result, "<child/>") && strstr(result, "</root>")) {
             TEST_PASS("多层嵌套元素");
         } else {
             TEST_FAIL("多层嵌套元素", "缺少嵌套结构");
@@ -330,7 +378,7 @@ static bool test_write_start_end_element(void)
         XXmlStreamWriter_writeEndElement(w);
         XXmlStreamWriter_writeEndElement(w);
         const char* result = XXmlStreamWriter_toString(w);
-        if (result && strstr(result, "<a>") && strstr(result, "<b>") && strstr(result, "<c>") && strstr(result, "</a>")) {
+        if (result && strstr(result, "<a>") && strstr(result, "<b>") && strstr(result, "<c/>") && strstr(result, "</a>")) {
             TEST_PASS("深层嵌套3层");
         } else {
             TEST_FAIL("深层嵌套3层", "缺少嵌套结构");
@@ -1042,6 +1090,23 @@ static bool test_auto_formatting(void)
         XXmlStreamWriter_delete_base(w);
     }
 
+    /* Qt 以负缩进表示 Tab；绝对值表示每层的 Tab 数。 */
+    {
+        XXmlStreamWriter* w = XXmlStreamWriter_create();
+        if (!w) { TEST_FAIL("负缩进", "创建失败"); return false; }
+        XXmlStreamWriter_setAutoFormatting(w, true);
+        XXmlStreamWriter_setAutoFormattingIndent(w, -1);
+        XXmlStreamWriter_writeStartElement_utf8(w, "root");
+        XXmlStreamWriter_writeStartElement_utf8(w, "child");
+        XXmlStreamWriter_writeEndElement(w);
+        XXmlStreamWriter_writeEndElement(w);
+        const char* result = XXmlStreamWriter_toString(w);
+        if (result && strstr(result, "\n\t<child"))
+            TEST_PASS("负缩进使用 Tab");
+        else { TEST_FAIL("负缩进", "未按 Tab 输出"); all_pass = false; }
+        XXmlStreamWriter_delete_base(w);
+    }
+
     return all_pass;
 }
 
@@ -1442,6 +1507,96 @@ static bool test_null_safety(void)
 
     return all_pass;
 }
+
+/* ==================== 测试: QIODevice 输出 ==================== */
+static bool test_device_output(void)
+{
+    TEST_INFO("===== QIODevice 输出测试 =====");
+    bool all_pass = true;
+    XString* path = XString_create_utf8("xmlstream_writer_device_test.xml");
+    XFile_remove_static(path);
+    XFile* file = XFile_create_2(path);
+    if (!path || !file || !XFile_open_2(file,
+            XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
+            XFile_ReadOwner | XFile_WriteOwner)) {
+        TEST_FAIL("Writer setDevice", "无法打开临时输出文件");
+        if (file) XFile_deleteLater(file);
+        if (path) { XFile_remove_static(path); XString_delete_base(path); }
+        return false;
+    }
+    XXmlStreamWriter* writer = XXmlStreamWriter_create();
+    XXmlStreamWriter_setDevice(writer, (XIODevice*)file);
+    XXmlStreamWriter_writeStartDocument(writer);
+    XXmlStreamWriter_writeStartElement_utf8(writer, "root");
+    XXmlStreamWriter_writeCharacters_utf8(writer, "device");
+    XXmlStreamWriter_writeEndDocument(writer);
+    if (!XXmlStreamWriter_hasError(writer)) TEST_PASS("写入设备无错误");
+    else { TEST_FAIL("写入设备", "Writer 报告错误"); all_pass = false; }
+    XXmlStreamWriter_delete_base(writer);
+    XIODevice_close_base((XIODevice*)file);
+    XFile_deleteLater(file);
+
+    XFile* readFile = XFile_create_2(path);
+    XByteArray* bytes = NULL;
+    if (readFile && XFile_open_2(readFile, XIODevice_ReadOnly | XIODevice_Existing,
+            XFile_ReadOwner | XFile_WriteOwner))
+        bytes = XIODevice_readAll_3((XIODevice*)readFile);
+    const char* output = bytes ? (const char*)XByteArray_data(bytes) : NULL;
+    if (output && strstr(output, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") &&
+        strstr(output, "<root>device</root>")) TEST_PASS("设备内容与 Qt 编码语义一致");
+    else { TEST_FAIL("设备内容", "未写入预期 XML"); all_pass = false; }
+    if (bytes) XByteArray_delete_base(bytes);
+    if (readFile) { XIODevice_close_base((XIODevice*)readFile); XFile_deleteLater(readFile); }
+    XFile_remove_static(path);
+    XString_delete_base(path);
+    return all_pass;
+}
+
+/* ==================== 测试: Qt 文档边界与设备错误语义 ==================== */
+static bool test_qt_edge_semantics(void)
+{
+    TEST_INFO("===== Qt 文档边界/设备错误测试 =====");
+    bool all_pass = true;
+
+    XXmlStreamWriter* writer = XXmlStreamWriter_create();
+    XXmlStreamWriter_writeStartElement_utf8(writer, "root");
+    XXmlStreamWriter_writeStartElement_utf8(writer, "child");
+    XXmlStreamWriter_writeEndDocument(writer);
+    const char* output = XXmlStreamWriter_toString(writer);
+    size_t outputLength = output ? strlen(output) : 0;
+    if (output && strcmp(output, "<root><child/></root>\n") == 0 &&
+        outputLength > 0 && output[outputLength - 1] == '\n')
+        TEST_PASS("writeEndDocument 自动关闭元素并写入换行");
+    else { TEST_FAIL("writeEndDocument 边界语义", "输出不符合 Qt 语义"); all_pass = false; }
+    XXmlStreamWriter_delete_base(writer);
+
+    XString* path = XString_create_utf8("xmlstream_writer_readonly_test.xml");
+    XFile_remove_static(path);
+    XFile* seed = XFile_create_2(path);
+    bool seeded = seed && XFile_open_2(seed,
+        XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
+        XFile_ReadOwner | XFile_WriteOwner);
+    if (seeded) {
+        XIODevice_write_3((XIODevice*)seed, "seed");
+        XIODevice_close_base((XIODevice*)seed);
+    }
+    if (seed) XFile_deleteLater(seed);
+
+    XFile* readOnly = XFile_create_2(path);
+    bool opened = readOnly && XFile_open_2(readOnly, XIODevice_ReadOnly | XIODevice_Existing,
+        XFile_ReadOwner | XFile_WriteOwner);
+    writer = XXmlStreamWriter_create();
+    XXmlStreamWriter_setDevice(writer, (XIODevice*)readOnly);
+    XXmlStreamWriter_writeStartElement_utf8(writer, "root");
+    if (seeded && opened && XXmlStreamWriter_hasError(writer))
+        TEST_PASS("设备写入失败传播 hasError");
+    else { TEST_FAIL("设备写入失败", "未报告 hasError"); all_pass = false; }
+    XXmlStreamWriter_delete_base(writer);
+    if (readOnly) { XIODevice_close_base((XIODevice*)readOnly); XFile_deleteLater(readOnly); }
+    XFile_remove_static(path);
+    XString_delete_base(path);
+    return all_pass;
+}
 /* ==================== 全量测试 ==================== */
 static void XXmlStreamWriterTest_all(XVariant* data)
 {
@@ -1473,6 +1628,8 @@ static void XXmlStreamWriterTest_all(XVariant* data)
     if (test_complex_document()) pass++; else fail++;
     if (test_write_current_token()) pass++; else fail++;
     if (test_null_safety()) pass++; else fail++;
+    if (test_device_output()) pass++; else fail++;
+    if (test_qt_edge_semantics()) pass++; else fail++;
 
     TEST_INFO("========== 测试结果: %d 通过, %d 失败 ==========", pass, fail);
 }
@@ -1532,4 +1689,8 @@ void XMenu_XXmlStreamWriterTest(XMenu* root)
     XAction_setAction(action, test_write_current_token_wrapper);
     action = XMenu_addAction(menu, "NULL安全");
     XAction_setAction(action, test_null_safety_wrapper);
+    action = XMenu_addAction(menu, "QIODevice 输出");
+    XAction_setAction(action, test_device_output_wrapper);
+    action = XMenu_addAction(menu, "Qt 文档边界/设备错误");
+    XAction_setAction(action, test_qt_edge_semantics_wrapper);
 }

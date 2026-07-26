@@ -815,21 +815,22 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * 内存映射
  * ============================================================================ */
 
-void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable)
+void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
 {
     if (fd < 0 || size <= 0) return NULL;
+    (void)flags;  /* Win32 端 MapPrivateOption 等价于 FILE_MAP_COPY */
     
     HANDLE hFile = XW32_getFile(fd);
     if (hFile == INVALID_HANDLE_VALUE) return NULL;
     
-    DWORD protect = writable ? PAGE_READWRITE : PAGE_READONLY;
+    DWORD protect = (flags & 0x2) ? PAGE_READWRITE : PAGE_READONLY;
     DWORD sizeHigh = (DWORD)(size >> 32);
     DWORD sizeLow = (DWORD)(size & 0xFFFFFFFF);
     
     HANDLE hMap = CreateFileMappingW(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
     if (!hMap) return NULL;
     
-    DWORD access = writable ? FILE_MAP_WRITE : FILE_MAP_READ;
+    DWORD access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
     DWORD offsetHigh = (DWORD)(offset >> 32);
     DWORD offsetLow = (DWORD)(offset & 0xFFFFFFFF);
     
@@ -845,11 +846,48 @@ bool XFileSystem_unmap(void* addr, int64_t size)
     if (!addr) return false;
     return UnmapViewOfFile(addr) != 0;
 }
+
+/* ============================================================================
+ * 回收站 (SHFileOperation)
+ * ============================================================================ */
+
+/**
+ * @brief Windows 端将文件移动到回收站。
+ *        使用 SHFileOperationW(FO_DELETE|FOF_ALLOWUNDO); 失败时退化为 XFileSystem_remove.
+ */
+bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash)
+{
+    if (!fileName) return false;
+    wchar_t* wpath = XStringToWidePath(fileName);
+    if (!wpath) return false;
+    size_t len = wcslen(wpath);
+    wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
+    if (!wpathDouble) { XFree_System(wpath); return false; }
+    wcscpy(wpathDouble, wpath);
+    wpathDouble[len] = 0;
+    wpathDouble[len + 1] = 0;
+    XFree_System(wpath);
+
+    SHFILEOPSTRUCTW shfos;
+    memset(&shfos, 0, sizeof(shfos));
+    shfos.wFunc = FO_DELETE;
+    shfos.pFrom = wpathDouble;
+    shfos.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    int rc = SHFileOperationW(&shfos);
+    XFree_System(wpathDouble);
+    if (rc == 0 && !shfos.fAnyOperationsAborted) {
+        if (pathInTrash) XString_assign_utf8(pathInTrash, "");
+        return true;
+    }
+    /* 退化: 直接删除 */
+    return XFileSystem_remove(fileName);
+}
+
 /**
  * @brief 通过文件描述符设置文件时间
  * @param fd 文件描述符（XFileDescriptor 表索引）
  * @param timeType 时间类型（访问时间/修改时间/创建时间）
- * @param timeValue 时间值（Unix时间戳，秒）
+ * @param newDate 新的 XDateTime 时间值（使用 XinYueC 自己的日期时间类型，不再使用 C time API）
  * @return 成功返回true
  * @note 直接操作已打开的 HANDLE，调用 SetFileTime。
  *       路径版需求由上层通过 open→setFileTime→close 组合实现。

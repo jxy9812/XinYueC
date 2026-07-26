@@ -104,8 +104,25 @@ void XContentTypes_addWorkbook(XContentTypes* self);
  * @param  name  工作表部件路径
  */
 void XContentTypes_addWorksheetName(XContentTypes* self, const XString* name);
+/**
+ * @brief 使用 UTF-8 扩展名和 MIME 类型添加默认内容类型。
+ * @param self  内容类型管理器指针。
+ * @param key   UTF-8 文件扩展名，不含点号。
+ * @param value UTF-8 MIME 类型。
+ */
 void XContentTypes_addDefault_utf8(XContentTypes* self, const char* key, const char* value);
+/**
+ * @brief 使用 UTF-8 部件路径和 MIME 类型添加覆盖内容类型。
+ * @param self  内容类型管理器指针。
+ * @param key   UTF-8 部件路径。
+ * @param value UTF-8 MIME 类型。
+ */
 void XContentTypes_addOverride_utf8(XContentTypes* self, const char* key, const char* value);
+/**
+ * @brief 使用 UTF-8 路径注册工作表内容类型。
+ * @param self 内容类型管理器指针。
+ * @param name UTF-8 工作表部件路径；可为 NULL 使用自动路径。
+ */
 void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name);
 
 /**

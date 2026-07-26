@@ -4,55 +4,75 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XMediaFile.h"
+#include "XCryptographicHash.h"
 #include "XMemory.h"
 #include <stdlib.h>
 
 #include <string.h>
 
+static void delete_string(XString* value)
+{
+    if (value) XString_delete_base(value);
+}
+
+static void delete_contents(XByteArray* value)
+{
+    if (value) XByteArray_delete_base(value);
+}
 
 XMediaFile* XMediaFile_create(const XString* fileName)
 {
     XMediaFile* self = (XMediaFile*)XMalloc_System(sizeof(XMediaFile));
     if (!self) return NULL;
     memset(self, 0, sizeof(XMediaFile));
-    self->m_index = -1;
+    self->m_index = 0;
     if (fileName) XMediaFile_setFileName(self, fileName);
     return self;
 }
 
 XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType)
 {
+    if (!bytes && dataSize > 0) return NULL;
     XMediaFile* self = XMediaFile_create(NULL);
     if (!self) return NULL;
     XMediaFile_set(self, bytes, dataSize, suffix, mimeType);
+    if (!self->m_contents || (suffix && !self->m_suffix) ||
+        (mimeType && !self->m_mimeType)) {
+        XMediaFile_delete(self);
+        return NULL;
+    }
     return self;
 }
 
 void XMediaFile_delete(XMediaFile* self)
 {
     if (!self) return;
-    if (self->m_fileName) { XString_deinit_base(self->m_fileName); XFree_System(self->m_fileName); }
-    if (self->m_contents) { XByteArray_deinit_base(self->m_contents); XFree_System(self->m_contents); }
-    if (self->m_suffix) { XString_deinit_base(self->m_suffix); XFree_System(self->m_suffix); }
-    if (self->m_mimeType) { XString_deinit_base(self->m_mimeType); XFree_System(self->m_mimeType); }
+    delete_string(self->m_fileName);
+    delete_contents(self->m_contents);
+    delete_string(self->m_suffix);
+    delete_string(self->m_mimeType);
     XFree_System(self);
 }
 
 void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, const XString* suffix, const XString* mimeType)
 {
-    if (!self) return;
-    if (self->m_contents) { XByteArray_deinit_base(self->m_contents); XFree_System(self->m_contents); }
-    self->m_contents = XByteArray_create_with_data((const char*)bytes, dataSize);
-    if (suffix)
-    {
-        if (!self->m_suffix) self->m_suffix = XString_create();
-        if (self->m_suffix) { XString_clear_base(self->m_suffix); XString_append(self->m_suffix, suffix); }
+    if (!self || (!bytes && dataSize > 0)) return;
+    XByteArray* newContents = XByteArray_create_with_data((const char*)bytes, dataSize);
+    XString* newSuffix = suffix ? XString_create_copy(suffix) : NULL;
+    XString* newMimeType = mimeType ? XString_create_copy(mimeType) : NULL;
+    if (!newContents || (suffix && !newSuffix) || (mimeType && !newMimeType)) {
+        delete_contents(newContents);
+        delete_string(newSuffix);
+        delete_string(newMimeType);
+        return;
     }
-    if (mimeType)
-    {
-        if (!self->m_mimeType) self->m_mimeType = XString_create();
-        if (self->m_mimeType) { XString_clear_base(self->m_mimeType); XString_append(self->m_mimeType, mimeType); }
-    }
+    delete_contents(self->m_contents);
+    delete_string(self->m_suffix);
+    delete_string(self->m_mimeType);
+    self->m_contents = newContents;
+    self->m_suffix = newSuffix;
+    self->m_mimeType = newMimeType;
+    self->m_indexValid = false;
 }
 
 const XString* XMediaFile_suffix(const XMediaFile* self)
@@ -73,8 +93,10 @@ void XMediaFile_setIndex(XMediaFile* self, int idx) { if (self) { self->m_index 
 void XMediaFile_setFileName(XMediaFile* self, const XString* name)
 {
     if (!self) return;
-    if (!self->m_fileName) self->m_fileName = XString_create();
-    if (self->m_fileName) { XString_clear_base(self->m_fileName); if (name) XString_append(self->m_fileName, name); }
+    XString* replacement = name ? XString_create_copy(name) : NULL;
+    if (name && !replacement) return;
+    delete_string(self->m_fileName);
+    self->m_fileName = replacement;
 }
 const XString* XMediaFile_fileName(const XMediaFile* self)
 { return (self && self->m_fileName) ? self->m_fileName : NULL; }
@@ -82,13 +104,23 @@ const XString* XMediaFile_fileName(const XMediaFile* self)
 void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen)
 {
     if (!self || !outKey || !outLen) { if (outKey) *outKey = NULL; if (outLen) *outLen = 0; return; }
+    if (!self->m_contents) { *outKey = NULL; *outLen = 0; return; }
     const uint8_t* contents = XMediaFile_contents(self);
     size_t size = XMediaFile_contentsSize(self);
-    if (!contents || size == 0) { *outKey = NULL; *outLen = 0; return; }
-    /* 简单哈希：使用内容的直接拷贝作为键（与 QXlsx 的 QCryptographicHash 对齐） */
-    uint8_t* key = (uint8_t*)XMalloc_System(size);
-    if (!key) { *outKey = NULL; *outLen = 0; return; }
-    memcpy(key, contents, size);
+    if (!contents && size > 0) { *outKey = NULL; *outLen = 0; return; }
+    XByteArray* digest = XCryptographicHash_hash(
+        contents ? (const char*)contents : "", size,
+        XCryptographicHash_Md5);
+    size_t digestSize = digest ? XByteArray_size_base(digest) : 0;
+    uint8_t* key = digestSize > 0 ? (uint8_t*)XMalloc_System(digestSize) : NULL;
+    if (!key) {
+        if (digest) XByteArray_delete_base(digest);
+        *outKey = NULL;
+        *outLen = 0;
+        return;
+    }
+    memcpy(key, XByteArray_data(digest), digestSize);
+    XByteArray_delete_base(digest);
     *outKey = key;
-    *outLen = size;
+    *outLen = digestSize;
 }

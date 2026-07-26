@@ -35,12 +35,15 @@ const XReadSax_Options XReadSax_DefaultOptions = { 0, 0, 0, 0, true, true };
 int XReadSax_parseColLetters(const XString* letters, int* lettersLen)
 {
     const char* lettersUtf8 = letters ? XString_toUtf8(letters) : NULL;
+    if (lettersLen) *lettersLen = 0;
     if (!lettersUtf8 || !lettersUtf8[0]) return 0;
     int col = 0;
     int len = 0;
     const char* p = lettersUtf8;
-    while (*p && isalpha((unsigned char)*p)) {
-        col = col * 26 + (toupper((unsigned char)*p) - 'A' + 1);
+    while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
+        int digit = (*p >= 'a' && *p <= 'z') ? *p - 'a' + 1 : *p - 'A' + 1;
+        if (col > (INT32_MAX - digit) / 26) return 0;
+        col = col * 26 + digit;
         ++p;
         ++len;
     }
@@ -59,14 +62,24 @@ bool XReadSax_parseCellRef(const XString* ref, int* outRow, int* outCol)
 {
     const char* refUtf8 = ref ? XString_toUtf8(ref) : NULL;
     if (!refUtf8 || !outRow || !outCol) return false;
+    const char* p = refUtf8;
+    if (*p == '$') ++p;
+    int col = 0;
     int lettersLen = 0;
-    int col = XReadSax_parseColLetters(ref, &lettersLen);
-    if (col <= 0 || lettersLen == 0) return false;
-    const char* rowPart = refUtf8 + lettersLen;
+    while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
+        int digit = (*p >= 'a' && *p <= 'z') ? *p - 'a' + 1 : *p - 'A' + 1;
+        if (col > (INT32_MAX - digit) / 26) return false;
+        col = col * 26 + digit;
+        ++p;
+        ++lettersLen;
+    }
+    if (col <= 0 || col > 16384 || lettersLen == 0) return false;
+    if (*p == '$') ++p;
+    const char* rowPart = p;
     char* end = NULL;
     errno = 0;
     long row = strtol(rowPart, &end, 10);
-    if (end == rowPart || *end != '\0' || row <= 0 || errno == ERANGE) return false;
+    if (end == rowPart || *end != '\0' || row <= 0 || row > 1048576 || errno == ERANGE) return false;
     *outRow = (int)row;
     *outCol = col;
     return true;
@@ -92,9 +105,23 @@ bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outL
     XZipReader_delete(zip);
     if (!xmlData) return true;  /* 文件不存在，视为成功（空列表）*/
 
-    XXmlStreamReader* reader = XXmlStreamReader_create();
-    XXmlStreamReader_addData(reader, xmlData);
+    bool result = XReadSax_loadSharedStringsXml(XByteArray_data(xmlData),
+        XByteArray_size_base(xmlData), outList);
     XByteArray_delete_base(xmlData);
+    return result;
+}
+
+bool XReadSax_loadSharedStringsXml(const uint8_t* xmlData, size_t xmlLen, XStringList* outList)
+{
+    if (!xmlData || xmlLen == 0 || !outList) return false;
+    XByteArray* xml = XByteArray_create_with_data((const char*)xmlData, xmlLen);
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    if (!xml || !reader) {
+        if (xml) XByteArray_delete_base(xml);
+        if (reader) XXmlStreamReader_delete_base(reader);
+        return false;
+    }
+    XXmlStreamReader_addData(reader, xml);
 
     bool in_si = false;
     XString* acc = XString_create();
@@ -109,11 +136,10 @@ bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outL
             if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = true;
                 XString_clear_base(acc);
-            }
-        } else if (tt == XXmlStream_Characters ) {
-            if (in_si) {
-                const XString* txt = XXmlStreamReader_text_const(reader);
-                if (txt) XString_append(acc, txt);
+            } else if (in_si && XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
+                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                    XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                if (text) XString_append(acc, text);
             }
         } else if (tt == XXmlStream_EndElement) {
             const XString* name = XXmlStreamReader_name_const(reader);
@@ -121,14 +147,17 @@ bool XReadSax_loadSharedStringsFromZip(const XString* zipPath, XStringList* outL
             if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = false;
                 XString* s = XString_create_copy(acc);
-                XStringList_push_back_base((XVector*)outList, &s);
+                XStringList_push_back_base((XVector*)outList, s);
+                XString_delete_base(s);
             }
         }
     }
 
     XString_delete_base(acc);
+    bool ok = !XXmlStreamReader_hasError(reader);
     XXmlStreamReader_delete_base(reader);
-    return true;
+    XByteArray_delete_base(xml);
+    return ok;
 }
 
 /* ========== 3. SAX 解析工作表 XML ========== */
@@ -148,12 +177,18 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                             XReadSax_CellCallback onCell,
                             void* userData)
 {
-    if (!sheetXml || !onCell) return false;
+    if (!sheetXml || sheetLen == 0 || !onCell) return false;
     static const XReadSax_Options defaultOpt = { 0, 0, 0, 0, true, true };
     if (!opt) opt = &defaultOpt;
 
+    XByteArray* xml = XByteArray_create_with_data((const char*)sheetXml, sheetLen);
     XXmlStreamReader* reader = XXmlStreamReader_create();
-    XXmlStreamReader_addData_utf8(reader, (const char*)sheetXml);
+    if (!xml || !reader) {
+        if (xml) XByteArray_delete_base(xml);
+        if (reader) XXmlStreamReader_delete_base(reader);
+        return false;
+    }
+    XXmlStreamReader_addData(reader, xml);
 
     typedef enum {
         ST_ROOT,       /* 根元素之外 */
@@ -165,10 +200,13 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
     int cell_row = 0, cell_col = 0;
     char cell_ref[32] = {0};
     char cell_type[16] = {0};   /* s=shared, b=bool, e=error, str=formula, inlineStr */
-    char value_buf[512] = {0};
-    size_t value_len = 0;
+    XString* value = XString_create();
+    if (!value) {
+        XXmlStreamReader_delete_base(reader);
+        XByteArray_delete_base(xml);
+        return false;
+    }
     bool has_value = false;
-    bool in_cell_child = false;
 
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
@@ -185,17 +223,15 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                 state = ST_CELL;
                 cell_ref[0] = '\0';
                 cell_type[0] = '\0';
-                value_buf[0] = '\0';
-                value_len = 0;
+                XString_clear_base(value);
                 has_value = false;
-                in_cell_child = false;
 
                 const XXmlStreamAttributes* attrs = XXmlStreamReader_attributes(reader);
                 if (attrs) {
                     XString_Init_Utf8(rName, "r");
                     XString_Init_Utf8(tName, "t");
-                    const XString* r = XXmlStreamAttributes_value_ex(attrs, NULL, &rName);
-                    const XString* t = XXmlStreamAttributes_value_ex(attrs, NULL, &tName);
+                    const XString* r = XXmlStreamAttributes_value_ex(attrs, NULL, rName);
+                    const XString* t = XXmlStreamAttributes_value_ex(attrs, NULL, tName);
                     if (r) {
                         const char* rStr = XString_toUtf8(r);
                         if (rStr && strlen(rStr) < sizeof(cell_ref)) strcpy(cell_ref, rStr);
@@ -204,41 +240,25 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                         const char* tStr = XString_toUtf8(t);
                         if (tStr && strlen(tStr) < sizeof(cell_type)) strcpy(cell_type, tStr);
                     }
+                    XString_deinit_base(rName);
+                    XString_deinit_base(tName);
                 }
                 if (cell_ref[0]) {
-                    XReadSax_parseCellRef(cell_ref, &cell_row, &cell_col);
+                    XString_Init_Utf8(cellRef, cell_ref);
+                    if (!XReadSax_parseCellRef(cellRef, &cell_row, &cell_col)) {
+                        cell_row = 0;
+                        cell_col = 0;
+                    }
+                    XString_deinit_base(cellRef);
                 }
             } else if (state == ST_CELL) {
-                in_cell_child = true;
-                if (XString_equals_utf8(name, "v", XChar_CaseSensitive) || XString_equals_utf8(name, "f", XChar_CaseSensitive)) {
+                if (XString_equals_utf8(name, "v", XChar_CaseSensitive) ||
+                    XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
                     const XString* txt = XXmlStreamReader_readElementText_const(reader,
                         XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                     if (txt) {
-                        const char* txtStr = XString_toUtf8(txt);
-                        if (txtStr) {
-                            size_t len = strlen(txtStr);
-                            if (len < sizeof(value_buf) - value_len) {
-                                memcpy(value_buf + value_len, txtStr, len + 1);
-                                value_len += len;
-                                if (XString_equals_utf8(name, "v", XChar_CaseSensitive)) has_value = true;
-                            }
-                        }
-                    }
-                    in_cell_child = false;
-                }
-            }
-        } else if (tt == XXmlStream_Characters ) {
-            if (state == ST_CELL && !in_cell_child && !has_value) {
-                const XString* txt = XXmlStreamReader_text_const(reader);
-                if (txt) {
-                    const char* txtStr = XString_toUtf8(txt);
-                    if (txtStr) {
-                        size_t len = strlen(txtStr);
-                        if (len < sizeof(value_buf) - value_len) {
-                            memcpy(value_buf + value_len, txtStr, len);
-                            value_len += len;
-                            value_buf[value_len] = '\0';
-                        }
+                        XString_append(value, txt);
+                        has_value = true;
                     }
                 }
             }
@@ -257,23 +277,21 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                 }
 
                 /* 解析值 */
+                if (cell_row <= 0 || cell_col <= 0) {
+                    state = ST_SHEETDATA;
+                    continue;
+                }
                 const char* type_str = cell_type;
-                const char* value_str = value_buf;
-                char resolved[512] = {0};
+                const XString* callbackValue = value;
 
                 if (cell_type[0] == 's' && has_value && sharedStrings) {
+                    const char* valueUtf8 = XString_toUtf8(value);
+                    char* end = NULL;
                     errno = 0;
-                    long idx = strtol(value_buf, NULL, 10);
+                    long idx = strtol(valueUtf8 ? valueUtf8 : "", &end, 10);
                     if (errno == 0 && idx >= 0 && idx < (long)XStringList_size_base((const XVector*)sharedStrings)) {
-                        XString** arr = (XString**)XStringList_at_base((XVector*)sharedStrings, (size_t)idx);
-                        if (arr && *arr) {
-                            const char* s = XString_toUtf8(*arr);
-                            if (s) {
-                                strncpy(resolved, s, sizeof(resolved) - 1);
-                                resolved[sizeof(resolved) - 1] = '\0';
-                                value_str = resolved;
-                            }
-                        }
+                        XString* item = (XString*)XStringList_at_base((XVector*)sharedStrings, (size_t)idx);
+                        if (item && end && *end == '\0') callbackValue = item;
                     }
                     type_str = "s";
                 } else if (cell_type[0] == '\0' && has_value) {
@@ -284,10 +302,15 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                     continue;
                 }
 
-                if (!onCell(cell_row, cell_col, value_str, type_str, userData)) {
+                XString_Init_Utf8(tmpType, type_str);
+                if (!onCell(cell_row, cell_col, callbackValue, tmpType, userData)) {
+                    XString_deinit_base(tmpType);
+                    XString_delete_base(value);
                     XXmlStreamReader_delete_base(reader);
+                    XByteArray_delete_base(xml);
                     return true;  /* 回调返回 false，停止解析 */
                 }
+                XString_deinit_base(tmpType);
                 state = ST_SHEETDATA;
             } else if (state == ST_SHEETDATA && XString_equals_utf8(name, "sheetData", XChar_CaseSensitive)) {
                 state = ST_ROOT;
@@ -295,8 +318,11 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
         }
     }
 
+    bool hasError = XXmlStreamReader_hasError(reader);
+    XString_delete_base(value);
     XXmlStreamReader_delete_base(reader);
-    return !XXmlStreamReader_hasError(reader);
+    XByteArray_delete_base(xml);
+    return !hasError;
 }
 
 /* ========== 4. 从ZIP读取指定sheet ========== */

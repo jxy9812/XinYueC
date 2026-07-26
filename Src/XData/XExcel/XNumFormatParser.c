@@ -1,36 +1,54 @@
 #include "XNumFormatParser.h"
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include <ctype.h>
+static bool is_builtin_date_format(int code)
+{
+    return (code >= 14 && code <= 22) || (code >= 27 && code <= 36) ||
+           (code >= 45 && code <= 47) || (code >= 50 && code <= 58) ||
+           (code >= 71 && code <= 81);
+}
 
-static const char* s_dateTokens[] = {
-    "yyyy", "yy", "mmmm", "mmm", "mm", "m", "dddd", "ddd", "dd", "d",
-    "hh", "h", "ss", "s", "AM/PM", "A/P", "am/pm", "a/p",
-    NULL
-};
-bool XNumFormatParser_isDateTime(const XString* formatCode) {
+bool XNumFormatParser_isDateTime(const XString* formatCode)
+{
     const char* fc = formatCode ? XString_toUtf8(formatCode) : NULL;
-    if (!fc || strlen(fc) == 0) return false;
-    /* 检查内置日期格式 */
-    int code = atoi(fc);
-    if ((code >= 14 && code <= 22) || (code >= 27 && code <= 36) || (code >= 45 && code <= 47) ||
-        (code >= 50 && code <= 58) || (code >= 71 && code <= 81) || code == 164 || code == 165 ||
-        code == 166 || code == 167 || code == 168 || code == 169 || code == 170 ||
-        code == 171 || code == 172 || code == 173 || code == 174 || code == 175 ||
-        code == 176 || code == 177 || code == 178 || code == 179 || code == 180 ||
-        code == 181 || code == 182 || code == 183 || code == 184 || code == 185 ||
-        code == 186 || code == 187 || code == 188 || code == 189 || code == 190 ||
-        code == 191 || code == 192 || code == 193 || code == 194 || code == 195 ||
-        code == 196 || code == 197 || code == 198 || code == 199 || code == 200 ||
-        code == 201 || code == 202 || code == 203 || code == 204 || code == 205 ||
-        code == 206 || code == 207 || code == 208 || code == 209 || code == 210 ||
-        code == 211 || code == 212 || code == 213 || code == 214 || code == 215 ||
-        code == 216 || code == 217 || code == 218 || code == 219 || code == 220) {
-        return true;
-    }
-    /* 检查自定义格式中的日期/时间标记 */
-    for (int i = 0; s_dateTokens[i] != NULL; ++i) {
-        if (strstr(fc, s_dateTokens[i]) != NULL) return true;
+    if (!fc || !*fc) return false;
+
+    /* 仅当整个字符串是十进制编号时，才按 Excel 内置 numFmtId 判断。 */
+    char* end = NULL;
+    long code = strtol(fc, &end, 10);
+    if (end != fc && *end == '\0') return is_builtin_date_format((int)code);
+
+    bool quoted = false;
+    for (size_t i = 0; fc[i] != '\0'; ++i) {
+        unsigned char ch = (unsigned char)fc[i];
+        if (ch == '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (quoted) continue;
+        if (ch == '\\' || ch == '_' || ch == '*') {
+            if (fc[i + 1] != '\0') ++i;
+            continue;
+        }
+        if (ch == '[') {
+            size_t close = i + 1;
+            while (fc[close] != '\0' && fc[close] != ']') ++close;
+            if (fc[close] == ']') {
+                size_t token = i + 1;
+                while (token < close && isspace((unsigned char)fc[token])) ++token;
+                if (token < close) {
+                    int lower = tolower((unsigned char)fc[token]);
+                    if (lower == 'h' || lower == 'm' || lower == 's') return true;
+                }
+                i = close;
+                continue;
+            }
+        }
+        ch = (unsigned char)tolower(ch);
+        if (ch == 'y' || ch == 'm' || ch == 'd' || ch == 'h' || ch == 's')
+            return true;
     }
     return false;
 }

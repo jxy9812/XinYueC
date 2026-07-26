@@ -53,6 +53,11 @@ XCellReference XCellReference_create_ex(int row, int column);
  * @return     解析后的 XCellReference 对象，无效字符串返回无效对象
  */
 XCellReference XCellReference_create_str(const XString* cell);
+/**
+ * @brief 从 UTF-8 单元格引用文本创建引用值对象。
+ * @param cell UTF-8 引用文本，例如 "A1"。
+ * @return 解析后的引用值对象；文本无效时返回无效引用。
+ */
 XCellReference XCellReference_create_str_utf8(const char* cell);
 
 /**
@@ -90,6 +95,11 @@ void XCellReference_init_ex(XCellReference* self, int row, int column);
  * @param cell 单元格引用字符串（如 "A1"）
  */
 void XCellReference_init_str(XCellReference* self, const XString* cell);
+/**
+ * @brief 使用 UTF-8 文本初始化单元格引用。
+ * @param self 单元格引用值对象指针。
+ * @param cell UTF-8 引用文本，例如 "B2"。
+ */
 void XCellReference_init_str_utf8(XCellReference* self, const char* cell);
 
 /* ========== 访问方法 ========== */
@@ -156,6 +166,11 @@ XString XCellReference_columnToName(int column);
  * @return     列号（1 索引），无效时返回 -1
  */
 int XCellReference_nameToColumn(const XString* colName);
+/**
+ * @brief 将 UTF-8 列名转换为 1 起始的列号。
+ * @param colName UTF-8 列名，例如 "A" 或 "AA"。
+ * @return 列号；名称无效返回 0 或负值，具体以实现约定为准。
+ */
 int XCellReference_nameToColumn_utf8(const char* colName);
 
 /* ========== 比较运算符（内联函数） ========== */

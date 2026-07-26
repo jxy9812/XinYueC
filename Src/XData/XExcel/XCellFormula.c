@@ -53,8 +53,8 @@ void XCellFormula_delete(XCellFormula* self)
 {
     if (self)
     {
-        if (self->m_text) { XString_deinit_base(self->m_text); XFree_System(self->m_text); }
-        if (self->m_ca) { XString_deinit_base(self->m_ca); XFree_System(self->m_ca); }
+        if (self->m_text) XString_delete_base(self->m_text);
+        if (self->m_ca) XString_delete_base(self->m_ca);
         XFree_System(self);
     }
 }
@@ -136,10 +136,7 @@ bool XCellFormula_equals(const XCellFormula* a, const XCellFormula* b)
     if (a->m_type != b->m_type) return false;
     if (a->m_sharedIndex != b->m_sharedIndex) return false;
     if (!XCellRange_equals(&a->m_reference, &b->m_reference)) return false;
-    /* 比较文本 */
-    const char* ta = (a->m_text) ? XString_toUtf8(a->m_text) : "";
-    const char* tb = (b->m_text) ? XString_toUtf8(b->m_text) : "";
-    return strcmp(ta, tb) == 0;
+    return XString_compare(a->m_text, b->m_text) == XCompare_Equality;
 }
 
 bool XCellFormula_notEquals(const XCellFormula* a, const XCellFormula* b)

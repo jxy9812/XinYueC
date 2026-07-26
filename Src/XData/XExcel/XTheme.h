@@ -65,6 +65,24 @@ void XTheme_setThemeXmlData(XTheme* self, const XString* data);
 const XString* XTheme_themeXmlData(const XTheme* self);
 
 /**
+ * @brief  将主题 XML 复制到新分配的 UTF-8 字节缓冲区
+ * @param  self    XTheme 指针
+ * @param  data    输出缓冲区，调用者使用 XFree_System 释放
+ * @param  length  输出字节数，不包含结尾 NUL
+ * @return 成功返回 true
+ */
+bool XTheme_saveToXmlData(const XTheme* self, uint8_t** data, size_t* length);
+
+/**
+ * @brief  从指定长度的 UTF-8 字节缓冲区加载主题 XML
+ * @param  self    XTheme 指针
+ * @param  data    输入缓冲区，不要求以 NUL 结尾
+ * @param  length  输入字节数
+ * @return 成功返回 true
+ */
+bool XTheme_loadFromXmlData(XTheme* self, const uint8_t* data, size_t length);
+
+/**
  * @brief  将主题保存为 XML 文件
  * @param  self      XTheme 指针
  * @param  filePath  输出文件路径

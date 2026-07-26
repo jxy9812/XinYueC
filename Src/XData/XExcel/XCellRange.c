@@ -167,9 +167,12 @@ XCellReference XCellRange_bottomRight(const XCellRange* self)
 
 bool XCellRange_isValid(const XCellRange* self)
 {
-    return self && self->m_firstRow > 0 && self->m_firstColumn > 0
+    return self && self->m_firstRow > 0 && self->m_firstRow <= 1048576
+        && self->m_firstColumn > 0 && self->m_firstColumn <= 16384
         && self->m_lastRow >= self->m_firstRow
-        && self->m_lastColumn >= self->m_firstColumn;
+        && self->m_lastRow <= 1048576
+        && self->m_lastColumn >= self->m_firstColumn
+        && self->m_lastColumn <= 16384;
 }
 
 XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs)

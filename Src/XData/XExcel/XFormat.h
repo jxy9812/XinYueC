@@ -406,20 +406,31 @@ const XString* XFormat_fontName(const XFormat* self);
  * @param name 字体名称
  */
 void XFormat_setFontName(XFormat* self, const XString* name);
+/**
+ * @brief 使用 UTF-8 文本设置字体名称。
+ * @param self 格式对象指针。
+ * @param name UTF-8 字体名称，可为 NULL 清除名称。
+ */
 void XFormat_setFontName_utf8(XFormat* self, const char* name);
+
+/**
+ * @brief 获取字体名称的 UTF-8 文本。
+ * @param self 格式对象指针。
+ * @return UTF-8 字体名称；未设置或失败时返回 NULL。返回指针属于对象内部，不可释放。
+ */
 const char* XFormat_fontName_utf8(const XFormat* self);
 
 /**
  * @brief      获取字体对象
  * @param self 指针
- * @return     字体指针
+ * @return     新创建的字体对象，调用者负责调用 XFont_delete 释放；失败返回 NULL
  */
 XFont* XFormat_font(const XFormat* self);
 
 /**
  * @brief      设置字体
  * @param self 指针
- * @param font 字体指针
+ * @param font 字体指针；属性会被复制，调用者保留所有权
  */
 void XFormat_setFont(XFormat* self, const XFont* font);
 

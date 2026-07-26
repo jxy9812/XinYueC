@@ -18,6 +18,12 @@ extern "C" {
 #include "XVector.h"
 #include "XMap.h"
 #include "XAbstractOOXmlFile.h"
+
+/** @brief 应用属性中的标题对（名称及对应部件数量） */
+typedef struct XDocPropsAppHeadingPair {
+    XString* m_name; /**< 标题对名称，内部所有 */
+    int m_value;     /**< 对应数量 */
+} XDocPropsAppHeadingPair;
 /** @brief XDocPropsApp 应用程序属性结构体 */
 typedef struct XDocPropsApp {
     XAbstractOOXmlFile m_base;         /**< 基类 */
@@ -78,6 +84,30 @@ const XString* XDocPropsApp_property(const XDocPropsApp* self, const XString* na
  * @return      属性数量
  */
 int XDocPropsApp_propertyNames(const XDocPropsApp* self, XString*** names);
+
+/**
+ * @brief      清空标题对与部件标题列表
+ * @param self 应用程序属性对象指针
+ */
+void XDocPropsApp_clearParts(XDocPropsApp* self);
+
+/**
+ * @brief  将应用程序属性序列化为 XML 数据
+ * @param  self    应用程序属性对象指针
+ * @param  outData [out] XML 数据，调用者使用 XFree_System 释放
+ * @param  outLen  [out] XML 数据长度
+ * @return 成功返回 true
+ */
+bool XDocPropsApp_saveToXmlData(const XDocPropsApp* self, uint8_t** outData, size_t* outLen);
+
+/**
+ * @brief  从 XML 数据加载应用程序属性
+ * @param  self 应用程序属性对象指针
+ * @param  data XML 数据
+ * @param  len  XML 数据长度
+ * @return 成功返回 true
+ */
+bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_t len);
 
 /**
  * @brief      保存到 XML 文件
