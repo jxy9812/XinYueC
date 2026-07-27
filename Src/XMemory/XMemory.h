@@ -160,6 +160,14 @@ void* XMalloc_MultiPool(size_t size);
 void* XMalloc_Hybrid(size_t size);
 
 /**
+ * @brief 复制以 NUL 结尾的 UTF-8 字符串
+ * @param text 源字符串，为 NULL 时返回 NULL
+ * @return 使用 XMemory 系统分配器创建的副本，失败返回 NULL
+ * @note 返回值必须使用 XFree_System 释放
+ */
+char* XMemory_strdup(const char* text);
+
+/**
 * @brief 使用系统内存方法申请满足指定对齐要求的内存
 * @param size 申请大小（字节）
 * @param alignment 对齐值，必须为2的幂

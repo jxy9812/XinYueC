@@ -1,6 +1,9 @@
 # XFTP Progress Handoff
 
 Last updated: 2026-07-27 (Asia/Shanghai)
+The work was paused after the build verification below; the remaining
+active-mode issue is intentionally recorded instead of being reported as
+complete.
 
 ## Scope
 
@@ -14,8 +17,21 @@ The following P0 fixes have been applied, primarily in
 `Src/XCode/XNetwork/XFtp/XFtp.c`:
 
 - XFtp now registers its deinitializer in the vtable. Creation initializes
-  private state, buffers, command queue, mutex, error string, listing storage,
+  embedded state, buffers, command queue, mutex, error string, listing storage,
   and the PI socket. Destruction releases those resources.
+- `XFtpPrivate` has been removed. Its live state is embedded directly in
+  `XFtp`, eliminating one heap allocation and one pointer indirection. The
+  former `m_transferDevice` mirror was also removed; transfer code uses the
+  current command's device directly.
+- Mutually exclusive storage is shared with unions: `m_dtpBuffer` and
+  `m_readBuffer` are aliases, and the compatibility `m_restOffset` slot
+  shares storage with the internal PUT write offset. These fields are not
+  accessed concurrently by their respective state machines.
+- Boolean state is packed into two `uint8_t` bitfield groups, and the finite
+  SSL/REST/MLST state values share one additional byte. The DTP state remains
+  separate from socket pointers, and the state-machine values remain separate
+  from one another because their lifetimes can overlap. The reconnect timer is
+  lazy created only when an automatic reconnect is scheduled.
 - The control socket is always created as `XSslSocket`, removing the unsafe
   runtime cast from `XTcpSocket*` to `XSslSocket*` when explicit FTPS starts.
 - Explicit FTPS control-channel flow was added: `AUTH TLS`, TLS handshake,
@@ -54,7 +70,7 @@ Related test corrections:
 - `ftp_test_server.py` was adjusted so a duplicate `MKD` uses
   `exist_ok=False`, matching normal FTP failure semantics.
 
-## Historical Windows Verification
+## Verification
 
 Build command:
 
@@ -71,41 +87,54 @@ The local server was started with:
 python ftp_test_server.py
 ```
 
-The recorded Windows run from the earlier handoff reported 16/17 passed. The
-Linux runs below are the current verification for the repaired state.
+The latest Windows build completed successfully. The latest full rerun did not
+complete all cases: passive FTP cases through APPE passed, active LIST passed,
+but active GET timed out while the server had already sent `150` and `226`.
+The test was stopped after the queue became blocked.
 
-Verified passing E2E coverage:
+Verified passing in the latest rerun:
 
 - connect/login/state machine
 - FEAT negotiation
 - LIST/MLSD with a real listing item
 - CWD/CDUP and MKDIR/RMDIR
 - PUT/GET, resumed GET, and APPE
-- passive and active FTP transfer paths
-- 256 KiB chunked PUT/GET integrity
-- ABOR followed by continued connection use
-- rename/remove and raw commands
-- SIZE, MDTM, and MLST
-- 550 error classification for missing SIZE/DELE/RMD targets
+- passive FTP transfer paths
+- active FTP LIST path
+
+Not yet verified in the latest rerun:
+
+- active FTP GET completion and subsequent queue recovery
+- 256 KiB chunked PUT/GET after the active GET timeout
+- ABOR, rename/remove, raw commands, SIZE, MDTM, MLST, and 550 classification
 
 The duplicate-MKD association issue was subsequently covered by the Linux
 run after the PI/DTP state-machine fixes.
 
-## Current Linux Verification
+## Current Verification Details
 
-- `XGuiRegression_Test` builds and passes. It covers uninitialized pixmap
-  copy, affine transform dimensions, icon size enumeration, and BMP reader /
-  writer device I/O.
-- `FtpE2E_Test` builds and exits normally. All 17 real-server cases pass,
-  including passive and active transfers, 256 KiB chunked PUT/GET, REST,
-  APPE, ABOR recovery, SIZE, MDTM, MLST, and 550 error classification.
-- `FtpE2E_Test --ssl` passes all 17 cases against the local certificate-backed
-  Explicit FTPS server. This covers TLS-protected control traffic, `PBSZ 0`,
-  `PROT P`, passive TLS data channels, REST/APPE, 256 KiB integrity, ABOR,
-  metadata commands, and 4xx/5xx classification. The active FTPS case is a
-  deliberate pass when the portable API returns `XFtp_Error_ActiveModeFailed`.
-  The test certificate is self-signed, so this test selects
-  `XSSL_VerifyNone`; the XFtp default remains `XSSL_VerifyPeer`.
+- `cmake --build build --target FtpE2E_Test --config Debug` completed with exit
+  code 0 and produced `bin/Debug/FtpE2E_Test.exe`. The build still emits many
+  existing project-wide C type warnings.
+- The latest plain FTP run reached active `GET` with `current=6` and one
+  pending command. The Python server log showed `RETR`, `150`, data send, and
+  `226`; the client did not complete the DTP transfer. This is the next fix.
+- MODE Z support is present in the source and uses
+  `XByteArray_toCompress()`/`XByteArray_toDecompress()` for transfer payloads,
+  but a complete MODE Z regression run must be repeated after the active-mode
+  fix.
+- `FtpE2E_Test --ssl --port 2122` is also 17/17 against a local
+  certificate-backed Explicit FTPS server. It covers TLS-protected control
+  traffic, `PBSZ 0`, `PROT P`, passive TLS data channels, REST/APPE, 256 KiB
+  integrity, ABOR, metadata commands, and 4xx/5xx classification. The active
+  FTPS case deliberately passes when the API returns
+  `XFtp_Error_ActiveModeFailed`. The temporary certificate was self-signed and
+  the test used `XSSL_VerifyNone`; the XFtp default remains
+  `XSSL_VerifyPeer`.
+- The temporary FTP/FTPS server processes were stopped after verification.
+- Earlier Linux verification recorded in this handoff is historical only; re-run
+  the FTP, MODE Z, Explicit FTPS, io_uring, and XTcpServer checks after the
+  active-mode fix.
 - The POSIX io_uring path now preserves completion results, uses the actual
   accepted descriptor from `IORING_OP_ACCEPT`, cancels pending operations
   before close, and keeps TCP-server descriptors separate from `XIODevice`
@@ -116,17 +145,27 @@ run after the PI/DTP state-machine fixes.
 - `ctest --test-dir build-xalignment` reports no registered CTest cases; the
   executable tests above are the available evidence.
 
-## Remaining Work
+## API Audit and Explicit Limitations
 
-The XFTP module is not yet feature-complete. Prioritize these before calling
-it complete:
-
-1. Audit every public declaration in `Src/XCode/XNetwork/XFtp/XFtp.h` and
-   `XFtpCommand.h`. Several API declarations still lack complete Doxygen
-   `@param` and return/error/lifetime documentation.
-2. Add certificate-chain and hostname-verification fixtures for FTPS E2E;
-   the current self-signed fixture intentionally exercises encrypted I/O with
-   peer verification disabled.
+- Every public function declared in `XFtp.h` has a matching implementation in
+  `XFtp.c`, including `XFtp_currentCommand`; no empty public function or
+  placeholder return was found in the final scan.
+- `XFtpCommand_class_init()` was implemented but missing from its header; its
+  public declaration and lifetime documentation were added to
+  `XFtpCommand.h`. The other `XFtpCommand` APIs document parameters, return
+  values, allocation failure, and external-device ownership.
+- MODE Z negotiation and payload handling are implemented. FEAT detection and
+  `MODE Z` negotiation are handled out of band; PUT/APPE payloads are compressed
+  with `XByteArray_toCompress()`, and GET/LIST payloads are decompressed with
+  `XByteArray_toDecompress()`. Full end-to-end coverage remains pending.
+- Active FTPS is intentionally unsupported because the portable socket API has
+  no safe descriptor-adoption path for wrapping an accepted socket in TLS.
+  Explicit FTPS passive mode is implemented and tested; active FTPS fails
+  explicitly with `XFtp_Error_ActiveModeFailed`.
+- Certificate-chain and hostname-verification fixtures remain a test-system
+  enhancement. The current FTPS fixture verifies encrypted I/O with a
+  self-signed certificate and `XSSL_VerifyNone`; production callers should use
+  the default `XSSL_VerifyPeer`.
 
 ## Linux Continuation
 
@@ -148,6 +187,14 @@ Before running the E2E test, ensure TCP port 2121 is free and that the Python
 server is using the repository root as its working directory. The test writes
 temporary files under `ftp_test_root/` and may leave generated files such as
 `xftp_dl_*.bin` and `xftp_resume_local.bin` in the repository root.
+
+Continuation priority:
+
+1. Fix active FTP GET DTP completion. Inspect the ordering of the accepted
+   socket's `readyRead`/`disconnected` events and `m_waitForDtpToClose`,
+   `m_piAckedTransfer`, and `m_dtpState` in `XFtp.c`.
+2. Rebuild and run plain FTP, `FtpE2E_Test --mode-z`, and Explicit FTPS + MODE Z.
+3. Only then update the pass counts and remove this active-mode limitation.
 
 ## Files of Interest
 

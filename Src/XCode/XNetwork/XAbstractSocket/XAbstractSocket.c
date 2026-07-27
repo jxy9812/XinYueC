@@ -307,8 +307,7 @@ void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
     if (sock->proxy.password) { XString_delete_base(sock->proxy.password); sock->proxy.password = NULL; }
 
     if (proxy) {
-        // 深拷贝代理配置（之前用 XStrdup(proxy->hostName) 是 bug：
-        // XStrdup 接收 char*，但 hostName 是 XString*，强转后 strlen
+        // 深拷贝代理配置，字符串副本统一由 XMemory 管理。
         // 会把 XString struct 的前几个字节当长度读，得到 garbage）
         sock->proxy.type = proxy->type;
         sock->proxy.capabilities = proxy->capabilities;

@@ -27,6 +27,7 @@
 #define FTP_TEST_PASS   "p1"
 
 static bool s_use_ssl = false;
+static bool s_use_compression = false;
 static int s_test_port = FTP_TEST_PORT;
 
 static int s_cmd_finished = 0;
@@ -132,12 +133,11 @@ static bool wait_state(XFtp* ftp, XFtp_State target, int timeout_ms)
 static bool connect_and_login(XFtp* ftp)
 {
     char url[128];
-    snprintf(url, sizeof(url), "ftp://%s:%u/", FTP_TEST_HOST, (unsigned)s_test_port);
+    snprintf(url, sizeof(url), "ftp://%s:%s@%s:%u/",
+             FTP_TEST_USER, FTP_TEST_PASS, FTP_TEST_HOST, (unsigned)s_test_port);
     int id = XFtp_connectToUrl(ftp, url);
     if (id < 0) return false;
     if (!wait_cmd(5000, id)) return false;
-    int loginId = XFtp_login(ftp, FTP_TEST_USER, FTP_TEST_PASS);
-    if (loginId < 0) return false;
     return wait_state(ftp, XFtp_State_LoggedIn, 5000);
 }
 
@@ -165,9 +165,10 @@ static bool t_feat(XFtp* ftp)
     }
     bool utf8 = XFtp_supportsFeature(ftp, XFtp_Feature_UTF8);
     bool mlsd = XFtp_supportsFeature(ftp, XFtp_Feature_MLSD);
+    bool modez = XFtp_supportsFeature(ftp, XFtp_Feature_MODEZ);
     bool epsv = XFtp_supportsFeature(ftp, XFtp_Feature_EPSV);
     XPrintf("    [协商结果: UTF8=%d MLSD=%d EPSV=%d]\n", utf8, mlsd, epsv);
-    return utf8 && mlsd && epsv;
+    return utf8 && mlsd && epsv && (!s_use_compression || modez);
 }
 
 static bool t_list(XFtp* ftp)
@@ -223,6 +224,12 @@ static bool t_put_get(XFtp* ftp)
     if (id < 0) return false;
     if (!wait_cmd(5000, id)) return false;
     XPrintf("    [GET 下载 OK]\n");
+
+    /* Empty uploads must still complete the data-channel handshake. */
+    id = XFtp_put(ftp, "xftp_empty.txt", NULL, 0);
+    if (id < 0 || !wait_cmd(5000, id)) return false;
+    id = XFtp_remove(ftp, "xftp_empty.txt");
+    if (id < 0 || !wait_cmd(3000, id)) return false;
     return true;
 }
 
@@ -329,6 +336,9 @@ static bool download_verify(XFtp* ftp, const char* remote,
     bool got = (id >= 0) && wait_cmd(30000, id);
     XIODevice_close_base((XIODevice*)wf);
     if (!got) {
+        XPrintf("    [GET 命令未完成: state=%d error=%d current=%d id=%d pending=%d]\n",
+                XFtp_state(ftp), XFtp_error(ftp), XFtp_currentCommand(ftp),
+                XFtp_currentId(ftp), XFtp_hasPendingCommands(ftp) ? 1 : 0);
         XClass_delete_base((XClass*)wf); XString_delete_base(lfn); return false;
     }
 
@@ -615,6 +625,8 @@ int main(int argc, char* argv[])
         if (strcmp(argv[i], "--ssl") == 0) {
             s_use_ssl = true;
             s_test_port = FTPS_TEST_PORT;
+        } else if (strcmp(argv[i], "--mode-z") == 0) {
+            s_use_compression = true;
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             s_test_port = atoi(argv[++i]);
         }
@@ -635,6 +647,15 @@ int main(int argc, char* argv[])
         XFtp_setSsl(ftp, true);
         /* 测试服务器使用临时自签名证书；仍验证 TLS 握手和加密 IO。 */
         XFtp_setSslPeerVerifyMode(ftp, XSSL_VerifyNone);
+    }
+    if (s_use_compression) XFtp_setCompression(ftp, true);
+    /* Calls made before authentication must fail synchronously and must not
+     * leave a command in the queue that blocks the later connection. */
+    if (XFtp_list(ftp, ".") != -1 || XFtp_error(ftp) != XFtp_Error_NotLoggedIn) {
+        XPrintf("[致命] 未登录操作未按约定失败\n");
+        XClass_delete_base((XClass*)ftp);
+        XCoreApplication_delete_base(XCoreApplication_instance());
+        return 1;
     }
     XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);

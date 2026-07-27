@@ -170,21 +170,26 @@ XByteArray* XByteArray_fromBase64(XByteArray* base64)
 #include"zlib.h"
 XByteArray* XByteArray_toCompress(XByteArray* sData)
 {
-	if (sData == NULL || XByteArray_isEmpty_base(sData))
+	if (sData == NULL)
 		return NULL;
 
 	// 获取输入数据
+	static const uint8_t empty_input = 0;
 	const uint8_t* input_data = XByteArray_data(sData);
 	uLongf input_len = XContainerSize(sData);
+	if (!input_data) input_data = &empty_input;
 
 	// 计算压缩缓冲区所需的最大大小
 	uLongf output_len = compressBound(input_len);
 
 	// 创建压缩结果缓冲区
 	XByteArray* compressed = XByteArray_create();
-	XByteArray_resize_base(compressed, output_len);
 	if (compressed == NULL)
 		return NULL;
+	if (!XByteArray_resize_base(compressed, output_len)) {
+		XByteArray_delete_base(compressed);
+		return NULL;
+	}
 
 	uint8_t* output_data = XByteArray_data(compressed);
 

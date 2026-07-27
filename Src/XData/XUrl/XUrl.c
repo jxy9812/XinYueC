@@ -4,6 +4,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XUrl.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -697,7 +698,7 @@ XString* XUrl_toDisplayString(const XUrl* self, int options)
     if (!self) return NULL;
     XString* result = XUrl_toString(self);
     if (!result) return NULL;
-    char* temp = strdup(XString_toUtf8(result));
+    char* temp = XMemory_strdup(XString_toUtf8(result));
     if (!temp) { XString_delete_base(result); return NULL; }
     if (options & XUrl_RemoveScheme) {
         const XString* scheme = XUrl_scheme_const(self);
@@ -730,7 +731,7 @@ XString* XUrl_toDisplayString(const XUrl* self, int options)
         if (len > 0 && temp[len-1] == '/') temp[len-1] = '\0';
     }
     XString_assign_utf8(result, temp);
-    free(temp);
+    XFree_System(temp);
     return result;
 }
 XUrl* XUrl_fromLocalFile(const XString* localfile)
@@ -771,7 +772,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     }
     XString* base = XUrl_toString(self);
     if (!base) return;
-    char* baseUtf8 = strdup(XString_toUtf8(base));
+    char* baseUtf8 = XMemory_strdup(XString_toUtf8(base));
     XString_delete_base(base);
     if (!baseUtf8) return;
     char* lastSlash = strrchr(baseUtf8, '/');
@@ -782,7 +783,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     }
     strncat(baseUtf8, relUtf8, 4096 - strlen(baseUtf8) - 1);
     XString* combined = XString_create_utf8(baseUtf8);
-    free(baseUtf8);
+    XFree_System(baseUtf8);
     XUrl_setUrl(out, combined, XUrl_TolerantMode);
     XString_delete_base(combined);
 }

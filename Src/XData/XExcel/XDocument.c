@@ -81,6 +81,39 @@ static void appendDrawingMarker(XByteArray* xml, int row, int column)
     XByteArray_append_utf8(xml, buffer);
 }
 
+static uint32_t readBigEndianUInt32(const uint8_t* data)
+{
+    return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
+        ((uint32_t)data[2] << 8) | (uint32_t)data[3];
+}
+
+static void imageDisplaySize(const XMediaFile* media, int* width, int* height)
+{
+    const int maxWidth = 480;
+    const int maxHeight = 240;
+    int sourceWidth = 128;
+    int sourceHeight = 128;
+    const uint8_t* bytes = media ? XMediaFile_contents(media) : NULL;
+    size_t size = media ? XMediaFile_contentsSize(media) : 0;
+    static const uint8_t pngSignature[8] = { 0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a };
+    if (bytes && size >= 24 && memcmp(bytes, pngSignature, sizeof(pngSignature)) == 0) {
+        uint32_t pngWidth = readBigEndianUInt32(bytes + 16);
+        uint32_t pngHeight = readBigEndianUInt32(bytes + 20);
+        if (pngWidth > 0 && pngHeight > 0 && pngWidth <= 100000 && pngHeight <= 100000) {
+            sourceWidth = (int)pngWidth;
+            sourceHeight = (int)pngHeight;
+        }
+    }
+
+    double scale = 1.0;
+    if (sourceWidth > maxWidth) scale = (double)maxWidth / sourceWidth;
+    if (sourceHeight * scale > maxHeight) scale = (double)maxHeight / sourceHeight;
+    *width = (int)(sourceWidth * scale + 0.5);
+    *height = (int)(sourceHeight * scale + 0.5);
+    if (*width < 1) *width = 1;
+    if (*height < 1) *height = 1;
+}
+
 static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
                                  int drawingIndex, int* nextImageIndex,
                                  int* nextChartIndex)
@@ -124,18 +157,26 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
             relationTarget);
         int rid = XRelationships_lastAssignedRidFor(&drawingRels);
 
+        int imageWidth = 0;
+        int imageHeight = 0;
+        imageDisplaySize(media, &imageWidth, &imageHeight);
+        long long widthEmu = (long long)imageWidth * 9525LL;
+        long long heightEmu = (long long)imageHeight * 9525LL;
         XByteArray_append_utf8(drawing, "<xdr:oneCellAnchor>");
         appendDrawingMarker(drawing, position->m_row, position->m_column);
-        XByteArray_append_utf8(drawing, "<xdr:ext cx=\"609600\" cy=\"609600\"/>");
+        char extentXml[128];
+        snprintf(extentXml, sizeof(extentXml), "<xdr:ext cx=\"%lld\" cy=\"%lld\"/>",
+            widthEmu, heightEmu);
+        XByteArray_append_utf8(drawing, extentXml);
         char pictureXml[1024];
         snprintf(pictureXml, sizeof(pictureXml),
             "<xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"%d\" name=\"Picture %d\"/>"
             "<xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"rId%d\"/>"
             "<a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>"
-            "<a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"609600\" cy=\"609600\"/></a:xfrm>"
+            "<a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"%lld\" cy=\"%lld\"/></a:xfrm>"
             "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>"
             "<xdr:clientData/></xdr:oneCellAnchor>",
-            (int)i + 1, imageIndex, rid);
+            (int)i + 1, imageIndex, rid, widthEmu, heightEmu);
         XByteArray_append_utf8(drawing, pictureXml);
     }
     for (size_t i = 0; ok && i < chartCount; ++i) {
@@ -160,17 +201,17 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
         appendDrawingMarker(drawing, chart->m_row, chart->m_col);
         char frame[2048];
         snprintf(frame, sizeof(frame),
-            "<xdr:ext cx=\"%lld\" cy=\"%lld\"/><xdr:graphicFrame macro=\"\">"
-            "<xdr:nvGraphicFramePr><xdr:cNvPr id=\"%d\" name=\"Chart %d\"/>"
-            "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm>"
-            "<a:off x=\"0\" y=\"0\"/><a:ext cx=\"%lld\" cy=\"%lld\"/></xdr:xfrm>"
-            "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
-            "<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
-            "r:id=\"rId%d\"/></a:graphicData></a:graphic></xdr:graphicFrame>"
-            "<xdr:clientData/></xdr:oneCellAnchor>",
-            (long long)chart->m_width * 9525LL, (long long)chart->m_height * 9525LL,
-            (int)imageCount + (int)i + 1, chartIndex,
-            (long long)chart->m_width * 9525LL, (long long)chart->m_height * 9525LL, rid);
+             "<xdr:ext cx=\"%lld\" cy=\"%lld\"/><xdr:graphicFrame macro=\"\">"
+             "<xdr:nvGraphicFramePr><xdr:cNvPr id=\"%d\" name=\"Chart %d\"/>"
+             "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm>"
+             "<a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>"
+             "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
+             "<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
+             "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+             "r:id=\"rId%d\"/></a:graphicData></a:graphic></xdr:graphicFrame>"
+             "<xdr:clientData/></xdr:oneCellAnchor>",
+             (long long)chart->m_width * 9525LL, (long long)chart->m_height * 9525LL,
+             (int)imageCount + (int)i + 1, chartIndex, rid);
         XByteArray_append_utf8(drawing, frame);
     }
     XByteArray_append_utf8(drawing, "</xdr:wsDr>");
@@ -218,16 +259,18 @@ static bool saveChartsheetDrawing(XZipWriter* zip, const XChartsheet* chartsheet
         "<xdr:absoluteAnchor><xdr:pos x=\"0\" y=\"0\"/>");
     char frame[2048];
     snprintf(frame, sizeof(frame),
-        "<xdr:ext cx=\"%lld\" cy=\"%lld\"/><xdr:graphicFrame macro=\"\">"
-        "<xdr:nvGraphicFramePr><xdr:cNvPr id=\"1\" name=\"Chart %d\"/>"
-        "<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm>"
-        "<a:off x=\"0\" y=\"0\"/><a:ext cx=\"%lld\" cy=\"%lld\"/></xdr:xfrm>"
+         "<xdr:ext cx=\"%lld\" cy=\"%lld\"/><xdr:graphicFrame macro=\"\">"
+        "<xdr:nvGraphicFramePr><xdr:cNvPr id=\"2\" name=\"Chart %d\"/>"
+        "<xdr:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/>"
+        "</xdr:cNvGraphicFramePr></xdr:nvGraphicFramePr><xdr:xfrm>"
+        "<a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>"
         "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
         "<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
         "r:id=\"rId1\"/></a:graphicData></a:graphic></xdr:graphicFrame>"
         "<xdr:clientData/></xdr:absoluteAnchor></xdr:wsDr>",
         (long long)chart->m_width * 9525LL, (long long)chart->m_height * 9525LL,
-        chartIndex, (long long)chart->m_width * 9525LL, (long long)chart->m_height * 9525LL);
+        chartIndex);
     XByteArray_append_utf8(drawing, frame);
     snprintf(path, sizeof(path), "xl/drawings/drawing%d.xml", drawingIndex);
     ok = zipAddFile_cstr(zip, path, XByteArray_data(drawing),
@@ -946,7 +989,22 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
     XByteArray_append_utf8(themeBuf, "      <a:minorFont><a:latin typeface=\"Calibri\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont>\n");
     XByteArray_append_utf8(themeBuf, "    </a:fontScheme>\n");
     XByteArray_append_utf8(themeBuf, "    <a:fmtScheme name=\"Office\">\n");
-    XByteArray_append_utf8(themeBuf, "      <a:fillStyleList><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:gradFill rotWithShape=\"1\"><a:gsL><a:pos val=\"0\"/><a:schemeClr val=\"phClr\"/></a:gsL><a:gsL><a:pos val=\"10000\"/><a:schemeClr val=\"phClr\"/></a:gsL><a:path path=\"circle\"><a:fillRect l=\"0\" r=\"0\" t=\"0\" b=\"0\"/></a:path></a:gradFill></a:fillStyleList>\n");
+    XByteArray_append_utf8(themeBuf, "      <a:fillStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"/></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"/></a:gs></a:gsLst><a:lin ang=\"5400000\" scaled=\"0\"/></a:gradFill>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"/></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"/></a:gs></a:gsLst><a:path path=\"circle\"><a:fillToRect l=\"0\" t=\"0\" r=\"0\" b=\"0\"/></a:path></a:gradFill>\n");
+    XByteArray_append_utf8(themeBuf, "      </a:fillStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "      <a:lnStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:ln w=\"25400\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:ln w=\"38100\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>\n");
+    XByteArray_append_utf8(themeBuf, "      </a:lnStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "      <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "      <a:bgFillStyleLst>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"/></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"/></a:gs></a:gsLst><a:lin ang=\"5400000\" scaled=\"0\"/></a:gradFill>\n");
+    XByteArray_append_utf8(themeBuf, "        <a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"/></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"/></a:gs></a:gsLst><a:path path=\"circle\"><a:fillToRect l=\"0\" t=\"0\" r=\"0\" b=\"0\"/></a:path></a:gradFill>\n");
+    XByteArray_append_utf8(themeBuf, "      </a:bgFillStyleLst>\n");
     XByteArray_append_utf8(themeBuf, "    </a:fmtScheme>\n");
     XByteArray_append_utf8(themeBuf, "  </a:themeElements>\n");
     XByteArray_append_utf8(themeBuf, "</a:theme>\n");
@@ -970,12 +1028,32 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
 
     XDocPropsApp* appProperties = ((XDocument*)self)->m_docPropsApp;
     XDocPropsApp_clearParts(appProperties);
-    XString_Init_Utf8(worksheetHeading, "Worksheets");
-    XDocPropsApp_addHeadingPair(appProperties, worksheetHeading, sheetCount);
-    XString_deinit_base(worksheetHeading);
+    int worksheetCount = 0;
+    int chartsheetCount = 0;
     for (int i = 0; i < sheetCount; ++i) {
         XAbstractSheet* sheet = XWorkbook_sheet(wb, i);
-        if (sheet && sheet->m_sheetName) XDocPropsApp_addPartTitle(appProperties, sheet->m_sheetName);
+        if (!sheet) continue;
+        if (sheet->m_sheetType == XAbstractSheet_ST_ChartSheet) ++chartsheetCount;
+        else ++worksheetCount;
+    }
+    if (worksheetCount > 0) {
+        XString_Init_Utf8(worksheetHeading, "Worksheets");
+        XDocPropsApp_addHeadingPair(appProperties, worksheetHeading, worksheetCount);
+        XString_deinit_base(worksheetHeading);
+    }
+    if (chartsheetCount > 0) {
+        XString_Init_Utf8(chartHeading, "Charts");
+        XDocPropsApp_addHeadingPair(appProperties, chartHeading, chartsheetCount);
+        XString_deinit_base(chartHeading);
+    }
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < sheetCount; ++i) {
+            XAbstractSheet* sheet = XWorkbook_sheet(wb, i);
+            bool isChartsheet = sheet &&
+                sheet->m_sheetType == XAbstractSheet_ST_ChartSheet;
+            if (sheet && sheet->m_sheetName && isChartsheet == (pass == 1))
+                XDocPropsApp_addPartTitle(appProperties, sheet->m_sheetName);
+        }
     }
     propertyData = NULL;
     propertyLength = 0;

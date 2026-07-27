@@ -304,6 +304,12 @@ void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out);
  */
 void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out);
 
+/** @brief 将图像转换到现有像素图；失败时保留原像素图。 */
+bool XPixmap_convertFromImage(XPixmap* self, const XImage* image, uint32_t flags);
+
+/** @brief 交换两个像素图的数据所有权，支持自交换。 */
+void XPixmap_swap(XPixmap* self, XPixmap* other);
+
 /* ========== 文件操作 ========== */
 
 /**

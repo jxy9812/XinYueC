@@ -16,6 +16,7 @@ import ssl
 import threading
 import time
 import argparse
+import zlib
 
 HOST = '127.0.0.1'
 PORT = 2121
@@ -48,6 +49,7 @@ class FtpSession:
         self.rest_offset = 0
         self.rename_from = None
         self.transfer_type = 'I'
+        self.compression = False
 
     def real_path(self, path):
         """Resolve FTP path to (normalized_ftp_path, real_fs_path)."""
@@ -192,7 +194,7 @@ class FtpSession:
         # ---- RFC 2389：FEAT/OPTS 必须允许认证前使用；SYST/NOOP 同理 ----
         if cmd == 'FEAT':
             feats = ['UTF8', 'MLSD', 'EPSV', 'EPRT', 'REST STREAM',
-                     'TVFS', 'ABOR', 'SIZE', 'MDTM', 'AUTH TLS',
+                     'TVFS', 'ABOR', 'SIZE', 'MDTM', 'MODE Z', 'AUTH TLS',
                      'PBSZ', 'PROT P']
             # 多行响应：每行以 CRLF 结尾，最后一行 "211 End" 也必须带 CRLF
             self.conn.sendall(b'211-Features:\r\n')
@@ -347,7 +349,16 @@ class FtpSession:
         elif cmd == 'ABOR':
             self.close_data()
             send_ctrl(self.conn, 226, 'ABOR command successful')
-        elif cmd in ('STRU', 'MODE', 'ALLO'):
+        elif cmd == 'MODE':
+            if arg.upper() == 'Z':
+                self.compression = True
+                send_ctrl(self.conn, 200, 'MODE Z enabled')
+            elif arg.upper() == 'S':
+                self.compression = False
+                send_ctrl(self.conn, 200, 'MODE S enabled')
+            else:
+                send_ctrl(self.conn, 504, f'Unsupported MODE {arg}')
+        elif cmd in ('STRU', 'ALLO'):
             send_ctrl(self.conn, 200, f'{cmd} ok')
         else:
             send_ctrl(self.conn, 502, f'{cmd} not implemented')
@@ -390,7 +401,10 @@ class FtpSession:
                     size = stat.st_size
                     mtime = time.strftime('%b %d %H:%M', time.localtime(stat.st_mtime))
                     data += f'{perms} {nlink:>3} owner group {size:>8} {mtime} {name}\r\n'
-            self.data_sock.sendall(data.encode('utf-8'))
+            payload = data.encode('utf-8')
+            if self.compression:
+                payload = zlib.compress(payload)
+            self.data_sock.sendall(payload)
         except Exception as e:
             log(f'LIST/MLSD error: {e}')
         finally:
@@ -432,11 +446,10 @@ class FtpSession:
             with open(real, 'rb') as f:
                 if offset > 0:
                     f.seek(offset)
-                while True:
-                    chunk = f.read(8192)
-                    if not chunk:
-                        break
-                    self.data_sock.sendall(chunk)
+                payload = f.read()
+                if self.compression:
+                    payload = zlib.compress(payload)
+                self.data_sock.sendall(payload)
         except Exception as e:
             log(f'RETR error: {e}')
         finally:
@@ -452,13 +465,17 @@ class FtpSession:
             return
         send_ctrl(self.conn, 150, f'Opening data connection for {arg}')
         try:
+            payload = bytearray()
+            while True:
+                chunk = self.data_sock.recv(8192)
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            if self.compression:
+                payload = zlib.decompress(bytes(payload))
             mode = 'ab' if append else 'wb'
             with open(real, mode) as f:
-                while True:
-                    chunk = self.data_sock.recv(8192)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+                f.write(payload)
         except Exception as e:
             log(f'STOR/APPE error: {e}')
         finally:

@@ -260,7 +260,7 @@ static void VXExample_copy(XExample* dest, const XExample* src)
 
     // 深拷贝动态分配的成员
     if (src->m_data) {
-        dest->m_data = XStrdup(src->m_data);
+        dest->m_data = XMemory_strdup(src->m_data);
     }
 
     //对于成员也是类的，可以直接调用成员的拷贝函数，而无需先释放.
@@ -675,6 +675,28 @@ XHostAddress_deinit_base(&src);
 | `XType_move_base(dest, src)` | 移动语义（转移资源所有权） |
 | `XType_deinit_base(obj)` | 反初始化对象（释放资源） |
 | `XType_delete_base(obj)` | 删除堆对象（反初始化 + 释放内存） |
+
+### 强制内存分配规则
+
+**严禁在 XinYueC 源码中直接使用 C 语言的 `malloc`、`calloc`、`realloc`、
+`free` 或 `strdup`。** 所有动态内存必须通过
+`Src/XMemory/XMemory.h` 提供的接口申请、重分配和释放，不得绕过库的内存
+管理策略调用 C 运行库分配函数。
+
+```c
+// 正确：使用 XMemory 接口，并使用同一分配器族配对释放
+void* ptr = XMalloc_System(size);
+ptr = XRealloc_System(ptr, newSize);
+XFree_System(ptr);
+
+char* text = XMemory_strdup(source);
+XFree_System(text);
+```
+
+根据分配接口选择匹配的释放函数：`XMalloc_System` 对应 `XFree_System`，
+`XMalloc_MultiPool` 对应 `XFree_MultiPool`，`XMalloc_Hybrid` 对应
+`XFree_Hybrid`。只有 `Src/XMemory` 内部实现可以封装底层分配后端；业务模块、
+容器、驱动和第三方库适配层都必须使用 `XMemory.h` 的公开接口。
 
 ### 内存分配器体系
 

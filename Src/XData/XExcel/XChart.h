@@ -71,6 +71,7 @@ typedef struct XChart {
     XString* m_axisTitleRight;              /**< 右侧轴标题 */
     XString* m_axisTitleTop;                /**< 顶部轴标题 */
     XString* m_axisTitleBottom;             /**< 底部轴标题 */
+    XString* m_dataSheetName;               /**< 图表数据所属工作表名称 */
     bool m_majorGridlinesEnable;            /**< 是否启用主网格线 */
     bool m_minorGridlinesEnable;           /**< 是否启用次网格线 */
     int m_row;                             /**< 所在行 */
@@ -113,6 +114,20 @@ void XChart_delete(XChart* self);
  * @param swapHeaders  是否交换行列标题
  */
 void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders);
+
+/**
+ * @brief 设置图表数据所属的工作表名称。
+ * @param self  图表指针
+ * @param name  工作表名称；传入 NULL 清除显式设置
+ */
+void XChart_setDataSheetName(XChart* self, const XString* name);
+
+/**
+ * @brief 使用 UTF-8 文本设置图表数据所属的工作表名称。
+ * @param self  图表指针
+ * @param name  UTF-8 工作表名称；传入 NULL 清除显式设置
+ */
+void XChart_setDataSheetName_utf8(XChart* self, const char* name);
 
 /**
  * @brief      设置图表类型

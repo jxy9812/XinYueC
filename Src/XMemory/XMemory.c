@@ -47,6 +47,18 @@ void* XMalloc_Hybrid(size_t size)
 {
 	return XMemory_malloc(size, XMEMORY_TYPE_HYBRID);
 }
+char* XMemory_strdup(const char* text)
+{
+	size_t length;
+	char* copy;
+	if (!text) return NULL;
+	length = strlen(text);
+	if (length == SIZE_MAX) return NULL;
+	copy = (char*)XMalloc_System(length + 1);
+	if (!copy) return NULL;
+	memcpy(copy, text, length + 1);
+	return copy;
+}
 void* XAlignedMalloc_System(size_t size, size_t alignment)
 {
 	if (alignment < sizeof(void*))

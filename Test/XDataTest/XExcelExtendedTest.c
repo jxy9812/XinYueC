@@ -1255,23 +1255,31 @@ static bool test_document_properties_roundtrip(void)
     XString_Init_Utf8(titleValue, "研发 & 测试 <2026>");
     XString_Init_Utf8(createdName, "created");
     XString_Init_Utf8(createdValue, "2026-07-26T12:34:56Z");
+    XString_Init_Utf8(authorName, "author");
+    XString_Init_Utf8(authorValue, "XinYueC 测试者");
     XDocPropsCore* core = XDocPropsCore_create(XAbstractOOXmlFile_F_NewFromScratch);
     CHECK(core && XDocPropsCore_setProperty(core, titleName, titleValue) &&
-          XDocPropsCore_setProperty(core, createdName, createdValue),
+          XDocPropsCore_setProperty(core, createdName, createdValue) &&
+          XDocPropsCore_setProperty(core, authorName, authorValue),
           "设置核心文档属性");
     uint8_t* coreXml = NULL;
     size_t coreLength = 0;
     CHECK(core && XDocPropsCore_saveToXmlData(core, &coreXml, &coreLength) && coreLength > 0,
           "核心属性保存为 XML 数据");
+    CHECK(coreXml && strstr((const char*)coreXml, "<dc:creator>XinYueC 测试者</dc:creator>") &&
+          !strstr((const char*)coreXml, "<author>"),
+          "作者属性序列化为标准 dc:creator");
     XDocPropsCore* loadedCore = XDocPropsCore_create(XAbstractOOXmlFile_F_LoadFromExists);
     CHECK(loadedCore && XDocPropsCore_loadFromXmlData(loadedCore, coreXml, coreLength),
           "核心属性从 XML 数据加载");
     CHECK(loadedCore && XString_equals(XDocPropsCore_property(loadedCore, titleName), titleValue,
           XChar_CaseSensitive) && XString_equals(XDocPropsCore_property(loadedCore, createdName),
-          createdValue, XChar_CaseSensitive), "核心属性特殊字符与日期往返");
+          createdValue, XChar_CaseSensitive) &&
+          XString_equals(XDocPropsCore_property(loadedCore, authorName), authorValue,
+          XChar_CaseSensitive), "核心属性特殊字符、日期与作者往返");
     XString** coreNames = NULL;
     int coreNameCount = XDocPropsCore_propertyNames(loadedCore, &coreNames);
-    CHECK(coreNameCount == 2, "核心属性名称枚举完整");
+    CHECK(coreNameCount == 3, "核心属性名称枚举完整");
     free_string_array(coreNames, coreNameCount);
     if (coreXml) XFree_System(coreXml);
 
@@ -1323,6 +1331,8 @@ static bool test_document_properties_roundtrip(void)
     XString_deinit_base(titleValue);
     XString_deinit_base(createdName);
     XString_deinit_base(createdValue);
+    XString_deinit_base(authorName);
+    XString_deinit_base(authorValue);
     XString_deinit_base(companyName);
     XString_deinit_base(companyValue);
     XString_deinit_base(headingName);
@@ -1438,6 +1448,7 @@ static bool test_document_charts_and_hyperlinks(void)
         XAbstractOOXmlFile_F_NewFromScratch);
     XChart_setChartType(chartsheetChart, XChart_PieChart);
     XChart_setChartTitle_utf8(chartsheetChart, "Chartsheet <pie>");
+    XChart_setDataSheetName_utf8(chartsheetChart, "Sheet1");
     XChart_addSeries(chartsheetChart, &seriesRange, false, false, false);
     XChartsheet_setChart(chartsheet, chartsheetChart);
     CHECK(XDocument_saveAs(document, path),
@@ -1456,6 +1467,23 @@ static bool test_document_charts_and_hyperlinks(void)
     XByteArray* drawing2 = zip ? XZipReader_fileData(zip, drawing2Path) : NULL;
     CHECK(chart1 && chart2 && chartSheetXml && drawing1 && drawing2,
           "XLSX 包含两个图表、Chartsheet 和对应 Drawing 部件");
+    CHECK(drawing1 && strstr((const char*)XByteArray_data(drawing1),
+          "<xdr:graphicFrame macro=\"\">") &&
+          strstr((const char*)XByteArray_data(drawing1),
+          "<a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>"),
+          "工作表图表 Drawing 使用标准图表框变换");
+    CHECK(drawing2 && strstr((const char*)XByteArray_data(drawing2),
+          "<xdr:graphicFrame macro=\"\">") &&
+          strstr((const char*)XByteArray_data(drawing2),
+          "<a:graphicFrameLocks noGrp=\"1\"/>") &&
+          strstr((const char*)XByteArray_data(drawing2),
+          "<a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm>"),
+          "Chartsheet Drawing 使用标准图表框和锁定属性");
+    CHECK(chartSheetXml && strstr((const char*)XByteArray_data(chartSheetXml),
+          "<sheetPr/>") &&
+          strstr((const char*)XByteArray_data(chartSheetXml), "<pageMargins ") &&
+          strstr((const char*)XByteArray_data(chartSheetXml), "<drawing r:id=\"rId1\"/>"),
+          "Chartsheet 包含标准工作表属性、页边距和绘图关系");
     if (chart1) XByteArray_delete_base(chart1);
     if (chart2) XByteArray_delete_base(chart2);
     if (chartSheetXml) XByteArray_delete_base(chartSheetXml);

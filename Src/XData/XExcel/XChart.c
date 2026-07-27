@@ -1,4 +1,5 @@
 #include "XChart.h"
+#include "XAbstractSheet.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XIODevice.h"
@@ -12,7 +13,6 @@
 #include <stdio.h>
 
 XChart* XChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag) {
-    (void)parent;
     XChart* self = (XChart*)XMalloc_System(sizeof(XChart));
     if (!self) return NULL; memset(self, 0, sizeof(XChart));
     XAbstractOOXmlFile_init(&self->m_base, flag);
@@ -21,6 +21,8 @@ XChart* XChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag
     self->m_legendPos = XChart_AxisPosRight;
     self->m_series = XVector_Create(XChart_Series);
     self->m_width = 480; self->m_height = 290;
+    if (parent && parent->m_sheetName)
+        self->m_dataSheetName = XString_create_copy(parent->m_sheetName);
     return self;
 }
 XChart* XChart_copy(const XChart* source, XAbstractSheet* parent) {
@@ -39,6 +41,8 @@ XChart* XChart_copy(const XChart* source, XAbstractSheet* parent) {
     copy->m_height = source->m_height;
     copy->m_colOffset = source->m_colOffset;
     copy->m_rowOffset = source->m_rowOffset;
+    if (source->m_dataSheetName)
+        copy->m_dataSheetName = XString_create_copy(source->m_dataSheetName);
     if (source->m_chartTitle) copy->m_chartTitle = XString_create_copy(source->m_chartTitle);
     if (source->m_axisTitleLeft) copy->m_axisTitleLeft = XString_create_copy(source->m_axisTitleLeft);
     if (source->m_axisTitleRight) copy->m_axisTitleRight = XString_create_copy(source->m_axisTitleRight);
@@ -58,6 +62,7 @@ void XChart_delete(XChart* self) {
     if (self->m_axisTitleRight) XString_delete_base(self->m_axisTitleRight);
     if (self->m_axisTitleTop) XString_delete_base(self->m_axisTitleTop);
     if (self->m_axisTitleBottom) XString_delete_base(self->m_axisTitleBottom);
+    if (self->m_dataSheetName) XString_delete_base(self->m_dataSheetName);
     if (self->m_series) XVector_delete_base(self->m_series);
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
@@ -65,6 +70,19 @@ void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool 
     if (!self || !range) return;
     XChart_Series s; memset(&s, 0, sizeof(s)); s.m_range = *range; s.m_headerH = headerH; s.m_headerV = headerV; s.m_swapHeaders = swapHeaders;
     XVector_push_back_2(self->m_series, &s, 1);
+}
+void XChart_setDataSheetName(XChart* self, const XString* name) {
+    if (!self) return;
+    if (self->m_dataSheetName) {
+        XString_delete_base(self->m_dataSheetName);
+        self->m_dataSheetName = NULL;
+    }
+    if (name) self->m_dataSheetName = XString_create_copy(name);
+}
+void XChart_setDataSheetName_utf8(XChart* self, const char* name) {
+    XString* sheetName = name ? XString_create_utf8(name) : NULL;
+    XChart_setDataSheetName(self, sheetName);
+    if (sheetName) XString_delete_base(sheetName);
 }
 void XChart_setChartType(XChart* self, XChart_ChartType type) { if (self) self->m_chartType = type; }
 void XChart_setChartStyle(XChart* self, int id) { if (self) self->m_chartStyle = id; }
@@ -141,6 +159,8 @@ static void write_chart_title(XXmlStreamWriter* writer, const XString* title)
     XXmlStreamWriter_writeStartElement_utf8(writer, "c:title");
     XXmlStreamWriter_writeStartElement_utf8(writer, "c:tx");
     XXmlStreamWriter_writeStartElement_utf8(writer, "c:rich");
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "a:bodyPr");
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "a:lstStyle");
     XXmlStreamWriter_writeStartElement_utf8(writer, "a:p");
     XXmlStreamWriter_writeStartElement_utf8(writer, "a:r");
     XXmlStreamWriter_writeTextElement_utf8(writer, "a:t", XString_toUtf8(title));
@@ -151,12 +171,147 @@ static void write_chart_title(XXmlStreamWriter* writer, const XString* title)
     XXmlStreamWriter_writeEndElement(writer);
 }
 
-static void write_axis_extension(XXmlStreamWriter* writer, const char* position, const XString* title)
+static XString chart_formula_for_range(const XChart* self, const XCellRange* range)
 {
-    if (!title || XString_isEmpty_base(title)) return;
-    XXmlStreamWriter_writeEmptyElement_utf8(writer, "xync:axis");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "pos", position);
-    XXmlStreamWriter_writeAttribute_utf8(writer, "title", XString_toUtf8(title));
+    XString formula;
+    XString_init(&formula);
+    if (!range || !XCellRange_isValid(range)) return formula;
+
+    if (self && self->m_dataSheetName &&
+        !XString_isEmpty_base(self->m_dataSheetName)) {
+        XString_append_utf8(&formula, "'");
+        const char* sheetName = XString_toUtf8(self->m_dataSheetName);
+        for (const char* p = sheetName ? sheetName : ""; *p; ++p) {
+            XString_append_utf8(&formula, *p == '\'' ? "''" : (char[2]){ *p, '\0' });
+        }
+        XString_append_utf8(&formula, "'!");
+    }
+    XString rangeText = XCellRange_toString(range, true, true);
+    XString_append(&formula, &rangeText);
+    XString_deinit_base(&rangeText);
+    return formula;
+}
+
+static void write_chart_reference(XXmlStreamWriter* writer, const char* containerName,
+                                  const char* referenceName, const XChart* chart,
+                                  const XCellRange* range)
+{
+    XXmlStreamWriter_writeStartElement_utf8(writer, containerName);
+    XXmlStreamWriter_writeStartElement_utf8(writer, referenceName);
+    XString formula = chart_formula_for_range(chart, range);
+    XXmlStreamWriter_writeTextElement_utf8(writer, "c:f", XString_toUtf8(&formula));
+    XXmlStreamWriter_writeEndElement(writer);
+    XXmlStreamWriter_writeEndElement(writer);
+    XString_deinit_base(&formula);
+}
+
+static bool chart_series_ranges(const XChart_Series* series, XCellRange* valueRange,
+                                XCellRange* categoryRange, XCellRange* titleCell)
+{
+    if (!series || !valueRange || !categoryRange || !titleCell ||
+        !XCellRange_isValid(&series->m_range)) return false;
+    XCellRange range = series->m_range;
+    int firstRow = range.m_firstRow + (series->m_headerH ? 1 : 0);
+    int firstColumn = range.m_firstColumn + (series->m_headerV ? 1 : 0);
+    if (firstRow > range.m_lastRow || firstColumn > range.m_lastColumn) return false;
+
+    *valueRange = XCellRange_create();
+    *categoryRange = XCellRange_create();
+    *titleCell = XCellRange_create();
+    if (!series->m_swapHeaders) {
+        /* 每次 addSeries 输出一个合法的列系列，避免把二维混合区域写入 numRef。 */
+        *valueRange = XCellRange_create_ex(firstRow, firstColumn,
+            range.m_lastRow, firstColumn);
+        if (series->m_headerV)
+            *categoryRange = XCellRange_create_ex(firstRow, range.m_firstColumn,
+                range.m_lastRow, range.m_firstColumn);
+        if (series->m_headerH)
+            *titleCell = XCellRange_create_ex(range.m_firstRow, firstColumn,
+                range.m_firstRow, firstColumn);
+    } else {
+        /* swapHeaders 表示按行生成系列，此时只取第一行数据。 */
+        *valueRange = XCellRange_create_ex(firstRow, firstColumn,
+            firstRow, range.m_lastColumn);
+        if (series->m_headerH)
+            *categoryRange = XCellRange_create_ex(range.m_firstRow, firstColumn,
+                range.m_firstRow, range.m_lastColumn);
+        if (series->m_headerV)
+            *titleCell = XCellRange_create_ex(firstRow, range.m_firstColumn,
+                firstRow, range.m_firstColumn);
+    }
+    return XCellRange_isValid(valueRange);
+}
+
+static void write_chart_series(XXmlStreamWriter* writer, const XChart* chart,
+                               const XChart_Series* series, size_t index)
+{
+    XCellRange valueRange;
+    XCellRange categoryRange;
+    XCellRange titleCell;
+    if (!chart_series_ranges(series, &valueRange, &categoryRange, &titleCell)) return;
+
+    char indexText[32];
+    snprintf(indexText, sizeof(indexText), "%zu", index);
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:ser");
+    write_value_element(writer, "c:idx", indexText);
+    write_value_element(writer, "c:order", indexText);
+    if (XCellRange_isValid(&titleCell))
+        write_chart_reference(writer, "c:tx", "c:strRef", chart, &titleCell);
+    if (chart->m_chartType == XChart_LineChart) {
+        XXmlStreamWriter_writeStartElement_utf8(writer, "c:marker");
+        write_value_element(writer, "c:symbol", "none");
+        XXmlStreamWriter_writeEndElement(writer);
+    }
+    if (XCellRange_isValid(&categoryRange))
+        write_chart_reference(writer, "c:cat", "c:strRef", chart, &categoryRange);
+    write_chart_reference(writer, "c:val", "c:numRef", chart, &valueRange);
+    XXmlStreamWriter_writeEndElement(writer);
+}
+
+static bool chart_type_has_axes(XChart_ChartType type)
+{
+    return type == XChart_AreaChart || type == XChart_LineChart ||
+        type == XChart_BarChart;
+}
+
+static void write_chart_axes(XXmlStreamWriter* writer, bool majorGridlinesEnable)
+{
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:catAx");
+    write_value_element(writer, "c:axId", "1");
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:scaling");
+    write_value_element(writer, "c:orientation", "minMax");
+    XXmlStreamWriter_writeEndElement(writer);
+    write_value_element(writer, "c:delete", "0");
+    write_value_element(writer, "c:axPos", "b");
+    write_value_element(writer, "c:majorTickMark", "none");
+    write_value_element(writer, "c:minorTickMark", "none");
+    write_value_element(writer, "c:tickLblPos", "nextTo");
+    write_value_element(writer, "c:crossAx", "2");
+    write_value_element(writer, "c:crosses", "autoZero");
+    write_value_element(writer, "c:auto", "1");
+    write_value_element(writer, "c:lblAlgn", "ctr");
+    write_value_element(writer, "c:lblOffset", "100");
+    XXmlStreamWriter_writeEndElement(writer);
+
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:valAx");
+    write_value_element(writer, "c:axId", "2");
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:scaling");
+    write_value_element(writer, "c:orientation", "minMax");
+    XXmlStreamWriter_writeEndElement(writer);
+    write_value_element(writer, "c:delete", "0");
+    write_value_element(writer, "c:axPos", "l");
+    if (majorGridlinesEnable)
+        XXmlStreamWriter_writeEmptyElement_utf8(writer, "c:majorGridlines");
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "c:numFmt");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "formatCode", "General");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "sourceLinked", "1");
+    write_value_element(writer, "c:majorTickMark", "none");
+    write_value_element(writer, "c:minorTickMark", "none");
+    write_value_element(writer, "c:tickLblPos", "nextTo");
+    write_value_element(writer, "c:crossAx", "1");
+    write_value_element(writer, "c:crosses", "autoZero");
+    write_value_element(writer, "c:crossBetween", "between");
+    XXmlStreamWriter_writeEndElement(writer);
 }
 
 static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
@@ -168,6 +323,11 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
         "http://schemas.openxmlformats.org/drawingml/2006/chart");
     XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:a",
         "http://schemas.openxmlformats.org/drawingml/2006/main");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:r",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+    XXmlStreamWriter_writeStartElement_utf8(writer, "c:lang");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "val", "zh-CN");
+    XXmlStreamWriter_writeEndElement(writer);
     if (self->m_chartStyle >= 0) {
         char value[32];
         snprintf(value, sizeof(value), "%d", self->m_chartStyle);
@@ -180,29 +340,31 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     char chartElementName[40];
     snprintf(chartElementName, sizeof(chartElementName), "c:%s", chart_type_name(self->m_chartType));
     XXmlStreamWriter_writeStartElement_utf8(writer, chartElementName);
+    if (self->m_chartType == XChart_BarChart) {
+        write_value_element(writer, "c:barDir", "col");
+        write_value_element(writer, "c:grouping", "clustered");
+    } else if (self->m_chartType == XChart_LineChart || self->m_chartType == XChart_AreaChart) {
+        write_value_element(writer, "c:grouping", "standard");
+    }
+    if (self->m_chartType == XChart_LineChart || self->m_chartType == XChart_AreaChart ||
+        self->m_chartType == XChart_BarChart || self->m_chartType == XChart_PieChart ||
+        self->m_chartType == XChart_DoughnutChart)
+        write_value_element(writer, "c:varyColors", "0");
     size_t seriesCount = XVector_size_base((XContainer*)self->m_series);
     for (size_t i = 0; i < seriesCount; ++i) {
         const XChart_Series* series = (const XChart_Series*)XVector_at_base(self->m_series, i);
         if (!series || !XCellRange_isValid(&series->m_range)) continue;
-        char index[32];
-        snprintf(index, sizeof(index), "%zu", i);
-        XXmlStreamWriter_writeStartElement_utf8(writer, "c:ser");
-        XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:xync", "urn:xinyuec:xlsx:chart");
-        XXmlStreamWriter_writeAttribute_utf8(writer, "xync:headerH", series->m_headerH ? "1" : "0");
-        XXmlStreamWriter_writeAttribute_utf8(writer, "xync:headerV", series->m_headerV ? "1" : "0");
-        XXmlStreamWriter_writeAttribute_utf8(writer, "xync:swapHeaders", series->m_swapHeaders ? "1" : "0");
-        write_value_element(writer, "c:idx", index);
-        write_value_element(writer, "c:order", index);
-        XXmlStreamWriter_writeStartElement_utf8(writer, "c:val");
-        XXmlStreamWriter_writeStartElement_utf8(writer, "c:numRef");
-        XString range = XCellRange_toString(&series->m_range, true, true);
-        XXmlStreamWriter_writeTextElement_utf8(writer, "c:f", XString_toUtf8(&range));
-        XString_deinit_base(&range);
-        XXmlStreamWriter_writeEndElement(writer);
-        XXmlStreamWriter_writeEndElement(writer);
-        XXmlStreamWriter_writeEndElement(writer);
+        write_chart_series(writer, self, series, i);
+    }
+    if (self->m_chartType == XChart_BarChart)
+        write_value_element(writer, "c:gapWidth", "150");
+    if (chart_type_has_axes(self->m_chartType)) {
+        write_value_element(writer, "c:axId", "1");
+        write_value_element(writer, "c:axId", "2");
     }
     XXmlStreamWriter_writeEndElement(writer);
+    if (chart_type_has_axes(self->m_chartType))
+        write_chart_axes(writer, self->m_majorGridlinesEnable);
     XXmlStreamWriter_writeEndElement(writer);
     if (self->m_legendPos != XChart_AxisPosNone) {
         XXmlStreamWriter_writeStartElement_utf8(writer, "c:legend");
@@ -210,30 +372,10 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
         write_value_element(writer, "c:overlay", self->m_legendOverlay ? "1" : "0");
         XXmlStreamWriter_writeEndElement(writer);
     }
-    XXmlStreamWriter_writeStartElement_utf8(writer, "c:extLst");
-    XXmlStreamWriter_writeStartElement_utf8(writer, "c:ext");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "uri", "{B59E14A5-612A-4A8D-9C04-XINYUEC}");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "xmlns:xync", "urn:xinyuec:xlsx:chart");
-    XXmlStreamWriter_writeEmptyElement_utf8(writer, "xync:settings");
-    char value[32];
-#define WRITE_INT_ATTRIBUTE(name, number) do { snprintf(value, sizeof(value), "%d", (number)); XXmlStreamWriter_writeAttribute_utf8(writer, (name), value); } while (0)
-    WRITE_INT_ATTRIBUTE("row", self->m_row);
-    WRITE_INT_ATTRIBUTE("col", self->m_col);
-    WRITE_INT_ATTRIBUTE("rowOffset", self->m_rowOffset);
-    WRITE_INT_ATTRIBUTE("colOffset", self->m_colOffset);
-    WRITE_INT_ATTRIBUTE("width", self->m_width);
-    WRITE_INT_ATTRIBUTE("height", self->m_height);
-    XXmlStreamWriter_writeAttribute_utf8(writer, "majorGridlines", self->m_majorGridlinesEnable ? "1" : "0");
-    XXmlStreamWriter_writeAttribute_utf8(writer, "minorGridlines", self->m_minorGridlinesEnable ? "1" : "0");
-#undef WRITE_INT_ATTRIBUTE
-    write_axis_extension(writer, "left", self->m_axisTitleLeft);
-    write_axis_extension(writer, "right", self->m_axisTitleRight);
-    write_axis_extension(writer, "top", self->m_axisTitleTop);
-    write_axis_extension(writer, "bottom", self->m_axisTitleBottom);
+    write_value_element(writer, "c:plotVisOnly", "1");
+    write_value_element(writer, "c:dispBlanksAs", "gap");
     XXmlStreamWriter_writeEndElement(writer);
-    XXmlStreamWriter_writeEndElement(writer);
-    XXmlStreamWriter_writeEndElement(writer);
-    XXmlStreamWriter_writeEndElement(writer);
+
     XXmlStreamWriter_writeEndDocument(writer);
 
     return !XXmlStreamWriter_hasError(writer);
@@ -294,6 +436,27 @@ static void normalize_chart_range(const char* formula, char* output, size_t outp
     output[written] = '\0';
 }
 
+static void set_chart_sheet_from_formula(XChart* self, const char* formula)
+{
+    if (!self || !formula) return;
+    const char* bang = strrchr(formula, '!');
+    if (!bang || bang == formula) return;
+    size_t length = (size_t)(bang - formula);
+    const char* start = formula;
+    if (length >= 2 && formula[0] == '\'' && formula[length - 1] == '\'') {
+        start++;
+        length -= 2;
+    }
+    char name[256];
+    size_t written = 0;
+    for (size_t i = 0; i < length && written + 1 < sizeof(name); ++i) {
+        if (start[i] == '\'' && i + 1 < length && start[i + 1] == '\'') ++i;
+        name[written++] = start[i];
+    }
+    name[written] = '\0';
+    if (written > 0) XChart_setDataSheetName_utf8(self, name);
+}
+
 bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
 {
     if (!self || !bytes || len == 0) return false;
@@ -335,6 +498,7 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
             } else if (name && XString_equals_utf8(name, "f", XChar_CaseSensitive) && inSeries) {
                 const XString* formula = XXmlStreamReader_readElementText_const(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                set_chart_sheet_from_formula(self, formula ? XString_toUtf8(formula) : NULL);
                 char normalized[160];
                 normalize_chart_range(formula ? XString_toUtf8(formula) : NULL,
                                       normalized, sizeof(normalized));

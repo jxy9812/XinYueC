@@ -16,6 +16,47 @@ extern "C" {
 #include "XGuiTypes.h"
 #include "XTypes.h"
 
+/* XPicture owns a small, portable command stream.  XPainter deliberately
+ * contains callbacks only; it has no dependency on a windowing toolkit. */
+typedef struct XImage XImage;
+typedef struct XPainter XPainter;
+
+typedef bool (*XPainter_drawLine)(XPainter* painter, int x1, int y1,
+                                  int x2, int y2);
+typedef bool (*XPainter_fillRect)(XPainter* painter, const XRect* rect,
+                                  uint32_t color);
+typedef bool (*XPainter_drawImage)(XPainter* painter, const XImage* image,
+                                   int x, int y);
+typedef bool (*XPainter_save)(XPainter* painter);
+typedef bool (*XPainter_restore)(XPainter* painter);
+
+struct XPainter
+{
+    void* userData;
+    XPainter_drawLine drawLine;
+    XPainter_fillRect fillRect;
+    XPainter_drawImage drawImage;
+    XPainter_save save;
+    XPainter_restore restore;
+};
+
+void XPainter_init(XPainter* self, void* userData);
+
+/* Stream constants are part of the XGui C ABI.  The byte stream is always
+ * little-endian, regardless of the host architecture. */
+#define XPICTURE_STREAM_VERSION 1u
+#define XPICTURE_HEADER_SIZE 40u
+#define XPICTURE_RECORD_HEADER_SIZE 8u
+#define XPICTURE_MAGIC_SIZE 8u
+
+typedef enum XPictureOpcode
+{
+    XPictureOpcode_DrawLine = 1,
+    XPictureOpcode_FillRect = 2,
+    XPictureOpcode_DrawImage = 3,
+    XPictureOpcode_Save = 4,
+    XPictureOpcode_Restore = 5
+} XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
 XCLASS_DEFINE_BEGING(XPicture)
@@ -147,12 +188,22 @@ void XPicture_setBoundingRect(XPicture* self, const XRect* rect);
 /* ========== 操作方法 ========== */
 
 /**
- * @brief      回放绘图指令到指定的 QPainter
+ * @brief      回放绘图指令到指定的纯 C XPainter
  * @param self    目标 XPicture 对象指针
- * @param painter QPainter 指针
+ * @param painter XPainter 指针；NULL 仅对空记录有效
  * @return 回放成功返回 true
  */
-bool XPicture_play(XPicture* self, void* painter);
+bool XPicture_play(XPicture* self, XPainter* painter);
+
+/* Record commands into the portable stream.  All functions return false on
+ * overflow, allocation failure, malformed existing data, or invalid input. */
+bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
+bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color);
+bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y);
+bool XPicture_recordSave(XPicture* self);
+bool XPicture_recordRestore(XPicture* self);
+void XPicture_clearCommands(XPicture* self);
+bool XPicture_isValidStream(const XPicture* self);
 
 /* ========== 文件操作 ========== */
 

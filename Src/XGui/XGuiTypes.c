@@ -4,10 +4,116 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGuiTypes.h"
-#include <stdlib.h>
+#include "XMemory.h"
 #include <string.h>
+#include <limits.h>
 #include "XCompare.h"
 
+static int clamp_int64_to_int(int64_t value)
+{
+    if (value > INT_MAX) return INT_MAX;
+    if (value < INT_MIN) return INT_MIN;
+    return (int)value;
+}
+
+static int64_t abs_int_to_i64(int value)
+{
+    return value < 0 ? -(int64_t)value : (int64_t)value;
+}
+
+static bool rect_edges(const XRect* rect, int64_t* left, int64_t* top,
+                       int64_t* right, int64_t* bottom)
+{
+    int64_t x1;
+    int64_t y1;
+    int64_t x2;
+    int64_t y2;
+    if (!rect) return false;
+    x1 = rect->x;
+    y1 = rect->y;
+    x2 = x1 + (int64_t)rect->width;
+    y2 = y1 + (int64_t)rect->height;
+    if (x2 < x1) { int64_t t = x1; x1 = x2; x2 = t; }
+    if (y2 < y1) { int64_t t = y1; y1 = y2; y2 = t; }
+    if (left) *left = x1;
+    if (top) *top = y1;
+    if (right) *right = x2;
+    if (bottom) *bottom = y2;
+    return x2 > x1 && y2 > y1;
+}
+
+static void rect_from_edges(int64_t left, int64_t top, int64_t right,
+                            int64_t bottom, XRect* out)
+{
+    if (!out) return;
+    if (right <= left || bottom <= top)
+    {
+        out->x = clamp_int64_to_int(left);
+        out->y = clamp_int64_to_int(top);
+        out->width = 0;
+        out->height = 0;
+        return;
+    }
+    out->x = clamp_int64_to_int(left);
+    out->y = clamp_int64_to_int(top);
+    out->width = clamp_int64_to_int(right - left);
+    out->height = clamp_int64_to_int(bottom - top);
+}
+
+static bool region_reserve(XRegion* self, int required)
+{
+    int newCapacity;
+    XRect* rects;
+    if (!self || required < 0) return false;
+    if (required <= self->capacity) return true;
+    newCapacity = self->capacity > 0 ? self->capacity : 4;
+    while (newCapacity < required)
+    {
+        if (newCapacity > INT_MAX / 2) { newCapacity = required; break; }
+        newCapacity *= 2;
+    }
+    if ((size_t)newCapacity > SIZE_MAX / sizeof(XRect)) return false;
+    rects = (XRect*)XRealloc_System(self->rects,
+                                    (size_t)newCapacity * sizeof(XRect));
+    if (!rects) return false;
+    self->rects = rects;
+    self->capacity = newCapacity;
+    return true;
+}
+
+static void region_replace(XRegion* out, XRegion* replacement)
+{
+    if (!out || !replacement || out == replacement) return;
+    XRegion_deinit(out);
+    *out = *replacement;
+    replacement->rects = NULL;
+    replacement->count = 0;
+    replacement->capacity = 0;
+}
+
+static void region_remove_at(XRegion* self, int index)
+{
+    if (!self || index < 0 || index >= self->count) return;
+    if (index + 1 < self->count)
+        memmove(&self->rects[index], &self->rects[index + 1],
+                (size_t)(self->count - index - 1) * sizeof(XRect));
+    --self->count;
+}
+
+static bool region_rects_can_merge(const XRect* lhs, const XRect* rhs)
+{
+    if (!lhs || !rhs) return false;
+    if (XRect_containsRect(lhs, rhs) || XRect_containsRect(rhs, lhs)) return true;
+    if (lhs->x == rhs->x && lhs->width == rhs->width)
+        return XRect_intersects(lhs, rhs) ||
+               (int64_t)XRect_bottom(lhs) + 1 == XRect_top(rhs) ||
+               (int64_t)XRect_bottom(rhs) + 1 == XRect_top(lhs);
+    if (lhs->y == rhs->y && lhs->height == rhs->height)
+        return XRect_intersects(lhs, rhs) ||
+               (int64_t)XRect_right(lhs) + 1 == XRect_left(rhs) ||
+               (int64_t)XRect_right(rhs) + 1 == XRect_left(lhs);
+    return false;
+}
 
 void XPoint_init(XPoint* self, int x, int y)
 {
@@ -16,11 +122,134 @@ void XPoint_init(XPoint* self, int x, int y)
     self->y = y;
 }
 
+bool XPoint_isNull(const XPoint* self)
+{
+    return !self || (self->x == 0 && self->y == 0);
+}
+
+int XPoint_manhattanLength(const XPoint* self)
+{
+    int64_t length;
+    if (!self) return 0;
+    length = abs_int_to_i64(self->x) + abs_int_to_i64(self->y);
+    return clamp_int64_to_int(length);
+}
+
+XPoint XPoint_add(const XPoint* lhs, const XPoint* rhs)
+{
+    int64_t x;
+    int64_t y;
+    XPoint out;
+    x = lhs ? lhs->x : 0;
+    y = lhs ? lhs->y : 0;
+    if (rhs) { x += rhs->x; y += rhs->y; }
+    out.x = clamp_int64_to_int(x);
+    out.y = clamp_int64_to_int(y);
+    return out;
+}
+
+XPoint XPoint_subtract(const XPoint* lhs, const XPoint* rhs)
+{
+    int64_t x;
+    int64_t y;
+    XPoint out;
+    x = lhs ? lhs->x : 0;
+    y = lhs ? lhs->y : 0;
+    if (rhs) { x -= rhs->x; y -= rhs->y; }
+    out.x = clamp_int64_to_int(x);
+    out.y = clamp_int64_to_int(y);
+    return out;
+}
+
 void XSize_init(XSize* self, int width, int height)
 {
     if (!self) return;
     self->width = width;
     self->height = height;
+}
+
+bool XSize_isNull(const XSize* self)
+{
+    return !self || (self->width == 0 && self->height == 0);
+}
+
+bool XSize_isEmpty(const XSize* self)
+{
+    return !self || self->width <= 0 || self->height <= 0;
+}
+
+bool XSize_isValid(const XSize* self)
+{
+    return self && self->width >= 0 && self->height >= 0;
+}
+
+XSize XSize_boundedTo(const XSize* self, const XSize* other)
+{
+    XSize out = { 0, 0 };
+    if (self && other)
+    {
+        out.width = self->width < other->width ? self->width : other->width;
+        out.height = self->height < other->height ? self->height : other->height;
+    }
+    return out;
+}
+
+XSize XSize_expandedTo(const XSize* self, const XSize* other)
+{
+    XSize out = { 0, 0 };
+    if (self && other)
+    {
+        out.width = self->width > other->width ? self->width : other->width;
+        out.height = self->height > other->height ? self->height : other->height;
+    }
+    return out;
+}
+
+XSize XSize_transposed(const XSize* self)
+{
+    XSize out = { 0, 0 };
+    if (self)
+    {
+        out.width = self->height;
+        out.height = self->width;
+    }
+    return out;
+}
+
+void XSize_scale(XSize* self, int width, int height, uint32_t mode)
+{
+    int sourceWidth;
+    int sourceHeight;
+    int64_t widthProduct;
+    int64_t heightProduct;
+    if (!self) return;
+    if (width <= 0 || height <= 0)
+    {
+        self->width = width;
+        self->height = height;
+        return;
+    }
+    sourceWidth = self->width;
+    sourceHeight = self->height;
+    if (mode == 0 || sourceWidth <= 0 || sourceHeight <= 0)
+    {
+        self->width = width;
+        self->height = height;
+        return;
+    }
+    widthProduct = (int64_t)sourceWidth * height;
+    heightProduct = (int64_t)sourceHeight * width;
+    if ((mode == 1 && widthProduct >= heightProduct) ||
+        (mode == 2 && widthProduct <= heightProduct))
+    {
+        self->width = width;
+        self->height = clamp_int64_to_int(((int64_t)sourceHeight * width + sourceWidth / 2) / sourceWidth);
+    }
+    else
+    {
+        self->height = height;
+        self->width = clamp_int64_to_int(((int64_t)sourceWidth * height + sourceHeight / 2) / sourceHeight);
+    }
 }
 
 void XRect_init(XRect* self, int x, int y, int width, int height)
@@ -38,11 +267,202 @@ bool XRect_isEmpty(const XRect* self)
     return (self->width <= 0 || self->height <= 0);
 }
 
+bool XRect_isNull(const XRect* self)
+{
+    return !self || (self->width == 0 && self->height == 0);
+}
+
+XRect XRect_normalized(const XRect* self)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    XRect out = { 0, 0, 0, 0 };
+    if (!rect_edges(self, &left, &top, &right, &bottom))
+    {
+        if (!self) return out;
+        out.x = clamp_int64_to_int(left);
+        out.y = clamp_int64_to_int(top);
+        return out;
+    }
+    rect_from_edges(left, top, right, bottom, &out);
+    return out;
+}
+
+int XRect_left(const XRect* self) { return self ? self->x : 0; }
+int XRect_top(const XRect* self) { return self ? self->y : 0; }
+int XRect_right(const XRect* self)
+{
+    return self ? clamp_int64_to_int((int64_t)self->x + self->width - 1) : 0;
+}
+int XRect_bottom(const XRect* self)
+{
+    return self ? clamp_int64_to_int((int64_t)self->y + self->height - 1) : 0;
+}
+
+XSize XRect_size(const XRect* self)
+{
+    XSize out = { 0, 0 };
+    if (self)
+    {
+        out.width = self->width;
+        out.height = self->height;
+    }
+    return out;
+}
+
+XPoint XRect_topLeft(const XRect* self)
+{
+    XPoint out = { 0, 0 };
+    if (self)
+    {
+        out.x = self->x;
+        out.y = self->y;
+    }
+    return out;
+}
+
+XPoint XRect_center(const XRect* self)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    XPoint out = { 0, 0 };
+    if (!rect_edges(self, &left, &top, &right, &bottom))
+    {
+        if (self)
+        {
+            out.x = self->x;
+            out.y = self->y;
+        }
+        return out;
+    }
+    out.x = clamp_int64_to_int(left + (right - left - 1) / 2);
+    out.y = clamp_int64_to_int(top + (bottom - top - 1) / 2);
+    return out;
+}
+
 bool XRect_contains(const XRect* self, int x, int y)
 {
-    if (!self) return false;
-    return (x >= self->x && x < self->x + self->width &&
-            y >= self->y && y < self->y + self->height);
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    if (!rect_edges(self, &left, &top, &right, &bottom)) return false;
+    return x >= left && x < right && y >= top && y < bottom;
+}
+
+bool XRect_containsRect(const XRect* self, const XRect* other)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t oLeft;
+    int64_t oTop;
+    int64_t oRight;
+    int64_t oBottom;
+    if (!rect_edges(self, &left, &top, &right, &bottom) ||
+        !rect_edges(other, &oLeft, &oTop, &oRight, &oBottom)) return false;
+    return oLeft >= left && oTop >= top && oRight <= right && oBottom <= bottom;
+}
+
+bool XRect_intersects(const XRect* self, const XRect* other)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t oLeft;
+    int64_t oTop;
+    int64_t oRight;
+    int64_t oBottom;
+    if (!rect_edges(self, &left, &top, &right, &bottom) ||
+        !rect_edges(other, &oLeft, &oTop, &oRight, &oBottom)) return false;
+    return left < oRight && oLeft < right && top < oBottom && oTop < bottom;
+}
+
+XRect XRect_intersected(const XRect* self, const XRect* other)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t oLeft;
+    int64_t oTop;
+    int64_t oRight;
+    int64_t oBottom;
+    XRect out = { 0, 0, 0, 0 };
+    if (!rect_edges(self, &left, &top, &right, &bottom) ||
+        !rect_edges(other, &oLeft, &oTop, &oRight, &oBottom))
+        return out;
+    if (oLeft > left) left = oLeft;
+    if (oTop > top) top = oTop;
+    if (oRight < right) right = oRight;
+    if (oBottom < bottom) bottom = oBottom;
+    rect_from_edges(left, top, right, bottom, &out);
+    return out;
+}
+
+XRect XRect_united(const XRect* self, const XRect* other)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t oLeft;
+    int64_t oTop;
+    int64_t oRight;
+    int64_t oBottom;
+    bool haveSelf;
+    bool haveOther;
+    XRect out = { 0, 0, 0, 0 };
+    haveSelf = rect_edges(self, &left, &top, &right, &bottom);
+    haveOther = rect_edges(other, &oLeft, &oTop, &oRight, &oBottom);
+    if (!haveSelf && !haveOther) return out;
+    if (!haveSelf) { rect_from_edges(oLeft, oTop, oRight, oBottom, &out); return out; }
+    if (!haveOther) { rect_from_edges(left, top, right, bottom, &out); return out; }
+    if (oLeft < left) left = oLeft;
+    if (oTop < top) top = oTop;
+    if (oRight > right) right = oRight;
+    if (oBottom > bottom) bottom = oBottom;
+    rect_from_edges(left, top, right, bottom, &out);
+    return out;
+}
+
+XRect XRect_adjusted(const XRect* self, int dx1, int dy1, int dx2, int dy2)
+{
+    XRect out = { 0, 0, 0, 0 };
+    if (!self) return out;
+    out.x = clamp_int64_to_int((int64_t)self->x + dx1);
+    out.y = clamp_int64_to_int((int64_t)self->y + dy1);
+    out.width = clamp_int64_to_int((int64_t)self->width + dx2 - dx1);
+    out.height = clamp_int64_to_int((int64_t)self->height + dy2 - dy1);
+    return out;
+}
+
+XRect XRect_translated(const XRect* self, int dx, int dy)
+{
+    XRect out = { 0, 0, 0, 0 };
+    if (!self) return out;
+    out = *self;
+    out.x = clamp_int64_to_int((int64_t)self->x + dx);
+    out.y = clamp_int64_to_int((int64_t)self->y + dy);
+    return out;
+}
+
+void XRect_translate(XRect* self, int dx, int dy)
+{
+    if (self) *self = XRect_translated(self, dx, dy);
+}
+
+void XRect_moveCenter(XRect* self, const XPoint* center)
+{
+    if (!self || !center) return;
+    self->x = clamp_int64_to_int((int64_t)center->x - self->width / 2);
+    self->y = clamp_int64_to_int((int64_t)center->y - self->height / 2);
 }
 
 void XSizeF_init(XSizeF* self, float width, float height)
@@ -63,24 +483,162 @@ void XRegion_init(XRegion* self)
 void XRegion_deinit(XRegion* self)
 {
     if (!self) return;
-    if (self->rects) free(self->rects);
+    if (self->rects) XFree_System(self->rects);
     self->rects = NULL;
     self->count = 0;
     self->capacity = 0;
 }
 
+void XRegion_clear(XRegion* self)
+{
+    if (self) self->count = 0;
+}
+
+bool XRegion_isEmpty(const XRegion* self)
+{
+    return !self || self->count == 0;
+}
+
+void XRegion_copy(const XRegion* self, XRegion* out)
+{
+    if (!out || self == out) return;
+    XRegion_deinit(out);
+    XRegion_init(out);
+    if (!self || self->count <= 0 || !region_reserve(out, self->count)) return;
+    memcpy(out->rects, self->rects, (size_t)self->count * sizeof(XRect));
+    out->count = self->count;
+}
+
+void XRegion_boundingRect(const XRegion* self, XRect* out)
+{
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+    bool have = false;
+    if (!out) return;
+    for (int i = 0; self && i < self->count; ++i)
+    {
+        int64_t rLeft;
+        int64_t rTop;
+        int64_t rRight;
+        int64_t rBottom;
+        if (!rect_edges(&self->rects[i], &rLeft, &rTop, &rRight, &rBottom)) continue;
+        if (!have)
+        {
+            left = rLeft; top = rTop; right = rRight; bottom = rBottom; have = true;
+        }
+        else
+        {
+            if (rLeft < left) left = rLeft;
+            if (rTop < top) top = rTop;
+            if (rRight > right) right = rRight;
+            if (rBottom > bottom) bottom = rBottom;
+        }
+    }
+    if (!have) XRect_init(out, 0, 0, 0, 0);
+    else rect_from_edges(left, top, right, bottom, out);
+}
+
+bool XRegion_contains(const XRegion* self, int x, int y)
+{
+    for (int i = 0; self && i < self->count; ++i)
+        if (XRect_contains(&self->rects[i], x, y)) return true;
+    return false;
+}
+
+bool XRegion_intersects(const XRegion* self, const XRect* rect)
+{
+    for (int i = 0; self && i < self->count; ++i)
+        if (XRect_intersects(&self->rects[i], rect)) return true;
+    return false;
+}
+
 void XRegion_addRect(XRegion* self, const XRect* rect)
 {
-    if (!self || !rect) return;
-    if (self->count >= self->capacity)
+    if (!self || !rect || XRect_isEmpty(rect)) return;
+    XRect value = XRect_normalized(rect);
+    if (XRect_isEmpty(&value)) return;
+    /* Keep folding the new rectangle into every compatible existing one.
+     * This makes merging transitive (A joins B, then A+B joins C). */
+    for (;;)
     {
-        int newCap = self->capacity ? self->capacity * 2 : 4;
-        XRect* newRects = (XRect*)realloc(self->rects, (size_t)newCap * sizeof(XRect));
-        if (!newRects) return;
-        self->rects = newRects;
-        self->capacity = newCap;
+        bool mergedAny = false;
+        for (int i = self->count - 1; i >= 0; --i)
+        {
+            XRect current = self->rects[i];
+            if (XRect_containsRect(&current, &value)) return;
+            if (!region_rects_can_merge(&current, &value)) continue;
+            value = XRect_united(&current, &value);
+            region_remove_at(self, i);
+            mergedAny = true;
+        }
+        if (!mergedAny) break;
     }
-    self->rects[self->count++] = *rect;
+    if (!region_reserve(self, self->count + 1)) return;
+    self->rects[self->count++] = value;
+}
+
+void XRegion_united(const XRegion* self, const XRegion* other, XRegion* out)
+{
+    XRegion result;
+    XRegion_init(&result);
+    for (int i = 0; self && i < self->count; ++i) XRegion_addRect(&result, &self->rects[i]);
+    for (int i = 0; other && i < other->count; ++i) XRegion_addRect(&result, &other->rects[i]);
+    region_replace(out, &result);
+}
+
+void XRegion_intersected(const XRegion* self, const XRegion* other, XRegion* out)
+{
+    XRegion result;
+    XRegion_init(&result);
+    for (int i = 0; self && i < self->count; ++i)
+        for (int j = 0; other && j < other->count; ++j)
+        {
+            XRect intersection = XRect_intersected(&self->rects[i], &other->rects[j]);
+            XRegion_addRect(&result, &intersection);
+        }
+    region_replace(out, &result);
+}
+
+static void region_subtract_rect(const XRect* source, const XRect* cutter, XRegion* out)
+{
+    XRect intersection;
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t cutLeft;
+    int64_t cutTop;
+    int64_t cutRight;
+    int64_t cutBottom;
+    if (!source || !out) return;
+    if (!XRect_intersects(source, cutter)) { XRegion_addRect(out, source); return; }
+    intersection = XRect_intersected(source, cutter);
+    rect_edges(source, &left, &top, &right, &bottom);
+    rect_edges(&intersection, &cutLeft, &cutTop, &cutRight, &cutBottom);
+    if (cutTop > top) { XRect r; rect_from_edges(left, top, right, cutTop, &r); XRegion_addRect(out, &r); }
+    if (cutBottom < bottom) { XRect r; rect_from_edges(left, cutBottom, right, bottom, &r); XRegion_addRect(out, &r); }
+    if (cutLeft > left) { XRect r; rect_from_edges(left, cutTop, cutLeft, cutBottom, &r); XRegion_addRect(out, &r); }
+    if (cutRight < right) { XRect r; rect_from_edges(cutRight, cutTop, right, cutBottom, &r); XRegion_addRect(out, &r); }
+}
+
+void XRegion_subtracted(const XRegion* self, const XRegion* other, XRegion* out)
+{
+    XRegion current;
+    XRegion next;
+    XRegion_init(&current);
+    XRegion_init(&next);
+    for (int i = 0; self && i < self->count; ++i) XRegion_addRect(&current, &self->rects[i]);
+    for (int j = 0; other && j < other->count && current.count > 0; ++j)
+    {
+        XRegion_clear(&next);
+        for (int i = 0; i < current.count; ++i)
+            region_subtract_rect(&current.rects[i], &other->rects[j], &next);
+        { XRegion temp = current; current = next; next = temp; }
+    }
+    XRegion_deinit(&next);
+    region_replace(out, &current);
 }
 
 

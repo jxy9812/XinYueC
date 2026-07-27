@@ -2175,15 +2175,6 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
     return result;
 }
 
-//拷贝字符串后返回
-char* XStrdup(char* str)
-{
-    size_t len = strlen(str);
-    if (!len)return NULL;
-    char* s = XMalloc_System(len + 1);
-    memcpy(s, str, len + 1);
-    return s;
-}
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str)
 {

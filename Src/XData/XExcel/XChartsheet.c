@@ -31,10 +31,18 @@ bool XChartsheet_saveToXmlData(const XChartsheet* self, uint8_t** outData, size_
         "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
     XXmlStreamWriter_writeNamespace_utf8(writer,
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships", "r");
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "sheetPr");
     XXmlStreamWriter_writeStartElement_utf8(writer, "sheetViews");
     XXmlStreamWriter_writeEmptyElement_utf8(writer, "sheetView");
     XXmlStreamWriter_writeAttribute_utf8(writer, "workbookViewId", "0");
     XXmlStreamWriter_writeEndElement(writer);
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "pageMargins");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "left", "0.7");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "right", "0.7");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "top", "0.75");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "bottom", "0.75");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "header", "0.3");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "footer", "0.3");
     XXmlStreamWriter_writeEmptyElement_utf8(writer, "drawing");
     XXmlStreamWriter_writeAttribute_utf8(writer, "r:id", "rId1");
     XXmlStreamWriter_writeEndDocument(writer);

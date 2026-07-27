@@ -256,6 +256,13 @@ void XImage_fillRect(XImage* self, const XRect* rect, uint32_t color);
  */
 void XImage_clear(XImage* self, const XRect* rect, uint32_t color);
 
+/**
+ * @brief      反转图像像素
+ * @param self 目标 XImage 对象指针
+ * @param mode 反转 RGB，或反转包括 Alpha 在内的所有分量
+ */
+void XImage_invertPixels(XImage* self, XImageInvertMode mode);
+
 /* ========== 像素数据访问 ========== */
 
 /**
@@ -504,6 +511,20 @@ int XImage_dotsPerMeterY(const XImage* self);
  * @param val  每米的点数
  */
 void XImage_setDotsPerMeterY(XImage* self, int val);
+
+/**
+ * @brief      获取设备像素比
+ * @param self 目标 XImage 对象指针
+ * @return 设备像素比，默认值为 1.0
+ */
+float XImage_devicePixelRatio(const XImage* self);
+
+/**
+ * @brief      设置设备像素比
+ * @param self 目标 XImage 对象指针
+ * @param scaleFactor 正数设备像素比
+ */
+void XImage_setDevicePixelRatio(XImage* self, float scaleFactor);
 
 /**
  * @brief      获取图像偏移

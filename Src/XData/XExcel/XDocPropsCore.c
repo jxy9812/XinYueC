@@ -22,6 +22,19 @@ static int32_t str_compare(const void* lhs, const void* rhs)
     return XString_compare(a, b);
 }
 
+static bool is_author_alias(const XString* name)
+{
+    return name && XString_equals_utf8(name, "author", XChar_CaseSensitive);
+}
+
+static bool property_name_equals(const XString* stored, const XString* requested)
+{
+    if (!stored || !requested) return false;
+    if (is_author_alias(requested))
+        return XString_equals_utf8(stored, "creator", XChar_CaseSensitive);
+    return XString_equals(stored, requested, XChar_CaseSensitive);
+}
+
 XDocPropsCore* XDocPropsCore_create(XAbstractOOXmlFile_CreateFlag flag)
 {
     XDocPropsCore* self = (XDocPropsCore*)XMalloc_System(sizeof(XDocPropsCore));
@@ -63,12 +76,13 @@ bool XDocPropsCore_setProperty(XDocPropsCore* self, const XString* name, const X
     for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_properties, &it)) {
         XPair* pair = XMap_iterator_data(&it);
         XString* key = pair ? *(XString**)XPair_first(pair) : NULL;
-        if (key && XString_equals(key, name, XChar_CaseSensitive)) {
+        if (property_name_equals(key, name)) {
             XString* current = *(XString**)XPair_second(pair);
             return current && XString_assign(current, value);
         }
     }
-    XString* keyStr = XString_create_copy(name);
+    XString* keyStr = is_author_alias(name)
+        ? XString_create_utf8("creator") : XString_create_copy(name);
     if (!keyStr) return false;
     XString* valStr = XString_create_copy(value);
     if (!valStr) { XString_delete_base(keyStr); return false; }
@@ -103,7 +117,7 @@ const XString* XDocPropsCore_property(const XDocPropsCore* self, const XString* 
         if (pair)
         {
             XString* key = *(XString**)XPair_first(pair);
-            if (key && XString_equals(key, name, XChar_CaseSensitive))
+            if (property_name_equals(key, name))
             {
                 XString* val = *(XString**)XPair_second(pair);
                 return val;

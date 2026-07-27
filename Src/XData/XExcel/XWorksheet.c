@@ -11,6 +11,7 @@
 #include "XSharedStrings.h"
 #include "XVariant.h"
 #include "XStyles.h"
+#include "XUtility.h"
 #include "XFile.h"
 #include "XClass.h"
 #include "XXmlStreamReader.h"
@@ -534,9 +535,9 @@ bool XWorksheet_writeDateTime(XWorksheet* self, int row, int column, int64_t tim
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     apply_cell_format(self, cell, format);
-    /* Excel 日期序列号：从1900-01-01开始 */
-    double excelSerial = (double)timestampMs / 86400000.0 + 25569.0; /* 1970-01-01到1900-01-01的偏移 */
-    if (excelSerial < 60.0) excelSerial -= 1.0; /* Excel 1900年闰年bug */
+    bool date1904 = self->m_base.m_workbook &&
+        XWorkbook_isDate1904(self->m_base.m_workbook);
+    double excelSerial = XUtility_dateTimeToExcelSerial(timestampMs, date1904);
     XString* dtStr = XString_create_fmt_utf8("%.15g", excelSerial);
     XCell_setValue(cell, dtStr);
     if (dtStr) XString_delete_base(dtStr);
@@ -556,11 +557,9 @@ bool XWorksheet_writeDate(XWorksheet* self, int row, int column, int year, int m
     XCell* cell = getOrCreateCell(self, row, column);
     if (!cell) return false;
     apply_cell_format(self, cell, format);
-    /* 日期序列号：从1900-01-01开始 */
-    int y = year, m = month, d = day;
-    if (m <= 2) { y--; m += 12; }
-    double excelSerial = (double)(365*y + y/4 - y/100 + y/400 + (153*m - 457)/5 + d - 1461) - 1.0;
-    if (excelSerial < 60.0) excelSerial -= 1.0; /* Excel 1900年闰年bug */
+    double excelSerial = XUtility_epochToExcel(year, month, day, 0, 0, 0);
+    if (self->m_base.m_workbook && XWorkbook_isDate1904(self->m_base.m_workbook))
+        excelSerial -= 1462.0;
     XString* dStr = XString_create_fmt_utf8("%.15g", excelSerial);
     XCell_setValue(cell, dStr);
     if (dStr) XString_delete_base(dStr);
@@ -1468,6 +1467,65 @@ static void appendRowStart(XByteArray* output, int row,
     }
 }
 
+static bool richTextNeedsPreservedSpace(const char* text)
+{
+    if (!text || !text[0]) return false;
+    size_t length = strlen(text);
+    return text[0] == ' ' || text[0] == '\t' || text[0] == '\r' || text[0] == '\n' ||
+        text[length - 1] == ' ' || text[length - 1] == '\t' ||
+        text[length - 1] == '\r' || text[length - 1] == '\n';
+}
+
+static void appendRichTextProperties(XByteArray* output, const XFormat* format)
+{
+    if (!output || !format) return;
+    bool bold = XFormat_fontBold(format);
+    bool italic = XFormat_fontItalic(format);
+    bool strike = XFormat_fontStrikeOut(format);
+    bool outline = XFormat_fontOutline(format);
+    XFormat_FontUnderline underline = XFormat_fontUnderline(format);
+    int fontSize = XFormat_fontSize(format);
+    if (!bold && !italic && !strike && !outline &&
+        underline == XFormat_FontUnderlineNone && fontSize <= 0) return;
+
+    XByteArray_append_utf8(output, "<rPr>");
+    if (bold) XByteArray_append_utf8(output, "<b/>");
+    if (italic) XByteArray_append_utf8(output, "<i/>");
+    if (strike) XByteArray_append_utf8(output, "<strike/>");
+    if (outline) XByteArray_append_utf8(output, "<outline/>");
+    if (fontSize > 0) {
+        char sizeText[64];
+        snprintf(sizeText, sizeof(sizeText), "<sz val=\"%d\"/>", fontSize);
+        XByteArray_append_utf8(output, sizeText);
+    }
+    if (underline != XFormat_FontUnderlineNone) {
+        const char* value = underline == XFormat_FontUnderlineDouble ? "double" :
+            underline == XFormat_FontUnderlineSingleAccounting ? "singleAccounting" :
+            underline == XFormat_FontUnderlineDoubleAccounting ? "doubleAccounting" : "single";
+        XByteArray_append_utf8(output, "<u val=\"");
+        XByteArray_append_utf8(output, value);
+        XByteArray_append_utf8(output, "\"/>");
+    }
+    XByteArray_append_utf8(output, "</rPr>");
+}
+
+static void appendRichStringXml(XByteArray* output, const XRichString* richString)
+{
+    XByteArray_append_utf8(output, "<is>");
+    int count = XRichString_fragmentCount(richString);
+    for (int i = 0; i < count; ++i) {
+        const XString* fragment = XRichString_fragmentText(richString, i);
+        const char* text = fragment ? XString_toUtf8(fragment) : "";
+        XByteArray_append_utf8(output, "<r>");
+        appendRichTextProperties(output, XRichString_fragmentFormat(richString, i));
+        XByteArray_append_utf8(output, richTextNeedsPreservedSpace(text)
+            ? "<t xml:space=\"preserve\">" : "<t>");
+        xmlEscape(text, output);
+        XByteArray_append_utf8(output, "</t></r>");
+    }
+    XByteArray_append_utf8(output, "</is>");
+}
+
 static void appendCellXml(XByteArray* output, const XCell* cell, int row, int column)
 {
     if (!output || !cell) return;
@@ -1481,6 +1539,9 @@ static void appendCellXml(XByteArray* output, const XCell* cell, int row, int co
     bool inlineString = cell->m_cellType == XCell_SharedStringType ||
                         cell->m_cellType == XCell_InlineStringType ||
                         (cell->m_richString && XRichString_isRichString(cell->m_richString));
+    bool hasValue = cell->m_value && !XString_isEmpty_base(cell->m_value);
+    bool hasFormula = cell->m_formula && XCellFormula_isValid(cell->m_formula);
+    bool hasRichString = cell->m_richString && XRichString_isRichString(cell->m_richString);
     const char* outputType = inlineString ? "inlineStr" : type;
     if (cell->m_cellType == XCell_NumberType || cell->m_cellType == XCell_DateType)
         outputType = NULL;
@@ -1495,18 +1556,25 @@ static void appendCellXml(XByteArray* output, const XCell* cell, int row, int co
         XByteArray_append_utf8(output, outputType);
         XByteArray_append_utf8(output, "\"");
     }
+    if (!hasValue && !hasFormula && !hasRichString) {
+        XByteArray_append_utf8(output, "/>\n");
+        return;
+    }
     XByteArray_append_utf8(output, ">");
-    if (cell->m_formula && XCellFormula_isValid(cell->m_formula)) {
+    if (hasFormula) {
         XByteArray_append_utf8(output, "<f>");
         const XString* formula = XCellFormula_formulaText(cell->m_formula);
         xmlEscape(formula ? XString_toUtf8(formula) : "", output);
         XByteArray_append_utf8(output, "</f>");
     }
-    if (inlineString) {
-        XByteArray_append_utf8(output, "<is><t>");
+    if (hasRichString) {
+        appendRichStringXml(output, cell->m_richString);
+    } else if (inlineString && hasValue) {
+        XByteArray_append_utf8(output, richTextNeedsPreservedSpace(value)
+            ? "<is><t xml:space=\"preserve\">" : "<is><t>");
         xmlEscape(value, output);
         XByteArray_append_utf8(output, "</t></is>");
-    } else {
+    } else if (hasValue) {
         XByteArray_append_utf8(output, "<v>");
         xmlEscape(value, output);
         XByteArray_append_utf8(output, "</v>");

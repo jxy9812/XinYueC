@@ -1,12 +1,13 @@
 # XGui Qt Alignment Handoff
 
-Last updated: 2026-07-27 Asia/Shanghai
+Last updated: 2026-07-27 21:00 Asia/Shanghai
 
 ## Scope
 
 This handoff covers the partial Qt 6.8 alignment work in `Src/XGui` completed
 on Windows. The current comparison source is
-`/home/xinyue/Qt/6.8.3/Src/qtbase`. Shared XGui code must remain portable and
+`D:/Qt/6.8.3/Src/qtbase` (use the corresponding Qt source path on Linux).
+Shared XGui code must remain portable and
 must not call platform GUI APIs.
 
 Do not assume the entire worktree belongs to this task. At handoff time it also
@@ -18,14 +19,17 @@ expanded.
 
 ```
 Src/XGui/XBitmap.c
+Src/XGui/XGuiTypes.h
 Src/XGui/XGuiTypes.c
 Src/XGui/XIcon.c
+Src/XGui/XImage.h
 Src/XGui/XImage.c
 Src/XGui/XImageFormat.c
 Src/XGui/XImageIOHandler.c
 Src/XGui/XImageReader.c
 Src/XGui/XImageWriter.c
 Src/XGui/XPicture.c
+Src/XGui/XPicture.h
 Src/XGui/XPixmap.c
 Src/XGui/XPixmap.h
 Src/XGui/XPixmapCache.c
@@ -47,12 +51,24 @@ xgui_regression_test.c
   owned image scanlines to 4-byte alignment.
 - Made cache keys change after mutation/detach.
 - Added guarded self-copy and self-move behavior.
-- Added common format conversion paths, safe per-format `rgbSwapped`, and
-  aspect-ratio-aware scaling. Smooth mode still uses nearest-neighbor sampling.
+- Added format-aware conversion and pixel access for every declared
+  `XImageFormat`, including packed Mono, Indexed8, 16/24/30/32/64/128-bit,
+  floating-point, grayscale, CMYK, and premultiplied formats.
+- Added aspect-ratio-aware scaling with fast nearest-neighbor and smooth
+  bilinear sampling; output aliasing is handled through temporary images.
 - Added BMP-only I/O: uncompressed `BI_RGB`, 24-bit BGR and 32-bit BGRA,
   including bottom-up/top-down input, 4-byte row padding, and bounds checks.
   `XImage_load`, `XImage_loadFromData`, and `XImage_save` are now functional
   for BMP.
+- Added Qt-style pixel access for Mono/MonoLSB, Indexed8, RGB16/RGB555,
+  RGB/BGR888, RGB/ARGB/RGBA8888, Alpha8, and grayscale formats, including
+  palette-aware `pixel()`/`setPixel()` and channel-correct fill behavior.
+- Added `XImage_invertPixels()` and `devicePixelRatio()`/`setDevicePixelRatio()`;
+  metadata setters now update the image cache key and COW preserves the DPR.
+- Reworked mirrored and RGB-swapped operations to use format-aware pixel
+  access, preserving palettes, metadata, packed Mono data, and RGBA byte order.
+- Preserved unpremultiplied public `pixel()` values for premultiplied formats;
+  conversion paths perform premultiplication exactly once.
 
 ### Pixmap, bitmap, and icon
 
@@ -64,13 +80,32 @@ xgui_regression_test.c
 - Fixed byte-aligned Mono input handling in `XBitmap_fromData`.
 - Improved icon resource matching, actual-size calculation, device-pixel-ratio
   output, and cache key invalidation after mutations.
+- Aligned icon best-match fallback order with Qt mode/state fallback rules,
+  area-based source selection, and effective DPR calculation for low-resolution
+  fallbacks. Theme engines and painting remain unavailable.
+- Expanded portable QPoint/QSize/QRect/QRegion helpers, including normalized
+  intersection/union/subtraction operations, alias-safe outputs, saturated
+  coordinate arithmetic, and region capacity/empty-rectangle checks.
+- Hardened XPixmap scroll clipping and exposed-region replacement against
+  integer overflow; scaled/transformed/copyRect preserve DPR and bitmap identity
+  when output aliases the source. setMask now converts non-alpha images to an
+  alpha-capable format before applying the mask, and XBitmap transforms retain
+  XBitmap vtable identity. Added portable `convertFromImage()` and `swap()`.
 
 ### Picture and cache
 
 - Fixed `XPicture_detach()` use-after-free and made `setData` and
   `setBoundingRect` COW-safe.
-- Added raw binary `XPicture` load/save. This persists the XPicture data buffer;
-  it is not a validated Qt QPIC implementation.
+- Added a portable XPIC v1 command stream with fixed little-endian header,
+  opcode/payload lengths, FNV checksum, strict validation, and COW-safe
+  recording. It records lines, filled rectangles, save/restore, and
+  self-contained XImage payloads including format, stride, palette, DPR, DPM,
+  and offset.
+- Added the pure C `XPainter` callback interface and complete dispatch in
+  `XPicture_play()`. Empty recordings remain successful no-ops.
+- `XPicture_load/save` validate XPIC streams when the magic is present; raw
+  non-XPIC data remains accepted by `setData` for compatibility. XPIC is a
+  project format and is intentionally not claimed to be Qt QPIC compatible.
 - Reworked `XPixmapCache` key lifecycle: new keys are invalid, all copies become
   invalid after removal/eviction/clear, and the old heap key-wrapper leak is
   removed.
@@ -85,8 +120,12 @@ xgui_regression_test.c
 - Added allocation limit storage (default 256 MB), file signature detection for
   PNG/JPEG/BMP/GIF/WebP, mutually exclusive file/device setters, and explicit
   error results instead of false-positive `canRead`/`canWrite` values.
-- Reader/writer now use `XIODevice` for BMP device reads and writes. The
-  built-in codec remains BMP-only; no decoder/encoder registry was added.
+- Reader/writer now use `XIODevice` for BMP device reads and writes.
+- Added a portable static discovery registry for the built-in BMP codec:
+  supported format/MIME lists are owned `XVector<const char*>` values, MIME
+  lookup is case-insensitive, and unknown MIME types return an empty list.
+  The built-in codec remains BMP-only; dynamic plugin discovery and other
+  decoders/encoders are still not implemented.
 
 ### Continuation Fixes
 
@@ -107,6 +146,9 @@ The Windows command below completed successfully after the final changes:
 cmake --build build --config Debug --target XinYueC --parallel 4
 ```
 
+The current Debug build also completed successfully for `XinYueC` and
+`XGuiRegression_Test`; the executable printed `XGui regression tests passed`.
+
 Additional checks completed:
 
 - `git diff --check -- Src/XGui Test/XGuiTest` (no whitespace errors; Git may
@@ -117,12 +159,14 @@ Additional checks completed:
   lifecycle/LRU were run successfully by the previous worker.
 
 The current `XGuiRegression_Test` includes BMP save/load and device round-trip
-assertions, so the earlier PowerShell smoke-script limitation is no longer the
-only BMP evidence.
+assertions, the BMP reader/writer registry, icon fallback/size/DPR matching,
+XImage pixel/palette/alpha/DPR/invert and premultiplied conversion behavior,
+geometry operations, scroll exposed regions, RGB mask conversion, bitmap
+identity, aliased transform outputs, XPainter command dispatch, image payload
+replay, and XPIC stream validation.
 
-The Linux Debug full build passed, and the independent `XGuiRegression_Test`
-passed. It covers lifecycle, affine dimensions, icon sizes, and BMP device
-I/O without menu interaction.
+The verified checkout is Windows-only at this handoff; Linux must rerun the
+commands below after syncing the current XGui changes.
 
 ## Linux Continuation
 
@@ -152,6 +196,50 @@ Suggested first Linux regression cases:
    and negative cache limits.
 5. Mono bitmap identity and Pixmap masks/scroll exposed-region behavior.
 
+Continuation update (2026-07-27):
+
+- `XIcon_addFile()` now decodes the source first and then stores the requested
+  positive width/height raster, matching `QIcon::addFile` resource sizing.
+- Added a regression fixture that verifies an `8x6` requested resource is
+  reported by `XIcon_availableSizes()`.
+- Rebuilt `XinYueCS` and `XGuiRegression_Test` in the isolated `build-linux`
+  directory (the checkout is Windows/MSVC despite the directory name).
+- Qt 6.8 `QImage::invertPixels()` explicitly complements 1/8-bit pixel indices
+  and does **not** modify the color table. Keep this as the Linux comparison
+  oracle for Indexed8; an Indexed8 test must check the complemented index and
+  out-of-range palette behavior rather than expecting an inverted palette.
+- Mono/MonoLSB conversion now preserves packed source bits even when the
+  source has no color table; this keeps `XBitmap_fromImage()` masks intact.
+- `XRegion_addRect()` now performs transitive merging of compatible adjacent
+  rectangles. The regression suite covers chained vertical merges.
+- Final Windows verification after these fixes:
+  `cmake --build build --config Debug --target XinYueC --parallel 1`,
+  `cmake --build build --config Debug --target XGuiRegression_Test --parallel 1`,
+  and `bin/Debug/XGuiRegression_Test.exe` all completed successfully.
+- Lightweight geometry value APIs now return structs directly: `XPoint` add/
+  subtract, `XSize` bounded/expanded/transposed, and pure `XRect` queries and
+  operations. `XRegion` operations keep output parameters because regions own
+  dynamic rectangle storage.
+
+Memory/API continuation update (2026-07-27):
+
+- Added `XMemory_strdup()` to `Src/XMemory/XMemory.h/.c`; it allocates with
+  `XMalloc_System()` and must be paired with `XFree_System()`.
+- Replaced `strdup`/`XStrdup` use in URL, CAN parser/bus, XDir, and the Windows
+  file driver. The obsolete `XStrdup` declaration and implementation were
+  removed from `XString.h/.c`.
+- `XGuiTypes.c` region storage now uses `XRealloc_System()` and
+  `XFree_System()`. `XClass_delete_base()` still honors custom `FreeMethod`
+  callbacks, but no longer contains a native `free()` call.
+- The embedded xxHash allocation hooks now use `XMalloc_Hybrid()` and
+  `XFree_Hybrid()`; no native allocation calls remain in actual `Src` code.
+- A Python lexer scan over every file below `Src` reports
+  `UNWRAPPED_CALLS=0` after ignoring comments, literals, and member callbacks.
+- Windows verification passed serially:
+  `cmake --build build --config Debug --target XinYueCS --parallel 1`,
+  `cmake --build build --config Debug --target XGuiRegression_Test --parallel 1`,
+  and `bin/Debug/XGuiRegression_Test.exe`.
+
 ## Remaining Qt Gaps
 
 This is still a partial compatibility layer, not QtGui parity. Highest-value
@@ -161,16 +249,15 @@ remaining work is:
    the current reader/writer device path is intentionally BMP-only.
 2. Implement `XIcon_paint`, icon engines, theme lookup and
    fallback search paths.
-3. Implement QPicture command recording/replay (`XPicture_play`) and a defined,
-   validated serialization format. Do not claim Qt QPIC binary compatibility
-   without test fixtures from Qt.
+3. Extend XPainter opcodes only when a matching portable callback is defined;
+   the current XPIC stream is not Qt QPIC binary compatible.
 4. Expand `xgui_regression_test.c` and add Qt fixture comparisons for
    malformed BMP input, masks, cache lifecycle, and picture serialization.
    Existing `Test/XGuiTest` code is guarded by `DEMOTEST` and historically
    printed expectations rather than asserting them.
-5. Fill remaining QImage APIs: color-space APIs, text metadata, device-pixel
-   ratio, color-table APIs, pixel color APIs, transforms, invertPixels, and the
-   full QRegion/QRect/QSize/QPoint surface.
+5. Fill remaining QImage APIs: color-space APIs, text metadata, and other Qt
+   extensions not represented by the current C ABI. The common color-table,
+   pixel color, DPR, invert, transform, and geometry paths now have coverage.
 
 ## Safe Git Review Commands
 

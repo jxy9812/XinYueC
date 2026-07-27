@@ -9,6 +9,8 @@
 #include "XObject.h"
 #include <string.h>
 
+#if XNETWORK_FTP_ON
+
 static void VXFtpCommand_deinit(XFtpCommand* cmd)
 {
     if (!cmd) return;
@@ -57,6 +59,10 @@ XFtpCommand* XFtpCommand_create(int id, XFtpCommand_Type cmdType)
     cmd->m_command = cmdType;
     cmd->m_rawCmd = XString_create();
     cmd->m_rawCmds = XVector_Create(const char*);
+    if (!cmd->m_rawCmd || !cmd->m_rawCmds) {
+        XFtpCommand_delete(cmd);
+        return NULL;
+    }
     cmd->m_data = NULL;
     cmd->m_device = NULL;
     cmd->m_openMode = 0;
@@ -74,10 +80,18 @@ void XFtpCommand_delete(XFtpCommand* cmd)
 void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg)
 {
     if (!cmd || !arg) return;
-    if (!cmd->m_rawCmds) cmd->m_rawCmds = XVector_Create(const char*);
+    if (!cmd->m_rawCmds) {
+        cmd->m_rawCmds = XVector_Create(const char*);
+        if (!cmd->m_rawCmds) return;
+    }
     size_t len = strlen(arg);
     char* dup = (char*)XMalloc(len + 1, XMEMORY_TYPE_SYSTEM);
     if (!dup) return;
     memcpy(dup, arg, len + 1);
+    size_t before = XVector_size_base(cmd->m_rawCmds);
     XVector_push_back_1_base(cmd->m_rawCmds, &dup);
+    if (XVector_size_base(cmd->m_rawCmds) != before + 1)
+        XFree(dup, XMEMORY_TYPE_SYSTEM);
 }
+
+#endif

@@ -35,11 +35,11 @@ void XClass_move_base(XClass* object, XClass* src)
 void XClass_delete_base(XClass* object)
 {
 	if (!object)return;
-	FreeMethod free = Class_MemoryFree(object);
-	if (free)
+	FreeMethod release = Class_MemoryFree(object);
+	if (release)
 	{
 		XClass_deinit_base(object);
-		free(object);
+		release(object);
 	}
 	else
 	{

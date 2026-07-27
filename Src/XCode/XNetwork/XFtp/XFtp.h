@@ -2,8 +2,9 @@
  * @file        XFtp.h
  * @brief       FTP 客户端实现（对标 Qt 6.8 QFtp），基于 XinYueC 信号/槽系统
  * @note        跨平台：Windows / Linux / 嵌入式
- *              特性：主动/被动模式、Explicit FTPS (RFC 4217)、REST 断点续传、
- *                    APPE 追加、MODE Z 压缩、SOCKS5/HTTP 代理、自动重连、URL 解析
+ *              特性：普通 FTP 主动/被动模式、Explicit FTPS 被动数据模式 (RFC 4217)、REST 断点续传、
+ *                    APPE 追加、SOCKS5/HTTP 代理、自动重连、URL 解析。
+ *              MODE Z 仅可检测；portable DTP 尚未实现压缩传输，启用后会明确失败。
  */
 
 #ifndef XFTP_H
@@ -28,9 +29,11 @@ extern "C" {
 #endif
 
 // =============== 条件编译 ===============
-// FTP 模块：依赖 XNETWORK_ON；通过 XNETWORK_FTP_ON 开关
-// 注意：默认启用以保证编译通过；可通过 #define XNETWORK_FTP_ON 显式控制
-#if defined(XNETWORK_ON) || 1
+// FTP module is enabled by default and can be disabled with XNETWORK_FTP_ON=0.
+#ifndef XNETWORK_FTP_ON
+#define XNETWORK_FTP_ON 1
+#endif
+#if XNETWORK_FTP_ON
 
 // =============== 枚举定义 ===============
 
@@ -101,8 +104,6 @@ typedef enum XFtp_ProxyType {
     XFtp_ProxyType_Socks5            ///< SOCKS5 代理（RFC 1928）
 } XFtp_ProxyType;
 
-// =============== 私有数据声明 ===============
-typedef struct XFtpPrivate XFtpPrivate;
 typedef struct XTimer XTimer;
 
 // =============== 主结构体 ===============
@@ -122,25 +123,26 @@ typedef enum XFtp_Feature {
 } XFtp_Feature;
 
 /**
- * @brief FTP 客户端对象（嵌入式优化：8字节指针优先 + 位域 + 排序）
+ * @brief FTP 客户端对象（状态直接内嵌；8字节指针优先 + 位域 + 联合布局）
  */
 typedef struct XFtp {
     XObject m_class;                      // 基类（必须第一位）
 
     // ===== 8 字节指针区 =====
-    XFtpPrivate* m_d;                     // 私有数据
     XAbstractSocket* m_piSocket;          // 控制连接 socket
     XAbstractSocket* m_dtpSocket;         // 数据连接 socket
     XByteArray* m_piBuffer;               // 控制连接读取缓冲
-    XByteArray* m_dtpBuffer;              // 数据连接读取缓冲
-    XByteArray* m_readBuffer;             // 数据读取缓冲
+    union {
+        XByteArray* m_dtpBuffer;          // 兼容字段；与 m_readBuffer 共用同一对象
+        XByteArray* m_readBuffer;         // 数据读取缓冲
+    };
     XTcpServer* m_dtpServer;              // 数据连接 server（主动模式用）
     XVector* m_pendingCommands;           // 待执行的命令
     XVector* m_listInfo;                  // 目录列表信息
     XMutex* m_commandMutex;               // 命令队列互斥锁
-    XTimer* m_reconnectTimer;             // 自动重连定时器
+    XTimer* m_reconnectTimer;             // 自动重连定时器；启用重连后惰性创建
     XFtpCommand* m_currentCommand;        // 当前执行的命令
-    void* m_transferDevice;               // 传输设备
+    XString* m_replyText;                 // 多行 FTP 响应暂存
     XString* m_errorString;               // 错误信息
     XString* m_host;
     XString* m_user;
@@ -152,7 +154,10 @@ typedef struct XFtp {
     // ===== 8 字节 int64 区 =====
     int64_t m_transferTotal;              // 传输总字节数
     int64_t m_transferCurrent;            // 当前已传输字节数
-    int64_t m_restOffset;                 // REST 断点续传偏移
+    union {
+        int64_t m_restOffset;             // 兼容字段；实现使用 m_putWriteOffset
+        int64_t m_putWriteOffset;         // PUT 已排队到 socket 的字节数
+    };
 
     // ===== 4 字节 enum/int 区 =====
     XFtp_State m_state;                   // 当前状态
@@ -174,33 +179,59 @@ typedef struct XFtp {
     uint8_t m_features;                   // FEAT 协商结果（XFtp_Feature 位掩码）
     uint8_t m_useSsl            : 1;      // 是否启用 SSL/TLS
     uint8_t m_useCompression    : 1;      // 是否启用 MODE Z
-    uint8_t m_compressionActive : 1;      // MODE Z 握手成功
+    uint8_t m_compressionActive : 1;      // MODE Z 协商成功后启用压缩 DTP
     uint8_t m_autoReconnect     : 1;      // 是否自动重连
     uint8_t m_useUtf8           : 1;      // UTF8 模式（OPTS UTF8 ON）
     uint8_t m_abortRequested    : 1;      // 用户发起 ABOR 中断传输
     uint8_t m_useMlsd           : 1;      // 优先用 MLSD 而非 LIST
     uint8_t m_dirListingActive  : 1;      // 当前正在列目录（listInfo 流式输出中）
+
+    // ===== 内部状态位（第二个字节） =====
+    uint8_t m_waitForDtpToConnect : 1;    // 等待 DTP 连接
+    uint8_t m_waitForDtpToClose   : 1;    // 等待 DTP 关闭
+    uint8_t m_rawCommand          : 1;    // 当前为 rawCommand
+    uint8_t m_waitForGreeting     : 1;    // 等待服务器 220 问候语
+    uint8_t m_piAckedTransfer     : 1;    // PI 已收到传输完成响应
+    uint8_t m_reconnectScheduled  : 1;    // 已安排自动重连
+    uint8_t m_reconnecting        : 1;    // 正在恢复控制会话
+    uint8_t m_closeRequested      : 1;    // QUIT 已发送
+    uint8_t m_outOfBandPending;           // FEAT/OPTS 等带外响应计数
+    uint8_t m_dtpState;                   // DTP 状态：0=关闭，1=已连接，2=连接中
+    struct {
+        uint8_t m_sslState : 3;            // 0=off,1=AUTH,2=handshake,3=PBSZ,4=PROT,5=ready
+        uint8_t m_restState : 2;           // REST 状态机 0/1/2
+        uint8_t m_mlstState : 2;           // MLST 状态机 0=idle,1=receiving,2=ending
+        uint8_t m_compressionNegotiating : 1; // MODE Z 控制命令正在等待响应
+    } m_sm;                                // 三个有限状态值共用一个字节
 } XFtp;
 
 // =============== 构造/析构 ===============
+/**
+ * @brief 返回 XFtp 类的共享虚函数表。
+ * @return 类虚函数表；首次调用时完成初始化，生命周期由类系统管理。
+ */
 XVtable* XFtp_class_init(void);
 /**
  * @brief 初始化 XFtp 对象（栈上使用）
+ * @param[out] ftp 已分配但尚未初始化的对象
  */
 void XFtp_init(XFtp* ftp);
 
 /**
  * @brief 反初始化 XFtp 对象（释放资源，不释放自身内存）
+ * @param[in,out] ftp 已初始化的对象
  */
 void XFtp_deinit_base(XFtp* ftp);
 
 /**
  * @brief 创建 FTP 客户端实例
+ * @return 新实例；失败返回 NULL。调用方使用 XFtp_delete 释放。
  */
 XFtp* XFtp_create(void);
 
 /**
  * @brief 销毁 FTP 客户端实例
+ * @param[in] ftp XFtp_create 返回的实例；NULL 安全
  */
 void XFtp_delete(XFtp* ftp);
 
@@ -218,25 +249,32 @@ int XFtp_connectToHost(XFtp* ftp, const char* host, uint16_t port);
 /**
  * @brief 用 URL 一次性连接、登录、切目录
  * @param[in,out] ftp  FTP 实例
- * @param[in]     url  FTP URL，如 ftp://user:pass@host:port/path
- * @return 命令ID，失败返回 -1
+ * @param[in]     url  FTP/FTPS URL，如 ftp://user:pass@host:port/path；无用户时使用 anonymous
+ * @return 连接命令ID，失败返回 -1；登录和切目录会作为后续命令异步执行
  */
 int XFtp_connectToUrl(XFtp* ftp, const char* url);
 
 /**
  * @brief 登录
- * @return 命令ID
+ * @param[in,out] ftp   已连接或正在连接的 FTP 实例
+ * @param[in]     user  用户名；NULL 使用 anonymous
+ * @param[in]     password 密码；NULL 使用空密码
+ * @return 命令ID，参数/状态/分配失败返回 -1
  */
 int XFtp_login(XFtp* ftp, const char* user, const char* password);
 
 /**
  * @brief 关闭连接
- * @return 命令ID
+ * @param[in,out] ftp  已连接或已登录的 FTP 实例
+ * @return QUIT 命令ID，失败返回 -1
+ * @note 等待 commandFinished；服务器先断开时也会完成该命令
  */
 int XFtp_close(XFtp* ftp);
 
 /**
  * @brief 中止所有挂起命令
+ * @param[in,out] ftp  FTP 实例
+ * @note 当前命令和排队命令都会收到 commandFinished(error=true)，随后发出 done(true)。
  */
 void XFtp_abort(XFtp* ftp);
 
@@ -244,76 +282,106 @@ void XFtp_abort(XFtp* ftp);
 
 /**
  * @brief 列出目录
+ * @param[in,out] ftp  已登录的 FTP 实例
  * @param[in] dir  目录路径，NULL 表示当前目录
- * @return 命令ID
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_list(XFtp* ftp, const char* dir);
 
 /**
  * @brief 下载文件
+ * @param[in,out] ftp     已登录的 FTP 实例
  * @param[in] file     远程文件路径
- * @param[in] device   本地保存设备（XFile* 等可写设备）
- * @param[in] type     传输类型（XIODevice_Append / Truncate 等）
- * @return 命令ID
+ * @param[in,out] device 本地保存设备（XFile* 等 XIODevice 派生对象），可为 NULL 以保留在内部缓冲
+ * @param[in] type       XIODeviceBaseMode 打开模式；设备已打开时只校验可写，0 默认创建并截断
+ * @return 命令ID，失败返回 -1
+ * @note XFtp 不拥有也不会关闭 device；调用方负责其生命周期
  */
 int XFtp_get(XFtp* ftp, const char* file, void* device, int type);
 
 /**
  * @brief 断点续传下载
+ * @param[in,out] ftp     已登录的 FTP 实例
  * @param[in] file     远程文件路径
- * @param[in] device   本地保存设备
- * @param[in] offset   偏移字节
- * @param[in] type     传输类型
- * @return 命令ID
+ * @param[in,out] device 本地保存设备，可为 NULL；不由 XFtp 关闭
+ * @param[in] offset      远端 REST 偏移，必须 >= 0
+ * @param[in] type        XIODeviceBaseMode 打开模式；本地追加位置由调用方控制
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_get_resume(XFtp* ftp, const char* file, void* device, int64_t offset, int type);
 
 /**
  * @brief 上传文件
+ * @param[in,out] ftp  已登录的 FTP 实例
  * @param[in] file     远程文件路径
- * @param[in] data     数据缓冲
- * @param[in] size     数据字节数
- * @return 命令ID
+ * @param[in] data     数据缓冲；size 为 0 时可为 NULL
+ * @param[in] size     数据字节数，必须 >= 0
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_put(XFtp* ftp, const char* file, const void* data, int64_t size);
 
 /**
  * @brief 追加上传
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @param[in] file     远程文件路径
+ * @param[in] data     数据缓冲；size 为 0 时可为 NULL
+ * @param[in] size     数据字节数，必须 >= 0
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_put_append(XFtp* ftp, const char* file, const void* data, int64_t size);
 
 /**
  * @brief 删除远程文件
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @param[in] file     远程文件路径
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_remove(XFtp* ftp, const char* file);
 
 /**
  * @brief 重命名/移动远程文件
+ * @param[in,out] ftp     已登录的 FTP 实例
+ * @param[in] oldname     原远程路径
+ * @param[in] newname     新远程路径
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_rename(XFtp* ftp, const char* oldname, const char* newname);
 
 /**
  * @brief 创建远程目录
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @param[in] dir      远程目录路径
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_mkdir(XFtp* ftp, const char* dir);
 
 /**
  * @brief 删除远程目录
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @param[in] dir      远程目录路径
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_rmdir(XFtp* ftp, const char* dir);
 
 /**
  * @brief 切换工作目录
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @param[in] dir      目标目录路径
+ * @return 命令ID，失败返回 -1
  */
 int XFtp_cd(XFtp* ftp, const char* dir);
 
 /**
- * @brief 获取当前工作目录
+ * @brief 切换到父工作目录（CDUP）
+ * @param[in,out] ftp  已登录的 FTP 实例
+ * @return 命令ID，失败返回 -1
+ * @note 当前实现通过 CWD .. 完成父目录切换；函数名称沿用现有 ABI
  */
 int XFtp_cdup(XFtp* ftp);
 
 /**
  * @brief 查询文件大小（SIZE 命令，RFC 3659）
+ * @param[in] ftp   已登录的 FTP 实例
  * @param[in] file  远程文件路径
  * @return 命令ID，命令完成后通过 rawCommandReply 信号携带 "213 <size>"
  *         或 commandFinished(id, error=true) 表示失败
@@ -322,63 +390,94 @@ int XFtp_size(XFtp* ftp, const char* file);
 
 /**
  * @brief 查询文件修改时间（MDTM 命令，RFC 3659）
+ * @param[in] ftp   已登录的 FTP 实例
  * @param[in] file  远程文件路径
- * @return 命令ID，命令完成后通过 rawCommandReply 信号携带 "213 YYYYMMDDHHMMSS"
+ * @return 命令ID，失败返回 -1；完成后通过 rawCommandReply 信号携带
+ *         "213 YYYYMMDDHHMMSS"
  */
 int XFtp_mdtm(XFtp* ftp, const char* file);
 
 /**
  * @brief 查询单文件元信息（MLST 命令，RFC 3659）
+ * @param[in,out] ftp 已登录的 FTP 实例
  * @param[in] file  远程文件路径（NULL = 当前路径）
- * @return 命令ID，命令完成后通过 listInfo 信号发射 XFileInfo
+ * @return 命令ID，失败返回 -1；完成后通过 listInfo 信号发射 XFileInfo
  */
 int XFtp_mlst(XFtp* ftp, const char* file);
 
 /**
  * @brief 发送原始命令
+ * @param[in,out] ftp 已登录的 FTP 实例
  * @param[in] command  命令字符串（自动追加 \r\n）
- * @return 命令ID
+ * @return 命令ID，参数/状态/分配失败返回 -1
  */
 int XFtp_rawCommand(XFtp* ftp, const char* command);
 
 // =============== 状态/配置 ===============
 
+/** @brief 获取连接状态。 @param[in] ftp FTP 实例。 @return 当前状态；NULL 返回 Unconnected。 */
 XFtp_State XFtp_state(const XFtp* ftp);
+/** @brief 获取最近一次错误码。 @param[in] ftp FTP 实例。 @return 错误码；NULL 返回 Unknown。 */
 XFtp_Error XFtp_error(const XFtp* ftp);
+/** @brief 获取最近一次错误描述。 @param[in] ftp FTP 实例。 @return UTF-8 描述，生命周期属于 ftp。 */
 const char* XFtp_errorString(const XFtp* ftp);
+/** @brief 获取当前命令 ID。 @param[in] ftp FTP 实例。 @return 当前 ID；无当前命令返回 0。 */
 int XFtp_currentId(const XFtp* ftp);
+/** @brief 获取当前命令类型。 @param[in] ftp FTP 实例。 @return 类型；无当前命令或 NULL 返回 None。 */
 XFtpCommand_Type XFtp_currentCommand(const XFtp* ftp);
+/** @brief 查询是否有当前或排队命令。 @param[in] ftp FTP 实例。 @return 有命令返回 true。 */
 bool XFtp_hasPendingCommands(const XFtp* ftp);
+/** @brief 获取传输模式。 @param[in] ftp FTP 实例。 @return Passive 或 Active；NULL 返回 Passive。 */
 XFtp_TransferMode XFtp_transferMode(const XFtp* ftp);
 
+/**
+ * @brief 设置数据传输模式。
+ * @param[in,out] ftp FTP 实例
+ * @param[in] mode Passive 或 Active
+ * @warning Explicit FTPS 当前只支持 Passive；在 Active 模式下传输命令会
+ *          返回 XFtp_Error_ActiveModeFailed。
+ */
 void XFtp_setTransferMode(XFtp* ftp, XFtp_TransferMode mode);
+/** @brief 获取 TYPE 设置。 @param[in] ftp FTP 实例。 @return Binary 或 Ascii；NULL 返回 Binary。 */
 XFtp_DataType XFtp_transferType(const XFtp* ftp);
+/** @brief 设置 TYPE。 @param[in,out] ftp 未连接的 FTP 实例。 @param[in] type Binary 或 Ascii。 */
 void XFtp_setTransferType(XFtp* ftp, XFtp_DataType type);
 
 /**
  * @brief 启用 UTF8 模式（自动在登录后发送 OPTS UTF8 ON）
+ * @param[in,out] ftp FTP 实例
+ * @param[in] enabled 是否启用
  */
 void XFtp_setUtf8(XFtp* ftp, bool enabled);
+/** @brief 查询 UTF8 设置。 @param[in] ftp FTP 实例。 @return 启用返回 true。 */
 bool XFtp_isUtf8(const XFtp* ftp);
 
 /**
  * @brief 启用 MLSD 优先（默认开启；服务器不支持时回退 LIST）
+ * @param[in,out] ftp FTP 实例
+ * @param[in] enabled 是否优先使用 MLSD
  */
 void XFtp_setMlsdEnabled(XFtp* ftp, bool enabled);
 
 /**
  * @brief 查询 FEAT 协商后某特性是否支持
+ * @param[in] ftp FTP 实例
+ * @param[in] feature 要查询的特性位
+ * @return 支持返回 true；NULL 返回 false
  */
 bool XFtp_supportsFeature(const XFtp* ftp, XFtp_Feature feature);
 
 /**
  * @brief 主动中断当前传输（发送 ABOR）
+ * @param[in,out] ftp FTP 实例
  * @note 调用后数据传输立即中止，触发 commandFinished(error=true)
  */
 void XFtp_abortTransfer(XFtp* ftp);
 
 /**
  * @brief 设置 SSL/TLS (Explicit FTPS, RFC 4217)
+ * @param[in,out] ftp 未连接的 FTP 实例
+ * @param[in] useSsl 是否启用 Explicit FTPS
  * @note 仅在未连接时可设置
  */
 void XFtp_setSsl(XFtp* ftp, bool useSsl);
@@ -401,12 +500,16 @@ XSslPeerVerifyMode XFtp_sslPeerVerifyMode(const XFtp* ftp);
 
 /**
  * @brief 设置 MODE Z 压缩
+ * @param[in,out] ftp 未连接的 FTP 实例
+ * @param[in] useCompression 是否请求 MODE Z
  * @note 仅在未连接时可设置
+ * @warning 当前 portable DTP path 尚未实现压缩传输；启用后传输命令会失败并返回 ProtocolError
  */
 void XFtp_setCompression(XFtp* ftp, bool useCompression);
 
 /**
  * @brief 设置自动重连
+ * @param[in,out] ftp       FTP 实例
  * @param[in] autoReconnect  是否启用
  * @param[in] intervalMs     重试间隔（毫秒）
  * @param[in] maxAttempts    最大重试次数（0=无限）
@@ -415,11 +518,17 @@ void XFtp_setAutoReconnect(XFtp* ftp, bool autoReconnect, int intervalMs, int ma
 
 /**
  * @brief 设置 HTTP 代理
+ * @param[in,out] ftp FTP 实例
+ * @param[in] host HTTP 代理主机
+ * @param[in] port HTTP 代理端口
  */
 void XFtp_setProxy(XFtp* ftp, const char* host, uint16_t port);
 
 /**
  * @brief 设置 SOCKS5 代理
+ * @param[in,out] ftp FTP 实例
+ * @param[in] host SOCKS5 代理主机
+ * @param[in] port SOCKS5 代理端口
  * @param[in] user     NULL 表示匿名
  * @param[in] password NULL 表示无密码
  */
@@ -428,13 +537,14 @@ void XFtp_setSocks5Proxy(XFtp* ftp, const char* host, uint16_t port,
 
 /**
  * @brief 清除代理设置（恢复直连）
+ * @param[in,out] ftp FTP 实例
  */
 void XFtp_clearProxy(XFtp* ftp);
 
 // =============== 信号 ===============
 
 /**
- * 7 个信号：
+ * 8 个信号：
  *  - stateChanged(int newState)            状态变化
  *  - commandStarted(int id)                 命令开始
  *  - commandFinished(int id, bool error)    命令完成
@@ -444,13 +554,21 @@ void XFtp_clearProxy(XFtp* ftp);
  *  - rawCommandReply(int code, const char* reply)  原始响应
  *  - done(bool error)                       所有命令完成
  */
+/** @brief 状态变化信号。 @param[in] ftp 发送者。 @param[in] state 新状态。 @return 信号标识。 */
 void* XFtp_stateChanged_signal(XFtp* ftp, XFtp_State state);
+/** @brief 命令开始信号。 @param[in] ftp 发送者。 @param[in] id 命令 ID。 @return 信号标识。 */
 void* XFtp_commandStarted_signal(XFtp* ftp, int id);
+/** @brief 命令完成信号。 @param[in] ftp 发送者。 @param[in] id 命令 ID。 @param[in] error 是否失败。 @return 信号标识。 */
 void* XFtp_commandFinished_signal(XFtp* ftp, int id, bool error);
+/** @brief 目录项信号。 @param[in] ftp 发送者。 @param[in] info 当前目录项，回调期间有效。 @return 信号标识。 */
 void* XFtp_listInfo_signal(XFtp* ftp, XFileInfo* info);
+/** @brief 数据可读信号。 @param[in] ftp 发送者。 @return 信号标识。 */
 void* XFtp_readyRead_signal(XFtp* ftp);
+/** @brief 传输进度信号。 @param[in] ftp 发送者。 @param[in] current 已传输字节数。 @param[in] total 总字节数，未知时为 -1。 @return 信号标识。 */
 void* XFtp_dataTransferProgress_signal(XFtp* ftp, int64_t current, int64_t total);
+/** @brief 原始响应信号。 @param[in] ftp 发送者。 @param[in] code FTP 响应码。 @param[in] reply 完整响应行。 @return 信号标识。 */
 void* XFtp_rawCommandReply_signal(XFtp* ftp, int code, const char* reply);
+/** @brief 队列完成信号。 @param[in] ftp 发送者。 @param[in] error 队列中是否有失败命令。 @return 信号标识。 */
 void* XFtp_done_signal(XFtp* ftp, bool error);
 
 #endif // XNETWORK_ON && XNETWORK_FTP_ON

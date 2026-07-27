@@ -543,8 +543,6 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
         if (!sheet) continue;
         
         char sheetEntry[256];
-        const char* sheetType = "worksheet";
-        if (sheet->m_sheetType == XAbstractSheet_ST_ChartSheet) sheetType = "chartsheet";
         const char* sheetState = "visible";
         if (sheet->m_sheetState == XAbstractSheet_SS_Hidden) sheetState = "hidden";
         else if (sheet->m_sheetState == XAbstractSheet_SS_VeryHidden) sheetState = "veryHidden";
@@ -557,8 +555,8 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
         XByteArray_append_utf8(buf, "    <sheet name=\"");
         workbookAppendEscaped(buf, sheet->m_sheetName);
         snprintf(sheetEntry, sizeof(sheetEntry),
-            "\" sheetId=\"%d\" r:id=\"rId%d\" state=\"%s\" type=\"%s\"/>\n",
-            sheet->m_sheetId, sheetRid, sheetState, sheetType);
+            "\" sheetId=\"%d\" r:id=\"rId%d\" state=\"%s\"/>\n",
+            sheet->m_sheetId, sheetRid, sheetState);
         XByteArray_append_utf8(buf, sheetEntry);
     }
     XByteArray_append_utf8(buf, "  </sheets>\n");

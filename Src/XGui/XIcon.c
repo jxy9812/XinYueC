@@ -9,6 +9,7 @@
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XVector.h"
+#include <limits.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -248,25 +249,91 @@ int64_t XIcon_cacheKey(const XIcon* self)
     return (self && self->m_data && self->m_data->m_entryCount > 0) ? self->m_data->m_cacheKey : 0;
 }
 
+static int64_t XIconPrivate_entryArea(const XIconEntry* entry)
+{
+    int64_t width;
+    int64_t height;
+    if (!entry) return 0;
+    width = XPixmap_width(&entry->m_pixmap);
+    height = XPixmap_height(&entry->m_pixmap);
+    if (width <= 0 || height <= 0) return 0;
+    return width * height;
+}
+
+/* Match the QPixmapIconEngine policy: within one mode/state, prefer the
+ * smallest resource that is at least as large as requested. If all resources
+ * are smaller, use the largest one so callers never upscale unnecessarily. */
+static const XIconEntry* XIconPrivate_tryMatch(const XIconPrivate* d, int width, int height,
+                                               XIconMode mode, XIconState state)
+{
+    const XIconEntry* best = NULL;
+    const int64_t requestedArea = (width > 0 && height > 0)
+        ? (int64_t)width * height : 0;
+    for (int i = 0; d && i < d->m_entryCount; ++i)
+    {
+        const XIconEntry* candidate = &d->m_entries[i];
+        const int64_t candidateArea = XIconPrivate_entryArea(candidate);
+        if (candidate->m_mode != mode || candidate->m_state != state || candidateArea <= 0)
+            continue;
+        if (!best)
+        {
+            best = candidate;
+            continue;
+        }
+
+        const int64_t bestArea = XIconPrivate_entryArea(best);
+        const bool candidateIsLargeEnough = candidateArea >= requestedArea;
+        const bool bestIsLargeEnough = bestArea >= requestedArea;
+        if (candidateIsLargeEnough != bestIsLargeEnough)
+        {
+            if (candidateIsLargeEnough) best = candidate;
+        }
+        else if (candidateIsLargeEnough)
+        {
+            if (candidateArea < bestArea) best = candidate;
+        }
+        else if (candidateArea > bestArea)
+        {
+            best = candidate;
+        }
+    }
+    return best;
+}
+
 static const XIconEntry* XIconPrivate_bestEntry(const XIconPrivate* d, int width, int height,
                                                 XIconMode mode, XIconState state)
 {
-    const XIconEntry* best = NULL;
-    int bestModeScore = -1;
-    int bestSizeScore = 0x7fffffff;
-    for (int i = 0; d && i < d->m_entryCount; ++i)
+    const XIconState oppositeState = (state == XIconState_On)
+        ? XIconState_Off : XIconState_On;
+    const XIconEntry* best = XIconPrivate_tryMatch(d, width, height, mode, state);
+    if (best) return best;
+
+    /* This is the fallback order used by QPixmapIconEngine::bestMatch().
+     * Disabled/Selected prefer Normal and Active; Normal/Active prefer each
+     * other, then fall back to Disabled/Selected. */
+    if (mode == XIconMode_Disabled || mode == XIconMode_Selected)
     {
-        const XIconEntry* e = &d->m_entries[i];
-        int modeScore = (e->m_mode == mode ? 2 : 0) + (e->m_state == state ? 1 : 0);
-        int ew = XPixmap_width(&e->m_pixmap);
-        int eh = XPixmap_height(&e->m_pixmap);
-        int sizeScore = abs(ew - width) + abs(eh - height);
-        if (!best || modeScore > bestModeScore || (modeScore == bestModeScore && sizeScore < bestSizeScore))
-        {
-            best = e;
-            bestModeScore = modeScore;
-            bestSizeScore = sizeScore;
-        }
+        const XIconMode oppositeMode = (mode == XIconMode_Disabled)
+            ? XIconMode_Selected : XIconMode_Disabled;
+        best = XIconPrivate_tryMatch(d, width, height, XIconMode_Normal, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Active, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, mode, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Normal, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Active, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, oppositeMode, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, oppositeMode, oppositeState);
+    }
+    else
+    {
+        const XIconMode oppositeMode = (mode == XIconMode_Normal)
+            ? XIconMode_Active : XIconMode_Normal;
+        best = XIconPrivate_tryMatch(d, width, height, oppositeMode, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, mode, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, oppositeMode, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Disabled, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Selected, state);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Disabled, oppositeState);
+        if (!best) best = XIconPrivate_tryMatch(d, width, height, XIconMode_Selected, oppositeState);
     }
     return best;
 }
@@ -297,12 +364,46 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
 void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out)
 {
+    double scaledWidth;
+    double scaledHeight;
+    int targetWidth;
+    int targetHeight;
+    int actualWidth;
+    int actualHeight;
+    float outputRatio = 1.0f;
     if (!out) return;
     if (devicePixelRatio <= 0.0f) devicePixelRatio = 1.0f;
-    XIcon_pixmap(self, (int)(width * devicePixelRatio + 0.5f),
-                 (int)(height * devicePixelRatio + 0.5f), mode, state, out);
-    if (!XPixmap_isNull(out))
-        XPixmap_setDevicePixelRatio(out, devicePixelRatio);
+    scaledWidth = (double)width * devicePixelRatio + 0.5;
+    scaledHeight = (double)height * devicePixelRatio + 0.5;
+    targetWidth = (scaledWidth <= 0.0) ? 0 :
+        ((scaledWidth > INT_MAX) ? INT_MAX : (int)scaledWidth);
+    targetHeight = (scaledHeight <= 0.0) ? 0 :
+        ((scaledHeight > INT_MAX) ? INT_MAX : (int)scaledHeight);
+    XIcon_pixmap(self, targetWidth, targetHeight, mode, state, out);
+    if (XPixmap_isNull(out)) return;
+
+    /* QIconPrivate::pixmapDevicePixelRatio() only preserves the requested
+     * ratio when the returned pixels cover the requested device size. For a
+     * lower-resolution fallback, reduce the ratio so its logical size does
+     * not become smaller than requested. */
+    actualWidth = XPixmap_width(out);
+    actualHeight = XPixmap_height(out);
+    if (devicePixelRatio > 1.0f && targetWidth > 0 && targetHeight > 0)
+    {
+        if ((actualWidth == targetWidth && actualHeight <= targetHeight) ||
+            (actualWidth <= targetWidth && actualHeight == targetHeight))
+        {
+            outputRatio = devicePixelRatio;
+        }
+        else
+        {
+            double scale = 0.5 * ((double)actualWidth / targetWidth +
+                                  (double)actualHeight / targetHeight);
+            double adjusted = devicePixelRatio * scale;
+            outputRatio = (adjusted > 1.0) ? (float)adjusted : 1.0f;
+        }
+    }
+    XPixmap_setDevicePixelRatio(out, outputRatio);
 }
 
 void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XSize* out)
@@ -347,11 +448,30 @@ void XIcon_addFile(XIcon* self, const char* fileName, int width, int height,
 {
     if (!self || !self->m_data || !fileName) return;
     XPixmap pixmap;
-    if (width > 0 && height > 0)
-        XPixmap_init_ex(&pixmap, width, height);
-    else
-        XPixmap_init(&pixmap);
-    XPixmap_load(&pixmap, fileName, NULL, 0);
+    XPixmap_init(&pixmap);
+    if (!XPixmap_load(&pixmap, fileName, NULL, 0))
+    {
+        XPixmap_deinit_base(&pixmap);
+        return;
+    }
+
+    /* QIcon::addFile stores the requested QSize as the resource size.  Load
+     * first so the decoder's native size is not discarded by XPixmap_load,
+     * then make the requested raster when both dimensions are specified. */
+    if (width > 0 && height > 0 &&
+        (XPixmap_width(&pixmap) != width || XPixmap_height(&pixmap) != height))
+    {
+        XPixmap scaled;
+        XPixmap_init(&scaled);
+        XPixmap_scaled(&pixmap, width, height, 0, 0, &scaled);
+        if (!XPixmap_isNull(&scaled))
+        {
+            XPixmap_deinit_base(&pixmap);
+            pixmap.m_data = scaled.m_data;
+            scaled.m_data = NULL;
+        }
+        XPixmap_deinit_base(&scaled);
+    }
     if (!XPixmap_isNull(&pixmap))
         XIcon_addPixmap(self, &pixmap, mode, state);
     XPixmap_deinit_base(&pixmap);

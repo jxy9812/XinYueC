@@ -8,6 +8,7 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XVector.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -15,6 +16,38 @@
 #include <limits.h>
 
 static int g_imageReaderAllocationLimitMb = 256;
+
+/* The portable reader currently has one built-in codec.  Keep this small
+   registry in one place so the static discovery APIs cannot advertise a
+   format that the reader does not actually instantiate. */
+static const char* const g_imageReaderFormats[] = { "bmp" };
+static const char* const g_imageReaderMimeTypes[] = { "image/bmp" };
+
+static XVector* XImageReader_makeStringList(const char* const* values, size_t count)
+{
+    XVector* result = XVector_create(sizeof(const char*));
+    if (!result) return NULL;
+    for (size_t i = 0; i < count; ++i) {
+        const char* value = values[i];
+        if (!XVector_push_back_1_base(result, &value)) {
+            XVector_delete_base(result);
+            return NULL;
+        }
+    }
+    return result;
+}
+
+static bool XImageReader_mimeIsBmp(const char* mimeType)
+{
+    const char* expected = "image/bmp";
+    size_t i;
+    if (!mimeType) return false;
+    for (i = 0; expected[i] && mimeType[i]; ++i) {
+        if (tolower((unsigned char)mimeType[i]) !=
+            tolower((unsigned char)expected[i])) return false;
+    }
+    return expected[i] == '\0' && mimeType[i] == '\0';
+}
 
 static const char* XImageReader_detectSignature(const unsigned char* data, size_t size)
 {
@@ -441,9 +474,30 @@ const char* XImageReader_imageFormatDevice(XIODevice* device)
     return result;
 }
 
-void* XImageReader_supportedImageFormats() { return NULL; }
-void* XImageReader_supportedMimeTypes() { return NULL; }
-void* XImageReader_imageFormatsForMimeType(const char* mimeType) { (void)mimeType; return NULL; }
+void* XImageReader_supportedImageFormats()
+{
+    return XImageReader_makeStringList(g_imageReaderFormats,
+                                       sizeof(g_imageReaderFormats) /
+                                       sizeof(g_imageReaderFormats[0]));
+}
+
+void* XImageReader_supportedMimeTypes()
+{
+    return XImageReader_makeStringList(g_imageReaderMimeTypes,
+                                       sizeof(g_imageReaderMimeTypes) /
+                                       sizeof(g_imageReaderMimeTypes[0]));
+}
+
+void* XImageReader_imageFormatsForMimeType(const char* mimeType)
+{
+    if (XImageReader_mimeIsBmp(mimeType))
+        return XImageReader_makeStringList(g_imageReaderFormats,
+                                           sizeof(g_imageReaderFormats) /
+                                           sizeof(g_imageReaderFormats[0]));
+    /* Match Qt's value-returning API: an unknown MIME type is an empty list,
+       rather than a list containing an unrelated fallback format. */
+    return XImageReader_makeStringList(NULL, 0);
+}
 int XImageReader_allocationLimit() { return g_imageReaderAllocationLimitMb; }
 void XImageReader_setAllocationLimit(int mbLimit)
 {

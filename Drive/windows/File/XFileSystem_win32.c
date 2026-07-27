@@ -482,7 +482,7 @@ bool XFileSystem_mkdir(const XString* path, bool recursive)
     }
     
     /* 递归创建目录 */
-    char* pathCopy = XStrdup(utf8Path);
+    char* pathCopy = XMemory_strdup(utf8Path);
     if (!pathCopy) return false;
     
     for (char* p = pathCopy; *p; p++) {

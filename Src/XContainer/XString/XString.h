@@ -1563,8 +1563,6 @@ XString* XString_create_local(const char* local_str);
  */
 #define XString_asprintf					XString_create_fmt_utf8
 
-//拷贝字符串并返回
-char* XStrdup(char* str);
 #ifdef __cplusplus
 }
 #endif

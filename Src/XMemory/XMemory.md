@@ -207,23 +207,28 @@ void XMemory_setFreeMethod(FreeMethod method, XMemoryType type)
 ### 示例：自定义内存管理器
 
 ```c
-// 自定义内存函数
+// 自定义内存函数（由应用程序提供具体后端）
+extern void* my_backend_allocate(size_t size);
+extern void my_backend_release(void* ptr);
+extern void* my_backend_resize(void* ptr, size_t size);
+extern void* my_backend_zero_allocate(size_t count, size_t size);
+
 void* my_malloc(size_t size) {
     printf("Allocating %zu bytes\n", size);
-    return malloc(size);
+    return my_backend_allocate(size);
 }
 
 void my_free(void* ptr) {
     printf("Freeing memory\n");
-    free(ptr);
+    my_backend_release(ptr);
 }
 
 // 设置自定义内存管理器
 XMemory myMemory = {
     .malloc = my_malloc,
     .free = my_free,
-    .realloc = realloc,
-    .calloc = calloc
+    .realloc = my_backend_resize,
+    .calloc = my_backend_zero_allocate
 };
 XMemory_setMethod(&myMemory, XMEMORY_TYPE_SYSTEM);
 

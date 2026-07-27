@@ -278,20 +278,21 @@ bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption
 
 /**
  * @brief      获取支持的图像格式列表
- * @return 格式字符串列表
+ * @return 新分配的 XVector（元素为 const char*）；调用者负责
+ *         使用 XVector_delete_base 释放向量，元素字符串由库静态持有
  */
 void* XImageWriter_supportedImageFormats();
 
 /**
  * @brief      获取支持的 MIME 类型列表
- * @return MIME 类型字符串列表
+ * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
  */
 void* XImageWriter_supportedMimeTypes();
 
 /**
  * @brief      获取指定 MIME 类型对应的图像格式列表
  * @param mimeType MIME 类型字符串
- * @return 格式字符串列表
+ * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
  */
 void* XImageWriter_imageFormatsForMimeType(const char* mimeType);
 

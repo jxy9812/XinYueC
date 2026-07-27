@@ -73,7 +73,8 @@ static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image)
     memset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
     XImage_copy(&d->m_image, image);
-    d->m_devicePixelRatio = 1.0f;
+    d->m_devicePixelRatio = XImage_devicePixelRatio(image);
+    if (!(d->m_devicePixelRatio > 0.0f)) d->m_devicePixelRatio = 1.0f;
     d->m_serialNumber = g_pixmapSerialCounter;
     d->m_cacheKey = XPlatformPixmap_nextCacheKey();
     return d;
@@ -313,18 +314,14 @@ void XPixmap_mask(const XPixmap* self, XPixmap* out)
     XImage_fill(&maskImage, 0);
     uint8_t* maskBits = XImage_bits(&maskImage);
     const int maskStride = XImage_bytesPerLine(&maskImage);
-    const XImageFormat format = XImage_format(&self->m_data->m_image);
     for (int y = 0; maskBits && y < XPixmap_height(self); ++y)
     {
         uint8_t* dst = maskBits + y * maskStride;
         const uint8_t* src = XImage_constScanLine(&self->m_data->m_image, y);
         for (int x = 0; src && x < XPixmap_width(self); ++x)
         {
-            uint8_t alpha = 0xff;
-            if (format == XImageFormat_ARGB32 || format == XImageFormat_ARGB32_Premultiplied)
-                alpha = (uint8_t)(((const uint32_t*)src)[x] >> 24);
-            else if (format == XImageFormat_Alpha8)
-                alpha = src[x];
+            uint8_t alpha = XImage_hasAlphaChannel(&self->m_data->m_image)
+                ? (uint8_t)(XImage_pixel(&self->m_data->m_image, x, y) >> 24) : 0xffu;
             if (alpha != 0)
                 dst[x >> 3] |= (uint8_t)(1u << (x & 7));
         }
@@ -341,11 +338,14 @@ void XPixmap_setMask(XPixmap* self, const XPixmap* mask)
         return;
 
     XPixmap_detach(self);
-    XImage_detach(&self->m_data->m_image);
     XImage* image = &self->m_data->m_image;
     XImageFormat format = XImage_format(image);
     if (format != XImageFormat_ARGB32 && format != XImageFormat_ARGB32_Premultiplied)
-        return;
+    {
+        if (!XImage_convertToFormatInPlace(image, XImageFormat_ARGB32_Premultiplied, 0))
+            return;
+    }
+    XImage_detach(image);
 
     for (int y = 0; y < XPixmap_height(self); ++y)
     {
@@ -509,11 +509,15 @@ void XPixmap_createMaskFromColor(const XPixmap* self, uint32_t maskColor, uint32
 
 void XPixmap_scaled(const XPixmap* self, int width, int height, uint32_t aspectMode, uint32_t mode, XPixmap* out)
 {
+    float sourceDevicePixelRatio;
+    bool sourceIsQBitmap;
     if (!out) return;
     if (!self || !self->m_data || width <= 0 || height <= 0) {
         XPixmap_resetOutput(out);
         return;
     }
+    sourceDevicePixelRatio = self->m_data->m_devicePixelRatio;
+    sourceIsQBitmap = self->m_data->m_isQBitmap;
     XImage scaled;
     XImage_init(&scaled);
     XImage_scaled(&self->m_data->m_image, width, height, aspectMode, mode, &scaled);
@@ -521,8 +525,8 @@ void XPixmap_scaled(const XPixmap* self, int width, int height, uint32_t aspectM
     XPixmap_init_image(out, &scaled, 0);
     if (out->m_data)
     {
-        out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-        out->m_data->m_isQBitmap = self->m_data->m_isQBitmap;
+        out->m_data->m_devicePixelRatio = sourceDevicePixelRatio;
+        out->m_data->m_isQBitmap = sourceIsQBitmap;
     }
     XImage_deinit_base(&scaled);
 }
@@ -554,6 +558,8 @@ void XPixmap_scaledToHeight(const XPixmap* self, int height, uint32_t mode, XPix
 void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
                          float m10, float m11, float m12, uint32_t mode, XPixmap* out)
 {
+    float sourceDevicePixelRatio;
+    bool sourceIsQBitmap;
     (void)mode;
     if (!out) return;
     if (!self || !self->m_data || XPixmap_isNull(self)) {
@@ -563,6 +569,8 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
 
     const int sourceWidth = XPixmap_width(self);
     const int sourceHeight = XPixmap_height(self);
+    sourceDevicePixelRatio = self->m_data->m_devicePixelRatio;
+    sourceIsQBitmap = self->m_data->m_isQBitmap;
     const float determinant = m00 * m11 - m01 * m10;
     if (sourceWidth <= 0 || sourceHeight <= 0 || fabsf(determinant) < 1.0e-7f) {
         XPixmap_resetOutput(out);
@@ -624,8 +632,8 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
     XPixmap_resetOutput(out);
     XPixmap_init_image(out, &transformed, 0);
     if (out->m_data) {
-        out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-        out->m_data->m_isQBitmap = self->m_data->m_isQBitmap;
+        out->m_data->m_devicePixelRatio = sourceDevicePixelRatio;
+        out->m_data->m_isQBitmap = sourceIsQBitmap;
     }
     XImage_deinit_base(&transformed);
 }
@@ -634,16 +642,20 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
 
 void XPixmap_toImage(const XPixmap* self, XImage* out)
 {
-    if (!self || !self->m_data || !out) return;
+    if (!out) return;
     if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
+    if (!self || !self->m_data) return;
     XImage_copy_base(out, &self->m_data->m_image);
+    if (out->m_data)
+        XImage_setDevicePixelRatio(out, self->m_data->m_devicePixelRatio);
 }
 
 void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out)
 {
-    if (!image || !out) return;
+    if (!out) return;
     XPixmap_resetOutput(out);
+    if (!image) return;
     XPixmap_init_image(out, image, flags);
 }
 
@@ -660,6 +672,27 @@ void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out)
         XPixmap_resetOutput(out);
     }
     XImage_deinit_base(&image);
+}
+
+bool XPixmap_convertFromImage(XPixmap* self, const XImage* image, uint32_t flags)
+{
+    XPlatformPixmap* replacement;
+    (void)flags;
+    if (!self || !image || XImage_isNull(image)) return false;
+    replacement = XPlatformPixmap_createFromImage(image);
+    if (!replacement) return false;
+    if (self->m_data) XPlatformPixmap_unref(self->m_data);
+    self->m_data = replacement;
+    return true;
+}
+
+void XPixmap_swap(XPixmap* self, XPixmap* other)
+{
+    XPlatformPixmap* data;
+    if (!self || !other || self == other) return;
+    data = self->m_data;
+    self->m_data = other->m_data;
+    other->m_data = data;
 }
 
 /* ========== 文件操作 ========== */
@@ -705,49 +738,79 @@ bool XPixmap_save(const XPixmap* self, const char* fileName, const char* format,
 
 void XPixmap_copyRect(const XPixmap* self, const XRect* rect, XPixmap* out)
 {
+    float sourceDevicePixelRatio;
+    bool sourceIsQBitmap;
     if (!out) return;
     if (!self || !self->m_data) {
         XPixmap_resetOutput(out);
         return;
     }
+    sourceDevicePixelRatio = self->m_data->m_devicePixelRatio;
+    sourceIsQBitmap = self->m_data->m_isQBitmap;
     XImage copied;
     XImage_init(&copied);
     XImage_copyRect(&self->m_data->m_image, rect, &copied);
     XPixmap_resetOutput(out);
     XPixmap_init_image(out, &copied, 0);
     if (out->m_data) {
-        out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-        out->m_data->m_isQBitmap = self->m_data->m_isQBitmap;
+        out->m_data->m_devicePixelRatio = sourceDevicePixelRatio;
+        out->m_data->m_isQBitmap = sourceIsQBitmap;
     }
     XImage_deinit_base(&copied);
 }
 
 void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* exposed)
 {
-    if (!self || !self->m_data || XPixmap_isNull(self) || (dx == 0 && dy == 0)) return;
-    XRect dest = rect ? *rect : (XRect){0, 0, XPixmap_width(self), XPixmap_height(self)};
-    int x1 = dest.x < 0 ? 0 : dest.x;
-    int y1 = dest.y < 0 ? 0 : dest.y;
-    int x2 = dest.x + dest.width;
-    int y2 = dest.y + dest.height;
-    if (x2 > XPixmap_width(self)) x2 = XPixmap_width(self);
-    if (y2 > XPixmap_height(self)) y2 = XPixmap_height(self);
-    if (x2 <= x1 || y2 <= y1) return;
-    dest = (XRect){x1, y1, x2 - x1, y2 - y1};
+    const int imageWidth = XPixmap_width(self);
+    const int imageHeight = XPixmap_height(self);
+    int64_t destLeft;
+    int64_t destTop;
+    int64_t destRight;
+    int64_t destBottom;
+    int64_t srcLeft;
+    int64_t srcTop;
+    int64_t srcRight;
+    int64_t srcBottom;
+    int64_t movedLeft;
+    int64_t movedTop;
+    int64_t movedRight;
+    int64_t movedBottom;
+    if (exposed) XRegion_clear(exposed);
+    if (!self || !self->m_data || XPixmap_isNull(self) || imageWidth <= 0 || imageHeight <= 0)
+        return;
+    if (dx == 0 && dy == 0)
+        return;
 
-    XRect src = {dest.x - dx, dest.y - dy, dest.width, dest.height};
-    if (src.x < dest.x) { src.width -= dest.x - src.x; src.x = dest.x; }
-    if (src.y < dest.y) { src.height -= dest.y - src.y; src.y = dest.y; }
-    if (src.x + src.width > dest.x + dest.width) src.width = dest.x + dest.width - src.x;
-    if (src.y + src.height > dest.y + dest.height) src.height = dest.y + dest.height - src.y;
-    if (src.width <= 0 || src.height <= 0)
+    destLeft = rect ? rect->x : 0;
+    destTop = rect ? rect->y : 0;
+    destRight = destLeft + (rect ? (int64_t)rect->width : imageWidth);
+    destBottom = destTop + (rect ? (int64_t)rect->height : imageHeight);
+    if (destLeft < 0) destLeft = 0;
+    if (destTop < 0) destTop = 0;
+    if (destRight > imageWidth) destRight = imageWidth;
+    if (destBottom > imageHeight) destBottom = imageHeight;
+    if (destRight <= destLeft || destBottom <= destTop)
+        return;
+
+    /* The source is the destination translated backwards, clipped back to
+     * the destination. All arithmetic stays in int64_t to avoid overflow for
+     * hostile rectangles or offsets. */
+    srcLeft = destLeft > destLeft - (int64_t)dx ? destLeft : destLeft - (int64_t)dx;
+    srcTop = destTop > destTop - (int64_t)dy ? destTop : destTop - (int64_t)dy;
+    srcRight = destRight < destRight - (int64_t)dx ? destRight : destRight - (int64_t)dx;
+    srcBottom = destBottom < destBottom - (int64_t)dy ? destBottom : destBottom - (int64_t)dy;
+    if (srcRight <= srcLeft || srcBottom <= srcTop)
     {
-        if (exposed)
-            XRegion_addRect(exposed, &dest);
+        if (exposed) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)destTop,
+                                                        (int)(destRight - destLeft),
+                                                        (int)(destBottom - destTop)});
         return;
     }
-    XRect moved = {src.x + dx, src.y + dy, src.width, src.height};
-    if (src.width > 0 && src.height > 0)
+    movedLeft = srcLeft + dx;
+    movedTop = srcTop + dy;
+    movedRight = srcRight + dx;
+    movedBottom = srcBottom + dy;
+
     {
         XImage oldImage;
         XImage_init(&oldImage);
@@ -758,36 +821,42 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
         if ((bpp % 8) == 0)
         {
             const int bytes = bpp / 8;
-            for (int y = 0; y < src.height; ++y)
+            for (int y = 0; y < (int)(srcBottom - srcTop); ++y)
             {
-                const uint8_t* s = XImage_constScanLine(&oldImage, src.y + y) + src.x * bytes;
-                uint8_t* d = XImage_scanLine(&self->m_data->m_image, moved.y + y) + moved.x * bytes;
-                memcpy(d, s, (size_t)src.width * bytes);
+                const uint8_t* s = XImage_constScanLine(&oldImage, (int)srcTop + y) + (size_t)srcLeft * bytes;
+                uint8_t* d = XImage_scanLine(&self->m_data->m_image, (int)movedTop + y) + (size_t)movedLeft * bytes;
+                memcpy(d, s, (size_t)(srcRight - srcLeft) * bytes);
             }
         }
         else
         {
             XImageFormat fmt = XImage_format(&oldImage);
-            for (int y = 0; y < src.height; ++y)
-                for (int x = 0; x < src.width; ++x)
+            for (int y = 0; y < (int)(srcBottom - srcTop); ++y)
+                for (int x = 0; x < (int)(srcRight - srcLeft); ++x)
                 {
-                    const uint8_t* s = XImage_constScanLine(&oldImage, src.y + y);
-                    uint8_t* d = XImage_scanLine(&self->m_data->m_image, moved.y + y);
-                    unsigned sm = fmt == XImageFormat_Mono ? (0x80u >> ((src.x + x) & 7)) : (1u << ((src.x + x) & 7));
-                    unsigned dm = fmt == XImageFormat_Mono ? (0x80u >> ((moved.x + x) & 7)) : (1u << ((moved.x + x) & 7));
-                    if (s[(src.x + x) >> 3] & sm) d[(moved.x + x) >> 3] |= (uint8_t)dm;
-                    else d[(moved.x + x) >> 3] &= (uint8_t)~dm;
+                    const uint8_t* s = XImage_constScanLine(&oldImage, (int)srcTop + y);
+                    uint8_t* d = XImage_scanLine(&self->m_data->m_image, (int)movedTop + y);
+                    unsigned sm = fmt == XImageFormat_Mono ? (0x80u >> (((int)srcLeft + x) & 7)) : (1u << (((int)srcLeft + x) & 7));
+                    unsigned dm = fmt == XImageFormat_Mono ? (0x80u >> (((int)movedLeft + x) & 7)) : (1u << (((int)movedLeft + x) & 7));
+                    if (s[((int)srcLeft + x) >> 3] & sm) d[((int)movedLeft + x) >> 3] |= (uint8_t)dm;
+                    else d[((int)movedLeft + x) >> 3] &= (uint8_t)~dm;
                 }
         }
         XImage_deinit_base(&oldImage);
         XPlatformPixmap_touch(self->m_data);
     }
+
     if (exposed)
     {
-        if (moved.y > dest.y) { XRect r = {dest.x, dest.y, dest.width, moved.y - dest.y}; XRegion_addRect(exposed, &r); }
-        if (moved.y + moved.height < dest.y + dest.height) { XRect r = {dest.x, moved.y + moved.height, dest.width, dest.y + dest.height - moved.y - moved.height}; XRegion_addRect(exposed, &r); }
-        if (moved.x > dest.x) { XRect r = {dest.x, moved.y, moved.x - dest.x, moved.height}; XRegion_addRect(exposed, &r); }
-        if (moved.x + moved.width < dest.x + dest.width) { XRect r = {moved.x + moved.width, moved.y, dest.x + dest.width - moved.x - moved.width, moved.height}; XRegion_addRect(exposed, &r); }
+        const int64_t dWidth = destRight - destLeft;
+        if (movedTop > destTop) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)destTop,
+            (int)dWidth, (int)(movedTop - destTop)});
+        if (movedBottom < destBottom) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)movedBottom,
+            (int)dWidth, (int)(destBottom - movedBottom)});
+        if (movedLeft > destLeft) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)movedTop,
+            (int)(movedLeft - destLeft), (int)(movedBottom - movedTop)});
+        if (movedRight < destRight) XRegion_addRect(exposed, &(XRect){(int)movedRight, (int)movedTop,
+            (int)(destRight - movedRight), (int)(movedBottom - movedTop)});
     }
 }
 

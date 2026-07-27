@@ -33,6 +33,7 @@ typedef struct XImageData
     uint32_t*        m_colorTable;       /**< 颜色表指针 */
     int              m_dpmX;             /**< X 方向分辨率（点/米） */
     int              m_dpmY;             /**< Y 方向分辨率（点/米） */
+    float            m_devicePixelRatio; /**< 设备像素比 */
     int              m_offsetX;          /**< X 偏移 */
     int              m_offsetY;          /**< Y 偏移 */
     uint8_t*         m_data;             /**< 像素数据指针 */
@@ -43,13 +44,14 @@ typedef struct XImageData
     int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
 }XImageData;
 
-static uint32_t g_imageSerialCounter = 0;  /**< 全局序列号计数器 */
+static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
 
 static int64_t XImageData_nextCacheKey(void)
 {
-    uint32_t serial = ++g_imageSerialCounter;
-    if (serial == 0)
-        serial = ++g_imageSerialCounter;
+    uint32_t serial;
+    do {
+        serial = XAtomic_fetch_add_uint32(&g_imageSerialCounter, 1u, XAtomic_MemoryOrder_SeqCst) + 1u;
+    } while (serial == 0);
     return (int64_t)((uint64_t)serial << 32);
 }
 
@@ -101,6 +103,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     d->m_height = height;
     d->m_format = format;
     d->m_depth = depth;
+    d->m_devicePixelRatio = 1.0f;
     d->m_cleanupFunc = cleanupFunc;
     d->m_cleanupInfo = cleanupInfo;
 
@@ -127,7 +130,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     }
 
     // 生成缓存键
-    d->m_serialNumber = (int)(g_imageSerialCounter + 1);
+    d->m_serialNumber = (int)(XImageData_nextCacheKey() >> 32);
     d->m_cacheKey = XImageData_nextCacheKey();
 
     return d;
@@ -180,6 +183,7 @@ static XImageData* XImageData_clone(const XImageData* source)
            (size_t)source->m_bytesPerLine * (size_t)source->m_height);
     copy->m_dpmX = source->m_dpmX;
     copy->m_dpmY = source->m_dpmY;
+    copy->m_devicePixelRatio = source->m_devicePixelRatio;
     copy->m_offsetX = source->m_offsetX;
     copy->m_offsetY = source->m_offsetY;
     if (source->m_colorCount > 0 && source->m_colorTable)
@@ -282,6 +286,7 @@ void XImage_init_ex(XImage* self, int width, int height, XImageFormat format)
     if (ISNULL(self, "XImage")) return;
     XImage_init(self);
     self->m_data = XImageData_create(width, height, format, 0, NULL, NULL, NULL);
+    if (self->m_data) self->m_data->m_devicePixelRatio = 1.0f;
 }
 
 void XImage_init_ex_2(XImage* self, int width, int height, XImageFormat format,
@@ -291,6 +296,7 @@ void XImage_init_ex_2(XImage* self, int width, int height, XImageFormat format,
     if (ISNULL(self, "XImage")) return;
     XImage_init(self);
     self->m_data = XImageData_create(width, height, format, bytesPerLine, data, cleanupFunction, cleanupInfo);
+    if (self->m_data) self->m_data->m_devicePixelRatio = 1.0f;
 }
 
 void XImage_init_file(XImage* self, const char* fileName, const char* format)
@@ -447,31 +453,7 @@ void XImage_setColor(XImage* self, int index, uint32_t color)
 void XImage_fill(XImage* self, uint32_t color)
 {
     if (!self || !self->m_data || !self->m_data->m_data) return;
-    XImage_detach(self);
-    int totalBytes = self->m_data->m_bytesPerLine * self->m_data->m_height;
-    // 根据格式填充
-    switch (self->m_data->m_format)
-    {
-        case XImageFormat_ARGB32:
-        case XImageFormat_RGB32:
-        {
-            uint32_t* p = (uint32_t*)self->m_data->m_data;
-            int count = totalBytes / 4;
-            for (int i = 0; i < count; i++)
-                p[i] = color;
-            break;
-        }
-        case XImageFormat_RGB888:
-        case XImageFormat_BGR888:
-        {
-            // 简单填充
-            memset(self->m_data->m_data, color & 0xFF, totalBytes);
-            break;
-        }
-        default:
-            memset(self->m_data->m_data, 0, totalBytes);
-            break;
-    }
+    XImage_fillRect(self, NULL, color);
 }
 
 bool XImage_hasAlphaChannel(const XImage* self)
@@ -484,17 +466,10 @@ bool XImage_hasAlpha(const XImage* self)
     if (!self || !self->m_data) return false;
     if (!XImageFormat_hasAlpha(self->m_data->m_format))
         return false;
-    // 检查实际像素是否使用了 Alpha
-    if (self->m_data->m_format == XImageFormat_ARGB32)
-    {
-        uint32_t* p = (uint32_t*)self->m_data->m_data;
-        int count = (self->m_data->m_bytesPerLine * self->m_data->m_height) / 4;
-        for (int i = 0; i < count; i++)
-        {
-            if ((p[i] >> 24) != 0xFF)
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
+            if ((XImage_pixel(self, x, y) >> 24) != 0xFFu)
                 return true;
-        }
-    }
     return false;
 }
 
@@ -547,27 +522,523 @@ int XImage_pixelIndex(const XImage* self, int x, int y)
     if (!line) return -1;
     if (self->m_data->m_format == XImageFormat_Indexed8)
         return line[x];
+    if (self->m_data->m_format == XImageFormat_Mono ||
+        self->m_data->m_format == XImageFormat_MonoLSB)
+    {
+        unsigned mask = self->m_data->m_format == XImageFormat_Mono
+            ? (0x80u >> ((unsigned)x & 7u)) : (1u << ((unsigned)x & 7u));
+        return (line[(unsigned)x >> 3] & mask) ? 1 : 0;
+    }
     return 0;
+}
+
+static uint8_t XImage_expand5(unsigned value)
+{
+    return (uint8_t)((value << 3) | (value >> 2));
+}
+
+static uint8_t XImage_expand6(unsigned value)
+{
+    return (uint8_t)((value << 2) | (value >> 4));
+}
+
+static uint8_t XImage_luma(uint32_t color)
+{
+    unsigned r = (color >> 16) & 0xffu;
+    unsigned g = (color >> 8) & 0xffu;
+    unsigned b = color & 0xffu;
+    return (uint8_t)((299u * r + 587u * g + 114u * b + 500u) / 1000u);
+}
+
+static uint16_t XImage_load16(const uint8_t* p)
+{
+    uint16_t value = 0;
+    if (p) memcpy(&value, p, sizeof(value));
+    return value;
+}
+
+static void XImage_store16(uint8_t* p, uint16_t value)
+{
+    if (p) memcpy(p, &value, sizeof(value));
+}
+
+static uint32_t XImage_load32(const uint8_t* p)
+{
+    uint32_t value = 0;
+    if (p) memcpy(&value, p, sizeof(value));
+    return value;
+}
+
+static void XImage_store32(uint8_t* p, uint32_t value)
+{
+    if (p) memcpy(p, &value, sizeof(value));
+}
+
+static uint8_t XImage_expand4(unsigned value)
+{
+    return (uint8_t)((value << 4) | value);
+}
+
+static uint8_t XImage_expand2(unsigned value)
+{
+    return (uint8_t)(value * 85u);
+}
+
+static uint8_t XImage_expand10(unsigned value)
+{
+    return (uint8_t)((value + 2u) >> 2);
+}
+
+static unsigned XImage_compress16(uint8_t value)
+{
+    return ((unsigned)value << 8) | value;
+}
+
+static unsigned XImage_compress6(uint8_t value)
+{
+    return ((unsigned)value * 63u + 127u) / 255u;
+}
+
+static unsigned XImage_compress5(uint8_t value)
+{
+    return ((unsigned)value * 31u + 127u) / 255u;
+}
+
+static unsigned XImage_compress4(uint8_t value)
+{
+    return ((unsigned)value * 15u + 127u) / 255u;
+}
+
+static unsigned XImage_compress2(uint8_t value)
+{
+    return ((unsigned)value * 3u + 127u) / 255u;
+}
+
+static unsigned XImage_compress10(uint8_t value)
+{
+    return ((unsigned)value * 1023u + 127u) / 255u;
+}
+
+static uint8_t XImage_unpremultiply8(uint8_t value, uint8_t alpha)
+{
+    if (alpha == 0 || alpha == 255) return value;
+    unsigned result = ((unsigned)value * 255u + alpha / 2u) / alpha;
+    return (uint8_t)(result > 255u ? 255u : result);
+}
+
+static uint16_t XImage_floatToHalf(float value)
+{
+    union { float f; uint32_t u; } bits;
+    uint32_t sign, exponent, fraction;
+    bits.f = value;
+    sign = (bits.u >> 16) & 0x8000u;
+    exponent = (bits.u >> 23) & 0xffu;
+    fraction = bits.u & 0x7fffffu;
+    if (exponent == 0xffu)
+        return (uint16_t)(sign | (fraction ? 0x7e00u : 0x7c00u));
+    if (exponent > 142u)
+        return (uint16_t)(sign | 0x7c00u);
+    if (exponent < 113u)
+    {
+        if (exponent < 103u) return (uint16_t)sign;
+        fraction |= 0x800000u;
+        return (uint16_t)(sign | (fraction >> (114u - exponent)));
+    }
+    return (uint16_t)(sign | ((exponent - 112u) << 10) |
+                      ((fraction + 0x1000u) >> 13));
+}
+
+static float XImage_halfToFloat(uint16_t value)
+{
+    union { float f; uint32_t u; } bits;
+    uint32_t sign = ((uint32_t)value & 0x8000u) << 16;
+    int exponent = (int)(((uint32_t)value >> 10) & 0x1fu);
+    uint32_t fraction = value & 0x3ffu;
+    if (exponent == 0)
+    {
+        if (fraction == 0) bits.u = sign;
+        else
+        {
+            exponent = 1;
+            while ((fraction & 0x400u) == 0) { fraction <<= 1; --exponent; }
+            fraction &= 0x3ffu;
+            bits.u = sign | ((exponent + 112u) << 23) | (fraction << 13);
+        }
+    }
+    else if (exponent == 0x1fu)
+        bits.u = sign | 0x7f800000u | (fraction << 13);
+    else
+        bits.u = sign | ((exponent + 112u) << 23) | (fraction << 13);
+    return bits.f;
+}
+
+static uint8_t XImage_floatChannel(float value)
+{
+    if (!(value > 0.0f)) return 0;
+    if (value >= 1.0f) return 255;
+    return (uint8_t)(value * 255.0f + 0.5f);
+}
+
+static uint32_t XImage_readPixelValue(const XImageData* d, int x, int y)
+{
+    const uint8_t* line;
+    uint32_t value;
+    uint8_t a, r, g, b;
+    if (!d || !d->m_data || x < 0 || y < 0 || x >= d->m_width || y >= d->m_height)
+        return 0;
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    switch (d->m_format)
+    {
+        case XImageFormat_Mono:
+        case XImageFormat_MonoLSB:
+        case XImageFormat_Indexed8:
+        {
+            unsigned index = d->m_format == XImageFormat_Indexed8
+                ? line[x]
+                : ((line[(unsigned)x >> 3] & (d->m_format == XImageFormat_Mono
+                    ? (0x80u >> ((unsigned)x & 7u)) : (1u << ((unsigned)x & 7u)))) ? 1u : 0u);
+            /* QImage::pixel() returns zero when an indexed pixel references
+             * an entry outside the color table; it does not synthesize a
+             * black/white fallback. */
+            return d->m_colorTable && index < (unsigned)d->m_colorCount
+                ? d->m_colorTable[index] : 0u;
+        }
+        case XImageFormat_RGB32:
+            return XImage_load32(line + x * 4) | 0xff000000u;
+        case XImageFormat_ARGB32:
+            return XImage_load32(line + x * 4);
+        case XImageFormat_ARGB32_Premultiplied:
+            value = XImage_load32(line + x * 4);
+            a = (uint8_t)(value >> 24);
+            r = XImage_unpremultiply8((uint8_t)(value >> 16), a);
+            g = XImage_unpremultiply8((uint8_t)(value >> 8), a);
+            b = XImage_unpremultiply8((uint8_t)value, a);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                   ((uint32_t)g << 8) | b;
+        case XImageFormat_RGB16:
+            value = XImage_load16(line + x * 2);
+            return 0xff000000u | ((uint32_t)XImage_expand5((value >> 11) & 0x1fu) << 16) |
+                   ((uint32_t)XImage_expand6((value >> 5) & 0x3fu) << 8) | XImage_expand5(value & 0x1fu);
+        case XImageFormat_RGB555:
+            value = XImage_load16(line + x * 2);
+            return 0xff000000u | ((uint32_t)XImage_expand5((value >> 10) & 0x1fu) << 16) |
+                   ((uint32_t)XImage_expand5((value >> 5) & 0x1fu) << 8) | XImage_expand5(value & 0x1fu);
+        case XImageFormat_RGB444:
+            value = XImage_load16(line + x * 2);
+            return 0xff000000u | ((uint32_t)XImage_expand4((value >> 8) & 0xfu) << 16) |
+                   ((uint32_t)XImage_expand4((value >> 4) & 0xfu) << 8) | XImage_expand4(value & 0xfu);
+        case XImageFormat_ARGB4444_Premultiplied:
+            value = XImage_load16(line + x * 2);
+            a = XImage_expand4((value >> 12) & 0xfu);
+            r = XImage_unpremultiply8(XImage_expand4((value >> 8) & 0xfu), a);
+            g = XImage_unpremultiply8(XImage_expand4((value >> 4) & 0xfu), a);
+            b = XImage_unpremultiply8(XImage_expand4(value & 0xfu), a);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        case XImageFormat_ARGB8565_Premultiplied:
+            value = XImage_load16(line + x * 3 + 1);
+            a = line[x * 3];
+            r = XImage_unpremultiply8(XImage_expand5((value >> 11) & 0x1fu), a);
+            g = XImage_unpremultiply8(XImage_expand6((value >> 5) & 0x3fu), a);
+            b = XImage_unpremultiply8(XImage_expand5(value & 0x1fu), a);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        case XImageFormat_ARGB8555_Premultiplied:
+            value = XImage_load16(line + x * 3 + 1);
+            a = line[x * 3];
+            r = XImage_unpremultiply8(XImage_expand5((value >> 10) & 0x1fu), a);
+            g = XImage_unpremultiply8(XImage_expand5((value >> 5) & 0x1fu), a);
+            b = XImage_unpremultiply8(XImage_expand5(value & 0x1fu), a);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        case XImageFormat_RGB666:
+        case XImageFormat_ARGB6666_Premultiplied:
+        {
+            uint32_t packed = ((uint32_t)line[x * 3] << 16) | ((uint32_t)line[x * 3 + 1] << 8) | line[x * 3 + 2];
+            if (d->m_format == XImageFormat_RGB666)
+            {
+                a = 255; r = XImage_expand6((packed >> 18) & 0x3fu);
+                g = XImage_expand6((packed >> 12) & 0x3fu); b = XImage_expand6((packed >> 6) & 0x3fu);
+            }
+            else
+            {
+                a = XImage_expand6((packed >> 18) & 0x3fu);
+                r = XImage_unpremultiply8(XImage_expand6((packed >> 12) & 0x3fu), a);
+                g = XImage_unpremultiply8(XImage_expand6((packed >> 6) & 0x3fu), a);
+                b = XImage_unpremultiply8(XImage_expand6(packed & 0x3fu), a);
+            }
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        case XImageFormat_RGB888:
+            return 0xff000000u | ((uint32_t)line[x * 3] << 16) | ((uint32_t)line[x * 3 + 1] << 8) | line[x * 3 + 2];
+        case XImageFormat_BGR888:
+            return 0xff000000u | ((uint32_t)line[x * 3 + 2] << 16) | ((uint32_t)line[x * 3 + 1] << 8) | line[x * 3];
+        case XImageFormat_RGBX8888:
+            return 0xff000000u | ((uint32_t)line[x * 4] << 16) | ((uint32_t)line[x * 4 + 1] << 8) | line[x * 4 + 2];
+        case XImageFormat_RGBA8888:
+            return ((uint32_t)line[x * 4 + 3] << 24) | ((uint32_t)line[x * 4] << 16) |
+                   ((uint32_t)line[x * 4 + 1] << 8) | line[x * 4 + 2];
+        case XImageFormat_RGBA8888_Premultiplied:
+            a = line[x * 4 + 3];
+            r = XImage_unpremultiply8(line[x * 4], a);
+            g = XImage_unpremultiply8(line[x * 4 + 1], a);
+            b = XImage_unpremultiply8(line[x * 4 + 2], a);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                   ((uint32_t)g << 8) | b;
+        case XImageFormat_BGR30:
+        case XImageFormat_RGB30:
+        case XImageFormat_A2BGR30_Premultiplied:
+        case XImageFormat_A2RGB30_Premultiplied:
+        {
+            value = XImage_load32(line + x * 4);
+            bool alpha = d->m_format == XImageFormat_A2BGR30_Premultiplied || d->m_format == XImageFormat_A2RGB30_Premultiplied;
+            a = alpha ? XImage_expand2((value >> 30) & 3u) : 255;
+            if (d->m_format == XImageFormat_BGR30 || d->m_format == XImageFormat_A2BGR30_Premultiplied)
+            {
+                r = XImage_expand10(value & 0x3ffu); g = XImage_expand10((value >> 10) & 0x3ffu); b = XImage_expand10((value >> 20) & 0x3ffu);
+            }
+            else
+            {
+                r = XImage_expand10((value >> 20) & 0x3ffu); g = XImage_expand10((value >> 10) & 0x3ffu); b = XImage_expand10(value & 0x3ffu);
+            }
+            if (alpha) { r = XImage_unpremultiply8(r, a); g = XImage_unpremultiply8(g, a); b = XImage_unpremultiply8(b, a); }
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        case XImageFormat_Alpha8:
+            return (uint32_t)line[x] << 24;
+        case XImageFormat_Grayscale8:
+            return 0xff000000u | (uint32_t)line[x] * 0x010101u;
+        case XImageFormat_Grayscale16:
+            value = XImage_load16(line + x * 2);
+            a = (uint8_t)(value >> 8);
+            return 0xff000000u | (uint32_t)a * 0x010101u;
+        case XImageFormat_RGBX64:
+        case XImageFormat_RGBA64:
+        case XImageFormat_RGBA64_Premultiplied:
+        {
+            const uint8_t* p = line + x * 8;
+            uint16_t rv = XImage_load16(p), gv = XImage_load16(p + 2), bv = XImage_load16(p + 4), av = XImage_load16(p + 6);
+            a = d->m_format == XImageFormat_RGBX64 ? 255 : (uint8_t)(av >> 8);
+            r = d->m_format == XImageFormat_RGBA64_Premultiplied ? XImage_unpremultiply8((uint8_t)(rv >> 8), a) : (uint8_t)(rv >> 8);
+            g = d->m_format == XImageFormat_RGBA64_Premultiplied ? XImage_unpremultiply8((uint8_t)(gv >> 8), a) : (uint8_t)(gv >> 8);
+            b = d->m_format == XImageFormat_RGBA64_Premultiplied ? XImage_unpremultiply8((uint8_t)(bv >> 8), a) : (uint8_t)(bv >> 8);
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        case XImageFormat_RGBX16FPx4:
+        case XImageFormat_RGBA16FPx4:
+        case XImageFormat_RGBA16FPx4_Premultiplied:
+        {
+            const uint8_t* p = line + x * 8;
+            float rf = XImage_halfToFloat(XImage_load16(p)), gf = XImage_halfToFloat(XImage_load16(p + 2));
+            float bf = XImage_halfToFloat(XImage_load16(p + 4)), af = XImage_halfToFloat(XImage_load16(p + 6));
+            a = d->m_format == XImageFormat_RGBX16FPx4 ? 255 : XImage_floatChannel(af);
+            r = XImage_floatChannel(rf); g = XImage_floatChannel(gf); b = XImage_floatChannel(bf);
+            if (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied) { r = XImage_unpremultiply8(r, a); g = XImage_unpremultiply8(g, a); b = XImage_unpremultiply8(b, a); }
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        case XImageFormat_RGBX32FPx4:
+        case XImageFormat_RGBA32FPx4:
+        case XImageFormat_RGBA32FPx4_Premultiplied:
+        {
+            float rf, gf, bf, af;
+            const uint8_t* p = line + x * 16;
+            memcpy(&rf, p, sizeof(float)); memcpy(&gf, p + 4, sizeof(float)); memcpy(&bf, p + 8, sizeof(float)); memcpy(&af, p + 12, sizeof(float));
+            a = d->m_format == XImageFormat_RGBX32FPx4 ? 255 : XImage_floatChannel(af);
+            r = XImage_floatChannel(rf); g = XImage_floatChannel(gf); b = XImage_floatChannel(bf);
+            if (d->m_format == XImageFormat_RGBA32FPx4_Premultiplied) { r = XImage_unpremultiply8(r, a); g = XImage_unpremultiply8(g, a); b = XImage_unpremultiply8(b, a); }
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        case XImageFormat_CMYK8888:
+        {
+            unsigned c = line[x * 4], m = line[x * 4 + 1], yy = line[x * 4 + 2], k = line[x * 4 + 3];
+            r = (uint8_t)(255u - (c + k > 255u ? 255u : c + k)); g = (uint8_t)(255u - (m + k > 255u ? 255u : m + k)); b = (uint8_t)(255u - (yy + k > 255u ? 255u : yy));
+            return 0xff000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+        default:
+            return 0;
+    }
+}
+
+static uint32_t XImage_readColorValue(const XImageData* d, int x, int y)
+{
+    /* XImage_readPixelValue already exposes the public, un-premultiplied
+     * ARGB value.  Conversion and filtering must consume that value exactly
+     * once; un-premultiplying here again would brighten semi-transparent
+     * pixels. */
+    return XImage_readPixelValue(d, x, y);
+}
+
+static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color)
+{
+    uint8_t* line;
+    uint8_t a, r, g, b;
+    uint32_t value;
+    if (!d || !d->m_data || x < 0 || y < 0 || x >= d->m_width || y >= d->m_height)
+        return;
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    a = (uint8_t)(color >> 24); r = (uint8_t)(color >> 16); g = (uint8_t)(color >> 8); b = (uint8_t)color;
+    switch (d->m_format)
+    {
+        case XImageFormat_Mono:
+        case XImageFormat_MonoLSB:
+        {
+            unsigned mask = d->m_format == XImageFormat_Mono ? (0x80u >> ((unsigned)x & 7u)) : (1u << ((unsigned)x & 7u));
+            if (color & 0x00ffffffu) line[(unsigned)x >> 3] |= (uint8_t)mask; else line[(unsigned)x >> 3] &= (uint8_t)~mask;
+            break;
+        }
+        case XImageFormat_Indexed8:
+        {
+            unsigned index = 0, best = UINT_MAX, distance = UINT_MAX;
+            if (d->m_colorTable && d->m_colorCount > 0)
+            {
+                for (int i = 0; i < d->m_colorCount; ++i)
+                {
+                    uint32_t pc = d->m_colorTable[i];
+                    unsigned dr = (unsigned)((pc >> 16) & 255u) > r ? ((pc >> 16) & 255u) - r : r - ((pc >> 16) & 255u);
+                    unsigned dg = (unsigned)((pc >> 8) & 255u) > g ? ((pc >> 8) & 255u) - g : g - ((pc >> 8) & 255u);
+                    unsigned db = (unsigned)(pc & 255u) > b ? (pc & 255u) - b : b - (pc & 255u);
+                    unsigned da = (unsigned)(pc >> 24) > a ? (pc >> 24) - a : a - (pc >> 24);
+                    unsigned score = dr * dr + dg * dg + db * db + da * da;
+                    if (score < distance) { distance = score; best = (unsigned)i; }
+                }
+                if (best != UINT_MAX) index = best;
+            }
+            line[x] = (uint8_t)index;
+            break;
+        }
+        case XImageFormat_RGB32:
+            XImage_store32(line + x * 4, color | 0xff000000u); break;
+        case XImageFormat_ARGB32:
+            XImage_store32(line + x * 4, color); break;
+        case XImageFormat_ARGB32_Premultiplied:
+            value = ((uint32_t)a << 24) | ((((uint32_t)r * a + 127u) / 255u) << 16) |
+                    ((((uint32_t)g * a + 127u) / 255u) << 8) | (((uint32_t)b * a + 127u) / 255u);
+            XImage_store32(line + x * 4, value); break;
+        case XImageFormat_RGB16:
+            value = (XImage_compress5(r) << 11) | (XImage_compress6(g) << 5) | XImage_compress5(b);
+            XImage_store16(line + x * 2, (uint16_t)value); break;
+        case XImageFormat_RGB555:
+            value = (XImage_compress5(r) << 10) | (XImage_compress5(g) << 5) | XImage_compress5(b);
+            XImage_store16(line + x * 2, (uint16_t)value); break;
+        case XImageFormat_RGB444:
+            value = (XImage_compress4(r) << 8) | (XImage_compress4(g) << 4) | XImage_compress4(b);
+            XImage_store16(line + x * 2, (uint16_t)value); break;
+        case XImageFormat_ARGB4444_Premultiplied:
+            value = (XImage_compress4(a) << 12) | ((XImage_compress4((uint8_t)((r * a + 127u) / 255u)) << 8)) |
+                    (XImage_compress4((uint8_t)((g * a + 127u) / 255u)) << 4) | XImage_compress4((uint8_t)((b * a + 127u) / 255u));
+            XImage_store16(line + x * 2, (uint16_t)value); break;
+        case XImageFormat_ARGB8565_Premultiplied:
+            line[x * 3] = a; value = (XImage_compress5((uint8_t)((r * a + 127u) / 255u)) << 11) |
+                (XImage_compress6((uint8_t)((g * a + 127u) / 255u)) << 5) | XImage_compress5((uint8_t)((b * a + 127u) / 255u));
+            XImage_store16(line + x * 3 + 1, (uint16_t)value); break;
+        case XImageFormat_ARGB8555_Premultiplied:
+            line[x * 3] = a; value = (XImage_compress5((uint8_t)((r * a + 127u) / 255u)) << 10) |
+                (XImage_compress5((uint8_t)((g * a + 127u) / 255u)) << 5) | XImage_compress5((uint8_t)((b * a + 127u) / 255u));
+            XImage_store16(line + x * 3 + 1, (uint16_t)value); break;
+        case XImageFormat_RGB666:
+        case XImageFormat_ARGB6666_Premultiplied:
+        {
+            unsigned aa = d->m_format == XImageFormat_RGB666 ? 63u : XImage_compress6(a);
+            unsigned rr = XImage_compress6(d->m_format == XImageFormat_RGB666 ? r : (uint8_t)((r * a + 127u) / 255u));
+            unsigned gg = XImage_compress6(d->m_format == XImageFormat_RGB666 ? g : (uint8_t)((g * a + 127u) / 255u));
+            unsigned bb = XImage_compress6(d->m_format == XImageFormat_RGB666 ? b : (uint8_t)((b * a + 127u) / 255u));
+            value = d->m_format == XImageFormat_RGB666
+                ? ((rr << 18) | (gg << 12) | (bb << 6))
+                : ((aa << 18) | (rr << 12) | (gg << 6) | bb);
+            line[x * 3] = (uint8_t)(value >> 16); line[x * 3 + 1] = (uint8_t)(value >> 8); line[x * 3 + 2] = (uint8_t)value;
+            break;
+        }
+        case XImageFormat_RGB888:
+            line[x * 3] = r; line[x * 3 + 1] = g; line[x * 3 + 2] = b; break;
+        case XImageFormat_BGR888:
+            line[x * 3] = b; line[x * 3 + 1] = g; line[x * 3 + 2] = r; break;
+        case XImageFormat_RGBX8888:
+            line[x * 4] = r; line[x * 4 + 1] = g; line[x * 4 + 2] = b; line[x * 4 + 3] = 0xff; break;
+        case XImageFormat_RGBA8888:
+            line[x * 4] = r; line[x * 4 + 1] = g; line[x * 4 + 2] = b; line[x * 4 + 3] = a; break;
+        case XImageFormat_RGBA8888_Premultiplied:
+            line[x * 4] = (uint8_t)((r * a + 127u) / 255u); line[x * 4 + 1] = (uint8_t)((g * a + 127u) / 255u);
+            line[x * 4 + 2] = (uint8_t)((b * a + 127u) / 255u); line[x * 4 + 3] = a; break;
+        case XImageFormat_BGR30:
+        case XImageFormat_RGB30:
+        case XImageFormat_A2BGR30_Premultiplied:
+        case XImageFormat_A2RGB30_Premultiplied:
+        {
+            bool alpha = d->m_format == XImageFormat_A2BGR30_Premultiplied || d->m_format == XImageFormat_A2RGB30_Premultiplied;
+            unsigned aa = alpha ? XImage_compress2(a) : 3u;
+            unsigned rr = XImage_compress10(alpha ? (uint8_t)((r * a + 127u) / 255u) : r);
+            unsigned gg = XImage_compress10(alpha ? (uint8_t)((g * a + 127u) / 255u) : g);
+            unsigned bb = XImage_compress10(alpha ? (uint8_t)((b * a + 127u) / 255u) : b);
+            if (d->m_format == XImageFormat_BGR30 || d->m_format == XImageFormat_A2BGR30_Premultiplied) value = (aa << 30) | (bb << 20) | (gg << 10) | rr;
+            else value = (aa << 30) | (rr << 20) | (gg << 10) | bb;
+            XImage_store32(line + x * 4, value); break;
+        }
+        case XImageFormat_Alpha8:
+            line[x] = a; break;
+        case XImageFormat_Grayscale8:
+            line[x] = XImage_luma(color); break;
+        case XImageFormat_Grayscale16:
+            XImage_store16(line + x * 2, (uint16_t)XImage_luma(color) * 0x0101u); break;
+        case XImageFormat_RGBX64:
+        case XImageFormat_RGBA64:
+        case XImageFormat_RGBA64_Premultiplied:
+        {
+            uint16_t rv = (uint16_t)(XImage_compress16(d->m_format == XImageFormat_RGBA64_Premultiplied ? (uint8_t)((r * a + 127u) / 255u) : r));
+            uint16_t gv = (uint16_t)(XImage_compress16(d->m_format == XImageFormat_RGBA64_Premultiplied ? (uint8_t)((g * a + 127u) / 255u) : g));
+            uint16_t bv = (uint16_t)(XImage_compress16(d->m_format == XImageFormat_RGBA64_Premultiplied ? (uint8_t)((b * a + 127u) / 255u) : b));
+            uint16_t av = d->m_format == XImageFormat_RGBX64 ? 0xffffu : (uint16_t)XImage_compress16(a);
+            uint8_t* p = line + x * 8; XImage_store16(p, rv); XImage_store16(p + 2, gv); XImage_store16(p + 4, bv); XImage_store16(p + 6, av); break;
+        }
+        case XImageFormat_RGBX16FPx4:
+        case XImageFormat_RGBA16FPx4:
+        case XImageFormat_RGBA16FPx4_Premultiplied:
+        {
+            uint8_t* p = line + x * 8; float af = a / 255.0f;
+            float rf = (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ? (r / 255.0f) * af : r / 255.0f);
+            float gf = (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ? (g / 255.0f) * af : g / 255.0f);
+            float bf = (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ? (b / 255.0f) * af : b / 255.0f);
+            XImage_store16(p, XImage_floatToHalf(rf)); XImage_store16(p + 2, XImage_floatToHalf(gf)); XImage_store16(p + 4, XImage_floatToHalf(bf)); XImage_store16(p + 6, XImage_floatToHalf(d->m_format == XImageFormat_RGBX16FPx4 ? 1.0f : af)); break;
+        }
+        case XImageFormat_RGBX32FPx4:
+        case XImageFormat_RGBA32FPx4:
+        case XImageFormat_RGBA32FPx4_Premultiplied:
+        {
+            uint8_t* p = line + x * 16; float af = a / 255.0f;
+            float rf = d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ? (r / 255.0f) * af : r / 255.0f;
+            float gf = d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ? (g / 255.0f) * af : g / 255.0f;
+            float bf = d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ? (b / 255.0f) * af : b / 255.0f;
+            float xf = d->m_format == XImageFormat_RGBX32FPx4 ? 1.0f : af;
+            memcpy(p, &rf, sizeof(float)); memcpy(p + 4, &gf, sizeof(float)); memcpy(p + 8, &bf, sizeof(float)); memcpy(p + 12, &xf, sizeof(float)); break;
+        }
+        case XImageFormat_CMYK8888:
+        {
+            unsigned k = 255u - (r > g ? (r > b ? r : b) : (g > b ? g : b));
+            line[x * 4] = (uint8_t)(r + k > 255u ? 0u : 255u - r - k);
+            line[x * 4 + 1] = (uint8_t)(g + k > 255u ? 0u : 255u - g - k);
+            line[x * 4 + 2] = (uint8_t)(b + k > 255u ? 0u : 255u - b - k);
+            line[x * 4 + 3] = (uint8_t)k; break;
+        }
+        default:
+            break;
+    }
+}
+
+static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb)
+{
+    if (!d || !d->m_data || x < 0 || y < 0 || x >= d->m_width || y >= d->m_height) return;
+    uint8_t* line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    if (d->m_format == XImageFormat_Indexed8)
+        line[x] = (uint8_t)indexOrRgb;
+    else if (d->m_format == XImageFormat_Mono || d->m_format == XImageFormat_MonoLSB)
+    {
+        unsigned mask = d->m_format == XImageFormat_Mono ? (0x80u >> ((unsigned)x & 7u)) : (1u << ((unsigned)x & 7u));
+        if (indexOrRgb & 1u) line[(unsigned)x >> 3] |= (uint8_t)mask;
+        else line[(unsigned)x >> 3] &= (uint8_t)~mask;
+    }
+    else
+        XImage_writePixelValue(d, x, y, indexOrRgb);
 }
 
 uint32_t XImage_pixel(const XImage* self, int x, int y)
 {
-    if (!self || !self->m_data || !self->m_data->m_data) return 0;
-    if (x < 0 || x >= self->m_data->m_width || y < 0 || y >= self->m_data->m_height)
-        return 0;
-    const uint8_t* line = XImage_constScanLine(self, y);
-    if (!line) return 0;
-    switch (self->m_data->m_format)
-    {
-        case XImageFormat_ARGB32:
-        case XImageFormat_RGB32:
-            return ((const uint32_t*)line)[x];
-        case XImageFormat_RGB888:
-            return 0xFF000000 | ((uint32_t)line[x * 3]) << 16 |
-                   ((uint32_t)line[x * 3 + 1]) << 8 | line[x * 3 + 2];
-        default:
-            return 0;
-    }
+    return (self && self->m_data) ? XImage_readPixelValue(self->m_data, x, y) : 0;
 }
 
 void XImage_setPixel(XImage* self, int x, int y, uint32_t indexOrRgb)
@@ -576,22 +1047,8 @@ void XImage_setPixel(XImage* self, int x, int y, uint32_t indexOrRgb)
     if (x < 0 || x >= self->m_data->m_width || y < 0 || y >= self->m_data->m_height)
         return;
     XImage_detach(self);
-    uint8_t* line = XImage_scanLine(self, y);
-    if (!line) return;
-    switch (self->m_data->m_format)
-    {
-        case XImageFormat_ARGB32:
-        case XImageFormat_RGB32:
-            ((uint32_t*)line)[x] = indexOrRgb;
-            break;
-        case XImageFormat_RGB888:
-            line[x * 3]     = (uint8_t)((indexOrRgb >> 16) & 0xFF);
-            line[x * 3 + 1] = (uint8_t)((indexOrRgb >> 8) & 0xFF);
-            line[x * 3 + 2] = (uint8_t)(indexOrRgb & 0xFF);
-            break;
-        default:
-            break;
-    }
+    if (!XImage_isDetached(self)) return;
+    XImage_writePixelIndex(self->m_data, x, y, indexOrRgb);
 }
 
 bool XImage_valid(const XImage* self, int x, int y)
@@ -602,153 +1059,69 @@ bool XImage_valid(const XImage* self, int x, int y)
 
 /* ========== 图像复制与转换 ========== */
 
-static bool XImageFormat_isBasicConvertible(XImageFormat format)
-{
-    switch (format)
-    {
-        case XImageFormat_Mono:
-        case XImageFormat_MonoLSB:
-        case XImageFormat_RGB32:
-        case XImageFormat_ARGB32:
-        case XImageFormat_ARGB32_Premultiplied:
-        case XImageFormat_RGB888:
-        case XImageFormat_BGR888:
-        case XImageFormat_Grayscale8:
-            return true;
-        default:
-            return false;
-    }
-}
-
-static uint32_t XImage_readBasicPixel(const XImageData* d, int x, int y)
-{
-    const uint8_t* line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
-    switch (d->m_format)
-    {
-        case XImageFormat_RGB32:
-            return ((const uint32_t*)line)[x] | 0xff000000u;
-        case XImageFormat_ARGB32:
-            return ((const uint32_t*)line)[x];
-        case XImageFormat_ARGB32_Premultiplied:
-        {
-            uint32_t c = ((const uint32_t*)line)[x];
-            unsigned a = c >> 24;
-            if (a == 0 || a == 255) return c;
-            unsigned r = (((c >> 16) & 255u) * 255u + a / 2u) / a;
-            unsigned g = (((c >> 8) & 255u) * 255u + a / 2u) / a;
-            unsigned b = ((c & 255u) * 255u + a / 2u) / a;
-            if (r > 255) r = 255;
-            if (g > 255) g = 255;
-            if (b > 255) b = 255;
-            return (a << 24) | (r << 16) | (g << 8) | b;
-        }
-        case XImageFormat_RGB888:
-            return 0xff000000u | ((uint32_t)line[x * 3] << 16) |
-                   ((uint32_t)line[x * 3 + 1] << 8) | line[x * 3 + 2];
-        case XImageFormat_BGR888:
-            return 0xff000000u | ((uint32_t)line[x * 3 + 2] << 16) |
-                   ((uint32_t)line[x * 3 + 1] << 8) | line[x * 3];
-        case XImageFormat_Grayscale8:
-        {
-            uint32_t gray = line[x];
-            return 0xff000000u | (gray << 16) | (gray << 8) | gray;
-        }
-        case XImageFormat_Mono:
-        case XImageFormat_MonoLSB:
-        {
-            unsigned shift = d->m_format == XImageFormat_Mono ? 7u - ((unsigned)x & 7u) : ((unsigned)x & 7u);
-            unsigned index = (line[x >> 3] >> shift) & 1u;
-            if (d->m_colorTable && (int)index < d->m_colorCount)
-                return d->m_colorTable[index];
-            return index ? 0xffffffffu : 0xff000000u;
-        }
-        default:
-            return 0;
-    }
-}
-
-static void XImage_writeBasicPixel(XImageData* d, int x, int y, uint32_t c)
-{
-    uint8_t* line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
-    const unsigned a = c >> 24;
-    const unsigned r = (c >> 16) & 255u;
-    const unsigned g = (c >> 8) & 255u;
-    const unsigned b = c & 255u;
-    switch (d->m_format)
-    {
-        case XImageFormat_RGB32:
-            ((uint32_t*)line)[x] = c | 0xff000000u;
-            break;
-        case XImageFormat_ARGB32:
-            ((uint32_t*)line)[x] = c;
-            break;
-        case XImageFormat_ARGB32_Premultiplied:
-            ((uint32_t*)line)[x] = (a << 24) |
-                ((((r * a + 127u) / 255u) & 255u) << 16) |
-                ((((g * a + 127u) / 255u) & 255u) << 8) |
-                (((b * a + 127u) / 255u) & 255u);
-            break;
-        case XImageFormat_RGB888:
-            line[x * 3] = (uint8_t)r; line[x * 3 + 1] = (uint8_t)g; line[x * 3 + 2] = (uint8_t)b;
-            break;
-        case XImageFormat_BGR888:
-            line[x * 3] = (uint8_t)b; line[x * 3 + 1] = (uint8_t)g; line[x * 3 + 2] = (uint8_t)r;
-            break;
-        case XImageFormat_Grayscale8:
-            line[x] = (uint8_t)((11u * r + 16u * g + 5u * b) / 32u);
-            break;
-        case XImageFormat_Mono:
-        case XImageFormat_MonoLSB:
-        {
-            unsigned shift = d->m_format == XImageFormat_Mono ? 7u - ((unsigned)x & 7u) : ((unsigned)x & 7u);
-            uint8_t mask = (uint8_t)(1u << shift);
-            if ((11u * r + 16u * g + 5u * b) / 32u >= 128u)
-                line[x >> 3] |= mask;
-            else
-                line[x >> 3] &= (uint8_t)~mask;
-            break;
-        }
-        default:
-            break;
-    }
-}
-
 void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
 {
     if (!self || !self->m_data || !out) return;
-    XImage_init(out);
-    int w = self->m_data->m_width;
-    int h = self->m_data->m_height;
-    int rx = 0, ry = 0, rw = w, rh = h;
-    if (rect)
+    if (out == self)
     {
-        rx = rect->x;
-        ry = rect->y;
-        rw = rect->width;
-        rh = rect->height;
+        XImage temp;
+        XImage_init(&temp);
+        XImage_copyRect(self, rect, &temp);
+        XImage_deinit_base(out);
+        out->m_data = temp.m_data;
+        temp.m_data = NULL;
+        XImage_deinit_base(&temp);
+        return;
     }
-    // 裁剪到图像边界
-    if (rx < 0) { rw += rx; rx = 0; }
-    if (ry < 0) { rh += ry; ry = 0; }
-    if (rx + rw > w) rw = w - rx;
-    if (ry + rh > h) rh = h - ry;
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+    XImage_init(out);
+    int w = self->m_data->m_width, h = self->m_data->m_height;
+    int rx = 0, ry = 0, rw = w, rh = h;
+    if (rect) { rx = rect->x; ry = rect->y; rw = rect->width; rh = rect->height; }
     if (rw <= 0 || rh <= 0) return;
     XImage_init_ex(out, rw, rh, self->m_data->m_format);
-    // 逐行复制
-    for (int y = 0; y < rh; y++)
+    if (!out->m_data) return;
+    out->m_data->m_dpmX = self->m_data->m_dpmX;
+    out->m_data->m_dpmY = self->m_data->m_dpmY;
+    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
+    out->m_data->m_offsetX = self->m_data->m_offsetX;
+    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
     {
-        const uint8_t* src = XImage_constScanLine(self, ry + y) + rx * (self->m_data->m_depth / 8);
-        uint8_t* dst = XImage_scanLine(out, y);
-        if (src && dst)
-            memcpy(dst, src, out->m_data->m_bytesPerLine < self->m_data->m_bytesPerLine ?
-                   out->m_data->m_bytesPerLine : self->m_data->m_bytesPerLine);
+        out->m_data->m_colorTable = (uint32_t*)XMalloc_System((size_t)self->m_data->m_colorCount * sizeof(uint32_t));
+        if (!out->m_data->m_colorTable) { XImage_deinit_base(out); XImage_init(out); return; }
+        memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
+        out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
+    for (int y = 0; y < rh; ++y)
+        for (int x = 0; x < rw; ++x)
+        {
+            int64_t sourceX64 = (int64_t)rx + x, sourceY64 = (int64_t)ry + y;
+            if (sourceX64 < 0 || sourceY64 < 0 || sourceX64 >= w || sourceY64 >= h) continue;
+            int sourceX = (int)sourceX64, sourceY = (int)sourceY64;
+            if (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB)
+                XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, sourceX, sourceY));
+            else
+                XImage_writePixelValue(out->m_data, x, y, XImage_readColorValue(self->m_data, sourceX, sourceY));
+        }
 }
 
 void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t flags, XImage* out)
 {
     (void)flags;
     if (!out) return;
+    if (self && (const XImage*)out == self)
+    {
+        XImage temp;
+        XImage_init(&temp);
+        XImage_convertToFormat(self, format, flags, &temp);
+        XImage_deinit_base(out);
+        out->m_data = temp.m_data;
+        temp.m_data = NULL;
+        XImage_deinit_base(&temp);
+        return;
+    }
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     if (!self || !self->m_data || !self->m_data->m_data ||
         format <= XImageFormat_Invalid || format >= XImageFormat_NImageFormats) return;
@@ -757,16 +1130,13 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
         out->m_data = XImageData_clone(self->m_data);
         return;
     }
-    if (!XImageFormat_isBasicConvertible(self->m_data->m_format) ||
-        !XImageFormat_isBasicConvertible(format))
-        return;
-
     out->m_data = XImageData_create(self->m_data->m_width, self->m_data->m_height,
                                      format, 0, NULL, NULL, NULL);
     if (!out->m_data)
         return;
     out->m_data->m_dpmX = self->m_data->m_dpmX;
     out->m_data->m_dpmY = self->m_data->m_dpmY;
+    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
     out->m_data->m_offsetX = self->m_data->m_offsetX;
     out->m_data->m_offsetY = self->m_data->m_offsetY;
     if (format == XImageFormat_Mono || format == XImageFormat_MonoLSB)
@@ -782,9 +1152,35 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
         out->m_data->m_colorTable[1] = 0xffffffffu;
         out->m_data->m_colorCount = 2;
     }
+    else if (format == XImageFormat_Indexed8)
+    {
+        out->m_data->m_colorTable = (uint32_t*)XMalloc_System(256 * sizeof(uint32_t));
+        if (!out->m_data->m_colorTable) { XImageData_unref(out->m_data); out->m_data = NULL; return; }
+        out->m_data->m_colorCount = 256;
+        for (int i = 0; i < 256; ++i) out->m_data->m_colorTable[i] = 0xff000000u | (uint32_t)i * 0x010101u;
+        if ((self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB) &&
+            self->m_data->m_colorTable && self->m_data->m_colorCount > 0)
+        {
+            int count = self->m_data->m_colorCount < 256 ? self->m_data->m_colorCount : 256;
+            memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)count * sizeof(uint32_t));
+        }
+    }
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)
-            XImage_writeBasicPixel(out->m_data, x, y, XImage_readBasicPixel(self->m_data, x, y));
+        {
+            bool sourceMono = self->m_data->m_format == XImageFormat_Mono ||
+                              self->m_data->m_format == XImageFormat_MonoLSB;
+            bool targetMono = format == XImageFormat_Mono || format == XImageFormat_MonoLSB;
+            /* A monochrome image may legitimately have no color table.  Keep
+             * its stored bit when converting between packed formats instead
+             * of routing through pixel(), which returns zero for that case. */
+            if (sourceMono && (targetMono || format == XImageFormat_Indexed8))
+                XImage_writePixelIndex(out->m_data, x, y,
+                                       (uint32_t)XImage_pixelIndex(self, x, y));
+            else
+                XImage_writePixelValue(out->m_data, x, y,
+                                       XImage_readColorValue(self->m_data, x, y));
+        }
 }
 
 void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
@@ -793,7 +1189,9 @@ void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
 {
     XImage_convertToFormat(self, format, flags, out);
     if (!out || !out->m_data || !colorTable || colorCount <= 0 ||
-        (format != XImageFormat_Mono && format != XImageFormat_MonoLSB))
+        (format != XImageFormat_Mono && format != XImageFormat_MonoLSB &&
+         format != XImageFormat_Indexed8) ||
+        (format == XImageFormat_Indexed8 && colorCount > 256))
         return;
     XImage_setColorCount(out, colorCount);
     if (!out->m_data->m_colorTable || out->m_data->m_colorCount != colorCount)
@@ -822,38 +1220,82 @@ bool XImage_convertToFormatInPlace(XImage* self, XImageFormat format, uint32_t f
 
 bool XImage_reinterpretAsFormat(XImage* self, XImageFormat format)
 {
-    if (!self || !self->m_data) return false;
+    if (!self || !self->m_data || format <= XImageFormat_Invalid || format >= XImageFormat_NImageFormats) return false;
     // 检查格式兼容性（相同位深度）
     if (XImageFormat_bitDepth(self->m_data->m_format) != XImageFormat_bitDepth(format))
         return false;
     XImage_detach(self);
     self->m_data->m_format = format;
     self->m_data->m_depth = XImageFormat_bitDepth(format);
+    if (format != XImageFormat_Indexed8 && format != XImageFormat_Mono && format != XImageFormat_MonoLSB)
+    {
+        XFree_System(self->m_data->m_colorTable);
+        self->m_data->m_colorTable = NULL;
+        self->m_data->m_colorCount = 0;
+    }
+    XImageData_markDirty(self->m_data);
     return true;
 }
 
 void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage* out)
 {
-    if (!self || !self->m_data || !out) return;
+    if (self && out && (!horizontal && !vertical ||
+                        (self->m_data && self->m_data->m_width <= 1 && self->m_data->m_height <= 1)))
+    {
+        if ((const XImage*)out != self) XImage_copy(out, self);
+        return;
+    }
+    if (self && (const XImage*)out == self)
+    {
+        XImage temp;
+        XImage_init(&temp);
+        XImage_mirrored(self, horizontal, vertical, &temp);
+        if (temp.m_data)
+        {
+            XImage_deinit_base(out);
+            out->m_data = temp.m_data;
+            temp.m_data = NULL;
+        }
+        XImage_deinit_base(&temp);
+        return;
+    }
+    if (!out) return;
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+    XImage_init(out);
+    if (!self || !self->m_data || !self->m_data->m_data) return;
     XImage_init_ex(out, self->m_data->m_width, self->m_data->m_height, self->m_data->m_format);
+    if (!out->m_data) return;
+    out->m_data->m_dpmX = self->m_data->m_dpmX;
+    out->m_data->m_dpmY = self->m_data->m_dpmY;
+    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
+    out->m_data->m_offsetX = self->m_data->m_offsetX;
+    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
+    {
+        out->m_data->m_colorTable = (uint32_t*)XMalloc_System(
+            (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
+        if (!out->m_data->m_colorTable)
+        {
+            XImageData_unref(out->m_data);
+            out->m_data = NULL;
+            return;
+        }
+        memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable,
+               (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
+        out->m_data->m_colorCount = self->m_data->m_colorCount;
+    }
     int w = self->m_data->m_width;
     int h = self->m_data->m_height;
-    int bpp = self->m_data->m_depth / 8;
-    if (bpp < 1) bpp = 1;
     for (int y = 0; y < h; y++)
     {
         int srcY = vertical ? (h - 1 - y) : y;
-        const uint8_t* src = XImage_constScanLine(self, srcY);
-        uint8_t* dst = XImage_scanLine(out, y);
-        if (!src || !dst) continue;
-        if (horizontal)
+        for (int x = 0; x < w; x++)
         {
-            for (int x = 0; x < w; x++)
-                memcpy(dst + x * bpp, src + (w - 1 - x) * bpp, bpp);
-        }
-        else
-        {
-            memcpy(dst, src, self->m_data->m_bytesPerLine);
+            int srcX = horizontal ? (w - 1 - x) : x;
+            if (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB)
+                XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, srcX, srcY));
+            else
+                XImage_writePixelValue(out->m_data, x, y, XImage_readColorValue(self->m_data, srcX, srcY));
         }
     }
 }
@@ -871,60 +1313,64 @@ void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
 
 void XImage_rgbSwapped(const XImage* self, XImage* out)
 {
+    if (self && (const XImage*)out == self)
+    {
+        XImage temp;
+        XImage_init(&temp);
+        XImage_rgbSwapped(self, &temp);
+        if (temp.m_data)
+        {
+            XImage_deinit_base(out);
+            out->m_data = temp.m_data;
+            temp.m_data = NULL;
+        }
+        XImage_deinit_base(&temp);
+        return;
+    }
     if (!out) return;
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     if (!self || !self->m_data || !self->m_data->m_data) return;
     out->m_data = XImageData_clone(self->m_data);
     if (!out->m_data) return;
     int w = self->m_data->m_width;
     int h = self->m_data->m_height;
-    switch (self->m_data->m_format)
+    if (self->m_data->m_format == XImageFormat_Indexed8 && out->m_data->m_colorTable)
     {
-        case XImageFormat_RGB32:
-        case XImageFormat_ARGB32:
-        case XImageFormat_ARGB32_Premultiplied:
-        case XImageFormat_RGBX8888:
-        case XImageFormat_RGBA8888:
-        case XImageFormat_RGBA8888_Premultiplied:
-            for (int y = 0; y < h; ++y)
-                for (int x = 0; x < w; ++x)
-                {
-                    uint32_t* p = (uint32_t*)(out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine) + x;
-                    uint32_t c = *p;
-                    *p = (c & 0xff00ff00u) | ((c & 0x00ff0000u) >> 16) | ((c & 0x000000ffu) << 16);
-                }
-            break;
-        case XImageFormat_RGB888:
-        case XImageFormat_BGR888:
-        case XImageFormat_RGB666:
-            for (int y = 0; y < h; ++y)
-                for (int x = 0; x < w; ++x)
-                {
-                    uint8_t* p = out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine + x * 3;
-                    uint8_t t = p[0]; p[0] = p[2]; p[2] = t;
-                }
-            break;
-        case XImageFormat_RGB16:
-            for (int y = 0; y < h; ++y)
-                for (int x = 0; x < w; ++x)
-                {
-                    uint16_t* p = (uint16_t*)(out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine) + x;
-                    uint16_t c = *p;
-                    *p = (uint16_t)(((c << 11) & 0xf800u) | ((c >> 11) & 0x001fu) | (c & 0x07e0u));
-                }
-            break;
-        case XImageFormat_Mono:
-        case XImageFormat_MonoLSB:
-        case XImageFormat_Indexed8:
-            for (int i = 0; i < out->m_data->m_colorCount; ++i)
+        for (int i = 0; i < out->m_data->m_colorCount; ++i)
+        {
+            uint32_t c = out->m_data->m_colorTable[i];
+            out->m_data->m_colorTable[i] = (c & 0xff00ff00u) |
+                ((c & 0x00ff0000u) >> 16) | ((c & 0x000000ffu) << 16);
+        }
+    }
+    else if (self->m_data->m_format != XImageFormat_Mono &&
+             self->m_data->m_format != XImageFormat_MonoLSB &&
+             self->m_data->m_format != XImageFormat_Alpha8)
+    {
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
             {
-                uint32_t c = out->m_data->m_colorTable[i];
-                out->m_data->m_colorTable[i] = (c & 0xff00ff00u) |
-                    ((c & 0x00ff0000u) >> 16) | ((c & 0x000000ffu) << 16);
+                uint32_t c;
+                if (self->m_data->m_format == XImageFormat_ARGB32_Premultiplied)
+                {
+                    c = XImage_load32(self->m_data->m_data + (size_t)y * self->m_data->m_bytesPerLine + x * 4);
+                    c = (c & 0xff00ff00u) | ((c & 0x00ff0000u) >> 16) | ((c & 0x000000ffu) << 16);
+                    XImage_store32(out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine + x * 4, c);
+                }
+                else if (self->m_data->m_format == XImageFormat_RGBA8888_Premultiplied)
+                {
+                    uint8_t* src = self->m_data->m_data + (size_t)y * self->m_data->m_bytesPerLine + x * 4;
+                    uint8_t* dst = out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine + x * 4;
+                    dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3];
+                }
+                else
+                {
+                    c = XImage_readColorValue(self->m_data, x, y);
+                    c = (c & 0xff00ff00u) | ((c & 0x00ff0000u) >> 16) | ((c & 0x000000ffu) << 16);
+                    XImage_writePixelValue(out->m_data, x, y, c);
+                }
             }
-            break;
-        default:
-            break;
     }
     XImageData_markDirty(out->m_data);
 }
@@ -947,8 +1393,19 @@ void XImage_rgbSwappedInPlace(XImage* self)
 
 void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMode, uint32_t mode, XImage* out)
 {
-    (void)mode;
     if (!out) return;
+    if (self && (const XImage*)out == self)
+    {
+        XImage temp;
+        XImage_init(&temp);
+        XImage_scaled(self, width, height, aspectMode, mode, &temp);
+        XImage_deinit_base(out);
+        out->m_data = temp.m_data;
+        temp.m_data = NULL;
+        XImage_deinit_base(&temp);
+        return;
+    }
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     if (!self || !self->m_data || !self->m_data->m_data || width <= 0 || height <= 0) return;
     int sw = self->m_data->m_width;
@@ -972,6 +1429,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
     if (!out->m_data) return;
     out->m_data->m_dpmX = self->m_data->m_dpmX;
     out->m_data->m_dpmY = self->m_data->m_dpmY;
+    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
     out->m_data->m_offsetX = self->m_data->m_offsetX;
     out->m_data->m_offsetY = self->m_data->m_offsetY;
     if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
@@ -985,28 +1443,32 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
                (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
-    if (XImageFormat_isBasicConvertible(self->m_data->m_format))
-    {
-        for (int y = 0; y < targetHeight; ++y)
-            for (int x = 0; x < targetWidth; ++x)
-                XImage_writeBasicPixel(out->m_data, x, y,
-                    XImage_readBasicPixel(self->m_data, (int)((int64_t)x * sw / targetWidth),
-                                          (int)((int64_t)y * sh / targetHeight)));
-        return;
-    }
-    int bpp = self->m_data->m_depth / 8;
-    if (bpp < 1 || self->m_data->m_depth % 8 != 0)
-    {
-        XImageData_unref(out->m_data); out->m_data = NULL; return;
-    }
+    const bool smooth = mode != 0;
     for (int y = 0; y < targetHeight; y++)
     {
-        const uint8_t* src = self->m_data->m_data + (size_t)((int64_t)y * sh / targetHeight) * self->m_data->m_bytesPerLine;
-        uint8_t* dst = out->m_data->m_data + (size_t)y * out->m_data->m_bytesPerLine;
         for (int x = 0; x < targetWidth; x++)
         {
-            int srcX = (int)((int64_t)x * sw / targetWidth);
-            memcpy(dst + x * bpp, src + srcX * bpp, bpp);
+            int srcX = (int)((int64_t)x * sw / targetWidth), srcY = (int)((int64_t)y * sh / targetHeight);
+            uint32_t color = XImage_readColorValue(self->m_data, srcX, srcY);
+            if (smooth && !(srcX == sw - 1 && srcY == sh - 1))
+            {
+                double fx = ((double)x + 0.5) * sw / targetWidth - 0.5;
+                double fy = ((double)y + 0.5) * sh / targetHeight - 0.5;
+                int x0 = fx < 0.0 ? 0 : (int)fx, y0 = fy < 0.0 ? 0 : (int)fy;
+                int x1 = x0 + 1 < sw ? x0 + 1 : x0, y1 = y0 + 1 < sh ? y0 + 1 : y0;
+                double tx = fx < 0.0 ? 0.0 : fx - x0, ty = fy < 0.0 ? 0.0 : fy - y0;
+                uint32_t c00 = XImage_readColorValue(self->m_data, x0, y0), c10 = XImage_readColorValue(self->m_data, x1, y0);
+                uint32_t c01 = XImage_readColorValue(self->m_data, x0, y1), c11 = XImage_readColorValue(self->m_data, x1, y1);
+                unsigned aa = (unsigned)(((((c00 >> 24) & 255u) * (1.0 - tx) + ((c10 >> 24) & 255u) * tx) * (1.0 - ty) + (((c01 >> 24) & 255u) * (1.0 - tx) + ((c11 >> 24) & 255u) * tx) * ty) + 0.5);
+                unsigned rr = (unsigned)(((((c00 >> 16) & 255u) * (1.0 - tx) + ((c10 >> 16) & 255u) * tx) * (1.0 - ty) + (((c01 >> 16) & 255u) * (1.0 - tx) + ((c11 >> 16) & 255u) * tx) * ty) + 0.5);
+                unsigned gg = (unsigned)(((((c00 >> 8) & 255u) * (1.0 - tx) + ((c10 >> 8) & 255u) * tx) * (1.0 - ty) + (((c01 >> 8) & 255u) * (1.0 - tx) + ((c11 >> 8) & 255u) * tx) * ty) + 0.5);
+                unsigned bb = (unsigned)((((c00 & 255u) * (1.0 - tx) + (c10 & 255u) * tx) * (1.0 - ty) + ((c01 & 255u) * (1.0 - tx) + (c11 & 255u) * tx) * ty) + 0.5);
+                color = (aa << 24) | (rr << 16) | (gg << 8) | bb;
+            }
+            if (!smooth && (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB))
+                XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, srcX, srcY));
+            else
+                XImage_writePixelValue(out->m_data, x, y, color);
         }
     }
 }
@@ -1197,6 +1659,7 @@ void XImage_setDotsPerMeterX(XImage* self, int val)
     if (!self || !self->m_data) return;
     XImage_detach(self);
     self->m_data->m_dpmX = val;
+    XImageData_markDirty(self->m_data);
 }
 
 int XImage_dotsPerMeterY(const XImage* self)
@@ -1209,6 +1672,23 @@ void XImage_setDotsPerMeterY(XImage* self, int val)
     if (!self || !self->m_data) return;
     XImage_detach(self);
     self->m_data->m_dpmY = val;
+    XImageData_markDirty(self->m_data);
+}
+
+float XImage_devicePixelRatio(const XImage* self)
+{
+    return (self && self->m_data && self->m_data->m_devicePixelRatio > 0.0f)
+        ? self->m_data->m_devicePixelRatio : 1.0f;
+}
+
+void XImage_setDevicePixelRatio(XImage* self, float scaleFactor)
+{
+    if (!self || !self->m_data || scaleFactor <= 0.0f || scaleFactor == XImage_devicePixelRatio(self))
+        return;
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    self->m_data->m_devicePixelRatio = scaleFactor;
+    XImageData_markDirty(self->m_data);
 }
 
 void XImage_offset(const XImage* self, XPoint* out)
@@ -1226,6 +1706,7 @@ void XImage_setOffset(XImage* self, const XPoint* pos)
     XImage_detach(self);
     self->m_data->m_offsetX = pos->x;
     self->m_data->m_offsetY = pos->y;
+    XImageData_markDirty(self->m_data);
 }
 
 int64_t XImage_cacheKey(const XImage* self)
@@ -1251,7 +1732,7 @@ void XImage_detach(XImage* self)
 
 bool XImage_isDetached(const XImage* self)
 {
-    return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
+    return self && self->m_data && XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
 }
 
 /* ========== 静态工具方法 ========== */
@@ -1273,8 +1754,36 @@ const char* XImage_formatToStr(XImageFormat format)
         case XImageFormat_RGB32: return "RGB32";
         case XImageFormat_ARGB32: return "ARGB32";
         case XImageFormat_ARGB32_Premultiplied: return "ARGB32_Premultiplied";
+        case XImageFormat_RGB16: return "RGB16";
+        case XImageFormat_ARGB8565_Premultiplied: return "ARGB8565_Premultiplied";
+        case XImageFormat_RGB666: return "RGB666";
+        case XImageFormat_ARGB6666_Premultiplied: return "ARGB6666_Premultiplied";
+        case XImageFormat_RGB555: return "RGB555";
+        case XImageFormat_ARGB8555_Premultiplied: return "ARGB8555_Premultiplied";
         case XImageFormat_RGB888: return "RGB888";
+        case XImageFormat_RGB444: return "RGB444";
+        case XImageFormat_ARGB4444_Premultiplied: return "ARGB4444_Premultiplied";
+        case XImageFormat_RGBX8888: return "RGBX8888";
         case XImageFormat_RGBA8888: return "RGBA8888";
+        case XImageFormat_RGBA8888_Premultiplied: return "RGBA8888_Premultiplied";
+        case XImageFormat_BGR30: return "BGR30";
+        case XImageFormat_A2BGR30_Premultiplied: return "A2BGR30_Premultiplied";
+        case XImageFormat_RGB30: return "RGB30";
+        case XImageFormat_A2RGB30_Premultiplied: return "A2RGB30_Premultiplied";
+        case XImageFormat_Alpha8: return "Alpha8";
+        case XImageFormat_Grayscale8: return "Grayscale8";
+        case XImageFormat_RGBX64: return "RGBX64";
+        case XImageFormat_RGBA64: return "RGBA64";
+        case XImageFormat_RGBA64_Premultiplied: return "RGBA64_Premultiplied";
+        case XImageFormat_Grayscale16: return "Grayscale16";
+        case XImageFormat_BGR888: return "BGR888";
+        case XImageFormat_RGBX16FPx4: return "RGBX16FPx4";
+        case XImageFormat_RGBA16FPx4: return "RGBA16FPx4";
+        case XImageFormat_RGBA16FPx4_Premultiplied: return "RGBA16FPx4_Premultiplied";
+        case XImageFormat_RGBX32FPx4: return "RGBX32FPx4";
+        case XImageFormat_RGBA32FPx4: return "RGBA32FPx4";
+        case XImageFormat_RGBA32FPx4_Premultiplied: return "RGBA32FPx4_Premultiplied";
+        case XImageFormat_CMYK8888: return "CMYK8888";
         default: return "Unknown";
     }
 }
@@ -1288,46 +1797,14 @@ bool XImage_allGray(const XImage* self)
 {
     if (!self || !self->m_data || !self->m_data->m_data)
         return false;
-    int w = self->m_data->m_width;
-    int h = self->m_data->m_height;
-    if (w <= 0 || h <= 0)
-        return false;
-    switch (self->m_data->m_format)
-    {
-        case XImageFormat_ARGB32:
-        case XImageFormat_RGB32:
+    if (self->m_data->m_width <= 0 || self->m_data->m_height <= 0) return false;
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
         {
-            const uint32_t* p = (const uint32_t*)self->m_data->m_data;
-            int count = (self->m_data->m_bytesPerLine * h) / 4;
-            for (int i = 0; i < count; i++)
-            {
-                uint32_t c = p[i];
-                uint8_t r = (uint8_t)((c >> 16) & 0xFF);
-                uint8_t g = (uint8_t)((c >> 8) & 0xFF);
-                uint8_t b = (uint8_t)(c & 0xFF);
-                if (r != g || g != b)
-                    return false;
-            }
-            return true;
+            uint32_t c = XImage_pixel(self, x, y);
+            if (((c >> 16) & 255u) != ((c >> 8) & 255u) || ((c >> 8) & 255u) != (c & 255u)) return false;
         }
-        case XImageFormat_RGB888:
-        {
-            for (int y = 0; y < h; y++)
-            {
-                const uint8_t* line = XImage_constScanLine(self, y);
-                if (!line) continue;
-                for (int x = 0; x < w; x++)
-                {
-                    if (line[x * 3] != line[x * 3 + 1] ||
-                        line[x * 3 + 1] != line[x * 3 + 2])
-                        return false;
-                }
-            }
-            return true;
-        }
-        default:
-            return false;
-    }
+    return true;
 }
 
 void XImage_fillRect(XImage* self, const XRect* rect, uint32_t color)
@@ -1343,44 +1820,106 @@ void XImage_fillRect(XImage* self, const XRect* rect, uint32_t color)
         rw = rect->width;
         rh = rect->height;
     }
-    if (rx < 0) { rw += rx; rx = 0; }
-    if (ry < 0) { rh += ry; ry = 0; }
-    if (rx + rw > w) rw = w - rx;
-    if (ry + rh > h) rh = h - ry;
-    if (rw <= 0 || rh <= 0) return;
+    int64_t left64 = rx, top64 = ry, right64 = (int64_t)rx + rw, bottom64 = (int64_t)ry + rh;
+    if (left64 < 0) left64 = 0;
+    if (top64 < 0) top64 = 0;
+    if (right64 > w) right64 = w;
+    if (bottom64 > h) bottom64 = h;
+    if (right64 <= left64 || bottom64 <= top64) return;
+    rx = (int)left64; ry = (int)top64; rw = (int)(right64 - left64); rh = (int)(bottom64 - top64);
     XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
     for (int y = ry; y < ry + rh; y++)
-    {
-        uint8_t* line = XImage_scanLine(self, y);
-        if (!line) continue;
-        switch (self->m_data->m_format)
-        {
-            case XImageFormat_ARGB32:
-            case XImageFormat_RGB32:
-            {
-                uint32_t* p = (uint32_t*)line + rx;
-                for (int x = 0; x < rw; x++)
-                    p[x] = color;
-                break;
-            }
-            case XImageFormat_RGB888:
-            {
-                for (int x = rx; x < rx + rw; x++)
-                {
-                    line[x * 3]     = (uint8_t)((color >> 16) & 0xFF);
-                    line[x * 3 + 1] = (uint8_t)((color >> 8) & 0xFF);
-                    line[x * 3 + 2] = (uint8_t)(color & 0xFF);
-                }
-                break;
-            }
-            default:
-                memset(line + rx, 0, rw);
-                break;
-        }
-    }
+        for (int x = rx; x < rx + rw; x++)
+            XImage_writePixelValue(self->m_data, x, y, color);
 }
 
 void XImage_clear(XImage* self, const XRect* rect, uint32_t color)
 {
     XImage_fillRect(self, rect, color);
+}
+
+void XImage_invertPixels(XImage* self, XImageInvertMode mode)
+{
+    if (!self || !self->m_data || !self->m_data->m_data) return;
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    const int depth = self->m_data->m_depth;
+    if (XImageFormat_isPremultiplied(self->m_data->m_format))
+    {
+        XImageFormat original = self->m_data->m_format;
+        XImageFormat intermediate = depth > 128 ? XImageFormat_RGBA32FPx4 :
+            (depth > 64 ? XImageFormat_RGBA32FPx4 :
+             (depth > 32 ? XImageFormat_RGBA64 : XImageFormat_ARGB32));
+        if (original == XImageFormat_RGBA16FPx4_Premultiplied) intermediate = XImageFormat_RGBA16FPx4;
+        else if (original == XImageFormat_RGBA32FPx4_Premultiplied) intermediate = XImageFormat_RGBA32FPx4;
+        else if (original == XImageFormat_ARGB32_Premultiplied || original == XImageFormat_A2RGB30_Premultiplied || original == XImageFormat_A2BGR30_Premultiplied ||
+                 original == XImageFormat_ARGB8565_Premultiplied || original == XImageFormat_ARGB6666_Premultiplied || original == XImageFormat_ARGB8555_Premultiplied || original == XImageFormat_ARGB4444_Premultiplied)
+            intermediate = XImageFormat_ARGB32;
+        XImage temp;
+        XImage_init(&temp);
+        XImage_convertToFormat(self, intermediate, 0, &temp);
+        if (!XImage_isNull(&temp))
+        {
+            XImage_invertPixels(&temp, mode);
+            XImage_convertToFormat(&temp, original, 0, self);
+            XImage_deinit_base(&temp);
+            return;
+        }
+        XImage_deinit_base(&temp);
+    }
+    if (depth < 32)
+    {
+        int bytes = (depth + 7) / 8;
+        if (depth == 1) bytes = (self->m_data->m_width + 7) / 8;
+        else if (bytes <= 0) bytes = 1;
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            int count = depth == 1 ? bytes : self->m_data->m_width * bytes;
+            for (int i = 0; i < count; ++i) line[i] ^= 0xffu;
+        }
+    }
+    else if (depth == 64)
+    {
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            for (int x = 0; x < self->m_data->m_width; ++x)
+            {
+                for (int c = 0; c < 3; ++c) XImage_store16(line + x * 8 + c * 2, (uint16_t)~XImage_load16(line + x * 8 + c * 2));
+                if (mode == XImageInvertMode_InvertRgba) XImage_store16(line + x * 8 + 6, (uint16_t)~XImage_load16(line + x * 8 + 6));
+            }
+        }
+    }
+    else if (depth == 128)
+    {
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            for (int x = 0; x < self->m_data->m_width; ++x)
+            {
+                float value;
+                for (int c = 0; c < 3; ++c) { memcpy(&value, line + x * 16 + c * 4, sizeof(value)); value = 1.0f - value; memcpy(line + x * 16 + c * 4, &value, sizeof(value)); }
+                if (mode == XImageInvertMode_InvertRgba) { memcpy(&value, line + x * 16 + 12, sizeof(value)); value = 1.0f - value; memcpy(line + x * 16 + 12, &value, sizeof(value)); }
+            }
+        }
+    }
+    else
+    {
+        uint32_t xorbits = mode == XImageInvertMode_InvertRgba ? 0xffffffffu : 0x00ffffffu;
+        if (self->m_data->m_format == XImageFormat_RGBX8888) xorbits = 0x00ffffffu;
+        if (self->m_data->m_format == XImageFormat_RGBA8888 && mode == XImageInvertMode_InvertRgb) xorbits = 0x00ffffffu;
+        if (self->m_data->m_format == XImageFormat_RGB30 || self->m_data->m_format == XImageFormat_BGR30) xorbits = 0x3fffffffu;
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            for (int x = 0; x < self->m_data->m_width; ++x)
+            {
+                uint32_t value = XImage_load32(line + x * 4);
+                XImage_store32(line + x * 4, value ^ xorbits);
+            }
+        }
+    }
+    XImageData_markDirty(self->m_data);
 }

@@ -8,10 +8,43 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XVector.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <limits.h>
+
+/* Keep writer discovery aligned with the only portable codec implemented in
+   this module.  Entries are static strings stored in a newly allocated
+   XVector returned to each caller. */
+static const char* const g_imageWriterFormats[] = { "bmp" };
+static const char* const g_imageWriterMimeTypes[] = { "image/bmp" };
+
+static XVector* XImageWriter_makeStringList(const char* const* values, size_t count)
+{
+    XVector* result = XVector_create(sizeof(const char*));
+    if (!result) return NULL;
+    for (size_t i = 0; i < count; ++i) {
+        const char* value = values[i];
+        if (!XVector_push_back_1_base(result, &value)) {
+            XVector_delete_base(result);
+            return NULL;
+        }
+    }
+    return result;
+}
+
+static bool XImageWriter_mimeIsBmp(const char* mimeType)
+{
+    const char* expected = "image/bmp";
+    size_t i;
+    if (!mimeType) return false;
+    for (i = 0; expected[i] && mimeType[i]; ++i) {
+        if (tolower((unsigned char)mimeType[i]) !=
+            tolower((unsigned char)expected[i])) return false;
+    }
+    return expected[i] == '\0' && mimeType[i] == '\0';
+}
 
 /**
  * @brief      XImageWriter 私有数据
@@ -377,6 +410,25 @@ bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption
     return false;
 }
 
-void* XImageWriter_supportedImageFormats() { return NULL; }
-void* XImageWriter_supportedMimeTypes() { return NULL; }
-void* XImageWriter_imageFormatsForMimeType(const char* mimeType) { (void)mimeType; return NULL; }
+void* XImageWriter_supportedImageFormats()
+{
+    return XImageWriter_makeStringList(g_imageWriterFormats,
+                                       sizeof(g_imageWriterFormats) /
+                                       sizeof(g_imageWriterFormats[0]));
+}
+
+void* XImageWriter_supportedMimeTypes()
+{
+    return XImageWriter_makeStringList(g_imageWriterMimeTypes,
+                                       sizeof(g_imageWriterMimeTypes) /
+                                       sizeof(g_imageWriterMimeTypes[0]));
+}
+
+void* XImageWriter_imageFormatsForMimeType(const char* mimeType)
+{
+    if (XImageWriter_mimeIsBmp(mimeType))
+        return XImageWriter_makeStringList(g_imageWriterFormats,
+                                           sizeof(g_imageWriterFormats) /
+                                           sizeof(g_imageWriterFormats[0]));
+    return XImageWriter_makeStringList(NULL, 0);
+}

@@ -253,7 +253,7 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
     if (parser->m_fileName) {
         XFree_System(parser->m_fileName);
     }
-    parser->m_fileName = strdup(fileName);
+    parser->m_fileName = XMemory_strdup(fileName);
 
     /* 读取整个文件到内存 */
     fseek(fp, 0, SEEK_END);
@@ -292,7 +292,7 @@ static bool parseDataInternal(XCanDbcFileParser* parser, const char* data)
     if (!parser || !data) return false;
 
     /* 按行解析 */
-    char* workBuffer = strdup(data);
+    char* workBuffer = XMemory_strdup(data);
     if (!workBuffer) {
         parser->m_error = XCanDbcFileParser_Error_Parsing;
         if (parser->m_errorString) XString_delete_base(parser->m_errorString);
@@ -399,7 +399,7 @@ static bool parseMessage(XCanDbcFileParser* parser, const char* data)
     if (!parser || !data) return false;
 
     /* 格式: messageId messageName: messageSize transmitter */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return false;
 
     char* savePtr = NULL;
@@ -496,7 +496,7 @@ static bool parseSignal(XCanDbcFileParser* parser, const char* data)
     }
 
     /* 格式: signalName multiplexerIndicator : startBit|bitLength@byteOrder+-(factor,offset) [min|max] unit receiver */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return false;
 
     char* savePtr = NULL;
@@ -669,7 +669,7 @@ static bool parseSignal(XCanDbcFileParser* parser, const char* data)
             afterUnit = strchr(afterUnit + 1, '"');
             if (afterUnit) {
                 afterUnit++;
-                receiver = strdup(trimString((char*)afterUnit));
+                receiver = XMemory_strdup(trimString((char*)afterUnit));
             }
         }
     }
@@ -750,7 +750,7 @@ static void parseSignalType(XCanDbcFileParser* parser, const char* data)
     if (!parser || !data) return;
 
     /* 格式: messageId signalName signalType */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return;
 
     char* savePtr = NULL;
@@ -816,7 +816,7 @@ static void parseComment(XCanDbcFileParser* parser, const char* data)
     /* 格式: CM_ SG_ messageId signalName "comment" */
     /* 格式: CM_ BO_ messageId "comment" */
     /* 格式: CM_ "comment" (全局注释，忽略) */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return;
 
     char* savePtr = NULL;
@@ -888,7 +888,7 @@ static void parseExtendedMux(XCanDbcFileParser* parser, const char* data)
     if (!parser || !data) return;
 
     /* 格式: messageId multiplexedSignalName switchName switchValue1-switchValue2 ... ; */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return;
 
     char* savePtr = NULL;
@@ -976,7 +976,7 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
     if (!parser || !data) return;
 
     /* 格式: messageId signalName value1 "desc1" value2 "desc2" ... ; */
-    char* work = strdup(data);
+    char* work = XMemory_strdup(data);
     if (!work) return;
 
     char* savePtr = NULL;

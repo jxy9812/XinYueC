@@ -141,7 +141,9 @@ void XBitmap_clear(XBitmap* self)
 void XBitmap_transformed(const XBitmap* self, float m00, float m01, float m02,
                          float m10, float m11, float m12, XBitmap* out)
 {
+    if (!out) return;
     XPixmap_transformed((const XPixmap*)self, m00, m01, m02, m10, m11, m12, 0, (XPixmap*)out);
+    XClassSetVtable(out, XBitmap);
 }
 
 void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out)

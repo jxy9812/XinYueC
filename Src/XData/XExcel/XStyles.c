@@ -288,10 +288,10 @@ static void write_font(XXmlStreamWriter* writer, const XFormat* format)
             write_val_element(writer, "vertAlign", "superscript");
         else if (XFormat_fontScript(format) == XFormat_FontScriptSub)
             write_val_element(writer, "vertAlign", "subscript");
-        const char* name = XFormat_fontName_utf8(format);
-        if (name && name[0]) write_val_element(writer, "name", name);
         XColor color = XFormat_fontColor(format);
         write_color(writer, "color", &color);
+        const char* name = XFormat_fontName_utf8(format);
+        if (name && name[0]) write_val_element(writer, "name", name);
     }
     XXmlStreamWriter_writeEndElement(writer);
 }
