@@ -635,6 +635,8 @@ void XSslSocket_startClientEncryption(XSslSocket* self)
     if (!self) return;
     self->mode = XSslSocket_SslClientMode;
     self->handshakePending = true;
+    /* 明文协议升级后没有新的可读事件可触发握手，先发送 ClientHello。 */
+    (void)xssl_pump_handshake(self);
 }
 
 void XSslSocket_startServerEncryption(XSslSocket* self)
@@ -642,6 +644,7 @@ void XSslSocket_startServerEncryption(XSslSocket* self)
     if (!self) return;
     self->mode = XSslSocket_SslServerMode;
     self->handshakePending = true;
+    (void)xssl_pump_handshake(self);
 }
 
 bool XSslSocket_waitForEncrypted(XSslSocket* self, int msecs)
@@ -1140,7 +1143,6 @@ XVtable* XSslSocket_class_init(void) {
 
     return XVTABLE_DEFAULT;
 }
-
 
 
 

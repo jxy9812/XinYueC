@@ -699,7 +699,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
         size_t pending = XRingBuffer_available(rb);
         if (pending > 0 && !p->writePending) {
             char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
-            size_t toSend = XRingBuffer_peek(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
+            size_t toSend = XRingBuffer_read(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
             if (toSend > 0) {
                 startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, sockType == XNetwork_Udp);
             }
@@ -711,6 +711,15 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
             if (ringBuffer) {
                 struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
                 XRingBuffer_write(rb, buf, len);
+                {
+                    char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
+                    size_t toSend = XRingBuffer_read(rb, tempBuf,
+                                                     XNETWORK_WRITE_BUFFER_SIZE);
+                    if (toSend > 0) {
+                        startAsyncWrite(priv, tempBuf, toSend,
+                                        destAddr, destPort, sockType == XNetwork_Udp);
+                    }
+                }
                 return len;
             }
             len = XNETWORK_WRITE_BUFFER_SIZE;
@@ -781,6 +790,29 @@ bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int 
         }
     }
     if (p->connected) { p->autoRead = true; startAsyncRead(priv, false); }
+    return true;
+}
+
+bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd)
+{
+    XNetworkSocketPrivateWin32* p;
+    XFd xfd;
+
+    if (!priv || fd == -1) return false;
+    p = W32(priv);
+    if (p->socket != INVALID_SOCKET || p->serverFd != XFD_INVALID) return false;
+    if (!iocp_assoc((SOCKET)fd, priv->owner)) return false;
+
+    p->socket = (SOCKET)fd;
+    p->isServer = true;
+    p->connected = true;
+    xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+    if (xfd == XFD_INVALID) {
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
+        return false;
+    }
+    p->serverFd = xfd;
     return true;
 }
 
@@ -1634,5 +1666,3 @@ void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ring
     }
 }
 #endif /* XNETWORK_USE_PLATFORM_API */
-
-

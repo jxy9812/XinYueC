@@ -150,6 +150,13 @@ typedef struct XNetworkSocketPrivateLwip {
     int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
 } XNetworkSocketPrivateLwip;
 
+/* Raw API 回调在描述符接管辅助函数之前声明。 */
+static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err);
+static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len);
+static void tcpErrCb(void* arg, err_t err);
+static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb);
+static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err);
+
 /* ================================================================
  * Socket 事件直接投递（回调驱动，替代轮询）
  *
@@ -231,7 +238,120 @@ static void ensure_xfd(XNetworkSocketPrivate* priv) {
     XNetworkSocketPrivateLwip* s = L4P(priv);
     if (s->fd != XFD_INVALID) return;
     s->fd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-    XIODevice_setFd((XIODevice*)priv->owner, s->fd);
+    /* XTcpServer 只继承 XObject，不能走 XIODevice 的 fd 字段。 */
+    if (!s->isServer) {
+        XIODevice_setFd((XIODevice*)priv->owner, s->fd);
+    }
+}
+
+/*
+ * lwIP 没有原生 socket descriptor。对外暴露 XFd 表索引，索引的 handle
+ * 指向 Raw API 私有对象；接管时转移 tcp_pcb 的所有权，而不是转换裸指针。
+ */
+static XNetworkSocketPrivateLwip* descriptor_private(XFd fd)
+{
+    if (fd == XFD_INVALID || XFd_type(fd) != XFD_TYPE_SOCKET) return NULL;
+    return (XNetworkSocketPrivateLwip*)XFd_handle(fd);
+}
+
+static void release_detached_private(XNetworkSocketPrivateLwip* s)
+{
+    if (!s || s->base.owner) return;
+    if (s->rxBuf) XFree_System(s->rxBuf);
+    if (s->base.notifiers) XVector_delete_base((XClass*)s->base.notifiers);
+    XFree_System(s);
+}
+
+static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
+                                       XFd sourceFd)
+{
+    XNetworkSocketPrivateLwip* source = descriptor_private(sourceFd);
+    XFd targetFd;
+    XNetLwipCoreLock prot;
+
+    if (!target || !source || source == target || source->isServer ||
+        !source->tpcb || source->pendingAccept || target->tpcb || target->upcb) {
+        return false;
+    }
+
+    targetFd = XFd_alloc(XFD_TYPE_SOCKET, target, target->base.owner);
+    if (targetFd == XFD_INVALID) return false;
+
+    prot = XNET_LWIP_LOCK();
+    target->tpcb = source->tpcb;
+    target->connected = source->connected;
+    target->closing = source->closing;
+    target->hasReadData = source->hasReadData;
+    target->hasWriteDone = source->hasWriteDone;
+    target->hasError = source->hasError;
+    target->sockType = XNetwork_Tcp;
+    target->rxPos = source->rxPos < XNETWORK_LWIP_RECV_BUFFER_SIZE
+        ? source->rxPos : XNETWORK_LWIP_RECV_BUFFER_SIZE;
+    target->rxTotal = source->rxTotal < target->rxPos ? source->rxTotal : target->rxPos;
+    if (target->rxBuf && source->rxBuf && source->rxPos > 0) {
+        memcpy(target->rxBuf, source->rxBuf,
+               (size_t)source->rxPos < XNETWORK_LWIP_RECV_BUFFER_SIZE
+                   ? (size_t)source->rxPos : XNETWORK_LWIP_RECV_BUFFER_SIZE);
+    }
+
+    tcp_arg(target->tpcb, target);
+    tcp_recv(target->tpcb, tcpRecvCb);
+    tcp_sent(target->tpcb, tcpSentCb);
+    tcp_err(target->tpcb, tcpErrCb);
+    tcp_poll(target->tpcb, tcpPollCb, 2);
+
+    source->tpcb = NULL;
+    source->connected = false;
+    source->closing = false;
+    source->hasReadData = false;
+    source->hasWriteDone = false;
+    source->hasError = false;
+    source->rxPos = 0;
+    source->rxTotal = 0;
+    XNET_LWIP_UNLOCK(prot);
+
+    target->fd = targetFd;
+    XFd_free(sourceFd);
+    source->fd = XFD_INVALID;
+    release_detached_private(source);
+    return true;
+}
+
+static bool adopt_server_descriptor(XNetworkSocketPrivateLwip* target,
+                                    XFd sourceFd)
+{
+    XNetworkSocketPrivateLwip* source = descriptor_private(sourceFd);
+    XFd targetFd;
+    XNetLwipCoreLock prot;
+
+    if (!target || !source || source == target || !source->isServer ||
+        !source->tpcb || source->pendingAccept || target->tpcb || target->upcb) {
+        return false;
+    }
+
+    targetFd = XFd_alloc(XFD_TYPE_SOCKET, target, target->base.owner);
+    if (targetFd == XFD_INVALID) return false;
+
+    prot = XNET_LWIP_LOCK();
+    target->tpcb = source->tpcb;
+    target->connected = true;
+    target->closing = false;
+    target->hasAccept = false;
+    target->isServer = true;
+    target->sockType = XNetwork_Tcp;
+    tcp_arg(target->tpcb, target);
+    tcp_accept(target->tpcb, tcpAcceptCb);
+
+    source->tpcb = NULL;
+    source->connected = false;
+    source->hasAccept = false;
+    XNET_LWIP_UNLOCK(prot);
+
+    target->fd = targetFd;
+    XFd_free(sourceFd);
+    source->fd = XFD_INVALID;
+    release_detached_private(source);
+    return true;
 }
 
 
@@ -350,12 +470,17 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*cs));
     if (!cs) return ERR_MEM;
     memset(cs, 0, sizeof(*cs));
-    cs->fd = XFD_INVALID;
+    cs->fd = XFd_alloc(XFD_TYPE_SOCKET, cs, NULL);
+    if (cs->fd == XFD_INVALID) { XFree_System(cs); return ERR_MEM; }
     cs->tpcb = newPcb;
     cs->connected = true;
     cs->sockType = XNetwork_Tcp;
     cs->rxBuf = (char*)XMalloc_System(XNETWORK_LWIP_RECV_BUFFER_SIZE);
-    if (!cs->rxBuf) { XFree_System(cs); return ERR_MEM; }
+    if (!cs->rxBuf) {
+        XFd_free(cs->fd);
+        XFree_System(cs);
+        return ERR_MEM;
+    }
 
     /* 注册 TCP 回调 */
     tcp_arg(newPcb, cs);
@@ -478,12 +603,24 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
     }
 
     /* 释放资源 */
+    if (s->fd != XFD_INVALID) {
+        if (!s->isServer && s->base.owner &&
+            XIODevice_fd((XIODevice*)s->base.owner) == s->fd) {
+            XIODevice_setFd((XIODevice*)s->base.owner, XFD_INVALID);
+        }
+        XFd_free(s->fd);
+        s->fd = XFD_INVALID;
+    }
     if (s->rxBuf) XFree_System(s->rxBuf);
     if (s->base.notifiers) XVector_delete_base((XClass*)s->base.notifiers);
 
     /* 清理未领取的 Accept 连接 */
     if (s->pendingAccept) {
         XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)s->pendingAccept;
+        if (cs->fd != XFD_INVALID) {
+            XFd_free(cs->fd);
+            cs->fd = XFD_INVALID;
+        }
         if (cs->rxBuf) XFree_System(cs->rxBuf);
         XFree_System(cs);
         s->pendingAccept = NULL;
@@ -492,7 +629,7 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
 }
 
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv) {
-    return priv ? (intptr_t)priv : -1;
+    return priv ? (intptr_t)L4P(priv)->fd : -1;
 }
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv) {
     return priv ? L4P(priv)->connected : false;
@@ -876,8 +1013,24 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
 }
 
 bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode) {
-        (void)priv; (void)fd; (void)state; (void)openMode;
-    return false;
+    XNetworkSocketPrivateLwip* target;
+
+    (void)openMode;
+    if (!priv || fd < 0 || state != 3) return false;
+    target = L4P(priv);
+    if (!adopt_connected_descriptor(target, (XFd)fd)) return false;
+    if (target->base.owner) {
+        XIODevice_setFd((XIODevice*)target->base.owner, target->fd);
+    }
+    return true;
+}
+
+bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd) {
+    XNetworkSocketPrivateLwip* target;
+
+    if (!priv || fd < 0) return false;
+    target = L4P(priv);
+    return adopt_server_descriptor(target, (XFd)fd);
 }
 
 bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value) {
@@ -937,7 +1090,7 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
     (void)backlog;
     uint16_t actualPort = XNetwork_socketBind(priv, addr, port, reuseAddr, false, XNetwork_Tcp);
     if (actualPort == 0) return (XServerHandle)(-1);
-    return (XServerHandle)(intptr_t)priv;
+    return (XServerHandle)L4P(priv)->fd;
 }
 
 bool XNetwork_serverAccept(XNetworkSocketPrivate* priv) {
@@ -947,20 +1100,34 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv) {
 }
 
 uint16_t XNetwork_serverPort(XServerHandle server) {
-    if (!server || server == (XServerHandle)(-1)) return 0;
-    XNetworkSocketPrivateLwip* s = L4P((XNetworkSocketPrivate*)(intptr_t)server);
+    XNetworkSocketPrivateLwip* s;
+
+    if (server < 0) return 0;
+    s = descriptor_private((XFd)server);
     if (!s || !s->tpcb) return 0;
     return s->tpcb->local_port;
 }
 
 void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server) {
-    if (!server || server == (XServerHandle)(-1)) return;
-    XNetworkSocketPrivateLwip* s = L4P((XNetworkSocketPrivate*)(intptr_t)server);
+    XNetworkSocketPrivateLwip* s;
+
+    (void)priv;
+    if (server < 0) return;
+    s = descriptor_private((XFd)server);
     if (!s) return;
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     if (s->tpcb) { tcp_close(s->tpcb); s->tpcb = NULL; }
     XNET_LWIP_UNLOCK(prot);
-    s->isServer = false;
+    /* 有 owner 的服务端私有对象仍由 XTcpServer 销毁，保持服务端标记，
+     * 避免析构时把 XTcpServer 误当作 XIODevice。 */
+    if (!s->base.owner) s->isServer = false;
+
+    /* 失败的 accepted socket 没有 XObject owner，由此路径负责回收。 */
+    if (!s->base.owner) {
+        XFd_free(s->fd);
+        s->fd = XFD_INVALID;
+        release_detached_private(s);
+    }
 }
 
 XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
@@ -973,7 +1140,7 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     if (clientAddr && cs->tpcb) ip_to_addr(&cs->tpcb->remote_ip, clientAddr);
     if (clientPort && cs->tpcb) *clientPort = cs->tpcb->remote_port;
     LWIP_DBG("[TCP服务] 领取客户端Socket=%p\n", (void*)cs);
-    return (XSocketHandle)(intptr_t)cs;
+    return (XSocketHandle)cs->fd;
 }
 
 XVector* XNetwork_lookupName(const XString* name) {

@@ -12,6 +12,7 @@ ftp_test_server.py
 import os
 import sys
 import socket
+import ssl
 import threading
 import time
 import argparse
@@ -35,13 +36,15 @@ def send_ctrl(sock, code, msg):
 
 
 class FtpSession:
-    def __init__(self, conn, addr):
+    def __init__(self, conn, addr, tls_context=None):
         self.conn = conn
         self.addr = addr
+        self.tls_context = tls_context
         self.cwd = '/'
         self.authenticated = False
         self.data_sock = None
         self.data_srv = None
+        self.protect_data = False
         self.rest_offset = 0
         self.rename_from = None
         self.transfer_type = 'I'
@@ -84,10 +87,14 @@ class FtpSession:
         self.data_srv.settimeout(timeout)
         try:
             self.data_sock, _ = self.data_srv.accept()
+            if self.protect_data and self.tls_context:
+                self.data_sock = self.tls_context.wrap_socket(
+                    self.data_sock, server_side=True)
         except socket.timeout:
             log('data accept timeout')
             self.data_sock = None
-        except OSError:
+        except (OSError, ssl.SSLError) as exc:
+            log(f'data TLS accept failed: {exc}')
             self.data_sock = None
         finally:
             try:
@@ -149,13 +156,44 @@ class FtpSession:
             send_ctrl(self.conn, 221, 'Goodbye')
             return False
         if cmd == 'AUTH':
-            send_ctrl(self.conn, 502, 'AUTH not implemented')
+            if arg.upper() != 'TLS' or not self.tls_context:
+                send_ctrl(self.conn, 502, 'AUTH TLS not available')
+                return True
+            if isinstance(self.conn, ssl.SSLSocket):
+                send_ctrl(self.conn, 503, 'Control channel is already protected')
+                return True
+            send_ctrl(self.conn, 234, 'AUTH TLS successful')
+            try:
+                self.conn = self.tls_context.wrap_socket(self.conn, server_side=True)
+            except ssl.SSLError as exc:
+                log(f'control TLS handshake failed: {exc}')
+                return False
+            return True
+
+        if cmd == 'PBSZ':
+            if isinstance(self.conn, ssl.SSLSocket):
+                send_ctrl(self.conn, 200, 'PBSZ=0')
+            else:
+                send_ctrl(self.conn, 503, 'AUTH TLS required')
+            return True
+        if cmd == 'PROT':
+            if not isinstance(self.conn, ssl.SSLSocket):
+                send_ctrl(self.conn, 503, 'AUTH TLS required')
+            elif arg.upper() == 'P':
+                self.protect_data = True
+                send_ctrl(self.conn, 200, 'Private data channel enabled')
+            elif arg.upper() == 'C':
+                self.protect_data = False
+                send_ctrl(self.conn, 200, 'Clear data channel enabled')
+            else:
+                send_ctrl(self.conn, 536, 'Unsupported protection level')
             return True
 
         # ---- RFC 2389：FEAT/OPTS 必须允许认证前使用；SYST/NOOP 同理 ----
         if cmd == 'FEAT':
             feats = ['UTF8', 'MLSD', 'EPSV', 'EPRT', 'REST STREAM',
-                     'TVFS', 'ABOR', 'SIZE', 'MDTM']
+                     'TVFS', 'ABOR', 'SIZE', 'MDTM', 'AUTH TLS',
+                     'PBSZ', 'PROT P']
             # 多行响应：每行以 CRLF 结尾，最后一行 "211 End" 也必须带 CRLF
             self.conn.sendall(b'211-Features:\r\n')
             for f in feats:
@@ -198,13 +236,18 @@ class FtpSession:
         elif cmd == 'EPSV':
             port = self.setup_data_passive()
             send_ctrl(self.conn, 229, f'Entering Extended Passive Mode (|||{port}|)')
-            # 不在此阻塞等连接；数据命令（LIST/RETR/STOR）到达时惰性 accept
+            # FTPS 客户端会在数据命令前先完成 TLS 握手，必须先接受数据连接。
+            if self.protect_data:
+                self.accept_data()
+            # 普通 FTP 保持惰性 accept，避免改变已有测试时序。
         elif cmd == 'PASV':
             port = self.setup_data_passive()
             p1, p2 = port >> 8, port & 0xFF
             h = HOST.replace('.', ',')
             send_ctrl(self.conn, 227, f'Entering Passive Mode ({h},{p1},{p2})')
-            # 不在此阻塞等连接；数据命令到达时惰性 accept
+            if self.protect_data:
+                self.accept_data()
+            # 普通 FTP 保持惰性 accept，避免改变已有测试时序。
         elif cmd == 'PORT':
             try:
                 nums = [int(x) for x in arg.split(',')]
@@ -427,22 +470,34 @@ def main():
     parser = argparse.ArgumentParser(description='FTP test server for XFtp E2E')
     parser.add_argument('--daemon', action='store_true', help='run in background')
     parser.add_argument('--port', type=int, default=PORT)
+    parser.add_argument('--tls', action='store_true', help='enable explicit FTPS')
+    parser.add_argument('--cert', help='PEM certificate used by FTPS')
+    parser.add_argument('--key', help='PEM private key used by FTPS')
     args = parser.parse_args()
 
     os.makedirs(ROOT, exist_ok=True)
+
+    tls_context = None
+    if args.tls:
+        if not args.cert or not args.key:
+            parser.error('--tls requires --cert and --key')
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(certfile=args.cert, keyfile=args.key)
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, args.port))
     srv.listen(5)
-    log(f'FTP server listening on {HOST}:{args.port}, root={ROOT}')
+    mode = 'Explicit FTPS' if tls_context else 'FTP'
+    log(f'{mode} server listening on {HOST}:{args.port}, root={ROOT}')
 
     try:
         while True:
             conn, addr = srv.accept()
             log(f'connect from {addr}')
             t = threading.Thread(
-                target=lambda c=conn, a=addr: FtpSession(c, a).handle(),
+                target=lambda c=conn, a=addr, t=tls_context: FtpSession(c, a, t).handle(),
                 daemon=True
             )
             t.start()

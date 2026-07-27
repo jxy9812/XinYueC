@@ -1,11 +1,13 @@
 # XGui Qt Alignment Handoff
 
-Last updated: 2026-07-27 00:01 Asia/Shanghai
+Last updated: 2026-07-27 Asia/Shanghai
 
 ## Scope
 
 This handoff covers the partial Qt 6.8 alignment work in `Src/XGui` completed
-on Windows. The comparison source was `D:\Qt\6.8.3\Src\qtbase`.
+on Windows. The current comparison source is
+`/home/xinyue/Qt/6.8.3/Src/qtbase`. Shared XGui code must remain portable and
+must not call platform GUI APIs.
 
 Do not assume the entire worktree belongs to this task. At handoff time it also
 contains unrelated network/FTP and CMake changes. Limit review, staging, and
@@ -29,6 +31,7 @@ Src/XGui/XPixmap.h
 Src/XGui/XPixmapCache.c
 Test/XGuiTest/XPictureTest.c
 Test/XGuiTest/XPixmapCacheTest.c
+xgui_regression_test.c
 ```
 
 ## Completed Work
@@ -82,8 +85,19 @@ Test/XGuiTest/XPixmapCacheTest.c
 - Added allocation limit storage (default 256 MB), file signature detection for
   PNG/JPEG/BMP/GIF/WebP, mutually exclusive file/device setters, and explicit
   error results instead of false-positive `canRead`/`canWrite` values.
-- No decoder/encoder registry was added. Reader/writer report a clear
-  unsupported-format error when no handler is available.
+- Reader/writer now use `XIODevice` for BMP device reads and writes. The
+  built-in codec remains BMP-only; no decoder/encoder registry was added.
+
+### Continuation Fixes
+
+- Added portable affine `XPixmap_transformed()`,
+  `XPixmap_fromImageReader()`, and safe output replacement for scaled and
+  cropped pixmap APIs.
+- Added `XIcon_availableSizes()` using an initialized `XVector` of
+  `XSize` values, with duplicate dimensions removed.
+- Normalized copy/move/deinit virtual dispatch in XImage, XPixmap, XBitmap,
+  XIcon, and XPicture; copy/move virtuals initialize an uninitialized
+  destination before taking ownership.
 
 ## Verification Already Performed
 
@@ -102,17 +116,22 @@ Additional checks completed:
 - The new menu regression tests for Picture COW/file round-trip and cache
   lifecycle/LRU were run successfully by the previous worker.
 
-The BMP round-trip smoke script did not run: its PowerShell `UInt32` literal
-conversion failed before any native call. No temporary test file was retained.
+The current `XGuiRegression_Test` includes BMP save/load and device round-trip
+assertions, so the earlier PowerShell smoke-script limitation is no longer the
+only BMP evidence.
+
+The Linux Debug full build passed, and the independent `XGuiRegression_Test`
+passed. It covers lifecycle, affine dimensions, icon sizes, and BMP device
+I/O without menu interaction.
 
 ## Linux Continuation
 
-Start with an isolated build directory and do not remove the existing Windows
-`build` directory from a shared checkout:
+For a fresh isolated build, do not remove the existing Windows `build`
+directory from a shared checkout:
 
 ```bash
 cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-linux --target XinYueC -j"$(nproc)"
+cmake --build build-linux --target XinYueCS XGuiRegression_Test -j"$(nproc)"
 git diff --check -- Src/XGui Test/XGuiTest XGui_Qt_Alignment_Handoff.md
 ```
 
@@ -139,17 +158,17 @@ This is still a partial compatibility layer, not QtGui parity. Highest-value
 remaining work is:
 
 1. Add real image handler discovery/registration and codec support beyond BMP;
-   wire `XImageReader` and `XImageWriter` to those handlers and `XIODevice`.
-2. Implement `XPixmap_transformed`, `XPixmap_fromImageReader`, and device I/O
-   overloads. Validate heuristic-mask output against Qt fixtures.
-3. Implement `XIcon_paint`, `availableSizes`, icon engines, theme lookup and
+   the current reader/writer device path is intentionally BMP-only.
+2. Implement `XIcon_paint`, icon engines, theme lookup and
    fallback search paths.
-4. Implement QPicture command recording/replay (`XPicture_play`) and a defined,
+3. Implement QPicture command recording/replay (`XPicture_play`) and a defined,
    validated serialization format. Do not claim Qt QPIC binary compatibility
    without test fixtures from Qt.
-5. Add automated non-menu tests. Existing `Test/XGuiTest` code is guarded by
-   `DEMOTEST` and historically printed expectations rather than asserting them.
-6. Fill remaining QImage APIs: color-space APIs, text metadata, device-pixel
+4. Expand `xgui_regression_test.c` and add Qt fixture comparisons for
+   malformed BMP input, masks, cache lifecycle, and picture serialization.
+   Existing `Test/XGuiTest` code is guarded by `DEMOTEST` and historically
+   printed expectations rather than asserting them.
+5. Fill remaining QImage APIs: color-space APIs, text metadata, device-pixel
    ratio, color-table APIs, pixel color APIs, transforms, invertPixels, and the
    full QRegion/QRect/QSize/QPoint surface.
 

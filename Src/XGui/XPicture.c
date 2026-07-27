@@ -95,6 +95,7 @@ static void VXPicture_copy(XPicture* dest, const XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XPicture_init(dest, -1);
     if (dest->m_data)
         XPicturePrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -105,6 +106,7 @@ static void VXPicture_move(XPicture* dest, XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XPicture_init(dest, -1);
     if (dest->m_data)
         XPicturePrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -163,7 +165,8 @@ void XPicture_deinit(XPicture* self) { XPicture_deinit_base(self); }
 void XPicture_copy_base(XPicture* dest, const XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
-    VXPicture_copy(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XPicture*, const XPicture*))(dest, src);
 }
 void XPicture_move(XPicture* self, XPicture* other)
 {
@@ -178,7 +181,8 @@ void XPicture_move(XPicture* self, XPicture* other)
 void XPicture_move_base(XPicture* dest, XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
-    VXPicture_move(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XPicture*, XPicture*))(dest, src);
 }
 
 void XPicture_deinit_base(XPicture* self)
@@ -308,6 +312,5 @@ bool XPicture_isDetached(const XPicture* self)
 {
     return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
 }
-
 
 

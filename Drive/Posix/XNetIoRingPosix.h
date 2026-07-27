@@ -51,6 +51,7 @@ typedef struct XEventContext {
     void* buffer;                       /* 数据缓冲区（read/write 使用） */
     size_t bufferSize;                  /* 缓冲区大小 */
     size_t finishedBytes;               /* 完成字节数 */
+    int64_t result;                     /* 原始完成结果，保留负 errno */
 } XEventContext;
 
 /** @brief 定时器事件上下文（继承 XEventContext） */

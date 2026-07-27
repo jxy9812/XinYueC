@@ -113,9 +113,9 @@ void XMenuTest_show(XMenu* menu, int column)
 		XVector_delete_base(menus);
 		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
 		XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
-		scanf("%s",command);
-		if (strcmp(command, "q") == 0)
+		if (scanf("%9s", command) != 1 || strcmp(command, "q") == 0) {
 			exit(0);
+		}
 		int index=atoi(command);
 		if (index < 0 || index >= XContainerSize(v))
 		{

@@ -16,13 +16,15 @@
 static void VXBitmap_copy(XBitmap* dest, const XBitmap* src)
 {
     if (ISNULL(dest, "XBitmap") || ISNULL(src, "XBitmap")) return;
-    XPixmap_copy_base((XPixmap*)dest, (const XPixmap*)src);
+    if (XClassIsVtableNull(dest)) XBitmap_init(dest);
+    XClass_Parent(XPixmap, EXClass_Copy, void(*)(XPixmap*, const XPixmap*))
+        ((XPixmap*)dest, (const XPixmap*)src);
 }
 
 static void VXBitmap_deinit(XBitmap* self)
 {
     if (ISNULL(self, "XBitmap")) return;
-    XPixmap_deinit_base((XPixmap*)self);
+    XClass_Parent(XPixmap, EXClass_Deinit, void(*)(XPixmap*))((XPixmap*)self);
 }
 
 /* ========== 虚函数表初始化 ========== */
@@ -114,13 +116,15 @@ void XBitmap_deinit(XBitmap* self)
 void XBitmap_copy_base(XBitmap* dest, const XBitmap* src)
 {
     if (ISNULL(dest, "XBitmap") || ISNULL(src, "XBitmap")) return;
-    VXBitmap_copy(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XBitmap*, const XBitmap*))(dest, src);
 }
 
 void XBitmap_deinit_base(XBitmap* self)
 {
     if (ISNULL(self, "XBitmap")) return;
-    VXBitmap_deinit(self);
+    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
+    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XBitmap*))(self);
 }
 
 
@@ -182,6 +186,5 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
     XBitmap_fromImage(&img, 0, out);
     XImage_deinit_base(&img);
 }
-
 
 

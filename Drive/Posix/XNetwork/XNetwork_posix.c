@@ -143,6 +143,7 @@ typedef struct XNetworkSocketPrivatePosix {
     bool autoRead;
     bool isServer;                          /**< 是否为服务器套接字 */
     bool acceptPending;                     /**< 是否有待处理的 Accept */
+    XFd serverFd;                            /**< TCP 服务器在 XFd 表中的句柄 */
 
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
@@ -196,6 +197,22 @@ static struct io_uring_sqe* getSqe(void) {
 static void submitSqe(int count) {
     XNetIoRingPosix* ring = getIoRing();
     if (ring) XNetIoRingPosix_submitSqe(ring, count);
+}
+
+static void cancelSqe(XEventContext_IO* context)
+{
+    struct io_uring_sqe* sqe;
+
+    if (!context) return;
+    sqe = getSqe();
+    if (!sqe) return;
+
+    memset(sqe, 0, sizeof(*sqe));
+    sqe->opcode = IORING_OP_ASYNC_CANCEL;
+    sqe->addr = (uint64_t)(uintptr_t)&context->base;
+    sqe->cancel_flags = 0;
+    sqe->user_data = 0;
+    submitSqe(1);
 }
 
 #endif /* __linux__ */
@@ -310,6 +327,7 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
     if (!p) return NULL;
 
     p->socket = -1;
+    p->serverFd = XFD_INVALID;
     p->base.owner = owner;
     p->autoRead = true;
 
@@ -329,7 +347,10 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
         p->socket = -1;
     }
 
-    if (priv->owner) {
+    if (p->serverFd != XFD_INVALID) {
+        XFd_free(p->serverFd);
+        p->serverFd = XFD_INVALID;
+    } else if (priv->owner) {
         XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
         if (xfd >= 0) {
             XFd_free(xfd);
@@ -541,6 +562,15 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
     if (!priv) return;
     XNetworkSocketPrivatePosix* p = P32(priv);
 
+#ifdef __linux__
+    if (p->readPending) cancelSqe(&p->readContext);
+    if (p->writePending) cancelSqe(&p->writeContext);
+    if (p->connectPending) cancelSqe(&p->connectContext);
+    /* 取消请求可能在 close 后才完成；迟到的 CQE 不能再投递到上层。 */
+    p->readContext.base.eventMask = 0;
+    p->writeContext.base.eventMask = 0;
+    p->connectContext.base.eventMask = 0;
+#endif
     if (p->socket >= 0) {
         close(p->socket);
         p->socket = -1;
@@ -583,7 +613,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
         size_t pending = XRingBuffer_available(rb);
         if (pending > 0 && !p->writePending) {
             char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
-            size_t toSend = XRingBuffer_peek(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
+            size_t toSend = XRingBuffer_read(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
             if (toSend > 0) {
                 startAsyncWrite(priv, tempBuf, (int64_t)toSend, destAddr, destPort,
                                 sockType == XNetwork_Udp);
@@ -596,6 +626,15 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
             if (ringBuffer) {
                 struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
                 XRingBuffer_write(rb, buf, (size_t)len);
+                {
+                    char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
+                    size_t toSend = XRingBuffer_read(rb, tempBuf,
+                                                     XNETWORK_WRITE_BUFFER_SIZE);
+                    if (toSend > 0) {
+                        startAsyncWrite(priv, tempBuf, (int64_t)toSend,
+                                        destAddr, destPort, sockType == XNetwork_Udp);
+                    }
+                }
                 return len;
             }
             len = XNETWORK_WRITE_BUFFER_SIZE;
@@ -663,6 +702,35 @@ bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int 
         }
     }
     if (p->connected) { p->autoRead = true; startAsyncRead(priv, false); }
+    return true;
+}
+
+bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd)
+{
+    XNetworkSocketPrivatePosix* p;
+    XFd xfd;
+
+    if (!priv || fd < 0) return false;
+    p = P32(priv);
+    if (p->socket >= 0 || p->serverFd != XFD_INVALID) return false;
+
+    p->socket = (int)fd;
+    if (!setNonBlocking(p->socket)) {
+        close(p->socket);
+        p->socket = -1;
+        return false;
+    }
+
+    xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+    if (xfd == XFD_INVALID) {
+        close(p->socket);
+        p->socket = -1;
+        return false;
+    }
+
+    p->serverFd = xfd;
+    p->isServer = true;
+    p->connected = true;
     return true;
 }
 
@@ -770,24 +838,14 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
     if (p->acceptPending) return true;
 
 #ifdef __linux__
-    struct sockaddr_storage addr;
-    socklen_t addrLen = sizeof(addr);
-    if (getsockname(p->socket, (struct sockaddr*)&addr, &addrLen) != 0) return false;
-    int af = addr.ss_family;
-
-    int acceptSock = socket(af, SOCK_STREAM, IPPROTO_TCP);
-    if (acceptSock < 0) return false;
-
-    p->acceptSocket = acceptSock;
-
     memset(&p->acceptContext, 0, sizeof(p->acceptContext));
     p->acceptContext.base.type = XEventContextType_Type_Socket;
-    p->acceptContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
+    p->acceptContext.base.fd = p->serverFd;
     p->acceptContext.base.eventMask = XSocketAct_Accept;
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
 
     struct io_uring_sqe* sqe = getSqe();
-    if (!sqe) { close(acceptSock); p->acceptSocket = -1; return false; }
+    if (!sqe) return false;
 
     memset(sqe, 0, sizeof(*sqe));
     sqe->opcode = IORING_OP_ACCEPT;
@@ -836,13 +894,14 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
         close(fd); return -1;
     }
 
-    /* 分配 XFileDescriptor */
+    /* XTcpServer 不继承 XIODevice，服务器必须独立保存 XFd。 */
     {
-        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+        XFd xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
         if (xfd == XFD_INVALID) {
-            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-            XIODevice_setFd((XIODevice*)priv->owner, xfd);
+            close(fd);
+            return -1;
         }
+        P32(priv)->serverFd = xfd;
     }
 
     /* 设置服务器套接字 */
@@ -850,28 +909,30 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
     P32(priv)->isServer = true;
     P32(priv)->connected = true;
 
-    return (XServerHandle)(intptr_t)P32(priv);
+    return (XServerHandle)(intptr_t)fd;
 }
 
 void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
 {
-    XNetworkSocketPrivatePosix* p = (XNetworkSocketPrivatePosix*)(intptr_t)server;
-    if (!p) return;
-    if (p->socket >= 0) {
+    XNetworkSocketPrivatePosix* p = P32(priv);
+    int fd = (int)server;
+    if (fd < 0) return;
+    if (p && p->socket == fd) {
         close(p->socket);
         p->socket = -1;
+        p->connected = false;
+    } else {
+        close(fd);
     }
-    /* 不释放 priv，由调用者管理 */
-    (void)priv;
 }
 
 uint16_t XNetwork_serverPort(XServerHandle server)
 {
-    XNetworkSocketPrivatePosix* p = (XNetworkSocketPrivatePosix*)(intptr_t)server;
-    if (!p || p->socket < 0) return 0;
+    int fd = (int)server;
+    if (fd < 0) return 0;
     struct sockaddr_in sin;
     socklen_t len = sizeof(sin);
-    if (getsockname(p->socket, (struct sockaddr*)&sin, &len) != 0) return 0;
+    if (getsockname(fd, (struct sockaddr*)&sin, &len) != 0) return 0;
     return ntohs(sin.sin_port);
 }
 
@@ -880,8 +941,8 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHos
     XNetworkSocketPrivatePosix* p = P32(priv);
     if (!p || !p->acceptPending) return -1;
 
-    int acceptedFd = p->acceptSocket;
-    p->acceptSocket = -1;
+    int acceptedFd = (int)p->acceptContext.base.result;
+    p->acceptContext.base.result = -1;
     p->acceptPending = false;
 
     if (acceptedFd >= 0 && clientAddr) {

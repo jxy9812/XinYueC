@@ -8,6 +8,7 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XVector.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -100,6 +101,7 @@ static void VXIcon_copy(XIcon* dest, const XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XIcon_init(dest);
     if (dest->m_data)
         XIconPrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -110,6 +112,7 @@ static void VXIcon_move(XIcon* dest, XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XIcon_init(dest);
     if (dest->m_data)
         XIconPrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -196,17 +199,20 @@ void XIcon_deinit(XIcon* self) { XIcon_deinit_base(self); }
 void XIcon_copy_base(XIcon* dest, const XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
-    VXIcon_copy(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XIcon*, const XIcon*))(dest, src);
 }
 void XIcon_move_base(XIcon* dest, XIcon* src)
 {
     if (ISNULL(dest, "XIcon") || ISNULL(src, "XIcon")) return;
-    VXIcon_move(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XIcon*, XIcon*))(dest, src);
 }
 void XIcon_deinit_base(XIcon* self)
 {
     if (ISNULL(self, "XIcon")) return;
-    VXIcon_deinit(self);
+    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
+    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XIcon*))(self);
 }
 
 
@@ -268,6 +274,7 @@ static const XIconEntry* XIconPrivate_bestEntry(const XIconPrivate* d, int width
 void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XPixmap* out)
 {
     if (!out) return;
+    if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
     XPixmap_init(out);
     if (!self || !self->m_data || width <= 0 || height <= 0) return;
     const XIconEntry* best = XIconPrivate_bestEntry(self->m_data, width, height, mode, state);
@@ -352,7 +359,28 @@ void XIcon_addFile(XIcon* self, const char* fileName, int width, int height,
 
 void XIcon_availableSizes(const XIcon* self, XIconMode mode, XIconState state, void* out)
 {
-    (void)self; (void)mode; (void)state; (void)out;
+    XVector* sizes = (XVector*)out;
+    if (!sizes) return;
+    XVector_clear_base(sizes);
+    if (!self || !self->m_data) return;
+
+    for (int i = 0; i < self->m_data->m_entryCount; ++i) {
+        const XIconEntry* entry = &self->m_data->m_entries[i];
+        if (entry->m_mode != mode || entry->m_state != state) continue;
+
+        XSize size;
+        size.width = XPixmap_width(&entry->m_pixmap);
+        size.height = XPixmap_height(&entry->m_pixmap);
+        bool duplicate = false;
+        for (size_t j = 0; j < XVector_size_base(sizes); ++j) {
+            const XSize* existing = (const XSize*)XVector_at_base(sizes, (int64_t)j);
+            if (existing && existing->width == size.width && existing->height == size.height) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) XVector_push_back_1_base(sizes, &size);
+    }
 }
 
 void XIcon_setIsMask(XIcon* self, bool isMask)
@@ -382,6 +410,3 @@ const char* XIcon_themeName() { return ""; }
 void XIcon_setThemeName(const char* name) { (void)name; }
 const char* XIcon_fallbackThemeName() { return ""; }
 void XIcon_setFallbackThemeName(const char* name) { (void)name; }
-
-
-

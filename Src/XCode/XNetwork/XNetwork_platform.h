@@ -261,10 +261,22 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event);
  * @param state 初始状态（XAbstractSocket_SocketState）
  * @param openMode 打开模式（XIODeviceBaseMode）
  * @return 成功返回 true
- * @note 用于接受外部创建的套接字（如服务器 accept 的客户端）
+ * @note 用于接受外部创建的套接字（如服务器 accept 的客户端）。fd 的具体
+ *       表示由平台后端定义；lwIP 后端使用 XFd 索引，并转移其 Raw API
+ *       tcp_pcb 所有权，不使用操作系统套接字 API。
  */
 bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, 
                                   int state, int openMode);
+
+/**
+ * @brief 将已有监听套接字交给 TCP 服务器平台私有层。
+ * @param priv TCP 服务器的平台私有数据
+ * @param fd 已打开的监听套接字平台描述符；lwIP 后端为 XFd 索引
+ * @return 成功返回 true，失败返回 false
+ * @note TCP 服务器不是 XIODevice，不能复用 socketSetDescriptor 的 fd 表路径。
+ *       接管成功后，fd 的所有权转移给平台私有数据。
+ */
+bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd);
 
 /**
  * @brief 设置套接字选项

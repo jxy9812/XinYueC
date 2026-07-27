@@ -22,11 +22,16 @@
 
 #define FTP_TEST_HOST   "127.0.0.1"
 #define FTP_TEST_PORT   2121
+#define FTPS_TEST_PORT  2122
 #define FTP_TEST_USER   "u1"
 #define FTP_TEST_PASS   "p1"
 
+static bool s_use_ssl = false;
+static int s_test_port = FTP_TEST_PORT;
+
 static int s_cmd_finished = 0;
 static int s_cmd_finished_id = 0;
+static bool s_cmd_finished_error = false;
 static int s_waiting_for_id = 0;
 static int s_listing_count = 0;
 static int s_total_size = 0;
@@ -46,17 +51,12 @@ static void on_commandFinished(XObject* receiver, XVarList* args)
     if (!args) return;
     XVarList_start(args);
     int id = XVarList_arg(args, int);
+    bool error = XVarList_arg(args, bool);
     s_cmd_finished_id = id;
     if (s_waiting_for_id == 0 || s_waiting_for_id == id) {
+        s_cmd_finished_error = error;
         s_cmd_finished = 1;
     }
-}
-
-/* TEMP: log ALL commandFinished signals regardless of wait state */
-static void on_commandFinished_log(XObject* receiver, XVarList* args)
-{
-    (void)receiver;
-    (void)args;
 }
 
 static void on_listInfo(XObject* receiver, XVarList* args)
@@ -112,6 +112,7 @@ static bool wait_cmd(int timeout_ms, int expected_id)
     }
     bool ok = s_cmd_finished != 0;
     s_cmd_finished = 0;
+    s_cmd_finished_error = false;
     s_cmd_finished_id = 0;
     s_waiting_for_id = 0;
     return ok;
@@ -131,7 +132,7 @@ static bool wait_state(XFtp* ftp, XFtp_State target, int timeout_ms)
 static bool connect_and_login(XFtp* ftp)
 {
     char url[128];
-    snprintf(url, sizeof(url), "ftp://%s:%u/", FTP_TEST_HOST, FTP_TEST_PORT);
+    snprintf(url, sizeof(url), "ftp://%s:%u/", FTP_TEST_HOST, (unsigned)s_test_port);
     int id = XFtp_connectToUrl(ftp, url);
     if (id < 0) return false;
     if (!wait_cmd(5000, id)) return false;
@@ -171,13 +172,23 @@ static bool t_feat(XFtp* ftp)
 
 static bool t_list(XFtp* ftp)
 {
+    const char* fixture = "xftp_list_fixture.txt";
+    int fixtureId = XFtp_put(ftp, fixture, "list fixture", 12);
+    if (fixtureId < 0 || !wait_cmd(5000, fixtureId)) return false;
+
     s_listing_count = 0;
     s_total_size = 0;
     int id = XFtp_list(ftp, ".");
-    if (id < 0) return false;
-    if (!wait_cmd(5000, id)) return false;
+    if (id < 0 || !wait_cmd(5000, id)) {
+        id = XFtp_remove(ftp, fixture);
+        if (id >= 0) wait_cmd(2000, id);
+        return false;
+    }
     XPrintf("    [列出 %d 项，总大小 %d 字节]\n", s_listing_count, s_total_size);
-    return s_listing_count > 0;
+    bool ok = s_listing_count > 0;
+    id = XFtp_remove(ftp, fixture);
+    if (id >= 0) wait_cmd(2000, id);
+    return ok;
 }
 
 static bool t_cd_pwd(XFtp* ftp)
@@ -255,7 +266,8 @@ static bool t_resume(XFtp* ftp)
     XString* lfname = XString_create_utf8("xftp_resume_local.bin");
     XFile* wf = XFile_create_2(lfname);
     if (!wf) { XString_delete_base(lfname); return false; }
-    if (!XIODevice_open_base((XIODevice*)wf, XIODevice_WriteOnly)) {
+    if (!XIODevice_open_base((XIODevice*)wf,
+                             XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
         XClass_delete_base((XClass*)wf);
         XString_delete_base(lfname);
         return false;
@@ -305,11 +317,12 @@ static bool download_verify(XFtp* ftp, const char* remote,
     /* 用唯一文件名避免前次残留导致 XFile 打开/写入行为异常 */
     static int s_dl_seq = 0;
     char nameBuf[64];
-    snprintf(nameBuf, sizeof(nameBuf), "xftp_dl_%d_%d.bin", (int)getpid(), s_dl_seq++);
+    snprintf(nameBuf, sizeof(nameBuf), "xftp_dl_%d.bin", s_dl_seq++);
     XString* lfn = XString_create_utf8(nameBuf);
     XFile* wf = XFile_create_2(lfn);
     if (!wf) { XString_delete_base(lfn); return false; }
-    if (!XIODevice_open_base((XIODevice*)wf, XIODevice_WriteOnly)) {
+    if (!XIODevice_open_base((XIODevice*)wf,
+                             XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
         XClass_delete_base((XClass*)wf); XString_delete_base(lfn); return false;
     }
     int id = XFtp_get(ftp, remote, wf, 0);
@@ -359,6 +372,22 @@ static bool t_appe(XFtp* ftp)
 /* PORT 主动模式：客户端监听、服务器回连。切到 Active 做 GET，再切回 Passive */
 static bool t_port_active(XFtp* ftp)
 {
+    if (s_use_ssl) {
+        XFtp_setTransferMode(ftp, XFtp_TransferMode_Active);
+        int id = XFtp_list(ftp, ".");
+        bool waited = (id >= 0) && wait_cmd(5000, id);
+        XFtp_Error error = XFtp_error(ftp);
+        const char* errorText = XFtp_errorString(ftp);
+        /* 当前跨平台实现明确拒绝 FTPS 主动数据通道；错误可能同步产生，
+         * 因此不能要求 commandFinished 一定先于 wait_cmd 返回。 */
+        bool rejected = id >= 0 && error == XFtp_Error_ActiveModeFailed;
+        XFtp_setTransferMode(ftp, XFtp_TransferMode_Passive);
+        XPrintf("    [主动 FTPS 按契约拒绝: id=%d wait=%d error=%d text=%s %s]\n",
+                id, waited ? 1 : 0, error, errorText,
+                rejected ? "OK" : "失败");
+        return rejected;
+    }
+
     const char* data = "Active mode PORT test data 主动模式测试";
     int64_t sz = (int64_t)strlen(data);
     /* 先用被动模式上传一个文件 */
@@ -582,9 +611,19 @@ int main(int argc, char* argv[])
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--ssl") == 0) {
+            s_use_ssl = true;
+            s_test_port = FTPS_TEST_PORT;
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            s_test_port = atoi(argv[++i]);
+        }
+    }
+
     XCoreApplication_create(argc, argv);
     XPrintf("=== XFtp 端到端真服务器联调测试 ===\n");
-    XPrintf("服务器: %s:%d\n", FTP_TEST_HOST, FTP_TEST_PORT);
+    XPrintf("服务器: %s:%d%s\n", FTP_TEST_HOST, s_test_port,
+            s_use_ssl ? " (Explicit FTPS)" : "");
     XPrintf("用户: %s / %s\n\n", FTP_TEST_USER, FTP_TEST_PASS);
 
     XFtp* ftp = XFtp_create();
@@ -592,10 +631,13 @@ int main(int argc, char* argv[])
         XPrintf("[致命] XFtp_create 失败\n");
         return 1;
     }
+    if (s_use_ssl) {
+        XFtp_setSsl(ftp, true);
+        /* 测试服务器使用临时自签名证书；仍验证 TLS 握手和加密 IO。 */
+        XFtp_setSslPeerVerifyMode(ftp, XSSL_VerifyNone);
+    }
     XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
-                      (XObject*)ftp, on_commandFinished_log, XConnectionType_Direct);
     XObject_connect_1((XObject*)ftp, XFtp_listInfo_signal,
                       (XObject*)ftp, on_listInfo, XConnectionType_Direct);
     XObject_connect_1((XObject*)ftp, XFtp_dataTransferProgress_signal,

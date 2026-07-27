@@ -380,9 +380,8 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	XNetworkSocketPrivate* priv = XNetwork_createSocketPrivate(server);
 	if (!priv) return false;
 
-	// 璁剧疆鎻忚堪绗︼紝娉ㄥ唽鍒颁簨浠跺惊鐜?
-	if (!XNetwork_socketSetDescriptor(priv, socketDescriptor,
-			XAbstractSocket_ConnectedState, XIODevice_ReadOnly)) {
+	// TCP server 不是 XIODevice，使用服务器专用的描述符接管路径。
+	if (!XNetwork_serverSetDescriptor(priv, socketDescriptor)) {
 		XNetwork_deleteSocketPrivate(priv);
 		return false;
 	}
@@ -390,8 +389,9 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	// 淇濆瓨鐘舵€?
 	server->d_ptr = priv;
 	//server->serverHandle = XSocketDescriptor_fromIntptr(socketDescriptor);
-	server->serverPort = XNetwork_serverPort(socketDescriptor);
+	server->serverPort = XNetwork_serverPort(XNetwork_socketDescriptor(priv));
 	server->listening = true;
+	XNetwork_serverAccept(server->d_ptr);
 
 	return true;
 }

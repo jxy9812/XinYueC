@@ -260,7 +260,7 @@ void XIcon_addFile(XIcon* self, const char* fileName, int width, int height,
  * @param self  目标 XIcon 对象指针
  * @param mode  图标模式
  * @param state 图标状态
- * @param out   输出尺寸列表指针
+ * @param out   输出 XVector 指针，元素类型必须为 XSize；调用者负责先初始化向量
  */
 void XIcon_availableSizes(const XIcon* self, XIconMode mode, XIconState state, void* out);
 
@@ -337,4 +337,3 @@ void XIcon_setFallbackThemeName(const char* name);
 }
 #endif
 #endif /* XICON_H */
-

@@ -4,11 +4,14 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImageWriter.h"
+#include "XByteArray.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <limits.h>
 
 /**
  * @brief      XImageWriter 私有数据
@@ -39,6 +42,116 @@ static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, c
         self->m_data->m_errorString = (char*)XMalloc_System(strlen(message) + 1);
         if (self->m_data->m_errorString) strcpy(self->m_data->m_errorString, message);
     }
+}
+
+static bool XImageWriter_isBmpFormat(const char* format)
+{
+    if (!format || !format[0]) return true;
+    return strlen(format) == 3 &&
+           tolower((unsigned char)format[0]) == 'b' &&
+           tolower((unsigned char)format[1]) == 'm' &&
+           tolower((unsigned char)format[2]) == 'p';
+}
+
+static bool XImageWriter_fileLooksBmp(const char* fileName)
+{
+    const char* dot;
+    if (!fileName) return false;
+    dot = strrchr(fileName, '.');
+    return dot && XImageWriter_isBmpFormat(dot + 1);
+}
+
+static void XImageWriter_writeLe16(uint8_t* out, uint16_t value)
+{
+    out[0] = (uint8_t)(value & 0xffu);
+    out[1] = (uint8_t)(value >> 8);
+}
+
+static void XImageWriter_writeLe32(uint8_t* out, uint32_t value)
+{
+    out[0] = (uint8_t)(value & 0xffu);
+    out[1] = (uint8_t)((value >> 8) & 0xffu);
+    out[2] = (uint8_t)((value >> 16) & 0xffu);
+    out[3] = (uint8_t)(value >> 24);
+}
+
+static bool XImageWriter_encodeBmp(const XImage* image, XByteArray* bytes)
+{
+    XImage converted;
+    bool withAlpha;
+    uint16_t bpp;
+    uint64_t rowBytes;
+    uint64_t imageBytes;
+    uint64_t totalBytes;
+    uint8_t* data;
+
+    if (!image || !bytes || XImage_isNull(image)) return false;
+    withAlpha = XImage_hasAlphaChannel(image);
+    XImage_init(&converted);
+    XImage_convertToFormat(image, withAlpha ? XImageFormat_ARGB32 : XImageFormat_RGB888,
+                           0, &converted);
+    if (XImage_isNull(&converted)) return false;
+
+    bpp = withAlpha ? 32u : 24u;
+    rowBytes = (((uint64_t)(uint32_t)XImage_width(&converted) * bpp) + 31u) / 32u * 4u;
+    imageBytes = rowBytes * (uint32_t)XImage_height(&converted);
+    totalBytes = 54u + imageBytes;
+    if (imageBytes > UINT32_MAX - 54u || totalBytes > SIZE_MAX) {
+        XImage_deinit_base(&converted);
+        return false;
+    }
+    if (!XByteArray_resize_base(bytes, (size_t)totalBytes)) {
+        XImage_deinit_base(&converted);
+        return false;
+    }
+
+    data = (uint8_t*)XByteArray_data(bytes);
+    memset(data, 0, (size_t)totalBytes);
+    data[0] = 'B'; data[1] = 'M';
+    XImageWriter_writeLe32(data + 2, (uint32_t)totalBytes);
+    XImageWriter_writeLe32(data + 10, 54u);
+    XImageWriter_writeLe32(data + 14, 40u);
+    XImageWriter_writeLe32(data + 18, (uint32_t)XImage_width(&converted));
+    XImageWriter_writeLe32(data + 22, (uint32_t)XImage_height(&converted));
+    XImageWriter_writeLe16(data + 26, 1u);
+    XImageWriter_writeLe16(data + 28, bpp);
+    XImageWriter_writeLe32(data + 34, (uint32_t)imageBytes);
+
+    for (int y = 0; y < XImage_height(&converted); ++y) {
+        int sourceY = XImage_height(&converted) - 1 - y;
+        uint8_t* row = data + 54u + (size_t)y * (size_t)rowBytes;
+        for (int x = 0; x < XImage_width(&converted); ++x) {
+            uint32_t pixel = XImage_pixel(&converted, x, sourceY);
+            if (withAlpha) {
+                row[x * 4] = (uint8_t)(pixel & 0xffu);
+                row[x * 4 + 1] = (uint8_t)((pixel >> 8) & 0xffu);
+                row[x * 4 + 2] = (uint8_t)((pixel >> 16) & 0xffu);
+                row[x * 4 + 3] = (uint8_t)(pixel >> 24);
+            } else {
+                row[x * 3] = (uint8_t)(pixel & 0xffu);
+                row[x * 3 + 1] = (uint8_t)((pixel >> 8) & 0xffu);
+                row[x * 3 + 2] = (uint8_t)((pixel >> 16) & 0xffu);
+            }
+        }
+    }
+    XImage_deinit_base(&converted);
+    return true;
+}
+
+static bool XImageWriter_writeDevice(XIODevice* device, const XByteArray* bytes)
+{
+    const char* data;
+    int64_t total;
+    int64_t offset = 0;
+    if (!device || !bytes) return false;
+    data = (const char*)XByteArray_constData(bytes);
+    total = (int64_t)XByteArray_size_base(bytes);
+    while (offset < total) {
+        int64_t written = XIODevice_write_1(device, data + offset, total - offset);
+        if (written <= 0) return false;
+        offset += written;
+    }
+    return XIODevice_flush(device);
 }
 
 static void VXImageWriter_deinit(XImageWriter* self)
@@ -208,7 +321,12 @@ void XImageWriter_setText(XImageWriter* self, const char* key, const char* text)
 bool XImageWriter_canWrite(const XImageWriter* self)
 {
     if (!self || !self->m_data) return false;
-    return false;
+    if (!self->m_data->m_fileName && !self->m_data->m_device) return false;
+    if (!XImageWriter_isBmpFormat(self->m_data->m_format)) return false;
+    return self->m_data->m_fileName ?
+        (self->m_data->m_format && self->m_data->m_format[0] ? true :
+         XImageWriter_fileLooksBmp(self->m_data->m_fileName)) :
+        (self->m_data->m_format && self->m_data->m_format[0]);
 }
 
 bool XImageWriter_write(XImageWriter* self, const XImage* image)
@@ -221,8 +339,28 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
     }
     if (!self->m_data->m_fileName && !self->m_data->m_device)
         XImageWriter_setError(self, XImageWriterError_DeviceError, "No image destination is set");
-    else
-        XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError, "No image encoder is registered");
+    else if (!self->m_data->m_fileName) {
+        XByteArray* bytes = XByteArray_create();
+        bool ok = XImageWriter_canWrite(self) && XImageWriter_encodeBmp(image, bytes) &&
+                  XImageWriter_writeDevice(self->m_data->m_device, bytes);
+        if (bytes) XByteArray_delete_base(bytes);
+        if (!ok)
+            XImageWriter_setError(self, XImageWriterError_DeviceError,
+                                  "BMP image could not be written to the device");
+        else {
+            XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
+            return true;
+        }
+    }
+    else if (!XImageWriter_canWrite(self))
+        XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
+                              "Only BMP is supported by the built-in portable encoder");
+    else if (!XImage_save(image, self->m_data->m_fileName, self->m_data->m_format, self->m_data->m_quality))
+        XImageWriter_setError(self, XImageWriterError_DeviceError, "BMP image could not be written");
+    else {
+        XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
+        return true;
+    }
     return false;
 }
 
@@ -242,4 +380,3 @@ bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption
 void* XImageWriter_supportedImageFormats() { return NULL; }
 void* XImageWriter_supportedMimeTypes() { return NULL; }
 void* XImageWriter_imageFormatsForMimeType(const char* mimeType) { (void)mimeType; return NULL; }
-

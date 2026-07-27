@@ -174,6 +174,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, struct io_uring_cqe* 
     /* user_data==0 表示 wakeUp 唤醒，无完成需处理（对应 Win32 overlapped==NULL） */
     if (!ctx) return;
 
+    ctx->result = res;
     if (ctx->type == XEventContextType_Type_Timer) {
         /* 定时器完成：直接投递定时器事件到应用层 */
         XFd timerFd = ctx->fd;

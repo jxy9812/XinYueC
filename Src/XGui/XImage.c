@@ -211,6 +211,7 @@ static void VXImage_copy(XImage* dest, const XImage* src)
 {
     if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XImage_init(dest);
     // 释放旧数据
     if (dest->m_data)
         XImageData_unref(dest->m_data);
@@ -226,6 +227,7 @@ static void VXImage_move(XImage* dest, XImage* src)
 {
     if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XImage_init(dest);
     if (dest->m_data)
         XImageData_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -325,19 +327,22 @@ void XImage_deinit(XImage* self)
 void XImage_copy_base(XImage* dest, const XImage* src)
 {
     if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
-    VXImage_copy(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XImage*, const XImage*))(dest, src);
 }
 
 void XImage_move_base(XImage* dest, XImage* src)
 {
     if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
-    VXImage_move(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XImage*, XImage*))(dest, src);
 }
 
 void XImage_deinit_base(XImage* self)
 {
     if (ISNULL(self, "XImage")) return;
-    VXImage_deinit(self);
+    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
+    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XImage*))(self);
 }
 
 

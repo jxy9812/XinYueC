@@ -6,12 +6,15 @@
 #include "XPixmap.h"
 #include "XImage.h"
 #include "XImageFormat.h"
+#include "XImageReader.h"
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
+#include <limits.h>
 
 /* ========== 私有数据结构 ========== */
 
@@ -30,6 +33,13 @@ typedef struct XPlatformPixmap
 }XPlatformPixmap;
 
 static int g_pixmapSerialCounter = 1;
+
+static void XPixmap_resetOutput(XPixmap* out)
+{
+    if (!out) return;
+    if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
+    XPixmap_init(out);
+}
 
 static int64_t XPlatformPixmap_nextCacheKey(void)
 {
@@ -90,6 +100,7 @@ static void VXPixmap_copy(XPixmap* dest, const XPixmap* src)
 {
     if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XPixmap_init(dest);
     if (dest->m_data)
         XPlatformPixmap_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -100,6 +111,7 @@ static void VXPixmap_move(XPixmap* dest, XPixmap* src)
 {
     if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
     if (dest == src) return;
+    if (XClassIsVtableNull(dest)) XPixmap_init(dest);
     if (dest->m_data)
         XPlatformPixmap_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -210,18 +222,21 @@ void XPixmap_deinit(XPixmap* self)
 void XPixmap_copy_base(XPixmap* dest, const XPixmap* src)
 {
     if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
-    VXPixmap_copy(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XPixmap*, const XPixmap*))(dest, src);
 }
 void XPixmap_move_base(XPixmap* dest, XPixmap* src)
 {
     if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
-    VXPixmap_move(dest, src);
+    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
+    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XPixmap*, XPixmap*))(dest, src);
 }
 
 void XPixmap_deinit_base(XPixmap* self)
 {
     if (ISNULL(self, "XPixmap")) return;
-    VXPixmap_deinit(self);
+    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
+    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XPixmap*))(self);
 }
 
 
@@ -494,10 +509,15 @@ void XPixmap_createMaskFromColor(const XPixmap* self, uint32_t maskColor, uint32
 
 void XPixmap_scaled(const XPixmap* self, int width, int height, uint32_t aspectMode, uint32_t mode, XPixmap* out)
 {
-    if (!self || !self->m_data || !out) return;
+    if (!out) return;
+    if (!self || !self->m_data || width <= 0 || height <= 0) {
+        XPixmap_resetOutput(out);
+        return;
+    }
     XImage scaled;
     XImage_init(&scaled);
     XImage_scaled(&self->m_data->m_image, width, height, aspectMode, mode, &scaled);
+    XPixmap_resetOutput(out);
     XPixmap_init_image(out, &scaled, 0);
     if (out->m_data)
     {
@@ -512,7 +532,7 @@ void XPixmap_scaledToWidth(const XPixmap* self, int width, uint32_t mode, XPixma
     if (!out) return;
     if (!self || !self->m_data || width <= 0 || XPixmap_width(self) <= 0)
     {
-        XPixmap_init(out);
+        XPixmap_resetOutput(out);
         return;
     }
     int height = XPixmap_height(self) * width / XPixmap_width(self);
@@ -524,7 +544,7 @@ void XPixmap_scaledToHeight(const XPixmap* self, int height, uint32_t mode, XPix
     if (!out) return;
     if (!self || !self->m_data || height <= 0 || XPixmap_height(self) <= 0)
     {
-        XPixmap_init(out);
+        XPixmap_resetOutput(out);
         return;
     }
     int width = XPixmap_width(self) * height / XPixmap_height(self);
@@ -534,15 +554,80 @@ void XPixmap_scaledToHeight(const XPixmap* self, int height, uint32_t mode, XPix
 void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
                          float m10, float m11, float m12, uint32_t mode, XPixmap* out)
 {
-    (void)self;
-    (void)m00;
-    (void)m01;
-    (void)m02;
-    (void)m10;
-    (void)m11;
-    (void)m12;
     (void)mode;
-    (void)out;
+    if (!out) return;
+    if (!self || !self->m_data || XPixmap_isNull(self)) {
+        XPixmap_resetOutput(out);
+        return;
+    }
+
+    const int sourceWidth = XPixmap_width(self);
+    const int sourceHeight = XPixmap_height(self);
+    const float determinant = m00 * m11 - m01 * m10;
+    if (sourceWidth <= 0 || sourceHeight <= 0 || fabsf(determinant) < 1.0e-7f) {
+        XPixmap_resetOutput(out);
+        return;
+    }
+
+    const float cornersX[4] = {0.0f, (float)sourceWidth, 0.0f, (float)sourceWidth};
+    const float cornersY[4] = {0.0f, 0.0f, (float)sourceHeight, (float)sourceHeight};
+    float minX = m00 * cornersX[0] + m01 * cornersY[0] + m02;
+    float maxX = minX;
+    float minY = m10 * cornersX[0] + m11 * cornersY[0] + m12;
+    float maxY = minY;
+    for (int i = 1; i < 4; ++i) {
+        float x = m00 * cornersX[i] + m01 * cornersY[i] + m02;
+        float y = m10 * cornersX[i] + m11 * cornersY[i] + m12;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+
+    float widthFloat = ceilf(maxX) - floorf(minX);
+    float heightFloat = ceilf(maxY) - floorf(minY);
+    if (widthFloat <= 0.0f || heightFloat <= 0.0f ||
+        widthFloat > (float)INT_MAX || heightFloat > (float)INT_MAX) {
+        XPixmap_resetOutput(out);
+        return;
+    }
+    int width = (int)widthFloat;
+    int height = (int)heightFloat;
+    float originX = floorf(minX);
+    float originY = floorf(minY);
+
+    XImage transformed;
+    XImage_init_ex(&transformed, width, height,
+                   self->m_data->m_isQBitmap ? XImageFormat_MonoLSB : XImageFormat_ARGB32_Premultiplied);
+    if (XImage_isNull(&transformed)) {
+        XPixmap_resetOutput(out);
+        return;
+    }
+    XImage_fill(&transformed, 0);
+
+    /* Sample the inverse affine transform. The image layer currently exposes
+     * nearest-neighbour sampling as its portable primitive; callers still get
+     * the same transformed bounds and pixel placement for every backend. */
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float targetX = originX + (float)x + 0.5f;
+            float targetY = originY + (float)y + 0.5f;
+            float sourceX = (m11 * (targetX - m02) - m01 * (targetY - m12)) / determinant;
+            float sourceY = (-m10 * (targetX - m02) + m00 * (targetY - m12)) / determinant;
+            int sampleX = (int)floorf(sourceX);
+            int sampleY = (int)floorf(sourceY);
+            if (sampleX >= 0 && sampleX < sourceWidth && sampleY >= 0 && sampleY < sourceHeight)
+                XImage_setPixel(&transformed, x, y, XImage_pixel(&self->m_data->m_image, sampleX, sampleY));
+        }
+    }
+
+    XPixmap_resetOutput(out);
+    XPixmap_init_image(out, &transformed, 0);
+    if (out->m_data) {
+        out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
+        out->m_data->m_isQBitmap = self->m_data->m_isQBitmap;
+    }
+    XImage_deinit_base(&transformed);
 }
 
 /* ========== 转换方法 ========== */
@@ -550,6 +635,7 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
 void XPixmap_toImage(const XPixmap* self, XImage* out)
 {
     if (!self || !self->m_data || !out) return;
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     XImage_copy_base(out, &self->m_data->m_image);
 }
@@ -557,35 +643,55 @@ void XPixmap_toImage(const XPixmap* self, XImage* out)
 void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out)
 {
     if (!image || !out) return;
+    XPixmap_resetOutput(out);
     XPixmap_init_image(out, image, flags);
 }
 
 void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out)
 {
-    (void)reader;
     (void)flags;
-    (void)out;
+    if (!reader || !out) return;
+    XImage image;
+    XImage_init(&image);
+    if (XImageReader_read((XImageReader*)reader, &image)) {
+        XPixmap_resetOutput(out);
+        XPixmap_init_image(out, &image, flags);
+    } else {
+        XPixmap_resetOutput(out);
+    }
+    XImage_deinit_base(&image);
 }
 
 /* ========== 文件操作 ========== */
 
 bool XPixmap_load(XPixmap* self, const char* fileName, const char* format, uint32_t flags)
 {
-    (void)self;
-    (void)fileName;
-    (void)format;
     (void)flags;
-    return false;
+    if (!self || !fileName) return false;
+    XImage image;
+    XImage_init(&image);
+    bool ok = XImage_load(&image, fileName, format);
+    if (ok) {
+        XPixmap_resetOutput(self);
+        XPixmap_init_image(self, &image, flags);
+    }
+    XImage_deinit_base(&image);
+    return ok;
 }
 
 bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const char* format, uint32_t flags)
 {
-    (void)self;
-    (void)buf;
-    (void)len;
-    (void)format;
     (void)flags;
-    return false;
+    if (!self || !buf || len > (uint32_t)INT_MAX) return false;
+    XImage image;
+    XImage_init(&image);
+    bool ok = XImage_loadFromData(&image, buf, (int)len, format);
+    if (ok) {
+        XPixmap_resetOutput(self);
+        XPixmap_init_image(self, &image, flags);
+    }
+    XImage_deinit_base(&image);
+    return ok;
 }
 
 bool XPixmap_save(const XPixmap* self, const char* fileName, const char* format, int quality)
@@ -599,11 +705,20 @@ bool XPixmap_save(const XPixmap* self, const char* fileName, const char* format,
 
 void XPixmap_copyRect(const XPixmap* self, const XRect* rect, XPixmap* out)
 {
-    if (!self || !self->m_data || !out) return;
+    if (!out) return;
+    if (!self || !self->m_data) {
+        XPixmap_resetOutput(out);
+        return;
+    }
     XImage copied;
     XImage_init(&copied);
     XImage_copyRect(&self->m_data->m_image, rect, &copied);
+    XPixmap_resetOutput(out);
     XPixmap_init_image(out, &copied, 0);
+    if (out->m_data) {
+        out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
+        out->m_data->m_isQBitmap = self->m_data->m_isQBitmap;
+    }
     XImage_deinit_base(&copied);
 }
 
@@ -733,9 +848,6 @@ void XPixmap_deviceIndependentSize(const XPixmap* self, XSizeF* out)
 void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out)
 {
     if (!image || !out) return;
-    XPixmap_init(out);
+    XPixmap_resetOutput(out);
     out->m_data = XPlatformPixmap_createFromImage(image);
 }
-
-
-

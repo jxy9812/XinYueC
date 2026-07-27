@@ -16,6 +16,7 @@
 #include "XByteArray.h"
 #include "XString.h"
 #include "XAbstractSocket.h"
+#include "XSslSocket.h"
 #include "XIODevice.h"
 #include "XFileInfo.h"
 #include "XTcpServer.h"
@@ -102,6 +103,7 @@ typedef enum XFtp_ProxyType {
 
 // =============== 私有数据声明 ===============
 typedef struct XFtpPrivate XFtpPrivate;
+typedef struct XTimer XTimer;
 
 // =============== 主结构体 ===============
 
@@ -136,6 +138,7 @@ typedef struct XFtp {
     XVector* m_pendingCommands;           // 待执行的命令
     XVector* m_listInfo;                  // 目录列表信息
     XMutex* m_commandMutex;               // 命令队列互斥锁
+    XTimer* m_reconnectTimer;             // 自动重连定时器
     XFtpCommand* m_currentCommand;        // 当前执行的命令
     void* m_transferDevice;               // 传输设备
     XString* m_errorString;               // 错误信息
@@ -157,6 +160,7 @@ typedef struct XFtp {
     XFtp_TransferMode m_transferMode;     // 传输模式
     XFtp_DataType m_transferType;         // 传输类型（Binary/Ascii）
     XFtp_ProxyType m_proxyType;           // 代理类型
+    XSslPeerVerifyMode m_sslPeerVerifyMode; // FTPS 对端证书校验模式
     int m_currentId;                      // 当前命令ID
     int m_reconnectInterval;              // 重试间隔（毫秒）
     int m_maxReconnectAttempts;           // 最大重试次数
@@ -378,6 +382,22 @@ void XFtp_abortTransfer(XFtp* ftp);
  * @note 仅在未连接时可设置
  */
 void XFtp_setSsl(XFtp* ftp, bool useSsl);
+
+/**
+ * @brief 设置 FTPS 对端证书校验模式。
+ * @param[in,out] ftp  FTP 实例；必须处于未连接状态
+ * @param[in] mode     对端证书校验模式，默认值为 XSSL_VerifyPeer
+ * @note 生产环境应保持 XSSL_VerifyPeer；测试自签名证书时可临时使用
+ *       XSSL_VerifyNone，但这不会验证服务器身份。
+ */
+void XFtp_setSslPeerVerifyMode(XFtp* ftp, XSslPeerVerifyMode mode);
+
+/**
+ * @brief 获取 FTPS 对端证书校验模式。
+ * @param[in] ftp FTP 实例；NULL 返回 XSSL_VerifyPeer
+ * @return 当前校验模式
+ */
+XSslPeerVerifyMode XFtp_sslPeerVerifyMode(const XFtp* ftp);
 
 /**
  * @brief 设置 MODE Z 压缩

@@ -33,6 +33,16 @@ The following P0 fixes have been applied, primarily in
 - Zero-length memory uploads close the DTP socket after the `150` reply.
 - PI and DTP socket failures now complete the active command instead of
   leaving the command queue permanently blocked.
+- The DTP state no longer shares storage with the passive target pointer. The
+  former union could interpret state values as heap pointers during teardown.
+- Automatic reconnect now uses `XTimer`, restores the saved login sequence,
+  avoids blocking the event thread, and fails commands queued while the
+  session is unavailable.
+- Active FTPS is explicitly rejected with a portable error because the shared
+  socket API has no safe descriptor-adoption operation for an accepted
+  `XTcpSocket`.
+- MODE Z is explicitly rejected until a portable compressed DTP path exists;
+  `XFtp_setCompression()` no longer silently advertises unsupported behavior.
 
 Related test corrections:
 
@@ -44,7 +54,7 @@ Related test corrections:
 - `ftp_test_server.py` was adjusted so a duplicate `MKD` uses
   `exist_ok=False`, matching normal FTP failure semantics.
 
-## Verification Performed on Windows
+## Historical Windows Verification
 
 Build command:
 
@@ -61,7 +71,8 @@ The local server was started with:
 python ftp_test_server.py
 ```
 
-Latest E2E run result: 16/17 passed.
+The recorded Windows run from the earlier handoff reported 16/17 passed. The
+Linux runs below are the current verification for the repaired state.
 
 Verified passing E2E coverage:
 
@@ -77,33 +88,45 @@ Verified passing E2E coverage:
 - SIZE, MDTM, and MLST
 - 550 error classification for missing SIZE/DELE/RMD targets
 
-The remaining E2E failure is the duplicate-MKD assertion. The test observed
-`257` where its second MKD expects `550`, even after the server was changed to
-`exist_ok=False`. Treat this as an unresolved test synchronization or response
-association issue until it is reproduced with PI command/reply logging. Do
-not mark it as a server-only issue without that trace.
+The duplicate-MKD association issue was subsequently covered by the Linux
+run after the PI/DTP state-machine fixes.
+
+## Current Linux Verification
+
+- `XGuiRegression_Test` builds and passes. It covers uninitialized pixmap
+  copy, affine transform dimensions, icon size enumeration, and BMP reader /
+  writer device I/O.
+- `FtpE2E_Test` builds and exits normally. All 17 real-server cases pass,
+  including passive and active transfers, 256 KiB chunked PUT/GET, REST,
+  APPE, ABOR recovery, SIZE, MDTM, MLST, and 550 error classification.
+- `FtpE2E_Test --ssl` passes all 17 cases against the local certificate-backed
+  Explicit FTPS server. This covers TLS-protected control traffic, `PBSZ 0`,
+  `PROT P`, passive TLS data channels, REST/APPE, 256 KiB integrity, ABOR,
+  metadata commands, and 4xx/5xx classification. The active FTPS case is a
+  deliberate pass when the portable API returns `XFtp_Error_ActiveModeFailed`.
+  The test certificate is self-signed, so this test selects
+  `XSSL_VerifyNone`; the XFtp default remains `XSSL_VerifyPeer`.
+- The POSIX io_uring path now preserves completion results, uses the actual
+  accepted descriptor from `IORING_OP_ACCEPT`, cancels pending operations
+  before close, and keeps TCP-server descriptors separate from `XIODevice`
+  descriptors. These changes are shared-contract fixes; no platform API was
+  added to XFtp or XGui shared code.
+- `XinYueC_Dynamic` startup runs the 15-case `XTcpServer` suite with 15/15
+  passing. A menu start/quit smoke test also exits normally.
+- `ctest --test-dir build-xalignment` reports no registered CTest cases; the
+  executable tests above are the available evidence.
 
 ## Remaining Work
 
 The XFTP module is not yet feature-complete. Prioritize these before calling
 it complete:
 
-1. Fix and fully verify duplicate-MKD E2E response association. Add command
-   IDs or PI tracing to prove that `wait_cmd` observes the reply for the
-   command it just enqueued.
-2. Resolve active-mode FTPS. `XTcpServer_nextPendingConnection_base()` returns
-   an `XTcpSocket`; active FTPS must not cast that object to `XSslSocket`.
-   Either implement safe descriptor adoption into an SSL socket or reject
-   active FTPS explicitly with a clear error until supported.
-3. Implement or explicitly reject MODE Z compression. `XFtp_setCompression()`
-   exists but the protocol negotiation and compression data path are absent.
-4. Complete reconnect behavior: after a reconnect, restore the necessary
-   authentication/session state and safely recover or fail queued commands.
-5. Audit every public declaration in `Src/XCode/XNetwork/XFtp/XFtp.h` and
+1. Audit every public declaration in `Src/XCode/XNetwork/XFtp/XFtp.h` and
    `XFtpCommand.h`. Several API declarations still lack complete Doxygen
    `@param` and return/error/lifetime documentation.
-6. Add FTPS E2E coverage with a local certificate-backed server. The current
-   E2E suite validates plain FTP only.
+2. Add certificate-chain and hostname-verification fixtures for FTPS E2E;
+   the current self-signed fixture intentionally exercises encrypted I/O with
+   peer verification disabled.
 
 ## Linux Continuation
 
@@ -111,9 +134,11 @@ Suggested clean build directory and commands:
 
 ```bash
 cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-linux --target FtpE2E_Test -j
+cmake --build build-linux --target FtpE2E_Test XGuiRegression_Test -j
 python3 ftp_test_server.py
 ./bin/Debug/FtpE2E_Test
+# For Explicit FTPS, start the server with --tls --cert <cert> --key <key>
+# and run: ./bin/Debug/FtpE2E_Test --ssl --port 2122
 ```
 
 The exact executable path may differ by generator. Use `find build-linux -name

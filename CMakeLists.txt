@@ -57,10 +57,15 @@ add_subdirectory(Library/lwip)
 # ==================== mbedTLS（XinYueC SSL/TLS 后端）====================
 # 以子目录静态库方式集成，详见 Library/mbedtls/CMakeLists.txt
 add_subdirectory(Library/mbedtls)
+# ==================== PCRE2（Qt 6.8 正则表达式引擎）====================
+add_subdirectory(Library/pcre2)
 
 # 链接 mbedTLS 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
 target_link_libraries(${EXPORT_NAME} PRIVATE mbedtls)
+# 链接 PCRE2 16-bit 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE pcre2)
+target_link_libraries(${EXPORT_NAME} PRIVATE pcre2)
 # 链接 lwIP 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE lwip)
 target_link_libraries(${EXPORT_NAME} PRIVATE lwip)
@@ -88,9 +93,9 @@ set_target_properties(${EXPORT_NAME}_Static PROPERTIES
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2)
 else()
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2)
 endif()
 
 # ==================== 动态链接的可执行程序 ====================
@@ -103,9 +108,9 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread pcap mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread pcap mbedtls lwip zlib fatfs pcre2)
 else()
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2)
 endif()
 
 # ==================== XFtp 端到端真服务器联调测试 ====================
@@ -114,9 +119,19 @@ add_executable(FtpE2E_Test
     "./ftp_e2e_test.c"
 )
 if(UNIX)
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs)
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs)
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== XGui 对齐回归测试 ====================
+add_executable(XGuiRegression_Test
+    "./xgui_regression_test.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 #安装
