@@ -2,6 +2,9 @@
 #if XStringList_ON
 #include<string.h>
 #include"XString.h"
+#if XRegularExpression_ON
+#include "XRegularExpression.h"
+#endif
 XVtable* XStringList_class_init()
 {
 	return XVector_class_init();
@@ -116,6 +119,66 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 	XString_delete_base(temp);
 	return str;
 }
+
+#if XRegularExpression_ON
+
+XStringList* XStringList_filter_regularExpression(const XStringList* strList,
+                                                  const XRegularExpression* expression)
+{
+    if (!strList || !expression) return NULL;
+    XStringList* result = XStringList_create();
+    if (!result) return NULL;
+    size_t count = XStringList_size_base(strList);
+    for (size_t i = 0; i < count; ++i) {
+        const XString* value = (const XString*)XStringList_at_base(strList, (int64_t)i);
+        if (value && XString_contains_regularExpression(value, expression))
+            XStringList_push_back_base(result, (void*)value);
+    }
+    return result;
+}
+
+int64_t XStringList_indexOf_regularExpression(const XStringList* strList,
+                                              const XRegularExpression* expression,
+                                              int64_t from)
+{
+    if (!strList || !expression) return -1;
+    if (from < 0) from = 0;
+    size_t count = XStringList_size_base(strList);
+    for (size_t i = (size_t)from; i < count; ++i) {
+        const XString* value = (const XString*)XStringList_at_base(strList, (int64_t)i);
+        if (value && XString_contains_regularExpression(value, expression)) return (int64_t)i;
+    }
+    return -1;
+}
+
+int64_t XStringList_lastIndexOf_regularExpression(const XStringList* strList,
+                                                   const XRegularExpression* expression,
+                                                   int64_t from)
+{
+    if (!strList || !expression) return -1;
+    int64_t count = (int64_t)XStringList_size_base(strList);
+    if (from < 0 || from >= count) from = count - 1;
+    for (int64_t i = from; i >= 0; --i) {
+        const XString* value = (const XString*)XStringList_at_base(strList, i);
+        if (value && XString_contains_regularExpression(value, expression)) return i;
+    }
+    return -1;
+}
+
+bool XStringList_replaceInStrings_regularExpression(XStringList* strList,
+                                                     const XRegularExpression* expression,
+                                                     const XString* after)
+{
+    if (!strList || !expression || !after) return false;
+    size_t count = XStringList_size_base(strList);
+    for (size_t i = 0; i < count; ++i) {
+        XString* value = (XString*)XStringList_at_base(strList, (int64_t)i);
+        if (!value || !XString_replace_regularExpression(value, expression, after)) return false;
+    }
+    return true;
+}
+
+#endif /* XRegularExpression_ON */
 
 
 // -------------------------- Qt 6.8 对齐：字符串列表特有方法 --------------------------
@@ -308,4 +371,3 @@ int64_t XStringList_lastIndexOf_utf8(const XStringList* strList, const char* utf
 	return result;
 }
 #endif
-

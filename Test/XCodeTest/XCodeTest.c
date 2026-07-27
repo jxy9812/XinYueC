@@ -14,4 +14,5 @@ void XMenu_XCodeTest(XMenu* root)
 	XMenu_XRandomGeneratorTest(menu);
 XMenu_XCoreApplicationTest(menu);
 	XMenu_XCommandLineParserTest(menu);
+	XMenu_XRegularExpressionTest(menu);
 }

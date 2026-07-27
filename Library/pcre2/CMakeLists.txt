@@ -6,6 +6,7 @@
 # 将 SLJIT 单独构建为目标。
 
 set(PCRE2_PUBLIC_INCS
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
 )
 
@@ -43,6 +44,8 @@ set(PCRE2_SRCS
     src/pcre2_ucp.h
     src/pcre2_valid_utf.c
     src/pcre2_xclass.c
+    pcre2_xin_memory.c
+    pcre2_xin_memory.h
 )
 
 option(XIN_PCRE2_ENABLE_JIT "启用 PCRE2 JIT 优化（不影响匹配结果）" ON)
@@ -51,6 +54,10 @@ add_library(pcre2 STATIC ${PCRE2_SRCS})
 set_target_properties(pcre2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(pcre2 PUBLIC ${PCRE2_PUBLIC_INCS})
+target_include_directories(pcre2 PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src"
+    "${PROJECT_SOURCE_DIR}/Src/XMemory"
+)
 target_compile_definitions(pcre2
     PRIVATE
         HAVE_CONFIG_H

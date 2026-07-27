@@ -12,6 +12,8 @@ extern "C" {
 #include"XStringList_Iterator.h"
 #include"XStringList_reverse_iterator.h"
 
+typedef struct XRegularExpression XRegularExpression;
+
 #define XSTRINGVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XStringList))
 
 XCLASS_DEFINE_BEGING(XStringList)
@@ -308,6 +310,50 @@ void XStringList_replaceInStrings(XStringList* strList, const XString* before, c
  * @param cs 大小写敏感性
  */
 void XStringList_replaceInStrings_utf8(XStringList* strList, const char* before, const char* after, XChar_CaseSensitivity cs);
+
+#if XRegularExpression_ON
+/**
+ * @brief 使用正则表达式过滤字符串列表。
+ * @param strList 源字符串列表
+ * @param expression 正则表达式
+ * @return 新的过滤结果列表，失败返回 NULL
+ */
+XStringList* XStringList_filter_regularExpression(const XStringList* strList,
+                                                  const XRegularExpression* expression);
+
+/**
+ * @brief 查找第一个匹配正则表达式的字符串索引。
+ * @param strList 字符串列表
+ * @param expression 正则表达式
+ * @param from 起始索引
+ * @return 匹配索引，未匹配返回 -1
+ */
+int64_t XStringList_indexOf_regularExpression(const XStringList* strList,
+                                              const XRegularExpression* expression,
+                                              int64_t from);
+
+/**
+ * @brief 查找最后一个匹配正则表达式的字符串索引。
+ * @param strList 字符串列表
+ * @param expression 正则表达式
+ * @param from 最大索引，负数表示从末尾查找
+ * @return 匹配索引，未匹配返回 -1
+ */
+int64_t XStringList_lastIndexOf_regularExpression(const XStringList* strList,
+                                                   const XRegularExpression* expression,
+                                                   int64_t from);
+
+/**
+ * @brief 替换列表中每个字符串的全部正则匹配。
+ * @param strList 待修改字符串列表
+ * @param expression 正则表达式
+ * @param after 替换文本
+ * @return 成功返回 true，参数无效或分配失败返回 false
+ */
+bool XStringList_replaceInStrings_regularExpression(XStringList* strList,
+                                                     const XRegularExpression* expression,
+                                                     const XString* after);
+#endif
 
 /**
  * @brief 判断列表中是否包含指定字符串（按值比较，对齐Qt QStringList::contains(str, cs)）

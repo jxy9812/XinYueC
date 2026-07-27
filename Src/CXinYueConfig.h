@@ -58,6 +58,7 @@ extern "C" {
 #define	XByteArray_ON					1
 #define	XVectorTwo_ON					1
 #define	XStringList_ON					1
+#define XRegularExpression_ON				1
 #define XVariantList_ON					1
 #define	XCircularQueue_ON				1
 #define	XLockFreeQueue_ON			1
@@ -77,12 +78,14 @@ extern "C" {
 #define	XStack_ON						0
 #define	XPriorityQueue_ON				0
 #define	XString_ON						0
+#define XRegularExpression_ON				0
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
 #endif
 #if !XContainer_ON					
 #define XMap_ON							0
 #define XString_ON						0
+#define XRegularExpression_ON				0
 #define	XPriorityQueue_ON				0
 #define	XQueue_ON						0
 #define	XList_ON						0

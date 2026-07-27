@@ -11,6 +11,8 @@ extern "C" {
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
+typedef struct XRegularExpression XRegularExpression;
+typedef struct XRegularExpressionMatch XRegularExpressionMatch;
 /**
  * @brief XString 类虚函数表枚举（继承自 XContainer）
  * @details 定义 XString 类支持的所有虚函数索引，用于虚函数调用机制
@@ -443,6 +445,74 @@ bool XString_contains(const XString* str, const XString* substr, XChar_CaseSensi
  * @return 包含返回true，否则返回false
  */
 bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_CaseSensitivity cs);
+
+#if XRegularExpression_ON
+/**
+ * @brief 使用正则表达式查找第一次匹配。
+ * @param str 源字符串
+ * @param expression 正则表达式
+ * @param from 起始位置，负数按0处理
+ * @param match 可选输出匹配结果，调用前可为未初始化对象
+ * @return 匹配起始位置，未匹配或参数无效返回 -1
+ */
+int64_t XString_indexOf_regularExpression(const XString* str,
+                                          const XRegularExpression* expression,
+                                          int64_t from,
+                                          XRegularExpressionMatch* match);
+
+/**
+ * @brief 使用正则表达式查找最后一次匹配。
+ * @param str 源字符串
+ * @param expression 正则表达式
+ * @param from 允许的最大匹配起始位置，负数表示从末尾查找
+ * @param match 可选输出匹配结果
+ * @return 匹配起始位置，未匹配或参数无效返回 -1
+ */
+int64_t XString_lastIndexOf_regularExpression(const XString* str,
+                                               const XRegularExpression* expression,
+                                               int64_t from,
+                                               XRegularExpressionMatch* match);
+
+/**
+ * @brief 判断字符串是否包含正则匹配。
+ * @param str 源字符串
+ * @param expression 正则表达式
+ * @return 包含匹配返回 true，否则返回 false
+ */
+bool XString_contains_regularExpression(const XString* str,
+                                        const XRegularExpression* expression);
+
+/**
+ * @brief 统计字符串中的正则匹配数量。
+ * @param str 源字符串
+ * @param expression 正则表达式
+ * @return 匹配数量，参数无效返回0
+ */
+size_t XString_count_regularExpression(const XString* str,
+                                       const XRegularExpression* expression);
+
+/**
+ * @brief 使用正则表达式替换字符串中的所有匹配。
+ * @param str 待修改字符串
+ * @param expression 正则表达式
+ * @param after 替换文本，支持 \\0 到 \\9 捕获组引用
+ * @return 成功返回 true，参数无效或分配失败返回 false
+ */
+bool XString_replace_regularExpression(XString* str,
+                                       const XRegularExpression* expression,
+                                       const XString* after);
+
+/**
+ * @brief 使用正则表达式分割字符串。
+ * @param str 源字符串
+ * @param separator 分隔符正则表达式
+ * @param keepEmptyParts 是否保留空字段
+ * @return 新字符串列表，失败返回 NULL
+ */
+XStringList* XString_split_regularExpression(const XString* str,
+                                             const XRegularExpression* separator,
+                                             bool keepEmptyParts);
+#endif
 // -------------------------- 字符串比较操作函数 --------------------------
 
 const bool XLess_XString(const XString* str1, const XString* str2);
