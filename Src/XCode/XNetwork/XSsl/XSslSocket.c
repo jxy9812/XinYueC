@@ -633,6 +633,9 @@ void XSslSocket_connectToHostEncrypted_3(XSslSocket* self,
 void XSslSocket_startClientEncryption(XSslSocket* self)
 {
     if (!self) return;
+    /* A repeated connected notification must not restart an in-flight TLS
+     * handshake on the same mbedTLS context. */
+    if (self->encrypted || self->handshakePending) return;
     self->mode = XSslSocket_SslClientMode;
     self->handshakePending = true;
     /* 明文协议升级后没有新的可读事件可触发握手，先发送 ClientHello。 */
@@ -1143,9 +1146,6 @@ XVtable* XSslSocket_class_init(void) {
 
     return XVTABLE_DEFAULT;
 }
-
-
-
 
 
 

@@ -26,6 +26,7 @@
 #include "XRingBuffer.h"
 #include "XEvent.h"
 #include "XHostAddress.h"
+#include "XAbstractSocket.h"
 #include "XNetworkInterface.h"
 #include "XNetworkAddressEntry.h"
 #include "XVector.h"
@@ -308,6 +309,36 @@ typedef struct XNetworkSocketPrivateWin32 {
 
 /* 便捷转换宏 */
 #define W32(p) ((XNetworkSocketPrivateWin32*)(p))
+
+/* Keep public endpoint properties aligned with the POSIX backend after an
+ * outbound connection completes. */
+static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
+{
+    if (!priv || !priv->owner) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return;
+
+    XAbstractSocket* socket = (XAbstractSocket*)priv->owner;
+    struct sockaddr_storage address;
+    int addressLength = sizeof(address);
+    XHostAddress endpoint;
+    uint16_t port = 0;
+
+    XHostAddress_init(&endpoint);
+    if (getsockname(p->socket, (struct sockaddr*)&address, &addressLength) == 0) {
+        sa2addr(&address, &endpoint, &port);
+        XAbstractSocket_setLocalAddress(socket, &endpoint);
+        XAbstractSocket_setLocalPort(socket, port);
+    }
+
+    addressLength = sizeof(address);
+    if (getpeername(p->socket, (struct sockaddr*)&address, &addressLength) == 0) {
+        sa2addr(&address, &endpoint, &port);
+        XAbstractSocket_setPeerAddress(socket, &endpoint);
+        XAbstractSocket_setPeerPort(socket, port);
+    }
+    XHostAddress_deinit_base(&endpoint);
+}
 
 /* =========================================================================
  * 私有数据管理
@@ -765,6 +796,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
             p->connected = true;
             int opt = 1;
             setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
+            syncSocketEndpoints(priv);
         } else {
             p->connected = false;
         }

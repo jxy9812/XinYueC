@@ -1,15 +1,64 @@
 # XFTP Progress Handoff
 
-Last updated: 2026-07-27 (Asia/Shanghai)
-The work was paused after the build verification below; the remaining
-active-mode issue is intentionally recorded instead of being reported as
-complete.
+Last updated: 2026-07-28 (Asia/Shanghai)
+The active FTP GET completion issue, FTPS data-handshake re-entry issue, and
+IPv6 active-mode endpoint issue have been fixed. The complete local IPv4/IPv6
+FTP/FTPS end-to-end matrix has passed on the POSIX backend.
 
 ## Scope
 
-This document records the current state of the untracked XFTP implementation
-under `Src/XCode/XNetwork/XFtp/`. The working tree was already dirty before
-this work began. Do not reset or discard unrelated changes.
+This document records the current state of the XFTP implementation under
+`Src/XCode/XNetwork/XFtp/` and its required POSIX/Windows socket backends.
+Preserve unrelated working-tree changes when continuing this work.
+
+## 2026-07-28 lwIP TAP/DHCP Follow-up
+
+The lwIP backend is selected with `-DXNETWORK_USE_LWIP`; its POSIX transport
+uses the existing `lwip0` TAP device and DHCP. In an isolated TAP namespace
+with the host-side address `192.168.200.1/24`, the client acquired
+`192.168.200.2` through DHCP and completed these full 17-case matrices:
+
+- FTP over DHCP/TAP, including passive EPSV and active PORT/EPRT-style
+  endpoint handling;
+- FTP + MODE Z over DHCP/TAP;
+- FTP against a fixture which advertises EPSV then rejects it with `502`,
+  proving the IPv4 PASV retry path.
+
+The lwIP implementation now coalesces chained pbufs into one TAP Ethernet
+frame, leaves lwIP's built-in loopback as the only loopback interface, and
+returns TAP as the default external netif. The generic socket read event also
+releases the backend read buffer before emitting `readyRead`, preventing a
+consumer from receiving the same control reply twice. XFtp counts queued and
+acknowledged PUT bytes separately and accepts only `225`/`226` as a transfer's
+final PI reply, so a delayed non-transfer `250` cannot complete a later PUT.
+
+The repeated lwIP explicit-FTPS failure is resolved. The apparent fifth TLS
+channel failure was a late close/error event from the completed DTP socket:
+because its FTP signals remained connected until the next passive setup, that
+old event failed the new PUT before its `229` response was processed. Completed
+DTP sockets now detach all FTP-facing signals immediately while preserving the
+existing deferred object destruction. A second large-upload issue was fixed by
+mapping lwIP's full send window and `ERR_MEM` result to a retryable zero-byte
+write, allowing the TLS BIO to return `WANT_WRITE` instead of mbedTLS internal
+error `-0x6c00`.
+
+The public error contract is now explicit for local precondition failures:
+operations on an unconnected client return `XFtp_Error_NotConnected`, commands
+issued on a connected but unauthenticated client return `XFtp_Error_NotLoggedIn`,
+and duplicate queued login/close requests return `XFtp_Error_OperationInProgress`.
+Directory-list parsing no longer silently drops malformed MLSD/MLST entries:
+the command completes with `XFtp_Error_DirectoryListingFailed`. Traditional
+Unix `LIST` summary lines such as `total 8` remain accepted.
+
+`ftp_e2e_test.c` now verifies all four local error states as part of normal
+execution: unconnected list/login/close, connected-but-unauthed list, duplicate
+login, and duplicate close. The fixture accepts `--malformed-listing`, and
+`FtpE2E_Test --expect-list-failure` proves that a malformed MLSD data line
+produces `XFtp_Error_DirectoryListingFailed` rather than a silent omission.
+
+The lwIP Raw API teardown now unregisters every TCP callback before closing a
+PCB. An established `tcp_close()` can defer final PCB release until a later ACK;
+without this, an ACK could call into an already freed socket-private object.
 
 ## Implemented and Checked
 
@@ -37,8 +86,20 @@ The following P0 fixes have been applied, primarily in
 - Explicit FTPS control-channel flow was added: `AUTH TLS`, TLS handshake,
   `PBSZ 0`, `PROT P`, then normal queued commands. Passive FTPS data sockets
   are also created as `XSslSocket` and wait for TLS before transfer starts.
+- Passive FTPS starts its data-channel TLS handshake exactly once when the
+  socket changes from connecting to connected. `XSslSocket_startClientEncryption`
+  is also idempotent while a handshake is pending or encryption is complete.
+  This prevents repeated connected notifications from re-entering the same
+  mbedTLS context and producing spurious `-0x6c00` internal errors.
 - Transfer completion now waits for both the final PI reply and DTP closure so
   late DTP data is not discarded.
+- Passive DTP connection startup now consumes `m_waitForDtpToConnect` before
+  it emits the transfer command. Repeated connected notifications can no
+  longer send a duplicate `STOR` or `RETR` after the server has closed its
+  data channel.
+- The common error path no longer assigns `m_errorString` from its own UTF-8
+  cache. This preserves the public error text for synchronous data-channel
+  failures, including failed active FTP/FTPS connection attempts.
 - LIST/MLSD data is parsed before the command object is removed. Previously
   the command was cleared first, making directory parsing unreachable.
 - MLSD/MLST filename parsing now follows RFC 3659: facts precede the first
@@ -54,11 +115,34 @@ The following P0 fixes have been applied, primarily in
 - Automatic reconnect now uses `XTimer`, restores the saved login sequence,
   avoids blocking the event thread, and fails commands queued while the
   session is unavailable.
-- Active FTPS is explicitly rejected with a portable error because the shared
-  socket API has no safe descriptor-adoption operation for an accepted
-  `XTcpSocket`.
-- MODE Z is explicitly rejected until a portable compressed DTP path exists;
-  `XFtp_setCompression()` no longer silently advertises unsupported behavior.
+- Active FTPS now uses an `XTcpServer` incoming-socket factory. The accepted
+  descriptor is bound to an `XSslSocket` on its first adoption, then the FTP
+  client performs the PROT P handshake as TLS client. This avoids unsafe
+  descriptor transfer between independently owning socket objects.
+- Active data commands now wait for both the PORT/EPRT `200` response and a
+  ready TCP/TLS channel before sending LIST, RETR, or STOR. This prevents a
+  fast lwIP TLS receive event from reaching the DTP completion state before
+  the control channel has entered its transfer phase.
+- MODE Z is negotiated after FEAT and uses the portable compressed DTP path
+  for uploads, downloads, and directory listings.
+- Active FTP listeners are detached from accepted DTP sockets and released at
+  transfer completion, abort, and object teardown. Repeated active transfers
+  no longer leave an `XTcpServer` alive for each command.
+- FEAT state is reset for every new control-session connection. EPSV and EPRT
+  now have distinct feature bits; an IPv6 active transfer requires EPRT rather
+  than assuming that EPSV implies it.
+- When an IPv4 server advertises EPSV but rejects its use, XFtp discards the
+  EPSV capability for that session and retries the same passive setup with
+  PASV. Explicit IPv6 literals do not take this IPv4-only fallback.
+- Outbound socket connections now synchronize their local and peer endpoints
+  into `XAbstractSocket` once connection succeeds. The POSIX and Windows
+  backends both do this for their asynchronous connect completions; without
+  it, XFtp could not see an IPv6 PI local address and active mode fell back to
+  an IPv4 `PORT` listener.
+- POSIX `XTcpServer` now selects `AF_INET` or `AF_INET6` from the requested
+  listen address and reports a bound IPv6 port correctly. XFtp binds its
+  active DTP listener to the PI socket's local address, so IPv6 active FTP
+  negotiates and exercises EPRT end to end.
 
 Related test corrections:
 
@@ -69,81 +153,118 @@ Related test corrections:
 - The E2E LIST assertion now requires at least one item.
 - `ftp_test_server.py` was adjusted so a duplicate `MKD` uses
   `exist_ok=False`, matching normal FTP failure semantics.
+- `ftp_test_server.py --reject-epsv` deliberately advertises EPSV then returns
+  `502` for the command. Its passing E2E run covers the client-side PASV
+  fallback rather than merely the nominal EPSV path.
+- The active-FTPS E2E case now performs protected active LIST, GET, and PUT;
+  the uploaded payload is downloaded over a passive channel for byte-for-byte
+  verification.
+- The E2E client and local test server accept `--host <address>`. The fixture
+  supports IPv6 control/passive sockets and EPRT data connections; IPv6 PASV
+  deliberately returns `522`, requiring EPSV as FTP specifies.
 
 ## Verification
 
 Build command:
 
-```powershell
-cmake --build build --target FtpE2E_Test --config Debug
+```bash
+cmake --build build --target FtpE2E_Test -j2
 ```
 
-The build completed successfully. It still produces many pre-existing C type
-warnings across the project; no new build errors were introduced.
+The build completed with exit code 0. It still emits existing project-wide C
+type warnings; no new build error was introduced.
 
-The local server was started with:
+The following local, real-server configurations each completed all 17 E2E
+cases with exit code 0:
 
-```powershell
-python ftp_test_server.py
-```
+- FTP: `./bin/FtpE2E_Test`
+- FTP + MODE Z: `./bin/FtpE2E_Test --mode-z`
+- Explicit FTPS: `./bin/FtpE2E_Test --ssl --port 2122`
+- Explicit FTPS + MODE Z: `./bin/FtpE2E_Test --ssl --mode-z --port 2122`
+- EPSV-rejecting FTP fixture: `python3 ftp_test_server.py --reject-epsv`, then
+  `./bin/FtpE2E_Test`
+- IPv6 FTP: `python3 ftp_test_server.py --host ::1`, then
+  `./bin/FtpE2E_Test --host ::1`
+- IPv6 FTP + MODE Z: `./bin/FtpE2E_Test --host ::1 --mode-z`
+- IPv6 Explicit FTPS: start the TLS fixture with `--host ::1 --port 2122`,
+  then `./bin/FtpE2E_Test --ssl --host ::1 --port 2122`
+- IPv6 Explicit FTPS + MODE Z:
+  `./bin/FtpE2E_Test --ssl --host ::1 --mode-z --port 2122`
 
-The latest Windows build completed successfully. The latest full rerun did not
-complete all cases: passive FTP cases through APPE passed, active LIST passed,
-but active GET timed out while the server had already sent `150` and `226`.
-The test was stopped after the queue became blocked.
+Each run covers login and FEAT negotiation; MLSD; CWD/CDUP; MKDIR/RMDIR;
+PUT/GET including empty upload; REST resume; APPE; active FTP/FTPS LIST, GET,
+and PUT;
+256 KiB upload/download integrity; ABOR recovery; rename/remove; raw commands;
+SIZE, MDTM, MLST; and 550 error classification. The IPv6 explicit-FTPS run
+specifically proves EPRT LIST, GET, and PUT. FTPS additionally verifies
+`AUTH TLS`, `PBSZ 0`, `PROT P`, and protected passive and active data
+channels.
 
-Verified passing in the latest rerun:
+The EPSV-rejecting fixture also completed 17/17. It exercised passive
+LIST/GET/PUT and the normal active FTP cases after an advertised EPSV command
+was rejected with `502`, proving that the next passive setup uses PASV.
 
-- connect/login/state machine
-- FEAT negotiation
-- LIST/MLSD with a real listing item
-- CWD/CDUP and MKDIR/RMDIR
-- PUT/GET, resumed GET, and APPE
-- passive FTP transfer paths
-- active FTP LIST path
+The local FTPS fixture used a temporary self-signed certificate and
+`XSSL_VerifyNone`; the XFtp default remains `XSSL_VerifyPeer`. The temporary
+FTP/FTPS server processes and generated test files were removed after testing.
+Both current FTPS runs completed without the former mbedTLS `-0x6c00` output.
+An additional three consecutive Explicit FTPS runs each completed 17/17 with
+no `mbedtls err`, failed-case, or fatal marker in their logs.
 
-Not yet verified in the latest rerun:
+The IPv4 and IPv6 FTP/FTPS/FTP+MODE Z/FTPS+MODE Z E2E variants all completed
+17/17 on Linux. The Windows endpoint-synchronization code follows the existing
+Windows socket APIs, but it has not been runtime-tested in this Linux-only
+environment.
 
-- active FTP GET completion and subsequent queue recovery
-- 256 KiB chunked PUT/GET after the active GET timeout
-- ABOR, rename/remove, raw commands, SIZE, MDTM, MLST, and 550 classification
+The current backend-specific regression evidence is:
 
-The duplicate-MKD association issue was subsequently covered by the Linux
-run after the PI/DTP state-machine fixes.
+- POSIX platform backend: FTP and FTP + MODE Z both completed 17/17 after the
+  shared read and transfer-state changes.
+- lwIP TAP/DHCP backend: FTP, FTP + MODE Z, and EPSV-reject/PASV-fallback each
+  completed 17/17 after a three-second DHCP settle period.
+- lwIP explicit FTPS and explicit FTPS + MODE Z both completed 17/17. The
+  clean verification logs contain no mbedTLS read/write/internal errors.
 
-## Current Verification Details
+On 2026-07-28, after the local-error/listing and lwIP TCP-teardown changes,
+the POSIX platform backend again completed FTP, FTP + MODE Z, Explicit FTPS,
+and Explicit FTPS + MODE Z at 17/17 each. The malformed-listing negative E2E
+case also completed with `XFtp_Error_DirectoryListingFailed`.
 
-- `cmake --build build --target FtpE2E_Test --config Debug` completed with exit
-  code 0 and produced `bin/Debug/FtpE2E_Test.exe`. The build still emits many
-  existing project-wide C type warnings.
-- The latest plain FTP run reached active `GET` with `current=6` and one
-  pending command. The Python server log showed `RETR`, `150`, data send, and
-  `226`; the client did not complete the DTP transfer. This is the next fix.
-- MODE Z support is present in the source and uses
-  `XByteArray_toCompress()`/`XByteArray_toDecompress()` for transfer payloads,
-  but a complete MODE Z regression run must be repeated after the active-mode
-  fix.
-- `FtpE2E_Test --ssl --port 2122` is also 17/17 against a local
-  certificate-backed Explicit FTPS server. It covers TLS-protected control
-  traffic, `PBSZ 0`, `PROT P`, passive TLS data channels, REST/APPE, 256 KiB
-  integrity, ABOR, metadata commands, and 4xx/5xx classification. The active
-  FTPS case deliberately passes when the API returns
-  `XFtp_Error_ActiveModeFailed`. The temporary certificate was self-signed and
-  the test used `XSSL_VerifyNone`; the XFtp default remains
-  `XSSL_VerifyPeer`.
-- The temporary FTP/FTPS server processes were stopped after verification.
-- Earlier Linux verification recorded in this handoff is historical only; re-run
-  the FTP, MODE Z, Explicit FTPS, io_uring, and XTcpServer checks after the
-  active-mode fix.
-- The POSIX io_uring path now preserves completion results, uses the actual
-  accepted descriptor from `IORING_OP_ACCEPT`, cancels pending operations
-  before close, and keeps TCP-server descriptors separate from `XIODevice`
-  descriptors. These changes are shared-contract fixes; no platform API was
-  added to XFtp or XGui shared code.
-- `XinYueC_Dynamic` startup runs the 15-case `XTcpServer` suite with 15/15
-  passing. A menu start/quit smoke test also exits normally.
-- `ctest --test-dir build-xalignment` reports no registered CTest cases; the
-  executable tests above are the available evidence.
+The lwIP runtime matrix was then re-run from scratch through TAP/DHCP. The
+temporary host-side TAP endpoint was `192.168.200.1/24`; the embedded lwIP
+client acquired `192.168.200.2` through DHCP. FTP, FTP + MODE Z, Explicit
+FTPS, and Explicit FTPS + MODE Z each completed 17/17, including active FTP
+PORT transfers that advertised the DHCP lease address. The malformed-listing
+negative case also produced `XFtp_Error_DirectoryListingFailed`. These runs
+contained no segfault, lwIP callback-state assertion, or mbedTLS internal
+read/write error. The original crash was a real lwIP lifecycle bug: an ACK
+could invoke a Raw API callback after its socket-private object was released;
+TCP callbacks are now detached before close and the PCB is aborted when a
+graceful close cannot be accepted.
+
+## 2026-07-28 Active FTPS Completion
+
+Active FTPS is implemented without descriptor hand-off: `XTcpServer` now
+accepts an optional socket factory, and XFtp configures it to create an
+`XSslSocket` before the accepted descriptor is adopted. Active data-command
+dispatch is two-phase: TYPE must succeed before PORT/EPRT is sent, and the
+transfer command waits until both PORT/EPRT and the client-side data TLS
+handshake have completed. This removes the lwIP re-entrancy window where a
+TLS data record could arrive before the control-plane `150` state existed.
+
+Final runtime evidence, using the generated FTP fixture and a real TAP/DHCP
+lease of `192.168.200.2`, is:
+
+- POSIX IPv4: FTP, FTP + MODE Z, Explicit FTPS, and Explicit FTPS + MODE Z
+  each completed 17/17. The active case performed LIST, GET, and PUT.
+- POSIX IPv6: Explicit FTPS completed 17/17, including EPRT protected
+  LIST, GET, and PUT.
+- lwIP TAP/DHCP: FTP, FTP + MODE Z, Explicit FTPS, and Explicit FTPS + MODE Z
+  each completed 17/17 after DHCP. The active FTPS case performed protected
+  PORT LIST, GET, and PUT with no mbedTLS internal error or lwIP assertion.
+
+The Windows backend compiles through the shared API change but has not been
+runtime-tested in this Linux environment.
 
 ## API Audit and Explicit Limitations
 
@@ -157,17 +278,17 @@ run after the PI/DTP state-machine fixes.
 - MODE Z negotiation and payload handling are implemented. FEAT detection and
   `MODE Z` negotiation are handled out of band; PUT/APPE payloads are compressed
   with `XByteArray_toCompress()`, and GET/LIST payloads are decompressed with
-  `XByteArray_toDecompress()`. Full end-to-end coverage remains pending.
-- Active FTPS is intentionally unsupported because the portable socket API has
-  no safe descriptor-adoption path for wrapping an accepted socket in TLS.
-  Explicit FTPS passive mode is implemented and tested; active FTPS fails
-  explicitly with `XFtp_Error_ActiveModeFailed`.
-- Certificate-chain and hostname-verification fixtures remain a test-system
-  enhancement. The current FTPS fixture verifies encrypted I/O with a
-  self-signed certificate and `XSSL_VerifyNone`; production callers should use
-  the default `XSSL_VerifyPeer`.
+  `XByteArray_toDecompress()`. The FTP/FTPS and MODE Z E2E matrix covers this
+  behavior end to end.
+- Active FTPS is implemented and tested on POSIX IPv4/IPv6 and lwIP TAP/DHCP.
+  `XFtp_Error_ActiveModeFailed` now denotes a real PORT/EPRT listener,
+  reverse-connection, or protected active-data-channel failure.
+- Desktop FTPS now has a CA-backed `XSSL_VerifyPeer` positive case and a
+  peer-name mismatch negative case. The self-signed `XSSL_VerifyNone` fixture
+  remains useful for encrypted-I/O coverage, while production callers should
+  retain the default `XSSL_VerifyPeer`.
 
-## Linux Continuation
+## Future Work
 
 Suggested clean build directory and commands:
 
@@ -190,11 +311,7 @@ temporary files under `ftp_test_root/` and may leave generated files such as
 
 Continuation priority:
 
-1. Fix active FTP GET DTP completion. Inspect the ordering of the accepted
-   socket's `readyRead`/`disconnected` events and `m_waitForDtpToClose`,
-   `m_piAckedTransfer`, and `m_dtpState` in `XFtp.c`.
-2. Rebuild and run plain FTP, `FtpE2E_Test --mode-z`, and Explicit FTPS + MODE Z.
-3. Only then update the pass counts and remove this active-mode limitation.
+1. Run the endpoint-synchronization and FTP matrix on Windows.
 
 ## Files of Interest
 
@@ -202,6 +319,11 @@ Continuation priority:
 - `Src/XCode/XNetwork/XFtp/XFtp.h`
 - `Src/XCode/XNetwork/XFtp/XFtpCommand.c`
 - `Src/XCode/XNetwork/XFtp/XFtpCommand.h`
+- `Src/XCode/XNetwork/XSsl/XSslSocket.c`
+- `Drive/Posix/XNetwork/XNetwork_posix.c`
+- `Drive/windows/XNetwork/XNetwork_win32.c`
+- `Drive/Posix/XNetwork/XNetwork_lwip_posix.c`
+- `Library/lwip/platform/XNetwork_lwip.c`
 - `ftp_e2e_test.c`
 - `ftp_test_server.py`
 - `Test/XIOTest/XNetworkTest/XFtpTest.c`

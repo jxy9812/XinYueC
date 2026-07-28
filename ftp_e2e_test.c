@@ -29,6 +29,13 @@
 static bool s_use_ssl = false;
 static bool s_use_compression = false;
 static int s_test_port = FTP_TEST_PORT;
+static const char* s_test_host = FTP_TEST_HOST;
+static bool s_use_ipv6 = false;
+static const char* s_ca_cert_path = NULL;
+static const char* s_ssl_peer_name = NULL;
+static bool s_expect_tls_failure = false;
+static bool s_expect_list_failure = false;
+static int s_network_settle_ms = 0;
 
 static int s_cmd_finished = 0;
 static int s_cmd_finished_id = 0;
@@ -130,13 +137,52 @@ static bool wait_state(XFtp* ftp, XFtp_State target, int timeout_ms)
     return XFtp_state(ftp) == target;
 }
 
+static void wait_network_settle(int timeout_ms)
+{
+    int waited = 0;
+    while (waited < timeout_ms) {
+        XCoreApplication_processEvents(0);
+        XThread_msleep(50);
+        waited += 50;
+    }
+}
+
+static bool verify_prelogin_error_contract(void)
+{
+    XFtp* probe = XFtp_create();
+    if (!probe) return false;
+
+    int connectId = XFtp_connectToHost(probe, s_test_host, (uint16_t)s_test_port);
+    bool connected = connectId >= 0 && wait_state(probe, XFtp_State_Connected, 5000);
+    bool notLoggedIn = connected && XFtp_list(probe, ".") == -1 &&
+                       XFtp_error(probe) == XFtp_Error_NotLoggedIn;
+    int closeId = connected ? XFtp_close(probe) : -1;
+    bool duplicateClose = closeId >= 0 && XFtp_close(probe) == -1 &&
+                          XFtp_error(probe) == XFtp_Error_OperationInProgress;
+    bool closed = closeId >= 0 && wait_state(probe, XFtp_State_Unconnected, 2000);
+
+    XClass_delete_base((XClass*)probe);
+    return notLoggedIn && duplicateClose && closed;
+}
+
 static bool connect_and_login(XFtp* ftp)
 {
-    char url[128];
+    char url[192];
+    char bracketedHost[128];
+    const char* urlHost = s_test_host;
+    if (s_use_ipv6) {
+        snprintf(bracketedHost, sizeof(bracketedHost), "[%s]", s_test_host);
+        urlHost = bracketedHost;
+    }
     snprintf(url, sizeof(url), "ftp://%s:%s@%s:%u/",
-             FTP_TEST_USER, FTP_TEST_PASS, FTP_TEST_HOST, (unsigned)s_test_port);
+             FTP_TEST_USER, FTP_TEST_PASS, urlHost, (unsigned)s_test_port);
     int id = XFtp_connectToUrl(ftp, url);
     if (id < 0) return false;
+    if (XFtp_login(ftp, FTP_TEST_USER, FTP_TEST_PASS) != -1 ||
+        XFtp_error(ftp) != XFtp_Error_OperationInProgress) {
+        XPrintf("    [重复登录未返回 OperationInProgress]\n");
+        return false;
+    }
     if (!wait_cmd(5000, id)) return false;
     return wait_state(ftp, XFtp_State_LoggedIn, 5000);
 }
@@ -167,8 +213,10 @@ static bool t_feat(XFtp* ftp)
     bool mlsd = XFtp_supportsFeature(ftp, XFtp_Feature_MLSD);
     bool modez = XFtp_supportsFeature(ftp, XFtp_Feature_MODEZ);
     bool epsv = XFtp_supportsFeature(ftp, XFtp_Feature_EPSV);
-    XPrintf("    [协商结果: UTF8=%d MLSD=%d EPSV=%d]\n", utf8, mlsd, epsv);
-    return utf8 && mlsd && epsv && (!s_use_compression || modez);
+    bool eprt = XFtp_supportsFeature(ftp, XFtp_Feature_EPRT);
+    XPrintf("    [协商结果: UTF8=%d MLSD=%d EPSV=%d EPRT=%d]\n",
+            utf8, mlsd, epsv, eprt);
+    return utf8 && mlsd && epsv && eprt && (!s_use_compression || modez);
 }
 
 static bool t_list(XFtp* ftp)
@@ -382,22 +430,6 @@ static bool t_appe(XFtp* ftp)
 /* PORT 主动模式：客户端监听、服务器回连。切到 Active 做 GET，再切回 Passive */
 static bool t_port_active(XFtp* ftp)
 {
-    if (s_use_ssl) {
-        XFtp_setTransferMode(ftp, XFtp_TransferMode_Active);
-        int id = XFtp_list(ftp, ".");
-        bool waited = (id >= 0) && wait_cmd(5000, id);
-        XFtp_Error error = XFtp_error(ftp);
-        const char* errorText = XFtp_errorString(ftp);
-        /* 当前跨平台实现明确拒绝 FTPS 主动数据通道；错误可能同步产生，
-         * 因此不能要求 commandFinished 一定先于 wait_cmd 返回。 */
-        bool rejected = id >= 0 && error == XFtp_Error_ActiveModeFailed;
-        XFtp_setTransferMode(ftp, XFtp_TransferMode_Passive);
-        XPrintf("    [主动 FTPS 按契约拒绝: id=%d wait=%d error=%d text=%s %s]\n",
-                id, waited ? 1 : 0, error, errorText,
-                rejected ? "OK" : "失败");
-        return rejected;
-    }
-
     const char* data = "Active mode PORT test data 主动模式测试";
     int64_t sz = (int64_t)strlen(data);
     /* 先用被动模式上传一个文件 */
@@ -415,14 +447,28 @@ static bool t_port_active(XFtp* ftp)
     /* 主动模式下 GET 并校验内容 */
     bool getOk = download_verify(ftp, "xftp_port.txt", data, sz);
 
+    /* 主动模式下 PUT；随后切回被动模式下载验证服务器收到的内容。 */
+    const char* upload = "Active mode STOR test data 主动模式上传";
+    int64_t uploadSz = (int64_t)strlen(upload);
+    id = XFtp_put(ftp, "xftp_port_upload.txt", upload, uploadSz);
+    bool putOk = (id >= 0) && wait_cmd(6000, id);
+
     /* 切回被动模式 */
     XFtp_setTransferMode(ftp, XFtp_TransferMode_Passive);
 
-    XPrintf("    [主动模式 LIST=%s, GET=%s]\n", listOk ? "OK" : "失败", getOk ? "OK" : "失败");
+    bool uploadVerifyOk = putOk && download_verify(ftp, "xftp_port_upload.txt",
+                                                    upload, uploadSz);
+
+    XPrintf("    [主动%s %s LIST=%s, GET=%s, PUT=%s]\n",
+            s_use_ssl ? " FTPS" : "模式", s_use_ipv6 ? "EPRT" : "PORT",
+            listOk ? "OK" : "失败", getOk ? "OK" : "失败",
+            uploadVerifyOk ? "OK" : "失败");
 
     id = XFtp_remove(ftp, "xftp_port.txt");
     if (id >= 0) wait_cmd(2000, id);
-    return listOk && getOk;
+    id = XFtp_remove(ftp, "xftp_port_upload.txt");
+    if (id >= 0) wait_cmd(2000, id);
+    return listOk && getOk && putOk && uploadVerifyOk;
 }
 
 /* 大文件分块传输：256KB 数据，远超单次缓冲，验证多块上传/下载完整性 */
@@ -629,12 +675,27 @@ int main(int argc, char* argv[])
             s_use_compression = true;
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             s_test_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
+            s_test_host = argv[++i];
+            s_use_ipv6 = strchr(s_test_host, ':') != NULL;
+        } else if (strcmp(argv[i], "--ca-cert") == 0 && i + 1 < argc) {
+            s_ca_cert_path = argv[++i];
+        } else if (strcmp(argv[i], "--ssl-peer-name") == 0 && i + 1 < argc) {
+            s_ssl_peer_name = argv[++i];
+        } else if (strcmp(argv[i], "--expect-tls-failure") == 0) {
+            s_expect_tls_failure = true;
+        } else if (strcmp(argv[i], "--expect-list-failure") == 0) {
+            s_expect_list_failure = true;
+        } else if (strcmp(argv[i], "--network-settle-ms") == 0 && i + 1 < argc) {
+            s_network_settle_ms = atoi(argv[++i]);
+            if (s_network_settle_ms < 0) s_network_settle_ms = 0;
         }
     }
 
     XCoreApplication_create(argc, argv);
     XPrintf("=== XFtp 端到端真服务器联调测试 ===\n");
-    XPrintf("服务器: %s:%d%s\n", FTP_TEST_HOST, s_test_port,
+    XPrintf("服务器: %s%s%s:%d%s\n", s_use_ipv6 ? "[" : "", s_test_host,
+            s_use_ipv6 ? "]" : "", s_test_port,
             s_use_ssl ? " (Explicit FTPS)" : "");
     XPrintf("用户: %s / %s\n\n", FTP_TEST_USER, FTP_TEST_PASS);
 
@@ -643,17 +704,42 @@ int main(int argc, char* argv[])
         XPrintf("[致命] XFtp_create 失败\n");
         return 1;
     }
+    XSslCertificate* caCert = NULL;
     if (s_use_ssl) {
         XFtp_setSsl(ftp, true);
-        /* 测试服务器使用临时自签名证书；仍验证 TLS 握手和加密 IO。 */
-        XFtp_setSslPeerVerifyMode(ftp, XSSL_VerifyNone);
+        if (s_ssl_peer_name) XFtp_setSslPeerVerifyName(ftp, s_ssl_peer_name);
+        if (s_ca_cert_path) {
+            caCert = XSsl_certificateLoad(s_ca_cert_path, XSSL_Pem);
+            if (!caCert) {
+                XPrintf("[致命] 无法加载 CA 证书: %s\n", s_ca_cert_path);
+                XClass_delete_base((XClass*)ftp);
+                XCoreApplication_delete_base(XCoreApplication_instance());
+                return 1;
+            }
+            XFtp_setSslCaCertificate(ftp, caCert);
+            XPrintf("TLS: 使用受信 CA 严格校验服务器身份\n");
+        } else {
+            /* 测试服务器使用临时自签名证书；仍验证 TLS 握手和加密 IO。 */
+            XFtp_setSslPeerVerifyMode(ftp, XSSL_VerifyNone);
+        }
     }
     if (s_use_compression) XFtp_setCompression(ftp, true);
     /* Calls made before authentication must fail synchronously and must not
      * leave a command in the queue that blocks the later connection. */
-    if (XFtp_list(ftp, ".") != -1 || XFtp_error(ftp) != XFtp_Error_NotLoggedIn) {
-        XPrintf("[致命] 未登录操作未按约定失败\n");
+    if (XFtp_list(ftp, ".") != -1 || XFtp_error(ftp) != XFtp_Error_NotConnected ||
+        XFtp_login(ftp, FTP_TEST_USER, FTP_TEST_PASS) != -1 ||
+        XFtp_error(ftp) != XFtp_Error_NotConnected ||
+        XFtp_close(ftp) != -1 || XFtp_error(ftp) != XFtp_Error_NotConnected) {
+        XPrintf("[致命] 未连接操作未按约定失败\n");
         XClass_delete_base((XClass*)ftp);
+        if (caCert) XSsl_certificateDestroy(caCert);
+        XCoreApplication_delete_base(XCoreApplication_instance());
+        return 1;
+    }
+    if (!verify_prelogin_error_contract()) {
+        XPrintf("[致命] 已连接未登录/重复关闭错误码未按约定返回\n");
+        XClass_delete_base((XClass*)ftp);
+        if (caCert) XSsl_certificateDestroy(caCert);
         XCoreApplication_delete_base(XCoreApplication_instance());
         return 1;
     }
@@ -687,16 +773,44 @@ int main(int argc, char* argv[])
     };
     int n = (int)(sizeof(tests) / sizeof(tests[0]));
 
+    if (s_network_settle_ms > 0) {
+        XPrintf("网络稳定等待: %d ms\n", s_network_settle_ms);
+        wait_network_settle(s_network_settle_ms);
+    }
+
     /* 先连一次 */
     XPrintf("[0/%d] 准备：连接+登录...\n", n);
     bool baseOk = connect_and_login(ftp);
     if (!baseOk) {
+        if (s_expect_tls_failure && s_use_ssl) {
+            bool expected = XFtp_error(ftp) == XFtp_Error_SslHandshakeFailed;
+            XPrintf("    [预期 TLS 握手失败: err=%d text=%s %s]\n",
+                    XFtp_error(ftp), XFtp_errorString(ftp),
+                    expected ? "OK" : "错");
+            XClass_delete_base((XClass*)ftp);
+            if (caCert) XSsl_certificateDestroy(caCert);
+            XCoreApplication_delete_base(XCoreApplication_instance());
+            return expected ? 0 : 2;
+        }
         XPrintf("[致命] 连接或登录失败，请检查 ftp_test_server.py 是否运行\n");
         XClass_delete_base((XClass*)ftp);
+        if (caCert) XSsl_certificateDestroy(caCert);
         XCoreApplication_delete_base(XCoreApplication_instance());
         return 2;
     }
     XPrintf("    [登录成功，state=%d]\n", XFtp_state(ftp));
+
+    if (s_expect_list_failure) {
+        int id = XFtp_list(ftp, ".");
+        bool expected = id >= 0 && wait_cmd(5000, id) &&
+                        XFtp_error(ftp) == XFtp_Error_DirectoryListingFailed;
+        XPrintf("    [预期列表解析失败: err=%d text=%s %s]\n",
+                XFtp_error(ftp), XFtp_errorString(ftp), expected ? "OK" : "错");
+        XClass_delete_base((XClass*)ftp);
+        if (caCert) XSsl_certificateDestroy(caCert);
+        XCoreApplication_delete_base(XCoreApplication_instance());
+        return expected ? 0 : 2;
+    }
 
     int passCnt = 0;
     for (int i = 0; i < n; i++) {
@@ -714,6 +828,7 @@ int main(int argc, char* argv[])
     XPrintf("\n通过率: %d / %d\n", passCnt, n);
 
     XClass_delete_base((XClass*)ftp);
+    if (caCert) XSsl_certificateDestroy(caCert);
     XCoreApplication_delete_base(XCoreApplication_instance());
     return passCnt == n ? 0 : 1;
 }

@@ -41,10 +41,11 @@ extern "C" {
  *                             适用：STM32等嵌入式设备
  */
 
-/* 取消注释以启用对应模式 */
-
-#define XNETWORK_USE_PLATFORM_API     /* 平台API模式 */
-//#define XNETWORK_USE_LWIP           /* lwIP模式 */
+/* 未由构建系统或产品配置指定时，桌面构建默认使用平台 API。
+ * 保留外部覆盖能力，避免嵌入式构建同时定义两个互斥后端。 */
+#if !defined(XNETWORK_USE_PLATFORM_API) && !defined(XNETWORK_USE_LWIP)
+#define XNETWORK_USE_PLATFORM_API
+#endif
 
 /* ========================================================================== */
 /*                        lwIP模式配置                                         */

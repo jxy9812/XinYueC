@@ -23,6 +23,7 @@ PORT = 2121
 USER = 'u1'
 PASS = 'p1'
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ftp_test_root')
+DHCP_DEFAULT_LEASE = '192.168.200.2'
 
 
 def log(msg):
@@ -36,8 +37,81 @@ def send_ctrl(sock, code, msg):
     log(f'>>> {code} {msg}')
 
 
+class DhcpTestServer:
+    """Small DHCPv4 responder used only by the lwIP TAP integration test."""
+
+    def __init__(self, server_ip, lease_ip, interface):
+        self.server_ip = server_ip
+        self.lease_ip = lease_ip
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        if interface:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
+                                 interface.encode('ascii') + b'\0')
+        # DHCP DISCOVER is sent to the limited broadcast address, which Linux
+        # delivers to an INADDR_ANY listener rather than a socket bound only
+        # to the server's unicast TAP address.
+        self.sock.bind(('0.0.0.0', 67))
+
+    @staticmethod
+    def message_type(packet):
+        if len(packet) < 240 or packet[236:240] != b'\x63\x82\x53\x63':
+            return None
+        pos = 240
+        while pos < len(packet):
+            code = packet[pos]
+            if code == 255:
+                break
+            if code == 0:
+                pos += 1
+                continue
+            if pos + 1 >= len(packet):
+                break
+            length = packet[pos + 1]
+            value_end = pos + 2 + length
+            if value_end > len(packet):
+                break
+            if code == 53 and length == 1:
+                return packet[pos + 2]
+            pos = value_end
+        return None
+
+    def reply(self, request, reply_type):
+        packet = bytearray(240)
+        packet[0] = 2
+        packet[1] = 1
+        packet[2] = 6
+        packet[4:8] = request[4:8]
+        packet[10:12] = request[10:12]
+        packet[16:20] = socket.inet_aton(self.lease_ip)
+        packet[20:24] = socket.inet_aton(self.server_ip)
+        packet[28:34] = request[28:34]
+        packet[236:240] = b'\x63\x82\x53\x63'
+        packet.extend(bytes([53, 1, reply_type]))
+        packet.extend(bytes([54, 4]) + socket.inet_aton(self.server_ip))
+        packet.extend(bytes([1, 4]) + socket.inet_aton('255.255.255.0'))
+        packet.extend(bytes([3, 4]) + socket.inet_aton(self.server_ip))
+        packet.extend(bytes([51, 4]) + (3600).to_bytes(4, 'big'))
+        packet.append(255)
+        self.sock.sendto(packet, ('255.255.255.255', 68))
+
+    def serve(self):
+        log(f'DHCPv4 test server leasing {self.lease_ip} via {self.server_ip}')
+        while True:
+            request, _ = self.sock.recvfrom(1500)
+            request_type = self.message_type(request)
+            if request_type == 1:
+                self.reply(request, 2)
+                log('DHCP DISCOVER -> OFFER')
+            elif request_type == 3:
+                self.reply(request, 5)
+                log('DHCP REQUEST -> ACK')
+
+
 class FtpSession:
-    def __init__(self, conn, addr, tls_context=None):
+    def __init__(self, conn, addr, tls_context=None, reject_epsv=False,
+                 malformed_listing=False, host=HOST):
         self.conn = conn
         self.addr = addr
         self.tls_context = tls_context
@@ -50,6 +124,13 @@ class FtpSession:
         self.rename_from = None
         self.transfer_type = 'I'
         self.compression = False
+        self.reject_epsv = reject_epsv
+        self.malformed_listing = malformed_listing
+        self.host = host
+        self.family = socket.AF_INET6 if ':' in host else socket.AF_INET
+
+    def socket_address(self, host, port):
+        return (host, port, 0, 0) if self.family == socket.AF_INET6 else (host, port)
 
     def real_path(self, path):
         """Resolve FTP path to (normalized_ftp_path, real_fs_path)."""
@@ -74,9 +155,9 @@ class FtpSession:
 
     def setup_data_passive(self):
         """Create passive data listener, return port."""
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv = socket.socket(self.family, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((HOST, 0))
+        srv.bind(self.socket_address(self.host, 0))
         srv.listen(1)
         port = srv.getsockname()[1]
         self.data_srv = srv
@@ -105,6 +186,12 @@ class FtpSession:
                 pass
             self.data_srv = None
         return self.data_sock
+
+    def protect_active_data_socket(self):
+        """Finish the server side of an active-mode FTPS data handshake."""
+        if self.protect_data and self.tls_context and self.data_sock:
+            self.data_sock = self.tls_context.wrap_socket(
+                self.data_sock, server_side=True)
 
     def close_data(self):
         if self.data_sock:
@@ -236,6 +323,9 @@ class FtpSession:
             self.transfer_type = arg.upper()
             send_ctrl(self.conn, 200, f'Type set to {self.transfer_type}')
         elif cmd == 'EPSV':
+            if self.reject_epsv:
+                send_ctrl(self.conn, 502, 'EPSV intentionally rejected for fallback testing')
+                return True
             port = self.setup_data_passive()
             send_ctrl(self.conn, 229, f'Entering Extended Passive Mode (|||{port}|)')
             # FTPS 客户端会在数据命令前先完成 TLS 握手，必须先接受数据连接。
@@ -243,9 +333,12 @@ class FtpSession:
                 self.accept_data()
             # 普通 FTP 保持惰性 accept，避免改变已有测试时序。
         elif cmd == 'PASV':
+            if self.family == socket.AF_INET6:
+                send_ctrl(self.conn, 522, 'Use EPSV for IPv6')
+                return True
             port = self.setup_data_passive()
             p1, p2 = port >> 8, port & 0xFF
-            h = HOST.replace('.', ',')
+            h = self.host.replace('.', ',')
             send_ctrl(self.conn, 227, f'Entering Passive Mode ({h},{p1},{p2})')
             if self.protect_data:
                 self.accept_data()
@@ -258,19 +351,24 @@ class FtpSession:
                 self.close_data()
                 self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.data_sock.connect((ip, port))
+                self.protect_active_data_socket()
                 send_ctrl(self.conn, 200, f'PORT command successful ({ip}:{port})')
             except Exception as e:
                 send_ctrl(self.conn, 425, f'Cannot connect to {arg}: {e}')
                 self.data_sock = None
         elif cmd == 'EPRT':
-            # |proto|ip|port|  e.g. |1|127.0.0.1|5000|
+            # |proto|ip|port|  e.g. |1|127.0.0.1|5000| or |2|::1|5000|
             try:
                 parts2 = arg.split('|')
+                proto = int(parts2[1])
                 ip = parts2[2]
                 port = int(parts2[3])
                 self.close_data()
-                self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.data_sock.connect((ip, port))
+                family = socket.AF_INET6 if proto == 2 else socket.AF_INET
+                self.data_sock = socket.socket(family, socket.SOCK_STREAM)
+                target = (ip, port, 0, 0) if family == socket.AF_INET6 else (ip, port)
+                self.data_sock.connect(target)
+                self.protect_active_data_socket()
                 send_ctrl(self.conn, 200, f'EPRT command successful ({ip}:{port})')
             except Exception as e:
                 send_ctrl(self.conn, 425, f'Cannot connect: {e}')
@@ -384,6 +482,8 @@ class FtpSession:
         try:
             entries = sorted(os.listdir(real))
             data = ''
+            if self.malformed_listing:
+                data += 'malformed FTP directory entry\r\n'
             for name in entries:
                 full = os.path.join(real, name)
                 try:
@@ -490,6 +590,18 @@ def main():
     parser.add_argument('--tls', action='store_true', help='enable explicit FTPS')
     parser.add_argument('--cert', help='PEM certificate used by FTPS')
     parser.add_argument('--key', help='PEM private key used by FTPS')
+    parser.add_argument('--reject-epsv', action='store_true',
+                        help='advertise EPSV in FEAT but reject the command')
+    parser.add_argument('--malformed-listing', action='store_true',
+                        help='prepend an invalid MLSD/LIST entry for negative tests')
+    parser.add_argument('--host', default=HOST,
+                        help='numeric IPv4 or IPv6 address to listen on')
+    parser.add_argument('--dhcp', action='store_true',
+                        help='also run a fixed-lease DHCPv4 server for lwIP TAP tests')
+    parser.add_argument('--dhcp-lease', default=DHCP_DEFAULT_LEASE,
+                        help='IPv4 lease emitted by --dhcp')
+    parser.add_argument('--dhcp-interface', default='lwip0',
+                        help='TAP interface used for --dhcp broadcasts')
     args = parser.parse_args()
 
     os.makedirs(ROOT, exist_ok=True)
@@ -502,19 +614,30 @@ def main():
         tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
         tls_context.load_cert_chain(certfile=args.cert, keyfile=args.key)
 
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if args.dhcp:
+        if ':' in args.host:
+            parser.error('--dhcp requires an IPv4 --host')
+        threading.Thread(target=DhcpTestServer(args.host, args.dhcp_lease,
+                                               args.dhcp_interface).serve,
+                         daemon=True).start()
+
+    family = socket.AF_INET6 if ':' in args.host else socket.AF_INET
+    srv = socket.socket(family, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((HOST, args.port))
+    bind_address = (args.host, args.port, 0, 0) if family == socket.AF_INET6 else (args.host, args.port)
+    srv.bind(bind_address)
     srv.listen(5)
     mode = 'Explicit FTPS' if tls_context else 'FTP'
-    log(f'{mode} server listening on {HOST}:{args.port}, root={ROOT}')
+    log(f'{mode} server listening on {args.host}:{args.port}, root={ROOT}')
 
     try:
         while True:
             conn, addr = srv.accept()
             log(f'connect from {addr}')
             t = threading.Thread(
-                target=lambda c=conn, a=addr, t=tls_context: FtpSession(c, a, t).handle(),
+                target=lambda c=conn, a=addr, t=tls_context, r=args.reject_epsv, \
+                              m=args.malformed_listing, h=args.host:
+                FtpSession(c, a, t, r, m, h).handle(),
                 daemon=True
             )
             t.start()

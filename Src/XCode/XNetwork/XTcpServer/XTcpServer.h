@@ -24,6 +24,15 @@ extern "C" {
 // =============== 前向声明 ===============
 typedef struct XTcpSocket XTcpSocket;
 
+/**
+ * @brief 为新接受的连接创建套接字对象。
+ * @param context 创建器私有上下文；生命周期由调用方负责。
+ * @return 新建且尚未绑定描述符的 XTcpSocket 派生对象；失败返回 NULL。
+ * @note 创建器仅在监听器接收到连接时调用。返回 XSslSocket 等派生对象可在
+ *       描述符首次绑定前完成其专用配置，避免跨对象转移套接字所有权。
+ */
+typedef XTcpSocket* (*XTcpServer_IncomingSocketFactory)(void* context);
+
 // ==================== 虚函数表定义 ====================
 XCLASS_DEFINE_BEGING(XTcpServer)
 XCLASS_DEFINE_ENUM(XTcpServer, HasPendingConnections) = XCLASS_VTABLE_GET_SIZE(XObject),
@@ -50,6 +59,8 @@ typedef struct XTcpServer {
     XAbstractSocket_SocketError lastError;     ///< 最后一次错误代码
     XString* errorString;                      ///< 错误字符串
     XNetworkProxy proxy;                       ///< 代理配置
+    XTcpServer_IncomingSocketFactory incomingSocketFactory; ///< 接受连接对象创建器
+    void* incomingSocketFactoryContext;        ///< 创建器私有上下文（不拥有）
     /* 临时存储最近接受的连接信息（供 incomingConnection_base 使用）*/
     XHostAddress lastAcceptedAddr;             ///< 最近接受的客户端地址
     uint16_t lastAcceptedPort;                 ///< 最近接受的客户端端口
@@ -120,6 +131,17 @@ void XTcpServer_setMaxPendingConnections(XTcpServer* server, int numConnections)
  * @return 最大连接数
  */
 int XTcpServer_maxPendingConnections(const XTcpServer* server);
+
+/**
+ * @brief 设置接受连接时使用的套接字对象创建器。
+ * @param server 服务器实例。
+ * @param factory 创建器；NULL 时恢复默认 XTcpSocket。
+ * @param context 传给创建器的私有上下文，服务器不拥有也不释放。
+ * @note 必须在 listen() 前设置；正在监听时调用会被忽略。
+ */
+void XTcpServer_setIncomingSocketFactory(XTcpServer* server,
+                                         XTcpServer_IncomingSocketFactory factory,
+                                         void* context);
 
 /**
  * @brief 设置监听积压大小。

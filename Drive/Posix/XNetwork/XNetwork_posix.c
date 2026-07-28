@@ -19,6 +19,7 @@
 #include "XRingBuffer.h"
 #include "XEvent.h"
 #include "XHostAddress.h"
+#include "XAbstractSocket.h"
 #include "XNetworkInterface.h"
 #include "XNetworkAddressEntry.h"
 #include "XVector.h"
@@ -176,6 +177,37 @@ typedef struct XNetworkSocketPrivatePosix {
 
 /* 便捷转换宏 */
 #define P32(p) ((XNetworkSocketPrivatePosix*)(p))
+
+/* Synchronize the public endpoint properties after an outbound connection.
+ * Active FTP uses the local address to choose PORT/EPRT and its listener's
+ * address family. */
+static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
+{
+    if (!priv || !priv->owner) return;
+    XNetworkSocketPrivatePosix* p = P32(priv);
+    if (p->socket < 0) return;
+
+    XAbstractSocket* socket = (XAbstractSocket*)priv->owner;
+    struct sockaddr_storage address;
+    socklen_t addressLength = sizeof(address);
+    XHostAddress endpoint;
+    uint16_t port = 0;
+
+    XHostAddress_init(&endpoint);
+    if (getsockname(p->socket, (struct sockaddr*)&address, &addressLength) == 0) {
+        sa2addr(&address, &endpoint, &port);
+        XAbstractSocket_setLocalAddress(socket, &endpoint);
+        XAbstractSocket_setLocalPort(socket, port);
+    }
+
+    addressLength = sizeof(address);
+    if (getpeername(p->socket, (struct sockaddr*)&address, &addressLength) == 0) {
+        sa2addr(&address, &endpoint, &port);
+        XAbstractSocket_setPeerAddress(socket, &endpoint);
+        XAbstractSocket_setPeerPort(socket, port);
+    }
+    XHostAddress_deinit_base(&endpoint);
+}
 
 /* =========================================================================
  * io_uring 辅助函数
@@ -534,6 +566,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         if (ret == 0 || errno == EINPROGRESS) {
             p->connected = true;
             p->connectPending = false;
+            syncSocketEndpoints(priv);
             startAsyncRead(priv, false);
             return true;
         }
@@ -676,6 +709,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, &soError, &soLen);
         if (soError == 0) {
             p->connected = true;
+            syncSocketEndpoints(priv);
             /* first read started by XNetwork_socketContinueRead in event handler */
         } else {
             p->connected = false;
@@ -874,13 +908,19 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
 XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddress* addr,
                                      uint16_t port, int backlog, bool reuseAddr)
 {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int af = (XHostAddress_protocol(addr) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
+    int fd = socket(af, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     setNonBlocking(fd);
 
     if (reuseAddr) {
         int opt = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    }
+
+    if (af == AF_INET6) {
+        int ipv6only = 0;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6only, sizeof(ipv6only));
     }
 
     struct sockaddr_storage ss;
@@ -930,10 +970,12 @@ uint16_t XNetwork_serverPort(XServerHandle server)
 {
     int fd = (int)server;
     if (fd < 0) return 0;
-    struct sockaddr_in sin;
-    socklen_t len = sizeof(sin);
-    if (getsockname(fd, (struct sockaddr*)&sin, &len) != 0) return 0;
-    return ntohs(sin.sin_port);
+    struct sockaddr_storage address;
+    socklen_t length = sizeof(address);
+    if (getsockname(fd, (struct sockaddr*)&address, &length) != 0) return 0;
+    if (address.ss_family == AF_INET6)
+        return ntohs(((struct sockaddr_in6*)&address)->sin6_port);
+    return ntohs(((struct sockaddr_in*)&address)->sin_port);
 }
 
 XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHostAddress* clientAddr, uint16_t* clientPort)

@@ -26,6 +26,7 @@
 #ifdef XNETWORK_USE_LWIP
 
 #include "XNetwork_platform.h"
+#include "XAbstractSocket.h"
 #include "XNetwork_lwip_platform.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
@@ -147,6 +148,7 @@ typedef struct XNetworkSocketPrivateLwip {
     unsigned hasAccept   : 1;      /* 有新客户端连接标记 */
     unsigned hasError    : 1;      /* 有错误发生标记 */
     unsigned sockType    : 2;      /* Socket 类型 (0=TCP, 1=UDP) */
+    unsigned listenBacklog : 8;    /* TCP 服务端监听队列，0=使用配置默认值 */
     int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
 } XNetworkSocketPrivateLwip;
 
@@ -156,6 +158,30 @@ static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len);
 static void tcpErrCb(void* arg, err_t err);
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb);
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err);
+
+/* tcp_close() can leave an established PCB alive until a later ACK or timer
+ * tick. Its Raw API callbacks must not retain a private socket that is about
+ * to be released. */
+static void dispose_tcp_pcb(struct tcp_pcb** pcb)
+{
+    struct tcp_pcb* current;
+
+    if (!pcb || !*pcb) return;
+    current = *pcb;
+    tcp_arg(current, NULL);
+    if (current->state == LISTEN) {
+        tcp_accept(current, NULL);
+    } else {
+        tcp_recv(current, NULL);
+        tcp_sent(current, NULL);
+        tcp_err(current, NULL);
+        tcp_poll(current, NULL, 0);
+    }
+    if (tcp_close(current) != ERR_OK) {
+        tcp_abort(current);
+    }
+    *pcb = NULL;
+}
 
 /* ================================================================
  * Socket 事件直接投递（回调驱动，替代轮询）
@@ -230,6 +256,55 @@ static void ip_to_addr(const ip_addr_t* ip, XHostAddress* a) {
     else
 #endif
         XHostAddress_setAddressIPv4(a, lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(ip))));
+}
+
+/* Keep XAbstractSocket endpoint properties consistent with the POSIX and
+ * Windows backends after a Raw API connection completes or is adopted. */
+static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
+{
+    if (!priv || !priv->owner) return;
+    XNetworkSocketPrivateLwip* s = L4P(priv);
+    if (s->isServer) return;
+
+    XAbstractSocket* socket = (XAbstractSocket*)priv->owner;
+    XHostAddress endpoint;
+    XHostAddress_init(&endpoint);
+    if (s->tpcb) {
+        ip_to_addr(&s->tpcb->local_ip, &endpoint);
+        XAbstractSocket_setLocalAddress(socket, &endpoint);
+        XAbstractSocket_setLocalPort(socket, s->tpcb->local_port);
+        ip_to_addr(&s->tpcb->remote_ip, &endpoint);
+        XAbstractSocket_setPeerAddress(socket, &endpoint);
+        XAbstractSocket_setPeerPort(socket, s->tpcb->remote_port);
+    } else if (s->upcb) {
+        ip_to_addr(&s->upcb->local_ip, &endpoint);
+        XAbstractSocket_setLocalAddress(socket, &endpoint);
+        XAbstractSocket_setLocalPort(socket, s->upcb->local_port);
+        ip_to_addr(&s->upcb->remote_ip, &endpoint);
+        XAbstractSocket_setPeerAddress(socket, &endpoint);
+        XAbstractSocket_setPeerPort(socket, s->upcb->remote_port);
+    }
+    XHostAddress_deinit_base((XClass*)&endpoint);
+}
+
+static struct tcp_pcb* createTcpPcb(const ip_addr_t* address)
+{
+#if LWIP_IPV6
+    return tcp_new_ip_type(address ? IP_GET_TYPE(address) : IPADDR_TYPE_ANY);
+#else
+    (void)address;
+    return tcp_new();
+#endif
+}
+
+static struct udp_pcb* createUdpPcb(const ip_addr_t* address)
+{
+#if LWIP_IPV6
+    return udp_new_ip_type(address ? IP_GET_TYPE(address) : IPADDR_TYPE_ANY);
+#else
+    (void)address;
+    return udp_new();
+#endif
 }
 
 /* 确保 Socket 已分配文件描述符，供事件系统地址查找 */
@@ -595,10 +670,15 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
     XNetworkSocketPrivateLwip* s = L4P(priv);
 
     /* 关闭 lwIP PCB，需要持有核心锁 */
-    if (s->tpcb || s->upcb) {
+    if (s->tpcb || s->upcb || s->pendingAccept) {
         XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-        if (s->tpcb) { tcp_close(s->tpcb); s->tpcb = NULL; }
+        dispose_tcp_pcb(&s->tpcb);
         if (s->upcb) { udp_remove(s->upcb); s->upcb = NULL; }
+        if (s->pendingAccept) {
+            XNetworkSocketPrivateLwip* cs =
+                (XNetworkSocketPrivateLwip*)s->pendingAccept;
+            dispose_tcp_pcb(&cs->tpcb);
+        }
         XNET_LWIP_UNLOCK(prot);
     }
 
@@ -658,23 +738,26 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     err_t err;
     if (sockType == XNetwork_Tcp) {
         /* TCP 服务端：创建 PCB 并开始监听 */
-        s->tpcb = tcp_new();
+        s->tpcb = createTcpPcb(&bindAddr);
         if (!s->tpcb) return 0;
         if (tcp_bind(s->tpcb, &bindAddr, port) != ERR_OK) {
-            tcp_close(s->tpcb); s->tpcb = NULL; return 0;
+            dispose_tcp_pcb(&s->tpcb); return 0;
         }
-        struct tcp_pcb* listenPcb = tcp_listen_with_backlog(s->tpcb, (u8_t)XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
+        u8_t listenBacklog = s->listenBacklog ? (u8_t)s->listenBacklog
+            : (u8_t)XNETWORK_LWIP_MAX_LISTEN_BACKLOG;
+        struct tcp_pcb* listenPcb = tcp_listen_with_backlog(s->tpcb, listenBacklog);
         if (!listenPcb) {
-            tcp_close(s->tpcb); s->tpcb = NULL; return 0;
+            dispose_tcp_pcb(&s->tpcb); return 0;
         }
         s->tpcb = listenPcb;
         s->isServer = true;
         tcp_arg(s->tpcb, s);
         tcp_accept(s->tpcb, tcpAcceptCb);
-            LWIP_DBG("[绑定] TCP服务端 port=%d backlog=%d\n", (int)port, XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
+        LWIP_DBG("[绑定] TCP服务端 port=%d backlog=%d\n", (int)s->tpcb->local_port,
+                 (int)listenBacklog);
     } else {
         /* UDP：创建 PCB 并绑定 */
-        s->upcb = udp_new();
+        s->upcb = createUdpPcb(&bindAddr);
         if (!s->upcb) return 0;
         if (udp_bind(s->upcb, &bindAddr, port) != ERR_OK) {
             udp_remove(s->upcb); s->upcb = NULL; return 0;
@@ -684,7 +767,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         LWIP_DBG("[绑定] UDP port=%d\n", (int)port);
     }
     ensure_xfd(priv);
-    return port;
+    return sockType == XNetwork_Tcp ? s->tpcb->local_port : s->upcb->local_port;
 }
 
 
@@ -875,7 +958,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     err_t err;
     if (sockType == XNetwork_Tcp) {
         /* TCP 客户端连接 */
-        s->tpcb = tcp_new();
+        s->tpcb = createTcpPcb(&ip);
         LWIP_DBG("[连接] tcp_new=%p\n", (void*)s->tpcb);
         if (!s->tpcb) return false;
         tcp_arg(s->tpcb, s);
@@ -885,15 +968,17 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         tcp_poll(s->tpcb, tcpPollCb, 2);  /* 每 1 秒轮询 */
         err = tcp_connect(s->tpcb, &ip, port, tcpConnectedCb);
         LWIP_DBG("[连接] tcp_connect结果=%d\n", (int)err);
-        if (err != ERR_OK) { tcp_close(s->tpcb); s->tpcb = NULL; return false; }
+        if (err != ERR_OK) { dispose_tcp_pcb(&s->tpcb); return false; }
     } else {
         /* UDP：创建 PCB 并直接设置目标地址 */
-        s->upcb = udp_new();
+        s->upcb = createUdpPcb(&ip);
         if (!s->upcb) return false;
         udp_recv(s->upcb, udpRecvCb, s);
         err = udp_connect(s->upcb, &ip, port);
         if (err != ERR_OK) { udp_remove(s->upcb); s->upcb = NULL; return false; }
         s->connected = true;
+        s->connectDone = true;
+        push_socket_cq(s, XSocketAct_Connect);
     }
     ensure_xfd(priv);
     return true;
@@ -904,7 +989,7 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv) {
     if (!priv) return;
     XNetworkSocketPrivateLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-    if (s->tpcb) { tcp_close(s->tpcb); s->tpcb = NULL; }
+    dispose_tcp_pcb(&s->tpcb);
     if (s->upcb) { udp_remove(s->upcb); s->upcb = NULL; }
     XNET_LWIP_UNLOCK(prot);
     s->connected = false;
@@ -943,12 +1028,18 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
         if (!s->tpcb) { XNET_LWIP_UNLOCK(prot); return -1; }
         u16_t sndBuf = tcp_sndbuf(s->tpcb);
         u16_t toWrite = (u16_t)((len > sndBuf) ? sndBuf : len);
-        if (toWrite == 0) { XNET_LWIP_UNLOCK(prot); return -6; }
+        /* A full TCP send window is a transient would-block condition.  BIO
+         * callers map 0 to WANT_WRITE and retry after the next ACK. */
+        if (toWrite == 0) { XNET_LWIP_UNLOCK(prot); return 0; }
         err_t e = tcp_write(s->tpcb, buf, toWrite, TCP_WRITE_FLAG_COPY);
         if (e == ERR_OK) {
             tcp_output(s->tpcb);
             XNET_LWIP_UNLOCK(prot);
             return toWrite;
+        }
+        if (e == ERR_MEM) {
+            XNET_LWIP_UNLOCK(prot);
+            return 0;
         }
         XNET_LWIP_UNLOCK(prot);
         return -1;
@@ -986,6 +1077,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
      * 不清除 hasReadData--后者由后续 Read 事件处理。 */
     if ((sockAct->actType & XSocketAct_Connect) &&
         (s->connectDone || s->hasError)) {
+        if (s->connected && !s->isServer) syncSocketEndpoints(priv);
         s->connectDone = false;
         s->hasError = false;
         s->closing = false;  /* 连接错误/完成时一并清除关闭标志 */
@@ -1022,6 +1114,7 @@ bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int 
     if (target->base.owner) {
         XIODevice_setFd((XIODevice*)target->base.owner, target->fd);
     }
+    syncSocketEndpoints(priv);
     return true;
 }
 
@@ -1087,7 +1180,11 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
 XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddress* addr,
                                      uint16_t port, int backlog, bool reuseAddr) {
     if (!priv) return (XServerHandle)(-1);
-    (void)backlog;
+    if (backlog > 0) {
+        L4P(priv)->listenBacklog = (unsigned)(backlog > 255 ? 255 : backlog);
+    } else {
+        L4P(priv)->listenBacklog = 0;
+    }
     uint16_t actualPort = XNetwork_socketBind(priv, addr, port, reuseAddr, false, XNetwork_Tcp);
     if (actualPort == 0) return (XServerHandle)(-1);
     return (XServerHandle)L4P(priv)->fd;
@@ -1116,7 +1213,7 @@ void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server) {
     s = descriptor_private((XFd)server);
     if (!s) return;
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-    if (s->tpcb) { tcp_close(s->tpcb); s->tpcb = NULL; }
+    dispose_tcp_pcb(&s->tpcb);
     XNET_LWIP_UNLOCK(prot);
     /* 有 owner 的服务端私有对象仍由 XTcpServer 销毁，保持服务端标记，
      * 避免析构时把 XTcpServer 误当作 XIODevice。 */

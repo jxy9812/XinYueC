@@ -7,9 +7,7 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
-#include "XFile.h"
-#include "XIODevice.h"
-#include "XClass.h"
+#include "XFileSystem_platform.h"
 #include <string.h>
 #include <stdio.h>
  /* 1. Memory bridge */
@@ -32,11 +30,20 @@ psa_status_t mbedtls_psa_external_get_random(
 #endif
 
 /* 3. Init/deinit */
+static bool s_platformInited = false;
+
 bool XSsl_platform_init(void) {
+    if (s_platformInited) return true;
     if (mbedtls_platform_set_calloc_free(xssl_mbedtls_calloc, xssl_mbedtls_free) != 0)return 0;
-    return psa_crypto_init() == PSA_SUCCESS ? 1 : 0;
+    if (psa_crypto_init() != PSA_SUCCESS) return false;
+    s_platformInited = true;
+    return true;
 }
-void XSsl_platform_deinit(void) { mbedtls_psa_crypto_free(); }
+void XSsl_platform_deinit(void) {
+    if (!s_platformInited) return;
+    mbedtls_psa_crypto_free();
+    s_platformInited = false;
+}
 
 /* 4. Queries */
 const char* XSsl_backendName(void) { return"mbedtls"; }
@@ -84,32 +91,39 @@ XSslContext* XSsl_contextCreate(XSslProtocol protocol) {
 }
 void XSsl_contextDestroy(XSslContext* c) { if (!c)return; mbedtls_ssl_config_free(&c->conf); XFree_System(c); }
 
-/* 6. File read helper (XFile + public XIODevice API: readAll_1) */
+/* 6. File read helper (portable XFileSystem API, including FatFs) */
 static unsigned char* xssl_read_file_all(const char* path, size_t* olen) {
     if (!path || !olen)return NULL; *olen = 0;
     XString* xn = XString_create_utf8(path);
     if (!xn)return NULL;
-    XFile* file = XFile_create();
-    if (!file) { XString_delete_base(xn); return NULL; }
-    XFile_setFileName(file, xn);
+    int error = 0;
+    XFd fd = XFileSystem_open(xn, XIODevice_ReadOnly, &error);
     XString_delete_base(xn);
-    if (!XFile_open_2(file, XIODevice_ReadOnly, 0)) {
-        XClass_delete_base((XClass*)file); return NULL;
+    if (fd == XFD_INVALID) return NULL;
+    XFileStat stat;
+    if (!XFileSystem_fstat(fd, &stat) || stat.size <= 0) {
+        XFileSystem_close(fd);
+        return NULL;
     }
-    int64_t fsize = XIODevice_size_base((XIODevice*)file);
-    if (fsize <= 0) { XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); return NULL; }
+    int64_t fsize = stat.size;
     unsigned char* buf = (unsigned char*)XMalloc_System((size_t)fsize + 1);
-    if (!buf) { XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); return NULL; }
-    int64_t got = XIODevice_readAll_1((XIODevice*)file, (char*)buf, (int64_t)fsize);
-    XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    if (!buf) { XFileSystem_close(fd); return NULL; }
+    /* Read the known file length directly and tolerate a platform backend
+     * returning it in multiple chunks. */
+    int64_t got = 0;
+    while (got < fsize) {
+        int64_t n = XFileSystem_read(fd, (char*)buf + got, fsize - got);
+        if (n <= 0) break;
+        got += n;
+    }
+    XFileSystem_close(fd);
     if (got < 0 || (size_t)got != (size_t)fsize) { XFree_System(buf); return NULL; }
     buf[fsize] = '\0'; *olen = (size_t)fsize; return buf;
 }
 
 /* 7. Certificates */
 XSslCertificate* XSsl_certificateFromPem(const char* d, size_t l) {
-    if (!d || !l)return NULL;
+    if (!d || !l || !XSsl_platform_init())return NULL;
     XSslCertificate* c = (XSslCertificate*)XMalloc_System(sizeof(XSslCertificate));
     if (!c)return NULL; memset(c, 0, sizeof(*c)); mbedtls_x509_crt_init(&c->crt);
     unsigned char* b = (unsigned char*)XMalloc_System(l + 1);
@@ -120,13 +134,14 @@ XSslCertificate* XSsl_certificateFromPem(const char* d, size_t l) {
     if (r < 0) { mbedtls_x509_crt_free(&c->crt); XFree_System(c); return NULL; }return c;
 }
 XSslCertificate* XSsl_certificateFromDer(const uint8_t* d, size_t l) {
-    if (!d || !l)return NULL;
+    if (!d || !l || !XSsl_platform_init())return NULL;
     XSslCertificate* c = (XSslCertificate*)XMalloc_System(sizeof(XSslCertificate));
     if (!c)return NULL; memset(c, 0, sizeof(*c)); mbedtls_x509_crt_init(&c->crt);
     int r = mbedtls_x509_crt_parse_der(&c->crt, d, l);
     if (r < 0) { mbedtls_x509_crt_free(&c->crt); XFree_System(c); return NULL; }return c;
 }
 XSslCertificate* XSsl_certificateLoad(const char* path, XSslEncodingFormat format) {
+    if (!XSsl_platform_init()) return NULL;
     size_t len = 0;
     unsigned char* buf = xssl_read_file_all(path, &len);
     if (!buf)return NULL;
@@ -141,7 +156,7 @@ void XSsl_certificateDestroy(XSslCertificate* c) { if (!c)return; mbedtls_x509_c
 
 /* 8. Keys */
 XSslKey* XSsl_keyFromPem(const char* data, size_t len, XSslKeyAlgorithm algo, XSslKeyType type, const char* pp) {
-    if (!data || !len)return NULL;
+    if (!data || !len || !XSsl_platform_init())return NULL;
     XSslKey* k = (XSslKey*)XMalloc_System(sizeof(XSslKey));
     if (!k)return NULL; memset(k, 0, sizeof(*k)); mbedtls_pk_init(&k->pk);
     k->algorithm = (XSslKeyAlgorithm)algo; k->type = (XSslKeyType)type;
@@ -155,7 +170,7 @@ XSslKey* XSsl_keyFromPem(const char* data, size_t len, XSslKeyAlgorithm algo, XS
     if (r) { mbedtls_pk_free(&k->pk); XFree_System(k); return NULL; }return k;
 }
 XSslKey* XSsl_keyFromDer(const uint8_t* data, size_t len, XSslKeyAlgorithm algo, XSslKeyType type) {
-    if (!data || !len)return NULL;
+    if (!data || !len || !XSsl_platform_init())return NULL;
     XSslKey* k = (XSslKey*)XMalloc_System(sizeof(XSslKey));
     if (!k)return NULL; memset(k, 0, sizeof(*k)); mbedtls_pk_init(&k->pk);
     k->algorithm = (XSslKeyAlgorithm)algo; k->type = (XSslKeyType)type;

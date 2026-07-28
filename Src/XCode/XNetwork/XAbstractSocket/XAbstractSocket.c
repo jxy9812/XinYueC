@@ -729,10 +729,17 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                     struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
                     if (rb && readBuf) {
                         XRingBuffer_write(rb, readBuf, bytesTransferred);
+                        /* Release the backend buffer before emitting: direct
+                         * readyRead slots call XIODevice_read(), which would
+                         * otherwise consume the same bytes from both buffers. */
+                        XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
                         XIODevice_readyRead_signal((XIODevice*)self);
+                    } else {
+                        XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
                     }
+                } else {
+                    XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
                 }
-                XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
             }
         }
 

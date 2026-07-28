@@ -434,16 +434,22 @@ static err_t tap_link_output(struct netif* netif, struct pbuf* p)
     }
     if (!ctx || ctx->tap_fd < 0) return ERR_IF;
 
-    for (struct pbuf* q = p; q != NULL; q = q->next) {
-        ssize_t n = write(ctx->tap_fd, q->payload, q->len);
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) return ERR_BUF;
-            return ERR_IF;
-        }
+    /* A TAP write is one complete Ethernet frame.  pbuf chains commonly
+     * split link/IP/TCP headers and payload; writing every segment separately
+     * turns them into malformed packets on the host side. */
+    uint8_t frame[TAP_MTU + 18];
+    if (p->tot_len == 0 || p->tot_len > sizeof(frame)) return ERR_BUF;
+    if (pbuf_copy_partial(p, frame, p->tot_len, 0) != p->tot_len) return ERR_BUF;
+
+    ssize_t n = write(ctx->tap_fd, frame, p->tot_len);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return ERR_BUF;
+        return ERR_IF;
     }
-    return ERR_OK;
+    return n == p->tot_len ? ERR_OK : ERR_IF;
 }
 
+#if !LWIP_HAVE_LOOPIF
 static err_t loop_if_init(struct netif* netif)
 {
     netif->name[0] = 'l';
@@ -454,6 +460,7 @@ static err_t loop_if_init(struct netif* netif)
     netif->linkoutput = NULL;
     return ERR_OK;
 }
+#endif
 
 static void tap_status_callback(struct netif* netif)
 {
@@ -586,6 +593,11 @@ struct netif* XNetworkLwip_platform_init(void)
     g_tapCtxCount = 0;
     memset(g_tapCtxs, 0, sizeof(g_tapCtxs));
 
+    /* lwIP already creates its own loopback interface when LWIP_HAVE_LOOPIF
+     * is enabled.  Do not register a second one or promote it to the default
+     * route: an unavailable TAP must fail routing cleanly, not emit Ethernet
+     * frames with a zero-length MAC address through loopback. */
+#if !LWIP_HAVE_LOOPIF
     /* 第一步：创建回环网卡 */
     {
         struct netif* lnif = (struct netif*)XMalloc_System(sizeof(struct netif));
@@ -611,6 +623,7 @@ struct netif* XNetworkLwip_platform_init(void)
             }
         }
     }
+#endif
 
 #ifdef LWIP_USE_PHYSICAL
     /* 第二步：打开物理网卡 */
@@ -834,8 +847,11 @@ struct netif* XNetworkLwip_platform_init(void)
 #ifdef LWIP_USE_PHYSICAL
     if (g_physCtxCount > 0 && g_physCtxs[0].netif) return g_physCtxs[0].netif;
 #endif
-    if (g_loopbackNetif) return g_loopbackNetif;
+    /* The TAP interface is the external lwIP route.  Returning loopback here
+     * makes XNetwork_ensureInitialized() overwrite the TAP default netif,
+     * sending DHCP/ARP frames through a non-Ethernet loopback interface. */
     if (g_tapCtxCount > 0 && g_tapCtxs[0].netif) return g_tapCtxs[0].netif;
+    if (g_loopbackNetif) return g_loopbackNetif;
     return NULL;
 }
 

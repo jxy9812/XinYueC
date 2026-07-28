@@ -79,9 +79,15 @@ static void ftp_failQueuedCommands(XFtp* ftp);
 static void ftp_applyProxy(XFtp* ftp, XAbstractSocket* socket);
 static XFtp_Error ftp_mapSocketError(XAbstractSocket_SocketError error);
 static bool ftp_addRawArg(XFtpCommand* cmd, const char* arg);
+static void ftp_setLocalError(XFtp* ftp, XFtp_Error error, const char* text);
 static bool ftp_requireLoggedIn(XFtp* ftp);
+static bool ftp_hasQueuedCommand(XFtp* ftp, XFtpCommand_Type type);
+static bool ftp_canUsePasvFallback(const XFtp* ftp);
+static const XString* ftp_sslPeerVerifyName(const XFtp* ftp);
 static int ftp_queueCommand(XFtp* ftp, XFtpCommand* cmd);
 static bool ftp_prepareGetDevice(XFtpCommand* cmd);
+static XTcpSocket* ftp_createActiveDtpSocket(void* context);
+static void ftp_configureDtpSslSocket(XFtp* ftp, XSslSocket* socket);
 static bool ftp_prepareActivePort(XFtp* ftp, char* portCmd, size_t portCmdSize);
 static bool ftp_compressCommandData(XFtpCommand* cmd);
 static bool ftp_compressDeviceData(XFtpCommand* cmd);
@@ -272,9 +278,13 @@ static int  ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize);
 
 static void ftp_connectPiSocketSignals(XFtp* ftp);
 static void ftp_connectDtpSocketSignals(XFtp* ftp);
+static void ftp_disconnectDtpSocketSignals(XFtp* ftp, XAbstractSocket* socket);
 static void ftp_releaseDtpSocket(XFtp* ftp);
+static void ftp_releaseDtpServer(XFtp* ftp);
 
-static void ftp_parse_list_line(XFtp* ftp, const char* line);
+static bool ftp_parse_list_line(XFtp* ftp, const char* line);
+static bool ftp_listingUsesMlsd(const XFtp* ftp);
+static bool ftp_isIgnorableListLine(const char* line);
 
 // 工具：移除字符串尾的 \r\n
 static void trim_crlf(char* s)
@@ -396,11 +406,7 @@ static void VXFtp_deinit(XFtp* ftp)
     if (ftp->m_dtpSocket) {
         ftp_releaseDtpSocket(ftp);
     }
-    if (ftp->m_dtpServer) {
-        XTcpServer_close(ftp->m_dtpServer);
-        XClass_delete_base((XClass*)ftp->m_dtpServer);
-        ftp->m_dtpServer = NULL;
-    }
+    ftp_releaseDtpServer(ftp);
 
     // 释放缓冲
     if (ftp->m_piBuffer) {
@@ -435,6 +441,7 @@ static void VXFtp_deinit(XFtp* ftp)
     if (ftp->m_proxyHost) { XClass_delete_base((XClass*)ftp->m_proxyHost); ftp->m_proxyHost = NULL; }
     if (ftp->m_proxyUser) { XClass_delete_base((XClass*)ftp->m_proxyUser); ftp->m_proxyUser = NULL; }
     if (ftp->m_proxyPass) { XClass_delete_base((XClass*)ftp->m_proxyPass); ftp->m_proxyPass = NULL; }
+    if (ftp->m_sslPeerVerifyName) { XClass_delete_base((XClass*)ftp->m_sslPeerVerifyName); ftp->m_sslPeerVerifyName = NULL; }
     if (ftp->m_errorString) { XClass_delete_base((XClass*)ftp->m_errorString); ftp->m_errorString = NULL; }
 
     // 释放列表
@@ -515,7 +522,7 @@ static void ftp_parse_feat_line(XFtp* ftp, const char* line)
     else if (xftp_stricmp_n(p, "MLSD", 4) == 0)    ftp->m_features |= XFtp_Feature_MLSD;
     else if (xftp_stricmp_n(p, "MODE Z", 6) == 0) ftp->m_features |= XFtp_Feature_MODEZ;
     else if (xftp_stricmp_n(p, "EPSV", 4) == 0)   ftp->m_features |= XFtp_Feature_EPSV;
-    else if (xftp_stricmp_n(p, "EPRT", 4) == 0)   ftp->m_features |= XFtp_Feature_EPSV;
+    else if (xftp_stricmp_n(p, "EPRT", 4) == 0)   ftp->m_features |= XFtp_Feature_EPRT;
     else if (xftp_stricmp_n(p, "REST STREAM", 11) == 0) ftp->m_features |= XFtp_Feature_REST_STREAM;
     else if (xftp_stricmp_n(p, "TVFS", 4) == 0)   ftp->m_features |= XFtp_Feature_TVFS;
     else if (xftp_stricmp_n(p, "ABOR", 4) == 0)   ftp->m_features |= XFtp_Feature_ABOR;
@@ -688,12 +695,23 @@ static void ftp_dtp_connected_handler(XObject* receiver, XVarList* args)
     }
 
     if (ftp->m_useSsl) {
-        XSslSocket_startClientEncryption((XSslSocket*)ftp->m_dtpSocket);
+        /* The socket backend may emit connected more than once while it
+         * drains queued events.  Re-entering mbedTLS while a data-channel
+         * handshake is pending can corrupt its handshake state. */
+        if (ftp->m_dtpState == 2) {
+            ftp->m_dtpState = 1;
+            XSslSocket_startClientEncryption((XSslSocket*)ftp->m_dtpSocket);
+        }
         return;
     }
     ftp->m_dtpState = 1;
 
     if (ftp->m_waitForDtpToConnect) {
+        /* The socket backend can deliver more than one connected notification
+         * while it drains queued events.  This transfer must start exactly
+         * once: a second STOR/RETR would be interpreted by the server as a
+         * new command after its data channel has already closed. */
+        ftp->m_waitForDtpToConnect = 0;
         ftp_dtp_startTransfer(ftp);
     }
 }
@@ -708,8 +726,23 @@ static void ftp_dtp_ssl_encrypted_handler(XObject* receiver, XVarList* args)
         XAbstractSocket_disconnectFromHost_base(ftp->m_dtpSocket);
         return;
     }
+    if (ftp->m_transferMode == XFtp_TransferMode_Active) {
+        if (ftp->m_dtpState == 5) {
+            ftp->m_dtpState = 1;
+            ftp->m_waitForDtpToConnect = 0;
+            ftp_dtp_startTransfer(ftp);
+        } else {
+            /* The TLS handshake finished before the PORT/EPRT 200 reply. */
+            ftp->m_dtpState = 4;
+        }
+        return;
+    }
+
     ftp->m_dtpState = 1;
-    if (ftp->m_waitForDtpToConnect) ftp_dtp_startTransfer(ftp);
+    if (ftp->m_waitForDtpToConnect) {
+        ftp->m_waitForDtpToConnect = 0;
+        ftp_dtp_startTransfer(ftp);
+    }
 }
 
 static void ftp_dtp_disconnected_handler(XObject* receiver, XVarList* args)
@@ -741,6 +774,12 @@ static void ftp_dtp_error_handler(XObject* receiver, XVarList* args)
 {
     if (!receiver) return;
     XFtp* ftp = (XFtp*)receiver;
+    /* A completed DTP socket can receive a late close/error event from the
+     * backend.  It no longer belongs to the next queued FTP command. */
+    if (ftp->m_dtpState == 0 && !ftp->m_waitForDtpToConnect &&
+        !ftp->m_waitForDtpToClose) {
+        return;
+    }
     XAbstractSocket_SocketError error = XAbstractSocket_UnknownSocketError;
     if (args) {
         XVarList_start(args);
@@ -858,9 +897,6 @@ static void ftp_dtp_bytesWritten_handler(XObject* receiver, XVarList* args)
         XVarList_start(args);
         bytes = XVarList_arg(args, int64_t);
     }
-    (void)bytes;
-    XFtp_dataTransferProgress_signal(ftp, ftp->m_transferCurrent, ftp->m_transferTotal);
-
     /* FTPS 数据连接的 ClientHello 也会触发底层 bytesWritten；只有 TLS
      * 完成后，写入的字节才属于 FTP 负载，不能提前推进 PUT 状态机。 */
     if (ftp->m_useSsl && ftp->m_dtpSocket &&
@@ -874,22 +910,23 @@ static void ftp_dtp_bytesWritten_handler(XObject* receiver, XVarList* args)
     // 内存缓冲 Put：分块续写
     if (ftp->m_currentCommand->m_data) {
         int64_t total = XByteArray_size_base(ftp->m_currentCommand->m_data);
+        if (bytes > 0) {
+            int64_t remaining = total - ftp->m_transferCurrent;
+            ftp->m_transferCurrent += bytes < remaining ? bytes : remaining;
+        }
         if (ftp->m_putWriteOffset < total) {
-            // 还在写过程中：统计实际写入 + 续写下一块
+            // m_putWriteOffset tracks queued bytes; bytesWritten reports TCP
+            // acknowledgements and can be smaller than one requested chunk.
             const char* data = (const char*)XByteArray_data(ftp->m_currentCommand->m_data);
             int64_t remain = total - ftp->m_putWriteOffset;
             int64_t chunk = remain < 8192 ? remain : 8192;
-            XAbstractSocket_write(ftp->m_dtpSocket, data + ftp->m_putWriteOffset, chunk);
-            ftp->m_putWriteOffset += chunk;
-            /* m_putWriteOffset is the amount queued to the socket.  Use it
-             * for progress so the final bytesWritten notification cannot
-             * leave a known-size upload short of its total. */
-            ftp->m_transferCurrent = ftp->m_putWriteOffset;
+            int64_t written = XAbstractSocket_write(ftp->m_dtpSocket,
+                                                    data + ftp->m_putWriteOffset, chunk);
+            if (written > 0) ftp->m_putWriteOffset += written;
         }
-        // 所有数据已排队：主动断开 DTP 通知服务器上传完成
-        // 注：因 CancelIo 会触发多个"假"bytesWritten，但后续事件进不来 if 分支，
-        // 不会重复 disconnect（XAbstractSocket_disconnectFromHost_base 对已关闭 socket 是 no-op）
-        if (ftp->m_putWriteOffset == total) {
+        XFtp_dataTransferProgress_signal(ftp, ftp->m_transferCurrent, ftp->m_transferTotal);
+        // Send FIN only after the final payload byte has been acknowledged.
+        if (ftp->m_putWriteOffset == total && ftp->m_transferCurrent >= total) {
             if (!ftp->m_useSsl ||
                 XSslSocket_encryptedBytesToWrite((XSslSocket*)ftp->m_dtpSocket) == 0) {
                 XAbstractSocket_disconnectFromHost_base(ftp->m_dtpSocket);
@@ -909,6 +946,8 @@ static void ftp_dtp_bytesWritten_handler(XObject* receiver, XVarList* args)
             XAbstractSocket_disconnectFromHost_base(ftp->m_dtpSocket);
         }
     }
+
+    XFtp_dataTransferProgress_signal(ftp, ftp->m_transferCurrent, ftp->m_transferTotal);
 }
 
 static void ftp_dtp_server_newConnection_handler(XObject* receiver, XVarList* args)
@@ -928,18 +967,27 @@ static void ftp_dtp_server_newConnection_handler(XObject* receiver, XVarList* ar
         return;
     }
 
-    // 把入站连接接管为 DTP socket
+    // 把入站连接接管为 DTP socket。脱离监听器后可在传输结束时安全销毁监听器。
+    XObject_setParent((XObject*)incoming, NULL);
     ftp_releaseDtpSocket(ftp);
     ftp->m_dtpSocket = (XAbstractSocket*)incoming;
-    {
-        ftp->m_dtpState = 1;
-    }
     XAbstractSocket_setProtocolTag(ftp->m_dtpSocket, "ftp-dtp-active");
     ftp_connectDtpSocketSignals(ftp);
 
-    if (ftp->m_waitForDtpToConnect) {
+    if (ftp->m_useSsl) {
+        /* The listener's factory created this object as XSslSocket before it
+         * adopted the accepted descriptor.  Active FTP reverses TCP roles,
+         * but the FTP client remains the TLS client for PROT P. */
+        XSslSocket_startClientEncryption((XSslSocket*)ftp->m_dtpSocket);
+        return;
+    }
+    if (ftp->m_dtpState == 5) {
+        ftp->m_dtpState = 1;
         ftp->m_waitForDtpToConnect = 0;
         ftp_dtp_startTransfer(ftp);
+    } else {
+        /* PORT/EPRT was sent, but its 200 reply has not reached the PI yet. */
+        ftp->m_dtpState = 4;
     }
 }
 
@@ -962,13 +1010,9 @@ static void ftp_failQueuedCommands(XFtp* ftp)
     }
 }
 
-static void ftp_releaseDtpSocket(XFtp* ftp)
+static void ftp_disconnectDtpSocketSignals(XFtp* ftp, XAbstractSocket* socket)
 {
-    if (!ftp || !ftp->m_dtpSocket) return;
-    XAbstractSocket* socket = ftp->m_dtpSocket;
-    /* Clear the owner pointer before disconnecting.  A pending disconnected
-     * event from the old socket must not mutate the new transfer state. */
-    ftp->m_dtpSocket = NULL;
+    if (!ftp || !socket) return;
     XObject_disconnect_1((XObject*)socket, XAbstractSocket_connected_signal,
                          (XObject*)ftp, ftp_dtp_connected_handler);
     XObject_disconnect_1((XObject*)socket, XAbstractSocket_disconnected_signal,
@@ -981,8 +1025,52 @@ static void ftp_releaseDtpSocket(XFtp* ftp)
                          (XObject*)ftp, ftp_dtp_bytesWritten_handler);
     XObject_disconnect_1((XObject*)socket, XSslSocket_encrypted_signal,
                          (XObject*)ftp, ftp_dtp_ssl_encrypted_handler);
+}
+
+static void ftp_releaseDtpSocket(XFtp* ftp)
+{
+    if (!ftp || !ftp->m_dtpSocket) return;
+    XAbstractSocket* socket = ftp->m_dtpSocket;
+    /* Clear the owner pointer before disconnecting.  A pending disconnected
+     * event from the old socket must not mutate the new transfer state. */
+    ftp->m_dtpSocket = NULL;
+    ftp_disconnectDtpSocketSignals(ftp, socket);
     XAbstractSocket_disconnectFromHost_base(socket);
     XClass_delete_base((XClass*)socket);
+}
+
+static void ftp_releaseDtpServer(XFtp* ftp)
+{
+    if (!ftp || !ftp->m_dtpServer) return;
+    XTcpServer* server = ftp->m_dtpServer;
+    ftp->m_dtpServer = NULL;
+    XObject_disconnect_1((XObject*)server, XTcpServer_newConnection_signal,
+                         (XObject*)ftp, ftp_dtp_server_newConnection_handler);
+    XTcpServer_close(server);
+    XClass_delete_base((XClass*)server);
+}
+
+static void ftp_configureDtpSslSocket(XFtp* ftp, XSslSocket* socket)
+{
+    if (!ftp || !socket) return;
+    XSslSocket_setPeerVerifyMode(socket, ftp->m_sslPeerVerifyMode);
+    if (ftp->m_sslCaCertificate)
+        XSslSocket_addCaCertificate(socket, ftp->m_sslCaCertificate);
+    /* EPSV may connect to a numeric address while the certificate identifies
+     * the original FTP hostname.  Active FTPS needs the same SNI/name policy. */
+    const XString* peerVerifyName = ftp_sslPeerVerifyName(ftp);
+    if (peerVerifyName)
+        XSslSocket_setPeerVerifyName(socket, peerVerifyName);
+}
+
+static XTcpSocket* ftp_createActiveDtpSocket(void* context)
+{
+    XFtp* ftp = (XFtp*)context;
+    if (!ftp || !ftp->m_useSsl) return XTcpSocket_create();
+
+    XSslSocket* socket = XSslSocket_create();
+    if (socket) ftp_configureDtpSslSocket(ftp, socket);
+    return (XTcpSocket*)socket;
 }
 
 static bool ftp_prepareActivePort(XFtp* ftp, char* portCmd, size_t portCmdSize)
@@ -991,6 +1079,11 @@ static bool ftp_prepareActivePort(XFtp* ftp, char* portCmd, size_t portCmdSize)
     if (!ftp->m_dtpServer) {
         ftp->m_dtpServer = XTcpServer_create();
         if (ftp->m_dtpServer) ftp_connectDtpServerSignals(ftp);
+    }
+    if (ftp->m_dtpServer) {
+        XTcpServer_setIncomingSocketFactory(ftp->m_dtpServer,
+            ftp->m_useSsl ? ftp_createActiveDtpSocket : NULL,
+            ftp->m_useSsl ? ftp : NULL);
     }
     if (!ftp->m_dtpServer || ftp_dtp_startListen(ftp, portCmd, portCmdSize) != 0)
         return false;
@@ -1005,14 +1098,63 @@ static bool ftp_addRawArg(XFtpCommand* cmd, const char* arg)
     return XVector_size_base(cmd->m_rawCmds) == before + 1;
 }
 
+static void ftp_setLocalError(XFtp* ftp, XFtp_Error error, const char* text)
+{
+    if (!ftp) return;
+    ftp->m_error = error;
+    if (ftp->m_errorString)
+        XString_assign_utf8(ftp->m_errorString, text ? text : "Unknown FTP error");
+}
+
 static bool ftp_requireLoggedIn(XFtp* ftp)
 {
     if (!ftp) return false;
     if (ftp->m_state == XFtp_State_LoggedIn) return true;
-    ftp->m_error = XFtp_Error_NotLoggedIn;
-    if (ftp->m_errorString)
-        XString_assign_utf8(ftp->m_errorString, "FTP operation requires an authenticated session");
+    if (ftp->m_state == XFtp_State_Unconnected || ftp->m_state == XFtp_State_Closing) {
+        ftp_setLocalError(ftp, XFtp_Error_NotConnected,
+                          "FTP operation requires a connected control session");
+    } else {
+        ftp_setLocalError(ftp, XFtp_Error_NotLoggedIn,
+                          "FTP operation requires an authenticated session");
+    }
     return false;
+}
+
+static bool ftp_hasQueuedCommand(XFtp* ftp, XFtpCommand_Type type)
+{
+    if (!ftp || !ftp->m_pendingCommands || !ftp->m_commandMutex) return false;
+
+    bool found = false;
+    XMutex_lock(ftp->m_commandMutex);
+    for (size_t i = 0; i < XVector_size_base(ftp->m_pendingCommands); i++) {
+        XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, i, XFtpCommand);
+        if (cmd && cmd->m_command == type) {
+            found = true;
+            break;
+        }
+    }
+    XMutex_unlock(ftp->m_commandMutex);
+    return found;
+}
+
+static bool ftp_canUsePasvFallback(const XFtp* ftp)
+{
+    if (!ftp || !ftp->m_piSocket) return false;
+    const XHostAddress* peer = XAbstractSocket_peerAddress(ftp->m_piSocket);
+    if (peer && XHostAddress_protocol(peer) == XHostAddress_IPv4Protocol)
+        return true;
+
+    /* Some dual-stack backends expose an IPv4 peer as an IPv6-mapped address.
+     * An explicit IPv6 literal must not fall back to PASV; host names and
+     * IPv4 literals may still use the IPv4 PASV fallback. */
+    const char* host = ftp->m_host ? XString_toUtf8(ftp->m_host) : NULL;
+    return host && host[0] && strchr(host, ':') == NULL;
+}
+
+static const XString* ftp_sslPeerVerifyName(const XFtp* ftp)
+{
+    if (!ftp) return NULL;
+    return ftp->m_sslPeerVerifyName ? ftp->m_sslPeerVerifyName : ftp->m_host;
 }
 
 static int ftp_queueCommand(XFtp* ftp, XFtpCommand* cmd)
@@ -1104,6 +1246,7 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
         ftp->m_waitForDtpToConnect = 0;
         ftp->m_waitForDtpToClose = 0;
         ftp->m_dtpState = 0;
+        ftp->m_epsvAttempted = 0;
         ftp->m_transferTotal = -1;
         ftp->m_transferCurrent = 0;
     }
@@ -1125,13 +1268,6 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
             ftp->m_error = XFtp_Error_ProtocolError;
             XString_assign_utf8(ftp->m_errorString,
                 "MODE Z was requested but the server did not accept compression");
-            ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
-            return;
-        }
-        if (ftp->m_useSsl && ftp->m_transferMode == XFtp_TransferMode_Active) {
-            ftp->m_error = XFtp_Error_ActiveModeFailed;
-            XString_assign_utf8(ftp->m_errorString,
-                "Active FTPS is not supported without a portable SSL descriptor adoption API");
             ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
             return;
         }
@@ -1171,6 +1307,14 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
         if (cmd->m_rawCmds && XVector_size_base(cmd->m_rawCmds) > 1) {
             port = (uint16_t)atoi(XVEC_STR_AT(cmd->m_rawCmds, 1));
         }
+        /* connectToHost_base intentionally bypasses the XSslSocket virtual
+         * wrapper, so retain the original FTP host for SNI and certificate
+         * name validation explicitly. */
+        const XString* peerVerifyName = ftp_sslPeerVerifyName(ftp);
+        if (peerVerifyName) {
+            XSslSocket_setPeerVerifyName((XSslSocket*)ftp->m_piSocket,
+                                          peerVerifyName);
+        }
         XAbstractSocket_connectToHost_base(ftp->m_piSocket, host, port,
             XIODevice_ReadWrite, XAbstractSocket_AnyIPProtocol);
         // 连接完成后，connected_handler 会启动 startNextCommand
@@ -1194,20 +1338,16 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
         // PASV / EPSV 优先
         if (ftp->m_transferMode == XFtp_TransferMode_Passive) {
             if (ftp->m_features & XFtp_Feature_EPSV) {
+                ftp->m_epsvAttempted = 1;
                 ftp_pi_sendCommand(ftp, "EPSV\r\n");
             } else {
+                ftp->m_epsvAttempted = 0;
                 ftp_pi_sendCommand(ftp, "PASV\r\n");
             }
         } else {
-            char portCmd[256];
-            if (ftp_prepareActivePort(ftp, portCmd, sizeof(portCmd))) {
-                ftp_pi_sendCommand(ftp, portCmd);
-                ftp->m_waitForDtpToConnect = 1;
-            } else {
-                ftp->m_error = XFtp_Error_ActiveModeFailed;
-                XString_assign_utf8(ftp->m_errorString, "Unable to create the active data listener");
-                ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
-            }
+            /* Do not send PORT/EPRT until the preceding TYPE succeeds. */
+            ftp->m_waitForDtpToConnect = 1;
+            ftp->m_dtpState = 6;
         }
         // 把"用 MLSD 还是 LIST"以及目录路径存在命令的 rawCmds 末尾供 227 响应时读
         char* chosen = useMlsd ? "MLSD" : "LIST";
@@ -1239,20 +1379,15 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
         // PASV / EPSV（RETR 在 DTP 连接建立后由 ftp_dtp_startTransfer 发送）
         if (ftp->m_transferMode == XFtp_TransferMode_Passive) {
             if (ftp->m_features & XFtp_Feature_EPSV) {
+                ftp->m_epsvAttempted = 1;
                 ftp_pi_sendCommand(ftp, "EPSV\r\n");
             } else {
+                ftp->m_epsvAttempted = 0;
                 ftp_pi_sendCommand(ftp, "PASV\r\n");
             }
         } else {
-            char portCmd[256];
-            if (ftp_prepareActivePort(ftp, portCmd, sizeof(portCmd))) {
-                ftp_pi_sendCommand(ftp, portCmd);
-                ftp->m_waitForDtpToConnect = 1;
-            } else {
-                ftp->m_error = XFtp_Error_ActiveModeFailed;
-                XString_assign_utf8(ftp->m_errorString, "Unable to create the active data listener");
-                ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
-            }
+            ftp->m_waitForDtpToConnect = 1;
+            ftp->m_dtpState = 6;
         }
         // REST + RETR 均在 ftp_dtp_startTransfer 中发送
         break;
@@ -1265,20 +1400,15 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
         // PASV / EPSV / PORT
         if (ftp->m_transferMode == XFtp_TransferMode_Passive) {
             if (ftp->m_features & XFtp_Feature_EPSV) {
+                ftp->m_epsvAttempted = 1;
                 ftp_pi_sendCommand(ftp, "EPSV\r\n");
             } else {
+                ftp->m_epsvAttempted = 0;
                 ftp_pi_sendCommand(ftp, "PASV\r\n");
             }
         } else {
-            char portCmd[256];
-            if (ftp_prepareActivePort(ftp, portCmd, sizeof(portCmd))) {
-                ftp_pi_sendCommand(ftp, portCmd);
-                ftp->m_waitForDtpToConnect = 1;
-            } else {
-                ftp->m_error = XFtp_Error_ActiveModeFailed;
-                XString_assign_utf8(ftp->m_errorString, "Unable to create the active data listener");
-                ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
-            }
+            ftp->m_waitForDtpToConnect = 1;
+            ftp->m_dtpState = 6;
         }
         // STOR/APPE 命令在 PASV 响应后发送
         if (cmd->m_rawCmds && XVector_size_base(cmd->m_rawCmds) > 0) {
@@ -1471,7 +1601,11 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
             && ftp->m_currentCommand->m_command == XFtpCommand_Mlst) {
             const char* p = reply;
             while (*p == ' ') p++;
-            if (*p) ftp_parse_list_line(ftp, p);  // 复用 MLSD 解析器
+            if (*p && !ftp_parse_list_line(ftp, p) &&
+                ftp->m_error == XFtp_Error_NoError) {
+                ftp_setLocalError(ftp, XFtp_Error_DirectoryListingFailed,
+                                  "Unable to parse the MLST response entry");
+            }
         } else {
             // 当作 FEAT 中间行解析：跳过前导空格
             const char* p = reply;
@@ -1562,15 +1696,16 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                     const char* data = (const char*)XByteArray_data(ftp->m_currentCommand->m_data);
                     int64_t chunk = size < 8192 ? size : 8192;
                     if (chunk > 0) {
-                        XAbstractSocket_write(ftp->m_dtpSocket, data, chunk);
-                        ftp->m_putWriteOffset = chunk;
-                        /* 关键：m_transferCurrent 也要累加，否则 disconnected_handler 调 finishTransfer
-                         * 时 m_transferCurrent < m_transferTotal 会误判为"未完成"。
-                         * 之前 bytesWritten handler 在 m_putWriteOffset < total 条件内累加 m_transferCurrent，
-                         * 但如果整个数据 ≤ 8KB（一次 write 完），bytesWritten handler 走 m_putWriteOffset==total
-                         * 分支不会累加 m_transferCurrent。这里直接在第一块 write 后累加，保证 m_transferCurrent
-                         * 反映已提交字节数。 */
-                        ftp->m_transferCurrent = chunk;
+                        int64_t written = XAbstractSocket_write(ftp->m_dtpSocket, data, chunk);
+                        if (written <= 0) {
+                            ftp->m_error = XFtp_Error_TransferFailed;
+                            XString_assign_utf8(ftp->m_errorString,
+                                "Unable to queue the first upload chunk");
+                            ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
+                            return;
+                        }
+                        ftp->m_putWriteOffset = written;
+                        ftp->m_transferCurrent = 0;
                     } else {
                         // 零字节数据：直接关闭 DTP 通知服务器上传完成
                         XAbstractSocket_disconnectFromHost_base(ftp->m_dtpSocket);
@@ -1607,6 +1742,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
         }
         // 227/229：PASV/EPSV 响应，处理 DTP 连接
         if (code == 227 && ftp->m_transferMode == XFtp_TransferMode_Passive) {
+            ftp->m_epsvAttempted = 0;
             if (ftp->m_abortRequested) {
                 {
                     ftp->m_dtpState = 0;
@@ -1637,6 +1773,8 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
             break;
         }
         if (code == 229 && ftp->m_transferMode == XFtp_TransferMode_Passive) {
+            bool epsvAttempted = ftp->m_epsvAttempted != 0;
+            ftp->m_epsvAttempted = 0;
             if (ftp->m_abortRequested) {
                 {
                     ftp->m_dtpState = 0;
@@ -1654,6 +1792,11 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                 }
             }
             if (!parsed) {
+                if (epsvAttempted && ftp_canUsePasvFallback(ftp)) {
+                    ftp->m_features &= (uint16_t)~XFtp_Feature_EPSV;
+                    ftp_pi_sendCommand(ftp, "PASV\r\n");
+                    break;
+                }
                 ftp->m_error = XFtp_Error_PassiveModeFailed;
                 XString_assign_utf8(ftp->m_errorString, "Invalid EPSV response");
                 ftp_pi_handleError(ftp, code, XString_toUtf8(ftp->m_errorString));
@@ -1687,8 +1830,54 @@ static void ftp_pi_finishCommand(XFtp* ftp, int code, const char* text)
     if (code == 200) {
         XFtpCommand_Type cmdType = ftp->m_currentCommand->m_command;
         if (cmdType == XFtpCommand_Put || cmdType == XFtpCommand_Get || cmdType == XFtpCommand_List) {
+            if (ftp->m_transferMode == XFtp_TransferMode_Active &&
+                ftp->m_waitForDtpToConnect) {
+                if (ftp->m_dtpState == 6) {
+                    char portCmd[256];
+                    if (!ftp_prepareActivePort(ftp, portCmd, sizeof(portCmd))) {
+                        ftp->m_error = XFtp_Error_ActiveModeFailed;
+                        XString_assign_utf8(ftp->m_errorString,
+                                             "Unable to create the active data listener");
+                        ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
+                        return;
+                    }
+                    ftp->m_dtpState = 3;
+                    ftp_pi_sendCommand(ftp, portCmd);
+                    return;
+                }
+                if (ftp->m_dtpState == 3) {
+                    /* PORT/EPRT is accepted before TCP/TLS becomes ready. */
+                    ftp->m_dtpState = 5;
+                    return;
+                }
+                if (ftp->m_dtpState == 4) {
+                    /* TCP and TLS are ready; the PORT/EPRT reply completes setup. */
+                    ftp->m_dtpState = 1;
+                    ftp->m_waitForDtpToConnect = 0;
+                    ftp_dtp_startTransfer(ftp);
+                    return;
+                }
+            }
             return;  // 前导应答，不结束命令，不清状态
         }
+    }
+
+    XFtpCommand_Type currentType = ftp->m_currentCommand->m_command;
+    if ((currentType == XFtpCommand_Put || currentType == XFtpCommand_Get ||
+         currentType == XFtpCommand_List) && code != 225 && code != 226) {
+        /* A delayed success reply from the preceding control command (for
+         * example RMD 250) must not complete the current data transfer. */
+        return;
+    }
+
+    /* A delayed 226 belongs to the preceding transfer when the current data
+     * socket has not finished connecting or negotiating TLS.  Completing the
+     * new command here clears m_waitForDtpToConnect and makes its later data
+     * connection orphaned. */
+    if (code == 226 && (currentType == XFtpCommand_Put ||
+                        currentType == XFtpCommand_Get || currentType == XFtpCommand_List) &&
+        (ftp->m_waitForDtpToConnect || ftp->m_dtpState == 2)) {
+        return;
     }
 
     // 主动模式(PORT)传输完成时（Put/Get/List 收到 226/227），不要在这里 finishTransfer。
@@ -1901,6 +2090,20 @@ static void ftp_pi_handleError(XFtp* ftp, int code, const char* text)
     if (!ftp) return;
     if (!ftp->m_currentCommand) return;  // 无命令在执行（如 ABOR 后的迟到 4xx/5xx）
 
+    /* Servers occasionally advertise EPSV but reject it on the control
+     * channel.  RFC 2428 permits a client to retry the same transfer setup
+     * with PASV for IPv4; remember the rejection for the remainder of this
+     * control session. */
+    if (ftp->m_transferMode == XFtp_TransferMode_Passive &&
+        ftp->m_epsvAttempted && !ftp->m_abortRequested &&
+        ftp_canUsePasvFallback(ftp) &&
+        (code == 500 || code == 501 || code == 502 || code == 504 || code == 522)) {
+        ftp->m_epsvAttempted = 0;
+        ftp->m_features &= (uint16_t)~XFtp_Feature_EPSV;
+        ftp_pi_sendCommand(ftp, "PASV\r\n");
+        return;
+    }
+
     // 按响应码细化错误分类（RFC 959 + 常见扩展）
     // 4xx: 暂时否定完成（未完成，可重试）
     //   421 Service not available / 425 Can't open data connection
@@ -1940,7 +2143,11 @@ static void ftp_pi_handleError(XFtp* ftp, int code, const char* text)
         else ftp->m_error = XFtp_Error_ProtocolError;
         break;
     }
-    if (text) {
+    /* Several local failure paths pass the current error string back into
+     * this function.  XString_assign_utf8 clears its destination before
+     * reading the source, so assigning that aliased pointer corrupts the
+     * public error text. */
+    if (text && ftp->m_errorString && text != XString_toUtf8(ftp->m_errorString)) {
         XString_assign_utf8(ftp->m_errorString, text);
     }
 
@@ -1993,8 +2200,7 @@ static void ftp_dtp_connect(XFtp* ftp, const char* host, uint16_t port)
         ftp_pi_handleError(ftp, 0, XString_toUtf8(ftp->m_errorString));
         return;
     }
-    XSslSocket_setPeerVerifyMode((XSslSocket*)ftp->m_dtpSocket,
-                                  ftp->m_sslPeerVerifyMode);
+    ftp_configureDtpSslSocket(ftp, (XSslSocket*)ftp->m_dtpSocket);
     ftp_applyProxy(ftp, ftp->m_dtpSocket);
     XAbstractSocket_setProtocolTag(ftp->m_dtpSocket, "ftp-dtp-passive");
     ftp_connectDtpSocketSignals(ftp);
@@ -2189,6 +2395,7 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
             if (ct == XFtpCommand_List) {
                 const char* data = (const char*)XByteArray_data(ftp->m_readBuffer);
                 int64_t size = XByteArray_size_base(ftp->m_readBuffer);
+                bool mlsd = ftp_listingUsesMlsd(ftp);
                 if (data && size > 0) {
                     int64_t start = 0;
                     for (int64_t i = 0; i <= size; i++) {
@@ -2200,7 +2407,13 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
                                 memcpy(line, data + start, copyLen);
                                 line[copyLen] = '\0';
                                 trim_crlf(line);
-                                if (line[0]) ftp_parse_list_line(ftp, line);
+                                if (line[0] && !ftp_parse_list_line(ftp, line) &&
+                                    ftp->m_error == XFtp_Error_NoError &&
+                                    (mlsd || !ftp_isIgnorableListLine(line))) {
+                                    ftp_setLocalError(ftp, XFtp_Error_DirectoryListingFailed,
+                                                      mlsd ? "Unable to parse an MLSD entry"
+                                                           : "Unable to parse a directory listing entry");
+                                }
                             }
                             start = i + 1;
                         }
@@ -2238,15 +2451,13 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
     // 但 m_currentCommand 仍非 NULL（DTP 数据未读完），此时不能关 DTP（后续 254KB 数据丢失）。
     if (did_finish) {
         if (ftp->m_dtpSocket) {
+            /* The object is deleted on the next DTP setup, but its FTP-facing
+             * signals must stop now. Otherwise a late backend close/error can
+             * fail the next command before its passive connection starts. */
+            ftp_disconnectDtpSocketSignals(ftp, ftp->m_dtpSocket);
             XAbstractSocket_disconnectFromHost_base(ftp->m_dtpSocket);
         }
-        if (ftp->m_dtpServer) {
-            // 注意：不能 XClass_delete_base m_dtpServer！它的 pendingConnections 中
-            // 已经交给 m_dtpSocket 的连接会被联动清理，导致后续访问 m_dtpSocket
-            // 时 vtable 失效 crash。只关闭监听端口，置 NULL，下次主动传输重建。
-            XTcpServer_close(ftp->m_dtpServer);
-            ftp->m_dtpServer = NULL;
-        }
+        ftp_releaseDtpServer(ftp);
     }
 }
 
@@ -2256,7 +2467,13 @@ static int ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize)
 
 	/* Already listening: reuse existing port (no re-listen) */
 	if (!XTcpServer_isListening(ftp->m_dtpServer)) {
-		if (!XTcpServer_listen(ftp->m_dtpServer, NULL, 0)) {
+		const XHostAddress* localAddr = ftp->m_piSocket
+			? XAbstractSocket_localAddress(ftp->m_piSocket) : NULL;
+		if (!localAddr || (XHostAddress_protocol(localAddr) != XHostAddress_IPv4Protocol &&
+			XHostAddress_protocol(localAddr) != XHostAddress_IPv6Protocol)) {
+			localAddr = NULL;
+		}
+		if (!XTcpServer_listen(ftp->m_dtpServer, localAddr, 0)) {
 			return -1;
 		}
 	}
@@ -2282,9 +2499,8 @@ static int ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize)
 	}
 
 	if (strchr(ipStr, ':')) {
-		/* IPv6 active FTP requires EPRT.  The feature bit is shared with
-		 * EPSV because FEAT advertises both extensions together in practice. */
-		if (!(ftp->m_features & XFtp_Feature_EPSV)) return -1;
+		/* IPv6 active FTP requires independently negotiated EPRT support. */
+		if (!(ftp->m_features & XFtp_Feature_EPRT)) return -1;
 		int n = snprintf(portCmd, portCmdSize, "EPRT |2|%s|%u|\r\n", ipStr, port);
 		return n > 0 && (size_t)n < portCmdSize ? 0 : -1;
 	}
@@ -2467,9 +2683,39 @@ static bool ftp_parse_windows_nt(const char* line, char* name, size_t nameSize,
     return true;
 }
 
-static void ftp_parse_list_line(XFtp* ftp, const char* line)
+static bool ftp_listingUsesMlsd(const XFtp* ftp)
 {
-    if (!ftp || !line || !ftp->m_listInfo) return;
+    if (!ftp || !ftp->m_currentCommand ||
+        ftp->m_currentCommand->m_command != XFtpCommand_List ||
+        !ftp->m_currentCommand->m_data) {
+        return false;
+    }
+    const char* command = XString_toUtf8((const XString*)ftp->m_currentCommand->m_data);
+    return command && strncmp(command, "MLSD", 4) == 0 &&
+           (command[4] == '\0' || command[4] == ' ');
+}
+
+static bool ftp_isIgnorableListLine(const char* line)
+{
+    if (!line) return true;
+    while (*line && isspace((unsigned char)*line)) line++;
+    if (xftp_stricmp_n(line, "total", 5) != 0 ||
+        (line[5] != '\0' && !isspace((unsigned char)line[5]))) {
+        return false;
+    }
+    line += 5;
+    while (*line && isspace((unsigned char)*line)) line++;
+    if (!*line) return true;
+    while (*line) {
+        if (!isdigit((unsigned char)*line)) return false;
+        line++;
+    }
+    return true;
+}
+
+static bool ftp_parse_list_line(XFtp* ftp, const char* line)
+{
+    if (!ftp || !line || !ftp->m_listInfo) return false;
 
     char name[256] = {0};
     int64_t size = 0;
@@ -2510,16 +2756,20 @@ static void ftp_parse_list_line(XFtp* ftp, const char* line)
     if (!parsed && line[0] >= '0' && line[0] <= '9') {
         parsed = ftp_parse_windows_nt(line, name, sizeof(name), &size, &type);
     }
-    if (!parsed) return;
+    if (!parsed || !name[0]) return false;
 
     XFileInfo* info = XFileInfo_create_1();
-    if (!info) return;
+    if (!info) return false;
 
     if (info->m_filePath) {
         XString_delete_base(info->m_filePath);
         info->m_filePath = NULL;
     }
     info->m_filePath = XString_create_utf8(name);
+    if (!info->m_filePath) {
+        XFileInfo_delete_base(info);
+        return false;
+    }
     info->m_stat.size = size >= 0 ? size : 0;
     info->m_stat.isFile = (type == 0) ? 1 : 0;
     info->m_stat.isDir  = (type == 1) ? 1 : 0;
@@ -2529,8 +2779,12 @@ static void ftp_parse_list_line(XFtp* ftp, const char* line)
         info->m_stat.modificationTime = modifyTime;
     }
 
-    XVector_push_back_1_base(ftp->m_listInfo, &info);
+    if (!XVector_push_back_1_base(ftp->m_listInfo, &info)) {
+        XFileInfo_delete_base(info);
+        return false;
+    }
     XFtp_listInfo_signal(ftp, info);
+    return true;
 }
 
 // =============== 状态查询 ===============
@@ -2606,8 +2860,15 @@ int XFtp_connectToHost(XFtp* ftp, const char* host, uint16_t port)
     {
         ftp->m_closeRequested = 0;
         ftp->m_sm.m_sslState = 0;
+        ftp->m_sm.m_restState = 0;
+        ftp->m_sm.m_mlstState = 0;
+        ftp->m_sm.m_compressionNegotiating = 0;
         ftp->m_waitForGreeting = 0;
         ftp->m_dtpState = 0;
+        ftp->m_epsvAttempted = 0;
+        ftp->m_outOfBandPending = 0;
+        ftp->m_features = 0;
+        ftp->m_compressionActive = 0;
     }
     ftp->m_state = XFtp_State_Connecting;
     XFtp_stateChanged_signal(ftp, ftp->m_state);
@@ -2624,8 +2885,16 @@ int XFtp_connectToHost(XFtp* ftp, const char* host, uint16_t port)
 int XFtp_login(XFtp* ftp, const char* user, const char* password)
 {
     if (!ftp) return -1;
-    if (ftp->m_state == XFtp_State_Unconnected || ftp->m_state == XFtp_State_Closing)
+    if (ftp->m_state == XFtp_State_Unconnected) {
+        ftp_setLocalError(ftp, XFtp_Error_NotConnected,
+                          "FTP login requires a connected control session");
         return -1;
+    }
+    if (ftp->m_state == XFtp_State_Closing || ftp_hasQueuedCommand(ftp, XFtpCommand_Login)) {
+        ftp_setLocalError(ftp, XFtp_Error_OperationInProgress,
+                          "A login command is already queued or executing");
+        return -1;
+    }
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Login);
     if (!cmd) return -1;
@@ -2885,8 +3154,19 @@ int XFtp_rawCommand(XFtp* ftp, const char* command)
 
 int XFtp_close(XFtp* ftp)
 {
-    if (!ftp || (ftp->m_state != XFtp_State_Connected &&
-                 ftp->m_state != XFtp_State_LoggedIn)) return -1;
+    if (!ftp) return -1;
+    if (ftp->m_state == XFtp_State_Unconnected) {
+        ftp_setLocalError(ftp, XFtp_Error_NotConnected,
+                          "FTP close requires a connected control session");
+        return -1;
+    }
+    if (ftp->m_state == XFtp_State_Connecting || ftp->m_state == XFtp_State_Closing ||
+        ftp_hasQueuedCommand(ftp, XFtpCommand_Close)) {
+        ftp_setLocalError(ftp, XFtp_Error_OperationInProgress,
+                          "A close command is already queued or executing");
+        return -1;
+    }
+    if (ftp->m_state != XFtp_State_Connected && ftp->m_state != XFtp_State_LoggedIn) return -1;
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Close);
     if (!cmd) return -1;
@@ -2912,7 +3192,7 @@ void XFtp_abort(XFtp* ftp)
     XMutex_unlock(ftp->m_commandMutex);
 
     if (ftp->m_dtpSocket) XAbstractSocket_abort(ftp->m_dtpSocket);
-    if (ftp->m_dtpServer) XTcpServer_close(ftp->m_dtpServer);
+    ftp_releaseDtpServer(ftp);
 
     if (canceled) {
         for (size_t i = 0; i < XVector_size_base(canceled); i++) {
@@ -3044,7 +3324,7 @@ void XFtp_setMlsdEnabled(XFtp* ftp, bool enabled)
 bool XFtp_supportsFeature(const XFtp* ftp, XFtp_Feature feature)
 {
     if (!ftp) return false;
-    return (ftp->m_features & (uint8_t)feature) != 0;
+    return (ftp->m_features & feature) != 0;
 }
 
 void XFtp_abortTransfer(XFtp* ftp)
@@ -3056,9 +3336,7 @@ void XFtp_abortTransfer(XFtp* ftp)
         if (ftp->m_dtpSocket) {
             XAbstractSocket_abort(ftp->m_dtpSocket);
         }
-        if (ftp->m_dtpServer) {
-            XTcpServer_close(ftp->m_dtpServer);
-        }
+        ftp_releaseDtpServer(ftp);
         /* XAbstractSocket_abort() may close a connecting socket without
          * emitting the disconnected signal.  Keep the FTP state machine
          * consistent so the server's 226 ABOR reply can finish the command. */
@@ -3094,6 +3372,35 @@ void XFtp_setSslPeerVerifyMode(XFtp* ftp, XSslPeerVerifyMode mode)
 XSslPeerVerifyMode XFtp_sslPeerVerifyMode(const XFtp* ftp)
 {
     return ftp ? ftp->m_sslPeerVerifyMode : XSSL_VerifyPeer;
+}
+
+void XFtp_setSslCaCertificate(XFtp* ftp, XSslCertificate* ca)
+{
+    if (!ftp || ftp->m_state != XFtp_State_Unconnected) return;
+    ftp->m_sslCaCertificate = ca;
+    if (ftp->m_piSocket) {
+        XSslSocket_addCaCertificate((XSslSocket*)ftp->m_piSocket, ca);
+    }
+}
+
+void XFtp_setSslPeerVerifyName(XFtp* ftp, const char* name)
+{
+    if (!ftp || ftp->m_state != XFtp_State_Unconnected) return;
+    if (ftp->m_sslPeerVerifyName) {
+        XClass_delete_base((XClass*)ftp->m_sslPeerVerifyName);
+        ftp->m_sslPeerVerifyName = NULL;
+    }
+    if (name && name[0]) ftp->m_sslPeerVerifyName = XString_create_utf8(name);
+    if (ftp->m_piSocket) {
+        XSslSocket_setPeerVerifyName((XSslSocket*)ftp->m_piSocket,
+                                      ftp_sslPeerVerifyName(ftp));
+    }
+}
+
+const char* XFtp_sslPeerVerifyName(const XFtp* ftp)
+{
+    return ftp && ftp->m_sslPeerVerifyName
+        ? XString_toUtf8(ftp->m_sslPeerVerifyName) : NULL;
 }
 
 void XFtp_setCompression(XFtp* ftp, bool useCompression)

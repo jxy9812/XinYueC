@@ -4,7 +4,7 @@
  * @note        跨平台：Windows / Linux / 嵌入式
  *              特性：普通 FTP 主动/被动模式、Explicit FTPS 被动数据模式 (RFC 4217)、REST 断点续传、
  *                    APPE 追加、SOCKS5/HTTP 代理、自动重连、URL 解析。
- *              MODE Z 仅可检测；portable DTP 尚未实现压缩传输，启用后会明确失败。
+ *              MODE Z 压缩传输。
  */
 
 #ifndef XFTP_H
@@ -66,7 +66,7 @@ typedef enum XFtp_Error {
     XFtp_Error_ProxyConnectionRefused, ///< 代理连接被拒绝
     XFtp_Error_ProxyAuthenticationRequired, ///< 代理鉴权失败
     XFtp_Error_PassiveModeFailed,      ///< PASV 响应解析失败
-    XFtp_Error_ActiveModeFailed,       ///< PORT 绑定失败
+    XFtp_Error_ActiveModeFailed,       ///< PORT/EPRT 主动数据通道建立失败
     XFtp_Error_TransferAborted,        ///< 传输被用户中断 (ABOR)
     XFtp_Error_TransferFailed,         ///< 数据传输失败
     XFtp_Error_InvalidResponse,        ///< 服务器响应格式无效
@@ -115,11 +115,12 @@ typedef enum XFtp_Feature {
     XFtp_Feature_UTF8     = 0x01,    ///< OPTS UTF8 ON 支持
     XFtp_Feature_MLSD     = 0x02,    ///< MLSD/MLST 机器可读列表
     XFtp_Feature_MODEZ    = 0x04,    ///< MODE Z 传输压缩
-    XFtp_Feature_EPSV     = 0x08,    ///< EPSV/EPRT 扩展被动模式
+    XFtp_Feature_EPSV     = 0x08,    ///< EPSV 扩展被动模式
     XFtp_Feature_REST_STREAM = 0x10, ///< REST + STREAM 字节偏移
     XFtp_Feature_TVFS     = 0x20,    ///< TVFS 文本虚拟文件系统
     XFtp_Feature_ABOR     = 0x40,    ///< ABOR 中断传输
-    XFtp_Feature_SIZE     = 0x80     ///< SIZE 文件大小
+    XFtp_Feature_SIZE     = 0x80,    ///< SIZE 文件大小
+    XFtp_Feature_EPRT     = 0x100    ///< EPRT 主动模式扩展
 } XFtp_Feature;
 
 /**
@@ -150,6 +151,8 @@ typedef struct XFtp {
     XString* m_proxyHost;                 // 代理主机
     XString* m_proxyUser;                 // 代理用户名
     XString* m_proxyPass;                 // 代理密码
+    XString* m_sslPeerVerifyName;         // FTPS SNI/证书名称；NULL 时使用 m_host
+    XSslCertificate* m_sslCaCertificate;  // FTPS 对端校验 CA；外部持有
 
     // ===== 8 字节 int64 区 =====
     int64_t m_transferTotal;              // 传输总字节数
@@ -175,8 +178,8 @@ typedef struct XFtp {
     uint16_t m_proxyPort;                 // 代理端口
     uint16_t m_port;                      // FTP 端口
 
-    // ===== 1 字节位域（特性协商、SSL、压缩、ABOR 等开关） =====
-    uint8_t m_features;                   // FEAT 协商结果（XFtp_Feature 位掩码）
+    // ===== 特性协商、SSL、压缩、ABOR 等开关 =====
+    uint16_t m_features;                  // FEAT 协商结果（XFtp_Feature 位掩码）
     uint8_t m_useSsl            : 1;      // 是否启用 SSL/TLS
     uint8_t m_useCompression    : 1;      // 是否启用 MODE Z
     uint8_t m_compressionActive : 1;      // MODE Z 协商成功后启用压缩 DTP
@@ -196,7 +199,8 @@ typedef struct XFtp {
     uint8_t m_reconnecting        : 1;    // 正在恢复控制会话
     uint8_t m_closeRequested      : 1;    // QUIT 已发送
     uint8_t m_outOfBandPending;           // FEAT/OPTS 等带外响应计数
-    uint8_t m_dtpState;                   // DTP 状态：0=关闭，1=已连接，2=连接中
+    uint8_t m_dtpState;                   // 0=关闭，1=传输中，2=被动连接中，3/4/5=主动协调，6=等待 TYPE
+    uint8_t m_epsvAttempted;              // 当前传输已发送 EPSV，失败时回退 PASV
     struct {
         uint8_t m_sslState : 3;            // 0=off,1=AUTH,2=handshake,3=PBSZ,4=PROT,5=ready
         uint8_t m_restState : 2;           // REST 状态机 0/1/2
@@ -434,8 +438,6 @@ XFtp_TransferMode XFtp_transferMode(const XFtp* ftp);
  * @brief 设置数据传输模式。
  * @param[in,out] ftp FTP 实例
  * @param[in] mode Passive 或 Active
- * @warning Explicit FTPS 当前只支持 Passive；在 Active 模式下传输命令会
- *          返回 XFtp_Error_ActiveModeFailed。
  */
 void XFtp_setTransferMode(XFtp* ftp, XFtp_TransferMode mode);
 /** @brief 获取 TYPE 设置。 @param[in] ftp FTP 实例。 @return Binary 或 Ascii；NULL 返回 Binary。 */
@@ -499,11 +501,35 @@ void XFtp_setSslPeerVerifyMode(XFtp* ftp, XSslPeerVerifyMode mode);
 XSslPeerVerifyMode XFtp_sslPeerVerifyMode(const XFtp* ftp);
 
 /**
+ * @brief 设置用于校验 FTPS 服务器证书的受信 CA。
+ * @param[in,out] ftp FTP 实例；必须处于未连接状态
+ * @param[in] ca 受信 CA 证书；NULL 清除已设置的证书
+ * @note XFtp 仅保存弱引用。调用方必须让 ca 在 ftp 的所有 FTPS 控制和
+ *       数据连接结束前保持有效，并在销毁 ftp 后自行释放 ca。
+ */
+void XFtp_setSslCaCertificate(XFtp* ftp, XSslCertificate* ca);
+
+/**
+ * @brief 设置 FTPS 证书校验和 SNI 使用的服务器名称。
+ * @param[in,out] ftp FTP 实例；必须处于未连接状态
+ * @param[in] name 证书中的 DNS 名称；NULL 或空串时使用 connectToHost 的主机名
+ * @note 该名称同时应用于控制连接和被动数据连接。XFtp 会复制 name，调用方可立即释放原字符串。
+ */
+void XFtp_setSslPeerVerifyName(XFtp* ftp, const char* name);
+
+/**
+ * @brief 获取显式设置的 FTPS 对端校验名称。
+ * @param[in] ftp FTP 实例
+ * @return 显式设置的 UTF-8 名称；未设置时返回 NULL，生命周期属于 ftp。
+ */
+const char* XFtp_sslPeerVerifyName(const XFtp* ftp);
+
+/**
  * @brief 设置 MODE Z 压缩
  * @param[in,out] ftp 未连接的 FTP 实例
  * @param[in] useCompression 是否请求 MODE Z
  * @note 仅在未连接时可设置
- * @warning 当前 portable DTP path 尚未实现压缩传输；启用后传输命令会失败并返回 ProtocolError
+ * @note 服务器未在 FEAT 中声明 MODE Z 或拒绝协商时，传输命令会返回 ProtocolError。
  */
 void XFtp_setCompression(XFtp* ftp, bool useCompression);
 

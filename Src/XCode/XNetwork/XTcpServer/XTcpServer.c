@@ -129,8 +129,11 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 		return;
 	}
 
-	// 鍒涘缓 TCP 濂楁帴瀛?
-	XTcpSocket* socket = XTcpSocket_create();
+	// Construct the final derived socket before its first descriptor binding, so
+	// a second object never takes ownership of an already-bound descriptor.
+	XTcpSocket* socket = server->incomingSocketFactory
+		? server->incomingSocketFactory(server->incomingSocketFactoryContext)
+		: XTcpSocket_create();
 	if (!socket) {
 		server->lastError = XAbstractSocket_SocketResourceError;
 		if (server->errorString) {
@@ -231,6 +234,8 @@ void XTcpServer_init(XTcpServer* server)
 	server->lastError = XAbstractSocket_UnknownSocketError;
 	server->errorString = NULL;
 	XNetworkProxy_init(&server->proxy);
+	server->incomingSocketFactory = NULL;
+	server->incomingSocketFactoryContext = NULL;
 	// 鍒濆鍖栦复鏃跺瓨鍌ㄧ殑瀹㈡埛绔湴鍧€
 	XHostAddress_init(&server->lastAcceptedAddr);
 	server->lastAcceptedPort = 0;
@@ -332,6 +337,14 @@ int XTcpServer_maxPendingConnections(const XTcpServer* server)
 {
 	if (!server) return 0;
 	return server->maxPendingConnections;
+}
+
+void XTcpServer_setIncomingSocketFactory(XTcpServer* server,
+	XTcpServer_IncomingSocketFactory factory, void* context)
+{
+	if (!server || server->listening) return;
+	server->incomingSocketFactory = factory;
+	server->incomingSocketFactoryContext = context;
 }
 
 void XTcpServer_setListenBacklogSize(XTcpServer* server, int size)
