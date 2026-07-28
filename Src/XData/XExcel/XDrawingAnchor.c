@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XDrawingAnchor.c
  * @brief      XDrawingAnchor 绘图锚点实现
  *             对齐 QXlsx::DrawingAnchor 全部功能
@@ -178,23 +178,23 @@ static bool read_marker(XXmlStreamReader* reader, XlsxMarker* out) {
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
             if (xml_name_is(name, "col")) {
-                const XString* t = XXmlStreamReader_readElementText_const(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_col = atoi(XString_toUtf8(t));
             } else if (xml_name_is(name, "colOff")) {
-                const XString* t = XXmlStreamReader_readElementText_const(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_colOffset = atoi(XString_toUtf8(t));
             } else if (xml_name_is(name, "row")) {
-                const XString* t = XXmlStreamReader_readElementText_const(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_row = atoi(XString_toUtf8(t));
             } else if (xml_name_is(name, "rowOff")) {
-                const XString* t = XXmlStreamReader_readElementText_const(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
+                const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_rowOffset = atoi(XString_toUtf8(t));
             }
         } else if (tt == XXmlStream_EndElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (xml_name_is(name, "from") || xml_name_is(name, "to"))
                 break;
         }
@@ -300,7 +300,7 @@ bool XDrawingAnchor_saveToXml(const XDrawingAnchor* self, void* writer_) {
 
 static bool load_anchor_xml(XDrawingAnchor* self, XXmlStreamReader* reader)
 {
-    const XString* element = XXmlStreamReader_name_const(reader);
+    const XString* element = XXmlStreamReader_name(reader);
     const char* anchorEnd = NULL;
     if (xml_name_is(element, "twoCellAnchor")) {
         self->m_anchorType = XDAnchor_TwoCell;
@@ -317,7 +317,7 @@ static bool load_anchor_xml(XDrawingAnchor* self, XXmlStreamReader* reader)
 
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement) {
             if (xml_name_is(name, "from")) {
                 XlsxMarker marker;

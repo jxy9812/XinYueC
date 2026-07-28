@@ -295,7 +295,7 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token != XXmlStream_StartElement) continue;
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (name && XString_equals_utf8(name, "Relationships", XChar_CaseSensitive)) {
             rootSeen = true;
             continue;

@@ -1,4 +1,4 @@
-﻿#include "XSharedStrings.h"
+#include "XSharedStrings.h"
 #include "XXmlStreamReader.h"
 #include "XMemory.h"
 #include "XFile.h"
@@ -475,7 +475,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
         if (XXmlStreamReader_hasError(reader)) break;
 
         if (tt == XXmlStream_StartElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
 
             if (XString_equals_utf8(name, "sst", XChar_CaseSensitive)) {
@@ -577,11 +577,11 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
             }
         } else if (tt == XXmlStream_Characters ) {
             if (in_si && in_t) {
-                const XString* txt = XXmlStreamReader_text_const(reader);
+                const XString* txt = XXmlStreamReader_text(reader);
                 if (txt) XString_append(acc, txt);
             }
         } else if (tt == XXmlStream_EndElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
 
             if (in_si && XString_equals_utf8(name, "t", XChar_CaseSensitive)) {

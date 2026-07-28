@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XReadSax.c
  * @brief      XReadSax SAX 流式单元格读取实现
  *             对标 QXlsx::read_sax 全部功能
@@ -131,18 +131,18 @@ bool XReadSax_loadSharedStringsXml(const uint8_t* xmlData, size_t xmlLen, XStrin
         if (XXmlStreamReader_hasError(reader)) break;
 
         if (tt == XXmlStream_StartElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
             if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = true;
                 XString_clear_base(acc);
             } else if (in_si && XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (text) XString_append(acc, text);
             }
         } else if (tt == XXmlStream_EndElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
             if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = false;
@@ -213,7 +213,7 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
         if (XXmlStreamReader_hasError(reader)) break;
 
         if (tt == XXmlStream_StartElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
 
             if (state == ST_ROOT && XString_equals_utf8(name, "sheetData", XChar_CaseSensitive)) {
@@ -254,7 +254,7 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
             } else if (state == ST_CELL) {
                 if (XString_equals_utf8(name, "v", XChar_CaseSensitive) ||
                     XString_equals_utf8(name, "t", XChar_CaseSensitive)) {
-                    const XString* txt = XXmlStreamReader_readElementText_const(reader,
+                    const XString* txt = XXmlStreamReader_readElementText(reader,
                         XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                     if (txt) {
                         XString_append(value, txt);
@@ -263,7 +263,7 @@ bool XReadSax_readSheetXml(const uint8_t* sheetXml, size_t sheetLen,
                 }
             }
         } else if (tt == XXmlStream_EndElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
 
             if (state == ST_CELL && XString_equals_utf8(name, "c", XChar_CaseSensitive)) {

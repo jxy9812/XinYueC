@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XXmlStreamReaderTest.c
  * @brief      XXmlStreamReader XML读取器全面测试
  * @author     XinYueC 团队
@@ -14,13 +14,14 @@
 #include "XCoreApplication.h"
 #include "XPrintf.h"
 #include "XMemory.h"
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 
 /* ==================== 测试辅助宏 ==================== */
-#define TEST_PASS(name) XPrintf("[PASS] %s\n", name)
-#define TEST_FAIL(name, reason) XPrintf("[FAIL] %s: %s\n", name, reason)
-#define TEST_INFO(fmt, ...) XPrintf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#define TEST_PASS(name) XPrintf("[通过] %s\n", name)
+#define TEST_FAIL(name, reason) XPrintf("[失败] %s: %s\n", name, reason)
+#define TEST_INFO(fmt, ...) XPrintf("[信息] " fmt "\n", ##__VA_ARGS__)
 
 /* ==================== 测试函数声明 ==================== */
 static bool test_create_delete(void);
@@ -36,6 +37,9 @@ static bool test_dtd_declaration_values(void);
 static bool test_device_input(void);
 static bool test_dtd_copy_move(void);
 static bool test_incremental_device_input(void);
+static bool test_encoded_input(void);
+static bool test_namespace_declarations_api(void);
+static bool test_uninitialized_copy_move(void);
 
 /* New API coverage tests */
 static bool test_line_column_offset(void);
@@ -54,7 +58,7 @@ static bool test_read_next_start_element(void);
 static bool test_read_element_text(void);
 static bool test_invalid_xml(void);
 
-static bool test_run_all(void);
+bool XXmlStreamReaderTest_runAll(void);
 
 /* ==================== 包装函数 ==================== */
 static void test_create_delete_wrapper(XVariant* d) { (void)d; test_create_delete(); }
@@ -70,6 +74,9 @@ static void test_dtd_declaration_values_wrapper(XVariant* d) { (void)d; test_dtd
 static void test_device_input_wrapper(XVariant* d) { (void)d; test_device_input(); }
 static void test_dtd_copy_move_wrapper(XVariant* d) { (void)d; test_dtd_copy_move(); }
 static void test_incremental_device_input_wrapper(XVariant* d) { (void)d; test_incremental_device_input(); }
+static void test_encoded_input_wrapper(XVariant* d) { (void)d; test_encoded_input(); }
+static void test_namespace_declarations_api_wrapper(XVariant* d) { (void)d; test_namespace_declarations_api(); }
+static void test_uninitialized_copy_move_wrapper(XVariant* d) { (void)d; test_uninitialized_copy_move(); }
 
 static void test_line_column_offset_wrapper(XVariant* d) { (void)d; test_line_column_offset(); }
 static void test_standalone_declaration_wrapper(XVariant* d) { (void)d; test_standalone_declaration(); }
@@ -87,7 +94,7 @@ static void test_read_next_start_element_wrapper(XVariant* d) { (void)d; test_re
 static void test_read_element_text_wrapper(XVariant* d) { (void)d; test_read_element_text(); }
 static void test_invalid_xml_wrapper(XVariant* d) { (void)d; test_invalid_xml(); }
 
-static void test_run_all_wrapper(XVariant* d) { (void)d; test_run_all(); }
+static void test_run_all_wrapper(XVariant* d) { (void)d; XXmlStreamReaderTest_runAll(); }
 
 /* ==================== 测试1: 创建和删除 ==================== */
 static bool test_create_delete(void)
@@ -100,7 +107,7 @@ static bool test_create_delete(void)
         XXmlStream_StartDocument == 2 && XXmlStream_ProcessingInstruction == 10)
         TEST_PASS("TokenType 数值与 Qt 对齐");
     else { TEST_FAIL("TokenType 数值", "与 Qt 枚举值不一致"); }
-    if (strcmp(XXmlStreamReader_tokenString_const(r), "NoToken") == 0)
+    if (strcmp(XXmlStreamReader_tokenString(r), "NoToken") == 0)
         TEST_PASS("tokenString(NoToken)");
     else TEST_FAIL("tokenString(NoToken)", "Token 文本映射错误");
     XXmlStreamReader_delete_base(r);
@@ -135,7 +142,7 @@ static bool test_raise_error(void)
     if (XXmlStreamReader_hasError(r)) TEST_PASS("hasError=true after raiseError");
     else { TEST_FAIL("hasError", "应为true"); all_pass = false; }
     if (XXmlStreamReader_error(r) == XXmlStream_CustomError) TEST_PASS("error=CustomError");
-    const XString* err = XXmlStreamReader_errorString_const(r);
+    const XString* err = XXmlStreamReader_errorString(r);
     if (err && XString_equals_utf8(err, "test error", XChar_CaseSensitive)) TEST_PASS("errorString match");
     XXmlStreamReader_delete_base(r);
     return all_pass;
@@ -222,11 +229,11 @@ static bool test_entity_expansion_limit(void)
 static bool test_null_safety(void)
 {
     TEST_INFO("===== 空安全测试 =====");
-    if (XXmlStreamReader_name_const(NULL) == NULL) TEST_PASS("name(NULL)=NULL");
-    if (XXmlStreamReader_namespaceUri_const(NULL) == NULL) TEST_PASS("namespaceUri(NULL)=NULL");
-    if (XXmlStreamReader_text_const(NULL) == NULL) TEST_PASS("text(NULL)=NULL");
-    if (XXmlStreamReader_errorString_const(NULL) == NULL) TEST_PASS("errorString(NULL)=NULL");
-    if (XXmlStreamReader_dtdName_const(NULL) == NULL) TEST_PASS("dtdName(NULL)=NULL");
+    if (XXmlStreamReader_name(NULL) == NULL) TEST_PASS("name(NULL)=NULL");
+    if (XXmlStreamReader_namespaceUri(NULL) == NULL) TEST_PASS("namespaceUri(NULL)=NULL");
+    if (XXmlStreamReader_text(NULL) == NULL) TEST_PASS("text(NULL)=NULL");
+    if (XXmlStreamReader_errorString(NULL) == NULL) TEST_PASS("errorString(NULL)=NULL");
+    if (XXmlStreamReader_dtdName(NULL) == NULL) TEST_PASS("dtdName(NULL)=NULL");
     if (XXmlStreamReader_notationDeclarations(NULL) == NULL) TEST_PASS("notationDeclarations(NULL)=NULL");
     if (XXmlStreamReader_entityDeclarations(NULL) == NULL) TEST_PASS("entityDeclarations(NULL)=NULL");
     if (XXmlStreamReader_entityResolver(NULL) == NULL) TEST_PASS("entityResolver(NULL)=NULL");
@@ -395,7 +402,7 @@ static bool test_dtd_declaration_values(void)
     bool resolved = false;
     while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r)) {
         if (XXmlStreamReader_readNext(r) == XXmlStream_Characters &&
-            XString_equals_utf8(XXmlStreamReader_text_const(r), "resolved", XChar_CaseSensitive)) {
+            XString_equals_utf8(XXmlStreamReader_text(r), "resolved", XChar_CaseSensitive)) {
             resolved = true;
             break;
         }
@@ -422,7 +429,7 @@ static bool test_dtd_declaration_values(void)
     resolved = false;
     while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r)) {
         if (XXmlStreamReader_readNext(r) == XXmlStream_Characters &&
-            XString_equals_utf8(XXmlStreamReader_text_const(r), "declared-resolved", XChar_CaseSensitive)) {
+            XString_equals_utf8(XXmlStreamReader_text(r), "declared-resolved", XChar_CaseSensitive)) {
             resolved = true;
             break;
         }
@@ -440,12 +447,12 @@ static bool test_device_input(void)
 {
     TEST_INFO("===== QIODevice 输入测试 =====");
     bool all_pass = true;
-    XString* path = XString_create_utf8("xmlstream_reader_device_test.xml");
+    XString* path = XString_create_utf8("xmlstream_reader_device_test_v2.xml");
     XFile_remove_static(path);
     XFile* writerFile = XFile_create_2(path);
     if (!path || !writerFile || !XFile_open_2(writerFile,
             XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
-            XFile_ReadOwner | XFile_WriteOwner)) {
+            0)) {
         TEST_FAIL("Reader setDevice", "无法创建临时输入文件");
         if (writerFile) XFile_deleteLater(writerFile);
         if (path) { XFile_remove_static(path); XString_delete_base(path); }
@@ -458,7 +465,7 @@ static bool test_device_input(void)
     XFile* input = XFile_create_2(path);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     bool opened = input && XFile_open_2(input, XIODevice_ReadOnly | XIODevice_Existing,
-        XFile_ReadOwner | XFile_WriteOwner);
+        0);
     XXmlStreamReader_addData_utf8(reader, "<old/>");
     XXmlStreamReader_readNext(reader);
     XXmlStreamReader_readNext(reader);
@@ -476,7 +483,7 @@ static bool test_device_input(void)
     if (opened) {
         while (!XXmlStreamReader_atEnd(reader) && !XXmlStreamReader_hasError(reader)) {
             if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
-                XString_equals_utf8(XXmlStreamReader_name_const(reader), "value", XChar_CaseSensitive)) {
+                XString_equals_utf8(XXmlStreamReader_name(reader), "value", XChar_CaseSensitive)) {
                 found = true;
                 break;
             }
@@ -533,12 +540,12 @@ static bool test_incremental_device_input(void)
 {
     TEST_INFO("===== QIODevice 分块输入测试 =====");
     bool all_pass = true;
-    XString* path = XString_create_utf8("xmlstream_reader_incremental_test.xml");
+    XString* path = XString_create_utf8("xmlstream_reader_incremental_test_v2.xml");
     XFile_remove_static(path);
     XFile* initial = XFile_create_2(path);
     if (!path || !initial || !XFile_open_2(initial,
-            XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
-            XFile_ReadOwner | XFile_WriteOwner)) {
+            XIODevice_ReadWrite | XIODevice_Create | XIODevice_Truncate,
+            0)) {
         TEST_FAIL("分块设备准备", "无法创建临时文件");
         if (initial) XFile_deleteLater(initial);
         if (path) { XFile_remove_static(path); XString_delete_base(path); }
@@ -550,30 +557,31 @@ static bool test_incremental_device_input(void)
 
     XFile* input = XFile_create_2(path);
     XXmlStreamReader* reader = XXmlStreamReader_create();
-    bool opened = input && XFile_open_2(input, XIODevice_ReadOnly | XIODevice_Existing,
-        XFile_ReadOwner | XFile_WriteOwner);
+    bool opened = input && XFile_open_2(input, XIODevice_ReadWrite | XIODevice_Existing,
+        0);
     XXmlStreamReader_setDevice(reader, (XIODevice*)input);
     int firstToken = opened ? XXmlStreamReader_readNext(reader) : XXmlStream_Invalid;
-    if (firstToken == XXmlStream_Invalid &&
+    int incompleteToken = opened ? XXmlStreamReader_readNext(reader) : XXmlStream_Invalid;
+    if (firstToken == XXmlStream_StartDocument &&
+        incompleteToken == XXmlStream_Invalid &&
         XXmlStreamReader_error(reader) == XXmlStream_PrematureEndOfDocumentError)
         TEST_PASS("不完整设备标记等待后续数据");
     else { TEST_FAIL("分块设备初始读取", "未报告文档提前结束"); all_pass = false; }
 
-    XFile* appended = XFile_create_2(path);
-    bool appendedOk = appended && XFile_open_2(appended,
-        XIODevice_Append | XIODevice_Existing, XFile_ReadOwner | XFile_WriteOwner);
-    if (appendedOk) {
-        XIODevice_write_3((XIODevice*)appended, "><value>ok</value></device>");
-        XIODevice_close_base((XIODevice*)appended);
-    }
-    if (appended) XFile_deleteLater(appended);
+    const char* suffix = "><value>ok</value></device>";
+    bool appendedOk = opened &&
+        XIODevice_write_3((XIODevice*)input, suffix) == (int64_t)strlen(suffix);
+    if (appendedOk)
+        appendedOk = XIODevice_seek_base((XIODevice*)input, 7);
 
     /* 续读调用会清除 PrematureEndOfDocumentError 并拉取文件新增字节。 */
-    if (appendedOk) XXmlStreamReader_readNext(reader);
-    bool found = false;
+    int tokenAfterAppend = appendedOk ? XXmlStreamReader_readNext(reader) : XXmlStream_Invalid;
+    bool found = tokenAfterAppend == XXmlStream_StartElement &&
+        XString_equals_utf8(XXmlStreamReader_name(reader), "value", XChar_CaseSensitive);
     while (appendedOk && !XXmlStreamReader_atEnd(reader) && !XXmlStreamReader_hasError(reader)) {
+        if (found) break;
         if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
-            XString_equals_utf8(XXmlStreamReader_name_const(reader), "value", XChar_CaseSensitive)) {
+            XString_equals_utf8(XXmlStreamReader_name(reader), "value", XChar_CaseSensitive)) {
             found = true;
             break;
         }
@@ -610,11 +618,11 @@ static bool test_line_column_offset(void)
     int safety = 0;
     while (!XXmlStreamReader_atEnd(r) && safety++ < 32) {
         XXmlStreamReader_readNext(r);
-        if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive))
+        if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive))
             break;
     }
     /* 找到 child 的开始 */
-    if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive)) {
+    if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) {
         int64_t lnChild = XXmlStreamReader_lineNumber(r);
         int64_t offChild = XXmlStreamReader_characterOffset(r);
         if (lnChild == 3) TEST_PASS("child 元素行号 = 3");
@@ -684,8 +692,8 @@ static bool test_processing_instruction_fields(void)
         if (type == XXmlStream_ProcessingInstruction) break;
     }
     if (type == XXmlStream_ProcessingInstruction) {
-        const XString* target = XXmlStreamReader_processingInstructionTarget_const(r);
-        const XString* data = XXmlStreamReader_processingInstructionData_const(r);
+        const XString* target = XXmlStreamReader_processingInstructionTarget(r);
+        const XString* data = XXmlStreamReader_processingInstructionData(r);
         if (target && XString_equals_utf8(target, "xml-stylesheet", XChar_CaseSensitive)) TEST_PASS("PI target = xml-stylesheet");
         else { TEST_FAIL("PI target", "应为 xml-stylesheet"); all_pass = false; }
         /* data 解析为 type="text/xsl" href="style.xsl"，至少应非空且包含 text/xsl */
@@ -774,12 +782,12 @@ static bool test_basic_xml_parse(void)
     int t = XXmlStreamReader_readNext(r); /* StartDocument */
     if (t == XXmlStream_StartDocument) TEST_PASS("StartDocument");
     else { TEST_FAIL("StartDocument", ""); all_pass = false; }
-    if (XString_equals_utf8(XXmlStreamReader_documentVersion_const(r), "1.0", XChar_CaseSensitive)) TEST_PASS("documentVersion=1.0");
+    if (XString_equals_utf8(XXmlStreamReader_documentVersion(r), "1.0", XChar_CaseSensitive)) TEST_PASS("documentVersion=1.0");
     else { TEST_FAIL("doc ver", ""); all_pass = false; }
-    if (XString_equals_utf8(XXmlStreamReader_documentEncoding_const(r), "UTF-8", XChar_CaseSensitive)) TEST_PASS("documentEncoding=UTF-8");
+    if (XString_equals_utf8(XXmlStreamReader_documentEncoding(r), "UTF-8", XChar_CaseSensitive)) TEST_PASS("documentEncoding=UTF-8");
     else { TEST_FAIL("doc enc", ""); all_pass = false; }
     t = XXmlStreamReader_readNext(r); /* StartElement root */
-    if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name_const(r), "root", XChar_CaseSensitive)) TEST_PASS("StartElement root");
+    if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name(r), "root", XChar_CaseSensitive)) TEST_PASS("StartElement root");
     else { TEST_FAIL("StartElement root", ""); all_pass = false; }
     /* 属性 attr="v" */
     const XXmlStreamAttributes* attrs = XXmlStreamReader_attributes(r);
@@ -792,21 +800,21 @@ static bool test_basic_xml_parse(void)
         else { TEST_FAIL("属性值", "应为 v"); all_pass = false; }
     }
     t = XXmlStreamReader_readNext(r); /* StartElement child */
-    if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive)) TEST_PASS("StartElement child");
+    if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) TEST_PASS("StartElement child");
     else { TEST_FAIL("StartElement child", ""); all_pass = false; }
     t = XXmlStreamReader_readNext(r); /* Characters hello */
-    if (t == XXmlStream_Characters && XString_equals_utf8(XXmlStreamReader_text_const(r), "hello", XChar_CaseSensitive)) TEST_PASS("Characters hello");
+    if (t == XXmlStream_Characters && XString_equals_utf8(XXmlStreamReader_text(r), "hello", XChar_CaseSensitive)) TEST_PASS("Characters hello");
     else { TEST_FAIL("Characters", ""); all_pass = false; }
     /* 跳到 EndElement child */
     while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isEndElement(r))
         XXmlStreamReader_readNext(r);
-    if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive)) TEST_PASS("EndElement child");
+    if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) TEST_PASS("EndElement child");
     else { TEST_FAIL("EndElement child", ""); all_pass = false; }
     /* 越过 EndElement child，EndElement root */
     XXmlStreamReader_readNext(r);
     while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isEndElement(r))
         XXmlStreamReader_readNext(r);
-    if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "root", XChar_CaseSensitive)) TEST_PASS("EndElement root");
+    if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "root", XChar_CaseSensitive)) TEST_PASS("EndElement root");
     else { TEST_FAIL("EndElement root", ""); all_pass = false; }
     XXmlStreamReader_delete_base(r);
     return all_pass;
@@ -954,13 +962,13 @@ static bool test_cdata_comment(void)
         int t = XXmlStreamReader_readNext(r);
         if (t == XXmlStream_Comment) {
             sawComment = 1;
-            const XString* tx = XXmlStreamReader_text_const(r);
+            const XString* tx = XXmlStreamReader_text(r);
             if (tx && XString_toUtf8(tx) && strstr(XString_toUtf8(tx), "a comment") != NULL) TEST_PASS("注释内容解析");
             else { TEST_FAIL("comment text", ""); all_pass = false; }
         }
         else if (t == XXmlStream_Characters && XXmlStreamReader_isCDATA(r)) {
             sawCdata = 1;
-            const XString* tx = XXmlStreamReader_text_const(r);
+            const XString* tx = XXmlStreamReader_text(r);
             if (tx && XString_toUtf8(tx) && strstr(XString_toUtf8(tx), "<x>raw</x>") != NULL) TEST_PASS("CDATA 内容解析（含 < >）");
             else { TEST_FAIL("cdata text", ""); all_pass = false; }
         }
@@ -988,7 +996,7 @@ static bool test_entity_reference(void)
     while (!XXmlStreamReader_atEnd(r) && safety++ < 16) {
         int t = XXmlStreamReader_readNext(r);
         if (t == XXmlStream_Characters) {
-            const XString* txtX = XXmlStreamReader_text_const(r);
+            const XString* txtX = XXmlStreamReader_text(r);
             const char* txt = txtX ? XString_toUtf8(txtX) : NULL;
             sawText = 1;
             if (txt) {
@@ -1016,12 +1024,13 @@ static bool test_dtd_declaration(void)
     XXmlStreamReader_addData_utf8(r,
         "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">"
         "<html/>");
-    int t = XXmlStreamReader_readNext(r); /* 没有 XML 声明 -> 第一个 token 是 DTD */
-    if (t == XXmlStream_DTD) TEST_PASS("DTD token");
+    int t = XXmlStreamReader_readNext(r); /* Qt 先报告 StartDocument，再报告 DTD。 */
+    if (t == XXmlStream_StartDocument &&
+        XXmlStreamReader_readNext(r) == XXmlStream_DTD) TEST_PASS("DTD token");
     else { TEST_FAIL("DTD token", ""); all_pass = false; }
-    const XString* dn = XXmlStreamReader_dtdName_const(r);
-    const XString* dpi = XXmlStreamReader_dtdPublicId_const(r);
-    const XString* dsi = XXmlStreamReader_dtdSystemId_const(r);
+    const XString* dn = XXmlStreamReader_dtdName(r);
+    const XString* dpi = XXmlStreamReader_dtdPublicId(r);
+    const XString* dsi = XXmlStreamReader_dtdSystemId(r);
     if (dn && XString_equals_utf8(dn, "html", XChar_CaseSensitive)) TEST_PASS("dtdName=html");
     else { TEST_FAIL("dtdName", "应为 html"); all_pass = false; }
     if (dpi && XString_toUtf8(dpi) && strstr(XString_toUtf8(dpi), "W3C") != NULL) TEST_PASS("dtdPublicId 包含 W3C");
@@ -1043,10 +1052,10 @@ static bool test_skip_current_element(void)
         XXmlStreamReader_addData_utf8(r, "<a><b>x</b><c>y</c></a>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "a", XChar_CaseSensitive)) {
+        if (XXmlStreamReader_isStartElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "a", XChar_CaseSensitive)) {
             TEST_PASS("找到 root StartElement");
             XXmlStreamReader_skipCurrentElement(r);
-            if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name_const(r), "a", XChar_CaseSensitive))
+            if (XXmlStreamReader_isEndElement(r) && XString_equals_utf8(XXmlStreamReader_name(r), "a", XChar_CaseSensitive))
                 TEST_PASS("skip 后停在 EndElement a");
             else { TEST_FAIL("skip result", "应停在 EndElement a"); all_pass = false; }
         } else { TEST_FAIL("find a", ""); all_pass = false; }
@@ -1065,19 +1074,36 @@ static bool test_read_next_start_element(void)
         "<root>   <!--c-->  <child id=\"1\">v</child>  text  <child2/> </root>");
     /* 第一个 StartElement 应该是 root */
     if (XXmlStreamReader_readNextStartElement(r)
-        && XString_equals_utf8(XXmlStreamReader_name_const(r), "root", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> root");
+        && XString_equals_utf8(XXmlStreamReader_name(r), "root", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> root");
     else { TEST_FAIL("first start", ""); all_pass = false; }
     /* 第二个应是 child */
     if (XXmlStreamReader_readNextStartElement(r)
-        && XString_equals_utf8(XXmlStreamReader_name_const(r), "child", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> child");
+        && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> child");
     else { TEST_FAIL("second start", ""); all_pass = false; }
-    /* child2 */
+    /* 当前停在 child 的 EndElement，Qt 语义要求本次返回 false。 */
     if (XXmlStreamReader_readNextStartElement(r)
-        && XString_equals_utf8(XXmlStreamReader_name_const(r), "child2", XChar_CaseSensitive)) TEST_PASS("readNextStartElement -> child2");
-    else { TEST_FAIL("third start", ""); all_pass = false; }
-    /* 越过 child2 后再调用应失败（已到 root EndElement） */
-    if (!XXmlStreamReader_readNextStartElement(r)) TEST_PASS("无更多 StartElement 返回 false");
-    else { TEST_FAIL("more start", "应返回 false"); all_pass = false; }
+        && XString_equals_utf8(XXmlStreamReader_name(r), "child2", XChar_CaseSensitive)) {
+        TEST_FAIL("子元素结束边界", "未按 Qt 语义停在 child 的结束标签");
+        all_pass = false;
+    } else if (XXmlStreamReader_isEndElement(r) &&
+               XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) {
+        TEST_PASS("子元素结束时返回 false");
+    } else {
+        TEST_FAIL("子元素结束边界", "未停在 child 的结束标签");
+        all_pass = false;
+    }
+    /* 从 child 的结束标签继续读取，应找到后续 child2。 */
+    if (XXmlStreamReader_readNextStartElement(r) &&
+        XString_equals_utf8(XXmlStreamReader_name(r), "child2", XChar_CaseSensitive)) {
+        TEST_PASS("readNextStartElement 找到后续 child2");
+    } else {
+        TEST_FAIL("readNextStartElement 后续元素", "未找到 child2");
+        all_pass = false;
+    }
+    /* 空元素 child2 的下一个 token 是其结束标签。 */
+    if (!XXmlStreamReader_readNextStartElement(r) && XXmlStreamReader_isEndElement(r))
+        TEST_PASS("空元素结束时返回 false");
+    else { TEST_FAIL("空元素结束边界", "应返回 false 并停在结束标签"); all_pass = false; }
     XXmlStreamReader_delete_base(r);
     return all_pass;
 }
@@ -1093,7 +1119,7 @@ static bool test_read_element_text(void)
         XXmlStreamReader_addData_utf8(r, "<g>hello world</g>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        const XString* txt = XXmlStreamReader_readElementText_const(r,
+        const XString* txt = XXmlStreamReader_readElementText(r,
             XXmlStream_ReadElementTextBehaviour_ErrorOnUnexpectedElement);
         if (txt && XString_equals_utf8(txt, "hello world", XChar_CaseSensitive)) TEST_PASS("readElementText = 'hello world'");
         else { TEST_FAIL("readElementText", ""); all_pass = false; }
@@ -1105,7 +1131,7 @@ static bool test_read_element_text(void)
         XXmlStreamReader_addData_utf8(r, "<g>before<x/>after</g>");
         while (!XXmlStreamReader_atEnd(r) && !XXmlStreamReader_isStartElement(r))
             XXmlStreamReader_readNext(r);
-        const XString* txt = XXmlStreamReader_readElementText_const(r,
+        const XString* txt = XXmlStreamReader_readElementText(r,
             XXmlStream_ReadElementTextBehaviour_SkipChildElements);
         if (txt && XString_toUtf8(txt) && (strstr(XString_toUtf8(txt), "before") != NULL || strstr(XString_toUtf8(txt), "after") != NULL))
             TEST_PASS("SkipChildElements 读取拼接文本");
@@ -1201,7 +1227,184 @@ static bool test_invalid_xml(void)
 /* ==================== 主测试入口 ==================== */
 
 /* ==================== 主测试入口 ==================== */
-static bool test_run_all(void)
+static bool test_encoded_document(const uint8_t* bytes, size_t length, const char* label)
+{
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    XByteArray* data = XByteArray_create_with_data((const char*)bytes, length);
+    bool ok = reader && data;
+    bool sawRoot = false;
+    int guard = 0;
+
+    if (ok) {
+        XXmlStreamReader_addData(reader, data);
+        while (!XXmlStreamReader_atEnd(reader) && guard++ < 16) {
+            if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
+                XString_equals_utf8(XXmlStreamReader_name(reader), "root",
+                                     XChar_CaseSensitive)) {
+                sawRoot = true;
+            }
+            if (XXmlStreamReader_hasError(reader)) break;
+        }
+        ok = sawRoot && !XXmlStreamReader_hasError(reader);
+    }
+
+    if (ok) TEST_PASS(label);
+    else TEST_FAIL(label, "编码 XML 解析失败");
+    if (data) XByteArray_delete_base(data);
+    if (reader) XXmlStreamReader_delete_base(reader);
+    return ok;
+}
+
+static bool test_encoded_input(void)
+{
+    TEST_INFO("===== UTF-8/UTF-16/UTF-32 编码输入测试 =====");
+    static const uint8_t utf8[] = {
+        0xef, 0xbb, 0xbf, '<', 'r', 'o', 'o', 't', '/', '>'
+    };
+    static const uint8_t utf16le[] = {
+        0xff, 0xfe,
+        0x3c, 0x00, 0x72, 0x00, 0x6f, 0x00, 0x6f, 0x00,
+        0x74, 0x00, 0x2f, 0x00, 0x3e, 0x00
+    };
+    static const uint8_t utf16be[] = {
+        0xfe, 0xff,
+        0x00, 0x3c, 0x00, 0x72, 0x00, 0x6f, 0x00, 0x6f,
+        0x00, 0x74, 0x00, 0x2f, 0x00, 0x3e
+    };
+    static const uint8_t utf32le[] = {
+        0xff, 0xfe, 0x00, 0x00,
+        0x3c, 0x00, 0x00, 0x00, 0x72, 0x00, 0x00, 0x00,
+        0x6f, 0x00, 0x00, 0x00, 0x6f, 0x00, 0x00, 0x00,
+        0x74, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00,
+        0x3e, 0x00, 0x00, 0x00
+    };
+    static const uint8_t utf32be[] = {
+        0x00, 0x00, 0xfe, 0xff,
+        0x00, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00, 0x72,
+        0x00, 0x00, 0x00, 0x6f, 0x00, 0x00, 0x00, 0x6f,
+        0x00, 0x00, 0x00, 0x74, 0x00, 0x00, 0x00, 0x2f,
+        0x00, 0x00, 0x00, 0x3e
+    };
+    bool allPass = true;
+    allPass = test_encoded_document(utf8, sizeof(utf8), "UTF-8 BOM 编码输入") && allPass;
+    allPass = test_encoded_document(utf16le, sizeof(utf16le), "UTF-16LE 编码输入") && allPass;
+    allPass = test_encoded_document(utf16be, sizeof(utf16be), "UTF-16BE 编码输入") && allPass;
+    allPass = test_encoded_document(utf32le, sizeof(utf32le), "UTF-32LE 编码输入") && allPass;
+    allPass = test_encoded_document(utf32be, sizeof(utf32be), "UTF-32BE 编码输入") && allPass;
+    return allPass;
+}
+
+static bool test_namespace_declarations_api(void)
+{
+    TEST_INFO("===== 命名空间声明列表数量/索引测试 =====");
+    bool allPass = true;
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    if (!reader) return false;
+
+    XXmlStreamReader_addData_utf8(reader,
+        "<root xmlns:p=\"urn:p\" xmlns=\"urn:default\"/>");
+    XXmlStreamReader_readNext(reader);
+    XXmlStreamReader_readNext(reader);
+
+    const XXmlStreamNamespaceDeclarations* declarations =
+        XXmlStreamReader_namespaceDeclarations(reader);
+    int count = XXmlStreamNamespaceDeclarations_size(declarations);
+    bool foundPrefix = false;
+    bool foundDefault = false;
+    for (int i = 0; i < count; ++i) {
+        const XXmlStreamNamespaceDeclaration* declaration =
+            XXmlStreamNamespaceDeclarations_at(declarations, i);
+        if (!declaration) continue;
+        if (XString_equals_utf8(XXmlStreamNamespaceDeclaration_prefix(declaration), "p",
+                                 XChar_CaseSensitive) &&
+            XString_equals_utf8(XXmlStreamNamespaceDeclaration_namespaceUri(declaration),
+                                "urn:p", XChar_CaseSensitive)) {
+            foundPrefix = true;
+        }
+        if (XString_equals_utf8(XXmlStreamNamespaceDeclaration_prefix(declaration), "",
+                                 XChar_CaseSensitive) &&
+            XString_equals_utf8(XXmlStreamNamespaceDeclaration_namespaceUri(declaration),
+                                "urn:default", XChar_CaseSensitive)) {
+            foundDefault = true;
+        }
+    }
+    if (count == 2 && foundPrefix && foundDefault &&
+        !XXmlStreamNamespaceDeclarations_at(declarations, -1) &&
+        !XXmlStreamNamespaceDeclarations_at(declarations, count)) {
+        TEST_PASS("命名空间声明列表数量和索引");
+    } else {
+        TEST_FAIL("命名空间声明列表数量和索引", "列表内容或边界不正确");
+        allPass = false;
+    }
+
+    XXmlStreamReader_readNext(reader);
+    if (XXmlStreamNamespaceDeclarations_size(
+            XXmlStreamReader_namespaceDeclarations(reader)) == 0) {
+        TEST_PASS("非开始元素的命名空间声明列表为空");
+    } else {
+        TEST_FAIL("非开始元素的命名空间声明列表", "列表应为空");
+        allPass = false;
+    }
+    if (XXmlStreamNamespaceDeclarations_size(NULL) == 0 &&
+        XXmlStreamNamespaceDeclarations_at(NULL, 0) == NULL) {
+        TEST_PASS("命名空间声明列表空指针安全");
+    } else {
+        TEST_FAIL("命名空间声明列表空指针安全", "空指针访问不安全");
+        allPass = false;
+    }
+    XXmlStreamReader_delete_base(reader);
+    return allPass;
+}
+
+static bool test_uninitialized_copy_move(void)
+{
+    TEST_INFO("===== 未初始化目标拷贝/移动测试 =====");
+    bool allPass = true;
+    XXmlStreamReader* source = XXmlStreamReader_create();
+    if (!source) return false;
+    XXmlStreamReader_addData_utf8(source, "<root/>");
+    XXmlStreamReader_readNext(source);
+    XXmlStreamReader_readNext(source);
+
+    XXmlStreamReader* copied = (XXmlStreamReader*)XMalloc_System(
+        sizeof(XXmlStreamReader) + 4096);
+    XXmlStreamReader* moved = (XXmlStreamReader*)XMalloc_System(
+        sizeof(XXmlStreamReader) + 4096);
+    if (!copied || !moved) {
+        if (copied) XFree_System(copied);
+        if (moved) XFree_System(moved);
+        XXmlStreamReader_delete_base(source);
+        return false;
+    }
+    memset(copied, 0, sizeof(XXmlStreamReader) + 4096);
+    memset(moved, 0, sizeof(XXmlStreamReader) + 4096);
+
+    XClass_copy_base((XClass*)copied, (const XClass*)source);
+    if (XXmlStreamReader_tokenType(copied) == XXmlStream_StartElement &&
+        XString_equals_utf8(XXmlStreamReader_name(copied), "root", XChar_CaseSensitive)) {
+        TEST_PASS("读取器拷贝自动初始化空目标");
+    } else {
+        TEST_FAIL("读取器拷贝自动初始化空目标", "拷贝目标无效");
+        allPass = false;
+    }
+    XXmlStreamReader_deinit_base(copied);
+
+    XClass_move_base((XClass*)moved, source);
+    if (XXmlStreamReader_tokenType(moved) == XXmlStream_StartElement &&
+        XString_equals_utf8(XXmlStreamReader_name(moved), "root", XChar_CaseSensitive)) {
+        TEST_PASS("读取器移动自动初始化空目标");
+    } else {
+        TEST_FAIL("读取器移动自动初始化空目标", "移动目标无效");
+        allPass = false;
+    }
+    XXmlStreamReader_deinit_base(moved);
+    XFree_System(copied);
+    XFree_System(moved);
+    XXmlStreamReader_delete_base(source);
+    return allPass;
+}
+
+bool XXmlStreamReaderTest_runAll(void)
 {
     XPrintf("\n");
     XPrintf("========================================\n");
@@ -1222,6 +1425,9 @@ static bool test_run_all(void)
     result = test_device_input() && result;
     result = test_dtd_copy_move() && result;
     result = test_incremental_device_input() && result;
+    result = test_encoded_input() && result;
+    result = test_namespace_declarations_api() && result;
+    result = test_uninitialized_copy_move() && result;
     /* 新 API 与功能覆盖 */
     result = test_line_column_offset() && result;
     result = test_standalone_declaration() && result;
@@ -1280,6 +1486,12 @@ void XMenu_XXmlStreamReaderTest(XMenu* root)
     XAction_setAction(action, test_dtd_copy_move_wrapper);
     action = XMenu_addAction(menu, "QIODevice 分块输入");
     XAction_setAction(action, test_incremental_device_input_wrapper);
+    action = XMenu_addAction(menu, "UTF-8/16/32 编码输入");
+    XAction_setAction(action, test_encoded_input_wrapper);
+    action = XMenu_addAction(menu, "命名空间声明列表");
+    XAction_setAction(action, test_namespace_declarations_api_wrapper);
+    action = XMenu_addAction(menu, "未初始化目标拷贝/移动");
+    XAction_setAction(action, test_uninitialized_copy_move_wrapper);
     action = XMenu_addAction(menu, "行/列/字符偏移");
     XAction_setAction(action, test_line_column_offset_wrapper);
     action = XMenu_addAction(menu, "standalone 声明");

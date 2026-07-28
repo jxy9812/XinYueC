@@ -454,7 +454,7 @@ void XXmlStreamReader_skipCurrentElement(XXmlStreamReader* self);
  * @param behaviour 子元素处理行为
  * @return     文本内容字符串
  */
-const XString* XXmlStreamReader_readElementText_const(XXmlStreamReader* self, int behaviour);
+const XString* XXmlStreamReader_readElementText(XXmlStreamReader* self, int behaviour);
 
 /* ========== Token 查询 ========== */
 
@@ -470,7 +470,7 @@ int XXmlStreamReader_tokenType(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     Token 类型名称字符串（UTF-8 编码，内部静态存储，无需释放）
  */
-const char* XXmlStreamReader_tokenString_const(const XXmlStreamReader* self);
+const char* XXmlStreamReader_tokenString(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否为文档开始
@@ -556,35 +556,35 @@ bool XXmlStreamReader_isProcessingInstruction(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     命名空间 URI 字符串
  */
-const XString* XXmlStreamReader_namespaceUri_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_namespaceUri(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的本地名
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     本地名
  */
-const XString* XXmlStreamReader_name_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_name(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的限定名
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     限定名
  */
-const XString* XXmlStreamReader_qualifiedName_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_qualifiedName(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素/属性的前缀
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     前缀字符串
  */
-const XString* XXmlStreamReader_prefix_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_prefix(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前字符数据或注释文本
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文本内容
  */
-const XString* XXmlStreamReader_text_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_text(const XXmlStreamReader* self);
 
 /**
  * @brief      获取当前元素的属性列表
@@ -594,19 +594,28 @@ const XString* XXmlStreamReader_text_const(const XXmlStreamReader* self);
 const XXmlStreamAttributes* XXmlStreamReader_attributes(const XXmlStreamReader* self);
 
 /**
- * @brief      获取命名空间声明数量
+ * @brief      获取当前元素的命名空间声明列表（对标 Qt namespaceDeclarations）
  * @param self 目标 XXmlStreamReader 对象指针
- * @return     命名空间声明数量
+ * @return     只读命名空间声明列表视图；非开始元素返回空列表视图
  */
-int XXmlStreamReader_namespaceDeclarationsCount(const XXmlStreamReader* self);
+const XXmlStreamNamespaceDeclarations* XXmlStreamReader_namespaceDeclarations(
+    const XXmlStreamReader* self);
 
 /**
- * @brief      按索引获取命名空间声明
- * @param self  目标 XXmlStreamReader 对象指针
- * @param index 索引
- * @return     指向 XXmlStreamNamespaceDeclaration 的指针
+ * @brief      获取命名空间声明列表数量
+ * @param self 目标命名空间声明列表
+ * @return     声明数量
  */
-const XXmlStreamNamespaceDeclaration* XXmlStreamReader_namespaceDeclaration(const XXmlStreamReader* self, int index);
+int XXmlStreamNamespaceDeclarations_size(const XXmlStreamNamespaceDeclarations* self);
+
+/**
+ * @brief      按索引获取命名空间声明列表项
+ * @param self 目标命名空间声明列表
+ * @param index 索引
+ * @return     声明项；越界返回 NULL
+ */
+const XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclarations_at(
+    const XXmlStreamNamespaceDeclarations* self, int index);
 
 /**
  * @brief      判断是否具有命名空间声明
@@ -622,21 +631,21 @@ bool XXmlStreamReader_hasNamespaceDeclarations(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 名称
  */
-const XString* XXmlStreamReader_dtdName_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdName(const XXmlStreamReader* self);
 
 /**
  * @brief      获取 DTD 公共标识符
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 公共标识符
  */
-const XString* XXmlStreamReader_dtdPublicId_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdPublicId(const XXmlStreamReader* self);
 
 /**
  * @brief      获取 DTD 系统标识符
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     DTD 系统标识符
  */
-const XString* XXmlStreamReader_dtdSystemId_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_dtdSystemId(const XXmlStreamReader* self);
 
 /* ========== 文档信息 ========== */
 
@@ -645,14 +654,14 @@ const XString* XXmlStreamReader_dtdSystemId_const(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文档版本字符串
  */
-const XString* XXmlStreamReader_documentVersion_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_documentVersion(const XXmlStreamReader* self);
 
 /**
  * @brief      获取文档编码
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     文档编码字符串
  */
-const XString* XXmlStreamReader_documentEncoding_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否为独立文档
@@ -700,7 +709,7 @@ int64_t XXmlStreamReader_characterOffset(const XXmlStreamReader* self);
  * @return     PI 目标字符串；非 PI Token 时返回空字符串
  * @note       对标 QXmlStreamReader::processingInstructionTarget
  */
-const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader* self);
 
 /**
  * @brief      获取处理指令的数据（data）
@@ -708,7 +717,7 @@ const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStre
  * @return     PI 数据字符串；无数据时返回空字符串
  * @note       对标 QXmlStreamReader::processingInstructionData
  */
-const XString* XXmlStreamReader_processingInstructionData_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_processingInstructionData(const XXmlStreamReader* self);
 
 /**
  * @brief      设置是否启用命名空间处理
@@ -759,7 +768,7 @@ int XXmlStreamReader_error(const XXmlStreamReader* self);
  * @param self 目标 XXmlStreamReader 对象指针
  * @return     错误描述字符串
  */
-const XString* XXmlStreamReader_errorString_const(const XXmlStreamReader* self);
+const XString* XXmlStreamReader_errorString(const XXmlStreamReader* self);
 
 /**
  * @brief      判断是否有错误

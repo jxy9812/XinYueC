@@ -1,0 +1,4 @@
+﻿#ifndef XDOMDOCUMENTFRAGMENT_H
+#define XDOMDOCUMENTFRAGMENT_H
+#include "XDom.h"
+#endif

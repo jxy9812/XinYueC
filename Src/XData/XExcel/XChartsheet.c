@@ -75,7 +75,7 @@ bool XChartsheet_loadFromXmlData(XChartsheet* self, const uint8_t* data, size_t 
     bool rootSeen = false;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement && name &&
             XString_equals_utf8(name, "chartsheet", XChar_CaseSensitive)) rootSeen = true;
     }

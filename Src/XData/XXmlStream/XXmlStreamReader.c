@@ -11,10 +11,8 @@
 #include "XFileDevice.h"
 #include "XStack.h"
 #include "XMemory.h"
-#include <stdlib.h>
+#include <stdlib.h> /* XClass 宏使用 ISO C exit 声明；XML 本身不调用平台 API。 */
 #include <string.h>
-#include <ctype.h>
-#include <stdio.h>
 
 /* ============================================================================
  * 内部常量定义
@@ -28,6 +26,29 @@
 
 /** @brief 流结束标记 */
 #define STREAM_EOF ((uint32_t)~0U)
+
+static bool is_xml_ascii_digit(uint8_t value)
+{
+    return value >= (uint8_t)'0' && value <= (uint8_t)'9';
+}
+
+static bool is_xml_ascii_hex_digit(uint8_t value)
+{
+    return (value >= (uint8_t)'0' && value <= (uint8_t)'9') ||
+           (value >= (uint8_t)'a' && value <= (uint8_t)'f') ||
+           (value >= (uint8_t)'A' && value <= (uint8_t)'F');
+}
+
+enum
+{
+    XML_INPUT_UTF8 = 0,
+    XML_INPUT_UTF16LE,
+    XML_INPUT_UTF16BE,
+    XML_INPUT_UTF32LE,
+    XML_INPUT_UTF32BE,
+    XML_INPUT_LATIN1,
+    XML_INPUT_ASCII
+};
 
 /* ============================================================================
  * 内部结构体定义
@@ -55,6 +76,15 @@ typedef struct XmlNamespaceDeclaration
     XString* m_prefix;          /**< 命名空间前缀 */
     XString* m_namespaceUri;    /**< 命名空间 URI */
 } XmlNamespaceDeclaration;
+
+/** @brief DTD ATTLIST 中可自动补入元素的默认属性。 */
+typedef struct XmlDefaultAttribute
+{
+    XString* m_elementName;
+    XString* m_attributeName;
+    XString* m_value;
+    bool m_required;
+} XmlDefaultAttribute;
 
 /**
  * @brief      XML 解析上下文
@@ -96,6 +126,7 @@ typedef struct XXmlStreamReaderPrivate
     XmlNamespaceDeclaration* m_namespaceBindings;     /**< 当前作用域内全部命名空间绑定 */
     int m_namespaceBindingCount;                      /**< 有效绑定数量 */
     int m_namespaceBindingCapacity;                   /**< 绑定数组容量 */
+    XXmlStreamNamespaceDeclarations m_namespaceDeclarationsView; /**< Qt 同名只读列表视图 */
 
     /* ---------- 元素栈 ---------- */
     XmlTag* m_tagStack;        /**< 标签栈 */
@@ -138,6 +169,25 @@ typedef struct XXmlStreamReaderPrivate
     XXmlStreamEntityDeclarations* m_entityDeclarations; /**< DTD 实体声明列表 */
     XXmlStreamEntityResolver* m_entityResolver; /**< 实体解析器 */
 
+    /* ---------- DTD 默认属性 ---------- */
+    XmlDefaultAttribute* m_defaultAttributes;
+    int m_defaultAttributeCount;
+    int m_defaultAttributeCapacity;
+
+    /* ---------- 输入编码 ---------- */
+    int m_inputEncoding;
+    bool m_inputInitialized;
+    uint8_t m_pendingInput[4];
+    size_t m_pendingInputLength;
+    uint16_t m_pendingUtf16High;
+    bool m_hasPendingUtf16High;
+
+    /* ---------- 文档状态 ---------- */
+    bool m_startedDocument;
+    bool m_seenXmlDeclaration;
+    bool m_seenDtd;
+    bool m_finishedRootElement;
+
     /* ---------- 内部缓冲区 ---------- */
     XString* m_buffer;           /**< 内部临时缓冲区 */
 } XXmlStreamReaderPrivate;
@@ -150,16 +200,35 @@ typedef struct XXmlStreamReaderPrivate
 static const char* skip_whitespace(const char* ptr, const char* end);
 
 /** @brief 检查字符是否为 XML 名称起始字符 */
-static bool is_name_start_char(uint8_t c);
+static bool is_name_start_char(uint32_t c);
 
 /** @brief 检查字符是否为 XML 名称字符 */
-static bool is_name_char(uint8_t c);
+static bool is_name_char(uint32_t c);
 
 /** @brief 解析 XML 名称 */
 static bool parse_name(const char** ptr, const char* end, XString* out);
 
 /** @brief 解析引号字符串 */
 static bool parse_quoted_string(const char** ptr, const char* end, XString* out);
+
+static bool parse_attribute_value(XXmlStreamReaderPrivate* d,
+                                  const char** ptr, const char* end, XString* out);
+static bool expand_entity_value(XXmlStreamReaderPrivate* d, const char* value,
+                                XString* output, int depth);
+static bool decode_utf8_codepoint(const char* ptr, const char* end,
+                                  uint32_t* codepoint, size_t* length);
+static bool is_xml_char(uint32_t codepoint);
+static bool is_valid_utf8_xml(const char* data, size_t length);
+static bool append_codepoint_utf8(XString* output, uint32_t codepoint);
+static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t length);
+static void clear_default_attributes(XXmlStreamReaderPrivate* d);
+static bool append_default_attribute(XXmlStreamReaderPrivate* d,
+                                     const XString* elementName,
+                                     const XString* attributeName,
+                                     const XString* value,
+                                     bool required);
+static const XmlDefaultAttribute* find_default_attribute(
+    const XXmlStreamReaderPrivate* d, const char* elementName, const char* attributeName);
 
 /** @brief 解析 XML 声明（<?xml ... ?>） */
 static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, const char* end);
@@ -249,15 +318,138 @@ static int64_t count_newlines(const char* from, const char* to)
     return n;
 }
 
+static bool decode_utf8_codepoint(const char* ptr, const char* end,
+                                  uint32_t* codepoint, size_t* length)
+{
+    if (!ptr || ptr >= end || !codepoint || !length) return false;
+    const uint8_t* bytes = (const uint8_t*)ptr;
+    uint32_t value = 0;
+    size_t count = 0;
+    if (bytes[0] <= 0x7f) {
+        value = bytes[0];
+        count = 1;
+    } else if (bytes[0] >= 0xc2 && bytes[0] <= 0xdf) {
+        value = bytes[0] & 0x1fU;
+        count = 2;
+    } else if (bytes[0] >= 0xe0 && bytes[0] <= 0xef) {
+        value = bytes[0] & 0x0fU;
+        count = 3;
+    } else if (bytes[0] >= 0xf0 && bytes[0] <= 0xf4) {
+        value = bytes[0] & 0x07U;
+        count = 4;
+    } else {
+        return false;
+    }
+    if ((size_t)(end - ptr) < count) return false;
+    for (size_t i = 1; i < count; ++i) {
+        if ((bytes[i] & 0xc0U) != 0x80U) return false;
+        value = (value << 6) | (bytes[i] & 0x3fU);
+    }
+    if ((count == 2 && value < 0x80U) ||
+        (count == 3 && value < 0x800U) ||
+        (count == 4 && value < 0x10000U) ||
+        value > 0x10ffffU || (value >= 0xd800U && value <= 0xdfffU))
+        return false;
+    *codepoint = value;
+    *length = count;
+    return true;
+}
+
+static bool is_xml_char(uint32_t codepoint)
+{
+    return codepoint == 0x9U || codepoint == 0xaU || codepoint == 0xdU ||
+           (codepoint >= 0x20U && codepoint <= 0xd7ffU) ||
+           (codepoint >= 0xe000U && codepoint <= 0xfffdU) ||
+           (codepoint >= 0x10000U && codepoint <= 0x10ffffU);
+}
+
+static bool is_valid_utf8_xml(const char* data, size_t length)
+{
+    if (!data && length > 0) return false;
+    const char* ptr = data;
+    const char* end = data ? data + length : data;
+    while (ptr < end) {
+        uint32_t codepoint;
+        size_t byteLength;
+        if (!decode_utf8_codepoint(ptr, end, &codepoint, &byteLength) ||
+            !is_xml_char(codepoint)) return false;
+        ptr += byteLength;
+    }
+    return true;
+}
+
+static bool encoding_name_matches_input(const XXmlStreamReaderPrivate* d, const char* encoding)
+{
+    if (!d || !encoding || !*encoding) return false;
+    char normalized[32];
+    size_t length = strlen(encoding);
+    if (length >= sizeof(normalized)) return false;
+    size_t out = 0;
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)encoding[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return false;
+        if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
+        normalized[out++] = (char)c;
+    }
+    normalized[out] = '\0';
+
+    if (d->m_inputEncoding == XML_INPUT_UTF8)
+        return strcmp(normalized, "UTF-8") == 0 || strcmp(normalized, "UTF8") == 0;
+    if (d->m_inputEncoding == XML_INPUT_UTF16LE ||
+        d->m_inputEncoding == XML_INPUT_UTF16BE)
+        return strcmp(normalized, "UTF-16") == 0 || strcmp(normalized, "UTF16") == 0 ||
+               strcmp(normalized, "UTF-16LE") == 0 || strcmp(normalized, "UTF16LE") == 0 ||
+               strcmp(normalized, "UTF-16BE") == 0 || strcmp(normalized, "UTF16BE") == 0;
+    if (d->m_inputEncoding == XML_INPUT_UTF32LE ||
+        d->m_inputEncoding == XML_INPUT_UTF32BE)
+        return strcmp(normalized, "UTF-32") == 0 || strcmp(normalized, "UTF32") == 0 ||
+               strcmp(normalized, "UTF-32LE") == 0 || strcmp(normalized, "UTF32LE") == 0 ||
+               strcmp(normalized, "UTF-32BE") == 0 || strcmp(normalized, "UTF32BE") == 0;
+    return false;
+}
+
+static bool append_codepoint_utf8(XString* output, uint32_t codepoint)
+{
+    if (!output || !is_xml_char(codepoint)) return false;
+    char utf8[4];
+    size_t length = 0;
+    if (codepoint <= 0x7fU) {
+        utf8[0] = (char)codepoint;
+        length = 1;
+    } else if (codepoint <= 0x7ffU) {
+        utf8[0] = (char)(0xc0U | (codepoint >> 6));
+        utf8[1] = (char)(0x80U | (codepoint & 0x3fU));
+        length = 2;
+    } else if (codepoint <= 0xffffU) {
+        utf8[0] = (char)(0xe0U | (codepoint >> 12));
+        utf8[1] = (char)(0x80U | ((codepoint >> 6) & 0x3fU));
+        utf8[2] = (char)(0x80U | (codepoint & 0x3fU));
+        length = 3;
+    } else {
+        utf8[0] = (char)(0xf0U | (codepoint >> 18));
+        utf8[1] = (char)(0x80U | ((codepoint >> 12) & 0x3fU));
+        utf8[2] = (char)(0x80U | ((codepoint >> 6) & 0x3fU));
+        utf8[3] = (char)(0x80U | (codepoint & 0x3fU));
+        length = 4;
+    }
+    return XString_append_with_length_utf8(output, utf8, length);
+}
+
 /**
  * @brief      检查字符是否为 XML 名称起始字符
  * @param c   字符
  * @return     是名称起始字符返回 true
  */
-static bool is_name_start_char(uint8_t c)
+static bool is_name_start_char(uint32_t c)
 {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == ':' ||
-           (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0xFF);
+    return c == ':' || c == '_' || (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') || (c >= 0xc0U && c <= 0xd6U) ||
+           (c >= 0xd8U && c <= 0xf6U) || (c >= 0xf8U && c <= 0x2ffU) ||
+           (c >= 0x370U && c <= 0x37dU) || (c >= 0x37fU && c <= 0x1fffU) ||
+           (c >= 0x200cU && c <= 0x200dU) || (c >= 0x2070U && c <= 0x218fU) ||
+           (c >= 0x2c00U && c <= 0x2fefU) || (c >= 0x3001U && c <= 0xd7ffU) ||
+           (c >= 0xf900U && c <= 0xfdcfU) || (c >= 0xfdf0U && c <= 0xfffdU) ||
+           (c >= 0x10000U && c <= 0xeffffU);
 }
 
 /**
@@ -265,9 +457,11 @@ static bool is_name_start_char(uint8_t c)
  * @param c   字符
  * @return     是名称字符返回 true
  */
-static bool is_name_char(uint8_t c)
+static bool is_name_char(uint32_t c)
 {
-    return is_name_start_char(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
+    return is_name_start_char(c) || (c >= '0' && c <= '9') || c == '-' || c == '.' ||
+           c == 0xb7U || (c >= 0x300U && c <= 0x36fU) ||
+           (c >= 0x203fU && c <= 0x2040U);
 }
 
 /**
@@ -280,16 +474,20 @@ static bool is_name_char(uint8_t c)
 static bool parse_name(const char** ptr, const char* end, XString* out)
 {
     const char* start = *ptr;
-    if (*ptr >= end || !is_name_start_char((uint8_t)**ptr))
+    uint32_t codepoint;
+    size_t byteLength;
+    if (*ptr >= end || !decode_utf8_codepoint(*ptr, end, &codepoint, &byteLength) ||
+        !is_name_start_char(codepoint))
         return false;
-    ++(*ptr);
-    while (*ptr < end && is_name_char((uint8_t)**ptr))
-        ++(*ptr);
+    *ptr += byteLength;
+    while (*ptr < end) {
+        if (!decode_utf8_codepoint(*ptr, end, &codepoint, &byteLength) ||
+            !is_name_char(codepoint)) break;
+        *ptr += byteLength;
+    }
     size_t len = (size_t)(*ptr - start);
     if (out)
-    {
-        XString_append_with_length_utf8(out, start, len);
-    }
+        return XString_append_with_length_utf8(out, start, len);
     return true;
 }
 
@@ -309,108 +507,103 @@ static bool parse_quoted_string(const char** ptr, const char* end, XString* out)
         return false;
     ++(*ptr); /* 跳过引号 */
     const char* start = *ptr;
-    while (*ptr < end && **ptr != quote)
-    {
-        if (**ptr == '&')
-        {
-            /* 先追加已扫描的文本 */
-            if (out && *ptr > start)
-                XString_append_with_length_utf8(out, start, (size_t)(*ptr - start));
-            /* 解析实体引用 */
-            ++(*ptr);
-            if (**ptr == '#')
-            {
-                ++(*ptr);
-                if (**ptr == 'x')
-                {
-                    ++(*ptr);
-                    /* 十六进制字符引用 */
-                    uint32_t code = 0;
-                    while (*ptr < end && **ptr != ';')
-                    {
-                        char c = **ptr;
-                        if (c >= '0' && c <= '9') code = code * 16 + (uint32_t)(c - '0');
-                        else if (c >= 'a' && c <= 'f') code = code * 16 + (uint32_t)(c - 'a' + 10);
-                        else if (c >= 'A' && c <= 'F') code = code * 16 + (uint32_t)(c - 'A' + 10);
-                        else break;
-                        ++(*ptr);
-                    }
-                    if (*ptr < end && **ptr == ';') ++(*ptr);
-                    /* 将 Unicode 码点转为 UTF-8 */
-                    if (out && code > 0)
-                    {
-                        uint8_t utf8_buf[4];
-                        int utf8_len = 0;
-                        if (code < 0x80) { utf8_buf[0] = (uint8_t)code; utf8_len = 1; }
-                        else if (code < 0x800) { utf8_buf[0] = (uint8_t)(0xC0 | (code >> 6)); utf8_buf[1] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 2; }
-                        else if (code < 0x10000) { utf8_buf[0] = (uint8_t)(0xE0 | (code >> 12)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 3; }
-                        else { utf8_buf[0] = (uint8_t)(0xF0 | (code >> 18)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 12) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[3] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 4; }
-                        XString_append_with_length_utf8(out, (const char*)utf8_buf, (size_t)utf8_len);
-                    }
-                    start = *ptr;
-                }
-                else
-                {
-                    /* 十进制字符引用 */
-                    uint32_t code = 0;
-                    while (*ptr < end && **ptr != ';')
-                    {
-                        char c = **ptr;
-                        if (c >= '0' && c <= '9') code = code * 10 + (uint32_t)(c - '0');
-                        else break;
-                        ++(*ptr);
-                    }
-                    if (*ptr < end && **ptr == ';') ++(*ptr);
-                    if (out && code > 0)
-                    {
-                        uint8_t utf8_buf[4];
-                        int utf8_len = 0;
-                        if (code < 0x80) { utf8_buf[0] = (uint8_t)code; utf8_len = 1; }
-                        else if (code < 0x800) { utf8_buf[0] = (uint8_t)(0xC0 | (code >> 6)); utf8_buf[1] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 2; }
-                        else if (code < 0x10000) { utf8_buf[0] = (uint8_t)(0xE0 | (code >> 12)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 3; }
-                        else { utf8_buf[0] = (uint8_t)(0xF0 | (code >> 18)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 12) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[3] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 4; }
-                        XString_append_with_length_utf8(out, (const char*)utf8_buf, (size_t)utf8_len);
-                    }
-                    start = *ptr;
-                }
-            }
-            else
-            {
-                /* 预定义实体引用 */
-                const char* entity_start = *ptr;
-                while (*ptr < end && **ptr != ';' && is_name_char((uint8_t)**ptr))
-                    ++(*ptr);
-                if (*ptr < end && **ptr == ';')
-                {
-                    size_t entity_len = (size_t)(*ptr - entity_start);
-                    const char* replacement = NULL;
-                    if (entity_len == 2 && strncmp(entity_start, "lt", 2) == 0) replacement = "<";
-                    else if (entity_len == 2 && strncmp(entity_start, "gt", 2) == 0) replacement = ">";
-                    else if (entity_len == 4 && strncmp(entity_start, "apos", 4) == 0) replacement = "'";
-                    else if (entity_len == 4 && strncmp(entity_start, "quot", 4) == 0) replacement = "\"";
-                    else if (entity_len == 3 && strncmp(entity_start, "amp", 3) == 0) replacement = "&";
-                    if (replacement && out)
-                        XString_append_utf8(out, replacement);
-                    else if (out)
-                        XString_append_with_length_utf8(
-                            out, entity_start - 1, entity_len + 2);
-                    ++(*ptr); /* 跳过 ; */
-                }
-                start = *ptr;
-            }
-        }
-        else
-        {
-            ++(*ptr);
-        }
+    while (*ptr < end && **ptr != quote) {
+        if (**ptr == '<') return false;
+        uint32_t codepoint;
+        size_t byteLength;
+        if (!decode_utf8_codepoint(*ptr, end, &codepoint, &byteLength) ||
+            !is_xml_char(codepoint)) return false;
+        *ptr += byteLength;
     }
     if (*ptr >= end)
         return false;
     /* 追加剩余文本 */
     if (out && *ptr > start)
-        XString_append_with_length_utf8(out, start, (size_t)(*ptr - start));
+        if (!XString_append_with_length_utf8(out, start, (size_t)(*ptr - start))) return false;
     ++(*ptr); /* 跳过结束引号 */
     return true;
+}
+
+static bool parse_attribute_value(XXmlStreamReaderPrivate* d,
+                                  const char** ptr, const char* end, XString* out)
+{
+    XString raw;
+    XString_init(&raw);
+    bool ok = parse_quoted_string(ptr, end, &raw);
+    if (ok) {
+        const char* value = XString_toUtf8(&raw);
+        ok = value ? expand_entity_value(d, value, out, 0) : true;
+    }
+    XString_deinit_base(&raw);
+    return ok;
+}
+
+static void clear_default_attributes(XXmlStreamReaderPrivate* d)
+{
+    if (!d || !d->m_defaultAttributes) return;
+    for (int i = 0; i < d->m_defaultAttributeCount; ++i) {
+        XString_delete_base(d->m_defaultAttributes[i].m_elementName);
+        XString_delete_base(d->m_defaultAttributes[i].m_attributeName);
+        XString_delete_base(d->m_defaultAttributes[i].m_value);
+        memset(&d->m_defaultAttributes[i], 0, sizeof(XmlDefaultAttribute));
+    }
+    d->m_defaultAttributeCount = 0;
+}
+
+static bool append_default_attribute(XXmlStreamReaderPrivate* d,
+                                     const XString* elementName,
+                                     const XString* attributeName,
+                                     const XString* value,
+                                     bool required)
+{
+    if (!d || !elementName || !attributeName || !value) return false;
+    for (int i = 0; i < d->m_defaultAttributeCount; ++i) {
+        XmlDefaultAttribute* item = &d->m_defaultAttributes[i];
+        if (XString_equals(item->m_elementName, elementName, XChar_CaseSensitive) &&
+            XString_equals(item->m_attributeName, attributeName, XChar_CaseSensitive)) {
+            XString_assign(item->m_value, value);
+            item->m_required = required;
+            return true;
+        }
+    }
+    if (d->m_defaultAttributeCount >= d->m_defaultAttributeCapacity) {
+        int capacity = d->m_defaultAttributeCapacity ? d->m_defaultAttributeCapacity * 2 : 8;
+        XmlDefaultAttribute* items = (XmlDefaultAttribute*)XRealloc_System(
+            d->m_defaultAttributes, (size_t)capacity * sizeof(XmlDefaultAttribute));
+        if (!items) return false;
+        memset(items + d->m_defaultAttributeCapacity, 0,
+               (size_t)(capacity - d->m_defaultAttributeCapacity) * sizeof(XmlDefaultAttribute));
+        d->m_defaultAttributes = items;
+        d->m_defaultAttributeCapacity = capacity;
+    }
+    XmlDefaultAttribute* item = &d->m_defaultAttributes[d->m_defaultAttributeCount];
+    item->m_elementName = XString_create_copy(elementName);
+    item->m_attributeName = XString_create_copy(attributeName);
+    item->m_value = XString_create_copy(value);
+    item->m_required = required;
+    if (!item->m_elementName || !item->m_attributeName || !item->m_value) {
+        XString_delete_base(item->m_elementName);
+        XString_delete_base(item->m_attributeName);
+        XString_delete_base(item->m_value);
+        memset(item, 0, sizeof(*item));
+        return false;
+    }
+    ++d->m_defaultAttributeCount;
+    return true;
+}
+
+static const XmlDefaultAttribute* find_default_attribute(
+    const XXmlStreamReaderPrivate* d, const char* elementName, const char* attributeName)
+{
+    if (!d || !elementName || !attributeName) return NULL;
+    for (int i = 0; i < d->m_defaultAttributeCount; ++i) {
+        const XmlDefaultAttribute* item = &d->m_defaultAttributes[i];
+        const char* element = XString_toUtf8(item->m_elementName);
+        const char* attribute = XString_toUtf8(item->m_attributeName);
+        if (element && attribute && strcmp(element, elementName) == 0 &&
+            strcmp(attribute, attributeName) == 0) return item;
+    }
+    return NULL;
 }
 /**
  * @brief      解析 XML 声明（<?xml ... ?>）
@@ -421,66 +614,79 @@ static bool parse_quoted_string(const char** ptr, const char* end, XString* out)
  */
 static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, const char* end)
 {
-    /* 已跳过 <?xml */
+    bool hasVersion = false;
+    bool hasEncoding = false;
+    bool hasStandalone = false;
     *ptr = skip_whitespace(*ptr, end);
-    while (*ptr < end)
-    {
-        if (**ptr == '?')
-        {
-            const char* save = *ptr;
-            ++(*ptr);
-            if (*ptr < end && **ptr == '>')
-            {
-                ++(*ptr);
-                return true;
-            }
-            *ptr = save;
+    while (*ptr < end) {
+        if (*ptr + 1 < end && **ptr == '?' && *(*ptr + 1) == '>') {
+            *ptr += 2;
+            return hasVersion;
         }
-        /* 解析属性 */
-        XString attrName, attrValue;
+        XString attrName;
+        XString attrValue;
         XString_init(&attrName);
         XString_init(&attrValue);
-        if (!parse_name(ptr, end, &attrName))
-        {
+        if (!parse_name(ptr, end, &attrName)) {
             XString_deinit_base(&attrName);
             XString_deinit_base(&attrValue);
-            break;
+            return false;
         }
+        const char* name = XString_toUtf8(&attrName);
         *ptr = skip_whitespace(*ptr, end);
-        if (*ptr < end && **ptr == '=')
-        {
-            ++(*ptr);
-            *ptr = skip_whitespace(*ptr, end);
-            if (parse_quoted_string(ptr, end, &attrValue))
-            {
-                const char* name_utf8 = XString_toUtf8(&attrName);
-                const char* value_utf8 = XString_toUtf8(&attrValue);
-                if (name_utf8 && value_utf8)
-                {
-                    if (strcmp(name_utf8, "version") == 0)
-                    {
-                        if (d->m_documentVersion)
-                            XString_assign_utf8(d->m_documentVersion, value_utf8);
-                    }
-                    else if (strcmp(name_utf8, "encoding") == 0)
-                    {
-                        if (d->m_documentEncoding)
-                            XString_assign_utf8(d->m_documentEncoding, value_utf8);
-                    }
-                    else if (strcmp(name_utf8, "standalone") == 0)
-                    {
-                        if (strcmp(value_utf8, "yes") == 0)
-                            d->m_isStandaloneDocument = true;
-                        else
-                            d->m_isStandaloneDocument = false;
-                        d->m_hasStandalone = true;
-                    }
-                }
+        if (*ptr >= end || **ptr != '=') {
+            XString_deinit_base(&attrName);
+            XString_deinit_base(&attrValue);
+            return false;
+        }
+        ++(*ptr);
+        *ptr = skip_whitespace(*ptr, end);
+        if (!parse_quoted_string(ptr, end, &attrValue)) {
+            XString_deinit_base(&attrName);
+            XString_deinit_base(&attrValue);
+            return false;
+        }
+        const char* value = XString_toUtf8(&attrValue);
+        bool valid = name && value && strchr(value, '&') == NULL;
+        if (valid && strcmp(name, "version") == 0) {
+            if (hasVersion || hasEncoding || hasStandalone ||
+                (strcmp(value, "1.0") != 0 && strcmp(value, "1.1") != 0)) valid = false;
+            if (valid) {
+                XString_assign_utf8(d->m_documentVersion, value);
+                hasVersion = true;
             }
+        } else if (valid && strcmp(name, "encoding") == 0) {
+            if (!hasVersion || hasEncoding || hasStandalone || !*value) valid = false;
+            for (const char* p = value; valid && *p; ++p) {
+                if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                      (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-'))
+                    valid = false;
+            }
+            if (valid) {
+                if (!encoding_name_matches_input(d, value)) valid = false;
+            }
+            if (valid) {
+                XString_assign_utf8(d->m_documentEncoding, value);
+                hasEncoding = true;
+            }
+        } else if (valid && strcmp(name, "standalone") == 0) {
+            if (!hasVersion || hasStandalone || hasEncoding ||
+                (strcmp(value, "yes") != 0 && strcmp(value, "no") != 0)) valid = false;
+            if (valid) {
+                d->m_isStandaloneDocument = strcmp(value, "yes") == 0;
+                d->m_hasStandalone = true;
+                hasStandalone = true;
+            }
+        } else {
+            valid = false;
         }
         XString_deinit_base(&attrName);
         XString_deinit_base(&attrValue);
-        *ptr = skip_whitespace(*ptr, end);
+        if (!valid) return false;
+        const char* afterValue = *ptr;
+        if (*ptr < end && **ptr != '?' &&
+            **ptr != ' ' && **ptr != '\t' && **ptr != '\r' && **ptr != '\n') return false;
+        *ptr = skip_whitespace(afterValue, end);
     }
     return false;
 }
@@ -494,8 +700,6 @@ static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, 
  */
 static bool parse_comment(XXmlStreamReaderPrivate* d, const char** ptr, const char* end)
 {
-    if (*ptr + 3 >= end)
-        return false;
     /* 已跳过 "<!--" */
     const char* start = *ptr;
     while (*ptr < end)
@@ -503,12 +707,14 @@ static bool parse_comment(XXmlStreamReaderPrivate* d, const char** ptr, const ch
         if (**ptr == '-' && *ptr + 2 < end && *(*ptr + 1) == '-' && *(*ptr + 2) == '>')
         {
             /* 提取注释文本 */
+            if (!is_valid_utf8_xml(start, (size_t)(*ptr - start))) return false;
             if (d->m_text && *ptr > start)
                 XString_assign_with_length_utf8(d->m_text, start, (size_t)(*ptr - start));
             *ptr += 3;
             d->m_type = XXmlStream_Comment;
             return true;
         }
+        if (**ptr == '-' && *ptr + 1 < end && *(*ptr + 1) == '-') return false;
         ++(*ptr);
     }
     return false;
@@ -528,6 +734,13 @@ static bool parse_processing_instruction(XXmlStreamReaderPrivate* d, const char*
     /* 解析目标 */
     if (!parse_name(ptr, end, d->m_processingInstructionTarget))
         return false;
+    const char* target = XString_toUtf8(d->m_processingInstructionTarget);
+    if (!target) return false;
+    size_t targetLength = strlen(target);
+    if (targetLength == 3 &&
+        (target[0] == 'x' || target[0] == 'X') &&
+        (target[1] == 'm' || target[1] == 'M') &&
+        (target[2] == 'l' || target[2] == 'L')) return false;
     *ptr = skip_whitespace(*ptr, end);
     /* 解析数据（直到 ?>） */
     const char* start = *ptr;
@@ -535,6 +748,7 @@ static bool parse_processing_instruction(XXmlStreamReaderPrivate* d, const char*
     {
         if (**ptr == '?' && *ptr + 1 < end && *(*ptr + 1) == '>')
         {
+            if (!is_valid_utf8_xml(start, (size_t)(*ptr - start))) return false;
             if (d->m_processingInstructionData && *ptr > start)
                 XString_assign_with_length_utf8(d->m_processingInstructionData, start, (size_t)(*ptr - start));
             *ptr += 2;
@@ -561,6 +775,7 @@ static bool parse_cdata(XXmlStreamReaderPrivate* d, const char** ptr, const char
     {
         if (**ptr == ']' && *ptr + 2 < end && *(*ptr + 1) == ']' && *(*ptr + 2) == '>')
         {
+            if (!is_valid_utf8_xml(start, (size_t)(*ptr - start))) return false;
             if (d->m_text && *ptr > start)
                 XString_assign_with_length_utf8(d->m_text, start, (size_t)(*ptr - start));
             *ptr += 3;
@@ -604,6 +819,7 @@ static void free_entity_entry(XXmlStreamEntityDeclaration* entry)
 static void clear_dtd_declarations(XXmlStreamReaderPrivate* d)
 {
     if (!d) return;
+    clear_default_attributes(d);
     if (!d->m_notationDeclarations)
         d->m_notationDeclarations = XXmlStreamNotationDeclarations_create();
     if (!d->m_entityDeclarations)
@@ -705,14 +921,103 @@ static bool parse_dtd_subset(XXmlStreamReaderPrivate* d, const char* start, cons
         }
         bool notation = (size_t)(end - p) >= 11 && strncmp(p + 2, "NOTATION", 8) == 0;
         bool entity = (size_t)(end - p) >= 9 && strncmp(p + 2, "ENTITY", 6) == 0;
-        if (!notation && !entity) {
+        bool attlist = (size_t)(end - p) >= 10 && strncmp(p + 2, "ATTLIST", 7) == 0;
+        bool element = (size_t)(end - p) >= 9 && strncmp(p + 2, "ELEMENT", 7) == 0;
+        if (!notation && !entity && !attlist && !element) {
             ++p;
             continue;
         }
         const char* declEnd = dtd_declaration_end(p + 2, end);
         if (!declEnd) return false;
-        const char* q = p + 2 + (notation ? 8 : 6);
+        const char* q = p + 2 + (notation ? 8 : (entity ? 6 : 7));
         q = skip_whitespace(q, declEnd);
+        if (element) {
+            /* ELEMENT 内容模型会影响验证，但不影响流式 token；完整扫描其声明，
+               确保括号和引号没有破坏内部子集边界。 */
+            int parenthesisDepth = 0;
+            char quote = '\0';
+            for (; q < declEnd; ++q) {
+                if (quote) {
+                    if (*q == quote) quote = '\0';
+                } else if (*q == '\'' || *q == '"') {
+                    quote = *q;
+                } else if (*q == '(') {
+                    ++parenthesisDepth;
+                } else if (*q == ')' && parenthesisDepth > 0) {
+                    --parenthesisDepth;
+                }
+            }
+            if (quote || parenthesisDepth != 0) return false;
+            p = declEnd + 1;
+            continue;
+        }
+        if (attlist) {
+            XString elementName;
+            XString_init(&elementName);
+            bool ok = parse_name(&q, declEnd, &elementName);
+            while (ok) {
+                q = skip_whitespace(q, declEnd);
+                if (q >= declEnd) break;
+                XString attributeName;
+                XString_init(&attributeName);
+                ok = parse_name(&q, declEnd, &attributeName);
+                q = skip_whitespace(q, declEnd);
+                if (!ok || q >= declEnd) {
+                    XString_deinit_base(&attributeName);
+                    break;
+                }
+                if (*q == '(') {
+                    int depth = 0;
+                    do {
+                        if (*q == '(') ++depth;
+                        else if (*q == ')') --depth;
+                        ++q;
+                    } while (q < declEnd && depth > 0);
+                    if (depth != 0) ok = false;
+                } else {
+                    XString typeName;
+                    XString_init(&typeName);
+                    ok = parse_name(&q, declEnd, &typeName);
+                    XString_deinit_base(&typeName);
+                }
+                q = skip_whitespace(q, declEnd);
+                bool required = false;
+                bool hasValue = false;
+                XString defaultValue;
+                XString_init(&defaultValue);
+                if (ok && q < declEnd && *q == '#') {
+                    ++q;
+                    const char* keywordStart = q;
+                    while (q < declEnd && ((*q >= 'A' && *q <= 'Z') ||
+                           (*q >= 'a' && *q <= 'z'))) ++q;
+                    size_t keywordLength = (size_t)(q - keywordStart);
+                    if (keywordLength == 8 && strncmp(keywordStart, "REQUIRED", 8) == 0) {
+                        required = true;
+                    } else if (keywordLength == 7 && strncmp(keywordStart, "IMPLIED", 7) == 0) {
+                        /* 没有默认值。 */
+                    } else if (keywordLength == 5 && strncmp(keywordStart, "FIXED", 5) == 0) {
+                        q = skip_whitespace(q, declEnd);
+                        hasValue = parse_quoted_string(&q, declEnd, &defaultValue);
+                    } else {
+                        ok = false;
+                    }
+                } else if (ok && q < declEnd && (*q == '\'' || *q == '"')) {
+                    hasValue = parse_quoted_string(&q, declEnd, &defaultValue);
+                } else {
+                    ok = false;
+                }
+                if (ok && hasValue)
+                    ok = append_default_attribute(d, &elementName, &attributeName,
+                                                  &defaultValue, required);
+                XString_deinit_base(&defaultValue);
+                XString_deinit_base(&attributeName);
+                q = skip_whitespace(q, declEnd);
+            }
+            XString_deinit_base(&elementName);
+            if (!ok) return false;
+            p = declEnd + 1;
+            continue;
+        }
         if (entity && q < declEnd && *q == '%') {
             ++q;
             q = skip_whitespace(q, declEnd);
@@ -933,6 +1238,11 @@ static bool parse_namespace_declaration(XXmlStreamReaderPrivate* d, const XStrin
         strcmp(value, "http://www.w3.org/2000/xmlns/") == 0) return false;
     if (*prefix != '\0' && *value == '\0') return false;
 
+    for (int i = 0; i < d->m_namespaceDeclarationCount; ++i) {
+        const char* existing = XString_toUtf8(d->m_namespaceDeclarations[i].m_prefix);
+        if (existing && strcmp(existing, prefix) == 0) return false;
+    }
+
     if (!append_namespace(&d->m_namespaceDeclarations, &d->m_namespaceDeclarationCount,
                           &d->m_namespaceDeclarationCapacity, prefix, value)) return false;
     if (!append_namespace(&d->m_namespaceBindings, &d->m_namespaceBindingCount,
@@ -989,7 +1299,11 @@ static bool parse_attributes(XXmlStreamReaderPrivate* d, const char** ptr, const
         if (*ptr >= end || **ptr != '=') goto cleanup;
         ++(*ptr);
         *ptr = skip_whitespace(*ptr, end);
-        if (!parse_quoted_string(ptr, end, &raw->m_value)) goto cleanup;
+        const char* valueEnd = *ptr;
+        if (!parse_attribute_value(d, ptr, end, &raw->m_value)) goto cleanup;
+        if (*ptr < end && **ptr != '/' && **ptr != '>' &&
+            (*ptr == valueEnd || (**ptr != ' ' && **ptr != '\t' &&
+             **ptr != '\r' && **ptr != '\n'))) goto cleanup;
     }
 
     /* 声明在解析普通属性前统一加入作用域，所以属性顺序不影响命名空间解析。 */
@@ -1009,7 +1323,9 @@ static bool parse_attributes(XXmlStreamReaderPrivate* d, const char** ptr, const
         if (d->m_namespaceProcessing &&
             (strcmp(qualifiedName, "xmlns") == 0 || strncmp(qualifiedName, "xmlns:", 6) == 0)) continue;
         const char* colon = strchr(qualifiedName, ':');
+        if (colon && strchr(colon + 1, ':') != NULL) goto cleanup;
         const char* localName = colon ? colon + 1 : qualifiedName;
+        if (!*localName || (colon && colon == qualifiedName)) goto cleanup;
         const char* namespaceUri = NULL;
         char prefix[128] = {0};
         if (colon) {
@@ -1123,6 +1439,42 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
         truncate_namespace_bindings(d, namespaceBindingCountBefore);
         return false;
     }
+    if (d->m_entityDeclarations && d->m_defaultAttributeCount > 0) {
+        const char* elementName = XString_toUtf8(d->m_qualifiedName);
+        for (int i = 0; elementName && i < d->m_defaultAttributeCount; ++i) {
+            const XmlDefaultAttribute* item = &d->m_defaultAttributes[i];
+            const char* declaredElement = XString_toUtf8(item->m_elementName);
+            const char* declaredAttribute = XString_toUtf8(item->m_attributeName);
+            if (!declaredElement || !declaredAttribute ||
+                strcmp(declaredElement, elementName) != 0) continue;
+            bool exists = false;
+            for (int j = 0; j < XXmlStreamAttributes_size(d->m_attributes); ++j) {
+                const XXmlStreamAttribute* existing =
+                    XXmlStreamAttributes_at(d->m_attributes, j);
+                const char* existingName = existing && existing->m_qualifiedName
+                    ? XString_toUtf8(existing->m_qualifiedName) : NULL;
+                if (existingName && strcmp(existingName, declaredAttribute) == 0) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) continue;
+            XString expanded;
+            XString_init(&expanded);
+            const char* rawValue = XString_toUtf8(item->m_value);
+            if (!rawValue || !expand_entity_value(d, rawValue, &expanded, 0)) {
+                XString_deinit_base(&expanded);
+                truncate_namespace_bindings(d, namespaceBindingCountBefore);
+                return false;
+            }
+            XXmlStreamAttributes_append_ex(d->m_attributes, item->m_attributeName, &expanded);
+            if (d->m_attributes->m_count > 0) {
+                XXmlStreamAttribute* added = d->m_attributes->m_items[d->m_attributes->m_count - 1];
+                if (added) added->m_isDefault = true;
+            }
+            XString_deinit_base(&expanded);
+        }
+    }
     /* 检查空元素 */
     d->m_isEmptyElement = false;
     if (*ptr < end && **ptr == '/')
@@ -1222,6 +1574,7 @@ static bool parse_end_element(XXmlStreamReaderPrivate* d, const char** ptr, cons
                 memset(tag, 0, sizeof(XmlTag));
                 d->m_tagStackSize--;
                 truncate_namespace_bindings(d, namespaceBindingCountBefore);
+                if (d->m_tagStackSize == 0) d->m_finishedRootElement = true;
                 d->m_type = XXmlStream_EndElement;
                 XString_deinit_base(&tagName);
                 return true;
@@ -1294,7 +1647,7 @@ static bool append_entity_codepoint(XXmlStreamReaderPrivate* d, XString* output,
         }
         codepoint = codepoint * (uint32_t)base + (uint32_t)digit;
     }
-    if (codepoint == 0 || codepoint > 0x10ffffU) {
+    if (!is_xml_char(codepoint)) {
         set_error(d, XXmlStream_NotWellFormedError, "无效的数字实体引用。");
         return false;
     }
@@ -1336,8 +1689,13 @@ static bool expand_entity_value(XXmlStreamReaderPrivate* d, const char* value,
     const char* p = value;
     while (*p) {
         if (*p != '&') {
-            if (!XString_append_with_length_utf8(output, p, 1)) return false;
-            ++p;
+            uint32_t codepoint;
+            size_t byteLength;
+            const char* end = p + strlen(p);
+            if (!decode_utf8_codepoint(p, end, &codepoint, &byteLength) ||
+                !is_xml_char(codepoint) ||
+                !XString_append_with_length_utf8(output, p, byteLength)) return false;
+            p += byteLength;
             continue;
         }
 
@@ -1369,6 +1727,12 @@ static bool expand_entity_value(XXmlStreamReaderPrivate* d, const char* value,
             if (!append_entity_codepoint(d, output, entity, entityLength)) return false;
             p = semicolon + 1;
             continue;
+        }
+
+        const char* entityNameEnd = entity;
+        if (!parse_name(&entityNameEnd, semicolon, NULL) || entityNameEnd != semicolon) {
+            set_error(d, XXmlStream_NotWellFormedError, "实体名称无效。");
+            return false;
         }
 
         const XXmlStreamEntityDeclaration* declaration =
@@ -1404,39 +1768,24 @@ static bool parse_entity_reference(XXmlStreamReaderPrivate* d, const char** ptr,
     if (**ptr == '#')
     {
         ++(*ptr);
-        if (**ptr == 'x')
+        if (*ptr < end && (**ptr == 'x' || **ptr == 'X'))
         {
             ++(*ptr);
-            while (*ptr < end && **ptr != ';' && isxdigit((uint8_t)**ptr))
+            while (*ptr < end && **ptr != ';' && is_xml_ascii_hex_digit((uint8_t)**ptr))
                 ++(*ptr);
         }
         else
         {
-            while (*ptr < end && **ptr != ';' && isdigit((uint8_t)**ptr))
+            while (*ptr < end && **ptr != ';' && is_xml_ascii_digit((uint8_t)**ptr))
                 ++(*ptr);
         }
-        if (*ptr < end && **ptr == ';')
+        if (*ptr < end && **ptr == ';' && *ptr > start + 1)
         {
+            size_t valueLength = (size_t)(*ptr - start);
             ++(*ptr);
             /* 解析数字字符引用为 UTF-8 并追加到 m_text */
-            if (d->m_text)
-            {
-                int code = 0;
-                const char* p = start;
-                if (p < end && *p == '#') ++p;
-                if (p < end && *p == 'x') { ++p; while (p < end && isxdigit((uint8_t)*p)) { code = code * 16 + ((*p >= '0' && *p <= '9') ? (*p - '0') : ((*p | 0x20) - 'a' + 10)); ++p; } }
-                else { while (p < end && isdigit((uint8_t)*p)) { code = code * 10 + (*p - '0'); ++p; } }
-                if (code > 0 && code < 0x110000)
-                {
-                    uint8_t utf8_buf[4];
-                    int utf8_len = 0;
-                    if (code < 0x80) { utf8_buf[0] = (uint8_t)code; utf8_len = 1; }
-                    else if (code < 0x800) { utf8_buf[0] = (uint8_t)(0xC0 | (code >> 6)); utf8_buf[1] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 2; }
-                    else if (code < 0x10000) { utf8_buf[0] = (uint8_t)(0xE0 | (code >> 12)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 3; }
-                    else { utf8_buf[0] = (uint8_t)(0xF0 | (code >> 18)); utf8_buf[1] = (uint8_t)(0x80 | ((code >> 12) & 0x3F)); utf8_buf[2] = (uint8_t)(0x80 | ((code >> 6) & 0x3F)); utf8_buf[3] = (uint8_t)(0x80 | (code & 0x3F)); utf8_len = 4; }
-                    XString_append_with_length_utf8(d->m_text, (const char*)utf8_buf, (size_t)utf8_len);
-                }
-            }
+            if (d->m_text && !append_entity_codepoint(d, d->m_text, start, valueLength))
+                return false;
             d->m_type = XXmlStream_Characters;
             d->m_isWhitespace = false;
             d->m_isCDATA = false;
@@ -1548,6 +1897,10 @@ static bool parse_characters(XXmlStreamReaderPrivate* d, const char** ptr, const
         {
             if (*ptr > start)
             {
+                if (!is_valid_utf8_xml(start, (size_t)(*ptr - start))) {
+                    set_error(d, XXmlStream_NotWellFormedError, "字符数据包含无效 XML 字符。");
+                    return false;
+                }
                 if (d->m_text)
                 {
                     XString_append_with_length_utf8(d->m_text, start, (size_t)(*ptr - start));
@@ -1582,6 +1935,10 @@ static bool parse_characters(XXmlStreamReaderPrivate* d, const char** ptr, const
         }
         else if (**ptr == '&')
         {
+            if (*ptr > start && !is_valid_utf8_xml(start, (size_t)(*ptr - start))) {
+                set_error(d, XXmlStream_NotWellFormedError, "字符数据包含无效 XML 字符。");
+                return false;
+            }
             if (*ptr > start && d->m_text)
                 XString_append_with_length_utf8(d->m_text, start, (size_t)(*ptr - start));
             ++(*ptr);
@@ -1599,6 +1956,10 @@ static bool parse_characters(XXmlStreamReaderPrivate* d, const char** ptr, const
     }
     if (*ptr > start && d->m_text)
     {
+        if (!is_valid_utf8_xml(start, (size_t)(*ptr - start))) {
+            set_error(d, XXmlStream_NotWellFormedError, "字符数据包含无效 XML 字符。");
+            return false;
+        }
         XString_append_with_length_utf8(d->m_text, start, (size_t)(*ptr - start));
         d->m_type = XXmlStream_Characters;
         if (d->m_tagStackSize == 0 && !d->m_isWhitespace) {
@@ -1704,6 +2065,15 @@ static void private_init(XXmlStreamReaderPrivate* d)
     d->m_tagStackSize = 0;
     d->m_notationDeclarations = XXmlStreamNotationDeclarations_create();
     d->m_entityDeclarations = XXmlStreamEntityDeclarations_create();
+    d->m_inputEncoding = XML_INPUT_UTF8;
+    d->m_inputInitialized = false;
+    d->m_pendingInputLength = 0;
+    d->m_pendingUtf16High = 0;
+    d->m_hasPendingUtf16High = false;
+    d->m_startedDocument = false;
+    d->m_seenXmlDeclaration = false;
+    d->m_seenDtd = false;
+    d->m_finishedRootElement = false;
 }
 /**
  * @brief      释放私有数据
@@ -1738,6 +2108,11 @@ static void private_deinit(XXmlStreamReaderPrivate* d)
     if (d->m_entityDeclarations) {
         XXmlStreamEntityDeclarations_delete(d->m_entityDeclarations);
         d->m_entityDeclarations = NULL;
+    }
+    clear_default_attributes(d);
+    if (d->m_defaultAttributes) {
+        XFree_System(d->m_defaultAttributes);
+        d->m_defaultAttributes = NULL;
     }
     if (d->m_extraNamespaceDeclarations)
     {
@@ -1833,13 +2208,166 @@ static bool markup_is_complete(const char* start, const char* end)
     return false;
 }
 
+static bool append_normalized_codepoint(XByteArray* output, uint32_t codepoint)
+{
+    if (!output || !is_xml_char(codepoint)) return false;
+    uint8_t utf8[4];
+    size_t length = 0;
+    if (codepoint <= 0x7fU) {
+        utf8[0] = (uint8_t)codepoint;
+        length = 1;
+    } else if (codepoint <= 0x7ffU) {
+        utf8[0] = (uint8_t)(0xc0U | (codepoint >> 6));
+        utf8[1] = (uint8_t)(0x80U | (codepoint & 0x3fU));
+        length = 2;
+    } else if (codepoint <= 0xffffU) {
+        utf8[0] = (uint8_t)(0xe0U | (codepoint >> 12));
+        utf8[1] = (uint8_t)(0x80U | ((codepoint >> 6) & 0x3fU));
+        utf8[2] = (uint8_t)(0x80U | (codepoint & 0x3fU));
+        length = 3;
+    } else {
+        utf8[0] = (uint8_t)(0xf0U | (codepoint >> 18));
+        utf8[1] = (uint8_t)(0x80U | ((codepoint >> 12) & 0x3fU));
+        utf8[2] = (uint8_t)(0x80U | ((codepoint >> 6) & 0x3fU));
+        utf8[3] = (uint8_t)(0x80U | (codepoint & 0x3fU));
+        length = 4;
+    }
+    return XByteArray_push_back_2(output, utf8, length);
+}
+
+static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t length)
+{
+    if (!d || (!data && length > 0) || !d->m_ownedData) return false;
+    if (length == 0) return true;
+
+    size_t offset = 0;
+    if (!d->m_inputInitialized) {
+        d->m_inputEncoding = XML_INPUT_UTF8;
+        if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x00 &&
+            (uint8_t)data[2] == 0xfe && (uint8_t)data[3] == 0xff) {
+            d->m_inputEncoding = XML_INPUT_UTF32BE;
+            offset = 4;
+        } else if (length >= 4 && (uint8_t)data[0] == 0xff && (uint8_t)data[1] == 0xfe &&
+                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x00) {
+            d->m_inputEncoding = XML_INPUT_UTF32LE;
+            offset = 4;
+        } else if (length >= 3 && (uint8_t)data[0] == 0xef &&
+                   (uint8_t)data[1] == 0xbb && (uint8_t)data[2] == 0xbf) {
+            d->m_inputEncoding = XML_INPUT_UTF8;
+            offset = 3;
+        } else if (length >= 2 && (uint8_t)data[0] == 0xfe && (uint8_t)data[1] == 0xff) {
+            d->m_inputEncoding = XML_INPUT_UTF16BE;
+            offset = 2;
+        } else if (length >= 2 && (uint8_t)data[0] == 0xff && (uint8_t)data[1] == 0xfe) {
+            d->m_inputEncoding = XML_INPUT_UTF16LE;
+            offset = 2;
+        } else if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x00 &&
+                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x3c) {
+            d->m_inputEncoding = XML_INPUT_UTF32BE;
+        } else if (length >= 4 && (uint8_t)data[0] == 0x3c && (uint8_t)data[1] == 0x00 &&
+                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x00) {
+            d->m_inputEncoding = XML_INPUT_UTF32LE;
+        } else if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x3c &&
+                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x3f) {
+            d->m_inputEncoding = XML_INPUT_UTF16BE;
+        } else if (length >= 4 && (uint8_t)data[0] == 0x3c && (uint8_t)data[1] == 0x00 &&
+                   (uint8_t)data[2] == 0x3f && (uint8_t)data[3] == 0x00) {
+            d->m_inputEncoding = XML_INPUT_UTF16LE;
+        }
+        d->m_inputInitialized = true;
+    }
+
+    XByteArray* normalized = XByteArray_create();
+    if (!normalized) return false;
+    bool ok = true;
+    if (d->m_inputEncoding == XML_INPUT_UTF8) {
+        ok = XByteArray_push_back_2(normalized, data + offset, length - offset);
+    } else if (d->m_inputEncoding == XML_INPUT_UTF16LE ||
+               d->m_inputEncoding == XML_INPUT_UTF16BE) {
+        uint8_t bytes[2];
+        size_t byteCount = d->m_pendingInputLength;
+        uint16_t pendingHigh = d->m_pendingUtf16High;
+        bool hasPendingHigh = d->m_hasPendingUtf16High;
+        if (byteCount > 0) memcpy(bytes, d->m_pendingInput, byteCount);
+        for (size_t i = offset; ok && i < length; ++i) {
+            bytes[byteCount++] = (uint8_t)data[i];
+            if (byteCount < 2) continue;
+            uint16_t unit = d->m_inputEncoding == XML_INPUT_UTF16LE
+                ? (uint16_t)(bytes[0] | ((uint16_t)bytes[1] << 8))
+                : (uint16_t)(((uint16_t)bytes[0] << 8) | bytes[1]);
+            byteCount = 0;
+            if (unit >= 0xdc00U && unit <= 0xdfffU) {
+                if (!hasPendingHigh) { ok = false; break; }
+                uint32_t codepoint = 0x10000U +
+                    (((uint32_t)pendingHigh - 0xd800U) << 10) + (unit - 0xdc00U);
+                pendingHigh = 0;
+                hasPendingHigh = false;
+                ok = append_normalized_codepoint(normalized, codepoint);
+            } else if (unit >= 0xd800U && unit <= 0xdbffU) {
+                if (hasPendingHigh) { ok = false; break; }
+                pendingHigh = unit;
+                hasPendingHigh = true;
+            } else if (unit >= 0xd800U && unit <= 0xdfffU) {
+                ok = false;
+            } else if (hasPendingHigh) {
+                ok = false;
+            } else {
+                ok = append_normalized_codepoint(normalized, unit);
+            }
+        }
+
+        d->m_pendingUtf16High = pendingHigh;
+        d->m_hasPendingUtf16High = hasPendingHigh;
+        d->m_pendingInputLength = byteCount;
+        if (ok && byteCount > 0) {
+            d->m_pendingInput[0] = bytes[0];
+        }
+    } else if (d->m_inputEncoding == XML_INPUT_UTF32LE ||
+               d->m_inputEncoding == XML_INPUT_UTF32BE) {
+        uint8_t bytes[4];
+        size_t byteCount = d->m_pendingInputLength;
+        if (byteCount > 0) memcpy(bytes, d->m_pendingInput, byteCount);
+        for (size_t i = offset; ok && i < length; ++i) {
+            bytes[byteCount++] = (uint8_t)data[i];
+            if (byteCount < 4) continue;
+            uint32_t codepoint = d->m_inputEncoding == XML_INPUT_UTF32LE
+                ? ((uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+                   ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24))
+                : (((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
+                   ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3]);
+            byteCount = 0;
+            ok = append_normalized_codepoint(normalized, codepoint);
+        }
+        d->m_pendingInputLength = byteCount;
+        if (byteCount > 0) memcpy(d->m_pendingInput, bytes, byteCount);
+    }
+
+    if (ok && XByteArray_size_base(normalized) > 0)
+        ok = XByteArray_push_back_2(d->m_ownedData, XByteArray_data(normalized),
+                                    XByteArray_size_base(normalized));
+    XByteArray_delete_base(normalized);
+    if (!ok) {
+        set_error(d, XXmlStream_NotWellFormedError, "输入编码或 XML 字符无效。");
+        return false;
+    }
+    d->m_data = (const char*)XByteArray_data(d->m_ownedData);
+    d->m_dataLength = XByteArray_size_base(d->m_ownedData);
+    return true;
+}
+
+static bool has_incomplete_input(const XXmlStreamReaderPrivate* d)
+{
+    if (!d) return false;
+    return d->m_pendingInputLength > 0 || d->m_hasPendingUtf16High;
+}
+
 static bool append_input_data(XXmlStreamReaderPrivate* d, const char* data, size_t length)
 {
     if (!d || (!data && length > 0) || !d->m_ownedData) return false;
     size_t readOffset = 0;
     if (d->m_data && d->m_readPtr && d->m_readPtr >= d->m_data)
         readOffset = (size_t)(d->m_readPtr - d->m_data);
-    if (length > 0 && !XByteArray_push_back_2(d->m_ownedData, data, length)) return false;
+    if (length > 0 && !normalize_input(d, data, length)) return false;
     d->m_data = (const char*)XByteArray_data(d->m_ownedData);
     d->m_dataLength = XByteArray_size_base(d->m_ownedData);
     if (readOffset > d->m_dataLength) readOffset = d->m_dataLength;
@@ -1906,8 +2434,9 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
             XString_delete_base(tag->m_prefix);
             XString_delete_base(tag->m_namespaceUri);
             memset(tag, 0, sizeof(XmlTag));
-            d->m_tagStackSize--;
-            truncate_namespace_bindings(d, namespaceBindingCountBefore);
+                d->m_tagStackSize--;
+                truncate_namespace_bindings(d, namespaceBindingCountBefore);
+                if (d->m_tagStackSize == 0) d->m_finishedRootElement = true;
         }
         return XXmlStream_EndElement;
     }
@@ -1924,9 +2453,42 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
     const char* end = d->m_endPtr;
     /* token_start 将在跳过空白后设置为真正的 token 起始位置 */
     const char* token_start = NULL;
+    if (!d->m_startedDocument) {
+        d->m_startedDocument = true;
+        if (ptr && end && ptr < end && *ptr == '<' &&
+            (size_t)(end - ptr) >= 5 && memcmp(ptr, "<?xml", 5) == 0 &&
+            (ptr + 5 == end || ptr[5] == ' ' || ptr[5] == '\t' ||
+             ptr[5] == '\r' || ptr[5] == '\n' || ptr[5] == '?')) {
+            token_start = ptr;
+            ptr += 5;
+            if (!parse_xml_declaration(d, &ptr, end)) {
+                set_error(d, XXmlStream_NotWellFormedError, "XML 声明无效。");
+                return XXmlStream_Invalid;
+            }
+            d->m_seenXmlDeclaration = true;
+            d->m_type = XXmlStream_StartDocument;
+            d->m_readPtr = ptr;
+            d->m_lineNumber = count_newlines(d->m_data, token_start);
+            d->m_characterOffset = (int64_t)(token_start - d->m_data);
+            d->m_tokenColumn = 1;
+            return d->m_type;
+        }
+        if (d->m_documentVersion && XString_isEmpty_base(d->m_documentVersion))
+            XString_assign_utf8(d->m_documentVersion, "1.0");
+        d->m_type = XXmlStream_StartDocument;
+        d->m_readPtr = ptr;
+        d->m_lineNumber = ptr && d->m_data ? count_newlines(d->m_data, ptr) : 0;
+        d->m_characterOffset = ptr && d->m_data ? (int64_t)(ptr - d->m_data) : 0;
+        d->m_tokenColumn = 1;
+        return d->m_type;
+    }
     if (!ptr || !end || ptr >= end)
     {
         d->m_atEnd = true;
+        if (has_incomplete_input(d)) {
+            set_error(d, XXmlStream_PrematureEndOfDocumentError, "输入编码在文档末尾不完整。");
+            return XXmlStream_Invalid;
+        }
         /* 检测未关闭标签 */
         if (d->m_tagStackSize > 0)
         {
@@ -1994,16 +2556,12 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
         else if (*ptr == '?')
         {
             ++ptr;
-            if (ptr + 3 < end && strncmp(ptr, "xml", 3) == 0 && (*(ptr + 3) == ' ' || *(ptr + 3) == '?'))
+            if (ptr + 3 < end && strncmp(ptr, "xml", 3) == 0 &&
+                (*(ptr + 3) == ' ' || *(ptr + 3) == '\t' ||
+                 *(ptr + 3) == '\r' || *(ptr + 3) == '\n' || *(ptr + 3) == '?'))
             {
-                /* XML 声明 */
-                ptr += 3;
-                if (!parse_xml_declaration(d, &ptr, end))
-                {
-                    set_error(d, XXmlStream_NotWellFormedError, "解析 XML 声明失败。");
-                    return XXmlStream_Invalid;
-                }
-                d->m_type = XXmlStream_StartDocument;
+                set_error(d, XXmlStream_NotWellFormedError, "XML 声明必须位于文档开头。");
+                return XXmlStream_Invalid;
             }
             else
             {
@@ -2049,6 +2607,10 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
             }
             else if (strncmp(ptr, "DOCTYPE", 7) == 0)
             {
+                if (d->m_seenDtd || d->m_seenRootElement) {
+                    set_error(d, XXmlStream_NotWellFormedError, "DTD 必须位于根元素之前且只能出现一次。");
+                    return XXmlStream_Invalid;
+                }
                 ptr += 7;
                 /* DTD */
                 if (!parse_dtd(d, &ptr, end))
@@ -2056,6 +2618,7 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
                     set_error(d, XXmlStream_NotWellFormedError, "解析 DTD 失败。");
                     return XXmlStream_Invalid;
                 }
+                d->m_seenDtd = true;
             }
             else
             {
@@ -2126,9 +2689,24 @@ static void VXXmlStreamReader_deinit(XXmlStreamReader* obj)
 }
 
 /* ========== 复制私有数据（深拷贝） ========== */
-static void private_copy(XXmlStreamReaderPrivate* dest, const XXmlStreamReaderPrivate* src)
+static void private_copy(XXmlStreamReader* destObject,
+                         const XXmlStreamReader* srcObject)
 {
-    if (!dest || !src) return;
+    if (!destObject || !srcObject || destObject == srcObject) return;
+
+    /*
+     * copy_base 允许目标是仅分配、尚未 init 的栈对象。先完成完整的
+     * XXmlStreamReader 初始化，再访问私有区，避免 private_deinit 读取
+     * 未初始化的成员。
+     */
+    if (XClassIsVtableNull(destObject))
+        XXmlStreamReader_init(destObject);
+    if (XClassIsVtableNull(srcObject)) return;
+
+    XXmlStreamReaderPrivate* dest =
+        (XXmlStreamReaderPrivate*)(destObject + 1);
+    const XXmlStreamReaderPrivate* src =
+        (const XXmlStreamReaderPrivate*)(srcObject + 1);
 
     /* 释放目标已有资源（如果之前有） */
     private_deinit(dest);
@@ -2309,13 +2887,39 @@ static void private_copy(XXmlStreamReaderPrivate* dest, const XXmlStreamReaderPr
                                       item->m_systemId, item->m_publicId, item->m_value);
         }
     }
+    for (int i = 0; i < src->m_defaultAttributeCount; ++i) {
+        const XmlDefaultAttribute* item = &src->m_defaultAttributes[i];
+        append_default_attribute(dest, item->m_elementName, item->m_attributeName,
+                                 item->m_value, item->m_required);
+    }
     dest->m_entityResolver = src->m_entityResolver;
+    dest->m_inputEncoding = src->m_inputEncoding;
+    dest->m_inputInitialized = src->m_inputInitialized;
+    memcpy(dest->m_pendingInput, src->m_pendingInput, sizeof(dest->m_pendingInput));
+    dest->m_pendingInputLength = src->m_pendingInputLength;
+    dest->m_pendingUtf16High = src->m_pendingUtf16High;
+    dest->m_hasPendingUtf16High = src->m_hasPendingUtf16High;
+    dest->m_startedDocument = src->m_startedDocument;
+    dest->m_seenXmlDeclaration = src->m_seenXmlDeclaration;
+    dest->m_seenDtd = src->m_seenDtd;
+    dest->m_finishedRootElement = src->m_finishedRootElement;
 }
 
 /* ========== 移动私有数据（转移所有权） ========== */
-static void private_move(XXmlStreamReaderPrivate* dest, XXmlStreamReaderPrivate* src)
+static void private_move(XXmlStreamReader* destObject,
+                         XXmlStreamReader* srcObject)
 {
-    if (!dest || !src) return;
+    if (!destObject || !srcObject || destObject == srcObject) return;
+
+    /* move_base 同样允许目标尚未 init，必须先建立类和私有数据状态。 */
+    if (XClassIsVtableNull(destObject))
+        XXmlStreamReader_init(destObject);
+    if (XClassIsVtableNull(srcObject)) return;
+
+    XXmlStreamReaderPrivate* dest =
+        (XXmlStreamReaderPrivate*)(destObject + 1);
+    XXmlStreamReaderPrivate* src =
+        (XXmlStreamReaderPrivate*)(srcObject + 1);
 
     /* 释放目标已有资源 */
     private_deinit(dest);
@@ -2401,6 +3005,19 @@ static void private_move(XXmlStreamReaderPrivate* dest, XXmlStreamReaderPrivate*
     dest->m_notationDeclarations = src->m_notationDeclarations;
     dest->m_entityDeclarations = src->m_entityDeclarations;
     dest->m_entityResolver = src->m_entityResolver;
+    dest->m_defaultAttributes = src->m_defaultAttributes;
+    dest->m_defaultAttributeCount = src->m_defaultAttributeCount;
+    dest->m_defaultAttributeCapacity = src->m_defaultAttributeCapacity;
+    dest->m_inputEncoding = src->m_inputEncoding;
+    dest->m_inputInitialized = src->m_inputInitialized;
+    memcpy(dest->m_pendingInput, src->m_pendingInput, sizeof(dest->m_pendingInput));
+    dest->m_pendingInputLength = src->m_pendingInputLength;
+    dest->m_pendingUtf16High = src->m_pendingUtf16High;
+    dest->m_hasPendingUtf16High = src->m_hasPendingUtf16High;
+    dest->m_startedDocument = src->m_startedDocument;
+    dest->m_seenXmlDeclaration = src->m_seenXmlDeclaration;
+    dest->m_seenDtd = src->m_seenDtd;
+    dest->m_finishedRootElement = src->m_finishedRootElement;
     src->m_device = NULL;
     src->m_data = NULL;
     src->m_readPtr = NULL;
@@ -2412,6 +3029,17 @@ static void private_move(XXmlStreamReaderPrivate* dest, XXmlStreamReaderPrivate*
     src->m_notationDeclarations = NULL;
     src->m_entityDeclarations = NULL;
     src->m_entityResolver = NULL;
+    src->m_defaultAttributes = NULL;
+    src->m_defaultAttributeCount = 0;
+    src->m_defaultAttributeCapacity = 0;
+    src->m_pendingInputLength = 0;
+    src->m_pendingUtf16High = 0;
+    src->m_hasPendingUtf16High = false;
+    src->m_inputInitialized = false;
+    src->m_startedDocument = false;
+    src->m_seenXmlDeclaration = false;
+    src->m_seenDtd = false;
+    src->m_finishedRootElement = false;
 }
 
 /**
@@ -2421,14 +3049,8 @@ static void private_move(XXmlStreamReaderPrivate* dest, XXmlStreamReaderPrivate*
  */
 static void VXXmlStreamReader_copy(XXmlStreamReader* dest, const XXmlStreamReader* src)
 {
-    if (!dest || !src) return;
-    /* 目标未 init 则自动 init */
-    if (XClassIsVtableNull(dest)) {
-        XXmlStreamReader_init(dest);
-    }
-    XXmlStreamReaderPrivate* dest_d = (XXmlStreamReaderPrivate*)(dest + 1);
-    const XXmlStreamReaderPrivate* src_d = (const XXmlStreamReaderPrivate*)(src + 1);
-    private_copy(dest_d, src_d);
+    if (!dest || !src || dest == src) return;
+    private_copy(dest, src);
 }
 
 /**
@@ -2438,14 +3060,8 @@ static void VXXmlStreamReader_copy(XXmlStreamReader* dest, const XXmlStreamReade
  */
 static void VXXmlStreamReader_move(XXmlStreamReader* dest, XXmlStreamReader* src)
 {
-    if (!dest || !src) return;
-    /* 目标未 init 则自动 init */
-    if (XClassIsVtableNull(dest)) {
-        XXmlStreamReader_init(dest);
-    }
-    XXmlStreamReaderPrivate* dest_d = (XXmlStreamReaderPrivate*)(dest + 1);
-    XXmlStreamReaderPrivate* src_d = (XXmlStreamReaderPrivate*)(src + 1);
-    private_move(dest_d, src_d);
+    if (!dest || !src || dest == src) return;
+    private_move(dest, src);
 }
 
 /**
@@ -2636,7 +3252,7 @@ static const char* s_tokenStrings[12] = {
     "Unknown"
 };
 
-const char* XXmlStreamReader_tokenString_const(const XXmlStreamReader* self)
+const char* XXmlStreamReader_tokenString(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) {
         return s_tokenStrings[XXmlStream_Invalid];
@@ -2681,7 +3297,7 @@ bool XXmlStreamReader_hasStandaloneDeclaration(const XXmlStreamReader* self)
     return d->m_hasStandalone;
 }
 
-const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_processingInstructionTarget(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader"))
         return NULL;
@@ -2689,7 +3305,7 @@ const XString* XXmlStreamReader_processingInstructionTarget_const(const XXmlStre
     return d->m_processingInstructionTarget;
 }
 
-const XString* XXmlStreamReader_processingInstructionData_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_processingInstructionData(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader"))
         return NULL;
@@ -2961,10 +3577,14 @@ const XString* XXmlStreamAttributes_value_ex(const XXmlStreamAttributes* self, c
     for (int i = 0; i < self->m_count; i++) {
         if (!self->m_items[i]) continue;
         if (self->m_items[i]->m_name && XString_equals(self->m_items[i]->m_name, name, XChar_CaseSensitive)) {
-            if (!namespaceUri || XString_isEmpty_base(namespaceUri))
+            if (!namespaceUri || XString_isEmpty_base(namespaceUri)) {
+                if (!self->m_items[i]->m_namespaceUri ||
+                    XString_isEmpty_base(self->m_items[i]->m_namespaceUri))
+                    return self->m_items[i]->m_value;
+            } else if (self->m_items[i]->m_namespaceUri &&
+                       XString_equals(self->m_items[i]->m_namespaceUri, namespaceUri, XChar_CaseSensitive)) {
                 return self->m_items[i]->m_value;
-            if (self->m_items[i]->m_namespaceUri && XString_equals(self->m_items[i]->m_namespaceUri, namespaceUri, XChar_CaseSensitive))
-                return self->m_items[i]->m_value;
+            }
         }
     }
     return NULL;
@@ -3078,35 +3698,35 @@ const XString* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNames
  * XXmlStreamReader getter 实现
  * ============================================================================ */
 
-const XString* XXmlStreamReader_namespaceUri_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_namespaceUri(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     return d->m_namespaceUri;
 }
 
-const XString* XXmlStreamReader_name_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_name(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     return d->m_name;
 }
 
-const XString* XXmlStreamReader_qualifiedName_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_qualifiedName(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     return d->m_qualifiedName;
 }
 
-const XString* XXmlStreamReader_prefix_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_prefix(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     return d->m_prefix;
 }
 
-const XString* XXmlStreamReader_text_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_text(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
@@ -3117,60 +3737,73 @@ const XXmlStreamAttributes* XXmlStreamReader_attributes(const XXmlStreamReader* 
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_attributes;
+    return d->m_type == XXmlStream_StartElement ? d->m_attributes : NULL;
 }
 
-int XXmlStreamReader_namespaceDeclarationsCount(const XXmlStreamReader* self)
-{
-    if (ISNULL(self, "XXmlStreamReader")) return 0;
-    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_namespaceDeclarationCount;
-}
-
-const XXmlStreamNamespaceDeclaration* XXmlStreamReader_namespaceDeclaration(const XXmlStreamReader* self, int index)
+const XXmlStreamNamespaceDeclarations* XXmlStreamReader_namespaceDeclarations(
+    const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    if (index < 0 || index >= d->m_namespaceDeclarationCount) return NULL;
-    return &d->m_namespaceDeclarations[index];
+    if (d->m_type == XXmlStream_StartElement && d->m_namespaceDeclarationCount > 0) {
+        d->m_namespaceDeclarationsView.m_items =
+            (const XXmlStreamNamespaceDeclaration*)d->m_namespaceDeclarations;
+        d->m_namespaceDeclarationsView.m_count = d->m_namespaceDeclarationCount;
+    } else {
+        d->m_namespaceDeclarationsView.m_items = NULL;
+        d->m_namespaceDeclarationsView.m_count = 0;
+    }
+    return &d->m_namespaceDeclarationsView;
+}
+
+int XXmlStreamNamespaceDeclarations_size(const XXmlStreamNamespaceDeclarations* self)
+{
+    return self ? self->m_count : 0;
+}
+
+const XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclarations_at(
+    const XXmlStreamNamespaceDeclarations* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_items) return NULL;
+    return &self->m_items[index];
 }
 
 bool XXmlStreamReader_hasNamespaceDeclarations(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return false;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_namespaceDeclarationCount > 0;
+    return d->m_type == XXmlStream_StartElement && d->m_namespaceDeclarationCount > 0;
 }
 
-const XString* XXmlStreamReader_dtdName_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdName(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdName;
+    return d->m_type == XXmlStream_DTD ? d->m_dtdName : NULL;
 }
 
-const XString* XXmlStreamReader_dtdPublicId_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdPublicId(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdPublicId;
+    return d->m_type == XXmlStream_DTD ? d->m_dtdPublicId : NULL;
 }
 
-const XString* XXmlStreamReader_dtdSystemId_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_dtdSystemId(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_dtdSystemId;
+    return d->m_type == XXmlStream_DTD ? d->m_dtdSystemId : NULL;
 }
 
-const XString* XXmlStreamReader_documentVersion_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_documentVersion(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     return d->m_documentVersion;
 }
 
-const XString* XXmlStreamReader_documentEncoding_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
@@ -3192,7 +3825,7 @@ int XXmlStreamReader_error(const XXmlStreamReader* self)
     return (int)d->m_error;
 }
 
-const XString* XXmlStreamReader_errorString_const(const XXmlStreamReader* self)
+const XString* XXmlStreamReader_errorString(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
@@ -3239,6 +3872,7 @@ bool XXmlStreamReader_readNextStartElement(XXmlStreamReader* self)
     if (ISNULL(self, "XXmlStreamReader")) return false;
     while (XXmlStreamReader_readNext(self) != XXmlStream_Invalid) {
         if (XXmlStreamReader_isStartElement(self)) return true;
+        if (XXmlStreamReader_isEndElement(self)) return false;
         if (XXmlStreamReader_isEndDocument(self)) return false;
     }
     return false;
@@ -3254,7 +3888,7 @@ void XXmlStreamReader_skipCurrentElement(XXmlStreamReader* self)
     }
 }
 
-const XString* XXmlStreamReader_readElementText_const(XXmlStreamReader* self, int behaviour)
+const XString* XXmlStreamReader_readElementText(XXmlStreamReader* self, int behaviour)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);

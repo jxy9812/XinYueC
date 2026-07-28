@@ -644,7 +644,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token != XXmlStream_StartElement) continue;
-        const XString* element = XXmlStreamReader_name_const(reader);
+        const XString* element = XXmlStreamReader_name(reader);
         const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
         if (!element) continue;
 
@@ -688,7 +688,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
                 XAbstractSheet* scopeSheet = XWorkbook_sheet(self, atoi(XString_toUtf8(localSheetId)));
                 if (scopeSheet && scopeSheet->m_sheetName) scope = XString_create_copy(scopeSheet->m_sheetName);
             }
-            const XString* formula = XXmlStreamReader_readElementText_const(reader,
+            const XString* formula = XXmlStreamReader_readElementText(reader,
                 XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
             if (name && formula) XWorkbook_defineName(self, name, formula, comment, scope);
             if (name) XString_delete_base(name);

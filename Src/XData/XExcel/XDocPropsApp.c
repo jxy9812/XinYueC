@@ -309,14 +309,14 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
     XString* pendingHeading = NULL;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement && name) {
             if (XString_equals_utf8(name, "HeadingPairs", XChar_CaseSensitive)) {
                 inHeadingPairs = true;
             } else if (XString_equals_utf8(name, "TitlesOfParts", XChar_CaseSensitive)) {
                 inTitles = true;
             } else if (XString_equals_utf8(name, "lpstr", XChar_CaseSensitive)) {
-                const XString* value = XXmlStreamReader_readElementText_const(reader,
+                const XString* value = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (inTitles) XDocPropsApp_addPartTitle(self, value);
                 else if (inHeadingPairs) {
@@ -324,7 +324,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                     pendingHeading = value ? XString_create_copy(value) : NULL;
                 }
             } else if (inHeadingPairs && XString_equals_utf8(name, "i4", XChar_CaseSensitive)) {
-                const XString* value = XXmlStreamReader_readElementText_const(reader,
+                const XString* value = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (pendingHeading && value) {
                     XDocPropsApp_addHeadingPair(self, pendingHeading, atoi(XString_toUtf8(value)));
@@ -336,7 +336,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                        !XString_equals_utf8(name, "vector", XChar_CaseSensitive) &&
                        !XString_equals_utf8(name, "variant", XChar_CaseSensitive)) {
                 XString* key = XString_create_copy(name);
-                const XString* value = XXmlStreamReader_readElementText_const(reader,
+                const XString* value = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (!key || !value || !XDocPropsApp_setProperty(self, key, value)) {
                     if (key) XString_delete_base(key);

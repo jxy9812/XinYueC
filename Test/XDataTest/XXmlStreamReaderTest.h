@@ -11,6 +11,11 @@ extern "C" {
 #endif
 #include "CXinYueConfig.h"
 #include "XClass.h"
+#include <stdbool.h>
+
+/* 直接运行全部 Reader 测试，不经过交互式菜单。 */
+bool XXmlStreamReaderTest_runAll(void);
+
 #if DEMOTEST
 void XMenu_XXmlStreamReaderTest(XMenu* root);
 #endif

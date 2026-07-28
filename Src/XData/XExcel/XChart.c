@@ -475,13 +475,13 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
 
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement) {
             XChart_ChartType type = chart_type_from_name(name);
             if (type != XChart_NoStatementChart) self->m_chartType = type;
             if (name && XString_equals_utf8(name, "title", XChar_CaseSensitive)) inTitle = true;
             else if (name && XString_equals_utf8(name, "t", XChar_CaseSensitive) && inTitle) {
-                const XString* title = XXmlStreamReader_readElementText_const(reader,
+                const XString* title = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 XChart_setChartTitle(self, title);
             } else if (name && XString_equals_utf8(name, "ser", XChar_CaseSensitive)) {
@@ -496,7 +496,7 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
                 pending.m_swapHeaders = flag && atoi(XString_toUtf8(flag)) != 0;
                 inSeries = true;
             } else if (name && XString_equals_utf8(name, "f", XChar_CaseSensitive) && inSeries) {
-                const XString* formula = XXmlStreamReader_readElementText_const(reader,
+                const XString* formula = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 set_chart_sheet_from_formula(self, formula ? XString_toUtf8(formula) : NULL);
                 char normalized[160];

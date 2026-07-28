@@ -1,0 +1,4 @@
+﻿#ifndef XDOMPROCESSINGINSTRUCTION_H
+#define XDOMPROCESSINGINSTRUCTION_H
+#include "XDom.h"
+#endif

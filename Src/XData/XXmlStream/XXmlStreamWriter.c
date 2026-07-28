@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XXmlStreamWriter.c
  * @brief      XXmlStreamWriter 的 XML 写入实现，行为参考 Qt 6.8 QXmlStreamWriter。
  * @author     XinYueC
@@ -9,9 +9,8 @@
 #include "XByteArray.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
-#include <stdlib.h>
+#include <stdlib.h> /* XClass 宏使用 ISO C exit 声明；XML 本身不调用平台 API。 */
 #include <string.h>
-#include <stdio.h>
 
 /* ============================================================================
  * 默认配置
@@ -19,6 +18,12 @@
 
 /** @brief 自动缩进使用的默认缩进宽度。 */
 #define DEFAULT_INDENT 4
+
+typedef struct XmlWriterNamespaceBinding
+{
+    XString* m_prefix;
+    XString* m_namespaceUri;
+} XmlWriterNamespaceBinding;
 
 /* ============================================================================
  * 内部辅助函数
@@ -40,13 +45,305 @@ static void write_byte(XXmlStreamWriter* self, uint8_t value);
 static void write_raw_str(XXmlStreamWriter* self, const char* str);
 
 /** @brief 写入 XML 文本并转义保留字符。 */
-static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute);
+static bool write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute);
 
 /** @brief 写入开始元素标签并更新元素栈状态。 */
 static void write_start_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
 
 /** @brief 写入空元素标签并标记待关闭状态。 */
 static void write_empty_element_impl(XXmlStreamWriter* self, const char* namespaceUri, const char* name);
+
+static bool is_valid_writer_xml(const char* text);
+static bool is_valid_writer_name(const char* name, bool qualified);
+static void clear_namespace_bindings(XXmlStreamWriter* self);
+static bool append_namespace_binding(XXmlStreamWriter* self, const char* prefix,
+                                     const char* namespaceUri);
+static const char* namespace_for_prefix(const XXmlStreamWriter* self, const char* prefix);
+static const char* prefix_for_namespace(const XXmlStreamWriter* self, const char* namespaceUri);
+static bool write_namespace_utf8_impl(XXmlStreamWriter* self, const char* namespaceUri,
+                                      const char* prefix);
+static void restore_namespace_scope(XXmlStreamWriter* self, int scopeStart);
+static bool push_element_state(XXmlStreamWriter* self, const char* qualifiedName);
+static void pop_element_state(XXmlStreamWriter* self);
+
+static bool decode_writer_utf8(const char* ptr, const char* end,
+                               uint32_t* codepoint, size_t* length)
+{
+    if (!ptr || ptr >= end || !codepoint || !length) return false;
+    const uint8_t* bytes = (const uint8_t*)ptr;
+    uint32_t value;
+    size_t count;
+    if (bytes[0] <= 0x7fU) {
+        value = bytes[0];
+        count = 1;
+    } else if (bytes[0] >= 0xc2U && bytes[0] <= 0xdfU) {
+        value = bytes[0] & 0x1fU;
+        count = 2;
+    } else if (bytes[0] >= 0xe0U && bytes[0] <= 0xefU) {
+        value = bytes[0] & 0x0fU;
+        count = 3;
+    } else if (bytes[0] >= 0xf0U && bytes[0] <= 0xf4U) {
+        value = bytes[0] & 0x07U;
+        count = 4;
+    } else {
+        return false;
+    }
+    if ((size_t)(end - ptr) < count) return false;
+    for (size_t i = 1; i < count; ++i) {
+        if ((bytes[i] & 0xc0U) != 0x80U) return false;
+        value = (value << 6) | (bytes[i] & 0x3fU);
+    }
+    if ((count == 2 && value < 0x80U) ||
+        (count == 3 && value < 0x800U) ||
+        (count == 4 && value < 0x10000U) ||
+        value > 0x10ffffU || (value >= 0xd800U && value <= 0xdfffU)) return false;
+    *codepoint = value;
+    *length = count;
+    return true;
+}
+
+static bool is_writer_xml_char(uint32_t codepoint)
+{
+    return codepoint == 0x9U || codepoint == 0xaU || codepoint == 0xdU ||
+           (codepoint >= 0x20U && codepoint <= 0xd7ffU) ||
+           (codepoint >= 0xe000U && codepoint <= 0xfffdU) ||
+           (codepoint >= 0x10000U && codepoint <= 0x10ffffU);
+}
+
+static bool is_writer_name_start(uint32_t codepoint)
+{
+    return codepoint == '_' || (codepoint >= 'A' && codepoint <= 'Z') ||
+           (codepoint >= 'a' && codepoint <= 'z') || (codepoint >= 0xc0U && codepoint <= 0xd6U) ||
+           (codepoint >= 0xd8U && codepoint <= 0xf6U) || (codepoint >= 0xf8U && codepoint <= 0x2ffU) ||
+           (codepoint >= 0x370U && codepoint <= 0x37dU) || (codepoint >= 0x37fU && codepoint <= 0x1fffU) ||
+           (codepoint >= 0x200cU && codepoint <= 0x200dU) || (codepoint >= 0x2070U && codepoint <= 0x218fU) ||
+           (codepoint >= 0x2c00U && codepoint <= 0x2fefU) || (codepoint >= 0x3001U && codepoint <= 0xd7ffU) ||
+           (codepoint >= 0xf900U && codepoint <= 0xfdcfU) || (codepoint >= 0xfdf0U && codepoint <= 0xfffdU) ||
+           (codepoint >= 0x10000U && codepoint <= 0xeffffU);
+}
+
+static bool is_writer_name_char(uint32_t codepoint)
+{
+    return is_writer_name_start(codepoint) || (codepoint >= '0' && codepoint <= '9') ||
+           codepoint == '-' || codepoint == '.' || codepoint == 0xb7U ||
+           (codepoint >= 0x300U && codepoint <= 0x36fU) ||
+           (codepoint >= 0x203fU && codepoint <= 0x2040U);
+}
+
+static bool is_valid_writer_xml(const char* text)
+{
+    if (!text) return false;
+    const char* ptr = text;
+    const char* end = text + strlen(text);
+    while (ptr < end) {
+        uint32_t codepoint;
+        size_t length;
+        if (!decode_writer_utf8(ptr, end, &codepoint, &length) ||
+            !is_writer_xml_char(codepoint)) return false;
+        ptr += length;
+    }
+    return true;
+}
+
+static bool writer_ascii_equals_ignore_case(const char* left, const char* right)
+{
+    if (!left || !right) return false;
+    while (*left && *right) {
+        char leftChar = *left++;
+        char rightChar = *right++;
+        if (leftChar >= 'A' && leftChar <= 'Z') leftChar = (char)(leftChar + ('a' - 'A'));
+        if (rightChar >= 'A' && rightChar <= 'Z') rightChar = (char)(rightChar + ('a' - 'A'));
+        if (leftChar != rightChar) return false;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static void make_writer_prefix(char* output, size_t capacity, unsigned int number)
+{
+    if (!output || capacity < 3) return;
+    char digits[sizeof(unsigned int) * 3 + 2];
+    size_t digitCount = 0;
+    if (number == 0) {
+        digits[digitCount++] = '0';
+    } else {
+        while (number > 0 && digitCount < sizeof(digits)) {
+            digits[digitCount++] = (char)('0' + (number % 10U));
+            number /= 10U;
+        }
+    }
+    if (digitCount + 2 > capacity) {
+        output[0] = '\0';
+        return;
+    }
+    output[0] = 'n';
+    for (size_t i = 0; i < digitCount; ++i)
+        output[i + 1] = digits[digitCount - i - 1];
+    output[digitCount + 1] = '\0';
+}
+
+static bool is_valid_writer_name_part(const char* name, size_t length)
+{
+    if (!name || length == 0) return false;
+    const char* ptr = name;
+    const char* end = name + length;
+    uint32_t codepoint;
+    size_t byteLength;
+    if (!decode_writer_utf8(ptr, end, &codepoint, &byteLength) ||
+        !is_writer_name_start(codepoint)) return false;
+    ptr += byteLength;
+    while (ptr < end) {
+        if (!decode_writer_utf8(ptr, end, &codepoint, &byteLength) ||
+            !is_writer_name_char(codepoint)) return false;
+        ptr += byteLength;
+    }
+    return true;
+}
+
+static bool is_valid_writer_name(const char* name, bool qualified)
+{
+    if (!name || !*name) return false;
+    const char* firstColon = strchr(name, ':');
+    if (!qualified && firstColon) return false;
+    if (!firstColon) return is_valid_writer_name_part(name, strlen(name));
+    if (strchr(firstColon + 1, ':') || firstColon == name || !firstColon[1]) return false;
+    return is_valid_writer_name_part(name, (size_t)(firstColon - name)) &&
+           is_valid_writer_name_part(firstColon + 1, strlen(firstColon + 1));
+}
+
+static XmlWriterNamespaceBinding* writer_namespace_bindings(const XXmlStreamWriter* self)
+{
+    return self ? (XmlWriterNamespaceBinding*)self->m_namespaceBindings : NULL;
+}
+
+static void clear_namespace_bindings(XXmlStreamWriter* self)
+{
+    if (!self) return;
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    for (int i = 0; bindings && i < self->m_namespaceBindingCount; ++i) {
+        XString_delete_base(bindings[i].m_prefix);
+        XString_delete_base(bindings[i].m_namespaceUri);
+        bindings[i].m_prefix = NULL;
+        bindings[i].m_namespaceUri = NULL;
+    }
+    if (bindings) XFree_System(bindings);
+    if (self->m_namespaceScopeStack) XFree_System(self->m_namespaceScopeStack);
+    self->m_namespaceBindings = NULL;
+    self->m_namespaceBindingCount = 0;
+    self->m_namespaceBindingCapacity = 0;
+    self->m_pendingNamespaceBindingCount = 0;
+    self->m_namespaceScopeStack = NULL;
+    self->m_namespaceScopeStackCapacity = 0;
+}
+
+static bool append_namespace_binding(XXmlStreamWriter* self, const char* prefix,
+                                     const char* namespaceUri)
+{
+    if (!self || !prefix || !namespaceUri) return false;
+    if (self->m_namespaceBindingCount >= self->m_namespaceBindingCapacity) {
+        int capacity = self->m_namespaceBindingCapacity ? self->m_namespaceBindingCapacity * 2 : 8;
+        XmlWriterNamespaceBinding* bindings = (XmlWriterNamespaceBinding*)XRealloc_System(
+            self->m_namespaceBindings, (size_t)capacity * sizeof(XmlWriterNamespaceBinding));
+        if (!bindings) return false;
+        memset(bindings + self->m_namespaceBindingCapacity, 0,
+               (size_t)(capacity - self->m_namespaceBindingCapacity) * sizeof(XmlWriterNamespaceBinding));
+        self->m_namespaceBindings = bindings;
+        self->m_namespaceBindingCapacity = capacity;
+    }
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    XmlWriterNamespaceBinding* binding = &bindings[self->m_namespaceBindingCount];
+    binding->m_prefix = XString_create_utf8(prefix);
+    binding->m_namespaceUri = XString_create_utf8(namespaceUri);
+    if (!binding->m_prefix || !binding->m_namespaceUri) {
+        XString_delete_base(binding->m_prefix);
+        XString_delete_base(binding->m_namespaceUri);
+        binding->m_prefix = NULL;
+        binding->m_namespaceUri = NULL;
+        return false;
+    }
+    ++self->m_namespaceBindingCount;
+    return true;
+}
+
+static const char* namespace_for_prefix(const XXmlStreamWriter* self, const char* prefix)
+{
+    if (!self || !prefix) return NULL;
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    for (int i = self->m_namespaceBindingCount - 1; bindings && i >= 0; --i) {
+        const char* candidate = XString_toUtf8(bindings[i].m_prefix);
+        if (candidate && strcmp(candidate, prefix) == 0)
+            return XString_toUtf8(bindings[i].m_namespaceUri);
+    }
+    return NULL;
+}
+
+static const char* prefix_for_namespace(const XXmlStreamWriter* self, const char* namespaceUri)
+{
+    if (!self || !namespaceUri) return NULL;
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    for (int i = self->m_namespaceBindingCount - 1; bindings && i >= 0; --i) {
+        const char* candidate = XString_toUtf8(bindings[i].m_namespaceUri);
+        if (candidate && strcmp(candidate, namespaceUri) == 0)
+            return XString_toUtf8(bindings[i].m_prefix);
+    }
+    return NULL;
+}
+
+static void restore_namespace_scope(XXmlStreamWriter* self, int scopeStart)
+{
+    if (!self) return;
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    while (self->m_namespaceBindingCount > scopeStart) {
+        XmlWriterNamespaceBinding* binding = &bindings[self->m_namespaceBindingCount - 1];
+        XString_delete_base(binding->m_prefix);
+        XString_delete_base(binding->m_namespaceUri);
+        binding->m_prefix = NULL;
+        binding->m_namespaceUri = NULL;
+        --self->m_namespaceBindingCount;
+    }
+}
+
+static bool push_element_state(XXmlStreamWriter* self, const char* qualifiedName)
+{
+    if (!self || !qualifiedName) return false;
+    if (self->m_elementNameStackSize >= self->m_elementNameStackCapacity) {
+        int capacity = self->m_elementNameStackCapacity ? self->m_elementNameStackCapacity * 2 : 16;
+        XString** stack = (XString**)XRealloc_System(
+            self->m_elementNameStack, (size_t)capacity * sizeof(XString*));
+        if (!stack) return false;
+        memset(stack + self->m_elementNameStackCapacity, 0,
+               (size_t)(capacity - self->m_elementNameStackCapacity) * sizeof(XString*));
+        self->m_elementNameStack = stack;
+        self->m_elementNameStackCapacity = capacity;
+    }
+    if (self->m_elementStack >= self->m_namespaceScopeStackCapacity) {
+        int capacity = self->m_namespaceScopeStackCapacity ? self->m_namespaceScopeStackCapacity * 2 : 16;
+        int* stack = (int*)XRealloc_System(self->m_namespaceScopeStack, (size_t)capacity * sizeof(int));
+        if (!stack) return false;
+        self->m_namespaceScopeStack = stack;
+        self->m_namespaceScopeStackCapacity = capacity;
+    }
+    XString* elementName = XString_create_utf8(qualifiedName);
+    if (!elementName) return false;
+    self->m_elementNameStack[self->m_elementNameStackSize++] = elementName;
+    int scopeStart = self->m_namespaceBindingCount - self->m_pendingNamespaceBindingCount;
+    if (scopeStart < 0) scopeStart = 0;
+    self->m_namespaceScopeStack[self->m_elementStack] = scopeStart;
+    return true;
+}
+
+static void pop_element_state(XXmlStreamWriter* self)
+{
+    if (!self || self->m_elementStack <= 0) return;
+    int depth = self->m_elementStack - 1;
+    int scopeStart = self->m_namespaceScopeStack ? self->m_namespaceScopeStack[depth] : 0;
+    restore_namespace_scope(self, scopeStart);
+    if (self->m_elementNameStackSize > 0) {
+        --self->m_elementNameStackSize;
+        XString_delete_base(self->m_elementNameStack[self->m_elementNameStackSize]);
+        self->m_elementNameStack[self->m_elementNameStackSize] = NULL;
+    }
+    --self->m_elementStack;
+}
 
 /* ============================================================================
  * 生命周期和复制移动
@@ -85,6 +382,7 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
         XString_delete_base(obj->m_deviceString);
         obj->m_deviceString = NULL;
     }
+    clear_namespace_bindings(obj);
     
     /* ========== 调用父类 deinit ========== */
     XClass_Deinit_Parent(XClass, obj);
@@ -97,12 +395,14 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
  */
 static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter* src)
 {
-    if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
+    if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter") || obj == src)
+        return;
 
-    /* 目标未 init 则自动 init（vtable 为空时），让 copy_base 可在未初始化目标上安全调用 */
+    /* 目标未 init 则自动 init，让 copy_base 可安全用于栈对象。 */
     if (XClassIsVtableNull(obj)) {
         XXmlStreamWriter_init(obj);
     }
+    if (XClassIsVtableNull(src)) return;
 
     /* ========== 释放目标对象已有资源 ========== */
     if (obj->m_elementNameStack) {
@@ -120,6 +420,7 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
     if (obj->m_deviceString) {
         XString_delete_base(obj->m_deviceString);
     }
+    clear_namespace_bindings(obj);
 
     /* ========== 复制元素名栈 ========== */
     obj->m_elementNameStack = NULL;
@@ -160,15 +461,44 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
     obj->m_inStartElement = src->m_inStartElement;
     obj->m_pendingEmptyElement = src->m_pendingEmptyElement;
     obj->m_namespacePrefixCounter = src->m_namespacePrefixCounter;
+    obj->m_device = src->m_device;
+
+    if (src->m_namespaceBindingCapacity > 0) {
+        XmlWriterNamespaceBinding* srcBindings = writer_namespace_bindings(src);
+        XmlWriterNamespaceBinding* bindings = (XmlWriterNamespaceBinding*)XMalloc_System(
+            (size_t)src->m_namespaceBindingCapacity * sizeof(XmlWriterNamespaceBinding));
+        if (bindings) {
+            memset(bindings, 0, (size_t)src->m_namespaceBindingCapacity * sizeof(XmlWriterNamespaceBinding));
+            obj->m_namespaceBindings = bindings;
+            obj->m_namespaceBindingCapacity = src->m_namespaceBindingCapacity;
+            for (int i = 0; i < src->m_namespaceBindingCount; ++i) {
+                bindings[i].m_prefix = XString_create_copy(srcBindings[i].m_prefix);
+                bindings[i].m_namespaceUri = XString_create_copy(srcBindings[i].m_namespaceUri);
+            }
+            obj->m_namespaceBindingCount = src->m_namespaceBindingCount;
+            obj->m_pendingNamespaceBindingCount = src->m_pendingNamespaceBindingCount;
+        }
+    }
+    if (src->m_namespaceScopeStackCapacity > 0) {
+        obj->m_namespaceScopeStack = (int*)XMalloc_System(
+            (size_t)src->m_namespaceScopeStackCapacity * sizeof(int));
+        if (obj->m_namespaceScopeStack) {
+            memcpy(obj->m_namespaceScopeStack, src->m_namespaceScopeStack,
+                   (size_t)src->m_namespaceScopeStackCapacity * sizeof(int));
+            obj->m_namespaceScopeStackCapacity = src->m_namespaceScopeStackCapacity;
+        }
+    }
 }
 static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
 {
-    if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter")) return;
+    if (ISNULL(obj, "XXmlStreamWriter") || ISNULL(src, "XXmlStreamWriter") || obj == src)
+        return;
 
-    /* 目标未 init 则自动 init */
+    /* 目标未 init 则自动 init，让 move_base 可安全用于栈对象。 */
     if (XClassIsVtableNull(obj)) {
         XXmlStreamWriter_init(obj);
     }
+    if (XClassIsVtableNull(src)) return;
 
     /* ========== 释放目标对象已有资源 ========== */
     if (obj->m_elementNameStack) {
@@ -186,10 +516,12 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     if (obj->m_deviceString) {
         XString_delete_base(obj->m_deviceString);
     }
+    clear_namespace_bindings(obj);
 
     /* ========== 转移所有权 ========== */
     obj->m_buffer = src->m_buffer;
     obj->m_deviceString = src->m_deviceString;
+    obj->m_device = src->m_device;
     obj->m_autoFormatting = src->m_autoFormatting;
     obj->m_autoFormattingIndent = src->m_autoFormattingIndent;
     obj->m_elementStack = src->m_elementStack;
@@ -200,10 +532,17 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     obj->m_elementNameStack = src->m_elementNameStack;
     obj->m_elementNameStackSize = src->m_elementNameStackSize;
     obj->m_elementNameStackCapacity = src->m_elementNameStackCapacity;
+    obj->m_namespaceBindings = src->m_namespaceBindings;
+    obj->m_namespaceBindingCount = src->m_namespaceBindingCount;
+    obj->m_namespaceBindingCapacity = src->m_namespaceBindingCapacity;
+    obj->m_pendingNamespaceBindingCount = src->m_pendingNamespaceBindingCount;
+    obj->m_namespaceScopeStack = src->m_namespaceScopeStack;
+    obj->m_namespaceScopeStackCapacity = src->m_namespaceScopeStackCapacity;
     
     /* 将源对象恢复为可安全释放的空状态。 */
     src->m_buffer = NULL;
     src->m_deviceString = NULL;
+    src->m_device = NULL;
     src->m_autoFormatting = false;
     src->m_autoFormattingIndent = DEFAULT_INDENT;
     src->m_elementStack = 0;
@@ -214,6 +553,12 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     src->m_elementNameStack = NULL;
     src->m_elementNameStackSize = 0;
     src->m_elementNameStackCapacity = 0;
+    src->m_namespaceBindings = NULL;
+    src->m_namespaceBindingCount = 0;
+    src->m_namespaceBindingCapacity = 0;
+    src->m_pendingNamespaceBindingCount = 0;
+    src->m_namespaceScopeStack = NULL;
+    src->m_namespaceScopeStackCapacity = 0;
 }
 
 /* ============================================================================
@@ -289,15 +634,7 @@ static void close_start_element(XXmlStreamWriter* self, bool empty)
         /* ========== 写入 /> ========== */
         write_byte(self, (uint8_t)'/');
         write_byte(self, (uint8_t)'>');
-        self->m_elementStack--;
-        /* ========== 从栈中弹出元素名 ========== */
-        if (self->m_elementNameStackSize > 0) {
-            self->m_elementNameStackSize--;
-            if (self->m_elementNameStack[self->m_elementNameStackSize]) {
-                XString_delete_base(self->m_elementNameStack[self->m_elementNameStackSize]);
-                self->m_elementNameStack[self->m_elementNameStackSize] = NULL;
-            }
-        }
+        pop_element_state(self);
     } else {
         /* ========== 写入 > ========== */
         write_byte(self, (uint8_t)'>');
@@ -312,11 +649,19 @@ static void close_start_element(XXmlStreamWriter* self, bool empty)
  * @param text        待写入的文本。
  * @param isAttribute 是否按 XML 属性值规则转义换行、回车和制表符。
  */
-static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute)
+static bool write_escaped(XXmlStreamWriter* self, const char* text, bool isAttribute)
 {
-    if (!self || !text || !self->m_buffer) return;
-    
-    for (const char* p = text; *p; p++) {
+    if (!self || !text || !self->m_buffer) return false;
+    const char* p = text;
+    const char* end = text + strlen(text);
+    while (p < end) {
+        uint32_t codepoint;
+        size_t length;
+        if (!decode_writer_utf8(p, end, &codepoint, &length) ||
+            !is_writer_xml_char(codepoint)) {
+            self->m_hasError = true;
+            return false;
+        }
         unsigned char c = (unsigned char)*p;
         switch (c) {
             case '&':
@@ -364,17 +709,13 @@ static void write_escaped(XXmlStreamWriter* self, const char* text, bool isAttri
                 }
                 break;
             default:
-                if (c < 0x20) {
-                    /* XML 1.0 不允许的控制字符使用十六进制字符引用。 */
-                    char hex[8];
-                    snprintf(hex, sizeof(hex), "&#x%02X;", c);
-                    write_raw_str(self, hex);
-                } else {
-                    write_byte(self, c);
-                }
+                /* 多字节 UTF-8 必须整体写入，不能只写首字节。 */
+                write_raw(self, p, length);
                 break;
         }
+        p += length;
     }
+    return true;
 }
 
 /**
@@ -389,9 +730,35 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
         if (self) self->m_hasError = true;
         return;
     }
-    
+    if ((namespaceUri && namespaceUri[0] && !is_valid_writer_name(namespaceUri, false)) ||
+        !is_valid_writer_name(name, namespaceUri && namespaceUri[0] ? false : true)) {
+        self->m_hasError = true;
+        return;
+    }
+
+    XString qualifiedName;
+    XString_init(&qualifiedName);
+    if (namespaceUri && namespaceUri[0]) {
+        if (!XString_append_utf8(&qualifiedName, namespaceUri) ||
+            !XString_append_utf8(&qualifiedName, ":") ||
+            !XString_append_utf8(&qualifiedName, name)) {
+            XString_deinit_base(&qualifiedName);
+            self->m_hasError = true;
+            return;
+        }
+    } else if (!XString_append_utf8(&qualifiedName, name)) {
+        XString_deinit_base(&qualifiedName);
+        self->m_hasError = true;
+        return;
+    }
     /* 先关闭上一个尚未完成的开始标签。 */
     close_start_element(self, false);
+    const char* qualifiedUtf8 = XString_toUtf8(&qualifiedName);
+    if (!qualifiedUtf8 || !push_element_state(self, qualifiedUtf8)) {
+        XString_deinit_base(&qualifiedName);
+        self->m_hasError = true;
+        return;
+    }
     
     /* 自动格式化缩进。 */
     write_indent(self);
@@ -407,25 +774,32 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
     
     /* 写入元素名称。 */
     write_raw_str(self, name);
-    
-    /* ========== 将元素名压入栈 ========== */
-    if (self->m_elementNameStackSize >= self->m_elementNameStackCapacity) {
-        int newCap = self->m_elementNameStackCapacity ? self->m_elementNameStackCapacity * 2 : 16;
-        XString** newStack = (XString**)XRealloc_System(self->m_elementNameStack, newCap * sizeof(XString*));
-        if (!newStack) {
-            self->m_hasError = true;
-            return;
+
+    /* 将此前为“下一个元素”登记的声明写入当前开始标签。 */
+    if (self->m_pendingNamespaceBindingCount > 0) {
+        int firstPending = self->m_namespaceBindingCount - self->m_pendingNamespaceBindingCount;
+        XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+        for (int i = firstPending; bindings && i < self->m_namespaceBindingCount; ++i) {
+            const char* pendingPrefix = XString_toUtf8(bindings[i].m_prefix);
+            const char* pendingUri = XString_toUtf8(bindings[i].m_namespaceUri);
+            write_byte(self, (uint8_t)' ');
+            write_raw_str(self, "xmlns");
+            if (pendingPrefix && pendingPrefix[0]) {
+                write_byte(self, (uint8_t)':');
+                write_raw_str(self, pendingPrefix);
+            }
+            write_raw_str(self, "=\"");
+            write_escaped(self, pendingUri, true);
+            write_byte(self, (uint8_t)'\"');
         }
-        self->m_elementNameStack = newStack;
-        self->m_elementNameStackCapacity = newCap;
+        self->m_pendingNamespaceBindingCount = 0;
     }
-    self->m_elementNameStack[self->m_elementNameStackSize] = XString_create_utf8(name);
-    self->m_elementNameStackSize++;
-    
+
     /* ========== 设置开始标签状态 ========== */
     self->m_inStartElement = true;
     self->m_pendingEmptyElement = false;
     self->m_elementStack++;
+    XString_deinit_base(&qualifiedName);
 }
 
 /**
@@ -438,6 +812,63 @@ static void write_empty_element_impl(XXmlStreamWriter* self, const char* namespa
 {
     write_start_element_impl(self, namespaceUri, name);
     if (self && !self->m_hasError) self->m_pendingEmptyElement = true;
+}
+
+static bool write_namespace_utf8_impl(XXmlStreamWriter* self, const char* namespaceUri,
+                                      const char* prefix)
+{
+    if (!self || !namespaceUri || !prefix || !self->m_buffer ||
+        !is_valid_writer_xml(namespaceUri) ||
+        (prefix[0] && !is_valid_writer_name(prefix, false)) ||
+        strcmp(prefix, "xmlns") == 0 ||
+        (strcmp(prefix, "xml") == 0 && strcmp(namespaceUri, "http://www.w3.org/XML/1998/namespace") != 0) ||
+        (strcmp(namespaceUri, "http://www.w3.org/XML/1998/namespace") == 0 &&
+         strcmp(prefix, "xml") != 0)) {
+        if (self) self->m_hasError = true;
+        return false;
+    }
+    if (strcmp(namespaceUri, "http://www.w3.org/2000/xmlns/") == 0) {
+        self->m_hasError = true;
+        return false;
+    }
+
+    int pendingCount = self->m_pendingNamespaceBindingCount;
+    int scopeStart = self->m_inStartElement && self->m_namespaceScopeStack && self->m_elementStack > 0
+        ? self->m_namespaceScopeStack[self->m_elementStack - 1]
+        : self->m_namespaceBindingCount - pendingCount;
+    if (scopeStart < 0) scopeStart = 0;
+    XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
+    for (int i = self->m_namespaceBindingCount - 1; bindings && i >= scopeStart; --i) {
+        const char* boundPrefix = XString_toUtf8(bindings[i].m_prefix);
+        const char* boundUri = XString_toUtf8(bindings[i].m_namespaceUri);
+        if (boundPrefix && strcmp(boundPrefix, prefix) == 0) {
+            if (boundUri && strcmp(boundUri, namespaceUri) == 0) return true;
+            self->m_hasError = true;
+            return false;
+        }
+    }
+    const char* inheritedUri = namespace_for_prefix(self, prefix);
+    if (inheritedUri && strcmp(inheritedUri, namespaceUri) == 0) return true;
+    if (!append_namespace_binding(self, prefix, namespaceUri)) {
+        self->m_hasError = true;
+        return false;
+    }
+
+    if (!self->m_inStartElement) {
+        ++self->m_pendingNamespaceBindingCount;
+        return true;
+    }
+
+    write_byte(self, (uint8_t)' ');
+    write_raw_str(self, "xmlns");
+    if (prefix[0]) {
+        write_byte(self, (uint8_t)':');
+        write_raw_str(self, prefix);
+    }
+    write_raw_str(self, "=\"");
+    write_escaped(self, namespaceUri, true);
+    write_byte(self, (uint8_t)'\"');
+    return !self->m_hasError;
 }
 
 /* ============================================================================
@@ -547,6 +978,11 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
     self->m_pendingEmptyElement = false;
     self->m_namespacePrefixCounter = 0;
     self->m_device = NULL;
+    self->m_namespaceBindings = NULL;
+    self->m_namespaceBindingCount = 0;
+    self->m_namespaceBindingCapacity = 0;
+    self->m_namespaceScopeStack = NULL;
+    self->m_namespaceScopeStackCapacity = 0;
 }
 
 
@@ -801,10 +1237,8 @@ void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const XString
         if (self) self->m_hasError = true;
         return;
     }
-    write_start_element_impl(self, NULL, XString_toUtf8(name));
-    if (namespaceUri && XString_size(namespaceUri) > 0 && !self->m_hasError) {
-        XXmlStreamWriter_writeDefaultNamespace(self, namespaceUri);
-    }
+    XXmlStreamWriter_writeStartElement_ex_utf8(
+        self, namespaceUri ? XString_toUtf8(namespaceUri) : NULL, XString_toUtf8(name));
 }
 
 /**
@@ -815,10 +1249,30 @@ void XXmlStreamWriter_writeStartElement_ex(XXmlStreamWriter* self, const XString
  */
 void XXmlStreamWriter_writeStartElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
-    write_start_element_impl(self, NULL, name);
-    if (namespaceUri && namespaceUri[0] && self && !self->m_hasError) {
-        XXmlStreamWriter_writeDefaultNamespace_utf8(self, namespaceUri);
+    if (!self || !name) {
+        if (self) self->m_hasError = true;
+        return;
     }
+    if (!is_valid_writer_name(name, false)) {
+        self->m_hasError = true;
+        return;
+    }
+    if (!namespaceUri || !namespaceUri[0]) {
+        write_start_element_impl(self, NULL, name);
+        return;
+    }
+    const char* prefix = prefix_for_namespace(self, namespaceUri);
+    char generatedPrefix[32];
+    if (!prefix) {
+        do {
+            ++self->m_namespacePrefixCounter;
+            make_writer_prefix(generatedPrefix, sizeof(generatedPrefix),
+                               self->m_namespacePrefixCounter);
+        } while (namespace_for_prefix(self, generatedPrefix));
+        prefix = generatedPrefix;
+    }
+    write_start_element_impl(self, prefix, name);
+    if (!self->m_hasError) write_namespace_utf8_impl(self, namespaceUri, prefix);
 }
 
 /**
@@ -837,8 +1291,6 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
        先关闭该空子元素，再继续关闭仍在栈中的父元素。 */
     if (self->m_inStartElement && self->m_pendingEmptyElement) {
         close_start_element(self, true);
-        if (self->m_elementStack > 0)
-            XXmlStreamWriter_writeEndElement(self);
         return;
     }
     if (self->m_inStartElement) {
@@ -852,13 +1304,10 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
     }
     
     self->m_elementStack--;
-    
-    /* ========== 从栈中弹出元素名 ========== */
-    const char* elementName = NULL;
-    if (self->m_elementNameStackSize > 0) {
-        self->m_elementNameStackSize--;
-        elementName = XString_toUtf8(self->m_elementNameStack[self->m_elementNameStackSize]);
-    }
+
+    /* ========== 读取栈顶限定名并恢复命名空间作用域 ========== */
+    const char* elementName = self->m_elementNameStackSize > 0
+        ? XString_toUtf8(self->m_elementNameStack[self->m_elementNameStackSize - 1]) : NULL;
     
     /* ========== 写入缩进 ========== */
     write_indent(self);
@@ -870,8 +1319,10 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
     }
     write_raw_str(self, ">");
     
-    /* ========== 释放元素名字符串资源 ========== */
-    if (self->m_elementNameStackSize >= 0 && self->m_elementNameStack[self->m_elementNameStackSize]) {
+    restore_namespace_scope(self, self->m_namespaceScopeStack
+        ? self->m_namespaceScopeStack[self->m_elementStack] : 0);
+    if (self->m_elementNameStackSize > 0) {
+        --self->m_elementNameStackSize;
         XString_delete_base(self->m_elementNameStack[self->m_elementNameStackSize]);
         self->m_elementNameStack[self->m_elementNameStackSize] = NULL;
     }
@@ -920,10 +1371,8 @@ void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const XString
         if (self) self->m_hasError = true;
         return;
     }
-    write_empty_element_impl(self, NULL, XString_toUtf8(name));
-    if (namespaceUri && XString_size(namespaceUri) > 0 && !self->m_hasError) {
-        XXmlStreamWriter_writeDefaultNamespace(self, namespaceUri);
-    }
+    XXmlStreamWriter_writeEmptyElement_ex_utf8(
+        self, namespaceUri ? XString_toUtf8(namespaceUri) : NULL, XString_toUtf8(name));
 }
 
 /**
@@ -934,10 +1383,30 @@ void XXmlStreamWriter_writeEmptyElement_ex(XXmlStreamWriter* self, const XString
  */
 void XXmlStreamWriter_writeEmptyElement_ex_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* name)
 {
-    write_empty_element_impl(self, NULL, name);
-    if (namespaceUri && namespaceUri[0] && self && !self->m_hasError) {
-        XXmlStreamWriter_writeDefaultNamespace_utf8(self, namespaceUri);
+    if (!self || !name) {
+        if (self) self->m_hasError = true;
+        return;
     }
+    if (!is_valid_writer_name(name, false)) {
+        self->m_hasError = true;
+        return;
+    }
+    if (!namespaceUri || !namespaceUri[0]) {
+        write_empty_element_impl(self, NULL, name);
+        return;
+    }
+    const char* prefix = prefix_for_namespace(self, namespaceUri);
+    char generatedPrefix[32];
+    if (!prefix) {
+        do {
+            ++self->m_namespacePrefixCounter;
+            make_writer_prefix(generatedPrefix, sizeof(generatedPrefix),
+                               self->m_namespacePrefixCounter);
+        } while (namespace_for_prefix(self, generatedPrefix));
+        prefix = generatedPrefix;
+    }
+    write_empty_element_impl(self, prefix, name);
+    if (!self->m_hasError) write_namespace_utf8_impl(self, namespaceUri, prefix);
 }
 
 /**
@@ -953,6 +1422,11 @@ void XXmlStreamWriter_writeAttribute(XXmlStreamWriter* self, const XString* qual
         return;
     }
     if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    if (!is_valid_writer_name(XString_toUtf8(qualifiedName), true) ||
+        !is_valid_writer_xml(XString_toUtf8(value))) {
         self->m_hasError = true;
         return;
     }
@@ -976,6 +1450,10 @@ void XXmlStreamWriter_writeAttribute_utf8(XXmlStreamWriter* self, const char* qu
         return;
     }
     if (!self->m_inStartElement) {
+        self->m_hasError = true;
+        return;
+    }
+    if (!is_valid_writer_name(qualifiedName, true) || !is_valid_writer_xml(value)) {
         self->m_hasError = true;
         return;
     }
@@ -1021,15 +1499,27 @@ void XXmlStreamWriter_writeAttribute_ex_utf8(XXmlStreamWriter* self, const char*
         self->m_hasError = true;
         return;
     }
+    if (!is_valid_writer_name(name, false) ||
+        (namespaceUri && namespaceUri[0] && !is_valid_writer_xml(namespaceUri))) {
+        self->m_hasError = true;
+        return;
+    }
     if (!namespaceUri || !namespaceUri[0]) {
         XXmlStreamWriter_writeAttribute_utf8(self, name, value);
         return;
     }
 
-    char prefix[32];
-    self->m_namespacePrefixCounter++;
-    snprintf(prefix, sizeof(prefix), "xns%u", self->m_namespacePrefixCounter);
-    XXmlStreamWriter_writeNamespace_utf8(self, namespaceUri, prefix);
+    const char* prefix = prefix_for_namespace(self, namespaceUri);
+    char generatedPrefix[32];
+    if (!prefix || !prefix[0]) {
+        do {
+            ++self->m_namespacePrefixCounter;
+            make_writer_prefix(generatedPrefix, sizeof(generatedPrefix),
+                               self->m_namespacePrefixCounter);
+        } while (namespace_for_prefix(self, generatedPrefix));
+        prefix = generatedPrefix;
+    }
+    if (!write_namespace_utf8_impl(self, namespaceUri, prefix)) return;
     write_byte(self, (uint8_t)' ');
     write_raw_str(self, prefix);
     write_byte(self, (uint8_t)':');
@@ -1063,7 +1553,7 @@ void XXmlStreamWriter_writeAttribute_attr(XXmlStreamWriter* self, const XXmlStre
     const char* value = XXmlStreamAttribute_value(attribute)
         ? XString_toUtf8(XXmlStreamAttribute_value(attribute)) : NULL;
 
-    if (!qualifiedName && (!namespaceUri || !name)) {
+    if (!value || (!qualifiedName && (!namespaceUri || !name))) {
         self->m_hasError = true;
         return;
     }
@@ -1137,10 +1627,7 @@ void XXmlStreamWriter_writeCDATA(XXmlStreamWriter* self, const XString* text)
         if (self) self->m_hasError = true;
         return;
     }
-    close_start_element(self, false);
-    write_raw_str(self, "<![CDATA[");
-    write_raw_str(self, XString_toUtf8(text));
-    write_raw_str(self, "]]>");
+    XXmlStreamWriter_writeCDATA_utf8(self, XString_toUtf8(text));
 }
 
 /**
@@ -1154,9 +1641,20 @@ void XXmlStreamWriter_writeCDATA_utf8(XXmlStreamWriter* self, const char* text)
         if (self) self->m_hasError = true;
         return;
     }
+    if (!is_valid_writer_xml(text)) {
+        self->m_hasError = true;
+        return;
+    }
     close_start_element(self, false);
     write_raw_str(self, "<![CDATA[");
-    write_raw_str(self, text);
+    const char* part = text;
+    const char* forbidden;
+    while ((forbidden = strstr(part, "]]>") ) != NULL) {
+        write_raw(self, part, (size_t)(forbidden - part));
+        write_raw_str(self, "]]]]><![CDATA[>");
+        part = forbidden + 3;
+    }
+    write_raw_str(self, part);
     write_raw_str(self, "]]>");
 }
 
@@ -1171,11 +1669,7 @@ void XXmlStreamWriter_writeComment(XXmlStreamWriter* self, const XString* text)
         if (self) self->m_hasError = true;
         return;
     }
-    close_start_element(self, false);
-    write_indent(self);
-    write_raw_str(self, "<!--");
-    write_raw_str(self, XString_toUtf8(text));
-    write_raw_str(self, "-->");
+    XXmlStreamWriter_writeComment_utf8(self, XString_toUtf8(text));
 }
 
 /**
@@ -1187,6 +1681,12 @@ void XXmlStreamWriter_writeComment_utf8(XXmlStreamWriter* self, const char* text
 {
     if (!self || !text || !self->m_buffer) {
         if (self) self->m_hasError = true;
+        return;
+    }
+    size_t length = strlen(text);
+    if (!is_valid_writer_xml(text) || strstr(text, "--") ||
+        (length > 0 && text[length - 1] == '-')) {
+        self->m_hasError = true;
         return;
     }
     close_start_element(self, false);
@@ -1208,14 +1708,8 @@ void XXmlStreamWriter_writeProcessingInstruction(XXmlStreamWriter* self, const X
         if (self) self->m_hasError = true;
         return;
     }
-    close_start_element(self, false);
-    write_raw_str(self, "<?");
-    write_raw_str(self, XString_toUtf8(target));
-    if (data && XString_size(data) > 0) {
-        write_byte(self, (uint8_t)' ');
-        write_raw_str(self, XString_toUtf8(data));
-    }
-    write_raw_str(self, "?>");
+    XXmlStreamWriter_writeProcessingInstruction_utf8(
+        self, XString_toUtf8(target), data ? XString_toUtf8(data) : NULL);
 }
 
 /**
@@ -1230,7 +1724,13 @@ void XXmlStreamWriter_writeProcessingInstruction_utf8(XXmlStreamWriter* self, co
         if (self) self->m_hasError = true;
         return;
     }
+    if (!is_valid_writer_name(target, true) || writer_ascii_equals_ignore_case(target, "xml") ||
+        (data && (!is_valid_writer_xml(data) || strstr(data, "?>")))) {
+        self->m_hasError = true;
+        return;
+    }
     close_start_element(self, false);
+    write_indent(self);
     write_raw_str(self, "<?");
     write_raw_str(self, target);
     if (data && data[0]) {
@@ -1251,10 +1751,7 @@ void XXmlStreamWriter_writeEntityReference(XXmlStreamWriter* self, const XString
         if (self) self->m_hasError = true;
         return;
     }
-    close_start_element(self, false);
-    write_byte(self, (uint8_t)'&');
-    write_raw_str(self, XString_toUtf8(name));
-    write_byte(self, (uint8_t)';');
+    XXmlStreamWriter_writeEntityReference_utf8(self, XString_toUtf8(name));
 }
 
 /**
@@ -1266,6 +1763,10 @@ void XXmlStreamWriter_writeEntityReference_utf8(XXmlStreamWriter* self, const ch
 {
     if (!self || !name || !self->m_buffer) {
         if (self) self->m_hasError = true;
+        return;
+    }
+    if (!is_valid_writer_name(name, true)) {
+        self->m_hasError = true;
         return;
     }
     close_start_element(self, false);
@@ -1285,8 +1786,7 @@ void XXmlStreamWriter_writeDTD(XXmlStreamWriter* self, const XString* dtd)
         if (self) self->m_hasError = true;
         return;
     }
-    close_start_element(self, false);
-    write_raw_str(self, XString_toUtf8(dtd));
+    XXmlStreamWriter_writeDTD_utf8(self, XString_toUtf8(dtd));
 }
 
 /**
@@ -1300,8 +1800,14 @@ void XXmlStreamWriter_writeDTD_utf8(XXmlStreamWriter* self, const char* dtd)
         if (self) self->m_hasError = true;
         return;
     }
+    if (!is_valid_writer_xml(dtd)) {
+        self->m_hasError = true;
+        return;
+    }
     close_start_element(self, false);
+    if (self->m_autoFormatting) write_byte(self, (uint8_t)'\n');
     write_raw_str(self, dtd);
+    if (self->m_autoFormatting) write_byte(self, (uint8_t)'\n');
 }
 
 /**
@@ -1312,23 +1818,21 @@ void XXmlStreamWriter_writeDTD_utf8(XXmlStreamWriter* self, const char* dtd)
  */
 void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const XString* namespaceUri, const XString* prefix)
 {
-    if (!self || !namespaceUri || !self->m_buffer) {
+    if (!self || !namespaceUri) {
         if (self) self->m_hasError = true;
         return;
     }
-    if (!self->m_inStartElement) {
-        self->m_hasError = true;
-        return;
+    const char* prefixUtf8 = prefix ? XString_toUtf8(prefix) : "";
+    char generatedPrefix[32];
+    if (!prefixUtf8 || !prefixUtf8[0]) {
+        do {
+            ++self->m_namespacePrefixCounter;
+            make_writer_prefix(generatedPrefix, sizeof(generatedPrefix),
+                               self->m_namespacePrefixCounter);
+        } while (namespace_for_prefix(self, generatedPrefix));
+        prefixUtf8 = generatedPrefix;
     }
-    write_byte(self, (uint8_t)' ');
-    write_raw_str(self, "xmlns");
-    if (prefix && XString_size(prefix) > 0) {
-        write_byte(self, (uint8_t)':');
-        write_raw_str(self, XString_toUtf8(prefix));
-    }
-    write_raw_str(self, "=\"");
-    write_escaped(self, XString_toUtf8(namespaceUri), true);
-    write_byte(self, (uint8_t)'"');
+    write_namespace_utf8_impl(self, XString_toUtf8(namespaceUri), prefixUtf8);
 }
 
 /**
@@ -1339,23 +1843,21 @@ void XXmlStreamWriter_writeNamespace(XXmlStreamWriter* self, const XString* name
  */
 void XXmlStreamWriter_writeNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri, const char* prefix)
 {
-    if (!self || !namespaceUri || !self->m_buffer) {
+    if (!self || !namespaceUri) {
         if (self) self->m_hasError = true;
         return;
     }
-    if (!self->m_inStartElement) {
-        self->m_hasError = true;
-        return;
+    const char* prefixUtf8 = prefix ? prefix : "";
+    char generatedPrefix[32];
+    if (!prefixUtf8[0]) {
+        do {
+            ++self->m_namespacePrefixCounter;
+            make_writer_prefix(generatedPrefix, sizeof(generatedPrefix),
+                               self->m_namespacePrefixCounter);
+        } while (namespace_for_prefix(self, generatedPrefix));
+        prefixUtf8 = generatedPrefix;
     }
-    write_byte(self, (uint8_t)' ');
-    write_raw_str(self, "xmlns");
-    if (prefix && prefix[0]) {
-        write_byte(self, (uint8_t)':');
-        write_raw_str(self, prefix);
-    }
-    write_raw_str(self, "=\"");
-    write_escaped(self, namespaceUri, true);
-    write_byte(self, (uint8_t)'"');
+    write_namespace_utf8_impl(self, namespaceUri, prefixUtf8);
 }
 
 /**
@@ -1365,18 +1867,11 @@ void XXmlStreamWriter_writeNamespace_utf8(XXmlStreamWriter* self, const char* na
  */
 void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const XString* namespaceUri)
 {
-    if (!self || !namespaceUri || !self->m_buffer) {
+    if (!self || !namespaceUri) {
         if (self) self->m_hasError = true;
         return;
     }
-    if (!self->m_inStartElement) {
-        self->m_hasError = true;
-        return;
-    }
-    write_byte(self, (uint8_t)' ');
-    write_raw_str(self, "xmlns=\"");
-    write_escaped(self, XString_toUtf8(namespaceUri), true);
-    write_byte(self, (uint8_t)'"');
+    write_namespace_utf8_impl(self, XString_toUtf8(namespaceUri), "");
 }
 
 /**
@@ -1386,18 +1881,7 @@ void XXmlStreamWriter_writeDefaultNamespace(XXmlStreamWriter* self, const XStrin
  */
 void XXmlStreamWriter_writeDefaultNamespace_utf8(XXmlStreamWriter* self, const char* namespaceUri)
 {
-    if (!self || !namespaceUri || !self->m_buffer) {
-        if (self) self->m_hasError = true;
-        return;
-    }
-    if (!self->m_inStartElement) {
-        self->m_hasError = true;
-        return;
-    }
-    write_byte(self, (uint8_t)' ');
-    write_raw_str(self, "xmlns=\"");
-    write_escaped(self, namespaceUri, true);
-    write_byte(self, (uint8_t)'"');
+    write_namespace_utf8_impl(self, namespaceUri, "");
 }
 
 /**
@@ -1481,10 +1965,14 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
 
     switch (tokenType) {
         case XXmlStream_StartDocument: {
-            const XString* version = XXmlStreamReader_documentVersion_const(reader);
-            bool standalone = XXmlStreamReader_isStandaloneDocument(reader);
+            const XString* version = XXmlStreamReader_documentVersion(reader);
             if (version && XString_size(version) > 0) {
-                XXmlStreamWriter_writeStartDocument_ex_2(self, version, standalone);
+                if (XXmlStreamReader_hasStandaloneDeclaration(reader)) {
+                    XXmlStreamWriter_writeStartDocument_ex_2(
+                        self, version, XXmlStreamReader_isStandaloneDocument(reader));
+                } else {
+                    XXmlStreamWriter_writeStartDocument_ex(self, version);
+                }
             } else {
                 XXmlStreamWriter_writeStartDocument(self);
             }
@@ -1497,19 +1985,24 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
         }
 
         case XXmlStream_StartElement: {
-            const XString* namespaceUri = XXmlStreamReader_namespaceUri_const(reader);
-            const XString* name = XXmlStreamReader_name_const(reader);
-            if (namespaceUri && XString_size(namespaceUri) > 0) {
+            const XString* namespaceUri = XXmlStreamReader_namespaceUri(reader);
+            const XString* name = XXmlStreamReader_name(reader);
+            const XString* qname = XXmlStreamReader_qualifiedName(reader);
+            if (qname && XString_size(qname) > 0) {
+                XXmlStreamWriter_writeStartElement(self, qname);
+            } else if (namespaceUri && XString_size(namespaceUri) > 0) {
                 XXmlStreamWriter_writeStartElement_ex(self, namespaceUri, name);
             } else {
-                const XString* qname = XXmlStreamReader_qualifiedName_const(reader);
-                XXmlStreamWriter_writeStartElement(self, qname ? qname : name);
+                XXmlStreamWriter_writeStartElement(self, name);
             }
 
             if (XXmlStreamReader_hasNamespaceDeclarations(reader)) {
-                int nsCount = XXmlStreamReader_namespaceDeclarationsCount(reader);
+                const XXmlStreamNamespaceDeclarations* declarations =
+                    XXmlStreamReader_namespaceDeclarations(reader);
+                int nsCount = XXmlStreamNamespaceDeclarations_size(declarations);
                 for (int i = 0; i < nsCount; i++) {
-                    const XXmlStreamNamespaceDeclaration* ns = XXmlStreamReader_namespaceDeclaration(reader, i);
+                    const XXmlStreamNamespaceDeclaration* ns =
+                        XXmlStreamNamespaceDeclarations_at(declarations, i);
                     if (ns) {
                         const XString* nsPrefix = XXmlStreamNamespaceDeclaration_prefix(ns);
                         const XString* nsUri = XXmlStreamNamespaceDeclaration_namespaceUri(ns);
@@ -1535,15 +2028,19 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
         }
 
         case XXmlStream_Characters: {
-            const XString* text = XXmlStreamReader_text_const(reader);
+            const XString* text = XXmlStreamReader_text(reader);
             if (text) {
-                XXmlStreamWriter_writeCharacters(self, text);
+                if (XXmlStreamReader_isCDATA(reader)) {
+                    XXmlStreamWriter_writeCDATA(self, text);
+                } else {
+                    XXmlStreamWriter_writeCharacters(self, text);
+                }
             }
             break;
         }
 
         case XXmlStream_Comment: {
-            const XString* text = XXmlStreamReader_text_const(reader);
+            const XString* text = XXmlStreamReader_text(reader);
             if (text) {
                 XXmlStreamWriter_writeComment(self, text);
             }
@@ -1551,36 +2048,15 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
         }
 
         case XXmlStream_DTD: {
-            const XString* dtdName = XXmlStreamReader_dtdName_const(reader);
-            const XString* dtdPublicId = XXmlStreamReader_dtdPublicId_const(reader);
-            const XString* dtdSystemId = XXmlStreamReader_dtdSystemId_const(reader);
-
-            XString* dtdStr = XString_create();
-            if (dtdStr) {
-                XString_append_utf8(dtdStr, "<!DOCTYPE ");
-                XString_append_utf8(dtdStr, dtdName ? XString_toUtf8(dtdName) : "");
-                if (dtdPublicId && XString_size(dtdPublicId) > 0) {
-                    XString_append_utf8(dtdStr, " PUBLIC \"");
-                    XString_append_utf8(dtdStr, XString_toUtf8(dtdPublicId));
-                    XString_append_utf8(dtdStr, "\"");
-                }
-                if (dtdSystemId && XString_size(dtdSystemId) > 0) {
-                    if (!dtdPublicId || XString_size(dtdPublicId) == 0) {
-                        XString_append_utf8(dtdStr, " SYSTEM");
-                    }
-                    XString_append_utf8(dtdStr, " \"");
-                    XString_append_utf8(dtdStr, XString_toUtf8(dtdSystemId));
-                    XString_append_utf8(dtdStr, "\"");
-                }
-                XString_append_utf8(dtdStr, ">");
-                XXmlStreamWriter_writeDTD(self, dtdStr);
-                XString_delete_base(dtdStr);
+            const XString* dtdText = XXmlStreamReader_text(reader);
+            if (dtdText && XString_size(dtdText) > 0) {
+                XXmlStreamWriter_writeDTD(self, dtdText);
             }
             break;
         }
 
         case XXmlStream_EntityReference: {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (name) {
                 XXmlStreamWriter_writeEntityReference(self, name);
             }
@@ -1588,8 +2064,8 @@ void XXmlStreamWriter_writeCurrentToken(XXmlStreamWriter* self, const XXmlStream
         }
 
         case XXmlStream_ProcessingInstruction: {
-            const XString* target = XXmlStreamReader_processingInstructionTarget_const(reader);
-            const XString* data = XXmlStreamReader_processingInstructionData_const(reader);
+            const XString* target = XXmlStreamReader_processingInstructionTarget(reader);
+            const XString* data = XXmlStreamReader_processingInstructionData(reader);
             if (target) {
                 XXmlStreamWriter_writeProcessingInstruction(self, target, data);
             }

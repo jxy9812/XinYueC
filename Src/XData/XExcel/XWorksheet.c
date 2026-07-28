@@ -2152,7 +2152,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token == XXmlStream_StartElement) {
-            const XString* element = XXmlStreamReader_name_const(reader);
+            const XString* element = XXmlStreamReader_name(reader);
             const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
             if (!element) continue;
 
@@ -2215,12 +2215,12 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 }
             } else if (pendingValidation &&
                        XString_equals_utf8(element, "formula1", XChar_CaseSensitive)) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 XDataValidation_setFormula1(pendingValidation, text);
             } else if (pendingValidation &&
                        XString_equals_utf8(element, "formula2", XChar_CaseSensitive)) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 XDataValidation_setFormula2(pendingValidation, text);
             } else if (XString_equals_utf8(element, "conditionalFormatting", XChar_CaseSensitive)) {
@@ -2273,7 +2273,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 }
             } else if (inConditionalRule &&
                        XString_equals_utf8(element, "formula", XChar_CaseSensitive)) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 XString** destination = pendingRule.m_formula1
                     ? &pendingRule.m_formula2 : &pendingRule.m_formula1;
@@ -2387,11 +2387,11 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 inCell = true;
             } else if (inCell && (XString_equals_utf8(element, "v", XChar_CaseSensitive) ||
                                   XString_equals_utf8(element, "t", XChar_CaseSensitive))) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (text) XString_append(value, text);
             } else if (inCell && XString_equals_utf8(element, "f", XChar_CaseSensitive)) {
-                const XString* text = XXmlStreamReader_readElementText_const(reader,
+                const XString* text = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (text) XString_append(formulaText, text);
             } else if (XString_equals_utf8(element, "mergeCell", XChar_CaseSensitive)) {
@@ -2403,7 +2403,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
             }
 #undef WS_ATTR
         } else if (token == XXmlStream_EndElement) {
-            const XString* element = XXmlStreamReader_name_const(reader);
+            const XString* element = XXmlStreamReader_name(reader);
             if (element && pendingValidation &&
                 XString_equals_utf8(element, "dataValidation", XChar_CaseSensitive)) {
                 if (!XWorksheet_addDataValidation(self, pendingValidation))

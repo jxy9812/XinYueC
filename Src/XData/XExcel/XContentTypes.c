@@ -342,7 +342,7 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token != XXmlStream_StartElement) continue;
-        const XString* element = XXmlStreamReader_name_const(reader);
+        const XString* element = XXmlStreamReader_name(reader);
         const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
         if (!element) continue;
         if (XString_equals_utf8(element, "Types", XChar_CaseSensitive)) {

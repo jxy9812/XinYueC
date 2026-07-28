@@ -625,7 +625,7 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
     bool rootSeen = false;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
-        const XString* element = XXmlStreamReader_name_const(reader);
+        const XString* element = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement && element) {
             if (XString_equals_utf8(element, "styleSheet", XChar_CaseSensitive)) rootSeen = true;
             else if (XString_equals_utf8(element, "fonts", XChar_CaseSensitive)) section = SectionFonts;

@@ -20,9 +20,9 @@
 #include<stdlib.h>
 
 /* ==================== 测试辅助宏 ==================== */
-#define TEST_PASS(name) XPrintf("[PASS] %s\n", name)
-#define TEST_FAIL(name, reason) XPrintf("[FAIL] %s: %s\n", name, reason)
-#define TEST_INFO(fmt, ...) XPrintf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#define TEST_PASS(name) XPrintf("[通过] %s\n", name)
+#define TEST_FAIL(name, reason) XPrintf("[失败] %s: %s\n", name, reason)
+#define TEST_INFO(fmt, ...) XPrintf("[信息] " fmt "\n", ##__VA_ARGS__)
 
 /* ==================== 测试函数声明 ==================== */
 static bool test_create_delete(void);
@@ -46,8 +46,10 @@ static bool test_auto_formatting(void);
 static bool test_to_string_bytearray(void);
 static bool test_has_error(void);
 static bool test_copy_move(void);
+static bool test_uninitialized_copy_move(void);
 static bool test_complex_document(void);
 static bool test_write_current_token(void);
+static bool test_reader_writer_roundtrip(void);
 static bool test_null_safety(void);
 static bool test_device_output(void);
 static bool test_qt_edge_semantics(void);
@@ -74,11 +76,14 @@ static void test_auto_formatting_wrapper(XVariant* d) { (void)d; test_auto_forma
 static void test_to_string_bytearray_wrapper(XVariant* d) { (void)d; test_to_string_bytearray(); }
 static void test_has_error_wrapper(XVariant* d) { (void)d; test_has_error(); }
 static void test_copy_move_wrapper(XVariant* d) { (void)d; test_copy_move(); }
+static void test_uninitialized_copy_move_wrapper(XVariant* d) { (void)d; test_uninitialized_copy_move(); }
 static void test_complex_document_wrapper(XVariant* d) { (void)d; test_complex_document(); }
 static void test_write_current_token_wrapper(XVariant* d) { (void)d; test_write_current_token(); }
+static void test_reader_writer_roundtrip_wrapper(XVariant* d) { (void)d; test_reader_writer_roundtrip(); }
 static void test_null_safety_wrapper(XVariant* d) { (void)d; test_null_safety(); }
 static void test_device_output_wrapper(XVariant* d) { (void)d; test_device_output(); }
 static void test_qt_edge_semantics_wrapper(XVariant* d) { (void)d; test_qt_edge_semantics(); }
+static void XXmlStreamWriterTest_all(XVariant* data);
 /* ==================== 测试1: 创建和删除测试 ==================== */
 static bool test_create_delete(void)
 {
@@ -1262,6 +1267,173 @@ static bool test_copy_move(void)
 
     return all_pass;
 }
+
+/* ==================== 测试22: 未初始化目标拷贝/移动测试 ==================== */
+static bool test_uninitialized_copy_move(void)
+{
+    TEST_INFO("===== 未初始化目标拷贝/移动测试 =====");
+    bool all_pass = true;
+    XXmlStreamWriter* source = XXmlStreamWriter_create();
+    XXmlStreamWriter* copied = NULL;
+    XXmlStreamWriter* moved = NULL;
+
+    if (!source) {
+        TEST_FAIL("未初始化目标拷贝/移动", "源对象创建失败");
+        return false;
+    }
+
+    XXmlStreamWriter_writeStartElement_utf8(source, "root");
+    XXmlStreamWriter_writeAttribute_utf8(source, "id", "copy-move");
+    XXmlStreamWriter_writeEndElement(source);
+    const char* expected = XXmlStreamWriter_toString(source);
+    char expectedText[256] = { 0 };
+    if (expected) {
+        size_t expectedLength = strlen(expected);
+        if (expectedLength >= sizeof(expectedText))
+            expectedLength = sizeof(expectedText) - 1;
+        memcpy(expectedText, expected, expectedLength);
+        expectedText[expectedLength] = '\0';
+    }
+
+    copied = (XXmlStreamWriter*)XMalloc_System(sizeof(XXmlStreamWriter) + 4096);
+    moved = (XXmlStreamWriter*)XMalloc_System(sizeof(XXmlStreamWriter) + 4096);
+    if (!copied || !moved) {
+        TEST_FAIL("未初始化目标拷贝/移动", "目标内存分配失败");
+        all_pass = false;
+        if (copied) XFree_System(copied);
+        if (moved) XFree_System(moved);
+        XXmlStreamWriter_delete_base(source);
+        return all_pass;
+    }
+    memset(copied, 0, sizeof(XXmlStreamWriter) + 4096);
+    memset(moved, 0, sizeof(XXmlStreamWriter) + 4096);
+
+    XClass_copy_base((XClass*)copied, (const XClass*)source);
+    const char* copiedText = XXmlStreamWriter_toString(copied);
+    if (expectedText[0] && copiedText && strcmp(expectedText, copiedText) == 0) {
+        TEST_PASS("写入器拷贝自动初始化空目标");
+    } else {
+        TEST_FAIL("写入器拷贝自动初始化空目标", "拷贝目标未自动初始化或内容不一致");
+        all_pass = false;
+    }
+    XXmlStreamWriter_deinit_base(copied);
+    XFree_System(copied);
+    copied = NULL;
+
+    XClass_move_base((XClass*)moved, (XClass*)source);
+    const char* movedText = XXmlStreamWriter_toString(moved);
+    if (expectedText[0] && movedText && strcmp(expectedText, movedText) == 0) {
+        TEST_PASS("写入器移动自动初始化空目标");
+    } else {
+        TEST_FAIL("写入器移动自动初始化空目标", "移动目标无自动初始化或内容不一致");
+        all_pass = false;
+    }
+
+    XXmlStreamWriter_deinit_base(moved);
+    XFree_System(moved);
+    XXmlStreamWriter_delete_base(source);
+    return all_pass;
+}
+
+/* ==================== 测试23: Reader/Writer 往返测试 ==================== */
+static bool test_reader_writer_roundtrip(void)
+{
+    TEST_INFO("===== Reader/Writer 往返测试 =====");
+    bool all_pass = true;
+    XXmlStreamWriter* writer = XXmlStreamWriter_create();
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+
+    if (!writer || !reader) {
+        TEST_FAIL("读写器往返", "对象创建失败");
+        if (writer) XXmlStreamWriter_delete_base(writer);
+        if (reader) XXmlStreamReader_delete_base(reader);
+        return false;
+    }
+
+    XXmlStreamWriter_writeStartDocument(writer);
+    XXmlStreamWriter_writeStartElement_utf8(writer, "root");
+    XXmlStreamWriter_writeNamespace_utf8(writer, "urn:test", "p");
+    XXmlStreamWriter_writeAttribute_utf8(writer, "id", "42");
+    XXmlStreamWriter_writeStartElement_ex_utf8(writer, "urn:test", "child");
+    XXmlStreamWriter_writeCharacters_utf8(writer, "你好 <XML> & 文本");
+    XXmlStreamWriter_writeCDATA_utf8(writer, "原始 <内容> & 数据");
+    XXmlStreamWriter_writeEndElement(writer);
+    XXmlStreamWriter_writeEndElement(writer);
+    XXmlStreamWriter_writeEndDocument(writer);
+
+    const char* xml = XXmlStreamWriter_toString(writer);
+    if (!xml || XXmlStreamWriter_hasError(writer)) {
+        TEST_FAIL("写入器输出 XML", "输出为空或写入失败");
+        all_pass = false;
+    } else {
+        XXmlStreamReader_addData_utf8(reader, xml);
+        int startCount = 0;
+        int endCount = 0;
+        bool rootFound = false;
+        bool childFound = false;
+        bool attributeFound = false;
+        bool textFound = false;
+        bool cdataFound = false;
+        int guard = 0;
+
+        while (!XXmlStreamReader_atEnd(reader) && guard++ < 64) {
+            int token = XXmlStreamReader_readNext(reader);
+            if (XXmlStreamReader_hasError(reader)) break;
+            if (token == XXmlStream_StartElement) {
+                ++startCount;
+                if (XString_equals_utf8(XXmlStreamReader_name(reader), "root",
+                                         XChar_CaseSensitive)) {
+                    rootFound = true;
+                    const XXmlStreamAttributes* attributes =
+                        XXmlStreamReader_attributes(reader);
+                    int count = XXmlStreamAttributes_size(attributes);
+                    for (int i = 0; i < count; ++i) {
+                        const XXmlStreamAttribute* attribute =
+                            XXmlStreamAttributes_at(attributes, i);
+                        if (attribute &&
+                            XString_equals_utf8(
+                                XXmlStreamAttribute_qualifiedName(attribute), "id",
+                                XChar_CaseSensitive) &&
+                            XString_equals_utf8(XXmlStreamAttribute_value(attribute), "42",
+                                                XChar_CaseSensitive)) {
+                            attributeFound = true;
+                        }
+                    }
+                }
+                if (XString_equals_utf8(XXmlStreamReader_name(reader), "child",
+                                         XChar_CaseSensitive) &&
+                    XString_equals_utf8(XXmlStreamReader_namespaceUri(reader), "urn:test",
+                                        XChar_CaseSensitive)) {
+                    childFound = true;
+                }
+            } else if (token == XXmlStream_EndElement) {
+                ++endCount;
+            } else if (token == XXmlStream_Characters) {
+                const XString* text = XXmlStreamReader_text(reader);
+                if (XXmlStreamReader_isCDATA(reader) &&
+                    XString_equals_utf8(text, "原始 <内容> & 数据", XChar_CaseSensitive)) {
+                    cdataFound = true;
+                } else if (!XXmlStreamReader_isCDATA(reader) &&
+                           XString_equals_utf8(text, "你好 <XML> & 文本", XChar_CaseSensitive)) {
+                    textFound = true;
+                }
+            }
+        }
+
+        if (!XXmlStreamReader_hasError(reader) && startCount == 2 && endCount == 2 &&
+            rootFound && childFound && attributeFound && textFound && cdataFound) {
+            TEST_PASS("读取器解析写入器输出");
+        } else {
+            TEST_FAIL("读取器解析写入器输出", "元素、属性或文本内容不一致");
+            all_pass = false;
+        }
+    }
+
+    XXmlStreamReader_delete_base(reader);
+    XXmlStreamWriter_delete_base(writer);
+    return all_pass;
+}
+
 /* ==================== 测试22: 复杂XML文档测试 ==================== */
 static bool test_complex_document(void)
 {
@@ -1513,12 +1685,12 @@ static bool test_device_output(void)
 {
     TEST_INFO("===== QIODevice 输出测试 =====");
     bool all_pass = true;
-    XString* path = XString_create_utf8("xmlstream_writer_device_test.xml");
+    XString* path = XString_create_utf8("xmlstream_writer_device_test_v2.xml");
     XFile_remove_static(path);
     XFile* file = XFile_create_2(path);
     if (!path || !file || !XFile_open_2(file,
             XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
-            XFile_ReadOwner | XFile_WriteOwner)) {
+            0)) {
         TEST_FAIL("Writer setDevice", "无法打开临时输出文件");
         if (file) XFile_deleteLater(file);
         if (path) { XFile_remove_static(path); XString_delete_base(path); }
@@ -1539,7 +1711,7 @@ static bool test_device_output(void)
     XFile* readFile = XFile_create_2(path);
     XByteArray* bytes = NULL;
     if (readFile && XFile_open_2(readFile, XIODevice_ReadOnly | XIODevice_Existing,
-            XFile_ReadOwner | XFile_WriteOwner))
+            0))
         bytes = XIODevice_readAll_3((XIODevice*)readFile);
     const char* output = bytes ? (const char*)XByteArray_data(bytes) : NULL;
     if (output && strstr(output, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") &&
@@ -1570,12 +1742,12 @@ static bool test_qt_edge_semantics(void)
     else { TEST_FAIL("writeEndDocument 边界语义", "输出不符合 Qt 语义"); all_pass = false; }
     XXmlStreamWriter_delete_base(writer);
 
-    XString* path = XString_create_utf8("xmlstream_writer_readonly_test.xml");
+    XString* path = XString_create_utf8("xmlstream_writer_readonly_test_v2.xml");
     XFile_remove_static(path);
     XFile* seed = XFile_create_2(path);
     bool seeded = seed && XFile_open_2(seed,
         XIODevice_WriteOnly | XIODevice_Create | XIODevice_Truncate,
-        XFile_ReadOwner | XFile_WriteOwner);
+        0);
     if (seeded) {
         XIODevice_write_3((XIODevice*)seed, "seed");
         XIODevice_close_base((XIODevice*)seed);
@@ -1584,7 +1756,7 @@ static bool test_qt_edge_semantics(void)
 
     XFile* readOnly = XFile_create_2(path);
     bool opened = readOnly && XFile_open_2(readOnly, XIODevice_ReadOnly | XIODevice_Existing,
-        XFile_ReadOwner | XFile_WriteOwner);
+        0);
     writer = XXmlStreamWriter_create();
     XXmlStreamWriter_setDevice(writer, (XIODevice*)readOnly);
     XXmlStreamWriter_writeStartElement_utf8(writer, "root");
@@ -1597,43 +1769,6 @@ static bool test_qt_edge_semantics(void)
     XString_delete_base(path);
     return all_pass;
 }
-/* ==================== 全量测试 ==================== */
-static void XXmlStreamWriterTest_all(XVariant* data)
-{
-    (void)data;
-    TEST_INFO("========== XXmlStreamWriter 全面测试开始 ==========");
-    int pass = 0, fail = 0;
-
-    if (test_create_delete()) pass++; else fail++;
-    if (test_init_deinit()) pass++; else fail++;
-    if (test_write_start_document()) pass++; else fail++;
-    if (test_write_end_document()) pass++; else fail++;
-    if (test_write_start_end_element()) pass++; else fail++;
-    if (test_write_empty_element()) pass++; else fail++;
-    if (test_write_attribute()) pass++; else fail++;
-    if (test_write_attributes()) pass++; else fail++;
-    if (test_write_characters()) pass++; else fail++;
-    if (test_write_cdata()) pass++; else fail++;
-    if (test_write_comment()) pass++; else fail++;
-    if (test_write_processing_instruction()) pass++; else fail++;
-    if (test_write_entity_reference()) pass++; else fail++;
-    if (test_write_dtd()) pass++; else fail++;
-    if (test_write_namespace()) pass++; else fail++;
-    if (test_write_default_namespace()) pass++; else fail++;
-    if (test_write_text_element()) pass++; else fail++;
-    if (test_auto_formatting()) pass++; else fail++;
-    if (test_to_string_bytearray()) pass++; else fail++;
-    if (test_has_error()) pass++; else fail++;
-    if (test_copy_move()) pass++; else fail++;
-    if (test_complex_document()) pass++; else fail++;
-    if (test_write_current_token()) pass++; else fail++;
-    if (test_null_safety()) pass++; else fail++;
-    if (test_device_output()) pass++; else fail++;
-    if (test_qt_edge_semantics()) pass++; else fail++;
-
-    TEST_INFO("========== 测试结果: %d 通过, %d 失败 ==========", pass, fail);
-}
-
 /* ==================== 菜单注册 ==================== */
 void XMenu_XXmlStreamWriterTest(XMenu* root)
 {
@@ -1683,14 +1818,63 @@ void XMenu_XXmlStreamWriterTest(XMenu* root)
     XAction_setAction(action, test_has_error_wrapper);
     action = XMenu_addAction(menu, "拷贝和移动");
     XAction_setAction(action, test_copy_move_wrapper);
+    action = XMenu_addAction(menu, "未初始化目标拷贝/移动");
+    XAction_setAction(action, test_uninitialized_copy_move_wrapper);
     action = XMenu_addAction(menu, "复杂文档");
     XAction_setAction(action, test_complex_document_wrapper);
-    action = XMenu_addAction(menu, "writeCurrentToken");
+    action = XMenu_addAction(menu, "写入当前 Token");
     XAction_setAction(action, test_write_current_token_wrapper);
+    action = XMenu_addAction(menu, "读取器与写入器往返");
+    XAction_setAction(action, test_reader_writer_roundtrip_wrapper);
     action = XMenu_addAction(menu, "NULL安全");
     XAction_setAction(action, test_null_safety_wrapper);
     action = XMenu_addAction(menu, "QIODevice 输出");
     XAction_setAction(action, test_device_output_wrapper);
     action = XMenu_addAction(menu, "Qt 文档边界/设备错误");
     XAction_setAction(action, test_qt_edge_semantics_wrapper);
+}
+
+/* ==================== 全量测试 ==================== */
+bool XXmlStreamWriterTest_runAll(void)
+{
+    TEST_INFO("========== XXmlStreamWriter 全面测试开始 ==========");
+    int pass = 0, fail = 0;
+
+    if (test_create_delete()) pass++; else fail++;
+    if (test_init_deinit()) pass++; else fail++;
+    if (test_write_start_document()) pass++; else fail++;
+    if (test_write_end_document()) pass++; else fail++;
+    if (test_write_start_end_element()) pass++; else fail++;
+    if (test_write_empty_element()) pass++; else fail++;
+    if (test_write_attribute()) pass++; else fail++;
+    if (test_write_attributes()) pass++; else fail++;
+    if (test_write_characters()) pass++; else fail++;
+    if (test_write_cdata()) pass++; else fail++;
+    if (test_write_comment()) pass++; else fail++;
+    if (test_write_processing_instruction()) pass++; else fail++;
+    if (test_write_entity_reference()) pass++; else fail++;
+    if (test_write_dtd()) pass++; else fail++;
+    if (test_write_namespace()) pass++; else fail++;
+    if (test_write_default_namespace()) pass++; else fail++;
+    if (test_write_text_element()) pass++; else fail++;
+    if (test_auto_formatting()) pass++; else fail++;
+    if (test_to_string_bytearray()) pass++; else fail++;
+    if (test_has_error()) pass++; else fail++;
+    if (test_copy_move()) pass++; else fail++;
+    if (test_uninitialized_copy_move()) pass++; else fail++;
+    if (test_complex_document()) pass++; else fail++;
+    if (test_write_current_token()) pass++; else fail++;
+    if (test_reader_writer_roundtrip()) pass++; else fail++;
+    if (test_null_safety()) pass++; else fail++;
+    if (test_device_output()) pass++; else fail++;
+    if (test_qt_edge_semantics()) pass++; else fail++;
+
+    TEST_INFO("========== 测试结果: %d 通过, %d 失败 ==========", pass, fail);
+    return fail == 0;
+}
+
+static void XXmlStreamWriterTest_all(XVariant* data)
+{
+    (void)data;
+    XXmlStreamWriterTest_runAll();
 }

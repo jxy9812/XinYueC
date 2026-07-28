@@ -841,43 +841,6 @@ void XMenu_XTcpServerTest(XMenu* root)
     XMenu* menu = XMenu_create("TCP Server 测试");
     if (!menu) return;
     XMenu_addMenu(root, menu);
-
-    TestCase tests[] = {
-        { "创建/销毁测试",              test_create_destroy },
-        { "listen 测试",                test_listen },
-        { "close 测试",                 test_close },
-        { "连接管理配置测试",           test_connection_management },
-        { "基本连接接受测试",           test_accept_connection },
-        { "waitForNewConnection 测试",  test_wait_for_new_connection },
-        { "暂停/恢复接受测试",          test_pause_resume_accepting },
-        { "数据收发测试",               test_data_transfer },
-        { "多连接测试",                 test_multiple_connections },
-        { "setSocketDescriptor 测试",    test_set_socket_descriptor },
-        { "错误处理测试",               test_error_handling },
-        { "代理设置测试",               test_proxy },
-        { "最大待处理连接限制测试",     test_max_pending_connections },
-        { "服务器地址测试",             test_server_address },
-        { "销毁时自动关闭测试",         test_auto_close_on_destroy },
-    };
-
-    int n = (int)(sizeof(tests) / sizeof(tests[0]));
-    XPrintf("\n========== XTcpServer 单元测试 (%d 项) ==========\n", n);
-
-    g_passCount = 0;
-    g_failCount = 0;
-
-    for (int i = 0; i < n; i++) {
-        XPrintf("[%d/%d] %s ...\n", i + 1, n, tests[i].name);
-        bool ok = tests[i].func();
-        if (ok) {
-            g_passCount++;
-        } else {
-            g_failCount++;
-        }
-    }
-
-    XPrintf("\n========== 结果: %d 通过, %d 失败 ==========\n\n", g_passCount, g_failCount);
-
     /* 注册菜单项（供交互式测试使用）*/
     XAction* a;
     a = XMenu_addAction(menu, "创建/销毁测试");              XAction_setAction(a, wrap_create_destroy);

@@ -277,10 +277,10 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token != XXmlStream_StartElement) continue;
-        const XString* name = XXmlStreamReader_name_const(reader);
+        const XString* name = XXmlStreamReader_name(reader);
         if (!name || XString_equals_utf8(name, "coreProperties", XChar_CaseSensitive)) continue;
         XString* key = XString_create_copy(name);
-        const XString* value = XXmlStreamReader_readElementText_const(reader,
+        const XString* value = XXmlStreamReader_readElementText(reader,
             XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
         if (!key || !value || !XDocPropsCore_setProperty(self, key, value)) {
             if (key) XString_delete_base(key);

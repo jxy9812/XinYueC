@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XDrawing.c
  * @brief      XDrawing 绘图容器类实现
  *             对齐 QXlsx::Drawing 全部功能
@@ -119,7 +119,7 @@ bool XDrawing_loadFromXmlData(XDrawing* self, const uint8_t* data, size_t length
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {
-            const XString* name = XXmlStreamReader_name_const(reader);
+            const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
             if (XString_equals_utf8(name, "twoCellAnchor", XChar_CaseSensitive) ||
                 XString_equals_utf8(name, "oneCellAnchor", XChar_CaseSensitive) ||

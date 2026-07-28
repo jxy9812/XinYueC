@@ -41,6 +41,12 @@ typedef struct XXmlStreamWriter
     XString**  m_elementNameStack; /**< 记录每个 writeStartElement 的限定名（writeEndElement 时匹配） */
     int        m_elementNameStackSize;  /**< 元素名栈大小 */
     int        m_elementNameStackCapacity; /**< 元素名栈容量 */
+    void*      m_namespaceBindings; /**< 内部命名空间绑定数组 */
+    int        m_namespaceBindingCount; /**< 当前有效命名空间绑定数 */
+    int        m_namespaceBindingCapacity; /**< 命名空间绑定容量 */
+    int        m_pendingNamespaceBindingCount; /**< 待应用到下一个元素的声明数量 */
+    int*       m_namespaceScopeStack; /**< 每层元素进入前的绑定数 */
+    int        m_namespaceScopeStackCapacity; /**< 命名空间作用域栈容量 */
 } XXmlStreamWriter;
 
 /* ========== 虚函数表初始化 ========== */

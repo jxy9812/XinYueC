@@ -177,9 +177,10 @@ static bool test_xmlstream_qt_behaviour(void)
     CHECK(!XXmlStreamReader_hasError(reader), "追加数据后可从 premature error 恢复");
     CHECK(XXmlStreamReader_readNext(reader) == XXmlStream_StartElement,
           "追加后重新得到根开始元素");
-    CHECK(XString_equals_utf8(XXmlStreamReader_namespaceUri_const(reader), "urn:root",
+    CHECK(XString_equals_utf8(XXmlStreamReader_namespaceUri(reader), "urn:root",
           XChar_CaseSensitive), "元素使用同一开始标签中后置声明的命名空间");
-    CHECK(XXmlStreamReader_namespaceDeclarationsCount(reader) == 2,
+    CHECK(XXmlStreamNamespaceDeclarations_size(
+              XXmlStreamReader_namespaceDeclarations(reader)) == 2,
           "根元素公开当前命名空间声明");
     const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
     XString_Init_Utf8(qualifiedId, "r:id");
@@ -200,12 +201,13 @@ static bool test_xmlstream_qt_behaviour(void)
 
     XXmlStreamReader* copy = XXmlStreamReader_create_copy(reader);
     CHECK(copy && XXmlStreamReader_readNext(copy) == XXmlStream_StartElement &&
-          XString_equals_utf8(XXmlStreamReader_namespaceUri_const(copy), "urn:root", XChar_CaseSensitive),
+          XString_equals_utf8(XXmlStreamReader_namespaceUri(copy), "urn:root", XChar_CaseSensitive),
           "Reader 深拷贝保留读取位置和命名空间作用域");
     CHECK(XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
-          XString_equals_utf8(XXmlStreamReader_namespaceUri_const(reader), "urn:root", XChar_CaseSensitive),
+          XString_equals_utf8(XXmlStreamReader_namespaceUri(reader), "urn:root", XChar_CaseSensitive),
           "子元素继承父元素命名空间绑定");
-    CHECK(XXmlStreamReader_namespaceDeclarationsCount(reader) == 0,
+    CHECK(XXmlStreamNamespaceDeclarations_size(
+              XXmlStreamReader_namespaceDeclarations(reader)) == 0,
           "子元素不重复报告父元素声明");
     if (copy) XXmlStreamReader_delete_base(copy);
     XXmlStreamReader_delete_base(reader);
@@ -232,7 +234,7 @@ static bool test_xmlstream_qt_behaviour(void)
     XString_Init_Utf8(attributeName, "id");
     const XString* generatedAttribute = XXmlStreamAttributes_value_ex(
         XXmlStreamReader_attributes(writtenReader), attributeNamespace, attributeName);
-    CHECK(XString_equals_utf8(XXmlStreamReader_namespaceUri_const(writtenReader),
+    CHECK(XString_equals_utf8(XXmlStreamReader_namespaceUri(writtenReader),
           "urn:element", XChar_CaseSensitive),
           "Writer 生成元素可由 Reader 解析为正确命名空间 URI");
     CHECK(generatedAttribute && XString_equals_utf8(generatedAttribute, "7", XChar_CaseSensitive),
@@ -247,7 +249,7 @@ static bool test_xmlstream_qt_behaviour(void)
     while (!XXmlStreamReader_atEnd(textReader) && !XXmlStreamReader_isStartElement(textReader)) {
         XXmlStreamReader_readNext(textReader);
     }
-    const XString* includedText = XXmlStreamReader_readElementText_const(textReader,
+    const XString* includedText = XXmlStreamReader_readElementText(textReader,
         XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
     CHECK(includedText && XString_equals_utf8(includedText, "beforeinsideafter", XChar_CaseSensitive),
           "readElementText 合并多段文本和子元素文本");
@@ -260,7 +262,7 @@ static bool test_xmlstream_qt_behaviour(void)
     while (!XXmlStreamReader_atEnd(textReader) && !XXmlStreamReader_isStartElement(textReader)) {
         XXmlStreamReader_readNext(textReader);
     }
-    const XString* skippedText = XXmlStreamReader_readElementText_const(textReader,
+    const XString* skippedText = XXmlStreamReader_readElementText(textReader,
         XXmlStream_ReadElementTextBehaviour_SkipChildElements);
     CHECK(skippedText && XString_equals_utf8(skippedText, "beforeafter", XChar_CaseSensitive),
           "readElementText SkipChildElements 跳过子元素内容但保留前后文本");
@@ -579,7 +581,7 @@ static bool test_chart_drawing_roundtrip(void)
     XDrawingAnchor* loadedAnchor = XDrawingAnchor_create(NULL, XDAnchor_Unknown);
     while (!XXmlStreamReader_atEnd(anchorReader)) {
         if (XXmlStreamReader_readNext(anchorReader) == XXmlStream_StartElement &&
-            XString_equals_utf8(XXmlStreamReader_name_const(anchorReader), "oneCellAnchor",
+            XString_equals_utf8(XXmlStreamReader_name(anchorReader), "oneCellAnchor",
             XChar_CaseSensitive)) {
             CHECK(XDrawingAnchor_loadFromXml(loadedAnchor, anchorReader), "加载锚点 XML");
             break;
