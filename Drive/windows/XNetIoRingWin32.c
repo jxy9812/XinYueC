@@ -89,6 +89,8 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
                                   LPOVERLAPPED overlapped, DWORD lastError) {
     XEventContext* ctx = (XEventContext*)overlapped;
     XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
+    XEventContextCompletionCallback completionCallback = NULL;
+    void* completionUserData = NULL;
 
     if (ctx->type == XEventContextType_Type_Timer) {
         /* 定时器完成：直接投递定时器事件到应用层 */
@@ -105,6 +107,10 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
     }
     else if (ctx->type == XEventContextType_Type_Socket ||
              ctx->type == XEventContextType_Type_File) {
+        bool shouldDispatch = true;
+        completionCallback = ioCtx->completionCallback;
+        completionUserData = ioCtx->completionUserData;
+
         /* Socket/File I/O 完成：转换为 CQ 条目 */
         XAbstractNetIoRing_CQEntry cqEntry;
         memset(&cqEntry, 0, sizeof(cqEntry));
@@ -132,7 +138,15 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
         }
 
         ioCtx->finishedBytes = bytesTransferred;
-        XAbstractNetIoRing_pushCompletion(self, &cqEntry);
+
+        /* The callback may release the allocation containing ioCtx.  Copy
+         * every needed field first and do not touch ioCtx afterwards.  A
+         * canceled operation whose owner is being destroyed is consumed
+         * here without dispatching an event through a potentially reused fd. */
+        if (completionCallback)
+            shouldDispatch = completionCallback(ioCtx, completionUserData);
+        if (shouldDispatch)
+            XAbstractNetIoRing_pushCompletion(self, &cqEntry);
     }
 }
 

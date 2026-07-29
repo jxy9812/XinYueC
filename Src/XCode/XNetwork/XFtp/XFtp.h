@@ -2,7 +2,7 @@
  * @file        XFtp.h
  * @brief       FTP 客户端实现（对标 Qt 6.8 QFtp），基于 XinYueC 信号/槽系统
  * @note        跨平台：Windows / Linux / 嵌入式
- *              特性：普通 FTP 主动/被动模式、Explicit FTPS 被动数据模式 (RFC 4217)、REST 断点续传、
+ *              特性：普通 FTP 与 Explicit FTPS 主动/被动模式 (RFC 4217)、REST 断点续传、
  *                    APPE 追加、SOCKS5/HTTP 代理、自动重连、URL 解析。
  *              MODE Z 压缩传输。
  */
@@ -162,13 +162,17 @@ typedef struct XFtp {
         int64_t m_putWriteOffset;         // PUT 已排队到 socket 的字节数
     };
 
-    // ===== 4 字节 enum/int 区 =====
-    XFtp_State m_state;                   // 当前状态
-    XFtp_Error m_error;                   // 错误码
-    XFtp_TransferMode m_transferMode;     // 传输模式
-    XFtp_DataType m_transferType;         // 传输类型（Binary/Ascii）
-    XFtp_ProxyType m_proxyType;           // 代理类型
-    XSslPeerVerifyMode m_sslPeerVerifyMode; // FTPS 对端证书校验模式
+    // ===== 小枚举与 FEAT 位掩码共用一个 32 位字 =====
+    uint32_t m_state             : 3;     // XFtp_State（0..4）
+    uint32_t m_error             : 5;     // XFtp_Error（0..21）
+    uint32_t m_transferMode      : 1;     // XFtp_TransferMode
+    uint32_t m_transferType      : 1;     // XFtp_DataType
+    uint32_t m_proxyType         : 2;     // XFtp_ProxyType（0..2）
+    uint32_t m_sslPeerVerifyMode : 2;     // XSslPeerVerifyMode（0..3）
+    uint32_t m_features          : 9;     // XFtp_Feature 位掩码（0x001..0x100）
+    uint32_t                     : 9;     // 保留
+
+    // ===== 4 字节 int 区 =====
     int m_currentId;                      // 当前命令ID
     int m_reconnectInterval;              // 重试间隔（毫秒）
     int m_maxReconnectAttempts;           // 最大重试次数
@@ -179,7 +183,6 @@ typedef struct XFtp {
     uint16_t m_port;                      // FTP 端口
 
     // ===== 特性协商、SSL、压缩、ABOR 等开关 =====
-    uint16_t m_features;                  // FEAT 协商结果（XFtp_Feature 位掩码）
     uint8_t m_useSsl            : 1;      // 是否启用 SSL/TLS
     uint8_t m_useCompression    : 1;      // 是否启用 MODE Z
     uint8_t m_compressionActive : 1;      // MODE Z 协商成功后启用压缩 DTP
@@ -385,7 +388,7 @@ int XFtp_cdup(XFtp* ftp);
 
 /**
  * @brief 查询文件大小（SIZE 命令，RFC 3659）
- * @param[in] ftp   已登录的 FTP 实例
+ * @param[in,out] ftp   已登录的 FTP 实例
  * @param[in] file  远程文件路径
  * @return 命令ID，命令完成后通过 rawCommandReply 信号携带 "213 <size>"
  *         或 commandFinished(id, error=true) 表示失败
@@ -394,7 +397,7 @@ int XFtp_size(XFtp* ftp, const char* file);
 
 /**
  * @brief 查询文件修改时间（MDTM 命令，RFC 3659）
- * @param[in] ftp   已登录的 FTP 实例
+ * @param[in,out] ftp   已登录的 FTP 实例
  * @param[in] file  远程文件路径
  * @return 命令ID，失败返回 -1；完成后通过 rawCommandReply 信号携带
  *         "213 YYYYMMDDHHMMSS"
@@ -513,7 +516,7 @@ void XFtp_setSslCaCertificate(XFtp* ftp, XSslCertificate* ca);
  * @brief 设置 FTPS 证书校验和 SNI 使用的服务器名称。
  * @param[in,out] ftp FTP 实例；必须处于未连接状态
  * @param[in] name 证书中的 DNS 名称；NULL 或空串时使用 connectToHost 的主机名
- * @note 该名称同时应用于控制连接和被动数据连接。XFtp 会复制 name，调用方可立即释放原字符串。
+ * @note 该名称同时应用于控制连接及主动/被动数据连接。XFtp 会复制 name，调用方可立即释放原字符串。
  */
 void XFtp_setSslPeerVerifyName(XFtp* ftp, const char* name);
 

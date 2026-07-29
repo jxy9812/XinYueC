@@ -50,9 +50,13 @@ static void on_listInfo(XObject* receiver, XVarList* args)
     (void)receiver;
 }
 
-static void on_dataTransferProgress(XFtp* ftp, int64_t current, int64_t total)
+static void on_dataTransferProgress(XObject* receiver, XVarList* args)
 {
-    (void)ftp;
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    int64_t current = XVarList_arg(args, int64_t);
+    int64_t total = XVarList_arg(args, int64_t);
     (void)total;
     if (current > 0 && current < 1024 * 1024) {
         s_download_bytes = (int)current;
@@ -228,11 +232,11 @@ static void test_xftp_signal_connect(void)
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
 
-    XObject_connect_1((XObject*)ftp, XFtp_listInfo_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_listInfo_signal),
                       (XObject*)ftp, on_listInfo, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_dataTransferProgress_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_dataTransferProgress_signal),
                       (XObject*)ftp, on_dataTransferProgress, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     XFtp_abort(ftp);
@@ -315,7 +319,7 @@ static void test_xftp_e2e_connect(void)
     XPrintf("【E2E】连接 + 登录 + 状态机 ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     bool ok = e2e_connect_and_login(ftp);
@@ -350,9 +354,9 @@ static void test_xftp_e2e_list(void)
     XPrintf("【E2E】LIST / MLSD 列表 ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_listInfo_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_listInfo_signal),
                       (XObject*)ftp, on_listInfo, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     s_listing_count = 0;
@@ -377,7 +381,7 @@ static void test_xftp_e2e_mkdir_rmdir(void)
     XPrintf("【E2E】MKDIR / RMDIR ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     bool ok = e2e_connect_and_login(ftp);
@@ -404,9 +408,9 @@ static void test_xftp_e2e_put_get(void)
     XPrintf("【E2E】PUT 上传 + GET 下载 ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_dataTransferProgress_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_dataTransferProgress_signal),
                       (XObject*)ftp, on_dataTransferProgress, XConnectionType_Direct);
 
     bool ok = e2e_connect_and_login(ftp);
@@ -439,7 +443,7 @@ static void test_xftp_e2e_rename_remove(void)
     XPrintf("【E2E】RENAME / REMOVE ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     bool ok = e2e_connect_and_login(ftp);
@@ -471,7 +475,7 @@ static void test_xftp_e2e_raw(void)
     XPrintf("【E2E】原始命令 PWD / SYST / NOOP ... ");
     XFtp* ftp = XFtp_create();
     XASSERT_NOT_NULL(ftp);
-    XObject_connect_1((XObject*)ftp, XFtp_rawCommandReply_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_rawCommandReply_signal),
                       (XObject*)ftp, on_rawCommandReply, XConnectionType_Direct);
 
     bool ok = e2e_connect_and_login(ftp);

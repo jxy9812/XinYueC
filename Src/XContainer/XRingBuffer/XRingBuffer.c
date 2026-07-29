@@ -456,20 +456,21 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size)
         return NULL;
     }
 
-    if (buffer->m_currentReadChunk >= XVector_size_base(buffer->m_chunks)) {
-        *size = 0;
-        return NULL;
+    XRingChunk* chunk = NULL;
+    size_t availableInChunk = 0;
+    while (buffer->m_currentReadChunk < XVector_size_base(buffer->m_chunks)) {
+        XRingChunk** chunkPtr = (XRingChunk**)XVector_at_base(
+            buffer->m_chunks, buffer->m_currentReadChunk);
+        if (!chunkPtr || !*chunkPtr) {
+            *size = 0;
+            return NULL;
+        }
+        chunk = *chunkPtr;
+        availableInChunk = XRingChunk_available(chunk);
+        if (availableInChunk > 0) break;
+        buffer->m_currentReadChunk++;
     }
-
-    XRingChunk** chunkPtr = (XRingChunk**)XVector_at_base(buffer->m_chunks, buffer->m_currentReadChunk);
-    if (!chunkPtr || !*chunkPtr) {
-        *size = 0;
-        return NULL;
-    }
-
-    XRingChunk* chunk = *chunkPtr;
-    size_t availableInChunk = XRingChunk_available(chunk);
-    if (availableInChunk == 0) {
+    if (!chunk || availableInChunk == 0) {
         *size = 0;
         return NULL;
     }

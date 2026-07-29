@@ -378,5 +378,5 @@ Makefile
 *.so.*
 XinYueCConfig.cmake
 XinYueCConfigVersion.cmake
-/build-linux
+/build*
 /ftp_test_root

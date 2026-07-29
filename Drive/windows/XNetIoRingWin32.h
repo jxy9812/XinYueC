@@ -62,6 +62,10 @@ typedef struct XEventContext_Timer {
     XEventContext base;                 /**< 继承基类（base.fd 即 XTimerId = XFd） */
 } XEventContext_Timer;
 
+struct XEventContext_IOCP;
+typedef bool (*XEventContextCompletionCallback)(
+    struct XEventContext_IOCP* context, void* userData);
+
 /** @brief 套接字/串口/文件 I/O 事件上下文（继承 XEventContext） */
 typedef struct XEventContext_IOCP {
     XEventContext base;                 /**< 继承基类（base.fd 即 xfd） */
@@ -70,6 +74,8 @@ typedef struct XEventContext_IOCP {
     void* buffer;                       /**< 数据缓冲区 */
     size_t bufferSize;                  /**< 缓冲区大小 */
     size_t finishedBytes;               /**< 完成字节数 */
+    XEventContextCompletionCallback completionCallback; /**< 完成包出队后的生命周期/投递过滤回调 */
+    void* completionUserData;           /**< completionCallback 的调用方上下文 */
 } XEventContext_IOCP;
 
 /* ================================================================

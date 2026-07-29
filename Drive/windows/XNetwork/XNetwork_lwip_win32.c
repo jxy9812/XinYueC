@@ -8,8 +8,8 @@
  * 核心功能：
  *   1. 动态加载 Npcap DLL（wpcap.dll）
  *   2. 创建回环网卡 lo0 (127.0.0.1)
- *   3. 枚举物理网卡，为每个创建 lwIP netif
- *   4. 对可发送数据包的网卡启用 DHCP 客户端
+ *   3. 在所有已连接网卡上创建独立的 lwIP netif
+ *   4. 为每个外部 netif 启用 DHCP，并按 Windows 默认路由选择外部默认网卡
  *   5. 使用 XRandomGenerator 生成随机 MAC 地址，避免与 Windows 网卡冲突
  */
 #ifdef _WIN32
@@ -77,7 +77,7 @@
 #define NETIF_FLAG_LOOPBACK 0x200
 #endif
 
-#define NPCAP_MAX_ADAPTERS  8
+#define NPCAP_MAX_ADAPTERS  16
 #define NPCAP_READ_TIMEOUT_MS 10
 
 /* Npcap 函数指针类型定义（动态加载，避免编译时依赖 wpcap.lib） */
@@ -132,7 +132,7 @@ static bool load_npcap(void) {
     pfn_freecode = (pcap_freecode_t)GetProcAddress(g_dll, "pcap_freecode");
     LWIP_DBG("[Npcap] wpcap.dll 加载成功, 函数指针: open=%p send=%p next=%p dispatch=%p close=%p\n",
              (void*)pfn_open, (void*)pfn_send, (void*)pfn_next, (void*)pfn_dispatch, (void*)pfn_close);
-    return pfn_open && pfn_findall && pfn_next && pfn_send;
+    return pfn_open && pfn_findall && pfn_freeall && pfn_next && pfn_send && pfn_close;
 }
 
 static void unload_npcap(void) {
@@ -148,13 +148,8 @@ typedef struct {
     char devName[256];          /* Npcap 设备名 */
     char winDesc[256];          /* Windows 适配器描述 */
     bool dhcpEnabled;           /* 是否启用了 DHCP */
-    bool canSend;                /* 是否可以发送数据包（用于检测发送失败的网卡） */
-    uint32_t winIp;              /* Windows 协议栈 IP（用于 DHCP 失败 fallback） */
-    uint32_t winMask;            /* Windows 协议栈掩码 */
-    uint32_t winGw;              /* Windows 协议栈网关 */
-    uint32_t dhcpStartTime;      /* DHCP 启动时间（用于超时检测） */
-    uint8_t winMac[6];           /* Windows 真实 MAC 地址（用于 BPF 排除过滤） */
-    bool hasWinMac;              /* winMac 是否有效 */
+    bool isDefaultRoute;        /* 是否为 Windows 最优默认 IPv4 路由接口 */
+    uint32_t ifIndex;           /* Windows 适配器接口索引 */
 } npcap_ctx_t;
 
 static npcap_ctx_t g_npcapCtxs[NPCAP_MAX_ADAPTERS];
@@ -181,126 +176,55 @@ static void gen_lwip_mac(uint8_t macOut[6]) {
 /* 前向声明：Npcap 数据包发送函数 */
 static err_t npcap_linkoutput(struct netif* netif, struct pbuf* p);
 
-/* 测试 Npcap 适配器是否可以发送数据包
- * 发送一个空的广播以太网帧作为测试，如果发送失败则标记此适配器不可用
- * 某些虚拟适配器（如 Wi-Fi Direct Virtual Adapter）虽然能被 Npcap 打开，
- * 但 pcap_sendpacket 会返回 -1，无法实际发送数据包 */
-static bool test_npcap_send(pcap_t pcap) {
-    if (!pcap || !pfn_send) return false;
-    /* 构造一个最小的广播以太网帧作为测试（14字节以太网头 + 填充） */
-    uint8_t testFrame[64];
-    memset(testFrame, 0, sizeof(testFrame));
-    /* 目标MAC: 广播地址 FF:FF:FF:FF:FF:FF */
-    memset(testFrame, 0xFF, 6);
-    /* 源MAC: 本地管理单播地址 02:00:00:00:00:01 */
-    testFrame[6] = 0x02; testFrame[7] = 0x00; testFrame[8] = 0x00;
-    testFrame[9] = 0x00; testFrame[10] = 0x00; testFrame[11] = 0x01;
-    /* EtherType: 0x0800 (IPv4) */
-    testFrame[12] = 0x08; testFrame[13] = 0x00;
-    /* 填充剩余部分（实际IPv4包需要至少46字节数据，这里填充0） */
-    int ret = pfn_send(pcap, testFrame, sizeof(testFrame));
-    return (ret == 0);  /* 0 表示发送成功 */
-}
-
-/* 过滤虚拟适配器 - 跳过 WAN Miniport、Bluetooth 等非物理网卡 */
-static bool is_physical_adapter(const char* desc) {
-    if (!desc) return false;
-    if (strstr(desc, "WAN Miniport")) return false;
-    if (strstr(desc, "NdisWan")) return false;
-    if (strstr(desc, "Bluetooth")) return false;
-    if (strstr(desc, "Network Monitor")) return false;
-    if (strstr(desc, "PLCSIM")) return false;
-    if (strstr(desc, "Wi-Fi Direct")) return false;   /* Wi-Fi Direct 虚拟适配器无法发送数据包 */
-    if (strstr(desc, "loopback")) return false;        /* 回环捕获适配器不适用于 DHCP */
-    if (strstr(desc, "Loopback")) return false;
-    return true;
-}
-
-/* 查找 Windows 网卡对应的 IPv4 地址信息（IP、掩码、网关）
- * 注意：Windows API 返回的 FriendlyName/Description 是 wchar_t* 类型，
- * 需要通过 WideCharToMultiByte 转换为 UTF-8 字符串后再与 Npcap 描述进行匹配 */
-static bool find_windows_ip_for_adapter(PIP_ADAPTER_ADDRESSES aa, const char* npcapDesc,
-                                         uint32_t* ipOut, uint32_t* maskOut, uint32_t* gwOut,
-                                         uint8_t* macOut) {
-    if (!aa || !npcapDesc || !ipOut || !maskOut || !gwOut) return false;
-
-    PIP_ADAPTER_ADDRESSES a = aa;
-    while (a) {
-        bool matched = false;
-        char winName[256] = {0};
-
-        /* 方法1：通过 FriendlyName 匹配 Npcap 描述 */
-        if (a->FriendlyName && a->FriendlyName[0]) {
-            WideCharToMultiByte(CP_UTF8, 0, a->FriendlyName, -1,
-                                winName, sizeof(winName) - 1, NULL, NULL);
-            if (strstr(npcapDesc, winName) || strstr(winName, npcapDesc)) {
-                matched = true;
-            }
-        }
-
-        /* 方法2：如果 FriendlyName 匹配失败，尝试用 Description 匹配 */
-        if (!matched && a->Description && a->Description[0]) {
-            WideCharToMultiByte(CP_UTF8, 0, a->Description, -1,
-                                winName, sizeof(winName) - 1, NULL, NULL);
-            if (strstr(npcapDesc, winName) || strstr(winName, npcapDesc)) {
-                matched = true;
-            }
-        }
-
-        if (matched) {
-            /* 查找该适配器的第一个有效 IPv4 单播地址 */
-            PIP_ADAPTER_UNICAST_ADDRESS ua = a->FirstUnicastAddress;
-            while (ua) {
-                if (ua->Address.lpSockaddr &&
-                    ua->Address.lpSockaddr->sa_family == AF_INET) {
-                    struct sockaddr_in* sa = (struct sockaddr_in*)ua->Address.lpSockaddr;
-                    uint32_t ip = sa->sin_addr.s_addr;
-                    if (ip != 0) {
-                        uint32_t hip = ntohl(ip);
-                        /* 跳过 0.0.0.0, 127.x.x.x (回环), 169.254.x.x (APIPA) */
-                        if (hip != 0 && (hip >> 24) != 127 && (hip >> 16) != 0xA9FE) {
-                            *ipOut = ip;
-                            uint8_t pfx = ua->OnLinkPrefixLength;
-                            uint32_t mask = (pfx >= 32) ? 0xFFFFFFFF :
-                                            ((pfx == 0) ? 0 : (0xFFFFFFFF << (32 - pfx)));
-                            *maskOut = htonl(mask);
-
-                            /* 获取网关地址 */
-                            PIP_ADAPTER_GATEWAY_ADDRESS ga = a->FirstGatewayAddress;
-                            if (ga && ga->Address.lpSockaddr &&
-                                ga->Address.lpSockaddr->sa_family == AF_INET) {
-                                *gwOut = ((struct sockaddr_in*)ga->Address.lpSockaddr)->sin_addr.s_addr;
-                            } else {
-                                *gwOut = 0;
-                            }
-
-                            /* 获取 Windows 真实 MAC 地址（用于 BPF 排除过滤） */
-                            if (macOut && a->PhysicalAddressLength == 6) {
-                                memcpy(macOut, a->PhysicalAddress, 6);
-                            }
-
-
-                            uint32_t hgw = ntohl(*gwOut);
-                            LWIP_DBG("[Windows网卡匹配] Npcap=\"%s\" -> Win=\"%s\" IP=%d.%d.%d.%d GW=%d.%d.%d.%d MAC=%02X:%02X:%02X:%02X:%02X:%02X\n",
-                                     npcapDesc, winName,
-                                     (int)(hip>>24)&0xFF, (int)(hip>>16)&0xFF,
-                                     (int)(hip>>8)&0xFF, (int)(hip)&0xFF,
-                                     (int)(hgw>>24)&0xFF, (int)(hgw>>16)&0xFF,
-                                     (int)(hgw>>8)&0xFF, (int)(hgw)&0xFF,
-                                     macOut ? (int)macOut[0] : 0, macOut ? (int)macOut[1] : 0,
-                                     macOut ? (int)macOut[2] : 0, macOut ? (int)macOut[3] : 0,
-                                     macOut ? (int)macOut[4] : 0, macOut ? (int)macOut[5] : 0);
-                            return true;
-                        }
-                    }
-                }
-                ua = ua->Next;
-            }
-            LWIP_DBG("[Windows网卡匹配] Npcap=\"%s\" -> Win=\"%s\" 匹配成功但没有有效IPv4地址\n", npcapDesc, winName);
-        }
-        a = a->Next;
+static bool ascii_contains_i(const char* text, const char* needle) {
+    size_t needleLen;
+    if (!text || !needle || !needle[0]) return false;
+    needleLen = strlen(needle);
+    for (; *text; ++text) {
+        if (_strnicmp(text, needle, needleLen) == 0) return true;
     }
     return false;
+}
+
+/* Npcap uses \\Device\\NPF_{GUID}; IP Helper exposes the same GUID through
+ * AdapterName.  Match that stable identifier instead of display names, which
+ * are localized and can be duplicated. */
+static bool npcap_matches_adapter(const char* deviceName, const IP_ADAPTER_ADDRESSES* adapter) {
+    return deviceName && adapter && adapter->AdapterName &&
+           ascii_contains_i(deviceName, adapter->AdapterName);
+}
+
+static PIP_ADAPTER_ADDRESSES find_default_ipv4_adapter(PIP_ADAPTER_ADDRESSES adapters) {
+    MIB_IPFORWARDROW route;
+    DWORD status = GetBestRoute(0, 0, &route);
+    if (status != NO_ERROR) {
+        LWIP_DBG("[Windows网卡] GetBestRoute(default) failed: %lu\n", (unsigned long)status);
+        return NULL;
+    }
+    for (PIP_ADAPTER_ADDRESSES adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter->IfIndex == route.dwForwardIfIndex) return adapter;
+    }
+    LWIP_DBG("[Windows网卡] default route interface %lu is absent from GetAdaptersAddresses\n",
+             (unsigned long)route.dwForwardIfIndex);
+    return NULL;
+}
+
+/* Expose every connected adapter that Npcap can identify. Do not require a
+ * pre-existing IPv4 lease here: the lwIP netif itself obtains that address
+ * through DHCP. Matching by GUID keeps this independent of localized or
+ * duplicated adapter descriptions. */
+static bool adapter_is_connected(const IP_ADAPTER_ADDRESSES* adapter) {
+    if (!adapter || adapter->OperStatus != IfOperStatusUp) return false;
+    return adapter->IfType != IF_TYPE_SOFTWARE_LOOPBACK;
+}
+
+static PIP_ADAPTER_ADDRESSES find_adapter_for_npcap(
+    PIP_ADAPTER_ADDRESSES adapters, const char* deviceName) {
+    for (PIP_ADAPTER_ADDRESSES adapter = adapters; adapter; adapter = adapter->Next) {
+        if (adapter_is_connected(adapter) &&
+            npcap_matches_adapter(deviceName, adapter)) return adapter;
+    }
+    return NULL;
 }
 
 /* Npcap 网卡初始化回调 - 由 netif_add 调用 */
@@ -368,16 +292,12 @@ static err_t npcap_linkoutput(struct netif* netif, struct pbuf* p) {
         if (&g_npcapCtxs[i] == ctx) { ctxIdx = i; break; }
     }
 
-    /* 将 pbuf 链拼接成连续缓冲区 */
+    /* netif MTU is 1500, but reject an oversize frame instead of silently
+     * truncating a chained pbuf and reporting a successful transmission. */
     uint8_t buf[2048];
-    u16_t total = 0;
-    struct pbuf* q = p;
-    while (q && total < sizeof(buf)) {
-        u16_t copy = (u16_t)((total + q->len > sizeof(buf)) ? sizeof(buf) - total : q->len);
-        memcpy(buf + total, q->payload, copy);
-        total += copy;
-        q = q->next;
-    }
+    if (!p || p->tot_len == 0 || p->tot_len > sizeof(buf)) return ERR_BUF;
+    u16_t total = p->tot_len;
+    if (pbuf_copy_partial(p, buf, total, 0) != total) return ERR_BUF;
 
     /* 打印发送数据包类型 - 前10个包全部打印，之后每50个打印一次 */
     if (ctxIdx >= 0 && total >= 14) {
@@ -429,91 +349,41 @@ static err_t npcap_linkoutput(struct netif* netif, struct pbuf* p) {
     return ERR_OK;
 }
 
-/* 网卡状态回调 - DHCP 获取到有效 IP 后自动设置为默认路由，并切换 BPF 为 IP 过滤 */
+/* Direct destinations are selected by lwIP from each netif's address/mask.
+ * Non-direct destinations use the adapter selected by Windows' best default
+ * route. If that adapter has not leased yet, temporarily use the first
+ * leased adapter with a gateway and replace it when the authoritative
+ * adapter is ready. */
 static void npcap_status_callback(struct netif* netif) {
-    if (!netif) return;
-    if (netif_is_up(netif) && !ip_addr_isany(&netif->ip_addr)) {
-        char ip_str[20], mask_str[20], gw_str[20];
-        uint32_t hip = ntohl(ip4_addr_get_u32(ip_2_ip4(&netif->ip_addr)));
-        /* 跳过 127.x.x.x (回环) 和 169.254.x.x (APIPA) */
-        if (((hip >> 24) & 0xFF) != 127 && ((hip >> 16) & 0xFFFF) != 0xA9FE) {
-            npcap_ctx_t* ctx = (npcap_ctx_t*)netif->state;
+    if (!netif || !netif_is_up(netif) ||
+        (netif->flags & NETIF_FLAG_LOOPBACK) ||
+        ip_addr_isany(&netif->ip_addr)) return;
 
-            /* npcap_init 中已设置 BPF 过滤器 "ether dst <lwipMAC> or broadcast or multicast"
-             * 基于 MAC 的正向包含过滤器在 DHCP 前后均有效，无需切换。
-             * 之前的 "host <IP>" 切换方案因 Mellanox 网卡不可靠已弃用。 */
-            LWIP_DBG("[IF_STATUS] %c%c%d IP=%s MASK=%s GW=%s DEV=%s\n",
-                     netif->name[0], netif->name[1], netif->num,
-                     ip4addr_ntoa_r(ip_2_ip4(&netif->ip_addr), ip_str, sizeof(ip_str)),
-                     ip4addr_ntoa_r(ip_2_ip4(&netif->netmask), mask_str, sizeof(mask_str)),
-                     ip4addr_ntoa_r(ip_2_ip4(&netif->gw), gw_str, sizeof(gw_str)),
-                     ctx ? ctx->winDesc : "?");
-
-            /* 默认路由决策策略：递增优先级，更高优先级替换更低优先级
-             * 0: 无IP/回环
-             * 1: Windows静态IP(无网关)
-             * 2: Windows静态IP(有网关)
-             * 3: DHCP(无网关)
-             * 4: DHCP(有网关) ← 最高优先级 */
-            bool newIsDhcp = ctx && ctx->dhcpEnabled;
-            bool curIsDhcp = netif_default && netif_default->state
-                          && ((npcap_ctx_t*)netif_default->state)->dhcpEnabled;
-            bool newHasGw = !ip_addr_isany(&netif->gw);
-            bool curHasGw = netif_default && !ip_addr_isany(&netif_default->gw);
-            /* 检查网关是否与网卡IP在同一子网（排除192.168.1.x之类的跨子网网关） */
-            bool newGwInSubnet = newHasGw && ip_addr_netcmp(&netif->gw, &netif->ip_addr, netif_ip4_netmask(netif));
-            bool curGwInSubnet = netif_default && curHasGw && ip_addr_netcmp(&netif_default->gw, &netif_default->ip_addr, netif_ip4_netmask(netif_default));
-
-            /* 检测是否为虚拟网卡（VMware/VirtualBox等，不是真正的物理网卡） */
-            bool newIsVirtual = ctx && ctx->winDesc &&
-                (strstr(ctx->winDesc, "VMware") || strstr(ctx->winDesc, "VirtualBox"));
-            bool curIsVirtual = false;
-            if (netif_default && netif_default->state) {
-                const char* curDesc = ((npcap_ctx_t*)netif_default->state)->winDesc;
-                if (curDesc) curIsVirtual = (strstr(curDesc, "VMware") || strstr(curDesc, "VirtualBox"));
-            }
-
-            /* 优先级：物理网卡 > 虚拟网卡
-             * 物理网卡: 100 = DHCP(有同子网网关)，90 = DHCP(其他)，80 = DHCP(无网关)
-             *           50  = 静态IP(有同子网网关)，40 = 静态IP(其他)，30 = 静态IP(无网关)
-             * 虚拟网卡(VMware等): 基础优先级 -20
-             * 0 = 无IP */
-            int curPrio = 0, newPrio = 0;
-            if (netif_default) {
-                if (curIsDhcp) curPrio = curHasGw ? (curGwInSubnet ? 100 : 90) : 80;
-                else curPrio = curHasGw ? (curGwInSubnet ? 50 : 40) : 30;
-                if (curIsVirtual) curPrio -= 20;
-            }
-            if (newIsDhcp) newPrio = newHasGw ? (newGwInSubnet ? 100 : 90) : 80;
-            else newPrio = newHasGw ? (newGwInSubnet ? 50 : 40) : 30;
-            if (newIsVirtual) newPrio -= 20;
-
-            if (netif_default == NULL || newPrio > curPrio) {
-                char defIp[20];
-                if (netif_default) {
-                    LWIP_DBG("[DEFAULT_ROUTE] %c%c%d (%s) prio=%d -> replace %c%c%d (%s) prio=%d\n",
-                             netif->name[0], netif->name[1], netif->num, ip_str, newPrio,
-                             netif_default->name[0], netif_default->name[1], netif_default->num,
-                             ip4addr_ntoa_r(ip_2_ip4(&netif_default->ip_addr), defIp, sizeof(defIp)), curPrio);
-                } else {
-                    LWIP_DBG("[DEFAULT_ROUTE] %c%c%d (%s) prio=%d -> set as default\n",
-                             netif->name[0], netif->name[1], netif->num, ip_str, newPrio);
-                }
-                netif_set_default(netif);
-                XNetworkLwip_setDefaultNetif(netif);
-            } else {
-                char defIp[20];
-                LWIP_DBG("[DEFAULT_ROUTE] %c%c%d (%s) prio=%d -> skipped, cur=%c%c%d (%s) prio=%d\n",
-                         netif->name[0], netif->name[1], netif->num, ip_str, newPrio,
-                         netif_default->name[0], netif_default->name[1], netif_default->num,
-                         ip4addr_ntoa_r(ip_2_ip4(&netif_default->ip_addr), defIp, sizeof(defIp)), curPrio);
-            }
-        }
+    char ip[20], mask[20], gw[20];
+    npcap_ctx_t* ctx = (npcap_ctx_t*)netif->state;
+    bool setDefault = ctx && ctx->isDefaultRoute;
+    bool currentUsable = netif_default &&
+                         !(netif_default->flags & NETIF_FLAG_LOOPBACK) &&
+                         netif_is_up(netif_default) &&
+                         netif_is_link_up(netif_default) &&
+                         !ip_addr_isany(&netif_default->ip_addr) &&
+                         !ip_addr_isany(&netif_default->gw);
+    if (!setDefault && !ip_addr_isany(&netif->gw) && !currentUsable) {
+        setDefault = true;
     }
+    if (setDefault && netif_default != netif) {
+        netif_set_default(netif);
+        XNetworkLwip_setDefaultNetif(netif);
+    }
+    LWIP_DBG("[DHCP] lease %c%c%d ifIndex=%lu default=%d IP=%s MASK=%s GW=%s DEV=%s\n",
+             netif->name[0], netif->name[1], netif->num,
+             (unsigned long)(ctx ? ctx->ifIndex : 0),
+             (int)(setDefault || netif_default == netif),
+             ip4addr_ntoa_r(ip_2_ip4(&netif->ip_addr), ip, sizeof(ip)),
+             ip4addr_ntoa_r(ip_2_ip4(&netif->netmask), mask, sizeof(mask)),
+             ip4addr_ntoa_r(ip_2_ip4(&netif->gw), gw, sizeof(gw)),
+             ctx ? ctx->winDesc : "?");
 }
-
-/* DHCP 超时阈值（毫秒）：30秒内未获取到 DHCP IP，则 fallback 到 Windows IP */
-#define DHCP_FALLBACK_TIMEOUT_MS 30000
 
 /* 广播 MAC 地址常量 */
 static const uint8_t g_broadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -531,10 +401,12 @@ static const uint8_t g_broadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
  */
 static void pcapif_input_callback(u_char* user, const struct pcap_pkthdr* hdr, const u_char* data) {
     npcap_ctx_t* ctx = (npcap_ctx_t*)user;
+    if (!ctx || !hdr || !data || hdr->caplen < 14 || hdr->len > hdr->caplen ||
+        hdr->len > 2048) return;
     struct netif* netif = ctx->netif;
     uint16_t pktLen = (uint16_t)hdr->len;
 
-    if (!netif || pktLen < 14) return;
+    if (!netif) return;
 
     /* 步骤1：发送回环过滤 — 如果源 MAC 等于 lwIP 的 MAC，说明是自己发出的包被 Npcap 回环收回来了
      * 参考官方 pcaipf_is_tx_packet (非 PCAPIF_RECEIVE_PROMISCUOUS 模式)：
@@ -578,35 +450,6 @@ static void pcapif_input_callback(u_char* user, const struct pcap_pkthdr* hdr, c
     }
 }
 
-/* DHCP 超时 fallback：DHCP 超时后将仍为 0.0.0.0 的网卡设置为 Windows IP */
-static void check_dhcp_fallback(uint32_t now) {
-    int i;
-    for (i = 0; i < g_npcapCtxCount; i++) {
-        npcap_ctx_t* ctx = &g_npcapCtxs[i];
-        struct netif* n = ctx->netif;
-        if (!n || !ctx->dhcpEnabled || !ctx->winIp) continue;
-
-        if (ip_addr_isany(&n->ip_addr) && ctx->dhcpStartTime > 0 &&
-            now - ctx->dhcpStartTime >= DHCP_FALLBACK_TIMEOUT_MS) {
-            ip4_addr_t fallbackIp, fallbackMask, fallbackGw;
-            ip4_addr_set_u32(&fallbackIp, ctx->winIp);
-            ip4_addr_set_u32(&fallbackMask, ctx->winMask);
-            ip4_addr_set_u32(&fallbackGw, ctx->winGw);
-            netif_set_addr(n, &fallbackIp, &fallbackMask, &fallbackGw);
-            char fbIp[20];
-            LWIP_DBG("[DHCP] %c%c%d DHCP超时(%dms)，fallback到Windows IP=%s\n",
-                     n->name[0], n->name[1], n->num,
-                     DHCP_FALLBACK_TIMEOUT_MS,
-                     ip4addr_ntoa_r(&fallbackIp, fbIp, sizeof(fbIp)));
-            if (!netif_default) {
-                netif_set_default(n);
-                XNetworkLwip_setDefaultNetif(n);
-            }
-            ctx->dhcpStartTime = 0;
-        }
-    }
-}
-
 /* 轮询所有 Npcap 网卡接收数据包，喂给 lwIP 协议栈
  *
  * 参考 lwIP 官方 pcapif.c 的 pcapif_poll 实现：
@@ -614,9 +457,6 @@ static void check_dhcp_fallback(uint32_t now) {
  *   -1 表示处理当前 Npcap 缓冲区中所有可用包（非阻塞，处理完就返回）
  */
 void XNetworkLwip_pollPcap(void) {
-    static uint32_t lastFallbackCheck = 0;
-    uint32_t now = sys_now();
-
     for (int i = 0; i < g_npcapCtxCount; i++) {
         npcap_ctx_t* ctx = &g_npcapCtxs[i];
         if (!ctx->pcap || !ctx->netif) continue;
@@ -636,11 +476,6 @@ void XNetworkLwip_pollPcap(void) {
         }
     }
 
-    /* DHCP 超时 fallback 检测：每隔1秒检查一次 */
-    if (now - lastFallbackCheck >= 1000) {
-        lastFallbackCheck = now;
-        check_dhcp_fallback(now);
-    }
 }
 /* 回环网卡 IPv4 输出包装函数 - 适配 netif->output 签名 (3 参数)
  * netif_loop_output 只有 2 参数，而 netif_output_fn 需要 3 参数
@@ -681,6 +516,12 @@ static err_t loopback_init(struct netif* netif) {
 /* 平台初始化 - 创建回环网卡 + Npcap 虚拟网卡 */
 struct netif* XNetworkLwip_platform_init(void) {
     LWIP_DBG("[平台初始化] 开始...\n");
+    memset(g_npcapCtxs, 0, sizeof(g_npcapCtxs));
+    memset(g_rxCount, 0, sizeof(g_rxCount));
+    memset(g_txCount, 0, sizeof(g_txCount));
+    g_npcapCtxCount = 0;
+    g_dhcpStarted = false;
+    XNetworkLwip_setDefaultNetif(NULL);
 
     /* 第一步：创建回环网卡 lo0 (127.0.0.1) */
     ip4_addr_t loopIp, loopMask, loopGw;
@@ -694,59 +535,48 @@ struct netif* XNetworkLwip_platform_init(void) {
         LWIP_DBG("[平台初始化] 回环网卡 lo0 创建成功\n");
     }
 
-    /* 第二步：加载 Npcap 并枚举所有物理网卡，为每个创建 Npcap 虚拟网卡 */
+    /* Enumerate every connected Windows adapter and create one matching
+     * Npcap-backed lwIP netif for each. GetBestRoute is used only to mark the
+     * external default route; lwIP still performs subnet-specific routing and
+     * each created interface starts its own DHCP client. */
     if (load_npcap()) {
-        /* 获取 Windows 网卡信息（用于匹配 IP 地址） */
         ULONG bufLen = 0;
-        GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS, NULL, NULL, &bufLen);
+        DWORD addressesStatus = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS,
+                                                      NULL, NULL, &bufLen);
+        if (addressesStatus != ERROR_BUFFER_OVERFLOW || bufLen == 0) {
+            LWIP_DBG("[Windows网卡] GetAdaptersAddresses(size) failed: %lu\n",
+                     (unsigned long)addressesStatus);
+            return lnif;
+        }
         PIP_ADAPTER_ADDRESSES aa = (PIP_ADAPTER_ADDRESSES)XMalloc_System(bufLen);
         if (aa) {
-            GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS, NULL, aa, &bufLen);
+            addressesStatus = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS,
+                                                    NULL, aa, &bufLen);
+            PIP_ADAPTER_ADDRESSES defaultAdapter = addressesStatus == NO_ERROR
+                ? find_default_ipv4_adapter(aa) : NULL;
+            if (addressesStatus != NO_ERROR) {
+                LWIP_DBG("[Windows网卡] GetAdaptersAddresses failed: %lu\n",
+                         (unsigned long)addressesStatus);
+                XFree_System(aa);
+                return lnif;
+            }
 
-            /* 枚举所有 Npcap 设备，过滤非物理网卡后创建虚拟网卡 */
             pcap_if_t* alldevs = NULL;
             char errbuf[256] = {0};
             if (pfn_findall(&alldevs, errbuf) == 0 && alldevs) {
-                LWIP_DBG("[Npcap] 开始枚举网络适配器...\n");
+                LWIP_DBG("[Npcap] enumerating connected adapters, default ifIndex=%lu\n",
+                         (unsigned long)(defaultAdapter ? defaultAdapter->IfIndex : 0));
 
                 for (pcap_if_t* d = alldevs; d && g_npcapCtxCount < NPCAP_MAX_ADAPTERS; d = d->next) {
                     if (!d->name) continue;
                     const char* desc = d->description ? d->description : "(无描述)";
-
-                    /* 过滤掉虚拟适配器（WAN Miniport 等） */
-                    if (!is_physical_adapter(desc)) {
-                        LWIP_DBG("[Npcap] 跳过虚拟适配器: %s -> %s\n", d->name, desc);
-                        continue;
-                    }
-
-                    /* 动态 IP 配置：尝试从 Windows 获取对应网卡的 IP 信息和 MAC 地址 */
-                    bool hasIp = false;
-                    uint32_t ip = 0, mask = 0, gw = 0;
-                    uint8_t winMacBuf[6] = {0};
-                    hasIp = find_windows_ip_for_adapter(aa, desc, &ip, &mask, &gw, winMacBuf);
-
-                    /* 多网卡自动路由：为所有有有效 IP 的物理网卡创建虚拟网卡
-                     * lwIP 的 ip4_route() 会根据目标 IP 自动选择出站网卡：
-                     *   - 目标在某个网卡子网内 -> 用该网卡直接发送（直接路由）
-                     *   - 目标不在任何子网 -> 用 netif_default（默认网关）发送
-                     * 默认网卡由 npcap_status_callback 按优先级自动选择
-                     *   （DHCP+有同子网网关的物理网卡优先级最高=100） */
-                    if (!hasIp) {
-                        LWIP_DBG("[Npcap] 跳过无IP网卡: %s -> %s\n", d->name, desc);
-                        continue;
-                    }
-                    {
-                        uint32_t hip = ntohl(ip);
-                        /* 跳过回环(127.x.x.x)和APIPA(169.254.x.x)地址 */
-                        if (((hip >> 24) & 0xFF) == 127 || ((hip >> 16) & 0xFFFF) == 0xA9FE) {
-                            LWIP_DBG("[Npcap] 跳过无效IP网卡(%d.%d.%d.%d): %s -> %s\n",
-                                     (int)(hip>>24)&0xFF, (int)(hip>>16)&0xFF,
-                                     (int)(hip>>8)&0xFF, (int)hip&0xFF,
-                                     d->name, desc);
-                            continue;
-                        }
-                    }
-                    LWIP_DBG("[Npcap] 创建虚拟网卡(%d): %s -> %s\n", g_npcapCtxCount + 1, d->name, desc);
+                    PIP_ADAPTER_ADDRESSES adapter = find_adapter_for_npcap(aa, d->name);
+                    if (!adapter) continue;
+                    bool isDefaultRoute = defaultAdapter &&
+                                          adapter->IfIndex == defaultAdapter->IfIndex;
+                    LWIP_DBG("[Npcap] connected %s -> %s ifIndex=%lu default=%d\n",
+                             d->name, desc, (unsigned long)adapter->IfIndex,
+                             (int)isDefaultRoute);
 
                     /* 打开 Npcap 设备 */
                     /* 混杂模式：接收所有包，在用户态 pollPcap 中进行软 MAC 过滤
@@ -766,28 +596,8 @@ struct netif* XNetworkLwip_platform_init(void) {
                     ctx->pcap = pcap;
                     snprintf(ctx->devName, sizeof(ctx->devName), "%s", d->name);
                     snprintf(ctx->winDesc, sizeof(ctx->winDesc), "%s", desc);
-
-                    /* 保存 Windows IP 用于 DHCP 失败时 fallback */
-                    if (hasIp) {
-                        ctx->winIp = ip;
-                        ctx->winMask = mask;
-                        ctx->winGw = gw;
-                        /* 保存 Windows 真实 MAC 用于 BPF 排除过滤 */
-                        if (winMacBuf[0] != 0 || winMacBuf[1] != 0 || winMacBuf[2] != 0 ||
-                            winMacBuf[3] != 0 || winMacBuf[4] != 0 || winMacBuf[5] != 0) {
-                            memcpy(ctx->winMac, winMacBuf, 6);
-                            ctx->hasWinMac = true;
-                        }
-                    } else {
-                        ctx->winIp = 0;
-                        ctx->winMask = 0;
-                        ctx->winGw = 0;
-                    }
-
-                    uint8_t mac[6];
-                    gen_lwip_mac(mac);
-
-                    bool useDhcp = true;  /* 对目标网卡启用 DHCP 获取独立 IP */
+                    ctx->ifIndex = adapter->IfIndex;
+                    ctx->isDefaultRoute = isDefaultRoute;
 
 #ifdef LWIP_USE_STATIC_IP
                     /* 静态 IP 配置模式 */
@@ -811,17 +621,20 @@ struct netif* XNetworkLwip_platform_init(void) {
                         } else {
                             LWIP_DBG("[网卡] netif_add失败(静态IP模式), 释放预分配的netif\n");
                             XFree_System(n);
+                            pfn_close(pcap);
+                            memset(ctx, 0, sizeof(*ctx));
                         }
                     } else {
                         LWIP_DBG("[网卡] XMalloc_System分配netif失败(静态IP模式)\n");
+                        pfn_close(pcap);
+                        memset(ctx, 0, sizeof(*ctx));
                     }
                     /* DHCP 客户端模式（已在上面设置 useDhcp=true） */
                     LWIP_DBG("[网卡] DHCP客户端模式\n");
 #endif /* LWIP_USE_STATIC_IP */
 
-                    /* 创建 lwIP 网络接口
-                     * DHCP 模式：初始 IP 设为 0.0.0.0，等待 DHCP 动态分配
-                     * DHCP 失败后 fallback 到 Windows 协议栈 IP */
+                    /* DHCP starts from 0.0.0.0 and must receive a distinct
+                     * lease.  Never reuse the Windows host address. */
                     {
                         ip4_addr_t iip, imask, igw;
                         IP4_ADDR(&iip, 0, 0, 0, 0);
@@ -838,60 +651,42 @@ struct netif* XNetworkLwip_platform_init(void) {
                                 netif_set_link_up(result);
                                 netif_set_status_callback(result, npcap_status_callback);
                                 g_npcapCtxCount++;
-                                LWIP_DBG("[网卡] netif_add=%p hasIp=%d dhcp=%d\n",
-                                         (void*)result, (int)hasIp, (int)useDhcp);
-
-                                if (hasIp && !useDhcp) {
-                                    if (!netif_default) {
-                                        netif_set_default(result);
-                                        XNetworkLwip_setDefaultNetif(result);
-                                        char is2[20];
-                                        LWIP_DBG("[网卡] 使用已有IP设为默认路由: %s\n",
-                                                 ip4addr_ntoa_r(ip_2_ip4(&result->ip_addr), is2, sizeof(is2)));
-                                    }
-                                }
+                                LWIP_DBG("[网卡] netif_add=%p ifIndex=%lu, awaiting DHCP lease\n",
+                                         (void*)result, (unsigned long)ctx->ifIndex);
                             } else {
                                 LWIP_DBG("[网卡] netif_add失败, 释放预分配的netif\n");
                                 XFree_System(n);
+                                pfn_close(pcap);
+                                memset(ctx, 0, sizeof(*ctx));
                             }
                         } else {
                             LWIP_DBG("[网卡] XMalloc_System分配netif失败\n");
+                            pfn_close(pcap);
+                            memset(ctx, 0, sizeof(*ctx));
                         }
                     }
                 } /* for each Npcap device */
 
-                /* 第三步：启动 DHCP 客户端（只对能发送数据包的网卡启动 DHCP，最多4个） */
+                /* Every connected netif gets its own DHCP client and therefore
+                 * its own lease/MAC identity. */
 #ifdef LWIP_USE_DHCP
                 if (!g_dhcpStarted && g_npcapCtxCount > 0) {
                     g_dhcpStarted = true;
-                    LWIP_DBG("[DHCP] 检测到 %d 个虚拟网卡，开始检测发送能力...\n", g_npcapCtxCount);
-
                     int dhcpCount = 0;
-                    for (int i = 0; i < g_npcapCtxCount && dhcpCount < 4; i++) {
+                    for (int i = 0; i < g_npcapCtxCount; ++i) {
                         npcap_ctx_t* ctx = &g_npcapCtxs[i];
                         struct netif* n = ctx->netif;
                         if (!n) continue;
- /* 测试此网卡是否可以发送数据包 */
-                        ctx->canSend = test_npcap_send(ctx->pcap);
-                        if (!ctx->canSend) {
-                            LWIP_DBG("[DHCP] %c%c%d (%s) 发送测试失败，跳过DHCP\n",
-                                     n->name[0], n->name[1], n->num, ctx->winDesc);
-                            continue;
-                        }
-
-                        ctx->dhcpEnabled = true;
-                        ctx->dhcpStartTime = sys_now();  /* 记录 DHCP 启动时间，用于超时 fallback */
-                        LWIP_DBG("[DHCP] 网卡 %c%c%d (%s) 启动DHCP: netif=%p up=%d link=%d mtu=%d startTime=%u\n",
+                        err_t dhcpErr = dhcp_start(n);
+                        ctx->dhcpEnabled = (dhcpErr == ERR_OK);
+                        if (ctx->dhcpEnabled) ++dhcpCount;
+                        LWIP_DBG("[DHCP] start %c%c%d ifIndex=%lu default=%d result=%d (%s)\n",
                                  n->name[0], n->name[1], n->num,
-                                 ctx->winDesc, (void*)n,
-                                 netif_is_up(n), netif_is_link_up(n), n->mtu,
-                                 (unsigned int)ctx->dhcpStartTime);
-                        err_t dhcp_err = dhcp_start(n);
-                        LWIP_DBG("[DHCP] %c%c%d dhcp_start返回=%d (0=OK)\n",
-                                 n->name[0], n->name[1], n->num, (int)dhcp_err);
-                        dhcpCount++;
+                                 (unsigned long)ctx->ifIndex,
+                                 (int)ctx->isDefaultRoute, (int)dhcpErr,
+                                 ctx->winDesc);
                     }
-                    LWIP_DBG("[DHCP] 共启动 %d 个DHCP客户端\n", dhcpCount);
+                    LWIP_DBG("[DHCP] started %d/%d clients\n", dhcpCount, g_npcapCtxCount);
                 }
 #endif
 
@@ -907,9 +702,10 @@ struct netif* XNetworkLwip_platform_init(void) {
     }
 
     LWIP_DBG("[平台初始化] 完成\n");
-    /* 返回默认网卡：优先回环接口，否则返回第一个 Npcap 虚拟网卡 */
-    if (lnif) return lnif;
+    /* The external interface must be returned so callers cannot promote
+     * loopback to the default route after this function returns. */
     if (g_npcapCtxCount > 0 && g_npcapCtxs[0].netif) return g_npcapCtxs[0].netif;
+    if (lnif) return lnif;
     return NULL;
 }
 
@@ -917,10 +713,28 @@ struct netif* XNetworkLwip_platform_init(void) {
 void XNetworkLwip_platform_deinit(void) {
     LWIP_DBG("[平台清理] 开始关闭 %d 个Npcap虚拟网卡...\n", g_npcapCtxCount);
     for (int i = 0; i < g_npcapCtxCount; i++) {
-        if (g_npcapCtxs[i].pcap && pfn_close) pfn_close(g_npcapCtxs[i].pcap);
+        npcap_ctx_t* ctx = &g_npcapCtxs[i];
+        if (ctx->netif) {
+            if (ctx->dhcpEnabled) dhcp_stop(ctx->netif);
+            netif_set_down(ctx->netif);
+            netif_remove(ctx->netif);
+            XFree_System(ctx->netif);
+            ctx->netif = NULL;
+        }
+        if (ctx->pcap && pfn_close) pfn_close(ctx->pcap);
+        ctx->pcap = NULL;
+    }
+    if (g_loopNetif.input) {
+        netif_set_down(&g_loopNetif);
+        netif_remove(&g_loopNetif);
+        memset(&g_loopNetif, 0, sizeof(g_loopNetif));
     }
     g_npcapCtxCount = 0;
     g_dhcpStarted = false;
+    memset(g_npcapCtxs, 0, sizeof(g_npcapCtxs));
+    memset(g_rxCount, 0, sizeof(g_rxCount));
+    memset(g_txCount, 0, sizeof(g_txCount));
+    XNetworkLwip_setDefaultNetif(NULL);
     unload_npcap();
     LWIP_DBG("[平台清理] 完成\n");
 }

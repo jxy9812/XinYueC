@@ -273,6 +273,8 @@ typedef struct XNetworkSocketPrivateWin32 {
     bool autoRead;
     bool isServer;                          ///< 是否为服务器套接字
     bool acceptPending;                     ///< 是否有待处理的 Accept
+    volatile LONG pendingIocpOperations;    ///< 生命周期引用：对象自身 + 尚未出队的重叠操作
+    volatile LONG deletePending;            ///< 非零表示析构已开始，不再向应用层投递事件
 
     /* 服务器专用：为 XFd_alloc 预分配的 fd，acceptContext.base.fd 使用。
      * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd。 */
@@ -309,6 +311,49 @@ typedef struct XNetworkSocketPrivateWin32 {
 
 /* 便捷转换宏 */
 #define W32(p) ((XNetworkSocketPrivateWin32*)(p))
+
+static void destroySocketPrivate(XNetworkSocketPrivateWin32* p)
+{
+    if (!p) return;
+    XHostAddress_deinit_base(&p->pendingPeerAddr);
+    XFree_System(p);
+}
+
+static void releaseSocketPrivate(XNetworkSocketPrivateWin32* p)
+{
+    if (InterlockedDecrement(&p->pendingIocpOperations) == 0)
+        destroySocketPrivate(p);
+}
+
+static bool socketIocpOperationCompleted(XEventContext_IOCP* context, void* userData)
+{
+    XNetworkSocketPrivateWin32* p = (XNetworkSocketPrivateWin32*)userData;
+    bool shouldDispatch;
+    if (!p) return false;
+
+    shouldDispatch = InterlockedCompareExchange(&p->deletePending, 0, 0) == 0 &&
+                     p->base.owner != NULL;
+    context->completionCallback = NULL;
+    context->completionUserData = NULL;
+    releaseSocketPrivate(p);
+    return shouldDispatch;
+}
+
+static void trackSocketIocpOperation(XNetworkSocketPrivateWin32* p,
+                                     XEventContext_IOCP* context)
+{
+    context->completionCallback = socketIocpOperationCompleted;
+    context->completionUserData = p;
+    InterlockedIncrement(&p->pendingIocpOperations);
+}
+
+static void abandonSocketIocpOperation(XNetworkSocketPrivateWin32* p,
+                                       XEventContext_IOCP* context)
+{
+    context->completionCallback = NULL;
+    context->completionUserData = NULL;
+    InterlockedDecrement(&p->pendingIocpOperations);
+}
 
 /* Keep public endpoint properties aligned with the POSIX backend after an
  * outbound connection completes. */
@@ -350,9 +395,11 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
     if (!p) return NULL;
 
     p->socket = INVALID_SOCKET;
+    p->acceptSocket = INVALID_SOCKET;
     p->serverFd = XFD_INVALID;
     p->base.owner = owner;
     p->autoRead = true;
+    p->pendingIocpOperations = 1; /* XNetwork_deleteSocketPrivate releases this owner reference. */
 
     XHostAddress_init(&p->pendingPeerAddr);
     XHostAddress_setAddressSpecial(&p->pendingPeerAddr, XHostAddress_NullSpecial);
@@ -364,11 +411,7 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
 {
     if (!priv) return;
     XNetworkSocketPrivateWin32* p = W32(priv);
-
-    if (p->socket != INVALID_SOCKET) {
-        closesocket(p->socket);
-        p->socket = INVALID_SOCKET;
-    }
+    if (InterlockedExchange(&p->deletePending, 1) != 0) return;
 
     /* 释放 XFd。
      * 客户端路径：通过 XIODevice_fd((XIODevice*)priv->owner) 获取（owner 是 XAbstractSocket 子类）。
@@ -391,8 +434,17 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
         }
     }
 
-    XHostAddress_deinit_base(&p->pendingPeerAddr);
-    XFree_System(p);
+    priv->owner = NULL;
+    XNetwork_socketDisconnect(priv);
+    if (p->acceptSocket != INVALID_SOCKET) {
+        closesocket(p->acceptSocket);
+        p->acceptSocket = INVALID_SOCKET;
+    }
+
+    /* OVERLAPPED and receive buffers are embedded in p.  Canceling or
+     * closing a handle still queues one completion for each pending I/O, so
+     * p must remain alive until processOneCompletion has consumed them. */
+    releaseSocketPrivate(p);
 }
 
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
@@ -419,6 +471,7 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
     p->readContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
     p->readContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->readContext.eventMask = FD_READ;
+    trackSocketIocpOperation(p, &p->readContext);
 
     WSABUF buf;
     buf.buf = p->readBuffer;
@@ -453,6 +506,7 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
     else {
         /* 错误 */
         p->readPending = false;
+        abandonSocketIocpOperation(p, &p->readContext);
     }
 }
 
@@ -476,6 +530,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     p->writeContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->writeContext.eventMask = FD_WRITE;
     p->writeContext.finishedBytes = len;
+    trackSocketIocpOperation(p, &p->writeContext);
     WSABUF buf;
     buf.buf = p->writeBuffer;
     buf.len = (ULONG)len;
@@ -497,18 +552,18 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     }
 
     if (result == 0) {
+        /* An overlapped socket associated with an IOCP queues its own
+         * completion packet even when WSASend completes synchronously.
+         * Posting another packet here delivers the same OVERLAPPED twice;
+         * a later delivery can outlive the FTP data socket that owned it. */
         p->writePending = true;
-        HANDLE iocp = iocp_get();
-        if (iocp) {
-            PostQueuedCompletionStatus(iocp, (DWORD)len, (ULONG_PTR)priv->owner,
-                (OVERLAPPED*)&p->writeContext);
-        }
     }
     else if (WSAGetLastError() == WSA_IO_PENDING) {
         p->writePending = true;
     }
     else {
         p->writePending = false;
+        abandonSocketIocpOperation(p, &p->writeContext);
     }
 }
 
@@ -655,10 +710,12 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         p->connectContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
         p->connectContext.socket = XSocketDescriptor_fromIntptr(p->socket);
         p->connectContext.eventMask = FD_CONNECT;
+        trackSocketIocpOperation(p, &p->connectContext);
 
         if (!g_ConnectEx(p->socket, (struct sockaddr*)&destAddr, destLen,
             NULL, 0, NULL, (OVERLAPPED*)&p->connectContext)) {
             if (WSAGetLastError() != WSA_IO_PENDING) {
+                abandonSocketIocpOperation(p, &p->connectContext);
                 closesocket(p->socket); p->socket = INVALID_SOCKET;
                 return false;
             }
@@ -689,7 +746,7 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
     XNetworkSocketPrivateWin32* p = W32(priv);
 
     if (p->socket != INVALID_SOCKET) {
-        CancelIo((HANDLE)p->socket);
+        CancelIoEx((HANDLE)p->socket, NULL);
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
     }
@@ -793,10 +850,12 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
         int soLen = sizeof(soError);
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
         if (soError == 0) {
-            p->connected = true;
-            int opt = 1;
-            setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
-            syncSocketEndpoints(priv);
+            if (setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0) == 0) {
+                p->connected = true;
+                syncSocketEndpoints(priv);
+            } else {
+                p->connected = false;
+            }
         } else {
             p->connected = false;
         }
@@ -951,6 +1010,7 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
     p->acceptContext.base.fd = p->serverFd;
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->acceptContext.eventMask = FD_ACCEPT;
+    trackSocketIocpOperation(p, &p->acceptContext);
 
     DWORD bytesReceived = 0;
     BOOL result = g_AcceptEx(p->socket, acceptSock, p->acceptBuffer, 0,
@@ -962,6 +1022,7 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
 
     closesocket(acceptSock);
     p->acceptSocket = INVALID_SOCKET;
+    abandonSocketIocpOperation(p, &p->acceptContext);
     return false;
 }
 
@@ -1024,6 +1085,8 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
         XFd xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
         if (xfd == XFD_INVALID) {
             closesocket(s);
+            p->socket = INVALID_SOCKET;
+            p->connected = false;
             return -1;
         }
         p->serverFd = xfd;
@@ -1057,9 +1120,22 @@ uint16_t XNetwork_serverPort(XServerHandle server)
 
 void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
 {
-    (void)priv;
-    if (server != -1) {
-        closesocket((SOCKET)server);
+    SOCKET socketToClose = (SOCKET)server;
+    XNetworkSocketPrivateWin32* p = priv ? W32(priv) : NULL;
+    if (server == -1) return;
+
+    if (p && p->socket == socketToClose) {
+        CancelIoEx((HANDLE)p->socket, NULL);
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
+        p->connected = false;
+        if (p->acceptSocket != INVALID_SOCKET) {
+            closesocket(p->acceptSocket);
+            p->acceptSocket = INVALID_SOCKET;
+        }
+    } else {
+        /* Used when XTcpServer rejects an already accepted client handle. */
+        closesocket(socketToClose);
     }
 }
 
@@ -1070,8 +1146,14 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     XNetworkSocketPrivateWin32* p = W32(priv);
     if (p->acceptSocket == INVALID_SOCKET) return -1;
 
-    int opt = 1;
-    setsockopt(p->acceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&opt, sizeof(opt));
+    SOCKET listenSocket = p->socket;
+    if (setsockopt(p->acceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+                   (char*)&listenSocket, sizeof(listenSocket)) != 0) {
+        closesocket(p->acceptSocket);
+        p->acceptSocket = INVALID_SOCKET;
+        p->acceptPending = false;
+        return -1;
+    }
 
     if (clientAddr || clientPort) {
         if (g_GetAcceptExSockaddrs) {

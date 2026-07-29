@@ -36,16 +36,18 @@ struct netif;
 
 /**
  * @brief 初始化本平台的 lwIP 虚拟网卡
- * @return 成功返回默认 netif 指针，失败返回 NULL
+ * @return 成功返回外部默认 netif 指针，失败返回 NULL
  *
  * 调用时机：XNetwork_ensureInit() 之后、使用 lwIP 网络之前
  *
  * 平台实现：
- *   - Windows: 创建 loopback (127.0.0.1) 虚拟网卡 + Npcap 适配器虚拟网卡
+ *   - Windows: 创建 loopback (127.0.0.1) 并绑定 Windows 默认 IPv4 路由
+ *              对应的 Npcap 适配器；该适配器通过 DHCP 获取独立租约
  *   - Linux:   创建 TAP 适配器虚拟网卡
  *   - 嵌入式:  注册硬件 MAC + PHY 驱动程序
  *
- * @note 实现中应使用 gen_lwip_mac() 生成随机 MAC 地址，避免与真实网卡冲突
+ * @note Windows 返回 Npcap 外部 netif 而非 loopback，避免后续初始化覆盖默认路由。
+ *       实现中应使用 gen_lwip_mac() 生成随机 MAC 地址，避免与真实网卡冲突。
  */
 struct netif* XNetworkLwip_platform_init(void);
 

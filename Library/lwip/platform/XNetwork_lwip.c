@@ -17,7 +17,7 @@
  *   3. 应用线程通过 Raw API 操作，sys_arch_protect 提供递归锁保护
  *
  * 基于 XSync + XMemory 系统实现，平台无关。
- * 内存分配统一使用 XMalloc_System / XFree_System。
+ * 内存分配统一使用 XMalloc_System / XRealloc_System / XFree_System。
  * 定时器使用 XTimeWheelGroup 全局时间轮。
  * 随机数使用 XRandomGenerator_system()。
  */
@@ -48,6 +48,7 @@
 #include "lwip/opt.h"
 #include "lwip/init.h"
 #include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"
 #include "lwip/udp.h"
 #include "lwip/dns.h"
 #include "lwip/igmp.h"
@@ -136,6 +137,7 @@ typedef struct XNetworkSocketPrivateLwip {
     int rxTotal;                   /* 上一次接收的字节数 */
     ip_addr_t fromAddr;            /* UDP 数据报来源地址 (IPv4=4 字节) */
     uint16_t fromPort;             /* UDP 数据报来源端口 */
+    uint16_t rxCapacity;           /* 懒分配接收缓冲容量，复用原对齐空隙 */
     /* 位域压缩：8 个布尔(8位) + sockType(2位) + lastErr(8位) = 18 位，合并到 4 字节
      * 原本 8 个 bool(8字节) + sockType(4字节) + lastErr(4字节) + 对齐填充
      * 现压缩为 4 字节，结构体从 ~104 字节减至 88 字节 */
@@ -158,6 +160,29 @@ static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len);
 static void tcpErrCb(void* arg, err_t err);
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb);
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err);
+
+/* 接收缓冲按需分配，未收数据的 socket 不占用缓冲预算。 */
+static bool reserve_rx_buffer(XNetworkSocketPrivateLwip* s, u16_t required)
+{
+    char* resized;
+
+    if (!s || required <= s->rxCapacity) return true;
+    resized = (char*)XRealloc_System(s->rxBuf, (size_t)required);
+    if (!resized) return false;
+    s->rxBuf = resized;
+    s->rxCapacity = required;
+    return true;
+}
+
+/* 优先使用配置容量以吸收连续报文、提高大内存设备吞吐；若该分配因
+ * 内存压力失败，退化到只容纳当前整包，后续依靠 TCP 背压继续传输。 */
+static bool reserve_tcp_rx_buffer(XNetworkSocketPrivateLwip* s, u16_t required)
+{
+    const u16_t configured = (u16_t)XNETWORK_LWIP_RECV_BUFFER_SIZE;
+
+    if (reserve_rx_buffer(s, configured)) return true;
+    return reserve_rx_buffer(s, required);
+}
 
 /* tcp_close() can leave an established PCB alive until a later ACK or timer
  * tick. Its Raw API callbacks must not retain a private socket that is about
@@ -360,14 +385,18 @@ static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
     target->hasWriteDone = source->hasWriteDone;
     target->hasError = source->hasError;
     target->sockType = XNetwork_Tcp;
-    target->rxPos = source->rxPos < XNETWORK_LWIP_RECV_BUFFER_SIZE
-        ? source->rxPos : XNETWORK_LWIP_RECV_BUFFER_SIZE;
-    target->rxTotal = source->rxTotal < target->rxPos ? source->rxTotal : target->rxPos;
-    if (target->rxBuf && source->rxBuf && source->rxPos > 0) {
-        memcpy(target->rxBuf, source->rxBuf,
-               (size_t)source->rxPos < XNETWORK_LWIP_RECV_BUFFER_SIZE
-                   ? (size_t)source->rxPos : XNETWORK_LWIP_RECV_BUFFER_SIZE);
+    /* target 尚未接管任何 PCB；直接转移接收缓冲区，避免 accepted socket
+     * 接管时重新分配和复制一份数据。source 随后释放 target 的旧缓冲。 */
+    {
+        char* targetRxBuf = target->rxBuf;
+        uint16_t targetRxCapacity = target->rxCapacity;
+        target->rxBuf = source->rxBuf;
+        target->rxCapacity = source->rxCapacity;
+        source->rxBuf = targetRxBuf;
+        source->rxCapacity = targetRxCapacity;
     }
+    target->rxPos = source->rxPos;
+    target->rxTotal = source->rxTotal < target->rxPos ? source->rxTotal : target->rxPos;
 
     tcp_arg(target->tpcb, target);
     tcp_recv(target->tpcb, tcpRecvCb);
@@ -465,25 +494,40 @@ int XNetworkLwip_err_to_errno(int e) {
 
 /* TCP 数据接收回调 */
 static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err) {
+    u16_t total;
+    size_t space;
+
+    (void)pcb;
     (void)err;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
-    if (!s) return ERR_ABRT;
+    if (!s) {
+        if (p) pbuf_free(p);
+        return ERR_OK;
+    }
     if (!p) { s->closing = true; s->hasReadData = true;
         push_socket_cq(s, XSocketAct_Read);
         return ERR_OK; }
-    int total = p->tot_len;
-    int acked = 0;
-    if (total > 0 && s->rxBuf) {
-        int space = XNETWORK_LWIP_RECV_BUFFER_SIZE - s->rxPos;
-        int copy = total < space ? total : space;
-        if (copy > 0) {
-            pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
-            s->rxPos += copy;
-            s->hasReadData = true;
-            push_socket_cq(s, XSocketAct_Read);
-        }
-        acked = copy;  /* 只确认已缓冲的字节数，未缓冲的由 lwIP 重传 */
+
+    total = p->tot_len;
+    if (total == 0) {
+        pbuf_free(p);
+        return ERR_OK;
     }
+
+    /* Raw API 不支持“复制一部分后释放整个 pbuf”。空间不足时必须保持
+     * pbuf 原样并返回 ERR_MEM，lwIP 才会存入 pcb->refused_data 后重试。
+     * 缓冲为空但单个重组 pbuf 较大时，按需扩容以避免永久拒收。 */
+    space = s->rxPos < (int)s->rxCapacity
+        ? (size_t)s->rxCapacity - (size_t)s->rxPos : 0;
+    if ((size_t)total > space) {
+        if (s->rxPos != 0 || !reserve_tcp_rx_buffer(s, total)) return ERR_MEM;
+    }
+    if (pbuf_copy_partial(p, s->rxBuf + s->rxPos, total, 0) != total) {
+        return ERR_MEM;
+    }
+    s->rxPos += (int)total;
+    s->hasReadData = true;
+    push_socket_cq(s, XSocketAct_Read);
     pbuf_free(p);
     /* tcp_recved 延迟到 XNetwork_socketContinueRead 中调用，避免窗口管理过早 */
     return ERR_OK;
@@ -550,13 +594,6 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     cs->tpcb = newPcb;
     cs->connected = true;
     cs->sockType = XNetwork_Tcp;
-    cs->rxBuf = (char*)XMalloc_System(XNETWORK_LWIP_RECV_BUFFER_SIZE);
-    if (!cs->rxBuf) {
-        XFd_free(cs->fd);
-        XFree_System(cs);
-        return ERR_MEM;
-    }
-
     /* 注册 TCP 回调 */
     tcp_arg(newPcb, cs);
     tcp_recv(newPcb, tcpRecvCb);
@@ -581,8 +618,15 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
     if (addr) s->fromAddr = *addr;
     s->fromPort = port;
     int total = p->tot_len;
-    if (total > 0 && s->rxBuf) {
-        int space = XNETWORK_LWIP_RECV_BUFFER_SIZE - s->rxPos;
+    if (total > 0) {
+        size_t configuredMax = XNETWORK_LWIP_RECV_BUFFER_SIZE;
+        size_t required = (size_t)s->rxPos + (size_t)total;
+        u16_t desired = (u16_t)(required < configuredMax ? required : configuredMax);
+        if (desired > s->rxCapacity && !reserve_rx_buffer(s, desired)) {
+            pbuf_free(p);
+            return;
+        }
+        int space = (int)s->rxCapacity - s->rxPos;
         int copy = total < space ? total : space;
         if (copy > 0) {
             pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
@@ -660,8 +704,6 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner) {
     s->fd = XFD_INVALID;
     s->base.owner = owner;
     s->base.notifiers = XVector_create(sizeof(void*));
-    s->rxBuf = (char*)XMalloc_System(XNETWORK_LWIP_RECV_BUFFER_SIZE);
-    if (!s->rxBuf) { XFree_System(s); return NULL; }
     return (XNetworkSocketPrivate*)s;
 }
 
@@ -777,11 +819,11 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
  * 问题背景：
  *   1. dns_gethostbyname 传 NULL 回调时，只能解析已缓存或 IP 字符串，
  *      对未缓存域名返回 ERR_INPROGRESS 后永远不会通知完成。
- *   2. Windows 上 DHCP 通常无法完成（宿主机已持有 IP 租约），
- *      netif 仍为 0.0.0.0，DNS 查询无源 IP；且无 DNS 服务器。
+ *   2. DHCP 尚未完成时，netif 仍为 0.0.0.0，DNS 查询无源 IP；
+ *      不能冒用宿主机地址作为 fallback，否则两个协议栈会产生地址冲突。
  *
  * 解决方案：
- *   ensure_network_ready(): 等待/强制网卡获取 IP + 设置 fallback DNS 服务器
+ *   ensure_network_ready(): 等待网卡获取独立 DHCP 地址并确认默认路由
  *   lwip_resolve_name():    dns_gethostbyname + 回调 + 轮询等待结果
  * ================================================================ */
 
@@ -797,7 +839,7 @@ static bool netif_has_valid_ipv4(struct netif* n) {
 /* 确保网络就绪：
  *   1. 等待网卡通过 DHCP 获取有效 IP（DHCP 完成时 lwIP 自动设置 IP/网关/DNS）
  *   2. 确保有默认路由 */
-static void ensure_network_ready(uint32_t timeoutMs) {
+static bool ensure_network_ready(uint32_t timeoutMs) {
     struct netif* n;
     bool hasIp = false;
     uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
@@ -838,6 +880,7 @@ static void ensure_network_ready(uint32_t timeoutMs) {
             }
         }
     }
+    return hasIp;
 }
 
 /* DNS 异步解析回调上下文 */
@@ -942,8 +985,10 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     XNetwork_ensureInit();
     s->sockType = (int)sockType;
 
-    /* 确保网卡有 IP + DNS 服务器就绪（等待 DHCP 或强制 fallback） */
-    ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
+    /* A connection without an independent DHCP lease has no valid source
+     * address.  Fail now instead of transmitting from 0.0.0.0 or sharing
+     * the host platform address. */
+    if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) return false;
 
     /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
@@ -1083,18 +1128,25 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
         s->closing = false;  /* 连接错误/完成时一并清除关闭标志 */
         hasEvent = true;
     }
-    if ((sockAct->actType & XSocketAct_Read) &&
-        (s->hasReadData || s->closing)) {
-        s->hasReadData = false;
-        s->closing = false;
-        s->rxTotal = s->rxPos;  /* 更新已读字节数，供上层获取 */
-        hasEvent = true;
+    if (sockAct->actType & XSocketAct_Read) {
+        /* CQ 允许重复条目；没有新完成标志时必须清空旧快照，避免上层
+         * 再次复制上一批数据。 */
+        s->rxTotal = 0;
+        if (s->hasReadData || s->closing) {
+            s->hasReadData = false;
+            s->closing = false;
+            s->rxTotal = s->rxPos;  /* 更新已读字节数，供上层获取 */
+            hasEvent = true;
+        }
     }
-    if ((sockAct->actType & XSocketAct_Write) && s->hasWriteDone) {
-        s->hasWriteDone = false;
-        s->lastWriteFinished = s->writeFinished;  /* 记录已确认字节数 */
-        s->writeFinished = 0;                      /* 重置计数器 */
-        hasEvent = true;
+    if (sockAct->actType & XSocketAct_Write) {
+        s->lastWriteFinished = 0;
+        if (s->hasWriteDone) {
+            s->hasWriteDone = false;
+            s->lastWriteFinished = s->writeFinished;  /* 记录已确认字节数 */
+            s->writeFinished = 0;                      /* 重置计数器 */
+            hasEvent = true;
+        }
     }
     if ((sockAct->actType & XSocketAct_Accept) && s->hasAccept) {
         s->hasAccept = false;
@@ -1172,8 +1224,12 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
         s->rxPos = 0;
         s->rxTotal = 0;
     }
-    /* 通知 lwIP 数据已消费，重新打开 TCP 接收窗口 */
+    /* 通知 lwIP 数据已消费，重新打开 TCP 接收窗口。若 Raw API 保存了
+     * refused_data，立即重新投递，避免等待 250ms fast timer。 */
     if (consumed > 0 && s->tpcb) tcp_recved(s->tpcb, (u16_t)consumed);
+    if (s->tpcb && s->tpcb->refused_data) {
+        (void)tcp_process_refused_data(s->tpcb);
+    }
     XNET_LWIP_UNLOCK(prot);
 }
 
@@ -1246,8 +1302,8 @@ XVector* XNetwork_lookupName(const XString* name) {
     if (!nameStr) return NULL;
     XNetwork_ensureInit();
 
-    /* 确保网卡有 IP + DNS 服务器就绪 */
-    ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
+    /* Name lookup also needs a usable source address for DNS traffic. */
+    if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
 
     /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;

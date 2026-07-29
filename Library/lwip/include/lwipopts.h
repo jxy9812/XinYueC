@@ -20,8 +20,11 @@
  * 调试开关
  * ================================================================ */
 
-/* 适配层调试总开关：1=开启 XPrintf 输出，0=静默（不影响 lwIP 内部 LWIP_DEBUG） */
+/* 适配层调试总开关：1=开启 XPrintf 输出，0=静默（不影响 lwIP 内部 LWIP_DEBUG）。
+ * 构建系统可通过 -DLWIP_NET_DEBUG=1 开启诊断，而不修改源码。 */
+#ifndef LWIP_NET_DEBUG
 #define LWIP_NET_DEBUG            0
+#endif
 #if LWIP_NET_DEBUG
   /* 适配层自定义调试输出，用于 XNetwork_lwip.c / sys_arch.c 等 */
   #define LWIP_DBG(fmt, ...)  XPrintf(fmt, ##__VA_ARGS__)
@@ -167,17 +170,27 @@
  * 以太网标准值，不要随意修改 */
 #define TCP_MSS                 1460
 
-/* TCP 接收窗口大小：8 × MSS = 11680 字节
- * 值越大吞吐越高，但占用内存越多 */
-#define TCP_WND                 (8 * TCP_MSS)
+/* TCP 接收窗口与平台接收缓冲预算一致。小内存设备可设为 1~2 × MSS，
+ * 依靠背压保证完整性；大内存设备可增大窗口提高吞吐。 */
+#if XNETWORK_LWIP_RECV_BUFFER_SIZE < TCP_MSS
+#error "XNETWORK_LWIP_RECV_BUFFER_SIZE must be at least TCP_MSS"
+#endif
+#if XNETWORK_LWIP_RECV_BUFFER_SIZE > 65535
+#error "XNETWORK_LWIP_RECV_BUFFER_SIZE must not exceed 65535 without window scaling"
+#endif
+#define TCP_WND                 XNETWORK_LWIP_RECV_BUFFER_SIZE
 
-/* TCP 发送缓冲区大小：8 × MSS = 11680 字节
- * 应用层单次最多可写入此大小的数据 */
-#define TCP_SND_BUF             (8 * TCP_MSS)
+/* TCP 发送缓冲采用产品配置；lwIP 要求至少为 2 × MSS。 */
+#if XNETWORK_LWIP_SEND_BUFFER_SIZE < (2 * TCP_MSS)
+#error "XNETWORK_LWIP_SEND_BUFFER_SIZE must be at least 2 * TCP_MSS"
+#endif
+#if XNETWORK_LWIP_SEND_BUFFER_SIZE > 65535
+#error "XNETWORK_LWIP_SEND_BUFFER_SIZE must not exceed 65535"
+#endif
+#define TCP_SND_BUF             XNETWORK_LWIP_SEND_BUFFER_SIZE
 
-/* TCP 发送队列长度：32 个段
- * 控制 lwIP 内部待发送/未确认的段数量 */
-#define TCP_SND_QUEUELEN        32
+/* 队列长度随发送预算增长，避免大内存配置仍被固定段数限制。 */
+#define TCP_SND_QUEUELEN        ((4 * TCP_SND_BUF + (TCP_MSS - 1)) / TCP_MSS)
 
 /* TCP 最大重传次数：6 次（超过后连接超时断开） */
 #define TCP_MAXRTX              6

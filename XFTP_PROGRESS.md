@@ -311,7 +311,8 @@ temporary files under `ftp_test_root/` and may leave generated files such as
 
 Continuation priority:
 
-1. Run the endpoint-synchronization and FTP matrix on Windows.
+1. See the 2026-07-29 Windows follow-up below. Platform-backend validation is
+   complete; only the Windows lwIP matrix against another LAN host remains.
 
 ## Files of Interest
 
@@ -327,3 +328,200 @@ Continuation priority:
 - `ftp_e2e_test.c`
 - `ftp_test_server.py`
 - `Test/XIOTest/XNetworkTest/XFtpTest.c`
+
+## 2026-07-29 Windows Finalization Follow-up
+
+This section supersedes the earlier statement that the Windows platform
+backend had not been runtime-tested.
+
+### Additional fixes
+
+- `XFtpCommand_delete()` previously released the command-owned strings,
+  argument vector, and upload buffer, then scheduled only an `XObject`
+  deinitialization. The `XFtpCommand` allocation itself was never freed.
+  `XFtpCommand` now installs its own vtable deinitializer, chains to the
+  `XObject` parent deinitializer, records `XFree_System` as its release method,
+  and is destroyed immediately through `XClass_delete_base()`.
+- The `dataTransferProgress` slots in `ftp_e2e_test.c` and
+  `Test/XIOTest/XNetworkTest/XFtpTest.c` now use the framework-required
+  `(XObject*, XVarList*)` ABI and extract both `int64_t` arguments from the
+  list.
+- XFtp signal connections and disconnections now use `XSignal(...)` instead
+  of passing function pointers directly to the `size_t` signal-id parameter.
+- `ftp_e2e_test.c` now runs an offline public-API contract check before any
+  network operation. It directly covers `XFtp_class_init`, stack
+  `XFtp_init`/`XFtp_deinit_base`, heap `XFtp_delete`, all `XFtpCommand` public
+  APIs, configuration setters/getters, and argument delivery for all eight
+  public XFtp signals.
+
+### Windows platform-backend verification
+
+The latest `build-platform` configuration uses:
+
+```text
+CMAKE_C_FLAGS=/DXNETWORK_USE_PLATFORM_API
+```
+
+After the command-lifetime and signal fixes, all four matrices were rebuilt
+and rerun against the LAN-bound fixtures at `192.168.1.46`:
+
+- FTP: 17/17
+- FTP + MODE Z: 17/17
+- Explicit FTPS: 17/17
+- Explicit FTPS + MODE Z: 17/17
+
+Every run also reported `公开 API/信号契约自检: 通过`. Full page heap was then
+enabled for `FtpE2E_Test.exe`; Explicit FTPS + MODE Z again completed 17/17
+with process exit code 0. Page heap was disabled afterward and the Image File
+Execution Options values were confirmed absent.
+
+### Windows lwIP verification and remaining fixture requirement
+
+The latest `build-lwip` configuration uses:
+
+```text
+CMAKE_C_FLAGS=/DXNETWORK_USE_LWIP
+```
+
+It builds successfully with the same command-lifetime and signal changes. The
+offline public-API/signal contract check passes under the lwIP build. With a
+five-second DHCP settle period, the lwIP client again established a TCP
+connection to the remote LAN endpoint `192.168.1.254:80`; the subsequent FTP
+contract check intentionally fails because that endpoint is HTTP rather than
+FTP. Connecting to the Windows host's own `192.168.1.46:2121` still sends the
+lwIP connection but receives no local server response. This is the previously
+confirmed Npcap same-physical-port host-loopback limitation, not an XFtp state
+machine failure.
+
+The only remaining end-to-end environment item is to run the Windows lwIP
+FTP, FTP + MODE Z, FTPS, and FTPS + MODE Z matrices against an FTP fixture on
+another machine on the same LAN. The Windows host fixture cannot satisfy that
+test because it shares the captured physical adapter. The equivalent lwIP
+TAP/DHCP matrices on Linux already pass 17/17 for all four variants.
+
+The shared `bin/Debug/FtpE2E_Test.exe` is currently the Windows lwIP build,
+because `build-lwip` was the final build performed in this session.
+
+### Final source audit
+
+- `XFtp.h` plus `XFtpCommand.h`: 63 public declarations, all implemented.
+- No empty public function or placeholder implementation was found. The only
+  `未实现` source match is the FTP `502/504 command not implemented` response
+  classification comment.
+- No direct `malloc`, `calloc`, `realloc`, or `free` call exists in the XFtp
+  module. Allocations use the project `XMemory` interfaces.
+- The XFtp module contains no direct Windows, POSIX, or lwIP platform API. It
+  uses the common XNetwork interfaces.
+- FTPS uses `XSslSocket`; the configured XinYueC TLS backend is mbedTLS.
+  OpenSSL is not linked into or called by XFtp. It was used only outside the
+  client to prepare/interoperate with the Python test fixture.
+
+## 2026-07-29 Windows lwIP Multi-Adapter Restoration
+
+`Drive/windows/XNetwork/XNetwork_lwip_win32.c` was restored from the
+single-adapter implementation to connected multi-adapter operation.
+
+- The backend now enumerates every Windows adapter whose `OperStatus` is Up
+  and that has a matching Npcap GUID. A pre-existing IPv4 address is not
+  required; this allows a connected adapter to obtain its first address from
+  lwIP DHCP.
+- Each matched adapter gets its own Npcap handle, lwIP `netif`, random local
+  MAC address, and DHCP client. The current build supports up to 16 concurrent
+  Npcap adapters.
+- `GetBestRoute(0, 0)` identifies the Windows external default-route adapter.
+  Only that adapter is marked as the preferred lwIP default route. lwIP's
+  normal `ip4_route()` selection still chooses a netif whose DHCP address and
+  mask directly contain the destination. A temporary first usable lease with
+  a gateway is kept stable, then replaced when the preferred adapter receives
+  its lease.
+- Npcap handles are closed on all allocation and `netif_add()` failure paths;
+  DHCP clients, netifs, loopback, the default-netif bridge, and Npcap handles
+  are cleaned up during deinitialization.
+
+### Verification
+
+The normal Windows lwIP configuration (`build-lwip`,
+`/DXNETWORK_USE_LWIP`) builds successfully, including `FtpE2E_Test`.
+A diagnostic build with `LWIP_NET_DEBUG=1` observed on this host:
+
+- 4 connected Npcap netifs created: Windows interface indexes 28, 9, 20,
+  and 24.
+- 4/4 `dhcp_start()` calls returned success.
+- DHCP leases acquired on interface 24 (`192.168.1.56`), interface 9
+  (`192.168.10.169`), and interface 20 (`192.168.222.168`). Interface 28
+  sent DHCP successfully but did not receive a lease from its network.
+- Interface 24 was the only `default=1` interface, matching Windows
+  `GetBestRoute`; TCP to `192.168.1.254:80` used that interface.
+- TCP to `192.168.10.2:80` emitted ARP on `en3` (`192.168.10.169`), proving
+  direct-subnet routing selected the second DHCP netif while the external
+  default remained on `en5`.
+
+The HTTP endpoints are not FTP fixtures, so the XFtp FTP matrix intentionally
+does not pass against them. The local Windows FTP fixture still cannot be used
+for a complete Npcap lwIP loopback test because the fixture and lwIP capture
+share the same physical adapter. A remote FTP fixture on another LAN host is
+still required for the four Windows lwIP FTP/FTPS matrix runs.
+
+## 2026-07-29 Adaptive lwIP Memory Finalization
+
+The Windows lwIP matrix was completed against the separate LAN fixture at
+`192.168.1.50`, eliminating the same-adapter Npcap loopback limitation.
+
+### Memory behavior
+
+- `TCP_WND` and `TCP_SND_BUF` now use
+  `XNETWORK_LWIP_RECV_BUFFER_SIZE` and
+  `XNETWORK_LWIP_SEND_BUFFER_SIZE`. `TCP_SND_QUEUELEN` scales with the send
+  budget rather than retaining a fixed segment count.
+- The receive buffer is allocated lazily from `XMemory` on first data. If its
+  normal configured allocation fails while empty, it falls back to the current
+  complete TCP pbuf and uses lwIP `ERR_MEM` backpressure for subsequent data.
+  It never copies part of a pbuf and then frees it.
+- Consuming buffered TCP data immediately retries lwIP `refused_data`, so
+  small windows do not wait for the fast timer before making progress.
+- The FTP upload batch follows the lwIP send budget, capped at one 16 KiB TLS
+  plaintext record. Stack I/O buffers follow the smaller receive/send budget,
+  capped at 8 KiB. At the 1460/2920 profile this reduces the temporary stack
+  block to 1460 bytes and avoids a multi-kilobyte TLS tail queue.
+- `XSslSocket` queues only an unfinished encrypted record tail, allocating the
+  queue lazily from `XMemory`. `XRingBuffer_peekReadPtr()` now crosses empty
+  chunks, preventing that queue from stalling after a partial TCP write.
+- The two lwIP budget macros now have defaults outside the runtime-backend
+  selector. The project always compiles the lwIP static library, including in
+  the platform-network build; leaving these macros lwIP-only made their values
+  evaluate to zero and broke the new compile-time range checks.
+
+Recommended product profiles:
+
+```text
+Small:  XNETWORK_LWIP_RECV_BUFFER_SIZE=1460
+        XNETWORK_LWIP_SEND_BUFFER_SIZE=2920
+Default: 8192 / 8192
+Large:  32768 / 32768
+```
+
+MODE Z intentionally uses `XByteArray` compression/decompression. Its
+memory-buffer commands therefore require the compressed or decompressed
+payload to fit the application memory budget. For a file larger than available
+RAM, use the non-compressed device transfer path; incremental MODE Z streaming
+is a separate future enhancement.
+
+### Final verification
+
+All tests used the LAN fixture `192.168.1.50` (`FTP 2121`, `Explicit FTPS
+2122`) and include the offline public XFtp API/signal-contract check.
+
+| Backend/profile | Matrix | Result |
+| --- | --- | --- |
+| Windows lwIP, 1460/2920 | FTP, FTP+MODE Z, FTPS, FTPS+MODE Z | 17/17 each |
+| Windows lwIP, 32768/32768 | FTP; FTPS+MODE Z | 17/17 each |
+| Windows lwIP, default 8192/8192 | FTPS+MODE Z | 17/17 |
+| Windows platform API | FTPS+MODE Z | 17/17 |
+
+The platform build and normal lwIP build both compile cleanly after the shared
+lwIP-budget default fix. Existing earlier platform full-matrix verification
+remains 17/17 for all four FTP/FTPS and MODE Z combinations.
+
+Temporary Linux fixture processes and `/tmp/xftp-win-lwip.Idrt2F` were removed
+after this validation. The active local `bin/Debug/FtpE2E_Test.exe` is the
+normal Windows lwIP build.

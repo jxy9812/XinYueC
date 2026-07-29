@@ -59,6 +59,8 @@ struct XSslSocket {
     XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain 缓存；自持有 */
     XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors；每个元素为 int 错误码 */
     struct XRingBuffer*  encRxBuf;
+    struct XRingBuffer*  encTxBuf;          /* BIO 部分写时按需创建 */
+    size_t               pendingAckedBytes; /* encTxBuf 排空前合并底层 ACK */
 };
 
 
@@ -95,13 +97,54 @@ typedef bool    (*Fn_event) (XAbstractSocket*, XEvent*);
 
 /* = BIO：mbedTLS 原始 socket I/O 回调（绕过 TLS 层） = */
 
+static size_t xssl_encrypted_tx_pending(const XSslSocket* self)
+{
+    return self && self->encTxBuf ? XRingBuffer_available(self->encTxBuf) : 0;
+}
+
+static bool xssl_queue_encrypted_tx(XSslSocket* self, const uint8_t* data, size_t len)
+{
+    if (!self || !data || len == 0) return len == 0;
+    if (!self->encTxBuf) {
+        /* 小窗口通常只剩少量 TLS 记录尾部，避免固定预分配完整记录。 */
+        self->encTxBuf = (struct XRingBuffer*)XRingBuffer_create(1024);
+        if (!self->encTxBuf) return false;
+    }
+    return XRingBuffer_write(self->encTxBuf, data, len) == len;
+}
+
+static void xssl_flush_encrypted_tx(XSslSocket* self)
+{
+    while (xssl_encrypted_tx_pending(self) > 0) {
+        size_t contiguous = xssl_encrypted_tx_pending(self);
+        const void* data = XRingBuffer_peekReadPtr(self->encTxBuf, &contiguous);
+        int64_t written;
+
+        if (!data || contiguous == 0) break;
+        written = PARENT_IO(EXIODevice_WriteData, Fn_writeData)
+            ((XIODevice*)self, (const char*)data, (int64_t)contiguous);
+        if (written <= 0) break;
+        XRingBuffer_skip(self->encTxBuf, (size_t)written);
+        if ((size_t)written < contiguous) break;
+    }
+}
+
 static int xssl_bio_send(void* u, const uint8_t* buf, size_t len) {
     XSslSocket* self = (XSslSocket*)u;
+    size_t pending = xssl_encrypted_tx_pending(self);
+    if (pending > 0) {
+        return xssl_queue_encrypted_tx(self, buf, len) ? (int)len : XSSL_BIO_ERROR;
+    }
     int64_t w = PARENT_IO(EXIODevice_WriteData, Fn_writeData)
                     ((XIODevice*)self, (const char*)buf, (int64_t)len);
-    if (w > 0) return (int)w;
-    if (w == 0) return XSSL_BIO_WANT_WRITE;
-    return XSSL_BIO_ERROR;
+    if (w < 0) return XSSL_BIO_ERROR;
+    if ((size_t)w < len &&
+        !xssl_queue_encrypted_tx(self, buf + (size_t)w, len - (size_t)w)) {
+        return XSSL_BIO_ERROR;
+    }
+    /* BIO 已接管全部密文：直接写入 TCP 的部分和 encTxBuf 中的尾部都
+     * 由 XSslSocket 持有，TLS 层无需以相同参数重试。 */
+    return (int)len;
 }
 
 static int xssl_bio_recv(void* u, uint8_t* buf, size_t len) {
@@ -144,6 +187,8 @@ static int xssl_pump_handshake(XSslSocket* self) {
     if (r == XSSL_S_OK) {
         self->encrypted = true;
         self->handshakePending = false;
+        /* 握手密文的 ACK 不属于应用明文写入。 */
+        self->pendingAckedBytes = 0;
         XSslSocket_encrypted_signal(self);
     } else if (r == XSSL_S_ERROR || r == XSSL_S_CLOSED) {
         XAbstractSocket_setSocketError((XAbstractSocket*)self,
@@ -235,6 +280,8 @@ static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     self->handshakePending = false;
     /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
     if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
+    if (self->encTxBuf) { XRingBuffer_reset(self->encTxBuf); }
+    self->pendingAckedBytes = 0;
     /* 释放前一次连接的对端证书链缓存 */
     if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
     /* 释放前一次连接的握手错误缓存 */
@@ -256,6 +303,8 @@ static void xssl_v_close(XIODevice* io) {
     self->handshakePending = false;
     /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
     if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
+    if (self->encTxBuf) { XRingBuffer_reset(self->encTxBuf); }
+    self->pendingAckedBytes = 0;
     /* 释放前一次连接的对端证书链缓存 */
     if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
     /* 释放前一次连接的握手错误缓存 */
@@ -343,6 +392,7 @@ static void xssl_v_deinit(XClass* obj) {
     if (self->localCertChain)  { XVector_delete_base((XContainer*)self->localCertChain);  self->localCertChain = NULL; }
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     if (self->encRxBuf) { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = NULL;/*(struct XRingBuffer*)XRingBuffer_create(16384);*/ }
+    if (self->encTxBuf) { XRingBuffer_delete_base((XContainer*)self->encTxBuf); self->encTxBuf = NULL; }
     /* localCert/privateKey/caCert 为外部引用，本类不持有 */
     XClass_Deinit_Parent(XAbstractSocket, self);
 }
@@ -446,8 +496,14 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
        这里只处理底层写完成事件，emit bytesWritten 让上层继续写 */
     if (sa->actType & XSocketAct_Write) {
         size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
-        if (bytesWritten > 0) {
-            XIODevice_bytesWritten_signal((XIODevice*)sock, bytesWritten);
+        self->pendingAckedBytes += bytesWritten;
+        xssl_flush_encrypted_tx(self);
+        /* 上层收到通知后会继续提交明文。只有前一条 TLS 记录的密文尾部
+         * 已全部交给 TCP 时才通知，避免低内存窗口下发送队列无界增长。 */
+        if (xssl_encrypted_tx_pending(self) == 0 && self->pendingAckedBytes > 0) {
+            size_t completed = self->pendingAckedBytes;
+            self->pendingAckedBytes = 0;
+            XIODevice_bytesWritten_signal((XIODevice*)sock, completed);
         }
         int wch = XIODevice_currentWriteChannel((XIODevice*)sock);
         struct XRingBuffer* wrb = XIODevicePrivate_getOrCreateWriteBuffer(sock->base.m_d, wch);
@@ -514,6 +570,8 @@ void XSslSocket_init(XSslSocket* self)
     self->peerCertChain = NULL;
     self->handshakeErrors = NULL;
     self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(DEFAULT_CHUNK_SIZE);
+    self->encTxBuf = NULL;
+    self->pendingAckedBytes = 0;
 }
 
 XSslSocket* XSslSocket_create(void)
@@ -814,11 +872,9 @@ int64_t XSslSocket_encryptedBytesAvailable(const XSslSocket* self)
 
 int64_t XSslSocket_encryptedBytesToWrite(const XSslSocket* self)
 {
-    /* 已进入 TLS 加密、但尚未写到底层 TCP 的字节数：
-       同步 BIO 模型下密文已即时交给父类 writeData，
-       故此处等于底层 TCP 写缓冲中的待发字节数。 */
     if (!self) return 0;
-    return XIODevice_bytesToWrite_base((const XIODevice*)self);
+    return (int64_t)xssl_encrypted_tx_pending(self) +
+           XIODevice_bytesToWrite_base((const XIODevice*)self);
 }
 
 XSslSession* XSslSocket_session(XSslSocket* self)

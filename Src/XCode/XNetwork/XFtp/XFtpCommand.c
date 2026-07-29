@@ -31,6 +31,7 @@ static void VXFtpCommand_deinit(XFtpCommand* cmd)
         cmd->m_data = NULL;
     }
     cmd->m_device = NULL;
+    XClass_Deinit_Parent(XObject, (XObject*)cmd);
 }
 
 static XVtable* s_xftpCommand_vtable = NULL;
@@ -41,6 +42,7 @@ XVtable* XFtpCommand_class_init(void)
     if (s_xftpCommand_inited && s_xftpCommand_vtable) return s_xftpCommand_vtable;
     XVtable_init(s_xftpCommand_vtable = XVtable_create());
     XVtable_append_vtable(s_xftpCommand_vtable, XObject_class_init());
+    XVTABLE_OVERLOAD(s_xftpCommand_vtable, EXClass_Deinit, VXFtpCommand_deinit);
     s_xftpCommand_inited = true;
     return s_xftpCommand_vtable;
 }
@@ -54,6 +56,7 @@ XFtpCommand* XFtpCommand_create(int id, XFtpCommand_Type cmdType)
     // 初始化基类 XObject
     XObject_init((XObject*)cmd);
     XClassGetVtable(cmd) = XFtpCommand_class_init();
+    Set_Class_MemoryFree(cmd, XFree_System);
     // 设置 XFtpCommand 自身字段
     cmd->m_id = id;
     cmd->m_command = cmdType;
@@ -73,8 +76,7 @@ XFtpCommand* XFtpCommand_create(int id, XFtpCommand_Type cmdType)
 void XFtpCommand_delete(XFtpCommand* cmd)
 {
     if (!cmd) return;
-    VXFtpCommand_deinit(cmd);
-    XObject_deinitLater((XObject*)cmd);
+    XClass_delete_base((XClass*)cmd);
 }
 
 void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg)

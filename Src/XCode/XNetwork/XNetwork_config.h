@@ -51,6 +51,17 @@ extern "C" {
 /*                        lwIP模式配置                                         */
 /* ========================================================================== */
 
+/* lwIP is compiled as a static library for every backend. Keep these
+ * compile-time defaults available even when the selected runtime backend is
+ * the platform API; only lwIP consumes them. */
+#ifndef XNETWORK_LWIP_RECV_BUFFER_SIZE
+#define XNETWORK_LWIP_RECV_BUFFER_SIZE  8192
+#endif
+
+#ifndef XNETWORK_LWIP_SEND_BUFFER_SIZE
+#define XNETWORK_LWIP_SEND_BUFFER_SIZE  8192
+#endif
+
 #if defined(XNETWORK_USE_LWIP)
 
 /**
@@ -61,14 +72,22 @@ extern "C" {
 #endif
 
 /**
- * @brief lwIP 接收缓冲区大小
+ * @brief lwIP 每个活跃接收 socket 的缓冲预算（字节）
+ *
+ * 同时作为 TCP 接收窗口。缓冲首次收到数据时才分配，空闲 socket 不占用
+ * 该预算。范围为 TCP_MSS（当前 1460）到 65535；小内存建议 1460/2920，
+ * 大内存或高吞吐场景建议 16384/32768。
  */
 #ifndef XNETWORK_LWIP_RECV_BUFFER_SIZE
 #define XNETWORK_LWIP_RECV_BUFFER_SIZE  8192
 #endif
 
 /**
- * @brief lwIP 发送缓冲区大小
+ * @brief lwIP 每个 TCP socket 的发送缓冲预算（字节）
+ *
+ * 范围为 2 * TCP_MSS（当前 2920）到 65535。值越大，允许同时等待确认的
+ * 数据越多，吞吐更高，但动态内存峰值也越大。XFtp 会按该预算调整上传
+ * 分块；小预算减少栈和 TLS 临时队列，大预算扩大批量以减少事件开销。
  */
 #ifndef XNETWORK_LWIP_SEND_BUFFER_SIZE
 #define XNETWORK_LWIP_SEND_BUFFER_SIZE  8192

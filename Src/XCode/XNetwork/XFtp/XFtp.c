@@ -18,6 +18,7 @@
 #include "XCoreApplication.h"
 #include "XFileInfo.h"
 #include "XFtpCommand.h"
+#include "XNetwork_config.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,23 @@ static int xftp_stricmp_n(const char* a, const char* b, size_t n)
 }
 
 #if XNETWORK_FTP_ON
+
+/* Match FTP transfer batches to the configured lwIP memory budget.  Keeping
+ * TLS plaintext at or below one maximum record avoids a large encrypted tail
+ * on small send windows, while larger budgets reduce event-loop overhead. */
+#if defined(XNETWORK_USE_LWIP)
+#define XFTP_UPLOAD_CHUNK_SIZE \
+    ((XNETWORK_LWIP_SEND_BUFFER_SIZE) < 16384 ? \
+        (XNETWORK_LWIP_SEND_BUFFER_SIZE) : 16384)
+#define XFTP_LWIP_IO_BUDGET \
+    ((XNETWORK_LWIP_RECV_BUFFER_SIZE) < (XNETWORK_LWIP_SEND_BUFFER_SIZE) ? \
+        (XNETWORK_LWIP_RECV_BUFFER_SIZE) : (XNETWORK_LWIP_SEND_BUFFER_SIZE))
+#define XFTP_STACK_IO_CHUNK_SIZE \
+    ((XFTP_LWIP_IO_BUDGET) < 8192 ? (XFTP_LWIP_IO_BUDGET) : 8192)
+#else
+#define XFTP_UPLOAD_CHUNK_SIZE 8192
+#define XFTP_STACK_IO_CHUNK_SIZE 8192
+#endif
 
 // =============== 静态变量 ===============
 static bool s_classInitialized = false;
@@ -160,7 +178,7 @@ static bool ftp_compressDeviceData(XFtpCommand* cmd)
     XByteArray* plain = XByteArray_create();
     if (!plain) return false;
 
-    char buf[8192];
+    char buf[XFTP_STACK_IO_CHUNK_SIZE];
     for (;;) {
         int64_t n = XIODevice_read_1(device, buf, (int64_t)sizeof(buf));
         if (n < 0) {
@@ -467,40 +485,40 @@ static void VXFtp_deinit(XFtp* ftp)
 static void ftp_connectPiSocketSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_piSocket) return;
-    XObject_connect_1((XObject*)ftp->m_piSocket, XAbstractSocket_connected_signal,
+    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_connected_signal),
                       (XObject*)ftp, ftp_pi_connected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XAbstractSocket_disconnected_signal,
+    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_disconnected_signal),
                       (XObject*)ftp, ftp_pi_disconnected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XAbstractSocket_errorOccurred_signal,
+    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XAbstractSocket_errorOccurred_signal),
                       (XObject*)ftp, ftp_pi_error_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_piSocket, XIODevice_readyRead_signal,
+    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XIODevice_readyRead_signal),
                       (XObject*)ftp, ftp_pi_readyRead_handler, XConnectionType_Direct);
 
-    XObject_connect_1((XObject*)ftp->m_piSocket, XSslSocket_encrypted_signal,
+    XObject_connect_1((XObject*)ftp->m_piSocket, XSignal(XSslSocket_encrypted_signal),
                       (XObject*)ftp, ftp_pi_ssl_encrypted_handler, XConnectionType_Direct);
 }
 
 static void ftp_connectDtpSocketSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_dtpSocket) return;
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XAbstractSocket_connected_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_connected_signal),
                       (XObject*)ftp, ftp_dtp_connected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XAbstractSocket_disconnected_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_disconnected_signal),
                       (XObject*)ftp, ftp_dtp_disconnected_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XAbstractSocket_errorOccurred_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XAbstractSocket_errorOccurred_signal),
                       (XObject*)ftp, ftp_dtp_error_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XIODevice_readyRead_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_readyRead_signal),
                       (XObject*)ftp, ftp_dtp_readyRead_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XIODevice_bytesWritten_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XIODevice_bytesWritten_signal),
                       (XObject*)ftp, ftp_dtp_bytesWritten_handler, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSslSocket_encrypted_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpSocket, XSignal(XSslSocket_encrypted_signal),
                       (XObject*)ftp, ftp_dtp_ssl_encrypted_handler, XConnectionType_Direct);
 }
 
 static void ftp_connectDtpServerSignals(XFtp* ftp)
 {
     if (!ftp || !ftp->m_dtpServer) return;
-    XObject_connect_1((XObject*)ftp->m_dtpServer, XTcpServer_newConnection_signal,
+    XObject_connect_1((XObject*)ftp->m_dtpServer, XSignal(XTcpServer_newConnection_signal),
                       (XObject*)ftp, ftp_dtp_server_newConnection_handler, XConnectionType_Direct);
 }
 
@@ -808,7 +826,7 @@ static void ftp_dtp_readyRead_handler(XObject* receiver, XVarList* args)
     XFtp* ftp = (XFtp*)receiver;
     if (!ftp->m_dtpSocket || !ftp->m_readBuffer) return;
 
-    char buf[8192];
+    char buf[XFTP_STACK_IO_CHUNK_SIZE];
     int64_t len;
     int64_t total_this = 0;
     /* 一次性读光当前内核缓冲；read 返 0 表示 EOF（server 关了 DTP），
@@ -919,7 +937,8 @@ static void ftp_dtp_bytesWritten_handler(XObject* receiver, XVarList* args)
             // acknowledgements and can be smaller than one requested chunk.
             const char* data = (const char*)XByteArray_data(ftp->m_currentCommand->m_data);
             int64_t remain = total - ftp->m_putWriteOffset;
-            int64_t chunk = remain < 8192 ? remain : 8192;
+            int64_t chunk = remain < XFTP_UPLOAD_CHUNK_SIZE
+                ? remain : XFTP_UPLOAD_CHUNK_SIZE;
             int64_t written = XAbstractSocket_write(ftp->m_dtpSocket,
                                                     data + ftp->m_putWriteOffset, chunk);
             if (written > 0) ftp->m_putWriteOffset += written;
@@ -935,7 +954,7 @@ static void ftp_dtp_bytesWritten_handler(XObject* receiver, XVarList* args)
     }
     // device 流式 Put：续读下一块
     else if (ftp->m_currentCommand->m_device) {
-        char buf[8192];
+        char buf[XFTP_STACK_IO_CHUNK_SIZE];
         int64_t n = XIODevice_read_1((XIODevice*)ftp->m_currentCommand->m_device, buf, sizeof(buf));
         if (n > 0) {
             XAbstractSocket_write(ftp->m_dtpSocket, buf, n);
@@ -1013,17 +1032,17 @@ static void ftp_failQueuedCommands(XFtp* ftp)
 static void ftp_disconnectDtpSocketSignals(XFtp* ftp, XAbstractSocket* socket)
 {
     if (!ftp || !socket) return;
-    XObject_disconnect_1((XObject*)socket, XAbstractSocket_connected_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_connected_signal),
                          (XObject*)ftp, ftp_dtp_connected_handler);
-    XObject_disconnect_1((XObject*)socket, XAbstractSocket_disconnected_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_disconnected_signal),
                          (XObject*)ftp, ftp_dtp_disconnected_handler);
-    XObject_disconnect_1((XObject*)socket, XAbstractSocket_errorOccurred_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XAbstractSocket_errorOccurred_signal),
                          (XObject*)ftp, ftp_dtp_error_handler);
-    XObject_disconnect_1((XObject*)socket, XIODevice_readyRead_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XIODevice_readyRead_signal),
                          (XObject*)ftp, ftp_dtp_readyRead_handler);
-    XObject_disconnect_1((XObject*)socket, XIODevice_bytesWritten_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XIODevice_bytesWritten_signal),
                          (XObject*)ftp, ftp_dtp_bytesWritten_handler);
-    XObject_disconnect_1((XObject*)socket, XSslSocket_encrypted_signal,
+    XObject_disconnect_1((XObject*)socket, XSignal(XSslSocket_encrypted_signal),
                          (XObject*)ftp, ftp_dtp_ssl_encrypted_handler);
 }
 
@@ -1044,7 +1063,7 @@ static void ftp_releaseDtpServer(XFtp* ftp)
     if (!ftp || !ftp->m_dtpServer) return;
     XTcpServer* server = ftp->m_dtpServer;
     ftp->m_dtpServer = NULL;
-    XObject_disconnect_1((XObject*)server, XTcpServer_newConnection_signal,
+    XObject_disconnect_1((XObject*)server, XSignal(XTcpServer_newConnection_signal),
                          (XObject*)ftp, ftp_dtp_server_newConnection_handler);
     XTcpServer_close(server);
     XClass_delete_base((XClass*)server);
@@ -1694,7 +1713,8 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                     ftp->m_putWriteOffset = 0;
                     // 写第一块（≤8KB），后续由 bytesWritten handler 续写
                     const char* data = (const char*)XByteArray_data(ftp->m_currentCommand->m_data);
-                    int64_t chunk = size < 8192 ? size : 8192;
+                    int64_t chunk = size < XFTP_UPLOAD_CHUNK_SIZE
+                        ? size : XFTP_UPLOAD_CHUNK_SIZE;
                     if (chunk > 0) {
                         int64_t written = XAbstractSocket_write(ftp->m_dtpSocket, data, chunk);
                         if (written <= 0) {
@@ -1712,7 +1732,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                     }
                 } else if (ftp->m_currentCommand->m_device) {
                     // device 流式 put：读一块写一块，总量由 bytesWritten 跟踪
-                    char buf[8192];
+                    char buf[XFTP_STACK_IO_CHUNK_SIZE];
                     int64_t n = XIODevice_read_1((XIODevice*)ftp->m_currentCommand->m_device,
                                                  buf, sizeof(buf));
                     if (n > 0) {

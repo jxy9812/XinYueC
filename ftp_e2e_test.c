@@ -43,6 +43,31 @@ static bool s_cmd_finished_error = false;
 static int s_waiting_for_id = 0;
 static int s_listing_count = 0;
 static int s_total_size = 0;
+static int64_t s_progress_current = 0;
+static int64_t s_progress_total = 0;
+
+typedef struct FtpSignalProbe {
+    int stateCount;
+    int startedCount;
+    int finishedCount;
+    int listInfoCount;
+    int readyReadCount;
+    int progressCount;
+    int rawReplyCount;
+    int doneCount;
+    XFtp_State state;
+    int startedId;
+    int finishedId;
+    bool finishedError;
+    XFileInfo* listInfo;
+    int64_t progressCurrent;
+    int64_t progressTotal;
+    int rawCode;
+    const char* rawText;
+    bool doneError;
+} FtpSignalProbe;
+
+static FtpSignalProbe s_signal_probe;
 
 /* 捕获最近的 XFileInfo（MLST/MLSD 单条用） */
 static XFileInfo* s_last_info = NULL;
@@ -83,9 +108,13 @@ static void on_listInfo(XObject* receiver, XVarList* args)
     }
 }
 
-static void on_dataTransferProgress(XFtp* ftp, int64_t current, int64_t total)
+static void on_dataTransferProgress(XObject* receiver, XVarList* args)
 {
-    (void)ftp; (void)current; (void)total;
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_progress_current = XVarList_arg(args, int64_t);
+    s_progress_total = XVarList_arg(args, int64_t);
 }
 
 /* rawCommandReply 信号是 2 个参数（int code, const char* text），
@@ -105,6 +134,198 @@ static void on_rawCommandReply(XObject* receiver, XVarList* args)
     } else {
         s_last_raw_text[0] = '\0';
     }
+}
+
+static void on_probe_stateChanged(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.state = XVarList_arg(args, XFtp_State);
+    s_signal_probe.stateCount++;
+}
+
+static void on_probe_commandStarted(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.startedId = XVarList_arg(args, int);
+    s_signal_probe.startedCount++;
+}
+
+static void on_probe_commandFinished(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.finishedId = XVarList_arg(args, int);
+    s_signal_probe.finishedError = XVarList_arg(args, bool);
+    s_signal_probe.finishedCount++;
+}
+
+static void on_probe_listInfo(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.listInfo = XVarList_arg(args, XFileInfo*);
+    s_signal_probe.listInfoCount++;
+}
+
+static void on_probe_readyRead(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) s_signal_probe.readyReadCount++;
+}
+
+static void on_probe_progress(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.progressCurrent = XVarList_arg(args, int64_t);
+    s_signal_probe.progressTotal = XVarList_arg(args, int64_t);
+    s_signal_probe.progressCount++;
+}
+
+static void on_probe_rawReply(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.rawCode = XVarList_arg(args, int);
+    s_signal_probe.rawText = XVarList_arg(args, const char*);
+    s_signal_probe.rawReplyCount++;
+}
+
+static void on_probe_done(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_start(args);
+    s_signal_probe.doneError = XVarList_arg(args, bool);
+    s_signal_probe.doneCount++;
+}
+
+static bool verify_public_api_contract(void)
+{
+    bool ok = true;
+    XVtable* ftpClass = XFtp_class_init();
+    XVtable* commandClass = XFtpCommand_class_init();
+    ok = ok && ftpClass && ftpClass == XFtp_class_init();
+    ok = ok && commandClass && commandClass == XFtpCommand_class_init();
+
+    XFtp stackFtp;
+    XFtp_init(&stackFtp);
+    ok = ok && XFtp_state(&stackFtp) == XFtp_State_Unconnected;
+    ok = ok && XFtp_error(&stackFtp) == XFtp_Error_NoError;
+    ok = ok && XFtp_currentId(&stackFtp) == 0;
+    ok = ok && XFtp_currentCommand(&stackFtp) == XFtpCommand_None;
+    ok = ok && !XFtp_hasPendingCommands(&stackFtp);
+    ok = ok && XFtp_transferMode(&stackFtp) == XFtp_TransferMode_Passive;
+    ok = ok && XFtp_transferType(&stackFtp) == XFtp_DataType_Binary;
+    ok = ok && XFtp_sslPeerVerifyMode(&stackFtp) == XSSL_VerifyPeer;
+    ok = ok && XFtp_sslPeerVerifyName(&stackFtp) == NULL;
+
+    XFtp_setTransferMode(&stackFtp, XFtp_TransferMode_Active);
+    XFtp_setTransferType(&stackFtp, XFtp_DataType_Ascii);
+    XFtp_setUtf8(&stackFtp, true);
+    XFtp_setMlsdEnabled(&stackFtp, false);
+    XFtp_setSsl(&stackFtp, true);
+    XFtp_setSslPeerVerifyMode(&stackFtp, XSSL_VerifyNone);
+    XFtp_setSslCaCertificate(&stackFtp, NULL);
+    XFtp_setSslPeerVerifyName(&stackFtp, "ftp.contract.test");
+    XFtp_setCompression(&stackFtp, true);
+    XFtp_setAutoReconnect(&stackFtp, true, 1234, 7);
+    ok = ok && XFtp_transferMode(&stackFtp) == XFtp_TransferMode_Active;
+    ok = ok && XFtp_transferType(&stackFtp) == XFtp_DataType_Ascii;
+    ok = ok && XFtp_isUtf8(&stackFtp);
+    ok = ok && XFtp_sslPeerVerifyMode(&stackFtp) == XSSL_VerifyNone;
+    ok = ok && XFtp_sslPeerVerifyName(&stackFtp) != NULL;
+    ok = ok && strcmp(XFtp_sslPeerVerifyName(&stackFtp), "ftp.contract.test") == 0;
+    ok = ok && stackFtp.m_useSsl && stackFtp.m_useCompression;
+    ok = ok && !stackFtp.m_useMlsd && stackFtp.m_autoReconnect;
+    ok = ok && stackFtp.m_reconnectInterval == 1234;
+    ok = ok && stackFtp.m_maxReconnectAttempts == 7;
+
+    XFtp_setProxy(&stackFtp, "127.0.0.1", 8080);
+    ok = ok && stackFtp.m_proxyType == XFtp_ProxyType_Http;
+    XFtp_setSocks5Proxy(&stackFtp, "127.0.0.1", 1080, "u", "p");
+    ok = ok && stackFtp.m_proxyType == XFtp_ProxyType_Socks5;
+    XFtp_clearProxy(&stackFtp);
+    ok = ok && stackFtp.m_proxyType == XFtp_ProxyType_None;
+    XFtp_abortTransfer(&stackFtp);
+    XFtp_abort(&stackFtp);
+    XFtp_deinit_base(&stackFtp);
+
+    XFtpCommand* cmd = XFtpCommand_create(73, XFtpCommand_RawCommand);
+    ok = ok && cmd && cmd->m_id == 73;
+    ok = ok && cmd && cmd->m_command == XFtpCommand_RawCommand;
+    ok = ok && cmd && cmd->m_rawCmd && cmd->m_rawCmds;
+    if (cmd) {
+        XFtpCommand_addRawArg(cmd, "NOOP");
+        XFtpCommand_addRawArg(cmd, NULL);
+        ok = ok && XVector_size_base(cmd->m_rawCmds) == 1;
+        if (XVector_size_base(cmd->m_rawCmds) == 1) {
+            const char* arg = *(const char**)XVector_at_base(cmd->m_rawCmds, 0);
+            ok = ok && arg && strcmp(arg, "NOOP") == 0;
+        }
+        XFtpCommand_delete(cmd);
+    }
+
+    XFtp* signalFtp = XFtp_create();
+    memset(&s_signal_probe, 0, sizeof(s_signal_probe));
+    XFileInfo info;
+    memset(&info, 0, sizeof(info));
+    ok = ok && signalFtp;
+    if (signalFtp) {
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_stateChanged_signal),
+            (XObject*)signalFtp, on_probe_stateChanged, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_commandStarted_signal),
+            (XObject*)signalFtp, on_probe_commandStarted, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_commandFinished_signal),
+            (XObject*)signalFtp, on_probe_commandFinished, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_listInfo_signal),
+            (XObject*)signalFtp, on_probe_listInfo, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_readyRead_signal),
+            (XObject*)signalFtp, on_probe_readyRead, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_dataTransferProgress_signal),
+            (XObject*)signalFtp, on_probe_progress, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_rawCommandReply_signal),
+            (XObject*)signalFtp, on_probe_rawReply, XConnectionType_Direct);
+        ok = ok && XObject_connect_1((XObject*)signalFtp, XSignal(XFtp_done_signal),
+            (XObject*)signalFtp, on_probe_done, XConnectionType_Direct);
+
+        XFtp_stateChanged_signal(signalFtp, XFtp_State_LoggedIn);
+        XFtp_commandStarted_signal(signalFtp, 101);
+        XFtp_commandFinished_signal(signalFtp, 102, true);
+        XFtp_listInfo_signal(signalFtp, &info);
+        XFtp_readyRead_signal(signalFtp);
+        XFtp_dataTransferProgress_signal(signalFtp, 103, 104);
+        XFtp_rawCommandReply_signal(signalFtp, 211, "contract");
+        XFtp_done_signal(signalFtp, true);
+
+        ok = ok && s_signal_probe.stateCount == 1;
+        ok = ok && s_signal_probe.state == XFtp_State_LoggedIn;
+        ok = ok && s_signal_probe.startedCount == 1 && s_signal_probe.startedId == 101;
+        ok = ok && s_signal_probe.finishedCount == 1;
+        ok = ok && s_signal_probe.finishedId == 102 && s_signal_probe.finishedError;
+        ok = ok && s_signal_probe.listInfoCount == 1 && s_signal_probe.listInfo == &info;
+        ok = ok && s_signal_probe.readyReadCount == 1;
+        ok = ok && s_signal_probe.progressCount == 1;
+        ok = ok && s_signal_probe.progressCurrent == 103 && s_signal_probe.progressTotal == 104;
+        ok = ok && s_signal_probe.rawReplyCount == 1 && s_signal_probe.rawCode == 211;
+        ok = ok && s_signal_probe.rawText && strcmp(s_signal_probe.rawText, "contract") == 0;
+        ok = ok && s_signal_probe.doneCount == 1 && s_signal_probe.doneError;
+        XFtp_delete(signalFtp);
+    }
+
+    XFtp_init(NULL);
+    XFtp_deinit_base(NULL);
+    XFtp_delete(NULL);
+    XFtpCommand_delete(NULL);
+    return ok;
 }
 
 /* 等待命令完成信号。expected_id: >0 只接受该 id，0 接受任意 */
@@ -161,6 +382,11 @@ static bool verify_prelogin_error_contract(void)
                           XFtp_error(probe) == XFtp_Error_OperationInProgress;
     bool closed = closeId >= 0 && wait_state(probe, XFtp_State_Unconnected, 2000);
 
+    if (!notLoggedIn || !duplicateClose || !closed) {
+        XPrintf("    [prelogin contract: connectId=%d connected=%d notLoggedIn=%d closeId=%d duplicateClose=%d closed=%d state=%d error=%d]\n",
+                connectId, connected, notLoggedIn, closeId, duplicateClose, closed,
+                XFtp_state(probe), XFtp_error(probe));
+    }
     XClass_delete_base((XClass*)probe);
     return notLoggedIn && duplicateClose && closed;
 }
@@ -699,6 +925,13 @@ int main(int argc, char* argv[])
             s_use_ssl ? " (Explicit FTPS)" : "");
     XPrintf("用户: %s / %s\n\n", FTP_TEST_USER, FTP_TEST_PASS);
 
+    if (!verify_public_api_contract()) {
+        XPrintf("[致命] XFtp 公开 API/信号契约自检失败\n");
+        XCoreApplication_delete_base(XCoreApplication_instance());
+        return 1;
+    }
+    XPrintf("公开 API/信号契约自检: 通过\n");
+
     XFtp* ftp = XFtp_create();
     if (!ftp) {
         XPrintf("[致命] XFtp_create 失败\n");
@@ -724,6 +957,15 @@ int main(int argc, char* argv[])
         }
     }
     if (s_use_compression) XFtp_setCompression(ftp, true);
+
+    /* The lwIP backend acquires its address asynchronously.  Settle the
+     * network before the pre-login contract test, because that test opens a
+     * real control connection of its own. */
+    if (s_network_settle_ms > 0) {
+        XPrintf("网络稳定等待: %d ms\n", s_network_settle_ms);
+        wait_network_settle(s_network_settle_ms);
+    }
+
     /* Calls made before authentication must fail synchronously and must not
      * leave a command in the queue that blocks the later connection. */
     if (XFtp_list(ftp, ".") != -1 || XFtp_error(ftp) != XFtp_Error_NotConnected ||
@@ -743,13 +985,13 @@ int main(int argc, char* argv[])
         XCoreApplication_delete_base(XCoreApplication_instance());
         return 1;
     }
-    XObject_connect_1((XObject*)ftp, XFtp_commandFinished_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_listInfo_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_listInfo_signal),
                       (XObject*)ftp, on_listInfo, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_dataTransferProgress_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_dataTransferProgress_signal),
                       (XObject*)ftp, on_dataTransferProgress, XConnectionType_Direct);
-    XObject_connect_1((XObject*)ftp, XFtp_rawCommandReply_signal,
+    XObject_connect_1((XObject*)ftp, XSignal(XFtp_rawCommandReply_signal),
                       (XObject*)ftp, on_rawCommandReply, XConnectionType_Direct);
 
     TestCase tests[] = {
@@ -772,11 +1014,6 @@ int main(int argc, char* argv[])
         { "错误码细化 4xx/5xx",     t_error_codes,   false },
     };
     int n = (int)(sizeof(tests) / sizeof(tests[0]));
-
-    if (s_network_settle_ms > 0) {
-        XPrintf("网络稳定等待: %d ms\n", s_network_settle_ms);
-        wait_network_settle(s_network_settle_ms);
-    }
 
     /* 先连一次 */
     XPrintf("[0/%d] 准备：连接+登录...\n", n);
