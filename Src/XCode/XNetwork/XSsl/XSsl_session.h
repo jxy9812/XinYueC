@@ -90,6 +90,14 @@ bool XSsl_sessionAddCaCertificate(XSslSession* s, XSslCertificate* ca);
 /** 设置对端校验模式，默认 XSSL_AutoVerifyPeer。 */
 void XSsl_sessionSetPeerVerify(XSslSession* s, XSslPeerVerifyMode mode);
 
+/**
+ * @brief 设置允许发送或选择的 ALPN 协议列表。
+ * @param s TLS 会话；不能为 NULL。
+ * @param protocols XVector<XByteArray*>；元素借用并在函数内深拷贝；NULL/空列表清除 ALPN。
+ * @return 成功返回 true；必须在首次握手前调用。
+ */
+bool XSsl_sessionSetAllowedNextProtocols(XSslSession* s, const XVector* protocols);
+
 /* ---- 状态机驱动 ------------------------------------------------------- */
 
 /**
@@ -120,6 +128,12 @@ const char* XSsl_sessionProtocolString(const XSslSession* s);
 
 /** 当前会话使用的 cipher suite 名称，未协商返回 NULL。 */
 const char* XSsl_sessionCipherName(const XSslSession* s);
+
+/** @param s TLS 会话；可为 NULL。 @return 协商协议名借用指针，未协商返回 NULL。 */
+const char* XSsl_sessionNextNegotiatedProtocol(const XSslSession* s);
+/** @param s TLS 会话；可为 NULL。 @return ALPN 协商状态。 */
+XSslNextProtocolNegotiationStatus XSsl_sessionNextProtocolNegotiationStatus(
+    const XSslSession* s);
 
 /** 上一次错误的简短描述（人类可读）。 */
 const char* XSsl_sessionLastErrorString(const XSslSession* s);

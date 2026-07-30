@@ -232,6 +232,8 @@ static const XmlDefaultAttribute* find_default_attribute(
 
 /** @brief 解析 XML 声明（<?xml ... ?>） */
 static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, const char* end);
+static int encoding_name_to_input(const char* encoding);
+static bool reencode_existing_single_byte(XXmlStreamReaderPrivate* d, bool asciiOnly);
 
 /** @brief 解析注释 */
 static bool parse_comment(XXmlStreamReaderPrivate* d, const char** ptr, const char* end);
@@ -378,34 +380,59 @@ static bool is_valid_utf8_xml(const char* data, size_t length)
     return true;
 }
 
-static bool encoding_name_matches_input(const XXmlStreamReaderPrivate* d, const char* encoding)
+static int encoding_name_to_input(const char* encoding)
 {
-    if (!d || !encoding || !*encoding) return false;
+    if (!encoding || !*encoding) return -1;
     char normalized[32];
     size_t length = strlen(encoding);
-    if (length >= sizeof(normalized)) return false;
+    if (length >= sizeof(normalized)) return -1;
     size_t out = 0;
     for (size_t i = 0; i < length; ++i) {
         unsigned char c = (unsigned char)encoding[i];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return false;
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return -1;
         if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
         normalized[out++] = (char)c;
     }
     normalized[out] = '\0';
 
-    if (d->m_inputEncoding == XML_INPUT_UTF8)
-        return strcmp(normalized, "UTF-8") == 0 || strcmp(normalized, "UTF8") == 0;
-    if (d->m_inputEncoding == XML_INPUT_UTF16LE ||
-        d->m_inputEncoding == XML_INPUT_UTF16BE)
-        return strcmp(normalized, "UTF-16") == 0 || strcmp(normalized, "UTF16") == 0 ||
-               strcmp(normalized, "UTF-16LE") == 0 || strcmp(normalized, "UTF16LE") == 0 ||
-               strcmp(normalized, "UTF-16BE") == 0 || strcmp(normalized, "UTF16BE") == 0;
-    if (d->m_inputEncoding == XML_INPUT_UTF32LE ||
-        d->m_inputEncoding == XML_INPUT_UTF32BE)
-        return strcmp(normalized, "UTF-32") == 0 || strcmp(normalized, "UTF32") == 0 ||
-               strcmp(normalized, "UTF-32LE") == 0 || strcmp(normalized, "UTF32LE") == 0 ||
-               strcmp(normalized, "UTF-32BE") == 0 || strcmp(normalized, "UTF32BE") == 0;
-    return false;
+    if (strcmp(normalized, "UTF-8") == 0 || strcmp(normalized, "UTF8") == 0)
+        return XML_INPUT_UTF8;
+    if (strcmp(normalized, "UTF-16") == 0 || strcmp(normalized, "UTF16") == 0 ||
+        strcmp(normalized, "UTF-16LE") == 0 || strcmp(normalized, "UTF16LE") == 0)
+        return XML_INPUT_UTF16LE;
+    if (strcmp(normalized, "UTF-16BE") == 0 || strcmp(normalized, "UTF16BE") == 0)
+        return XML_INPUT_UTF16BE;
+    if (strcmp(normalized, "UTF-32") == 0 || strcmp(normalized, "UTF32") == 0 ||
+        strcmp(normalized, "UTF-32LE") == 0 || strcmp(normalized, "UTF32LE") == 0)
+        return XML_INPUT_UTF32LE;
+    if (strcmp(normalized, "UTF-32BE") == 0 || strcmp(normalized, "UTF32BE") == 0)
+        return XML_INPUT_UTF32BE;
+    if (strcmp(normalized, "ISO-8859-1") == 0 ||
+        strcmp(normalized, "ISO8859-1") == 0 ||
+        strcmp(normalized, "LATIN1") == 0)
+        return XML_INPUT_LATIN1;
+    if (strcmp(normalized, "US-ASCII") == 0 || strcmp(normalized, "ASCII") == 0)
+        return XML_INPUT_ASCII;
+    return -1;
+}
+
+static bool encoding_name_matches_input(const XXmlStreamReaderPrivate* d, const char* encoding)
+{
+    if (!d || !encoding || !*encoding) return false;
+    /* QString/addData 输入已经转换为 UTF-8，Qt 会锁定解码器编码。 */
+    if (d->m_lockEncoding) return true;
+    int declared = encoding_name_to_input(encoding);
+    if (declared < 0) return false;
+    if (declared == d->m_inputEncoding) return true;
+    if ((d->m_inputEncoding == XML_INPUT_UTF16LE ||
+         d->m_inputEncoding == XML_INPUT_UTF16BE) && declared == XML_INPUT_UTF16LE)
+        return true;
+    if ((d->m_inputEncoding == XML_INPUT_UTF32LE ||
+         d->m_inputEncoding == XML_INPUT_UTF32BE) && declared == XML_INPUT_UTF32LE)
+        return true;
+    /* 无 BOM 的单字节编码在声明解析前按字节暂存，允许稍后切换解码器。 */
+    return d->m_inputEncoding == XML_INPUT_UTF8 &&
+           (declared == XML_INPUT_LATIN1 || declared == XML_INPUT_ASCII);
 }
 
 static bool append_codepoint_utf8(XString* output, uint32_t codepoint)
@@ -662,15 +689,34 @@ static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, 
                       (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-'))
                     valid = false;
             }
-            if (valid) {
-                if (!encoding_name_matches_input(d, value)) valid = false;
+            if (valid && !encoding_name_matches_input(d, value)) valid = false;
+            if (valid && !d->m_lockEncoding) {
+                int declaredEncoding = encoding_name_to_input(value);
+                if (declaredEncoding == XML_INPUT_LATIN1 ||
+                    declaredEncoding == XML_INPUT_ASCII) {
+                    size_t offset = 0;
+                    size_t endOffset = 0;
+                    if (d->m_data && *ptr >= d->m_data)
+                        offset = (size_t)(*ptr - d->m_data);
+                    if (d->m_data && end >= d->m_data)
+                        endOffset = (size_t)(end - d->m_data);
+                    if (!reencode_existing_single_byte(
+                            d, declaredEncoding == XML_INPUT_ASCII)) {
+                        valid = false;
+                    } else {
+                        d->m_inputEncoding = declaredEncoding;
+                        *ptr = d->m_data + offset;
+                        end = d->m_data + endOffset;
+                    }
+                }
             }
             if (valid) {
                 XString_assign_utf8(d->m_documentEncoding, value);
                 hasEncoding = true;
             }
         } else if (valid && strcmp(name, "standalone") == 0) {
-            if (!hasVersion || hasStandalone || hasEncoding ||
+            /* XML 声明允许 standalone 位于可选 encoding 之后。 */
+            if (!hasVersion || hasStandalone ||
                 (strcmp(value, "yes") != 0 && strcmp(value, "no") != 0)) valid = false;
             if (valid) {
                 d->m_isStandaloneDocument = strcmp(value, "yes") == 0;
@@ -1991,6 +2037,65 @@ static void clear_current_token(XXmlStreamReaderPrivate* d)
 }
 
 /**
+ * @brief      更新 Reader 的当前解析位置。
+ * @param      d Reader 私有数据。
+ * @param      position 当前输入位置，按 UTF-8 归一化缓冲区计数。
+ * @return     无。
+ * @note       对齐 Qt：lineNumber 从 1 开始，columnNumber 和 characterOffset
+ *             从 0 开始，并指向当前解析游标而不是 Token 起点。
+ */
+static void update_current_position(XXmlStreamReaderPrivate* d, const char* position)
+{
+    if (!d || !d->m_data || !position || position < d->m_data) return;
+    const char* end = d->m_data + d->m_dataLength;
+    if (position > end) position = end;
+    const char* lineStart = d->m_data;
+    for (const char* p = d->m_data; p < position; ++p) {
+        if (*p == '\r') {
+            lineStart = p + 1;
+            if (p + 1 < position && p[1] == '\n') {
+                lineStart = p + 2;
+                ++p;
+            }
+        } else if (*p == '\n') {
+            lineStart = p + 1;
+        }
+    }
+    /* Qt 的读取缓冲区是 UTF-16 QString，位置按 UTF-16 code unit 计数，
+       不能直接使用归一化 UTF-8 缓冲区的字节偏移。 */
+    int64_t totalUnits = 0;
+    int64_t lineUnits = 0;
+    const char* p = d->m_data;
+    while (p < position) {
+        uint32_t codepoint = 0;
+        size_t length = 0;
+        if (!decode_utf8_codepoint(p, position, &codepoint, &length) || length == 0) {
+            ++p;
+            ++totalUnits;
+            continue;
+        }
+        totalUnits += codepoint > 0xffffU ? 2 : 1;
+        p += length;
+    }
+    p = lineStart;
+    while (p < position) {
+        uint32_t codepoint = 0;
+        size_t length = 0;
+        if (!decode_utf8_codepoint(p, position, &codepoint, &length) || length == 0) {
+            ++p;
+            ++lineUnits;
+            continue;
+        }
+        lineUnits += codepoint > 0xffffU ? 2 : 1;
+        p += length;
+    }
+    d->m_lineNumber = count_newlines(d->m_data, position);
+    d->m_lastLineStart = totalUnits - lineUnits;
+    d->m_characterOffset = totalUnits;
+    d->m_tokenColumn = lineUnits;
+}
+
+/**
  * @brief      设置错误
  * @param d      解析器私有数据
  * @param error  错误类型
@@ -2163,6 +2268,36 @@ static void private_deinit(XXmlStreamReaderPrivate* d)
     d->m_endPtr = NULL;
 }
 
+/**
+ * @brief      重置解析状态并保留 Qt 要求跨输入重置保留的配置。
+ * @param      d Reader 私有数据；调用方必须保证对象已初始化。
+ * @return     无。
+ * @note       QXmlStreamReader::clear/setDevice 会重置解析器状态，但不会
+ *             清除实体解析器、实体扩展限制和额外命名空间声明。
+ */
+static void private_reset_for_input(XXmlStreamReaderPrivate* d)
+{
+    if (!d) return;
+    XXmlStreamEntityResolver* resolver = d->m_entityResolver;
+    int entityExpansionLimit = d->m_entityExpansionLimit;
+    XmlNamespaceDeclaration* extraDeclarations = d->m_extraNamespaceDeclarations;
+    int extraCount = d->m_extraNamespaceDeclarationCount;
+    int extraCapacity = d->m_extraNamespaceDeclarationCapacity;
+
+    d->m_entityResolver = NULL;
+    d->m_extraNamespaceDeclarations = NULL;
+    d->m_extraNamespaceDeclarationCount = 0;
+    d->m_extraNamespaceDeclarationCapacity = 0;
+    private_deinit(d);
+    private_init(d);
+
+    d->m_entityResolver = resolver;
+    d->m_entityExpansionLimit = entityExpansionLimit;
+    d->m_extraNamespaceDeclarations = extraDeclarations;
+    d->m_extraNamespaceDeclarationCount = extraCount;
+    d->m_extraNamespaceDeclarationCapacity = extraCapacity;
+}
+
 static bool contains_sequence(const char* start, const char* end, const char* sequence, size_t length)
 {
     if (!start || !end || !sequence || length == 0) return false;
@@ -2235,43 +2370,103 @@ static bool append_normalized_codepoint(XByteArray* output, uint32_t codepoint)
     return XByteArray_push_back_2(output, utf8, length);
 }
 
+static bool reencode_existing_single_byte(XXmlStreamReaderPrivate* d, bool asciiOnly)
+{
+    if (!d || !d->m_ownedData) return false;
+    const uint8_t* bytes = (const uint8_t*)XByteArray_data(d->m_ownedData);
+    size_t length = XByteArray_size_base(d->m_ownedData);
+    size_t readOffset = 0;
+    if (d->m_data && d->m_readPtr && d->m_readPtr >= d->m_data)
+        readOffset = (size_t)(d->m_readPtr - d->m_data);
+    XByteArray* normalized = XByteArray_create();
+    if (!normalized) {
+        return false;
+    }
+    bool ok = true;
+    for (size_t i = 0; i < length; ++i) {
+        if (asciiOnly && bytes[i] > 0x7fU) {
+            ok = false;
+            break;
+        }
+        if (!append_normalized_codepoint(normalized, bytes[i])) {
+            ok = false;
+            break;
+        }
+    }
+    if (ok) {
+        XByteArray_clear_base(d->m_ownedData);
+        ok = XByteArray_push_back_2(d->m_ownedData, XByteArray_data(normalized),
+                                    XByteArray_size_base(normalized));
+    }
+    XByteArray_delete_base(normalized);
+    if (!ok) return false;
+    d->m_data = (const char*)XByteArray_data(d->m_ownedData);
+    d->m_dataLength = XByteArray_size_base(d->m_ownedData);
+    if (readOffset > d->m_dataLength) readOffset = d->m_dataLength;
+    d->m_readPtr = d->m_data + readOffset;
+    d->m_endPtr = d->m_data + d->m_dataLength;
+    return true;
+}
+
 static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t length)
 {
     if (!d || (!data && length > 0) || !d->m_ownedData) return false;
     if (length == 0) return true;
 
+    const char* inputData = data;
+    size_t inputLength = length;
+    XByteArray* combined = NULL;
     size_t offset = 0;
+    if (!d->m_inputInitialized && d->m_pendingInputLength > 0) {
+        combined = XByteArray_create();
+        if (!combined) return false;
+        if (!XByteArray_push_back_2(combined, d->m_pendingInput,
+                                    d->m_pendingInputLength) ||
+            !XByteArray_push_back_2(combined, data, length)) {
+            XByteArray_delete_base(combined);
+            return false;
+        }
+        d->m_pendingInputLength = 0;
+        inputData = (const char*)XByteArray_data(combined);
+        inputLength = XByteArray_size_base(combined);
+    }
     if (!d->m_inputInitialized) {
+        if (inputLength < 4) {
+            memcpy(d->m_pendingInput, inputData, inputLength);
+            d->m_pendingInputLength = inputLength;
+            XByteArray_delete_base(combined);
+            return true;
+        }
         d->m_inputEncoding = XML_INPUT_UTF8;
-        if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x00 &&
-            (uint8_t)data[2] == 0xfe && (uint8_t)data[3] == 0xff) {
+        if (inputLength >= 4 && (uint8_t)inputData[0] == 0x00 && (uint8_t)inputData[1] == 0x00 &&
+            (uint8_t)inputData[2] == 0xfe && (uint8_t)inputData[3] == 0xff) {
             d->m_inputEncoding = XML_INPUT_UTF32BE;
             offset = 4;
-        } else if (length >= 4 && (uint8_t)data[0] == 0xff && (uint8_t)data[1] == 0xfe &&
-                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x00) {
+        } else if (inputLength >= 4 && (uint8_t)inputData[0] == 0xff && (uint8_t)inputData[1] == 0xfe &&
+                   (uint8_t)inputData[2] == 0x00 && (uint8_t)inputData[3] == 0x00) {
             d->m_inputEncoding = XML_INPUT_UTF32LE;
             offset = 4;
-        } else if (length >= 3 && (uint8_t)data[0] == 0xef &&
-                   (uint8_t)data[1] == 0xbb && (uint8_t)data[2] == 0xbf) {
+        } else if (inputLength >= 3 && (uint8_t)inputData[0] == 0xef &&
+                   (uint8_t)inputData[1] == 0xbb && (uint8_t)inputData[2] == 0xbf) {
             d->m_inputEncoding = XML_INPUT_UTF8;
             offset = 3;
-        } else if (length >= 2 && (uint8_t)data[0] == 0xfe && (uint8_t)data[1] == 0xff) {
+        } else if (inputLength >= 2 && (uint8_t)inputData[0] == 0xfe && (uint8_t)inputData[1] == 0xff) {
             d->m_inputEncoding = XML_INPUT_UTF16BE;
             offset = 2;
-        } else if (length >= 2 && (uint8_t)data[0] == 0xff && (uint8_t)data[1] == 0xfe) {
+        } else if (inputLength >= 2 && (uint8_t)inputData[0] == 0xff && (uint8_t)inputData[1] == 0xfe) {
             d->m_inputEncoding = XML_INPUT_UTF16LE;
             offset = 2;
-        } else if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x00 &&
-                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x3c) {
+        } else if (inputLength >= 4 && (uint8_t)inputData[0] == 0x00 && (uint8_t)inputData[1] == 0x00 &&
+                   (uint8_t)inputData[2] == 0x00 && (uint8_t)inputData[3] == 0x3c) {
             d->m_inputEncoding = XML_INPUT_UTF32BE;
-        } else if (length >= 4 && (uint8_t)data[0] == 0x3c && (uint8_t)data[1] == 0x00 &&
-                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x00) {
+        } else if (inputLength >= 4 && (uint8_t)inputData[0] == 0x3c && (uint8_t)inputData[1] == 0x00 &&
+                   (uint8_t)inputData[2] == 0x00 && (uint8_t)inputData[3] == 0x00) {
             d->m_inputEncoding = XML_INPUT_UTF32LE;
-        } else if (length >= 4 && (uint8_t)data[0] == 0x00 && (uint8_t)data[1] == 0x3c &&
-                   (uint8_t)data[2] == 0x00 && (uint8_t)data[3] == 0x3f) {
+        } else if (inputLength >= 4 && (uint8_t)inputData[0] == 0x00 && (uint8_t)inputData[1] == 0x3c &&
+                   (uint8_t)inputData[2] == 0x00 && (uint8_t)inputData[3] == 0x3f) {
             d->m_inputEncoding = XML_INPUT_UTF16BE;
-        } else if (length >= 4 && (uint8_t)data[0] == 0x3c && (uint8_t)data[1] == 0x00 &&
-                   (uint8_t)data[2] == 0x3f && (uint8_t)data[3] == 0x00) {
+        } else if (inputLength >= 4 && (uint8_t)inputData[0] == 0x3c && (uint8_t)inputData[1] == 0x00 &&
+                   (uint8_t)inputData[2] == 0x3f && (uint8_t)inputData[3] == 0x00) {
             d->m_inputEncoding = XML_INPUT_UTF16LE;
         }
         d->m_inputInitialized = true;
@@ -2281,7 +2476,17 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
     if (!normalized) return false;
     bool ok = true;
     if (d->m_inputEncoding == XML_INPUT_UTF8) {
-        ok = XByteArray_push_back_2(normalized, data + offset, length - offset);
+        ok = XByteArray_push_back_2(normalized, inputData + offset, inputLength - offset);
+    } else if (d->m_inputEncoding == XML_INPUT_LATIN1 ||
+               d->m_inputEncoding == XML_INPUT_ASCII) {
+        for (size_t i = offset; ok && i < inputLength; ++i) {
+            if (d->m_inputEncoding == XML_INPUT_ASCII &&
+                (uint8_t)inputData[i] > 0x7fU) {
+                ok = false;
+                break;
+            }
+            ok = append_normalized_codepoint(normalized, (uint8_t)inputData[i]);
+        }
     } else if (d->m_inputEncoding == XML_INPUT_UTF16LE ||
                d->m_inputEncoding == XML_INPUT_UTF16BE) {
         uint8_t bytes[2];
@@ -2289,8 +2494,8 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
         uint16_t pendingHigh = d->m_pendingUtf16High;
         bool hasPendingHigh = d->m_hasPendingUtf16High;
         if (byteCount > 0) memcpy(bytes, d->m_pendingInput, byteCount);
-        for (size_t i = offset; ok && i < length; ++i) {
-            bytes[byteCount++] = (uint8_t)data[i];
+        for (size_t i = offset; ok && i < inputLength; ++i) {
+            bytes[byteCount++] = (uint8_t)inputData[i];
             if (byteCount < 2) continue;
             uint16_t unit = d->m_inputEncoding == XML_INPUT_UTF16LE
                 ? (uint16_t)(bytes[0] | ((uint16_t)bytes[1] << 8))
@@ -2327,8 +2532,8 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
         uint8_t bytes[4];
         size_t byteCount = d->m_pendingInputLength;
         if (byteCount > 0) memcpy(bytes, d->m_pendingInput, byteCount);
-        for (size_t i = offset; ok && i < length; ++i) {
-            bytes[byteCount++] = (uint8_t)data[i];
+        for (size_t i = offset; ok && i < inputLength; ++i) {
+            bytes[byteCount++] = (uint8_t)inputData[i];
             if (byteCount < 4) continue;
             uint32_t codepoint = d->m_inputEncoding == XML_INPUT_UTF32LE
                 ? ((uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
@@ -2346,6 +2551,7 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
         ok = XByteArray_push_back_2(d->m_ownedData, XByteArray_data(normalized),
                                     XByteArray_size_base(normalized));
     XByteArray_delete_base(normalized);
+    XByteArray_delete_base(combined);
     if (!ok) {
         set_error(d, XXmlStream_NotWellFormedError, "输入编码或 XML 字符无效。");
         return false;
@@ -2417,6 +2623,7 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
     {
         d->m_atEnd = true;
         d->m_type = XXmlStream_Invalid;
+        update_current_position(d, d->m_readPtr);
         return XXmlStream_Invalid;
     }
     /* 处理空元素后的 EndElement —— 必须先于 clear_current_token，否则 m_isEmptyElement 被清掉 */
@@ -2438,6 +2645,7 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
                 truncate_namespace_bindings(d, namespaceBindingCountBefore);
                 if (d->m_tagStackSize == 0) d->m_finishedRootElement = true;
         }
+        update_current_position(d, d->m_readPtr);
         return XXmlStream_EndElement;
     }
     /* 清理当前 Token */
@@ -2451,35 +2659,29 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
     /* 设置读取指针 */
     const char* ptr = d->m_readPtr;
     const char* end = d->m_endPtr;
-    /* token_start 将在跳过空白后设置为真正的 token 起始位置 */
-    const char* token_start = NULL;
     if (!d->m_startedDocument) {
         d->m_startedDocument = true;
         if (ptr && end && ptr < end && *ptr == '<' &&
             (size_t)(end - ptr) >= 5 && memcmp(ptr, "<?xml", 5) == 0 &&
             (ptr + 5 == end || ptr[5] == ' ' || ptr[5] == '\t' ||
              ptr[5] == '\r' || ptr[5] == '\n' || ptr[5] == '?')) {
-            token_start = ptr;
             ptr += 5;
             if (!parse_xml_declaration(d, &ptr, end)) {
                 set_error(d, XXmlStream_NotWellFormedError, "XML 声明无效。");
                 return XXmlStream_Invalid;
             }
+            end = d->m_endPtr;
             d->m_seenXmlDeclaration = true;
             d->m_type = XXmlStream_StartDocument;
             d->m_readPtr = ptr;
-            d->m_lineNumber = count_newlines(d->m_data, token_start);
-            d->m_characterOffset = (int64_t)(token_start - d->m_data);
-            d->m_tokenColumn = 1;
+            update_current_position(d, ptr);
             return d->m_type;
         }
         if (d->m_documentVersion && XString_isEmpty_base(d->m_documentVersion))
             XString_assign_utf8(d->m_documentVersion, "1.0");
         d->m_type = XXmlStream_StartDocument;
         d->m_readPtr = ptr;
-        d->m_lineNumber = ptr && d->m_data ? count_newlines(d->m_data, ptr) : 0;
-        d->m_characterOffset = ptr && d->m_data ? (int64_t)(ptr - d->m_data) : 0;
-        d->m_tokenColumn = 1;
+        update_current_position(d, ptr);
         return d->m_type;
     }
     if (!ptr || !end || ptr >= end)
@@ -2487,6 +2689,7 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
         d->m_atEnd = true;
         if (has_incomplete_input(d)) {
             set_error(d, XXmlStream_PrematureEndOfDocumentError, "输入编码在文档末尾不完整。");
+            update_current_position(d, ptr);
             return XXmlStream_Invalid;
         }
         /* 检测未关闭标签 */
@@ -2494,18 +2697,22 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
         {
             d->m_type = XXmlStream_EndDocument;
             set_error(d, XXmlStream_PrematureEndOfDocumentError, "文档提前结束：存在未关闭的标签。");
+            update_current_position(d, ptr);
             return XXmlStream_Invalid;
         }
         if (!d->m_seenRootElement)
         {
             set_error(d, XXmlStream_NotWellFormedError, "XML 文档缺少根元素。");
+            update_current_position(d, ptr);
             return XXmlStream_Invalid;
         }
         if (d->m_type != XXmlStream_EndDocument)
         {
             d->m_type = XXmlStream_EndDocument;
+            update_current_position(d, ptr);
             return XXmlStream_EndDocument;
         }
+        update_current_position(d, ptr);
         return XXmlStream_NoToken;
     }
     /* 元素内容中的空白是有效字符数据，不能像标签内部空白那样跳过。 */
@@ -2518,20 +2725,21 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
         {
             d->m_type = XXmlStream_EndDocument;
             set_error(d, XXmlStream_PrematureEndOfDocumentError, "文档提前结束：存在未关闭的标签。");
+            update_current_position(d, ptr);
             return XXmlStream_Invalid;
         }
         if (!d->m_seenRootElement)
         {
             set_error(d, XXmlStream_NotWellFormedError, "XML 文档缺少根元素。");
+            update_current_position(d, ptr);
             return XXmlStream_Invalid;
         }
         d->m_type = XXmlStream_EndDocument;
+        update_current_position(d, ptr);
         return XXmlStream_EndDocument;
     }
-    /* token_start 为跳过空白后的第一个非空白字符位置 */
-    token_start = ptr;
     if (*ptr == '<' && !markup_is_complete(ptr, end)) {
-        d->m_readPtr = token_start;
+        d->m_readPtr = ptr;
         if (d->m_device && d->m_isDataFromDevice && read_more_from_device(d))
             return XXmlStreamReader_readNext(self);
         d->m_atEnd = true;
@@ -2650,25 +2858,8 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
             return XXmlStream_EndDocument;
         }
     }
-    /* 更新行号、字符偏移：基于 token 起始位置 */
-    if (d->m_data && token_start && token_start >= d->m_data) {
-        d->m_lineNumber = count_newlines(d->m_data, token_start);
-        d->m_characterOffset = (int64_t)(token_start - d->m_data);
-        /* 最近一个换行符之后的位置（用于列号） */
-        const char* nl = token_start;
-        const char* base = d->m_data;
-        while (nl > base) {
-            const char* prev = nl - 1;
-            if (*prev == '\n') { break; }
-            if (*prev == '\r') { break; }
-            nl--;
-            if (nl == base) break;
-        }
-        d->m_lastLineStart = (int64_t)(nl - base);
-        /* 列号：1-based */
-        d->m_tokenColumn = (int64_t)(token_start - nl) + 1;
-    }
     d->m_readPtr = ptr;
+    update_current_position(d, ptr);
     return d->m_type;
 }
 /* ============================================================================
@@ -3113,6 +3304,34 @@ XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other)
     return self;
 }
 
+XXmlStreamReader* XXmlStreamReader_create_byteArray(const XByteArray* data)
+{
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (self) XXmlStreamReader_addData(self, data);
+    return self;
+}
+
+XXmlStreamReader* XXmlStreamReader_create_string(const XString* data)
+{
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (self) XXmlStreamReader_addData_string(self, data);
+    return self;
+}
+
+XXmlStreamReader* XXmlStreamReader_create_utf8(const char* data)
+{
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (self) XXmlStreamReader_addData_utf8(self, data);
+    return self;
+}
+
+XXmlStreamReader* XXmlStreamReader_create_device(XIODevice* device)
+{
+    XXmlStreamReader* self = XXmlStreamReader_create();
+    if (self) XXmlStreamReader_setDevice(self, device);
+    return self;
+}
+
 /**
  * @brief      初始化 XXmlStreamReader 实例
  * @param self 待初始化的 XXmlStreamReader 对象指针
@@ -3139,8 +3358,7 @@ void XXmlStreamReader_setDevice(XXmlStreamReader* self, XIODevice* device)
     if (ISNULL(self, "XXmlStreamReader"))
         return;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    private_deinit(d);
-    private_init(d);
+    private_reset_for_input(d);
     d->m_device = device;
     d->m_deleteDevice = false;
     d->m_isDataFromDevice = device != NULL;
@@ -3198,6 +3416,25 @@ void XXmlStreamReader_addData(XXmlStreamReader* self, const XByteArray* data)
 }
 
 /**
+ * @brief      添加 UTF-16 XString 输入数据。
+ * @param      self 目标 XXmlStreamReader 对象指针。
+ * @param      data UTF-16 XML 文本，只在调用期间借用。
+ * @return     无；NULL 输入或设备输入状态不执行操作。
+ * @note       对标 Qt QXmlStreamReader::addData(QString)，内部通过 XString 的
+ *             UTF-8 表示追加到增量输入缓冲区，不调用平台 API。
+ */
+void XXmlStreamReader_addData_string(XXmlStreamReader* self, const XString* data)
+{
+    if (ISNULL(self, "XXmlStreamReader") || !data) return;
+    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
+    if (d->m_device) return;
+    /* QXmlStreamReader::addData(QString) 固定使用 UTF-8 解码器。 */
+    d->m_lockEncoding = true;
+    d->m_inputEncoding = XML_INPUT_UTF8;
+    append_input_data(d, XString_toUtf8(data), XString_toUtf8_length(data));
+}
+
+/**
  * @brief      重置读取器到初始状态
  * @param self 目标 XXmlStreamReader 对象指针
  */
@@ -3206,8 +3443,7 @@ void XXmlStreamReader_clear(XXmlStreamReader* self)
     if (ISNULL(self, "XXmlStreamReader"))
         return;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    private_deinit(d);
-    private_init(d);
+    private_reset_for_input(d);
     d->m_data = NULL;
     d->m_readPtr = NULL;
     d->m_endPtr = NULL;
@@ -3224,7 +3460,7 @@ bool XXmlStreamReader_atEnd(const XXmlStreamReader* self)
     if (ISNULL(self, "XXmlStreamReader"))
         return true;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_atEnd;
+    return d->m_atEnd || d->m_type == XXmlStream_Invalid;
 }
 /* ---- Token 类型 ---- */
 
@@ -3277,7 +3513,6 @@ int64_t XXmlStreamReader_columnNumber(const XXmlStreamReader* self)
     if (ISNULL(self, "XXmlStreamReader"))
         return 0;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    /* 优先返回 token 起始列 */
     return d->m_tokenColumn;
 }
 
@@ -3434,6 +3669,12 @@ bool XXmlStreamReader_isProcessingInstruction(const XXmlStreamReader* self)
  * XXmlStreamAttribute 实现
  * ============================================================================ */
 
+static bool xxml_stream_string_equals(const XString* left, const XString* right)
+{
+    if (!left || !right) return left == right;
+    return XString_equals(left, right, XChar_CaseSensitive);
+}
+
 XXmlStreamAttribute* XXmlStreamAttribute_create(const XString* qualifiedName, const XString* value)
 {
     XXmlStreamAttribute* self = (XXmlStreamAttribute*)XMalloc_System(sizeof(XXmlStreamAttribute));
@@ -3485,6 +3726,33 @@ void XXmlStreamAttribute_delete(XXmlStreamAttribute* self)
     XFree_System(self);
 }
 
+static XXmlStreamAttribute* xxml_stream_attribute_copy_private(
+    const XXmlStreamAttribute* source)
+{
+    if (!source) return NULL;
+    XXmlStreamAttribute* copy = (XXmlStreamAttribute*)XMalloc_System(
+        sizeof(XXmlStreamAttribute));
+    if (!copy) return NULL;
+    memset(copy, 0, sizeof(XXmlStreamAttribute));
+    copy->m_namespaceUri = source->m_namespaceUri ?
+        XString_create_copy(source->m_namespaceUri) : NULL;
+    copy->m_name = source->m_name ? XString_create_copy(source->m_name) : NULL;
+    copy->m_qualifiedName = source->m_qualifiedName ?
+        XString_create_copy(source->m_qualifiedName) : NULL;
+    copy->m_prefix = source->m_prefix ? XString_create_copy(source->m_prefix) : NULL;
+    copy->m_value = source->m_value ? XString_create_copy(source->m_value) : NULL;
+    copy->m_isDefault = source->m_isDefault;
+    if ((source->m_namespaceUri && !copy->m_namespaceUri) ||
+        (source->m_name && !copy->m_name) ||
+        (source->m_qualifiedName && !copy->m_qualifiedName) ||
+        (source->m_prefix && !copy->m_prefix) ||
+        (source->m_value && !copy->m_value)) {
+        XXmlStreamAttribute_delete(copy);
+        return NULL;
+    }
+    return copy;
+}
+
 XXmlStreamAttributes* XXmlStreamAttributes_create(void)
 {
     XXmlStreamAttributes* self = (XXmlStreamAttributes*)XMalloc_System(sizeof(XXmlStreamAttributes));
@@ -3503,6 +3771,23 @@ void XXmlStreamAttributes_delete(XXmlStreamAttributes* self)
         if (self->m_items[i]) XXmlStreamAttribute_delete(self->m_items[i]);
     if (self->m_items) XFree_System(self->m_items);
     XFree_System(self);
+}
+
+static bool xxml_stream_attributes_reserve(XXmlStreamAttributes* self, int needed)
+{
+    if (!self || needed < 0) return false;
+    if (needed <= self->m_capacity) return true;
+    int capacity = self->m_capacity ? self->m_capacity : 4;
+    while (capacity < needed) {
+        if (capacity > INT32_MAX / 2) { capacity = needed; break; }
+        capacity *= 2;
+    }
+    XXmlStreamAttribute** items = (XXmlStreamAttribute**)XRealloc_System(
+        self->m_items, sizeof(XXmlStreamAttribute*) * (size_t)capacity);
+    if (!items) return false;
+    self->m_items = items;
+    self->m_capacity = capacity;
+    return true;
 }
 
 
@@ -3544,6 +3829,17 @@ bool XXmlStreamAttribute_isDefault(const XXmlStreamAttribute* self)
     return self ? self->m_isDefault : false;
 }
 
+bool XXmlStreamAttribute_equals(const XXmlStreamAttribute* left,
+    const XXmlStreamAttribute* right)
+{
+    if (!left || !right) return left == right;
+    if (!xxml_stream_string_equals(left->m_value, right->m_value)) return false;
+    if (!left->m_namespaceUri || !right->m_namespaceUri)
+        return xxml_stream_string_equals(left->m_qualifiedName, right->m_qualifiedName);
+    return xxml_stream_string_equals(left->m_namespaceUri, right->m_namespaceUri) &&
+        xxml_stream_string_equals(left->m_name, right->m_name);
+}
+
 /* ============================================================================
  * XXmlStreamAttributes getter 实现
  * ============================================================================ */
@@ -3551,6 +3847,27 @@ bool XXmlStreamAttribute_isDefault(const XXmlStreamAttribute* self)
 int XXmlStreamAttributes_size(const XXmlStreamAttributes* self)
 {
     return self ? self->m_count : 0;
+}
+
+int XXmlStreamAttributes_count(const XXmlStreamAttributes* self)
+{
+    return XXmlStreamAttributes_size(self);
+}
+
+bool XXmlStreamAttributes_isEmpty(const XXmlStreamAttributes* self)
+{
+    return XXmlStreamAttributes_size(self) == 0;
+}
+
+bool XXmlStreamAttributes_equals(const XXmlStreamAttributes* left,
+    const XXmlStreamAttributes* right)
+{
+    if (!left || !right) return left == right;
+    if (left->m_count != right->m_count) return false;
+    for (int i = 0; i < left->m_count; ++i) {
+        if (!XXmlStreamAttribute_equals(left->m_items[i], right->m_items[i])) return false;
+    }
+    return true;
 }
 
 const XXmlStreamAttribute* XXmlStreamAttributes_at(const XXmlStreamAttributes* self, int index)
@@ -3613,12 +3930,8 @@ void XXmlStreamAttributes_append(XXmlStreamAttributes* self, const XString* name
     if (!self) return;
     XXmlStreamAttribute* attr = XXmlStreamAttribute_create_ex(namespaceUri, name, value);
     if (!attr) return;
-    if (self->m_count >= self->m_capacity) {
-        int newCap = self->m_capacity ? self->m_capacity * 2 : 4;
-        XXmlStreamAttribute** newItems = (XXmlStreamAttribute**)XRealloc_System(self->m_items, sizeof(XXmlStreamAttribute*) * newCap);
-        if (!newItems) { XXmlStreamAttribute_delete(attr); return; }
-        self->m_items = newItems;
-        self->m_capacity = newCap;
+    if (!xxml_stream_attributes_reserve(self, self->m_count + 1)) {
+        XXmlStreamAttribute_delete(attr); return;
     }
     self->m_items[self->m_count++] = attr;
 }
@@ -3628,12 +3941,8 @@ void XXmlStreamAttributes_append_ex(XXmlStreamAttributes* self, const XString* q
     if (!self) return;
     XXmlStreamAttribute* attr = XXmlStreamAttribute_create(qualifiedName, value);
     if (!attr) return;
-    if (self->m_count >= self->m_capacity) {
-        int newCap = self->m_capacity ? self->m_capacity * 2 : 4;
-        XXmlStreamAttribute** newItems = (XXmlStreamAttribute**)XRealloc_System(self->m_items, sizeof(XXmlStreamAttribute*) * newCap);
-        if (!newItems) { XXmlStreamAttribute_delete(attr); return; }
-        self->m_items = newItems;
-        self->m_capacity = newCap;
+    if (!xxml_stream_attributes_reserve(self, self->m_count + 1)) {
+        XXmlStreamAttribute_delete(attr); return;
     }
     self->m_items[self->m_count++] = attr;
 }
@@ -3658,6 +3967,63 @@ void XXmlStreamAttributes_append_ex_utf8(XXmlStreamAttributes* self, const char*
     XXmlStreamAttributes_append_ex(self, qn, val);
     if (qn) XString_delete_base(qn);
     if (val) XString_delete_base(val);
+}
+
+bool XXmlStreamAttributes_appendAttribute(XXmlStreamAttributes* self,
+    const XXmlStreamAttribute* attribute)
+{
+    return XXmlStreamAttributes_insert(self, self ? self->m_count : -1, attribute);
+}
+
+bool XXmlStreamAttributes_insert(XXmlStreamAttributes* self, int index,
+    const XXmlStreamAttribute* attribute)
+{
+    if (!self || !attribute || index < 0 || index > self->m_count) return false;
+    XXmlStreamAttribute* copy = xxml_stream_attribute_copy_private(attribute);
+    if (!copy || !xxml_stream_attributes_reserve(self, self->m_count + 1)) {
+        XXmlStreamAttribute_delete(copy);
+        return false;
+    }
+    if (index < self->m_count) {
+        memmove(&self->m_items[index + 1], &self->m_items[index],
+                (size_t)(self->m_count - index) * sizeof(*self->m_items));
+    }
+    self->m_items[index] = copy;
+    ++self->m_count;
+    return true;
+}
+
+bool XXmlStreamAttributes_removeAt(XXmlStreamAttributes* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count) return false;
+    XXmlStreamAttribute_delete(self->m_items[index]);
+    if (index + 1 < self->m_count) {
+        memmove(&self->m_items[index], &self->m_items[index + 1],
+                (size_t)(self->m_count - index - 1) * sizeof(*self->m_items));
+    }
+    --self->m_count;
+    self->m_items[self->m_count] = NULL;
+    return true;
+}
+
+void XXmlStreamAttributes_clear(XXmlStreamAttributes* self)
+{
+    if (!self) return;
+    while (self->m_count > 0) XXmlStreamAttributes_removeAt(self, self->m_count - 1);
+}
+
+XXmlStreamAttributes* XXmlStreamAttributes_create_copy(const XXmlStreamAttributes* self)
+{
+    if (!self) return NULL;
+    XXmlStreamAttributes* copy = XXmlStreamAttributes_create();
+    if (!copy) return NULL;
+    for (int i = 0; i < self->m_count; ++i) {
+        if (!XXmlStreamAttributes_appendAttribute(copy, self->m_items[i])) {
+            XXmlStreamAttributes_delete(copy);
+            return NULL;
+        }
+    }
+    return copy;
 }
 
 /* ============================================================================
@@ -3692,6 +4058,14 @@ const XString* XXmlStreamNamespaceDeclaration_namespaceUri(const XXmlStreamNames
 {
     if (!self) return NULL;
     return self->m_namespaceUri;
+}
+
+bool XXmlStreamNamespaceDeclaration_equals(const XXmlStreamNamespaceDeclaration* left,
+    const XXmlStreamNamespaceDeclaration* right)
+{
+    if (!left || !right) return left == right;
+    return xxml_stream_string_equals(left->m_prefix, right->m_prefix) &&
+        xxml_stream_string_equals(left->m_namespaceUri, right->m_namespaceUri);
 }
 
 /* ============================================================================
@@ -3747,11 +4121,15 @@ const XXmlStreamNamespaceDeclarations* XXmlStreamReader_namespaceDeclarations(
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
     if (d->m_type == XXmlStream_StartElement && d->m_namespaceDeclarationCount > 0) {
         d->m_namespaceDeclarationsView.m_items =
-            (const XXmlStreamNamespaceDeclaration*)d->m_namespaceDeclarations;
+            (XXmlStreamNamespaceDeclaration*)d->m_namespaceDeclarations;
         d->m_namespaceDeclarationsView.m_count = d->m_namespaceDeclarationCount;
+        d->m_namespaceDeclarationsView.m_capacity = 0;
+        d->m_namespaceDeclarationsView.m_ownsItems = false;
     } else {
         d->m_namespaceDeclarationsView.m_items = NULL;
         d->m_namespaceDeclarationsView.m_count = 0;
+        d->m_namespaceDeclarationsView.m_capacity = 0;
+        d->m_namespaceDeclarationsView.m_ownsItems = false;
     }
     return &d->m_namespaceDeclarationsView;
 }
@@ -3761,11 +4139,175 @@ int XXmlStreamNamespaceDeclarations_size(const XXmlStreamNamespaceDeclarations* 
     return self ? self->m_count : 0;
 }
 
+int XXmlStreamNamespaceDeclarations_count(const XXmlStreamNamespaceDeclarations* self)
+{
+    return XXmlStreamNamespaceDeclarations_size(self);
+}
+
+bool XXmlStreamNamespaceDeclarations_isEmpty(const XXmlStreamNamespaceDeclarations* self)
+{
+    return XXmlStreamNamespaceDeclarations_size(self) == 0;
+}
+
+bool XXmlStreamNamespaceDeclarations_equals(const XXmlStreamNamespaceDeclarations* left,
+    const XXmlStreamNamespaceDeclarations* right)
+{
+    if (!left || !right) return left == right;
+    if (left->m_count != right->m_count) return false;
+    for (int i = 0; i < left->m_count; ++i) {
+        if (!XXmlStreamNamespaceDeclaration_equals(&left->m_items[i], &right->m_items[i]))
+            return false;
+    }
+    return true;
+}
+
 const XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclarations_at(
     const XXmlStreamNamespaceDeclarations* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count || !self->m_items) return NULL;
     return &self->m_items[index];
+}
+
+static void xxml_stream_namespace_declaration_clear_private(
+    XXmlStreamNamespaceDeclaration* declaration)
+{
+    if (!declaration) return;
+    XString_delete_base(declaration->m_prefix);
+    XString_delete_base(declaration->m_namespaceUri);
+    declaration->m_prefix = NULL;
+    declaration->m_namespaceUri = NULL;
+}
+
+static bool xxml_stream_namespace_declarations_reserve(
+    XXmlStreamNamespaceDeclarations* self, int needed)
+{
+    if (!self || !self->m_ownsItems || needed < 0) return false;
+    if (needed <= self->m_capacity) return true;
+    int capacity = self->m_capacity ? self->m_capacity : 4;
+    while (capacity < needed) {
+        if (capacity > INT32_MAX / 2) { capacity = needed; break; }
+        capacity *= 2;
+    }
+    XXmlStreamNamespaceDeclaration* items =
+        (XXmlStreamNamespaceDeclaration*)XRealloc_System(
+            self->m_items, sizeof(XXmlStreamNamespaceDeclaration) * (size_t)capacity);
+    if (!items) return false;
+    memset(items + self->m_capacity, 0,
+           sizeof(XXmlStreamNamespaceDeclaration) * (size_t)(capacity - self->m_capacity));
+    self->m_items = items;
+    self->m_capacity = capacity;
+    return true;
+}
+
+XXmlStreamNamespaceDeclarations* XXmlStreamNamespaceDeclarations_create(void)
+{
+    XXmlStreamNamespaceDeclarations* self =
+        (XXmlStreamNamespaceDeclarations*)XMalloc_System(
+            sizeof(XXmlStreamNamespaceDeclarations));
+    if (!self) return NULL;
+    memset(self, 0, sizeof(*self));
+    self->m_ownsItems = true;
+    return self;
+}
+
+XXmlStreamNamespaceDeclarations* XXmlStreamNamespaceDeclarations_create_copy(
+    const XXmlStreamNamespaceDeclarations* source)
+{
+    if (!source) return NULL;
+    XXmlStreamNamespaceDeclarations* copy = XXmlStreamNamespaceDeclarations_create();
+    if (!copy) return NULL;
+    for (int i = 0; i < source->m_count; ++i) {
+        if (!XXmlStreamNamespaceDeclarations_append(copy, &source->m_items[i])) {
+            XXmlStreamNamespaceDeclarations_delete(copy);
+            return NULL;
+        }
+    }
+    return copy;
+}
+
+void XXmlStreamNamespaceDeclarations_delete(XXmlStreamNamespaceDeclarations* self)
+{
+    if (!self || !self->m_ownsItems) return;
+    for (int i = 0; i < self->m_count; ++i)
+        xxml_stream_namespace_declaration_clear_private(&self->m_items[i]);
+    XFree_System(self->m_items);
+    self->m_items = NULL;
+    self->m_count = 0;
+    self->m_capacity = 0;
+    self->m_ownsItems = false;
+    XFree_System(self);
+}
+
+bool XXmlStreamNamespaceDeclarations_append(XXmlStreamNamespaceDeclarations* self,
+    const XXmlStreamNamespaceDeclaration* declaration)
+{
+    return XXmlStreamNamespaceDeclarations_insert(self, self ? self->m_count : -1,
+                                                  declaration);
+}
+
+bool XXmlStreamNamespaceDeclarations_insert(XXmlStreamNamespaceDeclarations* self,
+    int index, const XXmlStreamNamespaceDeclaration* declaration)
+{
+    if (!self || !self->m_ownsItems || !declaration || index < 0 ||
+        index > self->m_count) return false;
+    XString* prefix = declaration->m_prefix ?
+        XString_create_copy(declaration->m_prefix) : NULL;
+    XString* namespaceUri = declaration->m_namespaceUri ?
+        XString_create_copy(declaration->m_namespaceUri) : NULL;
+    if ((declaration->m_prefix && !prefix) ||
+        (declaration->m_namespaceUri && !namespaceUri)) {
+        XString_delete_base(prefix);
+        XString_delete_base(namespaceUri);
+        return false;
+    }
+    if (!xxml_stream_namespace_declarations_reserve(self, self->m_count + 1)) {
+        XString_delete_base(prefix);
+        XString_delete_base(namespaceUri);
+        return false;
+    }
+    if (index < self->m_count) {
+        memmove(&self->m_items[index + 1], &self->m_items[index],
+                (size_t)(self->m_count - index) * sizeof(*self->m_items));
+    }
+    self->m_items[index].m_prefix = prefix;
+    self->m_items[index].m_namespaceUri = namespaceUri;
+    ++self->m_count;
+    return true;
+}
+
+bool XXmlStreamNamespaceDeclarations_removeAt(XXmlStreamNamespaceDeclarations* self,
+    int index)
+{
+    if (!self || !self->m_ownsItems || index < 0 || index >= self->m_count) return false;
+    xxml_stream_namespace_declaration_clear_private(&self->m_items[index]);
+    if (index + 1 < self->m_count) {
+        memmove(&self->m_items[index], &self->m_items[index + 1],
+                (size_t)(self->m_count - index - 1) * sizeof(*self->m_items));
+    }
+    --self->m_count;
+    memset(&self->m_items[self->m_count], 0, sizeof(*self->m_items));
+    return true;
+}
+
+void XXmlStreamNamespaceDeclarations_clear(XXmlStreamNamespaceDeclarations* self)
+{
+    if (!self || !self->m_ownsItems) return;
+    while (self->m_count > 0)
+        XXmlStreamNamespaceDeclarations_removeAt(self, self->m_count - 1);
+}
+
+XXmlStreamAttributes* XXmlStreamReader_attributes_copy(const XXmlStreamReader* self)
+{
+    const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(self);
+    return attributes ? XXmlStreamAttributes_create_copy(attributes) : NULL;
+}
+
+XXmlStreamNamespaceDeclarations* XXmlStreamReader_namespaceDeclarations_copy(
+    const XXmlStreamReader* self)
+{
+    const XXmlStreamNamespaceDeclarations* declarations =
+        XXmlStreamReader_namespaceDeclarations(self);
+    return declarations ? XXmlStreamNamespaceDeclarations_create_copy(declarations) : NULL;
 }
 
 bool XXmlStreamReader_hasNamespaceDeclarations(const XXmlStreamReader* self)
@@ -3800,14 +4342,21 @@ const XString* XXmlStreamReader_documentVersion(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_documentVersion;
+    return d->m_type == XXmlStream_StartDocument ? d->m_documentVersion : NULL;
 }
 
 const XString* XXmlStreamReader_documentEncoding(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_documentEncoding;
+    return d->m_type == XXmlStream_StartDocument ? d->m_documentEncoding : NULL;
+}
+
+bool XXmlStreamReader_hasXmlDeclaration(const XXmlStreamReader* self)
+{
+    if (ISNULL(self, "XXmlStreamReader")) return false;
+    XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
+    return d->m_seenXmlDeclaration;
 }
 
 bool XXmlStreamReader_isStandaloneDocument(const XXmlStreamReader* self)
@@ -3822,21 +4371,21 @@ int XXmlStreamReader_error(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return 0;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return (int)d->m_error;
+    return d->m_type == XXmlStream_Invalid ? (int)d->m_error : XXmlStream_NoError;
 }
 
 const XString* XXmlStreamReader_errorString(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_errorString;
+    return d->m_type == XXmlStream_Invalid ? d->m_errorString : NULL;
 }
 
 bool XXmlStreamReader_hasError(const XXmlStreamReader* self)
 {
     if (ISNULL(self, "XXmlStreamReader")) return false;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    return d->m_error != XXmlStream_NoError;
+    return d->m_type == XXmlStream_Invalid && d->m_error != XXmlStream_NoError;
 }
 
 void XXmlStreamReader_raiseError(XXmlStreamReader* self, const XString* message)
@@ -3892,7 +4441,10 @@ const XString* XXmlStreamReader_readElementText(XXmlStreamReader* self, int beha
 {
     if (ISNULL(self, "XXmlStreamReader")) return NULL;
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)(self + 1);
-    if (!XXmlStreamReader_isStartElement(self) || !d->m_buffer) return d->m_buffer;
+    if (!XXmlStreamReader_isStartElement(self) || !d->m_buffer) {
+        if (d->m_buffer) XString_clear_base(d->m_buffer);
+        return d->m_buffer;
+    }
 
     XString_clear_base(d->m_buffer);
     int depth = 1;
@@ -3973,6 +4525,15 @@ const XString* XXmlStreamNotationDeclaration_publicId(const XXmlStreamNotationDe
     return self->m_publicId;
 }
 
+bool XXmlStreamNotationDeclaration_equals(const XXmlStreamNotationDeclaration* left,
+    const XXmlStreamNotationDeclaration* right)
+{
+    if (!left || !right) return left == right;
+    return xxml_stream_string_equals(left->m_name, right->m_name) &&
+        xxml_stream_string_equals(left->m_systemId, right->m_systemId) &&
+        xxml_stream_string_equals(left->m_publicId, right->m_publicId);
+}
+
 /* ============================================================================
  * DTD 实体声明实现（对标 QXmlStreamEntityDeclaration）
  * ============================================================================ */
@@ -4037,6 +4598,17 @@ const XString* XXmlStreamEntityDeclaration_value(const XXmlStreamEntityDeclarati
     return self->m_value;
 }
 
+bool XXmlStreamEntityDeclaration_equals(const XXmlStreamEntityDeclaration* left,
+    const XXmlStreamEntityDeclaration* right)
+{
+    if (!left || !right) return left == right;
+    return xxml_stream_string_equals(left->m_name, right->m_name) &&
+        xxml_stream_string_equals(left->m_notationName, right->m_notationName) &&
+        xxml_stream_string_equals(left->m_systemId, right->m_systemId) &&
+        xxml_stream_string_equals(left->m_publicId, right->m_publicId) &&
+        xxml_stream_string_equals(left->m_value, right->m_value);
+}
+
 /* ============================================================================
  * DTD 声明列表实现
  * ============================================================================ */
@@ -4068,10 +4640,117 @@ size_t XXmlStreamNotationDeclarations_size(const XXmlStreamNotationDeclarations*
     return self ? self->m_count : 0;
 }
 
+size_t XXmlStreamNotationDeclarations_count(const XXmlStreamNotationDeclarations* self)
+{
+    return XXmlStreamNotationDeclarations_size(self);
+}
+
+bool XXmlStreamNotationDeclarations_isEmpty(const XXmlStreamNotationDeclarations* self)
+{
+    return XXmlStreamNotationDeclarations_size(self) == 0;
+}
+
+bool XXmlStreamNotationDeclarations_equals(const XXmlStreamNotationDeclarations* left,
+    const XXmlStreamNotationDeclarations* right)
+{
+    if (!left || !right) return left == right;
+    if (left->m_count != right->m_count) return false;
+    for (size_t i = 0; i < left->m_count; ++i) {
+        if (!XXmlStreamNotationDeclaration_equals(&left->m_declarations[i],
+                &right->m_declarations[i])) return false;
+    }
+    return true;
+}
+
 const XXmlStreamNotationDeclaration* XXmlStreamNotationDeclarations_at(const XXmlStreamNotationDeclarations* self, size_t index)
 {
     if (!self || index >= self->m_count) return NULL;
     return &self->m_declarations[index];
+}
+
+static void xxml_stream_notation_clear_private(XXmlStreamNotationDeclaration* declaration)
+{
+    if (!declaration) return;
+    XString_delete_base(declaration->m_name);
+    XString_delete_base(declaration->m_systemId);
+    XString_delete_base(declaration->m_publicId);
+    memset(declaration, 0, sizeof(*declaration));
+}
+
+static bool xxml_stream_notation_reserve(XXmlStreamNotationDeclarations* self,
+    size_t needed)
+{
+    if (!self || needed < self->m_count) return false;
+    if (needed <= self->m_capacity) return true;
+    size_t capacity = self->m_capacity ? self->m_capacity : 4;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX / 2) { capacity = needed; break; }
+        capacity *= 2;
+    }
+    XXmlStreamNotationDeclaration* declarations =
+        (XXmlStreamNotationDeclaration*)XRealloc_System(
+            self->m_declarations, sizeof(*declarations) * capacity);
+    if (!declarations) return false;
+    memset(declarations + self->m_capacity, 0,
+           sizeof(*declarations) * (capacity - self->m_capacity));
+    self->m_declarations = declarations;
+    self->m_capacity = capacity;
+    return true;
+}
+
+bool XXmlStreamNotationDeclarations_append(XXmlStreamNotationDeclarations* self,
+    const XXmlStreamNotationDeclaration* declaration)
+{
+    return XXmlStreamNotationDeclarations_insert(self, self ? self->m_count : 0,
+                                                  declaration);
+}
+
+bool XXmlStreamNotationDeclarations_insert(XXmlStreamNotationDeclarations* self,
+    size_t index, const XXmlStreamNotationDeclaration* declaration)
+{
+    if (!self || !declaration || index > self->m_count) return false;
+    XString* name = declaration->m_name ? XString_create_copy(declaration->m_name) : NULL;
+    XString* systemId = declaration->m_systemId ? XString_create_copy(declaration->m_systemId) : NULL;
+    XString* publicId = declaration->m_publicId ? XString_create_copy(declaration->m_publicId) : NULL;
+    if ((declaration->m_name && !name) || (declaration->m_systemId && !systemId) ||
+        (declaration->m_publicId && !publicId)) {
+        XString_delete_base(name); XString_delete_base(systemId); XString_delete_base(publicId);
+        return false;
+    }
+    if (!xxml_stream_notation_reserve(self, self->m_count + 1)) {
+        XString_delete_base(name); XString_delete_base(systemId); XString_delete_base(publicId);
+        return false;
+    }
+    if (index < self->m_count) {
+        memmove(&self->m_declarations[index + 1], &self->m_declarations[index],
+                (self->m_count - index) * sizeof(*self->m_declarations));
+    }
+    self->m_declarations[index].m_name = name;
+    self->m_declarations[index].m_systemId = systemId;
+    self->m_declarations[index].m_publicId = publicId;
+    ++self->m_count;
+    return true;
+}
+
+bool XXmlStreamNotationDeclarations_removeAt(XXmlStreamNotationDeclarations* self,
+    size_t index)
+{
+    if (!self || index >= self->m_count) return false;
+    xxml_stream_notation_clear_private(&self->m_declarations[index]);
+    if (index + 1 < self->m_count) {
+        memmove(&self->m_declarations[index], &self->m_declarations[index + 1],
+                (self->m_count - index - 1) * sizeof(*self->m_declarations));
+    }
+    --self->m_count;
+    memset(&self->m_declarations[self->m_count], 0, sizeof(*self->m_declarations));
+    return true;
+}
+
+void XXmlStreamNotationDeclarations_clear(XXmlStreamNotationDeclarations* self)
+{
+    if (!self) return;
+    while (self->m_count > 0)
+        XXmlStreamNotationDeclarations_removeAt(self, self->m_count - 1);
 }
 
 XXmlStreamEntityDeclarations* XXmlStreamEntityDeclarations_create(void)
@@ -4103,10 +4782,160 @@ size_t XXmlStreamEntityDeclarations_size(const XXmlStreamEntityDeclarations* sel
     return self ? self->m_count : 0;
 }
 
+size_t XXmlStreamEntityDeclarations_count(const XXmlStreamEntityDeclarations* self)
+{
+    return XXmlStreamEntityDeclarations_size(self);
+}
+
+bool XXmlStreamEntityDeclarations_isEmpty(const XXmlStreamEntityDeclarations* self)
+{
+    return XXmlStreamEntityDeclarations_size(self) == 0;
+}
+
+bool XXmlStreamEntityDeclarations_equals(const XXmlStreamEntityDeclarations* left,
+    const XXmlStreamEntityDeclarations* right)
+{
+    if (!left || !right) return left == right;
+    if (left->m_count != right->m_count) return false;
+    for (size_t i = 0; i < left->m_count; ++i) {
+        if (!XXmlStreamEntityDeclaration_equals(&left->m_declarations[i],
+                &right->m_declarations[i])) return false;
+    }
+    return true;
+}
+
 const XXmlStreamEntityDeclaration* XXmlStreamEntityDeclarations_at(const XXmlStreamEntityDeclarations* self, size_t index)
 {
     if (!self || index >= self->m_count) return NULL;
     return &self->m_declarations[index];
+}
+
+static void xxml_stream_entity_clear_private(XXmlStreamEntityDeclaration* declaration)
+{
+    if (!declaration) return;
+    XString_delete_base(declaration->m_name);
+    XString_delete_base(declaration->m_notationName);
+    XString_delete_base(declaration->m_systemId);
+    XString_delete_base(declaration->m_publicId);
+    XString_delete_base(declaration->m_value);
+    memset(declaration, 0, sizeof(*declaration));
+}
+
+static bool xxml_stream_entity_reserve(XXmlStreamEntityDeclarations* self,
+    size_t needed)
+{
+    if (!self || needed < self->m_count) return false;
+    if (needed <= self->m_capacity) return true;
+    size_t capacity = self->m_capacity ? self->m_capacity : 4;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX / 2) { capacity = needed; break; }
+        capacity *= 2;
+    }
+    XXmlStreamEntityDeclaration* declarations =
+        (XXmlStreamEntityDeclaration*)XRealloc_System(
+            self->m_declarations, sizeof(*declarations) * capacity);
+    if (!declarations) return false;
+    memset(declarations + self->m_capacity, 0,
+           sizeof(*declarations) * (capacity - self->m_capacity));
+    self->m_declarations = declarations;
+    self->m_capacity = capacity;
+    return true;
+}
+
+bool XXmlStreamEntityDeclarations_append(XXmlStreamEntityDeclarations* self,
+    const XXmlStreamEntityDeclaration* declaration)
+{
+    return XXmlStreamEntityDeclarations_insert(self, self ? self->m_count : 0,
+                                                declaration);
+}
+
+bool XXmlStreamEntityDeclarations_insert(XXmlStreamEntityDeclarations* self,
+    size_t index, const XXmlStreamEntityDeclaration* declaration)
+{
+    if (!self || !declaration || index > self->m_count) return false;
+    XString* name = declaration->m_name ? XString_create_copy(declaration->m_name) : NULL;
+    XString* notationName = declaration->m_notationName ? XString_create_copy(declaration->m_notationName) : NULL;
+    XString* systemId = declaration->m_systemId ? XString_create_copy(declaration->m_systemId) : NULL;
+    XString* publicId = declaration->m_publicId ? XString_create_copy(declaration->m_publicId) : NULL;
+    XString* value = declaration->m_value ? XString_create_copy(declaration->m_value) : NULL;
+    if ((declaration->m_name && !name) || (declaration->m_notationName && !notationName) ||
+        (declaration->m_systemId && !systemId) || (declaration->m_publicId && !publicId) ||
+        (declaration->m_value && !value)) {
+        XString_delete_base(name); XString_delete_base(notationName);
+        XString_delete_base(systemId); XString_delete_base(publicId); XString_delete_base(value);
+        return false;
+    }
+    if (!xxml_stream_entity_reserve(self, self->m_count + 1)) {
+        XString_delete_base(name); XString_delete_base(notationName);
+        XString_delete_base(systemId); XString_delete_base(publicId); XString_delete_base(value);
+        return false;
+    }
+    if (index < self->m_count) {
+        memmove(&self->m_declarations[index + 1], &self->m_declarations[index],
+                (self->m_count - index) * sizeof(*self->m_declarations));
+    }
+    self->m_declarations[index].m_name = name;
+    self->m_declarations[index].m_notationName = notationName;
+    self->m_declarations[index].m_systemId = systemId;
+    self->m_declarations[index].m_publicId = publicId;
+    self->m_declarations[index].m_value = value;
+    ++self->m_count;
+    return true;
+}
+
+bool XXmlStreamEntityDeclarations_removeAt(XXmlStreamEntityDeclarations* self,
+    size_t index)
+{
+    if (!self || index >= self->m_count) return false;
+    xxml_stream_entity_clear_private(&self->m_declarations[index]);
+    if (index + 1 < self->m_count) {
+        memmove(&self->m_declarations[index], &self->m_declarations[index + 1],
+                (self->m_count - index - 1) * sizeof(*self->m_declarations));
+    }
+    --self->m_count;
+    memset(&self->m_declarations[self->m_count], 0, sizeof(*self->m_declarations));
+    return true;
+}
+
+void XXmlStreamEntityDeclarations_clear(XXmlStreamEntityDeclarations* self)
+{
+    if (!self) return;
+    while (self->m_count > 0)
+        XXmlStreamEntityDeclarations_removeAt(self, self->m_count - 1);
+}
+
+XXmlStreamNotationDeclarations* XXmlStreamReader_notationDeclarations_copy(
+    const XXmlStreamReader* self)
+{
+    const XXmlStreamNotationDeclarations* source =
+        XXmlStreamReader_notationDeclarations(self);
+    if (!source) return NULL;
+    XXmlStreamNotationDeclarations* copy = XXmlStreamNotationDeclarations_create();
+    if (!copy) return NULL;
+    for (size_t i = 0; i < source->m_count; ++i) {
+        if (!XXmlStreamNotationDeclarations_append(copy, &source->m_declarations[i])) {
+            XXmlStreamNotationDeclarations_delete(copy);
+            return NULL;
+        }
+    }
+    return copy;
+}
+
+XXmlStreamEntityDeclarations* XXmlStreamReader_entityDeclarations_copy(
+    const XXmlStreamReader* self)
+{
+    const XXmlStreamEntityDeclarations* source =
+        XXmlStreamReader_entityDeclarations(self);
+    if (!source) return NULL;
+    XXmlStreamEntityDeclarations* copy = XXmlStreamEntityDeclarations_create();
+    if (!copy) return NULL;
+    for (size_t i = 0; i < source->m_count; ++i) {
+        if (!XXmlStreamEntityDeclarations_append(copy, &source->m_declarations[i])) {
+            XXmlStreamEntityDeclarations_delete(copy);
+            return NULL;
+        }
+    }
+    return copy;
 }
 
 /* ============================================================================
@@ -4163,7 +4992,7 @@ void* XXmlStreamEntityResolver_userData(XXmlStreamEntityResolver* self)
 
 /**
  * @brief      获取 DTD 符号声明列表
- * @note       对标 QXlsx::Document::copyStyle
+ * @note       对标 QXmlStreamReader::entityDeclarations
  */
 XXmlStreamNotationDeclarations* XXmlStreamReader_notationDeclarations(const XXmlStreamReader* self)
 {

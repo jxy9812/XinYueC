@@ -58,6 +58,9 @@ struct XSslSocket {
     XVector*             localCertChain;   /* Qt 6.8 setLocalCertificateChain；自持有 */
     XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain 缓存；自持有 */
     XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors；每个元素为 int 错误码 */
+    XVector*             allowedNextProtocols; /* XByteArray*；本对象拥有 */
+    XByteArray*          nextNegotiatedProtocol; /* 本次握手结果；本对象拥有 */
+    XSslNextProtocolNegotiationStatus nextProtocolStatus;
     struct XRingBuffer*  encRxBuf;
     struct XRingBuffer*  encTxBuf;          /* BIO 部分写时按需创建 */
     size_t               pendingAckedBytes; /* encTxBuf 排空前合并底层 ACK */
@@ -175,7 +178,23 @@ static bool xssl_ensure_session(XSslSocket* self, bool isServer) {
     if (self->caCert) {
         XSsl_sessionAddCaCertificate(self->session, self->caCert);
     }
+    if (self->allowedNextProtocols &&
+        !XSsl_sessionSetAllowedNextProtocols(self->session, self->allowedNextProtocols))
+        return false;
     return true;
+}
+
+static void xssl_clear_negotiated_protocol(XSslSocket* self)
+{
+    if (!self)
+        return;
+    if (self->nextNegotiatedProtocol) {
+        XClass_delete_base((XClass*)self->nextNegotiatedProtocol);
+        self->nextNegotiatedProtocol = NULL;
+    }
+    self->nextProtocolStatus = self->allowedNextProtocols &&
+        XContainer_size_base((const XContainer*)self->allowedNextProtocols) != 0 ?
+        XSSL_NextProtocolNegotiationUnsupported : XSSL_NextProtocolNegotiationNone;
 }
 
 /* 推进一次握手，返回 XSSL_S_* */
@@ -189,6 +208,11 @@ static int xssl_pump_handshake(XSslSocket* self) {
         self->handshakePending = false;
         /* 握手密文的 ACK 不属于应用明文写入。 */
         self->pendingAckedBytes = 0;
+        xssl_clear_negotiated_protocol(self);
+        self->nextProtocolStatus = XSsl_sessionNextProtocolNegotiationStatus(self->session);
+        if (XSsl_sessionNextNegotiatedProtocol(self->session))
+            self->nextNegotiatedProtocol = XByteArray_create_utf8(
+                XSsl_sessionNextNegotiatedProtocol(self->session));
         XSslSocket_encrypted_signal(self);
     } else if (r == XSSL_S_ERROR || r == XSSL_S_CLOSED) {
         XAbstractSocket_setSocketError((XAbstractSocket*)self,
@@ -286,6 +310,7 @@ static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
     /* 释放前一次连接的握手错误缓存 */
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
+    xssl_clear_negotiated_protocol(self);
     PARENT_SOCK(EXAbstractSocket_DisconnectFromHost, Fn_disconnectFromHost)(sock);
 }
 
@@ -309,6 +334,7 @@ static void xssl_v_close(XIODevice* io) {
     if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
     /* 释放前一次连接的握手错误缓存 */
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
+    xssl_clear_negotiated_protocol(self);
     PARENT_IO(EXIODevice_Close, Fn_close)(io);
 }
 
@@ -391,6 +417,18 @@ static void xssl_v_deinit(XClass* obj) {
     if (self->peerCertChain)   { XVector_delete_base((XContainer*)self->peerCertChain);   self->peerCertChain = NULL; }
     if (self->localCertChain)  { XVector_delete_base((XContainer*)self->localCertChain);  self->localCertChain = NULL; }
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
+    if (self->allowedNextProtocols) {
+        for (size_t i = 0; i < XContainer_size_base((const XContainer*)self->allowedNextProtocols); ++i) {
+            XByteArray** slot = (XByteArray**)XVector_at_base(self->allowedNextProtocols, (int64_t)i);
+            if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        }
+        XVector_delete_base((XContainer*)self->allowedNextProtocols);
+        self->allowedNextProtocols = NULL;
+    }
+    if (self->nextNegotiatedProtocol) {
+        XClass_delete_base((XClass*)self->nextNegotiatedProtocol);
+        self->nextNegotiatedProtocol = NULL;
+    }
     if (self->encRxBuf) { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = NULL;/*(struct XRingBuffer*)XRingBuffer_create(16384);*/ }
     if (self->encTxBuf) { XRingBuffer_delete_base((XContainer*)self->encTxBuf); self->encTxBuf = NULL; }
     /* localCert/privateKey/caCert 为外部引用，本类不持有 */
@@ -569,6 +607,9 @@ void XSslSocket_init(XSslSocket* self)
     self->localCertChain = NULL;
     self->peerCertChain = NULL;
     self->handshakeErrors = NULL;
+    self->allowedNextProtocols = NULL;
+    self->nextNegotiatedProtocol = NULL;
+    self->nextProtocolStatus = XSSL_NextProtocolNegotiationNone;
     self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(DEFAULT_CHUNK_SIZE);
     self->encTxBuf = NULL;
     self->pendingAckedBytes = 0;
@@ -597,6 +638,92 @@ void XSslSocket_setProtocol(XSslSocket* self, XSslProtocol protocol)
 XSslProtocol XSslSocket_protocol(const XSslSocket* self)
 {
     return self ? self->protocol : XSSL_SecureProtocols;
+}
+
+bool XSslSocket_setAllowedNextProtocols(XSslSocket* self, const XVector* protocols)
+{
+    XVector* replacement;
+    size_t count;
+    if (!self || self->session || self->handshakePending)
+        return false;
+    count = protocols ? XContainer_size_base((const XContainer*)protocols) : 0;
+    replacement = XVector_create(sizeof(XByteArray*));
+    if (!replacement)
+        return false;
+    for (size_t i = 0; i < count; ++i) {
+        XByteArray* const* slot = (XByteArray* const*)XVector_at_base(
+            (XVector*)protocols, (int64_t)i);
+        XByteArray* value = slot ? *slot : NULL;
+        size_t size = value ? XContainer_size_base((const XContainer*)value) : 0;
+        if (!value || size == 0 || size > 255 ||
+            memchr(XByteArray_constData(value), 0, size) != NULL) {
+            for (size_t j = 0; j < XContainer_size_base((const XContainer*)replacement); ++j) {
+                XByteArray** old = (XByteArray**)XVector_at_base(replacement, (int64_t)j);
+                if (old && *old) XClass_delete_base((XClass*)*old);
+            }
+            XVector_delete_base((XContainer*)replacement);
+            return false;
+        }
+        XByteArray* copy = XByteArray_create_copy(value);
+        if (!copy || !XVector_push_back_1_base(replacement, &copy)) {
+            if (copy) XClass_delete_base((XClass*)copy);
+            for (size_t j = 0; j < XContainer_size_base((const XContainer*)replacement); ++j) {
+                XByteArray** old = (XByteArray**)XVector_at_base(replacement, (int64_t)j);
+                if (old && *old) XClass_delete_base((XClass*)*old);
+            }
+            XVector_delete_base((XContainer*)replacement);
+            return false;
+        }
+    }
+    if (self->allowedNextProtocols) {
+        for (size_t i = 0; i < XContainer_size_base((const XContainer*)self->allowedNextProtocols); ++i) {
+            XByteArray** slot = (XByteArray**)XVector_at_base(self->allowedNextProtocols, (int64_t)i);
+            if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        }
+        XVector_delete_base((XContainer*)self->allowedNextProtocols);
+    }
+    self->allowedNextProtocols = replacement;
+    xssl_clear_negotiated_protocol(self);
+    return true;
+}
+
+XVector* XSslSocket_allowedNextProtocols(const XSslSocket* self)
+{
+    XVector* result;
+    size_t count;
+    if (!self || !self->allowedNextProtocols)
+        return XVector_create(sizeof(XByteArray*));
+    result = XVector_create(sizeof(XByteArray*));
+    if (!result)
+        return NULL;
+    count = XContainer_size_base((const XContainer*)self->allowedNextProtocols);
+    for (size_t i = 0; i < count; ++i) {
+        XByteArray* const* slot = (XByteArray* const*)XVector_at_base(
+            self->allowedNextProtocols, (int64_t)i);
+        XByteArray* copy = slot && *slot ? XByteArray_create_copy(*slot) : NULL;
+        if (!copy || !XVector_push_back_1_base(result, &copy)) {
+            if (copy) XClass_delete_base((XClass*)copy);
+            for (size_t j = 0; j < XContainer_size_base((const XContainer*)result); ++j) {
+                XByteArray** old = (XByteArray**)XVector_at_base(result, (int64_t)j);
+                if (old && *old) XClass_delete_base((XClass*)*old);
+            }
+            XVector_delete_base((XContainer*)result);
+            return NULL;
+        }
+    }
+    return result;
+}
+
+XByteArray* XSslSocket_nextNegotiatedProtocol(const XSslSocket* self)
+{
+    return self && self->nextNegotiatedProtocol ?
+        XByteArray_create_copy(self->nextNegotiatedProtocol) : NULL;
+}
+
+XSslNextProtocolNegotiationStatus XSslSocket_nextProtocolNegotiationStatus(
+    const XSslSocket* self)
+{
+    return self ? self->nextProtocolStatus : XSSL_NextProtocolNegotiationNone;
 }
 
 void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca)
@@ -1202,7 +1329,3 @@ XVtable* XSslSocket_class_init(void) {
 
     return XVTABLE_DEFAULT;
 }
-
-
-
-

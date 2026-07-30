@@ -56,6 +56,13 @@ void XRegularExpressionValidator_init(XRegularExpressionValidator* validator);
  */
 XRegularExpressionValidator* XRegularExpressionValidator_create(void);
 /**
+ * @brief 使用指定正则表达式创建校验器。
+ * @param expression 初始正则表达式；函数只读取该对象，不能传入 NULL。
+ * @return 成功返回新校验器，调用者必须使用 XRegularExpressionValidator_delete_base 释放；失败返回 NULL。
+ */
+XRegularExpressionValidator* XRegularExpressionValidator_create_ex(
+        const XRegularExpression* expression);
+/**
  * @brief 创建校验器的深拷贝。
  * @param other 源校验器；不能传入 NULL。
  * @return 成功返回新堆对象，调用者负责释放；失败返回 NULL。

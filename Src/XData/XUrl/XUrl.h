@@ -84,6 +84,8 @@ typedef struct XUrl
     XString*   m_path;       /**< 路径 */
     XString*   m_query;      /**< 查询字符串 */
     XString*   m_fragment;   /**< 片段标识符 */
+    XString*   m_userInfo;   /**< 用户信息缓存；对象拥有，只能通过 const API 借用。 */
+    XString*   m_authority;  /**< authority 缓存；对象拥有，只能通过 const API 借用。 */
     int        m_port;       /**< 端口号（-1 表示未指定） */
     bool       m_isValid;     /**< URL 是否有效 */
 } XUrl;
@@ -310,9 +312,9 @@ const XString* XUrl_fragment_const(const XUrl* self);
 void XUrl_setFragment(XUrl* self, const XString* fragment);
 
 /**
- * @brief      获取用户信息（username:password）
- * @param self 目标 XUrl 对象指针
- * @return     用户信息字符串（XString）
+ * @brief      获取用户信息（username:password）的借用视图
+ * @param self 目标 XUrl 对象指针；不能为 NULL。
+ * @return     内部缓存字符串；调用者不得释放或修改，下一次 URL 组件访问后仍由对象拥有。
  */
 const XString* XUrl_userInfo_const(const XUrl* self);
 
@@ -324,9 +326,9 @@ const XString* XUrl_userInfo_const(const XUrl* self);
 void XUrl_setUserInfo(XUrl* self, const XString* userInfo);
 
 /**
- * @brief      获取权限部分（userinfo@host:port）
- * @param self 目标 XUrl 对象指针
- * @return     权限字符串（XString）
+ * @brief      获取权限部分（userinfo@host:port）的借用视图
+ * @param self 目标 XUrl 对象指针；不能为 NULL。
+ * @return     内部缓存字符串；调用者不得释放或修改，URL 销毁后立即失效。
  */
 const XString* XUrl_authority_const(const XUrl* self);
 

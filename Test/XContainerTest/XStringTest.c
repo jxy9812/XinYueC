@@ -359,6 +359,16 @@ static void XStringFindCompareTest(void)
 		XString_delete_base(a);
 		XString_delete_base(b);
 	}
+	/* 有效空字符串允许尚未分配字符缓冲区，比较不得解引用空数据指针。 */
+	{
+		XString* firstEmpty = XString_create();
+		XString* secondEmpty = XString_create();
+		bool equals = firstEmpty && secondEmpty &&
+			XString_equals(firstEmpty, secondEmpty, XChar_CaseSensitive);
+		XPrintf("两个未分配缓冲区的空字符串相等=%s\n", equals ? "通过" : "失败");
+		XString_delete_base(firstEmpty);
+		XString_delete_base(secondEmpty);
+	}
 	{
 		XString* s = XString_create_utf8("Hello");
 		XString* t = XString_create_utf8("hello");

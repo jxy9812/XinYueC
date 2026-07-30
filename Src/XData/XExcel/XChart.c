@@ -376,6 +376,24 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     write_value_element(writer, "c:dispBlanksAs", "gap");
     XXmlStreamWriter_writeEndElement(writer);
 
+    /* 图表位置和尺寸由 Drawing 保存，但独立图表 XML 也要保留对象属性，
+       这样 XChart_saveToXmlData/XChart_loadFromXmlData 可以无损往返。 */
+    XXmlStreamWriter_writeEmptyElement_utf8(writer, "settings");
+    char setting[32];
+#define WRITE_CHART_SETTING(field, name) do { \
+        snprintf(setting, sizeof(setting), "%d", (field)); \
+        XXmlStreamWriter_writeAttribute_utf8(writer, (name), setting); \
+    } while (0)
+    WRITE_CHART_SETTING(self->m_row, "row");
+    WRITE_CHART_SETTING(self->m_col, "col");
+    WRITE_CHART_SETTING(self->m_rowOffset, "rowOffset");
+    WRITE_CHART_SETTING(self->m_colOffset, "colOffset");
+    WRITE_CHART_SETTING(self->m_width, "width");
+    WRITE_CHART_SETTING(self->m_height, "height");
+    WRITE_CHART_SETTING(self->m_majorGridlinesEnable, "majorGridlines");
+    WRITE_CHART_SETTING(self->m_minorGridlinesEnable, "minorGridlines");
+#undef WRITE_CHART_SETTING
+
     XXmlStreamWriter_writeEndDocument(writer);
 
     return !XXmlStreamWriter_hasError(writer);

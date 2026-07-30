@@ -122,6 +122,27 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 
 #if XRegularExpression_ON
 
+static XRegularExpression* XStringList_exactRegularExpression(
+        const XRegularExpression* expression)
+{
+    if (!expression) return NULL;
+    XString* pattern = XRegularExpression_pattern(expression);
+    if (!pattern) return NULL;
+    XString* anchored = XRegularExpression_anchoredPattern_2(pattern);
+    XRegularExpression* result = NULL;
+    if (anchored) {
+        result = XRegularExpression_create();
+        if (result) {
+            XRegularExpression_setPattern(result, anchored);
+            XRegularExpression_setPatternOptions(result,
+                                                  XRegularExpression_patternOptions(expression));
+        }
+    }
+    if (anchored) XString_delete_base(anchored);
+    XString_delete_base(pattern);
+    return result;
+}
+
 XStringList* XStringList_filter_regularExpression(const XStringList* strList,
                                                   const XRegularExpression* expression)
 {
@@ -142,12 +163,19 @@ int64_t XStringList_indexOf_regularExpression(const XStringList* strList,
                                               int64_t from)
 {
     if (!strList || !expression) return -1;
+    int64_t count = (int64_t)XStringList_size_base(strList);
+    if (from < 0) from += count;
     if (from < 0) from = 0;
-    size_t count = XStringList_size_base(strList);
-    for (size_t i = (size_t)from; i < count; ++i) {
+    XRegularExpression* exact = XStringList_exactRegularExpression(expression);
+    if (!exact) return -1;
+    for (int64_t i = from; i < count; ++i) {
         const XString* value = (const XString*)XStringList_at_base(strList, (int64_t)i);
-        if (value && XString_contains_regularExpression(value, expression)) return (int64_t)i;
+        if (value && XString_contains_regularExpression(value, exact)) {
+            XRegularExpression_delete_base(exact);
+            return (int64_t)i;
+        }
     }
+    XRegularExpression_delete_base(exact);
     return -1;
 }
 
@@ -157,11 +185,18 @@ int64_t XStringList_lastIndexOf_regularExpression(const XStringList* strList,
 {
     if (!strList || !expression) return -1;
     int64_t count = (int64_t)XStringList_size_base(strList);
-    if (from < 0 || from >= count) from = count - 1;
+    if (from < 0) from += count;
+    else if (from >= count) from = count - 1;
+    XRegularExpression* exact = XStringList_exactRegularExpression(expression);
+    if (!exact) return -1;
     for (int64_t i = from; i >= 0; --i) {
         const XString* value = (const XString*)XStringList_at_base(strList, i);
-        if (value && XString_contains_regularExpression(value, expression)) return i;
+        if (value && XString_contains_regularExpression(value, exact)) {
+            XRegularExpression_delete_base(exact);
+            return i;
+        }
     }
+    XRegularExpression_delete_base(exact);
     return -1;
 }
 

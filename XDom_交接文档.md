@@ -1,221 +1,183 @@
-﻿# XDom XML DOM 模块交接文档
+# XDom XML DOM 与 XML 流模块交接文档
 
-更新时间：2026-07-28  
-工作目录：`D:\code\CMake\XinYueC`
+更新时间：2026-07-30
+工作目录：`/home/xinyue/Code/XinYueC`
 
 ## 1. 目标与约束
 
-本模块位于 `Src/XData/XDom`，目标是以 C API 对齐 Qt 6.8 的 `QDomDocument`、`QDomNode`、`QDomElement`、`QDomAttr`、`QDomText`、`QDomCDATASection`、`QDomComment`、`QDomDocumentType`、`QDomNodeList`、`QDomNamedNodeMap`、`QDomImplementation`、`QDomEntity`、`QDomNotation`，并补充完整 `QDomNode` 所需的文档片段、实体引用、处理指令及字符数据句柄。
+`Src/XData/XDom` 与 `Src/XData/XXmlStream` 以 C API 对齐本机 Qt 6.8.3 的
+`QDomDocument`、`QDomNode`、
+`QDomElement`、`QDomAttr`、`QDomText`、`QDomCDATASection`、`QDomComment`、
+`QDomDocumentType`、`QDomNodeList`、`QDomNamedNodeMap`、`QDomImplementation`、
+`QDomEntity`、`QDomNotation`、`QDomEntityReference`、`QDomDocumentFragment`、
+`QDomProcessingInstruction`、`QDomCharacterData`，以及
+`QXmlStreamAttribute`、`QXmlStreamAttributes`、`QXmlStreamNamespaceDeclaration`、
+`QXmlStreamNamespaceDeclarations`、`QXmlStreamNotationDeclaration`、
+`QXmlStreamNotationDeclarations`、`QXmlStreamEntityDeclaration`、
+`QXmlStreamEntityDeclarations`、`QXmlStreamEntityResolver`、`QXmlStreamReader` 和
+`QXmlStreamWriter`。
 
-必须遵守：
+必须继续遵守：
 
-- 不引入 Qt、Win32、POSIX、文件系统 API 或其他平台 API。XML 实现只能依赖 `XString`、`XByteArray`、`XXmlStreamReader`、`XMemory`、`XClass` 等现有抽象。
-- 字符串内部使用 `XString` 的 UTF-16 表示；`XDomCharacterData` 的长度和偏移按 UTF-16 代码单元计算；字节输入输出使用 UTF-8。
-- 公开 API 保持 Qt 名称主体；C 的重载使用项目约定后缀，例如 `_utf8`、`_result`。
-- 不实现 QtCore5Compat 的旧 SAX 兼容层：`QXmlAttributes`、`QXmlSimpleReader`、`QXmlReader`、
-  `QXmlInputSource` 及各类 SAX Handler 均不在当前 XML 模块范围内。属性流式访问统一使用
-  已有的 `XXmlStreamAttribute` / `XXmlStreamAttributes`（对应 `QXmlStreamAttribute` /
-  `QXmlStreamAttributes`）。
-- 所有 `copy`、`move` 虚函数和私有辅助函数必须先检查源、目标和目标 vtable。目标未初始化时先 `Type_init()`，源未初始化安全返回，`dest == src` 直接返回。DOM 的复制语义是 Qt 风格浅拷贝；深拷贝使用 `cloneNode()`。
-- 公共头文件必须包含中文 Doxygen 注释：`@brief`、`@details`、每个参数的 `@param`、返回值的 `@return`、所有权和生命周期说明的 `@note`。该格式已经写入根目录的代码风格文档。
+- 不引入 Qt、Win32、POSIX、`FILE` 或其他平台 API；XML 只通过项目既有的
+  `XString`、`XByteArray`、`XIODevice`、`XXmlStreamReader`、`XMemory`、`XClass` 抽象工作。
+- 字符串内部使用 `XString` 的 UTF-16 表示；字符数据的偏移和长度均按 UTF-16 代码单元计算。
+- 保持 Qt 名称主体；C 重载使用项目后缀，例如 `_utf8`、`_result`。
+- 复制、移动和析构遵循项目的 `XClass`/vtable 约定；DOM 句柄为浅拷贝，深拷贝由
+  `cloneNode()` 明确请求。
+- 公共头文件保留中文 Doxygen 注释，说明参数、返回值、所有权和生命周期。
 
-## 2. 当前文件状态
+## 2. 当前完成状态
 
 | 路径 | 状态 | 说明 |
 |---|---|---|
-| `Src/XData/XDom/XDom.h` | 已创建，544 行 | 中央公开头文件，包含所有类型、枚举和 API 声明。前半部分注释较完整，后半部分 API 声明仍需逐函数补充详细中文注释。 |
-| `Src/XData/XDom/XDom.c` | 已创建，约 3179 行 | 单文件私有实现，已能编译；见下文的已实现和风险说明。 |
-| `Src/XData/XDom/XDom*.h` | 已创建但不完整 | 每个类头文件目前只是包含 `XDom.h` 的薄转发头，缺少文件注释和该类 API 的说明。 |
-| `Test/XDataTest/XDomTest.c/.h` | 未创建 | 尚无 DOM 自动测试。 |
-| `Test/XDataTest/XDataTest.c` | 未修改 | 尚未注册 DOM 菜单。 |
+| `Src/XData/XDom/XDom.h` | 已完成 | 中央公开入口，包含类型、枚举、生命周期、解析和序列化 API。 |
+| `Src/XData/XDom/XDom.c` | 已完成 | DOM 私有模型、节点树、解析、DTD、序列化和全部公开实现。 |
+| `Src/XData/XDom/` | 已完成 | DOM 模块已收敛为唯一公共头 `XDom.h` 和唯一实现 `XDom.c`，不再保留各类型转发头。 |
+| `Test/XDataTest/XDomTest.c/.h` | 已完成 | 中文自动化测试和菜单入口。 |
+| `Test/XDataTest/XDataTest.c` | 已完成 | 已注册 `XDomTest` 子菜单。 |
+| `Src/XData/XXmlStream/XXmlStreamReader.*` | 已完成 | XML 流值类型、声明集合、实体解析器和读取器 API。 |
+| `Src/XData/XXmlStream/XXmlStreamWriter.*` | 已完成 | XML 流文档、元素、属性、文本、DTD 和设备输出 API。 |
+| `Test/XDataTest/XXmlStreamReaderTest.c` | 已完成 | XML 流读取器、值类型、构造重载和集合 API 中文测试。 |
+| `Test/XDataTest/XXmlStreamWriterTest.c` | 已完成 | XML 流写入器、设备/外部缓冲目标和 Qt 边界行为中文测试。 |
 
-`Src/XData/XDom/` 目前还是未跟踪目录。工作树同时存在许多与 XML 无关的用户修改，继续工作时不要还原或覆盖它们。
+## 3. 已完成的 Qt 6.8 对齐
 
-## 3. 已完成实现
+### 3.1 公开 API 与符号
 
-### 3.1 内部模型
+- `XDomImplementation` 的能力查询、文档类型创建、文档创建、空句柄判断和全局
+  `InvalidDataPolicy` 已实现。
+- 所有具体句柄到 `XDomNode` 的转换均为共享私有节点的浅包装，不复制树。
+- `XDomNode`、`XDomNodeList`、`XDomNamedNodeMap`、文档工厂、属性、命名空间、
+  字符数据、实体、符号、处理指令、文档片段和实体引用 API 已实现。
+- `XDom_BaseNode = 21` 与 `XDom_CharacterDataNode = 22` 已按 Qt 枚举补齐。
+- `setContent` 支持 `XByteArray`、UTF-8、`XString`、已有 `XXmlStreamReader` 和
+  `XIODevice` 输入；旧式错误输出参数与 `XDomParseResult` 接口均可用。
+- 公开头文件共 255 个 `XDom*` 函数声明；对当前 `libXinYueCSd.a` 做符号审计，
+  缺失定义数量为 0。
 
-`XDomNodePrivate` 使用引用计数保存节点数据、父子关系、属性、DTD 实体和符号声明。所有公共对象是轻量句柄，结构第一个成员为 `XClass`，第二个成员持有共享私有节点。
+### 3.2 行为与边界
 
-已经实现：
+- 节点插入、替换、删除、同父节点移动、文档片段展开、深克隆、导入和浅拷贝已实现。
+- 文档最多保留一个根元素和一个文档类型；重复 DTD、重复根元素均被拒绝且不破坏原树。
+- `XDomNodeList`、`elementsByTagName()` 和 `elementsByTagNameNS()` 为实时查询列表。
+- `NamedNodeMap` 支持名称/命名空间查询与只读实体、notation 映射；`contains()` 无临时句柄泄漏。
+- 属性 `specified`、属性子文本同步、`setTagName()`、命名空间前缀、属性排序与自动
+  `xmlns` 补全已按 Qt 行为固定。
+- 文本、CDATA、注释和处理指令的字符数据 API、UTF-16 索引、`splitText()` 和
+  `normalize()` 已实现；`normalize()` 只处理当前层的相邻 Text/CDATA 节点。
+- DTD 的名称、publicId、systemId、internal subset、外部实体、内部实体、notation 和
+  实体引用已覆盖；CDATA 序列化保留原始数据并安全拆分 `]]>`。
+- 序列化支持缩进、紧凑输出、`EncodingFromDocument` 与 `EncodingFromTextStream`；
+  `save()` 仅写入 `XIODevice`。
+- 已按 Qt 6.8.3 源码修正属性节点追加、`setPrefix()`、`setTagName()`、浮点属性格式、
+  字符数据越界插入和 `readElementText()` 非开始元素返回值；这些行为均有回归测试。
 
-- 句柄的创建、浅拷贝、移动、析构和空句柄。
-- 子节点插入、替换、移除、追加、文档片段展开、深克隆、标准文本规范化。
-- 元素属性、命名空间属性、属性节点、`NamedNodeMap`、元素后代查询和文档节点工厂。
-- 文本、CDATA、注释的字符数据修改 API；`splitText()` 会为 CDATA 创建普通文本节点，这与 Qt 行为一致。
-- DTD 名称、publicId、systemId、internalSubset、实体和符号映射的基本承载。
-- 通过已有 `XXmlStreamReader` 解析 `StartDocument`、DTD、元素、属性、文本、CDATA、注释、处理指令、实体引用。
-- `toString(indent)` / `toByteArray(indent)` 的基础序列化。
-- `QDomNode::isText()` 已调整为普通文本和 CDATA 都返回真；`toText()` 同样接受 CDATA。
+### 3.3 Reader 配合项
 
-### 3.2 已验证
+- `XXmlStreamReader_hasXmlDeclaration()` 已公开，用于可靠区分“没有 XML 声明”与
+  Reader 的默认版本值。
+- XML 声明接受标准的 `version + encoding + standalone` 顺序，保证由 XExcel 保存的
+  `xl/workbook.xml` 能被重新读取。
+- XML 流测试中的局部 `XString` 均已配对析构；完整地址检测不再报告该路径泄漏。
 
-Windows 下执行过：
+### 3.4 QXmlStream 公共类对齐
 
-```powershell
-cmake --build build --config Debug --target XinYueC_Static -j 5
-```
+- `QXmlStreamAttribute`、`QXmlStreamNamespaceDeclaration`、
+  `QXmlStreamNotationDeclaration` 和 `QXmlStreamEntityDeclaration` 的字段、生命周期、
+  访问器及等价判断均已提供 C API 映射。
+- `QXmlStreamAttributes`、`QXmlStreamNamespaceDeclarations`、
+  `QXmlStreamNotationDeclarations` 和 `QXmlStreamEntityDeclarations` 均支持创建、销毁、
+  `size`/`count`、`isEmpty`、索引访问和顺序等价判断。
+- `QXmlStreamReader` 已覆盖增量输入、设备输入、令牌遍历、命名空间、DTD、实体、错误、
+  行列偏移、XML 声明和当前令牌读取；`QXmlStreamWriter` 已覆盖文档、元素、属性、文本、
+  CDATA、注释、处理指令、实体引用、DTD、命名空间、格式化、设备和当前令牌写出。
+- Reader 已提供字节数组、UTF-16 `XString`、UTF-8 字符串和 `XIODevice` 构造入口；Writer 已
+  提供 `XByteArray`、`XString` 和 `XIODevice` 输出入口。属性、命名空间、Notation、Entity
+  集合已提供深拷贝、追加、插入、删除和清空接口；Reader 返回的集合视图仍为借用值，需用
+  `_copy` 接口取得独立所有权。
+- C API 用显式的 `equals`、`count` 和 `isEmpty` 函数映射 Qt 的运算符与容器便捷接口；
+  读取器和写入器用 `create`/`setDevice`/`addData` 等函数映射 Qt 的构造函数重载。
+- `QXmlUtils`、`qdom_p.h` 和 `qxmlstream_p.h` 是 Qt 私有实现，不属于公共类迁移范围。
 
-结果：成功生成 `bin\Debug\XinYueC_Static.exe`，退出码为 `0`。构建输出含项目既有的大量警告；本次没有阻断编译的 DOM 错误。
+### 3.6 DOM 文件布局
 
-注意：这只证明编译和链接通过，不代表 DOM 行为已经测试通过。
+- 所有 XDom 类型、枚举、生命周期声明和公共 API 均集中在
+  `Src/XData/XDom/XDom.h`。
+- 所有 DOM 私有模型、节点操作、解析、DTD 和序列化实现均集中在
+  `Src/XData/XDom/XDom.c`。
+- 测试代码只包含 `XDom.h`；删除的类型专用头文件不再作为公共兼容入口维护。
 
-## 4. 未完成的公开 API
+### 3.5 公共头文件注释规范
 
-下列声明还没有对应实现。继续前应先实现它们，否则任何引用这些 API 的测试或业务代码都会链接失败。
+- `XDom` 和 `XXmlStream` 公共头文件统一使用文件说明在 include guard 之前、UTF-8 BOM
+  在文件首部的格式；类型、枚举、结构体字段和公共函数均保留中文 Doxygen 说明。
+- 每个公共函数均使用独立的多行 `/** ... */` 注释块；`@param` 名称与声明完全一致，
+  `@return` 说明返回对象的所有权、NULL 语义和释放方式，void 函数也明确写出无返回值。
+- 注释明确区分 UTF-8 字节输入、UTF-16 字符串及 UTF-16 代码单元索引，并标注对应的
+  Qt 6.8 API、借用参数、复制行为、失败时对象状态和设备所有权限制。
 
-### 4.1 `XDomImplementation`
+## 4. 测试与验证
 
-- `XDomImplementation_hasFeature`
-- `XDomImplementation_hasFeature_utf8`
-- `XDomImplementation_createDocumentType`
-- `XDomImplementation_createDocumentType_utf8`
-- `XDomImplementation_createDocument`
-- `XDomImplementation_createDocument_utf8`
-- `XDomImplementation_isNull`
-- `XDomImplementation_invalidDataPolicy`
-- `XDomImplementation_setInvalidDataPolicy`
+`XDomTest_runAll()` 已注册到中文菜单：`测试代码 -> XDataTest -> XDomTest -> 全部测试`；
+`XXmlStreamReaderTest_runAll()` 已注册到：`测试代码 -> XDataTest -> XXmlStreamReaderTest -> 全部测试`。
+测试覆盖以下类别：
 
-推荐行为：`hasFeature("XML", "")` 和 `hasFeature("XML", "1.0")` 返回真；`createDocument()` 创建文档、可选插入 doctype、创建并挂接根元素；无效名称返回空文档或空句柄；InvalidDataPolicy 为进程级状态，文档必须注明它不是并发可重入设置。
+- `XDomImplementation`、所有具体节点到 Node 的转换、默认文档类型构造。
+- 节点树操作、根元素/DTD 限制、实时列表、克隆、导入、片段、句柄复制和移动。
+- 属性、命名空间、字符数据、CDATA 序列化、实体、DTD、错误行列和内容回读。
+- `XString`、Reader、设备输入、XML 声明、UTF-8 声明策略以及失败路径。
+- XML 流值类型等价规则，以及四类声明集合的 `size`/`count`/`isEmpty`/`equals`。
+- Qt 剩余差异回归，包括属性 `specified`、命名映射、内部/外部实体、重复 DTD 和
+  命名空间序列化。
 
-### 4.2 类型到 Node 的转换
+已完成的验证记录：
 
-以下 `toNode()` 函数尚未实现：
+1. 普通构建成功：`cmake --build build_nosan --target XinYueC_Static -j5`。
+2. XData 中文菜单入口已完成连续回归；XChar、XXmlStreamWriter、XXmlStreamReader、XDom 和
+   XExcel 扩展流程均无失败。
+3. Writer 修复了 `writeEmptyElement()` 后结束父元素时的元素栈收口；生成的 Styles、Drawing、
+   Relationships 和 DocProps XML 不再发生错误嵌套。Reader 工作表属性查询同时支持限定名 `r:id`，
+   外部超链接关系可以恢复真实 URL；XChart 独立 XML 保存了位置、偏移和尺寸元数据。
+4. `XDocPropsCore_saveToXmlData()` 与 `XDocPropsApp_saveToXmlData()` 返回的 XML 数据增加 NUL
+   终止字节，`outLen` 仍只表示 XML 有效字节数，避免文本调用方越界读取。
+5. 普通 XExcel 完整流程连续运行三轮，均为 `200 项断言，失败 0`；覆盖图表、DrawingAnchor、
+   工作表保护/起始页、样式字体/颜色/边框/对齐、外部超链接关系、Document 单元格样式、设备和
+   图片包往返。
+6. 普通核心菜单回归通过：XChar `12 通过, 0 失败`，XXmlStreamWriter `28 通过, 0 失败`，
+   XXmlStreamReader 和 XDom 均无失败；Reader 覆盖新增构造、UTF-16/Latin1/ASCII 输入、拆分 BOM、
+   配置保留、位置、集合深拷贝和 `readElementText()` 回归。
+7. 目标 sanitizer 菜单中，XExcel 完整流程、XXmlStreamWriter、XXmlStreamReader 和 XDom 均有
+   退出码 `0` 且未报告地址错误或 LeakSanitizer 泄漏；重复 sanitizer 启动期间出现过无报告的
+   `DEADLYSIGNAL` 瞬时进程异常，因此该现象作为环境/工程级残余风险保留，不把单次 sanitizer
+   结果扩大为整个仓库的内存安全证明。
+8. 完整工程 ASan 菜单仍受当前工作区未跟踪的 `XNetworkAccessManager.c`
+   在新 sanitizer 配置中缺少 `xhttp_manager_shared_http2_detach` 链接定义，使用临时测试桩
+   后完整菜单又进入 `AddressSanitizer:DEADLYSIGNAL` 信号输出循环；该问题不在 XML 文件或
+   XML 测试栈中，不能将此环境结果表述为完整工程最新 LSan 证明。
+9. `git diff --check` 通过；XDom 头文件的 255 个公开函数和 XXmlStream 各公共类型的声明
+   均能在静态库中找到定义，缺失数量为 0。
 
-- `XDomElement_toNode`
-- `XDomAttr_toNode`
-- `XDomText_toNode`
-- `XDomCDATASection_toNode`
-- `XDomComment_toNode`
-- `XDomDocument_toNode`
-- `XDomDocumentType_toNode`
-- `XDomDocumentFragment_toNode`
-- `XDomEntity_toNode`
-- `XDomNotation_toNode`
+## 5. 当前未完成项
 
-实现方式应统一为创建 `XDomNode` 空句柄后，对底层 `m_impl` 增加引用。不得复制节点树。
+Qt 6.8.3 公共 API 的本轮源码、声明、符号和普通运行审计未发现缺少的 XDom 或 XXmlStream
+公开函数。集合返回值使用 `_copy` 明确表达 Qt 值语义，原有 Reader 访问器继续保留借用视图
+以兼容现有 XExcel 调用方。
 
-### 4.3 仍需补充的 Qt 对齐 API
+XML 核心 Reader、Writer、XDom 和 XExcel 目标菜单的 sanitizer 证据已经形成；仍未形成的是包含网络、GUI、
+协议栈和 XExcel 的完整工程 sanitizer 证据。该全工程路径受 `XNetworkAccessManager.c` 的
+未跟踪实现链接桩和既有工程规模影响，不能用 XML 核心菜单结果替代。
 
-当前公开头只覆盖了一部分 Qt 6.8 API。建议补齐并评审是否需要公开：
+后续只有以下非阻断性维护事项：
 
-- `setContent(XString)`、`setContent(XIODevice*)` 和从现有 Reader 继续构建的版本；接口名按现有 C 后缀规范设计。
-- `QDomDocument::setContent` 的所有解析选项、错误位置和字符串输入编码语义。
-- `QDomNode::save` 的设备/流抽象版本（若项目确实需要）；不能使用 `FILE` 或平台 API。
-- `QDomDocument` 的 `createEntityReference`、`QDomEntityReference` 的最终公开行为和测试。
-- 是否需要支持 XML 声明的 `standalone="no"`：当前私有节点只保存布尔真值，不能区分“显式 no”和“未声明”。
+- 若升级 Qt 版本，应重新以新版本 `qdom.h`/`qdom.cpp` 复核 API 和行为差异。
+- 新增业务场景时，将其最小回归用例加入 `XDomTest`，并重新运行普通构建和 sanitizer 菜单。
+- 工作区内的 `Src/XCode/XNetwork/XHttp/` 与网络测试文件属于其他正在开发的模块，
+  不属于 XDom 交接范围。
 
-## 5. 已知问题和高优先级风险
+## 6. 交接结论
 
-这些问题应该在添加测试前或测试驱动下优先修正。
-
-1. `XDomNodeList` 当前是创建时的快照，不是 Qt 的 live list。Qt 要求树发生增删后，已经取得的 `childNodes()`、`elementsByTagName()` 和 `elementsByTagNameNS()` 列表重新查询时能反映更新。需要将列表私有数据改为“源节点 + 查询过滤条件 + 文档版本号”，而不是复制节点数组。
-
-2. `XDomNamedNodeMap_contains()` 和 `_utf8()` 通过创建临时 `XDomNode` 查询，未释放临时句柄，存在泄漏。应直接调用 `xxml_dom_map_find_name()`，或在查询后销毁包装对象。
-
-3. 文档节点尚未限制“最多一个根元素”和“最多一个 doctype”。`xxml_dom_node_child_allowed()` 只限制了节点种类，未检查现有子节点数量。插入和解析都应拒绝第二个根元素，并保持失败操作不会破坏原树。
-
-4. CDATA 序列化目前错误地调用通用文本转义，CDATA 内容中的 `&`、`<` 会被改写。必须保留原内容，并将每个 `]]>` 拆成 `]]]]><![CDATA[>` 后再输出。
-
-5. DTD 的 internal subset 提取采用简单的 `strchr('[')` / `strrchr(']')`。当 DTD 注释、实体值或其他语法中包含方括号时会错误。应使用状态机扫描引号、注释、内部子集嵌套语义，或让 `XXmlStreamReader` 暴露可靠的原始 internal subset。
-
-6. `XDomDocument_setContent_result()` 已接入 Reader，但未做运行时测试。须覆盖 Reader 当前 XML 声明、UTF-8/UTF-16、错误行列、DTD 实体、命名空间、空白节点和实体引用的实际 token 行为。
-
-7. 解析器无法从 Reader 公开 API 区分“没有 XML 声明”和“Reader 默认给出 version=1.0”，现以原始字节开头是否 `<?xml` 作为临时判断。此方式未覆盖 UTF-16 BOM/XML 声明。更好的做法是在 `XXmlStreamReader` 公开 `hasXmlDeclaration()` 和错误位置快照。
-
-8. `XDom` 普通工厂节点和解析关闭命名空间处理时已改为清空 localName/prefix/namespaceURI；但所有调用路径、属性重命名和 `setPrefix()` 还需要测试，防止 DOM Level 1 与 Namespace API 混用时产生不一致状态。
-
-9. `XDomNodeType` 缺少 Qt 的 `BaseNode = 21` 枚举值；当前只有 `UnknownNode = 0` 和 `CharacterDataNode = 22`。应补回 API 对齐枚举值并写明其不是 XML 实体节点。
-
-10. `normalize()` 当前递归合并普通文本且不合并 CDATA，遵循 Qt 文档/DOM 直觉；Qt 6.8 实现本身有“只处理当前层且把 CDATA 当 text”的差异。需要明确项目选择文档语义还是逐源码兼容，并以测试锁定。
-
-11. 单个公共头转发文件只有四行，违反本项目“详细中文头文件注释”的新约束。要么为每个文件补充该类型摘要、所有权和包含关系注释，要么把各类型声明从中央头分拆到相应头文件，同时保持 `XDom.h` 作为总入口。
-
-12. 没有 DOM 专用测试，因此内存引用计数、失败路径、树重新挂接和序列化都未经过回归验证。建议在 Linux 运行 ASan/UBSan 或 valgrind（若项目构建方式允许）辅助查泄漏和悬挂引用。
-
-## 6. 测试与菜单计划
-
-新增：
-
-```text
-Test/XDataTest/XDomTest.h
-Test/XDataTest/XDomTest.c
-```
-
-建议测试函数采用已有风格：
-
-```c
-bool XDomTest_runAll(void);
-void XMenu_XDomTest(XMenu* root);
-```
-
-在 `Test/XDataTest/XDataTest.c` 中包含 `XDomTest.h`，并在 `XMenu_XDataTest()` 中调用：
-
-```c
-XMenu_XDomTest(menu);
-```
-
-菜单项目和输出必须使用中文。不要把 `runAll` 放入不相关的测试菜单；保持 Reader 和 Writer 当前各自的菜单注册方式。
-
-首批测试至少覆盖：
-
-- 句柄浅拷贝可见性、`cloneNode(true/false)` 独立性、移动后源对象为空但可析构。
-- 对未初始化的目标调用 `copy_base` / `move_base`，以及源未初始化、源目标同一对象的安全行为。
-- 根元素、父子重挂接、片段展开、错误引用节点、多个根元素的拒绝。
-- 属性、属性节点、普通/命名空间属性、命名节点映射替换和移除。
-- `NodeList` 实时更新行为和越界/负索引空节点。
-- UTF-16 代码单元长度、`substringData`、超范围 `insertData` 补空格、`splitText` 的 0/末尾/越界/负数/无父节点/CDATA 情况。
-- 文本、CDATA、注释、PI、实体引用的类型判断、转换与序列化；特别验证 CDATA `]]>`。
-- `setContent` 的成功、错误信息、行列、默认丢弃纯空白、`PreserveSpacingOnlyNodes`、命名空间开关、UTF-8 与 UTF-16。
-- DTD public/system/internal subset、实体、notation，以及序列化后再解析。
-- `QDomImplementation` 全部 API。
-
-## 7. Linux 继续步骤
-
-建议从干净构建目录开始，但不要删除用户已有 `build-linux` 内容，除非先确认其中没有需要保留的产物。
-
-```bash
-cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-linux --target XinYueC_Static -j5
-./bin/XinYueC_Static
-```
-
-若 Linux 输出目录由生成器配置为不同路径，先用：
-
-```bash
-find build-linux -type f -name 'XinYueC_Static*'
-```
-
-定位可执行文件。完成 `XDomTest` 菜单注册后，通过中文菜单运行 DOM 测试；也应保留现有 `--list`、`--test` 命令行测试入口的一致性。
-
-Linux 首次构建建议增加：
-
-```bash
-cmake -S . -B build-linux-asan -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
-cmake --build build-linux-asan --target XinYueC_Static -j5
-```
-
-若第三方库或已有代码不兼容 sanitizer，不要为 DOM 临时绕过平台抽象；先记录现有全局构建问题，再用最小 DOM 测试程序做验证。
-
-## 8. 建议执行顺序
-
-1. 实现第 4 节列出的 API，先完成 `Implementation` 与所有 `toNode()`，然后重新构建。
-2. 修复第 5 节的 CDATA、map 泄漏、文档根元素约束和 NodeList 实时语义。
-3. 将公共头文件注释补齐，并在代码风格文档中核对注释格式是否继续满足要求。
-4. 新建 DOM 测试和中文菜单注册，先以手工建树与序列化测试固定内存/所有权语义。
-5. 再以 `XXmlStreamReader` 驱动的解析测试固定命名空间、编码、DTD 和错误位置行为。
-6. 在 Linux Debug 与 sanitizer 构建下通过完整 DOM 测试后，再判断 Reader/Writer 是否需要为 DOM 暴露补充 API，例如 `hasXmlDeclaration()`。
-
-## 9. 与现有 Reader/Writer 的关系
-
-`XXmlStreamReader` 和 `XXmlStreamWriter` 已有较大未提交修改和测试改动，且在 `Test/XDataTest/XDataTest.c` 中已有独立中文菜单项。DOM 解析必须复用 Reader，不应重写 XML 词法分析器，也不能直接调用平台 API。
-
-在修改 Reader 时，优先考虑向 DOM 提供以下稳定信息：
-
-- XML 声明是否实际存在；
-- 错误发生时锁存的行号和列号；
-- 完整且不丢失方括号语义的 DTD internal subset；
-- UTF-8、UTF-16 输入的统一字节解码结果。
-
-这些补充应连同 Reader 回归测试一起完成，避免 DOM 通过访问 Reader 私有状态或依赖当前偶然行为。
+XDom 与 XXmlStream 的本轮 Qt 6.8.3 公共 API 对齐、XExcel 扩展回归和目标 sanitizer 验证已完成；
+完整工程 sanitizer 仍是独立事项，不能据此写成“整个仓库全部通过”。后续应保留本文件第 4 节的
+构建、菜单和 sanitizer 验证标准，并在网络模块链接桩和工程级 sanitizer 稳定性问题消除后更新
+最终全量结论。

@@ -10,8 +10,11 @@
 #include "XAction.h"
 #include "XPrintf.h"
 #include "XString.h"
+#include "XStringView.h"
 #include "XStringList.h"
 #include "XHashMap.h"
+#include "XThread.h"
+#include "XAtomic.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -272,6 +275,227 @@ static bool XRegularExpression_test_global_match(void)
     return true;
 }
 
+static bool XRegularExpression_test_global_edge_cases(void)
+{
+    XRegularExpression* emptyAlternation = XRegularExpression_create_utf8("a*|b", 0);
+    XRegularExpressionMatchIterator* emptyIterator =
+            XRegularExpression_globalMatch_utf8(emptyAlternation, "b", 0,
+                                                XRegularExpression_NormalMatch,
+                                                XRegularExpression_NoMatchOption);
+    const int64_t expectedStarts[] = { 0, 0, 1 };
+    const int64_t expectedEnds[] = { 0, 1, 1 };
+    XREGEX_REQUIRE(emptyAlternation && emptyIterator, "global empty create", "空匹配迭代器创建失败");
+    for (size_t i = 0; i < 3; ++i) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(emptyIterator);
+        XREGEX_REQUIRE(match && XRegularExpressionMatch_capturedStart(match, 0) == expectedStarts[i] &&
+                               XRegularExpressionMatch_capturedEnd(match, 0) == expectedEnds[i],
+                       "global empty progression", "空匹配后的同位置非空匹配或偏移错误");
+        XRegularExpressionMatch_delete_base(match);
+    }
+    XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(emptyIterator),
+                   "global empty end", "空匹配迭代器未正常结束");
+    XRegularExpressionMatchIterator_delete_base(emptyIterator);
+    XRegularExpression_delete_base(emptyAlternation);
+
+    XRegularExpression* dot = XRegularExpression_create_utf8(".*", 0);
+    XRegularExpressionMatchIterator* dotIterator = XRegularExpression_globalMatch_utf8(
+            dot, "the\nquick\nfox\n", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    const char* dotTexts[] = { "the", "", "quick", "", "fox", "", "" };
+    XREGEX_REQUIRE(dot && dotIterator, "global dot create", "换行空匹配迭代器创建失败");
+    for (size_t i = 0; i < 7; ++i) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(dotIterator);
+        XString* text = match ? XRegularExpressionMatch_captured(match, 0) : NULL;
+        XREGEX_REQUIRE(match && text && XString_equals_utf8(text, dotTexts[i],
+                                                            XChar_CaseSensitive),
+                       "global dot progression", "换行空匹配序列与 Qt 不一致");
+        XString_delete_base(text);
+        XRegularExpressionMatch_delete_base(match);
+    }
+    XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(dotIterator),
+                   "global dot end", "换行空匹配迭代器未结束");
+    XRegularExpressionMatchIterator_delete_base(dotIterator);
+    XRegularExpression_delete_base(dot);
+
+    XRegularExpression* crlf = XRegularExpression_create_utf8("(*CRLF).*", 0);
+    XRegularExpressionMatchIterator* crlfIterator = XRegularExpression_globalMatch_utf8(
+            crlf, "the\r\nquick\r\nfox", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    const char* crlfTexts[] = { "the", "", "quick", "", "fox", "" };
+    XREGEX_REQUIRE(crlf && crlfIterator, "global CRLF create", "CRLF 正则迭代器创建失败");
+    for (size_t i = 0; i < 6; ++i) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(crlfIterator);
+        XString* text = match ? XRegularExpressionMatch_captured(match, 0) : NULL;
+        XREGEX_REQUIRE(match && text && XString_equals_utf8(text, crlfTexts[i],
+                                                            XChar_CaseSensitive),
+                       "global CRLF progression", "CRLF 空匹配跳过规则错误");
+        XString_delete_base(text);
+        XRegularExpressionMatch_delete_base(match);
+    }
+    XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(crlfIterator),
+                   "global CRLF end", "CRLF 空匹配迭代器未结束");
+    XRegularExpressionMatchIterator_delete_base(crlfIterator);
+    XRegularExpression_delete_base(crlf);
+
+    XRegularExpression* surrogate = XRegularExpression_create_utf8(
+            "[\\x{0000}-\\x{FFFF}]*", 0);
+    XRegularExpressionMatchIterator* surrogateIterator = XRegularExpression_globalMatch_utf8(
+            surrogate, "ABC\xf0\x9d\x85\x9d" "DEF\xf0\x9d\x85\x9e" "GHI", 0,
+            XRegularExpression_NormalMatch, XRegularExpression_NoMatchOption);
+    const char* surrogateTexts[] = { "ABC", "", "DEF", "", "GHI", "" };
+    XREGEX_REQUIRE(surrogate && surrogateIterator, "global surrogate create", "代理对迭代器创建失败");
+    for (size_t i = 0; i < 6; ++i) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(surrogateIterator);
+        XString* text = match ? XRegularExpressionMatch_captured(match, 0) : NULL;
+        XREGEX_REQUIRE(match && text && XString_equals_utf8(text, surrogateTexts[i],
+                                                            XChar_CaseSensitive),
+                       "global surrogate progression", "代理对没有按 UTF-16 code point 跳过");
+        XString_delete_base(text);
+        XRegularExpressionMatch_delete_base(match);
+    }
+    XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(surrogateIterator),
+                   "global surrogate end", "代理对迭代器未结束");
+    XRegularExpressionMatchIterator_delete_base(surrogateIterator);
+    XRegularExpression_delete_base(surrogate);
+
+    XRegularExpression* lookbehind = XRegularExpression_create_utf8("\\bstring\\b", 0);
+    XRegularExpressionMatch* partial = XRegularExpression_match_utf8(
+            lookbehind, "a str", 2, XRegularExpression_PartialPreferCompleteMatch,
+            XRegularExpression_NoMatchOption);
+    XREGEX_REQUIRE(lookbehind && partial && XRegularExpressionMatch_hasPartialMatch(partial) &&
+                           XRegularExpressionMatch_capturedStart(partial, 0) == 1,
+                   "partial lookbehind", "部分匹配的 lookbehind 起点未按 Qt 调整");
+
+    XRegularExpression* empty = XRegularExpression_create_utf8("", 0);
+    XRegularExpressionMatch* emptySubject = XRegularExpression_match_utf8(
+            empty, "", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XStringView emptyView = XRegularExpressionMatch_capturedView(emptySubject, 0);
+    XString* emptyCaptured = XStringView_toString(&emptyView);
+    XREGEX_REQUIRE(empty && emptySubject && emptyCaptured && XString_isEmpty_base(emptyCaptured),
+                   "empty captured view", "空主题的空捕获视图访问失败");
+
+    XString_delete_base(emptyCaptured);
+    XRegularExpressionMatch_delete_base(emptySubject);
+    XRegularExpression_delete_base(empty);
+    XRegularExpressionMatch_delete_base(partial);
+    XRegularExpression_delete_base(lookbehind);
+    XREGEX_TEST_PASS("global empty/CRLF/surrogate/partial boundary cases");
+    return true;
+}
+
+static bool XRegularExpression_test_swap(void)
+{
+    XRegularExpression* left = XRegularExpression_create_utf8("left", 0);
+    XRegularExpression* right = XRegularExpression_create_utf8("right", 0);
+    XREGEX_REQUIRE(left && right, "swap expression create", "交换测试对象创建失败");
+    XRegularExpression_swap(left, right);
+    XString* leftPattern = XRegularExpression_pattern(left);
+    XString* rightPattern = XRegularExpression_pattern(right);
+    XREGEX_REQUIRE(leftPattern && rightPattern &&
+                           XString_equals_utf8(leftPattern, "right", XChar_CaseSensitive) &&
+                           XString_equals_utf8(rightPattern, "left", XChar_CaseSensitive),
+                   "swap expression", "正则对象交换结果错误");
+
+    XRegularExpressionMatch* leftMatch = XRegularExpression_match_utf8(
+            left, "right", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XRegularExpressionMatch* rightMatch = XRegularExpression_match_utf8(
+            right, "left", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XREGEX_REQUIRE(leftMatch && rightMatch, "swap match create", "匹配交换对象创建失败");
+    XRegularExpressionMatch_swap(leftMatch, rightMatch);
+    XString* swappedMatchText = XRegularExpressionMatch_captured(leftMatch, 0);
+    XREGEX_REQUIRE(swappedMatchText && XString_equals_utf8(swappedMatchText, "left",
+                                                           XChar_CaseSensitive),
+                   "swap match", "匹配结果交换错误");
+
+    XRegularExpression* first = XRegularExpression_create_utf8("1", 0);
+    XRegularExpression* second = XRegularExpression_create_utf8("2", 0);
+    XRegularExpressionMatchIterator* firstIterator = XRegularExpression_globalMatch_utf8(
+            first, "1", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XRegularExpressionMatchIterator* secondIterator = XRegularExpression_globalMatch_utf8(
+            second, "2", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XREGEX_REQUIRE(first && second && firstIterator && secondIterator,
+                   "swap iterator create", "迭代器交换对象创建失败");
+    XRegularExpressionMatchIterator_swap(firstIterator, secondIterator);
+    XRegularExpressionMatch* swappedIteratorMatch =
+            XRegularExpressionMatchIterator_next(firstIterator);
+    XString* swappedIteratorText = swappedIteratorMatch ?
+            XRegularExpressionMatch_captured(swappedIteratorMatch, 0) : NULL;
+    XREGEX_REQUIRE(swappedIteratorText && XString_equals_utf8(swappedIteratorText, "2",
+                                                               XChar_CaseSensitive),
+                   "swap iterator", "迭代器交换结果错误");
+
+    XString_delete_base(swappedIteratorText);
+    XRegularExpressionMatch_delete_base(swappedIteratorMatch);
+    XRegularExpressionMatchIterator_delete_base(firstIterator);
+    XRegularExpressionMatchIterator_delete_base(secondIterator);
+    XRegularExpression_delete_base(first);
+    XRegularExpression_delete_base(second);
+    XString_delete_base(swappedMatchText);
+    XRegularExpressionMatch_delete_base(leftMatch);
+    XRegularExpressionMatch_delete_base(rightMatch);
+    XString_delete_base(leftPattern);
+    XString_delete_base(rightPattern);
+    XRegularExpression_delete_base(left);
+    XRegularExpression_delete_base(right);
+    XREGEX_TEST_PASS("regular expression/match/iterator swap");
+    return true;
+}
+
+static XRegularExpression* g_regularExpressionThreadExpression;
+static XAtomic_int32_t g_regularExpressionThreadFailures;
+
+static void XRegularExpression_thread_reader(XThread* thread, XVarList* varList)
+{
+    (void)thread;
+    (void)varList;
+    for (int i = 0; i < 64; ++i) {
+        XRegularExpressionMatch* match = XRegularExpression_match_utf8(
+                g_regularExpressionThreadExpression, "abc 123", 0,
+                XRegularExpression_NormalMatch, XRegularExpression_NoMatchOption);
+        if (!match || !XRegularExpressionMatch_isValid(match) ||
+                !XRegularExpressionMatch_hasMatch(match)) {
+            XAtomic_fetch_add_int32(&g_regularExpressionThreadFailures, 1,
+                                    XAtomic_MemoryOrder_Relaxed);
+        }
+        if (match) XRegularExpressionMatch_delete_base(match);
+    }
+}
+
+static bool XRegularExpression_test_thread_safe_readers(void)
+{
+    XRegularExpression* expression = XRegularExpression_create_utf8("[a-z]+\\s+\\d+", 0);
+    XThread* threads[4] = { NULL, NULL, NULL, NULL };
+    size_t started = 0;
+    XREGEX_REQUIRE(expression != NULL, "thread expression create", "并发测试正则创建失败");
+    XAtomic_init(g_regularExpressionThreadFailures, 0);
+    g_regularExpressionThreadExpression = expression;
+    for (size_t i = 0; i < 4; ++i) {
+        threads[i] = XThread_create_func(XRegularExpression_thread_reader, NULL);
+        if (!threads[i] || !XThread_start(threads[i])) break;
+        ++started;
+    }
+    for (size_t i = 0; i < started; ++i) {
+        XThread_wait(threads[i], 10000);
+        XClass_delete_base((XClass*)threads[i]);
+    }
+    for (size_t i = started; i < 4; ++i) {
+        if (threads[i]) XClass_delete_base((XClass*)threads[i]);
+    }
+    g_regularExpressionThreadExpression = NULL;
+    int32_t failures = XAtomic_load_int32(&g_regularExpressionThreadFailures,
+                                          XAtomic_MemoryOrder_Relaxed);
+    XRegularExpression_delete_base(expression);
+    XREGEX_REQUIRE(started == 4 && failures == 0, "thread safe readers",
+                   "只读并发匹配失败");
+    XREGEX_TEST_PASS("XMutex 保护的并发只读匹配");
+    return true;
+}
+
 static bool XRegularExpression_test_conversion(void)
 {
     XString* literal = XString_create_utf8("a.b");
@@ -292,6 +516,13 @@ static bool XRegularExpression_test_conversion(void)
     XREGEX_REQUIRE(converted && XString_equals_utf8(converted, "\\A(?:[^/]*\\.txt)\\z",
                                                     XChar_CaseSensitive),
                    "wildcard conversion", "通配符转换结果错误");
+    XString* backslashWildcard = XString_create_utf8("\\");
+    XString* convertedBackslash = XRegularExpression_wildcardToRegularExpression_2(
+            backslashWildcard, XRegularExpression_DefaultWildcardConversion);
+    XREGEX_REQUIRE(backslashWildcard && convertedBackslash &&
+                           XString_equals_utf8(convertedBackslash, "\\A(?:\\\\)\\z",
+                                               XChar_CaseSensitive),
+                   "wildcard backslash conversion", "通配符反斜杠转义结果错误");
     XStringView wildcardView = XStringView_create_string(wildcard);
     XString* convertedView = XRegularExpression_wildcardToRegularExpression(
             &wildcardView, XRegularExpression_DefaultWildcardConversion);
@@ -311,8 +542,9 @@ static bool XRegularExpression_test_conversion(void)
     XREGEX_REQUIRE(match && XRegularExpressionMatch_hasMatch(match),
                    "wildcard match", "通配符正则无法匹配");
 
-    XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
     XRegularExpression* validatorExpression = XRegularExpression_create_utf8("[A-Z][0-9]", 0);
+    XRegularExpressionValidator* validator = XRegularExpressionValidator_create_ex(
+            validatorExpression);
     XREGEX_REQUIRE(validator && validatorExpression, "validator create", "校验器创建失败");
     int64_t position = 0;
     XRegularExpressionValidator_setRegularExpression(validator, validatorExpression);
@@ -352,6 +584,8 @@ static bool XRegularExpression_test_conversion(void)
     XString_delete_base(acceptableInput);
     XString_delete_base(convertedView);
     XString_delete_base(converted);
+    XString_delete_base(convertedBackslash);
+    XString_delete_base(backslashWildcard);
     XString_delete_base(anchored);
     XString_delete_base(escapedView);
     XString_delete_base(wildcard);
@@ -387,15 +621,58 @@ static bool XRegularExpression_test_string_consumers(void)
     XRegularExpression* digit = XRegularExpression_create_utf8("\\d", 0);
     XREGEX_REQUIRE(text && digit, "string consumer create", "创建失败");
     XREGEX_REQUIRE(XString_indexOf_regularExpression(text, digit, 0, NULL) == 1 &&
+                           XString_indexOf_regularExpression(text, digit, -1, NULL) == 4 &&
                            XString_lastIndexOf_regularExpression(text, digit, -1, NULL) == 4 &&
                            XString_contains_regularExpression(text, digit) &&
                            XString_count_regularExpression(text, digit) == 2,
                    "string search consumers", "字符串正则查找结果错误");
 
+    XRegularExpressionMatch* preservedMatch = XRegularExpression_match_utf8(
+            digit, "7", 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    XRegularExpression* absent = XRegularExpression_create_utf8("z", 0);
+    XREGEX_REQUIRE(preservedMatch &&
+                           absent &&
+                           XString_indexOf_regularExpression(text, digit, 0, preservedMatch) == 1 &&
+                           XString_indexOf_regularExpression(text, absent, 0, preservedMatch) == -1 &&
+                           XRegularExpressionMatch_capturedStart(preservedMatch, 0) == 1,
+                   "string index match output", "未匹配时不应覆盖已有匹配结果");
+    XREGEX_REQUIRE(XString_contains_regularExpression_2(text, digit, preservedMatch) &&
+                           XRegularExpressionMatch_capturedStart(preservedMatch, 0) == 1 &&
+                           !XString_contains_regularExpression_2(text, absent, preservedMatch) &&
+                           XRegularExpressionMatch_capturedStart(preservedMatch, 0) == 1,
+                   "string contains match output", "contains 匹配输出行为错误");
+
     XString* replacement = XString_create_utf8("[\\0]");
     XREGEX_REQUIRE(replacement && XString_replace_regularExpression(text, digit, replacement) &&
-                           XString_equals_utf8(text, "a[1] b[2]", XChar_CaseSensitive),
-                   "string replace consumer", "字符串正则替换结果错误");
+                           XString_equals_utf8(text, "a[\\0] b[\\0]", XChar_CaseSensitive),
+                   "string replace literal capture", "\\0 应保持为普通文本");
+
+    XString* numberedText = XString_create_utf8("abc-123 def-456");
+    XRegularExpression* numbered = XRegularExpression_create_utf8(
+            "([a-z]+)-(\\d+)", 0);
+    XString* numberedReplacement = XString_create_utf8("\\2/\\1");
+    XREGEX_REQUIRE(numberedText && numbered && numberedReplacement &&
+                           XString_replace_regularExpression(numberedText, numbered,
+                                                              numberedReplacement) &&
+                           XString_equals_utf8(numberedText, "123/abc 456/def",
+                                               XChar_CaseSensitive),
+                   "string replace captures", "数字捕获组替换结果错误");
+
+    XString* overlapText = XString_create_utf8("banana");
+    XRegularExpression* overlap = XRegularExpression_create_utf8("ana", 0);
+    XREGEX_REQUIRE(overlapText && overlap &&
+                           XString_count_regularExpression(overlapText, overlap) == 2,
+                   "string regex overlap count", "正则计数没有统计重叠匹配");
+
+    XString* emptyText = XString_create_utf8("abc");
+    XRegularExpression* emptyExpression = XRegularExpression_create_utf8("", 0);
+    XREGEX_REQUIRE(emptyText && emptyExpression &&
+                           XString_lastIndexOf_regularExpression(emptyText, emptyExpression, -1,
+                                                                 NULL) == 2 &&
+                           XString_lastIndexOf_regularExpression(emptyText, emptyExpression, 0,
+                                                                 NULL) == 0,
+                   "string regex last index", "负 from 的末尾空匹配边界错误");
 
     XString* csv = XString_create_utf8("a,,b,");
     XRegularExpression* comma = XRegularExpression_create_utf8(",", 0);
@@ -403,23 +680,100 @@ static bool XRegularExpression_test_string_consumers(void)
     XREGEX_REQUIRE(split && XStringList_size_base(split) == 4,
                    "string split consumer", "字符串正则分割数量错误");
 
+    XRegularExpression* invalidSeparator = XRegularExpression_create_utf8("[", 0);
+    XStringList* invalidSplit = XString_split_regularExpression(csv, invalidSeparator, true);
+    XREGEX_REQUIRE(invalidSeparator && invalidSplit &&
+                           XStringList_size_base(invalidSplit) == 0,
+                   "invalid regex split", "无效正则分割应返回空列表");
+
     XStringList* list = XStringList_create();
     XStringList_push_back_utf8(list, "one1");
     XStringList_push_back_utf8(list, "two");
     XStringList_push_back_utf8(list, "three3");
     XStringList* filtered = XStringList_filter_regularExpression(list, digit);
+    XRegularExpression* wholeWordDigit = XRegularExpression_create_utf8("\\w+\\d", 0);
     XREGEX_REQUIRE(filtered && XStringList_size_base(filtered) == 2 &&
-                           XStringList_indexOf_regularExpression(list, digit, 0) == 0 &&
-                           XStringList_lastIndexOf_regularExpression(list, digit, -1) == 2,
+                           wholeWordDigit &&
+                           XStringList_indexOf_regularExpression(list, wholeWordDigit, 0) == 0 &&
+                           XStringList_lastIndexOf_regularExpression(list, wholeWordDigit, -1) == 2,
                    "string list regex consumers", "字符串列表正则结果错误");
-    XREGEX_REQUIRE(XStringList_replaceInStrings_regularExpression(list, digit, replacement),
+    XREGEX_REQUIRE(XStringList_replaceInStrings_regularExpression(list, digit,
+                                                                  numberedReplacement),
                    "string list replace", "字符串列表正则替换失败");
 
+    XString* removed = XString_create_utf8("a1b2");
+    XREGEX_REQUIRE(removed && XString_remove_regularExpression(removed, digit) &&
+                           XString_equals_utf8(removed, "ab", XChar_CaseSensitive),
+                   "string regex remove", "正则移除结果错误");
+
+    XString* sectionText = XString_create_utf8("a,b,c");
+    XString* section = XString_section_regularExpression(sectionText, comma, 1, -1,
+                                                          XString_SectionDefault);
+    XString* sectionWithSeparators = XString_section_regularExpression(
+            sectionText, comma, 1, 1,
+            XString_SectionIncludeLeadingSep | XString_SectionIncludeTrailingSep);
+    XREGEX_REQUIRE(section && sectionWithSeparators &&
+                           XString_equals_utf8(section, "b,c", XChar_CaseSensitive) &&
+                           XString_equals_utf8(sectionWithSeparators, ",b,",
+                                               XChar_CaseSensitive),
+                   "string regex section", "正则分段结果错误");
+
+    XString* sectionEmptyText = XString_create_utf8("a,,b,");
+    XString* sectionSkipEmpty = XString_section_regularExpression(
+            sectionEmptyText, comma, 0, -1, XString_SectionSkipEmpty);
+    XRegularExpression* insensitiveComma = XRegularExpression_create_utf8("x", 0);
+    XString* insensitiveSectionText = XString_create_utf8("aXb");
+    XString* insensitiveSection = XString_section_regularExpression(
+            insensitiveSectionText, insensitiveComma, 0, -1,
+            XString_SectionCaseInsensitiveSeps);
+    XREGEX_REQUIRE(sectionEmptyText && sectionSkipEmpty && insensitiveComma &&
+                           insensitiveSectionText && insensitiveSection &&
+                           XString_equals_utf8(sectionSkipEmpty, "a,,b", XChar_CaseSensitive) &&
+                           XString_equals_utf8(insensitiveSection, "aXb", XChar_CaseSensitive),
+                   "string regex section flags", "正则分段标志结果错误");
+
+    XString* viewText = XString_create_utf8("a12b34");
+    XStringView view = XStringView_create_string(viewText);
+    XREGEX_REQUIRE(viewText && XStringView_indexOf_regularExpression(&view, digit, 0, NULL) == 1 &&
+                           XStringView_indexOf_regularExpression(&view, digit, -1, NULL) == 5 &&
+                           XStringView_lastIndexOf_regularExpression(&view, digit, -1, NULL) == 5 &&
+                           XStringView_count_regularExpression(&view, digit) == 4 &&
+                           XStringView_contains_regularExpression(&view, digit),
+                   "string view regex consumers", "字符串视图正则结果错误");
+    XREGEX_REQUIRE(XStringView_contains_regularExpression_2(&view, digit, preservedMatch) &&
+                           XRegularExpressionMatch_capturedStart(preservedMatch, 0) == 1,
+                   "string view contains match output", "字符串视图 contains 输出行为错误");
+    XStringList* viewSplit = XStringView_split_regularExpression(&view, comma, true);
+    XREGEX_REQUIRE(viewSplit != NULL, "string view regex split", "字符串视图正则分割失败");
+
+    XString_delete_base(viewText);
+    XStringList_delete_base(invalidSplit);
+    XRegularExpression_delete_base(invalidSeparator);
+    XRegularExpression_delete_base(absent);
+    XRegularExpressionMatch_delete_base(preservedMatch);
+    XStringList_delete_base(viewSplit);
+    XString_delete_base(insensitiveSection);
+    XString_delete_base(insensitiveSectionText);
+    XRegularExpression_delete_base(insensitiveComma);
+    XString_delete_base(sectionSkipEmpty);
+    XString_delete_base(sectionEmptyText);
+    XString_delete_base(sectionWithSeparators);
+    XString_delete_base(section);
+    XString_delete_base(sectionText);
+    XString_delete_base(removed);
+    XRegularExpression_delete_base(wholeWordDigit);
     XStringList_delete_base(filtered);
     XStringList_delete_base(list);
     XStringList_delete_base(split);
     XRegularExpression_delete_base(comma);
     XString_delete_base(csv);
+    XString_delete_base(emptyText);
+    XRegularExpression_delete_base(emptyExpression);
+    XString_delete_base(overlapText);
+    XRegularExpression_delete_base(overlap);
+    XString_delete_base(numberedReplacement);
+    XRegularExpression_delete_base(numbered);
+    XString_delete_base(numberedText);
     XString_delete_base(replacement);
     XRegularExpression_delete_base(digit);
     XString_delete_base(text);
@@ -474,8 +828,11 @@ static bool XRegularExpression_test_all(void)
     ok = XRegularExpression_test_match_and_capture() && ok;
     ok = XRegularExpression_test_match_modes() && ok;
     ok = XRegularExpression_test_global_match() && ok;
+    ok = XRegularExpression_test_global_edge_cases() && ok;
+    ok = XRegularExpression_test_swap() && ok;
     ok = XRegularExpression_test_conversion() && ok;
     ok = XRegularExpression_test_string_consumers() && ok;
+    ok = XRegularExpression_test_thread_safe_readers() && ok;
     ok = XRegularExpression_test_hash_map() && ok;
     ok = XRegularExpression_test_invalid_and_null() && ok;
     XPrintf("[RESULT] XRegularExpression: %s\n", ok ? "PASS" : "FAIL");
@@ -506,6 +863,12 @@ static void XRegularExpression_test_global_wrapper(XVariant* data)
     XRegularExpression_test_global_match();
 }
 
+static void XRegularExpression_test_edge_wrapper(XVariant* data)
+{
+    (void)data;
+    XRegularExpression_test_global_edge_cases();
+}
+
 static void XRegularExpression_test_conversion_wrapper(XVariant* data)
 {
     (void)data;
@@ -516,6 +879,12 @@ static void XRegularExpression_test_string_consumers_wrapper(XVariant* data)
 {
     (void)data;
     XRegularExpression_test_string_consumers();
+}
+
+static void XRegularExpression_test_thread_wrapper(XVariant* data)
+{
+    (void)data;
+    XRegularExpression_test_thread_safe_readers();
 }
 
 void XMenu_XRegularExpressionTest(XMenu* root)
@@ -530,8 +899,12 @@ void XMenu_XRegularExpressionTest(XMenu* root)
     XAction_setAction(action, XRegularExpression_test_match_wrapper);
     action = XMenu_addAction(menu, "全局匹配迭代器");
     XAction_setAction(action, XRegularExpression_test_global_wrapper);
+    action = XMenu_addAction(menu, "空匹配/Unicode/部分匹配边界");
+    XAction_setAction(action, XRegularExpression_test_edge_wrapper);
     action = XMenu_addAction(menu, "转义/通配符/校验器");
     XAction_setAction(action, XRegularExpression_test_conversion_wrapper);
     action = XMenu_addAction(menu, "XString/XStringList消费者");
     XAction_setAction(action, XRegularExpression_test_string_consumers_wrapper);
+    action = XMenu_addAction(menu, "并发只读匹配");
+    XAction_setAction(action, XRegularExpression_test_thread_wrapper);
 }

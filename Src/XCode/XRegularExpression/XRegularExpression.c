@@ -7,6 +7,7 @@
 #include "XMemory.h"
 #include "XAtomic.h"
 #include "XHashFunc.h"
+#include "XMutex.h"
 #include "pcre2_xin_memory.h"
 #include <limits.h>
 #include <string.h>
@@ -17,10 +18,12 @@ typedef struct XRegularExpressionData {
     XString m_errorString;
     XRegularExpression_PatternOptions m_patternOptions;
     pcre2_general_context* m_generalContext;
+    XMutex* m_compileMutex;
     pcre2_code* m_code;
     int m_errorCode;
     int64_t m_errorOffset;
     int m_captureCount;
+    bool m_usingCrLfNewlines;
     bool m_dirty;
 } XRegularExpressionData;
 
@@ -37,7 +40,7 @@ static bool XRegularExpression_assign_utf16(XString* target, const uint16_t* dat
     XString* value = XString_create_with_length_utf16(data, length);
     if (!value) return false;
     XString_move_base(target, value);
-    XString_deinit_base(value);
+    XString_delete_base(value);
     return true;
 }
 
@@ -60,6 +63,14 @@ static XRegularExpressionData* XRegularExpression_data_create(void)
         XFree_System(data);
         return NULL;
     }
+    data->m_compileMutex = XMutex_create(XLock_NonRecursive);
+    if (!data->m_compileMutex) {
+        pcre2_general_context_free(data->m_generalContext);
+        XString_deinit_base(&data->m_pattern);
+        XString_deinit_base(&data->m_errorString);
+        XFree_System(data);
+        return NULL;
+    }
     return data;
 }
 
@@ -73,6 +84,7 @@ static void XRegularExpression_data_cleanCompiled(XRegularExpressionData* data)
     data->m_errorCode = 0;
     data->m_errorOffset = -1;
     data->m_captureCount = 0;
+    data->m_usingCrLfNewlines = false;
     XString_assign_utf8(&data->m_errorString, "no error");
 }
 
@@ -82,6 +94,8 @@ static void XRegularExpression_data_destroy(XRegularExpressionData* data)
     XRegularExpression_data_cleanCompiled(data);
     if (data->m_generalContext)
         pcre2_general_context_free(data->m_generalContext);
+    if (data->m_compileMutex)
+        XMutex_delete(data->m_compileMutex);
     XString_deinit_base(&data->m_pattern);
     XString_deinit_base(&data->m_errorString);
     XFree_System(data);
@@ -133,19 +147,27 @@ static bool XRegularExpression_detach(XRegularExpression* expression)
 static void XRegularExpression_markDirty(XRegularExpressionData* data)
 {
     if (!data) return;
+    if (data->m_compileMutex) XMutex_lock(data->m_compileMutex);
     XRegularExpression_data_cleanCompiled(data);
     data->m_dirty = true;
+    if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
 }
 
 static void XRegularExpression_compilePattern(XRegularExpressionData* data)
 {
-    if (!data || !data->m_dirty) return;
+    if (!data) return;
+    if (data->m_compileMutex) XMutex_lock(data->m_compileMutex);
+    if (!data->m_dirty) {
+        if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
+        return;
+    }
     data->m_dirty = false;
     XRegularExpression_data_cleanCompiled(data);
 
     if (!data->m_generalContext) {
         data->m_errorCode = PCRE2_ERROR_NOMEMORY;
         XString_assign_utf8(&data->m_errorString, "memory context creation failed");
+        if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
         return;
     }
 
@@ -175,6 +197,7 @@ static void XRegularExpression_compilePattern(XRegularExpressionData* data)
     if (!compileContext) {
         data->m_errorCode = PCRE2_ERROR_NOMEMORY;
         XString_assign_utf8(&data->m_errorString, "compile context creation failed");
+        if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
         return;
     }
 
@@ -192,6 +215,7 @@ static void XRegularExpression_compilePattern(XRegularExpressionData* data)
             XRegularExpression_assign_utf16(&data->m_errorString, message, (size_t)messageLength);
         else
             XString_assign_utf8(&data->m_errorString, "PCRE2 pattern compilation failed");
+        if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
         return;
     }
 
@@ -200,6 +224,13 @@ static void XRegularExpression_compilePattern(XRegularExpressionData* data)
     (void)pcre2_jit_compile(data->m_code,
                             PCRE2_JIT_COMPLETE | PCRE2_JIT_PARTIAL_SOFT | PCRE2_JIT_PARTIAL_HARD);
     (void)pcre2_pattern_info(data->m_code, PCRE2_INFO_CAPTURECOUNT, &data->m_captureCount);
+
+    unsigned int newline = 0;
+    if (pcre2_pattern_info(data->m_code, PCRE2_INFO_NEWLINE, &newline) != 0)
+        (void)pcre2_config(PCRE2_CONFIG_NEWLINE, &newline);
+    data->m_usingCrLfNewlines = newline == PCRE2_NEWLINE_CRLF ||
+            newline == PCRE2_NEWLINE_ANY || newline == PCRE2_NEWLINE_ANYCRLF;
+    if (data->m_compileMutex) XMutex_unlock(data->m_compileMutex);
 }
 
 static int XRegularExpression_captureIndexForName(const XRegularExpressionData* data,
@@ -302,7 +333,8 @@ static XRegularExpressionMatch* XRegularExpression_matchInternal(const XRegularE
                                                                   size_t subjectLength,
                                                                   int64_t offset,
                                                                   XRegularExpression_MatchType matchType,
-                                                                  XRegularExpression_MatchOptions matchOptions)
+                                                                  XRegularExpression_MatchOptions matchOptions,
+                                                                  const XRegularExpressionMatch* previous)
 {
     XRegularExpressionMatch* match = XRegularExpressionMatch_create();
     if (!match) return NULL;
@@ -361,15 +393,52 @@ static XRegularExpressionMatch* XRegularExpression_matchInternal(const XRegularE
         return match;
     }
 
-    int result = pcre2_match(data->m_code, (PCRE2_SPTR)subjectData,
+    bool previousMatchWasEmpty = previous && previous->m_hasMatch &&
+            previous->m_capturedCount > 0 && previous->m_capturedOffsets &&
+            previous->m_capturedOffsets[0] == previous->m_capturedOffsets[1];
+    int result;
+    if (previousMatchWasEmpty) {
+        result = pcre2_match(data->m_code, (PCRE2_SPTR)subjectData,
+                             (PCRE2_SIZE)subjectLength, (PCRE2_SIZE)offset,
+                             options | PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED,
+                             matchData, matchContext);
+        if (result == PCRE2_ERROR_NOMATCH) {
+            ++offset;
+            if (offset < (int64_t)subjectLength &&
+                    XChar_isLowSurrogate(subjectData[offset])) {
+                ++offset;
+            } else if (data->m_usingCrLfNewlines && offset < (int64_t)subjectLength &&
+                       offset > 0 && subjectData[offset - 1] == '\r' &&
+                       subjectData[offset] == '\n') {
+                ++offset;
+            }
+            if (offset > (int64_t)subjectLength) {
+                result = PCRE2_ERROR_NOMATCH;
+            } else {
+                result = pcre2_match(data->m_code, (PCRE2_SPTR)subjectData,
+                                     (PCRE2_SIZE)subjectLength, (PCRE2_SIZE)offset,
+                                     options, matchData, matchContext);
+            }
+        }
+    } else {
+        result = pcre2_match(data->m_code, (PCRE2_SPTR)subjectData,
                              (PCRE2_SIZE)subjectLength, (PCRE2_SIZE)offset,
                              options, matchData, matchContext);
+    }
     match->m_hasMatch = result > 0;
     match->m_hasPartialMatch = result == PCRE2_ERROR_PARTIAL;
     if (result == PCRE2_ERROR_NOMATCH || result == PCRE2_ERROR_PARTIAL || result > 0)
         XRegularExpression_prepareOffsets(match, matchData, result);
     else
         match->m_isValid = false;
+
+    if (result == PCRE2_ERROR_PARTIAL && match->m_capturedCount > 0 &&
+            match->m_capturedOffsets && match->m_capturedOffsets[0] >= 0) {
+        uint32_t maximumLookBehind = 0;
+        if (pcre2_pattern_info(data->m_code, PCRE2_INFO_MAXLOOKBEHIND,
+                               &maximumLookBehind) == 0)
+            match->m_capturedOffsets[0] -= (int64_t)maximumLookBehind;
+    }
 
     if (jitStack) pcre2_jit_stack_free(jitStack);
     pcre2_match_data_free(matchData);
@@ -402,10 +471,26 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
     for (size_t i = 0; i < length; ++i) {
         XChar c = data[i];
         if (c == '*') {
-            XRegularExpression_append_literal(result, nonPath ? "[\\d\\D]*" : "[^/]*");
+            if (nonPath) {
+                XRegularExpression_append_literal(result, "[\\d\\D]*");
+            } else {
+#ifdef _WIN32
+                XRegularExpression_append_literal(result, "[^/\\\\]*");
+#else
+                XRegularExpression_append_literal(result, "[^/]*");
+#endif
+            }
             while (i + 1 < length && data[i + 1] == '*') ++i;
         } else if (c == '?') {
-            XRegularExpression_append_literal(result, nonPath ? "[\\d\\D]" : "[^/]");
+            if (nonPath) {
+                XRegularExpression_append_literal(result, "[\\d\\D]");
+            } else {
+#ifdef _WIN32
+                XRegularExpression_append_literal(result, "[^/\\\\]");
+#else
+                XRegularExpression_append_literal(result, "[^/]");
+#endif
+            }
         } else if (c == '[') {
             XString_append_char(result, c);
             ++i;
@@ -415,18 +500,25 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
             }
             if (i < length && data[i] == ']') XString_append_char(result, data[i++]);
             while (i < length && data[i] != ']') {
-                if (!nonPath && data[i] == '/') {
-                    XString_delete_base(result);
-                    return NULL;
+                bool isPathSeparator = data[i] == '/';
+#ifdef _WIN32
+                isPathSeparator = isPathSeparator || data[i] == '\\';
+#endif
+                if (!nonPath && isPathSeparator) {
+                    return result;
                 }
                 if (data[i] == '\\') XString_append_char(result, '\\');
                 XString_append_char(result, data[i++]);
             }
             if (i < length) XString_append_char(result, data[i]);
-        } else if (c == '\\' && !nonPath) {
+        } else if (c == '\\') {
 #ifdef _WIN32
-            XRegularExpression_append_literal(result, "[/\\\\]");
+            if (nonPath)
+                XRegularExpression_append_literal(result, "\\\\");
+            else
+                XRegularExpression_append_literal(result, "[/\\\\]");
 #else
+            XString_append_char(result, '\\');
             XString_append_char(result, c);
 #endif
         } else if (c == '/' && !nonPath) {
@@ -555,6 +647,8 @@ static void VXRegularExpressionMatchIterator_copy(XRegularExpressionMatchIterato
     if (dest->m_next) XRegularExpressionMatch_delete_base(dest->m_next);
     dest->m_next = src->m_next ? XRegularExpressionMatch_create_copy(src->m_next) : NULL;
     dest->m_nextOffset = src->m_nextOffset;
+    dest->m_matchType = src->m_matchType;
+    dest->m_matchOptions = src->m_matchOptions;
     dest->m_isValid = src->m_isValid;
 }
 
@@ -568,9 +662,13 @@ static void VXRegularExpressionMatchIterator_move(XRegularExpressionMatchIterato
     if (dest->m_next) XRegularExpressionMatch_delete_base(dest->m_next);
     dest->m_next = src->m_next;
     dest->m_nextOffset = src->m_nextOffset;
+    dest->m_matchType = src->m_matchType;
+    dest->m_matchOptions = src->m_matchOptions;
     dest->m_isValid = src->m_isValid;
     src->m_next = NULL;
     src->m_nextOffset = 0;
+    src->m_matchType = XRegularExpression_NoMatch;
+    src->m_matchOptions = XRegularExpression_NoMatchOption;
     src->m_isValid = false;
 }
 
@@ -653,6 +751,8 @@ void XRegularExpressionMatchIterator_init(XRegularExpressionMatchIterator* itera
     XRegularExpression_init(&iterator->m_regularExpression);
     XString_init(&iterator->m_subject);
     iterator->m_next = XRegularExpressionMatch_create();
+    iterator->m_matchType = XRegularExpression_NoMatch;
+    iterator->m_matchOptions = XRegularExpression_NoMatchOption;
     iterator->m_isValid = iterator->m_next != NULL;
 }
 
@@ -754,22 +854,30 @@ XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_move(
 
 void XRegularExpression_setPattern(XRegularExpression* expression, const XString* pattern)
 {
-    if (!expression || !XRegularExpression_detach(expression)) return;
+    if (!expression) return;
     if (!pattern) {
-        if (XString_isEmpty_base(&expression->m_data->m_pattern)) return;
+        if (expression->m_data && XString_isEmpty_base(&expression->m_data->m_pattern)) return;
+        if (!XRegularExpression_detach(expression)) return;
         XString_clear_base(&expression->m_data->m_pattern);
         XRegularExpression_markDirty(expression->m_data);
         return;
     }
-    if (XString_equals(&expression->m_data->m_pattern, pattern, XChar_CaseSensitive)) return;
+    if (expression->m_data &&
+            XString_equals(&expression->m_data->m_pattern, pattern, XChar_CaseSensitive)) return;
+    if (!XRegularExpression_detach(expression)) return;
     XString_assign(&expression->m_data->m_pattern, pattern);
     XRegularExpression_markDirty(expression->m_data);
 }
 
 void XRegularExpression_setPattern_utf8(XRegularExpression* expression, const char* pattern)
 {
-    if (!expression || !XRegularExpression_detach(expression)) return;
-    XString_assign_utf8(&expression->m_data->m_pattern, pattern ? pattern : "");
+    if (!expression) return;
+    const char* value = pattern ? pattern : "";
+    if (expression->m_data &&
+            XString_equals_utf8(&expression->m_data->m_pattern, value,
+                                XChar_CaseSensitive)) return;
+    if (!XRegularExpression_detach(expression)) return;
+    XString_assign_utf8(&expression->m_data->m_pattern, value);
     XRegularExpression_markDirty(expression->m_data);
 }
 
@@ -792,8 +900,9 @@ XRegularExpression_PatternOptions XRegularExpression_patternOptions(const XRegul
 void XRegularExpression_setPatternOptions(XRegularExpression* expression,
                                           XRegularExpression_PatternOptions options)
 {
-    if (!expression || !XRegularExpression_detach(expression)) return;
-    if (expression->m_data->m_patternOptions == options) return;
+    if (!expression) return;
+    if (expression->m_data && expression->m_data->m_patternOptions == options) return;
+    if (!XRegularExpression_detach(expression)) return;
     expression->m_data->m_patternOptions = options;
     XRegularExpression_markDirty(expression->m_data);
 }
@@ -876,6 +985,14 @@ bool XRegularExpression_equals(const XRegularExpression* left, const XRegularExp
                           XChar_CaseSensitive);
 }
 
+void XRegularExpression_swap(XRegularExpression* left, XRegularExpression* right)
+{
+    if (!left || !right || left == right) return;
+    XRegularExpressionData* data = left->m_data;
+    left->m_data = right->m_data;
+    right->m_data = data;
+}
+
 uint64_t XRegularExpression_hash(const void* key, size_t len)
 {
     (void)len;
@@ -926,7 +1043,8 @@ XRegularExpressionMatch* XRegularExpression_match(const XRegularExpression* expr
 {
     const uint16_t* data = subject ? XString_utf16(subject) : NULL;
     size_t length = subject ? XString_size_base(subject) : 0;
-    return XRegularExpression_matchInternal(expression, data, length, offset, matchType, matchOptions);
+    return XRegularExpression_matchInternal(expression, data, length, offset, matchType,
+                                            matchOptions, NULL);
 }
 
 XRegularExpressionMatch* XRegularExpression_matchView(const XRegularExpression* expression,
@@ -937,7 +1055,8 @@ XRegularExpressionMatch* XRegularExpression_matchView(const XRegularExpression* 
 {
     const uint16_t* data = subjectView ? XStringView_utf16(subjectView) : NULL;
     size_t length = subjectView ? (size_t)XStringView_size(subjectView) : 0;
-    return XRegularExpression_matchInternal(expression, data, length, offset, matchType, matchOptions);
+    return XRegularExpression_matchInternal(expression, data, length, offset, matchType,
+                                            matchOptions, NULL);
 }
 
 XRegularExpressionMatch* XRegularExpression_match_utf8(const XRegularExpression* expression,
@@ -1006,7 +1125,7 @@ XRegularExpression* XRegularExpression_fromWildcard(const XStringView* pattern,
     XRegularExpression* result = XRegularExpression_create();
     if (result) {
         XRegularExpression_setPattern(result, converted);
-        if (caseSensitivity == XChar_CaseInsensitive)
+        if (caseSensitivity != XChar_CaseSensitive)
             XRegularExpression_setPatternOptions(result, XRegularExpression_CaseInsensitiveOption);
     }
     XString_delete_base(converted);
@@ -1045,6 +1164,35 @@ XRegularExpression* XRegularExpressionMatch_regularExpression(const XRegularExpr
 const XRegularExpression* XRegularExpressionMatch_regularExpression_const(const XRegularExpressionMatch* match)
 {
     return match ? &match->m_regularExpression : NULL;
+}
+
+void XRegularExpressionMatch_swap(XRegularExpressionMatch* left,
+                                   XRegularExpressionMatch* right)
+{
+    if (!left || !right || left == right) return;
+    XRegularExpression_swap(&left->m_regularExpression, &right->m_regularExpression);
+    XString_swap(&left->m_subject, &right->m_subject);
+    int64_t* offsets = left->m_capturedOffsets;
+    left->m_capturedOffsets = right->m_capturedOffsets;
+    right->m_capturedOffsets = offsets;
+    size_t capturedCount = left->m_capturedCount;
+    left->m_capturedCount = right->m_capturedCount;
+    right->m_capturedCount = capturedCount;
+    XRegularExpression_MatchType matchType = left->m_matchType;
+    left->m_matchType = right->m_matchType;
+    right->m_matchType = matchType;
+    XRegularExpression_MatchOptions matchOptions = left->m_matchOptions;
+    left->m_matchOptions = right->m_matchOptions;
+    right->m_matchOptions = matchOptions;
+    bool value = left->m_hasMatch;
+    left->m_hasMatch = right->m_hasMatch;
+    right->m_hasMatch = value;
+    value = left->m_hasPartialMatch;
+    left->m_hasPartialMatch = right->m_hasPartialMatch;
+    right->m_hasPartialMatch = value;
+    value = left->m_isValid;
+    left->m_isValid = right->m_isValid;
+    right->m_isValid = value;
 }
 
 XRegularExpression_MatchType XRegularExpressionMatch_matchType(const XRegularExpressionMatch* match)
@@ -1099,7 +1247,9 @@ XStringView XRegularExpressionMatch_capturedView(const XRegularExpressionMatch* 
     int64_t start = match->m_capturedOffsets[(size_t)nth * 2];
     int64_t end = match->m_capturedOffsets[(size_t)nth * 2 + 1];
     if (start < 0 || end < start) return XStringView_create();
-    return XStringView_create_data(XString_unicode(&match->m_subject) + start, end - start);
+    const XChar* subject = XString_unicode(&match->m_subject);
+    if (!subject) return XStringView_create();
+    return XStringView_create_data(subject + start, end - start);
 }
 
 XStringView XRegularExpressionMatch_capturedView_2(const XRegularExpressionMatch* match,
@@ -1193,14 +1343,7 @@ static int64_t XRegularExpression_nextOffset(const XRegularExpressionMatchIterat
     int64_t start = XRegularExpressionMatch_capturedStart(iterator->m_next, 0);
     int64_t end = XRegularExpressionMatch_capturedEnd(iterator->m_next, 0);
     if (start < 0 || end < 0) return iterator->m_nextOffset;
-    if (start != end) return end;
-
-    int64_t next = end + 1;
-    int64_t length = (int64_t)XString_size_base(&iterator->m_subject);
-    const XChar* data = XString_unicode(&iterator->m_subject);
-    if (next < length && data && data[next] >= 0xDC00 && data[next] <= 0xDFFF) ++next;
-    if (next < length && data && data[next - 1] == '\r' && data[next] == '\n') ++next;
-    return next;
+    return end;
 }
 
 bool XRegularExpressionMatchIterator_isValid(const XRegularExpressionMatchIterator* iterator)
@@ -1220,11 +1363,11 @@ XRegularExpressionMatch* XRegularExpressionMatchIterator_next(XRegularExpression
     if (!XRegularExpressionMatchIterator_hasNext(iterator)) return NULL;
     XRegularExpressionMatch* result = XRegularExpressionMatch_create_copy(iterator->m_next);
     iterator->m_nextOffset = XRegularExpression_nextOffset(iterator);
-    XRegularExpressionMatch* next = XRegularExpression_match(&iterator->m_regularExpression,
-                                                               &iterator->m_subject,
-                                                               iterator->m_nextOffset,
-                                                               XRegularExpressionMatch_matchType(iterator->m_next),
-                                                               XRegularExpressionMatch_matchOptions(iterator->m_next));
+    XRegularExpressionMatch* next = XRegularExpression_matchInternal(
+            &iterator->m_regularExpression, XString_utf16(&iterator->m_subject),
+            XString_size_base(&iterator->m_subject), iterator->m_nextOffset,
+            XRegularExpressionMatch_matchType(iterator->m_next),
+            XRegularExpressionMatch_matchOptions(iterator->m_next), iterator->m_next);
     XRegularExpressionMatch_delete_base(iterator->m_next);
     iterator->m_next = next;
     return result;
@@ -1248,18 +1391,39 @@ const XRegularExpression* XRegularExpressionMatchIterator_regularExpression_cons
     return iterator ? &iterator->m_regularExpression : NULL;
 }
 
+void XRegularExpressionMatchIterator_swap(XRegularExpressionMatchIterator* left,
+                                          XRegularExpressionMatchIterator* right)
+{
+    if (!left || !right || left == right) return;
+    XRegularExpression_swap(&left->m_regularExpression, &right->m_regularExpression);
+    XString_swap(&left->m_subject, &right->m_subject);
+    XRegularExpressionMatch* next = left->m_next;
+    left->m_next = right->m_next;
+    right->m_next = next;
+    int64_t nextOffset = left->m_nextOffset;
+    left->m_nextOffset = right->m_nextOffset;
+    right->m_nextOffset = nextOffset;
+    bool valid = left->m_isValid;
+    left->m_isValid = right->m_isValid;
+    right->m_isValid = valid;
+    XRegularExpression_MatchType matchType = left->m_matchType;
+    left->m_matchType = right->m_matchType;
+    right->m_matchType = matchType;
+    XRegularExpression_MatchOptions matchOptions = left->m_matchOptions;
+    left->m_matchOptions = right->m_matchOptions;
+    right->m_matchOptions = matchOptions;
+}
+
 XRegularExpression_MatchType XRegularExpressionMatchIterator_matchType(
         const XRegularExpressionMatchIterator* iterator)
 {
-    return iterator && iterator->m_next ?
-            XRegularExpressionMatch_matchType(iterator->m_next) : XRegularExpression_NoMatch;
+    return iterator ? iterator->m_matchType : XRegularExpression_NoMatch;
 }
 
 XRegularExpression_MatchOptions XRegularExpressionMatchIterator_matchOptions(
         const XRegularExpressionMatchIterator* iterator)
 {
-    return iterator && iterator->m_next ?
-            XRegularExpressionMatch_matchOptions(iterator->m_next) : XRegularExpression_NoMatchOption;
+    return iterator ? iterator->m_matchOptions : XRegularExpression_NoMatchOption;
 }
 
 /* ============================== 全局匹配构造 ============================== */
@@ -1274,6 +1438,8 @@ static XRegularExpressionMatchIterator* XRegularExpression_globalMatchInternal(
     if (expression) XRegularExpression_copy_base(&iterator->m_regularExpression, expression);
     XRegularExpression_setSubject(&iterator->m_subject, subject, subjectLength);
     iterator->m_nextOffset = offset;
+    iterator->m_matchType = matchType;
+    iterator->m_matchOptions = matchOptions;
     if (iterator->m_next) XRegularExpressionMatch_delete_base(iterator->m_next);
     iterator->m_next = XRegularExpression_match(&iterator->m_regularExpression,
                                                  &iterator->m_subject, offset,

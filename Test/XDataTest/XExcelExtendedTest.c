@@ -169,6 +169,8 @@ static bool test_xmlstream_qt_behaviour(void)
     XPrintf("[INFO] 扩展测试：XXmlStream Qt 6.8 命名空间与增量追加行为\n");
     XXmlStreamReader* reader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(reader, "<abc:root r:id=\"9\"");
+    CHECK(XXmlStreamReader_readNext(reader) == XXmlStream_StartDocument,
+          "增量 XML 首个 Token 为 StartDocument");
     CHECK(XXmlStreamReader_readNext(reader) == XXmlStream_Invalid &&
           XXmlStreamReader_error(reader) == XXmlStream_PrematureEndOfDocumentError,
           "不完整分块报告 PrematureEndOfDocumentError");
@@ -220,9 +222,10 @@ static bool test_xmlstream_qt_behaviour(void)
     XXmlStreamWriter_writeCharacters_utf8(writer, "text");
     XXmlStreamWriter_writeEndDocument(writer);
     const char* writtenXml = XXmlStreamWriter_toString(writer);
-    CHECK(writtenXml && strstr(writtenXml, "<root xmlns=\"urn:element\"") &&
-          strstr(writtenXml, "</child></root>"),
-          "Writer 命名空间 URI 不再被当作前缀且 EndDocument 自动闭合元素");
+    CHECK(writtenXml && strstr(writtenXml, "<n1:root") &&
+          strstr(writtenXml, "xmlns:n1=\"urn:element\"") &&
+          strstr(writtenXml, "</child></n1:root>"),
+          "Writer 按 Qt 自动分配命名空间前缀且 EndDocument 自动闭合元素");
 
     XXmlStreamReader* writtenReader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(writtenReader, writtenXml);

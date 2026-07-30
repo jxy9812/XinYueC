@@ -280,9 +280,10 @@ bool XDocPropsApp_saveToXmlData(const XDocPropsApp* self, uint8_t** outData, siz
     XByteArray* buffer = XXmlStreamWriter_toByteArray(writer);
     size_t size = buffer ? XByteArray_size_base((XContainer*)buffer) : 0;
     if (!XXmlStreamWriter_hasError(writer) && size > 0) {
-        *outData = (uint8_t*)XMalloc_System(size);
+        *outData = (uint8_t*)XMalloc_System(size + 1);
         if (*outData) {
             memcpy(*outData, XByteArray_data(buffer), size);
+            (*outData)[size] = '\0';
             *outLen = size;
         }
     }

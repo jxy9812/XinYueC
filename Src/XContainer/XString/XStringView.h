@@ -20,6 +20,9 @@ extern "C" {
 
 /* ============================== 前向声明 ============================== */
 typedef struct XString XString;              ///< 字符串容器前向声明
+typedef struct XStringList XStringList;      ///< 字符串列表前向声明
+typedef struct XRegularExpression XRegularExpression; ///< 正则表达式前向声明
+typedef struct XRegularExpressionMatch XRegularExpressionMatch; ///< 正则匹配结果前向声明
 typedef uint16_t XChar;                      ///< 16 位 Unicode 字符（与 XChar.h 一致）
 
 /**
@@ -391,6 +394,79 @@ int64_t XStringView_count_char(const XStringView* self, XChar ch, int cs);
 * @return 出现次数
 */
 int64_t XStringView_count(const XStringView* self, const XStringView* substr, int cs);
+
+#if XRegularExpression_ON
+/**
+* @brief 使用正则表达式查找视图中的第一次匹配。
+* @details 对齐 Qt 6.8 `QStringView::indexOf(const QRegularExpression&, ...)`；输入视图只在调用期间借用。
+* @param self 待搜索的 UTF-16 视图；不能为 NULL。
+* @param expression 正则表达式对象；函数只借用，不能为 NULL。
+* @param from 起始 UTF-16 code unit 偏移；负数按正则匹配接口规则从末尾计算。
+* @param match 可选输出匹配结果；调用方提供已初始化或可由 `copy_base` 初始化的对象。
+* @return 首次匹配的 UTF-16 code unit 起始位置；未匹配或参数无效返回 -1。
+*/
+int64_t XStringView_indexOf_regularExpression(const XStringView* self,
+                                              const XRegularExpression* expression,
+                                              int64_t from,
+                                              XRegularExpressionMatch* match);
+
+/**
+* @brief 使用正则表达式查找视图中的最后一次匹配。
+* @param self 待搜索的 UTF-16 视图；不能为 NULL。
+* @param expression 正则表达式对象；函数只借用，不能为 NULL。
+* @param from 允许的最大匹配起始位置；负数按 Qt 6.8 规则从末尾计算，-1 排除末尾空匹配。
+* @param match 可选输出匹配结果；调用方提供已初始化或可由 `copy_base` 初始化的对象。
+* @return 最后一次匹配的 UTF-16 code unit 起始位置；未匹配或参数无效返回 -1。
+*/
+int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
+                                                  const XRegularExpression* expression,
+                                                  int64_t from,
+                                                  XRegularExpressionMatch* match);
+
+/**
+* @brief 判断视图是否包含正则表达式匹配。
+* @param self 待搜索的 UTF-16 视图；不能为 NULL。
+* @param expression 正则表达式对象；函数只借用，不能为 NULL。
+* @return 存在匹配返回 true，否则返回 false。
+*/
+bool XStringView_contains_regularExpression(const XStringView* self,
+                                            const XRegularExpression* expression);
+
+/**
+* @brief 判断视图是否包含正则表达式匹配并输出匹配结果。
+* @details 对齐 Qt 6.8 `QStringView::contains(const QRegularExpression&, QRegularExpressionMatch*)`；
+*          匹配成功时写入 `match`，失败时不修改已有的 `match` 内容。
+* @param self 待搜索的 UTF-16 视图；不能为 NULL。
+* @param expression 正则表达式对象；函数只借用，不能为 NULL。
+* @param match 可选输出匹配结果；必须指向已初始化对象，允许传入 NULL。
+* @return 存在匹配返回 true，否则返回 false。
+*/
+bool XStringView_contains_regularExpression_2(const XStringView* self,
+                                              const XRegularExpression* expression,
+                                              XRegularExpressionMatch* match);
+
+/**
+* @brief 统计视图中的正则表达式匹配数量。
+* @details 与 Qt 6.8 `QStringView::count(const QRegularExpression&)` 一致，统计重叠匹配。
+* @param self 待搜索的 UTF-16 视图；不能为 NULL。
+* @param expression 正则表达式对象；函数只借用，不能为 NULL。
+* @return 匹配数量；参数无效或正则无效返回 0。
+*/
+int64_t XStringView_count_regularExpression(const XStringView* self,
+                                            const XRegularExpression* expression);
+
+/**
+* @brief 按正则表达式分隔视图。
+* @details 返回拥有数据的 XStringList；这是 C API 对 Qt `QStringView::split` 非拥有视图列表的适配，返回项与源视图内容独立。
+* @param self 待分隔的 UTF-16 视图；不能为 NULL。
+* @param separator 分隔符正则表达式；函数只借用，不能为 NULL。
+* @param keepEmptyParts 是否保留空字段。
+* @return 成功返回新 XStringList，调用方必须使用 XStringList_delete_base 释放；参数无效或分配失败返回 NULL，正则无效时返回空列表。
+*/
+XStringList* XStringView_split_regularExpression(const XStringView* self,
+                                                 const XRegularExpression* separator,
+                                                 bool keepEmptyParts);
+#endif
 
 /**
 * @brief 判断是否以指定字符开头

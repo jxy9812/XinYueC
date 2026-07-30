@@ -51,6 +51,10 @@ struct XSslSession {
 
     /* 错误信息缓冲区 */
     char                    err_buf[128];
+
+    /* mbedTLS 配置只保存指针，因此会话必须拥有协议字符串数组。 */
+    char**                  alpn_protocols;
+    size_t                  alpn_protocol_count;
 };
 
 static XSslProtocol s_proto_of(XSslProtocol p) { return p; }
@@ -90,6 +94,18 @@ static void xssl_ensure_platform(void) {
     if (inited) return;
     if (XSsl_platform_init()) { inited = 1; }
     else { XPrintf("[XSsl] XSsl_platform_init FAILED\n"); }
+}
+
+static void xssl_session_clear_alpn(XSslSession* s)
+{
+    size_t i;
+    if (!s || !s->alpn_protocols)
+        return;
+    for (i = 0; i < s->alpn_protocol_count; ++i)
+        XFree_System(s->alpn_protocols[i]);
+    XFree_System(s->alpn_protocols);
+    s->alpn_protocols = NULL;
+    s->alpn_protocol_count = 0;
 }
 
 /* ---- 会话创建与销毁 ---- */
@@ -152,6 +168,7 @@ void XSsl_sessionDestroy(XSslSession* s) {
     mbedtls_ssl_free(&s->ssl);
     mbedtls_ssl_config_free(&s->conf);
     mbedtls_x509_crt_free(&s->ca_chain);
+    xssl_session_clear_alpn(s);
     XFree_System(s);
 }
 
@@ -207,6 +224,62 @@ void XSsl_sessionSetPeerVerify(XSslSession* s, XSslPeerVerifyMode mode) {
         : MBEDTLS_SSL_VERIFY_REQUIRED; break;
     }
     mbedtls_ssl_conf_authmode(&s->conf, m);
+}
+
+bool XSsl_sessionSetAllowedNextProtocols(XSslSession* s, const XVector* protocols)
+{
+    size_t count;
+    size_t i;
+    char** names;
+    static const char* emptyProtocols[] = {NULL};
+    if (!s || s->setup_done)
+        return false;
+#if !defined(MBEDTLS_SSL_ALPN)
+    (void)protocols;
+    return false;
+#else
+    count = protocols ? XContainer_size_base((const XContainer*)protocols) : 0;
+    if (count > (SIZE_MAX / sizeof(char*)) - 1)
+        return false;
+    names = (char**)XMalloc_System((count + 1) * sizeof(char*));
+    if (!names)
+        return false;
+    memset(names, 0, (count + 1) * sizeof(char*));
+    for (i = 0; i < count; ++i) {
+        XByteArray* const* slot = (XByteArray* const*)XVector_at_base(
+            (XVector*)protocols, (int64_t)i);
+        const XByteArray* value = slot ? *slot : NULL;
+        size_t size = value ? XContainer_size_base((const XContainer*)value) : 0;
+        const uint8_t* data = value ? XByteArray_constData((XByteArray*)value) : NULL;
+        if (!data || size == 0 || size > 255 || memchr(data, 0, size) != NULL) {
+            for (size_t j = 0; j < i; ++j)
+                XFree_System(names[j]);
+            XFree_System(names);
+            return false;
+        }
+        names[i] = (char*)XMalloc_System(size + 1);
+        if (!names[i]) {
+            for (size_t j = 0; j < i; ++j)
+                XFree_System(names[j]);
+            XFree_System(names);
+            return false;
+        }
+        memcpy(names[i], data, size);
+        names[i][size] = '\0';
+    }
+    names[count] = NULL;
+    if (mbedtls_ssl_conf_alpn_protocols(&s->conf,
+                                        count ? (const char* const*)names : emptyProtocols) != 0) {
+        for (i = 0; i < count; ++i)
+            XFree_System(names[i]);
+        XFree_System(names);
+        return false;
+    }
+    xssl_session_clear_alpn(s);
+    s->alpn_protocols = names;
+    s->alpn_protocol_count = count;
+    return true;
+#endif
 }
 
 /* ---- 内部辅助函数：延迟初始化（setup + BIO 绑定） ---- */
@@ -288,6 +361,24 @@ const char* XSsl_sessionCipherName(const XSslSession* s) {
     if (!s) return NULL;
     return mbedtls_ssl_get_ciphersuite((mbedtls_ssl_context*)&s->ssl);
 }
+const char* XSsl_sessionNextNegotiatedProtocol(const XSslSession* s)
+{
+#if defined(MBEDTLS_SSL_ALPN)
+    return s ? mbedtls_ssl_get_alpn_protocol((mbedtls_ssl_context*)&s->ssl) : NULL;
+#else
+    (void)s;
+    return NULL;
+#endif
+}
+XSslNextProtocolNegotiationStatus XSsl_sessionNextProtocolNegotiationStatus(
+    const XSslSession* s)
+{
+    if (!s || s->alpn_protocol_count == 0)
+        return XSSL_NextProtocolNegotiationNone;
+    return XSsl_sessionNextNegotiatedProtocol(s) ?
+        XSSL_NextProtocolNegotiationNegotiated :
+        XSSL_NextProtocolNegotiationUnsupported;
+}
 const char* XSsl_sessionLastErrorString(const XSslSession* s) {
     return s ? s->err_buf : "";
 }
@@ -317,4 +408,3 @@ XVector* XSsl_sessionPeerCertificateChain(XSslSession* s) {
 }
 
 #endif /* XSSL_USE_MBEDTLS */
-

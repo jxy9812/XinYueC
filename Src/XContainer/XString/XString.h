@@ -451,7 +451,7 @@ bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_Ca
  * @brief 使用正则表达式查找第一次匹配。
  * @param str 源字符串
  * @param expression 正则表达式
- * @param from 起始位置，负数按0处理
+ * @param from 起始 UTF-16 code unit 偏移；负数按 Qt 6.8 正则匹配规则从字符串末尾计算
  * @param match 可选输出匹配结果，调用前可为未初始化对象
  * @return 匹配起始位置，未匹配或参数无效返回 -1
  */
@@ -483,6 +483,19 @@ bool XString_contains_regularExpression(const XString* str,
                                         const XRegularExpression* expression);
 
 /**
+ * @brief 判断字符串是否包含正则匹配并输出匹配结果。
+ * @details 对齐 Qt 6.8 `QString::contains(const QRegularExpression&, QRegularExpressionMatch*)`；
+ *          匹配成功时写入 `match`，失败时不修改已有的 `match` 内容。
+ * @param str 源字符串；不能为 NULL。
+ * @param expression 正则表达式对象；函数只借用，不能为 NULL。
+ * @param match 可选输出匹配结果；必须指向已初始化对象，允许传入 NULL。
+ * @return 包含匹配返回 true，否则返回 false。
+ */
+bool XString_contains_regularExpression_2(const XString* str,
+                                          const XRegularExpression* expression,
+                                          XRegularExpressionMatch* match);
+
+/**
  * @brief 统计字符串中的正则匹配数量。
  * @param str 源字符串
  * @param expression 正则表达式
@@ -495,7 +508,7 @@ size_t XString_count_regularExpression(const XString* str,
  * @brief 使用正则表达式替换字符串中的所有匹配。
  * @param str 待修改字符串
  * @param expression 正则表达式
- * @param after 替换文本，支持 \\0 到 \\9 捕获组引用
+ * @param after 替换文本；按 Qt 6.8 规则支持 \\1 到 \\9 捕获组引用及合法的两位捕获组编号，\\0 保留为普通文本。
  * @return 成功返回 true，参数无效或分配失败返回 false
  */
 bool XString_replace_regularExpression(XString* str,
@@ -503,11 +516,21 @@ bool XString_replace_regularExpression(XString* str,
                                        const XString* after);
 
 /**
+ * @brief 移除字符串中的所有正则表达式匹配。
+ * @details 对齐 Qt 6.8 `QString::remove(const QRegularExpression&)`，等价于使用空替换字符串调用正则替换。
+ * @param str 待修改的字符串对象；不能为 NULL。
+ * @param expression 正则表达式对象；函数只借用该对象，不能为 NULL。
+ * @return 成功返回 true；参数无效或临时空替换字符串创建失败返回 false。
+ */
+bool XString_remove_regularExpression(XString* str,
+                                      const XRegularExpression* expression);
+
+/**
  * @brief 使用正则表达式分割字符串。
  * @param str 源字符串
  * @param separator 分隔符正则表达式
  * @param keepEmptyParts 是否保留空字段
- * @return 新字符串列表，失败返回 NULL
+ * @return 新字符串列表；分配失败或参数无效返回 NULL；正则无效时返回空列表。
  */
 XStringList* XString_split_regularExpression(const XString* str,
                                              const XRegularExpression* separator,
@@ -1363,6 +1386,26 @@ XString* XString_section_utf8(const XString* str, const char* sep, int64_t start
  * @note 内部构造单字符分隔符XString后委托 XString_section 实现
  */
 XString* XString_section_char(const XString* str, XChar sep, int64_t start, int64_t end, int flags);
+
+#if XRegularExpression_ON
+/**
+ * @brief 按正则表达式分隔符提取指定区间的字符串段。
+ * @details 对齐 Qt 6.8 `QString::section(const QRegularExpression&, ...)`；正则匹配结果作为分隔符，
+ *          `start` 和 `end` 按段编号处理，返回值为新创建的 XString。
+ * @param str 源字符串；函数只借用该对象，不能传入 NULL。
+ * @param expression 分隔符正则表达式；函数只借用该对象，不能传入 NULL。
+ * @param start 起始段编号，包含该段；负数从末尾倒数。
+ * @param end 结束段编号，包含该段；负数从末尾倒数，通常传 -1 表示最后一段。
+ * @param flags `XString_SectionFlag` 按位或组合；支持跳过空段、包含首尾分隔符和分隔符大小写不敏感。
+ * @return 成功返回新创建的 XString，调用者必须使用 XString_delete_base 释放；正则无效、参数无效或范围无效时返回空 XString。
+ * @note 字符索引和长度均按 XString 内部 UTF-16 code unit 计数；函数不修改输入对象。
+ */
+XString* XString_section_regularExpression(const XString* str,
+                                           const XRegularExpression* expression,
+                                           int64_t start,
+                                           int64_t end,
+                                           int flags);
+#endif
 
 // -------------------------- Qt 6.8 对齐：arg() 占位符替换 --------------------------
 

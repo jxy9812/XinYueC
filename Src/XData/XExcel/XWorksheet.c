@@ -1924,7 +1924,10 @@ static const XString* worksheetAttribute(const XXmlStreamAttributes* attributes,
 {
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(key, name);
-    const XString* value = XXmlStreamAttributes_value_ex(attributes, NULL, key);
+    /* 带前缀的属性（例如 r:id）按限定名查询；普通属性按本地名查询。 */
+    const XString* value = strchr(name, ':')
+        ? XXmlStreamAttributes_value(attributes, key)
+        : XXmlStreamAttributes_value_ex(attributes, NULL, key);
     XString_deinit_base(key);
     return value;
 }
@@ -2312,7 +2315,9 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 const XString* reference = worksheetAttribute(attributes, "ref");
                 XCellRange range = reference ? XCellRange_create_str(reference) : XCellRange_create();
                 const XString* location = worksheetAttribute(attributes, "location");
-                const XString* relationId = worksheetAttribute(attributes, "id");
+                /* OOXML 的关系属性保留限定名 r:id；兼容无命名空间的旧文档。 */
+                const XString* relationId = worksheetAttribute(attributes, "r:id");
+                if (!relationId) relationId = worksheetAttribute(attributes, "id");
                 if (XCellRange_isValid(&range) && (location || relationId)) {
                     XWorksheet_Hyperlink hyperlink;
                     memset(&hyperlink, 0, sizeof(hyperlink));

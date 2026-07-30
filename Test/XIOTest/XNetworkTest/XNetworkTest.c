@@ -1,6 +1,7 @@
 #include "XNetworkTest.h"
 #include "XMenu.h"
 #include "XFtpTest.h"
+#include "XHttpTest.h"
 
 void XMenu_XNetworkTest(XMenu* root)
 {
@@ -12,4 +13,5 @@ void XMenu_XNetworkTest(XMenu* root)
     XMenu_XNetworkAddressEntryTest(menu);
     XMenu_XNetworkProxyTest(menu);
     XFtpTest_registerAll(menu);
+    XHttpTest_registerAll(menu);
 }

@@ -194,6 +194,13 @@ extern "C" {
         XSSL_SupportedFeature_Alerts = 6                     /**< 警告消息 */
     } XSslSupportedFeature;
 
+    /** @brief TLS 应用层协议协商状态，对齐 QSslConfiguration。 */
+    typedef enum XSslNextProtocolNegotiationStatus {
+        XSSL_NextProtocolNegotiationNone = 0,       /**< 未配置 ALPN。 */
+        XSSL_NextProtocolNegotiationNegotiated,     /**< 已协商出应用协议。 */
+        XSSL_NextProtocolNegotiationUnsupported     /**< 没有共同应用协议。 */
+    } XSslNextProtocolNegotiationStatus;
+
     /* =========================================================================
      * 十一、SslError - SSL错误码（参考Qt QSslError）
      * ========================================================================= */

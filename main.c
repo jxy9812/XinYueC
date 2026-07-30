@@ -35,11 +35,14 @@ int main(int argc, char* args[])
 		"直接运行指定测试（菜单路径，如 2-9-1）", "test-path", NULL);
 	XCommandLineOption_addName(optTest, "test");
 	XCommandLineParser_addOption(cmdParser, optTest);
+	/* 解析器复制选项内容后不接管传入对象，原始对象由调用方释放。 */
+	XCommandLineOption_delete(optTest);
 	
 	XCommandLineOption* optList = XCommandLineOption_createFull("l",
 		"列出所有测试菜单", NULL, NULL);
 	XCommandLineOption_addName(optList, "list");
 	XCommandLineParser_addOption(cmdParser, optList);
+	XCommandLineOption_delete(optList);
 	
 	XCommandLineParser_addHelpOption(cmdParser);
 	
@@ -135,7 +138,9 @@ int main(int argc, char* args[])
 	//return;
 	//XStateMachineSignalTest();
 	//XHistoryState_Test();
-	return XMenuTest_run();
+	int result = XMenuTest_run();
+	XCoreApplication_delete_base(app);
+	return result;
 	//XStateMachineEventTest();
 	return XCoreApplication_exec();
 	//cJsonTest();

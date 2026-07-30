@@ -335,6 +335,21 @@ XString* XSslSocket_sessionProtocol(const XSslSocket* self); /* "TLSv1.2"/"TLSv1
  */
 XString* XSslSocket_sessionCipher(const XSslSocket* self);   /* cipher suite name */
 
+/**
+ * @brief 设置 TLS ALPN 允许协议列表，对齐 QSslConfiguration::setAllowedNextProtocols。
+ * @param self XSslSocket 实例；不能为 NULL。
+ * @param protocols XVector<XByteArray*>；深拷贝，NULL/空列表清除 ALPN。
+ * @return 成功返回 true；TLS 会话开始后返回 false。
+ */
+bool XSslSocket_setAllowedNextProtocols(XSslSocket* self, const XVector* protocols);
+/** @param self XSslSocket 实例；可为 NULL。 @return 允许协议深拷贝列表。 */
+XVector* XSslSocket_allowedNextProtocols(const XSslSocket* self);
+/** @param self XSslSocket 实例；可为 NULL。 @return 协商协议副本，未协商返回 NULL。 */
+XByteArray* XSslSocket_nextNegotiatedProtocol(const XSslSocket* self);
+/** @param self XSslSocket 实例；可为 NULL。 @return ALPN 协商状态。 */
+XSslNextProtocolNegotiationStatus XSslSocket_nextProtocolNegotiationStatus(
+    const XSslSocket* self);
+
 /* --- 同步等待（QSslSocket 新增的加密等待） --- */
 
 /** 对齐 QSslSocket::waitForEncrypted()。默认 30000ms（Qt 默认）。 */

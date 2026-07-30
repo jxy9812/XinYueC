@@ -91,7 +91,8 @@ XCLASS_DEFINE_EXTEND_END(XRegularExpressionMatchIterator, XClass)
 
 /**
  * @brief 正则表达式对象。
- * @details 对应 Qt 6.8 的 QRegularExpression，使用隐式共享数据保存编译结果。
+ * @details 对应 Qt 6.8 的 QRegularExpression，使用隐式共享数据保存编译结果；
+ *          多个只读对象可以安全共享同一份数据，延迟编译状态由 XMutex 保护。
  */
 typedef struct XRegularExpression {
     XClass m_class;                         ///< 基类虚函数表，必须位于第一位
@@ -125,6 +126,8 @@ struct XRegularExpressionMatchIterator {
     XString m_subject;                      ///< 全局匹配主题字符串副本
     XRegularExpressionMatch* m_next;        ///< 下一个匹配结果
     int64_t m_nextOffset;                   ///< 下一次匹配的起始偏移
+    XRegularExpression_MatchType m_matchType; ///< 创建迭代器时使用的匹配方式
+    XRegularExpression_MatchOptions m_matchOptions; ///< 创建迭代器时使用的匹配选项
     bool m_isValid;                         ///< 迭代器对应正则是否有效
 };
 
@@ -333,6 +336,15 @@ void XRegularExpression_optimize(const XRegularExpression* expression);
  * @return 模式和选项均相同返回 true，否则返回 false；同一 NULL 指针也视为相等。
  */
 bool XRegularExpression_equals(const XRegularExpression* left, const XRegularExpression* right);
+
+/**
+ * @brief 交换两个正则表达式对象的内容。
+ * @param left 第一个已初始化正则表达式对象；不能为 NULL。
+ * @param right 第二个已初始化正则表达式对象；不能为 NULL。
+ * @return 无；参数无效或两个指针相同时不执行操作。
+ * @note 只交换对象拥有的隐式共享数据，不交换对象虚函数表和堆释放标记。
+ */
+void XRegularExpression_swap(XRegularExpression* left, XRegularExpression* right);
 /**
  * @brief 计算正则表达式的 XHashMap 键哈希值。
  * @param key 指向 XRegularExpression 对象的指针，供 XHashMap 回调使用。
@@ -501,6 +513,15 @@ XRegularExpression* XRegularExpressionMatch_regularExpression(const XRegularExpr
  * @return 内部正则表达式指针，不得释放；匹配结果销毁后失效。
  */
 const XRegularExpression* XRegularExpressionMatch_regularExpression_const(const XRegularExpressionMatch* match);
+
+/**
+ * @brief 交换两个匹配结果对象的内容。
+ * @param left 第一个已初始化匹配结果对象；不能为 NULL。
+ * @param right 第二个已初始化匹配结果对象；不能为 NULL。
+ * @return 无；参数无效或两个指针相同时不执行操作。
+ */
+void XRegularExpressionMatch_swap(XRegularExpressionMatch* left,
+                                   XRegularExpressionMatch* right);
 /**
  * @brief 获取匹配结果使用的匹配方式。
  * @param match 匹配结果对象。
@@ -672,16 +693,25 @@ XRegularExpression* XRegularExpressionMatchIterator_regularExpression(const XReg
  * @return 内部正则表达式指针，不得释放；迭代器销毁后失效。
  */
 const XRegularExpression* XRegularExpressionMatchIterator_regularExpression_const(const XRegularExpressionMatchIterator* iterator);
+
+/**
+ * @brief 交换两个全局匹配迭代器对象的内容。
+ * @param left 第一个已初始化迭代器对象；不能为 NULL。
+ * @param right 第二个已初始化迭代器对象；不能为 NULL。
+ * @return 无；参数无效或两个指针相同时不执行操作。
+ */
+void XRegularExpressionMatchIterator_swap(XRegularExpressionMatchIterator* left,
+                                          XRegularExpressionMatchIterator* right);
 /**
  * @brief 获取迭代器使用的匹配方式。
  * @param iterator 全局匹配迭代器。
- * @return 匹配方式；参数无效或无下一个结果时返回 XRegularExpression_NoMatch。
+ * @return 创建迭代器时使用的匹配方式；参数无效返回 XRegularExpression_NoMatch。
  */
 XRegularExpression_MatchType XRegularExpressionMatchIterator_matchType(const XRegularExpressionMatchIterator* iterator);
 /**
  * @brief 获取迭代器使用的匹配选项。
  * @param iterator 全局匹配迭代器。
- * @return 匹配选项组合；参数无效或无下一个结果时返回 XRegularExpression_NoMatchOption。
+ * @return 创建迭代器时使用的匹配选项；参数无效返回 XRegularExpression_NoMatchOption。
  */
 XRegularExpression_MatchOptions XRegularExpressionMatchIterator_matchOptions(const XRegularExpressionMatchIterator* iterator);
 

@@ -1767,6 +1767,27 @@ static bool test_qt_edge_semantics(void)
     if (readOnly) { XIODevice_close_base((XIODevice*)readOnly); XFile_deleteLater(readOnly); }
     XFile_remove_static(path);
     XString_delete_base(path);
+
+    XByteArray* externalBytes = XByteArray_create();
+    XXmlStreamWriter* byteWriter = XXmlStreamWriter_create_byteArray(externalBytes);
+    XXmlStreamWriter_writeTextElement_utf8(byteWriter, "root", "byte");
+    XByteArray_append_1(externalBytes, 0);
+    const char* byteOutput = externalBytes ? (const char*)XByteArray_data(externalBytes) : NULL;
+    if (byteOutput && strstr(byteOutput, "<root>byte</root>"))
+        TEST_PASS("Writer 外部 XByteArray 输出");
+    else { TEST_FAIL("外部 XByteArray 输出", "未写入调用方缓冲区"); all_pass = false; }
+
+    XString* externalString = XString_create_utf8("prefix");
+    XXmlStreamWriter* stringWriter = XXmlStreamWriter_create_string(externalString);
+    XXmlStreamWriter_writeTextElement_utf8(stringWriter, "root", "string");
+    if (externalString && XString_equals_utf8(externalString,
+            "prefix<root>string</root>", XChar_CaseSensitive))
+        TEST_PASS("Writer 外部 XString 输出");
+    else { TEST_FAIL("外部 XString 输出", "未追加到调用方字符串"); all_pass = false; }
+    XXmlStreamWriter_delete_base(stringWriter);
+    XString_delete_base(externalString);
+    XXmlStreamWriter_delete_base(byteWriter);
+    XByteArray_delete_base(externalBytes);
     return all_pass;
 }
 /* ==================== 菜单注册 ==================== */

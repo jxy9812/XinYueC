@@ -462,6 +462,8 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
     obj->m_pendingEmptyElement = src->m_pendingEmptyElement;
     obj->m_namespacePrefixCounter = src->m_namespacePrefixCounter;
     obj->m_device = src->m_device;
+    obj->m_externalBuffer = src->m_externalBuffer;
+    obj->m_externalString = src->m_externalString;
 
     if (src->m_namespaceBindingCapacity > 0) {
         XmlWriterNamespaceBinding* srcBindings = writer_namespace_bindings(src);
@@ -521,6 +523,8 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     /* ========== 转移所有权 ========== */
     obj->m_buffer = src->m_buffer;
     obj->m_deviceString = src->m_deviceString;
+    obj->m_externalBuffer = src->m_externalBuffer;
+    obj->m_externalString = src->m_externalString;
     obj->m_device = src->m_device;
     obj->m_autoFormatting = src->m_autoFormatting;
     obj->m_autoFormattingIndent = src->m_autoFormattingIndent;
@@ -542,6 +546,8 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     /* 将源对象恢复为可安全释放的空状态。 */
     src->m_buffer = NULL;
     src->m_deviceString = NULL;
+    src->m_externalBuffer = NULL;
+    src->m_externalString = NULL;
     src->m_device = NULL;
     src->m_autoFormatting = false;
     src->m_autoFormattingIndent = DEFAULT_INDENT;
@@ -577,16 +583,24 @@ static void write_raw(XXmlStreamWriter* self, const char* data, size_t len)
     for (size_t i = 0; i < len; i++) {
         XByteArray_push_back_1(self->m_buffer, (uint8_t)data[i]);
     }
+    if (self->m_externalBuffer && self->m_externalBuffer != self->m_buffer) {
+        for (size_t i = 0; i < len; i++) {
+            if (!XByteArray_push_back_1(self->m_externalBuffer, (uint8_t)data[i])) {
+                self->m_hasError = true;
+                break;
+            }
+        }
+    }
+    if (self->m_externalString &&
+        !XString_append_with_length_utf8(self->m_externalString, data, len))
+        self->m_hasError = true;
     if (self->m_device && XIODevice_write_1(self->m_device, data, (int64_t)len) != (int64_t)len)
         self->m_hasError = true;
 }
 
 static void write_byte(XXmlStreamWriter* self, uint8_t value)
 {
-    if (!self || !self->m_buffer) return;
-    XByteArray_push_back_1(self->m_buffer, value);
-    if (self->m_device && XIODevice_write_1(self->m_device, (const char*)&value, 1) != 1)
-        self->m_hasError = true;
+    write_raw(self, (const char*)&value, 1);
 }
 
 /**
@@ -931,6 +945,27 @@ XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other)
     return self;
 }
 
+XXmlStreamWriter* XXmlStreamWriter_create_byteArray(XByteArray* array)
+{
+    XXmlStreamWriter* self = XXmlStreamWriter_create();
+    if (self) self->m_externalBuffer = array;
+    return self;
+}
+
+XXmlStreamWriter* XXmlStreamWriter_create_string(XString* string)
+{
+    XXmlStreamWriter* self = XXmlStreamWriter_create();
+    if (self) self->m_externalString = string;
+    return self;
+}
+
+XXmlStreamWriter* XXmlStreamWriter_create_device(XIODevice* device)
+{
+    XXmlStreamWriter* self = XXmlStreamWriter_create();
+    if (self) self->m_device = device;
+    return self;
+}
+
 /**
  * @brief      初始化 XXmlStreamWriter 对象。
  * @param self 待初始化的 XXmlStreamWriter 对象。
@@ -978,6 +1013,8 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
     self->m_pendingEmptyElement = false;
     self->m_namespacePrefixCounter = 0;
     self->m_device = NULL;
+    self->m_externalBuffer = NULL;
+    self->m_externalString = NULL;
     self->m_namespaceBindings = NULL;
     self->m_namespaceBindingCount = 0;
     self->m_namespaceBindingCapacity = 0;
@@ -1286,12 +1323,11 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
         return;
     }
     
-    /* Qt 在没有内容时使用空元素形式。 */
-    /* writeEmptyElement() 已经代表完整子元素；调用方随后结束父元素时，
-       先关闭该空子元素，再继续关闭仍在栈中的父元素。 */
+    /* Qt 的 writeEmptyElement 允许随后继续写属性，但不要求调用方再为
+       空元素单独调用 writeEndElement；结束父元素时先收口空子元素。 */
     if (self->m_inStartElement && self->m_pendingEmptyElement) {
         close_start_element(self, true);
-        return;
+        if (self->m_elementStack <= 0) return;
     }
     if (self->m_inStartElement) {
         close_start_element(self, true);
@@ -2092,6 +2128,9 @@ bool XXmlStreamWriter_hasError(const XXmlStreamWriter* self)
 void XXmlStreamWriter_setDevice(XXmlStreamWriter* self, XIODevice* device)
 {
     if (ISNULL(self, "XXmlStreamWriter")) return;
+    /* Qt setDevice 会解除此前的外部字符串或字节数组输出目标。 */
+    self->m_externalBuffer = NULL;
+    self->m_externalString = NULL;
     self->m_device = device;
 }
 

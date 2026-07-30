@@ -3,6 +3,7 @@
 #include"XXmlStreamWriterTest.h"
 #include"XXmlStreamReaderTest.h"
 #include"XExcelTest.h"
+#include"XDomTest.h"
 #include"XMenu.h"
 void XMenu_XDataTest(XMenu* root)
 {
@@ -12,4 +13,5 @@ void XMenu_XDataTest(XMenu* root)
 	XMenu_XXmlStreamWriterTest(menu);
 	XMenu_XXmlStreamReaderTest(menu);
 	XMenu_XExcelTest(menu);
+	XMenu_XDomTest(menu);
 }

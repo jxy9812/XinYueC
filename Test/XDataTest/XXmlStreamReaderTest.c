@@ -49,6 +49,7 @@ static bool test_namespace_processing(void);
 static bool test_extra_namespace_declaration(void);
 static bool test_basic_xml_parse(void);
 static bool test_attributes_navigation(void);
+static bool test_stream_value_types(void);
 static bool test_nested_elements(void);
 static bool test_cdata_comment(void);
 static bool test_entity_reference(void);
@@ -56,7 +57,10 @@ static bool test_dtd_declaration(void);
 static bool test_skip_current_element(void);
 static bool test_read_next_start_element(void);
 static bool test_read_element_text(void);
+static bool test_qt_collection_copy_and_mutation(void);
 static bool test_invalid_xml(void);
+static bool test_reset_preserves_configuration(void);
+static bool test_split_bom_and_single_byte_encoding(void);
 
 bool XXmlStreamReaderTest_runAll(void);
 
@@ -85,6 +89,7 @@ static void test_namespace_processing_wrapper(XVariant* d) { (void)d; test_names
 static void test_extra_namespace_declaration_wrapper(XVariant* d) { (void)d; test_extra_namespace_declaration(); }
 static void test_basic_xml_parse_wrapper(XVariant* d) { (void)d; test_basic_xml_parse(); }
 static void test_attributes_navigation_wrapper(XVariant* d) { (void)d; test_attributes_navigation(); }
+static void test_stream_value_types_wrapper(XVariant* d) { (void)d; test_stream_value_types(); }
 static void test_nested_elements_wrapper(XVariant* d) { (void)d; test_nested_elements(); }
 static void test_cdata_comment_wrapper(XVariant* d) { (void)d; test_cdata_comment(); }
 static void test_entity_reference_wrapper(XVariant* d) { (void)d; test_entity_reference(); }
@@ -92,7 +97,18 @@ static void test_dtd_declaration_wrapper(XVariant* d) { (void)d; test_dtd_declar
 static void test_skip_current_element_wrapper(XVariant* d) { (void)d; test_skip_current_element(); }
 static void test_read_next_start_element_wrapper(XVariant* d) { (void)d; test_read_next_start_element(); }
 static void test_read_element_text_wrapper(XVariant* d) { (void)d; test_read_element_text(); }
+static void test_qt_collection_copy_and_mutation_wrapper(XVariant* d) { (void)d; test_qt_collection_copy_and_mutation(); }
 static void test_invalid_xml_wrapper(XVariant* d) { (void)d; test_invalid_xml(); }
+static void test_reset_preserves_configuration_wrapper(XVariant* d)
+{
+    (void)d;
+    test_reset_preserves_configuration();
+}
+static void test_split_bom_and_single_byte_encoding_wrapper(XVariant* d)
+{
+    (void)d;
+    test_split_bom_and_single_byte_encoding();
+}
 
 static void test_run_all_wrapper(XVariant* d) { (void)d; XXmlStreamReaderTest_runAll(); }
 
@@ -110,6 +126,21 @@ static bool test_create_delete(void)
     if (strcmp(XXmlStreamReader_tokenString(r), "NoToken") == 0)
         TEST_PASS("tokenString(NoToken)");
     else TEST_FAIL("tokenString(NoToken)", "Token 文本映射错误");
+    XByteArray* constructorData = XByteArray_create_utf8("<root/>");
+    XString* constructorString = XString_create_utf8("<root/>");
+    XXmlStreamReader* byteReader = XXmlStreamReader_create_byteArray(constructorData);
+    XXmlStreamReader* stringReader = XXmlStreamReader_create_string(constructorString);
+    XXmlStreamReader* utf8Reader = XXmlStreamReader_create_utf8("<root/>");
+    XXmlStreamReader* deviceReader = XXmlStreamReader_create_device(NULL);
+    if (byteReader && stringReader && utf8Reader && deviceReader)
+        TEST_PASS("Reader 数据/字符串/设备构造映射");
+    else { TEST_FAIL("Reader 构造映射", "构造函数重载映射失败"); }
+    XXmlStreamReader_delete_base(byteReader);
+    XXmlStreamReader_delete_base(stringReader);
+    XXmlStreamReader_delete_base(utf8Reader);
+    XXmlStreamReader_delete_base(deviceReader);
+    XByteArray_delete_base(constructorData);
+    XString_delete_base(constructorString);
     XXmlStreamReader_delete_base(r);
     XXmlStreamReader_delete_base(NULL);
     TEST_PASS("XXmlStreamReader_delete NULL安全");
@@ -612,8 +643,8 @@ static bool test_line_column_offset(void)
     int64_t ln = XXmlStreamReader_lineNumber(r);
     int64_t col = XXmlStreamReader_columnNumber(r);
     int64_t off = XXmlStreamReader_characterOffset(r);
-    if (ln >= 1 && col >= 1 && off >= 0) TEST_PASS("StartDocument 位置");
-    else { TEST_FAIL("StartDocument pos", "ln/col/offset 应为正"); all_pass = false; }
+    if (ln >= 1 && col >= 0 && off >= 0) TEST_PASS("StartDocument 位置");
+    else { TEST_FAIL("StartDocument pos", "行号应从 1 开始，列号和偏移应从 0 开始"); all_pass = false; }
     /* 继续读到 child StartElement */
     int safety = 0;
     while (!XXmlStreamReader_atEnd(r) && safety++ < 32) {
@@ -631,6 +662,26 @@ static bool test_line_column_offset(void)
         else { TEST_FAIL("child offset", "应 > 0"); all_pass = false; }
     } else {
         TEST_FAIL("find child", "未找到 child 开始元素");
+        all_pass = false;
+    }
+    XXmlStreamReader_delete_base(r);
+
+    /* Qt 位置按 UTF-16 code unit 计数；同时验证 CRLF 不把 LF 算入下一列。 */
+    r = XXmlStreamReader_create_utf8("<root>\r\n  中<child/></root>");
+    bool foundUnicodeChild = false;
+    safety = 0;
+    while (r && !XXmlStreamReader_atEnd(r) && !XXmlStreamReader_hasError(r) && safety++ < 32) {
+        if (XXmlStreamReader_readNext(r) == XXmlStream_StartElement &&
+            XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) {
+            foundUnicodeChild = XXmlStreamReader_lineNumber(r) == 2 &&
+                                XXmlStreamReader_columnNumber(r) == 11 &&
+                                XXmlStreamReader_characterOffset(r) == 19;
+            break;
+        }
+    }
+    if (foundUnicodeChild) TEST_PASS("CRLF 和 Unicode 的 UTF-16 位置");
+    else {
+        TEST_FAIL("CRLF/Unicode 位置", "列号或字符偏移未按 Qt UTF-16 语义计算");
         all_pass = false;
     }
     XXmlStreamReader_delete_base(r);
@@ -671,6 +722,22 @@ static bool test_standalone_declaration(void)
         XXmlStreamReader_readNext(r);
         if (!XXmlStreamReader_hasStandaloneDeclaration(r)) TEST_PASS("无 standalone -> hasStandaloneDeclaration=false");
         else { TEST_FAIL("no standalone", "应为 false"); all_pass = false; }
+        XXmlStreamReader_delete_base(r);
+    }
+    /* 4) XML 规范允许 encoding 后接 standalone，OOXML workbook.xml 会使用该形式。 */
+    {
+        XXmlStreamReader* r = XXmlStreamReader_create();
+        XXmlStreamReader_addData_utf8(r,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><a/>");
+        XXmlStreamReader_readNext(r);
+        if (!XXmlStreamReader_hasError(r) &&
+            XXmlStreamReader_hasStandaloneDeclaration(r) &&
+            XXmlStreamReader_isStandaloneDocument(r))
+            TEST_PASS("encoding 后 standalone=yes 可解析");
+        else {
+            TEST_FAIL("encoding 后 standalone=yes", "合法 XML 声明被拒绝");
+            all_pass = false;
+        }
         XXmlStreamReader_delete_base(r);
     }
     return all_pass;
@@ -798,6 +865,7 @@ static bool test_basic_xml_parse(void)
         const XString* attrVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, attrName);
         if (attrVal && XString_equals_utf8(attrVal, "v", XChar_CaseSensitive)) TEST_PASS("属性 attr=v");
         else { TEST_FAIL("属性值", "应为 v"); all_pass = false; }
+        XString_deinit_base(attrName);
     }
     t = XXmlStreamReader_readNext(r); /* StartElement child */
     if (t == XXmlStream_StartElement && XString_equals_utf8(XXmlStreamReader_name(r), "child", XChar_CaseSensitive)) TEST_PASS("StartElement child");
@@ -853,6 +921,10 @@ static bool test_attributes_navigation(void)
          && !XXmlStreamAttributes_hasAttribute((XXmlStreamAttributes*)attrs, zName))
             TEST_PASS("hasAttribute 检查存在/不存在");
         else { TEST_FAIL("hasAttribute", ""); all_pass = false; }
+        XString_deinit_base(aName);
+        XString_deinit_base(bName);
+        XString_deinit_base(cName);
+        XString_deinit_base(zName);
     }
     /* 访问器 */
     if (a0 && XString_equals_utf8(XXmlStreamAttribute_name(a0), "a", XChar_CaseSensitive)
@@ -867,12 +939,14 @@ static bool test_attributes_navigation(void)
         const XString* bVal = XXmlStreamAttributes_value((XXmlStreamAttributes*)attrs, bName);
         if (bVal && XString_equals_utf8(bVal, "2", XChar_CaseSensitive)) TEST_PASS("value by name");
         else { TEST_FAIL("value by name", ""); all_pass = false; }
+        XString_deinit_base(bName);
     }
     {
         XString_Init_Utf8(aNameEx, "a");
         if (XXmlStreamAttributes_hasAttribute_ex((XXmlStreamAttributes*)attrs,
                 NULL, aNameEx)) TEST_PASS("hasAttribute(namespace,name)");
         else { TEST_FAIL("hasAttribute(namespace,name)", "未找到无命名空间属性"); all_pass = false; }
+        XString_deinit_base(aNameEx);
     }
     XXmlStreamReader_delete_base(r);
     r = XXmlStreamReader_create();
@@ -913,6 +987,7 @@ static bool test_attributes_navigation(void)
         XString_Init_Utf8(xName, "x");
         XXmlStreamAttributes_value(NULL, xName);
         XXmlStreamAttributes_hasAttribute(NULL, xName);
+        XString_deinit_base(xName);
     }
     XXmlStreamAttribute_namespaceUri(NULL);
     XXmlStreamAttribute_name(NULL);
@@ -920,6 +995,108 @@ static bool test_attributes_navigation(void)
     XXmlStreamAttribute_isDefault(NULL);
     TEST_PASS("Attribute(s) NULL 访问安全");
     XXmlStreamReader_delete_base(r);
+    return all_pass;
+}
+
+/* ==================== 测试: XML 流值类型与列表便捷 API ==================== */
+static bool test_stream_value_types(void)
+{
+    TEST_INFO("===== XML 流值类型等价与列表别名测试 =====");
+    bool all_pass = true;
+    XString* namespaceUri = XString_create_utf8("urn:test");
+    XString* qualifiedName = XString_create_utf8("p:id");
+    XString* localName = XString_create_utf8("id");
+    XString* value = XString_create_utf8("42");
+    XXmlStreamAttribute* qualified = XXmlStreamAttribute_create(qualifiedName, value);
+    XXmlStreamAttribute* qualifiedCopy = XXmlStreamAttribute_create(qualifiedName, value);
+    XXmlStreamAttribute* namespaced = XXmlStreamAttribute_create_ex(namespaceUri, localName, value);
+    if (qualified && qualifiedCopy &&
+        XXmlStreamAttribute_equals(qualified, qualifiedCopy) &&
+        !XXmlStreamAttribute_equals(qualified, namespaced) &&
+        XXmlStreamAttribute_equals(NULL, NULL) &&
+        !XXmlStreamAttribute_equals(qualified, NULL))
+        TEST_PASS("QXmlStreamAttribute 等价规则");
+    else { TEST_FAIL("QXmlStreamAttribute 等价规则", "属性等价或空指针规则错误"); all_pass = false; }
+
+    XXmlStreamNamespaceDeclaration* declaration =
+        XXmlStreamNamespaceDeclaration_create(localName, namespaceUri);
+    XXmlStreamNamespaceDeclaration* declarationCopy =
+        XXmlStreamNamespaceDeclaration_create(localName, namespaceUri);
+    if (declaration && declarationCopy &&
+        XXmlStreamNamespaceDeclaration_equals(declaration, declarationCopy) &&
+        XXmlStreamNamespaceDeclaration_equals(NULL, NULL))
+        TEST_PASS("QXmlStreamNamespaceDeclaration 等价规则");
+    else { TEST_FAIL("QXmlStreamNamespaceDeclaration 等价规则", "命名空间声明比较错误"); all_pass = false; }
+
+    XXmlStreamNotationDeclaration* notation = XXmlStreamNotationDeclaration_create();
+    XXmlStreamNotationDeclaration* notationCopy = XXmlStreamNotationDeclaration_create();
+    XXmlStreamEntityDeclaration* entity = XXmlStreamEntityDeclaration_create();
+    XXmlStreamEntityDeclaration* entityCopy = XXmlStreamEntityDeclaration_create();
+    if (notation && notationCopy && entity && entityCopy) {
+        XString_assign_utf8(notation->m_name, "image");
+        XString_assign_utf8(notationCopy->m_name, "image");
+        XString_assign_utf8(entity->m_name, "item");
+        XString_assign_utf8(entityCopy->m_name, "item");
+        XString_assign_utf8(entity->m_notationName, "image");
+        XString_assign_utf8(entityCopy->m_notationName, "image");
+        XString_assign_utf8(entity->m_value, "value");
+        XString_assign_utf8(entityCopy->m_value, "value");
+    }
+    if (notation && notationCopy && entity && entityCopy &&
+        XXmlStreamNotationDeclaration_equals(notation, notationCopy) &&
+        XXmlStreamEntityDeclaration_equals(entity, entityCopy) &&
+        XString_equals_utf8(XXmlStreamEntityDeclaration_notationName(entity), "image",
+            XChar_CaseSensitive))
+        TEST_PASS("QXmlStreamNotation/EntityDeclaration 等价规则");
+    else { TEST_FAIL("QXmlStreamNotation/EntityDeclaration 等价规则", "DTD 声明比较错误"); all_pass = false; }
+
+    XXmlStreamAttributes* attributes = XXmlStreamAttributes_create();
+    XXmlStreamAttributes* attributesCopy = XXmlStreamAttributes_create();
+    XXmlStreamNotationDeclarations* notations = XXmlStreamNotationDeclarations_create();
+    XXmlStreamNotationDeclarations* notationsCopy = XXmlStreamNotationDeclarations_create();
+    XXmlStreamEntityDeclarations* entities = XXmlStreamEntityDeclarations_create();
+    XXmlStreamEntityDeclarations* entitiesCopy = XXmlStreamEntityDeclarations_create();
+    XXmlStreamNamespaceDeclarations namespaceDeclarations = { NULL, 0 };
+    XXmlStreamNamespaceDeclarations namespaceDeclarationsCopy = { NULL, 0 };
+    XXmlStreamAttributes_append_ex_utf8(attributes, "id", "42");
+    XXmlStreamAttributes_append_ex_utf8(attributesCopy, "id", "42");
+    if (attributes && XXmlStreamAttributes_size(attributes) == 1 &&
+        XXmlStreamAttributes_count(attributes) == 1 &&
+        !XXmlStreamAttributes_isEmpty(attributes) &&
+        XXmlStreamAttributes_equals(attributes, attributesCopy) &&
+        XXmlStreamAttributes_isEmpty(NULL) &&
+        XXmlStreamNotationDeclarations_count(notations) == 0 &&
+        XXmlStreamNotationDeclarations_isEmpty(notations) &&
+        XXmlStreamNotationDeclarations_equals(notations, notationsCopy) &&
+        XXmlStreamEntityDeclarations_count(entities) == 0 &&
+        XXmlStreamEntityDeclarations_isEmpty(entities) &&
+        XXmlStreamEntityDeclarations_equals(entities, entitiesCopy) &&
+        XXmlStreamNamespaceDeclarations_count(&namespaceDeclarations) == 0 &&
+        XXmlStreamNamespaceDeclarations_isEmpty(&namespaceDeclarations) &&
+        XXmlStreamNamespaceDeclarations_equals(&namespaceDeclarations,
+            &namespaceDeclarationsCopy))
+        TEST_PASS("XML 流列表 size/count/isEmpty 别名");
+    else { TEST_FAIL("XML 流列表 size/count/isEmpty 别名", "列表便捷 API 结果错误"); all_pass = false; }
+
+    XXmlStreamAttributes_delete(attributes);
+    XXmlStreamAttributes_delete(attributesCopy);
+    XXmlStreamNotationDeclarations_delete(notations);
+    XXmlStreamNotationDeclarations_delete(notationsCopy);
+    XXmlStreamEntityDeclarations_delete(entities);
+    XXmlStreamEntityDeclarations_delete(entitiesCopy);
+    XXmlStreamAttribute_delete(qualified);
+    XXmlStreamAttribute_delete(qualifiedCopy);
+    XXmlStreamAttribute_delete(namespaced);
+    XXmlStreamNamespaceDeclaration_delete(declaration);
+    XXmlStreamNamespaceDeclaration_delete(declarationCopy);
+    XXmlStreamNotationDeclaration_delete(notation);
+    XXmlStreamNotationDeclaration_delete(notationCopy);
+    XXmlStreamEntityDeclaration_delete(entity);
+    XXmlStreamEntityDeclaration_delete(entityCopy);
+    XString_delete_base(namespaceUri);
+    XString_delete_base(qualifiedName);
+    XString_delete_base(localName);
+    XString_delete_base(value);
     return all_pass;
 }
 
@@ -1123,6 +1300,10 @@ static bool test_read_element_text(void)
             XXmlStream_ReadElementTextBehaviour_ErrorOnUnexpectedElement);
         if (txt && XString_equals_utf8(txt, "hello world", XChar_CaseSensitive)) TEST_PASS("readElementText = 'hello world'");
         else { TEST_FAIL("readElementText", ""); all_pass = false; }
+        const XString* empty = XXmlStreamReader_readElementText(r,
+            XXmlStream_ReadElementTextBehaviour_ErrorOnUnexpectedElement);
+        if (empty && XString_isEmpty_base(empty)) TEST_PASS("非开始元素 readElementText 返回空");
+        else { TEST_FAIL("非开始元素 readElementText", "不应返回上一次缓存"); all_pass = false; }
         XXmlStreamReader_delete_base(r);
     }
     /* 包含子元素，SkipChildElements 应跳过 */
@@ -1138,6 +1319,94 @@ static bool test_read_element_text(void)
         else { TEST_FAIL("SkipChildElements", ""); all_pass = false; }
         XXmlStreamReader_delete_base(r);
     }
+    return all_pass;
+}
+
+/* ==================== 测试: Qt 集合值语义与 UTF-16 输入 ==================== */
+static bool test_qt_collection_copy_and_mutation(void)
+{
+    TEST_INFO("===== Qt 集合深拷贝/修改和 XString 输入测试 =====");
+    bool all_pass = true;
+
+    XString* name = XString_create_utf8("item");
+    XString* value = XString_create_utf8("值");
+    XXmlStreamAttribute* attribute = XXmlStreamAttribute_create(name, value);
+    XXmlStreamAttributes* attributes = XXmlStreamAttributes_create();
+    XXmlStreamAttributes* copiedAttributes = NULL;
+    if (attribute && attributes &&
+        XXmlStreamAttributes_appendAttribute(attributes, attribute) &&
+        XXmlStreamAttributes_insert(attributes, 0, attribute) &&
+        XXmlStreamAttributes_size(attributes) == 2 &&
+        (copiedAttributes = XXmlStreamAttributes_create_copy(attributes)) &&
+        XXmlStreamAttributes_removeAt(copiedAttributes, 0) &&
+        XXmlStreamAttributes_size(copiedAttributes) == 1 &&
+        XXmlStreamAttributes_size(attributes) == 2)
+        TEST_PASS("属性列表深拷贝和插入/删除");
+    else { TEST_FAIL("属性列表修改", "QList 等价操作失败"); all_pass = false; }
+    XXmlStreamAttributes_clear(copiedAttributes);
+    XXmlStreamAttributes_delete(copiedAttributes);
+    XXmlStreamAttributes_delete(attributes);
+    XXmlStreamAttribute_delete(attribute);
+    XString_delete_base(value);
+    XString_delete_base(name);
+
+    XString* prefix = XString_create_utf8("p");
+    XString* namespaceUri = XString_create_utf8("urn:copy");
+    XXmlStreamNamespaceDeclaration* namespaceDeclaration =
+        XXmlStreamNamespaceDeclaration_create(prefix, namespaceUri);
+    XXmlStreamNamespaceDeclarations* namespaceDeclarations =
+        XXmlStreamNamespaceDeclarations_create();
+    XXmlStreamNamespaceDeclarations* namespaceCopy = NULL;
+    if (namespaceDeclaration && namespaceDeclarations &&
+        XXmlStreamNamespaceDeclarations_append(namespaceDeclarations, namespaceDeclaration) &&
+        (namespaceCopy = XXmlStreamNamespaceDeclarations_create_copy(namespaceDeclarations)) &&
+        XXmlStreamNamespaceDeclarations_insert(namespaceCopy, 0, namespaceDeclaration) &&
+        XXmlStreamNamespaceDeclarations_size(namespaceCopy) == 2 &&
+        XXmlStreamNamespaceDeclarations_removeAt(namespaceCopy, 0) &&
+        XXmlStreamNamespaceDeclarations_size(namespaceCopy) == 1)
+        TEST_PASS("命名空间列表深拷贝和修改");
+    else { TEST_FAIL("命名空间列表修改", "独立 QList 映射失败"); all_pass = false; }
+    XXmlStreamNamespaceDeclarations_clear(namespaceCopy);
+    XXmlStreamNamespaceDeclarations_delete(namespaceCopy);
+    XXmlStreamNamespaceDeclarations_delete(namespaceDeclarations);
+    XXmlStreamNamespaceDeclaration_delete(namespaceDeclaration);
+    XString_delete_base(namespaceUri);
+    XString_delete_base(prefix);
+
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    XString* xml = XString_create_utf8("<root xmlns:p=\"urn:p\" p:id=\"值\"/>");
+    XXmlStreamReader_addData_string(reader, xml);
+    XXmlStreamReader_readNext(reader);
+    XXmlStreamReader_readNext(reader);
+    XXmlStreamAttributes* readerAttributes = XXmlStreamReader_attributes_copy(reader);
+    XXmlStreamNamespaceDeclarations* readerNamespaces =
+        XXmlStreamReader_namespaceDeclarations_copy(reader);
+    if (readerAttributes && readerNamespaces &&
+        XXmlStreamAttributes_size(readerAttributes) == 1 &&
+        XXmlStreamNamespaceDeclarations_size(readerNamespaces) == 1)
+        TEST_PASS("XString UTF-16 输入和 Reader 集合深拷贝");
+    else { TEST_FAIL("Reader 集合深拷贝", "UTF-16 输入或独立集合为空"); all_pass = false; }
+    XXmlStreamNamespaceDeclarations_delete(readerNamespaces);
+    XXmlStreamAttributes_delete(readerAttributes);
+    XXmlStreamReader_delete_base(reader);
+    XString_delete_base(xml);
+
+    XXmlStreamNotationDeclaration* notation = XXmlStreamNotationDeclaration_create();
+    XXmlStreamNotationDeclarations* notations = XXmlStreamNotationDeclarations_create();
+    XXmlStreamEntityDeclaration* entity = XXmlStreamEntityDeclaration_create();
+    XXmlStreamEntityDeclarations* entities = XXmlStreamEntityDeclarations_create();
+    bool dtdListsOk = notation && notations && entity && entities &&
+        XXmlStreamNotationDeclarations_append(notations, notation) &&
+        XXmlStreamNotationDeclarations_removeAt(notations, 0) &&
+        XXmlStreamEntityDeclarations_append(entities, entity);
+    XXmlStreamEntityDeclarations_clear(entities);
+    if (dtdListsOk)
+        TEST_PASS("Notation/Entity 列表修改 API");
+    else { TEST_FAIL("DTD 列表修改", "列表追加或清空失败"); all_pass = false; }
+    XXmlStreamNotationDeclarations_delete(notations);
+    XXmlStreamEntityDeclarations_delete(entities);
+    XXmlStreamNotationDeclaration_delete(notation);
+    XXmlStreamEntityDeclaration_delete(entity);
     return all_pass;
 }
 
@@ -1294,6 +1563,110 @@ static bool test_encoded_input(void)
     return allPass;
 }
 
+/* ==================== 测试: 输入重置和扩展编码 ==================== */
+static bool test_reset_preserves_configuration(void)
+{
+    TEST_INFO("===== clear/setDevice 配置保留测试 =====");
+    bool allPass = true;
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    XXmlStreamEntityResolver* resolver = XXmlStreamEntityResolver_create();
+    XString* prefix = XString_create_utf8("p");
+    XString* uri = XString_create_utf8("urn:extra");
+    XXmlStreamNamespaceDeclaration* extra =
+        XXmlStreamNamespaceDeclaration_create(prefix, uri);
+    if (!reader || !resolver || !extra) {
+        TEST_FAIL("重置配置准备", "测试对象创建失败");
+        allPass = false;
+    } else {
+        XXmlStreamReader_setEntityResolver(reader, resolver);
+        XXmlStreamReader_setEntityExpansionLimit(reader, 123);
+        XXmlStreamReader_addExtraNamespaceDeclaration(reader, extra);
+        XXmlStreamReader_clear(reader);
+        bool clearPreserved =
+            XXmlStreamReader_entityResolver(reader) == resolver &&
+            XXmlStreamReader_entityExpansionLimit(reader) == 123;
+        if (clearPreserved) TEST_PASS("clear 保留实体解析器和扩展限制");
+        else { TEST_FAIL("clear 配置保留", "clear 清除了 Qt 要求保留的配置"); allPass = false; }
+
+        XXmlStreamReader_setDevice(reader, NULL);
+        if (XXmlStreamReader_entityResolver(reader) == resolver &&
+            XXmlStreamReader_entityExpansionLimit(reader) == 123)
+            TEST_PASS("setDevice 保留实体解析器和扩展限制");
+        else { TEST_FAIL("setDevice 配置保留", "setDevice 清除了 Qt 要求保留的配置"); allPass = false; }
+    }
+    XXmlStreamNamespaceDeclaration_delete(extra);
+    XString_delete_base(prefix);
+    XString_delete_base(uri);
+    XXmlStreamEntityResolver_delete(resolver);
+    XXmlStreamReader_delete_base(reader);
+    return allPass;
+}
+
+static bool test_split_bom_and_single_byte_encoding(void)
+{
+    TEST_INFO("===== 拆分 BOM、Latin1 和 ASCII 编码测试 =====");
+    bool allPass = true;
+    {
+        static const char firstBytes[] = { (char)0xff };
+        static const char secondBytes[] = {
+            (char)0xfe,
+            '<', 0, 'r', 0, 'o', 0, 'o', 0, 't', 0, '/', 0, '>', 0
+        };
+        XByteArray* first = XByteArray_create_with_data(firstBytes, sizeof(firstBytes));
+        XByteArray* second = XByteArray_create_with_data(secondBytes, sizeof(secondBytes));
+        XXmlStreamReader* reader = XXmlStreamReader_create();
+        bool sawRoot = false;
+        int guard = 0;
+        if (reader && first && second) {
+            XXmlStreamReader_addData(reader, first);
+            XXmlStreamReader_addData(reader, second);
+            while (!XXmlStreamReader_atEnd(reader) && guard++ < 16) {
+                if (XXmlStreamReader_readNext(reader) == XXmlStream_StartElement &&
+                    XString_equals_utf8(XXmlStreamReader_name(reader), "root", XChar_CaseSensitive))
+                    sawRoot = true;
+                if (XXmlStreamReader_hasError(reader)) break;
+            }
+        }
+        if (sawRoot && !XXmlStreamReader_hasError(reader)) TEST_PASS("拆分 UTF-16LE BOM 后继续解析");
+        else { TEST_FAIL("拆分 BOM", "BOM 分片未正确锁定 UTF-16LE"); allPass = false; }
+        XXmlStreamReader_delete_base(reader);
+        XByteArray_delete_base(first);
+        XByteArray_delete_base(second);
+    }
+    {
+        static const char latin1[] =
+            "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><root>\xe9</root>";
+        XByteArray* data = XByteArray_create_with_data(latin1, sizeof(latin1) - 1);
+        XXmlStreamReader* reader = XXmlStreamReader_create();
+        bool sawText = false;
+        int guard = 0;
+        if (reader && data) {
+            XXmlStreamReader_addData(reader, data);
+            while (!XXmlStreamReader_atEnd(reader) && guard++ < 32) {
+                if (XXmlStreamReader_readNext(reader) == XXmlStream_Characters &&
+                    XString_length_base(XXmlStreamReader_text(reader)) == 1)
+                    sawText = true;
+                if (XXmlStreamReader_hasError(reader)) break;
+            }
+        }
+        if (sawText && !XXmlStreamReader_hasError(reader)) TEST_PASS("ISO-8859-1 声明和单字节字符");
+        else { TEST_FAIL("Latin1 编码", "ISO-8859-1 输入未完成归一化"); allPass = false; }
+        XXmlStreamReader_delete_base(reader);
+        XByteArray_delete_base(data);
+    }
+    {
+        XXmlStreamReader* reader = XXmlStreamReader_create_utf8(
+            "<?xml version=\"1.0\" encoding=\"US-ASCII\"?><root>ok</root>");
+        int guard = 0;
+        while (reader && !XXmlStreamReader_atEnd(reader) && !XXmlStreamReader_hasError(reader) && guard++ < 32)
+            XXmlStreamReader_readNext(reader);
+        if (reader && !XXmlStreamReader_hasError(reader)) TEST_PASS("US-ASCII 声明");
+        else { TEST_FAIL("ASCII 编码", "US-ASCII 声明未通过"); allPass = false; }
+        XXmlStreamReader_delete_base(reader);
+    }
+    return allPass;
+}
+
 static bool test_namespace_declarations_api(void)
 {
     TEST_INFO("===== 命名空间声明列表数量/索引测试 =====");
@@ -1426,6 +1799,8 @@ bool XXmlStreamReaderTest_runAll(void)
     result = test_dtd_copy_move() && result;
     result = test_incremental_device_input() && result;
     result = test_encoded_input() && result;
+    result = test_reset_preserves_configuration() && result;
+    result = test_split_bom_and_single_byte_encoding() && result;
     result = test_namespace_declarations_api() && result;
     result = test_uninitialized_copy_move() && result;
     /* 新 API 与功能覆盖 */
@@ -1436,6 +1811,7 @@ bool XXmlStreamReaderTest_runAll(void)
     result = test_extra_namespace_declaration() && result;
     result = test_basic_xml_parse() && result;
     result = test_attributes_navigation() && result;
+    result = test_stream_value_types() && result;
     result = test_nested_elements() && result;
     result = test_cdata_comment() && result;
     result = test_entity_reference() && result;
@@ -1443,6 +1819,7 @@ bool XXmlStreamReaderTest_runAll(void)
     result = test_skip_current_element() && result;
     result = test_read_next_start_element() && result;
     result = test_read_element_text() && result;
+    result = test_qt_collection_copy_and_mutation() && result;
     result = test_invalid_xml() && result;
 
     XPrintf("\n========================================\n");
@@ -1506,6 +1883,8 @@ void XMenu_XXmlStreamReaderTest(XMenu* root)
     XAction_setAction(action, test_basic_xml_parse_wrapper);
     action = XMenu_addAction(menu, "属性导航");
     XAction_setAction(action, test_attributes_navigation_wrapper);
+    action = XMenu_addAction(menu, "XML 流值类型与列表别名");
+    XAction_setAction(action, test_stream_value_types_wrapper);
     action = XMenu_addAction(menu, "嵌套元素");
     XAction_setAction(action, test_nested_elements_wrapper);
     action = XMenu_addAction(menu, "CDATA/注释");
@@ -1520,7 +1899,13 @@ void XMenu_XXmlStreamReaderTest(XMenu* root)
     XAction_setAction(action, test_read_next_start_element_wrapper);
     action = XMenu_addAction(menu, "readElementText");
     XAction_setAction(action, test_read_element_text_wrapper);
+    action = XMenu_addAction(menu, "Qt 集合深拷贝和修改");
+    XAction_setAction(action, test_qt_collection_copy_and_mutation_wrapper);
     action = XMenu_addAction(menu, "非法 XML");
     XAction_setAction(action, test_invalid_xml_wrapper);
+    action = XMenu_addAction(menu, "clear/setDevice 配置保留");
+    XAction_setAction(action, test_reset_preserves_configuration_wrapper);
+    action = XMenu_addAction(menu, "拆分 BOM 和单字节编码");
+    XAction_setAction(action, test_split_bom_and_single_byte_encoding_wrapper);
 }
 #endif

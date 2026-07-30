@@ -26,6 +26,11 @@ enum {
     XDom_MapNotations = 3
 };
 
+enum {
+    XDom_ListChildren = 1,
+    XDom_ListElements = 2
+};
+
 struct XDomNodePrivate {
     int m_refs;
     int m_collectionKind;
@@ -42,11 +47,17 @@ struct XDomNodePrivate {
     XString* m_notationName;
     XString* m_internalSubset;
     XString* m_textCache;
+    XString* m_attributeCache;
+    XString* m_attributeNSCache;
     XString* m_documentVersion;
     XString* m_documentEncoding;
     bool m_specified;
+    bool m_publicIdNull;
+    bool m_systemIdNull;
+    bool m_createdWithNamespace;
     bool m_hasXmlDeclaration;
     bool m_isStandalone;
+    bool m_hasStandalone;
     int64_t m_line;
     int64_t m_column;
     XDomNodePrivate* m_parent;
@@ -67,6 +78,11 @@ struct XDomNodePrivate {
     int m_itemCount;
     int m_itemCapacity;
     XDomNodePrivate* m_mapOwner;
+    XDomNodePrivate* m_doctype;
+    XDomNodePrivate* m_listOwner;
+    int m_listQueryKind;
+    XString* m_listTagName;
+    XString* m_listNamespaceUri;
 };
 
 static XDomInvalidDataPolicy g_xxml_dom_invalid_data_policy = XDom_AcceptInvalidChars;
@@ -168,11 +184,20 @@ static XDomNodePrivate* xxml_dom_node_new_in_context(XDomContext* context,
                                                          XDomNodeType type);
 static void xxml_dom_node_retain(XDomNodePrivate* node);
 static void xxml_dom_node_release(XDomNodePrivate* node);
+static void xxml_dom_node_clear(XDomNodePrivate* node);
+static int xxml_dom_child_index(const XDomNodePrivate* parent,
+                                const XDomNodePrivate* child);
+static bool xxml_dom_append_private(XDomNodePrivate* parent,
+                                    XDomNodePrivate* child, int index);
+static void xxml_dom_attr_set_value_private(XDomNodePrivate* attr,
+                                             const XString* value);
 
 static void xxml_dom_clear_owner_document(XDomNodePrivate* node)
 {
     if (!node) return;
     node->m_ownerDocument = NULL;
+    if (node->m_type == XDom_DocumentNode && node->m_doctype)
+        xxml_dom_clear_owner_document(node->m_doctype);
     for (int i = 0; i < node->m_childCount; ++i)
         xxml_dom_clear_owner_document(node->m_children[i]);
     for (int i = 0; i < node->m_attributeCount; ++i)
@@ -184,6 +209,8 @@ static void xxml_dom_set_owner_document(XDomNodePrivate* node,
 {
     if (!node) return;
     node->m_ownerDocument = document;
+    if (node->m_type == XDom_DocumentNode && node->m_doctype)
+        xxml_dom_set_owner_document(node->m_doctype, document);
     for (int i = 0; i < node->m_childCount; ++i)
         xxml_dom_set_owner_document(node->m_children[i], document);
     for (int i = 0; i < node->m_attributeCount; ++i)
@@ -207,6 +234,8 @@ static void xxml_dom_node_free(XDomNodePrivate* node)
         xxml_dom_node_release(node->m_entities[i]);
     for (int i = 0; i < node->m_notationCount; ++i)
         xxml_dom_node_release(node->m_notations[i]);
+    if (node->m_type == XDom_DocumentNode)
+        xxml_dom_node_release(node->m_doctype);
     XFree_System(node->m_children);
     XFree_System(node->m_attributes);
     XFree_System(node->m_entities);
@@ -221,6 +250,8 @@ static void xxml_dom_node_free(XDomNodePrivate* node)
     xxml_dom_string_delete(&node->m_notationName);
     xxml_dom_string_delete(&node->m_internalSubset);
     xxml_dom_string_delete(&node->m_textCache);
+    xxml_dom_string_delete(&node->m_attributeCache);
+    xxml_dom_string_delete(&node->m_attributeNSCache);
     xxml_dom_string_delete(&node->m_documentVersion);
     xxml_dom_string_delete(&node->m_documentEncoding);
     XDomContext* context = node->m_context;
@@ -230,7 +261,7 @@ static void xxml_dom_node_free(XDomNodePrivate* node)
 
 static void xxml_dom_node_retain(XDomNodePrivate* node)
 {
-    if (node && node->m_collectionKind == XDom_CollectionNone) ++node->m_refs;
+    if (node) ++node->m_refs;
 }
 
 static void xxml_dom_node_release(XDomNodePrivate* node)
@@ -242,6 +273,9 @@ static void xxml_dom_node_release(XDomNodePrivate* node)
             for (int i = 0; i < node->m_itemCount; ++i)
                 xxml_dom_node_release(node->m_items[i]);
             XFree_System(node->m_items);
+            if (node->m_listOwner) xxml_dom_node_release(node->m_listOwner);
+            xxml_dom_string_delete(&node->m_listTagName);
+            xxml_dom_string_delete(&node->m_listNamespaceUri);
         } else {
             if (node->m_mapOwner) xxml_dom_node_release(node->m_mapOwner);
         }
@@ -270,6 +304,8 @@ static XDomNodePrivate* xxml_dom_node_new_in_context(XDomContext* context,
     node->m_refs = 1;
     node->m_context = context;
     node->m_type = type;
+    node->m_publicIdNull = true;
+    node->m_systemIdNull = true;
     node->m_line = -1;
     node->m_column = -1;
     node->m_name = XString_create();
@@ -282,6 +318,8 @@ static XDomNodePrivate* xxml_dom_node_new_in_context(XDomContext* context,
     node->m_notationName = XString_create();
     node->m_internalSubset = XString_create();
     node->m_textCache = NULL;
+    node->m_attributeCache = NULL;
+    node->m_attributeNSCache = NULL;
     node->m_documentVersion = XString_create();
     node->m_documentEncoding = XString_create();
     if (!node->m_name || !node->m_value || !node->m_namespaceUri ||
@@ -303,6 +341,14 @@ static XDomNodePrivate* xxml_dom_node_new_in_context(XDomContext* context,
         if (ownContext && --context->m_liveNodes == 0) XFree_System(context);
         return NULL;
     }
+    switch (type) {
+        case XDom_TextNode: XString_assign_utf8(node->m_name, "#text"); break;
+        case XDom_CDATASectionNode: XString_assign_utf8(node->m_name, "#cdata-section"); break;
+        case XDom_CommentNode: XString_assign_utf8(node->m_name, "#comment"); break;
+        case XDom_DocumentNode: XString_assign_utf8(node->m_name, "#document"); break;
+        case XDom_DocumentFragmentNode: XString_assign_utf8(node->m_name, "#document-fragment"); break;
+        default: break;
+    }
     ++context->m_liveNodes;
     return node;
 }
@@ -321,6 +367,7 @@ static void xxml_dom_set_qualified_name(XDomNodePrivate* node,
     xxml_dom_string_assign(&node->m_namespaceUri, namespaceURI);
     xxml_dom_string_assign(&node->m_prefix, NULL);
     xxml_dom_string_assign(&node->m_localName, qualifiedName);
+    node->m_createdWithNamespace = true;
     const char* qName = qualifiedName ? XString_toUtf8(qualifiedName) : "";
     const char* colon = qName ? strchr(qName, ':') : NULL;
     if (colon) {
@@ -345,6 +392,7 @@ static void xxml_dom_set_plain_name(XDomNodePrivate* node, const XString* name)
     xxml_dom_string_assign(&node->m_namespaceUri, NULL);
     xxml_dom_string_assign(&node->m_localName, NULL);
     xxml_dom_string_assign(&node->m_prefix, NULL);
+    node->m_createdWithNamespace = false;
 }
 
 static XDomNodePrivate* xxml_dom_document_for_node(XDomNodePrivate* node)
@@ -354,19 +402,88 @@ static XDomNodePrivate* xxml_dom_document_for_node(XDomNodePrivate* node)
     return node->m_ownerDocument;
 }
 
+static bool xxml_dom_name_char_allowed(XChar ch, bool first)
+{
+    if (first)
+        return XChar_isLetter(ch) || ch == XChar_from('_') || ch == XChar_from(':');
+    return XChar_isLetterOrNumber(ch) || XChar_isMark(ch) ||
+           ch == XChar_from('_') || ch == XChar_from('-') ||
+           ch == XChar_from('.') || ch == XChar_from(':');
+}
+
+static void xxml_dom_append_chars(XString* target, const XChar* chars,
+                                  size_t begin, size_t end)
+{
+    if (!target || !chars) return;
+    for (size_t i = begin; i < end; ++i) XString_append_char(target, chars[i]);
+}
+
+static XString* xxml_dom_fixed_name(const XString* name, bool namespaces, bool* ok)
+{
+    if (ok) *ok = false;
+    if (!name || XString_isEmpty_base(name)) return NULL;
+
+    const XChar* chars = XString_unicode(name);
+    size_t length = XString_length_base(name);
+    size_t localBegin = 0;
+    size_t prefixLength = 0;
+    if (namespaces) {
+        for (size_t i = 0; i < length; ++i) {
+            if (chars[i] == XChar_from(':')) {
+                /* Qt 允许空前缀，只有本地名为空时才是无效限定名。 */
+                if (i + 1 >= length) return NULL;
+                prefixLength = i;
+                localBegin = i + 1;
+                break;
+            }
+        }
+    }
+
+    if (g_xxml_dom_invalid_data_policy == XDom_AcceptInvalidChars) {
+        XString* copy = XString_create_copy(name);
+        if (copy && ok) *ok = true;
+        return copy;
+    }
+
+    XString* local = XString_create();
+    if (!local) return NULL;
+    bool first = true;
+    for (size_t i = localBegin; i < length; ++i) {
+        XChar ch = chars[i];
+        if (xxml_dom_name_char_allowed(ch, first)) {
+            XString_append_char(local, ch);
+            first = false;
+        } else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
+            XString_delete_base(local);
+            return NULL;
+        }
+    }
+    if (XString_isEmpty_base(local)) {
+        XString_delete_base(local);
+        return NULL;
+    }
+
+    XString* result = XString_create();
+    if (!result) {
+        XString_delete_base(local);
+        return NULL;
+    }
+    if (namespaces && prefixLength > 0) {
+        xxml_dom_append_chars(result, chars, 0, prefixLength);
+        XString_append_char(result, XChar_from(':'));
+    }
+    XString_append(result, local);
+    XString_delete_base(local);
+    if (ok) *ok = !XString_isEmpty_base(result);
+    return result;
+}
+
 static bool xxml_dom_valid_name(const XString* name)
 {
-    if (!name || XString_isEmpty_base(name)) return false;
-    if (g_xxml_dom_invalid_data_policy == XDom_AcceptInvalidChars) return true;
-    const char* text = XString_toUtf8(name);
-    if (!text || !text[0]) return false;
-    if (g_xxml_dom_invalid_data_policy == XDom_DropInvalidChars) return true;
-    if (!(isalpha((unsigned char)text[0]) || text[0] == '_' || text[0] == ':')) return false;
-    for (size_t i = 1; text[i]; ++i) {
-        unsigned char c = (unsigned char)text[i];
-        if (!(isalnum(c) || c == '_' || c == '-' || c == '.' || c == ':')) return false;
-    }
-    return true;
+    bool ok = false;
+    XString* fixed = xxml_dom_fixed_name(name, false, &ok);
+    XString_delete_base(fixed);
+    return ok;
 }
 
 static XDomNodePrivate* xxml_dom_collection_new(int kind)
@@ -379,9 +496,24 @@ static XDomNodePrivate* xxml_dom_collection_new(int kind)
     return collection;
 }
 
-static XDomNodePrivate* xxml_dom_list_new(void)
+static XDomNodePrivate* xxml_dom_list_new_for_owner(XDomNodePrivate* owner,
+                                                    int queryKind,
+                                                    const XString* tagName,
+                                                    const XString* namespaceURI)
 {
-    return xxml_dom_collection_new(XDom_CollectionList);
+    XDomNodePrivate* list = xxml_dom_collection_new(XDom_CollectionList);
+    if (!list) return NULL;
+    list->m_listOwner = owner;
+    list->m_listQueryKind = queryKind;
+    if (owner) xxml_dom_node_retain(owner);
+    if (tagName) list->m_listTagName = XString_create_copy(tagName);
+    if (namespaceURI) list->m_listNamespaceUri = XString_create_copy(namespaceURI);
+    if ((tagName && !list->m_listTagName) ||
+        (namespaceURI && !list->m_listNamespaceUri)) {
+        xxml_dom_node_release(list);
+        return NULL;
+    }
+    return list;
 }
 
 static XDomNodePrivate* xxml_dom_map_new(XDomNodePrivate* owner, int mapKind)
@@ -392,15 +524,6 @@ static XDomNodePrivate* xxml_dom_map_new(XDomNodePrivate* owner, int mapKind)
     map->m_mapKind = mapKind;
     if (owner) xxml_dom_node_retain(owner);
     return map;
-}
-
-static bool xxml_dom_list_append(XDomNodePrivate* list, XDomNodePrivate* node)
-{
-    if (!list || list->m_collectionKind != XDom_CollectionList || !node) return false;
-    if (!xxml_dom_array_append(&list->m_items, &list->m_itemCount,
-                               &list->m_itemCapacity, node)) return false;
-    xxml_dom_node_retain(node);
-    return true;
 }
 
 static XDomNodePrivate** xxml_dom_map_items(XDomNodePrivate* map, int* count)
@@ -464,19 +587,28 @@ static bool xxml_dom_node_child_allowed(XDomNodePrivate* parent,
                                         XDomNodePrivate* child)
 {
     if (!parent || !child) return false;
-    if (parent->m_type == XDom_DocumentTypeNode) return false;
-    if (parent->m_type == XDom_AttributeNode ||
-        parent->m_type == XDom_TextNode ||
+    if (parent->m_type == XDom_DocumentTypeNode)
+        return child->m_type == XDom_EntityNode || child->m_type == XDom_NotationNode;
+    if (parent->m_type == XDom_TextNode ||
         parent->m_type == XDom_CDATASectionNode ||
         parent->m_type == XDom_CommentNode ||
         parent->m_type == XDom_EntityNode ||
         parent->m_type == XDom_NotationNode) return false;
-    if (child->m_type == XDom_AttributeNode || child->m_type == XDom_EntityNode ||
-        child->m_type == XDom_NotationNode) return false;
+    if (parent->m_type == XDom_AttributeNode)
+        return child->m_type == XDom_TextNode;
+    /* Qt 历史兼容行为允许属性节点通过 append/insert 接口进入子节点序列。 */
+    if (child->m_type == XDom_EntityNode || child->m_type == XDom_NotationNode) return false;
     if (parent->m_type == XDom_DocumentNode &&
         child->m_type != XDom_ElementNode && child->m_type != XDom_DocumentTypeNode &&
         child->m_type != XDom_CommentNode && child->m_type != XDom_ProcessingInstructionNode)
         return false;
+    if (parent->m_type == XDom_DocumentNode &&
+        (child->m_type == XDom_ElementNode || child->m_type == XDom_DocumentTypeNode)) {
+        for (int i = 0; i < parent->m_childCount; ++i) {
+            XDomNodePrivate* existing = parent->m_children[i];
+            if (existing != child && existing->m_type == child->m_type) return false;
+        }
+    }
     if (parent->m_type == XDom_ElementNode && child->m_type == XDom_DocumentNode)
         return false;
     return true;
@@ -486,6 +618,12 @@ static bool xxml_dom_detach_from_parent(XDomNodePrivate* node)
 {
     if (!node || !node->m_parent) return true;
     XDomNodePrivate* parent = node->m_parent;
+    if (parent->m_type == XDom_DocumentNode && parent->m_doctype == node) {
+        parent->m_doctype = NULL;
+        node->m_parent = NULL;
+        xxml_dom_node_release(node);
+        return true;
+    }
     int index = xxml_dom_array_index(parent->m_children, parent->m_childCount, node);
     if (index >= 0) {
         xxml_dom_array_remove_at(parent->m_children, &parent->m_childCount, index);
@@ -511,8 +649,22 @@ static bool xxml_dom_append_private(XDomNodePrivate* parent,
 {
     if (!xxml_dom_node_child_allowed(parent, child) || parent == child ||
         xxml_dom_node_is_descendant(child, parent)) return false;
+    /* Qt 将文档类型保存在 QDomDocumentPrivate::type 中，不放入文档子链表。 */
+    if (parent->m_type == XDom_DocumentNode && child->m_type == XDom_DocumentTypeNode) {
+        if (parent->m_doctype && parent->m_doctype != child) return false;
+        if (!xxml_dom_detach_from_parent(child)) return false;
+        parent->m_doctype = child;
+        xxml_dom_node_retain(child);
+        child->m_parent = parent;
+        xxml_dom_set_owner_document(child, parent);
+        return true;
+    }
+    XDomNodePrivate* oldParent = child->m_parent;
+    int oldIndex = oldParent == parent ?
+                   xxml_dom_child_index(parent, child) : -1;
     if (!xxml_dom_detach_from_parent(child)) return false;
     if (index < 0 || index > parent->m_childCount) index = parent->m_childCount;
+    if (oldIndex >= 0 && oldIndex < index) --index;
     if (!xxml_dom_array_reserve(&parent->m_children, &parent->m_childCapacity,
                                 parent->m_childCount + 1)) return false;
     for (int i = parent->m_childCount; i > index; --i)
@@ -523,6 +675,24 @@ static bool xxml_dom_append_private(XDomNodePrivate* parent,
     child->m_parent = parent;
     xxml_dom_set_owner_document(child, xxml_dom_document_for_node(parent));
     return true;
+}
+
+/* QDomAttr::setValue() 通过一个直接子 Text 节点保存属性值。 */
+static void xxml_dom_attr_set_value_private(XDomNodePrivate* attr,
+                                             const XString* value)
+{
+    if (!attr || attr->m_type != XDom_AttributeNode) return;
+    xxml_dom_string_assign(&attr->m_value, value);
+    xxml_dom_node_clear(attr);
+    XDomNodePrivate* text = xxml_dom_node_new_in_context(attr->m_context, XDom_TextNode);
+    if (!text) return;
+    xxml_dom_string_assign(&text->m_value, value);
+    text->m_ownerDocument = attr->m_ownerDocument;
+    if (!xxml_dom_append_private(attr, text, -1)) {
+        xxml_dom_node_release(text);
+        return;
+    }
+    xxml_dom_node_release(text);
 }
 
 static XDomNodePrivate* xxml_dom_node_clone(XDomNodePrivate* source,
@@ -543,8 +713,12 @@ static XDomNodePrivate* xxml_dom_node_clone(XDomNodePrivate* source,
     xxml_dom_string_assign(&clone->m_documentVersion, source->m_documentVersion);
     xxml_dom_string_assign(&clone->m_documentEncoding, source->m_documentEncoding);
     clone->m_specified = source->m_specified;
+    clone->m_publicIdNull = source->m_publicIdNull;
+    clone->m_systemIdNull = source->m_systemIdNull;
+    clone->m_createdWithNamespace = source->m_createdWithNamespace;
     clone->m_hasXmlDeclaration = source->m_hasXmlDeclaration;
     clone->m_isStandalone = source->m_isStandalone;
+    clone->m_hasStandalone = source->m_hasStandalone;
     clone->m_line = source->m_line;
     clone->m_column = source->m_column;
     if (source->m_type == XDom_ElementNode || source->m_type == XDom_DocumentNode) {
@@ -561,26 +735,6 @@ static XDomNodePrivate* xxml_dom_node_clone(XDomNodePrivate* source,
             xxml_dom_node_release(attr);
         }
     }
-    if (source->m_type == XDom_DocumentTypeNode) {
-        for (int i = 0; i < source->m_entityCount; ++i) {
-            XDomNodePrivate* entity = xxml_dom_node_clone(source->m_entities[i], context, true);
-            if (entity) {
-                xxml_dom_array_append(&clone->m_entities, &clone->m_entityCount,
-                                      &clone->m_entityCapacity, entity);
-                xxml_dom_node_retain(entity);
-                xxml_dom_node_release(entity);
-            }
-        }
-        for (int i = 0; i < source->m_notationCount; ++i) {
-            XDomNodePrivate* notation = xxml_dom_node_clone(source->m_notations[i], context, true);
-            if (notation) {
-                xxml_dom_array_append(&clone->m_notations, &clone->m_notationCount,
-                                      &clone->m_notationCapacity, notation);
-                xxml_dom_node_retain(notation);
-                xxml_dom_node_release(notation);
-            }
-        }
-    }
     if (deep) {
         for (int i = 0; i < source->m_childCount; ++i) {
             XDomNodePrivate* child = xxml_dom_node_clone(source->m_children[i], context, true);
@@ -591,6 +745,31 @@ static XDomNodePrivate* xxml_dom_node_clone(XDomNodePrivate* source,
             }
             xxml_dom_node_release(child);
         }
+    }
+    if (clone->m_type == XDom_DocumentTypeNode) {
+        /* DTD 声明同时存在于 childNodes 和两个只读映射中，映射只增加引用。 */
+        for (int i = 0; i < clone->m_childCount; ++i) {
+            XDomNodePrivate* declaration = clone->m_children[i];
+            if (declaration->m_type == XDom_EntityNode) {
+                if (xxml_dom_array_append(&clone->m_entities, &clone->m_entityCount,
+                                          &clone->m_entityCapacity, declaration))
+                    xxml_dom_node_retain(declaration);
+            } else if (declaration->m_type == XDom_NotationNode) {
+                if (xxml_dom_array_append(&clone->m_notations, &clone->m_notationCount,
+                                          &clone->m_notationCapacity, declaration))
+                    xxml_dom_node_retain(declaration);
+            }
+        }
+    }
+    if (source->m_type == XDom_DocumentNode && source->m_doctype) {
+        XDomNodePrivate* type = xxml_dom_node_clone(source->m_doctype, context, true);
+        if (!type) {
+            xxml_dom_node_release(clone);
+            return NULL;
+        }
+        clone->m_doctype = type;
+        type->m_parent = clone;
+        xxml_dom_set_owner_document(type, clone);
     }
     return clone;
 }
@@ -616,6 +795,10 @@ static void xxml_dom_node_clear(XDomNodePrivate* node)
             xxml_dom_node_release(node->m_entities[--node->m_entityCount]);
         while (node->m_notationCount > 0)
             xxml_dom_node_release(node->m_notations[--node->m_notationCount]);
+    }
+    if (node->m_type == XDom_DocumentNode && node->m_doctype) {
+        xxml_dom_node_release(node->m_doctype);
+        node->m_doctype = NULL;
     }
 }
 
@@ -714,7 +897,10 @@ static void VXDomImplementation_copy(XClass* dest, const XClass* src)
     if (destination == source) return;
     if (XClassIsVtableNull((XClass*)source)) return;
     if (XClassIsVtableNull(dest)) XDomImplementation_init(destination);
+    xxml_dom_node_release(destination->m_document);
     destination->m_isNull = source->m_isNull;
+    destination->m_document = source->m_document;
+    xxml_dom_node_retain(destination->m_document);
 }
 
 static void VXDomImplementation_move(XClass* dest, XClass* src)
@@ -725,14 +911,21 @@ static void VXDomImplementation_move(XClass* dest, XClass* src)
     if (destination == source) return;
     if (XClassIsVtableNull((XClass*)source)) return;
     if (XClassIsVtableNull(dest)) XDomImplementation_init(destination);
+    xxml_dom_node_release(destination->m_document);
     destination->m_isNull = source->m_isNull;
+    destination->m_document = source->m_document;
+    source->m_document = NULL;
     source->m_isNull = true;
 }
 
 static void VXDomImplementation_deinit(XClass* object)
 {
     XDomImplementation* self = (XDomImplementation*)object;
-    if (self) self->m_isNull = true;
+    if (self) {
+        xxml_dom_node_release(self->m_document);
+        self->m_document = NULL;
+        self->m_isNull = true;
+    }
 }
 
 XVtable* XDomImplementation_class_init(void)
@@ -811,9 +1004,63 @@ XDOM_DEFINE_LIFECYCLE(XDomProcessingInstruction)
 XDOM_DEFINE_LIFECYCLE(XDomEntity)
 XDOM_DEFINE_LIFECYCLE(XDomNotation)
 
-XDOM_DEFINE_LIFECYCLE(XDomImplementation)
+void XDomImplementation_init(XDomImplementation* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(*self));
+    XClass_init(&self->m_class);
+    XClassSetVtable(self, XDomImplementation);
+    self->m_isNull = true;
+}
 
-/* QDomDocument 默认构造后就是一个可用的非空文档节点。 */
+XDomImplementation* XDomImplementation_create(void)
+{
+    XDomImplementation* self = (XDomImplementation*)XMalloc_System(sizeof(*self));
+    if (!self) return NULL;
+    XDomImplementation_init(self);
+    Set_Class_MemoryFree(self, XFree_System);
+    return self;
+}
+
+XDomImplementation* XDomImplementation_create_copy(const XDomImplementation* other)
+{
+    if (!other || XClassIsVtableNull((const XClass*)other)) return NULL;
+    XDomImplementation* self = XDomImplementation_create();
+    if (!self) return NULL;
+    XDomImplementation_copy_base(self, other);
+    return self;
+}
+
+XDomImplementation* XDomImplementation_create_move(XDomImplementation* other)
+{
+    if (!other || XClassIsVtableNull((XClass*)other)) return NULL;
+    XDomImplementation* self = XDomImplementation_create();
+    if (!self) return NULL;
+    XDomImplementation_move_base(self, other);
+    return self;
+}
+
+void XDomImplementation_deinit_base(XDomImplementation* self)
+{
+    if (self) XClass_deinit_base((XClass*)self);
+}
+
+void XDomImplementation_delete_base(XDomImplementation* self)
+{
+    if (self) XClass_delete_base((XClass*)self);
+}
+
+void XDomImplementation_copy_base(XDomImplementation* dest, const XDomImplementation* src)
+{
+    if (dest && src) XClass_copy_base((XClass*)dest, (const XClass*)src);
+}
+
+void XDomImplementation_move_base(XDomImplementation* dest, XDomImplementation* src)
+{
+    if (dest && src) XClass_move_base((XClass*)dest, (XClass*)src);
+}
+
+/* QDomDocument 默认构造后是 null；首次工厂调用或 setContent 时再分配实现。 */
 void XDomDocument_init(XDomDocument* self)
 {
     if (!self) return;
@@ -827,11 +1074,6 @@ XDomDocument* XDomDocument_create(void)
     XDomDocument* self = (XDomDocument*)XMalloc_System(sizeof(*self));
     if (!self) return NULL;
     XDomDocument_init(self);
-    self->m_impl = xxml_dom_node_new(XDom_DocumentNode);
-    if (!self->m_impl) {
-        XFree_System(self);
-        return NULL;
-    }
     Set_Class_MemoryFree(self, XFree_System);
     return self;
 }
@@ -940,7 +1182,6 @@ static XDomCharacterData* xxml_dom_wrap_character_data(XDomNodePrivate* node)
 {
     XDomCharacterData* result = XDomCharacterData_create();
     if (result && node && (node->m_type == XDom_TextNode ||
-                           node->m_type == XDom_CDATASectionNode ||
                            node->m_type == XDom_CommentNode))
         xxml_dom_assign_new_handle(&result->m_impl, node);
     return result;
@@ -1022,6 +1263,68 @@ static void xxml_dom_set_default_creation_value(XDomNodePrivate* node,
     if (node && value) xxml_dom_string_assign(&node->m_value, value);
 }
 
+static bool xxml_dom_xml_char_allowed(XChar ch)
+{
+    if (XChar_isNonCharacter(ch) || XChar_isControl(ch))
+        return ch == XChar_from(0x09) || ch == XChar_from(0x0a) || ch == XChar_from(0x0d);
+    return (ch >= XChar_from(0x20) && ch <= XChar_from(0xd7ff)) ||
+           (ch >= XChar_from(0xe000) && ch <= XChar_from(0xfffd));
+}
+
+static XString* xxml_dom_fixed_value(const XString* value, XDomNodeType type, bool* ok)
+{
+    if (ok) *ok = false;
+    XString* result = XString_create();
+    if (!result) return NULL;
+    if (g_xxml_dom_invalid_data_policy == XDom_AcceptInvalidChars) {
+        if (value) XString_assign(result, value);
+        if (ok) *ok = true;
+        return result;
+    }
+
+    const XChar* chars = value ? XString_unicode(value) : NULL;
+    size_t length = value ? XString_length_base(value) : 0;
+    for (size_t i = 0; i < length; ++i) {
+        XChar ch = chars[i];
+        bool valid = xxml_dom_xml_char_allowed(ch);
+        if (XChar_isHighSurrogate(ch)) {
+            valid = i + 1 < length && XChar_isLowSurrogate(chars[i + 1]);
+            if (valid) {
+                XString_append_char(result, ch);
+                XString_append_char(result, chars[++i]);
+                continue;
+            }
+        } else if (XChar_isLowSurrogate(ch)) {
+            valid = false;
+        }
+        if (valid) XString_append_char(result, ch);
+        else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
+            XString_delete_base(result);
+            return NULL;
+        }
+    }
+
+    const char* forbidden = NULL;
+    if (type == XDom_CommentNode) forbidden = "--";
+    else if (type == XDom_ProcessingInstructionNode) forbidden = "?>";
+    if (type == XDom_CDATASectionNode) forbidden = "]]>";
+    if (forbidden) {
+        size_t forbiddenLength = strlen(forbidden);
+        for (;;) {
+            int64_t position = XString_indexOf_utf8(result, forbidden, 0,
+                                                      XChar_CaseSensitive);
+            if (position < 0) break;
+            if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
+                XString_delete_base(result);
+                return NULL;
+            }
+            XString_remove_base(result, (size_t)position, forbiddenLength);
+        }
+    }
+    if (ok) *ok = true;
+    return result;
+}
+
 /* ==================== 公共句柄与节点树辅助函数 ==================== */
 
 static XDomNodePrivate* xxml_dom_handle_impl(const void* handle)
@@ -1032,6 +1335,13 @@ static XDomNodePrivate* xxml_dom_handle_impl(const void* handle)
 }
 
 static bool xxml_dom_node_is_character_data(const XDomNodePrivate* node)
+{
+    return node && (node->m_type == XDom_TextNode ||
+                    node->m_type == XDom_CommentNode);
+}
+
+/* 字符数据 API 仍可直接作用于 CDATA；Qt 的 isCharacterData 查询则排除 CDATA。 */
+static bool xxml_dom_node_is_character_data_payload(const XDomNodePrivate* node)
 {
     return node && (node->m_type == XDom_TextNode ||
                     node->m_type == XDom_CDATASectionNode ||
@@ -1103,7 +1413,75 @@ static XDomNodePrivate* xxml_dom_create_node_for_document(XDomNodePrivate* docum
     return xxml_dom_node_new_in_context(document ? document->m_context : NULL, type);
 }
 
+static bool xxml_dom_implementation_is_valid(const XDomImplementation* self)
+{
+    return self && !XClassIsVtableNull((const XClass*)self) && !self->m_isNull;
+}
+
+/* 与 Qt fixedPubidLiteral/fixedSystemLiteral 对齐的 DTD 标识符清理。 */
+static bool xxml_dom_public_id_char(XChar ch)
+{
+    if (ch == XChar_from(' ') || ch == XChar_from('\t') ||
+        ch == XChar_from('\n') || ch == XChar_from('\r')) return true;
+    if ((ch >= XChar_from('a') && ch <= XChar_from('z')) ||
+        (ch >= XChar_from('A') && ch <= XChar_from('Z')) ||
+        (ch >= XChar_from('0') && ch <= XChar_from('9'))) return true;
+    return strchr("-'()+,./:=?;!*#@$_%", (int)ch) != NULL;
+}
+
+static XString* xxml_dom_fixed_public_id(const XString* value, bool* ok)
+{
+    if (ok) *ok = false;
+    XString* result = XString_create();
+    if (!result) return NULL;
+    if (g_xxml_dom_invalid_data_policy == XDom_AcceptInvalidChars) {
+        if (value) XString_assign(result, value);
+        if (ok) *ok = true;
+        return result;
+    }
+    const XChar* chars = value ? XString_unicode(value) : NULL;
+    size_t length = value ? XString_length_base(value) : 0;
+    for (size_t i = 0; i < length; ++i) {
+        if (xxml_dom_public_id_char(chars[i])) XString_append_char(result, chars[i]);
+        else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
+            XString_delete_base(result);
+            return NULL;
+        }
+    }
+    if (XString_indexOf_utf8(result, "'", 0, XChar_CaseSensitive) >= 0 &&
+        XString_indexOf_utf8(result, "\"", 0, XChar_CaseSensitive) >= 0) {
+        if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
+            XString_delete_base(result);
+            return NULL;
+        }
+        XString_replace_utf8(result, "'", "", XChar_CaseSensitive);
+    }
+    if (ok) *ok = true;
+    return result;
+}
+
+static XString* xxml_dom_fixed_system_id(const XString* value, bool* ok)
+{
+    if (ok) *ok = false;
+    XString* result = value ? XString_create_copy(value) : XString_create();
+    if (!result) return NULL;
+    if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode &&
+        XString_indexOf_utf8(result, "'", 0, XChar_CaseSensitive) >= 0 &&
+        XString_indexOf_utf8(result, "\"", 0, XChar_CaseSensitive) >= 0) {
+        XString_delete_base(result);
+        return NULL;
+    }
+    if (g_xxml_dom_invalid_data_policy == XDom_DropInvalidChars &&
+        XString_indexOf_utf8(result, "'", 0, XChar_CaseSensitive) >= 0 &&
+        XString_indexOf_utf8(result, "\"", 0, XChar_CaseSensitive) >= 0)
+        XString_replace_utf8(result, "'", "", XChar_CaseSensitive);
+    if (ok) *ok = true;
+    return result;
+}
+
 static XString* xxml_dom_serialize(XDomNodePrivate* node, int indent);
+static XString* xxml_dom_serialize_for_policy(XDomNodePrivate* node, int indent,
+                                               XDomEncodingPolicy policy);
 
 /* ==================== QDomNode ==================== */
 
@@ -1113,8 +1491,10 @@ XDomNode* XDomNode_insertBefore(XDomNode* self, const XDomNode* newChild,
     XDomNodePrivate* parent = xxml_dom_handle_impl(self);
     XDomNodePrivate* child = xxml_dom_handle_impl(newChild);
     XDomNodePrivate* reference = xxml_dom_handle_impl(refChild);
-    int index = reference ? xxml_dom_child_index(parent, reference) : -1;
-    if (!parent || !child || (reference && index < 0) || !xxml_dom_insert_child(parent, child, index))
+    /* Qt 兼容：空参考节点表示插入到第一个子节点之前。 */
+    int index = reference ? xxml_dom_child_index(parent, reference) : 0;
+    if (!parent || !child || child == reference || (reference && index < 0) ||
+        !xxml_dom_insert_child(parent, child, index))
         return xxml_dom_wrap_node(NULL);
     return xxml_dom_wrap_node(child);
 }
@@ -1127,7 +1507,8 @@ XDomNode* XDomNode_insertAfter(XDomNode* self, const XDomNode* newChild,
     XDomNodePrivate* reference = xxml_dom_handle_impl(refChild);
     int index = reference ? xxml_dom_child_index(parent, reference) : -1;
     if (reference && index >= 0) ++index;
-    if (!parent || !child || (reference && index < 0) || !xxml_dom_insert_child(parent, child, index))
+    if (!parent || !child || child == reference || (reference && index < 0) ||
+        !xxml_dom_insert_child(parent, child, index))
         return xxml_dom_wrap_node(NULL);
     return xxml_dom_wrap_node(child);
 }
@@ -1139,7 +1520,8 @@ XDomNode* XDomNode_replaceChild(XDomNode* self, const XDomNode* newChild,
     XDomNodePrivate* child = xxml_dom_handle_impl(newChild);
     XDomNodePrivate* old = xxml_dom_handle_impl(oldChild);
     int index = xxml_dom_child_index(parent, old);
-    if (!parent || !child || !old || index < 0) return xxml_dom_wrap_node(NULL);
+    if (!parent || !child || !old || child == old || index < 0)
+        return xxml_dom_wrap_node(NULL);
 
     XDomNode* result = xxml_dom_wrap_node(old);
     if (!xxml_dom_detach_from_parent(old) || !xxml_dom_insert_child(parent, child, index)) {
@@ -1167,7 +1549,8 @@ XDomNode* XDomNode_removeChild(XDomNode* self, const XDomNode* oldChild)
 
 XDomNode* XDomNode_appendChild(XDomNode* self, const XDomNode* newChild)
 {
-    return XDomNode_insertBefore(self, newChild, NULL);
+    /* insertAfter(..., NULL) 的既有语义是追加到末尾。 */
+    return XDomNode_insertAfter(self, newChild, NULL);
 }
 
 bool XDomNode_hasChildNodes(const XDomNode* self)
@@ -1180,8 +1563,12 @@ XDomNode* XDomNode_cloneNode(const XDomNode* self, bool deep)
 {
     XDomNodePrivate* source = xxml_dom_handle_impl(self);
     if (!source) return xxml_dom_wrap_node(NULL);
-    XDomNodePrivate* clone = xxml_dom_node_clone(source, NULL, deep);
+    XDomNodePrivate* clone = xxml_dom_node_clone(source, source->m_context, deep);
     if (!clone) return xxml_dom_wrap_node(NULL);
+    /* 克隆节点仍归属原文档；文档自身的克隆则成为新树的归属文档。 */
+    xxml_dom_set_owner_document(clone,
+                                source->m_type == XDom_DocumentNode ? clone :
+                                xxml_dom_document_for_node(source));
     XDomNode* result = xxml_dom_wrap_node(clone);
     xxml_dom_node_release(clone);
     return result;
@@ -1190,24 +1577,25 @@ XDomNode* XDomNode_cloneNode(const XDomNode* self, bool deep)
 static void xxml_dom_normalize_private(XDomNodePrivate* node)
 {
     if (!node) return;
+    /* 对齐 Qt 6.8 qNormalizeNode：只处理当前节点的直接子节点，不递归进入后代。 */
+    XDomNodePrivate* text = NULL;
     for (int i = 0; i < node->m_childCount; ++i) {
         XDomNodePrivate* child = node->m_children[i];
-        xxml_dom_normalize_private(child);
-        if (child->m_type != XDom_TextNode) continue;
-        while (i + 1 < node->m_childCount &&
-               node->m_children[i + 1]->m_type == XDom_TextNode) {
-            XDomNodePrivate* next = node->m_children[i + 1];
-            XString_append(child->m_value, next->m_value);
-            xxml_dom_array_remove_at(node->m_children, &node->m_childCount, i + 1);
-            next->m_parent = NULL;
-            xxml_dom_node_release(next);
+        bool isText = child->m_type == XDom_TextNode ||
+                      child->m_type == XDom_CDATASectionNode;
+        if (!isText) {
+            text = NULL;
+            continue;
         }
-        if (XString_isEmpty_base(child->m_value)) {
-            xxml_dom_array_remove_at(node->m_children, &node->m_childCount, i);
-            child->m_parent = NULL;
-            xxml_dom_node_release(child);
-            --i;
+        if (!text) {
+            text = child;
+            continue;
         }
+        XString_append(text->m_value, child->m_value);
+        xxml_dom_array_remove_at(node->m_children, &node->m_childCount, i);
+        child->m_parent = NULL;
+        xxml_dom_node_release(child);
+        --i;
     }
     xxml_dom_node_invalidate_text_cache(node);
 }
@@ -1246,7 +1634,7 @@ const XString* XDomNode_nodeName(const XDomNode* self)
 XDomNodeType XDomNode_nodeType(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    return node ? node->m_type : XDom_UnknownNode;
+    return node ? node->m_type : XDom_BaseNode;
 }
 
 XDomNode* XDomNode_parentNode(const XDomNode* self)
@@ -1258,11 +1646,7 @@ XDomNode* XDomNode_parentNode(const XDomNode* self)
 XDomNodeList* XDomNode_childNodes(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    XDomNodePrivate* list = xxml_dom_list_new();
-    if (node && list) {
-        for (int i = 0; i < node->m_childCount; ++i)
-            if (!xxml_dom_list_append(list, node->m_children[i])) break;
-    }
+    XDomNodePrivate* list = xxml_dom_list_new_for_owner(node, XDom_ListChildren, NULL, NULL);
     XDomNodeList* result = xxml_dom_wrap_list(list);
     xxml_dom_node_release(list);
     return result;
@@ -1315,13 +1699,15 @@ XDomDocument* XDomNode_ownerDocument(const XDomNode* self)
 const XString* XDomNode_namespaceURI(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    return node && node->m_namespaceUri ? node->m_namespaceUri : xxml_dom_empty_string();
+    return node && node->m_createdWithNamespace && node->m_namespaceUri ?
+        node->m_namespaceUri : xxml_dom_empty_string();
 }
 
 const XString* XDomNode_localName(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    return node && node->m_localName ? node->m_localName : xxml_dom_empty_string();
+    return node && node->m_createdWithNamespace && node->m_localName ?
+        node->m_localName : xxml_dom_empty_string();
 }
 
 bool XDomNode_hasAttributes(const XDomNode* self)
@@ -1345,6 +1731,11 @@ void XDomNode_setNodeValue(XDomNode* self, const XString* value)
     if (!node || node->m_type == XDom_ElementNode || node->m_type == XDom_DocumentNode ||
         node->m_type == XDom_DocumentTypeNode || node->m_type == XDom_DocumentFragmentNode)
         return;
+    if (node->m_type == XDom_AttributeNode) {
+        xxml_dom_attr_set_value_private(node, value);
+        node->m_specified = true;
+        return;
+    }
     xxml_dom_string_assign(&node->m_value, value);
     xxml_dom_node_invalidate_text_cache(node);
 }
@@ -1359,20 +1750,17 @@ void XDomNode_setNodeValue_utf8(XDomNode* self, const char* value)
 const XString* XDomNode_prefix(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    return node && node->m_prefix ? node->m_prefix : xxml_dom_empty_string();
+    return node && node->m_createdWithNamespace && node->m_prefix ?
+        node->m_prefix : xxml_dom_empty_string();
 }
 
 void XDomNode_setPrefix(XDomNode* self, const XString* prefix)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    if (!node || !node->m_localName) return;
+    if (!node || !node->m_createdWithNamespace || !node->m_prefix ||
+        (node->m_type != XDom_ElementNode && node->m_type != XDom_AttributeNode)) return;
+    /* QDomNode::setPrefix 只修改 prefix，不重建 nodeName。 */
     xxml_dom_string_assign(&node->m_prefix, prefix);
-    XString_clear_base(node->m_name);
-    if (prefix && !XString_isEmpty_base(prefix)) {
-        XString_append(node->m_name, prefix);
-        XString_append_utf8(node->m_name, ":");
-    }
-    XString_append(node->m_name, node->m_localName);
 }
 
 void XDomNode_setPrefix_utf8(XDomNode* self, const char* prefix)
@@ -1385,10 +1773,10 @@ void XDomNode_setPrefix_utf8(XDomNode* self, const char* prefix)
 XDomNode* XDomNode_namedItem(const XDomNode* self, const XString* name)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    if (!node || node->m_type != XDom_ElementNode) return xxml_dom_wrap_node(NULL);
-    for (int i = 0; i < node->m_attributeCount; ++i)
-        if (xxml_dom_string_equal(node->m_attributes[i]->m_name, name))
-            return xxml_dom_wrap_node(node->m_attributes[i]);
+    if (!node) return xxml_dom_wrap_node(NULL);
+    for (int i = 0; i < node->m_childCount; ++i)
+        if (xxml_dom_string_equal(node->m_children[i]->m_name, name))
+            return xxml_dom_wrap_node(node->m_children[i]);
     return xxml_dom_wrap_node(NULL);
 }
 
@@ -1405,12 +1793,16 @@ bool XDomNode_isNull(const XDomNode* self)
     return xxml_dom_handle_impl(self) == NULL;
 }
 
+bool XDomNode_equals(const XDomNode* left, const XDomNode* right)
+{
+    return xxml_dom_handle_impl(left) == xxml_dom_handle_impl(right);
+}
+
 void XDomNode_clear(XDomNode* self)
 {
-    XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    if (!node) return;
-    xxml_dom_node_clear(node);
-    xxml_dom_node_invalidate_text_cache(node);
+    if (!self) return;
+    /* Qt 兼容：clear 只清空当前隐式共享句柄，不能修改共享的树。 */
+    xxml_dom_handle_deinit(&self->m_impl);
 }
 
 #define XDOM_DEFINE_NODE_TYPE_CHECK(Name, Value) \
@@ -1510,6 +1902,17 @@ XDomElement* XDomNode_lastChildElement_utf8(const XDomNode* self, const char* ta
     return result;
 }
 
+XDomElement* XDomNode_previousSiblingElement_utf8(const XDomNode* self,
+                                                        const char* tagName,
+                                                        const char* namespaceURI)
+{
+    XString* tag = XString_create_utf8(tagName);
+    XString* ns = XString_create_utf8(namespaceURI);
+    XDomElement* result = XDomNode_previousSiblingElement(self, tag, ns);
+    XString_delete_base(tag); XString_delete_base(ns);
+    return result;
+}
+
 static XDomElement* xxml_dom_find_sibling_element(const XDomNodePrivate* node, int direction,
                                                       const XString* tagName, const XString* namespaceURI)
 {
@@ -1534,6 +1937,17 @@ XDomElement* XDomNode_nextSiblingElement(const XDomNode* self, const XString* ta
     return xxml_dom_find_sibling_element(xxml_dom_handle_impl(self), 1, tagName, namespaceURI);
 }
 
+XDomElement* XDomNode_nextSiblingElement_utf8(const XDomNode* self,
+                                                    const char* tagName,
+                                                    const char* namespaceURI)
+{
+    XString* tag = XString_create_utf8(tagName);
+    XString* ns = XString_create_utf8(namespaceURI);
+    XDomElement* result = XDomNode_nextSiblingElement(self, tag, ns);
+    XString_delete_base(tag); XString_delete_base(ns);
+    return result;
+}
+
 int64_t XDomNode_lineNumber(const XDomNode* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
@@ -1551,14 +1965,74 @@ XString* XDomNode_toString(const XDomNode* self, int indent)
     return xxml_dom_serialize(xxml_dom_handle_impl(self), indent);
 }
 
+bool XDomNode_save(const XDomNode* self, XIODevice* device, int indent,
+                   XDomEncodingPolicy encodingPolicy)
+{
+    if (!self || !device || XDomNode_isNull(self)) return false;
+    XString* text = xxml_dom_serialize_for_policy(xxml_dom_handle_impl(self), indent,
+                                                   encodingPolicy);
+    const char* utf8 = text ? XString_toUtf8(text) : NULL;
+    size_t length = text ? XString_toUtf8_length(text) : 0;
+    int64_t written = (utf8 || length == 0) ? XIODevice_write_1(
+        device, utf8 ? utf8 : "", (int64_t)length) : -1;
+    XString_delete_base(text);
+    return written == (int64_t)length;
+}
+
 /* ==================== QDomNodeList ==================== */
+
+static bool xxml_dom_list_matches(const XDomNodePrivate* list,
+                                  const XDomNodePrivate* node)
+{
+    return list && node && xxml_dom_element_matches(node, list->m_listTagName,
+                                                     list->m_listNamespaceUri);
+}
+
+static int xxml_dom_list_count_descendants(const XDomNodePrivate* list,
+                                           const XDomNodePrivate* parent)
+{
+    if (!list || !parent) return 0;
+    int count = 0;
+    for (int i = 0; i < parent->m_childCount; ++i) {
+        const XDomNodePrivate* child = parent->m_children[i];
+        if (xxml_dom_list_matches(list, child) && count < INT_MAX) ++count;
+        int descendants = xxml_dom_list_count_descendants(list, child);
+        if (descendants > INT_MAX - count) count = INT_MAX;
+        else count += descendants;
+    }
+    return count;
+}
+
+static XDomNodePrivate* xxml_dom_list_at_descendant(const XDomNodePrivate* list,
+                                                    const XDomNodePrivate* parent,
+                                                    int* index)
+{
+    if (!list || !parent || !index || *index < 0) return NULL;
+    for (int i = 0; i < parent->m_childCount; ++i) {
+        XDomNodePrivate* child = parent->m_children[i];
+        if (xxml_dom_list_matches(list, child)) {
+            if (*index == 0) return child;
+            --*index;
+        }
+        XDomNodePrivate* result = xxml_dom_list_at_descendant(list, child, index);
+        if (result) return result;
+    }
+    return NULL;
+}
 
 XDomNode* XDomNodeList_item(const XDomNodeList* self, int index)
 {
     XDomNodePrivate* list = xxml_dom_handle_impl(self);
-    if (!list || list->m_collectionKind != XDom_CollectionList || index < 0 ||
-        index >= list->m_itemCount) return xxml_dom_wrap_node(NULL);
-    return xxml_dom_wrap_node(list->m_items[index]);
+    if (!list || list->m_collectionKind != XDom_CollectionList || index < 0)
+        return xxml_dom_wrap_node(NULL);
+    if (list->m_listQueryKind == XDom_ListChildren)
+        return xxml_dom_wrap_node(list->m_listOwner && index < list->m_listOwner->m_childCount ?
+                                  list->m_listOwner->m_children[index] : NULL);
+    if (list->m_listQueryKind == XDom_ListElements) {
+        XDomNodePrivate* result = xxml_dom_list_at_descendant(list, list->m_listOwner, &index);
+        return xxml_dom_wrap_node(result);
+    }
+    return xxml_dom_wrap_node(NULL);
 }
 
 XDomNode* XDomNodeList_at(const XDomNodeList* self, int index)
@@ -1569,12 +2043,29 @@ XDomNode* XDomNodeList_at(const XDomNodeList* self, int index)
 int XDomNodeList_length(const XDomNodeList* self)
 {
     XDomNodePrivate* list = xxml_dom_handle_impl(self);
-    return list && list->m_collectionKind == XDom_CollectionList ? list->m_itemCount : 0;
+    if (!list || list->m_collectionKind != XDom_CollectionList || !list->m_listOwner) return 0;
+    if (list->m_listQueryKind == XDom_ListChildren) return list->m_listOwner->m_childCount;
+    return list->m_listQueryKind == XDom_ListElements ?
+        xxml_dom_list_count_descendants(list, list->m_listOwner) : 0;
 }
 
 int XDomNodeList_count(const XDomNodeList* self) { return XDomNodeList_length(self); }
 int XDomNodeList_size(const XDomNodeList* self) { return XDomNodeList_length(self); }
 bool XDomNodeList_isEmpty(const XDomNodeList* self) { return XDomNodeList_length(self) == 0; }
+bool XDomNodeList_equals(const XDomNodeList* left, const XDomNodeList* right)
+{
+    XDomNodePrivate* leftList = xxml_dom_handle_impl(left);
+    XDomNodePrivate* rightList = xxml_dom_handle_impl(right);
+    if (leftList == rightList) return true;
+    if (!leftList || !rightList ||
+        leftList->m_collectionKind != XDom_CollectionList ||
+        rightList->m_collectionKind != XDom_CollectionList)
+        return false;
+    /* Qt 的 QDomNodeList::operator== 不比较 namespaceURI，只比较节点和 tagName。 */
+    return leftList->m_listOwner == rightList->m_listOwner &&
+           leftList->m_listQueryKind == rightList->m_listQueryKind &&
+           xxml_dom_string_equal(leftList->m_listTagName, rightList->m_listTagName);
+}
 
 /* ==================== QDomNamedNodeMap ==================== */
 
@@ -1620,7 +2111,11 @@ static XDomNode* xxml_dom_map_set_item(XDomNamedNodeMap* self,
 {
     XDomNodePrivate* map = xxml_dom_handle_impl(self);
     XDomNodePrivate* node = xxml_dom_handle_impl(newNode);
-    if (!map || !node) return xxml_dom_wrap_node(NULL);
+    /* Qt 的实体/notation 映射是只读；属性映射由 QDomElement 专门维护 parent。 */
+    if (!map || !node || map->m_mapKind != XDom_MapAttributes ||
+        node->m_type != XDom_AttributeNode) return xxml_dom_wrap_node(NULL);
+    if (node->m_parent && node->m_parent != map->m_mapOwner)
+        return xxml_dom_wrap_node(NULL);
     int index = byNamespace ? xxml_dom_map_find_ns(map, node->m_namespaceUri, node->m_localName) :
                               xxml_dom_map_find_name(map, node->m_name);
     XDomNode* replaced = xxml_dom_wrap_node(index >= 0 ? xxml_dom_map_at(map, index) : NULL);
@@ -1632,6 +2127,7 @@ static XDomNode* xxml_dom_map_set_item(XDomNamedNodeMap* self,
         XDomNodePrivate* old = storage[index];
         storage[index] = node;
         node->m_parent = map->m_mapOwner;
+        xxml_dom_set_owner_document(node, xxml_dom_document_for_node(map->m_mapOwner));
         xxml_dom_node_retain(node);
         old->m_parent = NULL;
         xxml_dom_node_release(old);
@@ -1643,6 +2139,7 @@ static XDomNode* xxml_dom_map_set_item(XDomNamedNodeMap* self,
     else array = &map->m_mapOwner->m_notations;
     if (xxml_dom_array_append(array, count, capacity, node)) {
         node->m_parent = map->m_mapOwner;
+        xxml_dom_set_owner_document(node, xxml_dom_document_for_node(map->m_mapOwner));
         xxml_dom_node_retain(node);
     }
     return replaced;
@@ -1661,6 +2158,8 @@ XDomNode* XDomNamedNodeMap_setNamedItemNS(XDomNamedNodeMap* self, const XDomNode
 XDomNode* XDomNamedNodeMap_removeNamedItem(XDomNamedNodeMap* self, const XString* name)
 {
     XDomNodePrivate* map = xxml_dom_handle_impl(self);
+    if (!map || map->m_mapKind != XDom_MapAttributes)
+        return xxml_dom_wrap_node(NULL);
     int index = xxml_dom_map_find_name(map, name);
     if (index < 0) return xxml_dom_wrap_node(NULL);
     XDomNodePrivate* node = xxml_dom_map_at(map, index);
@@ -1708,6 +2207,8 @@ XDomNode* XDomNamedNodeMap_removeNamedItemNS(XDomNamedNodeMap* self,
                                                     const XString* namespaceURI, const XString* localName)
 {
     XDomNodePrivate* map = xxml_dom_handle_impl(self);
+    if (!map || map->m_mapKind != XDom_MapAttributes)
+        return xxml_dom_wrap_node(NULL);
     int index = xxml_dom_map_find_ns(map, namespaceURI, localName);
     if (index < 0) return xxml_dom_wrap_node(NULL);
     XDomNodePrivate* node = xxml_dom_map_at(map, index);
@@ -1730,10 +2231,27 @@ int XDomNamedNodeMap_length(const XDomNamedNodeMap* self)
 int XDomNamedNodeMap_count(const XDomNamedNodeMap* self) { return XDomNamedNodeMap_length(self); }
 int XDomNamedNodeMap_size(const XDomNamedNodeMap* self) { return XDomNamedNodeMap_length(self); }
 bool XDomNamedNodeMap_isEmpty(const XDomNamedNodeMap* self) { return XDomNamedNodeMap_length(self) == 0; }
+bool XDomNamedNodeMap_equals(const XDomNamedNodeMap* left, const XDomNamedNodeMap* right)
+{
+    XDomNodePrivate* leftMap = xxml_dom_handle_impl(left);
+    XDomNodePrivate* rightMap = xxml_dom_handle_impl(right);
+    if (leftMap == rightMap) return true;
+    if (!leftMap || !rightMap ||
+        leftMap->m_collectionKind != XDom_CollectionMap ||
+        rightMap->m_collectionKind != XDom_CollectionMap)
+        return false;
+    return leftMap->m_mapOwner == rightMap->m_mapOwner &&
+           leftMap->m_mapKind == rightMap->m_mapKind;
+}
 bool XDomNamedNodeMap_contains(const XDomNamedNodeMap* self, const XString* name)
-{ return !XDomNode_isNull(XDomNamedNodeMap_namedItem(self, name)); }
+{ return xxml_dom_map_find_name(xxml_dom_handle_impl(self), name) >= 0; }
 bool XDomNamedNodeMap_contains_utf8(const XDomNamedNodeMap* self, const char* name)
-{ return !XDomNode_isNull(XDomNamedNodeMap_namedItem_utf8(self, name)); }
+{
+    XString* text = XString_create_utf8(name);
+    bool result = xxml_dom_map_find_name(xxml_dom_handle_impl(self), text) >= 0;
+    XString_delete_base(text);
+    return result;
+}
 
 /* ==================== QDomDocument 与节点工厂 ==================== */
 
@@ -1743,18 +2261,55 @@ static XDomNodePrivate* xxml_dom_document_impl(const XDomDocument* self)
     return node && node->m_type == XDom_DocumentNode ? node : NULL;
 }
 
+static bool xxml_dom_document_create_default_doctype(XDomNodePrivate* document)
+{
+    if (!document || document->m_type != XDom_DocumentNode) return false;
+    if (document->m_doctype) return true;
+    XDomNodePrivate* doctype = xxml_dom_node_new_in_context(document->m_context,
+                                                             XDom_DocumentTypeNode);
+    if (!doctype) return false;
+    doctype->m_parent = document;
+    doctype->m_ownerDocument = document;
+    document->m_doctype = doctype;
+    return true;
+}
+
+static XDomNodePrivate* xxml_dom_document_ensure_impl(XDomDocument* self)
+{
+    if (!self || XClassIsVtableNull((XClass*)self)) return NULL;
+    XDomNodePrivate* document = xxml_dom_document_impl(self);
+    if (document) return document;
+    document = xxml_dom_node_new(XDom_DocumentNode);
+    if (!document) return NULL;
+    self->m_impl = document;
+    if (!xxml_dom_document_create_default_doctype(document)) {
+        xxml_dom_handle_deinit(&self->m_impl);
+        return NULL;
+    }
+    return document;
+}
+
 static XDomElement* xxml_dom_document_new_element(XDomNodePrivate* document,
                                                       const XString* namespaceURI,
                                                       const XString* qualifiedName)
 {
-    if (!document || !xxml_dom_valid_name(qualifiedName)) return xxml_dom_wrap_element(NULL);
+    bool ok = false;
+    XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &ok);
+    if (!document || !ok) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_element(NULL);
+    }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, XDom_ElementNode);
-    if (!node) return xxml_dom_wrap_element(NULL);
-    if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, qualifiedName);
-    else xxml_dom_set_plain_name(node, qualifiedName);
+    if (!node) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_element(NULL);
+    }
+    if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, fixedName);
+    else xxml_dom_set_plain_name(node, fixedName);
     node->m_ownerDocument = document;
     XDomElement* result = xxml_dom_wrap_element(node);
     xxml_dom_node_release(node);
+    XString_delete_base(fixedName);
     return result;
 }
 
@@ -1762,15 +2317,23 @@ static XDomAttr* xxml_dom_document_new_attribute(XDomNodePrivate* document,
                                                      const XString* namespaceURI,
                                                      const XString* qualifiedName)
 {
-    if (!document || !xxml_dom_valid_name(qualifiedName)) return xxml_dom_wrap_attr(NULL);
+    bool ok = false;
+    XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &ok);
+    if (!document || !ok) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_attr(NULL);
+    }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, XDom_AttributeNode);
-    if (!node) return xxml_dom_wrap_attr(NULL);
-    if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, qualifiedName);
-    else xxml_dom_set_plain_name(node, qualifiedName);
+    if (!node) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_attr(NULL);
+    }
+    if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, fixedName);
+    else xxml_dom_set_plain_name(node, fixedName);
     node->m_ownerDocument = document;
-    node->m_specified = true;
     XDomAttr* result = xxml_dom_wrap_attr(node);
     xxml_dom_node_release(node);
+    XString_delete_base(fixedName);
     return result;
 }
 
@@ -1779,23 +2342,29 @@ static XDomNodePrivate* xxml_dom_document_new_value_node(XDomNodePrivate* docume
                                                              const XString* value)
 {
     if (!document) return NULL;
+    bool ok = false;
+    XString* fixedValue = xxml_dom_fixed_value(value, type, &ok);
+    if (!ok) {
+        XString_delete_base(fixedValue);
+        return NULL;
+    }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, type);
-    if (!node) return NULL;
-    xxml_dom_set_default_creation_value(node, value);
+    if (!node) {
+        XString_delete_base(fixedValue);
+        return NULL;
+    }
+    xxml_dom_set_default_creation_value(node, fixedValue);
     node->m_ownerDocument = document;
+    XString_delete_base(fixedValue);
     return node;
 }
 
 XDomDocument* XDomDocument_createName(const XString* name)
 {
     XDomDocument* document = XDomDocument_create();
-    XDomNodePrivate* impl = xxml_dom_document_impl(document);
-    if (!document || !impl || !name || XString_isEmpty_base(name)) return document;
-    XDomNodePrivate* doctype = xxml_dom_create_node_for_document(impl, XDom_DocumentTypeNode);
-    if (!doctype) return document;
-    xxml_dom_string_assign(&doctype->m_name, name);
-    xxml_dom_insert_child(impl, doctype, -1);
-    xxml_dom_node_release(doctype);
+    XDomNodePrivate* impl = xxml_dom_document_ensure_impl(document);
+    if (!document || !impl) return document;
+    xxml_dom_set_plain_name(impl->m_doctype, name);
     return document;
 }
 
@@ -1807,21 +2376,44 @@ XDomDocument* XDomDocument_createName_utf8(const char* name)
     return result;
 }
 
+XDomDocument* XDomDocument_createDoctype(const XDomDocumentType* doctype)
+{
+    XDomDocument* result = XDomDocument_create();
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(result);
+    XDomNodePrivate* source = xxml_dom_handle_impl(doctype);
+    if (!document) return result;
+    if (source && source->m_type == XDom_DocumentTypeNode) {
+        XDomNodePrivate* clone = xxml_dom_node_clone(source, document->m_context, true);
+        if (clone) {
+            if (document->m_doctype) {
+                xxml_dom_node_release(document->m_doctype);
+                document->m_doctype = NULL;
+            }
+            if (!xxml_dom_append_private(document, clone, -1))
+                xxml_dom_node_release(clone);
+            else
+                xxml_dom_node_release(clone);
+        }
+    }
+    return result;
+}
+
 XDomDocumentType* XDomDocument_doctype(const XDomDocument* self)
 {
     XDomNodePrivate* document = xxml_dom_document_impl(self);
-    if (document) {
-        for (int i = 0; i < document->m_childCount; ++i)
-            if (document->m_children[i]->m_type == XDom_DocumentTypeNode)
-                return xxml_dom_wrap_doctype(document->m_children[i]);
-    }
-    return xxml_dom_wrap_doctype(NULL);
+    return xxml_dom_wrap_doctype(document ? document->m_doctype : NULL);
 }
 
 XDomImplementation* XDomDocument_implementation(const XDomDocument* self)
 {
     XDomImplementation* result = XDomImplementation_create();
-    if (!xxml_dom_document_impl(self) && result) result->m_isNull = true;
+    XDomNodePrivate* document = xxml_dom_document_impl(self);
+    if (!document && result) result->m_isNull = true;
+    if (result && document) {
+        result->m_isNull = false;
+        result->m_document = document;
+        xxml_dom_node_retain(document);
+    }
     return result;
 }
 
@@ -1838,7 +2430,7 @@ XDomElement* XDomDocument_documentElement(const XDomDocument* self)
 
 XDomElement* XDomDocument_createElement(XDomDocument* self, const XString* tagName)
 {
-    return xxml_dom_document_new_element(xxml_dom_document_impl(self), NULL, tagName);
+    return xxml_dom_document_new_element(xxml_dom_document_ensure_impl(self), NULL, tagName);
 }
 
 XDomElement* XDomDocument_createElement_utf8(XDomDocument* self, const char* tagName)
@@ -1851,7 +2443,7 @@ XDomElement* XDomDocument_createElement_utf8(XDomDocument* self, const char* tag
 
 XDomDocumentFragment* XDomDocument_createDocumentFragment(XDomDocument* self)
 {
-    XDomNodePrivate* document = xxml_dom_document_impl(self);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
     XDomNodePrivate* node = xxml_dom_document_new_value_node(document,
                                                                  XDom_DocumentFragmentNode, NULL);
     XDomDocumentFragment* result = xxml_dom_wrap_fragment(node);
@@ -1861,7 +2453,7 @@ XDomDocumentFragment* XDomDocument_createDocumentFragment(XDomDocument* self)
 
 XDomText* XDomDocument_createTextNode(XDomDocument* self, const XString* data)
 {
-    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_impl(self),
+    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_ensure_impl(self),
                                                                  XDom_TextNode, data);
     XDomText* result = xxml_dom_wrap_text(node);
     xxml_dom_node_release(node);
@@ -1878,7 +2470,7 @@ XDomText* XDomDocument_createTextNode_utf8(XDomDocument* self, const char* data)
 
 XDomComment* XDomDocument_createComment(XDomDocument* self, const XString* data)
 {
-    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_impl(self),
+    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_ensure_impl(self),
                                                                  XDom_CommentNode, data);
     XDomComment* result = xxml_dom_wrap_comment(node);
     xxml_dom_node_release(node);
@@ -1895,7 +2487,7 @@ XDomComment* XDomDocument_createComment_utf8(XDomDocument* self, const char* dat
 
 XDomCDATASection* XDomDocument_createCDATASection(XDomDocument* self, const XString* data)
 {
-    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_impl(self),
+    XDomNodePrivate* node = xxml_dom_document_new_value_node(xxml_dom_document_ensure_impl(self),
                                                                  XDom_CDATASectionNode, data);
     XDomCDATASection* result = xxml_dom_wrap_cdata(node);
     xxml_dom_node_release(node);
@@ -1914,14 +2506,23 @@ XDomProcessingInstruction* XDomDocument_createProcessingInstruction(XDomDocument
                                                                             const XString* target,
                                                                             const XString* data)
 {
-    XDomNodePrivate* document = xxml_dom_document_impl(self);
-    if (!document || !xxml_dom_valid_name(target)) return xxml_dom_wrap_pi(NULL);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    bool ok = false;
+    XString* fixedTarget = xxml_dom_fixed_name(target, false, &ok);
+    if (!document || !ok) {
+        XString_delete_base(fixedTarget);
+        return xxml_dom_wrap_pi(NULL);
+    }
     XDomNodePrivate* node = xxml_dom_document_new_value_node(document,
                                                                  XDom_ProcessingInstructionNode, data);
-    if (!node) return xxml_dom_wrap_pi(NULL);
-    xxml_dom_string_assign(&node->m_name, target);
+    if (!node) {
+        XString_delete_base(fixedTarget);
+        return xxml_dom_wrap_pi(NULL);
+    }
+    xxml_dom_string_assign(&node->m_name, fixedTarget);
     XDomProcessingInstruction* result = xxml_dom_wrap_pi(node);
     xxml_dom_node_release(node);
+    XString_delete_base(fixedTarget);
     return result;
 }
 
@@ -1938,7 +2539,7 @@ XDomProcessingInstruction* XDomDocument_createProcessingInstruction_utf8(XDomDoc
 
 XDomAttr* XDomDocument_createAttribute(XDomDocument* self, const XString* name)
 {
-    return xxml_dom_document_new_attribute(xxml_dom_document_impl(self), NULL, name);
+    return xxml_dom_document_new_attribute(xxml_dom_document_ensure_impl(self), NULL, name);
 }
 
 XDomAttr* XDomDocument_createAttribute_utf8(XDomDocument* self, const char* name)
@@ -1951,14 +2552,23 @@ XDomAttr* XDomDocument_createAttribute_utf8(XDomDocument* self, const char* name
 
 XDomEntityReference* XDomDocument_createEntityReference(XDomDocument* self, const XString* name)
 {
-    XDomNodePrivate* document = xxml_dom_document_impl(self);
-    if (!document || !xxml_dom_valid_name(name)) return xxml_dom_wrap_entity_reference(NULL);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    bool ok = false;
+    XString* fixedName = xxml_dom_fixed_name(name, false, &ok);
+    if (!document || !ok) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_entity_reference(NULL);
+    }
     XDomNodePrivate* node = xxml_dom_document_new_value_node(document,
                                                                  XDom_EntityReferenceNode, NULL);
-    if (!node) return xxml_dom_wrap_entity_reference(NULL);
-    xxml_dom_string_assign(&node->m_name, name);
+    if (!node) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_entity_reference(NULL);
+    }
+    xxml_dom_string_assign(&node->m_name, fixedName);
     XDomEntityReference* result = xxml_dom_wrap_entity_reference(node);
     xxml_dom_node_release(node);
+    XString_delete_base(fixedName);
     return result;
 }
 
@@ -1970,22 +2580,11 @@ XDomEntityReference* XDomDocument_createEntityReference_utf8(XDomDocument* self,
     return result;
 }
 
-static void xxml_dom_collect_elements(XDomNodePrivate* parent, const XString* tagName,
-                                      const XString* namespaceURI, XDomNodePrivate* list)
-{
-    if (!parent || !list) return;
-    for (int i = 0; i < parent->m_childCount; ++i) {
-        XDomNodePrivate* child = parent->m_children[i];
-        if (xxml_dom_element_matches(child, tagName, namespaceURI)) xxml_dom_list_append(list, child);
-        xxml_dom_collect_elements(child, tagName, namespaceURI, list);
-    }
-}
-
 static XDomNodeList* xxml_dom_elements_by_name(XDomNodePrivate* parent, const XString* tagName,
                                                    const XString* namespaceURI)
 {
-    XDomNodePrivate* list = xxml_dom_list_new();
-    if (list) xxml_dom_collect_elements(parent, tagName, namespaceURI, list);
+    XDomNodePrivate* list = xxml_dom_list_new_for_owner(parent, XDom_ListElements,
+                                                        tagName, namespaceURI);
     XDomNodeList* result = xxml_dom_wrap_list(list);
     xxml_dom_node_release(list);
     return result;
@@ -2006,10 +2605,18 @@ XDomNodeList* XDomDocument_elementsByTagName_utf8(const XDomDocument* self, cons
 
 XDomNode* XDomDocument_importNode(XDomDocument* self, const XDomNode* importedNode, bool deep)
 {
-    XDomNodePrivate* document = xxml_dom_document_impl(self);
     XDomNodePrivate* source = xxml_dom_handle_impl(importedNode);
-    if (!document || !source) return xxml_dom_wrap_node(NULL);
-    XDomNodePrivate* copy = xxml_dom_node_clone(source, document->m_context, deep);
+    if (!source) return xxml_dom_wrap_node(NULL);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    if (!document) return xxml_dom_wrap_node(NULL);
+    /* QDomDocument 和 QDomDocumentType 不允许通过 importNode 导入。 */
+    if (source->m_type == XDom_DocumentNode ||
+        source->m_type == XDom_DocumentTypeNode)
+        return xxml_dom_wrap_node(NULL);
+    /* 实体引用的后代永不导入，deep 对其没有影响。属性始终导入后代。 */
+    bool copyDeep = source->m_type == XDom_AttributeNode ||
+                    (source->m_type != XDom_EntityReferenceNode && deep);
+    XDomNodePrivate* copy = xxml_dom_node_clone(source, document->m_context, copyDeep);
     if (!copy) return xxml_dom_wrap_node(NULL);
     xxml_dom_set_owner_document(copy, document);
     XDomNode* result = xxml_dom_wrap_node(copy);
@@ -2020,7 +2627,7 @@ XDomNode* XDomDocument_importNode(XDomDocument* self, const XDomNode* importedNo
 XDomElement* XDomDocument_createElementNS(XDomDocument* self, const XString* namespaceURI,
                                                 const XString* qualifiedName)
 {
-    return xxml_dom_document_new_element(xxml_dom_document_impl(self), namespaceURI, qualifiedName);
+    return xxml_dom_document_new_element(xxml_dom_document_ensure_impl(self), namespaceURI, qualifiedName);
 }
 
 XDomElement* XDomDocument_createElementNS_utf8(XDomDocument* self, const char* namespaceURI,
@@ -2036,7 +2643,7 @@ XDomElement* XDomDocument_createElementNS_utf8(XDomDocument* self, const char* n
 XDomAttr* XDomDocument_createAttributeNS(XDomDocument* self, const XString* namespaceURI,
                                                const XString* qualifiedName)
 {
-    return xxml_dom_document_new_attribute(xxml_dom_document_impl(self), namespaceURI, qualifiedName);
+    return xxml_dom_document_new_attribute(xxml_dom_document_ensure_impl(self), namespaceURI, qualifiedName);
 }
 
 XDomAttr* XDomDocument_createAttributeNS_utf8(XDomDocument* self, const char* namespaceURI,
@@ -2154,8 +2761,9 @@ const XString* XDomElement_tagName(const XDomElement* self)
 void XDomElement_setTagName(XDomElement* self, const XString* name)
 {
     XDomNodePrivate* element = xxml_dom_element_impl(self);
-    if (!element || !xxml_dom_valid_name(name)) return;
-    xxml_dom_set_qualified_name(element, element->m_namespaceUri, name);
+    /* Qt 6.8 直接修改 name，不重新执行 createElement 的名称校验。 */
+    if (!element) return;
+    xxml_dom_string_assign(&element->m_name, name);
 }
 
 void XDomElement_setTagName_utf8(XDomElement* self, const char* name)
@@ -2180,8 +2788,19 @@ const XString* XDomElement_attribute_utf8(const XDomElement* self, const char* n
     XString* nameString = XString_create_utf8(name);
     XString* defaultString = XString_create_utf8(defaultValue);
     const XString* result = XDomElement_attribute(self, nameString, defaultString);
-    /* 默认值只在调用期间借用；未命中时返回线程内空字符串以避免悬空指针。 */
-    const XString* stable = result == defaultString ? xxml_dom_empty_string() : result;
+    XDomNodePrivate* element = xxml_dom_element_impl(self);
+    /* UTF-8 包装函数的临时参数不能直接返回，未命中时复制到元素缓存。 */
+    const XString* stable = result;
+    if (result == defaultString) {
+        if (element) {
+            if (!element->m_attributeCache) element->m_attributeCache = XString_create();
+            if (element->m_attributeCache) {
+                XString_assign(element->m_attributeCache, defaultString);
+                stable = element->m_attributeCache;
+            }
+        }
+        if (stable == defaultString || !stable) stable = xxml_dom_empty_string();
+    }
     XString_delete_base(nameString); XString_delete_base(defaultString);
     return stable;
 }
@@ -2191,17 +2810,26 @@ static void xxml_dom_element_set_attribute(XDomElement* self, const XString* nam
                                            bool byNamespace)
 {
     XDomNodePrivate* element = xxml_dom_element_impl(self);
-    if (!element || !xxml_dom_valid_name(qualifiedName)) return;
+    bool ok = false;
+    XString* fixedName = xxml_dom_fixed_name(qualifiedName, byNamespace, &ok);
+    if (!element || !ok) {
+        XString_delete_base(fixedName);
+        return;
+    }
     XDomNodePrivate* document = xxml_dom_document_for_node(element);
     XDomNodePrivate* attr = xxml_dom_create_node_for_document(document ? document : element,
                                                                   XDom_AttributeNode);
-    if (!attr) return;
-    if (namespaceURI) xxml_dom_set_qualified_name(attr, namespaceURI, qualifiedName);
-    else xxml_dom_set_plain_name(attr, qualifiedName);
-    xxml_dom_string_assign(&attr->m_value, value);
+    if (!attr) {
+        XString_delete_base(fixedName);
+        return;
+    }
+    if (byNamespace) xxml_dom_set_qualified_name(attr, namespaceURI, fixedName);
+    else xxml_dom_set_plain_name(attr, fixedName);
+    xxml_dom_attr_set_value_private(attr, value);
     attr->m_specified = true;
     xxml_dom_attach_attribute(element, attr, byNamespace);
     xxml_dom_node_release(attr);
+    XString_delete_base(fixedName);
 }
 
 void XDomElement_setAttribute(XDomElement* self, const XString* name, const XString* value)
@@ -2240,6 +2868,8 @@ void XDomElement_setAttribute_uint64(XDomElement* self, const XString* name, uin
 { xxml_dom_element_set_attribute_number(self, name, "%llu", (unsigned long long)value); }
 void XDomElement_setAttribute_double(XDomElement* self, const XString* name, double value)
 { xxml_dom_element_set_attribute_number(self, name, "%.17g", value); }
+void XDomElement_setAttribute_float(XDomElement* self, const XString* name, float value)
+{ xxml_dom_element_set_attribute_number(self, name, "%.8g", (double)value); }
 
 void XDomElement_removeAttribute(XDomElement* self, const XString* name)
 {
@@ -2336,7 +2966,18 @@ const XString* XDomElement_attributeNS_utf8(const XDomElement* self, const char*
     XString* local = XString_create_utf8(localName);
     XString* defaultText = XString_create_utf8(defaultValue);
     const XString* result = XDomElement_attributeNS(self, ns, local, defaultText);
-    const XString* stable = result == defaultText ? xxml_dom_empty_string() : result;
+    XDomNodePrivate* element = xxml_dom_element_impl(self);
+    const XString* stable = result;
+    if (result == defaultText) {
+        if (element) {
+            if (!element->m_attributeNSCache) element->m_attributeNSCache = XString_create();
+            if (element->m_attributeNSCache) {
+                XString_assign(element->m_attributeNSCache, defaultText);
+                stable = element->m_attributeNSCache;
+            }
+        }
+        if (stable == defaultText || !stable) stable = xxml_dom_empty_string();
+    }
     XString_delete_base(ns); XString_delete_base(local); XString_delete_base(defaultText);
     return stable;
 }
@@ -2354,6 +2995,37 @@ void XDomElement_setAttributeNS_utf8(XDomElement* self, const char* namespaceURI
     XDomElement_setAttributeNS(self, ns, name, text);
     XString_delete_base(ns); XString_delete_base(name); XString_delete_base(text);
 }
+
+static void xxml_dom_element_set_attribute_ns_number(XDomElement* self,
+                                                       const XString* namespaceURI,
+                                                       const XString* name,
+                                                       const char* format, ...)
+{
+    char buffer[96];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    XString* value = XString_create_utf8(buffer);
+    XDomElement_setAttributeNS(self, namespaceURI, name, value);
+    XString_delete_base(value);
+}
+
+void XDomElement_setAttributeNS_int(XDomElement* self, const XString* namespaceURI,
+                                      const XString* name, int value)
+{ xxml_dom_element_set_attribute_ns_number(self, namespaceURI, name, "%d", value); }
+void XDomElement_setAttributeNS_uint(XDomElement* self, const XString* namespaceURI,
+                                       const XString* name, unsigned int value)
+{ xxml_dom_element_set_attribute_ns_number(self, namespaceURI, name, "%u", value); }
+void XDomElement_setAttributeNS_int64(XDomElement* self, const XString* namespaceURI,
+                                        const XString* name, int64_t value)
+{ xxml_dom_element_set_attribute_ns_number(self, namespaceURI, name, "%lld", (long long)value); }
+void XDomElement_setAttributeNS_uint64(XDomElement* self, const XString* namespaceURI,
+                                         const XString* name, uint64_t value)
+{ xxml_dom_element_set_attribute_ns_number(self, namespaceURI, name, "%llu", (unsigned long long)value); }
+void XDomElement_setAttributeNS_double(XDomElement* self, const XString* namespaceURI,
+                                         const XString* name, double value)
+{ xxml_dom_element_set_attribute_ns_number(self, namespaceURI, name, "%.17g", value); }
 
 void XDomElement_removeAttributeNS(XDomElement* self, const XString* namespaceURI,
                                       const XString* localName)
@@ -2414,7 +3086,8 @@ static void xxml_dom_collect_text(XDomNodePrivate* node, XString* output)
         XDomNodePrivate* child = node->m_children[i];
         if (child->m_type == XDom_TextNode || child->m_type == XDom_CDATASectionNode)
             XString_append(output, child->m_value);
-        else xxml_dom_collect_text(child, output);
+        else if (child->m_type == XDom_ElementNode)
+            xxml_dom_collect_text(child, output);
     }
 }
 
@@ -2462,7 +3135,7 @@ void XDomAttr_setValue(XDomAttr* self, const XString* value)
 {
     XDomNodePrivate* attr = xxml_dom_attr_impl(self);
     if (!attr) return;
-    xxml_dom_string_assign(&attr->m_value, value);
+    xxml_dom_attr_set_value_private(attr, value);
     attr->m_specified = true;
     xxml_dom_node_invalidate_text_cache(attr);
 }
@@ -2500,6 +3173,69 @@ static void xxml_dom_append_escaped(XString* output, const XString* value, bool 
     }
 }
 
+static void xxml_dom_append_cdata(XString* output, const XString* value)
+{
+    if (!output || !value) return;
+    size_t length = XString_length_base(value);
+    for (size_t i = 0; i < length; ++i) {
+        if (i + 2 < length && XString_at(value, i) == ']' &&
+            XString_at(value, i + 1) == ']' && XString_at(value, i + 2) == '>') {
+            XString_append_utf8(output, "]]]]><![CDATA[>");
+            i += 2;
+        } else {
+            XString_append_char(output, XString_at(value, i));
+        }
+    }
+}
+
+static bool xxml_dom_element_has_namespace_decl(const XDomNodePrivate* element,
+                                                 const XString* prefix)
+{
+    if (!element || element->m_type != XDom_ElementNode) return false;
+    for (int i = 0; i < element->m_attributeCount; ++i) {
+        const XString* name = element->m_attributes[i]->m_name;
+        if (!prefix || XString_isEmpty_base(prefix)) {
+            if (XString_equals_utf8(name, "xmlns", XChar_CaseSensitive)) return true;
+        }
+        if (prefix && !XString_isEmpty_base(prefix)) {
+            XString* qualified = XString_create_copy(prefix);
+            if (qualified) {
+                XString_insert_utf8(qualified, 0, "xmlns:");
+                bool equal = XString_equals(name, qualified, XChar_CaseSensitive);
+                XString_delete_base(qualified);
+                if (equal) return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool xxml_dom_element_has_namespace_prefix_before(const XDomNodePrivate* element,
+                                                         const XString* prefix, int end)
+{
+    if (!element || !prefix) return false;
+    for (int i = 0; i < end && i < element->m_attributeCount; ++i) {
+        XDomNodePrivate* attr = element->m_attributes[i];
+        if (attr->m_createdWithNamespace &&
+            xxml_dom_string_equal(attr->m_prefix, prefix)) return true;
+    }
+    return false;
+}
+
+static void xxml_dom_append_namespace_decl(XString* output, const XString* prefix,
+                                           const XString* namespaceURI)
+{
+    if (!output) return;
+    XString_append_utf8(output, " xmlns");
+    if (prefix && !XString_isEmpty_base(prefix)) {
+        XString_append_char(output, ':');
+        XString_append(output, prefix);
+    }
+    XString_append_utf8(output, "=\"");
+    xxml_dom_append_escaped(output, namespaceURI, true);
+    XString_append_char(output, '"');
+}
+
 static void xxml_dom_append_indent(XString* output, int indent, int level)
 {
     if (!output || indent <= 0 || level <= 0) return;
@@ -2518,28 +3254,78 @@ static void xxml_dom_serialize_node(XDomNodePrivate* node, XString* output,
 
 static void xxml_dom_serialize_doctype(XDomNodePrivate* node, XString* output)
 {
+    if (!node || XString_isEmpty_base(node->m_name)) return;
+    /* Qt 在写 DTD 标识符时优先使用单引号，避免无意义的转义。 */
+    #define XDOM_APPEND_QUOTED(value) do { \
+        char quote = XString_indexOf_utf8((value), "'", 0, XChar_CaseSensitive) < 0 ? '\'' : '"'; \
+        XString_append_char(output, quote); \
+        XString_append(output, (value)); \
+        XString_append_char(output, quote); \
+    } while (0)
     XString_append_utf8(output, "<!DOCTYPE ");
     XString_append(output, node->m_name);
-    if (!XString_isEmpty_base(node->m_publicId)) {
-        XString_append_utf8(output, " PUBLIC \"");
-        xxml_dom_append_escaped(output, node->m_publicId, true);
-        XString_append_utf8(output, "\"");
-        if (!XString_isEmpty_base(node->m_systemId)) {
-            XString_append_utf8(output, " \"");
-            xxml_dom_append_escaped(output, node->m_systemId, true);
-            XString_append_utf8(output, "\"");
+    if (!node->m_publicIdNull) {
+        XString_append_utf8(output, " PUBLIC ");
+        XDOM_APPEND_QUOTED(node->m_publicId);
+        if (!node->m_systemIdNull) {
+            XString_append_char(output, ' ');
+            XDOM_APPEND_QUOTED(node->m_systemId);
         }
-    } else if (!XString_isEmpty_base(node->m_systemId)) {
-        XString_append_utf8(output, " SYSTEM \"");
-        xxml_dom_append_escaped(output, node->m_systemId, true);
-        XString_append_utf8(output, "\"");
+    } else if (!node->m_systemIdNull) {
+        XString_append_utf8(output, " SYSTEM ");
+        XDOM_APPEND_QUOTED(node->m_systemId);
     }
-    if (!XString_isEmpty_base(node->m_internalSubset)) {
+
+    if (node->m_entityCount > 0 || node->m_notationCount > 0) {
         XString_append_utf8(output, " [");
-        XString_append(output, node->m_internalSubset);
+        for (int i = 0; i < node->m_notationCount; ++i) {
+            XDomNodePrivate* notation = node->m_notations[i];
+            XString_append_utf8(output, "<!NOTATION ");
+            XString_append(output, notation->m_name);
+            XString_append_char(output, ' ');
+            if (!notation->m_publicIdNull) {
+                XString_append_utf8(output, "PUBLIC ");
+                XDOM_APPEND_QUOTED(notation->m_publicId);
+                if (!notation->m_systemIdNull) {
+                    XString_append_char(output, ' ');
+                    XDOM_APPEND_QUOTED(notation->m_systemId);
+                }
+            } else {
+                XString_append_utf8(output, "SYSTEM ");
+                XDOM_APPEND_QUOTED(notation->m_systemId);
+            }
+            XString_append_utf8(output, ">\n");
+        }
+        for (int i = 0; i < node->m_entityCount; ++i) {
+            XDomNodePrivate* entity = node->m_entities[i];
+            XString_append_utf8(output, "<!ENTITY ");
+            XString_append(output, entity->m_name);
+            XString_append_char(output, ' ');
+            if (entity->m_publicIdNull && entity->m_systemIdNull) {
+                XDOM_APPEND_QUOTED(entity->m_value);
+            } else if (entity->m_publicIdNull) {
+                XString_append_utf8(output, "SYSTEM ");
+                XDOM_APPEND_QUOTED(entity->m_systemId);
+                if (!XString_isEmpty_base(entity->m_notationName)) {
+                    XString_append_utf8(output, " NDATA ");
+                    XString_append(output, entity->m_notationName);
+                }
+            } else {
+                XString_append_utf8(output, "PUBLIC ");
+                XDOM_APPEND_QUOTED(entity->m_publicId);
+                XString_append_char(output, ' ');
+                XDOM_APPEND_QUOTED(entity->m_systemId);
+                if (!XString_isEmpty_base(entity->m_notationName)) {
+                    XString_append_utf8(output, " NDATA ");
+                    XString_append(output, entity->m_notationName);
+                }
+            }
+            XString_append_utf8(output, ">\n");
+        }
         XString_append_utf8(output, "]");
     }
     XString_append_char(output, '>');
+    #undef XDOM_APPEND_QUOTED
 }
 
 static void xxml_dom_serialize_element(XDomNodePrivate* node, XString* output,
@@ -2549,14 +3335,51 @@ static void xxml_dom_serialize_element(XDomNodePrivate* node, XString* output,
     if (pretty) xxml_dom_append_indent(output, indent, level);
     XString_append_char(output, '<');
     XString_append(output, node->m_name);
+    if (node->m_createdWithNamespace &&
+        ((!node->m_prefix || !XString_isEmpty_base(node->m_prefix)) ||
+         !XString_isEmpty_base(node->m_namespaceUri)) &&
+        !xxml_dom_element_has_namespace_decl(node, node->m_prefix))
+        xxml_dom_append_namespace_decl(output, node->m_prefix, node->m_namespaceUri);
     for (int i = 0; i < node->m_attributeCount; ++i) {
         XDomNodePrivate* attribute = node->m_attributes[i];
+        if (!attribute->m_createdWithNamespace ||
+            xxml_dom_string_equal(attribute->m_prefix, node->m_prefix) ||
+            xxml_dom_element_has_namespace_decl(node, attribute->m_prefix) ||
+            xxml_dom_element_has_namespace_prefix_before(node, attribute->m_prefix, i))
+            continue;
+        xxml_dom_append_namespace_decl(output, attribute->m_prefix,
+                                       attribute->m_namespaceUri);
+    }
+    for (int emitted = 0; emitted < node->m_attributeCount; ++emitted) {
+        int selected = -1;
+        for (int i = 0; i < node->m_attributeCount; ++i) {
+            XDomNodePrivate* candidate = node->m_attributes[i];
+            if (candidate->m_line == INT64_MIN) continue;
+            const XString* candidatePrefix = candidate->m_createdWithNamespace ?
+                                              candidate->m_prefix : xxml_dom_empty_string();
+            if (selected < 0) {
+                selected = i;
+                continue;
+            }
+            XDomNodePrivate* current = node->m_attributes[selected];
+            const XString* currentPrefix = current->m_createdWithNamespace ?
+                                            current->m_prefix : xxml_dom_empty_string();
+            int prefixOrder = XString_compare(candidatePrefix, currentPrefix);
+            if (prefixOrder < 0 ||
+                (prefixOrder == 0 && XString_compare(candidate->m_name, current->m_name) < 0))
+                selected = i;
+        }
+        XDomNodePrivate* attribute = node->m_attributes[selected];
         XString_append_char(output, ' ');
         XString_append(output, attribute->m_name);
         XString_append_utf8(output, "=\"");
         xxml_dom_append_escaped(output, attribute->m_value, true);
         XString_append_char(output, '"');
+        /* 选中的节点标记为空，后续循环按原数组寻找未输出项。 */
+        node->m_attributes[selected]->m_line = INT64_MIN;
     }
+    for (int i = 0; i < node->m_attributeCount; ++i)
+        if (node->m_attributes[i]->m_line == INT64_MIN) node->m_attributes[i]->m_line = -1;
     if (node->m_childCount == 0) {
         XString_append_utf8(output, "/>");
         return;
@@ -2584,23 +3407,30 @@ static void xxml_dom_serialize_node(XDomNodePrivate* node, XString* output,
     bool pretty = indent >= 0;
     switch (node->m_type) {
         case XDom_DocumentNode:
-            if (node->m_hasXmlDeclaration) {
-                XString_append_utf8(output, "<?xml version=\"");
-                XString_append(output, XString_isEmpty_base(node->m_documentVersion) ?
-                               xxml_dom_empty_string() : node->m_documentVersion);
-                if (XString_isEmpty_base(node->m_documentVersion)) XString_append_utf8(output, "1.0");
-                if (!XString_isEmpty_base(node->m_documentEncoding)) {
-                    XString_append_utf8(output, "\" encoding=\"");
-                    XString_append(output, node->m_documentEncoding);
-                }
-                if (node->m_isStandalone) XString_append_utf8(output, "\" standalone=\"yes");
-                XString_append_utf8(output, "\"?>");
+        {
+            bool wroteHeader = false;
+            int firstChild = 0;
+            /* Qt 把 XML 声明保存为第一个 target 为 xml 的处理指令。 */
+            if (node->m_childCount > 0 &&
+                node->m_children[0]->m_type == XDom_ProcessingInstructionNode &&
+                xxml_dom_string_equal_utf8(node->m_children[0]->m_name, "xml")) {
+                xxml_dom_serialize_node(node->m_children[0], output, indent, 0);
+                wroteHeader = true;
+                firstChild = 1;
             }
-            for (int i = 0; i < node->m_childCount; ++i) {
-                if ((i > 0 || node->m_hasXmlDeclaration) && pretty) XString_append_char(output, '\n');
+            if (node->m_doctype && !XString_isEmpty_base(node->m_doctype->m_name)) {
+                if (wroteHeader && pretty) XString_append_char(output, '\n');
+                xxml_dom_serialize_doctype(node->m_doctype, output);
+                wroteHeader = true;
+            }
+            for (int i = firstChild; i < node->m_childCount; ++i) {
+                if (pretty && (wroteHeader || i > firstChild))
+                    XString_append_char(output, '\n');
                 xxml_dom_serialize_node(node->m_children[i], output, indent, 0);
+                wroteHeader = true;
             }
             break;
+        }
         case XDom_ElementNode:
             xxml_dom_serialize_element(node, output, indent, level);
             break;
@@ -2610,7 +3440,7 @@ static void xxml_dom_serialize_node(XDomNodePrivate* node, XString* output,
         case XDom_CDATASectionNode:
             if (pretty) xxml_dom_append_indent(output, indent, level);
             XString_append_utf8(output, "<![CDATA[");
-            xxml_dom_append_escaped(output, node->m_value, false);
+            xxml_dom_append_cdata(output, node->m_value);
             XString_append_utf8(output, "]]>");
             break;
         case XDom_CommentNode:
@@ -2650,12 +3480,41 @@ static XString* xxml_dom_serialize(XDomNodePrivate* node, int indent)
     return result;
 }
 
+static XString* xxml_dom_serialize_for_policy(XDomNodePrivate* node, int indent,
+                                               XDomEncodingPolicy policy)
+{
+    if (!node || node->m_type != XDom_DocumentNode ||
+        policy == XDom_EncodingFromDocument)
+        return xxml_dom_serialize(node, indent);
+
+    /* XinYueC 的 XIODevice 没有 QTextStream 编码状态，FromTextStream 以 UTF-8 约定输出。 */
+    XString* result = XString_create();
+    if (!result) return NULL;
+    XString_append_utf8(result, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    bool wroteContent = true;
+    if (node->m_doctype && !XString_isEmpty_base(node->m_doctype->m_name)) {
+        if (indent >= 0 && wroteContent) XString_append_char(result, '\n');
+        xxml_dom_serialize_doctype(node->m_doctype, result);
+        wroteContent = true;
+    }
+    for (int i = 0; i < node->m_childCount; ++i) {
+        XDomNodePrivate* child = node->m_children[i];
+        /* EncodingFromTextStream 已经生成新的声明，跳过文档中的 xml PI。 */
+        if (child->m_type == XDom_ProcessingInstructionNode &&
+            xxml_dom_string_equal_utf8(child->m_name, "xml")) continue;
+        if (indent >= 0 && wroteContent) XString_append_char(result, '\n');
+        xxml_dom_serialize_node(child, result, indent, 0);
+        wroteContent = true;
+    }
+    return result;
+}
+
 /* ==================== 字符数据、DTD 与实现对象 ==================== */
 
 static XDomNodePrivate* xxml_dom_character_data_impl(const XDomCharacterData* self)
 {
     XDomNodePrivate* node = xxml_dom_handle_impl(self);
-    return xxml_dom_node_is_character_data(node) ? node : NULL;
+    return xxml_dom_node_is_character_data_payload(node) ? node : NULL;
 }
 
 XString* XDomCharacterData_substringData(const XDomCharacterData* self,
@@ -2692,13 +3551,9 @@ void XDomCharacterData_insertData(XDomCharacterData* self, uint64_t offset,
     XDomNodePrivate* node = xxml_dom_character_data_impl(self);
     if (!node || !value) return;
     size_t length = XString_length_base(node->m_value);
-    if (offset > (uint64_t)length) {
-        size_t target = offset > (uint64_t)SIZE_MAX ? SIZE_MAX : (size_t)offset;
-        if (target == SIZE_MAX) return;
-        XString_resize_fill(node->m_value, target, ' ');
-        length = XString_length_base(node->m_value);
-    }
-    XString_insert(node->m_value, length < offset ? length : (size_t)offset, value);
+    /* QString::insert 对超出范围的 offset 不补齐，也不改变原字符串。 */
+    if (offset > (uint64_t)length || offset > (uint64_t)SIZE_MAX) return;
+    XString_insert(node->m_value, (size_t)offset, value);
     xxml_dom_node_invalidate_text_cache(node);
 }
 
@@ -2888,6 +3743,237 @@ void XDomProcessingInstruction_setData_utf8(XDomProcessingInstruction* self, con
     XString_delete_base(text);
 }
 
+/* ==================== QDomImplementation 与类型转换 ==================== */
+
+bool XDomImplementation_hasFeature(const XDomImplementation* self,
+                                    const XString* feature, const XString* version)
+{
+    if (!xxml_dom_implementation_is_valid(self) || !feature) return false;
+    return xxml_dom_string_equal_utf8(feature, "XML") &&
+           (!version || XString_isEmpty_base(version) ||
+            xxml_dom_string_equal_utf8(version, "1.0"));
+}
+
+bool XDomImplementation_hasFeature_utf8(const XDomImplementation* self,
+                                         const char* feature, const char* version)
+{
+    XString* featureString = XString_create_utf8(feature);
+    XString* versionString = XString_create_utf8(version);
+    bool result = XDomImplementation_hasFeature(self, featureString, versionString);
+    XString_delete_base(featureString);
+    XString_delete_base(versionString);
+    return result;
+}
+
+XDomDocumentType* XDomImplementation_createDocumentType(const XDomImplementation* self,
+                                                        const XString* qualifiedName,
+                                                        const XString* publicId,
+                                                        const XString* systemId)
+{
+    bool ok = false;
+    XString* fixedName = xxml_dom_fixed_name(qualifiedName, true, &ok);
+    if (!xxml_dom_implementation_is_valid(self) || !ok) {
+        XString_delete_base(fixedName);
+        return xxml_dom_wrap_doctype(NULL);
+    }
+    bool publicOk = false;
+    bool systemOk = false;
+    XString* fixedPublicId = xxml_dom_fixed_public_id(publicId, &publicOk);
+    XString* fixedSystemId = xxml_dom_fixed_system_id(systemId, &systemOk);
+    if (!publicOk || !systemOk) {
+        XString_delete_base(fixedName);
+        XString_delete_base(fixedPublicId);
+        XString_delete_base(fixedSystemId);
+        return xxml_dom_wrap_doctype(NULL);
+    }
+    XDomNodePrivate* doctype = xxml_dom_node_new(XDom_DocumentTypeNode);
+    if (!doctype) {
+        XString_delete_base(fixedName);
+        XString_delete_base(fixedPublicId);
+        XString_delete_base(fixedSystemId);
+        return xxml_dom_wrap_doctype(NULL);
+    }
+    xxml_dom_set_plain_name(doctype, fixedName);
+    xxml_dom_string_assign(&doctype->m_publicId, fixedPublicId);
+    xxml_dom_string_assign(&doctype->m_systemId, fixedSystemId);
+    /* XString 空串对应 Qt 的非 null QString；只有 NULL 才表示 null 标识符。 */
+    doctype->m_publicIdNull = publicId == NULL;
+    doctype->m_systemIdNull = systemId == NULL;
+    if (doctype->m_systemIdNull) {
+        doctype->m_publicIdNull = true;
+        XString_clear_base(doctype->m_publicId);
+    }
+    XDomDocumentType* result = xxml_dom_wrap_doctype(doctype);
+    xxml_dom_node_release(doctype);
+    XString_delete_base(fixedName);
+    XString_delete_base(fixedPublicId);
+    XString_delete_base(fixedSystemId);
+    return result;
+}
+
+XDomDocumentType* XDomImplementation_createDocumentType_utf8(const XDomImplementation* self,
+                                                             const char* qualifiedName,
+                                                             const char* publicId,
+                                                             const char* systemId)
+{
+    XString* name = XString_create_utf8(qualifiedName);
+    XString* publicText = XString_create_utf8(publicId);
+    XString* systemText = systemId ? XString_create_utf8(systemId) : NULL;
+    XDomDocumentType* result = XDomImplementation_createDocumentType(self, name, publicText,
+                                                                       systemText);
+    XString_delete_base(name);
+    XString_delete_base(publicText);
+    XString_delete_base(systemText);
+    return result;
+}
+
+XDomDocument* XDomImplementation_createDocument(const XDomImplementation* self,
+                                                const XString* namespaceURI,
+                                                const XString* qualifiedName,
+                                                const XDomDocumentType* doctype)
+{
+    if (!xxml_dom_implementation_is_valid(self)) return NULL;
+    bool nameOk = false;
+    XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &nameOk);
+    if (!nameOk) {
+        XString_delete_base(fixedName);
+        return NULL;
+    }
+    XDomDocument* result = XDomDocument_create();
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(result);
+    if (!document) {
+        XString_delete_base(fixedName);
+        XDomDocument_delete_base(result);
+        return NULL;
+    }
+
+    XDomNodePrivate* sourceType = xxml_dom_handle_impl(doctype);
+    if (sourceType && sourceType->m_type == XDom_DocumentTypeNode) {
+        XDomNodePrivate* type = xxml_dom_node_clone(sourceType, document->m_context, true);
+        if (document->m_doctype) {
+            xxml_dom_node_release(document->m_doctype);
+            document->m_doctype = NULL;
+        }
+        if (!type || !xxml_dom_insert_child(document, type, -1)) {
+            if (type) xxml_dom_node_release(type);
+            XString_delete_base(fixedName);
+            XDomDocument_delete_base(result);
+            return NULL;
+        }
+        xxml_dom_node_release(type);
+    }
+
+    XDomNodePrivate* root = xxml_dom_create_node_for_document(document, XDom_ElementNode);
+    if (!root) {
+        if (root) xxml_dom_node_release(root);
+        XString_delete_base(fixedName);
+        XDomDocument_delete_base(result);
+        return NULL;
+    }
+    if (namespaceURI) xxml_dom_set_qualified_name(root, namespaceURI, fixedName);
+    else xxml_dom_set_plain_name(root, fixedName);
+    if (!xxml_dom_insert_child(document, root, -1)) {
+        xxml_dom_node_release(root);
+        XString_delete_base(fixedName);
+        XDomDocument_delete_base(result);
+        return NULL;
+    }
+    xxml_dom_node_release(root);
+    XString_delete_base(fixedName);
+    return result;
+}
+
+XDomDocument* XDomImplementation_createDocument_utf8(const XDomImplementation* self,
+                                                     const char* namespaceURI,
+                                                     const char* qualifiedName,
+                                                     const XDomDocumentType* doctype)
+{
+    XString* namespaceText = namespaceURI ? XString_create_utf8(namespaceURI) : NULL;
+    XString* name = XString_create_utf8(qualifiedName);
+    XDomDocument* result = XDomImplementation_createDocument(self, namespaceText, name, doctype);
+    XString_delete_base(namespaceText);
+    XString_delete_base(name);
+    return result;
+}
+
+bool XDomImplementation_isNull(const XDomImplementation* self)
+{
+    return !xxml_dom_implementation_is_valid(self);
+}
+
+bool XDomImplementation_equals(const XDomImplementation* left,
+                               const XDomImplementation* right)
+{
+    if (left == right) return true;
+    if (!left || !right || XDomImplementation_isNull(left) != XDomImplementation_isNull(right))
+        return false;
+    return left->m_document == right->m_document;
+}
+
+XDomInvalidDataPolicy XDomImplementation_invalidDataPolicy(void)
+{
+    return g_xxml_dom_invalid_data_policy;
+}
+
+void XDomImplementation_setInvalidDataPolicy(XDomInvalidDataPolicy policy)
+{
+    if (policy < XDom_AcceptInvalidChars || policy > XDom_ReturnNullNode) return;
+    g_xxml_dom_invalid_data_policy = policy;
+}
+
+static XDomNode* xxml_dom_handle_to_node(const void* handle, XDomNodeType type)
+{
+    XDomNodePrivate* node = xxml_dom_handle_impl(handle);
+    return node && node->m_type == type ? xxml_dom_wrap_node(node) : xxml_dom_wrap_node(NULL);
+}
+
+XDomNode* XDomElement_toNode(const XDomElement* self)
+{ return xxml_dom_handle_to_node(self, XDom_ElementNode); }
+
+XDomNode* XDomAttr_toNode(const XDomAttr* self)
+{ return xxml_dom_handle_to_node(self, XDom_AttributeNode); }
+
+XDomNode* XDomText_toNode(const XDomText* self)
+{
+    XDomNodePrivate* node = xxml_dom_handle_impl(self);
+    return node && (node->m_type == XDom_TextNode || node->m_type == XDom_CDATASectionNode) ?
+        xxml_dom_wrap_node(node) : xxml_dom_wrap_node(NULL);
+}
+
+XDomNode* XDomCDATASection_toNode(const XDomCDATASection* self)
+{ return xxml_dom_handle_to_node(self, XDom_CDATASectionNode); }
+
+XDomNode* XDomComment_toNode(const XDomComment* self)
+{ return xxml_dom_handle_to_node(self, XDom_CommentNode); }
+
+XDomNode* XDomDocument_toNode(const XDomDocument* self)
+{ return xxml_dom_handle_to_node(self, XDom_DocumentNode); }
+
+XDomNode* XDomDocumentType_toNode(const XDomDocumentType* self)
+{ return xxml_dom_handle_to_node(self, XDom_DocumentTypeNode); }
+
+XDomNode* XDomDocumentFragment_toNode(const XDomDocumentFragment* self)
+{ return xxml_dom_handle_to_node(self, XDom_DocumentFragmentNode); }
+
+XDomNode* XDomCharacterData_toNode(const XDomCharacterData* self)
+{
+    XDomNodePrivate* node = xxml_dom_handle_impl(self);
+    return node && xxml_dom_node_is_character_data(node) ?
+        xxml_dom_wrap_node(node) : xxml_dom_wrap_node(NULL);
+}
+
+XDomNode* XDomEntity_toNode(const XDomEntity* self)
+{ return xxml_dom_handle_to_node(self, XDom_EntityNode); }
+
+XDomNode* XDomNotation_toNode(const XDomNotation* self)
+{ return xxml_dom_handle_to_node(self, XDom_NotationNode); }
+
+XDomNode* XDomEntityReference_toNode(const XDomEntityReference* self)
+{ return xxml_dom_handle_to_node(self, XDom_EntityReferenceNode); }
+
+XDomNode* XDomProcessingInstruction_toNode(const XDomProcessingInstruction* self)
+{ return xxml_dom_handle_to_node(self, XDom_ProcessingInstructionNode); }
+
 /* ==================== 文档解析与输出 ==================== */
 
 void XDomParseResult_init(XDomParseResult* result)
@@ -2920,24 +4006,53 @@ static void xxml_dom_parse_result_error_utf8(XDomParseResult* result, const char
     result->m_errorColumn = column;
 }
 
-static bool xxml_dom_input_has_xml_declaration(const XByteArray* data)
-{
-    if (!data || XByteArray_size_base(data) < 5) return false;
-    const uint8_t* bytes = XByteArray_constData((XByteArray*)data);
-    size_t size = XByteArray_size_base(data);
-    size_t offset = size >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
-    return offset + 5 <= size && bytes[offset] == '<' && bytes[offset + 1] == '?' &&
-           bytes[offset + 2] == 'x' && bytes[offset + 3] == 'm' && bytes[offset + 4] == 'l';
-}
-
 static void xxml_dom_extract_internal_subset(XDomNodePrivate* doctype, const XString* rawDtd)
 {
     if (!doctype || !rawDtd) return;
     const char* data = XString_toUtf8(rawDtd);
-    const char* begin = data ? strchr(data, '[') : NULL;
-    const char* end = data ? strrchr(data, ']') : NULL;
+    if (!data) return;
+    size_t length = strlen(data);
+    const char* begin = NULL;
+    const char* end = NULL;
+    int bracketDepth = 0;
+    char quote = '\0';
+    bool comment = false;
+    for (size_t i = 0; i < length; ++i) {
+        const char* p = data + i;
+        if (comment) {
+            if (i + 2 < length && p[0] == '-' && p[1] == '-' && p[2] == '>') {
+                comment = false;
+                i += 2;
+            }
+            continue;
+        }
+        if (quote) {
+            if (*p == quote) quote = '\0';
+            continue;
+        }
+        if (i + 3 < length && p[0] == '<' && p[1] == '!' &&
+            p[2] == '-' && p[3] == '-') {
+            comment = true;
+            i += 3;
+            continue;
+        }
+        if (*p == '\'' || *p == '"') {
+            quote = *p;
+            continue;
+        }
+        if (*p == '[') {
+            if (!begin) begin = p;
+            ++bracketDepth;
+        } else if (*p == ']' && bracketDepth > 0) {
+            if (--bracketDepth == 0) {
+                end = p;
+                break;
+            }
+        }
+    }
     if (!begin || !end || end <= begin) return;
-    XString* subset = XString_create_with_length_utf8(begin + 1, (size_t)(end - begin - 1));
+    XString* subset = XString_create_with_length_utf8(begin + 1,
+                                                       (size_t)(end - begin - 1));
     if (subset) {
         xxml_dom_string_assign(&doctype->m_internalSubset, subset);
         XString_delete_base(subset);
@@ -2957,11 +4072,10 @@ static void xxml_dom_append_dtd_entity(XDomNodePrivate* document,
     xxml_dom_string_assign(&entity->m_systemId, XXmlStreamEntityDeclaration_systemId(declaration));
     xxml_dom_string_assign(&entity->m_notationName, XXmlStreamEntityDeclaration_notationName(declaration));
     entity->m_ownerDocument = document;
-    if (xxml_dom_array_append(&doctype->m_entities, &doctype->m_entityCount,
-                              &doctype->m_entityCapacity, entity)) {
+    if (xxml_dom_append_private(doctype, entity, -1) &&
+        xxml_dom_array_append(&doctype->m_entities, &doctype->m_entityCount,
+                              &doctype->m_entityCapacity, entity))
         xxml_dom_node_retain(entity);
-        entity->m_parent = doctype;
-    }
     xxml_dom_node_release(entity);
 }
 
@@ -2976,11 +4090,10 @@ static void xxml_dom_append_dtd_notation(XDomNodePrivate* document,
     xxml_dom_string_assign(&notation->m_publicId, XXmlStreamNotationDeclaration_publicId(declaration));
     xxml_dom_string_assign(&notation->m_systemId, XXmlStreamNotationDeclaration_systemId(declaration));
     notation->m_ownerDocument = document;
-    if (xxml_dom_array_append(&doctype->m_notations, &doctype->m_notationCount,
-                              &doctype->m_notationCapacity, notation)) {
+    if (xxml_dom_append_private(doctype, notation, -1) &&
+        xxml_dom_array_append(&doctype->m_notations, &doctype->m_notationCount,
+                              &doctype->m_notationCapacity, notation))
         xxml_dom_node_retain(notation);
-        notation->m_parent = doctype;
-    }
     xxml_dom_node_release(notation);
 }
 
@@ -2992,16 +4105,32 @@ static void xxml_dom_parse_dtd(XDomNodePrivate* document, XXmlStreamReader* read
     xxml_dom_set_plain_name(doctype, XXmlStreamReader_dtdName(reader));
     xxml_dom_string_assign(&doctype->m_publicId, XXmlStreamReader_dtdPublicId(reader));
     xxml_dom_string_assign(&doctype->m_systemId, XXmlStreamReader_dtdSystemId(reader));
+    doctype->m_publicIdNull = XString_isEmpty_base(doctype->m_publicId);
+    doctype->m_systemIdNull = XString_isEmpty_base(doctype->m_systemId);
     xxml_dom_extract_internal_subset(doctype, XXmlStreamReader_text(reader));
     doctype->m_ownerDocument = document;
     XXmlStreamEntityDeclarations* entities = XXmlStreamReader_entityDeclarations(reader);
-    for (size_t i = 0; entities && i < XXmlStreamEntityDeclarations_size(entities); ++i)
-        xxml_dom_append_dtd_entity(document, doctype, XXmlStreamEntityDeclarations_at(entities, i));
+    for (size_t i = 0; entities && i < XXmlStreamEntityDeclarations_size(entities); ++i) {
+        const XXmlStreamEntityDeclaration* declaration =
+            XXmlStreamEntityDeclarations_at(entities, i);
+        const XString* publicId = XXmlStreamEntityDeclaration_publicId(declaration);
+        const XString* systemId = XXmlStreamEntityDeclaration_systemId(declaration);
+        /* Qt 的 QDomBuilder 只把外部/未解析实体放入 entities；内部实体由读取器展开。 */
+        if ((publicId && !XString_isEmpty_base(publicId)) ||
+            (systemId && !XString_isEmpty_base(systemId)))
+            xxml_dom_append_dtd_entity(document, doctype, declaration);
+    }
     XXmlStreamNotationDeclarations* notations = XXmlStreamReader_notationDeclarations(reader);
     for (size_t i = 0; notations && i < XXmlStreamNotationDeclarations_size(notations); ++i)
         xxml_dom_append_dtd_notation(document, doctype, XXmlStreamNotationDeclarations_at(notations, i));
-    if (!xxml_dom_insert_child(document, doctype, -1)) xxml_dom_node_release(doctype);
-    else xxml_dom_node_release(doctype);
+    if (document->m_doctype) {
+        xxml_dom_node_release(document->m_doctype);
+        document->m_doctype = NULL;
+    }
+    if (!xxml_dom_insert_child(document, doctype, -1))
+        xxml_dom_node_release(doctype);
+    else
+        xxml_dom_node_release(doctype);
 }
 
 static XDomNodePrivate* xxml_dom_parse_element(XDomNodePrivate* document,
@@ -3015,7 +4144,7 @@ static XDomNodePrivate* xxml_dom_parse_element(XDomNodePrivate* document,
     else xxml_dom_set_plain_name(element, XXmlStreamReader_qualifiedName(reader));
     element->m_ownerDocument = document;
     element->m_line = XXmlStreamReader_lineNumber(reader);
-    element->m_column = XXmlStreamReader_columnNumber(reader) - 1;
+    element->m_column = XXmlStreamReader_columnNumber(reader);
     const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
     for (int i = 0; attributes && i < XXmlStreamAttributes_size(attributes); ++i) {
         const XXmlStreamAttribute* source = XXmlStreamAttributes_at(attributes, i);
@@ -3024,16 +4153,47 @@ static XDomNodePrivate* xxml_dom_parse_element(XDomNodePrivate* document,
         if (useNamespace) xxml_dom_set_qualified_name(attribute, XXmlStreamAttribute_namespaceUri(source),
                                                        XXmlStreamAttribute_qualifiedName(source));
         else xxml_dom_set_plain_name(attribute, XXmlStreamAttribute_qualifiedName(source));
-        xxml_dom_string_assign(&attribute->m_value, XXmlStreamAttribute_value(source));
+        xxml_dom_attr_set_value_private(attribute, XXmlStreamAttribute_value(source));
         attribute->m_ownerDocument = document;
         attribute->m_specified = true;
         xxml_dom_attach_attribute(element, attribute, useNamespace);
         xxml_dom_node_release(attribute);
     }
+    if (useNamespace) {
+        const XXmlStreamNamespaceDeclarations* declarations =
+            XXmlStreamReader_namespaceDeclarations(reader);
+        for (int i = 0; declarations && i < XXmlStreamNamespaceDeclarations_size(declarations); ++i) {
+            const XXmlStreamNamespaceDeclaration* declaration =
+                XXmlStreamNamespaceDeclarations_at(declarations, i);
+            const XString* prefix = XXmlStreamNamespaceDeclaration_prefix(declaration);
+            const XString* namespaceURI = XXmlStreamNamespaceDeclaration_namespaceUri(declaration);
+            if (!declaration || !prefix || !namespaceURI) continue;
+            XString* name = XString_create();
+            if (!name) continue;
+            if (XString_isEmpty_base(prefix)) XString_assign_utf8(name, "xmlns");
+            else {
+                XString_assign_utf8(name, "xmlns:");
+                XString_append(name, prefix);
+            }
+            XDomNodePrivate* attribute = xxml_dom_create_node_for_document(document,
+                                                                              XDom_AttributeNode);
+            if (attribute) {
+                xxml_dom_set_plain_name(attribute, name);
+                xxml_dom_attr_set_value_private(attribute, namespaceURI);
+                attribute->m_ownerDocument = document;
+                attribute->m_specified = true;
+                xxml_dom_attach_attribute(element, attribute, false);
+                xxml_dom_node_release(attribute);
+            }
+            XString_delete_base(name);
+        }
+    }
     if (!xxml_dom_insert_child(parent, element, -1)) {
         xxml_dom_node_release(element);
         return NULL;
     }
+    /* 树已经持有元素引用；current 只借用该指针，不应额外持有初始引用。 */
+    xxml_dom_node_release(element);
     return element;
 }
 
@@ -3047,53 +4207,119 @@ static void xxml_dom_parse_value_node(XDomNodePrivate* document, XDomNodePrivate
     xxml_dom_node_release(node);
 }
 
-XDomParseResult XDomDocument_setContent_result(XDomDocument* self,
-                                                      const XByteArray* data, unsigned int options)
+static void xxml_dom_capture_document_info(XDomNodePrivate* document,
+                                            const XXmlStreamReader* reader)
+{
+    if (!document || !reader || !XXmlStreamReader_hasXmlDeclaration(reader)) return;
+    xxml_dom_string_assign(&document->m_documentVersion,
+                           XXmlStreamReader_documentVersion(reader));
+    xxml_dom_string_assign(&document->m_documentEncoding,
+                           XXmlStreamReader_documentEncoding(reader));
+    document->m_hasXmlDeclaration = true;
+    document->m_hasStandalone = XXmlStreamReader_hasStandaloneDeclaration(reader);
+    document->m_isStandalone = document->m_hasStandalone &&
+                               XXmlStreamReader_isStandaloneDocument(reader);
+}
+
+/**
+ * @brief      构造 Qt QDomDocument 使用的 XML 声明处理指令数据。
+ * @param      reader 已定位在 StartDocument 的 XML 读取器；只借用。
+ * @return     新分配的处理指令数据；调用者使用 XString_delete_base 释放，失败返回 NULL。
+ * @note       属性使用单引号，且仅在输入声明中出现 standalone 时写出 standalone='no'。
+ */
+static XString* xxml_dom_xml_declaration_data(const XXmlStreamReader* reader)
+{
+    if (!reader) return NULL;
+    const XString* version = XXmlStreamReader_documentVersion(reader);
+    if (!version || XString_isEmpty_base(version)) return NULL;
+    XString* data = XString_create();
+    if (!data) return NULL;
+    XString_append_utf8(data, "version='");
+    XString_append(data, version);
+    XString_append_char(data, '\'');
+    const XString* encoding = XXmlStreamReader_documentEncoding(reader);
+    if (encoding && !XString_isEmpty_base(encoding)) {
+        XString_append_utf8(data, " encoding='");
+        XString_append(data, encoding);
+        XString_append_char(data, '\'');
+    }
+    if (XXmlStreamReader_isStandaloneDocument(reader)) {
+        XString_append_utf8(data, " standalone='yes'");
+    } else if (XXmlStreamReader_hasStandaloneDeclaration(reader)) {
+        XString_append_utf8(data, " standalone='no'");
+    }
+    return data;
+}
+
+static XDomParseResult xxml_dom_set_content_from_reader(XDomNodePrivate* document,
+                                                         XXmlStreamReader* reader,
+                                                         unsigned int options)
 {
     XDomParseResult result;
     XDomParseResult_init(&result);
-    XDomNodePrivate* document = xxml_dom_document_impl(self);
-    if (!document || !data) {
-        xxml_dom_parse_result_error_utf8(&result, "XML 文档或输入数据为空", -1, -1);
+    if (!document || !reader) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 文档或读取器为空", -1, -1);
         return result;
     }
+
     xxml_dom_node_clear(document);
+    if (!xxml_dom_document_create_default_doctype(document)) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 文档类型创建失败", -1, -1);
+        return result;
+    }
     xxml_dom_string_assign(&document->m_documentVersion, NULL);
     xxml_dom_string_assign(&document->m_documentEncoding, NULL);
-    document->m_hasXmlDeclaration = xxml_dom_input_has_xml_declaration(data);
+    document->m_hasXmlDeclaration = false;
     document->m_isStandalone = false;
+    document->m_hasStandalone = false;
 
-    XXmlStreamReader* reader = XXmlStreamReader_create();
-    if (!reader) {
-        xxml_dom_parse_result_error_utf8(&result, "XML 读取器创建失败", -1, -1);
-        return result;
-    }
     bool useNamespace = (options & XDom_UseNamespaceProcessing) != 0;
+    bool foundDtd = false;
     XXmlStreamReader_setNamespaceProcessing(reader, useNamespace);
-    XXmlStreamReader_addData(reader, data);
+    xxml_dom_capture_document_info(document, reader);
     XDomNodePrivate* current = document;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token == XXmlStream_Invalid || XXmlStreamReader_hasError(reader)) break;
         if (token == XXmlStream_StartDocument) {
-            if (document->m_hasXmlDeclaration) {
-                xxml_dom_string_assign(&document->m_documentVersion, XXmlStreamReader_documentVersion(reader));
-                xxml_dom_string_assign(&document->m_documentEncoding, XXmlStreamReader_documentEncoding(reader));
-                document->m_isStandalone = XXmlStreamReader_hasStandaloneDeclaration(reader) &&
-                                           XXmlStreamReader_isStandaloneDocument(reader);
+            xxml_dom_capture_document_info(document, reader);
+            XString* declarationData = xxml_dom_xml_declaration_data(reader);
+            XDomNodePrivate* declaration = xxml_dom_document_new_value_node(
+                document, XDom_ProcessingInstructionNode, declarationData);
+            if (declaration) {
+                XString* target = XString_create_utf8("xml");
+                xxml_dom_set_plain_name(declaration, target);
+                XString_delete_base(target);
+                declaration->m_line = XXmlStreamReader_lineNumber(reader);
+                declaration->m_column = XXmlStreamReader_columnNumber(reader);
+                if (!xxml_dom_insert_child(document, declaration, 0))
+                    xxml_dom_node_release(declaration);
+                else
+                    xxml_dom_node_release(declaration);
             }
+            XString_delete_base(declarationData);
         } else if (token == XXmlStream_DTD) {
+            if (foundDtd) {
+                /* Qt 的 QDomParser 只允许一个文档类型声明。 */
+                xxml_dom_parse_result_error_utf8(&result, "XML 文档不允许包含多个 DTD 声明",
+                                                  XXmlStreamReader_lineNumber(reader),
+                                                  XXmlStreamReader_columnNumber(reader));
+                break;
+            }
+            foundDtd = true;
             xxml_dom_parse_dtd(document, reader);
         } else if (token == XXmlStream_StartElement) {
             XDomNodePrivate* element = xxml_dom_parse_element(document, current, reader, useNamespace);
             if (!element) {
-                xxml_dom_parse_result_error_utf8(&result, "XML 元素创建失败", XXmlStreamReader_lineNumber(reader),
-                                                  XXmlStreamReader_columnNumber(reader) - 1);
+                xxml_dom_parse_result_error_utf8(&result, "XML 元素创建失败",
+                                                  XXmlStreamReader_lineNumber(reader),
+                                                  XXmlStreamReader_columnNumber(reader));
                 break;
             }
             current = element;
         } else if (token == XXmlStream_EndElement) {
-            if (current && current != document) current = current->m_parent ? current->m_parent : document;
+            if (current && current != document)
+                current = current->m_parent ? current->m_parent : document;
         } else if (token == XXmlStream_Characters) {
             if (XXmlStreamReader_isWhitespace(reader) &&
                 !(options & XDom_PreserveSpacingOnlyNodes)) continue;
@@ -3101,7 +4327,8 @@ XDomParseResult XDomDocument_setContent_result(XDomDocument* self,
                 XXmlStreamReader_isCDATA(reader) ? XDom_CDATASectionNode : XDom_TextNode,
                 XXmlStreamReader_text(reader));
         } else if (token == XXmlStream_Comment) {
-            xxml_dom_parse_value_node(document, current, XDom_CommentNode, XXmlStreamReader_text(reader));
+            xxml_dom_parse_value_node(document, current, XDom_CommentNode,
+                                      XXmlStreamReader_text(reader));
         } else if (token == XXmlStream_ProcessingInstruction) {
             XDomNodePrivate* pi = xxml_dom_document_new_value_node(document,
                 XDom_ProcessingInstructionNode, XXmlStreamReader_processingInstructionData(reader));
@@ -3121,16 +4348,45 @@ XDomParseResult XDomDocument_setContent_result(XDomDocument* self,
         }
     }
     if (XXmlStreamReader_hasError(reader)) {
-        result.m_errorMessage = XString_create_copy(XXmlStreamReader_errorString(reader));
+        const XString* message = XXmlStreamReader_errorString(reader);
+        result.m_errorMessage = message ? XString_create_copy(message) :
+                                         XString_create_utf8("XML 解析失败");
         result.m_errorLine = XXmlStreamReader_lineNumber(reader);
-        result.m_errorColumn = XXmlStreamReader_columnNumber(reader) - 1;
+        result.m_errorColumn = XXmlStreamReader_columnNumber(reader);
     }
+    return result;
+}
+
+XDomParseResult XDomDocument_setContent_reader_result(XDomDocument* self,
+                                                       XXmlStreamReader* reader,
+                                                       unsigned int options)
+{
+    return xxml_dom_set_content_from_reader(xxml_dom_document_ensure_impl(self), reader, options);
+}
+
+XDomParseResult XDomDocument_setContent_result(XDomDocument* self,
+                                                const XByteArray* data, unsigned int options)
+{
+    XDomParseResult result;
+    XDomParseResult_init(&result);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    if (!document || !data) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 文档或输入数据为空", -1, -1);
+        return result;
+    }
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    if (!reader) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 读取器创建失败", -1, -1);
+        return result;
+    }
+    XXmlStreamReader_addData(reader, data);
+    result = xxml_dom_set_content_from_reader(document, reader, options);
     XXmlStreamReader_delete_base(reader);
     return result;
 }
 
 XDomParseResult XDomDocument_setContent_utf8_result(XDomDocument* self,
-                                                           const char* data, unsigned int options)
+                                                     const char* data, unsigned int options)
 {
     XByteArray* bytes = XByteArray_create_utf8(data ? data : "");
     XDomParseResult result = XDomDocument_setContent_result(self, bytes, options);
@@ -3138,31 +4394,123 @@ XDomParseResult XDomDocument_setContent_utf8_result(XDomDocument* self,
     return result;
 }
 
+XDomParseResult XDomDocument_setContent_string_result(XDomDocument* self,
+                                                        const XString* data,
+                                                        unsigned int options)
+{
+    XDomParseResult result;
+    XDomParseResult_init(&result);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    if (!document || !data) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 文档或输入数据为空", -1, -1);
+        return result;
+    }
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    if (!reader) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 读取器创建失败", -1, -1);
+        return result;
+    }
+    /* 直接使用 UTF-16 输入重载，匹配 Qt QString setContent 路径。 */
+    XXmlStreamReader_addData_string(reader, data);
+    result = xxml_dom_set_content_from_reader(document, reader, options);
+    XXmlStreamReader_delete_base(reader);
+    return result;
+}
+
+XDomParseResult XDomDocument_setContent_device_result(XDomDocument* self,
+                                                       XIODevice* device,
+                                                       unsigned int options)
+{
+    XDomParseResult result;
+    XDomParseResult_init(&result);
+    XDomNodePrivate* document = xxml_dom_document_ensure_impl(self);
+    if (!document || !device) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 文档或输入设备为空", -1, -1);
+        return result;
+    }
+    /* Qt 6.8 会为未打开设备尝试只读打开；设备仍由调用者负责关闭。 */
+    if (!XIODevice_isOpen(device) && !XIODevice_open_base(device, XIODevice_ReadOnly)) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 输入设备打开失败", -1, -1);
+        return result;
+    }
+    XXmlStreamReader* reader = XXmlStreamReader_create();
+    if (!reader) {
+        xxml_dom_parse_result_error_utf8(&result, "XML 读取器创建失败", -1, -1);
+        return result;
+    }
+    XXmlStreamReader_setDevice(reader, device);
+    result = xxml_dom_set_content_from_reader(document, reader, options);
+    XXmlStreamReader_delete_base(reader);
+    return result;
+}
+
+static bool xxml_dom_unpack_parse_result(XDomParseResult* result,
+                                         XString** errorMessage,
+                                         int64_t* errorLine, int64_t* errorColumn)
+{
+    if (!result) return false;
+    bool success = XDomParseResult_isSuccess(result);
+    if (errorMessage) {
+        *errorMessage = result->m_errorMessage;
+        result->m_errorMessage = NULL;
+    }
+    if (errorLine) *errorLine = result->m_errorLine;
+    if (errorColumn) *errorColumn = result->m_errorColumn;
+    XDomParseResult_deinit(result);
+    return success;
+}
+
 bool XDomDocument_setContent(XDomDocument* self, const XByteArray* data, unsigned int options,
-                                XString** errorMessage, int64_t* errorLine, int64_t* errorColumn)
+                             XString** errorMessage, int64_t* errorLine, int64_t* errorColumn)
 {
     if (errorMessage) *errorMessage = NULL;
     if (errorLine) *errorLine = 0;
     if (errorColumn) *errorColumn = 0;
     XDomParseResult result = XDomDocument_setContent_result(self, data, options);
-    bool success = XDomParseResult_isSuccess(&result);
-    if (errorMessage) {
-        *errorMessage = result.m_errorMessage;
-        result.m_errorMessage = NULL;
-    }
-    if (errorLine) *errorLine = result.m_errorLine;
-    if (errorColumn) *errorColumn = result.m_errorColumn;
-    XDomParseResult_deinit(&result);
-    return success;
+    return xxml_dom_unpack_parse_result(&result, errorMessage, errorLine, errorColumn);
 }
 
 bool XDomDocument_setContent_utf8(XDomDocument* self, const char* data, unsigned int options,
-                                     XString** errorMessage, int64_t* errorLine, int64_t* errorColumn)
+                                  XString** errorMessage, int64_t* errorLine, int64_t* errorColumn)
 {
     XByteArray* bytes = XByteArray_create_utf8(data ? data : "");
-    bool success = XDomDocument_setContent(self, bytes, options, errorMessage, errorLine, errorColumn);
+    bool success = XDomDocument_setContent(self, bytes, options, errorMessage,
+                                           errorLine, errorColumn);
     XByteArray_delete_base(bytes);
     return success;
+}
+
+bool XDomDocument_setContent_string(XDomDocument* self, const XString* data,
+                                    unsigned int options, XString** errorMessage,
+                                    int64_t* errorLine, int64_t* errorColumn)
+{
+    if (errorMessage) *errorMessage = NULL;
+    if (errorLine) *errorLine = 0;
+    if (errorColumn) *errorColumn = 0;
+    XDomParseResult result = XDomDocument_setContent_string_result(self, data, options);
+    return xxml_dom_unpack_parse_result(&result, errorMessage, errorLine, errorColumn);
+}
+
+bool XDomDocument_setContent_reader(XDomDocument* self, XXmlStreamReader* reader,
+                                    unsigned int options, XString** errorMessage,
+                                    int64_t* errorLine, int64_t* errorColumn)
+{
+    if (errorMessage) *errorMessage = NULL;
+    if (errorLine) *errorLine = 0;
+    if (errorColumn) *errorColumn = 0;
+    XDomParseResult result = XDomDocument_setContent_reader_result(self, reader, options);
+    return xxml_dom_unpack_parse_result(&result, errorMessage, errorLine, errorColumn);
+}
+
+bool XDomDocument_setContent_device(XDomDocument* self, XIODevice* device,
+                                    unsigned int options, XString** errorMessage,
+                                    int64_t* errorLine, int64_t* errorColumn)
+{
+    if (errorMessage) *errorMessage = NULL;
+    if (errorLine) *errorLine = 0;
+    if (errorColumn) *errorColumn = 0;
+    XDomParseResult result = XDomDocument_setContent_device_result(self, device, options);
+    return xxml_dom_unpack_parse_result(&result, errorMessage, errorLine, errorColumn);
 }
 
 XString* XDomDocument_toString(const XDomDocument* self, int indent)

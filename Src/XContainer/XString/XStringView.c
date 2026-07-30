@@ -8,6 +8,10 @@
 #include "XStringView.h"
 #if XString_ON
 #include "XString.h"           ///< XString 字符串容器，用于从 XString 构造视图和 toString
+#if XRegularExpression_ON
+#include "XRegularExpression.h"
+#include "XStringList.h"
+#endif
 #include <string.h>            ///< memcmp、memchr 等内存操作
 #include <stdlib.h>            ///< strtol、strtoll、strtoul、strtoull、strtod 等数值转换
 #include <wchar.h>             ///< wmemchr 宽字符查找
@@ -547,6 +551,123 @@ int64_t XStringView_count(const XStringView* self, const XStringView* substr, in
     }
     return count;
 }
+
+#if XRegularExpression_ON
+int64_t XStringView_indexOf_regularExpression(const XStringView* self,
+                                              const XRegularExpression* expression,
+                                              int64_t from,
+                                              XRegularExpressionMatch* match)
+{
+    if (!self || !expression) return -1;
+    XRegularExpressionMatch* result = XRegularExpression_matchView(
+            expression, self, from, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!result) return -1;
+    bool hasMatch = XRegularExpressionMatch_hasMatch(result);
+    int64_t position = hasMatch ?
+            XRegularExpressionMatch_capturedStart(result, 0) : -1;
+    if (match && hasMatch) XRegularExpressionMatch_copy_base(match, result);
+    XRegularExpressionMatch_delete_base(result);
+    return position;
+}
+
+int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
+                                                  const XRegularExpression* expression,
+                                                  int64_t from,
+                                                  XRegularExpressionMatch* match)
+{
+    if (!self || !expression) return -1;
+    int64_t length = self->m_size;
+    int64_t endPosition;
+    if (from < 0) {
+        endPosition = length + from + 1;
+    } else if (from >= length) {
+        endPosition = length + 1;
+    } else {
+        endPosition = from + 1;
+    }
+
+    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatchView(
+            expression, self, 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!iterator || !XRegularExpressionMatchIterator_isValid(iterator)) {
+        if (iterator) XRegularExpressionMatchIterator_delete_base(iterator);
+        return -1;
+    }
+
+    int64_t resultPosition = -1;
+    XRegularExpressionMatch* last = NULL;
+    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
+        XRegularExpressionMatch* current = XRegularExpressionMatchIterator_next(iterator);
+        if (!current) break;
+        int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
+        if (position < 0 || position >= endPosition) {
+            XRegularExpressionMatch_delete_base(current);
+            break;
+        }
+        if (last) XRegularExpressionMatch_delete_base(last);
+        last = current;
+        resultPosition = position;
+    }
+    if (match && last) XRegularExpressionMatch_copy_base(match, last);
+    if (last) XRegularExpressionMatch_delete_base(last);
+    XRegularExpressionMatchIterator_delete_base(iterator);
+    return resultPosition;
+}
+
+bool XStringView_contains_regularExpression(const XStringView* self,
+                                            const XRegularExpression* expression)
+{
+    return XStringView_contains_regularExpression_2(self, expression, NULL);
+}
+
+bool XStringView_contains_regularExpression_2(const XStringView* self,
+                                              const XRegularExpression* expression,
+                                              XRegularExpressionMatch* match)
+{
+    return XStringView_indexOf_regularExpression(self, expression, 0, match) >= 0;
+}
+
+int64_t XStringView_count_regularExpression(const XStringView* self,
+                                            const XRegularExpression* expression)
+{
+    if (!self || !expression) return 0;
+    int64_t count = 0;
+    int64_t index = -1;
+    while (index <= self->m_size - 1) {
+        XRegularExpressionMatch* match = XRegularExpression_matchView(
+                expression, self, index + 1, XRegularExpression_NormalMatch,
+                XRegularExpression_NoMatchOption);
+        if (!match) break;
+        if (!XRegularExpressionMatch_hasMatch(match)) {
+            XRegularExpressionMatch_delete_base(match);
+            break;
+        }
+        ++count;
+        index = XRegularExpressionMatch_capturedStart(match, 0);
+        if (index >= 0 && index < self->m_size &&
+                XChar_isHighSurrogate(self->m_data[index])) {
+            ++index;
+        }
+        XRegularExpressionMatch_delete_base(match);
+    }
+    return count;
+}
+
+XStringList* XStringView_split_regularExpression(const XStringView* self,
+                                                 const XRegularExpression* separator,
+                                                 bool keepEmptyParts)
+{
+    if (!self || !separator) return NULL;
+    XString* value = XString_create_with_length_utf16(
+            self->m_data, (size_t)(self->m_size > 0 ? self->m_size : 0));
+    if (!value) return NULL;
+    XStringList* result = XString_split_regularExpression(value, separator,
+                                                           keepEmptyParts);
+    XString_delete_base(value);
+    return result;
+}
+#endif
 
 bool XStringView_startsWith_char(const XStringView* self, XChar ch, int cs)
 {

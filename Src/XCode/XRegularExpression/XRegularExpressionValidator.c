@@ -67,6 +67,16 @@ XRegularExpressionValidator* XRegularExpressionValidator_create(void)
     return validator;
 }
 
+XRegularExpressionValidator* XRegularExpressionValidator_create_ex(
+        const XRegularExpression* expression)
+{
+    if (!expression) return NULL;
+    XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
+    if (!validator) return NULL;
+    XRegularExpressionValidator_setRegularExpression(validator, expression);
+    return validator;
+}
+
 XRegularExpressionValidator* XRegularExpressionValidator_create_copy(
         const XRegularExpressionValidator* other)
 {
