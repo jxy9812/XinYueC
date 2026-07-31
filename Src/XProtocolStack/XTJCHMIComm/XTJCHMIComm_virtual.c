@@ -82,7 +82,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		XVector_push_back_1_base(recvVector, &ucByte);  // 存储第一个字节
 		if (comm->m_recvFrameHead && !XVector_isEmpty_base(comm->m_recvFrameHead))
 		{//存在接收帧头
-			if (memcmp(XContainerSharedDataPtr(recvVector), XContainerSharedDataPtr(comm->m_recvFrameHead), 1) != 0)
+			if (memcmp(XVector_constData(recvVector), XByteArray_data(comm->m_recvFrameHead), 1) != 0)
 			{//比较第一个
 				return;//第一个就不一样 重新来过
 			}
@@ -114,7 +114,8 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		}
 		XVector_push_back_1_base(recvVector, &ucByte);  // 存储字节到缓冲区
 		size_t size = XContainerSize(recvVector);
-		if (memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerSharedDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
+		if (memcmp((const uint8_t*)XVector_constData(recvVector) + size - 1,
+			XByteArray_data(comm->m_recvFrameHead) + size - 1, 1) != 0)
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 			return;//校验失败重新开始
@@ -148,7 +149,9 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			
 			
 			static uint8_t tail[] = {0xFF,0xFF,0xFF };
-			if ((XContainerSize(recvVector) >= sizeof(tail)) && memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + XContainerSize(recvVector) - sizeof(tail), tail, sizeof(tail)) == 0)
+			if ((XContainerSize(recvVector) >= sizeof(tail)) &&
+				memcmp((const uint8_t*)XVector_constData(recvVector) + XContainerSize(recvVector) - sizeof(tail),
+					tail, sizeof(tail)) == 0)
 			{//检测到帧结束标志
 				XContainerSize(recvVector) -= sizeof(tail);//缓冲区删除结束标志
 				if (XContainerSize(recvVector) != 0)
@@ -168,10 +171,13 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				return ;
 			}
 			static uint8_t tailCrc[] = { 0x01, 0xFE,0xFE,0xFE };
-			if ((XContainerSize(recvVector) >= sizeof(tailCrc)) && memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + XContainerSize(recvVector) - sizeof(tailCrc), tailCrc, sizeof(tailCrc)) == 0)
+			if ((XContainerSize(recvVector) >= sizeof(tailCrc)) &&
+				memcmp((const uint8_t*)XVector_constData(recvVector) + XContainerSize(recvVector) - sizeof(tailCrc),
+					tailCrc, sizeof(tailCrc)) == 0)
 			{//检测到帧结束标志
 				XContainerSize(recvVector) -= sizeof(tailCrc);//缓冲区删除结束标志
-				if (XContainerSize(recvVector) != 0 && XCrc_get16(XContainerSharedDataPtr(recvVector), XContainerSize(recvVector)) == 0)
+				if (XContainerSize(recvVector) != 0 &&
+					XCrc_get16((uint8_t*)XVector_data(recvVector), XContainerSize(recvVector)) == 0)
 				{
 					XContainerSize(recvVector) -=2;//缓冲区删除CRC
 					XByteArray* v = XByteArray_create_copy(recvVector);
@@ -191,7 +197,9 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (comm->m_recvFrameTail != NULL && !XVector_isEmpty_base(comm->m_recvFrameTail))
 			{
 				size_t size = XContainerSize(comm->m_recvFrameTail);
-				if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerSharedDataPtr(comm->m_recvFrameTail), size) == 0)
+				if ((XContainerSize(recvVector) >= size) &&
+					memcmp((const uint8_t*)XVector_constData(recvVector) + XContainerSize(recvVector) - size,
+						XByteArray_data(comm->m_recvFrameTail), size) == 0)
 				{//检测到帧结束标志
 					XContainerSize(recvVector) -= size;//缓冲区删除结束标志
 					if(XContainerSize(recvVector) != 0)

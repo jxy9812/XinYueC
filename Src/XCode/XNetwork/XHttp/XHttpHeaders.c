@@ -3,6 +3,7 @@
 #include "XMemory.h"
 #include <ctype.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,9 +57,11 @@ static XByteArray* xhttp_well_known_header_name_array(XHttpHeaders_WellKnownHead
     return text ? XByteArray_create_utf8(text) : NULL;
 }
 
-_Static_assert(sizeof(xhttp_well_known_header_names) / sizeof(xhttp_well_known_header_names[0]) ==
-                   XHttpHeaders_WellKnownHeader_Count,
-               "QHttpHeaders WellKnownHeader mapping must match the public enum");
+typedef char xhttp_well_known_header_mapping_must_match_public_enum[
+    sizeof(xhttp_well_known_header_names) / sizeof(xhttp_well_known_header_names[0]) ==
+            XHttpHeaders_WellKnownHeader_Count
+        ? 1
+        : -1];
 
 static size_t xhttp_byte_size(const XByteArray* array)
 {
@@ -244,15 +247,21 @@ static void VXHttpHeaders_move(XHttpHeaders* dest, XHttpHeaders* src)
 XVtable* XHttpHeaders_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpHeaders))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpHeaders_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpHeaders_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttpHeaders_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttpHeaders size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

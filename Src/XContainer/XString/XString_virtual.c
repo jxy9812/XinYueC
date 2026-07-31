@@ -9,7 +9,7 @@
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量
-#define XString_cdata(str) ((const XChar*)XContainerSharedDataPtr(str))
+#define XString_cdata(str) ((const XChar*)XContainerDataAddr(str))
 
 /**
  * @brief 分离共享数据（Copy-On-Write 机制）
@@ -160,7 +160,7 @@ void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* 
     }
 
     // 获取数据区指针和长度
-    const XChar* data = (const XChar*)XContainerSharedDataPtr(str);
+    const XChar* data = XString_cdata(str);
     if (!data) {
         return;
     }
@@ -179,7 +179,7 @@ void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* 
 
     // 如果需要返回下一个迭代器
     if (next != NULL) {
-        const XChar* new_data = (const XChar*)XContainerSharedDataPtr(str);
+        const XChar* new_data = XString_cdata(str);
         size_t new_len = XString_length_base(str);
         if (new_data && pos < new_len) {
             // 下一个字符在相同索引位置（原 pos+1 已前移）
@@ -316,10 +316,10 @@ static void VXContainer_clear(XString* str)
     }
 
     // 不共享，直接清空数据
-    if (XContainerSharedDataPtr(str)) 
+    if (XString_data(str))
     {
         XContainerSize(str) = 0;
-        ((XChar*)XContainerSharedDataPtr(str))[0] = 0;
+        XString_data(str)[0] = 0;
     }
 
     XString_deinitCache(str);

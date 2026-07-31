@@ -22,6 +22,7 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -4100,14 +4101,20 @@ static void xhttp_manager_transaction_finish(XHttpTransaction* tx)
 XVtable* XNetworkAccessManager_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XObject))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkAccessManager))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkAccessManager_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXNetworkAccessManager_timerEvent);
+#if SHOWCONTAINERSIZE
+    printf("XNetworkAccessManager size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

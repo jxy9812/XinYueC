@@ -6,6 +6,7 @@
 #include "XHttpServerWebSocketUpgradeResponse.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <string.h>
 
 static void VXHttpServerWebSocketUpgradeResponse_deinit(
@@ -43,14 +44,20 @@ static void VXHttpServerWebSocketUpgradeResponse_copy(
 XVtable* XHttpServerWebSocketUpgradeResponse_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpServerWebSocketUpgradeResponse))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerWebSocketUpgradeResponse_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpServerWebSocketUpgradeResponse_copy);
+#if SHOWCONTAINERSIZE
+    printf("XHttpServerWebSocketUpgradeResponse size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

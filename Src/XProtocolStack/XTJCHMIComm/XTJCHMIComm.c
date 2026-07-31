@@ -1,6 +1,7 @@
 ﻿#include"XTJCHMIComm.h"
 #include"XCompare.h"
 #include"XVector.h"
+#include"XByteArray.h"
 //获取功能码回调
 static bool XTJCHMIComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* code);
 XTJCHMIComm* XTJCHMIComm_create(XIODevice* io)
@@ -30,6 +31,6 @@ bool XTJCHMIComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* 
 {
 	if (data == NULL || XVector_isEmpty_base(data) || code == NULL)
 		return false;
-	*code = *((uint8_t*)XContainerSharedDataPtr(data));
+	*code = *XByteArray_data(data);
 	return true;
 }

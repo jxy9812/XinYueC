@@ -39,7 +39,7 @@ typedef enum
      XCRC32_POSIX               /**< POSIX多项式：0x04C11DB7 (与IEEE相同) */
  } XCRC32Polynomial;
 
- uint32_t** XCrc32_get_crc_table();
+ uint32_t (*XCrc32_get_crc_table())[256];
  /**
  * 初始化CRC32查找表
  * @param polynomial 多项式类型

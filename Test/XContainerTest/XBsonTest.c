@@ -56,11 +56,11 @@ void XBsonDocumentTest()
 		XByteArray* bson = XBsonDocument_toBson(doc);
 		{
 			XByteArray* utf8=XByteArray_to16HexUtf8(bson);
-			XPrintf("%s\n",XContainerSharedDataPtr(utf8));
+			XPrintf("%s\n", XByteArray_data(utf8));
 			XByteArray_delete_base(utf8);
 		}
 		XBsonDocument_delete_base(doc);
-		/*XPrintf_3(XContainerSharedDataPtr(bson));
+		/*XPrintf_3(XByteArray_data(bson));
 		XPrintf_3("\n开始从bson文本转bson对象\n");*/
 		doc = XBsonDocument_fromBson(bson);
 		XByteArray_delete_base(bson);

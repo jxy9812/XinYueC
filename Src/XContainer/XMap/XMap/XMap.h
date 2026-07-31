@@ -82,6 +82,20 @@ XMap* XMap_create_move(XMap* other);
 * @note 需确保this_map不为NULL，keyTypeSize和valTypeSize大于0，compare不为NULL
 */
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
+
+/**
+ * @brief 强制分离共享的 COW 存储。
+ * @param this_map 需要分离的 XMap 实例。
+ * @note 与 XVector_detach 语义一致；未启用 COW 或已独占时为空操作。
+ */
+void XMap_detach(XMap* this_map);
+
+/**
+ * @brief 判断 XMap 是否独占底层存储。
+ * @param this_map 要检查的 XMap 实例。
+ * @return 未启用 COW、存储为空或引用计数为 1 时返回 true。
+ */
+bool XMap_isDetached(const XMap* this_map);
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 插入键值对（拷贝语义，基础版本）

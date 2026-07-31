@@ -6,6 +6,7 @@
 #include "XHttpServerRouterRule.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <string.h>
 
 static void VXHttpServerRouterRule_deinit(XHttpServerRouterRule* self)
@@ -51,13 +52,19 @@ static bool xhttp_router_match_path(const char* pattern,
 XVtable* XHttpServerRouterRule_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpServerRouterRule))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerRouterRule_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XHttpServerRouterRule size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

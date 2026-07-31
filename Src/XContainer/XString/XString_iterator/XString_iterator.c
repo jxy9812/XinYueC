@@ -8,7 +8,7 @@ XString_iterator XString_begin(XString* str)
 	XString_iterator it = { 0 };
 	if (ISNULL(str, ""))
 		return it;
-	it.data = XContainerSharedDataPtr(str);
+	it.data = XString_data(str);
 	return it;
 }
 
@@ -30,7 +30,7 @@ void XString_iterator_add(XString* str, XString_iterator* it)
 		*it=XString_end(str);
 		return;
 	}
-	XChar* back = ((XChar*)XContainerSharedDataPtr(str)) + (XString_length_base(str)-1);
+	XChar* back = XString_data(str) + (XString_length_base(str)-1);
 	if (it->data == back)//如果是最后一个元素则返回空表示遍历完成了
 	{
 		it->data = NULL;

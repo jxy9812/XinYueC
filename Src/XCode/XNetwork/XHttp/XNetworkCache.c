@@ -9,6 +9,7 @@
 #include "XFile.h"
 #include "XHashFunc.h"
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -347,15 +348,21 @@ static void VXNetworkCacheMetaData_move(XNetworkCacheMetaData* dest,
 XVtable* XNetworkCacheMetaData_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkCacheMetaData))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkCacheMetaData_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkCacheMetaData_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkCacheMetaData_move);
+#if SHOWCONTAINERSIZE
+    printf("XNetworkCacheMetaData size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -557,13 +564,19 @@ static void VXNetworkDiskCache_deinit(XNetworkDiskCache* self)
 XVtable* XNetworkDiskCache_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XObject))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkDiskCache))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkDiskCache_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XNetworkDiskCache size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

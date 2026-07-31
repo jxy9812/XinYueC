@@ -274,7 +274,7 @@ XStringList* XString_split_regularExpression(const XString* str,
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
-#define XString_cdata(str) ((const XChar*)XContainerSharedDataPtr(str))
+#define XString_cdata(str) ((const XChar*)XContainerDataAddr(str))
 
 // ==================== 内部公共宏：消除重复模式 ====================
 
@@ -320,7 +320,7 @@ XString* FuncName(FloatType n, char format, int precision) { \
 #define DEFINE_TO_NUM(FuncName, RetType, ToFunc, DefaultVal) \
 RetType FuncName(const XString* str, bool* ok, int base) { \
     if (!str) { if (ok) *ok = false; return DefaultVal; } \
-    return ToFunc(XContainerSharedDataPtr(str), XContainerSize(str), base, ok); \
+    return ToFunc(XString_cdata(str), XContainerSize(str), base, ok); \
 }
 
 // toXxx_length缓存长度查询宏
@@ -906,17 +906,13 @@ XChar XString_back(const XString* str)
 const XChar* XString_unicode(const XString* str)
 {
     if (!str || !XContainerDataPtr(str)) return NULL;
-    // 直接XString的内部数据通过XContainerSharedDataPtr访问，返回常量指针确保不被修改
-    return (const XChar*)XContainerSharedDataPtr(str);
+    return XString_cdata(str);
 }
 
 const uint16_t* XString_utf16(const XString* str)
 {
     if (!str || !XContainerDataPtr(str)) return NULL;
-    // XChar本质就是uint16_t（UTF-16编码），内部存储已经是UTF-16
-    // 直接返回内部数据指针，与Qt QString::utf16()行为一致
-    // 返回的是以0终止的UTF-16数组（reserve时已预留终止符空间）
-    return (const uint16_t*)XContainerSharedDataPtr(str);
+    return (const uint16_t*)XString_cdata(str);
 }
 
 bool XString_append(XString* str, const XString* app_str)
@@ -1773,7 +1769,7 @@ bool XString_isNull(const XString* str)
     }
     // 检查内部数据指针是否未初始化（根据XContainer结构特性）
     // 结合XString_init逻辑，未初始化的对象其数据指针可能为NULL
-    if (XContainerSharedDataPtr(str) == NULL) {
+    if (XString_cdata(str) == NULL) {
         return true;
     }
     return false;
@@ -2026,7 +2022,7 @@ bool XString_reserve(XString* str, size_t capacity)
 
     XContainerCapacity(str) = new_capacity;
     // 确保终止符存在
-    ((XChar*)XContainerSharedDataPtr(str))[XString_length_base(str)] = 0;
+    XString_data(str)[XString_length_base(str)] = 0;
     return true;
 }
 
@@ -2234,13 +2230,16 @@ XChar* XString_data(XString* str)
 {
     if (!str) return NULL;
     XString_detach(str);  // 修改前确保分离
-    return (XChar*)XContainerSharedDataPtr(str);
+    return (XChar*)XContainerDataAddr(str);
 }
 
 // 分离共享数据（Copy-On-Write机制）
 void XString_detach(XString* str)
 {
     if (!str) return;
+
+    if (!XContainerIsCow(str))
+        return;
 
     // 不共享，无需分离
     if (!(XSharedData*)XContainerDataPtr(str) || !XSharedData_isShared((XSharedData*)XContainerDataPtr(str)))
@@ -2257,8 +2256,8 @@ void XString_detach(XString* str)
     if (!newShared) return;
 
     // 复制现有数据（包含终止符）
-    if (curr_size > 0 && XContainerSharedDataPtr(str))
-        memcpy(newShared->data, XContainerSharedDataPtr(str), (curr_size + 1) * sizeof(XChar));
+    if (curr_size > 0 && XString_cdata(str))
+        memcpy(newShared->data, XString_cdata(str), (curr_size + 1) * sizeof(XChar));
     else
         memset(newShared->data, 0, bytes);
 

@@ -110,7 +110,7 @@ void XJsonArray_init(XJsonArray* array);
 * @brief 基于XVector的尾部添加基础操作（深拷贝）
 * @details 调用XVector的尾部添加接口，深拷贝元素到数组末尾
 */
-#define XJsonArray_append_base						XVector_append_1			
+#define XJsonArray_append_base						XVector_append_1_base
 /**
 * @brief 基于XVector的尾部添加基础操作（转移所有权）
 * @details 调用XVector的尾部添加接口，将元素所有权转移到数组末尾
@@ -180,6 +180,37 @@ XJsonValue* XJsonArray_at(XJsonArray* array, int64_t index);
 * @return 成功返回const XJsonValue指针，索引无效返回NULL
 */
 const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index);
+/**
+* @brief 获取数组第一个元素。
+* @return 非空数组返回元素指针；空数组或参数无效时返回未定义值。
+*/
+XJsonValue* XJsonArray_first(const XJsonArray* array);
+/**
+* @brief 获取数组最后一个元素。
+* @return 非空数组返回元素指针；空数组或参数无效时返回未定义值。
+*/
+XJsonValue* XJsonArray_last(const XJsonArray* array);
+/**
+* @brief 移除并返回指定位置元素的所有权。
+* @param array 目标数组；@param index 元素索引，支持负索引。
+*/
+XJsonValue* XJsonArray_takeAt(XJsonArray* array, int64_t index);
+/**
+* @brief 判断数组是否包含与 value 相等的元素。
+*/
+bool XJsonArray_contains(const XJsonArray* array, const XJsonValue* value);
+/**
+* @brief 比较两个数组的元素序列是否相等。
+*/
+bool XJsonArray_equals(const XJsonArray* left, const XJsonArray* right);
+/**
+* @brief 从字符串列表深拷贝创建 JSON 字符串数组。
+*/
+XJsonArray* XJsonArray_fromStringList(const XStringList* list);
+/**
+* @brief 从 VariantList 深拷贝创建 JSON 数组。
+*/
+XJsonArray* XJsonArray_fromVariantList(const XVariantList* list);
 // 转换函数
 /**
 * @brief 将XJsonArray序列化为XString

@@ -6,6 +6,7 @@
 #include "XHttp1Configuration.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -35,15 +36,21 @@ static void VXHttp1Configuration_move(XHttp1Configuration* dest, XHttp1Configura
 XVtable* XHttp1Configuration_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp1Configuration))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp1Configuration_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp1Configuration_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp1Configuration_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp1Configuration size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

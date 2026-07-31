@@ -20,7 +20,7 @@ XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 
 /*                                                  删除函数                                                       */
 //删除的是叶子节点
-static void* leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
+static void leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 {
 
 	if (XBTreeNode_GetParent(eraseNode) == NULL)//是叶子也是根
@@ -38,7 +38,7 @@ static void* leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 	XBBTree_SetLayerNumberAll(this_root, temp);
 }
 //删除的是只有一个孩子
-static void* OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
+static void OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 {
 	XBBTreeNode* ChildNode = NULL;//孩子节点
 	XBBTreeNode* eraseLeft = XBTreeNode_GetLChild(eraseNode);
@@ -69,7 +69,7 @@ static void* OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 	XBBTree_SetLayerNumberAll(this_root, currentParent);
 }
 //删除的是有两个孩子
-static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size_t dataSize)
+static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size_t dataSize)
 {
 	XBBTreeNode* LeftChildNode = XBTreeNode_GetLChild(eraseNode);//左孩子节点
 	XBBTreeNode* rightChildNode = XBTreeNode_GetRChild(eraseNode);//右孩子节点
@@ -144,6 +144,7 @@ void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne R
 		OneChild_erase(this_root, findRet);
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findRet,dataSize);
+	return NULL;
 }
 XBBTreeNode* XBBTree_findNode(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
 {

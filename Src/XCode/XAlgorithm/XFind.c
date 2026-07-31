@@ -2,16 +2,8 @@
 #include"XContainer.h"
 void* XBinarySearch(void* values, size_t n, size_t TypeSize, XCompare compare, void* findVal)
 {
-	{
-		if (ISNULL(values, ""))
-			return NULL;
-		if (ISNULL(n, ""))
-			return NULL;
-		if (ISNULL(compare, ""))
-			return NULL;
-		if (ISNULL(findVal, ""))
-			return NULL;
-	}
+	if (values == NULL || n == 0 || TypeSize == 0 || compare == NULL || findVal == NULL)
+		return NULL;
 	size_t nSel_Left=0;
 	size_t nSel_Right = n-1;
 	size_t nSel = 0;

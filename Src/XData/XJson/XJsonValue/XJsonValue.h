@@ -23,7 +23,8 @@ typedef enum XJsonValueType
 	XJsonValue_Int,        ///< 64位整数类型
 	XJsonValue_String,     ///< 字符串类型（基于XString）
 	XJsonValue_Array,      ///< 数组类型（XJsonArray）
-	XJsonValue_Object      ///< 对象类型（XJsonObject）
+	XJsonValue_Object,     ///< 对象类型（XJsonObject）
+	XJsonValue_Undefined = 0x80 ///< 与Qt一致的未定义值，用于越界和缺失键
 } XJsonValueType;
 // 前向声明
 //typedef struct XJsonArray XJsonArray;
@@ -50,6 +51,11 @@ typedef struct XJsonValue
 * @return 成功返回XJsonValue指针，失败返回NULL
 */
 XJsonValue* XJsonValue_create_null(void);
+/**
+* @brief 创建 Qt 语义的未定义值。
+* @return 成功返回未定义值指针，失败返回 NULL。
+*/
+XJsonValue* XJsonValue_create_undefined(void);
 /**
 * @brief 创建一个布尔类型的XJsonValue实例
 * @param value 布尔值（true/false）
@@ -158,6 +164,10 @@ XJsonValueType XJsonValue_type(const XJsonValue* value);
 */
 bool XJsonValue_isNull(const XJsonValue* value);
 /**
+* @brief 判断值是否为未定义类型。
+*/
+bool XJsonValue_isUndefined(const XJsonValue* value);
+/**
 * @brief 检查XJsonValue是否为布尔类型
 * @param value XJsonValue指针
 * @return 是布尔类型返回true，否则返回false
@@ -233,12 +243,20 @@ XJsonArray* XJsonValue_toArray(const XJsonValue* value);
 * @return 若为对象类型返回XJsonObject指针，否则返回NULL
 */
 XJsonObject* XJsonValue_toObject(const XJsonValue* value);
+/**
+* @brief 比较两个 JSON 值的类型和值是否完全相等。
+*/
+bool XJsonValue_equals(const XJsonValue* left, const XJsonValue* right);
 // 值设置
 /**
 * @brief 将XJsonValue设置为Null类型
 * @param value XJsonValue指针
 */
 void XJsonValue_setNull(XJsonValue* value);
+/**
+* @brief 将值设置为未定义类型并释放原有资源。
+*/
+void XJsonValue_setUndefined(XJsonValue* value);
 /**
 * @brief 将XJsonValue设置为布尔类型
 * @param value XJsonValue指针
@@ -268,7 +286,7 @@ void XJsonValue_setString(XJsonValue* value, const XString* s);
 * @param value XJsonValue指针
 * @param s 源字符串（XString指针，所有权转移）
 */
-void XJsonValue_setString_move(XJsonValue* value, const XString* s);
+void XJsonValue_setString_move(XJsonValue* value, XString* s);
 /**
 * @brief 将XJsonValue设置为字符串类型（从UTF-8字符创创建）
 * @param value XJsonValue指针
@@ -318,6 +336,11 @@ XVariant* XJsonValue_toVariant_move(XJsonValue* value);
 * @return 成功返回XVariant指针，失败返回NULL
 */
 XVariant* XJsonValue_toVariant_ref(XJsonValue* value);
+/**
+* @brief 从 XVariant 深拷贝创建 JSON 值。
+* @details 支持 JSON 值、对象、数组及对应 Map/List 类型。
+*/
+XJsonValue* XJsonValue_fromVariant(const XVariant* variant);
 #ifdef __cplusplus
 }
 #endif

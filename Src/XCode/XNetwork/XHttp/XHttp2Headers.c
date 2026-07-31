@@ -6,6 +6,7 @@
 #include "XHttp2Headers.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -413,15 +414,21 @@ static void VXHttp2HeaderList_move(XHttp2HeaderList* dest, XHttp2HeaderList* src
 XVtable* XHttp2HeaderList_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderList))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2HeaderList_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2HeaderList_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2HeaderList_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2HeaderList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -882,15 +889,21 @@ static void VXHttp2HeaderEncoder_move(XHttp2HeaderEncoder* dest,
 XVtable* XHttp2HeaderEncoder_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderEncoder))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2HeaderEncoder_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2HeaderEncoder_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2HeaderEncoder_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2HeaderEncoder size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -1111,15 +1124,21 @@ static void VXHttp2HeaderDecoder_move(XHttp2HeaderDecoder* dest,
 XVtable* XHttp2HeaderDecoder_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderDecoder))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2HeaderDecoder_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2HeaderDecoder_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2HeaderDecoder_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2HeaderDecoder size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

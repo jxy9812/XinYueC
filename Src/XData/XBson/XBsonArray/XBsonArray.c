@@ -172,16 +172,21 @@ bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size) 
 
         XString_delete_base(key);
 
-        // 添加到数组
-        XBsonArray_append_move_base(array, value);
+        // 添加到数组；移动成功后 value 的存储由数组接管。
+        bool nested = XBsonValue_is_type(value, XBSON_TYPE_DOCUMENT) ||
+                      XBsonValue_is_type(value, XBSON_TYPE_ARRAY);
+        if (!XBsonArray_append_move_base(array, value)) {
+            XBsonValue_delete(value);
+            XStack_delete_base(stack);
+            return false;
+        }
         XBsonValue_delete(value);
         // 更新索引
         current_index++;
         *(size_t*)XStack_top_base(stack) = current_index;
 
         // 如果是嵌套文档或数组，压栈处理
-        if (XBsonValue_is_type(value, XBSON_TYPE_DOCUMENT) ||
-            XBsonValue_is_type(value, XBSON_TYPE_ARRAY)) {
+        if (nested) {
             size_t new_index = 0;
             XStack_push_base(stack, &new_index);
         }

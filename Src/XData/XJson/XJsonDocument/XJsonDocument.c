@@ -10,40 +10,46 @@
 #include "XNumStrConv.h"
 #include <ctype.h>
 #include <inttypes.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-/*                                  XJsonDocument_fromJson                                             */
-// 解析上下文：用于栈存储当前解析的容器（对象/数组）及状态
-typedef enum 
+typedef struct JsonParser
 {
+    const char* data;
+    const char* ptr;
+    const char* end;
+    XJsonParseError* error;
+    size_t depth;
+    XStack* stack;
+} JsonParser;
+
+/* 保留现有解析栈模型：容器本体仍由 XJsonObject/XJsonArray 持有，栈只记录上下文。 */
+typedef enum {
     CONTEXT_OBJECT,
     CONTEXT_ARRAY
 } ContextType;
 
-typedef struct 
-{
+typedef struct {
     ContextType type;
     union {
         XJsonObject* object;
         XJsonArray* array;
     } container;
-    XString* currentKey; // 仅用于对象解析时存储当前键
+    XString* currentKey;
 } ParseContext;
-// 辅助函数：跳过空白字符
-static const char* Json_skip_whitespace(const char* ptr, const char* end);
-// 辅助函数：解析字符串（处理转义字符）
-static XString* Json_parse_string(const char** ptr, const char* end);
-// 辅助函数：解析数字
-static bool Json_parse_number(const char** ptr, const char* end, double* out_num, int64_t* out_int, bool* is_int);
-// 辅助函数：解析关键字（true/false/null）
-static XJsonValue* Json_parse_keyword(const char** ptr, const char* end);
-// 解析对象
-static XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack);
-// 解析数组
-static XJsonValue* Json_parse_array(const char** ptr, const char* end, XStack* stack);
-// 解析值（调度到对应类型的解析函数）
-static XJsonValue* Json_parse_value(const char** ptr, const char* end, XStack* stack);
+
+static void Json_set_error(JsonParser* parser, XJsonParseErrorCode code);
+static void Json_skip_whitespace(JsonParser* parser);
+static XString* Json_parse_string(JsonParser* parser);
+static XJsonValue* Json_parse_value(JsonParser* parser);
+static XJsonValue* Json_parse_object(JsonParser* parser);
+static XJsonValue* Json_parse_array(JsonParser* parser);
+static bool Json_parse_number(JsonParser* parser, XJsonValue** result);
+static bool Json_append_codepoint(XByteArray* bytes, uint32_t codepoint);
+static bool Json_append_codepoint_string(XString* string, uint32_t codepoint);
+static bool Json_flush_string_bytes(XString* string, XByteArray* bytes);
 
 /*                                  XJsonDocument_toJson                                             */                
 // 辅助函数：转义字符串并添加到字节数组（UTF-8）
@@ -64,7 +70,10 @@ static void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat 
 XJsonDocument* XJsonDocument_create(void)
 {
     XJsonDocument* doc = (XJsonDocument*)XMalloc_System(sizeof(XJsonDocument));
+    if (!doc)
+        return NULL;
     XJsonDocument_init(doc);
+    Set_Class_MemoryFree(doc, XFree_System);
     return doc;
 }
 
@@ -91,7 +100,7 @@ XJsonDocument* XJsonDocument_create_object(XJsonObject* object)
     XJsonDocument* doc = XJsonDocument_create();
     if (doc) 
     {
-        XJsonValue_setObject(doc, object);
+        XJsonValue_setObject(&doc->root, object);
     }
     return doc;
 }
@@ -103,7 +112,7 @@ XJsonDocument* XJsonDocument_create_object_move(XJsonObject* object)
     XJsonDocument* doc = XJsonDocument_create();
     if (doc)
     {
-        XJsonValue_setObject_move(doc, object);
+        XJsonValue_setObject_move(&doc->root, object);
     }
     return doc;
 }
@@ -114,7 +123,7 @@ XJsonDocument* XJsonDocument_create_array(XJsonArray* array) {
     XJsonDocument* doc = XJsonDocument_create();
     if (doc)
     {
-        XJsonValue_setArray(doc, array);
+        XJsonValue_setArray(&doc->root, array);
     }
     return doc;
 }
@@ -126,7 +135,7 @@ XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array)
     XJsonDocument* doc = XJsonDocument_create();
     if (doc)
     {
-        XJsonValue_setArray_move(doc, array);
+        XJsonValue_setArray_move(&doc->root, array);
     }
     return doc;
 }
@@ -135,73 +144,71 @@ void XJsonDocument_init(XJsonDocument* document)
 {
     if (document == NULL)
         return;
-    XJsonValue_init(document, XJsonValue_Null);
-    //document->root = XJsonValue_create_null();
+    XJsonValue_init(&document->root, XJsonValue_Invalid);
 }
 
 void XJsonDocument_deinit(XJsonDocument* document)
 {
     if (!document) return;
-    XJsonValue_deinit(document);
-  /*  if (document->root) 
-    {
-        XJsonValue_delete(document->root);
-        document->root = NULL;
-    }*/
+    XJsonValue_deinit(&document->root);
 }
 
 void XJsonDocument_delete(XJsonDocument* document)
 {
+    if (!document)
+        return;
     XJsonDocument_deinit(document);
-
-    if(document)
-        XFree_System(document);
+    XFree_System(document);
 }
 
 void XJsonDocument_clear(XJsonDocument* document)
 {
-    XJsonValue_clear(document);
+    if (document) {
+        XJsonValue_deinit(&document->root);
+        XJsonValue_init(&document->root, XJsonValue_Invalid);
+    }
 }
 
 void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
-    XJsonValue_copy(doc,src);
+    if (doc == src)
+        return;
+    XJsonValue_copy(&doc->root, &src->root);
 }
 
 void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
-    XJsonValue_move(doc, src);
+    if (doc == src)
+        return;
+    XJsonValue_move(&doc->root, &src->root);
+    /* A moved-from document is an empty document, matching isEmpty/isNull. */
+    src->root.type = XJsonValue_Invalid;
 }
 
 XJsonValue* XJsonDocument_root(XJsonDocument* document) 
 {
-    return document ? document : NULL;
+    return document ? &document->root : NULL;
 }
 
 const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document) 
 {
-    return XJsonDocument_root((XJsonDocument*)document);
+    return document ? &((XJsonDocument*)document)->root : NULL;
 }
 
 void XJsonDocument_setRoot(XJsonDocument* document,const XJsonValue* root) 
 {
     if (!document || !root) return;
-    XJsonValue_copy(document,root);
-    /*if (document->root)
-    {
-        XJsonValue_delete(document->root);
-    }
-    document->root = root;*/
+    XJsonValue_copy(&document->root, root);
 }
 
 void XJsonDocument_setRoot_move(XJsonDocument* document, XJsonValue* root)
 {
     if (!document || !root) return;
-    XJsonValue_move(document, root);
+    XJsonValue_move(&document->root, root);
 }
 
 bool XJsonDocument_isArray(const XJsonDocument* document)
@@ -220,33 +227,14 @@ bool XJsonDocument_isObject(const XJsonDocument* document)
 
 bool XJsonDocument_isNull(const XJsonDocument* document)
 {
-    if (!document )
-        return false;
-    switch (document->root.type)
-    {
-    case XJsonValue_Invalid:
-    case XJsonValue_Null: return true;
-    default:
-        break; 
-    };
-    return false;
+    return document && document->root.type == XJsonValue_Invalid;
 }
 
 bool XJsonDocument_isEmpty(const XJsonDocument* document)
 {
     if (!document )
         return false;
-    switch (document->root.type)
-    {
-    case XJsonValue_Invalid:
-    case XJsonValue_Null: return true;
-    case XJsonValue_String:return XString_isEmpty_base(document->root.data.string);
-    case XJsonValue_Array: return XJsonArray_isEmpty_base(document->root.data.array);
-    case XJsonValue_Object:return XJsonObject_isEmpty_base(document->root.data.object);
-    default:
-        break;
-    };
-    return false;
+    return document->root.type == XJsonValue_Invalid;
 }
 
 XJsonObject* XJsonDocument_object(XJsonDocument* document) 
@@ -281,7 +269,7 @@ bool XJsonDocument_setArray(XJsonDocument* document, const XJsonArray* array)
 {
     if (!document || !array) 
         return false;
-    XJsonValue_setArray(document, array);
+    XJsonValue_setArray(&document->root, array);
     return true;
 }
 
@@ -289,7 +277,7 @@ bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object)
 {
     if (!document || !object)
         return false;
-    XJsonValue_setObject(document, object);
+    XJsonValue_setObject(&document->root, object);
     return true;
 }
 
@@ -297,7 +285,7 @@ bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array)
 {
     if (!document || !array)
         return false;
-    XJsonValue_setArray_move(document, array);
+    XJsonValue_setArray_move(&document->root, array);
     return true;
 }
 
@@ -305,22 +293,25 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
 {
     if (!document || !object)
         return false;
-    XJsonValue_setObject_move(document, object);
+    XJsonValue_setObject_move(&document->root, object);
     return true;
 }
 XJsonDocument* XJsonDocument_fromString(const XString* json)
 {
-    if (!json || XString_isEmpty_base(json)) return NULL;
-    XByteArray* buff = XByteArray_create_ex(false);
-    //引用
-    XContainerDataPtr(buff)= XString_toUtf8(json);
-    XContainerSize(buff)= XString_toUtf8_length(json)+1;
-    XContainerCapacity(buff) = XContainerSize(buff) ;
-    XJsonDocument* doc = XJsonDocument_fromJson(buff);
-    XContainerDataPtr(buff) = NULL;
-    XContainerSize(buff) =0;
-    XContainerCapacity(buff) = 0;
-    XByteArray_delete_base(buff);
+    return XJsonDocument_fromString_ex(json, NULL);
+}
+
+XJsonDocument* XJsonDocument_fromString_ex(const XString* json, XJsonParseError* error)
+{
+    XByteArray* bytes;
+    XJsonDocument* doc;
+    if (!json)
+        return NULL;
+    bytes = XByteArray_create_with_data(XString_toUtf8(json), XString_toUtf8_length(json));
+    if (!bytes)
+        return NULL;
+    doc = XJsonDocument_fromJson_ex(bytes, error);
+    XByteArray_delete_base(bytes);
     return doc;
 }
 
@@ -328,48 +319,85 @@ XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentForm
 {
     if (!document ) return NULL;
     XByteArray* json = XJsonDocument_toJson(document, format);
-    XString* str = XString_create_utf8(XContainerDataAddr(json));
+    XString* str;
+    if (!json)
+        return NULL;
+    str = XString_create();
+    if (str)
+        XString_append_with_length_utf8(str, XContainerDataAddr(json), XByteArray_size_base(json));
     XByteArray_delete_base(json);
     return str;
 }
 
 XJsonDocument* XJsonDocument_fromJson(const XByteArray* json)
 {
-    if (!json || XByteArray_isEmpty_base(json)) return NULL;
+    return XJsonDocument_fromJson_ex(json, NULL);
+}
 
-    const char* data = XContainerDataAddr(json);
-    const char* end = data + XByteArray_size_base(json)-1;
-    const char* ptr = data;
-
-    // 初始化解析栈
-    XStack* stack = XStack_create(sizeof(ParseContext));
-    if (!stack) return NULL;
-
-    // 解析根值
-    XJsonValue* root = Json_parse_value(&ptr, end, stack);
-    if (!root) {
+XJsonDocument* XJsonDocument_fromJson_ex(const XByteArray* json, XJsonParseError* error)
+{
+    JsonParser parser;
+    XStack* stack;
+    XJsonValue* root;
+    XJsonDocument* document;
+    size_t size;
+    const unsigned char* data;
+    if (error)
+        XJsonParseError_init(error);
+    if (!json)
+        return NULL;
+    size = XByteArray_size_base(json);
+    if (size > INT32_MAX) {
+        if (error) {
+            error->offset = 0;
+            error->error = XJsonParseError_DocumentTooLarge;
+        }
+        return NULL;
+    }
+    data = (const unsigned char*)XByteArray_data((XByteArray*)json);
+    if (size && data && data[size - 1] == 0)
+        --size;
+    if (size == 0 || !data) {
+        if (error) {
+            error->offset = 0;
+            error->error = XJsonParseError_IllegalValue;
+        }
+        return NULL;
+    }
+    parser.data = (const char*)data;
+    parser.ptr = parser.data;
+    parser.end = parser.data + size;
+    parser.error = error;
+    parser.depth = 0;
+    parser.stack = NULL;
+    if (size >= 3 && (unsigned char)parser.ptr[0] == 0xef &&
+        (unsigned char)parser.ptr[1] == 0xbb && (unsigned char)parser.ptr[2] == 0xbf)
+        parser.ptr += 3;
+    Json_skip_whitespace(&parser);
+    if (parser.ptr >= parser.end || (*parser.ptr != '{' && *parser.ptr != '[')) {
+        Json_set_error(&parser, XJsonParseError_IllegalValue);
+        return NULL;
+    }
+    stack = XStack_create(sizeof(ParseContext));
+    if (!stack)
+        return NULL;
+    parser.stack = stack;
+    root = Json_parse_value(&parser);
+    Json_skip_whitespace(&parser);
+    if (!root || parser.ptr != parser.end) {
+        if (root)
+            XJsonValue_delete(root);
+        if (parser.ptr != parser.end)
+            Json_set_error(&parser, XJsonParseError_GarbageAtEnd);
         XStack_delete_base(stack);
         return NULL;
     }
-
-    // 检查是否解析完全
-    ptr = Json_skip_whitespace(ptr, end);
-    if (ptr != end) {
-        XJsonValue_delete(root);
-        XStack_delete_base(stack);
-        return NULL;
-    }
-
-    // 创建文档
-    XJsonDocument* doc = XJsonDocument_create();
-    if (doc) {
-        XJsonDocument_setRoot_move(doc, root);
-    }
+    document = XJsonDocument_create();
+    if (document)
+        XJsonDocument_setRoot_move(document, root);
     XJsonValue_delete(root);
-
     XStack_delete_base(stack);
-    return doc;
-
+    return document;
 }
 
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format)
@@ -388,6 +416,11 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     }
     XStack_Push_Base(stack, int,0);
 
+    if (document->root.type == XJsonValue_Invalid) {
+        XStack_delete_base(stack);
+        return output;
+    }
+
     // 根据根节点类型序列化
     switch (document->root.type) {
     case XJsonValue_Object:
@@ -397,11 +430,11 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
         XJsonArray_toByteArray(document->root.data.array, format, stack, output);
         break;
     default:
-        XJsonValue_toByteArray(document, format, stack, output);
+        XJsonValue_toByteArray(&document->root, format, stack, output);
         break;
     }
-    //添加结束符号
-    XByteArray_push_back_1(output,0);
+    if (format == XJsonDocument_Indented && XContainerSize(output) > 0)
+        XByteArray_push_back_1(output, '\n');
     // 清理资源
     XStack_delete_base(stack);
     return output;
@@ -422,6 +455,7 @@ XJsonDocument* XJsonDocument_fromBson_document(const XByteArray* bson)
     }
     XJsonDocument* jsonDoc = XJsonDocument_create_object_move(object);
     XJsonObject_delete_base(object);
+    XBsonDocument_delete_base(doc);
     return jsonDoc;
 }
 
@@ -440,6 +474,7 @@ XJsonDocument* XJsonDocument_fromBson_array(const XByteArray* bson)
     }
     XJsonDocument* jsonDoc = XJsonDocument_create_array_move(jsonArr);
     XJsonArray_delete_base(jsonArr);
+    XBsonArray_delete_base(array);
     return jsonDoc;
 }
 
@@ -471,22 +506,76 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document)
 
 XVariant* XJsonDocument_toVariant(const XJsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
-    XJsonDocument_init(var->m_data);
-    XJsonDocument_copy(var->m_data, doc);
-    return var;
+    XVariantMap* map;
+    XVariantList* list;
+    if (!doc || doc->root.type == XJsonValue_Invalid)
+        return XVariant_create_null();
+    if (doc->root.type == XJsonValue_Object) {
+        map = XJsonObject_toVariantMap(doc->root.data.object);
+        if (!map)
+            return NULL;
+        {
+            XVariant* variant = XVariant_create_map_move(map);
+            XMap_delete_base((XClass*)map);
+            return variant;
+        }
+    }
+    if (doc->root.type == XJsonValue_Array) {
+        list = XJsonArray_toVariantList(doc->root.data.array);
+        if (!list)
+            return NULL;
+        {
+            XVariant* variant = XVariant_create_list_move(list);
+            XClass_delete_base((XClass*)list);
+            return variant;
+        }
+    }
+    return XJsonValue_toVariant(&doc->root);
 }
 
 XVariant* XJsonDocument_toVariant_move(XJsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
-    XJsonDocument_init(var->m_data);
-    XJsonDocument_move(var->m_data, doc);
+    XVariant* var = XJsonDocument_toVariant(doc);
+    if (doc)
+        XJsonDocument_clear(doc);
     return var;
+}
+
+XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant)
+{
+    XJsonDocument* document = NULL;
+    XJsonArray* array = NULL;
+    XJsonObject* object = NULL;
+    if (!variant)
+        return NULL;
+    switch ((XVariantType)variant->m_type) {
+    case XVariantType_List:
+        array = XJsonArray_fromVariantList(XVariant_toList_ref(variant));
+        document = array ? XJsonDocument_create_array_move(array) : NULL;
+        if (array) XJsonArray_delete_base(array);
+        return document;
+    case XVariantType_Map:
+        object = XJsonObject_fromVariantMap(XVariant_toMap_ref(variant));
+        document = object ? XJsonDocument_create_object_move(object) : NULL;
+        if (object) XJsonObject_delete_base(object);
+        return document;
+    case XVariantType_JsonDocument:
+        return XJsonDocument_create_copy(XVariant_toJsonDocument_ref(variant));
+    case XVariantType_JsonArray:
+        return XJsonDocument_create_array(XVariant_toJsonArray_ref(variant));
+    case XVariantType_JsonObject:
+        return XJsonDocument_create_object((XJsonObject*)XVariant_toJsonObject_ref(variant));
+    case XVariantType_JsonValue: {
+        XJsonValue* value = XVariant_toJsonValue(variant);
+        if (!value) return NULL;
+        document = XJsonDocument_create();
+        if (document) XJsonDocument_setRoot_move(document, value);
+        XJsonValue_delete(value);
+        return document;
+    }
+    default:
+        return NULL;
+    }
 }
 
 XVariant* XJsonDocument_toVariant_ref(XJsonDocument* doc)
@@ -503,33 +592,37 @@ XVariant* XJsonDocument_toVariant_ref(XJsonDocument* doc)
 
 void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* output)
 {
+    const XChar* chars;
+    size_t length;
+    size_t index;
     if (!str || !output) return;
-
-    // 获取UTF-8数据（假设XString提供UTF-8转换接口）
-    const char* utf8_str = XString_toUtf8(str);
-    size_t len = XString_toUtf8_length(str);
-
-    // 添加引号
+    chars = XString_constData(str);
+    length = XString_length_base(str);
     XByteArray_push_back_2(output, "\"", 1);
-
-    // 转义特殊字符
-    for (size_t i = 0; i < len; i++) {
-        switch (utf8_str[i]) {
-        case '"': XByteArray_push_back_2(output, "\\\"", 2); break;
-        case '\\': XByteArray_push_back_2(output, "\\\\", 2); break;
-        case '\b': XByteArray_push_back_2(output, "\\b", 2); break;
-        case '\f': XByteArray_push_back_2(output, "\\f", 2); break;
-        case '\n': XByteArray_push_back_2(output, "\\n", 2); break;
-        case '\r': XByteArray_push_back_2(output, "\\r", 2); break;
-        case '\t': XByteArray_push_back_2(output, "\\t", 2); break;
-        default:
-            // 直接添加UTF-8字节
-            XByteArray_push_back_2(output, &(utf8_str[i]), 1);
-            break;
+    for (index = 0; index < length; ++index) {
+        uint32_t codepoint = chars[index];
+        if (XChar_isHighSurrogate(chars[index]) && index + 1 < length &&
+            XChar_isLowSurrogate(chars[index + 1])) {
+            XChar high = chars[index];
+            XChar low = chars[index + 1];
+            codepoint = XChar_surrogateToUcs4(high, low);
+            ++index;
+        }
+        if (codepoint == '"') XByteArray_push_back_2(output, "\\\"", 2);
+        else if (codepoint == '\\') XByteArray_push_back_2(output, "\\\\", 2);
+        else if (codepoint == '\b') XByteArray_push_back_2(output, "\\b", 2);
+        else if (codepoint == '\f') XByteArray_push_back_2(output, "\\f", 2);
+        else if (codepoint == '\n') XByteArray_push_back_2(output, "\\n", 2);
+        else if (codepoint == '\r') XByteArray_push_back_2(output, "\\r", 2);
+        else if (codepoint == '\t') XByteArray_push_back_2(output, "\\t", 2);
+        else if (codepoint < 0x20 || (codepoint >= 0xd800 && codepoint <= 0xdfff)) {
+            char escaped[7];
+            snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned)codepoint);
+            XByteArray_push_back_2(output, escaped, 6);
+        } else {
+            Json_append_codepoint(output, codepoint);
         }
     }
-
-    // 添加结束引号
     XByteArray_push_back_2(output, "\"", 1);
 }
 
@@ -688,19 +781,13 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
         
     }
     case XJsonValue_Double: {
-        // 转换数字为字符串（UTF-8）
-        char buffer[64]="0";
+        char buffer[64];
         double num = XJsonValue_toDouble(value, 0.0);
-        if (num == (long long)num) 
-        {
-            //snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
-            int64_to_str((long long)num, buffer, sizeof(buffer));
+        if (!isfinite(num)) {
+            XByteArray_append_utf8(output, "null");
+            break;
         }
-        else 
-        {
-            //snprintf(buffer, sizeof(buffer), "%g", num);
-            double_to_str(num, buffer, sizeof(buffer), -1);
-        }
+        snprintf(buffer, sizeof(buffer), "%.17g", num == 0.0 ? 0.0 : num);
         XByteArray_append_utf8(output, buffer);
         break;
     }
@@ -723,6 +810,551 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
     }
 }
 
+void XJsonParseError_init(XJsonParseError* error)
+{
+    if (error) {
+        error->offset = -1;
+        error->error = XJsonParseError_NoError;
+    }
+}
+
+const char* XJsonParseError_errorString(const XJsonParseError* error)
+{
+    if (!error) return "No error";
+    switch (error->error) {
+    case XJsonParseError_NoError: return "no error occurred";
+    case XJsonParseError_UnterminatedObject: return "unterminated object";
+    case XJsonParseError_MissingNameSeparator: return "missing name separator";
+    case XJsonParseError_UnterminatedArray: return "unterminated array";
+    case XJsonParseError_MissingValueSeparator: return "missing value separator";
+    case XJsonParseError_IllegalValue: return "illegal value";
+    case XJsonParseError_TerminationByNumber: return "terminated by number";
+    case XJsonParseError_IllegalNumber: return "illegal number";
+    case XJsonParseError_IllegalEscapeSequence: return "illegal escape sequence";
+    case XJsonParseError_IllegalUtf8String: return "illegal UTF-8 string";
+    case XJsonParseError_UnterminatedString: return "unterminated string";
+    case XJsonParseError_MissingObject: return "missing object";
+    case XJsonParseError_DeepNesting: return "too deeply nested";
+    case XJsonParseError_DocumentTooLarge: return "document too large";
+    case XJsonParseError_GarbageAtEnd: return "garbage at end of document";
+    default: return "unknown error";
+    }
+}
+
+static void Json_set_error(JsonParser* parser, XJsonParseErrorCode code)
+{
+    if (parser && parser->error && parser->error->error == XJsonParseError_NoError) {
+        parser->error->offset = (int64_t)(parser->ptr - parser->data);
+        parser->error->error = code;
+    }
+}
+
+static void Json_skip_whitespace(JsonParser* parser)
+{
+    while (parser && parser->ptr < parser->end &&
+           (*parser->ptr == ' ' || *parser->ptr == '\t' ||
+            *parser->ptr == '\n' || *parser->ptr == '\r'))
+        ++parser->ptr;
+}
+
+static int Json_hex_value(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool Json_append_codepoint(XByteArray* bytes, uint32_t codepoint)
+{
+    char encoded[4];
+    size_t length;
+    if (codepoint <= 0x7f) {
+        encoded[0] = (char)codepoint;
+        length = 1;
+    } else if (codepoint <= 0x7ff) {
+        encoded[0] = (char)(0xc0 | (codepoint >> 6));
+        encoded[1] = (char)(0x80 | (codepoint & 0x3f));
+        length = 2;
+    } else if (codepoint <= 0xffff) {
+        encoded[0] = (char)(0xe0 | (codepoint >> 12));
+        encoded[1] = (char)(0x80 | ((codepoint >> 6) & 0x3f));
+        encoded[2] = (char)(0x80 | (codepoint & 0x3f));
+        length = 3;
+    } else if (codepoint <= 0x10ffff) {
+        encoded[0] = (char)(0xf0 | (codepoint >> 18));
+        encoded[1] = (char)(0x80 | ((codepoint >> 12) & 0x3f));
+        encoded[2] = (char)(0x80 | ((codepoint >> 6) & 0x3f));
+        encoded[3] = (char)(0x80 | (codepoint & 0x3f));
+        length = 4;
+    } else {
+        return false;
+    }
+    return XByteArray_push_back_2(bytes, encoded, length);
+}
+
+static bool Json_append_codepoint_string(XString* string, uint32_t codepoint)
+{
+    if (!string || codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff))
+        return false;
+    if (codepoint <= 0xffff)
+        return XString_append_char(string, (XChar)codepoint);
+    return XString_append_char(string, (XChar)(0xd800 + ((codepoint - 0x10000) >> 10))) &&
+           XString_append_char(string, (XChar)(0xdc00 + ((codepoint - 0x10000) & 0x3ff)));
+}
+
+static bool Json_flush_string_bytes(XString* string, XByteArray* bytes)
+{
+    size_t length;
+    if (!string || !bytes)
+        return false;
+    length = XByteArray_size_base(bytes);
+    if (length && !XString_append_with_length_utf8(string, XContainerDataAddr(bytes), length))
+        return false;
+    XByteArray_clear_base(bytes);
+    return true;
+}
+
+static XString* Json_parse_string(JsonParser* parser)
+{
+    XByteArray* bytes;
+    XString* string;
+    if (!parser || parser->ptr >= parser->end || *parser->ptr != '"') {
+        Json_set_error(parser, XJsonParseError_IllegalValue);
+        return NULL;
+    }
+    ++parser->ptr;
+    bytes = XByteArray_create_ex(false);
+    string = XString_create();
+    if (!bytes || !string) {
+        if (bytes) XByteArray_delete_base(bytes);
+        if (string) XString_delete_base(string);
+        return NULL;
+    }
+    while (parser->ptr < parser->end) {
+        unsigned char c = (unsigned char)*parser->ptr++;
+        if (c == '"') {
+            if (!Json_flush_string_bytes(string, bytes))
+                goto string_error;
+            XByteArray_delete_base(bytes);
+            return string;
+        }
+        if (c < 0x20) {
+            Json_set_error(parser, XJsonParseError_IllegalUtf8String);
+            break;
+        }
+        if (c == '\\') {
+            uint32_t codepoint;
+            int high;
+            if (parser->ptr >= parser->end) {
+                Json_set_error(parser, XJsonParseError_UnterminatedString);
+                break;
+            }
+            c = (unsigned char)*parser->ptr++;
+            if (!Json_flush_string_bytes(string, bytes))
+                goto string_error;
+            switch (c) {
+            case '"': case '\\': case '/':
+                if (!XString_append_char(string, (XChar)c)) goto string_error;
+                break;
+            case 'b': if (!XString_append_char(string, (XChar)'\b')) goto string_error; break;
+            case 'f': if (!XString_append_char(string, (XChar)'\f')) goto string_error; break;
+            case 'n': if (!XString_append_char(string, (XChar)'\n')) goto string_error; break;
+            case 'r': if (!XString_append_char(string, (XChar)'\r')) goto string_error; break;
+            case 't': if (!XString_append_char(string, (XChar)'\t')) goto string_error; break;
+            case 'u':
+                if (parser->end - parser->ptr < 4) {
+                    Json_set_error(parser, XJsonParseError_IllegalEscapeSequence);
+                    goto string_error;
+                }
+                codepoint = 0;
+                for (high = 0; high < 4; ++high) {
+                    int digit = Json_hex_value(parser->ptr[high]);
+                    if (digit < 0) {
+                        Json_set_error(parser, XJsonParseError_IllegalEscapeSequence);
+                        goto string_error;
+                    }
+                    codepoint = (codepoint << 4) | (uint32_t)digit;
+                }
+                parser->ptr += 4;
+                if (codepoint >= 0xd800 && codepoint <= 0xdbff) {
+                    uint32_t low = 0;
+                    if (parser->end - parser->ptr >= 6 && parser->ptr[0] == '\\' && parser->ptr[1] == 'u') {
+                        for (high = 0; high < 4; ++high) {
+                            int digit = Json_hex_value(parser->ptr[2 + high]);
+                            if (digit < 0) {
+                                Json_set_error(parser, XJsonParseError_IllegalEscapeSequence);
+                                goto string_error;
+                            }
+                            low = (low << 4) | (uint32_t)digit;
+                        }
+                        if (low >= 0xdc00 && low <= 0xdfff) {
+                            parser->ptr += 6;
+                            codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00);
+                        }
+                    }
+                }
+                if (codepoint >= 0xd800 && codepoint <= 0xdfff) {
+                    if (!XString_append_char(string, (XChar)codepoint)) goto string_error;
+                } else if (!Json_append_codepoint_string(string, codepoint)) {
+                    goto string_error;
+                }
+                break;
+            default:
+                Json_set_error(parser, XJsonParseError_IllegalEscapeSequence);
+                goto string_error;
+            }
+            continue;
+        }
+        if (c < 0x80) {
+            if (!XByteArray_push_back_1(bytes, c)) goto string_error;
+        } else {
+            size_t length = c < 0xe0 ? 2 : (c < 0xf0 ? 3 : 4);
+            uint32_t codepoint = c & (length == 2 ? 0x1f : (length == 3 ? 0x0f : 0x07));
+            size_t i;
+            if ((length == 2 && c < 0xc2) || (length == 3 && c < 0xe0) ||
+                (length == 4 && c > 0xf4) || parser->end - parser->ptr < (ptrdiff_t)(length - 1)) {
+                Json_set_error(parser, XJsonParseError_IllegalUtf8String);
+                break;
+            }
+            for (i = 1; i < length; ++i) {
+                unsigned char continuation = (unsigned char)parser->ptr[i - 1];
+                if ((continuation & 0xc0) != 0x80) {
+                    Json_set_error(parser, XJsonParseError_IllegalUtf8String);
+                    goto string_error;
+                }
+                codepoint = (codepoint << 6) | (continuation & 0x3f);
+            }
+            if ((length == 3 && codepoint < 0x800) || (length == 4 && codepoint < 0x10000) ||
+                (codepoint >= 0xd800 && codepoint <= 0xdfff) || codepoint > 0x10ffff) {
+                Json_set_error(parser, XJsonParseError_IllegalUtf8String);
+                goto string_error;
+            }
+            if (!Json_flush_string_bytes(string, bytes) ||
+                !Json_append_codepoint_string(string, codepoint)) goto string_error;
+            parser->ptr += length - 1;
+        }
+    }
+    if (parser->ptr >= parser->end && (!parser->error || parser->error->error == XJsonParseError_NoError))
+        Json_set_error(parser, XJsonParseError_UnterminatedString);
+string_error:
+    XByteArray_delete_base(bytes);
+    XString_delete_base(string);
+    return NULL;
+}
+
+static bool Json_parse_number(JsonParser* parser, XJsonValue** result)
+{
+    const char* start;
+    size_t length;
+    char buffer[128];
+    bool integer = true;
+    errno = 0;
+    start = parser->ptr;
+    if (parser->ptr < parser->end && *parser->ptr == '-') ++parser->ptr;
+    if (parser->ptr >= parser->end || !isdigit((unsigned char)*parser->ptr)) {
+        Json_set_error(parser, XJsonParseError_IllegalNumber);
+        return false;
+    }
+    if (*parser->ptr == '0') {
+        ++parser->ptr;
+        if (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) {
+            Json_set_error(parser, XJsonParseError_IllegalNumber);
+            return false;
+        }
+    } else {
+        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+    }
+    if (parser->ptr < parser->end && *parser->ptr == '.') {
+        integer = false;
+        ++parser->ptr;
+        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+    }
+    if (parser->ptr < parser->end && (*parser->ptr == 'e' || *parser->ptr == 'E')) {
+        integer = false;
+        ++parser->ptr;
+        if (parser->ptr < parser->end && (*parser->ptr == '+' || *parser->ptr == '-')) ++parser->ptr;
+        if (parser->ptr >= parser->end || !isdigit((unsigned char)*parser->ptr)) {
+            Json_set_error(parser, XJsonParseError_IllegalNumber);
+            return false;
+        }
+        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+    }
+    length = (size_t)(parser->ptr - start);
+    if (!length || length >= sizeof(buffer)) {
+        Json_set_error(parser, XJsonParseError_IllegalNumber);
+        return false;
+    }
+    memcpy(buffer, start, length);
+    buffer[length] = '\0';
+    if (integer) {
+        char* endptr;
+        long long integer_value = strtoll(buffer, &endptr, 10);
+        if (errno == 0 && *endptr == '\0')
+            *result = XJsonValue_create_int((int64_t)integer_value);
+        else {
+            double number = strtod(buffer, &endptr);
+            if (errno == ERANGE || !isfinite(number) || *endptr != '\0') {
+                Json_set_error(parser, XJsonParseError_IllegalNumber);
+                return false;
+            }
+            *result = XJsonValue_create_double(number);
+        }
+    } else {
+        double number = strtod(buffer, NULL);
+        if (errno == ERANGE || !isfinite(number)) {
+            Json_set_error(parser, XJsonParseError_IllegalNumber);
+            return false;
+        }
+        *result = XJsonValue_create_double(number);
+    }
+    return *result != NULL;
+}
+
+static XJsonValue* Json_parse_value(JsonParser* parser)
+{
+    XJsonValue* value = NULL;
+    XString* string;
+    Json_skip_whitespace(parser);
+    if (!parser || parser->ptr >= parser->end) {
+        Json_set_error(parser, XJsonParseError_IllegalValue);
+        return NULL;
+    }
+    switch (*parser->ptr) {
+    case '{': return Json_parse_object(parser);
+    case '[': return Json_parse_array(parser);
+    case '"':
+        string = Json_parse_string(parser);
+        if (!string) return NULL;
+        value = XJsonValue_create_null();
+        if (value) XJsonValue_setString_move(value, string);
+        XString_delete_base(string);
+        return value;
+    case 't':
+        if (parser->end - parser->ptr >= 4 && memcmp(parser->ptr, "true", 4) == 0) {
+            parser->ptr += 4;
+            return XJsonValue_create_bool(true);
+        }
+        break;
+    case 'f':
+        if (parser->end - parser->ptr >= 5 && memcmp(parser->ptr, "false", 5) == 0) {
+            parser->ptr += 5;
+            return XJsonValue_create_bool(false);
+        }
+        break;
+    case 'n':
+        if (parser->end - parser->ptr >= 4 && memcmp(parser->ptr, "null", 4) == 0) {
+            parser->ptr += 4;
+            return XJsonValue_create_null();
+        }
+        break;
+    default:
+        if (*parser->ptr == '-' || isdigit((unsigned char)*parser->ptr)) {
+            if (Json_parse_number(parser, &value)) return value;
+            return NULL;
+        }
+        break;
+    }
+    Json_set_error(parser, XJsonParseError_IllegalValue);
+    return NULL;
+}
+
+static XJsonValue* Json_parse_object(JsonParser* parser)
+{
+    XJsonObject* object;
+    XJsonValue* value;
+    bool value_is_number;
+    ParseContext context;
+    Json_skip_whitespace(parser);
+    if (!parser || parser->ptr >= parser->end || *parser->ptr != '{') return NULL;
+    if (++parser->depth > 1024) {
+        Json_set_error(parser, XJsonParseError_DeepNesting);
+        --parser->depth;
+        return NULL;
+    }
+    ++parser->ptr;
+    object = XJsonObject_create();
+    if (!object) goto fail_depth;
+    context.type = CONTEXT_OBJECT;
+    context.container.object = object;
+    context.currentKey = NULL;
+    XStack_Push_Base(parser->stack, ParseContext, context);
+    Json_skip_whitespace(parser);
+    if (parser->ptr < parser->end && *parser->ptr == '}') goto object_done;
+    if (parser->ptr >= parser->end) {
+        Json_set_error(parser, XJsonParseError_UnterminatedObject);
+        goto object_error;
+    }
+    for (;;) {
+        XString* key;
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, XJsonParseError_UnterminatedObject);
+            goto object_error;
+        }
+        if (*parser->ptr == '}') {
+            Json_set_error(parser, XJsonParseError_MissingObject);
+            goto object_error;
+        }
+        key = Json_parse_string(parser);
+        if (!key) {
+            Json_set_error(parser, XJsonParseError_MissingNameSeparator);
+            goto object_error;
+        }
+        ((ParseContext*)XStack_top_base(parser->stack))->currentKey = key;
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end || *parser->ptr != ':') {
+            Json_set_error(parser, XJsonParseError_MissingNameSeparator);
+            goto object_error;
+        }
+        ++parser->ptr;
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, XJsonParseError_UnterminatedObject);
+            goto object_error;
+        }
+        if (*parser->ptr == '}') {
+            Json_set_error(parser, XJsonParseError_MissingObject);
+            goto object_error;
+        }
+        value = Json_parse_value(parser);
+        if (!value) goto object_error;
+        value_is_number = value->type == XJsonValue_Int || value->type == XJsonValue_Double;
+        key = ((ParseContext*)XStack_top_base(parser->stack))->currentKey;
+        if (!XJsonObject_insert_value_move(object, key, value)) {
+            XJsonValue_delete(value);
+            goto object_error;
+        }
+        XJsonValue_delete(value);
+        XString_delete_base(key);
+        ((ParseContext*)XStack_top_base(parser->stack))->currentKey = NULL;
+        Json_skip_whitespace(parser);
+        if (parser->ptr < parser->end && *parser->ptr == '}') goto object_done;
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, value_is_number ? XJsonParseError_TerminationByNumber : XJsonParseError_IllegalValue);
+            goto object_error;
+        }
+        if (*parser->ptr != ',') {
+            Json_set_error(parser, XJsonParseError_MissingValueSeparator);
+            goto object_error;
+        }
+        ++parser->ptr;
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, XJsonParseError_UnterminatedObject);
+            goto object_error;
+        }
+        if (*parser->ptr == '}') {
+            Json_set_error(parser, XJsonParseError_MissingObject);
+            goto object_error;
+        }
+    }
+object_done:
+    XStack_pop_base(parser->stack);
+    --parser->depth;
+    ++parser->ptr;
+    value = XJsonValue_create_null();
+    if (value) XJsonValue_setObject_move(value, object);
+    XJsonObject_delete_base(object);
+    return value;
+object_error:
+    if (parser->stack && XStack_size_base(parser->stack) > 0) {
+        ParseContext* top = XStack_top_base(parser->stack);
+        if (top && top->currentKey) {
+            XString_delete_base(top->currentKey);
+            top->currentKey = NULL;
+        }
+        XStack_pop_base(parser->stack);
+    }
+    XJsonObject_delete_base(object);
+fail_depth:
+    --parser->depth;
+    return NULL;
+}
+
+static XJsonValue* Json_parse_array(JsonParser* parser)
+{
+    XJsonArray* array;
+    XJsonValue* value;
+    bool value_is_number;
+    ParseContext context;
+    Json_skip_whitespace(parser);
+    if (!parser || parser->ptr >= parser->end || *parser->ptr != '[') return NULL;
+    if (++parser->depth > 1024) {
+        Json_set_error(parser, XJsonParseError_DeepNesting);
+        --parser->depth;
+        return NULL;
+    }
+    ++parser->ptr;
+    array = XJsonArray_create();
+    if (!array) goto fail_depth;
+    context.type = CONTEXT_ARRAY;
+    context.container.array = array;
+    context.currentKey = NULL;
+    XStack_Push_Base(parser->stack, ParseContext, context);
+    Json_skip_whitespace(parser);
+    if (parser->ptr < parser->end && *parser->ptr == ']') goto array_done;
+    if (parser->ptr >= parser->end) {
+        Json_set_error(parser, XJsonParseError_UnterminatedArray);
+        goto array_error;
+    }
+    for (;;) {
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, XJsonParseError_UnterminatedArray);
+            goto array_error;
+        }
+        if (*parser->ptr == ']') {
+            Json_set_error(parser, XJsonParseError_MissingObject);
+            goto array_error;
+        }
+        value = Json_parse_value(parser);
+        if (!value) goto array_error;
+        value_is_number = value->type == XJsonValue_Int || value->type == XJsonValue_Double;
+        if (!XJsonArray_append_move_base(array, value)) {
+            XJsonValue_delete(value);
+            goto array_error;
+        }
+        XJsonValue_delete(value);
+        Json_skip_whitespace(parser);
+        if (parser->ptr < parser->end && *parser->ptr == ']') goto array_done;
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, value_is_number ? XJsonParseError_TerminationByNumber : XJsonParseError_IllegalValue);
+            goto array_error;
+        }
+        if (*parser->ptr != ',') {
+            Json_set_error(parser, XJsonParseError_MissingValueSeparator);
+            goto array_error;
+        }
+        ++parser->ptr;
+        Json_skip_whitespace(parser);
+        if (parser->ptr >= parser->end) {
+            Json_set_error(parser, XJsonParseError_UnterminatedArray);
+            goto array_error;
+        }
+        if (*parser->ptr == ']') {
+            Json_set_error(parser, XJsonParseError_MissingObject);
+            goto array_error;
+        }
+    }
+array_done:
+    XStack_pop_base(parser->stack);
+    --parser->depth;
+    ++parser->ptr;
+    value = XJsonValue_create_null();
+    if (value) XJsonValue_setArray_move(value, array);
+    XJsonArray_delete_base(array);
+    return value;
+array_error:
+    if (parser->stack && XStack_size_base(parser->stack) > 0)
+        XStack_pop_base(parser->stack);
+    XJsonArray_delete_base(array);
+fail_depth:
+    --parser->depth;
+    return NULL;
+}
+
+#if 0 /* 旧接口签名保留作迁移参考；实际解析路径使用上面的 ParseContext 实现。 */
 const char* Json_skip_whitespace(const char* ptr, const char* end)
 {
     while (ptr < end && (isspace((unsigned char)*ptr))) {
@@ -1054,3 +1686,4 @@ error:
     XJsonArray_delete_base(arr);
     return NULL;
 }
+#endif

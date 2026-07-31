@@ -124,15 +124,21 @@ static void xcookie_release_members(XNetworkCookie* self)
 XVtable* XNetworkCookie_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkCookie))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkCookie_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkCookie_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkCookie_move);
+#if SHOWCONTAINERSIZE
+    printf("XNetworkCookie size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -527,13 +533,19 @@ static XNetworkCookie* xcookie_at(const XNetworkCookieJar* self, size_t index)
 XVtable* XNetworkCookieJar_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkCookieJar))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkCookieJar_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XNetworkCookieJar size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

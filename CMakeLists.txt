@@ -11,6 +11,18 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_DEBUG_POSTFIX "d")
 
+# GCC 14 将部分旧 C 代码诊断提升为错误。项目的容器继承接口通过宏
+# 保持现有的基类调用约定，因此暂时将这些兼容性诊断降回警告，避免
+# 升级编译器改变公开 API 和已有源码的调用方式。
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+    add_compile_options(
+        -Wno-error=incompatible-pointer-types
+        -Wno-error=return-mismatch
+        -Wno-error=implicit-function-declaration
+        -Wno-error=int-conversion
+    )
+endif()
+
 # Linux 平台需要_GNU_SOURCE 以使用 PTHREAD_MUTEX_NORMAL 等
 if(UNIX AND NOT APPLE)
     add_compile_definitions(_GNU_SOURCE)

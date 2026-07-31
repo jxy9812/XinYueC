@@ -165,7 +165,9 @@ static void recvAsync(XCommunicatorBase* comm)
 		//XContainerSize(comm->m_recvAsyncBuffer) = 0;
 		if(XVector_size_base(comm->m_recvAsyncBuffer)< buffCapacity)
 		{
-			size_t readSize = XIODevice_read_1(comm->m_io, ((uint8_t*)XContainerSharedDataPtr(comm->m_recvAsyncBuffer))+buffSize, buffCapacity-buffSize);
+			size_t readSize = XIODevice_read_1(comm->m_io,
+				((uint8_t*)XVector_data(comm->m_recvAsyncBuffer)) + buffSize,
+				buffCapacity - buffSize);
 			if (readSize == 0)
 				return;
 			XContainerSize(comm->m_recvAsyncBuffer) += readSize;
@@ -175,7 +177,7 @@ static void recvAsync(XCommunicatorBase* comm)
 			}
 		}
 		//if (readSize > 0)
-			//comm->m_recvDataCallback(XContainerSharedDataPtr(comm->m_recvAsyncBuffer), readSize,comm->m_userData);
+		//comm->m_recvDataCallback(XVector_constData(comm->m_recvAsyncBuffer), readSize,comm->m_userData);
 	}
 }
 void VXCommunicatorBase_poll(XCommunicatorBase* comm)

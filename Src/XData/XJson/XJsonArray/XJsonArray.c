@@ -2,6 +2,7 @@
 #include "XJsonDocument.h"
 #include "XMemory.h"
 #include "XVariantList.h"
+#include "XStringList.h"
 #include "XJsonValue.h"
 #include "XStack.h"
 
@@ -45,8 +46,10 @@ void XJsonArray_init(XJsonArray* array)
 XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format)
 {
     XJsonDocument* doc = XJsonDocument_create();
+    if (!doc)
+        return NULL;
     //引用XJsonArray 
-    doc->root.data.array = array;
+    doc->root.data.array = (XJsonArray*)array;
     doc->root.type = XJsonValue_Array;
     XString* str = XJsonDocument_toString(doc, format);
     //恢复防止释放 XJsonArray
@@ -60,6 +63,8 @@ XVariantList* XJsonArray_toVariantList(const XJsonArray* arr)
     if (arr == NULL)
         return NULL;
     XVariantList* list = XVariantList_create();
+    if (list == NULL)
+        return NULL;
     XJsonValue* value = NULL;
     XVariant* var = NULL;
     for_each_iterator(arr, XVector, it)
@@ -76,6 +81,13 @@ XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
     if (arr == NULL)
         return NULL;
     XVariantList* list = XVariantList_create();
+    if (list == NULL)
+        return NULL;
+    XVector_detach((XVector*)arr);
+    if (!XVector_isDetached((const XVector*)arr)) {
+        XVariantList_delete_base(list);
+        return NULL;
+    }
     XJsonValue* value = NULL;
     XVariant* var = NULL;
     for_each_iterator(arr, XVector, it)
@@ -154,10 +166,123 @@ XVariant* XJsonArray_toVariant_ref(XJsonArray* arr)
 
 XJsonValue* XJsonArray_at(XJsonArray* array, int64_t index)
 {
-    return XVector_at_base(array,index);
+    size_t size;
+    if (!array)
+        return NULL;
+    size = XJsonArray_size_base(array);
+    if (index < 0)
+        index += (int64_t)size;
+    if (index < 0 || (size_t)index >= size)
+        return NULL;
+    return XVector_at_base(array, index);
 }
 
 const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index)
 {
     return XJsonArray_at((XJsonArray*)array, index);
+}
+
+XJsonValue* XJsonArray_first(const XJsonArray* array)
+{
+    return (array && XJsonArray_size_base(array) > 0) ?
+        XJsonValue_create_copy(XJsonArray_at_const(array, 0)) : XJsonValue_create_undefined();
+}
+
+XJsonValue* XJsonArray_last(const XJsonArray* array)
+{
+    size_t size = array ? XJsonArray_size_base(array) : 0;
+    return size ? XJsonValue_create_copy(XJsonArray_at_const(array, (int64_t)size - 1)) :
+        XJsonValue_create_undefined();
+}
+
+XJsonValue* XJsonArray_takeAt(XJsonArray* array, int64_t index)
+{
+    XJsonValue* value;
+    size_t size;
+    if (!array)
+        return XJsonValue_create_undefined();
+    size = XJsonArray_size_base(array);
+    if (index < 0)
+        index += (int64_t)size;
+    if (index < 0 || (size_t)index >= size)
+        return XJsonValue_create_undefined();
+    value = XJsonValue_create_copy(XJsonArray_at(array, index));
+    if (value)
+        XJsonArray_removeAt_base(array, index);
+    return value;
+}
+
+bool XJsonArray_contains(const XJsonArray* array, const XJsonValue* value)
+{
+    size_t index;
+    if (!array || !value)
+        return false;
+    for (index = 0; index < XJsonArray_size_base(array); ++index) {
+        if (XJsonValue_equals(XJsonArray_at_const(array, (int64_t)index), value))
+            return true;
+    }
+    return false;
+}
+
+bool XJsonArray_equals(const XJsonArray* left, const XJsonArray* right)
+{
+    size_t index;
+    size_t size;
+    if (left == right)
+        return true;
+    if (!left || !right)
+        return false;
+    size = XJsonArray_size_base(left);
+    if (size != XJsonArray_size_base(right))
+        return false;
+    for (index = 0; index < size; ++index) {
+        if (!XJsonValue_equals(XJsonArray_at_const(left, (int64_t)index),
+                               XJsonArray_at_const(right, (int64_t)index)))
+            return false;
+    }
+    return true;
+}
+
+XJsonArray* XJsonArray_fromStringList(const XStringList* list)
+{
+    XJsonArray* array;
+    size_t index;
+    if (!list)
+        return NULL;
+    array = XJsonArray_create();
+    if (!array)
+        return NULL;
+    for (index = 0; index < XStringList_size_base(list); ++index) {
+        XString* string = XStringList_at_base((XStringList*)list, (int64_t)index);
+        XJsonValue* value = string ? XJsonValue_create_string(string) : NULL;
+        if (!value || !XJsonArray_append_move_base(array, value)) {
+            if (value) XJsonValue_delete(value);
+            XJsonArray_delete_base(array);
+            return NULL;
+        }
+        XJsonValue_delete(value);
+    }
+    return array;
+}
+
+XJsonArray* XJsonArray_fromVariantList(const XVariantList* list)
+{
+    XJsonArray* array;
+    size_t index;
+    if (!list)
+        return NULL;
+    array = XJsonArray_create();
+    if (!array)
+        return NULL;
+    for (index = 0; index < XVariantList_size_base(list); ++index) {
+        XVariant* variant = XVariantList_at_base((XVariantList*)list, (int64_t)index);
+        XJsonValue* value = XJsonValue_fromVariant(variant);
+        if (!value || !XJsonArray_append_move_base(array, value)) {
+            if (value) XJsonValue_delete(value);
+            XJsonArray_delete_base(array);
+            return NULL;
+        }
+        XJsonValue_delete(value);
+    }
+    return array;
 }

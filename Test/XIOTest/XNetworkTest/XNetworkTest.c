@@ -2,6 +2,7 @@
 #include "XMenu.h"
 #include "XFtpTest.h"
 #include "XHttpTest.h"
+#include "XServerChanTest.h"
 
 void XMenu_XNetworkTest(XMenu* root)
 {
@@ -14,4 +15,5 @@ void XMenu_XNetworkTest(XMenu* root)
     XMenu_XNetworkProxyTest(menu);
     XFtpTest_registerAll(menu);
     XHttpTest_registerAll(menu);
+    XServerChanTest_registerAll(menu);
 }

@@ -61,7 +61,7 @@ void XJsonObjectTest()
 		XJsonDocument* doc = XJsonDocument_create_object(object);
 		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
 		XJsonDocument_delete(doc);
-		XPrintf_3(XContainerSharedDataPtr(json));
+		XPrintf_3(XByteArray_data(json));
 		XPrintf_3("\n开始从json文本转json对象\n");
 		doc = XJsonDocument_fromJson(json);
 		XByteArray_delete_base(json);

@@ -6,6 +6,7 @@
 #include "XHttp2Frame.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,15 +61,21 @@ static void VXHttp2Frame_move(XHttp2Frame* dest, XHttp2Frame* src)
 XVtable* XHttp2Frame_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2Frame))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2Frame_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2Frame_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2Frame_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2Frame size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

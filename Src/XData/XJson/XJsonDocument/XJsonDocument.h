@@ -58,11 +58,16 @@ XJsonDocument* XJsonDocument_create_array(XJsonArray* array);
 * @return 成功返回XJsonDocument指针，失败返回NULL
 */
 XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array);
+/**
+* @brief 从 Variant 深拷贝创建 JSON 文档。
+* @param variant 支持 Map、List、JSON 对象、数组、值和文档类型。
+*/
+XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant);
 // 初始化与反初始化
 /**
 * @brief 初始化XJsonDocument实例
 * @param document 需要初始化的XJsonDocument指针
-* @details 将根节点初始化为Null类型
+* @details 将根节点初始化为Invalid类型，表示没有文档
 */
 void XJsonDocument_init(XJsonDocument* document);
 /**
@@ -80,7 +85,7 @@ void XJsonDocument_delete(XJsonDocument* document);
 /**
 * @brief 清空XJsonDocument的内容
 * @param document 目标XJsonDocument指针
-* @details 将根节点重置为Null类型，释放原有资源
+* @details 将根节点重置为Invalid类型，释放原有资源
 */
 void XJsonDocument_clear(XJsonDocument* document);
 // 拷贝与移动
@@ -139,11 +144,11 @@ bool XJsonDocument_isObject(const XJsonDocument* document);
 /**
 * @brief 判断文档根节点是否为Null
 * @param document 目标XJsonDocument指针
-* @return 是Null返回true，否则返回false
+* @return 文档没有根节点时返回true，否则返回false
 */
 bool XJsonDocument_isNull(const XJsonDocument* document);
 /**
-* @brief 判断文档是否为空（根节点为无效值、Null或空容器）
+* @brief 判断文档是否为空（没有根节点）
 * @param document 目标XJsonDocument指针
 * @return 为空返回true，否则返回false
 */
@@ -197,6 +202,10 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object);
 */
 XJsonDocument* XJsonDocument_fromString(const XString* json);
 /**
+* @brief 从 XString 解析 JSON，并返回详细错误位置。
+*/
+XJsonDocument* XJsonDocument_fromString_ex(const XString* json, XJsonParseError* error);
+/**
 * @brief 将JSON文档序列化为XString
 * @param document 目标XJsonDocument指针
 * @param format 序列化格式（缩进或紧凑）
@@ -210,12 +219,41 @@ XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentForm
 */
 XJsonDocument* XJsonDocument_fromJson(const XByteArray* json);
 /**
+* @brief 从 XByteArray 解析 JSON，并返回详细错误位置。
+*/
+XJsonDocument* XJsonDocument_fromJson_ex(const XByteArray* json, XJsonParseError* error);
+/**
 * @brief 将JSON文档序列化为XByteArray（UTF-8编码，适合传输）
 * @param document 目标XJsonDocument指针
 * @param format 序列化格式（缩进或紧凑）
 * @return 成功返回序列化后的XByteArray指针，失败返回NULL
 */
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format);
+/**
+* @brief 将文档深拷贝转换为 Variant。
+*/
+XVariant* XJsonDocument_toVariant(const XJsonDocument* document);
+/**
+* @brief 将文档移动转换为 Variant，并清空源文档。
+*/
+XVariant* XJsonDocument_toVariant_move(XJsonDocument* document);
+/**
+* @brief 创建引用文档的 Variant，不转移文档所有权。
+*/
+XVariant* XJsonDocument_toVariant_ref(XJsonDocument* document);
+
+/**
+* @brief 从 BSON 文档字节流转换为 JSON 文档。
+*/
+XJsonDocument* XJsonDocument_fromBson_document(const XByteArray* bson);
+/**
+* @brief 从 BSON 数组字节流转换为 JSON 文档。
+*/
+XJsonDocument* XJsonDocument_fromBson_array(const XByteArray* bson);
+/**
+* @brief 将 JSON 文档序列化为 BSON 字节流。
+*/
+XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
 #ifdef __cplusplus
 }
 #endif

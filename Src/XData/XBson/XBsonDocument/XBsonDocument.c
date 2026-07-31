@@ -420,20 +420,31 @@ bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t si
             break;
         }
 
+        bool nested = XBsonValue_is_type(value, XBSON_TYPE_DOCUMENT);
+        XString* lookup_key = XString_create_copy(key);
         // 添加到当前对象
-        XBsonDocument_insert_move_base(current_obj, key, value);
+        if (!lookup_key || !XBsonDocument_insert_move_base(current_obj, key, value)) {
+            XString_delete_base(lookup_key);
+            XString_delete_base(key);
+            XBsonValue_delete(value);
+            XStack_delete_base(stack);
+            return false;
+        }
+        XBsonValue* stored = nested ?
+            (XBsonValue*)XBsonDocument_value_base(current_obj, lookup_key) : NULL;
         XString_delete_base(key);
         XBsonValue_delete(value);
 
         // 如果是嵌套文档，压栈处理
-        if (XBsonValue_is_type(value, XBSON_TYPE_DOCUMENT)) {
-            XStack_push_base(stack, &(value->data.doc));
+        if (nested && stored && stored->data.doc) {
+            XStack_push_base(stack, &(stored->data.doc));
         }
         else if (ptr < content_end && *ptr == 0x00) {
             // 遇到终止符，出栈
             XStack_pop_base(stack);
             ptr++;
         }
+        XString_delete_base(lookup_key);
     }
 
     XStack_delete_base(stack);

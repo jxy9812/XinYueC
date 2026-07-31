@@ -97,7 +97,8 @@ bool XVector_append_crc16(XVector* data, XCRCByteOrder order)
     else
         XContainerSize(data) += 2;
     size_t size = XContainerSize(data);//加上校验大小
-    XCrc_set16Data(((uint8_t*)XContainerSharedDataPtr(data))+size-2, XCrc_get16(XContainerSharedDataPtr(data),size-2), order);
+    XCrc_set16Data(((uint8_t*)XVector_data(data)) + size - 2,
+        XCrc_get16(XVector_data(data), size - 2), order);
     return true;
 }
 #endif // XVector_ON
@@ -228,7 +229,7 @@ static void gf2_matrix_square(uint32_t* square, uint32_t* mat) {
     }
 }
 
-uint32_t** XCrc32_get_crc_table()
+uint32_t (*XCrc32_get_crc_table())[256]
 {
     return crc_table;
 }

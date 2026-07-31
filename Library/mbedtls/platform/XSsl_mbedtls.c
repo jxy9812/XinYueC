@@ -98,7 +98,7 @@ static unsigned char* xssl_read_file_all(const char* path, size_t* olen) {
     if (!xn)return NULL;
     int error = 0;
     XFd fd = XFileSystem_open(xn, XIODevice_ReadOnly, &error);
-    XString_delete_base(xn);
+    XString_delete_base((XClass*)xn);
     if (fd == XFD_INVALID) return NULL;
     XFileStat stat;
     if (!XFileSystem_fstat(fd, &stat) || stat.size <= 0) {

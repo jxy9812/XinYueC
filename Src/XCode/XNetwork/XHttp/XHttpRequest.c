@@ -218,15 +218,21 @@ static void VXHttpRequest_move(XHttpRequest* dest, XHttpRequest* src)
 XVtable* XHttpRequest_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpRequest))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpRequest_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpRequest_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttpRequest_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttpRequest size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

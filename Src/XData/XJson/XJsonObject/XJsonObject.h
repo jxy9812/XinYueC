@@ -165,6 +165,31 @@ bool XJsonObject_insert_value_move(XJsonObject* object, const XString* key, XJso
 * @return 删除成功返回true，失败返回false（键不存在或参数无效时）
 */
 bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
+/**
+* @brief 按 UTF-8 键获取对象值的深拷贝。
+* @return 找到时返回新值；键不存在或参数无效时返回未定义值。
+*/
+XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object, const char* key);
+/**
+* @brief 判断对象是否包含指定 UTF-8 键。
+*/
+bool XJsonObject_contains_keyUtf8(const XJsonObject* object, const char* key);
+/**
+* @brief 移除并返回指定 UTF-8 键对应值的所有权。
+*/
+XJsonValue* XJsonObject_take_keyUtf8(XJsonObject* object, const char* key);
+/**
+* @brief 比较两个 JSON 对象的键值集合是否相等。
+*/
+bool XJsonObject_equals(const XJsonObject* left, const XJsonObject* right);
+/**
+* @brief 从 VariantMap 深拷贝创建 JSON 对象。
+*/
+XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map);
+/**
+* @brief 从 VariantHashMap 深拷贝创建 JSON 对象。
+*/
+XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash);
 // 基础操作宏定义（封装XMap的接口）
 /**
 * @brief 插入键值对（基础接口，键为XString*，值为XJsonValue*，深拷贝）
@@ -289,6 +314,10 @@ XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat fo
 * @return 成功返回XVariantMap指针，失败返回NULL
 */
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object);
+/**
+* @brief 将对象深拷贝转换为 VariantHashMap。
+*/
+XVariantHashMap* XJsonObject_toVariantHash(const XJsonObject* object);
 /**
 * @brief 将XJsonObject转换为XVariantMap（移动资源所有权）
 * @param object 要转换的XJsonObject指针（所有权转移）

@@ -6,6 +6,7 @@
 #include "XRestReply.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,14 +27,20 @@ static void VXRestReply_copy(XRestReply* dest, const XRestReply* src)
 XVtable* XRestReply_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XRestReply))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRestReply_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXRestReply_copy);
+#if SHOWCONTAINERSIZE
+    printf("XRestReply size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

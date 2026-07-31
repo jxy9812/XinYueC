@@ -8,6 +8,7 @@
 #include "XHttp2Frame.h"
 #include "XMemory.h"
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -532,13 +533,19 @@ static void VXHttp2Connection_deinit(XHttp2Connection* self)
 XVtable* XHttp2Connection_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2Connection))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2Connection_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2Connection size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

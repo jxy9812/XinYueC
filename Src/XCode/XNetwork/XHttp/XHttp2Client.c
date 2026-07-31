@@ -7,6 +7,7 @@
 
 #include "XMemory.h"
 #include "XString.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,15 +89,21 @@ static void VXHttp2ClientSession_move(XHttp2ClientSession* dest,
 XVtable* XHttp2ClientSession_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2ClientSession))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2ClientSession_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2ClientSession_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2ClientSession_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttp2ClientSession size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

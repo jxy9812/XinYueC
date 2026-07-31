@@ -17,7 +17,7 @@ void XBinarySearchTest()
 		XVector_push_back_1_base(VArray, &i);
 	}
 	int findVal = 9999999;
-	int* ret=XBinarySearch(XContainerSharedDataPtr(VArray), count,sizeof(size_t),int_compare,&findVal);
+	int* ret=XBinarySearch(XVector_constData(VArray), count,sizeof(size_t),int_compare,&findVal);
 	XPrintf("二分查找到值:%d", *ret);
 #else
 	IS_ON_DEBUG(XVector_ON);

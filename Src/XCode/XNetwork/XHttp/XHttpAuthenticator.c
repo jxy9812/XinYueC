@@ -6,6 +6,7 @@
 #include "XHttpAuthenticator.h"
 
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,15 +89,21 @@ static void VXHttpAuthenticator_move(XHttpAuthenticator* dest, XHttpAuthenticato
 XVtable* XHttpAuthenticator_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpAuthenticator))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpAuthenticator_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpAuthenticator_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttpAuthenticator_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttpAuthenticator size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

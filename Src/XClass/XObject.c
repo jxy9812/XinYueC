@@ -510,18 +510,34 @@ static void objectNameChanged_signal_del(struct XVarList* list)
 {
 	XVarList_args_1(list, XString*, objectName);
 	if (objectName)
-		XString_delete_base(objectName);
+		XString_delete_base((XClass*)objectName);
 }
 void XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
 {
 	if(objectName)
 	{
 		XString* name = XString_create_copy(objectName);
-		XEmitSignal(object, XObject_objectNameChanged_signal, XVarList_Create(XVar(XString*, name)), objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
+		XVarList* args = XVarList_Create(XVar(XString*, name));
+		if (!args)
+		{
+			if (name)
+				XString_delete_base((XClass*)name);
+			return;
+		}
+		if (object && object->m_signalSlot)
+			XObject_emitSignal(object, (size_t)XObject_objectNameChanged_signal,
+				args, objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
+		else
+		{
+			XVarList_setArgsDel(args, objectNameChanged_signal_del);
+			XVarList_delete(args);
+		}
 	}
 	else
 	{
-		XEmitSignal(object, XObject_objectNameChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+		if (object && object->m_signalSlot)
+			XObject_emitSignal(object, (size_t)XObject_objectNameChanged_signal,
+				NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 	}
 }
 

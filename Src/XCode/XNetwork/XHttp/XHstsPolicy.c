@@ -7,6 +7,7 @@
 
 #include "XDateTime.h"
 #include "XMemory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,15 +61,21 @@ static void VXHstsPolicy_move(XHstsPolicy* dest, XHstsPolicy* src)
 XVtable* XHstsPolicy_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHstsPolicy))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHstsPolicy_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHstsPolicy_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHstsPolicy_move);
+#if SHOWCONTAINERSIZE
+    printf("XHstsPolicy size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

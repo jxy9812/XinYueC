@@ -16,13 +16,13 @@ void XBase64Test()
 	{
 		toBase = XByteArray_toBase64(sour);
 		if (toBase)
-			XPrintf("转Base64:%s\n", XContainerSharedDataPtr(toBase));
+			XPrintf("转Base64:%s\n", XByteArray_data(toBase));
 	}
 	if (toBase)
 	{
 		fromBase64 = XByteArray_fromBase64(toBase);
 		if (fromBase64)
-			XPrintf("还原Base64:%s\n", XContainerSharedDataPtr(fromBase64));
+			XPrintf("还原Base64:%s\n", XByteArray_data(fromBase64));
 	}
 
 	if (sour)

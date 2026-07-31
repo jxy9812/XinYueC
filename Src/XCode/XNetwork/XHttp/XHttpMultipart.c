@@ -89,15 +89,21 @@ static bool xhttp_multipart_make_boundary(XByteArray* boundary)
 XVtable* XHttpPart_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpPart))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpPart_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpPart_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttpPart_move);
+#if SHOWCONTAINERSIZE
+    printf("XHttpPart size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 
@@ -278,13 +284,19 @@ XIODevice* XHttpPart_bodyDevice(const XHttpPart* self)
 XVtable* XHttpMultiPart_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
+    //虚函数表初始化
 #if VTABLE_ISSTACK
     XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpMultiPart))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
+    //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
+    //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpMultiPart_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XHttpMultiPart size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
     return XVTABLE_DEFAULT;
 }
 

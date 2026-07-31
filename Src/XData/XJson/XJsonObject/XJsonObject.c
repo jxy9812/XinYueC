@@ -3,12 +3,15 @@
 #include "XJsonDocument.h"
 #include "XMemory.h"
 #include "XMap.h"
+#include "XHashMap.h"
 #include "XVector.h"
 #include "XStack.h"
 
 XJsonObject* XJsonObject_create(void)
 {
 	XJsonObject* object = (XJsonObject*)XMalloc_System(sizeof(XJsonObject));
+	if (!object)
+		return NULL;
     XJsonObject_init(object);
     Set_Class_MemoryFree(object, XFree_System);
 	return object;
@@ -228,13 +231,142 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key)
     return ret;
 }
 
+XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object, const char* key)
+{
+    XJsonValue* value;
+    XString* string;
+    if (!object || !key)
+        return XJsonValue_create_undefined();
+    string = XString_create_utf8(key);
+    if (!string)
+        return NULL;
+    value = XJsonObject_value_base((XJsonObject*)object, string);
+    XString_delete_base(string);
+    return value ? XJsonValue_create_copy(value) : XJsonValue_create_undefined();
+}
+
+bool XJsonObject_contains_keyUtf8(const XJsonObject* object, const char* key)
+{
+    XString* string;
+    bool contains;
+    if (!object || !key)
+        return false;
+    string = XString_create_utf8(key);
+    if (!string)
+        return false;
+    contains = XJsonObject_contains(object, string);
+    XString_delete_base(string);
+    return contains;
+}
+
+XJsonValue* XJsonObject_take_keyUtf8(XJsonObject* object, const char* key)
+{
+    XJsonValue* value = XJsonObject_value_keyUtf8(object, key);
+    if (!value || XJsonValue_isUndefined(value))
+        return value;
+    if (!XJsonObject_remove_keyUtf8(object, key)) {
+        XJsonValue_delete(value);
+        return XJsonValue_create_undefined();
+    }
+    return value;
+}
+
+bool XJsonObject_equals(const XJsonObject* left, const XJsonObject* right)
+{
+    XVector* keys;
+    size_t index;
+    bool equal = true;
+    if (left == right)
+        return true;
+    if (!left || !right || XJsonObject_size_base(left) != XJsonObject_size_base(right))
+        return false;
+    keys = XJsonObject_keys_base(left);
+    if (!keys)
+        return XJsonObject_size_base(left) == 0;
+    for (index = 0; index < XVector_size_base(keys); ++index) {
+        XString* key = XVector_at_base(keys, (int64_t)index);
+        if (!key || !XJsonObject_contains(right, key) ||
+            !XJsonValue_equals(XJsonObject_value_base((XJsonObject*)left, key),
+                                       XJsonObject_value_base((XJsonObject*)right, key))) {
+            equal = false;
+            break;
+        }
+    }
+    XVector_delete_base(keys);
+    return equal;
+}
+
+XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map)
+{
+    XJsonObject* object;
+    XVector* keys;
+    size_t index;
+    if (!map)
+        return NULL;
+    object = XJsonObject_create();
+    if (!object)
+        return NULL;
+    keys = XMap_keys_base(map);
+    if (!keys) {
+        XJsonObject_delete_base(object);
+        return NULL;
+    }
+    for (index = 0; index < XVector_size_base(keys); ++index) {
+        XString* key = XVector_at_base(keys, (int64_t)index);
+        XVariant* variant = key ? XMap_value_base((XVariantMap*)map, key) : NULL;
+        XJsonValue* value = XJsonValue_fromVariant(variant);
+        if (!key || !value || !XJsonObject_insert_value_move(object, key, value)) {
+            if (value) XJsonValue_delete(value);
+            XVector_delete_base(keys);
+            XJsonObject_delete_base(object);
+            return NULL;
+        }
+        XJsonValue_delete(value);
+    }
+    XVector_delete_base(keys);
+    return object;
+}
+
+XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash)
+{
+    XJsonObject* object;
+    XVector* keys;
+    size_t index;
+    if (!hash)
+        return NULL;
+    object = XJsonObject_create();
+    if (!object)
+        return NULL;
+    keys = XMapBase_keys_base((const XMapBase*)hash);
+    if (!keys) {
+        XJsonObject_delete_base(object);
+        return NULL;
+    }
+    for (index = 0; index < XVector_size_base(keys); ++index) {
+        XString* key = XVector_at_base(keys, (int64_t)index);
+        XVariant* variant = key ? XMapBase_value_base((XMapBase*)hash, key) : NULL;
+        XJsonValue* value = XJsonValue_fromVariant(variant);
+        if (!key || !value || !XJsonObject_insert_value_move(object, key, value)) {
+            if (value) XJsonValue_delete(value);
+            XVector_delete_base(keys);
+            XJsonObject_delete_base(object);
+            return NULL;
+        }
+        XJsonValue_delete(value);
+    }
+    XVector_delete_base(keys);
+    return object;
+}
+
 
 // 对象序列化实现
 XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat format)
 {
     XJsonDocument* doc = XJsonDocument_create();
+	if (!doc)
+		return NULL;
     //引用XJsonObject 
-    doc->root.data.object = object;
+    doc->root.data.object = (XJsonObject*)object;
     doc->root.type = XJsonValue_Object;
     XString* str= XJsonDocument_toString(doc,format);
     //恢复防止释放 XJsonObject
@@ -246,8 +378,10 @@ XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat for
 XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat format)
 {
     XJsonDocument* doc = XJsonDocument_create();
+	if (!doc)
+		return NULL;
     //引用XJsonObject 
-    doc->root.data.object = object;
+    doc->root.data.object = (XJsonObject*)object;
     doc->root.type = XJsonValue_Object;
     XByteArray* json = XJsonDocument_toJson(doc, format);
     //恢复防止释放 XJsonObject
@@ -272,11 +406,49 @@ XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object)
     }
     return map;
 }
+
+XVariantHashMap* XJsonObject_toVariantHash(const XJsonObject* object)
+{
+    XVariantHashMap* hash;
+    XVector* keys;
+    size_t index;
+    if (!object)
+        return NULL;
+    hash = XHashMap_create_XVariantHashMap();
+    if (!hash)
+        return NULL;
+    keys = XMapBase_keys_base((const XMapBase*)object);
+    if (!keys) {
+        XHashMap_delete_base(hash);
+        return NULL;
+    }
+    for (index = 0; index < XVector_size_base(keys); ++index) {
+        XString* key = XVector_at_base(keys, (int64_t)index);
+        XJsonValue* value = key ? XMapBase_value_base((XMapBase*)object, key) : NULL;
+        XVariant* variant = XJsonValue_toVariant(value);
+        if (!key || !variant || !XHashMap_insert_base(hash, key, variant)) {
+            if (variant) XVariant_delete_base(variant);
+            XVector_delete_base(keys);
+            XHashMap_delete_base(hash);
+            return NULL;
+        }
+        XVariant_delete_base(variant);
+    }
+    XVector_delete_base(keys);
+    return hash;
+}
 XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
 {
     if (object == NULL)
         return NULL;
     XVariantMap* map = XMap_create_XVariantMap();
+    if (map == NULL)
+        return NULL;
+    XMap_detach((XMap*)object);
+    if (!XMap_isDetached((const XMap*)object)) {
+        XMap_delete_base(map);
+        return NULL;
+    }
     XPair* pair = NULL;
     XVariant* var = NULL;
     for_each_iterator(object, XMap, it)

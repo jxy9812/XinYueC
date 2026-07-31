@@ -510,6 +510,23 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
     XClassSetVtable(this_map, XMap);
     //this_map->m_KeyLess = KeyLess;
 }
+
+void XMap_detach(XMap* this_map)
+{
+    if (ISNULL(this_map, ""))
+        return;
+    VXMapDetachIfNeeded(this_map);
+}
+
+bool XMap_isDetached(const XMap* this_map)
+{
+    XSharedData* shared;
+    if (this_map == NULL || !XContainerIsCow(this_map))
+        return true;
+    shared = (XSharedData*)XContainerDataPtr(this_map);
+    return shared == NULL || !XSharedData_isShared(shared);
+}
+
 XVariantMap* XMap_create_XVariantMap()
 {
     XMap* map = XMap_Create(XString, XVariant, XString_compare);
