@@ -117,7 +117,7 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 要添加的XBsonValue元素（将被拷贝）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_append_base						XVector_append_1			
+#define XBsonArray_append_base						XVector_append_1_base
 /**
 * @brief 在数组末尾添加元素（移动），映射到XVector_append_move_base
 * @param array XBsonArray实例指针

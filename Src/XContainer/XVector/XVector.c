@@ -128,7 +128,9 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
             else {
                 memcpy(newShared->data, oldData, oldSize * typeSize);
             }
-            XSharedData_release((XSharedData*)XContainerDataPtr(this_vector));
+            /* 扩容前已完成 COW 分离，此时旧块由当前容器独占，释放前必须析构元素。 */
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
+                (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {
@@ -298,7 +300,9 @@ static bool VXVector_resizeCore(XVector* this_vector, size_t size, bool zeroFill
                 if (oldData && oldSize > 0)
                     memcpy(newShared->data, oldData, oldSize * typeSize);
             }
-            XSharedData_release((XSharedData*)XContainerDataPtr(this_vector));
+            /* resize 的深拷贝完成后，旧块中的非 POD 元素仍需逐个释放。 */
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
+                (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {
@@ -748,7 +752,9 @@ static bool VXVector_reserve(XVector* this_vector, size_t size)
             }
         }
         XSharedData* old = (XSharedData*)XContainerDataPtr(this_vector);
-        if (old) XSharedData_release(old);
+        if (old)
+            XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete,
+                this_vector);
         XContainerSetDataPtr(this_vector, newShared);
     }
     else {

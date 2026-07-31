@@ -1,525 +1,675 @@
-﻿#include "XBsonDocument.h"
+#include "XBsonDocument.h"
 #include "XBsonArray.h"
 #include "XJsonObject.h"
 #include "XMemory.h"
-#include "XString.h"
-#include "XStack.h"
+#include <limits.h>
 #include <string.h>
-XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XString** key_out) ;
-bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* output);
-XBsonDocument* XBsonDocument_create() {
-    XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(XBsonDocument));
-    if (doc) {
-        XBsonDocument_init(doc);
-        Set_Class_MemoryFree(doc, XFree_System);
-    }
-    return doc;
-}
 
-XBsonDocument* XBsonDocument_create_copy(const XBsonDocument* other) {
-    if (!other) return NULL;
-
-    XBsonDocument* doc = XBsonDocument_create();
-    if (doc) {
-        XBsonDocument_copy_base(doc, other);
-    }
-    return doc;
-}
-
-XBsonDocument* XBsonDocument_create_move(XBsonDocument* other) {
-    if (!other) return NULL;
-
-    XBsonDocument* doc = XBsonDocument_create();
-    if (doc) {
-        XBsonDocument_move_base(doc, other);
-    }
-    return doc;
-}
-
-void XBsonDocument_init(XBsonDocument* doc) {
-    if (!doc) return;
-
-    XMap_init(doc, sizeof(XString), sizeof(XBsonValue),
-        XString_compare,true);
-
-    XMapBaseSetKeyCopyMethod(doc, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(doc, XString_move_base);
-    XMapBaseSetKeyDeinitMethod(doc, XString_deinit_base);
-
-    XContainerSetDataCopyMethod(doc, XBsonValue_copy);
-    XContainerSetDataMoveMethod(doc, XBsonValue_move);
-    XContainerSetDataDeinitMethod(doc, XBsonValue_deinit);
-}
-
-bool XBsonDocument_insert_keyUtf8_value(XBsonDocument* doc, const char* key, XBsonValue* value)
+/* BSON 文档保持元素原始顺序，并允许同名键重复出现。 */
+static bool XBsonDocument_keyEquals(const XString* left, const XString* right)
 {
-    if (doc == NULL || key == NULL || value == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    bool ret = XMap_insert_keyMove_base(doc, str, value);
-    XString_deinit_base(str);
-    return ret;
+	return left && right && XString_compare(left, right) == XCompare_Equality;
 }
 
-bool XBsonDocument_insert_keyUtf8_value_move(XBsonDocument* doc, const char* key, XBsonValue* value)
+void XBsonElement_init(XBsonElement* element)
 {
-    if (doc == NULL || key == NULL || value == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    return ret;
+	if (!element) return;
+	memset(element, 0, sizeof(*element));
+	XString_init(&element->m_key);
+	XBsonValue_init(&element->m_value, (XBsonType)0);
 }
 
-bool XBsonDocument_insert_keyUtf8_double(XBsonDocument* doc, const char* key, double d)
+void XBsonElement_deinit(XBsonElement* element)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_DOUBLE);
-    value->data.dbl = d;
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!element) return;
+	if (!XClassIsVtableNull(&element->m_key))
+		XString_deinit_base(&element->m_key);
+	XBsonValue_deinit(&element->m_value);
 }
 
-bool XBsonDocument_insert_keyUtf8_int32(XBsonDocument* doc, const char* key, int32_t i)
+void XBsonElement_copy(XBsonElement* dest, const XBsonElement* src)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_INT32);
-    value->data.int32 = i;
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!dest || !src || dest == src) return;
+	if (XClassIsVtableNull(&dest->m_key))
+		XString_init(&dest->m_key);
+	else
+		XString_deinit_base(&dest->m_key);
+	XString_copy_base(&dest->m_key, &src->m_key);
+	XBsonValue_copy(&dest->m_value, &src->m_value);
 }
 
-bool XBsonDocument_insert_keyUtf8_int64(XBsonDocument* doc, const char* key, int64_t i)
+void XBsonElement_move(XBsonElement* dest, XBsonElement* src)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_INT64);
-    value->data.int64 = i;
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!dest || !src || dest == src) return;
+	if (XClassIsVtableNull(&dest->m_key))
+		XString_init(&dest->m_key);
+	else
+		XString_deinit_base(&dest->m_key);
+	XString_move_base(&dest->m_key, &src->m_key);
+	XBsonValue_move(&dest->m_value, &src->m_value);
 }
 
-bool XBsonDocument_insert_keyUtf8_string(XBsonDocument* doc, const char* key, const XString* strValue)
+const XString* XBsonElement_key_const(const XBsonElement* element)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_STRING);
-    if (value->data.str)
-        XString_copy_base(value->data.str, strValue);
-    else
-        value->data.str = XString_create_copy(strValue);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	return element ? &element->m_key : NULL;
 }
 
-bool XBsonDocument_insert_keyUtf8_string_move(XBsonDocument* doc, const char* key, XString* strValue)
+const XBsonValue* XBsonElement_value_const(const XBsonElement* element)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_STRING);
-    if (value->data.str)
-        XString_move_base(value->data.str,strValue);
-    else
-        value->data.str = XString_create_move(strValue);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	return element ? &element->m_value : NULL;
 }
 
-bool XBsonDocument_insert_keyUtf8_utf8(XBsonDocument* doc, const char* key, const char* utf8)
+XBsonValue* XBsonElement_value(XBsonElement* element)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_STRING);
-    if (value->data.str)
-        XString_assign_utf8(value->data.str,utf8);
-    else
-        value->data.str = XString_create_utf8(utf8);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	return element ? &element->m_value : NULL;
+}
+
+XBsonDocument* XBsonDocument_create(void)
+{
+	XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(*doc));
+	if (!doc) return NULL;
+	XBsonDocument_init(doc);
+	Set_Class_MemoryFree(doc, XFree_System);
+	return doc;
+}
+
+XBsonDocument* XBsonDocument_create_copy(const XBsonDocument* other)
+{
+	if (!other) return NULL;
+	XBsonDocument* doc = XBsonDocument_create();
+	if (!doc) return NULL;
+	XBsonDocument_copy_base(doc, other);
+	return doc;
+}
+
+XBsonDocument* XBsonDocument_create_move(XBsonDocument* other)
+{
+	if (!other) return NULL;
+	XBsonDocument* doc = XBsonDocument_create();
+	if (!doc) return NULL;
+	XBsonDocument_move_base(doc, other);
+	return doc;
+}
+
+void XBsonDocument_init(XBsonDocument* doc)
+{
+	if (!doc) return;
+	XVector_init((XVector*)doc, sizeof(XBsonElement), true);
+	XContainerSetDataCopyMethod(doc, XBsonElement_copy);
+	XContainerSetDataMoveMethod(doc, XBsonElement_move);
+	XContainerSetDataDeinitMethod(doc, XBsonElement_deinit);
+}
+
+/* 有序元素追加和兼容旧 insert 接口。 */
+bool XBsonDocument_append(XBsonDocument* doc, const XString* key,
+                          const XBsonValue* value)
+{
+	const char* key_utf8 = key ? XString_toUtf8(key) : NULL;
+	size_t key_length = key ? XString_toUtf8_length(key) : 0;
+	if (!doc || !key || !value || !key_utf8 ||
+		memchr(key_utf8, 0, key_length) != NULL)
+		return false;
+	XBsonElement element;
+	XBsonElement_init(&element);
+	XString_copy_base(&element.m_key, key);
+	XBsonValue_copy(&element.m_value, value);
+	bool result = XVector_push_back_move_1_base((XVector*)doc, &element);
+	XBsonElement_deinit(&element);
+	return result;
+}
+
+bool XBsonDocument_append_move(XBsonDocument* doc, XString* key,
+                               XBsonValue* value)
+{
+	const char* key_utf8 = key ? XString_toUtf8(key) : NULL;
+	size_t key_length = key ? XString_toUtf8_length(key) : 0;
+	if (!doc || !key || !value || !key_utf8 ||
+		memchr(key_utf8, 0, key_length) != NULL)
+		return false;
+	XBsonElement element;
+	XBsonElement_init(&element);
+	XString_move_base(&element.m_key, key);
+	XBsonValue_move(&element.m_value, value);
+	bool result = XVector_push_back_move_1_base((XVector*)doc, &element);
+	XBsonElement_deinit(&element);
+	return result;
+}
+
+bool XBsonDocument_insert_base(XBsonDocument* doc, const XString* key,
+                               const XBsonValue* value)
+{
+	return XBsonDocument_append(doc, key, value);
+}
+
+bool XBsonDocument_insert_move_base(XBsonDocument* doc, XString* key,
+                                    XBsonValue* value)
+{
+	return XBsonDocument_append_move(doc, key, value);
+}
+
+static bool XBsonDocument_appendUtf8(XBsonDocument* doc, const char* key,
+                                     const XBsonValue* value, bool moveValue)
+{
+	if (!doc || !key || !value) return false;
+	XString_Init_Utf8(name, key);
+	bool result = moveValue
+		? XBsonDocument_append_move(doc, name, (XBsonValue*)value)
+		: XBsonDocument_append(doc, name, value);
+	XString_deinit_base(name);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_value(XBsonDocument* doc, const char* key,
+                                        XBsonValue* value)
+{
+	return XBsonDocument_appendUtf8(doc, key, value, false);
+}
+
+bool XBsonDocument_insert_keyUtf8_value_move(XBsonDocument* doc,
+                                             const char* key,
+                                             XBsonValue* value)
+{
+	return XBsonDocument_appendUtf8(doc, key, value, true);
+}
+
+bool XBsonDocument_insert_keyUtf8_double(XBsonDocument* doc, const char* key,
+                                         double d)
+{
+	if (!doc || !key) return false;
+	XBsonValue_Init(value, XBSON_TYPE_DOUBLE);
+	value->data.dbl = d;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_deinit(value);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_int32(XBsonDocument* doc, const char* key,
+                                        int32_t i)
+{
+	if (!doc || !key) return false;
+	XBsonValue_Init(value, XBSON_TYPE_INT32);
+	value->data.int32 = i;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_deinit(value);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_int64(XBsonDocument* doc, const char* key,
+                                        int64_t i)
+{
+	if (!doc || !key) return false;
+	XBsonValue_Init(value, XBSON_TYPE_INT64);
+	value->data.int64 = i;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_deinit(value);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_string(XBsonDocument* doc, const char* key,
+                                         const XString* strValue)
+{
+	if (!doc || !key || !strValue) return false;
+	XBsonValue* value = XBsonValue_create_string(strValue);
+	if (!value) return false;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_string_move(XBsonDocument* doc,
+                                              const char* key,
+                                              XString* strValue)
+{
+	if (!doc || !key || !strValue) return false;
+	XBsonValue* value = XBsonValue_create_string(strValue);
+	if (!value) return false;
+	XString_delete_base(value->data.str);
+	value->data.str = XString_create_move(strValue);
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
+}
+
+bool XBsonDocument_insert_keyUtf8_utf8(XBsonDocument* doc, const char* key,
+                                       const char* utf8)
+{
+	if (!doc || !key || !utf8) return false;
+	XBsonValue* value = XBsonValue_create(XBSON_TYPE_STRING);
+	if (!value) return false;
+	XBsonValue_setString_utf8(value, utf8);
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
 bool XBsonDocument_insert_keyUtf8_null(XBsonDocument* doc, const char* key)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_NULL);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key) return false;
+	XBsonValue* value = XBsonValue_create_null();
+	if (!value) return false;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_keyUtf8_bool(XBsonDocument* doc, const char* key, bool b)
+bool XBsonDocument_insert_keyUtf8_bool(XBsonDocument* doc, const char* key,
+                                       bool b)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_BOOL);
-    value->data.boolean = b;
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key) return false;
+	XBsonValue* value = XBsonValue_create_bool(b);
+	if (!value) return false;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* doc, const char* key, const XBsonArray* array)
+bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* doc, const char* key,
+                                        const XBsonArray* array)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_ARRAY);
-    if (value->data.arr)
-        XBsonArray_copy_base(value->data.arr,array);
-    else
-        value->data.arr = XBsonArray_create_copy(array);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key || !array) return false;
+	XBsonValue* value = XBsonValue_create_array(array);
+	if (!value) return false;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc, const char* key, XBsonArray* array)
+bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc,
+                                             const char* key,
+                                             XBsonArray* array)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_ARRAY);
-    if (value->data.arr)
-        XBsonArray_move_base(value->data.arr, array);
-    else
-        value->data.arr = XBsonArray_create_move(array);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key || !array) return false;
+	XBsonValue* value = XBsonValue_create(XBSON_TYPE_ARRAY);
+	if (!value) return false;
+	XBsonArray_move_base(value->data.arr, array);
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key, const XBsonDocument* newDoc)
+bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key,
+                                           const XBsonDocument* newDoc)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_DOCUMENT);
-    if (value->data.doc)
-        XBsonDocument_copy_base(value->data.doc, newDoc);
-    else
-        value->data.doc = XBsonDocument_create_copy(newDoc);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key || !newDoc) return false;
+	XBsonValue* value = XBsonValue_create_document(newDoc);
+	if (!value) return false;
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc, const char* key, XBsonDocument* newDoc)
+bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc,
+                                                const char* key,
+                                                XBsonDocument* newDoc)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_DOCUMENT);
-    if (value->data.doc)
-        XBsonDocument_move_base(value->data.doc, newDoc);
-    else
-        value->data.doc = XBsonDocument_create_move(newDoc);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    XBsonValue_deinit(value);
-    return ret;
+	if (!doc || !key || !newDoc) return false;
+	XBsonValue* value = XBsonValue_create(XBSON_TYPE_DOCUMENT);
+	if (!value) return false;
+	XBsonDocument_move_base(value->data.doc, newDoc);
+	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
+	XBsonValue_delete(value);
+	return result;
 }
 
-bool XBsonDocument_insert_value_move(XBsonDocument* doc, const XString* key, XBsonValue* value)
+bool XBsonDocument_insert_value_move(XBsonDocument* doc, const XString* key,
+                                     XBsonValue* value)
 {
-    if (doc == NULL || key == NULL || value == NULL)
-        return false;
-    XString_Init_Utf8(str, NULL);
-    XString_assign(str,key);
-    bool ret = XBsonDocument_insert_move_base(doc, str, value);
-    XString_deinit_base(str);
-    return ret;
+	if (!doc || !key || !value) return false;
+	XString* key_copy = XString_create_copy(key);
+	if (!key_copy) return false;
+	bool result = XBsonDocument_append_move(doc, key_copy, value);
+	XString_delete_base(key_copy);
+	return result;
+}
+
+XBsonElement* XBsonDocument_at_base(XBsonDocument* doc, int64_t index)
+{
+	return (XBsonElement*)XVector_at_base((const XVector*)doc, index);
+}
+
+const XBsonElement* XBsonDocument_at_const(const XBsonDocument* doc,
+                                           int64_t index)
+{
+	return (const XBsonElement*)XVector_at_base((const XVector*)doc, index);
+}
+
+int64_t XBsonDocument_indexOf(const XBsonDocument* doc, const XString* key)
+{
+	if (!doc || !key) return -1;
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)i);
+		if (element && XBsonDocument_keyEquals(&element->m_key, key))
+			return (int64_t)i;
+	}
+	return -1;
+}
+
+XBsonValue* XBsonDocument_value_base(XBsonDocument* doc, const XString* key)
+{
+	int64_t index = XBsonDocument_indexOf(doc, key);
+	XBsonElement* element = index >= 0 ? XBsonDocument_at_base(doc, index) : NULL;
+	return element ? &element->m_value : NULL;
+}
+
+XBsonValue* XBsonDocument_value_keyUtf8(XBsonDocument* doc, const char* key)
+{
+	if (!doc || !key) return NULL;
+	XString_Init_Utf8(name, key);
+	XBsonValue* value = XBsonDocument_value_base(doc, name);
+	XString_deinit_base(name);
+	return value;
+}
+
+size_t XBsonDocument_count_keyUtf8(const XBsonDocument* doc, const char* key)
+{
+	if (!doc || !key) return 0;
+	XString_Init_Utf8(name, key);
+	size_t count = 0;
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)i);
+		if (element && XBsonDocument_keyEquals(&element->m_key, name)) ++count;
+	}
+	XString_deinit_base(name);
+	return count;
+}
+
+bool XBsonDocument_contains_keyUtf8(const XBsonDocument* doc, const char* key)
+{
+	return XBsonDocument_count_keyUtf8(doc, key) != 0;
+}
+
+bool XBsonDocument_removeAt(XBsonDocument* doc, int64_t index)
+{
+	if (!doc || index < 0 || (size_t)index >= XBsonDocument_size_base(doc))
+		return false;
+	XVector_removeAt_base((XVector*)doc, index);
+	return true;
 }
 
 bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key)
 {
-    if (doc == NULL || key == NULL)
-        return false;
-    XString_Init_Utf8(str, key);
-    bool ret = XBsonDocument_remove_base(doc, str);
-    XString_deinit_base(str);
-    return ret;
+	if (!doc || !key) return false;
+	XString_Init_Utf8(name, key);
+	int64_t index = XBsonDocument_indexOf(doc, name);
+	XString_deinit_base(name);
+	return XBsonDocument_removeAt(doc, index);
 }
 
-XJsonObject* XBsonDocument_toJsonObject(const XBsonDocument* bson_obj) 
+size_t XBsonDocument_removeAll_keyUtf8(XBsonDocument* doc, const char* key)
 {
-    if (!bson_obj) return NULL;
-
-    XJsonObject* json_obj = XJsonObject_create();
-    if (!json_obj) return NULL;
-
-    /*XMapIterator it = XMap_begin(&bson_obj->members);
-    while (!XMapIterator_isEnd(&it)) {*/
-    for_each_iterator(bson_obj,XMap,it)
-    {
-        XPair* pair = XMap_iterator_data(&it);
-        const XString* key = XPair_first(pair);
-        const XBsonValue* bson_val = XPair_second(pair);
-
-        XJsonValue* json_val = XBsonValue_to_json(bson_val);
-        if (json_val) {
-            XJsonObject_insert_value_move(json_obj, key, json_val);
-            XJsonValue_delete(json_val);
-        }
-
-    }
-
-    return json_obj;
+	if (!doc || !key) return 0;
+	XString_Init_Utf8(name, key);
+	size_t removed = 0;
+	for (size_t i = XBsonDocument_size_base(doc); i > 0; --i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)(i - 1));
+		if (element && XBsonDocument_keyEquals(&element->m_key, name)) {
+			XVector_removeAt_base((XVector*)doc, (int64_t)(i - 1));
+			++removed;
+		}
+	}
+	XString_deinit_base(name);
+	return removed;
 }
 
-XBsonDocument* XBsonDocument_fromJsonObject(const XJsonObject* json_obj) 
+static void XBsonDocument_stringCopy(void* dest, const void* src)
 {
-    if(!json_obj|| XJsonObject_isEmpty_base(json_obj))
-        return NULL;
-    XBsonDocument* bson_obj= XBsonDocument_create();
-    if (!bson_obj) return NULL;
-    for_each_iterator(json_obj, XMap, it)
-    {
-        XPair* pair = XMap_iterator_data(&it);
-        const XString* key = XPair_first(pair);
-        const XJsonValue* json_val = XPair_second(pair);
-
-        XBsonValue* bson_val = XBsonValue_from_json(json_val);
-        if (bson_val)
-        {
-            XBsonDocument_insert_value_move(bson_obj, key, bson_val);
-            XBsonValue_delete(bson_val);
-        }
-    }
-    return bson_obj;
+	XString* d = (XString*)dest;
+	if (!d || !src) return;
+	if (XClassIsVtableNull(d)) XString_init(d);
+	else XString_deinit_base(d);
+	XString_copy_base(d, (const XString*)src);
 }
 
-XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc, XJsonDocumentFormat format)
+static void XBsonDocument_stringMove(void* dest, void* src)
 {
-    if (!bson_doc) return NULL;
-
-    // 1. 将BSON文档转换为JSON对象
-    XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
-    if (!json_obj) return NULL;
-
-    // 2. 将JSON对象转换为JSON字符串
-    XByteArray* json = XJsonObject_toJson(json_obj, format);
-
-    // 3. 释放中间JSON对象（XJsonObject_toString不会接管所有权）
-    XJsonObject_delete_base(json_obj);
-
-    return json;
+	XString* d = (XString*)dest;
+	if (!d || !src) return;
+	if (XClassIsVtableNull(d)) XString_init(d);
+	else XString_deinit_base(d);
+	XString_move_base(d, (XString*)src);
 }
 
-XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc, XJsonDocumentFormat format)
+static void XBsonDocument_stringDeinit(void* data)
 {
-    if (!bson_doc) return NULL;
-
-    // 1. 将BSON文档转换为JSON对象
-    XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
-    if (!json_obj) return NULL;
-
-    // 2. 将JSON对象转换为JSON字符串
-    XString* json = XJsonObject_toString(json_obj, format);
-
-    // 3. 释放中间JSON对象（XJsonObject_toString不会接管所有权）
-    XJsonObject_delete_base(json_obj);
-
-    return json;
+	if (data) XString_deinit_base((XString*)data);
 }
 
-XByteArray* XBsonDocument_toBson(const XBsonDocument* doc) 
+XVector* XBsonDocument_keys_base(const XBsonDocument* doc)
 {
-    if (!doc) return NULL;
-
-    // 先计算总大小
-    XByteArray* bytes = XByteArray_create();//预留总长度4字节大小
-    XByteArray_resize_base(bytes,4);
-    // 写入成员
-    for_each_iterator(doc,XMap,it)
-    {
-        XPair* pair= XMap_iterator_data(&it);
-        const XString* key = XPair_first(pair);
-        const XBsonValue* value =XPair_second(pair);
-
-        XBsonValue_serialize(value, XString_toUtf8(key), bytes);
-    }
-
-    // 添加终止符
-    XByteArray_push_back_1(bytes, 0x00);
-    //开头写入总长度
-    XMemory_write_data(XContainerDataAddr(bytes),XBYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
-    return bytes;
+	if (!doc) return NULL;
+	XVector* keys = XVector_create(sizeof(XString));
+	if (!keys) return NULL;
+	XContainerSetDataCopyMethod(keys, XBsonDocument_stringCopy);
+	XContainerSetDataMoveMethod(keys, XBsonDocument_stringMove);
+	XContainerSetDataDeinitMethod(keys, XBsonDocument_stringDeinit);
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)i);
+		if (!element || !XVector_append_1_base(keys, (void*)&element->m_key)) {
+			XVector_delete_base(keys);
+			return NULL;
+		}
+	}
+	return keys;
 }
 
-XBsonDocument* XBsonDocument_fromBson(XByteArray* data) {
-    if (!data || XContainerSize(data) < 5) return NULL; // 最小BSON对象: 4字节长度 + 1字节终止符
-
-    XBsonDocument* doc = XBsonDocument_create();
-    if (!XBsonDocument_from_bytes(doc, XContainerDataAddr(data), XContainerSize(data)))
-    {
-        XBsonDocument_delete_base(doc);
-        return NULL;
-    }
-    return doc;
-}
-
-bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t size)
+XJsonObject* XBsonDocument_toJsonObject(const XBsonDocument* bson_obj)
 {
-    if (!doc || !data || size < 5) return false; // 最小BSON对象: 4字节长度 + 1字节终止符
+	if (!bson_obj) return NULL;
+	XJsonObject* json_obj = XJsonObject_create();
+	if (!json_obj) return NULL;
+	for (size_t i = 0; i < XBsonDocument_size_base(bson_obj); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(bson_obj, (int64_t)i);
+		XJsonValue* json_val = element ? XBsonValue_to_json(&element->m_value) : NULL;
+		if (!element || !json_val) continue;
+		const char* key = XString_toUtf8(&element->m_key);
+		if (XJsonObject_contains_keyUtf8(json_obj, key))
+			XJsonObject_remove_keyUtf8(json_obj, key);
+		if (!XJsonObject_insert_value_move(json_obj, &element->m_key, json_val)) {
+			XJsonValue_delete(json_val);
+			XJsonObject_delete_base(json_obj);
+			return NULL;
+		}
+		XJsonValue_delete(json_val);
+	}
+	return json_obj;
+}
 
-    XBsonDocument_clear_base(doc);
+/* JSON 对象没有重复键，转换到 BSON 时仅生成一个同名元素。 */
+XBsonDocument* XBsonDocument_fromJsonObject(const XJsonObject* json_obj)
+{
+	if (!json_obj) return NULL;
+	XBsonDocument* bson_obj = XBsonDocument_create();
+	if (!bson_obj) return NULL;
+	for_each_iterator(json_obj, XMap, it) {
+		XPair* pair = XMap_iterator_data(&it);
+		const XString* key = XPair_first(pair);
+		const XJsonValue* json_val = XPair_second(pair);
+		XBsonValue* bson_val = XBsonValue_from_json(json_val);
+		if (!bson_val || !XBsonDocument_append(bson_obj, key, bson_val)) {
+			XBsonValue_delete(bson_val);
+			XBsonDocument_delete_base(bson_obj);
+			return NULL;
+		}
+		XBsonValue_delete(bson_val);
+	}
+	return bson_obj;
+}
 
-    const uint8_t* ptr = data;
-    const uint8_t* end = data + size;
+XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc,
+                                 XJsonDocumentFormat format)
+{
+	if (!bson_doc) return NULL;
+	XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
+	if (!json_obj) return NULL;
+	XByteArray* json = XJsonObject_toJson(json_obj, format);
+	XJsonObject_delete_base(json_obj);
+	return json;
+}
 
-    // 验证长度
-    uint32_t len = *((uint32_t*)ptr);
-    ptr += sizeof(uint32_t);
-    if (len != size) return false;
+XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc,
+                                     XJsonDocumentFormat format)
+{
+	if (!bson_doc) return NULL;
+	XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
+	if (!json_obj) return NULL;
+	XString* json = XJsonObject_toString(json_obj, format);
+	XJsonObject_delete_base(json_obj);
+	return json;
+}
 
-    const uint8_t* content_end = data + len - 1; // 减去终止符
+XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
+{
+	if (!doc) return NULL;
+	XByteArray* bytes = XByteArray_create();
+	if (!bytes || !XByteArray_resize_base(bytes, 4)) {
+		XByteArray_delete_base(bytes);
+		return NULL;
+	}
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)i);
+		if (!element || !XBsonValue_serialize(&element->m_value,
+				XString_toUtf8(&element->m_key), bytes)) {
+			XByteArray_delete_base(bytes);
+			return NULL;
+		}
+	}
+	if (!XByteArray_push_back_1(bytes, 0x00) ||
+		XByteArray_size_base(bytes) > INT32_MAX) {
+		XByteArray_delete_base(bytes);
+		return NULL;
+	}
+	uint32_t length = (uint32_t)XByteArray_size_base(bytes);
+	XMemory_write_data(XContainerDataAddr(bytes), XBYTE_ORDER_LITTLE_ENDIAN,
+		&length, sizeof(length));
+	return bytes;
+}
 
-    // 使用XStack处理递归
-    XStack* stack = XStack_create(sizeof(XBsonDocument*));
-    if (!stack) return false;
+/* 解析完整 BSON 文档；失败时目标文档始终保持为空。 */
+XBsonDocument* XBsonDocument_fromBson(XByteArray* data)
+{
+	if (!data || XByteArray_size_base(data) < 5) return NULL;
+	XBsonDocument* doc = XBsonDocument_create();
+	if (!doc) return NULL;
+	if (!XBsonDocument_from_bytes(doc, XContainerDataAddr(data),
+		XByteArray_size_base(data))) {
+		XBsonDocument_delete_base(doc);
+		return NULL;
+	}
+	return doc;
+}
 
-    // 初始状态: 解析当前对象
-    XStack_push_base(stack, &doc);
+bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data,
+                              size_t size)
+{
+	if (!doc) return false;
+	XBsonDocument_clear_base(doc);
+	if (!data || size < 5 || size > INT32_MAX) return false;
+	uint32_t length = 0;
+	XMemory_read_data(data, XBYTE_ORDER_LITTLE_ENDIAN, &length, sizeof(length));
+	if (length != size || length < 5 || data[length - 1] != 0x00) return false;
 
-    while (!XStack_isEmpty_base(stack) && ptr < content_end) {
-        XBsonDocument* current_obj = *(XBsonDocument**)XStack_top_base(stack);
+	const uint8_t* ptr = data + sizeof(uint32_t);
+	const uint8_t* end = data + length - 1;
+	while (ptr < end) {
+		XString* key = NULL;
+		XBsonValue* value = XBsonValue_deserialize(&ptr, end, &key);
+		if (!value || !key || !XBsonDocument_append_move(doc, key, value)) {
+			XString_delete_base(key);
+			XBsonValue_delete(value);
+			XBsonDocument_clear_base(doc);
+			return false;
+		}
+		XString_delete_base(key);
+		XBsonValue_delete(value);
+	}
+	if (ptr != end) {
+		XBsonDocument_clear_base(doc);
+		return false;
+	}
+	return true;
+}
 
-        XString* key = NULL;
-        XBsonValue* value = XBsonValue_deserialize(&ptr, content_end, &key);
-        if (!value || !key) {
-            XBsonValue_delete(value);
-            XString_delete_base(key);
-            break;
-        }
-
-        bool nested = XBsonValue_is_type(value, XBSON_TYPE_DOCUMENT);
-        XString* lookup_key = XString_create_copy(key);
-        // 添加到当前对象
-        if (!lookup_key || !XBsonDocument_insert_move_base(current_obj, key, value)) {
-            XString_delete_base(lookup_key);
-            XString_delete_base(key);
-            XBsonValue_delete(value);
-            XStack_delete_base(stack);
-            return false;
-        }
-        XBsonValue* stored = nested ?
-            (XBsonValue*)XBsonDocument_value_base(current_obj, lookup_key) : NULL;
-        XString_delete_base(key);
-        XBsonValue_delete(value);
-
-        // 如果是嵌套文档，压栈处理
-        if (nested && stored && stored->data.doc) {
-            XStack_push_base(stack, &(stored->data.doc));
-        }
-        else if (ptr < content_end && *ptr == 0x00) {
-            // 遇到终止符，出栈
-            XStack_pop_base(stack);
-            ptr++;
-        }
-        XString_delete_base(lookup_key);
-    }
-
-    XStack_delete_base(stack);
-
-    // 确保解析到正确的终止符
-    if (ptr != content_end || *ptr != 0x00) {
-        XBsonDocument_clear_base(doc);
-        return false;
-    }
-
-    return true;
+static bool XBsonDocument_insertVariant(XVariantMap* map,
+                                        const XString* key, XVariant* value)
+{
+	if (!map || !key || !value) return false;
+	if (XMap_contains(map, key)) XMap_remove_base(map, key);
+	return XMap_insert_valueMove_base(map, key, value);
 }
 
 XVariantMap* XBsonDocument_toVariantMap(const XBsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariantMap* map = XMap_create_XVariantMap();
-    XPair* pair = NULL;
-    XVariant* var = NULL;
-    for_each_iterator(doc, XMap, it)
-    {
-        pair = XMap_iterator_data(&it);
-        var = XBsonValue_toVariant(XPair_second(pair));
-        XMap_insert_valueMove_base(map, XPair_first(pair), var);
-        XVariant_delete_base(var);
-    }
-    return map;
+	if (!doc) return NULL;
+	XVariantMap* map = XMap_create_XVariantMap();
+	if (!map) return NULL;
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		const XBsonElement* element = XBsonDocument_at_const(doc, (int64_t)i);
+		XVariant* value = element ? XBsonValue_toVariant(&element->m_value) : NULL;
+		if (!element || !value || !XBsonDocument_insertVariant(map,
+			&element->m_key, value)) {
+			XVariant_delete_base(value);
+			XMap_delete_base(map);
+			return NULL;
+		}
+		XVariant_delete_base(value);
+	}
+	return map;
 }
 
 XVariantMap* XBsonDocument_toVariantMap_move(XBsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariantMap* map = XMap_create_XVariantMap();
-    XPair* pair = NULL;
-    XVariant* var = NULL;
-    for_each_iterator(doc, XMap, it)
-    {
-        pair = XMap_iterator_data(&it);
-        var = XBsonValue_toVariant_move(XPair_second(pair));
-        XMap_insert_valueMove_base(map, XPair_first(pair), var);
-        XVariant_delete_base(var);
-    }
-    return map;
+	if (!doc) return NULL;
+	XVariantMap* map = XMap_create_XVariantMap();
+	if (!map) return NULL;
+	for (size_t i = 0; i < XBsonDocument_size_base(doc); ++i) {
+		XBsonElement* element = XBsonDocument_at_base(doc, (int64_t)i);
+		XVariant* value = element ? XBsonValue_toVariant_move(&element->m_value) : NULL;
+		if (!element || !value || !XBsonDocument_insertVariant(map,
+			&element->m_key, value)) {
+			XVariant_delete_base(value);
+			XMap_delete_base(map);
+			return NULL;
+		}
+		XVariant_delete_base(value);
+	}
+	XBsonDocument_clear_base(doc);
+	return map;
 }
 
 XVariant* XBsonDocument_toVariant(const XBsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
-    XBsonDocument_init((((XVariant*)var)->m_data));
-    XBsonDocument_copy_base((((XVariant*)var)->m_data), doc);
-    return var;
+	if (!doc) return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument),
+		XVariantType_BsonDocument);
+	if (!var || !var->m_data) {
+		XVariant_delete_base(var);
+		return NULL;
+	}
+	XBsonDocument_init((XBsonDocument*)var->m_data);
+	XBsonDocument_copy_base((XBsonDocument*)var->m_data, doc);
+	return var;
 }
 
 XVariant* XBsonDocument_toVariant_move(XBsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
-    XBsonDocument_init((((XVariant*)var)->m_data));
-    XBsonDocument_move_base((((XVariant*)var)->m_data), doc);
-    return var;
+	if (!doc) return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument),
+		XVariantType_BsonDocument);
+	if (!var || !var->m_data) {
+		XVariant_delete_base(var);
+		return NULL;
+	}
+	XBsonDocument_init((XBsonDocument*)var->m_data);
+	XBsonDocument_move_base((XBsonDocument*)var->m_data, doc);
+	return var;
 }
 
 XVariant* XBsonDocument_toVariant_ref(XBsonDocument* doc)
 {
-    if (doc == NULL)
-        return NULL;
-    XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonDocument);
-    if (var == NULL)
-        return NULL;
-    var->m_data = doc;
-    var->m_dataSize = sizeof(XBsonDocument);
-    return var;
+	if (!doc) return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonDocument);
+	if (!var) return NULL;
+	var->m_data = doc;
+	var->m_dataSize = sizeof(XBsonDocument);
+	return var;
 }
