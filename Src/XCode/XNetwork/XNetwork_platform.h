@@ -87,6 +87,13 @@ typedef enum {
     XNetwork_Udp = 1    /**< UDP 套接字 */
 } XNetworkSocketType;
 
+/** 仅供数据库等后端使用的本地字节流传输类型。 */
+typedef enum {
+    XNetwork_LocalStream_Unknown = 0,
+    XNetwork_LocalStream_UnixSocket,
+    XNetwork_LocalStream_NamedPipe
+} XNetworkLocalStreamType;
+
 /** 协议类型（复用 XHostAddress） */
 typedef XHostAddress_NetworkLayerProtocol XNetworkProtocol;
 #define XNetwork_IPv4  XHostAddress_IPv4Protocol
@@ -208,6 +215,21 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
 bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
                             uint16_t port, XNetworkProtocol protocol, 
                             XNetworkSocketType sockType);
+
+/**
+ * @brief 建立平台特有的本地字节流连接。
+ * @param priv 套接字私有数据；不能为 NULL。
+ * @param endpoint Unix socket 路径或 Windows 命名管道名称；借用，不能为 NULL。
+ * @param streamType 本地流传输类型。
+ * @param timeoutMs 连接等待超时（毫秒），负数表示不限制。
+ * @param sockType 套接字类型，目前只支持 XNetwork_Tcp。
+ * @return 连接成功返回 true；当前平台或参数不支持返回 false。
+ * @note 平台内部接口，不属于 XAbstractSocket 的公开 API。
+ */
+bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* endpoint,
+                                 XNetworkLocalStreamType streamType,
+                                 int timeoutMs,
+                                 XNetworkSocketType sockType);
 
 /**
  * @brief 断开套接字连接

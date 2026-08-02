@@ -5,6 +5,7 @@ extern "C" {
 #endif
 #include"XClass.h"
 #include"XGui/XGuiTypes.h"
+#include "XDateTime.h"
 #include"XCompare.h"
 #include"XContainer.h"
 #include<stdio.h>
@@ -35,6 +36,9 @@ typedef enum
 	/* 自定义的数据结构 */
 	XVariantType_Pair,            ///< XPair结构体类型
 	XVariantType_Point,           ///< XPoint结构体类型
+	XVariantType_Date,            ///< XDate 日期值；按值存储。
+	XVariantType_Time,            ///< XTime 时间值；按值存储。
+	XVariantType_DateTime,        ///< XDateTime 日期时间值；按值存储。
 	XVariantType_ByteArray,       ///< XByteArray类型（字节数组）
 	XVariantType_String,          ///< XString类型（字符串）
 	XVariantType_StringList,      ///< XStringList类型（字符串列表）
@@ -228,6 +232,24 @@ XVariant* XVariant_create_Pair(const XPair* val);
 * @retval 返回新的XVariant实例，失败返回NULL
 */
 XVariant* XVariant_create_Point(XPoint val);
+/**
+ * @brief 创建存储 XDate 值的 XVariant。
+ * @param val 日期值；借用，函数按值复制，不能为 NULL。
+ * @return 新 XVariant 所有权，调用者使用 XVariant_delete_base 释放；参数无效或分配失败返回 NULL。
+*/
+XVariant* XVariant_create_Date(const XDate* val);
+/**
+ * @brief 创建存储 XTime 值的 XVariant。
+ * @param val 时间值；借用，函数按值复制，不能为 NULL。
+ * @return 新 XVariant 所有权，调用者使用 XVariant_delete_base 释放；参数无效或分配失败返回 NULL。
+*/
+XVariant* XVariant_create_Time(const XTime* val);
+/**
+ * @brief 创建存储 XDateTime 值的 XVariant。
+ * @param val 日期时间值；借用，函数按值复制，不能为 NULL。
+ * @return 新 XVariant 所有权，调用者使用 XVariant_delete_base 释放；参数无效或分配失败返回 NULL。
+*/
+XVariant* XVariant_create_DateTime(const XDateTime* val);
 /**
 * @brief 创建存储XByteArray的XVariant（复制源数据）
 * @param array: 待存储的XByteArray指针
@@ -694,6 +716,42 @@ XPair* XVariant_toPair_ref(const XVariant* var);
 */
 XPoint XVariant_toPoint(const XVariant* var);
 /**
+ * @brief 获取 XVariant 中的 XDate 值副本。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 日期值副本；类型不匹配或 var 为 NULL 时返回由 XDate_create 初始化的无效日期。
+ */
+XDate XVariant_toDate(const XVariant* var);
+/**
+ * @brief 获取 XVariant 内部 XDate 的借用指针。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 内部日期借用指针；调用者不得释放或修改，变体重设或销毁后失效；类型不匹配返回 NULL。
+ */
+XDate* XVariant_toDate_ref(const XVariant* var);
+/**
+ * @brief 获取 XVariant 中的 XTime 值副本。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 时间值副本；类型不匹配或 var 为 NULL 时返回由 XTime_create 初始化的无效时间。
+ */
+XTime XVariant_toTime(const XVariant* var);
+/**
+ * @brief 获取 XVariant 内部 XTime 的借用指针。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 内部时间借用指针；调用者不得释放或修改，变体重设或销毁后失效；类型不匹配返回 NULL。
+ */
+XTime* XVariant_toTime_ref(const XVariant* var);
+/**
+ * @brief 获取 XVariant 中的 XDateTime 值副本。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 日期时间值副本；类型不匹配或 var 为 NULL 时返回由 XDateTime_create 初始化的无效日期时间。
+ */
+XDateTime XVariant_toDateTime(const XVariant* var);
+/**
+ * @brief 获取 XVariant 内部 XDateTime 的借用指针。
+ * @param var 变体对象；借用，可为 NULL。
+ * @return 内部日期时间借用指针；调用者不得释放或修改，变体重设或销毁后失效；类型不匹配返回 NULL。
+ */
+XDateTime* XVariant_toDateTime_ref(const XVariant* var);
+/**
 * @brief 获取XVariant中XByteArray数据的指针（复制数据）
 * @param var: XVariant对象指针
 * @retval 指向XByteArray数据的指针，类型不匹配返回NULL
@@ -711,6 +769,7 @@ XByteArray* XVariant_toByteArray_ref(const XVariant* var);
 * @retval 指向XString数据的指针，类型不匹配返回NULL
 */
 XString* XVariant_toString(const XVariant* var);
+/** @brief 获取 XVariant 中 XString 的只读借用指针。 @param var 变体对象；可为 NULL。 @return 内部字符串借用指针；不得释放或修改，类型不匹配返回 NULL。 */
 const XString* XVariant_toString_const(const XVariant* var);
 /**
 * @brief 获取XVariant中XString数据的引用指针
@@ -910,52 +969,120 @@ void XVariant_setValue_int32(XVariant* var, int32_t val);
 * @param val: 64位有符号整数数据
 */
 void XVariant_setValue_int64(XVariant* var, int64_t val);
+/** @brief 设置 size_t 值。 @param var 目标变体；不能为 NULL。 @param val size_t 值。 @return 无；内存不足时保留原值。 */
 void XVariant_setValue_size_t(XVariant* var, size_t val);
+/** @brief 设置指针值。 @param var 目标变体；不能为 NULL。 @param val 指针值；不转移所指对象所有权。 @return 无。 */
 void XVariant_setValue_ptr(XVariant* var, void* val);
+/** @brief 设置单精度浮点值。 @param var 目标变体；不能为 NULL。 @param val 浮点值。 @return 无；内存不足时保留原值。 */
 void XVariant_setValue_float(XVariant* var, float val);
+/** @brief 设置双精度浮点值。 @param var 目标变体；不能为 NULL。 @param val 浮点值。 @return 无；内存不足时保留原值。 */
 void XVariant_setValue_double(XVariant* var, double val);
+/** @brief 深复制设置 XPair 值。 @param var 目标变体；不能为 NULL。 @param pair 源对象；借用，可为 NULL。 @return 无；复制失败时保留原值。 */
 void XVariant_setValue_Pair(XVariant* var, const XPair* pair);
+/** @brief 设置 XPoint 值。 @param var 目标变体；不能为 NULL。 @param val 点值。 @return 无。 */
 void XVariant_setValue_Point(XVariant* var, XPoint val);
+/**
+ * @brief 设置 XVariant 的 XDate 值。
+ * @param var 目标变体；不能为 NULL。
+ * @param val 日期值；借用，函数按值复制，可为 NULL 以设为无效日期。
+ * @return 无；分配失败时保留原有变体内容。
+ */
+void XVariant_setValue_Date(XVariant* var, const XDate* val);
+/**
+ * @brief 设置 XVariant 的 XTime 值。
+ * @param var 目标变体；不能为 NULL。
+ * @param val 时间值；借用，函数按值复制，可为 NULL 以设为无效时间。
+ * @return 无；分配失败时保留原有变体内容。
+ */
+void XVariant_setValue_Time(XVariant* var, const XTime* val);
+/**
+ * @brief 设置 XVariant 的 XDateTime 值。
+ * @param var 目标变体；不能为 NULL。
+ * @param val 日期时间值；借用，函数按值复制，可为 NULL 以设为无效日期时间。
+ * @return 无；分配失败时保留原有变体内容。
+ */
+void XVariant_setValue_DateTime(XVariant* var, const XDateTime* val);
+/** @brief 深复制设置 XByteArray。 @param var 目标变体；不能为 NULL。 @param array 源数组；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array);
+/** @brief 移动设置 XByteArray。 @param var 目标变体；不能为 NULL。 @param array 数组所有权；成功后由变体接管，失败时仍由调用者负责。 @return 无。 */
 void XVariant_setValue_ByteArray_move(XVariant* var, XByteArray* array);
+/** @brief 以引用设置 XByteArray。 @param var 目标变体；不能为 NULL。 @param array 外部数组借用指针；调用方必须保证其生命周期。 @return 无。 */
 void XVariant_setValue_ByteArray_ref(XVariant* var, XByteArray* array);
+/** @brief 复制原始字节设置 ByteArray。 @param var 目标变体；不能为 NULL。 @param data 字节数据；借用，size 为 0 时可为 NULL。 @param size 字节数。 @return 无。 */
 void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size);
+/** @brief 深复制设置 XString。 @param var 目标变体；不能为 NULL。 @param str 源字符串；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_String(XVariant* var, const XString* str);
+/** @brief 移动设置 XString。 @param var 目标变体；不能为 NULL。 @param str 字符串所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_String_move(XVariant* var, XString* str);
+/** @brief 以引用设置 XString。 @param var 目标变体；不能为 NULL。 @param str 外部字符串借用指针；调用方必须保证生命周期。 @return 无。 */
 void XVariant_setValue_String_ref(XVariant* var, XString* str);
+/** @brief 复制 UTF-8 字符串设置值。 @param var 目标变体；不能为 NULL。 @param utf8 UTF-8 字符串；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_utf8_str(XVariant* var, const char* utf8);
+/** @brief 深复制设置字符串列表。 @param var 目标变体；不能为 NULL。 @param list 源列表；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_StringList(XVariant* var, const XStringList* list);
+/** @brief 移动设置字符串列表。 @param var 目标变体；不能为 NULL。 @param list 列表所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_StringList_move(XVariant* var, XStringList* list);
+/** @brief 以引用设置字符串列表。 @param var 目标变体；不能为 NULL。 @param list 列表借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_StringList_ref(XVariant* var, XStringList* list);
+/** @brief 深复制设置变体列表。 @param var 目标变体；不能为 NULL。 @param list 源列表；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_list(XVariant* var, const XVariantList* list);
+/** @brief 移动设置变体列表。 @param var 目标变体；不能为 NULL。 @param list 列表所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_list_move(XVariant* var, XVariantList* list);
+/** @brief 以引用设置变体列表。 @param var 目标变体；不能为 NULL。 @param list 列表借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_list_ref(XVariant* var, XVariantList* list);
+/** @brief 深复制设置变体映射。 @param var 目标变体；不能为 NULL。 @param map 源映射；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_map(XVariant* var, const XVariantMap* map);
+/** @brief 移动设置变体映射。 @param var 目标变体；不能为 NULL。 @param map 映射所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_map_move(XVariant* var, XVariantMap* map);
+/** @brief 以引用设置变体映射。 @param var 目标变体；不能为 NULL。 @param map 映射借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map);
+/** @brief 深复制设置变体哈希表。 @param var 目标变体；不能为 NULL。 @param hash 源哈希表；借用，可为 NULL。 @return 无。 */
 void XVariant_setValue_hash(XVariant* var, const XVariantHashMap* hash);
+/** @brief 移动设置变体哈希表。 @param var 目标变体；不能为 NULL。 @param hash 哈希表所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_hash_move(XVariant* var, XVariantHashMap* hash);
+/** @brief 以引用设置变体哈希表。 @param var 目标变体；不能为 NULL。 @param hash 哈希表借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash);
+/** @brief 深复制设置 JSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档借用指针。 @return 无。 */
 void XVariant_setValue_JsonDocument(XVariant* var, const XJsonDocument* doc);
+/** @brief 移动设置 JSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_JsonDocument_move(XVariant* var, XJsonDocument* doc);
+/** @brief 以引用设置 JSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_JsonDocument_ref(XVariant* var, XJsonDocument* doc);
+/** @brief 深复制设置 JSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组借用指针。 @return 无。 */
 void XVariant_setValue_JsonArray(XVariant* var, const XJsonArray* arr);
+/** @brief 移动设置 JSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_JsonArray_move(XVariant* var, XJsonArray* arr);
+/** @brief 以引用设置 JSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_JsonArray_ref(XVariant* var, XJsonArray* arr);
+/** @brief 深复制设置 JSON 对象。 @param var 目标变体；不能为 NULL。 @param obj 对象借用指针。 @return 无。 */
 void XVariant_setValue_JsonObject(XVariant* var, const XJsonObject* obj);
+/** @brief 移动设置 JSON 对象。 @param var 目标变体；不能为 NULL。 @param obj 对象所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_JsonObject_move(XVariant* var, XJsonObject* obj);
+/** @brief 以引用设置 JSON 对象。 @param var 目标变体；不能为 NULL。 @param obj 对象借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_JsonObject_ref(XVariant* var, XJsonObject* obj);
+/** @brief 深复制设置 JSON 值。 @param var 目标变体；不能为 NULL。 @param val 值借用指针。 @return 无。 */
 void XVariant_setValue_JsonValue(XVariant* var, const XJsonValue* val);
+/** @brief 移动设置 JSON 值。 @param var 目标变体；不能为 NULL。 @param val 值所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_JsonValue_move(XVariant* var, XJsonValue* val);
+/** @brief 以引用设置 JSON 值。 @param var 目标变体；不能为 NULL。 @param val 值借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_JsonValue_ref(XVariant* var, XJsonValue* val);
+/** @brief 深复制设置 BSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档借用指针。 @return 无。 */
 void XVariant_setValue_BsonDocument(XVariant* var, const XBsonDocument* doc);
+/** @brief 移动设置 BSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_BsonDocument_move(XVariant* var, XBsonDocument* doc);
+/** @brief 以引用设置 BSON 文档。 @param var 目标变体；不能为 NULL。 @param doc 文档借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_BsonDocument_ref(XVariant* var, XBsonDocument* doc);
+/** @brief 深复制设置 BSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组借用指针。 @return 无。 */
 void XVariant_setValue_BsonArray(XVariant* var, const XBsonArray* arr);
+/** @brief 移动设置 BSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_BsonArray_move(XVariant* var, XBsonArray* arr);
+/** @brief 以引用设置 BSON 数组。 @param var 目标变体；不能为 NULL。 @param arr 数组借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_BsonArray_ref(XVariant* var, XBsonArray* arr);
+/** @brief 深复制设置 BSON 值。 @param var 目标变体；不能为 NULL。 @param val 值借用指针。 @return 无。 */
 void XVariant_setValue_BsonValue(XVariant* var, const XBsonValue* val);
+/** @brief 移动设置 BSON 值。 @param var 目标变体；不能为 NULL。 @param val 值所有权；成功后由变体接管。 @return 无。 */
 void XVariant_setValue_BsonValue_move(XVariant* var, XBsonValue* val);
+/** @brief 以引用设置 BSON 值。 @param var 目标变体；不能为 NULL。 @param val 值借用指针；调用方保证生命周期。 @return 无。 */
 void XVariant_setValue_BsonValue_ref(XVariant* var, XBsonValue* val);
 /**
 * @brief 设置XVariant的值为布尔值
@@ -987,21 +1114,45 @@ void XVariant_setValue_int(XVariant* var, int val);
  * @return 有效返回true，无效返回false
  */
 bool XVariant_isValid(const XVariant* var);
+/** @brief 清空变体并恢复 NULL 类型。 @param var 变体对象；不能为 NULL。 @return 无；原有数据释放。 */
 void XVariant_clear(XVariant* var);
+/** @brief 交换两个变体内容。 @param var 左变体；不能为 NULL。 @param other 右变体；不能为 NULL。 @return 无。 */
 void XVariant_swap(XVariant* var, XVariant* other);
+/** @brief 获取变体类型。 @param var 变体对象；可为 NULL。 @return XVariantType 编号；NULL 返回 XVariantType_NULL。 */
 int XVariant_type(XVariant* var);
+/** @brief 获取变体类型名称。 @param var 变体对象；可为 NULL。 @return 库静态持有的 UTF-8 名称；调用者不得释放。 */
 const char* XVariant_typeName(XVariant* var);
+/** @brief 比较两个变体。 @param var 左变体；可为 NULL。 @param cmp 右变体；可为 NULL。 @return 按库比较约定返回负数、0 或正数。 */
 int32_t XVariant_compare(XVariant* var, XVariant* cmp);
+/** @brief 注册用户类型名称。 @param type 用户类型编号。 @param typeName UTF-8 名称；借用并由注册表复制，可为 NULL。 @return 无。 */
 void XVariant_setUserTypeName(int type, const char* typeName);
+/** @brief 删除用户类型属性。 @param type 用户类型编号。 @return 无；不存在时不产生作用。 */
 void XVariant_removeUserTypeProperty(int type);
+/** @brief 注册用户类型比较函数。 @param type 用户类型编号。 @param compare 比较回调；借用，可为 NULL 以清除。 @return 无。 */
 void XVariant_setUserCompare(int type, XCompare compare);
+/**
+ * @brief 注册用户类型数据生命周期回调。
+ * @param type 用户类型编号。
+ * @param copyMethod 深复制回调；可为 NULL。
+ * @param moveMethod 移动回调；可为 NULL。
+ * @param clearMethod 清理内容回调；可为 NULL。
+ * @param deinitMethod 反初始化回调；可为 NULL。
+ * @return 无；回调由注册表借用，必须保持有效。
+ */
 void XVariant_setUserDataMethod(int type, XCDataCopyMethod copyMethod, XCDataMoveMethod moveMethod, XCDataClearMethod clearMethod, XCDataDeinitMethod deinitMethod);
+/** @brief 获取内部数据指针。 @param var 变体对象；可为 NULL。 @return 内部数据借用指针；不得释放，变体重设或销毁后失效。 */
 void* XVariant_data(XVariant* var);
+/** @brief 获取内部数据大小。 @param var 变体对象；可为 NULL。 @return 数据字节数；NULL 返回 0。 */
 size_t XVariant_dataSize(XVariant* var);
+/** @brief 深复制既有变体。 @param var 目标变体；不能为 NULL。 @param other 源变体；借用，不能为 NULL。 @return 基础复制入口返回值由 XClass 约定。 */
 #define XVariant_copy_base			XClass_copy_base
+/** @brief 移动既有变体。 @param var 目标变体；不能为 NULL。 @param other 源变体；借用，不能为 NULL。 @return 基础移动入口返回值由 XClass 约定。 */
 #define XVariant_move_base			XClass_move_base
+/** @brief 反初始化变体并释放其内部数据。 @param var 变体对象；不能为 NULL。 @return 无。 */
 #define XVariant_deinit_base		XClass_deinit_base
+/** @brief 释放由 XVariant_create 系列函数返回的变体。 @param var 变体对象所有权。 @return 无。 */
 #define XVariant_delete_base		XClass_delete_base
+/** @brief 取出变体内部数据并按指定类型解引用；仅适用于类型已确认的对象。 */
 #define XVariant_Value(Var,Type)   (*((Type*)XVariant_data(Var)))
 
 #ifdef __cplusplus

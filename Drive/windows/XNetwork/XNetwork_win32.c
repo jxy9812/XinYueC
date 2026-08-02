@@ -144,12 +144,12 @@ static HANDLE iocp_get(void)
     return g_iocp;
 }
 
-static bool iocp_assoc(SOCKET s, XObject* key)
+static bool iocp_assoc(HANDLE handle, XObject* key)
 {
     HANDLE h = iocp_get();
     if (!h) return false;
     //XPrintf("帮:%p\n",key);
-    return CreateIoCompletionPort((HANDLE)s, h, (ULONG_PTR)key, 0) != NULL;
+    return CreateIoCompletionPort(handle, h, (ULONG_PTR)key, 0) != NULL;
 }
 
 /* =========================================================================
@@ -264,6 +264,7 @@ char* XNetwork_errorString(int errorCode)
 typedef struct XNetworkSocketPrivateWin32 {
     XNetworkSocketPrivate base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
     SOCKET socket;                          ///< Windows SOCKET 句柄
+    HANDLE namedPipe;                       ///< Windows named-pipe 流句柄
 
     /* 状态标志 */
     bool readPending;
@@ -311,6 +312,12 @@ typedef struct XNetworkSocketPrivateWin32 {
 
 /* 便捷转换宏 */
 #define W32(p) ((XNetworkSocketPrivateWin32*)(p))
+
+static bool w32_has_stream_handle(const XNetworkSocketPrivateWin32* priv)
+{
+    return priv && (priv->socket != INVALID_SOCKET
+                    || priv->namedPipe != INVALID_HANDLE_VALUE);
+}
 
 static void destroySocketPrivate(XNetworkSocketPrivateWin32* p)
 {
@@ -395,6 +402,7 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
     if (!p) return NULL;
 
     p->socket = INVALID_SOCKET;
+    p->namedPipe = INVALID_HANDLE_VALUE;
     p->acceptSocket = INVALID_SOCKET;
     p->serverFd = XFD_INVALID;
     p->base.owner = owner;
@@ -449,7 +457,9 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
 
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
 {
-    return priv ? (intptr_t)W32(priv)->socket : -1;
+    if (!priv) return -1;
+    return W32(priv)->namedPipe != INVALID_HANDLE_VALUE
+        ? (intptr_t)W32(priv)->namedPipe : (intptr_t)W32(priv)->socket;
 }
 
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
@@ -463,15 +473,31 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
 static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
 {
     XNetworkSocketPrivateWin32* p = W32(priv);
-    if (!p || p->readPending || p->socket == INVALID_SOCKET) return;
+    if (!p || p->readPending || !w32_has_stream_handle(p)) return;
     (void)isUdp;
 
     memset(&p->readContext, 0, sizeof(XEventContext_IOCP));
     p->readContext.base.type = XEventContextType_Type_Socket;
     p->readContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
-    p->readContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+    p->readContext.socket = XSocketDescriptor_fromIntptr(
+        p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
     p->readContext.eventMask = FD_READ;
     trackSocketIocpOperation(p, &p->readContext);
+
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        DWORD bytesTransferred = 0;
+        if (ReadFile(p->namedPipe, p->readBuffer, XNETWORK_READ_BUFFER_SIZE,
+                     &bytesTransferred, (OVERLAPPED*)&p->readContext)) {
+            p->readContext.finishedBytes = bytesTransferred;
+            p->readPending = true;
+        } else if (GetLastError() == ERROR_IO_PENDING) {
+            p->readPending = true;
+        } else {
+            p->readPending = false;
+            abandonSocketIocpOperation(p, &p->readContext);
+        }
+        return;
+    }
 
     WSABUF buf;
     buf.buf = p->readBuffer;
@@ -518,7 +544,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
 {
     XNetworkSocketPrivateWin32* p = W32(priv);
-    if (!p || p->writePending || p->socket == INVALID_SOCKET) return;
+    if (!p || p->writePending || !w32_has_stream_handle(p)) return;
     if (len <= 0 || len > XNETWORK_WRITE_BUFFER_SIZE) return;
     (void)destAddr; (void)destPort; (void)isUdp;
 
@@ -527,10 +553,26 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     memset(&p->writeContext, 0, sizeof(XEventContext_IOCP));
     p->writeContext.base.type = XEventContextType_Type_Socket;
     p->writeContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
-    p->writeContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+    p->writeContext.socket = XSocketDescriptor_fromIntptr(
+        p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
     p->writeContext.eventMask = FD_WRITE;
     p->writeContext.finishedBytes = len;
     trackSocketIocpOperation(p, &p->writeContext);
+
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        DWORD bytesTransferred = 0;
+        if (WriteFile(p->namedPipe, p->writeBuffer, (DWORD)len,
+                      &bytesTransferred, (OVERLAPPED*)&p->writeContext)) {
+            p->writeContext.finishedBytes = bytesTransferred;
+            p->writePending = true;
+        } else if (GetLastError() == ERROR_IO_PENDING) {
+            p->writePending = true;
+        } else {
+            p->writePending = false;
+            abandonSocketIocpOperation(p, &p->writeContext);
+        }
+        return;
+    }
     WSABUF buf;
     buf.buf = p->writeBuffer;
     buf.len = (ULONG)len;
@@ -740,6 +782,67 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     return true;
 }
 
+bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* pipePath,
+                                 XNetworkLocalStreamType streamType,
+                                 int timeoutMs,
+                                 XNetworkSocketType sockType)
+{
+    XNetworkSocketPrivateWin32* p;
+    const char* pathText;
+    char fullPath[512];
+    HANDLE handle;
+    DWORD mode = PIPE_READMODE_BYTE;
+    XFd xfd;
+
+    if (!priv || !pipePath || streamType != XNetwork_LocalStream_NamedPipe
+        || sockType != XNetwork_Tcp) return false;
+    pathText = XString_toUtf8(pipePath);
+    if (!pathText || !pathText[0]) return false;
+    if (strncmp(pathText, "\\\\.\\pipe\\", 9) == 0) {
+        if (snprintf(fullPath, sizeof(fullPath), "%s", pathText) >= (int)sizeof(fullPath))
+            return false;
+    } else if (snprintf(fullPath, sizeof(fullPath), "\\\\.\\pipe\\%s", pathText)
+               >= (int)sizeof(fullPath)) {
+        return false;
+    }
+
+    p = W32(priv);
+    XNetwork_socketDisconnect(priv);
+    handle = CreateFileA(fullPath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+    if (handle == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY) {
+        if (!WaitNamedPipeA(fullPath, timeoutMs < 0 ? NMPWAIT_WAIT_FOREVER
+                                                    : (DWORD)timeoutMs)) return false;
+        handle = CreateFileA(fullPath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+    }
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    if (!SetNamedPipeHandleState(handle, &mode, NULL, NULL)
+        || !iocp_assoc(handle, (XObject*)priv->owner)) {
+        CloseHandle(handle);
+        return false;
+    }
+
+    p->namedPipe = handle;
+    p->connected = true;
+    p->connectPending = false;
+    p->readPending = false;
+    p->writePending = false;
+    xfd = XIODevice_fd((XIODevice*)priv->owner);
+    if (xfd == XFD_INVALID) {
+        xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        if (xfd == XFD_INVALID) {
+            CloseHandle(p->namedPipe);
+            p->namedPipe = INVALID_HANDLE_VALUE;
+            p->connected = false;
+            return false;
+        }
+        XIODevice_setFd((XIODevice*)priv->owner, xfd);
+    }
+    startAsyncRead(priv, false);
+    return true;
+}
+
 void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
 {
     if (!priv) return;
@@ -749,6 +852,11 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
         CancelIoEx((HANDLE)p->socket, NULL);
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
+    }
+    if (p->namedPipe != INVALID_HANDLE_VALUE) {
+        CancelIoEx(p->namedPipe, NULL);
+        CloseHandle(p->namedPipe);
+        p->namedPipe = INVALID_HANDLE_VALUE;
     }
     p->connected = false;
     p->connectPending = false;
@@ -761,7 +869,7 @@ int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
 {
     if (!priv || !buf || len <= 0) return -1;
     XNetworkSocketPrivateWin32* p = W32(priv);
-    if (p->socket == INVALID_SOCKET) return -1;
+    if (!w32_has_stream_handle(p)) return -1;
 
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
@@ -780,7 +888,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
 {
     if (!priv || !buf || len <= 0) return -1;
     XNetworkSocketPrivateWin32* p = W32(priv);
-    if (p->socket == INVALID_SOCKET) return -1;
+    if (!w32_has_stream_handle(p)) return -1;
 
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
@@ -1767,7 +1875,7 @@ void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ring
 {
     if (!priv || !ringBuffer) return;
     XNetworkSocketPrivateWin32* p = W32(priv);
-    if (p->writePending || p->socket == INVALID_SOCKET) return;
+    if (p->writePending || !w32_has_stream_handle(p)) return;
     struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
     size_t pending = XRingBuffer_available(rb);
     if (pending == 0) return;

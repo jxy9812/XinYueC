@@ -1,7 +1,11 @@
-﻿// XSslSocket.h
-// Copyright (C) 2026 Your Project Authors
-// SPDX-License-Identifier: MIT OR LGPL-3.0-only
-//
+﻿/**
+ * @file       XSslSocket.h
+ * @brief      TLS 套接字类，对齐 Qt 6.8 QSslSocket。
+ * @details    XSslSocket 首成员是 XTcpSocket 基类，TLS 未启用时仍按普通套接字工作；
+ *             TLS 配置、握手和证书对象的所有权约定以本文件的 API 注释为准。
+ * @copyright  Copyright (C) 2026 Your Project Authors
+ * @license    MIT OR LGPL-3.0-only
+ */
 // C 语言模拟 Qt6.8 QSslSocket，继承自 XTcpSocket（内存布局兼容）。
 //
 // 设计原则（对齐 XTcpSocket 已有做法）：
@@ -39,6 +43,10 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XSslSocket)
 XCLASS_DEFINE_EXTEND_END(XSslSocket, XAbstractSocket)
 
+/**
+ * @brief 初始化 XSslSocket 虚函数表。
+ * @return 进程内共享虚函数表；初始化失败返回 NULL，调用者不得释放成功返回值。
+ */
 XVtable* XSslSocket_class_init(void);
 
 /* =============== 枚举（对齐 QSslSocket 语义） ============ */
@@ -54,9 +62,11 @@ typedef enum XSslSocket_SslMode {
 
 /* =============== 结构体（前向，实现私有） =============== */
 
+/** @brief XSslSocket 的不透明声明；完整布局只在实现文件可见。 */
 typedef struct XSslSocket XSslSocket;
 
 /* =============== 前向声明（对齐 Qt 6.8 QSslConfiguration） =============== */
+/** @brief TLS 配置快照的不透明声明；由 XSslConfiguration_* API 管理。 */
 typedef struct XSslConfiguration XSslConfiguration;
 
 /* =============== 生命周期 =============== */
@@ -73,7 +83,7 @@ void XSslSocket_init(XSslSocket* self);
 XSslSocket* XSslSocket_create(void);
 
 /* 继承自 XObject 的生命周期 */
-/** 延迟销毁对象，对齐 QSslSocket::deleteLater()。 */
+/** @brief 延迟销毁对象，对齐 QSslSocket::deleteLater()；self 由宏参数隐含传入。 */
 #define XSslSocket_deleteLater              XObject_deleteLater
 
 /* =============== 继承自 XTcpSocket / XAbstractSocket / XIODevice 的 API
@@ -234,6 +244,14 @@ void         XSslSocket_setProtocol(XSslSocket* self, XSslProtocol protocol);
 XSslProtocol XSslSocket_protocol(const XSslSocket* self);
 
 /**
+ * @brief 设置允许的 TLS 密码套件列表。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param cipherSuites 密码套件名称列表；借用并复制，可为 NULL 以清除自定义列表。
+ * @return 设置成功返回 true；握手已开始、对象无效或内存不足返回 false。
+ */
+bool XSslSocket_setCipherSuites(XSslSocket* self, const XString* cipherSuites);
+
+/**
  * @brief 设置本地证书。
  * @param self XSslSocket 实例指针
  * @param cert 本地证书对象，传入后所有权转移给 self
@@ -246,7 +264,13 @@ void                XSslSocket_setLocalCertificate(XSslSocket* self, XSslCertifi
  */
 XSslCertificate*    XSslSocket_localCertificate(const XSslSocket* self);
 
-/** 对齐 QSslSocket::setLocalCertificate(fileName, format) —— 从文件加载证书。 */
+/**
+ * @brief 从文件加载并设置本地证书，对齐 QSslSocket::setLocalCertificate(fileName, format)。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param fileName 证书文件名；借用，调用期间有效，不能为 NULL。
+ * @param format 文件编码格式。
+ * @return 无；加载失败时保留原证书。
+ */
 void XSslSocket_setLocalCertificate_2(XSslSocket* self, const XString* fileName, XSslEncodingFormat format);
 
 /**
@@ -262,13 +286,50 @@ void      XSslSocket_setPrivateKey(XSslSocket* self, XSslKey* key);
  */
 XSslKey*  XSslSocket_privateKey(const XSslSocket* self);
 
-/** 对齐 QSslSocket::setPrivateKey(fileName, algo, format, passPhrase) —— 从文件加载私钥。 */
+/**
+ * @brief 从文件加载并设置私钥，对齐 QSslSocket::setPrivateKey(fileName, algo, format, passPhrase)。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param fileName 私钥文件名；借用，调用期间有效，不能为 NULL。
+ * @param algo 私钥算法。
+ * @param fmt 文件编码格式。
+ * @param passPhrase 私钥口令；借用，可为 NULL，不由套接字保存。
+ * @return 无；加载失败时保留原私钥。
+ */
 void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
                                 XSslKeyAlgorithm algo, XSslEncodingFormat fmt,
                                 const XByteArray* passPhrase);
 
-/** 追加 CA 证书用于校验对端。可多次调用累积。 */
+/**
+ * @brief 追加 CA 证书用于校验对端。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param ca CA 证书；借用，当前实现保存指针并在套接字生命周期内使用，不能为 NULL。
+ * @return 无；握手已开始、参数无效或内存不足时不修改 CA 列表。
+ */
 void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca);
+
+/**
+ * @brief 设置 CA 证书目录。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param path 目录路径；借用并复制，可为 NULL 以清除目录。
+ * @return 成功返回 true；握手已开始或复制失败返回 false。
+ */
+bool XSslSocket_setCaPath(XSslSocket* self, const XString* path);
+
+/**
+ * @brief 设置 TLS 对端证书吊销列表文件。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param path CRL 文件路径；借用并复制，不能为 NULL 或空字符串。
+ * @return 成功返回 true；握手已开始、路径无效或复制失败返回 false。
+ */
+bool XSslSocket_setCrlFile(XSslSocket* self, const XString* path);
+
+/**
+ * @brief 设置 TLS 对端证书吊销列表目录。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param path CRL 目录路径；借用并复制，不能为 NULL 或空字符串。
+ * @return 成功返回 true；握手已开始、路径无效或复制失败返回 false。
+ */
+bool XSslSocket_setCrlPath(XSslSocket* self, const XString* path);
 
 /**
  * @brief 设置对端证书验证模式。
@@ -342,17 +403,34 @@ XString* XSslSocket_sessionCipher(const XSslSocket* self);   /* cipher suite nam
  * @return 成功返回 true；TLS 会话开始后返回 false。
  */
 bool XSslSocket_setAllowedNextProtocols(XSslSocket* self, const XVector* protocols);
-/** @param self XSslSocket 实例；可为 NULL。 @return 允许协议深拷贝列表。 */
+/**
+ * @brief 获取 TLS ALPN 允许协议列表副本。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 新 XVector 所有权，元素为新 XByteArray 指针；调用者负责释放元素和容器；失败返回 NULL。
+ */
 XVector* XSslSocket_allowedNextProtocols(const XSslSocket* self);
-/** @param self XSslSocket 实例；可为 NULL。 @return 协商协议副本，未协商返回 NULL。 */
+/**
+ * @brief 获取 TLS 协商出的 ALPN 协议副本。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 新 XByteArray 所有权；调用者使用 XByteArray_delete_base 释放，未协商返回 NULL。
+ */
 XByteArray* XSslSocket_nextNegotiatedProtocol(const XSslSocket* self);
-/** @param self XSslSocket 实例；可为 NULL。 @return ALPN 协商状态。 */
+/**
+ * @brief 获取 ALPN 协商状态。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 协商状态；self 为 NULL 时返回 XSSL_NextProtocolNegotiationNone。
+ */
 XSslNextProtocolNegotiationStatus XSslSocket_nextProtocolNegotiationStatus(
     const XSslSocket* self);
 
 /* --- 同步等待（QSslSocket 新增的加密等待） --- */
 
-/** 对齐 QSslSocket::waitForEncrypted()。默认 30000ms（Qt 默认）。 */
+/**
+ * @brief 等待 TLS 握手完成，对齐 QSslSocket::waitForEncrypted()。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param msecs 等待毫秒数；负值使用平台默认，默认调用方应传 30000。
+ * @return 已进入加密状态返回 true；超时、连接关闭或握手失败返回 false。
+ */
 bool XSslSocket_waitForEncrypted(XSslSocket* self, int msecs);
 
 /* 其它 waitFor* 直接沿用父类：waitForConnected / waitForReadyRead /
@@ -387,38 +465,85 @@ void* XSslSocket_encryptedBytesWritten_signal(XSslSocket* self, int64_t bytes);
 
 // =============== Qt 6.8 API 对齐（补齐） ===============
 
-/** encryptedBytesAvailable —— 底层 TCP 已接收但尚未被 TLS 解密的字节数。 */
+/**
+ * @brief 获取底层 TCP 已接收但尚未被 TLS 解密的字节数。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 密文字节数；self 为 NULL 时返回 0。
+ */
 int64_t XSslSocket_encryptedBytesAvailable(const XSslSocket* self);
-/** encryptedBytesToWrite —— 已进入 TLS 但尚未写到底层 TCP 的字节数。 */
+/**
+ * @brief 获取已进入 TLS 但尚未写到底层 TCP 的密文字节数。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 待写密文字节数；self 为 NULL 时返回 0。
+ */
 int64_t XSslSocket_encryptedBytesToWrite(const XSslSocket* self);
 
-/** 设置本地证书链（首元素等价于 setLocalCertificate）。self 拥有传入 XVector 的所有权。 */
+/**
+ * @brief 设置本地证书链。
+ * @param self TLS 套接字；不能为 NULL。
+ * @param chain 证书链容器；转移所有权，可为 NULL 以清除；元素所有权也随容器转移。
+ * @return 无；旧证书链立即释放。
+ */
 void XSslSocket_setLocalCertificateChain(XSslSocket* self, XVector* chain);
-/** 获取本地证书链（可能为 NULL）。 */
+/**
+ * @brief 获取本地证书链借用指针。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 套接字拥有的证书链；调用者不得释放或修改，套接字重设或销毁后失效。
+ */
 XVector* XSslSocket_localCertificateChain(const XSslSocket* self);
 
-/** 握手完成后的对端证书；未连接返回 NULL。 */
+/**
+ * @brief 获取握手完成后的对端叶证书借用指针。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 套接字拥有的证书指针；调用者不得释放，未连接或无证书返回 NULL。
+ */
 XSslCertificate* XSslSocket_peerCertificate(const XSslSocket* self);
-/** 对端证书链（叶证书在首）。 */
+/**
+ * @brief 获取对端证书链借用指针，叶证书位于首元素。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 套接字拥有的容器；调用者不得释放或修改，下一次握手或销毁后失效。
+ */
 XVector*         XSslSocket_peerCertificateChain(const XSslSocket* self);
 
-/** 握手期间收集到的 TLS 错误（每个元素为 int 错误码）。 */
+/**
+ * @brief 获取握手期间收集的 TLS 错误借用容器。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 套接字拥有的错误列表；元素为 int 错误码，调用者不得释放或修改。
+ */
 XVector* XSslSocket_sslHandshakeErrors(const XSslSocket* self);
 
-/** 忽略指定的一组 SSL 错误（对齐 QSslSocket::ignoreSslErrors(QList<QSslError>&)）。 */
+/**
+ * @brief 忽略指定的一组 SSL 错误，对齐 QSslSocket::ignoreSslErrors(QList<QSslError>&)。
+ * @param self TLS 套接字；可为 NULL。
+ * @param errors 错误列表；借用，可为 NULL；当前实现记录忽略意图而不逐项筛选。
+ * @return 无；握手继续时使用该忽略策略。
+ */
 void XSslSocket_ignoreSslErrors_2(XSslSocket* self, const XVector* errors);
-/** 恢复被 emit sslErrors 中断的握手（对齐 QSslSocket::continueInterruptedHandshake）。 */
+/**
+ * @brief 恢复被 sslErrors 中断的握手。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 无；没有待恢复握手时不产生作用。
+ */
 void XSslSocket_continueInterruptedHandshake(XSslSocket* self);
 
-/** 获取 OCSP 装订响应列表（对齐 QSslSocket::ocspResponses()）。 */
+/**
+ * @brief 获取 OCSP 装订响应列表，对齐 QSslSocket::ocspResponses()。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 新列表所有权；当前 mbedTLS 后端未提供响应时返回 NULL，调用者负责释放非 NULL 返回值。
+ */
 XVector* XSslSocket_ocspResponses(const XSslSocket* self);
 
-/** 获取/设置 SSL 配置快照（对齐 QSslSocket::sslConfiguration / setSslConfiguration）。 */
+/**
+ * @brief 获取 SSL 配置快照，对齐 QSslSocket::sslConfiguration()。
+ * @param self TLS 套接字；可为 NULL。
+ * @return 新配置所有权；调用者使用 XSslConfiguration_delete 释放，失败返回 NULL。
+ */
 XSslConfiguration* XSslSocket_sslConfiguration(const XSslSocket* self);
 /**
  * @brief 设置 SSL 配置快照（对齐 QSslSocket::setSslConfiguration）。
- * @param self   XSslSocket 实例指针
- * @param config SSL 配置对象的指针，传入后所有权不转移
+ * @param self   TLS 套接字；不能为 NULL。
+ * @param config SSL 配置快照；借用，函数复制配置内容，不转移所有权，不能为 NULL。
+ * @return 无；配置复制失败时保留原配置。
  */
 void XSslSocket_setSslConfiguration(XSslSocket* self, const XSslConfiguration* config);
 

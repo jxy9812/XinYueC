@@ -1,4 +1,5 @@
 #include "XTime.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -185,13 +186,29 @@ XString* XTime_toString_format(const XTime* time, const char* format) {
 }
 
 XTime XTime_fromString_format(const char* str, const char* format) {
-    // 此处为简化实现，仅支持 "HH:mm:ss" 格式
-    if (!str || !format) return XTime_create();
+    const char* fraction;
     int hour, minute, second;
+    int msec = 0;
+    int digits = 0;
+    int fractionValue = 0;
+    if (!str || !format) return XTime_create();
     if (sscanf(str, "%d:%d:%d", &hour, &minute, &second) != 3) {
         return XTime_create();
     }
-    return XTime_create_time(hour, minute, second, 0);
+    fraction = strchr(str, '.');
+    if (fraction) {
+        ++fraction;
+        while (isdigit((unsigned char)fraction[digits]) && digits < 6) {
+            fractionValue = fractionValue * 10 + fraction[digits] - '0';
+            ++digits;
+        }
+        while (digits < 3) {
+            fractionValue *= 10;
+            ++digits;
+        }
+        msec = fractionValue / (digits > 3 ? 1000 : 1);
+    }
+    return XTime_create_time(hour, minute, second, msec);
 }
 
 int XTime_msecsSinceStartOfDay(const XTime* time) {

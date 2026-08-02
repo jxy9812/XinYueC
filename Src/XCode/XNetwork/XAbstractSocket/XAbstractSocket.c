@@ -1048,6 +1048,28 @@ void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAd
     XString_delete_base(s);
 }
 
+bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
+                                                const XString* endpoint,
+                                                XNetworkLocalStreamType streamType,
+                                                int timeoutMs)
+{
+    const char* path;
+    if (!sock || !endpoint || XString_length_base(endpoint) == 0) return false;
+    path = XString_toUtf8(endpoint);
+    if (!path || !XNetwork_socketConnectLocal(getPriv(sock), endpoint, streamType, timeoutMs,
+                                               toNetworkSockType(sock->socketType))) {
+        XAbstractSocket_setSocketError(sock, XAbstractSocket_OperationError,
+                                       "Local stream connection failed");
+        XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
+        return false;
+    }
+    XAbstractSocket_setPeerName(sock, path);
+    XAbstractSocket_setPeerPort(sock, 0);
+    XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
+    sock->isValidFlag = true;
+    return true;
+}
+
 // ==================== Qt6 对齐：代理认证信号 ====================
 void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, XNetworkProxy* proxy, void* authenticator)
 {

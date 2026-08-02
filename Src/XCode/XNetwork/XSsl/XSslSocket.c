@@ -44,12 +44,16 @@ struct XSslSocket {
 
     XSslSession*         session;          /* TLS 会话（mbedTLS 后端），自持有 */
     XSslProtocol         protocol;
+    XString*             cipherSuites;    /* TLS 密码套件列表，自持有 */
     XSslPeerVerifyMode   verifyMode;
     int                  peerVerifyDepth;
     XString*             peerVerifyName;   /* 期望的对端名称（SNI/主机名校验） */
     XSslCertificate*     localCert;        /* 外部引用，不持有 */
     XSslKey*             privateKey;       /* 外部引用，不持有 */
-    XSslCertificate*     caCert;           /* 外部引用，不持有；MVP 仅支持单个 CA */
+    XVector*             caCertificates;  /* XSslCertificate*，外部引用 */
+    XString*             caPath;          /* CA 目录，自持有 */
+    XString*             crlFile;         /* CRL 文件，自持有 */
+    XString*             crlPath;         /* CRL 目录，自持有 */
 
     XSslSocket_SslMode   mode;
     bool                 encrypted;        /* 握手是否完成 */
@@ -172,11 +176,32 @@ static bool xssl_ensure_session(XSslSocket* self, bool isServer) {
         const char* n = XString_toUtf8(self->peerVerifyName);
         XSsl_sessionSetHostname(self->session, n);
     }
+    if (self->cipherSuites
+        && !XSsl_sessionSetCipherSuites(self->session, XString_toUtf8(self->cipherSuites)))
+        return false;
     if (self->localCert && self->privateKey) {
         XSsl_sessionSetCertificate(self->session, self->localCert, self->privateKey);
     }
-    if (self->caCert) {
-        XSsl_sessionAddCaCertificate(self->session, self->caCert);
+    if (self->caCertificates) {
+        size_t count = XContainer_size_base((const XContainer*)self->caCertificates);
+        for (size_t i = 0; i < count; ++i) {
+            XSslCertificate** slot = (XSslCertificate**)XVector_at_base(
+                self->caCertificates, (int64_t)i);
+            if (!slot || !*slot || !XSsl_sessionAddCaCertificate(self->session, *slot))
+                return false;
+        }
+    }
+    if (self->caPath
+        && !XSsl_sessionAddCaPath(self->session, XString_toUtf8(self->caPath))) {
+        return false;
+    }
+    if (self->crlFile
+        && !XSsl_sessionAddCrlFile(self->session, XString_toUtf8(self->crlFile))) {
+        return false;
+    }
+    if (self->crlPath
+        && !XSsl_sessionAddCrlPath(self->session, XString_toUtf8(self->crlPath))) {
+        return false;
     }
     if (self->allowedNextProtocols &&
         !XSsl_sessionSetAllowedNextProtocols(self->session, self->allowedNextProtocols))
@@ -414,6 +439,11 @@ static void xssl_v_deinit(XClass* obj) {
     XSslSocket* self = (XSslSocket*)obj;
     if (self->session)         { XSsl_sessionDestroy(self->session); self->session = NULL; }
     if (self->peerVerifyName)  { XString_delete_base(self->peerVerifyName); self->peerVerifyName = NULL; }
+    if (self->cipherSuites)    { XString_delete_base(self->cipherSuites); self->cipherSuites = NULL; }
+    if (self->caCertificates)  { XVector_delete_base((XContainer*)self->caCertificates); self->caCertificates = NULL; }
+    if (self->caPath)          { XString_delete_base(self->caPath); self->caPath = NULL; }
+    if (self->crlFile)         { XString_delete_base(self->crlFile); self->crlFile = NULL; }
+    if (self->crlPath)         { XString_delete_base(self->crlPath); self->crlPath = NULL; }
     if (self->peerCertChain)   { XVector_delete_base((XContainer*)self->peerCertChain);   self->peerCertChain = NULL; }
     if (self->localCertChain)  { XVector_delete_base((XContainer*)self->localCertChain);  self->localCertChain = NULL; }
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
@@ -431,7 +461,7 @@ static void xssl_v_deinit(XClass* obj) {
     }
     if (self->encRxBuf) { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = NULL;/*(struct XRingBuffer*)XRingBuffer_create(16384);*/ }
     if (self->encTxBuf) { XRingBuffer_delete_base((XContainer*)self->encTxBuf); self->encTxBuf = NULL; }
-    /* localCert/privateKey/caCert 为外部引用，本类不持有 */
+    /* localCert/privateKey/CA 证书均为外部引用，本类不持有。 */
     XClass_Deinit_Parent(XAbstractSocket, self);
 }
 
@@ -594,12 +624,16 @@ void XSslSocket_init(XSslSocket* self)
 
     self->session = NULL;
     self->protocol = XSSL_SecureProtocols;
+    self->cipherSuites = NULL;
     self->verifyMode = XSSL_VerifyPeer;
     self->peerVerifyDepth = 0;
     self->peerVerifyName = NULL;
     self->localCert = NULL;
     self->privateKey = NULL;
-    self->caCert = NULL;
+    self->caCertificates = NULL;
+    self->caPath = NULL;
+    self->crlFile = NULL;
+    self->crlPath = NULL;
     self->mode = XSslSocket_UnencryptedMode;
     self->encrypted = false;
     self->handshakePending = false;
@@ -638,6 +672,18 @@ void XSslSocket_setProtocol(XSslSocket* self, XSslProtocol protocol)
 XSslProtocol XSslSocket_protocol(const XSslSocket* self)
 {
     return self ? self->protocol : XSSL_SecureProtocols;
+}
+
+bool XSslSocket_setCipherSuites(XSslSocket* self, const XString* cipherSuites)
+{
+    if (!self || self->session) return false;
+    if (self->cipherSuites) {
+        XString_delete_base(self->cipherSuites);
+        self->cipherSuites = NULL;
+    }
+    if (!cipherSuites) return true;
+    self->cipherSuites = XString_create_copy(cipherSuites);
+    return self->cipherSuites != NULL;
 }
 
 bool XSslSocket_setAllowedNextProtocols(XSslSocket* self, const XVector* protocols)
@@ -728,8 +774,45 @@ XSslNextProtocolNegotiationStatus XSslSocket_nextProtocolNegotiationStatus(
 
 void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca)
 {
-    if (!self) return;
-    self->caCert = ca;
+    if (!self || !ca || self->session) return;
+    if (!self->caCertificates)
+        self->caCertificates = XVector_create(sizeof(XSslCertificate*));
+    if (self->caCertificates)
+        XVector_push_back_1_base(self->caCertificates, &ca);
+}
+
+bool XSslSocket_setCaPath(XSslSocket* self, const XString* path)
+{
+    if (!self || self->session) return false;
+    if (self->caPath) {
+        XString_delete_base(self->caPath);
+        self->caPath = NULL;
+    }
+    if (!path) return true;
+    self->caPath = XString_create_copy(path);
+    return self->caPath != NULL;
+}
+
+bool XSslSocket_setCrlFile(XSslSocket* self, const XString* path)
+{
+    if (!self || self->session || !path || XString_length_base(path) == 0) return false;
+    if (self->crlFile) {
+        XString_delete_base(self->crlFile);
+        self->crlFile = NULL;
+    }
+    self->crlFile = XString_create_copy(path);
+    return self->crlFile != NULL;
+}
+
+bool XSslSocket_setCrlPath(XSslSocket* self, const XString* path)
+{
+    if (!self || self->session || !path || XString_length_base(path) == 0) return false;
+    if (self->crlPath) {
+        XString_delete_base(self->crlPath);
+        self->crlPath = NULL;
+    }
+    self->crlPath = XString_create_copy(path);
+    return self->crlPath != NULL;
 }
 
 void XSslSocket_setPeerVerifyMode(XSslSocket* self, XSslPeerVerifyMode mode)
@@ -1167,11 +1250,29 @@ void XSslSocket_setLocalCertificate_2(XSslSocket* self, const XString* fileName,
 void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
     XSslKeyAlgorithm algo, XSslEncodingFormat fmt, const XByteArray* passPhrase)
 {
+    XFile* file;
+    XByteArray* contents;
+    XSslKey* key = NULL;
     if (!self || !fileName) return;
     const char* path = XString_toUtf8(fileName);
     if (!path) return;
     const char* pass = passPhrase ? (const char*)XByteArray_constData(passPhrase) : NULL;
-    XSslKey* key = XSsl_keyFromPem(path, strlen(path), algo, XSSL_PrivateKey, pass);
+    file = XFile_create_2(fileName);
+    if (!file || !XFile_open_2(file, XIODevice_ReadOnly, 0)) {
+        if (file) XClass_delete_base((XClass*)file);
+        return;
+    }
+    contents = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XClass_delete_base((XClass*)file);
+    if (!contents) return;
+    if (fmt == XSSL_Der)
+        key = XSsl_keyFromDer(XByteArray_constData(contents), XByteArray_size_base(contents),
+                              algo, XSSL_PrivateKey);
+    else
+        key = XSsl_keyFromPem((const char*)XByteArray_constData(contents),
+                              XByteArray_size_base(contents), algo, XSSL_PrivateKey, pass);
+    XByteArray_delete_base(contents);
     if (key) {
         self->privateKey = key;
     }

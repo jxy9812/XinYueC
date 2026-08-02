@@ -24,15 +24,19 @@
 #include <mbedtls/pk.h>
 #include <mbedtls/error.h>
 #include <string.h>
+#include <ctype.h>
 #include "XPrintf.h"
 #include "XVector.h"
+#include "XDir.h"
 
  /* ---- XSslSession 结构体：保存 mbedTLS SSL 上下文和会话状态 ---- */
 struct XSslSession {
     mbedtls_ssl_context     ssl;
     mbedtls_ssl_config      conf;
     mbedtls_x509_crt        ca_chain;   /* 从信任存储加载的 CA 证书链 */
+    mbedtls_x509_crl        crl_chain;  /* 对端证书吊销列表 */
     bool                    ca_inited;
+    bool                    crl_inited;
 
     /* BIO */
     void* bio_user;
@@ -55,6 +59,7 @@ struct XSslSession {
     /* mbedTLS 配置只保存指针，因此会话必须拥有协议字符串数组。 */
     char**                  alpn_protocols;
     size_t                  alpn_protocol_count;
+    int*                    cipher_suites;
 };
 
 static XSslProtocol s_proto_of(XSslProtocol p) { return p; }
@@ -118,6 +123,7 @@ XSslSession* XSsl_sessionCreate(XSslProtocol protocol, bool isServer) {
     mbedtls_ssl_init(&s->ssl);
     mbedtls_ssl_config_init(&s->conf);
     mbedtls_x509_crt_init(&s->ca_chain);
+    mbedtls_x509_crl_init(&s->crl_chain);
     s->is_server = isServer;
     s->verify_mode = XSSL_AutoVerifyPeer;
 
@@ -157,6 +163,7 @@ XSslSession* XSsl_sessionCreate(XSslProtocol protocol, bool isServer) {
     return s;
 fail:
     mbedtls_x509_crt_free(&s->ca_chain);
+    mbedtls_x509_crl_free(&s->crl_chain);
     mbedtls_ssl_config_free(&s->conf);
     mbedtls_ssl_free(&s->ssl);
     XFree_System(s);
@@ -168,7 +175,9 @@ void XSsl_sessionDestroy(XSslSession* s) {
     mbedtls_ssl_free(&s->ssl);
     mbedtls_ssl_config_free(&s->conf);
     mbedtls_x509_crt_free(&s->ca_chain);
+    mbedtls_x509_crl_free(&s->crl_chain);
     xssl_session_clear_alpn(s);
+    if (s->cipher_suites) XFree_System(s->cipher_suites);
     XFree_System(s);
 }
 
@@ -197,6 +206,93 @@ bool XSsl_sessionSetHostname(XSslSession* s, const char* hostname) {
 #endif
 }
 
+static const char* xssl_cipher_alias(const char* name)
+{
+    if (!name) return NULL;
+    if (strcmp(name, "ECDHE-RSA-AES128-GCM-SHA256") == 0)
+        return "TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256";
+    if (strcmp(name, "ECDHE-RSA-AES256-GCM-SHA384") == 0)
+        return "TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384";
+    if (strcmp(name, "ECDHE-ECDSA-AES128-GCM-SHA256") == 0)
+        return "TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256";
+    if (strcmp(name, "ECDHE-ECDSA-AES256-GCM-SHA384") == 0)
+        return "TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384";
+    if (strcmp(name, "AES128-GCM-SHA256") == 0)
+        return "TLS-RSA-WITH-AES-128-GCM-SHA256";
+    if (strcmp(name, "AES256-GCM-SHA384") == 0)
+        return "TLS-RSA-WITH-AES-256-GCM-SHA384";
+    if (strcmp(name, "TLS_AES_128_GCM_SHA256") == 0)
+        return "TLS-AES-128-GCM-SHA256";
+    if (strcmp(name, "TLS_AES_256_GCM_SHA384") == 0)
+        return "TLS-AES-256-GCM-SHA384";
+    if (strcmp(name, "TLS_CHACHA20_POLY1305_SHA256") == 0)
+        return "TLS-CHACHA20-POLY1305-SHA256";
+    return name;
+}
+
+static bool xssl_cipher_count(const char* text, size_t* count)
+{
+    const char* cursor = text;
+    size_t total = 0;
+    if (!text || !count) return false;
+    while (*cursor) {
+        while (*cursor == ':' || *cursor == ',' || isspace((unsigned char)*cursor)) ++cursor;
+        if (!*cursor) break;
+        ++total;
+        while (*cursor && *cursor != ':' && *cursor != ','
+               && !isspace((unsigned char)*cursor)) ++cursor;
+    }
+    *count = total;
+    return total > 0;
+}
+
+bool XSsl_sessionSetCipherSuites(XSslSession* s, const char* cipherSuites)
+{
+    const char* cursor;
+    size_t count;
+    size_t index = 0;
+    int* suites;
+    if (!s || s->setup_done || !xssl_cipher_count(cipherSuites, &count)) return false;
+    suites = (int*)XMalloc_System((count + 1) * sizeof(*suites));
+    if (!suites) return false;
+    cursor = cipherSuites;
+    while (*cursor) {
+        const char* begin;
+        const char* end;
+        char name[128];
+        const char* lookup;
+        int id;
+        while (*cursor == ':' || *cursor == ',' || isspace((unsigned char)*cursor)) ++cursor;
+        if (!*cursor) break;
+        begin = cursor;
+        while (*cursor && *cursor != ':' && *cursor != ','
+               && !isspace((unsigned char)*cursor)) ++cursor;
+        end = cursor;
+        if ((size_t)(end - begin) >= sizeof(name)) {
+            XFree_System(suites);
+            return false;
+        }
+        memcpy(name, begin, (size_t)(end - begin));
+        name[end - begin] = 0;
+        lookup = xssl_cipher_alias(name);
+        id = mbedtls_ssl_get_ciphersuite_id(lookup);
+        if (id <= 0 || index >= count) {
+            XFree_System(suites);
+            return false;
+        }
+        suites[index++] = id;
+    }
+    if (index == 0) {
+        XFree_System(suites);
+        return false;
+    }
+    suites[index] = 0;
+    mbedtls_ssl_conf_ciphersuites(&s->conf, suites);
+    if (s->cipher_suites) XFree_System(s->cipher_suites);
+    s->cipher_suites = suites;
+    return true;
+}
+
 bool XSsl_sessionSetCertificate(XSslSession* s, XSslCertificate* cert, XSslKey* key) {
     if (!s || !cert || !key) return false;
     s->own_cert = cert;
@@ -205,10 +301,71 @@ bool XSsl_sessionSetCertificate(XSslSession* s, XSslCertificate* cert, XSslKey* 
 }
 
 bool XSsl_sessionAddCaCertificate(XSslSession* s, XSslCertificate* ca) {
+    const mbedtls_x509_crt* current;
     if (!s || !ca) return false;
-    /* 添加 CA 证书到信任链 */
+    /* Copy the complete certificate chain so multiple CA objects can be
+     * accumulated without borrowing their lifetime. */
+    for (current = &ca->crt; current; current = current->next) {
+        if (!current->raw.p || current->raw.len == 0
+            || mbedtls_x509_crt_parse_der(&s->ca_chain,
+                                          current->raw.p, current->raw.len) < 0)
+            return false;
+    }
     s->ca_inited = true;
-    mbedtls_ssl_conf_ca_chain(&s->conf, &ca->crt, NULL);
+    mbedtls_ssl_conf_ca_chain(&s->conf, &s->ca_chain,
+                              s->crl_inited ? &s->crl_chain : NULL);
+    return true;
+}
+
+bool XSsl_sessionAddCaPath(XSslSession* s, const char* path)
+{
+    int result;
+    if (!s || s->setup_done || !path || !path[0]) return false;
+    result = mbedtls_x509_crt_parse_path(&s->ca_chain, path);
+    if (result < 0) return false;
+    s->ca_inited = true;
+    mbedtls_ssl_conf_ca_chain(&s->conf, &s->ca_chain,
+                              s->crl_inited ? &s->crl_chain : NULL);
+    return result > 0;
+}
+
+bool XSsl_sessionAddCrlFile(XSslSession* s, const char* path)
+{
+    if (!s || s->setup_done || !path || !path[0]) return false;
+    if (mbedtls_x509_crl_parse_file(&s->crl_chain, path) != 0) return false;
+    s->crl_inited = true;
+    mbedtls_ssl_conf_ca_chain(&s->conf, &s->ca_chain, &s->crl_chain);
+    return true;
+}
+
+bool XSsl_sessionAddCrlPath(XSslSession* s, const char* path)
+{
+    XString* directoryPath = NULL;
+    XDir* directory = NULL;
+    XStringList* entries = NULL;
+    size_t count;
+    size_t index;
+    size_t loaded = 0;
+    if (!s || s->setup_done || !path || !path[0]) return false;
+    directoryPath = XString_create_utf8(path);
+    directory = directoryPath ? XDir_create_2(directoryPath) : NULL;
+    entries = directory
+        ? XDir_entryList_1(directory, XDir_Files | XDir_NoDotAndDotDot, XDir_Name) : NULL;
+    count = entries ? XStringList_size_base(entries) : 0;
+    for (index = 0; index < count; ++index) {
+        const XString* entry = XStringList_at_base(entries, (int64_t)index);
+        XString* filePath = entry ? XDir_filePath(directory, entry) : NULL;
+        const char* fileName = filePath ? XString_toUtf8(filePath) : NULL;
+        if (fileName && mbedtls_x509_crl_parse_file(&s->crl_chain, fileName) == 0)
+            ++loaded;
+        if (filePath) XString_delete_base(filePath);
+    }
+    if (entries) XStringList_delete_base(entries);
+    if (directory) XDir_delete_base(directory);
+    if (directoryPath) XString_delete_base(directoryPath);
+    if (loaded == 0) return false;
+    s->crl_inited = true;
+    mbedtls_ssl_conf_ca_chain(&s->conf, &s->ca_chain, &s->crl_chain);
     return true;
 }
 

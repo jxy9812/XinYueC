@@ -250,6 +250,24 @@ XVariant* XVariant_create_Point(XPoint val)
 	return XVariant_Create(val, XVariantType_Point);
 }
 
+XVariant* XVariant_create_Date(const XDate* val)
+{
+	if (!val) return NULL;
+	return XVariant_create((void*)val, sizeof(XDate), XVariantType_Date);
+}
+
+XVariant* XVariant_create_Time(const XTime* val)
+{
+	if (!val) return NULL;
+	return XVariant_create((void*)val, sizeof(XTime), XVariantType_Time);
+}
+
+XVariant* XVariant_create_DateTime(const XDateTime* val)
+{
+	if (!val) return NULL;
+	return XVariant_create((void*)val, sizeof(XDateTime), XVariantType_DateTime);
+}
+
 XVariant* XVariant_create_ByteArray(const XByteArray* array)
 {
 	if (array == NULL)
@@ -922,6 +940,39 @@ XPoint XVariant_toPoint(const XVariant* var)
 	return XVariant_Data(var, XPoint);
 }
 
+XDate XVariant_toDate(const XVariant* var)
+{
+	if (!var || var->m_type != XVariantType_Date) return XDate_create();
+	return XVariant_Data(var, XDate);
+}
+
+XDate* XVariant_toDate_ref(const XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Date);
+}
+
+XTime XVariant_toTime(const XVariant* var)
+{
+	if (!var || var->m_type != XVariantType_Time) return XTime_create();
+	return XVariant_Data(var, XTime);
+}
+
+XTime* XVariant_toTime_ref(const XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Time);
+}
+
+XDateTime XVariant_toDateTime(const XVariant* var)
+{
+	if (!var || var->m_type != XVariantType_DateTime) return XDateTime_create();
+	return XVariant_Data(var, XDateTime);
+}
+
+XDateTime* XVariant_toDateTime_ref(const XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_DateTime);
+}
+
 static void setValue(XVariant* var, void* data, size_t size, int type)
 {
 	if (var == NULL)
@@ -1047,6 +1098,24 @@ void XVariant_setValue_Pair(XVariant* var, const XPair* pair)
 void XVariant_setValue_Point(XVariant* var, XPoint val)
 {
 	setValue(var,&val,sizeof(XPoint), XVariantType_Point);
+}
+
+void XVariant_setValue_Date(XVariant* var, const XDate* val)
+{
+	XDate invalid = XDate_create();
+	setValue(var, val ? (void*)val : (void*)&invalid, sizeof(XDate), XVariantType_Date);
+}
+
+void XVariant_setValue_Time(XVariant* var, const XTime* val)
+{
+	XTime invalid = XTime_create();
+	setValue(var, val ? (void*)val : (void*)&invalid, sizeof(XTime), XVariantType_Time);
+}
+
+void XVariant_setValue_DateTime(XVariant* var, const XDateTime* val)
+{
+	XDateTime invalid = XDateTime_create();
+	setValue(var, val ? (void*)val : (void*)&invalid, sizeof(XDateTime), XVariantType_DateTime);
 }
 
 static void setValue_ByteArray(XVariant* var, XByteArray* array, XCDataCreatMethod dataCreatMethod)
@@ -1501,6 +1570,15 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 	{
 		XVariant_deinit_base(var);//
 	}
+	if (src->m_dataSize == 0)
+	{
+		if (var->m_data)
+			XVariant_deinit_base(var);
+		var->m_data = NULL;
+		var->m_dataSize = 0;
+		var->m_type = src->m_type;
+		return;
+	}
 	if (XVariant_DataPtr(var) == NULL)
 	{
 		var->m_data = XCalloc_System(1,src->m_dataSize);
@@ -1526,7 +1604,10 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 		case XVariantType_Float:
 		case XVariantType_Double:
 		case XVariantType_Pair:
-		case XVariantType_Point:memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize); break;
+		case XVariantType_Point:
+		case XVariantType_Date:
+		case XVariantType_Time:
+		case XVariantType_DateTime:memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize); break;
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
@@ -1611,7 +1692,10 @@ void VXVariant_deinit(XVariant* var)
 		case XVariantType_Float:
 		case XVariantType_Double:
 		case XVariantType_Pair:
-		case XVariantType_Point:break;
+		case XVariantType_Point:
+		case XVariantType_Date:
+		case XVariantType_Time:
+		case XVariantType_DateTime:break;
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
@@ -1671,6 +1755,9 @@ void XVariant_clear(XVariant* var)
 		case XVariantType_Double:
 		case XVariantType_Pair:
 		case XVariantType_Point:memset(XVariant_DataPtr(var), 0, var->m_dataSize);break;
+		case XVariantType_Date:*(XDate*)XVariant_DataPtr(var) = XDate_create();break;
+		case XVariantType_Time:*(XTime*)XVariant_DataPtr(var) = XTime_create();break;
+		case XVariantType_DateTime:*(XDateTime*)XVariant_DataPtr(var) = XDateTime_create();break;
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
@@ -1742,6 +1829,9 @@ const char* XVariant_typeName(XVariant* var)
 	case XVariantType_Double:return	    "double";
 	case XVariantType_Pair:return       "XPair";
 	case XVariantType_Point:return      "XPoint";
+	case XVariantType_Date:return       "XDate";
+	case XVariantType_Time:return       "XTime";
+	case XVariantType_DateTime:return   "XDateTime";
 	case XVariantType_ByteArray:return  "XByteArrat";
 	case XVariantType_String:return		"XString";
 	case XVariantType_StringList:return	"XStringList";
@@ -1795,6 +1885,17 @@ int32_t XVariant_compare(XVariant* var, XVariant* cmp)
 	case XVariantType_Double:return double_compare(var->m_data, cmp->m_data);
 	case XVariantType_Pair:return XPair_compare(var->m_data, cmp->m_data);
 	case XVariantType_Point:return XPoint_compare(var->m_data, cmp->m_data);
+	case XVariantType_Date:
+		return int64_t_compare(&((XDate*)var->m_data)->m_jd, &((XDate*)cmp->m_data)->m_jd);
+	case XVariantType_Time:
+		return int_compare(&((XTime*)var->m_data)->m_msecs, &((XTime*)cmp->m_data)->m_msecs);
+	case XVariantType_DateTime: {
+		int32_t dateCompare = int64_t_compare(&((XDateTime*)var->m_data)->m_date.m_jd,
+		                                      &((XDateTime*)cmp->m_data)->m_date.m_jd);
+		return dateCompare ? dateCompare
+		                   : int_compare(&((XDateTime*)var->m_data)->m_time.m_msecs,
+		                                 &((XDateTime*)cmp->m_data)->m_time.m_msecs);
+	}
 	case XVariantType_ByteArray:return XByteArray_compare(var->m_data, cmp->m_data);
 	case XVariantType_String:return XString_compare(var->m_data, cmp->m_data);
 	case XVariantType_List:

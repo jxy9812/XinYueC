@@ -744,6 +744,19 @@ void XNetworkLwip_platform_deinit(void) {
  * 默认 netif 管理
  * ================================================================ */
 
+bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* endpoint,
+                                 XNetworkLocalStreamType streamType,
+                                 int timeoutMs,
+                                 XNetworkSocketType sockType)
+{
+    (void)priv;
+    (void)endpoint;
+    (void)streamType;
+    (void)timeoutMs;
+    (void)sockType;
+    return false;
+}
+
 static struct netif* g_defaultLwipNetif = NULL;
 
 struct netif* XNetworkLwip_defaultNetif(void)

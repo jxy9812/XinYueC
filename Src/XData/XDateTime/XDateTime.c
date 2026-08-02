@@ -1,4 +1,5 @@
 #include "XDateTime.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -318,13 +319,35 @@ XDateTime XDateTime_fromString_format(const char* str, const char* format) {
 }
 
 XDateTime XDateTime_fromString_iso(const char* str) {
+    const char* separator;
+    const char* fraction;
+    int year, month, day, hour, minute, second;
+    char separatorChar;
+    int msec = 0;
+    int fractionValue = 0;
+    int digits = 0;
     if (!str) return XDateTime_create();
-    char date_part[11], time_part[9];
-    if (sscanf(str, "%10s %8s", date_part, time_part) != 2) {
+    separator = strchr(str, ' ');
+    if (!separator) separator = strchr(str, 'T');
+    if (!separator || sscanf(str, "%d-%d-%d%c%d:%d:%d", &year, &month, &day,
+                             &separatorChar, &hour, &minute, &second) != 7
+        || (separatorChar != ' ' && separatorChar != 'T'))
         return XDateTime_create();
+    XDate date = XDate_create_date(year, month, day);
+    fraction = strchr(separator, '.');
+    if (fraction) {
+        ++fraction;
+        while (isdigit((unsigned char)fraction[digits]) && digits < 6) {
+            fractionValue = fractionValue * 10 + fraction[digits] - '0';
+            ++digits;
+        }
+        while (digits < 3) {
+            fractionValue *= 10;
+            ++digits;
+        }
+        msec = fractionValue / (digits > 3 ? 1000 : 1);
     }
-    XDate date = XDate_fromString_iso(date_part);
-    XTime time = XTime_fromString_format(time_part, "HH:mm:ss");
+    XTime time = XTime_create_time(hour, minute, second, msec);
     return XDateTime_create_datetime(date, time);
 }
 

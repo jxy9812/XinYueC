@@ -590,6 +590,58 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     return true;
 }
 
+bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* socketPath,
+                                 XNetworkLocalStreamType streamType,
+                                 int timeoutMs,
+                                 XNetworkSocketType sockType)
+{
+    XNetworkSocketPrivatePosix* p;
+    const char* path;
+    struct sockaddr_un address;
+    size_t length;
+    int fd;
+
+    (void)timeoutMs;
+    if (!priv || !socketPath || streamType != XNetwork_LocalStream_UnixSocket
+        || sockType != XNetwork_Tcp) return false;
+    path = XString_toUtf8(socketPath);
+    if (!path || path[0] == '\0') return false;
+    length = strlen(path);
+    if (length >= sizeof(address.sun_path)) return false;
+
+    p = P32(priv);
+    XNetwork_socketDisconnect(priv);
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path, path, length + 1);
+    if (connect(fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
+        close(fd);
+        return false;
+    }
+    if (!setNonBlocking(fd)) {
+        close(fd);
+        return false;
+    }
+
+    p->socket = fd;
+    p->connected = true;
+    p->connectPending = false;
+    p->readPending = false;
+    p->writePending = false;
+    {
+        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+        if (xfd == XFD_INVALID) {
+            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+            XIODevice_setFd((XIODevice*)priv->owner, xfd);
+        }
+    }
+    startAsyncRead(priv, false);
+    return true;
+}
+
 void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
 {
     if (!priv) return;
