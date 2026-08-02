@@ -314,6 +314,21 @@ static int xmysql_ascii_casecmp(const char* left, const char* right)
     return (int)(unsigned char)*left - (int)(unsigned char)*right;
 }
 
+static int xmysql_ascii_ncasecmp(const char* left, const char* right, size_t count)
+{
+    size_t index;
+    unsigned char leftChar;
+    unsigned char rightChar;
+    if (!left || !right) return left == right ? 0 : (left ? 1 : -1);
+    for (index = 0; index < count; ++index) {
+        leftChar = (unsigned char)tolower((unsigned char)left[index]);
+        rightChar = (unsigned char)tolower((unsigned char)right[index]);
+        if (leftChar != rightChar) return (int)leftChar - (int)rightChar;
+        if (leftChar == 0) return 0;
+    }
+    return 0;
+}
+
 
 static bool xmysql_socket_read(XSqlMySqlClient* client, void* data, size_t size, int timeout)
 {
@@ -1108,14 +1123,14 @@ static bool xmysql_option_value(const char* options, const char* name,
             while (valueLength > 0 && (value[valueLength - 1] == ' '
                                        || value[valueLength - 1] == '\t')) --valueLength;
             if ((size_t)(keyEnd - token) == nameLength
-                && strncasecmp(token, name, nameLength) == 0) {
+                && xmysql_ascii_ncasecmp(token, name, nameLength) == 0) {
                 if (valueLength >= outputSize) valueLength = outputSize - 1;
                 memcpy(output, value, valueLength);
                 output[valueLength] = 0;
                 return true;
             }
         } else if ((size_t)(end - token) == nameLength
-                   && strncasecmp(token, name, nameLength) == 0) {
+                   && xmysql_ascii_ncasecmp(token, name, nameLength) == 0) {
             if (outputSize > 1) {
                 output[0] = '1';
                 output[1] = 0;
