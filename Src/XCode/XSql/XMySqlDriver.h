@@ -1,8 +1,8 @@
-﻿/**
+/**
  * @file       XMySqlDriver.h
- * @brief      MySQL/MariaDB æºç é©±å¨ã
- * @details    é©±å¨éè¿ XSqlMySqlClientApi è®¿é®å®¢æ·ç«¯å®ç°ï¼å¬å±å¤´æä»¶ä¸
- *             æ´é²ç¬¬ä¸æ¹å®¢æ·ç«¯ç±»åï¼é»è®¤å®¢æ·ç«¯ä½¿ç¨ XinYueC ç½ç»æ½è±¡ã
+ * @brief      MySQL/MariaDB 源码驱动。
+ * @details    驱动通过 XSqlMySqlClientApi 访问客户端实现，公共头文件不
+ *             暴露第三方客户端类型；默认客户端使用 XinYueC 网络抽象。
  */
 #ifndef XMYSQLDRIVER_H
 #define XMYSQLDRIVER_H
@@ -15,29 +15,31 @@ extern "C" {
 #include "XSqlMySqlClient.h"
 
 /**
- * @brief åå»º MySQL/MariaDB æºç é©±å¨ã
- * @return æ°é©±å¨å¯¹è±¡ï¼è°ç¨èåå¾æææå¹¶å¿é¡»ä½¿ç¨ XSqlDriver_delete_base éæ¾ï¼åå­ä¸è¶³æé»è®¤å®¢æ·ç«¯ä¸å¯ç¨æ¶è¿å NULLã
+ * @brief 创建 MySQL/MariaDB 源码驱动。
+ * @return 新驱动对象，调用者取得所有权并必须使用 XSqlDriver_delete_base
+ *         释放；内存不足或默认客户端不可用时返回 NULL。
  */
 XSqlDriver* XMySqlDriver_create(void);
 
 /**
- * @brief æ³¨å MySQL åç½®æºç é©±å¨ã
- * @return æ³¨åæåè¿å trueï¼åå­ä¸è¶³ææ³¨åå¤±è´¥è¿å falseã
- * @note æ³¨åè¡¨æ¥ç®¡åå»ºå¨ï¼è¯¥å½æ°å¯éå¤è°ç¨ã
+ * @brief 注册 MySQL 内置源码驱动。
+ * @return 注册成功返回 true；内存不足或注册失败返回 false。
+ * @note 注册表接管创建器；该函数可重复调用。
  */
 bool XMySqlDriver_register(void);
 
 /**
- * @brief è®¾ç½® MySQL å®¢æ·ç«¯å®ç°å½æ°è¡¨ã
- * @param api å®¢æ·ç«¯å½æ°è¡¨ï¼åç¨ï¼å¿é¡»åå«é©±å¨å®éä½¿ç¨çå¨é¨å½æ°ï¼ä¼ å¥ NULL æ¢å¤é»è®¤å®ç°ã
- * @return è®¾ç½®æåè¿å trueï¼åæ°ä¸å®æ´è¿å falseã
- * @note åºå¨åå»º MySQL è¿æ¥åè°ç¨ï¼å·²æè¿æ¥ä»ä½¿ç¨åå»ºæ¶çå½æ°è¡¨ã
+ * @brief 设置 MySQL 客户端实现函数表。
+ * @param api 客户端函数表，借用，必须包含驱动实际使用的全部函数；传入
+ *            NULL 恢复默认实现。
+ * @return 设置成功返回 true；参数不完整返回 false。
+ * @note 应在创建 MySQL 连接前调用；已有连接仍使用创建时的函数表。
  */
 bool XMySqlDriver_setClientApi(const XSqlMySqlClientApi* api);
 
 /**
- * @brief è·åå½å MySQL å®¢æ·ç«¯å®ç°å½æ°è¡¨ã
- * @return è¿ç¨åå±äº«å½æ°è¡¨ï¼è°ç¨æ¹åªå¯è¯»åï¼ä¸å¾éæ¾æä¿®æ¹ã
+ * @brief 获取当前 MySQL 客户端实现函数表。
+ * @return 进程内共享函数表；调用方只可读取，不得释放或修改。
  */
 const XSqlMySqlClientApi* XMySqlDriver_clientApi(void);
 
