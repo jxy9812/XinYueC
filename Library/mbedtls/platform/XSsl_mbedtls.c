@@ -179,6 +179,69 @@ XSslKey* XSsl_keyFromDer(const uint8_t* data, size_t len, XSslKeyAlgorithm algo,
 }
 void XSsl_keyDestroy(XSslKey* k) { if (!k)return; mbedtls_pk_free(&k->pk); XFree_System(k); }
 
+bool XSsl_publicKeyEncrypt(const uint8_t* publicKey, size_t publicKeySize,
+                           XSslEncodingFormat format, XSslKeyAlgorithm algorithm,
+                           const uint8_t* data, size_t dataSize,
+                           XByteArray** encrypted)
+{
+    mbedtls_pk_context pk;
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
+    XByteArray* output = NULL;
+    unsigned char* keyBuffer = NULL;
+    size_t outputSize;
+    size_t outputLength = 0;
+    bool imported = false;
+    bool ok = false;
+    int result;
+    psa_status_t status;
+
+    if (!publicKey || publicKeySize == 0 || algorithm != XSSL_KeyAlgorithm_Rsa
+        || !data || dataSize == 0 || !encrypted || !XSsl_platform_init()) return false;
+    *encrypted = NULL;
+    mbedtls_pk_init(&pk);
+    if (format == XSSL_Pem) {
+        keyBuffer = (unsigned char*)XMalloc_System(publicKeySize + 1);
+        if (!keyBuffer) goto cleanup;
+        memcpy(keyBuffer, publicKey, publicKeySize);
+        keyBuffer[publicKeySize] = '\0';
+        result = mbedtls_pk_parse_public_key(&pk, keyBuffer, publicKeySize + 1);
+    } else {
+        result = mbedtls_pk_parse_public_key(&pk, publicKey, publicKeySize);
+    }
+    if (result != 0 || mbedtls_pk_get_key_type(&pk) != PSA_KEY_TYPE_RSA_PUBLIC_KEY)
+        goto cleanup;
+    result = mbedtls_pk_get_psa_attributes(&pk, PSA_KEY_USAGE_ENCRYPT, &attributes);
+    if (result != 0) goto cleanup;
+    result = mbedtls_pk_import_into_psa(&pk, &attributes, &keyId);
+    if (result != 0) goto cleanup;
+    imported = true;
+
+    outputSize = (mbedtls_pk_get_bitlen(&pk) + 7u) / 8u;
+    output = XByteArray_create();
+    if (outputSize == 0 || !output
+        || !XVector_resize_base((XVector*)output, outputSize))
+        goto cleanup;
+    status = psa_asymmetric_encrypt(keyId, PSA_ALG_RSA_PKCS1V15_CRYPT,
+                                    data, dataSize, NULL, 0,
+                                    (uint8_t*)XByteArray_data(output), outputSize,
+                                    &outputLength);
+    if (status != PSA_SUCCESS
+        || !XVector_resize_base((XVector*)output, outputLength))
+        goto cleanup;
+    *encrypted = output;
+    output = NULL;
+    ok = true;
+
+cleanup:
+    if (imported) psa_destroy_key(keyId);
+    psa_reset_key_attributes(&attributes);
+    mbedtls_pk_free(&pk);
+    if (keyBuffer) XFree_System(keyBuffer);
+    if (output) XClass_delete_base((XClass*)output);
+    return ok;
+}
+
 /* 9. Random */
 bool XSsl_randomBytes(uint8_t* b, size_t l) {
     if (!b || !l)return 0; return XRandomGenerator_fillSecure(b, l) ? 1 : 0;

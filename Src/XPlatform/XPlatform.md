@@ -295,6 +295,7 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 - 使用 XSqlDriverType_MySql 和 XSqlDbmsType_MySql。
 - `Src/XPlatform/XSql/XSqlMySqlClient.h` 定义不包含 `mysql.h` 的客户端函数表；驱动只依赖这个抽象接口。
 - 默认实现为 `Src/XCode/XSql/XMySqlWireClient.c`，使用 `XSslSocket`（未启用时按普通 TCP 工作）、`XCryptographicHash`、`XByteArray` 和 `XMemory` 实现 MySQL 文本及二进制协议。
+- `XMySqlWireClient.c` 只调用 `XSqlMySqlClient_platform.h` 和 `XSsl_platform.h` 的抽象接口；Windows MySQL 共享内存实现位于 `Drive/windows/XSql/XSqlMySqlClient_win32.c`，POSIX 和其他平台提供明确的不支持回退，RSA 公钥加密由 SSL 后端实现，不得把 `windows.h`、`HANDLE`、mbedTLS 或 PSA API 带入协议层。
 - `Src/XCode/XSql/XMySqlDriver.c` 负责连接、事务、文本占位符转义、结果集缓存、字段类型转换、最后插入 ID 和元数据。
 - 对照 Qt 6.8 `qsql_mysql.cpp`，公共驱动接口已经覆盖 `open/close/createResult/tables/primaryIndex/record/formatValue/handle/escapeIdentifier`、事务、数值精度策略和 `XSqlResult::nextResult`；`XSqlDatabase_moveToThread/thread` 也已接入 XinYueC 的 `XObject` 线程亲和性。
 - Qt QMYSQL 的能力位语义保持一致：`MultipleResultSets`、查询大小、BLOB、Unicode、最后插入 ID 和预处理查询可用；`NamedPlaceholders`、`BatchOperations`、`FinishQuery`、`CancelQuery` 不在驱动能力位中伪造为原生支持。命名绑定和 `execBatch(ValuesAsRows)` 仍由公共结果层按 Qt 的兼容回退规则完成。

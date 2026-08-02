@@ -373,6 +373,22 @@ extern "C" {
      */
     void XSsl_keyDestroy(XSslKey* key);
 
+    /**
+     * @brief 使用平台 SSL 后端进行公钥加密。
+     * @param publicKey 公钥编码数据，借用，不能为 NULL。
+     * @param publicKeySize 公钥数据长度。
+     * @param format 公钥编码格式，目前支持 PEM 和 DER。
+     * @param algorithm 公钥算法，目前 MySQL caching_sha2_password 使用 RSA。
+     * @param data 待加密数据，借用，不能为 NULL。
+     * @param dataSize 待加密数据长度。
+     * @param encrypted 输出密文对象，由调用者使用 XByteArray_delete_base 释放。
+     * @return 加密成功返回 true；后端不支持、输入无效或加密失败返回 false。
+     */
+    bool XSsl_publicKeyEncrypt(const uint8_t* publicKey, size_t publicKeySize,
+                               XSslEncodingFormat format, XSslKeyAlgorithm algorithm,
+                               const uint8_t* data, size_t dataSize,
+                               XByteArray** encrypted);
+
     /* =========================================================================
      * 十六、随机数生成
      * ========================================================================= */

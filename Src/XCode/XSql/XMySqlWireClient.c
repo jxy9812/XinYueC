@@ -2,9 +2,9 @@
  * @file       XMySqlWireClient.c
  * @brief      基于 XinYueC 网络抽象的 MySQL 协议客户端。
  * @details    该文件是 XSqlMySqlClientApi 的默认源码实现。它不依赖
- *             mysqlclient、MariaDB Connector/C 或操作系统套接字 API，
- *             只使用 XSslSocket、XCryptographicHash 和 XMemory；TLS 关闭
- *             时 XSslSocket 按普通 TCP 套接字工作。
+ *             mysqlclient、MariaDB Connector/C、操作系统套接字 API 或
+ *             具体 SSL 后端；特殊平台传输和公钥加密均通过抽象接口访问。
+ *             TLS 关闭时 XSslSocket 按普通 TCP 套接字工作。
  */
 #include "XSqlMySqlClient.h"
 
@@ -15,28 +15,22 @@
 #include "XTcpSocket.h"
 #include "XAbstractSocket_p.h"
 #include "XSslSocket.h"
+#include "XSsl_platform.h"
 #include "XIODevice.h"
-#include "XFileSystem_platform.h"
-
-#include "mbedtls/pk.h"
-#include "psa/crypto.h"
+#include "XFile.h"
+#include "XSqlMySqlClient_platform.h"
 #include "zlib.h"
 
 #include <limits.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
-
-#if defined(_WIN32)
-#include <windows.h>
-#endif
 
 #define XMYSQL_MAX_PACKET_SIZE 0x00ffffffu
 #define XMYSQL_UNIX_SOCKET_PATH_MAX 512u
 #define XMYSQL_DEFAULT_UNIX_SOCKET "/run/mysqld/mysqld.sock"
 #define XMYSQL_DEFAULT_NAMED_PIPE "\\\\.\\pipe\\MySQL"
 #define XMYSQL_DEFAULT_SHARED_MEMORY_BASE_NAME "MYSQL"
-#define XMYSQL_SHARED_MEMORY_BUFFER_SIZE 16000u
 
 /* MySQL 客户端能力位。只选择本源码实现实际处理的能力。 */
 #define XMYSQL_CLIENT_LONG_PASSWORD 0x00000001u
@@ -110,20 +104,6 @@ typedef struct XMySqlWireCell {
     XByteArray* m_bytes;
 } XMySqlWireCell;
 
-#if defined(_WIN32)
-typedef struct XMySqlSharedMemory {
-    HANDLE m_fileMap;
-    uint8_t* m_map;
-    HANDLE m_eventServerWrote;
-    HANDLE m_eventServerRead;
-    HANDLE m_eventClientWrote;
-    HANDLE m_eventClientRead;
-    HANDLE m_eventConnectionClosed;
-    uint8_t* m_position;
-    size_t m_remaining;
-} XMySqlSharedMemory;
-#endif
-
 struct XSqlMySqlResult {
     XSqlMySqlField* m_fields;
     XString** m_fieldNames;
@@ -165,9 +145,7 @@ struct XSqlMySqlClient {
     bool m_localInfile;
     bool m_compress;
     bool m_useSharedMemory;
-#if defined(_WIN32)
-    XMySqlSharedMemory m_sharedMemory;
-#endif
+    XSqlMySqlSharedMemory* m_sharedMemory;
     bool m_compressionActive;
     uint8_t m_compressedSendSequence;
     uint8_t m_compressedReadSequence;
@@ -218,9 +196,6 @@ static void* xmysql_client_handle(const XSqlMySqlClient* client);
 static bool xmysql_client_cancel(XSqlMySqlClient* client);
 static bool xmysql_client_supports_transactions(const XSqlMySqlClient* client);
 static bool xmysql_client_supports_prepared_queries(const XSqlMySqlClient* client);
-static void xmysql_shared_memory_close(XSqlMySqlClient* client);
-static bool xmysql_shared_memory_open(XSqlMySqlClient* client, const char* baseName,
-                                      int timeoutMs);
 
 static const XSqlMySqlClientApi g_xmysql_client_api = {
     xmysql_client_create,
@@ -326,254 +301,27 @@ static void xmysql_clear_error(XSqlMySqlClient* client)
     xmysql_set_error(client, "", "", 0, XSqlErrorType_NoError);
 }
 
-#if defined(_WIN32)
-static DWORD xmysql_shared_memory_timeout(int timeoutMs)
+static int xmysql_ascii_casecmp(const char* left, const char* right)
 {
-    return timeoutMs < 0 ? INFINITE : (DWORD)timeoutMs;
-}
-
-static uint32_t xmysql_shared_memory_read_u32(const uint8_t* data)
-{
-    return (uint32_t)data[0] | ((uint32_t)data[1] << 8)
-        | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-}
-
-static void xmysql_shared_memory_write_u32(uint8_t* data, uint32_t value)
-{
-    data[0] = (uint8_t)(value & 0xffu);
-    data[1] = (uint8_t)((value >> 8) & 0xffu);
-    data[2] = (uint8_t)((value >> 16) & 0xffu);
-    data[3] = (uint8_t)((value >> 24) & 0xffu);
-}
-
-static void xmysql_shared_memory_close(XSqlMySqlClient* client)
-{
-    XMySqlSharedMemory* shared;
-    if (!client) return;
-    shared = &client->m_sharedMemory;
-    if (shared->m_eventConnectionClosed)
-        SetEvent(shared->m_eventConnectionClosed);
-    if (shared->m_map) UnmapViewOfFile(shared->m_map);
-    if (shared->m_eventServerWrote) CloseHandle(shared->m_eventServerWrote);
-    if (shared->m_eventServerRead) CloseHandle(shared->m_eventServerRead);
-    if (shared->m_eventClientWrote) CloseHandle(shared->m_eventClientWrote);
-    if (shared->m_eventClientRead) CloseHandle(shared->m_eventClientRead);
-    if (shared->m_eventConnectionClosed) CloseHandle(shared->m_eventConnectionClosed);
-    if (shared->m_fileMap) CloseHandle(shared->m_fileMap);
-    memset(shared, 0, sizeof(*shared));
-}
-
-static bool xmysql_shared_memory_open(XSqlMySqlClient* client, const char* baseName,
-                                      int timeoutMs)
-{
-    XMySqlSharedMemory* shared;
-    HANDLE eventConnectRequest = NULL;
-    HANDLE eventConnectAnswer = NULL;
-    HANDLE connectFileMap = NULL;
-    uint8_t* connectMap = NULL;
-    HANDLE fileMap = NULL;
-    uint8_t* map = NULL;
-    HANDLE eventServerWrote = NULL;
-    HANDLE eventServerRead = NULL;
-    HANDLE eventClientWrote = NULL;
-    HANDLE eventClientRead = NULL;
-    HANDLE eventConnectionClosed = NULL;
-    const char* prefix = NULL;
-    const char* prefixes[] = { "", "Global\\" };
-    char name[1024];
-    char connectionNumber[32];
-    uint32_t number;
-    int i;
-    bool ok = false;
-
-    if (!client || !baseName) return false;
-    shared = &client->m_sharedMemory;
-    xmysql_shared_memory_close(client);
-
-    for (i = 0; i < (int)(sizeof(prefixes) / sizeof(prefixes[0])); ++i) {
-        if (snprintf(name, sizeof(name), "%s%s_CONNECT_REQUEST", prefixes[i], baseName)
-                >= (int)sizeof(name))
-            return false;
-        eventConnectRequest = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-        if (eventConnectRequest) {
-            prefix = prefixes[i];
-            break;
-        }
+    unsigned char leftChar;
+    unsigned char rightChar;
+    if (!left || !right) return left == right ? 0 : (left ? 1 : -1);
+    while (*left && *right) {
+        leftChar = (unsigned char)tolower((unsigned char)*left++);
+        rightChar = (unsigned char)tolower((unsigned char)*right++);
+        if (leftChar != rightChar) return (int)leftChar - (int)rightChar;
     }
-    if (!eventConnectRequest || !prefix) goto fail;
-
-    if (snprintf(name, sizeof(name), "%s%s_CONNECT_ANSWER", prefix, baseName)
-            >= (int)sizeof(name)) goto fail;
-    eventConnectAnswer = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventConnectAnswer) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_CONNECT_DATA", prefix, baseName)
-            >= (int)sizeof(name)) goto fail;
-    connectFileMap = OpenFileMappingA(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, name);
-    if (!connectFileMap) goto fail;
-    connectMap = (uint8_t*)MapViewOfFile(connectFileMap, FILE_MAP_READ | FILE_MAP_WRITE,
-                                         0, 0, sizeof(uint32_t));
-    if (!connectMap) goto fail;
-    if (!SetEvent(eventConnectRequest)) goto fail;
-    if (WaitForSingleObject(eventConnectAnswer, xmysql_shared_memory_timeout(timeoutMs))
-            != WAIT_OBJECT_0)
-        goto fail;
-
-    number = xmysql_shared_memory_read_u32(connectMap);
-    if (snprintf(connectionNumber, sizeof(connectionNumber), "%u", number)
-            >= (int)sizeof(connectionNumber)) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_%s_DATA", prefix, baseName, connectionNumber)
-            >= (int)sizeof(name)) goto fail;
-    fileMap = OpenFileMappingA(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, name);
-    if (!fileMap) goto fail;
-    map = (uint8_t*)MapViewOfFile(fileMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0,
-                                  XMYSQL_SHARED_MEMORY_BUFFER_SIZE + 4u);
-    if (!map) goto fail;
-
-    if (snprintf(name, sizeof(name), "%s%s_%s_SERVER_WROTE", prefix, baseName,
-                 connectionNumber) >= (int)sizeof(name)) goto fail;
-    eventServerWrote = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventServerWrote) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_%s_SERVER_READ", prefix, baseName,
-                 connectionNumber) >= (int)sizeof(name)) goto fail;
-    eventServerRead = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventServerRead) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_%s_CLIENT_WROTE", prefix, baseName,
-                 connectionNumber) >= (int)sizeof(name)) goto fail;
-    eventClientWrote = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventClientWrote) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_%s_CLIENT_READ", prefix, baseName,
-                 connectionNumber) >= (int)sizeof(name)) goto fail;
-    eventClientRead = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventClientRead) goto fail;
-    if (snprintf(name, sizeof(name), "%s%s_%s_CONNECTION_CLOSED", prefix, baseName,
-                 connectionNumber) >= (int)sizeof(name)) goto fail;
-    eventConnectionClosed = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name);
-    if (!eventConnectionClosed) goto fail;
-
-    if (!SetEvent(eventServerRead)) goto fail;
-    shared->m_fileMap = fileMap;
-    shared->m_map = map;
-    shared->m_eventServerWrote = eventServerWrote;
-    shared->m_eventServerRead = eventServerRead;
-    shared->m_eventClientWrote = eventClientWrote;
-    shared->m_eventClientRead = eventClientRead;
-    shared->m_eventConnectionClosed = eventConnectionClosed;
-    shared->m_position = NULL;
-    shared->m_remaining = 0;
-    fileMap = NULL;
-    map = NULL;
-    eventServerWrote = NULL;
-    eventServerRead = NULL;
-    eventClientWrote = NULL;
-    eventClientRead = NULL;
-    eventConnectionClosed = NULL;
-    ok = true;
-
-fail:
-    if (connectMap) UnmapViewOfFile(connectMap);
-    if (connectFileMap) CloseHandle(connectFileMap);
-    if (eventConnectRequest) CloseHandle(eventConnectRequest);
-    if (eventConnectAnswer) CloseHandle(eventConnectAnswer);
-    if (map) UnmapViewOfFile(map);
-    if (fileMap) CloseHandle(fileMap);
-    if (eventServerWrote) CloseHandle(eventServerWrote);
-    if (eventServerRead) CloseHandle(eventServerRead);
-    if (eventClientWrote) CloseHandle(eventClientWrote);
-    if (eventClientRead) CloseHandle(eventClientRead);
-    if (eventConnectionClosed) CloseHandle(eventConnectionClosed);
-    if (!ok) xmysql_shared_memory_close(client);
-    return ok;
+    return (int)(unsigned char)*left - (int)(unsigned char)*right;
 }
 
-static bool xmysql_shared_memory_read(XSqlMySqlClient* client, void* data, size_t size,
-                                      int timeoutMs)
-{
-    XMySqlSharedMemory* shared;
-    uint8_t* current = (uint8_t*)data;
-    size_t remaining = size;
-    HANDLE events[2];
-    DWORD status;
-    uint32_t chunkSize;
-    size_t length;
-    if (!client || !data) return false;
-    shared = &client->m_sharedMemory;
-    events[0] = shared->m_eventServerWrote;
-    events[1] = shared->m_eventConnectionClosed;
-    while (remaining > 0) {
-        if (shared->m_remaining == 0) {
-            status = WaitForMultipleObjects(2, events, FALSE,
-                                            xmysql_shared_memory_timeout(timeoutMs));
-            if (status != WAIT_OBJECT_0) return false;
-            chunkSize = xmysql_shared_memory_read_u32(shared->m_map);
-            if (chunkSize > XMYSQL_SHARED_MEMORY_BUFFER_SIZE) return false;
-            shared->m_position = shared->m_map + 4;
-            shared->m_remaining = chunkSize;
-            if (chunkSize == 0 && !SetEvent(shared->m_eventClientRead)) return false;
-            continue;
-        }
-        length = shared->m_remaining < remaining ? shared->m_remaining : remaining;
-        memcpy(current, shared->m_position, length);
-        current += length;
-        remaining -= length;
-        shared->m_position += length;
-        shared->m_remaining -= length;
-        if (shared->m_remaining == 0 && !SetEvent(shared->m_eventClientRead)) return false;
-    }
-    return true;
-}
-
-static bool xmysql_shared_memory_write(XSqlMySqlClient* client, const void* data,
-                                       size_t size, int timeoutMs)
-{
-    XMySqlSharedMemory* shared;
-    const uint8_t* current = (const uint8_t*)data;
-    size_t remaining = size;
-    size_t length;
-    HANDLE events[2];
-    DWORD status;
-    if (!client || !data) return false;
-    shared = &client->m_sharedMemory;
-    events[0] = shared->m_eventServerRead;
-    events[1] = shared->m_eventConnectionClosed;
-    while (remaining > 0) {
-        status = WaitForMultipleObjects(2, events, FALSE,
-                                        xmysql_shared_memory_timeout(timeoutMs));
-        if (status != WAIT_OBJECT_0) return false;
-        length = remaining > XMYSQL_SHARED_MEMORY_BUFFER_SIZE
-            ? XMYSQL_SHARED_MEMORY_BUFFER_SIZE : remaining;
-        xmysql_shared_memory_write_u32(shared->m_map, (uint32_t)length);
-        memcpy(shared->m_map + 4, current, length);
-        current += length;
-        remaining -= length;
-        if (!SetEvent(shared->m_eventClientWrote)) return false;
-    }
-    return true;
-}
-#else
-static void xmysql_shared_memory_close(XSqlMySqlClient* client)
-{
-    (void)client;
-}
-
-static bool xmysql_shared_memory_open(XSqlMySqlClient* client, const char* baseName,
-                                      int timeoutMs)
-{
-    (void)client;
-    (void)baseName;
-    (void)timeoutMs;
-    return false;
-}
-#endif
 
 static bool xmysql_socket_read(XSqlMySqlClient* client, void* data, size_t size, int timeout)
 {
     size_t offset = 0;
     XIODevice* device;
     if (!client) return false;
-#if defined(_WIN32)
     if (client->m_useSharedMemory)
-        return xmysql_shared_memory_read(client, data, size, timeout);
-#endif
+        return XSqlMySqlSharedMemory_read(client->m_sharedMemory, data, size, timeout);
     device = (XIODevice*)client->m_socket;
     while (offset < size) {
         int64_t count = XIODevice_read_1(device, (char*)data + offset,
@@ -593,10 +341,8 @@ static bool xmysql_socket_write(XSqlMySqlClient* client, const void* data, size_
     size_t offset = 0;
     XIODevice* device;
     if (!client) return false;
-#if defined(_WIN32)
     if (client->m_useSharedMemory)
-        return xmysql_shared_memory_write(client, data, size, timeout);
-#endif
+        return XSqlMySqlSharedMemory_write(client->m_sharedMemory, data, size, timeout);
     device = (XIODevice*)client->m_socket;
     while (offset < size) {
         int64_t count = XIODevice_write_1(device, (const char*)data + offset,
@@ -1295,65 +1041,24 @@ static bool xmysql_encrypt_caching_sha2_password(const char* password,
                                                  size_t publicKeySize,
                                                  XByteArray** encrypted)
 {
-    mbedtls_pk_context pk;
-    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-    mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
     XByteArray* plain = NULL;
-    XByteArray* output = NULL;
-    uint8_t* pem = NULL;
     size_t passwordSize;
-    size_t outputSize;
-    size_t outputLength = 0;
-    bool imported = false;
-    bool ok = false;
-    int result;
-    psa_status_t status;
 
     if (!password || !scramble || scrambleSize == 0 || !publicKey || publicKeySize == 0
         || !encrypted) return false;
     *encrypted = NULL;
     passwordSize = strlen(password) + 1;
-    pem = (uint8_t*)XCalloc_System(publicKeySize + 1, sizeof(uint8_t));
-    if (!pem) goto cleanup;
-    memcpy(pem, publicKey, publicKeySize);
-
-    mbedtls_pk_init(&pk);
-    result = mbedtls_pk_parse_public_key(&pk, pem, publicKeySize + 1);
-    if (result != 0 || mbedtls_pk_get_key_type(&pk) != PSA_KEY_TYPE_RSA_PUBLIC_KEY)
-        goto cleanup_pk;
-    result = mbedtls_pk_get_psa_attributes(&pk, PSA_KEY_USAGE_ENCRYPT, &attributes);
-    if (result != 0) goto cleanup_pk;
-    result = mbedtls_pk_import_into_psa(&pk, &attributes, &keyId);
-    if (result != 0) goto cleanup_pk;
-    imported = true;
-
     plain = XByteArray_create_with_data(password, passwordSize);
-    if (!plain || !XByteArray_data(plain)) goto cleanup_pk;
+    if (!plain || !XByteArray_data(plain)) {
+        if (plain) XByteArray_delete_base(plain);
+        return false;
+    }
     for (size_t i = 0; i < passwordSize; ++i)
         XByteArray_data(plain)[i] ^= scramble[i % scrambleSize];
-
-    outputSize = (mbedtls_pk_get_bitlen(&pk) + 7u) / 8u;
-    output = XByteArray_create();
-    if (outputSize == 0 || !output || !XByteArray_resize_base(output, outputSize))
-        goto cleanup_pk;
-    status = psa_asymmetric_encrypt(keyId, PSA_ALG_RSA_PKCS1V15_CRYPT,
-                                    XByteArray_data(plain), XByteArray_size_base(plain),
-                                    NULL, 0, XByteArray_data(output), outputSize,
-                                    &outputLength);
-    if (status != PSA_SUCCESS || !XByteArray_resize_base(output, outputLength))
-        goto cleanup_pk;
-    *encrypted = output;
-    output = NULL;
-    ok = true;
-
-cleanup_pk:
-    if (imported) psa_destroy_key(keyId);
-    psa_reset_key_attributes(&attributes);
-    mbedtls_pk_free(&pk);
-cleanup:
-    if (pem) XFree_System(pem);
-    if (plain) XByteArray_delete_base(plain);
-    if (output) XByteArray_delete_base(output);
+    bool ok = XSsl_publicKeyEncrypt(
+        (const uint8_t*)publicKey, publicKeySize, XSSL_Pem, XSSL_KeyAlgorithm_Rsa,
+        (const uint8_t*)XByteArray_data(plain), XByteArray_size_base(plain), encrypted);
+    XByteArray_delete_base(plain);
     return ok;
 }
 
@@ -1434,22 +1139,22 @@ static bool xmysql_option_enabled(const char* options, const char* name, bool de
     char value[32];
     if (!xmysql_option_value(options, name, value, sizeof(value))) return defaultValue;
     if (!value[0]) return true;
-    return strcasecmp(value, "1") == 0 || strcasecmp(value, "true") == 0
-        || strcasecmp(value, "yes") == 0 || strcasecmp(value, "on") == 0
-        || strcasecmp(value, "required") == 0 || strcasecmp(value, "verify_ca") == 0
-        || strcasecmp(value, "verify_identity") == 0;
+    return xmysql_ascii_casecmp(value, "1") == 0 || xmysql_ascii_casecmp(value, "true") == 0
+        || xmysql_ascii_casecmp(value, "yes") == 0 || xmysql_ascii_casecmp(value, "on") == 0
+        || xmysql_ascii_casecmp(value, "required") == 0 || xmysql_ascii_casecmp(value, "verify_ca") == 0
+        || xmysql_ascii_casecmp(value, "verify_identity") == 0;
 }
 
 static XSslProtocol xmysql_tls_protocol(const char* value)
 {
     if (!value) return XSSL_SecureProtocols;
-    if (strcasecmp(value, "TLSv1.0") == 0 || strcasecmp(value, "TLSv1") == 0)
+    if (xmysql_ascii_casecmp(value, "TLSv1.0") == 0 || xmysql_ascii_casecmp(value, "TLSv1") == 0)
         return XSSL_TlsV1_0;
-    if (strcasecmp(value, "TLSv1.1") == 0)
+    if (xmysql_ascii_casecmp(value, "TLSv1.1") == 0)
         return XSSL_TlsV1_1;
-    if (strcasecmp(value, "TLSv1.2") == 0)
+    if (xmysql_ascii_casecmp(value, "TLSv1.2") == 0)
         return XSSL_TlsV1_2;
-    if (strcasecmp(value, "TLSv1.3") == 0)
+    if (xmysql_ascii_casecmp(value, "TLSv1.3") == 0)
         return XSSL_TlsV1_3;
     return XSSL_SecureProtocols;
 }
@@ -1726,7 +1431,8 @@ static XSqlMySqlClient* xmysql_client_create(void)
 static void xmysql_client_close(XSqlMySqlClient* client)
 {
     if (!client) return;
-    xmysql_shared_memory_close(client);
+    XSqlMySqlSharedMemory_close(client->m_sharedMemory);
+    client->m_sharedMemory = NULL;
     client->m_useSharedMemory = false;
     if (client->m_socket) {
         XTcpSocket_disconnectFromHost_base(client->m_socket);
@@ -1826,15 +1532,15 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
     if (xmysql_option_value_alias(options, "SSL_MODE", "MYSQL_OPT_SSL_MODE",
                                   sslMode, sizeof(sslMode))) {
         client->m_tlsModeSpecified = true;
-        if (strcasecmp(sslMode, "disabled") == 0 || strcasecmp(sslMode, "SSL_MODE_DISABLED") == 0)
+        if (xmysql_ascii_casecmp(sslMode, "disabled") == 0 || xmysql_ascii_casecmp(sslMode, "SSL_MODE_DISABLED") == 0)
             client->m_tlsMode = XMySqlTlsDisabled;
-        else if (strcasecmp(sslMode, "preferred") == 0 || strcasecmp(sslMode, "SSL_MODE_PREFERRED") == 0)
+        else if (xmysql_ascii_casecmp(sslMode, "preferred") == 0 || xmysql_ascii_casecmp(sslMode, "SSL_MODE_PREFERRED") == 0)
             client->m_tlsMode = XMySqlTlsPreferred;
-        else if (strcasecmp(sslMode, "required") == 0 || strcasecmp(sslMode, "SSL_MODE_REQUIRED") == 0)
+        else if (xmysql_ascii_casecmp(sslMode, "required") == 0 || xmysql_ascii_casecmp(sslMode, "SSL_MODE_REQUIRED") == 0)
             client->m_tlsMode = XMySqlTlsRequired;
-        else if (strcasecmp(sslMode, "verify_ca") == 0 || strcasecmp(sslMode, "SSL_MODE_VERIFY_CA") == 0)
+        else if (xmysql_ascii_casecmp(sslMode, "verify_ca") == 0 || xmysql_ascii_casecmp(sslMode, "SSL_MODE_VERIFY_CA") == 0)
             client->m_tlsMode = XMySqlTlsVerifyCa;
-        else if (strcasecmp(sslMode, "verify_identity") == 0 || strcasecmp(sslMode, "SSL_MODE_VERIFY_IDENTITY") == 0)
+        else if (xmysql_ascii_casecmp(sslMode, "verify_identity") == 0 || xmysql_ascii_casecmp(sslMode, "SSL_MODE_VERIFY_IDENTITY") == 0)
             client->m_tlsMode = XMySqlTlsVerifyIdentity;
     }
     client->m_useTls = client->m_tlsModeSpecified
@@ -1863,17 +1569,17 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         client->m_tlsProtocol = xmysql_tls_protocol(tlsVersion);
     if (xmysql_option_value(options, "MYSQL_OPT_PROTOCOL", protocol, sizeof(protocol))) {
         protocolSpecified = true;
-        if (strcasecmp(protocol, "TCP") == 0
-            || strcasecmp(protocol, "MYSQL_PROTOCOL_TCP") == 0
-            || strcasecmp(protocol, "DEFAULT") == 0
-            || strcasecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0) {
+        if (xmysql_ascii_casecmp(protocol, "TCP") == 0
+            || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_TCP") == 0
+            || xmysql_ascii_casecmp(protocol, "DEFAULT") == 0
+            || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0) {
             useUnixSocket = false;
-        } else if (strcasecmp(protocol, "SOCKET") == 0
-                   || strcasecmp(protocol, "MYSQL_PROTOCOL_SOCKET") == 0) {
+        } else if (xmysql_ascii_casecmp(protocol, "SOCKET") == 0
+                   || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_SOCKET") == 0) {
             useUnixSocket = true;
             useDefaultUnixSocket = true;
-        } else if (strcasecmp(protocol, "PIPE") == 0
-                   || strcasecmp(protocol, "MYSQL_PROTOCOL_PIPE") == 0) {
+        } else if (xmysql_ascii_casecmp(protocol, "PIPE") == 0
+                   || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_PIPE") == 0) {
 #if defined(_WIN32)
             useNamedPipe = true;
             useDefaultNamedPipe = true;
@@ -1882,8 +1588,8 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
                              0, XSqlErrorType_ConnectionError);
             return false;
 #endif
-        } else if (strcasecmp(protocol, "MEMORY") == 0
-                   || strcasecmp(protocol, "MYSQL_PROTOCOL_MEMORY") == 0) {
+        } else if (xmysql_ascii_casecmp(protocol, "MEMORY") == 0
+                   || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_MEMORY") == 0) {
 #if defined(_WIN32)
             useSharedMemory = true;
 #else
@@ -1898,16 +1604,16 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         }
     }
 #if !defined(_WIN32)
-    if ((!protocolSpecified || strcasecmp(protocol, "DEFAULT") == 0
-         || strcasecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0)
+    if ((!protocolSpecified || xmysql_ascii_casecmp(protocol, "DEFAULT") == 0
+         || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0)
         && (!host || !host[0])) {
         useUnixSocket = true;
         useDefaultUnixSocket = true;
     }
 #endif
 #if defined(_WIN32)
-    if ((!protocolSpecified || strcasecmp(protocol, "DEFAULT") == 0
-         || strcasecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0)
+    if ((!protocolSpecified || xmysql_ascii_casecmp(protocol, "DEFAULT") == 0
+         || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0)
         && host && strcmp(host, ".") == 0) {
         useNamedPipe = true;
         useDefaultNamedPipe = true;
@@ -2077,7 +1783,9 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         }
     }
     if (useSharedMemory) {
-        if (!xmysql_shared_memory_open(client, sharedMemoryBaseName, client->m_connectTimeout)) {
+        client->m_sharedMemory = XSqlMySqlSharedMemory_open(
+            sharedMemoryBaseName, client->m_connectTimeout);
+        if (!client->m_sharedMemory) {
             xmysql_set_error(client, "Unable to connect to MySQL shared memory",
                              sharedMemoryBaseName, 0, XSqlErrorType_ConnectionError);
             xmysql_client_close(client);
@@ -2402,8 +2110,7 @@ static bool xmysql_send_local_infile(XSqlMySqlClient* client,
     const uint8_t* data;
     size_t size;
     XString* path;
-    XFd fd;
-    int error = 0;
+    XFile* file;
     uint8_t packet[16384];
     uint8_t sequence;
     if (!client || !request || !client->m_localInfile) return false;
@@ -2412,23 +2119,26 @@ static bool xmysql_send_local_infile(XSqlMySqlClient* client,
     if (!data || size <= 1 || data[0] != 0xfbu) return false;
     path = XString_create_with_length_utf8((const char*)data + 1, size - 1);
     if (!path) return false;
-    fd = XFileSystem_open(path, XIODevice_ReadOnly, &error);
+    file = XFile_create_2(path);
     XString_delete_base(path);
-    if (fd == XFD_INVALID) return false;
+    if (!file || !XFile_open_2(file, XIODevice_ReadOnly, 0)) {
+        if (file) XClass_delete_base((XClass*)file);
+        return false;
+    }
     sequence = (uint8_t)(requestSequence + 1u);
     for (;;) {
-        int64_t count = XFileSystem_read(fd, packet, sizeof(packet));
+        int64_t count = XIODevice_read_1((XIODevice*)file, (char*)packet, sizeof(packet));
         if (count < 0) {
-            XFileSystem_close(fd);
+            XClass_delete_base((XClass*)file);
             return false;
         }
         if (count == 0) break;
         if (!xmysql_client_send_packet(client, packet, (size_t)count, sequence++)) {
-            XFileSystem_close(fd);
+            XClass_delete_base((XClass*)file);
             return false;
         }
     }
-    XFileSystem_close(fd);
+    XClass_delete_base((XClass*)file);
     return xmysql_client_send_packet(client, NULL, 0, sequence);
 }
 
