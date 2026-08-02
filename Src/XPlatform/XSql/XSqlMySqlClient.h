@@ -1,9 +1,9 @@
 ﻿/**
  * @file       XSqlMySqlClient.h
- * @brief      MySQL å®¢æ·ç«¯æºç ééæ¥å£ã
- * @details    æ¬æä»¶åªå®ä¹ MySQL åè®®å®¢æ·ç«¯ä¸ XSql é©±å¨ä¹é´çæ½è±¡è¾¹çï¼
- *             ä¸åå« mysql.hãMariaDB å¤´æä»¶æä»»ä½å¹³å° APIãé»è®¤å®ç°ä½äº
- *             Src/XCode/XSqlï¼å¹¶éè¿ XinYueC çç½ç»ååå­æ¥å£å·¥ä½ã
+ * @brief      MySQL 客户端源码适配接口。
+ * @details    本文件只定义 MySQL 协议客户端与 XSql 驱动之间的抽象边界，
+ *             不包含 mysql.h、MariaDB 头文件或任何平台 API。默认实现位于
+ *             Src/XCode/XSql，并通过 XinYueC 的网络和内存接口工作。
  */
 #ifndef XSQLMYSQLCLIENT_H
 #define XSQLMYSQLCLIENT_H
@@ -18,174 +18,206 @@ extern "C" {
 
 #include "XSqlGlobal.h"
 
-/** @brief MySQL å®¢æ·ç«¯è¿æ¥çä¸éæå®ç°ç±»åï¼åªè½ç±å®¢æ·ç«¯å½æ°è¡¨åå»ºåéæ¯ã */
+/** @brief MySQL 客户端连接的不透明实现类型；只能由客户端函数表创建和销毁。 */
 typedef struct XSqlMySqlClient XSqlMySqlClient;
-/** @brief MySQL æ¥è¯¢ç»æçä¸éæå®ç°ç±»åï¼åªè½ç±å®¢æ·ç«¯å½æ°è¡¨éæ¯ã */
+/** @brief MySQL 查询结果的不透明实现类型；只能由客户端函数表销毁。 */
 typedef struct XSqlMySqlResult XSqlMySqlResult;
 
 /**
- * @brief MySQL å­æ®µåå¼çéç¨ç±»åã
+ * @brief MySQL 字段和值的通用类型。
  */
 typedef enum XSqlMySqlValueType {
-    XSqlMySqlValueType_Unknown = 0,  /**< æªç¥ç±»åã */
-    XSqlMySqlValueType_Null,         /**< NULLã */
-    XSqlMySqlValueType_Integer,      /**< æç¬¦å·æ´æ°ã */
-    XSqlMySqlValueType_UnsignedInteger, /**< æ ç¬¦å·æ´æ°ã */
-    XSqlMySqlValueType_Real,         /**< æµ®ç¹æ°æå®ç¹æ°ã */
-    XSqlMySqlValueType_String,       /**< ææ¬å­ç¬¦ä¸²ã */
-    XSqlMySqlValueType_ByteArray,    /**< äºè¿å¶æ°æ®ã */
-    XSqlMySqlValueType_Date,         /**< æ¥æå¼ã */
-    XSqlMySqlValueType_Time,         /**< æ¶é´å¼ã */
-    XSqlMySqlValueType_DateTime      /**< æ¥ææ¶é´å¼ã */
+    XSqlMySqlValueType_Unknown = 0,      /**< 未知类型。 */
+    XSqlMySqlValueType_Null,             /**< NULL。 */
+    XSqlMySqlValueType_Integer,          /**< 有符号整数。 */
+    XSqlMySqlValueType_UnsignedInteger, /**< 无符号整数。 */
+    XSqlMySqlValueType_Real,             /**< 浮点数或定点数。 */
+    XSqlMySqlValueType_String,           /**< 文本字符串。 */
+    XSqlMySqlValueType_ByteArray,        /**< 二进制数据。 */
+    XSqlMySqlValueType_Date,             /**< 日期值。 */
+    XSqlMySqlValueType_Time,             /**< 时间值。 */
+    XSqlMySqlValueType_DateTime          /**< 日期时间值。 */
 } XSqlMySqlValueType;
 
 /**
- * @brief MySQL äºè¿å¶é¢å¤çåæ°çæ æææè§å¾ã
- * @note m_data å¨ executePrepared è¿ååå¿é¡»ä¿æææï¼å®¢æ·ç«¯ä¸ä¼ä¿å­æéã
+ * @brief MySQL 二进制预处理参数的无所有权视图。
+ * @note m_data 在 executePrepared 返回前必须保持有效；客户端不会保存该指针。
  */
 typedef struct XSqlMySqlBind {
-    XSqlMySqlValueType m_type; /**< åæ°å¼ç±»åã */
-    const void* m_data;        /**< åæ°æ°æ®åç¨æéï¼é NULL å¼å¿é¡»å¨è°ç¨ç»æåææã */
-    size_t m_size;             /**< åæ°æ°æ®å­èæ°ï¼ææ¬ä¸è¦æ±åå«æ«å°¾ NULã */
-    bool m_isNull;             /**< ä¸º true æ¶å¿½ç¥ m_data å m_size å¹¶ç»å® SQL NULLã */
-    bool m_unsigned;           /**< æ´æ°åæ°æ¯å¦ææ ç¬¦å·å¼ç¼ç ã */
+    XSqlMySqlValueType m_type; /**< 参数值类型。 */
+    const void* m_data;        /**< 参数数据借用指针；非 NULL 值必须在调用结束前有效。 */
+    size_t m_size;             /**< 参数数据字节数；文本不要求包含末尾 NUL。 */
+    bool m_isNull;             /**< 为 true 时忽略 m_data 和 m_size，并绑定 SQL NULL。 */
+    bool m_unsigned;           /**< 整数参数是否按无符号值编码。 */
 } XSqlMySqlBind;
 
 /**
- * @brief MySQL å­æ®µåæ°æ®è§å¾ã
- * @note ææå­ç¬¦ä¸²åç±ç»æå¯¹è±¡åç¨ï¼ç»æå¯¹è±¡éæ¯åå¤±æã
+ * @brief MySQL 字段元数据视图。
+ * @note 所有字符串均由结果对象借用，结果对象销毁后失效。
  */
 typedef struct XSqlMySqlField {
-    const char* m_name;          /**< å­æ®µåç§°ï¼UTF-8ã */
-    const char* m_table;         /**< æå±è¡¨åç§°ï¼UTF-8ã */
-    const char* m_database;      /**< æå±æ°æ®åºåç§°ï¼UTF-8ã */
-    XSqlMySqlValueType m_type;   /**< å­æ®µç±»åã */
-    uint32_t m_length;           /**< æå¡ç«¯å£°æçå­æ®µé¿åº¦ã */
-    uint32_t m_flags;            /**< MySQL å­æ®µæ å¿ã */
-    uint8_t m_nativeType;        /**< MySQL åçå­æ®µç±»åä»£ç ã */
-    uint8_t m_decimals;          /**< å®ç¹/æµ®ç¹å­æ®µçå°æ°ä½æ°ã */
-    bool m_unsigned;             /**< æ¯å¦ä¸ºæ ç¬¦å·æ°ã */
+    const char* m_name;          /**< 字段名称，UTF-8。 */
+    const char* m_table;         /**< 所属表名称，UTF-8。 */
+    const char* m_database;      /**< 所属数据库名称，UTF-8。 */
+    XSqlMySqlValueType m_type;   /**< 字段类型。 */
+    uint32_t m_length;           /**< 服务端声明的字段长度。 */
+    uint32_t m_flags;            /**< MySQL 字段标志。 */
+    uint8_t m_nativeType;        /**< MySQL 原生字段类型代码。 */
+    uint8_t m_decimals;          /**< 定点或浮点字段的小数位数。 */
+    bool m_unsigned;             /**< 是否为无符号数。 */
 } XSqlMySqlField;
 
 /**
- * @brief MySQL ç»æå¼è§å¾ã
- * @note m_data ç±ç»æå¯¹è±¡ææï¼è°ç¨èåªè½å¨å½åç»æå¯¹è±¡æææé´è¯»åã
+ * @brief MySQL 结果值视图。
+ * @note m_data 由结果对象持有，调用者只能在当前结果对象有效期间读取。
  */
 typedef struct XSqlMySqlValue {
-    const void* m_data;          /**< åå§å¼æ°æ®ï¼ä¸ä¿è¯ä»¥ NULL ç»å°¾ã */
-    size_t m_size;               /**< åå§å¼é¿åº¦ã */
-    XSqlMySqlValueType m_type;   /**< å¼ç±»åã */
-    bool m_isNull;               /**< æ¯å¦ä¸º NULLã */
+    const void* m_data;          /**< 原始值数据，不保证以 NULL 结尾。 */
+    size_t m_size;               /**< 原始值长度。 */
+    XSqlMySqlValueType m_type;   /**< 值类型。 */
+    bool m_isNull;               /**< 是否为 NULL。 */
 } XSqlMySqlValue;
 
 /**
- * @brief MySQL å®¢æ·ç«¯éè¯¯è§å¾ã
- * @note å­ç¬¦ä¸²ç±å®¢æ·ç«¯å¯¹è±¡ææï¼ä¸ä¸æ¬¡æä½æå¯¹è±¡éæ¯åå¤±æã
+ * @brief MySQL 客户端错误视图。
+ * @note 字符串由客户端对象持有，下一次操作或对象销毁后失效。
  */
 typedef struct XSqlMySqlError {
-    const char* m_driverText;    /**< é©±å¨éè¯¯ææ¬ã */
-    const char* m_databaseText;  /**< æå¡ç«¯éè¯¯ææ¬ã */
-    const char* m_errorCode;     /**< æå¡ç«¯éè¯¯ç ææ¬ã */
-    XSqlErrorType m_type;        /**< XinYueC SQL éè¯¯ç±»åã */
+    const char* m_driverText;    /**< 驱动错误文本。 */
+    const char* m_databaseText;  /**< 服务端错误文本。 */
+    const char* m_errorCode;     /**< 服务端错误码文本。 */
+    XSqlErrorType m_type;        /**< XinYueC SQL 错误类型。 */
 } XSqlMySqlError;
 
 /**
- * @brief å¯æ¿æ¢ç MySQL å®¢æ·ç«¯å½æ°è¡¨ã
- * @details XMySqlDriver åªä¾èµæ¬å½æ°è¡¨ãç§»æ¤å°åµå¥å¼æ¶å¯ä»¥ä¿çé»è®¤ç
- *          XinYueC åè®®å®ç°ï¼ä¹å¯ä»¥æä¾åºäºååå®¢æ·ç«¯æºç çå¦ä¸ä»½å½æ°è¡¨ã
+ * @brief 可替换的 MySQL 客户端函数表。
+ * @details XMySqlDriver 只依赖本函数表。移植到嵌入式时可以保留默认的
+ *          XinYueC 协议实现，也可以提供基于厂商客户端源码的另一份函数表。
  */
 typedef struct XSqlMySqlClientApi {
-    /** @brief åå»ºæªè¿æ¥ç MySQL å®¢æ·ç«¯ã @return æ°å®¢æ·ç«¯æææï¼å¤±è´¥è¿å NULLã */
+    /** @brief 创建未连接的 MySQL 客户端。 @return 新客户端所有权；失败返回 NULL。 */
     XSqlMySqlClient* (*create)(void);
-    /** @brief éæ¯å®¢æ·ç«¯åå¶è¿æ¥ã @param client å®¢æ·ç«¯æææï¼å¯ä¸º NULLã */
+    /** @brief 销毁客户端及其连接。 @param client 客户端所有权；可为 NULL。 */
     void (*destroy)(XSqlMySqlClient* client);
     /**
-     * @brief æå¼ MySQL è¿æ¥ã
-     * @param client å®¢æ·ç«¯ï¼ä¸è½ä¸º NULLï¼ç±è°ç¨æ¹åç¨ã
-     * @param database é»è®¤æ°æ®åºåï¼UTF-8 åç¨å­ç¬¦ä¸²ï¼å¯ä¸º NULLã
-     * @param user ç¨æ·åï¼UTF-8 åç¨å­ç¬¦ä¸²ï¼å¯ä¸º NULLã
-     * @param password å¯ç ï¼UTF-8 åç¨å­ç¬¦ä¸²ï¼å¯ä¸º NULLï¼ä¸ç±å®¢æ·ç«¯ä¿å­ã
-     * @param host ä¸»æºãUnix å¥æ¥å­ææ¬å°ä¼ è¾ç«¯ç¹ï¼UTF-8 åç¨å­ç¬¦ä¸²ï¼å¯ä¸º NULLã
-     * @param port TCP ç«¯å£ï¼å°äº 0 æ¶ç±å®¢æ·ç«¯ä½¿ç¨é»è®¤å¼ã
-     * @param options åå·åéè¿æ¥éé¡¹ï¼UTF-8 åç¨å­ç¬¦ä¸²ï¼å¯ä¸º NULLã
-     * @return æåè¿å trueï¼å¤±è´¥æ¶å®¢æ·ç«¯è®°å½å¯ç± lastError åå¾çéè¯¯ã
+     * @brief 打开 MySQL 连接。
+     * @param client 客户端；不能为 NULL，由调用方借用。
+     * @param database 默认数据库名；UTF-8 借用字符串，可为 NULL。
+     * @param user 用户名；UTF-8 借用字符串，可为 NULL。
+     * @param password 密码；UTF-8 借用字符串，可为 NULL，不由客户端保存。
+     * @param host 主机、Unix 套接字或本地传输端点；UTF-8 借用字符串，可为 NULL。
+     * @param port TCP 端口；小于 0 时由客户端使用默认值。
+     * @param options 分号分隔的连接选项；UTF-8 借用字符串，可为 NULL。
+     * @return 成功返回 true；失败时客户端记录可由 lastError 获取的错误。
      */
     bool (*open)(XSqlMySqlClient* client, const char* database, const char* user,
                  const char* password, const char* host, int port, const char* options);
     /**
-     * @brief å³é­å½åè¿æ¥ã
-     * @param client å®¢æ·ç«¯ï¼å¯ä¸º NULLï¼ç±è°ç¨æ¹åç¨ã
-     * @return æ ï¼å³é­åå·²æç»æç±ç»æå¯¹è±¡ç»§ç»­ç®¡çï¼å®¢æ·ç«¯ä¸åå¯æ§è¡ SQLã
+     * @brief 关闭当前连接。
+     * @param client 客户端；可为 NULL，由调用方借用。
+     * @return 无；关闭后已有结果由结果对象继续管理，客户端不再执行 SQL。
      */
     void (*close)(XSqlMySqlClient* client);
     /**
-     * @brief æ§è¡ UTF-8 SQL ææ¬ã
-     * @param client å·²è¿æ¥å®¢æ·ç«¯ï¼ä¸è½ä¸º NULLï¼ç±è°ç¨æ¹åç¨ã
-     * @param query SQL å­èåºåï¼åç¨ï¼é¿åº¦ç± length æå®ï¼ä¸è¦æ± NUL ç»å°¾ã
-     * @param length query çå­èæ°ã
-     * @param result è¾åºç»æï¼æåæ¶åå¥æ°ç»ææææï¼æ ç»æéæ¶ä»å¯ä¸º NULLã
-     * @return æå¡ç«¯æ¥åå¹¶å®æè¯·æ±è¿å trueï¼å¤±è´¥æ¶ result å¿é¡»ä¿æ NULLã
+     * @brief 执行 UTF-8 SQL 文本。
+     * @param client 已连接客户端；不能为 NULL，由调用方借用。
+     * @param query SQL 字节序列；借用，长度由 length 指定，不要求 NUL 结尾。
+     * @param length query 的字节数。
+     * @param result 输出结果；成功时写入新结果所有权，无结果集时仍可为 NULL。
+     * @return 服务端接受并完成请求返回 true；失败时 result 必须保持 NULL。
      */
     bool (*execute)(XSqlMySqlClient* client, const char* query, size_t length,
                     XSqlMySqlResult** result);
     /**
-     * @brief ä»¥æå¡ç«¯äºè¿å¶é¢å¤çåè®®æ§è¡ SQLã
-     * @param client å·²è¿æ¥å®¢æ·ç«¯ï¼ä¸è½ä¸º NULLï¼ç±è°ç¨æ¹åç¨ã
-     * @param query SQL å­èåºåï¼åç¨ï¼é¿åº¦ç± length æå®ã
-     * @param length query çå­èæ°ã
-     * @param binds åæ°æ°ç»ï¼åç¨ï¼bindCount ä¸º 0 æ¶å¯ä¸º NULLã
-     * @param bindCount binds ä¸­çåæ°ä¸ªæ°ã
-     * @param result è¾åºç»æï¼æåæ¶åå¥æ°ç»ææææï¼æ ç»æéæ¶ä»å¯ä¸º NULLã
-     * @return æåè¿å trueï¼æªæ¯æææ§è¡å¤±è´¥è¿å falseã
+     * @brief 使用服务端二进制预处理协议执行 SQL。
+     * @param client 已连接客户端；不能为 NULL，由调用方借用。
+     * @param query SQL 字节序列；借用，长度由 length 指定。
+     * @param length query 的字节数。
+     * @param binds 参数数组；借用，bindCount 为 0 时可为 NULL。
+     * @param bindCount binds 中的参数个数。
+     * @param result 输出结果；成功时写入新结果所有权，无结果集时仍可为 NULL。
+     * @return 成功返回 true；未支持或执行失败返回 false。
      */
     bool (*executePrepared)(XSqlMySqlClient* client, const char* query, size_t length,
                             const XSqlMySqlBind* binds, size_t bindCount,
                             XSqlMySqlResult** result);
-    /** @brief éæ¯æ¥è¯¢ç»æã @param result ç»ææææï¼å¯ä¸º NULLã */
+    /** @brief 销毁查询结果。 @param result 结果所有权；可为 NULL。 */
     void (*resultDestroy)(XSqlMySqlResult* result);
-    /** @brief è¿åç»æåæ°ã @param result ç»æï¼å¯ä¸º NULLã @return åæ°ï¼æ ç»ææ NULL è¿å 0ã */
+    /** @brief 返回结果列数。 @param result 结果；可为 NULL。 @return 列数；无结果或 NULL 返回 0。 */
     int (*resultColumnCount)(const XSqlMySqlResult* result);
-    /** @brief è·åå­æ®µåæ°æ®åç¨è§å¾ã @param result ç»æï¼ä¸è½ä¸º NULLã @param index åç´¢å¼ï¼ä» 0 å¼å§ã @return å­æ®µåç¨è§å¾ï¼è¶çè¿å NULLã */
+    /**
+     * @brief 获取字段元数据借用视图。
+     * @param result 结果；不能为 NULL。
+     * @param index 列索引，从 0 开始。
+     * @return 字段借用视图；越界返回 NULL。
+     */
     const XSqlMySqlField* (*resultField)(const XSqlMySqlResult* result, int index);
-    /** @brief å®ä½ç»æè¡ã @param result ç»æï¼ä¸è½ä¸º NULLã @param index è¡ç´¢å¼ï¼ä» 0 å¼å§ã @return å®ä½æåè¿å trueï¼è¶çæå¤±è´¥è¿å falseã */
+    /**
+     * @brief 定位结果行。
+     * @param result 结果；不能为 NULL。
+     * @param index 行索引，从 0 开始。
+     * @return 定位成功返回 true；越界或失败返回 false。
+     */
     bool (*resultFetch)(XSqlMySqlResult* result, int index);
-    /** @brief è·åå½åè¡åå¼åç¨è§å¾ã @param result å·²å®ä½ç»æï¼ä¸è½ä¸º NULLã @param index åç´¢å¼ï¼ä» 0 å¼å§ã @return å¼åç¨è§å¾ï¼æ å½åè¡æè¶çè¿å NULLã */
+    /**
+     * @brief 获取当前行列值借用视图。
+     * @param result 已定位结果；不能为 NULL。
+     * @param index 列索引，从 0 开始。
+     * @return 值借用视图；无当前行或越界返回 NULL。
+     */
     const XSqlMySqlValue* (*resultValue)(const XSqlMySqlResult* result, int index);
-    /** @brief è¿åå¯ç¥çç»æè¡æ°ã @param result ç»æï¼å¯ä¸º NULLã @return è¡æ°ï¼æªç¥æ¶è¿å -1ã */
+    /** @brief 返回可知的结果行数。 @param result 结果；可为 NULL。 @return 行数；未知时返回 -1。 */
     int (*resultSize)(const XSqlMySqlResult* result);
-    /** @brief è¿åæè¿è¯­å¥çåå½±åè¡æ°ã @param result ç»æï¼å¯ä¸º NULLã @return åå½±åè¡æ°ï¼æªç¥æ¶è¿å -1ã */
+    /** @brief 返回最近语句的受影响行数。 @param result 结果；可为 NULL。 @return 受影响行数；未知时返回 -1。 */
     int64_t (*resultRowsAffected)(const XSqlMySqlResult* result);
-    /** @brief è¿åæè¿æå¥çèªå¢ IDã @param result ç»æï¼å¯ä¸º NULLã @return èªå¢ IDï¼ä¸å¯ç¨æ¶è¿å 0ã */
+    /** @brief 返回最近插入的自增 ID。 @param result 结果；可为 NULL。 @return 自增 ID；不可用时返回 0。 */
     uint64_t (*resultLastInsertId)(const XSqlMySqlResult* result);
-    /** @brief å¤æ­æ¯å¦ä¸ºæåç SELECT ç»æã @param result ç»æï¼å¯ä¸º NULLã @return æ¯ SELECT è¿å trueï¼å¦åè¿å falseã */
+    /** @brief 判断是否为有列的 SELECT 结果。 @param result 结果；可为 NULL。 @return 是 SELECT 返回 true，否则返回 false。 */
     bool (*resultIsSelect)(const XSqlMySqlResult* result);
-    /** @brief åæ¢å°ä¸ä¸æå¡ç«¯ç»æã @param result å½åç»æï¼ä¸è½ä¸º NULLã @param next è¾åºä¸ä¸ç»ææææï¼æ ä¸ä¸ç»ææ¶ä¿æ NULLã @return å·²åæ¢è¿å trueï¼å¦åè¿å falseã */
+    /**
+     * @brief 切换到下一个服务端结果。
+     * @param result 当前结果；不能为 NULL。
+     * @param next 输出下一个结果所有权；无下一个结果时保持 NULL。
+     * @return 已切换返回 true，否则返回 false。
+     */
     bool (*resultNext)(XSqlMySqlResult* result, XSqlMySqlResult** next);
-    /** @brief è·åæè¿å®¢æ·ç«¯éè¯¯åç¨è§å¾ã @param client å®¢æ·ç«¯ï¼å¯ä¸º NULLã @return éè¯¯åç¨è§å¾ï¼æ éè¯¯ä¿¡æ¯æ¶è¿å NULLã */
+    /**
+     * @brief 获取最近客户端错误借用视图。
+     * @param client 客户端；可为 NULL。
+     * @return 错误借用视图；无错误信息时返回 NULL。
+     */
     const XSqlMySqlError* (*lastError)(const XSqlMySqlClient* client);
-    /** @brief è·ååç«¯åçå¥æã @param client å®¢æ·ç«¯ï¼å¯ä¸º NULLã @return åç¨å¥æï¼è°ç¨æ¹ä¸å¾éæ¾ï¼æªå®ç°æ¶è¿å NULLã */
+    /**
+     * @brief 获取后端原生句柄。
+     * @param client 客户端；可为 NULL。
+     * @return 借用句柄；调用方不得释放，未实现时返回 NULL。
+     */
     void* (*handle)(const XSqlMySqlClient* client);
-    /** @brief è¯·æ±åæ¶å½åæ¥è¯¢ã @param client å®¢æ·ç«¯ï¼ä¸è½ä¸º NULLã @return å·²åæ¶è¿å trueï¼æªå®ç°ææ æ³åæ¶è¿å falseã */
+    /**
+     * @brief 请求取消当前查询。
+     * @param client 客户端；不能为 NULL。
+     * @return 已取消返回 true；未实现或无法取消返回 false。
+     */
     bool (*cancel)(XSqlMySqlClient* client);
     /**
-     * @brief æ¥è¯¢å½åè¿æ¥æ¯å¦æ¯æäºå¡ã
-     * @param client å®¢æ·ç«¯å¯¹è±¡ï¼ç±é©±å¨åç¨ã
-     * @return æ¯æè¿å trueï¼ä¸æ¯æè¿å falseã
-     * @note å¯éåè°ï¼NULL æ¶é©±å¨æè¿æ¥å·²æå¼å¤çï¼ä»¥å¼å®¹æ§ééå¨ã
+     * @brief 查询当前连接是否支持事务。
+     * @param client 客户端对象；由驱动借用。
+     * @return 支持返回 true；不支持返回 false。
+     * @note 可选回调；为 NULL 时驱动按连接已打开处理，以兼容旧适配器。
      */
     bool (*supportsTransactions)(const XSqlMySqlClient* client);
     /**
-     * @brief æ¥è¯¢å½åè¿æ¥æ¯å¦æ¯ææå¡ç«¯é¢å¤çã
-     * @param client å®¢æ·ç«¯å¯¹è±¡ï¼ç±é©±å¨åç¨ã
-     * @return æ¯æè¿å trueï¼ä¸æ¯æè¿å falseã
-     * @note å¯éåè°ï¼NULL æ¶é©±å¨æè¿æ¥å·²æå¼å¤çï¼ä»¥å¼å®¹æ§ééå¨ã
+     * @brief 查询当前连接是否支持服务端预处理。
+     * @param client 客户端对象；由驱动借用。
+     * @return 支持返回 true；不支持返回 false。
+     * @note 可选回调；为 NULL 时驱动按连接已打开处理，以兼容旧适配器。
      */
     bool (*supportsPreparedQueries)(const XSqlMySqlClient* client);
 } XSqlMySqlClientApi;
 
 /**
- * @brief è·åé»è®¤ MySQL å®¢æ·ç«¯å®ç°ã
- * @return è¿ç¨åå±äº«å½æ°è¡¨ï¼ä¸å¾éæ¾ãæ²¡æå¯ç¨å®ç°æ¶è¿å NULLã
+ * @brief 获取默认 MySQL 客户端实现。
+ * @return 进程内共享函数表；不得释放。没有可用实现时返回 NULL。
  */
 const XSqlMySqlClientApi* XSqlMySqlClient_defaultApi(void);
 
