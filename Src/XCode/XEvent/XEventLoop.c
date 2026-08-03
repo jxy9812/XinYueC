@@ -36,7 +36,7 @@ static XAbstractEventDispatcher* XEventLoop_dispatcher(XEventLoop* loop)
 XVtable* XEventLoop_class_init() {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEventLoop))
+        XVTABLE_STACK_INIT_DEFAULT(XEventLoop)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

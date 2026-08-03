@@ -91,7 +91,7 @@ XVtable* XHttpPart_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpPart))
+    XVTABLE_STACK_INIT_DEFAULT(XHttpPart)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -286,7 +286,7 @@ XVtable* XHttpMultiPart_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpMultiPart))
+    XVTABLE_STACK_INIT_DEFAULT(XHttpMultiPart)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

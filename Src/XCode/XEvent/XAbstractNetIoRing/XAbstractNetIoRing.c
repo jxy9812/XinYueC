@@ -239,7 +239,7 @@ static void VXAbstractNetIoRing_deinit(XAbstractNetIoRing* obj) {
 XVtable* XAbstractNetIoRing_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractNetIoRing))
+    XVTABLE_STACK_INIT_DEFAULT(XAbstractNetIoRing)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

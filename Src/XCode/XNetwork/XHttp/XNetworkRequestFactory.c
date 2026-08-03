@@ -277,7 +277,7 @@ XVtable* XNetworkRequestFactory_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkRequestFactory))
+    XVTABLE_STACK_INIT_DEFAULT(XNetworkRequestFactory)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

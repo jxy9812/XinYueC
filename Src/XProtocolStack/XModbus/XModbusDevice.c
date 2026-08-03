@@ -28,7 +28,7 @@ XVtable* XModbusDevice_class_init()
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusDevice))
+        XVTABLE_STACK_INIT_DEFAULT(XModbusDevice)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

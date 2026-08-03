@@ -88,7 +88,7 @@ static inline uint64_t get_current_time_ns(XHrTimerGroup* group) {
 XVtable* XHrTimerGroup_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHRTIMERGROUP_VTABLE_SIZE)
+    XVTABLE_STACK_INIT_DEFAULT(XHrTimerGroup)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

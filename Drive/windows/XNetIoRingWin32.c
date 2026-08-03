@@ -260,7 +260,7 @@ static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj) {
 XVtable* XNetIoRingWin32_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetIoRingWin32))
+    XVTABLE_STACK_INIT_DEFAULT(XNetIoRingWin32)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

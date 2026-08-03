@@ -294,7 +294,7 @@ XVtable* XExample_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XExample))
+    XVTABLE_STACK_INIT_DEFAULT(XExample)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -408,7 +408,7 @@ XVtable* XExample_class_init(void)
     
     // 2. 初始化虚函数表（选择栈或堆）
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XExample))
+    XVTABLE_STACK_INIT_DEFAULT(XExample)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

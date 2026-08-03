@@ -70,7 +70,7 @@ XVtable* XAbstractEventDispatcher_class_init(void)
     XVTABLE_CREAT_DEFAULT // static XVtable* XVTABLE_DEFAULT = NULL; if exists return
 
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractEventDispatcher))
+        XVTABLE_STACK_INIT_DEFAULT(XAbstractEventDispatcher)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

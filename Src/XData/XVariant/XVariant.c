@@ -39,12 +39,12 @@ XVtable* XVariant_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+		XVTABLE_STACK_INIT_DEFAULT(XClass)
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
-	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	// 继承类
+	XVTABLE_INHERIT_XCLASS(XClass);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXVariant_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXVariant_copy);

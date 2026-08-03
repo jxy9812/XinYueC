@@ -1146,7 +1146,7 @@ XVtable* XStateMachine_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStateMachine))
+    XVTABLE_STACK_INIT_DEFAULT(XStateMachine)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -1609,7 +1609,7 @@ static XVtable* XStateMachine_SignalEvent_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStateMachine_SignalEventClass))
+    XVTABLE_STACK_INIT_DEFAULT(XStateMachine_SignalEventClass)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -1663,7 +1663,7 @@ static XVtable* XStateMachine_WrappedEvent_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStateMachine_WrappedEventClass))
+    XVTABLE_STACK_INIT_DEFAULT(XStateMachine_WrappedEventClass)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

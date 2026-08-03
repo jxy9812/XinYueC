@@ -126,7 +126,7 @@ XVtable* XNetworkCookie_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkCookie))
+    XVTABLE_STACK_INIT_DEFAULT(XNetworkCookie)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -535,7 +535,7 @@ XVtable* XNetworkCookieJar_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkCookieJar))
+    XVTABLE_STACK_INIT_DEFAULT(XNetworkCookieJar)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

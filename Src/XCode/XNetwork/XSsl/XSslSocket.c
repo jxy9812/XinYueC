@@ -1398,7 +1398,7 @@ bool XSslSocket_isFeatureSupported(XSslSupportedFeature feat, const XString* bac
 XVtable* XSslSocket_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractSocket))
+    XVTABLE_STACK_INIT_DEFAULT(XAbstractSocket)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

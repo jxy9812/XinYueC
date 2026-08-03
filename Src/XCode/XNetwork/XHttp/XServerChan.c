@@ -103,7 +103,7 @@ XVtable* XServerChanResult_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XServerChanResult))
+    XVTABLE_STACK_INIT_DEFAULT(XServerChanResult)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -401,7 +401,7 @@ XVtable* XServerChan_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XServerChan))
+    XVTABLE_STACK_INIT_DEFAULT(XServerChan)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

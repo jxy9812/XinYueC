@@ -416,7 +416,7 @@ XVtable* XHttp2HeaderList_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderList))
+    XVTABLE_STACK_INIT_DEFAULT(XHttp2HeaderList)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -891,7 +891,7 @@ XVtable* XHttp2HeaderEncoder_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderEncoder))
+    XVTABLE_STACK_INIT_DEFAULT(XHttp2HeaderEncoder)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -1126,7 +1126,7 @@ XVtable* XHttp2HeaderDecoder_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2HeaderDecoder))
+    XVTABLE_STACK_INIT_DEFAULT(XHttp2HeaderDecoder)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

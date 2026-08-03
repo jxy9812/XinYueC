@@ -94,8 +94,13 @@ static void VXFont_move(XFont* dest, XFont* src)
 
 XVtable* XFont_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT;
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_SIZE);
+    XVTABLE_CREAT_DEFAULT
+        // 虚函数表初始化
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XFont)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXFont_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXFont_move);

@@ -10,7 +10,7 @@ static void VXModbusReply_deinit(XModbusReply* reply);
 XVtable* XModbusReply_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XObject))
+        XVTABLE_STACK_INIT_DEFAULT(XObject)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

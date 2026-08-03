@@ -69,7 +69,7 @@ XVtable* XSqlDriverCreatorBase_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XSqlDriverCreatorBase))
+    XVTABLE_STACK_INIT_DEFAULT(XSqlDriverCreatorBase)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -83,7 +83,7 @@ XVtable* XSqlDriverCreator_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XSqlDriverCreator))
+    XVTABLE_STACK_INIT_DEFAULT(XSqlDriverCreator)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -184,7 +184,7 @@ XVtable* XSqlDatabase_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XSqlDatabase))
+    XVTABLE_STACK_INIT_DEFAULT(XSqlDatabase)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

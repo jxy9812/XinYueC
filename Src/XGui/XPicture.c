@@ -262,8 +262,13 @@ static void VXPicture_deinit(XPicture* self)
 
 XVtable* XPicture_class_init()
 {
-    XVTABLE_CREAT_DEFAULT;
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XPicture));
+    XVTABLE_CREAT_DEFAULT
+        // 虚函数表初始化
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XPicture)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPicture_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPicture_move);
@@ -821,5 +826,4 @@ bool XPicture_isDetached(const XPicture* self)
 {
     return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
 }
-
 

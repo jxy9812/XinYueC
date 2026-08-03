@@ -51,7 +51,7 @@ XVtable* XHttp2Configuration_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttp2Configuration))
+    XVTABLE_STACK_INIT_DEFAULT(XHttp2Configuration)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

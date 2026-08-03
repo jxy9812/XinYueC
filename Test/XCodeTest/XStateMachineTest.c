@@ -75,7 +75,7 @@ static XVtable* XStateMachineTest_TypeTransition_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStateMachineTest_TypeTransition))
+    XVTABLE_STACK_INIT_DEFAULT(XStateMachineTest_TypeTransition)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -137,7 +137,7 @@ static XVtable* XStateMachineTest_EventSource_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStateMachineTest_EventSource))
+    XVTABLE_STACK_INIT_DEFAULT(XStateMachineTest_EventSource)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

@@ -62,7 +62,7 @@ static void VXNetworkProxyQuery_move(XNetworkProxyQuery* dest, XNetworkProxyQuer
 XVtable* XNetworkProxyQuery_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkProxyQuery))
+        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxyQuery)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -258,7 +258,7 @@ static void VXNetworkProxy_move(XNetworkProxy* dest, XNetworkProxy* src) {
 XVtable* XNetworkProxy_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkProxy))
+        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxy)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -506,7 +506,7 @@ static void VXNetworkProxyFactory_move(XNetworkProxyFactory* dest, XNetworkProxy
 XVtable* XNetworkProxyFactory_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XNetworkProxyFactory))
+        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxyFactory)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

@@ -685,7 +685,7 @@ XVtable* XHttpServerRequest_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpServerRequest))
+    XVTABLE_STACK_INIT_DEFAULT(XHttpServerRequest)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -705,7 +705,7 @@ XVtable* XHttpServerResponse_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpServerResponse))
+    XVTABLE_STACK_INIT_DEFAULT(XHttpServerResponse)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -725,7 +725,7 @@ XVtable* XHttpServer_class_init(void)
     XVTABLE_CREAT_DEFAULT
     //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHttpServer))
+    XVTABLE_STACK_INIT_DEFAULT(XHttpServer)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

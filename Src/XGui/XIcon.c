@@ -134,8 +134,13 @@ static void VXIcon_deinit(XIcon* self)
 
 XVtable* XIcon_class_init()
 {
-    XVTABLE_CREAT_DEFAULT;
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XIcon));
+    XVTABLE_CREAT_DEFAULT
+        // 虚函数表初始化
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XIcon)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXIcon_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXIcon_move);

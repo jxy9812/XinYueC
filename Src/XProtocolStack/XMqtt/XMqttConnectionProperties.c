@@ -12,7 +12,7 @@ XVtable* XMqttLastWillProperties_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+    XVTABLE_STACK_INIT_DEFAULT(XClass)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -108,7 +108,7 @@ XVtable* XMqttConnectionProperties_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+    XVTABLE_STACK_INIT_DEFAULT(XClass)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -208,7 +208,7 @@ XVtable* XMqttServerConnectionProperties_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMqttConnectionProperties))
+    XVTABLE_STACK_INIT_DEFAULT(XMqttConnectionProperties)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif

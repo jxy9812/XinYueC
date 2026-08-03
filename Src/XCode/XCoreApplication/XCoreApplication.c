@@ -71,7 +71,7 @@ void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XCoreApplication))
+        XVTABLE_STACK_INIT_DEFAULT(XCoreApplication)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

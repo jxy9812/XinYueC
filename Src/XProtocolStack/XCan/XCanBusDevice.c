@@ -58,7 +58,7 @@ XVtable* XCanBusDevice_class_init()
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XCanBusDevice))
+        XVTABLE_STACK_INIT_DEFAULT(XCanBusDevice)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif

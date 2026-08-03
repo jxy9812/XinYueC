@@ -118,8 +118,13 @@ static void VXImageIOHandler_currentImageRect(const XImageIOHandler* self, XRect
 
 XVtable* XImageIOHandler_class_init()
 {
-    XVTABLE_CREAT_DEFAULT;
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XImageIOHandler));
+    XVTABLE_CREAT_DEFAULT
+        // 虚函数表初始化
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XImageIOHandler)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImageIOHandler_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VXImageIOHandler_canRead);
@@ -273,4 +278,3 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
     XImage_init_ex(image, size->width, size->height, format);
     return !XImage_isNull(image);
 }
-

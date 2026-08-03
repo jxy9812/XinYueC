@@ -678,7 +678,7 @@ XVtable* XRegularExpression_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XRegularExpression))
+    XVTABLE_STACK_INIT_DEFAULT(XRegularExpression)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -693,7 +693,7 @@ XVtable* XRegularExpressionMatch_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XRegularExpressionMatch))
+    XVTABLE_STACK_INIT_DEFAULT(XRegularExpressionMatch)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -708,7 +708,7 @@ XVtable* XRegularExpressionMatchIterator_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XRegularExpressionMatchIterator))
+    XVTABLE_STACK_INIT_DEFAULT(XRegularExpressionMatchIterator)
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
