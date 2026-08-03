@@ -32,6 +32,8 @@ typedef struct XATComm
     XTimerId m_timeoutId;             // 超时定时器 ID（XObject_startTimer_ms）
     int32_t m_operationResult:1;      // 当前操作结果
     int32_t m_currentOp:31;           // 当前操作类型（子类自定义，由 sendCommand 传入）
+    /* 与 m_operationResult 分开保存：旧位域仅有一位，只能表示未完成/成功。 */
+    bool m_operationError;
 } XATComm;
 
 // ========== 构造与析构 ==========

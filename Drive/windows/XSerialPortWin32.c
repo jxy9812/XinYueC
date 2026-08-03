@@ -13,6 +13,7 @@
 #include "XNetIoRingWin32.h"
 #include "XIODevice_Protected.h"
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
+void XSerialPort_platform_close(XSerialPort* port);
 static DWORD toDCBRate(int32_t rate);
 static BYTE toDCBDataBits(XSerialPort_DataBits d);
 static BYTE toDCBParity(XSerialPort_Parity p);
@@ -20,15 +21,29 @@ static BYTE toDCBStopBits(XSerialPort_StopBits sb);
 //缓冲区大小
 #define BUFFSIZE 2048
 
+typedef struct XSerialPortIo XSerialPortIo;
+
+/**
+ * 一个独立的异步操作上下文。它不能内嵌在 XSerialPortPrivate 中：
+ * 关闭并销毁端口后，取消的 IOCP 完成包仍可能稍后到达。
+ */
+struct XSerialPortIo {
+    XEventContext_IOCP context;
+    XSerialPort* owner;
+    HANDLE handle;
+    bool pending;
+    bool closing;
+    bool isRead;
+    char buffer[BUFFSIZE];
+};
+
 /** XSerialPort 平台私有数据（继承 XIODevicePrivate） */
-typedef struct XSerialPortPrivate 
+typedef struct XSerialPortPrivate
 {
     XIODevicePrivate base;          /**< 第一位继承父类私有数据 */
-    XEventContext_IOCP read;
-    XEventContext_IOCP write;
+    XSerialPortIo* read;
+    XSerialPortIo* write;
     HANDLE handle;
-    char readBuff[BUFFSIZE];
-    char writeBuff[BUFFSIZE];
 } XSerialPortPrivate;
 
 /* 便捷转换宏 */
@@ -54,8 +69,92 @@ static XSerialPortPrivate* XSerialPortPrivate_create(void)
 static void XSerialPortPrivate_delete(XSerialPortPrivate* priv)
 {
     if (!priv) return;
+    if (priv->read) {
+        priv->read->owner = NULL;
+        if (!priv->read->pending) XFree_System(priv->read);
+        priv->read = NULL;
+    }
+    if (priv->write) {
+        priv->write->owner = NULL;
+        if (!priv->write->pending) XFree_System(priv->write);
+        priv->write = NULL;
+    }
     XIODevicePrivate_deinit(&priv->base);
     XFree_System(priv);
+}
+
+static bool XSerialPortIo_completion(XEventContext_IOCP* context, void* userData)
+{
+    XSerialPortIo* io = (XSerialPortIo*)userData;
+    (void)context;
+    if (!io) return false;
+
+    io->pending = false;
+    if (!io->owner || !io->owner->isOpen || io->closing) {
+        XFree_System(io);
+        return false;
+    }
+    return true;
+}
+
+static XSerialPortIo* XSerialPortIo_create(XSerialPort* owner, HANDLE handle,
+                                           XFd fd, bool isRead)
+{
+    XSerialPortIo* io = (XSerialPortIo*)XCalloc_System(1, sizeof(XSerialPortIo));
+    if (!io) return NULL;
+
+    io->owner = owner;
+    io->handle = handle;
+    io->isRead = isRead;
+    io->context.base.type = XEventContextType_Type_File;
+    io->context.base.fd = fd;
+    io->context.socket = XSocketDescriptor_fromIntptr((intptr_t)handle);
+    io->context.eventMask = isRead ? FD_READ : FD_WRITE;
+    io->context.buffer = io->buffer;
+    io->context.bufferSize = BUFFSIZE;
+    io->context.completionCallback = XSerialPortIo_completion;
+    io->context.completionUserData = io;
+    return io;
+}
+
+static bool XSerialPortIo_submit(XSerialPortIo* io)
+{
+    if (!io || !io->owner || !io->owner->isOpen ||
+        io->handle == INVALID_HANDLE_VALUE || io->pending)
+        return false;
+
+    memset(&io->context.base.overlapped, 0, sizeof(OVERLAPPED));
+    io->context.finishedBytes = 0;
+    io->pending = true;
+
+    BOOL ok;
+    if (io->isRead) {
+        ok = ReadFile(io->handle, io->buffer, (DWORD)BUFFSIZE,
+                      NULL, &io->context.base.overlapped);
+    } else {
+        ok = WriteFile(io->handle, io->buffer,
+                       (DWORD)io->context.bufferSize, NULL,
+                       &io->context.base.overlapped);
+    }
+
+    if (!ok && GetLastError() != ERROR_IO_PENDING) {
+        io->pending = false;
+        return false;
+    }
+    return true;
+}
+
+static void XSerialPortIo_cancel(XSerialPortIo* io, HANDLE handle)
+{
+    if (!io) return;
+    io->owner = NULL;
+    io->closing = true;
+    if (!io->pending) {
+        XFree_System(io);
+        return;
+    }
+    if (handle != INVALID_HANDLE_VALUE)
+        CancelIoEx(handle, &io->context.base.overlapped);
 }
 
 void XSerialPort_init(XSerialPort* serial)
@@ -147,16 +246,25 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
 {
     XSerialPortPrivate* priv = SPP(receiver);
     if (!event || !priv) return;
+    if (!receiver->isOpen || priv->handle == INVALID_HANDLE_VALUE) {
+        XEvent_setAccepted_base(event, true);
+        return;
+    }
     int currentReadChannel = 0;
     if ((event->actType & XSocketAct_Read))
     {
-        if(priv->read.finishedBytes)
+        XSerialPortIo* read = priv->read;
+        if (read && !read->pending && read->context.finishedBytes)
         {
             XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
             struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
-            if (!readBuf) return;
+            if (!readBuf) {
+                XEvent_setAccepted_base(event, true);
+                return;
+            }
 
-            int64_t bytesFromBuffer = XRingBuffer_write(readBuf, priv->read.buffer, priv->read.finishedBytes);
+            int64_t bytesFromBuffer = XRingBuffer_write(readBuf, read->buffer,
+                                                        read->context.finishedBytes);
             if (bytesFromBuffer)
             {
                 receiver->readyReadTriggered = true;
@@ -164,30 +272,50 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
                 XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
             }
         }
-        priv->read.finishedBytes = 0;
-        memset(&priv->read, 0, sizeof(OVERLAPPED));
-        ReadFile(priv->handle, priv->readBuff, (DWORD)priv->read.bufferSize, &priv->read.finishedBytes, &priv->read);
+        if (read && !read->pending) {
+            read->context.finishedBytes = 0;
+            if (!XSerialPortIo_submit(read)) {
+                priv->read = NULL;
+                read->owner = NULL;
+                XFree_System(read);
+            }
+        }
     }
     if (event->actType & XSocketAct_Write)
     {
-        if (priv->write.finishedBytes)
+        XSerialPortIo* write = priv->write;
+        if (write && !write->pending && write->context.finishedBytes)
         {
-            XIODevice_bytesWritten_signal(receiver, priv->write.finishedBytes);
-            XIODevice_channelBytesWritten_signal(receiver, currentReadChannel, priv->write.finishedBytes);
+            XIODevice_bytesWritten_signal(receiver, write->context.finishedBytes);
+            XIODevice_channelBytesWritten_signal(receiver, currentReadChannel,
+                                                  write->context.finishedBytes);
         }
         XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
         struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentReadChannel);
-        if (!writeBuf) return;
-
-        int64_t bytesFromBuffer = XRingBuffer_read(writeBuf, priv->write.buffer, priv->write.bufferSize);
-        if (bytesFromBuffer)
-        {
-            WriteFile(priv->handle, priv->writeBuff, (DWORD)bytesFromBuffer, &priv->write.finishedBytes, &priv->write);
-            receiver->bytesWrittenTriggered = false;
+        if (!writeBuf) {
+            XEvent_setAccepted_base(event, true);
+            return;
         }
-        else
-        {
-            receiver->bytesWrittenTriggered = true;
+
+        if (write && !write->pending) {
+            write->context.finishedBytes = 0;
+            int64_t bytesFromBuffer = XRingBuffer_read(writeBuf, write->buffer, BUFFSIZE);
+            if (bytesFromBuffer)
+            {
+                write->context.bufferSize = (size_t)bytesFromBuffer;
+                if (XSerialPortIo_submit(write)) {
+                    receiver->bytesWrittenTriggered = false;
+                } else {
+                    priv->write = NULL;
+                    write->owner = NULL;
+                    XFree_System(write);
+                    receiver->bytesWrittenTriggered = true;
+                }
+            }
+            else
+            {
+                receiver->bytesWrittenTriggered = true;
+            }
         }
     }
     XEvent_setAccepted_base(event,true);
@@ -233,51 +361,78 @@ bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
     SetCommTimeouts(h, &timeouts);
     PurgeComm(h, PURGE_TXCLEAR | PURGE_RXCLEAR);
 
-    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    if (!IOCP_bind(XSocketDescriptor_fromIntptr(h), port))
-    {
+    priv->handle = h;
+    if (!XSerialPort_platform_applyConfig(port)) {
+        priv->handle = INVALID_HANDLE_VALUE;
         CloseHandle(h);
         return false;
     }
-    priv->handle = h;
 
-    if (!XSerialPort_platform_applyConfig(port)) {
+    /* 分配 XFileDescriptor 统一标识符 */
+    bool allocatedFd = false;
+    if (XIODevice_fd((XIODevice*)port) == XFD_INVALID) {
+        XFd fd = XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port);
+        if (fd == XFD_INVALID) {
+            priv->handle = INVALID_HANDLE_VALUE;
+            CloseHandle(h);
+            return false;
+        }
+        XIODevice_setFd((XIODevice*)port, fd);
+        allocatedFd = true;
+    }
+
+    if (!IOCP_bind(XSocketDescriptor_fromIntptr((intptr_t)h), (XObject*)port)) {
+        if (allocatedFd) {
+            XFd_free(XIODevice_fd((XIODevice*)port));
+            XIODevice_setFd((XIODevice*)port, XFD_INVALID);
+        }
+        priv->handle = INVALID_HANDLE_VALUE;
         CloseHandle(h);
         return false;
     }
 
     port->isOpen = true;
 
-    /* 分配 XFileDescriptor 统一标识符 */
-    //XIODevicePrivate* d = ((XIODevice*)port)->m_d;
-    if (XIODevice_fd((XIODevice*)port) == XFD_INVALID) {
-        XIODevice_setFd((XIODevice*)port, XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port));
+    if (mode & XIODevice_ReadOnly) {
+        priv->read = XSerialPortIo_create(port, h, XIODevice_fd((XIODevice*)port), true);
+        if (!priv->read || !XSerialPortIo_submit(priv->read)) {
+            if (priv->read) {
+                XFree_System(priv->read);
+                priv->read = NULL;
+            }
+            XSerialPort_platform_close(port);
+            return false;
+        }
     }
 
-    //打开成功发起异步接收
-    memset(&priv->read, 0, sizeof(OVERLAPPED));
-    priv->read.base.type = XEventContextType_Type_File;
-    priv->read.base.fd = XIODevice_fd((XIODevice*)port);
-    priv->read.buffer = priv->readBuff;
-    priv->read.bufferSize = BUFFSIZE;
-    priv->read.eventMask = FD_READ;
-    priv->read.socket = XSocketDescriptor_fromIntptr(priv->handle);
-    priv->read.finishedBytes = 0;
-    ReadFile(priv->handle, priv->readBuff, (DWORD)BUFFSIZE, &priv->read.finishedBytes, &priv->read);
+    if (mode & XIODevice_WriteOnly) {
+        priv->write = XSerialPortIo_create(port, h, XIODevice_fd((XIODevice*)port), false);
+        if (!priv->write) {
+            XSerialPort_platform_close(port);
+            return false;
+        }
+    }
+
     return true;
 }
 
 void XSerialPort_platform_close(XSerialPort* port) {
     XSerialPortPrivate* priv = SPP(port);
     if (!port->isOpen || !priv) return;
-    
-    CancelIo(priv->handle);
-    PurgeComm(priv->handle, PURGE_TXABORT | PURGE_RXABORT);
-    CloseHandle(priv->handle);
+
+    HANDLE handle = priv->handle;
+    port->isOpen = false;
     priv->handle = INVALID_HANDLE_VALUE;
 
-    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    port->isOpen = false;
+    XSerialPortIo_cancel(priv->read, handle);
+    XSerialPortIo_cancel(priv->write, handle);
+    priv->read = NULL;
+    priv->write = NULL;
+
+    if (handle != INVALID_HANDLE_VALUE) {
+        PurgeComm(handle, PURGE_TXABORT | PURGE_RXABORT);
+        CloseHandle(handle);
+    }
 }
 
 int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize) 
@@ -289,11 +444,19 @@ int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize
     struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
     if (!readBuf) return -1;
 
-    while (XRingBuffer_size_base(readBuf) < (size_t)maxSize)
-    {
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-    }
-    return XRingBuffer_read(readBuf, data, maxSize);
+    return XRingBuffer_read(readBuf, data, (size_t)maxSize);
+}
+
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPort* port)
+{
+    if (!port || !port->isOpen) return 0;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->handle == INVALID_HANDLE_VALUE) return 0;
+
+    COMSTAT stat = { 0 };
+    DWORD errors = 0;
+    if (!ClearCommError(priv->handle, &errors, &stat)) return 0;
+    return (int64_t)stat.cbInQue;
 }
 
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {
@@ -302,48 +465,22 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
     XIODevicePrivate* d = (XIODevicePrivate*)priv;
     int currentWriteChannel = XIODevice_currentWriteChannel(port);
     struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
-    int64_t written = 0;
+    if (!writeBuf || !priv->write) return -1;
 
-    if (!port->bytesWrittenTriggered)
-    {
-        written = XRingBuffer_write(writeBuf, data, (size_t)len);
-    }
-    else
-    {
-        memset(&priv->write, 0, sizeof(OVERLAPPED));
-        priv->write.base.type = XEventContextType_Type_File;
-        priv->write.base.fd = XIODevice_fd((XIODevice*)port);
-        priv->write.buffer = priv->writeBuff;
-        priv->write.bufferSize = BUFFSIZE;
-        priv->write.eventMask = FD_WRITE;
-        priv->write.socket = XSocketDescriptor_fromIntptr(priv->handle);
-        priv->write.finishedBytes = 0;
-        port->bytesWrittenTriggered = false;
+    if (!port->bytesWrittenTriggered || priv->write->pending)
+        return (int64_t)XRingBuffer_write(writeBuf, data, (size_t)len);
 
-        size_t toWrite = (len <= BUFFSIZE) ? (size_t)len : BUFFSIZE;
-        memcpy(priv->writeBuff, data, toWrite);
-        BOOL success = WriteFile(priv->handle, priv->writeBuff, (DWORD)toWrite,
-            &priv->write.finishedBytes, &priv->write);
+    size_t toWrite = (size_t)len < BUFFSIZE ? (size_t)len : BUFFSIZE;
+    memcpy(priv->write->buffer, data, toWrite);
+    priv->write->context.bufferSize = toWrite;
+    if (!XSerialPortIo_submit(priv->write))
+        return -1;
 
-        if (success) {
-            written = priv->write.finishedBytes;
-        }
-        else {
-            DWORD error = GetLastError();
-            if (error == ERROR_IO_PENDING) {
-                written = toWrite;
-            }
-            else {
-                port->bytesWrittenTriggered = true;
-                return -1;
-            }
-        }
-
-        if (len > BUFFSIZE) {
-            written += XRingBuffer_write(writeBuf, data + BUFFSIZE, (size_t)len - BUFFSIZE);
-        }
-    }
-    return written;
+    port->bytesWrittenTriggered = false;
+    if ((size_t)len > toWrite)
+        return (int64_t)toWrite +
+            (int64_t)XRingBuffer_write(writeBuf, data + toWrite, (size_t)len - toWrite);
+    return (int64_t)toWrite;
 }
 
 bool XSerialPort_setDataBits(XSerialPort* port, XSerialPort_DataBits dataBits) {

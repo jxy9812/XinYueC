@@ -173,10 +173,12 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
     if (!desc || !desc->ctx) return;
     owner = (XObject*)desc->ctx;
 
-    /* 原生 I/O 对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件 */
+    /* 原生套接字对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件。
+     * 串口的异步读可以在超时或取消时以 0 字节完成，不表示连接关闭。 */
     if (entry->m_bytes == 0 &&
         (entry->m_events & XSocketAct_Read) &&
-        entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO) {
+        entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO &&
+        entry->m_fdType == XFD_TYPE_SOCKET) {
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->posted = true;

@@ -9,6 +9,8 @@
 #include <stdarg.h>
 #include"XVarList.h"
 #include <stdint.h>
+#include <stdlib.h>
+#include "XDeviceTest.h"
 void XSocketTest();
 int main(int argc, char* args[])
 {
@@ -75,6 +77,8 @@ int main(int argc, char* args[])
 			printf("可用测试菜单:\n");
 			printf("  2-9-1  XCoreApplication Qt 对齐测试\n");
 			printf("  2-10-1 XCommandLineParser Qt 对齐测试\n");
+			printf("  esp8266-unit XATComm / ESP8266 模拟 API 回归测试\n");
+			printf("  esp8266-auto ESP8266 全 API 串口与 TCP 联调测试\n");
 			XCommandLineParser_delete(cmdParser);
 			XStringList_delete_base(argsList);
 			XCoreApplication_delete_base(app);
@@ -82,6 +86,23 @@ int main(int argc, char* args[])
 		}
 		if (XCommandLineParser_isSet(cmdParser, "test") || XCommandLineParser_isSet(cmdParser, "t")) {
 			const char* testPath = XCommandLineParser_value(cmdParser, "test");
+			if (testPath && strcmp(testPath, "esp8266-auto") == 0) {
+				const char* port = getenv("XESP8266_PORT");
+				const char* ssid = getenv("XESP8266_SSID");
+				const char* password = getenv("XESP8266_PASSWORD");
+				int result = XESP8266WifiTest_runAutomated(port, ssid, password);
+				XCommandLineParser_delete(cmdParser);
+				XStringList_delete_base(argsList);
+				XCoreApplication_delete_base(app);
+				return result;
+			}
+			if (testPath && strcmp(testPath, "esp8266-unit") == 0) {
+				int result = XESP8266WifiTest_runUnit();
+				XCommandLineParser_delete(cmdParser);
+				XStringList_delete_base(argsList);
+				XCoreApplication_delete_base(app);
+				return result;
+			}
 			printf("指定测试路径: %s\n", testPath ? testPath : "(无)");
 		}
 		XStringList_delete_base(argsList);

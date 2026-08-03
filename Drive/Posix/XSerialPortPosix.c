@@ -510,11 +510,18 @@ int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize
     struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
     if (!readBuf) return -1;
 
-    /* 等待缓冲区有足够数据（对标 Windows 的 processEvents 循环） */
-    while (XRingBuffer_size_base(readBuf) < (size_t)maxSize) {
-        XCoreApplication_processEvents(XEventLoop_AllEvents);
-    }
+    /* 异步完成事件负责填充 RingBuffer。这里仅消费已到达的数据，
+     * 不能因调用者请求的长度大于当前分段而阻塞事件循环。 */
     return XRingBuffer_read(readBuf, data, (size_t)maxSize);
+}
+
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPort* port) {
+    if (!port || !port->isOpen) return 0;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->fd < 0) return 0;
+
+    int available = 0;
+    return ioctl(priv->fd, FIONREAD, &available) == 0 && available > 0 ? available : 0;
 }
 
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {

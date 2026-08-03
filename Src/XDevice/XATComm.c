@@ -58,6 +58,7 @@ void XATComm_init(XATComm* comm, XIODevice* io)
     comm->m_io = io;
     comm->m_timeoutId = XFD_INVALID;
     comm->m_operationResult = 0;
+    comm->m_operationError = false;
     comm->m_currentOp = 0;
     comm->m_responseBuffer = XByteArray_create();
 
@@ -110,6 +111,7 @@ bool XATComm_sendCommand(XATComm* comm, const char* cmd, int opType, int msecs)
     comm->m_currentOp = opType;
     XByteArray_clear_base(comm->m_responseBuffer);
     comm->m_operationResult = 0;
+    comm->m_operationError = false;
 
     if (cmd) {
         char atCmd[256];
@@ -117,6 +119,7 @@ bool XATComm_sendCommand(XATComm* comm, const char* cmd, int opType, int msecs)
         size_t sent = XIODevice_write_1(comm->m_io, atCmd, strlen(atCmd));
         if (sent != strlen(atCmd)) {
             XDEBUG_PRINTF("XATComm: send failed: %s", cmd);
+            comm->m_currentOp = 0;
             return false;
         }
     }
@@ -126,23 +129,45 @@ bool XATComm_sendCommand(XATComm* comm, const char* cmd, int opType, int msecs)
         uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
         while (XDateTime_currentMSecsSinceEpoch() < deadline) {
             XCoreApplication_processEvents(XEventLoop_AllEvents);
-            if (comm->m_currentOp == 0/*||comm->m_operationResult*/)
+            /* 部分 Windows 串口驱动不会可靠地通过 IOCP 完成重叠读；轮询
+             * 设备作为兜底，使同步 AT 操作仍可继续处理响应。 */
+            if (comm->m_io && XIODevice_bytesAvailable_base(comm->m_io) > 0)
+                VXATComm_readyReadSlot(comm);
+            /* 基类 XATComm 没有协议专用解析器来清除 m_currentOp，因此非零
+             * 结果也表示终态。到此处前保留操作码，供子类响应解析器判断。 */
+            if (comm->m_currentOp == 0 || comm->m_operationResult != 0 ||
+                comm->m_operationError)
                 break;
         }
         if (comm->m_timeoutId != XFD_INVALID) {
             XObject_killTimer(&comm->m_base, comm->m_timeoutId);
             comm->m_timeoutId = XFD_INVALID;
         }
+        /* 粗粒度定时器事件可能在同步循环到达实际截止时间后才排队；此处
+         * 兜底完成一次超时，确保调用方总能收到约定的超时信号。 */
+        if (comm->m_currentOp != 0 && comm->m_operationResult == 0 &&
+            !comm->m_operationError) {
+            int op = comm->m_currentOp;
+            comm->m_currentOp = 0;
+            XATComm_timeout_signal(comm, op);
+        }
     }
     else if (msecs == -1) {
         while (!comm->m_operationResult) {
             XCoreApplication_processEvents(XEventLoop_AllEvents);
-            if (comm->m_currentOp == 0) break;
+            if (comm->m_io && XIODevice_bytesAvailable_base(comm->m_io) > 0)
+                VXATComm_readyReadSlot(comm);
+            if (comm->m_currentOp == 0 || comm->m_operationResult != 0 ||
+                comm->m_operationError) break;
         }
     }
 
-    if (msecs > 0 || msecs == -1)
-        return comm->m_operationResult != 0;
+    if (msecs > 0 || msecs == -1) {
+        bool completed = comm->m_operationResult != 0 || comm->m_operationError;
+        if (completed)
+            comm->m_currentOp = 0;
+        return comm->m_operationResult != 0 && !comm->m_operationError;
+    }
     return true;
 }
 
@@ -162,12 +187,24 @@ void VXATComm_processResponse(XATComm* comm)
     if (available == 0) return;
 
     size_t oldSize = XByteArray_size_base(comm->m_responseBuffer);
-    XByteArray_resize_base(comm->m_responseBuffer, oldSize + available);
+    /* 额外保留一个字节给基于 C 字符串的 AT 解析器，同时保持字节数组
+     * 逻辑长度正确，以便处理二进制 +IPD 载荷。 */
+    if (!XByteArray_resize_base(comm->m_responseBuffer, oldSize + available + 1))
+        return;
     char* buf = (char*)XByteArray_data(comm->m_responseBuffer);
+    if (!buf) {
+        XByteArray_resize_base(comm->m_responseBuffer, oldSize);
+        return;
+    }
 
-    available = XIODevice_read_1(comm->m_io, buf + oldSize, available);
-    if (available == 0) return;
-    XByteArray_resize_base(comm->m_responseBuffer, oldSize + available);
+    int64_t received = XIODevice_read_1(comm->m_io, buf + oldSize, (int64_t)available);
+    if (received <= 0) {
+        XByteArray_resize_base(comm->m_responseBuffer, oldSize);
+        buf[oldSize] = '\0';
+        return;
+    }
+    XByteArray_resize_base(comm->m_responseBuffer, oldSize + (size_t)received);
+    buf[oldSize + (size_t)received] = '\0';
 
     XPrintf("\n||XATComm<<%s>>||\n", buf + oldSize);
 
@@ -182,6 +219,7 @@ void VXATComm_processResponse(XATComm* comm)
         XATComm_ok_signal(comm);
     }
     else if (data && strstr(data, "ERROR")) {
+        comm->m_operationError = true;
         XATComm_error_signal(comm, data);
     }
 }
@@ -190,9 +228,15 @@ void VXATComm_processResponse(XATComm* comm)
 
 static void VXATComm_timerEvent(XObject* self, XTimerEvent* event)
 {
-    (void)event;
     XATComm* comm = (XATComm*)self;
     if (!comm) return;
+
+    /* 定时器回调通过投递事件执行。定时器触发后可能已被取消，而事件仍留在
+     * 队列中；这种旧事件不得完成后续命令。 */
+    if (!event || comm->m_timeoutId == XFD_INVALID ||
+        event->timerId != comm->m_timeoutId)
+        return;
+    comm->m_timeoutId = XFD_INVALID;
 
     comm->m_operationResult = 0;
     int op = comm->m_currentOp;

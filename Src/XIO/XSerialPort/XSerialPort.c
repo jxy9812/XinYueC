@@ -6,6 +6,7 @@
 #include "XVariant.h"
 #include "XVariantList.h"
 #include "XIODevicePrivate.h"
+#include "XRingBuffer.h"
 #include <string.h>
 static bool VXObject_event(XSerialPort* port, XEvent* e);
 void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort* receiver);
@@ -13,6 +14,7 @@ bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode);
 void XSerialPort_platform_close(XSerialPort* port);
 int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize);
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len);
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPort* port);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
 //bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs);
 //bool XSerialPort_platform_waitForBytesWritten(XSerialPort* port, int msecs);
@@ -78,6 +80,18 @@ static void VXSerialPort_close(XIODevice* io) {
 static bool VXSerialPort_isSequential(const XIODevice* io) {
     (void)io;
     return true;
+}
+
+static int64_t VXSerialPort_bytesAvailable(const XIODevice* io)
+{
+    const XSerialPort* port = (const XSerialPort*)io;
+    if (!port || !io->m_d) return 0;
+
+    XIODevicePrivate* d = io->m_d;
+    struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, 0);
+    int64_t buffered = readBuf ? (int64_t)XRingBuffer_available(readBuf) : 0;
+    int64_t native = port->isOpen ? XSerialPort_platform_bytesAvailable(port) : 0;
+    return buffered + (native > 0 ? native : 0);
 }
 
 //static bool VXSerialPort_canReadLine(const XIODevice* io) {
@@ -183,6 +197,7 @@ XVtable* XSerialPort_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXSerialPort_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXSerialPort_isSequential);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VXSerialPort_bytesAvailable);
     //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_CanReadLine, VXSerialPort_canReadLine);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead, VXSerialPort_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten, VXSerialPort_waitForBytesWritten);

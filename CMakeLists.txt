@@ -45,6 +45,9 @@ FIND_INCLUDE_DIR(INCLUDE_TEST_LIST "Test")			#调用函数，指定参数
 include_directories(${INCLUDE_SRC_LIST})
 include_directories(${INCLUDE_DRIVE_LIST})
 include_directories(${INCLUDE_TEST_LIST})
+# 公共平台接口直接位于 Src/XPlatform 下。这里显式加入该目录，避免递归
+# 头文件目录收集器只记录父目录而在 Visual Studio 构建中遗漏此叶子目录。
+include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
 #递归搜索目录下的文件添加到变量中
 file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
