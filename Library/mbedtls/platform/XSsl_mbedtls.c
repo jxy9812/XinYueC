@@ -7,7 +7,7 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include <string.h>
 #include <stdio.h>
  /* 1. Memory bridge */

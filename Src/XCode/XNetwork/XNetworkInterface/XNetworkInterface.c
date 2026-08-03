@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XNetworkInterface.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include <string.h>

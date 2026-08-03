@@ -52,7 +52,7 @@
 #endif
 
 #include "XNetwork_lwip_platform.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XMemory.h"
 #include "XThread.h"
 #include "XPrintf.h"

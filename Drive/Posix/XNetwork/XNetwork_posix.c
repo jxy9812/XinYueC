@@ -11,7 +11,7 @@
 #if defined(XNETWORK_USE_PLATFORM_API) && (defined(__linux__) || defined(__APPLE__) || defined(__BSD__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__))
 
 /* ====== 项目头文件 ====== */
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"

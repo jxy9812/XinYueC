@@ -3,10 +3,10 @@
  * @brief lwIP 平台网络实现 - 平台相关额外声明
  *
  * 本文件声明 XNetwork_lwip.c 需要由各平台提供的扩展接口，
- * XNetwork_platform.h 中已声明的标准接口不在此重复。
+ * XNetwork.h 中已声明的标准接口不在此重复。
  *
  * 架构分层：
- *   XNetwork_platform.h                              -> 统一平台抽象接口
+ *   XNetwork.h                                       -> 统一平台抽象接口
  *   Library/lwip/XNetwork_lwip.c                     -> lwIP 适配层（平台无关）
  *        +-- Drive/windows/XNetwork/XNetwork_lwip_win32.c   -> Windows Npcap 虚拟网卡实现
  *        +-- Drive/Posix/XNetwork_lwip_linux.c              -> Linux TAP 虚拟网卡实现

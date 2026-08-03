@@ -1,6 +1,6 @@
 #include "XSaveFile.h"
 #include "XIODevice_Protected.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,5 +1,5 @@
 ﻿#include "XDir.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XSort.h"
 #include "XCompare.h"
 #include "XMemory.h"

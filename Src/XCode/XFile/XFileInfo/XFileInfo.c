@@ -1,5 +1,5 @@
 #include "XFileInfo.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>

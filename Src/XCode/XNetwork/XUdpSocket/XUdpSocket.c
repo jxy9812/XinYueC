@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XUdpSocket.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include <string.h>

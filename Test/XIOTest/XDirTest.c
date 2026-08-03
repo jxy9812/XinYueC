@@ -7,7 +7,7 @@
 #include"XString.h"
 #include"XStringList.h"
 #include"XFileInfo.h"
-#include"XFileSystem_platform.h"
+#include"XFileSystem.h"
 #include"XStorageInfo.h"
 #include"XPrintf.h"
 

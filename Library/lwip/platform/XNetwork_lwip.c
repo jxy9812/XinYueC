@@ -3,7 +3,7 @@
  * @brief lwIP 平台网络实现（平台无关 + Raw API 回调模式）
  *
  * 架构分层：
- *   XNetwork_platform.h                    -> 统一平台抽象接口
+ *   XNetwork.h                             -> 统一平台抽象接口
  *   +-- XNetwork_win32.c                   -> Windows IOCP 实现
  *   +-- XNetwork_lwip.c（本文件）          -> lwIP 适配层（平台无关）
  *       +-- XNetwork_lwip_win32.c          -> Npcap 虚拟网卡（Windows 平台）
@@ -25,7 +25,7 @@
 #include "XNetwork_config.h"
 #ifdef XNETWORK_USE_LWIP
 
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XAbstractSocket.h"
 #include "XNetwork_lwip_platform.h"
 #include "XIODevice.h"

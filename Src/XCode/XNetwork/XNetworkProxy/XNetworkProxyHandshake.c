@@ -10,7 +10,7 @@
 #include "XDateTime.h"
 #include "XBase64.h"
 #include "XMemory.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XRandomGenerator.h"
 #include <stdlib.h>
 #include <string.h>

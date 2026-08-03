@@ -8,7 +8,7 @@
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XFileInfo.h"
 #include "XFileSystem_config.h"
 #include "XStorageInfo.h"

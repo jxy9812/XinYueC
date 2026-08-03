@@ -1,5 +1,5 @@
 #include "XFileDevice.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include "XIODevicePrivate.h"   /* XIODevicePrivate_getOrCreateReadBuffer */
 #include "XRingBuffer.h"        /* XRingBuffer_available */

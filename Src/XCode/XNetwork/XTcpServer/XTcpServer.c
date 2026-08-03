@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
 // C 璇█瀹炵幇 Qt6 QTcpServer锛岀户鎵胯嚜 XObject銆?
-// 鍩轰簬 XNetwork_platform 鎻愪緵鐨?TCP 鏈嶅姟鍣?API銆?
+// 基于 XNetwork.h 提供的 TCP 服务器平台 API。
 
 #include "XTcpServer.h"
 #include "XTcpSocket.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XEvent.h"

@@ -9,7 +9,7 @@
 #define XABSTRACTSOCKET_P_H
 
 #include "XAbstractSocket.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 
 #ifdef __cplusplus
 extern "C" {

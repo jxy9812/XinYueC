@@ -5,7 +5,7 @@
 /* 仅在启用平台API模式时编译此文件 */
 #if defined(XFILE_USE_PLATFORM_API)
 
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"

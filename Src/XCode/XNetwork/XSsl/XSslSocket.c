@@ -31,7 +31,7 @@
 #include "XIODevicePrivate.h"
 #include "XEvent.h"
 #include "XEventType.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include "XFile.h"
 #include "XTypes.h"
 #include <stdlib.h>

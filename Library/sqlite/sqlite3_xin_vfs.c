@@ -2,7 +2,7 @@
 
 #include "XDateTime.h"
 #include "XAtomic.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XMemory.h"
 #include "XMutex.h"
 #include "XRandomGenerator.h"
@@ -31,7 +31,7 @@ static XSqliteLockGroup g_xsqlite_lockGroups[XSQLITE_LOCK_GROUP_MAX];
 
 /*
  * SQLite calls this VFS for all file-backed databases.  The implementation
- * deliberately stops at XFileSystem_platform.h so the SQLite source does not
+ * deliberately stops at XFileSystem.h so the SQLite source does not
  * know whether the target uses POSIX, Win32, FatFs, or another XFile backend.
  */
 typedef struct XSqliteFile {
@@ -276,7 +276,7 @@ static int xsqlite_file_size(sqlite3_file* file, sqlite3_int64* size)
  * XFile currently exposes no portable inter-process byte-range lock.  Keep
  * SQLite's lock state per opened handle so normal single-connection and
  * single-process use follows SQLite's state machine.  A target that needs
- * multi-process locking can extend XFileSystem_platform.h without changing
+ * multi-process locking can extend XFileSystem.h without changing
  * the SQL public layer.
  */
 static int xsqlite_file_lock(sqlite3_file* file, int level)

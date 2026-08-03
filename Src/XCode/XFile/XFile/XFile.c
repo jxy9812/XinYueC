@@ -1,5 +1,5 @@
 #include "XFile.h"
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include <stdlib.h>
 #include <string.h>

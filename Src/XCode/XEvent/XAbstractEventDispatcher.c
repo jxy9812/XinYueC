@@ -10,7 +10,7 @@
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
-#include "XNetwork_platform.h"
+#include "XNetwork.h"
 #include <string.h>
 #include <stdlib.h>
 static XVector* global_nativeFilters;///< 本地事件过滤器列表

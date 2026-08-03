@@ -3,7 +3,7 @@
 /* 仅在启用FatFS模式时编译此文件 */
 #if defined(XFILE_USE_FATFS)
 
-#include "XFileSystem_platform.h"
+#include "XFileSystem.h"
 #include "XFileSystem_Fatfs_platform.h"  /* 平台抽象层 */
 #include "XFileDevice.h"
 #include "XMemory.h"
