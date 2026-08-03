@@ -204,6 +204,13 @@ bool XJsonArray_contains(const XJsonArray* array, const XJsonValue* value);
 */
 bool XJsonArray_equals(const XJsonArray* left, const XJsonArray* right);
 /**
+ * @brief 比较两个 JSON 数组。
+ * @param lhs 左侧 JSON 数组，可为 NULL。
+ * @param rhs 右侧 JSON 数组，可为 NULL。
+ * @return 相等返回 XCompare_Equality，否则返回 XCompare_Other。
+ */
+int32_t XJsonArray_compare(const XJsonArray* lhs, const XJsonArray* rhs);
+/**
 * @brief 从字符串列表深拷贝创建 JSON 字符串数组。
 */
 XJsonArray* XJsonArray_fromStringList(const XStringList* list);
@@ -249,6 +256,37 @@ XVariant* XJsonArray_toVariant_move(XJsonArray* array);
 * @return 成功返回XVariant指针（引用原数组，不转移所有权），失败返回NULL
 */
 XVariant* XJsonArray_toVariant_ref(XJsonArray* array);
+/**
+* @brief 从同类型 XVariant 深复制取得 JSON 数组。
+* @param variant 源 XVariant；借用，类型不匹配返回 NULL。
+* @return 新建的 XJsonArray，失败返回 NULL。
+*/
+XJsonArray* XJsonArray_fromVariant(const XVariant* variant);
+/**
+* @brief 从同类型 XVariant 借用取得 JSON 数组。
+* @param variant 源 XVariant；借用。
+* @return XVariant 内部数组指针；不得释放，类型不匹配返回 NULL。
+*/
+XJsonArray* XJsonArray_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 JSON 数组值。 */
+void XJsonArray_setVariant(XVariant* variant, const XJsonArray* array);
+/** @brief 移动设置 XVariant 的 JSON 数组值。 */
+void XJsonArray_setVariant_move(XVariant* variant, XJsonArray* array);
+/** @brief 将已有 JSON 数组直接交给 XVariant 管理。 */
+void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array);
+
+/**
+* @brief 兼容旧的 XVariant JSON 数组扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XJsonArray。
+*/
+#define XVariant_create_JsonArray       XJsonArray_toVariant
+#define XVariant_create_JsonArray_move  XJsonArray_toVariant_move
+#define XVariant_create_JsonArray_ref   XJsonArray_toVariant_ref
+#define XVariant_toJsonArray            XJsonArray_fromVariant
+#define XVariant_toJsonArray_ref        XJsonArray_fromVariant_ref
+#define XVariant_setValue_JsonArray     XJsonArray_setVariant
+#define XVariant_setValue_JsonArray_move XJsonArray_setVariant_move
+#define XVariant_setValue_JsonArray_ref XJsonArray_setVariant_ref
 #ifdef __cplusplus
 }
 #endif

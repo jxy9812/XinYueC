@@ -2,6 +2,7 @@
 #define XDATE_H
 
 #include <stdint.h>
+typedef struct XVariant XVariant;
 #include <stdbool.h>
 #include "XString.h"
 
@@ -187,6 +188,37 @@ bool XDate_isValid_static(int year, int month, int day);
  */
 bool XDate_isLeapYear_static(int year);
 
+/**
+ * @brief 将日期重置为无效日期。
+ * @param date 待清理的日期对象，可为 NULL。
+ */
+void XDate_clear(XDate* date);
+
+/**
+ * @brief 比较两个日期对象。
+ * @param lhs 左侧日期对象，可为 NULL。
+ * @param rhs 右侧日期对象，可为 NULL。
+ * @return 按 XCompare 约定返回比较结果。
+ */
+int32_t XDate_compare(const XDate* lhs, const XDate* rhs);
+
+/** @brief 深复制创建存储 XDate 的 XVariant。 */
+XVariant* XDate_toVariant(const XDate* date);
+/** @brief 从同类型 XVariant 取得 XDate 值副本。 */
+XDate XDate_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XDate 指针。 */
+XDate* XDate_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XDate 值；date 为 NULL 时设置无效日期。 */
+void XDate_setVariant(XVariant* variant, const XDate* date);
+
+/**
+ * @brief 兼容旧的 XVariant XDate 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XDate。
+ */
+#define XVariant_create_Date    XDate_toVariant
+#define XVariant_toDate         XDate_fromVariant
+#define XVariant_toDate_ref     XDate_fromVariant_ref
+#define XVariant_setValue_Date  XDate_setVariant
 
 
 #ifdef __cplusplus

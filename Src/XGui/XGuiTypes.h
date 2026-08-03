@@ -12,6 +12,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+typedef struct XVariant XVariant;
 
 /* ========== 点坐标类型（对标 Qt 6.8 QPoint） ========== */
 
@@ -32,6 +33,24 @@ typedef struct XPoint
  * @return     XCompare_Equality / XCompare_Less / XCompare_Greater
  */
 int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs);
+
+/** @brief 深复制创建存储 XPoint 的 XVariant。 */
+XVariant* XPoint_toVariant(XPoint point);
+/** @brief 从同类型 XVariant 取得 XPoint 值副本。 */
+XPoint XPoint_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XPoint 指针。 */
+XPoint* XPoint_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XPoint 值。 */
+void XPoint_setVariant(XVariant* variant, XPoint point);
+
+/**
+ * @brief 兼容旧的 XVariant XPoint 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XPoint。
+ */
+#define XVariant_create_Point    XPoint_toVariant
+#define XVariant_toPoint         XPoint_fromVariant
+#define XVariant_toPoint_ref     XPoint_fromVariant_ref
+#define XVariant_setValue_Point  XPoint_setVariant
 
 /**
  * @brief      初始化 XPoint 对象

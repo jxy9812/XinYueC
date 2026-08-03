@@ -247,6 +247,13 @@ XJsonObject* XJsonValue_toObject(const XJsonValue* value);
 * @brief 比较两个 JSON 值的类型和值是否完全相等。
 */
 bool XJsonValue_equals(const XJsonValue* left, const XJsonValue* right);
+/**
+ * @brief 比较两个 JSON 值。
+ * @param lhs 左侧 JSON 值，可为 NULL。
+ * @param rhs 右侧 JSON 值，可为 NULL。
+ * @return 相等返回 XCompare_Equality，否则返回 XCompare_Other。
+ */
+int32_t XJsonValue_compare(const XJsonValue* lhs, const XJsonValue* rhs);
 // 值设置
 /**
 * @brief 将XJsonValue设置为Null类型
@@ -341,6 +348,29 @@ XVariant* XJsonValue_toVariant_ref(XJsonValue* value);
 * @details 支持 JSON 值、对象、数组及对应 Map/List 类型。
 */
 XJsonValue* XJsonValue_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 深复制取得 JSON 值。 */
+XJsonValue* XJsonValue_fromVariant_copy(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 JSON 值。 */
+XJsonValue* XJsonValue_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 JSON 值。 */
+void XJsonValue_setVariant(XVariant* variant, const XJsonValue* value);
+/** @brief 移动设置 XVariant 的 JSON 值。 */
+void XJsonValue_setVariant_move(XVariant* variant, XJsonValue* value);
+/** @brief 将已有 JSON 值直接交给 XVariant 管理。 */
+void XJsonValue_setVariant_ref(XVariant* variant, XJsonValue* value);
+
+/**
+* @brief 兼容旧的 XVariant JSON 值扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XJsonValue。
+*/
+#define XVariant_create_JsonValue       XJsonValue_toVariant
+#define XVariant_create_JsonValue_move  XJsonValue_toVariant_move
+#define XVariant_create_JsonValue_ref   XJsonValue_toVariant_ref
+#define XVariant_toJsonValue            XJsonValue_fromVariant_copy
+#define XVariant_toJsonValue_ref        XJsonValue_fromVariant_ref
+#define XVariant_setValue_JsonValue     XJsonValue_setVariant
+#define XVariant_setValue_JsonValue_move XJsonValue_setVariant_move
+#define XVariant_setValue_JsonValue_ref XJsonValue_setVariant_ref
 #ifdef __cplusplus
 }
 #endif

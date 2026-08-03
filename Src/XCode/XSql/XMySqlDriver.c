@@ -16,6 +16,9 @@
 #include "XString.h"
 #include "XByteArray.h"
 #include "XVariantList.h"
+#include "XDate.h"
+#include "XTime.h"
+#include "XDateTime.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -484,7 +487,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
         const uint8_t* data;
         size_t size;
         if (type == XVariantType_ByteArray) {
-            const XByteArray* bytes = XVariant_toByteArray_ref(value);
+            const XByteArray* bytes = XByteArray_fromVariant_ref(value);
             data = bytes ? XByteArray_data((XByteArray*)bytes) : NULL;
             size = bytes ? XByteArray_size_base(bytes) : 0;
         } else {
@@ -707,7 +710,7 @@ static bool xmysql_make_bind(const XVariant* value, XSqlParamType type,
     }
     variantType = XVariant_type(value);
     if (variantType == XVariantType_ByteArray) {
-        const XByteArray* bytes = XVariant_toByteArray_ref(value);
+        const XByteArray* bytes = XByteArray_fromVariant_ref(value);
         bind->m_type = XSqlMySqlValueType_ByteArray;
         bind->m_data = bytes ? XByteArray_data((XByteArray*)bytes) : NULL;
         bind->m_size = bytes ? XByteArray_size_base((XByteArray*)bytes) : 0;

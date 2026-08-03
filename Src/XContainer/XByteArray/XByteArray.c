@@ -1,9 +1,140 @@
 ﻿#include "XByteArray.h"
+#include "XVariant.h"
+#include "XVariantTypeOps.h"
 #if XByteArray_ON
 #include "XString.h"
 #include "XByteArrayView.h"
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XByteArray, sizeof(XByteArray), XByteArray_copy_base,
+	XByteArray_move_base, XByteArray_clear_base, XByteArray_deinit_base,
+	XByteArray_compare, "XByteArray");
 uint8_t * XByteArray_data(XByteArray* other);
+
+XVariant* XByteArray_toVariant(const XByteArray* array)
+{
+	XVariant* var;
+	if (!array)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
+	if (!var)
+		return NULL;
+	XByteArray_init((XByteArray*)XVariant_data(var), true);
+	XByteArray_copy_base(XVariant_data(var), array);
+	return var;
+}
+
+XVariant* XByteArray_toVariant_move(XByteArray* array)
+{
+	XVariant* var;
+	if (!array)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
+	if (!var)
+		return NULL;
+	XByteArray_init((XByteArray*)XVariant_data(var), true);
+	XByteArray_move_base(XVariant_data(var), array);
+	return var;
+}
+
+XVariant* XByteArray_toVariant_ref(XByteArray* array)
+{
+	XVariant* var;
+	if (!array)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_ByteArray);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, array, sizeof(XByteArray), XVariantType_ByteArray);
+	return var;
+}
+
+XByteArray* XByteArray_fromVariant(const XVariant* var)
+{
+	return XByteArray_create_copy(XByteArray_fromVariant_ref(var));
+}
+
+XByteArray* XByteArray_fromVariant_ref(const XVariant* var)
+{
+	return (XByteArray*)XVariant_toRef(var, XVariantType_ByteArray);
+}
+
+static bool XByteArray_prepareVariant(XVariant* var)
+{
+	if (!var)
+		return false;
+	if (var->m_type != XVariantType_ByteArray)
+	{
+		XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XByteArray));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XByteArray);
+		XByteArray_init((XByteArray*)var->m_data, true);
+		var->m_type = XVariantType_ByteArray;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XByteArray))
+	{
+		if (var->m_data)
+			XFree_System(var->m_data);
+		var->m_data = XMalloc_System(sizeof(XByteArray));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XByteArray);
+		XByteArray_init((XByteArray*)var->m_data, true);
+	}
+	return true;
+}
+
+void XByteArray_setVariant(XVariant* var, const XByteArray* array)
+{
+	if (!array || !XByteArray_prepareVariant(var))
+		return;
+	XByteArray_copy_base(XVariant_data(var), array);
+}
+
+void XByteArray_setVariant_move(XVariant* var, XByteArray* array)
+{
+	if (!array || !XByteArray_prepareVariant(var))
+		return;
+	XByteArray_move_base(XVariant_data(var), array);
+}
+
+void XByteArray_setVariant_ref(XVariant* var, XByteArray* array)
+{
+	if (!var || !array)
+		return;
+	XVariant_setDataRef(var, array, sizeof(XByteArray), XVariantType_ByteArray);
+}
+
+void XByteArray_setVariant_data(XVariant* var, const void* data, size_t size)
+{
+	if (!data || size == 0 || !XByteArray_prepareVariant(var))
+		return;
+	XByteArray_resize_base(XVariant_data(var), size);
+	memcpy(XByteArray_data(XVariant_data(var)), data, size);
+}
+
+XVariant* XByteArray_toVariant_data(const void* data, size_t size)
+{
+	XVariant* var;
+	if (!data || size == 0)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
+	if (!var)
+		return NULL;
+	XByteArray_init((XByteArray*)XVariant_data(var), true);
+	XByteArray_resize_base(XVariant_data(var), size);
+	memcpy(XByteArray_data(XVariant_data(var)), data, size);
+	return var;
+}
+
 XByteArray* XByteArray_create_ex(bool useCow)
 {
 	XByteArray* array = XMalloc_System(sizeof(XByteArray));

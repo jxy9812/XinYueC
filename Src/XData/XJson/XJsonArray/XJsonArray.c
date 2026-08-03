@@ -1,10 +1,21 @@
 ﻿#include "XJsonArray.h"
 #include "XJsonDocument.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include "XVariantList.h"
 #include "XStringList.h"
 #include "XJsonValue.h"
 #include "XStack.h"
+
+int32_t XJsonArray_compare(const XJsonArray* lhs, const XJsonArray* rhs)
+{
+    return XJsonArray_equals(lhs, rhs)
+        ? XCompare_Equality : XCompare_Other;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XJsonArray, sizeof(XJsonArray), XJsonArray_copy_base,
+	XJsonArray_move_base, XJsonArray_clear_base, XJsonArray_deinit_base,
+	XJsonArray_compare, "XJsonArray");
 
 XJsonArray* XJsonArray_create()
 {
@@ -124,9 +135,56 @@ XVariant* XJsonArray_toVariant_ref(XJsonArray* arr)
     XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonArray);
     if (var == NULL)
         return NULL;
-    var->m_data = arr;
-    var->m_dataSize = sizeof(XJsonArray);
+	XVariant_setDataRef(var, arr, sizeof(XJsonArray), XVariantType_JsonArray);
     return var;
+}
+
+XJsonArray* XJsonArray_fromVariant(const XVariant* variant)
+{
+    XJsonArray* source = (XJsonArray*)XVariant_toRef(variant, XVariantType_JsonArray);
+    return source ? XJsonArray_create_copy(source) : NULL;
+}
+
+XJsonArray* XJsonArray_fromVariant_ref(const XVariant* variant)
+{
+    return (XJsonArray*)XVariant_toRef(variant, XVariantType_JsonArray);
+}
+
+static bool XJsonArray_prepareVariant(XVariant* variant)
+{
+    if (!variant)
+        return false;
+    if (variant->m_type != XVariantType_JsonArray ||
+        !variant->m_data || variant->m_dataSize != sizeof(XJsonArray)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XJsonArray));
+        if (!variant->m_data)
+            return false;
+        variant->m_dataSize = sizeof(XJsonArray);
+        XJsonArray_init((XJsonArray*)variant->m_data);
+        variant->m_type = XVariantType_JsonArray;
+    }
+    return true;
+}
+
+void XJsonArray_setVariant(XVariant* variant, const XJsonArray* array)
+{
+    if (array && XJsonArray_prepareVariant(variant))
+        XJsonArray_copy_base((XJsonArray*)variant->m_data, array);
+}
+
+void XJsonArray_setVariant_move(XVariant* variant, XJsonArray* array)
+{
+    if (array && XJsonArray_prepareVariant(variant))
+        XJsonArray_move_base((XJsonArray*)variant->m_data, array);
+}
+
+void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array)
+{
+	if (!variant || !array)
+		return;
+	XVariant_setDataRef(variant, array, sizeof(XJsonArray), XVariantType_JsonArray);
 }
 //XVariantList* XJsonArray_toVariantList(const XJsonArray* array) {
 //    if (!array) return NULL;

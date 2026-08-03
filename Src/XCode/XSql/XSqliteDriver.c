@@ -5,6 +5,9 @@
 #include "XSqlQuery.h"
 #include "XString.h"
 #include "XByteArray.h"
+#include "XDate.h"
+#include "XTime.h"
+#include "XDateTime.h"
 
 #include "sqlite3.h"
 
@@ -240,7 +243,7 @@ static XVariant* xsqlite_column_value(sqlite3_stmt* statement, int column)
             return XVariant_create_byteArray(sqlite3_column_blob(statement, column), (size_t)size);
         {
             XVariant* value = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
-            if (value) XByteArray_init(XVariant_toByteArray_ref(value), true);
+            if (value) XByteArray_init(XByteArray_fromVariant_ref(value), true);
             return value;
         }
     }
@@ -321,7 +324,7 @@ static bool xsqlite_bind_variant(sqlite3_stmt* statement, int index, const XVari
     case XVariantType_NULL:
         return sqlite3_bind_null(statement, index) == SQLITE_OK;
     case XVariantType_ByteArray: {
-        const XByteArray* array = XVariant_toByteArray_ref(value);
+        const XByteArray* array = XByteArray_fromVariant_ref(value);
         return array && sqlite3_bind_blob(statement, index, XByteArray_data((XByteArray*)array),
                                           (int)XByteArray_size_base(array), SQLITE_TRANSIENT) == SQLITE_OK;
     }

@@ -4,9 +4,14 @@
 #include "XJsonArray.h"
 #include "XJsonObject.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XBsonValue, sizeof(XBsonValue), XBsonValue_copy,
+	XBsonValue_move, XBsonValue_clear, XBsonValue_deinit,
+	NULL, "XBsonValue");
 
 /* BSON 1.1 类型、长度和小端编码辅助函数。 */
 static bool XBsonValue_isKnownType(XBsonType type)
@@ -1502,7 +1507,54 @@ XVariant* XBsonValue_toVariant_ref(XBsonValue* val)
 	if (!val) return NULL;
 	XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonValue);
 	if (!var) return NULL;
-	var->m_data = val;
-	var->m_dataSize = sizeof(XBsonValue);
+	XVariant_setDataRef(var, val, sizeof(XBsonValue), XVariantType_BsonValue);
 	return var;
+}
+
+XBsonValue* XBsonValue_fromVariant(const XVariant* variant)
+{
+	XBsonValue* source = (XBsonValue*)XVariant_toRef(variant, XVariantType_BsonValue);
+	return source ? XBsonValue_create_copy(source) : NULL;
+}
+
+XBsonValue* XBsonValue_fromVariant_ref(const XVariant* variant)
+{
+	return (XBsonValue*)XVariant_toRef(variant, XVariantType_BsonValue);
+}
+
+static bool XBsonValue_prepareVariant(XVariant* variant, XBsonType type)
+{
+	if (!variant)
+		return false;
+	if (variant->m_type != XVariantType_BsonValue ||
+		!variant->m_data || variant->m_dataSize != sizeof(XBsonValue)) {
+		if (variant->m_data)
+			XVariant_deinit_base(variant);
+		variant->m_data = XMalloc_System(sizeof(XBsonValue));
+		if (!variant->m_data)
+			return false;
+		variant->m_dataSize = sizeof(XBsonValue);
+		XBsonValue_init((XBsonValue*)variant->m_data, type);
+		variant->m_type = XVariantType_BsonValue;
+	}
+	return true;
+}
+
+void XBsonValue_setVariant(XVariant* variant, const XBsonValue* value)
+{
+	if (value && XBsonValue_prepareVariant(variant, value->type))
+		XBsonValue_copy((XBsonValue*)variant->m_data, value);
+}
+
+void XBsonValue_setVariant_move(XVariant* variant, XBsonValue* value)
+{
+	if (value && XBsonValue_prepareVariant(variant, value->type))
+		XBsonValue_move((XBsonValue*)variant->m_data, value);
+}
+
+void XBsonValue_setVariant_ref(XVariant* variant, XBsonValue* value)
+{
+	if (!variant || !value)
+		return;
+	XVariant_setDataRef(variant, value, sizeof(XBsonValue), XVariantType_BsonValue);
 }

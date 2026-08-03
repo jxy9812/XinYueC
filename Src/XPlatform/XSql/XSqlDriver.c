@@ -5,6 +5,9 @@
 #include "XSqlDriver.h"
 
 #include "XByteArray.h"
+#include "XDate.h"
+#include "XTime.h"
+#include "XDateTime.h"
 #include "XSqlResult.h"
 
 #include <limits.h>
@@ -150,7 +153,7 @@ static XString* xsql_driver_value_text(const XVariant* value)
     case XVariantType_String:
         return XVariant_toString(value);
     case XVariantType_ByteArray:
-        bytes = XVariant_toByteArray_ref(value);
+        bytes = XByteArray_fromVariant_ref(value);
         result = XString_create_utf8("'");
         if (bytes && result) {
             const uint8_t* data = XByteArray_data(bytes);

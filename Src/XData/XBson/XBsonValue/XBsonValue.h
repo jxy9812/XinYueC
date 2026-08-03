@@ -316,6 +316,29 @@ XVariant* XBsonValue_toVariant_move(XBsonValue* val);
  * @details 引用对象必须在 XVariant 存活期间保持有效。
  */
 XVariant* XBsonValue_toVariant_ref(XBsonValue* val);
+/** @brief 从同类型 XVariant 深复制取得 BSON 值。 */
+XBsonValue* XBsonValue_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 BSON 值。 */
+XBsonValue* XBsonValue_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 BSON 值。 */
+void XBsonValue_setVariant(XVariant* variant, const XBsonValue* value);
+/** @brief 移动设置 XVariant 的 BSON 值。 */
+void XBsonValue_setVariant_move(XVariant* variant, XBsonValue* value);
+/** @brief 将已有 BSON 值直接交给 XVariant 管理。 */
+void XBsonValue_setVariant_ref(XVariant* variant, XBsonValue* value);
+
+/**
+* @brief 兼容旧的 XVariant BSON 值扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XBsonValue。
+*/
+#define XVariant_create_BsonValue       XBsonValue_toVariant
+#define XVariant_create_BsonValue_move  XBsonValue_toVariant_move
+#define XVariant_create_BsonValue_ref   XBsonValue_toVariant_ref
+#define XVariant_toBsonValue            XBsonValue_fromVariant
+#define XVariant_toBsonValue_ref        XBsonValue_fromVariant_ref
+#define XVariant_setValue_BsonValue     XBsonValue_setVariant
+#define XVariant_setValue_BsonValue_move XBsonValue_setVariant_move
+#define XVariant_setValue_BsonValue_ref XBsonValue_setVariant_ref
 
 #ifdef __cplusplus
 }

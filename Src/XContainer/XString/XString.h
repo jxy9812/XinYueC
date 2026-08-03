@@ -547,6 +547,42 @@ const bool XLess_XString(const XString* str1, const XString* str2);
  */
 int32_t XString_compare(const XString* str1, const XString* str2);
 
+/** @brief 深复制创建存储 XString 的 XVariant。 */
+XVariant* XString_toVariant(const XString* str);
+/** @brief 移动创建存储 XString 的 XVariant。 */
+XVariant* XString_toVariant_move(XString* str);
+/** @brief 将已有 XString 直接交给 XVariant 管理。 */
+XVariant* XString_toVariant_ref(XString* str);
+/** @brief 从 UTF-8 字符串创建存储 XString 的 XVariant。 */
+XVariant* XString_toVariant_utf8(const char* utf8);
+/** @brief 从 XVariant 深复制取得 XString。 */
+XString* XString_fromVariant(const XVariant* var);
+/** @brief 从 XVariant 借用取得只读 XString。 */
+const XString* XString_fromVariant_const(const XVariant* var);
+/** @brief 从 XVariant 借用取得 XString。 */
+XString* XString_fromVariant_ref(const XVariant* var);
+/** @brief 深复制设置 XVariant 的 XString 值。 */
+void XString_setVariant(XVariant* var, const XString* str);
+/** @brief 移动设置 XVariant 的 XString 值。 */
+void XString_setVariant_move(XVariant* var, XString* str);
+/** @brief 将已有 XString 直接交给 XVariant 管理。 */
+void XString_setVariant_ref(XVariant* var, XString* str);
+/** @brief 以 UTF-8 字符串设置 XVariant 的 XString 值。 */
+void XString_setVariant_utf8(XVariant* var, const char* utf8);
+
+/* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XString。 */
+#define XVariant_create_String           XString_toVariant
+#define XVariant_create_String_move      XString_toVariant_move
+#define XVariant_create_String_ref       XString_toVariant_ref
+#define XVariant_create_utf8_str         XString_toVariant_utf8
+#define XVariant_toString                XString_fromVariant
+#define XVariant_toString_const          XString_fromVariant_const
+#define XVariant_toString_ref            XString_fromVariant_ref
+#define XVariant_setValue_String         XString_setVariant
+#define XVariant_setValue_String_move    XString_setVariant_move
+#define XVariant_setValue_String_ref     XString_setVariant_ref
+#define XVariant_setValue_utf8_str       XString_setVariant_utf8
+
 /**
  * @brief 判断两个字符串是否相等（支持大小写敏感性）
  * @param str1 第一个 XString 对象指针

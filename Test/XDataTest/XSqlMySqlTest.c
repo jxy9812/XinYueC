@@ -338,7 +338,7 @@ static bool xmysql_test_check_values(XSqlQuery* query)
         && XVariant_toDouble(score) > 12.49 && XVariant_toDouble(score) < 12.51;
     flagOk = flag && XVariant_type(flag) == XVariantType_Int32 && XVariant_toBool(flag);
     payloadOk = payload && XVariant_type(payload) == XVariantType_ByteArray;
-    if (payloadOk) payloadOk = XByteArray_size_base(XVariant_toByteArray_ref(payload)) == 4;
+    if (payloadOk) payloadOk = XByteArray_size_base(XByteArray_fromVariant_ref(payload)) == 4;
     noteOk = note && !XVariant_isValid(note);
     nullOk = XSqlQuery_isNull_utf8(query, "note");
     ok = idOk && nameOk && scoreOk && flagOk && payloadOk && noteOk && nullOk;

@@ -1,4 +1,5 @@
 ﻿#include "XHashMap.h"
+#include "XVariantTypeOps.h"
 #if XHashMap_ON
 #include "XAlgorithm.h"
 #include "XVector.h"
@@ -6,6 +7,118 @@
 #include "XVariant.h"
 #include "XRedBlackTree.h"
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XHashMap, sizeof(XHashMap), XHashMap_copy_base,
+	XHashMap_move_base, XHashMap_clear_base, XHashMap_deinit_base,
+	NULL, "XHashMap<XString,XVariant>");
+
+XVariant* XHashMap_toVariant(const XHashMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
+	if (!var)
+		return NULL;
+	XHashMap_init((XHashMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
+	              XContainerTypeSize(map), map->m_hash, XContainerCompare(map), XContainerIsCow(map));
+	XHashMap_copy_base(XVariant_data(var), map);
+	return var;
+}
+
+XVariant* XHashMap_toVariant_move(XHashMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
+	if (!var)
+		return NULL;
+	XHashMap_init((XHashMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
+	              XContainerTypeSize(map), map->m_hash, XContainerCompare(map), XContainerIsCow(map));
+	XHashMap_move_base(XVariant_data(var), map);
+	return var;
+}
+
+XVariant* XHashMap_toVariant_ref(XHashMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_Hash);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, map, sizeof(XHashMap), XVariantType_Hash);
+	return var;
+}
+
+XHashMap* XHashMap_fromVariant(const XVariant* var)
+{
+	return XHashMap_create_copy(XHashMap_fromVariant_ref(var));
+}
+
+XHashMap* XHashMap_fromVariant_ref(const XVariant* var)
+{
+	return (XHashMap*)XVariant_toRef(var, XVariantType_Hash);
+}
+
+static bool XHashMap_prepareVariant(XVariant* var, const XHashMap* source)
+{
+	if (!var || !source)
+		return false;
+	if (var->m_type != XVariantType_Hash)
+	{
+		XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XHashMap));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XHashMap);
+		XHashMap_init((XHashMap*)var->m_data, ((const XMapBase*)source)->m_keyTypeSize,
+		              XContainerTypeSize(source), source->m_hash,
+		              XContainerCompare(source), XContainerIsCow(source));
+		var->m_type = XVariantType_Hash;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XHashMap))
+	{
+		if (var->m_data)
+			XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XHashMap));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XHashMap);
+		XHashMap_init((XHashMap*)var->m_data, ((const XMapBase*)source)->m_keyTypeSize,
+		              XContainerTypeSize(source), source->m_hash,
+		              XContainerCompare(source), XContainerIsCow(source));
+	}
+	return true;
+}
+
+void XHashMap_setVariant(XVariant* var, const XHashMap* map)
+{
+	if (!XHashMap_prepareVariant(var, map))
+		return;
+	XHashMap_copy_base(XVariant_data(var), map);
+}
+
+void XHashMap_setVariant_move(XVariant* var, XHashMap* map)
+{
+	if (!XHashMap_prepareVariant(var, map))
+		return;
+	XHashMap_move_base(XVariant_data(var), map);
+}
+
+void XHashMap_setVariant_ref(XVariant* var, XHashMap* map)
+{
+	if (!var || !map)
+		return;
+	XVariant_setDataRef(var, map, sizeof(XHashMap), XVariantType_Hash);
+}
 
 // ======================== 桶数组访问辅助 ========================
 // 获取桶数组基地址（XRBTreeNode** 类型）

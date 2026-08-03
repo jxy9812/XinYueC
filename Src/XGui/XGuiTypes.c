@@ -8,6 +8,8 @@
 #include <string.h>
 #include <limits.h>
 #include "XCompare.h"
+#include "XVariantTypeOps.h"
+#include "XVariant.h"
 
 static int clamp_int64_to_int(int64_t value)
 {
@@ -652,4 +654,43 @@ int32_t XPoint_compare(const XPoint* lhs, const XPoint* rhs)
     if (lhs->y < rhs->y) return XCompare_Less;
     if (lhs->y > rhs->y) return XCompare_Greater;
     return XCompare_Equality;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XPoint, sizeof(XPoint), NULL, NULL, NULL, NULL,
+	XPoint_compare, "XPoint");
+
+XVariant* XPoint_toVariant(XPoint point)
+{
+    return XVariant_create((void*)&point, sizeof(XPoint), XVariantType_Point);
+}
+
+XPoint XPoint_fromVariant(const XVariant* variant)
+{
+    XPoint point = {0, 0};
+    XPoint* source = XPoint_fromVariant_ref(variant);
+    if (source)
+        point = *source;
+    return point;
+}
+
+XPoint* XPoint_fromVariant_ref(const XVariant* variant)
+{
+    return (XPoint*)XVariant_toRef(variant, XVariantType_Point);
+}
+
+void XPoint_setVariant(XVariant* variant, XPoint point)
+{
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_Point || !variant->m_data ||
+        variant->m_dataSize != sizeof(XPoint)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XPoint));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XPoint);
+        variant->m_type = XVariantType_Point;
+    }
+    *(XPoint*)variant->m_data = point;
 }

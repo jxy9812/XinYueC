@@ -1,7 +1,115 @@
 ﻿#include"XStringList.h"
+#include"XVariant.h"
+#include"XVariantTypeOps.h"
 #if XStringList_ON
 #include<string.h>
 #include"XString.h"
+
+XVARIANT_TYPE_OPS_DEFINE(XStringList, sizeof(XStringList), XStringList_copy_base,
+	XStringList_move_base, XStringList_clear_base, XStringList_deinit_base,
+	NULL, "XStringList");
+
+XVariant* XStringList_toVariant(const XStringList* list)
+{
+	XVariant* var;
+	if (!list)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XStringList), XVariantType_StringList);
+	if (!var)
+		return NULL;
+	XStringList_init((XStringList*)XVariant_data(var));
+	XStringList_copy_base(XVariant_data(var), list);
+	return var;
+}
+
+XVariant* XStringList_toVariant_move(XStringList* list)
+{
+	XVariant* var;
+	if (!list)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XStringList), XVariantType_StringList);
+	if (!var)
+		return NULL;
+	XStringList_init((XStringList*)XVariant_data(var));
+	XStringList_move_base(XVariant_data(var), list);
+	return var;
+}
+
+XVariant* XStringList_toVariant_ref(XStringList* list)
+{
+	XVariant* var;
+	if (!list)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_StringList);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, list, sizeof(XStringList), XVariantType_StringList);
+	return var;
+}
+
+XStringList* XStringList_fromVariant(const XVariant* var)
+{
+	return XStringList_create_copy(XStringList_fromVariant_ref(var));
+}
+
+XStringList* XStringList_fromVariant_ref(const XVariant* var)
+{
+	return (XStringList*)XVariant_toRef(var, XVariantType_StringList);
+}
+
+static bool XStringList_prepareVariant(XVariant* var)
+{
+	if (!var)
+		return false;
+	if (var->m_type != XVariantType_StringList)
+	{
+		XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XStringList));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XStringList);
+		XStringList_init((XStringList*)var->m_data);
+		var->m_type = XVariantType_StringList;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XStringList))
+	{
+		if (var->m_data)
+			XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XStringList));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XStringList);
+		XStringList_init((XStringList*)var->m_data);
+	}
+	return true;
+}
+
+void XStringList_setVariant(XVariant* var, const XStringList* list)
+{
+	if (!list || !XStringList_prepareVariant(var))
+		return;
+	XStringList_copy_base(XVariant_data(var), list);
+}
+
+void XStringList_setVariant_move(XVariant* var, XStringList* list)
+{
+	if (!list || !XStringList_prepareVariant(var))
+		return;
+	XStringList_move_base(XVariant_data(var), list);
+}
+
+void XStringList_setVariant_ref(XVariant* var, XStringList* list)
+{
+	if (!var || !list)
+		return;
+	XVariant_setDataRef(var, list, sizeof(XStringList), XVariantType_StringList);
+}
 #if XRegularExpression_ON
 #include "XRegularExpression.h"
 #endif

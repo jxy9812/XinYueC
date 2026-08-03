@@ -44,6 +44,33 @@ XStringList* XStringList_create_move(XStringList* other);
  */
 void XStringList_init(XStringList* strList);
 
+/** @brief 深复制创建存储 XStringList 的 XVariant。 */
+XVariant* XStringList_toVariant(const XStringList* list);
+/** @brief 移动创建存储 XStringList 的 XVariant。 */
+XVariant* XStringList_toVariant_move(XStringList* list);
+/** @brief 将已有 XStringList 直接交给 XVariant 管理。 */
+XVariant* XStringList_toVariant_ref(XStringList* list);
+/** @brief 从 XVariant 深复制取得 XStringList。 */
+XStringList* XStringList_fromVariant(const XVariant* var);
+/** @brief 从 XVariant 借用取得 XStringList。 */
+XStringList* XStringList_fromVariant_ref(const XVariant* var);
+/** @brief 深复制设置 XVariant 的 XStringList 值。 */
+void XStringList_setVariant(XVariant* var, const XStringList* list);
+/** @brief 移动设置 XVariant 的 XStringList 值。 */
+void XStringList_setVariant_move(XVariant* var, XStringList* list);
+/** @brief 将已有 XStringList 直接交给 XVariant 管理。 */
+void XStringList_setVariant_ref(XVariant* var, XStringList* list);
+
+/* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XStringList。 */
+#define XVariant_create_StringList       XStringList_toVariant
+#define XVariant_create_StringList_move  XStringList_toVariant_move
+#define XVariant_create_StringList_ref   XStringList_toVariant_ref
+#define XVariant_toStringList            XStringList_fromVariant
+#define XVariant_toStringList_ref        XStringList_fromVariant_ref
+#define XVariant_setValue_StringList     XStringList_setVariant
+#define XVariant_setValue_StringList_move XStringList_setVariant_move
+#define XVariant_setValue_StringList_ref XStringList_setVariant_ref
+
 /**
  * @brief 向前端插入一个XString对象（基础版本）
  * @param strList 指向XStringList对象的指针

@@ -1,4 +1,6 @@
 #include "XTime.h"
+#include "XVariantTypeOps.h"
+#include "XVariant.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -223,4 +225,56 @@ XTime XTime_fromMSecsSinceStartOfDay(int msecs) {
     XTime time;
     time.m_msecs = msecs;
     return time;
+}
+
+void XTime_clear(XTime* time)
+{
+    if (time) *time = XTime_create();
+}
+
+int32_t XTime_compare(const XTime* lhs, const XTime* rhs)
+{
+    if (!lhs || !rhs) return XCompare_Other;
+    return int_compare(&((const XTime*)lhs)->m_msecs,
+                       &((const XTime*)rhs)->m_msecs);
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XTime, sizeof(XTime), NULL, NULL, XTime_clear, NULL,
+	XTime_compare, "XTime");
+
+XVariant* XTime_toVariant(const XTime* time)
+{
+    return time ? XVariant_create((void*)time, sizeof(XTime), XVariantType_Time) : NULL;
+}
+
+XTime XTime_fromVariant(const XVariant* variant)
+{
+    XTime time = XTime_create();
+    XTime* source = XTime_fromVariant_ref(variant);
+    if (source)
+        time = *source;
+    return time;
+}
+
+XTime* XTime_fromVariant_ref(const XVariant* variant)
+{
+    return (XTime*)XVariant_toRef(variant, XVariantType_Time);
+}
+
+void XTime_setVariant(XVariant* variant, const XTime* time)
+{
+    XTime invalid = XTime_create();
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_Time || !variant->m_data ||
+        variant->m_dataSize != sizeof(XTime)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XTime));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XTime);
+        variant->m_type = XVariantType_Time;
+    }
+    *(XTime*)variant->m_data = time ? *time : invalid;
 }

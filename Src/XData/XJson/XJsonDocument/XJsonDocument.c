@@ -5,8 +5,10 @@
 #include "XBsonArray.h"
 #include "XByteArray.h"
 #include "XString.h"
+#include "XVariantList.h"
 #include "XStack.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include "XNumStrConv.h"
 #include <ctype.h>
 #include <inttypes.h>
@@ -15,6 +17,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XJsonDocument, sizeof(XJsonDocument), XJsonDocument_copy,
+	XJsonDocument_move, XJsonDocument_clear, XJsonDocument_deinit,
+	NULL, "XJsonDocument");
 typedef struct JsonParser
 {
     const char* data;
@@ -585,9 +591,56 @@ XVariant* XJsonDocument_toVariant_ref(XJsonDocument* doc)
     XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonDocument);
     if (var == NULL)
         return NULL;
-    var->m_data = doc;
-    var->m_dataSize = sizeof(XJsonDocument);
+	XVariant_setDataRef(var, doc, sizeof(XJsonDocument), XVariantType_JsonDocument);
     return var;
+}
+
+XJsonDocument* XJsonDocument_fromVariant_copy(const XVariant* variant)
+{
+    XJsonDocument* source = (XJsonDocument*)XVariant_toRef(variant, XVariantType_JsonDocument);
+    return source ? XJsonDocument_create_copy(source) : NULL;
+}
+
+XJsonDocument* XJsonDocument_fromVariant_ref(const XVariant* variant)
+{
+    return (XJsonDocument*)XVariant_toRef(variant, XVariantType_JsonDocument);
+}
+
+static bool XJsonDocument_prepareVariant(XVariant* variant)
+{
+    if (!variant)
+        return false;
+    if (variant->m_type != XVariantType_JsonDocument ||
+        !variant->m_data || variant->m_dataSize != sizeof(XJsonDocument)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XJsonDocument));
+        if (!variant->m_data)
+            return false;
+        variant->m_dataSize = sizeof(XJsonDocument);
+        XJsonDocument_init((XJsonDocument*)variant->m_data);
+        variant->m_type = XVariantType_JsonDocument;
+    }
+    return true;
+}
+
+void XJsonDocument_setVariant(XVariant* variant, const XJsonDocument* document)
+{
+    if (document && XJsonDocument_prepareVariant(variant))
+        XJsonDocument_copy((XJsonDocument*)variant->m_data, document);
+}
+
+void XJsonDocument_setVariant_move(XVariant* variant, XJsonDocument* document)
+{
+    if (document && XJsonDocument_prepareVariant(variant))
+        XJsonDocument_move((XJsonDocument*)variant->m_data, document);
+}
+
+void XJsonDocument_setVariant_ref(XVariant* variant, XJsonDocument* document)
+{
+	if (!variant || !document)
+		return;
+	XVariant_setDataRef(variant, document, sizeof(XJsonDocument), XVariantType_JsonDocument);
 }
 
 void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* output)

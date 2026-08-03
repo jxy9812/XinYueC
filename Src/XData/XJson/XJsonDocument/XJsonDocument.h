@@ -63,6 +63,36 @@ XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array);
 * @param variant 支持 Map、List、JSON 对象、数组、值和文档类型。
 */
 XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant);
+/**
+* @brief 从同类型 XVariant 深复制创建 JSON 文档。
+* @param variant 源 XVariant；借用，类型不匹配返回 NULL。
+* @return 新建的 XJsonDocument，失败返回 NULL。
+*/
+XJsonDocument* XJsonDocument_fromVariant_copy(const XVariant* variant);
+/**
+* @brief 从同类型 XVariant 借用取得 JSON 文档。
+* @param variant 源 XVariant；借用。
+* @return XVariant 内部文档指针；不得释放，类型不匹配返回 NULL。
+*/
+XJsonDocument* XJsonDocument_fromVariant_ref(const XVariant* variant);
+/**
+* @brief 深复制设置 XVariant 的 JSON 文档值。
+* @param variant 目标 XVariant；不能为 NULL。
+* @param document 源文档；借用，可为 NULL。
+*/
+void XJsonDocument_setVariant(XVariant* variant, const XJsonDocument* document);
+/**
+* @brief 移动设置 XVariant 的 JSON 文档值。
+* @param variant 目标 XVariant；不能为 NULL。
+* @param document 源文档；成功后由 XVariant 接管资源。
+*/
+void XJsonDocument_setVariant_move(XVariant* variant, XJsonDocument* document);
+/**
+* @brief 将已有 JSON 文档直接交给 XVariant 管理。
+* @param variant 目标 XVariant；不能为 NULL。
+* @param document 源文档；成功后由 XVariant 负责其生命周期。
+*/
+void XJsonDocument_setVariant_ref(XVariant* variant, XJsonDocument* document);
 // 初始化与反初始化
 /**
 * @brief 初始化XJsonDocument实例
@@ -241,6 +271,19 @@ XVariant* XJsonDocument_toVariant_move(XJsonDocument* document);
 * @brief 创建引用文档的 Variant，不转移文档所有权。
 */
 XVariant* XJsonDocument_toVariant_ref(XJsonDocument* document);
+
+/**
+* @brief 兼容旧的 XVariant JSON 文档扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XJsonDocument。
+*/
+#define XVariant_create_JsonDocument       XJsonDocument_toVariant
+#define XVariant_create_JsonDocument_move  XJsonDocument_toVariant_move
+#define XVariant_create_JsonDocument_ref   XJsonDocument_toVariant_ref
+#define XVariant_toJsonDocument            XJsonDocument_fromVariant_copy
+#define XVariant_toJsonDocument_ref        XJsonDocument_fromVariant_ref
+#define XVariant_setValue_JsonDocument     XJsonDocument_setVariant
+#define XVariant_setValue_JsonDocument_move XJsonDocument_setVariant_move
+#define XVariant_setValue_JsonDocument_ref XJsonDocument_setVariant_ref
 
 /**
 * @brief 从 BSON 文档字节流转换为 JSON 文档。

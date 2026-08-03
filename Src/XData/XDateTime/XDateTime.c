@@ -1,9 +1,65 @@
 #include "XDateTime.h"
+#include "XVariantTypeOps.h"
+#include "XVariant.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+
+void XDateTime_clear(XDateTime* datetime)
+{
+    if (datetime) *datetime = XDateTime_create();
+}
+
+int32_t XDateTime_compare(const XDateTime* lhs, const XDateTime* rhs)
+{
+    int32_t result;
+    if (!lhs || !rhs) return XCompare_Other;
+    result = int64_t_compare(&lhs->m_date.m_jd, &rhs->m_date.m_jd);
+    return result ? result : int_compare(&lhs->m_time.m_msecs,
+                                         &rhs->m_time.m_msecs);
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XDateTime, sizeof(XDateTime), NULL, NULL,
+	XDateTime_clear, NULL, XDateTime_compare, "XDateTime");
+
+XVariant* XDateTime_toVariant(const XDateTime* datetime)
+{
+    return datetime ? XVariant_create((void*)datetime, sizeof(XDateTime), XVariantType_DateTime) : NULL;
+}
+
+XDateTime XDateTime_fromVariant(const XVariant* variant)
+{
+    XDateTime datetime = XDateTime_create();
+    XDateTime* source = XDateTime_fromVariant_ref(variant);
+    if (source)
+        datetime = *source;
+    return datetime;
+}
+
+XDateTime* XDateTime_fromVariant_ref(const XVariant* variant)
+{
+    return (XDateTime*)XVariant_toRef(variant, XVariantType_DateTime);
+}
+
+void XDateTime_setVariant(XVariant* variant, const XDateTime* datetime)
+{
+    XDateTime invalid = XDateTime_create();
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_DateTime || !variant->m_data ||
+        variant->m_dataSize != sizeof(XDateTime)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XDateTime));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XDateTime);
+        variant->m_type = XVariantType_DateTime;
+    }
+    *(XDateTime*)variant->m_data = datetime ? *datetime : invalid;
+}
 /**
  * @brief （内部使用）获取自午夜以来的毫秒数。
  * @param time XTime 对象指针。

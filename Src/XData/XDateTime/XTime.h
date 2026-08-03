@@ -2,6 +2,7 @@
 #define XTIME_H
 
 #include <stdint.h>
+typedef struct XVariant XVariant;
 #include <stdbool.h>
 #include "XString.h"
 
@@ -148,6 +149,38 @@ XTime XTime_fromString_format(const char* str, const char* format);
  * @return 如果是有效时间则返回 true，否则返回 false。
  */
 bool XTime_isValid_static(int hour, int minute, int second, int msec);
+
+/**
+ * @brief 将时间重置为无效时间。
+ * @param time 待清理的时间对象，可为 NULL。
+ */
+void XTime_clear(XTime* time);
+
+/**
+ * @brief 比较两个时间对象。
+ * @param lhs 左侧时间对象，可为 NULL。
+ * @param rhs 右侧时间对象，可为 NULL。
+ * @return 按 XCompare 约定返回比较结果。
+ */
+int32_t XTime_compare(const XTime* lhs, const XTime* rhs);
+
+/** @brief 深复制创建存储 XTime 的 XVariant。 */
+XVariant* XTime_toVariant(const XTime* time);
+/** @brief 从同类型 XVariant 取得 XTime 值副本。 */
+XTime XTime_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XTime 指针。 */
+XTime* XTime_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XTime 值；time 为 NULL 时设置无效时间。 */
+void XTime_setVariant(XVariant* variant, const XTime* time);
+
+/**
+ * @brief 兼容旧的 XVariant XTime 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XTime。
+ */
+#define XVariant_create_Time    XTime_toVariant
+#define XVariant_toTime         XTime_fromVariant
+#define XVariant_toTime_ref     XTime_fromVariant_ref
+#define XVariant_setValue_Time  XTime_setVariant
 
 #ifdef __cplusplus
 }

@@ -2,6 +2,7 @@
 #define XDATETIME_H
 
 #include <stdint.h>
+typedef struct XVariant XVariant;
 #include <stdbool.h>
 #include "XDate.h"
 #include "XTime.h"
@@ -226,6 +227,38 @@ int64_t XDateTime_secsTo(const XDateTime* from, const XDateTime* to);
  * @return 从 from 到 to 的毫秒数差（to - from）。
  */
 int64_t XDateTime_msecsTo(const XDateTime* from, const XDateTime* to);
+
+/**
+ * @brief 将日期时间重置为无效日期时间。
+ * @param datetime 待清理的日期时间对象，可为 NULL。
+ */
+void XDateTime_clear(XDateTime* datetime);
+
+/**
+ * @brief 比较两个日期时间对象。
+ * @param lhs 左侧日期时间对象，可为 NULL。
+ * @param rhs 右侧日期时间对象，可为 NULL。
+ * @return 按 XCompare 约定返回比较结果。
+ */
+int32_t XDateTime_compare(const XDateTime* lhs, const XDateTime* rhs);
+
+/** @brief 深复制创建存储 XDateTime 的 XVariant。 */
+XVariant* XDateTime_toVariant(const XDateTime* datetime);
+/** @brief 从同类型 XVariant 取得 XDateTime 值副本。 */
+XDateTime XDateTime_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XDateTime 指针。 */
+XDateTime* XDateTime_fromVariant_ref(const XVariant* variant);
+/** @brief 设置 XVariant 的 XDateTime 值；datetime 为 NULL 时设置无效值。 */
+void XDateTime_setVariant(XVariant* variant, const XDateTime* datetime);
+
+/**
+ * @brief 兼容旧的 XVariant XDateTime 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XDateTime。
+ */
+#define XVariant_create_DateTime    XDateTime_toVariant
+#define XVariant_toDateTime          XDateTime_fromVariant
+#define XVariant_toDateTime_ref      XDateTime_fromVariant_ref
+#define XVariant_setValue_DateTime   XDateTime_setVariant
 
 #ifdef __cplusplus
 }

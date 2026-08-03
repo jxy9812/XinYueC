@@ -217,6 +217,29 @@ XVariant* XBsonDocument_toVariant(const XBsonDocument* doc);
 XVariant* XBsonDocument_toVariant_move(XBsonDocument* doc);
 /** @brief 创建引用型 XVariant；引用对象必须在 Variant 存活期间保持有效。 */
 XVariant* XBsonDocument_toVariant_ref(XBsonDocument* doc);
+/** @brief 从同类型 XVariant 深复制取得 BSON 文档。 */
+XBsonDocument* XBsonDocument_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 BSON 文档。 */
+XBsonDocument* XBsonDocument_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 BSON 文档值。 */
+void XBsonDocument_setVariant(XVariant* variant, const XBsonDocument* doc);
+/** @brief 移动设置 XVariant 的 BSON 文档值。 */
+void XBsonDocument_setVariant_move(XVariant* variant, XBsonDocument* doc);
+/** @brief 将已有 BSON 文档直接交给 XVariant 管理。 */
+void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc);
+
+/**
+* @brief 兼容旧的 XVariant BSON 文档扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XBsonDocument。
+*/
+#define XVariant_create_BsonDocument       XBsonDocument_toVariant
+#define XVariant_create_BsonDocument_move  XBsonDocument_toVariant_move
+#define XVariant_create_BsonDocument_ref   XBsonDocument_toVariant_ref
+#define XVariant_toBsonDocument            XBsonDocument_fromVariant
+#define XVariant_toBsonDocument_ref        XBsonDocument_fromVariant_ref
+#define XVariant_setValue_BsonDocument     XBsonDocument_setVariant
+#define XVariant_setValue_BsonDocument_move XBsonDocument_setVariant_move
+#define XVariant_setValue_BsonDocument_ref XBsonDocument_setVariant_ref
 
 #ifdef __cplusplus
 }

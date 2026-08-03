@@ -83,6 +83,33 @@ XMap* XMap_create_move(XMap* other);
 */
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
 
+/** @brief 深复制创建存储 XMap 的 XVariant。 */
+XVariant* XMap_toVariant(const XMap* map);
+/** @brief 移动创建存储 XMap 的 XVariant。 */
+XVariant* XMap_toVariant_move(XMap* map);
+/** @brief 将已有 XMap 直接交给 XVariant 管理。 */
+XVariant* XMap_toVariant_ref(XMap* map);
+/** @brief 从 XVariant 深复制取得 XMap。 */
+XMap* XMap_fromVariant(const XVariant* var);
+/** @brief 从 XVariant 借用取得 XMap。 */
+XMap* XMap_fromVariant_ref(const XVariant* var);
+/** @brief 深复制设置 XVariant 的 XMap 值。 */
+void XMap_setVariant(XVariant* var, const XMap* map);
+/** @brief 移动设置 XVariant 的 XMap 值。 */
+void XMap_setVariant_move(XVariant* var, XMap* map);
+/** @brief 将已有 XMap 直接交给 XVariant 管理。 */
+void XMap_setVariant_ref(XVariant* var, XMap* map);
+
+/* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XMap。 */
+#define XVariant_create_map        XMap_toVariant
+#define XVariant_create_map_move   XMap_toVariant_move
+#define XVariant_create_map_ref    XMap_toVariant_ref
+#define XVariant_toMap             XMap_fromVariant
+#define XVariant_toMap_ref         XMap_fromVariant_ref
+#define XVariant_setValue_map      XMap_setVariant
+#define XVariant_setValue_map_move XMap_setVariant_move
+#define XVariant_setValue_map_ref  XMap_setVariant_ref
+
 /**
  * @brief 强制分离共享的 COW 存储。
  * @param this_map 需要分离的 XMap 实例。

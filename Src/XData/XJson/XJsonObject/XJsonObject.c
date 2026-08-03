@@ -2,10 +2,21 @@
 #include "XJsonArray.h"
 #include "XJsonDocument.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include "XMap.h"
 #include "XHashMap.h"
 #include "XVector.h"
 #include "XStack.h"
+
+int32_t XJsonObject_compare(const XJsonObject* lhs, const XJsonObject* rhs)
+{
+    return XJsonObject_equals(lhs, rhs)
+        ? XCompare_Equality : XCompare_Other;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XJsonObject, sizeof(XJsonObject), XJsonObject_copy_base,
+	XJsonObject_move_base, XJsonObject_clear_base, XJsonObject_deinit_base,
+	XJsonObject_compare, "XJsonObject");
 
 XJsonObject* XJsonObject_create(void)
 {
@@ -485,9 +496,56 @@ XVariant* XJsonObject_toVariant_ref(XJsonObject* obj)
     XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonObject);
     if (var == NULL)
         return NULL;
-    var->m_data = obj;
-    var->m_dataSize = sizeof(XJsonObject);
+	XVariant_setDataRef(var, obj, sizeof(XJsonObject), XVariantType_JsonObject);
     return var;
+}
+
+XJsonObject* XJsonObject_fromVariant(const XVariant* variant)
+{
+    XJsonObject* source = (XJsonObject*)XVariant_toRef(variant, XVariantType_JsonObject);
+    return source ? XJsonObject_create_copy(source) : NULL;
+}
+
+XJsonObject* XJsonObject_fromVariant_ref(const XVariant* variant)
+{
+    return (XJsonObject*)XVariant_toRef(variant, XVariantType_JsonObject);
+}
+
+static bool XJsonObject_prepareVariant(XVariant* variant)
+{
+    if (!variant)
+        return false;
+    if (variant->m_type != XVariantType_JsonObject ||
+        !variant->m_data || variant->m_dataSize != sizeof(XJsonObject)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XJsonObject));
+        if (!variant->m_data)
+            return false;
+        variant->m_dataSize = sizeof(XJsonObject);
+        XJsonObject_init((XJsonObject*)variant->m_data);
+        variant->m_type = XVariantType_JsonObject;
+    }
+    return true;
+}
+
+void XJsonObject_setVariant(XVariant* variant, const XJsonObject* object)
+{
+    if (object && XJsonObject_prepareVariant(variant))
+        XJsonObject_copy_base((XJsonObject*)variant->m_data, object);
+}
+
+void XJsonObject_setVariant_move(XVariant* variant, XJsonObject* object)
+{
+    if (object && XJsonObject_prepareVariant(variant))
+        XJsonObject_move_base((XJsonObject*)variant->m_data, object);
+}
+
+void XJsonObject_setVariant_ref(XVariant* variant, XJsonObject* object)
+{
+	if (!variant || !object)
+		return;
+	XVariant_setDataRef(variant, object, sizeof(XJsonObject), XVariantType_JsonObject);
 }
 //XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object) {
 //    if (!object) return NULL;

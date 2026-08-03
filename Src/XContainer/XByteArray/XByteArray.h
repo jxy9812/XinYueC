@@ -257,6 +257,94 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 */
 int32_t XByteArray_compare(const XByteArray* lhs, const XByteArray* rhs);
 
+/**
+ * @brief 深复制创建存储 XByteArray 的 XVariant。
+ * @param array 源字节数组，借用，可为 NULL。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XByteArray_toVariant(const XByteArray* array);
+/**
+ * @brief 移动创建存储 XByteArray 的 XVariant。
+ * @param array 源字节数组；成功后由 XVariant 接管其资源。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XByteArray_toVariant_move(XByteArray* array);
+/**
+ * @brief 将已有 XByteArray 直接交给 XVariant 管理。
+ * @param array 源字节数组；成功后由 XVariant 负责其生命周期。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XByteArray_toVariant_ref(XByteArray* array);
+/**
+ * @brief 从 XVariant 深复制取得 XByteArray。
+ * @param var 源 XVariant；借用，可为 NULL。
+ * @return 新建并由调用者负责释放的 XByteArray，类型不匹配或失败返回 NULL。
+ */
+XByteArray* XByteArray_fromVariant(const XVariant* var);
+/**
+ * @brief 从 XVariant 借用取得 XByteArray。
+ * @param var 源 XVariant；借用，可为 NULL。
+ * @return XVariant 内部 XByteArray 指针；调用者不得释放，类型不匹配返回 NULL。
+ */
+XByteArray* XByteArray_fromVariant_ref(const XVariant* var);
+/**
+ * @brief 深复制设置 XVariant 的 XByteArray 值。
+ * @param var 目标 XVariant；不能为 NULL。
+ * @param array 源字节数组；借用，可为 NULL。
+ */
+void XByteArray_setVariant(XVariant* var, const XByteArray* array);
+/**
+ * @brief 移动设置 XVariant 的 XByteArray 值。
+ * @param var 目标 XVariant；不能为 NULL。
+ * @param array 源字节数组；成功后由 XVariant 接管其资源。
+ */
+void XByteArray_setVariant_move(XVariant* var, XByteArray* array);
+/**
+ * @brief 将已有 XByteArray 直接交给 XVariant 管理。
+ * @param var 目标 XVariant；不能为 NULL。
+ * @param array 源字节数组；成功后由 XVariant 负责其生命周期。
+ */
+void XByteArray_setVariant_ref(XVariant* var, XByteArray* array);
+/**
+ * @brief 从原始字节数据设置 XVariant 的 XByteArray 值。
+ * @param var 目标 XVariant；不能为 NULL。
+ * @param data 原始字节数据；借用，可为 NULL。
+ * @param size 数据长度，单位为字节。
+ */
+void XByteArray_setVariant_data(XVariant* var, const void* data, size_t size);
+/**
+ * @brief 从原始字节数据创建 XByteArray 类型的 XVariant。
+ * @param data 原始字节数据；借用，可为 NULL。
+ * @param size 数据长度，单位为字节。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XByteArray_toVariant_data(const void* data, size_t size);
+
+/**
+ * @brief 兼容旧的 XVariant 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XByteArray。
+ */
+/** @brief 兼容旧的深复制创建 ByteArray Variant 接口。 */
+#define XVariant_create_ByteArray        XByteArray_toVariant
+/** @brief 兼容旧的移动创建 ByteArray Variant 接口。 */
+#define XVariant_create_ByteArray_move   XByteArray_toVariant_move
+/** @brief 兼容旧的直接交给 Variant 管理的 ByteArray 创建接口。 */
+#define XVariant_create_ByteArray_ref    XByteArray_toVariant_ref
+/** @brief 兼容旧的原始字节创建 ByteArray Variant 接口。 */
+#define XVariant_create_byteArray        XByteArray_toVariant_data
+/** @brief 兼容旧的深复制取得 ByteArray 接口。 */
+#define XVariant_toByteArray             XByteArray_fromVariant
+/** @brief 兼容旧的借用取得 ByteArray 接口。 */
+#define XVariant_toByteArray_ref         XByteArray_fromVariant_ref
+/** @brief 兼容旧的深复制设置 ByteArray Variant 接口。 */
+#define XVariant_setValue_ByteArray      XByteArray_setVariant
+/** @brief 兼容旧的移动设置 ByteArray Variant 接口。 */
+#define XVariant_setValue_ByteArray_move XByteArray_setVariant_move
+/** @brief 兼容旧的直接交给 Variant 管理的 ByteArray 设置接口。 */
+#define XVariant_setValue_ByteArray_ref  XByteArray_setVariant_ref
+/** @brief 兼容旧的原始字节设置 ByteArray Variant 接口。 */
+#define XVariant_setValue_byteArray      XByteArray_setVariant_data
+
 
 //============================= 编码与转换 =============================
 

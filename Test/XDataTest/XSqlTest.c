@@ -727,7 +727,7 @@ static bool XSqlTest_run_sqlite(void)
     value = ok ? XSqlQuery_value(query, 2) : NULL;
     nameValue = ok ? XSqlQuery_value_2(query, nameField) : NULL;
     nameText = nameValue ? XVariant_toString(nameValue) : NULL;
-    blob = value ? XVariant_toByteArray(value) : NULL;
+    blob = value ? XByteArray_fromVariant(value) : NULL;
     ok = ok && blob && XByteArray_size_base(blob) == 2
         && memcmp(XByteArray_data(blob), "xy", 2) == 0
         && nameText && XString_equals_utf8(nameText, "Alice", XChar_CaseSensitive);

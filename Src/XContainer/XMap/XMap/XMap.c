@@ -1,4 +1,5 @@
 ﻿#include "XMap.h"
+#include "XVariantTypeOps.h"
 #if XMap_ON
 #include "XString.h"
 #include "XVariant.h"
@@ -6,6 +7,115 @@
 #include "XAlgorithm.h"
 #include <stdlib.h>
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XMap, sizeof(XMap), XMap_copy_base, XMap_move_base,
+	XMap_clear_base, XMap_deinit_base, NULL, "XMap<XString,XVariant>");
+
+XVariant* XMap_toVariant(const XMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XMap), XVariantType_Map);
+	if (!var)
+		return NULL;
+	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
+	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
+	XMap_copy_base(XVariant_data(var), map);
+	return var;
+}
+
+XVariant* XMap_toVariant_move(XMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XMap), XVariantType_Map);
+	if (!var)
+		return NULL;
+	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
+	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
+	XMap_move_base(XVariant_data(var), map);
+	return var;
+}
+
+XVariant* XMap_toVariant_ref(XMap* map)
+{
+	XVariant* var;
+	if (!map)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_Map);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, map, sizeof(XMap), XVariantType_Map);
+	return var;
+}
+
+XMap* XMap_fromVariant(const XVariant* var)
+{
+	return XMap_create_copy(XMap_fromVariant_ref(var));
+}
+
+XMap* XMap_fromVariant_ref(const XVariant* var)
+{
+	return (XMap*)XVariant_toRef(var, XVariantType_Map);
+}
+
+static bool XMap_prepareVariant(XVariant* var, const XMap* source)
+{
+	if (!var || !source)
+		return false;
+	if (var->m_type != XVariantType_Map)
+	{
+		XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XMap));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XMap);
+		XMap_init((XMap*)var->m_data, ((const XMapBase*)source)->m_keyTypeSize,
+		          XContainerTypeSize(source), XContainerCompare(source), XContainerIsCow(source));
+		var->m_type = XVariantType_Map;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XMap))
+	{
+		if (var->m_data)
+			XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XMap));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XMap);
+		XMap_init((XMap*)var->m_data, ((const XMapBase*)source)->m_keyTypeSize,
+		          XContainerTypeSize(source), XContainerCompare(source), XContainerIsCow(source));
+	}
+	return true;
+}
+
+void XMap_setVariant(XVariant* var, const XMap* map)
+{
+	if (!XMap_prepareVariant(var, map))
+		return;
+	XMap_copy_base(XVariant_data(var), map);
+}
+
+void XMap_setVariant_move(XVariant* var, XMap* map)
+{
+	if (!XMap_prepareVariant(var, map))
+		return;
+	XMap_move_base(XVariant_data(var), map);
+}
+
+void XMap_setVariant_ref(XVariant* var, XMap* map)
+{
+	if (!var || !map)
+		return;
+	XVariant_setDataRef(var, map, sizeof(XMap), XVariantType_Map);
+}
 
 // 获取根节点指针的地址（统一 COW/非 COW）
 static inline XRBTreeNode** XMap_root_ptr(XMap* map) {

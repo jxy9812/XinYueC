@@ -1,4 +1,6 @@
 #include "XDate.h"
+#include "XVariantTypeOps.h"
+#include "XVariant.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -313,4 +315,56 @@ XDate XDate_fromJulianDay(int64_t jd) {
         date.m_jd = -1;
     }
     return date;
+}
+
+void XDate_clear(XDate* date)
+{
+    if (date) *date = XDate_create();
+}
+
+int32_t XDate_compare(const XDate* lhs, const XDate* rhs)
+{
+    if (!lhs || !rhs) return XCompare_Other;
+    return int64_t_compare(&((const XDate*)lhs)->m_jd,
+                           &((const XDate*)rhs)->m_jd);
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XDate, sizeof(XDate), NULL, NULL, XDate_clear, NULL,
+	XDate_compare, "XDate");
+
+XVariant* XDate_toVariant(const XDate* date)
+{
+    return date ? XVariant_create((void*)date, sizeof(XDate), XVariantType_Date) : NULL;
+}
+
+XDate XDate_fromVariant(const XVariant* variant)
+{
+    XDate date = XDate_create();
+    XDate* source = XDate_fromVariant_ref(variant);
+    if (source)
+        date = *source;
+    return date;
+}
+
+XDate* XDate_fromVariant_ref(const XVariant* variant)
+{
+    return (XDate*)XVariant_toRef(variant, XVariantType_Date);
+}
+
+void XDate_setVariant(XVariant* variant, const XDate* date)
+{
+    XDate invalid = XDate_create();
+    if (!variant)
+        return;
+    if (variant->m_type != XVariantType_Date || !variant->m_data ||
+        variant->m_dataSize != sizeof(XDate)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XDate));
+        if (!variant->m_data)
+            return;
+        variant->m_dataSize = sizeof(XDate);
+        variant->m_type = XVariantType_Date;
+    }
+    *(XDate*)variant->m_data = date ? *date : invalid;
 }

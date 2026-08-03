@@ -88,6 +88,33 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @note 需确保this_map不为NULL，keyTypeSize、valTypeSize大于0，hash和compare不为NULL
 */
 void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow);
+
+/** @brief 深复制创建存储 XHashMap 的 XVariant。 */
+XVariant* XHashMap_toVariant(const XHashMap* map);
+/** @brief 移动创建存储 XHashMap 的 XVariant。 */
+XVariant* XHashMap_toVariant_move(XHashMap* map);
+/** @brief 将已有 XHashMap 直接交给 XVariant 管理。 */
+XVariant* XHashMap_toVariant_ref(XHashMap* map);
+/** @brief 从 XVariant 深复制取得 XHashMap。 */
+XHashMap* XHashMap_fromVariant(const XVariant* var);
+/** @brief 从 XVariant 借用取得 XHashMap。 */
+XHashMap* XHashMap_fromVariant_ref(const XVariant* var);
+/** @brief 深复制设置 XVariant 的 XHashMap 值。 */
+void XHashMap_setVariant(XVariant* var, const XHashMap* map);
+/** @brief 移动设置 XVariant 的 XHashMap 值。 */
+void XHashMap_setVariant_move(XVariant* var, XHashMap* map);
+/** @brief 将已有 XHashMap 直接交给 XVariant 管理。 */
+void XHashMap_setVariant_ref(XVariant* var, XHashMap* map);
+
+/* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XHashMap。 */
+#define XVariant_create_hash        XHashMap_toVariant
+#define XVariant_create_hash_move   XHashMap_toVariant_move
+#define XVariant_create_hash_ref    XHashMap_toVariant_ref
+#define XVariant_toHash             XHashMap_fromVariant
+#define XVariant_toHash_ref         XHashMap_fromVariant_ref
+#define XVariant_setValue_hash      XHashMap_setVariant
+#define XVariant_setValue_hash_move XHashMap_setVariant_move
+#define XVariant_setValue_hash_ref  XHashMap_setVariant_ref
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 插入键值对（拷贝语义，基础版本）

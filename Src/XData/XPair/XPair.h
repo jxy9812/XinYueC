@@ -6,6 +6,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdint.h>
 #include"XTypes.h"
+typedef struct XVariant XVariant;
 /**
 * @brief 用于组合两个不同类型数据的结构体
 * @details 可将两个任意类型的数据封装为一个整体，存储数据的类型大小及数据指针，支持拷贝、移动等操作
@@ -147,6 +148,48 @@ void XPair_delete(XPair* this_pair);
 * @return 相等返回XCompare_Equality，否则返回XCompare_Other
 */
 int32_t XPair_compare(const XPair* lhs, const XPair* rhs);
+
+/**
+ * @brief 深复制创建存储 XPair 的 XVariant。
+ * @param pair 源键值对；借用，可为 NULL。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XPair_toVariant(const XPair* pair);
+/**
+ * @brief 移动创建存储 XPair 的 XVariant。
+ * @param pair 源键值对；成功后由 XVariant 接管资源。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XPair_toVariant_move(XPair* pair);
+/**
+ * @brief 将已有 XPair 直接交给 XVariant 管理。
+ * @param pair 源键值对；成功后由 XVariant 负责其生命周期。
+ * @return 新建并由调用者负责释放的 XVariant，失败返回 NULL。
+ */
+XVariant* XPair_toVariant_ref(XPair* pair);
+/** @brief 从同类型 XVariant 深复制取得 XPair。 */
+XPair* XPair_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 XPair。 */
+XPair* XPair_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 XPair 值。 */
+void XPair_setVariant(XVariant* variant, const XPair* pair);
+/** @brief 移动设置 XVariant 的 XPair 值。 */
+void XPair_setVariant_move(XVariant* variant, XPair* pair);
+/** @brief 将已有 XPair 直接交给 XVariant 管理。 */
+void XPair_setVariant_ref(XVariant* variant, XPair* pair);
+
+/**
+ * @brief 兼容旧的 XVariant XPair 扩展 API 名称。
+ * @details 以下宏仅保留源代码兼容性，实际实现均归属 XPair。
+ */
+#define XVariant_create_Pair       XPair_toVariant
+#define XVariant_create_Pair_move  XPair_toVariant_move
+#define XVariant_create_Pair_ref   XPair_toVariant_ref
+#define XVariant_toPair            XPair_fromVariant
+#define XVariant_toPair_ref        XPair_fromVariant_ref
+#define XVariant_setValue_Pair     XPair_setVariant
+#define XVariant_setValue_Pair_move XPair_setVariant_move
+#define XVariant_setValue_Pair_ref XPair_setVariant_ref
 #ifdef __cplusplus
 }
 #endif

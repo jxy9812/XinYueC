@@ -2,11 +2,22 @@
 #include "XJsonArray.h"
 #include "XJsonObject.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include "XVariantList.h"
 #include "XAlgorithm.h"
 #include "XMap.h"
 #include <math.h>
 #include <string.h>
+
+int32_t XJsonValue_compare(const XJsonValue* lhs, const XJsonValue* rhs)
+{
+    return XJsonValue_equals(lhs, rhs)
+        ? XCompare_Equality : XCompare_Other;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XJsonValue, sizeof(XJsonValue), XJsonValue_copy,
+	XJsonValue_move, XJsonValue_clear, XJsonValue_deinit,
+	XJsonValue_compare, "XJsonValue");
 
 static XJsonValue* XJsonValue_create_with_type(XJsonValueType type)
 {
@@ -477,8 +488,7 @@ XVariant* XJsonValue_toVariant_ref(XJsonValue* val)
     XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonValue);
     if (var == NULL)
         return NULL;
-    var->m_data = val;
-    var->m_dataSize = sizeof(XJsonValue);
+	XVariant_setDataRef(var, val, sizeof(XJsonValue), XVariantType_JsonValue);
     return var;
 }
 
@@ -540,4 +550,54 @@ XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {
     default:
         return XJsonValue_create_null();
     }
+}
+
+XJsonValue* XJsonValue_fromVariant_copy(const XVariant* variant)
+{
+    XJsonValue* source = (XJsonValue*)XVariant_toRef(variant, XVariantType_JsonValue);
+    if (!source)
+        return NULL;
+    return XJsonValue_create_copy(source);
+}
+
+XJsonValue* XJsonValue_fromVariant_ref(const XVariant* variant)
+{
+    return (XJsonValue*)XVariant_toRef(variant, XVariantType_JsonValue);
+}
+
+static bool XJsonValue_prepareVariant(XVariant* variant, XJsonValueType type)
+{
+    if (!variant)
+        return false;
+    if (variant->m_type != XVariantType_JsonValue ||
+        !variant->m_data || variant->m_dataSize != sizeof(XJsonValue)) {
+        if (variant->m_data)
+            XVariant_deinit_base(variant);
+        variant->m_data = XMalloc_System(sizeof(XJsonValue));
+        if (!variant->m_data)
+            return false;
+        variant->m_dataSize = sizeof(XJsonValue);
+        XJsonValue_init((XJsonValue*)variant->m_data, type);
+        variant->m_type = XVariantType_JsonValue;
+    }
+    return true;
+}
+
+void XJsonValue_setVariant(XVariant* variant, const XJsonValue* value)
+{
+    if (value && XJsonValue_prepareVariant(variant, value->type))
+        XJsonValue_copy((XJsonValue*)variant->m_data, value);
+}
+
+void XJsonValue_setVariant_move(XVariant* variant, XJsonValue* value)
+{
+    if (value && XJsonValue_prepareVariant(variant, value->type))
+        XJsonValue_move((XJsonValue*)variant->m_data, value);
+}
+
+void XJsonValue_setVariant_ref(XVariant* variant, XJsonValue* value)
+{
+	if (!variant || !value)
+		return;
+	XVariant_setDataRef(variant, value, sizeof(XJsonValue), XVariantType_JsonValue);
 }

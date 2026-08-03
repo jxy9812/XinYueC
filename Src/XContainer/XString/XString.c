@@ -1,4 +1,6 @@
 ﻿#include "XString.h"
+#include "XVariant.h"
+#include "XVariantTypeOps.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +8,137 @@
 #include <limits.h>
 #include "XStringList.h"
 #include "XStringView.h"
+
+XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XString_copy_base,
+	XString_move_base, XString_clear_base, XString_deinit_base,
+	XString_compare, "XString");
+
+XVariant* XString_toVariant(const XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XString_copy_base(XVariant_data(var), str);
+	return var;
+}
+
+XVariant* XString_toVariant_move(XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XString_move_base(XVariant_data(var), str);
+	return var;
+}
+
+XVariant* XString_toVariant_ref(XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_String);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
+	return var;
+}
+
+XVariant* XString_toVariant_utf8(const char* utf8)
+{
+	XVariant* var;
+	if (!utf8)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XString_assign_utf8(XVariant_data(var), utf8);
+	return var;
+}
+
+XString* XString_fromVariant(const XVariant* var)
+{
+	return XString_create_copy(XString_fromVariant_ref(var));
+}
+
+const XString* XString_fromVariant_const(const XVariant* var)
+{
+	return (const XString*)XVariant_toRef(var, XVariantType_String);
+}
+
+XString* XString_fromVariant_ref(const XVariant* var)
+{
+	return (XString*)XString_fromVariant_const(var);
+}
+
+static bool XString_prepareVariant(XVariant* var)
+{
+	if (!var)
+		return false;
+	if (var->m_type != XVariantType_String)
+	{
+		XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XString));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XString);
+		XString_init((XString*)var->m_data);
+		var->m_type = XVariantType_String;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XString))
+	{
+		if (var->m_data)
+			XVariant_deinit_base(var);
+		var->m_data = XMalloc_System(sizeof(XString));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XString);
+		XString_init((XString*)var->m_data);
+	}
+	return true;
+}
+
+void XString_setVariant(XVariant* var, const XString* str)
+{
+	if (!str || !XString_prepareVariant(var))
+		return;
+	XString_copy_base(XVariant_data(var), str);
+}
+
+void XString_setVariant_move(XVariant* var, XString* str)
+{
+	if (!str || !XString_prepareVariant(var))
+		return;
+	XString_move_base(XVariant_data(var), str);
+}
+
+void XString_setVariant_ref(XVariant* var, XString* str)
+{
+	if (!var || !str)
+		return;
+	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
+}
+
+void XString_setVariant_utf8(XVariant* var, const char* utf8)
+{
+	if (!utf8 || !XString_prepareVariant(var))
+		return;
+	XString_assign_utf8(XVariant_data(var), utf8);
+}
 #if XRegularExpression_ON
 #include "XRegularExpression.h"
 #endif

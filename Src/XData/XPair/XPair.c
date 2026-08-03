@@ -1,5 +1,7 @@
 ﻿#include"XPair.h"
 #include"XContainer.h"
+#include"XVariantTypeOps.h"
+#include"XVariant.h"
 //#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
@@ -124,4 +126,99 @@ int32_t XPair_compare(const XPair* lhs, const XPair* rhs)
 		memcmp(XPair_second(lhs), XPair_second(rhs), lhs->m_secondTypeSize)==0)
 		return XCompare_Equality;
 	return XCompare_Other;
+}
+
+XVARIANT_TYPE_OPS_DEFINE(XPair, 0, NULL, NULL, NULL, NULL,
+	XPair_compare, "XPair");
+
+XVariant* XPair_toVariant(const XPair* pair)
+{
+	XVariant* variant;
+	if (!pair)
+		return NULL;
+	variant = XVariant_create(NULL, XPair_size2((XPair*)pair), XVariantType_Pair);
+	if (!variant)
+		return NULL;
+	XPair_init((XPair*)variant->m_data, pair->m_firstTypeSize, pair->m_secondTypeSize);
+	XPair_copy((XPair*)variant->m_data, pair);
+	return variant;
+}
+
+XVariant* XPair_toVariant_move(XPair* pair)
+{
+	XVariant* variant;
+	if (!pair)
+		return NULL;
+	variant = XVariant_create(NULL, XPair_size2(pair), XVariantType_Pair);
+	if (!variant)
+		return NULL;
+	XPair_init((XPair*)variant->m_data, pair->m_firstTypeSize, pair->m_secondTypeSize);
+	XPair_move((XPair*)variant->m_data, pair);
+	return variant;
+}
+
+XVariant* XPair_toVariant_ref(XPair* pair)
+{
+	XVariant* variant;
+	if (!pair)
+		return NULL;
+	variant = XVariant_create(NULL, 0, XVariantType_Pair);
+	if (variant)
+		XVariant_setDataRef(variant, pair, XPair_size2(pair), XVariantType_Pair);
+	return variant;
+}
+
+XPair* XPair_fromVariant(const XVariant* variant)
+{
+	XPair* source = (XPair*)XVariant_toRef(variant, XVariantType_Pair);
+	return source ? XPair_create_copy(source) : NULL;
+}
+
+XPair* XPair_fromVariant_ref(const XVariant* variant)
+{
+	return (XPair*)XVariant_toRef(variant, XVariantType_Pair);
+}
+
+static bool XPair_prepareVariant(XVariant* variant, const XPair* pair)
+{
+	size_t size;
+	XPair* target;
+	if (!variant || !pair)
+		return false;
+	size = XPair_size2((XPair*)pair);
+	target = (XPair*)variant->m_data;
+	if (variant->m_type != XVariantType_Pair || !target ||
+		variant->m_dataSize != size ||
+		target->m_firstTypeSize != pair->m_firstTypeSize ||
+		target->m_secondTypeSize != pair->m_secondTypeSize) {
+		if (variant->m_data)
+			XVariant_deinit_base(variant);
+		variant->m_data = XMalloc_System(size);
+		if (!variant->m_data)
+			return false;
+		variant->m_dataSize = size;
+		XPair_init((XPair*)variant->m_data, pair->m_firstTypeSize,
+		           pair->m_secondTypeSize);
+		variant->m_type = XVariantType_Pair;
+	}
+	return true;
+}
+
+void XPair_setVariant(XVariant* variant, const XPair* pair)
+{
+	if (XPair_prepareVariant(variant, pair))
+		XPair_copy((XPair*)variant->m_data, pair);
+}
+
+void XPair_setVariant_move(XVariant* variant, XPair* pair)
+{
+	if (XPair_prepareVariant(variant, pair))
+		XPair_move((XPair*)variant->m_data, pair);
+}
+
+void XPair_setVariant_ref(XVariant* variant, XPair* pair)
+{
+	if (!variant || !pair)
+		return;
+	XVariant_setDataRef(variant, pair, XPair_size2(pair), XVariantType_Pair);
 }

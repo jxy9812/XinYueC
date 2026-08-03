@@ -64,6 +64,33 @@ XVariantList* XVariantList_create_move(XVariantList* other);
 * @note 初始化基础数据成员、绑定虚函数表，设置元素类型为XVariant
 */
 void XVariantList_init(XVariantList* list);
+
+/** @brief 深复制创建存储 XVariantList 的 XVariant。 */
+XVariant* XVariantList_toVariant(const XVariantList* list);
+/** @brief 移动创建存储 XVariantList 的 XVariant。 */
+XVariant* XVariantList_toVariant_move(XVariantList* list);
+/** @brief 将已有 XVariantList 直接交给 XVariant 管理。 */
+XVariant* XVariantList_toVariant_ref(XVariantList* list);
+/** @brief 从 XVariant 深复制取得 XVariantList。 */
+XVariantList* XVariantList_fromVariant(const XVariant* var);
+/** @brief 从 XVariant 借用取得 XVariantList。 */
+XVariantList* XVariantList_fromVariant_ref(const XVariant* var);
+/** @brief 深复制设置 XVariant 的 XVariantList 值。 */
+void XVariantList_setVariant(XVariant* var, const XVariantList* list);
+/** @brief 移动设置 XVariant 的 XVariantList 值。 */
+void XVariantList_setVariant_move(XVariant* var, XVariantList* list);
+/** @brief 将已有 XVariantList 直接交给 XVariant 管理。 */
+void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
+
+/* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XVariantList。 */
+#define XVariant_create_list       XVariantList_toVariant
+#define XVariant_create_list_move  XVariantList_toVariant_move
+#define XVariant_create_list_ref   XVariantList_toVariant_ref
+#define XVariant_toList             XVariantList_fromVariant
+#define XVariant_toList_ref         XVariantList_fromVariant_ref
+#define XVariant_setValue_list      XVariantList_setVariant
+#define XVariant_setValue_list_move XVariantList_setVariant_move
+#define XVariant_setValue_list_ref  XVariantList_setVariant_ref
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 向前端插入元素（拷贝语义，基础版本）

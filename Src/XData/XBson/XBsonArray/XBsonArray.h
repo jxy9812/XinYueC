@@ -250,6 +250,29 @@ XVariant* XBsonArray_toVariant_move(XBsonArray* array);
 * @return 成功返回XVariant指针，失败返回NULL
 */
 XVariant* XBsonArray_toVariant_ref(XBsonArray* array);
+/** @brief 从同类型 XVariant 深复制取得 BSON 数组。 */
+XBsonArray* XBsonArray_fromVariant(const XVariant* variant);
+/** @brief 从同类型 XVariant 借用取得 BSON 数组。 */
+XBsonArray* XBsonArray_fromVariant_ref(const XVariant* variant);
+/** @brief 深复制设置 XVariant 的 BSON 数组值。 */
+void XBsonArray_setVariant(XVariant* variant, const XBsonArray* array);
+/** @brief 移动设置 XVariant 的 BSON 数组值。 */
+void XBsonArray_setVariant_move(XVariant* variant, XBsonArray* array);
+/** @brief 将已有 BSON 数组直接交给 XVariant 管理。 */
+void XBsonArray_setVariant_ref(XVariant* variant, XBsonArray* array);
+
+/**
+* @brief 兼容旧的 XVariant BSON 数组扩展 API 名称。
+* @details 以下宏仅保留源代码兼容性，实际实现均归属 XBsonArray。
+*/
+#define XVariant_create_BsonArray       XBsonArray_toVariant
+#define XVariant_create_BsonArray_move  XBsonArray_toVariant_move
+#define XVariant_create_BsonArray_ref   XBsonArray_toVariant_ref
+#define XVariant_toBsonArray            XBsonArray_fromVariant
+#define XVariant_toBsonArray_ref        XBsonArray_fromVariant_ref
+#define XVariant_setValue_BsonArray     XBsonArray_setVariant
+#define XVariant_setValue_BsonArray_move XBsonArray_setVariant_move
+#define XVariant_setValue_BsonArray_ref XBsonArray_setVariant_ref
 #ifdef __cplusplus
 }
 #endif

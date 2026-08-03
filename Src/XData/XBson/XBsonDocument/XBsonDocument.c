@@ -2,8 +2,13 @@
 #include "XBsonArray.h"
 #include "XJsonObject.h"
 #include "XMemory.h"
+#include "XVariantTypeOps.h"
 #include <limits.h>
 #include <string.h>
+
+XVARIANT_TYPE_OPS_DEFINE(XBsonDocument, sizeof(XBsonDocument), XBsonDocument_copy_base,
+	XBsonDocument_move_base, XBsonDocument_clear_base, XBsonDocument_deinit_base,
+	NULL, "XBsonDocument");
 
 /* BSON 文档保持元素原始顺序，并允许同名键重复出现。 */
 static bool XBsonDocument_keyEquals(const XString* left, const XString* right)
@@ -669,7 +674,54 @@ XVariant* XBsonDocument_toVariant_ref(XBsonDocument* doc)
 	if (!doc) return NULL;
 	XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonDocument);
 	if (!var) return NULL;
-	var->m_data = doc;
-	var->m_dataSize = sizeof(XBsonDocument);
+	XVariant_setDataRef(var, doc, sizeof(XBsonDocument), XVariantType_BsonDocument);
 	return var;
+}
+
+XBsonDocument* XBsonDocument_fromVariant(const XVariant* variant)
+{
+	XBsonDocument* source = (XBsonDocument*)XVariant_toRef(variant, XVariantType_BsonDocument);
+	return source ? XBsonDocument_create_copy(source) : NULL;
+}
+
+XBsonDocument* XBsonDocument_fromVariant_ref(const XVariant* variant)
+{
+	return (XBsonDocument*)XVariant_toRef(variant, XVariantType_BsonDocument);
+}
+
+static bool XBsonDocument_prepareVariant(XVariant* variant)
+{
+	if (!variant)
+		return false;
+	if (variant->m_type != XVariantType_BsonDocument ||
+		!variant->m_data || variant->m_dataSize != sizeof(XBsonDocument)) {
+		if (variant->m_data)
+			XVariant_deinit_base(variant);
+		variant->m_data = XMalloc_System(sizeof(XBsonDocument));
+		if (!variant->m_data)
+			return false;
+		variant->m_dataSize = sizeof(XBsonDocument);
+		XBsonDocument_init((XBsonDocument*)variant->m_data);
+		variant->m_type = XVariantType_BsonDocument;
+	}
+	return true;
+}
+
+void XBsonDocument_setVariant(XVariant* variant, const XBsonDocument* doc)
+{
+	if (doc && XBsonDocument_prepareVariant(variant))
+		XBsonDocument_copy_base((XBsonDocument*)variant->m_data, doc);
+}
+
+void XBsonDocument_setVariant_move(XVariant* variant, XBsonDocument* doc)
+{
+	if (doc && XBsonDocument_prepareVariant(variant))
+		XBsonDocument_move_base((XBsonDocument*)variant->m_data, doc);
+}
+
+void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc)
+{
+	if (!variant || !doc)
+		return;
+	XVariant_setDataRef(variant, doc, sizeof(XBsonDocument), XVariantType_BsonDocument);
 }
