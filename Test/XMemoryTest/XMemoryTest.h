@@ -8,6 +8,8 @@ extern "C" {
 #if DEMOTEST
 	void XMenu_XMemoryTest(XMenu* root);
 	void XMenu_XMultiPoolTest(XMenu* root);
+	void XVariablePoolTest(void);
+	void XMenu_XVariablePoolTest(XMenu* root);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

@@ -6,6 +6,7 @@
 - [XMemory 内存管理器](#xmemory-内存管理器)
 - [XFixedPool 固定大小内存池](#xfixedpool-固定大小内存池)
 - [XMultiPool 多级内存池](#xmultipool-多级内存池)
+- [XVariablePool TLSF可变大小内存池](#xvariablepool-tlsf可变大小内存池)
 - [字节序处理](#字节序处理)
 - [附录](#附录)
 
@@ -756,6 +757,77 @@ XMultiPool_global_free(ptr);
 
 ---
 
+## XVariablePool TLSF可变大小内存池
+
+`XVariablePool` 使用 TLSF（Two-Level Segregated Fit）管理一个连续 arena，
+适合嵌入式设备中需要可变大小申请、释放和碎片合并的场景。
+
+### 特性
+
+- 支持 arena 范围内的任意请求大小，并按配置的对齐值返回用户地址。
+- 使用一级/二级位图和空闲链表定位块，分配和释放路径不遍历全部物理块。
+- 申请时按需切分，释放时立即合并前后相邻空闲块。
+- 支持静态 buffer、从已有内存创建和系统内存动态创建。
+- 默认是单线程快速路径；多线程时通过 `lock/unlock` 回调保护同一个池。
+- `freeSize` 是所有空闲块可复用容量之和，不代表存在同样大小的连续块；
+  使用 `largestFreeSize` 判断一次性大块申请能力。
+
+### 静态模式
+
+```c
+#include "XVariablePool.h"
+
+XALIGNAS(XALIGN_PTR_SIZE) unsigned char memory[32 * 1024];
+XVariablePool pool;
+
+if (!XVariablePool_init(&pool, memory, sizeof(memory), 0)) {
+    return;
+}
+
+void* buffer = XVariablePool_malloc(&pool, 137);
+void* zeroed = XVariablePool_calloc(&pool, 16, 32);
+buffer = XVariablePool_realloc(&pool, buffer, 512);
+
+XVariablePool_free(&pool, buffer);
+XVariablePool_free(&pool, zeroed);
+XVariablePool_deinit(&pool);
+```
+
+### 堆模式
+
+```c
+XVariablePool* pool = XVariablePool_create(64 * 1024, 0);
+if (pool) {
+    void* buffer = XVariablePool_malloc(pool, 4096);
+    XVariablePool_free(pool, buffer);
+    XVariablePool_delete(pool);
+}
+```
+
+### 多线程模式
+
+锁回调由设备或应用提供，池不取得锁上下文所有权：
+
+```c
+XVariablePool_init_ex(&pool, memory, sizeof(memory), 0,
+                      device_lock, device_unlock, device_lock_context);
+```
+
+释放、合并和 `realloc` 需要修改空闲链表，不能在 ISR 中调用；ISR 应使用
+`XFixedPool`、预分配缓冲区或无动态分配的环形队列。
+
+### 统计与诊断
+
+```c
+size_t free_bytes = XVariablePool_freeSize(&pool);
+size_t largest = XVariablePool_largestFreeSize(&pool);
+size_t usable = XVariablePool_getMaxUserSize(&pool, buffer);
+bool valid = XVariablePool_check(&pool);
+```
+
+`XVariablePool_check` 会遍历物理块链并校验前后块大小、魔数和统计值，适合
+测试、长时间压力运行和故障现场诊断，不应放在实时分配路径中。
+
 ## 字节序处理
 
 XMemory模块提供了跨平台的字节序转换功能。
@@ -875,17 +947,18 @@ XMemory_write_data(output, XBYTE_ORDER_BIG_ENDIAN, (uint8_t*)&outValue, sizeof(o
 |---------|---------|------|------|
 | `XMEMORY_TYPE_SYSTEM` | 通用场景 | 一般 | 灵活，无大小限制 |
 | `XMEMORY_TYPE_MULTIPOOL` | 频繁分配释放 | 高 | O(1)分配，固定块大小 |
+| `XVariablePool` | 任意大小、嵌入式 arena | 高 | TLSF 分级，支持分裂和相邻块合并 |
 | `XMEMORY_TYPE_HYBRID` | 混合场景 | 中 | 小块用池，大块用系统 |
 
 ### 内存池性能特点
 
-| 特性 | XFixedPool | XMultiPool |
-|------|-----------|------------|
-| 分配时间复杂度 | O(1) | 二分模式O(log N) 倍数模式O(1) |
-| 释放时间复杂度 | O(1) | O(1) |
-| 线程安全 | 是 | 是 |
-| 块大小 | 固定 | 多种 |
-| 适用场景 | 单一大小对象 | 多种大小对象 |
+| 特性 | XFixedPool | XMultiPool | XVariablePool |
+|------|-----------|------------|---------------|
+| 分配时间复杂度 | O(1) | 二分模式O(log N) 倍数模式O(1) | TLSF 有界分级查找 |
+| 释放时间复杂度 | O(1) | O(1) | O(1)，含相邻块合并 |
+| 线程安全 | 是 | 是 | 通过锁回调配置 |
+| 块大小 | 固定 | 多种 | 可变 |
+| 适用场景 | 单一大小对象 | 多种大小对象 | 任意大小 arena |
 
 ### 内存对齐说明
 
