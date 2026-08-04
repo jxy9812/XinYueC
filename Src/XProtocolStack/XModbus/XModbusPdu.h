@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "XClass.h"
 #include "XTypes.h"
 
@@ -126,6 +127,39 @@ typedef enum {
     XModbusPdu_EncapsulatedInterfaceTransport = 0x2B,           ///< 封装接口传输(FC43)
     XModbusPdu_UndefinedFunctionCode = 0x100                    ///< 未定义功能码
 } XModbusPdu_FunctionCode;
+
+/**
+ * @brief XModbusPdu_encodeData/decodeData 支持的字段类型
+ * @note 对齐 QModbusPdu::encodeData/decodeData 支持的 quint8 与 quint16。
+ */
+typedef enum {
+    XModbusPdu_DataType_Uint8,
+    XModbusPdu_DataType_Uint16
+} XModbusPdu_DataType;
+
+/**
+ * @brief PDU 编码字段
+ * @param data 指向 uint8_t 或 uint16_t 标量/数组
+ * @param count 数组元素数量，标量传 1
+ * @note uint16_t 输入使用主机字节序表示，编码到 PDU 时转换为 Modbus 大端序。
+ */
+typedef struct {
+    XModbusPdu_DataType type;
+    const void* data;
+    size_t count;
+} XModbusPdu_EncodeField;
+
+/**
+ * @brief PDU 解码字段
+ * @param data 指向可写 uint8_t 或 uint16_t 标量/数组
+ * @param count 数组元素数量，标量传 1
+ * @note uint16_t 输出使用主机字节序表示，输入 PDU 按 Modbus 大端序解析。
+ */
+typedef struct {
+    XModbusPdu_DataType type;
+    void* data;
+    size_t count;
+} XModbusPdu_DecodeField;
 
 /******************************************************************************************
  * 结构体定义
@@ -454,6 +488,21 @@ XByteArray* XModbusPdu_data(const XModbusPdu* pdu);
  * @note 数据会被内部复制
  */
 void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size);
+
+/**
+ * @brief 按 Modbus 大端序编码 uint8_t/uint16_t 字段序列
+ * @details 等价于 QModbusPdu::encodeData()。编码成功后会替换原 PDU 数据。
+ * @return 成功返回 true；字段类型、指针、长度或 PDU 最大长度无效时返回 false。
+ */
+bool XModbusPdu_encodeData(XModbusPdu* pdu,
+    const XModbusPdu_EncodeField* fields, size_t fieldCount);
+
+/**
+ * @brief 按 Modbus 大端序解码 uint8_t/uint16_t 字段序列
+ * @details 等价于 QModbusPdu::decodeData()。PDU 数据不足或字段无效时返回 false。
+ */
+bool XModbusPdu_decodeData(const XModbusPdu* pdu,
+    const XModbusPdu_DecodeField* fields, size_t fieldCount);
 
 /******************************************************************************************
  * 数据大小计算器（对齐Qt6 QModbusRequest/QModbusResponse）

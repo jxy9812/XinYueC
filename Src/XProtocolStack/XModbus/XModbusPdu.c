@@ -12,13 +12,13 @@ XVtable* XModbusPdu_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XClass)
 	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusPdu");
-        // 继承 XModbusDevice
-        XVTABLE_INHERIT_XCLASS(XClass);
+    // 继承 XModbusDevice
+    XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusPdu_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusPdu_move);
-	XCLASS_SHOW_SIZE(XModbusPdu, sizeof(XModbusPdu));
+	XCLASS_SHOW_SIZE_DEFAULT(XModbusPdu);
     return XVTABLE_DEFAULT;
 }
 // =============== 数据大小计算器实现 ===============
@@ -603,4 +603,106 @@ void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size) {
     if (newData && size > 0) {
         XByteArray_push_back_2(pdu->m_data, newData, size);
     }
+}
+
+static bool XModbusPdu_validateField(XModbusPdu_DataType type, const void* data,
+    size_t count, size_t used, size_t* byteCount)
+{
+    size_t elementSize;
+
+    if (!data && count > 0) return false;
+
+    switch (type) {
+    case XModbusPdu_DataType_Uint8:
+        elementSize = sizeof(uint8_t);
+        break;
+    case XModbusPdu_DataType_Uint16:
+        elementSize = sizeof(uint16_t);
+        break;
+    default:
+        return false;
+    }
+
+    if (used > 252u || count > (252u - used) / elementSize) return false;
+    *byteCount = count * elementSize;
+    return true;
+}
+
+bool XModbusPdu_encodeData(XModbusPdu* pdu,
+    const XModbusPdu_EncodeField* fields, size_t fieldCount)
+{
+    size_t used = 0;
+
+    if (!pdu || !pdu->m_data || (fieldCount > 0 && !fields)) return false;
+
+    for (size_t i = 0; i < fieldCount; ++i) {
+        size_t byteCount;
+        if (!XModbusPdu_validateField(fields[i].type, fields[i].data,
+                fields[i].count, used, &byteCount)) {
+            return false;
+        }
+        used += byteCount;
+    }
+
+    XByteArray_clear_base(pdu->m_data);
+    for (size_t i = 0; i < fieldCount; ++i) {
+        if (fields[i].count == 0) continue;
+
+        if (fields[i].type == XModbusPdu_DataType_Uint8) {
+            if (!XByteArray_push_back_2(pdu->m_data, fields[i].data, fields[i].count)) {
+                XByteArray_clear_base(pdu->m_data);
+                return false;
+            }
+            continue;
+        }
+
+        const uint8_t* values = (const uint8_t*)fields[i].data;
+        for (size_t j = 0; j < fields[i].count; ++j) {
+            uint16_t value;
+            uint8_t encoded[2];
+            memcpy(&value, values + j * sizeof(value), sizeof(value));
+            encoded[0] = (uint8_t)(value >> 8);
+            encoded[1] = (uint8_t)value;
+            if (!XByteArray_push_back_2(pdu->m_data, encoded, sizeof(encoded))) {
+                XByteArray_clear_base(pdu->m_data);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool XModbusPdu_decodeData(const XModbusPdu* pdu,
+    const XModbusPdu_DecodeField* fields, size_t fieldCount)
+{
+    size_t offset = 0;
+    size_t dataSize;
+    const uint8_t* data;
+
+    if (!pdu || !pdu->m_data || (fieldCount > 0 && !fields)) return false;
+
+    dataSize = XByteArray_size_base(pdu->m_data);
+    data = XContainerDataAddr(pdu->m_data);
+    for (size_t i = 0; i < fieldCount; ++i) {
+        size_t byteCount;
+        if (offset > dataSize || !XModbusPdu_validateField(fields[i].type, fields[i].data,
+                fields[i].count, offset, &byteCount) || byteCount > dataSize - offset) {
+            return false;
+        }
+
+        if (fields[i].type == XModbusPdu_DataType_Uint8) {
+            memcpy(fields[i].data, data + offset, byteCount);
+        } else {
+            uint8_t* values = (uint8_t*)fields[i].data;
+            for (size_t j = 0; j < fields[i].count; ++j) {
+                uint16_t value = (uint16_t)((uint16_t)data[offset + j * 2] << 8
+                    | data[offset + j * 2 + 1]);
+                memcpy(values + j * sizeof(value), &value, sizeof(value));
+            }
+        }
+        offset += byteCount;
+    }
+
+    return true;
 }

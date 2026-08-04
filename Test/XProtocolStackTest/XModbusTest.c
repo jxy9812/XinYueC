@@ -76,15 +76,21 @@ void XModbusRtuSerialClientTest()
 }
 static void tcpFinished(XObject* receiver, XVarList* args)
 {
+    (void)args;
     XObject* sender = receiver;
-    XCoreApplication_processEvents(0);
-    //XPrintf("结束了，准备重启\n");
-    XModbusRtuSerialClient* rtu = XObject_parent(sender);
     XModbusTcpClient* client = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    if (!read) {
+        XObject_deleteLater(sender);
+        return;
+    }
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
-    if (!read)return;
+    if (!reply) {
+        XObject_deleteLater(sender);
+        XModbusDataUnit_delete_base(read);
+        return;
+    }
     XObject_setParent(reply, client);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
     //XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, tcpFinished, XConnectionType_Queued);
@@ -97,12 +103,17 @@ static void tcpFinished(XObject* receiver, XVarList* args)
 
 static void tcpStart(XObject* sender, XVarList* args)
 {
+    (void)args;
     //XPrintf("结束了\n");
     XModbusTcpClient* client = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    if (!read) return;
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
-    if (!read)return;
+    if (!reply) {
+        XModbusDataUnit_delete_base(read);
+        return;
+    }
     XObject_setParent(reply, client);
     XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply,tcpFinished,XConnectionType_Queued);
 
@@ -746,6 +757,10 @@ void XMenu_XModbusTest(XMenu* root)
     {
         XAction* action = XMenu_addAction(menu, "Adu单元测试");
         XAction_setAction(action, XModbusAduTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "公共 API 回归测试");
+        XAction_setAction(action, XModbusPublicApiTest);
     }
     XMenu_addMenu(root, menu);
     {

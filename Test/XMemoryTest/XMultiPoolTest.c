@@ -23,6 +23,7 @@ static bool test_basic_function(void);
 static bool test_continuous_alloc_free(void);
 static bool test_pool_exhaustion(void);
 static bool test_boundary_conditions(void);
+static bool test_power_of_two_capacity(void);
 static bool test_performance(void);
 static bool test_multithread_stress(void);
 static bool test_global_pool(void);
@@ -31,6 +32,7 @@ static void test_basic_function_wrapper(XVariant* data) { (void)data; test_basic
 static void test_continuous_alloc_free_wrapper(XVariant* data) { (void)data; test_continuous_alloc_free(); }
 static void test_pool_exhaustion_wrapper(XVariant* data) { (void)data; test_pool_exhaustion(); }
 static void test_boundary_conditions_wrapper(XVariant* data) { (void)data; test_boundary_conditions(); }
+static void test_power_of_two_capacity_wrapper(XVariant* data) { (void)data; test_power_of_two_capacity(); }
 static void test_performance_wrapper(XVariant* data) { (void)data; test_performance(); }
 static void test_multithread_stress_wrapper(XVariant* data) { (void)data; test_multithread_stress(); }
 static void test_global_pool_wrapper(XVariant* data) { (void)data; test_global_pool(); }
@@ -297,7 +299,89 @@ static bool test_boundary_conditions(void) {
     return all_passed;
 }
 
-// ==================== 测试5: 性能测试 ====================
+// ==================== 测试5: 2的幂容量回归测试 ====================
+static bool test_power_of_two_capacity(void) {
+    static const size_t capacities[] = {64, 128, 256};
+    void* ptrs[256];
+    bool all_passed = true;
+
+    TEST_INFO("===== 2的幂容量回归测试 =====");
+
+    for (size_t capacity_index = 0;
+         capacity_index < sizeof(capacities) / sizeof(capacities[0]);
+         ++capacity_index) {
+        const size_t capacity = capacities[capacity_index];
+        XFixedPool* pool = XFixedPool_create(32, capacity);
+        bool capacity_passed = true;
+
+        memset(ptrs, 0, sizeof(ptrs));
+        if (!pool) {
+            TEST_FAIL("2的幂容量回归测试", "创建固定内存池失败");
+            all_passed = false;
+            continue;
+        }
+
+        for (size_t i = 0; i < capacity; ++i) {
+            ptrs[i] = XFixedPool_malloc(pool);
+            if (!ptrs[i]) {
+                capacity_passed = false;
+                break;
+            }
+
+            for (size_t j = 0; j < i; ++j) {
+                if (ptrs[i] == ptrs[j]) {
+                    capacity_passed = false;
+                    break;
+                }
+            }
+            if (!capacity_passed) break;
+
+            memset(ptrs[i], (int)(i & 0xff), 32);
+        }
+
+        if (capacity_passed && XFixedPool_malloc(pool) != NULL) {
+            capacity_passed = false;
+        }
+
+        if (capacity_passed && XFixedPool_freeCount(pool) != 0) {
+            capacity_passed = false;
+        }
+
+        for (size_t i = 0; i < capacity; ++i) {
+            if (ptrs[i]) XFixedPool_free(pool, ptrs[i]);
+        }
+
+        if (capacity_passed && XFixedPool_freeCount(pool) != capacity) {
+            capacity_passed = false;
+        }
+
+        if (capacity_passed) {
+            void* reused = XFixedPool_malloc(pool);
+            if (!reused) {
+                capacity_passed = false;
+            } else {
+                XFixedPool_free(pool, reused);
+            }
+        }
+
+        if (capacity_passed) {
+            TEST_INFO("  容量 %zu: 地址唯一、耗尽检测和释放复用均正常", capacity);
+        } else {
+            TEST_FAIL("2的幂容量回归测试", "固定内存池空闲链表状态异常");
+            TEST_INFO("  失败容量: %zu", capacity);
+            all_passed = false;
+        }
+
+        XFixedPool_delete(pool);
+    }
+
+    if (all_passed) {
+        TEST_PASS("2的幂容量回归测试");
+    }
+    return all_passed;
+}
+
+// ==================== 测试6: 性能测试 ====================
 static bool test_performance(void) {
     TEST_INFO("===== 性能测试 =====");
     
@@ -359,7 +443,7 @@ static bool test_performance(void) {
     return true;
 }
 
-// ==================== 测试6: 多线程压力测试 ====================
+// ==================== 测试7: 多线程压力测试 ====================
 static volatile bool g_thread_running = true;
 static volatile int g_thread_alloc_count = 0;
 static volatile int g_thread_free_count = 0;
@@ -471,7 +555,7 @@ static bool test_multithread_stress(void) {
     return true;
 }
 
-// ==================== 测试7: 全局池测试 ====================
+// ==================== 测试8: 全局池测试 ====================
 static bool test_global_pool(void) {
     TEST_INFO("===== 全局池测试 =====");
     
@@ -519,12 +603,13 @@ void XMultiPoolTest(void) {
     TEST_INFO("========================================\n");
     
     int passed = 0;
-    int total = 7;
+    int total = 8;
     
     if (test_basic_function()) passed++;
     if (test_continuous_alloc_free()) passed++;
     if (test_pool_exhaustion()) passed++;
     if (test_boundary_conditions()) passed++;
+    if (test_power_of_two_capacity()) passed++;
     if (test_performance()) passed++;
     if (test_multithread_stress()) passed++;
     if (test_global_pool()) passed++;
@@ -554,13 +639,16 @@ void XMenu_XMultiPoolTest(XMenu* root) {
         XAction* action4 = XMenu_addAction(menu, "边界条件测试");
         XAction_setAction(action4, test_boundary_conditions_wrapper);
         
-        XAction* action5 = XMenu_addAction(menu, "性能测试");
-        XAction_setAction(action5, test_performance_wrapper);
-        
-        XAction* action6 = XMenu_addAction(menu, "多线程压力测试");
-        XAction_setAction(action6, test_multithread_stress_wrapper);
-        
-        XAction* action7 = XMenu_addAction(menu, "全局池测试");
-        XAction_setAction(action7, test_global_pool_wrapper);
+        XAction* action5 = XMenu_addAction(menu, "2的幂容量回归测试");
+        XAction_setAction(action5, test_power_of_two_capacity_wrapper);
+
+        XAction* action6 = XMenu_addAction(menu, "性能测试");
+        XAction_setAction(action6, test_performance_wrapper);
+
+        XAction* action7 = XMenu_addAction(menu, "多线程压力测试");
+        XAction_setAction(action7, test_multithread_stress_wrapper);
+
+        XAction* action8 = XMenu_addAction(menu, "全局池测试");
+        XAction_setAction(action8, test_global_pool_wrapper);
     }
 }

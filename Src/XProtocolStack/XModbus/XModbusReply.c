@@ -40,6 +40,7 @@ void XModbusReply_init(XModbusReply* reply, XModbusReply_ReplyType type, int ser
     reply->m_type = type;
     reply->m_serverAddress = serverAddress;
     reply->m_state = XModbusReply_State_No_Started;
+    reply->m_finished = false;
     reply->m_error = XModbusDevice_NoError;
     reply->m_errorString = NULL;
     reply->m_result = NULL;
@@ -97,7 +98,7 @@ int XModbusReply_serverAddress(const XModbusReply* reply) {
 
 bool XModbusReply_isFinished(const XModbusReply* reply) 
 {
-    return reply && (reply->m_state == XModbusReply_State_Finished);
+    return reply && reply->m_finished;
 }
 
 XModbusDataUnit* XModbusReply_result(const XModbusReply* reply) {
@@ -214,27 +215,49 @@ void XModbusReply_setRawResult_ref(XModbusReply * reply, const XModbusResponse *
 void XModbusReply_setState(XModbusReply* reply, XModbusReply_State state)
 {
     if (!reply|| reply->m_state == state)return;
+    bool wasFinished = reply->m_finished;
     reply->m_state = state;
+    if (state == XModbusReply_State_Finished || state == XModbusReply_State_Timeout)
+        reply->m_finished = true;
+    else if (state != XModbusReply_State_No_Started)
+        reply->m_finished = false;
     XModbusReply_stateChanged_signal(reply, state);
-    if (state == XModbusReply_State_Finished|| state == XModbusReply_State_Timeout)
+    if (reply->m_finished && !wasFinished)
         XModbusReply_finished_signal(reply);
 }
+
+void XModbusReply_setFinished(XModbusReply* reply, bool isFinished)
+{
+    if (!reply || reply->m_finished == isFinished) return;
+
+    reply->m_finished = isFinished;
+    if (isFinished)
+        XModbusReply_finished_signal(reply);
+}
+
 void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText) {
     if (!reply) return;
     reply->m_error = error;
-    if (XModbusDevice_NoError == error)return;//无错误退出
-   /* if (reply->m_errorString) {
-        XString_delete_base(reply->m_errorString);
-        reply->m_errorString = NULL;
-    }*/
-    if (errorText) 
-    {
+
+    // Internal retry paths reset a reply through NoError. Qt callers only use
+    // this setter for an actual error, which always completes the reply below.
+    if (error == XModbusDevice_NoError) {
+        if (reply->m_errorString)
+            XString_assign_fmt_utf8(reply->m_errorString, "%s", "");
+        return;
+    }
+
+    if (errorText) {
         if (reply->m_errorString)
             XString_assign_fmt_utf8(reply->m_errorString, "%s", errorText);
         else
             reply->m_errorString = XString_create_fmt_utf8("%s", errorText);
+    } else if (reply->m_errorString) {
+        XString_assign_fmt_utf8(reply->m_errorString, "%s", "");
     }
+
     XModbusReply_errorOccurred_signal(reply, error);
+    XModbusReply_setFinished(reply, true);
 }
 
 // --- Intermediate Errors ---

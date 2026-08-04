@@ -20,6 +20,15 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args);
 
+static void XModbusTcpServer_deinitClientBuffer(void* value)
+{
+    XByteArray** buffer = (XByteArray**)value;
+    if (buffer && *buffer) {
+        XByteArray_delete_base(*buffer);
+        *buffer = NULL;
+    }
+}
+
 // =============== 字节序辅助函数 ================
 static inline uint16_t readUint16BE(const uint8_t* data, size_t offset)
 {
@@ -89,7 +98,10 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
     }
 
     // 通过虚函数调用processRequest
-    XModbusResponse* response = XModbusServer_processRequest_base((XModbusServer*)server, request);
+    XModbusResponse* response = XClass_Parent(XModbusServer,
+        EXModbusServer_ProcessRequest,
+        XModbusResponse* (*)(XModbusServer*, const XModbusRequest*))(
+            (XModbusServer*)server, request);
 
     // 如果有响应，发送回客户端
     if (response) {
@@ -100,7 +112,7 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
 
         uint8_t* respFrame = (uint8_t*)XMalloc_System(respFrameSize);
         if (respFrame) {
-            buildMbapHeader(respFrame, transactionId, (uint16_t)(1 + respPduSize), unitId);
+            buildMbapHeader(respFrame, transactionId, (uint16_t)(2 + respPduSize), unitId);
             respFrame[7] = (uint8_t)XModbusPdu_functionCode(&response->m_base);
             if (respPduSize > 0) {
                 memcpy(respFrame + 8, XContainerDataAddr(respPdu), respPduSize);
@@ -167,7 +179,8 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
     // 创建客户端映射
     server->m_connectedClients = XMap_Create(XTcpSocket*, XByteArray*, uintptr_t_compare);
     if (server->m_connectedClients) {
-        XContainerSetDataDeinitMethod(server->m_connectedClients, XByteArray_deinit_base);
+        XContainerSetDataDeinitMethod(server->m_connectedClients,
+            XModbusTcpServer_deinitClientBuffer);
     }
 
     server->m_observer = NULL;
@@ -187,16 +200,6 @@ static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
 
     // 释放客户端映射
     if (server->m_connectedClients) {
-        // 断开所有客户端连接
-        for_each_iterator(server->m_connectedClients, XMap, it)
-        {
-            XPair* pair = XMap_iterator_data(&it);
-            XTcpSocket* socket = (XTcpSocket*)XPair_first(pair);
-            if (socket) {
-                XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
-                XTcpSocket_close_base(socket);
-            }
-        }
         XMapBase_delete_base(server->m_connectedClients);
         server->m_connectedClients = NULL;
     }
@@ -249,15 +252,6 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
 
     // 断开所有客户端
     if (server->m_connectedClients) {
-        for_each_iterator(server->m_connectedClients, XMap, it)
-        {
-            XPair* pair = XMap_iterator_data(&it);
-            XTcpSocket* socket = (XTcpSocket*)XPair_first(pair);
-            if (socket) {
-                XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
-                XTcpSocket_close_base(socket);
-            }
-        }
         XMap_clear_base(server->m_connectedClients);
     }
 
@@ -274,7 +268,8 @@ static XModbusResponse* VXModbusTcpServer_processRequest(XModbusServer* base, co
 {
     // TCP服务器默认委托给基类处理
     // 子类可以重写此函数实现自定义逻辑
-    return XModbusServer_processRequest_base(base, request);
+    return XClass_Parent(XModbusServer, EXModbusServer_ProcessRequest,
+        XModbusResponse* (*)(XModbusServer*, const XModbusRequest*))(base, request);
 }
 
 // =============== 连接观察器 ================
@@ -317,9 +312,7 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         }
 
         // 保存到客户端映射
-        XMap_insert_valueMove_base(server->m_connectedClients, &client, buffer);
-        if (buffer)
-            XByteArray_delete_base(buffer);
+        XMap_insert_valueMove_base(server->m_connectedClients, &client, &buffer);
         // 连接信号
         XObject_connect_1((XObject*)client,
             XSignal(XTcpSocket_readyRead_signal),
@@ -345,12 +338,14 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
     if (!server || !server->m_connectedClients) return;
 
     // 获取客户端socket（从信号发送者获取）
-    XObject* sender = XObject_sender(args);
+    XObject* sender = XObject_sender((XObject*)server);
     XTcpSocket* client = (XTcpSocket*)sender;
     if (!client) return;
 
     // 获取对应的接收缓冲区
-    XByteArray* buffer = (XByteArray*)XMapBase_value_base(server->m_connectedClients, &client);
+    XByteArray** bufferSlot = (XByteArray**)XMapBase_value_base(
+        (XMapBase*)server->m_connectedClients, &client);
+    XByteArray* buffer = bufferSlot ? *bufferSlot : NULL;
     if (!buffer) return;
 
     // 读取数据
@@ -406,15 +401,12 @@ static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* a
     if (!server || !server->m_connectedClients) return;
 
     // 获取断开的客户端socket
-    XObject* sender = XObject_sender(args);
+    XObject* sender = XObject_sender((XObject*)server);
     XTcpSocket* client = (XTcpSocket*)sender;
     if (!client) return;
 
     // 从映射中移除
-    XByteArray* buffer = (XByteArray*)XMapBase_remove_base(server->m_connectedClients, &client);
-    if (buffer) {
-        XByteArray_delete_base(buffer);
-    }
+    XMapBase_remove_base((XMapBase*)server->m_connectedClients, &client);
 
     // 断开信号连接
     XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);

@@ -40,9 +40,24 @@ static void XModbusDataUnit_resizeContainer(XModbusRegisterType type, XContainer
 static XContainer* XModbusDataUnit_copyContainer(XModbusRegisterType type, const XContainer* container) {
 	if (!container) return NULL;
 	if (XModbusDataUnit_isBitType(type)) {
-		return (XContainer*)XBitArray_create_copy((const XBitArray*)container);
+		size_t count = XBitArray_size_base((const XBitArray*)container);
+		XBitArray* copy = XBitArray_create_ex(count, false);
+		if (!copy) return NULL;
+		for (size_t i = 0; i < count; ++i)
+			XBitArray_setBit(copy, i, XBitArray_getBit((const XBitArray*)container, i));
+		return (XContainer*)copy;
 	} else {
-		return (XContainer*)XVector_create_copy((const XVector*)container);
+		size_t count = XVector_size_base((const XVector*)container);
+		XVector* copy = XVector_create_ex(XContainerTypeSize(container), false);
+		if (!copy) return NULL;
+		if (!XVector_resize_base(copy, count)) {
+			XVector_delete_base(copy);
+			return NULL;
+		}
+		if (count > 0)
+			memcpy(XVector_data(copy), XVector_constData((const XVector*)container),
+				count * XContainerTypeSize(container));
+		return (XContainer*)copy;
 	}
 }
 

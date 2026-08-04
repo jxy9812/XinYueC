@@ -55,6 +55,7 @@ typedef struct XModbusReply
     uint8_t/*XModbusReply_ReplyType*/ m_type;     ///< 回复类型
     uint8_t m_serverAddress;               ///< 从站地址
     uint8_t /*XModbusDevice_Error*/ m_error;       ///< 最终错误码
+    bool m_finished;                    ///< 是否已完成（包含超时/中止）
     XString* m_errorString;            ///< 错误描述字符串
 
     XModbusDataUnit* m_result;         ///< 结构化结果（Common 类型时有效）
@@ -183,6 +184,32 @@ XString* XModbusReply_errorString(const XModbusReply* reply);
  */
 XModbusDevice_Error XModbusReply_error(const XModbusReply* reply);
 
+// --- 公开结果/状态设置接口（对齐 Qt QModbusReply） ---
+
+/**
+ * @brief 设置结构化结果（深拷贝）
+ * @note 对齐 Qt 6.8.3 QModbusReply::setResult。
+ */
+void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
+
+/**
+ * @brief 设置原始响应 PDU（深拷贝）
+ * @note 对齐 Qt 6.8.3 QModbusReply::setRawResult。
+ */
+void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
+
+/**
+ * @brief 设置完成状态；传入 true 时发出 finished 信号
+ * @note 只更新完成标志，不改变 XModbusReply_state；对齐 Qt 6.8.3。
+ */
+void XModbusReply_setFinished(XModbusReply* reply, bool isFinished);
+
+/**
+ * @brief 设置错误及描述，并依次发出 errorOccurred、finished 信号
+ * @note 对齐 Qt 6.8.3 QModbusReply::setError。
+ */
+void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
+
 // --- 中间错误 ---
 
 /**
@@ -191,6 +218,12 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply);
  * @return 中间错误列表的深拷贝，调用者负责释放；无中间错误返回空列表
  */
 XVector* XModbusReply_intermediateErrors(const XModbusReply* reply);
+
+/**
+ * @brief 添加中间错误并发出 intermediateErrorOccurred 信号
+ * @note 对齐 Qt 6.8.3 QModbusReply::addIntermediateError。
+ */
+void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error);
 
 /******************************************************************************************
 * 信号接口 (严格对齐 Qt 信号)

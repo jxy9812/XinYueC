@@ -10,6 +10,7 @@ extern "C" {
 #include"XTimerGroupBase.h"
 #include"XTimerData.h"
 typedef struct XListSLinked XListSLinked;
+typedef struct XListSNode XListSNode;
 typedef struct XVector XVector;
 typedef struct XTimeWheelGroup XTimeWheelGroup;
 #define XTIMEWHEELGROUP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimeWheelGroup))       //XTimeGroupWheel虚函数表大小
@@ -22,7 +23,10 @@ typedef struct XTimeWheelGroup
 	XTimerGroupBase m_class;//继承
 	XVector m_timeWheel;//多时间轮	
 	XAtomic_size_t m_count;//正在管理的定时器数量
-	XMutex* m_mutex;
+	XAtomic_size_t m_activeProducers;//正在访问槽头的生产者数量，用于安全回收
+	XAtomic_bool m_hasCancelledTimers;//存在已取消节点，消费者下一轮统一清扫
+	XListSNode* m_retiredNodes;//等待无生产者时回收的节点
+	//XMutex* m_mutex;
 }XTimeWheelGroup;
 XVtable* XTimeWheelGroup_class_init();
 XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision);

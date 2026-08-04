@@ -36,24 +36,92 @@ static inline void free_timer_node(XListSNode* node)
     }
 }
 
-// 事件处理函数：释放链表节点
-static void delete_timer_node_event(XVarList* argList)
+/*
+ * 槽位是无锁 Treiber 链表。生产者在 CAS 前会暂存旧槽头，因此消费者
+ * 不能立即释放已摘下的节点，否则内存池复用地址后会产生 ABA。先退休，
+ * 等所有生产者离开槽访问临界区后再统一回收。
+ */
+static void reclaim_retired_nodes(XTimeWheelGroup* group)
 {
-    XVarList_args_1(argList, XListSNode*, node);
-    free_timer_node(node);
+    if (XAtomic_load_size_t(&group->m_activeProducers, XAtomic_MemoryOrder_SeqCst) != 0)
+        return;
+
+    XListSNode* node = group->m_retiredNodes;
+    group->m_retiredNodes = NULL;
+    while (node) {
+        XListSNode* next = node->next;
+        free_timer_node(node);
+        node = next;
+    }
 }
 
-// 专用函数：通过事件延迟释放链表节点
 static void delete_timer_node(XTimeWheelGroup* group, XListSNode* node)
 {
-    //XEventFunc* event = XEventFunc_create(delete_timer_node_event,XVarList_Create(XVar(XListSNode*, node)),NULL);
-    //if(!XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST))
-    //{
-    //    //改用普通队列
-    //    XCoreApplication_postEvent(group, event, XEVENT_PRIORITY_LOWEST);
-    //}
-    free_timer_node(node);
+    if (!node) return;
+    node->next = group->m_retiredNodes;
+    group->m_retiredNodes = node;
     XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
+}
+
+/*
+ * removeTimer 只负责标记，避免生产者直接改写槽内链表。消费者在下一轮
+ * 原子摘下各槽，过滤已取消节点，再把其余节点整体挂回。这样取消的长
+ * 超时定时器可以及时回收，又不会破坏并发插入槽头的生产者。
+ */
+static void sweep_cancelled_timers(XTimeWheelGroup* group)
+{
+    if (!XAtomic_exchange_bool(&group->m_hasCancelledTimers, false,
+                               XAtomic_MemoryOrder_AcqRel))
+        return;
+
+    for (size_t wheel_index = 0;
+         wheel_index < XContainerSize(&group->m_timeWheel);
+         ++wheel_index) {
+        XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, wheel_index);
+
+        for (size_t slot_index = 0;
+             slot_index < XContainerSize(&wheel->m_slots);
+             ++slot_index) {
+            XAtomic_uintptr_t* slot = XVector_at_base(&wheel->m_slots, slot_index);
+            XListSNode* node = (XListSNode*)XAtomic_exchange_uintptr_t(
+                slot, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
+            XListSNode* keep_head = NULL;
+            XListSNode* keep_tail = NULL;
+
+            while (node) {
+                XListSNode* next = node->next;
+                XTimerWheelData* timer = (XTimerWheelData*)XListSNode_DataPtr(node);
+
+                if (XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Acquire)) {
+                    delete_timer_node(group, node);
+                } else {
+                    node->next = NULL;
+                    if (keep_tail)
+                        keep_tail->next = node;
+                    else
+                        keep_head = node;
+                    keep_tail = node;
+                }
+                node = next;
+            }
+
+            if (keep_head) {
+                uintptr_t expected;
+
+                XAtomic_fetch_add_size_t(&group->m_activeProducers, 1,
+                                         XAtomic_MemoryOrder_SeqCst);
+                expected = XAtomic_load_uintptr_t(slot, XAtomic_MemoryOrder_SeqCst);
+                do {
+                    keep_tail->next = (XListSNode*)expected;
+                } while (!XAtomic_compare_exchange_strong_uintptr_t(
+                    slot, &expected, (uintptr_t)keep_head,
+                    XAtomic_MemoryOrder_SeqCst,
+                    XAtomic_MemoryOrder_SeqCst));
+                XAtomic_fetch_sub_size_t(&group->m_activeProducers, 1,
+                                         XAtomic_MemoryOrder_SeqCst);
+            }
+        }
+    }
 }
 // 辅助函数：向上取整除法
 static inline size_t ceil_div(size_t dividend, size_t divisor)
@@ -115,30 +183,34 @@ void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
         XTimeWheelGroup_removeTimeWheel(group);
     //XVector_delete_base(&&group->m_timeWheel);
     XVector_deinit_base(&group->m_timeWheel);
+    reclaim_retired_nodes(group);
     // 释放父对象
     XClass_Parent(XIODevice,EXClass_Deinit, void(*)(XIODevice*))(group);
 }
 // 无锁添加到时间轮槽位 - 使用 MPSC 链表
-static bool add_timer_to_wheel_lockfree(XTimeWheel* wheel, XListSNode* timer_node, size_t ticks)
+static bool add_timer_to_wheel_lockfree(XTimeWheelGroup* group, XTimeWheel* wheel,
+    XListSNode* timer_node, size_t ticks)
 {
     size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(&wheel->m_slots);
     XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, expire_slot);
 
-    void* expected = XAtomic_load_uintptr_t(slot_ptr, XAtomic_MemoryOrder_Relaxed);
-    void* desired = (void*)timer_node;
+    XAtomic_fetch_add_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
+    uintptr_t expected = XAtomic_load_uintptr_t(slot_ptr, XAtomic_MemoryOrder_SeqCst);
+    uintptr_t desired = (uintptr_t)timer_node;
 
     do {
-        // 发现重复节点，直接拒绝，防止自环
-        if (expected == timer_node) {
-            XERROR_PRINTF("add_timer_to_wheel_lockfree: 检测到自环或重复插入，拒绝操作\n");
-            return false;
+        /* 节点已经是槽头时视为成功，绝不能释放仍由槽位持有的节点。 */
+        if (expected == desired) {
+            XAtomic_fetch_sub_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
+            return true;
         }
         timer_node->next = (XListSNode*)expected;
     } while (!XAtomic_compare_exchange_strong_uintptr_t(
         slot_ptr, &expected, desired,
-        XAtomic_MemoryOrder_Release,
-        XAtomic_MemoryOrder_Relaxed));
+        XAtomic_MemoryOrder_SeqCst,
+        XAtomic_MemoryOrder_SeqCst));
 
+    XAtomic_fetch_sub_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
     return true;
 }
 
@@ -156,7 +228,7 @@ static bool addTimer_lockfree(XTimeWheelGroup* group, XListSNode* timer_node, si
             // 计算在当前轮上应延迟的滴答数（绝对偏移）
             size_t offset_ticks = timeout_ticks / wheelSize;
             if (i > 0 && offset_ticks == 0) offset_ticks = 1; // 至少偏移 1 格，避免立即触发
-            return add_timer_to_wheel_lockfree(wheel, timer_node, offset_ticks);
+            return add_timer_to_wheel_lockfree(group, wheel, timer_node, offset_ticks);
         }
         wheelSize *= XContainerSize(&wheel->m_slots);
     }
@@ -181,8 +253,6 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
     XListSNode* timer_node = create_timer_node(&data, expire_ticks);
     if (!timer_node) return NULL;
 
-    XMutex_lock(group->m_mutex);
-    // 无锁添加 - 不需要任何互斥锁
     bool result = addTimer_lockfree(group, timer_node, timeout_ticks);
     if (result)
     {
@@ -194,10 +264,8 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
     {
         /* 节点尚未计入 m_count，不能走会递减计数的删除路径。 */
         free_timer_node(timer_node);
-        XMutex_unlock(group->m_mutex);
         return NULL;
     }
-    XMutex_unlock(group->m_mutex);
     return timer_node;
 }
 bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* groupBase, XHandle handle)
@@ -205,12 +273,11 @@ bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* groupBase, XHandle handle)
     XTimeWheelGroup* group = (XTimeWheelGroup*)groupBase;
     XListSNode* timer_node = (XListSNode*)handle;
     XTimerWheelData* timer_data = (XTimerWheelData*)XListSNode_DataPtr(timer_node);
-    XMutex_lock(group->m_mutex);
     // 只做标记，不立即从链表中删除
     // m_deleted = true 表示已删除/不运行
     XAtomic_store_bool(&timer_data->m_deleted, true, XAtomic_MemoryOrder_Release);
-    XMutex_unlock(group->m_mutex);
-    // 注意：实际内存清理在 handler 中进行
+    XAtomic_store_bool(&group->m_hasCancelledTimers, true, XAtomic_MemoryOrder_Release);
+    // 实际内存清理由 handler 的消费者清扫完成
     return true;
 }
 // 计算时间轮的最大管理时间
@@ -263,9 +330,9 @@ void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
     for (size_t i = 0; i < XContainerSize(&wheel->m_slots); ++i)
     {
         XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, i);
-        void* head = XAtomic_exchange_uintptr_t(slot_ptr, NULL, XAtomic_MemoryOrder_Acquire);
+        uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
 
-        if (head != NULL)
+        if (head != (uintptr_t)NULL)
         {
             XListSNode* node = (XListSNode*)head;
             while (node)
@@ -279,6 +346,7 @@ void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
     }
     // 删除最后一个轮
     XVector_pop_back_base(&group->m_timeWheel);
+    reclaim_retired_nodes(group);
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
 }
 void VXTimeWheelGroup_clear(XTimeWheelGroup* group)
@@ -309,7 +377,7 @@ static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t 
         if (timer->m_expire_ticks <= current_tick)
         {
             // 已到期，直接触发
-            XTimerData_out(timer);
+            XTimerData_out(&timer->m_data);
 
             if ((!timer->m_data.m_isSingleShot) && (timer->m_data.m_interval > 0))
             {
@@ -362,8 +430,8 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
 
     // 原子获取高级轮当前槽的所有定时器
     XAtomic_uintptr_t* slot_ptr = XVector_at_base(&higher_level->m_slots, slot_index);
-    void* head = XAtomic_exchange_uintptr_t(slot_ptr, NULL, XAtomic_MemoryOrder_Acquire);
-    if (head == NULL) return;
+    uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
+    if (head == (uintptr_t)NULL) return;
 
     // 低级轮索引及每个滴答对应的全局 tick 数
     size_t lower_idx = higher_level_idx - 1;
@@ -389,7 +457,7 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
         size_t current_tick = group->m_class.m_current_tick;
         if (timer->m_expire_ticks <= current_tick) {
             node->next = NULL;
-            if(!add_timer_to_wheel_lockfree(lower_level, node, 0))
+            if(!add_timer_to_wheel_lockfree(group, lower_level, node, 0))
                 delete_timer_node(group, node);
             node = next;
             continue;
@@ -410,7 +478,7 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
         // 重置节点的 next 指针，确保它不再指向原链表
         node->next = NULL;
         // 插入到低级轮
-        if (!add_timer_to_wheel_lockfree(lower_level, node, ticks_in_lower_wheel)) {
+        if (!add_timer_to_wheel_lockfree(group, lower_level, node, ticks_in_lower_wheel)) {
             // 降级失败，释放节点
             delete_timer_node(group, node);
         }
@@ -422,6 +490,8 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
     if (XVector_isEmpty_base(&group->m_timeWheel))
         return;
 
+    sweep_cancelled_timers(group);
+
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
     size_t current_tick = groupBase->m_current_tick;
     XTimeWheel* wheel = XVector_front_base(&group->m_timeWheel);
@@ -429,9 +499,8 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
 
     // 原子获取并清空当前槽的链表
     XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, current_slot);
-    void* head = XAtomic_exchange_uintptr_t(slot_ptr, NULL, XAtomic_MemoryOrder_Acquire);
+    uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
 
-    XMutex_lock(group->m_mutex);
     // 处理当前槽的所有定时器
     process_timer_list(group, (XListSNode*)head, current_tick);
 
@@ -464,7 +533,7 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
             break;
         }
     }
-    XMutex_unlock(group->m_mutex);
+    reclaim_retired_nodes(group);
     // 当前节拍完成，增加全局节拍计数
     ++groupBase->m_current_tick;
 }
@@ -472,6 +541,11 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
 {
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
     if (!groupBase->m_high_res_time_func)return;
+
+    /* 即使当前毫秒尚未推进，也要及时回收上一轮取消的定时器。 */
+    sweep_cancelled_timers((XTimeWheelGroup*)group);
+    reclaim_retired_nodes((XTimeWheelGroup*)group);
+
     size_t tick = groupBase->m_high_res_time_func() / groupBase->m_precision; // 当前滴答数
 
     if (tick <= groupBase->m_current_tick)
@@ -512,6 +586,9 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision)
     //group->m_timeWheel = XVector_Create(XTimeWheel);
     //group->m_class.m_current_tick = ((XTimerGroupBase*)group)->m_high_res_time_func() / group->m_class.m_precision;
     XAtomic_init(group->m_count, 0);
+    XAtomic_init(group->m_activeProducers, 0);
+    XAtomic_init(group->m_hasCancelledTimers, false);
+    group->m_retiredNodes = NULL;
     //group->m_mutex=XMutex_create(XLock_Spin);
 }
 

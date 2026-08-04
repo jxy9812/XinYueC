@@ -121,7 +121,10 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
 
 
     // --- 关键修改: 计算索引和版本号位数 ---
-    pool->index_bits = XAtomic_index_bits(num_blocks - 1);
+    /* The packed head must also represent num_blocks, which is the empty-list
+     * sentinel. Using num_blocks - 1 wraps that sentinel to zero whenever the
+     * block count is a power of two and makes the free list cyclic. */
+    pool->index_bits = XAtomic_index_bits(num_blocks);
     pool->index_mask = XAtomic_index_mask(pool->index_bits);
     pool->version_mask = XAtomic_version_mask(pool->index_bits);
 
@@ -166,7 +169,6 @@ void* XFixedPool_malloc(XFixedPool* pool) {
 
         // 4. 读取下一个索引
         new_head_index = *(volatile size_t*)old_head_block;
-
         // 5. 打包新头
         size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits,pool->version_mask);
         new_head_packed = XAtomic_pack_index_version(new_head_index, old_version + 1, pool->index_bits, pool->version_mask);
