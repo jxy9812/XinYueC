@@ -41,6 +41,7 @@ XVtable* XFtpCommand_class_init(void)
 {
     if (s_xftpCommand_inited && s_xftpCommand_vtable) return s_xftpCommand_vtable;
     XVtable_init(s_xftpCommand_vtable = XVtable_create());
+    XVTABLE_SET_NAME(s_xftpCommand_vtable, "XFtpCommand");
     XVtable_append_vtable(s_xftpCommand_vtable, XObject_class_init());
     XVTABLE_OVERLOAD(s_xftpCommand_vtable, EXClass_Deinit, VXFtpCommand_deinit);
     s_xftpCommand_inited = true;

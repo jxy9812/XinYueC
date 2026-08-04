@@ -77,12 +77,8 @@ static void VXNetworkAddressEntry_move(XNetworkAddressEntry* dest, XNetworkAddre
 
 XVtable* XNetworkAddressEntry_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XNetworkAddressEntry)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkAddressEntry)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkAddressEntry");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkAddressEntry_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkAddressEntry_copy);

@@ -10,12 +10,8 @@ static void V_move(XMqttPublishProperties* dest, XMqttPublishProperties* src);
 
 XVtable* XMqttPublishProperties_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttPublishProperties");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, V_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, V_move);
@@ -118,12 +114,8 @@ static void VMS_move(XMqttMessageStatusProperties* dest, XMqttMessageStatusPrope
 
 XVtable* XMqttMessageStatusProperties_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttMessageStatusProperties");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VMS_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VMS_move);

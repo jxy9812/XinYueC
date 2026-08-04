@@ -3,7 +3,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XTimerConfig.h"
 /* ==================== 字节序(大小端)自动检测 ==================== */
 /* 编译器预定义宏自动检测字节序，无需手动配置
  * GCC/Clang: __BYTE_ORDER__ + __ORDER_BIG_ENDIAN__
@@ -22,10 +21,10 @@ extern "C" {
   #endif
 #endif
 //数据结构配置文件
-#define VTABLE_ISSTACK					1//虚函数表定义在栈上
-#define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
 #define XERROR_ON						1//错误输出
+#include"XClass/XClassConfig.h"
+#include"XContainer/XContainerConfig.h"
 /* ========================================================================== */
 /*                        XPrintf 输出编码模式                                */
 /* ========================================================================== */
@@ -39,61 +38,11 @@ extern "C" {
  * 注意：Linux/macOS始终直接输出UTF-8，此宏仅影响Windows */
 #define XPRINTF_UTF8_CONSOLE			1
 #define DEMOTEST						1//测试代码
-/*                容器                              */
-#define XContainer_ON				1
-#define XSet_ON							1
-#define XHashSet_ON						1
-#define XMap_ON							1
-#define XHashMap_ON						1
-#define XString_ON						1
-#define XVariant_ON						1
-#define	XPriorityQueue_ON				1
-#define	XQueue_ON						1
-#define	XList_ON						1
-#define	XListDLinked_ON					1
-#define	XListSLinked_ON					1
-#define	XLockFreeList_ON			1
-#define	XStack_ON						1
-#define	XVector_ON						1
-#define	XByteArray_ON					1
-#define	XVectorTwo_ON					1
-#define	XStringList_ON					1
-#define XRegularExpression_ON				1
-#define XVariantList_ON					1
-#define	XCircularQueue_ON				1
-#define	XLockFreeQueue_ON			1
-#define XBitArray_ON					1
-#define XRingChunk_ON					1
-#define XRingBuffer_ON					1
 /*                          算法                            */
 #define XCrc_ON                         1
 #define XCrc16_ON                       1
 #define XCrc32_ON                       1
 #define XBase64_ON						1
-/*                          依赖                            */
-#if !XList_ON
-#define	XQueue_ON						0
-#endif
-#if !XVector_ON					
-#define	XStack_ON						0
-#define	XPriorityQueue_ON				0
-#define	XString_ON						0
-#define XRegularExpression_ON				0
-#define	XVectorTwo_ON					0
-#define	XStringVector_ON				0
-#endif
-#if !XContainer_ON					
-#define XMap_ON							0
-#define XString_ON						0
-#define XRegularExpression_ON				0
-#define	XPriorityQueue_ON				0
-#define	XQueue_ON						0
-#define	XList_ON						0
-#define	XStack_ON						0
-#define	XVector_ON						0
-#define	XVectorTwo_ON					0
-#define	XStringVector_ON				0
-#endif
 #define	XAbstractNetIoRing_ON					1
 /* ========================================================================== */
 /*                        平台/操作系统自动检测                                */

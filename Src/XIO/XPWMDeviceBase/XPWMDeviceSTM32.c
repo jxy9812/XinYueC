@@ -12,13 +12,7 @@ static size_t VXIODevice_read(XPWMDeviceSTM32 *pwm, char* data, size_t maxSize);
 static void VXIODevice_close(XPWMDeviceSTM32 *pwm);
 XVtable *XPWMDeviceSTM32_class_init()
 {
-   	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT_SIZE(XPWMDEVICESTM32_VTABLE_SIZE)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT_SIZE(XPWMDEVICESTM32_VTABLE_SIZE)
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XPWMDeviceBase_class_init());
 	// void* table[] = { 
@@ -37,9 +31,7 @@ XVtable *XPWMDeviceSTM32_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_Stop,VXPWMDevice_stop);
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_SetFrequency,VXPWMDevice_setFrequency);
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_SetDutyCycle,VXPWMDevice_setDutyCycle);
-#if SHOWCONTAINERSIZE
-	printf("XPWMDeviceSTM32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XPWMDeviceSTM32);
 	return XVTABLE_DEFAULT;
 }
 

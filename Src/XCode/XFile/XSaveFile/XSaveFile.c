@@ -210,12 +210,8 @@ static void VXSaveFile_deinit(XSaveFile* file)
 
 XVtable* XSaveFile_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSaveFile)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSaveFile)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSaveFile");
     XVTABLE_INHERIT_XCLASS(XFileDevice);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSaveFile_deinit);
@@ -224,9 +220,7 @@ XVtable* XSaveFile_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXSaveFile_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXSaveFile_writeData);
 
-#if SHOWCONTAINERSIZE
-    printf("XSaveFile vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XSaveFile);
     return XVTABLE_DEFAULT;
 }
 

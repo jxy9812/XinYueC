@@ -8,13 +8,8 @@ static bool VXSwitchDevice_getState(XSwitchDeviceBase* sw);
 static void VXIODevice_poll(XSwitchDeviceBase* sw);
 XVtable* XSwitchDeviceBase_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-	//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XSwitchDeviceBase)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XSwitchDeviceBase)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSwitchDeviceBase");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XIODevice);
 	void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };
@@ -22,9 +17,7 @@ XVtable* XSwitchDeviceBase_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,VXIODevice_poll);
-#if SHOWCONTAINERSIZE
-	printf("XSwitchDeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XSwitchDeviceBase);
 	return XVTABLE_DEFAULT;
 }
 

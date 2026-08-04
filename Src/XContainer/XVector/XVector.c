@@ -40,12 +40,8 @@ static void VXVector_squeeze(XVector* this_vector);
 // ========================
 XVtable* XVector_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XVector)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XVector)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XVector");
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXVector_resize,
@@ -61,9 +57,7 @@ XVtable* XVector_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXVector_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-#if SHOWCONTAINERSIZE
-    printf("XVector size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XVector);
     return XVTABLE_DEFAULT;
 }
 

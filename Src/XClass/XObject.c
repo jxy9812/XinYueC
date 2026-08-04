@@ -20,13 +20,8 @@ static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
 static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
 XVtable* XObject_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XObject)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XObject)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XObject");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = { 
@@ -35,9 +30,7 @@ XVtable* XObject_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XObject);
 	return XVTABLE_DEFAULT;
 }
 

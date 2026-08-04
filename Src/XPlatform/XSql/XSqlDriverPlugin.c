@@ -11,12 +11,8 @@ static void VXSqlDriverPlugin_deinit(XSqlDriverPlugin* plugin);
 
 XVtable* XSqlDriverPlugin_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlDriverPlugin)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlDriverPlugin)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlDriverPlugin");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){ VXSqlDriverPlugin_create }));
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriverPlugin_deinit);

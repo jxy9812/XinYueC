@@ -69,20 +69,14 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
 void VXCoreApplication_deinit(XCoreApplication* app);
 
 XVtable* XCoreApplication_class_init() {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCoreApplication)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XCoreApplication)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCoreApplication");
     XVTABLE_INHERIT_XCLASS(XObject);
     /* Qt 6.8: QCoreApplication 重载 notify 和 event 虚函数 */
     void* table[] = { VXCoreApplication_notify, VXCoreApplication_event };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCoreApplication_deinit);
-#if SHOWCONTAINERSIZE
-        printf("XCoreApplication size:%d\n", XVtable_size(XClassVtable));
-#endif
+        XCLASS_SHOW_SIZE_DEFAULT(XCoreApplication);
     return XVTABLE_DEFAULT;
 }
 

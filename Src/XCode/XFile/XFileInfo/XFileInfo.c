@@ -62,19 +62,13 @@ static void VXFileInfo_deinit(XFileInfo* self)
 
 XVtable* XFileInfo_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XFileInfo)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XFileInfo)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XFileInfo");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXFileInfo_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXFileInfo_move);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFileInfo_deinit);
-#if SHOWCONTAINERSIZE
-        printf("XFileInfo size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+        XCLASS_SHOW_SIZE_DEFAULT(XFileInfo);
         return XVTABLE_DEFAULT;
 }
 

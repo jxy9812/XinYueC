@@ -327,13 +327,8 @@ static void VXContainer_clear(XString* str)
 
 // 虚函数表初始化
 XVtable* XString_class_init() {
-    XVTABLE_CREAT_DEFAULT
-
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XString)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XString)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XString");
 
         XVTABLE_INHERIT_XCLASS(XContainer);
 
@@ -353,9 +348,7 @@ XVtable* XString_class_init() {
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXContainer_clear);
 
-#if SHOWCONTAINERSIZE
-    printf("XString vtable size: %d\n", XSTRING_VTABLE_SIZE);
-#endif
+	XCLASS_SHOW_SIZE(XString, XSTRING_VTABLE_SIZE);
 
     return XVTABLE_DEFAULT;
 }

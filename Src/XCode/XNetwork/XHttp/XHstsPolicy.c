@@ -60,22 +60,15 @@ static void VXHstsPolicy_move(XHstsPolicy* dest, XHstsPolicy* src)
 
 XVtable* XHstsPolicy_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHstsPolicy)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHstsPolicy)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHstsPolicy");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHstsPolicy_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHstsPolicy_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHstsPolicy_move);
-#if SHOWCONTAINERSIZE
-    printf("XHstsPolicy size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHstsPolicy);
     return XVTABLE_DEFAULT;
 }
 

@@ -31,12 +31,8 @@ static inline void writeUint16BE(uint8_t* data, size_t offset, uint16_t value)
 // ================== 虚表初始化 ==================
 XVtable* XModbusClient_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusClient)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusClient)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusClient");
         // 继承 XModbusDevice
         XVTABLE_INHERIT_XCLASS(XModbusDevice);
 
@@ -50,9 +46,7 @@ XVtable* XModbusClient_class_init(void)
     // 重载析构
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusClient_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusClient size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XModbusClient);
     return XVTABLE_DEFAULT;
 }
 

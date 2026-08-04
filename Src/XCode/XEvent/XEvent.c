@@ -24,12 +24,8 @@ static XEvent* VXMouseEvent_clone(const XMouseEvent* event);
 
 static XVtable* XKeyEvent_class_init(void)
 {
-	XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XKeyEventClass)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XKeyEventClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XKeyEvent");
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXKeyEvent_clone);
 	return XVTABLE_DEFAULT;
@@ -37,25 +33,16 @@ static XVtable* XKeyEvent_class_init(void)
 
 static XVtable* XMouseEvent_class_init(void)
 {
-	XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XMouseEventClass)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XMouseEventClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMouseEvent");
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXMouseEvent_clone);
 	return XVTABLE_DEFAULT;
 }
 XVtable* XEvent_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XEvent)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XEvent)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XEvent");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
@@ -65,9 +52,7 @@ XVtable* XEvent_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XEvent size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XEvent);
 	return XVTABLE_DEFAULT;
 }
 XEvent* XEvent_create(XEventType code)
@@ -96,20 +81,13 @@ static void  XEventFunc_deinit(XEventFunc* ev)
 }
 XVtable* XEventFunc_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XEvent)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XEvent)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XEventFunc");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XEventFunc_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XEventFunc size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XEventFunc);
 	return XVTABLE_DEFAULT;
 }
 XEventFunc* XEventFunc_create(XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*))
@@ -154,19 +132,12 @@ static void VXMetaCallEvent_deinit(XMetaCallEvent* ev)
 }
 XVtable* XMetaCallEvent_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XEvent)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XEvent)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMetaCallEvent");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMetaCallEvent_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XMetaCallEvent size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XMetaCallEvent);
 	return XVTABLE_DEFAULT;
 }
 XMetaCallEvent* XMetaCallEvent_create(XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)

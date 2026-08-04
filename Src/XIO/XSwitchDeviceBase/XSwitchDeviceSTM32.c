@@ -7,13 +7,7 @@ static size_t VXIODevice_read(XSwitchDeviceSTM32 *sw, char* data, size_t maxSize
 static void VXIODevice_close(XSwitchDeviceSTM32 *sw);
 XVtable *XSwitchDeviceSTM32_class_init()
 {
-    	XVTABLE_CREAT_DEFAULT
-	//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT_SIZE(XSWITCHDEVICESTM32_VTABLE_SIZE)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT_SIZE(XSWITCHDEVICESTM32_VTABLE_SIZE)
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XSwitchDeviceBase_class_init());
 	// void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };
@@ -24,9 +18,7 @@ XVtable *XSwitchDeviceSTM32_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write,VXIODevice_write);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read,VXIODevice_read);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close,VXIODevice_close);
-#if SHOWCONTAINERSIZE
-	printf("XSwitchDeviceSTM32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XSwitchDeviceSTM32);
 	return XVTABLE_DEFAULT;
 }
 void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32 *sw)

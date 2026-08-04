@@ -30,12 +30,8 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle);
 
 XVtable* XTcpServer_class_init(void)
 {
-	XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XTcpServer)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XTcpServer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XTcpServer");
 	XVTABLE_INHERIT_XCLASS(XObject);
 	void* table[] = {
 		VXTcpServer_HasPendingConnections,
@@ -47,9 +43,7 @@ XVtable* XTcpServer_class_init(void)
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTcpServer_deinit);
 	// 閲嶈浇浜嬩欢澶勭悊
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXTcpServer_event);
-#if SHOWCONTAINERSIZE
-	printf("XTcpServer vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XTcpServer);
 	return XVTABLE_DEFAULT;
 }
 

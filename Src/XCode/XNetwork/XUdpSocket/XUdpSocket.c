@@ -17,17 +17,11 @@
 
 XVtable* XUdpSocket_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XUdpSocket)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XUdpSocket)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XUdpSocket");
     XVTABLE_INHERIT_XCLASS(XAbstractSocket);
 
-#if SHOWCONTAINERSIZE
-    printf("XUdpSocket vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XUdpSocket);
     return XVTABLE_DEFAULT;
 }
 

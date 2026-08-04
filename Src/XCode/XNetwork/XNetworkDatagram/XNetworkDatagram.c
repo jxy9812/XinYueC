@@ -12,17 +12,11 @@
 
 XVtable* XNetworkDatagram_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XNetworkDatagram)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkDatagram)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkDatagram");
     XVTABLE_INHERIT_XCLASS(XClass);
 
-#if SHOWCONTAINERSIZE
-    printf("XNetworkDatagram vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkDatagram);
     return XVTABLE_DEFAULT;
 }
 

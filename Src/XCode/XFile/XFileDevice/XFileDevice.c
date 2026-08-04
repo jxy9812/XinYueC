@@ -372,12 +372,8 @@ static bool VXFileDevice_setPermissions(XFileDevice* device, XFilePermissions pe
 
 XVtable* XFileDevice_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XFileDevice)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XFileDevice)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XFileDevice");
     XVTABLE_INHERIT_XCLASS(XIODevice);
 
     // 重写 XIODevice 虚函数
@@ -401,9 +397,7 @@ XVtable* XFileDevice_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXFileDevice_Permissions, VXFileDevice_permissions);
     XVTABLE_OVERLOAD_DEFAULT(EXFileDevice_SetPermissions, VXFileDevice_setPermissions);
 
-#if SHOWCONTAINERSIZE
-    printf("XFileDevice vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XFileDevice);
 
     return XVTABLE_DEFAULT;
 }

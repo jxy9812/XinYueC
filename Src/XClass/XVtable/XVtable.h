@@ -9,42 +9,82 @@ extern "C" {
 #include <stddef.h>
 #include"XTypes.h"
 #include"XMemory.h"
-typedef struct 
+#include"XClassConfig.h"
+/**
+ * @brief 虚函数表。
+ *
+ * data 只保存函数地址，不拥有函数本身。栈模式下 data 指向类初始化函数
+ * 内的静态数组；堆模式下 data 由 XVtable 管理并随虚函数表释放。
+ */
+typedef struct
 {
-	void** data;//
-	char* name;
-	uint16_t size;
-	uint16_t capacity;//当前容器能容纳的最大元素数量
-	uint16_t isStack : 1;//定义在栈上
-	uint16_t unused : 15;           // 保留位
+	void** data;
+#if XCLASS_VTABLE_ENABLE_NAME
+	char* name;                 /* 借用的类名，不由虚函数表释放。 */
+#endif
+	uint16_t size;              /* 当前已登记的函数槽位数。 */
+	uint16_t capacity;          /* data 可容纳的最大函数槽位数。 */
+	uint16_t isStack : 1;       /* data 是否指向静态存储区。 */
+	uint16_t unused : 15;       /* 保留位，便于后续扩展。 */
 }XVtable;
-XVtable* XVtable_create();				
-//定义在栈上
+
+/**
+ * @brief 设置虚函数表名称。
+ * @param Vtable 目标虚函数表，不能为空。
+ * @param Name 借用的名称指针，通常传入字符串字面量；虚函数表不释放它。
+ */
+#if XCLASS_VTABLE_ENABLE_NAME
+#define XVTABLE_SET_NAME(Vtable, Name) \
+	((Vtable)->name = (char*)(Name))
+#else
+#define XVTABLE_SET_NAME(Vtable, Name) ((void)(Vtable))
+#endif
+/**
+ * @brief 获取虚函数表名称。
+ * @param Vtable 虚函数表指针，可以为 NULL。
+ * @return 已设置的借用名称；未启用名称或参数为 NULL 时返回 NULL。
+ */
+#if XCLASS_VTABLE_ENABLE_NAME
+#define XVTABLE_GET_NAME(Vtable) \
+	((Vtable) ? (Vtable)->name : NULL)
+#else
+#define XVTABLE_GET_NAME(Vtable) ((void)(Vtable), NULL)
+#endif
+
+/** @brief 创建一个可动态扩容的堆虚函数表。 */
+XVtable* XVtable_create();
+/**
+ * @brief 初始化调用方提供的静态虚函数表。
+ * @param this_vtable 虚函数表对象，生命周期必须覆盖所有使用者。
+ * @param data 静态函数指针数组。
+ * @param size data 中可用槽位数量。
+ */
 void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size);
-#define XVtable_Init_Stack(this_vtable,vtable_data) XVtable_init_stack((this_vtable),vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]))
-//初始化堆上的
+/** @brief 初始化调用方提供的堆虚函数表对象。 */
 void XVtable_init(XVtable* this_vtable);
 void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func);
-void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begin, size_t n);
-void XVtable_append_array(XVtable* this_vtable, const void** begin, size_t n);
+void XVtable_insert_array(XVtable* this_vtable, int64_t index, void* const* begin, size_t n);
+void XVtable_append_array(XVtable* this_vtable, void* const* begin, size_t n);
 void XVtable_append_vtable(XVtable* this_vtable, XVtable* table);
-void XVtable_push_back(XVtable* this_vtable, void* func);
+void XVtable_push_back(XVtable* this_vtable, const void* func);
 void XVtable_pop_back(XVtable* this_vtable);
 void XVtable_clear(XVtable* this_vtable);
 bool XVtable_empty(XVtable* this_vtable);
 size_t XVtable_size(XVtable* this_vtable);
-//重写函数
+/** @brief 安全读取虚函数槽位，索引越界时返回 NULL。 */
 void* XVtable_at(XVtable* this_vtable, size_t index);
-#define XVtable_At(this_vtable,index) (*(this_vtable->data + index))
+/** @brief 直接读取虚函数槽位；调用方必须保证索引有效。 */
+#define XVtable_At(this_vtable, index) (((this_vtable)->data)[(index)])
 
-//定义类虚函数枚举开始
+/** @brief 开始定义 Class 的虚函数枚举。 */
 #define XCLASS_DEFINE_BEGING(Class)  enum Class##VtableEnum{
-//定义类的虚函数枚举
+/** @brief 声明一个虚函数槽位，Value 应使用稳定的 PascalCase 名称。 */
 #define XCLASS_DEFINE_ENUM(Class,Value) E##Class##_##Value
-//定义类的虚函数枚举结束
+/** @brief 结束当前类的虚函数枚举并生成槽位总数。 */
 #define XCLASS_DEFINE_END(Class)    XCLASS_VTABLE_GET_SIZE(Class)};
+/** @brief 结束派生类枚举，并从父类槽位数量开始编号。 */
 #define XCLASS_DEFINE_EXTEND_END(Class,Parent)    XCLASS_VTABLE_GET_SIZE(Class)=XCLASS_VTABLE_GET_SIZE(Parent)};
-//获取类虚函数表大小
+/** @brief 获取类的虚函数槽位总数，用于静态表容量。 */
 #define XCLASS_VTABLE_GET_SIZE(Class)   E##Class##_END_SIZE
 
 /**

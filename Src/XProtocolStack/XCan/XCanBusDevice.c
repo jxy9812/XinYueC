@@ -56,12 +56,8 @@ static void configEntryCopy(void* dest, const void* src)
 // =============== 类初始化 ===============
 XVtable* XCanBusDevice_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCanBusDevice)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XCanBusDevice)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCanBusDevice");
     // 继承 XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
@@ -78,9 +74,7 @@ XVtable* XCanBusDevice_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXCanBusDevice_BusStatus, VXCanBusDevice_busStatus);
     XVTABLE_OVERLOAD_DEFAULT(EXCanBusDevice_DeviceInfo, VXCanBusDevice_deviceInfo);
 
-#if SHOWCONTAINERSIZE
-    printf("XCanBusDevice vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XCanBusDevice);
     return XVTABLE_DEFAULT;
 }
 

@@ -37,12 +37,8 @@ static void VXESP8266_processResponse(XATComm* comm)
  * @brief 虚函数表初始化
  */
 XVtable* XESP8266Wifi_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XESP8266Wifi)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XESP8266Wifi)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XESP8266Wifi");
         XVTABLE_INHERIT_XCLASS(XATComm);
 
     // 重载 ProcessResponse
@@ -50,9 +46,7 @@ XVtable* XESP8266Wifi_class_init(void) {
     // 重载析构
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXESP8266_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XESP8266Wifi size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XESP8266Wifi);
     return XVTABLE_DEFAULT;
 }
 

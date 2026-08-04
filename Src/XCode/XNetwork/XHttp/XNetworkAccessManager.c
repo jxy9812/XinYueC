@@ -4100,21 +4100,14 @@ static void xhttp_manager_transaction_finish(XHttpTransaction* tx)
 
 XVtable* XNetworkAccessManager_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XNetworkAccessManager)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkAccessManager)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkAccessManager");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkAccessManager_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXNetworkAccessManager_timerEvent);
-#if SHOWCONTAINERSIZE
-    printf("XNetworkAccessManager size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkAccessManager);
     return XVTABLE_DEFAULT;
 }
 

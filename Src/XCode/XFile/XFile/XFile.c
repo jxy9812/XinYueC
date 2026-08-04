@@ -104,12 +104,8 @@ static void VXFile_deinit(XFile* file)
 
 XVtable* XFile_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XFile)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XFile)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XFile");
     XVTABLE_INHERIT_XCLASS(XFileDevice);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFile_deinit);
@@ -120,9 +116,7 @@ XVtable* XFile_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXFileDevice_Permissions, VXFile_permissions);
     XVTABLE_OVERLOAD_DEFAULT(EXFileDevice_SetPermissions, VXFile_setPermissions);
 
-#if SHOWCONTAINERSIZE
-    printf("XFile vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XFile);
     return XVTABLE_DEFAULT;
 }
 

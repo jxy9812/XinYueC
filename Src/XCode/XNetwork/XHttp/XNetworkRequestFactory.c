@@ -274,22 +274,15 @@ static void VXNetworkRequestFactory_move(XNetworkRequestFactory* dest,
 
 XVtable* XNetworkRequestFactory_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XNetworkRequestFactory)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkRequestFactory)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkRequestFactory");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkRequestFactory_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkRequestFactory_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkRequestFactory_move);
-#if SHOWCONTAINERSIZE
-    printf("XNetworkRequestFactory size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkRequestFactory);
     return XVTABLE_DEFAULT;
 }
 

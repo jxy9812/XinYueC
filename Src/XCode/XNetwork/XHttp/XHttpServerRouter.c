@@ -31,20 +31,13 @@ static void VXHttpServerRouter_deinit(XHttpServerRouter* self)
 
 XVtable* XHttpServerRouter_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpServerRouter)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpServerRouter)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRouter");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerRouter_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XHttpServerRouter size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpServerRouter);
     return XVTABLE_DEFAULT;
 }
 

@@ -88,22 +88,15 @@ static void VXHttpAuthenticator_move(XHttpAuthenticator* dest, XHttpAuthenticato
 
 XVtable* XHttpAuthenticator_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpAuthenticator)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpAuthenticator)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpAuthenticator");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpAuthenticator_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpAuthenticator_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttpAuthenticator_move);
-#if SHOWCONTAINERSIZE
-    printf("XHttpAuthenticator size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpAuthenticator);
     return XVTABLE_DEFAULT;
 }
 

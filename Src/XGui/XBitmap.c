@@ -31,13 +31,8 @@ static void VXBitmap_deinit(XBitmap* self)
 
 XVtable* XBitmap_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XBitmap)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XBitmap)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XBitmap");
     XVTABLE_INHERIT_XCLASS(XPixmap);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBitmap_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBitmap_deinit);

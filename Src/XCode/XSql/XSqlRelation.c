@@ -12,12 +12,8 @@ static void VXSqlRelation_deinit(XSqlRelation* relation);
 
 XVtable* XSqlRelation_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlRelation)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlRelation)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlRelation");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlRelation_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlRelation_move);

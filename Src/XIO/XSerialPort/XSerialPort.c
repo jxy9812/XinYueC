@@ -184,13 +184,8 @@ static void VXSerialPort_deinit(XObject* obj) {
 
 XVtable* XSerialPort_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XSERIALPORT_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XSERIALPORT_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSerialPort");
         // 继承类
         XVTABLE_INHERIT_XCLASS(XIODevice);
     // 重载
@@ -206,9 +201,7 @@ XVtable* XSerialPort_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXSerialPort_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXObject_event);
-#if SHOWCONTAINERSIZE
-    printf("XSerialPort size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XSerialPort);
     return XVTABLE_DEFAULT;
 }
 

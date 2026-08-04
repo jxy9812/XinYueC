@@ -12,13 +12,8 @@ static void VXRingBuffer_clear(XRingBuffer* buffer);
 static void VXRingBuffer_deinit(XRingBuffer* buffer);
 XVtable* XRingBuffer_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XRingBuffer)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XRingBuffer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XRingBuffer");
         // 继承类
         XVTABLE_INHERIT_XCLASS(XContainer);
 
@@ -30,9 +25,7 @@ XVtable* XRingBuffer_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRingBuffer_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XRingBuffer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XRingBuffer);
 
     return XVTABLE_DEFAULT;
 }

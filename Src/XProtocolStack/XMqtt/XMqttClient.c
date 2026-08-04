@@ -16,12 +16,8 @@ static bool V_requestPing(XMqttClient* client);
 // ==================== 类初始化 ====================
 XVtable* XMqttClient_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XMqttClient)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XMqttClient)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttClient");
     XVTABLE_INHERIT_XCLASS(XObject);
 
     void* table[] = {

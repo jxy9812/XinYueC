@@ -193,12 +193,8 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
 // =============== 类初始化 ===============
 XVtable* XModbusTcpClient_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusTcpClient)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusTcpClient)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusTcpClient");
         XVTABLE_INHERIT_XCLASS(XModbusClient);
 
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusTcpClient_open);
@@ -207,9 +203,7 @@ XVtable* XModbusTcpClient_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusTcpClient_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_SendRawRequest, VXModbusTcpClient_sendRawRequest);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusTcpClient vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XModbusTcpClient);
     return XVTABLE_DEFAULT;
 }
 

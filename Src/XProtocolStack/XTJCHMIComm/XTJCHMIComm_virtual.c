@@ -11,13 +11,8 @@ static void VXDataFrameComm_setSendValidCRC16(XTJCHMIComm* comm, bool enableCRC1
 static void VXDataFrameComm_setRecvFrameTail(XTJCHMIComm* comm, const uint8_t* data, uint8_t dataSize);
 XVtable* XTJCHMIComm_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XTJCHMIComm)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XTJCHMIComm)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XTJCHMIComm");
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XDataFrameComm_class_init());
 	//void* table[] =
@@ -34,9 +29,7 @@ XVtable* XTJCHMIComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetSendValidCRC16, VXDataFrameComm_setSendValidCRC16);
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_RecvFrameFSM, VXDataFrameComm_RecvFrameFSM);
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetRecvFrameTail, VXDataFrameComm_setRecvFrameTail);
-#if SHOWCONTAINERSIZE
-	printf("XTJCHMIComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XTJCHMIComm);
 	return XVTABLE_DEFAULT;
 }
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)

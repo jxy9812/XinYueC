@@ -20,12 +20,8 @@ static void VXATComm_readyReadSlot(XATComm* comm)
 // ========== 虚函数表 ==========
 XVtable* XATComm_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XATComm)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XATComm)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XATComm");
         XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXATComm_processResponse
@@ -39,9 +35,7 @@ XVtable* XATComm_class_init(void)
     // 重载 Deinit
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXATComm_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XATComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XATComm);
     return XVTABLE_DEFAULT;
 }
 

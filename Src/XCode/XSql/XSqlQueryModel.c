@@ -15,12 +15,8 @@ static XSqlModelIndex VXSqlQueryModel_indexInQuery(const XSqlQueryModel* model, 
 
 XVtable* XSqlQueryModel_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlQueryModel)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlQueryModel)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlQueryModel");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
         VXSqlQueryModel_clear, VXSqlQueryModel_queryChange,

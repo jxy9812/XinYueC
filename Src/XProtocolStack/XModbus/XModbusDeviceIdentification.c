@@ -10,20 +10,14 @@
 static void VXModbusDeviceIdentification_deinit(XModbusDeviceIdentification* id);
 
 XVtable* XModbusDeviceIdentification_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDeviceIdentification");
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDeviceIdentification_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusDeviceIdentification size: %zu\n", sizeof(XModbusDeviceIdentification));
-#endif
+	XCLASS_SHOW_SIZE(XModbusDeviceIdentification, sizeof(XModbusDeviceIdentification));
     return XVTABLE_DEFAULT;
 }
 

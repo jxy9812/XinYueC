@@ -34,20 +34,14 @@ static XAbstractEventDispatcher* XEventLoop_dispatcher(XEventLoop* loop)
  * @return 初始化后的虚函数表
  */
 XVtable* XEventLoop_class_init() {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XEventLoop)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XEventLoop)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XEventLoop");
         XVTABLE_INHERIT_XCLASS(XObject);
 
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXEventLoop_event);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventLoop_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XEventLoop size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XEventLoop);
     return XVTABLE_DEFAULT;
 }
 

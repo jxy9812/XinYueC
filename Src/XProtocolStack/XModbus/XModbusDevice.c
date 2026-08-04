@@ -26,12 +26,8 @@ static const char* errorToString(XModbusDevice_Error err) {
 // =============== 类初始化 ===============
 XVtable* XModbusDevice_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusDevice)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusDevice)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDevice");
     // 继承 XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
@@ -41,9 +37,7 @@ XVtable* XModbusDevice_class_init()
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDevice_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusDevice vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XModbusDevice);
     return XVTABLE_DEFAULT;
 }
 

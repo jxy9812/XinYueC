@@ -22,13 +22,8 @@ static void VXClass_deinit(XLockFreeQueue* this_queue);
 
 XVtable* XLockFreeQueue_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        //虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XLOCKFREEQUEUE_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XLOCKFREEQUEUE_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XLockFreeQueue");
         //继承类
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = { VXLockFreeQueue_push,VXLockFreeQueue_pop,VXLockFreeQueue_top,VXLockFreeQueue_receive,VXLockFreeQueue_isFull };
@@ -40,10 +35,8 @@ XVtable* XLockFreeQueue_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size, VXLockFreeQueue_size);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit)
-#if SHOWCONTAINERSIZE
-    printf("XLockFreeQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif // SHOWCONTAINERSIZE
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+    XCLASS_SHOW_SIZE_DEFAULT(XLockFreeQueue);
     return XVTABLE_DEFAULT;
 }
 XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count)

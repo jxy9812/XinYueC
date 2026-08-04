@@ -869,6 +869,7 @@ static XVtable* xxml_dom_make_vtable(void* copy, void* move, void* deinit)
         static XVtable* table = NULL; \
         if (table) return table; \
         table = xxml_dom_make_vtable(V##Type##_copy, V##Type##_move, V##Type##_deinit); \
+        XVTABLE_SET_NAME(table, #Type); \
         return table; \
     }
 
@@ -935,6 +936,7 @@ XVtable* XDomImplementation_class_init(void)
     table = xxml_dom_make_vtable(VXDomImplementation_copy,
                                  VXDomImplementation_move,
                                  VXDomImplementation_deinit);
+    XVTABLE_SET_NAME(table, "XDomImplementation");
     return table;
 }
 

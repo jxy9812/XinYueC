@@ -23,12 +23,8 @@ static inline bool XModbusServer_isBitType(XModbusRegisterType type) {
 // =============== 类初始化 ===============
 XVtable* XModbusServer_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusServer)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusServer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusServer");
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XModbusDevice);
     void* table[] = { VXModbusServer_processRequest,VXModbusServer_processPrivateRequest,
@@ -46,9 +42,7 @@ XVtable* XModbusServer_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXModbusServer_SetValue, VXModbusServer_setValue);*/
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusServer_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusServer vtable size: %d\n", XVtable_size(XClassVtable));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XModbusServer);
     return XVTABLE_DEFAULT;
 }
 

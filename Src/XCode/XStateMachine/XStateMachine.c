@@ -1144,12 +1144,8 @@ static void VXStateMachine_deinit(XStateMachine* machine)
 
 XVtable* XStateMachine_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XStateMachine)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XStateMachine)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine");
     XVTABLE_INHERIT_XCLASS(XState);
     void* table[] = {
         VXStateMachine_hook, VXStateMachine_hook,
@@ -1607,12 +1603,8 @@ static void VXStateMachine_SignalEvent_deinit(XStateMachine_SignalEvent* event)
 
 static XVtable* XStateMachine_SignalEvent_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XStateMachine_SignalEventClass)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XStateMachine_SignalEventClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine_SignalEvent");
     XVTABLE_INHERIT_XCLASS(XEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_SignalEvent_deinit);
     return XVTABLE_DEFAULT;
@@ -1661,12 +1653,8 @@ static void VXStateMachine_WrappedEvent_deinit(XStateMachine_WrappedEvent* event
 
 static XVtable* XStateMachine_WrappedEvent_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XStateMachine_WrappedEventClass)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XStateMachine_WrappedEventClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine_WrappedEvent");
     XVTABLE_INHERIT_XCLASS(XEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_WrappedEvent_deinit);
     return XVTABLE_DEFAULT;

@@ -321,6 +321,7 @@ XVtable* XFtp_class_init(void)
     // 简化的 vtable 初始化：直接继承 XObject
     XVtable_init(s_vtable = XVtable_create());
     if (s_vtable) {
+        XVTABLE_SET_NAME(s_vtable, "XFtp");
         XVtable_append_vtable(s_vtable, XObject_class_init());
         XVTABLE_OVERLOAD(s_vtable, EXClass_Deinit, VXFtp_deinit);
     }

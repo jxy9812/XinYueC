@@ -45,12 +45,8 @@ XCLASS_DEFINE_EXTEND_END(XSqlTestDriver, XSqlDriver)
 
 static XVtable* XSqlTestResult_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlTestResult)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlTestResult)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlTestResult");
     XVTABLE_INHERIT_XCLASS(XSqlResult);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Data, XSqlTest_resultData);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Reset, XSqlTest_resultReset);
@@ -116,12 +112,8 @@ static XVariant* XSqlTest_resultData(XSqlResult* result, int field)
 
 static XVtable* XSqlTestDriver_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlTestDriver)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlTestDriver)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlTestDriver");
     XVTABLE_INHERIT_XCLASS(XSqlDriver);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Open, XSqlTest_driverOpen);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_HasFeature, XSqlTest_driverHasFeature);

@@ -203,13 +203,8 @@ static void VXImageWriter_deinit(XImageWriter* self)
 
 XVtable* XImageWriter_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XImageWriter)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XImageWriter)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XImageWriter");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImageWriter_deinit);
     return XVTABLE_DEFAULT;

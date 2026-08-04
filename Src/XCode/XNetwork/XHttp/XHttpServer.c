@@ -682,60 +682,39 @@ static void VXHttpServerResponse_copy(XHttpServerResponse* dest,
 
 XVtable* XHttpServerRequest_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpServerRequest)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpServerRequest)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRequest");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerRequest_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpServerRequest_copy);
-#if SHOWCONTAINERSIZE
-    printf("XHttpServerRequest size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpServerRequest);
     return XVTABLE_DEFAULT;
 }
 
 XVtable* XHttpServerResponse_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpServerResponse)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpServerResponse)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerResponse");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerResponse_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttpServerResponse_copy);
-#if SHOWCONTAINERSIZE
-    printf("XHttpServerResponse size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpServerResponse);
     return XVTABLE_DEFAULT;
 }
 
 XVtable* XHttpServer_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpServer)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpServer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServer");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServer_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XHttpServer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpServer);
     return XVTABLE_DEFAULT;
 }
 

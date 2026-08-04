@@ -506,12 +506,8 @@ static void VMockAtIo_deinit(XIODevice* base)
 
 static XVtable* XMockAtIo_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XMockAtIo)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XMockAtIo)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMockAtIo");
     XVTABLE_INHERIT_XCLASS(XIODevice);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VMockAtIo_bytesAvailable);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VMockAtIo_readData);

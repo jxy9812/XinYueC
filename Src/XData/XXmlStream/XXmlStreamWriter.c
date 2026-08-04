@@ -895,13 +895,8 @@ static bool write_namespace_utf8_impl(XXmlStreamWriter* self, const char* namesp
  */
 XVtable* XXmlStreamWriter_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XCLASS_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XXmlStreamWriter");
     
     /* 继承 XClass 的基础行为。 */
     XVTABLE_INHERIT_XCLASS(XClass);

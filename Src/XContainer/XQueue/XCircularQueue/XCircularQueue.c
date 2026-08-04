@@ -23,12 +23,8 @@ static bool enlargeCapacity(XCircularQueue* this_queue);
 // =============== 虚函数表初始化 ===============
 XVtable* XCircularQueue_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XCIRCULARQUEUE_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XCIRCULARQUEUE_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCircularQueue");
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXCircularQueue_push,
@@ -44,9 +40,7 @@ XVtable* XCircularQueue_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XCircularQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XCircularQueue);
     return XVTABLE_DEFAULT;
 }
 

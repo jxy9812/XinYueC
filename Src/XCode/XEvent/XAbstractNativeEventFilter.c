@@ -25,13 +25,8 @@ static bool VXAbstractNativeEventFilter_nativeEventFilter(
 
 XVtable* XAbstractNativeEventFilter_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XAbstractNativeEventFilter)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XAbstractNativeEventFilter)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractNativeEventFilter");
         //继承类
         XVTABLE_INHERIT_XCLASS(XClass);
         // 无基类继承（XClass 是最底层）
@@ -40,9 +35,7 @@ XVtable* XAbstractNativeEventFilter_class_init(void)
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
-#if SHOWCONTAINERSIZE
-    printf("XAbstractNativeEventFilter size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XAbstractNativeEventFilter);
 
     return XVTABLE_DEFAULT;
 }

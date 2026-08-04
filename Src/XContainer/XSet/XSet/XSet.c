@@ -37,12 +37,8 @@ static void VXSet_deinit(XSet* this_set);
 
 XVtable* XSet_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XSET_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XSET_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSet");
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXSet_insert, VXSet_erase, VXSet_remove, VXSet_find,
@@ -53,9 +49,7 @@ XVtable* XSet_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XSet);
     return XVTABLE_DEFAULT;
 }
 

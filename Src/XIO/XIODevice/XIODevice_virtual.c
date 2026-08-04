@@ -32,13 +32,8 @@ static int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize);
 
 XVtable* XIODevice_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XIODevice)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XIODevice)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XIODevice");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XObject);
 	void* table[] = {
@@ -54,9 +49,7 @@ XVtable* XIODevice_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XIODevice size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XIODevice);
 	return XVTABLE_DEFAULT;
 }
 void VXIODevice_deinit(XIODevice* obj)

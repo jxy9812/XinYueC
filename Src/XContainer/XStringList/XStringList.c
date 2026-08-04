@@ -118,7 +118,7 @@ XVtable* XStringList_class_init()
 	return XVector_class_init();
 //	XVTABLE_CREAT_DEFAULT
 //		//虚函数表初始化
-//#if VTABLE_ISSTACK
+//#if XCLASS_VTABLE_USE_STACK
 //		XVTABLE_STACK_INIT_DEFAULT(XStringList)
 //#else
 //		XVTABLE_HEAP_INIT_DEFAULT
@@ -130,9 +130,9 @@ XVtable* XStringList_class_init()
 //	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 //
 //	//重写的函数
-//#if SHOWCONTAINERSIZE
+//#if XCLASS_VTABLE_SHOW_SIZE
 //	printf("XStringList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-//#endif // SHOWCONTAINERSIZE
+//#endif // XCLASS_VTABLE_SHOW_SIZE
 //	return XVTABLE_DEFAULT;
 }
 XStringList* XStringList_create()

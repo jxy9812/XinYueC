@@ -229,12 +229,8 @@ static void destroyNode(XLockFreeList* this_list, XLockFreeListNode* node)
 /* ------------------ vtable ------------------ */
 XVtable* XLockFreeList_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XLISTSLINKED_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XLISTSLINKED_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XLockFreeList");
         XVTABLE_INHERIT_XCLASS(XContainer);
 
     void* table[] = {
@@ -262,9 +258,7 @@ XVtable* XLockFreeList_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXListBase_LastIndexOf,  VXList_lastIndexOf);
     XVTABLE_OVERLOAD_DEFAULT(EXListBase_RemoveIf,     VXList_removeIf);
 
-#if SHOWCONTAINERSIZE
-    printf("XLockFreeList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XLockFreeList);
     return XVTABLE_DEFAULT;
 }
 

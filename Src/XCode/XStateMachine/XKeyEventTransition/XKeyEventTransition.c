@@ -36,12 +36,8 @@ static void VXKeyEventTransition_onTransition(XKeyEventTransition* transition,
 
 XVtable* XKeyEventTransition_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XKeyEventTransition)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XKeyEventTransition)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XKeyEventTransition");
     XVTABLE_INHERIT_XCLASS(XEventTransition);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest, VXKeyEventTransition_eventTest);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition, VXKeyEventTransition_onTransition);

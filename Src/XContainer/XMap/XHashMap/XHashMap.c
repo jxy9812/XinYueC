@@ -160,12 +160,8 @@ static void VXMap_deinit(XHashMap* this_hash);
 // ======================== 虚函数表初始化 ========================
 XVtable* XHashMap_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XHASHMAP_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XHASHMAP_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHashMap");
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXMap_insert, VXMap_erase, VXMap_remove, VXMap_value, VXMap_find,
@@ -176,9 +172,7 @@ XVtable* XHashMap_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMap_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XHash size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XHashMap);
     return XVTABLE_DEFAULT;
 }
 

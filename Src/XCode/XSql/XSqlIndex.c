@@ -12,12 +12,8 @@ static void VXSqlIndex_deinit(XSqlIndex* index);
 
 XVtable* XSqlIndex_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlIndex)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlIndex)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlIndex");
     XVTABLE_INHERIT_XCLASS(XSqlRecord);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlIndex_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlIndex_move);

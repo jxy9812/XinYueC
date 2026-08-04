@@ -81,19 +81,13 @@ static void VXDir_deinit(XDir* self)
 
 XVtable* XDir_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XDir)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XDir)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XDir");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDir_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXDir_move);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDir_deinit);
-#if SHOWCONTAINERSIZE
-        printf("XDir size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+        XCLASS_SHOW_SIZE_DEFAULT(XDir);
         return XVTABLE_DEFAULT;
 }
 

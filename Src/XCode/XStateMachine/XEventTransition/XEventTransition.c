@@ -75,12 +75,8 @@ static bool XEventTransition_sourceIsRegistered(const XState* state,
 
 XVtable* XEventTransition_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XEventTransition)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XEventTransition)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XEventTransition");
     XVTABLE_INHERIT_XCLASS(XAbstractTransition);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest, VXEventTransition_eventTest);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition, VXEventTransition_onTransition);

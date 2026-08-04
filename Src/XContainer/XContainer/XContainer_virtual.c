@@ -16,13 +16,8 @@ static void VXContainer_swap(XContainer* a, XContainer* b);
 static void VXContainer_clear(XContainer* Object);
 XVtable* XContainer_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XContainer)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XContainer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XContainer");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {VXContainer_isEmpty,VXContainer_size,VXContainer_capacity,VXContainer_typeSize,VXContainer_swap,VXContainer_clear };
@@ -32,9 +27,7 @@ XVtable* XContainer_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXContainer_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XContainer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XContainer);
 	return XVTABLE_DEFAULT;
 }
 bool VXContainer_isEmpty(const XContainer* Object)

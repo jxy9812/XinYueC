@@ -39,13 +39,8 @@ static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t
 static void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 XVtable* XDataFrameComm_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XDataFrameComm)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XDataFrameComm)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XDataFrameComm");
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XCommunicatorBase_class_init());
 	void* table[] =
@@ -65,9 +60,7 @@ XVtable* XDataFrameComm_class_init()
 	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
-#if SHOWCONTAINERSIZE
-	XPrintf("XDataFrameComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XDataFrameComm);
 	return XVTABLE_DEFAULT;
 }
 //接受数据验证

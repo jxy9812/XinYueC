@@ -50,12 +50,8 @@ static void VXDispatcher_deinit(XDispatcher* dispatcher);
 
 // 初始化虚函数表
 XVtable* XDispatcher_class_init() {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XDispatcher)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XDispatcher)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XDispatcher");
         XVTABLE_INHERIT_XCLASS(XClass);
 
     void* table[] = {

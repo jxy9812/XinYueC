@@ -4,12 +4,8 @@
 
 XVtable* XFinalState_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XFinalState)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XFinalState)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XFinalState");
     XVTABLE_INHERIT_XCLASS(XAbstractState);
     return XVTABLE_DEFAULT;
 }

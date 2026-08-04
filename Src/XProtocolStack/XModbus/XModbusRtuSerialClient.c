@@ -70,12 +70,8 @@ static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
 // =============== ¿‡≥ı ºªØ ===============
 XVtable* XModbusRtuSerialClient_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusRtuSerialClient)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusRtuSerialClient)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusRtuSerialClient");
         XVTABLE_INHERIT_XCLASS(XModbusClient);
 
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusRtuSerialClient_open);
@@ -87,9 +83,7 @@ XVtable* XModbusRtuSerialClient_class_init(void)
     //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessResponse, VXModbusRtuSerialClient_processResponse);
     //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessPrivateResponse, VXModbusRtuSerialClient_processPrivateResponse);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusRtuSerialClient vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XModbusRtuSerialClient);
     return XVTABLE_DEFAULT;
 }
 

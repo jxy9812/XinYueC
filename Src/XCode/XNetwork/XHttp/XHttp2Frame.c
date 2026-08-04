@@ -60,22 +60,15 @@ static void VXHttp2Frame_move(XHttp2Frame* dest, XHttp2Frame* src)
 
 XVtable* XHttp2Frame_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttp2Frame)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttp2Frame)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2Frame");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2Frame_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2Frame_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2Frame_move);
-#if SHOWCONTAINERSIZE
-    printf("XHttp2Frame size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttp2Frame);
     return XVTABLE_DEFAULT;
 }
 

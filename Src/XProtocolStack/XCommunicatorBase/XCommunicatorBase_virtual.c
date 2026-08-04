@@ -19,13 +19,8 @@ static void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, 
 static void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
 XVtable* XCommunicatorBase_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCommunicatorBase)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XCommunicatorBase)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCommunicatorBase");
 		//继承类
 		XVTABLE_INHERIT_XCLASS(XObject);
 	void* table[] = 
@@ -41,9 +36,7 @@ XVtable* XCommunicatorBase_class_init()
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCommunicatorBase_deinit);
 	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
-#if SHOWCONTAINERSIZE
-	printf("XIODevice size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XCommunicatorBase);
 	return XVTABLE_DEFAULT;
 }
 

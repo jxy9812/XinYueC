@@ -120,12 +120,8 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
 // =============== 类初始化 ================
 XVtable* XModbusTcpServer_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusTcpServer)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusTcpServer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusTcpServer");
     // 继承 XModbusServer
     XVTABLE_INHERIT_XCLASS(XModbusServer);
 
@@ -135,9 +131,7 @@ XVtable* XModbusTcpServer_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXModbusServer_ProcessRequest, VXModbusTcpServer_processRequest);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusTcpServer_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusTcpServer size: %zu\n", sizeof(XModbusTcpServer));
-#endif
+	XCLASS_SHOW_SIZE(XModbusTcpServer, sizeof(XModbusTcpServer));
     return XVTABLE_DEFAULT;
 }
 

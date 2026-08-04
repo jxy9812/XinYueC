@@ -1303,12 +1303,8 @@ static void VXCryptographicHash_move(XCryptographicHash* dest, XCryptographicHas
 
 XVtable* XCryptographicHash_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCryptographicHash)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XCryptographicHash)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCryptographicHash");
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCryptographicHash_deinit);
@@ -1316,9 +1312,7 @@ XVtable* XCryptographicHash_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXCryptographicHash_copy);
     // 重载移动函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXCryptographicHash_move);
-#if SHOWCONTAINERSIZE
-    printf("XCryptographicHash vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XCryptographicHash);
     return XVTABLE_DEFAULT;
 }
 

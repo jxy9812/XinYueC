@@ -35,12 +35,8 @@ static void VXSignalTransition_deinit(XSignalTransition* transition)
 
 XVtable* XSignalTransition_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSignalTransition)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSignalTransition)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSignalTransition");
     XVTABLE_INHERIT_XCLASS(XAbstractTransition);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest, VXSignalTransition_eventTest);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition, VXSignalTransition_onTransition);

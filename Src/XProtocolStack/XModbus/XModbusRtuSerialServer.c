@@ -340,12 +340,8 @@ static void processReceiveBuffer(XModbusRtuSerialServer* server)
 // =============== 类初始化 ================
 XVtable* XModbusRtuSerialServer_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XModbusRtuSerialServer)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XModbusRtuSerialServer)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusRtuSerialServer");
     // 继承 XModbusServer
     XVTABLE_INHERIT_XCLASS(XModbusServer);
 
@@ -356,9 +352,7 @@ XVtable* XModbusRtuSerialServer_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusRtuSerialServer_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusRtuSerialServer_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusRtuSerialServer size: %zu\n", sizeof(XModbusRtuSerialServer));
-#endif
+	XCLASS_SHOW_SIZE(XModbusRtuSerialServer, sizeof(XModbusRtuSerialServer));
     return XVTABLE_DEFAULT;
 }
 

@@ -13,13 +13,8 @@ static void VXThread_deinit(XThread* thread);
 // 虚函数表初始化
 XVtable* XThread_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XThread)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XThread)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XThread");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
@@ -28,9 +23,7 @@ XVtable* XThread_class_init()
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XThread size:%d\n", XVtable_size(XThreadVtable));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XThread);
     return XVTABLE_DEFAULT;
 }
 

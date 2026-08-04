@@ -451,12 +451,8 @@ static void xsqlite_prepare_clear(XSqliteResult* result)
 
 XVtable* XSqliteResult_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqliteResult)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqliteResult)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqliteResult");
     XVTABLE_INHERIT_XCLASS(XSqlResult);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqliteResult_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqliteResult_move);
@@ -935,12 +931,8 @@ fail:
 
 XVtable* XSqliteDriver_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqliteDriver)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqliteDriver)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqliteDriver");
     XVTABLE_INHERIT_XCLASS(XSqlDriver);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqliteDriver_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_BeginTransaction, VXSqliteDriver_beginTransaction);

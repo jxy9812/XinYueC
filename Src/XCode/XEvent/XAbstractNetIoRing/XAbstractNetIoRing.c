@@ -237,12 +237,8 @@ static void VXAbstractNetIoRing_deinit(XAbstractNetIoRing* obj) {
  * 此表，再用 XVTABLE_OVERLOAD_DEFAULT 重载平台特定虚函数。
  * ================================================================ */
 XVtable* XAbstractNetIoRing_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XAbstractNetIoRing)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XAbstractNetIoRing)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractNetIoRing");
     /* 继承 XClass 虚函数表（Copy/Move/Deinit） */
     XVTABLE_INHERIT_XCLASS(XClass);
 

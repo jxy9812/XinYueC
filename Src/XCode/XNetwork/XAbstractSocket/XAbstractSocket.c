@@ -72,13 +72,8 @@ static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msec
 // ==================== 虚函数表初始化 ====================
 XVtable* XAbstractSocket_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-        //虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XAbstractSocket)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XAbstractSocket)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractSocket");
     // 继承 XIODevice 的虚表
     XVTABLE_INHERIT_XCLASS(XIODevice);
     // 添加 XAbstractSocket 特有虚函数
@@ -117,9 +112,7 @@ XVtable* XAbstractSocket_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SkipData, VXAbstractSocket_skipData);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXAbstractSocket_event);
 
-#if SHOWCONTAINERSIZE
-        printf("XAbstractSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+        XCLASS_SHOW_SIZE_DEFAULT(XAbstractSocket);
         return XVTABLE_DEFAULT;
 }
 

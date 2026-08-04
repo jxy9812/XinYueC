@@ -255,13 +255,8 @@ static void VXImage_deinit(XImage* self)
 
 XVtable* XImage_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XImage)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XImage)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XImage");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXImage_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXImage_move);

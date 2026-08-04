@@ -48,22 +48,15 @@ static void VXHttp2Configuration_move(XHttp2Configuration* dest, XHttp2Configura
 
 XVtable* XHttp2Configuration_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttp2Configuration)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttp2Configuration)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2Configuration");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttp2Configuration_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHttp2Configuration_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHttp2Configuration_move);
-#if SHOWCONTAINERSIZE
-    printf("XHttp2Configuration size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttp2Configuration);
     return XVTABLE_DEFAULT;
 }
 

@@ -36,12 +36,8 @@ static void VXAbstractState_deinit(XAbstractState* state)
 
 XVtable* XAbstractState_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XAbstractState)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XAbstractState)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractState");
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { VXAbstractState_onEntry, VXAbstractState_onExit };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

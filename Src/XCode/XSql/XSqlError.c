@@ -12,12 +12,8 @@ static void VXSqlError_deinit(XSqlError* error);
 
 XVtable* XSqlError_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlError)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlError)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlError");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlError_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlError_move);

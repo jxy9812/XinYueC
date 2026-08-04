@@ -67,13 +67,8 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
 
 XVtable* XAbstractEventDispatcher_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT // static XVtable* XVTABLE_DEFAULT = NULL; if exists return
-
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XAbstractEventDispatcher)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XAbstractEventDispatcher)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractEventDispatcher");
 
         // 继承 XObject 的虚函数表
         XVTABLE_INHERIT_XCLASS(XObject);
@@ -95,9 +90,7 @@ XVtable* XAbstractEventDispatcher_class_init(void)
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, (void*)VXAbstractEventDispatcher_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XAbstractEventDispatcher size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XAbstractEventDispatcher);
 
     return XVTABLE_DEFAULT;
 }

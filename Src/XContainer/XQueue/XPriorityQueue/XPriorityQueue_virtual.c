@@ -13,22 +13,15 @@ static bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer);
 static bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue);
 XVtable* XPriorityQueue_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-	//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT_SIZE(XPRIORITYQUEUE_VTABLE_SIZE)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT_SIZE(XPRIORITYQUEUE_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XPriorityQueue");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XContainer);
 	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
-#if SHOWCONTAINERSIZE
-	printf("XPriorityQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif // SHOWCONTAINERSIZE
+	XCLASS_SHOW_SIZE_DEFAULT(XPriorityQueue);
 	return XVTABLE_DEFAULT;
 }
 //插入向上调整

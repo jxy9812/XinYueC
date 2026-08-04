@@ -17,19 +17,13 @@ static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* 
 
 XVtable* XNetworkInterface_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XNetworkInterface)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkInterface)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkInterface");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkInterface_deinit);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkInterface_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkInterface_move);
-#if SHOWCONTAINERSIZE
-        printf("XNetworkInterface size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+        XCLASS_SHOW_SIZE_DEFAULT(XNetworkInterface);
         return XVTABLE_DEFAULT;
 }
 

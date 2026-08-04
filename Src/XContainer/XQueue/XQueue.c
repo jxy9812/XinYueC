@@ -38,13 +38,8 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 
 XVtable* XQueue_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT_SIZE(XQUEUE_VTABLE_SIZE)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT_SIZE(XQUEUE_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XQueue");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XContainer);
 	void* table[] = { VXQueue_push,VXQueue_pop,VXQueue_top,VXQueue_receive,VXQueue_isFull };
@@ -56,9 +51,7 @@ XVtable* XQueue_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size, VXQueue_size);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-#if SHOWCONTAINERSIZE
-	printf("XQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XQueue);
 	return XVTABLE_DEFAULT;
 }
 

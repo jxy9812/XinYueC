@@ -10,22 +10,15 @@ static void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src);
 static void VXModbusPdu_move(XModbusPdu* pdu, XModbusPdu* src);
 XVtable* XModbusPdu_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusPdu");
         // 继承 XModbusDevice
         XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusPdu_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusPdu_move);
-#if SHOWCONTAINERSIZE
-    printf("XModbusPdu size: %zu\n", sizeof(XModbusPdu));
-
-#endif
+	XCLASS_SHOW_SIZE(XModbusPdu, sizeof(XModbusPdu));
     return XVTABLE_DEFAULT;
 }
 // =============== 数据大小计算器实现 ===============

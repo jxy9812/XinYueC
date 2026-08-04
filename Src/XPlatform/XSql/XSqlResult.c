@@ -43,12 +43,8 @@ static void VXSqlResult_deinit(XSqlResult* result);
 
 XVtable* XSqlResult_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSqlResult)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XSqlResult)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlResult");
     XVTABLE_INHERIT_XCLASS(XClass);
     void* table[] = {
         VXSqlResult_data, VXSqlResult_isNull, VXSqlResult_reset,

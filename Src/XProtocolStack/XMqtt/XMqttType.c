@@ -10,12 +10,8 @@ static void VXMqttStringPair_move(XMqttStringPair* dest, XMqttStringPair* src);
 
 XVtable* XMqttStringPair_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttStringPair");
     XVTABLE_INHERIT_XCLASS(XClass);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMqttStringPair_copy);

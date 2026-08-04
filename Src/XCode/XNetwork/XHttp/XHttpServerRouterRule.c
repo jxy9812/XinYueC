@@ -51,20 +51,13 @@ static bool xhttp_router_match_path(const char* pattern,
 
 XVtable* XHttpServerRouterRule_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpServerRouterRule)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpServerRouterRule)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRouterRule");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpServerRouterRule_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XHttpServerRouterRule size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpServerRouterRule);
     return XVTABLE_DEFAULT;
 }
 

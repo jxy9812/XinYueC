@@ -60,21 +60,15 @@ static void VXNetworkProxyQuery_move(XNetworkProxyQuery* dest, XNetworkProxyQuer
 }
 
 XVtable* XNetworkProxyQuery_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxyQuery)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkProxyQuery)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxyQuery");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkProxyQuery_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkProxyQuery_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkProxyQuery_move);
-#if SHOWCONTAINERSIZE
-    printf("XNetworkProxyQuery vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkProxyQuery);
     return XVTABLE_DEFAULT;
 }
 
@@ -256,21 +250,15 @@ static void VXNetworkProxy_move(XNetworkProxy* dest, XNetworkProxy* src) {
 }
 
 XVtable* XNetworkProxy_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxy)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkProxy)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxy");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkProxy_deinit_base);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkProxy_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkProxy_move);
-#if SHOWCONTAINERSIZE
-    printf("XNetworkProxy vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkProxy);
     return XVTABLE_DEFAULT;
 }
 
@@ -504,21 +492,15 @@ static void VXNetworkProxyFactory_move(XNetworkProxyFactory* dest, XNetworkProxy
 }
 
 XVtable* XNetworkProxyFactory_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XNetworkProxyFactory)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetworkProxyFactory)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxyFactory");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkProxyFactory_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkProxyFactory_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkProxyFactory_move);
-#if SHOWCONTAINERSIZE
-    printf("XNetworkProxyFactory vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XNetworkProxyFactory);
     return XVTABLE_DEFAULT;
 }
 

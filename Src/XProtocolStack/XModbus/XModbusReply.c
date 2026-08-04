@@ -8,21 +8,15 @@
 static void VXModbusReply_deinit(XModbusReply* reply);
 
 XVtable* XModbusReply_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XObject)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XObject)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusReply");
 
     // 继承XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusReply_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XModbusReply size: %zu\n", sizeof(XModbusReply));
-#endif
+	XCLASS_SHOW_SIZE(XModbusReply, sizeof(XModbusReply));
     return XVTABLE_DEFAULT;
 }
 

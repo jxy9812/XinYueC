@@ -53,6 +53,9 @@ void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size)
 	this_vtable->data = data;
 	this_vtable->capacity = size;
 	this_vtable->size = 0;
+#if XCLASS_VTABLE_ENABLE_NAME
+	this_vtable->name = NULL;
+#endif
 	this_vtable->isStack = true;
 }
 
@@ -63,6 +66,9 @@ void XVtable_init(XVtable* this_vtable)
 	this_vtable->data = NULL;
 	this_vtable->capacity = 0;
 	this_vtable->size = 0;
+#if XCLASS_VTABLE_ENABLE_NAME
+	this_vtable->name = NULL;
+#endif
 	this_vtable->isStack = false;
 	//XVtableEnlargeCapacity(this_vtable);
 }
@@ -71,7 +77,7 @@ void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 {
 	if (ISNULL(this_vtable, "") || index < 0 || ISNULL(func, ""))
 		return;
-	const void* ptr = (void*)(this_vtable->data + index);
+	void** ptr = this_vtable->data + index;
 	size_t typeSize = sizeof(void*);
 	if (!XVtable_empty(this_vtable) && ptr >= this_vtable->data && (index == 0 || ptr <= this_vtable->data + (index - 1)))
 	{
@@ -91,12 +97,12 @@ void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 	}
 }
 
-void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begin, size_t n)
+void XVtable_insert_array(XVtable* this_vtable, int64_t index, void* const* begin, size_t n)
 {
 	if (ISNULL(this_vtable, "") || index < 0 || ISNULL(begin, "") || n == 0)
 		return;
 	//XVtableEnlargeCapacity(this_vtable);
-	const void* ptr = (void*)(this_vtable->data + index);
+	void** ptr = this_vtable->data + index;
 	size_t typeSize = sizeof(void*);
 	if (!XVtable_empty(this_vtable) && ptr >= this_vtable->data && (index == 0 || ptr <= this_vtable->data + (index - 1)))
 	{
@@ -117,7 +123,7 @@ void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begi
 	
 }
 
-void XVtable_append_array(XVtable* this_vtable, const void** begin, size_t n)
+void XVtable_append_array(XVtable* this_vtable, void* const* begin, size_t n)
 {
 	if (ISNULL(this_vtable, "") || ISNULL(begin, "") || n == 0)
 		return;
@@ -132,7 +138,7 @@ void XVtable_append_vtable(XVtable* this_vtable, XVtable* table)
 	XVtable_append_array(this_vtable, table->data, table->size);
 }
 
-void XVtable_push_back(XVtable* this_vtable, void* func)
+void XVtable_push_back(XVtable* this_vtable, const void* func)
 {
 	if (ISNULL(this_vtable, ""))
 		return;

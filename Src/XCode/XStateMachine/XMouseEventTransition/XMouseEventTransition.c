@@ -76,12 +76,8 @@ static void VXMouseEventTransition_deinit(XMouseEventTransition* transition)
 
 XVtable* XMouseEventTransition_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XMouseEventTransition)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XMouseEventTransition)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XMouseEventTransition");
     XVTABLE_INHERIT_XCLASS(XEventTransition);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_EventTest, VXMouseEventTransition_eventTest);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractTransition_OnTransition, VXMouseEventTransition_onTransition);

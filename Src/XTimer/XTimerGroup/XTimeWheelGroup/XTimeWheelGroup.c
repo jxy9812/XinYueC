@@ -93,13 +93,8 @@ static XListSNode* create_timer_node(XTimerData* data, size_t expire_ticks)
 
 XVtable* XTimeWheelGroup_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XTimeWheelGroup)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XTimeWheelGroup)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XTimeWheelGroup");
     // 继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {

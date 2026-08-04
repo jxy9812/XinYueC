@@ -7,19 +7,12 @@ static void VXClass_move(XClass* object, XClass* src);
 static void VXClass_deinit(XClass* object);
 XVtable* XClass_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XClass");
 	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
-#if SHOWCONTAINERSIZE
-	printf("XClass size:%d\n", XVtable_size(XClassVtable));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XClass);
 	return XVTABLE_DEFAULT;
 }
 void XClass_init(XClass* object)

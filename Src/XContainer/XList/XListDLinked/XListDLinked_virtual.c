@@ -55,13 +55,8 @@ static size_t VXList_removeIf(XListDLinked* this_list, bool (*predicate)(const v
 
 XVtable* XListDLinked_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        //虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XLISTDLINKED_VTABLE_SIZE)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XLISTDLINKED_VTABLE_SIZE)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XListDLinked");
         //继承类
         XVTABLE_INHERIT_XCLASS(XContainer);
 
@@ -92,9 +87,7 @@ XVtable* XListDLinked_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXListBase_LastIndexOf, VXList_lastIndexOf);
     XVTABLE_OVERLOAD_DEFAULT(EXListBase_RemoveIf, VXList_removeIf);
 
-#if SHOWCONTAINERSIZE
-    printf("XListDLinked size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XListDLinked);
     return XVTABLE_DEFAULT;
 }
 #define CreatNode(this_list)    XMalloc_System(ALIGN_UP(sizeof(XListDNode)+XContainerTypeSize(this_list),sizeof(void*)))

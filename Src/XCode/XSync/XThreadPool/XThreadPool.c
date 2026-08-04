@@ -50,13 +50,8 @@ static XThreadPool* g_globalThreadPool = NULL;
 static void VXThreadPool_deinit(XThreadPool* pool);
 XVtable* XThreadPool_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XThreadPool)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XThreadPool)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XThreadPool");
 		//继承类
 		XVTABLE_INHERIT_XCLASS(XObject);
 	//void* table[] = {
@@ -66,9 +61,7 @@ XVtable* XThreadPool_class_init()
 	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThreadPool_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XThreadPool size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XThreadPool);
 	return XVTABLE_DEFAULT;
 }
 void XThreadPool_init(XThreadPool* pool, XObject* parent)

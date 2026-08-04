@@ -12,13 +12,8 @@ static void VXPLC_poll(XPLC* plc);
 static void VXIODevice_deinit(XPLC* task);
 XVtable* XPLC_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XPLC)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XPLC)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XPLC");
 		//继承类
 		XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
@@ -31,9 +26,7 @@ XVtable* XPLC_class_init()
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
 	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLC_poll);
-#if SHOWCONTAINERSIZE
-	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XPLC);
 	return XVTABLE_DEFAULT;
 }
 

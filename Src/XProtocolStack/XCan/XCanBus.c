@@ -12,12 +12,8 @@ static void VXCanBus_deinit(XCanBus* canBus);
 // =============== 类初始化 ===============
 XVtable* XCanBus_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XObject) + 1)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XObject) + 1)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XCanBus");
     // 继承 XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { NULL };
@@ -25,9 +21,7 @@ XVtable* XCanBus_class_init()
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCanBus_deinit);
 
-#if SHOWCONTAINERSIZE
-    printf("XCanBus vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XCanBus);
     return XVTABLE_DEFAULT;
 }
 

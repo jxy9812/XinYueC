@@ -355,12 +355,8 @@ static void VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj) {
  * 仅重载 6 个 io_uring 专属虚函数。
  * ================================================================ */
 XVtable* XNetIoRingPosix_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XNetIoRingPosix)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XNetIoRingPosix)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XNetIoRingPosix");
     /* 继承 XAbstractNetIoRing 虚函数表（含默认实现） */
     XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing);
 

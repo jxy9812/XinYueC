@@ -7,39 +7,73 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include"XPrintf.h"
 #include<stdlib.h>
-#define XCLASS_VTABLE_SIZE   XCLASS_VTABLE_GET_SIZE(XClass)      //虚函数表大小
-//XClass虚函数表枚举
+/** @brief XClass 基类虚函数表的固定槽位数量。 */
+#define XCLASS_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XClass)
+/* XClass 基类虚函数槽位；子类通过 XVTABLE_INHERIT_XCLASS 继承。 */
 XCLASS_DEFINE_BEGING(XClass)
 XCLASS_DEFINE_ENUM(XClass, Copy),
 XCLASS_DEFINE_ENUM(XClass, Move),
 XCLASS_DEFINE_ENUM(XClass, Deinit),
 XCLASS_DEFINE_END(XClass)
-//容器基类
+/**
+ * @brief 所有 XClass 风格对象的公共基类。
+ *
+ * m_vtable 指向只读逻辑上的类虚函数表，m_free 记录对象是否由堆创建者
+ * 管理。对象本身不拥有虚函数表，类初始化函数返回的表通常是共享的。
+ */
 typedef struct XClass
 {
-	XVtable* m_vtable;//虚函数表
-	FreeMethod m_free;//释放方法
+	XVtable* m_vtable;
+	FreeMethod m_free;
 }XClass;
-#define XVtableGetFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
-#define XClassGetVtable(Object) ((XClass*)Object)->m_vtable  //用获取类中的虚函数表
-#define XClassSetVtable(Obj,Type) (XClassGetVtable(Obj)=Type##_class_init())
-#define XClassIsVtableNull(Obj) (XClassGetVtable(Obj) == NULL)  // 检查虚函数表是否为空
-#define XClassEnsureVtable(Obj,Type) do { if (XClassIsVtableNull(Obj)) XClassSetVtable(Obj, Type); } while(0)  // 确保虚函数表已初始化
-//#define XClassGetVirtualFunc(Object,Offset,Type) ((Type)((((XClass*)Object)->m_vtable->data)[Offset]))
-#define XClassGetVirtualFunc(Object,Offset,Type)      XVtableGetFunc((XClassGetVtable(Object)),Offset,Type)//用XClassObject及其子类获取虚函数
-#define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
-#define ISNULL(args,str)(ArgIsNULL(isNULLInfo(args,str)))
-bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
-#define XAssert(args,str) {if(ISNULL(args,str))exit(-1);}
 
-//定义虚函数表
+/** @brief 按枚举槽位读取虚函数；调用方必须保证表、槽位和函数类型有效。 */
+#define XVtableGetFunc(Vtable, Offset, Type) \
+	((Type)((((XVtable*)(Vtable))->data)[(Offset)]))
+/** @brief 取得对象的虚函数表；Object 必须指向 XClass 或其派生对象。 */
+#define XClassGetVtable(Object) (((XClass*)(Object))->m_vtable)
+/** @brief 把对象的虚函数表设置为指定类的共享虚函数表。 */
+#define XClassSetVtable(Object, Type) \
+	(XClassGetVtable(Object) = Type##_class_init())
+
+/** @brief 设置默认类名；名称为借用指针，通常传入字符串字面量。 */
+#define XCLASS_SET_CLASS_NAME_DEFAULT(Name) \
+	XVTABLE_SET_NAME(XVTABLE_DEFAULT, (Name))
+/** @brief 获取默认类名；未设置或关闭类名配置时返回 NULL。 */
+#define XCLASS_GET_CLASS_NAME_DEFAULT() \
+	XVTABLE_GET_NAME(XVTABLE_DEFAULT)
+
+/** @brief 判断对象是否尚未绑定虚函数表；Object 不能为空。 */
+#define XClassIsVtableNull(Object) (XClassGetVtable(Object) == NULL)
+/** @brief 通过对象取得指定类型的虚函数；调用方负责保证槽位已实现。 */
+#define XClassGetVirtualFunc(Object, Offset, Type) \
+	XVtableGetFunc(XClassGetVtable(Object), (Offset), Type)
+
+/** @brief 判断表达式是否为空，并在开启错误输出时记录调用位置。 */
+#define ISNULL(args, str) \
+	(ArgIsNULL((args), #args, (str), __FUNCTION__, __FILE__, __LINE__))
+/** @brief 参数为空时立即终止当前进程；适用于不可恢复的内部错误。 */
+#define XAssert(args, str) do { if (ISNULL(args, str)) exit(-1); } while (0)
+/** @brief 空指针检查的实际实现。 */
+bool ArgIsNULL(const void* args, const char* argsName, const char* str,
+	const char* funcName, const char* filePath, int line);
+
+/**
+ * @brief 声明一个类的共享虚函数表并在已初始化时直接返回。
+ *
+ * 该宏必须放在 class_init 函数开头，Vtable 必须是函数内的静态指针名。
+ */
 #define XVTABLE_CREAT(Vtable)  \
-	 static XVtable* Vtable = NULL;\
-	 if (Vtable)return Vtable;
-//虚函数表在堆上初始化
+	static XVtable* Vtable = NULL; \
+	if (Vtable) return Vtable;
+/** @brief 使用堆内存创建默认虚函数表。 */
 #define XVTABLE_HEAP_INIT(Vtable)\
 	Vtable = XVtable_create();
-//虚函数表在栈上初始化
+/**
+ * @brief 使用静态存储区初始化虚函数表。
+ *
+ * Size 必须是编译期常量；静态数组只分配一次，表本身不会自动扩容。
+ */
 #define XVTABLE_STACK_INIT(Vtable,Size)\
 {\
 	static XVtable vtable;\
@@ -47,48 +81,99 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 	Vtable = &vtable;\
 	XVtable_init_stack(Vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));\
 }
-//虚函数表继承
-#define XVTABLE_INHERIT(Vtable,VtableBase)			XVtable_append_vtable(Vtable,VtableBase)
-//虚函数表函数重载
-#define XVTABLE_OVERLOAD(Vtable,Type,Func)\
-{\
-		if (Type >= Vtable->capacity)\
-		{\
-			XERROR_PRINTF("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", __FILE__, __func__, __LINE__, Type, Vtable->capacity); \
-			exit(-1); \
-		}\
-			XVtable_At(Vtable, Type) = Func; \
-}
-//虚函数表追加函数列表
-#define XVTABLE_ADD_FUNC_LIST(Vtable,table)\
-{ \
-	if(Vtable->isStack&&((Vtable->size)+(sizeof(table) / sizeof(table[0])))>Vtable->capacity)\
-	{\
-		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n",__FILE__,__func__,__LINE__,(Vtable->size)+(sizeof(table) / sizeof(table[0]))-Vtable->capacity);\
-		exit(-1);\
-	}\
-	XVtable_append_array(Vtable, table, sizeof(table) / sizeof(table[0]));\
- }
-/*								  以下是重新封装的默认参数						*/			
-//默认虚函数表
-#define XVTABLE_DEFAULT								XClassVtable
-//定义虚函数表 默认
-#define XVTABLE_CREAT_DEFAULT						XVTABLE_CREAT(XVTABLE_DEFAULT)
-//堆上初始化表   默认
-#define XVTABLE_HEAP_INIT_DEFAULT					XVTABLE_HEAP_INIT(XVTABLE_DEFAULT)
-//栈上初始化表，按类名自动获取虚函数表大小
-#define XVTABLE_STACK_INIT_DEFAULT(Type)			XVTABLE_STACK_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(Type))
-//栈上初始化表，保留对额外容量或自定义大小表达式的支持
-#define XVTABLE_STACK_INIT_DEFAULT_SIZE(Size)		XVTABLE_STACK_INIT(XVTABLE_DEFAULT,Size)
-//继承表
-#define XVTABLE_INHERIT_DEFAULT(VtableBase)			XVTABLE_INHERIT(XVTABLE_DEFAULT,VtableBase)
-//继承类
-#define XVTABLE_INHERIT_XCLASS(Type)				XVTABLE_INHERIT(XVTABLE_DEFAULT,Type##_class_init())
-//虚函数表函数重载
-#define XVTABLE_OVERLOAD_DEFAULT(Type,Func)			XVTABLE_OVERLOAD(XVTABLE_DEFAULT,Type,Func)
-//虚函数表追加函数列表
-#define XVTABLE_ADD_FUNC_LIST_DEFAULT(table)	XVTABLE_ADD_FUNC_LIST(XVTABLE_DEFAULT,table)
-/*								  类的创建主要用这些						*/
+/** @brief 把父类虚函数槽位追加到当前表。 */
+#define XVTABLE_INHERIT(Vtable, VtableBase) \
+	do { XVtable_append_vtable((Vtable), (VtableBase)); } while (0)
+/** @brief 将一个槽位替换为子类实现，并检查容量。 */
+#define XVTABLE_OVERLOAD(Vtable, Type, Func) \
+do { \
+	XVtable* _xvtable = (Vtable); \
+	if (!_xvtable) break; \
+	if ((Type) >= _xvtable->capacity) { \
+		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", \
+			__FILE__, __func__, __LINE__, (Type), _xvtable->capacity); \
+		exit(-1); \
+	} \
+	XVtable_At(_xvtable, (Type)) = (Func); \
+} while (0)
+/** @brief 把函数指针数组追加到虚函数表，并检查静态表容量。 */
+#define XVTABLE_ADD_FUNC_LIST(Vtable, Table) \
+do { \
+	XVtable* _xvtable = (Vtable); \
+	size_t _xvtable_count = sizeof(Table) / sizeof((Table)[0]); \
+	if (_xvtable && _xvtable->isStack && \
+		(_xvtable->size + _xvtable_count > _xvtable->capacity)) { \
+		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n", \
+			__FILE__, __func__, __LINE__, \
+			(_xvtable->size + _xvtable_count - _xvtable->capacity)); \
+		exit(-1); \
+	} \
+	if (_xvtable) XVtable_append_array(_xvtable, (Table), _xvtable_count); \
+} while (0)
+
+/* 默认参数封装：标准 class_init 只需要使用这一组宏。 */
+/** @brief class_init 当前类共享的虚函数表指针名。 */
+#define XVTABLE_DEFAULT XClassVtable
+
+/**
+ * @brief 按当前配置完成默认虚函数表初始化。
+ *
+ * Type 是用于计算虚函数槽位数量的类名。栈模式使用该类的枚举容量，
+ * 堆模式创建可动态扩容的虚函数表。宏展开时已经完成分支选择，不产生
+ * 运行时条件判断。
+ */
+#if XCLASS_VTABLE_USE_STACK
+#define XVTABLE_INIT_DEFAULT(Type) \
+	XVTABLE_CREAT(XVTABLE_DEFAULT) \
+	XVTABLE_STACK_INIT(XVTABLE_DEFAULT, XCLASS_VTABLE_GET_SIZE(Type))
+#define XVTABLE_INIT_DEFAULT_SIZE(Size) \
+	XVTABLE_CREAT(XVTABLE_DEFAULT) \
+	XVTABLE_STACK_INIT(XVTABLE_DEFAULT, (Size))
+#else
+#define XVTABLE_INIT_DEFAULT(Type) \
+	XVTABLE_CREAT(XVTABLE_DEFAULT) \
+	XVTABLE_HEAP_INIT(XVTABLE_DEFAULT)
+#define XVTABLE_INIT_DEFAULT_SIZE(Size) \
+	XVTABLE_CREAT(XVTABLE_DEFAULT) \
+	XVTABLE_HEAP_INIT(XVTABLE_DEFAULT)
+#endif
+
+/**
+ * @brief 按配置输出一个类型对应的 size_t 大小值。
+ *
+ * Type 既用于生成输出标签，也用于表达被统计的类型；Value 可以是虚表槽位数、
+ * sizeof 表达式或其他 size_t 表达式。关闭 XCLASS_VTABLE_SHOW_SIZE 时，
+ * Value 不会求值，也不会生成输出代码。
+ */
+#if XCLASS_VTABLE_SHOW_SIZE
+#define XCLASS_SHOW_SIZE(Type, Value) \
+	do { printf(#Type " size:%zu\n", (size_t)(Value)); } while (0)
+#else
+#define XCLASS_SHOW_SIZE(Type, Value) do { } while (0)
+#endif
+
+/**
+ * @brief 输出默认虚函数表的槽位数量。
+ *
+ * Type 用于生成输出标签，并自动统计 XVtable_size(XVTABLE_DEFAULT)，
+ * 由 XCLASS_VTABLE_SHOW_SIZE 统一控制，适用于标准 class_init 函数。
+ */
+#define XCLASS_SHOW_SIZE_DEFAULT(Type) \
+	XCLASS_SHOW_SIZE(Type, XVtable_size(XVTABLE_DEFAULT))
+
+/** @brief 把指定虚函数表追加到默认表。 */
+#define XVTABLE_INHERIT_DEFAULT(VtableBase) \
+	XVTABLE_INHERIT(XVTABLE_DEFAULT, (VtableBase))
+/** @brief 把指定类的虚函数表追加到默认表。 */
+#define XVTABLE_INHERIT_XCLASS(Type) \
+	XVTABLE_INHERIT(XVTABLE_DEFAULT, Type##_class_init())
+/** @brief 重载默认表中的一个虚函数槽位。 */
+#define XVTABLE_OVERLOAD_DEFAULT(Type, Func) \
+	XVTABLE_OVERLOAD(XVTABLE_DEFAULT, (Type), (Func))
+/** @brief 把函数指针数组追加到默认虚函数表。 */
+#define XVTABLE_ADD_FUNC_LIST_DEFAULT(Table) \
+	XVTABLE_ADD_FUNC_LIST(XVTABLE_DEFAULT, (Table))
+/* 类的创建和生命周期接口。 */
 XVtable* XClass_class_init();
 void XClass_init(XClass* object);
 void XClass_copy_base(XClass* object, const XClass* src);
@@ -96,17 +181,21 @@ void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
 
-//标记保护权限
+/** @brief 兼容 C++ 风格的保护区标记；C 语言中不产生任何代码。 */
 #define Protected 
 
-//类是否在堆上
-#define Class_MemoryFree(obj)   (((XClass*)obj)->m_free)
-//设置标志类在堆上
-#define Set_Class_MemoryFree(obj,method)  (((XClass*)obj)->m_free=method)
+/** @brief 获取对象的堆释放函数；返回 NULL 表示使用默认释放路径。 */
+#define Class_MemoryFree(Object) (((XClass*)(Object))->m_free)
+/** @brief 设置对象的堆释放函数；对象初始化后由创建者设置。 */
+#define Set_Class_MemoryFree(Object, Method) \
+	(Class_MemoryFree(Object) = (Method))
 
-// 释放父对象
-#define XClass_Parent(objType,funcEnum,funcType)  (XVtableGetFunc(objType##_class_init(), funcEnum, funcType))
-#define XClass_Deinit_Parent(Type,obj)			(XClass_Parent(Type,EXClass_Deinit,void(*)(Type*))(obj))
+/** @brief 取得父类指定虚函数；Type 必须提供 Type##_class_init。 */
+#define XClass_Parent(Type, FuncEnum, FuncType) \
+	(XVtableGetFunc(Type##_class_init(), (FuncEnum), FuncType))
+/** @brief 调用父类的 Deinit 实现释放派生对象中的父类资源。 */
+#define XClass_Deinit_Parent(Type, Object) \
+	(XClass_Parent(Type, EXClass_Deinit, void(*)(Type*))(Object))
 
 #ifdef __cplusplus
 }

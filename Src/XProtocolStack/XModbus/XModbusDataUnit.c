@@ -48,13 +48,8 @@ static XContainer* XModbusDataUnit_copyContainer(XModbusRegisterType type, const
 
 XVtable* XModbusDataUnit_class_init()
 {
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XClass)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
+	XVTABLE_INIT_DEFAULT(XClass)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDataUnit");
 	// 继承 XModbusDevice
 	XVTABLE_INHERIT_XCLASS(XClass);
 	//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
@@ -63,9 +58,7 @@ XVtable* XModbusDataUnit_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusDataUnit_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusDataUnit_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDataUnit_deinit);
-#if SHOWCONTAINERSIZE
-	printf("XModbusDataUnit size:%d\n", XVtable_size(XClassVtable));
-#endif
+	XCLASS_SHOW_SIZE_DEFAULT(XModbusDataUnit);
 	return XVTABLE_DEFAULT;
 }
 

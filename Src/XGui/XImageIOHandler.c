@@ -118,13 +118,8 @@ static void VXImageIOHandler_currentImageRect(const XImageIOHandler* self, XRect
 
 XVtable* XImageIOHandler_class_init()
 {
-    XVTABLE_CREAT_DEFAULT
-        // 虚函数表初始化
-#if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XImageIOHandler)
-#else
-        XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XImageIOHandler)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XImageIOHandler");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImageIOHandler_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VXImageIOHandler_canRead);

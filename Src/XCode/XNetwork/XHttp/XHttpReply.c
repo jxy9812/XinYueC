@@ -561,20 +561,13 @@ static bool xhttp_reply_parse(XHttpReply* self)
 
 XVtable* XHttpReply_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-    //虚函数表初始化
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XHttpReply)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XHttpReply)
+	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpReply");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHttpReply_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XHttpReply size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XCLASS_SHOW_SIZE_DEFAULT(XHttpReply);
     return XVTABLE_DEFAULT;
 }
 
