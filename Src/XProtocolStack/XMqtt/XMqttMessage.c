@@ -73,8 +73,15 @@ static void VMSG_deinit(XMqttMessage* msg)
 static void VMSG_copy(XMqttMessage* dest, const XMqttMessage* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttMessage_init(dest);
+    else {
+        if (dest->m_topic) XMqttTopicName_delete_base(dest->m_topic);
+        if (dest->m_payload) XByteArray_delete_base(dest->m_payload);
+        if (dest->m_publishProperties) XMqttPublishProperties_delete_base(dest->m_publishProperties);
+        dest->m_topic = NULL; dest->m_payload = NULL; dest->m_publishProperties = NULL;
+    }
     if (src->m_topic) dest->m_topic = XMqttTopicName_create_copy(src->m_topic);
     if (src->m_payload) dest->m_payload = XByteArray_create_copy(src->m_payload);
     dest->m_id = src->m_id;
@@ -87,10 +94,28 @@ static void VMSG_copy(XMqttMessage* dest, const XMqttMessage* src)
 static void VMSG_move(XMqttMessage* dest, XMqttMessage* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttMessage_init(dest);
-    memcpy(dest, src, sizeof(XMqttMessage));
-    memset(src, 0, sizeof(XMqttMessage));
+    else {
+        if (dest->m_topic) XMqttTopicName_delete_base(dest->m_topic);
+        if (dest->m_payload) XByteArray_delete_base(dest->m_payload);
+        if (dest->m_publishProperties) XMqttPublishProperties_delete_base(dest->m_publishProperties);
+    }
+    dest->m_topic = src->m_topic;
+    dest->m_payload = src->m_payload;
+    dest->m_id = src->m_id;
+    dest->m_qos = src->m_qos;
+    dest->m_duplicate = src->m_duplicate;
+    dest->m_retain = src->m_retain;
+    dest->m_publishProperties = src->m_publishProperties;
+    src->m_topic = NULL;
+    src->m_payload = NULL;
+    src->m_publishProperties = NULL;
+    src->m_id = 0;
+    src->m_qos = 0;
+    src->m_duplicate = false;
+    src->m_retain = false;
 }
 
 const XByteArray* XMqttMessage_payload_const(const XMqttMessage* msg) { return msg ? msg->m_payload : NULL; }

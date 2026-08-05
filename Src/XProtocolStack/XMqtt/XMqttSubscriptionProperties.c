@@ -52,8 +52,13 @@ static void VSP_deinit(XMqttSubscriptionProperties* prop)
 static void VSP_copy(XMqttSubscriptionProperties* dest, const XMqttSubscriptionProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttSubscriptionProperties_init(dest);
+    else if (dest->m_userProperties) {
+        XMqttUserProperties_delete_base(dest->m_userProperties);
+        dest->m_userProperties = NULL;
+    }
     dest->m_subscriptionIdentifier = src->m_subscriptionIdentifier;
     dest->m_noLocal = src->m_noLocal;
     if (src->m_userProperties) dest->m_userProperties = (XMqttUserProperties*)XVector_create_copy((XVector*)src->m_userProperties);
@@ -62,10 +67,14 @@ static void VSP_copy(XMqttSubscriptionProperties* dest, const XMqttSubscriptionP
 static void VSP_move(XMqttSubscriptionProperties* dest, XMqttSubscriptionProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttSubscriptionProperties_init(dest);
-    memcpy(dest, src, sizeof(XMqttSubscriptionProperties));
-    memset(src, 0, sizeof(XMqttSubscriptionProperties));
+    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    dest->m_userProperties = src->m_userProperties;
+    dest->m_subscriptionIdentifier = src->m_subscriptionIdentifier;
+    dest->m_noLocal = src->m_noLocal;
+    src->m_userProperties = NULL; src->m_subscriptionIdentifier = 0; src->m_noLocal = false;
 }
 
 const XMqttUserProperties* XMqttSubscriptionProperties_userProperties_const(const XMqttSubscriptionProperties* prop) { return prop ? prop->m_userProperties : NULL; }
@@ -126,18 +135,25 @@ static void VUSP_deinit(XMqttUnsubscriptionProperties* prop)
 static void VUSP_copy(XMqttUnsubscriptionProperties* dest, const XMqttUnsubscriptionProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttUnsubscriptionProperties_init(dest);
+    else if (dest->m_userProperties) {
+        XMqttUserProperties_delete_base(dest->m_userProperties);
+        dest->m_userProperties = NULL;
+    }
     if (src->m_userProperties) dest->m_userProperties = (XMqttUserProperties*)XVector_create_copy((XVector*)src->m_userProperties);
 }
 
 static void VUSP_move(XMqttUnsubscriptionProperties* dest, XMqttUnsubscriptionProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttUnsubscriptionProperties_init(dest);
-    memcpy(dest, src, sizeof(XMqttUnsubscriptionProperties));
-    memset(src, 0, sizeof(XMqttUnsubscriptionProperties));
+    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    dest->m_userProperties = src->m_userProperties;
+    src->m_userProperties = NULL;
 }
 
 const XMqttUserProperties* XMqttUnsubscriptionProperties_userProperties_const(const XMqttUnsubscriptionProperties* prop) { return prop ? prop->m_userProperties : NULL; }

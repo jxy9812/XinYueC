@@ -6,6 +6,14 @@ static void VXMqttTopicName_deinit(XMqttTopicName* name);
 static void VXMqttTopicName_copy(XMqttTopicName* dest, const XMqttTopicName* src);
 static void VXMqttTopicName_move(XMqttTopicName* dest, XMqttTopicName* src);
 
+static void XMqttTopicName_level_deinit(XString** level)
+{
+    if (level && *level) {
+        XString_delete_base(*level);
+        *level = NULL;
+    }
+}
+
 XVtable* XMqttTopicName_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XClass)
@@ -41,7 +49,7 @@ void XMqttTopicName_init(XMqttTopicName* name, const char* topic)
     memset(name, 0, sizeof(XMqttTopicName));
     XClass_init((XClass*)name);
     XClassGetVtable(name) = XMqttTopicName_class_init();
-    if (topic) name->m_name = XString_create_utf8(topic);
+    name->m_name = XString_create_utf8(topic);
 }
 
 static void VXMqttTopicName_deinit(XMqttTopicName* name)
@@ -54,16 +62,20 @@ static void VXMqttTopicName_deinit(XMqttTopicName* name)
 static void VXMqttTopicName_copy(XMqttTopicName* dest, const XMqttTopicName* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicName_init(dest, NULL);
-    if (src->m_name) dest->m_name = XString_create_copy(src->m_name);
+    if (dest->m_name) XString_delete_base(dest->m_name);
+    dest->m_name = src->m_name ? XString_create_copy(src->m_name) : XString_create_utf8(NULL);
 }
 
 static void VXMqttTopicName_move(XMqttTopicName* dest, XMqttTopicName* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicName_init(dest, NULL);
+    if (dest->m_name) XString_delete_base(dest->m_name);
     dest->m_name = src->m_name; src->m_name = NULL;
 }
 
@@ -82,16 +94,21 @@ void XMqttTopicName_setName(XMqttTopicName* name, const char* topic)
 {
     if (!name) return;
     if (name->m_name) { XString_delete_base(name->m_name); name->m_name = NULL; }
-    if (topic) name->m_name = XString_create_utf8(topic);
+    name->m_name = XString_create_utf8(topic ? topic : "");
 }
 
 bool XMqttTopicName_isValid(const XMqttTopicName* name)
 {
     if (!name || !name->m_name) return false;
     const char* s = XString_toUtf8(name->m_name);
-    if (!s || s[0] == '\0') return false;
-    // 主题名称不能包含通配符
-    if (strchr(s, '+') || strchr(s, '#')) return false;
+    size_t bytes = XString_toUtf8_length(name->m_name);
+    const XChar* unicode = XString_unicode(name->m_name);
+    size_t chars = XString_length_base(name->m_name);
+    if (!s || chars == 0 || chars > UINT16_MAX) return false;
+    for (size_t i = 0; i < chars; ++i) {
+        if (unicode[i] == 0) return false;
+    }
+    if (memchr(s, '+', bytes) || memchr(s, '#', bytes)) return false;
     return true;
 }
 
@@ -114,15 +131,17 @@ XVector* XMqttTopicName_levels(const XMqttTopicName* name)
     XVector* vec = XVector_create_ex(sizeof(XString*), true);
     if (!vec) return NULL;
 
-    char buf[256];
+    XContainerSetDataDeinitMethod(vec, (XCDataDeinitMethod)XMqttTopicName_level_deinit);
     const char* p = s;
-    while (*p) {
+    for (;;) {
         const char* slash = strchr(p, '/');
         size_t len = slash ? (size_t)(slash - p) : strlen(p);
-        if (len < sizeof(buf)) {
-            memcpy(buf, p, len); buf[len] = '\0';
-            XString* level = XString_create_utf8(buf);
-            if (level) XVector_push_back_1_base(vec, &level);
+        XString* level = len ? XString_create_with_length_utf8(p, len) :
+                               XString_create_utf8("");
+        if (!level || !XVector_push_back_1_base(vec, &level)) {
+            if (level) XString_delete_base(level);
+            XVector_delete_base(vec);
+            return NULL;
         }
         if (!slash) break;
         p = slash + 1;

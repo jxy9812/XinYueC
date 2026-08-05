@@ -54,6 +54,7 @@ static void VXMqttStringPair_deinit(XMqttStringPair* pair)
 static void VXMqttStringPair_copy(XMqttStringPair* dest, const XMqttStringPair* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     /* 兼容两种调用场景：
      * 1) vtable copy（EXClass_Copy）：dest 已初始化，直接 assign
      * 2) 容器回调（通过 _base 宏）：dest 是零内存，先 init 再 assign */
@@ -66,6 +67,7 @@ static void VXMqttStringPair_copy(XMqttStringPair* dest, const XMqttStringPair* 
 static void VXMqttStringPair_move(XMqttStringPair* dest, XMqttStringPair* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     /* 兼容两种调用场景：
      * 1) vtable move（EXClass_Move）：dest 已初始化，直接 swap
      * 2) 容器回调（通过 _base 宏）：dest 是零内存，先 init 再 swap */

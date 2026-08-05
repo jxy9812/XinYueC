@@ -53,8 +53,17 @@ static void VAP_deinit(XMqttAuthenticationProperties* prop)
 static void VAP_copy(XMqttAuthenticationProperties* dest, const XMqttAuthenticationProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttAuthenticationProperties_init(dest);
+    else {
+        if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
+        if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
+        if (dest->m_reason) XString_delete_base(dest->m_reason);
+        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+        dest->m_authenticationMethod = NULL; dest->m_authenticationData = NULL;
+        dest->m_reason = NULL; dest->m_userProperties = NULL;
+    }
     if (src->m_authenticationMethod) dest->m_authenticationMethod = XString_create_copy(src->m_authenticationMethod);
     if (src->m_authenticationData) dest->m_authenticationData = XByteArray_create_copy(src->m_authenticationData);
     if (src->m_reason) dest->m_reason = XString_create_copy(src->m_reason);
@@ -64,10 +73,19 @@ static void VAP_copy(XMqttAuthenticationProperties* dest, const XMqttAuthenticat
 static void VAP_move(XMqttAuthenticationProperties* dest, XMqttAuthenticationProperties* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttAuthenticationProperties_init(dest);
-    memcpy(dest, src, sizeof(XMqttAuthenticationProperties));
-    memset(src, 0, sizeof(XMqttAuthenticationProperties));
+    if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
+    if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
+    if (dest->m_reason) XString_delete_base(dest->m_reason);
+    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    dest->m_authenticationMethod = src->m_authenticationMethod;
+    dest->m_authenticationData = src->m_authenticationData;
+    dest->m_reason = src->m_reason;
+    dest->m_userProperties = src->m_userProperties;
+    src->m_authenticationMethod = NULL; src->m_authenticationData = NULL;
+    src->m_reason = NULL; src->m_userProperties = NULL;
 }
 
 const XString* XMqttAuthenticationProperties_authenticationMethod_const(const XMqttAuthenticationProperties* prop) { return prop ? prop->m_authenticationMethod : NULL; }

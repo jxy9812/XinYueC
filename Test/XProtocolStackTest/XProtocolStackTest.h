@@ -34,6 +34,11 @@ extern "C" {
 	void XMqttAuthenticationPropertiesTest();
 	void XMqttSubscriptionTest();
 	void XMqttClientTest();
+	int XMqttPublicApiTest_run(void);
+	void XMqttPublicApiTest(void);
+	void XMqttTcpServerIntegrationTest(void);
+	void XMqttTcpClientIntegrationTest(void);
+	void XMqttMemoryLifecycleTest(void);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

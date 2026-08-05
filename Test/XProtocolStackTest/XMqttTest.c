@@ -52,11 +52,11 @@ void XMqttTopicNameTest(void)
         XMqttTopicName* tn = XMqttTopicName_create(NULL);
         if (tn) {
             const XString* name = XMqttTopicName_name_const(tn);
-            if (name == NULL) {
-                XPrintf("  [通过] create(NULL) 返回空名称\n");
+            if (name && XString_length_base(name) == 0) {
+                XPrintf("  [通过] create(NULL) 返回空字符串值\n");
                 pass++;
             } else {
-                XPrintf("  [失败] create(NULL) 名称应为 NULL\n");
+                XPrintf("  [失败] create(NULL) 名称应为空字符串值\n");
                 fail++;
             }
             XMqttTopicName_delete_base(tn);
@@ -977,9 +977,9 @@ void XMqttSubscriptionTest(void)
         XMqttSubscription* sub = XMqttSubscription_create(filter, 0);
         XMqttSubscription_setState(sub, XMqttSubscription_Subscribed);
         XMqttSubscription_unsubscribe_base(sub);
-        if (XMqttSubscription_state(sub) == XMqttSubscription_Unsubscribed) {
-            XPrintf("  [通过] unsubscribe_base 正确\n"); pass++;
-        } else { XPrintf("  [失败] unsubscribe_base 状态不正确\n"); fail++; }
+        if (XMqttSubscription_state(sub) == XMqttSubscription_Subscribed) {
+            XPrintf("  [通过] 无关联客户端时 unsubscribe_base 保持状态\n"); pass++;
+        } else { XPrintf("  [失败] 无关联客户端时不应伪造取消成功\n"); fail++; }
         XMqttSubscription_deleteLater(sub);
         XMqttTopicFilter_delete_base(filter);
     }
@@ -1015,7 +1015,7 @@ void XMqttClientTest(void)
         if (client) {
             if (XMqttClient_state(client) == XMqttClient_Disconnected &&
                 XMqttClient_error(client) == XMqttClient_NoError &&
-                XMqttClient_port(client) == 1883 &&
+                XMqttClient_port(client) == 0 &&
                 XMqttClient_keepAlive(client) == 60 &&
                 XMqttClient_protocolVersion(client) == XMqttClient_MQTT_3_1_1 &&
                 XMqttClient_cleanSession(client) &&
@@ -1164,10 +1164,11 @@ void XMqttClientTest(void)
     /* ---------- 13. connectToHost / disconnectFromHost 虚函数调度 ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        XMqttClient_connectToHost_base(client); // 默认实现设置状态为 Connecting
-        if (XMqttClient_state(client) == XMqttClient_Connecting) {
-            XPrintf("  [通过] connectToHost 默认实现设置 Connecting 状态\n"); pass++;
-        } else { XPrintf("  [失败] connectToHost 状态不正确\n"); fail++; }
+        XMqttClient_connectToHost_base(client);
+        if (XMqttClient_state(client) == XMqttClient_Disconnected &&
+            XMqttClient_error(client) == XMqttClient_TransportInvalid) {
+            XPrintf("  [通过] 空主机连接报告传输无效\n"); pass++;
+        } else { XPrintf("  [失败] 空主机连接错误状态不正确\n"); fail++; }
 
         XMqttClient_disconnectFromHost_base(client);
         if (XMqttClient_state(client) == XMqttClient_Disconnected) {
@@ -1179,9 +1180,10 @@ void XMqttClientTest(void)
     /* ---------- 14. setTransport / transport ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        void* fakeDevice = (void*)0x1234;
-        XMqttClient_setTransport(client, fakeDevice, XMqttClient_AbstractSocket);
-        if (XMqttClient_transport(client) == fakeDevice) {
+        XTcpSocket* device = XTcpSocket_create();
+        XMqttClient_setTransport(client, device, XMqttClient_AbstractSocket);
+        XObject_setParent((XObject*)device, client);
+        if (XMqttClient_transport(client) == device) {
             XPrintf("  [通过] setTransport/transport 正确\n"); pass++;
         } else { XPrintf("  [失败] setTransport 不正确\n"); fail++; }
         XMqttClient_deleteLater(client);
@@ -1231,11 +1233,12 @@ void XMqttClientTest(void)
     /* ---------- 18. connectToHostEncrypted ---------- */
     {
         XMqttClient* client = XMqttClient_create();
-        /* 不传 SSL 配置，验证不崩溃且状态变为 Connecting */
+        /* 不传 SSL 配置且未设置主机，验证错误状态 */
         XMqttClient_connectToHostEncrypted(client, NULL);
-        if (XMqttClient_state(client) == XMqttClient_Connecting) {
-            XPrintf("  [通过] connectToHostEncrypted 设置 Connecting 状态\n"); pass++;
-        } else { XPrintf("  [失败] connectToHostEncrypted 状态不正确\n"); fail++; }
+        if (XMqttClient_state(client) == XMqttClient_Disconnected &&
+            XMqttClient_error(client) == XMqttClient_TransportInvalid) {
+            XPrintf("  [通过] connectToHostEncrypted 空主机错误状态正确\n"); pass++;
+        } else { XPrintf("  [失败] connectToHostEncrypted 空主机错误状态不正确\n"); fail++; }
         XMqttClient_deleteLater(client);
     }
 
@@ -1296,6 +1299,22 @@ void XMenu_XMqttTest(XMenu* root)
     {
         XAction* action = XMenu_addAction(menu, "Client单元测试");
         XAction_setAction(action, XMqttClientTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "Qt6.8公开API与协议回归");
+        XAction_setAction(action, XMqttPublicApiTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 服务器（固定端口 18884）");
+        XAction_setAction(action, XMqttTcpServerIntegrationTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 客户端联调");
+        XAction_setAction(action, XMqttTcpClientIntegrationTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "MQTT 生命周期泄漏回归");
+        XAction_setAction(action, XMqttMemoryLifecycleTest);
     }
     XMenu_addMenu(root, menu);
 }

@@ -521,7 +521,7 @@ int32_t XByteArrayView_compare(const XByteArrayView* self, const XByteArrayView*
     else
     {
         /* 大小写敏感比较 */
-        cmp = memcmp(self->m_data, a->m_data, (size_t)minSize);
+        cmp = minSize > 0 ? memcmp(self->m_data, a->m_data, (size_t)minSize) : 0;
         if (cmp != 0)
             return (cmp < 0) ? -1 : 1;
     }

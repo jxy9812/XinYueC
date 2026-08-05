@@ -281,6 +281,7 @@ XCLASS_DEFINE_EXTEND_END(XMqttServerConnectionProperties, XMqttConnectionPropert
  */
 typedef struct XMqttServerConnectionProperties {
     XMqttConnectionProperties m_base;        ///< 继承自连接属性基类
+    bool m_valid;                            ///< 是否已收到 CONNACK
     uint32_t m_availableProperties;          ///< 已设置的属性位标志
     uint8_t m_maximumQoS;                    ///< 最大 QoS
     bool m_retainAvailable;                  ///< 是否支持保留消息

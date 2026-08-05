@@ -77,6 +77,8 @@ typedef enum {
     XMqttClient_MQTT_5_0   = 5      ///< MQTT 5.0
 } XMqttClient_ProtocolVersion;
 
+typedef struct XMqttClientPrivate XMqttClientPrivate;
+
 /**
  * @brief XMqttClient 虚函数表枚举
  */
@@ -101,11 +103,11 @@ typedef struct XMqttClient {
     uint16_t m_port;                              ///< Broker 端口
     XString* m_clientId;                          ///< 客户端 ID
     uint16_t m_keepAlive;                         ///< 保活间隔（秒）
-    uint8_t m_protocolVersion;                    ///< 协议版本（XMqttClient_ProtocolVersion）
+    XMqttClient_ProtocolVersion m_protocolVersion; ///< 协议版本
 
     /* 状态 */
-    uint8_t m_state;                              ///< 客户端状态（XMqttClient_State）
-    uint8_t m_error;                              ///< 错误码（XMqttClient_Error）
+    XMqttClient_State m_state;                    ///< 客户端状态
+    XMqttClient_Error m_error;                    ///< 错误码
 
     /* 认证 */
     XString* m_username;                          ///< 用户名
@@ -125,8 +127,9 @@ typedef struct XMqttClient {
     XMqttServerConnectionProperties* m_serverConnectionProperties; ///< 服务端连接属性
 
     /* 传输 */
-    uint8_t m_transportType;                      ///< 传输类型（XMqttClient_TransportType）
+    XMqttClient_TransportType m_transportType;    ///< 传输类型
     void* m_transport;                            ///< 传输设备指针（不拥有）
+    XMqttClientPrivate* m_private;                 ///< 协议状态（内部使用）
 } XMqttClient;
 
 /******************************************************************************************
@@ -301,7 +304,7 @@ uint16_t XMqttClient_keepAlive(const XMqttClient* client);
  * @param client 客户端实例指针
  * @return 协议版本（XMqttClient_ProtocolVersion），未设置返回 0
  */
-uint8_t XMqttClient_protocolVersion(const XMqttClient* client);
+XMqttClient_ProtocolVersion XMqttClient_protocolVersion(const XMqttClient* client);
 
 /**
  * @brief 连接 Broker（虚函数调度入口）
@@ -337,14 +340,14 @@ void XMqttClient_disconnectFromHost_base(XMqttClient* client);
  * @param client 客户端实例指针
  * @return 客户端状态（XMqttClient_State），未初始化返回 Disconnected
  */
-uint8_t XMqttClient_state(const XMqttClient* client);
+XMqttClient_State XMqttClient_state(const XMqttClient* client);
 
 /**
  * @brief 获取错误码
  * @param client 客户端实例指针
  * @return 错误码（XMqttClient_Error），无错误返回 NoError
  */
-uint8_t XMqttClient_error(const XMqttClient* client);
+XMqttClient_Error XMqttClient_error(const XMqttClient* client);
 
 /******************************************************************************************
  * 属性 Getters/Setters
@@ -508,19 +511,19 @@ void XMqttClient_setKeepAlive(XMqttClient* client, uint16_t keepAlive);
  * @param client 客户端实例指针（非 NULL）
  * @param protocolVersion 协议版本（XMqttClient_ProtocolVersion）
  */
-void XMqttClient_setProtocolVersion(XMqttClient* client, uint8_t protocolVersion);
+void XMqttClient_setProtocolVersion(XMqttClient* client, XMqttClient_ProtocolVersion protocolVersion);
 /**
  * @brief 设置客户端状态
  * @param client 客户端实例指针（非 NULL）
  * @param state 客户端状态（XMqttClient_State）
  */
-void XMqttClient_setState(XMqttClient* client, uint8_t state);
+void XMqttClient_setState(XMqttClient* client, XMqttClient_State state);
 /**
  * @brief 设置错误码
  * @param client 客户端实例指针（非 NULL）
  * @param error 错误码（XMqttClient_Error）
  */
-void XMqttClient_setError(XMqttClient* client, uint8_t error);
+void XMqttClient_setError(XMqttClient* client, XMqttClient_Error error);
 
 /******************************************************************************************
  * MQTT 5.0 属性接口
@@ -675,21 +678,21 @@ void* XMqttClient_keepAliveChanged_signal(XMqttClient* client, uint16_t keepAliv
  * @param protocolVersion 新的协议版本
  * @return 信号发送结果
  */
-void* XMqttClient_protocolVersionChanged_signal(XMqttClient* client, uint8_t protocolVersion);
+void* XMqttClient_protocolVersionChanged_signal(XMqttClient* client, XMqttClient_ProtocolVersion protocolVersion);
 /**
  * @brief 客户端状态变更信号
  * @param client 客户端实例指针（非 NULL）
  * @param state 新的客户端状态
  * @return 信号发送结果
  */
-void* XMqttClient_stateChanged_signal(XMqttClient* client, uint8_t state);
+void* XMqttClient_stateChanged_signal(XMqttClient* client, XMqttClient_State state);
 /**
  * @brief 错误码变更信号
  * @param client 客户端实例指针（非 NULL）
  * @param error 新的错误码
  * @return 信号发送结果
  */
-void* XMqttClient_errorChanged_signal(XMqttClient* client, uint8_t error);
+void* XMqttClient_errorChanged_signal(XMqttClient* client, XMqttClient_Error error);
 /**
  * @brief 用户名变更信号
  * @param client 客户端实例指针（非 NULL）

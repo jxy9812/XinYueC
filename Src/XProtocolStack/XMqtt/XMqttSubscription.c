@@ -1,5 +1,6 @@
 ﻿#include "XMqttSubscription.h"
 #include "XMemory.h"
+#include "XMqttClient.h"
 #include <string.h>
 
 static void VXMQ_deinit(XMqttSubscription* sub);
@@ -115,8 +116,8 @@ void XMqttSubscription_unsubscribe_base(XMqttSubscription* sub)
 static void VXMQ_unsubscribe(XMqttSubscription* sub)
 {
     if (!sub) return;
-    sub->m_state = XMqttSubscription_Unsubscribed;
-    XMqttSubscription_stateChanged_signal(sub, XMqttSubscription_Unsubscribed);
+    if (sub->m_client && sub->m_topic)
+        XMqttClient_unsubscribe((XMqttClient*)sub->m_client, sub->m_topic);
 }
 
 // =============== 受保护接口 ===============
@@ -146,7 +147,7 @@ void XMqttSubscription_setClient(XMqttSubscription* sub, void* client)
 void* XMqttSubscription_stateChanged_signal(XMqttSubscription* sub, XMqttSubscription_State state)
 {
     XEmitSignal(sub, XMqttSubscription_stateChanged_signal,
-        XVarList_Create(XVar(uint8_t, state)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        XVarList_Create(XVar(int, state)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XMqttSubscription_qosChanged_signal(XMqttSubscription* sub, uint8_t qos)
@@ -155,8 +156,19 @@ void* XMqttSubscription_qosChanged_signal(XMqttSubscription* sub, uint8_t qos)
         XVarList_Create(XVar(uint8_t, qos)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
+static void XMqttSubscription_message_args_delete(XVarList* list)
+{
+    XVarList_args_1(list, XMqttMessage*, message);
+    if (message) XMqttMessage_delete_base(message);
+}
+
 void* XMqttSubscription_messageReceived_signal(XMqttSubscription* sub, XMqttMessage* msg)
 {
-    XEmitSignal(sub, XMqttSubscription_messageReceived_signal,
-        XVarList_Create(XVar(XMqttMessage*, msg)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    if (!sub) return (void*)(size_t)XMqttSubscription_messageReceived_signal;
+    XMqttMessage* copy = msg ? XMqttMessage_create_copy(msg) : NULL;
+    XVarList* args = XVarList_Create(XVar(XMqttMessage*, copy));
+    XObject_emitSignal((XObject*)sub, (size_t)XMqttSubscription_messageReceived_signal,
+                       args, XMqttSubscription_message_args_delete,
+                       NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)(size_t)XMqttSubscription_messageReceived_signal;
 }
