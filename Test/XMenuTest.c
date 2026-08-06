@@ -68,7 +68,7 @@ static void trigger(MenuData* data)
 		XPrintf("\n结束---------------%s---------------\n", XAction_getText(data->data));
 	}
 }
-void XMenuTest_show(XMenu* menu, int column)
+int XMenuTest_show(XMenu* menu, int column)
 {
 	XMenu* parent =NULL;
 	XVector* v=XVector_Create(MenuData);
@@ -114,7 +114,8 @@ void XMenuTest_show(XMenu* menu, int column)
 		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
 		XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
 		if (scanf("%9s", command) != 1 || strcmp(command, "q") == 0) {
-			exit(0);
+			XVector_delete_base(v);
+			return 0;
 		}
 		int index=atoi(command);
 		if (index < 0 || index >= XContainerSize(v))

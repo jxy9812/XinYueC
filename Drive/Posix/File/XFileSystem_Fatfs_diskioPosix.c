@@ -28,6 +28,7 @@
 #include "XMemory.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -59,6 +60,35 @@
 
 static int* g_diskFds = NULL;         /* fd[FF_VOLUMES]，首次 initialize 时分配 */
 static int  g_diskFdsInited = 0;
+static uint32_t g_diskReadonlyMask = 0;
+
+#if XFILE_FATFS_DISKIO_MODE == 1
+/* 按逻辑序号枚举实际块设备，避免“存在 sdb 时索引仍按 sdb=1”导致卷号断档。 */
+static bool findPhysicalDrive(int ordinal, char* outPath, size_t outSize)
+{
+    if (ordinal < 0 || !outPath || outSize == 0) return false;
+    int current = 0;
+    for (int i = 0; i < 26; ++i) {
+        char path[64];
+        struct stat st;
+        snprintf(path, sizeof(path), "/dev/sd%c1", (char)('a' + i));
+        if (stat(path, &st) == 0 && S_ISBLK(st.st_mode)) {
+            if (current++ == ordinal) {
+                snprintf(outPath, outSize, "%s", path);
+                return true;
+            }
+        }
+        snprintf(path, sizeof(path), "/dev/mmcblk%dp1", i);
+        if (stat(path, &st) == 0 && S_ISBLK(st.st_mode)) {
+            if (current++ == ordinal) {
+                snprintf(outPath, outSize, "%s", path);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+#endif
 
 static void ensureDiskFds(void)
 {
@@ -87,6 +117,7 @@ DSTATUS disk_initialize(BYTE pdrv)
         close(g_diskFds[pdrv]);
         g_diskFds[pdrv] = -1;
     }
+    g_diskReadonlyMask &= ~(1u << pdrv);
 
 #if XFILE_FATFS_DISKIO_MODE == 0
     /* 文件镜像模式：动态生成文件名 fatfs_diskX.img */
@@ -130,7 +161,9 @@ DSTATUS disk_initialize(BYTE pdrv)
     /* 物理磁盘模式：访问块设备 */
     {
         char devPath[64];
-        snprintf(devPath, sizeof(devPath), "/dev/sd%c1", 'a' + pdrv);
+        if (!findPhysicalDrive((int)pdrv, devPath, sizeof(devPath))) {
+            return STA_NOINIT | STA_NODISK;
+        }
 
         /* 先尝试读写打开 */
         g_diskFds[pdrv] = open(devPath, O_RDWR | O_CLOEXEC);
@@ -140,12 +173,13 @@ DSTATUS disk_initialize(BYTE pdrv)
             if (g_diskFds[pdrv] < 0) {
                 return STA_NOINIT | STA_NODISK;
             }
+            g_diskReadonlyMask |= (1u << pdrv);
             return STA_PROTECT;
         }
     }
 #endif
 
-    return 0;
+    return (g_diskReadonlyMask & (1u << pdrv)) ? STA_PROTECT : 0;
 }
 
 /* ============================================================================
@@ -158,7 +192,7 @@ DSTATUS disk_status(BYTE pdrv)
     if (!g_diskFds || g_diskFds[pdrv] < 0) {
         return STA_NOINIT | STA_NODISK;
     }
-    return 0;
+    return (g_diskReadonlyMask & (1u << pdrv)) ? STA_PROTECT : 0;
 }
 
 /* ============================================================================
@@ -191,6 +225,7 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count)
     if (pdrv >= FF_VOLUMES) return RES_PARERR;
     if (!g_diskFds || g_diskFds[pdrv] < 0) return RES_NOTRDY;
     if (!buff || count == 0) return RES_PARERR;
+    if (count > (UINT)(SIZE_MAX / 512u)) return RES_PARERR;
 
     UINT sectorSize = 512;
     off_t offset = (off_t)sector * sectorSize;
@@ -224,6 +259,8 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
     if (pdrv >= FF_VOLUMES) return RES_PARERR;
     if (!g_diskFds || g_diskFds[pdrv] < 0) return RES_NOTRDY;
     if (!buff || count == 0) return RES_PARERR;
+    if (count > (UINT)(SIZE_MAX / 512u)) return RES_PARERR;
+    if (disk_status(pdrv) & STA_PROTECT) return RES_WRPRT;
 
     UINT sectorSize = 512;
     off_t offset = (off_t)sector * sectorSize;
@@ -262,6 +299,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
             return RES_OK;
 
         case GET_SECTOR_COUNT: {
+            if (!buff) return RES_PARERR;
             off_t size = lseek(g_diskFds[pdrv], 0, SEEK_END);
             if (size < 0) return RES_ERROR;
             lseek(g_diskFds[pdrv], 0, SEEK_SET);
@@ -273,16 +311,20 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
         }
 
         case GET_SECTOR_SIZE:
+            if (!buff) return RES_PARERR;
             *(WORD*)buff = 512;
             return RES_OK;
 
         case GET_BLOCK_SIZE:
+            if (!buff) return RES_PARERR;
             *(DWORD*)buff = 1;
             return RES_OK;
 
         case CTRL_TRIM: {
 #ifdef __linux__
+            if (!buff) return RES_PARERR;
             LBA_t* range = (LBA_t*)buff;
+            if (range[1] < range[0]) return RES_PARERR;
             off_t trimOffset = (off_t)range[0] * 512;
             off_t trimLength = (off_t)(range[1] - range[0] + 1) * 512;
             fallocate(g_diskFds[pdrv], FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
@@ -337,19 +379,8 @@ int XFatfsDrives_prefixToIndex(const char* prefix)
 int XFatfsDrives_count(void)
 {
     int count = 0;
-    for (char c = 'a'; c <= 'z'; c++) {
-        char devPath[64];
-        snprintf(devPath, sizeof(devPath), "/dev/sd%c1", c);
-        struct stat st;
-        if (stat(devPath, &st) == 0 && S_ISBLK(st.st_mode)) {
-            count++;
-        } else {
-            snprintf(devPath, sizeof(devPath), "/dev/mmcblk%dp1", c - 'a');
-            if (stat(devPath, &st) == 0 && S_ISBLK(st.st_mode)) {
-                count++;
-            }
-        }
-    }
+    char path[64];
+    while (findPhysicalDrive(count, path, sizeof(path))) count++;
     return count;
 }
 
@@ -357,20 +388,18 @@ bool XFatfsDrives_at(int index, XString* path)
 {
     if (!path || index < 0) return false;
 
-    int count = 0;
-    for (char c = 'a'; c <= 'z'; c++) {
-        char devPath[64];
-        snprintf(devPath, sizeof(devPath), "/dev/sd%c1", c);
-        struct stat st;
-        if (stat(devPath, &st) == 0 && S_ISBLK(st.st_mode)) {
-            if (count == index) {
-                char drivePath[8];
-                snprintf(drivePath, sizeof(drivePath), "%c:", c);
-                XString_assign_utf8(path, drivePath);
-                return true;
-            }
-            count++;
+    char devPath[64];
+    if (findPhysicalDrive(index, devPath, sizeof(devPath))) {
+        char drivePath[8];
+        char letter = 'A';
+        if (strncmp(devPath, "/dev/sd", 7) == 0) letter = (char)('A' + (devPath[7] - 'a'));
+        else if (strncmp(devPath, "/dev/mmcblk", 11) == 0) {
+            int n = atoi(devPath + 11);
+            if (n >= 0 && n < 26) letter = (char)('A' + n);
         }
+        snprintf(drivePath, sizeof(drivePath), "%c:", letter);
+        XString_assign_utf8(path, drivePath);
+        return true;
     }
     return false;
 }
@@ -381,16 +410,15 @@ int XFatfsDrives_prefixToIndex(const char* prefix)
     if (prefix[0] && prefix[1] == ':') {
         char letter = (prefix[0] >= 'a' && prefix[0] <= 'z') ? prefix[0] - 'a' + 'A' : prefix[0];
         if (letter >= 'A' && letter <= 'Z') {
-            int idx = letter - 'A';
             char devPath[64];
-            snprintf(devPath, sizeof(devPath), "/dev/sd%c1", 'a' + idx);
-            struct stat st;
-            if (stat(devPath, &st) == 0 && S_ISBLK(st.st_mode)) {
-                return idx;
-            }
-            snprintf(devPath, sizeof(devPath), "/dev/mmcblk%dp1", idx);
-            if (stat(devPath, &st) == 0 && S_ISBLK(st.st_mode)) {
-                return idx;
+            for (int ordinal = 0; findPhysicalDrive(ordinal, devPath, sizeof(devPath)); ++ordinal) {
+                char mapped = 'A';
+                if (strncmp(devPath, "/dev/sd", 7) == 0) mapped = (char)('A' + (devPath[7] - 'a'));
+                else if (strncmp(devPath, "/dev/mmcblk", 11) == 0) {
+                    int n = atoi(devPath + 11);
+                    if (n >= 0 && n < 26) mapped = (char)('A' + n);
+                }
+                if (mapped == letter) return ordinal;
             }
         }
     }
@@ -453,7 +481,20 @@ bool XFatfsPath_setCurrent(const XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
-    return true;
+    const char* utf8 = XString_toUtf8(path);
+    if (!utf8) return false;
+    int index = XFatfsDrives_prefixToIndex(utf8);
+    const char* rest = utf8;
+    if (index >= 0) {
+        const char* colon = strchr(utf8, ':');
+        rest = colon ? colon + 1 : utf8;
+    } else {
+        index = 0;
+    }
+    char fatfsPath[512];
+    int n = snprintf(fatfsPath, sizeof(fatfsPath), "%d:%s", index, rest);
+    if (n < 0 || (size_t)n >= sizeof(fatfsPath)) return false;
+    return f_chdir(fatfsPath) == FR_OK;
 #else
     const char* utf8 = XString_toUtf8(path);
     if (!utf8) return false;

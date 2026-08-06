@@ -7,6 +7,8 @@
 #if defined(XFILE_USE_FATFS)
 
 #include "ff.h"
+#include <stdio.h>
+#include <string.h>
 
 
 #if FF_USE_LFN == 3	/* Use dynamic memory allocation */
@@ -97,7 +99,7 @@ int ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the 
 {
 #if OS_TYPE == 0	/* Win32 */
 	Mutex[vol] = CreateMutex(NULL, FALSE, NULL);
-	return (int)(Mutex[vol] != INVALID_HANDLE_VALUE);
+	return (int)(Mutex[vol] != NULL);
 
 #elif OS_TYPE == 1	/* uITRON */
 	T_CMTX cmtx = {TA_TPRI,1};
@@ -150,7 +152,10 @@ void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due
 )
 {
 #if OS_TYPE == 0	/* Win32 */
-	CloseHandle(Mutex[vol]);
+	if (Mutex[vol]) {
+		CloseHandle(Mutex[vol]);
+		Mutex[vol] = NULL;
+	}
 
 #elif OS_TYPE == 1	/* uITRON */
 	del_mtx(Mutex[vol]);

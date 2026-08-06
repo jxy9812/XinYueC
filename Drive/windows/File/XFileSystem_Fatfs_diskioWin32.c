@@ -9,6 +9,10 @@
 #include "diskio.h"
 #include "XFileSystem_Fatfs_platform.h"
 #include "XString.h"
+#include "XMemory.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
 #include <windows.h>
 #include <shlobj.h>
 
@@ -30,6 +34,25 @@
 
 static HANDLE* g_diskHandles = NULL;       /* HANDLE[FF_VOLUMES]，首次 initialize 时分配 */
 static int g_diskHandlesInited = 0;
+static uint32_t g_diskReadonlyMask = 0;
+
+#if XFILE_FATFS_DISKIO_MODE == 1
+static bool findLogicalDrive(int ordinal, char* outPath, size_t outSize)
+{
+    if (ordinal < 0 || !outPath || outSize == 0) return false;
+    DWORD mask = GetLogicalDrives();
+    int current = 0;
+    for (int i = 0; i < 26; ++i) {
+        if (mask & (1u << i)) {
+            if (current++ == ordinal) {
+                snprintf(outPath, outSize, "\\\\.\\%c:", (char)('A' + i));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+#endif
 
 static void ensureDiskHandles(void)
 {
@@ -57,16 +80,24 @@ DSTATUS disk_initialize(BYTE pdrv)
     if (g_diskHandles[pdrv] != INVALID_HANDLE_VALUE) {
         CloseHandle(g_diskHandles[pdrv]);
     }
+    g_diskReadonlyMask &= ~(1u << pdrv);
 
 #if XFILE_FATFS_DISKIO_MODE == 0
     /* 文件镜像模式：动态生成文件名 fatfs_diskX.img */
     {
-        char imgPath[64];
-        snprintf(imgPath, sizeof(imgPath), XFILE_FATFS_DISK_IMAGE_PATH "%d.img", pdrv);
+        char imgPath[MAX_PATH];
+        char baseDir[MAX_PATH];
+        DWORD baseLen = GetEnvironmentVariableA("XFILE_FATFS_DIR", baseDir, sizeof(baseDir));
+        if (baseLen > 0 && baseLen < sizeof(baseDir)) {
+            snprintf(imgPath, sizeof(imgPath), "%s\\%s%d.img", baseDir,
+                     XFILE_FATFS_DISK_IMAGE_PATH, pdrv);
+        } else {
+            snprintf(imgPath, sizeof(imgPath), XFILE_FATFS_DISK_IMAGE_PATH "%d.img", pdrv);
+        }
         g_diskHandles[pdrv] = CreateFileA(
             imgPath,
             GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
@@ -76,20 +107,33 @@ DSTATUS disk_initialize(BYTE pdrv)
         if (g_diskHandles[pdrv] != INVALID_HANDLE_VALUE) {
             /* 新文件预分配镜像大小（由宏 XFILE_FATFS_DISK_IMAGE_SIZE 控制） */
             LARGE_INTEGER fileSize;
-            if (GetFileSizeEx(g_diskHandles[pdrv], &fileSize) && fileSize.QuadPart == 0) {
+            if (!GetFileSizeEx(g_diskHandles[pdrv], &fileSize)) {
+                CloseHandle(g_diskHandles[pdrv]);
+                g_diskHandles[pdrv] = INVALID_HANDLE_VALUE;
+                return STA_NOINIT;
+            }
+            if (fileSize.QuadPart == 0) {
                 LARGE_INTEGER newSize;
                 newSize.QuadPart = XFILE_FATFS_DISK_IMAGE_SIZE;
-                SetFilePointerEx(g_diskHandles[pdrv], newSize, NULL, FILE_BEGIN);
-                SetEndOfFile(g_diskHandles[pdrv]);
-                SetFilePointerEx(g_diskHandles[pdrv], (LARGE_INTEGER){0}, NULL, FILE_BEGIN);
+                if (!SetFilePointerEx(g_diskHandles[pdrv], newSize, NULL, FILE_BEGIN)
+                    || !SetEndOfFile(g_diskHandles[pdrv])) {
+                    CloseHandle(g_diskHandles[pdrv]);
+                    g_diskHandles[pdrv] = INVALID_HANDLE_VALUE;
+                    return STA_NOINIT;
+                }
             }
+            SetFilePointer(g_diskHandles[pdrv], 0, NULL, FILE_BEGIN);
+        } else {
+            return STA_NOINIT;
         }
     }
 #else
     /* 物理磁盘模式 */
     {
         char drivePath[64];
-        snprintf(drivePath, sizeof(drivePath), "\\\\.\\%c:", 'A' + pdrv);
+        if (!findLogicalDrive((int)pdrv, drivePath, sizeof(drivePath))) {
+            return STA_NOINIT | STA_NODISK;
+        }
 
         g_diskHandles[pdrv] = CreateFileA(
             drivePath,
@@ -115,12 +159,13 @@ DSTATUS disk_initialize(BYTE pdrv)
             if (g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
                 return STA_NOINIT | STA_NODISK;
             }
+            g_diskReadonlyMask |= (1u << pdrv);
             return STA_PROTECT;
         }
     }
 #endif
 
-    return 0;
+    return (g_diskReadonlyMask & (1u << pdrv)) ? STA_PROTECT : 0;
 }
 
 /* ============================================================================
@@ -134,7 +179,7 @@ DSTATUS disk_status(BYTE pdrv)
         return STA_NOINIT | STA_NODISK;
     }
 
-    return 0;
+    return (g_diskReadonlyMask & (1u << pdrv)) ? STA_PROTECT : 0;
 }
 
 /* ============================================================================
@@ -149,8 +194,8 @@ static BYTE* ensureAlignedBuf(UINT size)
 {
     if (g_alignedBuf && g_alignedBufSize >= size) return g_alignedBuf;
     if (g_alignedBuf) { XFree_System(g_alignedBuf); g_alignedBuf = NULL; }
-    /* _aligned_malloc 返回扇区对齐（512字节）的内存 */
-    g_alignedBuf = (BYTE*)_aligned_malloc(size, FF_MAX_SS);
+    /* 使用 XinYueC 对齐分配器，保证释放函数与分配函数匹配。 */
+    g_alignedBuf = (BYTE*)XAlignedMalloc_System(size, FF_MAX_SS);
     if (g_alignedBuf) g_alignedBufSize = size;
     return g_alignedBuf;
 }
@@ -162,23 +207,24 @@ static BYTE* ensureAlignedBuf(UINT size)
 
 DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count)
 {
-    if (pdrv >= FF_VOLUMES || !g_diskHandles || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
+    if (pdrv >= FF_VOLUMES || !g_diskHandles || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE
+        || !buff || count == 0 || count > (UINT)(MAXDWORD / FF_MAX_SS)) {
         return RES_PARERR;
     }
-
 #if XFILE_FATFS_DISKIO_MODE == 1
-    /* 物理磁盘模式：使用 OVERLAPPED + 对齐缓冲区 */
+    /* 物理磁盘模式：同步句柄配合对齐缓冲区，避免未开启 OVERLAPPED 时
+     * 传入 OVERLAPPED 结构导致 ERROR_INVALID_PARAMETER。 */
     {
         UINT size = count * FF_MAX_SS;
         BYTE* alignedBuf = ensureAlignedBuf(size);
         if (!alignedBuf) return RES_ERROR;
 
-        OVERLAPPED ol = {0};
-        ol.Offset = (DWORD)(sector * FF_MAX_SS);
-        ol.OffsetHigh = 0;
+        LARGE_INTEGER offset;
+        offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
+        if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) return RES_ERROR;
 
         DWORD bytesRead;
-        if (!ReadFile(g_diskHandles[pdrv], alignedBuf, size, &bytesRead, &ol)) {
+        if (!ReadFile(g_diskHandles[pdrv], alignedBuf, size, &bytesRead, NULL)) {
             return RES_ERROR;
         }
         if (bytesRead < size) {
@@ -210,12 +256,14 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count)
 
 DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
 {
-    if (pdrv >= FF_VOLUMES || !g_diskHandles || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
+    if (pdrv >= FF_VOLUMES || !g_diskHandles || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE
+        || !buff || count == 0 || count > (UINT)(MAXDWORD / FF_MAX_SS)) {
         return RES_PARERR;
     }
+    if (disk_status(pdrv) & STA_PROTECT) return RES_WRPRT;
 
 #if XFILE_FATFS_DISKIO_MODE == 1
-    /* 物理磁盘模式：检查写保护后使用 OVERLAPPED + 对齐缓冲区 */
+    /* 物理磁盘模式：同步句柄配合对齐缓冲区。 */
     {
         DWORD status = disk_status(pdrv);
         if (status & STA_PROTECT) return RES_WRPRT;
@@ -225,12 +273,12 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
         if (!alignedBuf) return RES_ERROR;
         memcpy(alignedBuf, buff, size);
 
-        OVERLAPPED ol = {0};
-        ol.Offset = (DWORD)(sector * FF_MAX_SS);
-        ol.OffsetHigh = 0;
+        LARGE_INTEGER offset;
+        offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
+        if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) return RES_ERROR;
 
         DWORD bytesWritten;
-        if (!WriteFile(g_diskHandles[pdrv], alignedBuf, size, &bytesWritten, &ol)) {
+        if (!WriteFile(g_diskHandles[pdrv], alignedBuf, size, &bytesWritten, NULL)) {
             return RES_ERROR;
         }
         if (bytesWritten < size) return RES_ERROR;
@@ -264,7 +312,7 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
 
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
 {
-    if (pdrv >= FF_VOLUMES || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
+    if (pdrv >= FF_VOLUMES || !g_diskHandles || g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
         return RES_PARERR;
     }
 
@@ -274,6 +322,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
             return RES_OK;
 
         case GET_SECTOR_COUNT: {
+            if (!buff) return RES_PARERR;
             LARGE_INTEGER fileSize;
             if (!GetFileSizeEx(g_diskHandles[pdrv], &fileSize)) return RES_ERROR;
             *(DWORD*)buff = (DWORD)(fileSize.QuadPart / FF_MAX_SS);
@@ -281,10 +330,12 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
         }
 
         case GET_SECTOR_SIZE:
+            if (!buff) return RES_PARERR;
             *(DWORD*)buff = FF_MAX_SS;
             return RES_OK;
 
         case GET_BLOCK_SIZE:
+            if (!buff) return RES_PARERR;
             *(DWORD*)buff = 1;  /* 擦除块大小（1扇区） */
             return RES_OK;
 
@@ -335,9 +386,7 @@ int XFatfsDrives_count(void)
 {
     DWORD mask = GetLogicalDrives();
     int count = 0;
-    for (int i = 0; i < 26; i++) {
-        if (mask & (1 << i)) count++;
-    }
+    for (int i = 0; i < 26; i++) if (mask & (1u << i)) ++count;
     return count;
 }
 
@@ -348,17 +397,10 @@ bool XFatfsDrives_at(int index, XString* path)
     DWORD mask = GetLogicalDrives();
     int count = 0;
     for (int i = 0; i < 26; i++) {
-        if (mask & (1 << i)) {
-            if (count == index) {
-                char drivePath[4];
-                drivePath[0] = 'A' + i;
-                drivePath[1] = ':';
-                drivePath[2] = '\\';
-                drivePath[3] = '\0';
-                XString_assign_utf8(path, drivePath);
-                return true;
-            }
-            count++;
+        if (mask & (1u << i) && count++ == index) {
+            char drivePath[4] = { (char)('A' + i), ':', '\\', '\0' };
+            XString_assign_utf8(path, drivePath);
+            return true;
         }
     }
     return false;
@@ -370,7 +412,16 @@ int XFatfsDrives_prefixToIndex(const char* prefix)
     /* 物理磁盘模式：匹配单字母+冒号前缀（如 "C:", "C:/", "D:\"） */
     if (prefix[0] && prefix[1] == ':') {
         char letter = (prefix[0] >= 'a' && prefix[0] <= 'z') ? prefix[0] - 'a' + 'A' : prefix[0];
-        if (letter >= 'A' && letter <= 'Z') return letter - 'A';
+        if (letter >= 'A' && letter <= 'Z') {
+            DWORD mask = GetLogicalDrives();
+            int ordinal = 0;
+            for (int i = 0; i < 26; ++i) {
+                if (mask & (1u << i)) {
+                    if (i == letter - 'A') return ordinal;
+                    ++ordinal;
+                }
+            }
+        }
     }
     return -1;
 }
@@ -438,8 +489,20 @@ bool XFatfsPath_setCurrent(const XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
-    /* 文件镜像模式：由 FatFS 的 f_chdir 管理，平台层返回 true */
-    return true;
+    const char* utf8 = XString_toUtf8(path);
+    if (!utf8) return false;
+    int index = XFatfsDrives_prefixToIndex(utf8);
+    const char* rest = utf8;
+    if (index >= 0) {
+        const char* colon = strchr(utf8, ':');
+        rest = colon ? colon + 1 : utf8;
+    } else {
+        index = 0;
+    }
+    char fatfsPath[512];
+    int n = snprintf(fatfsPath, sizeof(fatfsPath), "%d:%s", index, rest);
+    if (n < 0 || (size_t)n >= sizeof(fatfsPath)) return false;
+    return f_chdir(fatfsPath) == FR_OK;
 #else
     const char* utf8 = XString_toUtf8(path);
     if (!utf8) return false;

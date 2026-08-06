@@ -5,13 +5,26 @@
 //#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
+
+/*
+ * XPair 将两个值存放在同一段字节缓冲区中。第一段数据位于 XPair
+ * 之后，并且由 sizeof(XPair) 保证自然对齐；当第一段数据较小或与
+ * 第二段数据的对齐要求不兼容时，第二段数据必须显式增加填充，例如
+ * int 后面存放指针的情况。
+ */
+static size_t XPair_secondOffset(size_t firstTypeSize)
+{
+	return ALIGN_UP(firstTypeSize, sizeof(void*));
+}
+
 void XPair_init(XPair* this_pair, const size_t firstTypeSize, const size_t secondTypeSize)
 {
 	if (!this_pair ||firstTypeSize == 0 || secondTypeSize == 0)return;
 	this_pair->m_firstTypeSize = firstTypeSize;
 	this_pair->m_secondTypeSize = secondTypeSize;
 
-	memset(this_pair + 1, 0, firstTypeSize + secondTypeSize);
+	memset(XPair_first(this_pair), 0, firstTypeSize);
+	memset(XPair_second(this_pair), 0, secondTypeSize);
 }
 XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 {
@@ -20,7 +33,7 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 		printf("有类型设置错误");
 		return NULL;
 	}
-	size_t size = ALIGN_UP(firstTypeSize + secondTypeSize + sizeof(XPair), sizeof(void*));
+	size_t size = XPair_size1(firstTypeSize, secondTypeSize);
 	XPair* this_pair = (XPair*)XMalloc_System(size);
 	if (!this_pair)return NULL;
 	XPair_init(this_pair, firstTypeSize, secondTypeSize);
@@ -53,15 +66,18 @@ void XPair_copy(XPair* this_pair, const XPair* copy)
 {
 	if (this_pair == NULL || copy == NULL||this_pair->m_firstTypeSize!=copy->m_firstTypeSize||this_pair->m_secondTypeSize!=copy->m_secondTypeSize)
 		return;
-	memcpy(this_pair+1, copy+1, copy->m_firstTypeSize + copy->m_secondTypeSize);
+	memcpy(XPair_first(this_pair), XPair_first((XPair*)copy), copy->m_firstTypeSize);
+	memcpy(XPair_second(this_pair), XPair_second((XPair*)copy), copy->m_secondTypeSize);
 }
 
 void XPair_move(XPair* this_pair, XPair* move)
 {
 	if (this_pair == NULL || move == NULL || this_pair->m_firstTypeSize != move->m_firstTypeSize || this_pair->m_secondTypeSize != move->m_secondTypeSize)
 		return;
-	memcpy(this_pair+1, move+1, move->m_firstTypeSize + move->m_secondTypeSize);
-	memset(move + 1,0, move->m_firstTypeSize + move->m_secondTypeSize);
+	memcpy(XPair_first(this_pair), XPair_first(move), move->m_firstTypeSize);
+	memcpy(XPair_second(this_pair), XPair_second(move), move->m_secondTypeSize);
+	memset(XPair_first(move), 0, move->m_firstTypeSize);
+	memset(XPair_second(move), 0, move->m_secondTypeSize);
 }
 
 void XPair_insert(XPair* this_pair, void* firstData, void* secondData)
@@ -75,9 +91,9 @@ void XPair_insertFirst(XPair* this_pair, void* firstData)
 	if (ISNULL(this_pair, ""))
 		return;
 	if(firstData)
-		memcpy(this_pair+1, firstData, this_pair->m_firstTypeSize);
+		memcpy(XPair_first(this_pair), firstData, this_pair->m_firstTypeSize);
 	else
-		memset(this_pair+1, 0, this_pair->m_firstTypeSize);
+		memset(XPair_first(this_pair), 0, this_pair->m_firstTypeSize);
 }
 
 void XPair_insertSecond(XPair* this_pair, void* secondData)
@@ -86,11 +102,11 @@ void XPair_insertSecond(XPair* this_pair, void* secondData)
 		return;
 	if(secondData!=NULL)
 	{
-		memcpy(((uint8_t*)(this_pair+1)) + this_pair->m_firstTypeSize, secondData, this_pair->m_secondTypeSize);
+		memcpy(XPair_second(this_pair), secondData, this_pair->m_secondTypeSize);
 	}
 	else
 	{
-		memset(((uint8_t*)(this_pair+1)) + this_pair->m_firstTypeSize, 0, this_pair->m_secondTypeSize);
+		memset(XPair_second(this_pair), 0, this_pair->m_secondTypeSize);
 	}
 }
 void* XPair_first(XPair* this_pair)
@@ -103,12 +119,13 @@ void* XPair_second(XPair* this_pair)
 {
 	if (ISNULL(this_pair, ""))
 		return;
-	return ((uint8_t*)(this_pair+1)) + this_pair->m_firstTypeSize;
+	return ((uint8_t*)(this_pair+1)) + XPair_secondOffset(this_pair->m_firstTypeSize);
 }
 size_t XPair_size1(size_t firstTypeSize, size_t secondTypeSize)
 {
 	if (!firstTypeSize|| !secondTypeSize)return 0;
-	return ALIGN_UP(firstTypeSize + secondTypeSize +sizeof(XPair),sizeof(void*));
+	return ALIGN_UP(sizeof(XPair) + XPair_secondOffset(firstTypeSize) + secondTypeSize,
+	                sizeof(void*));
 }
 size_t XPair_size2(XPair* this_pair)
 {

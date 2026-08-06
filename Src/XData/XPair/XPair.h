@@ -15,7 +15,7 @@ typedef struct XPair
 {
 	size_t m_firstTypeSize;  ///< 第一个数据的类型大小（字节）
 	size_t m_secondTypeSize; ///< 第二个数据的类型大小（字节）
-	char m_data[];  //数据
+	char m_data[];  //数据；第二段数据按指针对齐，实际偏移由 XPair_second 计算
 	//void* m_first;           ///< 指向第一个数据的指针
 	//void* m_second;          ///< 指向第二个数据的指针
 } XPair;

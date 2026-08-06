@@ -16,6 +16,7 @@ void XAction_init(XAction* action, const char* text)
 		return;
 	action->text = NULL;
 	action->action = NULL;
+	action->data = NULL;
 	XAction_setText(action,text);
 }
 

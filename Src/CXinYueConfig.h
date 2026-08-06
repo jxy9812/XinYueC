@@ -25,6 +25,12 @@ extern "C" {
 #define XERROR_ON						1//错误输出
 #include"XClass/XClassConfig.h"
 #include"XContainer/XContainerConfig.h"
+#include"XCode/XProcess/XProcessConfig.h"
+#ifndef XCONSOLE_SHELL_ON
+/* 默认程序入口使用 Shell；产品固件可在编译配置中关闭。 */
+#define XCONSOLE_SHELL_ON 1
+#endif
+#include"XCode/XConsoleShell/XConsoleShellConfig.h"
 /* ========================================================================== */
 /*                        XPrintf 输出编码模式                                */
 /* ========================================================================== */

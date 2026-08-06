@@ -12,6 +12,7 @@
 #include "XTypes.h"           /* XFd, XFD_INVALID */
 #include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle */
 #include "ff.h"               /* FatFs API */
+#include <limits.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -24,8 +25,11 @@ DWORD get_fattime(void)
     XDateTime now = XDateTime_currentDateTime();
     XDate date = XDateTime_date(&now);
     XTime time = XDateTime_time(&now);
+    int year = XDate_year(&date);
+    if (year < 1980) year = 1980;
+    if (year > 2107) year = 2107;
     
-    return (DWORD)((XDate_year(&date) - 1980) << 25)
+    return (DWORD)((year - 1980) << 25)
          | (DWORD)(XDate_month(&date) << 21)
          | (DWORD)(XDate_day(&date) << 16)
          | (DWORD)(XTime_hour(&time) << 11)
@@ -79,17 +83,26 @@ static FATFS* XFATFS_getFs(int idx)
  */
 static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath)
 {
+    if (!utf8Path || !outPath || XFatfsDrives_count() <= 0) return NULL;
     /* 通过平台函数在驱动器前缀列表中查找索引 */
     int bestIdx = XFatfsDrives_prefixToIndex(utf8Path);
     if (bestIdx >= 0) {
+        if (bestIdx >= FF_VOLUMES) return NULL;
         /* 获取匹配的前缀长度（如 "C:"=2, "sd:"=3） */
         XString* xDrive = XString_create();
         if (!xDrive) return NULL;
+        char driveName[64];
         const char* driveUtf8 = NULL;
         size_t bestLen = 0;
         if (XFatfsDrives_at(bestIdx, xDrive)) {
-            driveUtf8 = XString_toUtf8(xDrive);
-            if (driveUtf8) bestLen = strlen(driveUtf8);
+            const char* driveText = XString_toUtf8(xDrive);
+            if (driveText) {
+                bestLen = strlen(driveText);
+                if (bestLen >= sizeof(driveName)) bestLen = sizeof(driveName) - 1;
+                memcpy(driveName, driveText, bestLen);
+                driveName[bestLen] = '\0';
+                driveUtf8 = driveName;
+            }
         }
         XString_delete_base(xDrive);
         if (!driveUtf8 || bestLen == 0) return NULL;
@@ -109,7 +122,7 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
             mountStr[2] = '\0';
 
             FRESULT fr = f_mount(fs, mountStr, 1);
-#if XFILE_FATFS_DISKIO_MODE == 0
+#if XFILE_FATFS_DISKIO_MODE == 0 && !FF_FS_READONLY && FF_USE_MKFS
             if (fr == FR_NO_FILESYSTEM) {
                 f_mount(NULL, mountStr, 0);
                 memset(fs, 0, sizeof(FATFS));
@@ -143,6 +156,7 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
     if (g_defaultIndex < 0) {
         g_defaultIndex = 0;
     }
+    if (g_defaultIndex >= FF_VOLUMES) return NULL;
     FATFS* fs = XFATFS_getFs(g_defaultIndex);
     if (!fs) return NULL;
     if (!(g_mountedMask & (1u << g_defaultIndex))) {
@@ -153,6 +167,7 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
 
         FRESULT fr = f_mount(fs, mountStr, 1);
         if (fr == FR_NO_FILESYSTEM) {
+#if !FF_FS_READONLY && FF_USE_MKFS
             f_mount(NULL, mountStr, 0);
             memset(fs, 0, sizeof(FATFS));
             MKFS_PARM opt = { FM_ANY, 0, 0, 1, 0 };
@@ -160,6 +175,7 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
             if (f_mkfs(mountStr, &opt, work, sizeof(work)) == FR_OK) {
                 fr = f_mount(fs, mountStr, 1);
             }
+#endif
         }
         if (fr == FR_OK) {
             g_mountedMask |= (1u << g_defaultIndex);
@@ -193,6 +209,15 @@ static bool XFATFS_convertPath(const XString* path, char* fatfsPath, size_t bufS
     
     size_t driveLen = strlen(driveStr);
     size_t pathLen = strlen(remaining);
+    size_t pathStart = 0;
+
+    /* FatFs 对卷标后的重复分隔符处理并不一致，统一压成一个根分隔符。 */
+    while (pathStart < pathLen &&
+           (remaining[pathStart] == '/' || remaining[pathStart] == '\\')) {
+        ++pathStart;
+    }
+    remaining += pathStart;
+    pathLen -= pathStart;
     
     /* 去掉 remaining 尾部斜杠，f_getfree 需要纯净卷标（如 "0:"） */
     while (pathLen > 0 && (remaining[pathLen - 1] == '/' || remaining[pathLen - 1] == '\\')) {
@@ -203,9 +228,20 @@ static bool XFATFS_convertPath(const XString* path, char* fatfsPath, size_t bufS
     
     memcpy(fatfsPath, driveStr, driveLen);
     if (pathLen > 0) {
-        memcpy(fatfsPath + driveLen, remaining, pathLen);
+        /* driveStr 默认以 '/' 结尾；相对路径直接拼接即可。 */
+        if (driveLen > 0 && (fatfsPath[driveLen - 1] == '/' ||
+                             fatfsPath[driveLen - 1] == '\\')) {
+            memcpy(fatfsPath + driveLen, remaining, pathLen);
+        } else {
+            fatfsPath[driveLen] = '/';
+            memcpy(fatfsPath + driveLen + 1, remaining, pathLen);
+            ++driveLen;
+        }
     }
     fatfsPath[driveLen + pathLen] = '\0';
+    for (size_t i = 0; i < driveLen + pathLen; ++i) {
+        if (fatfsPath[i] == '\\') fatfsPath[i] = '/';
+    }
     
     return true;
 }
@@ -256,6 +292,13 @@ static XFATFS_DirHandle* XFATFS_getDirHandle(XFd fd)
 
 XFd XFileSystem_open(const XString* path, int mode, int* error)
 {
+#if FF_FS_READONLY
+    if (mode & (XFileSystem_WriteOnly | XFileSystem_ReadWrite | XFileSystem_Append |
+                XFileSystem_Truncate | XFileSystem_Create | XFileSystem_NewOnly)) {
+        if (error) *error = XFileDevice_PermissionsError;
+        return XFD_INVALID;
+    }
+#endif
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) {
         if (error) *error = XFileDevice_ResourceError;
@@ -333,7 +376,8 @@ bool XFileSystem_seek(XFd fd, int64_t pos)
 int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 {
     FIL* fp = XFATFS_getFile(fd);
-    if (!fp || !buf || len <= 0) return -1;
+    if (!fp || len < 0 || (len > 0 && !buf) || (uint64_t)len > UINT_MAX) return -1;
+    if (len == 0) return 0;
     
     UINT bytesRead = 0;
     FRESULT fr = f_read(fp, buf, (UINT)len, &bytesRead);
@@ -343,24 +387,41 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 
 int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 {
+#if FF_FS_READONLY
+    (void)fd;
+    (void)buf;
+    (void)len;
+    return -1;
+#else
     FIL* fp = XFATFS_getFile(fd);
-    if (!fp || !buf || len <= 0) return -1;
+    if (!fp || len < 0 || (len > 0 && !buf) || (uint64_t)len > UINT_MAX) return -1;
+    if (len == 0) return 0;
     
     UINT bytesWritten = 0;
     FRESULT fr = f_write(fp, buf, (UINT)len, &bytesWritten);
     if (fr != FR_OK) return -1;
     return (int64_t)bytesWritten;
+#endif
 }
 
 bool XFileSystem_flush(XFd fd)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return false;
+#if FF_FS_READONLY
+    return true;
+#else
     return f_sync(fp) == FR_OK;
+#endif
 }
 
 bool XFileSystem_resize(XFd fd, int64_t size)
 {
+#if FF_FS_READONLY
+    (void)fd;
+    (void)size;
+    return false;
+#else
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || size < 0) return false;
     
@@ -372,6 +433,7 @@ bool XFileSystem_resize(XFd fd, int64_t size)
     }
     f_lseek(fp, oldPos);
     return true;
+#endif
 }
 
 /* ============================================================================
@@ -388,6 +450,21 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     FILINFO fno;
     FRESULT fr = f_stat(fatfsPath, &fno);
     if (fr != FR_OK) {
+        /* FatFs 某些版本对卷根目录的 f_stat 返回 FR_INVALID_NAME，
+         * 通过打开目录确认根路径存在，保持 XFileSystem_stat 的目录语义。 */
+        DIR rootDir;
+        if (f_opendir(&rootDir, fatfsPath) == FR_OK) {
+            f_closedir(&rootDir);
+            memset(stat, 0, sizeof(XFileStat));
+            stat->exists = true;
+            stat->isDir = true;
+            stat->isReadable = true;
+            stat->isWritable = true;
+            stat->permissions = XFile_ReadOwner | XFile_WriteOwner |
+                                XFile_ReadUser | XFile_WriteUser |
+                                XFile_ReadGroup | XFile_WriteGroup;
+            return true;
+        }
         memset(stat, 0, sizeof(XFileStat));
         stat->exists = false;
         return false;
@@ -401,6 +478,8 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     stat->size = (int64_t)fno.fsize;
     stat->isReadable = true;
     stat->isWritable = !(fno.fattrib & AM_RDO);
+    stat->permissions = XFile_ReadOwner | XFile_ReadUser | XFile_ReadGroup |
+                        (stat->isWritable ? (XFile_WriteOwner | XFile_WriteUser | XFile_WriteGroup) : 0);
 
     /* 将 FatFs 日期时间转换为 Unix 时间戳（ms） */
     {
@@ -436,10 +515,15 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
     stat->size = (int64_t)f_size(&fh->fil);
     stat->isReadable = true;
     stat->isWritable = true;
+    stat->permissions = XFile_ReadOwner | XFile_ReadUser | XFile_ReadGroup |
+                        XFile_WriteOwner | XFile_WriteUser | XFile_WriteGroup;
 
     /* 通过存储的路径调用 f_stat 获取真实文件时间戳 */
     FILINFO fno;
     if (f_stat(fh->path, &fno) == FR_OK) {
+        stat->isWritable = !(fno.fattrib & AM_RDO);
+        stat->permissions = XFile_ReadOwner | XFile_ReadUser | XFile_ReadGroup |
+                            (stat->isWritable ? (XFile_WriteOwner | XFile_WriteUser | XFile_WriteGroup) : 0);
         int year  = ((fno.fdate >> 9) & 0x7F) + 1980;
         int month = (fno.fdate >> 5) & 0x0F;
         int day   = fno.fdate & 0x1F;
@@ -463,20 +547,28 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 /* ============================================================================
  * 三、文件系统操作（4个）
  * ============================================================================ */
-}
-
 bool XFileSystem_remove(const XString* path)
 {
+#if FF_FS_READONLY
+    (void)path;
+    return false;
+#else
     if (!path) return false;
     
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
     
     return f_unlink(fatfsPath) == FR_OK;
+#endif
 }
 
 bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
 {
+#if FF_FS_READONLY
+    (void)oldPath;
+    (void)newPath;
+    return false;
+#else
     if (!oldPath || !newPath) return false;
     
     char oldFatfs[512], newFatfs[512];
@@ -484,10 +576,16 @@ bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
     if (!XFATFS_convertPath(newPath, newFatfs, sizeof(newFatfs))) return false;
     
     return f_rename(oldFatfs, newFatfs) == FR_OK;
+#endif
 }
 
 bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
 {
+#if FF_FS_READONLY
+    (void)srcPath;
+    (void)dstPath;
+    return false;
+#else
     if (!srcPath || !dstPath) return false;
     
     /* 使用Fatfs读取源文件并写入目标文件 */
@@ -522,6 +620,7 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
     f_close(&src);
     f_close(&dst);
     return success;
+#endif
 }
 
 /* ============================================================================
@@ -530,6 +629,11 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
 
 bool XFileSystem_mkdir(const XString* path, bool recursive)
 {
+#if FF_FS_READONLY
+    (void)path;
+    (void)recursive;
+    return false;
+#else
     if (!path) return false;
     
     char fatfsPath[512];
@@ -549,10 +653,16 @@ bool XFileSystem_mkdir(const XString* path, bool recursive)
     }
     
     return f_mkdir(fatfsPath) == FR_OK;
+#endif
 }
 
 bool XFileSystem_rmdir(const XString* path, bool recursive)
 {
+#if FF_FS_READONLY
+    (void)path;
+    (void)recursive;
+    return false;
+#else
     if (!path) return false;
     
     char fatfsPath[512];
@@ -571,6 +681,10 @@ bool XFileSystem_rmdir(const XString* path, bool recursive)
     FILINFO fno;
     char fullPath[512];
     size_t baseLen = strlen(fatfsPath);
+    if (baseLen >= sizeof(fullPath) - 1) {
+        f_closedir(&dir);
+        return false;
+    }
     
     strcpy(fullPath, fatfsPath);
     if (baseLen > 0 && fullPath[baseLen - 1] != '/') {
@@ -581,7 +695,12 @@ bool XFileSystem_rmdir(const XString* path, bool recursive)
     while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0]) {
         if (strcmp(fno.fname, ".") == 0 || strcmp(fno.fname, "..") == 0) continue;
         
-        strcpy(fullPath + baseLen, fno.fname);
+        size_t nameLen = strlen(fno.fname);
+        if (baseLen + nameLen >= sizeof(fullPath)) {
+            f_closedir(&dir);
+            return false;
+        }
+        memcpy(fullPath + baseLen, fno.fname, nameLen + 1);
         
         if (fno.fattrib & AM_DIR) {
             XString* subPath = XString_create_utf8(fullPath);
@@ -594,6 +713,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive)
     
     f_closedir(&dir);
     return f_unlink(fatfsPath) == FR_OK;
+#endif
 }
 
 XDirIterator XFileSystem_opendir(const XString* path)
@@ -620,14 +740,17 @@ XDirIterator XFileSystem_opendir(const XString* path)
         return NULL;
     }
     
-    return (XDirIterator)(uintptr_t)fd;
+    /* XDirIterator 使用 NULL 表示失败，不能直接把合法的 fd=0 转成指针。 */
+    return (XDirIterator)(uintptr_t)(fd + 1);
 }
 
 bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
 {
     if (!iter || !entry) return false;
     
-    XFd fd = (XFd)(intptr_t)(uintptr_t)iter;
+    uintptr_t encoded = (uintptr_t)iter;
+    if (encoded == 0) return false;
+    XFd fd = (XFd)(encoded - 1);
     XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
     if (!dh) return false;
     
@@ -651,7 +774,9 @@ void XFileSystem_closedir(XDirIterator iter)
 {
     if (!iter) return;
     
-    XFd fd = (XFd)(intptr_t)(uintptr_t)iter;
+    uintptr_t encoded = (uintptr_t)iter;
+    if (encoded == 0) return;
+    XFd fd = (XFd)(encoded - 1);
     XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
     if (dh) {
         f_closedir(&dh->dir);
@@ -668,29 +793,54 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
 {
     if (!path || !result) return false;
 
-    /* Fatfs 模式下直接返回绝对路径：通过 f_getcwd 获取当前工作目录并拼接 */
+    const char* input = XString_toUtf8(path);
+    if (!input) return false;
+
+    char fatfsPath[512];
+    if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
+
+    /* 无卷标且不以根斜杠开始的路径按 FatFs 当前目录解析。 */
+    bool hasVolume = XFatfsDrives_prefixToIndex(input) >= 0;
+    const char* volumePath = input;
+    if (hasVolume) {
+        const char* colon = strchr(input, ':');
+        volumePath = colon ? colon + 1 : input;
+    }
+    bool absolute = volumePath[0] == '/' || volumePath[0] == '\\';
+    char resolvedFatfs[512];
     char cwd[256];
     if (f_getcwd(cwd, sizeof(cwd)) != FR_OK) return false;
+    if (!absolute && !hasVolume) {
+        const char* relative = fatfsPath;
+        if (relative[0] >= '0' && relative[0] <= '9' && relative[1] == ':' && relative[2] == '/') {
+            relative += 3;
+        }
+        int n = snprintf(resolvedFatfs, sizeof(resolvedFatfs), "%s/%s", cwd, relative);
+        if (n < 0 || (size_t)n >= sizeof(resolvedFatfs)) return false;
+    } else {
+        if (strlen(fatfsPath) >= sizeof(resolvedFatfs)) return false;
+        strcpy(resolvedFatfs, fatfsPath);
+    }
 
     /* 转换Fatfs格式 "0:/" → "C:/" */
-    char absPath[256];
-    if (cwd[0] >= '0' && cwd[0] <= '9' && cwd[1] == ':') {
-        int volIdx = cwd[0] - '0';
+    char absPath[512] = {0};
+    if (resolvedFatfs[0] >= '0' && resolvedFatfs[0] <= '9' && resolvedFatfs[1] == ':') {
+        int volIdx = resolvedFatfs[0] - '0';
         if (volIdx >= 0 && volIdx < XFATFS_MAX_VOLUMES && g_volumes[volIdx]) {
             XString* xDrive = XString_create();
             if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
                 const char* driveUtf8 = XString_toUtf8(xDrive);
                 if (driveUtf8) {
-                    snprintf(absPath, sizeof(absPath), "%s%s", driveUtf8, cwd + 2);
+                    snprintf(absPath, sizeof(absPath), "%s%s", driveUtf8, resolvedFatfs + 2);
                 }
             }
             if (xDrive) XString_delete_base(xDrive);
-            if (absPath[0] == '\0') strcpy(absPath, cwd);
+            if (absPath[0] == '\0') strcpy(absPath, resolvedFatfs);
         } else {
-            strcpy(absPath, cwd);
+            strcpy(absPath, resolvedFatfs);
         }
     } else {
-        strcpy(absPath, cwd);
+        strcpy(absPath, resolvedFatfs);
     }
 
     XString_assign_utf8(result, absPath);
@@ -765,12 +915,25 @@ bool XFileSystem_readLink(const XString* path, XString* target)
     return false;
 }
 
+bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash)
+{
+    /* FatFs 没有回收站概念；调用方应改用 XFileSystem_remove。 */
+    (void)fileName;
+    (void)pathInTrash;
+    return false;
+}
+
 /* ============================================================================
  * 八、权限操作（1个）- 支持基本只读属性
  * ============================================================================ */
 
 bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions)
 {
+#if FF_FS_READONLY
+    (void)path;
+    (void)permissions;
+    return false;
+#else
     if (!path) return false;
     
     char fatfsPath[512];
@@ -779,25 +942,35 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
     BYTE attr = 0;
     BYTE mask = AM_RDO | AM_HID | AM_SYS | AM_ARC;
     
-    if (!(permissions & 0x0200)) attr |= AM_RDO;
+    /* FatFs 仅有只读属性；只要任一标准写权限位存在，就清除只读。 */
+    const XFilePermissions writeMask = XFile_WriteOwner | XFile_WriteUser |
+                                       XFile_WriteGroup | XFile_WriteOther;
+    if ((permissions & writeMask) == 0) attr |= AM_RDO;
     
     return f_chmod(fatfsPath, attr, mask) == FR_OK;
+#endif
 }
 
 /* ============================================================================
  * 九、内存映射（2个）- 不支持
  * ============================================================================ */
 
-void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable)
+void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
 {
     FIL* fp = XFATFS_getFile(fd);
-    if (!fp || size <= 0) return NULL;
+    if (!fp || offset < 0 || size <= 0 || (uint64_t)size > UINT_MAX) return NULL;
+
+    /* FatFs 没有进程地址空间映射；flags 仅为统一公共接口保留。 */
+    (void)flags;
     
     void* buf = XMalloc_System((size_t)size);
     if (!buf) return NULL;
     
     FSIZE_t oldPos = f_tell(fp);
-    f_lseek(fp, (FSIZE_t)offset);
+    if (f_lseek(fp, (FSIZE_t)offset) != FR_OK) {
+        XFree_System(buf);
+        return NULL;
+    }
     
     UINT bytesRead;
     if (f_read(fp, buf, (UINT)size, &bytesRead) != FR_OK || bytesRead != (UINT)size) {
@@ -828,6 +1001,12 @@ bool XFileSystem_unmap(void* addr, int64_t size)
  */
 bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
+#if FF_FS_READONLY
+    (void)fd;
+    (void)timeType;
+    (void)timeValue;
+    return false;
+#else
     XFATFS_FileHandle* fh = XFATFS_getFileHandle(fd);
     if (!fh) return false;
 
@@ -845,6 +1024,7 @@ bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
     (void)timeType; /* FatFs 的 f_utime 同时设置修改时间和创建时间 */
 
     return f_utime(fh->path, &fno) == FR_OK;
+#endif
 }
 
 /* ============================================================================
@@ -867,6 +1047,11 @@ bool XFileSystem_drives_at(int index, XString* path)
 
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
 {
+#if FF_FS_READONLY
+    (void)path;
+    (void)info;
+    return false;
+#else
     if (!path || !info) return false;
     
     char fatfsPath[512];
@@ -901,6 +1086,7 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
     }
     
     return true;
+#endif
 }
 
 /* ============================================================================
@@ -915,6 +1101,16 @@ bool XFileSystem_format(const XString* drive,
                         XFileSystemFormatProgress progress,
                         void* userData)
 {
+#if FF_FS_READONLY || !FF_USE_MKFS
+    (void)drive;
+    (void)fsType;
+    (void)volumeName;
+    (void)flags;
+    (void)clusterSize;
+    (void)progress;
+    (void)userData;
+    return false;
+#else
     if (!drive) return false;
     
     char fatfsPath[512];
@@ -940,6 +1136,7 @@ bool XFileSystem_format(const XString* drive,
     (void)flags;
     
     return fr == FR_OK;
+#endif
 }
 
 #endif /* XFILE_USE_FATFS */

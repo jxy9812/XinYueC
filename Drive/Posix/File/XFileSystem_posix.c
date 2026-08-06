@@ -8,9 +8,11 @@
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 
-#include "XFileSystem.h"
 #include "XFileInfo.h"
 #include "XFileSystem_config.h"
+#if defined(XFILE_USE_PLATFORM_API)
+
+#include "XFileSystem.h"
 #include "XStorageInfo.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -52,6 +54,24 @@ static int XFS_getFd(XFd fdx) {
     XFileDescriptor* desc = XFd_get(fdx);
     if (!desc) return -1;
     return (int)(intptr_t)desc->handle;
+}
+
+static bool XFS_writeAll(int fd, const void* buffer, size_t length)
+{
+    const uint8_t* data = (const uint8_t*)buffer;
+    while (length > 0) {
+        ssize_t written = write(fd, data, length);
+        if (written <= 0) return false;
+        data += written;
+        length -= (size_t)written;
+    }
+    return true;
+}
+
+static bool XFS_isDirectoryPath(const char* path)
+{
+    struct stat info;
+    return path && stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
 /* ============================================================================
@@ -140,7 +160,7 @@ bool XFileSystem_seek(XFd fdx, int64_t pos) {
 
 int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
     int fd = XFS_getFd(fdx);
-    if (fd < 0) return -1;
+    if (fd < 0 || (len > 0 && !buf) || len < 0) return -1;
 
     ssize_t n = read(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
@@ -148,7 +168,7 @@ int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
 
 int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
     int fd = XFS_getFd(fdx);
-    if (fd < 0) return -1;
+    if (fd < 0 || (len > 0 && !buf) || len < 0) return -1;
 
     ssize_t n = write(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
@@ -313,8 +333,9 @@ bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
     if (dfd < 0) { close(sfd); return XFileSystem_remove(fileName); }
     char buf[8192]; ssize_t n; bool ok = true;
     while ((n = read(sfd, buf, sizeof(buf))) > 0) {
-        if (write(dfd, buf, (size_t)n) != n) { ok = false; break; }
+        if (!XFS_writeAll(dfd, buf, (size_t)n)) { ok = false; break; }
     }
+    if (n < 0) ok = false;
     close(sfd); close(dfd);
     if (!ok) { unlink(dest); return XFileSystem_remove(fileName); }
     if (unlink(src) != 0) { unlink(dest); return false; }
@@ -351,11 +372,13 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
     {
         ssize_t n;
         while ((n = read(sfd, buf, sizeof(buf))) > 0) {
-            if (write(dfd, buf, (size_t)n) != n) { ok = false; break; }
+            if (!XFS_writeAll(dfd, buf, (size_t)n)) { ok = false; break; }
         }
+        if (n < 0) ok = false;
     }
     close(sfd);
     close(dfd);
+    if (!ok) unlink(dst);
     return ok;
 }
 
@@ -366,24 +389,36 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
 bool XFileSystem_mkdir(const XString* path, bool recursive) {
     if (!path) return false;
     const char* p = XString_toUtf8(path);
+    if (!p || !p[0]) return false;
     if (recursive) {
-        char tmp[1024];
-        strncpy(tmp, p, sizeof(tmp) - 1);
+        char tmp[PATH_MAX];
+        if (strlen(p) >= sizeof(tmp)) return false;
+        strcpy(tmp, p);
         tmp[sizeof(tmp) - 1] = '\0';
-        for (char* s = tmp + 1; *s; s++) {
+        for (char* s = tmp + (tmp[0] == '/' ? 1 : 0); *s; s++) {
             if (*s == '/') {
                 *s = '\0';
-                mkdir(tmp, 0755);
+                if (tmp[0] && mkdir(tmp, 0755) != 0 &&
+                    (errno != EEXIST || !XFS_isDirectoryPath(tmp))) {
+                    *s = '/';
+                    return false;
+                }
                 *s = '/';
             }
         }
     }
-    return mkdir(p, 0755) == 0 || errno == EEXIST;
+    if (mkdir(p, 0755) == 0) return true;
+    if (errno == EEXIST) {
+        struct stat st;
+        return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+    }
+    return false;
 }
 
 bool XFileSystem_rmdir(const XString* path, bool recursive) {
     if (!path) return false;
     const char* p = XString_toUtf8(path);
+    if (!p || !p[0]) return false;
 
     if (!recursive) {
         return rmdir(p) == 0;
@@ -394,29 +429,32 @@ bool XFileSystem_rmdir(const XString* path, bool recursive) {
     if (!d) return false;
 
     struct dirent* de;
+    bool ok = true;
     char fullPath[PATH_MAX];
-    size_t baseLen = strlen(p);
 
     while ((de = readdir(d)) != NULL) {
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
             continue;
 
         int n = snprintf(fullPath, sizeof(fullPath), "%s/%s", p, de->d_name);
-        if (n < 0 || (size_t)n >= sizeof(fullPath)) continue;
+        if (n < 0 || (size_t)n >= sizeof(fullPath)) {
+            ok = false;
+            continue;
+        }
 
         struct stat st;
         if (lstat(fullPath, &st) == 0 && S_ISDIR(st.st_mode)) {
             XString* subPath = XString_create_utf8(fullPath);
             if (subPath) {
-                XFileSystem_rmdir(subPath, true);
+                if (!XFileSystem_rmdir(subPath, true)) ok = false;
                 XString_delete_base(subPath);
-            }
+            } else ok = false;
         } else {
-            unlink(fullPath);
+            if (unlink(fullPath) != 0) ok = false;
         }
     }
     closedir(d);
-    return rmdir(p) == 0;
+    return ok && rmdir(p) == 0;
 }
 
 typedef struct { DIR* dir; } PosixDirIter;
@@ -432,14 +470,23 @@ XDirIterator XFileSystem_opendir(const XString* path) {
 }
 
 bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry) {
-    if (!iter || !entry) return false;
+    if (!iter || !entry || !entry->name) return false;
     PosixDirIter* it = (PosixDirIter*)iter;
     struct dirent* de = readdir(it->dir);
     if (!de) return false;
+    unsigned char type = de->d_type;
+    if (type == DT_UNKNOWN) {
+        struct stat st;
+        if (fstatat(dirfd(it->dir), de->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (S_ISDIR(st.st_mode)) type = DT_DIR;
+            else if (S_ISREG(st.st_mode)) type = DT_REG;
+            else if (S_ISLNK(st.st_mode)) type = DT_LNK;
+        }
+    }
     XString_assign_utf8(entry->name, de->d_name);
-    entry->isDir = (de->d_type == DT_DIR);
-    entry->isFile = (de->d_type == DT_REG);
-    entry->isSymLink = (de->d_type == DT_LNK);
+    entry->isDir = (type == DT_DIR);
+    entry->isFile = (type == DT_REG);
+    entry->isSymLink = (type == DT_LNK);
     entry->isHidden = (de->d_name[0] == '.');
     return true;
 }
@@ -455,15 +502,80 @@ void XFileSystem_closedir(XDirIterator iter) {
  * 五、路径操作
  * ============================================================================ */
 
-bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style) {
-    if (!path || !result) return false;
-    char buf[1024];
-    if (style == XPathStyle_Canonical) {
-        if (!realpath(XString_toUtf8(path), buf)) return false;
+/* 绝对路径仅清理 .、.. 和重复分隔符，保留符号链接文本以维持操作对象语义。 */
+static bool XFS_normalizeAbsolutePath(const char* path, char* result, size_t capacity)
+{
+    char absolute[PATH_MAX];
+    const char* source;
+    size_t length;
+    size_t output = 1;
+
+    if (!path || !result || capacity == 0) return false;
+    if (path[0] == '/') {
+        length = strlen(path);
+        if (length >= sizeof(absolute)) return false;
+        memcpy(absolute, path, length + 1);
     } else {
-        if (!realpath(XString_toUtf8(path), buf)) return false;
+        if (!getcwd(absolute, sizeof(absolute))) return false;
+        length = strlen(absolute);
+        if (length + 1 >= sizeof(absolute)) return false;
+        absolute[length++] = '/';
+        if (strlen(path) >= sizeof(absolute) - length) return false;
+        strcpy(absolute + length, path);
     }
-    XString_assign_utf8(result, buf);
+
+    result[0] = '/';
+    result[1] = '\0';
+    source = absolute;
+    while (*source) {
+        const char* begin;
+        const char* end;
+        size_t partLength;
+
+        while (*source == '/') source++;
+        if (!*source) break;
+        begin = source;
+        while (*source && *source != '/') source++;
+        end = source;
+        partLength = (size_t)(end - begin);
+        if (partLength == 1 && begin[0] == '.') continue;
+        if (partLength == 2 && begin[0] == '.' && begin[1] == '.') {
+            if (output > 1) {
+                output--;
+                while (output > 0 && result[output - 1] != '/') output--;
+                result[output] = '\0';
+            }
+            continue;
+        }
+        if (output > 1) {
+            if (output + 1 + partLength >= capacity) return false;
+            result[output++] = '/';
+        } else if (output + partLength >= capacity) {
+            return false;
+        }
+        memcpy(result + output, begin, partLength);
+        output += partLength;
+        result[output] = '\0';
+    }
+    return true;
+}
+
+bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style) {
+    const char* value;
+    if (!path || !result) return false;
+    value = XString_toUtf8(path);
+    if (!value) return false;
+    if (style == XPathStyle_Canonical) {
+        char canonical[PATH_MAX];
+        if (!realpath(value, canonical)) return false;
+        XString_assign_utf8(result, canonical);
+        return true;
+    }
+    {
+        char absolute[PATH_MAX];
+        if (!XFS_normalizeAbsolutePath(value, absolute, sizeof(absolute))) return false;
+        XString_assign_utf8(result, absolute);
+    }
     return true;
 }
 
@@ -721,6 +833,12 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
     const char* devPath = XString_toUtf8(drive);
     if (!devPath || !devPath[0]) return false;
 
+    {
+        struct stat target;
+        /* POSIX 格式化只接受块设备，目录和普通文件不能传给 mkfs。 */
+        if (stat(devPath, &target) != 0 || !S_ISBLK(target.st_mode)) return false;
+    }
+
     /* 映射文件系统类型到 mkfs 命令 */
     const char* mkfsCmd = NULL;
     switch (fsType) {
@@ -805,5 +923,7 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
 
     return result == 0;
 }
+
+#endif /* XFILE_USE_PLATFORM_API */
 
 #endif /* POSIX */

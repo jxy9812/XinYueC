@@ -4,11 +4,19 @@
 
 #define FFCONF_DEF	5380	/* 修订版本ID */
 
+/* XinYueC 的 FatFS 配置覆盖。未启用 XFILE_USE_FATFS 时保持 FatFs 默认值，
+ * 这样该第三方库仍可被独立编译。 */
+#include "XFileSystem_config.h"
+
 /*---------------------------------------------------------------------------/
 / 功能配置（针对XFile模块优化）
 /---------------------------------------------------------------------------*/
 
+#if defined(XFILE_USE_FATFS)
+#define FF_FS_READONLY	XFILE_FATFS_READONLY
+#else
 #define FF_FS_READONLY	0
+#endif
 /* 此选项用于切换只读配置。(0: 读写模式 或 1: 只读模式)
 /  只读配置会移除写入相关的API函数，如f_write()、f_sync()、
 /  f_unlink()、f_mkdir()、f_chmod()、f_rename()、f_truncate()、f_getfree()
@@ -26,7 +34,11 @@
 /* 此选项用于切换过滤目录读取函数f_findfirst()和f_findnext()的启用状态。(0: 禁用, 1: 启用 2: 同时匹配altname[]启用)
 /  已关闭：XFile使用opendir/readdir实现目录遍历 */
 
+#if defined(XFILE_USE_FATFS)
+#define FF_USE_MKFS		XFILE_FATFS_USE_MKFS
+#else
 #define FF_USE_MKFS		1
+#endif
 /* 此选项用于切换f_mkfs()函数的启用状态。(0: 禁用 或 1: 启用)
 
 #define FF_USE_FASTSEEK	1
@@ -75,7 +87,11 @@
 / 区域设置和命名空间配置
 /---------------------------------------------------------------------------*/
 
+#if defined(XFILE_USE_FATFS)
+#define FF_CODE_PAGE	XFILE_FATFS_CODE_PAGE
+#else
 #define FF_CODE_PAGE	936
+#endif
 /* 此选项指定目标系统上使用的OEM代码页。
 /  错误的代码页设置可能会导致文件打开失败。
 /
@@ -103,7 +119,11 @@
 /     0 - 包含上述所有代码页，并通过f_setcp()进行配置
 */
 
+#if defined(XFILE_USE_FATFS)
+#define FF_USE_LFN		XFILE_FATFS_LFN
+#else
 #define FF_USE_LFN		3
+#endif
 #define FF_MAX_LFN		255
 /* FF_USE_LFN用于切换对长文件名(LFN)的支持。
 /
@@ -148,11 +168,23 @@
 / 驱动器/卷配置
 /---------------------------------------------------------------------------*/
 
+#if defined(XFILE_USE_FATFS)
+#define FF_VOLUMES		XFILE_FATFS_VOLUMES
+#else
 #define FF_VOLUMES		10
+#endif
 /* 要使用的卷(逻辑驱动器)数量。(1 - 10) */
 
+#if defined(XFILE_USE_FATFS)
+#define FF_STR_VOLUME_ID	XFILE_FATFS_STR_VOLUME_ID
+#else
 #define FF_STR_VOLUME_ID	0
+#endif
+#if defined(XFILE_USE_FATFS)
+#define FF_VOLUME_STRS		XFILE_FATFS_VOLUME_STRS
+#else
 #define FF_VOLUME_STRS		"RAM","NAND","CF","SD","SD2","USB","USB2","USB3"
+#endif
 /* FF_STR_VOLUME_ID用于切换对任意字符串作为卷ID的支持。
 /  当FF_STR_VOLUME_ID设置为1或2时，任意字符串可以在路径名中用作驱动器号。
 /  FF_VOLUME_STRS定义了每个逻辑驱动器的卷ID字符串。
@@ -199,7 +231,11 @@
 /  在小缓冲区配置下，文件对象(FIL)的大小会缩小FF_MAX_SS字节。
 /  代替从文件对象中移除的私有扇区缓冲区，文件系统对象(FATFS)中的公共扇区缓冲区用于文件数据传输。 */
 
+#if defined(XFILE_USE_FATFS)
+#define FF_FS_EXFAT		XFILE_FATFS_USE_EXFAT
+#else
 #define FF_FS_EXFAT		1
+#endif
 /* 此选项用于切换对exFAT文件系统的支持。(0: 禁用 或 1: 启用)
 /  要启用exFAT，还需要启用LFN。(FF_USE_LFN >= 1)
 /  注意，启用exFAT会丢弃ANSI C (C89)兼容性。 */

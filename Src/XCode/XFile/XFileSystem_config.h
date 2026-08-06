@@ -41,8 +41,11 @@ extern "C" {
 
 /* 取消注释以启用对应模式 */
 
+/* 未通过编译选项显式选择时，桌面平台默认使用平台API。嵌入式工程可通过
+ * -DXFILE_USE_FATFS 选择 FatFS，不能在这里无条件定义平台后端。 */
+#if !defined(XFILE_USE_PLATFORM_API) && !defined(XFILE_USE_FATFS)
 #define XFILE_USE_PLATFORM_API     /* 平台API模式 */
-//#define XFILE_USE_FATFS           /* FatFS模式 */
+#endif
 
 /* ========================================================================== */
 /*                        FatFS模式配置                                        */
@@ -105,7 +108,7 @@ extern "C" {
  * XFILE_FATFS_LFN_DYNAMIC - 动态分配（需要ff_memalloc/ff_memfree）
  */
 #ifndef XFILE_FATFS_LFN
-#define XFILE_FATFS_LFN           2  /* 默认使用动态分配 */
+#define XFILE_FATFS_LFN           3  /* 默认使用堆动态分配 */
 #endif
 
 /**

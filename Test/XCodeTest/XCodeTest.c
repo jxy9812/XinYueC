@@ -15,4 +15,7 @@ void XMenu_XCodeTest(XMenu* root)
 XMenu_XCoreApplicationTest(menu);
 	XMenu_XCommandLineParserTest(menu);
 	XMenu_XRegularExpressionTest(menu);
+	XMenu_XProcessTest(menu);
+	XMenu_XConsoleShellTest(menu);
+	XMenu_XConsoleShellBackendTest(menu);
 }

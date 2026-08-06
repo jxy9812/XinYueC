@@ -180,14 +180,14 @@ void XMenuData_delete(XMenuData* data)
 		XFree_System(data->title);
 	if(data->actions)
 	{
-		for_each_iterator(data->actions, XVector, it)
-		{
-			XAction* action = (*(XAction**)XVector_iterator_data(&it));
-			XAction_delete(action);
+		size_t i;
+		for (i = 0; i < XVector_size_base(data->actions); ++i) {
+			XAction* action = *(XAction**)XVector_at_base(data->actions, (int64_t)i);
+			if (action) XAction_delete(action);
 		}
 		XVector_delete_base(data->actions);
 	}
-	XFree_System(data);
+	/* XMenuData 存放在 XHTreeNode 的内嵌数据区，不是独立堆对象。 */
 }
 
 void DataDeleteMethod(XMenuData* data, void* args)
