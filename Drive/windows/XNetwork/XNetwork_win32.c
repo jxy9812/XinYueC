@@ -37,6 +37,7 @@
 /* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <icmpapi.h>
 #include <iphlpapi.h>
 #include <stdlib.h>
 #include "XNetIoRingWin32.h"
@@ -44,6 +45,8 @@
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "secur32.lib")
+
+#define XNETWORK_ICMP_HEADER_SIZE 8u
 
 /* =========================================================================
  * 手动定义缺失的宏（兼容旧版 SDK）
@@ -65,6 +68,50 @@
 #define IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE 0x0080
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
+
+bool XNetwork_icmpEchoSupported(void)
+{
+    return true;
+}
+
+bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+                       uint16_t sequence, const void* payload, size_t payloadSize,
+                       int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
+{
+    HANDLE icmpHandle = INVALID_HANDLE_VALUE;
+    IP_OPTION_INFORMATION options;
+    ICMP_ECHO_REPLY* reply;
+    size_t replyCapacity;
+    DWORD replyCount;
+    bool result = false;
+    (void)identifier;
+    (void)sequence;
+    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+        (payloadSize && !payload) || payloadSize > 65507u || timeoutMilliseconds <= 0)
+        return false;
+    icmpHandle = IcmpCreateFile();
+    if (icmpHandle == INVALID_HANDLE_VALUE) return false;
+    replyCapacity = sizeof(ICMP_ECHO_REPLY) + payloadSize + 8u;
+    reply = (ICMP_ECHO_REPLY*)XMalloc_System(replyCapacity);
+    if (!reply) {
+        IcmpCloseHandle(icmpHandle);
+        return false;
+    }
+    memset(&options, 0, sizeof(options));
+    options.Ttl = 128;
+    replyCount = IcmpSendEcho(icmpHandle,
+                               htonl(XHostAddress_toIPv4Address(address)),
+                               (LPVOID)payload, (WORD)payloadSize, &options,
+                               reply, (DWORD)replyCapacity,
+                               (DWORD)timeoutMilliseconds);
+    if (replyCount > 0 && reply[0].Status == IP_SUCCESS) {
+        if (elapsedMilliseconds) *elapsedMilliseconds = reply[0].RoundTripTime;
+        result = true;
+    }
+    XFree_System(reply);
+    IcmpCloseHandle(icmpHandle);
+    return result;
+}
 /* =========================================================================
  * ConnectEx 函数指针及 GUID
  * ========================================================================= */
@@ -1344,7 +1391,6 @@ XString* XNetwork_localHostName(void)
     }
     return NULL;
 }
-
 
 /* =========================================================================
  * 网络接口枚举

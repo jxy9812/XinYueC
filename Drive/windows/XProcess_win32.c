@@ -21,7 +21,7 @@
 #include "XFileSystem.h"
 #include "XFileDescriptor.h"
 #include "XMemory.h"
-#include "XByteArray.h"
+#include "XRingBuffer.h"
 #include <windows.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,8 +39,8 @@ typedef struct XProcessWin32Backend {
     bool stdoutEof;              /**< stdout 管道已经关闭。 */
     bool stderrEof;              /**< stderr 管道已经关闭。 */
     bool finishedNotified;       /**< 是否已经通知公共状态机。 */
-    XByteArray* stdoutBuffer;    /**< stdout 缓冲；对象拥有。 */
-    XByteArray* stderrBuffer;    /**< stderr 缓冲；对象拥有。 */
+    XRingBuffer* stdoutBuffer;   /**< stdout 缓冲；对象拥有。 */
+    XRingBuffer* stderrBuffer;   /**< stderr 缓冲；对象拥有。 */
     XProcess* outputSinkProcess; /**< 标准输出目标；借用。 */
 } XProcessWin32Backend;
 
@@ -222,8 +222,8 @@ static void xpw_dispose_backend(XProcessWin32Backend* backend)
     xpw_close_handle(&backend->stderrRead);
     xpw_close_handle(&backend->threadHandle);
     xpw_close_handle(&backend->processHandle);
-    if (backend->stdoutBuffer) XByteArray_delete_base(backend->stdoutBuffer);
-    if (backend->stderrBuffer) XByteArray_delete_base(backend->stderrBuffer);
+    if (backend->stdoutBuffer) XRingBuffer_delete_base(backend->stdoutBuffer);
+    if (backend->stderrBuffer) XRingBuffer_delete_base(backend->stderrBuffer);
     XFree_System(backend);
 }
 
@@ -247,9 +247,87 @@ static bool xpw_append_environment_entry(wchar_t* target, size_t capacity,
     return true;
 }
 
+/*
+ * Windows 环境变量名称不区分 ASCII 大小写；显式环境列表仍以 UTF-8
+ * 保存，因此这里不能直接使用区分大小写的字符串比较。
+ */
+static bool xpw_utf8_environment_name_equal(const char* entry, const char* name)
+{
+    size_t index = 0;
+    unsigned char left;
+    unsigned char right;
+    if (!entry || !name) return false;
+    while (entry[index] && entry[index] != '=' && name[index]) {
+        left = (unsigned char)entry[index];
+        right = (unsigned char)name[index];
+        if (left >= 'A' && left <= 'Z') left = (unsigned char)(left + ('a' - 'A'));
+        if (right >= 'A' && right <= 'Z') right = (unsigned char)(right + ('a' - 'A'));
+        if (left != right) return false;
+        ++index;
+    }
+    return entry[index] == '=' && name[index] == '\0';
+}
+
+static bool xpw_explicit_environment_contains(const XStringList* list,
+                                               const char* name)
+{
+    size_t i;
+    if (!list || !name) return false;
+    for (i = 0; i < XStringList_size_base(list); ++i) {
+        const XString* item = XStringList_at_base(list, i);
+        const char* text = item ? XString_toUtf8(item) : NULL;
+        if (xpw_utf8_environment_name_equal(text, name)) return true;
+    }
+    return false;
+}
+
+/* 需要补齐的系统变量名称均为 ASCII，直接比较宽字符可避免临时分配。 */
+static bool xpw_wide_environment_name_equal(const wchar_t* entry,
+                                            const wchar_t* name)
+{
+    size_t index = 0;
+    wchar_t left;
+    wchar_t right;
+    if (!entry || !name) return false;
+    while (entry[index] && entry[index] != L'=' && name[index]) {
+        left = entry[index];
+        right = name[index];
+        if (left >= L'A' && left <= L'Z') left = (wchar_t)(left + (L'a' - L'A'));
+        if (right >= L'A' && right <= L'Z') right = (wchar_t)(right + (L'a' - L'A'));
+        if (left != right) return false;
+        ++index;
+    }
+    return entry[index] == L'=' && name[index] == L'\0';
+}
+
+static bool xpw_is_missing_parent_entry(const wchar_t* entry,
+                                        const XStringList* explicitList)
+{
+    if (xpw_wide_environment_name_equal(entry, L"PATH"))
+        return !xpw_explicit_environment_contains(explicitList, "PATH");
+    if (xpw_wide_environment_name_equal(entry, L"SystemRoot"))
+        return !xpw_explicit_environment_contains(explicitList, "SystemRoot");
+    return false;
+}
+
+static bool xpw_append_wide_environment_entry(wchar_t* target, size_t capacity,
+                                              size_t* used, const wchar_t* entry)
+{
+    size_t length;
+    if (!target || !used || !entry) return false;
+    length = wcslen(entry);
+    if (*used + length + 1 > capacity) return false;
+    memcpy(target + *used, entry, length * sizeof(wchar_t));
+    *used += length;
+    target[(*used)++] = L'\0';
+    return true;
+}
+
 static wchar_t* xpw_build_environment(const XProcess* self, bool* borrowed)
 {
     XStringList* list;
+    LPWCH inherited = NULL;
+    LPWCH entry;
     wchar_t* result;
     size_t count;
     size_t i;
@@ -258,9 +336,9 @@ static wchar_t* xpw_build_environment(const XProcess* self, bool* borrowed)
     if (borrowed) *borrowed = false;
     if (!self) return NULL;
     if (XProcessEnvironment_inheritsFromParent(&self->m_environment)) {
-        wchar_t* inherited = GetEnvironmentStringsW();
-        if (inherited && borrowed) *borrowed = true;
-        return inherited;
+        wchar_t* parentBlock = GetEnvironmentStringsW();
+        if (parentBlock && borrowed) *borrowed = true;
+        return parentBlock;
     }
     list = XProcessEnvironment_toStringList(&self->m_environment);
     if (!list) return NULL;
@@ -270,6 +348,18 @@ static wchar_t* xpw_build_environment(const XProcess* self, bool* borrowed)
         const char* text = item ? XString_toUtf8(item) : "";
         int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
         if (length > 0) capacity += (size_t)length;
+    }
+    /*
+     * 显式环境并不自动继承父环境，但 Windows 的 PATH/SystemRoot 对程序
+     * 搜索和系统 DLL 加载具有基础作用。仅在调用方没有提供对应名称时，
+     * 从启动时父环境快照中补齐，避免覆盖显式值或引入其他变量。
+     */
+    inherited = GetEnvironmentStringsW();
+    if (inherited) {
+        for (entry = inherited; *entry; entry += wcslen(entry) + 1) {
+            if (xpw_is_missing_parent_entry(entry, list))
+                capacity += wcslen(entry) + 1;
+        }
     }
     result = (wchar_t*)XCalloc_System(capacity + 1, sizeof(wchar_t));
     if (result) {
@@ -282,8 +372,20 @@ static wchar_t* xpw_build_environment(const XProcess* self, bool* borrowed)
                 break;
             }
         }
+        if (result && inherited) {
+            for (entry = inherited; *entry; entry += wcslen(entry) + 1) {
+                if (xpw_is_missing_parent_entry(entry, list) &&
+                    !xpw_append_wide_environment_entry(result, capacity + 1,
+                                                        &used, entry)) {
+                    XFree_System(result);
+                    result = NULL;
+                    break;
+                }
+            }
+        }
         if (result) result[used] = L'\0';
     }
+    if (inherited) FreeEnvironmentStringsW(inherited);
     XStringList_delete_base(list);
     return result;
 }
@@ -297,7 +399,7 @@ static void xpw_close_child_handles(HANDLE input, HANDLE output, HANDLE error)
 
 static void xpw_read_pipe(XProcess* self, XProcessWin32Backend* backend,
                           XProcessChannel channel, HANDLE* handle, bool* eof,
-                          XByteArray* buffer)
+                          XRingBuffer* buffer)
 {
     char data[XPROCESS_IO_BUFFER_SIZE];
     bool got = false;
@@ -315,7 +417,11 @@ static void xpw_read_pipe(XProcess* self, XProcessWin32Backend* backend,
             if (GetLastError() == ERROR_BROKEN_PIPE) *eof = true;
             break;
         }
-        XByteArray_append_2(buffer, data, (size_t)readCount);
+        if (XRingBuffer_write(buffer, data, (size_t)readCount) != (size_t)readCount) {
+            XProcess_backend_setError(self, XProcessError_ReadError,
+                                      "process output buffer allocation failed");
+            break;
+        }
         got = true;
     }
     if (*eof) xpw_close_handle(handle);
@@ -335,7 +441,8 @@ static void xpw_notify_if_finished(XProcess* self, XProcessWin32Backend* backend
     if (xpw_valid_handle(backend->stdoutRead) || xpw_valid_handle(backend->stderrRead)) return;
     backend->finishedNotified = true;
     /* WaitForSingleObject 已确认进程退出，STILL_ACTIVE(259) 也可能是合法退出码。 */
-    crashed = backend->exitCode == 0xC0000005u;
+    /* Windows 异常退出码位于 NTSTATUS 严重错误范围；不要只识别访问冲突。 */
+    crashed = (backend->exitCode & 0xC0000000u) == 0xC0000000u;
     if (backend->outputSinkProcess) {
         XProcess_backend_closeWriteChannel(backend->outputSinkProcess);
         backend->outputSinkProcess = NULL;
@@ -359,14 +466,16 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
     HANDLE childOutput = NULL;
     HANDLE childError = NULL;
     HANDLE forwarded;
-    DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT;
+    DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP;
     bool success = false;
+    bool canRead = (mode & XIODevice_ReadOnly) != 0;
+    bool canWrite = (mode & XIODevice_WriteOnly) != 0;
     if (!self) return false;
     backend = (XProcessWin32Backend*)XCalloc_System(1, sizeof(*backend));
     if (!backend) return false;
-    backend->stdoutBuffer = XByteArray_create();
-    backend->stderrBuffer = XByteArray_create();
-    if (!backend->stdoutBuffer || !backend->stderrBuffer) goto cleanup;
+    backend->stdoutBuffer = canRead ? XRingBuffer_create(XPROCESS_IO_BUFFER_SIZE) : NULL;
+    backend->stderrBuffer = canRead ? XRingBuffer_create(XPROCESS_IO_BUFFER_SIZE) : NULL;
+    if (canRead && (!backend->stdoutBuffer || !backend->stderrBuffer)) goto cleanup;
 
     security.nLength = sizeof(security);
     security.lpSecurityDescriptor = NULL;
@@ -379,10 +488,11 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
     if (self->m_standardInputFile && !XString_isEmpty_base(self->m_standardInputFile)) {
         childInput = xpw_open_redirect(self->m_standardInputFile, false, false);
         if (!childInput) goto cleanup;
-    } else if (!detached && self->m_inputMode == XProcessInputChannelMode_ManagedInputChannel) {
+    } else if (!detached && canWrite &&
+               self->m_inputMode == XProcessInputChannelMode_ManagedInputChannel) {
         if (!CreatePipe(&childInput, &backend->stdinWrite, &security, 0)) goto cleanup;
         if (!SetHandleInformation(backend->stdinWrite, HANDLE_FLAG_INHERIT, 0)) goto cleanup;
-    } else if (!detached) {
+    } else if (!detached && canWrite) {
         forwarded = GetStdHandle(STD_INPUT_HANDLE);
         childInput = xpw_duplicate_inheritable(forwarded);
     }
@@ -406,7 +516,7 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
                !XString_isEmpty_base(self->m_standardOutputFile)) {
         childOutput = xpw_open_redirect(self->m_standardOutputFile, true, self->m_stdoutAppend);
         if (!childOutput) goto cleanup;
-    } else if (!detached) {
+    } else if (!detached && canRead) {
         if (!CreatePipe(&backend->stdoutRead, &childOutput, &security, 0)) goto cleanup;
         if (!SetHandleInformation(backend->stdoutRead, HANDLE_FLAG_INHERIT, 0)) goto cleanup;
     }
@@ -420,7 +530,7 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
     } else if (self->m_standardErrorFile && !XString_isEmpty_base(self->m_standardErrorFile)) {
         childError = xpw_open_redirect(self->m_standardErrorFile, true, self->m_stderrAppend);
         if (!childError) goto cleanup;
-    } else if (!detached) {
+    } else if (!detached && canRead) {
         if (!CreatePipe(&backend->stderrRead, &childError, &security, 0)) goto cleanup;
         if (!SetHandleInformation(backend->stderrRead, HANDLE_FLAG_INHERIT, 0)) goto cleanup;
     }
@@ -480,7 +590,6 @@ cleanup:
         /* CreateProcess 已复制需要的句柄，父端不再持有子端句柄。 */
         xpw_close_child_handles(childInput, childOutput, childError);
     }
-    (void)mode;
     return success;
 }
 
@@ -496,11 +605,7 @@ bool XProcess_backend_poll(XProcess* self, int timeoutMsecs)
                   &backend->stderrRead, &backend->stderrEof, backend->stderrBuffer);
     if (!backend->childExited && xpw_valid_handle(backend->processHandle)) {
         waitResult = WaitForSingleObject(backend->processHandle,
-                                         timeoutMsecs < 0 ? INFINITE : 0);
-        if (timeoutMsecs > 0 && waitResult == WAIT_TIMEOUT) {
-            Sleep((DWORD)timeoutMsecs);
-            waitResult = WaitForSingleObject(backend->processHandle, 0);
-        }
+                                         timeoutMsecs < 0 ? INFINITE : (DWORD)timeoutMsecs);
         if (waitResult == WAIT_OBJECT_0) {
             backend->childExited = true;
             if (!GetExitCodeProcess(backend->processHandle, &backend->exitCode))
@@ -518,11 +623,11 @@ bool XProcess_backend_poll(XProcess* self, int timeoutMsecs)
 int64_t XProcess_backend_bytesAvailable(const XProcess* self, XProcessChannel channel)
 {
     const XProcessWin32Backend* backend;
-    const XByteArray* buffer;
+    const XRingBuffer* buffer;
     if (!self || !self->m_backend) return 0;
     backend = (const XProcessWin32Backend*)self->m_backend;
     buffer = channel == XProcessChannel_StandardOutput ? backend->stdoutBuffer : backend->stderrBuffer;
-    return buffer ? (int64_t)XByteArray_size_base(buffer) : 0;
+    return buffer ? (int64_t)XRingBuffer_available(buffer) : 0;
 }
 
 int64_t XProcess_backend_bytesToWrite(const XProcess* self)
@@ -535,20 +640,14 @@ int64_t XProcess_backend_read(XProcess* self, XProcessChannel channel,
                               char* data, int64_t maxlen)
 {
     XProcessWin32Backend* backend;
-    XByteArray* buffer;
+    XRingBuffer* buffer;
     size_t count;
     if (!self || !data || maxlen <= 0 || !self->m_backend) return -1;
     backend = (XProcessWin32Backend*)self->m_backend;
     XProcess_backend_poll(self, 0);
     buffer = channel == XProcessChannel_StandardOutput ? backend->stdoutBuffer : backend->stderrBuffer;
-    if (!buffer || XByteArray_size_base(buffer) == 0) return 0;
-    count = XByteArray_size_base(buffer);
-    if (count > (size_t)maxlen) count = (size_t)maxlen;
-    memcpy(data, XByteArray_data(buffer), count);
-    if (count < XByteArray_size_base(buffer))
-        memmove(XByteArray_data(buffer), XByteArray_data(buffer) + count,
-                XByteArray_size_base(buffer) - count);
-    XByteArray_resize_base(buffer, XByteArray_size_base(buffer) - count);
+    if (!buffer || XRingBuffer_available(buffer) == 0) return 0;
+    count = XRingBuffer_read(buffer, data, (size_t)maxlen);
     return (int64_t)count;
 }
 

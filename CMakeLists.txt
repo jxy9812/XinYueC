@@ -96,6 +96,12 @@ target_link_libraries(${EXPORT_NAME} PRIVATE zlib)
 # 链接 FatFs 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE fatfs)
 target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
+# Windows XSystem 后端使用 Advapi32 调整关机权限，并通过 User32 请求系统
+# 复位或重启。静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
+if(WIN32)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC advapi32 user32)
+    target_link_libraries(${EXPORT_NAME} PRIVATE advapi32 user32)
+endif()
 # Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
 # 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator，
 # 但 platform_util.c 仍被编译并链接，故 Windows 上必须链接 bcrypt 解析符号。

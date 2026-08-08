@@ -1,7 +1,7 @@
 ﻿/**
- * @file XNetwork.h
- * @brief 跨平台网络后端的公共抽象接口。
- * @details 本文件位于 Src/XPlatform，定义 XAbstractSocket、XTcpServer、
+ * @file       XNetwork.h
+ * @brief      跨平台网络后端的公共抽象接口。
+ * @details    本文件位于 Src/XPlatform，定义 XAbstractSocket、XTcpServer、
  *          XUdpSocket 等通用网络模块与平台后端之间的契约，对齐 Qt 的
  *          QAbstractSocket、QTcpServer 和 QUdpSocket 的基础能力。声明本身
  *          不得调用 Windows、POSIX 或 lwIP API；具体实现在 Drive 目录中，
@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "XHostAddress.h"
 #include "XFileDescriptor.h"
 #include "XNetworkProxy.h"
@@ -36,14 +37,22 @@
 extern "C" {
 #endif
 
-/* 前置声明 - XNetworkInterface 在 XNetworkInterface.h 中定义 */
-
 /* lwIP 平台额外声明 */
 #ifdef XNETWORK_USE_LWIP
 #include "XNetwork_lwip_platform.h"
 #endif
 
+/**
+ * @brief XNetworkInterface 的不完整类型声明。
+ * @details 完整定义位于 XNetworkInterface.h；本接口仅在调用期间借用其对象，
+ *          具体所有权由对应 API 说明。
+ */
 typedef struct XNetworkInterface XNetworkInterface;
+
+/**
+ * @brief XRingBuffer 的不完整类型声明。
+ * @details 网络异步读写接口只借用调用方提供的环形缓冲区，不负责创建或释放。
+ */
 typedef struct XRingBuffer XRingBuffer;
 /* =========================================================================
  * 平台移植指南
@@ -76,10 +85,18 @@ typedef struct XRingBuffer XRingBuffer;
  * 一、基础类型
  * ========================================================================= */
 
-/** @brief 套接字平台描述符；值为 -1 时表示无效句柄。 */
+/**
+ * @brief 套接字平台描述符值类型。
+ * @details 值 -1 表示无效句柄；有效值只应传回 XNetwork API，不得假定它是
+ *          POSIX 文件描述符或直接交给平台函数。
+ */
 typedef intptr_t XSocketHandle;
 
-/** @brief TCP 服务器平台句柄；值为 -1 时表示无效句柄。 */
+/**
+ * @brief TCP 服务器平台句柄值类型。
+ * @details 值 -1 表示无效句柄；XNetwork_serverCreate 返回的有效句柄必须通过
+ *          XNetwork_serverClose 关闭。
+ */
 typedef intptr_t XServerHandle;
 
 /** @brief 套接字传输类型；枚举值不可按位组合。 */
@@ -95,40 +112,76 @@ typedef enum {
     XNetwork_LocalStream_NamedPipe    /**< Windows 命名管道。 */
 } XNetworkLocalStreamType;
 
-/** @brief 地址族类型；复用 XHostAddress 的网络层协议枚举，枚举值不可按位组合。 */
+/**
+ * @brief 地址族类型。
+ * @details 复用 XHostAddress_NetworkLayerProtocol；枚举值互斥、不可按位组合。
+ */
 typedef XHostAddress_NetworkLayerProtocol XNetworkProtocol;
 #define XNetwork_IPv4  XHostAddress_IPv4Protocol /**< IPv4 地址族。 */
 #define XNetwork_IPv6  XHostAddress_IPv6Protocol /**< IPv6 地址族。 */
 #define XNetwork_Any   XHostAddress_AnyIPProtocol /**< 由平台选择可用地址族。 */
+
+/**
+ * @brief 发送一次 ICMP Echo 请求并等待回复。
+ *
+ * 该接口是同步的一次性探测，不创建长期持有的套接字对象。平台后端负责
+ * 选择权限允许的 ICMP 通道（POSIX 的数据报/原始 ICMP、Windows 的系统
+ * ICMP 服务、lwIP Raw API），上层不得直接访问平台句柄。当前公共契约统一
+ * 支持 IPv4；IPv6 地址在后端未实现时返回 false。
+ *
+ * @param address 目标 IPv4 地址；调用期间借用，不能为 NULL。
+ * @param identifier 请求标识；用于区分并发或不同调用方的请求。
+ * @param sequence 请求序号；用于匹配本次回复。
+ * @param payload 请求负载；可为 NULL，但 payloadSize 非零时不能为 NULL。
+ * @param payloadSize 请求负载字节数；建议不超过 1400，过大时后端可能拒绝。
+ * @param timeoutMilliseconds 等待超时；必须大于 0，单位为毫秒。
+ * @param elapsedMilliseconds 可选的调用方输出存储；可为 NULL，成功时写入往返
+ *                            耗时，单位为毫秒，失败时保持不变。
+ * @return 收到匹配的 Echo Reply 返回 true；参数错误、超时、权限不足或
+ *         后端不支持返回 false。
+ */
+bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+                       uint16_t sequence, const void* payload, size_t payloadSize,
+                       int timeoutMilliseconds, uint32_t* elapsedMilliseconds);
+
+/**
+ * @brief 查询当前网络后端是否编译了 ICMP Echo 能力。
+ * @return 后端声明支持 ICMP Echo 返回 true，否则返回 false。
+ * @note 返回 true 只表示能力存在；运行时仍可能因系统权限、路由或防火墙失败。
+ */
+bool XNetwork_icmpEchoSupported(void);
 
 /* =========================================================================
  * 二、平台初始化与错误
  * ========================================================================= */
 
 /**
- * @brief 确保网络子系统已初始化
+ * @brief 确保网络子系统已经初始化。
  * @return 无。
- * @note 多次调用安全，内部有引用计数；与 XNetwork_cleanup 成对使用。
+ * @note 每次调用都增加平台引用计数，必须由同一组件使用 XNetwork_cleanup
+ *       成对释放。跨线程调用是否安全由所选平台后端保证。
  */
 void XNetwork_ensureInit(void);
 
 /**
- * @brief 清理网络子系统
+ * @brief 释放一次网络子系统初始化引用。
  * @return 无。
- * @note 与 XNetwork_ensureInit 配对使用，内部有引用计数。
+ * @note 必须与本组件成功执行的 XNetwork_ensureInit 成对；引用计数归零后平台
+ *       可以释放全局网络资源，之后仍在使用的网络对象行为未定义。
  */
 void XNetwork_cleanup(void);
 
 /**
- * @brief 获取最后一次网络错误码
+ * @brief 获取当前线程最近一次平台网络错误码。
  * @return 当前线程最近一次平台网络调用的错误码；没有错误时返回 0。
  */
 int XNetwork_lastError(void);
 
 /**
- * @brief 将错误码转换为可读字符串
- * @param errorCode 平台错误码。
- * @return 新分配的 NUL 结尾错误描述；调用者必须使用 XFree_System 释放，分配失败返回 NULL。
+ * @brief 将平台错误码转换为可读字符串。
+ * @param errorCode XNetwork_lastError 或平台后端返回的错误码。
+ * @return 成功返回新分配的 NUL 结尾错误描述，调用方必须使用 XFree_System
+ *         释放；分配失败返回 NULL。
  */
 char* XNetwork_errorString(int errorCode);
 
@@ -137,15 +190,19 @@ char* XNetwork_errorString(int errorCode);
  * ========================================================================= */
 
 /**
- * @brief 获取本机主机名
- * @return 新建的 XString 主机名；调用者必须使用 XString_delete_base 释放，失败返回 NULL。
+ * @brief 获取本机主机名。
+ * @return 成功返回新建的 XString 主机名，内部按 UTF-16 代码单元存储，调用方
+ *         必须使用 XString_delete_base 释放；平台不支持、查询或分配失败返回 NULL。
  */
 XString* XNetwork_localHostName(void);
 
 /**
- * @brief 同步 DNS 查询
- * @param name 待解析的主机名；借用，不能为 NULL。
- * @return 新建的 XVector<XHostAddress> 地址列表；调用者必须使用 XVector_delete_base 释放，失败返回 NULL。
+ * @brief 同步解析主机名。
+ * @param name 待解析主机名；不能为 NULL，调用期间只读借用，内部按 UTF-16
+ *             代码单元存储，函数不会保存或取得所有权。
+ * @return 成功返回新建的 XVector<XHostAddress> 地址列表，元素由容器拥有，
+ *         调用方必须使用 XVector_delete_base 释放；参数无效、解析或分配失败
+ *         返回 NULL。成功但没有地址时允许返回空容器。
  */
 XVector* XNetwork_lookupName(const XString* name);
 
@@ -155,39 +212,46 @@ XVector* XNetwork_lookupName(const XString* name);
 
 /**
  * @brief 平台套接字私有状态的公共前缀。
- * @details 由 XNetwork_createSocketPrivate 创建并由 XNetwork_deleteSocketPrivate 销毁。
- *          平台实现可在此公共前缀后附加私有字段；调用方不得按字段偏移访问附加状态。
+ * @details 由 XNetwork_createSocketPrivate 创建并由 XNetwork_deleteSocketPrivate
+ *          销毁。平台实现可在此公共前缀后附加私有字段；调用方不得直接修改
+ *          公开成员，也不得按字段偏移访问附加状态。对象不支持按值复制。
  */
 typedef struct XNetworkSocketPrivate {
-    void*    owner;     /**< 借用的拥有者 XAbstractSocket 指针；由创建者提供，平台层不得释放。 */
-    XVector* notifiers; /**< 平台拥有的 XVector<XSocketNotifier*>；销毁私有状态时一并释放。 */
+    void*    owner;     /**< 可选的拥有者 XAbstractSocket 借用指针；可为 NULL，平台层不得释放或修改。 */
+    XVector* notifiers; /**< 仅供实现使用的 XVector<XSocketNotifier*>；可为 NULL，由平台层拥有并释放。 */
 } XNetworkSocketPrivate;
 
 /**
- * @brief 创建套接字私有数据
- * @param owner 拥有者对象，通常为 XAbstractSocket；借用，平台层不会释放。
- * @return 新建的平台私有状态；调用者必须使用 XNetwork_deleteSocketPrivate 释放，失败返回 NULL。
+ * @brief 创建尚未连接的套接字平台私有状态。
+ * @param owner 可选的拥有者对象，通常为 XAbstractSocket；可为 NULL，平台层只
+ *              借用且不会释放，非 NULL 时必须至少存活到私有状态销毁。
+ * @return 成功返回新建的平台私有状态，调用方必须使用
+ *         XNetwork_deleteSocketPrivate 释放；平台初始化或内存分配失败返回 NULL。
  */
 XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner);
 
 /**
- * @brief 销毁套接字私有数据
- * @param priv 平台私有状态；可为 NULL，此时不执行任何操作。调用后该指针失效。
- * @return 无。
+ * @brief 销毁套接字平台私有状态并释放其拥有的资源。
+ * @param priv XNetwork_createSocketPrivate 返回的状态；可为 NULL，此时不执行
+ *             任何操作。非 NULL 时函数会关闭仍持有的句柄并释放后端拥有的
+ *             内部资源。
+ * @return 无。调用后 priv 失效，不得再次访问或释放。
  */
 void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv);
 
 /**
- * @brief 获取套接字描述符
+ * @brief 获取套接字当前的平台描述符。
  * @param priv 平台私有状态；借用，可为 NULL。
- * @return 套接字描述符，无效返回 -1
+ * @return 当前有效的借用描述符；priv 为 NULL、未创建或已经关闭时返回 -1。
+ * @warning 返回值仍由 priv 拥有，调用方不得直接关闭或转移其所有权。
  */
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv);
 
 /**
- * @brief 检查套接字是否已连接
+ * @brief 检查套接字是否已经完成连接。
  * @param priv 平台私有状态；借用，可为 NULL。
- * @return 已连接返回 true
+ * @return 平台已确认连接建立返回 true；priv 为 NULL、正在连接、未连接或已经
+ *         断开时返回 false。
  */
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv);
 

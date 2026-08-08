@@ -42,6 +42,15 @@ static bool xprocess_set_string(XString** target, const XString* value)
     return true;
 }
 
+/* XPROCESS_MAX_PATH 以 UTF-8 字节数限制程序、工作目录和重定向路径。 */
+static bool xprocess_path_allowed(const XString* value)
+{
+    const char* utf8;
+    if (!value || XPROCESS_MAX_PATH == 0) return true;
+    utf8 = XString_toUtf8(value);
+    return utf8 && strlen(utf8) <= (size_t)XPROCESS_MAX_PATH;
+}
+
 /* 从 QProcess::setEnvironment 使用的 name=value 字符串创建独立名称。 */
 static bool xprocess_insert_environment_entry(XProcessEnvironment* environment,
                                               const char* entry)
@@ -171,7 +180,8 @@ static void VXProcess_deinit(XObject* object)
 
 bool XProcess_setProgram(XProcess* self, const XString* program)
 {
-    return self && program && self->m_state == XProcessState_NotRunning &&
+    return self && program && xprocess_path_allowed(program) &&
+           self->m_state == XProcessState_NotRunning &&
            xprocess_set_string(&self->m_program, program);
 }
 
@@ -285,7 +295,8 @@ bool XProcess_setStandardInputFile(XProcess* self, const XString* fileName)
     (void)fileName;
     return false;
 #else
-    return self && self->m_state == XProcessState_NotRunning &&
+    return self && xprocess_path_allowed(fileName) &&
+           self->m_state == XProcessState_NotRunning &&
            xprocess_set_string(&self->m_standardInputFile, fileName);
 #endif
 }
@@ -308,7 +319,9 @@ bool XProcess_setStandardOutputFile(XProcess* self, const XString* fileName, boo
     (void)append;
     return false;
 #else
-    if (!self || self->m_state != XProcessState_NotRunning || !xprocess_set_string(&self->m_standardOutputFile, fileName))
+    if (!self || !xprocess_path_allowed(fileName) ||
+        self->m_state != XProcessState_NotRunning ||
+        !xprocess_set_string(&self->m_standardOutputFile, fileName))
         return false;
     self->m_stdoutAppend = append;
     return true;
@@ -333,7 +346,9 @@ bool XProcess_setStandardErrorFile(XProcess* self, const XString* fileName, bool
     (void)append;
     return false;
 #else
-    if (!self || self->m_state != XProcessState_NotRunning || !xprocess_set_string(&self->m_standardErrorFile, fileName))
+    if (!self || !xprocess_path_allowed(fileName) ||
+        self->m_state != XProcessState_NotRunning ||
+        !xprocess_set_string(&self->m_standardErrorFile, fileName))
         return false;
     self->m_stderrAppend = append;
     return true;
@@ -379,7 +394,8 @@ const XString* XProcess_workingDirectory_const(const XProcess* self)
 
 bool XProcess_setWorkingDirectory(XProcess* self, const XString* directory)
 {
-    return self && self->m_state == XProcessState_NotRunning &&
+    return self && xprocess_path_allowed(directory) &&
+           self->m_state == XProcessState_NotRunning &&
            xprocess_set_string(&self->m_workingDirectory, directory);
 }
 
@@ -490,8 +506,13 @@ static void xprocess_reset_start_state(XProcess* self)
 bool XProcess_start(XProcess* self, const XString* program,
                     const XStringList* arguments, XIODeviceBaseMode mode)
 {
-    if (!self || !program || !arguments) return false;
-    if (!XProcess_setProgram(self, program) || !XProcess_setArguments(self, arguments)) return false;
+    if (!self || !program) return false;
+    if (!XProcess_setProgram(self, program)) return false;
+    if (arguments) {
+        if (!XProcess_setArguments(self, arguments)) return false;
+    } else if (!XProcess_setArguments_utf8(self, NULL, 0)) {
+        return false;
+    }
     return XProcess_start_2(self, mode);
 }
 
@@ -603,9 +624,19 @@ bool XProcess_startDetached_static(const XString* program,
     (void)workingDirectory;
     return false;
 #else
+    XStringList* emptyArguments = NULL;
+    const XStringList* actualArguments = arguments;
+    bool result;
     if (pid) *pid = -1;
-    if (!program || !arguments || XString_isEmpty_base(program)) return false;
-    return XProcess_backend_startDetached(program, arguments, workingDirectory, pid);
+    if (!program || XString_isEmpty_base(program)) return false;
+    if (!actualArguments) {
+        emptyArguments = XStringList_create();
+        if (!emptyArguments) return false;
+        actualArguments = emptyArguments;
+    }
+    result = XProcess_backend_startDetached(program, actualArguments, workingDirectory, pid);
+    if (emptyArguments) XStringList_delete_base(emptyArguments);
+    return result;
 #endif
 }
 
@@ -928,14 +959,15 @@ static bool VXProcess_waitForBytesWritten(XIODevice* io, int msecs)
 static int64_t VXProcess_readData(XIODevice* io, char* data, int64_t maxlen)
 {
     XProcess* self = (XProcess*)io;
-    if (!self || !data || maxlen <= 0) return -1;
+    if (!self || !data || maxlen <= 0 || !(self->base.m_openMode & XIODevice_ReadOnly)) return -1;
     return XProcess_backend_read(self, self->m_readChannel, data, maxlen);
 }
 
 static int64_t VXProcess_writeData(XIODevice* io, const char* data, int64_t len)
 {
     XProcess* self = (XProcess*)io;
-    if (!self || !data || len < 0 || self->m_stdinClosed) return -1;
+    if (!self || !data || len < 0 || self->m_stdinClosed ||
+        !(self->base.m_openMode & XIODevice_WriteOnly)) return -1;
     return XProcess_backend_write(self, data, len);
 }
 

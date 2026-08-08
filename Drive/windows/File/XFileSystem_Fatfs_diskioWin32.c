@@ -187,17 +187,23 @@ DSTATUS disk_status(BYTE pdrv)
  * ============================================================================ */
 
 #if XFILE_FATFS_DISKIO_MODE == 1
-static BYTE* g_alignedBuf = NULL;
-static UINT  g_alignedBufSize = 0;
+/* 每个逻辑卷独占对齐缓冲区，避免不同卷并发读写时互相覆盖。 */
+static BYTE* g_alignedBuf[FF_VOLUMES] = { 0 };
+static UINT  g_alignedBufSize[FF_VOLUMES] = { 0 };
 
-static BYTE* ensureAlignedBuf(UINT size)
+static BYTE* ensureAlignedBuf(BYTE pdrv, UINT size)
 {
-    if (g_alignedBuf && g_alignedBufSize >= size) return g_alignedBuf;
-    if (g_alignedBuf) { XFree_System(g_alignedBuf); g_alignedBuf = NULL; }
+    if (pdrv >= FF_VOLUMES) return NULL;
+    if (g_alignedBuf[pdrv] && g_alignedBufSize[pdrv] >= size) return g_alignedBuf[pdrv];
+    if (g_alignedBuf[pdrv]) {
+        XFree_System(g_alignedBuf[pdrv]);
+        g_alignedBuf[pdrv] = NULL;
+        g_alignedBufSize[pdrv] = 0;
+    }
     /* 使用 XinYueC 对齐分配器，保证释放函数与分配函数匹配。 */
-    g_alignedBuf = (BYTE*)XAlignedMalloc_System(size, FF_MAX_SS);
-    if (g_alignedBuf) g_alignedBufSize = size;
-    return g_alignedBuf;
+    g_alignedBuf[pdrv] = (BYTE*)XAlignedMalloc_System(size, FF_MAX_SS);
+    if (g_alignedBuf[pdrv]) g_alignedBufSize[pdrv] = size;
+    return g_alignedBuf[pdrv];
 }
 #endif
 
@@ -216,7 +222,7 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count)
      * 传入 OVERLAPPED 结构导致 ERROR_INVALID_PARAMETER。 */
     {
         UINT size = count * FF_MAX_SS;
-        BYTE* alignedBuf = ensureAlignedBuf(size);
+        BYTE* alignedBuf = ensureAlignedBuf(pdrv, size);
         if (!alignedBuf) return RES_ERROR;
 
         LARGE_INTEGER offset;
@@ -269,7 +275,7 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
         if (status & STA_PROTECT) return RES_WRPRT;
 
         UINT size = count * FF_MAX_SS;
-        BYTE* alignedBuf = ensureAlignedBuf(size);
+        BYTE* alignedBuf = ensureAlignedBuf(pdrv, size);
         if (!alignedBuf) return RES_ERROR;
         memcpy(alignedBuf, buff, size);
 

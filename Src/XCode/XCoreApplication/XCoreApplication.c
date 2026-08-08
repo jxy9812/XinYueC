@@ -24,6 +24,8 @@ static XThread* g_mainThread = NULL;
 static bool is_app_running = false;
 static bool is_app_closing = false;
 static bool setuidAllowed = false;
+/* 当前 QCoreApplication::exec 对应的栈事件循环；用于安全退出当前循环。 */
+static XEventLoop* g_execLoop = NULL;
 
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
 bool VXCoreApplication_event(XObject* self, XEvent* e);
@@ -345,7 +347,9 @@ int XCoreApplication_exec()
 
     XEventLoop eventLoop;
     XEventLoop_init(&eventLoop);
+    g_execLoop = &eventLoop;
     int result = XEventLoop_exec(&eventLoop, XEventLoop_ApplicationExec);
+    g_execLoop = NULL;
 
     /* Qt 6.8: execCleanup — 事件循环结束后发送 DeferredDelete 事件 */
     if (data)
@@ -362,6 +366,13 @@ void XCoreApplication_exit(int returnCode)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
+
+    /* exec() 的循环对象是栈对象，直接退出它可以避免在事件回调中遍历
+       正在变化的线程事件循环栈。 */
+    if (g_execLoop) {
+        XEventLoop_exit(g_execLoop, returnCode);
+        return;
+    }
 
     /* Qt 6.8: 发出 aboutToQuit 信号（仅第一次），在设置 quitNow 之前 */
     if (!app->m_aboutToQuitEmitted) {

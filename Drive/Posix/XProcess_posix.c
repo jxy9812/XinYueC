@@ -16,7 +16,7 @@
 #include "XFileSystem.h"
 #include "XFileDescriptor.h"
 #include "XMemory.h"
-#include "XByteArray.h"
+#include "XRingBuffer.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -25,7 +25,11 @@
 #include <string.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 
 typedef struct XProcessPosixBackend {
     pid_t pid;                  /**< 当前子进程 ID。 */
@@ -38,8 +42,9 @@ typedef struct XProcessPosixBackend {
     int waitStatus;             /**< waitpid 返回的原始状态。 */
     bool stdoutEof;              /**< stdout 管道已到 EOF。 */
     bool stderrEof;              /**< stderr 管道已到 EOF。 */
-    XByteArray* stdoutBuffer;    /**< stdout 缓冲；对象拥有。 */
-    XByteArray* stderrBuffer;    /**< stderr 缓冲；对象拥有。 */
+    XRingBuffer* stdinBuffer;    /**< stdin 待写缓冲；对象拥有。 */
+    XRingBuffer* stdoutBuffer;   /**< stdout 缓冲；对象拥有。 */
+    XRingBuffer* stderrBuffer;   /**< stderr 缓冲；对象拥有。 */
     XProcess* outputSinkProcess; /**< 借用目标；源进程结束时关闭其 stdin。 */
 } XProcessPosixBackend;
 
@@ -152,6 +157,17 @@ static int xpp_open_redirect(const XString* path, bool write, bool append)
     }
 }
 
+/* 未开放的进程通道统一接入库抽象的空设备，避免继承父进程终端。 */
+static int xpp_open_null(bool write)
+{
+    XString* nullDevice = XProcess_backend_nullDevice();
+    int fd;
+    if (!nullDevice) return -1;
+    fd = xpp_open_redirect(nullDevice, write, false);
+    XString_delete_base(nullDevice);
+    return fd;
+}
+
 static void xpp_dispose_backend(XProcessPosixBackend* backend)
 {
     if (!backend) return;
@@ -160,8 +176,9 @@ static void xpp_dispose_backend(XProcessPosixBackend* backend)
     xpp_close_fd(&backend->stdoutFd);
     xpp_close_fd(&backend->stderrFd);
     xpp_close_fd(&backend->startupFd);
-    if (backend->stdoutBuffer) XByteArray_delete_base(backend->stdoutBuffer);
-    if (backend->stderrBuffer) XByteArray_delete_base(backend->stderrBuffer);
+    if (backend->stdoutBuffer) XRingBuffer_delete_base(backend->stdoutBuffer);
+    if (backend->stderrBuffer) XRingBuffer_delete_base(backend->stderrBuffer);
+    if (backend->stdinBuffer) XRingBuffer_delete_base(backend->stdinBuffer);
     XFree_System(backend);
 }
 
@@ -173,6 +190,38 @@ static void xpp_close_pipe_set(int pipes[3][2])
         xpp_close_fd(&pipes[i][0]);
         xpp_close_fd(&pipes[i][1]);
     }
+}
+
+/* 尝试把 stdin 待写缓冲冲入非阻塞管道；遇到 EAGAIN 时保留剩余数据。 */
+static bool xpp_flush_stdin(XProcess* self, XProcessPosixBackend* backend)
+{
+    XRingBuffer* buffer;
+    bool success = true;
+    if (!self || !backend || backend->stdinFd < 0) return false;
+    buffer = backend->stdinBuffer;
+    if (!buffer) return true;
+    while (XRingBuffer_available(buffer) > 0) {
+        size_t contiguous = XRingBuffer_available(buffer);
+        const void* data = XRingBuffer_peekReadPtr(buffer, &contiguous);
+        ssize_t written;
+        if (!data || contiguous == 0) break;
+        written = write(backend->stdinFd, data, contiguous);
+        if (written > 0) {
+            XRingBuffer_skip(buffer, (size_t)written);
+            XIODevice_bytesWritten_signal(&self->base, (int64_t)written);
+            continue;
+        }
+        if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        if (written < 0) {
+            XProcess_backend_setError(self, XProcessError_WriteError, strerror(errno));
+        }
+        xpp_close_fd(&backend->stdinFd);
+        success = false;
+        break;
+    }
+    if (success && self->m_stdinClosed && XRingBuffer_available(buffer) == 0)
+        xpp_close_fd(&backend->stdinFd);
+    return success;
 }
 
 static void xpp_child_fail(int errorFd, int error, bool detached)
@@ -199,6 +248,20 @@ static void xpp_child_close_extra_fds(int lowest, int keep)
 {
     long limit;
     int fd;
+#if defined(__linux__) && defined(SYS_close_range)
+    bool closeRangeSucceeded = true;
+    if (lowest < 3) lowest = 3;
+    if (keep >= lowest) {
+        if (keep > lowest && syscall(SYS_close_range, (unsigned)lowest,
+                                     (unsigned)(keep - 1), 0) < 0)
+            closeRangeSucceeded = false;
+        if (syscall(SYS_close_range, (unsigned)(keep + 1), UINT_MAX, 0) < 0)
+            closeRangeSucceeded = false;
+    } else if (syscall(SYS_close_range, (unsigned)lowest, UINT_MAX, 0) < 0) {
+        closeRangeSucceeded = false;
+    }
+    if (closeRangeSucceeded) return;
+#endif
     if (lowest < 3) lowest = 3;
     limit = sysconf(_SC_OPEN_MAX);
     if (limit < lowest) limit = 1024;
@@ -207,11 +270,11 @@ static void xpp_child_close_extra_fds(int lowest, int keep)
         if (fd != keep) (void)close(fd);
 }
 
-static void xpp_child_apply_unix_parameters(const XProcess* self, int startupWrite)
+static bool xpp_child_apply_unix_parameters(const XProcess* self, int startupWrite)
 {
     uint32_t flags;
     int signo;
-    if (!self) return;
+    if (!self) return true;
     flags = self->m_unixParameters.flags;
 #ifdef NSIG
     if (flags & XProcessUnixProcessFlag_ResetSignalHandlers) {
@@ -219,17 +282,46 @@ static void xpp_child_apply_unix_parameters(const XProcess* self, int startupWri
             if (signo == SIGKILL || signo == SIGSTOP) continue;
             (void)signal(signo, SIG_DFL);
         }
+        {
+            sigset_t emptyMask;
+            if (sigemptyset(&emptyMask) != 0 ||
+                sigprocmask(SIG_SETMASK, &emptyMask, NULL) != 0) {
+                xpp_child_fail(startupWrite, errno, false);
+                return false;
+            }
+        }
     }
 #endif
     if (flags & XProcessUnixProcessFlag_IgnoreSigPipe)
         (void)signal(SIGPIPE, SIG_IGN);
-    if (flags & (XProcessUnixProcessFlag_CreateNewSession |
-                 XProcessUnixProcessFlag_DisconnectControllingTerminal))
-        (void)setsid();
-    if (flags & XProcessUnixProcessFlag_ResetIds) {
-        (void)setgid(getgid());
-        (void)setuid(getuid());
+    if (flags & XProcessUnixProcessFlag_CreateNewSession) {
+        if (setsid() < 0) {
+            xpp_child_fail(startupWrite, errno, false);
+            return false;
+        }
     }
+    if (flags & XProcessUnixProcessFlag_DisconnectControllingTerminal) {
+        int tty = open("/dev/tty", O_RDWR | O_NOCTTY);
+        if (tty >= 0) {
+            if (ioctl(tty, TIOCNOTTY) < 0) {
+                int savedError = errno;
+                close(tty);
+                xpp_child_fail(startupWrite, savedError, false);
+                return false;
+            }
+            close(tty);
+        } else if (errno != ENXIO && errno != ENODEV && errno != ENOENT) {
+            xpp_child_fail(startupWrite, errno, false);
+            return false;
+        }
+    }
+    if (flags & XProcessUnixProcessFlag_ResetIds) {
+        if (setgid(getgid()) < 0 || setuid(getuid()) < 0) {
+            xpp_child_fail(startupWrite, errno, false);
+            return false;
+        }
+    }
+    return true;
 }
 
 static const char* xpp_environment_path(char** envp)
@@ -305,7 +397,7 @@ static void xpp_exec_child(XProcess* self, XProcessPosixBackend* backend,
         xpp_child_fail(startupWrite, errno, detached);
     }
     if (detached || self->m_unixParameters.flags)
-        xpp_child_apply_unix_parameters(self, startupWrite);
+        (void)xpp_child_apply_unix_parameters(self, startupWrite);
     if (detached)
         (void)setsid();
     if (detached) {
@@ -367,31 +459,43 @@ static bool xpp_make_pipes(XProcess* self, XProcessPosixBackend* backend,
     if (self->m_standardInputFile && !XString_isEmpty_base(self->m_standardInputFile)) {
         *inputFile = xpp_open_redirect(self->m_standardInputFile, false, false);
         if (*inputFile < 0) return false;
-    } else if (!detached && self->m_inputMode == XProcessInputChannelMode_ManagedInputChannel) {
+    } else if (!detached && canWrite &&
+               self->m_inputMode == XProcessInputChannelMode_ManagedInputChannel) {
         if (pipe(pipes[0]) < 0) return false;
         backend->stdinFd = pipes[0][1];
+    } else if (!detached && !canWrite &&
+               self->m_inputMode == XProcessInputChannelMode_ManagedInputChannel) {
+        *inputFile = xpp_open_null(false);
+        if (*inputFile < 0) return false;
     }
     if (self->m_standardOutputFile && !XString_isEmpty_base(self->m_standardOutputFile)) {
         *outputFile = xpp_open_redirect(self->m_standardOutputFile, true, self->m_stdoutAppend);
         if (*outputFile < 0) return false;
-    } else if (!detached && (self->m_channelMode == XProcessChannelMode_SeparateChannels ||
-               self->m_channelMode == XProcessChannelMode_MergedChannels)) {
+    } else if (!detached && canRead &&
+               (self->m_channelMode == XProcessChannelMode_SeparateChannels ||
+                self->m_channelMode == XProcessChannelMode_MergedChannels)) {
         if (pipe(pipes[1]) < 0) return false;
         backend->stdoutFd = pipes[1][0];
+    } else if (!detached && !canRead &&
+               (self->m_channelMode == XProcessChannelMode_SeparateChannels ||
+                self->m_channelMode == XProcessChannelMode_MergedChannels)) {
+        *outputFile = xpp_open_null(true);
+        if (*outputFile < 0) return false;
     }
     if (self->m_channelMode == XProcessChannelMode_SeparateChannels &&
         self->m_standardErrorFile && !XString_isEmpty_base(self->m_standardErrorFile)) {
         *errorFile = xpp_open_redirect(self->m_standardErrorFile, true, self->m_stderrAppend);
         if (*errorFile < 0) return false;
-    } else if (!detached && self->m_channelMode == XProcessChannelMode_SeparateChannels) {
+    } else if (!detached && canRead && self->m_channelMode == XProcessChannelMode_SeparateChannels) {
         if (pipe(pipes[2]) < 0) return false;
         backend->stderrFd = pipes[2][0];
+    } else if (!detached && !canRead && self->m_channelMode == XProcessChannelMode_SeparateChannels) {
+        *errorFile = xpp_open_null(true);
+        if (*errorFile < 0) return false;
     }
     (void)inputHandle;
     (void)outputHandle;
     (void)errorHandle;
-    (void)canRead;
-    (void)canWrite;
     return true;
 }
 
@@ -418,9 +522,15 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
     backend->outputSinkFd = -1;
     backend->startupFd = -1;
     backend->outputSinkProcess = NULL;
-    backend->stdoutBuffer = XByteArray_create();
-    backend->stderrBuffer = XByteArray_create();
-    if (!backend->stdoutBuffer || !backend->stderrBuffer ||
+    backend->stdinBuffer = (mode & XIODevice_WriteOnly)
+                               ? XRingBuffer_create(XPROCESS_IO_BUFFER_SIZE) : NULL;
+    backend->stdoutBuffer = (mode & XIODevice_ReadOnly)
+                                ? XRingBuffer_create(XPROCESS_IO_BUFFER_SIZE) : NULL;
+    backend->stderrBuffer = (mode & XIODevice_ReadOnly)
+                                ? XRingBuffer_create(XPROCESS_IO_BUFFER_SIZE) : NULL;
+    if (((mode & XIODevice_WriteOnly) && !backend->stdinBuffer) ||
+        ((mode & XIODevice_ReadOnly) &&
+         (!backend->stdoutBuffer || !backend->stderrBuffer)) ||
         !xpp_make_pipes(self, backend, mode, detached, pipes, &inputFile, &outputFile, &errorFile,
                         &inputHandle, &outputHandle, &errorHandle)) {
         xpp_close_pipe_set(pipes);
@@ -591,7 +701,7 @@ bool XProcess_backend_start(XProcess* self, XIODeviceBaseMode mode, bool detache
 
 static void xpp_read_fd(XProcess* self, XProcessPosixBackend* backend,
                         XProcessChannel channel, int* fd, bool* eof,
-                        XByteArray* target)
+                        XRingBuffer* target)
 {
     char buffer[XPROCESS_IO_BUFFER_SIZE];
     bool got = false;
@@ -600,7 +710,11 @@ static void xpp_read_fd(XProcess* self, XProcessPosixBackend* backend,
     for (;;) {
         n = read(*fd, buffer, sizeof(buffer));
         if (n > 0) {
-            XByteArray_append_2(target, buffer, (size_t)n);
+            if (XRingBuffer_write(target, buffer, (size_t)n) != (size_t)n) {
+                XProcess_backend_setError(self, XProcessError_ReadError,
+                                          "process output buffer allocation failed");
+                break;
+            }
             got = true;
             continue;
         }
@@ -623,8 +737,10 @@ static void xpp_read_fd(XProcess* self, XProcessPosixBackend* backend,
 bool XProcess_backend_poll(XProcess* self, int timeoutMsecs)
 {
     XProcessPosixBackend* backend;
-    struct pollfd fds[3];
+    struct pollfd fds[4];
     int count = 0;
+    int stdinIndex = -1;
+    int pollTimeout;
     int pollResult;
     int status;
     if (!self || !self->m_backend) return false;
@@ -638,10 +754,24 @@ bool XProcess_backend_poll(XProcess* self, int timeoutMsecs)
         self->m_processId = 0;
         return false;
     }
+    (void)xpp_flush_stdin(self, backend);
+    if (backend->stdinFd >= 0 && backend->stdinBuffer &&
+        XRingBuffer_available(backend->stdinBuffer) > 0) {
+        stdinIndex = count;
+        fds[count].fd = backend->stdinFd;
+        fds[count].events = POLLOUT | POLLERR | POLLHUP;
+        ++count;
+    }
     if (backend->stdoutFd >= 0) { fds[count].fd = backend->stdoutFd; fds[count].events = POLLIN | POLLHUP; ++count; }
     if (backend->stderrFd >= 0) { fds[count].fd = backend->stderrFd; fds[count].events = POLLIN | POLLHUP; ++count; }
-    pollResult = count ? poll(fds, (nfds_t)count, timeoutMsecs < 0 ? -1 : timeoutMsecs) : 0;
-    (void)pollResult;
+    /* poll 不支持等待子进程退出；有待写数据时限制单次等待，避免子进程
+       已退出但管道不再可写时把 waitForFinished 卡满整个超时。 */
+    pollTimeout = timeoutMsecs < 0 ? -1 : timeoutMsecs;
+    if (stdinIndex >= 0 && (pollTimeout < 0 || pollTimeout > 50)) pollTimeout = 50;
+    pollResult = count ? poll(fds, (nfds_t)count, pollTimeout) : 0;
+    if (stdinIndex >= 0 && pollResult > 0 &&
+        (fds[stdinIndex].revents & (POLLOUT | POLLERR | POLLHUP)))
+        (void)xpp_flush_stdin(self, backend);
     xpp_read_fd(self, backend, XProcessChannel_StandardOutput, &backend->stdoutFd,
                 &backend->stdoutEof, backend->stdoutBuffer);
     xpp_read_fd(self, backend, XProcessChannel_StandardError, &backend->stderrFd,
@@ -679,63 +809,70 @@ bool XProcess_backend_poll(XProcess* self, int timeoutMsecs)
 int64_t XProcess_backend_bytesAvailable(const XProcess* self, XProcessChannel channel)
 {
     const XProcessPosixBackend* backend;
-    const XByteArray* buffer;
+    const XRingBuffer* buffer;
     if (!self || !self->m_backend) return 0;
     backend = (const XProcessPosixBackend*)self->m_backend;
     buffer = channel == XProcessChannel_StandardOutput ? backend->stdoutBuffer : backend->stderrBuffer;
-    return buffer ? (int64_t)XByteArray_size_base(buffer) : 0;
+    return buffer ? (int64_t)XRingBuffer_available(buffer) : 0;
 }
 
 int64_t XProcess_backend_bytesToWrite(const XProcess* self)
 {
     const XProcessPosixBackend* backend = self ? (const XProcessPosixBackend*)self->m_backend : NULL;
-    return backend && backend->stdinFd >= 0 ? 0 : 0;
+    return backend && backend->stdinFd >= 0 && backend->stdinBuffer
+               ? (int64_t)XRingBuffer_available(backend->stdinBuffer) : 0;
 }
 
 int64_t XProcess_backend_read(XProcess* self, XProcessChannel channel,
                               char* data, int64_t maxlen)
 {
     XProcessPosixBackend* backend;
-    XByteArray* buffer;
+    XRingBuffer* buffer;
     size_t count;
     if (!self || !data || maxlen <= 0 || !self->m_backend) return -1;
     backend = (XProcessPosixBackend*)self->m_backend;
     XProcess_backend_poll(self, 0);
     buffer = channel == XProcessChannel_StandardOutput ? backend->stdoutBuffer : backend->stderrBuffer;
-    if (!buffer || XByteArray_size_base(buffer) == 0) return 0;
-    count = XByteArray_size_base(buffer);
-    if (count > (size_t)maxlen) count = (size_t)maxlen;
-    memcpy(data, XByteArray_data(buffer), count);
-    if (count < XByteArray_size_base(buffer))
-        memmove(XByteArray_data(buffer), XByteArray_data(buffer) + count,
-                XByteArray_size_base(buffer) - count);
-    XByteArray_resize_base(buffer, XByteArray_size_base(buffer) - count);
+    if (!buffer || XRingBuffer_available(buffer) == 0) return 0;
+    count = XRingBuffer_read(buffer, data, (size_t)maxlen);
     return (int64_t)count;
 }
 
 int64_t XProcess_backend_write(XProcess* self, const char* data, int64_t len)
 {
     XProcessPosixBackend* backend;
-    ssize_t n;
     if (!self || !data || len < 0 || !self->m_backend) return -1;
     backend = (XProcessPosixBackend*)self->m_backend;
-    if (backend->stdinFd < 0) return -1;
-    n = write(backend->stdinFd, data, (size_t)len);
-    if (n < 0) {
-        XProcess_backend_setError(self, XProcessError_WriteError, strerror(errno));
-        return -1;
+    if (backend->stdinFd < 0 || !backend->stdinBuffer) return -1;
+    if (len == 0) return 0;
+    {
+        size_t accepted = XRingBuffer_write(backend->stdinBuffer, data, (size_t)len);
+        if (accepted == 0) {
+            XProcess_backend_setError(self, XProcessError_WriteError,
+                                      "stdin buffer allocation failed");
+            return -1;
+        }
+        (void)xpp_flush_stdin(self, backend);
+        return (int64_t)accepted;
     }
-    return (int64_t)n;
 }
 
 bool XProcess_backend_waitForBytesWritten(XProcess* self, int msecs)
 {
     XProcessPosixBackend* backend = self ? (XProcessPosixBackend*)self->m_backend : NULL;
     struct pollfd pfd;
-    if (!backend || backend->stdinFd < 0) return true;
+    if (!backend || backend->stdinFd < 0 || !backend->stdinBuffer) return true;
+    (void)xpp_flush_stdin(self, backend);
+    if (XRingBuffer_available(backend->stdinBuffer) == 0) return true;
     pfd.fd = backend->stdinFd;
-    pfd.events = POLLOUT;
-    return poll(&pfd, 1, msecs < 0 ? -1 : msecs) > 0;
+    pfd.events = POLLOUT | POLLERR | POLLHUP;
+    if (poll(&pfd, 1, msecs < 0 ? -1 : msecs) <= 0) return false;
+    if (pfd.revents & (POLLERR | POLLHUP)) {
+        (void)xpp_flush_stdin(self, backend);
+        return XRingBuffer_available(backend->stdinBuffer) == 0;
+    }
+    (void)xpp_flush_stdin(self, backend);
+    return XRingBuffer_available(backend->stdinBuffer) == 0;
 }
 
 void XProcess_backend_closeReadChannel(XProcess* self, XProcessChannel channel)
@@ -749,7 +886,10 @@ void XProcess_backend_closeReadChannel(XProcess* self, XProcessChannel channel)
 void XProcess_backend_closeWriteChannel(XProcess* self)
 {
     XProcessPosixBackend* backend = self ? (XProcessPosixBackend*)self->m_backend : NULL;
-    if (backend) xpp_close_fd(&backend->stdinFd);
+    if (backend) {
+        if (backend->stdinBuffer) XRingBuffer_reset(backend->stdinBuffer);
+        xpp_close_fd(&backend->stdinFd);
+    }
 }
 
 void XProcess_backend_terminate(XProcess* self)

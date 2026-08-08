@@ -24,6 +24,7 @@
 #include "XNetworkAddressEntry.h"
 #include "XVector.h"
 #include "XString.h"
+#include "XDateTime.h"
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
 #include "XNetIoRingPosix.h"
@@ -62,6 +63,9 @@
 #define XNETWORK_READ_BUFFER_SIZE  8192
 #define XNETWORK_WRITE_BUFFER_SIZE 8192
 
+/* ICMP Echo 报文头固定为 type、code、checksum、identifier、sequence。 */
+#define XNETWORK_ICMP_HEADER_SIZE 8u
+
 /* =========================================================================
  * 地址转换辅助函数
  * ========================================================================= */
@@ -97,6 +101,111 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
         XHostAddress_setAddressIPv4(addr, ntohl(s4->sin_addr.s_addr));
         if (port) *port = ntohs(s4->sin_port);
     }
+}
+
+static uint16_t xnetwork_icmp_checksum(const uint8_t* data, size_t size)
+{
+    uint32_t sum = 0;
+    while (size > 1u) {
+        sum += ((uint32_t)data[0] << 8) | data[1];
+        data += 2;
+        size -= 2u;
+    }
+    if (size) sum += (uint32_t)data[0] << 8;
+    while (sum >> 16) sum = (sum & 0xffffu) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+bool XNetwork_icmpEchoSupported(void)
+{
+    return true;
+}
+
+bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+                       uint16_t sequence, const void* payload, size_t payloadSize,
+                       int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
+{
+    struct sockaddr_in destination;
+    uint8_t* request = NULL;
+    uint8_t response[2048];
+    size_t requestSize;
+    int socketFd = -1;
+    bool datagramSocket = false;
+    int pollResult;
+    uint64_t start;
+    uint64_t deadline;
+    bool matched = false;
+
+    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+        (payloadSize && !payload) || payloadSize > 65507u || timeoutMilliseconds <= 0)
+        return false;
+    requestSize = XNETWORK_ICMP_HEADER_SIZE + payloadSize;
+    request = (uint8_t*)XMalloc_System(requestSize);
+    if (!request) return false;
+    memset(request, 0, requestSize);
+    request[0] = 8u; /* Echo request */
+    request[1] = 0u;
+    request[4] = (uint8_t)(identifier >> 8);
+    request[5] = (uint8_t)identifier;
+    request[6] = (uint8_t)(sequence >> 8);
+    request[7] = (uint8_t)sequence;
+    if (payloadSize) memcpy(request + XNETWORK_ICMP_HEADER_SIZE, payload, payloadSize);
+    {
+        uint16_t checksum = xnetwork_icmp_checksum(request, requestSize);
+        request[2] = (uint8_t)(checksum >> 8);
+        request[3] = (uint8_t)checksum;
+    }
+
+    memset(&destination, 0, sizeof(destination));
+    destination.sin_family = AF_INET;
+    destination.sin_addr.s_addr = htonl(XHostAddress_toIPv4Address(address));
+    socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+    if (socketFd >= 0) datagramSocket = true;
+    else socketFd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (socketFd < 0) goto cleanup;
+    if (sendto(socketFd, request, requestSize, 0,
+               (const struct sockaddr*)&destination, sizeof(destination)) < 0)
+        goto cleanup;
+
+    start = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    deadline = start + (uint64_t)timeoutMilliseconds;
+    while (!matched) {
+        uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        int remaining = now >= deadline ? 0 : (int)(deadline - now);
+        struct pollfd descriptor;
+        ssize_t received;
+        size_t offset = 0;
+        uint8_t ihl;
+        if (remaining <= 0) break;
+        descriptor.fd = socketFd;
+        descriptor.events = POLLIN;
+        descriptor.revents = 0;
+        pollResult = poll(&descriptor, 1, remaining);
+        if (pollResult <= 0) break;
+        if (!(descriptor.revents & POLLIN)) continue;
+        received = recvfrom(socketFd, response, sizeof(response), 0, NULL, NULL);
+        if (received < (ssize_t)XNETWORK_ICMP_HEADER_SIZE) continue;
+        /* 原始套接字包含 IPv4 头；数据报 ICMP 套接字通常不包含。 */
+        if ((response[0] >> 4) == 4u) {
+            ihl = (uint8_t)(response[0] & 0x0fu);
+            if (ihl < 5u || (size_t)received < (size_t)ihl * 4u + XNETWORK_ICMP_HEADER_SIZE)
+                continue;
+            offset = (size_t)ihl * 4u;
+        }
+        if (response[offset] != 0u || response[offset + 1u] != 0u ||
+            response[offset + 6u] != request[6] || response[offset + 7u] != request[7] ||
+            (!datagramSocket && (response[offset + 4u] != request[4] ||
+                                 response[offset + 5u] != request[5])))
+            continue;
+        matched = true;
+    }
+    if (matched && elapsedMilliseconds)
+        *elapsedMilliseconds = (uint32_t)((uint64_t)XDateTime_currentMSecsSinceEpoch() - start);
+
+cleanup:
+    if (socketFd >= 0) close(socketFd);
+    if (request) XFree_System(request);
+    return matched;
 }
 
 /* =========================================================================
@@ -1060,6 +1169,18 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHos
 static struct ifaddrs* g_ifaddrsList = NULL;
 static struct ifaddrs* g_ifaddrsCurrent = NULL;
 static char g_ifaddrsCurrentName[IFNAMSIZ] = "";
+#define XNETWORK_MAX_ENUM_INTERFACES 64u
+static char g_ifaddrsSeen[XNETWORK_MAX_ENUM_INTERFACES][IFNAMSIZ];
+static size_t g_ifaddrsSeenCount = 0;
+
+static bool xnetwork_ifaddr_seen(const char* name)
+{
+    size_t i;
+    if (!name) return true;
+    for (i = 0; i < g_ifaddrsSeenCount; ++i)
+        if (strcmp(g_ifaddrsSeen[i], name) == 0) return true;
+    return false;
+}
 
 XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
 {
@@ -1068,11 +1189,13 @@ XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
         g_ifaddrsList = NULL;
         g_ifaddrsCurrent = NULL;
         g_ifaddrsCurrentName[0] = '\0';
+        g_ifaddrsSeenCount = 0;
     }
 
     if (getifaddrs(&g_ifaddrsList) != 0) return NULL;
     g_ifaddrsCurrent = g_ifaddrsList;
     g_ifaddrsCurrentName[0] = '\0';
+    g_ifaddrsSeenCount = 0;
     return (XNetworkInterfaceIterator)1; /* 非空标记 */
 }
 
@@ -1083,9 +1206,15 @@ struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator 
 
     /* 跳过重复的接口名称，每个接口只创建一个 XNetworkInterface */
     while (g_ifaddrsCurrent) {
-        if (strcmp(g_ifaddrsCurrent->ifa_name, g_ifaddrsCurrentName) != 0) {
+        if (!xnetwork_ifaddr_seen(g_ifaddrsCurrent->ifa_name)) {
             strncpy(g_ifaddrsCurrentName, g_ifaddrsCurrent->ifa_name, IFNAMSIZ - 1);
             g_ifaddrsCurrentName[IFNAMSIZ - 1] = '\0';
+            if (g_ifaddrsSeenCount < XNETWORK_MAX_ENUM_INTERFACES) {
+                strncpy(g_ifaddrsSeen[g_ifaddrsSeenCount], g_ifaddrsCurrentName,
+                        IFNAMSIZ - 1);
+                g_ifaddrsSeen[g_ifaddrsSeenCount][IFNAMSIZ - 1] = '\0';
+                ++g_ifaddrsSeenCount;
+            }
             break;
         }
         g_ifaddrsCurrent = g_ifaddrsCurrent->ifa_next;
@@ -1165,8 +1294,12 @@ struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator 
     }
 
     /* 收集该接口的所有地址条目 */
-    struct ifaddrs* cur = g_ifaddrsCurrent;
-    while (cur && strcmp(cur->ifa_name, g_ifaddrsCurrentName) == 0) {
+    struct ifaddrs* cur = g_ifaddrsList;
+    while (cur) {
+        if (strcmp(cur->ifa_name, g_ifaddrsCurrentName) != 0) {
+            cur = cur->ifa_next;
+            continue;
+        }
         if (cur->ifa_addr && (cur->ifa_addr->sa_family == AF_INET ||
                               cur->ifa_addr->sa_family == AF_INET6)) {
             XNetworkAddressEntry entry;
@@ -1218,8 +1351,10 @@ struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator 
         cur = cur->ifa_next;
     }
 
-    /* 将 g_ifaddrsCurrent 移到下一个接口的起始位置 */
-    g_ifaddrsCurrent = cur;
+    /* 当前指针仍指向本接口的第一条记录；从下一条开始寻找尚未输出的接口。 */
+    g_ifaddrsCurrent = g_ifaddrsCurrent ? g_ifaddrsCurrent->ifa_next : NULL;
+    while (g_ifaddrsCurrent && xnetwork_ifaddr_seen(g_ifaddrsCurrent->ifa_name))
+        g_ifaddrsCurrent = g_ifaddrsCurrent->ifa_next;
 
     iface->isValid = true;
     return iface;
@@ -1231,9 +1366,11 @@ void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
     if (g_ifaddrsList) {
         freeifaddrs(g_ifaddrsList);
         g_ifaddrsList = NULL;
-        g_ifaddrsCurrent = NULL;
+    g_ifaddrsCurrent = NULL;
+        g_ifaddrsSeenCount = 0;
     }
     g_ifaddrsCurrentName[0] = '\0';
+    g_ifaddrsSeenCount = 0;
 }
 
 /* =========================================================================
@@ -1554,7 +1691,9 @@ XVector* XNetwork_lookupName(const XString* name)
     XHostAddress addr;
     XHostAddress_init(&addr);
     struct sockaddr_in* sin = (struct sockaddr_in*)res->ai_addr;
-    XHostAddress_setAddressIPv4(&addr, sin->sin_addr.s_addr);
+    /* XHostAddress 的 IPv4 字段统一使用主机字节序，不能直接保存
+     * sockaddr_in 中的网络字节序地址，否则 127.0.0.1 会变成 1.0.0.127。 */
+    XHostAddress_setAddressIPv4(&addr, ntohl(sin->sin_addr.s_addr));
     XVector_push_back_1_base(vec, &addr);
 
     freeaddrinfo(res);

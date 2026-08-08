@@ -37,44 +37,53 @@ typedef struct XProcessEnvironment {
 
 /**
  * @brief 初始化空环境对象。
- * @param self 栈上环境对象；不能为空，调用方随后负责 deinit。
+ * @param self 调用方提供的未初始化存储；不能为 NULL。
+ * @return 无。列表分配失败时对象仍处于可反初始化状态。
+ * @note 成功调用后必须使用 XProcessEnvironment_deinit 释放内部资源。
  */
 void XProcessEnvironment_init(XProcessEnvironment* self);
 
 /**
  * @brief 初始化继承父进程环境的对象。
- * @param self 栈上环境对象；不能为空，不会立即复制父环境。
+ * @param self 调用方提供的未初始化存储；不能为 NULL。
+ * @return 无。本函数不会立即复制父进程环境。
+ * @note 成功调用后必须使用 XProcessEnvironment_deinit 结束对象生命周期。
  */
 void XProcessEnvironment_initInherit(XProcessEnvironment* self);
 
 /**
  * @brief 创建空环境对象。
- * @return 新对象；失败返回 NULL，调用方必须用 XProcessEnvironment_delete 释放。
+ * @return 新建环境对象；分配失败返回 NULL。调用方必须使用
+ *         XProcessEnvironment_delete 释放返回对象。
  */
 XProcessEnvironment* XProcessEnvironment_create(void);
 
 /**
  * @brief 创建继承父环境的对象。
- * @return 新对象；失败返回 NULL，调用方必须用 XProcessEnvironment_delete 释放。
+ * @return 新建继承标记对象；分配失败返回 NULL。调用方必须使用
+ *         XProcessEnvironment_delete 释放返回对象。
  */
 XProcessEnvironment* XProcessEnvironment_createInherit(void);
 
 /**
  * @brief 深拷贝环境对象。
- * @param other 源环境；借用，不能为 NULL。
- * @return 新环境对象；失败返回 NULL。
+ * @param other 源环境；仅在调用期间借用，不能为 NULL。
+ * @return 新建环境对象；参数非法或分配失败返回 NULL。调用方必须
+ *         使用 XProcessEnvironment_delete 释放返回对象。
  */
 XProcessEnvironment* XProcessEnvironment_createCopy(const XProcessEnvironment* other);
 
 /**
  * @brief 释放环境对象内部资源但保留对象存储。
  * @param self 环境对象；可为 NULL。
+ * @return 无。返回后对象可重新初始化，但不得继续读取原变量集合。
  */
 void XProcessEnvironment_deinit(XProcessEnvironment* self);
 
 /**
  * @brief 释放堆分配环境对象。
- * @param self 由 create 系列返回的对象；可为 NULL。
+ * @param self 由 create 系列返回的对象；可为 NULL，函数返回后不得再访问。
+ * @return 无。
  */
 void XProcessEnvironment_delete(XProcessEnvironment* self);
 
@@ -95,8 +104,28 @@ bool XProcessEnvironment_inheritsFromParent(const XProcessEnvironment* self);
 /**
  * @brief 清除所有显式变量。
  * @param self 环境对象；不能为空，继承标记保持不变。
+ * @return 无。传入 NULL 时不执行任何操作。
  */
 void XProcessEnvironment_clear(XProcessEnvironment* self);
+
+/**
+ * @brief 交换两个环境对象的内部状态。
+ * @param self 第一个环境对象；不能为空。
+ * @param other 第二个环境对象；不能为空。
+ * @return 无。任一参数为 NULL 或两个参数指向同一对象时保持不变。
+ * @note 只交换列表指针和继承标记，不复制变量内容。
+ */
+void XProcessEnvironment_swap(XProcessEnvironment* self,
+                              XProcessEnvironment* other);
+
+/**
+ * @brief 比较两个环境对象是否包含完全相同的变量集合。
+ * @param self 第一个环境对象；不能为空。
+ * @param other 第二个环境对象；不能为空。
+ * @return 继承状态、变量名称和值均相同返回 true，否则返回 false。
+ */
+bool XProcessEnvironment_equals(const XProcessEnvironment* self,
+                                const XProcessEnvironment* other);
 
 /**
  * @brief 查询 UTF-8 名称是否存在。
@@ -116,6 +145,7 @@ bool XProcessEnvironment_contains(const XProcessEnvironment* self, const XString
 
 /**
  * @brief 插入或替换 UTF-8 环境变量。
+ * @param self 目标环境对象；不能为 NULL。成功后继承标记转为显式环境。
  * @param name 变量名；借用，非 NULL、非空且不得包含等号。
  * @param value 变量值；借用，NULL 按空字符串处理，不取得所有权。
  * @return 成功返回 true；参数非法或内存不足返回 false。
@@ -151,8 +181,11 @@ bool XProcessEnvironment_remove(XProcessEnvironment* self, const XString* name);
 
 /**
  * @brief 查询 UTF-8 变量值。
+ * @param self 环境对象；调用期间借用，可为 NULL。
+ * @param name UTF-8 变量名；调用期间借用，必须非空且不含等号。
  * @param defaultValue 未找到时复制返回的默认值；可为 NULL，按空字符串处理。
- * @return 新建 XString；调用方必须使用 XString_delete_base 释放。
+ * @return 新建 XString；未找到或参数非法时返回 defaultValue 的副本，
+ *         分配失败返回 NULL。调用方必须使用 XString_delete_base 释放。
  */
 XString* XProcessEnvironment_value_utf8(const XProcessEnvironment* self,
                                          const char* name,

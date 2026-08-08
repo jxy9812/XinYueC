@@ -3,6 +3,7 @@
 #include "XEvent.h"
 #include "XMemory.h"
 #include "XEventLoop.h"
+#include "XTask.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -231,6 +232,7 @@ static void VXThread_setStackSize(XThread* Object, uint32_t stackSize) {
 // 销毁线程对象
 static void VXThread_deinit(XThread* Object) {
 	if (!Object) return;
+	XTask_unregisterThread(Object);
 	if (XThread_isRunning(Object)) {
 		XThread_requestInterruption(Object);
 		// 等待线程结束，最长 100ms

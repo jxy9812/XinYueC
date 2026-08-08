@@ -14,6 +14,7 @@
 #include "XFileSystem.h"
 #include "XString.h"
 #include "XMemory.h"
+#include "XDateTime.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -88,21 +89,36 @@ static int xfs_pwd(XConsoleShell* shell, XConsoleShellSession* session,
 static int xfs_cd(XConsoleShell* shell, XConsoleShellSession* session,
                   int argc, const char* const* argv, void* userData)
 {
-    XString* path;
+    XString* path = XString_create();
     XFileStat stat;
-    (void)userData;
-    if (argc != 1) return XConsoleResult_InvalidArgument;
-    path = XString_create();
-    if (!path || !xfs_make_path(session, argv[0], path) ||
-        !XFileSystem_stat(path, &stat) || !stat.isDir ||
-        XString_size_base(path) >= sizeof(session->currentPath)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_Failed;
-    }
-    strncpy(session->currentPath, XString_toUtf8(path), sizeof(session->currentPath) - 1);
-    session->currentPath[sizeof(session->currentPath) - 1] = '\0';
-    XString_delete_base(path);
+    char savedPath[XCONSOLE_SHELL_MAX_PATH];
+    bool ok = true;
     (void)shell;
+    (void)userData;
+    if (argc > 1 || !path) ok = false;
+    if (ok) {
+        if (argc == 0) {
+            ok = XFileSystem_getSpecialPath(XSpecialPath_Home, path);
+        } else if (strcmp(argv[0], "-") == 0) {
+            if (session->previousPath[0] == '\0') ok = false;
+            else ok = XString_assign_utf8(path, session->previousPath);
+        } else {
+            ok = xfs_make_path(session, argv[0], path);
+        }
+    }
+    if (ok && XString_size_base(path) >= sizeof(session->currentPath)) ok = false;
+    if (ok && !XFileSystem_stat(path, &stat)) ok = false;
+    if (!ok || !stat.isDir) {
+        if (path) XString_delete_base(path);
+        return XConsoleResult_InvalidArgument;
+    }
+    strncpy(savedPath, session->currentPath, sizeof(savedPath) - 1u);
+    savedPath[sizeof(savedPath) - 1u] = '\0';
+    strncpy(session->currentPath, XString_toUtf8(path), sizeof(session->currentPath) - 1u);
+    session->currentPath[sizeof(session->currentPath) - 1u] = '\0';
+    strncpy(session->previousPath, savedPath, sizeof(session->previousPath) - 1u);
+    session->previousPath[sizeof(session->previousPath) - 1u] = '\0';
+    XString_delete_base(path);
     return XConsoleResult_Ok;
 }
 
@@ -157,19 +173,27 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
     XFileStat stat;
     char permissions[16];
     char size[32];
-    char line[192];
+    char* line;
+    size_t lineCapacity;
     const char* suffix = "";
     int written;
     if (!shell || !fullPath || !displayName || !entry || !options) return false;
+    /* 文件名长度受后端长文件名配置控制，不能用固定的小栈缓冲区截断。 */
+    lineCapacity = strlen(displayName) + 128u;
+    line = (char*)XMalloc_System(lineCapacity);
+    if (!line) return false;
     memset(&stat, 0, sizeof(stat));
-    if (!XFileSystem_stat(fullPath, &stat)) return false;
+    if (!XFileSystem_stat(fullPath, &stat)) {
+        XFree_System(line);
+        return false;
+    }
     if (options->longFormat) {
         xfs_ls_permissions(stat.permissions, stat.isDir, permissions, sizeof(permissions));
         xfs_ls_size(stat.size, options->human, size, sizeof(size));
         /* 固定列宽便于串口终端逐行比较：大小和时间右对齐，类型左对齐。 */
-        written = snprintf(line, sizeof(line), "%-10s %10s %-9s %12lld %s",
-                           permissions, size, stat.isSymLink ? "link" :
-                           (stat.isDir ? "dir" : "file"),
+        written = snprintf(line, lineCapacity, "%-10s %10s %-9s %12lld %s",
+                           permissions, size, stat.isSymLink ? "链接" :
+                           (stat.isDir ? "目录" : "文件"),
                            (long long)stat.modificationTime, displayName);
     } else {
         if (options->classify) {
@@ -177,11 +201,15 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
             else if (stat.isSymLink) suffix = "@";
             else if (stat.isExecutable) suffix = "*";
         }
-        written = snprintf(line, sizeof(line), "%s%s", displayName, suffix);
+        written = snprintf(line, lineCapacity, "%s%s", displayName, suffix);
     }
-    return written > 0 && (size_t)written < sizeof(line) &&
-           XConsoleShell_write(shell, line, (size_t)written) &&
-           XConsoleShell_writeUtf8(shell, "\n");
+    {
+        bool result = written > 0 && (size_t)written < lineCapacity &&
+                      XConsoleShell_write(shell, line, (size_t)written) &&
+                      XConsoleShell_writeUtf8(shell, "\n");
+        XFree_System(line);
+        return result;
+    }
 }
 
 static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
@@ -390,23 +418,107 @@ static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
     return XConsoleResult_Ok;
 }
 
+static bool xfs_chmod_symbolic(const char* text, XFilePermissions current,
+                                bool canExecute, XFilePermissions* result)
+{
+    XFilePermissions perms = current;
+    const char* p = text;
+    size_t i;
+    if (!text || !text[0] || !result) return false;
+    while (*p) {
+        unsigned who = 0u;
+        char op;
+        const char* permStart;
+        size_t permLen;
+        bool hasWho = false;
+        while (*p == 'u' || *p == 'g' || *p == 'o' || *p == 'a') {
+            if (*p == 'u') who |= 1u;
+            else if (*p == 'g') who |= 2u;
+            else if (*p == 'o') who |= 4u;
+            else who |= 7u;
+            ++p;
+            hasWho = true;
+        }
+        if (!hasWho) who = 7u;
+        op = *p;
+        if (op != '+' && op != '-' && op != '=') return false;
+        ++p;
+        permStart = p;
+        while (*p == 'r' || *p == 'w' || *p == 'x' || *p == 'X') ++p;
+        permLen = (size_t)(p - permStart);
+        if (op == '=') {
+            if (who & 1u) perms &= ~(XFile_ReadOwner | XFile_WriteOwner | XFile_ExeOwner |
+                                     XFile_ReadUser | XFile_WriteUser | XFile_ExeUser);
+            if (who & 2u) perms &= ~(XFile_ReadGroup | XFile_WriteGroup | XFile_ExeGroup);
+            if (who & 4u) perms &= ~(XFile_ReadOther | XFile_WriteOther | XFile_ExeOther);
+        }
+        for (i = 0; i < permLen; ++i) {
+            char c = permStart[i];
+            bool add = op != '-';
+            if (c == 'r') {
+                if (who & 1u) perms = add ? (perms | XFile_ReadOwner | XFile_ReadUser)
+                                          : (perms & ~(XFile_ReadOwner | XFile_ReadUser));
+                if (who & 2u) perms = add ? (perms | XFile_ReadGroup) : (perms & ~XFile_ReadGroup);
+                if (who & 4u) perms = add ? (perms | XFile_ReadOther) : (perms & ~XFile_ReadOther);
+            } else if (c == 'w') {
+                if (who & 1u) perms = add ? (perms | XFile_WriteOwner | XFile_WriteUser)
+                                          : (perms & ~(XFile_WriteOwner | XFile_WriteUser));
+                if (who & 2u) perms = add ? (perms | XFile_WriteGroup) : (perms & ~XFile_WriteGroup);
+                if (who & 4u) perms = add ? (perms | XFile_WriteOther) : (perms & ~XFile_WriteOther);
+            } else if (c == 'x' || c == 'X') {
+                if (c == 'X' && add && !canExecute) continue;
+                if (who & 1u) perms = add ? (perms | XFile_ExeOwner | XFile_ExeUser)
+                                          : (perms & ~(XFile_ExeOwner | XFile_ExeUser));
+                if (who & 2u) perms = add ? (perms | XFile_ExeGroup) : (perms & ~XFile_ExeGroup);
+                if (who & 4u) perms = add ? (perms | XFile_ExeOther) : (perms & ~XFile_ExeOther);
+            } else {
+                return false;
+            }
+        }
+        if (*p == ',') ++p;
+        else if (*p) return false;
+    }
+    *result = perms;
+    return true;
+}
+
 static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
     XString* path;
     XFilePermissions permissions;
+    bool symbolic;
     bool ok;
     (void)shell;
     (void)userData;
-    if (argc < 2 || !xfs_parse_octal(argv[0], &permissions))
+    if (argc < 2) return XConsoleResult_InvalidArgument;
+    symbolic = argv[0][0] < '0' || argv[0][0] > '7';
+    if (symbolic) {
+        if (!xfs_chmod_symbolic(argv[0], 0, false, &permissions))
+            return XConsoleResult_InvalidArgument;
+    } else if (!xfs_parse_octal(argv[0], &permissions)) {
         return XConsoleResult_InvalidArgument;
+    }
     for (int i = 1; i < argc; ++i) {
+        XFilePermissions target = permissions;
+        XFileStat stat;
         path = XString_create();
         if (!path || !xfs_make_path(session, argv[i], path)) {
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_setPermissions(path, permissions);
+        if (symbolic) {
+            bool hasStat = XFileSystem_stat(path, &stat);
+            bool canExecute = hasStat && (stat.isDir ||
+                (stat.permissions & (XFile_ExeOwner | XFile_ExeGroup |
+                                     XFile_ExeOther)) != 0);
+            if (hasStat) target = stat.permissions;
+            if (!xfs_chmod_symbolic(argv[0], target, canExecute, &target)) {
+                XString_delete_base(path);
+                return XConsoleResult_InvalidArgument;
+            }
+        }
+        ok = XFileSystem_setPermissions(path, target);
         XString_delete_base(path);
         if (!ok) return XConsoleResult_Failed;
     }
@@ -416,21 +528,54 @@ static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
 static int xfs_readlink(XConsoleShell* shell, XConsoleShellSession* session,
                         int argc, const char* const* argv, void* userData)
 {
-    XString* path = XString_create();
-    XString* target = XString_create();
-    bool ok;
+    const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    int pathCount = 0;
+    bool canonical = false;
+    bool endOptions = false;
+    int i;
+    bool ok = true;
     (void)userData;
-    if (argc != 1 || !path || !target || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        if (target) XString_delete_base(target);
-        return XConsoleResult_InvalidArgument;
+    for (i = 0; i < argc; ++i) {
+        const char* argument = argv[i];
+        if (!endOptions && strcmp(argument, "--") == 0) {
+            endOptions = true;
+        } else if (!endOptions && (strcmp(argument, "-f") == 0 ||
+                                   strcmp(argument, "--canonicalize") == 0)) {
+            canonical = true;
+        } else if (!endOptions && argument[0] == '-' && argument[1]) {
+            return XConsoleResult_InvalidArgument;
+        } else {
+            if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS)
+                return XConsoleResult_ResourceLimit;
+            paths[pathCount++] = argument;
+        }
     }
-    ok = XFileSystem_readLink(path, target) &&
-         XConsoleShell_writeUtf8(shell, XString_toUtf8(target)) &&
-         XConsoleShell_writeUtf8(shell, "\n");
-    XString_delete_base(path);
-    XString_delete_base(target);
-    return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
+    if (pathCount == 0) return XConsoleResult_InvalidArgument;
+    for (i = 0; i < pathCount; ++i) {
+        XString* path = XString_create();
+        XString* result = XString_create();
+        XFileStat stat;
+        bool ok2;
+        if (!path || !result || !xfs_make_path(session, paths[i], path)) {
+            if (path) XString_delete_base(path);
+            if (result) XString_delete_base(result);
+            return XConsoleResult_InvalidArgument;
+        }
+        if (canonical) {
+            ok2 = XFileSystem_resolvePath(path, result, XPathStyle_Canonical);
+        } else {
+            ok2 = XFileSystem_stat(path, &stat) && stat.isSymLink &&
+                  XFileSystem_readLink(path, result);
+        }
+        if (ok2) {
+            ok2 = XConsoleShell_writeUtf8(shell, XString_toUtf8(result)) &&
+                  XConsoleShell_writeUtf8(shell, "\n");
+        }
+        XString_delete_base(path);
+        XString_delete_base(result);
+        if (!ok2) return XConsoleResult_Failed;
+    }
+    return XConsoleResult_Ok;
 }
 
 static int xfs_realpath(XConsoleShell* shell, XConsoleShellSession* session,
@@ -456,29 +601,59 @@ static int xfs_realpath(XConsoleShell* shell, XConsoleShellSession* session,
 static int xfs_truncate(XConsoleShell* shell, XConsoleShellSession* session,
                         int argc, const char* const* argv, void* userData)
 {
-    XString* path;
-    XFd fd;
-    int64_t size;
-    int error = 0;
-    bool ok;
+    const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    int pathCount = 0;
+    int64_t size = -1;
+    bool noCreate = false;
+    bool endOptions = false;
+    int i;
     (void)shell;
     (void)userData;
-    if (argc != 2 || !xfs_parse_nonnegative(argv[1], &size))
-        return XConsoleResult_InvalidArgument;
-    path = XString_create();
-    if (!path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
+    for (i = 0; i < argc; ++i) {
+        const char* argument = argv[i];
+        int64_t value;
+        if (!endOptions && strcmp(argument, "--") == 0) {
+            endOptions = true;
+        } else if (!endOptions && (strcmp(argument, "-s") == 0 ||
+                                   strcmp(argument, "--size") == 0)) {
+            if (i + 1 >= argc || size >= 0 ||
+                !xfs_parse_nonnegative(argv[++i], &value))
+                return XConsoleResult_InvalidArgument;
+            size = value;
+        } else if (!endOptions && (strcmp(argument, "-c") == 0 ||
+                                   strcmp(argument, "--no-create") == 0)) {
+            noCreate = true;
+        } else if (!endOptions && argument[0] == '-' && argument[1]) {
+            return XConsoleResult_InvalidArgument;
+        } else {
+            if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS)
+                return XConsoleResult_ResourceLimit;
+            paths[pathCount++] = argument;
+        }
     }
-    fd = XFileSystem_open(path, XFileSystem_WriteOnly, &error);
-    if (fd == XFD_INVALID) {
+    if (size < 0 || pathCount == 0) return XConsoleResult_InvalidArgument;
+    for (i = 0; i < pathCount; ++i) {
+        XString* path = XString_create();
+        XFd fd;
+        int error = 0;
+        bool ok;
+        if (!path || !xfs_make_path(session, paths[i], path)) {
+            if (path) XString_delete_base(path);
+            return XConsoleResult_InvalidArgument;
+        }
+        if (noCreate && !XFileSystem_exists(path)) {
+            XString_delete_base(path);
+            continue;
+        }
+        fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Truncate |
+                              (noCreate ? 0 : XFileSystem_Create), &error);
         XString_delete_base(path);
-        return XConsoleResult_Failed;
+        if (fd == XFD_INVALID) return XConsoleResult_Failed;
+        ok = XFileSystem_resize(fd, size);
+        XFileSystem_close(fd);
+        if (!ok) return XConsoleResult_Failed;
     }
-    ok = XFileSystem_resize(fd, size);
-    XFileSystem_close(fd);
-    XString_delete_base(path);
-    return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
+    return XConsoleResult_Ok;
 }
 
 static int xfs_df(XConsoleShell* shell, XConsoleShellSession* session,
@@ -499,7 +674,7 @@ static int xfs_df(XConsoleShell* shell, XConsoleShellSession* session,
         XString_delete_base(path);
         return XConsoleResult_Failed;
     }
-    written = snprintf(line, sizeof(line), "total=%-16lld free=%-16lld available=%-16lld block=%-8d\n",
+    written = snprintf(line, sizeof(line), "总计=%-16lld 空闲=%-16lld 可用=%-16lld 块=%-8d\n",
                        (long long)info.bytesTotal, (long long)info.bytesFree,
                        (long long)info.bytesAvailable, info.blockSize);
     XString_delete_base(path);
@@ -571,147 +746,320 @@ static int xfs_du(XConsoleShell* shell, XConsoleShellSession* session,
 }
 
 static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
-                  int argc, const char* const* argv, void* userData)
+                 int argc, const char* const* argv, void* userData)
 {
-    XString* path = XString_create();
-    XFd fd = XFD_INVALID;
-    char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
-    int64_t bytes = 0;
-    int64_t lines = 0;
-    int64_t words = 0;
-    bool inWord = false;
-    int error = 0;
-    int64_t count = 0;
-    char line[160];
-    int written;
-    size_t i;
+    const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    int pathCount = 0;
+    bool showLines = true;
+    bool showWords = true;
+    bool showBytes = true;
+    bool endOptions = false;
+    int64_t totalLines = 0;
+    int64_t totalWords = 0;
+    int64_t totalBytes = 0;
+    int i;
     (void)userData;
-    if (argc != 1 || !path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
-    }
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
-    if (fd == XFD_INVALID) {
-        XString_delete_base(path);
-        return XConsoleResult_Failed;
-    }
-    while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
-        bytes += count;
-        for (i = 0; i < (size_t)count; ++i) {
-            if (buffer[i] == '\n') ++lines;
-            if (buffer[i] == ' ' || buffer[i] == '\t' || buffer[i] == '\r' || buffer[i] == '\n') {
-                inWord = false;
-            } else if (!inWord) {
-                inWord = true;
-                ++words;
-            }
+    for (i = 0; i < argc; ++i) {
+        const char* argument = argv[i];
+        if (!endOptions && strcmp(argument, "--") == 0) {
+            endOptions = true;
+        } else if (!endOptions && (strcmp(argument, "-l") == 0 ||
+                                   strcmp(argument, "--lines") == 0)) {
+            showLines = true; showWords = false; showBytes = false;
+        } else if (!endOptions && (strcmp(argument, "-w") == 0 ||
+                                   strcmp(argument, "--words") == 0)) {
+            showLines = false; showWords = true; showBytes = false;
+        } else if (!endOptions && (strcmp(argument, "-c") == 0 ||
+                                   strcmp(argument, "--bytes") == 0)) {
+            showLines = false; showWords = false; showBytes = true;
+        } else if (!endOptions && (strcmp(argument, "-m") == 0 ||
+                                   strcmp(argument, "--chars") == 0)) {
+            showLines = false; showWords = false; showBytes = true;
+        } else if (!endOptions && argument[0] == '-' && argument[1]) {
+            return XConsoleResult_InvalidArgument;
+        } else {
+            if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS)
+                return XConsoleResult_ResourceLimit;
+            paths[pathCount++] = argument;
         }
     }
-    XFileSystem_close(fd);
-    XString_delete_base(path);
-    if (count < 0) return XConsoleResult_IoError;
-    written = snprintf(line, sizeof(line), "lines=%-12lld words=%-12lld bytes=%-12lld\n",
-                       (long long)lines, (long long)words, (long long)bytes);
-    return written > 0 && (size_t)written < sizeof(line) &&
-           XConsoleShell_write(shell, line, (size_t)written)
-               ? XConsoleResult_Ok : XConsoleResult_IoError;
+    if (pathCount == 0) return XConsoleResult_InvalidArgument;
+    for (i = 0; i < pathCount; ++i) {
+        XString* path = XString_create();
+        XFd fd = XFD_INVALID;
+        char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
+        int64_t bytes = 0;
+        int64_t lines = 0;
+        int64_t words = 0;
+        bool inWord = false;
+        int error = 0;
+        int64_t count = 0;
+        char line[256];
+        int written;
+        int column;
+        size_t j;
+        if (!path || !xfs_make_path(session, paths[i], path)) {
+            if (path) XString_delete_base(path);
+            return XConsoleResult_InvalidArgument;
+        }
+        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        XString_delete_base(path);
+        if (fd == XFD_INVALID) return XConsoleResult_Failed;
+        while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+            bytes += count;
+            for (j = 0; j < (size_t)count; ++j) {
+                if (buffer[j] == '\n') ++lines;
+                if (buffer[j] == ' ' || buffer[j] == '\t' || buffer[j] == '\r' ||
+                    buffer[j] == '\n') {
+                    inWord = false;
+                } else if (!inWord) {
+                    inWord = true;
+                    ++words;
+                }
+            }
+        }
+        XFileSystem_close(fd);
+        if (count < 0) return XConsoleResult_IoError;
+        written = 0;
+        column = 0;
+        if (showLines) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)lines);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (showWords) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)words);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (showBytes) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)bytes);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (column == 0) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)lines);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n;
+        }
+        {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%s\n", paths[i]);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n;
+        }
+        if (!XConsoleShell_write(shell, line, (size_t)written))
+            return XConsoleResult_IoError;
+        totalLines += lines;
+        totalWords += words;
+        totalBytes += bytes;
+    }
+    if (pathCount > 1) {
+        char line[256];
+        int written = 0;
+        int column = 0;
+        if (showLines) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)totalLines);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (showWords) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)totalWords);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (showBytes) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)totalBytes);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n; ++column;
+        }
+        if (column == 0) {
+            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+                             "%7lld ", (long long)totalLines);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
+                return XConsoleResult_IoError;
+            written += n;
+        }
+        if (snprintf(line + written, sizeof(line) - (size_t)written, "总计\n") < 0)
+            return XConsoleResult_IoError;
+        if (!XConsoleShell_write(shell, line, (size_t)written))
+            return XConsoleResult_IoError;
+    }
+    return XConsoleResult_Ok;
 }
+
 
 static int xfs_head(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
-    XString* path;
-    XFd fd;
+    const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    int pathCount = 0;
     int64_t lines = 10;
-    int64_t current = 0;
-    char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
-    int64_t count;
-    int error = 0;
+    bool endOptions = false;
+    int i;
     (void)userData;
-    if (argc == 3 && (strcmp(argv[0], "-n") == 0 || strcmp(argv[0], "--lines") == 0) &&
-        xfs_parse_nonnegative(argv[1], &lines)) argv += 2, argc -= 2;
-    if (argc != 1) return XConsoleResult_InvalidArgument;
-    path = XString_create();
-    if (!path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
+    for (i = 0; i < argc; ++i) {
+        const char* argument = argv[i];
+        if (!endOptions && strcmp(argument, "--") == 0) {
+            endOptions = true;
+        } else if (!endOptions && (strcmp(argument, "-n") == 0 ||
+                                   strcmp(argument, "--lines") == 0)) {
+            if (i + 1 >= argc || !xfs_parse_nonnegative(argv[++i], &lines))
+                return XConsoleResult_InvalidArgument;
+        } else if (!endOptions && argument[0] == '-' && argument[1]) {
+            return XConsoleResult_InvalidArgument;
+        } else {
+            if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS)
+                return XConsoleResult_ResourceLimit;
+            paths[pathCount++] = argument;
+        }
     }
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
-    XString_delete_base(path);
-    if (fd == XFD_INVALID) return XConsoleResult_Failed;
-    while (current < lines && (count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
-        size_t i;
-        for (i = 0; i < (size_t)count && current < lines; ++i) {
-            if (!XConsoleShell_write(shell, buffer + i, 1)) {
+    if (pathCount == 0) return XConsoleResult_InvalidArgument;
+    for (i = 0; i < pathCount; ++i) {
+        XString* path = XString_create();
+        XFd fd;
+        int64_t current = 0;
+        char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
+        int64_t count = 0;
+        int error = 0;
+        if (!path || !xfs_make_path(session, paths[i], path)) {
+            if (path) XString_delete_base(path);
+            return XConsoleResult_InvalidArgument;
+        }
+        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        XString_delete_base(path);
+        if (fd == XFD_INVALID) return XConsoleResult_Failed;
+        if (pathCount > 1) {
+            if (!XConsoleShell_writeUtf8(shell, "==> ") ||
+                !XConsoleShell_writeUtf8(shell, paths[i]) ||
+                !XConsoleShell_writeUtf8(shell, " <==\n")) {
                 XFileSystem_close(fd);
                 return XConsoleResult_IoError;
             }
-            if (buffer[i] == '\n') ++current;
         }
+        while (current < lines &&
+               (count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+            size_t j;
+            for (j = 0; j < (size_t)count && current < lines; ++j) {
+                if (!XConsoleShell_write(shell, buffer + j, 1)) {
+                    XFileSystem_close(fd);
+                    return XConsoleResult_IoError;
+                }
+                if (buffer[j] == '\n') ++current;
+            }
+        }
+        XFileSystem_close(fd);
+        if (count < 0) return XConsoleResult_IoError;
     }
-    XFileSystem_close(fd);
-    return count < 0 ? XConsoleResult_IoError : XConsoleResult_Ok;
+    return XConsoleResult_Ok;
 }
+
 
 static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
-    XString* path;
-    XFd fd;
+    const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    int pathCount = 0;
     int64_t lines = 10;
-    int64_t offsets[128];
-    size_t offsetCount = 0;
-    int64_t position = 0;
-    int64_t start = 0;
-    char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
-    int64_t count;
-    int error = 0;
-    size_t i;
+    bool endOptions = false;
+    int i;
     (void)userData;
-    if (argc >= 3 && (strcmp(argv[0], "-n") == 0 || strcmp(argv[0], "--lines") == 0) &&
-        xfs_parse_nonnegative(argv[1], &lines)) argv += 2, argc -= 2;
-    if (argc != 1 || lines > 127) return XConsoleResult_InvalidArgument;
-    path = XString_create();
-    if (!path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
+    for (i = 0; i < argc; ++i) {
+        const char* argument = argv[i];
+        if (!endOptions && strcmp(argument, "--") == 0) {
+            endOptions = true;
+        } else if (!endOptions && (strcmp(argument, "-n") == 0 ||
+                                   strcmp(argument, "--lines") == 0)) {
+            if (i + 1 >= argc || !xfs_parse_nonnegative(argv[++i], &lines))
+                return XConsoleResult_InvalidArgument;
+        } else if (!endOptions && argument[0] == '-' && argument[1]) {
+            return XConsoleResult_InvalidArgument;
+        } else {
+            if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS)
+                return XConsoleResult_ResourceLimit;
+            paths[pathCount++] = argument;
+        }
     }
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
-    XString_delete_base(path);
-    if (fd == XFD_INVALID) return XConsoleResult_Failed;
-    offsets[offsetCount++] = 0;
-    while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
-        for (i = 0; i < (size_t)count; ++i, ++position) {
-            if (buffer[i] == '\n') {
-                if (offsetCount < 128) offsets[offsetCount++] = position + 1;
-                else {
-                    memmove(offsets, offsets + 1, sizeof(offsets) - sizeof(offsets[0]));
-                    offsets[127] = position + 1;
+    if (pathCount == 0 || lines > 127) return XConsoleResult_InvalidArgument;
+    for (i = 0; i < pathCount; ++i) {
+        XString* path = XString_create();
+        XFd fd;
+        int64_t offsets[128];
+        size_t offsetCount = 0;
+        int64_t position = 0;
+        int64_t start = 0;
+        char buffer[XCONSOLE_SHELL_OUTPUT_CHUNK_SIZE];
+        int64_t count;
+        int error = 0;
+        size_t j;
+        if (!path || !xfs_make_path(session, paths[i], path)) {
+            if (path) XString_delete_base(path);
+            return XConsoleResult_InvalidArgument;
+        }
+        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        XString_delete_base(path);
+        if (fd == XFD_INVALID) return XConsoleResult_Failed;
+        offsets[offsetCount++] = 0;
+        while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+            for (j = 0; j < (size_t)count; ++j, ++position) {
+                if (buffer[j] == '\n') {
+                    if (offsetCount < 128) offsets[offsetCount++] = position + 1;
+                    else {
+                        memmove(offsets, offsets + 1,
+                                sizeof(offsets) - sizeof(offsets[0]));
+                        offsets[127] = position + 1;
+                    }
                 }
             }
         }
-    }
-    if (count < 0) {
-        XFileSystem_close(fd);
-        return XConsoleResult_IoError;
-    }
-    if (lines == 0) {
-        XFileSystem_close(fd);
-        return XConsoleResult_Ok;
-    }
-    if (lines < (int64_t)offsetCount) start = offsets[offsetCount - 1u - (size_t)lines];
-    if (!XFileSystem_seek(fd, start)) {
-        XFileSystem_close(fd);
-        return XConsoleResult_IoError;
-    }
-    while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
-        if (!XConsoleShell_write(shell, buffer, (size_t)count)) {
+        if (count < 0) {
             XFileSystem_close(fd);
             return XConsoleResult_IoError;
         }
+        if (lines > 0) {
+            if (pathCount > 1) {
+                if (!XConsoleShell_writeUtf8(shell, "==> ") ||
+                    !XConsoleShell_writeUtf8(shell, paths[i]) ||
+                    !XConsoleShell_writeUtf8(shell, " <==\n")) {
+                    XFileSystem_close(fd);
+                    return XConsoleResult_IoError;
+                }
+            }
+            if (lines < (int64_t)offsetCount)
+                start = offsets[offsetCount - 1u - (size_t)lines];
+            if (!XFileSystem_seek(fd, start)) {
+                XFileSystem_close(fd);
+                return XConsoleResult_IoError;
+            }
+            while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+                if (!XConsoleShell_write(shell, buffer, (size_t)count)) {
+                    XFileSystem_close(fd);
+                    return XConsoleResult_IoError;
+                }
+            }
+            if (count < 0) {
+                XFileSystem_close(fd);
+                return XConsoleResult_IoError;
+            }
+        }
+        XFileSystem_close(fd);
     }
-    XFileSystem_close(fd);
-    return count < 0 ? XConsoleResult_IoError : XConsoleResult_Ok;
+    return XConsoleResult_Ok;
 }
 
 static int xfs_cmp(XConsoleShell* shell, XConsoleShellSession* session,
@@ -752,7 +1100,7 @@ static int xfs_cmp(XConsoleShell* shell, XConsoleShellSession* session,
     XFileSystem_close(a);
     XFileSystem_close(b);
     if (equal) return XConsoleResult_Ok;
-    if (!XConsoleShell_writeUtf8(shell, "different\n")) return XConsoleResult_IoError;
+    if (!XConsoleShell_writeUtf8(shell, "不同\n")) return XConsoleResult_IoError;
     return XConsoleResult_Failed;
 }
 
@@ -777,7 +1125,8 @@ static bool xfs_glob_match_local(const char* pattern, const char* text)
 }
 
 static int xfs_find_walk(XConsoleShell* shell, const XString* path,
-                         const char* pattern, char type, int depth, int maxDepth)
+                         const char* pattern, char type, int depth, int maxDepth,
+                         int64_t mtimeDays, int64_t sizeBytes)
 {
     XFileStat stat;
     XString* name = XString_create();
@@ -791,8 +1140,20 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
     if (result == XConsoleResult_Ok && (!pattern || xfs_glob_match_local(pattern, base +
         (strrchr(base, '/') ? (strrchr(base, '/') - base + 1) : 0)) &&
         (type == 0 || (type == 'f' && stat.isFile) || (type == 'd' && stat.isDir)))) {
-        if (!XConsoleShell_writeUtf8(shell, base) || !XConsoleShell_writeUtf8(shell, "\n"))
-            result = XConsoleResult_IoError;
+        bool matched = true;
+        if (mtimeDays >= 0) {
+            int64_t nowSecs = XDateTime_currentSecsSinceEpoch();
+            int64_t start = nowSecs - (mtimeDays + 1) * 86400;
+            int64_t end = nowSecs - mtimeDays * 86400;
+            if (stat.modificationTime < start || stat.modificationTime >= end)
+                matched = false;
+        }
+        if (matched && sizeBytes >= 0 && stat.size != sizeBytes) matched = false;
+        if (matched) {
+            if (!XConsoleShell_writeUtf8(shell, base) ||
+                !XConsoleShell_writeUtf8(shell, "\n"))
+                result = XConsoleResult_IoError;
+        }
     }
     if (result == XConsoleResult_Ok && stat.isDir && (maxDepth < 0 || depth < maxDepth)) {
         iterator = XFileSystem_opendir(path);
@@ -808,7 +1169,8 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
                     result = XConsoleResult_Failed;
                     break;
                 }
-                result = xfs_find_walk(shell, child, pattern, type, depth + 1, maxDepth);
+                result = xfs_find_walk(shell, child, pattern, type, depth + 1,
+                                       maxDepth, mtimeDays, sizeBytes);
                 if (result < 0 || XConsoleShell_isCancelled(shell)) break;
             }
             XFileSystem_closedir(iterator);
@@ -826,6 +1188,8 @@ static int xfs_find(XConsoleShell* shell, XConsoleShellSession* session,
     const char* pattern = NULL;
     char type = 0;
     int maxDepth = -1;
+    int64_t mtimeDays = -1;
+    int64_t sizeBytes = -1;
     int i;
     (void)userData;
     if (argc < 1) return XConsoleResult_InvalidArgument;
@@ -846,12 +1210,41 @@ static int xfs_find(XConsoleShell* shell, XConsoleShellSession* session,
                 return XConsoleResult_InvalidArgument;
             }
             maxDepth = (int)value;
+        } else if (strcmp(argv[i], "-mtime") == 0 && i + 1 < argc) {
+            int64_t value;
+            if (!xfs_parse_nonnegative(argv[++i], &value)) {
+                XString_delete_base(path);
+                return XConsoleResult_InvalidArgument;
+            }
+            mtimeDays = value;
+        } else if (strcmp(argv[i], "-size") == 0 && i + 1 < argc) {
+            const char* text = argv[++i];
+            size_t len = strlen(text);
+            char copy[64];
+            if (len == 0) {
+                XString_delete_base(path);
+                return XConsoleResult_InvalidArgument;
+            }
+            if (text[len - 1] == 'c' || text[len - 1] == 'C') {
+                if (len - 1 >= sizeof(copy)) {
+                    XString_delete_base(path);
+                    return XConsoleResult_InvalidArgument;
+                }
+                memcpy(copy, text, len - 1);
+                copy[len - 1] = '\0';
+                text = copy;
+            }
+            if (!xfs_parse_nonnegative(text, &sizeBytes)) {
+                XString_delete_base(path);
+                return XConsoleResult_InvalidArgument;
+            }
         } else {
             XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
     }
-    i = xfs_find_walk(shell, path, pattern, type, 0, maxDepth);
+    i = xfs_find_walk(shell, path, pattern, type, 0, maxDepth,
+                      mtimeDays, sizeBytes);
     XString_delete_base(path);
     return i;
 }
@@ -930,8 +1323,8 @@ static int xfs_file(XConsoleShell* shell, XConsoleShellSession* session,
         if (path) XString_delete_base(path);
         return XConsoleResult_Failed;
     }
-    type = stat.isDir ? "directory" : (stat.isSymLink ? "symbolic-link" :
-           (stat.isFile ? "regular-file" : "other"));
+    type = stat.isDir ? "目录" : (stat.isSymLink ? "符号链接" :
+           (stat.isFile ? "常规文件" : "其他"));
     written = snprintf(line, sizeof(line), "%s: %s\n", XString_toUtf8(path), type);
     XString_delete_base(path);
     return written > 0 && (size_t)written < sizeof(line) &&
@@ -1023,6 +1416,14 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
     int64_t length = INT64_MAX;
     bool offsetSet = false;
     bool lengthSet = false;
+    bool numberAll = false;
+    bool numberNonblank = false;
+    bool squeezeBlank = false;
+    bool showEnds = false;
+    bool showTabs = false;
+    bool atLineStart = true;
+    bool sawBlankLine = false;
+    int64_t lineNumber = 0;
     const char* paths[XCONSOLE_SHELL_MAX_ARGUMENTS];
     int pathCount = 0;
     int i;
@@ -1043,6 +1444,18 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
             remaining = value;
             length = value;
             lengthSet = true;
+        } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--number") == 0) {
+            numberAll = true;
+        } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--number-nonblank") == 0) {
+            numberNonblank = true;
+        } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--squeeze-blank") == 0) {
+            squeezeBlank = true;
+        } else if (strcmp(argv[i], "-E") == 0 || strcmp(argv[i], "--show-ends") == 0) {
+            showEnds = true;
+        } else if (strcmp(argv[i], "-T") == 0 || strcmp(argv[i], "--show-tabs") == 0) {
+            showTabs = true;
+        } else if (argv[i][0] == '-' && argv[i][1]) {
+            return XConsoleResult_InvalidArgument;
         } else {
             if (pathCount >= XCONSOLE_SHELL_MAX_ARGUMENTS) return XConsoleResult_ResourceLimit;
             paths[pathCount++] = argv[i];
@@ -1064,6 +1477,7 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
         }
         while (remaining > 0) {
             int64_t request = (int64_t)sizeof(buffer);
+            size_t j;
             if (remaining < request) request = remaining;
             count = XFileSystem_read(fd, buffer, request);
             if (count < 0) {
@@ -1071,9 +1485,44 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
                 return XConsoleResult_IoError;
             }
             if (count == 0) break;
-            if (!XConsoleShell_write(shell, buffer, (size_t)count)) {
-                XFileSystem_close(fd);
-                return XConsoleResult_IoError;
+            for (j = 0; j < (size_t)count; ++j) {
+                unsigned char ch = (unsigned char)buffer[j];
+                if (atLineStart) {
+                    bool blank = (ch == '\n');
+                    if (squeezeBlank && blank && sawBlankLine) continue;
+                    if (!(numberAll || numberNonblank) ||
+                        (numberNonblank && blank)) {
+                        /* no line number */
+                    } else {
+                        char num[24];
+                        int written = snprintf(num, sizeof(num), "%6lld\t",
+                                               (long long)(++lineNumber));
+                        if (written < 0 || (size_t)written >= sizeof(num) ||
+                            !XConsoleShell_write(shell, num, (size_t)written)) {
+                            XFileSystem_close(fd);
+                            return XConsoleResult_IoError;
+                        }
+                    }
+                    atLineStart = false;
+                    if (blank) sawBlankLine = true;
+                    else sawBlankLine = false;
+                }
+                if (showTabs && ch == '\t') {
+                    if (!XConsoleShell_writeUtf8(shell, "^I")) {
+                        XFileSystem_close(fd);
+                        return XConsoleResult_IoError;
+                    }
+                } else if (!XConsoleShell_write(shell, (const char*)&ch, 1)) {
+                    XFileSystem_close(fd);
+                    return XConsoleResult_IoError;
+                }
+                if (ch == '\n') {
+                    if (showEnds && !XConsoleShell_writeUtf8(shell, "$")) {
+                        XFileSystem_close(fd);
+                        return XConsoleResult_IoError;
+                    }
+                    atLineStart = true;
+                }
             }
             remaining -= count;
             if (XConsoleShell_isCancelled(shell)) {
@@ -1083,9 +1532,124 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
         }
         XFileSystem_close(fd);
         remaining = length;
+        atLineStart = true;
+        sawBlankLine = false;
     }
     return XConsoleResult_Ok;
 }
+
+#if XCONSOLE_SHELL_FS_HEXDUMP_ON
+/**
+ * @brief 以 hexdump -C 风格分块输出文件内容。
+ * @details
+ * 每次只读取 16 字节，支持跳过起始偏移和限制输出长度；不会把整个文件
+ * 载入内存。所有文件访问和输出均通过 XinYueC 公共 API 完成。
+ */
+static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
+                       int argc, const char* const* argv, void* userData)
+{
+    XString* path = NULL;
+    XFd fd = XFD_INVALID;
+    const char* pathText = NULL;
+    int error = 0;
+    int64_t offset = 0;
+    int64_t remaining = INT64_MAX;
+    bool offsetSet = false;
+    bool lengthSet = false;
+    uint8_t buffer[16];
+    (void)userData;
+    if (!shell || !session || argc < 1) return XConsoleResult_InvalidArgument;
+    for (int i = 0; i < argc; ++i) {
+        int64_t value;
+        if (strcmp(argv[i], "-C") == 0 || strcmp(argv[i], "--canonical") == 0) {
+            continue;
+        }
+        if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--skip") == 0 ||
+            strcmp(argv[i], "--offset") == 0) {
+            if (offsetSet || i + 1 >= argc ||
+                !xfs_parse_nonnegative(argv[++i], &value))
+                return XConsoleResult_InvalidArgument;
+            offset = value;
+            offsetSet = true;
+            continue;
+        }
+        if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--length") == 0) {
+            if (lengthSet || i + 1 >= argc ||
+                !xfs_parse_nonnegative(argv[++i], &value))
+                return XConsoleResult_InvalidArgument;
+            remaining = value;
+            lengthSet = true;
+            continue;
+        }
+        if (pathText) return XConsoleResult_InvalidArgument;
+        pathText = argv[i];
+    }
+    if (!pathText) return XConsoleResult_InvalidArgument;
+    path = XString_create();
+    if (!path || !xfs_make_path(session, pathText, path)) goto failed;
+    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto failed;
+    if (offset > 0 && !XFileSystem_seek(fd, offset)) goto io_error;
+    while (remaining > 0) {
+        int64_t request = (int64_t)sizeof(buffer);
+        int64_t count;
+        char line[128];
+        int written;
+        int i;
+        if (remaining < request) request = remaining;
+        count = XFileSystem_read(fd, buffer, request);
+        if (count < 0) goto io_error;
+        if (count == 0) break;
+        written = snprintf(line, sizeof(line), "%08llx  ", (unsigned long long)offset);
+        if (written < 0 || (size_t)written >= sizeof(line)) goto io_error;
+        for (i = 0; i < 16; ++i) {
+            int part = i < count
+                           ? snprintf(line + written, sizeof(line) - (size_t)written,
+                                       "%02x ", buffer[i])
+                           : snprintf(line + written, sizeof(line) - (size_t)written, "   ");
+            if (part < 0 || (size_t)part >= sizeof(line) - (size_t)written) goto io_error;
+            written += part;
+            if (i == 7) {
+                if (written + 1 >= (int)sizeof(line)) goto io_error;
+                line[written++] = ' ';
+                line[written] = '\0';
+            }
+        }
+        if (written + 2 >= (int)sizeof(line)) goto io_error;
+        line[written++] = '|';
+        for (i = 0; i < count; ++i) {
+            unsigned char byte = buffer[i];
+            if (written + 1 >= (int)sizeof(line)) goto io_error;
+            line[written++] = (byte >= 0x20u && byte <= 0x7eu) ? (char)byte : '.';
+        }
+        if (written + 3 >= (int)sizeof(line)) goto io_error;
+        while (i++ < 16) line[written++] = ' ';
+        line[written++] = '|';
+        line[written++] = '\n';
+        line[written] = '\0';
+        if (!XConsoleShell_write(shell, line, (size_t)written)) goto io_error;
+        if (lengthSet) remaining -= count;
+        if (offset > INT64_MAX - count) break;
+        offset += count;
+        if (XConsoleShell_isCancelled(shell)) {
+            XFileSystem_close(fd);
+            XString_delete_base(path);
+            return XConsoleResult_Cancelled;
+        }
+    }
+    XFileSystem_close(fd);
+    XString_delete_base(path);
+    return XConsoleResult_Ok;
+io_error:
+    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (path) XString_delete_base(path);
+    return XConsoleResult_IoError;
+failed:
+    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (path) XString_delete_base(path);
+    return XConsoleResult_Failed;
+}
+#endif
 
 static void xfs_number(int64_t value, char* buffer, size_t capacity)
 {
@@ -1119,8 +1683,8 @@ static int xfs_stat(XConsoleShell* shell, XConsoleShellSession* session,
     }
     xfs_number(stat.size, number, sizeof(number));
     XString_delete_base(path);
-    if (!xfs_write(shell, "size=") || !xfs_write(shell, number) ||
-        !xfs_write(shell, stat.isDir ? "\ntype=directory\n" : "\ntype=file\n"))
+    if (!xfs_write(shell, "大小=") || !xfs_write(shell, number) ||
+        !xfs_write(shell, stat.isDir ? "\n类型=目录\n" : "\n类型=文件\n"))
         return XConsoleResult_IoError;
     return XConsoleResult_Ok;
 }
@@ -1215,25 +1779,39 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
     XString* path;
-    bool recursive = false;
+    bool parents = false;
     bool ok = true;
     int pathCount = 0;
     int i;
     (void)shell;
     (void)userData;
-    for (i = 0; i < argc; ++i)
-        if (strcmp(argv[i], "--recursive") == 0 || strcmp(argv[i], "-r") == 0) recursive = true;
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "--recursive") == 0 || strcmp(argv[i], "-r") == 0) {
-            continue;
+        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parents") == 0) {
+            parents = true;
+        } else if (argv[i][0] == '-') {
+            return XConsoleResult_InvalidArgument;
         }
+    }
+    for (i = 0; i < argc; ++i) {
+        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parents") == 0) continue;
         ++pathCount;
         path = XString_create();
         if (!path || !xfs_make_path(session, argv[i], path)) {
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_rmdir(path, recursive) && ok;
+        ok = XFileSystem_rmdir(path, false) && ok;
+        if (parents && ok) {
+            for (;;) {
+                const char* text = XString_toUtf8(path);
+                const char* slash;
+                if (!text || !*text || strcmp(text, "/") == 0) break;
+                slash = strrchr(text, '/');
+                if (!slash || slash == text) break;
+                XString_truncate(path, (size_t)(slash - text));
+                if (!XFileSystem_rmdir(path, false)) break;
+            }
+        }
         XString_delete_base(path);
     }
     if (pathCount == 0) return XConsoleResult_InvalidArgument;
@@ -1465,7 +2043,7 @@ static int xfs_link(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_link(target, link);
+    ok = XFileSystem_hardLink(target, link);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -1507,7 +2085,7 @@ static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
         if (operandCount >= 2) return XConsoleResult_InvalidArgument;
         operands[operandCount++] = argument;
     }
-    if (!symbolic || operandCount != 2) return XConsoleResult_InvalidArgument;
+    if (operandCount != 2) return XConsoleResult_InvalidArgument;
     target = XString_create();
     link = XString_create();
     if (!target || !link || !xfs_make_path(session, operands[0], target) ||
@@ -1516,7 +2094,8 @@ static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_link(target, link);
+    ok = symbolic ? XFileSystem_link(target, link) :
+                    XFileSystem_hardLink(target, link);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -1592,7 +2171,10 @@ static const XConsoleCommand g_fsCommands[] = {
     { "ls", NULL, "列出目录", "fs ls [-alRFdh] [path...]", 0, -1, 0, xfs_ls, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CAT_ON
-    { "cat", NULL, "分块输出文件", "fs cat <path> [--offset N] [--length N]", 1, -1, 0, xfs_cat, NULL, 0, NULL },
+    { "cat", NULL, "分块输出文件", "fs cat [-nbEsT] [--offset N] [--length N] <path...>", 1, -1, 0, xfs_cat, NULL, 0, NULL },
+#endif
+#if XCONSOLE_SHELL_FS_HEXDUMP_ON
+    { "hexdump", NULL, "十六进制查看文件", "fs hexdump [-C] [-s offset] [-n length] <path>", 1, -1, 0, xfs_hexdump, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_STAT_ON
     { "stat", NULL, "显示文件属性", "fs stat <path>", 1, 1, 0, xfs_stat, NULL, 0, NULL },
@@ -1604,7 +2186,7 @@ static const XConsoleCommand g_fsCommands[] = {
     { "mkdir", NULL, "创建目录", "fs mkdir [-p] <path...>", 1, -1, 0, xfs_mkdir, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_RMDIR_ON
-    { "rmdir", NULL, "删除目录", "fs rmdir [-r] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_rmdir, NULL, 0, NULL },
+    { "rmdir", NULL, "删除目录", "fs rmdir [-p] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_rmdir, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CP_ON
     { "cp", NULL, "复制文件", "fs cp [-rf] <source...> <target>", 2, -1, 0, xfs_copy, NULL, 0, NULL },
@@ -1616,10 +2198,10 @@ static const XConsoleCommand g_fsCommands[] = {
     { "write", NULL, "写入文件", "fs write <path> <data...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_write_file, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_LINK_ON
-    { "link", NULL, "创建链接", "fs link <target> <link>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_link, NULL, 0, NULL },
+    { "link", NULL, "创建硬链接", "fs link <target> <link>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_link, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_LN_ON
-    { "ln", NULL, "创建符号链接", "fs ln -s <target> <link>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_ln, NULL, 0, NULL },
+    { "ln", NULL, "创建链接（默认硬链接）", "fs ln [-s] <target> <link>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_ln, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_UNLINK_ON
     { "unlink", NULL, "删除文件链接", "fs unlink <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_unlink, NULL, 0, NULL },
@@ -1631,16 +2213,16 @@ static const XConsoleCommand g_fsCommands[] = {
     { "touch", NULL, "创建文件或更新时间", "fs touch [-c] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_touch, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CHMOD_ON
-    { "chmod", NULL, "设置文件权限", "fs chmod <mode> <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_chmod, NULL, 0, NULL },
+    { "chmod", NULL, "设置文件权限", "fs chmod [ugoa]*[+-=][rwxX]*|<octal> <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_chmod, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_READLINK_ON
-    { "readlink", NULL, "读取符号链接目标", "fs readlink <path>", 1, 1, 0, xfs_readlink, NULL, 0, NULL },
+    { "readlink", NULL, "读取符号链接目标", "fs readlink [-f] <path...>", 1, -1, 0, xfs_readlink, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_REALPATH_ON
     { "realpath", NULL, "输出规范路径", "fs realpath <path>", 1, 1, 0, xfs_realpath, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TRUNCATE_ON
-    { "truncate", NULL, "调整文件大小", "fs truncate <path> <bytes>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_truncate, NULL, 0, NULL },
+    { "truncate", NULL, "调整文件大小", "fs truncate -s <size> [-c] <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_truncate, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_DF_ON
     { "df", NULL, "显示存储空间", "fs df [path]", 0, 1, 0, xfs_df, NULL, 0, NULL },
@@ -1649,16 +2231,16 @@ static const XConsoleCommand g_fsCommands[] = {
     { "du", NULL, "统计目录大小", "fs du [path]", 0, 1, 0, xfs_du, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_WC_ON
-    { "wc", NULL, "统计文件行词节数", "fs wc <path>", 1, 1, 0, xfs_wc, NULL, 0, NULL },
+    { "wc", NULL, "统计文件行词节数", "fs wc [-l|-w|-c|-m] <path...>", 1, -1, 0, xfs_wc, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_HEAD_ON
-    { "head", NULL, "输出文件前若干行", "fs head [-n lines] <path>", 1, 3, 0, xfs_head, NULL, 0, NULL },
+    { "head", NULL, "输出文件前若干行", "fs head [-n lines] <path...>", 1, -1, 0, xfs_head, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TAIL_ON
-    { "tail", NULL, "输出文件后若干行", "fs tail [-n lines] <path>", 1, 3, 0, xfs_tail, NULL, 0, NULL },
+    { "tail", NULL, "输出文件后若干行", "fs tail [-n lines] <path...>", 1, -1, 0, xfs_tail, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_FIND_ON
-    { "find", NULL, "递归查找文件", "fs find <path> [-name pattern] [-type f|d] [-maxdepth N]", 1, -1, 0, xfs_find, NULL, 0, NULL },
+    { "find", NULL, "递归查找文件", "fs find <path> [-name pattern] [-type f|d] [-maxdepth N] [-mtime N] [-size N]", 1, -1, 0, xfs_find, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TREE_ON
     { "tree", NULL, "树状列出目录", "fs tree [path]", 0, 1, 0, xfs_tree, NULL, 0, NULL },
@@ -1684,7 +2266,7 @@ static const XConsoleCommand g_fsCommands[] = {
 
 const XConsoleCommand XConsoleShellFileSystem_command = {
     "fs", NULL, "文件系统命令",
-    "fs <pwd|cd|ls|cat|stat|rm|mkdir|rmdir|cp|mv|write|link|ln|unlink|touch|chmod|readlink|realpath|truncate|df|du|wc|head|tail|find|tree|cmp|file|basename|dirname|format>", 1, -1, 0,
+    "fs <pwd|cd|ls|cat|hexdump|stat|rm|mkdir|rmdir|cp|mv|write|link|ln|unlink|touch|chmod|readlink|realpath|truncate|df|du|wc|head|tail|find|tree|cmp|file|basename|dirname|format>", 1, -1, 0,
     NULL, g_fsCommands, XCONSOLE_SHELL_FS_COMMAND_COUNT, NULL
 };
 
@@ -1704,7 +2286,10 @@ static const XConsoleCommand g_rootFileCommands[] = {
     { "cd", NULL, "切换当前会话目录", "cd <path>", 1, 1, 0, xfs_cd, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CAT_ON
-    { "cat", NULL, "分块输出文件", "cat <path> [--offset N] [--length N]", 1, -1, 0, xfs_cat, NULL, 0, NULL },
+    { "cat", NULL, "分块输出文件", "cat [-nbEsT] [--offset N] [--length N] <path...>", 1, -1, 0, xfs_cat, NULL, 0, NULL },
+#endif
+#if XCONSOLE_SHELL_FS_HEXDUMP_ON
+    { "hexdump", NULL, "十六进制查看文件", "hexdump [-C] [-s offset] [-n length] <path>", 1, -1, 0, xfs_hexdump, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_STAT_ON
     { "stat", NULL, "显示文件属性", "stat <path>", 1, 1, 0, xfs_stat, NULL, 0, NULL },
@@ -1716,7 +2301,7 @@ static const XConsoleCommand g_rootFileCommands[] = {
     { "mkdir", NULL, "创建目录", "mkdir [-p] <path...>", 1, -1, 0, xfs_mkdir, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_RMDIR_ON
-    { "rmdir", NULL, "删除目录", "rmdir [-r] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_rmdir, NULL, 0, NULL },
+    { "rmdir", NULL, "删除目录", "rmdir [-p] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_rmdir, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CP_ON
     { "cp", NULL, "复制文件", "cp [-rf] <source...> <target>", 2, -1, 0, xfs_copy, NULL, 0, NULL },
@@ -1728,10 +2313,10 @@ static const XConsoleCommand g_rootFileCommands[] = {
     { "write", NULL, "写入文件", "write <path> <data...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_write_file, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_LINK_ON
-    { "link", NULL, "创建符号链接", "link <target> <link>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_link, NULL, 0, NULL },
+    { "link", NULL, "创建硬链接", "link <target> <link>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_link, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_LN_ON
-    { "ln", NULL, "创建符号链接", "ln -s <target> <link>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_ln, NULL, 0, NULL },
+    { "ln", NULL, "创建链接（默认硬链接）", "ln [-s] <target> <link>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_ln, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_UNLINK_ON
     { "unlink", NULL, "删除文件链接", "unlink <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_unlink, NULL, 0, NULL },
@@ -1740,16 +2325,16 @@ static const XConsoleCommand g_rootFileCommands[] = {
     { "touch", NULL, "创建文件或更新时间", "touch [-c] <path...>", 1, -1, XConsoleCommandFlag_Dangerous, xfs_touch, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_CHMOD_ON
-    { "chmod", NULL, "设置文件权限", "chmod <mode> <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_chmod, NULL, 0, NULL },
+    { "chmod", NULL, "设置文件权限", "chmod [ugoa]*[+-=][rwxX]*|<octal> <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_chmod, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_READLINK_ON
-    { "readlink", NULL, "读取符号链接目标", "readlink <path>", 1, 1, 0, xfs_readlink, NULL, 0, NULL },
+    { "readlink", NULL, "读取符号链接目标", "readlink [-f] <path...>", 1, -1, 0, xfs_readlink, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_REALPATH_ON
     { "realpath", NULL, "输出规范路径", "realpath <path>", 1, 1, 0, xfs_realpath, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TRUNCATE_ON
-    { "truncate", NULL, "调整文件大小", "truncate <path> <bytes>", 2, 2, XConsoleCommandFlag_Dangerous, xfs_truncate, NULL, 0, NULL },
+    { "truncate", NULL, "调整文件大小", "truncate -s <size> [-c] <path...>", 2, -1, XConsoleCommandFlag_Dangerous, xfs_truncate, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_DF_ON
     { "df", NULL, "显示存储空间", "df [path]", 0, 1, 0, xfs_df, NULL, 0, NULL },
@@ -1758,16 +2343,16 @@ static const XConsoleCommand g_rootFileCommands[] = {
     { "du", NULL, "统计目录大小", "du [path]", 0, 1, 0, xfs_du, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_WC_ON
-    { "wc", NULL, "统计文件行词和字节", "wc <path>", 1, 1, 0, xfs_wc, NULL, 0, NULL },
+    { "wc", NULL, "统计文件行词和字节", "wc [-l|-w|-c|-m] <path...>", 1, -1, 0, xfs_wc, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_HEAD_ON
-    { "head", NULL, "输出文件开头", "head [-n count] <path>", 1, 3, 0, xfs_head, NULL, 0, NULL },
+    { "head", NULL, "输出文件开头", "head [-n count] <path...>", 1, -1, 0, xfs_head, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TAIL_ON
-    { "tail", NULL, "输出文件结尾", "tail [-n count] <path>", 1, 3, 0, xfs_tail, NULL, 0, NULL },
+    { "tail", NULL, "输出文件结尾", "tail [-n count] <path...>", 1, -1, 0, xfs_tail, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_FIND_ON
-    { "find", NULL, "递归查找文件", "find <path> [-name pattern] [-type f|d] [-maxdepth N]", 1, -1, 0, xfs_find, NULL, 0, NULL },
+    { "find", NULL, "递归查找文件", "find <path> [-name pattern] [-type f|d] [-maxdepth N] [-mtime N] [-size N]", 1, -1, 0, xfs_find, NULL, 0, NULL },
 #endif
 #if XCONSOLE_SHELL_FS_TREE_ON
     { "tree", NULL, "树状列出目录", "tree [path]", 0, 1, 0, xfs_tree, NULL, 0, NULL },

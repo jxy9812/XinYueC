@@ -77,15 +77,17 @@ typedef struct XMultiPool {
  * ============================================================================ */
 
 /**
- * @brief 在堆上创建一个多级内存池
- * @return 成功返回 XMultiPool*，失败返回 NULL
- * @note 默认分配 16 个 XFixedPool* 槽位，可在需要时自动扩容
+ * @brief      在堆上创建一个多级内存池。
+ * @return     新建的 XMultiPool；分配失败返回 NULL，调用方必须使用
+ *             XMultiPool_delete 释放。
+ * @note       默认分配 16 个 XFixedPool* 槽位，可在需要时自动扩容。
  */
 XMultiPool* XMultiPool_create(void);
 
 /**
- * @brief 销毁堆上创建的多级内存池，释放所有子池和自身内存
- * @param multi_pool 要销毁的内存池指针
+ * @brief      销毁堆上创建的多级内存池并释放其拥有的子池。
+ * @param      multi_pool 由 XMultiPool_create 返回的对象；可为 NULL。
+ * @return     无。传入 NULL 时不执行任何操作。
  */
 void XMultiPool_delete(XMultiPool* multi_pool);
 
@@ -94,17 +96,18 @@ void XMultiPool_delete(XMultiPool* multi_pool);
  * ============================================================================ */
 
 /**
- * @brief 初始化一个静态或栈上的 XMultiPool 实例
- * @param multi_pool 指向待初始化的实例
- * @return 成功返回 true
- * @note 此函数仅将结构体清零，子池数组需通过静态宏或手动设置
+ * @brief      初始化一个静态或栈上的 XMultiPool 实例。
+ * @param      multi_pool 调用方提供的未初始化对象；不能为 NULL。
+ * @return     成功返回 true；参数为 NULL 返回 false。
+ * @note       此函数仅将结构体清零，子池数组需通过静态宏或手动设置。
  */
 bool XMultiPool_init(XMultiPool* multi_pool);
 
 /**
- * @brief 反初始化静态/栈模式的多级内存池
- * @param multi_pool 指向要反初始化的实例
- * @note 不释放子池数组内存（静态/栈区），仅调用子池的 XFixedPool_deinit
+ * @brief      反初始化静态或栈模式的多级内存池。
+ * @param      multi_pool 已初始化的对象；可为 NULL。
+ * @return     无。不会释放静态或栈上的子池数组存储。
+ * @note       函数只清理子池状态和对象拥有的动态资源，不释放调用方提供的数组。
  */
 void XMultiPool_deinit(XMultiPool* multi_pool);
 
@@ -176,21 +179,21 @@ void XMultiPool_deinit(XMultiPool* multi_pool);
  * ============================================================================ */
 
 /**
- * @brief 向多级内存池中添加一个子池
- * @param multi_pool 目标内存池
- * @param pool 要添加的子池（必须已初始化）
- * @return 成功返回 true
- * @note 子池按 user_block_size 升序自动插入到正确位置
+ * @brief      向多级内存池中添加一个子池。
+ * @param      multi_pool 已初始化的目标内存池；不能为 NULL。
+ * @param      pool 已初始化的子池；调用方转移其所有权，不能为 NULL。
+ * @return     添加成功返回 true；参数非法、容量不足或大小重复返回 false。
+ * @note       子池按 user_block_size 升序自动插入到正确位置。
  */
 bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* pool);
 
 /**
- * @brief 启用倍数增长模式
- * @param multi_pool 目标内存池
- * @param initial_size 第一个子池的大小（字节）
- * @param multiplier 增长倍数（必须大于 1，通常为 2）
- * @return 成功返回 true
- * @note 必须在添加任何子池之前调用！启用后 add_pool 会严格校验大小
+ * @brief      启用倍数增长模式。
+ * @param      multi_pool 已初始化且尚未添加子池的内存池；不能为 NULL。
+ * @param      initial_size 第一个子池的用户块大小，单位为字节，必须大于 0。
+ * @param      multiplier 增长倍数，必须大于 1 且不能造成 size_t 溢出。
+ * @return     配置成功返回 true；状态、参数或溢出检查失败返回 false。
+ * @note       必须在添加任何子池之前调用；启用后 add_pool 会严格校验大小。
  *
  * 示例：initial_size=32, multiplier=2 → 期望子池大小: 32, 64, 128, 256, ...
  */
@@ -229,9 +232,10 @@ void* XMultiPool_calloc(XMultiPool* multi_pool, size_t count, size_t size);
 void* XMultiPool_realloc(XMultiPool* multi_pool, void* ptr, size_t new_size);
 
 /**
- * @brief 释放由 XMultiPool 分配的内存
- * @param multi_pool 内存池指针
- * @param ptr 要释放的指针
+ * @brief      释放由 XMultiPool 分配的内存。
+ * @param      multi_pool 分配该内存的池；不能为 NULL。
+ * @param      ptr 由该池返回的指针；可为 NULL。
+ * @return     无。指针不属于该池时不会释放并由实现记录错误状态。
  */
 void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
 
@@ -244,10 +248,10 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
 bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
 
 /**
- * @brief 获取由 XMultiPool 分配的内存块的最大用户可用大小
- * @param mp 内存池指针（NULL 则使用全局池）
- * @param ptr 已分配的内存指针
- * @return 用户可用字节数，无效返回 0
+ * @brief      获取由 XMultiPool 分配的内存块的最大用户可用大小。
+ * @param      mp 内存池指针；为 NULL 时使用全局池。
+ * @param      ptr 由指定池分配的内存指针；为 NULL 或不属于该池时无效。
+ * @return     用户可用字节数；参数无效时返回 0。
  */
 size_t XMultiPool_getMaxUserSize(XMultiPool* mp, void* ptr);
 
@@ -256,28 +260,43 @@ size_t XMultiPool_getMaxUserSize(XMultiPool* mp, void* ptr);
  * ============================================================================ */
 
 /**
- * @brief 获取多级内存池当前剩余可用内存大小（字节）
- * @param multi_pool 内存池指针
- * @return 剩余字节数
- * @note 线程安全（原子读取）
+ * @brief      获取多级内存池当前剩余可用内存大小。
+ * @param      multi_pool 内存池指针；可为 NULL。
+ * @return     剩余用户可用字节数；参数为 NULL 时返回 0。
+ * @note       线程安全，读取使用原子操作。
  */
 size_t XMultiPool_freeSize(XMultiPool* multi_pool);
 
 /**
- * @brief 获取多级内存池总用户可用内存大小（字节）
- * @param multi_pool 内存池指针
- * @return 总字节数
+ * @brief      获取多级内存池总用户可用内存大小。
+ * @param      multi_pool 内存池指针；可为 NULL。
+ * @return     总用户可用字节数；参数为 NULL 时返回 0。
  */
 size_t XMultiPool_totalSize(XMultiPool* multi_pool);
+
+/**
+ * @brief 获取多级内存池中的子池数量。
+ * @param multi_pool 多级内存池指针；可为 NULL。
+ * @return 当前子池数量；参数为 NULL 时返回 0。
+ */
+size_t XMultiPool_subPoolCount(const XMultiPool* multi_pool);
+
+/**
+ * @brief 按索引获取只读子池指针。
+ * @param multi_pool 多级内存池指针；可为 NULL。
+ * @param index 子池索引，从 0 开始。
+ * @return 子池只读指针；索引越界或参数为 NULL 时返回 NULL。
+ */
+const XFixedPool* XMultiPool_subPoolAt(const XMultiPool* multi_pool, size_t index);
 
 /* ============================================================================
  * 全局池便捷 API（零配置，自动初始化）
  * ============================================================================ */
 
 /**
- * @brief 获取全局多级内存池实例
- * @return 全局 XMultiPool* 指针
- * @note 首次调用自动初始化（5 个子池：32B~512B，倍数增长模式）
+ * @brief      获取全局多级内存池实例。
+ * @return     全局借用 XMultiPool 指针；首次调用自动初始化，失败返回 NULL。
+ * @note       全局池由库管理，调用方不得删除或反初始化返回指针。
  */
 XMultiPool* XMultiPool_global(void);
 
@@ -306,8 +325,9 @@ void* XMultiPool_global_calloc(size_t count, size_t size);
 void* XMultiPool_global_realloc(void* ptr, size_t size);
 
 /**
- * @brief 释放由全局内存池分配的内存
- * @param ptr 要释放的指针
+ * @brief      释放由全局内存池分配的内存。
+ * @param      ptr 由全局池返回的指针；可为 NULL。
+ * @return     无。
  */
 void XMultiPool_global_free(void* ptr);
 

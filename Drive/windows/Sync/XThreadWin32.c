@@ -6,6 +6,7 @@
 #include"XObject.h"
 #include"XEventLoop.h"
 #include"XThreadData.h"
+#include "XTask.h"
 #include <windows.h>
 #include"XAtomic.h"
 void VXThread_run(XThread* thread);
@@ -243,6 +244,8 @@ bool XThread_terminate(XThread* Object)
 
 void VXThread_deinit(XThread* thread)
 {
+    if (!thread) return;
+    XTask_unregisterThread(thread);
     if (XThread_isRunning(thread))
         XThread_requestInterruption(thread);
     XThread_wait(thread,UINT32_MAX);

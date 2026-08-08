@@ -23,6 +23,7 @@ extern "C" {
 
 struct XConsoleShellSession;
 struct XConsoleCommand;
+struct XConsoleShell;
 
 /**
  * @brief 读取传输数据。
@@ -52,6 +53,35 @@ typedef bool (*XConsoleFlushFn)(void* userData);
  * @return 已取消返回 true。
  */
 typedef bool (*XConsoleCancelFn)(void* userData);
+/**
+ * @brief 将输入源附加到 Shell 的异步调度。
+ * @param userData XConsoleShellIo::userData 借用上下文。
+ * @param shell 当前 Shell；仅在回调期间借用。
+ * @return 输入源已准备好且 read 回调满足非阻塞契约时返回 true。
+ * @note 回调不得在事件线程中等待输入；数据可读时由输入源调用
+ *       XConsoleShell_notifyInput，或由 Shell 的轮询定时器读取。
+ */
+typedef bool (*XConsoleInputAttachFn)(void* userData, struct XConsoleShell* shell);
+/**
+ * @brief 从 Shell 的异步调度移除输入源。
+ * @param userData XConsoleShellIo::userData 借用上下文。
+ * @param shell 当前 Shell；仅在回调期间借用。
+ */
+typedef void (*XConsoleInputDetachFn)(void* userData, struct XConsoleShell* shell);
+/**
+ * @brief 设置输入字符是否回显。
+ * @param userData XConsoleShellIo::userData 借用上下文。
+ * @param enabled 为 true 时恢复回显，为 false 时隐藏密码输入。
+ * @return 后端成功切换回显返回 true；非终端或不支持时返回 false。
+ * @note Shell 不依赖此回调的成功结果；无回调时仍保证不主动写出密码。
+ */
+typedef bool (*XConsoleInputEchoFn)(void* userData, bool enabled);
+/**
+ * @brief 在一条完整命令处理结束后输出交互提示符。
+ * @param userData XConsoleShellIo::userData 借用上下文。
+ * @param shell 当前 Shell；仅在回调期间借用。
+ */
+typedef void (*XConsolePromptFn)(void* userData, struct XConsoleShell* shell);
 #if XCONSOLE_SHELL_LOG_ON
 /**
  * @brief 输出日志观察回调。
@@ -84,6 +114,10 @@ typedef struct XConsoleShellIo {
     XConsoleWriteFn write;     /**< 输出回调；无输出能力时 processLine 返回 IoError。 */
     XConsoleFlushFn flush;     /**< 刷新回调；可为 NULL。 */
     XConsoleCancelFn cancelled;/**< 取消回调；可为 NULL。 */
+    XConsoleInputAttachFn inputAttach; /**< 异步输入附加回调；可为 NULL。 */
+    XConsoleInputDetachFn inputDetach; /**< 异步输入移除回调；可为 NULL。 */
+    XConsoleInputEchoFn inputEcho;     /**< 输入回显切换回调；可为 NULL。 */
+    XConsolePromptFn prompt;            /**< 完整命令后的提示符回调；可为 NULL。 */
 #if XCONSOLE_SHELL_LOG_ON
     XConsoleLogFn log;         /**< 输出观察回调；可为 NULL，不参与写入成功判定。 */
 #endif

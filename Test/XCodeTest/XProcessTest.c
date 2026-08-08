@@ -69,6 +69,15 @@ static bool XProcessTest_environment(void)
     XPTEST_CHECK(XProcessEnvironment_insert_utf8(&source, "XP_TEST_SOURCE", "merged") &&
                      XProcessEnvironment_insertEnvironment(&environment, &source),
                  "environment bulk insert");
+    XPTEST_CHECK(XProcessEnvironment_insert_utf8(&environment, "XP_TEST_LOCAL", "local"),
+                 "environment local insert");
+    XPTEST_CHECK(!XProcessEnvironment_equals(&environment, &source),
+                 "environment inequality");
+    XProcessEnvironment_swap(&environment, &source);
+    XPTEST_CHECK(XProcessEnvironment_contains_utf8(&environment, "XP_TEST_SOURCE") &&
+                     XProcessEnvironment_contains_utf8(&source, "XP_TEST_LOCAL"),
+                 "environment swap");
+    XProcessEnvironment_swap(&environment, &source);
     value = XProcessEnvironment_value_utf8(&environment, "XP_TEST_SOURCE", "");
     XPTEST_CHECK(value && XString_equals_utf8(value, "merged", XChar_CaseSensitive),
                  "environment bulk insert value");
@@ -250,6 +259,81 @@ static bool XProcessTest_stdin(void)
     XByteArray_delete_base(output);
     XProcess_delete_base(process);
     return true;
+}
+
+static bool XProcessTest_nullArguments(void)
+{
+    XProcess* process = XProcess_create();
+    XString* program = XString_create_utf8("true");
+    bool result = process && program &&
+                  XProcess_start(process, program, NULL, XIODevice_ReadOnly) &&
+                  XProcess_waitForFinished(process, 3000) &&
+                  XProcess_exitCode(process) == 0;
+    if (program) XString_delete_base(program);
+    if (process) XProcess_delete_base(process);
+    return result;
+}
+
+/**
+ * @brief 验证进程的读写打开模式会限制对应的公共 I/O 操作。
+ * @details
+ * ReadOnly 不创建可写标准输入通道，WriteOnly 不创建可读输出通道，避免
+ * 嵌入式目标为不会使用的方向分配管道和环形缓冲。
+ */
+static bool XProcessTest_openModes(void)
+{
+    const char* arguments[] = { "-c", "printf mode-ok" };
+    XProcess* process = XProcess_create();
+    char output[16];
+    bool result = false;
+    if (!process) return false;
+
+    if (!XProcess_start_utf8(process, "sh", arguments, 2, XIODevice_ReadOnly)) goto cleanup;
+    if (XIODevice_write_1(&process->base, "x", 1) >= 0) goto cleanup;
+    if (!XProcess_waitForFinished(process, 3000)) goto cleanup;
+    XProcess_delete_base(process);
+    process = XProcess_create();
+    if (!process) return false;
+    if (!XProcess_start_utf8(process, "sh", arguments, 2, XIODevice_WriteOnly)) goto cleanup;
+    if (XIODevice_read_1(&process->base, output, sizeof(output)) >= 0) goto cleanup;
+    if (!XProcess_waitForFinished(process, 3000)) goto cleanup;
+    result = XIODevice_bytesAvailable_base(&process->base) == 0;
+
+cleanup:
+    if (process) XProcess_delete_base(process);
+    return result;
+}
+
+/**
+ * @brief 验证大块标准输入在管道背压下仍能完整传输。
+ * @details
+ * 输入数据故意超过常见匿名管道容量；POSIX 后端必须先接受到库缓冲，再由
+ * poll/写入冲刷，不能把短写或 EAGAIN 暴露为一次性写入失败。
+ */
+static bool XProcessTest_largeStdin(void)
+{
+    const char* arguments[] = { "-c", "cat" };
+    const size_t dataSize = 256u * 1024u;
+    XProcess* process = XProcess_create();
+    XByteArray* input = XByteArray_create();
+    XByteArray* output = NULL;
+    size_t i;
+    bool result = false;
+    if (!process || !input || !XByteArray_resize_base(input, dataSize)) goto cleanup;
+    for (i = 0; i < dataSize; ++i) XByteArray_data(input)[i] = (uint8_t)(i * 31u + 7u);
+    if (!XProcess_start_utf8(process, "sh", arguments, 2, XIODevice_ReadWrite)) goto cleanup;
+    if (XIODevice_write_1(&process->base, (const char*)XByteArray_data(input),
+                          (int64_t)dataSize) != (int64_t)dataSize) goto cleanup;
+    XProcess_closeWriteChannel(process);
+    if (!XProcess_waitForFinished(process, 10000)) goto cleanup;
+    output = XProcess_readAllStandardOutput(process);
+    result = output && XByteArray_size_base(output) == dataSize &&
+             memcmp(XByteArray_data(output), XByteArray_data(input), dataSize) == 0;
+cleanup:
+    if (output) XByteArray_delete_base(output);
+    if (input) XByteArray_delete_base(input);
+    if (process) XProcess_delete_base(process);
+    return result;
 }
 
 static bool XProcessTest_outputProcess(void)
@@ -714,6 +798,9 @@ bool XProcessTest_runAll(void)
              XProcessTest_environmentAndWorkingDirectory() &&
              XProcessTest_restart() &&
              XProcessTest_stdin() &&
+             XProcessTest_nullArguments() &&
+             XProcessTest_openModes() &&
+             XProcessTest_largeStdin() &&
              XProcessTest_outputProcess() &&
              XProcessTest_redirect() &&
              XProcessTest_failures() &&

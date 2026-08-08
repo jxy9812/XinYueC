@@ -63,6 +63,12 @@
 #include "lwip/mem.h"
 #include "lwip/tcpip.h"
 #include "lwip/dhcp.h"
+#if LWIP_RAW
+#include "lwip/raw.h"
+#include "lwip/prot/icmp.h"
+#include "lwip/inet_chksum.h"
+#include "lwip/ip4.h"
+#endif
 
 #include "CXinYueConfig.h"  /* XAbstractNetIoRing_ON */
 #if XAbstractNetIoRing_ON
@@ -271,6 +277,136 @@ static void addr_to_ip(const XHostAddress* a, ip_addr_t* ip) {
         IP_SET_TYPE_VAL(*ip, IPADDR_TYPE_V4);
         ip4_addr_set_u32(ip_2_ip4(ip), lwip_htonl(XHostAddress_toIPv4Address(a)));
     }
+}
+
+#if LWIP_RAW && LWIP_IPV4
+typedef struct XNetworkIcmpWait {
+    volatile bool done;
+    volatile bool matched;
+    uint16_t identifier;
+    uint16_t sequence;
+} XNetworkIcmpWait;
+
+static u8_t xnetwork_icmp_recv(void* argument, struct raw_pcb* pcb,
+                               struct pbuf* packet, const ip_addr_t* source)
+{
+    XNetworkIcmpWait* wait = (XNetworkIcmpWait*)argument;
+    struct ip_hdr* ipHeader;
+    struct icmp_echo_hdr echo;
+    u16_t headerLength;
+    (void)pcb;
+    (void)source;
+    if (!wait || !packet || packet->tot_len < IP_HLEN + sizeof(echo)) return 0;
+    ipHeader = (struct ip_hdr*)packet->payload;
+    headerLength = IPH_HL_BYTES(ipHeader);
+    if (headerLength < IP_HLEN || packet->tot_len < headerLength + sizeof(echo)) return 0;
+    if (pbuf_copy_partial(packet, &echo, sizeof(echo), headerLength) != sizeof(echo)) return 0;
+    if (ICMPH_TYPE(&echo) != ICMP_ER || ICMPH_CODE(&echo) != 0 ||
+        lwip_ntohs(echo.id) != wait->identifier || lwip_ntohs(echo.seqno) != wait->sequence)
+        return 0;
+    wait->matched = true;
+    wait->done = true;
+    pbuf_free(packet);
+    return 1;
+}
+#endif
+
+bool XNetwork_icmpEchoSupported(void)
+{
+#if LWIP_RAW && LWIP_IPV4
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+                       uint16_t sequence, const void* payload, size_t payloadSize,
+                       int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
+{
+#if LWIP_RAW && LWIP_IPV4
+    struct raw_pcb* pcb = NULL;
+    struct pbuf* packet = NULL;
+    XNetworkIcmpWait wait;
+    ip_addr_t target;
+    size_t packetSize;
+    uint64_t start;
+    uint64_t deadline;
+    bool result = false;
+    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+        (payloadSize && !payload) || payloadSize > 1400u || timeoutMilliseconds <= 0)
+        return false;
+    packetSize = sizeof(struct icmp_echo_hdr) + payloadSize;
+    packet = pbuf_alloc(PBUF_TRANSPORT, (u16_t)packetSize, PBUF_RAM);
+    if (!packet) return false;
+    {
+        struct icmp_echo_hdr echo;
+        memset(&echo, 0, sizeof(echo));
+        ICMPH_TYPE_SET(&echo, ICMP_ECHO);
+        ICMPH_CODE_SET(&echo, 0);
+        echo.id = lwip_htons(identifier);
+        echo.seqno = lwip_htons(sequence);
+        if (pbuf_take(packet, &echo, sizeof(echo)) != ERR_OK ||
+            (payloadSize && pbuf_take_at(packet, payload, (u16_t)payloadSize,
+                                         sizeof(echo)) != ERR_OK))
+            goto cleanup;
+        echo.chksum = inet_chksum_pbuf(packet);
+        if (pbuf_take(packet, &echo, sizeof(echo)) != ERR_OK) goto cleanup;
+    }
+    memset(&wait, 0, sizeof(wait));
+    wait.identifier = identifier;
+    wait.sequence = sequence;
+    addr_to_ip(address, &target);
+    {
+        XNetLwipCoreLock lock = XNET_LWIP_LOCK();
+        pcb = raw_new(IP_PROTO_ICMP);
+        if (pcb) {
+            raw_recv(pcb, xnetwork_icmp_recv, &wait);
+            if (raw_sendto(pcb, packet, &target) != ERR_OK) {
+                raw_remove(pcb);
+                pcb = NULL;
+            }
+        }
+        XNET_LWIP_UNLOCK(lock);
+    }
+    if (!pcb) goto cleanup;
+    start = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+    deadline = start + (uint64_t)timeoutMilliseconds;
+    while (!wait.done) {
+        uint64_t now = (uint64_t)XDateTime_currentMSecsSinceEpoch();
+        if (now >= deadline) break;
+#if NO_SYS
+        {
+            XNetLwipCoreLock lock = XNET_LWIP_LOCK();
+            XNetworkLwip_pollPcap();
+            XNET_LWIP_UNLOCK(lock);
+        }
+#else
+        XNetworkLwip_pollPcap();
+#endif
+        XThread_msleep(5);
+    }
+    result = wait.matched;
+    if (result && elapsedMilliseconds)
+        *elapsedMilliseconds = (uint32_t)((uint64_t)XDateTime_currentMSecsSinceEpoch() - start);
+cleanup:
+    if (pcb) {
+        XNetLwipCoreLock lock = XNET_LWIP_LOCK();
+        raw_remove(pcb);
+        XNET_LWIP_UNLOCK(lock);
+    }
+    if (packet) pbuf_free(packet);
+    return result;
+#else
+    (void)address;
+    (void)identifier;
+    (void)sequence;
+    (void)payload;
+    (void)payloadSize;
+    (void)timeoutMilliseconds;
+    (void)elapsedMilliseconds;
+    return false;
+#endif
 }
 
 /* lwIP ip_addr_t -> XHostAddress */

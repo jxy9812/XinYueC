@@ -1,8 +1,9 @@
 ﻿/**
  * @file       XGpio.h
  * @brief      GPIO 平台抽象接口。
- * @details    本文件定义 STM32、ESP32 和 Linux GPIO 后端共同遵守的
- *             纯函数式接口。公共层只使用逻辑控制器编号、逻辑引脚编号、
+ * @details    本接口没有 Qt 对齐对象。本文件定义 STM32、ESP32 和 Linux
+ *             GPIO 后端共同遵守的纯函数式接口。公共层只使用逻辑控制器编号、
+ *             逻辑引脚编号、
  *             GPIO 配置和不透明句柄，不包含 GPIO_TypeDef、ESP-IDF 或
  *             Linux GPIO 字符设备等平台头文件。
  *
@@ -147,6 +148,8 @@ typedef enum XGpioFeature {
     XGpioFeature_ActiveLevel = 1u << 11,     /**< 支持有效电平逻辑转换。 */
     XGpioFeature_ProcessEvents = 1u << 12    /**< 支持通过 processEvents 分发事件。 */
 } XGpioFeature;
+
+/** @brief XGpioFeature 按位组合后的 GPIO 后端能力集合。 */
 typedef uint32_t XGpioFeatures;
 
 /**

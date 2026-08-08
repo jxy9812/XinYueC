@@ -5,6 +5,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XCoreApplication.h"
 #include "XThreadData.h"
+#include "XTask.h"
 #include <string.h>
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
 {
@@ -54,6 +55,7 @@ XThread* XThread_createMainThread(XObject* parent)
     thread->m_stackSize = 0;
     Set_Class_MemoryFree(thread, XFree_System);
     thread->m_data = XThreadData_initMainThread(thread);
+    XTask_registerThread(thread);
     return thread;
 }
 void XThread_init(XThread* thread)
@@ -73,6 +75,7 @@ void XThread_init(XThread* thread)
     thread->m_priority = XThread_NormalPriority;
     thread->m_stackSize = 512;
     thread->m_data = XThreadData_create(thread);  /* Qt: QThreadPrivate creates QThreadData in constructor */
+    XTask_registerThread(thread);
 }
 void* XThread_finished_signal(XThread* thread)
 {

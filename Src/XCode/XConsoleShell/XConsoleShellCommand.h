@@ -43,7 +43,9 @@ typedef enum XConsoleCommandFlag {
     XConsoleCommandFlag_None = 0,
     XConsoleCommandFlag_Hidden = 1u << 0,    /**< 不在 help 列表显示。 */
     XConsoleCommandFlag_Dangerous = 1u << 1, /**< 需要产品权限策略确认。 */
-    XConsoleCommandFlag_Administrator = 1u << 2 /**< 需要管理员权限。 */
+    XConsoleCommandFlag_Administrator = 1u << 2, /**< 需要管理员权限。 */
+    XConsoleCommandFlag_Sensitive = 1u << 3, /**< 命令行包含敏感数据，不写入历史。 */
+    XConsoleCommandFlag_AllowUnauthenticated = 1u << 4 /**< 强制登录时允许未认证会话执行。 */
 } XConsoleCommandFlag;
 
 /** @brief 会话权限掩码中的标准权限位；产品可在此基础上扩展自定义位。 */

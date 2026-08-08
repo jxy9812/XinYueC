@@ -1,8 +1,9 @@
-/**
+﻿/**
  * @file       XCan.h
  * @brief      CAN 总线平台抽象接口。
- * @details    本文件定义 STM32、ESP32、Windows 和 Linux CAN 后端共同遵守的
- *             纯函数式接口。公共层只依赖逻辑通道、CAN 帧、位时序、过滤器、
+ * @details    本接口没有 Qt 对齐对象。本文件定义 STM32、ESP32、Windows 和
+ *             Linux CAN 后端共同遵守的纯函数式接口。公共层只依赖逻辑通道、
+ *             CAN 帧、位时序、过滤器、
  *             总线状态和不透明句柄，不包含 STM32 HAL、ESP-IDF、SocketCAN、
  *             Win32 或第三方 CAN 适配器头文件。
  *
@@ -94,6 +95,8 @@ typedef enum XCanFrameFlag {
     XCanFrameFlag_ErrorPassive = 1u << 4,      /**< 接收时表示控制器处于 Error Passive。 */
     XCanFrameFlag_BusOff = 1u << 5            /**< 接收时表示控制器处于 Bus Off。 */
 } XCanFrameFlag;
+
+/** @brief XCanFrameFlag 按位组合后的 CAN 帧标志集合。 */
 typedef uint32_t XCanFrameFlags;
 
 /**
@@ -131,6 +134,8 @@ typedef enum XCanConfigFlag {
     XCanConfigFlag_DisableAutomaticRetransmission = 1u << 6, /**< 禁用自动重发。 */
     XCanConfigFlag_ListenErrorFrames = 1u << 7 /**< 将总线错误作为事件回调。 */
 } XCanConfigFlag;
+
+/** @brief XCanConfigFlag 按位组合后的 CAN 控制器配置标志集合。 */
 typedef uint32_t XCanConfigFlags;
 
 /**
@@ -161,6 +166,8 @@ typedef enum XCanFeature {
     XCanFeature_MultipleFilters = 1u << 18, /**< 支持同时安装多个过滤器。 */
     XCanFeature_BusRecovery = 1u << 19      /**< 支持显式执行 Bus Off 恢复。 */
 } XCanFeature;
+
+/** @brief XCanFeature 按位组合后的 CAN 后端能力集合。 */
 typedef uint32_t XCanFeatures;
 
 /**
@@ -326,6 +333,8 @@ typedef enum XCanFilterFlag {
     XCanFilterFlag_None = 0,   /**< 无特殊行为。 */
     XCanFilterFlag_Invert = 1u << 0 /**< 对本过滤器匹配结果取反。 */
 } XCanFilterFlag;
+
+/** @brief XCanFilterFlag 按位组合后的 CAN 接收过滤器标志集合。 */
 typedef uint32_t XCanFilterFlags;
 
 /**

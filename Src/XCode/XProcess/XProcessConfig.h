@@ -58,7 +58,13 @@
 #define XPROCESS_MAX_PATH 4096
 #endif
 
-/** @brief 单次进程标准输出或标准错误缓冲的增长步长。 */
+/**
+ * @brief 进程标准输入、标准输出和标准错误环形缓冲的单个 chunk 大小。
+ * @details
+ * XProcess 使用 XRingBuffer 分段保存管道数据；该值是每段的容量，不是
+ * 整个缓冲区的上限。缓冲区在数据持续增长时按相同大小追加 chunk，设置
+ * 较小值可降低空闲内存，设置较大值可减少分段和分配次数。
+ */
 #ifndef XPROCESS_IO_BUFFER_SIZE
 #define XPROCESS_IO_BUFFER_SIZE 4096
 #endif

@@ -344,3 +344,12 @@ size_t XMultiPool_totalSize(XMultiPool* mp) {
     if (!mp) return 0;
     return mp->total_user_size;
 }
+
+size_t XMultiPool_subPoolCount(const XMultiPool* mp) {
+    return mp ? mp->sub_pool_count : 0;
+}
+
+const XFixedPool* XMultiPool_subPoolAt(const XMultiPool* mp, size_t index) {
+    if (!mp || index >= mp->sub_pool_count || !mp->sub_pools) return NULL;
+    return mp->sub_pools[index];
+}

@@ -9,7 +9,7 @@
  *          平台实现负责在边界处转换为平台编码。
  *
  * ============================================================================
- * API 分类统计（共31个平台函数 + 1个内联便捷函数）：
+ * API 分类统计（共34个平台函数 + 1个内联便捷函数）：
  * ============================================================================
  *
  * 一、核心文件操作（8个）- 必需实现
@@ -18,7 +18,7 @@
  * 四、目录操作（5个）- 必需实现（rmdir 合并了递归删除）
  * 五、路径操作（1个）- 必需实现
  * 六、特殊路径（2个）- 合并了5个路径函数为 getSpecialPath + setCurrentPath
- * 七、符号链接操作（2个）- 可选
+ * 七、链接操作（3个）- 可选
  * 八、权限操作（1个）- 可选
  * 九、内存映射（2个）- 可选
  * 十、文件时间修改（1个）- 仅fd版，路径版由上层 open→setFileTime→close 组合
@@ -101,6 +101,35 @@ typedef enum {
  * @note 返回的 XFd 由调用方拥有，必须使用 XFileSystem_close 关闭。
  */
 XFd XFileSystem_open(const XString* path, int mode, int* error);
+
+/**
+ * @brief 打开平台标准输入并配置为非阻塞读取。
+ * @param error 可选的调用方错误码存储；成功时写入 0，失败时写入平台错误码。
+ * @return 成功返回由调用方拥有的 XFd；平台没有标准输入或操作失败返回 XFD_INVALID。
+ * @note 返回描述符必须使用 XFileSystem_close 关闭；该 API 不改变进程标准输入的所有权。
+ */
+XFd XFileSystem_openStandardInput(int* error);
+
+/**
+ * @brief 从标准输入描述符执行一次非阻塞读取。
+ * @param fd 由 XFileSystem_openStandardInput 返回的输入描述符。
+ * @param buf 调用方提供的输出缓冲；len 非零时不能为 NULL。
+ * @param len 本次最多读取的字节数；必须为非负值。
+ * @return 正数表示读取字节数，0 表示当前没有数据，-1 表示输入已结束，
+ *         -2 表示读取错误或描述符不是非阻塞标准输入。
+ */
+int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len);
+
+/**
+ * @brief 设置标准输入终端是否回显用户输入字符。
+ * @param fd 由 XFileSystem_openStandardInput 返回的标准输入描述符；借用。
+ * @param enabled 为 true 时显示输入字符，为 false 时隐藏输入字符（适用于密码输入）。
+ * @return 后端成功修改终端回显状态返回 true；描述符无效、输入不是终端或平台不支持返回 false。
+ * @note 本函数只修改终端的回显标志，不关闭或重新打开描述符，也不改变非阻塞读取配置。
+ *       管道、重定向文件和 FatFS 标准输入不具备终端回显能力，调用失败时保持原状态。
+ *       调用方在隐藏密码后应在命令结束或发生错误时再次传入 true 恢复回显。
+ */
+bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled);
 
 /**
  * @brief 关闭文件描述符并释放其在 XFileDescriptor 表中的条目。
@@ -302,7 +331,7 @@ bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path);
 bool XFileSystem_setCurrentPath(const XString* path);
 
 /* ============================================================================
- * 七、符号链接操作（2个）- 可选
+ * 七、链接操作（3个）- 可选
  * ============================================================================ */
 
 /**
@@ -312,6 +341,14 @@ bool XFileSystem_setCurrentPath(const XString* path);
  * @return 创建成功返回 true；平台不支持、目标路径已存在或调用失败返回 false。
  */
 bool XFileSystem_link(const XString* targetPath, const XString* linkPath);
+
+/**
+ * @brief 创建指向目标文件的硬链接。
+ * @param targetPath 目标文件路径；借用，不能为 NULL。
+ * @param hardLinkPath 要创建的硬链接路径；借用，不能为 NULL。
+ * @return 创建成功返回 true；平台不支持、目标不是普通文件或调用失败返回 false。
+ */
+bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath);
 
 /**
  * @brief 读取符号链接中保存的目标路径。

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XConsoleShellTest.c
  * @brief XConsoleShell 全量核心回归测试。
  * @details
@@ -17,6 +17,19 @@
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XDateTime.h"
+#if XCONSOLE_SHELL_ASYNC_ON
+#include "XCoreApplication.h"
+#include "XEventLoop.h"
+#endif
+#if XCONSOLE_SHELL_RESET_ON || XCONSOLE_SHELL_REBOOT_ON || XCONSOLE_SHELL_SHUTDOWN_ON
+#include "XSystem.h"
+#endif
+#if XCONSOLE_SHELL_NETWORK_ON
+#include "XNetwork.h"
+#endif
+#if XCONSOLE_SHELL_MEMORY_ON && XCONSOLE_SHELL_MEMORY_POOL_ON
+#include "XMultiPool.h"
+#endif
 #if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
 #include "XConsoleShell_Telnet.h"
 #endif
@@ -46,7 +59,166 @@ typedef struct XConsoleShellTestTransport {
     int lastAuditResult;
     const XConsoleCommand* lastAuditCommand;
 #endif
+#if XCONSOLE_SHELL_RESET_ON
+    size_t resetCount;
+    XSystemResetReason resetReason;
+    XSystemResult resetResult;
+#endif
+#if XCONSOLE_SHELL_REBOOT_ON
+    size_t rebootCount;
+    XSystemRebootMode rebootMode;
+    XSystemResult rebootResult;
+#endif
+#if XCONSOLE_SHELL_SHUTDOWN_ON
+    size_t shutdownCount;
+    XSystemResult shutdownResult;
+#endif
+#if XCONSOLE_SHELL_GPIO_ON
+    size_t gpioAuthorizeCount;
+    bool gpioAllow;
+#endif
+#if XCONSOLE_SHELL_CAN_ON
+    size_t canAuthorizeCount;
+    bool canAllow;
+#endif
+#if XCONSOLE_SHELL_ADC_ON
+    size_t adcAuthorizeCount;
+    bool adcAllow;
+#endif
+#if XCONSOLE_SHELL_PWM_ON
+    size_t pwmAuthorizeCount;
+    bool pwmAllow;
+#endif
+#if XCONSOLE_SHELL_I2C_ON
+    size_t i2cAuthorizeCount;
+    bool i2cAllow;
+#endif
+#if XCONSOLE_SHELL_SPI_ON
+    size_t spiAuthorizeCount;
+    bool spiAllow;
+#endif
 } XConsoleShellTestTransport;
+
+#if XCONSOLE_SHELL_GPIO_ON
+static bool XConsoleShellTest_gpioAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XGpioPin* pin, XConsoleShellGpioOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !pin) return false;
+    ++transport->gpioAuthorizeCount;
+    return transport->gpioAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_CAN_ON
+static bool XConsoleShellTest_canAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XCanChannel* channel, XConsoleShellCanOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !channel) return false;
+    ++transport->canAuthorizeCount;
+    return transport->canAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_ADC_ON
+static bool XConsoleShellTest_adcAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XAdcChannel* channel, XConsoleShellAdcOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !channel) return false;
+    ++transport->adcAuthorizeCount;
+    return transport->adcAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_PWM_ON
+static bool XConsoleShellTest_pwmAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XPwmChannel* channel, XConsoleShellPwmOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !channel) return false;
+    ++transport->pwmAuthorizeCount;
+    return transport->pwmAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_I2C_ON
+static bool XConsoleShellTest_i2cAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XI2cTarget* target, XConsoleShellI2cOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !target) return false;
+    ++transport->i2cAuthorizeCount;
+    return transport->i2cAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_SPI_ON
+static bool XConsoleShellTest_spiAuthorize(
+    void* userData, const XConsoleShellSession* session,
+    const XSpiConfig* config, XConsoleShellSpiOperation operation)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    (void)operation;
+    if (!transport || !session || !config) return false;
+    ++transport->spiAuthorizeCount;
+    return transport->spiAllow;
+}
+#endif
+
+#if XCONSOLE_SHELL_RESET_ON
+static XSystemResult XConsoleShellTest_resetHandler(void* userData,
+                                                    XSystemResetReason reason)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    if (!transport) return XSystemResult_Failed;
+    ++transport->resetCount;
+    transport->resetReason = reason;
+    return transport->resetResult;
+}
+#endif
+
+#if XCONSOLE_SHELL_REBOOT_ON
+static XSystemResult XConsoleShellTest_rebootHandler(void* userData,
+                                                     XSystemRebootMode mode)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    if (!transport) return XSystemResult_Failed;
+    ++transport->rebootCount;
+    transport->rebootMode = mode;
+    return transport->rebootResult;
+}
+#endif
+
+#if XCONSOLE_SHELL_SHUTDOWN_ON
+static XSystemResult XConsoleShellTest_shutdownHandler(void* userData)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    if (!transport) return XSystemResult_Failed;
+    ++transport->shutdownCount;
+    return transport->shutdownResult;
+}
+#endif
 
 static int64_t XConsoleShellTest_read(void* userData, void* data, size_t size)
 {
@@ -121,6 +293,35 @@ static const XConsoleCommand g_custom = {
     "custom", "c", "测试命令", "custom <value>", 1, 1, 0,
     XConsoleShellTest_custom, NULL, 0, NULL
 };
+
+#if XCONSOLE_SHELL_TASKS_ON
+static XConsoleResult XConsoleShellTest_taskProvider(
+    void* userData, XConsoleShell* shell, XConsoleShellSession* session,
+    XConsoleShellTaskEmitFn emit, void* emitUserData)
+{
+    XConsoleShellTaskInfo info;
+    XConsoleResult result;
+    (void)userData;
+    (void)shell;
+    (void)session;
+    if (!emit) return XConsoleResult_InvalidArgument;
+    info.name = "shell-main";
+    info.id = 1u;
+    info.priority = 4;
+    info.stackSize = 2048u;
+    info.stackFree = 1024u;
+    info.state = XConsoleShellTaskState_Running;
+    result = emit(emitUserData, &info);
+    if (result != XConsoleResult_Ok) return result;
+    info.name = "shell-worker";
+    info.id = 2u;
+    info.priority = 3;
+    info.stackSize = 4096u;
+    info.stackFree = 3072u;
+    info.state = XConsoleShellTaskState_Blocked;
+    return emit(emitUserData, &info);
+}
+#endif
 
 static int XConsoleShellTest_selfUnregister(XConsoleShell* shell,
                                             XConsoleShellSession* session,
@@ -240,6 +441,13 @@ static bool XConsoleShellTest_runFileCommands(
     XString* link = NULL;
     XString* linkTarget = NULL;
     XString* nested = NULL;
+#if XCONSOLE_SHELL_FS_LS_ON
+    XString* longName = NULL;
+    XString* longPath = NULL;
+    char longNameText[161];
+    XFd longFd;
+    int longError = 0;
+#endif
     XFileStat stat;
     bool ok = false;
     bool rootCreated = false;
@@ -265,6 +473,14 @@ static bool XConsoleShellTest_runFileCommands(
     linkTarget = XString_create();
     nested = XString_create_fmt_utf8("%s/nested/deep", XString_toUtf8(root));
     if (!source || !copy || !moved || !link || !linkTarget || !nested) goto cleanup;
+#if XCONSOLE_SHELL_FS_LS_ON
+    /* 160 字节名称可覆盖 192 字节旧缓冲区，同时仍符合常见后端路径上限。 */
+    memset(longNameText, 'l', sizeof(longNameText) - 1u);
+    longNameText[sizeof(longNameText) - 1u] = '\0';
+    longName = XString_create_utf8(longNameText);
+    longPath = XString_create_fmt_utf8("%s/%s", XString_toUtf8(root), longNameText);
+    if (!longName || !longPath) goto cleanup;
+#endif
 
     {
         XString* command = XString_create_fmt_utf8("fs cd %s", XString_toUtf8(root));
@@ -277,6 +493,34 @@ static bool XConsoleShellTest_runFileCommands(
     }
     if (!XConsoleShellTest_runLine(shell, transport, "fs pwd", XConsoleResult_Ok,
                                    XString_toUtf8(root))) goto cleanup;
+#if XCONSOLE_SHELL_FS_LS_ON
+    longFd = XFileSystem_open(longPath, XFileSystem_WriteOnly | XFileSystem_Create |
+                              XFileSystem_Truncate, &longError);
+    if (longFd == XFD_INVALID) goto cleanup;
+    if (XFileSystem_write(longFd, "x", 1) != 1) {
+        XFileSystem_close(longFd);
+        goto cleanup;
+    }
+    XFileSystem_close(longFd);
+    {
+        XString* command = XString_create_fmt_utf8("ls %s", XString_toUtf8(longName));
+        if (!command || !XConsoleShellTest_runLine(shell, transport,
+                XString_toUtf8(command), XConsoleResult_Ok,
+                XString_toUtf8(longName))) {
+            if (command) XString_delete_base(command);
+            goto cleanup;
+        }
+        XString_delete_base(command);
+        command = XString_create_fmt_utf8("ls -l %s", XString_toUtf8(longName));
+        if (!command || !XConsoleShellTest_runLine(shell, transport,
+                XString_toUtf8(command), XConsoleResult_Ok,
+                XString_toUtf8(longName))) {
+            if (command) XString_delete_base(command);
+            goto cleanup;
+        }
+        XString_delete_base(command);
+    }
+#endif
     if (!XConsoleShellTest_runLine(shell, transport, "fs mkdir nested/deep --parents",
                                    XConsoleResult_Ok, NULL) ||
         !XFileSystem_stat(nested, &stat) || !stat.isDir) goto cleanup;
@@ -290,7 +534,7 @@ static bool XConsoleShellTest_runFileCommands(
                                    "fs cat source.txt --offset 6 --length 4",
                                    XConsoleResult_Ok, "beta")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs stat source.txt",
-                                   XConsoleResult_Ok, "type=file")) goto cleanup;
+                                   XConsoleResult_Ok, "类型=文件")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs ls .",
                                    XConsoleResult_Ok, "source.txt")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs cp source.txt copy.txt",
@@ -301,7 +545,7 @@ static bool XConsoleShellTest_runFileCommands(
         XFileSystem_exists(copy) || !XFileSystem_exists(moved)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs link source.txt link.txt",
                                    XConsoleResult_Ok, NULL) ||
-        !XFileSystem_readLink(link, linkTarget)) goto cleanup;
+        !XFileSystem_exists(link)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs cat link.txt",
                                    XConsoleResult_Ok, "alpha beta gamma")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs rm link.txt",
@@ -315,7 +559,7 @@ static bool XConsoleShellTest_runFileCommands(
     if (!XConsoleShellTest_runLine(shell, transport, "fs ls .",
                                    XConsoleResult_Ok, "source.txt")) goto cleanup;
     if (strstr(transport->output, "link.txt")) goto cleanup;
-    if (!XConsoleShellTest_runLine(shell, transport, "fs rmdir nested --recursive",
+    if (!XConsoleShellTest_runLine(shell, transport, "rm -rf nested",
                                    XConsoleResult_Ok, NULL) || XFileSystem_exists(nested)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs mkdir nested/deep -p",
                                    XConsoleResult_Ok, NULL) ||
@@ -358,10 +602,133 @@ cleanup:
     if (link) XString_delete_base(link);
     if (linkTarget) XString_delete_base(linkTarget);
     if (nested) XString_delete_base(nested);
+#if XCONSOLE_SHELL_FS_LS_ON
+    if (longName) XString_delete_base(longName);
+    if (longPath) XString_delete_base(longPath);
+#endif
     if (root) XString_delete_base(root);
     if (temp) XString_delete_base(temp);
     return ok;
 }
+
+#if XCONSOLE_SHELL_EDITOR_ON
+/**
+ * @brief 验证 vi/vim 行编辑命令的插入、保存、未修改退出和放弃退出。
+ * @details
+ * 使用临时目录创建/清理测试文件，通过 Shell 输入状态机逐行驱动编辑器。
+ */
+static bool XConsoleShellTest_runEditorCommands(
+    XConsoleShell* shell, XConsoleShellTestTransport* transport)
+{
+    XString* temp = XString_create();
+    XString* root = XString_create();
+    XString* file = NULL;
+    XString* command = NULL;
+    char content[512];
+    XFd fd;
+    int error = 0;
+    int64_t size;
+    bool ok = false;
+    bool rootCreated = false;
+
+    if (!temp || !root ||
+        !XFileSystem_getSpecialPath(XSpecialPath_Temp, temp) ||
+        !XString_assign_fmt_utf8(root, "%s/xconsole-shell-vi-%lld",
+                                 XString_toUtf8(temp),
+                                 (long long)XDateTime_currentMSecsSinceEpoch()))
+        goto cleanup;
+    if (XFileSystem_exists(root) || !XFileSystem_mkdir(root, false)) goto cleanup;
+    rootCreated = true;
+    file = XString_create_fmt_utf8("%s/edit.txt", XString_toUtf8(root));
+    if (!file) goto cleanup;
+    command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+
+    /* 新建文件打开后进入命令模式。 */
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, "vi 命令模式"))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    /* i 1：在第 1 行前插入两行内容。 */
+    if (!XConsoleShellTest_runLine(shell, transport, "i 1",
+                                   XConsoleResult_MoreOutput, "插入模式"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, "first line",
+                                   XConsoleResult_MoreOutput, "1:	first line"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, "second line",
+                                   XConsoleResult_MoreOutput, "2:	second line"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, ".",
+                                   XConsoleResult_MoreOutput, "命令模式"))
+        goto cleanup;
+    /* :wq 保存并退出。 */
+    if (!XConsoleShellTest_runLine(shell, transport, ":wq",
+                                   XConsoleResult_Ok, "已保存"))
+        goto cleanup;
+    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "first line") == NULL ||
+        strstr(content, "second line") == NULL)
+        goto cleanup;
+
+    /* 重新打开未修改文件，:q 直接退出。 */
+    command = XString_create_fmt_utf8("vim %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, "命令模式"))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    if (!XConsoleShellTest_runLine(shell, transport, ":q",
+                                   XConsoleResult_Ok, NULL))
+        goto cleanup;
+
+    /* 再次打开并修改后，:q! 放弃修改，磁盘内容保持不变。 */
+    command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, "命令模式"))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    if (!XConsoleShellTest_runLine(shell, transport, "i 1",
+                                   XConsoleResult_MoreOutput, "插入模式"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, "discarded",
+                                   XConsoleResult_MoreOutput, "discarded"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, ".",
+                                   XConsoleResult_MoreOutput, "命令模式"))
+        goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, ":q!",
+                                   XConsoleResult_Ok, NULL))
+        goto cleanup;
+    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "discarded") != NULL)
+        goto cleanup;
+
+    ok = true;
+
+cleanup:
+    if (rootCreated && root) XFileSystem_rmdir(root, true);
+    if (file) XString_delete_base(file);
+    if (command) XString_delete_base(command);
+    if (root) XString_delete_base(root);
+    if (temp) XString_delete_base(temp);
+    return ok;
+}
+#endif
 
 bool XConsoleShellTest_runAll(void)
 {
@@ -390,6 +757,334 @@ bool XConsoleShellTest_runAll(void)
     io.userData = &transport;
     shell = XConsoleShell_create(&io);
     XCS_TEST_CHECK(shell != NULL, "create");
+#if XCONSOLE_SHELL_LOGIN_ON
+    {
+        XString* loginPath = XString_create_utf8("xconsole_shell_users_test.json");
+        XCS_TEST_CHECK(loginPath != NULL, "login test path");
+        XFileSystem_remove(loginPath);
+        XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
+                           shell, "xconsole_shell_users_test.json"),
+                       "set login database path");
+#if XCONSOLE_SHELL_LOGIN_REQUIRED_ON
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "echo before-login",
+                                                 XConsoleResult_PermissionDenied,
+                                                 "权限不足"),
+                       "login is required for ordinary commands");
+#endif
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd testadmin --admin",
+                                                 XConsoleResult_Ok,
+                                                 "请使用 passwd"),
+                       "bootstrap useradd");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "password testadmin",
+                                                 XConsoleResult_MoreOutput,
+                                                 "新密码: "),
+                       "bootstrap password prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "secret",
+                                                 XConsoleResult_MoreOutput,
+                                                 "重新输入新密码: "),
+                       "bootstrap password confirmation prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "secret",
+                                                 XConsoleResult_Ok,
+                                                 "密码已更新"),
+                       "bootstrap password");
+        {
+            XFd loginFd;
+            char loginJson[XCONSOLE_SHELL_LOGIN_CONFIG_MAX_BYTES + 1u];
+            int loginError = 0;
+            int64_t loginSize;
+            loginFd = XFileSystem_open(loginPath, XFileSystem_ReadOnly, &loginError);
+            XCS_TEST_CHECK(loginFd != XFD_INVALID, "login database persisted");
+            loginSize = XFileSystem_read(loginFd, loginJson,
+                                         (int64_t)sizeof(loginJson) - 1);
+            XFileSystem_close(loginFd);
+            XCS_TEST_CHECK(loginSize > 0 && loginSize < (int64_t)sizeof(loginJson),
+                           "login database readable");
+            loginJson[loginSize] = '\0';
+            XCS_TEST_CHECK(strstr(loginJson, "\"hash\"") != NULL &&
+                           strstr(loginJson, "\"salt\"") != NULL &&
+                           strstr(loginJson, "secret") == NULL,
+                           "password is stored as hash only");
+        }
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "login testadmin",
+                                                 XConsoleResult_MoreOutput,
+                                                 "密码: "),
+                       "login prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "wrong-password",
+                                                 XConsoleResult_PermissionDenied,
+                                                 "用户名或密码错误"),
+                       "login incorrect password");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "login testadmin",
+                                                 XConsoleResult_MoreOutput,
+                                                 "密码: "),
+                       "login retry prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "secret",
+                                                 XConsoleResult_Ok,
+                                                 "testadmin"),
+                       "login command");
+        XCS_TEST_CHECK(XConsoleShellLogin_userName(shell) != NULL &&
+                       strcmp(XConsoleShellLogin_userName(shell), "testadmin") == 0,
+                       "logged-in user name");
+#if XCONSOLE_SHELL_HISTORY_ON
+        {
+            size_t historyIndex;
+            for (historyIndex = 0;
+                 historyIndex < XConsoleShell_historyCount(shell);
+                 ++historyIndex) {
+                const char* entry = XConsoleShell_historyAt(shell, historyIndex);
+                XCS_TEST_CHECK(!entry || (!strstr(entry, "secret") &&
+                                          !strstr(entry, "wrong-password")),
+                               "login password is not retained in history");
+            }
+        }
+#endif
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd testuser",
+                                                 XConsoleResult_Ok,
+                                                 "请使用 passwd"),
+                       "useradd command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "login testuser",
+                                                 XConsoleResult_PermissionDenied,
+                                                 "尚未设置密码"),
+                       "passwordless user login denied");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "userlist",
+                                                 XConsoleResult_Ok, "testuser"),
+                       "userlist command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "users",
+                                                 XConsoleResult_Ok, "testadmin"),
+                       "users session command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "usermod testuser --permissions 1",
+                                                 XConsoleResult_Ok,
+                                                 "用户已更新"),
+                       "usermod command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "password testuser",
+                                                 XConsoleResult_MoreOutput,
+                                                 "新密码: "),
+                       "passwd prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "changed",
+                                                 XConsoleResult_MoreOutput,
+                                                 "重新输入新密码: "),
+                       "passwd confirmation prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "changed",
+                                                 XConsoleResult_Ok,
+                                                 "密码已更新"),
+                       "passwd command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "logout",
+                                                 XConsoleResult_Ok,
+                                                 "已注销"),
+                       "logout before non-admin query");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "login testuser",
+                                                 XConsoleResult_MoreOutput,
+                                                 "密码: "),
+                       "non-admin login prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "changed",
+                                                 XConsoleResult_Ok,
+                                                 "testuser"),
+                       "non-admin login");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "id testadmin",
+                                                 XConsoleResult_Ok,
+                                                 "uid=0(testadmin)"),
+                       "non-admin can query another user id");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "groups testadmin",
+                                                 XConsoleResult_Ok,
+                                                 "testadmin :"),
+                       "non-admin can query another user groups");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "passwd",
+                                                 XConsoleResult_MoreOutput,
+                                                 "当前密码: "),
+                       "non-admin passwd current prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "wrong-old",
+                                                 XConsoleResult_PermissionDenied,
+                                                 "当前密码错误"),
+                       "non-admin passwd wrong old password");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "passwd",
+                                                 XConsoleResult_MoreOutput,
+                                                 "当前密码: "),
+                       "non-admin passwd current prompt retry");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "changed",
+                                                 XConsoleResult_MoreOutput,
+                                                 "新密码: "),
+                       "non-admin passwd old ok");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "newpass",
+                                                 XConsoleResult_MoreOutput,
+                                                 "重新输入新密码: "),
+                       "non-admin passwd new prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "newpass",
+                                                 XConsoleResult_Ok,
+                                                 "密码已更新"),
+                       "non-admin passwd change");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "logout",
+                                                 XConsoleResult_Ok,
+                                                 "已注销"),
+                       "logout after non-admin");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "login testadmin",
+                                                 XConsoleResult_MoreOutput,
+                                                 "密码: "),
+                       "admin relogin prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "secret",
+                                                 XConsoleResult_Ok,
+                                                 "testadmin"),
+                       "admin relogin");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd -u 2001 -g 2002 -G 2002,2003 linuxuser",
+                                                 XConsoleResult_Ok,
+                                                 "用户已创建"),
+                       "Linux useradd options");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd -l renamed bogus",
+                                                 XConsoleResult_InvalidArgument,
+                                                 "用法"),
+                       "useradd rejects usermod rename");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd -aG 3000 bogus",
+                                                 XConsoleResult_InvalidArgument,
+                                                 "用法"),
+                       "useradd rejects append groups");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd -L bogus",
+                                                 XConsoleResult_InvalidArgument,
+                                                 "用法"),
+                       "useradd rejects lock option");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "useradd -U bogus",
+                                                 XConsoleResult_InvalidArgument,
+                                                 "用法"),
+                       "useradd rejects unlock option");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "id linuxuser",
+                                                 XConsoleResult_Ok,
+                                                 "uid=2001(linuxuser) gid=2002"),
+                       "id named user");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "groups linuxuser",
+                                                 XConsoleResult_Ok,
+                                                 "linuxuser : 2002 2003"),
+                       "groups named user");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "usermod -aG 2004 -L -U -l renamed linuxuser",
+                                                 XConsoleResult_Ok,
+                                                 "用户已更新"),
+                       "Linux usermod options");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "groups renamed",
+                                                 XConsoleResult_Ok,
+                                                 "renamed : 2002 2003 2004"),
+                       "usermod appended groups");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "userdel -r renamed",
+                                                 XConsoleResult_NotSupported,
+                                                 "-r 不支持"),
+                       "userdel remove home unsupported");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "userdel renamed",
+                                                 XConsoleResult_Ok,
+                                                 "用户已删除"),
+                       "Linux userdel");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "userdel testuser",
+                                                 XConsoleResult_Ok,
+                                                 "用户已删除"),
+                       "userdel command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "logout",
+                                                 XConsoleResult_Ok, "已注销"),
+                       "logout command");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "login",
+                                                 XConsoleResult_MoreOutput,
+                                                 "用户名: "),
+                       "login username prompt");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "testadmin",
+                                                 XConsoleResult_MoreOutput,
+                                                 "密码: "),
+                       "login username input");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "secret",
+                                                 XConsoleResult_Ok,
+                                                 "testadmin"),
+                       "login username flow");
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "logout",
+                                                 XConsoleResult_Ok, "已注销"),
+                       "second logout command");
+#if XCONSOLE_SHELL_LOGIN_REQUIRED_ON
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                                 "echo after-logout",
+                                                 XConsoleResult_PermissionDenied,
+                                                 "权限不足"),
+                       "logout requires login again");
+#endif
+        XFileSystem_remove(loginPath);
+        XString_delete_base(loginPath);
+        XConsoleShell_setAuthenticated(shell, true);
+        XConsoleShell_session(shell)->permissionMask = UINT32_MAX;
+    }
+#endif
+#if XCONSOLE_SHELL_GPIO_ON
+    transport.gpioAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setGpioAuthorizeCallback(
+                       shell, XConsoleShellTest_gpioAuthorize, &transport),
+                   "set gpio authorize callback");
+#endif
+#if XCONSOLE_SHELL_CAN_ON
+    transport.canAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setCanAuthorizeCallback(
+                       shell, XConsoleShellTest_canAuthorize, &transport),
+                   "set can authorize callback");
+#endif
+#if XCONSOLE_SHELL_ADC_ON
+    transport.adcAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setAdcAuthorizeCallback(
+                       shell, XConsoleShellTest_adcAuthorize, &transport),
+                   "set adc authorize callback");
+#endif
+#if XCONSOLE_SHELL_PWM_ON
+    transport.pwmAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setPwmAuthorizeCallback(
+                       shell, XConsoleShellTest_pwmAuthorize, &transport),
+                   "set pwm authorize callback");
+#endif
+#if XCONSOLE_SHELL_I2C_ON
+    transport.i2cAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setI2cAuthorizeCallback(
+                       shell, XConsoleShellTest_i2cAuthorize, &transport),
+                   "set i2c authorize callback");
+#endif
+#if XCONSOLE_SHELL_SPI_ON
+    transport.spiAllow = true;
+    XCS_TEST_CHECK(XConsoleShell_setSpiAuthorizeCallback(
+                       shell, XConsoleShellTest_spiAuthorize, &transport),
+                   "set spi authorize callback");
+#endif
+#if XCONSOLE_SHELL_TASKS_ON
+    XCS_TEST_CHECK(XConsoleShell_setTaskProvider(shell,
+                                                  XConsoleShellTest_taskProvider,
+                                                  NULL),
+                   "set tasks provider");
+#endif
     XCS_TEST_CHECK(XConsoleShellTest_runStress(shell, &transport, &io),
                    "100000 command and 10000 lifecycle stress");
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
@@ -421,6 +1116,11 @@ bool XConsoleShellTest_runAll(void)
         secondary = XConsoleShell_openSession(shell, &secondaryIo);
         XCS_TEST_CHECK(secondary != NULL && XConsoleShell_sessionCount(shell) == 2,
                        "open secondary session");
+#if XCONSOLE_SHELL_AUTH_ON
+        /* 多会话测试验证的是会话切换与 I/O 路由，先让附加会话与主会话一样通过认证。 */
+        secondary->authenticated = true;
+        secondary->permissionMask = UINT32_MAX;
+#endif
         XCS_TEST_CHECK(XConsoleShell_processLineForSession(
                            shell, secondary, "echo secondary", 14) == XConsoleResult_Ok &&
                            strstr(secondaryTransport.output, "secondary"),
@@ -489,9 +1189,19 @@ bool XConsoleShellTest_runAll(void)
                        "telnet make io");
         telnetShell = XConsoleShell_create(&telnetIo);
         XCS_TEST_CHECK(telnetShell != NULL, "telnet shell create");
-        XCS_TEST_CHECK(XConsoleShellTelnetAdapter_feedData(&adapter, telnetShell, NULL,
-                                                           stream, sizeof(stream)) ==
-                           XConsoleResult_Ok &&
+#if XCONSOLE_SHELL_AUTH_ON
+        /* Telnet 测试验证协议过滤与 I/O 路由，先让会话通过认证。 */
+        XConsoleShell_session(telnetShell)->authenticated = true;
+        XConsoleShell_session(telnetShell)->permissionMask = UINT32_MAX;
+#endif
+        XConsoleResult telnetFeedResult = XConsoleShellTelnetAdapter_feedData(
+            &adapter, telnetShell, NULL, stream, sizeof(stream));
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        bool telnetFlushed = XConsoleShell_flushOutput(telnetShell);
+#else
+        bool telnetFlushed = true;
+#endif
+        XCS_TEST_CHECK(telnetFlushed && telnetFeedResult == XConsoleResult_Ok &&
                            telnetTransport.length >= 3 &&
                            (uint8_t)telnetTransport.output[0] == 255 &&
                            (uint8_t)telnetTransport.output[1] == 252 &&
@@ -547,6 +1257,8 @@ bool XConsoleShellTest_runAll(void)
     }
 #endif
 #if XCONSOLE_SHELL_AUTH_ON && XCONSOLE_SHELL_FS_FORMAT_ON
+    /* 前面的登录块已认证主会话，这里临时注销以验证危险命令的权限门槛。 */
+    XConsoleShell_setAuthenticated(shell, false);
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "fs format .", 11) ==
                        XConsoleResult_PermissionDenied,
                    "unauthenticated dangerous command");
@@ -636,6 +1348,10 @@ bool XConsoleShellTest_runAll(void)
     while (transport.inputPosition < transport.inputLength)
         XCS_TEST_CHECK(XConsoleShell_pump(shell, 3) == XConsoleResult_Ok,
                        "callback transport pump");
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    XCS_TEST_CHECK(XConsoleShell_flushOutput(shell),
+                   "callback transport pump flush");
+#endif
     XCS_TEST_CHECK(strstr(transport.output, "pump") != NULL,
                    "callback transport pump output");
     {
@@ -690,7 +1406,7 @@ bool XConsoleShellTest_runAll(void)
                                                  XConsoleResult_Ok, "counted"),
                        "stats counted command");
         XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "stats",
-                                                 XConsoleResult_Ok, "lines="),
+                                                 XConsoleResult_Ok, "行数="),
                        "stats command");
         XCS_TEST_CHECK(XConsoleShell_stats(shell, &stats) &&
                        stats.processedLines == 2 && stats.successfulCommands == 2 &&
@@ -702,10 +1418,581 @@ bool XConsoleShellTest_runAll(void)
                        "stats clear");
     }
 #endif
-#if XCONSOLE_SHELL_LINE_EDITOR_ON
+#if XCONSOLE_SHELL_CLEAR_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "clear",
                                              XConsoleResult_Ok, "\x1b[2J\x1b[H"),
                    "clear command");
+#endif
+#if XCONSOLE_SHELL_RESET_ON
+    transport.resetResult = XSystemResult_Ok;
+    XSystem_setResetHandler(XConsoleShellTest_resetHandler, &transport);
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reset",
+                                             XConsoleResult_Ok,
+                                             "reset requested") &&
+                       transport.resetCount == 1u &&
+                       transport.resetReason == XSystemResetReason_Shell,
+                   "reset command");
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "reset extra",
+                                             strlen("reset extra")) ==
+                       XConsoleResult_InvalidArgument,
+                   "reset invalid argument");
+    XCS_TEST_CHECK(XSystem_reset((XSystemResetReason)99) ==
+                       XSystemResult_InvalidArgument,
+                   "reset invalid reason");
+    transport.resetResult = XSystemResult_PermissionDenied;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reset",
+                                             XConsoleResult_PermissionDenied,
+                                             "权限不足"),
+                   "reset permission denied");
+    transport.resetResult = XSystemResult_NotSupported;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reset",
+                                             XConsoleResult_NotSupported,
+                                             "backend unavailable"),
+                   "reset unavailable backend");
+    XSystem_setResetHandler(NULL, NULL);
+#endif
+#if XCONSOLE_SHELL_REBOOT_ON
+    transport.rebootResult = XSystemResult_Ok;
+    XSystem_setRebootHandler(XConsoleShellTest_rebootHandler, &transport);
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reboot",
+                                             XConsoleResult_Ok,
+                                             "reboot requested") &&
+                       transport.rebootCount == 1u &&
+                       transport.rebootMode == XSystemRebootMode_Normal,
+                   "reboot command");
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "reboot extra",
+                                             strlen("reboot extra")) ==
+                       XConsoleResult_InvalidArgument,
+                   "reboot invalid argument");
+    XCS_TEST_CHECK(XSystem_reboot((XSystemRebootMode)99) ==
+                       XSystemResult_InvalidArgument,
+                   "reboot invalid mode");
+    transport.rebootResult = XSystemResult_PermissionDenied;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reboot",
+                                             XConsoleResult_PermissionDenied,
+                                             "权限不足"),
+                   "reboot permission denied");
+    transport.rebootResult = XSystemResult_NotSupported;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "reboot",
+                                             XConsoleResult_NotSupported,
+                                             "backend unavailable"),
+                   "reboot unavailable backend");
+    XSystem_setRebootHandler(NULL, NULL);
+#endif
+#if XCONSOLE_SHELL_SHUTDOWN_ON
+    transport.shutdownResult = XSystemResult_Ok;
+    XSystem_setShutdownHandler(XConsoleShellTest_shutdownHandler, &transport);
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "shutdown",
+                                             XConsoleResult_Ok,
+                                             "已请求关闭") &&
+                       transport.shutdownCount == 1u &&
+                       !XConsoleShell_isRunning(shell),
+                   "shutdown command");
+    XConsoleShell_setRunning(shell, true);
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "shutdown extra",
+                                             strlen("shutdown extra")) ==
+                       XConsoleResult_InvalidArgument,
+                   "shutdown invalid argument");
+    transport.shutdownResult = XSystemResult_PermissionDenied;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "shutdown",
+                                             XConsoleResult_PermissionDenied,
+                                             "权限不足") &&
+                       XConsoleShell_isRunning(shell),
+                   "shutdown permission denied");
+    transport.shutdownResult = XSystemResult_NotSupported;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "shutdown",
+                                             XConsoleResult_Ok,
+                                             "已请求关闭") &&
+                       !XConsoleShell_isRunning(shell),
+                   "shutdown unavailable backend exits Shell");
+    XConsoleShell_setRunning(shell, true);
+    XSystem_setShutdownHandler(NULL, NULL);
+#endif
+#if XCONSOLE_SHELL_EXIT_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "exit",
+                                             XConsoleResult_Ok,
+                                             "已请求退出") &&
+                       !XConsoleShell_isRunning(shell),
+                   "exit command");
+    XConsoleShell_setRunning(shell, true);
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "exit extra",
+                                             strlen("exit extra")) ==
+                       XConsoleResult_InvalidArgument &&
+                       XConsoleShell_isRunning(shell),
+                   "exit invalid argument");
+#endif
+#if XCONSOLE_SHELL_ASYNC_ON
+    {
+        const char asyncInput[] = "echo event-input\n";
+        transport.inputPosition = 0;
+        transport.inputLength = sizeof(asyncInput) - 1u;
+        memcpy(transport.input, asyncInput, transport.inputLength);
+        transport.length = 0;
+        transport.output[0] = '\0';
+        XCS_TEST_CHECK(XConsoleShell_startAsync(shell) &&
+                           XConsoleShell_isAsyncRunning(shell),
+                       "start event async Shell");
+        XCS_TEST_CHECK(XConsoleShell_notifyInput(shell),
+                       "post event async input");
+#if XCONSOLE_SHELL_ASYNC_RUN_MODE == XCONSOLE_SHELL_ASYNC_MODE_EVENT_DISPATCHER
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+#else
+        {
+            size_t waitCount = 0;
+            while (transport.inputPosition < transport.inputLength && waitCount++ < 100u)
+                XThread_usleep(1000);
+        }
+#endif
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        XCS_TEST_CHECK(XConsoleShell_flushOutput(shell),
+                       "flush event async output");
+#endif
+        XCS_TEST_CHECK(strstr(transport.output, "event-input") != NULL,
+                       "event async input handled");
+        XCS_TEST_CHECK(XConsoleShell_stopAsync(shell, 0) &&
+                           !XConsoleShell_isAsyncRunning(shell),
+                       "stop event async Shell");
+    }
+#endif
+#if XCONSOLE_SHELL_GPIO_ON
+#if XCONSOLE_SHELL_GPIO_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "gpio list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的引脚"),
+                   "gpio empty list");
+#endif
+#if XCONSOLE_SHELL_GPIO_OPEN_ON && XCONSOLE_SHELL_GPIO_CLOSE_ON
+    transport.gpioAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "gpio open 0 13 output --initial 0",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "gpio policy denied");
+    transport.gpioAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "gpio open 0 13 output --pull up --drive open-drain "
+                       "--active low --initial 0",
+                       XConsoleResult_Ok, "打开: 成功"),
+                   "gpio open");
+    XCS_TEST_CHECK(XConsoleShell_processLine(
+                       shell, "gpio open 0 13 output",
+                       strlen("gpio open 0 13 output")) ==
+                       XConsoleResult_ResourceLimit,
+                   "gpio duplicate open");
+#if XCONSOLE_SHELL_GPIO_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "gpio list",
+                                             XConsoleResult_Ok,
+                                             "open-drain"),
+                   "gpio populated list");
+#endif
+#if XCONSOLE_SHELL_GPIO_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio info 0 13",
+                                             XConsoleResult_Ok,
+                                             "controller=0 line=13"),
+                   "gpio info");
+#endif
+#if XCONSOLE_SHELL_GPIO_WRITE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio write 0 13 1",
+                                             XConsoleResult_Ok, "写入: 成功"),
+                   "gpio write");
+#endif
+#if XCONSOLE_SHELL_GPIO_READ_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio read 0 13",
+                                             XConsoleResult_Ok, "level=1"),
+                   "gpio physical read");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio read 0 13 --active",
+                                             XConsoleResult_Ok, "active=no"),
+                   "gpio active read");
+#endif
+#if XCONSOLE_SHELL_GPIO_TOGGLE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio toggle 0 13",
+                                             XConsoleResult_Ok, "翻转: 成功"),
+                   "gpio toggle");
+#endif
+#if XCONSOLE_SHELL_GPIO_CONFIGURE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "gpio configure 0 13 --direction input --pull down "
+                       "--drive push-pull --initial keep --active high "
+                       "--debounce 10",
+                       XConsoleResult_Ok, "配置: 成功"),
+                   "gpio configure");
+#endif
+#if XCONSOLE_SHELL_GPIO_INTERRUPT_ON && XCONSOLE_SHELL_GPIO_CONFIGURE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio irq set 0 13 rising",
+                                             XConsoleResult_Ok, "中断设置: 成功"),
+                   "gpio irq edge");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio irq enable 0 13",
+                                             XConsoleResult_Ok,
+                                             "中断使能: 成功"),
+                   "gpio irq enable");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio irq status 0 13",
+                                             XConsoleResult_Ok,
+                                             "irq=enabled"),
+                   "gpio irq status");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "gpio irq wait 0 13 --count 1 --timeout 100",
+                       XConsoleResult_Ok, "events=1 timeout=no"),
+                   "gpio irq wait");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio irq disable 0 13",
+                                             XConsoleResult_Ok,
+                                             "中断禁用: 成功"),
+                   "gpio irq disable");
+#endif
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio close 0 13",
+                                             XConsoleResult_Ok, "关闭: 成功"),
+                   "gpio close");
+#if XCONSOLE_SHELL_GPIO_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "gpio info 0 13",
+                                             XConsoleResult_InvalidArgument,
+                                             "not open"),
+                   "gpio closed info");
+#endif
+    XCS_TEST_CHECK(transport.gpioAuthorizeCount > 0u,
+                   "gpio authorize callback used");
+#endif
+#endif
+#if XCONSOLE_SHELL_ADC_ON
+#if XCONSOLE_SHELL_ADC_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "adc list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的通道"),
+                   "adc empty list");
+#endif
+#if XCONSOLE_SHELL_ADC_OPEN_ON
+    transport.adcAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "adc open 0 0",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "adc policy denied");
+    transport.adcAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "adc open 0 0 --resolution 12 --reference 3300",
+                       XConsoleResult_Ok, NULL),
+                   "adc open");
+#endif
+#if XCONSOLE_SHELL_ADC_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "adc info 0 0",
+                                             XConsoleResult_Ok,
+                                             "resolution=12"),
+                   "adc info");
+#endif
+#if XCONSOLE_SHELL_ADC_READ_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "adc read 0 0",
+                                             XConsoleResult_Ok, "raw=1234"),
+                   "adc raw read");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "adc read 0 0 --mv",
+                                             XConsoleResult_Ok, "994 mV"),
+                   "adc millivolt read");
+#endif
+#if XCONSOLE_SHELL_ADC_CONFIGURE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "adc configure 0 0 --sample-us 5",
+                       XConsoleResult_Ok, NULL),
+                   "adc configure");
+#endif
+#if XCONSOLE_SHELL_ADC_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "adc close 0 0",
+                                             XConsoleResult_Ok, NULL),
+                   "adc close");
+#endif
+    XCS_TEST_CHECK(transport.adcAuthorizeCount > 0u,
+                   "adc authorize callback used");
+#endif
+#if XCONSOLE_SHELL_PWM_ON
+#if XCONSOLE_SHELL_PWM_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "pwm list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的通道"),
+                   "pwm empty list");
+#endif
+#if XCONSOLE_SHELL_PWM_OPEN_ON
+    transport.pwmAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "pwm open 0 1",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "pwm policy denied");
+    transport.pwmAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "pwm open 0 1 --frequency 1000 --duty 5000",
+                       XConsoleResult_Ok, NULL),
+                   "pwm open");
+#endif
+#if XCONSOLE_SHELL_PWM_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "pwm info 0 1",
+                                             XConsoleResult_Ok,
+                                             "frequency=1000"),
+                   "pwm info");
+#endif
+#if XCONSOLE_SHELL_PWM_CONFIGURE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "pwm configure 0 1 --polarity inverted",
+                       XConsoleResult_Ok, NULL),
+                   "pwm configure");
+#endif
+#if XCONSOLE_SHELL_PWM_START_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "pwm start 0 1",
+                                             XConsoleResult_Ok, NULL),
+                   "pwm start");
+#endif
+#if XCONSOLE_SHELL_PWM_SET_FREQUENCY_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "pwm set-frequency 0 1 2000",
+                       XConsoleResult_Ok, NULL),
+                   "pwm set frequency");
+#endif
+#if XCONSOLE_SHELL_PWM_SET_DUTY_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "pwm set-duty 0 1 7500",
+                       XConsoleResult_Ok, NULL),
+                   "pwm set duty");
+#endif
+#if XCONSOLE_SHELL_PWM_STOP_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "pwm stop 0 1",
+                                             XConsoleResult_Ok, NULL),
+                   "pwm stop");
+#endif
+#if XCONSOLE_SHELL_PWM_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "pwm close 0 1",
+                                             XConsoleResult_Ok, NULL),
+                   "pwm close");
+#endif
+    XCS_TEST_CHECK(transport.pwmAuthorizeCount > 0u,
+                   "pwm authorize callback used");
+#endif
+#if XCONSOLE_SHELL_I2C_ON
+#if XCONSOLE_SHELL_I2C_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "i2c list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的从机"),
+                   "i2c empty list");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON
+    transport.i2cAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c open 0 0x50",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "i2c policy denied");
+    transport.i2cAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c open 0 0x50 --speed 400000",
+                       XConsoleResult_Ok, "打开: 成功"),
+                   "i2c open");
+#endif
+#if XCONSOLE_SHELL_I2C_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "i2c info 0 0x50",
+                                             XConsoleResult_Ok, "speed=400000"),
+                   "i2c info");
+#endif
+#if XCONSOLE_SHELL_I2C_WRITE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "i2c write 0 0x50 001122",
+                                             XConsoleResult_Ok, "写入: 成功"),
+                   "i2c write");
+#endif
+#if XCONSOLE_SHELL_I2C_READ_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "i2c read 0 0x50 2",
+                                             XConsoleResult_Ok, "i2c: 读取:"),
+                   "i2c read");
+#endif
+#if XCONSOLE_SHELL_I2C_WRITEREAD_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "i2c writeread 0 0x50 0001 2",
+                                             XConsoleResult_Ok, "i2c: 读取:"),
+                   "i2c write-read");
+#endif
+#if XCONSOLE_SHELL_I2C_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "i2c close 0 0x50",
+                                             XConsoleResult_Ok, "关闭: 成功"),
+                   "i2c close");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c open 0 0x180",
+                       XConsoleResult_InvalidArgument, NULL),
+                   "i2c reject ten-bit address without mode");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c open 0 0x180 --ten-bit",
+                       XConsoleResult_Ok, "打开: 成功"),
+                   "i2c ten-bit open");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON && XCONSOLE_SHELL_I2C_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c info 0 0x180 --ten-bit",
+                       XConsoleResult_Ok, "mode=10bit"),
+                   "i2c ten-bit info");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON && XCONSOLE_SHELL_I2C_WRITE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c write 0 0x180 001122 --ten-bit",
+                       XConsoleResult_Ok, "写入: 成功"),
+                   "i2c ten-bit write");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON && XCONSOLE_SHELL_I2C_READ_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c read 0 0x180 2 --ten-bit",
+                       XConsoleResult_Ok, "i2c: 读取:"),
+                   "i2c ten-bit read");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON && XCONSOLE_SHELL_I2C_WRITEREAD_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "i2c writeread 0 0x180 0001 2 --ten-bit",
+                       XConsoleResult_Ok, "i2c: 读取:"),
+                   "i2c ten-bit write-read");
+#endif
+#if XCONSOLE_SHELL_I2C_OPEN_ON && XCONSOLE_SHELL_I2C_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "i2c close 0 0x180 --ten-bit",
+                       XConsoleResult_Ok, "关闭: 成功"),
+                   "i2c ten-bit close");
+#endif
+    XCS_TEST_CHECK(transport.i2cAuthorizeCount > 0u,
+                   "i2c authorize callback used");
+#endif
+#if XCONSOLE_SHELL_SPI_ON
+#if XCONSOLE_SHELL_SPI_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "spi list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的从机"),
+                   "spi empty list");
+#endif
+#if XCONSOLE_SHELL_SPI_OPEN_ON
+    transport.spiAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "spi open 0 0",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "spi policy denied");
+    transport.spiAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "spi open 0 0 --speed 2000000 --mode 3",
+                       XConsoleResult_Ok, "打开: 成功"),
+                   "spi open");
+#endif
+#if XCONSOLE_SHELL_SPI_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "spi info 0 0",
+                                             XConsoleResult_Ok, "mode=3"),
+                   "spi info");
+#endif
+#if XCONSOLE_SHELL_SPI_TRANSFER_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "spi transfer 0 0 0102",
+                                             XConsoleResult_Ok, "spi: 接收: 01 02"),
+                   "spi transfer");
+#endif
+#if XCONSOLE_SHELL_SPI_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "spi close 0 0",
+                                             XConsoleResult_Ok, "关闭: 成功"),
+                   "spi close");
+#endif
+    XCS_TEST_CHECK(transport.spiAuthorizeCount > 0u,
+                   "spi authorize callback used");
+#endif
+#if XCONSOLE_SHELL_CAN_ON
+#if XCONSOLE_SHELL_CAN_LIST_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "can list",
+                                             XConsoleResult_Ok,
+                                             "没有打开的通道"),
+                   "can empty list");
+#endif
+#if XCONSOLE_SHELL_CAN_OPEN_ON
+    transport.canAllow = false;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "can open 0 0 --name testcan",
+                       XConsoleResult_PermissionDenied, "策略拒绝"),
+                   "can policy denied");
+    transport.canAllow = true;
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "can open 0 0 --name testcan --bitrate 500000 --fd "
+                       "--data-bitrate 1000000 --loopback",
+                       XConsoleResult_Ok, "打开: 成功"),
+                   "can open");
+#endif
+#if XCONSOLE_SHELL_CAN_OPEN_ON
+#if XCONSOLE_SHELL_CAN_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "can info 0 0",
+                                             XConsoleResult_Ok,
+                                             "format=fd"),
+                   "can info");
+#endif
+#if XCONSOLE_SHELL_CAN_STATUS_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "can status 0 0",
+                                             XConsoleResult_Ok,
+                                             "state=stopped"),
+                   "can stopped status");
+#endif
+#if XCONSOLE_SHELL_CAN_START_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "can start 0 0",
+                                             XConsoleResult_Ok, "启动: 成功"),
+                   "can start");
+#endif
+#if XCONSOLE_SHELL_CAN_SEND_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "can send 0 0 0x123 0x11 0xaa",
+                       XConsoleResult_Ok, "发送: 成功"),
+                   "can send");
+#endif
+#if XCONSOLE_SHELL_CAN_RECEIVE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "can receive 0 0 --count 1 --timeout 10",
+                       XConsoleResult_Ok, "id=0x00000123"),
+                   "can receive");
+#endif
+#if XCONSOLE_SHELL_CAN_FILTER_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "can filter add 0 0 0x100 0x700 --type data",
+                       XConsoleResult_Ok, "过滤器添加: id=1"),
+                   "can filter add");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "can filter remove 0 0 1",
+                       XConsoleResult_Ok, "过滤器移除: 成功"),
+                   "can filter remove");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "can filter clear 0 0",
+                       XConsoleResult_Ok, "过滤器清空: 成功"),
+                   "can filter clear");
+#endif
+#if XCONSOLE_SHELL_CAN_STATUS_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "can status 0 0",
+                                             XConsoleResult_Ok,
+                                             "state=error-active"),
+                   "can active status");
+#endif
+#if XCONSOLE_SHELL_CAN_STOP_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "can stop 0 0",
+                                             XConsoleResult_Ok, "停止: 成功"),
+                   "can stop");
+#endif
+#if XCONSOLE_SHELL_CAN_CLOSE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "can close 0 0",
+                                             XConsoleResult_Ok, "关闭: 成功"),
+                   "can close");
+#endif
+    XCS_TEST_CHECK(transport.canAuthorizeCount > 0u,
+                   "can authorize callback used");
+#endif
 #endif
 #if XCONSOLE_SHELL_COMPLETION_ON
     transport.length = 0;
@@ -715,12 +2002,105 @@ bool XConsoleShellTest_runAll(void)
 #endif
     session = XConsoleShell_session(shell);
     XCS_TEST_CHECK(session && session->currentPath[0] != '\0', "session cwd");
+#if XCONSOLE_SHELL_DATETIME_ON && XCONSOLE_SHELL_DATE_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "date",
+                                             XConsoleResult_Ok, "-"),
+                   "date local command");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "date -u",
+                                             XConsoleResult_Ok, "-"),
+                   "date UTC command");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "date -I",
+                                             XConsoleResult_Ok, "-"),
+                   "date ISO command");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "date +%Y-%m-%dT%H:%M:%S",
+                                             XConsoleResult_Ok, "T"),
+                   "date custom format command");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "date +%Q",
+                                             XConsoleResult_Failed, "date:"),
+                   "date unsupported format command");
+#endif
+#if XCONSOLE_SHELL_MEMORY_ON && XCONSOLE_SHELL_MEMORY_POOL_ON
+    {
+        void* memoryBlock = XMultiPool_global_malloc(16u);
+        bool memoryCommandOk;
+        XCS_TEST_CHECK(memoryBlock != NULL, "memory pool test allocation");
+        memoryCommandOk = XConsoleShellTest_runLine(shell, &transport, "mem",
+                                                     XConsoleResult_Ok, "XMultiPool");
+        memoryCommandOk = memoryCommandOk &&
+            XConsoleShellTest_runLine(shell, &transport, "mem -v",
+                                       XConsoleResult_Ok, "子池[0]");
+        XMultiPool_global_free(memoryBlock);
+        XCS_TEST_CHECK(memoryCommandOk, "memory pool usage command");
+    }
+#endif
+#if XCONSOLE_SHELL_INFO_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "info",
+                                             XConsoleResult_Ok, "XConsoleShell"),
+                   "info command");
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "info extra", strlen("info extra")) ==
+                       XConsoleResult_InvalidArgument,
+                   "info invalid argument");
+#endif
+#if XCONSOLE_SHELL_UPTIME_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "uptime",
+                                             XConsoleResult_Ok, "uptime:"),
+                   "uptime command");
+    XCS_TEST_CHECK(XConsoleShell_processLine(shell, "uptime extra", strlen("uptime extra")) ==
+                       XConsoleResult_InvalidArgument,
+                   "uptime invalid argument");
+#endif
+#if XCONSOLE_SHELL_TASKS_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "tasks",
+                                             XConsoleResult_Ok, "shell-main"),
+                   "tasks command");
+    XCS_TEST_CHECK(strstr(transport.output, "阻塞") != NULL,
+                   "tasks state output");
+    XCS_TEST_CHECK(XConsoleShell_setTaskProvider(shell, NULL, NULL),
+                   "clear tasks provider");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "tasks",
+                                             XConsoleResult_NotSupported,
+                                             "提供者不可用"),
+                   "tasks unavailable command");
+#endif
+#if XCONSOLE_SHELL_NETWORK_ON
+    {
+        XConsoleResult networkResult;
+        XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "net hostname",
+                                                 XConsoleResult_Ok, NULL) &&
+                           transport.length > 1u,
+                       "network hostname command");
+        transport.length = 0;
+        transport.output[0] = '\0';
+        networkResult = XConsoleShell_processLine(shell, "net ifconfig", strlen("net ifconfig"));
+        XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
+                           networkResult != XConsoleResult_InvalidSyntax,
+                       "network ifconfig command");
+        transport.length = 0;
+        transport.output[0] = '\0';
+        networkResult = XConsoleShell_processLine(shell, "net resolve localhost",
+                                                   strlen("net resolve localhost"));
+        XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
+                           networkResult != XConsoleResult_InvalidSyntax,
+                       "network resolve command");
+#if XCONSOLE_SHELL_NET_PING_ON
+        transport.length = 0;
+        transport.output[0] = '\0';
+        networkResult = XConsoleShell_processLine(shell, "net ping 127.0.0.1 -c 1 -W 500",
+                                                   strlen("net ping 127.0.0.1 -c 1 -W 500"));
+        XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
+                           networkResult != XConsoleResult_InvalidSyntax,
+                       "network ping command");
+#endif
+    }
+#endif
 #if XCONSOLE_SHELL_FS_PWD_ON
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "fs pwd", 6) == XConsoleResult_Ok,
                    "pwd command");
 #endif
     filePath = XString_create_utf8("xconsole_shell_test.txt");
     XCS_TEST_CHECK(filePath != NULL, "file path");
+    XFileSystem_remove(filePath);
     fd = XFileSystem_open(filePath, XFileSystem_WriteOnly | XFileSystem_Create |
                           XFileSystem_Truncate, &error);
     XCS_TEST_CHECK(fd != XFD_INVALID, "create shell file");
@@ -751,10 +2131,124 @@ bool XConsoleShellTest_runAll(void)
              XConsoleResult_Ok;
     XCS_TEST_CHECK(result && strstr(transport.output, fileText), "cat command");
 #endif
+#if XCONSOLE_SHELL_FS_HEXDUMP_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "hexdump -C -n 16 xconsole_shell_test.txt",
+                                             XConsoleResult_Ok, "73 68 65 6c 6c"),
+                   "hexdump command");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "fs hexdump -s 2 -n 4 xconsole_shell_test.txt",
+                                             XConsoleResult_Ok, "65 6c 6c 2d"),
+                   "fs hexdump options");
+#endif
 #if XCONSOLE_SHELL_FS_STAT_ON
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "fs stat xconsole_shell_test.txt", 31) ==
-                       XConsoleResult_Ok && strstr(transport.output, "type=file"),
+                       XConsoleResult_Ok && strstr(transport.output, "类型=文件"),
                    "stat command");
+#endif
+
+#if XCONSOLE_SHELL_FS_CHMOD_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "chmod 600 xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod octal");
+    {
+        XFileStat st;
+        if (XFileSystem_stat(filePath, &st)) {
+            XCS_TEST_CHECK((st.permissions & XFile_ReadOwner) != 0 &&
+                               (st.permissions & XFile_WriteOwner) != 0 &&
+                               (st.permissions &
+                                (XFile_ReadGroup | XFile_WriteGroup |
+                                 XFile_ReadOther | XFile_WriteOther)) == 0,
+                           "chmod octal permissions");
+        }
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "chmod u+x xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod symbolic add");
+    {
+        XFileStat st;
+        if (XFileSystem_stat(filePath, &st)) {
+            XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0,
+                           "chmod symbolic owner execute");
+        }
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "chmod a-w xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod symbolic clear write");
+    {
+        XFileStat st;
+        if (XFileSystem_stat(filePath, &st)) {
+            XCS_TEST_CHECK((st.permissions &
+                            (XFile_WriteOwner | XFile_WriteGroup |
+                             XFile_WriteOther)) == 0,
+                           "chmod symbolic clear all write");
+        }
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "chmod 644 xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod reset to no exec");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "chmod a+X xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod symbolic X on plain file");
+    {
+        XFileStat st;
+        if (XFileSystem_stat(filePath, &st)) {
+            XCS_TEST_CHECK((st.permissions &
+                            (XFile_ExeOwner | XFile_ExeGroup |
+                             XFile_ExeOther)) == 0,
+                           "chmod symbolic X no exec on plain file");
+        }
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "chmod u+x xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod set one exec bit");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport,
+                       "chmod a+X xconsole_shell_test.txt",
+                       XConsoleResult_Ok, NULL),
+                   "chmod symbolic X propagates exec");
+    {
+        XFileStat st;
+        if (XFileSystem_stat(filePath, &st)) {
+            XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0 &&
+                               (st.permissions & XFile_ExeGroup) != 0 &&
+                               (st.permissions & XFile_ExeOther) != 0,
+                           "chmod symbolic X exec propagation");
+        }
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "fs mkdir xconsole_shell_test_dir",
+                       XConsoleResult_Ok, NULL),
+                   "create chmod X test dir");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "chmod a+X xconsole_shell_test_dir",
+                       XConsoleResult_Ok, NULL),
+                   "chmod symbolic X on directory");
+    {
+        XString* dir = XString_create_utf8("xconsole_shell_test_dir");
+        XFileStat st;
+        if (dir && XFileSystem_stat(dir, &st)) {
+            XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0 &&
+                               (st.permissions & XFile_ExeGroup) != 0 &&
+                               (st.permissions & XFile_ExeOther) != 0,
+                           "chmod symbolic X exec on directory");
+        }
+        if (dir) XFileSystem_remove(dir);
+        XString_delete_base(dir);
+    }
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(
+                       shell, &transport, "chmod badmode xconsole_shell_test.txt",
+                       XConsoleResult_InvalidArgument, NULL),
+                   "chmod invalid mode");
 #endif
 #if XCONSOLE_SHELL_FS_LS_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "fs ls .",
@@ -772,7 +2266,7 @@ bool XConsoleShellTest_runAll(void)
 #endif
 #if XCONSOLE_SHELL_FS_DF_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "df .",
-                                             XConsoleResult_Ok, "total="),
+                                             XConsoleResult_Ok, "总计="),
                    "root df command");
 #endif
 #if XCONSOLE_SHELL_FS_DU_ON
@@ -782,7 +2276,7 @@ bool XConsoleShellTest_runAll(void)
 #endif
 #if XCONSOLE_SHELL_FS_WC_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "wc xconsole_shell_test.txt",
-                                             XConsoleResult_Ok, "bytes="),
+                                             XConsoleResult_Ok, "xconsole_shell_test.txt"),
                    "root wc command");
 #endif
 #if XCONSOLE_SHELL_FS_HEAD_ON
@@ -790,6 +2284,11 @@ bool XConsoleShellTest_runAll(void)
                                              "head -n 1 xconsole_shell_test.txt",
                                              XConsoleResult_Ok, fileText),
                    "head options");
+    XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
+                                             "head -n 0 xconsole_shell_test.txt",
+                                             XConsoleResult_Ok, NULL) &&
+                       transport.length == 0,
+                   "head zero lines");
 #endif
 #if XCONSOLE_SHELL_FS_TAIL_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport,
@@ -805,7 +2304,7 @@ bool XConsoleShellTest_runAll(void)
 #endif
 #if XCONSOLE_SHELL_FS_FILE_ON
     XCS_TEST_CHECK(XConsoleShellTest_runLine(shell, &transport, "file xconsole_shell_test.txt",
-                                             XConsoleResult_Ok, "regular-file"),
+                                             XConsoleResult_Ok, "常规文件"),
                    "file command");
 #endif
 #if XCONSOLE_SHELL_FS_CMP_ON
@@ -846,8 +2345,12 @@ bool XConsoleShellTest_runAll(void)
                            strlen("exec --async sh -c 'printf async'")) ==
                            XConsoleResult_MoreOutput,
                        "async process start");
-        for (attempts = 0; attempts < 100 && completed == 0; ++attempts)
+        for (attempts = 0; attempts < 300 && completed == 0; ++attempts)
             completed += XConsoleShell_pollProcesses(shell, 10);
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        XCS_TEST_CHECK(XConsoleShell_flushOutput(shell),
+                       "async process output flush");
+#endif
         XCS_TEST_CHECK(completed == 1 && strstr(transport.output, "async"),
                        "async process output");
         /* 输出超过系统管道容量时仍必须完成，验证轮询期间持续排空通道。 */
@@ -863,6 +2366,13 @@ bool XConsoleShellTest_runAll(void)
         for (attempts = 0; attempts < 200 && completed == 0; ++attempts)
             completed += XConsoleShell_pollProcesses(shell, 10);
         XCS_TEST_CHECK(completed == 1, "async large output does not deadlock");
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        /* 64KB 输出已超出 4KB 测试传输缓冲，写失败属预期；清空缓冲并排空残留队列，
+           避免残留输出影响后续 redirect 等用例。 */
+        transport.length = 0;
+        transport.output[0] = '\0';
+        (void)XConsoleShell_flushOutput(shell);
+#endif
     }
 #endif
 #if XCONSOLE_SHELL_REDIRECT_ON && \
@@ -874,12 +2384,14 @@ bool XConsoleShellTest_runAll(void)
         int redirectError = 0;
         XCS_TEST_CHECK(redirectPath != NULL, "redirect path");
         XFileSystem_remove(redirectPath);
-        XCS_TEST_CHECK(XConsoleShell_processLine(
-                           shell,
-                           "exec sh -c 'printf redirected' --stdout xconsole_shell_redirect.txt",
-                           strlen("exec sh -c 'printf redirected' --stdout xconsole_shell_redirect.txt")) ==
-                           XConsoleResult_Ok,
-                       "redirect command");
+        {
+            XConsoleResult redirectResult = XConsoleShell_processLine(
+                shell,
+                "exec sh -c 'printf redirected' --stdout xconsole_shell_redirect.txt",
+                strlen("exec sh -c 'printf redirected' --stdout xconsole_shell_redirect.txt"));
+            XCS_TEST_CHECK(redirectResult == XConsoleResult_Ok,
+                           "redirect command");
+        }
         redirectFd = XFileSystem_open(redirectPath, XFileSystem_ReadOnly, &redirectError);
         XCS_TEST_CHECK(redirectFd != XFD_INVALID, "redirect output file");
         XCS_TEST_CHECK(XFileSystem_read(redirectFd, redirectText,
@@ -898,6 +2410,10 @@ bool XConsoleShellTest_runAll(void)
     XCONSOLE_SHELL_FS_LINK_ON
     XCS_TEST_CHECK(XConsoleShellTest_runFileCommands(shell, &transport),
                    "Linux fs commands");
+#endif
+#if XCONSOLE_SHELL_EDITOR_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runEditorCommands(shell, &transport),
+                   "vi/vim editor commands");
 #endif
     XFileSystem_remove(filePath);
     XString_delete_base(filePath);

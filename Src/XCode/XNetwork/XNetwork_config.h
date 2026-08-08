@@ -263,6 +263,9 @@ extern "C" {
 #define XNETWORK_API_LOOKUP_NAME       1
 #define XNETWORK_API_LOCAL_HOSTNAME    1
 
+/* ICMP Echo - 平台套接字后端和 lwIP Raw API 均提供 IPv4 能力。 */
+#define XNETWORK_API_ICMP_ECHO         1
+
 /* 网络接口枚举 - 仅平台API模式完整支持 */
 #if defined(XNETWORK_USE_PLATFORM_API)
 #define XNETWORK_API_ENUM_INTERFACES   1

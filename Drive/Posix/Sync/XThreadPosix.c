@@ -8,6 +8,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "XThread.h"
 #include "XThreadData.h"
+#include "XTask.h"
 #include "XEventLoop.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -221,6 +222,8 @@ void XThread_setPriority(XThread* thread, XThread_Priority priority)
 static void VXThread_deinit(XThread* thread)
 {
     if (!thread) return;
+
+    XTask_unregisterThread(thread);
 
     if (thread->m_handle != 0) {
         if (XThread_isRunning(thread))

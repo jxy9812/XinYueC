@@ -33,6 +33,7 @@
 #include <limits.h>
 #include <pwd.h>
 #include <sys/statvfs.h>
+#include <termios.h>
 #ifdef __linux__
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
@@ -138,6 +139,28 @@ XFd XFileSystem_open(const XString* path, int mode, int* error) {
     return XFd_alloc(XFD_TYPE_FILE, (void*)(intptr_t)fd, NULL);
 }
 
+XFd XFileSystem_openStandardInput(int* error)
+{
+    int fd;
+    int flags;
+    /* /dev/stdin 产生独立的文件状态标志，避免把 O_NONBLOCK 传播给
+       XProcess 启动的子进程；精简 POSIX 系统没有该路径时再退回 dup。 */
+    fd = open("/dev/stdin", O_RDONLY | O_NONBLOCK);
+    if (fd < 0) fd = dup(STDIN_FILENO);
+    if (fd < 0) {
+        if (error) *error = errno;
+        return XFD_INVALID;
+    }
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        close(fd);
+        if (error) *error = errno;
+        return XFD_INVALID;
+    }
+    if (error) *error = 0;
+    return XFd_alloc(XFD_TYPE_FILE, (void*)(intptr_t)fd, NULL);
+}
+
 void XFileSystem_close(XFd fdx) {
     XFileDescriptor* desc = XFd_get(fdx);
     if (!desc) return;
@@ -163,7 +186,37 @@ int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
     if (fd < 0 || (len > 0 && !buf) || len < 0) return -1;
 
     ssize_t n = read(fd, buf, (size_t)len);
-    return (n >= 0) ? (int64_t)n : -1;
+    if (n >= 0) return (int64_t)n;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+    return -1;
+}
+
+int64_t XFileSystem_readStandardInput(XFd fdx, void* buf, int64_t len)
+{
+    int fd = XFS_getFd(fdx);
+    ssize_t n;
+    if (fd < 0 || !buf || len <= 0) return -2;
+    n = read(fd, buf, (size_t)len);
+    if (n > 0) return (int64_t)n;
+    if (n == 0) return -1;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+    return -2;
+}
+
+bool XFileSystem_setStandardInputEcho(XFd fdx, bool enabled)
+{
+    int fd = XFS_getFd(fdx);
+    struct termios attributes;
+
+    /* 只有终端具有回显属性；管道和重定向输入必须保持原行为。 */
+    if (fd < 0 || !isatty(fd)) return false;
+    if (tcgetattr(fd, &attributes) != 0) return false;
+    if (enabled) {
+        attributes.c_lflag |= ECHO;
+    } else {
+        attributes.c_lflag &= (tcflag_t)~ECHO;
+    }
+    return tcsetattr(fd, TCSANOW, &attributes) == 0;
 }
 
 int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
@@ -629,6 +682,11 @@ bool XFileSystem_setCurrentPath(const XString* path) {
 bool XFileSystem_link(const XString* targetPath, const XString* linkPath) {
     if (!targetPath || !linkPath) return false;
     return symlink(XString_toUtf8(targetPath), XString_toUtf8(linkPath)) == 0;
+}
+
+bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath) {
+    if (!targetPath || !hardLinkPath) return false;
+    return link(XString_toUtf8(targetPath), XString_toUtf8(hardLinkPath)) == 0;
 }
 
 bool XFileSystem_readLink(const XString* path, XString* target) {

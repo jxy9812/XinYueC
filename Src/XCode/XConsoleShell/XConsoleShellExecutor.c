@@ -408,23 +408,29 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
             XProcess_delete_base(process);
             return XConsoleResult_Cancelled;
         }
-        if (xexec_drain_channel(shell, process, session, XProcessChannel_StandardOutput,
-                                stdoutPath, append, &stdoutStarted) != XConsoleResult_Ok ||
-            xexec_drain_channel(shell, process, session, XProcessChannel_StandardError,
-                                stderrPath, append, &stderrStarted) != XConsoleResult_Ok) {
-            XProcess_kill(process);
-            (void)XProcess_waitForFinished(process, -1);
-            XProcess_delete_base(process);
-            return XConsoleResult_IoError;
+        {
+            XConsoleResult rd1 = xexec_drain_channel(shell, process, session, XProcessChannel_StandardOutput,
+                                                     stdoutPath, append, &stdoutStarted);
+            XConsoleResult rd2 = xexec_drain_channel(shell, process, session, XProcessChannel_StandardError,
+                                                     stderrPath, append, &stderrStarted);
+            if (rd1 != XConsoleResult_Ok || rd2 != XConsoleResult_Ok) {
+                XProcess_kill(process);
+                (void)XProcess_waitForFinished(process, -1);
+                XProcess_delete_base(process);
+                return XConsoleResult_IoError;
+            }
         }
         if (XProcess_state(process) == XProcessState_NotRunning) break;
     }
-    if (xexec_drain_channel(shell, process, session, XProcessChannel_StandardOutput,
-                            stdoutPath, append, &stdoutStarted) != XConsoleResult_Ok ||
-        xexec_drain_channel(shell, process, session, XProcessChannel_StandardError,
-                            stderrPath, append, &stderrStarted) != XConsoleResult_Ok) {
-        XProcess_delete_base(process);
-        return XConsoleResult_IoError;
+    {
+        XConsoleResult rd1 = xexec_drain_channel(shell, process, session, XProcessChannel_StandardOutput,
+                                                 stdoutPath, append, &stdoutStarted);
+        XConsoleResult rd2 = xexec_drain_channel(shell, process, session, XProcessChannel_StandardError,
+                                                 stderrPath, append, &stderrStarted);
+        if (rd1 != XConsoleResult_Ok || rd2 != XConsoleResult_Ok) {
+            XProcess_delete_base(process);
+            return XConsoleResult_IoError;
+        }
     }
     i = XProcess_exitCode(process);
     XProcess_delete_base(process);

@@ -24,6 +24,23 @@ static bool xpe_valid_name(const char* name)
     return name && name[0] != '\0' && strchr(name, '=') == NULL;
 }
 
+/* Windows 环境变量名大小写不敏感；POSIX 保持标准的大小写敏感语义。 */
+static bool xpe_name_equal(const char* left, const char* right, size_t length)
+{
+    size_t i;
+    if (!left || !right) return false;
+    for (i = 0; i < length; ++i) {
+        unsigned char a = (unsigned char)left[i];
+        unsigned char b = (unsigned char)right[i];
+#ifdef _WIN32
+        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b + ('a' - 'A'));
+#endif
+        if (a != b) return false;
+    }
+    return true;
+}
+
 static int64_t xpe_find_index(const XProcessEnvironment* self, const char* name)
 {
     size_t i;
@@ -33,7 +50,7 @@ static int64_t xpe_find_index(const XProcessEnvironment* self, const char* name)
         const char* text = item ? XString_toUtf8(item) : NULL;
         const char* equal = text ? strchr(text, '=') : NULL;
         size_t nameLen = equal ? (size_t)(equal - text) : 0;
-        if (equal && nameLen == strlen(name) && strncmp(text, name, nameLen) == 0)
+        if (equal && nameLen == strlen(name) && xpe_name_equal(text, name, nameLen))
             return (int64_t)i;
     }
     return -1;
@@ -129,6 +146,53 @@ void XProcessEnvironment_clear(XProcessEnvironment* self)
     if (!self) return;
     if (self->m_entries) XStringList_clear_base(self->m_entries);
     /* 对齐 QProcessEnvironment：继承标记的空对象清空后仍继承父环境。 */
+}
+
+void XProcessEnvironment_swap(XProcessEnvironment* self,
+                              XProcessEnvironment* other)
+{
+    XProcessEnvironment temporary;
+    if (!self || !other || self == other) return;
+    temporary = *self;
+    *self = *other;
+    *other = temporary;
+}
+
+bool XProcessEnvironment_equals(const XProcessEnvironment* self,
+                                const XProcessEnvironment* other)
+{
+    size_t i;
+    size_t count;
+    if (!self || !other || self->m_inherit != other->m_inherit) return false;
+    if (self->m_inherit) return true;
+    count = self->m_entries ? XStringList_size_base(self->m_entries) : 0;
+    if (count != (other->m_entries ? XStringList_size_base(other->m_entries) : 0))
+        return false;
+    for (i = 0; i < count; ++i) {
+        const XString* item = XStringList_at_base(self->m_entries, i);
+        const char* text = item ? XString_toUtf8(item) : NULL;
+        const char* equal = text ? strchr(text, '=') : NULL;
+        XString* name;
+        XString* value;
+        int64_t index;
+        if (!equal) return false;
+        name = XString_create_with_length_utf8(text, (size_t)(equal - text));
+        if (!name) return false;
+        index = xpe_find_index(other, XString_toUtf8(name));
+        if (index < 0) {
+            XString_delete_base(name);
+            return false;
+        }
+        value = XProcessEnvironment_value_utf8(other, XString_toUtf8(name), NULL);
+        XString_delete_base(name);
+        if (!value) return false;
+        if (strcmp(XString_toUtf8(value), equal + 1) != 0) {
+            XString_delete_base(value);
+            return false;
+        }
+        XString_delete_base(value);
+    }
+    return true;
 }
 
 bool XProcessEnvironment_contains_utf8(const XProcessEnvironment* self, const char* name)
@@ -321,6 +385,23 @@ bool XProcessEnvironment_inheritsFromParent(const XProcessEnvironment* self)
 void XProcessEnvironment_clear(XProcessEnvironment* self)
 {
     (void)self;
+}
+
+void XProcessEnvironment_swap(XProcessEnvironment* self,
+                              XProcessEnvironment* other)
+{
+    XProcessEnvironment temporary;
+    if (!self || !other || self == other) return;
+    temporary = *self;
+    *self = *other;
+    *other = temporary;
+}
+
+bool XProcessEnvironment_equals(const XProcessEnvironment* self,
+                                const XProcessEnvironment* other)
+{
+    return self && other && self->m_inherit == other->m_inherit &&
+           self->m_entries == other->m_entries;
 }
 
 bool XProcessEnvironment_contains_utf8(const XProcessEnvironment* self, const char* name)

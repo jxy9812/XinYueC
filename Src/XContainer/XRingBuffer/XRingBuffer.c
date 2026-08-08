@@ -50,7 +50,9 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
     XClassGetVtable(buffer) = XRingBuffer_class_init();
 
     // 创建chunks向量
-    buffer->m_chunks = XVector_Create(XRingChunk*);
+    /* chunk 指针表不参与 COW：COW 扩容会先释放旧块中的元素，导致复制后的
+       XRingChunk 指针悬空。该向量只由当前 XRingBuffer 独占，非 COW 扩容更安全。 */
+    buffer->m_chunks = XVector_create_ex(sizeof(XRingChunk*), false);
     if (buffer->m_chunks == NULL)
     {
         XContainerCapacity(buffer) = 0;
@@ -539,6 +541,11 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
     // 复制状态
     object->m_currentReadChunk = src->m_currentReadChunk;
     object->m_currentWriteChunk = src->m_currentWriteChunk;
+    object->m_markedReadChunk = src->m_markedReadChunk;
+    object->m_markedReadChunkIndex = src->m_markedReadChunkIndex;
+    object->m_markedReadPosInChunk = src->m_markedReadPosInChunk;
+    object->m_markedTotalSize = src->m_markedTotalSize;
+    object->m_hasMark = src->m_hasMark;
     XContainerSize(object) = XContainerSize(src);
     // XContainerCapacity 保持为0
 }

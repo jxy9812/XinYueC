@@ -24,11 +24,13 @@ XClass/XIODevice 父类入口时使用宏别名，槽实现只保留 `VX<Class>_
 1. 通过 UART、USB CDC、RTT、TCP、Telnet 或应用自定义传输接收命令。
 2. 逐字节输入和整行输入两种模式。
 3. 命令注册、命令层级、别名、帮助文本、参数数量检查和错误码。
-4. help、version、echo、pwd、cd、ls、cat、stat、rm、mkdir、rmdir、cp、mv 等文件命令。
-5. 设备控制命令通过回调注册，不依赖操作系统进程。
-6. 设备控制命令通过已注册的库级回调执行；不在本模块内执行任意外部进程。
-7. 每个功能独立编译开关，且由一个总开关统一控制。
-8. 默认使用固定缓冲区和静态命令表，关闭功能后不产生对应符号和依赖。
+4. help、version、echo、pwd、cd、ls、cat、hexdump、stat、rm、mkdir、rmdir、cp、mv 等文件命令。
+5. date 日期时间查看命令，以及 net ifconfig、net hostname、net resolve 和 net ping 网络命令；统一调用
+   XNetwork 公共抽象，不在 Shell 中直接访问平台套接字、DNS 或网卡接口。
+6. 设备控制命令通过回调注册，不依赖操作系统进程。
+7. 设备控制命令通过已注册的库级回调执行；不在本模块内执行任意外部进程。
+8. 每个功能独立编译开关，且由一个总开关统一控制。
+9. 默认使用固定缓冲区和静态命令表，关闭功能后不产生对应符号和依赖。
 
 ### 2.2 默认不支持
 
@@ -149,6 +151,10 @@ XCONSOLE_SHELL_CANCEL_ON
 /* 输入输出与后端 */
 XCONSOLE_SHELL_IO_ON
 XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+XCONSOLE_SHELL_ASYNC_ON
+XCONSOLE_SHELL_ASYNC_RUN_MODE
+XCONSOLE_SHELL_ASYNC_MODE_EVENT_DISPATCHER
+XCONSOLE_SHELL_ASYNC_MODE_THREAD
 XCONSOLE_SHELL_LOG_ON
 XCONSOLE_SHELL_MULTI_SESSION_ON
 XCONSOLE_SHELL_XIODEVICE_BACKEND_ON
@@ -158,12 +164,88 @@ XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
 XCONSOLE_SHELL_TELNET_PROTOCOL_ON
 XCONSOLE_SHELL_TRANSPORT_CALLBACK_ON
 
+/* 日期时间命令 */
+XCONSOLE_SHELL_DATETIME_ON
+XCONSOLE_SHELL_DATE_ON
+
+/* 内存池查询命令 */
+XCONSOLE_SHELL_MEMORY_ON
+XCONSOLE_SHELL_MEMORY_POOL_ON
+XCONSOLE_SHELL_INFO_ON
+XCONSOLE_SHELL_UPTIME_ON
+XCONSOLE_SHELL_TASKS_ON
+XCONSOLE_SHELL_CLEAR_ON
+XCONSOLE_SHELL_RESET_ON
+XCONSOLE_SHELL_REBOOT_ON
+XCONSOLE_SHELL_SHUTDOWN_ON
+XCONSOLE_SHELL_GPIO_ON
+XCONSOLE_SHELL_GPIO_LIST_ON
+XCONSOLE_SHELL_GPIO_OPEN_ON
+XCONSOLE_SHELL_GPIO_CLOSE_ON
+XCONSOLE_SHELL_GPIO_INFO_ON
+XCONSOLE_SHELL_GPIO_READ_ON
+XCONSOLE_SHELL_GPIO_WRITE_ON
+XCONSOLE_SHELL_GPIO_TOGGLE_ON
+XCONSOLE_SHELL_GPIO_CONFIGURE_ON
+XCONSOLE_SHELL_GPIO_INTERRUPT_ON
+XCONSOLE_SHELL_ADC_ON
+XCONSOLE_SHELL_ADC_LIST_ON
+XCONSOLE_SHELL_ADC_OPEN_ON
+XCONSOLE_SHELL_ADC_CLOSE_ON
+XCONSOLE_SHELL_ADC_INFO_ON
+XCONSOLE_SHELL_ADC_READ_ON
+XCONSOLE_SHELL_ADC_CONFIGURE_ON
+XCONSOLE_SHELL_PWM_ON
+XCONSOLE_SHELL_PWM_LIST_ON
+XCONSOLE_SHELL_PWM_OPEN_ON
+XCONSOLE_SHELL_PWM_CLOSE_ON
+XCONSOLE_SHELL_PWM_INFO_ON
+XCONSOLE_SHELL_PWM_CONFIGURE_ON
+XCONSOLE_SHELL_PWM_START_ON
+XCONSOLE_SHELL_PWM_STOP_ON
+XCONSOLE_SHELL_PWM_SET_FREQUENCY_ON
+XCONSOLE_SHELL_PWM_SET_DUTY_ON
+XCONSOLE_SHELL_I2C_ON
+XCONSOLE_SHELL_I2C_LIST_ON
+XCONSOLE_SHELL_I2C_OPEN_ON
+XCONSOLE_SHELL_I2C_CLOSE_ON
+XCONSOLE_SHELL_I2C_INFO_ON
+XCONSOLE_SHELL_I2C_READ_ON
+XCONSOLE_SHELL_I2C_WRITE_ON
+XCONSOLE_SHELL_I2C_WRITEREAD_ON
+XCONSOLE_SHELL_SPI_ON
+XCONSOLE_SHELL_SPI_LIST_ON
+XCONSOLE_SHELL_SPI_OPEN_ON
+XCONSOLE_SHELL_SPI_CLOSE_ON
+XCONSOLE_SHELL_SPI_INFO_ON
+XCONSOLE_SHELL_SPI_TRANSFER_ON
+XCONSOLE_SHELL_CAN_ON
+XCONSOLE_SHELL_CAN_LIST_ON
+XCONSOLE_SHELL_CAN_OPEN_ON
+XCONSOLE_SHELL_CAN_CLOSE_ON
+XCONSOLE_SHELL_CAN_INFO_ON
+XCONSOLE_SHELL_CAN_STATUS_ON
+XCONSOLE_SHELL_CAN_START_ON
+XCONSOLE_SHELL_CAN_STOP_ON
+XCONSOLE_SHELL_CAN_SEND_ON
+XCONSOLE_SHELL_CAN_RECEIVE_ON
+XCONSOLE_SHELL_CAN_RECOVER_ON
+XCONSOLE_SHELL_CAN_FILTER_ON
+
+/* 网络命令 */
+XCONSOLE_SHELL_NETWORK_ON
+XCONSOLE_SHELL_NET_IFCONFIG_ON
+XCONSOLE_SHELL_NET_HOSTNAME_ON
+XCONSOLE_SHELL_NET_RESOLVE_ON
+XCONSOLE_SHELL_NET_PING_ON
+
 /* 文件系统 */
 XCONSOLE_SHELL_FILESYSTEM_ON
 XCONSOLE_SHELL_FS_PWD_ON
 XCONSOLE_SHELL_FS_CD_ON
 XCONSOLE_SHELL_FS_LS_ON
 XCONSOLE_SHELL_FS_CAT_ON
+XCONSOLE_SHELL_FS_HEXDUMP_ON
 XCONSOLE_SHELL_FS_STAT_ON
 XCONSOLE_SHELL_FS_RM_ON
 XCONSOLE_SHELL_FS_MKDIR_ON
@@ -216,6 +298,12 @@ XCONSOLE_SHELL_STATS_ON
 | COMMAND/PARSER/IO | 1 | 最小可运行核心 |
 | HELP/SUBCOMMAND/CALLBACK_COMMAND | 1 | 控制台基本能力 |
 | FILESYSTEM 和只读命令 | 1 | 当前需求；最终受总开关控制 |
+| NETWORK 和网络查询命令 | 1 | 通过 XNetwork 公共抽象；最终受总开关控制 |
+| CLEAR | 1 | 只输出 ANSI 清屏序列，不改变设备状态 |
+| RESET/REBOOT | 0 | 系统控制命令，必须由产品显式开启并注册 XSystem 后端 |
+| GPIO | 0 | XGpio 平台抽象默认关闭；写入、配置和中断还要分别显式打开 |
+| ADC/PWM/I2C/SPI | 0 | 平台契约和 Shell 命令默认关闭；危险事务还要由子开关和授权回调控制 |
+| CAN | 0 | XCan 平台抽象默认关闭；发送、恢复和过滤器还要分别显式打开 |
 | 文件写入、删除、格式化 | 0 | 危险操作必须由产品显式开启 |
 | LINE_EDITOR/HISTORY/COMPLETION | 0 | 默认节省 RAM/Flash |
 | EXTERNAL_PROCESS/PIPE/REDIRECT/PROCESS_ASYNC | 0 | 依赖 XProcess 公共 API，默认关闭并需要产品白名单 |
@@ -251,6 +339,85 @@ XCONSOLE_SHELL_ASYNC_PROCESS_CAPACITY 4
 已有数据再继续入队；因此大段 `ls`、`help` 或文件输出不会因为单次输出超过队列容量而被
 截断。刷新失败仍返回 I/O 错误，调用方必须在下一轮重试或停止会话。该模式仍要求所有
 调用在同一执行上下文串行进行，不创建后台线程。
+
+### 5.3 Shell 输入异步调度
+
+Shell 输入异步化必须建立在 XinYueC 的事件调度器之上，不能在 Shell 内部直接创建
+`select`、`poll`、`epoll`、Win32 等平台等待。同步 `XConsoleShell_pump()` 保留为底层
+处理函数，但异步模式只在“输入就绪事件”到达后调用它，并要求 `XConsoleReadFn` 在
+该模式下为非阻塞读：没有数据时必须立即返回 0，不能等待下一字节。
+
+配置宏如下，所有宏均在 `XConsoleShellConfig.h` 中定义并允许产品覆盖：
+
+```c
+#define XCONSOLE_SHELL_ASYNC_MODE_EVENT_DISPATCHER 0
+#define XCONSOLE_SHELL_ASYNC_MODE_THREAD           1
+
+#ifndef XCONSOLE_SHELL_ASYNC_ON
+#define XCONSOLE_SHELL_ASYNC_ON 1
+#endif
+#ifndef XCONSOLE_SHELL_ASYNC_AUTO_START_ON
+#define XCONSOLE_SHELL_ASYNC_AUTO_START_ON 1
+#endif
+#ifndef XCONSOLE_SHELL_ASYNC_RUN_MODE
+#define XCONSOLE_SHELL_ASYNC_RUN_MODE XCONSOLE_SHELL_ASYNC_MODE_EVENT_DISPATCHER
+#endif
+#ifndef XCONSOLE_SHELL_ASYNC_READ_BUDGET
+#define XCONSOLE_SHELL_ASYNC_READ_BUDGET 32
+#endif
+#ifndef XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS
+#define XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS 10
+#endif
+```
+
+`XCONSOLE_SHELL_ASYNC_ON` 为总开关，默认开启；开启后只能选择一个运行模式。
+`XCONSOLE_SHELL_ASYNC_AUTO_START_ON` 默认开启，且只有 IO 提供 `inputAttach` 时才会在
+Shell 创建完成后自动启动；没有输入源附加回调的测试或嵌入式代码仍可显式调用
+`startAsync()`。默认事件模式会通过 `XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS` 定时调用
+非阻塞 `read`，因此主函数只需要进入 `XCoreApplication_exec()`。
+
+| `XCONSOLE_SHELL_ASYNC_RUN_MODE` | 执行上下文 | 事件归属 | 适用场景 |
+|---|---|---|---|
+| `EVENT_DISPATCHER` | 当前 Shell 所属线程 | 当前线程的 `XAbstractEventDispatcher` | 已有主循环、GUI、网络服务或串口事件循环 |
+| `THREAD` | Shell 独占的 `XThread` | 专用线程自己的 `XEventLoop` 和事件调度器 | 没有可复用主循环、需要隔离传输阻塞的产品 |
+
+配置头必须拒绝未知模式；`ASYNC_ON` 关闭时裁剪异步字段、线程和事件相关符号。
+两种模式都使用同一组公共 API：
+
+```c
+bool XConsoleShell_startAsync(XConsoleShell* self);
+bool XConsoleShell_stopAsync(XConsoleShell* self, uint32_t timeoutMs);
+bool XConsoleShell_isAsyncRunning(const XConsoleShell* self);
+bool XConsoleShell_notifyInput(XConsoleShell* self);
+```
+
+`startAsync()` 建立调度关系并调用可选的 `inputAttach`；`notifyInput()` 是传输层在确认
+输入就绪后调用的入口。Shell 将通知合并为一个用户事件并投递到自己的事件队列，事件
+到达后在所属线程内清除合并标志。事件模式的轮询和传输通知都只读取当前已经可读的
+字节，绝不会等待输入。`feedByte()` 收到 `\n`（同时忽略 `\r`）时立即提交当前完整行，
+不会等待下一次事件。重复通知不会为每个字节分配事件，从而避免高频串口中断造成堆
+分配和事件风暴。
+
+事件调度器模式要求 Shell 已经属于当前线程，并且产品主循环最终进入
+`XCoreApplication_exec()` 或等价的 `XEventLoop_exec()`。POSIX/Windows 标准输入可使用
+`XFileSystem_openStandardInput()` 和 `XFileSystem_readStandardInput()`，默认入口已经
+采用该非阻塞适配；普通文件描述符传输可以由产品用 `XSocketNotifier` 监听可读事件，
+再调用 `notifyInput()`。UART、RTT 和无文件描述符设备由驱动任务在可安全调用库 API 的
+上下文中调用同一函数。中断服务程序不得直接执行 `notifyInput()`，应先投递到驱动任务
+或平台事件队列。`inputDetach` 在停止和析构时调用，负责关闭或解除底层输入源；`prompt`
+可用于完整命令后的提示符输出。
+
+线程模式在 `startAsync()` 中创建 `XThread`，把 Shell 迁移到该线程；线程入口创建并
+运行自己的 `XEventLoop`，随后 `notifyInput()` 自动把事件投递到该线程的调度器。
+`stopAsync()` 先请求事件循环退出，再等待线程结束并把 Shell 迁回创建线程。停止和
+析构必须幂等；析构前若异步仍运行，必须先停止并等待，不能释放仍可能收到事件的
+Shell。异步运行期间禁止从其他线程直接调用 `processLine()`、`feedData()`、注册或
+注销命令；跨线程输入只能使用 `notifyInput()`，跨线程停止只能使用 `stopAsync()`。
+
+两种模式都不改变命令回调签名，不把 `argv`、会话指针或 `userData` 转移到后台线程。
+传输 `read/write/flush/cancelled` 回调及其 `userData` 必须在所选执行线程有效；线程模式
+下输出回调也必须是线程安全的，或由产品在回调内部转发到设备任务。异步 Shell 仍然
+是单执行者模型，同一时刻只有一个线程进入解析器和命令回调。
 
 ### 5.5 依赖裁剪
 
@@ -442,6 +609,9 @@ typedef int64_t (*XConsoleReadFn)(void* userData, void* data, size_t size);
 typedef int64_t (*XConsoleWriteFn)(void* userData, const void* data, size_t size);
 typedef bool (*XConsoleFlushFn)(void* userData);
 typedef bool (*XConsoleCancelFn)(void* userData);
+typedef bool (*XConsoleInputAttachFn)(void* userData, XConsoleShell* shell);
+typedef void (*XConsoleInputDetachFn)(void* userData, XConsoleShell* shell);
+typedef void (*XConsolePromptFn)(void* userData, XConsoleShell* shell);
 #if XCONSOLE_SHELL_LOG_ON
 typedef void (*XConsoleLogFn)(void* userData,
                               const XConsoleShellSession* session,
@@ -458,6 +628,9 @@ typedef struct XConsoleShellIo {
     XConsoleWriteFn write;
     XConsoleFlushFn flush;
     XConsoleCancelFn cancelled;
+    XConsoleInputAttachFn inputAttach;
+    XConsoleInputDetachFn inputDetach;
+    XConsolePromptFn prompt;
 #if XCONSOLE_SHELL_LOG_ON
     XConsoleLogFn log;
 #endif
@@ -605,7 +778,82 @@ cd 仅修改会话 currentPath。文件命令把逻辑路径解析为 XString �
 | echo <text...> | COMMAND | 原样输出参数 |
 | history | HISTORY | 固定环形缓冲、历史查询和输出历史命令 |
 | stats | STATS | 输出 Shell 输入、输出、成功和失败统计 |
-| clear | LINE_EDITOR | 输出 ANSI 终端清屏序列 |
+| clear | CLEAR | 输出 ANSI 终端清屏序列，不依赖行编辑器 |
+| reset | RESET | 调用 XSystem_reset 请求立即系统复位；危险、管理员命令 |
+| reboot | REBOOT | 调用 XSystem_reboot 请求有序系统重启；危险、管理员命令 |
+| shutdown | SHUTDOWN | 调用 XSystem_shutdown 请求关机；无操作系统或无后端时结束当前 Shell；危险、管理员命令 |
+| exit | EXIT | 退出当前 Shell 和应用程序事件循环 |
+| gpio | GPIO | 通过 XGpio 公共 API 管理固定槽位、读写和中断；默认开启 |
+| adc | ADC | 通过 XAdc 公共 API 读取原始值或毫伏值；默认开启 |
+| pwm | PWM | 通过 XPwm 公共 API 管理频率、占空比和启停；默认开启 |
+| i2c | I2C | 通过 XI2c 公共 API 执行固定缓冲读写事务；默认开启 |
+| spi | SPI | 通过 XSpi 公共 API 执行固定缓冲全双工事务；默认开启 |
+| can | CAN | 通过 XCan 公共 API 管理控制器、位时序、状态和帧收发；默认开启 |
+| info | INFO | 输出框架、Shell、平台和核心功能编译信息；只读 |
+| uptime | UPTIME | 输出 Shell 初始化后的运行时间；只读 |
+| tasks | TASKS | 输出 XThread 注册表和产品任务快照；无可用数据时返回不支持 |
+| date [-u] [-I] [+FORMAT] | DATETIME、DATE | 查看本地或 UTC 日期时间；只读 |
+| mem [-v] | MEMORY、MEMORY_POOL | 查看全局 XMultiPool 容量和使用率；`-v` 显示各子池；只读 |
+| vi/vim <path> | EDITOR | 行编辑命令；命令模式支持 `:w`/`:q`/`:wq`/`:x`/`:q!`、`i`/`a` 插入、`d` 删除、`r` 替换；默认开启 |
+
+`date` 默认输出 `yyyy-MM-dd HH:mm:ss`；`-u/--utc` 使用 UTC；`-I/--iso-8601`
+只输出 ISO 日期。自定义格式支持 `%Y`、`%y`、`%m`、`%d`、`%e`、`%H`、`%M`、
+`%S`、`%f`（毫秒）、`%F`、`%T`、`%s`（Unix 秒）和 `%%`。格式化使用固定栈
+缓冲，超出容量或使用未实现的控制符时返回失败；不注册 `date -s` 等修改系统时间
+的写操作。
+
+`mem` 只报告全局 `XMultiPool`；`mem -v/--verbose` 追加每个 `XFixedPool` 子池的
+总容量、已用容量、空闲容量和使用率。`XMemory` 的系统堆、混合分配器以及产品
+自行创建但未注册的 `XVariablePool` 不会被命令伪造为可查询池。命令不会触发分配、
+释放或整理，只读取当前统计快照。
+
+`uptime` 在 Shell 初始化时记录 `XDateTime_currentMSecsSinceEpoch()`，执行时计算
+当前时间与该值的差，并输出 `天 HH:MM:SS`。它表示 Shell 初始化后的运行时间，
+不是系统启动时间；底层使用日历时钟，因此 RTC/NTP 校时可能造成偏差，时间 API
+不可用或检测到时钟回拨时返回 `NotSupported`。
+
+`tasks` 不直接枚举操作系统任务。`Src/XPlatform/XTask.h` 定义统一的任务状态和
+快照字段，并维护由 `XThread` 生命周期注册的固定容量注册表；Linux 和 Windows
+复用各自已有的 XThread 平台后端，不需要额外的原生任务枚举驱动。产品可以通过
+`XConsoleShell_setTaskProvider()` 同步逐条补充 FreeRTOS、Zephyr 或其他任务，
+不能把平台头文件带入 Shell。注册表为空且没有产品提供者时命令返回 `NotSupported`。
+
+clear、reset、reboot 和 shutdown 的职责严格分离：clear 只发送固定 ANSI 清屏序列；
+reset 通过 XSystem_reset 请求立即复位；reboot 通过 XSystem_reboot 请求产品
+完成必要清理后有序重启。Linux 后端的 reset 直接请求内核重新启动，reboot
+先执行 sync 再正常重启；Windows 后端分别使用强制重启和正常重启标志，并申请
+系统关机权限。shutdown 在 Linux 上请求 `RB_POWER_OFF`，Windows 上请求
+`EWX_POWEROFF`；当 `XPLATFORM_HAS_OS` 为 0 时，XSystem 不调用任何平台默认
+后端，Shell 将 shutdown 视为退出当前程序。其他平台没有回调时返回
+NotSupported；产品注册的 XSystem 回调优先于平台默认实现。reset、reboot 和
+shutdown 默认关闭；exit 默认开启但可单独关闭。reset、reboot 和 shutdown 带有
+Dangerous 和 Administrator 标志，三个系统命令都
+不注册别名。
+
+GPIO 命令使用 Shell 内嵌的固定槽位表，controller 和 line 作为逻辑引脚键。
+open 创建并打开 XGpio，close 关闭并释放句柄；Shell 析构时会先禁用中断、清除
+回调，再删除全部槽位。read、info、list 是只读操作；write、toggle、configure、
+open、close 和 irq 配置属于危险管理员操作。XCONSOLE_SHELL_GPIO_REQUIRE_POLICY_ON
+默认开启时，产品还必须通过 XConsoleShell_setGpioAuthorizeCallback() 授权具体
+引脚，避免误操作 Flash、JTAG 或电源控制线。中断回调只原子增加事件计数，irq wait
+在普通任务上下文调用 XGpio_processEvents()，不在中断上下文输出文本。
+
+Linux 后端位于 Drive/Posix/XGpio_posix.c，优先使用 GPIO character device ABI v2，
+不支持 v2 的内核退回 ABI v1 基本输入输出；非 Linux 平台由安全存根返回
+XGpioError_Unsupported，产品可在对应 Drive 目录提供完整后端。GPIO Shell 默认
+不启用，启用后仍可单独裁剪每个子命令；XGPIO_TEST_BACKEND 只用于测试目标，
+不会链接到产品后端。
+
+CAN 命令使用 Shell 固定槽位持有 XCan 句柄，逻辑 `controller channel` 作为槽位键，
+可选 `--name` 保存 SocketCAN 或供应商适配器名称。`can open` 只完成资源打开，
+必须再执行 `can start` 才能收发；`can stop` 保留句柄，`can close` 释放句柄。
+`can info` 输出 Classical/CAN FD 配置、位速率、模式、能力和最近错误，`can status`
+输出总线状态、错误计数和待处理队列；`can send` 支持标准/扩展帧、Remote 帧、
+CAN FD 和十六进制负载，`can receive` 支持固定数量和超时。发送、启动、停止、
+打开、关闭和恢复均可通过 XConsoleShell_setCanAuthorizeCallback() 执行产品策略。
+Shell 不直接调用 SocketCAN、Win32 或 MCU 驱动；XCan 后端必须在 Drive 中实现，
+没有后端时应返回 XCanError_Unsupported。XCONSOLE_SHELL_CAN_TEST_BACKEND 仅用于
+Shell 自动化测试，提供固定内存队列，不表示真实硬件能力。
 
 根级 `ls [path]` 也可直接列出当前目录或指定目录；它与 `fs ls [path]` 共用
 同一文件系统实现，关闭 `XCONSOLE_SHELL_FS_LS_ON` 时两者同时裁剪。
@@ -620,6 +868,7 @@ fs pwd
 fs cd <path>
 fs ls [-alRFdh] [path...]
 fs cat <path> [--offset N] [--length N]
+fs hexdump [-C] [-s offset] [-n length] <path>
 fs stat <path>
 fs rm [-fr] <path...>
 fs mkdir [-p] <path...>
@@ -649,7 +898,7 @@ fs dirname <path>
 fs format <volume>
 ~~~
 
-Linux POSIX 后端已实现上述全部命令及列出的常用参数。每个命令受独立开关控制；写入、删除、权限和截断命令还需要产品权限策略。默认配置只打开只读命令，产品可通过配置宏启用危险命令。根级入口同步注册 `pwd/cd/cat/stat/rm/mkdir/rmdir/cp/mv/link/ln/unlink/touch/chmod/readlink/realpath/df/du/wc/head/tail/find/tree/cmp/file/basename/dirname`，`fs` 子树保留为显式命名空间。
+Linux POSIX 后端已实现上述全部命令及列出的常用参数。每个命令受独立开关控制；写入、删除、权限和截断命令还需要产品权限策略。默认配置只打开只读命令，产品可通过配置宏启用危险命令。根级入口同步注册 `pwd/cd/cat/hexdump/stat/rm/mkdir/rmdir/cp/mv/link/ln/unlink/touch/chmod/readlink/realpath/df/du/wc/head/tail/find/tree/cmp/file/basename/dirname`，`fs` 子树保留为显式命名空间。
 
 当前抽象没有硬链接、用户/组所有者、FIFO/设备节点、挂载点和 umask 的公共 API，
 因此 `ln` 只接受显式的 `-s/--symbolic` 符号链接形式；`chown/chgrp`、`mkfifo/mknod`、`mount/umount`
@@ -657,10 +906,20 @@ Linux POSIX 后端已实现上述全部命令及列出的常用参数。每个�
 
 - ls 使用 XFileSystem_opendir/readdir/closedir。
 - cat 固定块读取，持续检查取消，绝不把完整文件读入内存。
+- hexdump 每次读取 16 字节，支持 `-s/--skip/--offset` 和 `-n/--length`，输出偏移、十六进制字节和 ASCII 侧栏。
 - stat 使用 XFileSystem_stat。
 - 文件和目录句柄无论成功、失败、取消或短写都必须关闭。
 - format 默认关闭，并要求危险命令确认。
 - POSIX format 只接受块设备路径；目录和普通文件直接失败，不会调用格式化工具。
+
+`vi`/`vim` 是独立的行编辑命令，默认开启（`XCONSOLE_SHELL_EDITOR_ON`）。打开
+文件后进入编辑状态，后续输入行由 Shell 直接分流到编辑器状态机，不进入历史、
+tokenizer 和普通权限判断；编辑器只通过 `XFileSystem` 公共 API 读取和写回文件。
+命令模式支持 `:w` 保存、`:q` 未修改退出、`:wq`/`:x` 保存退出、`:q!` 放弃，
+以及 `p` 重新显示、`i [N]`/`a [N]` 插入、`d [N]` 删除、`r <行号> <文本>`
+替换。插入模式从 `i`/`a` 进入，输入 `.` 或空行结束，连续输入的行追加到当前
+行之后。`Ctrl-C` 会取消编辑状态并恢复普通提示符。编辑缓冲固定为
+`XCONSOLE_SHELL_EDITOR_MAX_LINES` 行，超过上限或保存失败时返回失败。
 
 ### 10.3 产品回调
 
@@ -1041,3 +1300,83 @@ source 脚本和 PROCESS_ASYNC 适配；异步 exec 不组合管道、重定向�
 - 当前目录是会话状态，不改变进程全局目录。
 - 核心不强制外部行编辑库；外部库只能经适配层接入。
 - 所有实现和测试提交前必须同时对照本文档与仓库代码风格清单。
+
+## 19. ADC 与 PWM 命令
+
+`adc` 和 `pwm` 通过 `XAdc`、`XPwm` 纯平台契约访问硬件，不在 Shell 中包含
+Linux、Windows、MCU HAL 或 sysfs 头文件。两棵命令树都有独立总开关和子命令
+开关，句柄保存在固定槽位，Shell 析构时自动释放；打开、配置、启停和动态修改
+等危险操作可由产品授权回调限制。
+
+ADC 支持 `list`、`open`、`info`、`read` 和可选 `configure`，读取可选择原始值
+或毫伏值；PWM 支持 `list`、`open`、`info`、`configure`、`start`、`stop`、
+`set-frequency` 和 `set-duty`。当前没有通用 Linux ADC/PWM 设备契约，因此
+Linux、Windows 等未接入产品驱动的平台使用 `Unsupported` 存根，不伪造硬件
+状态；`XADC_TEST_BACKEND` 与 `XPWM_TEST_BACKEND` 用于 Shell 回归和泄漏测试。
+
+## 20. I2C 与 SPI 命令
+
+`i2c` 和 `spi` 使用独立的 `XI2c`、`XSpi` 不透明句柄契约。命令层只保存固定
+槽位，不保存平台文件描述符或寄存器地址；Shell 通过产品授权回调保护写事务。
+I2C 支持 `list`、`open`、`info`、`read`、可选 `write` 和 `writeread`，事务数据
+使用固定十六进制缓冲并受 `XCONSOLE_SHELL_I2C_MAX_TRANSFER` 限制。七位地址
+为默认模式；十位地址必须在 `open`、`info`、`read`、`write`、`writeread`和
+`close` 中显式传入 `--ten-bit`，避免两种地址模式访问到错误槽位。SPI 支持
+`list`、`open`、`info`、`close`，可选 `transfer`，打开时可配置频率、模式、字长
+和位序，交换数据受 `XCONSOLE_SHELL_SPI_MAX_TRANSFER` 限制。
+
+当前仓库没有通用 Linux、Windows 或 MCU 的 I2C/SPI 产品驱动，unsupported 后端
+会返回 `XI2cError_Unsupported` 或 `XSpiError_Unsupported`，不会伪造总线状态。
+`XI2C_TEST_BACKEND`、`XSPI_TEST_BACKEND` 只用于 Shell 回归测试；产品接入真实
+控制器时，应在 `Drive` 下实现同名公共 API，并准确报告能力和错误。
+
+## 21. 登录与 Linux 风格用户管理
+
+`XCONSOLE_SHELL_LOGIN_ON` 是登录与账户库总开关，默认开启；
+`XCONSOLE_SHELL_LOGIN_REQUIRED_ON` 是强制认证开关，默认跟随登录总开关开启。
+强制认证开启后，普通命令在登录前返回权限错误，仅 `login`、首次账户初始化所需的
+`useradd`/`passwd`、`logout`、`help`、`version` 和 `exit` 等显式允许的命令可执行。
+登录总开关会同步开启 `XCONSOLE_SHELL_AUTH_ON` 和 `XCONSOLE_SHELL_PERMISSION_ON`，产品可以在配置头文件中
+显式关闭整个登录模块。账户文件默认是当前会话目录下的 `xconsole_users.json`，也可
+通过 `XConsoleShellLogin_setDatabasePath()` 为每个 Shell 设置路径。文件读写只经过
+`XFileSystem`，解析和生成只经过 `XJsonDocument`，不读取宿主机 `/etc/passwd`、
+`/etc/shadow`、Windows 注册表或任何平台账户数据库。
+
+JSON 根对象包含 `version` 和 `users` 数组；每个用户记录包含 `name`、`uid`、`gid`、
+`groups`、`permissions`、`locked`、`passwordSet`、`iterations`、`salt` 和 `hash`。
+`passwordSet` 为 false 时表示账户尚未设置密码，账户保持锁定且不能登录。密码保存为随机盐
+的迭代 HMAC-SHA256 摘要，不保存明文；账户文件成功写入后，POSIX 后端请求 `0600`
+权限，FatFs 等不支持权限位的后端忽略该设置失败。用户名遵循 Linux 账户名的 ASCII
+子集，UID/GID 和附加组使用无符号 32 位值，当前会话固定保存一个主 GID 和有限数量
+附加组，容量由 `XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY` 控制。
+
+首次没有账户文件时，`useradd <name>` 允许创建一个 UID/GID 为 0、同时拥有 `Dangerous`
+和 `Administrator` 权限的无密码 bootstrap 管理员；该账户在设置密码前不能登录，但可
+使用 `passwd <name>` 后按两次密码提示完成首次初始化。账户文件存在后，添加、删除、修改用户
+必须由已登录管理员执行。后续用户默认从 UID/GID 1000 开始，可通过
+`-u/--uid`、`-g/--gid`、`-G/--groups GID,...`、`-a/--append`、`-L/--lock`、
+`-U/--unlock` 和 `-l/--login` 调整账户；`--permissions` 与 `--admin` 是 XinYueC
+扩展选项。删除最后一个管理员、删除当前登录账户均被拒绝；`userdel -r` 因当前账户模型
+没有主目录字段而明确返回不支持，不会伪造删除行为。
+
+命令包括 `login`、`logout`、`whoami`、`id [user]`、`groups [user]`、`users`、
+`userlist`、`useradd [options] LOGIN`、`userdel [-r] LOGIN`、`usermod [options] LOGIN`
+和 `passwd [user]`（兼容别名 `password`）。`login <user>` 后由 Shell 提示
+`Password:` 并读取下一行；`passwd [user]` 依次提示 `Current password:`（非管理员
+修改自己的密码时）、`New password:` 和 `Retype new password:`。管理员可以指定其他
+用户，改其他用户密码不要求旧密码；首次无密码 bootstrap 管理员允许在未登录状态
+使用 `passwd <user>` 完成初始化。`id [user]`/`groups [user]` 输出 Linux 风格
+`uid=1001(name)` 形式，UID/GID 与账户名匹配时同时显示组名，任意已认证用户可以
+查询本地 JSON 账户库中的其他用户。密码命令标记为敏感命令，Shell 历史不保存
+其输入行；传输层仍应使用受控串口、USB CDC、RTT 或加密网络，不应把密码作为明文传输
+到不可信链路。若 `XConsoleShellIo.inputEcho` 已接入，Shell 会通过库级输入抽象关闭并
+恢复终端回显；不支持回显控制的管道、重定向和 FatFs 后端仍保证 Shell 不主动输出密码。
+`users` 显示已认证会话用户名；`userlist` 才显示本地 JSON 账户的用户名、
+UID、GID、权限掩码和锁定状态，二者都不显示盐或摘要。
+
+登录成功后，当前会话填充用户名、UID、GID、附加组和权限掩码；默认入口的提示符由
+`XinYueC> ` 变为 `<username>> `，注销后恢复。`uid=0` 自动补齐危险和管理员位；其他
+用户的危险命令需要 `XConsoleShellPermission_Dangerous`，管理员命令还需要
+`XConsoleShellPermission_Administrator`。这些是 Shell 应用层权限，不会伪装或切换
+宿主机进程的真实 Linux UID/GID，文件系统实际访问仍由 `XFileSystem` 后端和宿主系统
+权限共同决定。

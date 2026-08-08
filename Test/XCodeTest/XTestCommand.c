@@ -80,7 +80,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
 
 const XConsoleCommand XTestCommand = {
     "Test", "test", "运行测试命令", "Test [list|all|name]", 0, 1,
-    XConsoleCommandFlag_None, xtest_execute, NULL, 0, NULL
+    XConsoleCommandFlag_AllowUnauthenticated, xtest_execute, NULL, 0, NULL
 };
 
 #endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON */

@@ -256,6 +256,32 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     return fd;
 }
 
+XFd XFileSystem_openStandardInput(int* error)
+{
+    HANDLE source;
+    HANDLE duplicate = INVALID_HANDLE_VALUE;
+    DWORD type;
+    if (!GetStdHandle(STD_INPUT_HANDLE) ||
+        GetStdHandle(STD_INPUT_HANDLE) == INVALID_HANDLE_VALUE) {
+        if (error) *error = XFileDevice_OpenError;
+        return XFD_INVALID;
+    }
+    source = GetStdHandle(STD_INPUT_HANDLE);
+    if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(),
+                         &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        if (error) *error = XFileDevice_OpenError;
+        return XFD_INVALID;
+    }
+    type = GetFileType(duplicate);
+    if (type == FILE_TYPE_UNKNOWN && GetLastError() != NO_ERROR) {
+        CloseHandle(duplicate);
+        if (error) *error = XFileDevice_OpenError;
+        return XFD_INVALID;
+    }
+    if (error) *error = XFileDevice_NoError;
+    return XFd_alloc(XFD_TYPE_FILE, duplicate, NULL);
+}
+
 void XFileSystem_close(XFd fd)
 {
     HANDLE h = XW32_getFile(fd);
@@ -290,6 +316,17 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -1;
+
+    /* 管道和重定向输入先探测可读量，避免事件线程等待数据。 */
+    if (GetFileType(h) == FILE_TYPE_PIPE) {
+        DWORD available = 0;
+        if (!PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
+            if (GetLastError() == ERROR_BROKEN_PIPE) return 0;
+            return -1;
+        }
+        if (available == 0) return 0;
+        if ((uint64_t)len > available) len = available;
+    }
     
     int64_t totalRead = 0;
     while (totalRead < len) {
@@ -304,6 +341,49 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
         totalRead += bytesRead;
     }
     return totalRead;
+}
+
+int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
+{
+    HANDLE h = XW32_getFile(fd);
+    DWORD available = 0;
+    DWORD bytesRead = 0;
+    DWORD request;
+    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -2;
+    if (GetFileType(h) == FILE_TYPE_PIPE) {
+        if (!PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
+            return GetLastError() == ERROR_BROKEN_PIPE ? -1 : -2;
+        }
+        if (available == 0) return 0;
+        request = (DWORD)((uint64_t)len < available ? (uint64_t)len : available);
+    } else if (GetFileType(h) == FILE_TYPE_CHAR) {
+        DWORD events = 0;
+        if (!GetNumberOfConsoleInputEvents(h, &events)) return -2;
+        if (events == 0) return 0;
+        request = (DWORD)((uint64_t)len > UINT32_MAX ? UINT32_MAX : (uint64_t)len);
+        if (!ReadConsoleA(h, buf, request, &bytesRead, NULL)) return -2;
+        return bytesRead ? (int64_t)bytesRead : 0;
+    } else {
+        request = (DWORD)((uint64_t)len > UINT32_MAX ? UINT32_MAX : (uint64_t)len);
+    }
+    if (!ReadFile(h, buf, request, &bytesRead, NULL)) return -2;
+    return bytesRead ? (int64_t)bytesRead : -1;
+}
+
+bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
+{
+    HANDLE h = XW32_getFile(fd);
+    DWORD mode;
+
+    /* 管道和重定向句柄没有控制台回显位，不能伪造成功状态。 */
+    if (h == INVALID_HANDLE_VALUE || GetFileType(h) != FILE_TYPE_CHAR) return false;
+    if (!GetConsoleMode(h, &mode)) return false;
+    if (enabled) {
+        mode |= ENABLE_ECHO_INPUT;
+    } else {
+        mode &= (DWORD)~ENABLE_ECHO_INPUT;
+    }
+    return SetConsoleMode(h, mode) != 0;
 }
 
 int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
@@ -754,6 +834,25 @@ bool XFileSystem_link(const XString* targetPath, const XString* linkPath)
     XFree_System(wtarget);
     XFree_System(wlink);
     
+    return result != 0;
+}
+
+bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath)
+{
+    if (!targetPath || !hardLinkPath) return false;
+
+    wchar_t* wtarget = XStringToWidePath(targetPath);
+    wchar_t* wlink = XStringToWidePath(hardLinkPath);
+
+    if (!wtarget || !wlink) {
+        if (wtarget) XFree_System(wtarget);
+        if (wlink) XFree_System(wlink);
+        return false;
+    }
+
+    BOOL result = CreateHardLinkW(wlink, wtarget, NULL);
+    XFree_System(wtarget);
+    XFree_System(wlink);
     return result != 0;
 }
 

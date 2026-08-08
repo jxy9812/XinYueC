@@ -4,6 +4,14 @@ XPlatform 用于存放 XinYueC 跨平台公共代码依赖的抽象契约。这�
 
 当前 XPlatform 的重点是数据库抽象层。公共 SQL 类保持数据库无关，具体数据库通过抽象驱动和结果集接口接入。SQLite 已经以源码组件接入 XinYueC，其他后端仍按同一契约逐个实现。这样同一套公共 API 可以在桌面系统、服务器系统和嵌入式系统中复用，后端可以按构建目标静态选择。
 
+GPIO、ADC 和 PWM 也使用同样的纯函数式平台契约。`XGpio` 已提供 GPIO
+控制器、输入输出和中断接口；`XAdc` 提供逻辑 ADC 通道、原始值/毫伏值读取
+和采样配置；`XPwm` 提供逻辑 PWM 通道、频率、千分比占空比和启停控制。
+三者的公共头文件不包含平台 API，未接入具体硬件时由 Drive 下的 unsupported
+存根返回 `Unsupported`，测试构建可用固定行为的 mock 后端验证 Shell 和资源
+生命周期。仓库中旧的 `XPWMDeviceBase` 仍用于 XIODevice/虚表兼容类；面向
+Shell 和新平台驱动的独立通道资源应优先使用 `XPwm`。
+
 ## 设计目标
 
 - 公共数据库类只依赖 XinYueC 自身类型，不依赖操作系统 API。

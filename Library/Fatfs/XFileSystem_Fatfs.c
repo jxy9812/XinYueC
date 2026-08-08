@@ -11,8 +11,11 @@
 #include "XDateTime.h"        /* XDateTime_currentDateTime 等 */
 #include "XTypes.h"           /* XFd, XFD_INVALID */
 #include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle */
+#include "XAtomic.h"           /* 卷状态一次性初始化同步 */
+#include "XMutex.h"            /* 保护卷表、挂载位图和默认卷 */
 #include "ff.h"               /* FatFs API */
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -63,9 +66,115 @@ typedef struct XFATFS_DirHandle {
 static FATFS* g_volumes[XFATFS_MAX_VOLUMES];   /* NULL = 未分配 */
 static uint32_t g_mountedMask = 0;              /* bit[i] = 已挂载 */
 static int g_defaultIndex = -1;                 /* 默认驱动器索引 */
+static XMutex* g_volumeStateMutex = NULL;       /* 卷状态互斥锁 */
+static XAtomic_int32_t g_volumeStateInit = {0}; /* 0=未初始化，1=初始化中，2=已就绪，-1=失败 */
 
-/** 获取或分配指定索引的 FATFS* */
-static FATFS* XFATFS_getFs(int idx)
+/**
+ * @brief 构造 FatFs 的十进制卷字符串。
+ * @param index 卷索引。
+ * @param buffer 输出缓冲区。
+ * @param size 输出缓冲区大小。
+ * @return 成功返回true，索引越界或缓冲区不足返回false。
+ */
+static bool XFATFS_makeMountString(int index, char* buffer, size_t size)
+{
+    int length;
+    if (!buffer || size == 0 || index < 0 || index >= XFATFS_MAX_VOLUMES) return false;
+    length = snprintf(buffer, size, "%d:", index);
+    return length >= 0 && (size_t)length < size;
+}
+
+/**
+ * @brief 获取卷状态互斥锁。
+ * @return 初始化成功返回锁指针，内存不足时返回NULL。
+ * @note 采用原子状态完成一次性初始化，避免多个线程同时创建锁。
+ */
+static XMutex* XFATFS_stateMutex(void)
+{
+    int32_t expected = 0;
+    if (XAtomic_compare_exchange_strong_int32(&g_volumeStateInit, &expected, 1,
+            XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
+        XMutex* mutex = XMutex_create(XLock_NonRecursive);
+        g_volumeStateMutex = mutex;
+        XAtomic_store_int32(&g_volumeStateInit, mutex ? 2 : -1,
+                            XAtomic_MemoryOrder_Release);
+    } else {
+        while (XAtomic_load_int32(&g_volumeStateInit, XAtomic_MemoryOrder_Acquire) == 1) {
+            /* 等待创建线程发布互斥锁指针。 */
+        }
+    }
+    return XAtomic_load_int32(&g_volumeStateInit, XAtomic_MemoryOrder_Acquire) == 2
+        ? g_volumeStateMutex : NULL;
+}
+
+/**
+ * @brief 锁定卷状态。
+ * @return 成功获得锁返回true，锁创建失败返回false。
+ */
+static bool XFATFS_lockState(void)
+{
+    XMutex* mutex = XFATFS_stateMutex();
+    if (!mutex) return false;
+    XMutex_lock(mutex);
+    return true;
+}
+
+/**
+ * @brief 解锁卷状态。
+ */
+static void XFATFS_unlockState(void)
+{
+    if (g_volumeStateMutex) XMutex_unlock(g_volumeStateMutex);
+}
+
+/**
+ * @brief 判断卷对象是否已经分配。
+ * @param idx FatFs卷索引。
+ * @return 已分配返回true，否则返回false。
+ */
+static bool XFATFS_isVolumeAllocated(int idx)
+{
+    bool allocated = false;
+    if (!XFATFS_lockState()) return false;
+    if (idx >= 0 && idx < XFATFS_MAX_VOLUMES) allocated = g_volumes[idx] != NULL;
+    XFATFS_unlockState();
+    return allocated;
+}
+
+/**
+ * @brief 在卷状态锁内读取FatFs当前目录。
+ * @param buffer 当前目录输出缓冲区。
+ * @param size 输出缓冲区大小。
+ * @return FatFs操作结果。
+ */
+static FRESULT XFATFS_getCurrentDirectory(char* buffer, size_t size)
+{
+    FRESULT result;
+    if (!XFATFS_lockState()) return FR_NOT_READY;
+    result = f_getcwd(buffer, size);
+    XFATFS_unlockState();
+    return result;
+}
+
+/**
+ * @brief 在卷状态锁内切换FatFs当前目录。
+ * @param path FatFs格式路径。
+ * @return FatFs操作结果。
+ */
+static FRESULT XFATFS_setCurrentDirectory(const char* path)
+{
+    FRESULT result;
+    if (!XFATFS_lockState()) return FR_NOT_READY;
+    result = f_chdir(path);
+    XFATFS_unlockState();
+    return result;
+}
+
+/**
+ * @brief 获取或分配指定索引的 FATFS*。
+ * @note 调用方必须已经持有 XFATFS_lockState() 返回的卷状态锁。
+ */
+static FATFS* XFATFS_getFsLocked(int idx)
 {
     if (idx < 0 || idx >= XFATFS_MAX_VOLUMES) return NULL;
     if (!g_volumes[idx]) {
@@ -76,14 +185,21 @@ static FATFS* XFATFS_getFs(int idx)
 }
 
 /**
- * @brief 从路径中提取卷标，返回Fatfs驱动器号（TCHAR格式的字符串编号）
- * @param utf8Path UTF-8路径（如 "C:/file.txt"）
- * @param outPath 输出去掉卷标前缀的路径
- * @return Fatfs驱动器字符串编号（"0:", "1:", "2:"），失败返回NULL
+ * @brief 在已持有卷状态锁时解析卷标并完成懒挂载。
+ * @param utf8Path UTF-8路径（如 "C:/file.txt"）。
+ * @param outPath 输出去掉卷标前缀的路径。
+ * @param driveBuffer 调用方提供的FatFs驱动器字符串缓冲区。
+ * @param driveBufferSize 驱动器字符串缓冲区大小。
+ * @return FatFs驱动器字符串（如 "0:/"），失败返回NULL。
+ * @note 本函数只能由 XFATFS_parseVolume() 在持锁状态下调用。
  */
-static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath)
+static const char* XFATFS_parseVolumeLocked(const char* utf8Path,
+                                            const char** outPath,
+                                            char* driveBuffer,
+                                            size_t driveBufferSize)
 {
-    if (!utf8Path || !outPath || XFatfsDrives_count() <= 0) return NULL;
+    if (!utf8Path || !outPath || !driveBuffer || driveBufferSize < 4 ||
+        XFatfsDrives_count() <= 0) return NULL;
     /* 通过平台函数在驱动器前缀列表中查找索引 */
     int bestIdx = XFatfsDrives_prefixToIndex(utf8Path);
     if (bestIdx >= 0) {
@@ -110,16 +226,14 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
         *outPath = utf8Path + bestLen;
         while (**outPath == '/' || **outPath == '\\') (*outPath)++;
 
-        FATFS* fs = XFATFS_getFs(bestIdx);
+        FATFS* fs = XFATFS_getFsLocked(bestIdx);
         if (!fs) return NULL;
 
         if (g_defaultIndex < 0) g_defaultIndex = bestIdx;
 
         if (!(g_mountedMask & (1u << bestIdx))) {
-            char mountStr[4];
-            mountStr[0] = '0' + bestIdx;
-            mountStr[1] = ':';
-            mountStr[2] = '\0';
+            char mountStr[8];
+            if (!XFATFS_makeMountString(bestIdx, mountStr, sizeof(mountStr))) return NULL;
 
             FRESULT fr = f_mount(fs, mountStr, 1);
 #if XFILE_FATFS_DISKIO_MODE == 0 && !FF_FS_READONLY && FF_USE_MKFS
@@ -139,16 +253,17 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
             }
         }
 
-        static char driveNum[8];
+        if (driveBufferSize < 4) return NULL;
         if (bestIdx <= 9) {
-            driveNum[0] = '0' + bestIdx;
-            driveNum[1] = ':';
-            driveNum[2] = '/';
-            driveNum[3] = '\0';
+            driveBuffer[0] = '0' + bestIdx;
+            driveBuffer[1] = ':';
+            driveBuffer[2] = '/';
+            driveBuffer[3] = '\0';
         } else {
-            snprintf(driveNum, sizeof(driveNum), "%d:/", bestIdx);
+            int n = snprintf(driveBuffer, driveBufferSize, "%d:/", bestIdx);
+            if (n < 0 || (size_t)n >= driveBufferSize) return NULL;
         }
-        return driveNum;
+        return driveBuffer;
     }
 
     /* 没有卷标前缀，使用默认驱动器 */
@@ -157,13 +272,11 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
         g_defaultIndex = 0;
     }
     if (g_defaultIndex >= FF_VOLUMES) return NULL;
-    FATFS* fs = XFATFS_getFs(g_defaultIndex);
+    FATFS* fs = XFATFS_getFsLocked(g_defaultIndex);
     if (!fs) return NULL;
     if (!(g_mountedMask & (1u << g_defaultIndex))) {
-        char mountStr[4];
-        mountStr[0] = '0' + g_defaultIndex;
-        mountStr[1] = ':';
-        mountStr[2] = '\0';
+        char mountStr[8];
+        if (!XFATFS_makeMountString(g_defaultIndex, mountStr, sizeof(mountStr))) return NULL;
 
         FRESULT fr = f_mount(fs, mountStr, 1);
         if (fr == FR_NO_FILESYSTEM) {
@@ -181,12 +294,30 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
             g_mountedMask |= (1u << g_defaultIndex);
         }
     }
-    static char defDrive[4];
-    defDrive[0] = '0' + g_defaultIndex;
-    defDrive[1] = ':';
-    defDrive[2] = '/';
-    defDrive[3] = '\0';
-    return defDrive;
+    if (driveBufferSize < 4) return NULL;
+    if (snprintf(driveBuffer, driveBufferSize, "%d:/", g_defaultIndex) < 0 ||
+        strlen(driveBuffer) + 1 > driveBufferSize) return NULL;
+    return driveBuffer;
+}
+
+/**
+ * @brief 解析卷标并在必要时完成懒挂载。
+ * @param utf8Path UTF-8路径（如 "C:/file.txt"）。
+ * @param outPath 输出去掉卷标前缀的路径。
+ * @param driveBuffer 调用方提供的FatFs驱动器字符串缓冲区。
+ * @param driveBufferSize 驱动器字符串缓冲区大小。
+ * @return FatFs驱动器字符串（如 "0:/"），失败返回NULL。
+ */
+static const char* XFATFS_parseVolume(const char* utf8Path,
+                                      const char** outPath,
+                                      char* driveBuffer,
+                                      size_t driveBufferSize)
+{
+    if (!XFATFS_lockState()) return NULL;
+    const char* result = XFATFS_parseVolumeLocked(utf8Path, outPath,
+                                                  driveBuffer, driveBufferSize);
+    XFATFS_unlockState();
+    return result;
 }
 
 /**
@@ -204,7 +335,9 @@ static bool XFATFS_convertPath(const XString* path, char* fatfsPath, size_t bufS
     if (!utf8) return false;
     
     const char* remaining;
-    const char* driveStr = XFATFS_parseVolume(utf8, &remaining);
+    char driveBuffer[8];
+    const char* driveStr = XFATFS_parseVolume(utf8, &remaining,
+                                              driveBuffer, sizeof(driveBuffer));
     if (!driveStr) return false;
     
     size_t driveLen = strlen(driveStr);
@@ -354,6 +487,12 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     return fd;
 }
 
+XFd XFileSystem_openStandardInput(int* error)
+{
+    if (error) *error = XFileDevice_OpenError;
+    return XFD_INVALID;
+}
+
 void XFileSystem_close(XFd fd)
 {
     XFATFS_freeFile(fd);
@@ -383,6 +522,22 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
     FRESULT fr = f_read(fp, buf, (UINT)len, &bytesRead);
     if (fr != FR_OK) return -1;
     return (int64_t)bytesRead;
+}
+
+int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
+{
+    (void)fd;
+    (void)buf;
+    (void)len;
+    return -2;
+}
+
+bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
+{
+    /* FatFS 只提供块设备文件访问，不拥有终端控制台及回显状态。 */
+    (void)fd;
+    (void)enabled;
+    return false;
 }
 
 int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
@@ -809,7 +964,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
     bool absolute = volumePath[0] == '/' || volumePath[0] == '\\';
     char resolvedFatfs[512];
     char cwd[256];
-    if (f_getcwd(cwd, sizeof(cwd)) != FR_OK) return false;
+    if (XFATFS_getCurrentDirectory(cwd, sizeof(cwd)) != FR_OK) return false;
     if (!absolute && !hasVolume) {
         const char* relative = fatfsPath;
         if (relative[0] >= '0' && relative[0] <= '9' && relative[1] == ':' && relative[2] == '/') {
@@ -826,7 +981,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
     char absPath[512] = {0};
     if (resolvedFatfs[0] >= '0' && resolvedFatfs[0] <= '9' && resolvedFatfs[1] == ':') {
         int volIdx = resolvedFatfs[0] - '0';
-        if (volIdx >= 0 && volIdx < XFATFS_MAX_VOLUMES && g_volumes[volIdx]) {
+        if (XFATFS_isVolumeAllocated(volIdx)) {
             XString* xDrive = XString_create();
             if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
                 const char* driveUtf8 = XString_toUtf8(xDrive);
@@ -853,12 +1008,12 @@ bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
     switch (type) {
     case XSpecialPath_Current: {
         char cwd[256];
-        FRESULT fr = f_getcwd(cwd, sizeof(cwd));
+        FRESULT fr = XFATFS_getCurrentDirectory(cwd, sizeof(cwd));
         if (fr != FR_OK) return XFatfsPath_current(path);
         
         if (cwd[0] >= '0' && cwd[0] <= '9' && cwd[1] == ':') {
             int volIdx = cwd[0] - '0';
-            if (volIdx >= 0 && volIdx < XFATFS_MAX_VOLUMES && g_volumes[volIdx]) {
+            if (XFATFS_isVolumeAllocated(volIdx)) {
                 XString* xDrive = XString_create();
                 if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
                     const char* driveUtf8 = XString_toUtf8(xDrive);
@@ -892,7 +1047,7 @@ bool XFileSystem_setCurrentPath(const XString* path)
     if (!path) return false;
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
-    FRESULT fr = f_chdir(fatfsPath);
+    FRESULT fr = XFATFS_setCurrentDirectory(fatfsPath);
     if (fr == FR_OK) return true;
     return XFatfsPath_setCurrent(path);
 }
@@ -905,6 +1060,13 @@ bool XFileSystem_link(const XString* targetPath, const XString* linkPath)
 {
     (void)targetPath;
     (void)linkPath;
+    return false;
+}
+
+bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath)
+{
+    (void)targetPath;
+    (void)hardLinkPath;
     return false;
 }
 
@@ -1058,7 +1220,7 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
     
     DWORD freeClusters;
-    FATFS* fs;
+    FATFS* fs = NULL;
     
     FRESULT fr = f_getfree(fatfsPath, &freeClusters, &fs);
     if (fr != FR_OK) return false;
@@ -1111,31 +1273,77 @@ bool XFileSystem_format(const XString* drive,
     (void)userData;
     return false;
 #else
-    if (!drive) return false;
-    
+    const char* volumeText;
+    int volumeIndex;
+    char mountStr[8];
     char fatfsPath[512];
+    FATFS* fs = NULL;
+    FRESULT fr;
+    MKFS_PARM opt;
+    BYTE work[FF_MAX_SS];
+    bool result = false;
+
+    if (!drive) return false;
+
+    /* FatFS 只提供 FAT 系列格式；拒绝会被静默忽略的扩展选项。 */
+    if (flags & (XFileSystemFormat_Compress | XFileSystemFormat_Encrypt)) return false;
+    volumeText = volumeName ? XString_toUtf8(volumeName) : NULL;
+#if !FF_USE_LABEL
+    if (volumeText && volumeText[0] != '\0') return false;
+#endif
+
     if (!XFATFS_convertPath(drive, fatfsPath, sizeof(fatfsPath))) return false;
-    
-    MKFS_PARM opt = {0};
+
+    /* convertPath 已确保卷号存在；格式化前必须卸载，否则 FatFS 仍会使用旧 BPB。 */
+    {
+        char* colon = strchr(fatfsPath, ':');
+        char* end = NULL;
+        long parsed;
+        if (!colon || colon == fatfsPath) return false;
+        parsed = strtol(fatfsPath, &end, 10);
+        if (end != colon || parsed < 0 || parsed >= FF_VOLUMES) return false;
+        volumeIndex = (int)parsed;
+    }
+    if (!XFATFS_makeMountString(volumeIndex, mountStr, sizeof(mountStr))) return false;
+    if (!XFATFS_lockState()) return false;
+    if (volumeIndex >= FF_VOLUMES || !g_volumes[volumeIndex]) goto format_done;
+    fs = g_volumes[volumeIndex];
+    if (progress && !progress(0, userData)) goto format_done;
+    f_mount(NULL, mountStr, 0);
+    g_mountedMask &= ~(1u << volumeIndex);
+    memset(fs, 0, sizeof(*fs));
+
+    memset(&opt, 0, sizeof(opt));
     opt.fmt = FM_ANY;
-    
     if (fsType == XFileSystemType_FAT32) opt.fmt = FM_FAT32;
     else if (fsType == XFileSystemType_exFAT) opt.fmt = FM_EXFAT;
-    
     if (clusterSize > 0) opt.au_size = (DWORD)clusterSize;
-    
-    /* 调用进度回调 */
-    if (progress) progress(50, userData);
-    
-    BYTE work[FF_MAX_SS];
-    FRESULT fr = f_mkfs(fatfsPath, &opt, work, sizeof(work));
-    
-    if (progress) progress(100, userData);
-    
-    (void)volumeName;
-    (void)flags;
-    
-    return fr == FR_OK;
+    if (progress && !progress(50, userData)) goto format_done;
+    fr = f_mkfs(mountStr, &opt, work, sizeof(work));
+    if (fr != FR_OK) goto format_done;
+
+    fr = f_mount(fs, mountStr, 1);
+    if (fr != FR_OK) goto format_done;
+    g_mountedMask |= (1u << volumeIndex);
+#if FF_USE_LABEL
+    if (volumeText && volumeText[0] != '\0') {
+        fr = f_setlabel((const TCHAR*)volumeText);
+        if (fr != FR_OK) goto format_done;
+    }
+#else
+    (void)volumeText;
+#endif
+    if (progress && !progress(100, userData)) goto format_done;
+    result = true;
+
+format_done:
+    /* 格式化前已卸载卷时，取消或失败也尽量恢复原有挂载状态。 */
+    if (!result && fs && !(g_mountedMask & (1u << volumeIndex))) {
+        if (f_mount(fs, mountStr, 1) == FR_OK)
+            g_mountedMask |= (1u << volumeIndex);
+    }
+    XFATFS_unlockState();
+    return result;
 #endif
 }
 
