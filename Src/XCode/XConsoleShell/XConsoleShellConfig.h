@@ -667,7 +667,7 @@
 #endif
 /** @brief 启用登录、用户管理和本地 JSON 账户库。 */
 #ifndef XCONSOLE_SHELL_LOGIN_ON
-#define XCONSOLE_SHELL_LOGIN_ON 1
+#define XCONSOLE_SHELL_LOGIN_ON 0
 #endif
 
 /**
