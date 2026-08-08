@@ -165,6 +165,26 @@ static void xfs_ls_permissions(XFilePermissions permissions, bool directory,
     for (i = 0; i < 9u; ++i) output[i + 1u] = (permissions & bits[i]) ? marks[i] : '-';
     output[10] = '\0';
 }
+static bool xfs_ls_time(int64_t secs, char* output, size_t capacity)
+{
+    XDateTime datetime;
+    int written;
+
+    if (!output || capacity == 0u) return false;
+    output[0] = '\0';
+    if (secs <= 0) return false;
+
+    memset(&datetime, 0, sizeof(datetime));
+    if (!XDateTime_setSecsSinceEpoch(&datetime, secs)) return false;
+    written = snprintf(output, capacity, "%04d-%02d-%02d %02d:%02d:%02d",
+                       XDate_year(&datetime.m_date),
+                       XDate_month(&datetime.m_date),
+                       XDate_day(&datetime.m_date),
+                       XTime_hour(&datetime.m_time),
+                       XTime_minute(&datetime.m_time),
+                       XTime_second(&datetime.m_time));
+    return written > 0 && (size_t)written < capacity;
+}
 
 static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
                         const char* displayName, const XDirEntry* entry,
@@ -173,6 +193,7 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
     XFileStat stat;
     char permissions[16];
     char size[32];
+    char timeText[32];
     char* line;
     size_t lineCapacity;
     const char* suffix = "";
@@ -188,13 +209,17 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
         return false;
     }
     if (options->longFormat) {
+        if (!xfs_ls_time(stat.modificationTime, timeText, sizeof(timeText))) {
+            timeText[0] = '-';
+            timeText[1] = '\0';
+        }
         xfs_ls_permissions(stat.permissions, stat.isDir, permissions, sizeof(permissions));
         xfs_ls_size(stat.size, options->human, size, sizeof(size));
-        /* 固定列宽便于串口终端逐行比较：大小和时间右对齐，类型左对齐。 */
-        written = snprintf(line, lineCapacity, "%-10s %10s %-9s %12lld %s",
+        /* 固定列宽便于串口终端逐行比较；大小右对齐，时间显示为可读日期时刻。 */
+        written = snprintf(line, lineCapacity, "%-10s %10s %-9s %s %s",
                            permissions, size, stat.isSymLink ? "链接" :
                            (stat.isDir ? "目录" : "文件"),
-                           (long long)stat.modificationTime, displayName);
+                           timeText, displayName);
     } else {
         if (options->classify) {
             if (stat.isDir) suffix = "/";
