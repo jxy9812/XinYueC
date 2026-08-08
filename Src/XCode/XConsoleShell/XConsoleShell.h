@@ -22,6 +22,9 @@
 #include "XObject.h"
 #include "XConsoleShellCommand.h"
 #include "XConsoleShellIo.h"
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+#include "XConsoleShellNetwork.h"
+#endif
 #if XCONSOLE_SHELL_LOGIN_ON
 #include "XConsoleShellLogin.h"
 #endif
@@ -115,6 +118,7 @@ typedef struct XConsoleShellSession {
 #endif
     bool m_open;                                      /**< 是否为已打开的附加会话。 */
     bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
+    bool m_lastByteCR;                                /**< 上一个输入字节是否为 \r，用于合并 CRLF 的 \n，避免空行被提交。 */
 #endif
 } XConsoleShellSession;
 
@@ -178,6 +182,7 @@ typedef struct XConsoleShell {
     size_t m_lineLength;                              /**< 当前输入行长度。 */
     size_t m_argumentCount;                           /**< 当前 token 数量。 */
     bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
+    bool m_lastByteCR;                                /**< 上一个输入字节是否为 \r，用于合并 CRLF 的 \n，避免空行被提交。 */
 #if XCONSOLE_SHELL_HISTORY_ON
     char m_history[XCONSOLE_SHELL_HISTORY_CAPACITY][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 固定历史环形缓冲。 */
     size_t m_historyCount;                            /**< 当前保存的历史条目数。 */
@@ -258,6 +263,10 @@ typedef struct XConsoleShell {
     size_t m_asyncLastReadBytes;                     /**< 最近一次 pump 读取的字节数。 */
     XTimerId m_asyncPollTimer;                       /**< 事件模式下非阻塞输入轮询定时器。 */
     XAtomic_bool m_asyncInputAttached;               /**< 是否已调用输入源附加回调。 */
+#endif
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    XConsoleShellPingState m_ping;                    /**< 顶层 ping 异步状态。 */
+    XTimerId m_pingTimer;                             /**< ping 定时器；无效时为 XTIMER_INVALID_ID。 */
 #endif
 } XConsoleShell;
 

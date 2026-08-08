@@ -37,8 +37,8 @@
 /* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <icmpapi.h>
 #include <iphlpapi.h>
+#include <icmpapi.h>
 #include <stdlib.h>
 #include "XNetIoRingWin32.h"
 

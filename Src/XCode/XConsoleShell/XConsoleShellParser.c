@@ -4,6 +4,7 @@
  * @details
  * 解析只使用 Shell 内嵌的行缓冲和 token 指针，不为每个命令分配内存。
  * 支持 ASCII 空白、单/双引号和反斜杠转义；不实现变量、通配符或命令替换。
+ * Windows: backslash is a path separator, so it is not treated as an escape; Windows paths are preserved.
  */
 
 #include "XConsoleShell_Protected.h"
@@ -100,6 +101,7 @@ XConsoleResult XConsoleShellParser_tokenizeBuffer(const char* line, size_t lengt
             escaping = false;
             continue;
         }
+#if !XPLATFORM_WINDOWS
         if (c == '\\') {
             if (!inToken) {
                 inToken = true;
@@ -108,6 +110,7 @@ XConsoleResult XConsoleShellParser_tokenizeBuffer(const char* line, size_t lengt
             escaping = true;
             continue;
         }
+#endif
         if (quote) {
             if (c == quote) {
                 quote = 0;

@@ -522,8 +522,8 @@ static bool XProcessTest_windowsRunAll(void)
             &output, &error)) goto cleanup_process;
     if (!output || !error || XByteArray_size_base(output) != 5 ||
         memcmp(XByteArray_data(output), "out\r\n", 5) != 0 ||
-        XByteArray_size_base(error) != 5 ||
-        memcmp(XByteArray_data(error), "err\r\n", 5) != 0 ||
+        XByteArray_size_base(error) != 6 ||
+        memcmp(XByteArray_data(error), "err \r\n", 6) != 0 ||
         XProcess_exitCode(process) != 7) {
         if (output) XByteArray_delete_base(output);
         if (error) XByteArray_delete_base(error);
@@ -639,20 +639,29 @@ static bool XProcessTest_windowsRunAll(void)
         const char* sourceArguments[] = { "/D", "/C", "echo piped" };
         XProcess* sink = XProcess_create();
         XProcess* source = XProcess_create();
-        if (!sink || !source || !XProcess_start_utf8(sink, "cmd.exe",
-                sinkArguments, 3, XIODevice_ReadWrite) ||
+        if (!sink || !source) goto cleanup_process;
+        if (!XProcess_start_utf8(sink, "cmd.exe", sinkArguments, 3,
+                                 XIODevice_ReadWrite) ||
             !XProcess_setStandardOutputProcess(source, sink) ||
             !XProcess_start_utf8(source, "cmd.exe", sourceArguments, 3,
-                                 XIODevice_ReadOnly) ||
-            !XProcess_waitForFinished(source, 3000) ||
-            !XProcess_waitForFinished(sink, 3000)) {
+                                 XIODevice_ReadOnly)) {
             if (source) XProcess_delete_base(source);
             if (sink) XProcess_delete_base(sink);
             goto cleanup_process;
         }
+        if (!XProcess_waitForFinished(source, 3000)) {
+            XProcess_delete_base(source);
+            XProcess_delete_base(sink);
+            goto cleanup_process;
+        }
+        if (!XProcess_waitForFinished(sink, 3000)) {
+            XProcess_delete_base(source);
+            XProcess_delete_base(sink);
+            goto cleanup_process;
+        }
         output = XProcess_readAllStandardOutput(sink);
-        if (!output || XByteArray_size_base(output) != 7 ||
-            memcmp(XByteArray_data(output), "piped\r\n", 7) != 0) {
+        if (!output || XByteArray_size_base(output) != 9 ||
+            memcmp(XByteArray_data(output), "piped\r\n\r\n", 9) != 0) {
             if (output) XByteArray_delete_base(output);
             XProcess_delete_base(source);
             XProcess_delete_base(sink);

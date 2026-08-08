@@ -730,6 +730,80 @@ cleanup:
 }
 #endif
 
+#if XCONSOLE_SHELL_LOGIN_ON
+/* Windows/CRLF terminal sends \r\n on Enter; the LF must be skipped as part of the
+   newline so an empty line is not submitted to the pending login/password input. */
+static bool XConsoleShellTest_runCrlfLoginFlow(void)
+{
+    XConsoleShellTestTransport crlfTransport;
+    XConsoleShellIo crlfIo;
+    XConsoleShell* crlfShell;
+    XString* crlfPath;
+    static const uint8_t crlfInput[] =
+        "useradd root\r\n"
+        "passwd root\r\n"
+        "123456\r\n"
+        "123456\r\n"
+        "login root\r\n"
+        "123456\r\n";
+    bool ok = false;
+
+    memset(&crlfTransport, 0, sizeof(crlfTransport));
+    memset(&crlfIo, 0, sizeof(crlfIo));
+    crlfIo.read = XConsoleShellTest_read;
+    crlfIo.write = XConsoleShellTest_write;
+    crlfIo.flush = XConsoleShellTest_flush;
+#if XCONSOLE_SHELL_LOG_ON
+    crlfIo.log = XConsoleShellTest_log;
+#endif
+#if XCONSOLE_SHELL_AUDIT_ON
+    crlfIo.audit = XConsoleShellTest_audit;
+#endif
+    crlfIo.userData = &crlfTransport;
+
+    crlfPath = XString_create_utf8("xconsole_shell_crlf_users_test.json");
+    XCS_TEST_CHECK(crlfPath != NULL, "crlf login path");
+    XFileSystem_remove(crlfPath);
+    crlfShell = XConsoleShell_create(&crlfIo);
+    XCS_TEST_CHECK(crlfShell != NULL, "crlf shell create");
+    XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
+                       crlfShell, "xconsole_shell_crlf_users_test.json"),
+                   "crlf set login database path");
+    crlfTransport.length = 0;
+    crlfTransport.output[0] = '\0';
+    XCS_TEST_CHECK(XConsoleShell_feedData(crlfShell, crlfInput,
+                                          sizeof(crlfInput) - 1) ==
+                       XConsoleResult_Ok,
+                   "crlf feed byte stream");
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    XCS_TEST_CHECK(XConsoleShell_flushOutput(crlfShell), "crlf flush output");
+#endif
+    XCS_TEST_CHECK(strstr(crlfTransport.output,
+                          "\xe5\xaf\x86\xe7\xa0\x81\xe5\xb7\xb2\xe6\x9b\xb4\xe6\x96\xb0") != NULL,
+                   "crlf passwd updated");
+    XCS_TEST_CHECK(strstr(crlfTransport.output, "login: root ") != NULL &&
+                       strstr(crlfTransport.output,
+                              "\xe6\x88\x90\xe5\x8a\x9f") != NULL &&
+                       !strstr(crlfTransport.output,
+                               "\xe8\xb4\xa6\xe6\x88\xb7\xe5\xb0\x9a\xe6\x9c\xaa\xe8\xae\xbe\xe7\xbd\xae\xe5\xaf\x86\xe7\xa0\x81"),
+                   "crlf login root success");
+    XCS_TEST_CHECK(!strstr(crlfTransport.output,
+                           "\xe6\x96\xb0\xe5\xaf\x86\xe7\xa0\x81: \r\nXinYueC> ") &&
+                       !strstr(crlfTransport.output,
+                               "\xe6\x96\xb0\xe5\xaf\x86\xe7\xa0\x81: \nXinYueC> "),
+                   "crlf password prompt not interrupted by empty line");
+    XCS_TEST_CHECK(strstr(crlfTransport.output,
+                          "\xe6\x96\xb0\xe5\xaf\x86\xe7\xa0\x81: \n\xe9\x87\x8d\xe6\x96\xb0\xe8\xbe\x93\xe5\x85\xa5\xe6\x96\xb0\xe5\xaf\x86\xe7\xa0\x81: ") != NULL,
+                   "password prompts separated by newline");
+    ok = true;
+
+    XFileSystem_remove(crlfPath);
+    if (crlfShell) XConsoleShell_delete_base(crlfShell);
+    XString_delete_base(crlfPath);
+    return ok;
+}
+#endif
+
 bool XConsoleShellTest_runAll(void)
 {
     XConsoleShellTestTransport transport;
@@ -1043,6 +1117,10 @@ bool XConsoleShellTest_runAll(void)
         XConsoleShell_session(shell)->permissionMask = UINT32_MAX;
     }
 #endif
+#if XCONSOLE_SHELL_LOGIN_ON
+        XCS_TEST_CHECK(XConsoleShellTest_runCrlfLoginFlow(), "crlf login flow");
+#endif
+
 #if XCONSOLE_SHELL_GPIO_ON
     transport.gpioAllow = true;
     XCS_TEST_CHECK(XConsoleShell_setGpioAuthorizeCallback(
@@ -1280,8 +1358,12 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "echo \"hello world\"", 18) ==
                        XConsoleResult_Ok && strstr(transport.output, "hello world\n"),
                    "quoted echo and short write");
+    transport.length = 0;
+    transport.output[0] = '\0';
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "unknown", 7) ==
-                       XConsoleResult_UnknownCommand, "unknown command");
+                       XConsoleResult_UnknownCommand &&
+                       strstr(transport.output, "\xe9\x94\x99\xe8\xaf\xaf: \xe6\x9c\xaa\xe7\x9f\xa5\xe5\x91\xbd\xe4\xbb\xa4") != NULL,
+                       "unknown command error output");
     XCS_TEST_CHECK(XConsoleShell_processLine(shell, "echo \"", 6) ==
                        XConsoleResult_InvalidSyntax, "invalid quote");
 #if XCONSOLE_SHELL_CALLBACK_COMMAND_ON
@@ -2092,6 +2174,15 @@ bool XConsoleShellTest_runAll(void)
                            networkResult != XConsoleResult_InvalidSyntax,
                        "network ping command");
 #endif
+
+        /* Linux-style top-level ping must resolve too (reuses net ping handler). */
+        transport.length = 0;
+        transport.output[0] = '\0';
+        networkResult = XConsoleShell_processLine(shell, "ping 127.0.0.1 -c 1 -W 500",
+                                                   strlen("ping 127.0.0.1 -c 1 -W 500"));
+        XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
+                           networkResult != XConsoleResult_InvalidSyntax,
+                       "top-level ping command");
     }
 #endif
 #if XCONSOLE_SHELL_FS_PWD_ON

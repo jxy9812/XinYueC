@@ -175,6 +175,13 @@ static void VXConsoleShell_timerEvent(XObject* object, XTimerEvent* event)
         XEvent_accept((XEvent*)event);
         return;
     }
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    if (self && event && XTimerEvent_timerId(event) == self->m_pingTimer) {
+        XConsoleShellNetwork_pingTick(self);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+#endif
     XClass_Parent(XObject, EXObject_TimerEvent,
                   void(*)(XObject*, XTimerEvent*))(object, event);
 }
@@ -418,6 +425,8 @@ static XConsoleResult xcs_finish_command(XConsoleShell* self,
     }
     if (result == XConsoleResult_PermissionDenied && self && command &&
         !(command->flags & XConsoleCommandFlag_Sensitive))
+        (void)XConsoleShell_writeError(self, result, NULL);
+    if (result == XConsoleResult_UnknownCommand && self && !command)
         (void)XConsoleShell_writeError(self, result, NULL);
 #endif
 #if XCONSOLE_SHELL_STATS_ON
@@ -844,6 +853,7 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
     self->m_lineLength = 0;
     self->m_argumentCount = 0;
     self->m_discardLine = false;
+    self->m_lastByteCR = false;
 #if XCONSOLE_SHELL_HISTORY_ON
     memset(self->m_history, 0, sizeof(self->m_history));
     self->m_historyCount = 0;
@@ -882,6 +892,10 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
     self->m_asyncLastReadBytes = 0;
     self->m_asyncPollTimer = XTIMER_INVALID_ID;
     XAtomic_init(self->m_asyncInputAttached, false);
+#endif
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    memset(&self->m_ping, 0, sizeof(self->m_ping));
+    self->m_pingTimer = XTIMER_INVALID_ID;
 #endif
 #if XCONSOLE_SHELL_HELP_ON
     registered = xcs_register_static_commands(self, &g_helpCommand, 1) && registered;
@@ -929,6 +943,10 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON
     registered = xcs_register_static_commands(self, &XConsoleShellNetwork_command, 1) && registered;
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    /* Linux users expect ping at top level; reuse the net ping handler. */
+    registered = xcs_register_static_commands(self, &XConsoleShellNetwork_ping_command, 1) && registered;
+#endif
 #endif
 #if XCONSOLE_SHELL_DATETIME_ON && XCONSOLE_SHELL_DATE_ON
     registered = xcs_register_static_commands(self, &XConsoleShellDateTime_command, 1) && registered;
@@ -1025,6 +1043,9 @@ static void VXConsoleShell_deinit(XObject* object)
     XConsoleShell* self = (XConsoleShell*)object;
     size_t i;
     if (!self) return;
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    XConsoleShellNetwork_cancelPing(self);
+#endif
 #if XCONSOLE_SHELL_ASYNC_ON
     (void)XConsoleShell_stopAsync(self, 0);
     if (self->m_asyncEventType != XEVENT_TYPE_NONE)
@@ -1200,6 +1221,7 @@ typedef struct XConsoleShellSessionSwap {
     char lineBuffer[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 切换前的输入行缓冲。 */
     size_t lineLength;                               /**< 切换前的输入长度。 */
     bool discardLine;                                /**< 切换前的超长行丢弃状态。 */
+    bool lastByteCR;                                 /**< 切换前的 CRLF 合并状态。 */
 #if XCONSOLE_SHELL_HISTORY_ON
     char history[XCONSOLE_SHELL_HISTORY_CAPACITY][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 切换前的历史。 */
     size_t historyCount;                             /**< 切换前的历史数量。 */
@@ -1235,6 +1257,7 @@ static bool xcs_enter_session(XConsoleShell* self, XConsoleShellSession* session
     memcpy(swap->lineBuffer, self->m_lineBuffer, sizeof(swap->lineBuffer));
     swap->lineLength = self->m_lineLength;
     swap->discardLine = self->m_discardLine;
+    swap->lastByteCR = self->m_lastByteCR;
 #if XCONSOLE_SHELL_HISTORY_ON
     memcpy(swap->history, self->m_history, sizeof(swap->history));
     swap->historyCount = self->m_historyCount;
@@ -1250,6 +1273,7 @@ static bool xcs_enter_session(XConsoleShell* self, XConsoleShellSession* session
     memcpy(self->m_lineBuffer, session->m_lineBuffer, sizeof(self->m_lineBuffer));
     self->m_lineLength = session->m_lineLength;
     self->m_discardLine = session->m_discardLine;
+    self->m_lastByteCR = session->m_lastByteCR;
 #if XCONSOLE_SHELL_HISTORY_ON
     memcpy(self->m_history, session->m_history, sizeof(self->m_history));
     self->m_historyCount = session->m_historyCount;
@@ -1272,6 +1296,7 @@ static void xcs_leave_session(XConsoleShell* self, XConsoleShellSession* session
     memcpy(session->m_lineBuffer, self->m_lineBuffer, sizeof(session->m_lineBuffer));
     session->m_lineLength = self->m_lineLength;
     session->m_discardLine = self->m_discardLine;
+    session->m_lastByteCR = self->m_lastByteCR;
 #if XCONSOLE_SHELL_HISTORY_ON
     memcpy(session->m_history, self->m_history, sizeof(session->m_history));
     session->m_historyCount = self->m_historyCount;
@@ -1287,6 +1312,7 @@ static void xcs_leave_session(XConsoleShell* self, XConsoleShellSession* session
     memcpy(self->m_lineBuffer, swap->lineBuffer, sizeof(self->m_lineBuffer));
     self->m_lineLength = swap->lineLength;
     self->m_discardLine = swap->discardLine;
+    self->m_lastByteCR = swap->lastByteCR;
 #if XCONSOLE_SHELL_HISTORY_ON
     memcpy(self->m_history, swap->history, sizeof(self->m_history));
     self->m_historyCount = swap->historyCount;
@@ -1499,6 +1525,11 @@ XConsoleResult XConsoleShell_processLine(XConsoleShell* self,
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     self->m_lineCursor = 0;
 #endif
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    /* ping 异步运行期间忽略其他输入，避免命令与定时器冲突。 */
+    if (self->m_ping.active)
+        return XConsoleResult_MoreOutput;
+#endif
 #if XCONSOLE_SHELL_LOGIN_ON
     if (!xcs_is_sensitive_line(line, length))
         xcs_record_history(self, line, length);
@@ -1661,6 +1692,13 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
     }
 #endif
     if (byte == '\r' || byte == '\n') {
+        /* Windows/CRLF 终端按 Enter 发送 \r\n：LF 是换行的组成部分，
+           应跳过，避免把空行提交给等待中的登录/密码输入或普通命令。 */
+        if (self->m_lastByteCR && byte == '\n') {
+            self->m_lastByteCR = false;
+            return XConsoleResult_Ok;
+        }
+        self->m_lastByteCR = byte == '\r';
         if (self->m_discardLine) {
             /* 超长行必须整体丢弃，不能在换行时执行截断前缀。 */
             self->m_discardLine = false;
@@ -1679,6 +1717,9 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
 #endif
         return result;
     }
+    /* Any non-\n byte after a lone \r ends the CRLF-merge window; otherwise a
+       later \n would be wrongly swallowed as part of a CRLF pair. */
+    self->m_lastByteCR = false;
     if (byte == '\b' || byte == 0x7f) {
         if (self->m_lineLength
 #if XCONSOLE_SHELL_LINE_EDITOR_ON

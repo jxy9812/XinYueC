@@ -109,6 +109,7 @@ const XConsoleCommand* XConsoleShellParser_find(const XConsoleShell* shell,
 extern const XConsoleCommand XConsoleShellFileSystem_command;
 /** @brief 网络根命令静态描述；处理函数只调用 XNetwork 公共 API。 */
 extern const XConsoleCommand XConsoleShellNetwork_command;
+extern const XConsoleCommand XConsoleShellNetwork_ping_command;
 /** @brief 日期时间根命令静态描述；处理函数只调用 XDateTime 公共 API。 */
 extern const XConsoleCommand XConsoleShellDateTime_command;
 /** @brief 内存查询根命令静态描述；处理函数只调用 XMultiPool 公共 API。 */

@@ -704,8 +704,8 @@ static bool xfs_du_size(const XString* path, int64_t* total)
         entry.name = name;
         while (XFileSystem_readdir(iterator, &entry)) {
             if (entry.isSymLink) continue;
-            if (entry.isHidden && (strcmp(XString_toUtf8(name), ".") == 0 ||
-                                   strcmp(XString_toUtf8(name), "..") == 0)) continue;
+            if (strcmp(XString_toUtf8(name), ".") == 0 ||
+                strcmp(XString_toUtf8(name), "..") == 0) continue;
             if (!XString_assign_utf8(child, XString_toUtf8(path)) ||
                 !xfs_append_path_component(child, XString_toUtf8(name)) ||
                 !xfs_du_size(child, total)) {
@@ -1335,72 +1335,49 @@ static int xfs_file(XConsoleShell* shell, XConsoleShellSession* session,
 static int xfs_basename(XConsoleShell* shell, XConsoleShellSession* session,
                         int argc, const char* const* argv, void* userData)
 {
-    XString* path = XString_create();
     const char* text;
     size_t length;
     size_t start = 0;
     size_t i;
+    (void)session;
     (void)userData;
-    if (argc != 1 || !path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
-    }
-    text = XString_toUtf8(path);
+    if (!shell || argc != 1) return XConsoleResult_InvalidArgument;
+    text = (argv[0] && argv[0][0]) ? argv[0] : ".";
     length = strlen(text);
-    while (length > 1u && text[length - 1u] == '/') --length;
-    if (length == 1u && text[0] == '/') {
-        start = 0;
-    } else {
+    while (length > 1u && (text[length - 1u] == '/' || text[length - 1u] == '\\')) --length;
+    if (!(length == 1u && (text[0] == '/' || text[0] == '\\'))) {
         for (i = 0; i < length; ++i)
-            if (text[i] == '/') start = i + 1u;
+            if (text[i] == '/' || text[i] == '\\') start = i + 1u;
     }
-    if (!XConsoleShell_write(shell, text + start, length - start) ||
-        !XConsoleShell_writeUtf8(shell, "\n")) {
-        XString_delete_base(path);
-        return XConsoleResult_IoError;
-    }
-    XString_delete_base(path);
-    return XConsoleResult_Ok;
+    return XConsoleShell_write(shell, text + start, length - start) &&
+           XConsoleShell_writeUtf8(shell, "\n")
+               ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
 
 static int xfs_dirname(XConsoleShell* shell, XConsoleShellSession* session,
                        int argc, const char* const* argv, void* userData)
 {
-    XString* path = XString_create();
     const char* text;
     size_t length;
     size_t slash = SIZE_MAX;
     size_t i;
+    (void)session;
     (void)userData;
-    if (argc != 1 || !path || !xfs_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
-        return XConsoleResult_InvalidArgument;
-    }
-    text = XString_toUtf8(path);
+    if (!shell || argc != 1) return XConsoleResult_InvalidArgument;
+    text = (argv[0] && argv[0][0]) ? argv[0] : ".";
     length = strlen(text);
-    while (length > 1u && text[length - 1u] == '/') --length;
+    while (length > 1u && (text[length - 1u] == '/' || text[length - 1u] == '\\')) --length;
     for (i = 0; i < length; ++i)
-        if (text[i] == '/') slash = i;
+        if (text[i] == '/' || text[i] == '\\') slash = i;
     if (slash == SIZE_MAX) {
-        if (!XConsoleShell_writeUtf8(shell, ".")) {
-            XString_delete_base(path);
-            return XConsoleResult_IoError;
-        }
-    } else if (slash == 0u) {
-        if (!XConsoleShell_writeUtf8(shell, "/")) {
-            XString_delete_base(path);
-            return XConsoleResult_IoError;
-        }
-    } else if (!XConsoleShell_write(shell, text, slash)) {
-        XString_delete_base(path);
-        return XConsoleResult_IoError;
+        return XConsoleShell_writeUtf8(shell, ".\n") ? XConsoleResult_Ok : XConsoleResult_IoError;
     }
-    if (!XConsoleShell_writeUtf8(shell, "\n")) {
-        XString_delete_base(path);
-        return XConsoleResult_IoError;
+    if (slash == 0u) {
+        return XConsoleShell_writeUtf8(shell, "/\n") ? XConsoleResult_Ok : XConsoleResult_IoError;
     }
-    XString_delete_base(path);
-    return XConsoleResult_Ok;
+    return XConsoleShell_write(shell, text, slash) &&
+           XConsoleShell_writeUtf8(shell, "\n")
+               ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
 
 static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,

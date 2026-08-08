@@ -1196,6 +1196,9 @@ XConsoleResult XConsoleShellLogin_submitInput(XConsoleShell* shell,
         xlogin_secure_zero(userName, sizeof(userName));
         return result;
     }
+    /* 密码输入期间终端回显已关闭，用户按 Enter 不会显示换行；提交后先补一个
+       换行，避免下一个密码提示、结果或 Shell 提示紧跟在上一个提示后面。 */
+    if (!xlogin_emit(shell, "\n")) return XConsoleResult_IoError;
     if (!xlogin_copy_input_password(line, length, password, sizeof(password))) {
         xlogin_set_echo(shell, true);
         xlogin_clear_input(session);

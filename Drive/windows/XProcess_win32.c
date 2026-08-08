@@ -438,15 +438,18 @@ static void xpw_notify_if_finished(XProcess* self, XProcessWin32Backend* backend
 {
     bool crashed;
     if (!self || !backend || backend->finishedNotified || !backend->childExited) return;
+    /* When stdout is forwarded to another process, closing the sink write
+       end immediately after the source exits lets the sink see EOF even if
+       the source stderr pipe is still draining. */
+    if (backend->outputSinkProcess) {
+        XProcess_backend_closeWriteChannel(backend->outputSinkProcess);
+        backend->outputSinkProcess = NULL;
+    }
     if (xpw_valid_handle(backend->stdoutRead) || xpw_valid_handle(backend->stderrRead)) return;
     backend->finishedNotified = true;
     /* WaitForSingleObject 已确认进程退出，STILL_ACTIVE(259) 也可能是合法退出码。 */
     /* Windows 异常退出码位于 NTSTATUS 严重错误范围；不要只识别访问冲突。 */
     crashed = (backend->exitCode & 0xC0000000u) == 0xC0000000u;
-    if (backend->outputSinkProcess) {
-        XProcess_backend_closeWriteChannel(backend->outputSinkProcess);
-        backend->outputSinkProcess = NULL;
-    }
     XProcess_backend_notifyFinished(self, (int)backend->exitCode,
         crashed ? XProcessExitStatus_CrashExit : XProcessExitStatus_NormalExit,
         crashed);

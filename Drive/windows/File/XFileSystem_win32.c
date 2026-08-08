@@ -177,9 +177,9 @@ static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrDa
     }
     
     stat->permissions = 0;
-    if (stat->isReadable) stat->permissions |= 0x0400;
-    if (stat->isWritable) stat->permissions |= 0x0200;
-    if (stat->isExecutable) stat->permissions |= 0x0100;
+    if (stat->isReadable) stat->permissions |= XFile_ReadOwner;
+    if (stat->isWritable) stat->permissions |= XFile_WriteOwner;
+    if (stat->isExecutable) stat->permissions |= XFile_ExeOwner;
     
     return true;
 }
@@ -210,9 +210,19 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     DWORD shareMode = FILE_SHARE_READ;
     DWORD creationDisposition = OPEN_EXISTING;
     
-    if (mode & XFileSystem_ReadOnly) desiredAccess |= GENERIC_READ;
-    if (mode & XFileSystem_WriteOnly) desiredAccess |= GENERIC_WRITE;
-    if (mode & XFileSystem_ReadWrite) desiredAccess |= GENERIC_READ | GENERIC_WRITE;
+    switch (mode & 0x3) {
+    case XFileSystem_ReadOnly:
+        desiredAccess |= GENERIC_READ;
+        break;
+    case XFileSystem_WriteOnly:
+        desiredAccess |= GENERIC_WRITE;
+        break;
+    case XFileSystem_ReadWrite:
+        desiredAccess |= GENERIC_READ | GENERIC_WRITE;
+        break;
+    default:
+        break;
+    }
     
     if (mode & XFileSystem_Append) {
         desiredAccess |= GENERIC_WRITE;
@@ -898,7 +908,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
         return false;
     }
     
-    if (!(permissions & 0x0200)) {
+    if (!(permissions & (XFile_WriteOwner | XFile_WriteUser | XFile_WriteGroup | XFile_WriteOther))) {
         attrs |= FILE_ATTRIBUTE_READONLY;
     } else {
         attrs &= ~FILE_ATTRIBUTE_READONLY;
