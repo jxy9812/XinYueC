@@ -1067,7 +1067,7 @@ static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
             }
             if (lines < (int64_t)offsetCount)
                 start = offsets[offsetCount - 1u - (size_t)lines];
-            if (!XFileSystem_seek(fd, start)) {
+            if (XFileSystem_seek(fd, start, XSeekSet) < 0) {
                 XFileSystem_close(fd);
                 return XConsoleResult_IoError;
             }
@@ -1473,7 +1473,7 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
         fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
-        if (offset > 0 && !XFileSystem_seek(fd, offset)) {
+        if (offset > 0 && XFileSystem_seek(fd, offset, XSeekSet) < 0) {
             XFileSystem_close(fd);
             return XConsoleResult_IoError;
         }
@@ -1591,7 +1591,7 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
     if (!path || !xfs_make_path(session, pathText, path)) goto failed;
     fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
     if (fd == XFD_INVALID) goto failed;
-    if (offset > 0 && !XFileSystem_seek(fd, offset)) goto io_error;
+    if (offset > 0 && XFileSystem_seek(fd, offset, XSeekSet) < 0) goto io_error;
     while (remaining > 0) {
         int64_t request = (int64_t)sizeof(buffer);
         int64_t count;
@@ -1740,7 +1740,7 @@ static int xfs_remove(XConsoleShell* shell, XConsoleShellSession* session,
             if (XFileSystem_stat(path, &stat) && stat.isDir && recursive)
                 ok = XFileSystem_rmdir(path, true) && ok;
             else
-                ok = XFileSystem_remove(path) && ok;
+                ok = XFileSystem_removePermanent(path) && ok;
         }
         XString_delete_base(path);
     }
@@ -1933,7 +1933,7 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
             XFileStat destinationStat;
             if (XFileSystem_stat(destination, &destinationStat))
                 ok = destinationStat.isDir ? XFileSystem_rmdir(destination, true) :
-                     XFileSystem_remove(destination);
+                     XFileSystem_removePermanent(destination);
         }
         if (ok) ok = xfs_copy_recursive(source, destination);
         XString_delete_base(source);
@@ -1992,7 +1992,7 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
         if (ok && force) {
             XFileStat targetStat;
             if (XFileSystem_stat(destination, &targetStat))
-                ok = targetStat.isDir ? XFileSystem_rmdir(destination, true) : XFileSystem_remove(destination);
+                ok = targetStat.isDir ? XFileSystem_rmdir(destination, true) : XFileSystem_removePermanent(destination);
         }
         if (ok) ok = XFileSystem_rename(source, destination);
         XString_delete_base(source);
@@ -2045,14 +2045,14 @@ static int xfs_link(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_hardLink(target, link);
+    ok = XFileSystem_link(target, link, XLinkType_Hard);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
 
 #if XCONSOLE_SHELL_FS_LN_ON
-/* POSIX ln 的硬链接语义没有对应的 XFileSystem 公共 API；这里仅实现明确的 ln -s。 */
+/* POSIX ln 语义通过 XFileSystem_link 统一支持符号/硬链接。 */
 static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
                   int argc, const char* const* argv, void* userData)
 {
@@ -2096,8 +2096,7 @@ static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = symbolic ? XFileSystem_link(target, link) :
-                    XFileSystem_hardLink(target, link);
+    ok = XFileSystem_link(target, link, symbolic ? XLinkType_Symbolic : XLinkType_Hard);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -2127,7 +2126,7 @@ static int xfs_unlink(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_remove(path) && ok;
+        ok = XFileSystem_removePermanent(path) && ok;
         XString_delete_base(path);
     }
     if (pathCount == 0) return XConsoleResult_InvalidArgument;

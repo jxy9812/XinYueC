@@ -399,7 +399,7 @@ static bool XProcessTest_redirect(void)
     XFileSystem_close(fd);
     XPTEST_CHECK(n == 10 && memcmp(buffer, "redirected", 10) == 0, "redirect content");
     XProcess_delete_base(process);
-    XFileSystem_remove(path);
+    XFileSystem_removePermanent(path);
     XString_delete_base(path);
     return true;
 #endif
@@ -692,7 +692,7 @@ static bool XProcessTest_windowsRunAll(void)
     if (fd != XFD_INVALID) XFileSystem_close(fd);
     if (fileSize != 12 || memcmp(fileData, "redirected\r\n", 12) != 0)
         goto cleanup_redirect;
-    XFileSystem_remove(redirectPath);
+    XFileSystem_removePermanent(redirectPath);
     XString_delete_base(redirectPath);
     redirectPath = NULL;
 
@@ -730,7 +730,7 @@ static bool XProcessTest_windowsRunAll(void)
 cleanup_process:
     if (process) XProcess_delete_base(process);
     if (!result && redirectPath) {
-        XFileSystem_remove(redirectPath);
+        XFileSystem_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
     return result;
@@ -738,7 +738,7 @@ cleanup_process:
 cleanup_redirect:
     if (process) XProcess_delete_base(process);
     if (redirectPath) {
-        XFileSystem_remove(redirectPath);
+        XFileSystem_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
     return false;

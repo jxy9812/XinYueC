@@ -210,39 +210,53 @@ static bool XDirTest_fatfs_isSupportedFileSystem(const XString* fsType)
  * XDir Fatfs 驱动器测试
  * ============================================================================ */
 
+typedef struct XDirTestFatfsDriveData {
+    XStringList* list;
+} XDirTestFatfsDriveData;
+
+static bool xdirtest_fatfs_drive_callback(const XString* path, void* userData)
+{
+    XStringList* list = (XStringList*)userData;
+    XString* copy = XString_create_copy(path);
+    if (!copy) return false;
+    XStringList_push_back_move_base(list, copy);
+    XString_delete_base(copy);
+    return true;
+}
+
 void XDirTest_fatfs(void)
 {
     XPrintf_3("\n=== XDir Fatfs 驱动器测试 ===\n\n");
 
     /* 1. 枚举驱动器（含文件系统格式） */
     XPrintf_3("========== 1. 枚举驱动器 ==========\n");
-    int driveCount = XFileSystem_drives_count();
-    XPrintf("可用驱动器数量: %d\n\n", driveCount);
-
-    if (driveCount <= 0) {
+    XStringList* drives = XStringList_create();
+    if (!drives) return;
+    if (!XFileSystem_enumerateDrives(xdirtest_fatfs_drive_callback, drives) ||
+        XStringList_size_base(drives) == 0) {
         XPrintf_3("没有可用的驱动器，测试终止。\n");
+        XStringList_delete_base(drives);
         return;
     }
+    int driveCount = (int)XStringList_size_base(drives);
+    XPrintf("可用驱动器数量: %d\n\n", driveCount);
 
-    XString** drives = (XString**)XMalloc_System((size_t)(driveCount + 1) * sizeof(XString*));
     XStorageInfoData** infos = (XStorageInfoData**)XMalloc_System((size_t)(driveCount + 1) * sizeof(XStorageInfoData*));
 
     for (int i = 0; i < driveCount; i++) {
-        drives[i] = XString_create();
-        XFileSystem_drives_at(i, drives[i]);
-
+        XString* drivePath = XStringList_at_base(drives, i);
         infos[i] = (XStorageInfoData*)XMalloc_System(sizeof(XStorageInfoData));
         memset(infos[i], 0, sizeof(XStorageInfoData));
         infos[i]->fileSystemType = XString_create();
-        XFileSystem_getStorageInfo(drives[i], infos[i]);
+        XFileSystem_getStorageInfo(drivePath, infos[i]);
 
         XPrintf("  [%d] ", i);
-        XPrintf_2(drives[i]);
+        XPrintf_2(drivePath);
         if (infos[i]->isValid && infos[i]->fileSystemType) {
             XPrintf("  (");
             XPrintf_2(infos[i]->fileSystemType);
             if (XDirTest_fatfs_isSupportedFileSystem(infos[i]->fileSystemType)) {
-                XPrintf_3(", Fatfs支持)");
+                XPrintf_3(", FatFs支持)");
             } else {
                 XPrintf_3(", 不支持)");
             }
@@ -261,9 +275,9 @@ void XDirTest_fatfs(void)
             && infos[i]->isReady
             && XDirTest_fatfs_isSupportedFileSystem(infos[i]->fileSystemType))
         {
-            XDirTest_print_xstring("使用驱动器", drives[i]);
+            XDirTest_print_xstring("使用驱动器", XStringList_at_base(drives, i));
 
-            XDir* dir = XDir_create_2(drives[i]);
+            XDir* dir = XDir_create_2(XStringList_at_base(drives, i));
             if (!dir) {
                 XPrintf_3("XDir 创建失败，尝试下一个驱动器。\n");
                 continue;
@@ -322,7 +336,6 @@ void XDirTest_fatfs(void)
     XString_delete_base(root);
 
     for (int i = 0; i < driveCount; i++) {
-        XString_delete_base(drives[i]);
         if (infos[i]) {
             if (infos[i]->fileSystemType) {
                 XString_delete_base(infos[i]->fileSystemType);
@@ -330,7 +343,7 @@ void XDirTest_fatfs(void)
             XFree_System(infos[i]);
         }
     }
-    XFree_System(drives);
+    XStringList_delete_base(drives);
     XFree_System(infos);
 
     XPrintf_3("\n=== Fatfs 驱动器测试完成 ===\n");

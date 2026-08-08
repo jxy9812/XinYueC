@@ -91,7 +91,7 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
     }
     
 
-    return XFileSystem_seek(XIODevice_fd(&device->m_parent), pos);
+    return XFileSystem_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
 }
 
 /**
@@ -270,7 +270,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     
     int64_t actualSkip = newPos - currentPos;
     if (actualSkip > 0) {
-        XFileSystem_seek(XIODevice_fd(&device->m_parent), newPos);
+        XFileSystem_seek(XIODevice_fd(&device->m_parent), newPos, XSeekSet);
     }
     
     return actualSkip;

@@ -498,18 +498,19 @@ void XFileSystem_close(XFd fd)
     XFATFS_freeFile(fd);
 }
 
-int64_t XFileSystem_pos(XFd fd)
+int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return -1;
+    FSIZE_t target;
+    switch (whence) {
+        case XSeekSet: target = (FSIZE_t)offset; break;
+        case XSeekCur: target = (FSIZE_t)((int64_t)f_tell(fp) + offset); break;
+        case XSeekEnd: target = (FSIZE_t)((int64_t)f_size(fp) + offset); break;
+        default: return -1;
+    }
+    if ((int64_t)target < 0 || f_lseek(fp, target) != FR_OK) return -1;
     return (int64_t)f_tell(fp);
-}
-
-bool XFileSystem_seek(XFd fd, int64_t pos)
-{
-    FIL* fp = XFATFS_getFile(fd);
-    if (!fp || pos < 0) return false;
-    return f_lseek(fp, (FSIZE_t)pos) == FR_OK;
 }
 
 int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
@@ -702,8 +703,10 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 /* ============================================================================
  * 三、文件系统操作（4个）
  * ============================================================================ */
-bool XFileSystem_remove(const XString* path)
+bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath)
 {
+    (void)mode;
+    (void)trashPath;
 #if FF_FS_READONLY
     (void)path;
     return false;
@@ -1056,17 +1059,11 @@ bool XFileSystem_setCurrentPath(const XString* path)
  * 七、符号链接操作（2个）- 不支持
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath)
+bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type)
 {
     (void)targetPath;
     (void)linkPath;
-    return false;
-}
-
-bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath)
-{
-    (void)targetPath;
-    (void)hardLinkPath;
+    (void)type;
     return false;
 }
 
@@ -1077,13 +1074,6 @@ bool XFileSystem_readLink(const XString* path, XString* target)
     return false;
 }
 
-bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash)
-{
-    /* FatFs 没有回收站概念；调用方应改用 XFileSystem_remove。 */
-    (void)fileName;
-    (void)pathInTrash;
-    return false;
-}
 
 /* ============================================================================
  * 八、权限操作（1个）- 支持基本只读属性
@@ -1193,14 +1183,20 @@ bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
  * 十二、驱动器列表
  * ============================================================================ */
 
-int XFileSystem_drives_count(void)
+bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
 {
-    return XFatfsDrives_count();
-}
-
-bool XFileSystem_drives_at(int index, XString* path)
-{
-    return XFatfsDrives_at(index, path);
+    if (!callback) return false;
+    int count = XFatfsDrives_count();
+    for (int i = 0; i < count; i++) {
+        XString* path = XString_create();
+        if (!path) return false;
+        bool ok = XFatfsDrives_at(i, path);
+        if (!ok) { XString_delete_base(path); return false; }
+        bool cont = callback(path, userData);
+        XString_delete_base(path);
+        if (!cont) return false;
+    }
+    return true;
 }
 
 /* ============================================================================

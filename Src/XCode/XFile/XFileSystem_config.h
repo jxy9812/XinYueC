@@ -27,10 +27,10 @@ extern "C" {
  * 两种模式只能启用一种，优先级：PLATFORM_API > FATFS
  *
  * XFILE_USE_PLATFORM_API - 平台API模式
- *                          优点：完整支持所有30个API，性能最优
+ *                          优点：完整支持所有32个API，性能最优
  *                          缺点：依赖操作系统
  *                          适用：Windows/Linux/macOS桌面应用
- *                          API覆盖率：100%（31/31）
+ *                          API覆盖率：100%（32/32）
  *
  * XFILE_USE_FATFS         - FatFS模式
  *                          优点：跨平台，无操作系统依赖，适合嵌入式

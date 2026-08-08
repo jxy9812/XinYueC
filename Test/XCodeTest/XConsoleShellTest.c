@@ -763,7 +763,7 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
 
     crlfPath = XString_create_utf8("xconsole_shell_crlf_users_test.json");
     XCS_TEST_CHECK(crlfPath != NULL, "crlf login path");
-    XFileSystem_remove(crlfPath);
+    XFileSystem_removePermanent(crlfPath);
     crlfShell = XConsoleShell_create(&crlfIo);
     XCS_TEST_CHECK(crlfShell != NULL, "crlf shell create");
     XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
@@ -797,7 +797,7 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
                    "password prompts separated by newline");
     ok = true;
 
-    XFileSystem_remove(crlfPath);
+    XFileSystem_removePermanent(crlfPath);
     if (crlfShell) XConsoleShell_delete_base(crlfShell);
     XString_delete_base(crlfPath);
     return ok;
@@ -835,7 +835,7 @@ bool XConsoleShellTest_runAll(void)
     {
         XString* loginPath = XString_create_utf8("xconsole_shell_users_test.json");
         XCS_TEST_CHECK(loginPath != NULL, "login test path");
-        XFileSystem_remove(loginPath);
+        XFileSystem_removePermanent(loginPath);
         XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
                            shell, "xconsole_shell_users_test.json"),
                        "set login database path");
@@ -1111,7 +1111,7 @@ bool XConsoleShellTest_runAll(void)
                                                  "权限不足"),
                        "logout requires login again");
 #endif
-        XFileSystem_remove(loginPath);
+        XFileSystem_removePermanent(loginPath);
         XString_delete_base(loginPath);
         XConsoleShell_setAuthenticated(shell, true);
         XConsoleShell_session(shell)->permissionMask = UINT32_MAX;
@@ -2191,7 +2191,7 @@ bool XConsoleShellTest_runAll(void)
 #endif
     filePath = XString_create_utf8("xconsole_shell_test.txt");
     XCS_TEST_CHECK(filePath != NULL, "file path");
-    XFileSystem_remove(filePath);
+    XFileSystem_removePermanent(filePath);
     fd = XFileSystem_open(filePath, XFileSystem_WriteOnly | XFileSystem_Create |
                           XFileSystem_Truncate, &error);
     XCS_TEST_CHECK(fd != XFD_INVALID, "create shell file");
@@ -2213,7 +2213,7 @@ bool XConsoleShellTest_runAll(void)
                                                  strlen("source xconsole_shell_script.txt")) ==
                            XConsoleResult_Ok && strstr(transport.output, "scripted"),
                        "source command");
-        XFileSystem_remove(scriptPath);
+        XFileSystem_removePermanent(scriptPath);
         XString_delete_base(scriptPath);
     }
 #endif
@@ -2333,7 +2333,7 @@ bool XConsoleShellTest_runAll(void)
                                (st.permissions & XFile_ExeOther) != 0,
                            "chmod symbolic X exec on directory");
         }
-        if (dir) XFileSystem_remove(dir);
+        if (dir) XFileSystem_removePermanent(dir);
         XString_delete_base(dir);
     }
     XCS_TEST_CHECK(XConsoleShellTest_runLine(
@@ -2474,7 +2474,7 @@ bool XConsoleShellTest_runAll(void)
         char redirectText[32] = {0};
         int redirectError = 0;
         XCS_TEST_CHECK(redirectPath != NULL, "redirect path");
-        XFileSystem_remove(redirectPath);
+        XFileSystem_removePermanent(redirectPath);
         {
             XConsoleResult redirectResult = XConsoleShell_processLine(
                 shell,
@@ -2490,7 +2490,7 @@ bool XConsoleShellTest_runAll(void)
                            strcmp(redirectText, "redirected") == 0,
                        "redirect output content");
         XFileSystem_close(redirectFd);
-        XFileSystem_remove(redirectPath);
+        XFileSystem_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
 #endif
@@ -2506,7 +2506,7 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShellTest_runEditorCommands(shell, &transport),
                    "vi/vim editor commands");
 #endif
-    XFileSystem_remove(filePath);
+    XFileSystem_removePermanent(filePath);
     XString_delete_base(filePath);
     XConsoleShell_delete_base(shell);
     for (size_t i = 0; i < 10000; ++i) {

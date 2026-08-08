@@ -1076,7 +1076,7 @@ bool XDir_remove(XDir* dir, const XString* fileName)
     if (!dir || !fileName) return false;
     XString* fullPath = XDir_filePath(dir, fileName);
     if (!fullPath) return false;
-    bool result = XFileSystem_remove(fullPath);
+    bool result = XFileSystem_removePermanent(fullPath);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1286,20 +1286,24 @@ XString* XDir_tempPath(void)
     return path;
 }
 
+static bool xdir_drives_callback(const XString* path, void* userData)
+{
+    XStringList* result = (XStringList*)userData;
+    XString* drivePath = XString_create_copy(path);
+    if (!drivePath) return false;
+    XStringList_push_back_move_base(result, drivePath);
+    XString_delete_base(drivePath);
+    return true;
+}
+
 XStringList* XDir_drives(void)
 {
     XStringList* result = XStringList_create();
     if (!result) return NULL;
-    
-    int count = XFileSystem_drives_count();
-    for (int i = 0; i < count; i++) {
-        XString* drivePath = XString_create();
-        if (drivePath && XFileSystem_drives_at(i, drivePath)) {
-            XStringList_push_back_move_base(result, drivePath);
-            XString_delete_base(drivePath);
-        } else {
-            if (drivePath) XString_delete_base(drivePath);
-        }
+    if (!XFileSystem_enumerateDrives(xdir_drives_callback, result) &&
+        XStringList_size_base(result) == 0) {
+        XStringList_delete_base(result);
+        return NULL;
     }
     return result;
 }

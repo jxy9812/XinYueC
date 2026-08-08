@@ -235,7 +235,7 @@ bool XFile_remove(XFile* file)
 bool XFile_remove_static(const XString* fileName)
 {
     if (!fileName) return false;
-    return XFileSystem_remove(fileName);
+    return XFileSystem_removePermanent(fileName);
 }
 
 bool XFile_rename(XFile* file, const XString* newName)
@@ -279,7 +279,7 @@ bool XFile_link(XFile* file, const XString* linkName)
 bool XFile_link_static(const XString* fileName, const XString* linkName)
 {
     if (!fileName || !linkName) return false;
-    return XFileSystem_link(fileName, linkName);
+    return XFileSystem_link(fileName, linkName, XLinkType_Symbolic);
 }
 
 bool XFile_moveToTrash(XFile* file)
@@ -297,10 +297,10 @@ bool XFile_moveToTrash_static(const XString* fileName, XString* pathInTrash)
     /*
      * Qt 行为: QFile::moveToTrash() 在 Windows 上用 SHFileOperation(FO_DELETE|FOF_ALLOWUNDO),
      * 在 Unix 上 (Freedesktop.org Trash v1.0) 把文件 move 到 ~/.local/share/Trash/files.
-     * 平台层已经实现 XFileSystem_moveToTrash, 这里仅做一次抽象调用;
-     * 不可用时平台层自行退化到 XFileSystem_remove.
+     * 平台层已经实现 XFileSystem_remove(Trash), 这里仅做一次抽象调用;
+     * 不可用时平台层自行退化到永久删除。
      */
-    return XFileSystem_moveToTrash(fileName, pathInTrash);
+    return XFileSystem_remove(fileName, XRemoveMode_Trash, pathInTrash);
 }
 
 XString* XFile_symLinkTarget(const XFile* file)

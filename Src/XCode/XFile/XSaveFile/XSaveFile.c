@@ -179,7 +179,7 @@ static void VXSaveFile_deinit(XSaveFile* file)
     
     // 如果没有 commit，删除临时文件
     if (file->m_useTempFile && file->m_tempFileName && !file->m_committed) {
-        XFileSystem_remove(file->m_tempFileName);
+        XFileSystem_removePermanent(file->m_tempFileName);
     }
     
     // 关闭文件句柄
@@ -294,7 +294,7 @@ bool XSaveFile_commit(XSaveFile* file)
     // 已经提交或取消
     if (file->m_committed || file->m_canceled) {
         if (file->m_useTempFile && file->m_tempFileName) {
-            XFileSystem_remove(file->m_tempFileName);
+            XFileSystem_removePermanent(file->m_tempFileName);
             XString_delete_base(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
@@ -304,7 +304,7 @@ bool XSaveFile_commit(XSaveFile* file)
     // 写入过程中有错误
     if (file->m_writeError) {
         if (file->m_useTempFile && file->m_tempFileName) {
-            XFileSystem_remove(file->m_tempFileName);
+            XFileSystem_removePermanent(file->m_tempFileName);
             XString_delete_base(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
@@ -341,7 +341,7 @@ bool XSaveFile_commit(XSaveFile* file)
         // 重命名失败，尝试复制后删除
         result = XFileSystem_copy(file->m_tempFileName, file->m_fileName);
         if (result) {
-            XFileSystem_remove(file->m_tempFileName);
+            XFileSystem_removePermanent(file->m_tempFileName);
         }
         file->m_parent.m_error = XFileDevice_RenameError;
     }

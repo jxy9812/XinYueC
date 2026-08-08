@@ -9,20 +9,20 @@
  *          平台实现负责在边界处转换为平台编码。
  *
  * ============================================================================
- * API 分类统计（共34个平台函数 + 1个内联便捷函数）：
+ * API 分类统计（共32个平台函数 + 3个内联便捷函数）：
  * ============================================================================
  *
- * 一、核心文件操作（8个）- 必需实现
+ * 一、核心文件操作（10个）- 必需实现（pos 合并进 seek）
  * 二、文件属性操作（2个）- 必需实现（+ XFileSystem_exists 内联便捷函数）
  * 三、文件系统操作（3个）- 必需实现
  * 四、目录操作（5个）- 必需实现（rmdir 合并了递归删除）
  * 五、路径操作（1个）- 必需实现
  * 六、特殊路径（2个）- 合并了5个路径函数为 getSpecialPath + setCurrentPath
- * 七、链接操作（3个）- 可选
+ * 七、链接操作（2个）- 可选（link 合并了符号/硬链接）
  * 八、权限操作（1个）- 可选
  * 九、内存映射（2个）- 可选
  * 十、文件时间修改（1个）- 仅fd版，路径版由上层 open→setFileTime→close 组合
- * 十一、驱动器列表（2个）- 可选
+ * 十一、驱动器列表（1个）- 可选（enumerateDrives 合并 count/at）
  * 十二、存储设备信息（1个）- 可选
  * 十三、磁盘格式化（1个）- 可选
  */
@@ -140,19 +140,33 @@ bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled);
 void XFileSystem_close(XFd fd);
 
 /**
- * @brief 查询文件当前读写位置。
+ * @brief 文件定位基准。
+ * @note 枚举值不可按位组合。
+ */
+typedef enum {
+    XSeekSet,  /**< 从文件起点起算。 */
+    XSeekCur,  /**< 从当前读写位置起算。 */
+    XSeekEnd,  /**< 从文件末尾起算。 */
+} XSeekWhence;
+
+/**
+ * @brief 移动文件当前读写位置并返回新位置。
+ * @param fd 已打开的文件描述符；借用。
+ * @param offset 相对 whence 基准的字节偏移；SET 基准下必须非负。
+ * @param whence 定位基准，取值为 XSeekWhence。
+ * @return 成功返回新的字节偏移（从文件起点起算）；失败返回 -1。
+ * @note 查询当前位置可使用内联便捷函数 XFileSystem_pos。
+ */
+int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence);
+
+/**
+ * @brief 查询文件当前读写位置（定位零偏移的便捷内联函数）。
  * @param fd 已打开的文件描述符；借用。
  * @return 从文件起点起算的字节偏移；失败返回 -1。
  */
-int64_t XFileSystem_pos(XFd fd);
-
-/**
- * @brief 将文件当前读写位置移动到指定字节偏移。
- * @param fd 已打开的文件描述符；借用。
- * @param pos 从文件起点起算的目标字节偏移；必须非负。
- * @return 定位成功返回 true；描述符无效、偏移非法或平台调用失败返回 false。
- */
-bool XFileSystem_seek(XFd fd, int64_t pos);
+static inline int64_t XFileSystem_pos(XFd fd) {
+    return XFileSystem_seek(fd, 0, XSeekCur);
+}
 
 /**
  * @brief 从文件当前位置读取字节。
@@ -226,12 +240,35 @@ static inline bool XFileSystem_exists(const XString* path) {
  * ============================================================================ */
 
 /**
- * @brief 删除路径指向的文件。
- * @param path 待删除路径；借用，不能为 NULL。
- * @return 删除成功返回 true；路径不存在、指向非空目录或平台调用失败返回 false。
- * @note 目录删除请使用 XFileSystem_rmdir；本函数不会转移 path 的所有权。
+ * @brief 删除方式。
+ * @note 枚举值不可按位组合。
  */
-bool XFileSystem_remove(const XString* path);
+typedef enum {
+    XRemoveMode_Permanent,  /**< 立即从文件系统中删除，不可恢复。 */
+    XRemoveMode_Trash,      /**< 移动到操作系统回收站，用户可恢复；平台不支持时退化为永久删除。 */
+} XRemoveMode;
+
+/**
+ * @brief 按指定方式删除路径指向的文件或空目录。
+ * @param path 待删除路径；借用，不能为 NULL。
+ * @param mode 删除方式，取值为 XRemoveMode。
+ * @param trashPath 可选的调用方输出 XString；mode 为 XRemoveMode_Trash
+ *                  且非 NULL 时，成功后写入回收站目标路径（不可用时写空串）。
+ * @return 删除成功返回 true；路径不存在、目录非空或平台调用失败返回 false。
+ * @note 目录删除请使用 XFileSystem_rmdir；本函数不会转移 path 的所有权。
+ *       remove = 立即删除不可恢复；moveToTrash 等价于 XFileSystem_remove(path,
+ *       XRemoveMode_Trash, NULL)。
+ */
+bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath);
+
+/**
+ * @brief 永久删除路径（便捷内联函数）。
+ * @param path 待删除路径；借用，不能为 NULL。
+ * @return 删除成功返回 true；失败返回 false。
+ */
+static inline bool XFileSystem_removePermanent(const XString* path) {
+    return XFileSystem_remove(path, XRemoveMode_Permanent, NULL);
+}
 
 /**
  * @brief 将文件或目录重命名到新路径。
@@ -335,20 +372,23 @@ bool XFileSystem_setCurrentPath(const XString* path);
  * ============================================================================ */
 
 /**
- * @brief 创建指向目标路径的符号链接。
- * @param targetPath 符号链接保存的目标路径；借用，不能为 NULL。
- * @param linkPath 要创建的链接路径；借用，不能为 NULL。
- * @return 创建成功返回 true；平台不支持、目标路径已存在或调用失败返回 false。
+ * @brief 链接类型。
+ * @note 枚举值不可按位组合。
  */
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath);
+typedef enum {
+    XLinkType_Symbolic, /**< 符号链接。 */
+    XLinkType_Hard,     /**< 硬链接。 */
+} XLinkType;
 
 /**
- * @brief 创建指向目标文件的硬链接。
- * @param targetPath 目标文件路径；借用，不能为 NULL。
- * @param hardLinkPath 要创建的硬链接路径；借用，不能为 NULL。
- * @return 创建成功返回 true；平台不支持、目标不是普通文件或调用失败返回 false。
+ * @brief 创建指向目标路径的链接。
+ * @param targetPath 链接保存的目标路径；借用，不能为 NULL。
+ * @param linkPath 要创建的链接路径；借用，不能为 NULL。
+ * @param type 链接类型，取值为 XLinkType。
+ * @return 创建成功返回 true；平台不支持、目标路径已存在或调用失败返回 false。
+ * @note 符号链接对应原 XFileSystem_link，硬链接对应原 XFileSystem_hardLink。
  */
-bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath);
+bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type);
 
 /**
  * @brief 读取符号链接中保存的目标路径。
@@ -411,23 +451,24 @@ bool XFileSystem_unmap(void* addr, int64_t size);
 bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue);
 
 /* ============================================================================
- * 十一、驱动器列表（2个）- 可选
+ * 十一、驱动器列表（1个）- 可选
  * ============================================================================ */
 
-/**
- * @brief 查询当前平台可枚举的根路径数量。
- * @return 根路径数量；无法枚举时返回 0。
- * @note POSIX 通常返回一个根路径，Windows 可返回多个逻辑驱动器。
+/** @brief 驱动器枚举回调。
+ * @param path 当前根路径；借用在回调返回后失效。
+ * @param userData 调用 XFileSystem_enumerateDrives 时传入的借用用户数据；可为 NULL。
+ * @return 返回 true 继续枚举；返回 false 请求平台尽快停止。
  */
-int XFileSystem_drives_count(void);
+typedef bool (*XFileSystemDriveCallback)(const XString* path, void* userData);
 
 /**
- * @brief 查询指定索引处的根路径。
- * @param index 根路径索引，范围为 0 到 XFileSystem_drives_count() - 1。
- * @param path 调用方提供的已初始化 XString 输出对象；成功时写入路径，不能为 NULL。
- * @return 索引有效且查询成功返回 true；索引越界或平台调用失败返回 false。
+ * @brief 枚举当前平台可用的根路径。
+ * @param callback 枚举回调；不能为 NULL。
+ * @param userData 原样传给 callback 的用户数据；借用，可为 NULL。
+ * @return 枚举正常结束返回 true；参数无效或回调请求停止返回 false。
+ * @note POSIX 通常只枚举一个根路径 "/"，Windows 可枚举多个逻辑驱动器。
  */
-bool XFileSystem_drives_at(int index, XString* path);
+bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData);
 
 /* ============================================================================
  * 十二、存储设备信息（1个）- 可选
@@ -442,18 +483,6 @@ bool XFileSystem_drives_at(int index, XString* path);
  */
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info);
 
-/**
- * @brief 将文件移动到回收站（XDG Trash / Windows Shell / macOS Trash）
- * @param fileName 源文件路径；借用，不能为 NULL。
- * @param pathInTrash 可选的调用方输出 XString；非 NULL 时成功后写入回收站目标路径。
- * @return 成功返回 true，失败返回 false
- * @note POSIX 端按 FreeDesktop Trash 规范实现；Windows 端调用 SHFileOperationW；
- *       若平台不可用可退化为直接 unlink/DeleteFile，调用方不能据此假设一定可恢复。
- *       这与 XFileSystem_remove (XFile::remove) 的语义不同:
- *         remove     = 立即从文件系统中删除, 不可恢复
- *         moveToTrash = 移动到 OS 回收站, 用户可恢复
- */
-bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash);
 
 /* ============================================================================
  * 十三、磁盘格式化（1个）- 可选

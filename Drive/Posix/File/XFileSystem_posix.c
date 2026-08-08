@@ -169,16 +169,17 @@ void XFileSystem_close(XFd fdx) {
     XFd_free(fdx);
 }
 
-int64_t XFileSystem_pos(XFd fdx) {
+int64_t XFileSystem_seek(XFd fdx, int64_t offset, XSeekWhence whence) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return -1;
-    return (int64_t)lseek(fd, 0, SEEK_CUR);
-}
-
-bool XFileSystem_seek(XFd fdx, int64_t pos) {
-    int fd = XFS_getFd(fdx);
-    if (fd < 0) return false;
-    return lseek(fd, pos, SEEK_SET) >= 0;
+    int flag;
+    switch (whence) {
+        case XSeekSet: flag = SEEK_SET; break;
+        case XSeekCur: flag = SEEK_CUR; break;
+        case XSeekEnd: flag = SEEK_END; break;
+        default: return -1;
+    }
+    return (int64_t)lseek(fd, offset, flag);
 }
 
 int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
@@ -335,7 +336,7 @@ static bool ensureTrashDir(const char* trashDir, const char* infoDir)
     return errno == EEXIST;
 }
 
-bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
+static bool xfs_moveToTrash(const XString* fileName, XString* pathInTrash) {
     if (!fileName) return false;
     const char* src = XString_toUtf8(fileName);
     if (!src) return false;
@@ -351,7 +352,7 @@ bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
             struct passwd* pw = getpwuid(getuid());
             home = pw ? pw->pw_dir : NULL;
         }
-        if (!home) return XFileSystem_remove(fileName);
+        if (!home) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
         snprintf(trashRoot, sizeof(trashRoot), "%s/.local/share/Trash", home);
     }
 
@@ -359,8 +360,8 @@ bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
     char infoDir[4200];
     snprintf(filesDir, sizeof(filesDir), "%s/files", trashRoot);
     snprintf(infoDir, sizeof(infoDir), "%s/info", trashRoot);
-    if (!ensureTrashDir(filesDir, infoDir) && errno != EEXIST) return XFileSystem_remove(fileName);
-    if (!ensureTrashDir(infoDir, NULL) && errno != EEXIST) return XFileSystem_remove(fileName);
+    if (!ensureTrashDir(filesDir, infoDir) && errno != EEXIST) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
+    if (!ensureTrashDir(infoDir, NULL) && errno != EEXIST) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
 
     /* 2. 解析原文件 basename, 必要时按 XDateTime 时间戳去重 */
     const char* base = strrchr(src, '/');
@@ -381,23 +382,24 @@ bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash) {
         return true;
     }
     int sfd = open(src, O_RDONLY);
-    if (sfd < 0) return XFileSystem_remove(fileName);
+    if (sfd < 0) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
     int dfd = open(dest, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (dfd < 0) { close(sfd); return XFileSystem_remove(fileName); }
+    if (dfd < 0) { close(sfd); return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL); }
     char buf[8192]; ssize_t n; bool ok = true;
     while ((n = read(sfd, buf, sizeof(buf))) > 0) {
         if (!XFS_writeAll(dfd, buf, (size_t)n)) { ok = false; break; }
     }
     if (n < 0) ok = false;
     close(sfd); close(dfd);
-    if (!ok) { unlink(dest); return XFileSystem_remove(fileName); }
+    if (!ok) { unlink(dest); return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL); }
     if (unlink(src) != 0) { unlink(dest); return false; }
     if (pathInTrash) XString_assign_utf8(pathInTrash, dest);
     return true;
 }
 
-bool XFileSystem_remove(const XString* path) {
+bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath) {
     if (!path) return false;
+    if (mode == XRemoveMode_Trash) return xfs_moveToTrash(path, trashPath);
     return unlink(XString_toUtf8(path)) == 0;
 }
 
@@ -679,14 +681,10 @@ bool XFileSystem_setCurrentPath(const XString* path) {
  * 七、符号链接操作
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath) {
+bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type) {
     if (!targetPath || !linkPath) return false;
+    if (type == XLinkType_Hard) return link(XString_toUtf8(targetPath), XString_toUtf8(linkPath)) == 0;
     return symlink(XString_toUtf8(targetPath), XString_toUtf8(linkPath)) == 0;
-}
-
-bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath) {
-    if (!targetPath || !hardLinkPath) return false;
-    return link(XString_toUtf8(targetPath), XString_toUtf8(hardLinkPath)) == 0;
 }
 
 bool XFileSystem_readLink(const XString* path, XString* target) {
@@ -794,14 +792,14 @@ bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
  * 十一、驱动器列表
  * ============================================================================ */
 
-int XFileSystem_drives_count(void) {
-    return 1;
-}
-
-bool XFileSystem_drives_at(int index, XString* path) {
-    if (index != 0 || !path) return false;
-    XString_assign_utf8(path, "/");
-    return true;
+bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
+{
+    if (!callback) return false;
+    XString* path = XString_create_utf8("/");
+    if (!path) return false;
+    bool cont = callback(path, userData);
+    XString_delete_base(path);
+    return cont;
 }
 
 /* ============================================================================

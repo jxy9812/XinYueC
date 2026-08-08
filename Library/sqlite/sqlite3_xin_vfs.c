@@ -203,7 +203,7 @@ static int xsqlite_file_close(sqlite3_file* file)
         sqliteFile->m_fd = XFD_INVALID;
     }
     if (sqliteFile->m_deleteOnClose && sqliteFile->m_path
-        && !XFileSystem_remove(sqliteFile->m_path)) {
+        && !XFileSystem_removePermanent(sqliteFile->m_path)) {
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_path) {
@@ -225,7 +225,7 @@ static int xsqlite_file_read(sqlite3_file* file, void* buffer, int amount,
     int64_t readSize;
     if (!xsqlite_file_is_open(sqliteFile) || !buffer || amount < 0 || offset < 0)
         return SQLITE_IOERR_READ;
-    if (!XFileSystem_seek(sqliteFile->m_fd, offset)) return SQLITE_IOERR_SEEK;
+    if (XFileSystem_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
     readSize = XFileSystem_read(sqliteFile->m_fd, buffer, amount);
     if (readSize == amount) return SQLITE_OK;
     if (readSize >= 0 && readSize < amount) {
@@ -242,7 +242,7 @@ static int xsqlite_file_write(sqlite3_file* file, const void* buffer, int amount
     int64_t written;
     if (!xsqlite_file_is_open(sqliteFile) || !buffer || amount < 0 || offset < 0)
         return SQLITE_IOERR_WRITE;
-    if (!XFileSystem_seek(sqliteFile->m_fd, offset)) return SQLITE_IOERR_SEEK;
+    if (XFileSystem_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
     written = XFileSystem_write(sqliteFile->m_fd, buffer, amount);
     return written == amount ? SQLITE_OK : SQLITE_IOERR_WRITE;
 }
@@ -494,7 +494,7 @@ static int xsqlite_file_shm_unmap(sqlite3_file* file, int deleteFlag)
     }
     if (deleteFlag && sqliteFile->m_shmPath
         && XFileSystem_exists(sqliteFile->m_shmPath)
-        && !XFileSystem_remove(sqliteFile->m_shmPath)) {
+        && !XFileSystem_removePermanent(sqliteFile->m_shmPath)) {
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_shmPath) {
@@ -596,7 +596,7 @@ static int xsqlite_vfs_delete(sqlite3_vfs* vfs, const char* name, int syncDir)
         XString_delete_base(path);
         return SQLITE_OK;
     }
-    if (!XFileSystem_remove(path)) {
+    if (!XFileSystem_removePermanent(path)) {
         XString_delete_base(path);
         return SQLITE_IOERR_DELETE;
     }

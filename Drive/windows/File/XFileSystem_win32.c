@@ -301,25 +301,22 @@ void XFileSystem_close(XFd fd)
     XFd_free(fd);
 }
 
-int64_t XFileSystem_pos(XFd fd)
+int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return -1;
-    LARGE_INTEGER zero;
-    zero.QuadPart = 0;
-    LARGE_INTEGER pos;
-    if (!SetFilePointerEx(h, zero, &pos, FILE_CURRENT)) return -1;
-    return (int64_t)pos.QuadPart;
-}
-
-bool XFileSystem_seek(XFd fd, int64_t pos)
-{
-    HANDLE h = XW32_getFile(fd);
-    if (h == INVALID_HANDLE_VALUE || pos < 0) return false;
+    DWORD method;
+    switch (whence) {
+        case XSeekSet: method = FILE_BEGIN; break;
+        case XSeekCur: method = FILE_CURRENT; break;
+        case XSeekEnd: method = FILE_END; break;
+        default: return -1;
+    }
     LARGE_INTEGER li;
-    li.QuadPart = (LONGLONG)pos;
+    li.QuadPart = (LONGLONG)offset;
     LARGE_INTEGER newpos;
-    return SetFilePointerEx(h, li, &newpos, FILE_BEGIN) != 0;
+    if (!SetFilePointerEx(h, li, &newpos, method)) return -1;
+    return (int64_t)newpos.QuadPart;
 }
 
 int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
@@ -496,18 +493,43 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 }
 
 
-bool XFileSystem_remove(const XString* path)
+bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath)
 {
     if (!path) return false;
-    
+
+    if (mode == XRemoveMode_Trash) {
+        wchar_t* wpath = XStringToWidePath(path);
+        if (!wpath) return false;
+        size_t len = wcslen(wpath);
+        wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
+        if (!wpathDouble) { XFree_System(wpath); return false; }
+        wcscpy(wpathDouble, wpath);
+        wpathDouble[len] = 0;
+        wpathDouble[len + 1] = 0;
+        XFree_System(wpath);
+
+        SHFILEOPSTRUCTW shfos;
+        memset(&shfos, 0, sizeof(shfos));
+        shfos.wFunc = FO_DELETE;
+        shfos.pFrom = wpathDouble;
+        shfos.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+        int rc = SHFileOperationW(&shfos);
+        XFree_System(wpathDouble);
+        if (rc == 0 && !shfos.fAnyOperationsAborted) {
+            if (trashPath) XString_assign_utf8(trashPath, "");
+            return true;
+        }
+        /* 回收站不可用时退化为永久删除 */
+    }
+
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
-    
+
     BOOL result = DeleteFileW(wpath);
     if (!result) {
         result = RemoveDirectoryW(wpath);
     }
-    
+
     XFree_System(wpath);
     return result != 0;
 }
@@ -823,46 +845,33 @@ bool XFileSystem_setCurrentPath(const XString* path)
  * 符号链接操作
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath)
+bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type)
 {
     if (!targetPath || !linkPath) return false;
-    
+
     wchar_t* wtarget = XStringToWidePath(targetPath);
     wchar_t* wlink = XStringToWidePath(linkPath);
-    
+
     if (!wtarget || !wlink) {
         if (wtarget) XFree_System(wtarget);
         if (wlink) XFree_System(wlink);
         return false;
     }
-    
-    BOOLEAN result = CreateSymbolicLinkW(wlink, wtarget, 0);
-    if (!result) {
+
+    BOOL result;
+    if (type == XLinkType_Hard) {
         result = CreateHardLinkW(wlink, wtarget, NULL);
-    }
-    
-    XFree_System(wtarget);
-    XFree_System(wlink);
-    
-    return result != 0;
-}
-
-bool XFileSystem_hardLink(const XString* targetPath, const XString* hardLinkPath)
-{
-    if (!targetPath || !hardLinkPath) return false;
-
-    wchar_t* wtarget = XStringToWidePath(targetPath);
-    wchar_t* wlink = XStringToWidePath(hardLinkPath);
-
-    if (!wtarget || !wlink) {
-        if (wtarget) XFree_System(wtarget);
-        if (wlink) XFree_System(wlink);
-        return false;
+    } else {
+        BOOLEAN sr = CreateSymbolicLinkW(wlink, wtarget, 0);
+        if (!sr) {
+            sr = CreateHardLinkW(wlink, wtarget, NULL);
+        }
+        result = sr;
     }
 
-    BOOL result = CreateHardLinkW(wlink, wtarget, NULL);
     XFree_System(wtarget);
     XFree_System(wlink);
+
     return result != 0;
 }
 
@@ -956,42 +965,6 @@ bool XFileSystem_unmap(void* addr, int64_t size)
     return UnmapViewOfFile(addr) != 0;
 }
 
-/* ============================================================================
- * 回收站 (SHFileOperation)
- * ============================================================================ */
-
-/**
- * @brief Windows 端将文件移动到回收站。
- *        使用 SHFileOperationW(FO_DELETE|FOF_ALLOWUNDO); 失败时退化为 XFileSystem_remove.
- */
-bool XFileSystem_moveToTrash(const XString* fileName, XString* pathInTrash)
-{
-    if (!fileName) return false;
-    wchar_t* wpath = XStringToWidePath(fileName);
-    if (!wpath) return false;
-    size_t len = wcslen(wpath);
-    wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
-    if (!wpathDouble) { XFree_System(wpath); return false; }
-    wcscpy(wpathDouble, wpath);
-    wpathDouble[len] = 0;
-    wpathDouble[len + 1] = 0;
-    XFree_System(wpath);
-
-    SHFILEOPSTRUCTW shfos;
-    memset(&shfos, 0, sizeof(shfos));
-    shfos.wFunc = FO_DELETE;
-    shfos.pFrom = wpathDouble;
-    shfos.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
-    int rc = SHFileOperationW(&shfos);
-    XFree_System(wpathDouble);
-    if (rc == 0 && !shfos.fAnyOperationsAborted) {
-        if (pathInTrash) XString_assign_utf8(pathInTrash, "");
-        return true;
-    }
-    /* 退化: 直接删除 */
-    return XFileSystem_remove(fileName);
-}
-
 /**
  * @brief 通过文件描述符设置文件时间
  * @param fd 文件描述符（XFileDescriptor 表索引）
@@ -1031,43 +1004,28 @@ bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
  * 驱动器列表
  * ============================================================================ */
 
-int XFileSystem_drives_count(void)
+bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
 {
+    if (!callback) return false;
+    
     DWORD driveMask = GetLogicalDrives();
-    int count = 0;
     
     for (int i = 0; i < 26; i++) {
-        if (driveMask & (1 << i)) {
-            count++;
+        if (driveMask & (1u << i)) {
+            char drivePath[4];
+            drivePath[0] = 'A' + i;
+            drivePath[1] = ':';
+            drivePath[2] = '\\';
+            drivePath[3] = '\0';
+            XString* path = XString_create_utf8(drivePath);
+            if (!path) return false;
+            bool cont = callback(path, userData);
+            XString_delete_base(path);
+            if (!cont) return false;
         }
     }
     
-    return count;
-}
-
-bool XFileSystem_drives_at(int index, XString* path)
-{
-    if (!path || index < 0) return false;
-    
-    DWORD driveMask = GetLogicalDrives();
-    int count = 0;
-    
-    for (int i = 0; i < 26; i++) {
-        if (driveMask & (1 << i)) {
-            if (count == index) {
-                char drivePath[4];
-                drivePath[0] = 'A' + i;
-                drivePath[1] = ':';
-                drivePath[2] = '\\';
-                drivePath[3] = '\0';
-                XString_assign_utf8(path, drivePath);
-                return true;
-            }
-            count++;
-        }
-    }
-    
-    return false;
+    return true;
 }
 
 /* ============================================================================
