@@ -25,6 +25,7 @@ extern "C" {
 #include "XTimer.h"
 #include "XHashMap.h"
 #include "XFileDescriptor.h"
+#include "XConsoleShellConfig.h"
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct XHrTimerGroup XHrTimerGroup;
@@ -52,6 +53,8 @@ typedef struct XAbstractEventDispatcherPrivate
     XAtomic_bool m_interrupt;      ///< 中断标志，阻止阻塞等待
     XThreadData* m_threadData;    ///< 反向引用：本调度器所属线程的 XThreadData（工作线程信号量唤醒用）
     //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
+    void* m_consoleTransport;     ///< 默认 Shell 的标准输入传输（由调度器持有并释放）
+    void* m_consoleShell;         ///< 默认 Shell 实例（由调度器持有，析构时释放）
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);
@@ -279,6 +282,17 @@ XTimerId XAbstractEventDispatcher_registerTimer(
  * @return 调度器指针。
  */
 XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread);
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+struct XConsoleShell;
+
+/** @brief 获取事件调度器托管的默认控制台 Shell（惰性创建）。 */
+struct XConsoleShell* XAbstractEventDispatcher_consoleShell(XAbstractEventDispatcher* self);
+
+/** @brief 运行事件调度器托管的默认控制台 Shell 所属事件循环。 */
+int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self);
+#endif
 
 // ===================================================================
 // === 信号模拟（通过 XObject 信号槽） ================================

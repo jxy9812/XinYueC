@@ -79,37 +79,77 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
                        int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
 {
     HANDLE icmpHandle = INVALID_HANDLE_VALUE;
-    IP_OPTION_INFORMATION options;
-    ICMP_ECHO_REPLY* reply;
-    size_t replyCapacity;
-    DWORD replyCount;
     bool result = false;
     (void)identifier;
     (void)sequence;
-    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+    if (!address ||
+        (XHostAddress_protocol(address) != XHostAddress_IPv4Protocol &&
+         XHostAddress_protocol(address) != XHostAddress_IPv6Protocol) ||
         (payloadSize && !payload) || payloadSize > 65507u || timeoutMilliseconds <= 0)
         return false;
-    icmpHandle = IcmpCreateFile();
-    if (icmpHandle == INVALID_HANDLE_VALUE) return false;
-    replyCapacity = sizeof(ICMP_ECHO_REPLY) + payloadSize + 8u;
-    reply = (ICMP_ECHO_REPLY*)XMalloc_System(replyCapacity);
-    if (!reply) {
+
+    if (XHostAddress_protocol(address) == XHostAddress_IPv4Protocol) {
+        IP_OPTION_INFORMATION options;
+        ICMP_ECHO_REPLY* reply;
+        size_t replyCapacity;
+        DWORD replyCount;
+
+        icmpHandle = IcmpCreateFile();
+        if (icmpHandle == INVALID_HANDLE_VALUE) return false;
+        replyCapacity = sizeof(ICMP_ECHO_REPLY) + payloadSize + 8u;
+        reply = (ICMP_ECHO_REPLY*)XMalloc_System(replyCapacity);
+        if (!reply) {
+            IcmpCloseHandle(icmpHandle);
+            return false;
+        }
+        memset(&options, 0, sizeof(options));
+        options.Ttl = 128;
+        replyCount = IcmpSendEcho(icmpHandle,
+                                   htonl(XHostAddress_toIPv4Address(address)),
+                                   (LPVOID)payload, (WORD)payloadSize, &options,
+                                   reply, (DWORD)replyCapacity,
+                                   (DWORD)timeoutMilliseconds);
+        if (replyCount > 0 && reply[0].Status == IP_SUCCESS) {
+            if (elapsedMilliseconds) *elapsedMilliseconds = reply[0].RoundTripTime;
+            result = true;
+        }
+        XFree_System(reply);
         IcmpCloseHandle(icmpHandle);
-        return false;
+    } else {
+        struct sockaddr_in6 source;
+        struct sockaddr_in6 destination;
+        ICMPV6_ECHO_REPLY* reply;
+        IP_OPTION_INFORMATION options;
+        size_t replyCapacity;
+        DWORD replyCount;
+
+        icmpHandle = Icmp6CreateFile();
+        if (icmpHandle == INVALID_HANDLE_VALUE) return false;
+        replyCapacity = sizeof(ICMPV6_ECHO_REPLY) + payloadSize + 8u;
+        reply = (ICMPV6_ECHO_REPLY*)XMalloc_System(replyCapacity);
+        if (!reply) {
+            IcmpCloseHandle(icmpHandle);
+            return false;
+        }
+        memset(&source, 0, sizeof(source));
+        memset(&destination, 0, sizeof(destination));
+        source.sin6_family = AF_INET6;
+        destination.sin6_family = AF_INET6;
+        XHostAddress_toIPv6Address(address, (uint8_t*)&destination.sin6_addr);
+        memset(&options, 0, sizeof(options));
+        options.Ttl = 128;
+        replyCount = Icmp6SendEcho2(icmpHandle, NULL, NULL, NULL,
+                                    &source, &destination,
+                                    (LPVOID)payload, (WORD)payloadSize, &options,
+                                    reply, (DWORD)replyCapacity,
+                                    (DWORD)timeoutMilliseconds);
+        if (replyCount > 0 && reply[0].Status == IP_SUCCESS) {
+            if (elapsedMilliseconds) *elapsedMilliseconds = reply[0].RoundTripTime;
+            result = true;
+        }
+        XFree_System(reply);
+        IcmpCloseHandle(icmpHandle);
     }
-    memset(&options, 0, sizeof(options));
-    options.Ttl = 128;
-    replyCount = IcmpSendEcho(icmpHandle,
-                               htonl(XHostAddress_toIPv4Address(address)),
-                               (LPVOID)payload, (WORD)payloadSize, &options,
-                               reply, (DWORD)replyCapacity,
-                               (DWORD)timeoutMilliseconds);
-    if (replyCount > 0 && reply[0].Status == IP_SUCCESS) {
-        if (elapsedMilliseconds) *elapsedMilliseconds = reply[0].RoundTripTime;
-        result = true;
-    }
-    XFree_System(reply);
-    IcmpCloseHandle(icmpHandle);
     return result;
 }
 /* =========================================================================

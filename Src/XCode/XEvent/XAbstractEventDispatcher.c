@@ -13,12 +13,149 @@
 #include "XNetwork.h"
 #include <string.h>
 #include <stdlib.h>
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+#include "XConsoleShell.h"
+#include "XFileSystem.h"
+#include "XPrintf.h"
+#include <stdio.h>
+#endif
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
 static XMutex* global_mutex = NULL;
 #define PlatformPrivate(Dispatcher)  (((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
 #define GetXMutex(Dispatcher)         PlatformPrivate(Dispatcher)->mutex
 #define Global_Lock             XMutex_lock(global_mutex)
 #define Global_UnLock           XMutex_unlock(global_mutex)
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+
+typedef struct MainConsoleTransport {
+    XFd inputFd;     /* 由 XFileSystem 管理的非阻塞标准输入描述符。 */
+    bool endOfInput; /* 标准输入已到文件尾。 */
+} MainConsoleTransport;
+
+static int64_t console_read(void* userData, void* data, size_t size)
+{
+    MainConsoleTransport* transport = (MainConsoleTransport*)userData;
+    int64_t result;
+    if (!transport || (!data && size) || size == 0 ||
+        transport->inputFd == XFD_INVALID) return -1;
+    result = XFileSystem_readStandardInput(transport->inputFd, data,
+                                            (int64_t)size);
+    if (result == -1) transport->endOfInput = true;
+    return result == -2 ? -1 : result;
+}
+
+static bool console_attach(void* userData, XConsoleShell* shell)
+{
+    MainConsoleTransport* transport = (MainConsoleTransport*)userData;
+    int error = 0;
+    (void)shell;
+    if (!transport) return false;
+    transport->inputFd = XFileSystem_openStandardInput(&error);
+    transport->endOfInput = false;
+    return transport->inputFd != XFD_INVALID;
+}
+
+static void console_detach(void* userData, XConsoleShell* shell)
+{
+    MainConsoleTransport* transport = (MainConsoleTransport*)userData;
+    (void)shell;
+    if (!transport) return;
+    if (transport->inputFd != XFD_INVALID) {
+        XFileSystem_close(transport->inputFd);
+        transport->inputFd = XFD_INVALID;
+    }
+}
+
+static bool console_input_echo(void* userData, bool enabled)
+{
+    MainConsoleTransport* transport = (MainConsoleTransport*)userData;
+    if (!transport || transport->inputFd == XFD_INVALID) return false;
+    return XFileSystem_setStandardInputEcho(transport->inputFd, enabled);
+}
+
+static void console_prompt(void* userData, XConsoleShell* shell)
+{
+    const char* name = NULL;
+    (void)userData;
+#if XCONSOLE_SHELL_LOGIN_ON
+    name = XConsoleShellLogin_userName(shell);
+#endif
+    if (!name || !name[0]) name = XCONSOLE_SHELL_DEFAULT_PROMPT_NAME;
+    (void)XConsoleShell_writeUtf8(shell, name);
+    (void)XConsoleShell_writeUtf8(shell, "> ");
+}
+
+static int64_t console_write(void* userData, const void* data, size_t size)
+{
+    (void)userData;
+    if ((!data && size) || (size && fwrite(data, 1, size, stdout) != size)) return -1;
+    return (int64_t)size;
+}
+
+static bool console_flush(void* userData)
+{
+    (void)userData;
+    return fflush(stdout) == 0;
+}
+
+static XConsoleShell* create_shell(MainConsoleTransport* transport)
+{
+    XConsoleShellIo io;
+    XConsoleShell* shell;
+    memset(&io, 0, sizeof(io));
+    io.read = console_read;
+    io.write = console_write;
+    io.flush = console_flush;
+    io.inputAttach = console_attach;
+    io.inputDetach = console_detach;
+    io.inputEcho = console_input_echo;
+    io.prompt = console_prompt;
+    io.userData = transport;
+    shell = XConsoleShell_create(&io);
+    if (!shell) {
+        XPrintf("默认 Shell 初始化失败\n");
+        return NULL;
+    }
+    console_prompt(transport, shell);
+    return shell;
+}
+
+static bool console_shell_attach(XAbstractEventDispatcher* self)
+{
+    XAbstractEventDispatcherPrivate* dp;
+    MainConsoleTransport* transport;
+    XConsoleShell* shell;
+    if (!self || !self->d_ptr) return false;
+    dp = self->d_ptr;
+    if (dp->m_consoleShell) return true;
+    transport = (MainConsoleTransport*)XCalloc_System(1, sizeof(MainConsoleTransport));
+    if (!transport) return false;
+    transport->inputFd = XFD_INVALID;
+    transport->endOfInput = false;
+    shell = create_shell(transport);
+    if (!shell) {
+        XFree_System(transport);
+        return false;
+    }
+    dp->m_consoleTransport = transport;
+    dp->m_consoleShell = shell;
+    return true;
+}
+
+XConsoleShell* XAbstractEventDispatcher_consoleShell(XAbstractEventDispatcher* self)
+{
+    if (!console_shell_attach(self)) return NULL;
+    return (XConsoleShell*)self->d_ptr->m_consoleShell;
+}
+
+int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self)
+{
+    if (!console_shell_attach(self)) return 1;
+    return XCoreApplication_exec();
+}
+#endif
 // 前向声明虚函数
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags);
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier);
@@ -47,10 +184,27 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->m_ioRing = NULL;
     XAtomic_init(dp->m_interrupt, false);
     dp->m_threadData = NULL;
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+    dp->m_consoleTransport = NULL;
+    dp->m_consoleShell = NULL;
+#endif
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
 {
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+    /* 默认 Shell 由调度器托管，析构时先停止异步并释放传输。 */
+    if (dp->m_consoleShell) {
+        XConsoleShell_delete_base((XConsoleShell*)dp->m_consoleShell);
+        dp->m_consoleShell = NULL;
+    }
+    if (dp->m_consoleTransport) {
+        XFree_System(dp->m_consoleTransport);
+        dp->m_consoleTransport = NULL;
+    }
+#endif
     if (dp->m_hrtimerGroup)
     {
         XClass_delete_base(dp->m_hrtimerGroup);

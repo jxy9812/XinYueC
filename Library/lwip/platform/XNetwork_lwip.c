@@ -68,6 +68,10 @@
 #include "lwip/prot/icmp.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/ip4.h"
+#if LWIP_IPV6
+#include "lwip/prot/icmp6.h"
+#include "lwip/ip6.h"
+#endif
 #endif
 
 #include "CXinYueConfig.h"  /* XAbstractNetIoRing_ON */
@@ -279,29 +283,43 @@ static void addr_to_ip(const XHostAddress* a, ip_addr_t* ip) {
     }
 }
 
-#if LWIP_RAW && LWIP_IPV4
+#if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
 typedef struct XNetworkIcmpWait {
     volatile bool done;
     volatile bool matched;
     uint16_t identifier;
     uint16_t sequence;
+    bool isIpv6;
 } XNetworkIcmpWait;
 
 static u8_t xnetwork_icmp_recv(void* argument, struct raw_pcb* pcb,
                                struct pbuf* packet, const ip_addr_t* source)
 {
     XNetworkIcmpWait* wait = (XNetworkIcmpWait*)argument;
-    struct ip_hdr* ipHeader;
     struct icmp_echo_hdr echo;
     u16_t headerLength;
     (void)pcb;
     (void)source;
-    if (!wait || !packet || packet->tot_len < IP_HLEN + sizeof(echo)) return 0;
-    ipHeader = (struct ip_hdr*)packet->payload;
-    headerLength = IPH_HL_BYTES(ipHeader);
-    if (headerLength < IP_HLEN || packet->tot_len < headerLength + sizeof(echo)) return 0;
+    if (!wait || !packet || packet->tot_len < sizeof(echo)) return 0;
+    if (wait->isIpv6) {
+#if LWIP_IPV6
+        headerLength = IP6_HLEN;
+#else
+        return 0;
+#endif
+    } else {
+#if LWIP_IPV4
+        struct ip_hdr* ipHeader = (struct ip_hdr*)packet->payload;
+        headerLength = IPH_HL_BYTES(ipHeader);
+        if (headerLength < IP_HLEN) return 0;
+#else
+        return 0;
+#endif
+    }
+    if (packet->tot_len < headerLength + sizeof(echo)) return 0;
     if (pbuf_copy_partial(packet, &echo, sizeof(echo), headerLength) != sizeof(echo)) return 0;
-    if (ICMPH_TYPE(&echo) != ICMP_ER || ICMPH_CODE(&echo) != 0 ||
+    if (ICMPH_TYPE(&echo) != (wait->isIpv6 ? ICMP6_TYPE_EREP : ICMP_ER) ||
+        ICMPH_CODE(&echo) != 0 ||
         lwip_ntohs(echo.id) != wait->identifier || lwip_ntohs(echo.seqno) != wait->sequence)
         return 0;
     wait->matched = true;
@@ -313,7 +331,7 @@ static u8_t xnetwork_icmp_recv(void* argument, struct raw_pcb* pcb,
 
 bool XNetwork_icmpEchoSupported(void)
 {
-#if LWIP_RAW && LWIP_IPV4
+#if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
     return true;
 #else
     return false;
@@ -324,7 +342,7 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
                        uint16_t sequence, const void* payload, size_t payloadSize,
                        int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
 {
-#if LWIP_RAW && LWIP_IPV4
+#if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
     struct raw_pcb* pcb = NULL;
     struct pbuf* packet = NULL;
     XNetworkIcmpWait wait;
@@ -333,14 +351,38 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
     uint64_t start;
     uint64_t deadline;
     bool result = false;
-    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+    bool isIpv6;
+
+    if (!address ||
+        (XHostAddress_protocol(address) != XHostAddress_IPv4Protocol &&
+         XHostAddress_protocol(address) != XHostAddress_IPv6Protocol) ||
         (payloadSize && !payload) || payloadSize > 1400u || timeoutMilliseconds <= 0)
         return false;
-    packetSize = sizeof(struct icmp_echo_hdr) + payloadSize;
-    packet = pbuf_alloc(PBUF_TRANSPORT, (u16_t)packetSize, PBUF_RAM);
-    if (!packet) return false;
+    isIpv6 = (XHostAddress_protocol(address) == XHostAddress_IPv6Protocol);
+#if LWIP_IPV6
+    if (isIpv6) {
+        struct icmp6_echo_hdr echo;
+        packetSize = sizeof(struct icmp6_echo_hdr) + payloadSize;
+        packet = pbuf_alloc(PBUF_TRANSPORT, (u16_t)packetSize, PBUF_RAM);
+        if (!packet) return false;
+        memset(&echo, 0, sizeof(echo));
+        ICMPH_TYPE_SET(&echo, ICMP6_TYPE_EREQ);
+        ICMPH_CODE_SET(&echo, 0);
+        echo.id = lwip_htons(identifier);
+        echo.seqno = lwip_htons(sequence);
+        if (pbuf_take(packet, &echo, sizeof(echo)) != ERR_OK ||
+            (payloadSize && pbuf_take_at(packet, payload, (u16_t)payloadSize,
+                                         sizeof(echo)) != ERR_OK))
+            goto cleanup;
+        /* checksum is computed by raw_sendto_if_src via chksum_reqd/chksum_offset */
+    } else
+#endif
     {
+#if LWIP_IPV4
         struct icmp_echo_hdr echo;
+        packetSize = sizeof(struct icmp_echo_hdr) + payloadSize;
+        packet = pbuf_alloc(PBUF_TRANSPORT, (u16_t)packetSize, PBUF_RAM);
+        if (!packet) return false;
         memset(&echo, 0, sizeof(echo));
         ICMPH_TYPE_SET(&echo, ICMP_ECHO);
         ICMPH_CODE_SET(&echo, 0);
@@ -352,14 +394,29 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
             goto cleanup;
         echo.chksum = inet_chksum_pbuf(packet);
         if (pbuf_take(packet, &echo, sizeof(echo)) != ERR_OK) goto cleanup;
+#else
+        goto cleanup;
+#endif
     }
     memset(&wait, 0, sizeof(wait));
     wait.identifier = identifier;
     wait.sequence = sequence;
+    wait.isIpv6 = isIpv6;
     addr_to_ip(address, &target);
     {
         XNetLwipCoreLock lock = XNET_LWIP_LOCK();
-        pcb = raw_new(IP_PROTO_ICMP);
+#if LWIP_IPV6
+        if (isIpv6) {
+            pcb = raw_new_ip6(IP6_NEXTH_ICMP6);
+            if (pcb) {
+                pcb->chksum_reqd = 1;
+                pcb->chksum_offset = 2;
+            }
+        } else
+#endif
+        {
+            pcb = raw_new(IP_PROTO_ICMP);
+        }
         if (pcb) {
             raw_recv(pcb, xnetwork_icmp_recv, &wait);
             if (raw_sendto(pcb, packet, &target) != ERR_OK) {
