@@ -16,6 +16,10 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
 
+#if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+#include "XConsoleShell_XSsh.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,6 +29,9 @@ typedef struct XConsoleShellXTcpServerBinding {
     XConsoleShellSession* session;                   /**< Shell 管理的附加会话。 */
     XTcpSocket* socket;                              /**< XTcpServer 借用的连接对象。 */
     XConsoleShellXTcpSocketAdapter adapter;          /**< 连接的 I/O 适配器。 */
+#if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+    XConsoleShellSshAdapter* ssh;                    /**< 连接绑定的 SSH 适配器。 */
+#endif
 } XConsoleShellXTcpServerBinding;
 
 /** @brief TCP 服务端 Shell 适配器；所有成员均为借用或固定存储。 */

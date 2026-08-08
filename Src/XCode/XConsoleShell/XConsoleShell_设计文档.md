@@ -94,6 +94,8 @@ Src/XCode/XConsoleShell/
   XConsoleShell_XTcpSocket.c      # 基于 XTcpSocket 的 TCP 会话适配
   XConsoleShell_XTcpServer.h      # 基于 XTcpServer 的多会话适配声明
   XConsoleShell_XTcpServer.c      # 基于 XTcpServer 的多会话适配
+  XConsoleShell_XSsh.h            # 基于 SSH 2.0 的服务端适配声明
+  XConsoleShell_XSsh.c            # SSH 握手、认证、通道和会话适配
 
 Test/XCodeTest/
   XConsoleShellTest.c
@@ -460,6 +462,7 @@ MULTI_SESSION 关闭
 | XSerialPort | `XIODEVICE_BACKEND_ON`、`XSERIALPORT_BACKEND_ON` | 自动打开 XIODevice 后端；不负责串口配置、打开、关闭或事件循环。|
 | XTcpSocket | `XIODEVICE_BACKEND_ON`、`XTCPSOCKET_BACKEND_ON` | 自动打开 XIODevice 后端；Socket 必须由产品连接和关闭。|
 | XTcpServer | `MULTI_SESSION_ON`、`XTCPSERVER_BACKEND_ON` | 自动打开 XTcpSocket 后端；固定数组绑定待处理连接，超过容量不再接收。|
+| SSH Server | `MULTI_SESSION_ON`、`XTCPSERVER_BACKEND_ON`、`LOGIN_ON`、`AUTH_ON` | 在 `XTcpServer` 上承载 SSH 2.0 服务端；当前支持版本交换、ECDH P-256、AES-128-CTR、HMAC-SHA-256、密码认证、pty、env、shell、窗口调整和通道流控；`exec/subsystem` 请求明确拒绝。主机密钥首次启动生成并持久化到 `XCONSOLE_SHELL_XSSH_HOSTKEY_FILE`，跨进程重启保持不变；认证失败达到 `XSSH_MAX_AUTH_ATTEMPTS` 后关闭会话。|
 | Telnet | `IO_ON`、`TELNET_PROTOCOL_ON` | 在 Shell I/O 前过滤 Telnet IAC、协商、子协商和 CR-NUL；不创建网络对象。|
 | PROCESS_ASYNC | `EXTERNAL_PROCESS_ON`、`XProcess_ON` | 增加固定异步任务槽和 `pollProcesses`；每个任务由 Shell 持有，必须由事件循环或任务显式轮询。|
 

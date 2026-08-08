@@ -1366,6 +1366,30 @@ bool XConsoleShellLogin_setDatabasePath(XConsoleShell* shell, const char* path)
     return true;
 }
 
+bool XConsoleShellLogin_authenticateSession(XConsoleShell* shell,
+                                              XConsoleShellSession* session,
+                                              const char* user, const char* password)
+{
+    XConsoleShellLoginRecord records[XCONSOLE_SHELL_LOGIN_USER_CAPACITY];
+    XConsoleShellLoginRecord* record;
+    size_t count = 0;
+    bool exists = false;
+    uint8_t digest[XLOGIN_DIGEST_SIZE];
+    bool ok = false;
+    if (!shell || !session || !xlogin_name_valid(user) ||
+        !xlogin_password_valid(password)) return false;
+    if (!xlogin_load(shell, records, &count, &exists) || !exists) return false;
+    record = xlogin_find(records, count, user);
+    if (!record || record->locked || !record->passwordSet) return false;
+    if (!xlogin_password_digest(password, record->salt, record->iterations, digest))
+        return false;
+    ok = xlogin_const_equal(digest, record->digest, XLOGIN_DIGEST_SIZE);
+    xlogin_secure_zero(digest, sizeof(digest));
+    if (!ok) return false;
+    xlogin_apply_session(shell, session, record);
+    return true;
+}
+
 bool XConsoleShellLogin_registerCommands(XConsoleShell* shell)
 {
     static const XConsoleCommand* commands[] = {

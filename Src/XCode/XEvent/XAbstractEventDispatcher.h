@@ -55,6 +55,16 @@ typedef struct XAbstractEventDispatcherPrivate
     //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
     void* m_consoleTransport;     ///< 默认 Shell 的标准输入传输（由调度器持有并释放）
     void* m_consoleShell;         ///< 默认 Shell 实例（由调度器持有，析构时释放）
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON
+    bool m_consolePromptShown;    ///< 默认 Shell 初始提示符是否已经输出
+#endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    void* m_consoleSshServer;     ///< 默认 Shell 的 SSH TCP Server（由调度器持有）
+    void* m_consoleSshAdapter;    ///< 默认 Shell 的 SSH 多会话适配器（由调度器持有）
+#endif
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);

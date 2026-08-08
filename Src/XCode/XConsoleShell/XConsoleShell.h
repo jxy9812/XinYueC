@@ -116,6 +116,7 @@ typedef struct XConsoleShellSession {
     size_t m_lineCursor;                              /**< 会话行编辑光标位置。 */
     uint8_t m_escapeState;                            /**< 会话 ANSI 转义解析状态。 */
 #endif
+    bool m_closeRequested;                            /**< 附加会话已请求退出；所属 Shell 继续运行。 */
     bool m_open;                                      /**< 是否为已打开的附加会话。 */
     bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
     bool m_lastByteCR;                                /**< 上一个输入字节是否为 \r，用于合并 CRLF 的 \n，避免空行被提交。 */

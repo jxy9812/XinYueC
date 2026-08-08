@@ -293,7 +293,7 @@ static XConsoleResult xvi_command(XConsoleShell* shell,
     while (*token == ' ' || *token == '\t') ++token;
     rest = token;
     while (*rest && *rest != ' ' && *rest != '\t') ++rest;
-    restLength = length - (size_t)(rest - line);
+    restLength = commandLength - (size_t)(rest - command);
     {
         size_t tokenLength = (size_t)(rest - token);
         while (restLength && (rest[0] == ' ' || rest[0] == '\t')) {

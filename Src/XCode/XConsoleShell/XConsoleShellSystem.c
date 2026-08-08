@@ -132,7 +132,6 @@ static int xcs_exit(XConsoleShell* shell, XConsoleShellSession* session,
 {
     int64_t code = 0;
     size_t i;
-    (void)session;
     (void)userData;
     if (!shell) return XConsoleResult_InvalidArgument;
     if (argc > 1) return XConsoleResult_InvalidArgument;
@@ -146,13 +145,26 @@ static int xcs_exit(XConsoleShell* shell, XConsoleShellSession* session,
             code = code * 10 + (int64_t)(argv[0][i] - '0');
         if (code > 255) code = code % 256;
     }
+    /* 附加会话（SSH/TCP 多会话）的 exit 只关闭当前会话，不停止共享 Shell
+       和宿主应用程序；默认控制台会话仍按原语义退出整个程序。 */
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    /* 附加会话通过会话切换机制把内容复制到默认会话结构，因此不能按指针
+       判定，而应按会话 ID：默认控制台会话固定为 1。 */
+    if (session && session->id != 1) {
+        session->m_closeRequested = true;
+        return XConsoleShell_writeUtf8(shell, "已请求退出\n")
+                   ? XConsoleResult_Ok : XConsoleResult_IoError;
+    }
+#else
+    (void)session;
+#endif
     XConsoleShell_setRunning(shell, false);
     return XConsoleShell_writeUtf8(shell, "已请求退出\n")
                ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
 
 const XConsoleCommand XConsoleShellExit_command = {
-    "exit", NULL, "退出当前 Shell 和应用程序", "exit [n]", 0, 1,
+    "exit", NULL, "退出当前会话；默认会话退出程序", "exit [n]", 0, 1,
     XConsoleCommandFlag_AllowUnauthenticated, xcs_exit, NULL, 0, NULL
 };
 #endif

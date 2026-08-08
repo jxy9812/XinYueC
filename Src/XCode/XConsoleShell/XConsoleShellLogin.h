@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellLogin.h
  * @brief XConsoleShell 的登录、用户管理和 Linux 风格账户权限 API。
  * @details
@@ -60,6 +60,20 @@ const char* XConsoleShellLogin_databasePath(const struct XConsoleShell* shell);
  */
 bool XConsoleShellLogin_setDatabasePath(struct XConsoleShell* shell,
                                         const char* path);
+
+/**
+ * @brief 校验用户名和密码并应用到指定会话。
+ * @param shell Shell 对象；不能为空。
+ * @param session 目标会话；不能为空。
+ * @param user UTF-8 用户名；不能为空。
+ * @param password UTF-8 密码；不能为空。
+ * @return 用户名和密码匹配且账户未锁定、密码已设置时返回 true；
+ *         参数非法、账户不存在、锁定或密码错误返回 false。
+ * @note 供 SSH 等外部认证通道复用账户库，不写入 Shell 历史，不回显密码。
+ */
+bool XConsoleShellLogin_authenticateSession(struct XConsoleShell* shell,
+                                            struct XConsoleShellSession* session,
+                                            const char* user, const char* password);
 
 /** @brief 登录命令静态描述。 */
 extern const XConsoleCommand XConsoleShellLogin_command;

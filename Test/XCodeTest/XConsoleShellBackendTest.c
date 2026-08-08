@@ -1,10 +1,11 @@
 /**
  * @file XConsoleShellBackendTest.c
- * @brief XConsoleShell XTcpServer 后端的库级 loopback 回归测试。
+ * @brief XConsoleShell XTcpServer TCP/SSH 后端的库级 loopback 回归测试。
  * @details
  * 测试通过 XinYueC 的 XTcpServer、XTcpSocket、XCoreApplication 和
  * XConsoleShell 公共 API 建立本机回环连接，不直接依赖平台 socket、线程或
- * 文件接口。服务端适配器负责接收连接和泵入输入，客户端套接字负责验证输出。
+ * 文件接口。服务端适配器负责接收连接和泵入输入，客户端套接字负责验证输出
+ * 或 SSH 版本 banner。
  */
 
 #include "XConsoleShellBackendTest.h"
@@ -27,7 +28,7 @@
 #define XCS_BACKEND_CHECK(condition, text) \
     do { \
         if (!(condition)) { \
-            XPrintf("[FAIL] XConsoleShell TCP 后端: %s (第%d行)\n", \
+            XPrintf("[FAIL] XConsoleShell 后端: %s (第%d行)\n", \
                     text, __LINE__); \
             goto cleanup; \
         } \
@@ -73,10 +74,70 @@ static bool xcs_backend_read_contains(XTcpSocket* socket, const char* expected,
         }
         XThread_msleep(1);
     }
-    XPrintf("[FAIL] TCP 后端未收到期望输出，实际输出: %s\n", output);
+    XPrintf("[FAIL] 后端未收到期望输出，实际输出: %s\n", output);
     return false;
 }
 
+#if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+static bool xcs_backend_test_ssh_banner(void)
+{
+    XTcpServer* server = NULL;
+    XTcpSocket* client = NULL;
+    XConsoleShell* shell = NULL;
+    XConsoleShellXTcpServerAdapter adapter;
+    bool ok = false;
+
+    memset(&adapter, 0, sizeof(adapter));
+    server = XTcpServer_create();
+    shell = XConsoleShell_create(NULL);
+    XCS_BACKEND_CHECK(server != NULL && shell != NULL,
+                      "创建 SSH server 或 Shell 失败");
+    XCS_BACKEND_CHECK(XTcpServer_listen(server, NULL, 0),
+                      "SSH 回环监听失败");
+
+    XConsoleShellXTcpServerAdapter_init(&adapter, shell, server);
+    client = XTcpSocket_create();
+    XCS_BACKEND_CHECK(client != NULL, "创建 SSH 客户端套接字失败");
+    XTcpSocket_connectToHost_base((XAbstractSocket*)client, "127.0.0.1",
+                                   XTcpServer_serverPort(server),
+                                   XIODevice_ReadWrite,
+                                   XAbstractSocket_AnyIPProtocol);
+    XCS_BACKEND_CHECK(xcs_backend_wait_connected(client, 3000),
+                      "SSH 客户端连接超时");
+
+    {
+        uint64_t start = XDateTime_currentMSecsSinceEpoch();
+        while (XConsoleShell_sessionCount(shell) < 2 &&
+               XDateTime_currentMSecsSinceEpoch() - start < 3000u) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            (void)XConsoleShellXTcpServerAdapter_acceptPending(&adapter);
+            XThread_msleep(1);
+        }
+    }
+    XCS_BACKEND_CHECK(XConsoleShell_sessionCount(shell) == 2 &&
+                      adapter.bindings[0].ssh != NULL,
+                      "SSH acceptPending 未创建适配器和 Shell 会话");
+    XCS_BACKEND_CHECK(xcs_backend_read_contains(client,
+                                                 "SSH-2.0-XinYueC_1.0", 3000),
+                      "客户端未收到 SSH 版本 banner");
+    ok = true;
+
+cleanup:
+    XConsoleShellXTcpServerAdapter_closeAll(&adapter);
+    if (client) {
+        XTcpSocket_abort((XAbstractSocket*)client);
+        XTcpSocket_deleteLater((XObject*)client);
+    }
+    if (server) {
+        XTcpServer_close(server);
+        XTcpServer_deleteLater((XObject*)server);
+    }
+    if (shell) XConsoleShell_delete_base(shell);
+    return ok;
+}
+#endif
+
+#if !XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
 static bool xcs_backend_test_roundtrip(void)
 {
     XTcpServer* server = NULL;
@@ -164,11 +225,17 @@ cleanup:
     if (shell) XConsoleShell_delete_base(shell);
     return ok;
 }
+#endif
 
 bool XConsoleShellBackendTest_runAll(void)
 {
+#if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+    bool ok = xcs_backend_test_ssh_banner();
+    XPrintf("XConsoleShell SSH 后端测试: %s\n", ok ? "通过" : "失败");
+#else
     bool ok = xcs_backend_test_roundtrip();
     XPrintf("XConsoleShell TCP 后端测试: %s\n", ok ? "通过" : "失败");
+#endif
     return ok;
 }
 

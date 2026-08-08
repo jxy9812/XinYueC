@@ -11,6 +11,12 @@
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
 #include "XNetwork.h"
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+#include "XConsoleShell_XTcpServer.h"
+#include "XTcpServer.h"
+#endif
 #include <string.h>
 #include <stdlib.h>
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
@@ -118,9 +124,81 @@ static XConsoleShell* create_shell(MainConsoleTransport* transport)
         XPrintf("默认 Shell 初始化失败\n");
         return NULL;
     }
-    console_prompt(transport, shell);
     return shell;
 }
+
+static void console_show_initial_prompt(XAbstractEventDispatcherPrivate* dp)
+{
+    if (!dp || dp->m_consolePromptShown || !dp->m_consoleTransport ||
+        !dp->m_consoleShell)
+        return;
+    console_prompt((MainConsoleTransport*)dp->m_consoleTransport,
+                   (XConsoleShell*)dp->m_consoleShell);
+    dp->m_consolePromptShown = true;
+}
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+static bool console_ssh_attach(XAbstractEventDispatcher* self)
+{
+    XAbstractEventDispatcherPrivate* dp;
+    XConsoleShellXTcpServerAdapter* adapter;
+    XTcpServer* server;
+    if (!self || !self->d_ptr || !self->d_ptr->m_consoleShell) return false;
+    dp = self->d_ptr;
+    if (dp->m_consoleSshServer && dp->m_consoleSshAdapter) return true;
+
+    server = XTcpServer_create();
+    adapter = (XConsoleShellXTcpServerAdapter*)XCalloc_System(1, sizeof(*adapter));
+    if (!server || !adapter) {
+        if (server) XClass_delete_base((XClass*)server);
+        if (adapter) XFree_System(adapter);
+        return false;
+    }
+    if (!XTcpServer_listen(server, NULL,
+                           (uint16_t)XCONSOLE_SHELL_XSSH_SERVER_PORT)) {
+        XClass_delete_base((XClass*)server);
+        XFree_System(adapter);
+        return false;
+    }
+    XConsoleShellXTcpServerAdapter_init(
+        adapter, (XConsoleShell*)dp->m_consoleShell, server);
+    dp->m_consoleSshServer = server;
+    dp->m_consoleSshAdapter = adapter;
+    XPrintf("默认 SSH 服务端监听端口: %u\n",
+            (unsigned)XTcpServer_serverPort(server));
+    return true;
+}
+
+static void console_ssh_pump(XAbstractEventDispatcherPrivate* dp)
+{
+    XConsoleShellXTcpServerAdapter* adapter;
+    if (!dp || !dp->m_consoleSshServer || !dp->m_consoleSshAdapter) return;
+    adapter = (XConsoleShellXTcpServerAdapter*)dp->m_consoleSshAdapter;
+    (void)XConsoleShellXTcpServerAdapter_acceptPending(adapter);
+    (void)XConsoleShellXTcpServerAdapter_pump(adapter, 4096);
+}
+
+static void console_ssh_detach(XAbstractEventDispatcherPrivate* dp)
+{
+    XConsoleShellXTcpServerAdapter* adapter;
+    XTcpServer* server;
+    if (!dp) return;
+    adapter = (XConsoleShellXTcpServerAdapter*)dp->m_consoleSshAdapter;
+    server = (XTcpServer*)dp->m_consoleSshServer;
+    if (adapter) {
+        XConsoleShellXTcpServerAdapter_closeAll(adapter);
+        XFree_System(adapter);
+        dp->m_consoleSshAdapter = NULL;
+    }
+    if (server) {
+        XTcpServer_close(server);
+        XClass_delete_base((XClass*)server);
+        dp->m_consoleSshServer = NULL;
+    }
+}
+#endif
 
 static bool console_shell_attach(XAbstractEventDispatcher* self)
 {
@@ -147,12 +225,23 @@ static bool console_shell_attach(XAbstractEventDispatcher* self)
 XConsoleShell* XAbstractEventDispatcher_consoleShell(XAbstractEventDispatcher* self)
 {
     if (!console_shell_attach(self)) return NULL;
+#if !(XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+      XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+      XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON)
+    console_show_initial_prompt(self->d_ptr);
+#endif
     return (XConsoleShell*)self->d_ptr->m_consoleShell;
 }
 
 int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self)
 {
     if (!console_shell_attach(self)) return 1;
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    if (!console_ssh_attach(self)) return 2;
+#endif
+    console_show_initial_prompt(self->d_ptr);
     return XCoreApplication_exec();
 }
 #endif
@@ -188,11 +277,23 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     XCONSOLE_SHELL_ASYNC_ON
     dp->m_consoleTransport = NULL;
     dp->m_consoleShell = NULL;
+    dp->m_consolePromptShown = false;
+#endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    dp->m_consoleSshServer = NULL;
+    dp->m_consoleSshAdapter = NULL;
 #endif
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
 {
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    console_ssh_detach(dp);
+#endif
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
     /* 默认 Shell 由调度器托管，析构时先停止异步并释放传输。 */
@@ -364,6 +465,13 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         XThreadData_push_front_list(events);
         XVector_delete_base(events);
     }
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    /* 默认 SSH Server 与主事件循环共用线程，避免引入额外线程和竞态。 */
+    console_ssh_pump(self->d_ptr);
+#endif
 
     /* 4. Qt 6.8: 阻塞等待（对标 QAbstractEventDispatcher::processEvents 的 WaitForMoreEvents）
      *    - 检查 canWait: 有事件时不阻塞（对标 QThreadData::canWait）
