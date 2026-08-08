@@ -116,6 +116,30 @@ static uint16_t xnetwork_icmp_checksum(const uint8_t* data, size_t size)
     return (uint16_t)~sum;
 }
 
+static uint16_t xnetwork_icmp6_checksum(const uint8_t* src6, const uint8_t* dst6,
+                                        const uint8_t* data, size_t size)
+{
+    /* ICMPv6 校验和覆盖伪首部：src(16) + dst(16) + upper-layer length(32) +
+     * 3 字节零 + next header(58)，随后是 ICMPv6 报文。 */
+    uint32_t sum = 0;
+    size_t i;
+    for (i = 0; i < 16u; i += 2u)
+        sum += ((uint32_t)src6[i] << 8) | src6[i + 1u];
+    for (i = 0; i < 16u; i += 2u)
+        sum += ((uint32_t)dst6[i] << 8) | dst6[i + 1u];
+    /* 上层长度按网络字节序写入 32 位字段 */
+    sum += ((uint32_t)((size >> 8) & 0xffu)) | ((uint32_t)(size & 0xffu) << 8);
+    sum += 58u; /* IPPROTO_ICMPV6 */
+    while (size > 1u) {
+        sum += ((uint32_t)data[0] << 8) | data[1];
+        data += 2;
+        size -= 2u;
+    }
+    if (size) sum += (uint32_t)data[0] << 8;
+    while (sum >> 16) sum = (sum & 0xffffu) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
 bool XNetwork_icmpEchoSupported(void)
 {
     return true;
@@ -125,47 +149,87 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
                        uint16_t sequence, const void* payload, size_t payloadSize,
                        int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
 {
-    struct sockaddr_in destination;
+    struct sockaddr_in destination4;
+    struct sockaddr_in6 destination6;
     uint8_t* request = NULL;
     uint8_t response[2048];
     size_t requestSize;
     int socketFd = -1;
     bool datagramSocket = false;
+    bool isIpv6 = false;
     int pollResult;
     uint64_t start;
     uint64_t deadline;
     bool matched = false;
 
-    if (!address || XHostAddress_protocol(address) != XHostAddress_IPv4Protocol ||
+    if (!address ||
+        (XHostAddress_protocol(address) != XHostAddress_IPv4Protocol &&
+         XHostAddress_protocol(address) != XHostAddress_IPv6Protocol) ||
         (payloadSize && !payload) || payloadSize > 65507u || timeoutMilliseconds <= 0)
         return false;
+    isIpv6 = (XHostAddress_protocol(address) == XHostAddress_IPv6Protocol);
     requestSize = XNETWORK_ICMP_HEADER_SIZE + payloadSize;
     request = (uint8_t*)XMalloc_System(requestSize);
     if (!request) return false;
     memset(request, 0, requestSize);
-    request[0] = 8u; /* Echo request */
+    request[0] = isIpv6 ? 128u : 8u; /* ICMPv6 / ICMP Echo request */
     request[1] = 0u;
     request[4] = (uint8_t)(identifier >> 8);
     request[5] = (uint8_t)identifier;
     request[6] = (uint8_t)(sequence >> 8);
     request[7] = (uint8_t)sequence;
     if (payloadSize) memcpy(request + XNETWORK_ICMP_HEADER_SIZE, payload, payloadSize);
-    {
+
+    if (!isIpv6) {
         uint16_t checksum = xnetwork_icmp_checksum(request, requestSize);
         request[2] = (uint8_t)(checksum >> 8);
         request[3] = (uint8_t)checksum;
     }
 
-    memset(&destination, 0, sizeof(destination));
-    destination.sin_family = AF_INET;
-    destination.sin_addr.s_addr = htonl(XHostAddress_toIPv4Address(address));
-    socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-    if (socketFd >= 0) datagramSocket = true;
-    else socketFd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (socketFd < 0) goto cleanup;
-    if (sendto(socketFd, request, requestSize, 0,
-               (const struct sockaddr*)&destination, sizeof(destination)) < 0)
-        goto cleanup;
+    if (isIpv6) {
+        memset(&destination6, 0, sizeof(destination6));
+        destination6.sin6_family = AF_INET6;
+        XHostAddress_toIPv6Address(address, (uint8_t*)&destination6.sin6_addr);
+        socketFd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6);
+        if (socketFd >= 0) datagramSocket = true;
+        else socketFd = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+        if (socketFd < 0) goto cleanup;
+        /* connect() 让内核选择源地址，用于计算 ICMPv6 伪首部校验和 */
+        if (connect(socketFd, (const struct sockaddr*)&destination6, sizeof(destination6)) < 0)
+            goto cleanup;
+        {
+            struct sockaddr_storage local;
+            socklen_t localLen = (socklen_t)sizeof(local);
+            uint8_t src6[16];
+            memset(&local, 0, sizeof(local));
+            memset(src6, 0, sizeof(src6));
+            if (getsockname(socketFd, (struct sockaddr*)&local, &localLen) == 0 &&
+                local.ss_family == AF_INET6) {
+                const struct sockaddr_in6* l6 = (const struct sockaddr_in6*)&local;
+                memcpy(src6, &l6->sin6_addr, sizeof(src6));
+            }
+            {
+                uint16_t checksum = xnetwork_icmp6_checksum(src6,
+                    (const uint8_t*)&destination6.sin6_addr, request, requestSize);
+                request[2] = (uint8_t)(checksum >> 8);
+                request[3] = (uint8_t)checksum;
+            }
+        }
+        if (sendto(socketFd, request, requestSize, 0,
+                   (const struct sockaddr*)&destination6, sizeof(destination6)) < 0)
+            goto cleanup;
+    } else {
+        memset(&destination4, 0, sizeof(destination4));
+        destination4.sin_family = AF_INET;
+        destination4.sin_addr.s_addr = htonl(XHostAddress_toIPv4Address(address));
+        socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+        if (socketFd >= 0) datagramSocket = true;
+        else socketFd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+        if (socketFd < 0) goto cleanup;
+        if (sendto(socketFd, request, requestSize, 0,
+                   (const struct sockaddr*)&destination4, sizeof(destination4)) < 0)
+            goto cleanup;
+    }
 
     start = (uint64_t)XDateTime_currentMSecsSinceEpoch();
     deadline = start + (uint64_t)timeoutMilliseconds;
@@ -185,14 +249,20 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
         if (!(descriptor.revents & POLLIN)) continue;
         received = recvfrom(socketFd, response, sizeof(response), 0, NULL, NULL);
         if (received < (ssize_t)XNETWORK_ICMP_HEADER_SIZE) continue;
-        /* 原始套接字包含 IPv4 头；数据报 ICMP 套接字通常不包含。 */
-        if ((response[0] >> 4) == 4u) {
+        /* 原始套接字可能包含 IP 头；数据报 ICMP 套接字通常不包含。 */
+        if (isIpv6) {
+            if ((response[0] >> 4) == 6u) {
+                offset = 40u; /* IPv6 基础头 */
+                if ((size_t)received < offset + XNETWORK_ICMP_HEADER_SIZE) continue;
+            }
+        } else if ((response[0] >> 4) == 4u) {
             ihl = (uint8_t)(response[0] & 0x0fu);
             if (ihl < 5u || (size_t)received < (size_t)ihl * 4u + XNETWORK_ICMP_HEADER_SIZE)
                 continue;
             offset = (size_t)ihl * 4u;
         }
-        if (response[offset] != 0u || response[offset + 1u] != 0u ||
+        if ((isIpv6 ? response[offset] != 129u : response[offset] != 0u) ||
+            response[offset + 1u] != 0u ||
             response[offset + 6u] != request[6] || response[offset + 7u] != request[7] ||
             (!datagramSocket && (response[offset + 4u] != request[4] ||
                                  response[offset + 5u] != request[5])))
@@ -207,7 +277,6 @@ cleanup:
     if (request) XFree_System(request);
     return matched;
 }
-
 /* =========================================================================
  * 平台初始化
  * ========================================================================= */

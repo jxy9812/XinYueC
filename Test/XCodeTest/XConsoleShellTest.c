@@ -2173,6 +2173,13 @@ bool XConsoleShellTest_runAll(void)
         XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
                            networkResult != XConsoleResult_InvalidSyntax,
                        "network ping command");
+        transport.length = 0;
+        transport.output[0] = '\0';
+        networkResult = XConsoleShell_processLine(shell, "net ping ::1 -c 1 -W 500",
+                                                   strlen("net ping ::1 -c 1 -W 500"));
+        XCS_TEST_CHECK(networkResult != XConsoleResult_UnknownCommand &&
+                           networkResult != XConsoleResult_InvalidSyntax,
+                       "network ping IPv6 command");
 #endif
 
         /* Linux-style top-level ping must resolve too (reuses net ping handler). */

@@ -298,9 +298,19 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
                 break;
             }
         }
+        if (!target) {
+            for (i = 0; i < XVector_size_base(addresses); ++i) {
+                const XHostAddress* candidate =
+                    (const XHostAddress*)XVector_at_base(addresses, i);
+                if (candidate && XHostAddress_protocol(candidate) == XHostAddress_IPv6Protocol) {
+                    target = candidate;
+                    break;
+                }
+            }
+        }
     }
     if (!target) {
-        xcsn_write_line(shell, "ping: 没有可用的 IPv4 地址");
+        xcsn_write_line(shell, "ping: 没有可用的 IPv4/IPv6 地址");
         XHostInfo_delete_base(info);
         return XConsoleResult_Failed;
     }

@@ -126,10 +126,10 @@ typedef XHostAddress_NetworkLayerProtocol XNetworkProtocol;
  *
  * 该接口是同步的一次性探测，不创建长期持有的套接字对象。平台后端负责
  * 选择权限允许的 ICMP 通道（POSIX 的数据报/原始 ICMP、Windows 的系统
- * ICMP 服务、lwIP Raw API），上层不得直接访问平台句柄。当前公共契约统一
- * 支持 IPv4；IPv6 地址在后端未实现时返回 false。
+ * ICMP 服务、lwIP Raw API），上层不得直接访问平台句柄。同时支持 IPv4 与 IPv6：
+ * 各后端根据目标地址的协议族自动选择 ICMPv4 / ICMPv6 通道。
  *
- * @param address 目标 IPv4 地址；调用期间借用，不能为 NULL。
+ * @param address 目标 IPv4 或 IPv6 地址；调用期间借用，不能为 NULL。
  * @param identifier 请求标识；用于区分并发或不同调用方的请求。
  * @param sequence 请求序号；用于匹配本次回复。
  * @param payload 请求负载；可为 NULL，但 payloadSize 非零时不能为 NULL。
