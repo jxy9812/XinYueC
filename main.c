@@ -158,6 +158,17 @@ static XConsoleShell* main_create_shell(MainConsoleTransport* transport)
     main_console_prompt(transport, shell);
     return shell;
 }
+
+static int main_run_default_shell(void)
+{
+    MainConsoleTransport transport = { XFD_INVALID, false };
+    XConsoleShell* shell = main_create_shell(&transport);
+    int result;
+    if (!shell) return 1;
+    result = XCoreApplication_exec();
+    XConsoleShell_delete_base(shell);
+    return result;
+}
 #endif
 
 int main(int argc, char* args[])
@@ -262,16 +273,7 @@ int main(int argc, char* args[])
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
-    {
-        MainConsoleTransport transport = { XFD_INVALID, false };
-        XConsoleShell* shell = main_create_shell(&transport);
-        if (!shell) {
-            result = 1;
-        } else {
-            result = XCoreApplication_exec();
-            XConsoleShell_delete_base(shell);
-        }
-    }
+    result = main_run_default_shell();
 #else
     result = XCoreApplication_exec();
 #endif
