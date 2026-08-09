@@ -285,6 +285,7 @@ static bool xcs_backend_test_telnet_basic(void)
     bool ok = false;
     const uint8_t willEcho[3] = { 255, 251, 1 };
     const char command[] = "echo telnet-ok\n";
+    const char exitCommand[] = "exit\n";
 
     memset(&adapter, 0, sizeof(adapter));
     server = XTcpServer_create();
@@ -342,6 +343,30 @@ static bool xcs_backend_test_telnet_basic(void)
     }
     XCS_BACKEND_CHECK(xcs_backend_read_contains(client, "telnet-ok", 3000),
                       "Telnet 协商过滤或命令执行失败");
+    XCS_BACKEND_CHECK(XTcpSocket_write_1((XIODevice*)client,
+                                         exitCommand, (int64_t)strlen(exitCommand)) ==
+                          (int64_t)strlen(exitCommand),
+                      "Telnet 客户端发送 exit 失败");
+    {
+        uint64_t start = XDateTime_currentMSecsSinceEpoch();
+        while (XDateTime_currentMSecsSinceEpoch() - start < 3000u) {
+            XCoreApplication_processEvents(XEventLoop_AllEvents);
+            (void)XConsoleShellXTcpServerAdapter_pump(&adapter, 128);
+            if (adapter.bindings[0].socket == NULL &&
+                XConsoleShell_sessionCount(shell) == 1 &&
+                XTcpSocket_state((XAbstractSocket*)client) !=
+                    XAbstractSocket_ConnectedState)
+                break;
+            XThread_msleep(1);
+        }
+    }
+    XCS_BACKEND_CHECK(adapter.bindings[0].socket == NULL,
+                      "Telnet exit 后服务端套接字未关闭");
+    XCS_BACKEND_CHECK(XConsoleShell_sessionCount(shell) == 1,
+                      "Telnet exit 后附加会话未释放");
+    XCS_BACKEND_CHECK(XTcpSocket_state((XAbstractSocket*)client) !=
+                          XAbstractSocket_ConnectedState,
+                      "Telnet exit 后客户端连接未断开");
     ok = true;
 
 cleanup:

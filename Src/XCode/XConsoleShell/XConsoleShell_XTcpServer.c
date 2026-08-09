@@ -699,6 +699,16 @@ size_t XConsoleShellXTcpServerAdapter_pump(XConsoleShellXTcpServerAdapter* adapt
         XConsoleShellXTcpServerBinding* binding = &adapter->bindings[i];
         int64_t count;
         if (!binding->session || !binding->socket) continue;
+#if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
+        /* Telnet 协议栈会通过 socket 的 readyRead 信号直接消费输入。
+         * 此时 exit 已标记会话待关闭，但下面的 read 已经读不到字节，
+         * 因此必须在读取前独立处理 Telnet 的关闭请求。 */
+        if (binding->protocol == XConsoleShellXTcpServerProtocol_Telnet &&
+            binding->session->m_closeRequested) {
+            (void)XConsoleShellXTcpServerAdapter_closeSession(adapter, binding->session);
+            continue;
+        }
+#endif
         if (XTcpSocket_state((XAbstractSocket*)binding->socket) !=
             XAbstractSocket_ConnectedState) {
             (void)XConsoleShellXTcpServerAdapter_closeSession(adapter, binding->session);
