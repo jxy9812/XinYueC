@@ -22,7 +22,6 @@ static void VXRestAccessManager_deinit(XRestAccessManager* self)
 XVtable* XRestAccessManager_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRestAccessManager)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRestAccessManager");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

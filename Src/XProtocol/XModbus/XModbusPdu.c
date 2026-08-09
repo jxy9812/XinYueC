@@ -14,8 +14,7 @@ static void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src);
 static void VXModbusPdu_move(XModbusPdu* pdu, XModbusPdu* src);
 XVtable* XModbusPdu_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusPdu");
+    XVTABLE_INIT_DEFAULT(XModbusPdu)
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数

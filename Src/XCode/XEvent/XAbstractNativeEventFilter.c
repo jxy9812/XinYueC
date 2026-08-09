@@ -26,7 +26,6 @@ static bool VXAbstractNativeEventFilter_nativeEventFilter(
 XVtable* XAbstractNativeEventFilter_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractNativeEventFilter)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractNativeEventFilter");
         //继承类
         XVTABLE_INHERIT_XCLASS(XClass);
         // 无基类继承（XClass 是最底层）

@@ -259,7 +259,6 @@ static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj) {
  * ================================================================ */
 XVtable* XNetIoRingWin32_class_init(void) {
     XVTABLE_INIT_DEFAULT(XNetIoRingWin32)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetIoRingWin32");
     /* 继承 XAbstractNetIoRing 虚函数表（含默认实现） */
     XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing);
 

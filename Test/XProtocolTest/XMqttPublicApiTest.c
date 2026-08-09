@@ -65,7 +65,6 @@ static void mqtt_mock_deinit(XMqttMockDevice* mock)
 static XVtable* mqtt_mock_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMqttMockDevice)
-    XCLASS_SET_CLASS_NAME_DEFAULT("XMqttMockDevice");
     XVTABLE_INHERIT_XCLASS(XIODevice);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, mqtt_mock_bytes_available);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, mqtt_mock_read);

@@ -118,21 +118,24 @@ do { \
 /**
  * @brief 按当前配置完成默认虚函数表初始化。
  *
- * Type 是用于计算虚函数槽位数量的类名。栈模式使用该类的枚举容量，
- * 堆模式创建可动态扩容的虚函数表。宏展开时已经完成分支选择，不产生
- * 运行时条件判断。
+ * Type 是用于计算虚函数槽位数量的类名，并自动作为默认类名。栈模式
+ * 使用该类的枚举容量，堆模式创建可动态扩容的虚函数表。宏展开时已经
+ * 完成分支选择，不产生运行时条件判断。需要与 Type 不同的类名时，
+ * 可在该宏后调用 XCLASS_SET_CLASS_NAME_DEFAULT 覆盖默认值。
  */
 #if XCLASS_VTABLE_USE_STACK
 #define XVTABLE_INIT_DEFAULT(Type) \
 	XVTABLE_CREAT(XVTABLE_DEFAULT) \
-	XVTABLE_STACK_INIT(XVTABLE_DEFAULT, XCLASS_VTABLE_GET_SIZE(Type))
+	XVTABLE_STACK_INIT(XVTABLE_DEFAULT, XCLASS_VTABLE_GET_SIZE(Type)) \
+	XCLASS_SET_CLASS_NAME_DEFAULT(#Type);
 #define XVTABLE_INIT_DEFAULT_SIZE(Size) \
 	XVTABLE_CREAT(XVTABLE_DEFAULT) \
 	XVTABLE_STACK_INIT(XVTABLE_DEFAULT, (Size))
 #else
 #define XVTABLE_INIT_DEFAULT(Type) \
 	XVTABLE_CREAT(XVTABLE_DEFAULT) \
-	XVTABLE_HEAP_INIT(XVTABLE_DEFAULT)
+	XVTABLE_HEAP_INIT(XVTABLE_DEFAULT) \
+	XCLASS_SET_CLASS_NAME_DEFAULT(#Type);
 #define XVTABLE_INIT_DEFAULT_SIZE(Size) \
 	XVTABLE_CREAT(XVTABLE_DEFAULT) \
 	XVTABLE_HEAP_INIT(XVTABLE_DEFAULT)

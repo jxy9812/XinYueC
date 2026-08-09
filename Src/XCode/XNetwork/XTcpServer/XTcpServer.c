@@ -33,7 +33,6 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle);
 XVtable* XTcpServer_class_init(void)
 {
 	XVTABLE_INIT_DEFAULT(XTcpServer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XTcpServer");
 	XVTABLE_INHERIT_XCLASS(XObject);
 	void* table[] = {
 		VXTcpServer_HasPendingConnections,

@@ -12,8 +12,7 @@ static void VMSG_move(XMqttMessage* dest, XMqttMessage* src);
 
 XVtable* XMqttMessage_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttMessage");
+    XVTABLE_INIT_DEFAULT(XMqttMessage)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VMSG_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VMSG_move);

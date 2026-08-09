@@ -38,7 +38,6 @@ static void VXESP8266_processResponse(XATComm* comm)
  */
 XVtable* XESP8266Wifi_class_init(void) {
     XVTABLE_INIT_DEFAULT(XESP8266Wifi)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XESP8266Wifi");
         XVTABLE_INHERIT_XCLASS(XATComm);
 
     // 重载 ProcessResponse

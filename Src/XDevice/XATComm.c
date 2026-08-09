@@ -21,7 +21,6 @@ static void VXATComm_readyReadSlot(XATComm* comm)
 XVtable* XATComm_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XATComm)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XATComm");
         XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXATComm_processResponse

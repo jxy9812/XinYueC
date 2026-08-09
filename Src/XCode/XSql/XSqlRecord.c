@@ -13,7 +13,6 @@ static void VXSqlRecord_deinit(XSqlRecord* record);
 XVtable* XSqlRecord_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlRecord)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlRecord");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlRecord_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlRecord_move);

@@ -35,7 +35,6 @@ static XAbstractEventDispatcher* XEventLoop_dispatcher(XEventLoop* loop)
  */
 XVtable* XEventLoop_class_init() {
     XVTABLE_INIT_DEFAULT(XEventLoop)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XEventLoop");
         XVTABLE_INHERIT_XCLASS(XObject);
 
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXEventLoop_event);

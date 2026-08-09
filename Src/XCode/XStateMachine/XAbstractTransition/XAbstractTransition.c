@@ -38,7 +38,6 @@ static void VXAbstractTransition_deinit(XAbstractTransition* transition)
 XVtable* XAbstractTransition_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractTransition)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractTransition");
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { VXAbstractTransition_eventTest, VXAbstractTransition_onTransition };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

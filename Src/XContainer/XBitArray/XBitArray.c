@@ -27,7 +27,6 @@ static bool VXBitArray_clear(XBitArray* array);
 
 XVtable* XBitArray_class_init() {
     XVTABLE_INIT_DEFAULT(XBitArray)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XBitArray");
 
         XVTABLE_INHERIT_XCLASS(XContainer);
 

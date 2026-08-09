@@ -238,7 +238,6 @@ static void VXAbstractNetIoRing_deinit(XAbstractNetIoRing* obj) {
  * ================================================================ */
 XVtable* XAbstractNetIoRing_class_init(void) {
     XVTABLE_INIT_DEFAULT(XAbstractNetIoRing)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractNetIoRing");
     /* 继承 XClass 虚函数表（Copy/Move/Deinit） */
     XVTABLE_INHERIT_XCLASS(XClass);
 

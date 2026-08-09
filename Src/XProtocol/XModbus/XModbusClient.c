@@ -36,7 +36,6 @@ static inline void writeUint16BE(uint8_t* data, size_t offset, uint16_t value)
 XVtable* XModbusClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusClient)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusClient");
         // 继承 XModbusDevice
         XVTABLE_INHERIT_XCLASS(XModbusDevice);
 

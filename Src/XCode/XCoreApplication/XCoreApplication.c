@@ -72,7 +72,6 @@ void VXCoreApplication_deinit(XCoreApplication* app);
 
 XVtable* XCoreApplication_class_init() {
     XVTABLE_INIT_DEFAULT(XCoreApplication)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XCoreApplication");
     XVTABLE_INHERIT_XCLASS(XObject);
     /* Qt 6.8: QCoreApplication 重载 notify 和 event 虚函数 */
     void* table[] = { VXCoreApplication_notify, VXCoreApplication_event };

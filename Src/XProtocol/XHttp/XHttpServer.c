@@ -685,7 +685,6 @@ static void VXHttpServerResponse_copy(XHttpServerResponse* dest,
 XVtable* XHttpServerRequest_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServerRequest)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRequest");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -698,7 +697,6 @@ XVtable* XHttpServerRequest_class_init(void)
 XVtable* XHttpServerResponse_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServerResponse)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerResponse");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -711,7 +709,6 @@ XVtable* XHttpServerResponse_class_init(void)
 XVtable* XHttpServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServer");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

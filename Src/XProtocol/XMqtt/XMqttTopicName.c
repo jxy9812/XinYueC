@@ -20,8 +20,7 @@ static void XMqttTopicName_level_deinit(XString** level)
 
 XVtable* XMqttTopicName_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttTopicName");
+    XVTABLE_INIT_DEFAULT(XMqttTopicName)
     XVTABLE_INHERIT_XCLASS(XClass);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMqttTopicName_copy);

@@ -23,7 +23,6 @@ static void xsql_query_clear_error(XSqlResult* result)
 XVtable* XSqlQuery_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlQuery)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlQuery");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlQuery_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlQuery_move);

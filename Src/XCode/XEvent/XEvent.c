@@ -14,18 +14,12 @@
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
 static XEvent* VXEvent_default_clone(const XEvent* event);
 
-XCLASS_DEFINE_BEGING(XKeyEventClass)
-XCLASS_DEFINE_EXTEND_END(XKeyEventClass, XEvent);
-XCLASS_DEFINE_BEGING(XMouseEventClass)
-XCLASS_DEFINE_EXTEND_END(XMouseEventClass, XEvent);
-
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event);
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event);
 
 static XVtable* XKeyEvent_class_init(void)
 {
-	XVTABLE_INIT_DEFAULT(XKeyEventClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XKeyEvent");
+	XVTABLE_INIT_DEFAULT(XKeyEvent)
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXKeyEvent_clone);
 	return XVTABLE_DEFAULT;
@@ -33,8 +27,7 @@ static XVtable* XKeyEvent_class_init(void)
 
 static XVtable* XMouseEvent_class_init(void)
 {
-	XVTABLE_INIT_DEFAULT(XMouseEventClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMouseEvent");
+	XVTABLE_INIT_DEFAULT(XMouseEvent)
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXMouseEvent_clone);
 	return XVTABLE_DEFAULT;
@@ -42,7 +35,6 @@ static XVtable* XMouseEvent_class_init(void)
 XVtable* XEvent_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XEvent)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XEvent");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
@@ -81,8 +73,7 @@ static void  XEventFunc_deinit(XEventFunc* ev)
 }
 XVtable* XEventFunc_class_init()
 {
-	XVTABLE_INIT_DEFAULT(XEvent)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XEventFunc");
+	XVTABLE_INIT_DEFAULT(XEventFunc)
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	//重载
@@ -132,8 +123,7 @@ static void VXMetaCallEvent_deinit(XMetaCallEvent* ev)
 }
 XVtable* XMetaCallEvent_class_init()
 {
-	XVTABLE_INIT_DEFAULT(XEvent)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMetaCallEvent");
+	XVTABLE_INIT_DEFAULT(XMetaCallEvent)
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMetaCallEvent_deinit);

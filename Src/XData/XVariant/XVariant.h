@@ -10,6 +10,10 @@ extern "C" {
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
+
+XCLASS_DEFINE_BEGING(XVariant)
+XCLASS_DEFINE_EXTEND_END(XVariant, XClass)
+
 /**
 * @brief 变体数据结构，可存储多种类型的数据
 */

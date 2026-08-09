@@ -30,7 +30,6 @@ static void mqtt_detach_transport(XMqttClient* client, void* transport);
 XVtable* XMqttClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMqttClient)
-    XCLASS_SET_CLASS_NAME_DEFAULT("XMqttClient");
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         V_connectToHost, V_disconnectFromHost, V_subscribe,

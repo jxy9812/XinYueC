@@ -35,7 +35,6 @@ typedef struct {
 // 虚函数表初始化
 XVtable* XThread_class_init() {
 	XVTABLE_INIT_DEFAULT(XThread)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XThread");
 		XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
 	VXThread_start, VXThread_wait,

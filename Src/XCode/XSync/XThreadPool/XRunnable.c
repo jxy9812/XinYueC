@@ -21,7 +21,6 @@ static void VXRunnableFunctionWrapper_deinit(XRunnable* runnable);
 XVtable* XRunnable_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XRunnable)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRunnable");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {

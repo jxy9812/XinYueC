@@ -32,7 +32,6 @@ static void VXThread_deinit(XThread* thread);
 XVtable* XThread_class_init()
 {
     XVTABLE_INIT_DEFAULT(XThread)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XThread");
    //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {

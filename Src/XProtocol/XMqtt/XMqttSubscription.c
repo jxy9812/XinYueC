@@ -13,7 +13,6 @@ static void VXMQ_unsubscribe(XMqttSubscription* sub);
 XVtable* XMqttSubscription_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMqttSubscription)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttSubscription");
     XVTABLE_INHERIT_XCLASS(XObject);
 
     void* table[] = {

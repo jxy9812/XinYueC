@@ -103,7 +103,6 @@ static void VXServerChanResult_move(XServerChanResult* dest, XServerChanResult* 
 XVtable* XServerChanResult_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XServerChanResult)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XServerChanResult");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -394,7 +393,6 @@ static void VXServerChan_move(XServerChan* dest, XServerChan* src)
 XVtable* XServerChan_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XServerChan)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XServerChan");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

@@ -17,7 +17,6 @@ static void VXSocketNotifier_deinit(XObject* obj);
 XVtable* XSocketNotifier_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSocketNotifier)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSocketNotifier");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
  /*   void* table[] = { VXObject_poll };

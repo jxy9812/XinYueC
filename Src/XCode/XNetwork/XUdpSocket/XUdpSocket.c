@@ -20,7 +20,6 @@
 XVtable* XUdpSocket_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XUdpSocket)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XUdpSocket");
     XVTABLE_INHERIT_XCLASS(XAbstractSocket);
 
     XCLASS_SHOW_SIZE_DEFAULT(XUdpSocket);

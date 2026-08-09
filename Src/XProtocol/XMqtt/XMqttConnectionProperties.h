@@ -20,6 +20,9 @@ extern "C" {
 
 /* ---------- XMqttLastWillProperties ---------- */
 
+XCLASS_DEFINE_BEGING(XMqttLastWillProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttLastWillProperties, XClass)
+
 /**
  * @brief 遗嘱消息属性结构体
  * @details 对齐 Qt 6.8 QMqttLastWillProperties

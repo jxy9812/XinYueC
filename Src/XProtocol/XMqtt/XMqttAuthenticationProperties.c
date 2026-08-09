@@ -12,8 +12,7 @@ static void VAP_move(XMqttAuthenticationProperties* dest, XMqttAuthenticationPro
 
 XVtable* XMqttAuthenticationProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttAuthenticationProperties");
+    XVTABLE_INIT_DEFAULT(XMqttAuthenticationProperties)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VAP_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VAP_move);

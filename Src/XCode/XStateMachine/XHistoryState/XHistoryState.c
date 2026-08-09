@@ -23,7 +23,6 @@ static void VXHistoryState_deinit(XHistoryState* state)
 XVtable* XHistoryState_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHistoryState)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHistoryState");
     XVTABLE_INHERIT_XCLASS(XAbstractState);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHistoryState_deinit);
     return XVTABLE_DEFAULT;

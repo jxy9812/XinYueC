@@ -12,8 +12,7 @@ static void VXMqttTopicFilter_move(XMqttTopicFilter* dest, XMqttTopicFilter* src
 
 XVtable* XMqttTopicFilter_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttTopicFilter");
+    XVTABLE_INIT_DEFAULT(XMqttTopicFilter)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMqttTopicFilter_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXMqttTopicFilter_move);

@@ -61,7 +61,6 @@ static void configEntryCopy(void* dest, const void* src)
 XVtable* XCanBusDevice_class_init()
 {
     XVTABLE_INIT_DEFAULT(XCanBusDevice)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XCanBusDevice");
     // 继承 XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {

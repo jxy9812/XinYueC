@@ -1398,8 +1398,7 @@ bool XSslSocket_isFeatureSupported(XSslSupportedFeature feat, const XString* bac
 
 
 XVtable* XSslSocket_class_init(void) {
-    XVTABLE_INIT_DEFAULT(XAbstractSocket)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSslSocket");
+    XVTABLE_INIT_DEFAULT(XSslSocket)
     /* 继承 XAbstractSocket 的虚函数表 */
     XVTABLE_INHERIT_XCLASS(XAbstractSocket);
 

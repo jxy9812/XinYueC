@@ -256,7 +256,6 @@ static void VXImage_deinit(XImage* self)
 XVtable* XImage_class_init()
 {
     XVTABLE_INIT_DEFAULT(XImage)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XImage");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXImage_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXImage_move);

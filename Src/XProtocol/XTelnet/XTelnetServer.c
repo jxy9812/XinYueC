@@ -483,7 +483,6 @@ static void VXTelnetServer_deinit(XTelnetServer* self)
 XVtable* XTelnetServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTelnetServer)
-    XCLASS_SET_CLASS_NAME_DEFAULT("XTelnetServer");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTelnetServer_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XTelnetServer);

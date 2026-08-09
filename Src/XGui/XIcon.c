@@ -135,7 +135,6 @@ static void VXIcon_deinit(XIcon* self)
 XVtable* XIcon_class_init()
 {
     XVTABLE_INIT_DEFAULT(XIcon)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XIcon");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXIcon_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXIcon_move);

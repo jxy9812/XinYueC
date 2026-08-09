@@ -629,7 +629,6 @@ static const XConsoleCommand g_echoCommand = {
 XVtable* XConsoleShell_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XConsoleShell);
-    XCLASS_SET_CLASS_NAME_DEFAULT("XConsoleShell");
     XVTABLE_INHERIT_XCLASS(XObject);
 #if XCONSOLE_SHELL_ASYNC_ON
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXConsoleShell_event);

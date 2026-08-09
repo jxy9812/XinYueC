@@ -778,7 +778,6 @@ static void xmysql_apply_client_error(XMySqlResult* result, XMySqlDriver* driver
 static XVtable* XMySqlResult_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMySqlResult)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMySqlResult");
     XVTABLE_INHERIT_XCLASS(XSqlResult);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMySqlResult_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXMySqlResult_move);
@@ -1355,7 +1354,6 @@ static void xmysql_append_table_names(XStringList* list, XSqlResult* query,
 static XVtable* XMySqlDriver_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMySqlDriver)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMySqlDriver");
     XVTABLE_INHERIT_XCLASS(XSqlDriver);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMySqlDriver_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_BeginTransaction, VXMySqlDriver_beginTransaction);

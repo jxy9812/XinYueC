@@ -61,7 +61,6 @@ static bool VXTestReceiver_event(XObject* self, XEvent* e)
 static XVtable* TestReceiver_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(TestReceiver)
-	XCLASS_SET_CLASS_NAME_DEFAULT("TestReceiver");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXTestReceiver_event);
     return XVTABLE_DEFAULT;

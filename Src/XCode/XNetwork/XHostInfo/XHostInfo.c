@@ -139,7 +139,6 @@ static void VXHostInfo_deinit(XHostInfo* self) {
 XVtable* XHostInfo_class_init(void) 
 {
     XVTABLE_INIT_DEFAULT(XHostInfo)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHostInfo");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHostInfo_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHostInfo_move);

@@ -3,6 +3,13 @@
  *
  * 通过此配置文件可以裁剪 XSsh 协议栈内部的各个子功能：
  *   1. XSSH_SERVER_ON   - SSH 服务端状态机（XSshServer）
+ *   2. XSSH_KEX_CURVE25519_SHA256_ON - curve25519-sha256 密钥交换
+ *   3. XSSH_KEX_ECDH_SHA2_NISTP256_ON - ecdh-sha2-nistp256 密钥交换
+ *   4. XSSH_HOSTKEY_ECDSA_SHA2_NISTP256_ON - ecdsa-sha2-nistp256 主机密钥
+ *   5. XSSH_CIPHER_AES256_CTR_ON - aes256-ctr 报文加密
+ *   6. XSSH_CIPHER_AES192_CTR_ON - aes192-ctr 报文加密
+ *   7. XSSH_CIPHER_AES128_CTR_ON - aes128-ctr 报文加密
+ *   8. XSSH_MAC_HMAC_SHA2_256_ON - hmac-sha2-256 报文完整性校验
  *
  * 协议总开关 XSSH_ON 在 XProtocol_config.h 中定义，此处仅提供默认值。
  * 服务端默认随协议总开关开启而启用。
@@ -32,6 +39,45 @@ extern "C" {
  *         底层字节传输由 XProtocolIo 回调查询。 */
 #ifndef XSSH_SERVER_ON
 #define XSSH_SERVER_ON 1
+#endif
+
+/* ========================================================================== */
+/*                        加密套件开关                                      */
+/* ========================================================================== */
+
+/** @brief 启用 curve25519-sha256（X25519 + SHA-256）密钥交换。 */
+#ifndef XSSH_KEX_CURVE25519_SHA256_ON
+#define XSSH_KEX_CURVE25519_SHA256_ON 1
+#endif
+
+/** @brief 启用 ecdh-sha2-nistp256（NIST P-256 + SHA-256）密钥交换。 */
+#ifndef XSSH_KEX_ECDH_SHA2_NISTP256_ON
+#define XSSH_KEX_ECDH_SHA2_NISTP256_ON 1
+#endif
+
+/** @brief 启用 ecdsa-sha2-nistp256（NIST P-256 + SHA-256）主机密钥签名。 */
+#ifndef XSSH_HOSTKEY_ECDSA_SHA2_NISTP256_ON
+#define XSSH_HOSTKEY_ECDSA_SHA2_NISTP256_ON 1
+#endif
+
+/** @brief 启用 aes256-ctr 报文加密算法。 */
+#ifndef XSSH_CIPHER_AES256_CTR_ON
+#define XSSH_CIPHER_AES256_CTR_ON 1
+#endif
+
+/** @brief 启用 aes192-ctr 报文加密算法。 */
+#ifndef XSSH_CIPHER_AES192_CTR_ON
+#define XSSH_CIPHER_AES192_CTR_ON 1
+#endif
+
+/** @brief 启用 aes128-ctr 报文加密算法。 */
+#ifndef XSSH_CIPHER_AES128_CTR_ON
+#define XSSH_CIPHER_AES128_CTR_ON 1
+#endif
+
+/** @brief 启用 hmac-sha2-256 报文完整性校验算法。 */
+#ifndef XSSH_MAC_HMAC_SHA2_256_ON
+#define XSSH_MAC_HMAC_SHA2_256_ON 1
 #endif
 
 /* ========================================================================== */

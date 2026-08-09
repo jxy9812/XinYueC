@@ -38,7 +38,6 @@ static void VXHttp1Configuration_move(XHttp1Configuration* dest, XHttp1Configura
 XVtable* XHttp1Configuration_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp1Configuration)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp1Configuration");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

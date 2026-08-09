@@ -20,7 +20,6 @@ static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* 
 XVtable* XNetworkInterface_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkInterface)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkInterface");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkInterface_deinit);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkInterface_copy);

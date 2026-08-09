@@ -9,7 +9,6 @@ static void VXIODevice_poll(XSwitchDeviceBase* sw);
 XVtable* XSwitchDeviceBase_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XSwitchDeviceBase)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSwitchDeviceBase");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XIODevice);
 	void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };

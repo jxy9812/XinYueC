@@ -47,7 +47,6 @@ static void VXSqlDriver_deinit(XSqlDriver* driver);
 XVtable* XSqlDriver_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlDriver)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlDriver");
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXSqlDriver_isOpen, VXSqlDriver_beginTransaction,

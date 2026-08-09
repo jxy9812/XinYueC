@@ -17,7 +17,6 @@ static void VXContainer_clear(XContainer* Object);
 XVtable* XContainer_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XContainer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XContainer");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {VXContainer_isEmpty,VXContainer_size,VXContainer_capacity,VXContainer_typeSize,VXContainer_swap,VXContainer_clear };

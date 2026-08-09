@@ -446,7 +446,6 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
 XVtable* XAbstractEventDispatcher_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractEventDispatcher)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractEventDispatcher");
 
         // 继承 XObject 的虚函数表
         XVTABLE_INHERIT_XCLASS(XObject);

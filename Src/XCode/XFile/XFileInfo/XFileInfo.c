@@ -65,7 +65,6 @@ static void VXFileInfo_deinit(XFileInfo* self)
 XVtable* XFileInfo_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFileInfo)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XFileInfo");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXFileInfo_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXFileInfo_move);

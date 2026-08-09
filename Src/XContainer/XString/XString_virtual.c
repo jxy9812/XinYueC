@@ -328,7 +328,6 @@ static void VXContainer_clear(XString* str)
 // 虚函数表初始化
 XVtable* XString_class_init() {
     XVTABLE_INIT_DEFAULT(XString)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XString");
 
         XVTABLE_INHERIT_XCLASS(XContainer);
 

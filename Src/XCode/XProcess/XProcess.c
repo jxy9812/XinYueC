@@ -87,7 +87,6 @@ static void xprocess_set_state(XProcess* self, XProcessState state)
 XVtable* XProcess_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XProcess);
-    XCLASS_SET_CLASS_NAME_DEFAULT("XProcess");
     XVTABLE_INHERIT_XCLASS(XIODevice);
     /* QProcess::open() 是虚函数：打开即启动当前已配置程序和参数。 */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXProcess_open);

@@ -36,8 +36,7 @@ static void VXVariant_copy(XVariant* var, const XVariant* src);
 static void VXVariant_deinit(XVariant* var);
 XVtable* XVariant_class_init()
 {
-	XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XVariant");
+	XVTABLE_INIT_DEFAULT(XVariant)
 	// 继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	//重载

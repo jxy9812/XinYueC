@@ -68,7 +68,6 @@ static void VXSqlDatabase_deinit(XSqlDatabase* database);
 XVtable* XSqlDriverCreatorBase_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlDriverCreatorBase)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlDriverCreatorBase");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){ VXSqlDriverCreatorBase_createObject }));
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriverCreatorBase_deinit);
@@ -78,7 +77,6 @@ XVtable* XSqlDriverCreatorBase_class_init(void)
 XVtable* XSqlDriverCreator_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlDriverCreator)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlDriverCreator");
     XVTABLE_INHERIT_XCLASS(XSqlDriverCreatorBase);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriverCreator_deinit);
     return XVTABLE_DEFAULT;
@@ -175,7 +173,6 @@ static bool xsql_database_thread_allowed(const XSqlDatabasePrivate* privateData)
 XVtable* XSqlDatabase_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlDatabase)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlDatabase");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlDatabase_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlDatabase_move);

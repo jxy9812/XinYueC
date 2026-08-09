@@ -148,6 +148,9 @@ typedef enum XMouseButton {
 } XMouseButton;
 
 /** @brief 携带按键和修饰键数据的键盘事件。 */
+XCLASS_DEFINE_BEGING(XKeyEvent)
+XCLASS_DEFINE_EXTEND_END(XKeyEvent, XEvent)
+
 typedef struct XKeyEvent {
     XEvent m_class;                 ///< 继承 XEvent。
     int m_key;                      ///< 与平台无关的按键码。
@@ -188,6 +191,9 @@ XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event);
 #define XKeyEvent_deinit_base XEvent_deinit_base
 
 /** @brief 携带按键、修饰键和位置数据的鼠标事件。 */
+XCLASS_DEFINE_BEGING(XMouseEvent)
+XCLASS_DEFINE_EXTEND_END(XMouseEvent, XEvent)
+
 typedef struct XMouseEvent {
     XEvent m_class;                 ///< 继承 XEvent。
     XMouseButton m_button;          ///< 触发事件的鼠标按键。
@@ -339,6 +345,9 @@ typedef struct {
 XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create(const char* name);
 const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event);
 //函数运行事件
+XCLASS_DEFINE_BEGING(XEventFunc)
+XCLASS_DEFINE_EXTEND_END(XEventFunc, XEvent)
+
 typedef struct XEventFunc
 {
     XEvent event;
@@ -362,6 +371,9 @@ void XEventFunc_handler(XEventFunc* event);
 
 
 //槽函数调用事件
+XCLASS_DEFINE_BEGING(XMetaCallEvent)
+XCLASS_DEFINE_EXTEND_END(XMetaCallEvent, XEvent)
+
 typedef struct XMetaCallEvent
 {
     XEvent event;

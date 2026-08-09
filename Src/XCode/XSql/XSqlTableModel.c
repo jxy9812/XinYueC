@@ -27,7 +27,6 @@ static XSqlRecord* xsql_table_key_values(const XSqlTableModel* model,
 XVtable* XSqlTableModel_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlTableModel)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlTableModel");
     XVTABLE_INHERIT_XCLASS(XSqlQueryModel);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
         VXSqlTableModel_setTable, VXSqlTableModel_setEditStrategy,

@@ -35,7 +35,6 @@ static void VXRegularExpressionValidator_move(XRegularExpressionValidator* dest,
 XVtable* XRegularExpressionValidator_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRegularExpressionValidator)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRegularExpressionValidator");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRegularExpressionValidator_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXRegularExpressionValidator_copy);

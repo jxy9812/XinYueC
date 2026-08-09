@@ -91,7 +91,6 @@ static bool xhttp_multipart_make_boundary(XByteArray* boundary)
 XVtable* XHttpPart_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpPart)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpPart");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -279,7 +278,6 @@ XIODevice* XHttpPart_bodyDevice(const XHttpPart* self)
 XVtable* XHttpMultiPart_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpMultiPart)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpMultiPart");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

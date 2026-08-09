@@ -44,7 +44,6 @@ static void VXState_deinit(XState* state)
 XVtable* XState_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XState)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XState");
     XVTABLE_INHERIT_XCLASS(XAbstractState);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXState_deinit);
     return XVTABLE_DEFAULT;

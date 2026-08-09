@@ -21,7 +21,6 @@ static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
 XVtable* XObject_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XObject)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XObject");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = { 

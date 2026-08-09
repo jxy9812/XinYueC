@@ -74,7 +74,6 @@ static void VXStateMachineTest_TypeTransition_onTransition(
 static XVtable* XStateMachineTest_TypeTransition_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStateMachineTest_TypeTransition)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachineTest_TypeTransition");
     XVTABLE_INHERIT_XCLASS(XAbstractTransition);
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractTransition_EventTest,
@@ -132,7 +131,6 @@ static bool VXStateMachineTest_EventSource_event(XStateMachineTest_EventSource* 
 static XVtable* XStateMachineTest_EventSource_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStateMachineTest_EventSource)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachineTest_EventSource");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXStateMachineTest_EventSource_event);
     return XVTABLE_DEFAULT;

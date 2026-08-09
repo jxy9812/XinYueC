@@ -67,8 +67,7 @@ static XContainer* XModbusDataUnit_copyContainer(XModbusRegisterType type, const
 
 XVtable* XModbusDataUnit_class_init()
 {
-	XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDataUnit");
+	XVTABLE_INIT_DEFAULT(XModbusDataUnit)
 	// 继承 XModbusDevice
 	XVTABLE_INHERIT_XCLASS(XClass);
 	//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };

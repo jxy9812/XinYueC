@@ -41,7 +41,6 @@ static void VXVector_squeeze(XVector* this_vector);
 XVtable* XVector_class_init()
 {
     XVTABLE_INIT_DEFAULT(XVector)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XVector");
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXVector_resize,

@@ -91,7 +91,6 @@ static void VXHttp2ClientSession_move(XHttp2ClientSession* dest,
 XVtable* XHttp2ClientSession_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp2ClientSession)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2ClientSession");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

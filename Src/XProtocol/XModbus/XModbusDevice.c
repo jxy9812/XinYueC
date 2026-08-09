@@ -31,7 +31,6 @@ static const char* errorToString(XModbusDevice_Error err) {
 XVtable* XModbusDevice_class_init()
 {
     XVTABLE_INIT_DEFAULT(XModbusDevice)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDevice");
     // 继承 XObject
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {

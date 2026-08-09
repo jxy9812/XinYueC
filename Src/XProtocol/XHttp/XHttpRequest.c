@@ -220,7 +220,6 @@ static void VXHttpRequest_move(XHttpRequest* dest, XHttpRequest* src)
 XVtable* XHttpRequest_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpRequest)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpRequest");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

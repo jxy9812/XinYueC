@@ -134,7 +134,6 @@ static void VXPixmap_deinit(XPixmap* self)
 XVtable* XPixmap_class_init()
 {
     XVTABLE_INIT_DEFAULT(XPixmap)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XPixmap");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPixmap_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPixmap_move);

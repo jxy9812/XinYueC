@@ -51,6 +51,11 @@ typedef struct XStateMachine_WrappedEvent {
     XEvent* m_event;   ///< 原始事件的克隆，由包装事件拥有。
 } XStateMachine_WrappedEvent;
 
+XCLASS_DEFINE_BEGING(XStateMachine_SignalEvent)
+XCLASS_DEFINE_EXTEND_END(XStateMachine_SignalEvent, XEvent)
+XCLASS_DEFINE_BEGING(XStateMachine_WrappedEvent)
+XCLASS_DEFINE_EXTEND_END(XStateMachine_WrappedEvent, XEvent)
+
 /** @brief 延迟事件的内部记录。 */
 typedef struct XStateMachine_DelayedEvent {
     int m_id;              ///< 对外返回的延迟事件编号。

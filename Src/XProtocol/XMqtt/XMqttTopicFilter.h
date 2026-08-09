@@ -26,6 +26,9 @@ typedef enum {
     XMqttTopicFilter_WildcardsDontMatchDollarTopicMatchOption = 0x0001  ///< 通配符不匹配 $ 开头的主题
 } XMqttTopicFilter_MatchOption;
 
+XCLASS_DEFINE_BEGING(XMqttTopicFilter)
+XCLASS_DEFINE_EXTEND_END(XMqttTopicFilter, XClass)
+
 /**
  * @brief MQTT 主题过滤器结构体
  * @details 对齐 Qt 6.8 QMqttTopicFilter，基于 XClass 实现值类型语义。

@@ -63,7 +63,6 @@ static void VXHstsPolicy_move(XHstsPolicy* dest, XHstsPolicy* src)
 XVtable* XHstsPolicy_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHstsPolicy)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHstsPolicy");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

@@ -157,7 +157,6 @@ int XHostAddress_operator_compare(const XHostAddress* a, const XHostAddress* b) 
 XVtable* XHostAddress_class_init(void) 
 {
     XVTABLE_INIT_DEFAULT(XHostAddress)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHostAddress");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHostAddress_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHostAddress_move);

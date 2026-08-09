@@ -12,6 +12,9 @@
 extern "C" {
 #endif
 
+XCLASS_DEFINE_BEGING(XMqttMessage)
+XCLASS_DEFINE_EXTEND_END(XMqttMessage, XClass)
+
 /**
  * @file XMqttMessage.h
  * @brief MQTT 消息（对齐 Qt 6.8 QMqttMessage）

@@ -137,7 +137,6 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
 XVtable* XModbusTcpServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusTcpServer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusTcpServer");
     // 继承 XModbusServer
     XVTABLE_INHERIT_XCLASS(XModbusServer);
 

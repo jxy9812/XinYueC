@@ -54,7 +54,6 @@ static bool xhttp_router_match_path(const char* pattern,
 XVtable* XHttpServerRouterRule_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServerRouterRule)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRouterRule");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

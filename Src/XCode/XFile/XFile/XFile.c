@@ -107,7 +107,6 @@ static void VXFile_deinit(XFile* file)
 XVtable* XFile_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFile)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XFile");
     XVTABLE_INHERIT_XCLASS(XFileDevice);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFile_deinit);

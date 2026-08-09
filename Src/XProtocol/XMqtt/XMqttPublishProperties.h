@@ -35,6 +35,9 @@ typedef enum {
     XMqttPublishProperties_ContentType            = 0x00000080
 } XMqttPublishProperties_Detail;
 
+XCLASS_DEFINE_BEGING(XMqttPublishProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttPublishProperties, XClass)
+
 /**
  * @brief PUBLISH 属性结构体
  * @details 对齐 Qt 6.8 QMqttPublishProperties，基于 XClass 实现值类型语义。
@@ -141,6 +144,9 @@ void XMqttPublishProperties_setContentType(XMqttPublishProperties* prop, const c
  * @brief 消息状态属性结构体
  * @details 对齐 Qt 6.8 QMqttMessageStatusProperties
  */
+XCLASS_DEFINE_BEGING(XMqttMessageStatusProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttMessageStatusProperties, XClass)
+
 typedef struct XMqttMessageStatusProperties {
     XClass m_class;                        ///< 基类
     uint8_t m_reasonCode;                  ///< 原因码（XMqtt_ReasonCode）

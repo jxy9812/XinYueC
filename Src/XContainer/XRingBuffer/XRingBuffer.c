@@ -13,7 +13,6 @@ static void VXRingBuffer_deinit(XRingBuffer* buffer);
 XVtable* XRingBuffer_class_init()
 {
     XVTABLE_INIT_DEFAULT(XRingBuffer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRingBuffer");
         // 继承类
         XVTABLE_INHERIT_XCLASS(XContainer);
 

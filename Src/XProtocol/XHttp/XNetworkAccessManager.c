@@ -4103,7 +4103,6 @@ static void xhttp_manager_transaction_finish(XHttpTransaction* tx)
 XVtable* XNetworkAccessManager_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkAccessManager)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkAccessManager");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

@@ -63,7 +63,6 @@ static void VXHttp2Frame_move(XHttp2Frame* dest, XHttp2Frame* src)
 XVtable* XHttp2Frame_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp2Frame)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2Frame");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

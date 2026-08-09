@@ -8,7 +8,6 @@ static void VXClass_deinit(XClass* object);
 XVtable* XClass_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XClass");
 	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 

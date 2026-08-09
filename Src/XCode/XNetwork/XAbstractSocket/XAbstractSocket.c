@@ -75,7 +75,6 @@ static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msec
 XVtable* XAbstractSocket_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractSocket)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XAbstractSocket");
     // 继承 XIODevice 的虚表
     XVTABLE_INHERIT_XCLASS(XIODevice);
     // 添加 XAbstractSocket 特有虚函数

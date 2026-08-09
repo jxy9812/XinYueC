@@ -379,7 +379,6 @@ static void VXUrl_move(XUrl* dest, XUrl* src)
 XVtable* XUrl_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XUrl)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XUrl");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXUrl_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXUrl_move);

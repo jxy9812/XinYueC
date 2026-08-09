@@ -46,7 +46,6 @@ static void VXHttpServerWebSocketUpgradeResponse_copy(
 XVtable* XHttpServerWebSocketUpgradeResponse_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServerWebSocketUpgradeResponse)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerWebSocketUpgradeResponse");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

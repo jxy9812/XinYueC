@@ -48,6 +48,9 @@ typedef enum {
 * @details 封装了Modbus请求的最终结果，包括类型、从站地址、完成状态、
 * 错误信息、结构化结果、原始PDU结果以及中间错误列表。
 */
+XCLASS_DEFINE_BEGING(XModbusReply)
+XCLASS_DEFINE_EXTEND_END(XModbusReply, XObject)
+
 typedef struct XModbusReply 
 {
     XObject m_class;                    ///< 继承自XObject基类
@@ -267,4 +270,3 @@ void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbus
 #endif
 
 #endif // XMODBUSREPLY_H
-

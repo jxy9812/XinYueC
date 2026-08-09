@@ -14,8 +14,7 @@ static void VSP_move(XMqttSubscriptionProperties* dest, XMqttSubscriptionPropert
 
 XVtable* XMqttSubscriptionProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttSubscriptionProperties");
+    XVTABLE_INIT_DEFAULT(XMqttSubscriptionProperties)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VSP_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VSP_move);
@@ -97,8 +96,7 @@ static void VUSP_move(XMqttUnsubscriptionProperties* dest, XMqttUnsubscriptionPr
 
 XVtable* XMqttUnsubscriptionProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttUnsubscriptionProperties");
+    XVTABLE_INIT_DEFAULT(XMqttUnsubscriptionProperties)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VUSP_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VUSP_move);

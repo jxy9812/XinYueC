@@ -84,7 +84,6 @@ static void VXDir_deinit(XDir* self)
 XVtable* XDir_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDir)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XDir");
         XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDir_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXDir_move);

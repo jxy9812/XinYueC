@@ -5,8 +5,9 @@
  * 继承 XObject 获得信号与槽能力，内部包含 XIODevice 作为数据来源，
  * 可接入 TCP/串口等任何字节流设备，并保留原 SSH 状态机。
  *
- * 仅实现 SSH 2.0 传输层：版本协商、KEXINIT、ecdh-sha2-nistp256 密钥交换、
- * AES-128-CTR 加密、HMAC-SHA2-256 完整性、password 用户认证和 session 通道。
+ * 仅实现 SSH 2.0 传输层：版本协商、KEXINIT、curve25519-sha256 /
+ * ecdh-sha2-nistp256 密钥交换、AES-256/192/128-CTR 加密、
+ * HMAC-SHA2-256 完整性、password 用户认证和 session 通道。
  * 输入字节经 bytesReceived_signal 交给宿主，宿主可通过 setter 回填查询结果，
  * 输出/回显/提示符等操作通过公共方法 write/flush/setInputEcho/emitPrompt 完成。
  *

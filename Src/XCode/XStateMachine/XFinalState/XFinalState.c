@@ -5,7 +5,6 @@
 XVtable* XFinalState_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFinalState)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XFinalState");
     XVTABLE_INHERIT_XCLASS(XAbstractState);
     return XVTABLE_DEFAULT;
 }

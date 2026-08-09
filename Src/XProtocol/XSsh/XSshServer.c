@@ -2,8 +2,9 @@
  * @file XSshServer.c
  * @brief SSH 服务端协议栈实现（XSshServer）。
  * @details
- * 实现 SSH 2.0 传输层：版本协商、KEXINIT、ecdh-sha2-nistp256 密钥交换、
- * AES-128-CTR 加密、HMAC-SHA2-256 完整性、password 用户认证和 session 通道。
+ * 实现 SSH 2.0 传输层：版本协商、KEXINIT、curve25519-sha256 / ECDH P-256
+ * 密钥交换、AES-256/192/128-CTR 加密、HMAC-SHA2-256 完整性、password
+ * 用户认证和 session 通道。
  * 适配器不创建线程、不监听端口。底层字节传输由 XIODevice 提供；
  * 与宿主的交互全部通过 XObject 信号槽完成：协议栈向宿主发射
  * bytesReceived/authenticateRequested/isRunningRequested 等请求信号，
@@ -44,6 +45,8 @@ enum {
     XSSH_HASH_LEN = 32,
     XSSH_MAC_LEN = 32,
     XSSH_POINT_LEN = 65,
+    XSSH_CURVE25519_PUBLIC_LEN = 32,
+    XSSH_MAX_CIPHER_KEY_LEN = 32,
     XSSH_CHANNEL_DATA_CHUNK = 1024,
     XSSH_CHANNEL_INITIAL_WINDOW = 32768,
     XSSH_CHANNEL_WINDOW_LOW_WATER = 8192,
@@ -101,6 +104,61 @@ typedef enum XSshState {
     XSshState_Channel
 } XSshState;
 
+typedef enum XSshKexAlgorithm {
+    XSshKexAlgorithm_None = 0,
+    XSshKexAlgorithm_Curve25519Sha256,
+    XSshKexAlgorithm_EcdhSha2Nistp256
+} XSshKexAlgorithm;
+
+typedef enum XSshCipherAlgorithm {
+    XSshCipherAlgorithm_None = 0,
+    XSshCipherAlgorithm_Aes256Ctr,
+    XSshCipherAlgorithm_Aes192Ctr,
+    XSshCipherAlgorithm_Aes128Ctr
+} XSshCipherAlgorithm;
+
+typedef struct XSshNamedAlgorithm {
+    const char* name;
+    int value;
+} XSshNamedAlgorithm;
+
+static const XSshNamedAlgorithm xssh_kex_algorithms[] = {
+#if XSSH_KEX_CURVE25519_SHA256_ON
+    { "curve25519-sha256", XSshKexAlgorithm_Curve25519Sha256 },
+#endif
+#if XSSH_KEX_ECDH_SHA2_NISTP256_ON
+    { "ecdh-sha2-nistp256", XSshKexAlgorithm_EcdhSha2Nistp256 },
+#endif
+    { NULL, XSshKexAlgorithm_None }
+};
+
+static const XSshNamedAlgorithm xssh_hostkey_algorithms[] = {
+#if XSSH_HOSTKEY_ECDSA_SHA2_NISTP256_ON
+    { "ecdsa-sha2-nistp256", 1 },
+#endif
+    { NULL, 0 }
+};
+
+static const XSshNamedAlgorithm xssh_cipher_algorithms[] = {
+#if XSSH_CIPHER_AES256_CTR_ON
+    { "aes256-ctr", XSshCipherAlgorithm_Aes256Ctr },
+#endif
+#if XSSH_CIPHER_AES192_CTR_ON
+    { "aes192-ctr", XSshCipherAlgorithm_Aes192Ctr },
+#endif
+#if XSSH_CIPHER_AES128_CTR_ON
+    { "aes128-ctr", XSshCipherAlgorithm_Aes128Ctr },
+#endif
+    { NULL, XSshCipherAlgorithm_None }
+};
+
+static const XSshNamedAlgorithm xssh_mac_algorithms[] = {
+#if XSSH_MAC_HMAC_SHA2_256_ON
+    { "hmac-sha2-256", 1 },
+#endif
+    { NULL, 0 }
+};
+
 typedef struct XSshServerData {
     XSshState state;
     bool closed;
@@ -112,6 +170,9 @@ typedef struct XSshServerData {
     size_t clientKexInitLen;
     uint8_t serverKexInit[XSSH_RX_CAPACITY];
     size_t serverKexInitLen;
+    XSshKexAlgorithm kexAlgorithm;
+    XSshCipherAlgorithm cipherC2S;
+    XSshCipherAlgorithm cipherS2C;
 
     /* 主机密钥 */
     mbedtls_svc_key_id_t hostKey;
@@ -393,6 +454,51 @@ static bool xssh_name_list_contains(const uint8_t* list, size_t len, const char*
     return false;
 }
 
+/* SSH algorithm selection is driven by the client's preference order. */
+static bool xssh_select_client_algorithm(const uint8_t* list, size_t len,
+                                         const XSshNamedAlgorithm* supported,
+                                         int* value)
+{
+    size_t start = 0;
+    if (!list || !supported || !value) return false;
+    while (start < len) {
+        size_t end = start;
+        size_t i;
+        while (end < len && list[end] != ',') ++end;
+        for (i = 0; supported[i].name; ++i) {
+            size_t nameLen = strlen(supported[i].name);
+            if (end - start == nameLen &&
+                memcmp(list + start, supported[i].name, nameLen) == 0) {
+                *value = supported[i].value;
+                return true;
+            }
+        }
+        if (end == len) break;
+        start = end + 1u;
+    }
+    return false;
+}
+
+static bool xssh_build_algorithm_list(const XSshNamedAlgorithm* algorithms,
+                                      uint8_t* out, size_t capacity,
+                                      size_t* outLen)
+{
+    size_t off = 0;
+    size_t i;
+    if (!algorithms || !out || !outLen) return false;
+    for (i = 0; algorithms[i].name; ++i) {
+        size_t nameLen = strlen(algorithms[i].name);
+        if (off && off >= capacity) return false;
+        if (off) out[off++] = ',';
+        if (nameLen > capacity - off) return false;
+        memcpy(out + off, algorithms[i].name, nameLen);
+        off += nameLen;
+    }
+    if (off == 0) return false;
+    *outLen = off;
+    return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* 发送路径                                                           */
 /* ------------------------------------------------------------------ */
@@ -531,28 +637,55 @@ static bool xssh_derive_key(XSshServer* adapter, char letter,
     return true;
 }
 
+static size_t xssh_cipher_key_size(XSshCipherAlgorithm cipher)
+{
+    switch (cipher) {
+    case XSshCipherAlgorithm_Aes256Ctr:
+        return 32;
+    case XSshCipherAlgorithm_Aes192Ctr:
+        return 24;
+    case XSshCipherAlgorithm_Aes128Ctr:
+        return 16;
+    default:
+        return 0;
+    }
+}
+
 static bool xssh_setup_keys(XSshServer* adapter)
 {
-    uint8_t ivC2S[16], ivS2C[16], encC2S[16], encS2C[16];
+    uint8_t ivC2S[16], ivS2C[16];
+    uint8_t encC2S[XSSH_MAX_CIPHER_KEY_LEN], encS2C[XSSH_MAX_CIPHER_KEY_LEN];
     uint8_t macC2S[XSSH_MAC_LEN], macS2C[XSSH_MAC_LEN];
     psa_key_attributes_t attrs;
     psa_status_t st;
+    size_t encC2SLen;
+    size_t encS2CLen;
+
+    if (!adapter) return false;
+    encC2SLen = xssh_cipher_key_size(XSSH_DATA(adapter)->cipherC2S);
+    encS2CLen = xssh_cipher_key_size(XSSH_DATA(adapter)->cipherS2C);
+    if (encC2SLen == 0 || encS2CLen == 0) return false;
 
     if (!xssh_derive_key(adapter, 'A', ivC2S, sizeof(ivC2S))) return false;
     if (!xssh_derive_key(adapter, 'B', ivS2C, sizeof(ivS2C))) return false;
-    if (!xssh_derive_key(adapter, 'C', encC2S, sizeof(encC2S))) return false;
-    if (!xssh_derive_key(adapter, 'D', encS2C, sizeof(encS2C))) return false;
+    if (!xssh_derive_key(adapter, 'C', encC2S, encC2SLen)) return false;
+    if (!xssh_derive_key(adapter, 'D', encS2C, encS2CLen)) return false;
     if (!xssh_derive_key(adapter, 'E', macC2S, sizeof(macC2S))) return false;
     if (!xssh_derive_key(adapter, 'F', macS2C, sizeof(macS2C))) return false;
 
     attrs = psa_key_attributes_init();
     psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_bits(&attrs, 128);
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
     psa_set_key_algorithm(&attrs, PSA_ALG_CTR);
-    st = psa_import_key(&attrs, encC2S, sizeof(encC2S), &XSSH_DATA(adapter)->cipherKeyC2S);
+    psa_set_key_bits(&attrs, encC2SLen * 8u);
+    st = psa_import_key(&attrs, encC2S, encC2SLen, &XSSH_DATA(adapter)->cipherKeyC2S);
     if (st != PSA_SUCCESS) return false;
-    st = psa_import_key(&attrs, encS2C, sizeof(encS2C), &XSSH_DATA(adapter)->cipherKeyS2C);
+    psa_reset_key_attributes(&attrs);
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attrs, encS2CLen * 8u);
+    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attrs, PSA_ALG_CTR);
+    st = psa_import_key(&attrs, encS2C, encS2CLen, &XSSH_DATA(adapter)->cipherKeyS2C);
     if (st != PSA_SUCCESS) return false;
 
     attrs = psa_key_attributes_init();
@@ -712,21 +845,43 @@ static bool xssh_check_kexinit(XSshServer* adapter)
     size_t off = 0;
     const uint8_t* list;
     size_t listLen;
+    int selected;
 
     if (len < 1 + 16) { XSSH_DBG("kexinit too short len=%u\n", (unsigned)len); return false; }
     off = 1 + 16;
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 1 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "ecdh-sha2-nistp256")) { XSSH_DBG("kexinit no ecdh list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_kex_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported key exchange list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
+    XSSH_DATA(adapter)->kexAlgorithm = (XSshKexAlgorithm)selected;
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 2 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "ecdsa-sha2-nistp256")) { XSSH_DBG("kexinit no ecdsa list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_hostkey_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported host key list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 3 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "aes128-ctr")) { XSSH_DBG("kexinit no aes c2s list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_cipher_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported cipher c2s list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
+    XSSH_DATA(adapter)->cipherC2S = (XSshCipherAlgorithm)selected;
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 4 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "aes128-ctr")) { XSSH_DBG("kexinit no aes s2c list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_cipher_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported cipher s2c list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
+    XSSH_DATA(adapter)->cipherS2C = (XSshCipherAlgorithm)selected;
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 5 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "hmac-sha2-256")) { XSSH_DBG("kexinit no hmac c2s list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_mac_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported MAC c2s list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 6 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_name_list_contains(list, listLen, "hmac-sha2-256")) { XSSH_DBG("kexinit no hmac s2c list='%.*s'\n", (int)listLen, list); return false; }
+    if (!xssh_select_client_algorithm(list, listLen, xssh_mac_algorithms, &selected)) {
+        XSSH_DBG("kexinit has no supported MAC s2c list='%.*s'\n", (int)listLen, list);
+        return false;
+    }
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 7 fail off=%u\n", (unsigned)off); return false; }
     if (!xssh_name_list_contains(list, listLen, "none")) { XSSH_DBG("kexinit no none c2s list='%.*s'\n", (int)listLen, list); return false; }
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 8 fail off=%u\n", (unsigned)off); return false; }
@@ -738,24 +893,28 @@ static bool xssh_check_kexinit(XSshServer* adapter)
 static bool xssh_send_kexinit(XSshServer* adapter)
 {
     uint8_t msg[512];
+    uint8_t kex[96], host[64], cipher[96], mac[64];
     size_t off = 0;
+    size_t kexLen, hostLen, cipherLen, macLen;
     uint8_t cookie[16];
-    const uint8_t* kex = (const uint8_t*)"ecdh-sha2-nistp256";
-    const uint8_t* host = (const uint8_t*)"ecdsa-sha2-nistp256";
-    const uint8_t* cipher = (const uint8_t*)"aes128-ctr";
-    const uint8_t* mac = (const uint8_t*)"hmac-sha2-256";
     const uint8_t* none = (const uint8_t*)"none";
 
-    if (!XRandomGenerator_fillSecure(cookie, sizeof(cookie))) return false;
+    if (!adapter ||
+        !xssh_build_algorithm_list(xssh_kex_algorithms, kex, sizeof(kex), &kexLen) ||
+        !xssh_build_algorithm_list(xssh_hostkey_algorithms, host, sizeof(host), &hostLen) ||
+        !xssh_build_algorithm_list(xssh_cipher_algorithms, cipher, sizeof(cipher), &cipherLen) ||
+        !xssh_build_algorithm_list(xssh_mac_algorithms, mac, sizeof(mac), &macLen) ||
+        !XRandomGenerator_fillSecure(cookie, sizeof(cookie)))
+        return false;
     msg[off++] = SSH_MSG_KEXINIT;
     memcpy(msg + off, cookie, sizeof(cookie));
     off += sizeof(cookie);
-    xssh_write_string(msg, &off, kex, strlen((const char*)kex));
-    xssh_write_string(msg, &off, host, strlen((const char*)host));
-    xssh_write_string(msg, &off, cipher, strlen((const char*)cipher));
-    xssh_write_string(msg, &off, cipher, strlen((const char*)cipher));
-    xssh_write_string(msg, &off, mac, strlen((const char*)mac));
-    xssh_write_string(msg, &off, mac, strlen((const char*)mac));
+    xssh_write_string(msg, &off, kex, kexLen);
+    xssh_write_string(msg, &off, host, hostLen);
+    xssh_write_string(msg, &off, cipher, cipherLen);
+    xssh_write_string(msg, &off, cipher, cipherLen);
+    xssh_write_string(msg, &off, mac, macLen);
+    xssh_write_string(msg, &off, mac, macLen);
     xssh_write_string(msg, &off, none, 4);
     xssh_write_string(msg, &off, none, 4);
     xssh_write_string(msg, &off, (const uint8_t*)"", 0);
@@ -832,6 +991,35 @@ static bool xssh_der_ecdsa_to_rs(const uint8_t* der, size_t derLen,
     return off == contentEnd;
 }
 
+/* Normalize the raw agreement result before SSH mpint encoding.  The built-in
+ * PSA X25519 path used here already returns the value in network byte order;
+ * the helper still accepts little-endian providers for portability. */
+static bool xssh_store_shared_secret_mpint(XSshServer* adapter,
+                                           const uint8_t* shared, size_t sharedLen,
+                                           bool sourceIsLittleEndian)
+{
+    uint8_t encoded[64];
+    size_t start = 0;
+    size_t length;
+    size_t i;
+    if (!adapter || !shared || sharedLen == 0 || sharedLen > sizeof(encoded)) return false;
+    for (i = 0; i < sharedLen; ++i)
+        encoded[i] = sourceIsLittleEndian ? shared[sharedLen - 1u - i] : shared[i];
+    while (start + 1u < sharedLen && encoded[start] == 0) ++start;
+    length = sharedLen - start;
+    if (encoded[start] & 0x80u) {
+        if (length >= sizeof(XSSH_DATA(adapter)->sharedSecret)) return false;
+        XSSH_DATA(adapter)->sharedSecret[0] = 0;
+        memcpy(XSSH_DATA(adapter)->sharedSecret + 1u, encoded + start, length);
+        ++length;
+    } else {
+        if (length > sizeof(XSSH_DATA(adapter)->sharedSecret)) return false;
+        memcpy(XSSH_DATA(adapter)->sharedSecret, encoded + start, length);
+    }
+    XSSH_DATA(adapter)->sharedSecretLen = length;
+    return true;
+}
+
 static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
                                                 const uint8_t* payload, size_t len)
 {
@@ -841,7 +1029,7 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     size_t qcStringLen;
     uint8_t serverPub[XSSH_POINT_LEN];
     size_t serverPubLen;
-    uint8_t shared[32];
+    uint8_t shared[64];
     size_t sharedLen;
     uint8_t hashInput[XSSH_RX_CAPACITY + 64];
     size_t hashOff = 0;
@@ -857,52 +1045,84 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     psa_key_attributes_t attrs;
     psa_status_t st;
     size_t hLen;
+    size_t expectedPublicLen;
+    psa_ecc_family_t curveFamily;
+    size_t curveBits;
+    bool sharedIsLittleEndian;
 
     if (len < 1 + 4) { XSSH_DBG("bad len\n"); return XProtocolResult_Failed; }
     off = 1;
-    /* Q_C 在 SSH_MSG_KEX_ECDH_INIT 中是原始未压缩点（0x04 || X || Y），不是 key blob */
+    switch (XSSH_DATA(adapter)->kexAlgorithm) {
+    case XSshKexAlgorithm_Curve25519Sha256:
+#if XSSH_KEX_CURVE25519_SHA256_ON
+        expectedPublicLen = XSSH_CURVE25519_PUBLIC_LEN;
+        curveFamily = PSA_ECC_FAMILY_MONTGOMERY;
+        curveBits = 255;
+        sharedIsLittleEndian = false;
+        break;
+#else
+        return XProtocolResult_Failed;
+#endif
+    case XSshKexAlgorithm_EcdhSha2Nistp256:
+#if XSSH_KEX_ECDH_SHA2_NISTP256_ON
+        expectedPublicLen = XSSH_POINT_LEN;
+        curveFamily = PSA_ECC_FAMILY_SECP_R1;
+        curveBits = 256;
+        sharedIsLittleEndian = false;
+        break;
+#else
+        return XProtocolResult_Failed;
+#endif
+    default:
+        return XProtocolResult_Failed;
+    }
+
+    /* Q_C 是所选密钥交换算法定义的原始公钥字符串，不是 SSH key blob。 */
     if (!xssh_get_string(payload, len, &off, &qcString, &qcStringLen) ||
-        qcStringLen != XSSH_POINT_LEN || qcString[0] != 0x04)
-    { XSSH_DBG("get qc point failed len=%u first=%02x\n", (unsigned)qcStringLen, qcString[0]); return XProtocolResult_Failed; }
+        off != len || qcStringLen != expectedPublicLen ||
+        (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_EcdhSha2Nistp256 &&
+         qcString[0] != 0x04)) {
+        XSSH_DBG("get client public key failed len=%u\n", (unsigned)qcStringLen);
+        return XProtocolResult_Failed;
+    }
 
     memcpy(XSSH_DATA(adapter)->clientPublicBlob, qcString, qcStringLen);
     XSSH_DATA(adapter)->clientPublicBlobLen = qcStringLen;
 
-    /* 生成服务端临时 ECDH 密钥 */
+    /* 生成服务端临时密钥并执行 ECDH/X25519 原始密钥协商。 */
     attrs = psa_key_attributes_init();
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
-    psa_set_key_bits(&attrs, 256);
+    psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(curveFamily));
+    psa_set_key_bits(&attrs, curveBits);
     psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
     psa_set_key_algorithm(&attrs, PSA_ALG_ECDH);
     st = psa_generate_key(&attrs, &XSSH_DATA(adapter)->ecdhKey);
-    if (st != PSA_SUCCESS) { XSSH_DBG("gen ecdh failed st=%d\n", (int)st); return XProtocolResult_Failed; }
+    if (st != PSA_SUCCESS) { XSSH_DBG("generate key exchange key failed st=%d\n", (int)st); return XProtocolResult_Failed; }
     st = psa_export_public_key(XSSH_DATA(adapter)->ecdhKey, serverPub, sizeof(serverPub), &serverPubLen);
-    if (st != PSA_SUCCESS || serverPubLen != XSSH_POINT_LEN)
-    { XSSH_DBG("export pub failed st=%d len=%u\n", (int)st, (unsigned)serverPubLen); return XProtocolResult_Failed; }
-
-    st = psa_raw_key_agreement(PSA_ALG_ECDH, XSSH_DATA(adapter)->ecdhKey, qcString, XSSH_POINT_LEN,
-                               shared, sizeof(shared), &sharedLen);
-    if (st != PSA_SUCCESS || sharedLen == 0)
-    { XSSH_DBG("raw agreement failed st=%d len=%u\n", (int)st, (unsigned)sharedLen); return XProtocolResult_Failed; }
-    /* 共享密钥 K 以 SSH mpint 编码：先去掉前导 0x00，若最高位仍为 1 再前置 0x00。 */
-    {
-        size_t _i = 0;
-        while (_i + 1 < sharedLen && shared[_i] == 0) ++_i;
-        XSSH_DATA(adapter)->sharedSecretLen = sharedLen - _i;
-        memcpy(XSSH_DATA(adapter)->sharedSecret, shared + _i, XSSH_DATA(adapter)->sharedSecretLen);
-        if (XSSH_DATA(adapter)->sharedSecret[0] & 0x80u) {
-            memmove(XSSH_DATA(adapter)->sharedSecret + 1, XSSH_DATA(adapter)->sharedSecret,
-                    XSSH_DATA(adapter)->sharedSecretLen);
-            XSSH_DATA(adapter)->sharedSecret[0] = 0;
-            XSSH_DATA(adapter)->sharedSecretLen += 1;
-        }
+    if (st != PSA_SUCCESS || serverPubLen != expectedPublicLen) {
+        XSSH_DBG("export public key failed st=%d len=%u\n", (int)st, (unsigned)serverPubLen);
+        return XProtocolResult_Failed;
     }
+
+    st = psa_raw_key_agreement(PSA_ALG_ECDH, XSSH_DATA(adapter)->ecdhKey, qcString, qcStringLen,
+                               shared, sizeof(shared), &sharedLen);
+    if (st != PSA_SUCCESS || sharedLen == 0) {
+        XSSH_DBG("raw key agreement failed st=%d len=%u\n", (int)st, (unsigned)sharedLen);
+        return XProtocolResult_Failed;
+    }
+    if (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_Curve25519Sha256) {
+        uint8_t any = 0;
+        size_t i;
+        for (i = 0; i < sharedLen; ++i) any |= shared[i];
+        if (any == 0) return XProtocolResult_Failed;
+    }
+    if (!xssh_store_shared_secret_mpint(adapter, shared, sharedLen, sharedIsLittleEndian))
+        return XProtocolResult_Failed;
 
     /* 交换哈希 H（RFC 4253 §8）：
      *   string V_C || string V_S || string I_C || string I_S
      *   || string K_S || string Q_C || string Q_S || mpint K
      * V_C/V_S 为版本行（不含行尾 CR/LF）；I_C/I_S 内容含消息类型字节；
-     * K_S 为 host key blob；Q_C/Q_S 为原始点字符串；K 为 shared secret mpint。
+     * K_S 为 host key blob；Q_C/Q_S 为原始公钥字符串；K 为 shared secret mpint。
      * 注意 V_C/V_S/I_C/I_S 都必须带 SSH string 的 4 字节长度前缀。 */
     {
         const uint8_t* vc = XSSH_DATA(adapter)->clientVersion;
@@ -2288,7 +2508,6 @@ static void VXSshServer_deinit(XSshServer* self)
 XVtable* XSshServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSshServer)
-    XCLASS_SET_CLASS_NAME_DEFAULT("XSshServer");
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSshServer_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XSshServer);

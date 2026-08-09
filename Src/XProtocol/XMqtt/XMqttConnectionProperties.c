@@ -14,8 +14,7 @@ static void VLW_move(XMqttLastWillProperties* dest, XMqttLastWillProperties* src
 
 XVtable* XMqttLastWillProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttLastWillProperties");
+    XVTABLE_INIT_DEFAULT(XMqttLastWillProperties)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VLW_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VLW_move);
@@ -125,8 +124,7 @@ static void VCP_move(XMqttConnectionProperties* dest, XMqttConnectionProperties*
 
 XVtable* XMqttConnectionProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttConnectionProperties");
+    XVTABLE_INIT_DEFAULT(XMqttConnectionProperties)
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VCP_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VCP_move);
@@ -245,8 +243,7 @@ static void VSCP_move(XMqttServerConnectionProperties* dest, XMqttServerConnecti
 
 XVtable* XMqttServerConnectionProperties_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XMqttConnectionProperties)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMqttServerConnectionProperties");
+    XVTABLE_INIT_DEFAULT(XMqttServerConnectionProperties)
     XVTABLE_INHERIT_XCLASS(XMqttConnectionProperties);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VSCP_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VSCP_move);

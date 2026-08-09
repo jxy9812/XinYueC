@@ -34,6 +34,9 @@ typedef enum {
 *       - XModbusDiscreteInputs/XModbusCoils → 使用XBitArray存储，节省8倍内存
 *       - XModbusInputRegisters/XModbusHoldingRegisters → 使用XVector存储uint16_t
 */
+XCLASS_DEFINE_BEGING(XModbusDataUnit)
+XCLASS_DEFINE_EXTEND_END(XModbusDataUnit, XClass)
+
 typedef struct XModbusDataUnit
 {
     XClass m_class;                           ///< 基类信息
@@ -247,4 +250,3 @@ typedef XMap XModbusDataUnitMap;
 XModbusDataUnitMap* XModbusDataUnitMap_create();
 #define XModbusDataUnitMap_delete_base XMapBase_delete_base
 #endif // XMODBUSDATAUNIT_H
-

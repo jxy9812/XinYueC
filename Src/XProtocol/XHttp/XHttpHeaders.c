@@ -249,7 +249,6 @@ static void VXHttpHeaders_move(XHttpHeaders* dest, XHttpHeaders* src)
 XVtable* XHttpHeaders_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpHeaders)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpHeaders");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

@@ -14,8 +14,7 @@
 static void VXModbusDeviceIdentification_deinit(XModbusDeviceIdentification* id);
 
 XVtable* XModbusDeviceIdentification_class_init(void) {
-    XVTABLE_INIT_DEFAULT(XClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusDeviceIdentification");
+    XVTABLE_INIT_DEFAULT(XModbusDeviceIdentification)
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数

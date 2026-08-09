@@ -9,7 +9,6 @@
 XVtable* XSqlRelationalDelegate_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlRelationalDelegate)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlRelationalDelegate");
     XVTABLE_INHERIT_XCLASS(XObject);
     return XVTABLE_DEFAULT;
 }

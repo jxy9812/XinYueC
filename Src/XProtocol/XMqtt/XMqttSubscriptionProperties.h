@@ -10,6 +10,9 @@
 extern "C" {
 #endif
 
+XCLASS_DEFINE_BEGING(XMqttSubscriptionProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttSubscriptionProperties, XClass)
+
 /**
  * @file XMqttSubscriptionProperties.h
  * @brief MQTT 订阅/取消订阅属性（对齐 Qt 6.8 QMqttSubscriptionProperties / QMqttUnsubscriptionProperties）
@@ -113,6 +116,9 @@ void XMqttSubscriptionProperties_setNoLocal(XMqttSubscriptionProperties* prop, b
  * @brief 取消订阅属性结构体
  * @details 对齐 Qt 6.8 QMqttUnsubscriptionProperties
  */
+XCLASS_DEFINE_BEGING(XMqttUnsubscriptionProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttUnsubscriptionProperties, XClass)
+
 typedef struct XMqttUnsubscriptionProperties {
     XClass m_class;                       ///< 基类
     XMqttUserProperties* m_userProperties; ///< 用户属性

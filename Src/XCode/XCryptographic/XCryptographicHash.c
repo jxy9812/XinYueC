@@ -1304,7 +1304,6 @@ static void VXCryptographicHash_move(XCryptographicHash* dest, XCryptographicHas
 XVtable* XCryptographicHash_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCryptographicHash)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XCryptographicHash");
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCryptographicHash_deinit);

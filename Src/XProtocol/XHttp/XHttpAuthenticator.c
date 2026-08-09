@@ -91,7 +91,6 @@ static void VXHttpAuthenticator_move(XHttpAuthenticator* dest, XHttpAuthenticato
 XVtable* XHttpAuthenticator_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpAuthenticator)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpAuthenticator");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

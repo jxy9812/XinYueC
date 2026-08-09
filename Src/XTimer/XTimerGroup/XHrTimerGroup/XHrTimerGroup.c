@@ -87,7 +87,6 @@ static inline uint64_t get_current_time_ns(XHrTimerGroup* group) {
 // --- 虚函数表初始化 ---
 XVtable* XHrTimerGroup_class_init(void) {
     XVTABLE_INIT_DEFAULT(XHrTimerGroup)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHrTimerGroup");
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXTimerGroupBase_addTimerNs,   // Add_TimerNs

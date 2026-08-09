@@ -28,7 +28,6 @@ static inline bool XModbusServer_isBitType(XModbusRegisterType type) {
 XVtable* XModbusServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusServer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusServer");
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XModbusDevice);
     void* table[] = { VXModbusServer_processRequest,VXModbusServer_processPrivateRequest,

@@ -677,7 +677,6 @@ static void VXRegularExpressionMatchIterator_move(XRegularExpressionMatchIterato
 XVtable* XRegularExpression_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRegularExpression)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRegularExpression");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRegularExpression_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXRegularExpression_copy);
@@ -688,7 +687,6 @@ XVtable* XRegularExpression_class_init(void)
 XVtable* XRegularExpressionMatch_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRegularExpressionMatch)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRegularExpressionMatch");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRegularExpressionMatch_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXRegularExpressionMatch_copy);
@@ -699,7 +697,6 @@ XVtable* XRegularExpressionMatch_class_init(void)
 XVtable* XRegularExpressionMatchIterator_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRegularExpressionMatchIterator)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRegularExpressionMatchIterator");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRegularExpressionMatchIterator_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXRegularExpressionMatchIterator_copy);

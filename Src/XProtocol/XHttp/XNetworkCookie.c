@@ -126,7 +126,6 @@ static void xcookie_release_members(XNetworkCookie* self)
 XVtable* XNetworkCookie_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkCookie)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkCookie");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -528,7 +527,6 @@ static XNetworkCookie* xcookie_at(const XNetworkCookieJar* self, size_t index)
 XVtable* XNetworkCookieJar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkCookieJar)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkCookieJar");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

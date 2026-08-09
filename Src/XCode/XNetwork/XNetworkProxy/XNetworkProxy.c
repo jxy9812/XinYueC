@@ -63,7 +63,6 @@ static void VXNetworkProxyQuery_move(XNetworkProxyQuery* dest, XNetworkProxyQuer
 
 XVtable* XNetworkProxyQuery_class_init(void) {
     XVTABLE_INIT_DEFAULT(XNetworkProxyQuery)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxyQuery");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数
@@ -253,7 +252,6 @@ static void VXNetworkProxy_move(XNetworkProxy* dest, XNetworkProxy* src) {
 
 XVtable* XNetworkProxy_class_init(void) {
     XVTABLE_INIT_DEFAULT(XNetworkProxy)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxy");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数
@@ -495,7 +493,6 @@ static void VXNetworkProxyFactory_move(XNetworkProxyFactory* dest, XNetworkProxy
 
 XVtable* XNetworkProxyFactory_class_init(void) {
     XVTABLE_INIT_DEFAULT(XNetworkProxyFactory)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkProxyFactory");
     // 继承自 XClass
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载虚函数

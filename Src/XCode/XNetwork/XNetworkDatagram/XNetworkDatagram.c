@@ -15,7 +15,6 @@
 XVtable* XNetworkDatagram_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkDatagram)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkDatagram");
     XVTABLE_INHERIT_XCLASS(XClass);
 
     XCLASS_SHOW_SIZE_DEFAULT(XNetworkDatagram);

@@ -12,6 +12,9 @@
 extern "C" {
 #endif
 
+XCLASS_DEFINE_BEGING(XMqttAuthenticationProperties)
+XCLASS_DEFINE_EXTEND_END(XMqttAuthenticationProperties, XClass)
+
 /**
  * @file XMqttAuthenticationProperties.h
  * @brief MQTT 认证属性（对齐 Qt 6.8 QMqttAuthenticationProperties）

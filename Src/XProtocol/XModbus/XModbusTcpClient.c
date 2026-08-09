@@ -198,7 +198,6 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
 XVtable* XModbusTcpClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusTcpClient)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusTcpClient");
         XVTABLE_INHERIT_XCLASS(XModbusClient);
 
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusTcpClient_open);

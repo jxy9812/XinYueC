@@ -19,6 +19,9 @@ extern "C" {
 
 /* ---------- XMqttStringPair ---------- */
 
+XCLASS_DEFINE_BEGING(XMqttStringPair)
+XCLASS_DEFINE_EXTEND_END(XMqttStringPair, XClass)
+
 /**
  * @brief MQTT 字符串键值对结构体
  * @details 对齐 Qt 6.8 QMqttStringPair，用于 MQTT 5.0 属性中的用户属性。

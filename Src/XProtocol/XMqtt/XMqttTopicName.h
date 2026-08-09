@@ -17,6 +17,9 @@ extern "C" {
  * @details 表示一个 MQTT 主题名称，提供有效性验证、层级解析等功能。
  */
 
+XCLASS_DEFINE_BEGING(XMqttTopicName)
+XCLASS_DEFINE_EXTEND_END(XMqttTopicName, XClass)
+
 /**
  * @brief MQTT 主题名称结构体
  * @details 对齐 Qt 6.8 QMqttTopicName，基于 XClass 实现值类型语义。

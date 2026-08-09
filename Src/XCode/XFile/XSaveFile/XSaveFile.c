@@ -213,7 +213,6 @@ static void VXSaveFile_deinit(XSaveFile* file)
 XVtable* XSaveFile_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSaveFile)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSaveFile");
     XVTABLE_INHERIT_XCLASS(XFileDevice);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSaveFile_deinit);

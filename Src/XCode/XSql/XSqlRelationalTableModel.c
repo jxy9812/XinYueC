@@ -70,7 +70,6 @@ static bool xsql_relational_reserve(XSqlRelationalTableModel* model, size_t want
 XVtable* XSqlRelationalTableModel_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlRelationalTableModel)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlRelationalTableModel");
     XVTABLE_INHERIT_XCLASS(XSqlTableModel);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
         VXSqlRelationalTableModel_setRelation,

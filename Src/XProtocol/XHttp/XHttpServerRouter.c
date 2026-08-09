@@ -34,7 +34,6 @@ static void VXHttpServerRouter_deinit(XHttpServerRouter* self)
 XVtable* XHttpServerRouter_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpServerRouter)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpServerRouter");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

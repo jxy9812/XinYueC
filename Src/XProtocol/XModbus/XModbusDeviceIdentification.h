@@ -135,6 +135,9 @@ typedef enum {
  * @details 封装Modbus设备标识所需的数据结构和操作。
  *          使用XMap存储对象ID到数据的映射关系。
  */
+XCLASS_DEFINE_BEGING(XModbusDeviceIdentification)
+XCLASS_DEFINE_EXTEND_END(XModbusDeviceIdentification, XClass)
+
 typedef struct XModbusDeviceIdentification {
     XClass m_class;                                                         ///< 继承自 XClass
     XMap* m_objects;                                                        ///< 存储对象ID到数据的映射 (XMap<int, XByteArray>)

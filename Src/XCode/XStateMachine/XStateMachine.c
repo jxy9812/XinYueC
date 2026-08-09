@@ -6,11 +6,6 @@
 
 #include <stdlib.h>
 
-XCLASS_DEFINE_BEGING(XStateMachine_SignalEventClass)
-XCLASS_DEFINE_EXTEND_END(XStateMachine_SignalEventClass, XEvent);
-XCLASS_DEFINE_BEGING(XStateMachine_WrappedEventClass)
-XCLASS_DEFINE_EXTEND_END(XStateMachine_WrappedEventClass, XEvent);
-
 typedef struct XStateMachine_SignalConnection {
     XObject m_class;
     XStateMachine* m_machine;
@@ -1145,7 +1140,6 @@ static void VXStateMachine_deinit(XStateMachine* machine)
 XVtable* XStateMachine_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStateMachine)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine");
     XVTABLE_INHERIT_XCLASS(XState);
     void* table[] = {
         VXStateMachine_hook, VXStateMachine_hook,
@@ -1603,8 +1597,7 @@ static void VXStateMachine_SignalEvent_deinit(XStateMachine_SignalEvent* event)
 
 static XVtable* XStateMachine_SignalEvent_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XStateMachine_SignalEventClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine_SignalEvent");
+    XVTABLE_INIT_DEFAULT(XStateMachine_SignalEvent)
     XVTABLE_INHERIT_XCLASS(XEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_SignalEvent_deinit);
     return XVTABLE_DEFAULT;
@@ -1653,8 +1646,7 @@ static void VXStateMachine_WrappedEvent_deinit(XStateMachine_WrappedEvent* event
 
 static XVtable* XStateMachine_WrappedEvent_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(XStateMachine_WrappedEventClass)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XStateMachine_WrappedEvent");
+    XVTABLE_INIT_DEFAULT(XStateMachine_WrappedEvent)
     XVTABLE_INHERIT_XCLASS(XEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_WrappedEvent_deinit);
     return XVTABLE_DEFAULT;

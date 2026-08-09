@@ -29,7 +29,6 @@ static void VXRestReply_copy(XRestReply* dest, const XRestReply* src)
 XVtable* XRestReply_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRestReply)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XRestReply");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

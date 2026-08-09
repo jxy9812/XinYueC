@@ -375,7 +375,6 @@ static bool VXFileDevice_setPermissions(XFileDevice* device, XFilePermissions pe
 XVtable* XFileDevice_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFileDevice)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XFileDevice");
     XVTABLE_INHERIT_XCLASS(XIODevice);
 
     // 重写 XIODevice 虚函数

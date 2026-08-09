@@ -416,7 +416,6 @@ static void VXHttp2HeaderList_move(XHttp2HeaderList* dest, XHttp2HeaderList* src
 XVtable* XHttp2HeaderList_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp2HeaderList)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2HeaderList");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -884,7 +883,6 @@ static void VXHttp2HeaderEncoder_move(XHttp2HeaderEncoder* dest,
 XVtable* XHttp2HeaderEncoder_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp2HeaderEncoder)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2HeaderEncoder");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -1112,7 +1110,6 @@ static void VXHttp2HeaderDecoder_move(XHttp2HeaderDecoder* dest,
 XVtable* XHttp2HeaderDecoder_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttp2HeaderDecoder)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttp2HeaderDecoder");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载

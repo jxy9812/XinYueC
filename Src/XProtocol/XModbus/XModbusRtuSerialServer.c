@@ -345,7 +345,6 @@ static void processReceiveBuffer(XModbusRtuSerialServer* server)
 XVtable* XModbusRtuSerialServer_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusRtuSerialServer)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusRtuSerialServer");
     // 继承 XModbusServer
     XVTABLE_INHERIT_XCLASS(XModbusServer);
 

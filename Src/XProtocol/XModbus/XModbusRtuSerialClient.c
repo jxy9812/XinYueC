@@ -75,7 +75,6 @@ static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
 XVtable* XModbusRtuSerialClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XModbusRtuSerialClient)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusRtuSerialClient");
         XVTABLE_INHERIT_XCLASS(XModbusClient);
 
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusRtuSerialClient_open);

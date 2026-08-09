@@ -33,7 +33,6 @@ static int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize);
 XVtable* XIODevice_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XIODevice)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XIODevice");
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XObject);
 	void* table[] = {

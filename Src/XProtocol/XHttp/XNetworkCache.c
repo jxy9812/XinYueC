@@ -350,7 +350,6 @@ static void VXNetworkCacheMetaData_move(XNetworkCacheMetaData* dest,
 XVtable* XNetworkCacheMetaData_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkCacheMetaData)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkCacheMetaData");
     //继承类
     XVTABLE_INHERIT_XCLASS(XClass);
     //重载
@@ -559,7 +558,6 @@ static void VXNetworkDiskCache_deinit(XNetworkDiskCache* self)
 XVtable* XNetworkDiskCache_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XNetworkDiskCache)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XNetworkDiskCache");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

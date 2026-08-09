@@ -564,7 +564,6 @@ static bool xhttp_reply_parse(XHttpReply* self)
 XVtable* XHttpReply_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XHttpReply)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XHttpReply");
     //继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     //重载

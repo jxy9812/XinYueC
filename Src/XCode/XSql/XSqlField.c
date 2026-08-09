@@ -13,7 +13,6 @@ static void VXSqlField_deinit(XSqlField* field);
 XVtable* XSqlField_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSqlField)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSqlField");
     XVTABLE_INHERIT_XCLASS(XClass);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXSqlField_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXSqlField_move);

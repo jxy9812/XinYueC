@@ -184,6 +184,9 @@ typedef struct {
   * +----------+------------------+
   * @endcode
   */
+XCLASS_DEFINE_BEGING(XModbusPdu)
+XCLASS_DEFINE_EXTEND_END(XModbusPdu, XClass)
+
 typedef struct XModbusPdu {
     XClass m_class;                             ///< 继承自XClass
     XModbusPdu_FunctionCode m_code;             ///< 功能码（可能包含异常标志）
@@ -692,5 +695,4 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 #endif
 
 #endif // XMODBUSPDU_H
-
 

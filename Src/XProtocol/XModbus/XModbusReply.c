@@ -12,8 +12,7 @@
 static void VXModbusReply_deinit(XModbusReply* reply);
 
 XVtable* XModbusReply_class_init(void) {
-    XVTABLE_INIT_DEFAULT(XObject)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XModbusReply");
+    XVTABLE_INIT_DEFAULT(XModbusReply)
 
     // 继承XObject
     XVTABLE_INHERIT_XCLASS(XObject);
