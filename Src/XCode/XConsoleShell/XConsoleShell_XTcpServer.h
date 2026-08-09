@@ -5,6 +5,11 @@
  * 适配器从 XTcpServer 的待处理连接队列取得 XTcpSocket，以固定数组绑定到
  * Shell 附加会话。调用方在自己的事件循环中调用 acceptPending 和 pump；适配器
  * 不拥有 server 或 socket，不监听、不关闭 server，也不包含平台网络头文件。
+ *
+ * SSH/Telnet 由独立协议栈（XSshServer/XTelnetServer）实现，协议栈继承 XObject
+ * 获得信号与槽能力，内部以 XIODevice 作为数据来源，通过 setDevice 绑定连接
+ * socket，通过信号槽与 Shell 会话交互；本适配器只负责协议栈生命周期、会话
+ * 绑定和 pump 驱动。
  */
 
 #ifndef XCONSOLE_SHELL_XTCPSERVER_H
@@ -17,10 +22,10 @@
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
 
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
-#include "XConsoleShell_XSsh.h"
+#include "XSshServer.h"
 #endif
 #if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
-#include "XConsoleShell_Telnet.h"
+#include "XTelnetServer.h"
 #endif
 
 #ifdef __cplusplus
@@ -38,16 +43,20 @@ typedef enum XConsoleShellXTcpServerProtocol {
 
 /** @brief 单个 TCP 会话绑定；socket 为 XTcpServer 借用对象。 */
 typedef struct XConsoleShellXTcpServerBinding {
+    XConsoleShell* shell;                            /**< 借用的多会话 Shell；槽函数使用。 */
     XConsoleShellSession* session;                   /**< Shell 管理的附加会话。 */
     XTcpSocket* socket;                              /**< XTcpServer 借用的连接对象。 */
     XConsoleShellXTcpSocketAdapter adapter;          /**< 连接的 I/O 适配器。 */
     XConsoleShellXTcpServerProtocol protocol;        /**< 本连接使用的传输协议。 */
+    /* SSH 与 Telnet 协议栈互斥，故共用一块存储。 */
+    union {
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
-    XConsoleShellSshAdapter* ssh;                    /**< 连接绑定的 SSH 适配器。 */
+        XSshServer* ssh;                             /**< 连接绑定的 SSH 协议栈（动态创建）。 */
 #endif
 #if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
-    XConsoleShellTelnetAdapter telnet;               /**< 连接绑定的 Telnet 字节过滤适配器。 */
+        XTelnetServer telnet;                        /**< 连接绑定的 Telnet 协议栈（栈上）。 */
 #endif
+    };
 } XConsoleShellXTcpServerBinding;
 
 /** @brief TCP 服务端 Shell 适配器；所有成员均为借用或固定存储。 */

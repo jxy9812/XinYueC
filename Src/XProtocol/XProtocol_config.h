@@ -7,6 +7,8 @@
  *   3. XMQTT_ON     - MQTT 协议（XMqtt）
  *   4. XFTP_ON      - FTP 协议（XFtp）
  *   5. XHTTP_ON     - HTTP 协议（XHttp）
+ *   6. XSSH_ON      - SSH 协议（XSsh）
+ *   7. XTELNET_ON   - Telnet 协议（XTelnet）
  *
  * 模块总开关 XPROTOCOL_ON 在 CXinYueConfig.h 中定义，此处仅提供默认值。
  * 关闭后若仍有其它模块无条件引用 XProtocol 符号，需同步裁剪对应依赖。
@@ -31,6 +33,20 @@ extern "C" {
 #endif
 
 #if XPROTOCOL_ON
+
+/* ========================================================================== */
+/*                        公共日志/审计开关                                  */
+/* ========================================================================== */
+
+/** @brief XProtocol 旗下协议的输出日志观察回调总开关。 */
+#ifndef XPROTOCOL_LOG_ON
+#define XPROTOCOL_LOG_ON 0
+#endif
+
+/** @brief XProtocol 旗下协议的命令审计回调总开关。 */
+#ifndef XPROTOCOL_AUDIT_ON
+#define XPROTOCOL_AUDIT_ON 0
+#endif
 
 /* ========================================================================== */
 /*                        旗下协议开关                                      */
@@ -61,12 +77,24 @@ extern "C" {
 #define XHTTP_ON 1
 #endif
 
+/** @brief SSH 协议（XSsh：精简 SSH 服务端状态机） */
+#ifndef XSSH_ON
+#define XSSH_ON 1
+#endif
+
+/** @brief Telnet 协议（XTelnet：Telnet NVT/协商过滤状态机） */
+#ifndef XTELNET_ON
+#define XTELNET_ON 1
+#endif
+
 /* 引入各协议子配置文件 */
 #include "XCan/XCan_config.h"
 #include "XModbus/XModbus_config.h"
 #include "XMqtt/XMqtt_config.h"
 #include "XFtp/XFtp_config.h"
 #include "XHttp/XHttp_config.h"
+#include "XSsh/XSsh_config.h"
+#include "XTelnet/XTelnet_config.h"
 
 #endif /* XPROTOCOL_ON */
 

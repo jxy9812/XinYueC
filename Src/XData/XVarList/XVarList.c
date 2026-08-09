@@ -16,7 +16,9 @@ void XVarList_delete(XVarList* list)
 XVarList* XVarList_create(uint8_t count, ...)
 {
     if (count % 2 == 1)
+    {
         return NULL;
+    }
     va_list ap;       // 声明参数指针
     va_start(ap, count);  // 初始化 ap，指向第一个可变参数
     size_t sumTypeSize = 0;

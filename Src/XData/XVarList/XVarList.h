@@ -15,24 +15,26 @@ extern "C" {
 #include "XMemory.h"
 #include "XTypes.h"
 #include "XChar.h"
-#include <stdio.h>
 #include <stdint.h>
 /** @private 仅供 COUNT_ARGS 宏展开时取得参数总数。 */
 #define XVARLIST_COUNT_ARGS(_1, _2, _3, _4, _5, _6, _7, _8, \
                             _9, _10, _11, _12, _13, _14, _15, _16, \
                             _17, _18, _19, _20, _21, _22, _23, _24, \
                             _25, _26, _27, _28, _29, _30, _31, _32, N, ...) N
+/** @private 强制中间展开，兼容 MSVC 变参数宏转发。 */
+#define XVARLIST_EXPAND(...)  __VA_ARGS__
 /**
  * @brief      计算 XVarList_Create 的预处理器参数总数。
  * @details    每个 XVar(type, value) 展开为类型大小和数据地址两个参数。
  *             最多支持 16 个 XVar 项，避免将 64 位指针转换为 int。
  * @param      ... 由 XVar 宏生成的非空参数序列。
  * @return     预处理器参数数量；数值为 XVar 项数量的两倍。
+ * @note       MSVC 不会在转发 __VA_ARGS__ 前预先展开，必须借助 XVARLIST_EXPAND 强制中间展开，否则计数固定为 1，导致带参数信号在 Windows 下创建失败的兼容性问题。
  */
 #define COUNT_ARGS(...) \
-    XVARLIST_COUNT_ARGS(__VA_ARGS__, 32, 31, 30, 29, 28, 27, 26, 25, \
-                        24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, \
-                        12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+    XVARLIST_EXPAND(XVARLIST_COUNT_ARGS(__VA_ARGS__, 32, 31, 30, 29, 28, 27, 26, 25, \
+                                        24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, \
+                                        12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))
 /**
  * @brief      将变量包装为 XVarList_create 接受的大小和地址参数对。
  * @param      type var 的完整 C 数据类型。

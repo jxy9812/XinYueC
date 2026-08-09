@@ -9,16 +9,23 @@
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
 
 #include <string.h>
+#include <stdint.h>
 
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
-#include "XConsoleShell_XSsh.h"
+#include "XSshServer.h"
+#include "XConsoleShellLogin.h"
+#endif
+#if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
+#include "XTelnetServer.h"
 #endif
 
 /* 协议操作表：SSH/Telnet/裸 TCP 共用同一套多会话绑定、连接生命周期和
  * 关闭清理逻辑，仅在“建立协议适配器、投喂输入、刷新输出、销毁协议状态”
- * 四处差异。通过 vtable 让 acceptPending/pump/closeSession 不再按协议分支。 */
+ * 四处差异。通过 vtable 让 acceptPending/pump/closeSession 不再按协议分支。
+ * SSH/Telnet 协议栈通过 XObject 信号槽与 Shell 交互，setup 负责创建协议栈、
+ * 绑定 socket、连接信号并生成 Shell I/O 回调集合。 */
 typedef struct XConsoleShellXTcpServerProtocolOps {
-    bool (*setup)(XConsoleShellXTcpServerBinding* binding,
+    bool (*setup)(XConsoleShellXTcpServerBinding* binding, XTcpSocket* socket,
                   const XConsoleShellIo* transportIo, XConsoleShellIo* shellIo);
     void (*onSession)(XConsoleShellXTcpServerBinding* binding, XConsoleShell* shell);
     void (*feed)(XConsoleShellXTcpServerBinding* binding, XConsoleShell* shell,
@@ -52,7 +59,7 @@ static XConsoleShellXTcpServerProtocol xcs_tcpserver_default_protocol(void)
 {
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
     return XConsoleShellXTcpServerProtocol_Ssh;
-#elif XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON
+#elif XCONSOLE_SHELL_TELNET_PROTOCOL_ON
     return XConsoleShellXTcpServerProtocol_Telnet;
 #else
     return XConsoleShellXTcpServerProtocol_None;
@@ -73,103 +80,469 @@ static bool xcs_tcpserver_protocol_available(XConsoleShellXTcpServerProtocol pro
     }
 }
 
+/* ==================== SSH 协议栈接入（信号槽 + setter 回填） ==================== */
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+static void xcs_tcpserver_ssh_bytes_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_auth_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_is_running_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_close_requested_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_suppress_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_user_name_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_closed_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_error_slot(XObject* receiver, XVarList* args);
+
+static XConsoleShellXTcpServerBinding* xcs_tcpserver_ssh_binding(XSshServer* server)
+{
+    return server ? (XConsoleShellXTcpServerBinding*)server->m_hostContext : NULL;
+}
+
+static void xcs_tcpserver_ssh_bytes_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+    if (!binding || !binding->shell || !binding->session) {
+        XSshServer_setBytesReceivedResult(server, (int)XProtocolResult_InvalidArgument);
+        return;
+    }
+    XVarList_args_2(args, const void*, data, size_t, size);
+    XSshServer_setBytesReceivedResult(
+        server, (int)XConsoleShell_feedDataForSession(binding->shell, binding->session, data, size));
+}
+
+static void xcs_tcpserver_ssh_auth_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+#if XCONSOLE_SHELL_LOGIN_ON
+    if (!binding || !binding->shell || !binding->session) {
+        XSshServer_setAuthenticateResult(server, false);
+        return;
+    }
+    XVarList_args_2(args, const char*, user, const char*, password);
+    XSshServer_setAuthenticateResult(
+        server, XConsoleShellLogin_authenticateSession(binding->shell, binding->session,
+                                                       user, password));
+#else
+    (void)binding;
+    (void)args;
+    XSshServer_setAuthenticateResult(server, false);
+#endif
+}
+
+static void xcs_tcpserver_ssh_is_running_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+    XSshServer_setIsRunningResult(server,
+        binding && binding->shell && XConsoleShell_isRunning(binding->shell));
+}
+
+static void xcs_tcpserver_ssh_close_requested_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    XSshServer_setCloseRequestedResult(server,
+        binding && binding->session && binding->session->m_closeRequested);
+#else
+    XSshServer_setCloseRequestedResult(server, false);
+#endif
+}
+
+static void xcs_tcpserver_ssh_suppress_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+#if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
+    XSshServer_setSuppressPromptResult(server,
+        binding && binding->session && binding->session->suppressPrompt);
+#else
+    XSshServer_setSuppressPromptResult(server, false);
+#endif
+}
+
+static void xcs_tcpserver_ssh_user_name_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+#if XCONSOLE_SHELL_LOGIN_ON
+    if (!binding || !binding->session || !binding->session->authenticated ||
+        !binding->session->userName[0]) {
+        XSshServer_setUserNameResult(server, NULL, 0);
+        return;
+    }
+    XVarList_args_2(args, char*, buffer, size_t, capacity);
+    (void)buffer; (void)capacity;
+    XSshServer_setUserNameResult(server, binding->session->userName,
+                                 strlen(binding->session->userName));
+#else
+    (void)binding;
+    (void)args;
+    XSshServer_setUserNameResult(server, NULL, 0);
+#endif
+}
+
+static void xcs_tcpserver_ssh_closed_slot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+}
+
+static void xcs_tcpserver_ssh_error_slot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+}
+
+static int64_t xcs_tcpserver_ssh_write(void* userData, const void* data, size_t size)
+{
+    XSshServer* server = (XSshServer*)userData;
+    if (!server) return -1;
+    return XSshServer_write(server, data, size);
+}
+
+static bool xcs_tcpserver_ssh_flush_cb(void* userData)
+{
+    XSshServer* server = (XSshServer*)userData;
+    return server && XSshServer_flush(server);
+}
+
+static bool xcs_tcpserver_ssh_cancelled(void* userData)
+{
+    XSshServer* server = (XSshServer*)userData;
+    return XSshServer_isClosed(server);
+}
+
+static bool xcs_tcpserver_ssh_input_echo(void* userData, bool enabled)
+{
+    XSshServer* server = (XSshServer*)userData;
+    return server && XSshServer_setInputEcho(server, enabled);
+}
+
+static void xcs_tcpserver_ssh_prompt(void* userData, XConsoleShell* shell)
+{
+    XSshServer* server = (XSshServer*)userData;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)shell;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+    if (!binding || !binding->shell || XSshServer_isClosed(server)) return;
+    if (!XConsoleShell_isRunning(binding->shell)) return;
+    (void)XSshServer_emitPrompt(server);
+}
+
 static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
+                                    XTcpSocket* socket,
                                     const XConsoleShellIo* transportIo,
                                     XConsoleShellIo* shellIo)
 {
-    binding->ssh = XConsoleShellSshAdapter_create(transportIo);
-    if (!binding->ssh) return false;
-    if (!XConsoleShellSshAdapter_makeIo(binding->ssh, shellIo)) {
-        XConsoleShellSshAdapter_destroy(binding->ssh);
+    XSshServer* server;
+    (void)transportIo;
+    if (!binding || !socket || !shellIo) return false;
+    server = XSshServer_create();
+    if (!server) return false;
+    binding->ssh = server;
+    if (!XSshServer_setDevice(server, (XIODevice*)socket)) {
+        XSshServer_delete_base(server);
         binding->ssh = NULL;
         return false;
     }
+    XSshServer_setHostContext(server, binding);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_bytes_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_auth_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_isRunningRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_is_running_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_closeRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_close_requested_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_suppress_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_userNameRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_user_name_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_closed_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_closed_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_errorOccurred_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_error_slot, XConnectionType_Direct);
+    memset(shellIo, 0, sizeof(*shellIo));
+    shellIo->write = xcs_tcpserver_ssh_write;
+    shellIo->flush = xcs_tcpserver_ssh_flush_cb;
+    shellIo->cancelled = xcs_tcpserver_ssh_cancelled;
+    shellIo->inputEcho = xcs_tcpserver_ssh_input_echo;
+    shellIo->prompt = xcs_tcpserver_ssh_prompt;
+    shellIo->userData = server;
     return true;
 }
 
 static void xcs_tcpserver_ssh_on_session(XConsoleShellXTcpServerBinding* binding,
                                          XConsoleShell* shell)
 {
-    XConsoleShellSshAdapter_setSession(binding->ssh, shell, binding->session);
+    (void)shell;
+    if (!binding || !binding->ssh) return;
+    (void)XSshServer_start(binding->ssh);
 }
 
 static void xcs_tcpserver_ssh_feed(XConsoleShellXTcpServerBinding* binding,
                                    XConsoleShell* shell, const uint8_t* bytes,
                                    size_t count, bool* closed)
 {
-    (void)XConsoleShellSshAdapter_feedData(binding->ssh, shell, binding->session,
-                                           bytes, count);
-    if (closed && XConsoleShellSshAdapter_isClosed(binding->ssh))
-        *closed = true;
+    (void)shell;
+    if (!binding || !binding->ssh) {
+        if (closed) *closed = true;
+        return;
+    }
+    (void)XSshServer_feedData(binding->ssh, bytes, count);
+    if (closed && XSshServer_isClosed(binding->ssh)) *closed = true;
 }
 
 static bool xcs_tcpserver_ssh_flush(XConsoleShellXTcpServerBinding* binding)
 {
-    return binding->ssh && XConsoleShellSshAdapter_flush(binding->ssh);
+    return binding && binding->ssh && XSshServer_flush(binding->ssh);
 }
 
 static void xcs_tcpserver_ssh_close(XConsoleShellXTcpServerBinding* binding)
 {
-    if (binding->ssh) {
-        XConsoleShellSshAdapter_destroy(binding->ssh);
+    if (binding && binding->ssh) {
+        XSshServer_delete_base(binding->ssh);
         binding->ssh = NULL;
     }
 }
 #endif /* XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON */
 
+/* ==================== Telnet 协议栈接入（信号槽 + setter 回填） ==================== */
 #if XCONSOLE_SHELL_TELNET_PROTOCOL_ON
+static void xcs_tcpserver_telnet_bytes_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_is_running_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_close_requested_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_suppress_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_user_name_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_closed_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_error_slot(XObject* receiver, XVarList* args);
+
+static XConsoleShellXTcpServerBinding* xcs_tcpserver_telnet_binding(XTelnetServer* server)
+{
+    return server ? (XConsoleShellXTcpServerBinding*)server->m_hostContext : NULL;
+}
+
+static void xcs_tcpserver_telnet_bytes_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+    if (!binding || !binding->shell || !binding->session) {
+        XTelnetServer_setBytesReceivedResult(server, (int)XProtocolResult_InvalidArgument);
+        return;
+    }
+    XVarList_args_2(args, const void*, data, size_t, size);
+    {
+        int r = (int)XConsoleShell_feedDataForSession(binding->shell, binding->session, data, size);
+        XTelnetServer_setBytesReceivedResult(server, r);
+    }
+}
+
+static void xcs_tcpserver_telnet_is_running_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+    XTelnetServer_setIsRunningResult(server,
+        binding && binding->shell && XConsoleShell_isRunning(binding->shell));
+}
+
+static void xcs_tcpserver_telnet_close_requested_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    XTelnetServer_setCloseRequestedResult(server,
+        binding && binding->session && binding->session->m_closeRequested);
+#else
+    XTelnetServer_setCloseRequestedResult(server, false);
+#endif
+}
+
+static void xcs_tcpserver_telnet_suppress_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+#if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
+    XTelnetServer_setSuppressPromptResult(server,
+        binding && binding->session && binding->session->suppressPrompt);
+#else
+    XTelnetServer_setSuppressPromptResult(server, false);
+#endif
+}
+
+static void xcs_tcpserver_telnet_user_name_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+#if XCONSOLE_SHELL_LOGIN_ON
+    if (!binding || !binding->session || !binding->session->authenticated ||
+        !binding->session->userName[0]) {
+        XTelnetServer_setUserNameResult(server, NULL, 0);
+        return;
+    }
+    XVarList_args_2(args, char*, buffer, size_t, capacity);
+    (void)buffer; (void)capacity;
+    XTelnetServer_setUserNameResult(server, binding->session->userName,
+                                    strlen(binding->session->userName));
+#else
+    (void)binding;
+    (void)args;
+    XTelnetServer_setUserNameResult(server, NULL, 0);
+#endif
+}
+
+static void xcs_tcpserver_telnet_closed_slot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+}
+
+static void xcs_tcpserver_telnet_error_slot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+}
+
+static int64_t xcs_tcpserver_telnet_write(void* userData, const void* data, size_t size)
+{
+    XTelnetServer* server = (XTelnetServer*)userData;
+    if (!server) return -1;
+    return XTelnetServer_write(server, data, size);
+}
+
+static bool xcs_tcpserver_telnet_flush_cb(void* userData)
+{
+    XTelnetServer* server = (XTelnetServer*)userData;
+    return server && XTelnetServer_flush(server);
+}
+
+static bool xcs_tcpserver_telnet_cancelled(void* userData)
+{
+    XTelnetServer* server = (XTelnetServer*)userData;
+    return XTelnetServer_isClosed(server);
+}
+
+static bool xcs_tcpserver_telnet_input_echo(void* userData, bool enabled)
+{
+    XTelnetServer* server = (XTelnetServer*)userData;
+    return server && XTelnetServer_setInputEcho(server, enabled);
+}
+
+static void xcs_tcpserver_telnet_prompt(void* userData, XConsoleShell* shell)
+{
+    XTelnetServer* server = (XTelnetServer*)userData;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)shell;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+    if (!binding || !binding->shell || XTelnetServer_isClosed(server)) return;
+    if (!XConsoleShell_isRunning(binding->shell)) return;
+    (void)XTelnetServer_emitPrompt(server);
+}
+
 static bool xcs_tcpserver_telnet_setup(XConsoleShellXTcpServerBinding* binding,
+                                       XTcpSocket* socket,
                                        const XConsoleShellIo* transportIo,
                                        XConsoleShellIo* shellIo)
 {
-    XConsoleShellTelnetAdapter_init(&binding->telnet, transportIo);
-    return XConsoleShellTelnetAdapter_makeIo(&binding->telnet, shellIo);
+    XTelnetServer* server;
+    (void)transportIo;
+    if (!binding || !socket || !shellIo) return false;
+    server = &binding->telnet;
+    XTelnetServer_init(server);
+    if (!XTelnetServer_setDevice(server, (XIODevice*)socket)) return false;
+    XTelnetServer_setHostContext(server, binding);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_bytesReceived_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_bytes_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_isRunningRequested_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_is_running_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_closeRequested_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_close_requested_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_suppressPromptRequested_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_suppress_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_userNameRequested_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_user_name_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_closed_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_closed_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_errorOccurred_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_error_slot, XConnectionType_Direct);
+    memset(shellIo, 0, sizeof(*shellIo));
+    shellIo->write = xcs_tcpserver_telnet_write;
+    shellIo->flush = xcs_tcpserver_telnet_flush_cb;
+    shellIo->cancelled = xcs_tcpserver_telnet_cancelled;
+    shellIo->inputEcho = xcs_tcpserver_telnet_input_echo;
+    shellIo->prompt = xcs_tcpserver_telnet_prompt;
+    shellIo->userData = server;
+    return true;
 }
 
 static void xcs_tcpserver_telnet_on_session(XConsoleShellXTcpServerBinding* binding,
                                             XConsoleShell* shell)
 {
     (void)shell;
-    XConsoleShellTelnetAdapter_setSession(&binding->telnet, binding->session);
-    (void)XConsoleShellTelnetAdapter_emitPrompt(&binding->telnet);
+    if (!binding) return;
+    (void)XTelnetServer_start(&binding->telnet);
 }
 
 static void xcs_tcpserver_telnet_feed(XConsoleShellXTcpServerBinding* binding,
                                       XConsoleShell* shell, const uint8_t* bytes,
                                       size_t count, bool* closed)
 {
-    XConsoleResult result = XConsoleShellTelnetAdapter_feedData(
-        &binding->telnet, shell, binding->session, bytes, count);
+    XProtocolResult result;
+    (void)shell;
+    if (!binding) return;
+    result = XTelnetServer_feedData(&binding->telnet, bytes, count);
     if (!closed) return;
-    if (result == XConsoleResult_IoError) {
-        *closed = true;
-        return;
-    }
+    if (result == XProtocolResult_IoError) { *closed = true; return; }
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
     /* exit 命令已请求关闭当前会话：与 SSH 通道一致，由 pump 关闭连接。 */
-    if (binding->session && binding->session->m_closeRequested)
-        *closed = true;
+    if (binding->session && binding->session->m_closeRequested) *closed = true;
 #endif
 }
 
 static bool xcs_tcpserver_telnet_flush(XConsoleShellXTcpServerBinding* binding)
 {
-    (void)binding;
-    return true;
+    return binding && XTelnetServer_flush(&binding->telnet);
 }
 
 static void xcs_tcpserver_telnet_close(XConsoleShellXTcpServerBinding* binding)
 {
-    memset(&binding->telnet, 0, sizeof(binding->telnet));
+    if (binding) XTelnetServer_stop(&binding->telnet);
 }
 #endif /* XCONSOLE_SHELL_TELNET_PROTOCOL_ON */
 
 #if XCONSOLE_SHELL_XTCPSERVER_RAW_BACKEND_ON
 static bool xcs_tcpserver_none_setup(XConsoleShellXTcpServerBinding* binding,
+                                     XTcpSocket* socket,
                                      const XConsoleShellIo* transportIo,
                                      XConsoleShellIo* shellIo)
 {
+    (void)socket;
     (void)transportIo;
     return XConsoleShellXTcpSocketAdapter_makeIo(&binding->adapter, shellIo);
 }
@@ -288,12 +661,13 @@ size_t XConsoleShellXTcpServerAdapter_acceptPending(XConsoleShellXTcpServerAdapt
         socket = XTcpServer_nextPendingConnection_base(adapter->server);
         if (!socket) break;
         binding->protocol = adapter->protocol;
+        binding->shell = adapter->shell;
         XConsoleShellXTcpSocketAdapter_init(&binding->adapter, socket);
         if (!XConsoleShellXTcpSocketAdapter_makeIo(&binding->adapter, &transportIo)) {
             xcs_tcpserver_discard_socket(socket);
             continue;
         }
-        if (!ops->setup(binding, &transportIo, &io)) {
+        if (!ops->setup(binding, socket, &transportIo, &io)) {
             xcs_tcpserver_discard_socket(socket);
             continue;
         }

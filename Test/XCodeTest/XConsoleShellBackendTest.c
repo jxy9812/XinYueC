@@ -332,15 +332,13 @@ static bool xcs_backend_test_telnet_basic(void)
                       "Telnet 客户端发送命令失败");
     {
         uint64_t start = XDateTime_currentMSecsSinceEpoch();
-        size_t pumped = 0;
         while (XDateTime_currentMSecsSinceEpoch() - start < 3000u) {
             XCoreApplication_processEvents(XEventLoop_AllEvents);
-            pumped += XConsoleShellXTcpServerAdapter_pump(&adapter, 128);
-            if (pumped >= sizeof(willEcho) + strlen(command)) break;
+            (void)XConsoleShellXTcpServerAdapter_pump(&adapter, 128);
+            if (XTcpSocket_bytesAvailable_base((const XIODevice*)client) > 0)
+                break;
             XThread_msleep(1);
         }
-        XCS_BACKEND_CHECK(pumped >= sizeof(willEcho) + strlen(command),
-                          "Telnet pump 未读取完整命令");
     }
     XCS_BACKEND_CHECK(xcs_backend_read_contains(client, "telnet-ok", 3000),
                       "Telnet 协商过滤或命令执行失败");
