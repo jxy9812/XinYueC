@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_config.h
  * @brief XNetwork 模块网络后端配置文件
  *
@@ -19,6 +19,57 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+/* ========================================================================== */
+/*                        ???????????                                */
+/* ========================================================================== */
+/** @brief XNetwork ??????? 0 ????? XNetwork ???? API ???????
+ * @note ???? CXinYueConfig.h ??????????????????????
+ *       ?????? CXinYueConfig.h ??????????????? */
+#ifndef XNETWORK_ON
+#define XNETWORK_ON 1
+#endif
+
+#if XNETWORK_ON
+
+/** @brief XAbstractSocket / XTcpSocket ???????? */
+#ifndef XNETWORK_ABSTRACT_SOCKET_ON
+#define XNETWORK_ABSTRACT_SOCKET_ON 1
+#endif
+
+/** @brief XTcpServer TCP ?????? */
+#ifndef XNETWORK_TCPSERVER_ON
+#define XNETWORK_TCPSERVER_ON 1
+#endif
+
+/** @brief XUdpSocket UDP ?????? */
+#ifndef XNETWORK_UDPSOCKET_ON
+#define XNETWORK_UDPSOCKET_ON 1
+#endif
+
+/** @brief XNetworkDatagram ?????????? */
+#ifndef XNETWORK_DATAGRAM_ON
+#define XNETWORK_DATAGRAM_ON 1
+#endif
+
+/** @brief XHostInfo ?????DNS ?????? */
+#ifndef XNETWORK_HOSTINFO_ON
+#define XNETWORK_HOSTINFO_ON 1
+#endif
+
+/** @brief XNetworkInterface ????????? */
+#ifndef XNETWORK_INTERFACE_ON
+#define XNETWORK_INTERFACE_ON 1
+#endif
+
+/** @brief XNetworkProxy SOCKS5/HTTP ????? */
+#ifndef XNETWORK_PROXY_ON
+#define XNETWORK_PROXY_ON 1
+#endif
+
+/** @brief XSslSocket TLS/SSL ?????? */
+#ifndef XNETWORK_SSL_ON
+#define XNETWORK_SSL_ON 1
 #endif
 
 /* ========================================================================== */
@@ -292,6 +343,7 @@ extern "C" {
 #define XNETWORK_API_GSSAPI_AUTH       0
 #endif
 
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif
