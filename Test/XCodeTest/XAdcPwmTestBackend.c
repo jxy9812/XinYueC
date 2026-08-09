@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XAdcPwmTestBackend.c
  * @brief ADC/PWM 确定性测试后端。
  * @details

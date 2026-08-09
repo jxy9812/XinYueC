@@ -1,4 +1,4 @@
-#ifndef XATCOMM_H
+﻿#ifndef XATCOMM_H
 #define XATCOMM_H
 
 #ifdef __cplusplus

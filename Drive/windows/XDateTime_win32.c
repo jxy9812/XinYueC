@@ -1,4 +1,4 @@
-#ifdef _WIN32
+﻿#ifdef _WIN32
 #include"XDate.h"
 #include"XTime.h"
 #include"XDateTime.h"

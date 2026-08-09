@@ -4,6 +4,8 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#if XSYNC_ON
+#if XWAITCONDITION_ON
 // FreeRTOS平台具体结构体定义
 struct XWaitCondition {
     SemaphoreHandle_t sem;
@@ -97,4 +99,6 @@ void XWaitCondition_wakeAll(XWaitCondition* cond) {
         xSemaphoreGive(cond->sem);
     }
 }
+#endif /* XWAITCONDITION_ON */
+#endif /* XSYNC_ON */
 #endif

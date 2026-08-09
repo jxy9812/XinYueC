@@ -27,10 +27,13 @@
 
 #ifndef XSSLSOCKET_H
 #define XSSLSOCKET_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_SSL_ON
 
 #include "XTcpSocket.h"
 #include "XSsl_platform.h"
@@ -764,6 +767,8 @@ XSslKey* XSslConfiguration_privateKey(const XSslConfiguration* self);
 void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key);
 
 
+#endif // XNETWORK_SSL_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

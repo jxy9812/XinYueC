@@ -7,10 +7,13 @@
 
 #ifndef XNETWORKINTERFACE_H
 #define XNETWORKINTERFACE_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_INTERFACE_ON
 
 #include "XClass.h"
 #include "XHostAddress.h"
@@ -302,6 +305,8 @@ bool XNetworkInterface_canMulticast(const XNetworkInterface* iface);
  */
 void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2);
 
+#endif // XNETWORK_INTERFACE_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

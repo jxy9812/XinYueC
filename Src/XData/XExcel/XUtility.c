@@ -1,4 +1,4 @@
-#include "XUtility.h"
+﻿#include "XUtility.h"
 #include <string.h>
 #include <math.h>
 #include <ctype.h>

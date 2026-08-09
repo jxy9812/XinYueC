@@ -1,4 +1,4 @@
-#include"XDataTest.h"
+﻿#include"XDataTest.h"
 #include"XCharTest.h"
 #include"XXmlStreamWriterTest.h"
 #include"XXmlStreamReaderTest.h"

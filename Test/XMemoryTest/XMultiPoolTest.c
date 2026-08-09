@@ -25,7 +25,9 @@ static bool test_pool_exhaustion(void);
 static bool test_boundary_conditions(void);
 static bool test_power_of_two_capacity(void);
 static bool test_performance(void);
+#if XTHREAD_ON
 static bool test_multithread_stress(void);
+#endif // XTHREAD_ON
 static bool test_global_pool(void);
 void XMultiPoolTest(void);
 static void test_basic_function_wrapper(XVariant* data) { (void)data; test_basic_function(); }
@@ -34,7 +36,9 @@ static void test_pool_exhaustion_wrapper(XVariant* data) { (void)data; test_pool
 static void test_boundary_conditions_wrapper(XVariant* data) { (void)data; test_boundary_conditions(); }
 static void test_power_of_two_capacity_wrapper(XVariant* data) { (void)data; test_power_of_two_capacity(); }
 static void test_performance_wrapper(XVariant* data) { (void)data; test_performance(); }
+#if XTHREAD_ON
 static void test_multithread_stress_wrapper(XVariant* data) { (void)data; test_multithread_stress(); }
+#endif // XTHREAD_ON
 static void test_global_pool_wrapper(XVariant* data) { (void)data; test_global_pool(); }
 static void XMultiPoolTest_wrapper(XVariant* data) { (void)data; XMultiPoolTest(); }
 
@@ -448,6 +452,7 @@ static volatile bool g_thread_running = true;
 static volatile int g_thread_alloc_count = 0;
 static volatile int g_thread_free_count = 0;
 
+#if XTHREAD_ON
 static void thread_stress_func(XThread* thread, XVarList* list) {
     XVarList_args_1(list, XMultiPool*, pool);
     
@@ -478,7 +483,9 @@ static void thread_stress_func(XThread* thread, XVarList* list) {
     g_thread_alloc_count += local_alloc;
     g_thread_free_count += local_free;
 }
+#endif // XTHREAD_ON
 
+#if XTHREAD_ON
 static bool test_multithread_stress(void) {
     TEST_INFO("===== 多线程压力测试 =====");
     
@@ -554,6 +561,7 @@ static bool test_multithread_stress(void) {
     TEST_PASS("多线程压力测试");
     return true;
 }
+#endif // XTHREAD_ON
 
 // ==================== 测试8: 全局池测试 ====================
 static bool test_global_pool(void) {
@@ -603,7 +611,11 @@ void XMultiPoolTest(void) {
     TEST_INFO("========================================\n");
     
     int passed = 0;
+#if XTHREAD_ON
     int total = 8;
+#else
+    int total = 7;
+#endif
     
     if (test_basic_function()) passed++;
     if (test_continuous_alloc_free()) passed++;
@@ -611,7 +623,9 @@ void XMultiPoolTest(void) {
     if (test_boundary_conditions()) passed++;
     if (test_power_of_two_capacity()) passed++;
     if (test_performance()) passed++;
+#if XTHREAD_ON
     if (test_multithread_stress()) passed++;
+#endif
     if (test_global_pool()) passed++;
     
     TEST_INFO("\n========================================");
@@ -645,8 +659,10 @@ void XMenu_XMultiPoolTest(XMenu* root) {
         XAction* action6 = XMenu_addAction(menu, "性能测试");
         XAction_setAction(action6, test_performance_wrapper);
 
+#if XTHREAD_ON
         XAction* action7 = XMenu_addAction(menu, "多线程压力测试");
         XAction_setAction(action7, test_multithread_stress_wrapper);
+#endif // XTHREAD_ON
 
         XAction* action8 = XMenu_addAction(menu, "全局池测试");
         XAction_setAction(action8, test_global_pool_wrapper);

@@ -3,6 +3,8 @@
 #include "XMemory.h"
 #include <windows.h>
 #include <stdio.h>
+#if XSYNC_ON
+#if XSEMAPHORE_ON
 
 // Windows平台具体结构体定义（参考XWaitConditionWin32.c）
 struct XSemaphore {
@@ -106,4 +108,6 @@ int32_t XSemaphore_available(XSemaphore* sem) {
     return -1;
 }
 
+#endif /* XSEMAPHORE_ON */
+#endif /* XSYNC_ON */
 #endif

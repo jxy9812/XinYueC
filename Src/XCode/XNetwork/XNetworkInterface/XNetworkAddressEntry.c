@@ -1,4 +1,4 @@
-// XNetworkAddressEntry.c
+﻿// XNetworkAddressEntry.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -6,6 +6,8 @@
 #include "XMemory.h"
 #include "XHostAddress.h"
 #include <string.h>
+#if XNETWORK_ON
+#if XNETWORK_INTERFACE_ON
 
 // ==================== 虚函数表 ====================
 
@@ -434,3 +436,5 @@ void XNetworkAddressEntry_swap(XNetworkAddressEntry* entry1, XNetworkAddressEntr
     memcpy(entry1, entry2, sizeof(XNetworkAddressEntry));
     memcpy(entry2, &temp, sizeof(XNetworkAddressEntry));
 }
+#endif // XNETWORK_INTERFACE_ON
+#endif /* XNETWORK_ON */

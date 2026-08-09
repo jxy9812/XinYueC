@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSsl_session.h
  * @brief      后端无关的 TLS 会话状态机接口。
  * @details    会话通过 BIO 回调连接到 XAbstractSocket 或其他字节流，负责握手、
@@ -22,12 +22,15 @@
 
 #ifndef XSSL_SESSION_H
 #define XSSL_SESSION_H
+#include "XNetwork_config.h"
 
 #include "XSsl_platform.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_SSL_ON
 
 /* ---- 会话返回码 -------------------------------------------------------- */
 #define XSSL_S_OK          0   /**< 操作完成 */
@@ -247,6 +250,8 @@ XSslCertificate* XSsl_sessionPeerCertificate(XSslSession* s);
  * @return 新 XVector 所有权；元素为新证书指针，调用者负责释放元素和容器；无链或失败返回 NULL。
  */
 XVector*         XSsl_sessionPeerCertificateChain(XSslSession* s);
+#endif // XNETWORK_SSL_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

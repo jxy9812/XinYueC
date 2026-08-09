@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGpioTestBackend.c
  * @brief      XGpio 的确定性测试后端。
  * @details    本文件只在定义 XGPIO_TEST_BACKEND 且其值非零时参与编译。

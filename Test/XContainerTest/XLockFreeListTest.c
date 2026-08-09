@@ -580,6 +580,7 @@ typedef struct XLFLThreadCtx {
 	int              is_producer;
 } XLFLThreadCtx;
 
+#if XTHREAD_ON
 static void XLFLProducer(XThread* thread, XVarList* varlist)
 {
 	XVarList_args_1(varlist, XLFLThreadCtx*, ctx);
@@ -677,6 +678,7 @@ static void XLockFreeListConcurrentTest(void)
 	XPrintf("\n");
 	XCoreApplication_quit();
 }
+#endif // XTHREAD_ON
 
 /* ======================== 全部测试汇总 ======================== */
 static void XLockFreeListAllTest(void)
@@ -740,8 +742,10 @@ void XMenu_XLockFreeListTest(XMenu* root)
 		XAction_setAction(a, (Action)XLockFreeListSortDemo);
 	}
 	{
+#if XTHREAD_ON
 		XAction* a = XMenu_addAction(menu, "并发多生产/多消费");
 		XAction_setAction(a, (Action)XLockFreeListConcurrentTest);
+#endif // XTHREAD_ON
 	}
 }
 #endif

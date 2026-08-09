@@ -1,4 +1,4 @@
-#include"CXinYueConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XLockFreeListConfig_H)&& XLockFreeList_ON
 #define XLockFreeListConfig_H
 #ifdef __cplusplus

@@ -64,7 +64,7 @@ XinYueC/
 │   ├── XIOTest/              # IO测试
 │   ├── XLibraryTest/         # 库测试
 │   ├── XMemoryTest/          # 内存测试
-│   └── XProtocolStackTest/   # 协议栈测试
+│   └── XProtocolTest/   # 协议栈测试
 ├── CMakeLists.txt            # CMake配置文件
 └── README.md                 # 项目说明文档
 ```
@@ -551,7 +551,7 @@ Test/
 ├── XIOTest/              # IO测试
 ├── XLibraryTest/         # 库测试
 ├── XMemoryTest/          # 内存测试
-└── XProtocolStackTest/   # 协议栈测试
+└── XProtocolTest/   # 协议栈测试
 ```
 
 **使用方法：**

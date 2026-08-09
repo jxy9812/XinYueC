@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XLatin1StringView_reverse_iterator.c
 * @brief XLatin1StringView 反向迭代器实现
 */

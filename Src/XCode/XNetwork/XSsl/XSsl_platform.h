@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSsl_platform.h
  * @brief SSL/TLS平台抽象接口（参考Qt 6.8 QSsl命名空间）
  *
@@ -23,6 +23,7 @@
 
 #ifndef XSSL_PLATFORM_H
 #define XSSL_PLATFORM_H
+#include "XNetwork_config.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -35,6 +36,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_SSL_ON
 
     /* =========================================================================
      * 一、SslProtocol - SSL/TLS协议版本（参考Qt QSsl::SslProtocol）
@@ -401,6 +404,8 @@ extern "C" {
       */
     bool XSsl_randomBytes(uint8_t* buf, size_t len);
 
+#endif // XNETWORK_SSL_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

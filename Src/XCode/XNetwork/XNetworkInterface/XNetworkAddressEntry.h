@@ -1,4 +1,4 @@
-// XNetworkAddressEntry.h
+﻿// XNetworkAddressEntry.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -7,10 +7,13 @@
 
 #ifndef XNETWORKADDRESSENTRY_H
 #define XNETWORKADDRESSENTRY_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_INTERFACE_ON
 
 #include "XClass.h"
 #include "XHostAddress.h"
@@ -297,6 +300,8 @@ bool XNetworkAddressEntry_notEquals(const XNetworkAddressEntry* entry1,
  */
 void XNetworkAddressEntry_swap(XNetworkAddressEntry* entry1, XNetworkAddressEntry* entry2);
 
+#endif // XNETWORK_INTERFACE_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

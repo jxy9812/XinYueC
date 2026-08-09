@@ -1,4 +1,4 @@
-#include"CXinYueConfig.h"
+﻿#include"CXinYueConfig.h"
 #ifndef XATOMIC_H
 #define XATOMIC_H
 #ifdef __cplusplus

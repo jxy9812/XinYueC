@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XAnyStringViewTest.c
  * @brief XAnyStringView 全面测试（对标 Qt 6.8 QAnyStringView）
  * @details 覆盖构造、访问、子视图、编码检测、比较、迭代器等全部 API，

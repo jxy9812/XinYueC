@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XChar_file.c
  * @brief GBK编码转换的文件读取实现（二进制格式）
  *

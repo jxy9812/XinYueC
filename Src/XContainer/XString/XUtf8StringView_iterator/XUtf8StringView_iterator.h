@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XUtf8StringView_iterator.h
 * @brief XUtf8StringView 正向迭代器头文件
 * @details 定义 XUtf8StringView 的正向迭代器结构及相关操作函数，

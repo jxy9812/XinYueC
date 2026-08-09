@@ -9,6 +9,8 @@
 #include "XTask.h"
 #include <windows.h>
 #include"XAtomic.h"
+#if XSYNC_ON
+#if XTHREAD_ON
 void VXThread_run(XThread* thread);
 static void VXThread_deinit(XThread* thread);
 // 虚函数表初始化
@@ -274,6 +276,8 @@ void VXThread_deinit(XThread* thread)
     //XFree_System(thread);
 }
 
+#endif /* XTHREAD_ON */
+#if XTHREADDATA_ON
 XHandle XThread_currentThreadId()
 {
     return GetCurrentThreadId();
@@ -358,4 +362,6 @@ void* XThreadStorage_get(void)
     return TlsGetValue(slot);
 }
 
+#endif /* XTHREADDATA_ON */
+#endif /* XSYNC_ON */
 #endif

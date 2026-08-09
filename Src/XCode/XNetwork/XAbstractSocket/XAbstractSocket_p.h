@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractSocket_p.h
  * @brief      XAbstractSocket 本地流传输内部适配接口。
  * @details    此文件不是公开 API，只允许网络实现和 MySQL 协议客户端包含。
@@ -7,6 +7,7 @@
  */
 #ifndef XABSTRACTSOCKET_P_H
 #define XABSTRACTSOCKET_P_H
+#include "XNetwork_config.h"
 
 #include "XAbstractSocket.h"
 #include "XNetwork.h"
@@ -14,6 +15,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_ABSTRACT_SOCKET_ON
 
 /**
  * @brief 使用平台本地流传输连接端点。
@@ -29,6 +32,8 @@ bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
                                                 XNetworkLocalStreamType streamType,
                                                 int timeoutMs);
 
+#endif // XNETWORK_ABSTRACT_SOCKET_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

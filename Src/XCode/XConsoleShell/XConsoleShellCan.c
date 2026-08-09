@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellCan.c
  * @brief XConsoleShell CAN 固定槽位命令实现。
  * @details

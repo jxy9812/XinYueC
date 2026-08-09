@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XTestCommand.c
  * @brief 将测试入口转换为 XConsoleShell 的 Test 命令。
  * @details

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellTest.c
  * @brief XConsoleShell 全量核心回归测试。
  * @details

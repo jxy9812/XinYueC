@@ -1,4 +1,4 @@
-#include"XDataStructTest.h"
+﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XByteArray.h"
 #include"XByteArrayView.h"

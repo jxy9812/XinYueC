@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XStringViewTest.c
  * @brief XStringView 全面测试（对标 Qt 6.8 QStringView）
  * @details 覆盖构造、访问、子视图、查找、比较、数值转换、迭代器等全部 API，

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellVi.c
  * @brief XConsoleShell 的 vi/vim 风格行编辑命令实现。
  * @details

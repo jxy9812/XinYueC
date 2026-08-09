@@ -35,6 +35,8 @@
 #include "XFile.h"
 #include "XTypes.h"
 #include <stdlib.h>
+#if XNETWORK_ON
+#if XNETWORK_SSL_ON
 
 #define DEFAULT_CHUNK_SIZE 16384
 /* = 内部结构体 = */
@@ -1426,3 +1428,5 @@ XVtable* XSslSocket_class_init(void) {
 
     return XVTABLE_DEFAULT;
 }
+#endif // XNETWORK_SSL_ON
+#endif /* XNETWORK_ON */

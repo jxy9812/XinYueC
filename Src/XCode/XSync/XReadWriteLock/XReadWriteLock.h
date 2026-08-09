@@ -1,5 +1,8 @@
 ﻿#ifndef XREADWRITELOCK_H
 #define XREADWRITELOCK_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XREADWRITELOCK_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -112,4 +115,6 @@ bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock);
 }
 #endif
 
+#endif // XREADWRITELOCK_ON
+#endif /* XSYNC_ON */
 #endif // XREADWRITELOCK_H

@@ -4,6 +4,8 @@
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+#if XSYNC_ON
+#if XWAITCONDITION_ON
 pthread_mutex_t* XMutex_get_pthread_mutex_t(XMutex* mutex);
 // POSIX平台具体结构体定义
 struct XWaitCondition {
@@ -82,4 +84,6 @@ void XWaitCondition_wakeAll(XWaitCondition* cond) {
     pthread_cond_broadcast(&cond->cond);
 }
 
+#endif /* XWAITCONDITION_ON */
+#endif /* XSYNC_ON */
 #endif

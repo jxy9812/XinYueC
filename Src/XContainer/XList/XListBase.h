@@ -1,4 +1,4 @@
-#include"CXinYueConfig.h"
+﻿#include"CXinYueConfig.h"
 /**
 * @brief 条件编译控制
 * @note 防止头文件重复包含，且仅在XList模块启用时编译

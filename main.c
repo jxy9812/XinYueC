@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file main.c
  * @brief XinYueC 默认控制台入口。
  * @details

@@ -1,5 +1,6 @@
-#ifndef XFILE_H
+﻿#ifndef XFILE_H
 #define XFILE_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XFile.h
@@ -18,6 +19,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XFILE_OBJECT_ON
 
 /* ============================================================================
  * 虚函数表定义
@@ -356,6 +359,8 @@ XString* XFile_decodeName(const XByteArray* localFileName);
  */
 XString* XFile_decodeName_2(const char* localFileName);
 
+#endif // XFILE_OBJECT_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

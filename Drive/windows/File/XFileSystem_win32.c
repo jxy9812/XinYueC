@@ -1,4 +1,4 @@
-#ifdef _WIN32
+﻿#ifdef _WIN32
 
 #include "XFileSystem_config.h"  /* 文件系统配置 */
 

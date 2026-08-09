@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShell_XSerialPort.h
  * @brief XConsoleShell 到 XSerialPort 的串口传输适配器。
  * @details

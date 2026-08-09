@@ -1,5 +1,6 @@
-#ifndef XSAVEFILE_H
+﻿#ifndef XSAVEFILE_H
 #define XSAVEFILE_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XSaveFile.h
@@ -17,6 +18,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XSAVEFILE_ON
 
 /* ============================================================================
  * 虚函数表定义
@@ -206,6 +209,8 @@ bool XSaveFile_directWriteFallback(const XSaveFile* file);
  */
 bool XSaveFile_generateTempFileName(const XString* targetPath, XString* tempPath);
 
+#endif // XSAVEFILE_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

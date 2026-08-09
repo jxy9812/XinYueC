@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XLatin1StringView_iterator.c
 * @brief XLatin1StringView 正向迭代器实现
 * @details 实现 XLatin1StringView 的正向迭代器操作函数。

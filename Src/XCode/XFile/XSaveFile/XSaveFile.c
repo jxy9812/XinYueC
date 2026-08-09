@@ -1,8 +1,10 @@
-#include "XSaveFile.h"
+﻿#include "XSaveFile.h"
 #include "XIODevice_Protected.h"
 #include "XFileSystem.h"
 #include <stdlib.h>
 #include <string.h>
+#if XFILE_ON
+#if XSAVEFILE_ON
 
 /* ============================================================================
  * 内部函数：生成临时文件名
@@ -376,3 +378,5 @@ bool XSaveFile_directWriteFallback(const XSaveFile* file)
     if (!file) return false;
     return file->m_directWriteFallback;
 }
+#endif // XSAVEFILE_ON
+#endif /* XFILE_ON */

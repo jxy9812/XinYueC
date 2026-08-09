@@ -1,4 +1,4 @@
-#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include "XTime.h"
 #include "XDate.h"
 #include "XDateTime.h"

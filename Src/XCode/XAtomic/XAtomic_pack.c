@@ -1,4 +1,4 @@
-#include"XAtomic.h"
+﻿#include"XAtomic.h"
 size_t XAtomic_index_bits(size_t max_value)
 {
     if (max_value == 0) return 1;

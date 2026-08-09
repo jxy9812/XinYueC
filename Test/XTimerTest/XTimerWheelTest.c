@@ -95,6 +95,7 @@ static void MpscRegressionCallback(void* userData, XTimerData* timer)
 			XAtomic_MemoryOrder_Relaxed);
 }
 
+#if XTHREAD_ON
 static void XTimerTimeWheelMpscProducer(XThread* thread, XVarList* args)
 {
 	(void)thread;
@@ -144,7 +145,9 @@ static void XTimerTimeWheelMpscProducer(XThread* thread, XVarList* args)
 
 	XAtomic_fetch_add_int32(&context->completed, 1, XAtomic_MemoryOrder_Release);
 }
+#endif // XTHREAD_ON
 
+#if XTHREAD_ON
 static void XTimerTimeWheelMpscRegressionTest(XVariant* menuData)
 {
 	(void)menuData;
@@ -225,6 +228,7 @@ static void XTimerTimeWheelMpscRegressionTest(XVariant* menuData)
 	XPrintf("[%s] 时间轮 MPSC 多线程回归测试\n", passed ? "通过" : "失败");
 	XPrintf("========== 时间轮 MPSC 多线程回归测试结束 ==========\n");
 }
+#endif // XTHREAD_ON
 
 void XTimerTimeWheelTest()
 {
@@ -274,7 +278,9 @@ void XMenu_XTimerTimeWheelTest(XMenu* root)
 		XAction_setAction(action, XTimerTimeWheelCancelRegressionTest);
 	}
 	{
+#if XTHREAD_ON
 		XAction* action = XMenu_addAction(menu, "MPSC多线程回归测试");
 		XAction_setAction(action, XTimerTimeWheelMpscRegressionTest);
+#endif // XTHREAD_ON
 	}
 }

@@ -1,4 +1,4 @@
-// XAbstractSocket.h
+﻿// XAbstractSocket.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -15,10 +15,13 @@
 
 #ifndef XABSTRACTSOCKET_H
 #define XABSTRACTSOCKET_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_ABSTRACT_SOCKET_ON
 
 #include "XIODevice.h"
 #include "XHostAddress.h"
@@ -554,6 +557,8 @@ void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocke
  */
 void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, XNetworkProxy* proxy, void* authenticator);
 
+#endif // XNETWORK_ABSTRACT_SOCKET_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

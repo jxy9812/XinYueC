@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XConditionalFormatting.h
  * @brief      XConditionalFormatting 条件格式类（对标 QXlsx::ConditionalFormatting）
  * @author     XinYueC 团队

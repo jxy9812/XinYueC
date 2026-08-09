@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XFileSystem_unsupported.c
  * @brief 不具备终端控制能力的平台的标准输入回显存根。
  * @details

@@ -1,5 +1,8 @@
 ﻿#ifndef XREADLOCKER_H
 #define XREADLOCKER_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XREADWRITELOCK_ON
 
 #include "XReadWriteLock.h"
 
@@ -66,4 +69,6 @@ XReadWriteLock* XReadLocker_rwlock(XReadLocker* locker);
 }
 #endif
 
+#endif // XREADWRITELOCK_ON
+#endif /* XSYNC_ON */
 #endif // XREADLOCKER_H

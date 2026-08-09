@@ -1,5 +1,6 @@
-#ifndef XDIR_H
+﻿#ifndef XDIR_H
 #define XDIR_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XDir.h
@@ -19,6 +20,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XDIR_ON
 
 /* ============================================================================
  * 枚举定义
@@ -681,6 +684,8 @@ int XDir_localeCompare(const char* str1, const char* str2, bool ignoreCase);
  */
 bool matchWildcardCaseSensitive(const char* pattern, const char* str);
 
+#endif // XDIR_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

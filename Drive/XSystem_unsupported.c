@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSystem_unsupported.c
  * @brief 未提供系统复位、关机后端的平台存根。
  * @details

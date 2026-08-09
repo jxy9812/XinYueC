@@ -1,4 +1,4 @@
-// XStackBase.h
+﻿// XStackBase.h
 #ifndef XSTACKBASE_H
 #define XSTACKBASE_H
 

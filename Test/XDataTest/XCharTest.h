@@ -1,4 +1,4 @@
-#ifndef XCharTest_H
+﻿#ifndef XCharTest_H
 #define XCharTest_H
 #ifdef __cplusplus
 extern "C" {

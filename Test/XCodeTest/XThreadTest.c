@@ -6,6 +6,8 @@
 #include"XThread.h"
 #include"XTimer.h"
 #include"XAtomic.h"
+#if XTHREAD_ON
+
 static void threadFunc(XThread* thread, XVarList* list)
 {
 	XVarList_args_1(list, XAtomic_int32_t*, rt);
@@ -80,3 +82,4 @@ void XMenu_XThreadTest(XMenu* root)
 		XAction_setAction(action, XThreadTest);
 	}
 }
+#endif // XTHREAD_ON

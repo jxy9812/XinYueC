@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCan_unsupported.c
  * @brief 没有 CAN 驱动平台的安全存根。
  * @details

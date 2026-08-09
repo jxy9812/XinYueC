@@ -1,5 +1,8 @@
 ﻿#ifndef XSEMAPHORE_H
 #define XSEMAPHORE_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XSEMAPHORE_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,4 +88,6 @@ int32_t XSemaphore_available(XSemaphore* sem);
 }
 #endif
 
+#endif // XSEMAPHORE_ON
+#endif /* XSYNC_ON */
 #endif // XSEMAPHORE_H

@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XAnyStringView_reverse_iterator.h
 * @brief XAnyStringView 反向迭代器头文件
 * @details 定义 XAnyStringView 的反向迭代器结构及相关操作函数，

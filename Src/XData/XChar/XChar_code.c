@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XChar_code.c
  * @brief GBK编码转换的代码模式实现（静态数组）
  *

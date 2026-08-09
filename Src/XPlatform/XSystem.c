@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSystem.c
  * @brief 系统复位、关机和有序重启回调的默认分发实现。
  * @details

@@ -8,6 +8,8 @@
 #include "task.h"
 #include "semphr.h"
 #include "CXinYueConfig.h"
+#if XSYNC_ON
+#if XTHREAD_ON
 
 
 // 前向声明虚函数
@@ -249,10 +251,6 @@ static void VXThread_deinit(XThread* Object) {
 	}
 	XDEBUG_PRINTF("Thread object deinitialized");
 }
-// 获取当前线程 ID（使用任务句柄作为唯一标识）
-XHandle XThread_currentThreadId() {
-	return (XHandle)xTaskGetCurrentTaskHandle();
-}
 
 // 创建 XThread 对象
 XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
@@ -270,8 +268,16 @@ XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 	((XThreadFreeRTOS*)Object)->completion_sem = NULL;
 	return Object;
 }
+#endif /* XTHREAD_ON */
+#if XTHREADDATA_ON
+// 获取当前线程 ID（使用任务句柄作为唯一标识）
+XHandle XThread_currentThreadId() {
+	return (XHandle)xTaskGetCurrentTaskHandle();
+}
 //FreeRTOS 无通用 TLS 抽象:回退为空操作,线程私有数据仍由全局映射提供
 void XThreadStorage_set(void* p){(void)p;}
 void* XThreadStorage_get(void){return NULL;}
 
+#endif /* XTHREADDATA_ON */
+#endif /* XSYNC_ON */
 #endif

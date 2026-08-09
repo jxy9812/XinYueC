@@ -1,4 +1,4 @@
-#ifndef XBSONVALUE_H
+﻿#ifndef XBSONVALUE_H
 #define XBSONVALUE_H
 
 #ifdef __cplusplus

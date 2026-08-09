@@ -1,4 +1,4 @@
-#include"XDataStructTest.h"
+﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include<stdint.h>
 #include<time.h>
@@ -102,6 +102,7 @@ typedef struct XLFQCtx {
     size_t           threads_total;
 } XLFQCtx;
 
+#if XTHREAD_ON
 static void XLFQProducer(XThread* thread, XVarList* vl)
 {
     XVarList_args_1(vl, XLFQCtx*, ctx);
@@ -198,6 +199,7 @@ static void XLFQConcurrentTest(void)
     XPrintf("\n");
     XCoreApplication_quit();
 }
+#endif // XTHREAD_ON
 
 /* -------- 全部（不含并发） -------- */
 static void XLFQAllTest(void)
@@ -220,7 +222,9 @@ void XMenu_XLockFreeQueueTest(XMenu* root)
     { XAction* a = XMenu_addAction(menu, "基础 FIFO / Qt 别名"); XAction_setAction(a, (Action)XLFQBasicTest); }
     { XAction* a = XMenu_addAction(menu, "isFull 边界"); XAction_setAction(a, (Action)XLFQFullTest); }
     { XAction* a = XMenu_addAction(menu, "大量数据(单线程 100000)"); XAction_setAction(a, (Action)XLFQBulkTest); }
+#if XTHREAD_ON
     { XAction* a = XMenu_addAction(menu, "并发多生产/多消费"); XAction_setAction(a, (Action)XLFQConcurrentTest); }
+#endif // XTHREAD_ON
 #endif
 }
 #endif

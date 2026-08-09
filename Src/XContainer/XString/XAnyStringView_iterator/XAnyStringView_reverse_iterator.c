@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XAnyStringView_reverse_iterator.c
 * @brief XAnyStringView 反向迭代器实现
 */

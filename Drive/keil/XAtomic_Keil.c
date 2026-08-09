@@ -1,4 +1,4 @@
-// XAtomic_Keil.c
+﻿// XAtomic_Keil.c
 #if defined(__CC_ARM) || defined(__ARMCC_VERSION) || defined(__clang__)
 
 #include "XAtomic.h"

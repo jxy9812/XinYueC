@@ -1,4 +1,4 @@
-#include "XHrTimerGroup.h"
+﻿#include "XHrTimerGroup.h"
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XThreadData.h"

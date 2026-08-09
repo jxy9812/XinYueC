@@ -1,4 +1,4 @@
-#include "XZipWriter.h"
+﻿#include "XZipWriter.h"
 #include <stdio.h>
 #include "XMemory.h"
 #include "XFile.h"

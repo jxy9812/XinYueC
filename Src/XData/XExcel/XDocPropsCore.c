@@ -1,4 +1,4 @@
-#include "XDocPropsCore.h"
+﻿#include "XDocPropsCore.h"
 #include "XMemory.h"
 #include "XMap.h"
 #include "XFile.h"

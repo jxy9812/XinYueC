@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellSystem.c
  * @brief XConsoleShell 的 clear、reset、reboot 和 shutdown 命令实现。
  * @details

@@ -1,6 +1,8 @@
 ﻿#include "XWriteLocker.h"
 #include "XMemory.h"
 #include <stdlib.h>
+#if XSYNC_ON
+#if XREADWRITELOCK_ON
 
 
 
@@ -57,3 +59,5 @@ void XWriteLocker_relock(XWriteLocker* locker) {
 XReadWriteLock* XWriteLocker_rwlock(XWriteLocker* locker) {
     return locker ? locker->rwlock : NULL;
 }
+#endif // XREADWRITELOCK_ON
+#endif /* XSYNC_ON */

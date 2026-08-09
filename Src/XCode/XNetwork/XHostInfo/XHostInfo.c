@@ -17,6 +17,8 @@
 #include "XDateTime.h"
 #include <string.h>
 #include <stdlib.h>
+#if XNETWORK_ON
+#if XNETWORK_HOSTINFO_ON
 
 // ======================== 异步查询管理 ========================
 
@@ -426,6 +428,7 @@ static void lookupWorker(XVarList* varlist) {
     XMutex_unlock(g_lookupMutex);
 }
 
+#if XTHREADPOOL_ON
 int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void* userData) {
     if (!name || XString_size_base(name) == 0) return -1;
     
@@ -458,7 +461,14 @@ int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void*
     
     return req->id;
 }
+#else
+int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void* userData) {
+    (void)name; (void)callback; (void)userData;
+    return -1;
+}
+#endif // XTHREADPOOL_ON
 
+#if XTHREADPOOL_ON
 int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t member) {
     if (!name || XString_size_base(name) == 0 || !receiver || !member) return -1;
     
@@ -491,6 +501,12 @@ int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t
 
     return req->id;
 }
+#else
+int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t member) {
+    (void)name; (void)receiver; (void)member;
+    return -1;
+}
+#endif // XTHREADPOOL_ON
 
 void XHostInfo_abortHostLookup(int lookupId) {
     if (lookupId <= 0) return;
@@ -724,3 +740,5 @@ void XHostInfo_prefetchName(const XString* hostName) {
     /* 异步查询并存入缓存 */
     XHostInfo_lookupHost(hostName, prefetchCallback, NULL);
 }
+#endif // XNETWORK_HOSTINFO_ON
+#endif /* XNETWORK_ON */

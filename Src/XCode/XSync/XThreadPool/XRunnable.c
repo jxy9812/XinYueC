@@ -1,6 +1,8 @@
-#include"XRunnable.h"
+﻿#include"XRunnable.h"
 #include"XMemory.h"
 #include"XVarList.h"
+#if XSYNC_ON
+#if XTHREADPOOL_ON
 /**
  * @brief XRunnable类结构体定义，用于表示可运行的任务
  * @note 继承自XObject，提供类似Qt QRunnable的功能
@@ -114,3 +116,5 @@ XRunnable* XRunnable_create_from_function(XCallableToRun function, XVarList* arg
 
 	return (XRunnable*)wrapper;
 }
+#endif // XTHREADPOOL_ON
+#endif /* XSYNC_ON */

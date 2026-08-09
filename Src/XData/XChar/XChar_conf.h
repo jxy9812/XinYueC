@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XChar_conf.h
  * @brief XChar模块配置文件
  *

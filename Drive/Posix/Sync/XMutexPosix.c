@@ -6,6 +6,8 @@
 #include <time.h>
 #include <errno.h>
 #include <string.h>
+#if XSYNC_ON
+#if XMUTEX_ON
 
 // PlatformPrivate 结构体定义
 // 对于Linux，我们直接使用 pthread_mutex_t
@@ -101,4 +103,6 @@ static bool _XMutex_platform_tryLockTimeout_private(PlatformPrivate* p, uint32_t
 }
 */
 
+#endif /* XMUTEX_ON */
+#endif /* XSYNC_ON */
 #endif

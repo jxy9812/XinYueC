@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XFileSystem_Fatfs_diskioPosix.c
  * @brief FatFs POSIX 平台磁盘 I/O 实现（Linux/macOS/BSD）
  *

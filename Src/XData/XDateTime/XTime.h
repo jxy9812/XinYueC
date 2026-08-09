@@ -1,4 +1,4 @@
-#ifndef XTIME_H
+﻿#ifndef XTIME_H
 #define XTIME_H
 
 #include <stdint.h>

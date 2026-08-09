@@ -1,7 +1,10 @@
-// XRecursiveLockState.h
+﻿// XRecursiveLockState.h
 
 #ifndef XRECURSIVELOCKSTATE_H
 #define XRECURSIVELOCKSTATE_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XRECURSIVELOCKSTATE_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,4 +60,6 @@ void XRecursiveLockState_clear(void* lock_obj);
 }
 #endif
 
+#endif // XRECURSIVELOCKSTATE_ON
+#endif /* XSYNC_ON */
 #endif // XRECURSIVELOCKSTATE_H

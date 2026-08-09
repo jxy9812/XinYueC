@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XUtf8StringView_reverse_iterator.c
 * @brief XUtf8StringView 反向迭代器实现
 */

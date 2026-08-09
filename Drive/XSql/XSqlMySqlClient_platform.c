@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSqlMySqlClient_platform.c
  * @brief 非 Windows/POSIX 平台的 MySQL 特殊传输回退实现。
  */

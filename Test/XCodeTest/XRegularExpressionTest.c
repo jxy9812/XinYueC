@@ -446,6 +446,7 @@ static bool XRegularExpression_test_swap(void)
     return true;
 }
 
+#if XTHREAD_ON
 static XRegularExpression* g_regularExpressionThreadExpression;
 static XAtomic_int32_t g_regularExpressionThreadFailures;
 
@@ -495,6 +496,7 @@ static bool XRegularExpression_test_thread_safe_readers(void)
     XREGEX_TEST_PASS("XMutex 保护的并发只读匹配");
     return true;
 }
+#endif // XTHREAD_ON
 
 static bool XRegularExpression_test_conversion(void)
 {
@@ -832,7 +834,8 @@ static bool XRegularExpression_test_all(void)
     ok = XRegularExpression_test_swap() && ok;
     ok = XRegularExpression_test_conversion() && ok;
     ok = XRegularExpression_test_string_consumers() && ok;
-    ok = XRegularExpression_test_thread_safe_readers() && ok;
+#if XTHREAD_ON
+#endif // XTHREAD_ON
     ok = XRegularExpression_test_hash_map() && ok;
     ok = XRegularExpression_test_invalid_and_null() && ok;
     XPrintf("[RESULT] XRegularExpression: %s\n", ok ? "PASS" : "FAIL");
@@ -881,11 +884,13 @@ static void XRegularExpression_test_string_consumers_wrapper(XVariant* data)
     XRegularExpression_test_string_consumers();
 }
 
+#if XTHREAD_ON
 static void XRegularExpression_test_thread_wrapper(XVariant* data)
 {
     (void)data;
     XRegularExpression_test_thread_safe_readers();
 }
+#endif // XTHREAD_ON
 
 void XMenu_XRegularExpressionTest(XMenu* root)
 {
@@ -905,6 +910,8 @@ void XMenu_XRegularExpressionTest(XMenu* root)
     XAction_setAction(action, XRegularExpression_test_conversion_wrapper);
     action = XMenu_addAction(menu, "XString/XStringList消费者");
     XAction_setAction(action, XRegularExpression_test_string_consumers_wrapper);
+#if XTHREAD_ON
     action = XMenu_addAction(menu, "并发只读匹配");
     XAction_setAction(action, XRegularExpression_test_thread_wrapper);
+#endif // XTHREAD_ON
 }

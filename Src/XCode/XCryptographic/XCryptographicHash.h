@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCryptographicHash.h
  * @brief 加密哈希算法类（对齐Qt 6.8 QCryptographicHash）
  * 

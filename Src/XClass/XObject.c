@@ -309,7 +309,11 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 		return false;
 
 	XThreadData* currentData = XThreadData_current();
-	XThreadData* targetData = target_thread ? XThreadData_get2(target_thread) : NULL;
+#if XTHREAD_ON
+    XThreadData* targetData = target_thread ? XThreadData_get2(target_thread) : NULL;
+#else
+    XThreadData* targetData = NULL;
+#endif
 	XThreadData* thisData = XObject_threadData(object);
 	if (!currentData || !thisData)
 		return false;

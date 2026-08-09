@@ -1,4 +1,4 @@
-#include "XDate.h"
+﻿#include "XDate.h"
 #include "XVariantTypeOps.h"
 #include "XVariant.h"
 #include <stdlib.h>

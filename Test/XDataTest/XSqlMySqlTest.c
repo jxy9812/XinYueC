@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSqlMySqlTest.c
  * @brief      MySQL/MariaDB 真实服务器全流程联调测试。
  * @details    测试只通过 XSqlDatabase、XSqlQuery、模型和公共 SQL API 操作，

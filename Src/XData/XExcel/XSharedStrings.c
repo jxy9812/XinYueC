@@ -1,4 +1,4 @@
-#include "XSharedStrings.h"
+﻿#include "XSharedStrings.h"
 #include "XXmlStreamReader.h"
 #include "XMemory.h"
 #include "XFile.h"

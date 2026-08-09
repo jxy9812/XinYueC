@@ -7,8 +7,12 @@ void XMenu_XCodeTest(XMenu* root)
 	XMenu_XRcodeTest(menu);
 	XMenu_XDebugTest(menu);
 	XMenu_XStateMachineTest(menu);
+#if XTHREAD_ON
 	XMenu_XThreadTest(menu);
+#endif
+#if XTHREADPOOL_ON
 	XMenu_XThreadPoolTest(menu);
+#endif
 	XMenu_XDateTimeTest(menu);
 	XMenu_XCryptographicHashTest(menu);
 	XMenu_XRandomGeneratorTest(menu);

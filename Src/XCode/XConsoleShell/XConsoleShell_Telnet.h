@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShell_Telnet.h
  * @brief XConsoleShell 的轻量 Telnet 字节过滤适配器。
  * @details

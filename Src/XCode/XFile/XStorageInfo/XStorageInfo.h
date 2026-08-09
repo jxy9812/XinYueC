@@ -1,5 +1,6 @@
-#ifndef XSTORAGEINFO_H
+﻿#ifndef XSTORAGEINFO_H
 #define XSTORAGEINFO_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XStorageInfo.h
@@ -22,6 +23,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XSTORAGEINFO_ON
 
 /* ============================================================================
  * 虚函数表定义
@@ -318,6 +321,8 @@ XStorageInfoList* XStorageInfo_mountedVolumes(void);
  */
 bool XStorageInfo_equals(const XStorageInfo* lhs, const XStorageInfo* rhs);
 
+#endif // XSTORAGEINFO_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

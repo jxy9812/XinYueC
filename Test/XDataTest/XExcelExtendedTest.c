@@ -1,4 +1,4 @@
-#include "XExcelExtendedTest.h"
+﻿#include "XExcelExtendedTest.h"
 
 #include "XAbstractSheet.h"
 #include "XByteArray.h"

@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XStringView_iterator.h
 * @brief XStringView 正向迭代器头文件
 * @details 定义 XStringView 的正向迭代器结构及相关操作函数，

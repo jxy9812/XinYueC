@@ -1,4 +1,4 @@
-#include "XSimpleOOXmlFile.h"
+﻿#include "XSimpleOOXmlFile.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XByteArray.h"

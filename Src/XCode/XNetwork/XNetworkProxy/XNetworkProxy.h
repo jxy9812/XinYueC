@@ -1,4 +1,4 @@
-// XNetworkProxy.h
+﻿// XNetworkProxy.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -6,10 +6,13 @@
 
 #ifndef XNETWORKPROXY_H
 #define XNETWORKPROXY_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_PROXY_ON
 
 #include "XClass.h"
 #include "XString.h"
@@ -540,6 +543,8 @@ XNetworkProxy* XNetworkProxyFactory_proxyForQuery(const XNetworkProxyQuery* quer
  */
 XNetworkProxy* XNetworkProxyFactory_systemProxyForQuery(const XNetworkProxyQuery* query);
 
+#endif // XNETWORK_PROXY_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

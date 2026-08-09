@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XConsoleShellI2c.c
  * @brief      I2C Shell 命令实现。
  * @details    Shell 仅调用 XI2c 公共接口，使用固定槽位和固定长度字节缓冲，

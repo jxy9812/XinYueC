@@ -1,5 +1,8 @@
-#ifndef XRUNNABLE_H
+﻿#ifndef XRUNNABLE_H
 #define XRUNNABLE_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XTHREADPOOL_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,4 +80,6 @@ XRunnable* XRunnable_create_from_function(XCallableToRun function,XVarList* args
 }
 #endif
 
+#endif // XTHREADPOOL_ON
+#endif /* XSYNC_ON */
 #endif // XRUNNABLE_H

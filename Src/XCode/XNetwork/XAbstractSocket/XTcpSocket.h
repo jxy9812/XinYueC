@@ -1,4 +1,4 @@
-// XTcpSocket.h
+﻿// XTcpSocket.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -7,10 +7,13 @@
 
 #ifndef XTCPSOCKET_H
 #define XTCPSOCKET_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_ABSTRACT_SOCKET_ON
 
 #include "XAbstractSocket.h"
 
@@ -99,6 +102,8 @@ XTcpSocket* XTcpSocket_create(void);
 #define XTcpSocket_readyRead_signal         XIODevice_readyRead_signal
 #define XTcpSocket_bytesWritten_signal      XIODevice_bytesWritten_signal
 
+#endif // XNETWORK_ABSTRACT_SOCKET_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

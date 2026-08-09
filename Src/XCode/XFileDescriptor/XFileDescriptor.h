@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XFileDescriptor.h
  * @brief 通用文件描述符表 —— 统一管理文件、套接字、串口、定时器等 I/O 资源
  *

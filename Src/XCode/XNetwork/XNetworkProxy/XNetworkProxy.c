@@ -1,4 +1,4 @@
-// XNetworkProxy.c
+﻿// XNetworkProxy.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -7,6 +7,8 @@
 #include "XString.h"
 #include <stdlib.h>
 #include <string.h>
+#if XNETWORK_ON
+#if XNETWORK_PROXY_ON
 
 // =============== 全局变量 ===============
 
@@ -565,3 +567,5 @@ XNetworkProxy* XNetworkProxyFactory_systemProxyForQuery(const XNetworkProxyQuery
     }
     return proxy;
 }
+#endif // XNETWORK_PROXY_ON
+#endif /* XNETWORK_ON */

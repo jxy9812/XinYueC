@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XI2cTestBackend.c
  * @brief      I2C 命令测试用确定性模拟后端。
  * @details    仅在 XI2C_TEST_BACKEND 非零时编译。模拟器使用固定 256 字节

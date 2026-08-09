@@ -1,4 +1,4 @@
-#ifndef XCLASS_CONFIG_H
+﻿#ifndef XCLASS_CONFIG_H
 #define XCLASS_CONFIG_H
 
 /*

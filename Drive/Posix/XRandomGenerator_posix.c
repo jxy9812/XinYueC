@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XRandomGenerator_posix.c
  * @brief 随机数生成器 POSIX 平台实现 (Linux/macOS/BSD)
  */

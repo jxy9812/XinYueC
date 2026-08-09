@@ -1,4 +1,4 @@
-// XTcpServer.h
+﻿// XTcpServer.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -7,10 +7,13 @@
 
 #ifndef XTCPSERVER_H
 #define XTCPSERVER_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_TCPSERVER_ON
 
 #include "XObject.h"
 #include "XHostAddress.h"
@@ -326,6 +329,8 @@ void* XTcpServer_acceptError_signal(XTcpServer* server, XAbstractSocket_SocketEr
 #define XTcpServer_connect               XObject_connect
 #define XTcpServer_disconnect            XObject_disconnect
 
+#endif // XNETWORK_TCPSERVER_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

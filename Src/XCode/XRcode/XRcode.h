@@ -1,4 +1,4 @@
-#ifndef XRCODE_H
+﻿#ifndef XRCODE_H
 #define XRCODE_H
 
 #include "XByteArray.h"

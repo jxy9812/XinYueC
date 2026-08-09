@@ -1,4 +1,4 @@
-#include"XThreadPool.h"
+﻿#include"XThreadPool.h"
 #include"XMutex.h"
 #include"XWaitCondition.h"
 #include"XThread.h"
@@ -6,6 +6,8 @@
 #include"XCircularQueue.h"  
 #include"XCoreApplication.h"
 #include"XDateTime.h"
+#if XSYNC_ON
+#if XTHREADPOOL_ON
 static  void XThreadPool_worker_thread(XThread* thread, XThreadPool* pool);
 // 在文件顶部添加（在结构体定义之后）
 typedef struct {
@@ -701,3 +703,6 @@ void VXThreadPool_deinit(XThreadPool* pool)
     // 调用父类析构
     XClass_Deinit_Parent(XObject,pool);
 }
+
+#endif // XTHREADPOOL_ON
+#endif /* XSYNC_ON */

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XAdc_unsupported.c
  * @brief 未接入 ADC 驱动的平台存根。
  * @details

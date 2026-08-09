@@ -80,12 +80,19 @@ static void xtask_copy_snapshot(XTaskSnapshot* snapshot, XThread* thread, size_t
     if (!snapshot || !thread) return;
     memset(snapshot, 0, sizeof(*snapshot));
     snapshot->info.id = (uint32_t)(id + 1u);
+#if XTHREAD_ON
     snapshot->info.priority = (int32_t)XThread_priority(thread);
     snapshot->info.stackSize = XThread_stackSize(thread);
     snapshot->info.stackFree = 0;
     snapshot->info.state = XThread_isRunning(thread) ? XTaskState_Running :
                            (XThread_isFinished(thread) ? XTaskState_Finished :
                             XTaskState_Ready);
+#else
+    snapshot->info.priority = 0;
+    snapshot->info.stackSize = 0;
+    snapshot->info.stackFree = 0;
+    snapshot->info.state = XTaskState_Ready;
+#endif
     objectName = XObject_objectName((const XObject*)thread);
     name = objectName ? XString_toUtf8(objectName) : NULL;
     if (!name || !name[0]) name = "XThread";

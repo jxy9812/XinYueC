@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShell_XTcpSocket.c
  * @brief XTcpSocket 到 XConsoleShell 的公共 API 适配实现。
  */

@@ -1,4 +1,4 @@
-#ifndef XCOREAPPLICATION_H
+﻿#ifndef XCOREAPPLICATION_H
 #define XCOREAPPLICATION_H
 #ifdef __cplusplus
 extern "C" {

@@ -1,4 +1,4 @@
-#include "XThreadData.h"
+﻿#include "XThreadData.h"
 #include "XThread.h" // XThread_currentThreadId() / XThreadStorage_set/get
 #include "XSort.h"
 #include "XMutex.h"
@@ -8,6 +8,8 @@
 #include "XMemory.h"
 #include <stdlib.h>
 #include <string.h>
+#if XSYNC_ON
+#if XTHREADDATA_ON
 
 // Qt 6.8: 主线程数据 (对标 QCoreApplicationPrivate::theMainThread, QAtomicPointer<QThread>)
 // 原子指针: initMainThread 写入(storeRelease), 其它线程读取(loadAcquire)
@@ -168,12 +170,14 @@ void XThreadData_deref(XThreadData* data)
     }
 }
 
+#if XTHREAD_ON
 // Qt 6.8: get2(QThread*) (对标 QThreadData::get2)
 XThreadData* XThreadData_get2(XThread* thread)
 {
     if (!thread) return NULL;
     return thread->m_data;
 }
+#endif // XTHREAD_ON
 
 // Qt 6.8: clearCurrentThreadData() (对标 QThreadData::clearCurrentThreadData)
 // 仅清除当前线程 TLS 指针,不 deref (对标 Qt: clear_thread_data -> set_thread_data(nullptr))。
@@ -658,3 +662,32 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver)
     }
     return -1;
 }
+
+
+/* ==========================================================================
+ * XThread ???????? XThreadData ???XTHREADDATA_ON ???
+ * ????????XTHREAD_ON=0??????/????????????
+ * ?????? XThreadData.c ????? XThread.c ???????
+ * ========================================================================== */
+
+XThread* XThread_currentThread(void)
+{
+    XThreadData* data = XThreadData_current();
+    return data ? data->m_thread : NULL;
+}
+
+XEventDispatcher* XThread_currentEventDispatcher(void)
+{
+    XThreadData* data = XThreadData_current();
+    return data ? (XEventDispatcher*)data->m_eventDispatcher : NULL;
+}
+
+bool XThread_isMainThread(void)
+{
+    XThreadData* main = XThreadData_mainThread();
+    if (!main) return false;
+    return main->m_threadId == XThread_currentThreadId();
+}
+
+#endif // XTHREAD_ON
+#endif /* XSYNC_ON */

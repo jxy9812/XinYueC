@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XStringView_iterator.c
 * @brief XStringView 正向迭代器实现
 * @details 实现 XStringView 的正向迭代器操作函数。

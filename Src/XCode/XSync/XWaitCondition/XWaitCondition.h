@@ -1,6 +1,9 @@
 ﻿
 #ifndef XWAITCONDITION_H
 #define XWAITCONDITION_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XWAITCONDITION_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,4 +66,6 @@ void XWaitCondition_wakeAll(XWaitCondition* cond);
 }
 #endif
 
+#endif // XWAITCONDITION_ON
+#endif /* XSYNC_ON */
 #endif  // XWAITCONDITION_H

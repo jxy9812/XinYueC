@@ -1,4 +1,4 @@
-#include "XMultiPool.h"
+﻿#include "XMultiPool.h"
 #include "XMemory.h"
 #include "XMutex.h"
 #include <string.h>

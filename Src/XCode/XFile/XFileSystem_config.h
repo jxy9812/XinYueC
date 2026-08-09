@@ -16,6 +16,47 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* ========================================================================== */
+/*                        ???????????                                */
+/* ========================================================================== */
+/** @brief XFile ??????? 0 ????? XFile ???? API ???????
+ * @note ???? CXinYueConfig.h ??????????????????????
+ *       ?????? CXinYueConfig.h ??????????????? */
+#ifndef XFILE_ON
+#define XFILE_ON 1
+#endif
+
+#if XFILE_ON
+
+/** @brief XDir ???????? */
+#ifndef XDIR_ON
+#define XDIR_ON 1
+#endif
+
+/** @brief XFile ?????? */
+#ifndef XFILE_OBJECT_ON
+#define XFILE_OBJECT_ON 1
+#endif
+
+/** @brief XFileDevice ????????? */
+#ifndef XFILEDEVICE_ON
+#define XFILEDEVICE_ON 1
+#endif
+
+/** @brief XFileInfo ???????? */
+#ifndef XFILEINFO_ON
+#define XFILEINFO_ON 1
+#endif
+
+/** @brief XSaveFile ???????? */
+#ifndef XSAVEFILE_ON
+#define XSAVEFILE_ON 1
+#endif
+
+/** @brief XStorageInfo ???????? */
+#ifndef XSTORAGEINFO_ON
+#define XSTORAGEINFO_ON 1
+#endif
 
 /* ========================================================================== */
 /*                        模式选择                                            */
@@ -489,6 +530,8 @@ extern "C" {
 
 #endif
 
+
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

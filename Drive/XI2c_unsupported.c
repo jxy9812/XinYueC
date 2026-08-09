@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XI2c_unsupported.c
  * @brief      无 I2C 驱动平台的安全存根。
  * @details    该文件只提供生命周期和错误查询符号，硬件打开及事务明确返回

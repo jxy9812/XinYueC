@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐回归测试（无平台 API、无菜单依赖）
  */

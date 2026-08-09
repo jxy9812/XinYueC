@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XByteArrayView_iterator.h
 * @brief XByteArrayView 正向迭代器头文件
 * @details 定义 XByteArrayView 的正向迭代器结构及相关操作函数，

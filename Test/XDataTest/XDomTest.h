@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XDomTest.h
  * @brief      XDom XML DOM 模块回归测试声明。
  * @details    覆盖 Qt 6.8 对齐的节点树、工厂、列表、属性、字符数据、DTD 和解析行为。

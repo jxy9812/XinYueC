@@ -1,5 +1,8 @@
 ﻿#ifndef XRECURSIVEMUTEX_H
 #define XRECURSIVEMUTEX_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XMUTEX_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,4 +78,6 @@ typedef struct  XMutex  XRecursiveMutex;
 }
 #endif
 
+#endif // XMUTEX_ON
+#endif /* XSYNC_ON */
 #endif // XRecursiveMutex_H

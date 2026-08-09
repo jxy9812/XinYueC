@@ -1,4 +1,4 @@
-#include "XChartsheet.h"
+﻿#include "XChartsheet.h"
 #include "XWorkbook.h"
 #include "XMemory.h"
 #include "XByteArray.h"

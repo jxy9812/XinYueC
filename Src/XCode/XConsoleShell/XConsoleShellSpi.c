@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XConsoleShellSpi.c
  * @brief      SPI Shell 命令实现。
  * @details    命令层只调用 XSpi 公共 API，使用固定槽位和固定长度缓冲，

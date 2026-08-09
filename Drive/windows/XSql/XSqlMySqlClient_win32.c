@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSqlMySqlClient_win32.c
  * @brief Windows MySQL 共享内存传输实现。
  */

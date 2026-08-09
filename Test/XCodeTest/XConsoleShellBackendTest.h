@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellBackendTest.h
  * @brief XConsoleShell TCP/SSH 服务端适配器的回归测试入口。
  * @details

@@ -1,5 +1,8 @@
 ﻿#ifndef XMUTEX_H
 #define XMUTEX_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XMUTEX_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,4 +84,6 @@ XLock_Type XMutex_type(XMutex* mutex);
 }
 #endif
 
+#endif // XMUTEX_ON
+#endif /* XSYNC_ON */
 #endif // XMUTEX_H

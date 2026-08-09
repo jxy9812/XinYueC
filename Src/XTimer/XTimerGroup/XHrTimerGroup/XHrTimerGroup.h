@@ -1,4 +1,4 @@
-#ifndef XHrTimerGroup_H
+﻿#ifndef XHrTimerGroup_H
 #define XHrTimerGroup_H
 
 #ifdef __cplusplus

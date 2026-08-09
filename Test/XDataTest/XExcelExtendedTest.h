@@ -1,4 +1,4 @@
-#ifndef XEXCELEXTENDEDTEST_H
+﻿#ifndef XEXCELEXTENDEDTEST_H
 #define XEXCELEXTENDEDTEST_H
 
 #include <stdbool.h>

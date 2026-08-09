@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XRandomGenerator.h
  * @brief 随机数生成器（对齐Qt 6.8 QRandomGenerator）
  * 

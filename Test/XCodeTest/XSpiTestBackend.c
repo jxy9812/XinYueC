@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSpiTestBackend.c
  * @brief      SPI 命令测试用确定性模拟后端。
  * @details    仅在 XSPI_TEST_BACKEND 非零时编译。模拟器回传发送字节并在

@@ -1,4 +1,4 @@
-#include "XAbstractOOXmlFile.h"
+﻿#include "XAbstractOOXmlFile.h"
 #include "XMemory.h"
 #include <stdlib.h>
 

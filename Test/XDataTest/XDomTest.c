@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XDomTest.c
  * @brief      XDom XML DOM 模块回归测试实现。
  * @details    测试按节点树、实现对象、属性/列表、字符数据、序列化和解析顺序执行。

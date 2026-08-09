@@ -4,10 +4,13 @@
 
 #ifndef XHOSTINFO_H
 #define XHOSTINFO_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_HOSTINFO_ON
 
 #include "XClass.h"
 #include "XHostAddress.h"
@@ -263,6 +266,8 @@ void XHostInfo_removeFromCache(const XString* hostName);
  */
 void XHostInfo_prefetchName(const XString* hostName);
 
+#endif // XNETWORK_HOSTINFO_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

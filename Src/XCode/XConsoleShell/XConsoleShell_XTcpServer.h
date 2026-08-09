@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShell_XTcpServer.h
  * @brief XTcpServer 到 XConsoleShell 多会话的库级适配器。
  * @details

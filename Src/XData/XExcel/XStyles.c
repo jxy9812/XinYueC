@@ -1,4 +1,4 @@
-#include "XStyles.h"
+﻿#include "XStyles.h"
 
 #include "XByteArray.h"
 #include "XFile.h"

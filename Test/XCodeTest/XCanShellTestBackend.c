@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCanShellTestBackend.c
  * @brief XCan Shell 测试用固定队列后端。
  * @details

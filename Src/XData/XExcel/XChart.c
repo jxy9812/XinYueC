@@ -1,4 +1,4 @@
-#include "XChart.h"
+﻿#include "XChart.h"
 #include "XAbstractSheet.h"
 #include "XMemory.h"
 #include "XFile.h"

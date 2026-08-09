@@ -14,6 +14,8 @@
 #include "XCoreApplication.h"
 #include "XDateTime.h"
 #include <string.h>
+#if XNETWORK_ON
+#if XNETWORK_TCPSERVER_ON
 
 // ==================== 杈呭姪瀹?====================
 #define getPriv(server) ((XNetworkSocketPrivate*)(server)->d_ptr)
@@ -579,3 +581,5 @@ void* XTcpServer_acceptError_signal(XTcpServer* server, XAbstractSocket_SocketEr
 {
 	XEmitSignal(server, XTcpServer_acceptError_signal, XVarList_Create(XVar(XAbstractSocket_SocketError, socketError)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
+#endif // XNETWORK_TCPSERVER_ON
+#endif /* XNETWORK_ON */

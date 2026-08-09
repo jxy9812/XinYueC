@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellAdc.c
  * @brief XConsoleShell ADC 固定槽位命令实现。
  * @details

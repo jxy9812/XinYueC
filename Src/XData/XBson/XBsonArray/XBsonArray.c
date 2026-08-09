@@ -1,4 +1,4 @@
-#include "XBsonArray.h"
+﻿#include "XBsonArray.h"
 #include "XJsonArray.h"
 #include "XMemory.h"
 #include "XVariantTypeOps.h"

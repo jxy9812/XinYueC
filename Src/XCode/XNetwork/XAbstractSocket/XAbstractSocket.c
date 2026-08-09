@@ -1,4 +1,4 @@
-// XAbstractSocket.c
+﻿// XAbstractSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -17,6 +17,8 @@
 #include "XNetworkProxyHandshake.h"
 #include <string.h>
 #include <assert.h>
+#if XNETWORK_ON
+#if XNETWORK_ABSTRACT_SOCKET_ON
 
 // ==================== 辅助宏 ====================
 #define getPriv(sock) ((XNetworkSocketPrivate*)(sock)->d_ptr)
@@ -1072,3 +1074,5 @@ void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, 
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)XAbstractSocket_proxyAuthenticationRequired_signal;
 }
+#endif // XNETWORK_ABSTRACT_SOCKET_ON
+#endif /* XNETWORK_ON */

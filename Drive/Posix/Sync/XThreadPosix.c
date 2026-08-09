@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if XSYNC_ON
+#if XTHREAD_ON
 void VXThread_run(XThread* thread);
 /* =========================================================================
  * 虚函数表
@@ -278,6 +280,8 @@ uint32_t XThread_stackSize(const XThread* thread)
     return thread ? thread->m_stackSize : 0;
 }
 
+#endif /* XTHREAD_ON */
+#if XTHREADDATA_ON
 XHandle XThread_currentThreadId(void)
 {
     return (XHandle)pthread_self();
@@ -339,4 +343,6 @@ void* XThreadStorage_get(void)
     return pthread_getspecific(g_tlsKey);
 }
 
+#endif /* XTHREADDATA_ON */
+#endif /* XSYNC_ON */
 #endif /* POSIX */

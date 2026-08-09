@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMySqlDriver.c
  * @brief      MySQL/MariaDB XSql 驱动实现。
  * @details    结果集在驱动层转为 XVariant 缓存，客户端协议对象只在执行

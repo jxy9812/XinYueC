@@ -1,5 +1,6 @@
-#ifndef XFILEINFO_H
+﻿#ifndef XFILEINFO_H
 #define XFILEINFO_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XFileInfo.h
@@ -22,6 +23,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XFILEINFO_ON
 /**
  * @brief 文件权限标志
  */
@@ -258,6 +261,8 @@ void XFileInfo_setCaching(XFileInfo* info, bool enable);
 
 bool XFileInfo_equals(const XFileInfo* lhs, const XFileInfo* rhs);
 
+#endif // XFILEINFO_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

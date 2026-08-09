@@ -29,6 +29,7 @@
 
 #ifndef XFILESYSTEM_H
 #define XFILESYSTEM_H
+#include "XFileSystem_config.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -40,6 +41,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
 
 /* 前向声明 */
 struct XString;
@@ -535,6 +537,7 @@ bool XFileSystem_format(const XString* drive,
                         XFileSystemFormatProgress progress,
                         void* userData);
 
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

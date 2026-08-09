@@ -4,6 +4,8 @@
 #include <semaphore.h>
 #include <time.h>
 #include <errno.h>
+#if XSYNC_ON
+#if XSEMAPHORE_ON
 
 // POSIX平台具体结构体定义（参考XWaitConditionPosix.c）
 struct XSemaphore {
@@ -110,4 +112,6 @@ int32_t XSemaphore_available(XSemaphore* sem) {
     return value;
 }
 
+#endif /* XSEMAPHORE_ON */
+#endif /* XSYNC_ON */
 #endif

@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XLatin1StringView_reverse_iterator.h
 * @brief XLatin1StringView 反向迭代器头文件
 * @details 定义 XLatin1StringView 的反向迭代器结构及相关操作函数，

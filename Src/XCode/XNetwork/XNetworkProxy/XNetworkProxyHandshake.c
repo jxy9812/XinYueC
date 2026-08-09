@@ -16,6 +16,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#if XNETWORK_ON
+#if XNETWORK_PROXY_ON
 
 /**
  * @brief 生成随机cnonce（客户端nonce）
@@ -2183,3 +2185,5 @@ bool XNetworkProxy_isBypassed(
     XFree_System(listCopy);
     return result;
 }
+#endif // XNETWORK_PROXY_ON
+#endif /* XNETWORK_ON */

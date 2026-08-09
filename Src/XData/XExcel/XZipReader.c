@@ -1,4 +1,4 @@
-#include "XZipReader.h"
+﻿#include "XZipReader.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XClass.h"

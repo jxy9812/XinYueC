@@ -1,4 +1,4 @@
-// Minimal XTest compatibility shim for XFtpTest
+﻿// Minimal XTest compatibility shim for XFtpTest
 // Maps XASSERT_* macros to standard assert
 #ifndef XTEST_H
 #define XTEST_H

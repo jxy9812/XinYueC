@@ -12,8 +12,12 @@ extern "C" {
 void XMenu_XCodeTest(XMenu* root);
 void XMenu_XRcodeTest(XMenu* root);
 void XMenu_XDebugTest(XMenu* root);
+#if XTHREAD_ON
 void XMenu_XThreadTest(XMenu* root);
+#endif
+#if XTHREADPOOL_ON
 void XMenu_XThreadPoolTest(XMenu* root);
+#endif
 void XMenu_XStateMachineTest(XMenu* root);
 void XMenu_XDateTimeTest(XMenu* root);
 void XMenu_XCryptographicHashTest(XMenu* root);

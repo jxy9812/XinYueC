@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include"XContainerTest.h"
-#include"XProtocolStackTest.h"
+#include"XProtocolTest.h"
 #include"XIOTest.h"
 #include"XCodeTest.h"
 #include"XTimerTest.h"
@@ -25,7 +25,7 @@ XMenu* XMenuTest_create()
 	XMenu_XCodeTest(root);
 	XMenu_XIOTest(root);
 	XMenu_XDeviceTest(root);
-	XMenu_XProtocolStackTest(root);
+	XMenu_XProtocolTest(root);
 	XMenu_XTimerTest(root);
 	XMenu_XMemoryTest(root);
 	XMenu_XDataTest(root);

@@ -7,6 +7,8 @@
 #include "XThreadData.h"
 #include "XTask.h"
 #include <string.h>
+#if XSYNC_ON
+#if XTHREAD_ON
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
 {
     XThread* thread = (XThread*)XMalloc_System(sizeof(XThread));
@@ -91,20 +93,26 @@ void* XThread_started_signal(XThread* thread)
                            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XThread_started_signal;
 }
-XThread* XThread_currentThread()
+void XThread_exit(XThread* thread, int returnCode)
 {
-    XThreadData* data = XThreadData_current();
-    return data ? data->m_thread : NULL;
+    if (!thread)
+        return;
+
+    XEventLoop* loop = thread->m_loop;
+    XThreadData* data = thread->m_data;
+    if (!loop)
+        return;
+
+    /* Wake first.  Once the loop state changes, the worker may immediately
+     * destroy its dispatcher and thread data, so neither may be touched after
+     * XEventLoop_exit(). */
+    if (data && data->m_eventDispatcher)
+        XAbstractEventDispatcher_wakeUp_base(data->m_eventDispatcher);
+    XEventLoop_exit(loop, returnCode);
 }
-XEventDispatcher* XThread_currentEventDispatcher(void)
+void XThread_quit(XThread * thread)
 {
-    XThread* th = XThread_currentThread();
-    return th ? XThread_dispatcher(th) : NULL;
-}
-bool XThread_isMainThread()
-{
-    XThread* th=XThread_currentThread();
-    return th? th->m_isMainThread:false;
+    XThread_exit(thread, 0);
 }
 XHandle XThread_getHandle(XThread* thread)
 {
@@ -113,12 +121,12 @@ XHandle XThread_getHandle(XThread* thread)
 XEventDispatcher* XThread_dispatcher(const XThread* thread)
 {
     if (thread)
-        return thread->m_data? thread->m_data->m_eventDispatcher:NULL;
+        return thread->m_data ? thread->m_data->m_eventDispatcher : NULL;
     return XCoreApplication_eventDispatcher();
 }
 bool XThread_isCurrentThread(const XThread* thread)
 {
-    return XThread_currentThread()==thread;
+    return XThread_currentThread() == thread;
 }
 bool XThread_isInterruptionRequested(const XThread* thread)
 {
@@ -151,30 +159,9 @@ void XThread_setEventDispatcher(XThread* thread, XEventDispatcher* eventDispatch
         XClass_delete_base(thread->m_data->m_eventDispatcher);
     }
     thread->m_data->m_eventDispatcher = eventDispatcher;
-     XObject_setParent((XObject*)eventDispatcher, (XObject*)thread);
+    XObject_setParent((XObject*)eventDispatcher, (XObject*)thread);
 }
 
-void XThread_exit(XThread* thread, int returnCode)
-{
-    if (!thread)
-        return;
-
-    XEventLoop* loop = thread->m_loop;
-    XThreadData* data = thread->m_data;
-    if (!loop)
-        return;
-
-    /* Wake first.  Once the loop state changes, the worker may immediately
-     * destroy its dispatcher and thread data, so neither may be touched after
-     * XEventLoop_exit(). */
-    if (data && data->m_eventDispatcher)
-        XAbstractEventDispatcher_wakeUp_base(data->m_eventDispatcher);
-    XEventLoop_exit(loop, returnCode);
-}
-void XThread_quit(XThread * thread)
-{
-    XThread_exit(thread, 0);
-}
 int XThread_exec(XThread* thread)
 {
     if (!thread) return -1;
@@ -272,3 +259,6 @@ void VXThread_run(XThread* thread)
     if (data)
         XThreadData_deref(data);
 }
+
+#endif // XTHREAD_ON
+#endif /* XSYNC_ON */

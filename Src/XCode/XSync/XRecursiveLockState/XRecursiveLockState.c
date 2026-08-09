@@ -1,8 +1,10 @@
-#include "XRecursiveLockState.h"
+﻿#include "XRecursiveLockState.h"
 #include "XReadWriteLock.h" // 用于保护全局哈希表
 #include "XHashMap.h"
 #include "XThread.h" // 用于 XThread_currentThreadId()
 #include "XMemory.h" // 用于内存分配
+#if XSYNC_ON
+#if XRECURSIVELOCKSTATE_ON
 
 // ========== 全局变量 ==========
 static XReadWriteLock* global_lock = NULL;
@@ -58,3 +60,5 @@ void XRecursiveLockState_clear(void* lock_obj) {
 	XHashMap_remove_base(global_locks_map, &lock_obj);
 	XReadWriteLock_unlock(global_lock);
 }
+#endif // XRECURSIVELOCKSTATE_ON
+#endif /* XSYNC_ON */

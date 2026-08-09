@@ -1138,8 +1138,10 @@ XTimerId XAbstractEventDispatcher_registerTimer(
 
 XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread)
 {
+#if XTHREAD_ON
     if(thread)
         return (XAbstractEventDispatcher*)XThread_dispatcher((XThread*)thread);
+#endif
     return XCoreApplication_eventDispatcher();
 }
 

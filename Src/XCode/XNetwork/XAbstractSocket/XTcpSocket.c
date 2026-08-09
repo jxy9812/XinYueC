@@ -1,9 +1,11 @@
-// XTcpSocket.c
+﻿// XTcpSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XTcpSocket.h"
 #include "XMemory.h"
+#if XNETWORK_ON
+#if XNETWORK_ABSTRACT_SOCKET_ON
 
 /**
  * @brief 初始化已分配的 XTcpSocket 结构体。
@@ -25,3 +27,5 @@ XTcpSocket* XTcpSocket_create(void) {
     Set_Class_MemoryFree(sock, XFree_System);
     return sock;
 }
+#endif // XNETWORK_ABSTRACT_SOCKET_ON
+#endif /* XNETWORK_ON */

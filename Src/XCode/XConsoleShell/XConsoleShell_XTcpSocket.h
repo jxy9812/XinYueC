@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShell_XTcpSocket.h
  * @brief XConsoleShell 到 XTcpSocket 的 TCP 传输适配器。
  * @details

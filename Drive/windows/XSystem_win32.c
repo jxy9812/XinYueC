@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSystem_win32.c
  * @brief Windows 系统复位、关机和有序重启后端。
  * @details

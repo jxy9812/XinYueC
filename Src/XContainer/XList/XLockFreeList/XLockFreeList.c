@@ -1,4 +1,4 @@
-#include"XLockFreeList.h"
+﻿#include"XLockFreeList.h"
 #if XLockFreeList_ON
 #include <stdlib.h>
 #include <string.h>

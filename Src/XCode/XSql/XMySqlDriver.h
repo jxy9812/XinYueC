@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMySqlDriver.h
  * @brief      MySQL/MariaDB 源码驱动。
  * @details    驱动通过 XSqlMySqlClientApi 访问客户端实现，公共头文件不

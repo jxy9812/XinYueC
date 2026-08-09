@@ -1,4 +1,4 @@
-#include "XNetworkTest.h"
+﻿#include "XNetworkTest.h"
 #include "XNetworkInterface.h"
 #include "XHostAddress.h"
 #include "XString.h"

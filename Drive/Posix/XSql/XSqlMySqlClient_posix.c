@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSqlMySqlClient_posix.c
  * @brief POSIX MySQL 客户端特殊传输的默认实现。
  */

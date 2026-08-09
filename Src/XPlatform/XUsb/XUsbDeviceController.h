@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XUsbDeviceController.h
  * @brief      USB Device/Gadget 从机平台抽象接口。
  * @details    本文件定义 STM32、ESP32、Linux Gadget 和具备 USB Device

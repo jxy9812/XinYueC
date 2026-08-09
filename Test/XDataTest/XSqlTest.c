@@ -34,8 +34,10 @@ static XSqlRecord* XSqlTest_driverRecord(const XSqlDriver* driver, const XString
 static XSqlResult* XSqlTest_driverCreateResult(const XSqlDriver* driver);
 static bool XSqlTest_run_sqlite(void);
 static bool XSqlTest_run_value_api(const XSqlDatabase* database);
+#if XTHREAD_ON
 static void XSqlTest_thread_affinity_probe(XThread* thread, XVarList* list);
 static XAtomic_bool g_sqlThreadAffinityOk = { false };
+#endif // XTHREAD_ON
 
 XCLASS_DEFINE_BEGING(XSqlTestResult)
 XCLASS_DEFINE_EXTEND_END(XSqlTestResult, XSqlResult)
@@ -484,6 +486,7 @@ static bool XSqlTest_run_sqlite(void)
         }
     }
     printf("SQLite 已打开连接获取：%s\n", ok ? "通过" : "失败");
+#if XTHREAD_ON
     if (ok) {
         XAtomic_store_bool(&g_sqlThreadAffinityOk, false, XAtomic_MemoryOrder_Relaxed);
         XThread* affinityThread = XThread_create_func(
@@ -497,6 +500,9 @@ static bool XSqlTest_run_sqlite(void)
         }
         ok = XAtomic_load_bool(&g_sqlThreadAffinityOk, XAtomic_MemoryOrder_Acquire);
     }
+#else
+    ok = false; /* XTHREAD_ON disabled: skip cross-thread affinity check */
+#endif // XTHREAD_ON
     printf("SQLite 跨线程连接访问拒绝：%s\n", ok ? "通过" : "失败");
     if (ok) {
         sqliteDriver = XSqlDatabase_driver(database);
@@ -1044,6 +1050,7 @@ static bool XSqlTest_run_sqlite(void)
     return ok;
 }
 
+#if XTHREAD_ON
 static void XSqlTest_thread_affinity_probe(XThread* thread, XVarList* list)
 {
     bool result;
@@ -1054,3 +1061,4 @@ static void XSqlTest_thread_affinity_probe(XThread* thread, XVarList* list)
         && XSqlDatabase_driver(database) == NULL;
     XAtomic_store_bool(&g_sqlThreadAffinityOk, result, XAtomic_MemoryOrder_Release);
 }
+#endif // XTHREAD_ON

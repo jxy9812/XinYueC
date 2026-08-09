@@ -1,4 +1,4 @@
-#include"XDataStructTest.h"
+﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XBitArray.h"
 #include"XMenu.h"

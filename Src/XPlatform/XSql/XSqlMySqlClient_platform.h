@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSqlMySqlClient_platform.h
  * @brief MySQL 客户端平台传输抽象接口。
  *

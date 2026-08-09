@@ -1,4 +1,4 @@
-// XUdpSocket.h
+﻿// XUdpSocket.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -7,10 +7,13 @@
 
 #ifndef XUDPSOCKET_H
 #define XUDPSOCKET_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_UDPSOCKET_ON
 
 #include "XAbstractSocket.h"
 #include "XNetworkDatagram.h"
@@ -248,6 +251,8 @@ void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
 #define XUdpSocket_readyRead_signal        XIODevice_readyRead_signal
 #define XUdpSocket_bytesWritten_signal     XIODevice_bytesWritten_signal
 
+#endif // XNETWORK_UDPSOCKET_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

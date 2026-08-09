@@ -21,6 +21,7 @@
 
 #ifndef XNETWORK_H
 #define XNETWORK_H
+#include "XNetwork_config.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -36,6 +37,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
 
 /* lwIP 平台额外声明 */
 #ifdef XNETWORK_USE_LWIP
@@ -597,6 +599,7 @@ int XNetwork_gssapiAuth(const XString* serviceName,
                          XByteArray* outputToken,
                          void** context);
 
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,4 @@
-#ifndef XNETWORKTEST_H
+﻿#ifndef XNETWORKTEST_H
 #define XNETWORKTEST_H
 
 #include "XMenu.h"

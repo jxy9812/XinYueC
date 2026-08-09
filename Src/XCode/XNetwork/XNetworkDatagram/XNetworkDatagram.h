@@ -1,4 +1,4 @@
-// XNetworkDatagram.h
+﻿// XNetworkDatagram.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -6,10 +6,13 @@
 
 #ifndef XNETWORKDATAGRAM_H
 #define XNETWORKDATAGRAM_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_DATAGRAM_ON
 
 #include "XClass.h"
 #include "XHostAddress.h"
@@ -229,6 +232,8 @@ void XNetworkDatagram_swap(XNetworkDatagram* a, XNetworkDatagram* b);
  */
 XNetworkDatagram* XNetworkDatagram_makeReply(const XNetworkDatagram* dgram, const XByteArray* payload);
 
+#endif // XNETWORK_DATAGRAM_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

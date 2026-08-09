@@ -1,4 +1,4 @@
-// XNetworkInterface.c
+﻿// XNetworkInterface.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -8,6 +8,8 @@
 #include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
+#if XNETWORK_ON
+#if XNETWORK_INTERFACE_ON
 
 // ==================== 虚函数表 ====================
 
@@ -440,3 +442,5 @@ void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2
     memcpy(iface1, iface2, sizeof(XNetworkInterface));
     memcpy(iface2, &temp, sizeof(XNetworkInterface));
 }
+#endif // XNETWORK_INTERFACE_ON
+#endif /* XNETWORK_ON */

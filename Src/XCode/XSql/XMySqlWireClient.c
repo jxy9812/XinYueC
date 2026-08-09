@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMySqlWireClient.c
  * @brief      基于 XinYueC 网络抽象的 MySQL 协议客户端。
  * @details    该文件是 XSqlMySqlClientApi 的默认源码实现。它不依赖

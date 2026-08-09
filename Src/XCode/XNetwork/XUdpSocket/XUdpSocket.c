@@ -1,4 +1,4 @@
-// XUdpSocket.c
+﻿// XUdpSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -7,6 +7,8 @@
 #include "XMemory.h"
 #include "XByteArray.h"
 #include <string.h>
+#if XNETWORK_ON
+#if XNETWORK_UDPSOCKET_ON
 
 /* Helper macro to get private data from socket */
 #define GET_PRIV(sock) ((XNetworkSocketPrivate*)(sock)->base.d_ptr)
@@ -265,3 +267,5 @@ void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
     
     XNetwork_multicastOp(sd, XMC_SetIf, &interfaceIndex);
 }
+#endif // XNETWORK_UDPSOCKET_ON
+#endif /* XNETWORK_ON */

@@ -1,7 +1,7 @@
-﻿#include"XProtocolStackTest.h"
+﻿#include"XProtocolTest.h"
 #include"XMenu.h"
 #include"XAction.h"
-void XMenu_XProtocolStackTest(XMenu* root)
+void XMenu_XProtocolTest(XMenu* root)
 {
 	XMenu* menu = XMenu_create("协议栈");
 	XMenu_addMenu(root, menu);

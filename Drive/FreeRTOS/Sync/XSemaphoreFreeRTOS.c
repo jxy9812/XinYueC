@@ -4,6 +4,8 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#if XSYNC_ON
+#if XSEMAPHORE_ON
 
 // FreeRTOS平台具体结构体定义（参考XWaitConditionFreeRTOS.c）
 struct XSemaphore {
@@ -134,4 +136,6 @@ int32_t XSemaphore_available(XSemaphore* sem) {
     return count;
 }
 
+#endif /* XSEMAPHORE_ON */
+#endif /* XSYNC_ON */
 #endif

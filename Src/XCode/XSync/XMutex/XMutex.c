@@ -1,7 +1,9 @@
-#include "XMutex.h"
+﻿#include "XMutex.h"
 #include "XThread.h"
 #include "XDateTime.h" 
 #include <string.h>
+#if XSYNC_ON
+#if XMUTEX_ON
 typedef struct XMutex
 {
     XLock_Type type;
@@ -244,3 +246,6 @@ XLock_Type XMutex_type(XMutex* mutex)
 {
     return mutex ? mutex->type : XLock_NonRecursive;
 }
+
+#endif // XMUTEX_ON
+#endif /* XSYNC_ON */

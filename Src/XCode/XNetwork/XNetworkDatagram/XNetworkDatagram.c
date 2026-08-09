@@ -1,10 +1,12 @@
-// XNetworkDatagram.c
+﻿// XNetworkDatagram.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XNetworkDatagram.h"
 #include "XMemory.h"
 #include <string.h>
+#if XNETWORK_ON
+#if XNETWORK_DATAGRAM_ON
 
 /* ============================================================================
  * 虚函数表初始化
@@ -300,3 +302,5 @@ XNetworkDatagram* XNetworkDatagram_makeReply(const XNetworkDatagram* dgram, cons
     
     return reply;
 }
+#endif // XNETWORK_DATAGRAM_ON
+#endif /* XNETWORK_ON */

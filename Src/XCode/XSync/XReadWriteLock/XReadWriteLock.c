@@ -1,4 +1,4 @@
-#include "XReadLocker.h"
+﻿#include "XReadLocker.h"
 #include "XRecursiveLockState.h"
 #include "XThread.h"
 #include "XHashMap.h"
@@ -6,6 +6,8 @@
 #include "XWaitCondition.h"
 #include"XDateTime.h"
 #include <stdlib.h>
+#if XSYNC_ON
+#if XREADWRITELOCK_ON
 // --- 锁状态定义 (使用 size_t) ---
 #if SIZE_MAX == UINT32_MAX
  // 32-bit platform: 
@@ -598,3 +600,5 @@ bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock)
 	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	return tls && (tls->writer_count > 0);
 }
+#endif // XREADWRITELOCK_ON
+#endif /* XSYNC_ON */

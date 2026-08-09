@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XByteArrayView_reverse_iterator.c
 * @brief XByteArrayView 反向迭代器实现
 * @details 实现 XByteArrayView 的反向迭代器操作函数。

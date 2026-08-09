@@ -1,6 +1,12 @@
-// XThreadData.h - 线程私有数据（内部使用，完整对标 Qt 6.8 QThreadData）
+﻿// XThreadData.h - 线程私有数据（内部使用，完整对标 Qt 6.8 QThreadData）
 #ifndef XTHREADDATA_H
 #define XTHREADDATA_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XTHREADDATA_ON
+
+/* XThread forward declaration: XThreadData only borrows the pointer; still needed when XTHREAD_ON is off. */
+typedef struct XThread XThread;
 #include "XAbstractEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h"
@@ -130,12 +136,14 @@ void XThreadData_deref(XThreadData* data);
  */
 XThreadData* XThreadData_current(void);
 
+#if XTHREAD_ON
 /**
  * @brief 从 XThread 对象获取其线程数据（对标 QThreadData::get2）
  * @param thread 线程对象
  * @return 该线程的 XThreadData 指针，thread 为 NULL 时返回 NULL
  */
 XThreadData* XThreadData_get2(XThread* thread);
+#endif // XTHREAD_ON
 
 /**
  * @brief 清除当前线程的 TLS 指针（对标 QThreadData::clearCurrentThreadData）
@@ -339,4 +347,6 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver);
 }
 #endif
 
+#endif // XTHREADDATA_ON
+#endif /* XSYNC_ON */
 #endif // XTHREADDATA_H

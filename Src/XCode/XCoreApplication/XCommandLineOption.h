@@ -1,4 +1,4 @@
-#ifndef XCOMMANDLINEOPTION_H
+﻿#ifndef XCOMMANDLINEOPTION_H
 #define XCOMMANDLINEOPTION_H
 #ifdef __cplusplus
 extern "C" {

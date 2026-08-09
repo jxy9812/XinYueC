@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XRandomGenerator_win32.c
  * @brief 随机数生成器Windows平台实现
  * 

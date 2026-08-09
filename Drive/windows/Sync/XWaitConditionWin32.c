@@ -2,6 +2,8 @@
 #include "XWaitCondition.h"
 #include "XMemory.h"
 #include <windows.h>
+#if XSYNC_ON
+#if XWAITCONDITION_ON
 CRITICAL_SECTION* XMutex_get_critical_section(XMutex* mutex);
 // Windows平台具体结构体定义
 struct XWaitCondition {
@@ -61,4 +63,6 @@ void XWaitCondition_wakeAll(XWaitCondition* cond) {
     WakeAllConditionVariable(&cond->cond);
 }
 
+#endif /* XWAITCONDITION_ON */
+#endif /* XSYNC_ON */
 #endif

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSharedData.c
  * @brief 隐式共享（Copy-On-Write）数据块实现
  */

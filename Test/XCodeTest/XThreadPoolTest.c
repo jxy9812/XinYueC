@@ -7,6 +7,8 @@
 #include"XThread.h"
 #include"XTimer.h"
 #include"XAtomic.h"
+#if XTHREADPOOL_ON
+
 static void threadFunc( XVarList* list)
 {
 	XThread* thread = XThread_currentThread();
@@ -59,3 +61,4 @@ void XMenu_XThreadPoolTest(XMenu* root)
 		XAction_setAction(action, XThreadPoolTest);
 	}
 }
+#endif // XTHREADPOOL_ON

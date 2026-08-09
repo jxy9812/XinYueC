@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XAbstractOOXmlFile.h
  * @brief      XAbstractOOXmlFile OOXML 文件抽象基类（对标 QXlsx::AbstractOOXmlFile）
  * @author     XinYueC 团队

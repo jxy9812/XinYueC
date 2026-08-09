@@ -1,4 +1,4 @@
-#include "XATComm.h"
+﻿#include "XATComm.h"
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"

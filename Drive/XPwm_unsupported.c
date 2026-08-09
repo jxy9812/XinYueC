@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XPwm_unsupported.c
  * @brief 未接入 PWM 驱动的平台存根。
  * @details

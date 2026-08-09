@@ -1,5 +1,8 @@
-#ifndef XTHREADPOOL_H
+﻿#ifndef XTHREADPOOL_H
 #define XTHREADPOOL_H
+#include "XSync_config.h"
+#if XSYNC_ON
+#if XTHREADPOOL_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -191,4 +194,6 @@ void* XThreadPool_tasksEmpty_signal(XThreadPool* pool);
 }
 #endif
 
+#endif // XTHREADPOOL_ON
+#endif /* XSYNC_ON */
 #endif // XTHREADPOOL_H

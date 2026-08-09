@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XLatin1StringViewTest.c
  * @brief XLatin1StringView 全面测试（对标 Qt 6.8 QLatin1StringView）
  * @details 覆盖构造、访问、子视图、查找、比较、修剪、迭代器等全部 API，

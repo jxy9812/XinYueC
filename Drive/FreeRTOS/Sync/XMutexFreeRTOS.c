@@ -3,6 +3,8 @@
 #include "XThread.h" // For XThread_currentThreadId(), which should map to xTaskGetCurrentTaskHandle()
 #include <string.h>
 #include "semphr.h"  // FreeRTOS semaphore API
+#if XSYNC_ON
+#if XMUTEX_ON
 
 // PlatformPrivate 结构体定义
 // 对于FreeRTOS，我们使用 SemaphoreHandle_t 来持有互斥信号量
@@ -68,4 +70,6 @@ void XMutex_platform_unlock(PlatformPrivate* p)
     // 释放互斥锁
     xSemaphoreGive(p->mutex);
 }
+#endif /* XMUTEX_ON */
+#endif /* XSYNC_ON */
 #endif

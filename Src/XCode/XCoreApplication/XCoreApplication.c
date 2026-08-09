@@ -1,4 +1,4 @@
-#include "XCoreApplication.h"
+﻿#include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XEvent.h"
@@ -109,9 +109,17 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
 
     app->m_argc = argc;
     app->m_argv = argv;
+#if XTHREAD_ON
     g_mainThread = XThread_createMainThread(app);
     /* XThread_createMainThread 内部已通过 ensureEventDispatcher 创建事件分发器 */
     /* 不需要再手动创建，否则会泄漏前一个分发器 */
+#else
+    XThreadData* td = XThreadData_current();
+    if (td) {
+        XThreadData_initMainThread(NULL);
+        XThreadData_ensureEventDispatcher(td);
+    }
+#endif
 
     g_app = app;
     is_app_running = true;

@@ -1,5 +1,6 @@
-#ifndef XFILEDEVICE_H
+﻿#ifndef XFILEDEVICE_H
 #define XFILEDEVICE_H
+#include "XFileSystem_config.h"
 
 /**
  * @file XFileDevice.h
@@ -19,6 +20,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XFILE_ON
+#if XFILEDEVICE_ON
 
 /* ============================================================================
  * 枚举定义（XFileDevice 特有）
@@ -288,6 +291,8 @@ void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDe
  */
 bool XFileDevice_unmap(XFileDevice* device, void* address);
 
+#endif // XFILEDEVICE_ON
+#endif /* XFILE_ON */
 #ifdef __cplusplus
 }
 #endif

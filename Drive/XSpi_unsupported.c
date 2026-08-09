@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSpi_unsupported.c
  * @brief      无 SPI 驱动平台的安全存根。
  * @details    硬件打开和事务明确返回 XSpiError_Unsupported；定义

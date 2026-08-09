@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetworkProxyHandshake.h
  * @brief 代理握手协议实现（对齐Qt 6.8）
  * 
@@ -45,10 +45,13 @@
 
 #ifndef XNETWORKPROXYHANDSHAKE_H
 #define XNETWORKPROXYHANDSHAKE_H
+#include "XNetwork_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XNETWORK_ON
+#if XNETWORK_PROXY_ON
 
 #include "XNetworkProxy.h"
 #include "XHostAddress.h"
@@ -698,6 +701,8 @@ bool XNetworkProxy_isBypassed(
     const char* bypassList
 );
 
+#endif // XNETWORK_PROXY_ON
+#endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,4 @@
-/**
+﻿/**
 * @file XAnyStringView_iterator.c
 * @brief XAnyStringView 正向迭代器实现
 */

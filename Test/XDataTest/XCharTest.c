@@ -1,4 +1,4 @@
-#include"XCharTest.h"
+﻿#include"XCharTest.h"
 #include"XChar.h"
 #include"XMenu.h"
 #include"XAction.h"

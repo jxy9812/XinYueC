@@ -2,6 +2,8 @@
 #include "XRecursiveMutex.h"
 #include "XMemory.h"
 #include <windows.h>
+#if XSYNC_ON
+#if XMUTEX_ON
 typedef struct PlatformPrivate
 {
     CRITICAL_SECTION cs;       // 临界区
@@ -39,4 +41,6 @@ void XMutex_platform_unlock(PlatformPrivate* p)
     LeaveCriticalSection(&p->cs);
 }
 
+#endif /* XMUTEX_ON */
+#endif /* XSYNC_ON */
 #endif

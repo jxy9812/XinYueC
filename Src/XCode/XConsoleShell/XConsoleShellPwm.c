@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XConsoleShellPwm.c
  * @brief XConsoleShell PWM 固定槽位命令实现。
  * @details

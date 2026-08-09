@@ -1,9 +1,18 @@
 ﻿#ifndef XTHREAD_H
 #define XTHREAD_H
+#include "XSync_config.h"
+#if XSYNC_ON
 
 #include "XObject.h"
 #include <stdbool.h>
 #include <stdint.h>
+
+/* Forward declarations: XThread/XThreadData/XVarList incomplete types stay available even when XTHREAD_ON is off. */
+typedef struct XVarList XVarList;
+typedef struct XThreadData XThreadData;
+typedef struct XThread XThread;
+
+#if XTHREAD_ON
 
 /**
  * @brief 线程优先级枚举（对标 Qt 6.8 QThread::Priority）
@@ -31,9 +40,6 @@ typedef enum
 XCLASS_DEFINE_BEGING(XThread)
 XCLASS_DEFINE_ENUM(XThread, Run) = XCLASS_VTABLE_GET_SIZE(XObject),  /**< 线程入口虚函数（对标 QThread::run） */
 XCLASS_DEFINE_END(XThread)
-typedef struct XVarList XVarList;          /**< 可变参数列表（前向声明） */
-typedef struct XThreadData XThreadData;    /**< 线程私有数据（前向声明，对标 QThreadData） */
-
 /**
  * @brief 线程入口函数类型（对标 QThread::run 的回调形式）
  * @param thread 当前线程对象
@@ -254,6 +260,26 @@ void* XThread_finished_signal(XThread* thread);
  */
 void* XThread_started_signal(XThread* thread);
 
+
+
+Protected
+
+/**
+ * @brief 启动线程的事件循环，在 run() 内调用（对标 QThread::exec）
+ * @param thread 指向 XThread 对象的指针
+ * @return 事件循环退出返回码
+ */
+int XThread_exec(XThread* thread);
+
+/**
+ * @brief 线程入口基类实现，由平台层在回调中调用，外部不应直接调用（对标 QThread::run）
+ * @param thread 指向 XThread 对象的指针
+ */
+void XThread_run_base(XThread* thread);
+#endif // XTHREAD_ON
+
+#if XTHREADDATA_ON
+
 /**
  * @brief 获取当前线程对应的 XThread 对象（对标 QThread::currentThread）
  * @return 当前线程的 XThread 指针，主线程返回主线程包装对象
@@ -324,21 +350,10 @@ void XThread_usleep(uint32_t tsecs);
  */
 void XThread_yieldCurrentThread();
 
-Protected
+#endif // XTHREADDATA_ON
 
-/**
- * @brief 启动线程的事件循环，在 run() 内调用（对标 QThread::exec）
- * @param thread 指向 XThread 对象的指针
- * @return 事件循环退出返回码
- */
-int XThread_exec(XThread* thread);
-
-/**
- * @brief 线程入口基类实现，由平台层在回调中调用，外部不应直接调用（对标 QThread::run）
- * @param thread 指向 XThread 对象的指针
- */
-void XThread_run_base(XThread* thread);
 #ifdef __cplusplus
 }
 #endif
+#endif /* XSYNC_ON */
 #endif

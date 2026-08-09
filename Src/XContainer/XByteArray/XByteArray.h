@@ -1,4 +1,4 @@
-﻿//﻿/**
+﻿///**
 //* @file XByteArray.h
 //* @brief 字节数组容器头文件
 //* @details 定义了基于XVector的字节数组容器XByteArray，专门用于存储和操作uint8_t类型数据.

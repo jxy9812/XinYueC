@@ -1,4 +1,4 @@
-#ifndef XDATE_H
+﻿#ifndef XDATE_H
 #define XDATE_H
 
 #include <stdint.h>

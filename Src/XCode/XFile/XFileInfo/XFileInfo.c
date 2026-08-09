@@ -1,8 +1,10 @@
-#include "XFileInfo.h"
+﻿#include "XFileInfo.h"
 #include "XFileSystem.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#if XFILE_ON
+#if XFILEINFO_ON
 
 /* ============================================================================
  * 虚函数实现
@@ -815,3 +817,5 @@ bool XFileInfo_equals(const XFileInfo* lhs, const XFileInfo* rhs)
     
     return result;
 }
+#endif // XFILEINFO_ON
+#endif /* XFILE_ON */

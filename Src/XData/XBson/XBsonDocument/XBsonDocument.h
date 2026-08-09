@@ -1,4 +1,4 @@
-#ifndef XBSONDOCUMENT_H
+﻿#ifndef XBSONDOCUMENT_H
 #define XBSONDOCUMENT_H
 
 #ifdef __cplusplus

@@ -1,4 +1,4 @@
-#ifndef XIODevice_Protected_H
+﻿#ifndef XIODevice_Protected_H
 #define XIODevice_Protected_H
 #ifdef __cplusplus
 extern "C" {

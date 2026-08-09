@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XChar_win32.c
  * @brief GBK编码转换的系统API模式实现（Windows平台）
  *

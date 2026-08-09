@@ -1,4 +1,4 @@
-#include "XLockFreeStack.h"
+﻿#include "XLockFreeStack.h"
 #include "XAlgorithm.h"
 #include <string.h>
 #include <stdlib.h>

@@ -1,4 +1,4 @@
-#include "XFileDevice.h"
+﻿#include "XFileDevice.h"
 #include "XFileSystem.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include "XIODevicePrivate.h"   /* XIODevicePrivate_getOrCreateReadBuffer */
@@ -8,6 +8,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#if XFILE_ON
+#if XFILEDEVICE_ON
 
 /* ============================================================================
  * 虚函数实现（重写父类虚函数）
@@ -597,3 +599,5 @@ bool XFileDevice_unmap(XFileDevice* device, void* address)
     if (ok) mmapUntrack(address);
     return ok;
 }
+#endif // XFILEDEVICE_ON
+#endif /* XFILE_ON */

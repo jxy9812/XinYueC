@@ -1,4 +1,4 @@
-#ifndef XCOMMANDLINEPARSER_H
+﻿#ifndef XCOMMANDLINEPARSER_H
 #define XCOMMANDLINEPARSER_H
 #ifdef __cplusplus
 extern "C" {

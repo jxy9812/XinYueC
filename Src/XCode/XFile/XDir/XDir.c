@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#if XFILE_ON
+#if XDIR_ON
 
 /* ============================================================================
  * 虚函数实现
@@ -1352,3 +1354,5 @@ XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilt
     XStringList_delete_base(names);
     return result;
 }
+#endif // XDIR_ON
+#endif /* XFILE_ON */

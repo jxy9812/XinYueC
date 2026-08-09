@@ -1,4 +1,4 @@
-#ifndef XLOCKFREESTACK_H
+﻿#ifndef XLOCKFREESTACK_H
 #define XLOCKFREESTACK_H
 
 #ifdef __cplusplus

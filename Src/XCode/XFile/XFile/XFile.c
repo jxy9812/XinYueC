@@ -1,8 +1,10 @@
-#include "XFile.h"
+﻿#include "XFile.h"
 #include "XFileSystem.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include <stdlib.h>
 #include <string.h>
+#if XFILE_ON
+#if XFILE_OBJECT_ON
 
 /* ============================================================================
  * 虚函数实现（重写父类虚函数）
@@ -392,3 +394,5 @@ XString* XFile_decodeName_2(const char* localFileName)
     if (!localFileName) return XString_create();
     return XString_create_utf8(localFileName);
 }
+#endif // XFILE_OBJECT_ON
+#endif /* XFILE_ON */
