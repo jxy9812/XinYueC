@@ -323,13 +323,12 @@ XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock)
 bool XAbstractSocket_flush(XAbstractSocket* sock)
 {
     if (!sock) return false;
-    //XAbstractSocketPrivate* priv = getPriv(sock);
-    //if (!priv || priv->socketHandle == INVALID_SOCKET) return false;
-
     XIODevice* io = (XIODevice*)sock;
 
-    // 检查是否有待发送数据
-    while (XIODevice_bytesToWrite_base(io) > 0) {
+    // 检查是否有待发送数据：既包括 XIODevice 环形缓冲队列，也包括平台
+    // 已提交但尚未完成的异步写请求（io_uring/IOCP 的 SEND 仍在内核队列时，
+    // bytesToWrite 可能已经是 0，但 writePending 仍为 true，直接关闭会丢包）。
+    while (XIODevice_bytesToWrite_base(io) > 0 || XNetwork_socketWritePending(getPriv(sock))) {
         // 等待数据发送完成
         if (!XAbstractSocket_waitForBytesWritten(sock, 100)) {
             // 超时或出错
@@ -617,10 +616,12 @@ static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msec
 {
     // 通用实现：事件循环等待
     if (!self) return false;
-    if (XAbstractSocket_bytesToWrite_base(self) == 0) return true;
-    
+    if (XAbstractSocket_bytesToWrite_base(self) == 0 &&
+        !XNetwork_socketWritePending(getPriv(self))) return true;
+
     uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (XAbstractSocket_bytesToWrite_base(self) > 0) {
+    while (XAbstractSocket_bytesToWrite_base(self) > 0 ||
+           XNetwork_socketWritePending(getPriv(self))) {
         if (self->state != XAbstractSocket_ConnectedState) return false;
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;

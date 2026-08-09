@@ -11,9 +11,10 @@
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
 #include "XNetwork.h"
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
-    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+#if (XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+     XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_MULTI_SESSION_ON && \
+     XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON) && \
+    (XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON || XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
 #include "XConsoleShell_XTcpServer.h"
 #include "XTcpServer.h"
 #endif
@@ -106,11 +107,29 @@ static bool console_flush(void* userData)
     return fflush(stdout) == 0;
 }
 
+#if !XCONSOLE_SHELL_CONSOLE_ON
+/* 本地控制台关闭时 Shell 主 I/O 仍需要一个可用的 write/flush，但输出应丢弃，
+ * 不向程序 stdout 打印任何 Shell 内容。 */
+static int64_t console_null_write(void* userData, const void* data, size_t size)
+{
+    (void)userData;
+    (void)data;
+    return (int64_t)size;
+}
+
+static bool console_null_flush(void* userData)
+{
+    (void)userData;
+    return true;
+}
+#endif
+
 static XConsoleShell* create_shell(MainConsoleTransport* transport)
 {
     XConsoleShellIo io;
     XConsoleShell* shell;
     memset(&io, 0, sizeof(io));
+#if XCONSOLE_SHELL_CONSOLE_ON
     io.read = console_read;
     io.write = console_write;
     io.flush = console_flush;
@@ -118,6 +137,13 @@ static XConsoleShell* create_shell(MainConsoleTransport* transport)
     io.inputDetach = console_detach;
     io.inputEcho = console_input_echo;
     io.prompt = console_prompt;
+#else
+    /* 本地控制台关闭：不附加标准输入，Shell 的输出直接丢弃，不打印提示符。
+       保留 read 仅用于满足 Shell 异步启动的接口约束，实际不会读取 stdin。 */
+    io.read = console_read;
+    io.write = console_null_write;
+    io.flush = console_null_flush;
+#endif
     io.userData = transport;
     shell = XConsoleShell_create(&io);
     if (!shell) {
@@ -129,12 +155,14 @@ static XConsoleShell* create_shell(MainConsoleTransport* transport)
 
 static void console_show_initial_prompt(XAbstractEventDispatcherPrivate* dp)
 {
+#if XCONSOLE_SHELL_CONSOLE_ON
     if (!dp || dp->m_consolePromptShown || !dp->m_consoleTransport ||
         !dp->m_consoleShell)
         return;
     console_prompt((MainConsoleTransport*)dp->m_consoleTransport,
                    (XConsoleShell*)dp->m_consoleShell);
     dp->m_consolePromptShown = true;
+#endif
 }
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
@@ -200,6 +228,74 @@ static void console_ssh_detach(XAbstractEventDispatcherPrivate* dp)
 }
 #endif
 
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+static bool console_telnet_attach(XAbstractEventDispatcher* self)
+{
+    XAbstractEventDispatcherPrivate* dp;
+    XConsoleShellXTcpServerAdapter* adapter;
+    XTcpServer* server;
+    if (!self || !self->d_ptr || !self->d_ptr->m_consoleShell) return false;
+    dp = self->d_ptr;
+    if (dp->m_consoleTelnetServer && dp->m_consoleTelnetAdapter) return true;
+
+    server = XTcpServer_create();
+    adapter = (XConsoleShellXTcpServerAdapter*)XCalloc_System(1, sizeof(*adapter));
+    if (!server || !adapter) {
+        if (server) XClass_delete_base((XClass*)server);
+        if (adapter) XFree_System(adapter);
+        return false;
+    }
+    if (!XTcpServer_listen(server, NULL,
+                           (uint16_t)XCONSOLE_SHELL_XTELNET_SERVER_PORT)) {
+        XClass_delete_base((XClass*)server);
+        XFree_System(adapter);
+        return false;
+    }
+    if (!XConsoleShellXTcpServerAdapter_initProtocol(
+            adapter, (XConsoleShell*)dp->m_consoleShell, server,
+            XConsoleShellXTcpServerProtocol_Telnet)) {
+        XClass_delete_base((XClass*)server);
+        XFree_System(adapter);
+        return false;
+    }
+    dp->m_consoleTelnetServer = server;
+    dp->m_consoleTelnetAdapter = adapter;
+    XPrintf("默认 Telnet 服务端监听端口: %u\n",
+            (unsigned)XTcpServer_serverPort(server));
+    return true;
+}
+
+static void console_telnet_pump(XAbstractEventDispatcherPrivate* dp)
+{
+    XConsoleShellXTcpServerAdapter* adapter;
+    if (!dp || !dp->m_consoleTelnetServer || !dp->m_consoleTelnetAdapter) return;
+    adapter = (XConsoleShellXTcpServerAdapter*)dp->m_consoleTelnetAdapter;
+    (void)XConsoleShellXTcpServerAdapter_acceptPending(adapter);
+    (void)XConsoleShellXTcpServerAdapter_pump(adapter, 4096);
+}
+
+static void console_telnet_detach(XAbstractEventDispatcherPrivate* dp)
+{
+    XConsoleShellXTcpServerAdapter* adapter;
+    XTcpServer* server;
+    if (!dp) return;
+    adapter = (XConsoleShellXTcpServerAdapter*)dp->m_consoleTelnetAdapter;
+    server = (XTcpServer*)dp->m_consoleTelnetServer;
+    if (adapter) {
+        XConsoleShellXTcpServerAdapter_closeAll(adapter);
+        XFree_System(adapter);
+        dp->m_consoleTelnetAdapter = NULL;
+    }
+    if (server) {
+        XTcpServer_close(server);
+        XClass_delete_base((XClass*)server);
+        dp->m_consoleTelnetServer = NULL;
+    }
+}
+#endif
+
 static bool console_shell_attach(XAbstractEventDispatcher* self)
 {
     XAbstractEventDispatcherPrivate* dp;
@@ -217,6 +313,15 @@ static bool console_shell_attach(XAbstractEventDispatcher* self)
         XFree_System(transport);
         return false;
     }
+#if XCONSOLE_SHELL_ASYNC_ON && !XCONSOLE_SHELL_CONSOLE_ON
+    /* 本地控制台关闭时 inputAttach 为空，Shell 创建阶段不会自动启动异步；
+       但 SSH/Telnet 会话仍需 Shell 处于运行态，这里显式启动且不读取 stdin。 */
+    if (!XConsoleShell_startAsync(shell)) {
+        XConsoleShell_delete_base((XConsoleShell*)shell);
+        XFree_System(transport);
+        return false;
+    }
+#endif
     dp->m_consoleTransport = transport;
     dp->m_consoleShell = shell;
     return true;
@@ -241,7 +346,14 @@ int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self)
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
     if (!console_ssh_attach(self)) return 2;
 #endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    if (!console_telnet_attach(self)) return 3;
+#endif
+#if XCONSOLE_SHELL_CONSOLE_ON
     console_show_initial_prompt(self->d_ptr);
+#endif
     return XCoreApplication_exec();
 }
 #endif
@@ -285,6 +397,12 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->m_consoleSshServer = NULL;
     dp->m_consoleSshAdapter = NULL;
 #endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    dp->m_consoleTelnetServer = NULL;
+    dp->m_consoleTelnetAdapter = NULL;
+#endif
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -293,6 +411,11 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
     console_ssh_detach(dp);
+#endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    console_telnet_detach(dp);
 #endif
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -471,6 +594,12 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
     /* 默认 SSH Server 与主事件循环共用线程，避免引入额外线程和竞态。 */
     console_ssh_pump(self->d_ptr);
+#endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    /* 默认 Telnet Server 与主事件循环共用线程，避免引入额外线程和竞态。 */
+    console_telnet_pump(self->d_ptr);
 #endif
 
     /* 4. Qt 6.8: 阻塞等待（对标 QAbstractEventDispatcher::processEvents 的 WaitForMoreEvents）

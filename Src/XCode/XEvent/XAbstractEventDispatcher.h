@@ -65,6 +65,12 @@ typedef struct XAbstractEventDispatcherPrivate
     void* m_consoleSshServer;     ///< 默认 Shell 的 SSH TCP Server（由调度器持有）
     void* m_consoleSshAdapter;    ///< 默认 Shell 的 SSH 多会话适配器（由调度器持有）
 #endif
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
+    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+    void* m_consoleTelnetServer;  ///< 默认 Shell 的 Telnet TCP Server（由调度器持有）
+    void* m_consoleTelnetAdapter; ///< 默认 Shell 的 Telnet 多会话适配器（由调度器持有）
+#endif
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);

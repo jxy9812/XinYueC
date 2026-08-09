@@ -697,6 +697,7 @@ fail:
 
 static int64_t xssh_shell_write(void* userData, const void* data, size_t size);
 static bool xssh_flush_channel_pending(XConsoleShellSshAdapter* adapter);
+static void xssh_shell_emit_prompt(XConsoleShellSshAdapter* adapter);
 static void xssh_shell_prompt(void* userData, XConsoleShell* shell);
 
 static bool xssh_check_kexinit(XConsoleShellSshAdapter* adapter)
@@ -1322,8 +1323,7 @@ static XConsoleResult xssh_handle_channel_request(XConsoleShellSshAdapter* adapt
          * callback, so the initial prompt is sent when the shell request is
          * accepted.  Subsequent prompts are emitted by xssh_shell_prompt. */
         if (adapter->shell) {
-            static const char prompt[] = "> ";
-            (void)xssh_shell_write(adapter, prompt, sizeof(prompt) - 1);
+            xssh_shell_emit_prompt(adapter);
         }
         return XConsoleResult_Ok;
     }
@@ -1712,6 +1712,21 @@ static void xssh_channel_pending_compact(XConsoleShellSshAdapter* adapter)
     adapter->channelTxPendingLen = pending;
 }
 
+/* 向通道待发送缓冲追加一个字节；缓冲满时先尝试发送并压缩，仍放不下返回 false。 */
+static bool xssh_channel_pending_append(XConsoleShellSshAdapter* adapter,
+                                        uint8_t byte)
+{
+    if (!adapter) return false;
+    if (adapter->channelTxPendingLen >= sizeof(adapter->channelTxPending)) {
+        (void)xssh_flush_channel_pending(adapter);
+        xssh_channel_pending_compact(adapter);
+    }
+    if (adapter->channelTxPendingLen >= sizeof(adapter->channelTxPending))
+        return false;
+    adapter->channelTxPending[adapter->channelTxPendingLen++] = byte;
+    return true;
+}
+
 static bool xssh_send_channel_data_now(XConsoleShellSshAdapter* adapter,
                                        const uint8_t* data, size_t len)
 {
@@ -1765,7 +1780,8 @@ static bool xssh_flush_channel_pending(XConsoleShellSshAdapter* adapter)
 static int64_t xssh_shell_write(void* userData, const void* data, size_t size)
 {
     XConsoleShellSshAdapter* adapter = (XConsoleShellSshAdapter*)userData;
-    size_t available;
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t i;
     if (!adapter || adapter->closed || !adapter->channelOpen ||
         !adapter->shellStarted || adapter->localEof || adapter->localClose ||
         adapter->remoteClose ||
@@ -1774,10 +1790,16 @@ static int64_t xssh_shell_write(void* userData, const void* data, size_t size)
     if (size == 0) return 0;
     (void)xssh_flush_channel_pending(adapter);
     xssh_channel_pending_compact(adapter);
-    available = sizeof(adapter->channelTxPending) - adapter->channelTxPendingLen;
-    if (size > available) return -1;
-    memcpy(adapter->channelTxPending + adapter->channelTxPendingLen, data, size);
-    adapter->channelTxPendingLen += size;
+    /* SSH 客户端的本地终端在会话期间处于 raw 模式，只有换行符不会把光标
+     * 移回行首；因此把单独出现的换行规范为回车加换行，避免多行输出逐行
+     * 右移。遇到已带回车换行（如输入回显路径）保持原样，不重复插入回车。 */
+    for (i = 0; i < size; ++i) {
+        uint8_t byte = bytes[i];
+        if (byte == '\n' && (i == 0u || bytes[i - 1u] != '\r')) {
+            if (!xssh_channel_pending_append(adapter, '\r')) return -1;
+        }
+        if (!xssh_channel_pending_append(adapter, byte)) return -1;
+    }
     if (!xssh_flush_channel_pending(adapter)) return -1;
     return (int64_t)size;
 }
@@ -1808,16 +1830,38 @@ static bool xssh_shell_input_echo(void* userData, bool enabled)
     return true;
 }
 
+/* 发送交互提示符：当前连接会话已登录显示“用户名> ”，未登录或未启用登录
+ * 显示默认名。SSH 每个连接绑定独立会话，必须从 adapter->session 读取，不能
+ * 读取 Shell 默认会话，否则登录后提示符不会切换到实际登录用户。 */
+static void xssh_shell_emit_prompt(XConsoleShellSshAdapter* adapter)
+{
+    const char* user;
+    char prompt[XCONSOLE_SHELL_LOGIN_NAME_SIZE + 2u];
+    size_t len;
+    if (!adapter || !adapter->shell)
+        return;
+    user = (adapter->session && adapter->session->authenticated &&
+            adapter->session->userName[0])
+               ? adapter->session->userName
+               : (const char*)XCONSOLE_SHELL_DEFAULT_PROMPT_NAME;
+    len = strlen(user);
+    if (len >= sizeof(prompt) - 2u)
+        len = sizeof(prompt) - 2u;
+    memcpy(prompt, user, len);
+    prompt[len++] = '>';
+    prompt[len++] = ' ';
+    (void)xssh_shell_write(adapter, prompt, len);
+}
+
 static void xssh_shell_prompt(void* userData, XConsoleShell* shell)
 {
     XConsoleShellSshAdapter* adapter = (XConsoleShellSshAdapter*)userData;
-    static const char prompt[] = "> ";
     (void)shell;
     if (!adapter || adapter->closed || !adapter->channelOpen ||
         !adapter->shellStarted || adapter->localClose || adapter->remoteClose ||
         !XConsoleShell_isRunning(adapter->shell))
         return;
-    (void)xssh_shell_write(adapter, prompt, sizeof(prompt) - 1);
+    xssh_shell_emit_prompt(adapter);
 }
 
 #if XCONSOLE_SHELL_LOG_ON

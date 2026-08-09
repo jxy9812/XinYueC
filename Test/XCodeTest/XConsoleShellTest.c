@@ -1282,7 +1282,7 @@ bool XConsoleShellTest_runAll(void)
         XCS_TEST_CHECK(telnetFlushed && telnetFeedResult == XConsoleResult_Ok &&
                            telnetTransport.length >= 3 &&
                            (uint8_t)telnetTransport.output[0] == 255 &&
-                           (uint8_t)telnetTransport.output[1] == 252 &&
+                           (uint8_t)telnetTransport.output[1] == 251 &&
                            (uint8_t)telnetTransport.output[2] == 1 &&
                            strstr(telnetTransport.output + 3, "telnet"),
                        "telnet negotiate and command");

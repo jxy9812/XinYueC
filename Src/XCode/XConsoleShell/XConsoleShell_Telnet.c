@@ -17,7 +17,8 @@ enum {
     XCS_TELNET_WILL = 251,
     XCS_TELNET_SB = 250,
     XCS_TELNET_SE = 240,
-    XCS_TELNET_IP = 244
+    XCS_TELNET_IP = 244,
+    XCS_TELNET_OPT_ECHO = 1
 };
 
 static bool xcs_telnet_write_all(XConsoleShellTelnetAdapter* adapter,
@@ -41,7 +42,7 @@ static bool xcs_telnet_reply(XConsoleShellTelnetAdapter* adapter,
     return xcs_telnet_write_all(adapter, bytes, sizeof(bytes));
 }
 
-static int64_t xcs_telnet_write(void* userData, const void* data, size_t size)
+static int64_t xcs_telnet_write_raw(void* userData, const void* data, size_t size)
 {
     XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
     const uint8_t* bytes = (const uint8_t*)data;
@@ -61,6 +62,37 @@ static int64_t xcs_telnet_write(void* userData, const void* data, size_t size)
     return (int64_t)size;
 }
 
+/* Telnet 文本行以 CRLF 结束；Shell 输出统一使用 LF，发送前补 CR，
+ * 否则客户端只换行不回车，各行会向右错位。 */
+static int64_t xcs_telnet_write(void* userData, const void* data, size_t size)
+{
+    XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
+    const uint8_t* bytes = (const uint8_t*)data;
+    size_t begin = 0;
+    size_t i;
+    if (!adapter || (!data && size)) return -1;
+    for (i = 0; i < size; ++i) {
+        uint8_t byte = bytes[i];
+        if (byte == '\r' || byte == '\n') {
+            if (i > begin &&
+                xcs_telnet_write_raw(adapter, bytes + begin, i - begin) !=
+                    (int64_t)(i - begin))
+                return -1;
+            if (byte == '\r' && i + 1 < size && bytes[i + 1] == '\n') ++i;
+            {
+                const uint8_t crlf[2] = { '\r', '\n' };
+                if (!xcs_telnet_write_all(adapter, crlf, sizeof(crlf))) return -1;
+            }
+            begin = i + 1u;
+        }
+    }
+    if (begin < size &&
+        xcs_telnet_write_raw(adapter, bytes + begin, size - begin) !=
+            (int64_t)(size - begin))
+        return -1;
+    return (int64_t)size;
+}
+
 static bool xcs_telnet_flush(void* userData)
 {
     XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
@@ -73,6 +105,56 @@ static bool xcs_telnet_cancelled(void* userData)
     XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
     return adapter && adapter->transport.cancelled &&
            adapter->transport.cancelled(adapter->transport.userData);
+}
+
+/* Telnet 客户端接受 DONT ECHO 后关闭本地回显，由服务端负责回显普通输入。
+ * 密码输入期间 Shell 通过 inputEcho(false) 关闭回显，避免明文泄露。 */
+static bool xcs_telnet_echo_byte(XConsoleShellTelnetAdapter* adapter, uint8_t byte)
+{
+    const uint8_t* text;
+    size_t size;
+    if (!adapter || !adapter->echoEnabled) return true;
+    if (adapter->echoEscape) {
+        if (byte >= '@' && byte <= '~') adapter->echoEscape = false;
+        return true;
+    }
+    if (byte == 0x1b) {
+        adapter->echoEscape = true;
+        return true;
+    }
+    if (byte == '\r') {
+        text = (const uint8_t*)"\r\n";
+        size = 2;
+        return xcs_telnet_write_raw(adapter, text, size) == (int64_t)size;
+    }
+    if (byte == '\n') {
+        if (!adapter->echoPendingCr)
+            return xcs_telnet_write_raw(adapter, (const uint8_t*)"\r\n", 2) == 2;
+        adapter->echoPendingCr = false;
+        return true;
+    }
+    adapter->echoPendingCr = false;
+    if (byte == '\b' || byte == 0x7f) {
+        text = (const uint8_t*)"\b \b";
+        size = 3;
+        return xcs_telnet_write_raw(adapter, text, size) == (int64_t)size;
+    }
+    if (byte == 0x03) {
+        text = (const uint8_t*)"^C\r\n";
+        size = 4;
+        return xcs_telnet_write_raw(adapter, text, size) == (int64_t)size;
+    }
+    if (byte >= 0x20 || byte == '\t')
+        return xcs_telnet_write_raw(adapter, &byte, 1) == 1;
+    return true;
+}
+
+static bool xcs_telnet_input_echo(void* userData, bool enabled)
+{
+    XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
+    if (!adapter) return false;
+    adapter->echoEnabled = enabled;
+    return true;
 }
 
 #if XCONSOLE_SHELL_LOG_ON
@@ -95,6 +177,55 @@ static void xcs_telnet_audit(void* userData, const XConsoleShellSession* session
 }
 #endif
 
+bool XConsoleShellTelnetAdapter_emitPrompt(XConsoleShellTelnetAdapter* adapter)
+{
+    const char* user;
+    char prompt[XCONSOLE_SHELL_LOGIN_NAME_SIZE + 2u];
+    size_t len;
+    if (!adapter) return false;
+    user = (adapter->session && adapter->session->authenticated &&
+            adapter->session->userName[0])
+               ? adapter->session->userName
+               : (const char*)XCONSOLE_SHELL_DEFAULT_PROMPT_NAME;
+    len = strlen(user);
+    if (len >= sizeof(prompt) - 2u)
+        len = sizeof(prompt) - 2u;
+    memcpy(prompt, user, len);
+    prompt[len++] = '>';
+    prompt[len++] = ' ';
+    return xcs_telnet_write(adapter, (const uint8_t*)prompt, len) == (int64_t)len;
+}
+
+static void xcs_telnet_prompt(void* userData, XConsoleShell* shell)
+{
+    XConsoleShellTelnetAdapter* adapter = (XConsoleShellTelnetAdapter*)userData;
+    (void)shell;
+    if (adapter) (void)XConsoleShellTelnetAdapter_emitPrompt(adapter);
+}
+
+/* Telnet 会话由 XTcpServer 适配器直接投喂字节，不经过默认控制台的异步
+ * completedLine 提示路径；因此在每个完整输入行结束后由 Telnet 适配器主动
+ * 补发提示符，行为与 SSH 通道一致。 */
+static void xcs_telnet_prompt_after_line(XConsoleShellTelnetAdapter* adapter,
+                                         XConsoleShell* shell)
+{
+    if (!adapter || !shell || !adapter->session) return;
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    if (adapter->session->m_closeRequested) return;
+#endif
+#if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
+    if (adapter->session->suppressPrompt) return;
+#endif
+    if (!XConsoleShell_isRunning(shell)) return;
+    (void)XConsoleShellTelnetAdapter_emitPrompt(adapter);
+}
+
+void XConsoleShellTelnetAdapter_setSession(XConsoleShellTelnetAdapter* adapter,
+                                           XConsoleShellSession* session)
+{
+    if (adapter) adapter->session = session;
+}
+
 static XConsoleResult xcs_telnet_feed_byte(XConsoleShell* shell,
                                            XConsoleShellSession* session,
                                            uint8_t byte)
@@ -114,6 +245,7 @@ void XConsoleShellTelnetAdapter_init(XConsoleShellTelnetAdapter* adapter,
     memset(adapter, 0, sizeof(*adapter));
     if (transport) adapter->transport = *transport;
     adapter->state = XConsoleShellTelnetState_Data;
+    adapter->echoEnabled = true;
 }
 
 bool XConsoleShellTelnetAdapter_makeIo(XConsoleShellTelnetAdapter* adapter,
@@ -124,6 +256,8 @@ bool XConsoleShellTelnetAdapter_makeIo(XConsoleShellTelnetAdapter* adapter,
     io->write = xcs_telnet_write;
     io->flush = xcs_telnet_flush;
     io->cancelled = xcs_telnet_cancelled;
+    io->inputEcho = xcs_telnet_input_echo;
+    io->prompt = xcs_telnet_prompt;
 #if XCONSOLE_SHELL_LOG_ON
     io->log = xcs_telnet_log;
 #endif
@@ -155,18 +289,29 @@ XConsoleResult XConsoleShellTelnetAdapter_feedData(XConsoleShellTelnetAdapter* a
             continue;
         }
         if (adapter->state == XConsoleShellTelnetState_Option) {
-            if (adapter->negotiation == XCS_TELNET_DO &&
-                !xcs_telnet_reply(adapter, XCS_TELNET_WONT, byte))
-                return XConsoleResult_IoError;
-            if (adapter->negotiation == XCS_TELNET_WILL &&
-                !xcs_telnet_reply(adapter, XCS_TELNET_DONT, byte))
-                return XConsoleResult_IoError;
+            if (adapter->negotiation == XCS_TELNET_DO) {
+                if (byte == XCS_TELNET_OPT_ECHO) {
+                    if (!xcs_telnet_reply(adapter, XCS_TELNET_WILL, byte))
+                        return XConsoleResult_IoError;
+                } else if (!xcs_telnet_reply(adapter, XCS_TELNET_WONT, byte)) {
+                    return XConsoleResult_IoError;
+                }
+            }
+            if (adapter->negotiation == XCS_TELNET_WILL) {
+                if (byte == XCS_TELNET_OPT_ECHO) {
+                    if (!xcs_telnet_reply(adapter, XCS_TELNET_DONT, byte))
+                        return XConsoleResult_IoError;
+                } else if (!xcs_telnet_reply(adapter, XCS_TELNET_DONT, byte)) {
+                    return XConsoleResult_IoError;
+                }
+            }
             adapter->state = XConsoleShellTelnetState_Data;
             continue;
         }
         if (adapter->state == XConsoleShellTelnetState_Iac) {
             if (byte == XCS_TELNET_IAC) {
                 adapter->state = XConsoleShellTelnetState_Data;
+                if (!xcs_telnet_echo_byte(adapter, byte)) return XConsoleResult_IoError;
                 result = xcs_telnet_feed_byte(shell, session, byte);
                 continue;
             }
@@ -181,8 +326,10 @@ XConsoleResult XConsoleShellTelnetAdapter_feedData(XConsoleShellTelnetAdapter* a
                 continue;
             }
             adapter->state = XConsoleShellTelnetState_Data;
-            if (byte == XCS_TELNET_IP)
+            if (byte == XCS_TELNET_IP) {
+                if (!xcs_telnet_echo_byte(adapter, 0x03)) return XConsoleResult_IoError;
                 result = xcs_telnet_feed_byte(shell, session, 0x03);
+            }
             continue;
         }
         if (byte == XCS_TELNET_IAC) {
@@ -194,7 +341,10 @@ XConsoleResult XConsoleShellTelnetAdapter_feedData(XConsoleShellTelnetAdapter* a
             continue;
         }
         adapter->afterCarriageReturn = byte == '\r';
+        if (!xcs_telnet_echo_byte(adapter, byte)) return XConsoleResult_IoError;
         result = xcs_telnet_feed_byte(shell, session, byte);
+        if (byte == '\r' || byte == '\n')
+            xcs_telnet_prompt_after_line(adapter, shell);
     }
     return result;
 }

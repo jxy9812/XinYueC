@@ -427,6 +427,15 @@ size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv);
 size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv);
 
 /**
+ * @brief 查询是否存在尚未完成的异步写入请求。
+ * @param priv 平台私有状态；借用，可为 NULL。
+ * @return 存在待完成的异步写入返回 true；无待写状态返回 false。
+ * @note 与 XIODevice_bytesToWrite 不同，该函数直接反映平台异步写队列中
+ *       尚未完成的发送请求，用于关闭前刷新待发送数据。
+ */
+bool XNetwork_socketWritePending(const XNetworkSocketPrivate* priv);
+
+/**
  * @brief 在处理完当前数据后继续提交异步读取。
  * @param priv 平台私有状态；借用，不能为 NULL。
  * @param isUdp 为 true 时按 UDP 语义读取，为 false 时按 TCP 语义读取。

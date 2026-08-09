@@ -301,7 +301,10 @@ int XNetwork_lastError(void)
 char* XNetwork_errorString(int errorCode)
 {
     char* buf = (char*)XMalloc_System(256);
-    if (buf) strerror_r(errorCode, buf, 256);
+    if (buf) {
+        strerror_r(errorCode, buf, 256);
+        buf[255] = '\0'; /* strerror_r 在消息超长时可能不补 NUL，强制截断终止。 */
+    }
     return buf;
 }
 
@@ -1064,6 +1067,11 @@ size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv)
 size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv)
 {
     return priv ? P32(priv)->writeContext.base.finishedBytes : 0;
+}
+
+bool XNetwork_socketWritePending(const XNetworkSocketPrivate* priv)
+{
+    return priv ? P32(priv)->writePending : false;
 }
 
 void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)

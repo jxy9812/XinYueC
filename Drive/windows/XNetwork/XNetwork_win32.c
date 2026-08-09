@@ -341,6 +341,7 @@ char* XNetwork_errorString(int errorCode)
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL, errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         buf, 256, NULL);
+    buf[255] = '\0'; /* FormatMessageA 在消息填满时可能不补 NUL，强制截断终止。 */
     return buf;
 }
 
@@ -1168,6 +1169,11 @@ size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv)
 size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv)
 {
     return priv ? W32(priv)->writeContext.finishedBytes : 0;
+}
+
+bool XNetwork_socketWritePending(const XNetworkSocketPrivate* priv)
+{
+    return priv ? W32(priv)->writePending : false;
 }
 
 void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)

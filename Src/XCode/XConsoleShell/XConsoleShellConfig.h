@@ -113,15 +113,32 @@
 #define XCONSOLE_SHELL_LOG_ON 0
 #endif
 
-/** @brief XTcpServer 内建 SSH Server 开关；使用 mbedTLS(PSA) 实现精简 SSH 传输。 */
+/** @brief 程序本地控制台 Shell 开关；置 0 时不在 stdin/stdout 上运行 Shell，
+ *  控制台不输出提示符、不读取标准输入，但 SSH/Telnet Server 等网络会话不受影响。 */
+#ifndef XCONSOLE_SHELL_CONSOLE_ON
+#define XCONSOLE_SHELL_CONSOLE_ON 0
+#endif
+
+/** @brief XTcpServer 内建 SSH Server 开关；使用 mbedTLS(PSA) 实现精简 SSH 传输。
+ *  与 Telnet Server 互相独立，可单独或同时开启。 */
 #ifndef XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
 #define XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON 1
 #define XCONSOLE_SHELL_XSSHSERVER_BACKEND_DEFAULT_ON 1
 #endif
 
+/** @brief XTcpServer 内建 Telnet Server 开关；与 SSH Server 互相独立。 */
+#ifndef XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON
+#define XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON 1
+#endif
+
 /** @brief SSH Server 默认监听端口；产品调用 XTcpServer_listen 时可覆盖。 */
 #ifndef XCONSOLE_SHELL_XSSH_SERVER_PORT
 #define XCONSOLE_SHELL_XSSH_SERVER_PORT 2222u
+#endif
+
+/** @brief Telnet Server 默认监听端口；产品调用 XTcpServer_listen 时可覆盖。 */
+#ifndef XCONSOLE_SHELL_XTELNET_SERVER_PORT
+#define XCONSOLE_SHELL_XTELNET_SERVER_PORT 2223u
 #endif
 
 /** @brief SSH Server 单连接允许的最大密码认证失败次数。 */
@@ -132,11 +149,6 @@
 /** @brief SSH Server 主机密钥持久化文件路径；首次启动生成并落盘，之后保持不变。 */
 #ifndef XCONSOLE_SHELL_XSSH_HOSTKEY_FILE
 #define XCONSOLE_SHELL_XSSH_HOSTKEY_FILE "xconsole_ssh_hostkey.bin"
-#endif
-
-/** @brief 多会话固定槽位开关；开启后可管理默认会话之外的连接。 */
-#ifndef XCONSOLE_SHELL_MULTI_SESSION_ON
-#define XCONSOLE_SHELL_MULTI_SESSION_ON XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
 #endif
 
 /** @brief 通用 XIODevice 传输适配器开关。 */
@@ -154,13 +166,30 @@
 #define XCONSOLE_SHELL_XTCPSOCKET_BACKEND_ON 0
 #endif
 
-/** @brief XTcpServer 多会话适配器开关；同时需要多会话和 TCP Socket。 */
+/** @brief XTcpServer 多会话适配器开关；SSH 或 Telnet Server 任一开启时自动打开。 */
 #ifndef XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
-#define XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+#define XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON     (XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON || XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
 #endif
-/** @brief Telnet 协议过滤适配器开关；仅处理字节协议，不创建网络连接。 */
+
+/** @brief 裸 TCP（无协议协商）多会话后端开关；SSH 或 Telnet 任一开启时保持关闭，
+ *  避免未加密的裸字节流 Shell 意外暴露。仅当 XTcpServer 后端开启且 SSH、Telnet
+ *  均关闭时自动打开；若与 SSH/Telnet 同时显式开启会在编译期报错。 */
+#ifndef XCONSOLE_SHELL_XTCPSERVER_RAW_BACKEND_ON
+#define XCONSOLE_SHELL_XTCPSERVER_RAW_BACKEND_ON     \
+    (XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON && \
+     !XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
+     !XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
+#endif
+
+/** @brief 多会话固定槽位开关；开启后可管理默认会话之外的连接。 */
+#ifndef XCONSOLE_SHELL_MULTI_SESSION_ON
+#define XCONSOLE_SHELL_MULTI_SESSION_ON XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+#endif
+
+/** @brief Telnet 协议过滤适配器开关；仅处理字节协议，不创建网络连接。
+ *  Telnet Server 开启时自动启用，也可单独用于自定义 Telnet 传输。 */
 #ifndef XCONSOLE_SHELL_TELNET_PROTOCOL_ON
-#define XCONSOLE_SHELL_TELNET_PROTOCOL_ON 0
+#define XCONSOLE_SHELL_TELNET_PROTOCOL_ON XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON
 #endif
 
 /** @brief 基础传输回调适配器开关；read/write 回调由产品提供。 */
@@ -518,9 +547,10 @@
 /* 9. 登录、认证与权限                                                        */
 /* ==================================================================== */
 
-/** @brief 启用登录、用户管理和本地 JSON 账户库。 */
+/** @brief 启用登录、用户管理和本地 JSON 账户库。
+ *  SSH 或 Telnet Server 任一开启时默认启用，可单独裁剪。 */
 #ifndef XCONSOLE_SHELL_LOGIN_ON
-#define XCONSOLE_SHELL_LOGIN_ON XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+#define XCONSOLE_SHELL_LOGIN_ON     (XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON || XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
 #endif
 
 /**
@@ -1478,6 +1508,20 @@
 #endif
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && XCONSOLE_SHELL_XSSH_SERVER_PORT > 65535u
 #error "XConsoleShell: XSSH_SERVER_PORT must fit in uint16_t"
+#endif
+
+#if XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && !XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
+#error "XConsoleShell: Telnet server requires XTcpServer backend"
+#endif
+#if XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && !XCONSOLE_SHELL_TELNET_PROTOCOL_ON
+#error "XConsoleShell: Telnet server requires TELNET_PROTOCOL_ON"
+#endif
+#if XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && XCONSOLE_SHELL_XTELNET_SERVER_PORT > 65535u
+#error "XConsoleShell: XTELNET_SERVER_PORT must fit in uint16_t"
+#endif
+#if XCONSOLE_SHELL_XTCPSERVER_RAW_BACKEND_ON && \
+    (XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON || XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
+#error "XConsoleShell: raw TCP backend cannot be enabled together with SSH or Telnet server"
 #endif
 
 #if XCONSOLE_SHELL_EXTERNAL_PROCESS_ON && !XProcess_ON

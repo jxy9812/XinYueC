@@ -31,9 +31,13 @@ typedef enum XConsoleShellTelnetState {
 /** @brief Telnet 适配器；transport 为借用回调集合，不由适配器释放。 */
 typedef struct XConsoleShellTelnetAdapter {
     XConsoleShellIo transport;              /**< 借用的底层字节传输。 */
+    XConsoleShellSession* session;          /**< 绑定的 Shell 会话；用于提示符取用户名。 */
     XConsoleShellTelnetState state;         /**< 输入协议状态。 */
     uint8_t negotiation;                    /**< 等待选项号的协商命令。 */
     bool afterCarriageReturn;               /**< 用于吞掉 CR 后的 NUL。 */
+    bool echoEnabled;                       /**< 服务端是否回显普通输入；密码输入时由 Shell 关闭。 */
+    bool echoPendingCr;                     /**< 已回显 CR，等待吞掉 LF 以避免重复。 */
+    bool echoEscape;                        /**< 正在跳过 ESC 转义序列，不回显。 */
 } XConsoleShellTelnetAdapter;
 
 /**
@@ -51,6 +55,19 @@ void XConsoleShellTelnetAdapter_init(XConsoleShellTelnetAdapter* adapter,
  */
 bool XConsoleShellTelnetAdapter_makeIo(XConsoleShellTelnetAdapter* adapter,
                                        XConsoleShellIo* io);
+/**
+ * @brief 绑定会话；提示符回调会读取会话当前登录用户名。
+ * @param adapter Telnet 适配器；不能为空。
+ * @param session 目标 Shell 会话；可为 NULL（表示未绑定）。
+ */
+void XConsoleShellTelnetAdapter_setSession(XConsoleShellTelnetAdapter* adapter,
+                                           XConsoleShellSession* session);
+/**
+ * @brief 向传输发送当前会话提示符（未登录用默认名，已登录用用户名）。
+ * @param adapter Telnet 适配器；不能为空。
+ * @return 写入成功返回 true；传输失败返回 false。
+ */
+bool XConsoleShellTelnetAdapter_emitPrompt(XConsoleShellTelnetAdapter* adapter);
 /**
  * @brief 过滤一段 Telnet 数据并投入默认或指定会话。
  * @param adapter Telnet 适配器；不能为空。

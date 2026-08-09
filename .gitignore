@@ -380,6 +380,6 @@ XinYueCConfig.cmake
 XinYueCConfigVersion.cmake
 /build*
 /ftp_test_root
-
+xconsole_users.json
 # XConsoleShell SSH 主机密钥（运行时生成，敏感，不应入库）
 xconsole_ssh_hostkey.bin
