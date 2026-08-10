@@ -387,7 +387,8 @@ typedef struct XCryptographic_CipherOperation {
 
 /** @brief ECDH 密钥协商算法。 */
 typedef enum XCryptographic_EcdhAlgorithm {
-    XCryptographic_EcdhAlgorithm_X25519 = 0,
+    XCryptographic_EcdhAlgorithm_None = 0,
+    XCryptographic_EcdhAlgorithm_X25519,
     XCryptographic_EcdhAlgorithm_NistP256
 } XCryptographic_EcdhAlgorithm;
 

@@ -15,6 +15,7 @@
 #include "XConsoleShellCommand.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_EDITOR_ON
@@ -41,6 +42,22 @@ bool XConsoleShellVi_isActive(const struct XConsoleShellSession* session);
  */
 void XConsoleShellVi_cancel(struct XConsoleShell* shell,
                             struct XConsoleShellSession* session);
+
+/**
+ * @brief 向 vi/vim 插入模式投递一个原始字节。
+ *
+ * 插入模式下 Shell 的 feedByte 会直接把每个输入字节交给本函数，
+ * 实现逐字符插入、回车换行、退格删除和 ESC 返回命令模式，
+ * 行为对齐 Linux vim 的插入模式。
+ *
+ * @param shell 当前 Shell；不能为空。
+ * @param session 当前会话；不能为空且必须处于插入模式。
+ * @param byte 输入字节。
+ * @return 处理结果码。
+ */
+XConsoleResult XConsoleShellVi_feedByte(struct XConsoleShell* shell,
+                                        struct XConsoleShellSession* session,
+                                        uint8_t byte);
 
 /**
  * @brief 提交 vi/vim 编辑器等待的一行输入。

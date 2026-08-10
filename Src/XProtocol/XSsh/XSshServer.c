@@ -39,14 +39,15 @@
 /* ------------------------------------------------------------------ */
 
 enum {
-    XSSH_RX_CAPACITY = 4096,
-    XSSH_TX_OUT_CAPACITY = 8192,
-    XSSH_MAX_PACKET = 2048,
-    XSSH_MAX_PAYLOAD = 2048,
+    XSSH_RX_CAPACITY = XSSH_CFG_RX_CAPACITY,
+    XSSH_TX_OUT_CAPACITY = XSSH_CFG_TX_OUT_CAPACITY,
+    XSSH_MAX_PACKET = XSSH_CFG_MAX_PACKET,
+    XSSH_MAX_PAYLOAD = XSSH_CFG_MAX_PAYLOAD,
     XSSH_HASH_LEN = 32,
     XSSH_MAC_LEN = 32,
     XSSH_POINT_LEN = 65,
     XSSH_CURVE25519_PUBLIC_LEN = 32,
+    XSSH_MAX_DH_PUBLIC_LEN = 513,   /* 4096 位 MODP 公钥 + 可能的前导 0 */
     XSSH_MAX_CIPHER_KEY_LEN = 32,
     XSSH_CHANNEL_DATA_CHUNK = 1024,
     XSSH_CHANNEL_INITIAL_WINDOW = 32768,
@@ -126,11 +127,13 @@ typedef struct XSshServerData {
     uint8_t hostKeyBlob[256];
     size_t hostKeyBlobLen;
 
-    /* 服务端临时 ECDH */
+    /* 服务端临时 ECDH / 有限域 DH */
     XCryptographic_Key ecdhKey;
-    uint8_t clientPublicBlob[256];
+    uint8_t ffdhPriv[32];                    /* 自研 FFDH 临时私钥（256 位指数） */
+    size_t ffdhPrivLen;
+    uint8_t clientPublicBlob[XSSH_MAX_DH_PUBLIC_LEN];
     size_t clientPublicBlobLen;
-    uint8_t sharedSecret[64];
+    uint8_t sharedSecret[XSSH_MAX_DH_PUBLIC_LEN];
     size_t sharedSecretLen;
 
     /* 交换哈希与会话 ID */
@@ -195,6 +198,32 @@ typedef struct XSshServerData {
 } XSshServerData;
 
 #define XSSH_DATA(self) ((XSshServerData*)((self)->m_data))
+
+/* 服务端密钥交换算法表：在共享算法表基础上增加 RFC 3526 MODP 有限域 DH，
+ * 用于兼容 Xshell 默认的 diffie-hellman-group14/16 算法。客户端（XSshClient）
+ * 仍使用共享算法表，因此不会主动选择这些 DH 算法。 */
+#if XSSH_FFDH_GROUPS_ON
+static const XSshNamedAlgorithm xssh_server_kex_algorithms[] = {
+#if XCRYPTOGRAPHIC_X25519_ON && XCRYPTOGRAPHIC_SHA256_ON
+    { "curve25519-sha256", XSshKexAlgorithm_Curve25519Sha256 },
+#endif
+#if XCRYPTOGRAPHIC_ECDH_NISTP256_ON && XCRYPTOGRAPHIC_SHA256_ON
+    { "ecdh-sha2-nistp256", XSshKexAlgorithm_EcdhSha2Nistp256 },
+#endif
+    { "diffie-hellman-group14-sha256", XSshKexAlgorithm_DhGroup14Sha256 },
+    { NULL, XSshKexAlgorithm_None }
+};
+#else
+static const XSshNamedAlgorithm xssh_server_kex_algorithms[] = {
+#if XCRYPTOGRAPHIC_X25519_ON && XCRYPTOGRAPHIC_SHA256_ON
+    { "curve25519-sha256", XSshKexAlgorithm_Curve25519Sha256 },
+#endif
+#if XCRYPTOGRAPHIC_ECDH_NISTP256_ON && XCRYPTOGRAPHIC_SHA256_ON
+    { "ecdh-sha2-nistp256", XSshKexAlgorithm_EcdhSha2Nistp256 },
+#endif
+    { NULL, XSshKexAlgorithm_None }
+};
+#endif
 
 
 /* A volatile PSA key is shared by connections during one process lifetime.
@@ -480,7 +509,7 @@ static bool xssh_send_packet(XSshServer* adapter,
             XSSH_DATA(adapter)->closed = true;
             return false;
         }
-        if (!XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->encOp,
+        if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->encOp,
                 (char*)encoded, sizeof(encoded),
                 (XByteArrayView){ frame, (int64_t)total }).m_size != (int64_t)total) {
             XSSH_DATA(adapter)->closed = true;
@@ -502,11 +531,11 @@ static bool xssh_send_packet(XSshServer* adapter,
 static bool xssh_derive_key(XSshServer* adapter, char letter,
                             uint8_t* out, size_t outLen)
 {
-    uint8_t input[4 + 64 + XSSH_HASH_LEN + 1 + XSSH_HASH_LEN];
+    uint8_t input[4 + XSSH_MAX_DH_PUBLIC_LEN + XSSH_HASH_LEN + 1 + XSSH_HASH_LEN];
     uint8_t hash[XSSH_HASH_LEN];
     size_t off = 0;
     if (!adapter || !out || outLen > XSSH_HASH_LEN ||
-        XSSH_DATA(adapter)->sharedSecretLen > 64)
+        XSSH_DATA(adapter)->sharedSecretLen > XSSH_MAX_DH_PUBLIC_LEN)
         return false;
     /* K is an SSH mpint in the key derivation input, including its uint32
      * length prefix.  The exchange hash uses the same representation. */
@@ -697,7 +726,7 @@ static bool xssh_check_kexinit(XSshServer* adapter)
     if (len < 1 + 16) { XSSH_DBG("kexinit too short len=%u\n", (unsigned)len); return false; }
     off = 1 + 16;
     if (!xssh_get_string(p, len, &off, &list, &listLen)) { XSSH_DBG("kexinit get string 1 fail off=%u\n", (unsigned)off); return false; }
-    if (!xssh_select_client_algorithm(list, listLen, xssh_kex_algorithms, &selected)) {
+    if (!xssh_select_client_algorithm(list, listLen, xssh_server_kex_algorithms, &selected)) {
         XSSH_DBG("kexinit has no supported key exchange list='%.*s'\n", (int)listLen, list);
         return false;
     }
@@ -747,7 +776,7 @@ static bool xssh_send_kexinit(XSshServer* adapter)
     const uint8_t* none = (const uint8_t*)"none";
 
     if (!adapter ||
-        !xssh_build_algorithm_list(xssh_kex_algorithms, kex, sizeof(kex), &kexLen) ||
+        !xssh_build_algorithm_list(xssh_server_kex_algorithms, kex, sizeof(kex), &kexLen) ||
         !xssh_build_algorithm_list(xssh_hostkey_algorithms, host, sizeof(host), &hostLen) ||
         !xssh_build_algorithm_list(xssh_cipher_algorithms, cipher, sizeof(cipher), &cipherLen) ||
         !xssh_build_algorithm_list(xssh_mac_algorithms, mac, sizeof(mac), &macLen) ||
@@ -845,7 +874,7 @@ static bool xssh_store_shared_secret_mpint(XSshServer* adapter,
                                            const uint8_t* shared, size_t sharedLen,
                                            bool sourceIsLittleEndian)
 {
-    uint8_t encoded[64];
+    uint8_t encoded[XSSH_MAX_DH_PUBLIC_LEN];
     size_t start = 0;
     size_t length;
     size_t i;
@@ -867,6 +896,359 @@ static bool xssh_store_shared_secret_mpint(XSshServer* adapter,
     return true;
 }
 
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* 有限域 DH 帮助函数（RFC 3526 group14 = ffdhe2048，自研 2048 位大数） */
+/* ------------------------------------------------------------------ */
+
+#if XSSH_FFDH_GROUPS_ON
+
+#define XSSH_BN_LIMBS 64u
+#define XSSH_BN_BITS  2048u
+#define XSSH_BN_BYTES 256u
+
+typedef struct XSshBn {
+    uint32_t d[XSSH_BN_LIMBS];
+} XSshBn;
+
+/* RFC 3526 group14 素数 p（2048 位 MODP 群），小端 limb 表示 */
+static const uint32_t xssh_dh14_prime[XSSH_BN_LIMBS] = {
+    0xffffffffu, 0xffffffffu, 0x8aacaa68u, 0x15728e5au,
+    0x98fa0510u, 0x15d22618u, 0xea956ae5u, 0x3995497cu,
+    0x95581718u, 0xde2bcbf6u, 0x6f4c52c9u, 0xb5c55df0u,
+    0xec07a28fu, 0x9b2783a2u, 0x180e8603u, 0xe39e772cu,
+    0x2e36ce3bu, 0x32905e46u, 0xca18217cu, 0xf1746c08u,
+    0x4abc9804u, 0x670c354eu, 0x7096966du, 0x9ed52907u,
+    0x208552bbu, 0x1c62f356u, 0xdca3ad96u, 0x83655d23u,
+    0xfd24cf5fu, 0x69163fa8u, 0x1c55d39au, 0x98da4836u,
+    0xa163bf05u, 0xc2007cb8u, 0xece45b3du, 0x49286651u,
+    0x7c4b1fe6u, 0xae9f2411u, 0x5a899fa5u, 0xee386bfbu,
+    0xf406b7edu, 0x0bff5cb6u, 0xa637ed6bu, 0xf44c42e9u,
+    0x625e7ec6u, 0xe485b576u, 0x6d51c245u, 0x4fe1356du,
+    0xf25f1437u, 0x302b0a6du, 0xcd3a431bu, 0xef9519b3u,
+    0x8e3404ddu, 0x514a0879u, 0x3b139b22u, 0x020bbea6u,
+    0x8a67cc74u, 0x29024e08u, 0x80dc1cd1u, 0xc4c6628bu,
+    0x2168c234u, 0xc90fdaa2u, 0xffffffffu, 0xffffffffu,
+};
+
+/* R^2 mod p，R = 2^(32*64)，用于 Montgomery 形式转换 */
+static const uint32_t xssh_dh14_r2[XSSH_BN_LIMBS] = {
+    0x125fb664u, 0x477122ceu, 0x9b38d313u, 0xb03548fbu,
+    0x6fd412c1u, 0x4c2153ffu, 0x873f9bc6u, 0x2a092b50u,
+    0xfcb7f5f9u, 0xbbc71629u, 0x36bd84e7u, 0x4bec06e1u,
+    0x6b020cb1u, 0x27ba725au, 0xed939eebu, 0xf8115426u,
+    0x8a0e30d9u, 0x4bc1b187u, 0x258633ffu, 0x5620820eu,
+    0x785a3071u, 0x074ed6abu, 0x81f1cb61u, 0xf228105fu,
+    0x4e2e6f7fu, 0x570e436fu, 0xd7450bd9u, 0x5ca52ff7u,
+    0x75f10a7eu, 0x552272d2u, 0x739c7978u, 0xac2b7925u,
+    0x325b54d0u, 0xa2f88257u, 0xe8d72bd5u, 0xbc821c9du,
+    0x866d2986u, 0xdbd442b3u, 0x70c4b2ceu, 0x9478951bu,
+    0x94910c76u, 0x5d998fb3u, 0x7e300867u, 0xf273b293u,
+    0x38569f92u, 0x8c106bbeu, 0x14e992c5u, 0xf83c92cbu,
+    0xed6880ddu, 0xd85d6e7eu, 0xbe06a1dfu, 0xeb5b276fu,
+    0xfa11e105u, 0x2a492090u, 0x19ea00beu, 0x63bdd96du,
+    0x0a1698abu, 0x27238297u, 0x9240c974u, 0x8a3a686cu,
+    0x66613000u, 0x3ed85703u, 0x628b3197u, 0x0cd37a33u,
+};
+
+/* (-p^{-1}) mod 2^32；group14 素数低 32 位为 0xffffffff，故等于 1 */
+#define XSSH_DH14_NINV 1u
+
+static void xssh_bn_zero(XSshBn* a)
+{
+    if (a) memset(a, 0, sizeof(*a));
+}
+
+static void xssh_bn_copy(XSshBn* dst, const XSshBn* src)
+{
+    if (dst && src) memcpy(dst, src, sizeof(*dst));
+}
+
+static void xssh_bn_set_u32(XSshBn* a, uint32_t v)
+{
+    if (!a) return;
+    xssh_bn_zero(a);
+    a->d[0] = v;
+}
+
+static int xssh_bn_cmp(const XSshBn* a, const XSshBn* b)
+{
+    int i;
+    if (!a || !b) return 0;
+    for (i = (int)XSSH_BN_LIMBS - 1; i >= 0; --i) {
+        if (a->d[i] > b->d[i]) return 1;
+        if (a->d[i] < b->d[i]) return -1;
+    }
+    return 0;
+}
+
+static bool xssh_bn_is_zero(const XSshBn* a)
+{
+    uint32_t v = 0;
+    size_t i;
+    if (!a) return true;
+    for (i = 0; i < XSSH_BN_LIMBS; ++i) v |= a->d[i];
+    return v == 0;
+}
+
+static bool xssh_bn_bit(const XSshBn* a, size_t bit)
+{
+    if (!a || bit >= XSSH_BN_BITS) return false;
+    return ((a->d[bit / 32u] >> (bit % 32u)) & 1u) != 0;
+}
+
+/* 大端字节转 2048 位定点数（len <= 256） */
+static void xssh_bn_from_be(const uint8_t* bytes, size_t len, XSshBn* out)
+{
+    size_t i;
+    xssh_bn_zero(out);
+    if (!bytes || !out || len > XSSH_BN_BYTES) return;
+    for (i = 0; i < len; ++i) {
+        size_t bufIndex = XSSH_BN_BYTES - len + i;
+        size_t limb = (XSSH_BN_BYTES - 1u - bufIndex) / 4u;
+        unsigned shift = (unsigned)((XSSH_BN_BYTES - 1u - bufIndex) % 4u) * 8u;
+        out->d[limb] |= ((uint32_t)bytes[i]) << shift;
+    }
+}
+
+/* 2048 位定点数转大端字节（固定 256 字节） */
+static size_t xssh_bn_to_be(const XSshBn* in, uint8_t* out, size_t outCap)
+{
+    size_t i;
+    if (!in || !out || outCap < XSSH_BN_BYTES) return 0;
+    for (i = 0; i < XSSH_BN_BYTES; ++i) {
+        size_t limb = (XSSH_BN_BYTES - 1u - i) / 4u;
+        unsigned shift = (unsigned)((XSSH_BN_BYTES - 1u - i) % 4u) * 8u;
+        out[i] = (uint8_t)(in->d[limb] >> shift);
+    }
+    return XSSH_BN_BYTES;
+}
+
+static uint32_t xssh_bn_add_raw(XSshBn* out, const XSshBn* a, const XSshBn* b)
+{
+    uint64_t carry = 0;
+    size_t i;
+    if (!out || !a || !b) return 0;
+    for (i = 0; i < XSSH_BN_LIMBS; ++i) {
+        uint64_t sum = (uint64_t)a->d[i] + b->d[i] + carry;
+        out->d[i] = (uint32_t)sum;
+        carry = sum >> 32;
+    }
+    return (uint32_t)carry;
+}
+
+static void xssh_bn_sub_raw(XSshBn* out, const XSshBn* a, const XSshBn* b)
+{
+    uint64_t borrow = 0;
+    size_t i;
+    if (!out || !a || !b) return;
+    for (i = 0; i < XSSH_BN_LIMBS; ++i) {
+        uint32_t ai = a->d[i];
+        uint64_t bi = (uint64_t)b->d[i] + borrow;
+        out->d[i] = (uint32_t)((uint64_t)ai - bi);
+        borrow = ((uint64_t)ai < bi) ? 1u : 0u;
+    }
+}
+
+static void xssh_bn_add_mod(XSshBn* out, const XSshBn* a, const XSshBn* b,
+                            const XSshBn* mod)
+{
+    XSshBn temp;
+    uint32_t carry;
+    if (!out || !a || !b || !mod) return;
+    carry = xssh_bn_add_raw(&temp, a, b);
+    if (carry) {
+        XSshBn correction, zero;
+        xssh_bn_zero(&zero);
+        xssh_bn_sub_raw(&correction, &zero, mod);
+        (void)xssh_bn_add_raw(&temp, &temp, &correction);
+    } else if (xssh_bn_cmp(&temp, mod) >= 0) {
+        xssh_bn_sub_raw(&temp, &temp, mod);
+    }
+    *out = temp;
+}
+
+static void xssh_bn_sub_mod(XSshBn* out, const XSshBn* a, const XSshBn* b,
+                            const XSshBn* mod)
+{
+    if (!out || !a || !b || !mod) return;
+    if (xssh_bn_cmp(a, b) >= 0) {
+        xssh_bn_sub_raw(out, a, b);
+    } else {
+        XSshBn temp;
+        xssh_bn_sub_raw(&temp, mod, b);
+        xssh_bn_add_raw(out, a, &temp);
+    }
+}
+
+/* Montgomery 乘法：out = a*b*R^{-1} mod m */
+static void xssh_bn_mont_mul(XSshBn* out, const XSshBn* a, const XSshBn* b,
+                             const XSshBn* mod, uint32_t ninv)
+{
+    uint64_t T[2u * XSSH_BN_LIMBS + 4u];
+    size_t i, j;
+    if (!out || !a || !b || !mod) return;
+    memset(T, 0, sizeof(T));
+    /* T = a*b */
+    for (i = 0; i < XSSH_BN_LIMBS; ++i) {
+        uint64_t carry = 0;
+        uint64_t ai = a->d[i];
+        for (j = 0; j < XSSH_BN_LIMBS; ++j) {
+            uint64_t cur = T[i + j] + ai * (uint64_t)b->d[j] + carry;
+            T[i + j] = cur & 0xffffffffu;
+            carry = cur >> 32;
+        }
+        {
+            size_t k = i + XSSH_BN_LIMBS;
+            while (carry) {
+                uint64_t cur = T[k] + carry;
+                T[k] = cur & 0xffffffffu;
+                carry = cur >> 32;
+                ++k;
+            }
+        }
+    }
+    /* Montgomery 归约 */
+    for (i = 0; i < XSSH_BN_LIMBS; ++i) {
+        uint32_t u = (uint32_t)((T[i] * ninv) & 0xffffffffu);
+        uint64_t carry = 0;
+        for (j = 0; j < XSSH_BN_LIMBS; ++j) {
+            uint64_t cur = T[i + j] + u * (uint64_t)mod->d[j] + carry;
+            T[i + j] = cur & 0xffffffffu;
+            carry = cur >> 32;
+        }
+        {
+            size_t k = i + XSSH_BN_LIMBS;
+            while (carry) {
+                uint64_t cur = T[k] + carry;
+                T[k] = cur & 0xffffffffu;
+                carry = cur >> 32;
+                ++k;
+            }
+        }
+    }
+    /* 结果 = T >> (32*64)，第 65 个 limb（bit 2048）走补充归约 */
+    for (i = 0; i < XSSH_BN_LIMBS; ++i)
+        out->d[i] = (uint32_t)T[i + XSSH_BN_LIMBS];
+    if (T[2u * XSSH_BN_LIMBS] != 0u) {
+        XSshBn correction, zero, temp;
+        xssh_bn_zero(&zero);
+        xssh_bn_sub_raw(&correction, &zero, mod);
+        (void)xssh_bn_add_raw(&temp, out, &correction);
+        *out = temp;
+    }
+    if (xssh_bn_cmp(out, mod) >= 0)
+        xssh_bn_sub_raw(out, out, mod);
+}
+
+/* Montgomery 模幂：out = base^exponent mod mod */
+static void xssh_bn_pow_mod(XSshBn* out, const XSshBn* base,
+                            const XSshBn* exponent, const XSshBn* mod,
+                            const XSshBn* r2)
+{
+    XSshBn one, baseMont, result, tmp;
+    size_t i;
+    if (!out || !base || !exponent || !mod || !r2) return;
+    xssh_bn_set_u32(&one, 1u);
+    xssh_bn_mont_mul(&baseMont, base, r2, mod, XSSH_DH14_NINV);
+    xssh_bn_mont_mul(&result, &one, r2, mod, XSSH_DH14_NINV);
+    for (i = XSSH_BN_BITS; i-- > 0;) {
+        xssh_bn_mont_mul(&tmp, &result, &result, mod, XSSH_DH14_NINV);
+        result = tmp;
+        if (xssh_bn_bit(exponent, i)) {
+            xssh_bn_mont_mul(&tmp, &result, &baseMont, mod, XSSH_DH14_NINV);
+            result = tmp;
+        }
+    }
+    xssh_bn_mont_mul(out, &result, &one, mod, XSSH_DH14_NINV);
+}
+
+/* 2048 位定点数转 SSH mpint 字节（若最高位为 1 则前置 0x00） */
+static size_t xssh_bn_to_mpint(const XSshBn* in, uint8_t* out, size_t outCap)
+{
+    uint8_t be[XSSH_BN_BYTES];
+    size_t start = 0;
+    size_t len;
+    if (!in || !out || outCap < 1u) return 0;
+    if (xssh_bn_to_be(in, be, sizeof(be)) != sizeof(be)) return 0;
+    while (start + 1u < sizeof(be) && be[start] == 0) ++start;
+    len = sizeof(be) - start;
+    if ((be[start] & 0x80u) != 0) {
+        if (outCap < len + 1u) return 0;
+        out[0] = 0;
+        memcpy(out + 1, be + start, len);
+        return len + 1u;
+    }
+    if (outCap < len) return 0;
+    memcpy(out, be + start, len);
+    return len;
+}
+
+/* 生成服务端 DH 私钥并计算公钥 f = g^x mod p（g=2），以 mpint 形式返回 */
+static bool xssh_ffdh_generate_key(XSshServer* adapter,
+                                   uint8_t* serverPublicMpint,
+                                   size_t serverPublicCap,
+                                   size_t* serverPublicLen)
+{
+    uint8_t priv[32];
+    XSshBn privBn, base, f;
+    size_t fMpintLen;
+    if (!adapter || !serverPublicMpint || !serverPublicLen) return false;
+    if (!XRandomGenerator_fillSecure(priv, sizeof(priv))) return false;
+    priv[0] |= 0x80u;               /* 保证 256 位私钥与 2048 位群安全强度匹配 */
+    xssh_bn_from_be(priv, sizeof(priv), &privBn);
+    memcpy(XSSH_DATA(adapter)->ffdhPriv, priv, sizeof(priv));
+    XSSH_DATA(adapter)->ffdhPrivLen = sizeof(priv);
+    xssh_bn_set_u32(&base, 2u);     /* g = 2 */
+    xssh_bn_pow_mod(&f, &base, &privBn,
+                    (const XSshBn*)xssh_dh14_prime,
+                    (const XSshBn*)xssh_dh14_r2);
+    fMpintLen = xssh_bn_to_mpint(&f, serverPublicMpint, serverPublicCap);
+    if (fMpintLen == 0) return false;
+    *serverPublicLen = fMpintLen;
+    return true;
+}
+
+/* 计算共享秘密 K = e^x mod p，以 256 字节大端输出 */
+static bool xssh_ffdh_agree(XSshServer* adapter,
+                            const uint8_t* clientEMpint,
+                            size_t clientEMpintLen,
+                            uint8_t* shared, size_t sharedCapacity,
+                            size_t* sharedLen)
+{
+    XSshBn e, priv, K;
+    const XSshBn* mod = (const XSshBn*)xssh_dh14_prime;
+    size_t eLen = clientEMpintLen;
+    if (!adapter || !clientEMpint || !shared || !sharedLen ||
+        clientEMpintLen == 0 || clientEMpintLen > XSSH_MAX_DH_PUBLIC_LEN ||
+        XSSH_DATA(adapter)->ffdhPrivLen == 0)
+        return false;
+    /* mpint 可能带前导 0x00（RFC 4251 §5 符号位约定），先剥离再转定点数。 */
+    while (eLen > 0 && clientEMpint[0] == 0u) { ++clientEMpint; --eLen; }
+    if (eLen == 0 || eLen > XSSH_BN_BYTES)
+        return false;
+    xssh_bn_from_be(clientEMpint, eLen, &e);
+    if (xssh_bn_is_zero(&e) || xssh_bn_cmp(&e, mod) >= 0) return false;
+    xssh_bn_from_be(XSSH_DATA(adapter)->ffdhPriv,
+                    XSSH_DATA(adapter)->ffdhPrivLen, &priv);
+    xssh_bn_pow_mod(&K, &e, &priv, mod, (const XSshBn*)xssh_dh14_r2);
+    if (sharedCapacity < XSSH_BN_BYTES) return false;
+    if (xssh_bn_to_be(&K, shared, sharedCapacity) != XSSH_BN_BYTES) return false;
+    *sharedLen = XSSH_BN_BYTES;
+    return true;
+}
+
+/* 清理临时私钥缓存 */
+static void xssh_ffdh_destroy_key(XSshServer* adapter)
+{
+    if (!adapter) return;
+    memset(XSSH_DATA(adapter)->ffdhPriv, 0, sizeof(XSSH_DATA(adapter)->ffdhPriv));
+    XSSH_DATA(adapter)->ffdhPrivLen = 0;
+}
+
+#endif /* XSSH_FFDH_GROUPS_ON */
+
+
 static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
                                                 const uint8_t* payload, size_t len)
 {
@@ -874,11 +1256,12 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     size_t off = 0;
     const uint8_t* qcString;
     size_t qcStringLen;
-    uint8_t serverPub[XSSH_POINT_LEN];
+    uint8_t serverPub[XSSH_MAX_DH_PUBLIC_LEN];
     size_t serverPubLen;
-    uint8_t shared[64];
+    uint8_t shared[XSSH_MAX_DH_PUBLIC_LEN];
     size_t sharedLen;
-    uint8_t hashInput[XSSH_RX_CAPACITY + 64];
+    bool isDhGroup14 = false;
+    uint8_t hashInput[4u * XSSH_MAX_PACKET + 4u * XSSH_MAX_DH_PUBLIC_LEN + 128];
     size_t hashOff = 0;
     uint8_t sig[256];
     size_t sigLen;
@@ -913,13 +1296,26 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
 #else
         return XProtocolResult_Failed;
 #endif
+    case XSshKexAlgorithm_DhGroup14Sha256:
+#if XSSH_FFDH_GROUPS_ON && XCRYPTOGRAPHIC_SHA256_ON
+        expectedPublicLen = 0;                 /* 长度由包内 mpint 决定 */
+        ecdhAlgorithm = XCryptographic_EcdhAlgorithm_None;
+        sharedIsLittleEndian = false;
+        isDhGroup14 = true;
+        break;
+#else
+        return XProtocolResult_Failed;
+#endif
     default:
         return XProtocolResult_Failed;
     }
 
-    /* Q_C 是所选密钥交换算法定义的原始公钥字符串，不是 SSH key blob。 */
+    /* Q_C 是所选密钥交换算法定义的原始公钥字符串，不是 SSH key blob。
+     * DH group14 的 Q_C 为 mpint e（含可能的前导 0），长度不固定。 */
     if (!xssh_get_string(payload, len, &off, &qcString, &qcStringLen) ||
-        off != len || qcStringLen != expectedPublicLen ||
+        off != len ||
+        (!isDhGroup14 && qcStringLen != expectedPublicLen) ||
+        (isDhGroup14 && (qcStringLen == 0 || qcStringLen > XSSH_MAX_DH_PUBLIC_LEN)) ||
         (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_EcdhSha2Nistp256 &&
          qcString[0] != 0x04)) {
         XSSH_DBG("get client public key failed len=%u\n", (unsigned)qcStringLen);
@@ -929,30 +1325,51 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     memcpy(XSSH_DATA(adapter)->clientPublicBlob, qcString, qcStringLen);
     XSSH_DATA(adapter)->clientPublicBlobLen = qcStringLen;
 
-    /* 生成服务端临时密钥并执行 ECDH/X25519 原始密钥协商。 */
-    if (!XCryptographic_ecdhGenerateKey(ecdhAlgorithm, &XSSH_DATA(adapter)->ecdhKey)) {
-        XSSH_DBG("generate key exchange key failed\n");
+    /* 生成服务端临时密钥并执行 ECDH/X25519 或有限域 DH 原始密钥协商。 */
+    if (isDhGroup14) {
+#if XSSH_FFDH_GROUPS_ON
+        if (!xssh_ffdh_generate_key(adapter, serverPub, sizeof(serverPub),
+                                    &serverPubLen)) {
+            XSSH_DBG("ffdh generate key failed\n");
+            xssh_ffdh_destroy_key(adapter);
+            return XProtocolResult_Failed;
+        }
+        sharedLen = 0;
+        if (!xssh_ffdh_agree(adapter, qcString, qcStringLen,
+                             shared, sizeof(shared), &sharedLen)) {
+            XSSH_DBG("ffdh raw agreement failed\n");
+            xssh_ffdh_destroy_key(adapter);
+            return XProtocolResult_Failed;
+        }
+        xssh_ffdh_destroy_key(adapter);
+#else
         return XProtocolResult_Failed;
-    }
-    serverPubLen = (size_t)XCryptographic_exportPublicKeyInto(
-        (char*)serverPub, sizeof(serverPub), XSSH_DATA(adapter)->ecdhKey).m_size;
-    if (serverPubLen != expectedPublicLen) {
-        XSSH_DBG("export public key failed len=%u\n", (unsigned)serverPubLen);
-        return XProtocolResult_Failed;
-    }
+#endif
+    } else {
+        if (!XCryptographic_ecdhGenerateKey(ecdhAlgorithm, &XSSH_DATA(adapter)->ecdhKey)) {
+            XSSH_DBG("generate key exchange key failed\n");
+            return XProtocolResult_Failed;
+        }
+        serverPubLen = (size_t)XCryptographic_exportPublicKeyInto(
+            (char*)serverPub, sizeof(serverPub), XSSH_DATA(adapter)->ecdhKey).m_size;
+        if (serverPubLen != expectedPublicLen) {
+            XSSH_DBG("export public key failed len=%u\n", (unsigned)serverPubLen);
+            return XProtocolResult_Failed;
+        }
 
-    sharedLen = (size_t)XCryptographic_ecdhAgreeInto(
-        (char*)shared, sizeof(shared), XSSH_DATA(adapter)->ecdhKey,
-        (XByteArrayView){ qcString, (int64_t)qcStringLen }).m_size;
-    if (sharedLen == 0) {
-        XSSH_DBG("raw key agreement failed len=%u\n", (unsigned)sharedLen);
-        return XProtocolResult_Failed;
-    }
-    if (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_Curve25519Sha256) {
-        uint8_t any = 0;
-        size_t i;
-        for (i = 0; i < sharedLen; ++i) any |= shared[i];
-        if (any == 0) return XProtocolResult_Failed;
+        sharedLen = (size_t)XCryptographic_ecdhAgreeInto(
+            (char*)shared, sizeof(shared), XSSH_DATA(adapter)->ecdhKey,
+            (XByteArrayView){ qcString, (int64_t)qcStringLen }).m_size;
+        if (sharedLen == 0) {
+            XSSH_DBG("raw key agreement failed len=%u\n", (unsigned)sharedLen);
+            return XProtocolResult_Failed;
+        }
+        if (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_Curve25519Sha256) {
+            uint8_t any = 0;
+            size_t i;
+            for (i = 0; i < sharedLen; ++i) any |= shared[i];
+            if (any == 0) return XProtocolResult_Failed;
+        }
     }
     if (!xssh_store_shared_secret_mpint(adapter, shared, sharedLen, sharedIsLittleEndian))
         return XProtocolResult_Failed;

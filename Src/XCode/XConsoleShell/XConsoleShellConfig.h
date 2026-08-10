@@ -394,6 +394,21 @@
 #define XCONSOLE_SHELL_EDITOR_MAX_LINES 64
 #endif
 
+/** @brief 启用 XTui 全屏 vim 编辑器（依赖 XTUI_VIM_ON）；置 0 时回退到行式编辑器。 */
+#ifndef XCONSOLE_SHELL_EDITOR_TUI_ON
+#define XCONSOLE_SHELL_EDITOR_TUI_ON 1
+#endif
+
+/** @brief XTui 全屏 vim 的终端默认宽度（列数）。 */
+#ifndef XCONSOLE_SHELL_TUI_WIDTH
+#define XCONSOLE_SHELL_TUI_WIDTH 80
+#endif
+
+/** @brief XTui 全屏 vim 的终端默认高度（行数）。 */
+#ifndef XCONSOLE_SHELL_TUI_HEIGHT
+#define XCONSOLE_SHELL_TUI_HEIGHT 24
+#endif
+
 /** @brief 启用 `chmod` 权限修改入口；后端可能只支持部分权限。 */
 #ifndef XCONSOLE_SHELL_FS_CHMOD_ON
 #define XCONSOLE_SHELL_FS_CHMOD_ON 0

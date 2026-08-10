@@ -1612,6 +1612,13 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
     if (XConsoleShellLogin_isInputPending(&self->m_session) && byte == 0x1b)
         return XConsoleResult_Ok;
 #endif
+#if XCONSOLE_SHELL_EDITOR_ON
+    /* vim 插入模式下，所有输入字节直接交给编辑器逐字符处理，
+       实现输入、回车换行、退格和 ESC 返回命令模式。 */
+    if (XConsoleShellVi_isActive(&self->m_session) &&
+        (self->m_session.editorInsertMode || self->m_session.editorTui != NULL))
+        return XConsoleShellVi_feedByte(self, &self->m_session, byte);
+#endif
 #if XCONSOLE_SHELL_STATS_ON
     ++self->m_inputBytes;
 #endif
@@ -1688,6 +1695,18 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
     if (byte == '\t') {
         xcs_complete_root_command(self);
         return XConsoleResult_Ok;
+    }
+#endif
+#if XCONSOLE_SHELL_EDITOR_ON
+    /* vi/vim 命令模式下，单独的 `i`/`a` 按键立即进入插入模式，
+       无需再按回车提交；与行式 shell 的其余命令保持兼容。 */
+    if (XConsoleShellVi_isActive(&self->m_session) &&
+        !self->m_session.editorInsertMode &&
+        self->m_lineLength == 0 &&
+        (byte == 'i' || byte == 'a')) {
+        char single[2] = { (char)byte, '\0' };
+        result = XConsoleShellVi_submitLine(self, &self->m_session, single, 1);
+        return result;
     }
 #endif
     if (byte == '\r' || byte == '\n') {

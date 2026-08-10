@@ -23,7 +23,9 @@
 typedef enum XSshKexAlgorithm {
     XSshKexAlgorithm_None = 0,
     XSshKexAlgorithm_Curve25519Sha256,
-    XSshKexAlgorithm_EcdhSha2Nistp256
+    XSshKexAlgorithm_EcdhSha2Nistp256,
+    XSshKexAlgorithm_DhGroup14Sha256,
+    XSshKexAlgorithm_DhGroup16Sha512
 } XSshKexAlgorithm;
 
 typedef enum XSshCipherAlgorithm {

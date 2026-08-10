@@ -41,6 +41,41 @@ extern "C" {
 #define XSSH_CLIENT_ON 1
 #endif
 
+/** @brief 启用 RFC 3526 MODP 有限域 DH 密钥交换（diffie-hellman-group14-sha256），
+ *         用于兼容 Xshell 等客户端的默认密钥交换列表。
+ *
+ *         实现为仓库内自研 2048 位大数 + Montgomery 模幂，不依赖外部库
+ *         （不包含 mbedTLS PSA 头文件）；group16-sha512 预留枚举但暂未实现。 */
+#ifndef XSSH_FFDH_GROUPS_ON
+#define XSSH_FFDH_GROUPS_ON 1
+#endif
+
+/** @brief SSH 接收缓冲容量（字节）。未加密阶段缓存版本行和明文包，
+ *         加密阶段缓存完整密文包（含 4 字节长度和 MAC）。 */
+#ifndef XSSH_CFG_RX_CAPACITY
+#define XSSH_CFG_RX_CAPACITY 4096
+#endif
+
+/** @brief SSH 发送缓冲容量（字节）。停靠待冲刷的协议输出。 */
+#ifndef XSSH_CFG_TX_OUT_CAPACITY
+#define XSSH_CFG_TX_OUT_CAPACITY 4096
+#endif
+
+/** @brief SSH 单包最大长度（字节）。包含 packet_length 之后的
+ *         padding_length、payload 和 padding，不含 4 字节长度字段。
+ *
+ *         常见客户端（含 Xshell 默认 KEXINIT 约 2068 字节）可被
+ *         3072 覆盖；嵌入式资源紧张时仍可调小，但需 >= 客户端握手包。 */
+#ifndef XSSH_CFG_MAX_PACKET
+#define XSSH_CFG_MAX_PACKET 3072
+#endif
+
+/** @brief 单包 payload 上限（字节），用于接收缓冲与发送组装。 */
+#ifndef XSSH_CFG_MAX_PAYLOAD
+#define XSSH_CFG_MAX_PAYLOAD 3072
+#endif
+
+
 /* ========================================================================== */
 /*                        公共参数                                          */
 /* ========================================================================== */

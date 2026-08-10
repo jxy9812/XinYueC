@@ -430,6 +430,31 @@ static XConsoleResult XConsoleShellTest_feedData(XConsoleShell* shell,
 #define XConsoleShell_feedData XConsoleShellTest_feedData
 #endif
 
+#if XCONSOLE_SHELL_EDITOR_ON
+/** @brief 全屏 TUI 编辑器测试：逐字节喂给 Shell 并验证返回结果与输出内容。 */
+static bool XConsoleShellTest_feedEditor(XConsoleShell* shell,
+                                         XConsoleShellTestTransport* transport,
+                                         const char* data, size_t length,
+                                         XConsoleResult expected,
+                                         const char* expectedText)
+{
+    XConsoleResult result;
+    if (!shell || !transport || (!data && length)) return false;
+    transport->length = 0;
+    transport->output[0] = '\0';
+    result = XConsoleShell_feedData(shell, data, length);
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+    if (result != expected || (expectedText && !strstr(transport->output, expectedText))) {
+        XPrintf("[FAIL] Shell 编辑器字节输入长度=%zu, result=%d, expected=%d, output=%s\n",
+                length, result, expected, transport->output);
+        return false;
+    }
+    return true;
+}
+#endif
+
 static bool XConsoleShellTest_runFileCommands(
     XConsoleShell* shell, XConsoleShellTestTransport* transport)
 {
@@ -644,7 +669,89 @@ static bool XConsoleShellTest_runEditorCommands(
     command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
     if (!command) goto cleanup;
 
-    /* 新建文件打开后进入命令模式。 */
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    /* 打开新文件进入全屏 vim，随后用字节流驱动 XTui 状态机。 */
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    /* i 进入插入模式，输入内容后 ESC 返回命令模式。 */
+    if (!XConsoleShellTest_feedEditor(shell, transport, "i", 1,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    /* TUI 输出带 ANSI 光标控制序列，字符间不连续；文本正确性由
+       保存后的文件内容断言保证。 */
+    if (!XConsoleShellTest_feedEditor(shell, transport, "hello", 5,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    /* 插入模式方向键：只移动光标，不得输出 abcd 或退出插入模式。 */
+    if (!XConsoleShellTest_feedEditor(shell, transport,
+                                      "\x1b[D\x1b[C\x1b[A\x1b[B", 12,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    if (!XConsoleShellTest_feedEditor(shell, transport, "\x1b", 1,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    /* :wq 保存并退出。 */
+    if (!XConsoleShellTest_feedEditor(shell, transport, ":wq\n", 4,
+                                      XConsoleResult_Ok, NULL))
+        goto cleanup;
+    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "hello") == NULL || strstr(content, "abcd") != NULL)
+        goto cleanup;
+
+    /* 重新打开未修改文件，:q 直接退出。 */
+    command = XString_create_fmt_utf8("vim %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    if (!XConsoleShellTest_feedEditor(shell, transport, ":q\n", 3,
+                                      XConsoleResult_Ok, NULL))
+        goto cleanup;
+
+    /* 再次打开并修改后，:q! 放弃修改，磁盘内容保持不变。 */
+    command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    if (!XConsoleShellTest_feedEditor(shell, transport, "i", 1,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    if (!XConsoleShellTest_feedEditor(shell, transport, "discarded", 9,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    if (!XConsoleShellTest_feedEditor(shell, transport, "\x1b", 1,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    /* 有未保存修改时 :q 应拒绝退出并留在 TUI。 */
+    if (!XConsoleShellTest_feedEditor(shell, transport, ":q\n", 3,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    if (!XConsoleShellTest_feedEditor(shell, transport, ":q!\n", 4,
+                                      XConsoleResult_Ok, NULL))
+        goto cleanup;
+    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "discarded") != NULL)
+        goto cleanup;
+#else
+    /* 行式状态机：新建文件打开后进入命令模式。 */
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, "vi 命令模式"))
         goto cleanup;
@@ -655,10 +762,10 @@ static bool XConsoleShellTest_runEditorCommands(
                                    XConsoleResult_MoreOutput, "插入模式"))
         goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "first line",
-                                   XConsoleResult_MoreOutput, "1:	first line"))
+                                   XConsoleResult_MoreOutput, "1:\tfirst line"))
         goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "second line",
-                                   XConsoleResult_MoreOutput, "2:	second line"))
+                                   XConsoleResult_MoreOutput, "2:\tsecond line"))
         goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, ".",
                                    XConsoleResult_MoreOutput, "命令模式"))
@@ -717,6 +824,7 @@ static bool XConsoleShellTest_runEditorCommands(
     content[size] = '\0';
     if (strstr(content, "discarded") != NULL)
         goto cleanup;
+#endif
 
     ok = true;
 

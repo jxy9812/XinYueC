@@ -101,6 +101,12 @@ typedef struct XConsoleShellSession {
     size_t editorLineCount;                           /**< 编辑缓冲有效行数。 */
     size_t editorCursorLine;                          /**< 插入模式插入位置所在行；0 起。 */
     size_t editorCursorColumn;                        /**< 插入模式插入位置所在列；0 起。 */
+    char editorInsertBuf[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 插入模式当前正在编辑的一行。 */
+    size_t editorInsertLen;                           /**< 插入模式当前行的长度。 */
+    size_t editorInsertCursor;                        /**< 插入模式当前行的光标列。 */
+    bool editorInsertPendingCr;                       /**< 插入模式已收到 \r，等待合并其后的 \n。 */
+    unsigned char editorInsertEscape;                 /**< 插入模式 ESC/方向键状态；0 无，1 收到 ESC，2 收到 ESC [。 */
+    void* editorTui;                                  /**< XConsoleShellViTui 私有 TUI 会话；由编辑器拥有，Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
     XConsoleShellIo m_io;                             /**< 会话借用的传输回调集合。 */

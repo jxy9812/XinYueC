@@ -22,6 +22,189 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+#include "XTui.h"
+#include "XTuiVim.h"
+
+static void xvi_clear(XConsoleShellSession* session);
+static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
+                           const XString* path);
+static bool xvi_write_line(XConsoleShell* shell, const char* text);
+
+/** @brief XConsoleShell vi/vim 的全屏 TUI 会话私有结构。 */
+typedef struct XviTui
+{
+    XConsoleShell*      shell;    /**< 所属 Shell；借用指针。 */
+    XConsoleShellSession* session;/**< 所属会话；借用指针。 */
+    XTui*               tui;      /**< TUI 主会话；由本结构拥有。 */
+    XTuiScreen*         screen;   /**< 屏幕缓冲；由本结构拥有。 */
+    XTuiTerminal*       terminal; /**< 终端适配器；由本结构拥有。 */
+    XTuiVim*            vim;      /**< 全屏 vim 控件；由本结构拥有。 */
+    char                path[XCONSOLE_SHELL_MAX_PATH]; /**< 目标文件路径。 */
+} XviTui;
+
+static bool xvi_tui_write(void* userData, const char* data, size_t length)
+{
+    XviTui* tui = (XviTui*)userData;
+    if (!tui || !tui->shell || !data)
+        return false;
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    return XConsoleShell_writeForSession(tui->shell, tui->session, data, length);
+#else
+    return XConsoleShell_write(tui->shell, data, length);
+#endif
+}
+
+static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
+                         XviTui* tui, const char* path)
+{
+    XFd fd;
+    XString* pathObj;
+    int error = 0;
+    int i;
+    bool ok = true;
+    (void)shell;
+    (void)session;
+    if (!tui || !path)
+        return false;
+    pathObj = XString_create_utf8(path);
+    if (!pathObj)
+        return false;
+    fd = XFileSystem_open(pathObj, XFileSystem_WriteOnly | XFileSystem_Create |
+                          XFileSystem_Truncate, &error);
+    if (fd == XFD_INVALID) {
+        XString_delete_base(pathObj);
+        return false;
+    }
+    for (i = 0; i < XTuiVim_lineCount(tui->vim) && ok; ++i) {
+        const char* line = XTuiVim_line(tui->vim, i);
+        size_t length = strlen(line ? line : "");
+        if (length &&
+            XFileSystem_write(fd, line, (int64_t)length) != (int64_t)length)
+            ok = false;
+        if (ok && XFileSystem_write(fd, "\n", 1) != 1)
+            ok = false;
+    }
+    if (ok)
+        ok = XFileSystem_flush(fd);
+    XFileSystem_close(fd);
+    XString_delete_base(pathObj);
+    return ok;
+}
+
+static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
+                                          XConsoleShellSession* session,
+                                          XviTui* tui)
+{
+    bool quit = false;
+    if (!shell || !session || !tui)
+        return XConsoleResult_InvalidArgument;
+    if (XTuiVim_wantSaveQuit(tui->vim)) {
+        if (!xvi_tui_save(shell, session, tui, tui->path)) {
+            (void)xvi_write_line(shell, "vi: 保存失败");
+            XTuiVim_ackAction(tui->vim);
+            return XConsoleResult_MoreOutput;
+        }
+        XTuiVim_clearModified(tui->vim);
+        XTuiVim_ackAction(tui->vim);
+        quit = true;
+    } else if (XTuiVim_wantSave(tui->vim)) {
+        if (!xvi_tui_save(shell, session, tui, tui->path)) {
+            (void)xvi_write_line(shell, "vi: 保存失败");
+            XTuiVim_ackAction(tui->vim);
+            return XConsoleResult_MoreOutput;
+        }
+        XTuiVim_clearModified(tui->vim);
+        XTuiVim_ackAction(tui->vim);
+        XTui_refresh(tui->tui);
+        return XConsoleResult_MoreOutput;
+    }
+    if (XTuiVim_wantQuit(tui->vim)) {
+        XTuiVim_ackAction(tui->vim);
+        quit = true;
+    }
+    if (quit) {
+        XTui_stop(tui->tui);
+        if (tui->vim) XTuiVim_delete_base(tui->vim);
+        if (tui->screen) XTuiScreen_delete_base(tui->screen);
+        if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
+        if (tui->tui) XTui_delete_base(tui->tui);
+        XFree_System(tui);
+        session->editorTui = NULL;
+        session->editorActive = false;
+        session->suppressPrompt = false;
+        xvi_clear(session);
+        return XConsoleResult_Ok;
+    }
+    return XConsoleResult_MoreOutput;
+}
+
+static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
+                         const XString* path)
+{
+    XviTui* tui;
+    const char* lines[XCONSOLE_SHELL_EDITOR_MAX_LINES];
+    int i;
+    if (!shell || !session || !path)
+        return false;
+    if (!xvi_load_lines(shell, session, path))
+        return false;
+    if (session->editorLineCount > XCONSOLE_SHELL_EDITOR_MAX_LINES)
+        return false;
+    tui = (XviTui*)XMalloc_System(sizeof(XviTui));
+    if (!tui)
+        return false;
+    memset(tui, 0, sizeof(*tui));
+    tui->shell = shell;
+    tui->session = session;
+    tui->tui = XTui_create();
+    tui->screen = XTuiScreen_create_ex(XCONSOLE_SHELL_TUI_WIDTH,
+                                       XCONSOLE_SHELL_TUI_HEIGHT);
+    tui->terminal = XTuiTerminal_create();
+    tui->vim = XTuiVim_create();
+    if (!tui->tui || !tui->screen || !tui->terminal || !tui->vim)
+        goto fail;
+    XTuiTerminal_setWriteCallback(tui->terminal, xvi_tui_write, tui);
+    XTuiTerminal_setSize(tui->terminal, XCONSOLE_SHELL_TUI_WIDTH,
+                         XCONSOLE_SHELL_TUI_HEIGHT);
+    for (i = 0; i < (int)session->editorLineCount; ++i)
+        lines[i] = session->editorLines[i];
+    /* 新文件行数为 0 时，向 TUI 提供一个空行作为初始缓冲。 */
+    if (session->editorLineCount == 0)
+        lines[0] = "";
+    XTuiVim_setLines(tui->vim, lines,
+                     session->editorLineCount ? (int)session->editorLineCount : 1);
+    XTuiVim_setPath(tui->vim, XString_toUtf8(path));
+    XTui_setScreen(tui->tui, tui->screen);
+    XTui_setTerminal(tui->tui, tui->terminal);
+    XTui_setRootWidget(tui->tui, (XTuiWidget*)tui->vim);
+    XTui_setFocusWidget(tui->tui, (XTuiWidget*)tui->vim);
+    {
+        XRect vimRect = { 0, 0, XCONSOLE_SHELL_TUI_WIDTH,
+                          XCONSOLE_SHELL_TUI_HEIGHT };
+        XTuiWidget_setRect((XTuiWidget*)tui->vim, &vimRect);
+    }
+    if (!XTui_start(tui->tui) || !XTui_refresh(tui->tui))
+        goto fail;
+    if (XString_size_base(path) >= sizeof(tui->path))
+        goto fail;
+    memcpy(tui->path, XString_toUtf8(path), XString_size_base(path) + 1u);
+    session->editorActive = true;
+    session->editorInsertMode = false;
+    session->editorModified = false;
+    session->editorTui = tui;
+    session->suppressPrompt = true;
+    return true;
+fail:
+    if (tui->vim) XTuiVim_delete_base(tui->vim);
+    if (tui->screen) XTuiScreen_delete_base(tui->screen);
+    if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
+    if (tui->tui) XTui_delete_base(tui->tui);
+    XFree_System(tui);
+    return false;
+}
+#endif /* XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON */
+
 static bool xvi_write_line(XConsoleShell* shell, const char* text)
 {
     return shell && text && XConsoleShell_writeUtf8(shell, text) &&
@@ -75,8 +258,13 @@ static void xvi_clear(XConsoleShellSession* session)
     session->editorLineCount = 0;
     session->editorCursorLine = 0;
     session->editorCursorColumn = 0;
+    session->editorInsertLen = 0;
+    session->editorInsertCursor = 0;
+    session->editorInsertPendingCr = false;
+    session->editorInsertEscape = 0;
     session->editorPath[0] = '\0';
     memset(session->editorLines, 0, sizeof(session->editorLines));
+    memset(session->editorInsertBuf, 0, sizeof(session->editorInsertBuf));
 }
 
 static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
@@ -189,8 +377,13 @@ static bool xvi_enter_insert(XConsoleShell* shell, XConsoleShellSession* session
         session->editorCursorColumn = 0;
     session->editorInsertMode = true;
     session->editorInsertAfter = after;
-    return xvi_write_line(shell, after ? "-- 插入模式（当前行后，输入 . 结束）--"
-                                      : "-- 插入模式（输入 . 结束）--");
+    session->editorInsertLen = 0;
+    session->editorInsertCursor = 0;
+    session->editorInsertPendingCr = false;
+    session->editorInsertEscape = 0;
+    session->editorInsertBuf[0] = '\0';
+    return xvi_write_line(shell, after ? "-- 插入模式 --"
+                                      : "-- 插入模式 --");
 }
 
 static bool xvi_insert_line(XConsoleShell* shell, XConsoleShellSession* session,
@@ -412,6 +605,136 @@ static XConsoleResult xvi_insert(XConsoleShell* shell,
                                            : XConsoleResult_IoError;
 }
 
+static XConsoleResult xvi_exit_insert(XConsoleShell* shell,
+                                        XConsoleShellSession* session)
+{
+    bool hadText = session->editorInsertLen > 0;
+    if (hadText &&
+        !xvi_insert_line(shell, session, session->editorInsertBuf,
+                         session->editorInsertLen))
+        return XConsoleResult_MoreOutput;
+    session->editorInsertMode = false;
+    session->editorInsertAfter = false;
+    session->editorInsertLen = 0;
+    session->editorInsertCursor = 0;
+    session->editorInsertPendingCr = false;
+    session->editorInsertEscape = 0;
+    session->editorInsertBuf[0] = '\0';
+    (void)xvi_write_line(shell, "-- 命令模式 --");
+    if (hadText)
+        return xvi_print_lines(shell, session) ? XConsoleResult_MoreOutput
+                                               : XConsoleResult_IoError;
+    return XConsoleResult_MoreOutput;
+}
+
+XConsoleResult XConsoleShellVi_feedByte(XConsoleShell* shell,
+                                        XConsoleShellSession* session,
+                                        uint8_t byte)
+{
+    if (!shell || !session || !XConsoleShellVi_isActive(session))
+        return XConsoleResult_InvalidArgument;
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    /* 全屏 TUI 模式下所有输入字节直接交给 XTui 解析状态机处理，
+       包括方向键、冒号命令、回车和 Ctrl+C（模拟 ESC 返回命令模式）。 */
+    if (session->editorTui) {
+        XviTui* tui = (XviTui*)session->editorTui;
+        char c = (char)byte;
+        if (byte == 0x03)
+            c = (char)0x1b; /* Ctrl+C 模拟 ESC。 */
+        XTui_feedInput(tui->tui, &c, 1);
+        XTui_refresh(tui->tui);
+        return xvi_tui_after_input(shell, session, tui);
+    }
+#endif
+    if (!session->editorInsertMode)
+        return XConsoleResult_InvalidArgument;
+
+    /* ESC/方向键状态机：方向键真正发送 ESC [ A/B/C/D，必须完整消费，
+       不能把 ESC 直接当作退出插入模式。 */
+    if (session->editorInsertEscape == 1) {
+        /* 普通光标键 ESC [ 与应用光标键 ESC O 都支持。 */
+        if (byte == '[' || byte == 'O') {
+            session->editorInsertEscape = byte == '[' ? 2u : 3u;
+            return XConsoleResult_Ok;
+        }
+        /* 单独按 ESC（后面不是 '['/'O'）：退出插入模式，并把后续字节
+           重新交给 Shell 处理，避免丢失紧跟 ESC 的输入。 */
+        {
+            XConsoleResult exitResult = xvi_exit_insert(shell, session);
+            if (exitResult != XConsoleResult_MoreOutput)
+                return exitResult;
+            return XConsoleShell_feedByte(shell, byte);
+        }
+    }
+    if (session->editorInsertEscape == 2 || session->editorInsertEscape == 3) {
+        session->editorInsertEscape = 0;
+        if (byte == 'C' && session->editorInsertCursor < session->editorInsertLen)
+            ++session->editorInsertCursor;
+        else if (byte == 'D' && session->editorInsertCursor > 0)
+            --session->editorInsertCursor;
+        /* 上下方向键暂不跨行移动，直接忽略以免误退出。 */
+        return XConsoleResult_Ok;
+    }
+    if (byte == 0x1b) {
+        session->editorInsertEscape = 1;
+        return XConsoleResult_Ok;
+    }
+    if (byte == 0x03) {
+        return xvi_exit_insert(shell, session);
+    }
+
+    /* 回车提交当前插入行；CRLF 的 LF 作为换行的组成部分跳过，
+       避免把空行重复提交。 */
+    if (byte == '\r' || byte == '\n') {
+        if (session->editorInsertPendingCr && byte == '\n') {
+            session->editorInsertPendingCr = false;
+            return XConsoleResult_Ok;
+        }
+        session->editorInsertPendingCr = (byte == '\r');
+        if (!xvi_insert_line(shell, session, session->editorInsertBuf,
+                             session->editorInsertLen))
+            return XConsoleResult_MoreOutput;
+        session->editorInsertLen = 0;
+        session->editorInsertCursor = 0;
+        session->editorInsertPendingCr = false;
+        session->editorInsertBuf[0] = '\0';
+        return xvi_print_lines(shell, session) ? XConsoleResult_MoreOutput
+                                               : XConsoleResult_IoError;
+    }
+
+    /* 非换行字节结束 CRLF 合并窗口。 */
+    session->editorInsertPendingCr = false;
+
+    /* 退格删除光标前字符。 */
+    if (byte == '\b' || byte == 0x7f) {
+        if (session->editorInsertCursor > 0) {
+            --session->editorInsertCursor;
+            --session->editorInsertLen;
+            memmove(session->editorInsertBuf + session->editorInsertCursor,
+                    session->editorInsertBuf + session->editorInsertCursor + 1u,
+                    session->editorInsertLen - session->editorInsertCursor);
+            session->editorInsertBuf[session->editorInsertLen] = '\0';
+        }
+        return XConsoleResult_Ok;
+    }
+
+    /* 可打印字节插入到光标位置。 */
+    if (session->editorInsertLen + 1u >= sizeof(session->editorInsertBuf)) {
+        (void)xvi_write_line(shell, "vi: 行缓冲已满");
+        return XConsoleResult_MoreOutput;
+    }
+    if (session->editorInsertCursor < session->editorInsertLen) {
+        memmove(session->editorInsertBuf + session->editorInsertCursor + 1u,
+                session->editorInsertBuf + session->editorInsertCursor,
+                session->editorInsertLen - session->editorInsertCursor);
+    }
+    session->editorInsertBuf[session->editorInsertCursor] = (char)byte;
+    ++session->editorInsertCursor;
+    ++session->editorInsertLen;
+    session->editorInsertBuf[session->editorInsertLen] = '\0';
+    return XConsoleResult_Ok;
+}
+
 static int xvi_open(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
@@ -424,6 +747,12 @@ static int xvi_open(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     }
     xvi_clear(session);
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    if (xvi_tui_open(shell, session, path)) {
+        XString_delete_base(path);
+        return XConsoleResult_MoreOutput;
+    }
+#endif
     if (!xvi_load_lines(shell, session, path)) {
         XString_delete_base(path);
         (void)xvi_write_line(shell, "vi: 文件行数超过编辑上限");
@@ -466,6 +795,22 @@ bool XConsoleShellVi_isActive(const XConsoleShellSession* session)
 void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
 {
     if (!shell || !session) return;
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    if (session->editorTui) {
+        XviTui* tui = (XviTui*)session->editorTui;
+        XTui_stop(tui->tui);
+        if (tui->vim) XTuiVim_delete_base(tui->vim);
+        if (tui->screen) XTuiScreen_delete_base(tui->screen);
+        if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
+        if (tui->tui) XTui_delete_base(tui->tui);
+        XFree_System(tui);
+        session->editorTui = NULL;
+        session->editorActive = false;
+        session->suppressPrompt = false;
+        xvi_clear(session);
+        return;
+    }
+#endif
     session->suppressPrompt = false;
     xvi_clear(session);
 }
@@ -476,6 +821,15 @@ XConsoleResult XConsoleShellVi_submitLine(XConsoleShell* shell,
 {
     if (!shell || !session || !XConsoleShellVi_isActive(session))
         return XConsoleResult_InvalidArgument;
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    /* 全屏 TUI 模式下不进入行式提交；所有输入已由 feedByte 逐字节
+       交给 XTui 处理，这里直接忽略整行提交。 */
+    if (session->editorTui) {
+        (void)line;
+        (void)length;
+        return XConsoleResult_MoreOutput;
+    }
+#endif
     if (session->editorInsertMode)
         return xvi_insert(shell, session, line ? line : "", length ? length : 0u);
     return xvi_command(shell, session, line ? line : "", length ? length : 0u);
