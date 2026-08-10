@@ -7,8 +7,8 @@
  *   3. XMQTT_ON     - MQTT 协议（XMqtt）
  *   4. XFTP_ON      - FTP 协议（XFtp）
  *   5. XHTTP_ON     - HTTP 协议（XHttp）
- *   6. XSSH_ON      - SSH 协议（XSsh）
- *   7. XTELNET_ON   - Telnet 协议（XTelnet）
+ *   6. XSSH_ON      - SSH 协议客户端/服务端（XSsh）
+ *   7. XTELNET_ON   - Telnet 协议客户端/服务端（XTelnet）
  *
  * 模块总开关 XPROTOCOL_ON 在 CXinYueConfig.h 中定义，此处仅提供默认值。
  * 关闭后若仍有其它模块无条件引用 XProtocol 符号，需同步裁剪对应依赖。

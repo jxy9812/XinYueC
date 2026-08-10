@@ -15,6 +15,7 @@
  */
 
 #include "XSshServer.h"
+#include "XSshCrypto.h"
 
 #if XPROTOCOL_ON && XSSH_ON && XSSH_SERVER_ON
 
@@ -23,7 +24,7 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
-#include "psa/crypto.h"
+#include "XCryptographic.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -104,61 +105,6 @@ typedef enum XSshState {
     XSshState_Channel
 } XSshState;
 
-typedef enum XSshKexAlgorithm {
-    XSshKexAlgorithm_None = 0,
-    XSshKexAlgorithm_Curve25519Sha256,
-    XSshKexAlgorithm_EcdhSha2Nistp256
-} XSshKexAlgorithm;
-
-typedef enum XSshCipherAlgorithm {
-    XSshCipherAlgorithm_None = 0,
-    XSshCipherAlgorithm_Aes256Ctr,
-    XSshCipherAlgorithm_Aes192Ctr,
-    XSshCipherAlgorithm_Aes128Ctr
-} XSshCipherAlgorithm;
-
-typedef struct XSshNamedAlgorithm {
-    const char* name;
-    int value;
-} XSshNamedAlgorithm;
-
-static const XSshNamedAlgorithm xssh_kex_algorithms[] = {
-#if XSSH_KEX_CURVE25519_SHA256_ON
-    { "curve25519-sha256", XSshKexAlgorithm_Curve25519Sha256 },
-#endif
-#if XSSH_KEX_ECDH_SHA2_NISTP256_ON
-    { "ecdh-sha2-nistp256", XSshKexAlgorithm_EcdhSha2Nistp256 },
-#endif
-    { NULL, XSshKexAlgorithm_None }
-};
-
-static const XSshNamedAlgorithm xssh_hostkey_algorithms[] = {
-#if XSSH_HOSTKEY_ECDSA_SHA2_NISTP256_ON
-    { "ecdsa-sha2-nistp256", 1 },
-#endif
-    { NULL, 0 }
-};
-
-static const XSshNamedAlgorithm xssh_cipher_algorithms[] = {
-#if XSSH_CIPHER_AES256_CTR_ON
-    { "aes256-ctr", XSshCipherAlgorithm_Aes256Ctr },
-#endif
-#if XSSH_CIPHER_AES192_CTR_ON
-    { "aes192-ctr", XSshCipherAlgorithm_Aes192Ctr },
-#endif
-#if XSSH_CIPHER_AES128_CTR_ON
-    { "aes128-ctr", XSshCipherAlgorithm_Aes128Ctr },
-#endif
-    { NULL, XSshCipherAlgorithm_None }
-};
-
-static const XSshNamedAlgorithm xssh_mac_algorithms[] = {
-#if XSSH_MAC_HMAC_SHA2_256_ON
-    { "hmac-sha2-256", 1 },
-#endif
-    { NULL, 0 }
-};
-
 typedef struct XSshServerData {
     XSshState state;
     bool closed;
@@ -175,13 +121,13 @@ typedef struct XSshServerData {
     XSshCipherAlgorithm cipherS2C;
 
     /* 主机密钥 */
-    mbedtls_svc_key_id_t hostKey;
+    XCryptographic_Key hostKey;
     bool hostKeyShared;
     uint8_t hostKeyBlob[256];
     size_t hostKeyBlobLen;
 
     /* 服务端临时 ECDH */
-    mbedtls_svc_key_id_t ecdhKey;
+    XCryptographic_Key ecdhKey;
     uint8_t clientPublicBlob[256];
     size_t clientPublicBlobLen;
     uint8_t sharedSecret[64];
@@ -192,12 +138,12 @@ typedef struct XSshServerData {
     uint8_t sessionId[XSSH_HASH_LEN];
 
     /* 会话密钥 */
-    mbedtls_svc_key_id_t cipherKeyC2S;
-    mbedtls_svc_key_id_t cipherKeyS2C;
-    mbedtls_svc_key_id_t macKeyC2S;
-    mbedtls_svc_key_id_t macKeyS2C;
-    psa_cipher_operation_t encOp;
-    psa_cipher_operation_t decOp;
+    XCryptographic_Key cipherKeyC2S;
+    XCryptographic_Key cipherKeyS2C;
+    uint8_t macKeyC2S[XSSH_MAC_LEN];
+    uint8_t macKeyS2C[XSSH_MAC_LEN];
+    XCryptographic_CipherOperation encOp;
+    XCryptographic_CipherOperation decOp;
     bool encActive;
     bool decActive;
     bool sendEncrypted;
@@ -255,10 +201,15 @@ typedef struct XSshServerData {
  * This keeps the SSH host identity stable across reconnects while avoiding a
  * process-wide private-key byte buffer.  Callers still serialize PSA access
  * according to the library's normal threading contract. */
-static mbedtls_svc_key_id_t g_xssh_hostKey;
+static XCryptographic_Key g_xssh_hostKey;
 static uint8_t g_xssh_hostKeyBlob[256];
 static size_t g_xssh_hostKeyBlobLen;
 static size_t g_xssh_hostKeyRefs;
+
+static bool xssh_key_is_valid(const XCryptographic_Key* key)
+{
+    return key && key->type != XCryptographic_KeyType_None;
+}
 
 /* ------------------------------------------------------------------ */
 /* 主机密钥持久化                                                      */
@@ -439,65 +390,6 @@ static bool xssh_get_string(const uint8_t* buf, size_t len, size_t* off,
     return true;
 }
 
-static bool xssh_name_list_contains(const uint8_t* list, size_t len, const char* name)
-{
-    size_t nameLen = strlen(name);
-    size_t start = 0;
-    while (start <= len) {
-        size_t i = start;
-        while (i < len && list[i] != ',') ++i;
-        if (i - start == nameLen && memcmp(list + start, name, nameLen) == 0)
-            return true;
-        if (i >= len) break;
-        start = i + 1;
-    }
-    return false;
-}
-
-/* SSH algorithm selection is driven by the client's preference order. */
-static bool xssh_select_client_algorithm(const uint8_t* list, size_t len,
-                                         const XSshNamedAlgorithm* supported,
-                                         int* value)
-{
-    size_t start = 0;
-    if (!list || !supported || !value) return false;
-    while (start < len) {
-        size_t end = start;
-        size_t i;
-        while (end < len && list[end] != ',') ++end;
-        for (i = 0; supported[i].name; ++i) {
-            size_t nameLen = strlen(supported[i].name);
-            if (end - start == nameLen &&
-                memcmp(list + start, supported[i].name, nameLen) == 0) {
-                *value = supported[i].value;
-                return true;
-            }
-        }
-        if (end == len) break;
-        start = end + 1u;
-    }
-    return false;
-}
-
-static bool xssh_build_algorithm_list(const XSshNamedAlgorithm* algorithms,
-                                      uint8_t* out, size_t capacity,
-                                      size_t* outLen)
-{
-    size_t off = 0;
-    size_t i;
-    if (!algorithms || !out || !outLen) return false;
-    for (i = 0; algorithms[i].name; ++i) {
-        size_t nameLen = strlen(algorithms[i].name);
-        if (off && off >= capacity) return false;
-        if (off) out[off++] = ',';
-        if (nameLen > capacity - off) return false;
-        memcpy(out + off, algorithms[i].name, nameLen);
-        off += nameLen;
-    }
-    if (off == 0) return false;
-    *outLen = off;
-    return true;
-}
 
 /* ------------------------------------------------------------------ */
 /* 发送路径                                                           */
@@ -557,8 +449,6 @@ static bool xssh_send_packet(XSshServer* adapter,
     uint8_t mac[XSSH_MAC_LEN];
     size_t total;
     size_t padLen;
-    size_t outLen;
-    size_t macLen;
 
     if (!adapter || payloadLen > XSSH_MAX_PACKET - 32) return false;
 
@@ -584,20 +474,20 @@ static bool xssh_send_packet(XSshServer* adapter,
          * applied only after the MAC has been computed. */
         xssh_write_u32(macInput, XSSH_DATA(adapter)->sendSeq);
         memcpy(macInput + 4, frame, total);
-        if (psa_mac_compute(XSSH_DATA(adapter)->macKeyS2C, PSA_ALG_HMAC(PSA_ALG_SHA_256),
-                            macInput, 4 + total, mac, sizeof(mac), &macLen) != PSA_SUCCESS ||
-            macLen != XSSH_MAC_LEN) {
+        if (!xssh_hmac_sha256(XSSH_DATA(adapter)->macKeyS2C,
+                              sizeof(XSSH_DATA(adapter)->macKeyS2C),
+                              macInput, 4 + total, mac)) {
             XSSH_DATA(adapter)->closed = true;
             return false;
         }
-        if (psa_cipher_update(&XSSH_DATA(adapter)->encOp, frame, total, encoded,
-                              sizeof(encoded), &outLen) != PSA_SUCCESS ||
-            outLen != total) {
+        if (!XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->encOp,
+                (char*)encoded, sizeof(encoded),
+                (XByteArrayView){ frame, (int64_t)total }).m_size != (int64_t)total) {
             XSSH_DATA(adapter)->closed = true;
             return false;
         }
         if (!xssh_send_raw(adapter, encoded, total)) return false;
-        if (!xssh_send_raw(adapter, mac, macLen)) return false;
+        if (!xssh_send_raw(adapter, mac, sizeof(mac))) return false;
     } else {
         if (!xssh_send_raw(adapter, frame, total)) return false;
     }
@@ -615,7 +505,6 @@ static bool xssh_derive_key(XSshServer* adapter, char letter,
     uint8_t input[4 + 64 + XSSH_HASH_LEN + 1 + XSSH_HASH_LEN];
     uint8_t hash[XSSH_HASH_LEN];
     size_t off = 0;
-    size_t hLen;
     if (!adapter || !out || outLen > XSSH_HASH_LEN ||
         XSSH_DATA(adapter)->sharedSecretLen > 64)
         return false;
@@ -630,25 +519,10 @@ static bool xssh_derive_key(XSshServer* adapter, char letter,
     input[off++] = (uint8_t)letter;
     memcpy(input + off, XSSH_DATA(adapter)->sessionId, XSSH_HASH_LEN);
     off += XSSH_HASH_LEN;
-    if (psa_hash_compute(PSA_ALG_SHA_256, input, off, hash, sizeof(hash), &hLen) != PSA_SUCCESS ||
-        hLen < outLen)
+    if (!xssh_hash_sha256(input, off, hash))
         return false;
     memcpy(out, hash, outLen);
     return true;
-}
-
-static size_t xssh_cipher_key_size(XSshCipherAlgorithm cipher)
-{
-    switch (cipher) {
-    case XSshCipherAlgorithm_Aes256Ctr:
-        return 32;
-    case XSshCipherAlgorithm_Aes192Ctr:
-        return 24;
-    case XSshCipherAlgorithm_Aes128Ctr:
-        return 16;
-    default:
-        return 0;
-    }
 }
 
 static bool xssh_setup_keys(XSshServer* adapter)
@@ -656,8 +530,6 @@ static bool xssh_setup_keys(XSshServer* adapter)
     uint8_t ivC2S[16], ivS2C[16];
     uint8_t encC2S[XSSH_MAX_CIPHER_KEY_LEN], encS2C[XSSH_MAX_CIPHER_KEY_LEN];
     uint8_t macC2S[XSSH_MAC_LEN], macS2C[XSSH_MAC_LEN];
-    psa_key_attributes_t attrs;
-    psa_status_t st;
     size_t encC2SLen;
     size_t encS2CLen;
 
@@ -673,43 +545,24 @@ static bool xssh_setup_keys(XSshServer* adapter)
     if (!xssh_derive_key(adapter, 'E', macC2S, sizeof(macC2S))) return false;
     if (!xssh_derive_key(adapter, 'F', macS2C, sizeof(macS2C))) return false;
 
-    attrs = psa_key_attributes_init();
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-    psa_set_key_algorithm(&attrs, PSA_ALG_CTR);
-    psa_set_key_bits(&attrs, encC2SLen * 8u);
-    st = psa_import_key(&attrs, encC2S, encC2SLen, &XSSH_DATA(adapter)->cipherKeyC2S);
-    if (st != PSA_SUCCESS) return false;
-    psa_reset_key_attributes(&attrs);
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-    psa_set_key_bits(&attrs, encS2CLen * 8u);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-    psa_set_key_algorithm(&attrs, PSA_ALG_CTR);
-    st = psa_import_key(&attrs, encS2C, encS2CLen, &XSSH_DATA(adapter)->cipherKeyS2C);
-    if (st != PSA_SUCCESS) return false;
+    if (!XCryptographic_aesCtrImportKey((XByteArrayView){ encC2S, (int64_t)encC2SLen },
+                                        &XSSH_DATA(adapter)->cipherKeyC2S) ||
+        !XCryptographic_aesCtrImportKey((XByteArrayView){ encS2C, (int64_t)encS2CLen },
+                                        &XSSH_DATA(adapter)->cipherKeyS2C))
+        return false;
+    memcpy(XSSH_DATA(adapter)->macKeyC2S, macC2S, sizeof(macC2S));
+    memcpy(XSSH_DATA(adapter)->macKeyS2C, macS2C, sizeof(macS2C));
 
-    attrs = psa_key_attributes_init();
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_HMAC);
-    psa_set_key_bits(&attrs, 256);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE);
-    psa_set_key_algorithm(&attrs, PSA_ALG_HMAC(PSA_ALG_SHA_256));
-    st = psa_import_key(&attrs, macC2S, sizeof(macC2S), &XSSH_DATA(adapter)->macKeyC2S);
-    if (st != PSA_SUCCESS) return false;
-    st = psa_import_key(&attrs, macS2C, sizeof(macS2C), &XSSH_DATA(adapter)->macKeyS2C);
-    if (st != PSA_SUCCESS) return false;
-
-    XSSH_DATA(adapter)->encOp = psa_cipher_operation_init();
-    XSSH_DATA(adapter)->decOp = psa_cipher_operation_init();
-    st = psa_cipher_encrypt_setup(&XSSH_DATA(adapter)->encOp, XSSH_DATA(adapter)->cipherKeyS2C, PSA_ALG_CTR);
-    if (st != PSA_SUCCESS) return false;
-    st = psa_cipher_set_iv(&XSSH_DATA(adapter)->encOp, ivS2C, sizeof(ivS2C));
-    if (st != PSA_SUCCESS) return false;
+    if (!XCryptographic_aesCtrSetup(&XSSH_DATA(adapter)->encOp,
+                                    XSSH_DATA(adapter)->cipherKeyS2C, true,
+                                    (XByteArrayView){ ivS2C, sizeof(ivS2C) }))
+        return false;
     XSSH_DATA(adapter)->encActive = true;
 
-    st = psa_cipher_decrypt_setup(&XSSH_DATA(adapter)->decOp, XSSH_DATA(adapter)->cipherKeyC2S, PSA_ALG_CTR);
-    if (st != PSA_SUCCESS) return false;
-    st = psa_cipher_set_iv(&XSSH_DATA(adapter)->decOp, ivC2S, sizeof(ivC2S));
-    if (st != PSA_SUCCESS) return false;
+    if (!XCryptographic_aesCtrSetup(&XSSH_DATA(adapter)->decOp,
+                                    XSSH_DATA(adapter)->cipherKeyC2S, false,
+                                    (XByteArrayView){ ivC2S, sizeof(ivC2S) }))
+        return false;
     XSSH_DATA(adapter)->decActive = true;
     return true;
 }
@@ -730,15 +583,13 @@ static bool xssh_build_key_blob(const uint8_t* point, size_t pointLen,
 
 static bool xssh_generate_host_key(XSshServer* adapter)
 {
-    psa_key_attributes_t attrs;
-    psa_status_t st;
     uint8_t point[XSSH_POINT_LEN];
     size_t pointLen;
     uint8_t privateBytes[XSSH_HOSTKEY_MAX_BYTES];
     size_t privateLen = 0;
 
     if (!adapter) return false;
-    if (g_xssh_hostKey) {
+    if (xssh_key_is_valid(&g_xssh_hostKey)) {
         XSSH_DATA(adapter)->hostKey = g_xssh_hostKey;
         XSSH_DATA(adapter)->hostKeyShared = true;
         memcpy(XSSH_DATA(adapter)->hostKeyBlob, g_xssh_hostKeyBlob,
@@ -748,20 +599,16 @@ static bool xssh_generate_host_key(XSshServer* adapter)
         return true;
     }
 
-    attrs = psa_key_attributes_init();
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
-    psa_set_key_bits(&attrs, 256);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
-    psa_set_key_algorithm(&attrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
-
     /* 优先加载已持久化的主机密钥，保证跨进程重启后主机指纹不变。 */
     if (xssh_hostkey_load(privateBytes, sizeof(privateBytes), &privateLen)) {
-        st = psa_import_key(&attrs, privateBytes, privateLen, &XSSH_DATA(adapter)->hostKey);
+        bool imported = XCryptographic_ecdsaP256ImportPrivateKey(
+            (XByteArrayView){ privateBytes, (int64_t)privateLen },
+            &XSSH_DATA(adapter)->hostKey);
         memset(privateBytes, 0, sizeof(privateBytes));
-        if (st == PSA_SUCCESS) {
-            st = psa_export_public_key(XSSH_DATA(adapter)->hostKey, point, sizeof(point),
-                                       &pointLen);
-            if (st == PSA_SUCCESS && pointLen == XSSH_POINT_LEN &&
+        if (imported) {
+            if ((pointLen = (size_t)XCryptographic_exportPublicKeyInto(
+                    (char*)point, sizeof(point), XSSH_DATA(adapter)->hostKey).m_size) &&
+                pointLen == XSSH_POINT_LEN &&
                 xssh_build_key_blob(point, pointLen, XSSH_DATA(adapter)->hostKeyBlob,
                                     sizeof(XSSH_DATA(adapter)->hostKeyBlob),
                                     &XSSH_DATA(adapter)->hostKeyBlobLen)) {
@@ -773,31 +620,31 @@ static bool xssh_generate_host_key(XSshServer* adapter)
                 XSSH_DATA(adapter)->hostKeyShared = true;
                 return true;
             }
-            (void)psa_destroy_key(XSSH_DATA(adapter)->hostKey);
-            XSSH_DATA(adapter)->hostKey = 0;
+            XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
+            XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
         }
     }
 
     /* 没有可用持久化密钥：生成新主机密钥并落盘。对 PSA 导出的私钥标量
      * 立即清零，避免在栈上长时间保留明文。 */
-    st = psa_generate_key(&attrs, &XSSH_DATA(adapter)->hostKey);
-    XSSH_DBG("hostkey: generate st=%d\n", (int)st);
-    if (st != PSA_SUCCESS) return false;
+    if (!XCryptographic_ecdsaP256GenerateKey(&XSSH_DATA(adapter)->hostKey)) {
+        XSSH_DBG("hostkey: generate failed\n");
+        return false;
+    }
 
-    st = psa_export_key(XSSH_DATA(adapter)->hostKey, privateBytes, sizeof(privateBytes),
-                        &privateLen);
-    XSSH_DBG("hostkey: export st=%d len=%u\n", (int)st, (unsigned)privateLen);
-    if (st != PSA_SUCCESS || privateLen == 0 || privateLen > XSSH_HOSTKEY_MAX_BYTES) {
-        (void)psa_destroy_key(XSSH_DATA(adapter)->hostKey);
-        XSSH_DATA(adapter)->hostKey = 0;
+    privateLen = (size_t)XCryptographic_ecdsaP256ExportPrivateKeyInto(
+        (char*)privateBytes, sizeof(privateBytes), XSSH_DATA(adapter)->hostKey).m_size;
+    if (privateLen == 0 || privateLen > XSSH_HOSTKEY_MAX_BYTES) {
+        XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
         return false;
     }
     if (!xssh_hostkey_save(privateBytes, privateLen))
         XSSH_DBG("hostkey: save failed (host key will not persist)\n");
     memset(privateBytes, 0, sizeof(privateBytes));
 
-    st = psa_export_public_key(XSSH_DATA(adapter)->hostKey, point, sizeof(point), &pointLen);
-    if (st != PSA_SUCCESS || pointLen != XSSH_POINT_LEN) goto fail;
+    pointLen = (size_t)XCryptographic_exportPublicKeyInto(
+        (char*)point, sizeof(point), XSSH_DATA(adapter)->hostKey).m_size;
+    if (pointLen != XSSH_POINT_LEN) goto fail;
     if (!xssh_build_key_blob(point, pointLen, XSSH_DATA(adapter)->hostKeyBlob,
                              sizeof(XSSH_DATA(adapter)->hostKeyBlob), &XSSH_DATA(adapter)->hostKeyBlobLen))
         goto fail;
@@ -812,16 +659,16 @@ static bool xssh_generate_host_key(XSshServer* adapter)
 fail:
     if (XSSH_DATA(adapter)->hostKeyShared) {
         if (g_xssh_hostKeyRefs) --g_xssh_hostKeyRefs;
-        if (g_xssh_hostKeyRefs == 0 && g_xssh_hostKey) {
-            (void)psa_destroy_key(g_xssh_hostKey);
-            g_xssh_hostKey = 0;
+        if (g_xssh_hostKeyRefs == 0 && xssh_key_is_valid(&g_xssh_hostKey)) {
+            XCryptographic_destroyKey(&g_xssh_hostKey);
+            XCryptographic_destroyKey(&g_xssh_hostKey);
             g_xssh_hostKeyBlobLen = 0;
             memset(g_xssh_hostKeyBlob, 0, sizeof(g_xssh_hostKeyBlob));
         }
     } else {
-        (void)psa_destroy_key(XSSH_DATA(adapter)->hostKey);
+        XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
     }
-    XSSH_DATA(adapter)->hostKey = 0;
+    XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
     return false;
 }
 
@@ -1036,38 +883,31 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     uint8_t sig[256];
     size_t sigLen;
     uint8_t signatureHash[XSSH_HASH_LEN];
-    size_t signatureHashLen;
     uint8_t r[32], sx[32];
     uint8_t sigBlob[300];
     size_t sigBlobLen;
     uint8_t reply[XSSH_MAX_PACKET];
     size_t replyOff = 0;
-    psa_key_attributes_t attrs;
-    psa_status_t st;
-    size_t hLen;
     size_t expectedPublicLen;
-    psa_ecc_family_t curveFamily;
-    size_t curveBits;
+    XCryptographic_EcdhAlgorithm ecdhAlgorithm;
     bool sharedIsLittleEndian;
 
     if (len < 1 + 4) { XSSH_DBG("bad len\n"); return XProtocolResult_Failed; }
     off = 1;
     switch (XSSH_DATA(adapter)->kexAlgorithm) {
     case XSshKexAlgorithm_Curve25519Sha256:
-#if XSSH_KEX_CURVE25519_SHA256_ON
+#if XCRYPTOGRAPHIC_X25519_ON && XCRYPTOGRAPHIC_SHA256_ON
         expectedPublicLen = XSSH_CURVE25519_PUBLIC_LEN;
-        curveFamily = PSA_ECC_FAMILY_MONTGOMERY;
-        curveBits = 255;
+        ecdhAlgorithm = XCryptographic_EcdhAlgorithm_X25519;
         sharedIsLittleEndian = false;
         break;
 #else
         return XProtocolResult_Failed;
 #endif
     case XSshKexAlgorithm_EcdhSha2Nistp256:
-#if XSSH_KEX_ECDH_SHA2_NISTP256_ON
+#if XCRYPTOGRAPHIC_ECDH_NISTP256_ON && XCRYPTOGRAPHIC_SHA256_ON
         expectedPublicLen = XSSH_POINT_LEN;
-        curveFamily = PSA_ECC_FAMILY_SECP_R1;
-        curveBits = 256;
+        ecdhAlgorithm = XCryptographic_EcdhAlgorithm_NistP256;
         sharedIsLittleEndian = false;
         break;
 #else
@@ -1090,23 +930,22 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
     XSSH_DATA(adapter)->clientPublicBlobLen = qcStringLen;
 
     /* 生成服务端临时密钥并执行 ECDH/X25519 原始密钥协商。 */
-    attrs = psa_key_attributes_init();
-    psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(curveFamily));
-    psa_set_key_bits(&attrs, curveBits);
-    psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
-    psa_set_key_algorithm(&attrs, PSA_ALG_ECDH);
-    st = psa_generate_key(&attrs, &XSSH_DATA(adapter)->ecdhKey);
-    if (st != PSA_SUCCESS) { XSSH_DBG("generate key exchange key failed st=%d\n", (int)st); return XProtocolResult_Failed; }
-    st = psa_export_public_key(XSSH_DATA(adapter)->ecdhKey, serverPub, sizeof(serverPub), &serverPubLen);
-    if (st != PSA_SUCCESS || serverPubLen != expectedPublicLen) {
-        XSSH_DBG("export public key failed st=%d len=%u\n", (int)st, (unsigned)serverPubLen);
+    if (!XCryptographic_ecdhGenerateKey(ecdhAlgorithm, &XSSH_DATA(adapter)->ecdhKey)) {
+        XSSH_DBG("generate key exchange key failed\n");
+        return XProtocolResult_Failed;
+    }
+    serverPubLen = (size_t)XCryptographic_exportPublicKeyInto(
+        (char*)serverPub, sizeof(serverPub), XSSH_DATA(adapter)->ecdhKey).m_size;
+    if (serverPubLen != expectedPublicLen) {
+        XSSH_DBG("export public key failed len=%u\n", (unsigned)serverPubLen);
         return XProtocolResult_Failed;
     }
 
-    st = psa_raw_key_agreement(PSA_ALG_ECDH, XSSH_DATA(adapter)->ecdhKey, qcString, qcStringLen,
-                               shared, sizeof(shared), &sharedLen);
-    if (st != PSA_SUCCESS || sharedLen == 0) {
-        XSSH_DBG("raw key agreement failed st=%d len=%u\n", (int)st, (unsigned)sharedLen);
+    sharedLen = (size_t)XCryptographic_ecdhAgreeInto(
+        (char*)shared, sizeof(shared), XSSH_DATA(adapter)->ecdhKey,
+        (XByteArrayView){ qcString, (int64_t)qcStringLen }).m_size;
+    if (sharedLen == 0) {
+        XSSH_DBG("raw key agreement failed len=%u\n", (unsigned)sharedLen);
         return XProtocolResult_Failed;
     }
     if (XSSH_DATA(adapter)->kexAlgorithm == XSshKexAlgorithm_Curve25519Sha256) {
@@ -1169,79 +1008,31 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
         for (i = 0; i < XSSH_DATA(adapter)->hostKeyBlobLen; ++i) XSSH_DBG("%02x", XSSH_DATA(adapter)->hostKeyBlob[i]);
         XSSH_DBG("\n");
     }
-    if (psa_hash_compute(PSA_ALG_SHA_256, hashInput, hashOff,
-                         XSSH_DATA(adapter)->exchangeHash, sizeof(XSSH_DATA(adapter)->exchangeHash), &hLen) != PSA_SUCCESS ||
-        hLen != XSSH_HASH_LEN)
-    { XSSH_DBG("hash failed hLen=%u\n", (unsigned)hLen); return XProtocolResult_Failed; }
+    if (!xssh_hash_sha256(hashInput, hashOff, XSSH_DATA(adapter)->exchangeHash))
+    { XSSH_DBG("hash failed\n"); return XProtocolResult_Failed; }
     memcpy(XSSH_DATA(adapter)->sessionId, XSSH_DATA(adapter)->exchangeHash, XSSH_HASH_LEN);
 
     if (!xssh_setup_keys(adapter)) { XSSH_DBG("setup keys failed\n"); return XProtocolResult_Failed; }
 
     /* OpenSSH 的 ECDSA 验证接口按消息模式再计算一次 SHA-256；交换哈希 H
      * 仍作为会话 ID 和密钥派生输入保留原值。 */
-    if (psa_hash_compute(PSA_ALG_SHA_256, XSSH_DATA(adapter)->exchangeHash,
-                         XSSH_HASH_LEN, signatureHash, sizeof(signatureHash),
-                         &signatureHashLen) != PSA_SUCCESS ||
-        signatureHashLen != XSSH_HASH_LEN)
+    if (!xssh_hash_sha256(XSSH_DATA(adapter)->exchangeHash,
+                          XSSH_HASH_LEN, signatureHash))
         return XProtocolResult_Failed;
 
     /* ecdsa-sha2-nistp256 签名格式（RFC 5656 §3.1.2）：
      *   string "ecdsa-sha2-nistp256"
      *   string ecdsa_signature_blob
      * 其中 ecdsa_signature_blob = mpint r || mpint s */
-    st = psa_sign_hash(XSSH_DATA(adapter)->hostKey, PSA_ALG_ECDSA(PSA_ALG_SHA_256),
-                       signatureHash, signatureHashLen, sig, sizeof(sig), &sigLen);
-    if (st != PSA_SUCCESS) { XSSH_DBG("sign hash failed st=%d\n", (int)st); return XProtocolResult_Failed; }
+    sigLen = (size_t)XCryptographic_ecdsaP256SignHashInto(
+        (char*)sig, sizeof(sig), XSSH_DATA(adapter)->hostKey,
+        (XByteArrayView){ signatureHash, XSSH_HASH_LEN }).m_size;
+    if (sigLen == 0) {
+        XSSH_DBG("sign hash failed\n");
+        return XProtocolResult_Failed;
+    }
     XSSH_DBG("sign sigLen=%u first=%02x %02x %02x %02x\n",
              (unsigned)sigLen, sig[0], sig[1], sig[2], sig[3]);
-    {
-        /* temporary self-verify against exported host key */
-        psa_key_attributes_t vattrs;
-        mbedtls_svc_key_id_t vkey = 0;
-        psa_status_t vst;
-        uint8_t point[XSSH_POINT_LEN];
-        size_t point_len = 0;
-        vattrs = psa_key_attributes_init();
-        psa_set_key_type(&vattrs, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
-        psa_set_key_bits(&vattrs, 256);
-        psa_set_key_usage_flags(&vattrs, PSA_KEY_USAGE_VERIFY_HASH);
-        psa_set_key_algorithm(&vattrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
-        vst = psa_export_public_key(XSSH_DATA(adapter)->hostKey, point, sizeof(point), &point_len);
-        if (vst == PSA_SUCCESS) {
-            unsigned ii;
-            XSSH_DBG("exported point len=%u:", (unsigned)point_len);
-            for (ii = 0; ii < point_len; ++ii) XSSH_DBG("%02x", point[ii]);
-            XSSH_DBG("\nblob point:");
-            {
-                const uint8_t* bp = XSSH_DATA(adapter)->hostKeyBlob;
-                size_t boff = 0, bsl;
-                size_t j;
-                /* parse blob: alg string, curve string, point string */
-                if (boff + 4 <= XSSH_DATA(adapter)->hostKeyBlobLen) {
-                    bsl = (size_t)((bp[boff]<<24)|(bp[boff+1]<<16)|(bp[boff+2]<<8)|bp[boff+3]); boff += 4;
-                    boff += bsl;
-                    if (boff + 4 <= XSSH_DATA(adapter)->hostKeyBlobLen) {
-                        bsl = (size_t)((bp[boff]<<24)|(bp[boff+1]<<16)|(bp[boff+2]<<8)|bp[boff+3]); boff += 4;
-                        boff += bsl;
-                        if (boff + 4 <= XSSH_DATA(adapter)->hostKeyBlobLen) {
-                            bsl = (size_t)((bp[boff]<<24)|(bp[boff+1]<<16)|(bp[boff+2]<<8)|bp[boff+3]); boff += 4;
-                            for (j = 0; j < bsl; ++j) XSSH_DBG("%02x", bp[boff+j]);
-                            XSSH_DBG("\n");
-                        }
-                    }
-                }
-            }
-        }
-        if (vst == PSA_SUCCESS) {
-            vst = psa_import_key(&vattrs, point, point_len, &vkey);
-            if (vst == PSA_SUCCESS) {
-                vst = psa_verify_hash(vkey, PSA_ALG_ECDSA(PSA_ALG_SHA_256),
-                                      signatureHash, signatureHashLen, sig, sigLen);
-                XSSH_DBG("self verify st=%d\n", (int)vst);
-                psa_destroy_key(vkey);
-            }
-        }
-    }
     if (sigLen == 64) {
         /* mbedTLS PSA 的 ECDSA 签名直接返回 r||s 各 32 字节 */
         memcpy(r, sig, 32);
@@ -2151,8 +1942,6 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
         uint8_t macInput[XSSH_RX_CAPACITY + 4];
         uint8_t macCalc[XSSH_MAC_LEN];
         uint8_t plain[XSSH_RX_CAPACITY + 4];
-        size_t macLen;
-        size_t outLen;
         size_t padLen;
         size_t payloadLen;
 
@@ -2162,9 +1951,10 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
                 XSSH_DATA(adapter)->closed = true;
                 return XProtocolResult_Failed;
             }
-            if (psa_cipher_update(&XSSH_DATA(adapter)->decOp, XSSH_DATA(adapter)->rxBuf, 4,
-                                  XSSH_DATA(adapter)->lenPlain, sizeof(XSSH_DATA(adapter)->lenPlain), &outLen) != PSA_SUCCESS ||
-                outLen != 4) {
+            if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->decOp,
+                    (char*)XSSH_DATA(adapter)->lenPlain,
+                    sizeof(XSSH_DATA(adapter)->lenPlain),
+                    (XByteArrayView){ XSSH_DATA(adapter)->rxBuf, 4 }).m_size != 4) {
                 XSSH_DATA(adapter)->closed = true;
                 return XProtocolResult_Failed;
             }
@@ -2182,9 +1972,11 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
         totalCipher = 4 + XSSH_DATA(adapter)->packetLen;
         if (XSSH_DATA(adapter)->rxLen < totalCipher + XSSH_MAC_LEN) return XProtocolResult_Ok;
 
-        if (psa_cipher_update(&XSSH_DATA(adapter)->decOp, XSSH_DATA(adapter)->rxBuf + 4, totalCipher - 4,
-                              plain + 4, totalCipher - 4, &outLen) != PSA_SUCCESS ||
-            outLen != totalCipher - 4) {
+        if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->decOp,
+                (char*)(plain + 4), totalCipher - 4,
+                (XByteArrayView){ XSSH_DATA(adapter)->rxBuf + 4,
+                                  (int64_t)(totalCipher - 4) }).m_size !=
+            (int64_t)(totalCipher - 4)) {
             XSSH_DATA(adapter)->closed = true;
             return XProtocolResult_Failed;
         }
@@ -2196,9 +1988,9 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
          * the MAC; otherwise CTR ciphertext bytes are authenticated. */
         xssh_write_u32(macInput, XSSH_DATA(adapter)->recvSeq);
         memcpy(macInput + 4, plain, totalCipher);
-        if (psa_mac_compute(XSSH_DATA(adapter)->macKeyC2S, PSA_ALG_HMAC(PSA_ALG_SHA_256),
-                            macInput, 4 + totalCipher, macCalc, sizeof(macCalc), &macLen) != PSA_SUCCESS ||
-            macLen != XSSH_MAC_LEN ||
+        if (!xssh_hmac_sha256(XSSH_DATA(adapter)->macKeyC2S,
+                              sizeof(XSSH_DATA(adapter)->macKeyC2S),
+                              macInput, 4 + totalCipher, macCalc) ||
             !xssh_const_equal(macCalc, XSSH_DATA(adapter)->rxBuf + totalCipher, XSSH_MAC_LEN)) {
             XSSH_DATA(adapter)->closed = true;
             return XProtocolResult_Failed;
@@ -2264,29 +2056,28 @@ static void vxssh_server_cleanup_keys(XSshServer* adapter)
 {
     if (!adapter || !adapter->m_data) return;
     if (XSSH_DATA(adapter)->encActive) {
-        (void)psa_cipher_abort(&XSSH_DATA(adapter)->encOp);
+        XCryptographic_aesCtrAbort(&XSSH_DATA(adapter)->encOp);
         XSSH_DATA(adapter)->encActive = false;
     }
     if (XSSH_DATA(adapter)->decActive) {
-        (void)psa_cipher_abort(&XSSH_DATA(adapter)->decOp);
+        XCryptographic_aesCtrAbort(&XSSH_DATA(adapter)->decOp);
         XSSH_DATA(adapter)->decActive = false;
     }
     if (XSSH_DATA(adapter)->hostKeyShared) {
         if (g_xssh_hostKeyRefs) --g_xssh_hostKeyRefs;
-        if (g_xssh_hostKeyRefs == 0 && g_xssh_hostKey) {
-            (void)psa_destroy_key(g_xssh_hostKey);
-            g_xssh_hostKey = 0;
+        if (g_xssh_hostKeyRefs == 0 && xssh_key_is_valid(&g_xssh_hostKey)) {
+            XCryptographic_destroyKey(&g_xssh_hostKey);
             g_xssh_hostKeyBlobLen = 0;
             memset(g_xssh_hostKeyBlob, 0, sizeof(g_xssh_hostKeyBlob));
         }
     } else {
-        (void)psa_destroy_key(XSSH_DATA(adapter)->hostKey);
+        XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
     }
-    (void)psa_destroy_key(XSSH_DATA(adapter)->ecdhKey);
-    (void)psa_destroy_key(XSSH_DATA(adapter)->cipherKeyC2S);
-    (void)psa_destroy_key(XSSH_DATA(adapter)->cipherKeyS2C);
-    (void)psa_destroy_key(XSSH_DATA(adapter)->macKeyC2S);
-    (void)psa_destroy_key(XSSH_DATA(adapter)->macKeyS2C);
+    XCryptographic_destroyKey(&XSSH_DATA(adapter)->ecdhKey);
+    XCryptographic_destroyKey(&XSSH_DATA(adapter)->cipherKeyC2S);
+    XCryptographic_destroyKey(&XSSH_DATA(adapter)->cipherKeyS2C);
+    memset(XSSH_DATA(adapter)->macKeyC2S, 0, sizeof(XSSH_DATA(adapter)->macKeyC2S));
+    memset(XSSH_DATA(adapter)->macKeyS2C, 0, sizeof(XSSH_DATA(adapter)->macKeyS2C));
 }
 
 static void xssh_device_ready_read(XObject* receiver, XVarList* args)
@@ -2330,7 +2121,6 @@ void XSshServer_setHostContext(XSshServer* self, void* context)
 bool XSshServer_start(XSshServer* self)
 {
     if (!self || !self->m_device || !self->m_data) return false;
-    if (psa_crypto_init() != PSA_SUCCESS) return false;
     if (!xssh_generate_host_key(self)) return false;
     if (!xssh_send_raw(self, (const uint8_t*)XSSH_VERSION, strlen(XSSH_VERSION))) return false;
     if (!xssh_send_kexinit(self)) return false;

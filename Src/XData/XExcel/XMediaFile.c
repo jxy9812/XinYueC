@@ -4,7 +4,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XMediaFile.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XMemory.h"
 #include <stdlib.h>
 

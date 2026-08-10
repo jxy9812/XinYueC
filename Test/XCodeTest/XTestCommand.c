@@ -13,6 +13,7 @@
 #include "XConsoleShell.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
+#include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XMenuTest.h"
 #include "XPrintf.h"
@@ -33,6 +34,8 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XConsoleShellTest_runAll();
     } else if (strcmp(name, "xconsole-shell-backend") == 0) {
         result = XConsoleShellBackendTest_runAll();
+    } else if (strcmp(name, "ssh-telnet-client") == 0) {
+        result = XSshTelnetClientTest_runAll();
     } else {
         return XConsoleResult_UnknownCommand;
     }
@@ -46,7 +49,8 @@ static int xtest_run_all(XConsoleShell* shell)
     bool process = XProcessTest_runAll();
     bool shellTest = XConsoleShellTest_runAll();
     bool backend = XConsoleShellBackendTest_runAll();
-    bool result = process && shellTest && backend;
+    bool protocolClients = XSshTelnetClientTest_runAll();
+    bool result = process && shellTest && backend && protocolClients;
     if (!xtest_write(shell, result ? "Test all PASS\n" : "Test all FAIL\n"))
         return XConsoleResult_IoError;
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -70,6 +74,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test xprocess\n"
                            "  Test xconsole-shell\n"
                            "  Test xconsole-shell-backend\n"
+                           "  Test ssh-telnet-client\n"
                            "  Test all\n")
                    ? XConsoleResult_Ok : XConsoleResult_IoError;
     }

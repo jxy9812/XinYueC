@@ -463,7 +463,9 @@ MULTI_SESSION 关闭
 | XTcpSocket | `XIODEVICE_BACKEND_ON`、`XTCPSOCKET_BACKEND_ON` | 自动打开 XIODevice 后端；Socket 必须由产品连接和关闭。|
 | XTcpServer | `MULTI_SESSION_ON`、`XTCPSERVER_BACKEND_ON` | 自动打开 XTcpSocket 后端；固定数组绑定待处理连接，超过容量不再接收。|
 | SSH Server | `MULTI_SESSION_ON`、`XTCPSERVER_BACKEND_ON`、`LOGIN_ON`、`AUTH_ON` | 在 `XTcpServer` 上承载 SSH 2.0 服务端；当前支持版本交换、`curve25519-sha256` / ECDH P-256 密钥交换、AES-256/192/128-CTR、HMAC-SHA-256、密码认证、pty、env、shell、窗口调整和通道流控；`exec/subsystem` 请求明确拒绝。主机密钥首次启动生成并持久化到 `XCONSOLE_SHELL_XSSH_HOSTKEY_FILE`，跨进程重启保持不变；认证失败达到 `XSSH_MAX_AUTH_ATTEMPTS` 后关闭会话。|
+| SSH Client | `XSSH_CLIENT_ON`、`XSSH_KEX_*`、`XSSH_CIPHER_*`、`XSSH_MAC_*` | 绑定调用方提供的 `XIODevice`，完成 SSH 2.0 版本协商、共享算法套件选择、主机密钥确认、password 认证、pty/shell 通道和双向数据；未知主机密钥默认拒绝，不创建线程或网络对象。|
 | Telnet | `IO_ON`、`TELNET_PROTOCOL_ON` | 在 Shell I/O 前过滤 Telnet IAC、协商、子协商和 CR-NUL；不创建网络对象。|
+| Telnet Client | `XTELNET_CLIENT_ON` | 绑定调用方提供的 `XIODevice`，完成 NVT/IAC 协商、ECHO/SGA、CRLF 规范化和 IAC 转义；不创建线程或网络对象。|
 | PROCESS_ASYNC | `EXTERNAL_PROCESS_ON`、`XProcess_ON` | 增加固定异步任务槽和 `pollProcesses`；每个任务由 Shell 持有，必须由事件循环或任务显式轮询。|
 
 `XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON` 未打开 `XCONSOLE_SHELL_MULTI_SESSION_ON` 时，配置头

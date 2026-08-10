@@ -19,6 +19,7 @@
 #include "XProcessTest.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
+#include "XSshTelnetClientTest.h"
 #include "XTestCommand.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -48,6 +49,8 @@ static int main_run_test_path(const char* testPath)
         return XConsoleShellTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xconsole-shell-backend") == 0)
         return XConsoleShellBackendTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "ssh-telnet-client") == 0)
+        return XSshTelnetClientTest_runAll() ? 0 : 1;
     XPrintf("未知测试命令: %s\n", testPath);
     return 1;
 }
@@ -58,6 +61,7 @@ static void main_print_test_list(void)
     XPrintf("  Test xprocess\n");
     XPrintf("  Test xconsole-shell\n");
     XPrintf("  Test xconsole-shell-backend\n");
+    XPrintf("  Test ssh-telnet-client\n");
     XPrintf("  Test all\n");
     XPrintf("  --test esp8266-unit\n");
     XPrintf("  --test esp8266-auto\n");

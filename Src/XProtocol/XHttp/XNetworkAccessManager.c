@@ -6,7 +6,7 @@
 #include "XNetworkAccessManager.h"
 
 #include "XBase64.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XMemory.h"
 #include "XDir.h"
 #include "XFile.h"

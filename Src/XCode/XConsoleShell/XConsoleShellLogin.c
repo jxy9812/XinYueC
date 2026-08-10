@@ -13,7 +13,7 @@
     XCONSOLE_SHELL_LOGIN_ON
 
 #include "XByteArray.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XFileSystem.h"
 #include "XJsonArray.h"
 #include "XJsonDocument.h"

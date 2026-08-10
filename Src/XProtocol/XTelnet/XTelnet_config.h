@@ -2,10 +2,11 @@
  * @brief Telnet 协议栈子功能配置文件
  *
  * 通过此配置文件可以裁剪 XTelnet 协议栈内部的各个子功能：
- *   1. XTELNET_SERVER_ON - Telnet 字节过滤/协商状态机（XTelnetServer）
+ *   1. XTELNET_SERVER_ON - Telnet 服务端字节过滤/协商状态机（XTelnetServer）
+ *   2. XTELNET_CLIENT_ON - Telnet 客户端 NVT/协商状态机（XTelnetClient）
  *
  * 协议总开关 XTELNET_ON 在 XProtocol_config.h 中定义，此处仅提供默认值。
- * 服务端默认随协议总开关开启而启用。
+ * 客户端和服务端默认随协议总开关开启而启用。
  */
 
 #ifndef XTELNET_CONFIG_H
@@ -32,6 +33,11 @@ extern "C" {
  *         底层字节传输由 XProtocolIo 回调查询。 */
 #ifndef XTELNET_SERVER_ON
 #define XTELNET_SERVER_ON 1
+#endif
+
+/** @brief Telnet 客户端状态机（XTelnetClient）；连接传输由调用方提供 XIODevice。 */
+#ifndef XTELNET_CLIENT_ON
+#define XTELNET_CLIENT_ON 1
 #endif
 
 /* ========================================================================== */

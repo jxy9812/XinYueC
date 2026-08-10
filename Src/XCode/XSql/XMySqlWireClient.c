@@ -8,7 +8,7 @@
  */
 #include "XSqlMySqlClient.h"
 
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include "XString.h"

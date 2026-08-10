@@ -1,0 +1,48 @@
+/** @file XCryptographic_config.h
+ * @brief XCryptographic 通用算法裁剪配置。
+ */
+
+#ifndef XCRYPTOGRAPHIC_CONFIG_H
+#define XCRYPTOGRAPHIC_CONFIG_H
+
+/** @brief 启用 SHA-256 摘要算法。 */
+#ifndef XCRYPTOGRAPHIC_SHA256_ON
+#define XCRYPTOGRAPHIC_SHA256_ON 1
+#endif
+
+/** @brief 启用 HMAC-SHA-256 消息认证码算法。 */
+#ifndef XCRYPTOGRAPHIC_HMAC_SHA256_ON
+#define XCRYPTOGRAPHIC_HMAC_SHA256_ON XCRYPTOGRAPHIC_SHA256_ON
+#endif
+
+/** @brief 启用 AES-128-CTR。 */
+#ifndef XCRYPTOGRAPHIC_AES128_CTR_ON
+#define XCRYPTOGRAPHIC_AES128_CTR_ON 1
+#endif
+
+/** @brief 启用 AES-192-CTR。 */
+#ifndef XCRYPTOGRAPHIC_AES192_CTR_ON
+#define XCRYPTOGRAPHIC_AES192_CTR_ON 1
+#endif
+
+/** @brief 启用 AES-256-CTR。 */
+#ifndef XCRYPTOGRAPHIC_AES256_CTR_ON
+#define XCRYPTOGRAPHIC_AES256_CTR_ON 1
+#endif
+
+/** @brief 启用 X25519 密钥协商。 */
+#ifndef XCRYPTOGRAPHIC_X25519_ON
+#define XCRYPTOGRAPHIC_X25519_ON 1
+#endif
+
+/** @brief 启用 NIST P-256 ECDH 密钥协商。 */
+#ifndef XCRYPTOGRAPHIC_ECDH_NISTP256_ON
+#define XCRYPTOGRAPHIC_ECDH_NISTP256_ON 1
+#endif
+
+/** @brief 启用 NIST P-256 ECDSA 签名与验签。 */
+#ifndef XCRYPTOGRAPHIC_ECDSA_NISTP256_ON
+#define XCRYPTOGRAPHIC_ECDSA_NISTP256_ON 1
+#endif
+
+#endif /* XCRYPTOGRAPHIC_CONFIG_H */

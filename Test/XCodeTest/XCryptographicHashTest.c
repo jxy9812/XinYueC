@@ -3,7 +3,7 @@
 #include "XMenu.h"
 #include "XAction.h"
 #include "XByteArray.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include <stdio.h>
 #include <string.h>
 

@@ -4,7 +4,7 @@
  */
 
 #include "XNetworkProxyHandshake.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XByteArray.h"
 #include "XAbstractSocket.h"
 #include "XDateTime.h"

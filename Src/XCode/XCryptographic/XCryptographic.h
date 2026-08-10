@@ -1,35 +1,36 @@
 ﻿/**
- * @file XCryptographicHash.h
- * @brief 加密哈希算法类（对齐Qt 6.8 QCryptographicHash）
- * 
+ * @file XCryptographic.h
+ * @brief 加密算法与哈希类（哈希部分对齐 Qt 6.8 QCryptographicHash）
+ *
  * 支持的算法：MD4, MD5, SHA-1, SHA-224/256/384/512, SHA3, Keccak, Blake2
- * 
+ *
  * 使用方式：
  * @code
  * // 方式1：一次性计算
  * XByteArray* hash = XCryptographicHash_hash(data, XCryptographicHash_Md5);
- * 
+ *
  * // 方式2：流式计算
  * XCryptographicHash* ctx = XCryptographicHash_create(XCryptographicHash_Sha256);
  * XCryptographicHash_addData(ctx, data1, len1);
  * XCryptographicHash_addData_1(ctx, byteArray);
  * XByteArray* result = XCryptographicHash_result(ctx);
  * XCryptographicHash_delete(ctx);
- * 
+ *
  * // 方式3：hashInto（无内存分配）
  * char buffer[32];
  * XByteArrayView view = XCryptographicHash_hashInto(buffer, sizeof(buffer), data, len, XCryptographicHash_Sha256);
  * @endcode
  */
 
-#ifndef XCRYPTOGRAPHICHASH_H
-#define XCRYPTOGRAPHICHASH_H
+#ifndef XCRYPTOGRAPHIC_H
+#define XCRYPTOGRAPHIC_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "XClass.h"
+#include "XCryptographic_config.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -342,8 +343,142 @@ XByteArrayView XCryptographicHash_hmacInto(
     XCryptographicHash_Algorithm method
 );
 
+// =============== 通用密码原语 ===============
+
+/**
+ * @brief 密钥用途
+ * @note 密钥内容只在 XCryptographic 的对称加密、密钥交换和签名函数之间传递。
+ */
+typedef enum XCryptographic_KeyType {
+    XCryptographic_KeyType_None = 0,
+    XCryptographic_KeyType_AesCtr,
+    XCryptographic_KeyType_X25519,
+    XCryptographic_KeyType_EcdhNistP256,
+    XCryptographic_KeyType_EcdsaNistP256Private,
+    XCryptographic_KeyType_EcdsaNistP256Public
+} XCryptographic_KeyType;
+
+/**
+ * @brief 通用密码密钥
+ * @note 值类型，调用 XCryptographic_destroyKey 后不可再使用。
+ */
+typedef struct XCryptographic_Key {
+    XCryptographic_KeyType type;      ///< 密钥用途
+    uint8_t privateKey[32];               ///< 私钥或 ECDH 标量
+    uint8_t publicKey[65];                ///< X25519 或 P-256 公钥
+    size_t publicKeyLen;                  ///< 公钥长度
+    uint8_t symmetricKey[32];             ///< AES 对称密钥
+    size_t symmetricKeyLen;               ///< AES 密钥长度
+} XCryptographic_Key;
+
+/**
+ * @brief AES-CTR 流式运算上下文
+ * @note 值类型；先使用 XCryptographic_aesCtrSetup 初始化，
+ *       使用完成后调用 XCryptographic_aesCtrAbort 清理。
+ */
+typedef struct XCryptographic_CipherOperation {
+    uint8_t roundKeys[240];
+    uint8_t counter[16];
+    uint8_t stream[16];
+    size_t streamOffset;
+    uint8_t rounds;
+    bool active;
+} XCryptographic_CipherOperation;
+
+/** @brief ECDH 密钥协商算法。 */
+typedef enum XCryptographic_EcdhAlgorithm {
+    XCryptographic_EcdhAlgorithm_X25519 = 0,
+    XCryptographic_EcdhAlgorithm_NistP256
+} XCryptographic_EcdhAlgorithm;
+
+/**
+ * @brief 导入 AES-CTR 密钥
+ * @param key AES-128/192/256 原始密钥视图（长度为 16、24 或 32）
+ * @param result 输出密钥对象
+ * @return 成功返回 true；算法被关闭或参数无效返回 false
+ */
+bool XCryptographic_aesCtrImportKey(XByteArrayView key,
+                                        XCryptographic_Key* result);
+/**
+ * @brief 初始化 AES-CTR 加密或解密流
+ * @param operation 输出流式上下文
+ * @param key AES-CTR 密钥
+ * @param encrypt true 表示加密；CTR 模式下两种方向使用相同变换
+ * @param iv 16 字节初始计数器视图
+ * @return 成功返回 true
+ */
+bool XCryptographic_aesCtrSetup(XCryptographic_CipherOperation* operation,
+                                    XCryptographic_Key key, bool encrypt,
+                                    XByteArrayView iv);
+/**
+ * @brief 处理 AES-CTR 流的一段输入
+ * @return 成功返回指向 buffer 的有效视图，失败返回空视图
+ */
+XByteArrayView XCryptographic_aesCtrUpdateInto(
+    XCryptographic_CipherOperation* operation,
+    char* buffer, size_t bufferSize, XByteArrayView data);
+/** @brief 将 AES-CTR 处理结果写入新建的 XByteArray；调用者负责删除返回值。 */
+XByteArray* XCryptographic_aesCtrUpdate(
+    XCryptographic_CipherOperation* operation, XByteArrayView data);
+/** @brief 清理 AES-CTR 流上下文中的密钥派生数据。 */
+void XCryptographic_aesCtrAbort(XCryptographic_CipherOperation* operation);
+
+/**
+ * @brief 生成 X25519 或 NIST P-256 ECDH 临时密钥
+ * @param algorithm 密钥协商算法
+ * @param result 输出密钥对象
+ * @return 成功返回 true
+ */
+bool XCryptographic_ecdhGenerateKey(XCryptographic_EcdhAlgorithm algorithm,
+                                        XCryptographic_Key* result);
+/**
+ * @brief 导出 ECDH 或 ECDSA 公钥
+ * @return 公钥字节数组；失败返回 NULL，调用者负责删除返回值
+ */
+XByteArray* XCryptographic_exportPublicKey(XCryptographic_Key key);
+/** @brief 将公钥写入提供的缓冲区（无内存分配）。 */
+XByteArrayView XCryptographic_exportPublicKeyInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key key);
+/**
+ * @brief 计算 ECDH 共享密钥
+ * @return 共享密钥字节数组；失败返回 NULL，调用者负责删除返回值
+ */
+XByteArray* XCryptographic_ecdhAgree(XCryptographic_Key privateKey,
+                                         XByteArrayView peerPublicKey);
+/** @brief 将 ECDH 共享密钥写入提供的缓冲区（无内存分配）。 */
+XByteArrayView XCryptographic_ecdhAgreeInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key privateKey,
+    XByteArrayView peerPublicKey);
+
+/** @brief 从 32 字节 P-256 私钥标量导入 ECDSA 签名密钥。 */
+bool XCryptographic_ecdsaP256ImportPrivateKey(XByteArrayView key,
+                                                  XCryptographic_Key* result);
+/** @brief 生成 P-256 ECDSA 签名密钥。 */
+bool XCryptographic_ecdsaP256GenerateKey(XCryptographic_Key* result);
+/** @brief 导出 P-256 ECDSA 私钥标量。 */
+XByteArray* XCryptographic_ecdsaP256ExportPrivateKey(XCryptographic_Key key);
+/** @brief 将 P-256 ECDSA 私钥标量写入提供的缓冲区。 */
+XByteArrayView XCryptographic_ecdsaP256ExportPrivateKeyInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key key);
+/** @brief 导入 65 字节 P-256 ECDSA 公钥用于验签。 */
+bool XCryptographic_ecdsaP256ImportPublicKey(XByteArrayView key,
+                                                 XCryptographic_Key* result);
+/** @brief 对 SHA-256 摘要进行 P-256 ECDSA 签名，输出为 64 字节 r||s。 */
+XByteArray* XCryptographic_ecdsaP256SignHash(XCryptographic_Key key,
+                                                  XByteArrayView hash);
+/** @brief 将 P-256 ECDSA 签名写入提供的缓冲区，结果为 64 字节 r||s。 */
+XByteArrayView XCryptographic_ecdsaP256SignHashInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key key,
+    XByteArrayView hash);
+/** @brief 验证 64 字节 r||s 格式的 P-256 ECDSA 签名。 */
+bool XCryptographic_ecdsaP256VerifyHash(XCryptographic_Key key,
+                                            XByteArrayView hash,
+                                            XByteArrayView signature);
+/** @brief 清零由本模块导入或生成的密钥。 */
+void XCryptographic_destroyKey(XCryptographic_Key* key);
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif // XCRYPTOGRAPHICHASH_H
+#endif /* XCRYPTOGRAPHIC_H */

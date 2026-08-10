@@ -22,7 +22,7 @@
 #include "XHttpServerRouterRule.h"
 #include "XHttpServerWebSocketUpgradeResponse.h"
 #include "XSslSocket.h"
-#include "XCryptographicHash.h"
+#include "XCryptographic.h"
 #include "XNetworkRequestFactory.h"
 #include "XRestAccessManager.h"
 #include "XRestReply.h"
