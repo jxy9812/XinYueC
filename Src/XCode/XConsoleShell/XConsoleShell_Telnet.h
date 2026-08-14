@@ -37,7 +37,7 @@ typedef struct XConsoleShellTelnetAdapter {
     bool afterCarriageReturn;               /**< 用于吞掉 CR 后的 NUL。 */
     bool echoEnabled;                       /**< 服务端是否回显普通输入；密码输入时由 Shell 关闭。 */
     bool echoPendingCr;                     /**< 已回显 CR，等待吞掉 LF 以避免重复。 */
-    bool echoEscape;                        /**< 正在跳过 ESC 转义序列，不回显。 */
+    uint8_t echoEscape;                     /**< 0 普通，1 已收 ESC，2 正在消费 CSI/O 序列。 */
 } XConsoleShellTelnetAdapter;
 
 /**

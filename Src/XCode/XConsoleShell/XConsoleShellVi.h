@@ -35,6 +35,15 @@ struct XConsoleShellSession;
 bool XConsoleShellVi_isActive(const struct XConsoleShellSession* session);
 
 /**
+ * @brief 判断当前 vi/vim 状态接收退格后是否会实际删除编辑内容。
+ * @details 供远程终端适配器决定是否回显 `\b \b` 使用，避免空输入时把
+ *          Shell 提示符视觉上擦掉。该判断不修改编辑器状态。
+ * @param session 当前会话；可为 NULL。
+ * @return 退格会删除内容返回 true，否则返回 false。
+ */
+bool XConsoleShellVi_canBackspace(const struct XConsoleShellSession* session);
+
+/**
  * @brief 取消当前会话的 vi/vim 编辑状态并恢复 Shell 提示符。
  * @param shell 当前 Shell；不能为空。
  * @param session 当前会话；可为 NULL。

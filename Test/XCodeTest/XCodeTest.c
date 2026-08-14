@@ -15,6 +15,7 @@ void XMenu_XCodeTest(XMenu* root)
 #endif
 	XMenu_XDateTimeTest(menu);
 	XMenu_XCryptographicHashTest(menu);
+	XMenu_XCryptographicPrimitiveTest(menu);
 	XMenu_XRandomGeneratorTest(menu);
 XMenu_XCoreApplicationTest(menu);
 	XMenu_XCommandLineParserTest(menu);

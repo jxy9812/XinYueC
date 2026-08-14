@@ -406,6 +406,16 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte);
 XConsoleResult XConsoleShell_feedData(XConsoleShell* self,
                                       const void* data, size_t size);
 /**
+ * @brief      判断指定会话当前是否可由退格键删除一个输入字符。
+ * @details    该查询不改变 Shell 状态。远程终端适配器应仅在返回 true 时
+ *             回显 `\b \b`，以免空命令行的退格键擦除提示符。
+ * @param      self Shell 对象；不能为空。
+ * @param      session 目标会话；NULL 或默认会话表示默认输入行。
+ * @return     退格会实际删除输入返回 true，否则返回 false。
+ */
+bool XConsoleShell_canBackspace(const XConsoleShell* self,
+                                const XConsoleShellSession* session);
+/**
  * @brief      从默认会话 read 回调读取并处理一批输入。
  * @param      self Shell 对象；不能为空且必须配置 read 回调。
  * @param      maxBytes 本轮最多读取的字节数；0 或超过内部临时缓冲容量时

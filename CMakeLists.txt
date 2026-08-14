@@ -11,6 +11,15 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_DEBUG_POSTFIX "d")
 
+# ML-DSA-87 使用 PQCP 中 mldsa-native 的单编译单元实现，默认关闭以保持
+# 常规构建的体积和编译时间。开启后算法归 XCryptographic 所有，mbedTLS
+# 只保留其余 PQCP 驱动。
+option(XCRYPTOGRAPHIC_ENABLE_MLDSA87
+    "启用 XCryptographic 的 ML-DSA-87 密钥生成、签名和验签" OFF)
+if(XCRYPTOGRAPHIC_ENABLE_MLDSA87)
+    add_compile_definitions(XCRYPTOGRAPHIC_MLDSA87_ON=1)
+endif()
+
 # GCC 14 将部分旧 C 代码诊断提升为错误。项目的容器继承接口通过宏
 # 保持现有的基类调用约定，因此暂时将这些兼容性诊断降回警告，避免
 # 升级编译器改变公开 API 和已有源码的调用方式。

@@ -21,6 +21,8 @@ void XMenu_XThreadPoolTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
 void XMenu_XDateTimeTest(XMenu* root);
 void XMenu_XCryptographicHashTest(XMenu* root);
+/** @brief 添加 XCryptographic 独立密码原语标准向量测试菜单。 */
+void XMenu_XCryptographicPrimitiveTest(XMenu* root);
 void XMenu_XRandomGeneratorTest(XMenu* root);
 void XMenu_XCoreApplicationTest(XMenu* root);
 void XMenu_XCommandLineParserTest(XMenu* root);

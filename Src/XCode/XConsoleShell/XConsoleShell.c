@@ -446,27 +446,707 @@ static XConsoleResult xcs_finish_command(XConsoleShell* self,
 }
 
 #if XCONSOLE_SHELL_COMPLETION_ON
-static void xcs_complete_root_command(XConsoleShell* self)
+/* ============================================================================
+ * 命令补全
+ * ----------------------------------------------------------------------------
+ * 补全在输入流收到 Tab(0x09) 时执行，只修改当前会话的活动行缓冲，不执行命令
+ * 也不改变历史。支持四类补全：
+ *   1. 根命令名补全（唯一时补全，歧义时列出候选）；
+ *   2. 子命令补全（fs 等带 subcommands 的命令）；
+ *   3. 选项补全（从命令 usage 文本解析 `-x` / `--long` / 组合短选项）；
+ *   4. 文件路径补全（相对/绝对路径，含多段路径，目录追加 `/`）。
+ * 歧义时列出候选并重绘当前提示符与输入行；该功能由
+ * XCONSOLE_SHELL_COMPLETION_ON 裁剪，嵌入端可整体关闭。
+ * ========================================================================== */
+
+#define XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS 48u
+#define XCONSOLE_SHELL_COMPLETION_OPTION_SIZE 40u
+
+typedef struct XConsoleCompletionSpan {
+    size_t start; /**< 当前词在行缓冲中的起始字节偏移。 */
+    size_t end;   /**< 当前词结束字节偏移（不含）。 */
+} XConsoleCompletionSpan;
+
+/* 扫描行缓冲，返回已完成 token 数，并定位包含光标（或紧随光标）的当前词。 */
+static size_t xcs_complete_scan(const char* line, size_t length, size_t cursor,
+                                XConsoleCompletionSpan* spans, size_t maxSpans,
+                                size_t* completedCount, XConsoleCompletionSpan* current)
 {
-    const XConsoleCommand* match = NULL;
+    size_t i = 0;
+    size_t n = 0;
+    char quote = 0;
+    bool escaping = false;
+    *completedCount = 0;
+    current->start = length;
+    current->end = length;
+    while (i < length) {
+        /* 跳过引号/转义之外的空白；反斜杠转义和引号内的空格属于词的一部分，
+           与 Linux readline 的补全词切分保持一致。 */
+        while (i < length && quote == 0 && !escaping &&
+               (line[i] == ' ' || line[i] == '\t' ||
+                line[i] == '\r' || line[i] == '\n' ||
+                line[i] == '\f' || line[i] == '\v')) {
+            if (cursor == i) {
+                current->start = i;
+                current->end = i;
+                *completedCount = n;
+                return n;
+            }
+            ++i;
+        }
+        if (i >= length) break;
+        if (cursor == i) {
+            current->start = i;
+            current->end = i;
+            *completedCount = n;
+            return n;
+        }
+        {
+            size_t start = i;
+            while (i < length) {
+                if (escaping) {
+                    escaping = false;
+                    ++i;
+                    continue;
+                }
+#if !XPLATFORM_WINDOWS
+                if (line[i] == '\\') {
+                    escaping = true;
+                    ++i;
+                    continue;
+                }
+#endif
+                if (quote) {
+                    if (line[i] == quote) quote = 0;
+                    ++i;
+                    continue;
+                }
+                if (line[i] == '\'' || line[i] == '"') {
+                    quote = line[i];
+                    ++i;
+                    continue;
+                }
+                if (line[i] == ' ' || line[i] == '\t' ||
+                    line[i] == '\r' || line[i] == '\n' ||
+                    line[i] == '\f' || line[i] == '\v')
+                    break;
+                ++i;
+            }
+            if (n < maxSpans) {
+                spans[n].start = start;
+                spans[n].end = i;
+            }
+            ++n;
+            if (cursor > start && cursor <= i) {
+                current->start = start;
+                current->end = i;
+                *completedCount = n - 1;
+                return n;
+            }
+        }
+    }
+    *completedCount = n;
+    current->start = length;
+    current->end = length;
+    return n;
+}
+
+/* 用替换文本覆盖行缓冲 [start, end) 区间，并把光标移到替换文本末尾。 */
+static bool xcs_complete_apply(XConsoleShell* self, size_t start, size_t end,
+                               const char* text, size_t textLength)
+{
+    size_t tail;
+    size_t newLength;
+    if (!self || !text || start > end || end > self->m_lineLength) return false;
+    tail = self->m_lineLength - end;
+    newLength = self->m_lineLength - (end - start) + textLength;
+    if (newLength >= sizeof(self->m_lineBuffer)) return false;
+    memmove(self->m_lineBuffer + start + textLength,
+            self->m_lineBuffer + end, tail + 1u);
+    memcpy(self->m_lineBuffer + start, text, textLength);
+    self->m_lineLength = newLength;
+    self->m_lineBuffer[newLength] = '\0';
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+    self->m_lineCursor = start + textLength;
+#endif
+    return true;
+}
+
+/* 清空当前行并重绘提示符和补全后的输入行。 */
+static void xcs_complete_redraw(XConsoleShell* self)
+{
+    if (!self) return;
+    (void)XConsoleShell_writeUtf8(self, "\r\x1b[K");
+    if (self->m_io.prompt)
+        self->m_io.prompt(self->m_io.userData, self);
+    else
+        (void)XConsoleShell_writeUtf8(self, "> ");
+    (void)XConsoleShell_write(self, self->m_lineBuffer, self->m_lineLength);
+}
+
+/* 列出歧义候选并重绘提示符与输入行。 */
+static void xcs_complete_show_candidates(XConsoleShell* self,
+                                         const char* const* candidates,
+                                         size_t count)
+{
     size_t i;
-    if (!self || self->m_lineLength == 0 ||
-        memchr(self->m_lineBuffer, ' ', self->m_lineLength) ||
-        memchr(self->m_lineBuffer, '\t', self->m_lineLength)) return;
+    if (!self || !candidates) return;
+    for (i = 0; i < count; ++i) {
+        if (!candidates[i]) continue;
+        (void)XConsoleShell_writeUtf8(self, candidates[i]);
+        (void)XConsoleShell_writeUtf8(self, "  ");
+    }
+    (void)XConsoleShell_writeUtf8(self, "\r\n");
+    xcs_complete_redraw(self);
+}
+
+static void xcs_complete_add_candidate(const char* candidate,
+                                       const char** candidates,
+                                       size_t* count, size_t capacity)
+{
+    size_t i;
+    if (!candidate || !candidate[0] || !candidates || !count) return;
+    for (i = 0; i < *count; ++i) {
+        if (candidates[i] && strcmp(candidates[i], candidate) == 0) return;
+    }
+    if (*count < capacity) candidates[(*count)++] = candidate;
+}
+
+/* 唯一候选补全（追加空格），多候选列出。 */
+static void xcs_complete_finish(XConsoleShell* self,
+                                const XConsoleCompletionSpan* current,
+                                const char* const* candidates, size_t count)
+{
+    if (!self || !current || !candidates) return;
+    if (count == 1) {
+        char completed[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        size_t len = candidates[0] ? strlen(candidates[0]) : 0;
+        if (len + 1u < sizeof(completed)) {
+            memcpy(completed, candidates[0], len);
+            completed[len] = ' ';
+            completed[len + 1u] = '\0';
+            if (xcs_complete_apply(self, current->start, current->end,
+                                   completed, len + 1u))
+                xcs_complete_redraw(self);
+        }
+    } else if (count > 1) {
+        xcs_complete_show_candidates(self, candidates, count);
+    }
+}
+
+/* 根命令名补全。 */
+static void xcs_complete_root_command(XConsoleShell* self, const char* line,
+                                      const XConsoleCompletionSpan* current)
+{
+    const char* candidates[XCONSOLE_SHELL_COMMAND_CAPACITY];
+    size_t candidateCount = 0;
+    size_t i;
+    size_t prefixLength;
+    const char* prefix;
+    if (!self || !line || !current) return;
+    prefixLength = current->end - current->start;
+    prefix = line + current->start;
     for (i = 0; i < self->m_commandCount; ++i) {
         const XConsoleCommand* command = self->m_commands[i];
-        if (!command || !command->name ||
-            strncmp(command->name, self->m_lineBuffer, self->m_lineLength) != 0)
-            continue;
-        if (match) return;
-        match = command;
+        if (!command || !command->name) continue;
+        if (prefixLength <= strlen(command->name) &&
+            strncmp(command->name, prefix, prefixLength) == 0)
+            xcs_complete_add_candidate(command->name, candidates,
+                                       &candidateCount,
+                                       XCONSOLE_SHELL_COMMAND_CAPACITY);
     }
-    if (!match || strlen(match->name) >= sizeof(self->m_lineBuffer)) return;
-    strcpy(self->m_lineBuffer, match->name);
-    self->m_lineLength = strlen(match->name);
-#if XCONSOLE_SHELL_LINE_EDITOR_ON
-    self->m_lineCursor = self->m_lineLength;
+    xcs_complete_finish(self, current, candidates, candidateCount);
+}
+
+/* 子命令名补全。 */
+static void xcs_complete_subcommand(XConsoleShell* self,
+                                    const XConsoleCommand* command,
+                                    const char* line,
+                                    const XConsoleCompletionSpan* current)
+{
+    const char* candidates[XCONSOLE_SHELL_COMMAND_CAPACITY];
+    size_t candidateCount = 0;
+    size_t i;
+    size_t prefixLength;
+    const char* prefix;
+    if (!self || !command || !command->subcommands || !line || !current) return;
+    prefixLength = current->end - current->start;
+    prefix = line + current->start;
+    for (i = 0; i < command->subcommandCount; ++i) {
+        const XConsoleCommand* sub = &command->subcommands[i];
+        if (!sub->name) continue;
+        if (prefixLength <= strlen(sub->name) &&
+            strncmp(sub->name, prefix, prefixLength) == 0)
+            xcs_complete_add_candidate(sub->name, candidates,
+                                       &candidateCount,
+                                       XCONSOLE_SHELL_COMMAND_CAPACITY);
+    }
+    xcs_complete_finish(self, current, candidates, candidateCount);
+}
+
+/* 从 usefa text 提取 `-x`/`--long`/组合短选项候选。 */
+static void xcs_complete_option(XConsoleShell* self,
+                                const XConsoleCommand* command,
+                                const char* line,
+                                const XConsoleCompletionSpan* current)
+{
+    char candidates[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS]
+                    [XCONSOLE_SHELL_COMPLETION_OPTION_SIZE];
+    size_t candidateCount = 0;
+    size_t prefixLength;
+    const char* prefix;
+    const char* usage;
+    if (!self || !command || !line || !current) return;
+    prefixLength = current->end - current->start;
+    prefix = line + current->start;
+    usage = command->usage;
+    if (!usage) return;
+    while (*usage && candidateCount < XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS) {
+        char candidate[XCONSOLE_SHELL_COMPLETION_OPTION_SIZE];
+        const char* start;
+        size_t len;
+        if (*usage != '-' || !(usage[1] == '-' ||
+                               (usage[1] >= 'a' && usage[1] <= 'z') ||
+                               (usage[1] >= 'A' && usage[1] <= 'Z') ||
+                               (usage[1] >= '0' && usage[1] <= '9'))) {
+            ++usage;
+            continue;
+        }
+        start = usage;
+        while (*usage && *usage != ' ' && *usage != '\t' && *usage != '\r' &&
+               *usage != '\n' && *usage != ']' && *usage != '[' &&
+               *usage != '=' && *usage != '<' && *usage != '>' &&
+               *usage != ',' && *usage != '|') ++usage;
+        len = (size_t)(usage - start);
+        /* 组合短选项 `-alRFdh` 逐个展开为 `-a`、`-l` 等 */
+        if (len > 2 && start[1] != '-') {
+            size_t k;
+            for (k = 1; k < len; ++k) {
+                char single[3];
+                single[0] = '-';
+                single[1] = start[k];
+                single[2] = '\0';
+                if (prefixLength <= 2 && strncmp(single, prefix, prefixLength) == 0) {
+                    size_t j;
+                    bool dup = false;
+                    for (j = 0; j < candidateCount; ++j) {
+                        if (strcmp(candidates[j], single) == 0) { dup = true; break; }
+                    }
+                    if (!dup && candidateCount < XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS) {
+                        strncpy(candidates[candidateCount], single,
+                                XCONSOLE_SHELL_COMPLETION_OPTION_SIZE - 1u);
+                        candidates[candidateCount][XCONSOLE_SHELL_COMPLETION_OPTION_SIZE - 1u] = '\0';
+                        ++candidateCount;
+                    }
+                }
+            }
+        } else if (len < XCONSOLE_SHELL_COMPLETION_OPTION_SIZE) {
+            if (prefixLength <= len && strncmp(start, prefix, prefixLength) == 0) {
+                size_t j;
+                bool dup = false;
+                memcpy(candidate, start, len);
+                candidate[len] = '\0';
+                for (j = 0; j < candidateCount; ++j) {
+                    if (strcmp(candidates[j], candidate) == 0) { dup = true; break; }
+                }
+                if (!dup) {
+                    strncpy(candidates[candidateCount], candidate,
+                            XCONSOLE_SHELL_COMPLETION_OPTION_SIZE - 1u);
+                    candidates[candidateCount][XCONSOLE_SHELL_COMPLETION_OPTION_SIZE - 1u] = '\0';
+                    ++candidateCount;
+                }
+            }
+        }
+    }
+    if (candidateCount) {
+        const char* ptrs[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS];
+        size_t i;
+        for (i = 0; i < candidateCount; ++i) ptrs[i] = candidates[i];
+        xcs_complete_finish(self, current, ptrs, candidateCount);
+    }
+}
+
+#if XCONSOLE_SHELL_FILESYSTEM_ON
+/* 路径候选池：列出歧义路径候选时复用，避免为每个会话分配大块栈内存。 */
+static char g_xcs_pathCandidates[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS]
+                                 [XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+
+/* 解码路径前缀中的反斜杠转义（`\ ` -> 空格），供文件系统真实路径使用。 */
+static size_t xcs_complete_decode(const char* src, size_t len,
+                                  char* dst, size_t cap)
+{
+    size_t i = 0;
+    size_t o = 0;
+    if (!src || !dst || !cap) return 0;
+    while (i < len && o + 1u < cap) {
+        if (src[i] == '\\' && i + 1u < len) {
+            dst[o++] = src[i + 1u];
+            i += 2u;
+        } else {
+            dst[o++] = src[i++];
+        }
+    }
+    dst[o] = '\0';
+    return o;
+}
+
+/* 编码路径候选：把空格、引号、通配符等元字符用反斜杠转义，保持单个词。 */
+static size_t xcs_complete_encode(const char* src, size_t len,
+                                  char* dst, size_t cap)
+{
+    size_t i = 0;
+    size_t o = 0;
+    if (!src || !dst || !cap) return 0;
+    for (i = 0; i < len; ++i) {
+        char c = src[i];
+        if (c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\\' ||
+            c == '$' || c == '`' || c == '*' || c == '?' || c == '[' ||
+            c == ']' || c == '#' || c == ';' || c == '&' || c == '|' ||
+            c == '(' || c == ')' || c == '<' || c == '>' || c == '\r' ||
+            c == '\n' || c == '\v' || c == '\f') {
+            if (o + 2u > cap) return 0;
+            dst[o++] = '\\';
+            dst[o++] = c;
+        } else {
+            if (o + 1u > cap) return 0;
+            dst[o++] = c;
+        }
+    }
+    if (o < cap) dst[o] = '\0';
+    return o;
+}
+
+/* 文件路径补全：支持相对/绝对、多段路径，目录追加 `/`，可限定只补目录。 */
+static void xcs_complete_path(XConsoleShell* self, const char* line,
+                              const XConsoleCompletionSpan* current,
+                              const XConsoleShellSession* session,
+                              bool dirsOnly)
+{
+    const char* prefix;
+    size_t prefixLength;
+    size_t lastSlash;
+    const char* dirAsWritten = NULL;
+    size_t dirAsWrittenLength = 0;
+    const char* filePrefix;
+    size_t filePrefixLength;
+    XString* dirPath = NULL;
+    XString* entryName = NULL;
+    XDirEntry entry;
+    XDirIterator iterator = NULL;
+    size_t matchCount = 0;
+    char decodedPrefix[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+    size_t decodedPrefixLength = 0;
+    char uniqueNameStorage[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+    const char* uniqueName = NULL;
+    size_t uniqueNameLength = 0;
+    bool uniqueIsDir = false;
+    char common[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+    size_t commonLength = 0;
+    bool haveMatched = false;
+    char quote = 0;
+    if (!self || !line || !current || !session) return;
+    prefix = line + current->start;
+    prefixLength = current->end - current->start;
+    if (prefixLength >= sizeof(common)) return;
+    /* 引号内补全：去掉词首的 `'` / `"`，文件系统按未加引号的路径查找；
+       输出时保留引号并在词尾补回闭引号，空格不再用反斜杠转义。 */
+    if (prefixLength && (prefix[0] == '\'' || prefix[0] == '"')) {
+        quote = prefix[0];
+        ++prefix;
+        --prefixLength;
+    }
+    decodedPrefixLength = xcs_complete_decode(prefix, prefixLength,
+                                              decodedPrefix, sizeof(decodedPrefix));
+    if (!decodedPrefixLength && prefixLength) return;
+    lastSlash = decodedPrefixLength;
+    while (lastSlash > 0 && decodedPrefix[lastSlash - 1u] != '/') --lastSlash;
+    if (lastSlash > 0) {
+        dirAsWritten = decodedPrefix;
+        dirAsWrittenLength = lastSlash;
+        filePrefix = decodedPrefix + lastSlash;
+        filePrefixLength = decodedPrefixLength - lastSlash;
+    } else {
+        filePrefix = decodedPrefix;
+        filePrefixLength = decodedPrefixLength;
+    }
+    dirPath = XString_create_utf8(session->currentPath[0] ? session->currentPath : "/");
+    if (!dirPath) return;
+    if (dirAsWrittenLength) {
+        char dirText[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        if (dirAsWrittenLength >= sizeof(dirText)) goto cleanup;
+        memcpy(dirText, dirAsWritten, dirAsWrittenLength);
+        dirText[dirAsWrittenLength] = '\0';
+        if (dirAsWritten[0] == '/' || (dirAsWritten[0] && dirAsWritten[1] == ':')) {
+            if (!XString_assign_utf8(dirPath, dirText)) goto cleanup;
+        } else {
+            size_t currentLen = strlen(XString_toUtf8(dirPath));
+            if (currentLen && XString_toUtf8(dirPath)[currentLen - 1u] != '/' &&
+                !XString_append_utf8(dirPath, "/")) goto cleanup;
+            if (!XString_append_utf8(dirPath, dirText)) goto cleanup;
+        }
+    }
+    entryName = XString_create();
+    if (!entryName) goto cleanup;
+    memset(&entry, 0, sizeof(entry));
+    entry.name = entryName;
+    iterator = XFileSystem_opendir(dirPath);
+    if (!iterator) goto cleanup;
+    while (XFileSystem_readdir(iterator, &entry)) {
+        const char* name = XString_toUtf8(entryName);
+        size_t nameLen = name ? strlen(name) : 0;
+        if (!name || !nameLen) continue;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        if (entry.isHidden && (filePrefixLength == 0 || filePrefix[0] != '.')) continue;
+        if (dirsOnly && !entry.isDir) continue;
+        if (filePrefixLength > nameLen ||
+            strncmp(name, filePrefix, filePrefixLength) != 0) continue;
+        if (!haveMatched) {
+            haveMatched = true;
+            if (nameLen + 1u > sizeof(uniqueNameStorage)) continue;
+            memcpy(uniqueNameStorage, name, nameLen + 1u);
+            uniqueName = uniqueNameStorage;
+            uniqueNameLength = nameLen;
+            uniqueIsDir = entry.isDir != 0;
+            commonLength = nameLen;
+            memcpy(common, name, nameLen);
+            common[nameLen] = '\0';
+        } else {
+            size_t j = 0;
+            if (commonLength > nameLen) commonLength = nameLen;
+            while (j < commonLength && common[j] == name[j]) ++j;
+            commonLength = j;
+            common[commonLength] = '\0';
+        }
+        ++matchCount;
+    }
+    XFileSystem_closedir(iterator);
+    iterator = NULL;
+    if (matchCount == 1 && uniqueName) {
+        char raw[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        char completed[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        size_t len = dirAsWrittenLength + uniqueNameLength;
+        size_t outLen = 0;
+        if (len + 1u < sizeof(raw)) {
+            if (dirAsWrittenLength) memcpy(raw, dirAsWritten, dirAsWrittenLength);
+            memcpy(raw + dirAsWrittenLength, uniqueName, uniqueNameLength);
+            if (quote) {
+                if (outLen < sizeof(completed)) completed[outLen++] = quote;
+                if (len <= sizeof(completed) - outLen) {
+                    memcpy(completed + outLen, raw, len);
+                    outLen += len;
+                } else {
+                    outLen = 0;
+                }
+                if (outLen && uniqueIsDir && outLen + 1u < sizeof(completed))
+                    completed[outLen++] = '/';
+                if (outLen && outLen + 1u < sizeof(completed))
+                    completed[outLen++] = quote;
+                if (outLen && !uniqueIsDir && outLen + 1u < sizeof(completed))
+                    completed[outLen++] = ' ';
+            } else {
+                /* 只转义文件名字符本身；追加的目录斜杠/分隔空格不需要转义。 */
+                outLen = xcs_complete_encode(raw, len, completed, sizeof(completed));
+                if (outLen && outLen + 1u < sizeof(completed))
+                    completed[outLen++] = uniqueIsDir ? '/' : ' ';
+            }
+            if (outLen && outLen < sizeof(completed)) {
+                completed[outLen] = '\0';
+                if (xcs_complete_apply(self, current->start, current->end,
+                                       completed, outLen))
+                    xcs_complete_redraw(self);
+            }
+        }
+    } else if (matchCount > 1 && commonLength > filePrefixLength) {
+        /* 多候选仍有共同前缀，先补全共同前缀（不追加空格/斜杠）。 */
+        char raw[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        char completed[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+        size_t len = dirAsWrittenLength + commonLength;
+        size_t outLen = 0;
+        if (len < sizeof(raw)) {
+            if (dirAsWrittenLength) memcpy(raw, dirAsWritten, dirAsWrittenLength);
+            memcpy(raw + dirAsWrittenLength, common, commonLength);
+            if (quote) {
+                if (outLen < sizeof(completed)) completed[outLen++] = quote;
+                if (len <= sizeof(completed) - outLen) {
+                    memcpy(completed + outLen, raw, len);
+                    outLen += len;
+                } else {
+                    outLen = 0;
+                }
+            } else {
+                outLen = xcs_complete_encode(raw, len, completed, sizeof(completed));
+            }
+            if (outLen && outLen < sizeof(completed)) {
+                completed[outLen] = '\0';
+                if (xcs_complete_apply(self, current->start, current->end,
+                                       completed, outLen))
+                    xcs_complete_redraw(self);
+            }
+        }
+    } else if (matchCount > 1) {
+        /* 无共同前缀，列出候选。 */
+        XDirIterator listIterator;
+        const char* ptrs[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS];
+        size_t listCount = 0;
+        listIterator = XFileSystem_opendir(dirPath);
+        if (listIterator) {
+            while (XFileSystem_readdir(listIterator, &entry) &&
+                   listCount < XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS) {
+                const char* name = XString_toUtf8(entryName);
+                size_t nameLen = name ? strlen(name) : 0;
+                if (!name || !nameLen) continue;
+                if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+                if (entry.isHidden && (filePrefixLength == 0 || filePrefix[0] != '.')) continue;
+                if (dirsOnly && !entry.isDir) continue;
+                if (filePrefixLength > nameLen ||
+                    strncmp(name, filePrefix, filePrefixLength) != 0) continue;
+                {
+                    char combined[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+                    char encoded[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+                    size_t combinedLen;
+                    size_t outLen;
+                    combinedLen = dirAsWrittenLength + nameLen;
+                    if (combinedLen + 1u < sizeof(combined)) {
+                        if (dirAsWrittenLength)
+                            memcpy(combined, dirAsWritten, dirAsWrittenLength);
+                        memcpy(combined + dirAsWrittenLength, name, nameLen);
+                        if (quote) {
+                            /* 引号内列出：保留引号，空格不转义，目录尾加 `/`。 */
+                            outLen = 0;
+                            if (outLen < sizeof(encoded)) encoded[outLen++] = quote;
+                            if (combinedLen <= sizeof(encoded) - outLen) {
+                                memcpy(encoded + outLen, combined, combinedLen);
+                                outLen += combinedLen;
+                            } else {
+                                outLen = 0;
+                            }
+                            if (outLen && entry.isDir && outLen + 1u < sizeof(encoded))
+                                encoded[outLen++] = '/';
+                            if (outLen && outLen + 1u < sizeof(encoded))
+                                encoded[outLen++] = quote;
+                        } else {
+                            /* 候选只转义文件名；目录用 `/` 结尾，普通文件不加
+                               分隔空格（候选之间由列出函数统一加空格间隔）。 */
+                            outLen = xcs_complete_encode(combined, combinedLen,
+                                                         encoded, sizeof(encoded));
+                            if (outLen && entry.isDir && outLen + 1u < sizeof(encoded))
+                                encoded[outLen++] = '/';
+                        }
+                        if (!outLen) continue;
+                        encoded[outLen] = '\0';
+                        /* 用静态缓冲区保存，直到本函数结束 */
+                        strncpy(g_xcs_pathCandidates[listCount], encoded,
+                                sizeof(g_xcs_pathCandidates[listCount]) - 1u);
+                        g_xcs_pathCandidates[listCount][sizeof(g_xcs_pathCandidates[listCount]) - 1u] = '\0';
+                        ptrs[listCount] = g_xcs_pathCandidates[listCount];
+                        ++listCount;
+                    }
+                }
+            }
+            XFileSystem_closedir(listIterator);
+        }
+        if (listCount) xcs_complete_show_candidates(self, ptrs, listCount);
+    }
+cleanup:
+    if (iterator) XFileSystem_closedir(iterator);
+    if (entryName) XString_delete_base(entryName);
+    if (dirPath) XString_delete_base(dirPath);
+}
+#endif /* XCONSOLE_SHELL_FILESYSTEM_ON */
+
+/* 判断缓冲区中是否包含指定字符。 */
+static bool xcs_complete_has_char(const char* text, size_t length, char c)
+{
+    size_t i;
+    if (!text) return false;
+    for (i = 0; i < length; ++i)
+        if (text[i] == c) return true;
+    return false;
+}
+
+/* 总入口：根据当前行和光标位置决定补全类型。 */
+static void xcs_complete_line(XConsoleShell* self)
+{
+    const char* line;
+    size_t length;
+    size_t cursor;
+    XConsoleCompletionSpan spans[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    size_t completedCount = 0;
+    XConsoleCompletionSpan current;
+    char scratch[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
+    const char* completedTokens[XCONSOLE_SHELL_MAX_ARGUMENTS];
+    size_t completedTokenCount = 0;
+    const XConsoleCommand* command;
+    XConsoleResult result;
+    if (!self) return;
+#if XCONSOLE_SHELL_LOGIN_ON
+    if (XConsoleShellLogin_isInputPending(&self->m_session)) return;
 #endif
+    line = self->m_lineBuffer;
+    length = self->m_lineLength;
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+    cursor = self->m_lineCursor;
+    if (cursor > length) cursor = length;
+#else
+    cursor = length;
+#endif
+    (void)xcs_complete_scan(line, length, cursor, spans,
+                            XCONSOLE_SHELL_MAX_ARGUMENTS,
+                            &completedCount, &current);
+    const XConsoleCommand* completionCommand;
+#if XCONSOLE_SHELL_SUBCOMMAND_ON
+    const XConsoleCommand* subcommand = NULL;
+#endif
+    if (completedCount == 0) {
+#if XCONSOLE_SHELL_FILESYSTEM_ON
+        /* 命令词含 `/` 时按 Linux 习惯直接补全路径（如 ./sc、/usr/bin/）。 */
+        if (current.end > current.start &&
+            xcs_complete_has_char(line + current.start,
+                                  current.end - current.start, '/'))
+            xcs_complete_path(self, line, &current, &self->m_session, false);
+        else
+#endif
+            xcs_complete_root_command(self, line, &current);
+        return;
+    }
+    result = XConsoleShellParser_tokenizeBuffer(line, current.start,
+                                                scratch, sizeof(scratch),
+                                                completedTokens,
+                                                XCONSOLE_SHELL_MAX_ARGUMENTS,
+                                                &completedTokenCount);
+    if (result != XConsoleResult_Ok || completedTokenCount == 0) return;
+    command = XConsoleShellParser_find(self, completedTokens,
+                                       completedTokenCount, NULL);
+    if (!command) return;
+    completionCommand = command;
+#if XCONSOLE_SHELL_SUBCOMMAND_ON
+    if (command->subcommands && command->subcommandCount) {
+        size_t i;
+        if (completedTokenCount >= 2) {
+            for (i = 0; i < command->subcommandCount; ++i) {
+                const XConsoleCommand* sub = &command->subcommands[i];
+                if (sub->name && strcmp(sub->name, completedTokens[1]) == 0) {
+                    subcommand = sub;
+                    break;
+                }
+            }
+        }
+        if (!subcommand) {
+            xcs_complete_subcommand(self, command, line, &current);
+            return;
+        }
+        completionCommand = subcommand;
+    }
+#endif
+    if (current.end > current.start && line[current.start] == '-') {
+        xcs_complete_option(self, completionCommand, line, &current);
+    } else {
+#if XCONSOLE_SHELL_FILESYSTEM_ON
+        bool dirsOnly = completionCommand && completionCommand->name &&
+                        strcmp(completionCommand->name, "cd") == 0;
+        xcs_complete_path(self, line, &current, &self->m_session, dirsOnly);
+#endif
+    }
 }
 #endif
 
@@ -1693,7 +2373,7 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
     }
 #if XCONSOLE_SHELL_COMPLETION_ON
     if (byte == '\t') {
-        xcs_complete_root_command(self);
+        xcs_complete_line(self);
         return XConsoleResult_Ok;
     }
 #endif
@@ -1802,6 +2482,35 @@ XConsoleResult XConsoleShell_feedData(XConsoleShell* self,
         result = XConsoleShell_feedByte(self, bytes[i]);
     }
     return result;
+}
+
+bool XConsoleShell_canBackspace(const XConsoleShell* self,
+                                const XConsoleShellSession* session)
+{
+    if (!self) return false;
+#if XCONSOLE_SHELL_EDITOR_ON
+    if (session && XConsoleShellVi_isActive(session))
+        return XConsoleShellVi_canBackspace(session);
+    if ((!session || session == &self->m_session) &&
+        XConsoleShellVi_isActive(&self->m_session))
+        return XConsoleShellVi_canBackspace(&self->m_session);
+#endif
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    if (session && session != &self->m_session) {
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+        return session->m_lineCursor > 0;
+#else
+        return session->m_lineLength > 0;
+#endif
+    }
+#else
+    (void)session;
+#endif
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+    return self->m_lineCursor > 0;
+#else
+    return self->m_lineLength > 0;
+#endif
 }
 
 XConsoleResult XConsoleShell_pump(XConsoleShell* self, size_t maxBytes)

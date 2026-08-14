@@ -13,6 +13,8 @@
 #include "XConsoleShell.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
+#include "XCryptographicPrimitiveTest.h"
+#include "XSslTest.h"
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XMenuTest.h"
@@ -36,6 +38,10 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XConsoleShellBackendTest_runAll();
     } else if (strcmp(name, "ssh-telnet-client") == 0) {
         result = XSshTelnetClientTest_runAll();
+    } else if (strcmp(name, "xcryptographic") == 0) {
+        result = XCryptographicPrimitiveTest_runAll();
+    } else if (strcmp(name, "xssl") == 0) {
+        result = XSslTest_runAll();
     } else {
         return XConsoleResult_UnknownCommand;
     }
@@ -50,7 +56,9 @@ static int xtest_run_all(XConsoleShell* shell)
     bool shellTest = XConsoleShellTest_runAll();
     bool backend = XConsoleShellBackendTest_runAll();
     bool protocolClients = XSshTelnetClientTest_runAll();
-    bool result = process && shellTest && backend && protocolClients;
+    bool cryptographic = XCryptographicPrimitiveTest_runAll();
+    bool ssl = XSslTest_runAll();
+    bool result = process && shellTest && backend && protocolClients && cryptographic && ssl;
     if (!xtest_write(shell, result ? "Test all PASS\n" : "Test all FAIL\n"))
         return XConsoleResult_IoError;
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -75,6 +83,8 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test xconsole-shell\n"
                            "  Test xconsole-shell-backend\n"
                            "  Test ssh-telnet-client\n"
+                           "  Test xcryptographic\n"
+                           "  Test xssl\n"
                            "  Test all\n")
                    ? XConsoleResult_Ok : XConsoleResult_IoError;
     }

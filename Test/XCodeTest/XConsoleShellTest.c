@@ -17,6 +17,11 @@
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XDateTime.h"
+#if XTUI_ON && XTUI_WIDGET_ON && XTUI_VIM_ON
+#include "XTuiVim.h"
+#include "XTuiScreen.h"
+#include "XTuiTypes.h"
+#endif
 #if XCONSOLE_SHELL_ASYNC_ON
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
@@ -446,12 +451,790 @@ static bool XConsoleShellTest_feedEditor(XConsoleShell* shell,
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
     if (!XConsoleShell_flushOutput(shell)) return false;
 #endif
+
     if (result != expected || (expectedText && !strstr(transport->output, expectedText))) {
         XPrintf("[FAIL] Shell 编辑器字节输入长度=%zu, result=%d, expected=%d, output=%s\n",
                 length, result, expected, transport->output);
         return false;
     }
     return true;
+}
+#endif
+
+#if XTUI_ON && XTUI_WIDGET_ON && XTUI_VIM_ON
+static bool XConsoleShellTest_vimKey(XTuiVim* vim, char key)
+{
+    XTuiKeyEvent event;
+    XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Char,
+                      XKeyboardModifier_NoModifier);
+    event.m_utf8[0] = key;
+    event.m_utf8[1] = '\0';
+    return XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+}
+
+static bool XConsoleShellTest_vimEnter(XTuiVim* vim)
+{
+    XTuiKeyEvent event;
+    XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Enter,
+                      XKeyboardModifier_NoModifier);
+    return XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+}
+
+static bool XConsoleShellTest_vimEscape(XTuiVim* vim)
+{
+    XTuiKeyEvent event;
+    XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Escape,
+                      XKeyboardModifier_NoModifier);
+    return XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+}
+
+static bool XConsoleShellTest_vimSpecial(XTuiVim* vim, XTuiKeyType key)
+{
+    XTuiKeyEvent event;
+    XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, key,
+                      XKeyboardModifier_NoModifier);
+    return XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+}
+
+static bool XConsoleShellTest_vimControl(XTuiVim* vim, char key)
+{
+    XTuiKeyEvent event;
+    XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Char,
+                      XKeyboardModifier_ControlModifier);
+    event.m_utf8[0] = key;
+    event.m_utf8[1] = '\0';
+    return XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+}
+
+static bool XConsoleShellTest_runVimAdvanced(void)
+{
+    XTuiVim* vim;
+    const char* initial[] = { "one two", "three two", "last" };
+    bool ok = false;
+    vim = XTuiVim_create();
+    if (!vim) return false;
+    {
+        XTuiScreen* screen = XTuiScreen_create_ex(40, 3);
+        XRect rect = { 0, 0, 40, 3 };
+        bool foundChinese = false;
+        bool replacementCharacter = false;
+        int x;
+        XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+        if (!screen || !XTuiWidget_render_base((XTuiWidget*)vim, screen)) {
+            if (screen) XTuiScreen_delete_base(screen);
+            XTuiVim_delete_base(vim);
+            return false;
+        }
+        for (x = 0; x < 40; ++x) {
+            const XTuiCell* cell = XTuiScreen_cell(screen, x, 2);
+            if (!cell) continue;
+            if (strcmp(cell->m_utf8, "\xe5\x91\xbd") == 0) foundChinese = true;
+            if (strcmp(cell->m_utf8, "\xef\xbf\xbd") == 0) replacementCharacter = true;
+        }
+        XCS_TEST_CHECK(foundChinese && !replacementCharacter,
+                       "vim status renders complete utf8 cells");
+        XTuiScreen_delete_base(screen);
+    }
+#if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_REPLACE_ON
+    XTuiVim_setLines(vim, initial, 3);
+    XCS_TEST_CHECK(XConsoleShellTest_vimKey(vim, 'w') && vim->m_cursorColumn == 4,
+                   "vim word forward");
+    XCS_TEST_CHECK(XConsoleShellTest_vimKey(vim, 'e') && vim->m_cursorColumn == 6,
+                   "vim word end");
+    XCS_TEST_CHECK(XConsoleShellTest_vimKey(vim, 'b') && vim->m_cursorColumn == 4,
+                   "vim word backward");
+    XCS_TEST_CHECK(XConsoleShellTest_vimKey(vim, 'f') &&
+                       XConsoleShellTest_vimKey(vim, 'o') && vim->m_cursorColumn == 6,
+                   "vim find character");
+    XTuiVim_setLines(vim, initial, 3);
+    XConsoleShellTest_vimKey(vim, 'c'); XConsoleShellTest_vimKey(vim, 'i');
+    XConsoleShellTest_vimKey(vim, 'w');
+    XConsoleShellTest_vimKey(vim, 'O'); XConsoleShellTest_vimKey(vim, 'N');
+    XConsoleShellTest_vimKey(vim, 'E'); XConsoleShellTest_vimEscape(vim);
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "ONE two") == 0, "vim ciw");
+    {
+        const char* motion[] = { "abc abc", "tail" };
+        XTuiVim_setLines(vim, motion, 2);
+        XConsoleShellTest_vimKey(vim, 'W');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 4, "vim W word forward");
+        XConsoleShellTest_vimKey(vim, 'E');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 6, "vim E word end");
+        XConsoleShellTest_vimKey(vim, 'B');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 4, "vim B word backward");
+        XTuiVim_setLines(vim, motion, 2);
+        XConsoleShellTest_vimKey(vim, 'f'); XConsoleShellTest_vimKey(vim, 'c');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 2, "vim f forward");
+        XConsoleShellTest_vimKey(vim, ';');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 6, "vim find repeat forward");
+        XConsoleShellTest_vimKey(vim, ',');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 2, "vim find repeat reverse");
+        XConsoleShellTest_vimKey(vim, 'F'); XConsoleShellTest_vimKey(vim, 'a');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 0, "vim F backward");
+        XTuiVim_setLines(vim, motion, 2);
+        XConsoleShellTest_vimKey(vim, 't'); XConsoleShellTest_vimKey(vim, 'c');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 1, "vim t till forward");
+        XConsoleShellTest_vimKey(vim, 'T'); XConsoleShellTest_vimKey(vim, 'a');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 1, "vim T till backward");
+        XTuiVim_setLines(vim, motion, 2);
+        XConsoleShellTest_vimKey(vim, '2'); XConsoleShellTest_vimKey(vim, 'l');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 2, "vim counted l motion");
+        XConsoleShellTest_vimKey(vim, '2'); XConsoleShellTest_vimKey(vim, 'h');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 0, "vim counted h motion");
+    }
+#endif
+    {
+        const char* lines[] = { "base" };
+        XTuiVim_setLines(vim, lines, 1);
+        XConsoleShellTest_vimKey(vim, 'o');
+        XConsoleShellTest_vimKey(vim, 'n'); XConsoleShellTest_vimKey(vim, 'e');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 2 &&
+                           strcmp(XTuiVim_line(vim, 1), "ne") == 0,
+                       "vim o new line");
+        XConsoleShellTest_vimKey(vim, 'O');
+        XConsoleShellTest_vimKey(vim, 't'); XConsoleShellTest_vimKey(vim, 'o');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 3 &&
+                           strcmp(XTuiVim_line(vim, 1), "to") == 0,
+                       "vim O new line above");
+#if XTUI_VIM_ADVANCED_MOTION_ON
+        XTuiVim_setLines(vim, (const char*[]){ "abcdef" }, 1);
+        XConsoleShellTest_vimKey(vim, '2'); XConsoleShellTest_vimKey(vim, 'x');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "cdef") == 0,
+                       "vim counted x delete");
+#endif
+    }
+    {
+        const char* text[] = { "  abc" };
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, 'I'); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "  Xabc") == 0, "vim I");
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, 'A'); XConsoleShellTest_vimKey(vim, '!');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "  abc!") == 0, "vim A");
+    }
+#if XTUI_VIM_REPLACE_ON
+    {
+        const char* text[] = { "abc" };
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, 'r'); XConsoleShellTest_vimKey(vim, 'X');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xbc") == 0, "vim r");
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, 's'); XConsoleShellTest_vimKey(vim, 'Z');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Zbc") == 0, "vim s");
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, 'S'); XConsoleShellTest_vimKey(vim, 'l');
+        XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, 'n');
+        XConsoleShellTest_vimKey(vim, 'e'); XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "line") == 0, "vim S");
+    }
+#endif
+#if XTUI_VIM_SEARCH_ON && XTUI_VIM_EX_ON
+    {
+        const char* text[] = { "  word word" };
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, '^');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 2, "vim first nonblank");
+        XConsoleShellTest_vimKey(vim, 'A');
+        XConsoleShellTest_vimControl(vim, 23);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "  word ") == 0, "vim insert Ctrl-W");
+        XConsoleShellTest_vimControl(vim, 21);
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "") == 0, "vim insert Ctrl-U");
+    }
+    {
+        const char* lines[] = { "0", "1", "2", "3", "4", "5" };
+        XRect rect = { 0, 0, 20, 3 };
+        XTuiVim_setLines(vim, lines, 6);
+        XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+        XConsoleShellTest_vimSpecial(vim, XTuiKey_PageDown);
+        XCS_TEST_CHECK(vim->m_cursorLine == 2 && vim->m_topLine == 1,
+                       "vim page down viewport");
+        XConsoleShellTest_vimSpecial(vim, XTuiKey_PageUp);
+        XCS_TEST_CHECK(vim->m_cursorLine == 0 && vim->m_topLine == 0,
+                       "vim page up viewport");
+    }
+    {
+        const char* text[] = { "word word" };
+        const char* p;
+        XTuiVim_setLines(vim, text, 1);
+        XConsoleShellTest_vimKey(vim, '/'); XConsoleShellTest_vimKey(vim, 'w');
+        XConsoleShellTest_vimKey(vim, 'o'); XConsoleShellTest_vimKey(vim, 'r');
+        XConsoleShellTest_vimKey(vim, 'd'); XConsoleShellTest_vimEnter(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        {
+            const char* command = "nohlsearch";
+            const char* p = command;
+            while (*p) XConsoleShellTest_vimKey(vim, *p++);
+        }
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(!vim->m_searchHighlight &&
+                           strcmp(vim->m_lastSearch, "word") == 0,
+                       "vim nohlsearch keeps pattern");
+        XConsoleShellTest_vimKey(vim, 'n');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 0, "vim n wraps after nohlsearch");
+#if XTUI_VIM_HISTORY_ON
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "set nu"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        XConsoleShellTest_vimSpecial(vim, XTuiKey_ArrowUp);
+        XCS_TEST_CHECK(strcmp(vim->m_command, "set nu") == 0,
+                       "vim command history up");
+        XConsoleShellTest_vimSpecial(vim, XTuiKey_ArrowDown);
+        XCS_TEST_CHECK(vim->m_commandLen == 0 && vim->m_command[0] == '\0',
+                       "vim command history down");
+        XConsoleShellTest_vimEscape(vim);
+        XConsoleShellTest_vimKey(vim, '/');
+        XConsoleShellTest_vimSpecial(vim, XTuiKey_ArrowUp);
+        XCS_TEST_CHECK(strcmp(vim->m_search, "word") == 0,
+                       "vim search history up");
+        XConsoleShellTest_vimEscape(vim);
+#endif
+#if XTUI_VIM_SEARCH_ON
+        XTuiVim_setLines(vim, (const char*[]){ "one", "two" }, 2);
+        XConsoleShellTest_vimKey(vim, '?');
+        for (p = "two"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(strcmp(vim->m_lastSearch, "two") == 0 &&
+                           !vim->m_searchMode,
+                       "vim reverse search");
+#endif
+    }
+#endif
+#if XRegularExpression_ON && XTUI_VIM_SEARCH_ON && \
+    XTUI_VIM_SUBSTITUTE_ON
+#if XTUI_VIM_MULTIBUFFER_ON
+    {
+        const char* lines[] = { "id-12", "id-34", "\xe4\xb8\xad id-56" };
+        const char* command = "%s/(id)-([0-9]+)/\\2:\\1/g";
+        const char* p;
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimKey(vim, '/');
+        for (p = "id-[0-9]+"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(vim->m_cursorLine == 1 && vim->m_cursorColumn == 0,
+                       "vim regular expression search");
+        XConsoleShellTest_vimKey(vim, 'n');
+        XCS_TEST_CHECK(vim->m_cursorLine == 2 && vim->m_cursorColumn == 2,
+                       "vim regular expression search utf8 column");
+        XConsoleShellTest_vimKey(vim, 'N');
+        XCS_TEST_CHECK(vim->m_cursorLine == 1 && vim->m_cursorColumn == 0,
+                       "vim regular expression reverse repeat");
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = command; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "12:id") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "34:id") == 0 &&
+                           strcmp(XTuiVim_line(vim, 2), "\xe4\xb8\xad 56:id") == 0,
+                       "vim regular expression substitution captures");
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimKey(vim, '/');
+        XConsoleShellTest_vimKey(vim, '['); XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(strstr(vim->m_status, "\xe6\x97\xa0\xe6\x95\x88\xe6\xad\xa3\xe5\x88\x99") != NULL,
+                       "vim regular expression syntax error");
+    }
+#endif
+    {
+        const char* line[] = { "buffer" };
+        const char* p;
+        XTuiVim_setLines(vim, line, 1);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "e next.txt"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantEdit(vim) &&
+                           strcmp(XTuiVim_actionPath(vim), "next.txt") == 0 &&
+                           !XTuiVim_wantForce(vim),
+                       "vim edit buffer action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "e blocked.txt"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(!XTuiVim_wantEdit(vim) &&
+                           strstr(vim->m_status, "\xe6\x9c\xaa\xe4\xbf\x9d\xe5\xad\x98") != NULL,
+                       "vim edit protects modified buffer");
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "bn"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantBufferNext(vim), "vim buffer next action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "b 3"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantBufferIndex(vim) == 3, "vim buffer index action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "buffers"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantBufferList(vim), "vim buffer list action");
+        XTuiVim_ackAction(vim);
+#if XTUI_VIM_EX_ON
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "w copy.txt"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantWritePath(vim) &&
+                           !XTuiVim_wantSaveAs(vim) &&
+                           strcmp(XTuiVim_actionPath(vim), "copy.txt") == 0,
+                       "vim write path action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "saveas renamed.txt"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantSaveAs(vim) &&
+                           strcmp(XTuiVim_actionPath(vim), "renamed.txt") == 0,
+                       "vim saveas action");
+        XTuiVim_ackAction(vim);
+#endif
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "wa"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantWriteAll(vim) && !XTuiVim_wantQuitAll(vim),
+                       "vim write all action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "wqa"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantWriteAll(vim) && XTuiVim_wantQuitAll(vim),
+                       "vim write quit all action");
+        XTuiVim_ackAction(vim);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "bd!"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(XTuiVim_wantBufferClose(vim) && XTuiVim_wantForce(vim),
+                       "vim force buffer close action");
+        XTuiVim_ackAction(vim);
+    }
+#endif
+#if XTUI_VIM_SUBSTITUTE_ON
+    {
+        const char* lines[] = { "cat CAT cat", "cat", "CAT" };
+        const char* p;
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "2,3s#cat#dog#gi"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "cat CAT cat") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "dog") == 0 &&
+                           strcmp(XTuiVim_line(vim, 2), "dog") == 0,
+                       "vim substitute range delimiter flags");
+        XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = ".s/dog/bird/I"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 1), "bird") == 0,
+                       "vim substitute current line range");
+#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
+        {
+            const char* confirmLine[] = { "a a" };
+            XTuiVim_setLines(vim, confirmLine, 1);
+            XConsoleShellTest_vimKey(vim, ':');
+            for (p = "s/a/X/gc"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+            XConsoleShellTest_vimEnter(vim);
+            XCS_TEST_CHECK(vim->m_substituteConfirm, "vim substitute confirmation starts");
+            XConsoleShellTest_vimKey(vim, 'y');
+            XCS_TEST_CHECK(vim->m_substituteConfirm &&
+                               strcmp(XTuiVim_line(vim, 0), "X a") == 0,
+                           "vim substitute confirmation accepts");
+            XConsoleShellTest_vimKey(vim, 'n');
+            XCS_TEST_CHECK(!vim->m_substituteConfirm &&
+                               strcmp(XTuiVim_line(vim, 0), "X a") == 0,
+                           "vim substitute confirmation skips");
+        }
+#endif
+    }
+#endif
+#if XTUI_VIM_EX_ON
+    {
+        const char* exLines[] = { "one", "two", "three" };
+        const char* p;
+        XTuiVim_setLines(vim, exLines, 3);
+#if XTUI_VIM_YANK_PASTE_ON
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "yank"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(vim->m_regCount == 1 && vim->m_regLineWise,
+                       "vim Ex yank");
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "put"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(vim->m_lineCount == 4 &&
+                           strcmp(XTuiVim_line(vim, 1), "one") == 0,
+                       "vim Ex put");
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "delete"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(vim->m_lineCount == 3 &&
+                           strcmp(XTuiVim_line(vim, 1), "two") == 0,
+                       "vim Ex delete");
+#endif
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "set nonu"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(!vim->m_showLineNumbers, "vim set nonumber");
+        XConsoleShellTest_vimKey(vim, ':');
+        for (p = "set number"; *p; ++p) XConsoleShellTest_vimKey(vim, *p);
+        XConsoleShellTest_vimEnter(vim);
+        XCS_TEST_CHECK(vim->m_showLineNumbers, "vim set number");
+    }
+#endif
+#if XTUI_VIM_VISUAL_ON && XTUI_VIM_YANK_PASTE_ON
+    {
+        const char* lines[] = { "abc", "def", "ghi" };
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimControl(vim, 22);
+        XConsoleShellTest_vimKey(vim, 'l'); XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, 'y');
+        XCS_TEST_CHECK(vim->m_regCount == 2 && strcmp(vim->m_regLines[0], "ab") == 0 &&
+                           strcmp(vim->m_regLines[1], "de") == 0,
+                       "vim visual block yank");
+        XConsoleShellTest_vimKey(vim, 'p');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 1), "deabf") == 0 &&
+                           strcmp(XTuiVim_line(vim, 2), "ghdei") == 0,
+                       "vim visual block paste");
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimControl(vim, 22);
+        XConsoleShellTest_vimKey(vim, 'l'); XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, 'd');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "c") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "f") == 0,
+                       "vim visual block delete");
+#if XTUI_VIM_REPLACE_ON
+        {
+            const char* blockLines[] = { "ab", "cd" };
+            XTuiVim_setLines(vim, blockLines, 2);
+            XConsoleShellTest_vimControl(vim, 22); XConsoleShellTest_vimKey(vim, 'j');
+            XConsoleShellTest_vimKey(vim, 'I'); XConsoleShellTest_vimKey(vim, 'X');
+            XConsoleShellTest_vimEscape(vim);
+            XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xab") == 0 &&
+                               strcmp(XTuiVim_line(vim, 1), "Xcd") == 0,
+                           "vim visual block I");
+            XTuiVim_setLines(vim, blockLines, 2);
+            XConsoleShellTest_vimControl(vim, 22); XConsoleShellTest_vimKey(vim, 'j');
+            XConsoleShellTest_vimKey(vim, 'A'); XConsoleShellTest_vimKey(vim, 'X');
+            XConsoleShellTest_vimEscape(vim);
+            XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "aXb") == 0 &&
+                               strcmp(XTuiVim_line(vim, 1), "cXd") == 0,
+                           "vim visual block A");
+            {
+                const char* changeLines[] = { "abc", "def" };
+                XTuiVim_setLines(vim, changeLines, 2);
+                XConsoleShellTest_vimControl(vim, 22); XConsoleShellTest_vimKey(vim, 'l');
+                XConsoleShellTest_vimKey(vim, 'j'); XConsoleShellTest_vimKey(vim, 'c');
+                XConsoleShellTest_vimKey(vim, 'X'); XConsoleShellTest_vimEscape(vim);
+                XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xc") == 0 &&
+                                   strcmp(XTuiVim_line(vim, 1), "Xf") == 0,
+                               "vim visual block change");
+            }
+        }
+#endif
+    }
+#endif
+#if XTUI_VIM_VISUAL_ON && XTUI_VIM_REPLACE_ON
+    {
+        const char* visualLines[] = { "alpha", "beta", "gamma" };
+        XTuiVim_setLines(vim, visualLines, 3);
+        XConsoleShellTest_vimKey(vim, 'v'); XConsoleShellTest_vimKey(vim, 'l');
+        XConsoleShellTest_vimKey(vim, 'c'); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xpha") == 0,
+                       "vim visual character change");
+        XTuiVim_setLines(vim, visualLines, 3);
+        XConsoleShellTest_vimKey(vim, 'V'); XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, 'd');
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 1 &&
+                           strcmp(XTuiVim_line(vim, 0), "gamma") == 0,
+                       "vim visual line delete");
+    }
+#endif
+#if XTUI_VIM_SEARCH_ON && XTUI_VIM_ADVANCED_MOTION_ON
+    {
+        const char* lines[] = { "word x word", "(a[b])", "last" };
+        XRect rect = { 0, 0, 20, 3 };
+        XTuiVim_setLines(vim, lines, 3);
+        XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+        XConsoleShellTest_vimKey(vim, '*');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 7, "vim star word search");
+        XConsoleShellTest_vimKey(vim, '#');
+        XCS_TEST_CHECK(vim->m_cursorColumn == 0, "vim hash word search");
+        XConsoleShellTest_vimKey(vim, 'j'); XConsoleShellTest_vimKey(vim, '%');
+        XCS_TEST_CHECK(vim->m_cursorLine == 1 && vim->m_cursorColumn == 5,
+                       "vim percent bracket match");
+        XConsoleShellTest_vimKey(vim, 'z'); XConsoleShellTest_vimKey(vim, 't');
+        XCS_TEST_CHECK(vim->m_topLine == 1, "vim zt viewport");
+        XConsoleShellTest_vimKey(vim, 'z'); XConsoleShellTest_vimKey(vim, 'b');
+        XCS_TEST_CHECK(vim->m_topLine == 0, "vim zb viewport");
+    }
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_REPLACE_ON
+    {
+        const char* line[] = { "call(alpha)" };
+        XTuiVim_setLines(vim, line, 1);
+        XConsoleShellTest_vimKey(vim, 'w');
+        XConsoleShellTest_vimKey(vim, 'c'); XConsoleShellTest_vimKey(vim, 'i');
+        XConsoleShellTest_vimKey(vim, '('); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim);
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "call(X)") == 0, "vim ci parenthesis");
+    }
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_YANK_PASTE_ON
+    {
+        const char* line[] = { "{ alpha }", "[beta]" };
+        XTuiVim_setLines(vim, line, 2);
+        XConsoleShellTest_vimKey(vim, 'd'); XConsoleShellTest_vimKey(vim, 'i');
+        XConsoleShellTest_vimKey(vim, '{');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "{}") == 0, "vim di brace");
+        XConsoleShellTest_vimKey(vim, 'j'); XConsoleShellTest_vimKey(vim, 'y');
+        XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, '[');
+        XCS_TEST_CHECK(vim->m_regCount == 1 && strcmp(vim->m_regLines[0], "beta") == 0,
+                       "vim yi bracket");
+    }
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON
+    {
+        const char* lines[] = { "0", "1", "2", "3", "4", "5", "6", "7" };
+        XRect rect = { 0, 0, 20, 5 };
+        XTuiVim_setLines(vim, lines, 8);
+        XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+        vim->m_topLine = 2; vim->m_cursorLine = 3;
+        XConsoleShellTest_vimKey(vim, 'H');
+        XCS_TEST_CHECK(vim->m_cursorLine == 2, "vim H");
+        XConsoleShellTest_vimKey(vim, 'M');
+        XCS_TEST_CHECK(vim->m_cursorLine == 4, "vim M");
+        XConsoleShellTest_vimKey(vim, 'L');
+        XCS_TEST_CHECK(vim->m_cursorLine == 5, "vim L");
+        XConsoleShellTest_vimControl(vim, 5);
+        XCS_TEST_CHECK(vim->m_topLine == 3, "vim Ctrl-E viewport");
+        XConsoleShellTest_vimControl(vim, 25);
+        XCS_TEST_CHECK(vim->m_topLine == 2, "vim Ctrl-Y viewport");
+    }
+    {
+        const char* lines[] = { "left", "right" };
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'J');
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 1 &&
+                       strcmp(XTuiVim_line(vim, 0), "left right") == 0,
+                       "vim J inserts separator");
+    }
+    {
+        const char* lines[] = { "abcd", "efgh" };
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'x');
+        XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, '.');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "bcd") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "fgh") == 0,
+                       "vim dot repeats delete");
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'D');
+        XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, '.');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "") == 0,
+                       "vim dot repeats D");
+    }
+    {
+        const char* lines[] = { "abcd", "tail" };
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 's'); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim); XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, '.');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xbcd") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "tXil") == 0,
+                       "vim dot repeats s");
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'C'); XConsoleShellTest_vimKey(vim, 'Z');
+        XConsoleShellTest_vimEscape(vim); XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, '.');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Z") == 0 &&
+                           strcmp(XTuiVim_line(vim, 1), "Z") == 0,
+                       "vim dot repeats C");
+    }
+#if XTUI_VIM_JUMPLIST_ON
+    {
+        const char* lines[] = { "first", "middle", "last" };
+        XTuiVim_setLines(vim, lines, 3);
+        XConsoleShellTest_vimKey(vim, 'G');
+        XCS_TEST_CHECK(vim->m_cursorLine == 2, "vim jump list destination");
+        XConsoleShellTest_vimControl(vim, 15);
+        XCS_TEST_CHECK(vim->m_cursorLine == 0, "vim Ctrl-O older jump");
+        XConsoleShellTest_vimControl(vim, 9);
+        XCS_TEST_CHECK(vim->m_cursorLine == 2, "vim Ctrl-I newer jump");
+    }
+#endif
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_YANK_PASTE_ON
+    XTuiVim_setLines(vim, initial, 3);
+    XConsoleShellTest_vimKey(vim, 'G');
+    XCS_TEST_CHECK(vim->m_cursorLine == 2, "vim G");
+    XConsoleShellTest_vimKey(vim, 'g'); XConsoleShellTest_vimKey(vim, 'g');
+    XCS_TEST_CHECK(vim->m_cursorLine == 0, "vim gg");
+    XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+    XConsoleShellTest_vimKey(vim, 'p');
+    XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 4 &&
+                       strcmp(XTuiVim_line(vim, 1), "one two") == 0,
+                   "vim yank paste");
+    XConsoleShellTest_vimKey(vim, 'd'); XConsoleShellTest_vimKey(vim, 'w');
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 1), "two") == 0, "vim dw");
+    {
+        const char* beforeLines[] = { "one", "two" };
+        XTuiVim_setLines(vim, beforeLines, 2);
+        XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+        XConsoleShellTest_vimKey(vim, 'j'); XConsoleShellTest_vimKey(vim, 'P');
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 3 &&
+                           strcmp(XTuiVim_line(vim, 1), "one") == 0 &&
+                           strcmp(XTuiVim_line(vim, 2), "two") == 0,
+                       "vim paste before");
+    }
+    {
+        const char* counted[] = { "one two three" };
+        XTuiVim_setLines(vim, counted, 1);
+        XConsoleShellTest_vimKey(vim, 'd'); XConsoleShellTest_vimKey(vim, '2');
+        XConsoleShellTest_vimKey(vim, 'w');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "three") == 0,
+                       "vim counted operator motion");
+    }
+#endif
+#if XTUI_VIM_REGISTER_ON
+    {
+        const char* lines[] = { "one", "two" };
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, 'a');
+        XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+        XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, 'a');
+        XConsoleShellTest_vimKey(vim, 'p');
+        XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 3 &&
+                           strcmp(XTuiVim_line(vim, 2), "one") == 0,
+                       "vim named register paste");
+        {
+            const char* appendLines[] = { "one", "two", "three" };
+            XTuiVim_setLines(vim, appendLines, 3);
+            XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, 'a');
+            XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+            XConsoleShellTest_vimKey(vim, 'j');
+            XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, 'A');
+            XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+            XConsoleShellTest_vimKey(vim, 'k');
+            XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, 'a');
+            XConsoleShellTest_vimKey(vim, 'p');
+            XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 5 &&
+                               strcmp(XTuiVim_line(vim, 1), "one") == 0 &&
+                               strcmp(XTuiVim_line(vim, 2), "two") == 0 &&
+                               strcmp(XTuiVim_line(vim, 3), "two") == 0,
+                           "vim uppercase named register append");
+        }
+        {
+            const char* yankLines[] = { "alpha", "beta" };
+            XTuiVim_setLines(vim, yankLines, 2);
+            XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+            XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, '0');
+            XConsoleShellTest_vimKey(vim, 'p');
+            XCS_TEST_CHECK(XTuiVim_lineCount(vim) == 3 &&
+                               strcmp(XTuiVim_line(vim, 1), "alpha") == 0,
+                           "vim numbered yank register zero");
+        }
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'd'); XConsoleShellTest_vimKey(vim, 'd');
+        XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, '1');
+        XConsoleShellTest_vimKey(vim, 'p');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 1), "one") == 0,
+                       "vim numbered delete register");
+        XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, '_');
+        XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'y');
+        XConsoleShellTest_vimKey(vim, '"'); XConsoleShellTest_vimKey(vim, '1');
+        XConsoleShellTest_vimKey(vim, 'p');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 2), "one") == 0,
+                       "vim blackhole register preserves numbered register");
+    }
+#endif
+#if XTUI_VIM_MARK_ON && XTUI_VIM_ADVANCED_MOTION_ON
+    {
+        const char* lines[] = { "first", "  second" };
+        XTuiVim_setLines(vim, lines, 2);
+        XConsoleShellTest_vimKey(vim, 'j');
+        XConsoleShellTest_vimKey(vim, 'm'); XConsoleShellTest_vimKey(vim, 'a');
+        XConsoleShellTest_vimKey(vim, 'g'); XConsoleShellTest_vimKey(vim, 'g');
+        XConsoleShellTest_vimKey(vim, '\''); XConsoleShellTest_vimKey(vim, 'a');
+        XCS_TEST_CHECK(vim->m_cursorLine == 1 && vim->m_cursorColumn == 2,
+                       "vim line mark jump");
+        XConsoleShellTest_vimKey(vim, 'g'); XConsoleShellTest_vimKey(vim, 'g');
+        XConsoleShellTest_vimKey(vim, '`'); XConsoleShellTest_vimKey(vim, 'a');
+        XCS_TEST_CHECK(vim->m_cursorLine == 1 && vim->m_cursorColumn == 0,
+                       "vim exact mark jump");
+    }
+#endif
+#if XTUI_VIM_MACRO_ON
+    {
+        const char* lines[] = { "abc" };
+        XTuiVim_setLines(vim, lines, 1);
+        XConsoleShellTest_vimKey(vim, 'q'); XConsoleShellTest_vimKey(vim, 'a');
+        XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, 'X');
+        XConsoleShellTest_vimEscape(vim); XConsoleShellTest_vimKey(vim, 'q');
+        XConsoleShellTest_vimKey(vim, '@'); XConsoleShellTest_vimKey(vim, 'a');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "XXabc") == 0,
+                       "vim macro record and playback");
+        XConsoleShellTest_vimKey(vim, '@'); XConsoleShellTest_vimKey(vim, '@');
+        XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "XXXabc") == 0,
+                       "vim repeat last macro");
+    }
+#endif
+#if XTUI_VIM_VISUAL_ON && XTUI_VIM_YANK_PASTE_ON && \
+    XTUI_VIM_SEARCH_ON && XTUI_VIM_SUBSTITUTE_ON && \
+    XTUI_VIM_UNDO_REDO_ON
+    XTuiVim_setLines(vim, initial, 3);
+    XConsoleShellTest_vimKey(vim, 'v'); XConsoleShellTest_vimKey(vim, 'l');
+    XConsoleShellTest_vimKey(vim, 'y'); XConsoleShellTest_vimKey(vim, 'p');
+    XConsoleShellTest_vimKey(vim, '/'); XConsoleShellTest_vimKey(vim, 't');
+    XConsoleShellTest_vimKey(vim, 'w'); XConsoleShellTest_vimKey(vim, 'o');
+    XConsoleShellTest_vimEnter(vim);
+    XConsoleShellTest_vimKey(vim, ':');
+    {
+        const char* command = "%s/two/TWO/g";
+        const char* p = command;
+        while (*p) XConsoleShellTest_vimKey(vim, *p++);
+    }
+    XConsoleShellTest_vimEnter(vim);
+    XCS_TEST_CHECK(strstr(XTuiVim_line(vim, 0), "TWO") != NULL,
+                   "vim substitute");
+    XConsoleShellTest_vimKey(vim, 'u');
+    XCS_TEST_CHECK(strstr(XTuiVim_line(vim, 0), "TWO") == NULL, "vim undo");
+    {
+        XTuiKeyEvent event;
+        XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Char,
+                          XKeyboardModifier_ControlModifier);
+        event.m_utf8[0] = 18; event.m_utf8[1] = '\0';
+        XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+    }
+    XCS_TEST_CHECK(strstr(XTuiVim_line(vim, 0), "TWO") != NULL, "vim redo");
+    XTuiVim_setLines(vim, (const char*[]){ "abc" }, 1);
+    XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, 'X');
+    XConsoleShellTest_vimEscape(vim);
+    XConsoleShellTest_vimKey(vim, 'i'); XConsoleShellTest_vimKey(vim, 'Y');
+    XConsoleShellTest_vimEscape(vim);
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "XYabc") == 0,
+                   "vim two changes before undo");
+    XConsoleShellTest_vimKey(vim, 'u');
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xabc") == 0,
+                   "vim first undo level");
+    XConsoleShellTest_vimKey(vim, 'u');
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "abc") == 0,
+                   "vim second undo level");
+    XConsoleShellTest_vimControl(vim, 18);
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "Xabc") == 0,
+                   "vim first redo level");
+    XConsoleShellTest_vimControl(vim, 18);
+    XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "XYabc") == 0,
+                   "vim second redo level");
+#endif
+    ok = true;
+cleanup:
+    XTuiVim_delete_base(vim);
+    return ok;
 }
 #endif
 
@@ -648,6 +1431,7 @@ static bool XConsoleShellTest_runEditorCommands(
     XString* temp = XString_create();
     XString* root = XString_create();
     XString* file = NULL;
+    XString* other = NULL;
     XString* command = NULL;
     char content[512];
     XFd fd;
@@ -666,6 +1450,8 @@ static bool XConsoleShellTest_runEditorCommands(
     rootCreated = true;
     file = XString_create_fmt_utf8("%s/edit.txt", XString_toUtf8(root));
     if (!file) goto cleanup;
+    other = XString_create_fmt_utf8("%s/other.txt", XString_toUtf8(root));
+    if (!other) goto cleanup;
     command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
     if (!command) goto cleanup;
 
@@ -682,6 +1468,15 @@ static bool XConsoleShellTest_runEditorCommands(
         goto cleanup;
     /* TUI 输出带 ANSI 光标控制序列，字符间不连续；文本正确性由
        保存后的文件内容断言保证。 */
+    XCS_TEST_CHECK(!XConsoleShell_canBackspace(shell,
+                                               XConsoleShell_session(shell)),
+                   "vim empty insert backspace boundary");
+    if (!XConsoleShellTest_feedEditor(shell, transport, "h\x7f", 2,
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XCS_TEST_CHECK(!XConsoleShell_canBackspace(shell,
+                                               XConsoleShell_session(shell)),
+                   "vim backspace returns to empty input");
     if (!XConsoleShellTest_feedEditor(shell, transport, "hello", 5,
                                       XConsoleResult_MoreOutput, NULL))
         goto cleanup;
@@ -717,6 +1512,51 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_feedEditor(shell, transport, ":q\n", 3,
                                       XConsoleResult_Ok, NULL))
         goto cleanup;
+
+#if XTUI_VIM_MULTIBUFFER_ON
+    /* 多缓冲：在两个文件之间切换，分别修改并保存。 */
+    command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                   XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XString_delete_base(command);
+    command = XString_create_fmt_utf8(":e %s\n", XString_toUtf8(other));
+    if (!command) goto cleanup;
+    if (!XConsoleShellTest_feedEditor(shell, transport, XString_toUtf8(command),
+                                      XString_size_base(command),
+                                      XConsoleResult_MoreOutput, NULL))
+        goto cleanup;
+    XString_delete_base(command);
+    command = NULL;
+    if (!XConsoleShellTest_feedEditor(shell, transport, "iB\x1b", 3,
+                                      XConsoleResult_MoreOutput, NULL) ||
+        !XConsoleShellTest_feedEditor(shell, transport, ":bprev\n", 7,
+                                      XConsoleResult_MoreOutput, NULL) ||
+        !XConsoleShellTest_feedEditor(shell, transport, "AA\x1b", 3,
+                                      XConsoleResult_MoreOutput, NULL) ||
+        !XConsoleShellTest_feedEditor(shell, transport, ":w\n", 3,
+                                      XConsoleResult_MoreOutput, NULL) ||
+        !XConsoleShellTest_feedEditor(shell, transport, ":bnext\n", 7,
+                                      XConsoleResult_MoreOutput, NULL) ||
+        !XConsoleShellTest_feedEditor(shell, transport, ":wq\n", 4,
+                                      XConsoleResult_Ok, NULL))
+        goto cleanup;
+    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "helloA") == NULL) goto cleanup;
+    fd = XFileSystem_open(other, XFileSystem_ReadOnly, &error);
+    if (fd == XFD_INVALID) goto cleanup;
+    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
+    XFileSystem_close(fd);
+    if (size <= 0) goto cleanup;
+    content[size] = '\0';
+    if (strstr(content, "B") == NULL) goto cleanup;
+#endif
 
     /* 再次打开并修改后，:q! 放弃修改，磁盘内容保持不变。 */
     command = XString_create_fmt_utf8("vi %s", XString_toUtf8(file));
@@ -831,6 +1671,7 @@ static bool XConsoleShellTest_runEditorCommands(
 cleanup:
     if (rootCreated && root) XFileSystem_rmdir(root, true);
     if (file) XString_delete_base(file);
+    if (other) XString_delete_base(other);
     if (command) XString_delete_base(command);
     if (root) XString_delete_base(root);
     if (temp) XString_delete_base(temp);
@@ -909,6 +1750,394 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
     if (crlfShell) XConsoleShell_delete_base(crlfShell);
     XString_delete_base(crlfPath);
     return ok;
+}
+#endif
+
+#if XCONSOLE_SHELL_COMPLETION_ON
+static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
+                                            XConsoleShellTestTransport* transport)
+{
+    /* 1. 命令名唯一补全：ec<Tab> -> echo，随后 hello 作为参数执行 */
+    memset(transport->output, 0, sizeof(transport->output));
+    transport->length = 0;
+    if (XConsoleShell_feedData(shell, "ec\t hello\n", 10) != XConsoleResult_Ok)
+        return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+    if (!strstr(transport->output, "hello")) {
+        XPrintf("completion command output missing: [%s]\n", transport->output);
+        return false;
+    }
+    /* 2. 歧义命令列出候选：vi<Tab> 应同时列出 vi 与 vim */
+    memset(transport->output, 0, sizeof(transport->output));
+    transport->length = 0;
+    if (XConsoleShell_feedData(shell, "vi\t", 3) != XConsoleResult_Ok)
+        return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+    if (!strstr(transport->output, "vi ") || !strstr(transport->output, "vim ")) {
+        XPrintf("completion ambiguous output missing: [%s]\n", transport->output);
+        return false;
+    }
+    /* 候选列出后行缓冲仍保留原词，用 Ctrl-C 清空后再测路径补全。 */
+    memset(transport->output, 0, sizeof(transport->output));
+    transport->length = 0;
+    {
+        XConsoleResult r = XConsoleShell_feedData(shell, "\x03", 1);
+        /* Ctrl-C 清空活动行并返回已取消，属于正常清空路径。 */
+        if (r != XConsoleResult_Ok && r != XConsoleResult_Cancelled)
+            return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+    }
+#if XCONSOLE_SHELL_FILESYSTEM_ON && XCONSOLE_SHELL_FS_CAT_ON
+    /* 3. 文件路径补全：cat /tmp/xcs_complete_t<Tab> -> 完整路径并执行 */
+    {
+        const char* pathText = "/tmp/xcs_complete_test_file.txt";
+        XString* testPath = XString_create_utf8(pathText);
+        XFd wfd;
+        int error = 0;
+        bool ok = false;
+        if (!testPath) return false;
+        XFileSystem_removePermanent(testPath);
+        wfd = XFileSystem_open(testPath, XFileSystem_WriteOnly |
+                               XFileSystem_Truncate, &error);
+        if (wfd != XFD_INVALID) {
+            ok = XFileSystem_write(wfd, "COMPLETE_OK", 11) == 11;
+            XFileSystem_close(wfd);
+        }
+        XString_delete_base(testPath);
+        if (!ok) return false;
+    }
+    memset(transport->output, 0, sizeof(transport->output));
+    transport->length = 0;
+    if (XConsoleShell_feedData(shell, "cat /tmp/xcs_complete_t\t\n", 25) != XConsoleResult_Ok)
+        return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+    if (!strstr(transport->output, "COMPLETE_OK")) {
+        XPrintf("completion path output missing: [%s]\n", transport->output);
+        return false;
+    }
+    {
+        XString* cleanupPath = XString_create_utf8("/tmp/xcs_complete_test_file.txt");
+        if (cleanupPath) {
+            XFileSystem_removePermanent(cleanupPath);
+            XString_delete_base(cleanupPath);
+        }
+    }
+#endif
+#if XCONSOLE_SHELL_FILESYSTEM_ON && XCONSOLE_SHELL_FS_CAT_ON && \
+    XCONSOLE_SHELL_FS_CD_ON && XCONSOLE_SHELL_SUBCOMMAND_ON
+    /* 4. cd 目录专用补全：只列出目录，不列出同名前缀的文件 */
+    {
+        XString* dirA = XString_create_utf8("/tmp/xcs_complete_dir_a");
+        XString* dirB = XString_create_utf8("/tmp/xcs_complete_dir_b");
+        XString* fileN = XString_create_utf8("/tmp/xcs_complete_file_note.txt");
+        bool ok = true;
+        if (!dirA || !dirB || !fileN) { ok = false; }
+        else {
+            XFileSystem_mkdir(dirA, false);
+            XFileSystem_mkdir(dirB, false);
+            {
+                XFd wfd;
+                int e = 0;
+                XFileSystem_removePermanent(fileN);
+                wfd = XFileSystem_open(fileN, XFileSystem_WriteOnly |
+                                       XFileSystem_Truncate, &e);
+                if (wfd != XFD_INVALID) {
+                    ok = XFileSystem_write(wfd, "N", 1) == 1;
+                    XFileSystem_close(wfd);
+                }
+            }
+        }
+        if (ok) {
+            memset(transport->output, 0, sizeof(transport->output));
+            transport->length = 0;
+            if (XConsoleShell_feedData(shell, "cd /tmp/xcs_complete_d\t", 23) != XConsoleResult_Ok)
+                ok = false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+            else if (!XConsoleShell_flushOutput(shell)) ok = false;
+#endif
+            else if (!strstr(transport->output, "/tmp/xcs_complete_dir_") ||
+                     strstr(transport->output, "xcs_complete_file_note")) {
+                XPrintf("cd dir-only common prefix missing: [%s]\n", transport->output);
+                ok = false;
+            }
+        }
+        if (ok) {
+            memset(transport->output, 0, sizeof(transport->output));
+            transport->length = 0;
+            if (XConsoleShell_feedData(shell, "\x03", 1) != XConsoleResult_Ok &&
+                XConsoleShell_feedData(shell, "\x03", 1) != XConsoleResult_Cancelled)
+                ok = false;
+        }
+        if (ok) {
+            memset(transport->output, 0, sizeof(transport->output));
+            transport->length = 0;
+            if (XConsoleShell_feedData(shell, "cd /tmp/xcs_complete_dir_a\t", 27) != XConsoleResult_Ok)
+                ok = false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+            else if (!XConsoleShell_flushOutput(shell)) ok = false;
+#endif
+            else if (!strstr(transport->output, "/tmp/xcs_complete_dir_a/")) {
+                XPrintf("cd unique dir slash missing: [%s]\n", transport->output);
+                ok = false;
+            }
+        }
+        if (ok) {
+            memset(transport->output, 0, sizeof(transport->output));
+            transport->length = 0;
+            if (XConsoleShell_feedData(shell, "\x03", 1) != XConsoleResult_Ok &&
+                XConsoleShell_feedData(shell, "\x03", 1) != XConsoleResult_Cancelled)
+                ok = false;
+        }
+        if (dirA) XFileSystem_rmdir(dirA, false);
+        if (dirB) XFileSystem_rmdir(dirB, false);
+        if (fileN) XFileSystem_removePermanent(fileN);
+        XString_delete_base(dirA);
+        XString_delete_base(dirB);
+        XString_delete_base(fileN);
+        if (!ok) return false;
+    }
+    /* 5. 含空格文件名补全：补全后仍能通过 cat 正确读取 */
+    {
+        const char* spacedPath = "/tmp/xcs complete file.txt";
+        XString* spaced = XString_create_utf8(spacedPath);
+        XFd wfd;
+        int error = 0;
+        bool ok = false;
+        if (!spaced) return false;
+        XFileSystem_removePermanent(spaced);
+        wfd = XFileSystem_open(spaced, XFileSystem_WriteOnly |
+                               XFileSystem_Truncate, &error);
+        if (wfd != XFD_INVALID) {
+            ok = XFileSystem_write(wfd, "SPACE_OK", 8) == 8;
+            XFileSystem_close(wfd);
+        }
+        if (!ok) {
+            XString_delete_base(spaced);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "cat /tmp/xcs\\ compl\t\n", 21) != XConsoleResult_Ok) {
+            XFileSystem_removePermanent(spaced);
+            XString_delete_base(spaced);
+            return false;
+        }
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) {
+            XFileSystem_removePermanent(spaced);
+            XString_delete_base(spaced);
+            return false;
+        }
+#endif
+        if (!strstr(transport->output, "SPACE_OK")) {
+            XPrintf("escaped-space path output missing: [%s]\n", transport->output);
+            XFileSystem_removePermanent(spaced);
+            XString_delete_base(spaced);
+            return false;
+        }
+        XFileSystem_removePermanent(spaced);
+        XString_delete_base(spaced);
+    }
+    /* 6. fs cd 子命令参数目录补全 */
+    {
+        XString* subDir = XString_create_utf8("/tmp/xcs_complete_dir_a");
+        bool ok = true;
+        XConsoleResult r6;
+        if (!subDir) return false;
+        XFileSystem_mkdir(subDir, false);
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        r6 = XConsoleShell_feedData(shell, "fs cd /tmp/xcs_complete_dir_a\t", 30);
+        if (r6 != XConsoleResult_Ok) ok = false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (ok && !XConsoleShell_flushOutput(shell)) ok = false;
+#endif
+        if (ok && !strstr(transport->output, "/tmp/xcs_complete_dir_a/")) {
+            XPrintf("fs cd dir slash missing: [%s]\n", transport->output);
+            ok = false;
+        }
+        if (ok) {
+            memset(transport->output, 0, sizeof(transport->output));
+            transport->length = 0;
+            {
+                XConsoleResult rc = XConsoleShell_feedData(shell, "\x03", 1);
+                if (rc != XConsoleResult_Ok && rc != XConsoleResult_Cancelled)
+                    ok = false;
+            }
+        }
+        XFileSystem_rmdir(subDir, false);
+        XString_delete_base(subDir);
+        if (!ok) return false;
+    }
+    /* 6b. 选项补全：fs cat --off<Tab> 唯一补全为 --offset */
+    {
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "fs cat --off	", 13) != XConsoleResult_Ok)
+            return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+        if (!strstr(transport->output, "--offset ")) {
+            XPrintf("option completion missing: [%s]\n", transport->output);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        {
+            XConsoleResult rc = XConsoleShell_feedData(shell, "\x03", 1);
+            if (rc != XConsoleResult_Ok && rc != XConsoleResult_Cancelled)
+                return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+            if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+        }
+    }
+    /* 6c. 组合短选项补全：fs cat -n<Tab> 展开并唯一补全为 -n */
+    {
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "fs cat -n	", 10) != XConsoleResult_Ok)
+            return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+        if (!strstr(transport->output, "-n ")) {
+            XPrintf("short option completion missing: [%s]\n", transport->output);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        {
+            XConsoleResult rc = XConsoleShell_feedData(shell, "\x03", 1);
+            if (rc != XConsoleResult_Ok && rc != XConsoleResult_Cancelled)
+                return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+            if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+        }
+    }
+    /* 7. 命令词路径补全：./ 前缀补全可执行脚本路径 */
+    {
+        XString* script = XString_create_utf8("/tmp/xcs_complete_script.sh");
+        XFd wfd;
+        int error = 0;
+        bool ok = false;
+        if (!script) return false;
+        XFileSystem_removePermanent(script);
+        wfd = XFileSystem_open(script, XFileSystem_WriteOnly |
+                               XFileSystem_Truncate, &error);
+        if (wfd != XFD_INVALID) {
+            ok = XFileSystem_write(wfd, "#! /bin/sh\n", 11) == 11;
+            XFileSystem_close(wfd);
+        }
+        if (!ok) {
+            XString_delete_base(script);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "cd /tmp\n", 8) != XConsoleResult_Ok) {
+            XFileSystem_removePermanent(script);
+            XString_delete_base(script);
+            return false;
+        }
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) {
+            XFileSystem_removePermanent(script);
+            XString_delete_base(script);
+            return false;
+        }
+#endif
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        if (XConsoleShell_feedData(shell, "./xcs_complete_sc\t", 18) != XConsoleResult_Ok) {
+            XFileSystem_removePermanent(script);
+            XString_delete_base(script);
+            return false;
+        }
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) {
+            XFileSystem_removePermanent(script);
+            XString_delete_base(script);
+            return false;
+        }
+#endif
+        if (!strstr(transport->output, "./xcs_complete_script.sh")) {
+            XPrintf("./ command path completion missing: [%s]\n", transport->output);
+            XFileSystem_removePermanent(script);
+            XString_delete_base(script);
+            return false;
+        }
+        XFileSystem_removePermanent(script);
+        XString_delete_base(script);
+        /* 清空上一轮补全留下的活动行，避免影响引号补全用例。 */
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        {
+            XConsoleResult r = XConsoleShell_feedData(shell, "\x03", 1);
+            if (r != XConsoleResult_Ok && r != XConsoleResult_Cancelled)
+                return false;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+            if (!XConsoleShell_flushOutput(shell)) return false;
+#endif
+        }
+    }
+    /* 8. 引号内路径补全：`cat "/tmp/xcs compl<Tab>` 保留引号并正确执行 */
+    {
+        const char* qPath = "/tmp/xcs complete file.txt";
+        XString* q = XString_create_utf8(qPath);
+        XFd wfd;
+        int error = 0;
+        bool ok = false;
+        if (!q) return false;
+        XFileSystem_removePermanent(q);
+        wfd = XFileSystem_open(q, XFileSystem_WriteOnly |
+                               XFileSystem_Truncate, &error);
+        if (wfd != XFD_INVALID) {
+            ok = XFileSystem_write(wfd, "QUOTE_OK", 8) == 8;
+            XFileSystem_close(wfd);
+        }
+        if (!ok) {
+            XString_delete_base(q);
+            return false;
+        }
+        memset(transport->output, 0, sizeof(transport->output));
+        transport->length = 0;
+        {
+            XConsoleResult rq = XConsoleShell_feedData(shell, "cat \"/tmp/xcs compl\t\n", 21);
+            if (rq != XConsoleResult_Ok) {
+                XFileSystem_removePermanent(q);
+                XString_delete_base(q);
+                return false;
+            }
+        }
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        if (!XConsoleShell_flushOutput(shell)) {
+            XFileSystem_removePermanent(q);
+            XString_delete_base(q);
+            return false;
+        }
+#endif
+        if (!strstr(transport->output, "QUOTE_OK")) {
+            XPrintf("quoted path completion missing: [%s]\n", transport->output);
+            XFileSystem_removePermanent(q);
+            XString_delete_base(q);
+            return false;
+        }
+        XFileSystem_removePermanent(q);
+        XString_delete_base(q);
+    }
+#endif
+    return true;
 }
 #endif
 
@@ -1364,6 +2593,8 @@ bool XConsoleShellTest_runAll(void)
         XConsoleShell* telnetShell;
         bool sawEscapedIac = false;
         size_t telnetIndex;
+        const uint8_t arrows[] = { 0x1b, '[', 'A', 0x1b, '[', 'B',
+                                   0x1b, '[', 'C', 0x1b, '[', 'D' };
         const uint8_t stream[] = {
             255, 253, 1, 'e', 'c', 'h', 'o', ' ', 't', 'e', 'l', 'n', 'e', 't',
             255, 255, '\r', '\n'
@@ -1402,6 +2633,13 @@ bool XConsoleShellTest_runAll(void)
             }
         }
         XCS_TEST_CHECK(sawEscapedIac, "telnet literal IAC escaping and CRLF");
+        telnetTransport.length = 0;
+        telnetTransport.output[0] = '\0';
+        XCS_TEST_CHECK(XConsoleShellTelnetAdapter_feedData(
+                           &adapter, telnetShell, NULL, arrows, sizeof(arrows)) ==
+                           XConsoleResult_Ok && adapter.echoEscape == 0 &&
+                           !strstr(telnetTransport.output, "ABCD"),
+                       "telnet arrow sequences are not echoed as letters");
         XConsoleShell_delete_base(telnetShell);
     }
 #endif
@@ -2621,8 +3859,16 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShellTest_runEditorCommands(shell, &transport),
                    "vi/vim editor commands");
 #endif
+#if XTUI_ON && XTUI_WIDGET_ON && XTUI_VIM_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runVimAdvanced(),
+                   "vim Linux behavior commands");
+#endif
     XFileSystem_removePermanent(filePath);
     XString_delete_base(filePath);
+#if XCONSOLE_SHELL_COMPLETION_ON
+    XCS_TEST_CHECK(XConsoleShellTest_runCompletion(shell, &transport),
+                   "shell completion");
+#endif
     XConsoleShell_delete_base(shell);
     for (size_t i = 0; i < 10000; ++i) {
         shell = XConsoleShell_create(&io);

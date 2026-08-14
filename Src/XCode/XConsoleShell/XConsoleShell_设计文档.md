@@ -1,4 +1,4 @@
-# XConsoleShell 设计文档
+﻿# XConsoleShell 设计文档
 
 ## 1. 文档状态
 
@@ -799,7 +799,7 @@ cd 仅修改会话 currentPath。文件命令把逻辑路径解析为 XString �
 | tasks | TASKS | 输出 XThread 注册表和产品任务快照；无可用数据时返回不支持 |
 | date [-u] [-I] [+FORMAT] | DATETIME、DATE | 查看本地或 UTC 日期时间；只读 |
 | mem [-v] | MEMORY、MEMORY_POOL | 查看全局 XMultiPool 容量和使用率；`-v` 显示各子池；只读 |
-| vi/vim <path> | EDITOR | 行编辑命令；命令模式支持 `:w`/`:q`/`:wq`/`:x`/`:q!`、`i`/`a` 插入、`d` 删除、`r` 替换；默认开启 |
+| vi/vim <path> | EDITOR | 文件编辑命令；TUI 开启时对齐 Linux vim 常用编辑操作，子功能由 `XTUI_VIM_*` 宏裁剪；默认开启 |
 
 `date` 默认输出 `yyyy-MM-dd HH:mm:ss`；`-u/--utc` 使用 UTC；`-I/--iso-8601`
 只输出 ISO 日期。自定义格式支持 `%Y`、`%y`、`%m`、`%d`、`%e`、`%H`、`%M`、
@@ -917,14 +917,36 @@ Linux POSIX 后端已实现上述全部命令及列出的常用参数。每个�
 - format 默认关闭，并要求危险命令确认。
 - POSIX format 只接受块设备路径；目录和普通文件直接失败，不会调用格式化工具。
 
-`vi`/`vim` 是独立的行编辑命令，默认开启（`XCONSOLE_SHELL_EDITOR_ON`）。打开
-文件后进入编辑状态，后续输入行由 Shell 直接分流到编辑器状态机，不进入历史、
+`vi`/`vim` 是独立的文件编辑命令，默认开启（`XCONSOLE_SHELL_EDITOR_ON`）。打开
+文件后进入编辑状态，后续输入由 Shell 直接分流到编辑器状态机，不进入历史、
 tokenizer 和普通权限判断；编辑器只通过 `XFileSystem` 公共 API 读取和写回文件。
-命令模式支持 `:w` 保存、`:q` 未修改退出、`:wq`/`:x` 保存退出、`:q!` 放弃，
-以及 `p` 重新显示、`i [N]`/`a [N]` 插入、`d [N]` 删除、`r <行号> <文本>`
-替换。插入模式从 `i`/`a` 进入，输入 `.` 或空行结束，连续输入的行追加到当前
-行之后。`Ctrl-C` 会取消编辑状态并恢复普通提示符。编辑缓冲固定为
-`XCONSOLE_SHELL_EDITOR_MAX_LINES` 行，超过上限或保存失败时返回失败。
+
+- `XCONSOLE_SHELL_EDITOR_TUI_ON` 为 1 时使用 XTui 全屏 `XTuiVim` 控件，行为对齐
+  Linux vim 的常用编辑操作；置 0 时回退到精简行式编辑器（`i`/`a` 插入、`d` 删除、
+  `r <行号> <文本>` 替换、`:w`/`:q`/`:wq`/`:x`/`:q!`）。行式编辑器从 `i`/`a`
+  进入插入模式，输入 `.` 或空行结束；缓冲固定为 `XCONSOLE_SHELL_EDITOR_MAX_LINES`
+  行，超过上限或保存失败时返回失败。
+- 全屏 vim 的每个子功能都有独立编译期开关，默认全部开启，产品可按嵌入式内存目标
+  单独裁剪。产品优先在 `XConsoleShellConfig.h` 使用 `XCONSOLE_SHELL_VIM_*` 别名配置；
+  这些别名兼容并映射到 `Src/XTui/XTuiConfig.h` 的 `XTUI_VIM_*`，并带依赖检查；Shell 总开关为
+  `XCONSOLE_SHELL_EDITOR_TUI_ON`，关闭时 `XConsoleShellConfig.h` 会强制把所有 `XTUI_VIM_*`
+  子开关置 0 以裁剪内存。子开关包括 `_VIM_MULTIBUFFER_ON`（多缓冲与
+  `:edit/:bnext/:buffers`）、`_VIM_EX_ON`（扩展 Ex 命令）、`_VIM_SUBSTITUTE_ON`
+  （`:s/:%s` 替换）、`_VIM_SUBSTITUTE_CONFIRM_ON`（替换逐项确认 `c` flag，依赖
+  `XRegularExpression_ON`）、`_VIM_SEARCH_ON`（`/`、`?`、`n/N`、`*`、`#` 搜索与
+  高亮）、`_VIM_YANK_PASTE_ON`（`y/p/P` 与无名寄存器）、`_VIM_REGISTER_ON`
+  （命名、编号、黑洞寄存器）、`_VIM_UNDO_REDO_ON`（多级撤销/重做）、
+  `_VIM_REPLACE_ON`（`R/r/s/S/C` 等替换快捷操作）、`_VIM_MACRO_ON`（`q/@` 宏录制
+  回放）、`_VIM_MARK_ON`（`m{a-zA-Z}` 标记）、`_VIM_JUMPLIST_ON`（跳转列表与
+  `Ctrl-O/Ctrl-I`）、`_VIM_VISUAL_ON`（字符/行/块可视模式）、
+  `_VIM_ADVANCED_MOTION_ON`（词移动 `w/e/b/W/E/B`、`f/F/t/T`、`gg/G`、括号配对、
+  文本对象、操作符计数与重复操作 `.`）、`_VIM_HISTORY_ON`（冒号命令和搜索上下键历史，
+  容量由 `_VIM_HISTORY_MAX` 控制）。多缓冲 Ex 还支持 `:w {path}`、`:saveas`、
+  `:wa`/`:wqa`、`:qa`/`:qa!` 和 `:bd`/`:bd!`。
+- `XTUI_VIM_LINE_MAX`、`XTUI_VIM_CMD_MAX`、`XTUI_VIM_STATUS_MAX`、
+  `XTUI_VIM_MAX_BUFFERS`、`XTUI_VIM_JUMPLIST_MAX`、`XTUI_VIM_HISTORY_MAX` 为编译期
+  容量，运行时不动态增长。全部子功能关闭时 `XTuiVim` 对象从约 4.1 KiB 精简到约
+  0.6 KiB，适合 M 级以下 RAM 的嵌入式目标。
 
 ### 10.3 产品回调
 

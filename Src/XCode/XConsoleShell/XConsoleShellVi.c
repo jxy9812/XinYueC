@@ -30,6 +30,10 @@ static void xvi_clear(XConsoleShellSession* session);
 static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
                            const XString* path);
 static bool xvi_write_line(XConsoleShell* shell, const char* text);
+static bool xvi_make_path(const XConsoleShellSession* session, const char* input,
+                          XString* output);
+
+#define XVI_TUI_MAX_BUFFERS XTUI_VIM_MAX_BUFFERS
 
 /** @brief XConsoleShell vi/vim 的全屏 TUI 会话私有结构。 */
 typedef struct XviTui
@@ -41,6 +45,9 @@ typedef struct XviTui
     XTuiTerminal*       terminal; /**< 终端适配器；由本结构拥有。 */
     XTuiVim*            vim;      /**< 全屏 vim 控件；由本结构拥有。 */
     char                path[XCONSOLE_SHELL_MAX_PATH]; /**< 目标文件路径。 */
+    XTuiVim*            buffers[XVI_TUI_MAX_BUFFERS]; /**< 已打开缓冲。 */
+    int                 bufferCount; /**< 已打开缓冲数。 */
+    int                 currentBuffer; /**< 当前缓冲下标。 */
 } XviTui;
 
 static bool xvi_tui_write(void* userData, const char* data, size_t length)
@@ -55,8 +62,9 @@ static bool xvi_tui_write(void* userData, const char* data, size_t length)
 #endif
 }
 
-static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
-                         XviTui* tui, const char* path)
+static bool xvi_tui_save_buffer(XConsoleShell* shell,
+                                XConsoleShellSession* session,
+                                XTuiVim* vim, const char* path)
 {
     XFd fd;
     XString* pathObj;
@@ -65,7 +73,7 @@ static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
     bool ok = true;
     (void)shell;
     (void)session;
-    if (!tui || !path)
+    if (!vim || !path)
         return false;
     pathObj = XString_create_utf8(path);
     if (!pathObj)
@@ -76,8 +84,8 @@ static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
         XString_delete_base(pathObj);
         return false;
     }
-    for (i = 0; i < XTuiVim_lineCount(tui->vim) && ok; ++i) {
-        const char* line = XTuiVim_line(tui->vim, i);
+    for (i = 0; i < XTuiVim_lineCount(vim) && ok; ++i) {
+        const char* line = XTuiVim_line(vim, i);
         size_t length = strlen(line ? line : "");
         if (length &&
             XFileSystem_write(fd, line, (int64_t)length) != (int64_t)length)
@@ -92,6 +100,169 @@ static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
     return ok;
 }
 
+static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
+                         XviTui* tui, const char* path)
+{
+    return tui && xvi_tui_save_buffer(shell, session, tui->vim, path);
+}
+
+#if XTUI_VIM_MULTIBUFFER_ON
+static void xvi_tui_attach(XviTui* tui, XTuiVim* vim)
+{
+    XRect rect;
+    if (!tui || !vim) return;
+    tui->vim = vim;
+    XTui_setRootWidget(tui->tui, (XTuiWidget*)vim);
+    XTui_setFocusWidget(tui->tui, (XTuiWidget*)vim);
+    rect.x = 0; rect.y = 0;
+    rect.width = XCONSOLE_SHELL_TUI_WIDTH;
+    rect.height = XCONSOLE_SHELL_TUI_HEIGHT;
+    XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+}
+
+static bool xvi_tui_switch(XviTui* tui, int index)
+{
+    if (!tui || index < 0 || index >= tui->bufferCount || !tui->buffers[index])
+        return false;
+    tui->currentBuffer = index;
+    xvi_tui_attach(tui, tui->buffers[index]);
+    return XTui_refresh(tui->tui);
+}
+
+static XTuiVim* xvi_tui_make_buffer(XviTui* tui,
+                                    XConsoleShellSession* session,
+                                    const XString* path)
+{
+    XTuiVim* vim;
+    const char* lines[XCONSOLE_SHELL_EDITOR_MAX_LINES];
+    int i;
+    if (!tui || !session || !path) return NULL;
+    vim = XTuiVim_create();
+    if (!vim) return NULL;
+    for (i = 0; i < (int)session->editorLineCount; ++i)
+        lines[i] = session->editorLines[i];
+    if (!session->editorLineCount) lines[0] = "";
+    XTuiVim_setLines(vim, lines,
+                     session->editorLineCount ? (int)session->editorLineCount : 1);
+    XTuiVim_setPath(vim, XString_toUtf8(path));
+    return vim;
+}
+
+static bool xvi_tui_open_buffer(XConsoleShell* shell, XConsoleShellSession* session,
+                                XviTui* tui, const char* input)
+{
+    XString* path;
+    XTuiVim* vim;
+    int i;
+    if (!shell || !session || !tui || !input || !input[0]) return false;
+    path = XString_create();
+    if (!path || !xvi_make_path(session, input, path)) {
+        if (path) XString_delete_base(path);
+        return false;
+    }
+    for (i = 0; i < tui->bufferCount; ++i) {
+        if (strcmp(XTuiVim_path(tui->buffers[i]), XString_toUtf8(path)) == 0) {
+            bool ok = xvi_tui_switch(tui, i);
+            XString_delete_base(path);
+            return ok;
+        }
+    }
+    if (tui->bufferCount >= XVI_TUI_MAX_BUFFERS ||
+        !xvi_load_lines(shell, session, path)) {
+        XString_delete_base(path);
+        return false;
+    }
+    vim = xvi_tui_make_buffer(tui, session, path);
+    if (!vim) {
+        XString_delete_base(path);
+        return false;
+    }
+    tui->buffers[tui->bufferCount] = vim;
+    ++tui->bufferCount;
+    i = tui->bufferCount - 1;
+    XString_delete_base(path);
+    return xvi_tui_switch(tui, i);
+}
+
+static bool xvi_tui_list_buffers(XviTui* tui)
+{
+    char line[XCONSOLE_SHELL_MAX_PATH + 48];
+    int i;
+    if (!tui) return false;
+    for (i = 0; i < tui->bufferCount; ++i) {
+        int n = snprintf(line, sizeof(line), "%c %d %s%s\n",
+                         i == tui->currentBuffer ? '>' : ' ', i + 1,
+                         XTuiVim_isModified(tui->buffers[i]) ? "+ " : "  ",
+                         XTuiVim_path(tui->buffers[i]));
+        if (n < 0 || (size_t)n >= sizeof(line) ||
+            !xvi_tui_write(tui, line, (size_t)n)) return false;
+    }
+    return true;
+}
+#endif
+
+static void xvi_tui_delete_buffers(XviTui* tui)
+{
+    int i;
+    if (!tui) return;
+    for (i = 0; i < tui->bufferCount; ++i) {
+        if (tui->buffers[i]) XTuiVim_delete_base(tui->buffers[i]);
+        tui->buffers[i] = NULL;
+    }
+    tui->bufferCount = 0;
+    tui->currentBuffer = 0;
+    tui->vim = NULL;
+}
+
+#if XTUI_VIM_MULTIBUFFER_ON
+static bool xvi_tui_close_current_buffer(XviTui* tui)
+{
+    int index;
+    int i;
+    if (!tui || tui->bufferCount <= 0 || tui->currentBuffer < 0 ||
+        tui->currentBuffer >= tui->bufferCount)
+        return false;
+    index = tui->currentBuffer;
+    /* XTui 失焦回调仍会访问旧控件，必须在释放旧缓冲前先把焦点移走。 */
+    if (tui->bufferCount > 1) {
+        XTuiVim* replacement = tui->buffers[index + 1 < tui->bufferCount ?
+                                           index + 1 : index - 1];
+        if (!replacement) return false;
+        xvi_tui_attach(tui, replacement);
+    }
+    if (tui->buffers[index]) XTuiVim_delete_base(tui->buffers[index]);
+    for (i = index; i + 1 < tui->bufferCount; ++i)
+        tui->buffers[i] = tui->buffers[i + 1];
+    tui->buffers[tui->bufferCount - 1] = NULL;
+    --tui->bufferCount;
+    if (tui->bufferCount <= 0) {
+        tui->bufferCount = 0;
+        tui->currentBuffer = 0;
+        tui->vim = NULL;
+        return true;
+    }
+    if (index >= tui->bufferCount) index = tui->bufferCount - 1;
+    return xvi_tui_switch(tui, index);
+}
+
+static bool xvi_tui_save_all(XConsoleShell* shell,
+                             XConsoleShellSession* session,
+                             XviTui* tui)
+{
+    int i;
+    if (!tui) return false;
+    for (i = 0; i < tui->bufferCount; ++i) {
+        XTuiVim* vim = tui->buffers[i];
+        const char* path = vim ? XTuiVim_path(vim) : NULL;
+        if (!vim || !path || !path[0] ||
+            (XTuiVim_isModified(vim) && !xvi_tui_save_buffer(shell, session, vim, path)))
+            return false;
+        XTuiVim_clearModified(vim);
+    }
+    return true;
+}
+#endif
+
 static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
                                           XConsoleShellSession* session,
                                           XviTui* tui)
@@ -99,8 +270,69 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
     bool quit = false;
     if (!shell || !session || !tui)
         return XConsoleResult_InvalidArgument;
+    if (XTuiVim_wantWritePath(tui->vim) || XTuiVim_wantSaveAs(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool saveAs = XTuiVim_wantSaveAs(actionVim);
+        XString* path = XString_create();
+        bool ok = path && xvi_make_path(session, XTuiVim_actionPath(actionVim), path) &&
+                  xvi_tui_save_buffer(shell, session, actionVim, XString_toUtf8(path));
+        if (ok) {
+            XTuiVim_clearModified(actionVim);
+            if (saveAs) XTuiVim_setPath(actionVim, XString_toUtf8(path));
+        } else {
+            (void)xvi_write_line(shell, "vi: 保存失败");
+        }
+        if (path) XString_delete_base(path);
+        XTuiVim_ackAction(actionVim);
+        XTui_refresh(tui->tui);
+        return XConsoleResult_MoreOutput;
+    }
+#if XTUI_VIM_MULTIBUFFER_ON
+    if (XTuiVim_wantWriteAll(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool quitAll = XTuiVim_wantQuitAll(actionVim);
+        bool ok = xvi_tui_save_all(shell, session, tui);
+        if (!ok) (void)xvi_write_line(shell, "vi: 有缓冲保存失败");
+        XTuiVim_ackAction(actionVim);
+        if (!ok || !quitAll) {
+            XTui_refresh(tui->tui);
+            return XConsoleResult_MoreOutput;
+        }
+        quit = true;
+    } else if (XTuiVim_wantQuitAll(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool force = XTuiVim_wantForce(actionVim);
+        bool dirty = false;
+        int i;
+        for (i = 0; i < tui->bufferCount; ++i)
+            if (XTuiVim_isModified(tui->buffers[i])) { dirty = true; break; }
+        XTuiVim_ackAction(actionVim);
+        if (dirty && !force) {
+            (void)xvi_write_line(shell, "vi: 有未保存修改，使用 :wqa 或 :qa! 退出");
+            XTui_refresh(tui->tui);
+            return XConsoleResult_MoreOutput;
+        }
+        quit = true;
+    } else if (XTuiVim_wantBufferClose(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool force = XTuiVim_wantForce(actionVim);
+        bool dirty = XTuiVim_isModified(actionVim);
+        XTuiVim_ackAction(actionVim);
+        if (dirty && !force) {
+            (void)xvi_write_line(shell, "vi: 缓冲有未保存修改，使用 :bd! 放弃");
+            XTui_refresh(tui->tui);
+            return XConsoleResult_MoreOutput;
+        }
+        if (!xvi_tui_close_current_buffer(tui)) {
+            (void)xvi_write_line(shell, "vi: 关闭缓冲失败");
+            return XConsoleResult_MoreOutput;
+        }
+        if (!tui->bufferCount) quit = true;
+        else return XConsoleResult_MoreOutput;
+    }
+#endif
     if (XTuiVim_wantSaveQuit(tui->vim)) {
-        if (!xvi_tui_save(shell, session, tui, tui->path)) {
+        if (!xvi_tui_save(shell, session, tui, XTuiVim_path(tui->vim))) {
             (void)xvi_write_line(shell, "vi: 保存失败");
             XTuiVim_ackAction(tui->vim);
             return XConsoleResult_MoreOutput;
@@ -109,7 +341,7 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
         XTuiVim_ackAction(tui->vim);
         quit = true;
     } else if (XTuiVim_wantSave(tui->vim)) {
-        if (!xvi_tui_save(shell, session, tui, tui->path)) {
+        if (!xvi_tui_save(shell, session, tui, XTuiVim_path(tui->vim))) {
             (void)xvi_write_line(shell, "vi: 保存失败");
             XTuiVim_ackAction(tui->vim);
             return XConsoleResult_MoreOutput;
@@ -119,13 +351,70 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
         XTui_refresh(tui->tui);
         return XConsoleResult_MoreOutput;
     }
-    if (XTuiVim_wantQuit(tui->vim)) {
+#if XTUI_VIM_MULTIBUFFER_ON
+    if (XTuiVim_wantEdit(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool ok = xvi_tui_open_buffer(shell, session, tui,
+                                      XTuiVim_actionPath(actionVim));
+        XTuiVim_ackAction(actionVim);
+        if (!ok) {
+            (void)xvi_write_line(shell, "vi: 打开缓冲失败");
+            return XConsoleResult_MoreOutput;
+        }
+        return XConsoleResult_MoreOutput;
+    }
+    if (XTuiVim_wantBufferNext(tui->vim) || XTuiVim_wantBufferPrev(tui->vim) ||
+        XTuiVim_wantBufferIndex(tui->vim) > 0) {
+        XTuiVim* actionVim = tui->vim;
+        int index = tui->currentBuffer;
+        if (XTuiVim_wantBufferIndex(actionVim) > 0) {
+            index = XTuiVim_wantBufferIndex(actionVim) - 1;
+        } else if (XTuiVim_wantBufferNext(actionVim)) {
+            index = (index + 1) % tui->bufferCount;
+        } else {
+            index = (index + tui->bufferCount - 1) % tui->bufferCount;
+        }
+        XTuiVim_ackAction(actionVim);
+        if (!xvi_tui_switch(tui, index)) {
+            (void)xvi_write_line(shell, "vi: 缓冲编号无效");
+            return XConsoleResult_MoreOutput;
+        }
+        return XConsoleResult_MoreOutput;
+    }
+    if (XTuiVim_wantBufferList(tui->vim)) {
         XTuiVim_ackAction(tui->vim);
+        if (!xvi_tui_list_buffers(tui)) return XConsoleResult_IoError;
+        return XConsoleResult_MoreOutput;
+    }
+#endif
+    if (XTuiVim_wantQuit(tui->vim)) {
+        XTuiVim* actionVim = tui->vim;
+        bool force = XTuiVim_wantForce(actionVim);
+        XTuiVim_ackAction(actionVim);
+#if XTUI_VIM_MULTIBUFFER_ON
+        if (tui->bufferCount > 1) {
+            if (XTuiVim_isModified(actionVim) && !force) {
+                (void)xvi_write_line(shell, "vi: 缓冲有未保存修改，使用 :q! 放弃或 :wq 保存");
+                XTui_refresh(tui->tui);
+                return XConsoleResult_MoreOutput;
+            }
+            if (!xvi_tui_close_current_buffer(tui)) {
+                (void)xvi_write_line(shell, "vi: 关闭缓冲失败");
+                return XConsoleResult_MoreOutput;
+            }
+            if (!tui->bufferCount) quit = true;
+            else return XConsoleResult_MoreOutput;
+        } else {
+            quit = true;
+        }
+#else
+        (void)force;
         quit = true;
+#endif
     }
     if (quit) {
         XTui_stop(tui->tui);
-        if (tui->vim) XTuiVim_delete_base(tui->vim);
+        xvi_tui_delete_buffers(tui);
         if (tui->screen) XTuiScreen_delete_base(tui->screen);
         if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
         if (tui->tui) XTui_delete_base(tui->tui);
@@ -175,6 +464,9 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     XTuiVim_setLines(tui->vim, lines,
                      session->editorLineCount ? (int)session->editorLineCount : 1);
     XTuiVim_setPath(tui->vim, XString_toUtf8(path));
+    tui->buffers[0] = tui->vim;
+    tui->bufferCount = 1;
+    tui->currentBuffer = 0;
     XTui_setScreen(tui->tui, tui->screen);
     XTui_setTerminal(tui->tui, tui->terminal);
     XTui_setRootWidget(tui->tui, (XTuiWidget*)tui->vim);
@@ -792,6 +1084,19 @@ bool XConsoleShellVi_isActive(const XConsoleShellSession* session)
     return session && session->editorActive;
 }
 
+bool XConsoleShellVi_canBackspace(const XConsoleShellSession* session)
+{
+    if (!session || !session->editorActive) return false;
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    if (session->editorTui) {
+        const XviTui* tui = (const XviTui*)session->editorTui;
+        return tui->vim && XTuiVim_isInsertMode(tui->vim) &&
+               (tui->vim->m_cursorColumn > 0 || tui->vim->m_cursorLine > 0);
+    }
+#endif
+    return session->editorInsertMode && session->editorInsertCursor > 0;
+}
+
 void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
 {
     if (!shell || !session) return;
@@ -799,7 +1104,7 @@ void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
     if (session->editorTui) {
         XviTui* tui = (XviTui*)session->editorTui;
         XTui_stop(tui->tui);
-        if (tui->vim) XTuiVim_delete_base(tui->vim);
+        xvi_tui_delete_buffers(tui);
         if (tui->screen) XTuiScreen_delete_base(tui->screen);
         if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
         if (tui->tui) XTui_delete_base(tui->tui);

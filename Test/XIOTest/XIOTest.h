@@ -9,6 +9,7 @@ extern "C" {
 	void XMenu_XIOTest(XMenu* root);
 	void XMenu_XSerialPortTest(XMenu* root);
 	void XMenu_XSocketTest(XMenu* root);
+	void XMenu_XSslTest(XMenu* root);
 	void XMenu_XUdpSocketTest(XMenu* root);
 	void XMenu_XTcpSocketTest(XMenu* root);
 	void XMenu_XTcpServerTest(XMenu* root);

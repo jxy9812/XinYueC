@@ -20,6 +20,8 @@
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
 #include "XSshTelnetClientTest.h"
+#include "XCryptographicPrimitiveTest.h"
+#include "XSslTest.h"
 #include "XTestCommand.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -51,6 +53,19 @@ static int main_run_test_path(const char* testPath)
         return XConsoleShellBackendTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "ssh-telnet-client") == 0)
         return XSshTelnetClientTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xcryptographic") == 0)
+        return XCryptographicPrimitiveTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xssl") == 0)
+        return XSslTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "all") == 0) {
+        bool process = XProcessTest_runAll();
+        bool shell = XConsoleShellTest_runAll();
+        bool backend = XConsoleShellBackendTest_runAll();
+        bool clients = XSshTelnetClientTest_runAll();
+        bool cryptographic = XCryptographicPrimitiveTest_runAll();
+        bool ssl = XSslTest_runAll();
+        return process && shell && backend && clients && cryptographic && ssl ? 0 : 1;
+    }
     XPrintf("未知测试命令: %s\n", testPath);
     return 1;
 }
@@ -62,9 +77,12 @@ static void main_print_test_list(void)
     XPrintf("  Test xconsole-shell\n");
     XPrintf("  Test xconsole-shell-backend\n");
     XPrintf("  Test ssh-telnet-client\n");
+    XPrintf("  Test xcryptographic\n");
+    XPrintf("  Test xssl\n");
     XPrintf("  Test all\n");
     XPrintf("  --test esp8266-unit\n");
     XPrintf("  --test esp8266-auto\n");
+    XPrintf("  --test all\n");
 }
 
 int main(int argc, char* args[])

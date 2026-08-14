@@ -114,6 +114,7 @@ int XMenuTest_show(XMenu* menu, int column)
 		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
 		XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
 		if (scanf("%9s", command) != 1 || strcmp(command, "q") == 0) {
+			clearerr(stdin);
 			XVector_delete_base(v);
 			return 0;
 		}
@@ -131,8 +132,10 @@ int XMenuTest_show(XMenu* menu, int column)
 int XMenuTest_run()
 {
 	XMenu* menu = XMenuTest_create();
-	XMenuTest_show(menu, 1);
-	int code = *((int*)(&(menu->m_userData)));
+	int code;
+	if (!menu)
+		return -1;
+	code = XMenuTest_show(menu, 1);
 	XMenu_delete(menu);
 	return code;
 }

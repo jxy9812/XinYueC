@@ -16,7 +16,7 @@
  * finalized, but before the user's mbedtls config is applied. This way
  * it is possible to differentiate macros set by the user's mbedtls config
  * from macros set or derived by the crypto config. */
-#include <tf-psa-crypto/build_info.h>
+#include <mbedtls/private/crypto_build_info.h>
 
 /* Consistency checks on the user's configuration.
  * Check that it doesn't define macros that we assume are under full

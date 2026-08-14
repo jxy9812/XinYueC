@@ -174,7 +174,7 @@ struct XConsoleShellSshAdapter {
     bool ptyRequested;
     bool inputEcho;
     bool echoPendingCr;
-    bool echoEscape;
+    uint8_t echoEscape; /* 0 普通，1 已收 ESC，2 正在消费 CSI/O 序列。 */
     bool channelOpen;
     bool shellStarted;
     bool authDone;
@@ -1405,12 +1405,17 @@ static bool xssh_echo_channel_input(XConsoleShellSshAdapter* adapter,
     if (!adapter->ptyRequested || !adapter->inputEcho) return true;
     for (i = 0; i < size; ++i) {
         uint8_t byte = data[i];
-        if (adapter->echoEscape) {
-            if (byte >= '@' && byte <= '~') adapter->echoEscape = false;
+        if (adapter->echoEscape == 1u) {
+            if (byte == '[' || byte == 'O') adapter->echoEscape = 2u;
+            else adapter->echoEscape = 0u;
+            if (adapter->echoEscape == 2u) continue;
+        }
+        if (adapter->echoEscape == 2u) {
+            if (byte >= '@' && byte <= '~') adapter->echoEscape = 0u;
             continue;
         }
         if (byte == 0x1b) {
-            adapter->echoEscape = true;
+            adapter->echoEscape = 1u;
             continue;
         }
         if (byte == '\r') {
@@ -1432,6 +1437,10 @@ static bool xssh_echo_channel_input(XConsoleShellSshAdapter* adapter,
         adapter->echoPendingCr = false;
         if (byte == '\b' || byte == 0x7f) {
             static const char erase[] = "\b \b";
+            /* 远端 PTY 通常关闭本地回显。只有 Shell 能实际删掉输入时才
+             * 输出擦除序列，空命令行不能把 `user> ` 提示符擦掉。 */
+            if (!XConsoleShell_canBackspace(adapter->shell, adapter->session))
+                continue;
             if (echoLen && !xssh_shell_write(adapter, echo, echoLen)) return false;
             echoLen = 0;
             if (!xssh_shell_write(adapter, erase, sizeof(erase) - 1u)) return false;
@@ -1444,7 +1453,7 @@ static bool xssh_echo_channel_input(XConsoleShellSshAdapter* adapter,
             if (!xssh_shell_write(adapter, interrupt, sizeof(interrupt) - 1u)) return false;
             continue;
         }
-        if (byte >= 0x20 || byte == '\t') {
+        if (byte >= 0x20 && byte != '\t') {
             if (echoLen == sizeof(echo) && !xssh_shell_write(adapter, echo, echoLen))
                 return false;
             if (echoLen == sizeof(echo)) echoLen = 0;
@@ -1488,10 +1497,21 @@ static XConsoleResult xssh_handle_channel_data(XConsoleShellSshAdapter* adapter,
             while (end < dataLen && data[end] != '\r' && data[end] != '\n') ++end;
             if (end < dataLen) terminator = data[end++];
             segmentLen = end - pos;
-            if (!xssh_echo_channel_input(adapter, data + pos, segmentLen))
-                return XConsoleResult_IoError;
-            result = XConsoleShell_feedDataForSession(
-                adapter->shell, adapter->session, data + pos, segmentLen);
+            /* 回显和 Shell 必须按字节保持同一顺序。若整段先回显再喂入，
+             * `abc<退格>` 中的退格会在 Shell 看到 abc 之前被判定为“空行”，
+             * 从而无法擦除最后一个字符；TUI 的 ANSI 序列也需要跨字节保持状态。 */
+            {
+                size_t segmentOffset;
+                for (segmentOffset = 0; segmentOffset < segmentLen; ++segmentOffset) {
+                    if (!xssh_echo_channel_input(adapter,
+                                                 data + pos + segmentOffset, 1u))
+                        return XConsoleResult_IoError;
+                    result = XConsoleShell_feedDataForSession(
+                        adapter->shell, adapter->session,
+                        data + pos + segmentOffset, 1u);
+                    if (result == XConsoleResult_IoError) break;
+                }
+            }
             if (result == XConsoleResult_IoError) break;
             if (segmentLen > (terminator ? 1u : 0u)) previousCr = false;
             if (terminator == '\r') {
