@@ -579,11 +579,11 @@ Added:
   `XCRYPTOGRAPHIC_TLS12_PRF_SHA256_ON`,
   `XCRYPTOGRAPHIC_TLS12_PSK_TO_MS_SHA256_ON`,
   `XCRYPTOGRAPHIC_PBKDF2_AES_CMAC_PRF_128_ON` (default 1).
-- `XCryptographic.h/.c`: `XCryptographic_hkdfExtractSha256Into`,
-  `XCryptographic_hkdfExpandSha256Into`,
-  `XCryptographic_tls12PrfSha256Into`,
-  `XCryptographic_tls12PskToMsSha256Into`,
-  `XCryptographic_pbkdf2AesCmacPrf128Into`.
+- `XCryptographic.h/.c`: generic `XCryptographic_hkdfExtractInto`,
+  `XCryptographic_hkdfExpandInto`, `XCryptographic_tls12PrfInto`,
+  `XCryptographic_tls12PskToMsInto`, and
+  `XCryptographic_pbkdf2AesCmacPrf128Into`; SHA-256 is selected with
+  `XCryptographicHash_Sha256`.
 - `Library/mbedtls/CMakeLists.txt`: `MBEDTLS_USE_XCRYPTOGRAPHIC_KDF` (default
   ON) and the matching private compile definition for the `mbedtls` target.
 - `psa_crypto.c`: three static helpers plus routing in
@@ -603,10 +603,20 @@ Fixed during this batch:
 - `XCryptographic_pbkdf2AesCmacPrf128Into` previously fed the cumulative XOR
   accumulator back into the next AES-CMAC PRF iteration; it now keeps the
   current `U` chain separate from the `T` accumulator, matching RFC 4615.
-- The PSA TLS 1.2 PSK-to-MS helper initially called
-  `XCryptographic_tls12PskToMsSha256Into` on the already-built premaster
-  secret, which double-wrapped the key; it now uses
-  `XCryptographic_tls12PrfSha256Into` directly.
+- The PSA TLS 1.2 PSK-to-MS helper initially double-wrapped the already-built
+  premaster secret; it now uses `XCryptographic_tls12PrfInto` with
+  `XCryptographicHash_Sha256` directly.
+
+## Public API Consolidation (2026-08-14)
+
+- Removed the AES-only `XCryptographic_aesBlockCipher*` wrappers. AES callers
+  use `XCryptographic_blockCipher*` with
+  `XCryptographic_BlockCipherAlgorithm_Aes`.
+- Removed fixed SHA-256 HKDF, PBKDF2-HMAC, and TLS 1.2 PRF/PSK-to-MS entry
+  points. Callers use the generic KDF functions and select SHA-256 with
+  `XCryptographicHash_Sha256`.
+- `XCryptographicHash_hashInto_1` and the Hash/HMAC `_2`/`_3` overloads remain
+  public by design.
 
 Focused evidence (both static and dynamic):
 
@@ -1453,3 +1463,26 @@ ML-DSA-87 原语，而没有虚构 PSA API：
 - 动态 `--test all`：exit=0，密码与 XSsl 均 PASS。
 - 静态 `--test all`：密码与 XSsl 均 PASS；整体 exit=1 仅因既有的
   XConsoleShell `login testadmin` 断言。
+
+## 2026-08-14 Hash 内存池路由与公共 API 注释
+
+本批次继续完成 `XCryptographicHash` 独立后的内存分配收口，并补齐
+`XCryptographicHash.h` 与 `XCryptographic.h` 的公共 API 文档：
+
+- `XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE` 现在实际控制 Hash 上下文、输入
+  缓冲区、`resultView` 缓存，以及 HMAC/CMAC 适配层上下文的分配和释放。
+- 默认值 `XMEMORY_TYPE_HYBRID` 仍会按大小将大块工作区回退到系统分配器；
+  需要完全使用多池时编译配置应改为
+  `-DXCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE=XMEMORY_TYPE_MULTIPOOL`。
+- `XCryptographic.c` 中 HKDF、PBKDF2、TLS 1.2 PRF、PSK-to-MS 和
+  PBKDF2-AES-CMAC 的临时工作区也统一通过该宏选择的 `XMemory` 方法。
+- HMAC 的固定尺寸 ipad/opad 和摘要临时值改为栈/Hash 缓存路径，避免每次
+  HMAC 操作创建临时 `XByteArray`。
+- `XByteArray*` 返回型兼容 API 仍使用 `XByteArray` 自身的 System 分配器，
+  因为调用方通过 `XByteArray_delete_base` 释放；不改变该容器的全局分配契约。
+- 其余 AES、RSA、椭圆曲线等非 Hash 算法的工作区仍保持各自现有分配策略，
+  不应将其中的 `XMalloc_System` 误认为 Hash 内存池宏未生效。
+
+验证：默认构建、`XinYueC_Static --test xcryptographic` 和
+`XinYueC_Static --test xssl` 均通过；Hash 快速算法统一分发探针通过，
+`git diff --check` 无空白错误。

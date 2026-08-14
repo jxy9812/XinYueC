@@ -258,9 +258,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaP521ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP521,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaP521ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP521,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer, data, data_length);
@@ -273,9 +273,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         attributes->bits == 512 && data_length <= INT64_MAX && key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaBrainpoolP512r1ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaBrainpoolP512r1ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer, data, data_length);
@@ -288,8 +288,8 @@ psa_status_t mbedtls_psa_ecp_import_key(
         attributes->bits == 384 && data_length <= INT64_MAX && key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaBrainpoolP384r1ImportPublicKey(XByteArrayView_create_data(data,(int64_t)data_length),&key) :
-                     XCryptographic_ecdsaBrainpoolP384r1ImportPrivateKey(XByteArrayView_create_data(data,(int64_t)data_length),&key);
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1, XByteArrayView_create_data(data,(int64_t)data_length),&key) :
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1, XByteArrayView_create_data(data,(int64_t)data_length),&key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer,data,data_length); *key_buffer_length=data_length; *bits=384; XCryptographic_destroyKey(&key); return PSA_SUCCESS;
     }
@@ -298,9 +298,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaP384ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP384,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaP384ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP384,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer, data, data_length);
@@ -314,9 +314,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaP256ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP256,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaP256ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP256,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) {
             return PSA_ERROR_INVALID_ARGUMENT;
@@ -332,9 +332,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaSecp256k1ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaSecp256k1ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer, data, data_length);
@@ -348,9 +348,9 @@ psa_status_t mbedtls_psa_ecp_import_key(
         key_buffer_size >= data_length) {
         XCryptographic_Key key;
         bool valid = PSA_KEY_TYPE_IS_PUBLIC_KEY(attributes->type) ?
-                     XCryptographic_ecdsaBrainpoolP256r1ImportPublicKey(
+                     XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key) :
-                     XCryptographic_ecdsaBrainpoolP256r1ImportPrivateKey(
+                     XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
                          XByteArrayView_create_data(data, (int64_t)data_length), &key);
         if (!valid) return PSA_ERROR_INVALID_ARGUMENT;
         memcpy(key_buffer, data, data_length);
@@ -699,25 +699,25 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     XByteArrayView signature_view;
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type)==PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits==384 && key_buffer_size==48 && hash_length<=INT64_MAX && signature_size>=96 &&
-        XCryptographic_ecdsaBrainpoolP384r1ImportPrivateKey(XByteArrayView_create_data(key_buffer,48),&key)) {
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1, XByteArrayView_create_data(key_buffer,48),&key)) {
         signature_view=PSA_ALG_ECDSA_IS_DETERMINISTIC(alg) ?
-            XCryptographic_ecdsaBrainpoolP384r1SignHashDeterministicInto((char*)signature,signature_size,key,XByteArrayView_create_data(hash,(int64_t)hash_length)) :
-            XCryptographic_ecdsaBrainpoolP384r1SignHashInto((char*)signature,signature_size,key,XByteArrayView_create_data(hash,(int64_t)hash_length));
+            XCryptographic_ecdsaSignHashInto((char*)signature,signature_size,key,XByteArrayView_create_data(hash,(int64_t)hash_length), true) :
+            XCryptographic_ecdsaSignHashInto((char*)signature,signature_size,key,XByteArrayView_create_data(hash,(int64_t)hash_length), false);
         XCryptographic_destroyKey(&key); if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
         *signature_length=(size_t)signature_view.m_size; return PSA_SUCCESS;
     }
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits == 512 && key_buffer_size == 64 && hash_length <= INT64_MAX &&
         signature_size >= 128 &&
-        XCryptographic_ecdsaBrainpoolP512r1ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
             XByteArrayView_create_data(key_buffer, 64), &key)) {
         signature_view = PSA_ALG_ECDSA_IS_DETERMINISTIC(alg) ?
-            XCryptographic_ecdsaBrainpoolP512r1SignHashDeterministicInto(
+            XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length)) :
-            XCryptographic_ecdsaBrainpoolP512r1SignHashInto(
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true) :
+            XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
         *signature_length = (size_t)signature_view.m_size;
@@ -726,16 +726,16 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 521 && key_buffer_size == 66 && hash_length <= INT64_MAX &&
         signature_size >= 132 &&
-        XCryptographic_ecdsaP521ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP521,
             XByteArrayView_create_data(key_buffer, 66), &key)) {
         if (PSA_ALG_ECDSA_IS_DETERMINISTIC(alg)) {
-            signature_view = XCryptographic_ecdsaP521SignHashDeterministicInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true);
         } else {
-            signature_view = XCryptographic_ecdsaP521SignHashInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         }
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -745,16 +745,16 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 384 && key_buffer_size == 48 && hash_length <= INT64_MAX &&
         signature_size >= 96 &&
-        XCryptographic_ecdsaP384ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP384,
             XByteArrayView_create_data(key_buffer, 48), &key)) {
         if (PSA_ALG_ECDSA_IS_DETERMINISTIC(alg)) {
-            signature_view = XCryptographic_ecdsaP384SignHashDeterministicInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true);
         } else {
-            signature_view = XCryptographic_ecdsaP384SignHashInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         }
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -764,16 +764,16 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 256 &&
         key_buffer_size == 32 && hash_length <= INT64_MAX && signature_size >= 64 &&
-        XCryptographic_ecdsaP256ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP256,
             XByteArrayView_create_data(key_buffer, 32), &key)) {
         if (PSA_ALG_ECDSA_IS_DETERMINISTIC(alg)) {
-            signature_view = XCryptographic_ecdsaP256SignHashDeterministicInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true);
         } else {
-            signature_view = XCryptographic_ecdsaP256SignHashInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         }
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -783,16 +783,16 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_K1 &&
         attributes->bits == 256 && key_buffer_size == 32 && hash_length <= INT64_MAX &&
         signature_size >= 64 &&
-        XCryptographic_ecdsaSecp256k1ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
             XByteArrayView_create_data(key_buffer, 32), &key)) {
         if (PSA_ALG_ECDSA_IS_DETERMINISTIC(alg)) {
-            signature_view = XCryptographic_ecdsaSecp256k1SignHashDeterministicInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true);
         } else {
-            signature_view = XCryptographic_ecdsaSecp256k1SignHashInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         }
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -802,16 +802,16 @@ psa_status_t mbedtls_psa_ecdsa_sign_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits == 256 && key_buffer_size == 32 && hash_length <= INT64_MAX &&
         signature_size >= 64 &&
-        XCryptographic_ecdsaBrainpoolP256r1ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
             XByteArrayView_create_data(key_buffer, 32), &key)) {
         if (PSA_ALG_ECDSA_IS_DETERMINISTIC(alg)) {
-            signature_view = XCryptographic_ecdsaBrainpoolP256r1SignHashDeterministicInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), true);
         } else {
-            signature_view = XCryptographic_ecdsaBrainpoolP256r1SignHashInto(
+            signature_view = XCryptographic_ecdsaSignHashInto(
                 (char *)signature, signature_size, key,
-                XByteArrayView_create_data(hash, (int64_t)hash_length));
+                XByteArrayView_create_data(hash, (int64_t)hash_length), false);
         }
         XCryptographic_destroyKey(&key);
         if (!signature_view.m_data) return PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -913,16 +913,16 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     XCryptographic_Key key;
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type)==PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits==384 && key_buffer_size==97 && hash_length<=INT64_MAX && signature_length<=INT64_MAX &&
-        XCryptographic_ecdsaBrainpoolP384r1ImportPublicKey(XByteArrayView_create_data(key_buffer,key_buffer_size),&key)) {
-        bool valid=XCryptographic_ecdsaBrainpoolP384r1VerifyHash(key,XByteArrayView_create_data(hash,(int64_t)hash_length),XByteArrayView_create_data(signature,(int64_t)signature_length));
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1, XByteArrayView_create_data(key_buffer,key_buffer_size),&key)) {
+        bool valid=XCryptographic_ecdsaVerifyHash(key,XByteArrayView_create_data(hash,(int64_t)hash_length),XByteArrayView_create_data(signature,(int64_t)signature_length));
         XCryptographic_destroyKey(&key); return valid ? PSA_SUCCESS : PSA_ERROR_INVALID_SIGNATURE;
     }
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits == 512 && key_buffer_size == 129 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaBrainpoolP512r1ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaBrainpoolP512r1VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);
@@ -931,9 +931,9 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 521 && key_buffer_size == 133 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaP521ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP521,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaP521VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);
@@ -942,9 +942,9 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 384 && key_buffer_size == 97 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaP384ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP384,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaP384VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);
@@ -953,9 +953,9 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_R1 &&
         attributes->bits == 256 && key_buffer_size == 65 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaP256ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP256,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaP256VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);
@@ -964,9 +964,9 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_SECP_K1 &&
         attributes->bits == 256 && key_buffer_size == 65 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaSecp256k1ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaSecp256k1VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);
@@ -975,9 +975,9 @@ psa_status_t mbedtls_psa_ecdsa_verify_hash(
     if (PSA_KEY_TYPE_ECC_GET_FAMILY(attributes->type) == PSA_ECC_FAMILY_BRAINPOOL_P_R1 &&
         attributes->bits == 256 && key_buffer_size == 65 && hash_length <= INT64_MAX &&
         signature_length <= INT64_MAX &&
-        XCryptographic_ecdsaBrainpoolP256r1ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
             XByteArrayView_create_data(key_buffer, key_buffer_size), &key)) {
-        bool valid = XCryptographic_ecdsaBrainpoolP256r1VerifyHash(
+        bool valid = XCryptographic_ecdsaVerifyHash(
             key, XByteArrayView_create_data(hash, (int64_t)hash_length),
             XByteArrayView_create_data(signature, (int64_t)signature_length));
         XCryptographic_destroyKey(&key);

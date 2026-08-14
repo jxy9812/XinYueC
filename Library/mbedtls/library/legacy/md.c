@@ -315,7 +315,7 @@ void mbedtls_md_free(mbedtls_md_context_t *ctx)
 
     if (ctx->md_ctx != NULL) {
 #if defined(MBEDTLS_USE_XCRYPTOGRAPHIC_LEGACY_MD)
-        XCryptographicHash_delete_base((XClass *)md_xcryptographic_context(ctx->md_ctx));
+        XCryptographicHash_delete(md_xcryptographic_context(ctx->md_ctx));
 #else
 #if defined(MBEDTLS_MD_SOME_PSA)
         if (ctx->engine == MBEDTLS_MD_ENGINE_PSA) {
@@ -408,14 +408,10 @@ int mbedtls_md_clone(mbedtls_md_context_t *dst,
     {
         XCryptographicHash *source = md_xcryptographic_context(src->md_ctx);
         XCryptographicHash *target = md_xcryptographic_context(dst->md_ctx);
-        XByteArrayView bytes;
-        if (!source || !target || !source->buffer || !target->buffer) {
+        if (!source || !target || !source->initialized || !target->initialized) {
             return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
         }
-        XCryptographicHash_reset(target);
-        bytes = XByteArrayView_create_bytearray(source->buffer);
-        if (bytes.m_size > 0 && !bytes.m_data) return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
-        XCryptographicHash_addData_2(target, bytes);
+        XCryptographicHash_copy(target, source);
         return 0;
     }
 #endif

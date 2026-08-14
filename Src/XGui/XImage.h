@@ -13,7 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XImageFormat.h"
-#include "XGuiTypes.h"
+#include "XData/XGeometry.h"
 #include "XClass.h"
 #include "XTypes.h"
 #include "XMemory.h"
@@ -582,4 +582,3 @@ const char* XImage_formatToStr(XImageFormat format);
 }
 #endif
 #endif /* XIMAGE_H */
-

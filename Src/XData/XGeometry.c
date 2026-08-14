@@ -1,9 +1,9 @@
 ﻿/******************************************************************************
- * @file       XGuiTypes.c
- * @brief      XGui 基础几何类型实现
+ * @file       XGeometry.c
+ * @brief      基础空间几何类型实现
  * @author     XinYueC 团队
  ******************************************************************************/
-#include "XGuiTypes.h"
+#include "XGeometry.h"
 #include "XMemory.h"
 #include <string.h>
 #include <limits.h>

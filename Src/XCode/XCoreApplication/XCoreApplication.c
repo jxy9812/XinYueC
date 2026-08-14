@@ -2,7 +2,7 @@
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XEvent.h"
-#include "XHashFunc.h"
+#include "XCryptographic.h"
 #include "XHashSet.h"
 #include "XMutex.h"
 #include "XObject.h"

@@ -6,6 +6,7 @@
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XCoreApplication.h"
+#include "XCryptographic.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -57,12 +58,13 @@ static int stringCompare(const void* a, const void* b)
     return strcmp(sa, sb);
 }
 
-static uint64_t XHash_string(const void* key, size_t len)
+static uint64_t xcommandline_hash_string(const void* key, size_t len)
 {
     (void)len;
     const char* str = *(const char**)key;
     if (!str) return 0;
-    return XHash_xxhash64(str, strlen(str));
+    return XCryptographicHash_function(XCryptographicHash_XxHash64)(
+        str, strlen(str));
 }
 
 /* ==================== 构造/析构 ==================== */
@@ -74,9 +76,12 @@ XCommandLineParser* XCommandLineParser_create(void)
 
     parser->m_errorText = XString_create();
     parser->m_commandLineOptionList = XVector_create(sizeof(XCommandLineOption*));
-    parser->m_nameHash = XHashMap_create(sizeof(char*), sizeof(int), XHash_string, stringCompare);
+    parser->m_nameHash = XHashMap_create(
+        sizeof(char*), sizeof(int), xcommandline_hash_string, stringCompare);
     XMapBaseSetKeyDeinitMethod(parser->m_nameHash, free_name_hash_key);
-    parser->m_optionValuesHash = XHashMap_create(sizeof(int), sizeof(XStringList*), XHash_xxhash64, int_compare);
+    parser->m_optionValuesHash = XHashMap_create(
+        sizeof(int), sizeof(XStringList*),
+        XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare);
     XContainerSetDataDeinitMethod(parser->m_optionValuesHash, free_option_values_value);
     parser->m_optionNames = XStringList_create();
     parser->m_positionalArgumentList = XStringList_create();

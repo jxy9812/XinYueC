@@ -5,7 +5,7 @@
 
 #include "XIcon.h"
 #include "XBitmap.h"
-#include "XGuiTypes.h"
+#include "XData/XGeometry.h"
 #include "XImage.h"
 #include "XImageReader.h"
 #include "XImageWriter.h"

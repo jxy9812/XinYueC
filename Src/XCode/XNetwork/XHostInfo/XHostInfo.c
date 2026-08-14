@@ -13,7 +13,6 @@
 #include "XVarList.h"
 #include "XAtomic.h"
 #include "XHashMap.h"
-//#include "XHashFunc.h"
 #include "XDateTime.h"
 #include <string.h>
 #include <stdlib.h>

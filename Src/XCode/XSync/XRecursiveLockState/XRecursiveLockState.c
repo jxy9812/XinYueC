@@ -1,6 +1,7 @@
 ﻿#include "XRecursiveLockState.h"
 #include "XReadWriteLock.h" // 用于保护全局哈希表
 #include "XHashMap.h"
+#include "XCryptographic.h"
 #include "XThread.h" // 用于 XThread_currentThreadId()
 #include "XMemory.h" // 用于内存分配
 #if XSYNC_ON
@@ -45,7 +46,9 @@ start:
 	{
 		XReadWriteLock_unlock(global_lock);
 		XHashMap map;
-		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState), XHash_xxhash64, uintptr_t_compare,false);
+		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState),
+			XCryptographicHash_function(XCryptographicHash_XxHash64),
+			uintptr_t_compare, false);
 		XReadWriteLock_lockForWrite(global_lock);
 		XHashMap_insert_base(global_locks_map, &lock_obj, &map);
 		XReadWriteLock_unlock(global_lock);

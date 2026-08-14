@@ -10,7 +10,7 @@ extern "C" {
 */
 #include "XFunctionCallback.h"    ///< 包含函数回调相关定义
 #include "XMapBase.h"             ///< 包含映射基类XMapBase的定义，XHashMap继承自此基类
-#include "XHashFunc.h"            ///< 包含哈希函数相关定义
+#include "XCryptographic.h"       ///< 包含统一哈希算法定义
 #include "XHashMap_iterator.h"    ///< 包含XHashMap迭代器定义
 /**
 * @brief 宏定义：默认初始容量
@@ -77,7 +77,9 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @return 调用XHashMap_create创建的XHashMap指针，哈希函数默认使用XHashMap_murmur3_32
 * @note 自动推导键和值的类型大小，避免手动计算sizeof
 */
-#define XHashMap_Create(keyType, valType, compare) XHashMap_create(sizeof(keyType), sizeof(valType), XHash_xxhash64, compare)
+#define XHashMap_Create(keyType, valType, compare) \
+    XHashMap_create(sizeof(keyType), sizeof(valType), \
+        XCryptographicHash_function(XCryptographicHash_XxHash64), compare)
 /**
 * @brief 初始化已分配内存的XHashMap实例
 * @param this_map 待初始化的XHashMap指针（需提前分配内存）

@@ -630,7 +630,7 @@ static bool xssh_generate_host_key(XSshServer* adapter)
 
     /* 优先加载已持久化的主机密钥，保证跨进程重启后主机指纹不变。 */
     if (xssh_hostkey_load(privateBytes, sizeof(privateBytes), &privateLen)) {
-        bool imported = XCryptographic_ecdsaP256ImportPrivateKey(
+        bool imported = XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP256,
             (XByteArrayView){ privateBytes, (int64_t)privateLen },
             &XSSH_DATA(adapter)->hostKey);
         memset(privateBytes, 0, sizeof(privateBytes));
@@ -656,12 +656,12 @@ static bool xssh_generate_host_key(XSshServer* adapter)
 
     /* 没有可用持久化密钥：生成新主机密钥并落盘。对 PSA 导出的私钥标量
      * 立即清零，避免在栈上长时间保留明文。 */
-    if (!XCryptographic_ecdsaP256GenerateKey(&XSSH_DATA(adapter)->hostKey)) {
+    if (!XCryptographic_ecdsaGenerateKey(XCryptographic_EcdsaAlgorithm_NistP256, &XSSH_DATA(adapter)->hostKey)) {
         XSSH_DBG("hostkey: generate failed\n");
         return false;
     }
 
-    privateLen = (size_t)XCryptographic_ecdsaP256ExportPrivateKeyInto(
+    privateLen = (size_t)XCryptographic_ecdsaExportPrivateKeyInto(
         (char*)privateBytes, sizeof(privateBytes), XSSH_DATA(adapter)->hostKey).m_size;
     if (privateLen == 0 || privateLen > XSSH_HOSTKEY_MAX_BYTES) {
         XCryptographic_destroyKey(&XSSH_DATA(adapter)->hostKey);
@@ -1441,9 +1441,9 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
      *   string "ecdsa-sha2-nistp256"
      *   string ecdsa_signature_blob
      * 其中 ecdsa_signature_blob = mpint r || mpint s */
-    sigLen = (size_t)XCryptographic_ecdsaP256SignHashInto(
+    sigLen = (size_t)XCryptographic_ecdsaSignHashInto(
         (char*)sig, sizeof(sig), XSSH_DATA(adapter)->hostKey,
-        (XByteArrayView){ signatureHash, XSSH_HASH_LEN }).m_size;
+        (XByteArrayView){ signatureHash, XSSH_HASH_LEN }, false).m_size;
     if (sigLen == 0) {
         XSSH_DBG("sign hash failed\n");
         return XProtocolResult_Failed;

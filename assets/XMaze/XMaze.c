@@ -1,5 +1,5 @@
 ﻿#include"XMaze.h"
-#include"XGui/XGuiTypes.h"
+#include"XData/XGeometry.h"
 #include"XAlgorithm.h"
 #include"XClass.h"
 #include<string.h>

@@ -404,10 +404,10 @@ static bool XCryptographicPrimitive_test_hkdf_sha256(void)
         0x58, 0x65
     };
     uint8_t output[sizeof(expected)];
-    XByteArrayView result = XCryptographic_hkdfSha256Into(
+    XByteArrayView result = XCryptographic_hkdfInto(
         xcryptographic_test_view(salt, sizeof(salt)),
         xcryptographic_test_view(inputKeyMaterial, sizeof(inputKeyMaterial)),
-        xcryptographic_test_view(info, sizeof(info)), sizeof(output),
+        xcryptographic_test_view(info, sizeof(info)), XCryptographicHash_Sha256, sizeof(output),
         (char*)output, sizeof(output));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == (int64_t)sizeof(expected) &&
                                   memcmp(output, expected, sizeof(expected)) == 0,
@@ -666,51 +666,47 @@ static bool XCryptographicPrimitive_test_aes_ecb_cbc(void)
     uint8_t output[sizeof(plainText)];
     XByteArrayView result;
 
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_EcbNoPadding, true),
                               "AES-ECB setup", "AES-ECB 初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText, sizeof(plainText)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == (int64_t)sizeof(output) &&
-                              XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                              XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                               memcmp(output, ecbExpected, sizeof(output)) == 0,
                               "AES-ECB NIST vector", "ECB 加密向量不匹配");
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_EcbNoPadding, false),
                               "AES-ECB decrypt setup", "AES-ECB 解密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(ecbExpected, sizeof(ecbExpected)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == (int64_t)sizeof(output) &&
-                              XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                              XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                               memcmp(output, plainText, sizeof(output)) == 0,
                               "AES-ECB decrypt", "ECB 解密向量不匹配");
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcNoPadding, true) &&
-                              XCryptographic_aesBlockCipherSetIv(&operation, xcryptographic_test_view(iv, sizeof(iv))),
+                              XCryptographic_blockCipherSetIv(&operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC setup", "AES-CBC 初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText, 21));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16,
                               "AES-CBC streaming", "CBC 第一段输出长度错误");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output + 16, sizeof(output) - 16,
         xcryptographic_test_view(plainText + 21, sizeof(plainText) - 21));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 48 &&
-                              XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                              XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                               memcmp(output, cbcExpected, sizeof(output)) == 0,
                               "AES-CBC NIST vector", "CBC 加密向量不匹配");
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcNoPadding, false) &&
-                              XCryptographic_aesBlockCipherSetIv(&operation, xcryptographic_test_view(iv, sizeof(iv))),
+                              XCryptographic_blockCipherSetIv(&operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC decrypt setup", "AES-CBC 解密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(cbcExpected, sizeof(cbcExpected)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == (int64_t)sizeof(output) &&
-                              XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                              XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                               memcmp(output, plainText, sizeof(output)) == 0,
                               "AES-CBC decrypt", "CBC 解密向量不匹配");
     XCRYPTO_PRIMITIVE_PASS("AES-ECB/CBC NIST SP 800-38A vectors");
@@ -760,59 +756,59 @@ static bool XCryptographicPrimitive_test_aes_xts(void)
     XByteArrayView result;
 
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_aesBlockCipherSetup(&operation,
+        XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes,
             xcryptographic_test_view(key32_p1619, sizeof(key32_p1619)),
             XCryptographic_BlockCipherMode_Xts, true) &&
-        XCryptographic_aesBlockCipherSetIv(&operation,
+        XCryptographic_blockCipherSetIv(&operation,
             xcryptographic_test_view(p1619_tweak, sizeof(p1619_tweak))),
         "AES-XTS IEEE P1619 setup", "AES-XTS 初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherUpdateInto(&operation, (char*)output,
         sizeof(output), xcryptographic_test_view(p1619_plain, 11));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0,
         "AES-XTS segmented update", "AES-XTS 分段更新输出长度错误");
-    result = XCryptographic_aesBlockCipherUpdateInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherUpdateInto(&operation, (char*)output,
         sizeof(output), xcryptographic_test_view(p1619_plain + 11, 21));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16,
         "AES-XTS full-block update", "AES-XTS 整块更新输出长度错误");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output + 16,
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output + 16,
         sizeof(output) - 16);
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16 &&
         memcmp(output, p1619_cipher, sizeof(p1619_cipher)) == 0,
         "AES-XTS IEEE P1619 vector", "AES-XTS 整块向量不匹配");
 
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_aesBlockCipherSetup(&operation,
+        XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes,
             xcryptographic_test_view(key32, sizeof(key32)),
             XCryptographic_BlockCipherMode_Xts, true) &&
-        XCryptographic_aesBlockCipherSetIv(&operation,
+        XCryptographic_blockCipherSetIv(&operation,
             xcryptographic_test_view((const uint8_t[16]){ 0 }, 16)),
         "AES-XTS ciphertext-stealing setup", "AES-XTS 窃取模式初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherUpdateInto(&operation, (char*)output,
         sizeof(output), xcryptographic_test_view(partial_plain, 7));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0,
         "AES-XTS ciphertext-stealing split", "AES-XTS 窃取模式第一段输出错误");
-    result = XCryptographic_aesBlockCipherUpdateInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherUpdateInto(&operation, (char*)output,
         sizeof(output), xcryptographic_test_view(partial_plain + 7, 10));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0,
         "AES-XTS ciphertext-stealing tail", "AES-XTS 窃取模式尾段输出错误");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output,
         sizeof(output));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 17 &&
         memcmp(output, partial_cipher, sizeof(partial_cipher)) == 0,
         "AES-XTS ciphertext stealing vector", "AES-XTS 窃取向量不匹配");
 
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_aesBlockCipherSetup(&operation,
+        XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes,
             xcryptographic_test_view(key32, sizeof(key32)),
             XCryptographic_BlockCipherMode_Xts, false) &&
-        XCryptographic_aesBlockCipherSetIv(&operation,
+        XCryptographic_blockCipherSetIv(&operation,
             xcryptographic_test_view((const uint8_t[16]){ 0 }, 16)),
         "AES-XTS decrypt setup", "AES-XTS 解密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherUpdateInto(&operation, (char*)output,
         sizeof(output), xcryptographic_test_view(partial_cipher, sizeof(partial_cipher)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0,
         "AES-XTS decrypt update", "AES-XTS 解密更新输出错误");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output,
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output,
         sizeof(output));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 17 &&
         memcmp(output, partial_plain, sizeof(partial_plain)) == 0,
@@ -985,34 +981,32 @@ static bool XCryptographicPrimitive_test_aes_cfb_ofb(void)
     size_t index;
 
     for (index = 0; index < sizeof(modes) / sizeof(modes[0]); ++index) {
-        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                      &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                       modes[index], true) &&
-                                  XCryptographic_aesBlockCipherSetIv(
+                                  XCryptographic_blockCipherSetIv(
                                       &operation, xcryptographic_test_view(iv, sizeof(iv))),
                                   "AES-CFB/OFB setup", "流密码模式初始化失败");
-        result = XCryptographic_aesBlockCipherUpdateInto(
+        result = XCryptographic_blockCipherUpdateInto(
             &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText, 23));
         XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 23,
                                   "AES-CFB/OFB streaming", "第一段输出长度错误");
-        result = XCryptographic_aesBlockCipherUpdateInto(
+        result = XCryptographic_blockCipherUpdateInto(
             &operation, (char*)output + 23, sizeof(output) - 23,
             xcryptographic_test_view(plainText + 23, sizeof(plainText) - 23));
         XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 41 &&
-                                  XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                                  XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                                   memcmp(output, expected[index], sizeof(output)) == 0,
                                   "AES-CFB/OFB NIST vector", "流密码模式加密向量不匹配");
-        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                      &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                       modes[index], false) &&
-                                  XCryptographic_aesBlockCipherSetIv(
+                                  XCryptographic_blockCipherSetIv(
                                       &operation, xcryptographic_test_view(iv, sizeof(iv))),
                                   "AES-CFB/OFB decrypt setup", "流密码模式解密初始化失败");
-        result = XCryptographic_aesBlockCipherUpdateInto(
+        result = XCryptographic_blockCipherUpdateInto(
             &operation, (char*)output, sizeof(output),
             xcryptographic_test_view(expected[index], sizeof(output)));
         XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == (int64_t)sizeof(output) &&
-                                  XCryptographic_aesBlockCipherFinishInto(&operation, NULL, 0).m_data &&
+                                  XCryptographic_blockCipherFinishInto(&operation, NULL, 0).m_data &&
                                   memcmp(output, plainText, sizeof(output)) == 0,
                                   "AES-CFB/OFB decrypt", "流密码模式解密向量不匹配");
     }
@@ -1069,67 +1063,63 @@ static bool XCryptographicPrimitive_test_aes_cbc_pkcs7(void)
     size_t index;
 
     /* 21 字节明文：填充 11 字节后输出 32 字节。 */
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcPkcs7, true) &&
-                              XCryptographic_aesBlockCipherSetIv(
+                              XCryptographic_blockCipherSetIv(
                                   &operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC-PKCS7 encrypt setup", "CBC-PKCS7 加密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText21, 7));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0,
                               "AES-CBC-PKCS7 streaming", "第一段输出长度错误");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText21 + 7, 14));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16,
                               "AES-CBC-PKCS7 streaming", "第二段输出长度错误");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output + 16, sizeof(output) - 16);
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output + 16, sizeof(output) - 16);
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16 &&
                               memcmp(output, expected21, sizeof(expected21)) == 0,
                               "AES-CBC-PKCS7 NIST vector", "CBC-PKCS7 加密向量不匹配");
 
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcPkcs7, false) &&
-                              XCryptographic_aesBlockCipherSetIv(
+                              XCryptographic_blockCipherSetIv(
                                   &operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC-PKCS7 decrypt setup", "CBC-PKCS7 解密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(expected21, sizeof(expected21)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16,
                               "AES-CBC-PKCS7 decrypt update", "CBC-PKCS7 解密更新失败");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output + 16, sizeof(output) - 16);
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output + 16, sizeof(output) - 16);
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 5 &&
                               memcmp(output, plainText21, sizeof(plainText21)) == 0,
                               "AES-CBC-PKCS7 decrypt", "CBC-PKCS7 解密向量不匹配");
 
     /* 64 字节整块明文：PKCS7 仍补一整块，输出 80 字节。 */
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcPkcs7, true) &&
-                              XCryptographic_aesBlockCipherSetIv(
+                              XCryptographic_blockCipherSetIv(
                                   &operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC-PKCS7 full-block encrypt setup", "CBC-PKCS7 整块加密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(plainText64, sizeof(plainText64)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 64,
                               "AES-CBC-PKCS7 full-block update", "CBC-PKCS7 整块更新失败");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output + 64, sizeof(output) - 64);
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output + 64, sizeof(output) - 64);
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16 &&
                               memcmp(output, expected80, sizeof(expected80)) == 0,
                               "AES-CBC-PKCS7 full-block vector", "CBC-PKCS7 整块加密向量不匹配");
 
-    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                  &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+    XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                   XCryptographic_BlockCipherMode_CbcPkcs7, false) &&
-                              XCryptographic_aesBlockCipherSetIv(
+                              XCryptographic_blockCipherSetIv(
                                   &operation, xcryptographic_test_view(iv, sizeof(iv))),
                               "AES-CBC-PKCS7 full-block decrypt setup", "CBC-PKCS7 整块解密初始化失败");
-    result = XCryptographic_aesBlockCipherUpdateInto(
+    result = XCryptographic_blockCipherUpdateInto(
         &operation, (char*)output, sizeof(output), xcryptographic_test_view(expected80, sizeof(expected80)));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 64,
                               "AES-CBC-PKCS7 full-block decrypt update", "CBC-PKCS7 整块解密更新失败");
-    result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output + 64, sizeof(output) - 64);
+    result = XCryptographic_blockCipherFinishInto(&operation, (char*)output + 64, sizeof(output) - 64);
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 0 &&
                               memcmp(output, plainText64, sizeof(plainText64)) == 0,
                               "AES-CBC-PKCS7 full-block decrypt", "CBC-PKCS7 整块解密向量不匹配");
@@ -1139,17 +1129,16 @@ static bool XCryptographicPrimitive_test_aes_cbc_pkcs7(void)
         uint8_t bad[sizeof(expected21)];
         memcpy(bad, expected21, sizeof(bad));
         bad[31] ^= 1u;
-        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_aesBlockCipherSetup(
-                                      &operation, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
+        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_blockCipherSetup(&operation, XCryptographic_BlockCipherAlgorithm_Aes, xcryptographic_test_view(keyBytes, sizeof(keyBytes)),
                                       XCryptographic_BlockCipherMode_CbcPkcs7, false) &&
-                                  XCryptographic_aesBlockCipherSetIv(
+                                  XCryptographic_blockCipherSetIv(
                                       &operation, xcryptographic_test_view(iv, sizeof(iv))),
                                   "AES-CBC-PKCS7 invalid padding setup", "CBC-PKCS7 解密初始化失败");
-        result = XCryptographic_aesBlockCipherUpdateInto(
+        result = XCryptographic_blockCipherUpdateInto(
             &operation, (char*)output, sizeof(output), xcryptographic_test_view(bad, sizeof(bad)));
         XCRYPTO_PRIMITIVE_REQUIRE(result.m_data && result.m_size == 16,
                                   "AES-CBC-PKCS7 invalid padding update", "CBC-PKCS7 解密更新失败");
-        result = XCryptographic_aesBlockCipherFinishInto(&operation, (char*)output, sizeof(output));
+        result = XCryptographic_blockCipherFinishInto(&operation, (char*)output, sizeof(output));
         XCRYPTO_PRIMITIVE_REQUIRE(result.m_data == NULL,
                                   "AES-CBC-PKCS7 invalid padding", "错误填充未被拒绝");
     }
@@ -1723,9 +1712,9 @@ static bool XCryptographicPrimitive_test_pbkdf2_hmac_sha256(void)
         0x08, 0x05, 0x98, 0x7c, 0xb7, 0x0b, 0xe1, 0x7b
     };
     uint8_t output[sizeof(expected)];
-    XByteArrayView result = XCryptographic_pbkdf2HmacSha256Into(
+    XByteArrayView result = XCryptographic_pbkdf2HmacInto(
         xcryptographic_test_view((const uint8_t*)"password", 8),
-        xcryptographic_test_view((const uint8_t*)"salt", 4), 1,
+        xcryptographic_test_view((const uint8_t*)"salt", 4), 1, XCryptographicHash_Sha256,
         sizeof(output), (char*)output, sizeof(output));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == (int64_t)sizeof(expected) &&
                                   memcmp(output, expected, sizeof(expected)) == 0,
@@ -1918,46 +1907,46 @@ static bool XCryptographicPrimitive_test_kdf_batch(void)
     uint8_t pbkdf2[32];
     XByteArrayView result;
 
-    result = XCryptographic_hkdfExtractSha256Into(
+    result = XCryptographic_hkdfExtractInto(
         xcryptographic_test_view(salt, sizeof(salt)),
-        xcryptographic_test_view(ikm, sizeof(ikm)),
+        xcryptographic_test_view(ikm, sizeof(ikm)), XCryptographicHash_Sha256,
         (char*)prk, sizeof(prk));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == 32 &&
                                   memcmp(prk, expectedPrk, sizeof(expectedPrk)) == 0,
                               "HKDF-extract SHA-256 RFC 5869 PRK", "HKDF 提取阶段向量不匹配");
 
-    result = XCryptographic_hkdfExpandSha256Into(
+    result = XCryptographic_hkdfExpandInto(
         xcryptographic_test_view(expectedPrk, sizeof(expectedPrk)),
-        xcryptographic_test_view(info, sizeof(info)), sizeof(okm),
+        xcryptographic_test_view(info, sizeof(info)), XCryptographicHash_Sha256, sizeof(okm),
         (char*)okm, sizeof(okm));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == (int64_t)sizeof(okm) &&
                                   memcmp(okm, expectedOkM, sizeof(expectedOkM)) == 0,
                               "HKDF-expand SHA-256 RFC 5869 OKM", "HKDF 展开阶段向量不匹配");
 
-    result = XCryptographic_tls12PrfSha256Into(
+    result = XCryptographic_tls12PrfInto(
         xcryptographic_test_view((const uint8_t*)"secret", 6),
         xcryptographic_test_view((const uint8_t*)"label", 5),
-        xcryptographic_test_view((const uint8_t*)"seed", 4),
+        xcryptographic_test_view((const uint8_t*)"seed", 4), XCryptographicHash_Sha256,
         sizeof(tls12), (char*)tls12, sizeof(tls12));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == 48 &&
                                   memcmp(tls12, expectedTls12Prf, sizeof(expectedTls12Prf)) == 0,
                               "TLS1.2 PRF SHA-256 vector", "TLS1.2 PRF 向量不匹配");
 
-    result = XCryptographic_tls12PskToMsSha256Into(
+    result = XCryptographic_tls12PskToMsInto(
         xcryptographic_test_view((const uint8_t*)"abc", 3),
         xcryptographic_test_view(NULL, 0),
         xcryptographic_test_view((const uint8_t*)"master secret", 13),
-        xcryptographic_test_view((const uint8_t*)"seed", 4),
+        xcryptographic_test_view((const uint8_t*)"seed", 4), XCryptographicHash_Sha256,
         sizeof(psk), (char*)psk, sizeof(psk));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == 48 &&
                                   memcmp(psk, expectedPskPure, sizeof(expectedPskPure)) == 0,
                               "TLS1.2 PSK-to-MS pure vector", "TLS1.2 纯 PSK 主密钥向量不匹配");
 
-    result = XCryptographic_tls12PskToMsSha256Into(
+    result = XCryptographic_tls12PskToMsInto(
         xcryptographic_test_view((const uint8_t*)"abc", 3),
         xcryptographic_test_view((const uint8_t*)"\x00\x11\x22\x33", 4),
         xcryptographic_test_view((const uint8_t*)"master secret", 13),
-        xcryptographic_test_view((const uint8_t*)"seed", 4),
+        xcryptographic_test_view((const uint8_t*)"seed", 4), XCryptographicHash_Sha256,
         sizeof(psk), (char*)psk, sizeof(psk));
     XCRYPTO_PRIMITIVE_REQUIRE(result.m_data != NULL && result.m_size == 48 &&
                                   memcmp(psk, expectedPskMixed, sizeof(expectedPskMixed)) == 0,
@@ -2398,10 +2387,11 @@ static bool XCryptographicPrimitive_test_ecdsa_deterministic(void)
     XByteArrayView privView = { priv, 32 };
     XByteArrayView hashView = { hash, 32 };
     XByteArrayView sigView;
-    if (!XCryptographic_ecdsaP256ImportPrivateKey(privView, &key))
+    if (!XCryptographic_ecdsaImportPrivateKey(
+            XCryptographic_EcdsaAlgorithm_NistP256, privView, &key))
         XCRYPTO_PRIMITIVE_REQUIRE(false, "ECDSA deterministic import", "导入确定性 ECDSA 密钥失败");
-    sigView = XCryptographic_ecdsaP256SignHashDeterministicInto(
-        (char*)sig, sizeof(sig), key, hashView);
+    sigView = XCryptographic_ecdsaSignHashInto(
+        (char*)sig, sizeof(sig), key, hashView, true);
     XCRYPTO_PRIMITIVE_REQUIRE(sigView.m_data != NULL && sigView.m_size == 64,
                               "ECDSA deterministic sign", "RFC6979 确定性签名失败");
     XCRYPTO_PRIMITIVE_REQUIRE(memcmp(sig, expR, 32) == 0 && memcmp(sig + 32, expS, 32) == 0,
@@ -2412,10 +2402,11 @@ static bool XCryptographicPrimitive_test_ecdsa_deterministic(void)
         XByteArrayView pubView = XCryptographic_exportPublicKeyInto(
             (char*)pubBuf, sizeof(pubBuf), key);
         XCRYPTO_PRIMITIVE_REQUIRE(pubView.m_data != NULL &&
-                                  XCryptographic_ecdsaP256ImportPublicKey(pubView, &pub),
+                                  XCryptographic_ecdsaImportPublicKey(
+                                      XCryptographic_EcdsaAlgorithm_NistP256, pubView, &pub),
                                   "ECDSA deterministic pubkey", "确定性 ECDSA 公钥导入失败");
-        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_ecdsaP256VerifyHash(pub, hashView,
-                                                                     xcryptographic_test_view(sig, 64)),
+        XCRYPTO_PRIMITIVE_REQUIRE(XCryptographic_ecdsaVerifyHash(
+                                      pub, hashView, xcryptographic_test_view(sig, 64)),
                                   "ECDSA deterministic verify", "确定性 ECDSA 验签失败");
         XCryptographic_destroyKey(&pub);
     }
@@ -2499,26 +2490,26 @@ static bool XCryptographicPrimitive_test_secp256k1_ecdh(void)
     XCryptographic_destroyKey(&first);
     XCryptographic_destroyKey(&second);
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaSecp256k1ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
             xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-        XCryptographic_ecdsaSecp256k1ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_Secp256k1,
             xcryptographic_test_view(base_public, sizeof(base_public)), &second),
         "secp256k1 ECDSA import", "secp256k1 ECDSA 密钥导入失败");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaSecp256k1VerifyHash(
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(openssl_signature, sizeof(openssl_signature))),
         "secp256k1 ECDSA OpenSSL vector", "OpenSSL 签名未通过验签");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaSecp256k1SignHashDeterministicInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaSecp256k1VerifyHash(
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "secp256k1 deterministic ECDSA", "确定性签名或验签失败");
     signature[0] ^= 1u;
-    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaSecp256k1VerifyHash(
+    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                   second, xcryptographic_test_view(hash, sizeof(hash)),
                                   xcryptographic_test_view(signature, sizeof(signature))),
                               "secp256k1 ECDSA rejection", "篡改签名未被拒绝");
@@ -2603,26 +2594,26 @@ static bool XCryptographicPrimitive_test_brainpool_p256r1_ecdh(void)
     XCryptographic_destroyKey(&first);
     XCryptographic_destroyKey(&second);
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaBrainpoolP256r1ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
             xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-        XCryptographic_ecdsaBrainpoolP256r1ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
             xcryptographic_test_view(base_public, sizeof(base_public)), &second),
         "brainpoolP256r1 ECDSA import", "brainpoolP256r1 ECDSA 密钥导入失败");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaBrainpoolP256r1VerifyHash(
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(openssl_signature, sizeof(openssl_signature))),
         "brainpoolP256r1 ECDSA OpenSSL vector", "OpenSSL 签名未通过验签");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaBrainpoolP256r1SignHashDeterministicInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaBrainpoolP256r1VerifyHash(
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "brainpoolP256r1 deterministic ECDSA", "确定性签名或验签失败");
     signature[0] ^= 1u;
-    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaBrainpoolP256r1VerifyHash(
+    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                   second, xcryptographic_test_view(hash, sizeof(hash)),
                                   xcryptographic_test_view(signature, sizeof(signature))),
                               "brainpoolP256r1 ECDSA rejection", "篡改签名未被拒绝");
@@ -2721,38 +2712,38 @@ static bool XCryptographicPrimitive_test_p384_ecdh(void)
     XCryptographic_destroyKey(&first);
     XCryptographic_destroyKey(&second);
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP384ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP384,
             xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-        XCryptographic_ecdsaP384ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP384,
             xcryptographic_test_view(base_public, sizeof(base_public)), &second),
         "P-384 ECDSA import", "P-384 ECDSA 密钥导入失败");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP384VerifyHash(
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(openssl_signature, sizeof(openssl_signature))),
         "P-384 ECDSA OpenSSL vector", "外部 P-384/SHA-384 签名未通过验签");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP384SignHashInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaP384VerifyHash(
+            xcryptographic_test_view(hash, sizeof(hash)), false).m_data &&
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "P-384 random ECDSA", "随机签名或验签失败");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP384SignHashDeterministicInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaP384SignHashDeterministicInto(
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+        XCryptographic_ecdsaSignHashInto(
             (char*)deterministic_signature, sizeof(deterministic_signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
         memcmp(signature, deterministic_signature, sizeof(signature)) == 0 &&
-        XCryptographic_ecdsaP384VerifyHash(
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "P-384 deterministic ECDSA", "RFC 6979 签名不可重复或验签失败");
     signature[0] ^= 1u;
-    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaP384VerifyHash(
+    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                   second, xcryptographic_test_view(hash, sizeof(hash)),
                                   xcryptographic_test_view(signature, sizeof(signature))),
                               "P-384 ECDSA rejection", "篡改签名未被拒绝");
@@ -2833,32 +2824,32 @@ static bool XCryptographicPrimitive_test_p521_ecdh(void)
         "P-521 public-key rejection", "非法曲线点未被拒绝");
     memset(hash, 0x5a, sizeof(hash));
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP521ImportPrivateKey(
+        XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP521,
             xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-        XCryptographic_ecdsaP521ImportPublicKey(
+        XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP521,
             xcryptographic_test_view(base_public, sizeof(base_public)), &second) &&
-        XCryptographic_ecdsaP521SignHashInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaP521VerifyHash(
+            xcryptographic_test_view(hash, sizeof(hash)), false).m_data &&
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "P-521 ECDSA", "随机签名或验签失败");
     XCRYPTO_PRIMITIVE_REQUIRE(
-        XCryptographic_ecdsaP521SignHashDeterministicInto(
+        XCryptographic_ecdsaSignHashInto(
             (char*)signature, sizeof(signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-        XCryptographic_ecdsaP521SignHashDeterministicInto(
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+        XCryptographic_ecdsaSignHashInto(
             (char*)deterministic_signature, sizeof(deterministic_signature), first,
-            xcryptographic_test_view(hash, sizeof(hash))).m_data &&
+            xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
         memcmp(signature, deterministic_signature, sizeof(signature)) == 0 &&
         memcmp(signature, deterministic_signature_expected, sizeof(signature)) == 0 &&
-        XCryptographic_ecdsaP521VerifyHash(
+        XCryptographic_ecdsaVerifyHash(
             second, xcryptographic_test_view(hash, sizeof(hash)),
             xcryptographic_test_view(signature, sizeof(signature))),
         "P-521 deterministic ECDSA", "RFC 6979 签名不可重复或验签失败");
     signature[0] ^= 1u;
-    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaP521VerifyHash(
+    XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                   second, xcryptographic_test_view(hash, sizeof(hash)),
                                   xcryptographic_test_view(signature, sizeof(signature))),
                               "P-521 ECDSA rejection", "篡改签名未被拒绝");
@@ -2930,31 +2921,31 @@ static bool XCryptographicPrimitive_test_brainpool_p512r1_ecdh(void)
         uint8_t deterministic_signature[128];
         memset(hash, 0x5a, sizeof(hash));
         XCRYPTO_PRIMITIVE_REQUIRE(
-            XCryptographic_ecdsaBrainpoolP512r1ImportPrivateKey(
+            XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
                 xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-            XCryptographic_ecdsaBrainpoolP512r1ImportPublicKey(
+            XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
                 xcryptographic_test_view(base_public, sizeof(base_public)), &second) &&
-            XCryptographic_ecdsaBrainpoolP512r1SignHashInto(
+            XCryptographic_ecdsaSignHashInto(
                 (char*)signature, sizeof(signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-            XCryptographic_ecdsaBrainpoolP512r1VerifyHash(
+                xcryptographic_test_view(hash, sizeof(hash)), false).m_data &&
+            XCryptographic_ecdsaVerifyHash(
                 second, xcryptographic_test_view(hash, sizeof(hash)),
                 xcryptographic_test_view(signature, sizeof(signature))),
             "brainpoolP512r1 ECDSA", "随机签名或验签失败");
         XCRYPTO_PRIMITIVE_REQUIRE(
-            XCryptographic_ecdsaBrainpoolP512r1SignHashDeterministicInto(
+            XCryptographic_ecdsaSignHashInto(
                 (char*)signature, sizeof(signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-            XCryptographic_ecdsaBrainpoolP512r1SignHashDeterministicInto(
+                xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+            XCryptographic_ecdsaSignHashInto(
                 (char*)deterministic_signature, sizeof(deterministic_signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
+                xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
             memcmp(signature, deterministic_signature, sizeof(signature)) == 0 &&
-            XCryptographic_ecdsaBrainpoolP512r1VerifyHash(
+            XCryptographic_ecdsaVerifyHash(
                 second, xcryptographic_test_view(hash, sizeof(hash)),
                 xcryptographic_test_view(signature, sizeof(signature))),
             "brainpoolP512r1 deterministic ECDSA", "确定性签名或验签失败");
         signature[0] ^= 1u;
-        XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaBrainpoolP512r1VerifyHash(
+        XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                       second, xcryptographic_test_view(hash, sizeof(hash)),
                                       xcryptographic_test_view(signature, sizeof(signature))),
                                   "brainpoolP512r1 ECDSA rejection", "篡改签名未被拒绝");
@@ -3006,31 +2997,31 @@ static bool XCryptographicPrimitive_test_brainpool_p384_ecdh(void)
         uint8_t hash[48], signature[96], deterministic_signature[96];
         memset(hash, 0x5a, sizeof(hash));
         XCRYPTO_PRIMITIVE_REQUIRE(
-            XCryptographic_ecdsaBrainpoolP384r1ImportPrivateKey(
+            XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1,
                 xcryptographic_test_view(private_one, sizeof(private_one)), &first) &&
-            XCryptographic_ecdsaBrainpoolP384r1ImportPublicKey(
+            XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_BrainpoolP384r1,
                 xcryptographic_test_view(base_public, sizeof(base_public)), &second) &&
-            XCryptographic_ecdsaBrainpoolP384r1SignHashInto(
+            XCryptographic_ecdsaSignHashInto(
                 (char*)signature, sizeof(signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-            XCryptographic_ecdsaBrainpoolP384r1VerifyHash(
+                xcryptographic_test_view(hash, sizeof(hash)), false).m_data &&
+            XCryptographic_ecdsaVerifyHash(
                 second, xcryptographic_test_view(hash, sizeof(hash)),
                 xcryptographic_test_view(signature, sizeof(signature))),
             "brainpoolP384r1 ECDSA", "签名或验签失败");
         XCRYPTO_PRIMITIVE_REQUIRE(
-            XCryptographic_ecdsaBrainpoolP384r1SignHashDeterministicInto(
+            XCryptographic_ecdsaSignHashInto(
                 (char*)signature, sizeof(signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
-            XCryptographic_ecdsaBrainpoolP384r1SignHashDeterministicInto(
+                xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
+            XCryptographic_ecdsaSignHashInto(
                 (char*)deterministic_signature, sizeof(deterministic_signature), first,
-                xcryptographic_test_view(hash, sizeof(hash))).m_data &&
+                xcryptographic_test_view(hash, sizeof(hash)), true).m_data &&
             memcmp(signature, deterministic_signature, sizeof(signature)) == 0 &&
-            XCryptographic_ecdsaBrainpoolP384r1VerifyHash(
+            XCryptographic_ecdsaVerifyHash(
                 second, xcryptographic_test_view(hash, sizeof(hash)),
                 xcryptographic_test_view(signature, sizeof(signature))),
             "brainpoolP384r1 deterministic ECDSA", "确定性签名或验签失败");
         signature[0] ^= 1u;
-        XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaBrainpoolP384r1VerifyHash(
+        XCRYPTO_PRIMITIVE_REQUIRE(!XCryptographic_ecdsaVerifyHash(
                                       second, xcryptographic_test_view(hash, sizeof(hash)),
                                       xcryptographic_test_view(signature, sizeof(signature))),
                                   "brainpoolP384r1 ECDSA rejection", "篡改签名未被拒绝");

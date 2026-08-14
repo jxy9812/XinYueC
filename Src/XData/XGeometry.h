@@ -1,11 +1,12 @@
 ﻿/******************************************************************************
- * @file       XGuiTypes.h
- * @brief      XGui 基础几何类型定义（对标 Qt 6.8 QPoint/QSize/QRect/QRegion）
+ * @file       XGeometry.h
+ * @brief      基础空间几何类型定义（对标 Qt 6.8 QPoint/QSize/QRect/QRegion）
  * @author     XinYueC 团队
- * @note       提供 GUI 模块常用的点、尺寸、矩形、区域等基础几何类型
+ * @note       提供通用的点、尺寸、矩形、区域等基础几何类型，供 GUI、TUI
+ *             和其他坐标相关模块复用
  ******************************************************************************/
-#ifndef XGUITYPES_H
-#define XGUITYPES_H
+#ifndef XGEOMETRY_H
+#define XGEOMETRY_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -471,4 +472,4 @@ void XRegion_subtracted(const XRegion* self, const XRegion* other, XRegion* out)
 #ifdef __cplusplus
 }
 #endif
-#endif /* XGUITYPES_H */
+#endif /* XGEOMETRY_H */

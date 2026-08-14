@@ -1,7 +1,7 @@
 ﻿/**
  * @file       XTuiTypes.c
  * @brief      XTui 基础类型实现。
- * @details    几何类型纯函数由 XGui 模块提供（XGuiTypes.c），颜色类型复用
+ * @details    几何类型纯函数由 XData 模块提供（XGeometry.c），颜色类型复用
  *             XColor，按键事件继承 XEvent；本文件实现 TUI 键盘事件与颜色
  *             调色板工具函数。
  */

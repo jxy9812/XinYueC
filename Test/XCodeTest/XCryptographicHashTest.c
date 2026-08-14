@@ -4,6 +4,7 @@
 #include "XAction.h"
 #include "XByteArray.h"
 #include "XCryptographic.h"
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +22,21 @@ static void print_hash_hex(const char* label, const uint8_t* hash, int len)
 static bool compare_hash(const uint8_t* hash1, const uint8_t* hash2, int len)
 {
     return memcmp(hash1, hash2, len) == 0;
+}
+
+static uint64_t read_u64_le(const uint8_t* data)
+{
+    uint64_t value = 0;
+    for (size_t i = 0; i < 8; ++i) value |= (uint64_t)data[i] << (i * 8);
+    return value;
+}
+
+static uint32_t read_u32_le(const uint8_t* data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
 }
 
 // 测试向量
@@ -277,7 +293,7 @@ static void test_incremental_hashing(void)
             XByteArray_delete_base(result);
         }
         
-        XCryptographicHash_delete_base(ctx);
+        XCryptographicHash_delete(ctx);
     }
 }
 
@@ -292,6 +308,86 @@ static void test_hash_into(void)
         print_hash_hex("hashInto SHA256(\"test\")", (const uint8_t*)view.m_data, (int)view.m_size);
         XPrintf("Expected: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n");
     }
+}
+
+static void test_fast_hashes(void)
+{
+    static const char input[] = "abc";
+    static const XCryptographicHash_Algorithm algorithms[] = {
+        XCryptographicHash_Murmur3_32,
+        XCryptographicHash_Fnv1a_64,
+        XCryptographicHash_Djb2,
+        XCryptographicHash_Pearson,
+        XCryptographicHash_Lookup3,
+        XCryptographicHash_CityHash64,
+        XCryptographicHash_FarmHash64,
+        XCryptographicHash_HighwayHash64,
+        XCryptographicHash_XxHash64,
+        XCryptographicHash_WyHash,
+        XCryptographicHash_T1ha2,
+        XCryptographicHash_SpookyHash64,
+        XCryptographicHash_MetroHash64,
+        XCryptographicHash_MumHash,
+        XCryptographicHash_FastHash64,
+        XCryptographicHash_ThomasWang64,
+        XCryptographicHash_OneAtATime,
+        XCryptographicHash_SuperFastHash,
+        XCryptographicHash_ElfHash,
+        XCryptographicHash_ApHash,
+        XCryptographicHash_JsHash,
+        XCryptographicHash_RsHash,
+        XCryptographicHash_PjwHash,
+        XCryptographicHash_BkdrHash,
+        XCryptographicHash_SdbmHash
+    };
+    const uint64_t expectedXxHash64 = UINT64_C(0x44bc2cf5ad770999);
+    const uint64_t expectedFnv1a64 = UINT64_C(0xe71fa2190541574b);
+    const uint64_t expectedSipHash24 = UINT64_C(0x726fdb47dd0e0e31);
+    XCryptographicHashFunction function;
+    XByteArray* digest;
+    uint64_t value;
+
+    XPrintf("\n========== Fast Hash Tests ==========\n");
+
+    value = XCryptographicHash_value(input, 3, XCryptographicHash_XxHash64);
+    function = XCryptographicHash_function(XCryptographicHash_XxHash64);
+    digest = XCryptographicHash_hash(input, 3, XCryptographicHash_XxHash64);
+    assert(value == expectedXxHash64);
+    assert(function && function(input, 3) == expectedXxHash64);
+    assert(digest && XByteArray_size_base(digest) == 8 &&
+           read_u64_le((const uint8_t*)XByteArray_data(digest)) == expectedXxHash64);
+    XByteArray_delete_base(digest);
+
+    assert(XCryptographicHash_value(input, 3, XCryptographicHash_Fnv1a_64) ==
+           expectedFnv1a64);
+    assert(XCryptographicHash_siphash24(
+               NULL, 0, UINT64_C(0x0706050403020100),
+               UINT64_C(0x0f0e0d0c0b0a0908)) == expectedSipHash24);
+    assert(!XCryptographicHash_supportsAlgorithm(XCryptographicHash_SipHash24));
+    assert(XCryptographicHash_function(XCryptographicHash_SipHash24) == NULL);
+
+    for (size_t i = 0; i < sizeof(algorithms) / sizeof(algorithms[0]); ++i) {
+        XCryptographicHash_Algorithm algorithm = algorithms[i];
+        int hashLength = XCryptographicHash_hashLength(algorithm);
+        XByteArray* fastDigest = XCryptographicHash_hash(input, 3, algorithm);
+        XCryptographicHashFunction fastFunction =
+            XCryptographicHash_function(algorithm);
+        assert(fastDigest && fastFunction);
+        assert((int)XByteArray_size_base(fastDigest) == hashLength);
+        value = fastFunction(input, 3);
+        if (hashLength == 4) {
+            assert(read_u32_le((const uint8_t*)XByteArray_data(fastDigest)) ==
+                   (uint32_t)value);
+        } else {
+            assert(hashLength == 8);
+            assert(read_u64_le((const uint8_t*)XByteArray_data(fastDigest)) ==
+                   value);
+        }
+        XByteArray_delete_base(fastDigest);
+    }
+    assert(XCryptographicHash_hash(input, 3, XCryptographicHash_SipHash24) == NULL);
+
+    XPrintf("Fast hash shared API vectors: PASSED\n");
 }
 
 static void test_algorithm_info(void)
@@ -318,7 +414,7 @@ static void test_copy_move(void)
     // 测试拷贝 - 使用栈对象
     XCryptographicHash copied;
     XCryptographicHash_init(&copied, XCryptographicHash_Sha256);
-    XCryptographicHash_copy_base(&copied, original);
+    XCryptographicHash_copy(&copied, original);
     
     XByteArray* result1 = XCryptographicHash_result(original);
     XByteArray* result2 = XCryptographicHash_result(&copied);
@@ -343,13 +439,13 @@ static void test_copy_move(void)
     // 测试移动 - 使用栈对象
     XCryptographicHash moved;
     XCryptographicHash_init(&moved, XCryptographicHash_Sha256);
-    XCryptographicHash_move_base(&moved, original);
+    XCryptographicHash_move(&moved, original);
     
     XPrintf("Move test: completed\n");
     
-    XCryptographicHash_delete_base(original);
-    XCryptographicHash_deinit_base(&copied);
-    XCryptographicHash_deinit_base(&moved);
+    XCryptographicHash_delete(original);
+    XCryptographicHash_deinit(&copied);
+    XCryptographicHash_deinit(&moved);
 }
 
 void XCryptographicHashTest(void)
@@ -366,6 +462,7 @@ void XCryptographicHashTest(void)
     test_blake2s();
     test_incremental_hashing();
     test_hash_into();
+    test_fast_hashes();
     test_algorithm_info();
     test_copy_move();
     

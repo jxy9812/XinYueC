@@ -18,6 +18,7 @@
 
 #if defined(MBEDTLS_USE_XCRYPTOGRAPHIC_MAC)
 #include "XCryptographic.h"
+#include "XCryptographic_config.h"
 #include "XMemory.h"
 #include <limits.h>
 #endif
@@ -27,6 +28,18 @@
 #include <string.h>
 
 #if defined(MBEDTLS_USE_XCRYPTOGRAPHIC_MAC)
+static void *xcryptographic_mac_malloc(size_t size)
+{
+    const XMemory *memory = XMemory_method(XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE);
+    return memory && memory->malloc ? memory->malloc(size) : NULL;
+}
+
+static void xcryptographic_mac_free(void *ptr)
+{
+    const XMemory *memory = XMemory_method(XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE);
+    if (ptr && memory && memory->free) memory->free(ptr);
+}
+
 static psa_status_t xcryptographic_mac_hash_algorithm(
     psa_algorithm_t alg, XCryptographicHash_Algorithm *result)
 {
@@ -142,7 +155,7 @@ static psa_status_t psa_hmac_abort_internal(
     XCryptographic_HmacOperation *context = hmac->ctx.xcryptographic;
     if (context) {
         XCryptographic_hmacAbort(context);
-        XFree_System(context);
+        xcryptographic_mac_free(context);
     }
     hmac->ctx.xcryptographic = NULL;
     hmac->alg = 0;
@@ -166,14 +179,14 @@ static psa_status_t psa_hmac_setup_internal(
     if (status != PSA_SUCCESS || key_length > INT64_MAX) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    context = XMalloc_System(sizeof(*context));
+    context = xcryptographic_mac_malloc(sizeof(*context));
     if (!context) {
         return PSA_ERROR_INSUFFICIENT_MEMORY;
     }
     if (!XCryptographic_hmacSetup(context,
                                   XByteArrayView_create_data(key, (int64_t)key_length),
                                   algorithm)) {
-        XFree_System(context);
+        xcryptographic_mac_free(context);
         return PSA_ERROR_NOT_SUPPORTED;
     }
     hmac->alg = hash_alg;
@@ -277,7 +290,7 @@ static psa_status_t psa_hmac_finish_internal(
         return PSA_ERROR_BAD_STATE;
     }
     result = XCryptographic_hmacFinishInto(context, (char *)mac, mac_size);
-    XFree_System(context);
+    xcryptographic_mac_free(context);
     hmac->ctx.xcryptographic = NULL;
     hmac->alg = 0;
     return result.m_data ? PSA_SUCCESS : PSA_ERROR_INSUFFICIENT_MEMORY;
@@ -333,12 +346,13 @@ static psa_status_t cmac_setup(mbedtls_psa_mac_operation_t *operation,
     XByteArrayView key_view = XByteArrayView_create_data(
         key_buffer, (int64_t)psa_get_key_bits(attributes) / 8);
 
-    context = (XCryptographic_CmacOperation *)XMalloc_System(sizeof(*context));
+    context = (XCryptographic_CmacOperation *)xcryptographic_mac_malloc(
+        sizeof(*context));
     if (!context) {
         return PSA_ERROR_INSUFFICIENT_MEMORY;
     }
     if (!XCryptographic_aesCmacSetup(context, key_view)) {
-        XFree_System(context);
+        xcryptographic_mac_free(context);
         return PSA_ERROR_NOT_SUPPORTED;
     }
     xcryptographic_cmac_context_set(operation, context);
@@ -427,7 +441,7 @@ psa_status_t mbedtls_psa_mac_abort(mbedtls_psa_mac_operation_t *operation)
         XCryptographic_CmacOperation *context = xcryptographic_cmac_context_get(operation);
         if (context) {
             XCryptographic_aesCmacAbort(context);
-            XFree_System(context);
+            xcryptographic_mac_free(context);
         }
         xcryptographic_cmac_context_set(operation, NULL);
 #else
@@ -581,7 +595,7 @@ static psa_status_t psa_mac_finish_internal(
         if (!result.m_data) {
             return PSA_ERROR_INSUFFICIENT_MEMORY;
         }
-        XFree_System(context);
+        xcryptographic_mac_free(context);
         xcryptographic_cmac_context_set(operation, NULL);
         return PSA_SUCCESS;
 #else

@@ -10,8 +10,31 @@
 #include "XMemory.h"
 #include "XIODevice.h"
 #include "XRandomGenerator.h"
+#include "XCryptographicHash.h"
 #include <string.h>
 #include <stdlib.h>
+
+/*
+ * Hash/KDF temporary storage follows the same pool as XCryptographicHash.
+ * Keep this adapter local to the implementation so the public API remains
+ * independent from a particular allocator.
+ */
+static const XMemory* xcryptographic_hash_memory_method(void)
+{
+    return XMemory_method(XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE);
+}
+
+static void* xcryptographic_hash_malloc(size_t size)
+{
+    const XMemory* memory = xcryptographic_hash_memory_method();
+    return memory && memory->malloc ? memory->malloc(size) : NULL;
+}
+
+static void xcryptographic_hash_free(void* data)
+{
+    const XMemory* memory = xcryptographic_hash_memory_method();
+    if (data && memory && memory->free) memory->free(data);
+}
 
 
 /* 动态大整数（小端 32 位 limb）。 */
@@ -27,2422 +50,6 @@ static bool xcbig_mod(XCryptographic_BigInt *out, const XCryptographic_BigInt *a
 
 static void xcryptographic_chacha20_block(const uint8_t key[32], uint32_t counter,
                                           const uint8_t nonce[12], uint8_t output[64]);
-
-// ==================== 内部常量 ====================
-
-/* 各算法输出长度（字节） */
-static const int g_hashLengths[] = {
-    16, /* Md4 */
-    16, /* Md5 */
-    20, /* Sha1 */
-    28, /* Sha224 */
-    32, /* Sha256 */
-    48, /* Sha384 */
-    64, /* Sha512 */
-    28, /* Keccak_224 */
-    32, /* Keccak_256 */
-    48, /* Keccak_384 */
-    64, /* Keccak_512 */
-    28, /* RealSha3_224 */
-    32, /* RealSha3_256 */
-    48, /* RealSha3_384 */
-    64, /* RealSha3_512 */
-    20, /* Blake2b_160 */
-    32, /* Blake2b_256 */
-    48, /* Blake2b_384 */
-    64, /* Blake2b_512 */
-    16, /* Blake2s_128 */
-    20, /* Blake2s_160 */
-    28, /* Blake2s_224 */
-    32, /* Blake2s_256 */
-    20, /* Ripemd160 */
-};
-
-/* 算法名称 */
-static const char* g_algorithmNames[] = {
-    "Md4",
-    "Md5",
-    "Sha1",
-    "Sha224",
-    "Sha256",
-    "Sha384",
-    "Sha512",
-    "Keccak-224",
-    "Keccak-256",
-    "Keccak-384",
-    "Keccak-512",
-    "Sha3-224",
-    "Sha3-256",
-    "Sha3-384",
-    "Sha3-512",
-    "Blake2b-160",
-    "Blake2b-256",
-    "Blake2b-384",
-    "Blake2b-512",
-    "Blake2s-128",
-    "Blake2s-160",
-    "Blake2s-224",
-    "Blake2s-256",
-    "Ripemd160",
-};
-
-// ==================== MD5 实现 ====================
-
-#define MD5_BLOCK_SIZE 64
-#define MD5_DIGEST_SIZE 16
-
-typedef struct MD5_CTX {
-    uint32_t state[4];
-    uint64_t count;
-    uint8_t buffer[MD5_BLOCK_SIZE];
-} MD5_CTX;
-
-static const uint32_t K[64] = {
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-    0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-    0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-    0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-    0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-    0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
-};
-
-static const uint8_t S[64] = {
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
-};
-
-#define ROTLEFT(a,b) (((a) << (b)) | ((a) >> (32-(b))))
-#define F(x,y,z) ((x & y) | (~x & z))
-#define G(x,y,z) ((x & z) | (y & ~z))
-#define H(x,y,z) (x ^ y ^ z)
-#define I(x,y,z) (y ^ (x | ~z))
-
-static void md5_transform(MD5_CTX* ctx, const uint8_t* block)
-{
-    uint32_t a = ctx->state[0];
-    uint32_t b = ctx->state[1];
-    uint32_t c = ctx->state[2];
-    uint32_t d = ctx->state[3];
-    uint32_t m[16];
-    int i;
-
-    for (i = 0; i < 16; i++) {
-        m[i] = (uint32_t)block[i * 4] |
-               ((uint32_t)block[i * 4 + 1] << 8) |
-               ((uint32_t)block[i * 4 + 2] << 16) |
-               ((uint32_t)block[i * 4 + 3] << 24);
-    }
-
-    for (i = 0; i < 64; i++) {
-        uint32_t f, g;
-        if (i < 16) {
-            f = F(b, c, d);
-            g = i;
-        } else if (i < 32) {
-            f = G(b, c, d);
-            g = (5 * i + 1) % 16;
-        } else if (i < 48) {
-            f = H(b, c, d);
-            g = (3 * i + 5) % 16;
-        } else {
-            f = I(b, c, d);
-            g = (7 * i) % 16;
-        }
-
-        uint32_t temp = d;
-        d = c;
-        c = b;
-        b = b + ROTLEFT(a + f + K[i] + m[g], S[i]);
-        a = temp;
-    }
-
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-}
-
-static void md5_init(MD5_CTX* ctx)
-{
-    ctx->state[0] = 0x67452301;
-    ctx->state[1] = 0xefcdab89;
-    ctx->state[2] = 0x98badcfe;
-    ctx->state[3] = 0x10325476;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, MD5_BLOCK_SIZE);
-}
-
-static void md5_update(MD5_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t index = (size_t)(ctx->count % MD5_BLOCK_SIZE);
-    ctx->count += len;
-
-    size_t firstPart = MD5_BLOCK_SIZE - index;
-    if (len >= firstPart) {
-        memcpy(&ctx->buffer[index], data, firstPart);
-        md5_transform(ctx, ctx->buffer);
-
-        data += firstPart;
-        len -= firstPart;
-
-        while (len >= MD5_BLOCK_SIZE) {
-            md5_transform(ctx, data);
-            data += MD5_BLOCK_SIZE;
-            len -= MD5_BLOCK_SIZE;
-        }
-        index = 0;
-    }
-
-    if (len > 0) {
-        memcpy(&ctx->buffer[index], data, len);
-    }
-}
-
-static void md5_final(MD5_CTX* ctx, uint8_t* digest)
-{
-    uint8_t bits[8];
-    size_t index = (size_t)(ctx->count % MD5_BLOCK_SIZE);
-    size_t padLen = (index < 56) ? (56 - index) : (120 - index);
-
-    /* 保存长度 */
-    for (int i = 0; i < 8; i++) {
-        bits[i] = (uint8_t)((ctx->count << 3) >> (i * 8));
-    }
-
-    /* 填充 */
-    static const uint8_t padding[64] = { 0x80 };
-    md5_update(ctx, padding, padLen);
-    md5_update(ctx, bits, 8);
-
-    /* 输出 */
-    for (int i = 0; i < 4; i++) {
-        digest[i] = (uint8_t)(ctx->state[0] >> (i * 8));
-        digest[i + 4] = (uint8_t)(ctx->state[1] >> (i * 8));
-        digest[i + 8] = (uint8_t)(ctx->state[2] >> (i * 8));
-        digest[i + 12] = (uint8_t)(ctx->state[3] >> (i * 8));
-    }
-}
-
-// ==================== SHA-256 实现 ====================
-
-#define SHA256_BLOCK_SIZE 64
-#define SHA256_DIGEST_SIZE 32
-
-typedef struct SHA256_CTX {
-    uint32_t state[8];
-    uint64_t count;
-    uint8_t buffer[SHA256_BLOCK_SIZE];
-} SHA256_CTX;
-
-static const uint32_t K256[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-};
-
-#define CH(x,y,z) (((x) & (y)) ^ (~(x) & (z)))
-#define MAJ(x,y,z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
-#define EP0(x) (ROTRIGHT(x,2) ^ ROTRIGHT(x,13) ^ ROTRIGHT(x,22))
-#define EP1(x) (ROTRIGHT(x,6) ^ ROTRIGHT(x,11) ^ ROTRIGHT(x,25))
-#define SIG0(x) (ROTRIGHT(x,7) ^ ROTRIGHT(x,18) ^ ((x) >> 3))
-#define SIG1(x) (ROTRIGHT(x,17) ^ ROTRIGHT(x,19) ^ ((x) >> 10))
-#define ROTRIGHT(a,b) (((a) >> (b)) | ((a) << (32-(b))))
-
-static void sha256_transform(SHA256_CTX* ctx, const uint8_t* block)
-{
-    uint32_t W[64];
-    uint32_t a, b, c, d, e, f, g, h;
-    uint32_t t1, t2;
-    int i;
-
-    for (i = 0; i < 16; i++) {
-        W[i] = ((uint32_t)block[i * 4] << 24) |
-               ((uint32_t)block[i * 4 + 1] << 16) |
-               ((uint32_t)block[i * 4 + 2] << 8) |
-               (uint32_t)block[i * 4 + 3];
-    }
-
-    for (i = 16; i < 64; i++) {
-        W[i] = SIG1(W[i - 2]) + W[i - 7] + SIG0(W[i - 15]) + W[i - 16];
-    }
-
-    a = ctx->state[0];
-    b = ctx->state[1];
-    c = ctx->state[2];
-    d = ctx->state[3];
-    e = ctx->state[4];
-    f = ctx->state[5];
-    g = ctx->state[6];
-    h = ctx->state[7];
-
-    for (i = 0; i < 64; i++) {
-        t1 = h + EP1(e) + CH(e, f, g) + K256[i] + W[i];
-        t2 = EP0(a) + MAJ(a, b, c);
-        h = g;
-        g = f;
-        f = e;
-        e = d + t1;
-        d = c;
-        c = b;
-        b = a;
-        a = t1 + t2;
-    }
-
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-    ctx->state[4] += e;
-    ctx->state[5] += f;
-    ctx->state[6] += g;
-    ctx->state[7] += h;
-}
-
-static void sha256_init(SHA256_CTX* ctx)
-{
-    ctx->state[0] = 0x6a09e667;
-    ctx->state[1] = 0xbb67ae85;
-    ctx->state[2] = 0x3c6ef372;
-    ctx->state[3] = 0xa54ff53a;
-    ctx->state[4] = 0x510e527f;
-    ctx->state[5] = 0x9b05688c;
-    ctx->state[6] = 0x1f83d9ab;
-    ctx->state[7] = 0x5be0cd19;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, SHA256_BLOCK_SIZE);
-}
-
-static void sha224_init(SHA256_CTX* ctx)
-{
-    ctx->state[0] = 0xc1059ed8;
-    ctx->state[1] = 0x367cd507;
-    ctx->state[2] = 0x3070dd17;
-    ctx->state[3] = 0xf70e5939;
-    ctx->state[4] = 0xffc00b31;
-    ctx->state[5] = 0x68581511;
-    ctx->state[6] = 0x64f98fa7;
-    ctx->state[7] = 0xbefa4fa4;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, SHA256_BLOCK_SIZE);
-}
-
-static void sha256_update(SHA256_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t index = (size_t)(ctx->count % SHA256_BLOCK_SIZE);
-    ctx->count += len;
-
-    size_t firstPart = SHA256_BLOCK_SIZE - index;
-    if (len >= firstPart) {
-        memcpy(&ctx->buffer[index], data, firstPart);
-        sha256_transform(ctx, ctx->buffer);
-
-        data += firstPart;
-        len -= firstPart;
-
-        while (len >= SHA256_BLOCK_SIZE) {
-            sha256_transform(ctx, data);
-            data += SHA256_BLOCK_SIZE;
-            len -= SHA256_BLOCK_SIZE;
-        }
-        index = 0;
-    }
-
-    if (len > 0) {
-        memcpy(&ctx->buffer[index], data, len);
-    }
-}
-
-static void sha256_final(SHA256_CTX* ctx, uint8_t* digest, int digestSize)
-{
-    uint8_t bits[8];
-    size_t index = (size_t)(ctx->count % SHA256_BLOCK_SIZE);
-    size_t padLen = (index < 56) ? (56 - index) : (120 - index);
-
-    /* 保存长度 */
-    for (int i = 0; i < 8; i++) {
-        bits[i] = (uint8_t)((ctx->count << 3) >> (56 - i * 8));
-    }
-
-    /* 填充 */
-    static const uint8_t padding[64] = { 0x80 };
-    sha256_update(ctx, padding, padLen);
-    sha256_update(ctx, bits, 8);
-
-    /* 输出 */
-    for (int i = 0; i < digestSize; i++) {
-        digest[i] = (uint8_t)(ctx->state[i / 4] >> (24 - (i % 4) * 8));
-    }
-}
-
-// ==================== SHA-512 实现 ====================
-
-#define SHA512_BLOCK_SIZE 128
-#define SHA512_DIGEST_SIZE 64
-
-typedef struct SHA512_CTX {
-    uint64_t state[8];
-    uint64_t count;
-    uint8_t buffer[SHA512_BLOCK_SIZE];
-} SHA512_CTX;
-
-static const uint64_t K512[80] = {
-    0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
-    0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL, 0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
-    0xd807aa98a3030242ULL, 0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
-    0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
-    0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL, 0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
-    0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
-    0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
-    0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL, 0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
-    0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
-    0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
-    0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL, 0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
-    0xd192e819d6ef5218ULL, 0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
-    0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
-    0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL, 0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
-    0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
-    0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
-    0xca273eceea26619cULL, 0xd186b8c721c0c207ULL, 0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
-    0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
-    0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
-    0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL, 0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL
-};
-
-#define CH64(x,y,z) (((x) & (y)) ^ (~(x) & (z)))
-#define MAJ64(x,y,z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
-#define EP064(x) (ROTRIGHT64(x,28) ^ ROTRIGHT64(x,34) ^ ROTRIGHT64(x,39))
-#define EP164(x) (ROTRIGHT64(x,14) ^ ROTRIGHT64(x,18) ^ ROTRIGHT64(x,41))
-#define SIG064(x) (ROTRIGHT64(x,1) ^ ROTRIGHT64(x,8) ^ ((x) >> 7))
-#define SIG164(x) (ROTRIGHT64(x,19) ^ ROTRIGHT64(x,61) ^ ((x) >> 6))
-#define ROTRIGHT64(a,b) (((a) >> (b)) | ((a) << (64-(b))))
-
-static void sha512_transform(SHA512_CTX* ctx, const uint8_t* block)
-{
-    uint64_t W[80];
-    uint64_t a, b, c, d, e, f, g, h;
-    uint64_t t1, t2;
-    int i;
-
-    for (i = 0; i < 16; i++) {
-        W[i] = ((uint64_t)block[i * 8] << 56) | ((uint64_t)block[i * 8 + 1] << 48) |
-               ((uint64_t)block[i * 8 + 2] << 40) | ((uint64_t)block[i * 8 + 3] << 32) |
-               ((uint64_t)block[i * 8 + 4] << 24) | ((uint64_t)block[i * 8 + 5] << 16) |
-               ((uint64_t)block[i * 8 + 6] << 8) | (uint64_t)block[i * 8 + 7];
-    }
-
-    for (i = 16; i < 80; i++) {
-        W[i] = SIG164(W[i - 2]) + W[i - 7] + SIG064(W[i - 15]) + W[i - 16];
-    }
-
-    a = ctx->state[0];
-    b = ctx->state[1];
-    c = ctx->state[2];
-    d = ctx->state[3];
-    e = ctx->state[4];
-    f = ctx->state[5];
-    g = ctx->state[6];
-    h = ctx->state[7];
-
-    for (i = 0; i < 80; i++) {
-        t1 = h + EP164(e) + CH64(e, f, g) + K512[i] + W[i];
-        t2 = EP064(a) + MAJ64(a, b, c);
-        h = g;
-        g = f;
-        f = e;
-        e = d + t1;
-        d = c;
-        c = b;
-        b = a;
-        a = t1 + t2;
-    }
-
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-    ctx->state[4] += e;
-    ctx->state[5] += f;
-    ctx->state[6] += g;
-    ctx->state[7] += h;
-}
-
-static void sha512_init(SHA512_CTX* ctx)
-{
-    ctx->state[0] = 0x6a09e667f3bcc908ULL;
-    ctx->state[1] = 0xbb67ae8584caa73bULL;
-    ctx->state[2] = 0x3c6ef372fe94f82bULL;
-    ctx->state[3] = 0xa54ff53a5f1d36f1ULL;
-    ctx->state[4] = 0x510e527fade682d1ULL;
-    ctx->state[5] = 0x9b05688c2b3e6c1fULL;
-    ctx->state[6] = 0x1f83d9abfb41bd6bULL;
-    ctx->state[7] = 0x5be0cd19137e2179ULL;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, SHA512_BLOCK_SIZE);
-}
-
-static void sha384_init(SHA512_CTX* ctx)
-{
-    ctx->state[0] = 0xcbbb9d5dc1059ed8ULL;
-    ctx->state[1] = 0x629a292a367cd507ULL;
-    ctx->state[2] = 0x9159015a3070dd17ULL;
-    ctx->state[3] = 0x152fecd8f70e5939ULL;
-    ctx->state[4] = 0x67332667ffc00b31ULL;
-    ctx->state[5] = 0x8eb44a8768581511ULL;
-    ctx->state[6] = 0xdb0c2e0d64f98fa7ULL;
-    ctx->state[7] = 0x47b5481dbefa4fa4ULL;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, SHA512_BLOCK_SIZE);
-}
-
-static void sha512_update(SHA512_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t index = (size_t)(ctx->count % SHA512_BLOCK_SIZE);
-    ctx->count += len;
-
-    size_t firstPart = SHA512_BLOCK_SIZE - index;
-    if (len >= firstPart) {
-        memcpy(&ctx->buffer[index], data, firstPart);
-        sha512_transform(ctx, ctx->buffer);
-
-        data += firstPart;
-        len -= firstPart;
-
-        while (len >= SHA512_BLOCK_SIZE) {
-            sha512_transform(ctx, data);
-            data += SHA512_BLOCK_SIZE;
-            len -= SHA512_BLOCK_SIZE;
-        }
-        index = 0;
-    }
-
-    if (len > 0) {
-        memcpy(&ctx->buffer[index], data, len);
-    }
-}
-
-static void sha512_final(SHA512_CTX* ctx, uint8_t* digest, int digestSize)
-{
-    uint8_t bits[16];
-    size_t index = (size_t)(ctx->count % SHA512_BLOCK_SIZE);
-    size_t padLen = (index < 112) ? (112 - index) : (240 - index);
-
-    /* 保存长度 */
-    uint64_t bitLen = ctx->count << 3;
-    for (int i = 0; i < 8; i++) {
-        bits[i] = 0;
-        bits[8 + i] = (uint8_t)(bitLen >> (56 - i * 8));
-    }
-
-    /* 填充 */
-    static const uint8_t padding[128] = { 0x80 };
-    sha512_update(ctx, padding, padLen);
-    sha512_update(ctx, bits, 16);
-
-    /* 输出 */
-    for (int i = 0; i < digestSize; i++) {
-        digest[i] = (uint8_t)(ctx->state[i / 8] >> (56 - (i % 8) * 8));
-    }
-}
-
-// ==================== SHA-1 实现 ====================
-
-#define SHA1_BLOCK_SIZE 64
-#define SHA1_DIGEST_SIZE 20
-
-typedef struct SHA1_CTX {
-    uint32_t state[5];
-    uint64_t count;
-    uint8_t buffer[SHA1_BLOCK_SIZE];
-} SHA1_CTX;
-
-static void sha1_transform(SHA1_CTX* ctx, const uint8_t* block)
-{
-    uint32_t W[80];
-    uint32_t a, b, c, d, e;
-    uint32_t t;
-    int i;
-
-    for (i = 0; i < 16; i++) {
-        W[i] = ((uint32_t)block[i * 4] << 24) |
-               ((uint32_t)block[i * 4 + 1] << 16) |
-               ((uint32_t)block[i * 4 + 2] << 8) |
-               (uint32_t)block[i * 4 + 3];
-    }
-
-    for (i = 16; i < 80; i++) {
-        W[i] = ROTLEFT(W[i-3] ^ W[i-8] ^ W[i-14] ^ W[i-16], 1);
-    }
-
-    a = ctx->state[0];
-    b = ctx->state[1];
-    c = ctx->state[2];
-    d = ctx->state[3];
-    e = ctx->state[4];
-
-    for (i = 0; i < 80; i++) {
-        uint32_t f, k;
-        if (i < 20) {
-            f = (b & c) | (~b & d);
-            k = 0x5A827999;
-        } else if (i < 40) {
-            f = b ^ c ^ d;
-            k = 0x6ED9EBA1;
-        } else if (i < 60) {
-            f = (b & c) | (b & d) | (c & d);
-            k = 0x8F1BBCDC;
-        } else {
-            f = b ^ c ^ d;
-            k = 0xCA62C1D6;
-        }
-
-        t = ROTLEFT(a, 5) + f + e + k + W[i];
-        e = d;
-        d = c;
-        c = ROTLEFT(b, 30);
-        b = a;
-        a = t;
-    }
-
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-    ctx->state[4] += e;
-}
-
-static void sha1_init(SHA1_CTX* ctx)
-{
-    ctx->state[0] = 0x67452301;
-    ctx->state[1] = 0xEFCDAB89;
-    ctx->state[2] = 0x98BADCFE;
-    ctx->state[3] = 0x10325476;
-    ctx->state[4] = 0xC3D2E1F0;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, SHA1_BLOCK_SIZE);
-}
-
-static void sha1_update(SHA1_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t index = (size_t)(ctx->count % SHA1_BLOCK_SIZE);
-    ctx->count += len;
-
-    size_t firstPart = SHA1_BLOCK_SIZE - index;
-    if (len >= firstPart) {
-        memcpy(&ctx->buffer[index], data, firstPart);
-        sha1_transform(ctx, ctx->buffer);
-
-        data += firstPart;
-        len -= firstPart;
-
-        while (len >= SHA1_BLOCK_SIZE) {
-            sha1_transform(ctx, data);
-            data += SHA1_BLOCK_SIZE;
-            len -= SHA1_BLOCK_SIZE;
-        }
-        index = 0;
-    }
-
-    if (len > 0) {
-        memcpy(&ctx->buffer[index], data, len);
-    }
-}
-
-static void sha1_final(SHA1_CTX* ctx, uint8_t* digest)
-{
-    uint8_t bits[8];
-    size_t index = (size_t)(ctx->count % SHA1_BLOCK_SIZE);
-    size_t padLen = (index < 56) ? (56 - index) : (120 - index);
-
-    /* 保存长度 */
-    for (int i = 0; i < 8; i++) {
-        bits[i] = (uint8_t)((ctx->count << 3) >> (56 - i * 8));
-    }
-
-    /* 填充 */
-    static const uint8_t padding[64] = { 0x80 };
-    sha1_update(ctx, padding, padLen);
-    sha1_update(ctx, bits, 8);
-
-    /* 输出 */
-    for (int i = 0; i < 20; i++) {
-        digest[i] = (uint8_t)(ctx->state[i / 4] >> (24 - (i % 4) * 8));
-    }
-}
-
-// ==================== RIPEMD-160 实现 ====================
-
-#define RIPEMD160_BLOCK_SIZE 64
-
-typedef struct RIPEMD160_CTX {
-    uint32_t state[5];
-    uint64_t count;
-    uint8_t buffer[RIPEMD160_BLOCK_SIZE];
-} RIPEMD160_CTX;
-
-static uint32_t ripemd160_load_le(const uint8_t* input)
-{
-    return (uint32_t)input[0] | ((uint32_t)input[1] << 8) |
-           ((uint32_t)input[2] << 16) | ((uint32_t)input[3] << 24);
-}
-
-static void ripemd160_store_le(uint8_t* output, uint32_t value)
-{
-    output[0] = (uint8_t)value;
-    output[1] = (uint8_t)(value >> 8);
-    output[2] = (uint8_t)(value >> 16);
-    output[3] = (uint8_t)(value >> 24);
-}
-
-static uint32_t ripemd160_rotate_left(uint32_t value, uint8_t bits)
-{
-    return (value << bits) | (value >> (32u - bits));
-}
-
-static uint32_t ripemd160_function(size_t round, uint32_t x, uint32_t y, uint32_t z)
-{
-    switch (round) {
-    case 0: return x ^ y ^ z;
-    case 1: return (x & y) | (~x & z);
-    case 2: return (x | ~y) ^ z;
-    case 3: return (x & z) | (y & ~z);
-    default: return x ^ (y | ~z);
-    }
-}
-
-static void ripemd160_transform(RIPEMD160_CTX* context, const uint8_t block[64])
-{
-    static const uint8_t leftIndex[80] = {
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8,
-        3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12,
-        1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
-        4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13
-    };
-    static const uint8_t rightIndex[80] = {
-        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12,
-        6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2,
-        15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13,
-        8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14,
-        12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11
-    };
-    static const uint8_t leftShift[80] = {
-        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8,
-        7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
-        11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5,
-        11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
-        9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6
-    };
-    static const uint8_t rightShift[80] = {
-        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6,
-        9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
-        9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5,
-        15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
-        8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11
-    };
-    static const uint32_t leftConstant[5] = {
-        UINT32_C(0x00000000), UINT32_C(0x5a827999), UINT32_C(0x6ed9eba1),
-        UINT32_C(0x8f1bbcdc), UINT32_C(0xa953fd4e)
-    };
-    static const uint32_t rightConstant[5] = {
-        UINT32_C(0x50a28be6), UINT32_C(0x5c4dd124), UINT32_C(0x6d703ef3),
-        UINT32_C(0x7a6d76e9), UINT32_C(0x00000000)
-    };
-    uint32_t words[16];
-    uint32_t al, bl, cl, dl, el, ar, br, cr, dr, er;
-    size_t i;
-
-    for (i = 0; i < 16; ++i) words[i] = ripemd160_load_le(block + i * 4u);
-    al = ar = context->state[0];
-    bl = br = context->state[1];
-    cl = cr = context->state[2];
-    dl = dr = context->state[3];
-    el = er = context->state[4];
-    for (i = 0; i < 80; ++i) {
-        size_t round = i / 16u;
-        uint32_t temp = ripemd160_rotate_left(al + ripemd160_function(round, bl, cl, dl) +
-                                               words[leftIndex[i]] + leftConstant[round],
-                                               leftShift[i]) + el;
-        al = el;
-        el = dl;
-        dl = ripemd160_rotate_left(cl, 10);
-        cl = bl;
-        bl = temp;
-
-        temp = ripemd160_rotate_left(ar + ripemd160_function(4u - round, br, cr, dr) +
-                                     words[rightIndex[i]] + rightConstant[round],
-                                     rightShift[i]) + er;
-        ar = er;
-        er = dr;
-        dr = ripemd160_rotate_left(cr, 10);
-        cr = br;
-        br = temp;
-    }
-    {
-        uint32_t temp = context->state[1] + cl + dr;
-        context->state[1] = context->state[2] + dl + er;
-        context->state[2] = context->state[3] + el + ar;
-        context->state[3] = context->state[4] + al + br;
-        context->state[4] = context->state[0] + bl + cr;
-        context->state[0] = temp;
-    }
-    memset(words, 0, sizeof(words));
-}
-
-static void ripemd160_init(RIPEMD160_CTX* context)
-{
-    context->state[0] = UINT32_C(0x67452301);
-    context->state[1] = UINT32_C(0xefcdab89);
-    context->state[2] = UINT32_C(0x98badcfe);
-    context->state[3] = UINT32_C(0x10325476);
-    context->state[4] = UINT32_C(0xc3d2e1f0);
-    context->count = 0;
-    memset(context->buffer, 0, sizeof(context->buffer));
-}
-
-static void ripemd160_update(RIPEMD160_CTX* context, const uint8_t* data, size_t size)
-{
-    size_t offset = (size_t)(context->count % RIPEMD160_BLOCK_SIZE);
-    context->count += size;
-    if (size >= RIPEMD160_BLOCK_SIZE - offset) {
-        size_t first = RIPEMD160_BLOCK_SIZE - offset;
-        if (offset != 0) {
-            memcpy(context->buffer + offset, data, first);
-            ripemd160_transform(context, context->buffer);
-            data += first;
-            size -= first;
-        }
-        while (size >= RIPEMD160_BLOCK_SIZE) {
-            ripemd160_transform(context, data);
-            data += RIPEMD160_BLOCK_SIZE;
-            size -= RIPEMD160_BLOCK_SIZE;
-        }
-        offset = 0;
-    }
-    if (size != 0) memcpy(context->buffer + offset, data, size);
-}
-
-static void ripemd160_final(RIPEMD160_CTX* context, uint8_t digest[20])
-{
-    static const uint8_t padding[64] = { 0x80 };
-    uint8_t bitLength[8];
-    uint64_t length = context->count << 3;
-    size_t offset = (size_t)(context->count % RIPEMD160_BLOCK_SIZE);
-    size_t paddingSize = offset < 56 ? 56 - offset : 120 - offset;
-    size_t i;
-    for (i = 0; i < sizeof(bitLength); ++i) {
-        bitLength[i] = (uint8_t)length;
-        length >>= 8;
-    }
-    ripemd160_update(context, padding, paddingSize);
-    ripemd160_update(context, bitLength, sizeof(bitLength));
-    for (i = 0; i < 5; ++i) ripemd160_store_le(digest + i * 4u, context->state[i]);
-    memset(context, 0, sizeof(*context));
-}
-
-// ==================== MD4 实现 ====================
-
-#define MD4_BLOCK_SIZE 64
-#define MD4_DIGEST_SIZE 16
-
-typedef struct MD4_CTX {
-    uint32_t state[4];
-    uint64_t count;
-    uint8_t buffer[MD4_BLOCK_SIZE];
-} MD4_CTX;
-
-static void md4_transform(MD4_CTX* ctx, const uint8_t* block)
-{
-    uint32_t a = ctx->state[0];
-    uint32_t b = ctx->state[1];
-    uint32_t c = ctx->state[2];
-    uint32_t d = ctx->state[3];
-    uint32_t m[16];
-    int i;
-
-    for (i = 0; i < 16; i++) {
-        m[i] = (uint32_t)block[i * 4] |
-               ((uint32_t)block[i * 4 + 1] << 8) |
-               ((uint32_t)block[i * 4 + 2] << 16) |
-               ((uint32_t)block[i * 4 + 3] << 24);
-    }
-
-    /* Round 1 */
-#define MD4_F(x, y, z) (((x) & (y)) | ((~x) & (z)))
-#define MD4_ROUND1(a, b, c, d, x, s) { a += MD4_F(b, c, d) + x; a = ROTLEFT(a, s); }
-
-    MD4_ROUND1(a, b, c, d, m[0], 3);
-    MD4_ROUND1(d, a, b, c, m[1], 7);
-    MD4_ROUND1(c, d, a, b, m[2], 11);
-    MD4_ROUND1(b, c, d, a, m[3], 19);
-    MD4_ROUND1(a, b, c, d, m[4], 3);
-    MD4_ROUND1(d, a, b, c, m[5], 7);
-    MD4_ROUND1(c, d, a, b, m[6], 11);
-    MD4_ROUND1(b, c, d, a, m[7], 19);
-    MD4_ROUND1(a, b, c, d, m[8], 3);
-    MD4_ROUND1(d, a, b, c, m[9], 7);
-    MD4_ROUND1(c, d, a, b, m[10], 11);
-    MD4_ROUND1(b, c, d, a, m[11], 19);
-    MD4_ROUND1(a, b, c, d, m[12], 3);
-    MD4_ROUND1(d, a, b, c, m[13], 7);
-    MD4_ROUND1(c, d, a, b, m[14], 11);
-    MD4_ROUND1(b, c, d, a, m[15], 19);
-
-    /* Round 2 */
-#define MD4_G(x, y, z) (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
-#define MD4_ROUND2(a, b, c, d, x, s) { a += MD4_G(b, c, d) + x + 0x5A827999; a = ROTLEFT(a, s); }
-
-    MD4_ROUND2(a, b, c, d, m[0], 3);
-    MD4_ROUND2(d, a, b, c, m[4], 5);
-    MD4_ROUND2(c, d, a, b, m[8], 9);
-    MD4_ROUND2(b, c, d, a, m[12], 13);
-    MD4_ROUND2(a, b, c, d, m[1], 3);
-    MD4_ROUND2(d, a, b, c, m[5], 5);
-    MD4_ROUND2(c, d, a, b, m[9], 9);
-    MD4_ROUND2(b, c, d, a, m[13], 13);
-    MD4_ROUND2(a, b, c, d, m[2], 3);
-    MD4_ROUND2(d, a, b, c, m[6], 5);
-    MD4_ROUND2(c, d, a, b, m[10], 9);
-    MD4_ROUND2(b, c, d, a, m[14], 13);
-    MD4_ROUND2(a, b, c, d, m[3], 3);
-    MD4_ROUND2(d, a, b, c, m[7], 5);
-    MD4_ROUND2(c, d, a, b, m[11], 9);
-    MD4_ROUND2(b, c, d, a, m[15], 13);
-
-    /* Round 3 */
-#define MD4_H(x, y, z) ((x) ^ (y) ^ (z))
-#define MD4_ROUND3(a, b, c, d, x, s) { a += MD4_H(b, c, d) + x + 0x6ED9EBA1; a = ROTLEFT(a, s); }
-
-    MD4_ROUND3(a, b, c, d, m[0], 3);
-    MD4_ROUND3(d, a, b, c, m[8], 9);
-    MD4_ROUND3(c, d, a, b, m[4], 11);
-    MD4_ROUND3(b, c, d, a, m[12], 15);
-    MD4_ROUND3(a, b, c, d, m[2], 3);
-    MD4_ROUND3(d, a, b, c, m[10], 9);
-    MD4_ROUND3(c, d, a, b, m[6], 11);
-    MD4_ROUND3(b, c, d, a, m[14], 15);
-    MD4_ROUND3(a, b, c, d, m[1], 3);
-    MD4_ROUND3(d, a, b, c, m[9], 9);
-    MD4_ROUND3(c, d, a, b, m[5], 11);
-    MD4_ROUND3(b, c, d, a, m[13], 15);
-    MD4_ROUND3(a, b, c, d, m[3], 3);
-    MD4_ROUND3(d, a, b, c, m[11], 9);
-    MD4_ROUND3(c, d, a, b, m[7], 11);
-    MD4_ROUND3(b, c, d, a, m[15], 15);
-
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-}
-
-static void md4_init(MD4_CTX* ctx)
-{
-    ctx->state[0] = 0x67452301;
-    ctx->state[1] = 0xefcdab89;
-    ctx->state[2] = 0x98badcfe;
-    ctx->state[3] = 0x10325476;
-    ctx->count = 0;
-    memset(ctx->buffer, 0, MD4_BLOCK_SIZE);
-}
-
-static void md4_update(MD4_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t index = (size_t)(ctx->count % MD4_BLOCK_SIZE);
-    ctx->count += len;
-
-    size_t firstPart = MD4_BLOCK_SIZE - index;
-    if (len >= firstPart) {
-        memcpy(&ctx->buffer[index], data, firstPart);
-        md4_transform(ctx, ctx->buffer);
-
-        data += firstPart;
-        len -= firstPart;
-
-        while (len >= MD4_BLOCK_SIZE) {
-            md4_transform(ctx, data);
-            data += MD4_BLOCK_SIZE;
-            len -= MD4_BLOCK_SIZE;
-        }
-        index = 0;
-    }
-
-    if (len > 0) {
-        memcpy(&ctx->buffer[index], data, len);
-    }
-}
-
-static void md4_final(MD4_CTX* ctx, uint8_t* digest)
-{
-    uint8_t bits[8];
-    size_t index = (size_t)(ctx->count % MD4_BLOCK_SIZE);
-    size_t padLen = (index < 56) ? (56 - index) : (120 - index);
-
-    for (int i = 0; i < 8; i++) {
-        bits[i] = (uint8_t)((ctx->count << 3) >> (i * 8));
-    }
-
-    static const uint8_t padding[64] = { 0x80 };
-    md4_update(ctx, padding, padLen);
-    md4_update(ctx, bits, 8);
-
-    for (int i = 0; i < 4; i++) {
-        digest[i] = (uint8_t)(ctx->state[0] >> (i * 8));
-        digest[i + 4] = (uint8_t)(ctx->state[1] >> (i * 8));
-        digest[i + 8] = (uint8_t)(ctx->state[2] >> (i * 8));
-        digest[i + 12] = (uint8_t)(ctx->state[3] >> (i * 8));
-    }
-}
-
-// ==================== Keccak/SHA3 实现 ====================
-
-#define KECCAK_ROUNDS 24
-#define KECCAK_STATE_SIZE 25  /* 5x5 的 uint64_t 状态 */
-
-/* Keccak 轮常数 */
-static const uint64_t keccak_rc[24] = {
-    0x0000000000000001ULL, 0x0000000000008082ULL, 0x800000000000808aULL,
-    0x8000000080008000ULL, 0x000000000000808bULL, 0x0000000080000001ULL,
-    0x8000000080008081ULL, 0x8000000000008009ULL, 0x000000000000008aULL,
-    0x0000000000000088ULL, 0x0000000080008009ULL, 0x000000008000000aULL,
-    0x000000008000808bULL, 0x800000000000008bULL, 0x8000000000008089ULL,
-    0x8000000000008003ULL, 0x8000000000008002ULL, 0x8000000000000080ULL,
-    0x000000000000800aULL, 0x800000008000000aULL, 0x8000000080008081ULL,
-    0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL
-};
-
-/* 旋转偏移量 */
-static const int keccak_rotations[5][5] = {
-    {0, 36, 3, 41, 18},
-    {1, 44, 10, 45, 2},
-    {62, 6, 43, 15, 61},
-    {28, 55, 25, 21, 56},
-    {27, 20, 39, 8, 14}
-};
-
-#define KECCAK_ROL64(a, n) (((a) << (n)) | ((a) >> (64 - (n))))
-
-static void keccak_f(uint64_t* state)
-{
-    int round;
-    uint64_t C[5], D[5], B[5][5];
-
-    for (round = 0; round < KECCAK_ROUNDS; round++) {
-        /* θ 步骤 */
-        for (int x = 0; x < 5; x++) {
-            C[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
-        }
-        for (int x = 0; x < 5; x++) {
-            D[x] = C[(x + 4) % 5] ^ KECCAK_ROL64(C[(x + 1) % 5], 1);
-        }
-        for (int x = 0; x < 5; x++) {
-            for (int y = 0; y < 5; y++) {
-                state[x + 5 * y] ^= D[x];
-            }
-        }
-
-        /* ρ 和 π 步骤 */
-        for (int x = 0; x < 5; x++) {
-            for (int y = 0; y < 5; y++) {
-                B[y][(2 * x + 3 * y) % 5] = KECCAK_ROL64(state[x + 5 * y], keccak_rotations[x][y]);
-            }
-        }
-
-        /* χ 步骤 */
-        for (int x = 0; x < 5; x++) {
-            for (int y = 0; y < 5; y++) {
-                state[x + 5 * y] = B[x][y] ^ ((~B[(x + 1) % 5][y]) & B[(x + 2) % 5][y]);
-            }
-        }
-
-        /* ι 步骤 */
-        state[0] ^= keccak_rc[round];
-    }
-}
-
-typedef struct Keccak_CTX {
-    uint64_t state[25];
-    uint8_t buffer[200];  /* 最大速率 168 字节 (SHA3-224) */
-    size_t rate;          /* 速率（字节） */
-    size_t digestSize;    /* 输出长度 */
-    size_t bufferLen;     /* 缓冲区当前长度 */
-    uint8_t delimitedSuffix; /* 分隔符：SHA3=0x06, Keccak=0x01 */
-} Keccak_CTX;
-
-static void keccak_init(Keccak_CTX* ctx, int digestSize, bool isSha3)
-{
-    memset(ctx->state, 0, sizeof(ctx->state));
-    memset(ctx->buffer, 0, sizeof(ctx->buffer));
-    ctx->digestSize = digestSize;
-    ctx->bufferLen = 0;
-
-    /* 速率 = (1600 - 2*输出长度) / 8 */
-    ctx->rate = (200 - 2 * digestSize);
-
-    /* SHA3 使用 0x06 分隔符，原始 Keccak 使用 0x01 */
-    ctx->delimitedSuffix = isSha3 ? 0x06 : 0x01;
-}
-
-static void keccak_absorb(Keccak_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t offset = 0;
-
-    /* 处理缓冲区中的数据 */
-    while (len > 0) {
-        size_t copyLen = ctx->rate - ctx->bufferLen;
-        if (copyLen > len) copyLen = len;
-
-        /* XOR 到缓冲区 */
-        for (size_t i = 0; i < copyLen; i++) {
-            ctx->buffer[ctx->bufferLen + i] ^= data[offset + i];
-        }
-
-        ctx->bufferLen += copyLen;
-        offset += copyLen;
-        len -= copyLen;
-
-        /* 如果缓冲区满，进行置换 */
-        if (ctx->bufferLen == ctx->rate) {
-            /* 将缓冲区 XOR 到状态 */
-            for (size_t i = 0; i < ctx->rate / 8; i++) {
-                ctx->state[i] ^= ((uint64_t*)ctx->buffer)[i];
-            }
-            keccak_f(ctx->state);
-            ctx->bufferLen = 0;
-            memset(ctx->buffer, 0, ctx->rate);
-        }
-    }
-}
-
-static void keccak_final(Keccak_CTX* ctx, uint8_t* output)
-{
-    /* 填充分隔符 */
-    ctx->buffer[ctx->bufferLen] ^= ctx->delimitedSuffix;
-    ctx->buffer[ctx->rate - 1] ^= 0x80;
-
-    /* 最后的吸收 */
-    for (size_t i = 0; i < ctx->rate / 8; i++) {
-        ctx->state[i] ^= ((uint64_t*)ctx->buffer)[i];
-    }
-    keccak_f(ctx->state);
-
-    /* 挤出输出 */
-    uint8_t* stateBytes = (uint8_t*)ctx->state;
-    memcpy(output, stateBytes, ctx->digestSize);
-}
-
-// ==================== Blake2b 实现 ====================
-
-#define BLAKE2B_BLOCK_SIZE 128
-#define BLAKE2B_MAX_DIGEST 64
-
-/* Blake2b IV */
-static const uint64_t blake2b_iv[8] = {
-    0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
-    0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
-    0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
-    0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
-};
-
-/* Blake2b sigma 置换 */
-static const uint8_t blake2b_sigma[12][16] = {
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
-    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
-    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
-    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
-    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
-    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
-    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
-    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
-    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3}
-};
-
-typedef struct Blake2b_CTX {
-    uint64_t h[8];
-    uint64_t t[2];
-    uint8_t buffer[BLAKE2B_BLOCK_SIZE];
-    size_t bufferLen;
-    size_t digestSize;
-} Blake2b_CTX;
-
-#define BLAKE2B_G(v, a, b, c, d, x, y) \
-    v[a] += v[b] + x; v[d] = ROTRIGHT64(v[d] ^ v[a], 32); \
-    v[c] += v[d]; v[b] = ROTRIGHT64(v[b] ^ v[c], 24); \
-    v[a] += v[b] + y; v[d] = ROTRIGHT64(v[d] ^ v[a], 16); \
-    v[c] += v[d]; v[b] = ROTRIGHT64(v[b] ^ v[c], 63);
-
-static void blake2b_compress(Blake2b_CTX* ctx, const uint8_t* block, bool isFinal)
-{
-    uint64_t v[16];
-    uint64_t m[16];
-    int i;
-
-    for (i = 0; i < 8; i++) v[i] = ctx->h[i];
-    for (i = 0; i < 8; i++) v[i + 8] = blake2b_iv[i];
-    v[12] ^= ctx->t[0];
-    v[13] ^= ctx->t[1];
-    if (isFinal) v[14] = ~v[14];
-
-    for (i = 0; i < 16; i++) {
-        m[i] = ((uint64_t*)block)[i];
-    }
-
-    for (i = 0; i < 12; i++) {
-        BLAKE2B_G(v, 0, 4, 8, 12, m[blake2b_sigma[i][0]], m[blake2b_sigma[i][1]]);
-        BLAKE2B_G(v, 1, 5, 9, 13, m[blake2b_sigma[i][2]], m[blake2b_sigma[i][3]]);
-        BLAKE2B_G(v, 2, 6, 10, 14, m[blake2b_sigma[i][4]], m[blake2b_sigma[i][5]]);
-        BLAKE2B_G(v, 3, 7, 11, 15, m[blake2b_sigma[i][6]], m[blake2b_sigma[i][7]]);
-        BLAKE2B_G(v, 0, 5, 10, 15, m[blake2b_sigma[i][8]], m[blake2b_sigma[i][9]]);
-        BLAKE2B_G(v, 1, 6, 11, 12, m[blake2b_sigma[i][10]], m[blake2b_sigma[i][11]]);
-        BLAKE2B_G(v, 2, 7, 8, 13, m[blake2b_sigma[i][12]], m[blake2b_sigma[i][13]]);
-        BLAKE2B_G(v, 3, 4, 9, 14, m[blake2b_sigma[i][14]], m[blake2b_sigma[i][15]]);
-    }
-
-    for (i = 0; i < 8; i++) ctx->h[i] ^= v[i] ^ v[i + 8];
-}
-
-static void blake2b_init(Blake2b_CTX* ctx, int digestSize)
-{
-    ctx->digestSize = digestSize;
-    ctx->bufferLen = 0;
-    ctx->t[0] = ctx->t[1] = 0;
-
-    for (int i = 0; i < 8; i++) ctx->h[i] = blake2b_iv[i];
-    ctx->h[0] ^= 0x01010000 ^ digestSize;
-
-    memset(ctx->buffer, 0, BLAKE2B_BLOCK_SIZE);
-}
-
-static void blake2b_update(Blake2b_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t offset = 0;
-
-    while (len > 0) {
-        size_t copyLen = BLAKE2B_BLOCK_SIZE - ctx->bufferLen;
-        if (copyLen > len) copyLen = len;
-
-        memcpy(ctx->buffer + ctx->bufferLen, data + offset, copyLen);
-        ctx->bufferLen += copyLen;
-        offset += copyLen;
-        len -= copyLen;
-
-        if (ctx->bufferLen == BLAKE2B_BLOCK_SIZE) {
-            ctx->t[0] += BLAKE2B_BLOCK_SIZE;
-            if (ctx->t[0] < BLAKE2B_BLOCK_SIZE) ctx->t[1]++;
-            blake2b_compress(ctx, ctx->buffer, false);
-            ctx->bufferLen = 0;
-        }
-    }
-}
-
-static void blake2b_final(Blake2b_CTX* ctx, uint8_t* output)
-{
-    ctx->t[0] += ctx->bufferLen;
-    if (ctx->t[0] < ctx->bufferLen) ctx->t[1]++;
-
-    memset(ctx->buffer + ctx->bufferLen, 0, BLAKE2B_BLOCK_SIZE - ctx->bufferLen);
-    blake2b_compress(ctx, ctx->buffer, true);
-
-    memcpy(output, ctx->h, ctx->digestSize);
-}
-
-// ==================== Blake2s 实现 ====================
-
-#define BLAKE2S_BLOCK_SIZE 64
-#define BLAKE2S_MAX_DIGEST 32
-
-/* Blake2s IV */
-static const uint32_t blake2s_iv[8] = {
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-};
-
-/* Blake2s sigma 置换 */
-static const uint8_t blake2s_sigma[10][16] = {
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
-    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
-    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
-    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
-    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
-    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
-    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
-    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
-    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0}
-};
-
-typedef struct Blake2s_CTX {
-    uint32_t h[8];
-    uint32_t t[2];
-    uint8_t buffer[BLAKE2S_BLOCK_SIZE];
-    size_t bufferLen;
-    size_t digestSize;
-} Blake2s_CTX;
-
-#define BLAKE2S_G(v, a, b, c, d, x, y) \
-    v[a] += v[b] + x; v[d] = ROTRIGHT(v[d] ^ v[a], 16); \
-    v[c] += v[d]; v[b] = ROTRIGHT(v[b] ^ v[c], 12); \
-    v[a] += v[b] + y; v[d] = ROTRIGHT(v[d] ^ v[a], 8); \
-    v[c] += v[d]; v[b] = ROTRIGHT(v[b] ^ v[c], 7);
-
-static void blake2s_compress(Blake2s_CTX* ctx, const uint8_t* block, bool isFinal)
-{
-    uint32_t v[16];
-    uint32_t m[16];
-    int i;
-
-    for (i = 0; i < 8; i++) v[i] = ctx->h[i];
-    for (i = 0; i < 8; i++) v[i + 8] = blake2s_iv[i];
-    v[12] ^= ctx->t[0];
-    v[13] ^= ctx->t[1];
-    if (isFinal) v[14] = ~v[14];
-
-    for (i = 0; i < 16; i++) {
-        m[i] = ((uint32_t*)block)[i];
-    }
-
-    for (i = 0; i < 10; i++) {
-        BLAKE2S_G(v, 0, 4, 8, 12, m[blake2s_sigma[i][0]], m[blake2s_sigma[i][1]]);
-        BLAKE2S_G(v, 1, 5, 9, 13, m[blake2s_sigma[i][2]], m[blake2s_sigma[i][3]]);
-        BLAKE2S_G(v, 2, 6, 10, 14, m[blake2s_sigma[i][4]], m[blake2s_sigma[i][5]]);
-        BLAKE2S_G(v, 3, 7, 11, 15, m[blake2s_sigma[i][6]], m[blake2s_sigma[i][7]]);
-        BLAKE2S_G(v, 0, 5, 10, 15, m[blake2s_sigma[i][8]], m[blake2s_sigma[i][9]]);
-        BLAKE2S_G(v, 1, 6, 11, 12, m[blake2s_sigma[i][10]], m[blake2s_sigma[i][11]]);
-        BLAKE2S_G(v, 2, 7, 8, 13, m[blake2s_sigma[i][12]], m[blake2s_sigma[i][13]]);
-        BLAKE2S_G(v, 3, 4, 9, 14, m[blake2s_sigma[i][14]], m[blake2s_sigma[i][15]]);
-    }
-
-    for (i = 0; i < 8; i++) ctx->h[i] ^= v[i] ^ v[i + 8];
-}
-
-static void blake2s_init(Blake2s_CTX* ctx, int digestSize)
-{
-    ctx->digestSize = digestSize;
-    ctx->bufferLen = 0;
-    ctx->t[0] = ctx->t[1] = 0;
-
-    for (int i = 0; i < 8; i++) ctx->h[i] = blake2s_iv[i];
-    ctx->h[0] ^= 0x01010000 ^ digestSize;
-
-    memset(ctx->buffer, 0, BLAKE2S_BLOCK_SIZE);
-}
-
-static void blake2s_update(Blake2s_CTX* ctx, const uint8_t* data, size_t len)
-{
-    size_t offset = 0;
-
-    while (len > 0) {
-        size_t copyLen = BLAKE2S_BLOCK_SIZE - ctx->bufferLen;
-        if (copyLen > len) copyLen = len;
-
-        memcpy(ctx->buffer + ctx->bufferLen, data + offset, copyLen);
-        ctx->bufferLen += copyLen;
-        offset += copyLen;
-        len -= copyLen;
-
-        if (ctx->bufferLen == BLAKE2S_BLOCK_SIZE) {
-            ctx->t[0] += BLAKE2S_BLOCK_SIZE;
-            if (ctx->t[0] < BLAKE2S_BLOCK_SIZE) ctx->t[1]++;
-            blake2s_compress(ctx, ctx->buffer, false);
-            ctx->bufferLen = 0;
-        }
-    }
-}
-
-static void blake2s_final(Blake2s_CTX* ctx, uint8_t* output)
-{
-    ctx->t[0] += ctx->bufferLen;
-    if (ctx->t[0] < ctx->bufferLen) ctx->t[1]++;
-
-    memset(ctx->buffer + ctx->bufferLen, 0, BLAKE2S_BLOCK_SIZE - ctx->bufferLen);
-    blake2s_compress(ctx, ctx->buffer, true);
-
-    memcpy(output, ctx->h, ctx->digestSize);
-}
-
-// ==================== 统一上下文结构 ====================
-
-typedef union HashContext {
-    MD4_CTX md4;
-    MD5_CTX md5;
-    SHA1_CTX sha1;
-    SHA256_CTX sha256;
-    SHA512_CTX sha512;
-    Keccak_CTX keccak;
-    Blake2b_CTX blake2b;
-    Blake2s_CTX blake2s;
-} HashContext;
-
-// ==================== 析构函数 ====================
-
-static void VXCryptographicHash_deinit(XCryptographicHash* hash)
-{
-    if (!hash) return;
-
-    if (hash->buffer) {
-        XByteArray_delete_base(hash->buffer);
-        hash->buffer = NULL;
-    }
-
-    if (hash->resultCache) {
-        XByteArray_delete_base(hash->resultCache);
-        hash->resultCache = NULL;
-    }
-
-    XClass_Deinit_Parent(XClass, hash);
-}
-
-// ==================== 拷贝/移动函数 ====================
-
-static void VXCryptographicHash_copy(XCryptographicHash* dest, const XCryptographicHash* src)
-{
-    if (!dest || !src) return;
-
-    // 先调用基类拷贝
-    if (XClassIsVtableNull(dest))
-        XCryptographicHash_init(dest, src->algorithm);
-
-    XClass_Parent(XClass, EXClass_Copy, void(*)(XClass*, const XClass*))(dest, src);
-
-    // 拷贝成员
-    dest->algorithm = src->algorithm;
-    dest->totalLen = src->totalLen;
-    dest->finalized = src->finalized;
-
-    // 深拷贝buffer
-    if (src->buffer) {
-        if (!dest->buffer)
-            dest->buffer = XByteArray_create();
-        if (dest->buffer)
-            XByteArray_copy_base(dest->buffer, src->buffer);
-    } else {
-        if (dest->buffer) {
-            XByteArray_delete_base(dest->buffer);
-            dest->buffer = NULL;
-        }
-    }
-
-    // 深拷贝resultCache
-    if (src->resultCache) {
-        if (!dest->resultCache)
-            dest->resultCache = XByteArray_create();
-        if (dest->resultCache)
-            XByteArray_copy_base(dest->resultCache, src->resultCache);
-    } else {
-        if (dest->resultCache) {
-            XByteArray_delete_base(dest->resultCache);
-            dest->resultCache = NULL;
-        }
-    }
-}
-
-static void VXCryptographicHash_move(XCryptographicHash* dest, XCryptographicHash* src)
-{
-    if (!dest || !src) return;
-
-    // 先调用基类移动
-    if (XClassIsVtableNull(dest))
-        XCryptographicHash_init(dest, src->algorithm);
-
-    XClass_Parent(XClass, EXClass_Move, void(*)(XClass*, XClass*))(dest, src);
-
-    // 移动成员
-    dest->algorithm = src->algorithm;
-    dest->buffer = src->buffer;
-    dest->resultCache = src->resultCache;
-    dest->totalLen = src->totalLen;
-    dest->finalized = src->finalized;
-
-    // 清空源对象
-    src->buffer = NULL;
-    src->resultCache = NULL;
-    src->totalLen = 0;
-    src->finalized = false;
-}
-
-// ==================== 虚函数表初始化 ====================
-
-XVtable* XCryptographicHash_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XCryptographicHash)
-    XVTABLE_INHERIT_XCLASS(XClass);
-    // 重载析构函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCryptographicHash_deinit);
-    // 重载拷贝函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXCryptographicHash_copy);
-    // 重载移动函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXCryptographicHash_move);
-    XCLASS_SHOW_SIZE_DEFAULT(XCryptographicHash);
-    return XVTABLE_DEFAULT;
-}
-
-// ==================== 构造函数 ====================
-
-void XCryptographicHash_init(XCryptographicHash* hash, XCryptographicHash_Algorithm method)
-{
-    if (!hash) return;
-
-    XClass_init(&hash->base);
-    XClassSetVtable(hash, XCryptographicHash);
-
-    hash->algorithm = method;
-    hash->buffer = XByteArray_create();
-    hash->resultCache = NULL;
-    hash->totalLen = 0;
-    hash->finalized = false;
-}
-
-XCryptographicHash* XCryptographicHash_create(XCryptographicHash_Algorithm method)
-{
-    XCryptographicHash* hash = (XCryptographicHash*)XMalloc_System(sizeof(XCryptographicHash));
-    if (!hash) return NULL;
-
-    XCryptographicHash_init(hash, method);
-    Set_Class_MemoryFree(hash, XFree_System);
-    return hash;
-}
-
-// ==================== 数据输入 ====================
-
-void XCryptographicHash_addData(XCryptographicHash* hash, const char* data, size_t len)
-{
-    if (!hash || !data || len == 0 || hash->finalized) return;
-
-    XByteArray_push_back_2(hash->buffer, data, len);
-    hash->totalLen += len;
-}
-
-void XCryptographicHash_addData_2(XCryptographicHash* hash, XByteArrayView bytes)
-{
-    if (!hash || !bytes.m_data || bytes.m_size == 0 || hash->finalized) return;
-
-    XByteArray_push_back_2(hash->buffer, bytes.m_data, bytes.m_size);
-    hash->totalLen += bytes.m_size;
-}
-
-void XCryptographicHash_addData_3(XCryptographicHash* hash, const XByteArray* data)
-{
-    if (!hash || !data || hash->finalized) return;
-
-    const char* d = (const char*)XByteArray_data((XByteArray*)data);
-    size_t len = XByteArray_size_base(data);
-    if (d && len > 0) {
-        XByteArray_push_back_2(hash->buffer, d, len);
-        hash->totalLen += len;
-    }
-}
-
-bool XCryptographicHash_addData_4(XCryptographicHash* hash, XIODevice* device)
-{
-    if (!hash || !device || hash->finalized) return false;
-
-    XByteArray* data = XIODevice_readAll_3(device);
-    if (!data) return false;
-
-    XCryptographicHash_addData_3(hash, data);
-    XByteArray_delete_base(data);
-    return true;
-}
-
-void XCryptographicHash_reset(XCryptographicHash* hash)
-{
-    if (!hash) return;
-
-    XByteArray_clear_base(hash->buffer);
-    hash->totalLen = 0;
-    hash->finalized = false;
-
-    if (hash->resultCache) {
-        XByteArray_clear_base(hash->resultCache);
-    }
-}
-
-// ==================== 内部计算函数 ====================
-
-static void computeHash(XCryptographicHash* hash, uint8_t* output)
-{
-    const char* data = XByteArray_data(hash->buffer);
-    size_t len = XByteArray_size_base(hash->buffer);
-
-    switch (hash->algorithm) {
-        case XCryptographicHash_Md4: {
-            MD4_CTX ctx;
-            md4_init(&ctx);
-            md4_update(&ctx, (const uint8_t*)data, len);
-            md4_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Md5: {
-            MD5_CTX ctx;
-            md5_init(&ctx);
-            md5_update(&ctx, (const uint8_t*)data, len);
-            md5_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Sha1: {
-            SHA1_CTX ctx;
-            sha1_init(&ctx);
-            sha1_update(&ctx, (const uint8_t*)data, len);
-            sha1_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Ripemd160: {
-            RIPEMD160_CTX ctx;
-            ripemd160_init(&ctx);
-            ripemd160_update(&ctx, (const uint8_t*)data, len);
-            ripemd160_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Sha224: {
-            SHA256_CTX ctx;
-            sha224_init(&ctx);
-            sha256_update(&ctx, (const uint8_t*)data, len);
-            sha256_final(&ctx, output, 28);
-            break;
-        }
-        case XCryptographicHash_Sha256: {
-            SHA256_CTX ctx;
-            sha256_init(&ctx);
-            sha256_update(&ctx, (const uint8_t*)data, len);
-            sha256_final(&ctx, output, 32);
-            break;
-        }
-        case XCryptographicHash_Sha384: {
-            SHA512_CTX ctx;
-            sha384_init(&ctx);
-            sha512_update(&ctx, (const uint8_t*)data, len);
-            sha512_final(&ctx, output, 48);
-            break;
-        }
-        case XCryptographicHash_Sha512: {
-            SHA512_CTX ctx;
-            sha512_init(&ctx);
-            sha512_update(&ctx, (const uint8_t*)data, len);
-            sha512_final(&ctx, output, 64);
-            break;
-        }
-        /* Keccak 算法（原始 Keccak，分隔符 0x01） */
-        case XCryptographicHash_Keccak_224: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 28, false);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Keccak_256: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 32, false);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Keccak_384: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 48, false);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Keccak_512: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 64, false);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        /* SHA3 算法（NIST 标准化，分隔符 0x06） */
-        case XCryptographicHash_RealSha3_224: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 28, true);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_RealSha3_256: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 32, true);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_RealSha3_384: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 48, true);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_RealSha3_512: {
-            Keccak_CTX ctx;
-            keccak_init(&ctx, 64, true);
-            keccak_absorb(&ctx, (const uint8_t*)data, len);
-            keccak_final(&ctx, output);
-            break;
-        }
-        /* Blake2b 算法 */
-        case XCryptographicHash_Blake2b_160: {
-            Blake2b_CTX ctx;
-            blake2b_init(&ctx, 20);
-            blake2b_update(&ctx, (const uint8_t*)data, len);
-            blake2b_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2b_256: {
-            Blake2b_CTX ctx;
-            blake2b_init(&ctx, 32);
-            blake2b_update(&ctx, (const uint8_t*)data, len);
-            blake2b_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2b_384: {
-            Blake2b_CTX ctx;
-            blake2b_init(&ctx, 48);
-            blake2b_update(&ctx, (const uint8_t*)data, len);
-            blake2b_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2b_512: {
-            Blake2b_CTX ctx;
-            blake2b_init(&ctx, 64);
-            blake2b_update(&ctx, (const uint8_t*)data, len);
-            blake2b_final(&ctx, output);
-            break;
-        }
-        /* Blake2s 算法 */
-        case XCryptographicHash_Blake2s_128: {
-            Blake2s_CTX ctx;
-            blake2s_init(&ctx, 16);
-            blake2s_update(&ctx, (const uint8_t*)data, len);
-            blake2s_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2s_160: {
-            Blake2s_CTX ctx;
-            blake2s_init(&ctx, 20);
-            blake2s_update(&ctx, (const uint8_t*)data, len);
-            blake2s_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2s_224: {
-            Blake2s_CTX ctx;
-            blake2s_init(&ctx, 28);
-            blake2s_update(&ctx, (const uint8_t*)data, len);
-            blake2s_final(&ctx, output);
-            break;
-        }
-        case XCryptographicHash_Blake2s_256: {
-            Blake2s_CTX ctx;
-            blake2s_init(&ctx, 32);
-            blake2s_update(&ctx, (const uint8_t*)data, len);
-            blake2s_final(&ctx, output);
-            break;
-        }
-        default:
-            memset(output, 0, 64);
-            break;
-    }
-}
-
-// ==================== 结果获取 ====================
-
-XByteArray* XCryptographicHash_result(XCryptographicHash* hash)
-{
-    if (!hash) return NULL;
-
-    int hashLen = XCryptographicHash_hashLength(hash->algorithm);
-    XByteArray* result = XByteArray_create();
-    if (!result) return NULL;
-
-    XByteArray_resize_base(result, hashLen);
-    char* data = (char*)XByteArray_data(result);
-
-    computeHash(hash, (uint8_t*)data);
-    hash->finalized = true;
-
-    return result;
-}
-
-XByteArrayView XCryptographicHash_resultView(XCryptographicHash* hash)
-{
-    XByteArrayView empty = { NULL, 0 };
-    if (!hash) return empty;
-
-    int hashLen = XCryptographicHash_hashLength(hash->algorithm);
-
-    if (!hash->resultCache) {
-        hash->resultCache = XByteArray_create();
-        if (!hash->resultCache) return empty;
-    }
-
-    XByteArray_resize_base(hash->resultCache, hashLen);
-    char* data = (char*)XByteArray_data(hash->resultCache);
-
-    computeHash(hash, (uint8_t*)data);
-    hash->finalized = true;
-
-    XByteArrayView view = { (const uint8_t*)data, (int64_t)hashLen };
-    return view;
-}
-
-// ==================== 算法信息 ====================
-
-XCryptographicHash_Algorithm XCryptographicHash_algorithm(const XCryptographicHash* hash)
-{
-    return hash ? hash->algorithm : XCryptographicHash_Md5;
-}
-
-// ==================== 静态便捷方法 ====================
-
-XByteArray* XCryptographicHash_hash(const char* data, size_t len, XCryptographicHash_Algorithm method)
-{
-    /* 注意：空字符串(len=0)的哈希是有效的，只有 data 为 NULL 时才返回 NULL */
-    if (!data) return NULL;
-
-    XCryptographicHash* ctx = XCryptographicHash_create(method);
-    if (!ctx) return NULL;
-
-    if (len > 0) {
-        XCryptographicHash_addData(ctx, data, len);
-    }
-    XByteArray* result = XCryptographicHash_result(ctx);
-
-    XCryptographicHash_delete_base(ctx);
-    return result;
-}
-
-XByteArray* XCryptographicHash_hash_2(XByteArrayView data, XCryptographicHash_Algorithm method)
-{
-    return XCryptographicHash_hash(data.m_data, data.m_size, method);
-}
-
-XByteArray* XCryptographicHash_hash_3(const XByteArray* data, XCryptographicHash_Algorithm method)
-{
-    if (!data) return NULL;
-
-    const char* d = (const char*)XByteArray_data((XByteArray*)data);
-    size_t len = XByteArray_size_base((XByteArray*)data);
-    return XCryptographicHash_hash(d, len, method);
-}
-
-XByteArrayView XCryptographicHash_hashInto(
-    char* buffer, size_t bufferSize,
-    const char* data, size_t dataLen,
-    XCryptographicHash_Algorithm method
-)
-{
-    XByteArrayView empty = { NULL, 0 };
-
-    int hashLen = XCryptographicHash_hashLength(method);
-    if (!buffer || bufferSize < (size_t)hashLen || !data) {
-        return empty;
-    }
-
-    XCryptographicHash* ctx = XCryptographicHash_create(method);
-    if (!ctx) return empty;
-
-    XCryptographicHash_addData(ctx, data, dataLen);
-
-    computeHash(ctx, (uint8_t*)buffer);
-
-    XCryptographicHash_delete_base(ctx);
-
-    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
-    return result;
-}
-
-XByteArrayView XCryptographicHash_hashInto_1(
-    char* buffer, size_t bufferSize,
-    const XByteArrayView* dataArray, size_t count,
-    XCryptographicHash_Algorithm method
-)
-{
-    XByteArrayView empty = { NULL, 0 };
-
-    int hashLen = XCryptographicHash_hashLength(method);
-    if (!buffer || bufferSize < (size_t)hashLen || !dataArray) {
-        return empty;
-    }
-
-    XCryptographicHash* ctx = XCryptographicHash_create(method);
-    if (!ctx) return empty;
-
-    for (size_t i = 0; i < count; i++) {
-        XCryptographicHash_addData_2(ctx, dataArray[i]);
-    }
-
-    computeHash(ctx, (uint8_t*)buffer);
-
-    XCryptographicHash_delete_base(ctx);
-
-    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
-    return result;
-}
-
-static bool xcryptographic_lms_sha256_parts(const XByteArrayView* parts,
-                                            size_t count, uint8_t output[32])
-{
-    XCryptographicHash* hash;
-    XByteArrayView result;
-    size_t index;
-
-    if (!parts || !output || count == 0) return false;
-    hash = XCryptographicHash_create(XCryptographicHash_Sha256);
-    if (!hash) return false;
-    for (index = 0; index < count; ++index) {
-        if (parts[index].m_size < 0 ||
-            (!parts[index].m_data && parts[index].m_size != 0)) {
-            XCryptographicHash_delete_base(hash);
-            return false;
-        }
-        XCryptographicHash_addData_2(hash, parts[index]);
-    }
-    result = XCryptographicHash_resultView(hash);
-    if (!result.m_data || result.m_size != 32) {
-        XCryptographicHash_delete_base(hash);
-        return false;
-    }
-    memcpy(output, result.m_data, 32);
-    XCryptographicHash_delete_base(hash);
-    return true;
-}
-
-static void xcryptographic_lms_put_u32_be(uint32_t value, uint8_t output[4])
-{
-    output[0] = (uint8_t)(value >> 24);
-    output[1] = (uint8_t)(value >> 16);
-    output[2] = (uint8_t)(value >> 8);
-    output[3] = (uint8_t)value;
-}
-
-bool XCryptographic_lmotsCalculatePublicKeyCandidate(
-    XByteArrayView keyIdentifier, uint32_t leafIdentifier,
-    XByteArrayView message, XByteArrayView signature,
-    uint8_t* output, size_t outputSize)
-{
-    uint8_t qBytes[4];
-    uint8_t iBytes[2];
-    uint8_t jByte;
-    uint8_t digest[32];
-    uint8_t digits[34];
-    uint8_t hashedDigits[34][32];
-    XByteArrayView parts[6];
-    size_t digitIndex;
-    unsigned int hashIndex;
-
-    if (keyIdentifier.m_size != 16) return false;
-    if (message.m_size < 0 || signature.m_size != 1124 || outputSize < 32 ||
-        (!message.m_data && message.m_size != 0) || !output ||
-        signature.m_data == NULL) return false;
-    if (signature.m_data[0] != 0 || signature.m_data[1] != 0 ||
-        signature.m_data[2] != 0 || signature.m_data[3] != 4) return false;
-
-    xcryptographic_lms_put_u32_be(leafIdentifier, qBytes);
-    parts[0] = keyIdentifier;
-    parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x81, 0x81 }, 2);
-    parts[3] = XByteArrayView_create_data(signature.m_data + 4, 32);
-    parts[4] = message;
-    if (!xcryptographic_lms_sha256_parts(parts, 5, digest)) return false;
-
-    memcpy(digits, digest, 32);
-    {
-        unsigned int checksum = 0;
-        for (digitIndex = 0; digitIndex < 32; ++digitIndex) {
-            checksum += 255u - digits[digitIndex];
-        }
-        digits[32] = (uint8_t)(checksum >> 8);
-        digits[33] = (uint8_t)checksum;
-    }
-
-    for (digitIndex = 0; digitIndex < 34; ++digitIndex) {
-        memcpy(digest, signature.m_data + 36 + digitIndex * 32, 32);
-        for (hashIndex = digits[digitIndex]; hashIndex < 255; ++hashIndex) {
-            xcryptographic_lms_put_u32_be(leafIdentifier, qBytes);
-            iBytes[0] = (uint8_t)(digitIndex >> 8);
-            iBytes[1] = (uint8_t)digitIndex;
-            jByte = (uint8_t)hashIndex;
-            parts[0] = keyIdentifier;
-            parts[1] = XByteArrayView_create_data(qBytes, 4);
-            parts[2] = XByteArrayView_create_data(iBytes, 2);
-            parts[3] = XByteArrayView_create_data(&jByte, 1);
-            parts[4] = XByteArrayView_create_data(digest, 32);
-            if (!xcryptographic_lms_sha256_parts(parts, 5, digest)) return false;
-        }
-        memcpy(hashedDigits[digitIndex], digest, 32);
-    }
-
-    parts[0] = keyIdentifier;
-    parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x80, 0x80 }, 2);
-    parts[3] = XByteArrayView_create_data((const uint8_t*)hashedDigits, sizeof(hashedDigits));
-    parts[4] = XByteArrayView_create_data(NULL, 0);
-    return xcryptographic_lms_sha256_parts(parts, 4, output);
-}
-
-bool XCryptographic_lmsVerify(
-    XByteArrayView keyIdentifier, XByteArrayView root,
-    XByteArrayView message, XByteArrayView signature)
-{
-    uint8_t candidate[32];
-    uint8_t node[32];
-    uint8_t path[32];
-    uint8_t indexBytes[4];
-    uint8_t qBytes[4];
-    XByteArrayView parts[6];
-    uint32_t leafIdentifier;
-    uint32_t currentNode;
-    unsigned int height;
-
-    if (keyIdentifier.m_size != 16 || root.m_size != 32 || signature.m_size != 1452 ||
-        (!keyIdentifier.m_data && keyIdentifier.m_size != 0) ||
-        (!root.m_data && root.m_size != 0) ||
-        (!message.m_data && message.m_size != 0) || !signature.m_data) return false;
-    if (signature.m_data[1128] != 0 || signature.m_data[1129] != 0 ||
-        signature.m_data[1130] != 0 || signature.m_data[1131] != 6) return false;
-    leafIdentifier = ((uint32_t)signature.m_data[0] << 24) |
-                     ((uint32_t)signature.m_data[1] << 16) |
-                     ((uint32_t)signature.m_data[2] << 8) |
-                     signature.m_data[3];
-    if (leafIdentifier >= 1024u) return false;
-    if (!XCryptographic_lmotsCalculatePublicKeyCandidate(
-            keyIdentifier, leafIdentifier, message,
-            XByteArrayView_create_data(signature.m_data + 4, 1124), candidate, sizeof(candidate))) {
-        return false;
-    }
-
-    currentNode = 1024u + leafIdentifier;
-    xcryptographic_lms_put_u32_be(currentNode, qBytes);
-    parts[0] = keyIdentifier;
-    parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x82, 0x82 }, 2);
-    parts[3] = XByteArrayView_create_data(candidate, 32);
-    if (!xcryptographic_lms_sha256_parts(parts, 4, node)) return false;
-
-    for (height = 0; height < 10; ++height) {
-        uint32_t parent = currentNode / 2u;
-        xcryptographic_lms_put_u32_be(parent, indexBytes);
-        memcpy(path, signature.m_data + 1132 + height * 32, 32);
-        parts[0] = keyIdentifier;
-        parts[1] = XByteArrayView_create_data(indexBytes, 4);
-        parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x83, 0x83 }, 2);
-        parts[3] = (currentNode & 1u) ? XByteArrayView_create_data(path, 32) : XByteArrayView_create_data(node, 32);
-        parts[4] = (currentNode & 1u) ? XByteArrayView_create_data(node, 32) : XByteArrayView_create_data(path, 32);
-        if (!xcryptographic_lms_sha256_parts(parts, 5, node)) return false;
-        currentNode = parent;
-    }
-    return memcmp(node, root.m_data, 32) == 0;
-}
-
-int XCryptographicHash_hashLength(XCryptographicHash_Algorithm method)
-{
-    if (method < 0 || method >= XCryptographicHash_NumAlgorithms) {
-        return 0;
-    }
-    return g_hashLengths[method];
-}
-
-bool XCryptographicHash_supportsAlgorithm(XCryptographicHash_Algorithm method)
-{
-    /* 目前支持 MD4, MD5, SHA-1, SHA-224/256/384/512 */
-    return method >= 0 && method < XCryptographicHash_NumAlgorithms;
-}
-
-const char* XCryptographicHash_algorithmName(XCryptographicHash_Algorithm method)
-{
-    if (method < 0 || method >= XCryptographicHash_NumAlgorithms) {
-        return "Unknown";
-    }
-    return g_algorithmNames[method];
-}
-
-// ==================== HMAC 实现 ====================
-
-/**
- * @brief HMAC内部实现（RFC 2104）
- *
- * HMAC(K, m) = H((K ^ opad) || H((K ^ ipad) || m))
- *
- * 其中：
- * - K: 密钥（如果长度超过块大小，先进行哈希）
- * - m: 消息
- * - H: 哈希函数
- * - opad: 0x5c重复块大小次
- * - ipad: 0x36重复块大小次
- * - ||: 连接操作
- */
-
-/**
- * @brief 获取算法的块大小（字节）
- * @param method 哈希算法
- * @return 块大小（字节）
- */
-static int getBlockSize(XCryptographicHash_Algorithm method)
-{
-    switch (method) {
-        case XCryptographicHash_Md4:
-        case XCryptographicHash_Md5:
-        case XCryptographicHash_Sha1:
-        case XCryptographicHash_Ripemd160:
-        case XCryptographicHash_Sha224:
-        case XCryptographicHash_Sha256:
-        case XCryptographicHash_Blake2s_128:
-        case XCryptographicHash_Blake2s_160:
-        case XCryptographicHash_Blake2s_224:
-        case XCryptographicHash_Blake2s_256:
-            return 64;  // 512 bits
-
-        case XCryptographicHash_RealSha3_224:
-        case XCryptographicHash_Keccak_224:
-            return 144; // SHA-3/Keccak-224 海绵速率
-
-        case XCryptographicHash_RealSha3_256:
-        case XCryptographicHash_Keccak_256:
-            return 136; // SHA-3/Keccak-256 海绵速率
-
-        case XCryptographicHash_RealSha3_384:
-        case XCryptographicHash_Keccak_384:
-            return 104; // SHA-3/Keccak-384 海绵速率
-
-        case XCryptographicHash_RealSha3_512:
-        case XCryptographicHash_Keccak_512:
-            return 72; // SHA-3/Keccak-512 海绵速率
-
-        case XCryptographicHash_Sha384:
-        case XCryptographicHash_Sha512:
-        case XCryptographicHash_Blake2b_160:
-        case XCryptographicHash_Blake2b_256:
-        case XCryptographicHash_Blake2b_384:
-        case XCryptographicHash_Blake2b_512:
-            return 128; // 1024 bits
-
-        default:
-            return 64;
-    }
-}
-
-bool XCryptographic_hmacSetup(XCryptographic_HmacOperation* operation,
-                              XByteArrayView key,
-                              XCryptographicHash_Algorithm algorithm)
-{
-    uint8_t ipad[144];
-    XByteArray* hashedKey = NULL;
-    const uint8_t* keyData;
-    size_t keySize;
-    size_t i;
-    int hashLength;
-    int blockSize;
-
-    if (!operation || key.m_size < 0 || (!key.m_data && key.m_size != 0)) {
-        return false;
-    }
-    hashLength = XCryptographicHash_hashLength(algorithm);
-    blockSize = getBlockSize(algorithm);
-    if (hashLength <= 0 || hashLength > (int)sizeof(ipad) ||
-        blockSize <= 0 || blockSize > (int)sizeof(operation->opad)) {
-        return false;
-    }
-
-    memset(operation, 0, sizeof(*operation));
-    keyData = key.m_data;
-    keySize = (size_t)key.m_size;
-    if (keySize > (size_t)blockSize) {
-        hashedKey = XCryptographicHash_hash((const char*)keyData, keySize, algorithm);
-        if (!hashedKey || XByteArray_size_base(hashedKey) != (size_t)hashLength) {
-            if (hashedKey) XByteArray_delete_base(hashedKey);
-            return false;
-        }
-        memcpy(ipad, XByteArray_data(hashedKey), (size_t)hashLength);
-        XByteArray_delete_base(hashedKey);
-        keyData = ipad;
-        keySize = (size_t)hashLength;
-    }
-
-    operation->inner = XCryptographicHash_create(algorithm);
-    if (!operation->inner) {
-        memset(ipad, 0, sizeof(ipad));
-        return false;
-    }
-    for (i = 0; i < (size_t)blockSize; ++i) {
-        uint8_t value = i < keySize ? keyData[i] : 0;
-        operation->opad[i] = value ^ 0x5cu;
-        ipad[i] = value ^ 0x36u;
-    }
-    XCryptographicHash_addData(operation->inner, (const char*)ipad,
-                               (size_t)blockSize);
-    memset(ipad, 0, sizeof(ipad));
-    operation->algorithm = algorithm;
-    operation->blockSize = (size_t)blockSize;
-    operation->active = true;
-    return true;
-}
-
-bool XCryptographic_hmacUpdate(XCryptographic_HmacOperation* operation,
-                               XByteArrayView message)
-{
-    if (!operation || !operation->active || !operation->inner ||
-        message.m_size < 0 || (!message.m_data && message.m_size != 0)) {
-        return false;
-    }
-    if (message.m_size != 0) {
-        XCryptographicHash_addData(operation->inner, (const char*)message.m_data,
-                                   (size_t)message.m_size);
-    }
-    return true;
-}
-
-XByteArrayView XCryptographic_hmacFinishInto(XCryptographic_HmacOperation* operation,
-                                             char* buffer, size_t bufferSize)
-{
-    XByteArrayView empty = { NULL, 0 };
-    XByteArray* innerResult = NULL;
-    XByteArray* outerResult = NULL;
-    XCryptographicHash* outer = NULL;
-    int hashLength;
-
-    if (!operation || !operation->active || !operation->inner || !buffer) {
-        return empty;
-    }
-    hashLength = XCryptographicHash_hashLength(operation->algorithm);
-    if (hashLength <= 0 || bufferSize < (size_t)hashLength) {
-        return empty;
-    }
-    innerResult = XCryptographicHash_result(operation->inner);
-    outer = XCryptographicHash_create(operation->algorithm);
-    if (!innerResult || !outer ||
-        XByteArray_size_base(innerResult) != (size_t)hashLength) {
-        goto cleanup;
-    }
-    XCryptographicHash_addData(outer, (const char*)operation->opad,
-                               operation->blockSize);
-    XCryptographicHash_addData(outer, XByteArray_data(innerResult),
-                               (size_t)hashLength);
-    outerResult = XCryptographicHash_result(outer);
-    if (!outerResult || XByteArray_size_base(outerResult) != (size_t)hashLength) {
-        goto cleanup;
-    }
-    memcpy(buffer, XByteArray_data(outerResult), (size_t)hashLength);
-    XCryptographic_hmacAbort(operation);
-    XByteArray_delete_base(outerResult);
-    XByteArray_delete_base(innerResult);
-    XCryptographicHash_delete_base(outer);
-    return (XByteArrayView){ (const uint8_t*)buffer, hashLength };
-
-cleanup:
-    if (outerResult) XByteArray_delete_base(outerResult);
-    if (innerResult) XByteArray_delete_base(innerResult);
-    if (outer) XCryptographicHash_delete_base(outer);
-    XCryptographic_hmacAbort(operation);
-    return empty;
-}
-
-void XCryptographic_hmacAbort(XCryptographic_HmacOperation* operation)
-{
-    if (!operation) return;
-    if (operation->inner) {
-        XCryptographicHash_reset(operation->inner);
-        XCryptographicHash_delete_base(operation->inner);
-    }
-    memset(operation, 0, sizeof(*operation));
-}
-
-XByteArrayView XCryptographicHash_hmacInto(
-    char* buffer, size_t bufferSize,
-    const char* key, size_t keyLen,
-    const char* message, size_t msgLen,
-    XCryptographicHash_Algorithm method
-)
-{
-    XByteArrayView empty = { NULL, 0 };
-
-    int hashLen = XCryptographicHash_hashLength(method);
-    int blockSize = getBlockSize(method);
-
-    if (!buffer || bufferSize < (size_t)hashLen) {
-        return empty;
-    }
-
-    // 分配内部缓冲区
-    char* ipad = (char*)XMalloc_System(blockSize);
-    char* opad = (char*)XMalloc_System(blockSize);
-    char* kkey = (char*)XMalloc_System(blockSize);
-
-    if (!ipad || !opad || !kkey) {
-        if (ipad) XFree_System(ipad);
-        if (opad) XFree_System(opad);
-        if (kkey) XFree_System(kkey);
-        return empty;
-    }
-
-    // 初始化kkey
-    memset(kkey, 0, blockSize);
-
-    // 如果密钥长度超过块大小，先进行哈希
-    if (keyLen > (size_t)blockSize) {
-        XByteArray* hashedKey = XCryptographicHash_hash(key, keyLen, method);
-        if (hashedKey) {
-            size_t hashedLen = XByteArray_size_base(hashedKey);
-            const char* hashedData = XByteArray_data(hashedKey);
-            if (hashedData && hashedLen <= (size_t)blockSize) {
-                memcpy(kkey, hashedData, hashedLen);
-            }
-            XByteArray_delete_base(hashedKey);
-        }
-    } else if (keyLen > 0) {
-        memcpy(kkey, key, keyLen);
-    }
-
-    // 准备ipad和opad
-    for (int i = 0; i < blockSize; i++) {
-        ipad[i] = kkey[i] ^ 0x36;
-        opad[i] = kkey[i] ^ 0x5c;
-    }
-
-    // 计算内部哈希: H((K ^ ipad) || message)
-    char* innerHash = (char*)XMalloc_System(hashLen);
-    if (!innerHash) {
-        XFree_System(ipad);
-        XFree_System(opad);
-        XFree_System(kkey);
-        return empty;
-    }
-
-    {
-        XCryptographicHash* ctx = XCryptographicHash_create(method);
-        if (!ctx) {
-            XFree_System(innerHash);
-            XFree_System(ipad);
-            XFree_System(opad);
-            XFree_System(kkey);
-            return empty;
-        }
-
-        XCryptographicHash_addData(ctx, ipad, blockSize);
-        if (message && msgLen > 0) {
-            XCryptographicHash_addData(ctx, message, msgLen);
-        }
-
-        XByteArray* innerResult = XCryptographicHash_result(ctx);
-        if (innerResult) {
-            const char* innerData = XByteArray_data(innerResult);
-            if (innerData) {
-                memcpy(innerHash, innerData, hashLen);
-            }
-            XByteArray_delete_base(innerResult);
-        }
-
-        XCryptographicHash_delete_base(ctx);
-    }
-
-    // 计算外部哈希: H((K ^ opad) || innerHash)
-    {
-        XCryptographicHash* ctx = XCryptographicHash_create(method);
-        if (!ctx) {
-            XFree_System(innerHash);
-            XFree_System(ipad);
-            XFree_System(opad);
-            XFree_System(kkey);
-            return empty;
-        }
-
-        XCryptographicHash_addData(ctx, opad, blockSize);
-        XCryptographicHash_addData(ctx, innerHash, hashLen);
-
-        XByteArray* outerResult = XCryptographicHash_result(ctx);
-        if (outerResult) {
-            const char* outerData = XByteArray_data(outerResult);
-            if (outerData) {
-                memcpy(buffer, outerData, hashLen);
-            }
-            XByteArray_delete_base(outerResult);
-        }
-
-        XCryptographicHash_delete_base(ctx);
-    }
-
-    // 清理
-    XFree_System(innerHash);
-    XFree_System(ipad);
-    XFree_System(opad);
-    XFree_System(kkey);
-
-    XByteArrayView result = { (const uint8_t*)buffer, (int64_t)hashLen };
-    return result;
-}
-
-XByteArray* XCryptographicHash_hmac(
-    const char* key, size_t keyLen,
-    const char* message, size_t msgLen,
-    XCryptographicHash_Algorithm method
-)
-{
-    int hashLen = XCryptographicHash_hashLength(method);
-    XByteArray* result = XByteArray_create();
-    if (!result) return NULL;
-
-    XByteArray_resize_base(result, hashLen);
-    char* data = (char*)XByteArray_data(result);
-
-    XByteArrayView view = XCryptographicHash_hmacInto(data, hashLen, key, keyLen, message, msgLen, method);
-
-    if (!view.m_data) {
-        XByteArray_delete_base(result);
-        return NULL;
-    }
-
-    return result;
-}
-
-XByteArray* XCryptographicHash_hmac_2(
-    XByteArrayView key,
-    XByteArrayView message,
-    XCryptographicHash_Algorithm method
-)
-{
-    return XCryptographicHash_hmac(key.m_data, key.m_size, message.m_data, message.m_size, method);
-}
-
-XByteArray* XCryptographicHash_hmac_3(
-    const XByteArray* key,
-    const XByteArray* message,
-    XCryptographicHash_Algorithm method
-)
-{
-    if (!key || !message) return NULL;
-
-    const char* keyData = (const char*)XByteArray_data((XByteArray*)key);
-    size_t keyLen = XByteArray_size_base((XByteArray*)key);
-    const char* msgData = (const char*)XByteArray_data((XByteArray*)message);
-    size_t msgLen = XByteArray_size_base((XByteArray*)message);
-
-    return XCryptographicHash_hmac(keyData, keyLen, msgData, msgLen, method);
-}
 
 // ==================== SHAKE128/256 XOF 实现 ====================
 
@@ -2485,7 +92,7 @@ static void xcryptographic_xof_absorb(XCryptographic_XofOperation* operation,
         if (operation->blockLen == operation->rate) {
             for (size_t i = 0; i < operation->rate / 8; ++i)
                 operation->state[i] ^= ((uint64_t*)operation->block)[i];
-            keccak_f(operation->state);
+            XCryptographicHash_keccakPermute(operation->state);
             operation->blockLen = 0;
             memset(operation->block, 0, operation->rate);
         }
@@ -2499,7 +106,7 @@ static void xcryptographic_xof_finalize(XCryptographic_XofOperation* operation)
     operation->block[operation->rate - 1] ^= 0x80;
     for (size_t i = 0; i < operation->rate / 8; ++i)
         operation->state[i] ^= ((uint64_t*)operation->block)[i];
-    keccak_f(operation->state);
+    XCryptographicHash_keccakPermute(operation->state);
     operation->finalized = true;
     operation->outputOffset = 0;
 }
@@ -2510,7 +117,7 @@ static void xcryptographic_xof_squeeze(XCryptographic_XofOperation* operation,
     size_t produced = 0;
     while (produced < outputSize) {
         if (operation->outputOffset == operation->rate) {
-            keccak_f(operation->state);
+            XCryptographicHash_keccakPermute(operation->state);
             operation->outputOffset = 0;
         }
         {
@@ -3735,15 +1342,7 @@ bool XCryptographic_blockCipherSetup(
     return true;
 }
 
-bool XCryptographic_aesBlockCipherSetup(
-    XCryptographic_BlockCipherOperation* operation, XByteArrayView key,
-    XCryptographic_BlockCipherMode mode, bool encrypt)
-{
-    return XCryptographic_blockCipherSetup(
-        operation, XCryptographic_BlockCipherAlgorithm_Aes, key, mode, encrypt);
-}
-
-bool XCryptographic_aesBlockCipherSetIv(
+bool XCryptographic_blockCipherSetIv(
     XCryptographic_BlockCipherOperation* operation, XByteArrayView iv)
 {
     if (!operation || operation->mode == XCryptographic_BlockCipherMode_EcbNoPadding ||
@@ -3842,7 +1441,7 @@ static void xcryptographic_block_cipher_process(
     memset(block, 0, sizeof(block));
 }
 
-XByteArrayView XCryptographic_aesBlockCipherUpdateInto(
+XByteArrayView XCryptographic_blockCipherUpdateInto(
     XCryptographic_BlockCipherOperation* operation, char* buffer,
     size_t bufferSize, XByteArrayView data)
 {
@@ -3990,7 +1589,7 @@ XByteArrayView XCryptographic_aesBlockCipherUpdateInto(
     return result;
 }
 
-XByteArrayView XCryptographic_aesBlockCipherFinishInto(
+XByteArrayView XCryptographic_blockCipherFinishInto(
     XCryptographic_BlockCipherOperation* operation, char* buffer,
     size_t bufferSize)
 {
@@ -4039,7 +1638,7 @@ XByteArrayView XCryptographic_aesBlockCipherFinishInto(
             }
             memset(block, 0, sizeof(block));
         }
-        XCryptographic_aesBlockCipherAbort(operation);
+        XCryptographic_blockCipherAbort(operation);
         return XByteArrayView_create_data((const uint8_t*)buffer,
                                           (int64_t)(partial == 0 ? 16 : 16 + partial));
     }
@@ -4078,18 +1677,18 @@ XByteArrayView XCryptographic_aesBlockCipherFinishInto(
                                                     16 - (size_t)padValue);
             }
         }
-        XCryptographic_aesBlockCipherAbort(operation);
+        XCryptographic_blockCipherAbort(operation);
         return result;
     }
 
     if ((operation->mode == XCryptographic_BlockCipherMode_EcbNoPadding ||
          operation->mode == XCryptographic_BlockCipherMode_CbcNoPadding) &&
         operation->pendingSize != 0) return empty;
-    XCryptographic_aesBlockCipherAbort(operation);
+    XCryptographic_blockCipherAbort(operation);
     return result;
 }
 
-void XCryptographic_aesBlockCipherAbort(
+void XCryptographic_blockCipherAbort(
     XCryptographic_BlockCipherOperation* operation)
 {
     if (operation) memset(operation, 0, sizeof(*operation));
@@ -4276,34 +1875,6 @@ failure:
     if (!result && buffer && outputLength != 0) memset(buffer, 0, outputLength);
     memset(roundKeys, 0, sizeof(roundKeys));
     return result;
-}
-
-bool XCryptographic_blockCipherSetIv(
-    XCryptographic_BlockCipherOperation* operation, XByteArrayView iv)
-{
-    return XCryptographic_aesBlockCipherSetIv(operation, iv);
-}
-
-XByteArrayView XCryptographic_blockCipherUpdateInto(
-    XCryptographic_BlockCipherOperation* operation, char* buffer,
-    size_t bufferSize, XByteArrayView data)
-{
-    return XCryptographic_aesBlockCipherUpdateInto(operation, buffer,
-                                                   bufferSize, data);
-}
-
-XByteArrayView XCryptographic_blockCipherFinishInto(
-    XCryptographic_BlockCipherOperation* operation, char* buffer,
-    size_t bufferSize)
-{
-    return XCryptographic_aesBlockCipherFinishInto(operation, buffer,
-                                                   bufferSize);
-}
-
-void XCryptographic_blockCipherAbort(
-    XCryptographic_BlockCipherOperation* operation)
-{
-    XCryptographic_aesBlockCipherAbort(operation);
 }
 
 bool XCryptographic_chacha20Setup(XCryptographic_ChaCha20Operation* operation,
@@ -6045,7 +3616,10 @@ XByteArrayView XCryptographic_hkdfExtractInto(
     XByteArrayView empty = { NULL, 0 };
     XByteArrayView result;
     int hashLength = XCryptographicHash_hashLength(hashAlgorithm);
-    if (!XCRYPTOGRAPHIC_HKDF_HMAC_ON || hashLength <= 0 ||
+    if (!XCRYPTOGRAPHIC_HKDF_HMAC_ON ||
+        (hashAlgorithm == XCryptographicHash_Sha256 &&
+         !XCRYPTOGRAPHIC_HKDF_EXTRACT_SHA256_ON) ||
+        hashLength <= 0 ||
         (size_t)hashLength > sizeof(zeroSalt) || salt.m_size < 0 ||
         inputKeyMaterial.m_size < 0 || (!salt.m_data && salt.m_size != 0) ||
         (!inputKeyMaterial.m_data && inputKeyMaterial.m_size != 0) || !buffer ||
@@ -6073,13 +3647,17 @@ XByteArrayView XCryptographic_hkdfExpandInto(
     uint8_t counter = 1;
     int hashLength = XCryptographicHash_hashLength(hashAlgorithm);
     XByteArrayView empty = { NULL, 0 };
-    if (!XCRYPTOGRAPHIC_HKDF_HMAC_ON || hashLength <= 0 ||
+    if (!XCRYPTOGRAPHIC_HKDF_HMAC_ON ||
+        (hashAlgorithm == XCryptographicHash_Sha256 &&
+         !XCRYPTOGRAPHIC_HKDF_EXPAND_SHA256_ON) ||
+        hashLength <= 0 ||
         (size_t)hashLength > sizeof(previous) || prk.m_size != hashLength ||
         !prk.m_data || info.m_size < 0 || (!info.m_data && info.m_size != 0) ||
         !buffer || outputSize == 0 || outputSize > 255u * (size_t)hashLength ||
         bufferSize < outputSize || (size_t)info.m_size > SIZE_MAX - (size_t)hashLength - 1u)
         return empty;
-    message = (uint8_t*)XMalloc_System((size_t)hashLength + (size_t)info.m_size + 1u);
+    message = (uint8_t*)xcryptographic_hash_malloc(
+        (size_t)hashLength + (size_t)info.m_size + 1u);
     if (!message) goto cleanup;
     while (outputOffset < outputSize) {
         size_t messageSize = 0;
@@ -6106,13 +3684,13 @@ XByteArrayView XCryptographic_hkdfExpandInto(
     }
     memset(previous, 0, sizeof(previous));
     memset(message, 0, (size_t)hashLength + (size_t)info.m_size + 1u);
-    XFree_System(message);
+    xcryptographic_hash_free(message);
     return XByteArrayView_create_data((const uint8_t*)buffer, (int64_t)outputSize);
 cleanup:
     memset(previous, 0, sizeof(previous));
     if (message) {
         memset(message, 0, (size_t)hashLength + (size_t)info.m_size + 1u);
-        XFree_System(message);
+        xcryptographic_hash_free(message);
     }
     return empty;
 }
@@ -6137,96 +3715,6 @@ XByteArrayView XCryptographic_hkdfInto(
     return result;
 }
 
-XByteArrayView XCryptographic_hkdfSha256Into(
-    XByteArrayView salt, XByteArrayView inputKeyMaterial,
-    XByteArrayView info, size_t outputSize,
-    char* buffer, size_t bufferSize)
-{
-    uint8_t zeroSalt[32] = { 0 };
-    uint8_t prk[32];
-    uint8_t previous[32] = { 0 };
-    uint8_t* message = NULL;
-    size_t previousSize = 0;
-    size_t outputOffset = 0;
-    uint8_t counter = 1;
-    XByteArrayView empty = { NULL, 0 };
-    if (!XCRYPTOGRAPHIC_HKDF_SHA256_ON || salt.m_size < 0 || inputKeyMaterial.m_size < 0 ||
-        info.m_size < 0 || (!salt.m_data && salt.m_size != 0) ||
-        (!inputKeyMaterial.m_data && inputKeyMaterial.m_size != 0) ||
-        (!info.m_data && info.m_size != 0) || !buffer || outputSize == 0 ||
-        outputSize > 255u * sizeof(prk) || bufferSize < outputSize ||
-        (size_t)info.m_size > SIZE_MAX - sizeof(previous) - 1u)
-        return empty;
-
-    if (!XCryptographicHash_hmacInto((char*)prk, sizeof(prk),
-                                     (const char*)(salt.m_size == 0 ? zeroSalt : salt.m_data),
-                                     (size_t)(salt.m_size == 0 ? sizeof(zeroSalt) : salt.m_size),
-                                     (const char*)inputKeyMaterial.m_data,
-                                     (size_t)inputKeyMaterial.m_size,
-                                     XCryptographicHash_Sha256).m_data)
-        goto cleanup;
-
-    message = (uint8_t*)XMalloc_System(sizeof(previous) + (size_t)info.m_size + 1u);
-    if (!message) goto cleanup;
-    while (outputOffset < outputSize) {
-        size_t messageSize = 0;
-        size_t copySize;
-        if (previousSize != 0) {
-            memcpy(message, previous, previousSize);
-            messageSize = previousSize;
-        }
-        if (info.m_size != 0) {
-            memcpy(message + messageSize, info.m_data, (size_t)info.m_size);
-            messageSize += (size_t)info.m_size;
-        }
-        message[messageSize++] = counter++;
-        if (!XCryptographicHash_hmacInto((char*)previous, sizeof(previous),
-                                         (const char*)prk, sizeof(prk),
-                                         (const char*)message, messageSize,
-                                         XCryptographicHash_Sha256).m_data)
-            goto cleanup;
-        previousSize = sizeof(previous);
-        copySize = outputSize - outputOffset;
-        if (copySize > sizeof(previous)) copySize = sizeof(previous);
-        memcpy(buffer + outputOffset, previous, copySize);
-        outputOffset += copySize;
-    }
-    memset(prk, 0, sizeof(prk));
-    memset(previous, 0, sizeof(previous));
-    memset(message, 0, sizeof(previous) + (size_t)info.m_size + 1u);
-    XFree_System(message);
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputSize };
-        return result;
-    }
-cleanup:
-    memset(prk, 0, sizeof(prk));
-    memset(previous, 0, sizeof(previous));
-    if (message) {
-        memset(message, 0, sizeof(previous) + (size_t)info.m_size + 1u);
-        XFree_System(message);
-    }
-    return empty;
-}
-
-XByteArray* XCryptographic_hkdfSha256(
-    XByteArrayView salt, XByteArrayView inputKeyMaterial,
-    XByteArrayView info, size_t outputSize)
-{
-    XByteArray* result;
-    if (outputSize == 0) return NULL;
-    result = XByteArray_create();
-    if (!result || !XByteArray_resize_base((XVector*)result, outputSize)) {
-        if (result) XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    if (!XCryptographic_hkdfSha256Into(salt, inputKeyMaterial, info, outputSize,
-                                       (char*)XByteArray_data(result), outputSize).m_data) {
-            XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    return result;
-}
 
 XByteArrayView XCryptographic_pbkdf2HmacInto(
     XByteArrayView password, XByteArrayView salt, uint32_t iterations,
@@ -6242,14 +3730,18 @@ XByteArrayView XCryptographic_pbkdf2HmacInto(
     int hashLength;
     XByteArrayView empty = { NULL, 0 };
     hashLength = XCryptographicHash_hashLength(hashAlgorithm);
-    if (!XCRYPTOGRAPHIC_PBKDF2_HMAC_ON || hashLength <= 0 ||
+    if (!XCRYPTOGRAPHIC_PBKDF2_HMAC_ON ||
+        (hashAlgorithm == XCryptographicHash_Sha256 &&
+         !XCRYPTOGRAPHIC_PBKDF2_HMAC_SHA256_ON) ||
+        hashLength <= 0 ||
         (size_t)hashLength > sizeof(first) || password.m_size < 0 || salt.m_size < 0 ||
         (!password.m_data && password.m_size != 0) || (!salt.m_data && salt.m_size != 0) ||
         iterations == 0 || outputSize == 0 || !buffer || bufferSize < outputSize ||
         (size_t)salt.m_size > SIZE_MAX - sizeof(saltCounter) ||
         ((outputSize - 1u) / (size_t)hashLength) >= UINT32_MAX)
         return empty;
-    message = (uint8_t*)XMalloc_System((size_t)salt.m_size + sizeof(saltCounter));
+    message = (uint8_t*)xcryptographic_hash_malloc(
+        (size_t)salt.m_size + sizeof(saltCounter));
     if (!message) goto cleanup;
     if (salt.m_size != 0) memcpy(message, salt.m_data, (size_t)salt.m_size);
     while (outputOffset < outputSize) {
@@ -6285,7 +3777,7 @@ XByteArrayView XCryptographic_pbkdf2HmacInto(
     memset(first, 0, sizeof(first));
     memset(next, 0, sizeof(next));
     memset(message, 0, (size_t)salt.m_size + sizeof(saltCounter));
-    XFree_System(message);
+    xcryptographic_hash_free(message);
     {
         XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputSize };
         return result;
@@ -6295,118 +3787,12 @@ cleanup:
     memset(next, 0, sizeof(next));
     if (message) {
         memset(message, 0, (size_t)salt.m_size + sizeof(saltCounter));
-        XFree_System(message);
+        xcryptographic_hash_free(message);
     }
     return empty;
 }
 
-XByteArrayView XCryptographic_pbkdf2HmacSha256Into(
-    XByteArrayView password, XByteArrayView salt, uint32_t iterations,
-    size_t outputSize, char* buffer, size_t bufferSize)
-{
-    if (!XCRYPTOGRAPHIC_PBKDF2_HMAC_SHA256_ON) {
-        XByteArrayView empty = { NULL, 0 };
-        return empty;
-    }
-    return XCryptographic_pbkdf2HmacInto(
-        password, salt, iterations, XCryptographicHash_Sha256,
-        outputSize, buffer, bufferSize);
-}
 
-XByteArray* XCryptographic_pbkdf2HmacSha256(
-    XByteArrayView password, XByteArrayView salt, uint32_t iterations,
-    size_t outputSize)
-{
-    XByteArray* result;
-    if (outputSize == 0) return NULL;
-    result = XByteArray_create();
-    if (!result || !XByteArray_resize_base((XVector*)result, outputSize) ||
-        !XCryptographic_pbkdf2HmacSha256Into(password, salt, iterations, outputSize,
-                                              (char*)XByteArray_data(result), outputSize).m_data) {
-        if (result) XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    return result;
-}
-
-XByteArrayView XCryptographic_hkdfExtractSha256Into(
-    XByteArrayView salt, XByteArrayView inputKeyMaterial,
-    char* buffer, size_t bufferSize)
-{
-    uint8_t zeroSalt[32] = { 0 };
-    XByteArrayView empty = { NULL, 0 };
-    XByteArrayView result;
-    if (!XCRYPTOGRAPHIC_HKDF_EXTRACT_SHA256_ON || salt.m_size < 0 ||
-        inputKeyMaterial.m_size < 0 || (!salt.m_data && salt.m_size != 0) ||
-        (!inputKeyMaterial.m_data && inputKeyMaterial.m_size != 0) ||
-        !buffer || bufferSize < 32)
-        return empty;
-    result = XCryptographicHash_hmacInto(
-        buffer, bufferSize,
-        (const char*)(salt.m_size == 0 ? zeroSalt : salt.m_data),
-        (size_t)(salt.m_size == 0 ? sizeof(zeroSalt) : salt.m_size),
-        (const char*)inputKeyMaterial.m_data, (size_t)inputKeyMaterial.m_size,
-        XCryptographicHash_Sha256);
-    memset(zeroSalt, 0, sizeof(zeroSalt));
-    if (!result.m_data || result.m_size != 32) return empty;
-    return result;
-}
-
-XByteArrayView XCryptographic_hkdfExpandSha256Into(
-    XByteArrayView prk, XByteArrayView info, size_t outputSize,
-    char* buffer, size_t bufferSize)
-{
-    uint8_t previous[32] = { 0 };
-    uint8_t* message = NULL;
-    size_t previousSize = 0;
-    size_t outputOffset = 0;
-    uint8_t counter = 1;
-    XByteArrayView empty = { NULL, 0 };
-    if (!XCRYPTOGRAPHIC_HKDF_EXPAND_SHA256_ON || prk.m_size != 32 ||
-        info.m_size < 0 || (!info.m_data && info.m_size != 0) || !buffer ||
-        outputSize == 0 || outputSize > 255u * sizeof(previous) ||
-        bufferSize < outputSize || (size_t)info.m_size > SIZE_MAX - sizeof(previous) - 1u)
-        return empty;
-    message = (uint8_t*)XMalloc_System(sizeof(previous) + (size_t)info.m_size + 1u);
-    if (!message) goto cleanup;
-    while (outputOffset < outputSize) {
-        size_t messageSize = 0;
-        size_t copySize;
-        if (previousSize != 0) {
-            memcpy(message, previous, previousSize);
-            messageSize = previousSize;
-        }
-        if (info.m_size != 0) {
-            memcpy(message + messageSize, info.m_data, (size_t)info.m_size);
-            messageSize += (size_t)info.m_size;
-        }
-        message[messageSize++] = counter++;
-        if (!XCryptographicHash_hmacInto((char*)previous, sizeof(previous),
-                                         (const char*)prk.m_data, sizeof(previous),
-                                         (const char*)message, messageSize,
-                                         XCryptographicHash_Sha256).m_data)
-            goto cleanup;
-        previousSize = sizeof(previous);
-        copySize = outputSize - outputOffset;
-        if (copySize > sizeof(previous)) copySize = sizeof(previous);
-        memcpy(buffer + outputOffset, previous, copySize);
-        outputOffset += copySize;
-    }
-    memset(previous, 0, sizeof(previous));
-    memset(message, 0, sizeof(previous) + (size_t)info.m_size + 1u);
-    XFree_System(message);
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputSize };
-        return result;
-    }
-cleanup:
-    memset(previous, 0, sizeof(previous));
-    if (message) {
-        memset(message, 0, sizeof(previous) + (size_t)info.m_size + 1u);
-        XFree_System(message);
-    }
-    return empty;
-}
 
 XByteArrayView XCryptographic_tls12PrfInto(
     XByteArrayView secret, XByteArrayView label, XByteArrayView seed,
@@ -6422,7 +3808,10 @@ XByteArrayView XCryptographic_tls12PrfInto(
     size_t outputOffset = 0;
     int hashLength = XCryptographicHash_hashLength(hashAlgorithm);
     XByteArrayView empty = { NULL, 0 };
-    if (!XCRYPTOGRAPHIC_TLS12_PRF_HMAC_ON || hashLength <= 0 ||
+    if (!XCRYPTOGRAPHIC_TLS12_PRF_HMAC_ON ||
+        (hashAlgorithm == XCryptographicHash_Sha256 &&
+         !XCRYPTOGRAPHIC_TLS12_PRF_SHA256_ON) ||
+        hashLength <= 0 ||
         (size_t)hashLength > sizeof(a) || secret.m_size < 0 ||
         label.m_size < 0 || seed.m_size < 0 ||
         (!secret.m_data && secret.m_size != 0) ||
@@ -6432,7 +3821,7 @@ XByteArrayView XCryptographic_tls12PrfInto(
         return empty;
     seedSize = (size_t)label.m_size + (size_t)seed.m_size;
     if (seedSize > SIZE_MAX - (size_t)hashLength) return empty;
-    message = (uint8_t*)XMalloc_System(seedSize + (size_t)hashLength);
+    message = (uint8_t*)xcryptographic_hash_malloc(seedSize + (size_t)hashLength);
     if (!message) goto cleanup;
     if (label.m_size != 0) memcpy(message, label.m_data, (size_t)label.m_size);
     if (seed.m_size != 0) memcpy(message + (size_t)label.m_size, seed.m_data, (size_t)seed.m_size);
@@ -6468,7 +3857,7 @@ XByteArrayView XCryptographic_tls12PrfInto(
     memset(nextA, 0, sizeof(nextA));
     memset(outputBlock, 0, sizeof(outputBlock));
     memset(message, 0, seedSize + (size_t)hashLength);
-    XFree_System(message);
+    xcryptographic_hash_free(message);
     return XByteArrayView_create_data((const uint8_t*)buffer, (int64_t)outputSize);
 cleanup:
     memset(a, 0, sizeof(a));
@@ -6476,83 +3865,11 @@ cleanup:
     memset(outputBlock, 0, sizeof(outputBlock));
     if (message) {
         memset(message, 0, seedSize + (size_t)hashLength);
-        XFree_System(message);
+        xcryptographic_hash_free(message);
     }
     return empty;
 }
 
-XByteArrayView XCryptographic_tls12PrfSha256Into(
-    XByteArrayView secret, XByteArrayView label, XByteArrayView seed,
-    size_t outputSize, char* buffer, size_t bufferSize)
-{
-    uint8_t a[32] = { 0 };
-    uint8_t nextA[32] = { 0 };
-    uint8_t outputBlock[32] = { 0 };
-    uint8_t* message = NULL;
-    size_t seedSize;
-    size_t outputOffset = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (!XCRYPTOGRAPHIC_TLS12_PRF_SHA256_ON || secret.m_size < 0 ||
-        label.m_size < 0 || seed.m_size < 0 ||
-        (!secret.m_data && secret.m_size != 0) ||
-        (!label.m_data && label.m_size != 0) ||
-        (!seed.m_data && seed.m_size != 0) || !buffer ||
-        outputSize == 0 || bufferSize < outputSize)
-        return empty;
-    seedSize = (size_t)label.m_size + (size_t)seed.m_size;
-    if (seedSize > SIZE_MAX - sizeof(a)) return empty;
-    message = (uint8_t*)XMalloc_System(seedSize + sizeof(a));
-    if (!message) goto cleanup;
-    if (label.m_size != 0) memcpy(message, label.m_data, (size_t)label.m_size);
-    if (seed.m_size != 0) memcpy(message + (size_t)label.m_size, seed.m_data, (size_t)seed.m_size);
-    if (!XCryptographicHash_hmacInto((char*)a, sizeof(a),
-                                     (const char*)secret.m_data, (size_t)secret.m_size,
-                                     (const char*)message, seedSize,
-                                     XCryptographicHash_Sha256).m_data)
-        goto cleanup;
-    while (outputOffset < outputSize) {
-        size_t copySize;
-        memcpy(message, a, sizeof(a));
-        if (label.m_size != 0) memcpy(message + sizeof(a), label.m_data, (size_t)label.m_size);
-        if (seed.m_size != 0) memcpy(message + sizeof(a) + (size_t)label.m_size,
-                                     seed.m_data, (size_t)seed.m_size);
-        if (!XCryptographicHash_hmacInto((char*)outputBlock, sizeof(outputBlock),
-                                         (const char*)secret.m_data, (size_t)secret.m_size,
-                                         (const char*)message, sizeof(a) + seedSize,
-                                         XCryptographicHash_Sha256).m_data)
-            goto cleanup;
-        copySize = outputSize - outputOffset;
-        if (copySize > sizeof(outputBlock)) copySize = sizeof(outputBlock);
-        memcpy(buffer + outputOffset, outputBlock, copySize);
-        outputOffset += copySize;
-        if (outputOffset < outputSize) {
-            if (!XCryptographicHash_hmacInto((char*)nextA, sizeof(nextA),
-                                             (const char*)secret.m_data, (size_t)secret.m_size,
-                                             (const char*)a, sizeof(a),
-                                             XCryptographicHash_Sha256).m_data)
-                goto cleanup;
-            memcpy(a, nextA, sizeof(a));
-        }
-    }
-    memset(a, 0, sizeof(a));
-    memset(nextA, 0, sizeof(nextA));
-    memset(outputBlock, 0, sizeof(outputBlock));
-    memset(message, 0, seedSize + sizeof(a));
-    XFree_System(message);
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputSize };
-        return result;
-    }
-cleanup:
-    memset(a, 0, sizeof(a));
-    memset(nextA, 0, sizeof(nextA));
-    memset(outputBlock, 0, sizeof(outputBlock));
-    if (message) {
-        memset(message, 0, seedSize + sizeof(a));
-        XFree_System(message);
-    }
-    return empty;
-}
 
 XByteArrayView XCryptographic_tls12PskToMsInto(
     XByteArrayView psk, XByteArrayView otherSecret,
@@ -6565,7 +3882,10 @@ XByteArrayView XCryptographic_tls12PskToMsInto(
     size_t offset = 0;
     XByteArrayView empty = { NULL, 0 };
     XByteArrayView result;
-    if (!XCRYPTOGRAPHIC_TLS12_PSK_TO_MS_HMAC_ON || psk.m_size < 0 ||
+    if (!XCRYPTOGRAPHIC_TLS12_PSK_TO_MS_HMAC_ON ||
+        (hashAlgorithm == XCryptographicHash_Sha256 &&
+         !XCRYPTOGRAPHIC_TLS12_PSK_TO_MS_SHA256_ON) ||
+        psk.m_size < 0 ||
         otherSecret.m_size < 0 || label.m_size < 0 || seed.m_size < 0 ||
         (!psk.m_data && psk.m_size != 0) || (!otherSecret.m_data && otherSecret.m_size != 0) ||
         (!label.m_data && label.m_size != 0) || (!seed.m_data && seed.m_size != 0) ||
@@ -6579,7 +3899,7 @@ XByteArrayView XCryptographic_tls12PskToMsInto(
         if ((size_t)psk.m_size > (SIZE_MAX - 4u) / 2u) return empty;
         pmsSize = 4u + 2u * (size_t)psk.m_size;
     }
-    pms = (uint8_t*)XMalloc_System(pmsSize == 0 ? 1 : pmsSize);
+    pms = (uint8_t*)xcryptographic_hash_malloc(pmsSize == 0 ? 1 : pmsSize);
     if (!pms) return empty;
     if (otherSecret.m_size > 0) {
         pms[offset++] = (uint8_t)((size_t)otherSecret.m_size >> 8);
@@ -6600,59 +3920,10 @@ XByteArrayView XCryptographic_tls12PskToMsInto(
         XByteArrayView_create_data(pms, (int64_t)offset), label, seed, hashAlgorithm,
         outputSize, buffer, bufferSize);
     memset(pms, 0, pmsSize);
-    XFree_System(pms);
+    xcryptographic_hash_free(pms);
     return result;
 }
 
-XByteArrayView XCryptographic_tls12PskToMsSha256Into(
-    XByteArrayView psk, XByteArrayView otherSecret,
-    XByteArrayView label, XByteArrayView seed,
-    size_t outputSize, char* buffer, size_t bufferSize)
-{
-    uint8_t* pms = NULL;
-    size_t pmsSize;
-    size_t offset = 0;
-    XByteArrayView empty = { NULL, 0 };
-    XByteArrayView result;
-    if (!XCRYPTOGRAPHIC_TLS12_PSK_TO_MS_SHA256_ON || psk.m_size < 0 ||
-        otherSecret.m_size < 0 || label.m_size < 0 || seed.m_size < 0 ||
-        (!psk.m_data && psk.m_size != 0) || (!otherSecret.m_data && otherSecret.m_size != 0) ||
-        (!label.m_data && label.m_size != 0) || (!seed.m_data && seed.m_size != 0) ||
-        !buffer || outputSize == 0 || bufferSize < outputSize)
-        return empty;
-    if (otherSecret.m_size > 0) {
-        pmsSize = 4u + (size_t)otherSecret.m_size + (size_t)psk.m_size;
-    } else {
-        pmsSize = 4u + 2u * (size_t)psk.m_size;
-    }
-    pms = (uint8_t*)XMalloc_System(pmsSize);
-    if (!pms) return empty;
-    if (otherSecret.m_size > 0) {
-        pms[offset++] = (uint8_t)((size_t)otherSecret.m_size >> 8);
-        pms[offset++] = (uint8_t)(size_t)otherSecret.m_size;
-        if (otherSecret.m_size != 0) {
-            memcpy(pms + offset, otherSecret.m_data, (size_t)otherSecret.m_size);
-            offset += (size_t)otherSecret.m_size;
-        }
-    } else {
-        pms[offset++] = (uint8_t)((size_t)psk.m_size >> 8);
-        pms[offset++] = (uint8_t)(size_t)psk.m_size;
-        memset(pms + offset, 0, (size_t)psk.m_size);
-        offset += (size_t)psk.m_size;
-    }
-    pms[offset++] = (uint8_t)((size_t)psk.m_size >> 8);
-    pms[offset++] = (uint8_t)(size_t)psk.m_size;
-    if (psk.m_size != 0) {
-        memcpy(pms + offset, psk.m_data, (size_t)psk.m_size);
-        offset += (size_t)psk.m_size;
-    }
-    result = XCryptographic_tls12PrfSha256Into(
-        XByteArrayView_create_data(pms, (int64_t)offset), label, seed,
-        outputSize, buffer, bufferSize);
-    memset(pms, 0, pmsSize);
-    XFree_System(pms);
-    return result;
-}
 
 XByteArrayView XCryptographic_pbkdf2AesCmacPrf128Into(
     XByteArrayView password, XByteArrayView salt, uint32_t iterations,
@@ -6672,7 +3943,8 @@ XByteArrayView XCryptographic_pbkdf2AesCmacPrf128Into(
         outputSize == 0 || !buffer || bufferSize < outputSize ||
         (size_t)salt.m_size > SIZE_MAX - sizeof(saltCounter))
         return empty;
-    message = (uint8_t*)XMalloc_System((size_t)salt.m_size + sizeof(saltCounter));
+    message = (uint8_t*)xcryptographic_hash_malloc(
+        (size_t)salt.m_size + sizeof(saltCounter));
     if (!message) goto cleanup;
     if (salt.m_size != 0) memcpy(message, salt.m_data, (size_t)salt.m_size);
     while (outputOffset < outputSize) {
@@ -6709,7 +3981,7 @@ XByteArrayView XCryptographic_pbkdf2AesCmacPrf128Into(
     memset(blockU, 0, sizeof(blockU));
     memset(nextU, 0, sizeof(nextU));
     memset(message, 0, (size_t)salt.m_size + sizeof(saltCounter));
-    XFree_System(message);
+    xcryptographic_hash_free(message);
     {
         XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputSize };
         return result;
@@ -6720,7 +3992,7 @@ cleanup:
     memset(acc, 0, sizeof(acc));
     if (message) {
         memset(message, 0, (size_t)salt.m_size + sizeof(saltCounter));
-        XFree_System(message);
+        xcryptographic_hash_free(message);
     }
     return empty;
 }
@@ -9987,23 +7259,6 @@ static bool xcryptographic_ecdsa_p256_import_private_key(
     return true;
 }
 
-bool XCryptographic_ecdsaP256GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[32];
-    if (!result || !xcryptographic_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_p256_import_private_key(privateKey, 32, result);
-}
-
-static bool xcryptographic_ecdsa_p256_export_private_key(
-    XCryptographic_Key key, void* output, size_t outputCap, size_t* outputLen)
-{
-    if (!output || !outputLen || outputCap < 32 ||
-        key.type != XCryptographic_KeyType_EcdsaNistP256Private) return false;
-    memcpy(output, key.privateKey, 32);
-    *outputLen = 32;
-    return true;
-}
-
 static bool xcryptographic_ecdsa_p256_import_public_key(
     const void* key, size_t keyLen, XCryptographic_Key* result)
 {
@@ -11891,413 +9146,330 @@ XByteArray* XCryptographic_ecdhAgree(XCryptographic_Key privateKey,
     return result;
 }
 
-bool XCryptographic_ecdsaP256ImportPrivateKey(XByteArrayView key,
-                                                  XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_p256_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
 
-XByteArrayView XCryptographic_ecdsaP256ExportPrivateKeyInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key)
+bool XCryptographic_ecdsaImportPrivateKey(
+    XCryptographic_EcdsaAlgorithm algorithm, XByteArrayView key,
+    XCryptographic_Key* result)
 {
-    size_t outputLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (!xcryptographic_ecdsa_p256_export_private_key(key, buffer, bufferSize,
-                                                            &outputLen))
-        return empty;
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)outputLen };
-        return result;
+    if (key.m_size < 0) return false;
+    switch (algorithm) {
+        case XCryptographic_EcdsaAlgorithm_NistP256:
+            return xcryptographic_ecdsa_p256_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_NistP384:
+            return xcryptographic_ecdsa_p384_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_NistP521:
+            return xcryptographic_ecdsa_p521_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP256r1:
+            return xcryptographic_ecdsa_brainpool_p256r1_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP384r1:
+            return xcryptographic_ecdsa_brainpool_p384r1_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP512r1:
+            return xcryptographic_ecdsa_brainpool_p512r1_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_Secp256k1:
+            return xcryptographic_ecdsa_secp256k1_import_private_key(
+                key.m_data, (size_t)key.m_size, result);
+        default:
+            return false;
     }
 }
 
-XByteArray* XCryptographic_ecdsaP256ExportPrivateKey(XCryptographic_Key key)
-{
-    XByteArray* result = XByteArray_create();
-    XByteArrayView view;
-    if (!result || !XByteArray_resize_base(result, 32)) {
-        if (result) XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    view = XCryptographic_ecdsaP256ExportPrivateKeyInto(
-        (char*)XByteArray_data(result), 32, key);
-    if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    return result;
-}
-
-bool XCryptographic_ecdsaP256ImportPublicKey(XByteArrayView key,
-                                                 XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_p256_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-XByteArrayView XCryptographic_ecdsaP256SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key,
-    XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p256_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen)) return empty;
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)signatureLen };
-        return result;
-    }
-}
-
-XByteArray* XCryptographic_ecdsaP256SignHash(XCryptographic_Key key,
-                                                  XByteArrayView hash)
-{
-    XByteArray* result = XByteArray_create();
-    XByteArrayView view;
-    if (!result || !XByteArray_resize_base(result, 64)) {
-        if (result) XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    view = XCryptographic_ecdsaP256SignHashInto((char*)XByteArray_data(result),
-                                                     64, key, hash);
-    if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    return result;
-}
-
-XByteArrayView XCryptographic_ecdsaP256SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key,
-    XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p256_sign_hash_deterministic(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen)) return empty;
-    {
-        XByteArrayView result = { (const uint8_t*)buffer, (int64_t)signatureLen };
-        return result;
-    }
-}
-
-XByteArray* XCryptographic_ecdsaP256SignHashDeterministic(
-    XCryptographic_Key key, XByteArrayView hash)
-{
-    XByteArray* result = XByteArray_create();
-    XByteArrayView view;
-    if (!result || !XByteArray_resize_base(result, 64)) {
-        if (result) XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    view = XCryptographic_ecdsaP256SignHashDeterministicInto(
-        (char*)XByteArray_data(result), 64, key, hash);
-    if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
-        return NULL;
-    }
-    return result;
-}
-
-bool XCryptographic_ecdsaP256VerifyHash(XCryptographic_Key key,
-                                            XByteArrayView hash,
-                                            XByteArrayView signature)
-{
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_p256_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
-}
-
-bool XCryptographic_ecdsaP384ImportPrivateKey(XByteArrayView key,
-                                              XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_p384_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-bool XCryptographic_ecdsaP384GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[48];
-    if (!result || !xcryptographic_p384_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_p384_import_private_key(privateKey, sizeof(privateKey), result);
-}
-
-bool XCryptographic_ecdsaP384ImportPublicKey(XByteArrayView key,
-                                             XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_p384_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-XByteArrayView XCryptographic_ecdsaP384SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p384_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, false)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-XByteArrayView XCryptographic_ecdsaP384SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p384_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, true)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-bool XCryptographic_ecdsaP384VerifyHash(XCryptographic_Key key,
-                                        XByteArrayView hash,
-                                        XByteArrayView signature)
-{
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_p384_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
-}
-
-bool XCryptographic_ecdsaP521ImportPrivateKey(XByteArrayView key,
-                                              XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_p521_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-bool XCryptographic_ecdsaP521GenerateKey(XCryptographic_Key* result)
+bool XCryptographic_ecdsaGenerateKey(
+    XCryptographic_EcdsaAlgorithm algorithm, XCryptographic_Key* result)
 {
     uint8_t privateKey[66];
-    if (!result || !xcryptographic_p521_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_p521_import_private_key(privateKey, sizeof(privateKey), result);
+    if (!result) return false;
+    switch (algorithm) {
+        case XCryptographic_EcdsaAlgorithm_NistP256:
+            return xcryptographic_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_p256_import_private_key(privateKey, 32, result);
+        case XCryptographic_EcdsaAlgorithm_NistP384:
+            return xcryptographic_p384_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_p384_import_private_key(privateKey, 48, result);
+        case XCryptographic_EcdsaAlgorithm_NistP521:
+            return xcryptographic_p521_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_p521_import_private_key(privateKey, 66, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP256r1:
+            return xcryptographic_brainpool_p256r1_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_brainpool_p256r1_import_private_key(privateKey, 32, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP384r1:
+            return xcryptographic_brainpool_p384r1_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_brainpool_p384r1_import_private_key(privateKey, 48, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP512r1:
+            return xcryptographic_brainpool_p512r1_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_brainpool_p512r1_import_private_key(privateKey, 64, result);
+        case XCryptographic_EcdsaAlgorithm_Secp256k1:
+            return xcryptographic_secp256k1_random_scalar(privateKey) &&
+                   xcryptographic_ecdsa_secp256k1_import_private_key(privateKey, 32, result);
+        default:
+            return false;
+    }
 }
 
-bool XCryptographic_ecdsaP521ImportPublicKey(XByteArrayView key,
-                                             XCryptographic_Key* result)
+bool XCryptographic_ecdsaImportPublicKey(
+    XCryptographic_EcdsaAlgorithm algorithm, XByteArrayView key,
+    XCryptographic_Key* result)
 {
-    return key.m_size >= 0 && xcryptographic_ecdsa_p521_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
+    if (key.m_size < 0) return false;
+    switch (algorithm) {
+        case XCryptographic_EcdsaAlgorithm_NistP256:
+            return xcryptographic_ecdsa_p256_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_NistP384:
+            return xcryptographic_ecdsa_p384_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_NistP521:
+            return xcryptographic_ecdsa_p521_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP256r1:
+            return xcryptographic_ecdsa_brainpool_p256r1_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP384r1:
+            return xcryptographic_ecdsa_brainpool_p384r1_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_BrainpoolP512r1:
+            return xcryptographic_ecdsa_brainpool_p512r1_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        case XCryptographic_EcdsaAlgorithm_Secp256k1:
+            return xcryptographic_ecdsa_secp256k1_import_public_key(
+                key.m_data, (size_t)key.m_size, result);
+        default:
+            return false;
+    }
 }
 
-XByteArrayView XCryptographic_ecdsaP521SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
+static size_t xcryptographic_ecdsa_private_key_size(XCryptographic_KeyType type)
 {
-    size_t signatureLen = 0;
+    switch (type) {
+        case XCryptographic_KeyType_EcdsaNistP256Private:
+        case XCryptographic_KeyType_EcdsaSecp256k1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Private:
+            return 32;
+        case XCryptographic_KeyType_EcdsaNistP384Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Private:
+            return 48;
+        case XCryptographic_KeyType_EcdsaNistP521Private:
+            return 66;
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Private:
+            return 64;
+        default:
+            return 0;
+    }
+}
+
+static size_t xcryptographic_ecdsa_signature_size(XCryptographic_KeyType type)
+{
+    switch (type) {
+        case XCryptographic_KeyType_EcdsaNistP256Private:
+        case XCryptographic_KeyType_EcdsaNistP256Public:
+        case XCryptographic_KeyType_EcdsaSecp256k1Private:
+        case XCryptographic_KeyType_EcdsaSecp256k1Public:
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Public:
+            return 64;
+        case XCryptographic_KeyType_EcdsaNistP384Private:
+        case XCryptographic_KeyType_EcdsaNistP384Public:
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Public:
+            return 96;
+        case XCryptographic_KeyType_EcdsaNistP521Private:
+        case XCryptographic_KeyType_EcdsaNistP521Public:
+            return 132;
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Public:
+            return 128;
+        default:
+            return 0;
+    }
+}
+
+XByteArrayView XCryptographic_ecdsaExportPrivateKeyInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key key)
+{
     XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p521_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, false)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+    size_t keySize = xcryptographic_ecdsa_private_key_size(key.type);
+    if (!buffer || keySize == 0 || bufferSize < keySize) return empty;
+    memcpy(buffer, key.privateKey, keySize);
+    return XByteArrayView_create_data(buffer, (int64_t)keySize);
 }
 
-XByteArrayView XCryptographic_ecdsaP521SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
+XByteArray* XCryptographic_ecdsaExportPrivateKey(XCryptographic_Key key)
 {
-    size_t signatureLen = 0;
+    size_t keySize = xcryptographic_ecdsa_private_key_size(key.type);
+    XByteArray* result;
+    XByteArrayView view;
+    if (keySize == 0) return NULL;
+    result = XByteArray_create();
+    if (!result || !XByteArray_resize_base(result, keySize)) {
+        if (result) XByteArray_delete_base((XClass*)result);
+        return NULL;
+    }
+    view = XCryptographic_ecdsaExportPrivateKeyInto(
+        (char*)XByteArray_data(result), keySize, key);
+    if (!view.m_data) {
+        XByteArray_delete_base((XClass*)result);
+        return NULL;
+    }
+    return result;
+}
+
+XByteArrayView XCryptographic_ecdsaSignHashInto(
+    char* buffer, size_t bufferSize, XCryptographic_Key key,
+    XByteArrayView hash, bool deterministic)
+{
     XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_p521_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, true)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+    if (!buffer || hash.m_size < 0) return empty;
+    switch (key.type) {
+        case XCryptographic_KeyType_EcdsaNistP256Private:
+            if (deterministic) {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_p256_sign_hash_deterministic(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            } else {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_p256_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaNistP256Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaNistP384Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_p384_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaNistP384Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaNistP521Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_p521_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaNistP521Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_brainpool_p256r1_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_brainpool_p384r1_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_brainpool_p512r1_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Public:
+            return empty;
+        case XCryptographic_KeyType_EcdsaSecp256k1Private:
+            {
+                size_t signatureLen = 0;
+                if (!xcryptographic_ecdsa_secp256k1_sign_hash(
+                        key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
+                        &signatureLen, deterministic)) return empty;
+                return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
+            }
+        case XCryptographic_KeyType_EcdsaSecp256k1Public:
+            return empty;
+        default:
+            return empty;
+    }
 }
 
-bool XCryptographic_ecdsaP521VerifyHash(XCryptographic_Key key,
-                                        XByteArrayView hash,
-                                        XByteArrayView signature)
+XByteArray* XCryptographic_ecdsaSignHash(
+    XCryptographic_Key key, XByteArrayView hash, bool deterministic)
 {
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_p521_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
+    size_t signatureSize = xcryptographic_ecdsa_signature_size(key.type);
+    XByteArray* result;
+    XByteArrayView view;
+    if (signatureSize == 0) return NULL;
+    result = XByteArray_create();
+    if (!result || !XByteArray_resize_base(result, signatureSize)) {
+        if (result) XByteArray_delete_base((XClass*)result);
+        return NULL;
+    }
+    view = XCryptographic_ecdsaSignHashInto(
+        (char*)XByteArray_data(result), signatureSize, key, hash, deterministic);
+    if (!view.m_data) {
+        XByteArray_delete_base((XClass*)result);
+        return NULL;
+    }
+    return result;
 }
 
-bool XCryptographic_ecdsaBrainpoolP384r1ImportPrivateKey(XByteArrayView key,XCryptographic_Key* result)
-{ return key.m_size>=0 && xcryptographic_ecdsa_brainpool_p384r1_import_private_key(key.m_data,(size_t)key.m_size,result); }
-bool XCryptographic_ecdsaBrainpoolP384r1GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[48]; if (!result || !xcryptographic_brainpool_p384r1_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_brainpool_p384r1_import_private_key(privateKey,sizeof(privateKey),result);
-}
-bool XCryptographic_ecdsaBrainpoolP384r1ImportPublicKey(XByteArrayView key,XCryptographic_Key* result)
-{ return key.m_size>=0 && xcryptographic_ecdsa_brainpool_p384r1_import_public_key(key.m_data,(size_t)key.m_size,result); }
-XByteArrayView XCryptographic_ecdsaBrainpoolP384r1SignHashInto(char* buffer,size_t bufferSize,XCryptographic_Key key,XByteArrayView hash)
-{
-    size_t signatureLen=0; XByteArrayView empty={NULL,0};
-    if (hash.m_size<0 || !xcryptographic_ecdsa_brainpool_p384r1_sign_hash(key,hash.m_data,(size_t)hash.m_size,buffer,bufferSize,&signatureLen,false)) return empty;
-    return XByteArrayView_create_data(buffer,(int64_t)signatureLen);
-}
-XByteArrayView XCryptographic_ecdsaBrainpoolP384r1SignHashDeterministicInto(char* buffer,size_t bufferSize,XCryptographic_Key key,XByteArrayView hash)
-{
-    size_t signatureLen=0; XByteArrayView empty={NULL,0};
-    if (hash.m_size<0 || !xcryptographic_ecdsa_brainpool_p384r1_sign_hash(key,hash.m_data,(size_t)hash.m_size,buffer,bufferSize,&signatureLen,true)) return empty;
-    return XByteArrayView_create_data(buffer,(int64_t)signatureLen);
-}
-bool XCryptographic_ecdsaBrainpoolP384r1VerifyHash(XCryptographic_Key key,XByteArrayView hash,XByteArrayView signature)
-{ return hash.m_size>=0 && signature.m_size>=0 && xcryptographic_ecdsa_brainpool_p384r1_verify_hash(key,hash.m_data,(size_t)hash.m_size,signature.m_data,(size_t)signature.m_size); }
-
-bool XCryptographic_ecdsaBrainpoolP512r1ImportPrivateKey(
-    XByteArrayView key, XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_brainpool_p512r1_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-bool XCryptographic_ecdsaBrainpoolP512r1GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[64];
-    if (!result || !xcryptographic_brainpool_p512r1_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_brainpool_p512r1_import_private_key(
-        privateKey, sizeof(privateKey), result);
-}
-
-bool XCryptographic_ecdsaBrainpoolP512r1ImportPublicKey(
-    XByteArrayView key, XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_brainpool_p512r1_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-XByteArrayView XCryptographic_ecdsaBrainpoolP512r1SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_brainpool_p512r1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, false)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-XByteArrayView XCryptographic_ecdsaBrainpoolP512r1SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_brainpool_p512r1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, true)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-bool XCryptographic_ecdsaBrainpoolP512r1VerifyHash(
+bool XCryptographic_ecdsaVerifyHash(
     XCryptographic_Key key, XByteArrayView hash, XByteArrayView signature)
 {
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_brainpool_p512r1_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
-}
-
-bool XCryptographic_ecdsaSecp256k1ImportPrivateKey(XByteArrayView key,
-                                                    XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_secp256k1_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-bool XCryptographic_ecdsaSecp256k1GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[32];
-    if (!result || !xcryptographic_secp256k1_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_secp256k1_import_private_key(privateKey, 32, result);
-}
-
-bool XCryptographic_ecdsaSecp256k1ImportPublicKey(XByteArrayView key,
-                                                   XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_secp256k1_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-XByteArrayView XCryptographic_ecdsaSecp256k1SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_secp256k1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, false)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-XByteArrayView XCryptographic_ecdsaSecp256k1SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_secp256k1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, true)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-bool XCryptographic_ecdsaSecp256k1VerifyHash(XCryptographic_Key key,
-                                              XByteArrayView hash,
-                                              XByteArrayView signature)
-{
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_secp256k1_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
-}
-
-bool XCryptographic_ecdsaBrainpoolP256r1ImportPrivateKey(
-    XByteArrayView key, XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_brainpool_p256r1_import_private_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-bool XCryptographic_ecdsaBrainpoolP256r1GenerateKey(XCryptographic_Key* result)
-{
-    uint8_t privateKey[32];
-    if (!result || !xcryptographic_brainpool_p256r1_random_scalar(privateKey)) return false;
-    return xcryptographic_ecdsa_brainpool_p256r1_import_private_key(privateKey, 32, result);
-}
-
-bool XCryptographic_ecdsaBrainpoolP256r1ImportPublicKey(
-    XByteArrayView key, XCryptographic_Key* result)
-{
-    return key.m_size >= 0 && xcryptographic_ecdsa_brainpool_p256r1_import_public_key(
-        key.m_data, (size_t)key.m_size, result);
-}
-
-XByteArrayView XCryptographic_ecdsaBrainpoolP256r1SignHashInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_brainpool_p256r1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, false)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-XByteArrayView XCryptographic_ecdsaBrainpoolP256r1SignHashDeterministicInto(
-    char* buffer, size_t bufferSize, XCryptographic_Key key, XByteArrayView hash)
-{
-    size_t signatureLen = 0;
-    XByteArrayView empty = { NULL, 0 };
-    if (hash.m_size < 0 || !xcryptographic_ecdsa_brainpool_p256r1_sign_hash(
-            key, hash.m_data, (size_t)hash.m_size, buffer, bufferSize,
-            &signatureLen, true)) return empty;
-    return XByteArrayView_create_data(buffer, (int64_t)signatureLen);
-}
-
-bool XCryptographic_ecdsaBrainpoolP256r1VerifyHash(
-    XCryptographic_Key key, XByteArrayView hash, XByteArrayView signature)
-{
-    return hash.m_size >= 0 && signature.m_size >= 0 &&
-           xcryptographic_ecdsa_brainpool_p256r1_verify_hash(
-               key, hash.m_data, (size_t)hash.m_size,
-               signature.m_data, (size_t)signature.m_size);
+    if (hash.m_size < 0 || signature.m_size < 0) return false;
+    switch (key.type) {
+        case XCryptographic_KeyType_EcdsaNistP256Private:
+        case XCryptographic_KeyType_EcdsaNistP256Public:
+            return xcryptographic_ecdsa_p256_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaNistP384Private:
+        case XCryptographic_KeyType_EcdsaNistP384Public:
+            return xcryptographic_ecdsa_p384_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaNistP521Private:
+        case XCryptographic_KeyType_EcdsaNistP521Public:
+            return xcryptographic_ecdsa_p521_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP256r1Public:
+            return xcryptographic_ecdsa_brainpool_p256r1_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP384r1Public:
+            return xcryptographic_ecdsa_brainpool_p384r1_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Private:
+        case XCryptographic_KeyType_EcdsaBrainpoolP512r1Public:
+            return xcryptographic_ecdsa_brainpool_p512r1_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        case XCryptographic_KeyType_EcdsaSecp256k1Private:
+        case XCryptographic_KeyType_EcdsaSecp256k1Public:
+            return xcryptographic_ecdsa_secp256k1_verify_hash(
+                key, hash.m_data, (size_t)hash.m_size,
+                signature.m_data, (size_t)signature.m_size);
+        default:
+            return false;
+    }
 }
 
 /* =============== RSA / 大整数扩展（XCRYPTOGRAPHIC_RSA_ON） =============== */

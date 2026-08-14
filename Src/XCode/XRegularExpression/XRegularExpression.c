@@ -6,7 +6,7 @@
 #include "XRegularExpression.h"
 #include "XMemory.h"
 #include "XAtomic.h"
-#include "XHashFunc.h"
+#include "XCryptographic.h"
 #include "XMutex.h"
 #include "pcre2_xin_memory.h"
 #include <limits.h>
@@ -988,10 +988,12 @@ uint64_t XRegularExpression_hash(const void* key, size_t len)
     const XString* pattern = &expression->m_data->m_pattern;
     size_t patternLength = XString_size_base(pattern);
     const uint16_t* patternData = patternLength ? XString_utf16(pattern) : NULL;
-    uint64_t patternHash = XHash_xxhash64(patternData ? patternData : emptyData,
-                                          patternLength * sizeof(uint16_t));
+    XCryptographicHashFunction hashFunction =
+        XCryptographicHash_function(XCryptographicHash_XxHash64);
+    uint64_t patternHash = hashFunction(patternData ? patternData : emptyData,
+                                        patternLength * sizeof(uint16_t));
     uint32_t options = expression->m_data->m_patternOptions;
-    uint64_t optionsHash = XHash_xxhash64(&options, sizeof(options));
+    uint64_t optionsHash = hashFunction(&options, sizeof(options));
     return patternHash ^ (optionsHash + UINT64_C(0x9E3779B97F4A7C15) +
                           (patternHash << 6) + (patternHash >> 2));
 }

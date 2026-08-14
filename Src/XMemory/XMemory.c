@@ -125,7 +125,10 @@ void XMemory_setMethod(const XMemory* method, XMemoryType type)
 	if(method)
 		global_Memory[type] = *method;
 }
-
+const XMemory*  XMemory_method( XMemoryType type)
+{
+	return global_Memory+(int)type ;
+}
 void XMemory_setMallocMethod(MallocMethod method, XMemoryType type)
 {
 	global_Memory[type].malloc = method;

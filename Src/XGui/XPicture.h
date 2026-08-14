@@ -13,7 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XClass.h"
-#include "XGuiTypes.h"
+#include "XData/XGeometry.h"
 #include "XTypes.h"
 
 /* XPicture owns a small, portable command stream.  XPainter deliberately
@@ -242,5 +242,4 @@ bool XPicture_isDetached(const XPicture* self);
 }
 #endif
 #endif /* XPICTURE_H */
-
 

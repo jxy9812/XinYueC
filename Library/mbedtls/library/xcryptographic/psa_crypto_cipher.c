@@ -478,8 +478,7 @@ static psa_status_t psa_cipher_setup(
             (xcryptographic_block_cipher_context *)XMalloc_System(sizeof(*context));
         if (!context) return PSA_ERROR_INSUFFICIENT_MEMORY;
         memset(context, 0, sizeof(*context));
-        if (!XCryptographic_aesBlockCipherSetup(
-                &context->operation,
+        if (!XCryptographic_blockCipherSetup(&context->operation, XCryptographic_BlockCipherAlgorithm_Aes,
                 XByteArrayView_create_data(key_buffer, (int64_t)key_buffer_size),
                 XCryptographic_BlockCipherMode_Xts,
                 cipher_operation == MBEDTLS_ENCRYPT)) {

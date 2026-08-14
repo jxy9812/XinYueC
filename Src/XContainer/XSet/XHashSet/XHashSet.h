@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include "XFunctionCallback.h"
 #include "XSetBase.h"
-#include "XHashFunc.h"
+#include "XCryptographic.h"
 #include "XHashSet_iterator.h"
 /**
 * @brief 哈希集合默认初始容量
@@ -59,7 +59,9 @@ XHashSet* XHashSet_create_ex(const size_t keyTypeSize, XHashFunc hash, XCompare 
 * @return 创建成功的XHashSet实例指针，失败返回NULL
 * @note 自动推导键的类型大小，哈希函数默认使用XHashMap_murmur3_32
 */
-#define XHashSet_Create(keyType, compare) XHashSet_create(sizeof(keyType), XHash_xxhash64, compare);
+#define XHashSet_Create(keyType, compare) \
+    XHashSet_create(sizeof(keyType), \
+        XCryptographicHash_function(XCryptographicHash_XxHash64), compare);
 /**
 * @brief 初始化XHashSet实例
 * @param this_set 待初始化的XHashSet实例指针（需提前分配内存）

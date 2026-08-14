@@ -5,7 +5,7 @@ XTui 是 XinYueC 的轻量通用文本界面库，适合嵌入式裁剪。提供
 
 已复用的既有类型，XTui 不重复定义：
 
-- 几何类型（XPoint/XSize/XRect）直接复用 `XGui/XGuiTypes.h`。
+- 几何类型（XPoint/XSize/XRect）直接复用 `XData/XGeometry.h`。
 - 颜色类型直接复用 `XData/XColor/XColor.h` 的 `XColor`；终端 16 色映射为
   XTui 内部调色板索引，屏幕单元格仍只保存 1 字节索引以保持轻量。
 - TUI 键盘事件 `XTuiKeyEvent` 继承 `XEvent`，修饰键复用
@@ -16,7 +16,7 @@ XTui 是 XinYueC 的轻量通用文本界面库，适合嵌入式裁剪。提供
 ```
 Src/XTui/
   XTuiConfig.h      编译期开关与固定容量
-  XTuiTypes.h/.c    按键事件、颜色工具、属性（复用 XGui/XGuiTypes.h 与 XColor）
+  XTuiTypes.h/.c    按键事件、颜色工具、属性（复用 XData/XGeometry.h 与 XColor）
   XTuiScreen.h/.c   离屏单元格缓冲
   XTuiTerminal.h/.c ANSI 终端控制（输出走回调）
   XTuiWidget.h/.c   控件基类（虚函数：Render/KeyPress/Resize/Focus）

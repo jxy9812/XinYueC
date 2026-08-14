@@ -7,7 +7,7 @@
 
 #include "XDir.h"
 #include "XFile.h"
-#include "XHashFunc.h"
+#include "XCryptographic.h"
 #include "XMemory.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,7 +85,8 @@ static XString* xcache_file_path(const XNetworkDiskCache* self, const XUrl* url)
     urlText = XUrl_toString(url);
     if (!urlText)
         return NULL;
-    hash = XHash_fnv1a_64(XString_toUtf8(urlText), XString_toUtf8_length(urlText));
+    hash = XCryptographicHash_function(XCryptographicHash_Fnv1a_64)(
+        XString_toUtf8(urlText), XString_toUtf8_length(urlText));
     fileName = XString_create_fmt_utf8("%016llX.xnc", (unsigned long long)hash);
     directory = XDir_create_2(self->m_cacheDirectory);
     result = directory && fileName ? XDir_filePath(directory, fileName) : NULL;

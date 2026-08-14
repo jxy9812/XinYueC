@@ -500,7 +500,7 @@ static bool xssh_client_parse_host_key(XSshClient* self,
             pointLen != XSSH_CLIENT_POINT_LEN || point[0] != 0x04) return false;
         memcpy(state->hostKeyBlob, blob, blobLen);
         state->hostKeyBlobLen = blobLen;
-        return XCryptographic_ecdsaP256ImportPublicKey(
+        return XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP256,
             (XByteArrayView){ point, (int64_t)pointLen }, &state->hostPublicKey);
     }
 }
@@ -554,7 +554,7 @@ static bool xssh_client_verify_host_signature(XSshClient* self,
         return false;
     if (!xssh_hash_sha256(state->exchangeHash, sizeof(state->exchangeHash),
                           signatureHash)) return false;
-    return XCryptographic_ecdsaP256VerifyHash(
+    return XCryptographic_ecdsaVerifyHash(
         state->hostPublicKey,
         (XByteArrayView){ signatureHash, sizeof(signatureHash) },
         (XByteArrayView){ rawSignature, sizeof(rawSignature) });

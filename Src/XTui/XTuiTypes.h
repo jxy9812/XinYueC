@@ -1,7 +1,7 @@
 ﻿/**
  * @file       XTuiTypes.h
  * @brief      XTui 通用 TUI 模块的基础类型定义。
- * @details    几何类型（XPoint/XSize/XRect）复用 XGuiTypes.h，颜色类型复用
+ * @details    几何类型（XPoint/XSize/XRect）复用 XGeometry.h，颜色类型复用
  *             XData/XColor/XColor.h 的 XColor，按键事件继承 XEvent，避免重复
  *             定义；本文件只包含 TUI 特有的逻辑按键类型与文本属性，不分配内存，
  *             适合嵌入式裁剪。所有坐标使用列(x)、行(y)约定，原点在左上角。
@@ -11,7 +11,7 @@
 #define XTUI_TYPES_H
 
 #include "XTuiConfig.h"
-#include "XGui/XGuiTypes.h"
+#include "XData/XGeometry.h"
 #include "XData/XColor/XColor.h"
 #include "XEvent.h"
 

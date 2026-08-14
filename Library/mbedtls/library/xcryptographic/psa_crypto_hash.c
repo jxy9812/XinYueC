@@ -115,7 +115,7 @@ psa_status_t mbedtls_psa_hash_abort(
     if (!context) {
         return PSA_ERROR_BAD_STATE;
     }
-    XCryptographicHash_delete_base((XClass *) context);
+    XCryptographicHash_delete(context);
     xcryptographic_hash_context_set(operation, NULL);
     operation->alg = 0;
     return PSA_SUCCESS;
@@ -316,7 +316,7 @@ psa_status_t mbedtls_psa_hash_clone(
     if (!target) {
         return PSA_ERROR_INSUFFICIENT_MEMORY;
     }
-    XCryptographicHash_copy_base((XClass *) target, (const XClass *) source);
+    XCryptographicHash_copy(target, source);
     xcryptographic_hash_context_set(target_operation, target);
     target_operation->alg = source_operation->alg;
     return PSA_SUCCESS;

@@ -5,6 +5,25 @@
 #ifndef XCRYPTOGRAPHIC_CONFIG_H
 #define XCRYPTOGRAPHIC_CONFIG_H
 
+#include "XMemory.h"
+
+/**
+ * @brief XCryptographicHash 使用的内存池类型。
+ * @details 控制哈希模块拥有的动态内存的分配来源，包括哈希上下文、
+ *          输入缓存、resultView 缓存以及 HMAC 内外层哈希上下文；同时
+ *          控制 XCryptographic.c 中 HKDF/PBKDF2/TLS-PRF 的临时工作区。
+ *          HMAC 的固定尺寸工作区使用栈内存，不进行系统堆分配。
+ *          返回的 XByteArray 对象仍遵循 XByteArray 自身的分配策略。
+ *          默认的 XMEMORY_TYPE_HYBRID 会按 XMemory 的规则将大块内存回退到
+ *          系统分配器；若要求 Hash 工作区完全来自多池，应显式配置为
+ *          XMEMORY_TYPE_MULTIPOOL。
+ *          可配置为 XMEMORY_TYPE_SYSTEM、XMEMORY_TYPE_MULTIPOOL 或
+ *          XMEMORY_TYPE_HYBRID。
+ */
+#ifndef XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE
+#define XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE XMEMORY_TYPE_HYBRID
+#endif
+
 /** @brief 启用 SHA-256 摘要算法。 */
 #ifndef XCRYPTOGRAPHIC_SHA256_ON
 #define XCRYPTOGRAPHIC_SHA256_ON 1

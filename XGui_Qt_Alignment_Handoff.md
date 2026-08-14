@@ -19,8 +19,8 @@ expanded.
 
 ```
 Src/XGui/XBitmap.c
-Src/XGui/XGuiTypes.h
-Src/XGui/XGuiTypes.c
+Src/XData/XGeometry.h
+Src/XData/XGeometry.c
 Src/XGui/XIcon.c
 Src/XGui/XImage.h
 Src/XGui/XImage.c
@@ -228,7 +228,7 @@ Memory/API continuation update (2026-07-27):
 - Replaced `strdup`/`XStrdup` use in URL, CAN parser/bus, XDir, and the Windows
   file driver. The obsolete `XStrdup` declaration and implementation were
   removed from `XString.h/.c`.
-- `XGuiTypes.c` region storage now uses `XRealloc_System()` and
+- `XGeometry.c` region storage now uses `XRealloc_System()` and
   `XFree_System()`. `XClass_delete_base()` still honors custom `FreeMethod`
   callbacks, but no longer contains a native `free()` call.
 - The embedded xxHash allocation hooks now use `XMalloc_Hybrid()` and
