@@ -8,7 +8,9 @@
 #include"XCoreApplication.h"
 #include"XSocketNotifier.h"
 #include"XHostInfo.h"
+#include"XThread.h"
 void XSocketTest();
+static bool g_baiduRequestFinished = false;
 static void readData(XObject* sender, XVarList* args)
 {
 	XByteArray* data= XTcpSocket_readAll_2(sender);
@@ -28,9 +30,12 @@ static void XSocketNotifierSlot(XObject* sender, XVarList* args)
 static void readDataBaidu(XObject* sender, XVarList* args)
 {
 	XByteArray* data = XTcpSocket_readAll_2(sender);
-	for_each_iterator(data, XByteArray, it)
+	if (data && XByteArray_size_base(data) > 0)
 	{
-		putchar(XByteArray_iterator_data(&it));
+		/* HTTP 响应可能分多次到达，按实际字节数输出，避免依赖字符串终止符。 */
+		XPrintf("[百度] 收到HTTP响应数据:\n");
+		fwrite(XByteArray_data(data), 1, XByteArray_size_base(data), stdout);
+		fflush(stdout);
 	}
 	XByteArray_delete_base(data);
 }
@@ -38,8 +43,8 @@ static void readDataBaidu(XObject* sender, XVarList* args)
 static void onBaiduDisconnected(XObject* sender, XVarList* args)
 {
 	(void)sender; (void)args;
-	XPrintf_3("[百度] 连接已断开，退出事件循环\n");
-	XCoreApplication_quit();
+	g_baiduRequestFinished = true;
+	XPrintf("[百度] 连接已断开\n");
 }
 
 void XSocketTest_Baidu()
@@ -67,6 +72,7 @@ void XSocketTest_Baidu()
 
 	/* 发起 HTTP GET 请求 */
 	XSocket* socket = XTcpSocket_create();
+	g_baiduRequestFinished = false;
 	XObject_connect_2(socket, XSignal(XIODevice_readyRead_signal), readDataBaidu);
 	XObject_connect_2(socket, XSignal(XAbstractSocket_disconnected_signal), onBaiduDisconnected);
 	XAbstractSocket_connectToHost_base(socket, "www.baidu.com", 80, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
@@ -81,8 +87,23 @@ void XSocketTest_Baidu()
 		XClass_delete_base((XClass*)socket);
 		return;
 	}
-	XCoreApplication_exec();
-	/* 事件循环退出后清理 socket */
+
+	/*
+	 * 测试可能从菜单动作或其他已经运行的事件循环中调用，不能再次
+	 * 启动 XCoreApplication_exec()。使用 processEvents 等待响应，既能
+	 * 驱动网络回调，也不会退出宿主应用的事件循环。
+	 */
+	XPrintf("[百度] 处理事件并等待HTTP响应...\n");
+	for (int i = 0; i < 500 && !g_baiduRequestFinished; ++i)
+	{
+		XCoreApplication_processEvents(XEventLoop_AllEvents);
+		XThread_msleep(10);
+	}
+	if (!g_baiduRequestFinished)
+	{
+		XPrintf("[百度] 等待HTTP响应超时，主动断开连接\n");
+		XTcpSocket_abort(socket);
+	}
 	XClass_delete_base((XClass*)socket);
 }
 
@@ -211,4 +232,3 @@ void XMenu_XSocketTest(XMenu* root)
 		XAction_setAction(action, XSocketTest_BaiduHttps);
 	}
 }
-

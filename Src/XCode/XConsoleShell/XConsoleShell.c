@@ -96,8 +96,14 @@ static void xcs_async_read_ready(XConsoleShell* self)
 #if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
         && !self->m_session.suppressPrompt
 #endif
-        )
+        ) {
         self->m_io.prompt(self->m_io.userData, self);
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+        /* 提示符没有换行，必须在 prompt 回调后再次刷新，避免用户还要
+           输入下一次回车才能看到并继续使用新的 Shell 提示符。 */
+        (void)XConsoleShell_flushOutput(self);
+#endif
+    }
     if (self->m_asyncLastReadBytes > 0 &&
         XAtomic_load_bool(&self->m_asyncRunning, XAtomic_MemoryOrder_Acquire))
         (void)XConsoleShell_notifyInput(self);

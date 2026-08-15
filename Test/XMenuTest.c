@@ -39,6 +39,26 @@ typedef struct MenuData
 	void* data;
 	XMenu** menu;
 }MenuData;
+
+/*
+ * @brief 按行读取菜单命令，避免 scanf 保留换行符导致下一层菜单误读输入。
+ * @param command 输出缓冲区
+ * @param size 缓冲区容量
+ * @return 成功读取返回 true，输入结束返回 false
+ */
+static bool XMenuTest_readCommand(char* command, size_t size)
+{
+	int ch;
+	if (!command || size < 2 || !fgets(command, (int)size, stdin))
+		return false;
+	if (!strchr(command, '\n') && !strchr(command, '\r'))
+	{
+		while ((ch = getchar()) != '\n' && ch != '\r' && ch != EOF)
+			;
+	}
+	command[strcspn(command, "\r\n")] = '\0';
+	return true;
+}
 //跳转到上一级父菜单
 static void gotoParent(MenuData* data)
 {
@@ -74,7 +94,7 @@ int XMenuTest_show(XMenu* menu, int column)
 	XVector* v=XVector_Create(MenuData);
 	MenuData data = { 0 };
 	data.menu = &menu;
-	char command[10] = {0};
+	char command[32] = {0};
 	while (true)
 	{
 		//int index = 0;
@@ -113,11 +133,14 @@ int XMenuTest_show(XMenu* menu, int column)
 		XVector_delete_base(menus);
 		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
 		XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
-		if (scanf("%9s", command) != 1 || strcmp(command, "q") == 0) {
+		if (!XMenuTest_readCommand(command, sizeof(command)) ||
+			strcmp(command, "q") == 0 || strcmp(command, "Q") == 0) {
 			clearerr(stdin);
 			XVector_delete_base(v);
 			return 0;
 		}
+		if (command[0] == '\0')
+			continue;
 		int index=atoi(command);
 		if (index < 0 || index >= XContainerSize(v))
 		{

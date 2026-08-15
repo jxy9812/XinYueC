@@ -64,9 +64,27 @@ static int xtest_run_all(XConsoleShell* shell)
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
 
-static int xtest_run_menu(void)
+static int xtest_run_menu(XConsoleShell* shell)
 {
+#if XCONSOLE_SHELL_ASYNC_ON
+    bool restartAsync = shell && XConsoleShell_isAsyncRunning(shell);
+    int result;
+
+    /*
+     * 菜单会暂时接管标准输入；如果 Shell 的异步轮询仍在运行，菜单项目
+     * 中调用 processEvents() 时可能由 Shell 抢先读走 q 或回车。暂停异步
+     * 输入还会关闭 Shell 自己的输入描述符，确保菜单期间只有一个读者。
+     */
+    if (restartAsync && !XConsoleShell_stopAsync(shell, UINT32_MAX))
+        return XConsoleResult_Failed;
+    result = XMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
+    if (restartAsync && !XConsoleShell_startAsync(shell))
+        return XConsoleResult_Failed;
+    return result;
+#else
+    (void)shell;
     return XMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
+#endif
 }
 
 static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
@@ -75,7 +93,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
     (void)session;
     (void)userData;
     if (!shell || argc < 0 || (argc && !argv)) return XConsoleResult_InvalidArgument;
-    if (argc == 0) return xtest_run_menu();
+    if (argc == 0) return xtest_run_menu(shell);
     if (argc == 1 && strcmp(argv[0], "list") == 0) {
         return xtest_write(shell,
                            "Test commands:\n"
