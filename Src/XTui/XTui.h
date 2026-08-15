@@ -56,13 +56,13 @@ typedef struct XTui
     XTuiWidget*    m_root;            /**< 根控件；借用指针。 */
     XTuiWidget*    m_focus;           /**< 焦点控件；借用指针。 */
     XTuiScreen*    m_previousScreen;  /**< 上次绘制快照；内部动态分配。 */
-    XTuiParseState m_parseState;      /**< 输入解析状态。 */
-    char           m_csiBuffer[XTUI_INPUT_BUFFER_SIZE]; /**< CSI 参数缓冲。 */
     size_t         m_csiLength;       /**< CSI 参数缓冲长度。 */
-    char           m_utf8Buf[XTUI_CELL_UTF8_MAX + 1];   /**< UTF-8 字符累积缓冲。 */
     size_t         m_utf8Pos;         /**< UTF-8 已累积字节数。 */
     size_t         m_utf8Expected;    /**< UTF-8 期望总字节数。 */
     int64_t        m_escapeStartedMsecs; /**< 单独 ESC 等待开始时间；0 表示无等待。 */
+    XTuiParseState m_parseState;      /**< 输入解析状态。 */
+    char           m_csiBuffer[XTUI_INPUT_BUFFER_SIZE]; /**< CSI 参数缓冲。 */
+    char           m_utf8Buf[XTUI_CELL_UTF8_MAX + 1];   /**< UTF-8 字符累积缓冲。 */
     bool           m_running;         /**< 是否已进入全屏模式。 */
     bool           m_useAlternateScreen; /**< 是否使用备用屏幕；默认 true。 */
     bool           m_lastByteCR;      /**< 上次输入为 CR，用于合并 CRLF 回车。 */

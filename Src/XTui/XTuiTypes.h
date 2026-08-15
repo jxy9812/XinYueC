@@ -88,7 +88,6 @@ typedef struct XTuiKeyEvent
     XTuiKeyType        m_keyType;  /**< TUI 逻辑按键类型。 */
     XKeyboardModifiers m_modifiers;/**< 事件发生时按下的修饰键。 */
     char               m_utf8[XTUI_CELL_UTF8_MAX + 1]; /**< 当 key 为 Char 时的 UTF-8 字符。 */
-    int                m_code;     /**< 扩展码；当前保留为 0。 */
 } XTuiKeyEvent;
 
 /** @brief 初始化 XTuiKeyEvent 类虚函数表。 */

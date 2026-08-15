@@ -42,7 +42,6 @@ void XTuiKeyEvent_init(XTuiKeyEvent* event, XEventType type, XTuiKeyType key, XK
     event->m_keyType = key;
     event->m_modifiers = modifiers;
     event->m_utf8[0] = '\0';
-    event->m_code = 0;
 }
 
 XTuiKeyType XTuiKeyEvent_keyType(const XTuiKeyEvent* event)

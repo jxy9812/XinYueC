@@ -272,13 +272,21 @@ void XMultiPool_deinit(XMultiPool* mp) {
 }
 
 bool XMultiPool_is_from_pool(const XMultiPool* mp, const void* ptr) {
+    size_t i;
+    const void* raw;
     if (!mp || !ptr) return false;
-    pool_index_t idx = read_pool_index((void*)ptr);
-    if (idx >= mp->sub_pool_count) return false;
-    XFixedPool* sub = mp->sub_pools[idx];
-    if (!sub) return false;
-    void* raw = get_raw_block_for_fixed_pool((void*)ptr);
-    return XFixedPool_is_from_pool(sub, raw);
+    /*
+     * 不能先读取 ptr 前面的池索引：系统堆指针或外部指针并没有
+     * XMultiPool 的前缀，直接读取会在 AddressSanitizer 下越界。
+     * XMultiPool 用户指针前面还有一个池索引，先用整数地址计算出固定池
+     * 用户指针，再由 XFixedPool_is_from_pool 检查地址范围和块边界。
+     */
+    raw = (const void*)((uintptr_t)ptr - POOL_INDEX_SIZE);
+    for (i = 0; i < mp->sub_pool_count; ++i) {
+        if (mp->sub_pools[i] && XFixedPool_is_from_pool(mp->sub_pools[i], raw))
+            return true;
+    }
+    return false;
 }
 
 /* ============================================================================

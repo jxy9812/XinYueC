@@ -542,6 +542,30 @@ static bool XConsoleShellTest_runVimAdvanced(void)
     bool ok = false;
     vim = XTuiVim_create();
     if (!vim) return false;
+#if XTUI_VIM_HISTORY_ON
+    XCS_TEST_CHECK(vim->m_commandHistoryState == NULL,
+                   "Vim 初始状态不分配命令历史");
+#if XTUI_VIM_SEARCH_ON
+    XCS_TEST_CHECK(vim->m_searchHistoryState == NULL,
+                   "Vim 初始状态不分配搜索历史");
+#endif
+#endif
+#if XTUI_VIM_REGISTER_ON
+    XCS_TEST_CHECK(vim->m_registerState == NULL,
+                   "Vim 初始状态不分配寄存器表");
+#endif
+#if XTUI_VIM_MACRO_ON
+    XCS_TEST_CHECK(vim->m_macroState == NULL,
+                   "Vim 初始状态不分配宏表");
+#endif
+#if XTUI_VIM_MARK_ON
+    XCS_TEST_CHECK(vim->m_markState == NULL,
+                   "Vim 初始状态不分配标记表");
+#endif
+#if XTUI_VIM_JUMPLIST_ON
+    XCS_TEST_CHECK(vim->m_jumpState == NULL,
+                   "Vim 初始状态不分配跳转表");
+#endif
     {
         XTuiScreen* screen = XTuiScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 40, 3);
         XRect rect = { 0, 0, 40, 3 };
@@ -1291,6 +1315,104 @@ static bool XConsoleShellTest_runVimAdvanced(void)
     XConsoleShellTest_vimControl(vim, 18);
     XCS_TEST_CHECK(strcmp(XTuiVim_line(vim, 0), "XYabc") == 0,
                    "vim second redo level");
+#endif
+    /* 各可选状态只应在首次执行对应功能时创建。 */
+    XTuiVim_setLines(vim, (const char*[]){ "alpha", "beta" }, 2);
+#if XTUI_VIM_HISTORY_ON
+    XConsoleShellTest_vimKey(vim, ':');
+    XConsoleShellTest_vimKey(vim, 'w');
+    XConsoleShellTest_vimEnter(vim);
+    XCS_TEST_CHECK(vim->m_commandHistoryState != NULL,
+                   "Vim 命令历史按需创建");
+    XTuiVim_ackAction(vim);
+#if XTUI_VIM_SEARCH_ON
+    XConsoleShellTest_vimKey(vim, '/');
+    XConsoleShellTest_vimKey(vim, 'a');
+    XConsoleShellTest_vimEnter(vim);
+    XCS_TEST_CHECK(vim->m_searchHistoryState != NULL,
+                   "Vim 搜索历史按需创建");
+#endif
+#endif
+#if XTUI_VIM_REGISTER_ON && XTUI_VIM_YANK_PASTE_ON
+    XConsoleShellTest_vimKey(vim, 'y');
+    XConsoleShellTest_vimKey(vim, 'y');
+    XCS_TEST_CHECK(vim->m_registerState != NULL,
+                   "Vim 寄存器表按需创建");
+#endif
+#if XTUI_VIM_MACRO_ON
+    XConsoleShellTest_vimKey(vim, 'q');
+    XConsoleShellTest_vimKey(vim, 'a');
+    XConsoleShellTest_vimKey(vim, 'q');
+    XCS_TEST_CHECK(vim->m_macroState != NULL,
+                   "Vim 宏表按需创建");
+#endif
+#if XTUI_VIM_MARK_ON
+    XConsoleShellTest_vimKey(vim, 'm');
+    XConsoleShellTest_vimKey(vim, 'a');
+    XCS_TEST_CHECK(vim->m_markState != NULL,
+                   "Vim 标记表按需创建");
+#endif
+#if XTUI_VIM_JUMPLIST_ON && XTUI_VIM_ADVANCED_MOTION_ON
+    XConsoleShellTest_vimKey(vim, 'g');
+    XConsoleShellTest_vimKey(vim, 'g');
+    XCS_TEST_CHECK(vim->m_jumpState != NULL,
+                   "Vim 跳转表按需创建");
+#endif
+    {
+        XTuiVim copy;
+        XTuiVim moved;
+        memset(&copy, 0, sizeof(copy));
+        memset(&moved, 0, sizeof(moved));
+        XClass_copy_base((XClass*)&copy, (const XClass*)vim);
+        XCS_TEST_CHECK(copy.m_lines &&
+                       strcmp(XTuiVim_line(&copy, 0), XTuiVim_line(vim, 0)) == 0,
+                       "Vim 复制保留文本缓冲");
+#if XTUI_VIM_HISTORY_ON
+        XCS_TEST_CHECK(copy.m_commandHistoryState &&
+                       copy.m_commandHistoryState != vim->m_commandHistoryState,
+                       "Vim 复制深拷贝命令历史");
+#endif
+#if XTUI_VIM_REGISTER_ON && XTUI_VIM_YANK_PASTE_ON
+        XCS_TEST_CHECK(copy.m_registerState &&
+                       copy.m_registerState != vim->m_registerState,
+                       "Vim 复制深拷贝寄存器表");
+#endif
+#if XTUI_VIM_MACRO_ON
+        XCS_TEST_CHECK(copy.m_macroState && copy.m_macroState != vim->m_macroState,
+                       "Vim 复制深拷贝宏表");
+#endif
+        XClass_move_base((XClass*)&moved, (XClass*)&copy);
+        XCS_TEST_CHECK(moved.m_lines && copy.m_lines == NULL,
+                       "Vim 同内存池移动转移文本缓冲");
+#if XTUI_VIM_HISTORY_ON
+        XCS_TEST_CHECK(moved.m_commandHistoryState &&
+                       copy.m_commandHistoryState == NULL,
+                       "Vim 同内存池移动转移命令历史");
+#endif
+#if XTUI_VIM_REGISTER_ON && XTUI_VIM_YANK_PASTE_ON
+        XCS_TEST_CHECK(moved.m_registerState && copy.m_registerState == NULL,
+                       "Vim 同内存池移动转移寄存器表");
+#endif
+        XClass_deinit_base((XClass*)&moved);
+        XClass_deinit_base((XClass*)&copy);
+    }
+#if XTUI_VIM_HISTORY_ON
+    {
+        XTuiVim* source = XTuiVim_create_ex(XMEMORY_TYPE_SYSTEM);
+        XTuiVim* target = XTuiVim_create_ex(XMEMORY_TYPE_HYBRID);
+        XCS_TEST_CHECK(source && target, "Vim 跨内存池移动对象创建");
+        XCS_TEST_CHECK(Class_Memory(target) == XMemory_method(XMEMORY_TYPE_HYBRID),
+                       "Vim 可选状态使用所属内存池");
+        XConsoleShellTest_vimKey(source, ':');
+        XConsoleShellTest_vimKey(source, 'w');
+        XConsoleShellTest_vimEnter(source);
+        XClass_move_base((XClass*)target, (XClass*)source);
+        XCS_TEST_CHECK(target->m_commandHistoryState &&
+                       source->m_commandHistoryState == NULL,
+                       "Vim 跨内存池移动深拷贝历史状态");
+        XTuiVim_delete_base(source);
+        XTuiVim_delete_base(target);
+    }
 #endif
     ok = true;
 cleanup:

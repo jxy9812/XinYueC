@@ -38,6 +38,152 @@ static void xvim_delete_regular_match(XRegularExpressionMatch* match);
 static void xvim_delete_regular_iterator(XRegularExpressionMatchIterator* iterator);
 #endif
 
+/*
+ * 这些状态在空 Vim 控件中通常不会被使用。将大数组移到这里后，控件本体
+ * 只保留指针，历史、寄存器、宏、标记和跳转表都可以在第一次使用时分配。
+ * 状态块使用所属 Vim 对象的 XMemory，复制时深拷贝，移动时只在内存方法
+ * 相同的情况下转移指针，避免由错误的释放方法回收内存。
+ */
+#if XTUI_VIM_HISTORY_ON
+struct XVimCommandHistoryState
+{
+    char m_entries[XTUI_VIM_HISTORY_MAX][XTUI_VIM_CMD_MAX + 1];
+    int  m_length;
+    int  m_index;
+};
+#if XTUI_VIM_SEARCH_ON
+struct XVimSearchHistoryState
+{
+    char m_entries[XTUI_VIM_HISTORY_MAX][XTUI_VIM_CMD_MAX + 1];
+    int  m_length;
+    int  m_index;
+};
+#endif
+#endif
+
+#if XTUI_VIM_REGISTER_ON
+struct XVimRegisterState
+{
+    XVimRegister m_named[26];
+    XVimRegister m_numbered[10];
+};
+#endif
+
+#if XTUI_VIM_MACRO_ON
+struct XVimMacroState
+{
+    char m_entries[26][XTUI_VIM_CMD_MAX + 1];
+    int  m_lengths[26];
+};
+#endif
+
+#if XTUI_VIM_MARK_ON
+struct XVimMarkState
+{
+    int m_lines[26];
+    int m_columns[26];
+};
+#endif
+
+#if XTUI_VIM_JUMPLIST_ON
+struct XVimJumpState
+{
+    int m_lines[XTUI_VIM_JUMPLIST_MAX];
+    int m_columns[XTUI_VIM_JUMPLIST_MAX];
+    int m_length;
+    int m_index;
+};
+#endif
+
+static void* xvim_optional_calloc(XTuiVim* vim, size_t size)
+{
+    XMemory* memory;
+    if (!vim) return NULL;
+    memory = Class_Memory(vim);
+    return memory && memory->calloc ? memory->calloc(1u, size) : NULL;
+}
+
+static void xvim_optional_free(XTuiVim* vim, void* state)
+{
+    XMemory* memory;
+    if (!vim || !state) return;
+    memory = Class_Memory(vim);
+    if (memory && memory->free) memory->free(state);
+}
+
+#if XTUI_VIM_HISTORY_ON
+static XVimCommandHistoryState* xvim_ensure_command_history(XTuiVim* vim)
+{
+    if (!vim) return NULL;
+    if (!vim->m_commandHistoryState)
+        vim->m_commandHistoryState = (XVimCommandHistoryState*)
+            xvim_optional_calloc(vim, sizeof(XVimCommandHistoryState));
+    return vim->m_commandHistoryState;
+}
+
+#if XTUI_VIM_SEARCH_ON
+static XVimSearchHistoryState* xvim_ensure_search_history(XTuiVim* vim)
+{
+    if (!vim) return NULL;
+    if (!vim->m_searchHistoryState)
+        vim->m_searchHistoryState = (XVimSearchHistoryState*)
+            xvim_optional_calloc(vim, sizeof(XVimSearchHistoryState));
+    return vim->m_searchHistoryState;
+}
+#endif
+#endif
+
+#if XTUI_VIM_MACRO_ON
+static XVimMacroState* xvim_ensure_macro_state(XTuiVim* vim)
+{
+    if (!vim) return NULL;
+    if (!vim->m_macroState)
+        vim->m_macroState = (XVimMacroState*)
+            xvim_optional_calloc(vim, sizeof(XVimMacroState));
+    return vim->m_macroState;
+}
+#endif
+
+#if XTUI_VIM_REGISTER_ON
+static XVimRegisterState* xvim_ensure_register_state(XTuiVim* vim)
+{
+    if (!vim) return NULL;
+    if (!vim->m_registerState)
+        vim->m_registerState = (XVimRegisterState*)
+            xvim_optional_calloc(vim, sizeof(XVimRegisterState));
+    return vim->m_registerState;
+}
+#endif
+
+#if XTUI_VIM_MARK_ON
+static XVimMarkState* xvim_ensure_mark_state(XTuiVim* vim)
+{
+    XVimMarkState* state;
+    int i;
+    if (!vim) return NULL;
+    if (vim->m_markState) return vim->m_markState;
+    state = (XVimMarkState*)xvim_optional_calloc(vim, sizeof(XVimMarkState));
+    if (!state) return NULL;
+    for (i = 0; i < 26; ++i) {
+        state->m_lines[i] = -1;
+        state->m_columns[i] = -1;
+    }
+    vim->m_markState = state;
+    return state;
+}
+#endif
+
+#if XTUI_VIM_JUMPLIST_ON
+static XVimJumpState* xvim_ensure_jump_state(XTuiVim* vim)
+{
+    if (!vim) return NULL;
+    if (!vim->m_jumpState)
+        vim->m_jumpState = (XVimJumpState*)
+            xvim_optional_calloc(vim, sizeof(XVimJumpState));
+    return vim->m_jumpState;
+}
+#endif
+
 /* ==================== UTF-8 与行工具 ==================== */
 
 static int xvim_utf8_len(unsigned char c)
@@ -412,9 +558,15 @@ static void xvim_clear_register(XTuiVim* vim)
     if (!vim) return;
     xvim_clear_unnamed_register(vim);
 #if XTUI_VIM_REGISTER_ON
-    int i;
-    for (i = 0; i < 26; ++i) xvim_clear_register_value(&vim->m_namedRegisters[i]);
-    for (i = 0; i < 10; ++i) xvim_clear_register_value(&vim->m_numberedRegisters[i]);
+    if (vim->m_registerState) {
+        int i;
+        for (i = 0; i < 26; ++i)
+            xvim_clear_register_value(&vim->m_registerState->m_named[i]);
+        for (i = 0; i < 10; ++i)
+            xvim_clear_register_value(&vim->m_registerState->m_numbered[i]);
+        xvim_optional_free(vim, vim->m_registerState);
+        vim->m_registerState = NULL;
+    }
     vim->m_activeRegister = '\0';
     vim->m_appendRegister = false;
 #endif
@@ -439,12 +591,16 @@ static bool xvim_set_register(XTuiVim* vim, char* const* lines, int count, bool 
     vim->m_regCount = count;
     vim->m_regLineWise = lineWise;
 #if XTUI_VIM_REGISTER_ON
-    if (vim->m_activeRegister >= 'a' && vim->m_activeRegister <= 'z')
-        (void)(vim->m_appendRegister ?
-            xvim_append_register_value(
-                &vim->m_namedRegisters[vim->m_activeRegister - 'a'], lines, count, lineWise) :
-            xvim_assign_register_value(
-                &vim->m_namedRegisters[vim->m_activeRegister - 'a'], lines, count, lineWise));
+    if (vim->m_activeRegister >= 'a' && vim->m_activeRegister <= 'z') {
+        XVimRegisterState* state = xvim_ensure_register_state(vim);
+        if (state) {
+            (void)(vim->m_appendRegister ?
+                xvim_append_register_value(
+                    &state->m_named[vim->m_activeRegister - 'a'], lines, count, lineWise) :
+                xvim_assign_register_value(
+                    &state->m_named[vim->m_activeRegister - 'a'], lines, count, lineWise));
+        }
+    }
     vim->m_activeRegister = '\0';
     vim->m_appendRegister = false;
 #endif
@@ -455,22 +611,28 @@ static bool xvim_set_register(XTuiVim* vim, char* const* lines, int count, bool 
 #if XTUI_VIM_REGISTER_ON
 static void xvim_set_numbered_delete(XTuiVim* vim)
 {
+    XVimRegisterState* state;
     int i;
     if (!vim || vim->m_regCount <= 0) return;
+    state = xvim_ensure_register_state(vim);
+    if (!state) return;
     for (i = 9; i > 1; --i) {
-        xvim_clear_register_value(&vim->m_numberedRegisters[i]);
-        vim->m_numberedRegisters[i] = vim->m_numberedRegisters[i - 1];
-        memset(&vim->m_numberedRegisters[i - 1], 0, sizeof(XVimRegister));
+        xvim_clear_register_value(&state->m_numbered[i]);
+        state->m_numbered[i] = state->m_numbered[i - 1];
+        memset(&state->m_numbered[i - 1], 0, sizeof(XVimRegister));
     }
-    (void)xvim_assign_register_value(&vim->m_numberedRegisters[1],
+    (void)xvim_assign_register_value(&state->m_numbered[1],
                                       vim->m_regLines, vim->m_regCount,
                                       vim->m_regLineWise);
 }
 
 static void xvim_set_numbered_yank(XTuiVim* vim)
 {
+    XVimRegisterState* state;
     if (!vim || vim->m_regCount <= 0) return;
-    (void)xvim_assign_register_value(&vim->m_numberedRegisters[0],
+    state = xvim_ensure_register_state(vim);
+    if (!state) return;
+    (void)xvim_assign_register_value(&state->m_numbered[0],
                                       vim->m_regLines, vim->m_regCount,
                                       vim->m_regLineWise);
 }
@@ -478,11 +640,13 @@ static void xvim_set_numbered_yank(XTuiVim* vim)
 static const XVimRegister* xvim_paste_register(XTuiVim* vim)
 {
     const XVimRegister* reg = NULL;
+    XVimRegisterState* state;
     if (!vim) return NULL;
+    state = vim->m_registerState;
     if (vim->m_activeRegister >= 'a' && vim->m_activeRegister <= 'z')
-        reg = &vim->m_namedRegisters[vim->m_activeRegister - 'a'];
+        reg = state ? &state->m_named[vim->m_activeRegister - 'a'] : NULL;
     else if (vim->m_activeRegister >= '0' && vim->m_activeRegister <= '9')
-        reg = &vim->m_numberedRegisters[vim->m_activeRegister - '0'];
+        reg = state ? &state->m_numbered[vim->m_activeRegister - '0'] : NULL;
     vim->m_activeRegister = '\0';
     vim->m_appendRegister = false;
     return reg;
@@ -609,47 +773,55 @@ static void xvim_goto(XTuiVim* vim, int line, int column)
 #if XTUI_VIM_JUMPLIST_ON
 static void xvim_jump_push(XTuiVim* vim)
 {
+    XVimJumpState* state;
     int index;
     if (!vim) return;
-    if (vim->m_jumpIndex < vim->m_jumpLength)
-        vim->m_jumpLength = vim->m_jumpIndex + 1;
-    if (vim->m_jumpLength > 0) {
-        index = vim->m_jumpLength - 1;
-        if (vim->m_jumpLines[index] == vim->m_cursorLine &&
-            vim->m_jumpColumns[index] == vim->m_cursorColumn) {
-            vim->m_jumpIndex = vim->m_jumpLength;
+    state = xvim_ensure_jump_state(vim);
+    if (!state) return;
+    if (state->m_index < state->m_length)
+        state->m_length = state->m_index + 1;
+    if (state->m_length > 0) {
+        index = state->m_length - 1;
+        if (state->m_lines[index] == vim->m_cursorLine &&
+            state->m_columns[index] == vim->m_cursorColumn) {
+            state->m_index = state->m_length;
             return;
         }
     }
-    if (vim->m_jumpLength == XTUI_VIM_JUMPLIST_MAX) {
-        memmove(vim->m_jumpLines, vim->m_jumpLines + 1,
-                (XTUI_VIM_JUMPLIST_MAX - 1u) * sizeof(vim->m_jumpLines[0]));
-        memmove(vim->m_jumpColumns, vim->m_jumpColumns + 1,
-                (XTUI_VIM_JUMPLIST_MAX - 1u) * sizeof(vim->m_jumpColumns[0]));
-        --vim->m_jumpLength;
+    if (state->m_length == XTUI_VIM_JUMPLIST_MAX) {
+        memmove(state->m_lines, state->m_lines + 1,
+                (XTUI_VIM_JUMPLIST_MAX - 1u) * sizeof(state->m_lines[0]));
+        memmove(state->m_columns, state->m_columns + 1,
+                (XTUI_VIM_JUMPLIST_MAX - 1u) * sizeof(state->m_columns[0]));
+        --state->m_length;
     }
-    index = vim->m_jumpLength++;
-    vim->m_jumpLines[index] = vim->m_cursorLine;
-    vim->m_jumpColumns[index] = vim->m_cursorColumn;
-    vim->m_jumpIndex = vim->m_jumpLength;
+    index = state->m_length++;
+    state->m_lines[index] = vim->m_cursorLine;
+    state->m_columns[index] = vim->m_cursorColumn;
+    state->m_index = state->m_length;
 }
 
 static bool xvim_jump_navigate(XTuiVim* vim, bool newer)
 {
+    XVimJumpState* state;
     if (!vim) return false;
-    if (!newer && vim->m_jumpIndex == vim->m_jumpLength) {
+    state = vim->m_jumpState;
+    if (!newer && (!state || state->m_index == state->m_length)) {
         xvim_jump_push(vim);
-        vim->m_jumpIndex = vim->m_jumpLength - 1;
+        state = vim->m_jumpState;
+        if (!state) return false;
+        state->m_index = state->m_length - 1;
     }
+    if (!state) return false;
     if (newer) {
-        if (vim->m_jumpIndex + 1 >= vim->m_jumpLength) return false;
-        ++vim->m_jumpIndex;
+        if (state->m_index + 1 >= state->m_length) return false;
+        ++state->m_index;
     } else {
-        if (vim->m_jumpIndex <= 0) return false;
-        --vim->m_jumpIndex;
+        if (state->m_index <= 0) return false;
+        --state->m_index;
     }
-    xvim_goto(vim, vim->m_jumpLines[vim->m_jumpIndex],
-              vim->m_jumpColumns[vim->m_jumpIndex]);
+    xvim_goto(vim, state->m_lines[state->m_index],
+              state->m_columns[state->m_index]);
     xvim_ensure_cursor_visible(vim);
     return true;
 }
@@ -658,23 +830,28 @@ static bool xvim_jump_navigate(XTuiVim* vim, bool newer)
 #if XTUI_VIM_MARK_ON
 static void xvim_set_mark(XTuiVim* vim, char name)
 {
+    XVimMarkState* state;
     int index = name - 'a';
     if (!vim || index < 0 || index >= 26) return;
-    vim->m_markLines[index] = vim->m_cursorLine;
-    vim->m_markColumns[index] = vim->m_cursorColumn;
+    state = xvim_ensure_mark_state(vim);
+    if (!state) return;
+    state->m_lines[index] = vim->m_cursorLine;
+    state->m_columns[index] = vim->m_cursorColumn;
 }
 
 static bool xvim_jump_mark(XTuiVim* vim, char name, bool lineWise)
 {
+    XVimMarkState* state;
     int index = name - 'a';
-    if (!vim || index < 0 || index >= 26 || vim->m_markLines[index] < 0 ||
-        vim->m_markLines[index] >= vim->m_lineCount) return false;
+    if (!vim || index < 0 || index >= 26 || !vim->m_markState) return false;
+    state = vim->m_markState;
+    if (state->m_lines[index] < 0 || state->m_lines[index] >= vim->m_lineCount) return false;
 #if XTUI_VIM_JUMPLIST_ON
     xvim_jump_push(vim);
 #endif
-    vim->m_cursorLine = vim->m_markLines[index];
+    vim->m_cursorLine = state->m_lines[index];
     vim->m_cursorColumn = lineWise ? xvim_first_nonblank(vim->m_lines[vim->m_cursorLine]) :
-                                   vim->m_markColumns[index];
+                                   state->m_columns[index];
     xvim_normalize_cursor(vim);
     return true;
 }
@@ -1892,8 +2069,12 @@ static void xvim_execute_command(XTuiVim* vim)
     const char* cmd = vim->m_command;
     if (!cmd[0]) { xvim_leave_command(vim); return; }
 #if XTUI_VIM_HISTORY_ON
-    xvim_history_add(vim->m_commandHistory, &vim->m_commandHistoryLen,
-                     &vim->m_commandHistoryIndex, cmd);
+    {
+        XVimCommandHistoryState* history = xvim_ensure_command_history(vim);
+        if (history)
+            xvim_history_add(history->m_entries, &history->m_length,
+                             &history->m_index, cmd);
+    }
 #endif
     if (strcmp(cmd, "w") == 0 || strcmp(cmd, "write") == 0) vim->m_wantSave = true;
     else if (strcmp(cmd, "w!") == 0 || strcmp(cmd, "write!") == 0) {
@@ -1990,7 +2171,8 @@ static void xvim_start_search(XTuiVim* vim, bool backward)
     vim->m_searchHighlight = true;
     vim->m_searchLen = 0; vim->m_search[0] = '\0';
 #if XTUI_VIM_HISTORY_ON
-    vim->m_searchHistoryIndex = vim->m_searchHistoryLen;
+    if (vim->m_searchHistoryState)
+        vim->m_searchHistoryState->m_index = vim->m_searchHistoryState->m_length;
 #endif
 }
 
@@ -2000,8 +2182,12 @@ static void xvim_finish_search(XTuiVim* vim)
         memcpy(vim->m_lastSearch, vim->m_search, (size_t)vim->m_searchLen + 1u);
         vim->m_lastSearchLen = vim->m_searchLen;
 #if XTUI_VIM_HISTORY_ON
-        xvim_history_add(vim->m_searchHistory, &vim->m_searchHistoryLen,
-                         &vim->m_searchHistoryIndex, vim->m_search);
+        {
+            XVimSearchHistoryState* history = xvim_ensure_search_history(vim);
+            if (history)
+                xvim_history_add(history->m_entries, &history->m_length,
+                                 &history->m_index, vim->m_search);
+        }
 #endif
         vim->m_status[0] = '\0';
 #if XTUI_VIM_JUMPLIST_ON
@@ -2032,35 +2218,41 @@ static void xvim_record(XTuiVim* vim, const char* text)
 #if XTUI_VIM_MACRO_ON
 static void xvim_macro_record_event(XTuiVim* vim, const XTuiKeyEvent* event)
 {
+    XVimMacroState* state;
     int index;
     if (!vim || !event || !vim->m_macroRecording || vim->m_macroPlaying) return;
+    state = vim->m_macroState;
+    if (!state) return;
     index = vim->m_macroRegister - 'a';
-    if (index < 0 || index >= 26 || vim->m_macroLengths[index] >= XTUI_VIM_CMD_MAX) return;
+    if (index < 0 || index >= 26 || state->m_lengths[index] >= XTUI_VIM_CMD_MAX) return;
     if (event->m_keyType == XTuiKey_Char) {
         if (event->m_utf8[0] < 0x80)
-            vim->m_macros[index][vim->m_macroLengths[index]++] = event->m_utf8[0];
+            state->m_entries[index][state->m_lengths[index]++] = event->m_utf8[0];
     } else if (event->m_keyType == XTuiKey_Escape) {
-        vim->m_macros[index][vim->m_macroLengths[index]++] = '\x1b';
+        state->m_entries[index][state->m_lengths[index]++] = '\x1b';
     } else if (event->m_keyType == XTuiKey_Enter) {
-        vim->m_macros[index][vim->m_macroLengths[index]++] = '\n';
+        state->m_entries[index][state->m_lengths[index]++] = '\n';
     }
-    vim->m_macros[index][vim->m_macroLengths[index]] = '\0';
+    state->m_entries[index][state->m_lengths[index]] = '\0';
 }
 
 static void xvim_macro_play(XTuiVim* vim, char name)
 {
+    XVimMacroState* state;
     int index;
     int i;
     if (!vim) return;
+    state = vim->m_macroState;
+    if (!state) return;
     if (name == '@') name = vim->m_lastMacro;
     index = name - 'a';
-    if (index < 0 || index >= 26 || vim->m_macroLengths[index] <= 0 || vim->m_macroPlaying)
+    if (index < 0 || index >= 26 || state->m_lengths[index] <= 0 || vim->m_macroPlaying)
         return;
     vim->m_lastMacro = name;
     vim->m_macroPlaying = true;
-    for (i = 0; i < vim->m_macroLengths[index]; ++i) {
+    for (i = 0; i < state->m_lengths[index]; ++i) {
         XTuiKeyEvent event;
-        unsigned char key = (unsigned char)vim->m_macros[index][i];
+        unsigned char key = (unsigned char)state->m_entries[index][i];
         if (key == 0x1b)
             XTuiKeyEvent_init(&event, XEVENT_TYPE_KEY_PRESS, XTuiKey_Escape,
                               XKeyboardModifier_NoModifier);
@@ -2724,11 +2916,16 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         vim->m_pendingNormal = '\0';
         if (name >= 'a' && name <= 'z') {
             int index = name - 'a';
-            vim->m_macroRegister = name;
-            vim->m_macroLengths[index] = 0;
-            vim->m_macros[index][0] = '\0';
-            vim->m_macroRecording = true;
-            snprintf(vim->m_status, sizeof(vim->m_status), "录制宏 @%c", name);
+            XVimMacroState* state = xvim_ensure_macro_state(vim);
+            if (state) {
+                vim->m_macroRegister = name;
+                state->m_lengths[index] = 0;
+                state->m_entries[index][0] = '\0';
+                vim->m_macroRecording = true;
+                snprintf(vim->m_status, sizeof(vim->m_status), "录制宏 @%c", name);
+            } else {
+                snprintf(vim->m_status, sizeof(vim->m_status), "宏状态内存不足");
+            }
         }
         return true;
     }
@@ -2746,8 +2943,22 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         if (event->m_keyType == XTuiKey_Char) { size_t n = strlen(event->m_utf8); if (vim->m_commandLen + (int)n < (int)sizeof(vim->m_command)) { memcpy(vim->m_command + vim->m_commandLen, event->m_utf8, n); vim->m_commandLen += (int)n; vim->m_command[vim->m_commandLen] = '\0'; } return true; }
         if (event->m_keyType == XTuiKey_Backspace) { if (vim->m_commandLen > 0) vim->m_command[--vim->m_commandLen] = '\0'; return true; }
 #if XTUI_VIM_HISTORY_ON
-        if (event->m_keyType == XTuiKey_ArrowUp) { xvim_history_previous(vim->m_commandHistory, vim->m_commandHistoryLen, &vim->m_commandHistoryIndex, vim->m_command, &vim->m_commandLen); return true; }
-        if (event->m_keyType == XTuiKey_ArrowDown) { xvim_history_next(vim->m_commandHistory, vim->m_commandHistoryLen, &vim->m_commandHistoryIndex, vim->m_command, &vim->m_commandLen); return true; }
+        if (event->m_keyType == XTuiKey_ArrowUp) {
+            if (vim->m_commandHistoryState)
+                xvim_history_previous(vim->m_commandHistoryState->m_entries,
+                                      vim->m_commandHistoryState->m_length,
+                                      &vim->m_commandHistoryState->m_index,
+                                      vim->m_command, &vim->m_commandLen);
+            return true;
+        }
+        if (event->m_keyType == XTuiKey_ArrowDown) {
+            if (vim->m_commandHistoryState)
+                xvim_history_next(vim->m_commandHistoryState->m_entries,
+                                  vim->m_commandHistoryState->m_length,
+                                  &vim->m_commandHistoryState->m_index,
+                                  vim->m_command, &vim->m_commandLen);
+            return true;
+        }
 #endif
         if (event->m_keyType == XTuiKey_Enter) { xvim_execute_command(vim); return true; }
         if (event->m_keyType == XTuiKey_Escape) { xvim_leave_command(vim); return true; }
@@ -2758,8 +2969,22 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         if (event->m_keyType == XTuiKey_Char) { size_t n = strlen(event->m_utf8); if (vim->m_searchLen + (int)n < (int)sizeof(vim->m_search)) { memcpy(vim->m_search + vim->m_searchLen, event->m_utf8, n); vim->m_searchLen += (int)n; vim->m_search[vim->m_searchLen] = '\0'; } return true; }
         if (event->m_keyType == XTuiKey_Backspace) { if (vim->m_searchLen > 0) vim->m_search[--vim->m_searchLen] = '\0'; return true; }
 #if XTUI_VIM_HISTORY_ON
-        if (event->m_keyType == XTuiKey_ArrowUp) { xvim_history_previous(vim->m_searchHistory, vim->m_searchHistoryLen, &vim->m_searchHistoryIndex, vim->m_search, &vim->m_searchLen); return true; }
-        if (event->m_keyType == XTuiKey_ArrowDown) { xvim_history_next(vim->m_searchHistory, vim->m_searchHistoryLen, &vim->m_searchHistoryIndex, vim->m_search, &vim->m_searchLen); return true; }
+        if (event->m_keyType == XTuiKey_ArrowUp) {
+            if (vim->m_searchHistoryState)
+                xvim_history_previous(vim->m_searchHistoryState->m_entries,
+                                      vim->m_searchHistoryState->m_length,
+                                      &vim->m_searchHistoryState->m_index,
+                                      vim->m_search, &vim->m_searchLen);
+            return true;
+        }
+        if (event->m_keyType == XTuiKey_ArrowDown) {
+            if (vim->m_searchHistoryState)
+                xvim_history_next(vim->m_searchHistoryState->m_entries,
+                                  vim->m_searchHistoryState->m_length,
+                                  &vim->m_searchHistoryState->m_index,
+                                  vim->m_search, &vim->m_searchLen);
+            return true;
+        }
 #endif
         if (event->m_keyType == XTuiKey_Enter) { xvim_finish_search(vim); return true; }
         if (event->m_keyType == XTuiKey_Escape) { vim->m_searchMode = false; return true; }
@@ -3141,7 +3366,9 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
 #endif
     if (c == ':') { vim->m_commandMode = true; vim->m_commandLen = 0; vim->m_command[0] = '\0';
 #if XTUI_VIM_HISTORY_ON
-        vim->m_commandHistoryIndex = vim->m_commandHistoryLen;
+        if (vim->m_commandHistoryState)
+            vim->m_commandHistoryState->m_index =
+                vim->m_commandHistoryState->m_length;
 #endif
         return true; }
 #if XTUI_VIM_ADVANCED_MOTION_ON
@@ -3156,115 +3383,396 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
 
 /* ==================== XClass 生命周期 ==================== */
 
+static void xvim_clear_optional_states(XTuiVim* vim)
+{
+    if (!vim) return;
+#if XTUI_VIM_HISTORY_ON
+    xvim_optional_free(vim, vim->m_commandHistoryState);
+    vim->m_commandHistoryState = NULL;
+#if XTUI_VIM_SEARCH_ON
+    xvim_optional_free(vim, vim->m_searchHistoryState);
+    vim->m_searchHistoryState = NULL;
+#endif
+#endif
+#if XTUI_VIM_MACRO_ON
+    xvim_optional_free(vim, vim->m_macroState);
+    vim->m_macroState = NULL;
+#endif
+#if XTUI_VIM_MARK_ON
+    xvim_optional_free(vim, vim->m_markState);
+    vim->m_markState = NULL;
+#endif
+#if XTUI_VIM_JUMPLIST_ON
+    xvim_optional_free(vim, vim->m_jumpState);
+    vim->m_jumpState = NULL;
+#endif
+}
+
+#if XTUI_VIM_REGISTER_ON && XTUI_VIM_YANK_PASTE_ON
+static void xvim_copy_register_value(XVimRegister* dest, const XVimRegister* src)
+{
+    if (!dest || !src || !src->lines || src->count <= 0) return;
+    (void)xvim_assign_register_value(dest, src->lines, src->count, src->lineWise);
+}
+#endif
+
+static void xvim_copy_optional_states(XTuiVim* dest, const XTuiVim* src)
+{
+    if (!dest || !src) return;
+#if XTUI_VIM_HISTORY_ON
+    if (src->m_commandHistoryState) {
+        dest->m_commandHistoryState = (XVimCommandHistoryState*)
+            xvim_optional_calloc(dest, sizeof(XVimCommandHistoryState));
+        if (dest->m_commandHistoryState)
+            *dest->m_commandHistoryState = *src->m_commandHistoryState;
+    }
+#if XTUI_VIM_SEARCH_ON
+    if (src->m_searchHistoryState) {
+        dest->m_searchHistoryState = (XVimSearchHistoryState*)
+            xvim_optional_calloc(dest, sizeof(XVimSearchHistoryState));
+        if (dest->m_searchHistoryState)
+            *dest->m_searchHistoryState = *src->m_searchHistoryState;
+    }
+#endif
+#endif
+#if XTUI_VIM_REGISTER_ON && XTUI_VIM_YANK_PASTE_ON
+    if (src->m_registerState) {
+        int i;
+        dest->m_registerState = (XVimRegisterState*)
+            xvim_optional_calloc(dest, sizeof(XVimRegisterState));
+        if (dest->m_registerState) {
+            for (i = 0; i < 26; ++i)
+                xvim_copy_register_value(&dest->m_registerState->m_named[i],
+                                         &src->m_registerState->m_named[i]);
+            for (i = 0; i < 10; ++i)
+                xvim_copy_register_value(&dest->m_registerState->m_numbered[i],
+                                         &src->m_registerState->m_numbered[i]);
+        }
+    }
+#endif
+#if XTUI_VIM_MACRO_ON
+    if (src->m_macroState) {
+        dest->m_macroState = (XVimMacroState*)
+            xvim_optional_calloc(dest, sizeof(XVimMacroState));
+        if (dest->m_macroState) *dest->m_macroState = *src->m_macroState;
+    }
+#endif
+#if XTUI_VIM_MARK_ON
+    if (src->m_markState) {
+        dest->m_markState = (XVimMarkState*)
+            xvim_optional_calloc(dest, sizeof(XVimMarkState));
+        if (dest->m_markState) *dest->m_markState = *src->m_markState;
+    }
+#endif
+#if XTUI_VIM_JUMPLIST_ON
+    if (src->m_jumpState) {
+        dest->m_jumpState = (XVimJumpState*)
+            xvim_optional_calloc(dest, sizeof(XVimJumpState));
+        if (dest->m_jumpState) *dest->m_jumpState = *src->m_jumpState;
+    }
+#endif
+}
+
+static void xvim_clear_owned(XTuiVim* vim)
+{
+    if (!vim) return;
+    xvim_free_lines(vim->m_lines, vim->m_lineCount);
+    vim->m_lines = NULL;
+    vim->m_lineCount = 0;
+    vim->m_linesCapacity = 0;
+#if XTUI_VIM_UNDO_REDO_ON
+    xvim_clear_stack(vim->m_undoStack, vim->m_undoLen);
+    xvim_clear_stack(vim->m_redoStack, vim->m_redoLen);
+    vim->m_undoStack = NULL; vim->m_undoLen = vim->m_undoCap = 0;
+    vim->m_redoStack = NULL; vim->m_redoLen = vim->m_redoCap = 0;
+#endif
+    xvim_clear_register(vim);
+    xvim_clear_optional_states(vim);
+    if (vim->m_path) XFree_System(vim->m_path);
+    vim->m_path = NULL;
+}
+
 static void VXTuiVim_deinit(XTuiVim* vim)
 {
     if (!vim) return;
-    xvim_free_lines(vim->m_lines, vim->m_lineCount); vim->m_lines = NULL;
-#if XTUI_VIM_UNDO_REDO_ON
-    xvim_clear_stack(vim->m_undoStack, vim->m_undoLen); vim->m_undoStack = NULL;
-    xvim_clear_stack(vim->m_redoStack, vim->m_redoLen); vim->m_redoStack = NULL;
-#endif
-    xvim_clear_register(vim);
-    if (vim->m_path) XFree_System(vim->m_path);
-    vim->m_path = NULL; vim->m_lineCount = 0;
+    xvim_clear_owned(vim);
     XClass_Deinit_Parent(XTuiWidget, (XTuiWidget*)vim);
 }
 
 static void VXTuiVim_copy(XTuiVim* dest, const XTuiVim* src)
 {
+    bool uninitialized;
     if (!dest || !src || dest == src) return;
-    if (XClassIsVtableNull(dest)) XTuiVim_init(dest);
-    XClass_Parent(XTuiWidget, EXClass_Copy, void(*)(XTuiWidget*, const XTuiWidget*))((XTuiWidget*)dest, (const XTuiWidget*)src);
-    dest->m_lines = xvim_clone_lines(src->m_lines, src->m_lineCount, &dest->m_linesCapacity);
+    uninitialized = XClassIsVtableNull(dest);
+    if (uninitialized) {
+        XTuiVim_init(dest);
+        Class_Memory(dest) = Class_Memory(src);
+    }
+    xvim_clear_owned(dest);
+    XClass_Parent(XTuiWidget, EXClass_Copy,
+                  void(*)(XTuiWidget*, const XTuiWidget*))(
+                      (XTuiWidget*)dest, (const XTuiWidget*)src);
+    dest->m_lines = xvim_clone_lines(src->m_lines, src->m_lineCount,
+                                     &dest->m_linesCapacity);
     dest->m_lineCount = src->m_lineCount;
-    dest->m_cursorLine = src->m_cursorLine; dest->m_cursorColumn = src->m_cursorColumn; dest->m_topLine = src->m_topLine;
-    dest->m_insertMode = src->m_insertMode; dest->m_replaceMode = src->m_replaceMode; dest->m_commandMode = src->m_commandMode; dest->m_modified = src->m_modified;
+    dest->m_cursorLine = src->m_cursorLine;
+    dest->m_cursorColumn = src->m_cursorColumn;
+    dest->m_topLine = src->m_topLine;
+    dest->m_insertMode = src->m_insertMode;
+    dest->m_replaceMode = src->m_replaceMode;
+    dest->m_commandMode = src->m_commandMode;
+    dest->m_modified = src->m_modified;
+    memcpy(dest->m_command, src->m_command, sizeof(dest->m_command));
+    dest->m_commandLen = src->m_commandLen;
 #if XTUI_VIM_SEARCH_ON
-    dest->m_searchMode = src->m_searchMode; dest->m_searchBackward = src->m_searchBackward; dest->m_searchHighlight = src->m_searchHighlight;
+    dest->m_searchMode = src->m_searchMode;
+    dest->m_searchBackward = src->m_searchBackward;
+    dest->m_searchHighlight = src->m_searchHighlight;
+    memcpy(dest->m_search, src->m_search, sizeof(dest->m_search));
+    memcpy(dest->m_lastSearch, src->m_lastSearch, sizeof(dest->m_lastSearch));
+    dest->m_searchLen = src->m_searchLen;
+    dest->m_lastSearchLen = src->m_lastSearchLen;
 #endif
-    memcpy(dest->m_command, src->m_command, sizeof(dest->m_command)); dest->m_commandLen = src->m_commandLen;
-#if XTUI_VIM_HISTORY_ON
-    memcpy(dest->m_commandHistory, src->m_commandHistory, sizeof(dest->m_commandHistory)); dest->m_commandHistoryLen = src->m_commandHistoryLen; dest->m_commandHistoryIndex = src->m_commandHistoryIndex;
-#endif
-#if XTUI_VIM_SEARCH_ON
-    memcpy(dest->m_search, src->m_search, sizeof(dest->m_search)); memcpy(dest->m_lastSearch, src->m_lastSearch, sizeof(dest->m_lastSearch)); dest->m_searchLen = src->m_searchLen; dest->m_lastSearchLen = src->m_lastSearchLen;
-#if XTUI_VIM_HISTORY_ON
-    memcpy(dest->m_searchHistory, src->m_searchHistory, sizeof(dest->m_searchHistory)); dest->m_searchHistoryLen = src->m_searchHistoryLen; dest->m_searchHistoryIndex = src->m_searchHistoryIndex;
-#endif
-#endif
-    memcpy(dest->m_insertBuf, src->m_insertBuf, sizeof(dest->m_insertBuf)); dest->m_insertLen = src->m_insertLen; dest->m_insertCursor = src->m_insertCursor;
+    memcpy(dest->m_insertBuf, src->m_insertBuf, sizeof(dest->m_insertBuf));
+    dest->m_insertLen = src->m_insertLen;
+    dest->m_insertCursor = src->m_insertCursor;
     memcpy(dest->m_status, src->m_status, sizeof(dest->m_status));
+#if XTUI_VIM_YANK_PASTE_ON
+    dest->m_regCount = src->m_regCount;
+    dest->m_regLineWise = src->m_regLineWise;
+    if (src->m_regLines)
+        dest->m_regLines = xvim_clone_lines(src->m_regLines, src->m_regCount, NULL);
+#endif
 #if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
-    dest->m_substituteConfirm = src->m_substituteConfirm; dest->m_substituteGlobal = src->m_substituteGlobal; dest->m_substituteIgnoreCase = src->m_substituteIgnoreCase; dest->m_substituteFirstLine = src->m_substituteFirstLine; dest->m_substituteLastLine = src->m_substituteLastLine; dest->m_substituteLine = src->m_substituteLine; dest->m_substituteColumn = src->m_substituteColumn; dest->m_substituteEndColumn = src->m_substituteEndColumn; dest->m_substituteNextColumn = src->m_substituteNextColumn; memcpy(dest->m_substitutePattern, src->m_substitutePattern, sizeof(dest->m_substitutePattern)); memcpy(dest->m_substituteReplacement, src->m_substituteReplacement, sizeof(dest->m_substituteReplacement));
+    dest->m_substituteConfirm = src->m_substituteConfirm;
+    dest->m_substituteGlobal = src->m_substituteGlobal;
+    dest->m_substituteIgnoreCase = src->m_substituteIgnoreCase;
+    dest->m_substituteFirstLine = src->m_substituteFirstLine;
+    dest->m_substituteLastLine = src->m_substituteLastLine;
+    dest->m_substituteLine = src->m_substituteLine;
+    dest->m_substituteColumn = src->m_substituteColumn;
+    dest->m_substituteEndColumn = src->m_substituteEndColumn;
+    dest->m_substituteNextColumn = src->m_substituteNextColumn;
+    memcpy(dest->m_substitutePattern, src->m_substitutePattern,
+           sizeof(dest->m_substitutePattern));
+    memcpy(dest->m_substituteReplacement, src->m_substituteReplacement,
+           sizeof(dest->m_substituteReplacement));
 #endif
-    dest->m_wantSave = src->m_wantSave; dest->m_wantQuit = src->m_wantQuit; dest->m_wantSaveQuit = src->m_wantSaveQuit;
+#if XTUI_VIM_REGISTER_ON
+    dest->m_activeRegister = src->m_activeRegister;
+    dest->m_appendRegister = src->m_appendRegister;
+#endif
+#if XTUI_VIM_MACRO_ON
+    dest->m_macroRecording = src->m_macroRecording;
+    dest->m_macroPlaying = false;
+    dest->m_macroRegister = src->m_macroRegister;
+    dest->m_lastMacro = src->m_lastMacro;
+#endif
+    dest->m_wantSave = src->m_wantSave;
+    dest->m_wantQuit = src->m_wantQuit;
+    dest->m_wantSaveQuit = src->m_wantSaveQuit;
 #if XTUI_VIM_MULTIBUFFER_ON
-    dest->m_wantEdit = src->m_wantEdit; dest->m_wantBufferNext = src->m_wantBufferNext; dest->m_wantBufferPrev = src->m_wantBufferPrev; dest->m_wantBufferList = src->m_wantBufferList; dest->m_wantBufferIndex = src->m_wantBufferIndex; dest->m_wantForce = src->m_wantForce; dest->m_wantWritePath = src->m_wantWritePath; dest->m_wantSaveAs = src->m_wantSaveAs; dest->m_wantWriteAll = src->m_wantWriteAll; dest->m_wantQuitAll = src->m_wantQuitAll; dest->m_wantBufferClose = src->m_wantBufferClose; memcpy(dest->m_actionPath, src->m_actionPath, sizeof(dest->m_actionPath));
+    dest->m_wantEdit = src->m_wantEdit;
+    dest->m_wantBufferNext = src->m_wantBufferNext;
+    dest->m_wantBufferPrev = src->m_wantBufferPrev;
+    dest->m_wantBufferList = src->m_wantBufferList;
+    dest->m_wantBufferIndex = src->m_wantBufferIndex;
+    dest->m_wantForce = src->m_wantForce;
+    dest->m_wantWritePath = src->m_wantWritePath;
+    dest->m_wantSaveAs = src->m_wantSaveAs;
+    dest->m_wantWriteAll = src->m_wantWriteAll;
+    dest->m_wantQuitAll = src->m_wantQuitAll;
+    dest->m_wantBufferClose = src->m_wantBufferClose;
+    memcpy(dest->m_actionPath, src->m_actionPath, sizeof(dest->m_actionPath));
 #endif
-    dest->m_pendingOperator = src->m_pendingOperator; dest->m_pendingNormal = src->m_pendingNormal; dest->m_count = src->m_count;
+    dest->m_pendingOperator = src->m_pendingOperator;
+    dest->m_pendingNormal = src->m_pendingNormal;
+    dest->m_count = src->m_count;
+    dest->m_opStartLine = src->m_opStartLine;
+    dest->m_opStartColumn = src->m_opStartColumn;
 #if XTUI_VIM_VISUAL_ON
-    dest->m_visualMode = src->m_visualMode; dest->m_visualLineWise = src->m_visualLineWise; dest->m_visualBlock = src->m_visualBlock; dest->m_visualStartLine = src->m_visualStartLine; dest->m_visualStartColumn = src->m_visualStartColumn; dest->m_blockInsertMode = src->m_blockInsertMode; dest->m_blockInsertFirstLine = src->m_blockInsertFirstLine; dest->m_blockInsertLastLine = src->m_blockInsertLastLine; dest->m_blockInsertColumn = src->m_blockInsertColumn;
-#endif
-#if XTUI_VIM_MARK_ON
-    memcpy(dest->m_markLines, src->m_markLines, sizeof(dest->m_markLines)); memcpy(dest->m_markColumns, src->m_markColumns, sizeof(dest->m_markColumns));
-#endif
-#if XTUI_VIM_JUMPLIST_ON
-    memcpy(dest->m_jumpLines, src->m_jumpLines, sizeof(dest->m_jumpLines)); memcpy(dest->m_jumpColumns, src->m_jumpColumns, sizeof(dest->m_jumpColumns)); dest->m_jumpLength = src->m_jumpLength; dest->m_jumpIndex = src->m_jumpIndex;
+    dest->m_visualMode = src->m_visualMode;
+    dest->m_visualLineWise = src->m_visualLineWise;
+    dest->m_visualBlock = src->m_visualBlock;
+    dest->m_visualStartLine = src->m_visualStartLine;
+    dest->m_visualStartColumn = src->m_visualStartColumn;
+    dest->m_blockInsertMode = src->m_blockInsertMode;
+    dest->m_blockInsertFirstLine = src->m_blockInsertFirstLine;
+    dest->m_blockInsertLastLine = src->m_blockInsertLastLine;
+    dest->m_blockInsertColumn = src->m_blockInsertColumn;
 #endif
 #if XTUI_VIM_ADVANCED_MOTION_ON
-    dest->m_findChar = src->m_findChar; dest->m_findBackward = src->m_findBackward; dest->m_findTill = src->m_findTill; memcpy(dest->m_lastRepeat, src->m_lastRepeat, sizeof(dest->m_lastRepeat)); dest->m_lastRepeatLen = src->m_lastRepeatLen;
-    memcpy(dest->m_insertRepeatPrefix, src->m_insertRepeatPrefix, sizeof(dest->m_insertRepeatPrefix));
+    dest->m_findChar = src->m_findChar;
+    dest->m_findBackward = src->m_findBackward;
+    dest->m_findTill = src->m_findTill;
+    memcpy(dest->m_lastRepeat, src->m_lastRepeat, sizeof(dest->m_lastRepeat));
+    dest->m_lastRepeatLen = src->m_lastRepeatLen;
+    memcpy(dest->m_insertRepeatPrefix, src->m_insertRepeatPrefix,
+           sizeof(dest->m_insertRepeatPrefix));
 #endif
     dest->m_showLineNumbers = src->m_showLineNumbers;
-    if (src->m_path) { dest->m_path = (char*)XMalloc_System(strlen(src->m_path) + 1u); if (dest->m_path) strcpy(dest->m_path, src->m_path); }
+    xvim_copy_optional_states(dest, src);
+    if (src->m_path) {
+        dest->m_path = (char*)XMalloc_System(strlen(src->m_path) + 1u);
+        if (dest->m_path) strcpy(dest->m_path, src->m_path);
+    }
 }
 
 static void VXTuiVim_move(XTuiVim* dest, XTuiVim* src)
 {
+    bool uninitialized;
+    bool sameMemory;
     if (!dest || !src || dest == src) return;
-    if (XClassIsVtableNull(dest)) XTuiVim_init(dest);
-    XClass_Parent(XTuiWidget, EXClass_Move, void(*)(XTuiWidget*, XTuiWidget*))((XTuiWidget*)dest, (XTuiWidget*)src);
-    dest->m_lines = src->m_lines; dest->m_lineCount = src->m_lineCount; dest->m_linesCapacity = src->m_linesCapacity; src->m_lines = NULL; src->m_lineCount = 0; src->m_linesCapacity = 0;
+    uninitialized = XClassIsVtableNull(dest);
+    if (uninitialized) {
+        XTuiVim_init(dest);
+        Class_Memory(dest) = Class_Memory(src);
+    }
+    sameMemory = Class_Memory(dest) == Class_Memory(src);
+    if (!sameMemory) {
+        VXTuiVim_copy(dest, src);
+        xvim_clear_owned(src);
+        XClass_Deinit_Parent(XTuiWidget, (XTuiWidget*)src);
+        return;
+    }
+    xvim_clear_owned(dest);
+    XClass_Parent(XTuiWidget, EXClass_Move,
+                  void(*)(XTuiWidget*, XTuiWidget*))(
+                      (XTuiWidget*)dest, (XTuiWidget*)src);
+    dest->m_lines = src->m_lines;
+    dest->m_lineCount = src->m_lineCount;
+    dest->m_linesCapacity = src->m_linesCapacity;
+    src->m_lines = NULL; src->m_lineCount = 0; src->m_linesCapacity = 0;
 #if XTUI_VIM_UNDO_REDO_ON
-    dest->m_undoStack = src->m_undoStack; dest->m_undoLen = src->m_undoLen; dest->m_undoCap = src->m_undoCap; src->m_undoStack = NULL; src->m_undoLen = src->m_undoCap = 0;
-    dest->m_redoStack = src->m_redoStack; dest->m_redoLen = src->m_redoLen; dest->m_redoCap = src->m_redoCap; src->m_redoStack = NULL; src->m_redoLen = src->m_redoCap = 0;
+    dest->m_undoStack = src->m_undoStack;
+    dest->m_undoLen = src->m_undoLen; dest->m_undoCap = src->m_undoCap;
+    dest->m_redoStack = src->m_redoStack;
+    dest->m_redoLen = src->m_redoLen; dest->m_redoCap = src->m_redoCap;
+    src->m_undoStack = NULL; src->m_undoLen = src->m_undoCap = 0;
+    src->m_redoStack = NULL; src->m_redoLen = src->m_redoCap = 0;
 #endif
 #if XTUI_VIM_YANK_PASTE_ON
-    dest->m_regLines = src->m_regLines; dest->m_regCount = src->m_regCount; dest->m_regLineWise = src->m_regLineWise; src->m_regLines = NULL; src->m_regCount = 0;
+    dest->m_regLines = src->m_regLines;
+    dest->m_regCount = src->m_regCount;
+    dest->m_regLineWise = src->m_regLineWise;
+    src->m_regLines = NULL; src->m_regCount = 0; src->m_regLineWise = false;
 #endif
-    dest->m_cursorLine = src->m_cursorLine; dest->m_cursorColumn = src->m_cursorColumn; dest->m_topLine = src->m_topLine; dest->m_insertMode = src->m_insertMode; dest->m_replaceMode = src->m_replaceMode; dest->m_commandMode = src->m_commandMode; dest->m_modified = src->m_modified; memcpy(dest->m_command, src->m_command, sizeof(dest->m_command)); dest->m_commandLen = src->m_commandLen;
 #if XTUI_VIM_HISTORY_ON
-    memcpy(dest->m_commandHistory, src->m_commandHistory, sizeof(dest->m_commandHistory)); dest->m_commandHistoryLen = src->m_commandHistoryLen; dest->m_commandHistoryIndex = src->m_commandHistoryIndex;
-#endif
+    dest->m_commandHistoryState = src->m_commandHistoryState;
+    src->m_commandHistoryState = NULL;
 #if XTUI_VIM_SEARCH_ON
-    dest->m_searchMode = src->m_searchMode; dest->m_searchBackward = src->m_searchBackward; dest->m_searchHighlight = src->m_searchHighlight; memcpy(dest->m_search, src->m_search, sizeof(dest->m_search)); memcpy(dest->m_lastSearch, src->m_lastSearch, sizeof(dest->m_lastSearch)); dest->m_searchLen = src->m_searchLen; dest->m_lastSearchLen = src->m_lastSearchLen;
-#if XTUI_VIM_HISTORY_ON
-    memcpy(dest->m_searchHistory, src->m_searchHistory, sizeof(dest->m_searchHistory)); dest->m_searchHistoryLen = src->m_searchHistoryLen; dest->m_searchHistoryIndex = src->m_searchHistoryIndex;
+    dest->m_searchHistoryState = src->m_searchHistoryState;
+    src->m_searchHistoryState = NULL;
 #endif
 #endif
-    memcpy(dest->m_insertBuf, src->m_insertBuf, sizeof(dest->m_insertBuf)); dest->m_insertLen = src->m_insertLen; dest->m_insertCursor = src->m_insertCursor; memcpy(dest->m_status, src->m_status, sizeof(dest->m_status));
-#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
-    dest->m_substituteConfirm = src->m_substituteConfirm; dest->m_substituteGlobal = src->m_substituteGlobal; dest->m_substituteIgnoreCase = src->m_substituteIgnoreCase; dest->m_substituteFirstLine = src->m_substituteFirstLine; dest->m_substituteLastLine = src->m_substituteLastLine; dest->m_substituteLine = src->m_substituteLine; dest->m_substituteColumn = src->m_substituteColumn; dest->m_substituteEndColumn = src->m_substituteEndColumn; dest->m_substituteNextColumn = src->m_substituteNextColumn; memcpy(dest->m_substitutePattern, src->m_substitutePattern, sizeof(dest->m_substitutePattern)); memcpy(dest->m_substituteReplacement, src->m_substituteReplacement, sizeof(dest->m_substituteReplacement));
+#if XTUI_VIM_REGISTER_ON
+    dest->m_registerState = src->m_registerState;
+    src->m_registerState = NULL;
+    dest->m_activeRegister = src->m_activeRegister;
+    dest->m_appendRegister = src->m_appendRegister;
 #endif
-    dest->m_path = src->m_path; src->m_path = NULL; dest->m_wantSave = src->m_wantSave; dest->m_wantQuit = src->m_wantQuit; dest->m_wantSaveQuit = src->m_wantSaveQuit;
-#if XTUI_VIM_MULTIBUFFER_ON
-    dest->m_wantEdit = src->m_wantEdit; dest->m_wantBufferNext = src->m_wantBufferNext; dest->m_wantBufferPrev = src->m_wantBufferPrev; dest->m_wantBufferList = src->m_wantBufferList; dest->m_wantBufferIndex = src->m_wantBufferIndex; dest->m_wantForce = src->m_wantForce; dest->m_wantWritePath = src->m_wantWritePath; dest->m_wantSaveAs = src->m_wantSaveAs; dest->m_wantWriteAll = src->m_wantWriteAll; dest->m_wantQuitAll = src->m_wantQuitAll; dest->m_wantBufferClose = src->m_wantBufferClose; memcpy(dest->m_actionPath, src->m_actionPath, sizeof(dest->m_actionPath));
-#endif
-    dest->m_pendingOperator = src->m_pendingOperator; dest->m_pendingNormal = src->m_pendingNormal; dest->m_count = src->m_count;
-#if XTUI_VIM_VISUAL_ON
-    dest->m_visualMode = src->m_visualMode; dest->m_visualLineWise = src->m_visualLineWise; dest->m_visualBlock = src->m_visualBlock; dest->m_visualStartLine = src->m_visualStartLine; dest->m_visualStartColumn = src->m_visualStartColumn; dest->m_blockInsertMode = src->m_blockInsertMode; dest->m_blockInsertFirstLine = src->m_blockInsertFirstLine; dest->m_blockInsertLastLine = src->m_blockInsertLastLine; dest->m_blockInsertColumn = src->m_blockInsertColumn;
+#if XTUI_VIM_MACRO_ON
+    dest->m_macroState = src->m_macroState;
+    src->m_macroState = NULL;
+    dest->m_macroRecording = src->m_macroRecording;
+    dest->m_macroPlaying = src->m_macroPlaying;
+    dest->m_macroRegister = src->m_macroRegister;
+    dest->m_lastMacro = src->m_lastMacro;
+    src->m_macroRecording = false; src->m_macroPlaying = false;
 #endif
 #if XTUI_VIM_MARK_ON
-    memcpy(dest->m_markLines, src->m_markLines, sizeof(dest->m_markLines)); memcpy(dest->m_markColumns, src->m_markColumns, sizeof(dest->m_markColumns));
+    dest->m_markState = src->m_markState;
+    src->m_markState = NULL;
 #endif
 #if XTUI_VIM_JUMPLIST_ON
-    memcpy(dest->m_jumpLines, src->m_jumpLines, sizeof(dest->m_jumpLines)); memcpy(dest->m_jumpColumns, src->m_jumpColumns, sizeof(dest->m_jumpColumns)); dest->m_jumpLength = src->m_jumpLength; dest->m_jumpIndex = src->m_jumpIndex;
+    dest->m_jumpState = src->m_jumpState;
+    src->m_jumpState = NULL;
+#endif
+    dest->m_path = src->m_path; src->m_path = NULL;
+    dest->m_cursorLine = src->m_cursorLine;
+    dest->m_cursorColumn = src->m_cursorColumn;
+    dest->m_topLine = src->m_topLine;
+    dest->m_insertMode = src->m_insertMode;
+    dest->m_replaceMode = src->m_replaceMode;
+    dest->m_commandMode = src->m_commandMode;
+    dest->m_modified = src->m_modified;
+    memcpy(dest->m_command, src->m_command, sizeof(dest->m_command));
+    dest->m_commandLen = src->m_commandLen;
+#if XTUI_VIM_SEARCH_ON
+    dest->m_searchMode = src->m_searchMode;
+    dest->m_searchBackward = src->m_searchBackward;
+    dest->m_searchHighlight = src->m_searchHighlight;
+    memcpy(dest->m_search, src->m_search, sizeof(dest->m_search));
+    memcpy(dest->m_lastSearch, src->m_lastSearch, sizeof(dest->m_lastSearch));
+    dest->m_searchLen = src->m_searchLen;
+    dest->m_lastSearchLen = src->m_lastSearchLen;
+#endif
+    memcpy(dest->m_insertBuf, src->m_insertBuf, sizeof(dest->m_insertBuf));
+    dest->m_insertLen = src->m_insertLen;
+    dest->m_insertCursor = src->m_insertCursor;
+    memcpy(dest->m_status, src->m_status, sizeof(dest->m_status));
+    dest->m_wantSave = src->m_wantSave;
+    dest->m_wantQuit = src->m_wantQuit;
+    dest->m_wantSaveQuit = src->m_wantSaveQuit;
+#if XTUI_VIM_MULTIBUFFER_ON
+    dest->m_wantEdit = src->m_wantEdit;
+    dest->m_wantBufferNext = src->m_wantBufferNext;
+    dest->m_wantBufferPrev = src->m_wantBufferPrev;
+    dest->m_wantBufferList = src->m_wantBufferList;
+    dest->m_wantBufferIndex = src->m_wantBufferIndex;
+    dest->m_wantForce = src->m_wantForce;
+    dest->m_wantWritePath = src->m_wantWritePath;
+    dest->m_wantSaveAs = src->m_wantSaveAs;
+    dest->m_wantWriteAll = src->m_wantWriteAll;
+    dest->m_wantQuitAll = src->m_wantQuitAll;
+    dest->m_wantBufferClose = src->m_wantBufferClose;
+    memcpy(dest->m_actionPath, src->m_actionPath, sizeof(dest->m_actionPath));
+#endif
+    dest->m_pendingOperator = src->m_pendingOperator;
+    dest->m_pendingNormal = src->m_pendingNormal;
+    dest->m_count = src->m_count;
+    dest->m_opStartLine = src->m_opStartLine;
+    dest->m_opStartColumn = src->m_opStartColumn;
+#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
+    dest->m_substituteConfirm = src->m_substituteConfirm;
+    dest->m_substituteGlobal = src->m_substituteGlobal;
+    dest->m_substituteIgnoreCase = src->m_substituteIgnoreCase;
+    dest->m_substituteFirstLine = src->m_substituteFirstLine;
+    dest->m_substituteLastLine = src->m_substituteLastLine;
+    dest->m_substituteLine = src->m_substituteLine;
+    dest->m_substituteColumn = src->m_substituteColumn;
+    dest->m_substituteEndColumn = src->m_substituteEndColumn;
+    dest->m_substituteNextColumn = src->m_substituteNextColumn;
+    memcpy(dest->m_substitutePattern, src->m_substitutePattern,
+           sizeof(dest->m_substitutePattern));
+    memcpy(dest->m_substituteReplacement, src->m_substituteReplacement,
+           sizeof(dest->m_substituteReplacement));
+#endif
+#if XTUI_VIM_VISUAL_ON
+    dest->m_visualMode = src->m_visualMode;
+    dest->m_visualLineWise = src->m_visualLineWise;
+    dest->m_visualBlock = src->m_visualBlock;
+    dest->m_visualStartLine = src->m_visualStartLine;
+    dest->m_visualStartColumn = src->m_visualStartColumn;
+    dest->m_blockInsertMode = src->m_blockInsertMode;
+    dest->m_blockInsertFirstLine = src->m_blockInsertFirstLine;
+    dest->m_blockInsertLastLine = src->m_blockInsertLastLine;
+    dest->m_blockInsertColumn = src->m_blockInsertColumn;
 #endif
 #if XTUI_VIM_ADVANCED_MOTION_ON
-    dest->m_findChar = src->m_findChar; dest->m_findBackward = src->m_findBackward; dest->m_findTill = src->m_findTill; memcpy(dest->m_lastRepeat, src->m_lastRepeat, sizeof(dest->m_lastRepeat)); dest->m_lastRepeatLen = src->m_lastRepeatLen;
-    memcpy(dest->m_insertRepeatPrefix, src->m_insertRepeatPrefix, sizeof(dest->m_insertRepeatPrefix));
+    dest->m_findChar = src->m_findChar;
+    dest->m_findBackward = src->m_findBackward;
+    dest->m_findTill = src->m_findTill;
+    memcpy(dest->m_lastRepeat, src->m_lastRepeat, sizeof(dest->m_lastRepeat));
+    dest->m_lastRepeatLen = src->m_lastRepeatLen;
+    memcpy(dest->m_insertRepeatPrefix, src->m_insertRepeatPrefix,
+           sizeof(dest->m_insertRepeatPrefix));
 #endif
     dest->m_showLineNumbers = src->m_showLineNumbers;
+#if XTUI_VIM_REGISTER_ON
+    src->m_activeRegister = '\0';
+    src->m_appendRegister = false;
+#endif
 }
 
 XVtable* XTuiVim_class_init(void)
@@ -3282,9 +3790,6 @@ XVtable* XTuiVim_class_init(void)
 
 void XTuiVim_init(XTuiVim* vim)
 {
-#if XTUI_VIM_MARK_ON
-    int i;
-#endif
     if (!vim) return;
     memset(((XClass*)vim) + 1, 0, sizeof(XTuiVim) - sizeof(XClass));
     XTuiWidget_init((XTuiWidget*)vim); XClassGetVtable(vim) = XTuiVim_class_init();
@@ -3293,12 +3798,6 @@ void XTuiVim_init(XTuiVim* vim)
     vim->m_showLineNumbers = true;
 #if XTUI_VIM_SEARCH_ON
     vim->m_searchHighlight = true;
-#endif
-#if XTUI_VIM_MARK_ON
-    for (i = 0; i < 26; ++i) {
-        vim->m_markLines[i] = -1;
-        vim->m_markColumns[i] = -1;
-    }
 #endif
 }
 
@@ -3335,10 +3834,12 @@ void XTuiVim_setLines(XTuiVim* vim, const char* const* lines, int count)
     vim->m_blockInsertLastLine = 0; vim->m_blockInsertColumn = 0;
 #endif
 #if XTUI_VIM_MARK_ON
-    for (i = 0; i < 26; ++i) vim->m_markLines[i] = vim->m_markColumns[i] = -1;
+    xvim_optional_free(vim, vim->m_markState);
+    vim->m_markState = NULL;
 #endif
 #if XTUI_VIM_JUMPLIST_ON
-    vim->m_jumpLength = vim->m_jumpIndex = 0;
+    xvim_optional_free(vim, vim->m_jumpState);
+    vim->m_jumpState = NULL;
 #endif
 #if XTUI_VIM_ADVANCED_MOTION_ON
     vim->m_insertRepeatPrefix[0] = '\0';

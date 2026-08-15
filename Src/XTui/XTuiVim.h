@@ -54,6 +54,26 @@ typedef struct XVimRegister
     bool   lineWise;  /**< 是否为行方式寄存器。 */
 } XVimRegister;
 
+/* 可选 Vim 状态只在 XTuiVim.c 中定义，公开对象保留不透明指针。 */
+#if XTUI_VIM_HISTORY_ON
+typedef struct XVimCommandHistoryState XVimCommandHistoryState;
+#if XTUI_VIM_SEARCH_ON
+typedef struct XVimSearchHistoryState XVimSearchHistoryState;
+#endif
+#endif
+#if XTUI_VIM_REGISTER_ON
+typedef struct XVimRegisterState XVimRegisterState;
+#endif
+#if XTUI_VIM_MACRO_ON
+typedef struct XVimMacroState XVimMacroState;
+#endif
+#if XTUI_VIM_MARK_ON
+typedef struct XVimMarkState XVimMarkState;
+#endif
+#if XTUI_VIM_JUMPLIST_ON
+typedef struct XVimJumpState XVimJumpState;
+#endif
+
 /**
  * @brief 全屏 vim 编辑器控件对象。
  * @details m_lines 为动态行数组，每行是 NUL 结尾的 UTF-8 字符串；
@@ -96,9 +116,7 @@ typedef struct XTuiVim
     char       m_command[XTUI_VIM_CMD_MAX + 1];   /**< 冒号命令缓冲（不含 ':'）。 */
     int        m_commandLen;    /**< 冒号命令缓冲字节长度。 */
 #if XTUI_VIM_HISTORY_ON
-    char       m_commandHistory[XTUI_VIM_HISTORY_MAX][XTUI_VIM_CMD_MAX + 1]; /**< 冒号命令历史。 */
-    int        m_commandHistoryLen; /**< 冒号命令历史有效条目数。 */
-    int        m_commandHistoryIndex; /**< 冒号命令当前浏览位置。 */
+    XVimCommandHistoryState* m_commandHistoryState; /**< 冒号命令历史；首次执行命令时按需创建。 */
 #endif
 #if XTUI_VIM_SEARCH_ON
     char       m_search[XTUI_VIM_CMD_MAX + 1];    /**< 搜索缓冲（不含 '/' 或 '?'）。 */
@@ -106,9 +124,7 @@ typedef struct XTuiVim
     char       m_lastSearch[XTUI_VIM_CMD_MAX + 1];/**< 上次执行的搜索串。 */
     int        m_lastSearchLen; /**< 上次搜索串长度。 */
 #if XTUI_VIM_HISTORY_ON
-    char       m_searchHistory[XTUI_VIM_HISTORY_MAX][XTUI_VIM_CMD_MAX + 1]; /**< 搜索历史。 */
-    int        m_searchHistoryLen; /**< 搜索历史有效条目数。 */
-    int        m_searchHistoryIndex; /**< 搜索历史当前浏览位置。 */
+    XVimSearchHistoryState* m_searchHistoryState; /**< 搜索历史；首次完成搜索时按需创建。 */
 #endif
 #endif
     char       m_insertBuf[XTUI_VIM_LINE_MAX + 1];/**< 插入模式当前待回车行缓冲。 */
@@ -130,14 +146,12 @@ typedef struct XTuiVim
     bool       m_regLineWise;   /**< 寄存器内容是否为行方式（粘贴在行间）。 */
 #endif
 #if XTUI_VIM_REGISTER_ON
-    XVimRegister m_namedRegisters[26]; /**< a-z 命名寄存器。 */
-    XVimRegister m_numberedRegisters[10]; /**< 0-9 编号寄存器。 */
+    XVimRegisterState* m_registerState; /**< a-z/0-9 寄存器表；首次使用命名或编号寄存器时按需创建。 */
     char       m_activeRegister; /**< 下一条操作指定的寄存器；0 为无名。 */
     bool       m_appendRegister; /**< 大写寄存器名表示追加写入。 */
 #endif
 #if XTUI_VIM_MACRO_ON
-    char       m_macros[26][XTUI_VIM_CMD_MAX + 1]; /**< a-z 宏内容。 */
-    int        m_macroLengths[26]; /**< 宏内容字节长度。 */
+    XVimMacroState* m_macroState; /**< a-z 宏内容；首次录制宏时按需创建。 */
     bool       m_macroRecording; /**< 是否正在录制宏。 */
     bool       m_macroPlaying; /**< 是否正在回放宏。 */
     char       m_macroRegister; /**< 当前录制寄存器。 */
@@ -177,14 +191,10 @@ typedef struct XTuiVim
     int        m_blockInsertColumn; /**< 块插入原始列。 */
 #endif
 #if XTUI_VIM_MARK_ON
-    int        m_markLines[26]; /**< a-z 本地标记行；-1 表示未设置。 */
-    int        m_markColumns[26]; /**< a-z 本地标记列；-1 表示未设置。 */
+    XVimMarkState* m_markState; /**< a-z 本地标记；首次设置标记时按需创建。 */
 #endif
 #if XTUI_VIM_JUMPLIST_ON
-    int        m_jumpLines[XTUI_VIM_JUMPLIST_MAX]; /**< 跳转列表行。 */
-    int        m_jumpColumns[XTUI_VIM_JUMPLIST_MAX]; /**< 跳转列表列。 */
-    int        m_jumpLength;    /**< 跳转列表有效位置数。 */
-    int        m_jumpIndex;     /**< 当前浏览位置；等于长度表示最新位置。 */
+    XVimJumpState* m_jumpState; /**< 跳转列表；首次记录跳转位置时按需创建。 */
 #endif
 #if XTUI_VIM_ADVANCED_MOTION_ON
     char       m_findChar;      /**< 上次 f/F/t/T 查找的字符。 */
