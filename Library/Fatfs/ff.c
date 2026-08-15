@@ -26,6 +26,7 @@
 
 #include "ff.h"			/* Declarations of FatFs API */
 #include "diskio.h"		/* Declarations of device I/O functions */
+#include "XCrc.h"		/* XinYueC CRC algorithms */
 
 
 /*--------------------------------------------------------------------------
@@ -3236,24 +3237,6 @@ static int get_ldnumber (	/* Returns logical drive number (-1:invalid drive numb
 
 #if FF_LBA64
 
-/* Calculate CRC32 in byte-by-byte */
-
-static DWORD crc32 (	/* Returns next CRC value */
-	DWORD crc,			/* Current CRC value */
-	BYTE d				/* A byte to be processed */
-)
-{
-	BYTE b;
-
-
-	for (b = 1; b; b <<= 1) {
-		crc ^= (d & b) ? 1 : 0;
-		crc = (crc & 1) ? crc >> 1 ^ 0xEDB88320 : crc >> 1;
-	}
-	return crc;
-}
-
-
 /* Check validity of GPT header */
 
 static int test_gpt_header (	/* 0:Invalid, 1:Valid */
@@ -3267,10 +3250,12 @@ static int test_gpt_header (	/* 0:Invalid, 1:Valid */
 	if (memcmp(gpth + GPTH_Sign, "EFI PART" "\0\0\1", 12)) return 0;	/* Check signature and version (1.0) */
 	hlen = ld_dword(gpth + GPTH_Size);						/* Check header size */
 	if (hlen < 92 || hlen > FF_MIN_SS) return 0;
-	for (i = 0, bcc = 0xFFFFFFFF; i < hlen; i++) {			/* Check header BCC */
-		bcc = crc32(bcc, i - GPTH_Bcc < 4 ? 0 : gpth[i]);
+	bcc = XCrc32_initialize(XCrc32_Algorithm_IsoHdlc);
+	for (i = 0; i < hlen; i++) {						/* Check header BCC */
+		BYTE data = (BYTE)(i - GPTH_Bcc < 4 ? 0 : gpth[i]);
+		bcc = XCrc32_update(XCrc32_Algorithm_IsoHdlc, bcc, &data, 1);
 	}
-	if (~bcc != ld_dword(gpth + GPTH_Bcc)) return 0;
+	if (bcc != ld_dword(gpth + GPTH_Bcc)) return 0;
 	if (ld_dword(gpth + GPTH_PteSize) != SZ_GPTE) return 0;	/* Table entry size (must be SZ_GPTE bytes) */
 	if (ld_dword(gpth + GPTH_PtNum) > 128) return 0;		/* Table size (must be 128 entries or less) */
 
@@ -5795,7 +5780,7 @@ static FRESULT create_partition (
 		top_bpt = sz_drv - sz_ptbl - 1;		/* Backup partition table start LBA */
 		nxt_alloc = 2 + sz_ptbl;			/* First allocatable LBA */
 		sz_pool = top_bpt - nxt_alloc;		/* Size of allocatable area [sector] */
-		bcc = 0xFFFFFFFF; sz_part = 1;
+		bcc = XCrc32_initialize(XCrc32_Algorithm_IsoHdlc); sz_part = 1;
 		pi = si = 0;	/* partition table index, map index */
 		do {
 			if (pi * SZ_GPTE % ss == 0) memset(buf, 0, ss);	/* Clean the buffer if needed */
@@ -5819,7 +5804,7 @@ static FRESULT create_partition (
 				nxt_alloc += sz_part;								/* Next allocatable LBA */
 			}
 			if ((pi + 1) * SZ_GPTE % ss == 0) {		/* Write the sector buffer if it is filled up */
-				for (i = 0; i < ss; bcc = crc32(bcc, buf[i++])) ;	/* Calculate table check sum */
+				bcc = XCrc32_update(XCrc32_Algorithm_IsoHdlc, bcc, buf, ss); /* Calculate table check sum */
 				if (disk_write(drv, buf, 2 + pi * SZ_GPTE / ss, 1) != RES_OK) return FR_DISK_ERR;		/* Write to primary table */
 				if (disk_write(drv, buf, top_bpt + pi * SZ_GPTE / ss, 1) != RES_OK) return FR_DISK_ERR;	/* Write to secondary table */
 			}
@@ -5828,7 +5813,7 @@ static FRESULT create_partition (
 		/* Create primary GPT header */
 		memset(buf, 0, ss);
 		memcpy(buf + GPTH_Sign, "EFI PART" "\0\0\1\0" "\x5C\0\0", 16);	/* Signature, version (1.0) and size (92) */
-		st_dword(buf + GPTH_PtBcc, ~bcc);			/* Table check sum */
+		st_dword(buf + GPTH_PtBcc, bcc);			/* Table check sum */
 		st_qword(buf + GPTH_CurLba, 1);				/* LBA of this header */
 		st_qword(buf + GPTH_BakLba, sz_drv - 1);	/* LBA of secondary header */
 		st_qword(buf + GPTH_FstLba, 2 + sz_ptbl);	/* LBA of first allocatable sector */
@@ -5837,8 +5822,8 @@ static FRESULT create_partition (
 		st_dword(buf + GPTH_PtNum, GPT_ITEMS);		/* Number of table entries */
 		st_dword(buf + GPTH_PtOfs, 2);				/* LBA of this table */
 		rnd = make_rand(rnd, buf + GPTH_DskGuid, 16);	/* Disk GUID */
-		for (i = 0, bcc= 0xFFFFFFFF; i < 92; bcc = crc32(bcc, buf[i++])) ;	/* Calculate header check sum */
-		st_dword(buf + GPTH_Bcc, ~bcc);				/* Header check sum */
+		bcc = XCrc32_calculate(XCrc32_Algorithm_IsoHdlc, buf, 92); /* Calculate header check sum */
+		st_dword(buf + GPTH_Bcc, bcc);				/* Header check sum */
 		if (disk_write(drv, buf, 1, 1) != RES_OK) return FR_DISK_ERR;
 
 		/* Create secondary GPT header */
@@ -5846,8 +5831,8 @@ static FRESULT create_partition (
 		st_qword(buf + GPTH_BakLba, 1);				/* LBA of primary header */
 		st_qword(buf + GPTH_PtOfs, top_bpt);		/* LBA of this table */
 		st_dword(buf + GPTH_Bcc, 0);
-		for (i = 0, bcc= 0xFFFFFFFF; i < 92; bcc = crc32(bcc, buf[i++])) ;	/* Calculate header check sum */
-		st_dword(buf + GPTH_Bcc, ~bcc);				/* Header check sum */
+		bcc = XCrc32_calculate(XCrc32_Algorithm_IsoHdlc, buf, 92); /* Calculate header check sum */
+		st_dword(buf + GPTH_Bcc, bcc);				/* Header check sum */
 		if (disk_write(drv, buf, sz_drv - 1, 1) != RES_OK) return FR_DISK_ERR;
 
 		/* Create protective MBR */

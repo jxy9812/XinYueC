@@ -8,6 +8,16 @@
 #ifndef ZCONF_H
 #define ZCONF_H
 
+/**
+ * @brief zlib 内部内存池类型。
+ * @details 可设置为 XMEMORY_TYPE_SYSTEM、XMEMORY_TYPE_MULTIPOOL 或
+ *          XMEMORY_TYPE_HYBRID。默认使用混合模式：小块内存使用多池，
+ *          大块内存使用系统分配器。
+ */
+#ifndef ZLIB_MEMORY_POOL_TYPE
+#define ZLIB_MEMORY_POOL_TYPE XMEMORY_TYPE_HYBRID
+#endif
+
 /* RT-Thread 系统配置（嵌入式实时操作系统）*/
 //#include <rtconfig.h>  // 引入RT-Thread的系统配置文件（按需启用）
 #ifdef RT_USING_LIBC  // 若RT-Thread启用了标准C库
@@ -48,10 +58,6 @@
 #define compress2             z_compress2       // 可设置压缩级别的压缩函数
 #define compressBound         z_compressBound   // 计算压缩最大可能长度
 #endif
-#define crc32                 z_crc32            // CRC32校验函数
-#define crc32_combine         z_crc32_combine    // 合并CRC32校验值
-#define crc32_combine64       z_crc32_combine64  // 64位版本合并CRC32校验值
-#define crc32_z               z_crc32_z          // 带z_stream参数的CRC32校验
 #define deflate               z_deflate          // deflate压缩核心函数
 #define deflateBound          z_deflateBound     // 计算deflate压缩最大长度
 #define deflateCopy           z_deflateCopy      // 复制压缩器状态
@@ -70,7 +76,6 @@
 #define deflateSetHeader      z_deflateSetHeader // 设置gzip格式的文件头
 #define deflateTune           z_deflateTune      // 微调压缩器性能参数
 #define deflate_copyright     z_deflate_copyright// 压缩模块版权信息
-#define get_crc_table         z_get_crc_table    // 获取CRC32校验表
 #ifndef Z_SOLO
 #define gz_error              z_gz_error         // gz文件操作错误码处理
 #define gz_intmax             z_gz_intmax        // gz模块的最大整数类型
@@ -451,23 +456,6 @@ typedef void* voidp;   // void指针（输出参数）
 typedef Byte const* voidpc;  // 非标准C用Byte const*模拟const void*
 typedef Byte FAR* voidpf;
 typedef Byte* voidp;
-#endif
-
-/* z_crc_t 类型定义（CRC32校验值的存储类型）*/
-#if !defined(Z_U4) && !defined(Z_SOLO) && defined(STDC)
-#include <limits.h>  // 引入整数范围定义
-#if (UINT_MAX == 0xffffffffUL)  // 若unsigned为32位
-#define Z_U4 unsigned
-#elif (ULONG_MAX == 0xffffffffUL)  // 若unsigned long为32位
-#define Z_U4 unsigned long
-#elif (USHRT_MAX == 0xffffffffUL)  // 若unsigned short为32位（极少情况）
-#define Z_U4 unsigned short
-#endif
-#endif
-#ifdef Z_U4
-typedef Z_U4 z_crc_t;
-#else
-typedef unsigned long z_crc_t;  // 默认用unsigned long存储CRC32值
 #endif
 
 /* 头文件包含控制（由configure工具配置）*/

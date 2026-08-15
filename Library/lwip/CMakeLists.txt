@@ -18,3 +18,6 @@ set_target_properties(lwip PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
 target_include_directories(lwip PUBLIC ${LWIP_PUBLIC_INCS})
+target_include_directories(lwip PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/XCode/XAlgorithm/XCrc"
+)

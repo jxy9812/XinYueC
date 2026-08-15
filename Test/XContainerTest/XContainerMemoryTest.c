@@ -1,4 +1,4 @@
-#include "XDataStructTest.h"
+﻿#include "XDataStructTest.h"
 #if DEMOTEST
 #include "XMemory.h"
 #include "XClass.h"

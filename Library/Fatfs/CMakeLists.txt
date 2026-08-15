@@ -16,3 +16,6 @@ set_target_properties(fatfs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
 target_include_directories(fatfs PUBLIC ${FATFS_PUBLIC_INCS})
+target_include_directories(fatfs PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/XCode/XAlgorithm/XCrc"
+)

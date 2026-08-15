@@ -80,8 +80,10 @@ XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
     }
 
     // CRC直接写入缓冲区末尾
-    uint16_t crc = XCrc_get16(data, (uint16_t)(frameSize - 2));
-    XCrc_set16Data(data + frameSize - 2, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
+    uint16_t crc = XCrc16_calculate(XCrc16_Algorithm_Modbus, data,
+                                    frameSize - 2);
+    XMemory_write_data(data + frameSize - 2, XBYTE_ORDER_LITTLE_ENDIAN,
+                       (const uint8_t*)&crc, sizeof(crc));
 
     if (pduData) XByteArray_delete_base(pduData);
     return result;
@@ -186,7 +188,8 @@ XModbusAdu* XModbusAdu_parseRtu(const uint8_t* data, size_t size)
     adu->m_serverAddress = data[0];
 
     size_t dataSize = size - 2;
-    uint16_t calcCrc = XCrc_get16((uint8_t*)data, (uint16_t)dataSize);
+    uint16_t calcCrc = XCrc16_calculate(XCrc16_Algorithm_Modbus, data,
+                                        dataSize);
     uint16_t rcvCrc;
     rcvCrc = (uint16_t)data[dataSize] | ((uint16_t)data[dataSize + 1] << 8);
     adu->m_checksumValid = (calcCrc == rcvCrc);
@@ -337,7 +340,7 @@ uint8_t XModbusAdu_calculateLRC(const uint8_t* data, int len)
 
 uint16_t XModbusAdu_calculateCRC(const uint8_t* data, int len)
 {
-    return XCrc_get16((uint8_t*)data, (uint16_t)len);
+    return XCrc16_calculate(XCrc16_Algorithm_Modbus, data, (size_t)len);
 }
 
 #endif /* XMODBUS_CORE_ON */

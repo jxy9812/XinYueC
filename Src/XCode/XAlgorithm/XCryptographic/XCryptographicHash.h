@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCryptographicHash.h
  * @brief XCryptographic 哈希、HMAC 与高速哈希公共 API。
  */

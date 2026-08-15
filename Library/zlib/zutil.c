@@ -309,8 +309,7 @@ voidpf ZLIB_INTERNAL zcalloc (voidpf opaque, unsigned items, unsigned size)
 //    unsigned size;
 {
     (void)opaque;
-    return sizeof(uInt) > 2 ? (voidpf)XMalloc_System(items * size) :
-                              (voidpf)XCalloc_System(items, size);
+    return (voidpf)XMemory_calloc(items, size, ZLIB_MEMORY_POOL_TYPE);
 }
 
 void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
@@ -318,7 +317,7 @@ void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
 //    voidpf ptr;
 {
     (void)opaque;
-   XFree_System(ptr);
+   XMemory_free(ptr, ZLIB_MEMORY_POOL_TYPE);
 }
 #else
 voidpf ZLIB_INTERNAL zcalloc (voidpf opaque, unsigned items, unsigned size)
@@ -327,8 +326,7 @@ voidpf ZLIB_INTERNAL zcalloc (voidpf opaque, unsigned items, unsigned size)
     unsigned size;*/
 {
     (void)opaque;
-    return sizeof(uInt) > 2 ? (voidpf)XMalloc_System(items * size) :
-                              (voidpf)XCalloc_System(items, size);
+    return (voidpf)XMemory_calloc(items, size, ZLIB_MEMORY_POOL_TYPE);
    
 }
 
@@ -337,8 +335,8 @@ void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
 //    voidpf ptr;
 {
     (void)opaque;
-    XFree_System(ptr);
-//   XFree_System(ptr);
+    XMemory_free(ptr, ZLIB_MEMORY_POOL_TYPE);
+//   XMemory_free(ptr, ZLIB_MEMORY_POOL_TYPE);
 }
 #endif
 #endif /* MY_ZCALLOC */

@@ -1,5 +1,6 @@
 ﻿#include "XZipReader.h"
 #include "XMemory.h"
+#include "XCrc.h"
 #include "XFile.h"
 #include "XClass.h"
 #include "zlib.h"
@@ -253,9 +254,10 @@ XByteArray* XZipReader_fileData(const XZipReader* self, const XString* fileName)
             output = inflated;
         }
 
-        uLong actualCrc = crc32(0L, Z_NULL, 0);
-        actualCrc = crc32(actualCrc, output, (uInt)outputSize);
-        if ((uint32_t)actualCrc != expectedCrc) {
+        uint32_t actualCrc = XCrc32_initialize(XCrc32_Algorithm_IsoHdlc);
+        actualCrc = XCrc32_update(XCrc32_Algorithm_IsoHdlc, actualCrc,
+                                   output, outputSize);
+        if (actualCrc != expectedCrc) {
             if (inflated) XFree_System(inflated);
             return NULL;
         }

@@ -1,4 +1,4 @@
-﻿#include"CXinYueConfig.h"
+﻿#include "XCrc_config.h"
 #if !defined(XCRC_H)&& XCrc_ON
 #define XCRC_H
 
@@ -11,109 +11,98 @@
 extern "C" {
 #endif
 
-#include "XTypes.h"
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+#if XCrc16_ON
 /**
- * @brief CRC 结果的字节序。
- * @details 用于指定写入缓冲区或返回值中的 CRC 数值采用的字节顺序。
+ * @brief CRC-16 标准参数组。
+ * @details 每个枚举值的实现由 XCrc_config.h 中对应的宏控制；已关闭的
+ *          算法传入 XCrc16_calculate 时返回 0。
  */
-typedef enum XCRCByteOrder {
-    XCRC_BYTE_ORDER_LITTLE_ENDIAN = 0, /**< 小端序，低字节在前。 */
-    XCRC_BYTE_ORDER_BIG_ENDIAN,        /**< 大端序，高字节在前。 */
-    XCRC_BYTE_ORDER_NATIVE             /**< 使用当前平台本机字节序。 */
-} XCRCByteOrder;
+typedef enum XCrc16_Algorithm {
+    XCrc16_Algorithm_Arc,         /**< CRC-16/ARC（CRC-16/IBM）。 */
+    XCrc16_Algorithm_Modbus,      /**< CRC-16/MODBUS。 */
+    XCrc16_Algorithm_CcittFalse,  /**< CRC-16/CCITT-FALSE。 */
+    XCrc16_Algorithm_Xmodem,      /**< CRC-16/XMODEM。 */
+    XCrc16_Algorithm_X25,         /**< CRC-16/X25。 */
+    XCrc16_Algorithm_Kermit,      /**< CRC-16/KERMIT，IEEE 802.15.4 FCS。 */
+    XCrc16_Algorithm_Usb,         /**< CRC-16/USB。 */
+    XCrc16_Algorithm_Dnp          /**< CRC-16/DNP。 */
+} XCrc16_Algorithm;
 
 /**
- * @brief 计算一段数据的 CRC16/MODBUS 校验值。
- * @param pucFrame 输入数据；usLen 为 0 时可为空，否则不能为 NULL。
- * @param usLen 输入数据长度，单位为字节。
- * @return 计算得到的 CRC16 数值，默认初始值为 0xFFFF。
+ * @brief 使用指定标准参数组计算一段数据的 CRC-16 校验值。
+ * @param algorithm CRC-16 算法枚举；对应实现必须已在 XCrc_config.h 启用。
+ * @param data 输入数据；length 为 0 时可为空，否则不能为 NULL。
+ * @param length 输入数据长度，单位为字节。
+ * @return 计算得到的 CRC-16 数值；参数无效、算法枚举无效或算法未启用时
+ *         返回 0。
  */
-uint16_t XCrc_get16(uint8_t* pucFrame, uint16_t usLen);
-
-/**
- * @brief 按指定字节序写入 CRC16 校验值。
- * @param dst 至少可写入 2 字节的目标地址。
- * @param crc16 要写入的 CRC16 数值。
- * @param order 目标字节序。
- */
-void XCrc_set16Data(uint8_t* dst, uint16_t crc16, XCRCByteOrder order);
-
-#if XVector_ON
-/**
- * @brief 计算向量数据的 CRC16 并将结果追加到向量末尾。
- * @param data 待校验的非空向量；向量必须有可扩展容量或支持 resize。
- * @param order 追加的 CRC16 字节序。
- * @return 成功追加返回 true；data 为空或为空向量时返回 false。
- */
- bool XVector_append_crc16(XVector* data, XCRCByteOrder order);
-#endif
+uint16_t XCrc16_calculate(XCrc16_Algorithm algorithm,
+                          const uint8_t* data, size_t length);
+#endif /* XCrc16_ON */
 
 #if XCrc32_ON
 /**
- * @brief CRC32 查找表使用的多项式类型。
+ * @brief CRC-32 标准参数组。
+ * @details 每个枚举值的实现由 XCrc_config.h 中对应的宏控制；已关闭的
+ *          算法传入 CRC-32 API 时返回 0。
  */
-typedef enum XCRC32Polynomial {
-    XCRC32_IEEE_802_3 = 0, /**< IEEE 802.3，多项式 0x04C11DB7。 */
-    XCRC32_CASTAGNOLI,      /**< Castagnoli，多项式 0x1EDC6F41。 */
-    XCRC32_KOOPMAN,         /**< Koopman，多项式 0x741B8CD7。 */
-    XCRC32_ISO_HDLC,        /**< ISO HDLC，多项式 0x04C11DB7。 */
-    XCRC32_MPEG2,           /**< MPEG-2，多项式 0x04C11DB7。 */
-    XCRC32_POSIX            /**< POSIX，多项式 0x04C11DB7。 */
-} XCRC32Polynomial;
+typedef enum XCrc32_Algorithm {
+    XCrc32_Algorithm_IsoHdlc,    /**< CRC-32/ISO-HDLC（IEEE 802.3、PKZIP、zlib）。 */
+    XCrc32_Algorithm_Castagnoli, /**< CRC-32C（Castagnoli）。 */
+    XCrc32_Algorithm_Mpeg2,      /**< CRC-32/MPEG-2。 */
+    XCrc32_Algorithm_Bzip2,      /**< CRC-32/BZIP2。 */
+    XCrc32_Algorithm_Posix,      /**< CRC-32/POSIX（CKSUM 参数组）。 */
+    XCrc32_Algorithm_Jamcrc,     /**< CRC-32/JAMCRC。 */
+    XCrc32_Algorithm_Q,          /**< CRC-32Q。 */
+    XCrc32_Algorithm_Xfer        /**< CRC-32/XFER。 */
+} XCrc32_Algorithm;
 
 /**
- * @brief 获取当前 CRC32 查找表。
- * @return 8 个 256 项表组成的表指针；表由模块内部维护，调用者不得释放或修改。
+ * @brief 获取指定 CRC-32 算法的流式计算初始值。
+ * @param algorithm CRC-32 算法枚举；对应实现必须已在 XCrc_config.h 启用。
+ * @return 传入 XCrc32_update 进行首段计算的初始 CRC 值，同时也是空数据的
+ *         CRC-32 结果；算法枚举无效或算法未启用时返回 0。
  */
-uint32_t (*XCrc32_get_crc_table())[256];
+uint32_t XCrc32_initialize(XCrc32_Algorithm algorithm);
 
 /**
- * @brief 按指定多项式初始化 CRC32 查找表。
- * @param polynomial 要使用的 CRC32 多项式类型。
- * @note 后续 CRC32 计算会使用最近一次初始化的多项式。
- */
-void XCrc32_init_table(XCRC32Polynomial polynomial);
-
-/**
- * @brief 计算一段数据的 CRC32 校验值。
+ * @brief 使用指定标准参数组计算一段数据的 CRC-32 校验值。
+ * @param algorithm CRC-32 算法枚举；对应实现必须已在 XCrc_config.h 启用。
  * @param data 输入数据；length 为 0 时可为空，否则不能为 NULL。
  * @param length 输入数据长度，单位为字节。
- * @param order 返回值的字节序调整方式。
- * @return CRC32 校验值。
+ * @return 计算得到的 CRC-32 数值；参数无效、算法枚举无效或算法未启用时
+ *         返回 0。
  */
-uint32_t XCrc32_calculate(const uint8_t* data, size_t length, XCRCByteOrder order);
+uint32_t XCrc32_calculate(XCrc32_Algorithm algorithm,
+                          const uint8_t* data, size_t length);
 
 /**
- * @brief 使用一段新数据更新 CRC32 状态。
- * @param crc 当前 CRC32 状态值，通常为前一次计算的中间结果。
+ * @brief 使用一段新数据更新指定 CRC-32 算法的校验值。
+ * @param algorithm CRC-32 算法枚举；必须与 crc 的来源保持一致。
+ * @param crc 上一次返回的 CRC-32 值；首次调用传入
+ *            XCrc32_initialize(algorithm) 的返回值。
  * @param data 新数据；length 为 0 时可为空，否则不能为 NULL。
  * @param length 新数据长度，单位为字节。
- * @return 更新后的 CRC32 状态值。
+ * @return 更新后的 CRC-32 数值；参数无效、算法枚举无效或算法未启用时返回 0。
  */
-uint32_t XCrc32_update(uint32_t crc, const uint8_t* data, size_t length);
+uint32_t XCrc32_update(XCrc32_Algorithm algorithm, uint32_t crc,
+                        const uint8_t* data, size_t length);
 
 /**
- * @brief 按指定字节序调整 CRC32 数值。
- * @param crc 待调整的 CRC32 数值。
- * @param order 目标字节序；当前实现对大端序执行字节交换。
- * @return 调整后的 CRC32 数值。
- */
-uint32_t XCrc32_finalize(uint32_t crc, XCRCByteOrder order);
-
-/**
- * @brief 合并两段连续数据的 CRC32 结果。
+ * @brief 合并同一 CRC-32 算法下两段连续数据的校验值。
+ * @param algorithm CRC-32 算法枚举；必须与两个 CRC 的来源保持一致。
  * @param crc1 第一段数据的 CRC32 结果。
  * @param crc2 第二段数据的 CRC32 结果。
  * @param len2 第二段数据长度，单位为字节。
  * @return 拼接后数据的 CRC32 结果。
- * @note 两个 CRC 必须使用同一多项式和同一计算约定。
+ * @note 两个 CRC 必须使用相同算法独立计算得到。
  */
-uint32_t XCrc32_combine(uint32_t crc1, uint32_t crc2, size_t len2);
-#endif // XCrc32_ON
+uint32_t XCrc32_combine(XCrc32_Algorithm algorithm, uint32_t crc1,
+                        uint32_t crc2, uint64_t len2);
+#endif /* XCrc32_ON */
 
 #ifdef __cplusplus
 }

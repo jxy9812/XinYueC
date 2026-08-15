@@ -1,6 +1,7 @@
 ﻿#include "XZipWriter.h"
 #include <stdio.h>
 #include "XMemory.h"
+#include "XCrc.h"
 #include "XFile.h"
 #include "XClass.h"
 #include "zlib.h"
@@ -28,14 +29,14 @@ static void write_le32(uint8_t* buf, uint32_t val) {
 
 /* 辅助：CRC32 计算 */
 static uint32_t calc_crc32(const uint8_t* data, size_t size) {
-    uLong crc = crc32(0L, Z_NULL, 0);
+    uint32_t crc = XCrc32_initialize(XCrc32_Algorithm_IsoHdlc);
     while (size > 0) {
         uInt chunk = size > UINT_MAX ? UINT_MAX : (uInt)size;
-        crc = crc32(crc, data, chunk);
+        crc = XCrc32_update(XCrc32_Algorithm_IsoHdlc, crc, data, chunk);
         data += chunk;
         size -= chunk;
     }
-    return (uint32_t)crc;
+    return crc;
 }
 
 /*

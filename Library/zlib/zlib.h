@@ -1724,40 +1724,6 @@ ZEXTERN uLong ZEXPORT adler32_combine OF((uLong adler1, uLong adler2,
    negative, the result has no meaning or utility.
 */
 
-ZEXTERN uLong ZEXPORT crc32   OF((uLong crc, const Bytef *buf, uInt len));
-/*
-     Update a running CRC-32 with the bytes buf[0..len-1] and return the
-   updated CRC-32.  If buf is Z_NULL, this function returns the required
-   initial value for the crc.  Pre- and post-conditioning (one's complement) is
-   performed within this function so it shouldn't be done by the application.
-
-   Usage example:
-
-     uLong crc = crc32(0L, Z_NULL, 0);
-
-     while (read_buffer(buffer, length) != EOF) {
-       crc = crc32(crc, buffer, length);
-     }
-     if (crc != original_crc) error();
-*/
-
-ZEXTERN uLong ZEXPORT crc32_z OF((uLong adler, const Bytef *buf,
-                                  z_size_t len));
-/*
-     Same as crc32(), but with a size_t length.
-*/
-
-/*
-ZEXTERN uLong ZEXPORT crc32_combine OF((uLong crc1, uLong crc2, z_off_t len2));
-
-     Combine two CRC-32 check values into one.  For two sequences of bytes,
-   seq1 and seq2 with lengths len1 and len2, CRC-32 check values were
-   calculated for each, crc1 and crc2.  crc32_combine() returns the CRC-32
-   check value of seq1 and seq2 concatenated, requiring only crc1, crc2, and
-   len2.
-*/
-
-
 /* various hacks, don't look :) */
 
 /* deflateInit and inflateInit are macros to allow checking the zlib version
@@ -1844,7 +1810,6 @@ ZEXTERN z_off64_t ZEXPORT gzseek64 OF((gzFile, z_off64_t, int));
 ZEXTERN z_off64_t ZEXPORT gztell64 OF((gzFile));
 ZEXTERN z_off64_t ZEXPORT gzoffset64 OF((gzFile));
 ZEXTERN uLong ZEXPORT adler32_combine64 OF((uLong, uLong, z_off64_t));
-ZEXTERN uLong ZEXPORT crc32_combine64 OF((uLong, uLong, z_off64_t));
 #endif
 
 #if !defined(ZLIB_INTERNAL) && defined(Z_WANT64)
@@ -1854,14 +1819,12 @@ ZEXTERN uLong ZEXPORT crc32_combine64 OF((uLong, uLong, z_off64_t));
 #    define z_gztell z_gztell64
 #    define z_gzoffset z_gzoffset64
 #    define z_adler32_combine z_adler32_combine64
-#    define z_crc32_combine z_crc32_combine64
 #  else
 #    define gzopen gzopen64
 #    define gzseek gzseek64
 #    define gztell gztell64
 #    define gzoffset gzoffset64
 #    define adler32_combine adler32_combine64
-#    define crc32_combine crc32_combine64
 #  endif
 #  ifndef Z_LARGE64
 ZEXTERN gzFile ZEXPORT gzopen64 OF((const char *, const char *));
@@ -1869,7 +1832,6 @@ ZEXTERN z_off_t ZEXPORT gzseek64 OF((gzFile, z_off_t, int));
 ZEXTERN z_off_t ZEXPORT gztell64 OF((gzFile));
 ZEXTERN z_off_t ZEXPORT gzoffset64 OF((gzFile));
 ZEXTERN uLong ZEXPORT adler32_combine64 OF((uLong, uLong, z_off_t));
-ZEXTERN uLong ZEXPORT crc32_combine64 OF((uLong, uLong, z_off_t));
 #  endif
 #else
 ZEXTERN gzFile ZEXPORT gzopen OF((const char *, const char *));
@@ -1877,20 +1839,16 @@ ZEXTERN z_off_t ZEXPORT gzseek OF((gzFile, z_off_t, int));
 ZEXTERN z_off_t ZEXPORT gztell OF((gzFile));
 ZEXTERN z_off_t ZEXPORT gzoffset OF((gzFile));
 ZEXTERN uLong ZEXPORT adler32_combine OF((uLong, uLong, z_off_t));
-ZEXTERN uLong ZEXPORT crc32_combine OF((uLong, uLong, z_off_t));
 #endif
 
 #else /* Z_SOLO */
 
 ZEXTERN uLong ZEXPORT adler32_combine OF((uLong, uLong, z_off_t));
-ZEXTERN uLong ZEXPORT crc32_combine OF((uLong, uLong, z_off_t));
-
 #endif /* !Z_SOLO */
 
 /* undocumented functions */
 ZEXTERN const char    *ZEXPORT zError           OF((int));
 ZEXTERN int            ZEXPORT inflateSyncPoint OF((z_streamp));
-ZEXTERN const z_crc_t FAR *ZEXPORT get_crc_table    OF((void));
 ZEXTERN int            ZEXPORT inflateUndermine OF((z_streamp, int));
 ZEXTERN int            ZEXPORT inflateValidate OF((z_streamp, int));
 ZEXTERN unsigned long  ZEXPORT inflateCodesUsed OF((z_streamp));

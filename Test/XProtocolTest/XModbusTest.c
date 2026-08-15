@@ -638,7 +638,8 @@ void XModbusAduTest(void)
         }
 
         uint16_t crc = XModbusAdu_calculateCRC(testData, 6);
-        uint16_t expectedCrc = XCrc_get16(testData, 6);
+        uint16_t expectedCrc = XCrc16_calculate(XCrc16_Algorithm_Modbus,
+                                                testData, 6);
         if (crc == expectedCrc) {
             XPrintf("  [通过] calculateCRC 正确\n");
             pass++;
@@ -646,6 +647,117 @@ void XModbusAduTest(void)
             XPrintf("  [失败] calculateCRC = 0x%04X, 期望 0x%04X\n", crc, expectedCrc);
             fail++;
         }
+
+#if XCrc16_ON
+        {
+            static const uint8_t checkData[] = "123456789";
+#define XCRC16_CHECK(algorithm, expected, name)                              \
+            do {                                                               \
+                uint16_t result = XCrc16_calculate((algorithm), checkData,    \
+                                                    sizeof(checkData) - 1);     \
+                if (result == (expected)) {                                   \
+                    XPrintf("  [通过] " name " 标准向量正确\n");            \
+                    pass++;                                                    \
+                } else {                                                       \
+                    XPrintf("  [失败] " name " = 0x%04X, 期望 0x%04X\n",    \
+                            result, (unsigned int)(expected));                 \
+                    fail++;                                                    \
+                }                                                              \
+            } while (0)
+
+#if XCrc16_Arc_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Arc, 0xBB3Du, "CRC-16/ARC");
+#endif
+#if XCrc16_Modbus_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Modbus, 0x4B37u, "CRC-16/MODBUS");
+#endif
+#if XCrc16_CcittFalse_ON
+            XCRC16_CHECK(XCrc16_Algorithm_CcittFalse, 0x29B1u,
+                         "CRC-16/CCITT-FALSE");
+#endif
+#if XCrc16_Xmodem_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Xmodem, 0x31C3u, "CRC-16/XMODEM");
+#endif
+#if XCrc16_X25_ON
+            XCRC16_CHECK(XCrc16_Algorithm_X25, 0x906Eu, "CRC-16/X25");
+#endif
+#if XCrc16_Kermit_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Kermit, 0x2189u, "CRC-16/KERMIT");
+#endif
+#if XCrc16_Usb_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Usb, 0xB4C8u, "CRC-16/USB");
+#endif
+#if XCrc16_Dnp_ON
+            XCRC16_CHECK(XCrc16_Algorithm_Dnp, 0xEA82u, "CRC-16/DNP");
+#endif
+
+#undef XCRC16_CHECK
+        }
+#endif
+
+#if XCrc32_ON
+        {
+            static const uint8_t checkData[] = "123456789";
+#define XCRC32_CHECK(algorithm, expected, name)                              \
+            do {                                                               \
+                uint32_t result = XCrc32_calculate((algorithm), checkData,    \
+                                                    sizeof(checkData) - 1);     \
+                uint32_t first = XCrc32_calculate((algorithm), checkData, 4); \
+                uint32_t second = XCrc32_calculate((algorithm),               \
+                                                    checkData + 4, 5);          \
+                uint32_t combined = XCrc32_combine((algorithm), first, second,\
+                                                    5);                          \
+                uint32_t updated = XCrc32_update((algorithm),                  \
+                                                  XCrc32_initialize((algorithm)),\
+                                                  checkData, 4);                  \
+                updated = XCrc32_update((algorithm), updated, checkData + 4, 5);\
+                if (result == (expected) && combined == (expected) &&         \
+                    updated == (expected)) {                                  \
+                    XPrintf("  [通过] " name " 标准向量、分段和合并正确\\n");\
+                    pass++;                                                    \
+                } else {                                                       \
+                    XPrintf("  [失败] " name " = 0x%08X, 分段 = 0x%08X, "  \
+                            "合并 = 0x%08X，期望 0x%08X\\n",                \
+                            result, updated, combined, (uint32_t)(expected)); \
+                    fail++;                                                    \
+                }                                                              \
+            } while (0)
+
+#if XCrc32_IsoHdlc_ON
+            XCRC32_CHECK(XCrc32_Algorithm_IsoHdlc, 0xCBF43926u,
+                         "CRC-32/ISO-HDLC");
+#endif
+#if XCrc32_Castagnoli_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Castagnoli, 0xE3069283u,
+                         "CRC-32C");
+#endif
+#if XCrc32_Mpeg2_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Mpeg2, 0x0376E6E7u,
+                         "CRC-32/MPEG-2");
+#endif
+#if XCrc32_Bzip2_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Bzip2, 0xFC891918u,
+                         "CRC-32/BZIP2");
+#endif
+#if XCrc32_Posix_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Posix, 0x765E7680u,
+                         "CRC-32/POSIX");
+#endif
+#if XCrc32_Jamcrc_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Jamcrc, 0x340BC6D9u,
+                         "CRC-32/JAMCRC");
+#endif
+#if XCrc32_Q_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Q, 0x3010BF7Fu, "CRC-32Q");
+#endif
+#if XCrc32_Xfer_ON
+            XCRC32_CHECK(XCrc32_Algorithm_Xfer, 0xBD0BE338u,
+                         "CRC-32/XFER");
+#endif
+
+#undef XCRC32_CHECK
+        }
+#endif
     }
 
     // ========== 9. 错误校验测试 ==========

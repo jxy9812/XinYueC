@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCryptographicPrimitiveTest.c
  * @brief XCryptographic 独立密码原语标准向量测试。
  */

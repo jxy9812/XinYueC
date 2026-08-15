@@ -136,7 +136,7 @@ void XModbusAdu_deinit(XModbusAdu* adu);
  * @param serverAddress 从站地址
  * @param pdu Modbus PDU指针
  * @return 组装好的RTU帧数据（地址 + PDU + CRC16），调用者负责释放
- * @note CRC16使用XCrc_get16计算，以小端序附加
+ * @note CRC16使用XCrc16_calculate计算，以小端序附加
  */
 XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu);
 
@@ -250,7 +250,7 @@ uint8_t XModbusAdu_calculateLRC(const uint8_t* data, int len);
  * @param len 数据长度
  * @return CRC16校验码
  * @note 使用标准Modbus CRC16算法（多项式0x8005）
- *       此函数与XCrc_get16功能相同，提供便捷封装
+ *       此函数与XCrc16_calculate功能相同，提供便捷封装
  */
 uint16_t XModbusAdu_calculateCRC(const uint8_t* data, int len);
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XCryptographicPrimitiveTest.h
  * @brief XCryptographic 独立密码原语回归测试。
  */

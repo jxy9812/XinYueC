@@ -1,4 +1,4 @@
-/** @file XCryptographic_config.h
+﻿/** @file XCryptographic_config.h
  * @brief XCryptographic 通用算法裁剪配置。
  */
 

@@ -1,4 +1,4 @@
-/* deflate.c -- compress data using the deflation algorithm
+﻿/* deflate.c -- compress data using the deflation algorithm
  * Copyright (C) 1995-2017 Jean-loup Gailly and Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
@@ -520,7 +520,7 @@ z_streamp strm;
         s->wrap ? INIT_STATE : BUSY_STATE;
     strm->adler =
 #ifdef GZIP
-        s->wrap == 2 ? crc32(0L, Z_NULL, 0) :
+        s->wrap == 2 ? XZlib_crc32(0L, Z_NULL, 0) :
 #endif
         adler32(0L, Z_NULL, 0);
     s->last_flush = Z_NO_FLUSH;
@@ -831,7 +831,7 @@ z_streamp strm;
 #define HCRC_UPDATE(beg) \
     do { \
         if (s->gzhead->hcrc && s->pending > (beg)) \
-            strm->adler = crc32(strm->adler, s->pending_buf + (beg), \
+            strm->adler = XZlib_crc32(strm->adler, s->pending_buf + (beg), \
                                 s->pending - (beg)); \
     } while (0)
 
@@ -938,7 +938,7 @@ int flush;
     if (s->status == GZIP_STATE)
     {
         /* gzip header */
-        strm->adler = crc32(0L, Z_NULL, 0);
+        strm->adler = XZlib_crc32(0L, Z_NULL, 0);
         put_byte(s, 31);
         put_byte(s, 139);
         put_byte(s, 8);
@@ -984,7 +984,7 @@ int flush;
                 put_byte(s, (s->gzhead->extra_len >> 8) & 0xff);
             }
             if (s->gzhead->hcrc)
-                strm->adler = crc32(strm->adler, s->pending_buf,
+                strm->adler = XZlib_crc32(strm->adler, s->pending_buf,
                                     s->pending);
             s->gzindex = 0;
             s->status = EXTRA_STATE;
@@ -1089,7 +1089,7 @@ int flush;
             }
             put_byte(s, (Byte)(strm->adler & 0xff));
             put_byte(s, (Byte)((strm->adler >> 8) & 0xff));
-            strm->adler = crc32(0L, Z_NULL, 0);
+            strm->adler = XZlib_crc32(0L, Z_NULL, 0);
         }
         s->status = BUSY_STATE;
         /* Compression must start with an empty pending buffer */
@@ -1304,7 +1304,7 @@ unsigned size;
 #ifdef GZIP
     else if (strm->state->wrap == 2)
     {
-        strm->adler = crc32(strm->adler, buf, len);
+        strm->adler = XZlib_crc32(strm->adler, buf, len);
     }
 #endif
     strm->next_in  += len;

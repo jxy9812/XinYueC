@@ -62,7 +62,8 @@ static inline int calculateInterFrameDelay(int baudRate) {
 static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
     if (!frame || frameLen < 4) return false;
 
-    uint16_t calculatedCrc = XCrc_get16((uint8_t*)frame, frameLen - 2);
+    uint16_t calculatedCrc = XCrc16_calculate(XCrc16_Algorithm_Modbus, frame,
+                                               frameLen - 2);
 
     // Modbus RTU CRC 是小端序
     uint16_t receivedCrc;
@@ -468,8 +469,12 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     // 添加数据
     XByteArray_push_back_2(rtuClient->m_requestData, XContainerDataAddr(pdu), XContainerSize(pdu));
     //添加Crc16
-    uint16_t crc = XCrc_get16(XContainerDataAddr(rtuClient->m_requestData), XContainerSize(rtuClient->m_requestData));
-    XCrc_set16Data(&XByteArray_back_base(rtuClient->m_requestData) + 1, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
+    uint16_t crc = XCrc16_calculate(
+        XCrc16_Algorithm_Modbus, XContainerDataAddr(rtuClient->m_requestData),
+        XContainerSize(rtuClient->m_requestData));
+    XMemory_write_data(&XByteArray_back_base(rtuClient->m_requestData) + 1,
+                       XBYTE_ORDER_LITTLE_ENDIAN, (const uint8_t*)&crc,
+                       sizeof(crc));
     XContainerSize(rtuClient->m_requestData) += 2;
 
     /* XString* text= XByteArray_to16HexString(rtuClient->m_requestData);

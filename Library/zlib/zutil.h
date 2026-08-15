@@ -1,4 +1,4 @@
-/* zutil.h -- internal interface and configuration of the compression library
+﻿/* zutil.h -- internal interface and configuration of the compression library
  * Copyright (C) 1995-2016 Jean-loup Gailly, Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
@@ -20,6 +20,7 @@
 #endif
 
 #include "zlib.h"
+#include "XCrc.h"
 
 #if defined(STDC) && !defined(Z_SOLO)
 #  if !(defined(_WIN32_WCE) && defined(_MSC_VER))
@@ -36,6 +37,12 @@
 #ifndef local
 #  define local static
 #endif
+
+/* zlib 内部直接复用 XinYueC 的标准 CRC-32 实现。 */
+#define XZlib_crc32(crc, buf, len)                                           \
+    ((uLong)XCrc32_update(XCrc32_Algorithm_IsoHdlc, (uint32_t)(crc),          \
+                          (const uint8_t*)(buf), (size_t)(len)))
+
 /* since "static" is used to mean two completely different things in C, we
    define "local" for the non-static meaning of "static", for readability
    (compile with -Dlocal if your debugger can't find static symbols) */
@@ -189,7 +196,6 @@ extern z_const char * const z_errmsg[10]; /* indexed by 2-zlib_error */
 #if !defined(_WIN32) && \
     (!defined(_LARGEFILE64_SOURCE) || _LFS64_LARGEFILE-0 == 0)
     ZEXTERN uLong ZEXPORT adler32_combine64 OF((uLong, uLong, z_off_t));
-    ZEXTERN uLong ZEXPORT crc32_combine64 OF((uLong, uLong, z_off_t));
 #endif
 
         /* common defaults */

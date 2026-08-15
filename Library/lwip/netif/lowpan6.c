@@ -49,6 +49,7 @@
  */
 
 #include "netif/lowpan6.h"
+#include "XCrc.h"
 
 #if LWIP_IPV6
 
@@ -257,29 +258,12 @@ lowpan6_parse_iee802154_header(struct pbuf *p, struct lowpan6_link_addr *src,
   return ERR_OK;
 }
 
-/** Calculate the 16-bit CRC as required by IEEE 802.15.4 */
+/** Calculate the IEEE 802.15.4 CRC through XinYueC's table implementation. */
 u16_t
 lowpan6_calc_crc(const void* buf, u16_t len)
 {
-#define CCITT_POLY_16 0x8408U
-  u16_t i;
-  u8_t b;
-  u16_t crc = 0;
-  const u8_t* p = (const u8_t*)buf;
-
-  for (i = 0; i < len; i++) {
-    u8_t data = *p;
-    for (b = 0U; b < 8U; b++) {
-      if (((data ^ crc) & 1) != 0) {
-        crc = (u16_t)((crc >> 1) ^ CCITT_POLY_16);
-      } else {
-        crc = (u16_t)(crc >> 1);
-      }
-      data = (u8_t)(data >> 1);
-    }
-    p++;
-  }
-  return crc;
+  return (u16_t)XCrc16_calculate(XCrc16_Algorithm_Kermit,
+                                 (const uint8_t*)buf, (size_t)len);
 }
 
 /* Fragmentation specific functions: */
