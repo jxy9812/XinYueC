@@ -78,7 +78,7 @@ typedef struct XNetIoRingPosix XNetIoRingPosix;
 
 /* ==================== 构造与析构 ==================== */
 void XNetIoRingPosix_init(XNetIoRingPosix* ring);
-XNetIoRingPosix* XNetIoRingPosix_create(void);
+XNetIoRingPosix* XNetIoRingPosix_create_ex(XMemoryType memory);
 
 /* ==================== io_uring 专属 API ==================== */
 
@@ -121,5 +121,10 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetIoRingPosix_create
+#define XNetIoRingPosix_create(...) XNetIoRingPosix_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XNETIORINGPOSIX_H */

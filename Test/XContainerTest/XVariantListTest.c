@@ -12,7 +12,6 @@
 void XVariantListTest()
 {
 	XPrintf_3("--------------------------XVariantList测试-----------------------\n");
-	while (true)
 	{
 		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);

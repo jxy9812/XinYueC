@@ -651,12 +651,12 @@ void XSslSocket_init(XSslSocket* self)
     self->pendingAckedBytes = 0;
 }
 
-XSslSocket* XSslSocket_create(void)
+XSslSocket* XSslSocket_create_ex(XMemoryType memory)
 {
-    XSslSocket* self = XNew(XSslSocket);
+    XSslSocket* self = XMemory_malloc(sizeof(XSslSocket), memory);
     if (!self) return NULL;
     XSslSocket_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

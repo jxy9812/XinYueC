@@ -24,12 +24,12 @@ XVtable* XMqttStringPair_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttStringPair* XMqttStringPair_create(const char* name, const char* value)
+XMqttStringPair* XMqttStringPair_create_ex(XMemoryType memory, const char* name, const char* value)
 {
-    XMqttStringPair* pair = (XMqttStringPair*)XMalloc_System(sizeof(XMqttStringPair));
+    XMqttStringPair* pair = (XMqttStringPair*)XMemory_malloc(sizeof(XMqttStringPair), memory);
     if (pair) {
         XMqttStringPair_init(pair, name, value);
-        Set_Class_MemoryFree(pair, XFree_System);
+        Set_Class_Memory(pair, memory); Set_Class_IsHeap(pair, true);
     }
     return pair;
 }
@@ -133,7 +133,7 @@ bool XMqttStringPair_equal(const XMqttStringPair* a, const XMqttStringPair* b)
 
 XMqttUserProperties* XMqttUserProperties_create(void)
 {
-    XMqttUserProperties* props = XVector_create_ex(sizeof(XMqttStringPair), true);
+    XMqttUserProperties* props = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttStringPair), true);
     if (props) {
         /* 直接用 XMqttStringPair 的虚函数 copy/move/deinit 作为容器元素回调 */
         XContainerSetDataCopyMethod(props, (XCDataCopyMethod)XMqttStringPair_copy_base);

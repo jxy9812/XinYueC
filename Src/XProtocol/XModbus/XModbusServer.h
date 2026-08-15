@@ -67,7 +67,7 @@ XVtable* XModbusServer_class_init(void);
 * @brief 创建Modbus服务器实例
 * @return 成功返回XModbusServer实例指针，失败返回NULL
 */
-XModbusServer* XModbusServer_create(void);
+XModbusServer* XModbusServer_create_ex(XMemoryType memory);
 
 /**
 * @brief 初始化Modbus服务器实例
@@ -172,5 +172,10 @@ void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterTyp
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusServer_create
+#define XModbusServer_create(...) XModbusServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSSERVER_H

@@ -85,10 +85,10 @@ void XNetworkProxyQuery_init(XNetworkProxyQuery* query) {
     query->localPort = -1;
 }
 
-XNetworkProxyQuery* XNetworkProxyQuery_create(void) {
-    XNetworkProxyQuery* query = XNew(XNetworkProxyQuery);
+XNetworkProxyQuery* XNetworkProxyQuery_create_ex(XMemoryType memory) {
+    XNetworkProxyQuery* query = XMemory_malloc(sizeof(XNetworkProxyQuery), memory);
     XNetworkProxyQuery_init(query);
-    Set_Class_MemoryFree(query, XFree_System);
+    Set_Class_Memory(query, memory); Set_Class_IsHeap(query, true);
     return query;
 }
 
@@ -273,10 +273,10 @@ void XNetworkProxy_init(XNetworkProxy* proxy) {
     proxy->capabilities = XNetworkProxy_TunnelingCapability | XNetworkProxy_HostNameLookupCapability;
 }
 
-XNetworkProxy* XNetworkProxy_create(void) {
-    XNetworkProxy* proxy = XNew(XNetworkProxy);
+XNetworkProxy* XNetworkProxy_create_ex(XMemoryType memory) {
+    XNetworkProxy* proxy = XMemory_malloc(sizeof(XNetworkProxy), memory);
     XNetworkProxy_init(proxy);
-    Set_Class_MemoryFree(proxy, XFree_System);
+    Set_Class_Memory(proxy, memory); Set_Class_IsHeap(proxy, true);
     return proxy;
 }
 
@@ -513,10 +513,10 @@ void XNetworkProxyFactory_init(XNetworkProxyFactory* factory, XNetworkProxyFacto
     factory->queryProxy = queryFunc;
 }
 
-XNetworkProxyFactory* XNetworkProxyFactory_create(XNetworkProxyFactory_QueryFunc queryFunc) {
-    XNetworkProxyFactory* factory = XNew(XNetworkProxyFactory);
+XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory, XNetworkProxyFactory_QueryFunc queryFunc) {
+    XNetworkProxyFactory* factory = XMemory_malloc(sizeof(XNetworkProxyFactory), memory);
     XNetworkProxyFactory_init(factory, queryFunc);
-    Set_Class_MemoryFree(factory, XFree_System);
+    Set_Class_Memory(factory, memory); Set_Class_IsHeap(factory, true);
     return factory;
 }
 

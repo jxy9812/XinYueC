@@ -77,7 +77,7 @@ XVtable* XModbusTcpServer_class_init(void);
  * @brief 在堆上创建并初始化一个XModbusTcpServer实例
  * @return 成功返回指向新分配XModbusTcpServer对象的指针，失败返回NULL
  */
-XModbusTcpServer* XModbusTcpServer_create(void);
+XModbusTcpServer* XModbusTcpServer_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusTcpServer实例
@@ -141,5 +141,10 @@ void* XModbusTcpServer_modbusClientDisconnected_signal(XModbusTcpServer* server,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusTcpServer_create
+#define XModbusTcpServer_create(...) XModbusTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSTCPSERVER_H

@@ -17,7 +17,9 @@ XVtable* XClass_class_init()
 void XClass_init(XClass* object)
 {
 	XClassGetVtable(object) = XClass_class_init();
-	object->m_free = NULL;
+	Set_Class_Memory(object, XCLASS_DEFAULT_MEMORY_TYPE);
+	Set_Class_IsHeap(object, false);
+	object->m_reserved = 0;
 }
 
 void VXClass_copy(XClass* object, const XClass* src)

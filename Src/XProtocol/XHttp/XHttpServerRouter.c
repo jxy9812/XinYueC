@@ -42,10 +42,10 @@ XVtable* XHttpServerRouter_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XHttpServerRouter* XHttpServerRouter_create(XHttpServer* server)
+XHttpServerRouter* XHttpServerRouter_create_ex(XMemoryType memory, XHttpServer* server)
 {
     XHttpServerRouter* self =
-        (XHttpServerRouter*)XMalloc_System(sizeof(*self));
+        (XHttpServerRouter*)XMemory_malloc(sizeof(XHttpServerRouter), memory);
     if (!self)
         return NULL;
     memset(self, 0, sizeof(*self));
@@ -53,7 +53,7 @@ XHttpServerRouter* XHttpServerRouter_create(XHttpServer* server)
     XClassSetVtable(self, XHttpServerRouter);
     self->m_server = server;
     self->m_rules = XVector_Create(XHttpServerRouterRule*);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_rules) {
         XClass_delete_base((XClass*)self);
         return NULL;

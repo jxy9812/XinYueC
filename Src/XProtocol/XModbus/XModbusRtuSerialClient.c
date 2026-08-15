@@ -91,12 +91,12 @@ XVtable* XModbusRtuSerialClient_class_init(void)
 }
 
 // =============== 创建/初始化 ===============
-XModbusRtuSerialClient* XModbusRtuSerialClient_create(void)
+XModbusRtuSerialClient* XModbusRtuSerialClient_create_ex(XMemoryType memory)
 {
-    XModbusRtuSerialClient* client = XMalloc_System(sizeof(XModbusRtuSerialClient));
+    XModbusRtuSerialClient* client = XMemory_malloc(sizeof(XModbusRtuSerialClient), memory);
     if (!client) return NULL;
     XModbusRtuSerialClient_init(client);
-    Set_Class_MemoryFree(client, XFree_System);
+    Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
     return client;
 }
 

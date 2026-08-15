@@ -407,13 +407,13 @@ XVtable* XFileDevice_class_init(void)
  * 构造与析构
  * ============================================================================ */
 
-XFileDevice* XFileDevice_create(void)
+XFileDevice* XFileDevice_create_ex(XMemoryType memory)
 {
-    XFileDevice* device = (XFileDevice*)XMalloc_System(sizeof(XFileDevice));
+    XFileDevice* device = (XFileDevice*)XMemory_malloc(sizeof(XFileDevice), memory);
     if (!device) return NULL;
 
     XFileDevice_init(device);
-    Set_Class_MemoryFree(device, XFree_System);
+    Set_Class_Memory(device, memory); Set_Class_IsHeap(device, true);
     return device;
 }
 

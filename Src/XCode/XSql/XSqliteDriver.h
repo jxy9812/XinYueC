@@ -17,7 +17,7 @@ extern "C" {
  * @brief 创建 SQLite 源码驱动。
  * @return 新驱动对象，调用者取得所有权并必须使用 XSqlDriver_delete_base 释放；失败返回 NULL。
  */
-XSqlDriver* XSqliteDriver_create(void);
+XSqlDriver* XSqliteDriver_create_ex(XMemoryType memory);
 
 /**
  * @brief 注册 SQLite 内置源码驱动。
@@ -29,5 +29,10 @@ bool XSqliteDriver_register(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqliteDriver_create
+#define XSqliteDriver_create(...) XSqliteDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLITEDRIVER_H */

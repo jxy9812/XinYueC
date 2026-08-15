@@ -50,12 +50,12 @@ XVtable* XModbusServer_class_init(void)
 }
 
 // =============== 创建/初始化 ===============
-XModbusServer* XModbusServer_create(void)
+XModbusServer* XModbusServer_create_ex(XMemoryType memory)
 {
-    XModbusServer* server = XMalloc_System(sizeof(XModbusServer));
+    XModbusServer* server = XMemory_malloc(sizeof(XModbusServer), memory);
     if (!server) return NULL;
     XModbusServer_init(server);
-    Set_Class_MemoryFree(server, XFree_System);
+    Set_Class_Memory(server, memory); Set_Class_IsHeap(server, true);
     return server;
 }
 
@@ -123,7 +123,7 @@ bool XModbusServer_data2(const XModbusServer* server, XModbusRegisterType table,
     if (!server || !value) return false;
     
     // 创建临时数据单元用于读取
-    XModbusDataUnit* unit = XModbusDataUnit_create_ex(table, address, 1);
+    XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, table, address, 1);
     if (!unit) return false;
     
     bool result = XModbusServer_readData_base((XModbusServer*)server, unit);
@@ -147,7 +147,7 @@ bool XModbusServer_setData2(XModbusServer* server, XModbusRegisterType table,
     if (!server) return false;
     
     // 创建临时数据单元用于写入
-    XModbusDataUnit* unit = XModbusDataUnit_create_ex(table, address, 1);
+    XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, table, address, 1);
     if (!unit) return false;
     
     XModbusDataUnit_setValue(unit, 0, value);
@@ -284,7 +284,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusCoils, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -327,7 +327,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusDiscreteInputs, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusDiscreteInputs, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -370,7 +370,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -411,7 +411,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusInputRegisters, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusInputRegisters, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -451,7 +451,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusCoils, address, 1);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, address, 1);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -479,7 +479,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         uint16_t address = readUint16FromData(data, 0);
         uint16_t value = readUint16FromData(data, 2);
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, address, 1);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, address, 1);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -503,7 +503,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         const XVariant* offsetVar = XModbusServer_value_const_base(server, XModbusServer_ExceptionStatusOffset);
         uint16_t offset = offsetVar ? (uint16_t)XVariant_toInt(offsetVar) : 0;
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusCoils, offset, 8);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, offset, 8);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -611,7 +611,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusCoils, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -658,7 +658,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, startAddress, quantity);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, startAddress, quantity);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -728,7 +728,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         uint16_t andMask = readUint16FromData(data, 2);
         uint16_t orMask = readUint16FromData(data, 4);
 
-        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, address, 1);
+        XModbusDataUnit* unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, address, 1);
         if (!unit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
@@ -781,7 +781,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
 
         // 先执行写入
         if (writeQuantity > 0) {
-            XModbusDataUnit* writeUnit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, writeStartAddr, writeQuantity);
+            XModbusDataUnit* writeUnit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, writeStartAddr, writeQuantity);
             if (!writeUnit) {
                 return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
             }
@@ -799,7 +799,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         // 执行读取
-        XModbusDataUnit* readUnit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, readStartAddr, readQuantity);
+        XModbusDataUnit* readUnit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, readStartAddr, readQuantity);
         if (!readUnit) {
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }

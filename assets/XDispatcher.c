@@ -70,11 +70,11 @@ XVtable* XDispatcher_class_init() {
 }
 
 // 创建调度器
-XDispatcher* XDispatcher_create(XSchedulePolicy policy) {
-    XDispatcher* dispatcher = XMalloc_System(sizeof(XDispatcher));
+XDispatcher* XDispatcher_create_ex(XMemoryType memory, XSchedulePolicy policy) {
+    XDispatcher* dispatcher = XMemory_malloc(sizeof(XDispatcher), memory);
     if (dispatcher) {
         XDispatcher_init(dispatcher, policy);
-        Set_Class_MemoryFree(dispatcher, XFree_System);
+        Set_Class_Memory(dispatcher, memory); Set_Class_IsHeap(dispatcher, true);
     }
     return dispatcher;
 }

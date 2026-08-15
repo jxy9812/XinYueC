@@ -61,7 +61,6 @@ void XSqlField_init_ex(XSqlField* field, const XString* fieldName,
  * @brief 创建空字段。
  * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
  */
-XSqlField* XSqlField_create(void);
 /**
  * @brief 创建字段。
  * @param fieldName 字段名；借用。
@@ -69,7 +68,7 @@ XSqlField* XSqlField_create(void);
  * @param tableName 所属表名；借用。
  * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
  */
-XSqlField* XSqlField_create_ex(const XString* fieldName, int metaType,
+XSqlField* XSqlField_create_ex(XMemoryType memory, const XString* fieldName, int metaType,
                                const XString* tableName);
 /**
  * @brief 深拷贝创建字段。
@@ -166,5 +165,11 @@ bool XSqlField_equals(const XSqlField* left, const XSqlField* right);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlField_create
+#define XSqlField_create() \
+	XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XVariantType_NULL, NULL)
 
 #endif /* XSQLFIELD_H */

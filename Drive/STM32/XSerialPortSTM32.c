@@ -44,7 +44,7 @@ void XSerialPort_init(XSerialPort* serial)
 #endif
 
 #ifdef USE_STDPERIPH_DRIVER
-XSerialPort* XSerialPort_create(XUsartGPIO* TX, XUsartGPIO* RX)
+XSerialPort* XSerialPort_create_ex(XMemoryType memory, XUsartGPIO* TX, XUsartGPIO* RX)
 {
     XSerialPort* serial = XMalloc_System(sizeof(XSerialPort));
     if (serial == NULL)

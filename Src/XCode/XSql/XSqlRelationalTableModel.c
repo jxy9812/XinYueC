@@ -97,13 +97,13 @@ void XSqlRelationalTableModel_init(XSqlRelationalTableModel* model, const XSqlDa
     model->m_joinMode = XSqlRelationJoinMode_InnerJoin;
 }
 
-XSqlRelationalTableModel* XSqlRelationalTableModel_create(const XSqlDatabase* database)
+XSqlRelationalTableModel* XSqlRelationalTableModel_create_ex(XMemoryType memory, const XSqlDatabase* database)
 {
-    XSqlRelationalTableModel* model = (XSqlRelationalTableModel*)XMalloc_System(sizeof(XSqlRelationalTableModel));
+    XSqlRelationalTableModel* model = (XSqlRelationalTableModel*)XMemory_malloc(sizeof(XSqlRelationalTableModel), memory);
     if (!model) return NULL;
     memset(model, 0, sizeof(*model));
     XSqlRelationalTableModel_init(model, database);
-    Set_Class_MemoryFree(model, XFree_System);
+    Set_Class_Memory(model, memory); Set_Class_IsHeap(model, true);
     return model;
 }
 

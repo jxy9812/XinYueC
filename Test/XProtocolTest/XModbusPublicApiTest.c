@@ -37,7 +37,7 @@ static void delete_pdu(XModbusPdu *pdu)
 static bool configure_holding_registers(XModbusServer *server, uint16_t start, size_t count)
 {
     XModbusDataUnitMap *map = XModbusDataUnitMap_create();
-    XModbusDataUnit *unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, start, count);
+    XModbusDataUnit *unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, start, count);
     XModbusRegisterType type = XModbusHoldingRegisters;
     bool ok = false;
 
@@ -139,8 +139,8 @@ static void test_adu(void)
 static void test_data_unit(void)
 {
     XModbusDataUnit *invalid = XModbusDataUnit_create();
-    XModbusDataUnit *registers = XModbusDataUnit_create_ex(XModbusHoldingRegisters, 10, 3);
-    XModbusDataUnit *coils = XModbusDataUnit_create_ex(XModbusCoils, 20, 4);
+    XModbusDataUnit *registers = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, 10, 3);
+    XModbusDataUnit *coils = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 20, 4);
     XVector *values = XVector_Create(uint16_t);
     XVector *copyValues = NULL;
     XBitArray *bits = XBitArray_create(4);
@@ -179,7 +179,7 @@ static void test_data_unit(void)
 static void test_reply_device(void)
 {
     XModbusReply *reply = XModbusReply_create(XModbusReply_Common, 7);
-    XModbusDataUnit *unit = XModbusDataUnit_create_ex(XModbusHoldingRegisters, 2, 2);
+    XModbusDataUnit *unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, 2, 2);
     XModbusResponse *response = XModbusResponse_create_with_code(XModbusPdu_ReadHoldingRegisters);
     XVector *errors;
     XString *errorText;
@@ -335,7 +335,7 @@ static void test_tcp_loopback(void)
         connected = connected && XModbusDevice_state((XModbusDevice *)client) == XModbusDevice_ConnectedState;
     }
     CHECK(connected, "TCP 客户端本机连接");
-    read = XModbusDataUnit_create_ex(XModbusHoldingRegisters, 0, 1);
+    read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusHoldingRegisters, 0, 1);
     if (client && connected && read)
         reply = XModbusClient_sendReadRequest((XModbusClient *)client, read, 1);
     for (i = 0; reply && i < 100 && !XModbusReply_isFinished(reply); ++i)

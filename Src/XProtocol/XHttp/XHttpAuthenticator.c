@@ -111,13 +111,13 @@ void XHttpAuthenticator_init(XHttpAuthenticator* self)
     self->m_method = XHttpAuthenticator_None;
 }
 
-XHttpAuthenticator* XHttpAuthenticator_create(void)
+XHttpAuthenticator* XHttpAuthenticator_create_ex(XMemoryType memory)
 {
-    XHttpAuthenticator* self = (XHttpAuthenticator*)XMalloc_System(sizeof(*self));
+    XHttpAuthenticator* self = (XHttpAuthenticator*)XMemory_malloc(sizeof(XHttpAuthenticator), memory);
     if (!self)
         return NULL;
     XHttpAuthenticator_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

@@ -77,13 +77,13 @@ void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType
     driver->m_precisionPolicy = XSqlNumericalPrecisionPolicy_LowPrecisionDouble;
 }
 
-XSqlDriver* XSqlDriver_create(XSqlDriverType driverType, XSqlDbmsType dbmsType)
+XSqlDriver* XSqlDriver_create_ex(XMemoryType memory, XSqlDriverType driverType, XSqlDbmsType dbmsType)
 {
-    XSqlDriver* driver = (XSqlDriver*)XMalloc_System(sizeof(XSqlDriver));
+    XSqlDriver* driver = (XSqlDriver*)XMemory_malloc(sizeof(XSqlDriver), memory);
     if (!driver) return NULL;
     memset(driver, 0, sizeof(*driver));
     XSqlDriver_init(driver, driverType, dbmsType);
-    Set_Class_MemoryFree(driver, XFree_System);
+    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
     return driver;
 }
 

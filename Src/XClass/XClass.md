@@ -171,7 +171,9 @@ XClass是所有类的基类，提供基本的虚函数表管理和对象生命�
 ```c
 typedef struct XClass {
     XVtable* m_vtable;  // 虚函数表
-    FreeMethod m_free;  // 释放方法
+    XMemory* m_memory;  // 内存方法；由 init/create 绑定默认内存池
+    uint32_t m_is_heap : 1; // 0: init 初始化，1: create 堆创建
+    uint32_t m_reserved : 31; // 后续扩展
 } XClass;
 ```
 

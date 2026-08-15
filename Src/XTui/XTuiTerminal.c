@@ -108,13 +108,13 @@ void XTuiTerminal_init(XTuiTerminal* terminal)
     terminal->m_hasColor = true;
 }
 
-XTuiTerminal* XTuiTerminal_create(void)
+XTuiTerminal* XTuiTerminal_create_ex(XMemoryType memory)
 {
-    XTuiTerminal* term = (XTuiTerminal*)XMalloc_System(sizeof(XTuiTerminal));
+    XTuiTerminal* term = (XTuiTerminal*)XMemory_malloc(sizeof(XTuiTerminal), memory);
     if (!term)
         return NULL;
     XTuiTerminal_init(term);
-    Set_Class_MemoryFree(term, XFree_System);
+    Set_Class_Memory(term, memory); Set_Class_IsHeap(term, true);
     return term;
 }
 

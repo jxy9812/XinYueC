@@ -61,7 +61,7 @@ XVtable* XSqlDriverCreator_class_init(void);
  * @param createMethod 驱动创建回调；不能为 NULL。
  * @return 新创建器，调用者必须使用 XSqlDriverCreator_delete_base 释放；失败返回 NULL。
  */
-XSqlDriverCreator* XSqlDriverCreator_create(XSqlDriverCreateMethod createMethod);
+XSqlDriverCreator* XSqlDriverCreator_create_ex(XMemoryType memory,  XSqlDriverCreateMethod createMethod);
 /**
  * @brief 初始化栈上驱动创建器。
  * @param creator 待初始化创建器；不能为 NULL。
@@ -113,7 +113,7 @@ void XSqlDatabase_init(XSqlDatabase* database);
  * @brief 创建空数据库句柄。
  * @return 新句柄，调用者必须使用 XSqlDatabase_delete_base 释放；失败返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_create(void);
+XSqlDatabase* XSqlDatabase_create_ex(XMemoryType memory);
 /**
  * @brief 复制数据库句柄。
  * @param other 源句柄；借用，不能为 NULL。
@@ -477,5 +477,12 @@ XSqlDriver* XSqlDatabase_driver(const XSqlDatabase* database);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlDatabase_create
+#define XSqlDatabase_create(...) XSqlDatabase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XSqlDriverCreator_create
+#define XSqlDriverCreator_create(...) XSqlDriverCreator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLDATABASE_H */

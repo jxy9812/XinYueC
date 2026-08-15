@@ -46,7 +46,7 @@ typedef struct XHrTimerGroup
 
 // 标准构造函数，精度单位为纳秒
 XVtable* XHrTimerGroup_class_init(void);
-XHrTimerGroup* XHrTimerGroup_create(uint64_t precision_ns);
+XHrTimerGroup* XHrTimerGroup_create_ex(XMemoryType memory,  uint64_t precision_ns);
 void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns);
 /**
  * @brief 获取最近一个定时器的绝对到期时间（纳秒）。
@@ -71,5 +71,10 @@ size_t XHrTimerGroup_count(XHrTimerGroup* group);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHrTimerGroup_create
+#define XHrTimerGroup_create(...) XHrTimerGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // !XHrTimerGroup_H

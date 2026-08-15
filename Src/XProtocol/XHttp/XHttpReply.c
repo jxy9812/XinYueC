@@ -608,19 +608,19 @@ void XHttpReply_init(XHttpReply* self, const XHttpRequest* request)
     self->m_finishedPending = false;
 }
 
-XHttpReply* XHttpReply_create(const XHttpRequest* request)
+XHttpReply* XHttpReply_create_ex(XMemoryType memory, const XHttpRequest* request)
 {
-    XHttpReply* self = (XHttpReply*)XMalloc_System(sizeof(XHttpReply));
+    XHttpReply* self = (XHttpReply*)XMemory_malloc(sizeof(XHttpReply), memory);
     if (!self)
         return NULL;
     XHttpReply_init(self, request);
     if (!self->m_headers || !self->m_trailers || !self->m_body || !self->m_input ||
         !self->m_reason || (request && !self->m_request)) {
         XHttpReply_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

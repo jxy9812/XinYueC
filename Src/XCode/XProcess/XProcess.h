@@ -137,7 +137,7 @@ XVtable* XProcess_class_init(void);
 void XProcess_init(XProcess* self);
 
 /** @brief 创建堆上 XProcess；失败返回 NULL，调用方必须 delete_base。 */
-XProcess* XProcess_create(void);
+XProcess* XProcess_create_ex(XMemoryType memory);
 
 /** @brief 复用 XClass 虚析构入口；会调用 XProcess 自己注册的 deinit 槽。 */
 #define XProcess_deinit_base XClass_deinit_base
@@ -409,4 +409,9 @@ void* XProcess_readyReadStandardError_signal(XProcess* self);
 #endif
 
 #endif /* XProcess_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XProcess_create
+#define XProcess_create(...) XProcess_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XPROCESS_H */

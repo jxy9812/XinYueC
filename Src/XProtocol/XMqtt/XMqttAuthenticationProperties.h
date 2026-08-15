@@ -42,7 +42,7 @@ XVtable* XMqttAuthenticationProperties_class_init(void);
  * @brief 创建认证属性实例
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttAuthenticationProperties* XMqttAuthenticationProperties_create(void);
+XMqttAuthenticationProperties* XMqttAuthenticationProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建认证属性的深拷贝
@@ -150,5 +150,10 @@ void XMqttAuthenticationProperties_setUserProperties(XMqttAuthenticationProperti
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttAuthenticationProperties_create
+#define XMqttAuthenticationProperties_create(...) XMqttAuthenticationProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTAUTHENTICATIONPROPERTIES_H

@@ -39,14 +39,14 @@ void XRestAccessManager_init(XRestAccessManager* self, XNetworkAccessManager* ma
     self->m_manager = manager;
 }
 
-XRestAccessManager* XRestAccessManager_create(XNetworkAccessManager* manager)
+XRestAccessManager* XRestAccessManager_create_ex(XMemoryType memory, XNetworkAccessManager* manager)
 {
     XRestAccessManager* self;
     if (!manager) return NULL;
-    self = (XRestAccessManager*)XMalloc_System(sizeof(*self));
+    self = (XRestAccessManager*)XMemory_malloc(sizeof(XRestAccessManager), memory);
     if (!self) return NULL;
     XRestAccessManager_init(self, manager);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

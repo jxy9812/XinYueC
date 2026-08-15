@@ -73,7 +73,6 @@ void XHttp2Frame_init(XHttp2Frame* self);
  * - @brief 创建空 HTTP/2 帧。
  * - @return 新建帧对象；调用者必须使用 XHttp2Frame_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2Frame* XHttp2Frame_create(void);
 /**
  * - @brief 创建指定字段的 HTTP/2 帧。
  * - @param type 帧类型；使用 XHttp2Frame_Type 的值或 RFC 7540 扩展帧类型。
@@ -82,7 +81,7 @@ XHttp2Frame* XHttp2Frame_create(void);
  * - @param payload 帧载荷；借用，NULL 等价于空载荷，创建时深拷贝。
  * - @return 新建帧对象；调用者必须使用 XHttp2Frame_delete_base 释放，字段无效或分配失败返回 NULL。
  */
-XHttp2Frame* XHttp2Frame_create_ex(uint8_t type, uint8_t flags, uint32_t streamId,
+XHttp2Frame* XHttp2Frame_create_ex(XMemoryType memory, uint8_t type, uint8_t flags, uint32_t streamId,
                                    const XByteArray* payload);
 #define XHttp2Frame_deinit_base XClass_deinit_base
 #define XHttp2Frame_delete_base XClass_delete_base
@@ -184,5 +183,11 @@ bool XHttp2Frame_hasClientPreface(const void* data, size_t size);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttp2Frame_create
+#define XHttp2Frame_create() \
+	XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, 0, 0, NULL)
 
 #endif /* XHTTP2FRAME_H */

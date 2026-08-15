@@ -55,6 +55,30 @@ static bool   VXList_remove_one(XLockFreeList* this_list, const void* pvData);
 static bool   VXList_indexOf(const XLockFreeList* this_list, const void* findVal, size_t from, XLockFreeList_iterator* it);
 static bool   VXList_lastIndexOf(const XLockFreeList* this_list, const void* findVal, size_t from, XLockFreeList_iterator* it);
 static size_t VXList_removeIf(XLockFreeList* this_list, bool (*predicate)(const void* elemData, void* userData), void* userData);
+static void XLockFreeList_init_with_memory(XLockFreeList* this_list,
+    size_t typeSize, XMemoryType memoryType);
+
+static void* XLockFreeList_aligned_malloc(size_t size, size_t alignment,
+    XMemory* memory)
+{
+    if (!memory || !memory->malloc || alignment == 0)
+        return NULL;
+    void* raw = memory->malloc(size + alignment - 1 + sizeof(void*));
+    if (!raw)
+        return NULL;
+    uintptr_t address = ALIGN_UP((uintptr_t)raw + sizeof(void*), alignment);
+    ((void**)address)[-1] = raw;
+    return (void*)address;
+}
+
+static void XLockFreeList_aligned_free(void* ptr, XMemory* memory)
+{
+    if (!ptr)
+        return;
+    void* raw = ((void**)ptr)[-1];
+    if (memory && memory->free)
+        memory->free(raw);
+}
 
 /* =========================================================================
  *  Hazard Pointer 子系统（本文件内部使用）
@@ -71,9 +95,20 @@ typedef struct XLFL_HPRec {
 static XLFL_HPRec           g_lfl_hp[XLFL_HP_MAX_THREADS];
 static XAtomic_uintptr_t    g_lfl_slot_used[XLFL_HP_MAX_THREADS]; /* 0/1，用 CAS 占位 */
 
-static /*__thread*/ int         t_lfl_slot        = -1;
-static /*__thread*/ XLockFreeListNode* t_lfl_retired[XLFL_RETIRE_CAPACITY];
-static /*__thread*/ int         t_lfl_retired_n   = 0;
+typedef struct XLFL_RetiredNode {
+    XLockFreeListNode* node;
+    XMemory* memory;
+} XLFL_RetiredNode;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define XLFL_THREAD_LOCAL __thread
+#else
+#define XLFL_THREAD_LOCAL _Thread_local
+#endif
+
+static XLFL_THREAD_LOCAL int t_lfl_slot = -1;
+static XLFL_THREAD_LOCAL XLFL_RetiredNode t_lfl_retired[XLFL_RETIRE_CAPACITY];
+static XLFL_THREAD_LOCAL int t_lfl_retired_n = 0;
 
 /* 为当前线程申请一个 HP 槽（终身持有，不释放）。返回槽下标；失败 abort。 */
 static int _lfl_hp_acquire_slot(void)
@@ -123,7 +158,7 @@ static inline void _lfl_hp_clear_all(void)
 
 /* 立即销毁一个节点（真正 free）。此处也做数据 deinit——但退休链的节点在退休前
  * 数据已被 pop 消耗（copy 或 move 出去），因此这里只 free 内存。 */
-static void _lfl_free_node_memory(XLockFreeListNode* node);
+static void _lfl_free_node_memory(XLockFreeListNode* node, XMemory* memory);
 
 /* 收集所有他人 HP，扫描 t_lfl_retired[] 中未被引用的节点予以释放 */
 static void _lfl_scan_and_reclaim(void)
@@ -144,21 +179,22 @@ static void _lfl_scan_and_reclaim(void)
     /* 遍历本线程退休链，未被引用的立刻释放；被引用的保留 */
     int keep = 0;
     for (int i = 0; i < t_lfl_retired_n; i++) {
-        XLockFreeListNode* n = t_lfl_retired[i];
+        XLFL_RetiredNode retired = t_lfl_retired[i];
+        XLockFreeListNode* n = retired.node;
         bool hazarded = false;
         for (int j = 0; j < nsnap; j++) {
             if (snapshot[j] == (uintptr_t)n) { hazarded = true; break; }
         }
         if (hazarded) {
-            t_lfl_retired[keep++] = n;
+            t_lfl_retired[keep++] = retired;
         } else {
-            _lfl_free_node_memory(n);
+            _lfl_free_node_memory(n, retired.memory);
         }
     }
     t_lfl_retired_n = keep;
 }
 
-static void _lfl_retire(XLockFreeListNode* node)
+static void _lfl_retire(XLockFreeListNode* node, XMemory* memory)
 {
     if (node == NULL) return;
     if (t_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
@@ -166,13 +202,14 @@ static void _lfl_retire(XLockFreeListNode* node)
         /* 若扫完还是满了（罕见），强制释放最老一个 —— 依赖调用者保证不会长期
          * 持有过多 HP 引用。测试规模下不会触发。 */
         if (t_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
-            _lfl_free_node_memory(t_lfl_retired[0]);
+            _lfl_free_node_memory(t_lfl_retired[0].node,
+                t_lfl_retired[0].memory);
             for (int i = 1; i < t_lfl_retired_n; i++)
                 t_lfl_retired[i-1] = t_lfl_retired[i];
             t_lfl_retired_n--;
         }
     }
-    t_lfl_retired[t_lfl_retired_n++] = node;
+    t_lfl_retired[t_lfl_retired_n++] = (XLFL_RetiredNode){ node, memory };
     if (t_lfl_retired_n >= XLFL_RETIRE_THRESHOLD) {
         _lfl_scan_and_reclaim();
     }
@@ -183,7 +220,7 @@ static XLockFreeListNode* createNode(XLockFreeList* this_list, void* pvData,
                                      XCDataCreatMethod dataCreatMethod)
 {
     size_t needed_size = sizeof(void*) + sizeof(XLockFreeListNode) + XContainerTypeSize(this_list);
-    void* raw_buffer = XMalloc_System(needed_size + 7);
+    void* raw_buffer = XContainer_malloc(this_list, needed_size + 7);
     if (raw_buffer == NULL) return NULL;
     uintptr_t addr = (uintptr_t)raw_buffer;
     uintptr_t node_start = addr + sizeof(void*);
@@ -210,11 +247,16 @@ static XLockFreeListNode* createSentinel(XLockFreeList* this_list)
     return createNode(this_list, NULL, NULL);
 }
 
-static void _lfl_free_node_memory(XLockFreeListNode* node)
+static void _lfl_free_node_memory(XLockFreeListNode* node, XMemory* memory)
 {
     if (node == NULL) return;
     void* raw = *((void**)((uintptr_t)node - sizeof(void*)));
-    XFree_System(raw);
+    if (!memory)
+        memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (memory && memory->free)
+        memory->free(raw);
+    else
+        XFree_System(raw);
 }
 
 /* destroyNode：先执行数据 deinit，再释放内存。仅用于 “已从链表卸下且无并发观测” 的场景。 */
@@ -223,7 +265,7 @@ static void destroyNode(XLockFreeList* this_list, XLockFreeListNode* node)
     if (node == NULL) return;
     if (this_list && XContainerDataDeinitMethod(this_list) != NULL)
         XContainerDataDeinitMethod(this_list)(&node->data);
-    _lfl_free_node_memory(node);
+    _lfl_free_node_memory(node, XContainer_memory(this_list));
 }
 
 /* ------------------ vtable ------------------ */
@@ -419,7 +461,7 @@ static bool _lfl_pop_front_impl(XLockFreeList* this_list, void* pvOutData,
             _lfl_hp_clear(1);
             /* 旧 head 是原哨兵，其 data 已经被上一次 pop 拷贝走（或从未使用），
              * 无需再次 deinit；只做内存回收。*/
-            _lfl_retire(head);
+            _lfl_retire(head, XContainer_memory(this_list));
             XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1,
                 XAtomic_MemoryOrder_Relaxed);
             XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1,
@@ -467,10 +509,10 @@ static XLockFreeListNode* VXListAtomic_push_front(XLockFreeList* this_list,
     if (this_list == NULL) return NULL;
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod) {
-        void* temp = XCalloc_System(1, XContainerTypeSize(this_list));
+        void* temp = XContainer_calloc(this_list, 1, XContainerTypeSize(this_list));
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
-        XFree_System(temp);
+        XContainer_free(this_list, temp);
     } else {
         newNode = createNode(this_list, pvData, dataCreatMethod);
     }
@@ -485,10 +527,10 @@ static XLockFreeListNode* VXListAtomic_push_back(XLockFreeList* this_list,
     if (this_list == NULL) return NULL;
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod) {
-        void* temp = XCalloc_System(1, XContainerTypeSize(this_list));
+        void* temp = XContainer_calloc(this_list, 1, XContainerTypeSize(this_list));
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
-        XFree_System(temp);
+        XContainer_free(this_list, temp);
     } else {
         newNode = createNode(this_list, pvData, dataCreatMethod);
     }
@@ -846,7 +888,8 @@ static void VXClass_copy(XLockFreeList* object, const XLockFreeList* src)
 {
     if (object == NULL || src == NULL) return;
     if (XClassIsVtableNull(object)) {
-        XLockFreeList_init(object, XContainerTypeSize(src));
+        XLockFreeList_init_with_memory(object, XContainerTypeSize(src),
+            XContainer_memory_type(src));
     } else if (!XListBase_isEmpty_base(object)) {
         XListBase_clear_base(object);
     }
@@ -861,12 +904,19 @@ static void VXClass_copy(XLockFreeList* object, const XLockFreeList* src)
 static void VXClass_move(XLockFreeList* object, XLockFreeList* src)
 {
     if (object == NULL || src == NULL) return;
-    if (XClassIsVtableNull(object)) {
-        XLockFreeList_init(object, XContainerTypeSize(src));
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+    if (target_uninitialized) {
+        XLockFreeList_init_with_memory(object, XContainerTypeSize(src),
+            XContainer_memory_type(src));
     } else if (!XListBase_isEmpty_base(object)) {
         XListBase_clear_base(object);
     }
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeList) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
+    if (!target_uninitialized)
+        Class_Memory(src) = target_memory;
 }
 
 static void VXLockFreeList_swap(XLockFreeList* list1, XLockFreeList* list2)
@@ -904,26 +954,44 @@ static void VXListAtomic_deinit(XLockFreeList* this_list)
      * 退休链。*/
     _lfl_scan_and_reclaim();
     XLockFreeListNode* head = _load_head(this_list);
-    if (head) _lfl_free_node_memory(head);
+    if (head) _lfl_free_node_memory(head, XContainer_memory(this_list));
     XAtomic_store_size_t(&this_list->m_head, 0, XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&this_list->m_tail, 0, XAtomic_MemoryOrder_Relaxed);
 }
 
-XLockFreeList* XLockFreeList_create(size_t typeSize)
+XLockFreeList* XLockFreeList_create_ex(XMemoryType memory, size_t typeSize)
 {
     if (typeSize == 0) return NULL;
-    XLockFreeList* this_list = (XLockFreeList*)XAlignedMalloc_System(sizeof(XLockFreeList), CACHE_LINE_SIZE);
+    XMemory* memoryMethod = XMemory_method(memory);
+    XLockFreeList* this_list = (XLockFreeList*)XLockFreeList_aligned_malloc(
+        sizeof(XLockFreeList), CACHE_LINE_SIZE, memoryMethod);
     if (this_list == NULL) return NULL;
-    XLockFreeList_init(this_list, typeSize);
-    Set_Class_MemoryFree(this_list, XAlignedFree_System);
+    XLockFreeList_init_with_memory(this_list, typeSize, memory);
+    Set_Class_IsHeap(this_list, true);
     return this_list;
+}
+
+void XLockFreeList_delete_base(XLockFreeList* this_list)
+{
+    if (!this_list) return;
+    XMemory* memory = Class_Memory(this_list);
+    XClass_deinit_base((XClass*)this_list);
+    XLockFreeList_aligned_free(this_list, memory);
 }
 
 void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize)
 {
+    XLockFreeList_init_with_memory(this_list, typeSize,
+        XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+static void XLockFreeList_init_with_memory(XLockFreeList* this_list,
+    size_t typeSize, XMemoryType memoryType)
+{
     if (this_list == NULL || typeSize == 0) return;
     XListBase_init(this_list, typeSize, false);
     XClassGetVtable(this_list) = XLockFreeList_class_init();
+    Set_Class_Memory(this_list, memoryType);
     XAtomic_init(this_list->m_head, (size_t)0);
     XAtomic_init(this_list->m_tail, (size_t)0);
     /* 分配哨兵节点：m_head=m_tail=sentinel */

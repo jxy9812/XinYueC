@@ -52,7 +52,7 @@ XBsonValue* XBsonElement_value(XBsonElement* element);
  * @brief 创建空 BSON 文档。
  * @return 新对象，失败返回 NULL；调用者使用 XBsonDocument_delete_base 释放。
  */
-XBsonDocument* XBsonDocument_create(void);
+XBsonDocument* XBsonDocument_create_ex(XMemoryType memory);
 /**
  * @brief 深拷贝创建 BSON 文档。
  * @param other 源文档，只读借用。
@@ -244,5 +244,10 @@ void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XBsonDocument_create
+#define XBsonDocument_create(...) XBsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XBSONDOCUMENT_H */

@@ -50,8 +50,9 @@ XVtable* XHashSet_class_init();
 * @return 创建成功的XHashSet实例指针，失败返回NULL
 * @note 动态分配内存并调用XHashSet_init完成初始化，需确保参数有效
 */
-XHashSet* XHashSet_create_ex(const size_t keyTypeSize, XHashFunc hash, XCompare compare, bool useCow);
-#define XHashSet_create(keyTypeSize, hash, compare) XHashSet_create_ex(keyTypeSize, hash, compare, true)
+XHashSet* XHashSet_create_ex(XMemoryType memory, const size_t keyTypeSize, XHashFunc hash, XCompare compare, bool useCow);
+#define XHashSet_create(keyTypeSize, hash, compare) \
+	XHashSet_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, hash, compare, true)
 /**
 * @brief 类型安全的XHashSet创建宏
 * @param keyType 键的数据类型（如int、XString）
@@ -60,8 +61,8 @@ XHashSet* XHashSet_create_ex(const size_t keyTypeSize, XHashFunc hash, XCompare 
 * @note 自动推导键的类型大小，哈希函数默认使用XHashMap_murmur3_32
 */
 #define XHashSet_Create(keyType, compare) \
-    XHashSet_create(sizeof(keyType), \
-        XCryptographicHash_function(XCryptographicHash_XxHash64), compare);
+    XHashSet_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(keyType), \
+        XCryptographicHash_function(XCryptographicHash_XxHash64), compare, true)
 /**
 * @brief 初始化XHashSet实例
 * @param this_set 待初始化的XHashSet实例指针（需提前分配内存）
@@ -234,4 +235,10 @@ void XHashSet_squeeze_base(XHashSet* this_set);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XHashSet_create
+#define XHashSet_create(keyTypeSize, hash, compare) \
+	XHashSet_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, hash, compare, true)
+
 #endif // !XHashSet_H

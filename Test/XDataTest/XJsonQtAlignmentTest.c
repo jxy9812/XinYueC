@@ -391,7 +391,7 @@ static void test_json_document_api(void)
 {
     const char* source = "{\"a\":1,\"u\":\"\\u0061\",\"list\":[true,null]}";
     XByteArray* input = XByteArray_create_with_data(source, strlen(source));
-    XByteArray* unshared_input = XByteArray_create_ex(false);
+    XByteArray* unshared_input = XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, false);
     XJsonParseError error;
     XJsonDocument* document = XJsonDocument_fromJson_ex(input, &error);
     XJsonDocument* unshared_document;

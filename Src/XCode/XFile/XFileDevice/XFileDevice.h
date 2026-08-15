@@ -125,7 +125,7 @@ XVtable* XFileDevice_class_init(void);
  * @brief 创建 XFileDevice 对象
  * @return XFileDevice 对象指针，失败返回 NULL
  */
-XFileDevice* XFileDevice_create(void);
+XFileDevice* XFileDevice_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化 XFileDevice 对象
@@ -296,5 +296,10 @@ bool XFileDevice_unmap(XFileDevice* device, void* address);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XFileDevice_create
+#define XFileDevice_create(...) XFileDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XFILEDEVICE_H

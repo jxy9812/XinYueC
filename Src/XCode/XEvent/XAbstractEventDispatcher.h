@@ -149,7 +149,7 @@ XVtable* XAbstractEventDispatcher_class_init(void);
  * @param parent 父对象（可为 NULL）。
  * @return 新创建的对象指针。
  */
-XAbstractEventDispatcher* XAbstractEventDispatcher_create(XObject* parent);
+XAbstractEventDispatcher* XAbstractEventDispatcher_create_ex(XMemoryType memory,  XObject* parent);
 
 /**
  * @brief 初始化 XAbstractEventDispatcher 实例。
@@ -329,4 +329,9 @@ bool XAbstractEventDispatcher_isMainThread(XAbstractEventDispatcher* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XAbstractEventDispatcher_create
+#define XAbstractEventDispatcher_create(...) XAbstractEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XABSTRACTEVENTDISPATCHER_H

@@ -57,20 +57,25 @@ static XVtable* xshtelnet_test_device_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XSshTelnetTestDevice* xshtelnet_test_device_create(void)
+static XSshTelnetTestDevice* xshtelnet_test_device_create_ex(XMemoryType memory)
 {
-    XSshTelnetTestDevice* device = (XSshTelnetTestDevice*)XMalloc_System(sizeof(*device));
+    XSshTelnetTestDevice* device = (XSshTelnetTestDevice*)XMemory_malloc(sizeof(XSshTelnetTestDevice), memory);
     if (!device) return NULL;
     memset(device, 0, sizeof(*device));
     XIODevice_init(&device->m_base);
     XClassGetVtable(device) = xshtelnet_test_device_class_init();
     device->output = XByteArray_create();
-    Set_Class_MemoryFree(device, XFree_System);
+    Set_Class_Memory(device, memory); Set_Class_IsHeap(device, true);
     if (!device->output || !XIODevice_open_base((XIODevice*)device, XIODevice_ReadWrite)) {
         XClass_delete_base((XClass*)device);
         return NULL;
     }
     return device;
+}
+
+static XSshTelnetTestDevice* xshtelnet_test_device_create(void)
+{
+    return xshtelnet_test_device_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 static size_t xshtelnet_test_output_size(const XSshTelnetTestDevice* device)

@@ -47,7 +47,7 @@ static void XVectorCreateTest(void)
 		XVector_delete_base(v);
 	}
 	{
-		XVector* v = XVector_create_ex(sizeof(int), false);
+		XVector* v = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), false);
 		XPrintf("create_ex(int,cow=false): size=%zu, typeSize=%zu\n",
 			XVector_size_base(v), XVector_typeSize_base(v));
 		XVector_delete_base(v);

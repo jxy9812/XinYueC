@@ -502,7 +502,7 @@ XVector* XThreadData_takePostedEvents(void)
 {
     XThreadData* td = XThreadData_current();
     if (!td) return NULL;
-    XVector* local = XVector_create_ex(sizeof(XPostEvent), false);
+    XVector* local = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XPostEvent), false);
     if (!local) return NULL;
 
     XMutex_lock(td->m_mutex);

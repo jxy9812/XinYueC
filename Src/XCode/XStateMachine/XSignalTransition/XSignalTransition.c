@@ -43,18 +43,13 @@ XVtable* XSignalTransition_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XSignalTransition* XSignalTransition_create(void)
+XSignalTransition* XSignalTransition_create_ex(XMemoryType memory, const XObject* sender, size_t signal, XState* sourceState)
 {
-    return XSignalTransition_create_ex(NULL, 0, NULL);
-}
-
-XSignalTransition* XSignalTransition_create_ex(const XObject* sender, size_t signal, XState* sourceState)
-{
-    XSignalTransition* transition = XNew(XSignalTransition);
+    XSignalTransition* transition = XMemory_malloc(sizeof(XSignalTransition), memory);
     if (!transition)
         return NULL;
     XSignalTransition_init_ex(transition, sender, signal, sourceState);
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_Memory(transition, memory); Set_Class_IsHeap(transition, true);
     return transition;
 }
 

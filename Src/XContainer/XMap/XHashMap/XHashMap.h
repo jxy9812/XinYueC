@@ -53,8 +53,9 @@ XVtable* XHashMap_class_init();
 * @return 成功返回创建的XHashMap指针（XHashMap*），失败返回NULL
 * @note 需确保keyTypeSize、valTypeSize大于0，hash和compare不为NULL
 */
-XHashMap* XHashMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow);
-#define XHashMap_create(keyTypeSize, valTypeSize, hash, compare) XHashMap_create_ex(keyTypeSize, valTypeSize, hash, compare, true)
+XHashMap* XHashMap_create_ex(XMemoryType memory, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow);
+#define XHashMap_create(keyTypeSize, valTypeSize, hash, compare) \
+	XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, hash, compare, true)
 /**
 * @brief 拷贝创建XHashMap实例
 * @param other 待拷贝的XHashMap实例指针
@@ -78,8 +79,8 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @note 自动推导键和值的类型大小，避免手动计算sizeof
 */
 #define XHashMap_Create(keyType, valType, compare) \
-    XHashMap_create(sizeof(keyType), sizeof(valType), \
-        XCryptographicHash_function(XCryptographicHash_XxHash64), compare)
+    XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(keyType), sizeof(valType), \
+        XCryptographicHash_function(XCryptographicHash_XxHash64), compare, true)
 /**
 * @brief 初始化已分配内存的XHashMap实例
 * @param this_map 待初始化的XHashMap指针（需提前分配内存）
@@ -247,4 +248,10 @@ void XHashMap_squeeze_base(XHashMap* this_map);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XHashMap_create
+#define XHashMap_create(keyTypeSize, valTypeSize, hash, compare) \
+	XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, hash, compare, true)
+
 #endif // !XHASHMAP_H

@@ -270,7 +270,7 @@ XVtable* XModbusExceptionResponse_class_init(void);
   * @brief 在堆上创建并初始化一个XModbusPdu实例
   * @return 成功返回XModbusPdu指针，失败返回NULL
   */
-XModbusPdu* XModbusPdu_create(void);
+XModbusPdu* XModbusPdu_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建XModbusPdu的深拷贝
@@ -307,7 +307,7 @@ void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
   * @brief 在堆上创建并初始化一个XModbusRequest实例
   * @return 成功返回XModbusRequest指针，失败返回NULL
   */
-XModbusRequest* XModbusRequest_create(void);
+XModbusRequest* XModbusRequest_create_ex(XMemoryType memory);
 XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req);
 XModbusRequest* XModbusRequest_create_move(XModbusRequest* req);
 /**
@@ -338,7 +338,7 @@ void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode 
   * @brief 在堆上创建并初始化一个XModbusResponse实例
   * @return 成功返回XModbusResponse指针，失败返回NULL
   */
-XModbusResponse* XModbusResponse_create(void);
+XModbusResponse* XModbusResponse_create_ex(XMemoryType memory);
 XModbusResponse* XModbusResponse_create_copy(XModbusResponse* response);
 XModbusResponse* XModbusResponse_create_move(XModbusResponse* response);
 /**
@@ -370,7 +370,7 @@ void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCo
   * @brief 在堆上创建并初始化一个XModbusExceptionResponse实例
   * @return 成功返回XModbusExceptionResponse指针，失败返回NULL
   */
-XModbusExceptionResponse* XModbusExceptionResponse_create(void);
+XModbusExceptionResponse* XModbusExceptionResponse_create_ex(XMemoryType memory);
 XModbusExceptionResponse* XModbusExceptionResponse_create_copy(const XModbusExceptionResponse* res);
 XModbusExceptionResponse* XModbusExceptionResponse_create_move(XModbusExceptionResponse* res);
 /**
@@ -693,6 +693,17 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusExceptionResponse_create
+#define XModbusExceptionResponse_create(...) XModbusExceptionResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XModbusPdu_create
+#define XModbusPdu_create(...) XModbusPdu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XModbusRequest_create
+#define XModbusRequest_create(...) XModbusRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XModbusResponse_create
+#define XModbusResponse_create(...) XModbusResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSPDU_H
 

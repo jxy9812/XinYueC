@@ -76,7 +76,7 @@ void XServerChanResult_init(XServerChanResult* self);
  * - @brief 创建空结果对象。
  * - @return 新对象；调用者必须使用 XServerChanResult_delete_base 释放。
  */
-XServerChanResult* XServerChanResult_create(void);
+XServerChanResult* XServerChanResult_create_ex(XMemoryType memory);
 
 /**
  * - @brief 深拷贝创建结果对象。
@@ -173,14 +173,12 @@ void XServerChan_init(XServerChan* self);
  * - @brief 创建空客户端。
  * - @return 新对象；调用者必须使用 XServerChan_delete_base 释放。
  */
-XServerChan* XServerChan_create(void);
-
 /**
  * - @brief 使用 SendKey 创建客户端。
  * - @param sendKey UTF-8 SendKey；借用，创建时深拷贝，不能为 NULL。
  * - @return 新对象；SendKey 无效或分配失败时返回 NULL。
  */
-XServerChan* XServerChan_create_ex(const char* sendKey);
+XServerChan* XServerChan_create_ex(XMemoryType memory, const char* sendKey);
 
 /**
  * - @brief 深拷贝创建客户端。
@@ -287,5 +285,13 @@ XServerChanResult* XServerChan_sendBlocking(XServerChan* self,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XServerChan_create
+#define XServerChan_create() \
+	XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
+#undef XServerChanResult_create
+#define XServerChanResult_create(...) XServerChanResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSERVERCHAN_H */

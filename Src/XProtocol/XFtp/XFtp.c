@@ -375,12 +375,12 @@ void XFtp_deinit_base(XFtp* ftp)
     VXFtp_deinit(ftp);
 }
 
-XFtp* XFtp_create(void)
+XFtp* XFtp_create_ex(XMemoryType memory)
 {
     XFtp* ftp = (XFtp*)XMalloc(sizeof(XFtp), XMEMORY_TYPE_SYSTEM);
     if (!ftp) return NULL;
     XFtp_init(ftp);
-    Set_Class_MemoryFree(ftp, XFree_System);
+    Set_Class_Memory(ftp, memory); Set_Class_IsHeap(ftp, true);
     if (!ftp->m_replyText || !ftp->m_piSocket || !ftp->m_piBuffer ||
         !ftp->m_readBuffer ||
         !ftp->m_pendingCommands || !ftp->m_commandMutex ||
@@ -3236,7 +3236,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
     /* XUrl_create_ex 接收 const XString*，先把 char* 包成 XString 再传 */
     XString* urlStr = XString_create_utf8(url);
     if (!urlStr) return -1;
-    XUrl* parsed = XUrl_create_ex(urlStr, XUrl_TolerantMode);
+    XUrl* parsed = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlStr, XUrl_TolerantMode);
     XString_delete_base(urlStr);
     if (!parsed) return -1;
 

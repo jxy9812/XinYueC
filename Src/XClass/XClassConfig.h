@@ -9,6 +9,16 @@
  */
 
 /**
+ * @brief XClass 默认对象使用的内存池类型。
+ *
+ * 修改此宏右侧的枚举值即可切换所有默认对象记录的内存方法；*_init 函数绑定
+ * 该方法但保持 m_is_heap 为 0，只有 *_create 路径将 m_is_heap 设置为 1。
+ */
+#ifndef XCLASS_DEFAULT_MEMORY_TYPE
+#define XCLASS_DEFAULT_MEMORY_TYPE XMEMORY_TYPE_SYSTEM
+#endif
+
+/**
  * @brief 是否把默认虚函数表放在静态栈表区域。
  *
  * 1：每个类使用静态 XVtable 和静态函数指针数组，不经过堆分配；

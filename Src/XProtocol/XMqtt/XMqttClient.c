@@ -55,12 +55,12 @@ static XString* mqtt_generated_client_id(void)
     return XString_create_utf8(value);
 }
 
-XMqttClient* XMqttClient_create(void)
+XMqttClient* XMqttClient_create_ex(XMemoryType memory)
 {
-    XMqttClient* client = (XMqttClient*)XMalloc_System(sizeof(XMqttClient));
+    XMqttClient* client = (XMqttClient*)XMemory_malloc(sizeof(XMqttClient), memory);
     if (client) {
         XMqttClient_init(client);
-        Set_Class_MemoryFree(client, XFree_System);
+        Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
     }
     return client;
 }

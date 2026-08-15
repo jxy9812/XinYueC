@@ -66,15 +66,20 @@ static XVtable* TestReceiver_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static TestReceiver* TestReceiver_create(void)
+static TestReceiver* TestReceiver_create_ex(XMemoryType memory)
 {
-    TestReceiver* r = XMalloc_System(sizeof(TestReceiver));
+    TestReceiver* r = XMemory_malloc(sizeof(TestReceiver), memory);
     if (!r) return NULL;
     XObject_init((XObject*)r);
     XClassGetVtable(r) = TestReceiver_class_init();
     r->receivedCount = 0;
-    Set_Class_MemoryFree(r, XFree_System);
+    Set_Class_Memory(r, memory); Set_Class_IsHeap(r, true);
     return r;
+}
+
+static TestReceiver* TestReceiver_create(void)
+{
+    return TestReceiver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 /* ==================== 测试 1: sendEvent — spont 标志 ==================== */

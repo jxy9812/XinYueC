@@ -514,7 +514,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
     vim = XTuiVim_create();
     if (!vim) return false;
     {
-        XTuiScreen* screen = XTuiScreen_create_ex(40, 3);
+        XTuiScreen* screen = XTuiScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 40, 3);
         XRect rect = { 0, 0, 40, 3 };
         bool foundChinese = false;
         bool replacementCharacter = false;

@@ -1265,16 +1265,16 @@ void XSshClient_init(XSshClient* self)
     }
 }
 
-XSshClient* XSshClient_create(void)
+XSshClient* XSshClient_create_ex(XMemoryType memory)
 {
-    XSshClient* self = (XSshClient*)XMalloc_System(sizeof(*self));
+    XSshClient* self = (XSshClient*)XMemory_malloc(sizeof(XSshClient), memory);
     if (!self) return NULL;
     XSshClient_init(self);
     if (!self->m_data) {
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

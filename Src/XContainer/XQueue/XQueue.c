@@ -18,13 +18,13 @@ static bool VXQueue_receive(XQueue* this_queue, void* pvBuffer);
 static void VXClass_copy(XQueue* object, const XQueue* src);
 static void VXClass_move(XQueue* object, XQueue* src);
 
-XQueue* XQueue_create(size_t typeSize)
+XQueue* XQueue_create_ex(XMemoryType memory, size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XQueue* this_queue = XMalloc_System(sizeof(XQueue));
+	XQueue* this_queue = XMemory_malloc(sizeof(XQueue), memory);
 	XQueue_init(this_queue, typeSize);
-	Set_Class_MemoryFree(this_queue, XFree_System);
+	Set_Class_Memory(this_queue, memory); Set_Class_IsHeap(this_queue, true);
 	return this_queue;
 }
 
@@ -104,9 +104,11 @@ bool VXQueue_receive(XQueue* this_queue, void* pvBuffer)
 
 void VXClass_copy(XQueue* object, const XQueue* src)
 {
-	if (XClassIsVtableNull(object))
+	bool target_uninitialized = XClassIsVtableNull(object);
+	if (target_uninitialized)
 	{
 		XQueue_init(object, XContainerTypeSize(src));
+		Class_Memory(object) = Class_Memory(src);
 	}
 	else if (!XQueue_isEmpty_base(object))
 	{
@@ -123,7 +125,10 @@ void VXClass_copy(XQueue* object, const XQueue* src)
 
 void VXClass_move(XQueue* object, XQueue* src)
 {
-	if (XClassIsVtableNull(object))
+	XMemory* source_memory = Class_Memory(src);
+	bool target_uninitialized = XClassIsVtableNull(object);
+	XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+	if (target_uninitialized)
 	{
 		XQueue_init(object, XContainerTypeSize(src));
 	}
@@ -131,5 +136,9 @@ void VXClass_move(XQueue* object, XQueue* src)
 	{
 		XQueue_clear_base(object);
 	}
-	XSwap(object, src, sizeof(XQueue));
+	XSwap((XClass*)object + 1, (XClass*)src + 1,
+		sizeof(XQueue) - sizeof(XClass));
+	Class_Memory(object) = source_memory;
+	if (!target_uninitialized)
+		Class_Memory(src) = target_memory;
 }

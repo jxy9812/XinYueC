@@ -26,7 +26,8 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	this_map->m_keyCopyMethod = NULL;
 	this_map->m_keyMoveMethod = NULL;
 	this_map->m_keyDeinitMethod = NULL;
-	this_map->m_pairBuffer = XPair_create(keyTypeSize, valTypeSize);
+	/* 延迟到第一次插入时按具体 XMap/XHashMap 的内存池申请。 */
+	this_map->m_pairBuffer = NULL;
 	this_map->m_pairTypeSize = XPair_size1(keyTypeSize, valTypeSize);
 }
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
@@ -138,4 +139,3 @@ void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map)
 }
 
 #endif
-

@@ -34,7 +34,7 @@ XVtable* XStringList_class_init();
  * @brief 创建一个空的XStringList对象
  * @return 成功返回新创建的XStringList指针，失败返回NULL
  */
-XStringList* XStringList_create();
+XStringList* XStringList_create_ex(XMemoryType memory);
 XStringList* XStringList_create_copy(const XStringList* other);
 XStringList* XStringList_create_move(XStringList* other);
 
@@ -445,5 +445,10 @@ int64_t XStringList_lastIndexOf_utf8(const XStringList* strList, const char* utf
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XStringList_create
+#define XStringList_create(...) XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // !XSTRINGLIST_H

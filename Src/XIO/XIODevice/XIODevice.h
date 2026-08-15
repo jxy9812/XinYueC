@@ -73,7 +73,7 @@ XVtable* XIODevice_class_init();
  * @return 指向新创建的 XIODevice 对象的指针，若创建失败则返回 NULL
  * @note 该对象需要通过 XIODevice_deleteLater() 或 XObject_deleteLater() 来释放
  */
-XIODevice* XIODevice_create();
+XIODevice* XIODevice_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的 XIODevice 对象
@@ -496,4 +496,9 @@ void* XIODevice_readChannelFinished_signal(XIODevice* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XIODevice_create
+#define XIODevice_create(...) XIODevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

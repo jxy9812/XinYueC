@@ -21,7 +21,7 @@ typedef struct XJsonArray
 * @brief 创建一个空的XJsonArray实例
 * @return 成功返回XJsonArray指针，失败返回NULL
 */
-XJsonArray* XJsonArray_create();
+XJsonArray* XJsonArray_create_ex(XMemoryType memory);
 /**
 * @brief 通过深拷贝创建XJsonArray实例
 * @param copy 被拷贝的XJsonArray实例
@@ -290,4 +290,9 @@ void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XJsonArray_create
+#define XJsonArray_create(...) XJsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XJSONARRAY_H

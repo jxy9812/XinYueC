@@ -518,7 +518,7 @@ XVtable* XXmlStreamReader_class_init(void);
  * @brief      在堆上创建 XXmlStreamReader 实例
  * @return      指向新创建的 XXmlStreamReader 对象的指针，失败返回 NULL
  */
-XXmlStreamReader* XXmlStreamReader_create(void);
+XXmlStreamReader* XXmlStreamReader_create_ex(XMemoryType memory);
 
 /**
  * @brief      创建并追加字节数组输入的 Reader。
@@ -1532,4 +1532,9 @@ XXmlStreamEntityResolver* XXmlStreamReader_entityResolver(const XXmlStreamReader
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XXmlStreamReader_create
+#define XXmlStreamReader_create(...) XXmlStreamReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XXMLSTREAMREADER_H */

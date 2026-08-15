@@ -95,7 +95,7 @@ XVtable* XModbusRtuSerialClient_class_init(void);
  * - 创建时会自动创建关联的XSerialPort对象
  * - 删除时会自动释放关联的XSerialPort对象
  */
-XModbusRtuSerialClient* XModbusRtuSerialClient_create(void);
+XModbusRtuSerialClient* XModbusRtuSerialClient_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusRtuSerialClient实例
@@ -290,5 +290,10 @@ XSerialPort* XModbusRtuSerialClient_serialPort(const XModbusRtuSerialClient* cli
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusRtuSerialClient_create
+#define XModbusRtuSerialClient_create(...) XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSRTUSERIALCLIENT_H

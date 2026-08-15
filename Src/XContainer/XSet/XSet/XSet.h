@@ -1,6 +1,6 @@
 ﻿#include"XContainer.h"
-#if !defined(XMAP_H)&& XSet_ON
-#define XMAP_H
+#if !defined(XSET_H)&& XSet_ON
+#define XSET_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,8 +40,9 @@ XVtable* XSet_class_init();
 * @return 创建成功的XSet实例指针，失败返回NULL
 * @note 动态分配内存并调用XSet_init完成初始化，需确保keyTypeSize>0且compare不为NULL
 */
-XSet* XSet_create_ex(const size_t keyTypeSize, XCompare compare, bool useCow);
-#define XSet_create(keyTypeSize, compare) XSet_create_ex(keyTypeSize, compare, true)
+XSet* XSet_create_ex(XMemoryType memory, const size_t keyTypeSize, XCompare compare, bool useCow);
+#define XSet_create(keyTypeSize, compare) \
+	XSet_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, compare, true)
 /**
 * @brief 类型安全的XSet创建宏
 * @param keyType 键的数据类型（如int、float）
@@ -229,4 +230,10 @@ static inline void XSet_squeeze_base(XSet* this_set) { (void)this_set; }
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XSet_create
+#define XSet_create(keyTypeSize, compare) \
+	XSet_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, compare, true)
+
 #endif // !XSET_H

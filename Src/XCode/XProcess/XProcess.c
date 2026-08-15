@@ -135,19 +135,19 @@ void XProcess_init(XProcess* self)
     memset(&self->m_unixParameters, 0, sizeof(self->m_unixParameters));
 }
 
-XProcess* XProcess_create(void)
+XProcess* XProcess_create_ex(XMemoryType memory)
 {
-    XProcess* self = (XProcess*)XMalloc_System(sizeof(*self));
+    XProcess* self = (XProcess*)XMemory_malloc(sizeof(XProcess), memory);
     if (!self) return NULL;
     XProcess_init(self);
     if (!self->m_program || !self->m_arguments || !self->m_workingDirectory ||
         !self->m_standardInputFile || !self->m_standardOutputFile ||
         !self->m_standardErrorFile || !self->m_errorString) {
         XProcess_deinit_base(self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

@@ -81,12 +81,12 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
     {
         size_t bytes = XContainerTypeSize(this_vector) * VECTORNUM;
         if (XContainerIsCow(this_vector)) {
-            XSharedData* shared = XSharedData_create(NULL, bytes);
+            XSharedData* shared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
             if (!shared) return false;
             XContainerSetDataPtr(this_vector, shared);
         }
         else {
-            void* raw = XMalloc_System(bytes);
+            void* raw = XContainer_malloc(this_vector, bytes);
             if (!raw) return false;
             XContainerDataPtr(this_vector) = raw;
         }
@@ -108,7 +108,7 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
         size_t oldSize = XContainerSize(this_vector);
 
         if (XContainerIsCow(this_vector)) {
-            XSharedData* newShared = XSharedData_create(NULL, bytes);
+            XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
             if (!newShared) return false;
             void* oldData = XContainerSharedDataPtr(this_vector);
             XCDataCopyMethod copy = XContainerDataCopyMethod(this_vector);
@@ -123,11 +123,12 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
             }
             /* 扩容前已完成 COW 分离，此时旧块由当前容器独占，释放前必须析构元素。 */
             XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
-                (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
+                (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
+                XContainer_memory(this_vector));
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {
-            void* newRaw = XRealloc_System(XContainerDataPtr(this_vector), bytes);
+            void* newRaw = XContainer_realloc(this_vector, XContainerDataPtr(this_vector), bytes);
             if (!newRaw) return false;
             XContainerDataPtr(this_vector) = newRaw;
         }
@@ -159,7 +160,7 @@ static bool VXVectorDetachIfNeeded(XVector* this_vector)
     if (capacity == 0 || typeSize == 0) return true;
 
     size_t bytes = capacity * typeSize;
-    XSharedData* newShared = XSharedData_create(NULL, bytes);
+    XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
     if (!newShared) return false;
 
     void* oldData = sd->data;
@@ -175,7 +176,7 @@ static bool VXVectorDetachIfNeeded(XVector* this_vector)
             memcpy(newShared->data, oldData, size * typeSize);
     }
 
-    XSharedData_release(sd);
+    XSharedData_release(sd, XContainer_memory(this_vector));
     XContainerSetDataPtr(this_vector, newShared);
     return true;
 }
@@ -207,6 +208,7 @@ void VXClass_copy(XVector* object, const XVector* src)
     if (XClassIsVtableNull(object))
     {
         XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
+        Class_Memory(object) = Class_Memory(src);
     }
     XClass_Parent(XContainer,EXClass_Copy,void(*)(XVector*, const XVector*))(object, src);
     //else if ((XSharedData*)XContainerDataPtr(object))
@@ -236,6 +238,7 @@ void VXClass_move(XVector* object, XVector* src)
     if (XClassIsVtableNull(object))
     {
         XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
+        Class_Memory(object) = Class_Memory(src);
     }
     XClass_Parent(XContainer, EXClass_Move, void(*)(XVector*, const XVector*))(object, src);
     //else if ((XSharedData*)XContainerDataPtr(object))
@@ -279,7 +282,7 @@ static bool VXVector_resizeCore(XVector* this_vector, size_t size, bool zeroFill
         size_t newCapacity = size;
         size_t bytes = newCapacity * typeSize;
         if (XContainerIsCow(this_vector)) {
-            XSharedData* newShared = XSharedData_create(NULL, bytes);
+            XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
             if (!newShared) return false;
             void* oldData = VXVectorData(this_vector);
             XCDataCopyMethod copy = XContainerDataCopyMethod(this_vector);
@@ -295,11 +298,12 @@ static bool VXVector_resizeCore(XVector* this_vector, size_t size, bool zeroFill
             }
             /* resize 的深拷贝完成后，旧块中的非 POD 元素仍需逐个释放。 */
             XSharedData_release_with((XSharedData*)XContainerDataPtr(this_vector),
-                (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
+                (XCDataDeinitMethod)VXVectorDataDelete, this_vector,
+                XContainer_memory(this_vector));
             XContainerSetDataPtr(this_vector, newShared);
         }
         else {
-            void* newRaw = XRealloc_System(XContainerDataPtr(this_vector), bytes);
+            void* newRaw = XContainer_realloc(this_vector, XContainerDataPtr(this_vector), bytes);
             if (!newRaw) return false;
             XContainerDataPtr(this_vector) = newRaw;
         }
@@ -380,7 +384,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
     if (ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
     {
         int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
-        void* temp = XMalloc_System(size);
+        void* temp = XContainer_malloc(this_vector, size);
         memcpy(temp, ptr, size);
         int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 
@@ -389,7 +393,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
             if (!VXVectorEnlargeCapacity(this_vector))
             {
                 memcpy(VXVector_at(this_vector, sizen), temp, size);
-                XFree_System(temp);
+                XContainer_free(this_vector, temp);
                 return false;
             }
             char* dest = (char*)VXVectorData(this_vector) + typeSize * sizen;
@@ -406,7 +410,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
             XContainerSize(this_vector)++;
         }
         memcpy(VXVector_at(this_vector, sizen), temp, size);
-        XFree_System(temp);
+        XContainer_free(this_vector, temp);
     }
     return true;
 }
@@ -550,7 +554,7 @@ void VXVector_clear(XVector* this_vector)
     if (XContainerIsCow(this_vector)) {
         XSharedData* sd = (XSharedData*)XContainerDataPtr(this_vector);
         if (sd && XSharedData_isShared(sd)) {
-            XSharedData_release(sd);
+            XSharedData_release(sd, XContainer_memory(this_vector));
             XContainerSetDataPtr(this_vector, NULL);
             XContainerCapacity(this_vector) = 0;
             XContainerSize(this_vector) = 0;
@@ -584,11 +588,12 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
         // 释放目标原有数据
         if (XContainerIsCow(this_One)) {
             XSharedData* sd = (XSharedData*)XContainerDataPtr(this_One);
-            if (sd) XSharedData_release_with(sd, (XCDataDeinitMethod)VXVectorDataDelete, this_One);
+            if (sd) XSharedData_release_with(sd, (XCDataDeinitMethod)VXVectorDataDelete,
+                this_One, XContainer_memory(this_One));
         }
         else {
             if (XContainerDataPtr(this_One))
-                XFree_System(XContainerDataPtr(this_One));
+                XContainer_free(this_One, XContainerDataPtr(this_One));
         }
     }
 
@@ -600,7 +605,7 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
     size_t typeSize = XContainerTypeSize(this_Two);
     if (size > 0) {
         if (XContainerIsCow(this_One)) {
-            XSharedData* newShared = XSharedData_create(NULL, size * typeSize);
+            XSharedData* newShared = XSharedData_create_ex(NULL, size * typeSize, XContainer_memory(this_One));
             if (!newShared) return;
             const char* src = (const char*)VXVectorData(this_Two);
             char* dst = newShared->data;
@@ -615,7 +620,7 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
             XContainerSetDataPtr(this_One, newShared);
         }
         else {
-            void* newRaw = XMalloc_System(size * typeSize);
+            void* newRaw = XContainer_malloc(this_One, size * typeSize);
             if (!newRaw) return;
             const char* src = (const char*)VXVectorData(this_Two);
             char* dst = (char*)newRaw;
@@ -730,7 +735,7 @@ static bool VXVector_reserve(XVector* this_vector, size_t size)
     size_t bytes = size * typeSize;
 
     if (XContainerIsCow(this_vector)) {
-        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
         if (!newShared) return false;
         void* oldData = VXVectorData(this_vector);
         XCDataCopyMethod copy = XContainerDataCopyMethod(this_vector);
@@ -747,11 +752,11 @@ static bool VXVector_reserve(XVector* this_vector, size_t size)
         XSharedData* old = (XSharedData*)XContainerDataPtr(this_vector);
         if (old)
             XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete,
-                this_vector);
+                this_vector, XContainer_memory(this_vector));
         XContainerSetDataPtr(this_vector, newShared);
     }
     else {
-        void* newRaw = XRealloc_System(XContainerDataPtr(this_vector), bytes);
+        void* newRaw = XContainer_realloc(this_vector, XContainerDataPtr(this_vector), bytes);
         if (!newRaw) return false;
         XContainerDataPtr(this_vector) = newRaw;
     }
@@ -777,13 +782,14 @@ static void VXVector_squeeze(XVector* this_vector)
         if (XContainerIsCow(this_vector)) {
             XSharedData* old = (XSharedData*)XContainerDataPtr(this_vector);
             if (old) {
-                XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
+                XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete,
+                    this_vector, XContainer_memory(this_vector));
                 XContainerSetDataPtr(this_vector, NULL);
             }
         }
         else {
             if (XContainerDataPtr(this_vector)) {
-                XFree_System(XContainerDataPtr(this_vector));
+                XContainer_free(this_vector, XContainerDataPtr(this_vector));
                 XContainerDataPtr(this_vector) = NULL;
             }
         }
@@ -793,7 +799,7 @@ static void VXVector_squeeze(XVector* this_vector)
 
     size_t bytes = size * typeSize;
     if (XContainerIsCow(this_vector)) {
-        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(this_vector));
         if (!newShared) return;
         void* oldData = VXVectorData(this_vector);
         XCDataCopyMethod copy = XContainerDataCopyMethod(this_vector);
@@ -808,13 +814,14 @@ static void VXVector_squeeze(XVector* this_vector)
         XSharedData* old = (XSharedData*)XContainerDataPtr(this_vector);
         // 深拷贝时需析构旧元素再释放；POD（浅拷贝）时仅释放缓冲区，避免双重释放
         if (copy)
-            XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete, this_vector);
+            XSharedData_release_with(old, (XCDataDeinitMethod)VXVectorDataDelete,
+                this_vector, XContainer_memory(this_vector));
         else
-            XSharedData_release(old);
+            XSharedData_release(old, XContainer_memory(this_vector));
         XContainerSetDataPtr(this_vector, newShared);
     }
     else {
-        void* newRaw = XRealloc_System(XContainerDataPtr(this_vector), bytes);
+        void* newRaw = XContainer_realloc(this_vector, XContainerDataPtr(this_vector), bytes);
         if (!newRaw) return;  // 失败时保留原缓冲区
         XContainerDataPtr(this_vector) = newRaw;
     }
@@ -825,13 +832,13 @@ static void VXVector_squeeze(XVector* this_vector)
 // ========================
 // 公开的 API 函数（创建、包装等）
 // ========================
-XVector* XVector_create_ex(size_t typeSize, bool useCow)
+XVector* XVector_create_ex(XMemoryType memory, size_t typeSize, bool useCow)
 {
     if (ISNULL(typeSize, ""))
         return NULL;
-    XVector* this_vector = XMalloc_System(sizeof(XVector));
+    XVector* this_vector = XMemory_malloc(sizeof(XVector), memory);
     XVector_init(this_vector, typeSize, useCow);
-    Set_Class_MemoryFree(this_vector, XFree_System);
+    Set_Class_Memory(this_vector, memory); Set_Class_IsHeap(this_vector, true);
     return this_vector;
 }
 
@@ -839,7 +846,8 @@ XVector* XVector_create_copy(const XVector* other)
 {
     if (other == NULL)
         return NULL;
-    XVector* v = XVector_create_ex((((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
+    XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
+    XVector* v = XVector_create_ex(memory, (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
     XVector_copy_base(v, other);
     return v;
 }
@@ -848,7 +856,8 @@ XVector* XVector_create_move(XVector* other)
 {
     if (other == NULL)
         return NULL;
-    XVector* v = XVector_create_ex((((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
+    XVector* v = XVector_create_ex(XContainer_memory_type(other),
+        (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
     XVector_move_base(v, other);
     return v;
 }
@@ -1135,7 +1144,7 @@ XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length)
 
     size_t totalSize = XVector_size_base(this_vector);
     size_t typeSize = XContainerTypeSize(this_vector);
-    XVector* result = XVector_create(typeSize);
+    XVector* result = XVector_create_ex(XContainer_memory_type(this_vector), typeSize, true);
     XContainerSetDataCopyMethod(result, XContainerDataCopyMethod(this_vector));
     XContainerSetDataMoveMethod(result, XContainerDataMoveMethod(this_vector));
     XContainerSetDataDeinitMethod(result, XContainerDataDeinitMethod(this_vector));
@@ -1373,7 +1382,7 @@ void XVector_move(XVector* this_vector, int64_t from, int64_t to)
 
     size_t typeSize = XContainerTypeSize(this_vector);
     char* data = (char*)VXVectorData(this_vector);
-    void* temp = XMalloc_System(typeSize);
+    void* temp = XContainer_malloc(this_vector, typeSize);
     if (!temp)
         return;
     // 暂存待移动元素（字节级搬迁，与项目内remove/shift的方式一致）
@@ -1385,7 +1394,7 @@ void XVector_move(XVector* this_vector, int64_t from, int64_t to)
         memmove(data + (to + 1) * typeSize, data + to * typeSize,
             (size_t)(from - to) * typeSize);
     memcpy(data + to * typeSize, temp, typeSize);
-    XFree_System(temp);
+    XContainer_free(this_vector, temp);
 }
 
 void XVector_swapItemsAt(XVector* this_vector, int64_t i, int64_t j)
@@ -1421,7 +1430,7 @@ void* XVector_takeAt(XVector* this_vector, int64_t index)
 
     size_t typeSize = XContainerTypeSize(this_vector);
     char* data = (char*)VXVectorData(this_vector);
-    void* out = XMalloc_System(typeSize);
+    void* out = XContainer_malloc(this_vector, typeSize);
     if (!out)
         return NULL;
     // 取出元素（移动语义：优先用move方法转移资源，否则字节拷贝）

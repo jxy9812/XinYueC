@@ -230,7 +230,7 @@ void XFtp_deinit_base(XFtp* ftp);
  * @brief 创建 FTP 客户端实例
  * @return 新实例；失败返回 NULL。调用方使用 XFtp_delete 释放。
  */
-XFtp* XFtp_create(void);
+XFtp* XFtp_create_ex(XMemoryType memory);
 
 /**
  * @brief 销毁 FTP 客户端实例
@@ -601,5 +601,10 @@ void* XFtp_done_signal(XFtp* ftp, bool error);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XFtp_create
+#define XFtp_create(...) XFtp_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XFTP_H

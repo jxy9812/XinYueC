@@ -47,12 +47,12 @@ void XRestReply_init(XRestReply* self, XHttpReply* reply)
     self->m_reply = reply;
 }
 
-XRestReply* XRestReply_create(XHttpReply* reply)
+XRestReply* XRestReply_create_ex(XMemoryType memory, XHttpReply* reply)
 {
-    XRestReply* self = (XRestReply*)XMalloc_System(sizeof(*self));
+    XRestReply* self = (XRestReply*)XMemory_malloc(sizeof(XRestReply), memory);
     if (!self) return NULL;
     XRestReply_init(self, reply);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

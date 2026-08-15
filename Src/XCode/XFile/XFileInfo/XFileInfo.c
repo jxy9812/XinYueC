@@ -79,31 +79,31 @@ XVtable* XFileInfo_class_init(void)
 
 XFileInfo* XFileInfo_create_1(void)
 {
-    XFileInfo* info = (XFileInfo*)XMalloc_System(sizeof(XFileInfo));
+    XFileInfo* info = (XFileInfo*)XClass_Malloc(XFileInfo);
     if (!info) return NULL;
     
     XFileInfo_init_1(info);
-    Set_Class_MemoryFree(info, XFree_System);
+    Set_Class_IsHeap(info, true);
     return info;
 }
 
 XFileInfo* XFileInfo_create_2(const XString* path)
 {
-    XFileInfo* info = (XFileInfo*)XMalloc_System(sizeof(XFileInfo));
+    XFileInfo* info = (XFileInfo*)XClass_Malloc(XFileInfo);
     if (!info) return NULL;
     
     XFileInfo_init_2(info, path);
-    Set_Class_MemoryFree(info, XFree_System);
+    Set_Class_IsHeap(info, true);
     return info;
 }
 
 XFileInfo* XFileInfo_create_3(const XString* dir, const XString* path)
 {
-    XFileInfo* info = (XFileInfo*)XMalloc_System(sizeof(XFileInfo));
+    XFileInfo* info = (XFileInfo*)XClass_Malloc(XFileInfo);
     if (!info) return NULL;
     
     XFileInfo_init_3(info, dir, path);
-    Set_Class_MemoryFree(info, XFree_System);
+    Set_Class_IsHeap(info, true);
     return info;
 }
 

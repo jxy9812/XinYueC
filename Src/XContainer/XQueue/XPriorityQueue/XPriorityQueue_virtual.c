@@ -11,6 +11,8 @@ static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 static void* VXPriorityQueue_top(XPriorityQueue* this_queue);
 static bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer);
 static bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue);
+static void VXClass_copy(XPriorityQueue* object, const XPriorityQueue* src);
+static void VXClass_move(XPriorityQueue* object, XPriorityQueue* src);
 XVtable* XPriorityQueue_class_init()
 {
 	XVTABLE_INIT_DEFAULT_SIZE(XPRIORITYQUEUE_VTABLE_SIZE)
@@ -20,9 +22,39 @@ XVtable* XPriorityQueue_class_init()
 	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 
 	XCLASS_SHOW_SIZE_DEFAULT(XPriorityQueue);
 	return XVTABLE_DEFAULT;
+}
+
+static void VXClass_copy(XPriorityQueue* object, const XPriorityQueue* src)
+{
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized) {
+        XPriorityQueue_init(object, XContainerTypeSize(src), src->compare,
+            src->m_order);
+        Class_Memory(object) = Class_Memory(src);
+    }
+    XClass_Parent(XContainer, EXClass_Copy,
+        void(*)(XPriorityQueue*, const XPriorityQueue*))(object, src);
+    object->compare = src->compare;
+    object->m_order = src->m_order;
+}
+
+static void VXClass_move(XPriorityQueue* object, XPriorityQueue* src)
+{
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized)
+        XPriorityQueue_init(object, XContainerTypeSize(src), src->compare,
+            src->m_order);
+    XClass_Parent(XContainer, EXClass_Move,
+        void(*)(XPriorityQueue*, XPriorityQueue*))(object, src);
+    object->compare = src->compare;
+    object->m_order = src->m_order;
+    Class_Memory(object) = source_memory;
 }
 //插入向上调整
 static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare, XSortOrder order)

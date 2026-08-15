@@ -347,10 +347,10 @@ XVtable* XModbusExceptionResponse_class_init(void)
 }
 
 // --- 创建与初始化 ---
-XModbusPdu* XModbusPdu_create(void) {
-    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
+XModbusPdu* XModbusPdu_create_ex(XMemoryType memory) {
+    XModbusPdu* pdu = (XModbusPdu*)XMemory_malloc(sizeof(XModbusPdu), memory);
     if (pdu) XModbusPdu_init(pdu);
-    Set_Class_MemoryFree(pdu, XFree_System);
+    Set_Class_Memory(pdu, memory); Set_Class_IsHeap(pdu, true);
     return pdu;
 }
 
@@ -371,10 +371,10 @@ XModbusPdu* XModbusPdu_create_move(XModbusPdu* pdu)
 }
 
 XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code) {
-    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
+    XModbusPdu* pdu = (XModbusPdu*)XClass_Malloc(XModbusPdu);
     if (pdu) {
         XModbusPdu_init_with_code(pdu, code);
-        Set_Class_MemoryFree(pdu, XFree_System);
+        Set_Class_IsHeap(pdu, true);
     }
     return pdu;
 }
@@ -392,12 +392,12 @@ void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code) {
     if (pdu) pdu->m_code = code;
 }
 
-XModbusRequest* XModbusRequest_create(void)
+XModbusRequest* XModbusRequest_create_ex(XMemoryType memory)
 {
-    XModbusRequest* req = (XModbusRequest*)XMalloc_System(sizeof(XModbusRequest));
+    XModbusRequest* req = (XModbusRequest*)XMemory_malloc(sizeof(XModbusRequest), memory);
     if (req) {
         XModbusRequest_init(req);
-        Set_Class_MemoryFree(req, XFree_System);
+        Set_Class_Memory(req, memory); Set_Class_IsHeap(req, true);
     }
     return req;
 }
@@ -438,12 +438,12 @@ void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode 
     if (req) req->m_base.m_code = code;
 }
 
-XModbusResponse* XModbusResponse_create(void)
+XModbusResponse* XModbusResponse_create_ex(XMemoryType memory)
 {
-    XModbusResponse* resp = (XModbusResponse*)XMalloc_System(sizeof(XModbusResponse));
+    XModbusResponse* resp = (XModbusResponse*)XMemory_malloc(sizeof(XModbusResponse), memory);
     if (resp) {
         XModbusResponse_init(resp);
-        Set_Class_MemoryFree(resp, XFree_System);
+        Set_Class_Memory(resp, memory); Set_Class_IsHeap(resp, true);
     }
     return resp;
 }
@@ -475,11 +475,11 @@ void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCo
     XModbusResponse_init(resp);
     if (resp) resp->m_base.m_code = code;
 }
-XModbusExceptionResponse* XModbusExceptionResponse_create(void) {
-    XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMalloc_System(sizeof(XModbusExceptionResponse));
+XModbusExceptionResponse* XModbusExceptionResponse_create_ex(XMemoryType memory) {
+    XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMemory_malloc(sizeof(XModbusExceptionResponse), memory);
     if (exc) {
         XModbusExceptionResponse_init(exc);
-        Set_Class_MemoryFree(exc, XFree_System);
+        Set_Class_Memory(exc, memory); Set_Class_IsHeap(exc, true);
     }
     return exc;
 }

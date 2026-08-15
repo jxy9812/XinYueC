@@ -43,19 +43,14 @@ XVtable* XKeyEventTransition_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XKeyEventTransition* XKeyEventTransition_create(void)
-{
-    return XKeyEventTransition_create_ex(NULL, XEVENT_TYPE_NONE, 0, NULL);
-}
-
-XKeyEventTransition* XKeyEventTransition_create_ex(XObject* object, XEventType type,
+XKeyEventTransition* XKeyEventTransition_create_ex(XMemoryType memory, XObject* object, XEventType type,
                                                    int key, XState* sourceState)
 {
-    XKeyEventTransition* transition = XNew(XKeyEventTransition);
+    XKeyEventTransition* transition = XMemory_malloc(sizeof(XKeyEventTransition), memory);
     if (!transition)
         return NULL;
     XKeyEventTransition_init_ex(transition, object, type, key, sourceState);
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_Memory(transition, memory); Set_Class_IsHeap(transition, true);
     return transition;
 }
 

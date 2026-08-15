@@ -104,23 +104,16 @@ XVtable* XFont_class_init(void)
 
 /* ========== 创建与初始化 ========== */
 
-XFont* XFont_create(void)
+XFont* XFont_create_ex(XMemoryType memory, const char* family, int pointSize, int weight, bool italic)
 {
-    XFont* self = (XFont*)XMalloc_System(sizeof(XFont));
+    XFont* self = (XFont*)XMemory_malloc(sizeof(XFont), memory);
     if (!self) return NULL;
     XFont_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
-    return self;
-}
-
-XFont* XFont_create_ex(const char* family, int pointSize, int weight, bool italic)
-{
-    XFont* self = XFont_create();
-    if (!self) return NULL;
     if (family) XFont_setFamily(self, family);
     if (pointSize > 0) XFont_setPointSize(self, pointSize);
     if (weight > 0) XFont_setWeight(self, weight);
     if (italic) XFont_setItalic(self, true);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

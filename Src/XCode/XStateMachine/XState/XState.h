@@ -48,7 +48,6 @@ XVtable* XState_class_init(void);
  * @return 新状态；内存分配失败时返回 NULL。
  * @note 返回对象由调用者拥有，加入父状态后由父状态取得所有权。
  */
-XState* XState_create(void);
 /**
  * @brief 创建指定模式和父状态的状态。
  * @param childMode 子状态模式。
@@ -56,7 +55,7 @@ XState* XState_create(void);
  * @return 新状态，失败返回 NULL。
  * @note parent 非 NULL 时，新状态会立即加入父状态的子状态列表并转移所有权。
  */
-XState* XState_create_ex(XState_ChildMode childMode, XState* parent);
+XState* XState_create_ex(XMemoryType memory, XState_ChildMode childMode, XState* parent);
 /**
  * @brief 初始化无父状态的互斥状态。
  * @param state 调用者提供的未初始化存储。
@@ -196,4 +195,10 @@ void* XState_errorStateChanged_signal(XState* state);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XState_create
+#define XState_create() \
+	XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, NULL)
+
 #endif // XSTATE_H

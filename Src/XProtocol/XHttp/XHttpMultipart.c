@@ -112,18 +112,18 @@ void XHttpPart_init(XHttpPart* self)
     self->m_body = XByteArray_create();
 }
 
-XHttpPart* XHttpPart_create(void)
+XHttpPart* XHttpPart_create_ex(XMemoryType memory)
 {
-    XHttpPart* self = (XHttpPart*)XMalloc_System(sizeof(XHttpPart));
+    XHttpPart* self = (XHttpPart*)XMemory_malloc(sizeof(XHttpPart), memory);
     if (!self)
         return NULL;
     XHttpPart_init(self);
     if (!self->m_headers || !self->m_body) {
         XHttpPart_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -301,23 +301,23 @@ void XHttpMultiPart_init(XHttpMultiPart* self, XHttpMultiPart_ContentType type)
         xhttp_multipart_make_boundary(self->m_boundary);
 }
 
-XHttpMultiPart* XHttpMultiPart_create(void)
-{
-    return XHttpMultiPart_create_type(XHttpMultiPart_MixedType);
-}
-
 XHttpMultiPart* XHttpMultiPart_create_type(XHttpMultiPart_ContentType type)
 {
-    XHttpMultiPart* self = (XHttpMultiPart*)XMalloc_System(sizeof(XHttpMultiPart));
+    return XHttpMultiPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type);
+}
+
+XHttpMultiPart* XHttpMultiPart_create_ex(XMemoryType memory, XHttpMultiPart_ContentType type)
+{
+    XHttpMultiPart* self = (XHttpMultiPart*)XMemory_malloc(sizeof(XHttpMultiPart), memory);
     if (!self)
         return NULL;
     XHttpMultiPart_init(self, type);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_parts || !self->m_boundary) {
         XHttpMultiPart_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
     return self;
 }
 

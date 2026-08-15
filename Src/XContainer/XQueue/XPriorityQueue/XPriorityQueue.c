@@ -3,13 +3,13 @@
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
-XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOrder order)
+XPriorityQueue* XPriorityQueue_create_ex(XMemoryType memory, size_t typeSize, XCompare compare, XSortOrder order)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XPriorityQueue* this_queue = XMalloc_System(sizeof(XPriorityQueue));
+	XPriorityQueue* this_queue = XMemory_malloc(sizeof(XPriorityQueue), memory);
 	XPriorityQueue_init(this_queue, typeSize,compare,order);
-	Set_Class_MemoryFree(this_queue, XFree_System);
+	Set_Class_Memory(this_queue, memory); Set_Class_IsHeap(this_queue, true);
 	return this_queue;
 }
 

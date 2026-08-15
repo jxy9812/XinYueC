@@ -49,16 +49,16 @@ XVtable* XFtpCommand_class_init(void)
     return s_xftpCommand_vtable;
 }
 
-XFtpCommand* XFtpCommand_create(int id, XFtpCommand_Type cmdType)
+XFtpCommand* XFtpCommand_create_ex(XMemoryType memory, int id, XFtpCommand_Type cmdType)
 {
     /* 必须按 XFtpCommand 大小分配，否则后续填字段会越界写堆 */
-    XFtpCommand* cmd = (XFtpCommand*)XNew(XFtpCommand);
+    XFtpCommand* cmd = (XFtpCommand*)XMemory_malloc(sizeof(XFtpCommand), memory);
     if (!cmd) return NULL;
     memset(cmd, 0, sizeof(XFtpCommand));
     // 初始化基类 XObject
     XObject_init((XObject*)cmd);
     XClassGetVtable(cmd) = XFtpCommand_class_init();
-    Set_Class_MemoryFree(cmd, XFree_System);
+    Set_Class_Memory(cmd, memory); Set_Class_IsHeap(cmd, true);
     // 设置 XFtpCommand 自身字段
     cmd->m_id = id;
     cmd->m_command = cmdType;

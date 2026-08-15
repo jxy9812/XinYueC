@@ -57,7 +57,7 @@ void XLockFreeStack_init(XLockFreeStack* this_stack, size_t typeSize, size_t cap
 * @return 创建成功的实例指针，失败返回NULL
 * @note 动态分配内存并调用XLockFreeStack_init完成初始化
 */
-XLockFreeStack* XLockFreeStack_create(size_t typeSize, size_t capacity);
+XLockFreeStack* XLockFreeStack_create_ex(XMemoryType memory,  size_t typeSize, size_t capacity);
 
 /**
 * @brief 类型安全的无锁栈创建宏
@@ -237,5 +237,10 @@ XLockFreeStack* XLockFreeStack_create(size_t typeSize, size_t capacity);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XLockFreeStack_create
+#define XLockFreeStack_create(...) XLockFreeStack_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // !XLOCKFREESTACK_H

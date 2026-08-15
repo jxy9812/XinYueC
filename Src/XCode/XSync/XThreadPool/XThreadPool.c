@@ -72,7 +72,6 @@ void XThreadPool_init(XThreadPool* pool, XObject* parent)
     // 初始化基类
     XObject_init(pool);
     XClassSetVtable(pool, XThreadPool);
-    Set_Class_MemoryFree(pool, NULL);
     XObject_setParent(pool, parent);
     // 初始化成员变量
     XPriorityQueue_init(&pool->m_waitQueue, sizeof(PrioritizedTask), prioritizedTask_compare, XSORT_ASC);
@@ -91,14 +90,14 @@ void XThreadPool_init(XThreadPool* pool, XObject* parent)
     pool->expiry_timeout = 30000; // 默认30秒
     pool->stack_size = 0; // 使用系统默认栈大小
 }
-XThreadPool* XThreadPool_create(XObject* parent)
+XThreadPool* XThreadPool_create_ex(XMemoryType memory, XObject* parent)
 {
-    XThreadPool* pool = (XThreadPool*)XMalloc_System(sizeof(XThreadPool));
+    XThreadPool* pool = (XThreadPool*)XMemory_malloc(sizeof(XThreadPool), memory);
     if (!pool)
         return NULL;
 
     XThreadPool_init(pool, parent);
-    Set_Class_MemoryFree(pool, XFree_System);
+    Set_Class_Memory(pool, memory); Set_Class_IsHeap(pool, true);
     return pool;
 }
 XThreadPool* XThreadPool_globalInstance()
@@ -110,7 +109,8 @@ XThreadPool* XThreadPool_globalInstance()
         if (!new_instance) {
             return NULL; // 创建失败
         }
-        Set_Class_MemoryFree(new_instance, NULL);
+        Class_Memory(new_instance) = NULL;
+        Class_IsHeap(new_instance) = 0;
 
         // 原子地设置全局实例
         if (!XAtomic_compare_exchange_strong_uintptr_t((void**)&g_globalThreadPool,

@@ -39,7 +39,7 @@ XVtable* XMqttTopicName_class_init(void);
  * @param name 主题名称（UTF-8 字符串，可为 NULL 表示空主题）
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttTopicName* XMqttTopicName_create(const char* name);
+XMqttTopicName* XMqttTopicName_create_ex(XMemoryType memory,  const char* name);
 
 /**
  * @brief 创建 XMqttTopicName 的深拷贝
@@ -129,5 +129,10 @@ size_t XMqttTopicName_hash(const XMqttTopicName* name, size_t seed);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttTopicName_create
+#define XMqttTopicName_create(...) XMqttTopicName_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTTOPICNAME_H

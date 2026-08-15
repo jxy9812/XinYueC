@@ -254,12 +254,12 @@ static void VXThread_deinit(XThread* Object) {
 // 创建 XThread 对象
 XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 {
-	XThread* Object = (XThreadFreeRTOS*)XMalloc_System(sizeof(XThreadFreeRTOS));
+	XThread* Object = (XThreadFreeRTOS*)XClass_Malloc(XThreadFreeRTOS);
 	if (Object == NULL) {
 		return NULL;
 	}
 	XThread_init(Object);
-	Set_Class_MemoryFree(Object);
+	Set_Class_IsHeap(Object, true);
 	Object->m_start_routine = start_routine;
 	Object->m_varList = arg;
 

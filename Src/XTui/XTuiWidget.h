@@ -57,7 +57,7 @@ XVtable* XTuiWidget_class_init(void);
 void XTuiWidget_init(XTuiWidget* widget);
 
 /** @brief 在堆上创建控件对象。 */
-XTuiWidget* XTuiWidget_create(void);
+XTuiWidget* XTuiWidget_create_ex(XMemoryType memory);
 
 #define XTuiWidget_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiWidget_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -135,4 +135,9 @@ bool XTuiWidget_isEnabled(const XTuiWidget* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiWidget_create
+#define XTuiWidget_create(...) XTuiWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_WIDGET_H */

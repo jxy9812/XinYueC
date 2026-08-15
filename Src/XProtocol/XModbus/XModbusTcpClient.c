@@ -211,12 +211,12 @@ XVtable* XModbusTcpClient_class_init(void)
 }
 
 // =============== 创建/初始化 ===============
-XModbusTcpClient* XModbusTcpClient_create(void)
+XModbusTcpClient* XModbusTcpClient_create_ex(XMemoryType memory)
 {
-    XModbusTcpClient* client = XMalloc_System(sizeof(XModbusTcpClient));
+    XModbusTcpClient* client = XMemory_malloc(sizeof(XModbusTcpClient), memory);
     if (!client) return NULL;
     XModbusTcpClient_init(client);
-    Set_Class_MemoryFree(client, XFree_System);
+    Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
     return client;
 }
 

@@ -49,14 +49,15 @@ XVtable* XVector_class_init();
  * @return 新创建的XVector指针，失败返回NULL
  * @note 需确保typeSize大于0，否则创建失败
  */
-XVector* XVector_create_ex(size_t typeSize, bool useCow);
+XVector* XVector_create_ex(XMemoryType memory, size_t typeSize, bool useCow);
 /**
  * @brief 宏定义：创建一个默认开启COW（写时拷贝）的动态数组
  * @param typeSize 数组中元素的类型大小（字节数）
  * @return 新创建的XVector指针，失败返回NULL
  * @note 内部调用XVector_create_ex(typeSize,true)，即useCow=true的便捷版本
  */
-#define XVector_create(typeSize)   XVector_create_ex(typeSize,true)
+#define XVector_create(typeSize) \
+	XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
 /**
  * @brief 通过拷贝另一个XVector创建新的XVector
  * @param other 被拷贝的源XVector
@@ -922,4 +923,10 @@ XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XVector_create
+#define XVector_create(typeSize) \
+	XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
+
 #endif // !VECTOR_H

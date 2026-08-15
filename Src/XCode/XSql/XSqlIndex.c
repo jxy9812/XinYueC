@@ -28,13 +28,13 @@ void XSqlIndex_init(XSqlIndex* index)
     XClassSetVtable(index, XSqlIndex);
 }
 
-XSqlIndex* XSqlIndex_create(void)
+XSqlIndex* XSqlIndex_create_ex(XMemoryType memory)
 {
-    XSqlIndex* index = (XSqlIndex*)XMalloc_System(sizeof(XSqlIndex));
+    XSqlIndex* index = (XSqlIndex*)XMemory_malloc(sizeof(XSqlIndex), memory);
     if (!index) return NULL;
     memset(index, 0, sizeof(*index));
     XSqlIndex_init(index);
-    Set_Class_MemoryFree(index, XFree_System);
+    Set_Class_Memory(index, memory); Set_Class_IsHeap(index, true);
     return index;
 }
 

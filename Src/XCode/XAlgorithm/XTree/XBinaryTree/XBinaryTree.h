@@ -48,7 +48,7 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
 
 #define XBTreeNode_delete							XTreeNode_delete
 //递归释放整颗树
-#define XBTree_delete(this_root,method,args)		XTree_delete_base(this_root,XBTreeNode_delete,method,args)
+#define XBTree_delete(this_root,method,args,memory)		XTree_delete_base(this_root,XBTreeNode_delete,method,args,memory)
 #ifdef __cplusplus
 }
 #endif

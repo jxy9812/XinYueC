@@ -77,12 +77,12 @@ static void VXSqlError_move(XSqlError* dest, XSqlError* src)
     src->m_type = XSqlErrorType_NoError;
 }
 
-XSqlError* XSqlError_create(const XString* driverText,
+XSqlError* XSqlError_create_ex(XMemoryType memory, const XString* driverText,
                             const XString* databaseText,
                             XSqlErrorType type,
                             const XString* errorCode)
 {
-    XSqlError* error = (XSqlError*)XMalloc_System(sizeof(XSqlError));
+    XSqlError* error = (XSqlError*)XMemory_malloc(sizeof(XSqlError), memory);
     if (!error) return NULL;
     memset(error, 0, sizeof(*error));
     XSqlError_init(error);
@@ -90,7 +90,7 @@ XSqlError* XSqlError_create(const XString* driverText,
     XSqlError_setDatabaseText(error, databaseText);
     XSqlError_setNativeErrorCode(error, errorCode);
     error->m_type = type;
-    Set_Class_MemoryFree(error, XFree_System);
+    Set_Class_Memory(error, memory); Set_Class_IsHeap(error, true);
     return error;
 }
 

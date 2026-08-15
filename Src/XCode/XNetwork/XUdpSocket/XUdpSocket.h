@@ -45,7 +45,7 @@ void XUdpSocket_init(XUdpSocket* sock);
  * @brief 创建 XUdpSocket 实例。
  * @return 新分配的实例，需调用 XUdpSocket_delete_base() 释放
  */
-XUdpSocket* XUdpSocket_create(void);
+XUdpSocket* XUdpSocket_create_ex(XMemoryType memory);
 
 #define XUdpSocket_deleteLater XIODevice_deleteLater
 
@@ -256,5 +256,10 @@ void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XUdpSocket_create
+#define XUdpSocket_create(...) XUdpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XUDPSOCKET_H

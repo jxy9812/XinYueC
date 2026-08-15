@@ -10,6 +10,8 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src);
 static void VXClass_move(XRingBuffer* object, XRingBuffer* src);
 static void VXRingBuffer_clear(XRingBuffer* buffer);
 static void VXRingBuffer_deinit(XRingBuffer* buffer);
+static void XRingBuffer_init_with_memory(XRingBuffer* buffer,
+    size_t chunkSize, XMemoryType memoryType);
 XVtable* XRingBuffer_class_init()
 {
     XVTABLE_INIT_DEFAULT(XRingBuffer)
@@ -42,16 +44,25 @@ static void VXRingBuffer_chunkDeleter(void* data)
 }
 void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
 {
+    XRingBuffer_init_with_memory(buffer, chunkSize,
+        XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+static void XRingBuffer_init_with_memory(XRingBuffer* buffer,
+    size_t chunkSize, XMemoryType memoryType)
+{
     if (ISNULL(buffer, "") || ISNULL(chunkSize, ""))
         return;
 
     XContainer_init(buffer, sizeof(uint8_t),false);
     XClassGetVtable(buffer) = XRingBuffer_class_init();
+    Set_Class_Memory(buffer, memoryType);
 
     // 创建chunks向量
     /* chunk 指针表不参与 COW：COW 扩容会先释放旧块中的元素，导致复制后的
        XRingChunk 指针悬空。该向量只由当前 XRingBuffer 独占，非 COW 扩容更安全。 */
-    buffer->m_chunks = XVector_create_ex(sizeof(XRingChunk*), false);
+    buffer->m_chunks = XVector_create_ex(XContainer_memory_type(buffer),
+        sizeof(XRingChunk*), false);
     if (buffer->m_chunks == NULL)
     {
         XContainerCapacity(buffer) = 0;
@@ -62,7 +73,8 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
     }
     XContainerSetDataDeinitMethod(buffer->m_chunks, VXRingBuffer_chunkDeleter);
     // 添加第一个chunk
-    XRingChunk* firstChunk = XRingChunk_create(chunkSize);
+    XRingChunk* firstChunk = XRingChunk_create_ex(XContainer_memory_type(buffer),
+        chunkSize);
     if (firstChunk == NULL)
     {
         XVector_delete_base(buffer->m_chunks); // 现在delete会自动清理（虽然此时为空）
@@ -97,17 +109,17 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
     buffer->m_hasMark = false;
 }
 
-XRingBuffer* XRingBuffer_create(size_t chunkSize)
+XRingBuffer* XRingBuffer_create_ex(XMemoryType memory, size_t chunkSize)
 {
     if (ISNULL(chunkSize, ""))
         return NULL;
 
-    XRingBuffer* buffer = XMalloc_System(sizeof(XRingBuffer));
+    XRingBuffer* buffer = XMemory_malloc(sizeof(XRingBuffer), memory);
     if (buffer == NULL)
         return NULL;
 
-    XRingBuffer_init(buffer, chunkSize);
-    Set_Class_MemoryFree(buffer, XFree_System);
+    XRingBuffer_init_with_memory(buffer, chunkSize, memory);
+    Set_Class_IsHeap(buffer, true);
     return buffer;
 }
 
@@ -352,7 +364,8 @@ bool XRingBuffer_addChunk(XRingBuffer* buffer, size_t chunkSize)
     if (ISNULL(buffer, "") || ISNULL(chunkSize, ""))
         return false;
 
-    XRingChunk* newChunk = XRingChunk_create(chunkSize);
+    XRingChunk* newChunk = XRingChunk_create_ex(XContainer_memory_type(buffer),
+        chunkSize);
     if (newChunk == NULL)
         return false;
 
@@ -515,7 +528,8 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
         // 如果目标对象未初始化，先用源对象的第一个chunk大小来初始化它
         XRingChunk** firstChunkPtr = (XRingChunk**)XVector_at_base(src->m_chunks, 0);
         size_t initSize = (firstChunkPtr && *firstChunkPtr) ? XRingChunk_capacity_base(*firstChunkPtr) : 1024;
-        XRingBuffer_init(object, initSize);
+        XRingBuffer_init_with_memory(object, initSize,
+            XContainer_memory_type(src));
     }
     else if (!XRingBuffer_isEmpty_base(object))
     {
@@ -529,9 +543,12 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
         XRingChunk** srcChunkPtr = (XRingChunk**)XVector_iterator_data(&it);
         if (srcChunkPtr && *srcChunkPtr)
         {
-            XRingChunk* newChunk = XRingChunk_create_copy(*srcChunkPtr);
+            XRingChunk* newChunk = XRingChunk_create_ex(
+                XContainer_memory_type(object),
+                XRingChunk_capacity_base(*srcChunkPtr));
             if (newChunk)
             {
+                XRingChunk_copy_base(newChunk, *srcChunkPtr);
                 XVector_push_back_1_base(object->m_chunks, &newChunk);
             }
         }
@@ -551,10 +568,18 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
 
 static void VXClass_move(XRingBuffer* object, XRingBuffer* src)
 {
-    if (object->m_chunks)
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized) {
+        XContainer_init(object, sizeof(uint8_t), false);
+        XClassGetVtable(object) = XRingBuffer_class_init();
+        object->m_chunks = NULL;
+    }
+    else if (object->m_chunks)
         XVector_delete_base(object->m_chunks);
 
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XRingBuffer) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
 
     // 重置源对象
     src->m_chunks = NULL;

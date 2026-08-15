@@ -105,13 +105,12 @@ void XHttp2Connection_init(XHttp2Connection* self);
  * - @brief 创建默认 HTTP/2 客户端连接。
  * - @return 新建客户端连接；调用者必须使用 XHttp2Connection_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2Connection* XHttp2Connection_create(void);
 /**
  * - @brief 创建并复制指定 HTTP/2 配置的客户端连接。
  * - @param configuration 本地配置；借用，不能为 NULL。
  * - @return 新连接；调用者必须释放；内存不足返回 NULL。
  */
-XHttp2Connection* XHttp2Connection_create_ex(const XHttp2Configuration* configuration);
+XHttp2Connection* XHttp2Connection_create_ex(XMemoryType memory, const XHttp2Configuration* configuration);
 #define XHttp2Connection_deinit_base XClass_deinit_base
 #define XHttp2Connection_delete_base XClass_delete_base
 
@@ -208,5 +207,11 @@ bool XHttp2Connection_isGoingAway(const XHttp2Connection* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttp2Connection_create
+#define XHttp2Connection_create() \
+	XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
 
 #endif /* XHTTP2CONNECTION_H */

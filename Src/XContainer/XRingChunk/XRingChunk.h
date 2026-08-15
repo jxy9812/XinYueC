@@ -43,7 +43,7 @@ XVtable* XRingChunk_class_init();
  * @param capacity 环形缓冲区的逻辑容量（字节数）
  * @return 成功时返回指向新创建XRingChunk的指针；失败时返回NULL
  */
-XRingChunk* XRingChunk_create(size_t capacity);
+XRingChunk* XRingChunk_create_ex(XMemoryType memory,  size_t capacity);
 
 /**
  * @brief 创建一个XRingChunk的副本
@@ -233,5 +233,10 @@ void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRingChunk_create
+#define XRingChunk_create(...) XRingChunk_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // !XRINGCHUNK_H

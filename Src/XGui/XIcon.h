@@ -64,7 +64,7 @@ XVtable* XIcon_class_init();
  * @brief      在堆上创建 XIcon 实例
  * @return     指向新创建的 XIcon 对象的指针，失败返回 NULL
  */
-XIcon* XIcon_create();
+XIcon* XIcon_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XIcon 实例（创建空图标）
@@ -336,4 +336,9 @@ void XIcon_setFallbackThemeName(const char* name);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XIcon_create
+#define XIcon_create(...) XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XICON_H */

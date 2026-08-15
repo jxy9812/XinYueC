@@ -19,7 +19,7 @@ typedef struct XBsonArray
 * @brief 创建一个空的XBsonArray实例
 * @return 成功返回XBsonArray指针，失败返回NULL
 */
-XBsonArray* XBsonArray_create();
+XBsonArray* XBsonArray_create_ex(XMemoryType memory);
 /**
 * @brief 从另一个XBsonArray复制创建新实例（深拷贝）
 * @param other 被复制的XBsonArray实例
@@ -276,4 +276,9 @@ void XBsonArray_setVariant_ref(XVariant* variant, XBsonArray* array);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XBsonArray_create
+#define XBsonArray_create(...) XBsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XBSONARRAY_H

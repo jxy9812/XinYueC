@@ -100,7 +100,7 @@ XVtable* XImageIOHandler_class_init();
  * @brief      在堆上创建 XImageIOHandler 实例
  * @return     指向新创建的 XImageIOHandler 对象的指针，失败返回 NULL
  */
-XImageIOHandler* XImageIOHandler_create();
+XImageIOHandler* XImageIOHandler_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XImageIOHandler 实例
@@ -264,5 +264,10 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XImageIOHandler_create
+#define XImageIOHandler_create(...) XImageIOHandler_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XIMAGEIOHANDLER_H */
 

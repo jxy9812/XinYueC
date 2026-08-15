@@ -186,8 +186,6 @@ XVtable* XFont_class_init(void);
  * @brief      在堆上创建 XFont 实例
  * @return     指向新创建的 XFont 对象的指针，失败返回 NULL
  */
-XFont* XFont_create(void);
-
 /**
  * @brief      在堆上创建 XFont 实例（含家族和大小）
  * @param family   字体家族名称
@@ -196,7 +194,7 @@ XFont* XFont_create(void);
  * @param italic   是否斜体
  * @return     指向新创建的 XFont 对象的指针，失败返回 NULL
  */
-XFont* XFont_create_ex(const char* family, int pointSize, int weight, bool italic);
+XFont* XFont_create_ex(XMemoryType memory, const char* family, int pointSize, int weight, bool italic);
 
 /**
  * @brief      初始化 XFont 实例
@@ -606,4 +604,10 @@ void XFont_swap(XFont* a, XFont* b);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XFont_create
+#define XFont_create() \
+	XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, -1, false)
+
 #endif /* XFONT_H */

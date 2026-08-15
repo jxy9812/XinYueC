@@ -44,7 +44,7 @@ XVtable* XStack_class_init();
 * @param typeSize 单个元素的类型大小（字节数，如sizeof(int)）
 * @return 栈实例指针（失败返回NULL）
 */
-XStack* XStack_create(size_t typeSize);
+XStack* XStack_create_ex(XMemoryType memory,  size_t typeSize);
 
 /**
 * @brief 类型安全的栈创建宏
@@ -266,5 +266,10 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XStack_create
+#define XStack_create(...) XStack_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif  // !XSTACK_H

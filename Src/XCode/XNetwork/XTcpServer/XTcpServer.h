@@ -81,7 +81,7 @@ void XTcpServer_init(XTcpServer* server);
  * @brief 创建 XTcpServer 实例。
  * @return 新分配的实例，需调用 XTcpServer_delete_base() 释放
  */
-XTcpServer* XTcpServer_create(void);
+XTcpServer* XTcpServer_create_ex(XMemoryType memory);
 
 /**
  * @brief 延迟销毁 XTcpServer 实例。
@@ -334,5 +334,10 @@ void* XTcpServer_acceptError_signal(XTcpServer* server, XAbstractSocket_SocketEr
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XTcpServer_create
+#define XTcpServer_create(...) XTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XTCPSERVER_H

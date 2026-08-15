@@ -27,7 +27,6 @@ XVtable* XEventTransition_class_init(void);
  * @brief 创建未指定事件源的事件转换。
  * @return 新事件转换；内存分配失败时返回 NULL。
  */
-XEventTransition* XEventTransition_create(void);
 /**
  * @brief 创建指定事件源、事件类型和源状态的事件转换。
  * @param object 被监听对象，不转移所有权，可为 NULL。
@@ -35,7 +34,7 @@ XEventTransition* XEventTransition_create(void);
  * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
  * @return 新事件转换；内存分配失败时返回 NULL。
  */
-XEventTransition* XEventTransition_create_ex(XObject* object, XEventType type, XState* sourceState);
+XEventTransition* XEventTransition_create_ex(XMemoryType memory, XObject* object, XEventType type, XState* sourceState);
 /**
  * @brief 初始化空事件转换。
  * @param transition 调用者提供的未初始化存储。
@@ -81,4 +80,10 @@ void XEventTransition_setEventType(XEventTransition* transition, XEventType type
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XEventTransition_create
+#define XEventTransition_create() \
+	XEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XEVENT_TYPE_NONE, NULL)
+
 #endif // XEVENTTRANSITION_H

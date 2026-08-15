@@ -43,7 +43,7 @@ void XHttp1Configuration_init(XHttp1Configuration* self);
  * - @brief 创建 HTTP/1 配置对象。
  * - @return 新建配置对象；调用者必须使用 XHttp1Configuration_delete_base 释放，失败返回 NULL。
  */
-XHttp1Configuration* XHttp1Configuration_create(void);
+XHttp1Configuration* XHttp1Configuration_create_ex(XMemoryType memory);
 /**
  * - @brief 深拷贝创建 HTTP/1 配置对象。
  * - @param other 源配置对象；借用且不能为 NULL。
@@ -83,5 +83,10 @@ size_t XHttp1Configuration_numberOfConnectionsPerHost(const XHttp1Configuration*
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttp1Configuration_create
+#define XHttp1Configuration_create(...) XHttp1Configuration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif

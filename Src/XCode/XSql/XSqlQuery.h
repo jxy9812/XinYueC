@@ -47,7 +47,7 @@ void XSqlQuery_init_database(XSqlQuery* query, const XSqlDatabase* database);
  * @brief 创建空查询。
  * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
  */
-XSqlQuery* XSqlQuery_create(void);
+XSqlQuery* XSqlQuery_create_ex(XMemoryType memory);
 /**
  * @brief 使用数据库连接创建查询。
  * @param database 数据库连接；借用，可为 NULL。
@@ -309,5 +309,10 @@ bool XSqlQuery_nextResult(XSqlQuery* query);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlQuery_create
+#define XSqlQuery_create(...) XSqlQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLQUERY_H */

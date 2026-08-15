@@ -74,7 +74,7 @@ void XHostAddress_init(XHostAddress* addr);
  * @brief 创建 null 地址。
  * @return 新分配的 XHostAddress 实例，需调用 XHostAddress_delete() 释放。
  */
-XHostAddress* XHostAddress_create(void);
+XHostAddress* XHostAddress_create_ex(XMemoryType memory);
 /**
  * @brief 拷贝构造。
  * @param other 源地址
@@ -312,4 +312,9 @@ bool XHostAddress_isIPv6Address(const char* address);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XHostAddress_create
+#define XHostAddress_create(...) XHostAddress_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XHOSTADDRESS_H

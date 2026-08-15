@@ -31,7 +31,7 @@ typedef struct XPWMDeviceBase
 //初始化类
 XVtable* XPWMDeviceBase_class_init();
 //pwm设备
-XPWMDeviceBase* XPWMDeviceBase_create();
+XPWMDeviceBase* XPWMDeviceBase_create_ex(XMemoryType memory);
 void XPWMDeviceBase_init(XPWMDeviceBase* pwm);
 //设置运行状态改变回调函数
 void XPWMDeviceBase_setRunChangeCallback(XPWMDeviceBase* sw, void (*callback)(XPWMDeviceBase* pwm));
@@ -61,4 +61,9 @@ uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XPWMDeviceBase_create
+#define XPWMDeviceBase_create(...) XPWMDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

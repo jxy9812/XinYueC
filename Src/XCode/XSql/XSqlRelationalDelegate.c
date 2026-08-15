@@ -21,12 +21,12 @@ void XSqlRelationalDelegate_init(XSqlRelationalDelegate* delegate)
     XClassSetVtable(delegate, XSqlRelationalDelegate);
 }
 
-XSqlRelationalDelegate* XSqlRelationalDelegate_create(void)
+XSqlRelationalDelegate* XSqlRelationalDelegate_create_ex(XMemoryType memory)
 {
-    XSqlRelationalDelegate* delegate = (XSqlRelationalDelegate*)XMalloc_System(sizeof(XSqlRelationalDelegate));
+    XSqlRelationalDelegate* delegate = (XSqlRelationalDelegate*)XMemory_malloc(sizeof(XSqlRelationalDelegate), memory);
     if (!delegate) return NULL;
     XSqlRelationalDelegate_init(delegate);
-    Set_Class_MemoryFree(delegate, XFree_System);
+    Set_Class_Memory(delegate, memory); Set_Class_IsHeap(delegate, true);
     return delegate;
 }
 

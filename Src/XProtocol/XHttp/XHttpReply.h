@@ -126,7 +126,7 @@ void XHttpReply_init(XHttpReply* self, const XHttpRequest* request);
  * - @param request 请求对象；借用，创建时深拷贝，可为 NULL。
  * - @return 新对象，调用者必须使用 XHttpReply_delete_base 释放；失败返回 NULL。
  */
-XHttpReply* XHttpReply_create(const XHttpRequest* request);
+XHttpReply* XHttpReply_create_ex(XMemoryType memory,  const XHttpRequest* request);
 
 /**
  * - @brief 反初始化、删除和延迟删除入口。
@@ -421,5 +421,10 @@ void* XHttpReply_redirected_signal(XHttpReply* reply, const XUrl* target);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpReply_create
+#define XHttpReply_create(...) XHttpReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPREPLY_H */

@@ -12,12 +12,12 @@ XVARIANT_TYPE_OPS_DEFINE(XBsonArray, sizeof(XBsonArray), XBsonArray_copy_base,
 	NULL, "XBsonArray");
 
 /* BSON 数组以 XVector 保存值，序列化时键必须为连续十进制索引。 */
-XBsonArray* XBsonArray_create(void)
+XBsonArray* XBsonArray_create_ex(XMemoryType memory)
 {
-	XBsonArray* array = (XBsonArray*)XMalloc_System(sizeof(*array));
+    XBsonArray* array = (XBsonArray*)XMemory_malloc(sizeof(XBsonArray), memory);
 	if (!array) return NULL;
 	XBsonArray_init(array);
-	Set_Class_MemoryFree(array, XFree_System);
+	Set_Class_Memory(array, memory); Set_Class_IsHeap(array, true);
 	return array;
 }
 

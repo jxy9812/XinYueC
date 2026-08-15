@@ -435,13 +435,13 @@ void XHttp2HeaderList_init(XHttp2HeaderList* self)
     XClassSetVtable(self, XHttp2HeaderList);
 }
 
-XHttp2HeaderList* XHttp2HeaderList_create(void)
+XHttp2HeaderList* XHttp2HeaderList_create_ex(XMemoryType memory)
 {
-    XHttp2HeaderList* self = (XHttp2HeaderList*)XMalloc_System(sizeof(XHttp2HeaderList));
+    XHttp2HeaderList* self = (XHttp2HeaderList*)XMemory_malloc(sizeof(XHttp2HeaderList), memory);
     if (!self)
         return NULL;
     XHttp2HeaderList_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -904,13 +904,13 @@ void XHttp2HeaderEncoder_init(XHttp2HeaderEncoder* self)
     self->m_maxSize = 4096;
 }
 
-XHttp2HeaderEncoder* XHttp2HeaderEncoder_create(void)
+XHttp2HeaderEncoder* XHttp2HeaderEncoder_create_ex(XMemoryType memory)
 {
-    XHttp2HeaderEncoder* self = (XHttp2HeaderEncoder*)XMalloc_System(sizeof(*self));
+    XHttp2HeaderEncoder* self = (XHttp2HeaderEncoder*)XMemory_malloc(sizeof(XHttp2HeaderEncoder), memory);
     if (!self)
         return NULL;
     XHttp2HeaderEncoder_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -1131,13 +1131,13 @@ void XHttp2HeaderDecoder_init(XHttp2HeaderDecoder* self)
     self->m_maxSize = 4096;
 }
 
-XHttp2HeaderDecoder* XHttp2HeaderDecoder_create(void)
+XHttp2HeaderDecoder* XHttp2HeaderDecoder_create_ex(XMemoryType memory)
 {
-    XHttp2HeaderDecoder* self = (XHttp2HeaderDecoder*)XMalloc_System(sizeof(*self));
+    XHttp2HeaderDecoder* self = (XHttp2HeaderDecoder*)XMemory_malloc(sizeof(XHttp2HeaderDecoder), memory);
     if (!self)
         return NULL;
     XHttp2HeaderDecoder_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

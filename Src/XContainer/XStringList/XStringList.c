@@ -135,18 +135,18 @@ XVtable* XStringList_class_init()
 //#endif // XCLASS_VTABLE_SHOW_SIZE
 //	return XVTABLE_DEFAULT;
 }
-XStringList* XStringList_create()
+XStringList* XStringList_create_ex(XMemoryType memory)
 {
-	XStringList* vector=XMalloc_System(sizeof(XStringList));
+	XStringList* vector=XMemory_malloc(sizeof(XStringList), memory);
 	XStringList_init(vector);
-	Set_Class_MemoryFree(vector, XFree_System);
+	Set_Class_Memory(vector, memory); Set_Class_IsHeap(vector, true);
 	return vector;
 }
 XStringList* XStringList_create_copy(const XStringList* other)
 {
 	if (other == NULL)
 		return NULL;
-	XStringList* list = XStringList_create();
+	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if(list==NULL)
 		return NULL;
 	XStringList_copy_base(list,other);
@@ -156,7 +156,7 @@ XStringList* XStringList_create_move(XStringList* other)
 {
 	if (other == NULL)
 		return NULL;
-	XStringList* list = XStringList_create();
+	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
 	XStringList_move_base(list, other);

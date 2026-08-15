@@ -3,11 +3,24 @@
  * @brief 隐式共享（Copy-On-Write）数据块实现
  */
 #include "XSharedData.h"
+#include "XClassConfig.h"
 #include "XVtable.h"
 #include <string.h>
 XSharedData* XSharedData_create(void* dataPtr, size_t  dataSize)
 {
-    XSharedData* sd = (XSharedData*)XMalloc_System(ALIGN_UP(sizeof(XSharedData)+dataSize,sizeof(void*)));
+    return XSharedData_create_ex(dataPtr, dataSize,
+        XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+}
+
+XSharedData* XSharedData_create_ex(void* dataPtr, size_t dataSize, XMemory* memory)
+{
+    if (!memory)
+        memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!memory || !memory->malloc)
+        return NULL;
+
+    XSharedData* sd = (XSharedData*)memory->malloc(
+        ALIGN_UP(sizeof(XSharedData) + dataSize, sizeof(void*)));
     if (sd) 
     {
         XAtomic_store_int32(&sd->refCount, 1, XAtomic_MemoryOrder_Relaxed);
@@ -25,25 +38,36 @@ void XSharedData_addRef(XSharedData* sd)
         XAtomic_fetch_add_int32(&sd->refCount, 1, XAtomic_MemoryOrder_Relaxed);
 }
 
-bool XSharedData_release(XSharedData* sd)
+bool XSharedData_release(XSharedData* sd, XMemory* memory)
 {
     if (!sd) return false;
     int32_t old = XAtomic_fetch_sub_int32(&sd->refCount, 1, XAtomic_MemoryOrder_Relaxed);
     if (old <= 1) {
-        XFree_System(sd);
+        if (!memory)
+            memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (memory && memory->free)
+            memory->free(sd);
+        else
+            XFree_System(sd);
         return true;
     }
     return false;
 }
 
-bool XSharedData_release_with(XSharedData* sd, void (*dataDeleter)(void* data, void* arg), void* arg)
+bool XSharedData_release_with(XSharedData* sd, void (*dataDeleter)(void* data, void* arg),
+	void* arg, XMemory* memory)
 {
     if (!sd) return false;
     int32_t old = XAtomic_fetch_sub_int32(&sd->refCount, 1, XAtomic_MemoryOrder_Relaxed);
     if (old <= 1) {
         if (dataDeleter && sd->data)
             dataDeleter(sd->data,arg);
-        XFree_System(sd);
+        if (!memory)
+            memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (memory && memory->free)
+            memory->free(sd);
+        else
+            XFree_System(sd);
         return true;
     }
     return false;

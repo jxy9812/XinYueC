@@ -64,7 +64,7 @@ void XSqlQueryModel_init(XSqlQueryModel* model);
  * @brief 创建查询模型。
  * @return 新模型，调用者必须使用 XSqlQueryModel_delete_base 释放；失败返回 NULL。
  */
-XSqlQueryModel* XSqlQueryModel_create(void);
+XSqlQueryModel* XSqlQueryModel_create_ex(XMemoryType memory);
 
 /** @brief 调用 XClass 析构入口释放查询、行缓存、表头和最近错误。 */
 #define XSqlQueryModel_deinit_base XClass_deinit_base
@@ -255,5 +255,10 @@ void* XSqlQueryModel_dataChanged_signal(XSqlQueryModel* model, int firstRow,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlQueryModel_create
+#define XSqlQueryModel_create(...) XSqlQueryModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLQUERYMODEL_H */

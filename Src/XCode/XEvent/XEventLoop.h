@@ -64,7 +64,7 @@ XVtable* XEventLoop_class_init();
  * @brief 创建事件循环实例
  * @return 新创建的事件循环实例
  */
-XEventLoop* XEventLoop_create();
+XEventLoop* XEventLoop_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化事件循环
@@ -121,4 +121,9 @@ void XEventLoop_delay(size_t msec);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XEventLoop_create
+#define XEventLoop_create(...) XEventLoop_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XEVENTLOOP_H

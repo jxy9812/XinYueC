@@ -35,7 +35,7 @@ void XSqlRelationalDelegate_init(XSqlRelationalDelegate* delegate);
  * @brief 创建关系委托对象。
  * @return 新委托对象，调用者必须使用 XSqlRelationalDelegate_delete_base 释放；失败返回 NULL。
  */
-XSqlRelationalDelegate* XSqlRelationalDelegate_create(void);
+XSqlRelationalDelegate* XSqlRelationalDelegate_create_ex(XMemoryType memory);
 /** @brief 调用 XClass 析构入口释放关系委托对象。 */
 #define XSqlRelationalDelegate_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelationalDelegate_create 返回的关系委托对象。 */
@@ -85,5 +85,10 @@ XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTab
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlRelationalDelegate_create
+#define XSqlRelationalDelegate_create(...) XSqlRelationalDelegate_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLRELATIONALDELEGATE_H */

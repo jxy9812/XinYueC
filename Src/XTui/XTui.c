@@ -344,13 +344,13 @@ void XTui_init(XTui* tui)
     tui->m_lastByteCR = false;
 }
 
-XTui* XTui_create(void)
+XTui* XTui_create_ex(XMemoryType memory)
 {
-    XTui* tui = (XTui*)XMalloc_System(sizeof(XTui));
+    XTui* tui = (XTui*)XMemory_malloc(sizeof(XTui), memory);
     if (!tui)
         return NULL;
     XTui_init(tui);
-    Set_Class_MemoryFree(tui, XFree_System);
+    Set_Class_Memory(tui, memory); Set_Class_IsHeap(tui, true);
     return tui;
 }
 

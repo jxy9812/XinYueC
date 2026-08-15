@@ -41,13 +41,13 @@ void XNetworkDatagram_init(XNetworkDatagram* dgram)
     dgram->interfaceIndex = 0;
 }
 
-XNetworkDatagram* XNetworkDatagram_create(void)
+XNetworkDatagram* XNetworkDatagram_create_ex(XMemoryType memory)
 {
-    XNetworkDatagram* dgram = (XNetworkDatagram*)XMalloc_System(sizeof(XNetworkDatagram));
+    XNetworkDatagram* dgram = (XNetworkDatagram*)XMemory_malloc(sizeof(XNetworkDatagram), memory);
     if (!dgram) return NULL;
     
     XNetworkDatagram_init(dgram);
-    Set_Class_MemoryFree(dgram, XFree_System);
+    Set_Class_Memory(dgram, memory); Set_Class_IsHeap(dgram, true);
     return dgram;
 }
 

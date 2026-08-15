@@ -113,18 +113,18 @@ XVtable* XVariantList_class_init()
 	return XVector_class_init();
 }
 
-XVariantList* XVariantList_create()
+XVariantList* XVariantList_create_ex(XMemoryType memory)
 {
-	XVariantList* vector = XMalloc_System(sizeof(XVariantList));
+	XVariantList* vector = XMemory_malloc(sizeof(XVariantList), memory);
 	XVariantList_init(vector);
-	Set_Class_MemoryFree(vector, XFree_System);
+	Set_Class_Memory(vector, memory); Set_Class_IsHeap(vector, true);
 	return vector;
 }
 XVariantList* XVariantList_create_copy(const XVariantList* other)
 {
 	if (other == NULL)
 		return NULL;
-	XVariantList* list = XVariantList_create();
+	XVariantList* list = XVariantList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
 	XVariantList_copy_base(list, other);
@@ -134,7 +134,7 @@ XVariantList* XVariantList_create_move(XVariantList* other)
 {
 	if (other == NULL)
 		return NULL;
-	XVariantList* list = XVariantList_create();
+	XVariantList* list = XVariantList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
 	XVariantList_move_base(list, other);

@@ -44,7 +44,7 @@ XVtable* XMqttMessage_class_init(void);
 /**
  * @brief 创建空消息
  */
-XMqttMessage* XMqttMessage_create(void);
+XMqttMessage* XMqttMessage_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建完整消息
@@ -138,5 +138,10 @@ bool XMqttMessage_equal(const XMqttMessage* a, const XMqttMessage* b);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttMessage_create
+#define XMqttMessage_create(...) XMqttMessage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTMESSAGE_H

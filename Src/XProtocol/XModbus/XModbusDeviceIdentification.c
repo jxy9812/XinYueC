@@ -24,11 +24,11 @@ XVtable* XModbusDeviceIdentification_class_init(void) {
     return XVTABLE_DEFAULT;
 }
 
-XModbusDeviceIdentification* XModbusDeviceIdentification_create(void) {
-    XModbusDeviceIdentification* id = (XModbusDeviceIdentification*)XMalloc_System(sizeof(XModbusDeviceIdentification));
+XModbusDeviceIdentification* XModbusDeviceIdentification_create_ex(XMemoryType memory) {
+    XModbusDeviceIdentification* id = (XModbusDeviceIdentification*)XMemory_malloc(sizeof(XModbusDeviceIdentification), memory);
     if (!id) return NULL;
     XModbusDeviceIdentification_init(id);
-    Set_Class_MemoryFree(id, XFree_System);
+    Set_Class_Memory(id, memory); Set_Class_IsHeap(id, true);
     return id;
 }
 

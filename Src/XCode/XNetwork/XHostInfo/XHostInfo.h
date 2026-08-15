@@ -53,7 +53,7 @@ typedef struct XHostInfo {
  * @brief 创建一个空的 XHostInfo 实例。
  * @return 新分配的 XHostInfo 实例，需调用 XHostInfo_delete() 释放。
  */
-XHostInfo* XHostInfo_create(void);
+XHostInfo* XHostInfo_create_ex(XMemoryType memory);
 
 /**
  * @brief 拷贝构造函数。
@@ -73,6 +73,9 @@ XVtable* XHostInfo_class_init(void);
 #define XHostInfo_delete_base    XClass_delete_base
 #define XHostInfo_deinit_base    XClass_deinit_base
 #define XHostInfo_copy_base      XClass_copy_base
+
+#undef XHostInfo_create
+#define XHostInfo_create() XHostInfo_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #define XHostInfo_move_base      XClass_move_base
 
 // ==================== 属性访问器 ====================

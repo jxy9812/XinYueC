@@ -93,7 +93,7 @@ XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist);
  * @param parent 父对象，可为 NULL
  * @return 成功返回新创建的 XThread 对象指针，失败返回 NULL
  */
-XThread* XThread_create(XObject*parent);
+XThread* XThread_create_ex(XMemoryType memory,  XObject*parent);
 
 /**
  * @brief 创建主线程包装对象（对标 Qt QAdoptedThread，绑定主线程 XThreadData）
@@ -356,4 +356,9 @@ void XThread_yieldCurrentThread();
 }
 #endif
 #endif /* XSYNC_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XThread_create
+#define XThread_create(...) XThread_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

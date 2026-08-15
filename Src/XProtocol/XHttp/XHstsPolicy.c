@@ -84,32 +84,21 @@ void XHstsPolicy_init(XHstsPolicy* self)
     self->m_expiryMSecs = -1;
 }
 
-XHstsPolicy* XHstsPolicy_create(void)
+XHstsPolicy* XHstsPolicy_create_ex(XMemoryType memory, const XByteArray* host,
+                                   int64_t expiryMSecs, uint32_t flags)
 {
-    XHstsPolicy* self = (XHstsPolicy*)XMalloc_System(sizeof(XHstsPolicy));
+    XHstsPolicy* self = (XHstsPolicy*)XMemory_malloc(sizeof(XHstsPolicy), memory);
     if (!self)
         return NULL;
     XHstsPolicy_init(self);
-    if (!self->m_host) {
-        XHstsPolicy_deinit_base((XClass*)self);
-        XFree_System(self);
-        return NULL;
-    }
-    Set_Class_MemoryFree(self, XFree_System);
-    return self;
-}
-
-XHstsPolicy* XHstsPolicy_create_ex(const XByteArray* host, int64_t expiryMSecs, uint32_t flags)
-{
-    XHstsPolicy* self = XHstsPolicy_create();
-    if (!self)
-        return NULL;
-    if (!XHstsPolicy_setHost(self, host) || (flags & ~XHstsPolicy_IncludeSubDomains) != 0) {
+    if (!self->m_host || !XHstsPolicy_setHost(self, host) ||
+        (flags & ~XHstsPolicy_IncludeSubDomains) != 0) {
         XClass_delete_base((XClass*)self);
         return NULL;
     }
     self->m_expiryMSecs = expiryMSecs;
     self->m_flags = flags;
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

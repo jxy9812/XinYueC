@@ -38,12 +38,12 @@ XVtable* XBitmap_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XBitmap* XBitmap_create()
+XBitmap* XBitmap_create_ex(XMemoryType memory)
 {
-    XBitmap* self = (XBitmap*)XMalloc_System(sizeof(XBitmap));
+    XBitmap* self = (XBitmap*)XMemory_malloc(sizeof(XBitmap), memory);
     if (!self) return NULL;
     XBitmap_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

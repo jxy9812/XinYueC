@@ -63,7 +63,7 @@ XVtable* XFile_class_init(void);
  * @brief 创建 XFile 对象
  * @return XFile 对象指针，失败返回 NULL
  */
-XFile* XFile_create(void);
+XFile* XFile_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建 XFile 对象并设置文件名
@@ -364,5 +364,10 @@ XString* XFile_decodeName_2(const char* localFileName);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XFile_create
+#define XFile_create(...) XFile_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XFILE_H

@@ -30,12 +30,12 @@ XVtable* XMqttTopicName_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttTopicName* XMqttTopicName_create(const char* name)
+XMqttTopicName* XMqttTopicName_create_ex(XMemoryType memory, const char* name)
 {
-    XMqttTopicName* n = (XMqttTopicName*)XMalloc_System(sizeof(XMqttTopicName));
+    XMqttTopicName* n = (XMqttTopicName*)XMemory_malloc(sizeof(XMqttTopicName), memory);
     if (n) {
         XMqttTopicName_init(n, name);
-        Set_Class_MemoryFree(n, XFree_System);
+        Set_Class_Memory(n, memory); Set_Class_IsHeap(n, true);
     }
     return n;
 }
@@ -131,7 +131,7 @@ XVector* XMqttTopicName_levels(const XMqttTopicName* name)
     const char* s = XString_toUtf8(name->m_name);
     if (!s) return NULL;
 
-    XVector* vec = XVector_create_ex(sizeof(XString*), true);
+    XVector* vec = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XString*), true);
     if (!vec) return NULL;
 
     XContainerSetDataDeinitMethod(vec, (XCDataDeinitMethod)XMqttTopicName_level_deinit);

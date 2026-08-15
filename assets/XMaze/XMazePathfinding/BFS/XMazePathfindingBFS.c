@@ -95,7 +95,7 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVector_delete_base(CurrentNodeArray);
 	XVector_delete_base(NextNodeArray);
 	XVectorTwo_delete(tempMaze);
-	XTree_delete(root,NULL,NULL);
+	XTree_delete(root,NULL,NULL, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 	return Path;
 #else
 	IS_ON_DEBUG(XVector_ON);

@@ -74,13 +74,13 @@ void XHttp2Configuration_init(XHttp2Configuration* self)
     self->m_maxFrameSize = XHttp2Configuration_MinFrameSize;
 }
 
-XHttp2Configuration* XHttp2Configuration_create(void)
+XHttp2Configuration* XHttp2Configuration_create_ex(XMemoryType memory)
 {
-    XHttp2Configuration* self = (XHttp2Configuration*)XMalloc_System(sizeof(XHttp2Configuration));
+    XHttp2Configuration* self = (XHttp2Configuration*)XMemory_malloc(sizeof(XHttp2Configuration), memory);
     if (!self)
         return NULL;
     XHttp2Configuration_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

@@ -72,20 +72,31 @@ static void XJsonArray_toByteArray(const XJsonArray* array, XJsonDocumentFormat 
 static void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
     XStack* stack, XByteArray* output);
 
-
-XJsonDocument* XJsonDocument_create(void)
+static XMemoryType XJsonDocument_memory_type(const XJsonDocument* document)
 {
-    XJsonDocument* doc = (XJsonDocument*)XMalloc_System(sizeof(XJsonDocument));
+    XMemory* memory = document ? Class_Memory(document) : NULL;
+    for (int type = XMEMORY_TYPE_SYSTEM; type <= XMEMORY_TYPE_HYBRID; ++type)
+    {
+        if (memory == XMemory_method((XMemoryType)type))
+            return (XMemoryType)type;
+    }
+    return XCLASS_DEFAULT_MEMORY_TYPE;
+}
+
+
+XJsonDocument* XJsonDocument_create_ex(XMemoryType memory)
+{
+    XJsonDocument* doc = (XJsonDocument*)XMemory_malloc(sizeof(XJsonDocument), memory);
     if (!doc)
         return NULL;
     XJsonDocument_init(doc);
-    Set_Class_MemoryFree(doc, XFree_System);
+    Set_Class_Memory(doc, memory); Set_Class_IsHeap(doc, true);
     return doc;
 }
 
 XJsonDocument* XJsonDocument_create_copy(XJsonDocument* copy)
 {
-    XJsonDocument* doc = XJsonDocument_create();
+    XJsonDocument* doc = XJsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (doc && copy)
         XJsonDocument_copy(doc, copy);
     return doc;
@@ -93,7 +104,7 @@ XJsonDocument* XJsonDocument_create_copy(XJsonDocument* copy)
 
 XJsonDocument* XJsonDocument_create_move(XJsonDocument* move)
 {
-    XJsonDocument* doc = XJsonDocument_create();
+    XJsonDocument* doc = XJsonDocument_create_ex(XJsonDocument_memory_type(move));
     if (doc && move)
         XJsonDocument_move(doc, move);
     return doc;
@@ -150,6 +161,7 @@ void XJsonDocument_init(XJsonDocument* document)
 {
     if (document == NULL)
         return;
+	XClass_init(&document->m_class);
     XJsonValue_init(&document->root, XJsonValue_Invalid);
 }
 
@@ -161,10 +173,13 @@ void XJsonDocument_deinit(XJsonDocument* document)
 
 void XJsonDocument_delete(XJsonDocument* document)
 {
+	XMemory* memory;
     if (!document)
         return;
+	memory = Class_Memory(document);
     XJsonDocument_deinit(document);
-    XFree_System(document);
+	if (Class_IsHeap(document) && memory && memory->free)
+		memory->free(document);
 }
 
 void XJsonDocument_clear(XJsonDocument* document)
@@ -191,6 +206,7 @@ void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src)
     if (doc == src)
         return;
     XJsonValue_move(&doc->root, &src->root);
+	Class_Memory(doc) = Class_Memory(src);
     /* A moved-from document is an empty document, matching isEmpty/isNull. */
     src->root.type = XJsonValue_Invalid;
 }
@@ -977,7 +993,7 @@ static XString* Json_parse_string(JsonParser* parser)
         return NULL;
     }
     ++parser->ptr;
-    bytes = XByteArray_create_ex(false);
+    bytes = XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, false);
     string = XString_create();
     if (!bytes || !string) {
         if (bytes) XByteArray_delete_base(bytes);
@@ -1422,7 +1438,7 @@ XString* Json_parse_string(const char** ptr, const char* end)
     (*ptr)++; // 跳过开头引号
     const char* start = *ptr;
     XString* str = XString_create();
-    XByteArray* buff = XByteArray_create_ex(false);
+    XByteArray* buff = XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, false);
     while (*ptr < end && **ptr != '"') {
         if (**ptr == '\\') {
             // 处理转义字符

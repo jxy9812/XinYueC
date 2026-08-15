@@ -37,7 +37,7 @@ void XRestAccessManager_init(XRestAccessManager* self, XNetworkAccessManager* ma
  * - @param manager 底层网络访问管理器；借用，可为 NULL，必须在 REST 管理器使用期间保持有效。
  * - @return 新建 REST 管理器；调用者必须使用 XRestAccessManager_delete_base 释放，分配失败返回 NULL。
  */
-XRestAccessManager* XRestAccessManager_create(XNetworkAccessManager* manager);
+XRestAccessManager* XRestAccessManager_create_ex(XMemoryType memory,  XNetworkAccessManager* manager);
 
 #define XRestAccessManager_deinit_base XClass_deinit_base
 #define XRestAccessManager_delete_base XClass_delete_base
@@ -167,5 +167,10 @@ XRestReply* XRestAccessManager_wrapReply(const XRestAccessManager* self, XHttpRe
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRestAccessManager_create
+#define XRestAccessManager_create(...) XRestAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XRESTACCESSMANAGER_H */

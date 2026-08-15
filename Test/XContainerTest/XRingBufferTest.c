@@ -15,7 +15,6 @@ static void print_buffer_status(const char* msg, const XRingBuffer* buffer) {
 
 void XRingBufferTest()
 {
-	while (true)
 	{
         printf("=== Starting XRingBuffer Comprehensive Test ===\n");
 

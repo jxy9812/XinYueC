@@ -80,7 +80,7 @@ XVtable* XTelnetServer_class_init(void);
 /** @brief 初始化 Telnet 服务器对象。 */
 void XTelnetServer_init(XTelnetServer* self);
 /** @brief 创建 Telnet 服务器；销毁时使用 XTelnetServer_delete_base 释放。 */
-XTelnetServer* XTelnetServer_create(void);
+XTelnetServer* XTelnetServer_create_ex(XMemoryType memory);
 #define XTelnetServer_deinit_base XClass_deinit_base
 #define XTelnetServer_delete_base XClass_delete_base
 #define XTelnetServer_deleteLater XObject_deleteLater
@@ -235,5 +235,10 @@ void XTelnetServer_setUserNameResult(XTelnetServer* self,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XTelnetServer_create
+#define XTelnetServer_create(...) XTelnetServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XTELNETSERVER_H */

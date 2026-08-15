@@ -51,7 +51,7 @@ XVtable* XRingBuffer_class_init();
  * @param chunkSize 每个内部chunk的大小（字节数）
  * @return 成功时返回指向新创建XRingBuffer的指针；失败时返回NULL
  */
-XRingBuffer* XRingBuffer_create(size_t chunkSize);
+XRingBuffer* XRingBuffer_create_ex(XMemoryType memory,  size_t chunkSize);
 
 /**
  * @brief 初始化一个已分配的XRingBuffer结构体
@@ -243,5 +243,10 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRingBuffer_create
+#define XRingBuffer_create(...) XRingBuffer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // !XRINGBUFFER_H

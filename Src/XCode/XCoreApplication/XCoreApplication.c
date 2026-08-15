@@ -85,15 +85,15 @@ XCoreApplication* XCoreApplication_instance() {
     return g_app;
 }
 
-XCoreApplication* XCoreApplication_create(int argc, char** argv) {
+XCoreApplication* XCoreApplication_create_ex(XMemoryType memory, int argc, char** argv) {
     if (g_app != NULL)
         return g_app;
 
-    XCoreApplication* app = XMalloc_System(sizeof(XCoreApplication));
+    XCoreApplication* app = XMemory_malloc(sizeof(XCoreApplication), memory);
     if (!app) return NULL;
 
     XCoreApplication_init(app, argc, argv);
-    Set_Class_MemoryFree(app, XFree_System);
+    Set_Class_Memory(app, memory); Set_Class_IsHeap(app, true);
     return g_app;
 }
 

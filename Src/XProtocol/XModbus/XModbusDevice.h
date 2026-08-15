@@ -172,7 +172,7 @@ XVtable* XModbusDevice_class_init(void);
  * @note 返回的对象必须通过 XObject_deleteLater 释放
  * @warning 此为抽象基类，通常不应直接创建实例，而应使用子类的创建函数
  */
-XModbusDevice* XModbusDevice_create(void);
+XModbusDevice* XModbusDevice_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusDevice实例
@@ -356,6 +356,13 @@ void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State 
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusDevice_create
+#define XModbusDevice_create(...) XModbusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XModbusRtuSerialClient_create
+#define XModbusRtuSerialClient_create(...) XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSDEVICE_H
 

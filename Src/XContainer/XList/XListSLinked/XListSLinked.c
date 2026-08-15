@@ -1,13 +1,13 @@
 ﻿#include "XListSLinked.h"
 #if XListSLinked_ON
 
-XListSLinked* XListSLinked_create_ex(size_t typeSize, bool useCow)
+XListSLinked* XListSLinked_create_ex(XMemoryType memory, size_t typeSize, bool useCow)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XListSLinked* this_list = XMalloc_System(sizeof(XListSLinked));
+	XListSLinked* this_list = XMemory_malloc(sizeof(XListSLinked), memory);
 	XListSLinked_init(this_list, typeSize, useCow);
-	Set_Class_MemoryFree(this_list, XFree_System);
+	Set_Class_Memory(this_list, memory); Set_Class_IsHeap(this_list, true);
 	return this_list;
 }
 void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow)

@@ -39,7 +39,7 @@ XVtable* XVariant_class_init();
 * @param type: 数据类型（XVariantType）
 * @retval 返回新的XVariant实例，失败返回NULL
 */
-XVariant* XVariant_create(void* data, size_t dataSize, int type);
+XVariant* XVariant_create_ex(XMemoryType memory,  void* data, size_t dataSize, int type);
 /**
 * @brief 创建一个XVariant的副本，复制源对象的数据
 * @param copy: 待复制的XVariant对象
@@ -512,4 +512,9 @@ void XVariant_setDataRef(XVariant* var, void* data, size_t dataSize, int type);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XVariant_create
+#define XVariant_create(...) XVariant_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XVARIANT_H

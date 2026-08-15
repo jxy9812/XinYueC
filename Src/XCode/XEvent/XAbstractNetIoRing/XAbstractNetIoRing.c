@@ -271,7 +271,7 @@ void XAbstractNetIoRing_init(XAbstractNetIoRing* ring) {
     /* 清零基类部分（子类应已先 memset 清零整个子类结构体） */
     memset(ring, 0, sizeof(XAbstractNetIoRing));
 
-    /* 初始化 XClass 基类（设置 m_vtable=NULL, m_free=NULL） */
+    /* 初始化 XClass 基类（设置 m_vtable 和默认 m_memory） */
     XClass_init(ring);
 
     /* 设置基类虚函数表（含默认实现），子类可在调用本函数后自行重载 */
@@ -300,12 +300,12 @@ void XAbstractNetIoRing_cleanupQueues(XAbstractNetIoRing* ring) {
     ring->m_enabled = false;
 }
 
-XAbstractNetIoRing* XAbstractNetIoRing_create(void) {
-    XAbstractNetIoRing* ring = (XAbstractNetIoRing*)XMalloc_System(sizeof(XAbstractNetIoRing));
+XAbstractNetIoRing* XAbstractNetIoRing_create_ex(XMemoryType memory) {
+    XAbstractNetIoRing* ring = (XAbstractNetIoRing*)XMemory_malloc(sizeof(XAbstractNetIoRing), memory);
     if (!ring) return NULL;
 
     XAbstractNetIoRing_init(ring);
-    Set_Class_MemoryFree(ring, XFree_System);
+    Set_Class_Memory(ring, memory); Set_Class_IsHeap(ring, true);
     return ring;
 }
 

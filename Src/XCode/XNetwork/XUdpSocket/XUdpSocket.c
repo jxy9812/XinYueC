@@ -38,13 +38,13 @@ void XUdpSocket_init(XUdpSocket* sock)
     XClassSetVtable(sock, XUdpSocket);
 }
 
-XUdpSocket* XUdpSocket_create(void)
+XUdpSocket* XUdpSocket_create_ex(XMemoryType memory)
 {
-    XUdpSocket* sock = (XUdpSocket*)XMalloc_System(sizeof(XUdpSocket));
+    XUdpSocket* sock = (XUdpSocket*)XMemory_malloc(sizeof(XUdpSocket), memory);
     if (!sock) return NULL;
     
     XUdpSocket_init(sock);
-    Set_Class_MemoryFree(sock, XFree_System);
+    Set_Class_Memory(sock, memory); Set_Class_IsHeap(sock, true);
     return sock;
 }
 

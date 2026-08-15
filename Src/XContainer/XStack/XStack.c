@@ -18,13 +18,13 @@ static bool VXStack_receive(XStack* stack, void* pvBuffer);
 static void VXClass_copy(XStack* object, const XStack* src);
 static void VXClass_move(XStack* object, XStack* src);
 //初始化函数
-XStack* XStack_create(size_t typeSize)
+XStack* XStack_create_ex(XMemoryType memory, size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_stack = XMalloc_System(sizeof(XVector));
+	XVector* this_stack = XMemory_malloc(sizeof(XVector), memory);
 	XStack_init(this_stack, typeSize);
-	Set_Class_MemoryFree(this_stack, XFree_System);
+	Set_Class_Memory(this_stack, memory); Set_Class_IsHeap(this_stack, true);
 	return this_stack;
 }
 
@@ -114,9 +114,11 @@ bool VXStack_receive(XStack* stack, void* pvBuffer)
 
 void VXClass_copy(XStack* object, const XStack* src)
 {
-	if (XClassIsVtableNull(object))
+	bool target_uninitialized = XClassIsVtableNull(object);
+	if (target_uninitialized)
 	{
 		XStack_init(object, XContainerTypeSize(src));
+		Class_Memory(object) = Class_Memory(src);
 	}
 	else if (!XStack_isEmpty_base(object))
 	{
@@ -133,7 +135,10 @@ void VXClass_copy(XStack* object, const XStack* src)
 
 void VXClass_move(XStack * object, XStack * src)
 {
-	if (XClassIsVtableNull(object))
+	XMemory* source_memory = Class_Memory(src);
+	bool target_uninitialized = XClassIsVtableNull(object);
+	XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+	if (target_uninitialized)
 	{
 		XStack_init(object, XContainerTypeSize(src));
 	}
@@ -141,5 +146,9 @@ void VXClass_move(XStack * object, XStack * src)
 	{
 		XStack_clear_base(object);
 	}
-	XSwap(object, src, sizeof(XStack));
+	XSwap((XClass*)object + 1, (XClass*)src + 1,
+		sizeof(XStack) - sizeof(XClass));
+	Class_Memory(object) = source_memory;
+	if (!target_uninitialized)
+		Class_Memory(src) = target_memory;
 }

@@ -83,25 +83,20 @@ void XHttp2Frame_init(XHttp2Frame* self)
     self->m_payload = XByteArray_create();
 }
 
-XHttp2Frame* XHttp2Frame_create(void)
+XHttp2Frame* XHttp2Frame_create_ex(XMemoryType memory, uint8_t type, uint8_t flags,
+                                   uint32_t streamId,
+                                   const XByteArray* payload)
 {
-    XHttp2Frame* self = (XHttp2Frame*)XMalloc_System(sizeof(XHttp2Frame));
+    XHttp2Frame* self = (XHttp2Frame*)XMemory_malloc(sizeof(XHttp2Frame), memory);
     if (!self)
         return NULL;
     XHttp2Frame_init(self);
     if (!self->m_payload) {
         XHttp2Frame_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_free(self, memory);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
-    return self;
-}
-
-XHttp2Frame* XHttp2Frame_create_ex(uint8_t type, uint8_t flags, uint32_t streamId,
-                                   const XByteArray* payload)
-{
-    XHttp2Frame* self = XHttp2Frame_create();
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self || !XHttp2Frame_setStreamId(self, streamId) || !XHttp2Frame_setPayload(self, payload)) {
         if (self) XClass_delete_base((XClass*)self);
         return NULL;
@@ -277,7 +272,7 @@ XHttp2Frame* XHttp2Frame_fromBytes(const void* data, size_t size, size_t* consum
     payload = XByteArray_create_with_data((const char*)(bytes + 9), length);
     if (!payload)
         return NULL;
-    frame = XHttp2Frame_create_ex(bytes[3], bytes[4],
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, bytes[3], bytes[4],
                                   ((uint32_t)(bytes[5] & 0x7f) << 24) |
                                   ((uint32_t)bytes[6] << 16) |
                                   ((uint32_t)bytes[7] << 8) | bytes[8], payload);

@@ -78,7 +78,7 @@ XVtable* XObject_class_init();
  * @return 指向新创建的 XObject 对象的指针，失败返回 NULL
  * @note 内部调用 XMalloc_System 分配内存，再调用 XObject_init 初始化
  */
-XObject* XObject_create();
+XObject* XObject_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化 XObject 实例的成员变量
@@ -524,4 +524,9 @@ void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*d
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XObject_create
+#define XObject_create(...) XObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

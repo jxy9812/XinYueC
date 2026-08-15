@@ -51,13 +51,13 @@ void XSqlQuery_init_database(XSqlQuery* query, const XSqlDatabase* database)
     }
 }
 
-XSqlQuery* XSqlQuery_create(void)
+XSqlQuery* XSqlQuery_create_ex(XMemoryType memory)
 {
-    XSqlQuery* query = (XSqlQuery*)XMalloc_System(sizeof(XSqlQuery));
+    XSqlQuery* query = (XSqlQuery*)XMemory_malloc(sizeof(XSqlQuery), memory);
     if (!query) return NULL;
     memset(query, 0, sizeof(*query));
     XSqlQuery_init(query);
-    Set_Class_MemoryFree(query, XFree_System);
+    Set_Class_Memory(query, memory); Set_Class_IsHeap(query, true);
     return query;
 }
 

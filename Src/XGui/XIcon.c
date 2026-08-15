@@ -142,12 +142,12 @@ XVtable* XIcon_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XIcon* XIcon_create()
+XIcon* XIcon_create_ex(XMemoryType memory)
 {
-    XIcon* self = (XIcon*)XMalloc_System(sizeof(XIcon));
+    XIcon* self = (XIcon*)XMemory_malloc(sizeof(XIcon), memory);
     if (!self) return NULL;
     XIcon_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

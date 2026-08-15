@@ -24,6 +24,8 @@ static void VXBitArray_copy(XBitArray* dest, const XBitArray* src);
 static void VXBitArray_move(XBitArray* dest, XBitArray* src);
 static void VXBitArray_deinit(XBitArray* array);
 static bool VXBitArray_clear(XBitArray* array);
+static void XBitArray_init_with_memory(XBitArray* array, size_t initialBitCount,
+    bool useCow, XMemoryType memory);
 
 XVtable* XBitArray_class_init() {
     XVTABLE_INIT_DEFAULT(XBitArray)
@@ -52,7 +54,7 @@ static bool VXBitArrayDetachIfNeeded(XBitArray* array)
     size_t byteCount = BYTE_COUNT(XBitArray_count(array));
     if (byteCount == 0) byteCount = 1;
 
-    XSharedData* newShared = XSharedData_create(NULL, byteCount);
+    XSharedData* newShared = XSharedData_create_ex(NULL, byteCount, XContainer_memory(array));
     if (!newShared) return false;
 
     // 拷贝数据
@@ -60,7 +62,7 @@ static bool VXBitArrayDetachIfNeeded(XBitArray* array)
     if (oldData && byteCount > 0)
         memcpy(newShared->data, oldData, byteCount);
 
-    XSharedData_release(sd);
+    XSharedData_release(sd, XContainer_memory(array));
     XContainerSetDataPtr(array, newShared);
     return true;
 }
@@ -79,17 +81,25 @@ static void VXBitArrayDataDelete(void* data, XBitArray* array)
 void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 {
     if (!dest || !src) return;
-    if (XClassIsVtableNull(dest))
+    bool target_uninitialized = XClassIsVtableNull(dest);
+    if (target_uninitialized) {
         XBitArray_init(dest, 0, false);
+        Class_Memory(dest) = Class_Memory(src);
+    }
+    else if (XContainerIsCow(src) &&
+        XContainer_memory(dest) != XContainer_memory(src)) {
+        return;
+    }
 
     // 释放目标原有数据
     if (XContainerIsCow(dest)) {
         if ((XSharedData*)XContainerDataPtr(dest))
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest), VXBitArrayDataDelete, dest);
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest),
+                VXBitArrayDataDelete, dest, XContainer_memory(dest));
     }
     else {
         if (XContainerDataPtr(dest))
-            XFree_System(XContainerDataPtr(dest));
+            XContainer_free(dest, XContainerDataPtr(dest));
     }
 
     // 拷贝元数据（包括 m_useCow、容量、大小等）
@@ -106,7 +116,7 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
         // 非 COW 模式：深拷贝原始数据
         if (XContainerDataPtr(src) && XContainerSize(src) > 0) {
             size_t bytes = BYTE_COUNT(XContainerSize(src));
-            void* newData = XMalloc_System(bytes);
+            void* newData = XContainer_malloc(dest, bytes);
             if (newData) {
                 memcpy(newData, XContainerDataPtr(src), bytes);
                 XContainerDataPtr(dest) = newData;
@@ -126,21 +136,23 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 void VXBitArray_move(XBitArray* dest, XBitArray* src)
 {
     if (!dest || !src) return;
-    if (XClassIsVtableNull(dest))
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(dest);
+    if (target_uninitialized) {
         XBitArray_init(dest, 0, false);
-
-    // 释放目标原有数据
-    if (XContainerIsCow(dest)) {
-        if ((XSharedData*)XContainerDataPtr(dest))
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest), VXBitArrayDataDelete, dest);
     }
-    else {
+    else if (XContainerIsCow(dest)) {
         if (XContainerDataPtr(dest))
-            XFree_System(XContainerDataPtr(dest));
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest),
+                VXBitArrayDataDelete, dest, XContainer_memory(dest));
+    }
+    else if (XContainerDataPtr(dest)) {
+        XContainer_free(dest, XContainerDataPtr(dest));
     }
 
     // 转移所有权
     memcpy((XClass*)dest + 1, (XClass*)src + 1, sizeof(XBitArray) - sizeof(XClass));
+    Class_Memory(dest) = source_memory;
 
     // 清空源对象
     if (XContainerIsCow(src)) {
@@ -160,11 +172,12 @@ void VXBitArray_deinit(XBitArray* array)
 
     if (XContainerIsCow(array)) {
         if ((XSharedData*)XContainerDataPtr(array))
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(array), VXBitArrayDataDelete, array);
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(array),
+                VXBitArrayDataDelete, array, XContainer_memory(array));
     }
     else {
         if (XContainerDataPtr(array))
-            XFree_System(XContainerDataPtr(array));
+            XContainer_free(array, XContainerDataPtr(array));
     }
     XContainerSize(array) = 0;
     XContainerCapacity(array) = 0;
@@ -181,9 +194,9 @@ bool VXBitArray_clear(XBitArray* array)
     // COW 模式且共享：直接丢弃共享块，创建空数据
     if (XContainerIsCow(array) && (XSharedData*)XContainerDataPtr(array) && XSharedData_isShared((XSharedData*)XContainerDataPtr(array)))
     {
-        XSharedData_release((XSharedData*)XContainerDataPtr(array));
+        XSharedData_release((XSharedData*)XContainerDataPtr(array), XContainer_memory(array));
         // 创建至少1字节的空数据
-        XSharedData* sd = XSharedData_create(NULL, 1);
+        XSharedData* sd = XSharedData_create_ex(NULL, 1, XContainer_memory(array));
         if (sd) {
             XContainerSetDataPtr(array, sd);
             XContainerCapacity(array) = 8;
@@ -203,19 +216,21 @@ bool VXBitArray_clear(XBitArray* array)
 
 // ======================== 公开 API ========================
 
-XBitArray* XBitArray_create_ex(size_t initialBitCount, bool useCow)
+XBitArray* XBitArray_create_ex(XMemoryType memory, size_t initialBitCount, bool useCow)
 {
-    XBitArray* array = XNew(XBitArray);
+    XBitArray* array = XMemory_malloc(sizeof(XBitArray), memory);
     if (array) {
-        XBitArray_init(array, initialBitCount, useCow);
-        Set_Class_MemoryFree(array, XFree_System);
+        XBitArray_init_with_memory(array, initialBitCount, useCow, memory);
+        Set_Class_Memory(array, memory); Set_Class_IsHeap(array, true);
     }
     return array;
 }
 
 XBitArray* XBitArray_create_copy(const XBitArray* other) {
     if (!other) return NULL;
-    XBitArray* array = XBitArray_create_ex(0, XContainerIsCow((XBitArray*)other));
+    XMemoryType memory = XContainerIsCow((XBitArray*)other) ?
+        XContainer_memory_type((const XContainer*)other) : XCLASS_DEFAULT_MEMORY_TYPE;
+    XBitArray* array = XBitArray_create_ex(memory, 0, XContainerIsCow((XBitArray*)other));
     if (array) {
         XBitArray_copy_base(array, other);
     }
@@ -224,25 +239,28 @@ XBitArray* XBitArray_create_copy(const XBitArray* other) {
 
 XBitArray* XBitArray_create_move(XBitArray* other) {
     if (!other) return NULL;
-    XBitArray* array = XBitArray_create_ex(0, XContainerIsCow(other));
+    XBitArray* array = XBitArray_create_ex(XContainer_memory_type((const XContainer*)other),
+        0, XContainerIsCow(other));
     if (array) {
         XBitArray_move_base(array, other);
     }
     return array;
 }
 
-void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
+static void XBitArray_init_with_memory(XBitArray* array, size_t initialBitCount,
+    bool useCow, XMemoryType memory)
 {
     if (!array) return;
     // 初始化基类，类型大小设为1（字节）
     XContainer_init(&array->m_class, 1, useCow);
     XClassSetVtable(array, XBitArray);
+    Set_Class_Memory(array, memory);
 
     size_t initialBytes = BYTE_COUNT(initialBitCount);
     if (initialBytes == 0) initialBytes = 1;
 
     if (XContainerIsCow(array)) {
-        XSharedData* sd = XSharedData_create(NULL, initialBytes);
+        XSharedData* sd = XSharedData_create_ex(NULL, initialBytes, XContainer_memory(array));
         if (sd) {
             XContainerSetDataPtr(array, sd);
             memset(sd->data, 0, initialBytes);
@@ -252,7 +270,7 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
         }
     }
     else {
-        void* raw = XMalloc_System(initialBytes);
+        void* raw = XContainer_malloc(array, initialBytes);
         if (raw) {
             XContainerDataPtr(array) = raw;
             memset(raw, 0, initialBytes);
@@ -264,6 +282,12 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
     XContainerCapacity(array) = initialBytes * 8;
     XContainerSize(array) = initialBitCount;
     array->m_bitOrder = XBIT_ORDER_LSB_FIRST;
+}
+
+void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
+{
+    XBitArray_init_with_memory(array, initialBitCount, useCow,
+        XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 bool XBitArray_setBit(XBitArray* array, size_t index, bool value)
@@ -318,17 +342,17 @@ bool XBitArray_resize(XBitArray* array, size_t newBitCount)
     if (newBytes > oldBytes) {
         // 需要扩容
         if (XContainerIsCow(array)) {
-            XSharedData* newSd = XSharedData_create(NULL, newBytes);
+            XSharedData* newSd = XSharedData_create_ex(NULL, newBytes, XContainer_memory(array));
             if (!newSd) return false;
             // 拷贝旧数据
             void* oldData = XContainerSharedDataPtr(array);
             if (oldData && oldBytes > 0)
                 memcpy(newSd->data, oldData, oldBytes);
-            XSharedData_release((XSharedData*)XContainerDataPtr(array));
+            XSharedData_release((XSharedData*)XContainerDataPtr(array), XContainer_memory(array));
             XContainerSetDataPtr(array, newSd);
         }
         else {
-            void* newRaw = XRealloc_System(XContainerDataPtr(array), newBytes);
+            void* newRaw = XContainer_realloc(array, XContainerDataPtr(array), newBytes);
             if (!newRaw) return false;
             XContainerDataPtr(array) = newRaw;
         }

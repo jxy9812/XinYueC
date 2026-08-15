@@ -35,15 +35,15 @@ void XClass_move_base(XClass* object, XClass* src)
 void XClass_delete_base(XClass* object)
 {
 	if (!object)return;
-	FreeMethod release = Class_MemoryFree(object);
-	if (release)
-	{
-		XClass_deinit_base(object);
-		release(object);
-	}
+	bool is_heap = Class_IsHeap(object);
+	XMemory* memory = Class_Memory(object);
+	if (!memory)
+		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	XClass_deinit_base(object);
+	if (!is_heap)
+		return;
+	if (memory && memory->free)
+		memory->free(object);
 	else
-	{
-		XClass_deinit_base(object);
 		XFree_System(object);
-	}
 }

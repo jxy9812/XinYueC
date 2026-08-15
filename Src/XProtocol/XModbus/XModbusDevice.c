@@ -45,12 +45,12 @@ XVtable* XModbusDevice_class_init()
 }
 
 // =============== 创建/初始化 ===============
-XModbusDevice* XModbusDevice_create()
+XModbusDevice* XModbusDevice_create_ex(XMemoryType memory)
 {
-    XModbusDevice* dev = (XModbusDevice*)XMalloc_System(sizeof(XModbusDevice));
+    XModbusDevice* dev = (XModbusDevice*)XMemory_malloc(sizeof(XModbusDevice), memory);
     if (dev) {
         XModbusDevice_init(dev);
-        Set_Class_MemoryFree(dev, XFree_System);
+        Set_Class_Memory(dev, memory); Set_Class_IsHeap(dev, true);
     }
     return dev;
 }

@@ -66,8 +66,7 @@ XVtable* XModbusDataUnit_class_init();
 *          - 数据容器：创建空的int16_t类型XVector
 *          - 数据数量：0
 */
-XModbusDataUnit* XModbusDataUnit_create();
-XModbusDataUnit* XModbusDataUnit_create_ex(XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
+XModbusDataUnit* XModbusDataUnit_create_ex(XMemoryType memory, XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit);
 XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit);
 /**
@@ -249,4 +248,10 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 typedef XMap XModbusDataUnitMap;
 XModbusDataUnitMap* XModbusDataUnitMap_create();
 #define XModbusDataUnitMap_delete_base XMapBase_delete_base
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusDataUnit_create
+#define XModbusDataUnit_create() \
+	XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusInvalid, 0xFFFF, 0)
+
 #endif // XMODBUSDATAUNIT_H

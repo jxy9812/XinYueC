@@ -14,6 +14,29 @@ static size_t VXContainer_capacity(const  XContainer* Object);
 static size_t VXContainer_typeSize(const XContainer* Object);
 static void VXContainer_swap(XContainer* a, XContainer* b);
 static void VXContainer_clear(XContainer* Object);
+
+static void VXContainer_destroy_raw_data(XContainer* object)
+{
+    if (!object || !object->m_data)
+        return;
+    if (object->m_dataDeinitMethod) {
+        for (size_t i = 0; i < object->m_size; ++i)
+            object->m_dataDeinitMethod((char*)object->m_data + i * object->m_typeSize);
+    }
+    XContainer_free(object, object->m_data);
+    object->m_data = NULL;
+    object->m_capacity = 0;
+    object->m_size = 0;
+}
+
+static void VXContainer_destroy_shared_data(void* data, void* arg)
+{
+    XContainer* object = (XContainer*)arg;
+    if (!object || !data || !object->m_dataDeinitMethod)
+        return;
+    for (size_t i = 0; i < object->m_size; ++i)
+        object->m_dataDeinitMethod((char*)data + i * object->m_typeSize);
+}
 XVtable* XContainer_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XContainer)
@@ -74,17 +97,26 @@ void VXContainer_clear(XContainer* Object)
 void VXClass_copy(XContainer* dst, const XContainer* src)
 {
     if (!dst || !src) return;
-    if (XClassIsVtableNull(dst))
-        XContainer_init(dst, 0, false);
+    bool target_uninitialized = XClassIsVtableNull(dst);
+    if (target_uninitialized) {
+        XContainer_init(dst, XContainerTypeSize(src), XContainerIsCow(src));
+        Class_Memory(dst) = Class_Memory(src);
+    }
+    else if (XContainerIsCow(src) &&
+        XContainer_memory(dst) != XContainer_memory(src)) {
+        /* COW 共享块不能跨内存池共享。 */
+        return;
+    }
     // 1. 释放目标原有资源
     if (XContainerIsCow(dst))
     {
         if (dst->m_data)
-            XSharedData_release_with(dst->m_data, NULL, NULL);
+            XSharedData_release_with(dst->m_data, VXContainer_destroy_shared_data,
+                dst, XContainer_memory(dst));
     }
     else {
         if (dst->m_data)
-            XFree_System(dst->m_data);
+            VXContainer_destroy_raw_data(dst);
     }
 
     // 2. 拷贝公共字段（包括 m_useCow、大小、容量、回调等）
@@ -101,7 +133,7 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
         // 非 COW 模式：深拷贝原始数据
         if (src->m_data && src->m_size > 0) {
             size_t bytes = src->m_capacity * src->m_typeSize;
-            dst->m_data = XMalloc_System(bytes);
+            dst->m_data = XContainer_malloc(dst, bytes);
             if (dst->m_data) {
                 memcpy(dst->m_data, src->m_data, src->m_size * src->m_typeSize);
             }
@@ -115,20 +147,23 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
 void VXClass_move(XContainer* dst, XContainer* src)
 {
     if (!dst || !src) return;
-    if (XClassIsVtableNull(dst))
-        XContainer_init(dst, 0, false);
-    // 1. 释放目标原有资源
-    if (XContainerIsCow(dst)) {
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(dst);
+    if (target_uninitialized) {
+        XContainer_init(dst, XContainerTypeSize(src), XContainerIsCow(src));
+    }
+    else if (XContainerIsCow(dst)) {
         if (dst->m_data)
-            XSharedData_release_with(dst->m_data, NULL, NULL);
+            XSharedData_release_with(dst->m_data, VXContainer_destroy_shared_data,
+                dst, XContainer_memory(dst));
     }
     else {
-        if (dst->m_data)
-            XFree_System(dst->m_data);
+        VXContainer_destroy_raw_data(dst);
     }
 
-    // 2. 拷贝所有字段（包括 m_useCow）
+    // 先按目标原内存池释放成员，再接管源成员和源内存池。
     memcpy((XClass*)dst + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
+    Class_Memory(dst) = source_memory;
 
     // 3. 清空源对象（不再持有资源）
     src->m_data = NULL;
@@ -145,11 +180,11 @@ void VXContainer_deinit(XContainer* obj)
     // 释放数据块
     if (obj->m_useCow) {
         if (obj->m_data)
-            XSharedData_release_with(obj->m_data, NULL, NULL);
+            XSharedData_release_with(obj->m_data, NULL, NULL, XContainer_memory(obj));
     }
     else {
         if (obj->m_data)
-            XFree_System(obj->m_data);
+            XContainer_free(obj, obj->m_data);
     }
     obj->m_data = NULL;
     obj->m_capacity = 0;

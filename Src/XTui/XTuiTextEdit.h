@@ -50,7 +50,7 @@ XVtable* XTuiTextEdit_class_init(void);
 void XTuiTextEdit_init(XTuiTextEdit* edit);
 
 /** @brief 在堆上创建控件对象。 */
-XTuiTextEdit* XTuiTextEdit_create(void);
+XTuiTextEdit* XTuiTextEdit_create_ex(XMemoryType memory);
 
 #define XTuiTextEdit_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiTextEdit_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -92,4 +92,9 @@ bool XTuiTextEdit_deleteChar(XTuiTextEdit* edit);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiTextEdit_create
+#define XTuiTextEdit_create(...) XTuiTextEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_TEXTEDIT_H */

@@ -47,12 +47,12 @@ XVtable* XEvent_class_init()
 	XCLASS_SHOW_SIZE_DEFAULT(XEvent);
 	return XVTABLE_DEFAULT;
 }
-XEvent* XEvent_create(XEventType code)
+XEvent* XEvent_create_ex(XMemoryType memory, XEventType code)
 {
-	XEvent* event = XMalloc_MultiPool(sizeof(XEvent));
+	XEvent* event = XMemory_malloc(sizeof(XEvent), memory);
 	if (!event)return NULL;
 	XEvent_init(event, code);
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
 void XEvent_init(XEvent* event,XEventType type)
@@ -81,12 +81,12 @@ XVtable* XEventFunc_class_init()
 	XCLASS_SHOW_SIZE_DEFAULT(XEventFunc);
 	return XVTABLE_DEFAULT;
 }
-XEventFunc* XEventFunc_create(XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*))
+XEventFunc* XEventFunc_create_ex(XMemoryType memory, XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*))
 {
-	XEventFunc* event = XMalloc_MultiPool(sizeof(XEventFunc));
+	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc), memory);
 	if (!event)return NULL;
 	XEventFunc_init(event, func, argList, del_argList);
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
 void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
@@ -130,9 +130,9 @@ XVtable* XMetaCallEvent_class_init()
 	XCLASS_SHOW_SIZE_DEFAULT(XMetaCallEvent);
 	return XVTABLE_DEFAULT;
 }
-XMetaCallEvent* XMetaCallEvent_create(XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
+XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory, XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
-	XMetaCallEvent* event = XMalloc_MultiPool(sizeof(XMetaCallEvent));
+	XMetaCallEvent* event = XMemory_malloc(sizeof(XMetaCallEvent), memory);
 	//XPrintf("XMetaCallEvent:%p 创建\n", event);
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_META_CALL);
@@ -143,7 +143,7 @@ XMetaCallEvent* XMetaCallEvent_create(XObject* sender,XSlotFunc1 func, size_t si
 	event->argList = argList;
 	event->ref_count = ref_count;
 	event->sem = sem;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	
 	return event;
 }
@@ -223,13 +223,13 @@ XEventType XEvent_type(const XEvent* event)
 	return event ? event->type : XEVENT_TYPE_NONE;
 }
 
-XKeyEvent* XKeyEvent_create(XEventType type, int key, XKeyboardModifiers modifiers)
+XKeyEvent* XKeyEvent_create_ex(XMemoryType memory, XEventType type, int key, XKeyboardModifiers modifiers)
 {
-	XKeyEvent* event = XNew(XKeyEvent);
+	XKeyEvent* event = XMemory_malloc(sizeof(XKeyEvent), memory);
 	if (!event)
 		return NULL;
 	XKeyEvent_init(event, type, key, modifiers);
-	Set_Class_MemoryFree(event, XFree_System);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
 
@@ -254,14 +254,14 @@ XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event)
 	return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
 }
 
-XMouseEvent* XMouseEvent_create(XEventType type, XMouseButton button,
+XMouseEvent* XMouseEvent_create_ex(XMemoryType memory, XEventType type, XMouseButton button,
 	XKeyboardModifiers modifiers, XPoint position)
 {
-	XMouseEvent* event = XNew(XMouseEvent);
+	XMouseEvent* event = XMemory_malloc(sizeof(XMouseEvent), memory);
 	if (!event)
 		return NULL;
 	XMouseEvent_init(event, type, button, modifiers, position);
-	Set_Class_MemoryFree(event, XFree_System);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
 
@@ -308,15 +308,15 @@ int XEvent_registerEventType(int hint)
 	return -1; // 失败
 }
 
-XDeferredDeleteEvent* XDeferredDeleteEvent_create(bool isDelete, int loopLevel, int scopeLevel)
+XDeferredDeleteEvent* XDeferredDeleteEvent_create_ex(XMemoryType memory, bool isDelete, int loopLevel, int scopeLevel)
 {
-	XDeferredDeleteEvent* event = XMalloc_MultiPool(sizeof(XDeferredDeleteEvent));
+	XDeferredDeleteEvent* event = XMemory_malloc(sizeof(XDeferredDeleteEvent), memory);
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_DEFERRED_DELETE);
 	event->isDelete = isDelete;
 	event->loopLevel = loopLevel;
 	event->scopeLevel = scopeLevel;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	
 	return event;
 }
@@ -350,14 +350,14 @@ bool XDeferredDeleteEvent_shouldDeliver(const XDeferredDeleteEvent* event,
 		|| (explicitlyRequested && eventLevel == currentLevel);
 }
 
-XTimerEvent* XTimerEvent_create(XTimerId id)
+XTimerEvent* XTimerEvent_create_ex(XMemoryType memory, XTimerId id)
 {
-	XTimerEvent* event = XMalloc_MultiPool(sizeof(XTimerEvent));
+	XTimerEvent* event = XMemory_malloc(sizeof(XTimerEvent), memory);
 	
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	//XPrintf("XTimerEvent:%p 创建 type:%d\n", event,event->m_base.type);
 	return event;
 }
@@ -367,32 +367,32 @@ XTimerId XTimerEvent_timerId(const XTimerEvent* event)
 		((XTimerEvent*)event)->timerId : 0;
 }
 
-XEventSockAct* XEventSockAct_create(XFd fd, XSocketActType actType)
+XEventSockAct* XEventSockAct_create_ex(XMemoryType memory, XFd fd, XSocketActType actType)
 {
-	XEventSockAct* event = XMalloc_MultiPool(sizeof(XEventSockAct));
+	XEventSockAct* event = XMemory_malloc(sizeof(XEventSockAct), memory);
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_SOCK_ACT);
 	event->fd = fd;
 	event->actType = actType;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
-XEventSockClose* XEventSockClose_create(XFd fd)
+XEventSockClose* XEventSockClose_create_ex(XMemoryType memory, XFd fd)
 {
-	XEventSockClose* event = XMalloc_MultiPool(sizeof(XEventSockClose));
+	XEventSockClose* event = XMemory_malloc(sizeof(XEventSockClose), memory);
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_SOCK_CLOSE);
 	event->fd = fd;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
-XChildEvent* XChildEvent_create(XEventType type, XObject* child)
+XChildEvent* XChildEvent_create_ex(XMemoryType memory, XEventType type, XObject* child)
 {
-	XChildEvent* event = XMalloc_MultiPool(sizeof(XChildEvent));
+	XChildEvent* event = XMemory_malloc(sizeof(XChildEvent), memory);
 	if (!event)return NULL;
 	XEvent_init(event, type);
 	event->child = child;
-	Set_Class_MemoryFree(event, XFree_MultiPool);
+	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
 	return event;
 }
 
@@ -444,8 +444,10 @@ void XChildEvent_handler(XChildEvent* event, XObject* receiver)
 	XEvent_accept((XEvent*)event);
 }
 
-XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create(const char* name)
+XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create_ex(XMemoryType memory, const char* name)
 {
+	(void)memory;
+	(void)name;
 	return NULL;
 }
 
@@ -464,30 +466,30 @@ void VXEvent_default_setAccepted(XEvent* event, bool accepted)
 
 XEvent* VXEvent_default_clone(const XEvent* event)
 {
-	XEvent* copy = (XEvent*)XMalloc_System(sizeof(XEvent));
+	XEvent* copy = (XEvent*)XClass_Malloc(XEvent);
 	if (copy) {
 		memcpy(copy, event, sizeof(XEvent));
-		Set_Class_MemoryFree(copy, XFree_System);
+		Set_Class_IsHeap(copy, true);
 	}
 	return copy;
 }
 
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
 {
-	XKeyEvent* copy = XNew(XKeyEvent);
+	XKeyEvent* copy = XClass_Malloc(XKeyEvent);
 	if (copy) {
 		memcpy(copy, event, sizeof(XKeyEvent));
-		Set_Class_MemoryFree(copy, XFree_System);
+		Set_Class_IsHeap(copy, true);
 	}
 	return (XEvent*)copy;
 }
 
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event)
 {
-	XMouseEvent* copy = XNew(XMouseEvent);
+	XMouseEvent* copy = XClass_Malloc(XMouseEvent);
 	if (copy) {
 		memcpy(copy, event, sizeof(XMouseEvent));
-		Set_Class_MemoryFree(copy, XFree_System);
+		Set_Class_IsHeap(copy, true);
 	}
 	return (XEvent*)copy;
 }

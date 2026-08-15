@@ -78,15 +78,13 @@ void XTuiScreen_init(XTuiScreen* screen);
  * @brief 在堆上创建默认（1x1）屏幕对象。
  * @return 新对象，失败返回 NULL；使用 XTuiScreen_delete_base 释放。
  */
-XTuiScreen* XTuiScreen_create(void);
-
 /**
  * @brief 在堆上创建指定尺寸的屏幕对象。
  * @param width 列数，必须大于 0。
  * @param height 行数，必须大于 0。
  * @return 新对象，失败返回 NULL；使用 XTuiScreen_delete_base 释放。
  */
-XTuiScreen* XTuiScreen_create_ex(int width, int height);
+XTuiScreen* XTuiScreen_create_ex(XMemoryType memory, int width, int height);
 
 #define XTuiScreen_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiScreen_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -198,4 +196,10 @@ void XTuiCell_makeDefault(XTuiCell* cell);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiScreen_create
+#define XTuiScreen_create() \
+	XTuiScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 1, 1)
+
 #endif /* XTUI_SCREEN_H */

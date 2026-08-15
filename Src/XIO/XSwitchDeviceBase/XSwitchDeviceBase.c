@@ -3,15 +3,15 @@
 #include<string.h>
 #define Parent(ptr) ((XIODevice*)(ptr))
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_class.m_port))
-XSwitchDeviceBase* XSwitchDeviceBase_create()
+XSwitchDeviceBase* XSwitchDeviceBase_create_ex(XMemoryType memory)
 {
-	XSwitchDeviceBase* sw = XMalloc_System(sizeof(XSwitchDeviceBase));
+	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase), memory);
 	//开始初始化
 	memset(sw, 0, sizeof(XSwitchDeviceBase));
 	if (sw == NULL)
 		return NULL;
 	XSwitchDeviceBase_init(sw);
-	Set_Class_MemoryFree(sw, XFree_System);
+	Set_Class_Memory(sw, memory); Set_Class_IsHeap(sw, true);
 	return sw;
 }
 

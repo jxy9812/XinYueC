@@ -43,7 +43,7 @@ XVtable* XVariantList_class_init();
 * @return 创建成功的XVariantList实例指针，失败返回NULL
 * @note 动态分配内存并调用XVariantList_init完成初始化，初始化为空列表
 */
-XVariantList* XVariantList_create();
+XVariantList* XVariantList_create_ex(XMemoryType memory);
 /**
 * @brief 拷贝构造创建XVariantList实例
 * @param other 待拷贝的XVariantList实例指针
@@ -225,4 +225,9 @@ void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XVariantList_create
+#define XVariantList_create(...) XVariantList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // !XVARIANTLIST_H

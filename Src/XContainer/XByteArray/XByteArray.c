@@ -135,13 +135,13 @@ XVariant* XByteArray_toVariant_data(const void* data, size_t size)
 	return var;
 }
 
-XByteArray* XByteArray_create_ex(bool useCow)
+XByteArray* XByteArray_create_ex(XMemoryType memory, bool useCow)
 {
-	XByteArray* array = XMalloc_System(sizeof(XByteArray));
+	XByteArray* array = XMemory_malloc(sizeof(XByteArray), memory);
 	if (array == NULL)
 		return NULL;
 	XByteArray_init(array, useCow);
-	Set_Class_MemoryFree(array, XFree_System);
+	Set_Class_Memory(array, memory); Set_Class_IsHeap(array, true);
 	return array;
 }
 
@@ -169,7 +169,7 @@ XByteArray* XByteArray_create_copy(const XByteArray* other)
 {
 	if (other == NULL)
 		return NULL;
-	XByteArray* v = XByteArray_create();
+	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
 	XByteArray_copy_base(v, other);
 	return v;
 }
@@ -178,7 +178,7 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 {
 	if (other == NULL)
 		return NULL;
-	XByteArray* v = XByteArray_create();
+	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
 	XByteArray_move_base(v, other);
 	return v;
 }

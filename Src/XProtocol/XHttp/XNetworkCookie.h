@@ -68,7 +68,7 @@ XVtable* XNetworkCookie_class_init(void);
  * - @param value 值；借用，创建时深拷贝；可为 NULL。
  * - @return 新 Cookie；调用者必须使用 XNetworkCookie_delete_base 释放。
  */
-XNetworkCookie* XNetworkCookie_create(const XByteArray* name, const XByteArray* value);
+XNetworkCookie* XNetworkCookie_create_ex(XMemoryType memory,  const XByteArray* name, const XByteArray* value);
 
 /**
  * - @brief 创建空 HTTP Cookie。
@@ -273,7 +273,7 @@ XVtable* XNetworkCookieJar_class_init(void);
  * - @brief 创建空 CookieJar。
  * - @return 新建 CookieJar；调用者必须使用 XNetworkCookieJar_delete_base 释放，分配失败返回 NULL。
  */
-XNetworkCookieJar* XNetworkCookieJar_create(void);
+XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory);
 /**
  * - @brief 初始化 CookieJar。
  * - @param self 待初始化的 CookieJar；不能为 NULL。
@@ -349,5 +349,12 @@ size_t XNetworkCookieJar_size(const XNetworkCookieJar* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkCookie_create
+#define XNetworkCookie_create(...) XNetworkCookie_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XNetworkCookieJar_create
+#define XNetworkCookieJar_create(...) XNetworkCookieJar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif

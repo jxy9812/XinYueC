@@ -69,7 +69,7 @@ typedef struct XNetworkAddressEntry {
  * @brief 创建一个空的 XNetworkAddressEntry 实例。
  * @return 新分配的实例，需调用 XNetworkAddressEntry_delete_base() 释放。
  */
-XNetworkAddressEntry* XNetworkAddressEntry_create(void);
+XNetworkAddressEntry* XNetworkAddressEntry_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建一个指定 IP 地址的 XNetworkAddressEntry 实例。
@@ -305,5 +305,10 @@ void XNetworkAddressEntry_swap(XNetworkAddressEntry* entry1, XNetworkAddressEntr
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkAddressEntry_create
+#define XNetworkAddressEntry_create(...) XNetworkAddressEntry_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XNETWORKADDRESSENTRY_H

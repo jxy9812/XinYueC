@@ -49,18 +49,13 @@ XVtable* XState_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XState* XState_create(void)
+XState* XState_create_ex(XMemoryType memory, XState_ChildMode childMode, XState* parent)
 {
-    return XState_create_ex(XState_ExclusiveStates, NULL);
-}
-
-XState* XState_create_ex(XState_ChildMode childMode, XState* parent)
-{
-    XState* state = XNew(XState);
+    XState* state = XMemory_malloc(sizeof(XState), memory);
     if (!state)
         return NULL;
     XState_init_ex(state, childMode, parent);
-    Set_Class_MemoryFree(state, XFree_System);
+    Set_Class_Memory(state, memory); Set_Class_IsHeap(state, true);
     return state;
 }
 
@@ -211,7 +206,7 @@ XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender,
     if (!state || !sender || !signal || !target)
         return NULL;
 
-    XSignalTransition* transition = XSignalTransition_create_ex(sender, signal, state);
+    XSignalTransition* transition = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sender, signal, state);
     if (!transition)
         return NULL;
     if (!XAbstractTransition_setTargetState((XAbstractTransition*)transition, target)) {
@@ -226,11 +221,11 @@ XAbstractTransition* XState_addTransition_3(XState* state, XAbstractState* targe
     if (!state || !target)
         return NULL;
 
-    XAbstractTransition* transition = XNew(XAbstractTransition);
+    XAbstractTransition* transition = XClass_Malloc(XAbstractTransition);
     if (!transition)
         return NULL;
     XAbstractTransition_init(transition, state);
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_IsHeap(transition, true);
     if (!XAbstractTransition_setTargetState(transition, target)) {
         XAbstractTransition_delete_base((XClass*)transition);
         return NULL;

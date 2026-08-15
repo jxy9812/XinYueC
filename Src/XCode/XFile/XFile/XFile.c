@@ -125,12 +125,12 @@ XVtable* XFile_class_init(void)
  * 构造与析构
  * ============================================================================ */
 
-XFile* XFile_create(void)
+XFile* XFile_create_ex(XMemoryType memory)
 {
-    XFile* file = (XFile*)XMalloc_System(sizeof(XFile));
+    XFile* file = (XFile*)XMemory_malloc(sizeof(XFile), memory);
     if (!file) return NULL;
     XFile_init(file);
-    Set_Class_MemoryFree(file, XFree_System);
+    Set_Class_Memory(file, memory); Set_Class_IsHeap(file, true);
     return file;
 }
 

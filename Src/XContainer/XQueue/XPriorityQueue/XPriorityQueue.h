@@ -47,7 +47,7 @@ void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare c
 * @return 创建成功的优先队列实例指针，失败返回NULL
 * @note 内部分配内存并调用XPriorityQueue_init完成初始化
 */
-XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOrder order);
+XPriorityQueue* XPriorityQueue_create_ex(XMemoryType memory,  size_t typeSize, XCompare compare, XSortOrder order);
 /**
 * @brief 从优先队列中移除指定元素
 * @param this_queue 优先队列实例指针
@@ -262,4 +262,9 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XPriorityQueue_create
+#define XPriorityQueue_create(...) XPriorityQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

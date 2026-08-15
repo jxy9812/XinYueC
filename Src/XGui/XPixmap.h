@@ -45,7 +45,7 @@ XVtable* XPixmap_class_init();
  * @brief      在堆上创建 XPixmap 实例
  * @return     指向新创建的 XPixmap 对象的指针，失败返回 NULL
  */
-XPixmap* XPixmap_create();
+XPixmap* XPixmap_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XPixmap 实例（创建空像素图）
@@ -422,5 +422,10 @@ void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XPixmap_create
+#define XPixmap_create(...) XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XPIXMAP_H */
 

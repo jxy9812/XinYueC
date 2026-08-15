@@ -270,12 +270,12 @@ XVtable* XPicture_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XPicture* XPicture_create()
+XPicture* XPicture_create_ex(XMemoryType memory)
 {
-    XPicture* self = (XPicture*)XMalloc_System(sizeof(XPicture));
+    XPicture* self = (XPicture*)XMemory_malloc(sizeof(XPicture), memory);
     if (!self) return NULL;
     XPicture_init(self, -1);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

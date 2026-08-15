@@ -178,10 +178,10 @@ void XHostAddress_init(XHostAddress* addr) {
 
 // ==================== 构造函数 ====================
 
-XHostAddress* XHostAddress_create(void) {
-    XHostAddress* addr = (XHostAddress*)XMalloc_System(sizeof(XHostAddress));
+XHostAddress* XHostAddress_create_ex(XMemoryType memory) {
+    XHostAddress* addr = (XHostAddress*)XMemory_malloc(sizeof(XHostAddress), memory);
     if (addr) XHostAddress_init(addr);
-    Set_Class_MemoryFree(addr, XFree_System);
+    Set_Class_Memory(addr, memory); Set_Class_IsHeap(addr, true);
     return addr;
 }
 

@@ -48,7 +48,7 @@ XVtable* XMqttLastWillProperties_class_init(void);
  * @brief 创建遗嘱消息属性实例
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttLastWillProperties* XMqttLastWillProperties_create(void);
+XMqttLastWillProperties* XMqttLastWillProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建遗嘱消息属性的深拷贝
@@ -218,7 +218,7 @@ typedef struct XMqttConnectionProperties {
 } XMqttConnectionProperties;
 
 XVtable* XMqttConnectionProperties_class_init(void);
-XMqttConnectionProperties* XMqttConnectionProperties_create(void);
+XMqttConnectionProperties* XMqttConnectionProperties_create_ex(XMemoryType memory);
 XMqttConnectionProperties* XMqttConnectionProperties_create_copy(const XMqttConnectionProperties* other);
 void XMqttConnectionProperties_init(XMqttConnectionProperties* prop);
 
@@ -309,7 +309,7 @@ XVtable* XMqttServerConnectionProperties_class_init(void);
  * @brief 创建服务端连接属性实例
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttServerConnectionProperties* XMqttServerConnectionProperties_create(void);
+XMqttServerConnectionProperties* XMqttServerConnectionProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建服务端连接属性的深拷贝
@@ -444,5 +444,14 @@ XString* XMqttServerConnectionProperties_serverReference(const XMqttServerConnec
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttConnectionProperties_create
+#define XMqttConnectionProperties_create(...) XMqttConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XMqttLastWillProperties_create
+#define XMqttLastWillProperties_create(...) XMqttLastWillProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XMqttServerConnectionProperties_create
+#define XMqttServerConnectionProperties_create(...) XMqttServerConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTCONNECTIONPROPERTIES_H

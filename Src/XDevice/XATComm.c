@@ -64,12 +64,12 @@ void XATComm_init(XATComm* comm, XIODevice* io)
     }
 }
 
-XATComm* XATComm_create(XIODevice* io)
+XATComm* XATComm_create_ex(XMemoryType memory, XIODevice* io)
 {
-    XATComm* comm = XMalloc_System(sizeof(XATComm));
+    XATComm* comm = XMemory_malloc(sizeof(XATComm), memory);
     if (ISNULL(comm, "malloc failed")) return NULL;
     XATComm_init(comm, io);
-    Set_Class_MemoryFree(comm, XFree_System);
+    Set_Class_Memory(comm, memory); Set_Class_IsHeap(comm, true);
     return comm;
 }
 

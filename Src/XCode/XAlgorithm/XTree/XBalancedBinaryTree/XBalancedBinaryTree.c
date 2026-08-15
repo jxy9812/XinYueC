@@ -8,9 +8,18 @@ size_t XBBTreeNode_typeSize()
 }
 XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 {
+	return XBBTree_create_ex(pvData, TypeSize,
+		XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+}
+
+XBBTreeNode* XBBTree_create_ex(const char* pvData, const size_t TypeSize, XMemory* memory)
+{
 	//分配 [结构体][孩子指针槽][用户数据] 连续内存，与 XRBTree_create 保持一致
 	//原先仅分配 sizeof(XBBTreeNode)（无孩子指针槽与数据空间），XTreeNode_init 的 memset/memcpy 会越界写
-	XBBTreeNode* nodes = XMalloc_System(XBBTreeNode_typeSize() + TypeSize);
+	if (!memory)
+		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	XBBTreeNode* nodes = memory && memory->malloc
+		? (XBBTreeNode*)memory->malloc(XBBTreeNode_typeSize() + TypeSize) : NULL;
 	if (nodes == NULL)
 		return NULL;
 	XBTreeNode_init(nodes, XBBTreeNode_typeSize(), pvData, TypeSize);
@@ -20,12 +29,12 @@ XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 
 /*                                                  删除函数                                                       */
 //删除的是叶子节点
-static void leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
+static void leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, XMemory* memory)
 {
 
 	if (XBTreeNode_GetParent(eraseNode) == NULL)//是叶子也是根
 	{
-		XTreeNode_delete(eraseNode);
+		XTreeNode_delete(eraseNode, memory);
 		*this_root = NULL;
 		return;
 	}
@@ -34,11 +43,11 @@ static void leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 	XBBTreeNode** parent = XTreeNode_getChildrenParentRef(eraseNode);
 	if (parent)
 		*parent = NULL;
-	XTreeNode_delete(eraseNode);
+	XTreeNode_delete(eraseNode, memory);
 	XBBTree_SetLayerNumberAll(this_root, temp);
 }
 //删除的是只有一个孩子
-static void OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
+static void OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, XMemory* memory)
 {
 	XBBTreeNode* ChildNode = NULL;//孩子节点
 	XBBTreeNode* eraseLeft = XBTreeNode_GetLChild(eraseNode);
@@ -53,7 +62,7 @@ static void OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 		XBBTreeNode** parent = XTreeNode_getChildrenParentRef(eraseNode);
 		if (parent)
 			*parent = NULL;
-		XTreeNode_delete(eraseNode);
+		XTreeNode_delete(eraseNode, memory);
 		*this_root = ChildNode;
 		return;
 	}
@@ -63,13 +72,13 @@ static void OneChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 	XBBTreeNode** parent = XTreeNode_getChildrenParentRef(eraseNode);
 	if (parent)
 		*parent = NULL;
-	XTreeNode_delete(eraseNode);
+	XTreeNode_delete(eraseNode, memory);
 	*temp = ChildNode;//将父节点的指针指向新的孩子;
 	XBTreeNode_GetParent(ChildNode) = currentParent;//孩子的指针也指向新的父节点
 	XBBTree_SetLayerNumberAll(this_root, currentParent);
 }
 //删除的是有两个孩子
-static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size_t dataSize)
+static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size_t dataSize, XMemory* memory)
 {
 	XBBTreeNode* LeftChildNode = XBTreeNode_GetLChild(eraseNode);//左孩子节点
 	XBBTreeNode* rightChildNode = XBTreeNode_GetRChild(eraseNode);//右孩子节点
@@ -88,7 +97,7 @@ static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size
 
 		XBBTreeNode* freeNode = preCursor;
 		preCursor = XBTreeNode_GetLChild(preCursor);//左子树的左子树
-		XTreeNode_delete(freeNode);
+		XTreeNode_delete(freeNode, memory);
 		XBTreeNode_SetLChild(LPparent, preCursor);//开始建立新的父子关系
 		if (preCursor != NULL)
 			XBTreeNode_SetParent(preCursor, LPparent);
@@ -116,7 +125,7 @@ static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size
 		LPparent = XBTreeNode_GetParent(preCursor);
 		XBBTreeNode* freeNode = preCursor;
 		preCursor = XBTreeNode_GetLChild(preCursor);//左子树的左子树
-		XTreeNode_delete(freeNode);
+		XTreeNode_delete(freeNode, memory);
 		XBTreeNode_SetRChild(LPparent, preCursor);//开始建立新的父子关系
 		if (preCursor != NULL)
 			XBTreeNode_SetParent(preCursor, LPparent);
@@ -126,7 +135,7 @@ static void TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, size
 
 }
 
-void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, size_t dataSize)
+void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, size_t dataSize, XMemory* memory)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
@@ -139,11 +148,11 @@ void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne R
 	if (XBTreeNode_GetRChild(findRet) != NULL)
 		++count;
 	if (count == 0)//叶子
-		leaf_erase(this_root, findRet);
+		leaf_erase(this_root, findRet, memory);
 	if (count == 1)//一个孩子
-		OneChild_erase(this_root, findRet);
+		OneChild_erase(this_root, findRet, memory);
 	if (count == 2)//两个孩子
-		TwoChild_erase(this_root, findRet,dataSize);
+		TwoChild_erase(this_root, findRet,dataSize, memory);
 	return NULL;
 }
 XBBTreeNode* XBBTree_findNode(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
@@ -169,13 +178,13 @@ XBBTreeNode* XBBTree_findNode(XBBTreeNode* this_root, XCompare compare, XCompare
 	return NULL;
 }
 /*                                              插入                                           */
-bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize)
+bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize, XMemory* memory)
 {
 	//if (!XBTree_insertData(insertNode, pvData, 0))//插入数据
 
 	if (pvData&&!XTreeNode_setData(insertNode,pvData, dataSize))
 	{
-		XTreeNode_delete(insertNode);//插入失败释放创建的节点
+		XTreeNode_delete(insertNode, memory);//插入失败释放创建的节点
 		return false;
 	}
 	if (this_root == NULL || *this_root == NULL)//如果没有根节点或根为空
@@ -222,20 +231,20 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XComp
 			}
 		}
 	}
-	XTreeNode_delete(insertNode);
+	XTreeNode_delete(insertNode, memory);
 	return false;
 }
-XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize)
+XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize, XMemory* memory)
 {
 	if (ISNULL(compare, ""))
 		return NULL;
 	if (ISNULL(pvData, ""))
 		return NULL;
 	//创建一个新的节点
-	XBBTreeNode* NewNode = XBBTree_create(pvData, dataSize);
+	XBBTreeNode* NewNode = XBBTree_create_ex(pvData, dataSize, memory);
 	if (ISNULL(NewNode, ""))
 		return NULL;
-	bool flag = XBBTree_insertAlign(this_root, NewNode, compare, lessRule, pvData, dataSize);
+	bool flag = XBBTree_insertAlign(this_root, NewNode, compare, lessRule, pvData, dataSize, memory);
 	if (!flag)
 	{
 		printf("节点插入失败\n");

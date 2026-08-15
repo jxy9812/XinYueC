@@ -206,7 +206,7 @@ static void VXStringDataDelete(void* data, XString* str)
     if (str->m_cache)
     {
         XString_deinitCache(str);
-        XFree_System(str->m_cache);
+        XContainer_free(str, str->m_cache);
         str->m_cache = NULL;
     }
 }
@@ -214,13 +214,19 @@ static void VXStringDataDelete(void* data, XString* str)
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
-    if (XClassIsVtableNull(object))
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized)
     {
         XString_init(object);
+        Class_Memory(object) = Class_Memory(src);
+    }
+    else if (XContainer_memory(object) != XContainer_memory(src)) {
+        return;
     }
     else if ((XSharedData*)XContainerDataPtr(object))
     {
-        XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXStringDataDelete, object);
+        XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+            VXStringDataDelete, object, XContainer_memory(object));
     }
 
     // 共享源数据的 XSharedData（COW 机制）
@@ -238,13 +244,15 @@ static void VXClass_copy(XString* object, const XString* src)
 // 类方法：移动
 static void VXClass_move(XString* object, XString* src) 
 {
+    XMemory* source_memory = Class_Memory(src);
     if (XClassIsVtableNull(object))
     {
         XString_init(object);
     }
     else if ((XSharedData*)XContainerDataPtr(object))
     {
-        XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXStringDataDelete, object);
+        XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+            VXStringDataDelete, object, XContainer_memory(object));
     }
 
     // 转移资源所有权
@@ -258,6 +266,7 @@ static void VXClass_move(XString* object, XString* src)
     XContainerSize(src) = 0;
     XContainerCapacity(src) = 0;
     src->m_cache = NULL;
+    Class_Memory(object) = source_memory;
 }
 
 // 类方法：销毁
@@ -265,7 +274,8 @@ static void VXClass_deinit(XString* str)
 {
     if (!str) return;
     if((XSharedData*)XContainerDataPtr(str))
-        XSharedData_release_with((XSharedData*)XContainerDataPtr(str), VXStringDataDelete, str);
+        XSharedData_release_with((XSharedData*)XContainerDataPtr(str),
+            VXStringDataDelete, str, XContainer_memory(str));
     XContainerSize(str) = 0;
     XContainerCapacity(str) = 0;
     XContainerSetDataPtr(str, NULL);
@@ -274,7 +284,7 @@ static void VXClass_deinit(XString* str)
     if (str->m_cache)
     {
         XString_deinitCache(str);
-        XFree_System(str->m_cache);
+        XContainer_free(str, str->m_cache);
         str->m_cache = NULL;
     }
 }
@@ -294,11 +304,11 @@ static void VXContainer_clear(XString* str)
     // 如果数据被共享，减少引用并创建空数据
     if ((XSharedData*)XContainerDataPtr(str) && XSharedData_isShared((XSharedData*)XContainerDataPtr(str)))
     {
-        XSharedData_release((XSharedData*)XContainerDataPtr(str));
+        XSharedData_release((XSharedData*)XContainerDataPtr(str), XContainer_memory(str));
 
                 // 创建新的空数据（一次分配）
         size_t bytes = sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1);
-        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(str));
         if (newShared)
         {
             memset(newShared->data, 0, bytes);

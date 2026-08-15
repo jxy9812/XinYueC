@@ -1,15 +1,15 @@
 ﻿#include"XTimerData.h"
 #include"XMemory.h"
 #include<string.h>
-XTimerData* XTimerData_create(XVtable* vtable)
+XTimerData* XTimerData_create_ex(XMemoryType memory, XVtable* vtable)
 {
 	if (vtable == NULL)
 		return NULL;
-	XTimerData* timer = XMalloc_System(sizeof(XTimerData));
+	XTimerData* timer = XMemory_malloc(sizeof(XTimerData), memory);
 	if (timer == NULL)
 		return NULL;
 	XTimerData_init(timer,vtable);
-	Set_Class_MemoryFree(timer, XFree_System);
+	Set_Class_Memory(timer, memory); Set_Class_IsHeap(timer, true);
 	return timer;
 }
 

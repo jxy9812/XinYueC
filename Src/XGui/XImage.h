@@ -45,7 +45,7 @@ XVtable* XImage_class_init();
  * @brief      在堆上创建 XImage 实例
  * @return     指向新创建的 XImage 对象的指针，失败返回 NULL
  */
-XImage* XImage_create();
+XImage* XImage_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XImage 实例（创建空图像）
@@ -581,4 +581,9 @@ const char* XImage_formatToStr(XImageFormat format);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XImage_create
+#define XImage_create(...) XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XIMAGE_H */

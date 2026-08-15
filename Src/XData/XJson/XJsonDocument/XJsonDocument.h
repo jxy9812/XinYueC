@@ -9,11 +9,13 @@ extern "C" {
 #include "XJsonArray.h"
 #include "XString.h"
 #include "XByteArray.h"
+#include "XClass.h"
 /**
 * @brief JSON文档结构体
 * @details 封装JSON文档的根节点（可为对象、数组或其他JSON值），提供JSON的解析与生成功能
 */
 typedef struct XJsonDocument {
+	XClass m_class; ///< 文档对象的内存方法和堆对象标志
 	XJsonValue root; ///< 文档的根节点值（支持对象、数组、基本类型等）
 } XJsonDocument;
 // 构造与析构函数
@@ -21,7 +23,7 @@ typedef struct XJsonDocument {
 * @brief 创建一个空的XJsonDocument实例
 * @return 成功返回XJsonDocument指针，失败返回NULL
 */
-XJsonDocument* XJsonDocument_create(void);
+XJsonDocument* XJsonDocument_create_ex(XMemoryType memory);
 /**
 * @brief 通过深拷贝创建XJsonDocument实例
 * @param copy 被拷贝的XJsonDocument实例
@@ -300,4 +302,9 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XJsonDocument_create
+#define XJsonDocument_create(...) XJsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XJSONDOCUMENT_H

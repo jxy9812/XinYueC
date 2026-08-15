@@ -84,7 +84,7 @@ void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType
  * @param dbmsType 实际数据库类型。
  * @return 新驱动对象，调用者必须使用 XSqlDriver_delete_base 释放；失败返回 NULL。
  */
-XSqlDriver* XSqlDriver_create(XSqlDriverType driverType, XSqlDbmsType dbmsType);
+XSqlDriver* XSqlDriver_create_ex(XMemoryType memory,  XSqlDriverType driverType, XSqlDbmsType dbmsType);
 
 /** @brief 调用 XClass 析构入口释放驱动对象及其最近错误。 */
 #define XSqlDriver_deinit_base XClass_deinit_base
@@ -324,5 +324,10 @@ void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlDriver_create
+#define XSqlDriver_create(...) XSqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLDRIVER_H */

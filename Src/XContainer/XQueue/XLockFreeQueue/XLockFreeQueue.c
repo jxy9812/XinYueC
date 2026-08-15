@@ -19,6 +19,30 @@ static bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer);
 static void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src);
 static void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src);
 static void VXClass_deinit(XLockFreeQueue* this_queue);
+static void XLockFreeQueue_init_with_memory(XLockFreeQueue* this_queue,
+    size_t typeSize, size_t count, XMemoryType memoryType);
+
+static void* XLockFreeQueue_aligned_malloc(size_t size, size_t alignment,
+    XMemory* memory)
+{
+    if (!memory || !memory->malloc || alignment == 0)
+        return NULL;
+    void* raw = memory->malloc(size + alignment - 1 + sizeof(void*));
+    if (!raw)
+        return NULL;
+    uintptr_t address = ALIGN_UP((uintptr_t)raw + sizeof(void*), alignment);
+    ((void**)address)[-1] = raw;
+    return (void*)address;
+}
+
+static void XLockFreeQueue_aligned_free(void* ptr, XMemory* memory)
+{
+    if (!ptr)
+        return;
+    void* raw = ((void**)ptr)[-1];
+    if (memory && memory->free)
+        memory->free(raw);
+}
 
 XVtable* XLockFreeQueue_class_init()
 {
@@ -39,17 +63,35 @@ XVtable* XLockFreeQueue_class_init()
     XCLASS_SHOW_SIZE_DEFAULT(XLockFreeQueue);
     return XVTABLE_DEFAULT;
 }
-XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count)
+XLockFreeQueue* XLockFreeQueue_create_ex(XMemoryType memory, size_t typeSize, size_t count)
 {
     if (ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
-    XLockFreeQueue* this_queue = XAlignedMalloc_System(sizeof(XLockFreeQueue), CACHE_LINE_SIZE);
+    XMemory* memoryMethod = XMemory_method(memory);
+    XLockFreeQueue* this_queue = XLockFreeQueue_aligned_malloc(
+        sizeof(XLockFreeQueue), CACHE_LINE_SIZE, memoryMethod);
     if (!this_queue) return NULL;
-    XLockFreeQueue_init(this_queue, typeSize, count);
-    Set_Class_MemoryFree(this_queue, XAlignedFree_System);
+    XLockFreeQueue_init_with_memory(this_queue, typeSize, count, memory);
+    Set_Class_IsHeap(this_queue, true);
     return this_queue;
 }
+
+void XLockFreeQueue_delete_base(XLockFreeQueue* this_queue)
+{
+    if (!this_queue) return;
+    XMemory* memory = Class_Memory(this_queue);
+    XClass_deinit_base((XClass*)this_queue);
+    XLockFreeQueue_aligned_free(this_queue, memory);
+}
+
 void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t count)
+{
+    XLockFreeQueue_init_with_memory(this_queue, typeSize, count,
+        XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+static void XLockFreeQueue_init_with_memory(XLockFreeQueue* this_queue,
+    size_t typeSize, size_t count, XMemoryType memoryType)
 {
     if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
@@ -60,6 +102,7 @@ void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t cou
     }
     // 现在 actual_buffer_size 是 >= (count+1) 的最小2的幂
     XVector_init(this_queue, typeSize,false);
+    Set_Class_Memory(this_queue, memoryType);
     XVector_resize_base(this_queue, actual_buffer_size);
     this_queue->m_index_bits =XAtomic_index_bits(actual_buffer_size);
     //this_queue->m_index_mask = XAtomic_index_mask(this_queue->m_index_bits);
@@ -238,7 +281,7 @@ void* VXLockFreeQueue_top(XLockFreeQueue* this_queue)
 
 bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 {
-    if (!this_queue || !pvBuffer ) return false;
+    if (!this_queue) return false;
 
     size_t old_head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
     size_t new_head_packed;
@@ -277,11 +320,11 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 
     // 如果有删除方法，则调用它
    /* if (XContainerDataDeinitMethod(this_queue) != NULL) {
-        void* temp = XMalloc_System(type_size);
+        void* temp = XContainer_malloc(this_queue, type_size);
         if (temp != NULL) {
             memcpy(temp, read_slot, type_size);
             XContainerDataDeinitMethod(this_queue)(temp);
-            XFree_System(temp);
+            XContainer_free(this_queue, temp);
         }
     }*/
 
@@ -290,23 +333,32 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
 {
     if (!object || !src) return;
-    if (XClassIsVtableNull(object))
-        XLockFreeQueue_init(object, XContainerTypeSize(src), XContainerCapacity(src) - 1);
+    if (XClassIsVtableNull(object)) {
+        XLockFreeQueue_init_with_memory(object, XContainerTypeSize(src),
+            XContainerCapacity(src) - 1, XContainer_memory_type(src));
+    }
     XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*, const XVector*))(object, src);
     object->m_head = src->m_head;
     object->m_tail = src->m_tail;
 }
 void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src)
 {
-    if (XClassIsVtableNull(object))
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+    if (target_uninitialized)
     {
-        XLockFreeQueue_init(object, XContainerTypeSize(src), XContainerCapacity(src)-1);
+        XLockFreeQueue_init_with_memory(object, XContainerTypeSize(src),
+            XContainerCapacity(src)-1, XContainer_memory_type(src));
     }
     else if (!XLockFreeQueue_isEmpty_base(object))
     {
         XLockFreeQueue_clear_base(object);
     }
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeQueue) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
+    if (!target_uninitialized)
+        Class_Memory(src) = target_memory;
 }
 void VXClass_deinit(XLockFreeQueue* this_queue)
 {

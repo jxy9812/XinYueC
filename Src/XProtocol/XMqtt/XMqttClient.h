@@ -144,7 +144,7 @@ XVtable* XMqttClient_class_init(void);
 /**
  * @brief 在堆上创建并初始化 XMqttClient 实例
  */
-XMqttClient* XMqttClient_create(void);
+XMqttClient* XMqttClient_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化 XMqttClient 实例
@@ -774,5 +774,10 @@ void* XMqttClient_authenticationFinished_signal(XMqttClient* client, const XMqtt
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttClient_create
+#define XMqttClient_create(...) XMqttClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTCLIENT_H

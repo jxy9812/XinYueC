@@ -54,11 +54,11 @@ XVtable* XModbusClient_class_init(void)
 }
 
 // ================== 构造/析构 ==================
-XModbusClient* XModbusClient_create(void) {
-    XModbusClient* client = (XModbusClient*)XMalloc_System(sizeof(XModbusClient));
+XModbusClient* XModbusClient_create_ex(XMemoryType memory) {
+    XModbusClient* client = (XModbusClient*)XMemory_malloc(sizeof(XModbusClient), memory);
     if (client) {
         XModbusClient_init(client);
-        Set_Class_MemoryFree(client, XFree_System);
+        Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
     }
     return client;
 }

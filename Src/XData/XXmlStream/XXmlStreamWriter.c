@@ -917,13 +917,13 @@ XVtable* XXmlStreamWriter_class_init(void)
  * @brief      创建一个动态分配的 XXmlStreamWriter。
  * @return     成功返回对象指针，内存不足时返回 NULL。
  */
-XXmlStreamWriter* XXmlStreamWriter_create(void)
+XXmlStreamWriter* XXmlStreamWriter_create_ex(XMemoryType memory)
 {
-    XXmlStreamWriter* self = (XXmlStreamWriter*)XMalloc_System(sizeof(XXmlStreamWriter));
+    XXmlStreamWriter* self = (XXmlStreamWriter*)XMemory_malloc(sizeof(XXmlStreamWriter), memory);
     if (!self) return NULL;
 
     XXmlStreamWriter_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

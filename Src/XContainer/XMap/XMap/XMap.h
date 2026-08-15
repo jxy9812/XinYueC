@@ -42,14 +42,14 @@ XVtable* XMap_class_init();
  * @param useCow 是否启用 COW（true=COW，false=非COW）
  * @return 成功返回 XMap 指针，失败返回 NULL
  */
-XMap* XMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
+XMap* XMap_create_ex(XMemoryType memory, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
 
 /**
  * @brief 创建 XMap 实例（默认使用 COW 模式）
  * @note 宏定义，展开为 XMap_create_ex(keyTypeSize, valTypeSize, compare, true)
  */
 #define XMap_create(keyTypeSize, valTypeSize, compare) \
-    XMap_create_ex(keyTypeSize, valTypeSize, compare, true)
+    XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, compare, true)
 /**
 * @brief 拷贝创建XMap实例
 * @param other 待拷贝的XMap实例指针
@@ -293,4 +293,10 @@ static inline void XMap_squeeze_base(XMap* this_map) { (void)this_map; }
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XMap_create
+#define XMap_create(keyTypeSize, valTypeSize, compare) \
+	XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, compare, true)
+
 #endif // !XMAP_H

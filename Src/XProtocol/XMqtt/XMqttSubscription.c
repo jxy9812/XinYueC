@@ -24,12 +24,12 @@ XVtable* XMqttSubscription_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttSubscription* XMqttSubscription_create(const XMqttTopicFilter* topic, uint8_t qos)
+XMqttSubscription* XMqttSubscription_create_ex(XMemoryType memory, const XMqttTopicFilter* topic, uint8_t qos)
 {
-    XMqttSubscription* sub = (XMqttSubscription*)XMalloc_System(sizeof(XMqttSubscription));
+    XMqttSubscription* sub = (XMqttSubscription*)XMemory_malloc(sizeof(XMqttSubscription), memory);
     if (sub) {
         XMqttSubscription_init(sub, topic, qos);
-        Set_Class_MemoryFree(sub, XFree_System);
+        Set_Class_Memory(sub, memory); Set_Class_IsHeap(sub, true);
     }
     return sub;
 }

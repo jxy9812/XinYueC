@@ -49,7 +49,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize);
 * @return 创建成功的队列实例指针XQueue*，失败返回NULL
 * @note 内部调用XMalloc_System分配内存并调用XQueue_init初始化
 */
-XQueue* XQueue_create(size_t typeSize);
+XQueue* XQueue_create_ex(XMemoryType memory,  size_t typeSize);
 // ------------------------------ 入队操作 ------------------------------
 /**
 * @brief 类型安全的入队宏（拷贝语义，继承自基类）
@@ -249,4 +249,9 @@ XQueue* XQueue_create(size_t typeSize);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XQueue_create
+#define XQueue_create(...) XQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif  // !XQUEUE_H

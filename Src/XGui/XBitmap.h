@@ -39,7 +39,7 @@ XVtable* XBitmap_class_init();
  * @brief      在堆上创建 XBitmap 实例
  * @return     指向新创建的 XBitmap 对象的指针，失败返回 NULL
  */
-XBitmap* XBitmap_create();
+XBitmap* XBitmap_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XBitmap 实例（创建空位图）
@@ -155,6 +155,11 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XBitmap_create
+#define XBitmap_create(...) XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XBITMAP_H */
 
 

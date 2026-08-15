@@ -83,7 +83,7 @@ void XSslSocket_init(XSslSocket* self);
 /**
  * @brief 在堆上创建并初始化一个 XSslSocket 实例。
  */
-XSslSocket* XSslSocket_create(void);
+XSslSocket* XSslSocket_create_ex(XMemoryType memory);
 
 /* 继承自 XObject 的生命周期 */
 /** @brief 延迟销毁对象，对齐 QSslSocket::deleteLater()；self 由宏参数隐含传入。 */
@@ -772,5 +772,10 @@ void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSslSocket_create
+#define XSslSocket_create(...) XSslSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSSLSOCKET_H */

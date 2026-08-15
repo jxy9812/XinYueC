@@ -91,12 +91,12 @@ void XSqlDriverCreator_init(XSqlDriverCreator* creator, XSqlDriverCreateMethod c
     creator->m_parent.m_create = createMethod;
 }
 
-XSqlDriverCreator* XSqlDriverCreator_create(XSqlDriverCreateMethod createMethod)
+XSqlDriverCreator* XSqlDriverCreator_create_ex(XMemoryType memory, XSqlDriverCreateMethod createMethod)
 {
-    XSqlDriverCreator* creator = (XSqlDriverCreator*)XMalloc_System(sizeof(XSqlDriverCreator));
+    XSqlDriverCreator* creator = (XSqlDriverCreator*)XMemory_malloc(sizeof(XSqlDriverCreator), memory);
     if (!creator) return NULL;
     XSqlDriverCreator_init(creator, createMethod);
-    Set_Class_MemoryFree(creator, XFree_System);
+    Set_Class_Memory(creator, memory); Set_Class_IsHeap(creator, true);
     return creator;
 }
 
@@ -188,13 +188,13 @@ void XSqlDatabase_init(XSqlDatabase* database)
     XClassSetVtable(database, XSqlDatabase);
 }
 
-XSqlDatabase* XSqlDatabase_create(void)
+XSqlDatabase* XSqlDatabase_create_ex(XMemoryType memory)
 {
-    XSqlDatabase* database = (XSqlDatabase*)XMalloc_System(sizeof(XSqlDatabase));
+    XSqlDatabase* database = (XSqlDatabase*)XMemory_malloc(sizeof(XSqlDatabase), memory);
     if (!database) return NULL;
     memset(database, 0, sizeof(*database));
     XSqlDatabase_init(database);
-    Set_Class_MemoryFree(database, XFree_System);
+    Set_Class_Memory(database, memory); Set_Class_IsHeap(database, true);
     return database;
 }
 

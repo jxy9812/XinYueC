@@ -101,7 +101,7 @@ XVtable* XTuiKeyEvent_class_init(void);
  * @param modifiers 修饰键组合（XKeyboardModifier_*）。
  * @return 新事件；内存分配失败返回 NULL。
  */
-XTuiKeyEvent* XTuiKeyEvent_create(XEventType type, XTuiKeyType key, XKeyboardModifiers modifiers);
+XTuiKeyEvent* XTuiKeyEvent_create_ex(XMemoryType memory,  XEventType type, XTuiKeyType key, XKeyboardModifiers modifiers);
 
 /**
  * @brief 初始化调用者提供的 TUI 键盘事件存储。
@@ -152,4 +152,9 @@ XColor XTuiColor_fromIndex(uint8_t index);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiKeyEvent_create
+#define XTuiKeyEvent_create(...) XTuiKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_TYPES_H */

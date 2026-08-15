@@ -31,6 +31,9 @@ typedef struct XSharedData {
  */
 XSharedData* XSharedData_create(void* dataPtr, size_t  dataSize);
 
+/** @brief 使用指定内存方法创建 XSharedData；memory 为 NULL 时使用默认内存池。 */
+XSharedData* XSharedData_create_ex(void* dataPtr, size_t dataSize, XMemory* memory);
+
 /**
  * @brief 增加引用计数
  */
@@ -40,7 +43,7 @@ void XSharedData_addRef(XSharedData* sd);
  * @brief 减少引用计数，减到0则释放 XSharedData 块（不释放 data 指向的资源）
  * @return true 已释放，false 还有引用
  */
-bool XSharedData_release(XSharedData* sd);
+bool XSharedData_release(XSharedData* sd, XMemory* memory);
 
 /**
  * @brief 减少引用计数，减到0时调用 dataDeleter 释放 data 并释放 XSharedData 块
@@ -48,7 +51,8 @@ bool XSharedData_release(XSharedData* sd);
  * @param dataDeleter data 释放回调（可为 NULL，此时不释放 data）
  * @return true 已释放（XSharedData 已不可用），false 还有引用
  */
-bool XSharedData_release_with(XSharedData* sd, void (*dataDeleter)(void* data,void*arg),void* arg);
+bool XSharedData_release_with(XSharedData* sd, void (*dataDeleter)(void* data,void*arg),
+	void* arg, XMemory* memory);
 
 /**
  * @brief 判断数据是否被共享（引用计数 > 1）

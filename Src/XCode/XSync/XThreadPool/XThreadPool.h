@@ -32,7 +32,7 @@ XVtable* XThreadPool_class_init();
  * @param parent 父对象指针（可为NULL）
  * @return 指向新创建的XThreadPool对象的指针，失败返回NULL
  */
-XThreadPool* XThreadPool_create(XObject* parent);
+XThreadPool* XThreadPool_create_ex(XMemoryType memory,  XObject* parent);
 
 /**
  * @brief 初始化XThreadPool实例
@@ -196,4 +196,9 @@ void* XThreadPool_tasksEmpty_signal(XThreadPool* pool);
 
 #endif // XTHREADPOOL_ON
 #endif /* XSYNC_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XThreadPool_create
+#define XThreadPool_create(...) XThreadPool_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XTHREADPOOL_H

@@ -248,19 +248,19 @@ void XHttpRequest_init(XHttpRequest* self)
     self->m_maximumRedirectsAllowed = -1;
 }
 
-XHttpRequest* XHttpRequest_create(void)
+XHttpRequest* XHttpRequest_create_ex(XMemoryType memory)
 {
-    XHttpRequest* self = (XHttpRequest*)XMalloc_System(sizeof(XHttpRequest));
+    XHttpRequest* self = (XHttpRequest*)XMemory_malloc(sizeof(XHttpRequest), memory);
     if (!self)
         return NULL;
     XHttpRequest_init(self);
     if (!self->m_headers || !self->m_body || !self->m_http1Configuration ||
         !self->m_http2Configuration || !self->m_attributes) {
         XHttpRequest_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -359,7 +359,7 @@ bool XHttpRequest_setUrl_utf8(XHttpRequest* self, const char* url)
     if (!self || !url)
         return false;
     XString* text = XString_create_utf8(url);
-    XUrl* parsed = text ? XUrl_create_ex(text, XUrl_TolerantMode) : NULL;
+    XUrl* parsed = text ? XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, text, XUrl_TolerantMode) : NULL;
     bool result = parsed && XUrl_isValid(parsed) && XHttpRequest_setUrl(self, parsed);
     if (text) XClass_delete_base((XClass*)text);
     if (parsed) XClass_delete_base((XClass*)parsed);

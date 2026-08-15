@@ -65,7 +65,7 @@ XVtable* XXmlStreamWriter_class_init(void);
  * @brief      在堆上创建 XXmlStreamWriter 实例
  * @return      指向新创建的 XXmlStreamWriter 对象的指针，失败返回 NULL
  */
-XXmlStreamWriter* XXmlStreamWriter_create(void);
+XXmlStreamWriter* XXmlStreamWriter_create_ex(XMemoryType memory);
 
 /**
  * @brief      在堆上拷贝创建 XXmlStreamWriter 实例（深拷贝 buffer/deviceString/element 栈）
@@ -559,4 +559,9 @@ struct XIODevice* XXmlStreamWriter_device(const XXmlStreamWriter* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XXmlStreamWriter_create
+#define XXmlStreamWriter_create(...) XXmlStreamWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XXMLSTREAMWRITER_H */

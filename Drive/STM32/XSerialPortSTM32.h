@@ -29,7 +29,7 @@ typedef struct XSerialPort
 }XSerialPort;//串口
     XVtable* XSerialPort_class_init();
 #ifdef USE_STDPERIPH_DRIVER
-    XSerialPort* XSerialPort_create(XUsartGPIO* TX, XUsartGPIO* RX);
+    XSerialPort* XSerialPort_create_ex(XMemoryType memory,  XUsartGPIO* TX, XUsartGPIO* RX);
 #endif
     void XSerialPort_init(XSerialPort* serial);
     XSerialPort* XSerialPort_global(uint8_t port);
@@ -37,4 +37,9 @@ typedef struct XSerialPort
 }
 #endif
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XSerialPort_create
+#define XSerialPort_create(...) XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // Win32

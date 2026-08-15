@@ -27,7 +27,7 @@ typedef struct XSwitchDeviceSTM32
 XVtable* XSwitchDeviceSTM32_class_init();
 //开关设备
 #ifdef USE_STDPERIPH_DRIVER
-XSwitchDeviceSTM32* XSwitchDeviceSTM32_create(XSwitchGPIO* gpio);
+XSwitchDeviceSTM32* XSwitchDeviceSTM32_create_ex(XMemoryType memory,  XSwitchGPIO* gpio);
 #endif
 //初始化
 void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32* sw);
@@ -44,5 +44,10 @@ void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32* sw);
 }
 #endif
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSwitchDeviceSTM32_create
+#define XSwitchDeviceSTM32_create(...) XSwitchDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif

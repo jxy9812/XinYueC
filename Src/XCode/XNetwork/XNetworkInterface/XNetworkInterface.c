@@ -152,13 +152,13 @@ void XNetworkInterface_init(XNetworkInterface* iface)
     iface->isValid = false;
 }
 
-XNetworkInterface* XNetworkInterface_create(void)
+XNetworkInterface* XNetworkInterface_create_ex(XMemoryType memory)
 {
-    XNetworkInterface* iface = (XNetworkInterface*)XMalloc_System(sizeof(XNetworkInterface));
+    XNetworkInterface* iface = (XNetworkInterface*)XMemory_malloc(sizeof(XNetworkInterface), memory);
     if (!iface) return NULL;
     
     XNetworkInterface_init(iface);
-    Set_Class_MemoryFree(iface, XFree_System);
+    Set_Class_Memory(iface, memory); Set_Class_IsHeap(iface, true);
     return iface;
 }
 

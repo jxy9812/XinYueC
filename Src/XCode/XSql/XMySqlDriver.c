@@ -319,7 +319,7 @@ static bool xmysql_build_record(XMySqlResult* result, XSqlMySqlResult* raw,
         XString* name = XString_create_utf8(info && info->m_name ? info->m_name : "");
         XString* table = XString_create_utf8(info && info->m_table ? info->m_table : "");
         XSqlField* sqlField = info
-            ? XSqlField_create_ex(name, xmysql_variant_type(info->m_type, info->m_unsigned,
+            ? XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, name, xmysql_variant_type(info->m_type, info->m_unsigned,
                                                              info->m_nativeType,
                                                              result->m_parent.m_precisionPolicy), table)
             : NULL;
@@ -796,15 +796,20 @@ static XVtable* XMySqlResult_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XMySqlResult* XMySqlResult_create(const XSqlDriver* driver)
+static XMySqlResult* XMySqlResult_create_ex(XMemoryType memory, const XSqlDriver* driver)
 {
-    XMySqlResult* result = (XMySqlResult*)XCalloc_System(1, sizeof(*result));
+    XMySqlResult* result = XMemory_calloc(1, sizeof(XMySqlResult), memory);
     if (!result) return NULL;
     XSqlResult_init(&result->m_parent, driver);
     if (driver) result->m_parent.m_precisionPolicy = XSqlDriver_numericalPrecisionPolicy(driver);
     XClassSetVtable(result, XMySqlResult);
-    Set_Class_MemoryFree(result, XFree_System);
+    Set_Class_Memory(result, memory); Set_Class_IsHeap(result, true);
     return result;
+}
+
+static XMySqlResult* XMySqlResult_create(const XSqlDriver* driver)
+{
+    return XMySqlResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, driver);
 }
 
 static void VXMySqlResult_deinit(XMySqlResult* result)
@@ -1307,7 +1312,7 @@ static XSqlField* xmysql_field_from_column(XSqlResult* query,
     XString* nullText = nullValue ? XVariant_toString(nullValue) : NULL;
     XString* extraText = extraValue ? XVariant_toString(extraValue) : NULL;
     XSqlField* field = name
-        ? XSqlField_create_ex(name, xmysql_type_from_name(type ? XString_toUtf8(type) : NULL),
+        ? XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, name, xmysql_type_from_name(type ? XString_toUtf8(type) : NULL),
                               tableName) : NULL;
     if (field) {
         XSqlField_setRequired(field, nullText
@@ -1375,9 +1380,9 @@ static XVtable* XMySqlDriver_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XSqlDriver* XMySqlDriver_create(void)
+XSqlDriver* XMySqlDriver_create_ex(XMemoryType memory)
 {
-    XMySqlDriver* driver = (XMySqlDriver*)XCalloc_System(1, sizeof(*driver));
+    XMySqlDriver* driver = XMemory_calloc(1, sizeof(XMySqlDriver), memory);
     if (!driver) return NULL;
     XSqlDriver_init(&driver->m_parent, XSqlDriverType_MySql, XSqlDbmsType_MySql);
     XClassSetVtable(driver, XMySqlDriver);
@@ -1385,10 +1390,10 @@ XSqlDriver* XMySqlDriver_create(void)
     driver->m_client = driver->m_api && driver->m_api->create ? driver->m_api->create() : NULL;
     if (!driver->m_client) {
         XClass_Deinit_Parent(XSqlDriver, driver);
-        XFree_System(driver);
+        XMemory_method(memory)->free(driver);
         return NULL;
     }
-    Set_Class_MemoryFree(driver, XFree_System);
+    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
     return &driver->m_parent;
 }
 
@@ -1497,7 +1502,7 @@ static XSqlIndex* VXMySqlDriver_primaryIndex(const XSqlDriver* base, const XStri
             XString* cursorName = cursorValue ? XVariant_toString(cursorValue) : NULL;
             XSqlField* field = name && fields
                 ? XSqlRecord_field_utf8(fields, XString_toUtf8(name))
-                : name ? XSqlField_create_ex(name, XVariantType_String, tableName) : NULL;
+                : name ? XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, name, XVariantType_String, tableName) : NULL;
             if (field) {
                 XSqlIndex_append(index, field);
                 XSqlField_delete_base(field);
@@ -1727,11 +1732,16 @@ const XSqlMySqlClientApi* XMySqlDriver_clientApi(void)
     return g_xmysql_client_api ? g_xmysql_client_api : XSqlMySqlClient_defaultApi();
 }
 
+static XSqlDriver* XMySqlDriver_create_default(void)
+{
+    return XMySqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
 bool XMySqlDriver_register(void)
 {
     static XSqlDriverCreator* creator;
     if (creator) return true;
-    creator = XSqlDriverCreator_create(XMySqlDriver_create);
+    creator = XSqlDriverCreator_create(XMySqlDriver_create_default);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_MySql,
                                                          &creator->m_parent)) {
         if (creator) XSqlDriverCreator_delete_base(creator);

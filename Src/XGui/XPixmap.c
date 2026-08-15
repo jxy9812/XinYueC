@@ -141,12 +141,12 @@ XVtable* XPixmap_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XPixmap* XPixmap_create()
+XPixmap* XPixmap_create_ex(XMemoryType memory)
 {
-    XPixmap* self = (XPixmap*)XMalloc_System(sizeof(XPixmap));
+    XPixmap* self = (XPixmap*)XMemory_malloc(sizeof(XPixmap), memory);
     if (!self) return NULL;
     XPixmap_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

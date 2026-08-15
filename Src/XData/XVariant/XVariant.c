@@ -47,14 +47,14 @@ XVtable* XVariant_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-XVariant* XVariant_create(void* data, size_t dataSize, int type)
+XVariant* XVariant_create_ex(XMemoryType memory, void* data, size_t dataSize, int type)
 {
-	XVariant* var = (XVariant*)XMalloc_System(sizeof(XVariant));
+	XVariant* var = (XVariant*)XMemory_malloc(sizeof(XVariant), memory);
 	if (!var) return NULL;
 	/* 重要：必须先把 var 清零，避免 XVariant_init 读到未初始化的 m_data 等指针 */
 	memset(var, 0, sizeof(XVariant));
 	XVariant_init(var, data, dataSize, type);
-	Set_Class_MemoryFree(var, XFree_System);
+	Set_Class_Memory(var, memory); Set_Class_IsHeap(var, true);
 	return var;
 }
 

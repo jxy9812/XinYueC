@@ -515,9 +515,9 @@ static XVtable* XMockAtIo_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XMockAtIo* mockAtIo_create(void)
+static XMockAtIo* mockAtIo_create_ex(XMemoryType memory)
 {
-    XMockAtIo* io = XMalloc_System(sizeof(XMockAtIo));
+    XMockAtIo* io = XMemory_malloc(sizeof(XMockAtIo), memory);
     if (!io) return NULL;
     memset(io, 0, sizeof(*io));
     XIODevice_init(&io->m_base);
@@ -528,8 +528,13 @@ static XMockAtIo* mockAtIo_create(void)
         XClass_delete_base((XClass*)io);
         return NULL;
     }
-    Set_Class_MemoryFree(io, XFree_System);
+    Set_Class_Memory(io, memory); Set_Class_IsHeap(io, true);
     return io;
+}
+
+static XMockAtIo* mockAtIo_create(void)
+{
+    return mockAtIo_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 static bool mockAtIo_queueResponse(XMockAtIo* io, const char* response)

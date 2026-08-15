@@ -22,10 +22,10 @@ XVtable* XMqttSubscriptionProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttSubscriptionProperties* XMqttSubscriptionProperties_create(void)
+XMqttSubscriptionProperties* XMqttSubscriptionProperties_create_ex(XMemoryType memory)
 {
-    XMqttSubscriptionProperties* p = (XMqttSubscriptionProperties*)XMalloc_System(sizeof(XMqttSubscriptionProperties));
-    if (p) { XMqttSubscriptionProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttSubscriptionProperties* p = (XMqttSubscriptionProperties*)XMemory_malloc(sizeof(XMqttSubscriptionProperties), memory);
+    if (p) { XMqttSubscriptionProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 
@@ -104,10 +104,10 @@ XVtable* XMqttUnsubscriptionProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create(void)
+XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create_ex(XMemoryType memory)
 {
-    XMqttUnsubscriptionProperties* p = (XMqttUnsubscriptionProperties*)XMalloc_System(sizeof(XMqttUnsubscriptionProperties));
-    if (p) { XMqttUnsubscriptionProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttUnsubscriptionProperties* p = (XMqttUnsubscriptionProperties*)XMemory_malloc(sizeof(XMqttUnsubscriptionProperties), memory);
+    if (p) { XMqttUnsubscriptionProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 

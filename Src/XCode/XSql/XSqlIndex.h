@@ -35,7 +35,7 @@ XVtable* XSqlIndex_class_init(void);
 /** @brief 初始化空索引。 @param index 待初始化索引；不能为 NULL。 @return 无；对象进入可析构的空索引状态。 */
 void XSqlIndex_init(XSqlIndex* index);
 /** @brief 创建空索引。 @return 新索引所有权；调用者使用 XSqlIndex_delete_base 释放，失败返回 NULL。 */
-XSqlIndex* XSqlIndex_create(void);
+XSqlIndex* XSqlIndex_create_ex(XMemoryType memory);
 /** @brief 使用 UTF-8 游标名和索引名创建索引。 @param cursorName 游标名；借用并复制，可为 NULL。 @param name 索引名；借用并复制，可为 NULL。 @return 新索引所有权；调用者使用 XSqlIndex_delete_base 释放，失败返回 NULL。 */
 XSqlIndex* XSqlIndex_create_utf8(const char* cursorName, const char* name);
 /** @brief 使用 XString 游标名和索引名创建索引。 @param cursorName 游标名；借用并复制，可为 NULL。 @param name 索引名；借用并复制，可为 NULL。 @return 新索引所有权；调用者使用 XSqlIndex_delete_base 释放，失败返回 NULL。 */
@@ -81,5 +81,10 @@ void XSqlIndex_setDescending(XSqlIndex* index, int fieldIndex, bool descending);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlIndex_create
+#define XSqlIndex_create(...) XSqlIndex_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLINDEX_H */

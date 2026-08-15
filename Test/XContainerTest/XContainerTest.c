@@ -31,6 +31,7 @@ void XMenu_VectorTest(XMenu* root)
 	XMenu_XVariantListTest(menu);
 	XMenu_XByteArrayTest(menu);
 	XMenu_XBitArrayTest(menu);
+	XMenu_XContainerMemoryTest(menu);
 }
 void XMenu_ListTest(XMenu* root)
 {

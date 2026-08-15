@@ -447,7 +447,7 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     tui->shell = shell;
     tui->session = session;
     tui->tui = XTui_create();
-    tui->screen = XTuiScreen_create_ex(XCONSOLE_SHELL_TUI_WIDTH,
+    tui->screen = XTuiScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XCONSOLE_SHELL_TUI_WIDTH,
                                        XCONSOLE_SHELL_TUI_HEIGHT);
     tui->terminal = XTuiTerminal_create();
     tui->vim = XTuiVim_create();

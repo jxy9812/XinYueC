@@ -58,7 +58,7 @@ XVtable* XHttpPart_class_init(void);
  * - @brief 创建空 MIME 部件。
  * - @return 新部件；调用者必须使用 XHttpPart_delete_base 释放，失败返回 NULL。
  */
-XHttpPart* XHttpPart_create(void);
+XHttpPart* XHttpPart_create_ex(XMemoryType memory);
 
 /**
  * - @brief 深拷贝创建 MIME 部件。
@@ -198,7 +198,7 @@ XVtable* XHttpMultiPart_class_init(void);
  * - @brief 创建 MixedType multipart。
  * - @return 新对象；调用者必须使用 XHttpMultiPart_delete_base 释放。
  */
-XHttpMultiPart* XHttpMultiPart_create(void);
+XHttpMultiPart* XHttpMultiPart_create_ex(XMemoryType memory, XHttpMultiPart_ContentType type);
 
 /**
  * - @brief 按指定类型创建 multipart。
@@ -279,5 +279,13 @@ XByteArray* XHttpMultiPart_contentType(const XHttpMultiPart* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpPart_create
+#define XHttpPart_create(...) XHttpPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XHttpMultiPart_create
+#define XHttpMultiPart_create() \
+	XHttpMultiPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttpMultiPart_MixedType)
 
 #endif

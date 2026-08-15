@@ -6,6 +6,7 @@ extern "C" {
 #include"XVtable.h"
 #include"CXinYueConfig.h"
 #include"XPrintf.h"
+#include"XMemory.h"
 #include<stdlib.h>
 /** @brief XClass 基类虚函数表的固定槽位数量。 */
 #define XCLASS_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XClass)
@@ -18,14 +19,22 @@ XCLASS_DEFINE_END(XClass)
 /**
  * @brief 所有 XClass 风格对象的公共基类。
  *
- * m_vtable 指向只读逻辑上的类虚函数表，m_free 记录对象是否由堆创建者
- * 管理。对象本身不拥有虚函数表，类初始化函数返回的表通常是共享的。
+ * m_vtable 指向只读逻辑上的类虚函数表，m_memory 记录对象对应的内存方法；
+ * m_is_heap 为 0 表示对象由 *_init 初始化，通常位于栈或外部存储中，1 表示
+ * 对象由 *_create 在堆上创建。对象本身不拥有虚函数表，类初始化函数返回的
+ * 表通常是共享的。
  */
 typedef struct XClass
 {
 	XVtable* m_vtable;
-	FreeMethod m_free;
+	XMemory* m_memory;
+	uint32_t m_is_heap : 1;
+	uint32_t m_reserved : 31;
 }XClass;
+
+/** @brief 按 XClass 默认内存池创建指定类型的对象。 */
+#define XClass_Malloc(Type) \
+	((Type*)XMemory_malloc(sizeof(Type), XCLASS_DEFAULT_MEMORY_TYPE))
 
 /** @brief 按枚举槽位读取虚函数；调用方必须保证表、槽位和函数类型有效。 */
 #define XVtableGetFunc(Vtable, Offset, Type) \
@@ -187,11 +196,16 @@ void XClass_delete_base(XClass* object);
 /** @brief 兼容 C++ 风格的保护区标记；C 语言中不产生任何代码。 */
 #define Protected 
 
-/** @brief 获取对象的堆释放函数；返回 NULL 表示使用默认释放路径。 */
-#define Class_MemoryFree(Object) (((XClass*)(Object))->m_free)
-/** @brief 设置对象的堆释放函数；对象初始化后由创建者设置。 */
-#define Set_Class_MemoryFree(Object, Method) \
-	(Class_MemoryFree(Object) = (Method))
+/** @brief 获取对象的内存方法；由 *_init 绑定默认方法，*_create 可覆盖并标记所有权。 */
+#define Class_Memory(Object) (((XClass*)(Object))->m_memory)
+/** @brief 判断对象是否由 *_create 堆分配；0 表示由 *_init 初始化。 */
+#define Class_IsHeap(Object) (((XClass*)(Object))->m_is_heap)
+/** @brief 按内存池类型设置对象的内存方法；不改变对象的堆所有权位。 */
+#define Set_Class_Memory(Object, MemoryType) \
+	(Class_Memory(Object) = XMemory_method((MemoryType)))
+/** @brief 设置对象是否由 *_create 堆分配；Value 为 true 表示堆对象。 */
+#define Set_Class_IsHeap(Object, Value) \
+	(Class_IsHeap(Object) = !!(Value))
 
 /** @brief 取得父类指定虚函数；Type 必须提供 Type##_class_init。 */
 #define XClass_Parent(Type, FuncEnum, FuncType) \

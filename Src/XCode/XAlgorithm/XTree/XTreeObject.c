@@ -25,11 +25,24 @@ size_t XTreeNode_typeSize(const uint8_t nodeCount)
 }
 XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataSize)
 {
+	return XTreeNode_create_ex(nodeCount, pvData, dataSize,
+		XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+}
+
+XTreeNode* XTreeNode_create_ex(const uint8_t nodeCount, const char* pvData,
+	const size_t dataSize, XMemory* memory)
+{
 	if (nodeCount == 0 || dataSize == 0)
 		return NULL;
-	XTreeNode* node = XMalloc_System(XTreeNode_typeSize(node)+ dataSize);
+	if (!memory)
+		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	if (!memory || !memory->malloc)
+		return NULL;
+	XTreeNode* node = (XTreeNode*)memory->malloc(XTreeNode_typeSize(nodeCount) + dataSize);
 	if (node)
-		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(node),pvData,dataSize);
+	{
+		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(nodeCount),pvData,dataSize);
+	}
 	return node;
 }
 bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t dataSize)
@@ -60,12 +73,13 @@ XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType)
 	return XTreeNode_GetChild(this_root,nodeType);
 	//return ((XTreeNode**)(this_root->nodes))[nodeType];
 }
-void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method, void* args)
+void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,
+	void* args, XMemory* memory)
 {
-	XTree_delete_base(this_root, XTreeNode_delete,method,args);
+	XTree_delete_base(this_root, XTreeNode_delete,method,args,memory);
 }
 
-void XTreeNode_delete(XTreeNode* node)
+void XTreeNode_delete(XTreeNode* node, XMemory* memory)
 {
 	if (node == NULL)
 		return;
@@ -73,10 +87,16 @@ void XTreeNode_delete(XTreeNode* node)
 		XFree_System(node->nodes);*/
 	/*if (XTreeNode_GetDataPtr(node))
 		XFree_System(XTreeNode_GetDataPtr(node));*/
-	XFree_System(node);
+	if (!memory)
+		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	if (memory && memory->free)
+		memory->free(node);
+	else
+		XFree_System(node);
 }
 
-void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod, XTreeNodeDataDeleteMethod dataMethod, void* args)
+void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
+	XTreeNodeDataDeleteMethod dataMethod, void* args, XMemory* memory)
 {
 	if (this_root == NULL)
 		return;
@@ -101,7 +121,7 @@ void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod, X
 		}
 		if (XTreeNode_GetDataPtr(currentNode) != NULL && dataMethod != NULL)
 			dataMethod(XTreeNode_GetDataPtr(currentNode), args);
-		nodeMethod(currentNode);//释放当前节点
+		nodeMethod(currentNode, memory);//释放当前节点
 		sum++;
 	}
 	XStack_delete_base(stack);

@@ -78,10 +78,10 @@ static void VXCanBus_deinit(XCanBus* canBus)
 XCanBus* XCanBus_instance(void)
 {
     if (!g_canBusInstance) {
-        g_canBusInstance = (XCanBus*)XMalloc_System(sizeof(XCanBus));
+        g_canBusInstance = (XCanBus*)XClass_Malloc(XCanBus);
         if (g_canBusInstance) {
             XCanBus_init(g_canBusInstance);
-            Set_Class_MemoryFree(g_canBusInstance, XFree_System);
+            Set_Class_IsHeap(g_canBusInstance, true);
         }
     }
     return g_canBusInstance;

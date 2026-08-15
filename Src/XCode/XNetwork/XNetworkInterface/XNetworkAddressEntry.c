@@ -111,13 +111,13 @@ void XNetworkAddressEntry_init(XNetworkAddressEntry* entry)
     entry->isPermanent = true;  // 默认为永久地址
 }
 
-XNetworkAddressEntry* XNetworkAddressEntry_create(void)
+XNetworkAddressEntry* XNetworkAddressEntry_create_ex(XMemoryType memory)
 {
-    XNetworkAddressEntry* entry = (XNetworkAddressEntry*)XMalloc_System(sizeof(XNetworkAddressEntry));
+    XNetworkAddressEntry* entry = (XNetworkAddressEntry*)XMemory_malloc(sizeof(XNetworkAddressEntry), memory);
     if (!entry) return NULL;
     
     XNetworkAddressEntry_init(entry);
-    Set_Class_MemoryFree(entry, XFree_System);
+    Set_Class_Memory(entry, memory); Set_Class_IsHeap(entry, true);
     return entry;
 }
 

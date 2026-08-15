@@ -7,7 +7,9 @@ XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize)
 {
 	if (dataTypeSize == 0)
 		return NULL;
-	XHTreeNode* node = XMalloc_System(XHTreeNode_typeSize()+dataTypeSize);
+	XMemory* memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	XHTreeNode* node = memory && memory->malloc
+		? (XHTreeNode*)memory->malloc(XHTreeNode_typeSize() + dataTypeSize) : NULL;
 	if (node)
 		XHTreeNode_init(node, XHTreeNode_typeSize(), pvData, dataTypeSize);
 	return node;
@@ -50,11 +52,11 @@ XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const si
 	XHTreeNode* node=XHTreeNode_create(pvData, dataTypeSize);
 	if (XHTreeNode_addNode(parent, node))
 		return node;
-	XHTreeNode_delete(node);
+	XHTreeNode_delete(node, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 	return NULL;
 }
 
-bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args)
+bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args, XMemory* memory)
 {
 	if (node == NULL)
 		return;
@@ -81,11 +83,11 @@ bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, v
 		
 	}
 	//递归释放
-	XHTree_delete(node, method, args);
+	XHTree_delete(node, method, args, memory);
 	return true;
 }
 
-bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData,XTreeNodeDataDeleteMethod method, void* args)
+bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData,XTreeNodeDataDeleteMethod method, void* args, XMemory* memory)
 {
 	if(parent==NULL)
 		return false;
@@ -103,7 +105,7 @@ bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRule
 				XHTreeNode_SetNextSibling(prev, XHTreeNode_GetNextSibling(child));
 			}
 			//递归释放
-			XHTree_delete(child, method,args);
+			XHTree_delete(child, method,args,memory);
 		}
 		prev = child;
 		child = XHTreeNode_GetNextSibling(child);

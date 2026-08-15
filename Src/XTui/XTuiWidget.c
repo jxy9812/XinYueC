@@ -145,13 +145,13 @@ void XTuiWidget_init(XTuiWidget* widget)
     widget->m_enabled = true;
 }
 
-XTuiWidget* XTuiWidget_create(void)
+XTuiWidget* XTuiWidget_create_ex(XMemoryType memory)
 {
-    XTuiWidget* widget = (XTuiWidget*)XMalloc_System(sizeof(XTuiWidget));
+    XTuiWidget* widget = (XTuiWidget*)XMemory_malloc(sizeof(XTuiWidget), memory);
     if (!widget)
         return NULL;
     XTuiWidget_init(widget);
-    Set_Class_MemoryFree(widget, XFree_System);
+    Set_Class_Memory(widget, memory); Set_Class_IsHeap(widget, true);
     return widget;
 }
 

@@ -48,13 +48,13 @@ void XSqlRelation_init_2(XSqlRelation* relation, const XString* tableName,
     XSqlRelation_setDisplayColumn(relation, displayColumn);
 }
 
-XSqlRelation* XSqlRelation_create(void)
+XSqlRelation* XSqlRelation_create_ex(XMemoryType memory)
 {
-    XSqlRelation* relation = (XSqlRelation*)XMalloc_System(sizeof(XSqlRelation));
+    XSqlRelation* relation = (XSqlRelation*)XMemory_malloc(sizeof(XSqlRelation), memory);
     if (!relation) return NULL;
     memset(relation, 0, sizeof(*relation));
     XSqlRelation_init(relation);
-    Set_Class_MemoryFree(relation, XFree_System);
+    Set_Class_Memory(relation, memory); Set_Class_IsHeap(relation, true);
     return relation;
 }
 

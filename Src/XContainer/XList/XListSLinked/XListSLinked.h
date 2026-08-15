@@ -66,8 +66,9 @@ XVtable* XListSLinked_class_init();
 * @return 新创建的单链表实例指针，失败返回NULL
 * @note 内部会分配内存并初始化链表，需通过XListSLinked_delete_base释放
 */
-XListSLinked* XListSLinked_create_ex(size_t typeSize, bool useCow);
-#define XListSLinked_create(typeSize) XListSLinked_create_ex(typeSize, true)
+XListSLinked* XListSLinked_create_ex(XMemoryType memory, size_t typeSize, bool useCow);
+#define XListSLinked_create(typeSize) \
+	XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
 /**
 * @brief 类型安全的单链表创建宏
 * @param Type 元素数据类型（如int、float等）
@@ -366,6 +367,12 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XListSLinked_create
+#define XListSLinked_create(typeSize) \
+	XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
+
 #endif // 
 
 // ====================== Qt 6.8 QList/QLinkedList 对齐 ======================

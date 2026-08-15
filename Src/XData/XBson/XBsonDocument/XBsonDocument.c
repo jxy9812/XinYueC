@@ -69,12 +69,12 @@ XBsonValue* XBsonElement_value(XBsonElement* element)
 	return element ? &element->m_value : NULL;
 }
 
-XBsonDocument* XBsonDocument_create(void)
+XBsonDocument* XBsonDocument_create_ex(XMemoryType memory)
 {
-	XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(*doc));
+	XBsonDocument* doc = (XBsonDocument*)XMemory_malloc(sizeof(XBsonDocument), memory);
 	if (!doc) return NULL;
 	XBsonDocument_init(doc);
-	Set_Class_MemoryFree(doc, XFree_System);
+	Set_Class_Memory(doc, memory); Set_Class_IsHeap(doc, true);
 	return doc;
 }
 

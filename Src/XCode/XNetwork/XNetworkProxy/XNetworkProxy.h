@@ -108,7 +108,7 @@ void XNetworkProxyQuery_init(XNetworkProxyQuery* query);
  * @brief 在堆上创建并初始化一个 XNetworkProxyQuery 实例。
  * @return 成功返回指向新分配实例的指针，失败返回 NULL
  */
-XNetworkProxyQuery* XNetworkProxyQuery_create(void);
+XNetworkProxyQuery* XNetworkProxyQuery_create_ex(XMemoryType memory);
 
 /**
  * @brief 使用 URL 创建代理查询。
@@ -289,7 +289,7 @@ void XNetworkProxy_init(XNetworkProxy* proxy);
  * @brief 在堆上创建并初始化一个 XNetworkProxy 实例。
  * @return 成功返回指向新分配实例的指针，失败返回 NULL
  */
-XNetworkProxy* XNetworkProxy_create(void);
+XNetworkProxy* XNetworkProxy_create_ex(XMemoryType memory);
 
 /**
  * @brief 使用指定参数创建代理配置。
@@ -492,7 +492,7 @@ void XNetworkProxyFactory_init(XNetworkProxyFactory* factory, XNetworkProxyFacto
  * @param queryFunc 查询代理的回调函数
  * @return 新创建的工厂实例
  */
-XNetworkProxyFactory* XNetworkProxyFactory_create(XNetworkProxyFactory_QueryFunc queryFunc);
+XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory,  XNetworkProxyFactory_QueryFunc queryFunc);
 
 // =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
 
@@ -548,5 +548,14 @@ XNetworkProxy* XNetworkProxyFactory_systemProxyForQuery(const XNetworkProxyQuery
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkProxy_create
+#define XNetworkProxy_create(...) XNetworkProxy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XNetworkProxyFactory_create
+#define XNetworkProxyFactory_create(...) XNetworkProxyFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XNetworkProxyQuery_create
+#define XNetworkProxyQuery_create(...) XNetworkProxyQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XNETWORKPROXY_H

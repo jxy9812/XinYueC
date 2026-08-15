@@ -224,7 +224,7 @@ static bool xcache_read_file(const XNetworkDiskCache* self, const XUrl* url,
     if (!urlText || !xcache_read_u64(serialized, &offset, &value64)) goto done_serialized;
     metadataValue = XNetworkCacheMetaData_create();
     if (!metadataValue) goto done_serialized;
-    parsedUrl = XUrl_create_ex(urlText, XUrl_TolerantMode);
+    parsedUrl = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlText, XUrl_TolerantMode);
     if (!parsedUrl || !XNetworkCacheMetaData_setUrl(metadataValue, parsedUrl))
         goto done_serialized;
     XClass_delete_base((XClass*)parsedUrl);
@@ -374,19 +374,19 @@ void XNetworkCacheMetaData_init(XNetworkCacheMetaData* self)
     self->m_expirationMSecs = -1;
 }
 
-XNetworkCacheMetaData* XNetworkCacheMetaData_create(void)
+XNetworkCacheMetaData* XNetworkCacheMetaData_create_ex(XMemoryType memory)
 {
     XNetworkCacheMetaData* self =
-        (XNetworkCacheMetaData*)XMalloc_System(sizeof(XNetworkCacheMetaData));
+        (XNetworkCacheMetaData*)XMemory_malloc(sizeof(XNetworkCacheMetaData), memory);
     if (!self)
         return NULL;
     XNetworkCacheMetaData_init(self);
     if (!self->m_url || !self->m_headers) {
         XNetworkCacheMetaData_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -579,18 +579,18 @@ void XNetworkDiskCache_init(XNetworkDiskCache* self)
     self->m_cacheSize = 0;
 }
 
-XNetworkDiskCache* XNetworkDiskCache_create(void)
+XNetworkDiskCache* XNetworkDiskCache_create_ex(XMemoryType memory)
 {
-    XNetworkDiskCache* self = (XNetworkDiskCache*)XMalloc_System(sizeof(XNetworkDiskCache));
+    XNetworkDiskCache* self = (XNetworkDiskCache*)XMemory_malloc(sizeof(XNetworkDiskCache), memory);
     if (!self)
         return NULL;
     XNetworkDiskCache_init(self);
     if (!self->m_cacheDirectory || !self->m_entries) {
         XNetworkDiskCache_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

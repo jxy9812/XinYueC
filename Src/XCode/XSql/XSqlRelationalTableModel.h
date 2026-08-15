@@ -50,7 +50,7 @@ void XSqlRelationalTableModel_init(XSqlRelationalTableModel* model, const XSqlDa
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
  * @return 新模型，调用者必须使用 XSqlRelationalTableModel_delete_base 释放；失败返回 NULL。
  */
-XSqlRelationalTableModel* XSqlRelationalTableModel_create(const XSqlDatabase* database);
+XSqlRelationalTableModel* XSqlRelationalTableModel_create_ex(XMemoryType memory,  const XSqlDatabase* database);
 /** @brief 调用 XClass 析构入口释放关系、子模型与行缓存。 */
 #define XSqlRelationalTableModel_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelationalTableModel_create 返回的关系表模型。 */
@@ -166,5 +166,10 @@ void XSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlRelationalTableModel_create
+#define XSqlRelationalTableModel_create(...) XSqlRelationalTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLRELATIONALTABLEMODEL_H */

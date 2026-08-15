@@ -28,7 +28,6 @@ XVtable* XSignalTransition_class_init(void);
  * @brief 创建未绑定发送者和源状态的信号转换。
  * @return 新信号转换；内存分配失败时返回 NULL。
  */
-XSignalTransition* XSignalTransition_create(void);
 /**
  * @brief 创建指定发送者、信号和源状态的信号转换。
  * @param sender 信号发送对象，不转移所有权，可为 NULL。
@@ -36,7 +35,7 @@ XSignalTransition* XSignalTransition_create(void);
  * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
  * @return 新信号转换；内存分配失败时返回 NULL。
  */
-XSignalTransition* XSignalTransition_create_ex(const XObject* sender, size_t signal, XState* sourceState);
+XSignalTransition* XSignalTransition_create_ex(XMemoryType memory, const XObject* sender, size_t signal, XState* sourceState);
 /**
  * @brief 初始化空信号转换。
  * @param transition 调用者提供的未初始化存储。
@@ -95,4 +94,10 @@ void* XSignalTransition_signalChanged_signal(XSignalTransition* transition);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XSignalTransition_create
+#define XSignalTransition_create() \
+	XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0, NULL)
+
 #endif // XSIGNALTRANSITION_H

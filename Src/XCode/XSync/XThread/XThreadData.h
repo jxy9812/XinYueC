@@ -92,7 +92,7 @@ typedef struct XThreadData{
  * @param parent 父对象，可为 NULL
  * @return 新创建的事件分发器
  */
-XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent);
+XAbstractEventDispatcher* XEventDispatcher_create_ex(XMemoryType memory,  XObject* parent);
 
 /* ======================== 构造/析构/引用计数（对标 QThreadData 构造/析构/ref/deref） ======================== */
 
@@ -349,4 +349,9 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver);
 
 #endif // XTHREADDATA_ON
 #endif /* XSYNC_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XEventDispatcher_create
+#define XEventDispatcher_create(...) XEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XTHREADDATA_H

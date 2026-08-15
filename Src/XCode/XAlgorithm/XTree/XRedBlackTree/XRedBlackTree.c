@@ -6,9 +6,25 @@ size_t XRBTree_typeSize()
 {
 	return sizeof(XRBTreeNode) - sizeof(XBTreeNode) + XBTreeNode_typeSize();
 }
+
+void XRBTreeNode_delete(XTreeNode* node, XMemory* memory)
+{
+	XTreeNode_delete(node, memory);
+}
 XRBTreeNode* XRBTree_create(const char* pvData, const size_t dataTypeSize)
 {
-	XRBTreeNode* node = XMalloc_System(XRBTree_typeSize()+ dataTypeSize);
+	return XRBTree_create_ex(pvData, dataTypeSize,
+		XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+}
+
+XRBTreeNode* XRBTree_create_ex(const char* pvData, const size_t dataTypeSize,
+	XMemory* memory)
+{
+	if (!memory)
+		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+	if (!memory || !memory->malloc)
+		return NULL;
+	XRBTreeNode* node = (XRBTreeNode*)memory->malloc(XRBTree_typeSize() + dataTypeSize);
 	if (!node)return NULL;
 	XRBTree_init(node, XRBTree_typeSize(),pvData, dataTypeSize);
 	return node;
@@ -228,7 +244,8 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 
 }
 //删除的是有两个孩子
-static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_t dataSize)
+static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,
+	size_t dataSize, XMemory* memory)
 {
 #if XVector_ON
 	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
@@ -245,7 +262,8 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 	if (dataSize > 0) 
 	{
-		char* tempBuffer = (char*)XMalloc_Hybrid(dataSize); // 创建临时缓冲区
+		char* tempBuffer = memory && memory->malloc
+			? (char*)memory->malloc(dataSize) : NULL; // 创建临时缓冲区
 		if (tempBuffer == NULL) {
 			// 处理内存分配失败的情况，例如直接返回或采取其他措施
 			return;
@@ -253,7 +271,8 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
 		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
 		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-		XFree_Hybrid(tempBuffer); // 释放临时缓冲区
+		if (memory && memory->free)
+			memory->free(tempBuffer); // 释放临时缓冲区
 	}
 	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
 	//memcpy();
@@ -270,7 +289,8 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, const size_t dataSize)
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,
+	const void* pvData, const size_t dataSize, XMemory* memory)
 {
 	if (!this_root||!compare||!Rule||!pvData|| !dataSize)
 		return NULL;
@@ -278,10 +298,11 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 	//XDEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
-	return XRBTree_removeNode(this_root, findErase, dataSize);	
+	return XRBTree_removeNode(this_root, findErase, dataSize, memory);
 }
 
-XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode* findErase, const size_t dataSize)
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode* findErase,
+	const size_t dataSize, XMemory* memory)
 {
 	if (!this_root || !findErase || !dataSize)
 		return NULL;
@@ -294,7 +315,7 @@ XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode* find
 		++count;
 	if (count == 2) // 两个孩子
 	{
-		return TwoChild_erase(this_root, findErase, dataSize);
+		return TwoChild_erase(this_root, findErase, dataSize, memory);
 	}
 	else // 零个或一个孩子
 	{
@@ -427,7 +448,8 @@ static void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNo
 		XRBTree_SetBlack(*this_root);
 	}
 }
-XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize)
+XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,
+	const void* pvData, const size_t dataSize, XMemory* memory)
 {
 	//XDEBUG_PRINTF("less=%p pvData=%p dataTypeSize=%u\n",less,pvData,dataTypeSize);
 	if (ISNULL(compare, ""))
@@ -436,21 +458,22 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareR
 		return NULL;
 	if (ISNULL(dataSize, ""))
 		return NULL;
-	XRBTreeNode* nodes = XRBTree_create(pvData, dataSize);//创建一个红黑树节点并且初始化,默认红色
+	XRBTreeNode* nodes = XRBTree_create_ex(pvData, dataSize, memory);//创建一个红黑树节点并且初始化,默认红色
 	if (ISNULL(nodes, ""))
 		return NULL;
 	//XDEBUG_PRINTF("nodes=%p\n",nodes);
-	return XRBTree_insertNode(this_root, compare, lessRule, nodes);
+	return XRBTree_insertNode(this_root, compare, lessRule, nodes, memory);
 }
 
-XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, XRBTreeNode* insertNode)
+XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,
+	XRBTreeNode* insertNode, XMemory* memory)
 {
 	if (!compare || !lessRule || !insertNode)return;
-	bool flag = XBBTree_insertAlign(this_root, insertNode, compare, lessRule, NULL, 0);//将数据插入到节点，并且链接
+	bool flag = XBBTree_insertAlign(this_root, insertNode, compare, lessRule, NULL, 0, memory);//将数据插入到节点，并且链接
 	if (!flag)
 	{
 		printf("节点插入失败\n");
-		XTreeNode_delete((XTreeNode*)insertNode); // 
+		XTreeNode_delete((XTreeNode*)insertNode, memory); // 插入失败时释放节点
 		return NULL;
 	}
 	if (this_root == NULL)//根节点，无内存开辟
@@ -467,5 +490,3 @@ XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XComp
 	XRBTree_insertAdjust(this_root, insertNode);
 	return insertNode;
 }
-
-

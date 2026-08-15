@@ -143,7 +143,7 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io);
  * @param io 底层IO设备指针(外部提供，必须已初始化)
  * @return 成功返回XESP8266Wifi对象指针，失败返回NULL
  */
-XESP8266Wifi* XESP8266Wifi_create(XIODevice* io);
+XESP8266Wifi* XESP8266Wifi_create_ex(XMemoryType memory,  XIODevice* io);
 
 /**
  * @brief 测试AT指令是否正常工作
@@ -429,5 +429,10 @@ void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XESP8266Wifi_create
+#define XESP8266Wifi_create(...) XESP8266Wifi_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XESP8266WIFI_H

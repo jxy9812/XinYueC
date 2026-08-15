@@ -85,6 +85,54 @@ typedef struct XContainer
     size_t m_capacity;        ///< 容器当前可容纳的最大元素数量（容量）
     size_t m_size;            ///< 容器当前实际存储的元素数量（大小）
 }XContainer;
+
+/** @brief 获取容器所属内存方法；对象尚未绑定时回退到 XClass 默认内存池。 */
+static inline XMemory* XContainer_memory(const XContainer* object)
+{
+    XMemory* memory = object ? Class_Memory(object) : NULL;
+    return memory ? memory : XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+/** @brief 将容器当前的全局内存方法映射回内存池枚举，供嵌套容器 create_ex 使用。 */
+static inline XMemoryType XContainer_memory_type(const XContainer* object)
+{
+    XMemory* memory = XContainer_memory(object);
+    for (int type = XMEMORY_TYPE_SYSTEM; type <= XMEMORY_TYPE_HYBRID; ++type)
+    {
+        if (memory == XMemory_method((XMemoryType)type))
+            return (XMemoryType)type;
+    }
+    return XCLASS_DEFAULT_MEMORY_TYPE;
+}
+
+/** @brief 使用容器所属内存方法申请内部缓冲区。 */
+static inline void* XContainer_malloc(const XContainer* object, size_t size)
+{
+    XMemory* memory = XContainer_memory(object);
+    return memory && memory->malloc ? memory->malloc(size) : NULL;
+}
+
+/** @brief 使用容器所属内存方法申请清零的内部缓冲区。 */
+static inline void* XContainer_calloc(const XContainer* object, size_t count, size_t size)
+{
+    XMemory* memory = XContainer_memory(object);
+    return memory && memory->calloc ? memory->calloc(count, size) : NULL;
+}
+
+/** @brief 使用容器所属内存方法重分配内部缓冲区。 */
+static inline void* XContainer_realloc(const XContainer* object, void* ptr, size_t size)
+{
+    XMemory* memory = XContainer_memory(object);
+    return memory && memory->realloc ? memory->realloc(ptr, size) : NULL;
+}
+
+/** @brief 使用容器所属内存方法释放内部缓冲区。 */
+static inline void XContainer_free(const XContainer* object, void* ptr)
+{
+    XMemory* memory = XContainer_memory(object);
+    if (ptr && memory && memory->free)
+        memory->free(ptr);
+}
 //宏函数
 /**
  * @brief 获取派生类中存储的数据
@@ -103,7 +151,8 @@ typedef struct XContainer
  * @param object XContainer实例指针（可传入派生类实例指针）
  * @return 数据区首地址（void*类型），失败或未初始化返回 NULL
  */
-#define XContainerSharedDataPtr(object)     ((XSharedData*)XContainerDataPtr(object))->data
+#define XContainerSharedDataPtr(object) \
+   ((XContainerDataPtr(object) != NULL) ? ((XSharedData*)XContainerDataPtr(object))->data : NULL)
 //容器不使用共享模式的数据指针
 #define XContainerDataPtr(object)              ((XContainer*)(object))->m_data
 #define XContainerSetDataPtr(object,ptr)       (XContainerDataPtr(object)=ptr )  

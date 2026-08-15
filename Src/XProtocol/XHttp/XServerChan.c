@@ -123,12 +123,12 @@ void XServerChanResult_init(XServerChanResult* self)
     self->m_error = XServerChanResult_InvalidArgument;
 }
 
-XServerChanResult* XServerChanResult_create(void)
+XServerChanResult* XServerChanResult_create_ex(XMemoryType memory)
 {
-    XServerChanResult* self = (XServerChanResult*)XMalloc_System(sizeof(*self));
+    XServerChanResult* self = (XServerChanResult*)XMemory_malloc(sizeof(XServerChanResult), memory);
     if (!self) return NULL;
     XServerChanResult_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -415,23 +415,13 @@ void XServerChan_init(XServerChan* self)
         XNetworkAccessManager_setTransferTimeout(self->m_manager, self->m_transferTimeout);
 }
 
-XServerChan* XServerChan_create(void)
+XServerChan* XServerChan_create_ex(XMemoryType memory, const char* sendKey)
 {
-    XServerChan* self = (XServerChan*)XMalloc_System(sizeof(*self));
+    XServerChan* self = (XServerChan*)XMemory_malloc(sizeof(XServerChan), memory);
     if (!self) return NULL;
     XServerChan_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
-    if (!self->m_manager) {
-        XServerChan_delete_base(self);
-        return NULL;
-    }
-    return self;
-}
-
-XServerChan* XServerChan_create_ex(const char* sendKey)
-{
-    XServerChan* self = XServerChan_create();
-    if (!self || !XServerChan_setSendKey_utf8(self, sendKey)) {
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
+    if (!self->m_manager || (sendKey && !XServerChan_setSendKey_utf8(self, sendKey))) {
         if (self) XServerChan_delete_base(self);
         return NULL;
     }
@@ -493,7 +483,7 @@ bool XServerChan_setEndpointUrl_utf8(XServerChan* self, const char* endpointUrl)
         return true;
     }
     value = XString_create_utf8(endpointUrl);
-    url = value ? XUrl_create_ex(value, XUrl_TolerantMode) : NULL;
+    url = value ? XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, value, XUrl_TolerantMode) : NULL;
     scheme = url ? XUrl_scheme_const(url) : NULL;
     valid = url && XUrl_isValid(url) && scheme &&
         (!strcmp(XString_toUtf8(scheme), "http") || !strcmp(XString_toUtf8(scheme), "https"));

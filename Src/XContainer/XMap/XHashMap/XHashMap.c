@@ -155,6 +155,63 @@ static XVector* VXMapBase_values(const XMapBase* this_hash);
 static void VXMap_clear(XHashMap* this_hash);
 static void VXClass_copy(XHashMap* object, const XHashMap* src);
 static void VXClass_move(XHashMap* object, XHashMap* src);
+
+static void XHashMap_deinit_pair(XHashMap* map, XPair* pair)
+{
+    if (!pair) return;
+    if (XMapBaseKeyDeinitMethod(map))
+        XMapBaseKeyDeinitMethod(map)(XPair_first(pair));
+    if (XContainerDataDeinitMethod(map))
+        XContainerDataDeinitMethod(map)(XPair_second(pair));
+}
+
+static void XHashMap_release_pair_after_copy(XHashMap* map, XPair* pair)
+{
+    if (!pair) return;
+    if (XMapBaseKeyCopyMethod(map)) {
+        if (XMapBaseKeyDeinitMethod(map))
+            XMapBaseKeyDeinitMethod(map)(XPair_first(pair));
+    }
+    else if (XMapBaseKeyDeinitMethod(map)) {
+        memset(XPair_first(pair), 0, ((XMapBase*)map)->m_keyTypeSize);
+    }
+    if (XContainerDataCopyMethod(map)) {
+        if (XContainerDataDeinitMethod(map))
+            XContainerDataDeinitMethod(map)(XPair_second(pair));
+    }
+    else if (XContainerDataDeinitMethod(map)) {
+        memset(XPair_second(pair), 0, XContainerTypeSize(map));
+    }
+}
+
+static void XHashMap_copy_pair_to_node(XHashMap* map, XPair* source, XRBTreeNode* node)
+{
+    XPair* target = XBTreeNode_GetDataPtr(node);
+    XPair_init(target, source->m_firstTypeSize, source->m_secondTypeSize);
+    if (XMapBaseKeyCopyMethod(map))
+        XMapBaseKeyCopyMethod(map)(XPair_first(target), XPair_first(source));
+    else
+        memcpy(XPair_first(target), XPair_first(source), source->m_firstTypeSize);
+    if (XContainerDataCopyMethod(map))
+        XContainerDataCopyMethod(map)(XPair_second(target), XPair_second(source));
+    else
+        memcpy(XPair_second(target), XPair_second(source), source->m_secondTypeSize);
+}
+
+static XPair* XHashMap_pair_buffer(XHashMap* this_hash)
+{
+    XPair* pair = XMapBasePairBuffer(this_hash);
+    if (!pair) {
+        pair = (XPair*)XContainer_malloc(this_hash,
+            XMapBasePairTypeSize(this_hash));
+        if (pair) {
+            XPair_init(pair, ((XMapBase*)this_hash)->m_keyTypeSize,
+                XContainerTypeSize(this_hash));
+            XMapBasePairBuffer(this_hash) = pair;
+        }
+    }
+    return pair;
+}
 static void VXMap_deinit(XHashMap* this_hash);
 
 // ======================== 虚函数表初始化 ========================
@@ -192,7 +249,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
     if (!oldBuckets) return true;
 
     size_t newSize = capacity * sizeof(XRBTreeNode*);
-    XSharedData* newShared = XSharedData_create(NULL, newSize);
+    XSharedData* newShared = XSharedData_create_ex(NULL, newSize, XContainer_memory(this_hash));
     if (!newShared) return false;
     XRBTreeNode** newBuckets = (XRBTreeNode**)newShared->data;
     memset(newBuckets, 0, newSize);
@@ -200,19 +257,19 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
     for (size_t i = 0; i < capacity; i++) {
         XRBTreeNode* root = oldBuckets[i];
         if (root) {
-            XVector* nodes = XVector_create(sizeof(XRBTreeNode*));
+            XVector* nodes = XVector_create_ex(XContainer_memory_type(this_hash), sizeof(XRBTreeNode*), true);
             if (!nodes) {
-                XSharedData_release(newShared);
+                XSharedData_release(newShared, XContainer_memory(this_hash));
                 return false;
             }
             XBTree_TraversingToXVector(root, XBTreePreorder, nodes);
             for (size_t j = 0; j < XVector_size_base(nodes); j++) {
                 XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[j];
                 XPair* oldPair = XBTreeNode_GetDataPtr(oldNode);
-                XRBTreeNode* newNode = XRBTree_create(NULL, XMapBasePairTypeSize(this_hash));
+                XRBTreeNode* newNode = XRBTree_create_ex(NULL, XMapBasePairTypeSize(this_hash), XContainer_memory(this_hash));
                 if (!newNode) {
                     XVector_delete_base(nodes);
-                    XSharedData_release(newShared);
+                    XSharedData_release(newShared, XContainer_memory(this_hash));
                     return false;
                 }
                 XPair* newPair = XBTreeNode_GetDataPtr(newNode);
@@ -228,13 +285,13 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
                 XRBTree_SetRed(newNode);
                 memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->nodeCount);
                 ((XTreeNode*)newNode)->parentNode = NULL;
-                XRBTree_insertNode(&newBuckets[i], XContainerCompare(this_hash), XCompareRuleTwo_XMap, newNode);
+                XRBTree_insertNode(&newBuckets[i], XContainerCompare(this_hash), XCompareRuleTwo_XMap, newNode, XContainer_memory(this_hash));
             }
             XVector_delete_base(nodes);
         }
     }
 
-    XSharedData_release(sd);
+    XSharedData_release(sd, XContainer_memory(this_hash));
     XContainerSetDataPtr(this_hash, newShared);
     return true;
 }
@@ -246,7 +303,7 @@ static void VXHashMapDataDelete(void* data, XHashMap* this_hash)
     size_t capacity = XContainerCapacity(this_hash);
     for (size_t i = 0; i < capacity; i++) {
         if (buckets[i])
-            XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash);
+            XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash, XContainer_memory(this_hash));
     }
     XContainerSize(this_hash) = 0;
     XContainerCapacity(this_hash) = 0;
@@ -261,11 +318,11 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
     XSharedData* newShared = NULL;
 
     if (XContainerIsCow(map)) {
-        newShared = XSharedData_create(NULL, newSize);
+        newShared = XSharedData_create_ex(NULL, newSize, XContainer_memory(map));
         if (!newShared) return false;
         newBuckets = (XRBTreeNode**)newShared->data;
     } else {
-        newBuckets = (XRBTreeNode**)XMalloc_System(newSize);
+        newBuckets = (XRBTreeNode**)XContainer_malloc(map, newSize);
         if (!newBuckets) return false;
     }
     memset(newBuckets, 0, newSize);
@@ -276,10 +333,10 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
     for (size_t i = 0; i < oldCap; i++) {
         XRBTreeNode* root = oldBuckets ? oldBuckets[i] : NULL;
         if (root) {
-            XVector* nodes = XVector_create(sizeof(XRBTreeNode*));
+            XVector* nodes = XVector_create_ex(XContainer_memory_type(map), sizeof(XRBTreeNode*), true);
             if (!nodes) {
-                if (newShared) XSharedData_release(newShared);
-                else XFree_System(newBuckets);
+                if (newShared) XSharedData_release(newShared, XContainer_memory(map));
+                else XContainer_free(map, newBuckets);
                 return false;
             }
             XBTree_TraversingToXVector(root, XBTreePreorder, nodes);
@@ -290,7 +347,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
                 XRBTree_SetRed(node);
                 memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * ((XTreeNode*)node)->nodeCount);
                 ((XTreeNode*)node)->parentNode = NULL;
-                XRBTree_insertNode(&newBuckets[idx], XContainerCompare(map), XCompareRuleTwo_XMap, node);
+                XRBTree_insertNode(&newBuckets[idx], XContainerCompare(map), XCompareRuleTwo_XMap, node, XContainer_memory(map));
             }
             XVector_delete_base(nodes);
         }
@@ -298,11 +355,12 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 
     if (XContainerIsCow(map)) {
         if ((XSharedData*)XContainerDataPtr(map))
-            XSharedData_release((XSharedData*)XContainerDataPtr(map));
+            XSharedData_release((XSharedData*)XContainerDataPtr(map),
+                XContainer_memory(map));
         XContainerSetDataPtr(map, newShared);
     } else {
         if (XContainerDataPtr(map))
-            XFree_System(XContainerDataPtr(map));
+            XContainer_free(map, XContainerDataPtr(map));
         XContainerDataPtr(map) = newBuckets;
     }
     XContainerCapacity(map) = new_capacity;
@@ -319,7 +377,7 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue,
     if (XContainerIsCow(this_hash)) {
         if (!(XSharedData*)XContainerDataPtr(this_hash)) {
             size_t size = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
-            XSharedData* sd = XSharedData_create(NULL, size);
+            XSharedData* sd = XSharedData_create_ex(NULL, size, XContainer_memory(this_hash));
             if (!sd) return false;
             memset(sd->data, 0, size);
             XContainerSetDataPtr(this_hash, sd);
@@ -328,7 +386,7 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue,
     } else {
         if (!XContainerDataPtr(this_hash)) {
             size_t size = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
-            void* buckets = XMalloc_System(size);
+            void* buckets = XContainer_malloc(this_hash, size);
             if (!buckets) return false;
             memset(buckets, 0, size);
             XContainerDataPtr(this_hash) = buckets;
@@ -349,8 +407,8 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue,
     XPair* pair = NULL;
 
     if (!XHashMap_find_base(this_hash, pvKey, &it)) {
-        pair = XMapBasePairBuffer(this_hash);
-        XPair_init(pair, ((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
+        pair = XHashMap_pair_buffer(this_hash);
+        if (!pair) return false;
         if (keyCreatMethod)
             keyCreatMethod(XPair_first(pair), pvKey);
         else
@@ -360,10 +418,18 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue,
         else
             XPair_insertSecond(pair, pvValue);
 
-        XRBTreeNode* inserted = XRBTree_insert(root_ptr, XContainerCompare(this_hash),
-                                               XCompareRuleTwo_XMap, pair, XMapBasePairTypeSize(this_hash));
+        XRBTreeNode* insertNode = XRBTree_create_ex(NULL,
+            XMapBasePairTypeSize(this_hash), XContainer_memory(this_hash));
+        if (!insertNode) {
+            XHashMap_deinit_pair(this_hash, pair);
+            return false;
+        }
+        XHashMap_copy_pair_to_node(this_hash, pair, insertNode);
+        XRBTreeNode* inserted = XRBTree_insertNode(root_ptr,
+            XContainerCompare(this_hash), XCompareRuleTwo_XMap, insertNode,
+            XContainer_memory(this_hash));
+        XHashMap_release_pair_after_copy(this_hash, pair);
         if (!inserted) {
-            //XMapBase_deleteNodeData(pair, this_hash);
             return false;
         }
         ++XContainerSize(this_hash);
@@ -407,10 +473,11 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
     }
 
     XRBTreeNode** root_ptr = &XHashMap_buckets(this_hash)[it->index];
-    XRBTreeNode* removeNode = XRBTree_removeNode(root_ptr, current_node, XMapBasePairTypeSize(this_hash));
+    XRBTreeNode* removeNode = XRBTree_removeNode(root_ptr, current_node,
+        XMapBasePairTypeSize(this_hash), XContainer_memory(this_hash));
     if (removeNode) {
         XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_hash);
-        XRBTreeNode_delete(removeNode);
+        XRBTreeNode_delete((XTreeNode*)removeNode, XContainer_memory(this_hash));
         --XContainerSize(this_hash);
     }
     if (next) *next = next_it;
@@ -425,10 +492,12 @@ bool VXMap_remove(XHashMap* this_hash, const void* pvKey)
     size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
     XRBTreeNode** root_ptr = &XHashMap_buckets(this_hash)[index];
     XRBTreeNode* removeNode = XRBTree_remove(root_ptr, XContainerCompare(this_hash),
-                                             XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash));
+                                             XCompareRuleOne_XMap, pvKey,
+                                             XMapBasePairTypeSize(this_hash),
+                                             XContainer_memory(this_hash));
     if (removeNode) {
         XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_hash);
-        XRBTreeNode_delete(removeNode);
+        XRBTreeNode_delete((XTreeNode*)removeNode, XContainer_memory(this_hash));
         --XContainerSize(this_hash);
         return true;
     }
@@ -471,7 +540,7 @@ bool VXMap_find(XHashMap* this_hash, const void* pvKey, XHashMap_iterator* it)
 // ======================== 键集合 ========================
 XVector* VXMapBase_keys(const XMapBase* this_hash)
 {
-    XVector* v = XVector_create(this_hash->m_keyTypeSize);
+    XVector* v = XVector_create_ex(XContainer_memory_type(this_hash), this_hash->m_keyTypeSize, true);
     XContainerSetDataCopyMethod(v, XMapBaseKeyCopyMethod(this_hash));
     XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_hash));
     XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_hash));
@@ -483,7 +552,7 @@ XVector* VXMapBase_keys(const XMapBase* this_hash)
 
 XVector* VXMapBase_values(const XMapBase* this_hash)
 {
-    XVector* v = XVector_create(XContainerTypeSize(this_hash));
+    XVector* v = XVector_create_ex(XContainer_memory_type(this_hash), XContainerTypeSize(this_hash), true);
     XContainerSetDataCopyMethod(v, XContainerDataCopyMethod(this_hash));
     XContainerSetDataMoveMethod(v, XContainerDataMoveMethod(this_hash));
     XContainerSetDataDeinitMethod(v, XContainerDataDeinitMethod(this_hash));
@@ -498,7 +567,8 @@ void VXMap_clear(XHashMap* this_hash)
 {
     if (XHashMap_isEmpty_base(this_hash)) return;
     if (XContainerIsCow(this_hash) && (XSharedData*)XContainerDataPtr(this_hash) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_hash))) {
-        XSharedData_release((XSharedData*)XContainerDataPtr(this_hash));
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_hash),
+            XContainer_memory(this_hash));
         XContainerSetDataPtr(this_hash, NULL);
         XContainerCapacity(this_hash) = 0;
         XContainerSize(this_hash) = 0;
@@ -508,7 +578,7 @@ void VXMap_clear(XHashMap* this_hash)
     size_t cap = XContainerCapacity(this_hash);
     for (size_t i = 0; i < cap; i++) {
         if (buckets[i])
-            XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash);
+            XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash, XContainer_memory(this_hash));
     }
     if (XContainerIsCow(this_hash)) {
         if ((XSharedData*)XContainerDataPtr(this_hash))
@@ -524,23 +594,30 @@ void VXMap_clear(XHashMap* this_hash)
 // ======================== 拷贝 ========================
 void VXClass_copy(XHashMap* object, const XHashMap* src)
 {
-    if (XClassIsVtableNull(object)) {
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized) {
         XHashMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src),
                       src->m_hash, XContainerCompare(src), XContainerIsCow(src));
+        Class_Memory(object) = Class_Memory(src);
+    }
+    else if (XContainerIsCow(src) &&
+        XContainer_memory(object) != XContainer_memory(src)) {
+        return;
     } else {
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
             if ((XSharedData*)XContainerDataPtr(object))
-                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashMapDataDelete, object);
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+                    VXHashMapDataDelete, object, XContainer_memory(object));
         } else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
             if (buckets) {
                 size_t cap = XContainerCapacity(object);
                 for (size_t i = 0; i < cap; i++) {
                     if (buckets[i])
-                        XTree_delete(buckets[i], XMapBase_deleteNodeData, object);
+                        XTree_delete(buckets[i], XMapBase_deleteNodeData, object, XContainer_memory(object));
                 }
-                XFree_System(buckets);
+                XContainer_free(object, buckets);
             }
             XContainerDataPtr(object) = NULL;
         }
@@ -565,24 +642,24 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
         size_t cap = XContainerCapacity(src);
         size_t typeSize = XContainerTypeSize(src);
         size_t keySize = ((XMapBase*)src)->m_keyTypeSize;
-        XRBTreeNode** newBuckets = (XRBTreeNode**)XMalloc_System(cap * sizeof(XRBTreeNode*));
+        XRBTreeNode** newBuckets = (XRBTreeNode**)XContainer_malloc(object, cap * sizeof(XRBTreeNode*));
         if (!newBuckets) return;
         memset(newBuckets, 0, cap * sizeof(XRBTreeNode*));
         for (size_t i = 0; i < cap; i++) {
             if (srcBuckets[i]) {
-                XVector* nodes = XVector_create(sizeof(XRBTreeNode*));
+                XVector* nodes = XVector_create_ex(XContainer_memory_type(object), sizeof(XRBTreeNode*), true);
                 if (!nodes) {
-                    XFree_System(newBuckets);
+                    XContainer_free(object, newBuckets);
                     return;
                 }
                 XBTree_TraversingToXVector(srcBuckets[i], XBTreePreorder, nodes);
                 for (size_t j = 0; j < XVector_size_base(nodes); j++) {
                     XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[j];
                     XPair* oldPair = XBTreeNode_GetDataPtr(oldNode);
-                    XRBTreeNode* newNode = XRBTree_create(NULL, XMapBasePairTypeSize(object));
+                    XRBTreeNode* newNode = XRBTree_create_ex(NULL, XMapBasePairTypeSize(object), XContainer_memory(object));
                     if (!newNode) {
                         XVector_delete_base(nodes);
-                        XFree_System(newBuckets);
+                        XContainer_free(object, newBuckets);
                         return;
                     }
                     XPair* newPair = XBTreeNode_GetDataPtr(newNode);
@@ -598,7 +675,7 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
                     XRBTree_SetRed(newNode);
                     memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->nodeCount);
                     ((XTreeNode*)newNode)->parentNode = NULL;
-                    XRBTree_insertNode(&newBuckets[i], XContainerCompare(object), XCompareRuleTwo_XMap, newNode);
+                    XRBTree_insertNode(&newBuckets[i], XContainerCompare(object), XCompareRuleTwo_XMap, newNode, XContainer_memory(object));
                 }
                 XVector_delete_base(nodes);
             }
@@ -612,7 +689,10 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
 // ======================== 移动 ========================
 void VXClass_move(XHashMap* object, XHashMap* src)
 {
-    if (XClassIsVtableNull(object)) {
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+    if (target_uninitialized) {
         XHashMap_init(object, ((XMapBase*)src)->m_keyTypeSize, XContainerTypeSize(src),
             src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     }
@@ -620,7 +700,8 @@ void VXClass_move(XHashMap* object, XHashMap* src)
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
             if ((XSharedData*)XContainerDataPtr(object))
-                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashMapDataDelete, object);
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+                    VXHashMapDataDelete, object, XContainer_memory(object));
         }
         else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
@@ -628,9 +709,9 @@ void VXClass_move(XHashMap* object, XHashMap* src)
                 size_t cap = XContainerCapacity(object);
                 for (size_t i = 0; i < cap; i++) {
                     if (buckets[i])
-                        XTree_delete(buckets[i], XMapBase_deleteNodeData, object);
+                        XTree_delete(buckets[i], XMapBase_deleteNodeData, object, XContainer_memory(object));
                 }
-                XFree_System(buckets);
+                XContainer_free(object, buckets);
             }
             XContainerDataPtr(object) = NULL;
         }
@@ -640,6 +721,9 @@ void VXClass_move(XHashMap* object, XHashMap* src)
 
     // 交换目标与源（包括 m_data、m_capacity、m_size、m_hash 等）
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XHashMap) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
+    if (!target_uninitialized)
+        Class_Memory(src) = target_memory;
 }
 
 // ======================== 析构 ========================
@@ -647,41 +731,43 @@ void VXMap_deinit(XHashMap* this_hash)
 {
     if (XContainerIsCow(this_hash)) {
         if ((XSharedData*)XContainerDataPtr(this_hash))
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_hash), VXHashMapDataDelete, this_hash);
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_hash),
+                VXHashMapDataDelete, this_hash, XContainer_memory(this_hash));
     } else {
         XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(this_hash);
         if (buckets) {
             size_t cap = XContainerCapacity(this_hash);
             for (size_t i = 0; i < cap; i++) {
                 if (buckets[i])
-                    XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash);
+                    XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash, XContainer_memory(this_hash));
             }
-            XFree_System(buckets);
+                    XContainer_free(this_hash, buckets);
         }
         XContainerDataPtr(this_hash) = NULL;
     }
     XContainerSize(this_hash) = 0;
     XContainerCapacity(this_hash) = 0;
     if (XMapBasePairBuffer(this_hash)) {
-        XPair_delete(XMapBasePairBuffer(this_hash));
+        XContainer_free(this_hash, XMapBasePairBuffer(this_hash));
         XMapBasePairBuffer(this_hash) = NULL;
     }
 }
 
 
-XHashMap* XHashMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow)
+XHashMap* XHashMap_create_ex(XMemoryType memory, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow)
 {
     if (keyTypeSize == 0 || valTypeSize == 0 || hash == NULL || compare == NULL) return NULL;
-    XHashMap* map = XMalloc_System(sizeof(XHashMap));
+    XHashMap* map = XMemory_malloc(sizeof(XHashMap), memory);
     if (!map) return NULL;
     XHashMap_init(map, keyTypeSize, valTypeSize, hash, compare, useCow);
-    Set_Class_MemoryFree(map, XFree_System);
+    Set_Class_Memory(map, memory); Set_Class_IsHeap(map, true);
     return map;
 }
 XHashMap* XHashMap_create_copy(const XHashMap* other)
 {
     if (!other) return NULL;
-    XHashMap* map = XHashMap_create_ex(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
+    XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
+    XHashMap* map = XHashMap_create_ex(memory, ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
         other->m_hash, XContainerCompare(other), XContainerIsCow(other));
     if (!map) return NULL;
     XHashMap_copy_base(map, other);
@@ -690,7 +776,7 @@ XHashMap* XHashMap_create_copy(const XHashMap* other)
 XHashMap* XHashMap_create_move(XHashMap* other)
 {
     if (!other) return NULL;
-    XHashMap* map = XHashMap_create_ex(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
+    XHashMap* map = XHashMap_create_ex(XContainer_memory_type(other), ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
         other->m_hash, XContainerCompare(other), XContainerIsCow(other));
     if (!map) return NULL;
     XHashMap_move_base(map, other);
@@ -735,13 +821,13 @@ bool XHashMap_reserve_base(XHashMap* this_hash, size_t size)
     if (cur == 0) {
         if (XContainerIsCow(this_hash)) {
             size_t szBytes = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
-            XSharedData* sd = XSharedData_create(NULL, szBytes);
+            XSharedData* sd = XSharedData_create_ex(NULL, szBytes, XContainer_memory(this_hash));
             if (!sd) return false;
             memset(sd->data, 0, szBytes);
             XContainerSetDataPtr(this_hash, sd);
         } else {
             size_t szBytes = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
-            void* p2 = XMalloc_System(szBytes);
+            void* p2 = XContainer_malloc(this_hash, szBytes);
             if (!p2) return false;
             memset(p2, 0, szBytes);
             XContainerDataPtr(this_hash) = p2;

@@ -1708,12 +1708,12 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
 #endif
 }
 
-XConsoleShell* XConsoleShell_create(const XConsoleShellIo* io)
+XConsoleShell* XConsoleShell_create_ex(XMemoryType memory, const XConsoleShellIo* io)
 {
-    XConsoleShell* self = (XConsoleShell*)XMalloc_System(sizeof(*self));
+    XConsoleShell* self = (XConsoleShell*)XMemory_malloc(sizeof(XConsoleShell), memory);
     if (!self) return NULL;
     XConsoleShell_init(self, io);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

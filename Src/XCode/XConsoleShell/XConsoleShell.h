@@ -301,7 +301,7 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io);
  * @return     新对象的拥有指针；分配失败返回 NULL。调用方必须使用
  *             XConsoleShell_delete_base 释放非 NULL 返回值。
  */
-XConsoleShell* XConsoleShell_create(const XConsoleShellIo* io);
+XConsoleShell* XConsoleShell_create_ex(XMemoryType memory,  const XConsoleShellIo* io);
 /**
  * @brief      释放 Shell 内部资源但保留调用方提供的对象存储。
  * @param      self 已由 XConsoleShell_init 初始化的对象；可为 NULL；函数不
@@ -715,4 +715,9 @@ void XConsoleShell_clearCancelled(XConsoleShell* self);
 #endif
 
 #endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XConsoleShell_create
+#define XConsoleShell_create(...) XConsoleShell_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XCONSOLE_SHELL_H */

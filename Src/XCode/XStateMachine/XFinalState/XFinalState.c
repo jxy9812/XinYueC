@@ -9,18 +9,13 @@ XVtable* XFinalState_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XFinalState* XFinalState_create(void)
+XFinalState* XFinalState_create_ex(XMemoryType memory, XState* parent)
 {
-    return XFinalState_create_ex(NULL);
-}
-
-XFinalState* XFinalState_create_ex(XState* parent)
-{
-    XFinalState* state = XNew(XFinalState);
+    XFinalState* state = XMemory_malloc(sizeof(XFinalState), memory);
     if (!state)
         return NULL;
     XFinalState_init_ex(state, parent);
-    Set_Class_MemoryFree(state, XFree_System);
+    Set_Class_Memory(state, memory); Set_Class_IsHeap(state, true);
     return state;
 }
 

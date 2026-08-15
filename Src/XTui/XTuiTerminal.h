@@ -54,7 +54,7 @@ XVtable* XTuiTerminal_class_init(void);
 void XTuiTerminal_init(XTuiTerminal* terminal);
 
 /** @brief 在堆上创建终端对象。 */
-XTuiTerminal* XTuiTerminal_create(void);
+XTuiTerminal* XTuiTerminal_create_ex(XMemoryType memory);
 
 #define XTuiTerminal_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiTerminal_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -151,4 +151,9 @@ void XTuiTerminal_leaveAlternateScreen(XTuiTerminal* terminal);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiTerminal_create
+#define XTuiTerminal_create(...) XTuiTerminal_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_TERMINAL_H */

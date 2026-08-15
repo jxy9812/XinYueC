@@ -388,15 +388,6 @@ XVtable* XUrl_class_init(void)
 
 /* ========== 创建与初始化 ========== */
 
-XUrl* XUrl_create(void)
-{
-    XUrl* self = (XUrl*)XMalloc_System(sizeof(XUrl));
-    if (!self) return NULL;
-    XUrl_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
-    return self;
-}
-
 XUrl* XUrl_create_copy(const XUrl* other)
 {
     if (!other) return NULL;
@@ -415,11 +406,14 @@ XUrl* XUrl_create_move(XUrl* other)
     return self;
 }
 
-XUrl* XUrl_create_ex(const XString* urlString, XUrl_ParsingMode mode)
+XUrl* XUrl_create_ex(XMemoryType memory, const XString* urlString, XUrl_ParsingMode mode)
 {
-    XUrl* self = XUrl_create();
+    XUrl* self = (XUrl*)XMemory_malloc(sizeof(XUrl), memory);
     if (!self) return NULL;
-    XUrl_setUrl(self, urlString, mode);
+    XUrl_init(self);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
+    if (urlString)
+        XUrl_setUrl(self, urlString, mode);
     return self;
 }
 
@@ -770,7 +764,7 @@ XUrl* XUrl_fromLocalFile(const XString* localfile)
     XString* urlBuf = XString_create();
     XString_append_utf8(urlBuf, "file:///");
     XString_append(urlBuf, localfile);
-    XUrl* url = XUrl_create_ex(urlBuf, XUrl_TolerantMode);
+    XUrl* url = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlBuf, XUrl_TolerantMode);
     XString_delete_base(urlBuf);
     return url;
 }

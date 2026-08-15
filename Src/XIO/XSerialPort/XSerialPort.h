@@ -136,7 +136,7 @@ XVtable* XSerialPort_class_init();
  * @details 内部调用XSerialPort_class_init确保虚表已初始化，
  *          对象需通过XObject_destroy释放
  */
-XSerialPort* XSerialPort_create();
+XSerialPort* XSerialPort_create_ex(XMemoryType memory);
 /**
  * @brief 初始化已分配的XSerialPort结构体
  * @param port 指向待初始化的XSerialPort实例（不可为NULL）
@@ -418,4 +418,9 @@ void* XSerialPort_breakEnabledChanged_signal(XSerialPort* port, bool enabled);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XSerialPort_create
+#define XSerialPort_create(...) XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

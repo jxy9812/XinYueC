@@ -28,13 +28,13 @@ void XSqlRecord_init(XSqlRecord* record)
     XClassSetVtable(record, XSqlRecord);
 }
 
-XSqlRecord* XSqlRecord_create(void)
+XSqlRecord* XSqlRecord_create_ex(XMemoryType memory)
 {
-    XSqlRecord* record = (XSqlRecord*)XMalloc_System(sizeof(XSqlRecord));
+    XSqlRecord* record = (XSqlRecord*)XMemory_malloc(sizeof(XSqlRecord), memory);
     if (!record) return NULL;
     memset(record, 0, sizeof(*record));
     XSqlRecord_init(record);
-    Set_Class_MemoryFree(record, XFree_System);
+    Set_Class_Memory(record, memory); Set_Class_IsHeap(record, true);
     return record;
 }
 

@@ -44,11 +44,10 @@ XSignalSlot* XSignalSlot_create(XObject* obj)
 {
 	if (obj == NULL)
 		return NULL;
-	XSignalSlot* manager = XNew(XSignalSlot);
+	XSignalSlot* manager = XClass_Malloc(XSignalSlot);
 	if (manager == NULL)
 		return NULL;
 	XSignalSlot_init(manager,obj);
-	Set_Class_MemoryFree(obj, XFree_System);
 	return manager;
 }
 
@@ -112,7 +111,8 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 void XSignalSlot_delete(XSignalSlot* manager)
 {
 	XSignalSlot_deinit(manager);
-	XDelete(manager);
+	if (manager)
+		XFree_System(manager);
 }
 bool XSignalSlot_isSignalConnected(const XSignalSlot* manager, size_t signal)
 {

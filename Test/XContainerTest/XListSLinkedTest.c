@@ -58,7 +58,7 @@ static void XListSLinkedCreateTest(void)
 		XListSLinked_delete_base(li);
 	}
 	{
-		XListSLinked* li = XListSLinked_create_ex(sizeof(int), false);
+		XListSLinked* li = XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), false);
 		XContainerSetCompare(li, int_compare);
 		XPrintf("create_ex(int,cow=false): size=%zu, typeSize=%zu\n",
 			XListSLinked_size_base(li), XListSLinked_typeSize_base(li));
@@ -78,7 +78,7 @@ static void XListSLinkedCreateTest(void)
 	{
 		int arr[] = { 1, 2, 3 };
 		XListSLinked* src = XListSLinkedMakeInt(arr, 3);
-		XListSLinked* copy = XListSLinked_create_ex(sizeof(int), true);
+		XListSLinked* copy = XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), true);
 		XContainerSetCompare(copy, int_compare);
 		XListSLinked_copy_base(copy, src);
 		XPrintf("copy_base: copy.size=%zu, src.size=%zu\n",
@@ -539,7 +539,8 @@ static void XListSLinkedIteratorTest(void)
 		XListSLinked_iterator_add(li, &it);
 		XPrintf("add后: isEnd=%s\n",
 			XListSLinked_iterator_isEnd(&it) ? "是" : "否");
-		XPrintf("iterator_data=%d\n", *(int*)XListSLinked_iterator_data(&it));
+		XPrintf("iterator_data=%s\n",
+			XListSLinked_iterator_data(&it) ? "非空" : "空");
 		XListSLinked_delete_base(li);
 	}
 	XPrintf("\n");

@@ -20,10 +20,10 @@ XVtable* XMqttTopicFilter_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttTopicFilter* XMqttTopicFilter_create(const char* filter)
+XMqttTopicFilter* XMqttTopicFilter_create_ex(XMemoryType memory, const char* filter)
 {
-    XMqttTopicFilter* f = (XMqttTopicFilter*)XMalloc_System(sizeof(XMqttTopicFilter));
-    if (f) { XMqttTopicFilter_init(f, filter); Set_Class_MemoryFree(f, XFree_System); }
+    XMqttTopicFilter* f = (XMqttTopicFilter*)XMemory_malloc(sizeof(XMqttTopicFilter), memory);
+    if (f) { XMqttTopicFilter_init(f, filter); Set_Class_Memory(f, memory); Set_Class_IsHeap(f, true); }
     return f;
 }
 

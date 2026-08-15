@@ -50,7 +50,7 @@ typedef struct XImageWriter
  * @brief      在堆上创建 XImageWriter 实例
  * @return     指向新创建的 XImageWriter 对象的指针，失败返回 NULL
  */
-XImageWriter* XImageWriter_create();
+XImageWriter* XImageWriter_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XImageWriter 实例（空写入器）
@@ -299,5 +299,10 @@ void* XImageWriter_imageFormatsForMimeType(const char* mimeType);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XImageWriter_create
+#define XImageWriter_create(...) XImageWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XIMAGEWRITER_H */
 

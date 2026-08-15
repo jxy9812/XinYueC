@@ -147,7 +147,7 @@ void XHttpRequest_init(XHttpRequest* self);
  * - @brief 创建默认 HTTP 请求对象。
  * - @return 新对象，调用者必须使用 XHttpRequest_delete_base 释放；失败返回 NULL。
  */
-XHttpRequest* XHttpRequest_create(void);
+XHttpRequest* XHttpRequest_create_ex(XMemoryType memory);
 
 /**
  * - @brief 从 URL 创建 HTTP 请求对象。
@@ -470,5 +470,10 @@ XByteArray* XHttpRequest_toHttp1(const XHttpRequest* self, bool includeConnectio
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpRequest_create
+#define XHttpRequest_create(...) XHttpRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPREQUEST_H */

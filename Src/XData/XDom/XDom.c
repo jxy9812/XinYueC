@@ -950,10 +950,10 @@ XVtable* XDomImplementation_class_init(void)
     } \
     Type* Type##_create(void) \
     { \
-        Type* self = (Type*)XMalloc_System(sizeof(Type)); \
+        Type* self = (Type*)XClass_Malloc(Type); \
         if (!self) return NULL; \
         Type##_init(self); \
-        Set_Class_MemoryFree(self, XFree_System); \
+        Set_Class_IsHeap(self, true); \
         return self; \
     } \
     Type* Type##_create_copy(const Type* other) \
@@ -1015,12 +1015,12 @@ void XDomImplementation_init(XDomImplementation* self)
     self->m_isNull = true;
 }
 
-XDomImplementation* XDomImplementation_create(void)
+XDomImplementation* XDomImplementation_create_ex(XMemoryType memory)
 {
-    XDomImplementation* self = (XDomImplementation*)XMalloc_System(sizeof(*self));
+    XDomImplementation* self = (XDomImplementation*)XMemory_malloc(sizeof(XDomImplementation), memory);
     if (!self) return NULL;
     XDomImplementation_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -1071,12 +1071,12 @@ void XDomDocument_init(XDomDocument* self)
     XClassSetVtable(self, XDomDocument);
 }
 
-XDomDocument* XDomDocument_create(void)
+XDomDocument* XDomDocument_create_ex(XMemoryType memory)
 {
-    XDomDocument* self = (XDomDocument*)XMalloc_System(sizeof(*self));
+    XDomDocument* self = (XDomDocument*)XMemory_malloc(sizeof(XDomDocument), memory);
     if (!self) return NULL;
     XDomDocument_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

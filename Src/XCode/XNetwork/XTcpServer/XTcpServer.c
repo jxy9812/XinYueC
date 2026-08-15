@@ -239,13 +239,13 @@ void XTcpServer_init(XTcpServer* server)
 	XClassSetVtable(server, XTcpServer);
 }
 
-XTcpServer* XTcpServer_create(void)
+XTcpServer* XTcpServer_create_ex(XMemoryType memory)
 {
-	XTcpServer* server = XNew(XTcpServer);
+	XTcpServer* server = XMemory_malloc(sizeof(XTcpServer), memory);
 	if (!server) return NULL;
 
 	XTcpServer_init(server);
-	Set_Class_MemoryFree(server, XFree_System);
+	Set_Class_Memory(server, memory); Set_Class_IsHeap(server, true);
 	return server;
 }
 

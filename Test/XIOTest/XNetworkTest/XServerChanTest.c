@@ -72,7 +72,7 @@ static void xserverchan_test_local_send(void)
 {
     XServerChanTestState state = {0};
     XHttpServer* server = XHttpServer_create();
-    XServerChan* client = XServerChan_create_ex("SCT_test_key");
+    XServerChan* client = XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "SCT_test_key");
     XServerChanResult* result;
     char endpoint[96];
     assert(server && client);
@@ -98,7 +98,7 @@ static void xserverchan_test_local_send(void)
 
 static void xserverchan_test_lifecycle(void)
 {
-    XServerChan* client = XServerChan_create_ex("sctp123t_test_key");
+    XServerChan* client = XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "sctp123t_test_key");
     XServerChan* copy;
     XServerChan* moved;
     XServerChanResult* result = XServerChanResult_create();
@@ -154,7 +154,7 @@ static void xserverchan_test_live_send(void)
         printf("未读取到 SendKey，跳过真实发送测试\n");
         return;
     }
-    client = XServerChan_create_ex(sendKey);
+    client = XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sendKey);
     memset(sendKey, 0, sizeof(sendKey));
     if (!client) {
         printf("SendKey 无效，跳过真实发送测试\n");

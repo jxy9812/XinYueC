@@ -545,8 +545,7 @@ static bool XRegularExpression_test_conversion(void)
                    "wildcard match", "通配符正则无法匹配");
 
     XRegularExpression* validatorExpression = XRegularExpression_create_utf8("[A-Z][0-9]", 0);
-    XRegularExpressionValidator* validator = XRegularExpressionValidator_create_ex(
-            validatorExpression);
+    XRegularExpressionValidator* validator = XRegularExpressionValidator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, validatorExpression);
     XREGEX_REQUIRE(validator && validatorExpression, "validator create", "校验器创建失败");
     int64_t position = 0;
     XRegularExpressionValidator_setRegularExpression(validator, validatorExpression);

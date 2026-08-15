@@ -461,12 +461,12 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
     ((XAbstractNetIoRing*)ring)->m_enabled = ok;
 }
 
-XNetIoRingPosix* XNetIoRingPosix_create(void) {
-    XNetIoRingPosix* ring = (XNetIoRingPosix*)XMalloc_System(sizeof(XNetIoRingPosix));
+XNetIoRingPosix* XNetIoRingPosix_create_ex(XMemoryType memory) {
+    XNetIoRingPosix* ring = (XNetIoRingPosix*)XMemory_malloc(sizeof(XNetIoRingPosix), memory);
     if (!ring) return NULL;
 
     XNetIoRingPosix_init(ring);
-    Set_Class_MemoryFree(ring, XFree_System);
+    Set_Class_Memory(ring, memory); Set_Class_IsHeap(ring, true);
     return ring;
 }
 

@@ -39,7 +39,7 @@ XVtable* XTimer_class_init();
 * @brief 创建XTimer实例
 * @return 成功返回XTimer实例指针，失败返回NULL
 */
-XTimer* XTimer_create();
+XTimer* XTimer_create_ex(XMemoryType memory);
 /**
 * @brief 初始化XTimer实例
 * @param timer 要初始化的XTimer实例指针
@@ -200,4 +200,9 @@ void XTimer_singleShot2(size_t msec,XSlotFunc1 slot_func);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTimer_create
+#define XTimer_create(...) XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // !XTimers_H

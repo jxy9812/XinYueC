@@ -33,7 +33,7 @@ XVtable* XSqlRecord_class_init(void);
 /** @brief 初始化空记录。 @param record 待初始化记录；不能为 NULL。 @return 无；对象进入可析构的空记录状态。 */
 void XSqlRecord_init(XSqlRecord* record);
 /** @brief 创建空记录。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
-XSqlRecord* XSqlRecord_create(void);
+XSqlRecord* XSqlRecord_create_ex(XMemoryType memory);
 /** @brief 深拷贝创建记录。 @param other 源记录；借用，不能为 NULL。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_copy(const XSqlRecord* other);
 /** @brief 移动创建记录。 @param other 源记录；不能为 NULL，成功后资源被移出但对象仍需反初始化。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
@@ -125,5 +125,10 @@ bool XSqlRecord_equals(const XSqlRecord* left, const XSqlRecord* right);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlRecord_create
+#define XSqlRecord_create(...) XSqlRecord_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLRECORD_H */

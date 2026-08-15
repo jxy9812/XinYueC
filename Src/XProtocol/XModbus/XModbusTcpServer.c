@@ -151,12 +151,12 @@ XVtable* XModbusTcpServer_class_init(void)
 }
 
 // =============== 创建/初始化 ================
-XModbusTcpServer* XModbusTcpServer_create(void)
+XModbusTcpServer* XModbusTcpServer_create_ex(XMemoryType memory)
 {
-    XModbusTcpServer* server = (XModbusTcpServer*)XMalloc_System(sizeof(XModbusTcpServer));
+    XModbusTcpServer* server = (XModbusTcpServer*)XMemory_malloc(sizeof(XModbusTcpServer), memory);
     if (!server) return NULL;
     XModbusTcpServer_init(server);
-    Set_Class_MemoryFree(server, XFree_System);
+    Set_Class_Memory(server, memory); Set_Class_IsHeap(server, true);
     return server;
 }
 

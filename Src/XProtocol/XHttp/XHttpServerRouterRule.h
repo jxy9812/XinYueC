@@ -45,7 +45,7 @@ XVtable* XHttpServerRouterRule_class_init(void);
  * - @param context 上下文借用指针。
  * - @return 新规则；调用者或路由器负责释放。
  */
-XHttpServerRouterRule* XHttpServerRouterRule_create(const char* pathPattern,
+XHttpServerRouterRule* XHttpServerRouterRule_create_ex(XMemoryType memory,  const char* pathPattern,
                                                     uint32_t methods,
                                                     XHttpServer_RouteHandler handler,
                                                     void* context);
@@ -88,5 +88,10 @@ bool XHttpServerRouterRule_exec(const XHttpServerRouterRule* self,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpServerRouterRule_create
+#define XHttpServerRouterRule_create(...) XHttpServerRouterRule_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPSERVERROUTERRULE_H */

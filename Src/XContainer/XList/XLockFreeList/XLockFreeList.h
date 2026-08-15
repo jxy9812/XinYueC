@@ -63,7 +63,7 @@ XVtable* XLockFreeList_class_init();
 * @param typeSize 链表存储元素的类型大小（字节数，如sizeof(int)）
 * @return 成功返回创建的链表指针（XLockFreeList*），失败返回NULL
 */
-XLockFreeList* XLockFreeList_create(size_t typeSize);
+XLockFreeList* XLockFreeList_create_ex(XMemoryType memory,  size_t typeSize);
 /**
 * @brief 简化创建指定类型的无锁单链表（类型安全宏）
 * @param Type 链表存储元素的类型（如int、float等）
@@ -255,7 +255,7 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
 * @brief 删除链表（基础版本）
 * @note 继承自XListBase的删除操作，释放资源并销毁链表实例
 */
-#define XLockFreeList_delete_base                  XListBase_delete_base
+void XLockFreeList_delete_base(XLockFreeList* this_list);
 /**
 * @brief 清空链表（基础版本）
 * @note 继承自XListBase的清空操作，删除所有元素但保留链表结构
@@ -292,4 +292,9 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XLockFreeList_create
+#define XLockFreeList_create(...) XLockFreeList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XLockFreeList_H

@@ -52,7 +52,7 @@ void XBinaryTreeTest()
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("\n");
 		XVector_delete_base(TreePreorder);
-		XTree_delete(root,NULL,NULL);
+		XTree_delete(root,NULL,NULL, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 #else
 		IS_ON_DEBUG(XVector_ON);
 #endif

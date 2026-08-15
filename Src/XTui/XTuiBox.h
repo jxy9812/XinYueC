@@ -48,7 +48,7 @@ XVtable* XTuiBox_class_init(void);
 void XTuiBox_init(XTuiBox* box);
 
 /** @brief 在堆上创建控件对象。 */
-XTuiBox* XTuiBox_create(void);
+XTuiBox* XTuiBox_create_ex(XMemoryType memory);
 
 #define XTuiBox_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiBox_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -69,4 +69,9 @@ void XTuiBox_setColors(XTuiBox* box, XColor borderFg, XColor borderBg, XColor co
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiBox_create
+#define XTuiBox_create(...) XTuiBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_BOX_H */

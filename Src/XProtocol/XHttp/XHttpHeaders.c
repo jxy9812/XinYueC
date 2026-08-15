@@ -268,13 +268,13 @@ void XHttpHeaders_init(XHttpHeaders* self)
     XClassSetVtable(self, XHttpHeaders);
 }
 
-XHttpHeaders* XHttpHeaders_create(void)
+XHttpHeaders* XHttpHeaders_create_ex(XMemoryType memory)
 {
-    XHttpHeaders* self = (XHttpHeaders*)XMalloc_System(sizeof(XHttpHeaders));
+    XHttpHeaders* self = (XHttpHeaders*)XMemory_malloc(sizeof(XHttpHeaders), memory);
     if (!self)
         return NULL;
     XHttpHeaders_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

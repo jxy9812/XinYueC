@@ -87,7 +87,7 @@ void XNetworkAccessManager_init(XNetworkAccessManager* self);
  * - @brief 创建管理器。
  * - @return 新对象，调用者必须使用 XNetworkAccessManager_delete_base 释放；失败返回 NULL。
  */
-XNetworkAccessManager* XNetworkAccessManager_create(void);
+XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory);
 
 /**
  * - @brief 反初始化、删除和延迟删除入口。
@@ -418,5 +418,10 @@ void* XNetworkAccessManager_proxyAuthenticationRequired_signal(
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkAccessManager_create
+#define XNetworkAccessManager_create(...) XNetworkAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XNETWORKACCESSMANAGER_H */

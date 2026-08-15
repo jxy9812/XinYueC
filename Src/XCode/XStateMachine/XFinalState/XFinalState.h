@@ -27,13 +27,12 @@ XVtable* XFinalState_class_init(void);
  * @brief 创建无父状态的最终状态。
  * @return 新最终状态；内存分配失败时返回 NULL。
  */
-XFinalState* XFinalState_create(void);
 /**
  * @brief 创建指定父状态的最终状态。
  * @param parent 父状态，可为 NULL；非 NULL 时取得最终状态所有权。
  * @return 新最终状态；内存分配失败时返回 NULL。
  */
-XFinalState* XFinalState_create_ex(XState* parent);
+XFinalState* XFinalState_create_ex(XMemoryType memory, XState* parent);
 /**
  * @brief 初始化无父状态的最终状态。
  * @param state 调用者提供的未初始化存储。
@@ -52,4 +51,10 @@ void XFinalState_init_ex(XFinalState* state, XState* parent);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XFinalState_create
+#define XFinalState_create() \
+	XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
+
 #endif // XFINALSTATE_H

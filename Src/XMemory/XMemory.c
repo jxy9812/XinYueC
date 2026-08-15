@@ -125,7 +125,7 @@ void XMemory_setMethod(const XMemory* method, XMemoryType type)
 	if(method)
 		global_Memory[type] = *method;
 }
-const XMemory*  XMemory_method( XMemoryType type)
+XMemory* XMemory_method(XMemoryType type)
 {
 	return global_Memory+(int)type ;
 }

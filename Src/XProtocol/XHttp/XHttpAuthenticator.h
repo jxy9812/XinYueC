@@ -64,7 +64,7 @@ void XHttpAuthenticator_init(XHttpAuthenticator* self);
  * - @brief 创建空认证器。
  * - @return 新对象，调用者必须使用 XHttpAuthenticator_delete_base 释放；内存不足返回 NULL。
  */
-XHttpAuthenticator* XHttpAuthenticator_create(void);
+XHttpAuthenticator* XHttpAuthenticator_create_ex(XMemoryType memory);
 /**
  * - @brief 深拷贝创建认证器。
  * - @param other 源认证器；借用，不能为 NULL。
@@ -175,5 +175,10 @@ bool XHttpAuthenticator_hasCredentials(const XHttpAuthenticator* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpAuthenticator_create
+#define XHttpAuthenticator_create(...) XHttpAuthenticator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPAUTHENTICATOR_H */

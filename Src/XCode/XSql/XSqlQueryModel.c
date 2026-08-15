@@ -36,13 +36,13 @@ void XSqlQueryModel_init(XSqlQueryModel* model)
     XSqlError_init(&model->m_lastError);
 }
 
-XSqlQueryModel* XSqlQueryModel_create(void)
+XSqlQueryModel* XSqlQueryModel_create_ex(XMemoryType memory)
 {
-    XSqlQueryModel* model = (XSqlQueryModel*)XMalloc_System(sizeof(XSqlQueryModel));
+    XSqlQueryModel* model = (XSqlQueryModel*)XMemory_malloc(sizeof(XSqlQueryModel), memory);
     if (!model) return NULL;
     memset(model, 0, sizeof(*model));
     XSqlQueryModel_init(model);
-    Set_Class_MemoryFree(model, XFree_System);
+    Set_Class_Memory(model, memory); Set_Class_IsHeap(model, true);
     return model;
 }
 

@@ -19,12 +19,12 @@ void XTcpSocket_init(XTcpSocket* sock) {
 /**
  * @brief 在堆上创建并初始化一个 XTcpSocket 实例。
  */
-XTcpSocket* XTcpSocket_create(void) {
-    XTcpSocket* sock = XNew(XTcpSocket);
+XTcpSocket* XTcpSocket_create_ex(XMemoryType memory) {
+    XTcpSocket* sock = XMemory_malloc(sizeof(XTcpSocket), memory);
     if (!sock) return NULL;
     
     XTcpSocket_init(sock);
-    Set_Class_MemoryFree(sock, XFree_System);
+    Set_Class_Memory(sock, memory); Set_Class_IsHeap(sock, true);
     return sock;
 }
 #endif // XNETWORK_ABSTRACT_SOCKET_ON

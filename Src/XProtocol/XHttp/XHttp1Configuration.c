@@ -58,13 +58,13 @@ void XHttp1Configuration_init(XHttp1Configuration* self)
     self->m_numberOfConnectionsPerHost = 6;
 }
 
-XHttp1Configuration* XHttp1Configuration_create(void)
+XHttp1Configuration* XHttp1Configuration_create_ex(XMemoryType memory)
 {
-    XHttp1Configuration* self = (XHttp1Configuration*)XMalloc_System(sizeof(XHttp1Configuration));
+    XHttp1Configuration* self = (XHttp1Configuration*)XMemory_malloc(sizeof(XHttp1Configuration), memory);
     if (!self)
         return NULL;
     XHttp1Configuration_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

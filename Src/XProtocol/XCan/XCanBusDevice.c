@@ -82,12 +82,12 @@ XVtable* XCanBusDevice_class_init()
 }
 
 // =============== 创建/初始化 ===============
-XCanBusDevice* XCanBusDevice_create()
+XCanBusDevice* XCanBusDevice_create_ex(XMemoryType memory)
 {
-    XCanBusDevice* dev = (XCanBusDevice*)XMalloc_System(sizeof(XCanBusDevice));
+    XCanBusDevice* dev = (XCanBusDevice*)XMemory_malloc(sizeof(XCanBusDevice), memory);
     if (dev) {
         XCanBusDevice_init(dev);
-        Set_Class_MemoryFree(dev, XFree_System);
+        Set_Class_Memory(dev, memory); Set_Class_IsHeap(dev, true);
     }
     return dev;
 }
@@ -110,7 +110,7 @@ void XCanBusDevice_init(XCanBusDevice* dev)
     dev->m_outgoingFrames = XVector_create(sizeof(XCanBusFrame*));
 
     // 初始化配置参数列表
-    dev->m_configOptions = XVector_create_ex(sizeof(XCanBusDevice_ConfigEntry), false);
+    dev->m_configOptions = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XCanBusDevice_ConfigEntry), false);
 
     dev->m_waitForReceivedEntered = false;
     dev->m_waitForWrittenEntered = false;

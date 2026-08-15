@@ -48,7 +48,7 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 * @return 创建成功的实例指针，失败返回NULL
 * @note 动态分配内存并调用XCircularQueue_init完成初始化
 */
-XCircularQueue* XCircularQueue_create(size_t typeSize, size_t count);
+XCircularQueue* XCircularQueue_create_ex(XMemoryType memory,  size_t typeSize, size_t count);
 /**
 * @brief 类型安全的环形队列创建宏
 * @param Type 元素数据类型（如int、float）
@@ -270,4 +270,9 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XCircularQueue_create
+#define XCircularQueue_create(...) XCircularQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

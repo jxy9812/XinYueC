@@ -22,13 +22,13 @@ XVtable* XTuiKeyEvent_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XTuiKeyEvent* XTuiKeyEvent_create(XEventType type, XTuiKeyType key, XKeyboardModifiers modifiers)
+XTuiKeyEvent* XTuiKeyEvent_create_ex(XMemoryType memory, XEventType type, XTuiKeyType key, XKeyboardModifiers modifiers)
 {
-    XTuiKeyEvent* event = (XTuiKeyEvent*)XMalloc_System(sizeof(XTuiKeyEvent));
+    XTuiKeyEvent* event = (XTuiKeyEvent*)XMemory_malloc(sizeof(XTuiKeyEvent), memory);
     if (!event)
         return NULL;
     XTuiKeyEvent_init(event, type, key, modifiers);
-    Set_Class_MemoryFree(event, XFree_System);
+    Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
     return event;
 }
 

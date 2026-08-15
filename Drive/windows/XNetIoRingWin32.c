@@ -298,12 +298,12 @@ void XNetIoRingWin32_init(XNetIoRingWin32* ring) {
     ((XAbstractNetIoRing*)ring)->m_enabled = (ring->m_iocp != NULL);
 }
 
-XNetIoRingWin32* XNetIoRingWin32_create(void) {
-    XNetIoRingWin32* ring = (XNetIoRingWin32*)XMalloc_System(sizeof(XNetIoRingWin32));
+XNetIoRingWin32* XNetIoRingWin32_create_ex(XMemoryType memory) {
+    XNetIoRingWin32* ring = (XNetIoRingWin32*)XMemory_malloc(sizeof(XNetIoRingWin32), memory);
     if (!ring) return NULL;
 
     XNetIoRingWin32_init(ring);
-    Set_Class_MemoryFree(ring, XFree_System);
+    Set_Class_Memory(ring, memory); Set_Class_IsHeap(ring, true);
     return ring;
 }
 

@@ -217,13 +217,13 @@ void XTuiTextEdit_init(XTuiTextEdit* edit)
         edit->m_capacity = 0;
 }
 
-XTuiTextEdit* XTuiTextEdit_create(void)
+XTuiTextEdit* XTuiTextEdit_create_ex(XMemoryType memory)
 {
-    XTuiTextEdit* edit = (XTuiTextEdit*)XMalloc_System(sizeof(XTuiTextEdit));
+    XTuiTextEdit* edit = (XTuiTextEdit*)XMemory_malloc(sizeof(XTuiTextEdit), memory);
     if (!edit)
         return NULL;
     XTuiTextEdit_init(edit);
-    Set_Class_MemoryFree(edit, XFree_System);
+    Set_Class_Memory(edit, memory); Set_Class_IsHeap(edit, true);
     return edit;
 }
 

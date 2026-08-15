@@ -55,7 +55,7 @@ typedef struct XTelnetClient {
 
 XVtable* XTelnetClient_class_init(void);
 void XTelnetClient_init(XTelnetClient* self);
-XTelnetClient* XTelnetClient_create(void);
+XTelnetClient* XTelnetClient_create_ex(XMemoryType memory);
 #define XTelnetClient_deinit_base XClass_deinit_base
 #define XTelnetClient_delete_base XClass_delete_base
 #define XTelnetClient_deleteLater XObject_deleteLater
@@ -91,5 +91,10 @@ void* XTelnetClient_errorOccurred_signal(XTelnetClient* self, int error);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XTelnetClient_create
+#define XTelnetClient_create(...) XTelnetClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XTELNETCLIENT_H */

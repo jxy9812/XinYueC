@@ -52,7 +52,7 @@ XVtable* XModbusClient_class_init(void);
  * @return 成功返回指向新分配XModbusClient对象的指针，失败返回NULL
  * @note 返回的对象必须通过 XObject_deleteLater 或 XModbusClient_delete_base 释放
  */
-XModbusClient* XModbusClient_create(void);
+XModbusClient* XModbusClient_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusClient实例
@@ -237,5 +237,10 @@ void* XModbusClient_timeoutChanged_signal(XModbusClient* client, int newTimeout)
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusClient_create
+#define XModbusClient_create(...) XModbusClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSCLIENT_H

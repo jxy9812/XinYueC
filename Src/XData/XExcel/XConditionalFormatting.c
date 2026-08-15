@@ -19,8 +19,8 @@ XConditionalFormatting* XConditionalFormatting_create(void)
     XConditionalFormatting* self = (XConditionalFormatting*)XMalloc_System(sizeof(XConditionalFormatting));
     if (!self) return NULL;
     memset(self, 0, sizeof(XConditionalFormatting));
-    self->m_rules = XVector_create_ex(sizeof(XConditionalFormatting_Rule), true);
-    self->m_ranges = XVector_create_ex(sizeof(XCellRange), true);
+    self->m_rules = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XConditionalFormatting_Rule), true);
+    self->m_ranges = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XCellRange), true);
     if (!self->m_rules || !self->m_ranges) {
         XConditionalFormatting_delete(self);
         return NULL;

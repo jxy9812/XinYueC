@@ -20,10 +20,10 @@ XVtable* XMqttMessage_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttMessage* XMqttMessage_create(void)
+XMqttMessage* XMqttMessage_create_ex(XMemoryType memory)
 {
-    XMqttMessage* msg = (XMqttMessage*)XMalloc_System(sizeof(XMqttMessage));
-    if (msg) { XMqttMessage_init(msg); Set_Class_MemoryFree(msg, XFree_System); }
+    XMqttMessage* msg = (XMqttMessage*)XMemory_malloc(sizeof(XMqttMessage), memory);
+    if (msg) { XMqttMessage_init(msg); Set_Class_Memory(msg, memory); Set_Class_IsHeap(msg, true); }
     return msg;
 }
 

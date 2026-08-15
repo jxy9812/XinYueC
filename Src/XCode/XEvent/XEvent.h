@@ -42,7 +42,7 @@ XVtable* XEvent_class_init();
  * @return 新创建的基础事件；内存分配失败时返回 NULL。
  * @note 返回对象由调用者拥有，成功投递到事件队列后转移所有权。
  */
-XEvent* XEvent_create(XEventType code);
+XEvent* XEvent_create_ex(XMemoryType memory,  XEventType code);
 /**
  * @brief 初始化基础事件
  * @param event 调用者提供的未初始化事件存储，不可为 NULL。
@@ -165,7 +165,7 @@ typedef struct XKeyEvent {
  * @return 新键盘事件；内存分配失败时返回 NULL。
  * @note 返回对象由调用者拥有，投递成功后由事件队列取得所有权。
  */
-XKeyEvent* XKeyEvent_create(XEventType type, int key, XKeyboardModifiers modifiers);
+XKeyEvent* XKeyEvent_create_ex(XMemoryType memory,  XEventType type, int key, XKeyboardModifiers modifiers);
 /**
  * @brief 初始化调用者提供的键盘事件存储。
  * @param event 待初始化的键盘事件，不可为 NULL。
@@ -210,7 +210,7 @@ typedef struct XMouseEvent {
  * @return 新鼠标事件；内存分配失败时返回 NULL。
  * @note 返回对象由调用者拥有，投递成功后由事件队列取得所有权。
  */
-XMouseEvent* XMouseEvent_create(XEventType type, XMouseButton button,
+XMouseEvent* XMouseEvent_create_ex(XMemoryType memory,  XEventType type, XMouseButton button,
                                 XKeyboardModifiers modifiers, XPoint position);
 /**
  * @brief 初始化调用者提供的鼠标事件存储。
@@ -262,7 +262,7 @@ typedef struct XDeferredDeleteEvent
     int loopLevel;   // Qt 6.8: 调用 deleteLater 时的事件循环嵌套层级
     int scopeLevel;  // Qt 6.8: 调用 deleteLater 时的作用域层级
 }XDeferredDeleteEvent;
-XDeferredDeleteEvent*XDeferredDeleteEvent_create(bool isDelete, int loopLevel, int scopeLevel);
+XDeferredDeleteEvent*XDeferredDeleteEvent_create_ex(XMemoryType memory,  bool isDelete, int loopLevel, int scopeLevel);
 bool XDeferredDeleteEvent_shouldDeliver(const XDeferredDeleteEvent* event,
                                         const XThreadData* threadData,
                                         bool explicitlyRequested);
@@ -277,7 +277,7 @@ typedef struct XTimerEvent
         XFd fd;
     };
 }XTimerEvent;
-XTimerEvent* XTimerEvent_create(XTimerId id);
+XTimerEvent* XTimerEvent_create_ex(XMemoryType memory,  XTimerId id);
 XTimerId XTimerEvent_timerId(const XTimerEvent* event);
 //套接字活动事件
 typedef struct XEventSockAct
@@ -287,14 +287,14 @@ typedef struct XEventSockAct
     XFd fd;
     XSocketActType actType;//活动类型
 }XEventSockAct;
-XEventSockAct* XEventSockAct_create(XFd fd, XSocketActType actType);
+XEventSockAct* XEventSockAct_create_ex(XMemoryType memory,  XFd fd, XSocketActType actType);
 typedef struct XEventSockClose
 {
     XEvent m_base;
     //XSocketDescriptor socket;
     XFd fd;
 }XEventSockClose;
-XEventSockClose* XEventSockClose_create(XFd fd);
+XEventSockClose* XEventSockClose_create_ex(XMemoryType memory,  XFd fd);
 //孩子事件
 typedef struct {
     XEvent m_base;
@@ -306,7 +306,7 @@ typedef struct {
  * @param child 发生事件的子对象
  * @return 新创建的 XChildEvent 实例，需由调用者负责释放
  */
-XChildEvent* XChildEvent_create(XEventType type, XObject* child);
+XChildEvent* XChildEvent_create_ex(XMemoryType memory,  XEventType type, XObject* child);
 
 /**
  * @brief 判断子对象事件是否为“已添加”类型
@@ -342,7 +342,7 @@ typedef struct {
     XEvent m_base;
     XByteArray* propertyName;
 } XDynamicPropertyChangeEvent;
-XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create(const char* name);
+XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create_ex(XMemoryType memory,  const char* name);
 const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event);
 //函数运行事件
 XCLASS_DEFINE_BEGING(XEventFunc)
@@ -360,7 +360,7 @@ typedef struct XEventFunc
  * @param argList 函数参数
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*));
+XEventFunc* XEventFunc_create_ex(XMemoryType memory,  XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*));
 void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*));
 XVtable* XEventFunc_class_init();
 /**
@@ -397,7 +397,7 @@ typedef struct XMetaCallEvent
  * @param priority 事件优先级
  * @return 新创建的槽函数事件
  */
-XMetaCallEvent* XMetaCallEvent_create(XObject* sender, XSlotFunc1 func, size_t signal_id,
+XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory,  XObject* sender, XSlotFunc1 func, size_t signal_id,
     XVarList* argList, XAtomic_int32_t* ref_count, XSemaphore* sem);
 XVtable* XMetaCallEvent_class_init();
 /**
@@ -409,4 +409,30 @@ void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver);
 #ifdef __cplusplus
 }
 #endif	
+
+/* XClass create API default-memory wrappers. */
+#undef XChildEvent_create
+#define XChildEvent_create(...) XChildEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XDeferredDeleteEvent_create
+#define XDeferredDeleteEvent_create(...) XDeferredDeleteEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XDynamicPropertyChangeEvent_create
+#define XDynamicPropertyChangeEvent_create(name) \
+	XDynamicPropertyChangeEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, name)
+#undef XEvent_create
+#define XEvent_create(...) XEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XEventFunc_create
+#define XEventFunc_create(...) XEventFunc_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XEventSockAct_create
+#define XEventSockAct_create(...) XEventSockAct_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XEventSockClose_create
+#define XEventSockClose_create(...) XEventSockClose_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XKeyEvent_create
+#define XKeyEvent_create(...) XKeyEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XMetaCallEvent_create
+#define XMetaCallEvent_create(...) XMetaCallEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XMouseEvent_create
+#define XMouseEvent_create(...) XMouseEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#undef XTimerEvent_create
+#define XTimerEvent_create(...) XTimerEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+
 #endif // !XDataFrameCommunicatorEvent_H

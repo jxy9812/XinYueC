@@ -98,7 +98,7 @@ void XHttp2HeaderList_init(XHttp2HeaderList* self);
  * - @brief 创建空 HTTP/2 头字段列表。
  * - @return 新建头字段列表；调用者必须使用 XHttp2HeaderList_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2HeaderList* XHttp2HeaderList_create(void);
+XHttp2HeaderList* XHttp2HeaderList_create_ex(XMemoryType memory);
 #define XHttp2HeaderList_deinit_base XClass_deinit_base
 #define XHttp2HeaderList_delete_base XClass_delete_base
 #define XHttp2HeaderList_copy_base XClass_copy_base
@@ -113,7 +113,7 @@ void XHttp2HeaderDecoder_init(XHttp2HeaderDecoder* self);
  * - @brief 创建有状态 HPACK 解码器。
  * - @return 新建解码器；调用者必须使用 XHttp2HeaderDecoder_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2HeaderDecoder* XHttp2HeaderDecoder_create(void);
+XHttp2HeaderDecoder* XHttp2HeaderDecoder_create_ex(XMemoryType memory);
 #define XHttp2HeaderDecoder_deinit_base XClass_deinit_base
 #define XHttp2HeaderDecoder_delete_base XClass_delete_base
 #define XHttp2HeaderDecoder_copy_base XClass_copy_base
@@ -128,7 +128,7 @@ void XHttp2HeaderEncoder_init(XHttp2HeaderEncoder* self);
  * - @brief 创建有状态 HPACK 编码器。
  * - @return 新建编码器；调用者必须使用 XHttp2HeaderEncoder_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2HeaderEncoder* XHttp2HeaderEncoder_create(void);
+XHttp2HeaderEncoder* XHttp2HeaderEncoder_create_ex(XMemoryType memory);
 #define XHttp2HeaderEncoder_deinit_base XClass_deinit_base
 #define XHttp2HeaderEncoder_delete_base XClass_delete_base
 #define XHttp2HeaderEncoder_copy_base XClass_copy_base
@@ -238,5 +238,14 @@ XHttp2HeaderList* XHttp2HeaderList_decode(const void* data, size_t size);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttp2HeaderDecoder_create
+#define XHttp2HeaderDecoder_create(...) XHttp2HeaderDecoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XHttp2HeaderEncoder_create
+#define XHttp2HeaderEncoder_create(...) XHttp2HeaderEncoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XHttp2HeaderList_create
+#define XHttp2HeaderList_create(...) XHttp2HeaderList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTP2HEADERS_H */

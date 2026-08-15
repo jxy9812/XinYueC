@@ -30,7 +30,6 @@ XVtable* XMouseEventTransition_class_init(void);
  * @brief 创建未指定事件源的鼠标事件转换。
  * @return 新鼠标事件转换；内存分配失败时返回 NULL。
  */
-XMouseEventTransition* XMouseEventTransition_create(void);
 /**
  * @brief 创建指定事件源、事件类型、按键和源状态的鼠标事件转换。
  * @param object 被监听对象，不转移所有权，可为 NULL。
@@ -39,7 +38,7 @@ XMouseEventTransition* XMouseEventTransition_create(void);
  * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
  * @return 新鼠标事件转换；内存分配失败时返回 NULL。
  */
-XMouseEventTransition* XMouseEventTransition_create_ex(XObject* object, XEventType type,
+XMouseEventTransition* XMouseEventTransition_create_ex(XMemoryType memory, XObject* object, XEventType type,
                                                        XMouseButton button,
                                                        XState* sourceState);
 /**
@@ -107,4 +106,10 @@ bool XMouseEventTransition_setHitTestPath(XMouseEventTransition* transition,
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XMouseEventTransition_create
+#define XMouseEventTransition_create() \
+	XMouseEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XEVENT_TYPE_NONE, XMouseButton_NoButton, NULL)
+
 #endif // XMOUSEEVENTTRANSITION_H

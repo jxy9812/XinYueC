@@ -132,13 +132,13 @@ bool XTimer_isAutoDelete(XTimer* timer)
 	return timer ? XTimerData_isAutoDelete(&timer->m_timerData) : false;
 }
 
-XTimer* XTimer_create()
+XTimer* XTimer_create_ex(XMemoryType memory)
 {
-	XTimer* timer = XNew(XTimer);
+	XTimer* timer = XMemory_malloc(sizeof(XTimer), memory);
 	if (timer == NULL)
 		return timer;
 	XTimer_init(timer);
-	Set_Class_MemoryFree(timer, XFree_System);
+	Set_Class_Memory(timer, memory); Set_Class_IsHeap(timer, true);
 	return timer;
 }
 

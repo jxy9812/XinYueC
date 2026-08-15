@@ -120,7 +120,7 @@ XCoreApplication* XCoreApplication_instance();
  * @param argv 命令行参数数组
  * @return 创建的实例指针，已存在时返回已有实例
  */
-XCoreApplication* XCoreApplication_create(int argc, char** argv);
+XCoreApplication* XCoreApplication_create_ex(XMemoryType memory,  int argc, char** argv);
 
 /**
  * @brief 初始化 XCoreApplication 实例（栈分配用）
@@ -506,4 +506,9 @@ bool XCoreApplication_notifyInternal2(XObject* receiver, XEvent* event);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XCoreApplication_create
+#define XCoreApplication_create(...) XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

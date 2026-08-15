@@ -54,7 +54,7 @@ void XHttp2ClientSession_init(XHttp2ClientSession* self);
  * - @brief 创建 HTTP/2 客户端会话。
  * - @return 新建客户端会话；调用者必须使用 XHttp2ClientSession_delete_base 释放，分配失败返回 NULL。
  */
-XHttp2ClientSession* XHttp2ClientSession_create(void);
+XHttp2ClientSession* XHttp2ClientSession_create_ex(XMemoryType memory);
 #define XHttp2ClientSession_deinit_base XClass_deinit_base
 #define XHttp2ClientSession_delete_base XClass_delete_base
 
@@ -173,5 +173,10 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttp2ClientSession_create
+#define XHttp2ClientSession_create(...) XHttp2ClientSession_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTP2CLIENT_H */

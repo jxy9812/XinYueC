@@ -62,7 +62,7 @@ XVtable* XHttpServerRouterRule_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XHttpServerRouterRule* XHttpServerRouterRule_create(const char* pathPattern,
+XHttpServerRouterRule* XHttpServerRouterRule_create_ex(XMemoryType memory, const char* pathPattern,
                                                     uint32_t methods,
                                                     XHttpServer_RouteHandler handler,
                                                     void* context)
@@ -70,7 +70,7 @@ XHttpServerRouterRule* XHttpServerRouterRule_create(const char* pathPattern,
     XHttpServerRouterRule* self;
     if (!pathPattern || !handler)
         return NULL;
-    self = (XHttpServerRouterRule*)XMalloc_System(sizeof(*self));
+    self = (XHttpServerRouterRule*)XMemory_malloc(sizeof(XHttpServerRouterRule), memory);
     if (!self)
         return NULL;
     memset(self, 0, sizeof(*self));
@@ -80,7 +80,7 @@ XHttpServerRouterRule* XHttpServerRouterRule_create(const char* pathPattern,
     self->m_methods = methods;
     self->m_handler = handler;
     self->m_context = context;
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_pathPattern) {
         XClass_delete_base((XClass*)self);
         return NULL;

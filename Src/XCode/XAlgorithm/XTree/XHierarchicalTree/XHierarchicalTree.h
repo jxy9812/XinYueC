@@ -23,9 +23,9 @@ bool XHTreeNode_addNode(XHTreeNode* parent, XHTreeNode* child);
 // 添加子节点
 XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize);
 //删除节点(从树中删除节点node)
-bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args);
+bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args, XMemory* memory);
 //删除子节点(只找儿子不找孙子)
-bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
+bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args, XMemory* memory);
 //查找节点
 XHTreeNode* XHTreeNode_findData(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, void* pvData);
 // 前序遍历（根-子树）
@@ -33,7 +33,7 @@ void XHTree_print(XHTreeNode* this_root, int depth);
 //释放一个节点(仅释放自己也不释放数据)
 #define XHTreeNode_delete								XTreeNode_delete
 //递归释放整颗树
-#define XHTree_delete(this_root,method,args)			XTree_delete_base(this_root,XHTreeNode_delete,method,args)
+#define XHTree_delete(this_root,method,args,memory)			XTree_delete_base(this_root,XHTreeNode_delete,method,args,memory)
 //获取节点
 #define XHTreeNode_GetParent(this_root)					XTreeNode_GetParent(this_root)//树-获取父节点(继承的子类均可以使用)
 #define XHTreeNode_GetFirstChild(this_root)				XTreeNode_GetChild(this_root,XHTreeFirstChild)//树-获取第一个子节点指针(继承的子类均可以使用)

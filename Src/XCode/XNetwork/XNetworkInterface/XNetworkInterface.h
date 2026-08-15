@@ -106,7 +106,7 @@ typedef struct XNetworkInterface {
  * @brief 创建一个空的 XNetworkInterface 实例。
  * @return 新分配的实例，需调用 XNetworkInterface_delete_base() 释放。
  */
-XNetworkInterface* XNetworkInterface_create(void);
+XNetworkInterface* XNetworkInterface_create_ex(XMemoryType memory);
 
 /**
  * @brief 拷贝构造函数。
@@ -310,5 +310,10 @@ void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkInterface_create
+#define XNetworkInterface_create(...) XNetworkInterface_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XNETWORKINTERFACE_H

@@ -29,7 +29,7 @@ typedef struct XTimeWheelGroup
 	//XMutex* m_mutex;
 }XTimeWheelGroup;
 XVtable* XTimeWheelGroup_class_init();
-XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision);
+XTimeWheelGroup* XTimeWheelGroup_create_ex(XMemoryType memory,  uint16_t precision);
 void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision);
 void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group,size_t slotsCount);
 void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
@@ -51,4 +51,9 @@ bool XTimeWheelGroup_GlobalExists(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTimeWheelGroup_create
+#define XTimeWheelGroup_create(...) XTimeWheelGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // !XTimeWheelGroup_H

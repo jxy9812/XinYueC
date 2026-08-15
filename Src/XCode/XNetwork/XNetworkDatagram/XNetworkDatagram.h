@@ -60,7 +60,7 @@ void XNetworkDatagram_init(XNetworkDatagram* dgram);
  * @brief 创建一个空的 XNetworkDatagram 实例。
  * @return 新分配的实例，需调用 XNetworkDatagram_delete_base() 释放
  */
-XNetworkDatagram* XNetworkDatagram_create(void);
+XNetworkDatagram* XNetworkDatagram_create_ex(XMemoryType memory);
 
 /**
  * @brief 从数据创建数据报。
@@ -237,5 +237,10 @@ XNetworkDatagram* XNetworkDatagram_makeReply(const XNetworkDatagram* dgram, cons
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkDatagram_create
+#define XNetworkDatagram_create(...) XNetworkDatagram_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XNETWORKDATAGRAM_H

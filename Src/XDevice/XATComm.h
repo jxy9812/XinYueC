@@ -56,7 +56,7 @@ void XATComm_init(XATComm* comm, XIODevice* io);
  * @param io 底层 IO 设备指针
  * @return 成功返回 XATComm 对象指针，失败返回 NULL
  */
-XATComm* XATComm_create(XIODevice* io);
+XATComm* XATComm_create_ex(XMemoryType memory,  XIODevice* io);
 
 // ========== AT 指令操作 ==========
 
@@ -119,5 +119,10 @@ void* XATComm_timeout_signal(XATComm* comm, int opType);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XATComm_create
+#define XATComm_create(...) XATComm_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XATCOMM_H

@@ -170,7 +170,7 @@ void XRegularExpressionMatchIterator_init(XRegularExpressionMatchIterator* itera
  * @brief 创建空正则表达式对象。
  * @return 成功返回堆对象指针，调用者必须使用 XRegularExpression_delete_base 释放；失败返回 NULL。
  */
-XRegularExpression* XRegularExpression_create(void);
+XRegularExpression* XRegularExpression_create_ex(XMemoryType memory);
 /**
  * @brief 创建正则表达式的共享数据拷贝。
  * @param other 源正则表达式；不能传入 NULL。
@@ -196,7 +196,7 @@ XRegularExpression* XRegularExpression_create_utf8(const char* pattern,
  * @brief 创建空匹配结果对象。
  * @return 成功返回堆对象指针，调用者必须使用 XRegularExpressionMatch_delete_base 释放；失败返回 NULL。
  */
-XRegularExpressionMatch* XRegularExpressionMatch_create(void);
+XRegularExpressionMatch* XRegularExpressionMatch_create_ex(XMemoryType memory);
 /**
  * @brief 创建匹配结果的深拷贝。
  * @param other 源匹配结果；不能传入 NULL。
@@ -214,7 +214,7 @@ XRegularExpressionMatch* XRegularExpressionMatch_create_move(XRegularExpressionM
  * @brief 创建空全局匹配迭代器。
  * @return 成功返回堆对象指针，调用者必须使用 XRegularExpressionMatchIterator_delete_base 释放；失败返回 NULL。
  */
-XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create(void);
+XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_ex(XMemoryType memory);
 /**
  * @brief 创建全局匹配迭代器的深拷贝。
  * @param other 源迭代器；不能传入 NULL。
@@ -720,5 +720,14 @@ XRegularExpression_MatchOptions XRegularExpressionMatchIterator_matchOptions(con
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRegularExpression_create
+#define XRegularExpression_create(...) XRegularExpression_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XRegularExpressionMatch_create
+#define XRegularExpressionMatch_create(...) XRegularExpressionMatch_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XRegularExpressionMatchIterator_create
+#define XRegularExpressionMatchIterator_create(...) XRegularExpressionMatchIterator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XREGULAREXPRESSION_H */

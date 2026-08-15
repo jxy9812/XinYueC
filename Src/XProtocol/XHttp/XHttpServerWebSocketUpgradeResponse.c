@@ -62,7 +62,7 @@ xhttp_server_websocket_upgrade_response_create(
     const XByteArray* message)
 {
     XHttpServerWebSocketUpgradeResponse* self =
-        (XHttpServerWebSocketUpgradeResponse*)XMalloc_System(sizeof(*self));
+        (XHttpServerWebSocketUpgradeResponse*)XClass_Malloc(XHttpServerWebSocketUpgradeResponse);
     if (!self)
         return NULL;
     memset(self, 0, sizeof(*self));
@@ -71,7 +71,7 @@ xhttp_server_websocket_upgrade_response_create(
     self->m_type = type;
     self->m_denyStatus = (status >= 100 && status <= 599) ? status : 403;
     self->m_denyMessage = message ? XByteArray_create_copy(message) : XByteArray_create();
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_IsHeap(self, true);
     if (!self->m_denyMessage) {
         XClass_delete_base((XClass*)self);
         return NULL;

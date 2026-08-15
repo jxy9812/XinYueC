@@ -204,7 +204,7 @@ XVtable* XTuiVim_class_init(void);
 void XTuiVim_init(XTuiVim* vim);
 
 /** @brief 在堆上创建控件对象。 */
-XTuiVim* XTuiVim_create(void);
+XTuiVim* XTuiVim_create_ex(XMemoryType memory);
 
 #define XTuiVim_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTuiVim_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -296,4 +296,9 @@ bool XTuiVim_isInsertMode(const XTuiVim* vim);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTuiVim_create
+#define XTuiVim_create(...) XTuiVim_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_VIM_H */

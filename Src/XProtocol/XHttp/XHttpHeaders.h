@@ -250,7 +250,7 @@ void XHttpHeaders_init(XHttpHeaders* self);
  * - @brief 在堆上创建一个空 HTTP 字段集合。
  * - @return 新对象，调用者必须使用 XHttpHeaders_delete_base 释放；分配失败返回 NULL。
  */
-XHttpHeaders* XHttpHeaders_create(void);
+XHttpHeaders* XHttpHeaders_create_ex(XMemoryType memory);
 
 /**
  * - @brief 深拷贝创建 HTTP 字段集合。
@@ -565,5 +565,10 @@ void XHttpHeaders_swap(XHttpHeaders* lhs, XHttpHeaders* rhs);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpHeaders_create
+#define XHttpHeaders_create(...) XHttpHeaders_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPHEADERS_H */

@@ -94,7 +94,7 @@ void XNetworkRequestFactory_init(XNetworkRequestFactory* self);
  * - @brief 创建空请求工厂。
  * - @return 新建请求工厂；调用者必须使用 XNetworkRequestFactory_delete_base 释放，分配失败返回 NULL。
  */
-XNetworkRequestFactory* XNetworkRequestFactory_create(void);
+XNetworkRequestFactory* XNetworkRequestFactory_create_ex(XMemoryType memory);
 /**
  * - @brief 从基础 URL 创建请求工厂。
  * - @param baseUrl 基础 URL；借用，可为 NULL，创建时深拷贝。
@@ -306,5 +306,10 @@ void XNetworkRequestFactory_clearAttributes(XNetworkRequestFactory* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkRequestFactory_create
+#define XNetworkRequestFactory_create(...) XNetworkRequestFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XNETWORKREQUESTFACTORY_H */

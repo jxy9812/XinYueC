@@ -293,11 +293,11 @@ XMqttClientPrivate* XMqttClientPrivate_create(void)
     XMqttClientPrivate* priv = (XMqttClientPrivate*)XCalloc_System(1, sizeof(*priv));
     if (!priv) return NULL;
     priv->input = XByteArray_create();
-    priv->subscriptions = XVector_create_ex(sizeof(XMqttSubscriptionEntry), false);
-    priv->pendingPublishes = XVector_create_ex(sizeof(XMqttPendingPublish), false);
-    priv->incomingQos2 = XVector_create_ex(sizeof(uint16_t), false);
-    priv->receiveAliases = XVector_create_ex(sizeof(XMqttTopicAliasEntry), false);
-    priv->publishAliases = XVector_create_ex(sizeof(XMqttTopicAliasEntry), false);
+    priv->subscriptions = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttSubscriptionEntry), false);
+    priv->pendingPublishes = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttPendingPublish), false);
+    priv->incomingQos2 = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint16_t), false);
+    priv->receiveAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
+    priv->publishAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
     priv->nextPacketIdentifier = 1;
     priv->keepAliveTimer = XTIMER_INVALID_ID;
     if (!priv->input || !priv->subscriptions || !priv->pendingPublishes ||
@@ -979,7 +979,7 @@ static bool mqtt_parse_publish_properties(XMqttReader* reader,
         case MQTT_PROP_SUBSCRIPTION_ID: {
             uint32_t value = mqtt_read_varint(reader);
             if (!prop->m_subscriptionIdentifiers)
-                prop->m_subscriptionIdentifiers = XVector_create_ex(sizeof(uint32_t), false);
+                prop->m_subscriptionIdentifiers = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint32_t), false);
             if (!value || !prop->m_subscriptionIdentifiers ||
                 !XVector_push_back_1_base(prop->m_subscriptionIdentifiers, &value))
                 reader->ok = false;

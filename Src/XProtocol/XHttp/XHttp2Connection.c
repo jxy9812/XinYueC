@@ -136,7 +136,7 @@ static bool xhttp2_connection_append_frame(XHttp2Connection* self, uint8_t type,
     bool result;
     if (!self || !self->m_outgoing)
         return false;
-    frame = XHttp2Frame_create_ex(type, flags, streamId, payload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, flags, streamId, payload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     result = wire && xhttp2_connection_append(self->m_outgoing, XByteArray_constData(wire),
                                                XContainer_size_base((const XContainer*)wire));
@@ -492,7 +492,7 @@ static bool xhttp2_connection_flush(XHttp2Connection* self)
                                                     stream->m_dataOffset, chunk);
                 if ((XHttp2Frame_flags(frame) & XHttp2Frame_EndStream) &&
                     stream->m_dataOffset + chunk == payloadSize) flags = XHttp2Frame_EndStream;
-                out = part ? XHttp2Frame_create_ex(XHttp2Frame_Data, flags, stream->m_id, part) : NULL;
+                out = part ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, flags, stream->m_id, part) : NULL;
                 encoded = out ? XHttp2Frame_toByteArray(out) : NULL;
                 if (!part || !out || !encoded || !xhttp2_connection_append(self->m_outgoing,
                     XByteArray_constData(encoded), XContainer_size_base((const XContainer*)encoded))) {
@@ -569,24 +569,19 @@ void XHttp2Connection_init(XHttp2Connection* self)
     self->m_sessionRecvWindow = 65535;
 }
 
-XHttp2Connection* XHttp2Connection_create(void)
+XHttp2Connection* XHttp2Connection_create_ex(XMemoryType memory,
+                                              const XHttp2Configuration* configuration)
 {
-    XHttp2Connection* self = (XHttp2Connection*)XMalloc_System(sizeof(*self));
+    XHttp2Connection* self = (XHttp2Connection*)XMemory_malloc(sizeof(XHttp2Connection), memory);
+    XHttp2Configuration* copy;
     if (!self) return NULL;
     XHttp2Connection_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_configuration || !self->m_session || !self->m_decoder || !self->m_streams ||
         !self->m_pushedReplies || !self->m_input || !self->m_outgoing) {
         XClass_delete_base((XClass*)self); return NULL;
     }
-    return self;
-}
-
-XHttp2Connection* XHttp2Connection_create_ex(const XHttp2Configuration* configuration)
-{
-    XHttp2Connection* self = XHttp2Connection_create();
-    XHttp2Configuration* copy;
-    if (!self || !configuration) { if (self) XClass_delete_base((XClass*)self); return NULL; }
+    if (!configuration) return self;
     copy = XHttp2Configuration_create_copy(configuration);
     if (!copy || !XHttp2ClientSession_setConfiguration(self->m_session, configuration)) {
         if (copy) XClass_delete_base((XClass*)copy); XClass_delete_base((XClass*)self); return NULL;

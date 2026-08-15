@@ -500,12 +500,12 @@ void XTelnetServer_init(XTelnetServer* self)
     self->m_bytesReceivedResult = XProtocolResult_Ok;
 }
 
-XTelnetServer* XTelnetServer_create(void)
+XTelnetServer* XTelnetServer_create_ex(XMemoryType memory)
 {
-    XTelnetServer* self = (XTelnetServer*)XMalloc_System(sizeof(*self));
+    XTelnetServer* self = (XTelnetServer*)XMemory_malloc(sizeof(XTelnetServer), memory);
     if (!self) return NULL;
     XTelnetServer_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

@@ -17,13 +17,13 @@ XVARIANT_TYPE_OPS_DEFINE(XJsonArray, sizeof(XJsonArray), XJsonArray_copy_base,
 	XJsonArray_move_base, XJsonArray_clear_base, XJsonArray_deinit_base,
 	XJsonArray_compare, "XJsonArray");
 
-XJsonArray* XJsonArray_create()
+XJsonArray* XJsonArray_create_ex(XMemoryType memory)
 {
-    XJsonArray* array = (XJsonArray*)XMalloc_System(sizeof(XJsonArray));
+    XJsonArray* array = (XJsonArray*)XMemory_malloc(sizeof(XJsonArray), memory);
     if (array == NULL)
         return NULL;
     XJsonArray_init(array);
-    Set_Class_MemoryFree(array, XFree_System);
+    Set_Class_Memory(array, memory); Set_Class_IsHeap(array, true);
     return array;
 }
 

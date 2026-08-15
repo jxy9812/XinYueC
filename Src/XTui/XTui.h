@@ -73,7 +73,7 @@ XVtable* XTui_class_init(void);
 void XTui_init(XTui* tui);
 
 /** @brief 在堆上创建 TUI 会话对象。 */
-XTui* XTui_create(void);
+XTui* XTui_create_ex(XMemoryType memory);
 
 #define XTui_delete_base XClass_delete_base /**< 释放堆对象。 */
 #define XTui_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
@@ -162,4 +162,9 @@ bool XTui_handleKey(XTui* self, const XTuiKeyEvent* event);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTui_create
+#define XTui_create(...) XTui_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XTUI_H */

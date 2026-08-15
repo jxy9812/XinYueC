@@ -62,7 +62,7 @@ void XSqlRelation_init_2(XSqlRelation* relation, const XString* tableName,
  * @brief 创建空关系对象。
  * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放；失败返回 NULL。
  */
-XSqlRelation* XSqlRelation_create(void);
+XSqlRelation* XSqlRelation_create_ex(XMemoryType memory);
 /**
  * @brief 使用 UTF-8 名称创建关系对象。
  * @param tableName 被引用表名；借用。
@@ -161,5 +161,10 @@ bool XSqlRelation_isValid(const XSqlRelation* relation);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlRelation_create
+#define XSqlRelation_create(...) XSqlRelation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLRELATION_H */

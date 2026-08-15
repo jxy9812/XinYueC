@@ -332,7 +332,7 @@ XExample* XExample_create(void)
     if (!obj) return NULL;
     
     XExample_init(obj);
-    Set_Class_MemoryFree(obj, XFree_System);  // 标记为堆分配
+    Set_Class_Memory(obj, XFree_System);  // 标记为堆分配
     return obj;
 }
 
@@ -1402,12 +1402,12 @@ void right(XHostAddress* result)
 // ❌ 错误：堆对象未设置释放函数，delete_base 时无法正确释放
 XExample* obj = (XExample*)XMalloc_System(sizeof(XExample));
 XExample_init(obj);
-// 缺少 Set_Class_MemoryFree！
+// 缺少 Set_Class_Memory！
 
 // ✅ 正确
 XExample* obj = (XExample*)XMalloc_System(sizeof(XExample));
 XExample_init(obj);
-Set_Class_MemoryFree(obj, XFree_System);  // 必须设置！
+Set_Class_Memory(obj, XFree_System);  // 必须设置！
 ```
 
 ### 4. 在虚函数表中重载顺序错误
@@ -1515,7 +1515,7 @@ bool XExample_event_base(XExample* self, XEvent* e)
 1. **命名规范**：`X` 前缀 + 大驼峰，函数名为 `X类型_功能`，成员变量 `m_` 前缀，内部虚函数 `V` 前缀
 2. **类创建**：继承 `XClass`/`XObject`，使用虚函数表宏定义，遵循标准头文件/源文件结构
 3. **虚函数表**：先继承 `XVTABLE_INHERIT_XCLASS`，再 `XVTABLE_OVERLOAD_DEFAULT`，不可颠倒
-4. **生命周期**：`init` / `deinit_base` 必须成对出现，堆对象记得 `Set_Class_MemoryFree`
+4. **生命周期**：`init` / `deinit_base` 必须成对出现，堆对象记得 `Set_Class_Memory`
 5. **内存管理**：禁止 `memcpy` 复制对象，使用 `copy_base` / `move_base`
 6. **错误处理**：使用 `ISNULL` 检查指针，`XAssert` 断言关键条件，检查所有返回值
 7. **文件组织**：UTF-8 BOM 编码，标准头文件结构，可选 `_virtual.c` 和 `_Protected.h`
@@ -1535,7 +1535,7 @@ bool XExample_event_base(XExample* self, XEvent* e)
 - [ ] 结构体 `m_class` 位于第一位
 - [ ] 成员变量用 `m_` 前缀
 - [ ] `_init` 中 `memset` 清零子类字段 → 调用父类 `_init` → 设置 vtable
-- [ ] `_create` 中调用 `Set_Class_MemoryFree`
+- [ ] `_create` 中调用 `Set_Class_Memory`
 - [ ] `_class_init` 中先 `XVTABLE_INHERIT_XCLASS` 再 `XVTABLE_OVERLOAD_DEFAULT`
 - [ ] `_base` 函数中用 `ISNULL` 检查 self 和 vtable
 - [ ] `copy_base` 调用前目标对象已 `init`

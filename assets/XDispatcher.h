@@ -84,7 +84,7 @@ XVtable* XDispatcher_class_init();
  * @param policy 调度器的初始调度策略（X_SCHED_FIFO/X_SCHED_RR/X_SCHED_CFS）
  * @return 新创建的调度器指针（XDispatcher*），失败时返回NULL
  */
-XDispatcher* XDispatcher_create(XSchedulePolicy policy);
+XDispatcher* XDispatcher_create_ex(XMemoryType memory,  XSchedulePolicy policy);
 
 /**
  * @brief 初始化调度器实例（与create配合使用，完成成员变量初始化）
@@ -184,5 +184,10 @@ void XDispatcher_block(XDispatcher* dispatcher, XScheduleEntity* entity);
   * @param entity 待销毁的调度实体指针
   */
 #define XScheduleEntity_delete(entity) XClass_delete_base((XClass*)entity)
+
+
+/* XClass create API default-memory wrappers. */
+#undef XDispatcher_create
+#define XDispatcher_create(...) XDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif

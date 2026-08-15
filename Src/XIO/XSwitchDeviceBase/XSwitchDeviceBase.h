@@ -28,7 +28,7 @@ typedef struct XSwitchDeviceBase
 //初始化类
 XVtable* XSwitchDeviceBase_class_init();
 //开关设备
-XSwitchDeviceBase* XSwitchDeviceBase_create();
+XSwitchDeviceBase* XSwitchDeviceBase_create_ex(XMemoryType memory);
 //初始化
 void XSwitchDeviceBase_init(XSwitchDeviceBase* sw);
 //设置状态改变回调函数
@@ -53,4 +53,9 @@ bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XSwitchDeviceBase_create
+#define XSwitchDeviceBase_create(...) XSwitchDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

@@ -3,15 +3,15 @@
 #include <string.h>
 #include <stdio.h>
 
-XStepMotor* XStepMotor_create(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
+XStepMotor* XStepMotor_create_ex(XMemoryType memory, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
 	if (PUL==NULL)
 		return NULL;
-	XStepMotor* motor = XMalloc_System(sizeof(XStepMotor));
+	XStepMotor* motor = XMemory_malloc(sizeof(XStepMotor), memory);
 	if (motor == NULL)
 		return motor;
 	XStepMotor_init(motor, ENA,DIR,PUL);
-	Set_Class_MemoryFree(motor, XFree_System);
+	Set_Class_Memory(motor, memory); Set_Class_IsHeap(motor, true);
 	return motor;
 }
 

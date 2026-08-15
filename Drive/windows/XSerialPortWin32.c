@@ -186,12 +186,12 @@ void XSerialPort_init(XSerialPort* serial)
     serial->readBufferSize = 512 * 1024;
 }
 
-XSerialPort* XSerialPort_create()
+XSerialPort* XSerialPort_create_ex(XMemoryType memory)
 {
-    XSerialPort* port = XNew(XSerialPort);
+    XSerialPort* port = XMemory_malloc(sizeof(XSerialPort), memory);
     if (!port)return NULL;
     XSerialPort_init(port);
-    Set_Class_MemoryFree(port, XFree_System);
+    Set_Class_Memory(port, memory); Set_Class_IsHeap(port, true);
     return port;
 }
 

@@ -108,7 +108,7 @@ void XSqlResult_init(XSqlResult* result, const XSqlDriver* driver);
  * @param driver 所属驱动；借用，可为 NULL。
  * @return 新结果对象，调用者必须使用 XSqlResult_delete_base 释放；失败返回 NULL。
  */
-XSqlResult* XSqlResult_create(const XSqlDriver* driver);
+XSqlResult* XSqlResult_create_ex(XMemoryType memory,  const XSqlDriver* driver);
 
 /** @brief 调用 XClass 析构入口释放查询文本、绑定值和后端结果资源。 */
 #define XSqlResult_deinit_base XClass_deinit_base
@@ -485,5 +485,10 @@ void XSqlResult_resetBindCount(XSqlResult* result);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlResult_create
+#define XSqlResult_create(...) XSqlResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLRESULT_H */

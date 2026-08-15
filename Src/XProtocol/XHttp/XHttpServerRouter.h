@@ -40,7 +40,7 @@ XVtable* XHttpServerRouter_class_init(void);
  * - @param server 所属服务端；借用，可为 NULL，必须在路由器使用期间保持有效。
  * - @return 新建路由器；调用者必须使用 XHttpServerRouter_delete_base 释放，分配失败返回 NULL。
  */
-XHttpServerRouter* XHttpServerRouter_create(XHttpServer* server);
+XHttpServerRouter* XHttpServerRouter_create_ex(XMemoryType memory,  XHttpServer* server);
 #define XHttpServerRouter_deinit_base XClass_deinit_base
 #define XHttpServerRouter_delete_base XClass_delete_base
 /**
@@ -93,5 +93,10 @@ bool XHttpServerRouter_handleRequest(const XHttpServerRouter* self,
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpServerRouter_create
+#define XHttpServerRouter_create(...) XHttpServerRouter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPSERVERROUTER_H */

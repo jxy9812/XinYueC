@@ -1624,7 +1624,7 @@ static void xhttp_manager_hsts_store_load(XNetworkAccessManager* manager)
             if (host) XClass_delete_base((XClass*)host);
             break;
         }
-        policy = XHstsPolicy_create_ex(host, (int64_t)expiry,
+        policy = XHstsPolicy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, host, (int64_t)expiry,
                                        flags ? XHstsPolicy_IncludeSubDomains : 0);
         if (policy) {
             xhttp_manager_hsts_insert(manager, policy);
@@ -1900,7 +1900,7 @@ static void xhttp_manager_process_hsts_response(XNetworkAccessManager* manager, 
         expiry = INT64_MAX;
     else
         expiry = XDateTime_toMSecsSinceEpoch(&now) + maxAge * 1000;
-    policy = XHstsPolicy_create_ex(host, expiry,
+    policy = XHstsPolicy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, host, expiry,
                                    includeSubDomains ? XHstsPolicy_IncludeSubDomains : 0);
     if (policy) {
         xhttp_manager_hsts_insert(manager, policy);
@@ -2005,7 +2005,7 @@ static bool xhttp_manager_send_http2_frame(XHttpTransaction* tx, uint8_t type,
     size_t size;
     if (!tx || !tx->m_socket)
         return false;
-    frame = XHttp2Frame_create_ex(type, flags, streamId, payload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, flags, streamId, payload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     if (!frame || !wire) {
         if (wire) XClass_delete_base((XClass*)wire);
@@ -2560,7 +2560,7 @@ static bool xhttp_manager_send_http2_pending(XHttpTransaction* tx)
             if ((XHttp2Frame_flags(frame) & XHttp2Frame_EndStream) != 0 &&
                 dataOffset + chunk == payloadSize)
                 flags |= XHttp2Frame_EndStream;
-            outgoing = part ? XHttp2Frame_create_ex(XHttp2Frame_Data, flags,
+            outgoing = part ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, flags,
                                                      tx->m_http2StreamId, part) : NULL;
             encoded = outgoing ? XHttp2Frame_toByteArray(outgoing) : NULL;
             if (!part || !outgoing || !encoded ||
@@ -3357,7 +3357,7 @@ static XHttp2SharedConnection* xhttp_manager_shared_http2_create(
         return NULL;
     memset(connection, 0, sizeof(*connection));
     connection->m_manager = tx->m_manager;
-    connection->m_protocol = configuration ? XHttp2Connection_create_ex(configuration) :
+    connection->m_protocol = configuration ? XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration) :
                                              XHttp2Connection_create();
     connection->m_transactions = XVector_create(sizeof(XHttpTransaction*));
     connection->m_host = XString_create_copy(host);
@@ -4136,9 +4136,9 @@ void XNetworkAccessManager_init(XNetworkAccessManager* self)
     self->m_deinitializing = false;
 }
 
-XNetworkAccessManager* XNetworkAccessManager_create(void)
+XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory)
 {
-    XNetworkAccessManager* self = (XNetworkAccessManager*)XMalloc_System(sizeof(XNetworkAccessManager));
+    XNetworkAccessManager* self = (XNetworkAccessManager*)XMemory_malloc(sizeof(XNetworkAccessManager), memory);
     if (!self)
         return NULL;
     XNetworkAccessManager_init(self);
@@ -4146,10 +4146,10 @@ XNetworkAccessManager* XNetworkAccessManager_create(void)
         !self->m_authenticationCache || !self->m_hstsPolicies ||
         !self->m_hstsStoreDirectory) {
         XNetworkAccessManager_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

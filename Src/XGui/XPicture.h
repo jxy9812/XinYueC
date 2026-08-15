@@ -85,7 +85,7 @@ XVtable* XPicture_class_init();
  * @brief      在堆上创建 XPicture 实例
  * @return     指向新创建的 XPicture 对象的指针，失败返回 NULL
  */
-XPicture* XPicture_create();
+XPicture* XPicture_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XPicture 实例
@@ -241,5 +241,10 @@ bool XPicture_isDetached(const XPicture* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XPicture_create
+#define XPicture_create(...) XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XPICTURE_H */
 

@@ -155,20 +155,15 @@ void XTuiScreen_init(XTuiScreen* screen)
     screen->m_cursor.y = 0;
 }
 
-XTuiScreen* XTuiScreen_create(void)
-{
-    return XTuiScreen_create_ex(1, 1);
-}
-
-XTuiScreen* XTuiScreen_create_ex(int width, int height)
+XTuiScreen* XTuiScreen_create_ex(XMemoryType memory, int width, int height)
 {
     if (!isValidCellArea(width, height))
         return NULL;
-    XTuiScreen* screen = (XTuiScreen*)XMalloc_System(sizeof(XTuiScreen));
+    XTuiScreen* screen = (XTuiScreen*)XMemory_malloc(sizeof(XTuiScreen), memory);
     if (!screen)
         return NULL;
     XTuiScreen_init(screen);
-    Set_Class_MemoryFree(screen, XFree_System);
+    Set_Class_Memory(screen, memory); Set_Class_IsHeap(screen, true);
     if (!XTuiScreen_resize(screen, width, height)) {
         XTuiScreen_delete_base(screen);
         return NULL;

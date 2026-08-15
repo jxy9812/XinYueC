@@ -12,16 +12,15 @@ static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle);
 static void VXHrTimerGroup_tick(XHrTimerGroup* group);
 static void VXHrTimerGroup_clear(XHrTimerGroup* group);
 
-static inline XRBTreeNode* create_hr_timer_node(const void* pvData, const size_t dataTypeSize)
+static inline XRBTreeNode* create_hr_timer_node(const void* pvData, const size_t dataTypeSize, XMemory* memory)
 {
-    XRBTreeNode* node = XMalloc_MultiPool(XRBTree_typeSize() + dataTypeSize);
-    if (!node)return NULL;
-    XRBTree_init(node, XRBTree_typeSize(), pvData, dataTypeSize);
-    return node;
+    return XRBTree_create_ex((const char*)pvData, dataTypeSize, memory);
 }
 static inline void delete_hr_timer_node(XHrTimerGroup* group, XRBTreeNode* node) {
     if (node) {
-        XFree_MultiPool(node); // 或者您项目中对应的简单 free 函数
+        XMemory* memory = Class_Memory(group);
+        if (memory && memory->free)
+            memory->free(node);
     }
     /*XEventFunc* event = XEventFunc_create(delete_hr_timer_node_event,
         XVarList_Create(XVar(XRBTreeNode*, node)),
@@ -137,7 +136,7 @@ static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle) {
             XRBTreeNode* removed_node = XRBTree_removeNode(
                 &group->m_rbtree_root,
                 node_to_remove,
-                sizeof(XHrTimerNodeData)
+                sizeof(XHrTimerNodeData), Class_Memory(group)
             );
 
             if (removed_node) {
@@ -180,7 +179,7 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
             XRBTreeNode* detached_node = XRBTree_removeNode(
                 &group->m_rbtree_root,
                 group->m_min_node, // 直接使用缓存的最小节点
-                sizeof(XHrTimerNodeData)
+                sizeof(XHrTimerNodeData), Class_Memory(group)
             );
 
             if (detached_node) {
@@ -244,7 +243,8 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
             XMutex_lock(group->m_mutex);
             {
                 data->m_is_detached = false; // 重新插入前清除标记（在锁内执行）
-                XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns,current_expired);
+                XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns,
+                    less_expire_time_ns, current_expired, Class_Memory(group));
                 XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
                 update_min_node(group);
             }
@@ -262,7 +262,7 @@ void VXHrTimerGroup_clear(XHrTimerGroup* group)
         XMutex_lock(group->m_mutex);
         if(group->m_rbtree_root)
         {
-            XRBTree_delete(group->m_rbtree_root, NULL, NULL);
+            XRBTree_delete(group->m_rbtree_root, NULL, NULL, Class_Memory(group));
             group->m_rbtree_root = NULL;
             group->m_min_node = NULL;
             XAtomic_store_size_t(&group->m_count, 0, XAtomic_MemoryOrder_Relaxed);
@@ -297,12 +297,13 @@ static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data
     XRBTreeNode* new_node = NULL;
     XMutex_lock(group->m_mutex);
     {
-        new_node = create_hr_timer_node(&node_data, sizeof(XHrTimerNodeData));
+        new_node = create_hr_timer_node(&node_data, sizeof(XHrTimerNodeData), Class_Memory(group));
         if (!new_node) {
             XMutex_unlock(group->m_mutex);
             return NULL;
         }
-        new_node = XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, new_node);
+        new_node = XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns,
+            less_expire_time_ns, new_node, Class_Memory(group));
         if (new_node) {
             XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
             update_min_node(group);
@@ -313,14 +314,14 @@ static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data
     return (XHandle)new_node;
 }
 // --- 对外构造函数 ---
-XHrTimerGroup* XHrTimerGroup_create(uint64_t precision_ns) {
+XHrTimerGroup* XHrTimerGroup_create_ex(XMemoryType memory, uint64_t precision_ns) {
     if (precision_ns == 0) return NULL;
 
-    XHrTimerGroup* group = XMalloc_System(sizeof(XHrTimerGroup));
+    XHrTimerGroup* group = XMemory_malloc(sizeof(XHrTimerGroup), memory);
     if (group == NULL) return NULL;
 
     XHrTimerGroup_init(group, precision_ns);
-    Set_Class_MemoryFree(group, XFree_System);
+    Set_Class_Memory(group, memory); Set_Class_IsHeap(group, true);
     return group;
 }
 

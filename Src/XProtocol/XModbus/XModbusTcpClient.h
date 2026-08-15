@@ -98,7 +98,7 @@ XVtable* XModbusTcpClient_class_init(void);
  * - 创建时会自动创建关联的XTcpSocket对象
  * - 删除时会自动释放关联的XTcpSocket对象
  */
-XModbusTcpClient* XModbusTcpClient_create(void);
+XModbusTcpClient* XModbusTcpClient_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusTcpClient实例
@@ -196,6 +196,11 @@ void XModbusTcpClient_init(XModbusTcpClient* client);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusTcpClient_create
+#define XModbusTcpClient_create(...) XModbusTcpClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSTCPCLIENT_H
 

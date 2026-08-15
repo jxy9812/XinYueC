@@ -50,7 +50,7 @@ XStyles* XStyles_create(XAbstractOOXmlFile_CreateFlag flag)
     self->m_bordersList = XVector_create(sizeof(XFormat*));
     self->m_xfFormatsList = XVector_create(sizeof(XFormat*));
     self->m_dxfFormatsList = XVector_create(sizeof(XFormat*));
-    self->m_customNumFmtIdMap = XMap_create_ex(sizeof(int), sizeof(int), int_compare, false);
+    self->m_customNumFmtIdMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(int), int_compare, false);
     self->m_nextCustomNumFmtId = 164;
     for (int i = 0; i < 64; ++i)
         self->m_indexedColors[i] = XColor_create_rgb(0, 0, 0, 0);

@@ -360,12 +360,12 @@ XVtable* XModbusRtuSerialServer_class_init(void)
 }
 
 // =============== 创建/初始化 ================
-XModbusRtuSerialServer* XModbusRtuSerialServer_create(void)
+XModbusRtuSerialServer* XModbusRtuSerialServer_create_ex(XMemoryType memory)
 {
-    XModbusRtuSerialServer* server = XMalloc_System(sizeof(XModbusRtuSerialServer));
+    XModbusRtuSerialServer* server = XMemory_malloc(sizeof(XModbusRtuSerialServer), memory);
     if (!server) return NULL;
     XModbusRtuSerialServer_init(server);
-    Set_Class_MemoryFree(server, XFree_System);
+    Set_Class_Memory(server, memory); Set_Class_IsHeap(server, true);
     return server;
 }
 

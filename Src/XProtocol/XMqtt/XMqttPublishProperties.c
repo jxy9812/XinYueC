@@ -22,10 +22,10 @@ XVtable* XMqttPublishProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttPublishProperties* XMqttPublishProperties_create(void)
+XMqttPublishProperties* XMqttPublishProperties_create_ex(XMemoryType memory)
 {
-    XMqttPublishProperties* p = (XMqttPublishProperties*)XMalloc_System(sizeof(XMqttPublishProperties));
-    if (p) { XMqttPublishProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttPublishProperties* p = (XMqttPublishProperties*)XMemory_malloc(sizeof(XMqttPublishProperties), memory);
+    if (p) { XMqttPublishProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 
@@ -171,10 +171,10 @@ XVtable* XMqttMessageStatusProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttMessageStatusProperties* XMqttMessageStatusProperties_create(void)
+XMqttMessageStatusProperties* XMqttMessageStatusProperties_create_ex(XMemoryType memory)
 {
-    XMqttMessageStatusProperties* p = (XMqttMessageStatusProperties*)XMalloc_System(sizeof(XMqttMessageStatusProperties));
-    if (p) { XMqttMessageStatusProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttMessageStatusProperties* p = (XMqttMessageStatusProperties*)XMemory_malloc(sizeof(XMqttMessageStatusProperties), memory);
+    if (p) { XMqttMessageStatusProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 

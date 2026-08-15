@@ -53,7 +53,7 @@ typedef struct XImageReader
  * @brief      在堆上创建 XImageReader 实例
  * @return     指向新创建的 XImageReader 对象的指针，失败返回 NULL
  */
-XImageReader* XImageReader_create();
+XImageReader* XImageReader_create_ex(XMemoryType memory);
 
 /**
  * @brief      初始化 XImageReader 实例（空读取器）
@@ -451,6 +451,11 @@ void XImageReader_setAllocationLimit(int mbLimit);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XImageReader_create
+#define XImageReader_create(...) XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif /* XIMAGEREADER_H */
 
 

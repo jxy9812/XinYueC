@@ -29,8 +29,9 @@ typedef struct XBitArray
  * @param initialBitCount 初始比特数量
  * @return 成功返回创建的XBitArray对象指针，失败返回NULL
  */
-XBitArray* XBitArray_create_ex(size_t initialBitCount, bool useCow);
-#define XBitArray_create(initialBitCount) XBitArray_create_ex(initialBitCount, true)
+XBitArray* XBitArray_create_ex(XMemoryType memory, size_t initialBitCount, bool useCow);
+#define XBitArray_create(initialBitCount) \
+	XBitArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, initialBitCount, true)
 /**
  * @brief 基于另一个比特数组创建一个新的副本
  * @param other 被复制的比特数组
@@ -332,4 +333,10 @@ XVtable* XBitArray_class_init();
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XBitArray_create
+#define XBitArray_create(initialBitCount) \
+	XBitArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, initialBitCount, true)
+
 #endif // XBITARRAY_H

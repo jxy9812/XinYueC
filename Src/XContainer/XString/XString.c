@@ -500,11 +500,13 @@ XString* XString_create_copy(const XString* other)
 {
     if (other == NULL)
         return NULL;
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XMemory_malloc(sizeof(XString),
+        XContainer_memory_type((const XContainer*)other));
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
 
     XString_copy_base(str, other);
+    Set_Class_IsHeap(str, true);
 
     return str;
 }
@@ -512,8 +514,12 @@ XString* XString_create_move(XString* other)
 {
     if (other==NULL)
         return NULL;
-    XString* str= XString_create();
+    XString* str = (XString*)XMemory_malloc(sizeof(XString),
+        XContainer_memory_type((const XContainer*)other));
+    if (!str) return NULL;
+    memset(str, 0, sizeof(XString));
     XString_move_base(str,other);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 // 字符串创建函数
@@ -524,7 +530,7 @@ XString* XString_create_utf8(const char* utf8_str)
 
 XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
 {
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XClass_Malloc(XString);
     if (!str) return NULL;
     XString_init(str);
     size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
@@ -537,7 +543,7 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
             str->parent.m_size = xchar_count;
         }
     }
-    Set_Class_MemoryFree(str, XFree_System);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 
@@ -565,7 +571,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     }
 
     // 步骤2：创建并初始化XString
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XClass_Malloc(XString);
     if (!str) {
         return NULL;
     }
@@ -588,7 +594,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     data[xchar_count] = (XChar){ 0 };
 
     XString_deinitCache(str);
-    Set_Class_MemoryFree(str, XFree_System);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 
@@ -604,7 +610,7 @@ XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len)
     if (!latin1 || len == 0) return XString_create();
     int64_t xchar_count = XChar_fromLatin1Stream(latin1, len, NULL, 0);
     if (xchar_count <= 0) return XString_create();
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XClass_Malloc(XString);
     if (!str) return NULL;
     XString_init(str);
     XString_reserve(str, (size_t)xchar_count);
@@ -613,7 +619,7 @@ XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len)
     str->parent.m_size = (size_t)xchar_count;
     data[xchar_count] = (XChar){ 0 };
     XString_deinitCache(str);
-    Set_Class_MemoryFree(str, XFree_System);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 
@@ -631,7 +637,7 @@ XString* XString_create_with_length_utf32(const uint32_t* ucs4, size_t len)
     if (!ucs4 || len == 0) return XString_create();
     int64_t xchar_count = XChar_fromUtf32Stream(ucs4, len, NULL, 0);
     if (xchar_count <= 0) return XString_create();
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XClass_Malloc(XString);
     if (!str) return NULL;
     XString_init(str);
     XString_reserve(str, (size_t)xchar_count);
@@ -640,7 +646,7 @@ XString* XString_create_with_length_utf32(const uint32_t* ucs4, size_t len)
     str->parent.m_size = (size_t)xchar_count;
     data[xchar_count] = (XChar){ 0 };
     XString_deinitCache(str);
-    Set_Class_MemoryFree(str, XFree_System);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 
@@ -684,7 +690,9 @@ XString* XString_create_fmt_gbk(const char* format, ...)
     if (fmt_len <= 0) return NULL;
 
     // 第二步：分配缓冲区并格式化GBK字符串
-    char* gbk_buf = (char*)XMalloc_System(fmt_len + 1); // +1 用于终止符
+    XMemory* default_memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+    char* gbk_buf = default_memory && default_memory->malloc
+        ? (char*)default_memory->malloc(fmt_len + 1) : NULL; // +1 用于终止符
     if (!gbk_buf) return NULL;
 
     va_start(args, format);
@@ -693,7 +701,8 @@ XString* XString_create_fmt_gbk(const char* format, ...)
 
     // 第三步：通过已实现的函数创建XString
     XString* str = XString_create_gbk(gbk_buf);
-    XFree_System(gbk_buf); // 释放临时缓冲区
+    if (default_memory && default_memory->free)
+        default_memory->free(gbk_buf); // 释放临时缓冲区
 
     return str;
 }
@@ -705,7 +714,9 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     }
 
     // 步骤1：创建带空终止符的临时GBK缓冲区（避免原函数越界读取）
-    char* temp_gbk = (char*)XMalloc_System(len + 1); // +1 用于存储'\0'
+    XMemory* default_memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+    char* temp_gbk = default_memory && default_memory->malloc
+        ? (char*)default_memory->malloc(len + 1) : NULL; // +1 用于存储'\0'
     if (!temp_gbk) {
         return NULL;
     }
@@ -715,14 +726,16 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
     int64_t xchar_count = XChar_fromGbkStream(temp_gbk, len, NULL, 0);
     if (xchar_count <= 0) {
-        XFree_System(temp_gbk); // 释放临时缓冲区
+        if (default_memory && default_memory->free)
+            default_memory->free(temp_gbk); // 释放临时缓冲区
         return NULL;
     }
 
     // 步骤3：创建并初始化XString
-    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    XString* str = (XString*)XClass_Malloc(XString);
     if (!str) {
-        XFree_System(temp_gbk);
+        if (default_memory && default_memory->free)
+            default_memory->free(temp_gbk);
         return NULL;
     }
     XString_init(str);
@@ -733,7 +746,8 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     // 步骤5：执行实际转换（使用临时缓冲区）
     XChar* data = XString_data(str);
     xchar_count = XChar_fromGbkStream(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
-    XFree_System(temp_gbk); // 转换完成后释放临时缓冲区
+    if (default_memory && default_memory->free)
+        default_memory->free(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
         XString_delete_base(str);
@@ -745,7 +759,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     data[xchar_count] = (XChar){ 0 };
 
     XString_deinitCache(str);
-    Set_Class_MemoryFree(str, XFree_System);
+    Set_Class_IsHeap(str, true);
     return str;
 }
 
@@ -767,7 +781,9 @@ XString* XString_create_fmt_utf8(const char* format, ...)
     }
 
     // 分配缓冲区（+1 用于存储终止符'\0'）
-    char* buf = (char*)XMalloc_System(buf_size + 1);
+    XMemory* default_memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+    char* buf = default_memory && default_memory->malloc
+        ? (char*)default_memory->malloc(buf_size + 1) : NULL;
     if (!buf) {
         va_end(args);
         return NULL;     // 内存分配失败
@@ -779,7 +795,8 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 
     // 创建UTF-8编码的XString并释放临时缓冲区
     XString* str = XString_create_utf8(buf);
-    XFree_System(buf);
+    if (default_memory && default_memory->free)
+        default_memory->free(buf);
 
     return str;
 }
@@ -822,14 +839,14 @@ const char* XString_toUtf8(const XString* str)
     
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf8_len * sizeof(uint8_t) + sizeof(uint8_t);
-    uint16_t* utf8_buf = (uint16_t*)XMalloc_System(buf_size);
+    uint16_t* utf8_buf = (uint16_t*)XContainer_malloc((const XContainer*)str, buf_size);
     if (!utf8_buf) return NULL;
 
     // 调用XChar转换函数（使用内部结束符自动处理）
     int64_t result = XChar_toUtf8Stream(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
     if (result <= 0) 
     {
-        XFree_System(utf8_buf);
+        XContainer_free((const XContainer*)str, utf8_buf);
         return NULL;  // 转换失败
     }
     XString_initCache(str);
@@ -864,13 +881,13 @@ const uint16_t* XString_toUtf16(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf16_len * sizeof(uint16_t) + sizeof(uint16_t);
-    uint16_t* utf16_buf = (uint16_t*)XMalloc_System(buf_size);
+    uint16_t* utf16_buf = (uint16_t*)XContainer_malloc((const XContainer*)str, buf_size);
     if (!utf16_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_toUtf16Stream(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
     if (result <= 0) {
-        XFree_System(utf16_buf);
+        XContainer_free((const XContainer*)str, utf16_buf);
         return NULL;
     }
 
@@ -906,13 +923,13 @@ const uint32_t* XString_toUtf32(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf32_len * sizeof(uint32_t) + sizeof(uint32_t);
-    uint32_t* utf32_buf = (uint32_t*)XMalloc_System(buf_size);
+    uint32_t* utf32_buf = (uint32_t*)XContainer_malloc((const XContainer*)str, buf_size);
     if (!utf32_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_toUtf32Stream(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
     if (result <= 0) {
-        XFree_System(utf32_buf);
+        XContainer_free((const XContainer*)str, utf32_buf);
         return NULL;
     }
 
@@ -947,13 +964,13 @@ const char* XString_toGbk(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t gbk_max_len = (size_t)gbk_len + 1;
-    char* gbk_buf = (char*)XMalloc_System(gbk_max_len);
+    char* gbk_buf = (char*)XContainer_malloc((const XContainer*)str, gbk_max_len);
     if (!gbk_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_toGbkStream(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
     if (result <= 0) {
-        XFree_System(gbk_buf);
+        XContainer_free((const XContainer*)str, gbk_buf);
         return NULL;
     }
 
@@ -1250,7 +1267,7 @@ bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...)
 
     // 第二步：分配临时缓冲区并执行格式化
     // +1 用于存储字符串终止符'\0'
-    char* utf8_buf = (char*)XMalloc_System(fmt_len + 1);
+    char* utf8_buf = (char*)XContainer_malloc(str, fmt_len + 1);
     if (!utf8_buf) {
         return false; // 内存分配失败
     }
@@ -1265,7 +1282,7 @@ bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...)
     bool success = XString_assign_utf8(str, utf8_buf);
 
     // 释放临时缓冲区（无论成功与否都需要释放）
-    XFree_System(utf8_buf);
+    XContainer_free(str, utf8_buf);
 
     return success;
 }
@@ -1428,7 +1445,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
     size_t text_len = XString_length_base(str);
 
     // 预计算前缀表（KMP算法）
-    int* prefix = (int*)XMalloc_System(before_len * sizeof(int));
+    int* prefix = (int*)XContainer_malloc(str, before_len * sizeof(int));
     if (!prefix) return false;
     compute_prefix(before_data, before_len, prefix, cs);
 
@@ -1448,14 +1465,14 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
         // 1. 移除原子串
         if (!XString_remove_base(str, (size_t)pos, before_len)) 
         {
-            XFree_System(prefix);
+            XContainer_free(str, prefix);
             return false;
         }
 
         // 2. 插入新子串
         if (!XString_insert(str, (size_t)pos, after)) 
         {
-            XFree_System(prefix);
+            XContainer_free(str, prefix);
             return false;
         }
 
@@ -1467,7 +1484,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
         pos += after_len;
     }
 
-    XFree_System(prefix);
+    XContainer_free(str, prefix);
     return replaced; // 即使没有替换也返回true（操作成功但无匹配）
 }
 
@@ -1611,7 +1628,7 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
     const XChar* pattern = XString_cdata(substr_str);  // 模式串XChar数组
 
     // 分配并计算前缀表
-    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
+    int* prefix = (int*)XContainer_malloc(str, substr_len * sizeof(int));
     if (!prefix) {
         XString_delete_base(substr_str);
         return -1;
@@ -1622,7 +1639,7 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
     int64_t result = kmp_search(text, str_len, pattern, substr_len, prefix, cs, from);
 
     // 清理资源
-    XFree_System(prefix);
+    XContainer_free(str, prefix);
     XString_delete_base(substr_str);
     return result;
 }
@@ -2120,7 +2137,7 @@ bool XString_reserve(XString* str, size_t capacity)
     if (!(XSharedData*)XContainerDataPtr(str))
     {
         size_t bytes = sizeof(XChar) * (new_capacity + 1);
-        XSharedData* sd = XSharedData_create(NULL, bytes);
+        XSharedData* sd = XSharedData_create_ex(NULL, bytes, XContainer_memory(str));
         if (sd)
         {
             memset(sd->data, 0, bytes);
@@ -2135,7 +2152,7 @@ bool XString_reserve(XString* str, size_t capacity)
     else
     {
         size_t bytes = (new_capacity + 1) * sizeof(XChar);
-        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(str));
         if (!newShared)
             return false;
 
@@ -2149,7 +2166,7 @@ bool XString_reserve(XString* str, size_t capacity)
             memset(newShared->data, 0, bytes);
         }
 
-        XSharedData_release((XSharedData*)XContainerDataPtr(str));
+        XSharedData_release((XSharedData*)XContainerDataPtr(str), XContainer_memory(str));
         XContainerSetDataPtr(str, newShared);
     }
 
@@ -2385,7 +2402,7 @@ void XString_detach(XString* str)
     // 分配新的缓冲区（保留原有容量，避免后续频繁分配）
         size_t bytes = (curr_capacity + 1) * sizeof(XChar);
     // 创建新的 XSharedData（一次分配）
-    XSharedData* newShared = XSharedData_create(NULL, bytes);
+    XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(str));
     if (!newShared) return;
 
     // 复制现有数据（包含终止符）
@@ -2395,7 +2412,7 @@ void XString_detach(XString* str)
         memset(newShared->data, 0, bytes);
 
     // 减少旧引用，设置新引用
-    XSharedData_release((XSharedData*)XContainerDataPtr(str));
+    XSharedData_release((XSharedData*)XContainerDataPtr(str), XContainer_memory(str));
     XContainerSetDataPtr(str, newShared);
 
     // 缓存失效（数据已变更）
@@ -2411,7 +2428,7 @@ void XString_deinitCache(XString* str)
     {
         if (str->m_cache[i].m_data == NULL)
             continue;
-        XFree_System(str->m_cache[i].m_data);
+        XContainer_free(str, str->m_cache[i].m_data);
         if (str->m_cache[i].m_data == local)
             local = NULL;
         str->m_cache[i].m_data = NULL;
@@ -2419,7 +2436,7 @@ void XString_deinitCache(XString* str)
     }
     if (local != NULL)
     {
-        XFree_System(local);
+        XContainer_free(str, local);
     }
     str->m_cache[0].m_data = NULL;
     str->m_cache[0].m_length = 0;
@@ -2429,7 +2446,7 @@ static void XString_initCache(XString* str)
 {
     if (str == NULL || str->m_cache != NULL)
         return;
-    str->m_cache=XCalloc_System(XStringCache_Size,sizeof(XStringCache));
+    str->m_cache = XContainer_calloc(str, XStringCache_Size, sizeof(XStringCache));
 }
 
 /* ========================================================================== */
@@ -2546,7 +2563,7 @@ void XString_squeeze(XString* str)
     XString_detach(str);
 
     size_t bytes = (len + 1) * sizeof(XChar);
-    XSharedData* newShared = XSharedData_create(NULL, bytes);
+    XSharedData* newShared = XSharedData_create_ex(NULL, bytes, XContainer_memory(str));
     if (!newShared) return;
 
     if (XString_cdata(str) && len > 0) {
@@ -2555,7 +2572,7 @@ void XString_squeeze(XString* str)
         memset(newShared->data, 0, bytes);
     }
 
-    XSharedData_release((XSharedData*)XContainerDataPtr(str));
+    XSharedData_release((XSharedData*)XContainerDataPtr(str), XContainer_memory(str));
     XContainerSetDataPtr(str, newShared);
     XContainerCapacity(str) = len;
 }
@@ -3028,8 +3045,8 @@ static bool XString_section_regularExpression_append(
 
     if (*sectionCount == *sectionCapacity) {
         size_t capacity = *sectionCapacity ? *sectionCapacity * 2 : 8;
-        size_t* values = (size_t*)XRealloc_System(*separatorLengths,
-                                                   capacity * sizeof(size_t));
+        size_t* values = (size_t*)XContainer_realloc(source, *separatorLengths,
+            capacity * sizeof(size_t));
         if (!values) return false;
         *separatorLengths = values;
         *sectionCapacity = capacity;
@@ -3114,7 +3131,7 @@ XString* XString_section_regularExpression(const XString* str,
     XRegularExpressionMatchIterator_delete_base(iterator);
     XRegularExpression_delete_base(separator);
     if (!ok || sectionCount == 0) {
-        if (separatorLengths) XFree_System(separatorLengths);
+        if (separatorLengths) XContainer_free(str, separatorLengths);
         if (sections) XStringList_delete_base(sections);
         return XString_create();
     }
@@ -3139,7 +3156,7 @@ XString* XString_section_regularExpression(const XString* str,
     XString* result = XString_create();
     if (!result || start < 0 || end < 0 || start >= sectionsSize || start > end) {
         if (result) XString_delete_base(result);
-        XFree_System(separatorLengths);
+        XContainer_free(str, separatorLengths);
         XStringList_delete_base(sections);
         return XString_create();
     }
@@ -3162,14 +3179,14 @@ XString* XString_section_regularExpression(const XString* str,
                 if (!piece || !XString_append(result, piece)) {
                     if (piece) XString_delete_base(piece);
                     XString_delete_base(result);
-                    XFree_System(separatorLengths);
+                    XContainer_free(str, separatorLengths);
                     XStringList_delete_base(sections);
                     return XString_create();
                 }
                 XString_delete_base(piece);
             } else if (!XString_append(result, section)) {
                 XString_delete_base(result);
-                XFree_System(separatorLengths);
+                XContainer_free(str, separatorLengths);
                 XStringList_delete_base(sections);
                 return XString_create();
             }
@@ -3185,7 +3202,7 @@ XString* XString_section_regularExpression(const XString* str,
         if (!prefix || !XString_prepend(result, prefix)) {
             if (prefix) XString_delete_base(prefix);
             XString_delete_base(result);
-            XFree_System(separatorLengths);
+            XContainer_free(str, separatorLengths);
             XStringList_delete_base(sections);
             return XString_create();
         }
@@ -3200,14 +3217,14 @@ XString* XString_section_regularExpression(const XString* str,
         if (!suffix || !XString_append(result, suffix)) {
             if (suffix) XString_delete_base(suffix);
             XString_delete_base(result);
-            XFree_System(separatorLengths);
+            XContainer_free(str, separatorLengths);
             XStringList_delete_base(sections);
             return XString_create();
         }
         XString_delete_base(suffix);
     }
 
-    XFree_System(separatorLengths);
+    XContainer_free(str, separatorLengths);
     XStringList_delete_base(sections);
     return result;
 }

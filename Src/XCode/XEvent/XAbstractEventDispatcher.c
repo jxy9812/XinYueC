@@ -476,12 +476,12 @@ XVtable* XAbstractEventDispatcher_class_init(void)
 // === 对象创建与初始化 ==============================================
 // ===================================================================
 
-XAbstractEventDispatcher* XAbstractEventDispatcher_create(XObject* parent)
+XAbstractEventDispatcher* XAbstractEventDispatcher_create_ex(XMemoryType memory, XObject* parent)
 {
-    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMalloc_System(sizeof(XAbstractEventDispatcher));
+    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMemory_malloc(sizeof(XAbstractEventDispatcher), memory);
     if (self) {
         XAbstractEventDispatcher_init(self, parent);
-        Set_Class_MemoryFree(self, XFree_System);
+        Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     }
     return self;
 }
@@ -919,9 +919,9 @@ void global_init()
  * 创建 XAbstractEventDispatcher 实例 + 分配私有数据 + 创建平台 I/O 后端。
  * 原实现位于 XEventDispatcher_win32.c，现迁移至此处实现平台无关化。
  * ================================================================ */
-XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
+XAbstractEventDispatcher* XEventDispatcher_create_ex(XMemoryType memory, XObject* parent)
 {
-    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMalloc_System(sizeof(XAbstractEventDispatcher));
+    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMemory_malloc(sizeof(XAbstractEventDispatcher), memory);
     if (!self) return NULL;
 
     /* 初始化基类（设置 XAbstractEventDispatcher 虚函数表） */
@@ -931,7 +931,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     XAbstractEventDispatcherPrivate* d = (XAbstractEventDispatcherPrivate*)XCalloc_System(1, sizeof(XAbstractEventDispatcherPrivate));
     if (!d)
     {
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
     XAbstractEventDispatcherPrivate_init(d);
@@ -961,7 +961,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     }
 #endif
 
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 // ===================================================================

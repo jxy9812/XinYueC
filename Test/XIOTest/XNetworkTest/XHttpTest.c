@@ -586,7 +586,7 @@ static void xhttp_test_hsts(void)
     XVector* current = NULL;
     XByteArray* directory = XByteArray_create_utf8("/tmp/xhttp_hsts_alignment_v2");
     assert(manager && reopened && host && policies && directory);
-    policy = XHstsPolicy_create_ex(host, INT64_MAX, XHstsPolicy_IncludeSubDomains);
+    policy = XHstsPolicy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, host, INT64_MAX, XHstsPolicy_IncludeSubDomains);
     assert(policy);
     assert(!XHstsPolicy_isExpired(policy));
     assert(XHstsPolicy_includesSubDomains(policy));
@@ -661,7 +661,7 @@ static void xhttp_test_http2_frame(void)
     XByteArray* encoded;
     size_t consumed = 0;
     assert(payload);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_Data, XHttp2Frame_EndStream, 1, payload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, XHttp2Frame_EndStream, 1, payload);
     assert(frame);
     encoded = XHttp2Frame_toByteArray(frame);
     assert(encoded && XContainer_size_base((const XContainer*)encoded) == 12);
@@ -696,7 +696,7 @@ static void xhttp_test_http2_frame_validation(void)
     XHttp2Frame* frame;
     size_t consumed = 0;
     assert(payload);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_Settings, XHttp2Frame_Ack, 0, payload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Settings, XHttp2Frame_Ack, 0, payload);
     assert(frame && !XHttp2Frame_validateHeader(frame) &&
            !XHttp2Frame_toByteArray(frame));
     XClass_delete_base((XClass*)frame);
@@ -894,9 +894,9 @@ static void xhttp_test_http2_connection_multiplex(void)
     assert(outgoing && XHttp2Frame_hasClientPreface(XByteArray_constData(outgoing),
                                                      XContainer_size_base((const XContainer*)outgoing)));
     XClass_delete_base((XClass*)outgoing);
-    firstFrame = XHttp2Frame_create_ex(XHttp2Frame_Headers,
+    firstFrame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
         XHttp2Frame_EndHeaders | XHttp2Frame_EndStream, firstId, payload);
-    secondFrame = XHttp2Frame_create_ex(XHttp2Frame_Headers,
+    secondFrame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
         XHttp2Frame_EndHeaders | XHttp2Frame_EndStream, secondId, payload);
     firstWire = firstFrame ? XHttp2Frame_toByteArray(firstFrame) : NULL;
     secondWire = secondFrame ? XHttp2Frame_toByteArray(secondFrame) : NULL;
@@ -937,7 +937,7 @@ static void xhttp_test_http2_connection_initial_window(void)
     assert(configuration && request);
     assert(XHttp2Configuration_setSessionReceiveWindowSize(configuration, 100000));
     assert(XHttp2Configuration_setStreamReceiveWindowSize(configuration, 90000));
-    connection = XHttp2Connection_create_ex(configuration);
+    connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttpRequest_setUrl_utf8(request, "https://example.com/window") &&
            XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
@@ -1007,9 +1007,9 @@ static void xhttp_test_http2_connection_h2c_upgrade(void)
     assert(settings && XHttp2Frame_type(settings) == XHttp2Frame_Settings &&
            sizeof(XHttp2Frame_ClientPreface) - 1 + consumed ==
                XContainer_size_base((const XContainer*)outgoing));
-    headers = XHttp2Frame_create_ex(XHttp2Frame_Headers, XHttp2Frame_EndHeaders,
+    headers = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers, XHttp2Frame_EndHeaders,
                                     1, headerPayload);
-    data = XHttp2Frame_create_ex(XHttp2Frame_Data, XHttp2Frame_EndStream, 1, dataPayload);
+    data = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, XHttp2Frame_EndStream, 1, dataPayload);
     headerWire = headers ? XHttp2Frame_toByteArray(headers) : NULL;
     dataWire = data ? XHttp2Frame_toByteArray(data) : NULL;
     input = XByteArray_create();
@@ -1053,7 +1053,7 @@ static void xhttp_test_http2_connection_protocol_limits(void)
     /* Qt QHttp2Connection::acceptSetting：服务端不能向客户端启用 PUSH。 */
     connection = XHttp2Connection_create();
     settingsPayload = XByteArray_create_with_data("\0\2\0\0\0\1", 6);
-    settings = settingsPayload ? XHttp2Frame_create_ex(XHttp2Frame_Settings, 0, 0,
+    settings = settingsPayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Settings, 0, 0,
                                                         settingsPayload) : NULL;
     wire = settings ? XHttp2Frame_toByteArray(settings) : NULL;
     assert(connection && settingsPayload && settings && wire &&
@@ -1068,7 +1068,7 @@ static void xhttp_test_http2_connection_protocol_limits(void)
     /* Qt 将未主动发送 PING 时收到的 ACK 作为诊断状态，不关闭连接。 */
     connection = XHttp2Connection_create();
     pingPayload = XByteArray_create_with_data("12345678", 8);
-    ping = pingPayload ? XHttp2Frame_create_ex(XHttp2Frame_Ping, XHttp2Frame_Ack, 0,
+    ping = pingPayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Ping, XHttp2Frame_Ack, 0,
                                                 pingPayload) : NULL;
     wire = ping ? XHttp2Frame_toByteArray(ping) : NULL;
     assert(connection && pingPayload && ping && wire &&
@@ -1096,8 +1096,7 @@ static void xhttp_test_http2_connection_protocol_limits(void)
         uint32_t streamId = 0;
         connection = XHttp2Connection_create();
         invalidHeaderPayload = XByteArray_create_with_data("\xff", 1);
-        invalidHeaders = invalidHeaderPayload ? XHttp2Frame_create_ex(
-            XHttp2Frame_Headers, XHttp2Frame_EndHeaders, 1, invalidHeaderPayload) : NULL;
+        invalidHeaders = invalidHeaderPayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers, XHttp2Frame_EndHeaders, 1, invalidHeaderPayload) : NULL;
         wire = invalidHeaders ? XHttp2Frame_toByteArray(invalidHeaders) : NULL;
         assert(connection && request && invalidHeaderPayload && invalidHeaders && wire &&
                XHttpRequest_setUrl_utf8(request, "https://example.com/hpack") &&
@@ -1153,7 +1152,7 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
     wire = XHttp2Connection_takeOutgoing(connection);
     assert(wire);
     XClass_delete_base((XClass*)wire);
-    response = XHttp2Frame_create_ex(XHttp2Frame_Headers,
+    response = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
                                      XHttp2Frame_EndHeaders | XHttp2Frame_EndStream,
                                      firstId, payload);
     wire = response ? XHttp2Frame_toByteArray(response) : NULL;
@@ -1167,7 +1166,7 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
 
     /* 已关闭流的 WINDOW_UPDATE/RST_STREAM 可忽略；DATA 必须以 STREAM_CLOSED 拒绝。 */
     controlPayload = XByteArray_create_with_data("\0\0\0\1", 4);
-    update = controlPayload ? XHttp2Frame_create_ex(XHttp2Frame_WindowUpdate, 0, firstId,
+    update = controlPayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_WindowUpdate, 0, firstId,
                                                      controlPayload) : NULL;
     wire = update ? XHttp2Frame_toByteArray(update) : NULL;
     assert(update && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1177,7 +1176,7 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
     XClass_delete_base((XClass*)update);
     XClass_delete_base((XClass*)controlPayload);
     latePayload = XByteArray_create_utf8("late");
-    data = latePayload ? XHttp2Frame_create_ex(XHttp2Frame_Data, 0, firstId,
+    data = latePayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, 0, firstId,
                                                latePayload) : NULL;
     wire = data ? XHttp2Frame_toByteArray(data) : NULL;
     assert(data && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1207,7 +1206,7 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
 {
     XHttp2Connection* connection = XHttp2Connection_create();
     XByteArray* payload = XByteArray_create_with_data("\0\0\0\1", 4);
-    XHttp2Frame* update = payload ? XHttp2Frame_create_ex(XHttp2Frame_WindowUpdate, 0, 1,
+    XHttp2Frame* update = payload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_WindowUpdate, 0, 1,
                                                            payload) : NULL;
     XByteArray* wire = update ? XHttp2Frame_toByteArray(update) : NULL;
     /* 对齐 Qt：未关联活动流的 WINDOW_UPDATE 按已关闭流忽略。 */
@@ -1223,7 +1222,7 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
     /* Qt 将没有对应主动 PING 的 ACK 作为诊断信息，不关闭连接。 */
     connection = XHttp2Connection_create();
     payload = XByteArray_create_with_data("\0\0\0\0\0\0\0\0", 8);
-    update = payload ? XHttp2Frame_create_ex(XHttp2Frame_Ping, XHttp2Frame_Ack, 0, payload) : NULL;
+    update = payload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Ping, XHttp2Frame_Ack, 0, payload) : NULL;
     wire = update ? XHttp2Frame_toByteArray(update) : NULL;
     assert(connection && payload && update && wire &&
            XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1243,7 +1242,7 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
         uint32_t streamId = 0;
         connection = XHttp2Connection_create();
         payload = XByteArray_create_with_data("\0\0\0\0", 4);
-        update = payload ? XHttp2Frame_create_ex(XHttp2Frame_WindowUpdate, 0, 1, payload) : NULL;
+        update = payload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_WindowUpdate, 0, 1, payload) : NULL;
         wire = update ? XHttp2Frame_toByteArray(update) : NULL;
         assert(connection && request && payload && update && wire &&
                XHttpRequest_setUrl_utf8(request, "https://example.com/window-error"));
@@ -1345,8 +1344,8 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
     XHttp2Configuration_setServerPushEnabled(configuration, true);
     assert(XHttpRequest_setUrl_utf8(request, "https://example.com/push-state"));
 
-    connection = XHttp2Connection_create_ex(configuration);
-    frame = connection ? XHttp2Frame_create_ex(XHttp2Frame_Priority, 0, 1, priorityPayload) : NULL;
+    connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
+    frame = connection ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Priority, 0, 1, priorityPayload) : NULL;
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(connection && frame && wire &&
            !XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1356,13 +1355,13 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
     XClass_delete_base((XClass*)frame);
     XClass_delete_base((XClass*)connection);
 
-    connection = XHttp2Connection_create_ex(configuration);
+    connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
     XClass_delete_base((XClass*)outgoing);
 
-    frame = XHttp2Frame_create_ex(XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                   streamId, firstPromisePayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1371,7 +1370,7 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
     XClass_delete_base((XClass*)frame);
 
     /* 已接收服务端流 4 后，服务端不能再承诺更小的流 2。 */
-    frame = XHttp2Frame_create_ex(XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                   streamId, secondPromisePayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && !XHttp2Connection_feed(connection, XByteArray_constData(wire),
@@ -1382,19 +1381,19 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
     XClass_delete_base((XClass*)connection);
 
     /* 已见过服务端流 4 时，未记录的较小偶数 RST_STREAM 按关闭流忽略。 */
-    connection = XHttp2Connection_create_ex(configuration);
+    connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
     XClass_delete_base((XClass*)outgoing);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                   streamId, firstPromisePayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)));
     XClass_delete_base((XClass*)wire);
     XClass_delete_base((XClass*)frame);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_RstStream, 0, 2, rstPayload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_RstStream, 0, 2, rstPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)) &&
@@ -1433,7 +1432,7 @@ static void xhttp_test_http2_connection_goaway(void)
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
     XClass_delete_base((XClass*)outgoing);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_GoAway, 0, 0, invalidPayload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_GoAway, 0, 0, invalidPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && !XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                     XContainer_size_base((const XContainer*)wire)) &&
@@ -1450,7 +1449,7 @@ static void xhttp_test_http2_connection_goaway(void)
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
     XClass_delete_base((XClass*)outgoing);
-    frame = XHttp2Frame_create_ex(XHttp2Frame_GoAway, 0, 0, gracefulPayload);
+    frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_GoAway, 0, 0, gracefulPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)) &&
@@ -1481,15 +1480,15 @@ static void xhttp_test_http2_connection_push_promise(void)
     uint32_t streamId = 0;
     assert(configuration && request && promisePayload && responsePayload);
     XHttp2Configuration_setServerPushEnabled(configuration, true);
-    connection = XHttp2Connection_create_ex(configuration);
+    connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttpRequest_setUrl_utf8(request, "https://example.com/push") &&
            XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     discarded = XHttp2Connection_takeOutgoing(connection);
     assert(discarded);
     XClass_delete_base((XClass*)discarded);
-    promise = XHttp2Frame_create_ex(XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
+    promise = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                     streamId, promisePayload);
-    response = XHttp2Frame_create_ex(XHttp2Frame_Headers,
+    response = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
         XHttp2Frame_EndHeaders | XHttp2Frame_EndStream, 2, responsePayload);
     promiseWire = promise ? XHttp2Frame_toByteArray(promise) : NULL;
     responseWire = response ? XHttp2Frame_toByteArray(response) : NULL;
@@ -1534,7 +1533,7 @@ static void xhttp_test_server_values(void)
     XByteArray* denyMessage;
     int routeCount = 0;
     assert(request && body && mime && urlText);
-    url = XUrl_create_ex(urlText, XUrl_TolerantMode);
+    url = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlText, XUrl_TolerantMode);
     assert(url);
     request->m_url = url;
     request->m_method = XHttpServerRequest_Get;
@@ -1786,7 +1785,7 @@ static void xhttp_test_request_factory_and_rest(void)
     XNetworkAccessManager* manager;
     XRestAccessManager* restManager;
     assert(factory && common && query && token && baseUrlText && priorityValue);
-    baseUrl = XUrl_create_ex(baseUrlText, XUrl_TolerantMode);
+    baseUrl = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, baseUrlText, XUrl_TolerantMode);
     assert(baseUrl);
     assert(XHttpHeaders_append_utf8(common, "X-Common", "yes"));
     assert(XNetworkRequestFactory_setBaseUrl(factory, baseUrl));

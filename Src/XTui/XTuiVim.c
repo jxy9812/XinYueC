@@ -3284,10 +3284,10 @@ void XTuiVim_init(XTuiVim* vim)
 #endif
 }
 
-XTuiVim* XTuiVim_create(void)
+XTuiVim* XTuiVim_create_ex(XMemoryType memory)
 {
-    XTuiVim* vim = (XTuiVim*)XMalloc_System(sizeof(XTuiVim));
-    if (!vim) return NULL; XTuiVim_init(vim); Set_Class_MemoryFree(vim, XFree_System); return vim;
+    XTuiVim* vim = (XTuiVim*)XMemory_malloc(sizeof(XTuiVim), memory);
+    if (!vim) return NULL; XTuiVim_init(vim); Set_Class_Memory(vim, memory); Set_Class_IsHeap(vim, true); return vim;
 }
 
 void XTuiVim_setLines(XTuiVim* vim, const char* const* lines, int count)

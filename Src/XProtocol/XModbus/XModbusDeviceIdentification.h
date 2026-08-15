@@ -158,7 +158,7 @@ XVtable* XModbusDeviceIdentification_class_init(void);
  * @brief 在堆上创建并初始化一个XModbusDeviceIdentification实例
  * @return 成功返回XModbusDeviceIdentification指针，失败返回NULL
  */
-XModbusDeviceIdentification* XModbusDeviceIdentification_create(void);
+XModbusDeviceIdentification* XModbusDeviceIdentification_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化已分配的XModbusDeviceIdentification实例
@@ -251,5 +251,10 @@ XModbusDeviceIdentification* XModbusDeviceIdentification_fromByteArray(const uin
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusDeviceIdentification_create
+#define XModbusDeviceIdentification_create(...) XModbusDeviceIdentification_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSDEVICEIDENTIFICATION_H

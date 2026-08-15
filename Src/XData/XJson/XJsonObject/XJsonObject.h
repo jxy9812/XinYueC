@@ -26,7 +26,7 @@ typedef struct XJsonObject
 * @brief 创建一个空的XJsonObject实例
 * @return 成功返回XJsonObject指针，失败返回NULL
 */
-XJsonObject* XJsonObject_create(void);
+XJsonObject* XJsonObject_create_ex(XMemoryType memory);
 /**
 * @brief 通过深拷贝创建XJsonObject实例
 * @param copy 被拷贝的XJsonObject实例
@@ -376,4 +376,9 @@ void XJsonObject_setVariant_ref(XVariant* variant, XJsonObject* object);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XJsonObject_create
+#define XJsonObject_create(...) XJsonObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XJSONOBJECT_H

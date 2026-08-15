@@ -101,7 +101,6 @@ XVtable* XStateMachine_class_init(void);
  * @return 新状态机；内存分配失败时返回 NULL。
  * @note 调用 start 前必须使用 XState_setInitialState 配置顶层初始状态。
  */
-XStateMachine* XStateMachine_create(void);
 /**
  * @brief 创建指定根子状态模式的状态机。
  * @param childMode 根状态的子状态模式。
@@ -109,7 +108,7 @@ XStateMachine* XStateMachine_create(void);
  * @warning Qt 允许构造并行根状态机，但跨根区域转换会报告
  * XStateMachine_StateMachineChildModeSetToParallelError。
  */
-XStateMachine* XStateMachine_create_ex(XState_ChildMode childMode);
+XStateMachine* XStateMachine_create_ex(XMemoryType memory, XState_ChildMode childMode);
 /**
  * @brief 初始化互斥根状态机。
  * @param machine 调用者提供的未初始化存储。
@@ -255,7 +254,7 @@ void XStateMachine_endMicrostep_base(XStateMachine* machine, XEvent* event);
  * @return 新信号事件；内存分配失败时返回 NULL。
  * @note 指针参数只复制指针值，不深拷贝指针指向的对象。
  */
-XStateMachine_SignalEvent* XStateMachine_SignalEvent_create(XObject* sender, size_t signal, const XVarList* arguments);
+XStateMachine_SignalEvent* XStateMachine_SignalEvent_create_ex(XMemoryType memory,  XObject* sender, size_t signal, const XVarList* arguments);
 /**
  * @brief 获取信号事件的发送者。
  * @param event 信号事件。
@@ -283,7 +282,7 @@ const XVarList* XStateMachine_SignalEvent_arguments_const(const XStateMachine_Si
  * @return 新包装事件；event 为 NULL 或分配失败时返回 NULL。
  * @note 创建失败时 event 所有权仍属于调用者。
  */
-XStateMachine_WrappedEvent* XStateMachine_WrappedEvent_create(XObject* object, XEvent* event);
+XStateMachine_WrappedEvent* XStateMachine_WrappedEvent_create_ex(XMemoryType memory,  XObject* object, XEvent* event);
 /**
  * @brief 获取包装事件的原始事件源。
  * @param event 包装事件。
@@ -321,4 +320,14 @@ void* XStateMachine_runningChanged_signal(XStateMachine* machine, bool running);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XStateMachine_create
+#define XStateMachine_create() \
+	XStateMachine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates)
+#undef XStateMachine_SignalEvent_create
+#define XStateMachine_SignalEvent_create(...) XStateMachine_SignalEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XStateMachine_WrappedEvent_create
+#define XStateMachine_WrappedEvent_create(...) XStateMachine_WrappedEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XSTATEMACHINE_H

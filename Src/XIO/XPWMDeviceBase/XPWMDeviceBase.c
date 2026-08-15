@@ -1,16 +1,16 @@
 ﻿#include"XPWMDeviceBase.h"
 #include"XMemory.h"
 #include<string.h>
-XPWMDeviceBase* XPWMDeviceBase_create()
+XPWMDeviceBase* XPWMDeviceBase_create_ex(XMemoryType memory)
 {
 	/*if (port == NULL)
 		return NULL;*/
-	XPWMDeviceBase* pwm = XMalloc_System(sizeof(XPWMDeviceBase));
+	XPWMDeviceBase* pwm = XMemory_malloc(sizeof(XPWMDeviceBase), memory);
 	if (pwm == NULL)
 		return pwm;
 	
 	XPWMDeviceBase_init(pwm);
-	Set_Class_MemoryFree(pwm, XFree_System);
+	Set_Class_Memory(pwm, memory); Set_Class_IsHeap(pwm, true);
 	return pwm;
 }
 

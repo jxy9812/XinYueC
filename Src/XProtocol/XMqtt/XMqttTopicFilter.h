@@ -48,7 +48,7 @@ XVtable* XMqttTopicFilter_class_init(void);
  * @param filter 过滤器字符串（UTF-8，可为 NULL）
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttTopicFilter* XMqttTopicFilter_create(const char* filter);
+XMqttTopicFilter* XMqttTopicFilter_create_ex(XMemoryType memory,  const char* filter);
 
 /**
  * @brief 创建深拷贝
@@ -132,5 +132,10 @@ size_t XMqttTopicFilter_hash(const XMqttTopicFilter* filter, size_t seed);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttTopicFilter_create
+#define XMqttTopicFilter_create(...) XMqttTopicFilter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTTOPICFILTER_H

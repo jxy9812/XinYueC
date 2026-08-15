@@ -48,12 +48,12 @@ XVtable* XEventLoop_class_init() {
  * @brief 创建事件循环实例
  * @return 新创建的事件循环实例
  */
-XEventLoop* XEventLoop_create() {
-    XEventLoop* loop = XMalloc_System(sizeof(XEventLoop));
+XEventLoop* XEventLoop_create_ex(XMemoryType memory) {
+    XEventLoop* loop = XMemory_malloc(sizeof(XEventLoop), memory);
     if (!loop)
         return NULL;
     XEventLoop_init(loop);
-    Set_Class_MemoryFree(loop, XFree_System);
+    Set_Class_Memory(loop, memory); Set_Class_IsHeap(loop, true);
     return loop;
 }
 

@@ -20,6 +20,8 @@ static bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer);
 static void VXClass_copy(XLockFreeStack* object, const XLockFreeStack* src);
 static void VXClass_move(XLockFreeStack* object, XLockFreeStack* src);
 static void VXClass_deinit(XLockFreeStack* this_stack);
+static void XLockFreeStack_init_with_memory(XLockFreeStack* this_stack,
+    size_t typeSize, size_t capacity, XMemoryType memoryType);
 
 XVtable* XLockFreeStack_class_init()
 {
@@ -52,26 +54,34 @@ XVtable* XLockFreeStack_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XLockFreeStack* XLockFreeStack_create(size_t typeSize, size_t capacity)
+XLockFreeStack* XLockFreeStack_create_ex(XMemoryType memory, size_t typeSize, size_t capacity)
 {
     if (ISNULL(typeSize, "") || ISNULL(capacity, ""))
         return NULL;
 
-    XLockFreeStack* this_stack = XMalloc_System(sizeof(XLockFreeStack));
+    XLockFreeStack* this_stack = XMemory_malloc(sizeof(XLockFreeStack), memory);
     if (!this_stack) return NULL;
 
-    XLockFreeStack_init(this_stack, typeSize, capacity);
-    Set_Class_MemoryFree(this_stack, XFree_System);
+    XLockFreeStack_init_with_memory(this_stack, typeSize, capacity, memory);
+    Set_Class_IsHeap(this_stack, true);
     return this_stack;
 }
 
 void XLockFreeStack_init(XLockFreeStack* this_stack, size_t typeSize, size_t capacity)
+{
+    XLockFreeStack_init_with_memory(this_stack, typeSize, capacity,
+        XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+static void XLockFreeStack_init_with_memory(XLockFreeStack* this_stack,
+    size_t typeSize, size_t capacity, XMemoryType memoryType)
 {
     if (ISNULL(this_stack, "") || ISNULL(typeSize, "") || ISNULL(capacity, ""))
         return;
 
     // 初始化底层向量
     XVector_init(this_stack, typeSize,false);
+    Set_Class_Memory(this_stack, memoryType);
     XVector_resize_base(this_stack, capacity);
 
     // 计算索引位数和掩码
@@ -252,8 +262,10 @@ bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer)
 void VXClass_copy(XLockFreeStack* object, const XLockFreeStack* src)
 {
     if (!object || !src) return;
-    if (XClassIsVtableNull(object))
-        XLockFreeStack_init(object, XContainerTypeSize(src), XContainerCapacity(src));
+    if (XClassIsVtableNull(object)) {
+        XLockFreeStack_init_with_memory(object, XContainerTypeSize(src),
+            XContainerCapacity(src), XContainer_memory_type(src));
+    }
     XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*, const XVector*))(object, src);
     object->m_top = src->m_top;
     object->m_index_bits = src->m_index_bits;
@@ -263,15 +275,22 @@ void VXClass_copy(XLockFreeStack* object, const XLockFreeStack* src)
 
 void VXClass_move(XLockFreeStack* object, XLockFreeStack* src)
 {
-    if (XClassIsVtableNull(object))
+    XMemory* source_memory = Class_Memory(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
+    if (target_uninitialized)
     {
-        XLockFreeStack_init(object, XContainerTypeSize(src), XContainerCapacity(src));
+        XLockFreeStack_init_with_memory(object, XContainerTypeSize(src),
+            XContainerCapacity(src), XContainer_memory_type(src));
     }
     else if (!XLockFreeStack_isEmpty_base(object))
     {
         XLockFreeStack_clear_base(object);
     }
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeStack) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
+    if (!target_uninitialized)
+        Class_Memory(src) = target_memory;
 }
 
 void VXClass_deinit(XLockFreeStack* this_stack)

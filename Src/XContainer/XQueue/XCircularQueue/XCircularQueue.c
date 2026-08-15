@@ -19,6 +19,8 @@ static void VXClass_deinit(XCircularQueue* this_queue);
 
 // =============== 内部辅助函数 ===============
 static bool enlargeCapacity(XCircularQueue* this_queue);
+static void XCircularQueue_init_with_memory(XCircularQueue* this_queue,
+    size_t typeSize, size_t count, XMemoryType memory);
 
 // =============== 虚函数表初始化 ===============
 XVtable* XCircularQueue_class_init()
@@ -76,7 +78,7 @@ static bool enlargeCapacity(XCircularQueue* this_queue)
     size_t count = VXCircularQueue_size(this_queue);
 
     // 分配新缓冲区
-    uint8_t* newData = (uint8_t*)XMalloc_System(typeSize * new_capacity);
+    uint8_t* newData = (uint8_t*)XContainer_malloc(this_queue, typeSize * new_capacity);
     if (!newData) return false;
 
     // 复制元素到新数组（线性化）
@@ -92,7 +94,7 @@ static bool enlargeCapacity(XCircularQueue* this_queue)
     }
 
     // 释放旧缓冲区
-    XFree_System(oldData);
+    XContainer_free(this_queue, oldData);
 
     // 更新状态
     XContainerDataPtr(this_queue) = newData;
@@ -245,11 +247,14 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
     size_t typeSize = XContainerTypeSize(src);
     size_t capacity = getCapacity(src);
     size_t count = VXCircularQueue_size(src);
+    bool target_uninitialized = XClassIsVtableNull(object);
+    XMemory* target_memory = target_uninitialized ? NULL : XContainer_memory(object);
 
     // 如果目标未初始化
-    if (XClassIsVtableNull(object))
+    if (target_uninitialized)
     {
-        XCircularQueue_init(object, typeSize, capacity > 0 ? capacity - 1 : 0);
+        XCircularQueue_init_with_memory(object, typeSize,
+            capacity > 0 ? capacity - 1 : 0, XContainer_memory_type(src));
     }
     else
     {
@@ -257,9 +262,10 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
         VXClass_deinit(object);
         XContainer_init(object, typeSize, false);
         XClassGetVtable(object) = XCircularQueue_class_init();
+        Class_Memory(object) = target_memory;
 
         // 分配缓冲区
-        uint8_t* buffer = (uint8_t*)XMalloc_System(typeSize * capacity);
+        uint8_t* buffer = (uint8_t*)XContainer_malloc(object, typeSize * capacity);
         if (!buffer) return;
 
         XContainerDataPtr(object) = buffer;
@@ -294,6 +300,7 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
 static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
 {
     if (!object || !src) return;
+    XMemory* source_memory = Class_Memory(src);
 
     // 如果目标未初始化
     if (XClassIsVtableNull(object))
@@ -308,6 +315,7 @@ static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
 
     // 转移所有权（直接复制所有成员）
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XCircularQueue) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
 
     // 清空源对象
     XContainerDataPtr(src) = NULL;
@@ -341,7 +349,7 @@ static void VXClass_deinit(XCircularQueue* this_queue)
     // 释放缓冲区
     if (buffer)
     {
-        XFree_System(buffer);
+        XContainer_free(this_queue, buffer);
         XContainerDataPtr(this_queue) = NULL;
     }
 
@@ -355,7 +363,8 @@ static void VXClass_deinit(XCircularQueue* this_queue)
 
 // =============== 公开 API ===============
 
-void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t count)
+static void XCircularQueue_init_with_memory(XCircularQueue* this_queue,
+    size_t typeSize, size_t count, XMemoryType memory)
 {
     if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
         return;
@@ -363,12 +372,13 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
     // 初始化容器基类（不使用 COW）
     XContainer_init(this_queue, typeSize, false);
     XClassGetVtable(this_queue) = XCircularQueue_class_init();
+    Set_Class_Memory(this_queue, memory);
 
     // 分配缓冲区（容量 + 1，环形队列需要一个空位判断满）
     size_t capacity = count + 1;
     size_t bytes = typeSize * capacity;
 
-    void* buffer = XMalloc_System(bytes);
+    void* buffer = XContainer_malloc(this_queue, bytes);
     if (!buffer) return;
 
     XContainerDataPtr(this_queue) = buffer;
@@ -380,16 +390,22 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
     this_queue->m_tail = 0;
 }
 
-XCircularQueue* XCircularQueue_create(size_t typeSize, size_t count)
+void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t count)
+{
+    XCircularQueue_init_with_memory(this_queue, typeSize, count,
+        XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
+XCircularQueue* XCircularQueue_create_ex(XMemoryType memory, size_t typeSize, size_t count)
 {
     if (ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
 
-    XCircularQueue* this_queue = XMalloc_System(sizeof(XCircularQueue));
+    XCircularQueue* this_queue = XMemory_malloc(sizeof(XCircularQueue), memory);
     if (!this_queue) return NULL;
 
-    XCircularQueue_init(this_queue, typeSize, count);
-    Set_Class_MemoryFree(this_queue, XFree_System);
+    XCircularQueue_init_with_memory(this_queue, typeSize, count, memory);
+    Set_Class_Memory(this_queue, memory); Set_Class_IsHeap(this_queue, true);
     return this_queue;
 }
 
@@ -420,7 +436,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
     size_t removed_count = 0;
 
     // 记录要删除的索引
-    size_t* indices = XMalloc_System(count * sizeof(size_t));
+    size_t* indices = XContainer_malloc(this_queue, count * sizeof(size_t));
     if (!indices) return 0;
 
     size_t found_count = 0;
@@ -439,7 +455,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
 
     if (found_count == 0)
     {
-        XFree_System(indices);
+        XContainer_free(this_queue, indices);
         return 0;
     }
 
@@ -529,7 +545,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
         capacity = getCapacity(this_queue);
     }
 
-    XFree_System(indices);
+    XContainer_free(this_queue, indices);
     return removed_count;
 }
 

@@ -258,7 +258,7 @@ XVtable* XCanBusDevice_class_init(void);
  * @return 成功返回指向新分配 XCanBusDevice 对象的指针，失败返回 NULL
  * @note 返回的对象必须通过 XObject_deleteLater 或 XCanBusDevice_delete_base 释放
  */
-XCanBusDevice* XCanBusDevice_create(void);
+XCanBusDevice* XCanBusDevice_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的 XCanBusDevice 实例
@@ -498,5 +498,10 @@ void* XCanBusDevice_stateChanged_signal(XCanBusDevice* dev, XCanBusDevice_State 
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XCanBusDevice_create
+#define XCanBusDevice_create(...) XCanBusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XCANBUSDEVICE_H

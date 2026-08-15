@@ -31,8 +31,8 @@ typedef struct XByteArray
 * @param size 初始字节数量（若为0则创建空数组）
 * @return 成功返回XByteArray实例指针，失败返回NULL（内存分配失败）
 */
-XByteArray* XByteArray_create_ex(bool useCow);
-#define XByteArray_create() XByteArray_create_ex(true)
+XByteArray* XByteArray_create_ex(XMemoryType memory, bool useCow);
+#define XByteArray_create() XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, true)
 XByteArray* XByteArray_create_with_data(const char* data,size_t size);
 //用字符串创建
 XByteArray* XByteArray_create_utf8(const char* utf8);
@@ -672,4 +672,9 @@ int32_t XByteArray_compareCS(const XByteArray* lhs, const XByteArray* rhs, int c
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XByteArray_create
+#define XByteArray_create() XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, true)
+
 #endif // !VECTOR_H

@@ -53,13 +53,13 @@ void XSqlTableModel_init(XSqlTableModel* model, const XSqlDatabase* database)
     model->m_database = database ? XSqlDatabase_create_copy(database) : NULL;
 }
 
-XSqlTableModel* XSqlTableModel_create(const XSqlDatabase* database)
+XSqlTableModel* XSqlTableModel_create_ex(XMemoryType memory, const XSqlDatabase* database)
 {
-    XSqlTableModel* model = (XSqlTableModel*)XMalloc_System(sizeof(XSqlTableModel));
+    XSqlTableModel* model = (XSqlTableModel*)XMemory_malloc(sizeof(XSqlTableModel), memory);
     if (!model) return NULL;
     memset(model, 0, sizeof(*model));
     XSqlTableModel_init(model, database);
-    Set_Class_MemoryFree(model, XFree_System);
+    Set_Class_Memory(model, memory); Set_Class_IsHeap(model, true);
     return model;
 }
 

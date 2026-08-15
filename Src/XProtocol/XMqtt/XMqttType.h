@@ -43,7 +43,7 @@ XVtable* XMqttStringPair_class_init(void);
  * @param value 键值
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttStringPair* XMqttStringPair_create(const char* name, const char* value);
+XMqttStringPair* XMqttStringPair_create_ex(XMemoryType memory,  const char* name, const char* value);
 
 /**
  * @brief 初始化 XMqttStringPair 实例
@@ -127,5 +127,10 @@ XMqttUserProperties* XMqttUserProperties_create(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttStringPair_create
+#define XMqttStringPair_create(...) XMqttStringPair_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTTYPE_H

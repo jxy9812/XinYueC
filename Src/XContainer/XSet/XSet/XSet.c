@@ -35,6 +35,32 @@ static void VXClass_copy(XSet* object, const XSet* src);
 static void VXClass_move(XSet* object, XSet* src);
 static void VXSet_deinit(XSet* this_set);
 
+static void XSet_copy_data_to_node(XSet* set, void* source, XRBTreeNode* node)
+{
+    void* target = XBTreeNode_GetDataPtr(node);
+    if (XContainerDataCopyMethod(set))
+        XContainerDataCopyMethod(set)(target, source);
+    else
+        memcpy(target, source, XContainerTypeSize(set));
+}
+
+static void XSet_deinit_data(XSet* set, void* data)
+{
+    if (XContainerDataDeinitMethod(set))
+        XContainerDataDeinitMethod(set)(data);
+}
+
+static void XSet_release_data_after_copy(XSet* set, void* data)
+{
+    if (XContainerDataCopyMethod(set)) {
+        if (XContainerDataDeinitMethod(set))
+            XContainerDataDeinitMethod(set)(data);
+    }
+    else if (XContainerDataDeinitMethod(set)) {
+        memset(data, 0, XContainerTypeSize(set));
+    }
+}
+
 XVtable* XSet_class_init()
 {
     XVTABLE_INIT_DEFAULT_SIZE(XSET_VTABLE_SIZE)
@@ -64,7 +90,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
     XRBTreeNode* oldRoot = *XSet_root_ptr(this_set);
     if (oldRoot == NULL) return true;
 
-    XVector* nodes = XVector_create(sizeof(XRBTreeNode*));
+    XVector* nodes = XVector_create_ex(XContainer_memory_type(this_set), sizeof(XRBTreeNode*), true);
     if (!nodes) return false;
     XBTree_TraversingToXVector(oldRoot, XBTreePreorder, nodes);
 
@@ -73,7 +99,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
     {
         XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[i];
         void* oldData = XBTreeNode_GetDataPtr(oldNode);
-        XRBTreeNode* newNode = XRBTree_create(NULL, typeSize);
+        XRBTreeNode* newNode = XRBTree_create_ex(NULL, typeSize, XContainer_memory(this_set));
         if (!newNode)
         {
             XVector_delete_base(nodes);
@@ -87,18 +113,18 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
         XRBTree_SetRed(newNode);
         memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->nodeCount);
         ((XTreeNode*)newNode)->parentNode = NULL;
-        XRBTree_insertNode(&newRoot, XContainerCompare(this_set), XCompareRuleTwo_XSet, newNode);
+        XRBTree_insertNode(&newRoot, XContainerCompare(this_set), XCompareRuleTwo_XSet, newNode, XContainer_memory(this_set));
     }
     XVector_delete_base(nodes);
 
-    XSharedData* newShared = XSharedData_create(NULL, sizeof(XRBTreeNode*));
+    XSharedData* newShared = XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_set));
     if (!newShared)
     {
-        XTree_delete(newRoot, NULL, NULL);
+        XTree_delete(newRoot, NULL, NULL, XContainer_memory(this_set));
         return false;
     }
     *(XRBTreeNode**)newShared->data = newRoot;
-    XSharedData_release(sd);
+    XSharedData_release(sd, XContainer_memory(this_set));
     XContainerSetDataPtr(this_set, newShared);
     return true;
 }
@@ -114,7 +140,7 @@ static void VXSetDataDelete(void* data, XSet* this_set)
     if (data == NULL || this_set == NULL) return;
     XRBTreeNode* root = *(XRBTreeNode**)data;
     if (root)
-        XTree_delete(root, XSet_deleteNodeData, this_set);
+        XTree_delete(root, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
     XContainerSize(this_set) = 0;
     XContainerCapacity(this_set) = 0;
 }
@@ -125,7 +151,8 @@ void VXSet_clear(XSet* this_set)
 
     if (XContainerIsCow(this_set) && (XSharedData*)XContainerDataPtr(this_set) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_set)))
     {
-        XSharedData_release((XSharedData*)XContainerDataPtr(this_set));
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_set),
+            XContainer_memory(this_set));
         XContainerSetDataPtr(this_set, NULL);
         XContainerCapacity(this_set) = 0;
         XContainerSize(this_set) = 0;
@@ -135,7 +162,7 @@ void VXSet_clear(XSet* this_set)
     // 非 COW 或未共享
     XRBTreeNode* root = XSet_root(this_set);
     if (root)
-        XTree_delete(root, XSet_deleteNodeData, this_set);
+                XTree_delete(root, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
     // 清空根指针
     if (XContainerIsCow(this_set))
         *(XRBTreeNode**)XContainerSharedDataPtr(this_set) = NULL;
@@ -147,22 +174,29 @@ void VXSet_clear(XSet* this_set)
 
 void VXClass_copy(XSet* object, const XSet* src)
 {
-    if (XClassIsVtableNull(object))
+    bool target_uninitialized = XClassIsVtableNull(object);
+    if (target_uninitialized)
     {
         XSet_init(object, XContainerTypeSize(src), XContainerCompare(src), XContainerIsCow(src));
+        Class_Memory(object) = Class_Memory(src);
+    }
+    else if (XContainerIsCow(src) &&
+        XContainer_memory(object) != XContainer_memory(src)) {
+        return;
     }
     else
     {
         if (XContainerIsCow(object))
         {
             if ((XSharedData*)XContainerDataPtr(object))
-                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXSetDataDelete, object);
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+                    VXSetDataDelete, object, XContainer_memory(object));
         }
         else
         {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-                XTree_delete(root, XSet_deleteNodeData, object);
+                XTree_delete(root, XSet_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
     }
@@ -200,6 +234,7 @@ void VXClass_copy(XSet* object, const XSet* src)
 
 void VXClass_move(XSet* object, XSet* src)
 {
+    XMemory* source_memory = Class_Memory(src);
     if (XClassIsVtableNull(object))
     {
         XSet_init(object, XContainerTypeSize(src), XContainerCompare(src), XContainerIsCow(src));
@@ -209,13 +244,14 @@ void VXClass_move(XSet* object, XSet* src)
         if (XContainerIsCow(object))
         {
             if ((XSharedData*)XContainerDataPtr(object))
-                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXSetDataDelete, object);
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object),
+                    VXSetDataDelete, object, XContainer_memory(object));
         }
         else
         {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-                XTree_delete(root, XSet_deleteNodeData, object);
+                XTree_delete(root, XSet_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
     }
@@ -230,6 +266,7 @@ void VXClass_move(XSet* object, XSet* src)
     XContainerSize(object) = 0;
 
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XSet) - sizeof(XClass));
+    Class_Memory(object) = source_memory;
 }
 
 void VXSet_deinit(XSet* this_set)
@@ -237,13 +274,14 @@ void VXSet_deinit(XSet* this_set)
     if (XContainerIsCow(this_set))
     {
         if ((XSharedData*)XContainerDataPtr(this_set))
-            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_set), VXSetDataDelete, this_set);
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_set),
+                VXSetDataDelete, this_set, XContainer_memory(this_set));
     }
     else
     {
         XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(this_set);
         if (root)
-            XTree_delete(root, XSet_deleteNodeData, this_set);
+            XTree_delete(root, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
         XContainerDataPtr(this_set) = NULL;
     }
     XContainerSize(this_set) = 0;
@@ -259,7 +297,7 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
         if (XContainerIsCow(this_set))
         {
             if (!(XSharedData*)XContainerDataPtr(this_set))
-                XContainerSetDataPtr(this_set, XSharedData_create(NULL, sizeof(XRBTreeNode*)));
+                XContainerSetDataPtr(this_set, XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_set)));
         }
         else
         {
@@ -270,14 +308,31 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
         XRBTreeNode** root_ptr = XSet_root_ptr(this_set);
         if (dataCreatMethod)
         {
-            void* temp = XCalloc_System(1, XContainerTypeSize(this_set));
+            void* temp = XContainer_calloc(this_set, 1, XContainerTypeSize(this_set));
+            if (!temp) return false;
             dataCreatMethod(temp, pvKey);
-            XRBTree_insert(root_ptr, XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
-            XFree_System(temp);
+            XRBTreeNode* insertNode = XRBTree_create_ex(NULL,
+                XContainerTypeSize(this_set), XContainer_memory(this_set));
+            if (!insertNode) {
+                XSet_deinit_data(this_set, temp);
+                XContainer_free(this_set, temp);
+                return false;
+            }
+            XSet_copy_data_to_node(this_set, temp, insertNode);
+            XRBTreeNode* inserted = XRBTree_insertNode(root_ptr, XContainerCompare(this_set),
+                XCompareRuleTwo_XSet, insertNode, XContainer_memory(this_set));
+            XSet_release_data_after_copy(this_set, temp);
+            XContainer_free(this_set, temp);
+            if (!inserted) return false;
         }
         else
         {
-            XRBTree_insert(root_ptr, XContainerCompare(this_set), XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+            XRBTreeNode* insertNode = XRBTree_create_ex((const char*)pvKey,
+                XContainerTypeSize(this_set), XContainer_memory(this_set));
+            if (!insertNode) return false;
+            if (!XRBTree_insertNode(root_ptr, XContainerCompare(this_set),
+                XCompareRuleTwo_XSet, insertNode, XContainer_memory(this_set)))
+                return false;
         }
         ++XContainerCapacity(this_set);
         ++XContainerSize(this_set);
@@ -308,11 +363,12 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
         return;
     }
 
-    XRBTreeNode* removeNode = XRBTree_removeNode(XSet_root_ptr(this_set), current_node, XContainerTypeSize(this_set));
+    XRBTreeNode* removeNode = XRBTree_removeNode(XSet_root_ptr(this_set), current_node,
+        XContainerTypeSize(this_set), XContainer_memory(this_set));
     if (removeNode)
     {
         XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
-        XRBTreeNode_delete(removeNode);
+        XRBTreeNode_delete((XTreeNode*)removeNode, XContainer_memory(this_set));
         --XContainerCapacity(this_set);
         --XContainerSize(this_set);
     }
@@ -324,11 +380,12 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
     if (XSet_isEmpty_base(this_set)) return false;
     if (!VXSetDetachIfNeeded(this_set)) return false;
 
-    XRBTreeNode* removeNode = XRBTree_remove(XSet_root_ptr(this_set), XContainerCompare(this_set), XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set));
+    XRBTreeNode* removeNode = XRBTree_remove(XSet_root_ptr(this_set), XContainerCompare(this_set),
+        XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set), XContainer_memory(this_set));
     if (removeNode)
     {
         XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
-        XRBTreeNode_delete(removeNode);
+        XRBTreeNode_delete((XTreeNode*)removeNode, XContainer_memory(this_set));
         --XContainerCapacity(this_set);
         --XContainerSize(this_set);
         return true;
@@ -355,7 +412,7 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 
 XVector* VXSetBase_keys(const XSetBase* this_set)
 {
-    XVector* v = XVector_create(XContainerTypeSize(this_set));
+    XVector* v = XVector_create_ex(XContainer_memory_type(this_set), XContainerTypeSize(this_set), true);
     for_each_iterator(this_set, XSet, it)
     {
         XVector_push_back_1_base(v, XSet_iterator_data(&it));
@@ -363,13 +420,13 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
     return v;
 }
 
-XSet* XSet_create_ex(const size_t keyTypeSize, XCompare compare, bool useCow)
+XSet* XSet_create_ex(XMemoryType memory, const size_t keyTypeSize, XCompare compare, bool useCow)
 {
     if (keyTypeSize == 0 || compare == NULL) return NULL;
-    XSet* this_set = (XSet*)XMalloc_System(sizeof(XSet));
+    XSet* this_set = (XSet*)XMemory_malloc(sizeof(XSet), memory);
     if (!this_set) return NULL;
     XSet_init(this_set, keyTypeSize, compare, useCow);
-    Set_Class_MemoryFree(this_set, XFree_System);
+    Set_Class_Memory(this_set, memory); Set_Class_IsHeap(this_set, true);
     return this_set;
 }
 

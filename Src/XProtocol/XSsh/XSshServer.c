@@ -2456,16 +2456,16 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
 /* 公共 API                                                           */
 /* ------------------------------------------------------------------ */
 
-XSshServer* XSshServer_create(void)
+XSshServer* XSshServer_create_ex(XMemoryType memory)
 {
-    XSshServer* self = (XSshServer*)XMalloc_System(sizeof(*self));
+    XSshServer* self = (XSshServer*)XMemory_malloc(sizeof(XSshServer), memory);
     if (!self) return NULL;
     XSshServer_init(self);
     if (!self->m_data) {
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

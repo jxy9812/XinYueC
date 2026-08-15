@@ -66,7 +66,7 @@ XVtable* XMqttSubscription_class_init(void);
  * @param qos QoS 等级
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttSubscription* XMqttSubscription_create(const XMqttTopicFilter* topic, uint8_t qos);
+XMqttSubscription* XMqttSubscription_create_ex(XMemoryType memory,  const XMqttTopicFilter* topic, uint8_t qos);
 
 /**
  * @brief 初始化订阅实例
@@ -187,5 +187,10 @@ void XMqttSubscription_setClient(XMqttSubscription* sub, void* client);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttSubscription_create
+#define XMqttSubscription_create(...) XMqttSubscription_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTSUBSCRIPTION_H

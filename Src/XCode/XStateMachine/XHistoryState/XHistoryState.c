@@ -28,18 +28,13 @@ XVtable* XHistoryState_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XHistoryState* XHistoryState_create(void)
+XHistoryState* XHistoryState_create_ex(XMemoryType memory, XHistoryState_HistoryType type, XState* parent)
 {
-    return XHistoryState_create_ex(XHistoryState_ShallowHistory, NULL);
-}
-
-XHistoryState* XHistoryState_create_ex(XHistoryState_HistoryType type, XState* parent)
-{
-    XHistoryState* state = XNew(XHistoryState);
+    XHistoryState* state = XMemory_malloc(sizeof(XHistoryState), memory);
     if (!state)
         return NULL;
     XHistoryState_init_ex(state, type, parent);
-    Set_Class_MemoryFree(state, XFree_System);
+    Set_Class_Memory(state, memory); Set_Class_IsHeap(state, true);
     return state;
 }
 
@@ -98,11 +93,11 @@ bool XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* default
     if (XHistoryState_defaultState(state) == defaultState)
         return true;
 
-    XAbstractTransition* transition = XNew(XAbstractTransition);
+    XAbstractTransition* transition = XClass_Malloc(XAbstractTransition);
     if (!transition)
         return false;
     XAbstractTransition_init(transition, NULL);
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_IsHeap(transition, true);
     if (!XAbstractTransition_setTargetState(transition, defaultState)) {
         XAbstractTransition_delete_base((XClass*)transition);
         return false;

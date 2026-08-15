@@ -12,13 +12,13 @@
 #define XIO_DEFAULT_CHANNEL_ID 0
 
 
-XIODevice* XIODevice_create()
+XIODevice* XIODevice_create_ex(XMemoryType memory)
 {
-	XIODevice* io = XMalloc_System(sizeof(XIODevice));
+	XIODevice* io = XMemory_malloc(sizeof(XIODevice), memory);
 	if (io == NULL)
 		return io;
 	XIODevice_init(io);
-	Set_Class_MemoryFree(io, XFree_System);
+	Set_Class_Memory(io, memory); Set_Class_IsHeap(io, true);
 	return io;
 }
 void XIODevice_init(XIODevice* io)

@@ -91,19 +91,26 @@ static XVtable* XStateMachineTest_TypeTransition_class_init(void)
  * @param triggerCount 可选执行次数计数器，生命周期必须覆盖转换。
  * @return 新转换；内存分配失败时返回 NULL。
  */
-static XStateMachineTest_TypeTransition* XStateMachineTest_TypeTransition_create(
+static XStateMachineTest_TypeTransition* XStateMachineTest_TypeTransition_create_ex(XMemoryType memory,
     XState* sourceState, XEventType eventType, int* triggerCount)
 {
     XStateMachineTest_TypeTransition* transition =
-        XNew(XStateMachineTest_TypeTransition);
+        XMemory_malloc(sizeof(XStateMachineTest_TypeTransition), memory);
     if (!transition)
         return NULL;
     XAbstractTransition_init((XAbstractTransition*)transition, sourceState);
     XClassSetVtable(transition, XStateMachineTest_TypeTransition);
     transition->m_eventType = eventType;
     transition->m_triggerCount = triggerCount;
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_Memory(transition, memory); Set_Class_IsHeap(transition, true);
     return transition;
+}
+
+static XStateMachineTest_TypeTransition* XStateMachineTest_TypeTransition_create(
+    XState* sourceState, XEventType eventType, int* triggerCount)
+{
+    return XStateMachineTest_TypeTransition_create_ex(
+        XCLASS_DEFAULT_MEMORY_TYPE, sourceState, eventType, triggerCount);
 }
 
 // ==================== 测试事件源 ====================
@@ -136,15 +143,20 @@ static XVtable* XStateMachineTest_EventSource_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XStateMachineTest_EventSource* XStateMachineTest_EventSource_create(void)
+static XStateMachineTest_EventSource* XStateMachineTest_EventSource_create_ex(XMemoryType memory)
 {
-    XStateMachineTest_EventSource* source = XNew(XStateMachineTest_EventSource);
+    XStateMachineTest_EventSource* source = XMemory_malloc(sizeof(XStateMachineTest_EventSource), memory);
     if (!source)
         return NULL;
     XObject_init((XObject*)source);
     XClassGetVtable(source) = XStateMachineTest_EventSource_class_init();
-    Set_Class_MemoryFree(source, XFree_System);
+    Set_Class_Memory(source, memory); Set_Class_IsHeap(source, true);
     return source;
+}
+
+static XStateMachineTest_EventSource* XStateMachineTest_EventSource_create(void)
+{
+    return XStateMachineTest_EventSource_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 // ==================== 公共测试工具 ====================
@@ -269,10 +281,9 @@ static void XStateMachineTest_keyEventTransition(void)
     // 1. 准备 waiting -> final 状态图，并要求 Control 修饰键。
     XStateMachineTest_EventSource* eventSource = XStateMachineTest_EventSource_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* waiting = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XFinalState* finalState = XFinalState_create_ex((XState*)machine);
-    XKeyEventTransition* transition = XKeyEventTransition_create_ex(
-        (XObject*)eventSource, XEVENT_TYPE_KEY_PRESS, 65, waiting);
+    XState* waiting = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XFinalState* finalState = XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XState*)machine);
+    XKeyEventTransition* transition = XKeyEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)eventSource, XEVENT_TYPE_KEY_PRESS, 65, waiting);
 
     XKeyEventTransition_setModifierMask(
         transition, XKeyboardModifier_ControlModifier);
@@ -313,10 +324,9 @@ static void XStateMachineTest_mouseEventTransition(void)
     // 1. 准备 waiting -> final 状态图，并设置 100 x 100 的命中区域。
     XStateMachineTest_EventSource* eventSource = XStateMachineTest_EventSource_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* waiting = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XFinalState* finalState = XFinalState_create_ex((XState*)machine);
-    XMouseEventTransition* transition = XMouseEventTransition_create_ex(
-        (XObject*)eventSource, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+    XState* waiting = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XFinalState* finalState = XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XState*)machine);
+    XMouseEventTransition* transition = XMouseEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)eventSource, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
         XMouseButton_LeftButton, waiting);
     XVector* path = XVector_Create(XPoint);
     XPoint points[] = { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } };
@@ -374,10 +384,10 @@ static void XStateMachineTest_postEventPriority(void)
     int normalAfterHighCount = 0;
     int wrongCount = 0;
     XStateMachine* machine = XStateMachine_create();
-    XState* source = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* highTarget = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* doneTarget = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* wrongTarget = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
+    XState* source = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* highTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* doneTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* wrongTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
     XEventType highType = (XEventType)XEvent_registerEventType(-1);
     XEventType normalType = (XEventType)XEvent_registerEventType(-1);
 
@@ -442,15 +452,15 @@ static void XStateMachineTest_parallelSignalEvent(void)
 
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* parallel = XState_create_ex(XState_ParallelStates, (XState*)machine);
-    XState* firstRegion = XState_create_ex(XState_ExclusiveStates, parallel);
-    XState* secondRegion = XState_create_ex(XState_ExclusiveStates, parallel);
-    XState* firstA = XState_create_ex(XState_ExclusiveStates, firstRegion);
-    XState* firstB = XState_create_ex(XState_ExclusiveStates, firstRegion);
-    XState* firstC = XState_create_ex(XState_ExclusiveStates, firstRegion);
-    XState* secondA = XState_create_ex(XState_ExclusiveStates, secondRegion);
-    XState* secondB = XState_create_ex(XState_ExclusiveStates, secondRegion);
-    XState* secondC = XState_create_ex(XState_ExclusiveStates, secondRegion);
+    XState* parallel = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ParallelStates, (XState*)machine);
+    XState* firstRegion = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parallel);
+    XState* secondRegion = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parallel);
+    XState* firstA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, firstRegion);
+    XState* firstB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, firstRegion);
+    XState* firstC = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, firstRegion);
+    XState* secondA = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, secondRegion);
+    XState* secondB = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, secondRegion);
+    XState* secondC = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, secondRegion);
 
     // 两个并行区域都使用同一个 sender 和 signal，第二级转换用于检测重复投递。
     XState_setInitialState(firstRegion, (XAbstractState*)firstA);
@@ -501,14 +511,13 @@ static void XStateMachineTest_multipleTargetStates(void)
 
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* source = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* parallel = XState_create_ex(XState_ParallelStates, (XState*)machine);
-    XState* firstRegion = XState_create_ex(XState_ExclusiveStates, parallel);
-    XState* secondRegion = XState_create_ex(XState_ExclusiveStates, parallel);
-    XState* firstTarget = XState_create_ex(XState_ExclusiveStates, firstRegion);
-    XState* secondTarget = XState_create_ex(XState_ExclusiveStates, secondRegion);
-    XSignalTransition* transition = XSignalTransition_create_ex(
-        sender, XSignal(XStateMachineTest_advance_signal), source);
+    XState* source = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* parallel = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ParallelStates, (XState*)machine);
+    XState* firstRegion = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parallel);
+    XState* secondRegion = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parallel);
+    XState* firstTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, firstRegion);
+    XState* secondTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, secondRegion);
+    XSignalTransition* transition = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sender, XSignal(XStateMachineTest_advance_signal), source);
     XVector* targets = XVector_Create(XAbstractState*);
     XAbstractState* targetArray[] = {
         (XAbstractState*)firstTarget,
@@ -558,10 +567,10 @@ static void XStateMachineTest_descendantTransitionPriority(void)
 
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* parent = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* outside = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* child = XState_create_ex(XState_ExclusiveStates, parent);
-    XState* childTarget = XState_create_ex(XState_ExclusiveStates, parent);
+    XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* outside = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* child = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+    XState* childTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
 
     XState_setInitialState(parent, (XAbstractState*)child);
     XState_setInitialState((XState*)machine, (XAbstractState*)parent);
@@ -603,9 +612,9 @@ static void XStateMachineTest_transitionType(
 
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* parent = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* first = XState_create_ex(XState_ExclusiveStates, parent);
-    XState* second = XState_create_ex(XState_ExclusiveStates, parent);
+    XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* first = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+    XState* second = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
     XSignalTransition* transition = XState_addTransition_2(
         parent, sender, XSignal(XStateMachineTest_advance_signal),
         (XAbstractState*)second);
@@ -657,7 +666,7 @@ static void XStateMachineTest_explicitStop(void)
     g_finishedCount = 0;
     g_runningChangedCount = 0;
     XStateMachine* machine = XStateMachine_create();
-    XState* waiting = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
+    XState* waiting = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
 
     XState_setInitialState((XState*)machine, (XAbstractState*)waiting);
     XObject_connect_2((XObject*)machine,
@@ -701,10 +710,9 @@ static void XStateMachineTest_delayedEventCancellation(void)
     XPrintf("\n  -- 延迟事件投递与取消 --\n");
 
     XStateMachine* machine = XStateMachine_create();
-    XState* waiting = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* delivered = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* cancelledTarget = XState_create_ex(
-        XState_ExclusiveStates, (XState*)machine);
+    XState* waiting = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* delivered = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* cancelledTarget = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
     XEventType type = (XEventType)XEvent_registerEventType(-1);
     XEventType cancelledType = (XEventType)XEvent_registerEventType(-1);
     XStateMachineTest_TypeTransition* transition =
@@ -777,15 +785,14 @@ static void XStateMachineTest_propertyApi(void)
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
     XStateMachine* otherMachine = XStateMachine_create();
-    XState* compound = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* child = XState_create_ex(XState_ExclusiveStates, compound);
-    XState* sibling = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* parallel = XState_create_ex(XState_ParallelStates, (XState*)machine);
-    XState* parallelChild = XState_create_ex(XState_ExclusiveStates, parallel);
-    XState* foreign = XState_create_ex(XState_ExclusiveStates, (XState*)otherMachine);
+    XState* compound = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* child = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, compound);
+    XState* sibling = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* parallel = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ParallelStates, (XState*)machine);
+    XState* parallelChild = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parallel);
+    XState* foreign = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)otherMachine);
     XState* detached = XState_create();
-    XHistoryState* history = XHistoryState_create_ex(
-        XHistoryState_ShallowHistory, compound);
+    XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHistoryState_ShallowHistory, compound);
 
     // addState 取得顶层状态所有权；removeState 只解除关系，不销毁状态。
     XStateMachineTest_expect(
@@ -891,8 +898,8 @@ static void XStateMachineTest_targetDeletion(void)
     XPrintf("\n  -- 目标状态生命周期保护 --\n");
 
     XStateMachine* machine = XStateMachine_create();
-    XState* source = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* target = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
+    XState* source = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* target = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
     XAbstractTransition* transition = XState_addTransition_3(
         source, (XAbstractState*)target);
 
@@ -912,11 +919,10 @@ static void XStateMachineTest_errorState(void)
     XPrintf("\n  -- 可恢复状态图错误 --\n");
 
     XStateMachine* machine = XStateMachine_create();
-    XState* compound = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* childWithoutInitial = XState_create_ex(XState_ExclusiveStates, compound);
-    XState* nestedChild = XState_create_ex(
-        XState_ExclusiveStates, childWithoutInitial);
-    XState* errorState = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
+    XState* compound = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* childWithoutInitial = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, compound);
+    XState* nestedChild = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, childWithoutInitial);
+    XState* errorState = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
     (void)nestedChild;
 
     XState_setErrorState(compound, (XAbstractState*)errorState);
@@ -951,8 +957,8 @@ static void XStateMachineTest_unrecoverableError(void)
 
     g_stoppedCount = 0;
     XStateMachine* machine = XStateMachine_create();
-    XState* compound = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* nested = XState_create_ex(XState_ExclusiveStates, compound);
+    XState* compound = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* nested = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, compound);
     (void)nested;
 
     XState_setInitialState((XState*)machine, (XAbstractState*)compound);
@@ -981,13 +987,12 @@ static void XStateMachineTest_shallowHistory(void)
 
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* parent = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* outside = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* group = XState_create_ex(XState_ExclusiveStates, parent);
-    XState* first = XState_create_ex(XState_ExclusiveStates, group);
-    XState* second = XState_create_ex(XState_ExclusiveStates, group);
-    XHistoryState* history = XHistoryState_create_ex(
-        XHistoryState_ShallowHistory, parent);
+    XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* outside = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* group = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+    XState* first = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, group);
+    XState* second = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, group);
+    XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHistoryState_ShallowHistory, parent);
 
     XHistoryState_setDefaultState(history, (XAbstractState*)group);
     XState_setInitialState(group, (XAbstractState*)first);
@@ -1042,11 +1047,10 @@ void XStateMachineEventTest(void)
     // 1. 准备 idle -> final 状态图，转换监听指定对象的自定义事件。
     XStateMachineTest_EventSource* eventSource = XStateMachineTest_EventSource_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* idle = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XFinalState* finalState = XFinalState_create_ex((XState*)machine);
+    XState* idle = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XFinalState* finalState = XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XState*)machine);
     XEventType eventType = (XEventType)XEvent_registerEventType(-1);
-    XEventTransition* transition = XEventTransition_create_ex(
-        (XObject*)eventSource, eventType, idle);
+    XEventTransition* transition = XEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)eventSource, eventType, idle);
 
     XAbstractTransition_setTargetState(
         (XAbstractTransition*)transition, (XAbstractState*)finalState);
@@ -1085,10 +1089,9 @@ void XStateMachineSignalTest(void)
     g_finishedCount = 0;
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* waiting = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XFinalState* finalState = XFinalState_create_ex((XState*)machine);
-    XSignalTransition* transition = XSignalTransition_create_ex(
-        sender, XSignal(XStateMachineTest_finish_signal), waiting);
+    XState* waiting = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XFinalState* finalState = XFinalState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XState*)machine);
+    XSignalTransition* transition = XSignalTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sender, XSignal(XStateMachineTest_finish_signal), waiting);
 
     XAbstractTransition_setTargetState(
         (XAbstractTransition*)transition, (XAbstractState*)finalState);
@@ -1134,13 +1137,12 @@ void XHistoryState_Test(void)
     // 1. 准备 parent/child/first 分层配置，并将历史状态设为深历史。
     XObject* sender = XObject_create();
     XStateMachine* machine = XStateMachine_create();
-    XState* parent = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* outside = XState_create_ex(XState_ExclusiveStates, (XState*)machine);
-    XState* child = XState_create_ex(XState_ExclusiveStates, parent);
-    XState* first = XState_create_ex(XState_ExclusiveStates, child);
-    XState* second = XState_create_ex(XState_ExclusiveStates, child);
-    XHistoryState* history = XHistoryState_create_ex(
-        XHistoryState_DeepHistory, parent);
+    XState* parent = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* outside = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, (XState*)machine);
+    XState* child = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, parent);
+    XState* first = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, child);
+    XState* second = XState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates, child);
+    XHistoryState* history = XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHistoryState_DeepHistory, parent);
 
     XHistoryState_setDefaultState(history, (XAbstractState*)child);
     XState_setInitialState(child, (XAbstractState*)first);

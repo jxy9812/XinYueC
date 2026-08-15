@@ -104,8 +104,6 @@ XVtable* XUrl_class_init(void);
  * @brief      在堆上创建 XUrl 实例
  * @return     指向新创建的 XUrl 对象的指针，失败返回 NULL
  */
-XUrl* XUrl_create(void);
-
 /**
  * @brief      在堆上拷贝创建 XUrl 实例（深拷贝）
  * @param other 源 XUrl 对象指针
@@ -126,7 +124,7 @@ XUrl* XUrl_create_move(XUrl* other);
  * @param mode      解析模式
  * @return     指向新创建的 XUrl 对象的指针，失败返回 NULL
  */
-XUrl* XUrl_create_ex(const XString* urlString, XUrl_ParsingMode mode);
+XUrl* XUrl_create_ex(XMemoryType memory, const XString* urlString, XUrl_ParsingMode mode);
 
 /**
  * @brief      初始化 XUrl 实例
@@ -414,4 +412,10 @@ void XUrl_swap(XUrl* a, XUrl* b);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XUrl_create
+#define XUrl_create() \
+	XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XUrl_TolerantMode)
+
 #endif /* XURL_H */

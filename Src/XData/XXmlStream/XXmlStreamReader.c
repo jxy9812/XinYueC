@@ -3276,13 +3276,13 @@ XVtable* XXmlStreamReader_class_init(void)
  * @brief      在堆上创建 XXmlStreamReader 实例
  * @return     指向新创建的 XXmlStreamReader 对象的指针，失败返回 NULL
  */
-XXmlStreamReader* XXmlStreamReader_create(void)
+XXmlStreamReader* XXmlStreamReader_create_ex(XMemoryType memory)
 {
     size_t totalSize = sizeof(XXmlStreamReader) + sizeof(XXmlStreamReaderPrivate);
-    XXmlStreamReader* self = (XXmlStreamReader*)XMalloc_System(totalSize);
+    XXmlStreamReader* self = (XXmlStreamReader*)XMemory_malloc(totalSize, memory);
     if (!self) return NULL;
     XXmlStreamReader_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -3677,7 +3677,7 @@ static bool xxml_stream_string_equals(const XString* left, const XString* right)
 
 XXmlStreamAttribute* XXmlStreamAttribute_create(const XString* qualifiedName, const XString* value)
 {
-    XXmlStreamAttribute* self = (XXmlStreamAttribute*)XMalloc_System(sizeof(XXmlStreamAttribute));
+    XXmlStreamAttribute* self = (XXmlStreamAttribute*)XClass_Malloc(XXmlStreamAttribute);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamAttribute));
     self->m_qualifiedName = qualifiedName ? XString_create_copy(qualifiedName) : NULL;
@@ -3699,7 +3699,7 @@ XXmlStreamAttribute* XXmlStreamAttribute_create(const XString* qualifiedName, co
 
 XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const XString* namespaceUri, const XString* name, const XString* value)
 {
-    XXmlStreamAttribute* self = (XXmlStreamAttribute*)XMalloc_System(sizeof(XXmlStreamAttribute));
+    XXmlStreamAttribute* self = (XXmlStreamAttribute*)XClass_Malloc(XXmlStreamAttribute);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamAttribute));
     self->m_namespaceUri = namespaceUri ? XString_create_copy(namespaceUri) : NULL;
@@ -3755,7 +3755,7 @@ static XXmlStreamAttribute* xxml_stream_attribute_copy_private(
 
 XXmlStreamAttributes* XXmlStreamAttributes_create(void)
 {
-    XXmlStreamAttributes* self = (XXmlStreamAttributes*)XMalloc_System(sizeof(XXmlStreamAttributes));
+    XXmlStreamAttributes* self = (XXmlStreamAttributes*)XClass_Malloc(XXmlStreamAttributes);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamAttributes));
     self->m_items = NULL;
@@ -4032,7 +4032,7 @@ XXmlStreamAttributes* XXmlStreamAttributes_create_copy(const XXmlStreamAttribute
 
 XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const XString* prefix, const XString* namespaceUri)
 {
-    XXmlStreamNamespaceDeclaration* self = (XXmlStreamNamespaceDeclaration*)XMalloc_System(sizeof(XXmlStreamNamespaceDeclaration));
+    XXmlStreamNamespaceDeclaration* self = (XXmlStreamNamespaceDeclaration*)XClass_Malloc(XXmlStreamNamespaceDeclaration);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamNamespaceDeclaration));
     self->m_prefix = prefix ? XString_create_copy(prefix) : NULL;
@@ -4483,7 +4483,7 @@ const XString* XXmlStreamReader_readElementText(XXmlStreamReader* self, int beha
 
 XXmlStreamNotationDeclaration* XXmlStreamNotationDeclaration_create(void)
 {
-    XXmlStreamNotationDeclaration* self = (XXmlStreamNotationDeclaration*)XMalloc_System(sizeof(XXmlStreamNotationDeclaration));
+    XXmlStreamNotationDeclaration* self = (XXmlStreamNotationDeclaration*)XClass_Malloc(XXmlStreamNotationDeclaration);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamNotationDeclaration));
     XXmlStreamNotationDeclaration_init(self);
@@ -4540,7 +4540,7 @@ bool XXmlStreamNotationDeclaration_equals(const XXmlStreamNotationDeclaration* l
 
 XXmlStreamEntityDeclaration* XXmlStreamEntityDeclaration_create(void)
 {
-    XXmlStreamEntityDeclaration* self = (XXmlStreamEntityDeclaration*)XMalloc_System(sizeof(XXmlStreamEntityDeclaration));
+    XXmlStreamEntityDeclaration* self = (XXmlStreamEntityDeclaration*)XClass_Malloc(XXmlStreamEntityDeclaration);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamEntityDeclaration));
     XXmlStreamEntityDeclaration_init(self);
@@ -4615,7 +4615,7 @@ bool XXmlStreamEntityDeclaration_equals(const XXmlStreamEntityDeclaration* left,
 
 XXmlStreamNotationDeclarations* XXmlStreamNotationDeclarations_create(void)
 {
-    XXmlStreamNotationDeclarations* self = (XXmlStreamNotationDeclarations*)XMalloc_System(sizeof(XXmlStreamNotationDeclarations));
+    XXmlStreamNotationDeclarations* self = (XXmlStreamNotationDeclarations*)XClass_Malloc(XXmlStreamNotationDeclarations);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamNotationDeclarations));
     return self;
@@ -4755,7 +4755,7 @@ void XXmlStreamNotationDeclarations_clear(XXmlStreamNotationDeclarations* self)
 
 XXmlStreamEntityDeclarations* XXmlStreamEntityDeclarations_create(void)
 {
-    XXmlStreamEntityDeclarations* self = (XXmlStreamEntityDeclarations*)XMalloc_System(sizeof(XXmlStreamEntityDeclarations));
+    XXmlStreamEntityDeclarations* self = (XXmlStreamEntityDeclarations*)XClass_Malloc(XXmlStreamEntityDeclarations);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamEntityDeclarations));
     return self;
@@ -4944,7 +4944,7 @@ XXmlStreamEntityDeclarations* XXmlStreamReader_entityDeclarations_copy(
 
 XXmlStreamEntityResolver* XXmlStreamEntityResolver_create(void)
 {
-    XXmlStreamEntityResolver* self = (XXmlStreamEntityResolver*)XMalloc_System(sizeof(XXmlStreamEntityResolver));
+    XXmlStreamEntityResolver* self = (XXmlStreamEntityResolver*)XClass_Malloc(XXmlStreamEntityResolver);
     if (!self) return NULL;
     memset(self, 0, sizeof(XXmlStreamEntityResolver));
     XXmlStreamEntityResolver_init(self);

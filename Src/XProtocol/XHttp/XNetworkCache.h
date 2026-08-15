@@ -54,7 +54,7 @@ void XNetworkCacheMetaData_init(XNetworkCacheMetaData* self);
  * - @brief 创建网络缓存元数据。
  * - @return 新建缓存元数据；调用者必须使用 XNetworkCacheMetaData_delete_base 释放，分配失败返回 NULL。
  */
-XNetworkCacheMetaData* XNetworkCacheMetaData_create(void);
+XNetworkCacheMetaData* XNetworkCacheMetaData_create_ex(XMemoryType memory);
 /**
  * - @brief 深拷贝创建网络缓存元数据。
  * - @param other 源缓存元数据；借用且不能为 NULL。
@@ -185,7 +185,7 @@ void XNetworkDiskCache_init(XNetworkDiskCache* self);
  * - @brief 创建网络磁盘缓存对象。
  * - @return 新建磁盘缓存；调用者必须使用 XNetworkDiskCache_delete_base 释放，分配失败返回 NULL。
  */
-XNetworkDiskCache* XNetworkDiskCache_create(void);
+XNetworkDiskCache* XNetworkDiskCache_create_ex(XMemoryType memory);
 #define XNetworkDiskCache_deinit_base XClass_deinit_base
 #define XNetworkDiskCache_delete_base XClass_delete_base
 #define XNetworkDiskCache_deleteLater XObject_deleteLater
@@ -264,5 +264,12 @@ void XNetworkDiskCache_clear(XNetworkDiskCache* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetworkCacheMetaData_create
+#define XNetworkCacheMetaData_create(...) XNetworkCacheMetaData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XNetworkDiskCache_create
+#define XNetworkDiskCache_create(...) XNetworkDiskCache_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XNETWORKCACHE_H */

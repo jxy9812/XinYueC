@@ -19,7 +19,7 @@ extern "C" {
  * @return 新驱动对象，调用者取得所有权并必须使用 XSqlDriver_delete_base
  *         释放；内存不足或默认客户端不可用时返回 NULL。
  */
-XSqlDriver* XMySqlDriver_create(void);
+XSqlDriver* XMySqlDriver_create_ex(XMemoryType memory);
 
 /**
  * @brief 注册 MySQL 内置源码驱动。
@@ -46,5 +46,10 @@ const XSqlMySqlClientApi* XMySqlDriver_clientApi(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMySqlDriver_create
+#define XMySqlDriver_create(...) XMySqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XMYSQLDRIVER_H */

@@ -157,9 +157,9 @@ XNetworkCookie* XNetworkCookie_create_empty(void)
     return XNetworkCookie_create(NULL, NULL);
 }
 
-XNetworkCookie* XNetworkCookie_create(const XByteArray* name, const XByteArray* value)
+XNetworkCookie* XNetworkCookie_create_ex(XMemoryType memory, const XByteArray* name, const XByteArray* value)
 {
-    XNetworkCookie* self = (XNetworkCookie*)XMalloc_System(sizeof(XNetworkCookie));
+    XNetworkCookie* self = (XNetworkCookie*)XMemory_malloc(sizeof(XNetworkCookie), memory);
     if (!self)
         return NULL;
     XNetworkCookie_init(self);
@@ -167,10 +167,10 @@ XNetworkCookie* XNetworkCookie_create(const XByteArray* name, const XByteArray* 
         (name && !XNetworkCookie_setName(self, name)) ||
         (value && !XNetworkCookie_setValue(self, value))) {
         XNetworkCookie_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
@@ -545,18 +545,18 @@ void XNetworkCookieJar_init(XNetworkCookieJar* self)
     self->m_cookies = XVector_create(sizeof(XNetworkCookie*));
 }
 
-XNetworkCookieJar* XNetworkCookieJar_create(void)
+XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory)
 {
-    XNetworkCookieJar* self = (XNetworkCookieJar*)XMalloc_System(sizeof(XNetworkCookieJar));
+    XNetworkCookieJar* self = (XNetworkCookieJar*)XMemory_malloc(sizeof(XNetworkCookieJar), memory);
     if (!self)
         return NULL;
     XNetworkCookieJar_init(self);
     if (!self->m_cookies) {
         XNetworkCookieJar_deinit_base((XClass*)self);
-        XFree_System(self);
+        XMemory_method(memory)->free(self);
         return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

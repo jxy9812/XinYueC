@@ -147,7 +147,7 @@ XVtable* XHttpServerRequest_class_init(void);
  * - @brief 创建服务端请求对象。
  * - @return 新建请求对象；调用者必须使用 XHttpServerRequest_delete_base 释放，分配失败返回 NULL。
  */
-XHttpServerRequest* XHttpServerRequest_create(void);
+XHttpServerRequest* XHttpServerRequest_create_ex(XMemoryType memory);
 #define XHttpServerRequest_deinit_base XClass_deinit_base
 #define XHttpServerRequest_delete_base XClass_delete_base
 /**
@@ -366,7 +366,7 @@ void XHttpServer_init(XHttpServer* self);
  * - @brief 创建 HTTP 服务端。
  * - @return 新建服务端；调用者必须使用 XHttpServer_delete_base 释放，分配失败返回 NULL。
  */
-XHttpServer* XHttpServer_create(void);
+XHttpServer* XHttpServer_create_ex(XMemoryType memory);
 #define XHttpServer_deinit_base XClass_deinit_base
 #define XHttpServer_delete_base XClass_delete_base
 #define XHttpServer_deleteLater XObject_deleteLater
@@ -444,5 +444,12 @@ void XHttpServer_close(XHttpServer* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHttpServer_create
+#define XHttpServer_create(...) XHttpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XHttpServerRequest_create
+#define XHttpServerRequest_create(...) XHttpServerRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XHTTPSERVER_H */

@@ -59,6 +59,12 @@ static void XLFQFullTest(void)
     XPrintf("实际填入=%d count=%zu isFull=%d\n",
         filled, XLockFreeQueue_count_base(q),
         (int)XLockFreeQueue_isFull_base(q));
+    XLockFreeQueue_pop_base(q);
+    XPrintf("pop后 count=%zu\n", XLockFreeQueue_count_base(q));
+    XLockFreeQueue_clear_base(q);
+    XPrintf("clear后 count=%zu empty=%d\n",
+        XLockFreeQueue_count_base(q),
+        (int)XLockFreeQueue_empty_base(q));
     XLockFreeQueue_delete_base(q);
     XCoreApplication_quit();
 }

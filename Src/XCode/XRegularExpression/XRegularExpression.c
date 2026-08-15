@@ -741,12 +741,12 @@ void XRegularExpressionMatchIterator_init(XRegularExpressionMatchIterator* itera
     iterator->m_isValid = iterator->m_next != NULL;
 }
 
-XRegularExpression* XRegularExpression_create(void)
+XRegularExpression* XRegularExpression_create_ex(XMemoryType memory)
 {
-    XRegularExpression* expression = (XRegularExpression*)XMalloc_System(sizeof(*expression));
+    XRegularExpression* expression = (XRegularExpression*)XMemory_malloc(sizeof(XRegularExpression), memory);
     if (!expression) return NULL;
     XRegularExpression_init(expression);
-    Set_Class_MemoryFree(expression, XFree_System);
+    Set_Class_Memory(expression, memory); Set_Class_IsHeap(expression, true);
     return expression;
 }
 
@@ -778,12 +778,12 @@ XRegularExpression* XRegularExpression_create_utf8(const char* pattern,
     return expression;
 }
 
-XRegularExpressionMatch* XRegularExpressionMatch_create(void)
+XRegularExpressionMatch* XRegularExpressionMatch_create_ex(XMemoryType memory)
 {
-    XRegularExpressionMatch* match = (XRegularExpressionMatch*)XMalloc_System(sizeof(*match));
+    XRegularExpressionMatch* match = (XRegularExpressionMatch*)XMemory_malloc(sizeof(XRegularExpressionMatch), memory);
     if (!match) return NULL;
     XRegularExpressionMatch_init(match);
-    Set_Class_MemoryFree(match, XFree_System);
+    Set_Class_Memory(match, memory); Set_Class_IsHeap(match, true);
     return match;
 }
 
@@ -805,13 +805,13 @@ XRegularExpressionMatch* XRegularExpressionMatch_create_move(XRegularExpressionM
     return match;
 }
 
-XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create(void)
+XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_ex(XMemoryType memory)
 {
     XRegularExpressionMatchIterator* iterator =
-            (XRegularExpressionMatchIterator*)XMalloc_System(sizeof(*iterator));
+            (XRegularExpressionMatchIterator*)XMemory_malloc(sizeof(XRegularExpressionMatchIterator), memory);
     if (!iterator) return NULL;
     XRegularExpressionMatchIterator_init(iterator);
-    Set_Class_MemoryFree(iterator, XFree_System);
+    Set_Class_Memory(iterator, memory); Set_Class_IsHeap(iterator, true);
     return iterator;
 }
 

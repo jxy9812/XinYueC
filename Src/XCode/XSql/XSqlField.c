@@ -46,21 +46,13 @@ void XSqlField_init_ex(XSqlField* field, const XString* fieldName,
     XSqlField_setMetaType(field, metaType);
 }
 
-XSqlField* XSqlField_create(void)
-{
-    XSqlField* field = (XSqlField*)XMalloc_System(sizeof(XSqlField));
-    if (!field) return NULL;
-    memset(field, 0, sizeof(*field));
-    XSqlField_init(field);
-    Set_Class_MemoryFree(field, XFree_System);
-    return field;
-}
-
-XSqlField* XSqlField_create_ex(const XString* fieldName, int metaType,
+XSqlField* XSqlField_create_ex(XMemoryType memory, const XString* fieldName, int metaType,
                                const XString* tableName)
 {
-    XSqlField* field = XSqlField_create();
-    if (field) XSqlField_init_ex(field, fieldName, metaType, tableName);
+    XSqlField* field = (XSqlField*)XMemory_malloc(sizeof(XSqlField), memory);
+    if (!field) return NULL;
+    XSqlField_init_ex(field, fieldName, metaType, tableName);
+    Set_Class_Memory(field, memory); Set_Class_IsHeap(field, true);
     return field;
 }
 

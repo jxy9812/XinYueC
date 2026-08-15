@@ -23,11 +23,11 @@ XVtable* XModbusReply_class_init(void) {
     return XVTABLE_DEFAULT;
 }
 
-XModbusReply* XModbusReply_create(XModbusReply_ReplyType type, int serverAddress) {
-    XModbusReply* reply = (XModbusReply*)XMalloc_System(sizeof(XModbusReply));
+XModbusReply* XModbusReply_create_ex(XMemoryType memory, XModbusReply_ReplyType type, int serverAddress) {
+    XModbusReply* reply = (XModbusReply*)XMemory_malloc(sizeof(XModbusReply), memory);
     if (reply) {
         XModbusReply_init(reply, type, serverAddress);
-        Set_Class_MemoryFree(reply, XFree_System);
+        Set_Class_Memory(reply, memory); Set_Class_IsHeap(reply, true);
     }
     return reply;
 }

@@ -52,23 +52,16 @@ void XRegularExpressionValidator_init(XRegularExpressionValidator* validator)
     XRegularExpression_init(&validator->m_usedExpression);
 }
 
-XRegularExpressionValidator* XRegularExpressionValidator_create(void)
+XRegularExpressionValidator* XRegularExpressionValidator_create_ex(
+        XMemoryType memory, const XRegularExpression* expression)
 {
     XRegularExpressionValidator* validator =
-            (XRegularExpressionValidator*)XMalloc_System(sizeof(*validator));
+            (XRegularExpressionValidator*)XMemory_malloc(sizeof(XRegularExpressionValidator), memory);
     if (!validator) return NULL;
     XRegularExpressionValidator_init(validator);
-    Set_Class_MemoryFree(validator, XFree_System);
-    return validator;
-}
-
-XRegularExpressionValidator* XRegularExpressionValidator_create_ex(
-        const XRegularExpression* expression)
-{
-    if (!expression) return NULL;
-    XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
-    if (!validator) return NULL;
-    XRegularExpressionValidator_setRegularExpression(validator, expression);
+    Set_Class_Memory(validator, memory); Set_Class_IsHeap(validator, true);
+    if (expression)
+        XRegularExpressionValidator_setRegularExpression(validator, expression);
     return validator;
 }
 

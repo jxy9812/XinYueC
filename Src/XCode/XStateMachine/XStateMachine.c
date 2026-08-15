@@ -1153,18 +1153,13 @@ XVtable* XStateMachine_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XStateMachine* XStateMachine_create(void)
+XStateMachine* XStateMachine_create_ex(XMemoryType memory, XState_ChildMode childMode)
 {
-    return XStateMachine_create_ex(XState_ExclusiveStates);
-}
-
-XStateMachine* XStateMachine_create_ex(XState_ChildMode childMode)
-{
-    XStateMachine* machine = XNew(XStateMachine);
+    XStateMachine* machine = XMemory_malloc(sizeof(XStateMachine), memory);
     if (!machine)
         return NULL;
     XStateMachine_init_ex(machine, childMode);
-    Set_Class_MemoryFree(machine, XFree_System);
+    Set_Class_Memory(machine, memory); Set_Class_IsHeap(machine, true);
     return machine;
 }
 
@@ -1384,11 +1379,11 @@ void XStateMachine_registerSignalTransition_internal(XStateMachine* machine,
         }
     }
 
-    XStateMachine_SignalConnection* record = XNew(XStateMachine_SignalConnection);
+    XStateMachine_SignalConnection* record = XClass_Malloc(XStateMachine_SignalConnection);
     if (!record)
         return;
     XObject_init((XObject*)record);
-    Set_Class_MemoryFree(record, XFree_System);
+    Set_Class_IsHeap(record, true);
     record->m_machine = machine;
     record->m_sender = transition->m_senderObject;
     record->m_signal = transition->m_signal;
@@ -1603,11 +1598,11 @@ static XVtable* XStateMachine_SignalEvent_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XStateMachine_SignalEvent* XStateMachine_SignalEvent_create(XObject* sender,
+XStateMachine_SignalEvent* XStateMachine_SignalEvent_create_ex(XMemoryType memory, XObject* sender,
                                                             size_t signal,
                                                             const XVarList* arguments)
 {
-    XStateMachine_SignalEvent* event = XNew(XStateMachine_SignalEvent);
+    XStateMachine_SignalEvent* event = XMemory_malloc(sizeof(XStateMachine_SignalEvent), memory);
     if (!event)
         return NULL;
     XEvent_init((XEvent*)event, g_signalEventType);
@@ -1615,7 +1610,7 @@ XStateMachine_SignalEvent* XStateMachine_SignalEvent_create(XObject* sender,
     event->m_sender = sender;
     event->m_signal = signal;
     event->m_arguments = XVarList_create_copy(arguments);
-    Set_Class_MemoryFree(event, XFree_System);
+    Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
     return event;
 }
 
@@ -1652,18 +1647,18 @@ static XVtable* XStateMachine_WrappedEvent_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XStateMachine_WrappedEvent* XStateMachine_WrappedEvent_create(XObject* object, XEvent* event)
+XStateMachine_WrappedEvent* XStateMachine_WrappedEvent_create_ex(XMemoryType memory, XObject* object, XEvent* event)
 {
     if (!event)
         return NULL;
-    XStateMachine_WrappedEvent* wrapped = XNew(XStateMachine_WrappedEvent);
+    XStateMachine_WrappedEvent* wrapped = XMemory_malloc(sizeof(XStateMachine_WrappedEvent), memory);
     if (!wrapped)
         return NULL;
     XEvent_init((XEvent*)wrapped, g_wrappedEventType);
     XClassGetVtable(wrapped) = XStateMachine_WrappedEvent_class_init();
     wrapped->m_object = object;
     wrapped->m_event = event;
-    Set_Class_MemoryFree(wrapped, XFree_System);
+    Set_Class_Memory(wrapped, memory); Set_Class_IsHeap(wrapped, true);
     return wrapped;
 }
 

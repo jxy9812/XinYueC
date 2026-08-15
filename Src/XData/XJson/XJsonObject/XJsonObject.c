@@ -18,13 +18,13 @@ XVARIANT_TYPE_OPS_DEFINE(XJsonObject, sizeof(XJsonObject), XJsonObject_copy_base
 	XJsonObject_move_base, XJsonObject_clear_base, XJsonObject_deinit_base,
 	XJsonObject_compare, "XJsonObject");
 
-XJsonObject* XJsonObject_create(void)
+XJsonObject* XJsonObject_create_ex(XMemoryType memory)
 {
-	XJsonObject* object = (XJsonObject*)XMalloc_System(sizeof(XJsonObject));
+	XJsonObject* object = (XJsonObject*)XMemory_malloc(sizeof(XJsonObject), memory);
 	if (!object)
 		return NULL;
     XJsonObject_init(object);
-    Set_Class_MemoryFree(object, XFree_System);
+    Set_Class_Memory(object, memory); Set_Class_IsHeap(object, true);
 	return object;
 }
 

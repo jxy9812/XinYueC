@@ -41,7 +41,6 @@ void XRunnable_init(XRunnable* runnable)
 
 	// 初始化基类
 	XClassSetVtable(runnable, XRunnable);
-	Set_Class_MemoryFree(runnable, NULL);
 
 	// 初始化成员变量
 	runnable->function = NULL;
@@ -49,13 +48,13 @@ void XRunnable_init(XRunnable* runnable)
 	runnable->auto_delete = true;
 }
 
-XRunnable* XRunnable_create()
+XRunnable* XRunnable_create_ex(XMemoryType memory)
 {
-	XRunnable* runnable = (XRunnable*)XMalloc_System(sizeof(XRunnable));
+	XRunnable* runnable = (XRunnable*)XMemory_malloc(sizeof(XRunnable), memory);
 	if (!runnable)
 		return NULL;
 	XRunnable_init(runnable);
-	Set_Class_MemoryFree(runnable, XFree_System);
+	Set_Class_Memory(runnable, memory); Set_Class_IsHeap(runnable, true);
 	return runnable;
 }
 

@@ -33,13 +33,13 @@ XVtable* XObject_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-XObject* XObject_create()
+XObject* XObject_create_ex(XMemoryType memory)
 {
-	XObject* object = XNew(XObject);
+	XObject* object = XMemory_malloc(sizeof(XObject), memory);
 	if (!object)
 		return NULL;
 	XObject_init(object);
-	Set_Class_MemoryFree(object, XFree_System);
+	Set_Class_Memory(object, memory); Set_Class_IsHeap(object, true);
 	return object;
 }
 
@@ -563,7 +563,7 @@ void VXObject_deinit(XObject* object)
 			object->currentChildBeingDeleted = child;
 			childPtr[i] = NULL;
 			child->m_parent = NULL;
-			if (Class_MemoryFree(child))
+			if (Class_IsHeap(child))
 				XClass_delete_base(child);
 			else
 				XClass_deinit_base(child);

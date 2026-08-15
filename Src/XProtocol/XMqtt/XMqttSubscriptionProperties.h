@@ -41,7 +41,7 @@ XVtable* XMqttSubscriptionProperties_class_init(void);
  * @brief 创建订阅属性实例
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttSubscriptionProperties* XMqttSubscriptionProperties_create(void);
+XMqttSubscriptionProperties* XMqttSubscriptionProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建订阅属性的深拷贝
@@ -134,7 +134,7 @@ XVtable* XMqttUnsubscriptionProperties_class_init(void);
  * @brief 创建取消订阅属性实例
  * @return 新创建的实例指针，失败返回 NULL
  */
-XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create(void);
+XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建取消订阅属性的深拷贝
@@ -178,5 +178,12 @@ void XMqttUnsubscriptionProperties_setUserProperties(XMqttUnsubscriptionProperti
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttSubscriptionProperties_create
+#define XMqttSubscriptionProperties_create(...) XMqttSubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XMqttUnsubscriptionProperties_create
+#define XMqttUnsubscriptionProperties_create(...) XMqttUnsubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTSUBSCRIPTIONPROPERTIES_H

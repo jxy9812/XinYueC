@@ -167,7 +167,7 @@ static XHttpRequest* xrequest_factory_create_internal(const XNetworkRequestFacto
         request = XHttpRequest_create_url(resolved);
     } else if (path) {
         XString* absolute = XString_create_utf8(path);
-        resolved = absolute ? XUrl_create_ex(absolute, XUrl_TolerantMode) : NULL;
+        resolved = absolute ? XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, absolute, XUrl_TolerantMode) : NULL;
         if (absolute) XClass_delete_base((XClass*)absolute);
         request = resolved ? XHttpRequest_create_url(resolved) : NULL;
     } else if (self->m_baseUrl) {
@@ -299,15 +299,15 @@ void XNetworkRequestFactory_init(XNetworkRequestFactory* self)
     self->m_priority = XHttpRequest_NormalPriority;
 }
 
-XNetworkRequestFactory* XNetworkRequestFactory_create(void)
+XNetworkRequestFactory* XNetworkRequestFactory_create_ex(XMemoryType memory)
 {
-    XNetworkRequestFactory* self = (XNetworkRequestFactory*)XMalloc_System(sizeof(*self));
+    XNetworkRequestFactory* self = (XNetworkRequestFactory*)XMemory_malloc(sizeof(XNetworkRequestFactory), memory);
     if (!self) return NULL;
     XNetworkRequestFactory_init(self);
     if (!self->m_commonHeaders || !self->m_attributes) {
-        XNetworkRequestFactory_deinit_base((XClass*)self); XFree_System(self); return NULL;
+        XNetworkRequestFactory_deinit_base((XClass*)self); XMemory_method(memory)->free(self); return NULL;
     }
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

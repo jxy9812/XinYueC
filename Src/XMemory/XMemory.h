@@ -74,7 +74,7 @@ typedef enum {
 * @param method 内存管理方法结构体指针，为NULL时不执行操作
 */
 void XMemory_setMethod(const XMemory* method, XMemoryType type);
-const XMemory* XMemory_method( XMemoryType type);
+XMemory* XMemory_method(XMemoryType type);
 /**
 * @brief 设置内存申请函数
 * @param method 自定义的内存申请函数指针

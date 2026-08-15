@@ -101,7 +101,7 @@ void XNetIoRingWin32_init(XNetIoRingWin32* ring);
  * @return XNetIoRingWin32 实例指针，失败返回 NULL
  * @note 调用者负责通过 XClass 释放机制释放
  */
-XNetIoRingWin32* XNetIoRingWin32_create(void);
+XNetIoRingWin32* XNetIoRingWin32_create_ex(XMemoryType memory);
 
 /* ==================== IOCP 专属 API ==================== */
 
@@ -156,5 +156,10 @@ bool IOCP_bind(XSocketDescriptor socket, XObject* obj);
 #endif
 
 #endif /* XPLATFORM_WINDOWS */
+
+
+/* XClass create API default-memory wrappers. */
+#undef XNetIoRingWin32_create
+#define XNetIoRingWin32_create(...) XNetIoRingWin32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XNETIORINGWIN32_H */

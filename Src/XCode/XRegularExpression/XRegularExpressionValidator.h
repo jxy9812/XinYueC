@@ -54,13 +54,12 @@ void XRegularExpressionValidator_init(XRegularExpressionValidator* validator);
  * @brief 创建默认校验器。
  * @return 成功返回堆对象，调用者必须使用 XRegularExpressionValidator_delete_base 释放；失败返回 NULL。
  */
-XRegularExpressionValidator* XRegularExpressionValidator_create(void);
 /**
  * @brief 使用指定正则表达式创建校验器。
  * @param expression 初始正则表达式；函数只读取该对象，不能传入 NULL。
  * @return 成功返回新校验器，调用者必须使用 XRegularExpressionValidator_delete_base 释放；失败返回 NULL。
  */
-XRegularExpressionValidator* XRegularExpressionValidator_create_ex(
+XRegularExpressionValidator* XRegularExpressionValidator_create_ex(XMemoryType memory,
         const XRegularExpression* expression);
 /**
  * @brief 创建校验器的深拷贝。
@@ -132,5 +131,11 @@ XRegularExpressionValidator_State XRegularExpressionValidator_validate_utf8(
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRegularExpressionValidator_create
+#define XRegularExpressionValidator_create() \
+	XRegularExpressionValidator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
 
 #endif /* XREGULAREXPRESSIONVALIDATOR_H */

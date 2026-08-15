@@ -199,8 +199,8 @@ XContentTypes* XContentTypes_create(void)
     if (!self) return NULL;
     memset(self, 0, sizeof(XContentTypes));
     /* 用 sizeof(intptr_t) 存 XString*，并注册 deinit 方法让 XMap_delete_base 自动清理 */
-    self->m_defaults = XMap_create_ex(sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
-    self->m_overrides = XMap_create_ex(sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
+    self->m_defaults = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
+    self->m_overrides = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
     /* 通知 map 在清空条目时调用的 deinit 方法（按 key、按 value 各一次） */
     XMapBaseSetKeyDeinitMethod(self->m_defaults, XStringContainer_deinit);
     XContainerSetDataDeinitMethod(self->m_defaults, XStringContainer_deinit);

@@ -78,7 +78,7 @@ XVtable* XFtpCommand_class_init(void);
  * @param[in] cmdType  命令类型
  * @return 新对象；分配失败返回 NULL。调用方负责 XFtpCommand_delete。
  */
-XFtpCommand* XFtpCommand_create(int id, XFtpCommand_Type cmdType);
+XFtpCommand* XFtpCommand_create_ex(XMemoryType memory,  int id, XFtpCommand_Type cmdType);
 
 /**
  * @brief 销毁 FTP 命令对象及其参数/上传缓冲。
@@ -100,5 +100,10 @@ void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XFtpCommand_create
+#define XFtpCommand_create(...) XFtpCommand_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XFTP_COMMAND_H

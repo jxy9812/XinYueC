@@ -38,14 +38,13 @@ XVtable* XHistoryState_class_init(void);
  * @brief 创建无父状态的浅历史状态。
  * @return 新历史状态；内存分配失败时返回 NULL。
  */
-XHistoryState* XHistoryState_create(void);
 /**
  * @brief 创建指定类型和父状态的历史状态。
  * @param type 浅历史或深历史。
  * @param parent 需要记录配置的父状态，可为 NULL。
  * @return 新历史状态；内存分配失败时返回 NULL。
  */
-XHistoryState* XHistoryState_create_ex(XHistoryState_HistoryType type, XState* parent);
+XHistoryState* XHistoryState_create_ex(XMemoryType memory, XHistoryState_HistoryType type, XState* parent);
 /**
  * @brief 初始化无父状态的浅历史状态。
  * @param state 调用者提供的未初始化存储。
@@ -127,4 +126,10 @@ void* XHistoryState_historyTypeChanged_signal(XHistoryState* state);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XHistoryState_create
+#define XHistoryState_create() \
+	XHistoryState_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHistoryState_ShallowHistory, NULL)
+
 #endif // XHISTORYSTATE_H

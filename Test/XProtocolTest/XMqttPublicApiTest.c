@@ -73,22 +73,27 @@ static XVtable* mqtt_mock_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XMqttMockDevice* mqtt_mock_create(void)
+static XMqttMockDevice* mqtt_mock_create_ex(XMemoryType memory)
 {
-    XMqttMockDevice* mock = (XMqttMockDevice*)XMalloc_System(sizeof(*mock));
+    XMqttMockDevice* mock = (XMqttMockDevice*)XMemory_malloc(sizeof(XMqttMockDevice), memory);
     if (!mock) return NULL;
     memset(mock, 0, sizeof(*mock));
     XIODevice_init(&mock->m_base);
     XClassGetVtable(mock) = mqtt_mock_class_init();
     mock->input = XByteArray_create();
     mock->output = XByteArray_create();
-    Set_Class_MemoryFree(mock, XFree_System);
+    Set_Class_Memory(mock, memory); Set_Class_IsHeap(mock, true);
     if (!mock->input || !mock->output ||
         !XIODevice_open_base((XIODevice*)mock, XIODevice_ReadWrite)) {
         XClass_delete_base((XClass*)mock);
         return NULL;
     }
     return mock;
+}
+
+static XMqttMockDevice* mqtt_mock_create(void)
+{
+    return mqtt_mock_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 static bool mqtt_mock_feed(XMqttMockDevice* mock, const uint8_t* data, size_t size)

@@ -136,12 +136,12 @@ XVtable* XImageReader_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XImageReader* XImageReader_create()
+XImageReader* XImageReader_create_ex(XMemoryType memory)
 {
-    XImageReader* self = (XImageReader*)XMalloc_System(sizeof(XImageReader));
+    XImageReader* self = (XImageReader*)XMemory_malloc(sizeof(XImageReader), memory);
     if (!self) return NULL;
     XImageReader_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

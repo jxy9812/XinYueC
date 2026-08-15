@@ -75,9 +75,9 @@ XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* 
     memset(self, 0, sizeof(XWorksheet));
     XAbstractSheet_init(&self->m_base, sheetName, sheetId, book, flag);
     self->m_base.m_sheetType = XAbstractSheet_ST_WorkSheet;
-    self->m_cellTable = XMap_create_ex(sizeof(uint64_t), sizeof(XCell*), uint64_t_compare, false);
-    self->m_rowInfoMap = XMap_create_ex(sizeof(int), sizeof(XWorksheet_RowInfo*), int_compare, false);
-    self->m_colInfoMap = XMap_create_ex(sizeof(int), sizeof(XWorksheet_ColumnInfo*), int_compare, false);
+    self->m_cellTable = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(XCell*), uint64_t_compare, false);
+    self->m_rowInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_RowInfo*), int_compare, false);
+    self->m_colInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_ColumnInfo*), int_compare, false);
     self->m_mergedCells = XVector_Create(XCellRange);
     self->m_dataValidations = XVector_Create(XDataValidation*);
     self->m_conditionalFormatting = XVector_Create(XConditionalFormatting*);
@@ -85,7 +85,7 @@ XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* 
     self->m_mediaFiles = XVector_Create(XMediaFile*);
     self->m_imagePositions = XVector_Create(XWorksheet_ImagePosition);
     self->m_chartFiles = XVector_Create(XChart*);
-    self->m_rowSpans = XMap_create_ex(sizeof(uint64_t), sizeof(uint64_t), uint64_t_compare, false);
+    self->m_rowSpans = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(uint64_t), uint64_t_compare, false);
     self->m_showGridLines = true;
     self->m_showRowColHeaders = true;
     self->m_showZeros = true;

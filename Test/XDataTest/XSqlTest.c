@@ -56,14 +56,19 @@ static XVtable* XSqlTestResult_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XSqlTestResult* XSqlTestResult_create(const XSqlDriver* driver)
+static XSqlTestResult* XSqlTestResult_create_ex(XMemoryType memory, const XSqlDriver* driver)
 {
-    XSqlTestResult* result = (XSqlTestResult*)XMalloc_System(sizeof(XSqlTestResult));
+    XSqlTestResult* result = (XSqlTestResult*)XMemory_malloc(sizeof(XSqlTestResult), memory);
     if (!result) return NULL;
     XSqlResult_init(&result->m_parent, driver);
     XClassSetVtable(result, XSqlTestResult);
-    Set_Class_MemoryFree(result, XFree_System);
+    Set_Class_Memory(result, memory); Set_Class_IsHeap(result, true);
     return result;
+}
+
+static XSqlTestResult* XSqlTestResult_create(const XSqlDriver* driver)
+{
+    return XSqlTestResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, driver);
 }
 
 static bool XSqlTest_resultReset(XSqlResult* result, const XString* query)
@@ -76,8 +81,8 @@ static bool XSqlTest_resultReset(XSqlResult* result, const XString* query)
     result->m_size = 2;
     XString* idName = XString_create_utf8("id");
     XString* textName = XString_create_utf8("text");
-    XSqlField* idField = XSqlField_create_ex(idName, XVariantType_Int32, NULL);
-    XSqlField* textField = XSqlField_create_ex(textName, XVariantType_String, NULL);
+    XSqlField* idField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, idName, XVariantType_Int32, NULL);
+    XSqlField* textField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, textName, XVariantType_String, NULL);
     bool ok = idField && textField && XSqlRecord_append(&result->m_record, idField)
         && XSqlRecord_append(&result->m_record, textField);
     if (idName) XString_delete_base(idName);
@@ -122,14 +127,19 @@ static XVtable* XSqlTestDriver_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XSqlTestDriver* XSqlTestDriver_create(void)
+static XSqlTestDriver* XSqlTestDriver_create_ex(XMemoryType memory)
 {
-    XSqlTestDriver* driver = (XSqlTestDriver*)XMalloc_System(sizeof(XSqlTestDriver));
+    XSqlTestDriver* driver = (XSqlTestDriver*)XMemory_malloc(sizeof(XSqlTestDriver), memory);
     if (!driver) return NULL;
     XSqlDriver_init(&driver->m_parent, XSqlDriverType_Custom, XSqlDbmsType_Sqlite);
     XClassSetVtable(driver, XSqlTestDriver);
-    Set_Class_MemoryFree(driver, XFree_System);
+    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
     return driver;
+}
+
+static XSqlTestDriver* XSqlTestDriver_create(void)
+{
+    return XSqlTestDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 }
 
 static bool XSqlTest_driverOpen(XSqlDriver* driver, const XString* database,
@@ -160,8 +170,8 @@ static XSqlRecord* XSqlTest_driverRecord(const XSqlDriver* driver, const XString
         return record;
     idName = XString_create_utf8("id");
     textName = XString_create_utf8("text");
-    idField = XSqlField_create_ex(idName, XVariantType_Int32, NULL);
-    textField = XSqlField_create_ex(textName, XVariantType_String, NULL);
+    idField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, idName, XVariantType_Int32, NULL);
+    textField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, textName, XVariantType_String, NULL);
     if (!idField || !textField || !XSqlRecord_append(record, idField)
         || !XSqlRecord_append(record, textField)) {
         XSqlRecord_clear(record);
@@ -191,8 +201,8 @@ static bool XSqlTest_run_value_api(const XSqlDatabase* database)
     XSqlError* rightError = XSqlError_create_utf8("right", NULL, XSqlErrorType_ConnectionError, NULL);
     XString* leftName = XString_create_utf8("left_field");
     XString* rightName = XString_create_utf8("right_field");
-    XSqlField* leftField = XSqlField_create_ex(leftName, XVariantType_String, NULL);
-    XSqlField* rightField = XSqlField_create_ex(rightName, XVariantType_Int64, NULL);
+    XSqlField* leftField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, leftName, XVariantType_String, NULL);
+    XSqlField* rightField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, rightName, XVariantType_Int64, NULL);
     XSqlRecord* leftRecord = XSqlRecord_create();
     XSqlRecord* rightRecord = XSqlRecord_create();
     XSqlRecord* keyValues = NULL;

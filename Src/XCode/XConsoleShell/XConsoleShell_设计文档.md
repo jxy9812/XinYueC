@@ -561,7 +561,7 @@ typedef struct XConsoleShell {
 ~~~
 
 init 使用对象内嵌的固定数组；create 仅在应用允许堆分配时使用，必须调用
-Set_Class_MemoryFree。静态命令表、I/O 回调、会话 userData 与后端对象均为借用，Shell 只释放
+Set_Class_Memory。静态命令表、I/O 回调、会话 userData 与后端对象均为借用，Shell 只释放
 动态命令树和异步进程任务。所有释放使用 XFree_System 或匹配的 XinYueC 分配器，禁止直接使用
 malloc/free。
 

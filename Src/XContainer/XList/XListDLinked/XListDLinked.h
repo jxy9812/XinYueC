@@ -64,8 +64,9 @@ XVtable* XListDLinked_class_init();
 * @param TypeSize 链表存储元素的类型大小（字节数，如sizeof(int)）
 * @return 成功返回创建的链表指针（XListDLinked*），失败返回NULL
 */
-XListDLinked* XListDLinked_create_ex(size_t typeSize, bool useCow);
-#define XListDLinked_create(typeSize) XListDLinked_create_ex(typeSize, true)
+XListDLinked* XListDLinked_create_ex(XMemoryType memory, size_t typeSize, bool useCow);
+#define XListDLinked_create(typeSize) \
+	XListDLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
 /**
 * @brief 简化创建指定类型的双向链表（类型安全宏）
 * @param Type 链表存储元素的类型（如int、float等）
@@ -254,6 +255,12 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XListDLinked_create
+#define XListDLinked_create(typeSize) \
+	XListDLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
 
 #endif // XLISTDLINKED_H
 

@@ -98,32 +98,32 @@ XVtable* XDir_class_init(void)
 
 XDir* XDir_create_1(void)
 {
-    XDir* dir = (XDir*)XMalloc_System(sizeof(XDir));
+    XDir* dir = (XDir*)XClass_Malloc(XDir);
     if (!dir) return NULL;
     
     XDir_init_1(dir);
-    Set_Class_MemoryFree(dir, XFree_System);
+    Set_Class_IsHeap(dir, true);
     return dir;
 }
 
 XDir* XDir_create_2(const XString* path)
 {
-    XDir* dir = (XDir*)XMalloc_System(sizeof(XDir));
+    XDir* dir = (XDir*)XClass_Malloc(XDir);
     if (!dir) return NULL;
     
     XDir_init_2(dir, path);
-    Set_Class_MemoryFree(dir, XFree_System);
+    Set_Class_IsHeap(dir, true);
     return dir;
 }
 
 XDir* XDir_create_3(const XString* path, const XStringList* nameFilters,
                     XDirSortFlags sort, XDirFilters filters)
 {
-    XDir* dir = (XDir*)XMalloc_System(sizeof(XDir));
+    XDir* dir = (XDir*)XClass_Malloc(XDir);
     if (!dir) return NULL;
     
     XDir_init_3(dir, path, nameFilters, sort, filters);
-    Set_Class_MemoryFree(dir, XFree_System);
+    Set_Class_IsHeap(dir, true);
     return dir;
 }
 

@@ -40,7 +40,7 @@ void XRestReply_init(XRestReply* self, XHttpReply* reply);
  * - @param reply 被包装的 HTTP 响应；借用，可为 NULL，必须在包装使用期间保持有效。
  * - @return 新建 REST 包装；调用者必须使用 XRestReply_delete_base 释放，分配失败返回 NULL。
  */
-XRestReply* XRestReply_create(XHttpReply* reply);
+XRestReply* XRestReply_create_ex(XMemoryType memory,  XHttpReply* reply);
 /**
  * - @brief 深拷贝创建 REST 响应包装。
  * - @param other 源包装；借用且不能为 NULL，内部 HTTP 响应指针仍按借用语义复制。
@@ -119,5 +119,10 @@ XString* XRestReply_errorString(const XRestReply* self);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XRestReply_create
+#define XRestReply_create(...) XRestReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XRESTREPLY_H */

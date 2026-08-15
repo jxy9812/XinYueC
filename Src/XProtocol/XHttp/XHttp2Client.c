@@ -33,16 +33,16 @@ static void VXHttp2ClientSession_copy(XHttp2ClientSession* dest,
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XHttp2ClientSession_init(dest);
     configuration = XHttp2Configuration_create_copy(src->m_configuration);
-    encoder = src->m_encoder ? (XHttp2HeaderEncoder*)XMalloc_System(sizeof(*encoder)) : NULL;
+    encoder = src->m_encoder ? (XHttp2HeaderEncoder*)XClass_Malloc(XHttp2HeaderEncoder) : NULL;
     if (!configuration || (src->m_encoder && !encoder)) {
         if (configuration) XClass_delete_base((XClass*)configuration);
-        if (encoder) XFree_System(encoder);
+        if (encoder) XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE)->free(encoder);
         return;
     }
     if (encoder) {
         XHttp2HeaderEncoder_init(encoder);
         XClass_copy_base((XClass*)encoder, (const XClass*)src->m_encoder);
-        Set_Class_MemoryFree(encoder, XFree_System);
+        Set_Class_IsHeap(encoder, true);
     }
     if (dest->m_configuration)
         XClass_delete_base((XClass*)dest->m_configuration);
@@ -115,12 +115,12 @@ void XHttp2ClientSession_init(XHttp2ClientSession* self)
     self->m_peerMaxFrameSize = XHttp2Configuration_MinFrameSize;
 }
 
-XHttp2ClientSession* XHttp2ClientSession_create(void)
+XHttp2ClientSession* XHttp2ClientSession_create_ex(XMemoryType memory)
 {
-    XHttp2ClientSession* self = (XHttp2ClientSession*)XMalloc_System(sizeof(*self));
+    XHttp2ClientSession* self = (XHttp2ClientSession*)XMemory_malloc(sizeof(XHttp2ClientSession), memory);
     if (!self) return NULL;
     XHttp2ClientSession_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_configuration || !self->m_encoder) {
         XClass_delete_base((XClass*)self);
         return NULL;
@@ -247,7 +247,7 @@ XByteArray* XHttp2ClientSession_start(XHttp2ClientSession* self)
                 goto fail;
         }
     }
-    settings = XHttp2Frame_create_ex(XHttp2Frame_Settings, 0, 0, settingsPayload);
+    settings = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Settings, 0, 0, settingsPayload);
     frameBytes = settings ? XHttp2Frame_toByteArray(settings) : NULL;
     if (!settingsPayload || !settings || !frameBytes ||
         !XByteArray_push_back_2(result, XHttp2Frame_ClientPreface,
@@ -449,7 +449,7 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
                 flags |= XHttp2Frame_EndStream;
             part = XByteArray_create_with_data(
                 (const char*)XByteArray_constData(headerBlock) + headerOffset, chunk);
-            frame = part ? XHttp2Frame_create_ex(type, flags, id, part) : NULL;
+            frame = part ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, flags, id, part) : NULL;
             frameBytes = frame ? XHttp2Frame_toByteArray(frame) : NULL;
             if (!part || !frame || !frameBytes ||
                 !XByteArray_push_back_2(result, XByteArray_constData(frameBytes),
@@ -479,7 +479,7 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
             {
                 XByteArray* part = XByteArray_create_with_data(
                     (const char*)XByteArray_constData((XByteArray*)body) + offset, chunk);
-                XHttp2Frame* dataFrame = part ? XHttp2Frame_create_ex(XHttp2Frame_Data, flags, id, part) : NULL;
+                XHttp2Frame* dataFrame = part ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, flags, id, part) : NULL;
                 XByteArray* dataBytes = dataFrame ? XHttp2Frame_toByteArray(dataFrame) : NULL;
                 if (!part || !dataFrame || !dataBytes ||
                     !XByteArray_push_back_2(result, XByteArray_constData(dataBytes), XByteArray_size_base(dataBytes))) {

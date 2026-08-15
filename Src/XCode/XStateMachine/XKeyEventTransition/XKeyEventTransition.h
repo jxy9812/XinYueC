@@ -29,7 +29,6 @@ XVtable* XKeyEventTransition_class_init(void);
  * @brief 创建未指定事件源的键盘事件转换。
  * @return 新键盘事件转换；内存分配失败时返回 NULL。
  */
-XKeyEventTransition* XKeyEventTransition_create(void);
 /**
  * @brief 创建指定事件源、事件类型、按键和源状态的键盘事件转换。
  * @param object 被监听对象，不转移所有权，可为 NULL。
@@ -38,7 +37,7 @@ XKeyEventTransition* XKeyEventTransition_create(void);
  * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
  * @return 新键盘事件转换；内存分配失败时返回 NULL。
  */
-XKeyEventTransition* XKeyEventTransition_create_ex(XObject* object, XEventType type,
+XKeyEventTransition* XKeyEventTransition_create_ex(XMemoryType memory, XObject* object, XEventType type,
                                                    int key, XState* sourceState);
 /**
  * @brief 初始化空键盘事件转换。
@@ -89,4 +88,10 @@ void XKeyEventTransition_setModifierMask(XKeyEventTransition* transition,
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XKeyEventTransition_create
+#define XKeyEventTransition_create() \
+	XKeyEventTransition_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XEVENT_TYPE_NONE, 0, NULL)
+
 #endif // XKEYEVENTTRANSITION_H

@@ -20,10 +20,10 @@ XVtable* XMqttAuthenticationProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttAuthenticationProperties* XMqttAuthenticationProperties_create(void)
+XMqttAuthenticationProperties* XMqttAuthenticationProperties_create_ex(XMemoryType memory)
 {
-    XMqttAuthenticationProperties* p = (XMqttAuthenticationProperties*)XMalloc_System(sizeof(XMqttAuthenticationProperties));
-    if (p) { XMqttAuthenticationProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttAuthenticationProperties* p = (XMqttAuthenticationProperties*)XMemory_malloc(sizeof(XMqttAuthenticationProperties), memory);
+    if (p) { XMqttAuthenticationProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 

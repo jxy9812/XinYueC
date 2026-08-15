@@ -30,7 +30,7 @@ XVtable* XRunnable_class_init();
  * @return 指向新创建的XRunnable对象的指针，失败返回NULL
  * @note 这是一个抽象基类，通常应该由子类实现
  */
-XRunnable* XRunnable_create();
+XRunnable* XRunnable_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化XRunnable实例
@@ -82,4 +82,9 @@ XRunnable* XRunnable_create_from_function(XCallableToRun function,XVarList* args
 
 #endif // XTHREADPOOL_ON
 #endif /* XSYNC_ON */
+
+/* XClass create API default-memory wrappers. */
+#undef XRunnable_create
+#define XRunnable_create(...) XRunnable_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // XRUNNABLE_H

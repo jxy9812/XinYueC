@@ -85,7 +85,7 @@ typedef struct XTcpSocket {
 // =============== 核心操作函数 ===============
 
 void XTcpSocket_init(XTcpSocket* sock);
-XTcpSocket* XTcpSocket_create(void);
+XTcpSocket* XTcpSocket_create_ex(XMemoryType memory);
 #define XTcpSocket_connectToHost_base       XAbstractSocket_connectToHost_base
 #define XTcpSocket_disconnectFromHost_base  XAbstractSocket_disconnectFromHost_base
 #define XTcpSocket_flush                    XAbstractSocket_flush
@@ -107,5 +107,10 @@ XTcpSocket* XTcpSocket_create(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XTcpSocket_create
+#define XTcpSocket_create(...) XTcpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XTCPSOCKET_H

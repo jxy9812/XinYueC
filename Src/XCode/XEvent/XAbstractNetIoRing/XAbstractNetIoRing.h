@@ -136,7 +136,7 @@ XVtable* XAbstractNetIoRing_class_init(void);
  * @note 用于无 IOCP/epoll 的平台（裸机 / 嵌入式），直接使用基类默认实现。
  *       平台后端（如 XNetIoRingWin32）使用各自的 _create 函数。
  */
-XAbstractNetIoRing* XAbstractNetIoRing_create(void);
+XAbstractNetIoRing* XAbstractNetIoRing_create_ex(XMemoryType memory);
 
 /**
  * @brief 清理 SQ/CQ 队列资源（非虚函数，供子类 deinit 调用）
@@ -316,5 +316,10 @@ void XAbstractNetIoRing_pollLwip(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XAbstractNetIoRing_create
+#define XAbstractNetIoRing_create(...) XAbstractNetIoRing_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XABSTRACTNETIORING_H */

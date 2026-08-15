@@ -36,7 +36,7 @@ typedef struct XPWMDeviceSTM32
 XVtable* XPWMDeviceSTM32_class_init();
 #ifdef USE_STDPERIPH_DRIVER
 //pwm设备
-XPWMDeviceSTM32* XPWMDeviceSTM32_create(XPWMGPIO* gpio);
+XPWMDeviceSTM32* XPWMDeviceSTM32_create_ex(XMemoryType memory,  XPWMGPIO* gpio);
 bool XPWMDeviceSTM32_open_base(XPWMDeviceSTM32* pwm, XIODeviceBaseMode mode, uint8_t portNum, uint8_t oc, void(*updateCallback)(void*));
 void XPWMDeviceSTM32_TIM_ITConfig(XPWMDeviceSTM32* pwm,bool open);
 void XPWMDeviceSTM32_setTIM_ITCallback(XPWMDeviceSTM32* pwm,void(*callback)(void*),void*userData);
@@ -67,5 +67,10 @@ void XPWMDeviceSTM32_init(XPWMDeviceSTM32* pwm);
 }
 #endif
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XPWMDeviceSTM32_create
+#define XPWMDeviceSTM32_create(...) XPWMDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif

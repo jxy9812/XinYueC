@@ -31,14 +31,20 @@ typedef struct XRBTreeNode
 size_t XRBTree_typeSize();
 //红黑树-创建初始化一个节点
 XRBTreeNode* XRBTree_create(const char* pvData,const size_t dataTypeSize);
+XRBTreeNode* XRBTree_create_ex(const char* pvData, const size_t dataTypeSize,
+	XMemory* memory);
 void XRBTree_init(XRBTreeNode* this_root, size_t treeNodeSize, const char* pvData, const size_t dataTypeSize);
 //红黑树-自动创建节点，插入数据，并自动调整高度和旋转保证平衡
-XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,const void* pvData, const size_t dataSize);
-XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, XRBTreeNode* insertNode);
+XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,
+	const void* pvData, const size_t dataSize, XMemory* memory);
+XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,
+	XRBTreeNode* insertNode, XMemory* memory);
 //返回被解除关系的节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, const size_t dataSize);
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,
+	const void* pvData, const size_t dataSize, XMemory* memory);
 //删除节点但是不释放节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
-XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode*node, const size_t dataSize);
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode*node,
+	const size_t dataSize, XMemory* memory);
 //查找红黑树节点
 XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
 /**
@@ -49,9 +55,9 @@ XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompare
  */
 XRBTreeNode* XRBTree_findSuccessor(XRBTreeNode* node);
 //释放节点
-#define XRBTreeNode_delete							XBTreeNode_delete
+void XRBTreeNode_delete(XTreeNode* node, XMemory* memory);
 //递归释放整颗树
-#define XRBTree_delete(this_root,method,args)		XTree_delete_base(this_root,XRBTreeNode_delete,method,args)
+#define XRBTree_delete(this_root,method,args,memory)		XTree_delete_base(this_root,XRBTreeNode_delete,method,args,memory)
 #ifdef __cplusplus
 }
 #endif

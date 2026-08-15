@@ -38,7 +38,7 @@ typedef struct XTimerData
 * @param vtable 虚函数表指针
 * @return 成功返回XTimerData实例指针，失败返回NULL
 */
-XTimerData* XTimerData_create(XVtable* vtable);
+XTimerData* XTimerData_create_ex(XMemoryType memory,  XVtable* vtable);
 /**
 * @brief 初始化XTimerData实例
 * @param timer 要初始化的XTimerData实例指针
@@ -141,4 +141,9 @@ void XTimerData_out(XTimerData* timer);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XTimerData_create
+#define XTimerData_create(...) XTimerData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif // !XTIMERS_H

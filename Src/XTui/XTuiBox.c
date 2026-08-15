@@ -147,13 +147,13 @@ void XTuiBox_init(XTuiBox* box)
     box->m_contentFg = XColor_create();
 }
 
-XTuiBox* XTuiBox_create(void)
+XTuiBox* XTuiBox_create_ex(XMemoryType memory)
 {
-    XTuiBox* box = (XTuiBox*)XMalloc_System(sizeof(XTuiBox));
+    XTuiBox* box = (XTuiBox*)XMemory_malloc(sizeof(XTuiBox), memory);
     if (!box)
         return NULL;
     XTuiBox_init(box);
-    Set_Class_MemoryFree(box, XFree_System);
+    Set_Class_Memory(box, memory); Set_Class_IsHeap(box, true);
     return box;
 }
 

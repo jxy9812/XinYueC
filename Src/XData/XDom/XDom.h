@@ -416,6 +416,9 @@ XDOM_DECLARE_LIFECYCLE(XDomEntity);
 XDOM_DECLARE_LIFECYCLE(XDomNotation);
 XDOM_DECLARE_LIFECYCLE(XDomImplementation);
 
+XDomDocument* XDomDocument_create_ex(XMemoryType memory);
+XDomImplementation* XDomImplementation_create_ex(XMemoryType memory);
+
 /**
  * @brief      QDomNode 节点树和节点查询 API。
  * @param      self 目标节点；允许为空或空句柄，查询函数会返回默认值。
@@ -2186,5 +2189,10 @@ XDomNode* XDomProcessingInstruction_toNode(const XDomProcessingInstruction* self
 #ifdef __cplusplus
 }
 #endif
+
+#undef XDomDocument_create
+#define XDomDocument_create() XDomDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+#undef XDomImplementation_create
+#define XDomImplementation_create() XDomImplementation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

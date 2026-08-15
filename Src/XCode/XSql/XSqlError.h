@@ -49,7 +49,7 @@ void XSqlError_init(XSqlError* error);
  * @param errorCode 原生错误码；NULL 按空文本处理。
  * @return 新对象；失败返回 NULL，调用者使用 XSqlError_delete_base 释放。
  */
-XSqlError* XSqlError_create(const XString* driverText,
+XSqlError* XSqlError_create_ex(XMemoryType memory,  const XString* driverText,
                             const XString* databaseText,
                             XSqlErrorType type,
                             const XString* errorCode);
@@ -119,5 +119,10 @@ bool XSqlError_equals(const XSqlError* left, const XSqlError* right);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlError_create
+#define XSqlError_create(...) XSqlError_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLERROR_H */

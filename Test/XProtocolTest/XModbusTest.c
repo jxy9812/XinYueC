@@ -39,7 +39,7 @@ static void rtuFinished(XObject* sender, XVarList* args)
 {
     //XPrintf("结束了\n");
     XModbusClient* client = XObject_parent(sender);
-    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
     XObject_setParent(reply, client);
@@ -62,7 +62,7 @@ void XModbusRtuSerialClientTest()
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         return;
     }
-    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
 
     XModbusReply* reply= XModbusClient_sendWriteRequest(client, read,1);
@@ -79,7 +79,7 @@ static void tcpFinished(XObject* receiver, XVarList* args)
     (void)args;
     XObject* sender = receiver;
     XModbusTcpClient* client = XObject_parent(sender);
-    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     if (!read) {
         XObject_deleteLater(sender);
         return;
@@ -106,7 +106,7 @@ static void tcpStart(XObject* sender, XVarList* args)
     (void)args;
     //XPrintf("结束了\n");
     XModbusTcpClient* client = XObject_parent(sender);
-    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     if (!read) return;
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
@@ -140,7 +140,7 @@ void XModbusTcpClientTest()
     XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpStart);
 
     //{
-    //    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    //    XModbusDataUnit* read = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XModbusCoils, 0, 1);
     //    XModbusDataUnit_setValue(read, 0, true);
     //    XModbusClient_pollWriteRequest(client, read, 1, 2);
     //}

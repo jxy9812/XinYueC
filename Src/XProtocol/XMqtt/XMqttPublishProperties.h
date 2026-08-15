@@ -63,7 +63,7 @@ XVtable* XMqttPublishProperties_class_init(void);
 /**
  * @brief 创建实例
  */
-XMqttPublishProperties* XMqttPublishProperties_create(void);
+XMqttPublishProperties* XMqttPublishProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建深拷贝
@@ -162,7 +162,7 @@ XVtable* XMqttMessageStatusProperties_class_init(void);
 /**
  * @brief 创建实例
  */
-XMqttMessageStatusProperties* XMqttMessageStatusProperties_create(void);
+XMqttMessageStatusProperties* XMqttMessageStatusProperties_create_ex(XMemoryType memory);
 
 /**
  * @brief 创建深拷贝
@@ -199,5 +199,12 @@ XMqttUserProperties* XMqttMessageStatusProperties_userProperties(const XMqttMess
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XMqttMessageStatusProperties_create
+#define XMqttMessageStatusProperties_create(...) XMqttMessageStatusProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#undef XMqttPublishProperties_create
+#define XMqttPublishProperties_create(...) XMqttPublishProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMQTTPUBLISHPROPERTIES_H

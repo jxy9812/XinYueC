@@ -126,11 +126,11 @@ static void VXESP8266_deinit(XESP8266Wifi* device)
 /**
  * @brief 创建ESP8266设备实例
  */
-XESP8266Wifi* XESP8266Wifi_create(XIODevice* io) {
-    XESP8266Wifi* device = XMalloc_System(sizeof(XESP8266Wifi));
+XESP8266Wifi* XESP8266Wifi_create_ex(XMemoryType memory, XIODevice* io) {
+    XESP8266Wifi* device = XMemory_malloc(sizeof(XESP8266Wifi), memory);
     if (ISNULL(device, "malloc failed")) return NULL;
     XESP8266Wifi_init(device, io);
-    Set_Class_MemoryFree(device, XFree_System);
+    Set_Class_Memory(device, memory); Set_Class_IsHeap(device, true);
     return device;
 }
 

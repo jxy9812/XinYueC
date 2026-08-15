@@ -79,7 +79,7 @@ XVtable* XModbusRtuSerialServer_class_init(void);
  * - 创建时会自动创建关联的XSerialPort对象
  * - 删除时会自动释放关联的XSerialPort对象
  */
-XModbusRtuSerialServer* XModbusRtuSerialServer_create(void);
+XModbusRtuSerialServer* XModbusRtuSerialServer_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化一个已分配的XModbusRtuSerialServer实例
@@ -197,6 +197,11 @@ void XModbusRtuSerialServer_setInterFrameDelay(XModbusRtuSerialServer* server, i
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusRtuSerialServer_create
+#define XModbusRtuSerialServer_create(...) XModbusRtuSerialServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSRTUSERIALSERVER_H
 

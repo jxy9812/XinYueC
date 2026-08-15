@@ -107,7 +107,8 @@ bool XMenu_removeMenu(XMenu* menu)
 		XMenu_delete(menu);
 		return true;
 	}
-	return XHTreeNode_removeNode(menu, DataDeleteMethod, NULL);
+	return XHTreeNode_removeNode(menu, DataDeleteMethod, NULL,
+		XMemory_method(XMEMORY_TYPE_SYSTEM));
 }
 
 XVector* XMenu_getMenus(XMenu* menu)
@@ -131,7 +132,8 @@ void XMenu_delete(XMenu* menu)
 {
 	if (menu==NULL)
 		return;
-	XHTree_delete(menu, DataDeleteMethod,NULL);
+	XHTree_delete(menu, DataDeleteMethod,NULL,
+		XMemory_method(XMEMORY_TYPE_SYSTEM));
 }
 
 void XMenuData_init(XMenuData* data, const char* title)

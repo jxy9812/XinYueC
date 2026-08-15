@@ -231,10 +231,10 @@ XVtable* XSaveFile_class_init(void)
 
 XSaveFile* XSaveFile_create_1(void)
 {
-    XSaveFile* file = (XSaveFile*)XMalloc_System(sizeof(XSaveFile));
+    XSaveFile* file = (XSaveFile*)XClass_Malloc(XSaveFile);
     if (!file) return NULL;
     XSaveFile_init_1(file);
-    Set_Class_MemoryFree(file, XFree_System);
+    Set_Class_IsHeap(file, true);
     return file;
 }
 

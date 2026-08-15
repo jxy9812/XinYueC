@@ -65,7 +65,7 @@ void XSqlTableModel_init(XSqlTableModel* model, const XSqlDatabase* database);
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
  * @return 新模型，调用者必须使用 XSqlTableModel_delete_base 释放；失败返回 NULL。
  */
-XSqlTableModel* XSqlTableModel_create(const XSqlDatabase* database);
+XSqlTableModel* XSqlTableModel_create_ex(XMemoryType memory,  const XSqlDatabase* database);
 
 /** @brief 调用 XClass 析构入口释放表模型的行缓存和连接句柄。 */
 #define XSqlTableModel_deinit_base XClass_deinit_base
@@ -416,5 +416,10 @@ void* XSqlTableModel_beforeDelete_signal(XSqlTableModel* model, int row);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSqlTableModel_create
+#define XSqlTableModel_create(...) XSqlTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSQLTABLEMODEL_H */

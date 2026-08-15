@@ -43,7 +43,7 @@ typedef struct XSshClient {
 
 XVtable* XSshClient_class_init(void);
 void XSshClient_init(XSshClient* self);
-XSshClient* XSshClient_create(void);
+XSshClient* XSshClient_create_ex(XMemoryType memory);
 #define XSshClient_deinit_base XClass_deinit_base
 #define XSshClient_delete_base XClass_delete_base
 #define XSshClient_deleteLater XObject_deleteLater
@@ -97,5 +97,10 @@ void XSshClient_setHostKeyAccepted(XSshClient* self, bool accepted);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XSshClient_create
+#define XSshClient_create(...) XSshClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif /* XSSHCLIENT_H */

@@ -949,7 +949,7 @@ static bool test_support_modules(void)
     CHECK(!XFormat_isDateTimeFormat(dateFormat), "XFormat 复用数字格式解析器避免文字 m 误判");
     XFormat_delete(dateFormat);
 
-    XFont* sourceFont = XFont_create_ex("Noto Sans CJK SC", 13, XFont_Bold, true);
+    XFont* sourceFont = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "Noto Sans CJK SC", 13, XFont_Bold, true);
     XFont_setUnderline(sourceFont, true);
     XFont_setStrikeOut(sourceFont, true);
     XFormat* fontFormat = XFormat_create();

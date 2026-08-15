@@ -84,21 +84,15 @@ XVtable* XMouseEventTransition_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMouseEventTransition* XMouseEventTransition_create(void)
-{
-    return XMouseEventTransition_create_ex(
-        NULL, XEVENT_TYPE_NONE, XMouseButton_NoButton, NULL);
-}
-
-XMouseEventTransition* XMouseEventTransition_create_ex(XObject* object, XEventType type,
+XMouseEventTransition* XMouseEventTransition_create_ex(XMemoryType memory, XObject* object, XEventType type,
                                                        XMouseButton button,
                                                        XState* sourceState)
 {
-    XMouseEventTransition* transition = XNew(XMouseEventTransition);
+    XMouseEventTransition* transition = XMemory_malloc(sizeof(XMouseEventTransition), memory);
     if (!transition)
         return NULL;
     XMouseEventTransition_init_ex(transition, object, type, button, sourceState);
-    Set_Class_MemoryFree(transition, XFree_System);
+    Set_Class_Memory(transition, memory); Set_Class_IsHeap(transition, true);
     return transition;
 }
 

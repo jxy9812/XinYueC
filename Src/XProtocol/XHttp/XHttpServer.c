@@ -500,7 +500,7 @@ static bool xhttp_server_parse_request(XHttpServerConnection* connection)
     if (!urlString) {
         goto bad_request;
     }
-    request->m_url = XUrl_create_ex(urlString, XUrl_TolerantMode);
+    request->m_url = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlString, XUrl_TolerantMode);
     request->m_remotePort = XAbstractSocket_peerPort((XAbstractSocket*)connection->m_socket);
     request->m_localPort = XAbstractSocket_localPort((XAbstractSocket*)connection->m_socket);
     if (!request->m_url)
@@ -717,21 +717,21 @@ XVtable* XHttpServer_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XHttpServerRequest* XHttpServerRequest_create(void)
+XHttpServerRequest* XHttpServerRequest_create_ex(XMemoryType memory)
 {
-    XHttpServerRequest* self = (XHttpServerRequest*)XMalloc_System(sizeof(*self));
+    XHttpServerRequest* self = (XHttpServerRequest*)XMemory_malloc(sizeof(XHttpServerRequest), memory);
     if (!self) return NULL;
     memset(self, 0, sizeof(*self));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XHttpServerRequest);
     self->m_method = XHttpServerRequest_Unknown;
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 
 XHttpServerResponse* XHttpServerResponse_create_status(XHttpServerResponse_StatusCode status)
 {
-    XHttpServerResponse* self = (XHttpServerResponse*)XMalloc_System(sizeof(*self));
+    XHttpServerResponse* self = (XHttpServerResponse*)XClass_Malloc(XHttpServerResponse);
     if (!self) return NULL;
     memset(self, 0, sizeof(*self));
     XClass_init((XClass*)self);
@@ -739,7 +739,7 @@ XHttpServerResponse* XHttpServerResponse_create_status(XHttpServerResponse_Statu
     self->m_headers = XHttpHeaders_create();
     self->m_body = XByteArray_create();
     self->m_statusCode = status;
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_IsHeap(self, true);
     if (!self->m_headers || !self->m_body) {
         XClass_delete_base((XClass*)self);
         return NULL;
@@ -852,12 +852,12 @@ void XHttpServer_init(XHttpServer* self)
             xhttp_server_new_connection, XConnectionType_Direct);
 }
 
-XHttpServer* XHttpServer_create(void)
+XHttpServer* XHttpServer_create_ex(XMemoryType memory)
 {
-    XHttpServer* self = (XHttpServer*)XMalloc_System(sizeof(*self));
+    XHttpServer* self = (XHttpServer*)XMemory_malloc(sizeof(XHttpServer), memory);
     if (!self) return NULL;
     XHttpServer_init(self);
-    Set_Class_MemoryFree(self, XFree_System);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_tcpServer || !self->m_connections || !self->m_router) {
         XClass_delete_base((XClass*)self);
         return NULL;

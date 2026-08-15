@@ -83,7 +83,7 @@ XVtable* XModbusReply_class_init(void);
 * @param serverAddress 从站地址
 * @return 新创建的XModbusReply实例指针，失败返回NULL
 */
-XModbusReply* XModbusReply_create(XModbusReply_ReplyType type, int serverAddress);
+XModbusReply* XModbusReply_create_ex(XMemoryType memory,  XModbusReply_ReplyType type, int serverAddress);
 
 /**
 * @brief 初始化XModbusReply实例
@@ -268,5 +268,10 @@ void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbus
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XModbusReply_create
+#define XModbusReply_create(...) XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
 
 #endif // XMODBUSREPLY_H

@@ -22,10 +22,10 @@ XVtable* XMqttLastWillProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttLastWillProperties* XMqttLastWillProperties_create(void)
+XMqttLastWillProperties* XMqttLastWillProperties_create_ex(XMemoryType memory)
 {
-    XMqttLastWillProperties* p = (XMqttLastWillProperties*)XMalloc_System(sizeof(XMqttLastWillProperties));
-    if (p) { XMqttLastWillProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttLastWillProperties* p = (XMqttLastWillProperties*)XMemory_malloc(sizeof(XMqttLastWillProperties), memory);
+    if (p) { XMqttLastWillProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 
@@ -132,10 +132,10 @@ XVtable* XMqttConnectionProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttConnectionProperties* XMqttConnectionProperties_create(void)
+XMqttConnectionProperties* XMqttConnectionProperties_create_ex(XMemoryType memory)
 {
-    XMqttConnectionProperties* p = (XMqttConnectionProperties*)XMalloc_System(sizeof(XMqttConnectionProperties));
-    if (p) { XMqttConnectionProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttConnectionProperties* p = (XMqttConnectionProperties*)XMemory_malloc(sizeof(XMqttConnectionProperties), memory);
+    if (p) { XMqttConnectionProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 
@@ -251,10 +251,10 @@ XVtable* XMqttServerConnectionProperties_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XMqttServerConnectionProperties* XMqttServerConnectionProperties_create(void)
+XMqttServerConnectionProperties* XMqttServerConnectionProperties_create_ex(XMemoryType memory)
 {
-    XMqttServerConnectionProperties* p = (XMqttServerConnectionProperties*)XMalloc_System(sizeof(XMqttServerConnectionProperties));
-    if (p) { XMqttServerConnectionProperties_init(p); Set_Class_MemoryFree(p, XFree_System); }
+    XMqttServerConnectionProperties* p = (XMqttServerConnectionProperties*)XMemory_malloc(sizeof(XMqttServerConnectionProperties), memory);
+    if (p) { XMqttServerConnectionProperties_init(p); Set_Class_Memory(p, memory); Set_Class_IsHeap(p, true); }
     return p;
 }
 

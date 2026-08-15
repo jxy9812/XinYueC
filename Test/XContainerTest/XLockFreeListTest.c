@@ -576,8 +576,10 @@ typedef struct XLFLThreadCtx {
 	XAtomic_size_t*  produced;   /* 已生产总数 */
 	XAtomic_size_t*  consumed;   /* 已消费总数 */
 	XAtomic_size_t*  finished;   /* 生产者结束计数 */
+	XAtomic_size_t*  threads_finished; /* 所有工作线程结束计数 */
 	int              per_thread; /* 每个生产者的元素数 */
 	int              is_producer;
+	size_t           threads_total;
 } XLFLThreadCtx;
 
 #if XTHREAD_ON
@@ -593,7 +595,11 @@ static void XLFLProducer(XThread* thread, XVarList* varlist)
 		XAtomic_MemoryOrder_Relaxed) + 1;
 	XPrintf("[P] tid=%p 完成生产 %d 项 (完成生产者=%zu/%d)\n",
 		XThread_currentThreadId(), ctx->per_thread, done, XLFL_PRODUCERS);
+	size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
+		XAtomic_MemoryOrder_AcqRel) + 1;
 	XThread_deleteLater(thread);
+	if (fin == ctx->threads_total)
+		XCoreApplication_quit();
 }
 
 static void XLFLConsumer(XThread* thread, XVarList* varlist)
@@ -637,8 +643,11 @@ static void XLFLConsumer(XThread* thread, XVarList* varlist)
 		XThread_currentThreadId(), local,
 		XAtomic_load_size_t(ctx->consumed, XAtomic_MemoryOrder_Relaxed),
 		XLockFreeList_size_base(ctx->list));
+	size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
+		XAtomic_MemoryOrder_AcqRel) + 1;
 	XThread_deleteLater(thread);
-	XCoreApplication_quit();
+	if (fin == ctx->threads_total)
+		XCoreApplication_quit();
 }
 
 static void XLockFreeListConcurrentTest(void)
@@ -651,9 +660,14 @@ static void XLockFreeListConcurrentTest(void)
 	XAtomic_size_t produced = { 0 };
 	XAtomic_size_t consumed = { 0 };
 	XAtomic_size_t finished = { 0 };
+	XAtomic_size_t threads_finished = { 0 };
 
-	XLFLThreadCtx pctx = { list, &produced, &consumed, &finished, per, 1 };
-	XLFLThreadCtx cctx = { list, &produced, &consumed, &finished, per, 0 };
+	XLFLThreadCtx pctx = { list, &produced, &consumed, &finished,
+		&threads_finished, per, 1,
+		(size_t)(XLFL_PRODUCERS + XLFL_CONSUMERS) };
+	XLFLThreadCtx cctx = { list, &produced, &consumed, &finished,
+		&threads_finished, per, 0,
+		(size_t)(XLFL_PRODUCERS + XLFL_CONSUMERS) };
 	XLFLThreadCtx* pctxPtr = &pctx;
 	XLFLThreadCtx* cctxPtr = &cctx;
 

@@ -158,10 +158,11 @@ void XHostInfo_init(XHostInfo* info) {
     info->lookupId = -1;
 }
 
-XHostInfo* XHostInfo_create(void) {
-    XHostInfo* info = XMalloc_System(sizeof(XHostInfo));
+XHostInfo* XHostInfo_create_ex(XMemoryType memory) {
+    XHostInfo* info = (XHostInfo*)XMemory_malloc(sizeof(XHostInfo), memory);
     if (!info) return NULL;
     XHostInfo_init(info);
+    Set_Class_Memory(info, memory); Set_Class_IsHeap(info, true);
     return info;
 }
 

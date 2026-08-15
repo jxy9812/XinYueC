@@ -55,8 +55,6 @@ void XHstsPolicy_init(XHstsPolicy* self);
  * - @brief 创建空 HSTS 策略。
  * - @return 新对象；调用者必须使用 XHstsPolicy_delete_base 释放，失败返回 NULL。
  */
-XHstsPolicy* XHstsPolicy_create(void);
-
 /**
  * - @brief 创建 HSTS 策略。
  * - @param host 主机名；借用，创建时深拷贝；NULL 等价于空主机。
@@ -64,7 +62,7 @@ XHstsPolicy* XHstsPolicy_create(void);
  * - @param flags 标志，可使用 XHstsPolicy_IncludeSubDomains。
  * - @return 新对象；调用者必须释放，失败返回 NULL。
  */
-XHstsPolicy* XHstsPolicy_create_ex(const XByteArray* host, int64_t expiryMSecs, uint32_t flags);
+XHstsPolicy* XHstsPolicy_create_ex(XMemoryType memory, const XByteArray* host, int64_t expiryMSecs, uint32_t flags);
 
 /**
  * - @brief 深拷贝创建 HSTS 策略。
@@ -166,5 +164,11 @@ void XHstsPolicy_list_free(XVector* policies);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* XClass create API default-memory wrappers. */
+#undef XHstsPolicy_create
+#define XHstsPolicy_create() \
+	XHstsPolicy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, 0)
 
 #endif /* XHSTSPOLICY_H */

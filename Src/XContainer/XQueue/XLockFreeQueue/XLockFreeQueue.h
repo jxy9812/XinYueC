@@ -50,7 +50,7 @@ void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t cou
 * @return 创建成功的实例指针，失败返回NULL
 * @note 动态分配内存并调用XLockFreeQueue_init完成初始化
 */
-XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count);
+XLockFreeQueue* XLockFreeQueue_create_ex(XMemoryType memory,  size_t typeSize, size_t count);
 /**
 * @brief 类型安全的原子环形队列创建宏
 * @param Type 元素数据类型（如int、float）
@@ -148,7 +148,7 @@ XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count);
 * @brief 删除容器实例
 * @note 复用XQueueBase的接口，释放队列资源并销毁实例
 */
-#define XLockFreeQueue_delete_base		XQueueBase_delete_base
+void XLockFreeQueue_delete_base(XLockFreeQueue* this_queue);
 /**
 * @brief 清空容器元素
 * @note 复用XQueueBase的接口，删除所有元素但保留队列结构，线程安全
@@ -255,4 +255,9 @@ XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count);
 #ifdef __cplusplus
 }
 #endif
+
+/* XClass create API default-memory wrappers. */
+#undef XLockFreeQueue_create
+#define XLockFreeQueue_create(...) XLockFreeQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+
 #endif

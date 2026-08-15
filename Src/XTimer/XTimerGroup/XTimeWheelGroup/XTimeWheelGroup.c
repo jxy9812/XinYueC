@@ -559,15 +559,15 @@ void VXTimerGroupBase_handler(XTimerGroupBase* group)
         XTimerGroupBase_tick_base(group);
     }
 }
-XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision)
+XTimeWheelGroup* XTimeWheelGroup_create_ex(XMemoryType memory, uint16_t precision)
 {
     if (precision == 0)
         return NULL;
-    XTimeWheelGroup* group = XMalloc_System(sizeof(XTimeWheelGroup));
+    XTimeWheelGroup* group = XMemory_malloc(sizeof(XTimeWheelGroup), memory);
     if (group == NULL)
         return group;
     XTimeWheelGroup_init(group, precision);
-    Set_Class_MemoryFree(group, XFree_System);
+    Set_Class_Memory(group, memory); Set_Class_IsHeap(group, true);
     return group;
 }
 

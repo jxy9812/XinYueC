@@ -271,7 +271,7 @@ static bool xsqlite_build_record(XSqliteResult* result)
         const char* table = sqlite3_column_table_name(result->m_statement, column);
         XString* fieldName = XString_create_utf8(name ? name : "");
         XString* tableName = table ? XString_create_utf8(table) : NULL;
-        XSqlField* field = XSqlField_create_ex(fieldName, xsqlite_type_from_column(result->m_statement, column), tableName);
+        XSqlField* field = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, fieldName, xsqlite_type_from_column(result->m_statement, column), tableName);
         bool appended = field && XSqlRecord_append(&result->m_parent.m_record, field);
         if (fieldName) XString_delete_base(fieldName);
         if (tableName) XString_delete_base(tableName);
@@ -472,15 +472,20 @@ XVtable* XSqliteResult_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static XSqliteResult* XSqliteResult_create(const XSqlDriver* driver)
+static XSqliteResult* XSqliteResult_create_ex(XMemoryType memory, const XSqlDriver* driver)
 {
-    XSqliteResult* result = (XSqliteResult*)XMalloc_System(sizeof(*result));
+    XSqliteResult* result = (XSqliteResult*)XMemory_malloc(sizeof(XSqliteResult), memory);
     if (!result) return NULL;
     memset(result, 0, sizeof(*result));
     XSqlResult_init(&result->m_parent, driver);
     XClassSetVtable(result, XSqliteResult);
-    Set_Class_MemoryFree(result, XFree_System);
+    Set_Class_Memory(result, memory); Set_Class_IsHeap(result, true);
     return result;
+}
+
+static XSqliteResult* XSqliteResult_create(const XSqlDriver* driver)
+{
+    return XSqliteResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, driver);
 }
 
 static void VXSqliteResult_deinit(XSqliteResult* result)
@@ -870,7 +875,7 @@ static XSqlField* xsqlite_field_from_info(XSqlResult* result, const XString* tab
     type = typeValue ? XVariant_toString(typeValue) : NULL;
     isPrimary = primaryValue ? XVariant_toInt(primaryValue) : 0;
     if (primary) *primary = isPrimary != 0;
-    field = XSqlField_create_ex(name, xsqlite_type_from_name(type ? XString_toUtf8(type) : NULL), tableName);
+    field = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, name, xsqlite_type_from_name(type ? XString_toUtf8(type) : NULL), tableName);
     if (field) {
         XSqlField_setRequired(field, notNullValue && XVariant_toInt(notNullValue) != 0);
         if (defaultValue && XVariant_isValid(defaultValue)) XSqlField_setDefaultValue(field, defaultValue);
@@ -955,14 +960,14 @@ XVtable* XSqliteDriver_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-XSqlDriver* XSqliteDriver_create(void)
+XSqlDriver* XSqliteDriver_create_ex(XMemoryType memory)
 {
-    XSqliteDriver* driver = (XSqliteDriver*)XMalloc_System(sizeof(*driver));
+    XSqliteDriver* driver = (XSqliteDriver*)XMemory_malloc(sizeof(XSqliteDriver), memory);
     if (!driver) return NULL;
     memset(driver, 0, sizeof(*driver));
     XSqlDriver_init(&driver->m_parent, XSqlDriverType_Sqlite, XSqlDbmsType_Sqlite);
     XClassSetVtable(driver, XSqliteDriver);
-    Set_Class_MemoryFree(driver, XFree_System);
+    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
     driver->m_notifications = XStringList_create();
     if (!driver->m_notifications) {
         XClass_delete_base((XClass*)driver);
@@ -1262,11 +1267,16 @@ static bool VXSqliteDriver_cancelQuery(XSqlDriver* base)
     return false;
 }
 
+static XSqlDriver* XSqliteDriver_create_default(void)
+{
+    return XSqliteDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+}
+
 bool XSqliteDriver_register(void)
 {
     static XSqlDriverCreator* creator;
     if (creator) return true;
-    creator = XSqlDriverCreator_create(XSqliteDriver_create);
+    creator = XSqlDriverCreator_create(XSqliteDriver_create_default);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Sqlite, &creator->m_parent)) {
         if (creator) XSqlDriverCreator_delete_base(creator);
         creator = NULL;

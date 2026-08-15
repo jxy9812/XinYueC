@@ -45,14 +45,14 @@ static XContainer* XModbusDataUnit_copyContainer(XModbusRegisterType type, const
 	if (!container) return NULL;
 	if (XModbusDataUnit_isBitType(type)) {
 		size_t count = XBitArray_size_base((const XBitArray*)container);
-		XBitArray* copy = XBitArray_create_ex(count, false);
+		XBitArray* copy = XBitArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, count, false);
 		if (!copy) return NULL;
 		for (size_t i = 0; i < count; ++i)
 			XBitArray_setBit(copy, i, XBitArray_getBit((const XBitArray*)container, i));
 		return (XContainer*)copy;
 	} else {
 		size_t count = XVector_size_base((const XVector*)container);
-		XVector* copy = XVector_create_ex(XContainerTypeSize(container), false);
+		XVector* copy = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XContainerTypeSize(container), false);
 		if (!copy) return NULL;
 		if (!XVector_resize_base(copy, count)) {
 			XVector_delete_base(copy);
@@ -80,15 +80,6 @@ XVtable* XModbusDataUnit_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-XModbusDataUnit* XModbusDataUnit_create()
-{
-	XModbusDataUnit* unit = XMalloc_System(sizeof(XModbusDataUnit));
-	if (!unit) return NULL;
-	XModbusDataUnit_init(unit);
-	Set_Class_MemoryFree(unit, XFree_System);
-	return unit;
-}
-
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 {
 	if (!unit) return NULL;
@@ -107,12 +98,15 @@ XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit)
 	return newUnit;
 }
 
-XModbusDataUnit* XModbusDataUnit_create_ex(XModbusRegisterType type, uint16_t startAddress, size_t valueCount)
+XModbusDataUnit* XModbusDataUnit_create_ex(XMemoryType memory, XModbusRegisterType type, uint16_t startAddress, size_t valueCount)
 {
-	XModbusDataUnit* unit = (XModbusDataUnit*)XMalloc_System(sizeof(XModbusDataUnit));
+	XModbusDataUnit* unit = (XModbusDataUnit*)XMemory_malloc(sizeof(XModbusDataUnit), memory);
 	if (!unit) return NULL;
-	XModbusDataUnit_init_ex(unit, type, startAddress, valueCount);
-	Set_Class_MemoryFree(unit, XFree_System);
+	if (type == XModbusInvalid)
+		XModbusDataUnit_init(unit);
+	else
+		XModbusDataUnit_init_ex(unit, type, startAddress, valueCount);
+	Set_Class_Memory(unit, memory); Set_Class_IsHeap(unit, true);
 	return unit;
 }
 
