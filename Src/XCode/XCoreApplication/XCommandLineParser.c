@@ -571,8 +571,8 @@ void XCommandLineParser_process(XCommandLineParser* parser, const XStringList* a
     if (!XCommandLineParser_parse(parser, args)) {
         // 解析失败，显示错误并退出
         const char* err = XCommandLineParser_errorText(parser);
-        fprintf(stderr, "%s\n", err);
-        fprintf(stderr, "使用 --help 查看帮助信息。\n");
+        XERROR_PRINTF( "%s\n", err);
+        XERROR_PRINTF( "使用 --help 查看帮助信息。\n");
         exit(1);
     }
 
@@ -582,7 +582,7 @@ void XCommandLineParser_process(XCommandLineParser* parser, const XStringList* a
             || XCommandLineParser_isSet(parser, "help-all")) {
             XString* help = XCommandLineParser_helpText(parser);
             if (help) {
-                printf("%s\n", XString_toUtf8(help));
+                XPrintf("%s\n", XString_toUtf8(help));
                 XString_delete_base(help);
             }
             exit(0);
@@ -738,7 +738,7 @@ void XCommandLineParser_showVersion(XCommandLineParser* parser)
     if (app && app->m_version) {
         version = XString_toUtf8(app->m_version);
     }
-    printf("%s %s\n", parser->m_description ? XString_toUtf8(parser->m_description) : "应用程序", version);
+    XPrintf("%s %s\n", parser->m_description ? XString_toUtf8(parser->m_description) : "应用程序", version);
     fflush(stdout);
     exit(0);
 }
@@ -748,7 +748,7 @@ void XCommandLineParser_showHelp(XCommandLineParser* parser, int exitCode)
     if (!parser) return;
     XString* help = XCommandLineParser_helpText(parser);
     if (help) {
-        printf("%s\n", XString_toUtf8(help));
+        XPrintf("%s\n", XString_toUtf8(help));
         XString_delete_base(help);
     }
     fflush(stdout);

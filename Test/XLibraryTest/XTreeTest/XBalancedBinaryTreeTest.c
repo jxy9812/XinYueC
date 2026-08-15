@@ -86,7 +86,7 @@ void XBalancedBinaryTreeTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 void XMenu_XBalancedBinaryTreeTest(XMenu* root)
 {

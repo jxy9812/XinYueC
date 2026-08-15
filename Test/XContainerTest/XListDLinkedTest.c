@@ -643,7 +643,7 @@ static void XListDLinkedAllTest(void)
 	XListDLinkedIteratorTest();
 	XListDLinkedSafetyTest();
 	XPrintf("\n========== XListDLinked 全部测试结束 ==========\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XListDLinkedTest(XMenu* root)

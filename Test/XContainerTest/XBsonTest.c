@@ -1,4 +1,5 @@
-﻿#include "XDataStructTest.h"
+﻿#include "XPrintf.h"
+#include "XDataStructTest.h"
 #if DEMOTEST
 
 #include "XAction.h"
@@ -32,23 +33,23 @@ static bool XBsonTest_check(bool condition, const char* description)
 {
 	if (condition) {
 		++g_bsonTestState.passed;
-		printf("【通过】%s\n", description);
+		XPrintf("【通过】%s\n", description);
 	} else {
 		++g_bsonTestState.failed;
-		printf("【失败】%s\n", description);
+		XPrintf("【失败】%s\n", description);
 	}
 	return condition;
 }
 
 static void XBsonTest_begin(const char* group)
 {
-	printf("\n========== %s ==========\n", group);
+	XPrintf("\n========== %s ==========\n", group);
 }
 
 static void XBsonTest_summary(void)
 {
-	printf("\n========== XBson 测试汇总 ==========\n");
-	printf("通过：%d 项，失败：%d 项\n",
+	XPrintf("\n========== XBson 测试汇总 ==========\n");
+	XPrintf("通过：%d 项，失败：%d 项\n",
 		g_bsonTestState.passed, g_bsonTestState.failed);
 }
 
@@ -77,7 +78,7 @@ static void XBsonTest_printJsonObject(const char* title,
 		                                  const XJsonObject* object)
 {
 	XString* text = object ? XJsonObject_toString(object, XJsonDocument_Indented) : NULL;
-	printf("【调试】%s：%s\n", title, text ? XString_toUtf8(text) : "<空>");
+	XPrintf("【调试】%s：%s\n", title, text ? XString_toUtf8(text) : "<空>");
 	XString_delete_base(text);
 }
 
@@ -706,7 +707,7 @@ static void XBsonTest_runSelected(bool standard, bool document,
 	if (json) XBsonTest_jsonConversions();
 	if (invalid) XBsonTest_invalidInputs();
 	XBsonTest_summary();
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 static void XBsonTest_runAll(void)

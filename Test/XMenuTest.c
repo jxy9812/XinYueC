@@ -4,6 +4,9 @@
 #include "XCoreApplication.h"
 #include "XString.h"
 #include "XPrintf.h"
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+#include "XMemory.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +42,15 @@ typedef struct MenuData
 	void* data;
 	XMenu** menu;
 }MenuData;
+
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+struct XMenuTestRemoteSession
+{
+	XMenu* menu;
+	int column;
+	XVector* choices;
+};
+#endif
 
 /*
  * @brief 按行读取菜单命令，避免 scanf 保留换行符导致下一层菜单误读输入。
@@ -88,51 +100,77 @@ static void trigger(MenuData* data)
 		XPrintf("\n结束---------------%s---------------\n", XAction_getText(data->data));
 	}
 }
+
+/* 构建并显示一页菜单；menuRef 必须指向调用方长期有效的当前菜单指针。 */
+static bool XMenuTest_renderPage(XMenu** menuRef, int column, XVector* choices)
+{
+	XMenu* menu;
+	const XVector* actions;
+	XVector* menus;
+	MenuData data = { 0 };
+	size_t menuSize;
+	int i;
+	if (!menuRef || !(menu = *menuRef) || !choices || column <= 0)
+		return false;
+	XVector_clear_base(choices);
+	data.menu = menuRef;
+	actions = XMenu_getActions(menu);
+	menus = XMenu_getMenus(menu);
+	if (!actions || !menus)
+	{
+		if (menus) XVector_delete_base(menus);
+		return false;
+	}
+	XPrintf("\n---------------%s---------------\n", XMenu_getTitle(menu));
+	if (XTreeNode_GetParent(menu))
+	{
+		XPrintf("%d 返回上级目录 -----返回\n", XContainerSize(choices));
+		data.action = gotoParent;
+		data.data = menu;
+		XVector_push_back_1_base(choices, &data);
+	}
+	menuSize = XVector_size_base(menus);
+	for (i = 0; i < (int)menuSize; ++i)
+	{
+		XMenu* child = XVector_At_Base(menus, i, XMenu*);
+		XPrintf("%02d--菜单 %-30s\t", XContainerSize(choices),
+				XMenu_getTitle(child));
+		if ((i + 1) % column == 0 || (size_t)(i + 1) == menuSize)
+			XPrintf("\n");
+		data.action = gotoChild;
+		data.data = child;
+		XVector_push_back_1_base(choices, &data);
+	}
+	for (i = 0; i < (int)XVector_size_base(actions); ++i)
+	{
+		XAction* child = XVector_At_Base(actions, i, XAction*);
+		XPrintf("%02d--项目 %-30s\t", XContainerSize(choices),
+				XAction_getText(child));
+		if (((size_t)i + 1u + menuSize) % (size_t)column == 0 ||
+			((size_t)i + 1u + menuSize) == XVector_size_base(actions))
+			XPrintf("\n");
+		data.action = trigger;
+		data.data = child;
+		XVector_push_back_1_base(choices, &data);
+	}
+	XVector_delete_base(menus);
+	XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
+	XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(choices) - 1);
+	return true;
+}
+
 int XMenuTest_show(XMenu* menu, int column)
 {
-	XMenu* parent =NULL;
-	XVector* v=XVector_Create(MenuData);
-	MenuData data = { 0 };
-	data.menu = &menu;
+	XVector* v = XVector_Create(MenuData);
 	char command[32] = {0};
+	if (!v) return -1;
 	while (true)
 	{
-		//int index = 0;
-		XVector_clear_base(v);
-		XVector* actions = XMenu_getActions(menu);
-		XVector* menus = XMenu_getMenus(menu);
-		XPrintf("\n---------------%s---------------\n", XMenu_getTitle(menu));
-		//判断是否右父菜单
-		parent = XTreeNode_GetParent(menu);
-		if (parent)
+		if (!XMenuTest_renderPage(&menu, column, v))
 		{
-			XPrintf("%d 返回上级目录 -----返回\n",XContainerSize(v));
-			data.action = gotoParent;
-			data.data = menu;
-			XVector_push_back_1_base(v,&data);
+			XVector_delete_base(v);
+			return -1;
 		}
-		size_t menuSize = XVector_size_base(menus);
-		for (int i = 0; i < menuSize; i++)
-		{
-			XMenu* child = XVector_At_Base(menus,i, XMenu*);
-			XPrintf("%02d--菜单 %-30s\t", XContainerSize(v), XMenu_getTitle(child));
-			if ((i + 1) % column == 0 || (i + 1) == menuSize)printf("\n");//换行
-			data.action = gotoChild;
-			data.data = child;
-			XVector_push_back_1_base(v, &data);
-		}
-		for (int i = 0; i < XVector_size_base(actions); i++)
-		{
-			XAction* child = XVector_At_Base(actions, i, XAction*);
-			XPrintf("%02d--项目 %-30s\t", XContainerSize(v), XAction_getText(child));
-			if ((i + 1+ menuSize) % column == 0 || (i + 1+ menuSize) == XVector_size_base(actions))printf("\n");//换行
-			data.action = trigger;
-			data.data = child;
-			XVector_push_back_1_base(v, &data);
-		}
-		XVector_delete_base(menus);
-		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));
-		XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
 		if (!XMenuTest_readCommand(command, sizeof(command)) ||
 			strcmp(command, "q") == 0 || strcmp(command, "Q") == 0) {
 			clearerr(stdin);
@@ -151,6 +189,74 @@ int XMenuTest_show(XMenu* menu, int column)
 		pdata->action(pdata);
 	}
 }
+
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+XMenuTestRemoteSession* XMenuTestRemoteSession_create(void)
+{
+	XMenuTestRemoteSession* session =
+		(XMenuTestRemoteSession*)XCalloc_System(1, sizeof(*session));
+	if (!session) return NULL;
+	session->menu = XMenuTest_create();
+	session->column = 1;
+	session->choices = XVector_Create(MenuData);
+	if (!session->menu || !session->choices)
+	{
+		XMenuTestRemoteSession_destroy(session);
+		return NULL;
+	}
+	return session;
+}
+
+void XMenuTestRemoteSession_show(XMenuTestRemoteSession* session)
+{
+	if (!session) return;
+	(void)XMenuTest_renderPage(&session->menu, session->column,
+						   session->choices);
+}
+
+XMenuTestRemoteResult XMenuTestRemoteSession_processLine(
+	XMenuTestRemoteSession* session, const char* line, size_t length)
+{
+	char command[32];
+	char* end;
+	long index;
+	MenuData* data;
+	if (!session || (!line && length) || length >= sizeof(command))
+		return XMenuTestRemoteResult_Error;
+	memcpy(command, line, length);
+	command[length] = '\0';
+	command[strcspn(command, "\r\n")] = '\0';
+	if (strcmp(command, "q") == 0 || strcmp(command, "Q") == 0)
+		return XMenuTestRemoteResult_Finished;
+	if (command[0] == '\0')
+	{
+		XMenuTestRemoteSession_show(session);
+		return XMenuTestRemoteResult_Active;
+	}
+	end = NULL;
+	index = strtol(command, &end, 10);
+	if (end == command || *end != '\0' || index < 0 ||
+		index >= (long)XContainerSize(session->choices))
+	{
+		XPrintf("序号不合法请重新选择\n");
+		return XMenuTestRemoteResult_Active;
+	}
+	data = XVector_at_base(session->choices, (int)index);
+	if (!data || !data->action)
+		return XMenuTestRemoteResult_Error;
+	data->action(data);
+	XMenuTestRemoteSession_show(session);
+	return XMenuTestRemoteResult_Active;
+}
+
+void XMenuTestRemoteSession_destroy(XMenuTestRemoteSession* session)
+{
+	if (!session) return;
+	if (session->choices) XVector_delete_base(session->choices);
+	if (session->menu) XMenu_delete(session->menu);
+	XFree_System(session);
+}
+#endif
 
 int XMenuTest_run()
 {

@@ -1,4 +1,5 @@
-﻿#include "XRcode.h"
+﻿#include "XPrintf.h"
+#include "XRcode.h"
 #include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
@@ -257,10 +258,10 @@ void XRcode_print_matrix(const XRcode* qr) {
     int sz = qr->size;
     for (int y = 0; y < sz; ++y) {
         for (int x = 0; x < sz; ++x)
-            putchar(matrix_get(qr, x, y) ? '#' : ' ');
-        putchar('\n');
+            XPrintf("%c", matrix_get(qr, x, y) ? '#' : ' ');
+        XPrintf("%c", '\n');
     }
-    putchar('\n');
+    XPrintf("%c", '\n');
 }
 
 /* ---------- 内部 QR 编码函数实现 ---------- */

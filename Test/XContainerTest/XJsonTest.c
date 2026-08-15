@@ -68,7 +68,7 @@ void XJsonObjectTest()
 
 		XString* str = XJsonDocument_toString(doc, XJsonDocument_Indented);
 		XPrintf_2(str);
-		printf("\n");
+		XPrintf("\n");
 		XString_delete_base(str);
 		XJsonDocument_delete(doc);
 
@@ -76,7 +76,7 @@ void XJsonObjectTest()
 		XJsonValue_delete(value);
 		XJsonObject_delete_base(object);
 	}
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 void XJsonArrayTest()
 {
@@ -115,13 +115,13 @@ void XJsonArrayTest()
 
 		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
 		XPrintf_2(str);
-		printf("\n");
+		XPrintf("\n");
 		XString_delete_base(str);
 
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);
 	}
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 void XMenu_XJsonTest(XMenu* root)
 {

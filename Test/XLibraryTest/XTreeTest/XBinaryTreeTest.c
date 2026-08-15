@@ -57,7 +57,7 @@ void XBinaryTreeTest()
 		IS_ON_DEBUG(XVector_ON);
 #endif
 	}
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 void XMenu_XBinaryTreeTest(XMenu* root)
 {

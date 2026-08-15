@@ -1,4 +1,5 @@
-﻿#include"XIOTest.h"
+﻿#include "XPrintf.h"
+#include"XIOTest.h"
 #include"XTcpSocket.h"
 #include"XSslSocket.h"
 #include"XMemory.h"
@@ -16,7 +17,7 @@ static void readData(XObject* sender, XVarList* args)
 	XByteArray* data= XTcpSocket_readAll_2(sender);
 	for_each_iterator(data, XByteArray,it)
 	{
-		putchar(XByteArray_iterator_data(&it));
+		XPrintf("%c", XByteArray_iterator_data(&it));
 	}
 	XByteArray_delete_base(data);
 	//XPrintf_3(XContainerDataAddr(data));
@@ -34,7 +35,7 @@ static void readDataBaidu(XObject* sender, XVarList* args)
 	{
 		/* HTTP 响应可能分多次到达，按实际字节数输出，避免依赖字符串终止符。 */
 		XPrintf("[百度] 收到HTTP响应数据:\n");
-		fwrite(XByteArray_data(data), 1, XByteArray_size_base(data), stdout);
+		XPrintf(XByteArray_data(data), 1, XByteArray_size_base(data), stdout);
 		fflush(stdout);
 	}
 	XByteArray_delete_base(data);
@@ -190,7 +191,7 @@ void XSocketTest_BaiduHttps()
 		int64_t n = XSslSocket_read_1(ssl, buf, (int64_t)sizeof(buf) - 1);
 		if (n <= 0) break;
 		buf[n] = '\0';
-		fwrite(buf, 1, (size_t)n, stdout);
+		XPrintf(buf, 1, (size_t)n, stdout);
 		total += n;
 	}
 	XPrintf("\n[百度HTTPS] HTTPS 响应接收完成，共 %lld 字节\n", (long long)total);

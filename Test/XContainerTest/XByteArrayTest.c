@@ -456,7 +456,7 @@ static void XByteArrayTest_All(void)
     XByteArrayTest_Stress();
     XPrintf("\n[XByteArray] 全部测试完成\n");
 #endif
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XByteArrayTest(void)

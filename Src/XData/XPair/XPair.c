@@ -1,4 +1,5 @@
-﻿#include"XPair.h"
+﻿#include "XPrintf.h"
+#include"XPair.h"
 #include"XContainer.h"
 #include"XVariantTypeOps.h"
 #include"XVariant.h"
@@ -30,7 +31,7 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 {
 	if (firstTypeSize == 0 || secondTypeSize == 0)
 	{
-		printf("有类型设置错误");
+		XPrintf("有类型设置错误");
 		return NULL;
 	}
 	size_t size = XPair_size1(firstTypeSize, secondTypeSize);

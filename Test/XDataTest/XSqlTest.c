@@ -2,6 +2,7 @@
  * @file       XSqlTest.c
  * @brief      SQL 抽象驱动和公共类回归测试。
  */
+#include "XPrintf.h"
 #include "XSqlTest.h"
 #include "XSqlMySqlTest.h"
 #include "XSql.h"
@@ -442,7 +443,7 @@ int XSqlTest_run(void)
     }
     if (!XSqlMySqlTest_run()) return 5;
     if (!XSqlTest_run_sqlite()) return 6;
-    printf("XSqlTest 测试通过\n");
+    XPrintf("XSqlTest 测试通过\n");
     return 0;
 }
 
@@ -484,7 +485,7 @@ static bool XSqlTest_run_sqlite(void)
     XFile_remove_static(shmName);
     if (ok) XSqlDatabase_setDatabaseName(database, databaseName);
     ok = ok && XSqlDatabase_open(database);
-    printf("SQLite 打开数据库：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 打开数据库：%s\n", ok ? "通过" : "失败");
     if (ok) {
         openedDatabase = XSqlDatabase_database("xsql-sqlite", true);
         ok = openedDatabase && XSqlDatabase_isOpen(openedDatabase);
@@ -493,7 +494,7 @@ static bool XSqlTest_run_sqlite(void)
             openedDatabase = NULL;
         }
     }
-    printf("SQLite 已打开连接获取：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 已打开连接获取：%s\n", ok ? "通过" : "失败");
 #if XTHREAD_ON
     if (ok) {
         XAtomic_store_bool(&g_sqlThreadAffinityOk, false, XAtomic_MemoryOrder_Relaxed);
@@ -511,7 +512,7 @@ static bool XSqlTest_run_sqlite(void)
 #else
     ok = false; /* XTHREAD_ON disabled: skip cross-thread affinity check */
 #endif // XTHREAD_ON
-    printf("SQLite 跨线程连接访问拒绝：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 跨线程连接访问拒绝：%s\n", ok ? "通过" : "失败");
     if (ok) {
         sqliteDriver = XSqlDatabase_driver(database);
         notificationName = XString_create_utf8("people");
@@ -526,14 +527,14 @@ static bool XSqlTest_run_sqlite(void)
             && XStringList_contains_utf8(notificationNames, "people", XChar_CaseSensitive)
             && !XSqlDriver_subscribeToNotification_base(sqliteDriver, notificationName);
     }
-    printf("SQLite 事件通知订阅：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 事件通知订阅：%s\n", ok ? "通过" : "失败");
     databaseThread = ok ? XSqlDatabase_thread(database) : NULL;
     ok = ok && databaseThread && XSqlDatabase_moveToThread(database, databaseThread);
-    printf("SQLite 连接线程亲和性：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 连接线程亲和性：%s\n", ok ? "通过" : "失败");
     query = ok ? XSqlDatabase_exec_utf8(database,
         "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, payload BLOB, score REAL)") : NULL;
     ok = ok && query && XSqlQuery_isActive(query);
-    printf("SQLite 创建表：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 创建表：%s\n", ok ? "通过" : "失败");
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
 
     if (ok) {
@@ -549,7 +550,7 @@ static bool XSqlTest_run_sqlite(void)
             repeatOk = XSqlResult_boundValueCount(XSqlQuery_result(repeatQuery)) == 1
                 && boundName && XString_equals_utf8(boundName, ":0", XChar_CaseSensitive);
         }
-        printf("SQLite 位置占位符元数据：%s\n", repeatOk ? "通过" : "失败");
+        XPrintf("SQLite 位置占位符元数据：%s\n", repeatOk ? "通过" : "失败");
         ok = ok && repeatOk;
         if (boundName) { XString_delete_base(boundName); boundName = NULL; }
         if (repeatOk) {
@@ -565,7 +566,7 @@ static bool XSqlTest_run_sqlite(void)
             readValue = repeatOk ? XSqlQuery_value(repeatQuery, 0) : NULL;
             repeatOk = repeatOk && readValue && XVariant_toInt32(readValue) == 22;
         }
-        printf("SQLite addBindValue 重复执行：%s\n", repeatOk ? "通过" : "失败");
+        XPrintf("SQLite addBindValue 重复执行：%s\n", repeatOk ? "通过" : "失败");
         ok = ok && repeatOk;
         if (readValue) XVariant_delete_base(readValue);
         if (firstValue) XVariant_delete_base(firstValue);
@@ -586,7 +587,7 @@ static bool XSqlTest_run_sqlite(void)
     if (ok) XSqlQuery_bindValue(query, 2, value, XSqlParamType_In);
     if (value) { XVariant_delete_base(value); value = NULL; }
     ok = ok && XSqlQuery_exec(query) && XSqlQuery_numRowsAffected(query) == 1;
-    printf("SQLite 位置参数绑定：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 位置参数绑定：%s\n", ok ? "通过" : "失败");
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
 
     query = ok ? XSqlQuery_create_database(database) : NULL;
@@ -597,7 +598,7 @@ static bool XSqlTest_run_sqlite(void)
         bool metadataOk = query
             && XSqlResult_boundValueCount(XSqlQuery_result(query)) == 3
             && boundNames && XStringList_size_base(boundNames) == 3;
-        printf("SQLite 命名占位符元数据：%s\n", metadataOk ? "通过" : "失败");
+        XPrintf("SQLite 命名占位符元数据：%s\n", metadataOk ? "通过" : "失败");
         ok = ok && metadataOk;
         if (boundNames) XStringList_delete_base(boundNames);
     }
@@ -611,7 +612,7 @@ static bool XSqlTest_run_sqlite(void)
     if (ok) XSqlQuery_bindValue_utf8(query, ":score", value, XSqlParamType_In);
     if (value) { XVariant_delete_base(value); value = NULL; }
     ok = ok && XSqlQuery_exec(query) && XSqlQuery_numRowsAffected(query) == 1;
-    printf("SQLite 命名参数绑定：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 命名参数绑定：%s\n", ok ? "通过" : "失败");
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
 
     if (ok) {
@@ -627,7 +628,7 @@ static bool XSqlTest_run_sqlite(void)
             && XSqlQuery_first(duplicateQuery);
         duplicateOutput = duplicateOk ? XSqlQuery_value(duplicateQuery, 0) : NULL;
         duplicateOk = duplicateOk && duplicateOutput && XVariant_toInt32(duplicateOutput) == 10;
-        printf("SQLite 重复命名占位符绑定：%s\n", duplicateOk ? "通过" : "失败");
+        XPrintf("SQLite 重复命名占位符绑定：%s\n", duplicateOk ? "通过" : "失败");
         ok = ok && duplicateOk;
         if (duplicateOutput) XVariant_delete_base(duplicateOutput);
         if (duplicateInput) XVariant_delete_base(duplicateInput);
@@ -660,7 +661,7 @@ static bool XSqlTest_run_sqlite(void)
                 && XTime_isNull(XVariant_toTime_ref(nullTimeValue))
                 && XDateTime_isNull(XVariant_toDateTime_ref(nullDateTimeValue));
         }
-        printf("XVariant NULL 日期时间值：%s\n", nullTemporalOk ? "通过" : "失败");
+        XPrintf("XVariant NULL 日期时间值：%s\n", nullTemporalOk ? "通过" : "失败");
         ok = ok && nullTemporalOk;
         query = XSqlDatabase_exec_utf8(database,
             "CREATE TABLE temporal (date_value DATE, datetime_value DATETIME, time_value TIME)");
@@ -691,7 +692,7 @@ static bool XSqlTest_run_sqlite(void)
                 && XString_equals_utf8(datetimeText, "2024-02-29T23:45:06.123", XChar_CaseSensitive)
                 && XString_equals_utf8(timeText, "23:45:06.123", XChar_CaseSensitive);
         }
-        printf("SQLite 日期时间对象绑定：%s\n", temporalOk ? "通过" : "失败");
+        XPrintf("SQLite 日期时间对象绑定：%s\n", temporalOk ? "通过" : "失败");
         ok = ok && temporalOk;
         if (dateText) XString_delete_base(dateText);
         if (datetimeText) XString_delete_base(datetimeText);
@@ -723,7 +724,7 @@ static bool XSqlTest_run_sqlite(void)
         XString* rowText = rowValue ? XVariant_toString(rowValue) : NULL;
         bool recordValueOk = rowRecord && rowValue && rowText
             && XString_equals_utf8(rowText, "Alice", XChar_CaseSensitive);
-        printf("SQLite 查询记录携带当前行值：%s\n", recordValueOk ? "通过" : "失败");
+        XPrintf("SQLite 查询记录携带当前行值：%s\n", recordValueOk ? "通过" : "失败");
         ok = ok && recordValueOk;
         if (rowText) XString_delete_base(rowText);
         if (rowValue) XVariant_delete_base(rowValue);
@@ -750,7 +751,7 @@ static bool XSqlTest_run_sqlite(void)
         && XSqlQuery_at(query) == XSqlLocation_BeforeFirstRow
         && XSqlQuery_size(query) == -1 && XSqlQuery_numRowsAffected(query) == -1
         && XSqlQuery_exec(query) && XSqlQuery_first(query);
-    printf("SQLite 查询和记录定位：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 查询和记录定位：%s\n", ok ? "通过" : "失败");
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
 
     ok = ok && XSqlDatabase_transaction(database);
@@ -763,7 +764,7 @@ static bool XSqlTest_run_sqlite(void)
     ok = ok && query && XSqlQuery_first(query);
     value = ok ? XSqlQuery_value(query, 0) : NULL;
     ok = ok && value && XVariant_toInt64(value) == 2;
-    printf("SQLite 事务回滚：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 事务回滚：%s\n", ok ? "通过" : "失败");
     if (value) XVariant_delete_base(value);
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
 
@@ -780,7 +781,7 @@ static bool XSqlTest_run_sqlite(void)
         && primaryIndex && XSqlRecord_count(&primaryIndex->m_parent) == 1
         && peopleName && connectionName
         && XSqlDatabase_contains_2(connectionName);
-    printf("SQLite 元数据：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite 元数据：%s\n", ok ? "通过" : "失败");
 
     if (ok) {
         bool batchFetch;
@@ -811,7 +812,7 @@ static bool XSqlTest_run_sqlite(void)
             && value && XVariant_toInt64(value) == 300;
         if (value) { XVariant_delete_base(value); value = NULL; }
         ok = ok && batchFetch && copyQuerySet;
-        printf("SQLite 查询模型分批取数和复制查询重载：%s\n",
+        XPrintf("SQLite 查询模型分批取数和复制查询重载：%s\n",
                batchFetch && copyQuerySet ? "通过" : "失败");
     }
 
@@ -976,11 +977,11 @@ static bool XSqlTest_run_sqlite(void)
         ok = ok && tableSelect && tableUpdate && tableInsertDelete && tableRead
             && tableRefresh && tableRevert && tableManualSubmit && tableStrategyRevert
             && tableManualDelete && tableFieldChange && tableColumnRemoval;
-        printf("SQLite 表模型插入、更新、删除和编辑策略：%s\n", ok ? "通过" : "失败");
+        XPrintf("SQLite 表模型插入、更新、删除和编辑策略：%s\n", ok ? "通过" : "失败");
         if (!ok) {
             XSqlError* error = tableModel ? XSqlQueryModel_lastError(&tableModel->m_parent) : NULL;
             XString* errorText = error ? XSqlError_text(error) : NULL;
-            printf("SQLite 表模型诊断：加载=%s，更新=%s，插入删除提交=%s，写回读取=%s，单行刷新=%s，撤销=%s，手动提交=%s，手动删除=%s，策略切换=%s，即时提交=%s，移除列重查=%s\n",
+            XPrintf("SQLite 表模型诊断：加载=%s，更新=%s，插入删除提交=%s，写回读取=%s，单行刷新=%s，撤销=%s，手动提交=%s，手动删除=%s，策略切换=%s，即时提交=%s，移除列重查=%s\n",
                    tableSelect ? "通过" : "失败", tableUpdate ? "通过" : "失败",
                    tableInsertDelete ? "通过" : "失败", tableRead ? "通过" : "失败",
                    tableRefresh ? "通过" : "失败", tableRevert ? "通过" : "失败",
@@ -988,7 +989,7 @@ static bool XSqlTest_run_sqlite(void)
                    tableStrategyRevert ? "通过" : "失败",
                    tableFieldChange ? "通过" : "失败", tableColumnRemoval ? "通过" : "失败");
             if (errorText && XString_length_base(errorText) > 0)
-                printf("SQLite 表模型错误：%s\n", XString_toUtf8(errorText));
+                XPrintf("SQLite 表模型错误：%s\n", XString_toUtf8(errorText));
             if (errorText) XString_delete_base(errorText);
             if (error) XSqlError_delete_base(error);
         }
@@ -1000,7 +1001,7 @@ static bool XSqlTest_run_sqlite(void)
         value = ok ? XSqlQuery_value(query, 0) : NULL;
         XString* journalMode = value ? XVariant_toString(value) : NULL;
         ok = ok && journalMode && XString_equals_utf8(journalMode, "wal", XChar_CaseInsensitive);
-        printf("SQLite 共享内存映射：%s\n", ok ? "通过" : "失败");
+        XPrintf("SQLite 共享内存映射：%s\n", ok ? "通过" : "失败");
         if (journalMode) XString_delete_base(journalMode);
         if (value) XVariant_delete_base(value);
         if (query) { XSqlQuery_delete_base(query); query = NULL; }
@@ -1054,7 +1055,7 @@ static bool XSqlTest_run_sqlite(void)
     XString_delete_base(shmName);
     XSqlDatabase_removeDatabase("xsql-sqlite");
     if (database) XSqlDatabase_delete_base(database);
-    printf("SQLite XFile 文件抽象：%s\n", ok ? "通过" : "失败");
+    XPrintf("SQLite XFile 文件抽象：%s\n", ok ? "通过" : "失败");
     return ok;
 }
 

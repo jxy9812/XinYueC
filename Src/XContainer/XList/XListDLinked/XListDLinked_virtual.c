@@ -1,4 +1,5 @@
-﻿#include"XListDLinked.h"
+﻿#include "XPrintf.h"
+#include"XListDLinked.h"
 #if XListDLinked_ON
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -476,7 +477,7 @@ bool VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData, X
 {
     if (curNode == NULL)
     {
-        printf("节点指针不能为空\n");
+        XPrintf("节点指针不能为空\n");
         return false;
     }
     VXList_inserts(this_list, curNode, pvData, 1, dataCreatMethod);

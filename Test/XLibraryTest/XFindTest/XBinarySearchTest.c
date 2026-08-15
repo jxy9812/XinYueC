@@ -22,7 +22,7 @@ void XBinarySearchTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 void XMenu_XBinarySearchTest(XMenu* root)
 {

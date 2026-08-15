@@ -631,7 +631,7 @@ void XVectorAllTest(void)
 	XVectorFillTest();
 	XVectorSafetyTest();
 	XPrintf("\n========== XVector 全部测试结束 ==========\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XVectorTest(XMenu* root)

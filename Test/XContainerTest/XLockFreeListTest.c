@@ -87,7 +87,7 @@ static void XLockFreeListCreateTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 2. 插入操作 ======================== */
@@ -157,7 +157,7 @@ static void XLockFreeListInsertTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 3. 删除操作 ======================== */
@@ -259,7 +259,7 @@ static void XLockFreeListRemoveTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 4. 查找与访问 ======================== */
@@ -328,7 +328,7 @@ static void XLockFreeListAccessTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 5. 迭代器 ======================== */
@@ -374,7 +374,7 @@ static void XLockFreeListIteratorTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 6. 复制/移动/交换/排序 ======================== */
@@ -430,7 +430,7 @@ static void XLockFreeListCompareTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 7. 原子 pop 与随机压力 ======================== */
@@ -468,7 +468,7 @@ static void XLockFreeListPopAtomicTest(void)
 		XLockFreeList_delete_base(empty);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 8. 边界与安全 ======================== */
@@ -539,7 +539,7 @@ static void XLockFreeListSafetyTest(void)
 		XLockFreeList_delete_base(li);
 	}
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 9. 排序演示（原有排序压力） ======================== */
@@ -563,7 +563,7 @@ static void XLockFreeListSortDemo(void)
 	XPrintf("耗时: %ld ticks\n", (long)(t2 - t1));
 	XLockFreeList_delete_base(li);
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /* ======================== 10. 并发多生产/多消费 ======================== */
@@ -598,8 +598,8 @@ static void XLFLProducer(XThread* thread, XVarList* varlist)
 	size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
 		XAtomic_MemoryOrder_AcqRel) + 1;
 	XThread_deleteLater(thread);
-	if (fin == ctx->threads_total)
-		XCoreApplication_quit();
+	/*if (fin == ctx->threads_total)
+		XCoreApplication_quit();*/
 }
 
 static void XLFLConsumer(XThread* thread, XVarList* varlist)
@@ -646,8 +646,8 @@ static void XLFLConsumer(XThread* thread, XVarList* varlist)
 	size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
 		XAtomic_MemoryOrder_AcqRel) + 1;
 	XThread_deleteLater(thread);
-	if (fin == ctx->threads_total)
-		XCoreApplication_quit();
+	/*if (fin == ctx->threads_total)
+		XCoreApplication_quit();*/
 }
 
 static void XLockFreeListConcurrentTest(void)
@@ -690,7 +690,7 @@ static void XLockFreeListConcurrentTest(void)
 		XLFL_PRODUCERS * per, XLFL_PRODUCERS * per);
 	XLockFreeList_delete_base(list);
 	XPrintf("\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 #endif // XTHREAD_ON
 
@@ -708,7 +708,7 @@ static void XLockFreeListAllTest(void)
 	XLockFreeListSafetyTest();
 	XLockFreeListSortDemo();
 	XPrintf("\n========== XLockFreeList 全部测试结束(不含并发) ==========\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XLockFreeListTest(XMenu* root)

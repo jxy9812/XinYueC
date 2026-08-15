@@ -41,7 +41,7 @@ static void XLFQBasicTest(void)
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XLockFreeQueue_empty_base(q));
     XLockFreeQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 2. isFull(容量固定) -------- */
@@ -66,7 +66,7 @@ static void XLFQFullTest(void)
         XLockFreeQueue_count_base(q),
         (int)XLockFreeQueue_empty_base(q));
     XLockFreeQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 3. 大量数据(单线程) -------- */
@@ -88,7 +88,7 @@ static void XLFQBulkTest(void)
     XPrintf("pushed=%zu popped=%zu 剩余count=%zu (期望:100000/100000/0)\n",
         pushed, popped, XLockFreeQueue_count_base(q));
     XLockFreeQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* =========================================================
@@ -124,7 +124,7 @@ static void XLFQProducer(XThread* thread, XVarList* vl)
     size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
         XAtomic_MemoryOrder_AcqRel) + 1;
     XThread_deleteLater(thread);
-    if (fin == ctx->threads_total) XCoreApplication_quit();
+   /* if (fin == ctx->threads_total) XCoreApplication_quit();*/
 }
 
 static void XLFQConsumer(XThread* thread, XVarList* vl)
@@ -163,7 +163,7 @@ static void XLFQConsumer(XThread* thread, XVarList* vl)
     size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
         XAtomic_MemoryOrder_AcqRel) + 1;
     XThread_deleteLater(thread);
-    if (fin == ctx->threads_total) XCoreApplication_quit();
+    /*if (fin == ctx->threads_total) XCoreApplication_quit();*/
 }
 
 static void XLFQConcurrentTest(void)
@@ -203,7 +203,7 @@ static void XLFQConcurrentTest(void)
         total, total);
     XLockFreeQueue_delete_base(q);
     XPrintf("\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 #endif // XTHREAD_ON
 
@@ -215,7 +215,7 @@ static void XLFQAllTest(void)
     XLFQFullTest();
     XLFQBulkTest();
     XPrintf("========== XLockFreeQueue 全部测试结束(不含并发) ==========\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 #endif
 

@@ -1,4 +1,5 @@
-﻿#include "XCodeTest.h"
+﻿#include "XPrintf.h"
+#include "XCodeTest.h"
 #include "XMemory.h"
 #include "XMenu.h"
 #include "XAction.h"
@@ -31,7 +32,7 @@ static void onAboutToQuit(XObject* receiver, XVarList* args)
 {
     (void)receiver; (void)args;
     ++g_aboutToQuitCount;
-    printf("  [槽] aboutToQuit 收到 (计数=%d)\n", g_aboutToQuitCount);
+    XPrintf("  [槽] aboutToQuit 收到 (计数=%d)\n", g_aboutToQuitCount);
 }
 
 /* 权限回调 */
@@ -39,7 +40,7 @@ static void onPermissionResult(XPermission* permission, void* userData)
 {
     (void)userData;
     g_permissionCallbackCalled = true;
-    printf("  权限回调被调用, status=%d\n", permission->status);
+    XPrintf("  权限回调被调用, status=%d\n", permission->status);
 }
 
 /* ==================== 自定义事件接收对象 ==================== */
@@ -85,7 +86,7 @@ static TestReceiver* TestReceiver_create(void)
 /* ==================== 测试 1: sendEvent — spont 标志 ==================== */
 static void test_sendEvent_spont(void)
 {
-    printf("\n===== [测试 1] sendEvent — spont 标志 =====\n");
+    XPrintf("\n===== [测试 1] sendEvent — spont 标志 =====\n");
     resetCounters();
 
     XEvent e;
@@ -95,15 +96,15 @@ static void test_sendEvent_spont(void)
     /* Qt 6.8: sendEvent 设置 spontaneous = false */
     XCoreApplication_sendEvent((XObject*)xApp, &e);
 
-    printf("  sendEvent 后 spontaneous: %d (Qt 行为: sendEvent 设置 spont=0)\n", e.spontaneous);
+    XPrintf("  sendEvent 后 spontaneous: %d (Qt 行为: sendEvent 设置 spont=0)\n", e.spontaneous);
     assert(e.spontaneous == 0);
-    printf("  [通过] sendEvent 正确设置 spontaneous=0\n");
+    XPrintf("  [通过] sendEvent 正确设置 spontaneous=0\n");
 }
 
 /* ==================== 测试 2: postEvent — Timer 事件压缩 ==================== */
 static void test_postEvent_timerCompression(void)
 {
-    printf("\n===== [测试 2] postEvent — Timer 事件压缩 =====\n");
+    XPrintf("\n===== [测试 2] postEvent — Timer 事件压缩 =====\n");
     resetCounters();
 
     TestReceiver* recv = TestReceiver_create();
@@ -112,36 +113,36 @@ static void test_postEvent_timerCompression(void)
     XTimerEvent* t2 = XTimerEvent_create(42);
 
     XCoreApplication_postEvent((XObject*)recv, (XEvent*)t1, 0);
-    printf("  投递 timer 42 (event=%p)\n", (void*)t1);
+    XPrintf("  投递 timer 42 (event=%p)\n", (void*)t1);
 
     XCoreApplication_postEvent((XObject*)recv, (XEvent*)t2, 0);
-    printf("  再次投递 timer 42 — 应被压缩\n");
+    XPrintf("  再次投递 timer 42 — 应被压缩\n");
 
     XCoreApplication_sendPostedEvents((XObject*)recv, XEVENT_TYPE_TIMER);
-    printf("  接收器收到 %d 个事件 (预期 1)\n", recv->receivedCount);
+    XPrintf("  接收器收到 %d 个事件 (预期 1)\n", recv->receivedCount);
     assert(recv->receivedCount == 1);
-    printf("  [通过] Timer 事件压缩正常\n");
+    XPrintf("  [通过] Timer 事件压缩正常\n");
 }
 
 /* ==================== 测试 3: postEvent — Quit 事件去重 ==================== */
 static void test_postEvent_quitDedup(void)
 {
-    printf("\n===== [测试 3] postEvent — Quit 事件去重 =====\n");
+    XPrintf("\n===== [测试 3] postEvent — Quit 事件去重 =====\n");
     resetCounters();
 
     XEvent* q1 = XEvent_create(XEVENT_TYPE_QUIT);
     XEvent* q2 = XEvent_create(XEVENT_TYPE_QUIT);
 
     XCoreApplication_postEvent((XObject*)xApp, q1, 0);
-    printf("  投递 Quit 事件 (event=%p)\n", (void*)q1);
+    XPrintf("  投递 Quit 事件 (event=%p)\n", (void*)q1);
 
     XCoreApplication_postEvent((XObject*)xApp, q2, 0);
-    printf("  投递第二个 Quit — 应被去重\n");
+    XPrintf("  投递第二个 Quit — 应被去重\n");
 
     int32_t posted = XAtomic_load_int32(&((XObject*)xApp)->m_posted_events, XAtomic_MemoryOrder_Relaxed);
-    printf("  posted_events 计数: %d (预期 >= 1)\n", posted);
+    XPrintf("  posted_events 计数: %d (预期 >= 1)\n", posted);
     assert(posted >= 1);
-    printf("  [通过] Quit 事件去重正常\n");
+    XPrintf("  [通过] Quit 事件去重正常\n");
 
     XCoreApplication_removePostedEvents((XObject*)xApp, XEVENT_TYPE_QUIT);
 }
@@ -149,27 +150,27 @@ static void test_postEvent_quitDedup(void)
 /* ==================== 测试 4: sendPostedEvents — DeferredDelete 重新投递 ==================== */
 static void test_sendPostedEvents_deferredDelete(void)
 {
-    printf("\n===== [测试 4] sendPostedEvents — DeferredDelete 重新投递 =====\n");
+    XPrintf("\n===== [测试 4] sendPostedEvents — DeferredDelete 重新投递 =====\n");
     resetCounters();
 
     TestReceiver* recv = TestReceiver_create();
 
     XDeferredDeleteEvent* dde = XDeferredDeleteEvent_create(true, 0, 0);
     XCoreApplication_postEvent((XObject*)recv, (XEvent*)dde, 0);
-    printf("  投递 DeferredDelete 事件\n");
+    XPrintf("  投递 DeferredDelete 事件\n");
 
     XCoreApplication_sendPostedEvents((XObject*)recv, XEVENT_TYPE_DEFERRED_DELETE);
     /* 注意: DeferredDelete 事件投递后, receiver 已被 XDeferredDeleteEvent_handler 删除,
        因此不能访问 recv->receivedCount, 使用静态计数器验证 */
-    printf("  发送 DeferredDelete 后, 接收计数=%d (预期 1)\n", g_deferredDeleteReceivedCount);
+    XPrintf("  发送 DeferredDelete 后, 接收计数=%d (预期 1)\n", g_deferredDeleteReceivedCount);
     assert(g_deferredDeleteReceivedCount == 1);
-    printf("  [通过] DeferredDelete 事件投递正常\n");
+    XPrintf("  [通过] DeferredDelete 事件投递正常\n");
 }
 
 /* ==================== 测试 5: exec / exit / quit — 信号顺序 ==================== */
 static void test_exec_exit_quit(void)
 {
-    printf("\n===== [测试 5] exec / exit / quit — 信号顺序 =====\n");
+    XPrintf("\n===== [测试 5] exec / exit / quit — 信号顺序 =====\n");
     resetCounters();
 
     /* 连接 aboutToQuit 信号 */
@@ -178,13 +179,13 @@ static void test_exec_exit_quit(void)
         NULL, onAboutToQuit, XConnectionType_Direct);
     assert(conn != NULL);
 
-    printf("  调用 quit()...\n");
+    XPrintf("  调用 quit()...\n");
     XCoreApplication_quit();
 
     /* Qt 6.8: quit() 触发 exit(0) → aboutToQuit 信号 → 设置 quitNow */
-    printf("  aboutToQuit 信号触发次数: %d (预期 1)\n", g_aboutToQuitCount);
+    XPrintf("  aboutToQuit 信号触发次数: %d (预期 1)\n", g_aboutToQuitCount);
     assert(g_aboutToQuitCount == 1);
-    printf("  [通过] exec/exit/quit 信号顺序正确\n");
+    XPrintf("  [通过] exec/exit/quit 信号顺序正确\n");
 
     XObject_disconnect_2(conn);
 }
@@ -192,30 +193,30 @@ static void test_exec_exit_quit(void)
 /* ==================== 测试 6: startingUp / closingDown ==================== */
 static void test_startingUp_closingDown(void)
 {
-    printf("\n===== [测试 6] startingUp / closingDown =====\n");
+    XPrintf("\n===== [测试 6] startingUp / closingDown =====\n");
     resetCounters();
 
     /* Qt 6.8: 应用运行后 startingUp() 返回 false */
     bool starting = XCoreApplication_startingUp();
-    printf("  startingUp: %d (预期 0)\n", starting);
+    XPrintf("  startingUp: %d (预期 0)\n", starting);
     assert(starting == false);
 
     bool closing = XCoreApplication_closingDown();
-    printf("  closingDown: %d (预期 0)\n", closing);
+    XPrintf("  closingDown: %d (预期 0)\n", closing);
     assert(closing == false);
 
-    printf("  [通过] startingUp/closingDown 状态正确\n");
+    XPrintf("  [通过] startingUp/closingDown 状态正确\n");
 }
 
 /* ==================== 测试 7: setEventDispatcher ==================== */
 static void test_setEventDispatcher(void)
 {
-    printf("\n===== [测试 7] setEventDispatcher =====\n");
+    XPrintf("\n===== [测试 7] setEventDispatcher =====\n");
     resetCounters();
 
     /* Qt 6.8: 已有分发器时无法替换 */
     XAbstractEventDispatcher* oldEd = XCoreApplication_eventDispatcher();
-    printf("  当前 eventDispatcher: %p\n", (void*)oldEd);
+    XPrintf("  当前 eventDispatcher: %p\n", (void*)oldEd);
     assert(oldEd != NULL);
 
     /* 尝试设置新的分发器 — Qt 6.8 不允许替换已有分发器 */
@@ -224,20 +225,20 @@ static void test_setEventDispatcher(void)
 
     /* Qt 6.8: setEventDispatcher 在已有分发器时不应替换 */
     XAbstractEventDispatcher* currentEd = XCoreApplication_eventDispatcher();
-    printf("  setEventDispatcher 后: %p (预期 == 旧分发器 %p)\n", (void*)currentEd, (void*)oldEd);
+    XPrintf("  setEventDispatcher 后: %p (预期 == 旧分发器 %p)\n", (void*)currentEd, (void*)oldEd);
     assert(currentEd == oldEd);
 
     /* 清理新创建的分发器 */
     XAbstractEventDispatcher_closingDown_base(newEd);
     XObject_deleteLater((XObject*)newEd);
 
-    printf("  [通过] setEventDispatcher 正确（已有分发器时不可替换）\n");
+    XPrintf("  [通过] setEventDispatcher 正确（已有分发器时不可替换）\n");
 }
 
 /* ==================== 测试 8: setSetuidAllowed / isSetuidAllowed ==================== */
 static void test_setuidAllowed(void)
 {
-    printf("\n===== [测试 8] setSetuidAllowed / isSetuidAllowed =====\n");
+    XPrintf("\n===== [测试 8] setSetuidAllowed / isSetuidAllowed =====\n");
     resetCounters();
 
     assert(XCoreApplication_isSetuidAllowed() == false);
@@ -246,43 +247,43 @@ static void test_setuidAllowed(void)
     XCoreApplication_setSetuidAllowed(false);
     assert(XCoreApplication_isSetuidAllowed() == false);
 
-    printf("  [通过] setuidAllowed 正常\n");
+    XPrintf("  [通过] setuidAllowed 正常\n");
 }
 
 /* ==================== 测试 9: processEventsWithMaxTime ==================== */
 static void test_processEventsWithMaxTime(void)
 {
-    printf("\n===== [测试 9] processEventsWithMaxTime =====\n");
+    XPrintf("\n===== [测试 9] processEventsWithMaxTime =====\n");
     resetCounters();
 
     XCoreApplication_processEventsWithMaxTime(0, 10);
-    printf("  [通过] processEventsWithMaxTime(10ms) 完成未崩溃\n");
+    XPrintf("  [通过] processEventsWithMaxTime(10ms) 完成未崩溃\n");
 }
 
 /* ==================== 测试 10: compressEvent 非虚函数 ==================== */
 static void test_compressEvent_nonvirtual(void)
 {
-    printf("\n===== [测试 10] compressEvent 非虚函数 =====\n");
+    XPrintf("\n===== [测试 10] compressEvent 非虚函数 =====\n");
     resetCounters();
 
     /* Qt 6.8: compressEvent 是非虚函数 */
     bool result = XCoreApplication_compressEvent(NULL, NULL, NULL);
-    printf("  compressEvent(NULL, NULL, NULL) 返回: %d (预期 0)\n", result);
+    XPrintf("  compressEvent(NULL, NULL, NULL) 返回: %d (预期 0)\n", result);
     assert(result == false);
 
-    printf("  [通过] compressEvent 非虚函数接口正常\n");
+    XPrintf("  [通过] compressEvent 非虚函数接口正常\n");
 }
 
 /* ==================== 测试 11: 应用程序元信息 ==================== */
 static void test_application_meta(void)
 {
-    printf("\n===== [测试 11] 应用程序元信息 =====\n");
+    XPrintf("\n===== [测试 11] 应用程序元信息 =====\n");
     resetCounters();
 
     XString* name = XString_create_utf8("测试应用");
     XCoreApplication_setApplicationName(name);
     const XString* got = XCoreApplication_applicationName();
-    printf("  应用名称: %s (预期 '测试应用')\n", got ? XString_toUtf8(got) : "NULL");
+    XPrintf("  应用名称: %s (预期 '测试应用')\n", got ? XString_toUtf8(got) : "NULL");
     assert(got != NULL);
     assert(strcmp(XString_toUtf8(got), "测试应用") == 0);
     XString_delete_base(name);
@@ -308,13 +309,13 @@ static void test_application_meta(void)
     assert(strcmp(XString_toUtf8(gd), "test.org") == 0);
     XString_delete_base(dom);
 
-    printf("  [通过] 应用程序元信息正常\n");
+    XPrintf("  [通过] 应用程序元信息正常\n");
 }
 
 /* ==================== 测试 12: 应用程序属性 ==================== */
 static void test_application_attributes(void)
 {
-    printf("\n===== [测试 12] 应用程序属性 =====\n");
+    XPrintf("\n===== [测试 12] 应用程序属性 =====\n");
     resetCounters();
 
     assert(XCoreApplication_testAttribute(XCORE_APPLICATION_ATTRIBUTE_DONT_SHOW_ICONS_IN_MENUS) == false);
@@ -323,104 +324,104 @@ static void test_application_attributes(void)
     XCoreApplication_setAttribute(XCORE_APPLICATION_ATTRIBUTE_DONT_SHOW_ICONS_IN_MENUS, false);
     assert(XCoreApplication_testAttribute(XCORE_APPLICATION_ATTRIBUTE_DONT_SHOW_ICONS_IN_MENUS) == false);
 
-    printf("  [通过] 应用程序属性正常\n");
+    XPrintf("  [通过] 应用程序属性正常\n");
 }
 
 /* ==================== 测试 13: 权限系统 ==================== */
 static void test_permission_system(void)
 {
-    printf("\n===== [测试 13] 权限系统 =====\n");
+    XPrintf("\n===== [测试 13] 权限系统 =====\n");
     resetCounters();
 
     XPermission perm = { 1, XPERMISSION_STATUS_UNDETERMINED };
     XPermissionStatus status = XCoreApplication_checkPermission(&perm);
-    printf("  checkPermission 返回: %d (预期 %d=GRANTED)\n", status, XPERMISSION_STATUS_GRANTED);
+    XPrintf("  checkPermission 返回: %d (预期 %d=GRANTED)\n", status, XPERMISSION_STATUS_GRANTED);
     assert(status == XPERMISSION_STATUS_GRANTED);
 
     XCoreApplication_requestPermission(&perm, onPermissionResult, NULL);
     assert(g_permissionCallbackCalled);
 
-    printf("  [通过] 权限系统正常\n");
+    XPrintf("  [通过] 权限系统正常\n");
 }
 
 /* ==================== 测试 14: 原生事件过滤器 ==================== */
 static void test_native_event_filter(void)
 {
-    printf("\n===== [测试 14] 原生事件过滤器 =====\n");
+    XPrintf("\n===== [测试 14] 原生事件过滤器 =====\n");
     resetCounters();
 
     /* Qt 6.8: 接口测试 — 传入 NULL 应不崩溃 */
     XCoreApplication_installNativeEventFilter(NULL);
-    printf("  安装原生事件过滤器(NULL)\n");
+    XPrintf("  安装原生事件过滤器(NULL)\n");
 
     XCoreApplication_removeNativeEventFilter(NULL);
-    printf("  移除原生事件过滤器(NULL)\n");
+    XPrintf("  移除原生事件过滤器(NULL)\n");
 
-    printf("  [通过] 原生事件过滤器接口正常\n");
+    XPrintf("  [通过] 原生事件过滤器接口正常\n");
 }
 
 /* ==================== 测试 15: quitLock ==================== */
 static void test_quitLock(void)
 {
-    printf("\n===== [测试 15] quitLock =====\n");
+    XPrintf("\n===== [测试 15] quitLock =====\n");
     resetCounters();
 
     bool enabled = XCoreApplication_isQuitLockEnabled();
-    printf("  默认 quitLockEnabled: %d (预期 1)\n", enabled);
+    XPrintf("  默认 quitLockEnabled: %d (预期 1)\n", enabled);
     assert(enabled == true);
 
     XCoreApplication_setQuitLockEnabled(false);
-    printf("  设置 quitLockEnabled=false\n");
+    XPrintf("  设置 quitLockEnabled=false\n");
     assert(XCoreApplication_isQuitLockEnabled() == false);
 
     XCoreApplication_setQuitLockEnabled(true);
     assert(XCoreApplication_isQuitLockEnabled() == true);
 
-    printf("  [通过] quitLock 正常\n");
+    XPrintf("  [通过] quitLock 正常\n");
 }
 
 /* ==================== 测试 16: 应用程序路径和 PID ==================== */
 static void test_app_path_pid(void)
 {
-    printf("\n===== [测试 16] 应用程序路径和 PID =====\n");
+    XPrintf("\n===== [测试 16] 应用程序路径和 PID =====\n");
     resetCounters();
 
     const XString* dirPath = XCoreApplication_applicationDirPath();
-    printf("  应用目录: %s\n", dirPath ? XString_toUtf8(dirPath) : "NULL");
+    XPrintf("  应用目录: %s\n", dirPath ? XString_toUtf8(dirPath) : "NULL");
 
     const XString* filePath = XCoreApplication_applicationFilePath();
-    printf("  应用路径: %s\n", filePath ? XString_toUtf8(filePath) : "NULL");
+    XPrintf("  应用路径: %s\n", filePath ? XString_toUtf8(filePath) : "NULL");
 
     int64_t pid = XCoreApplication_applicationPid();
-    printf("  进程 PID: %ld\n", (long)pid);
+    XPrintf("  进程 PID: %ld\n", (long)pid);
     assert(pid > 0);
 
-    printf("  [通过] 应用程序路径和 PID 正常\n");
+    XPrintf("  [通过] 应用程序路径和 PID 正常\n");
 }
 
 /* ==================== 测试 17: 库路径管理 ==================== */
 static void test_library_paths(void)
 {
-    printf("\n===== [测试 17] 库路径管理 =====\n");
+    XPrintf("\n===== [测试 17] 库路径管理 =====\n");
 
     XString* path = XString_create_utf8("/test/lib");
     XCoreApplication_addLibraryPath(path);
     const XStringList* paths = XCoreApplication_libraryPaths();
-    printf("  库路径数量: %zu (预期 >= 1)\n", paths ? XStringList_size_base(paths) : 0);
+    XPrintf("  库路径数量: %zu (预期 >= 1)\n", paths ? XStringList_size_base(paths) : 0);
     assert(paths != NULL && XStringList_size_base(paths) >= 1);
 
     XCoreApplication_removeLibraryPath(path);
     paths = XCoreApplication_libraryPaths();
-    printf("  移除后数量: %zu (预期 0)\n", paths ? XStringList_size_base(paths) : 0);
+    XPrintf("  移除后数量: %zu (预期 0)\n", paths ? XStringList_size_base(paths) : 0);
 
     XString_delete_base(path);
-    printf("  [通过] 库路径管理正常\n");
+    XPrintf("  [通过] 库路径管理正常\n");
 }
 
 /* ==================== 测试 18: forwardEvent ==================== */
 static void test_forwardEvent(void)
 {
-    printf("\n===== [测试 18] forwardEvent — 源事件 spont 传递 =====\n");
+    XPrintf("\n===== [测试 18] forwardEvent — 源事件 spont 传递 =====\n");
     resetCounters();
 
     TestReceiver* recv = TestReceiver_create();
@@ -435,38 +436,38 @@ static void test_forwardEvent(void)
 
     /* Qt 6.8: forwardEvent 复制源事件的 spontaneous 状态 */
     XCoreApplication_forwardEvent((XObject*)recv, &forwarded, &e);
-    printf("  forwardEvent 后 forwarded.spontaneous: %d (预期 1, 从源事件复制)\n", forwarded.spontaneous);
+    XPrintf("  forwardEvent 后 forwarded.spontaneous: %d (预期 1, 从源事件复制)\n", forwarded.spontaneous);
     assert(forwarded.spontaneous == 1);
 
-    printf("  接收器收到 %d 个事件 (预期 1)\n", recv->receivedCount);
+    XPrintf("  接收器收到 %d 个事件 (预期 1)\n", recv->receivedCount);
     assert(recv->receivedCount == 1);
 
-    printf("  [通过] forwardEvent 正确传递 spont 标志\n");
+    XPrintf("  [通过] forwardEvent 正确传递 spont 标志\n");
 }
 
 /* ==================== 测试 19: eventDispatcher 返回主线程分发器 ==================== */
 static void test_eventDispatcher_mainThread(void)
 {
-    printf("\n===== [测试 19] eventDispatcher 返回主线程分发器 =====\n");
+    XPrintf("\n===== [测试 19] eventDispatcher 返回主线程分发器 =====\n");
 
     XAbstractEventDispatcher* ed = XCoreApplication_eventDispatcher();
-    printf("  主线程 eventDispatcher: %p\n", (void*)ed);
+    XPrintf("  主线程 eventDispatcher: %p\n", (void*)ed);
     assert(ed != NULL);
 
     /* Qt 6.8: eventDispatcher() 返回主线程的分发器 */
     XThreadData* td = XObject_threadData((XObject*)xApp);
-    printf("  主线程 ThreadData: %p\n", (void*)td);
+    XPrintf("  主线程 ThreadData: %p\n", (void*)td);
     assert(td != NULL);
-    printf("  ThreadData 中的 dispatcher: %p\n", (void*)td->m_eventDispatcher);
+    XPrintf("  ThreadData 中的 dispatcher: %p\n", (void*)td->m_eventDispatcher);
     assert(ed == td->m_eventDispatcher);
 
-    printf("  [通过] eventDispatcher 返回主线程分发器\n");
+    XPrintf("  [通过] eventDispatcher 返回主线程分发器\n");
 }
 
 /* ==================== 测试 20: postEvent 压缩 — 多种事件类型 ==================== */
 static void test_postEvent_compress_multi(void)
 {
-    printf("\n===== [测试 20] postEvent 压缩 — 多种事件类型 =====\n");
+    XPrintf("\n===== [测试 20] postEvent 压缩 — 多种事件类型 =====\n");
     resetCounters();
 
     TestReceiver* recv = TestReceiver_create();
@@ -489,19 +490,19 @@ static void test_postEvent_compress_multi(void)
 
     /* 发送所有事件 */
     XCoreApplication_sendPostedEvents((XObject*)recv, 0);
-    printf("  接收器收到 %d 个事件 (预期 3: timer42(1)+timer99(1)+quit(1))\n", recv->receivedCount);
+    XPrintf("  接收器收到 %d 个事件 (预期 3: timer42(1)+timer99(1)+quit(1))\n", recv->receivedCount);
     assert(recv->receivedCount == 3);
 
-    printf("  [通过] 多类型事件压缩正常\n");
+    XPrintf("  [通过] 多类型事件压缩正常\n");
 }
 
 /* ==================== 主测试入口 ==================== */
 void XCoreApplicationTest(XVariant* variant)
 {
     (void)variant;
-    printf("\n========================================\n");
-    printf("  XCoreApplication Qt 行为对齐测试\n");
-    printf("========================================\n");
+    XPrintf("\n========================================\n");
+    XPrintf("  XCoreApplication Qt 行为对齐测试\n");
+    XPrintf("========================================\n");
 
     test_sendEvent_spont();
     test_postEvent_timerCompression();
@@ -524,9 +525,9 @@ void XCoreApplicationTest(XVariant* variant)
     test_eventDispatcher_mainThread();
     test_postEvent_compress_multi();
 
-    printf("\n========================================\n");
-    printf("  所有 XCoreApplication 测试通过！\n");
-    printf("========================================\n");
+    XPrintf("\n========================================\n");
+    XPrintf("  所有 XCoreApplication 测试通过！\n");
+    XPrintf("========================================\n");
 }
 
 void XMenu_XCoreApplicationTest(XMenu* root)

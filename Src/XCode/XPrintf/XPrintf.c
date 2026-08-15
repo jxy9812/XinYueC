@@ -1,6 +1,62 @@
 ﻿#include"XPrintf.h"
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+#include "XAtomic.h"
+#endif
+#include <limits.h>
 #include"XString.h"
 #include"XByteArray.h"
+
+/* XPrintf 是统一输出入口，底层控制台写出必须使用 fwrite，避免递归调用自身。 */
+static int xprintf_write_stdout(const char* data, size_t size)
+{
+    size_t written;
+
+    if (!data || !size)
+        return 0;
+    written = fwrite(data, 1, size, stdout);
+    return written > (size_t)INT_MAX ? INT_MAX : (int)written;
+}
+
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+/* XAtomic 统一提供跨平台的线程局部存储限定符，避免各模块重复判断编译器。 */
+static XATOMIC_THREAD_LOCAL XPrintfOutputWrite g_xprintf_output_write;
+static XATOMIC_THREAD_LOCAL void* g_xprintf_output_userData;
+
+static int xprintf_write_redirect(const void* data, size_t size)
+{
+    int64_t written;
+    if (!g_xprintf_output_write) return -1;
+    if (!size) return 0;
+    if (!data) return -1;
+    written = g_xprintf_output_write(g_xprintf_output_userData,
+                                     (const char*)data, size);
+    if (written < 0 || (uint64_t)written != (uint64_t)size)
+        return -1;
+    return size > (size_t)INT_MAX ? INT_MAX : (int)size;
+}
+
+bool XPrintf_outputPush(XPrintfOutputScope* scope, XPrintfOutputWrite write,
+                        void* userData)
+{
+    if (!scope || scope->active || !write) return false;
+    scope->previousWrite = g_xprintf_output_write;
+    scope->previousUserData = g_xprintf_output_userData;
+    scope->active = true;
+    g_xprintf_output_write = write;
+    g_xprintf_output_userData = userData;
+    return true;
+}
+
+void XPrintf_outputPop(XPrintfOutputScope* scope)
+{
+    if (!scope || !scope->active) return;
+    g_xprintf_output_write = scope->previousWrite;
+    g_xprintf_output_userData = scope->previousUserData;
+    scope->previousWrite = NULL;
+    scope->previousUserData = NULL;
+    scope->active = false;
+}
+#endif
 
 /* ========================================================================== */
 /*                        Windows 控制台编码控制                               */
@@ -41,19 +97,28 @@ static void XPrintf_initConsole(void)
 /* ========================================================================== */
 int XPrintf_2(const XString* str)
 {
+    const char* utf8;
     if (str == NULL)
         return 0;
+    utf8 = XString_toUtf8(str);
+    if (!utf8)
+        return 0;
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write) {
+        return xprintf_write_redirect(utf8, strlen(utf8));
+    }
+#endif
 #ifdef _WIN32
     XPrintf_initConsole();
 #if XPRINTF_UTF8_CONSOLE
-    printf("%s", XString_toUtf8(str));
+    return xprintf_write_stdout(utf8, strlen(utf8));
 #else
-    printf("%s", XString_toLocal(str));
+    const char* local = XString_toLocal(str);
+    return local ? xprintf_write_stdout(local, strlen(local)) : 0;
 #endif
 #else
-    printf("%s", XString_toUtf8(str));
+    return xprintf_write_stdout(utf8, strlen(utf8));
 #endif
-    return XString_length_base(str);
 }
 
 /* ========================================================================== */
@@ -62,12 +127,16 @@ int XPrintf_2(const XString* str)
 int XPrintf_3(const char* utf8_str)
 {
     if (!utf8_str) return 0;
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write)
+        return xprintf_write_redirect(utf8_str, strlen(utf8_str));
+#endif
 
 #ifdef _WIN32
     XPrintf_initConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
-    return printf("%s", utf8_str);
+    return xprintf_write_stdout(utf8_str, strlen(utf8_str));
 #else
     /* GBK模式：UTF-8 -> GBK 转换后输出 */
     int64_t gbk_len = XChar_utf8ToGbkStream(utf8_str, 0, NULL, 0);
@@ -81,12 +150,12 @@ int XPrintf_3(const char* utf8_str)
         return 0;
     }
 
-    int result = printf("%s", gbk_buf);
+    int result = xprintf_write_stdout(gbk_buf, strlen(gbk_buf));
     XFree_System(gbk_buf);
     return result;
 #endif
 #else
-    return printf("%s", utf8_str);
+    return xprintf_write_stdout(utf8_str, strlen(utf8_str));
 #endif
 }
 
@@ -95,15 +164,15 @@ int XPrintf_3(const char* utf8_str)
 /* ========================================================================== */
 int XPrintf_4(const XByteArray* array)
 {
+    size_t len;
     if(!array||XByteArray_isEmpty_base(array))
         return 0;
-    size_t len = XByteArray_size_base(array);
-    for_each_iterator(array, XByteArray,it)
-    {
-        char c = XByteArray_iterator_data(&it);
-        putchar(c);
-    }
-    return len;
+    len = XByteArray_size_base(array);
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write)
+        return xprintf_write_redirect(XByteArray_data((XByteArray*)array), len);
+#endif
+    return xprintf_write_stdout((const char*)XByteArray_data((XByteArray*)array), len);
 }
 
 /* ========================================================================== */
@@ -111,6 +180,7 @@ int XPrintf_4(const XByteArray* array)
 /* ========================================================================== */
 int XPrintf(const char* format, ...)
 {
+    int result;
     if (!format) return 0;
 
     va_list args;
@@ -139,13 +209,21 @@ int XPrintf(const char* format, ...)
     vsnprintf(utf8_buf, utf8_len, format, args);
     va_end(args);
 
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write) {
+        result = xprintf_write_redirect(utf8_buf, strlen(utf8_buf));
+        XFree_System(utf8_buf);
+        return result;
+    }
+#endif
+
     /* 步骤3：根据模式输出 */
-    int result = 0;
+    result = 0;
 #ifdef _WIN32
     XPrintf_initConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
-    result = printf("%s", utf8_buf);
+    result = xprintf_write_stdout(utf8_buf, strlen(utf8_buf));
 #else
     /* GBK模式：UTF-8 -> GBK 转换后输出 */
     int gbk_len = XChar_utf8ToGbkStream(utf8_buf, 0, NULL, 0);
@@ -164,13 +242,13 @@ int XPrintf(const char* format, ...)
 
     if (XChar_utf8ToGbkStream(utf8_buf, 0, gbk_buf, gbk_len + 1) > 0)
     {
-        result = printf("%s", gbk_buf);
+        result = xprintf_write_stdout(gbk_buf, strlen(gbk_buf));
     }
     XFree_System(gbk_buf);
 #endif
 #else
     /* Linux/macOS：直接输出UTF-8 */
-    result = printf("%s", utf8_buf);
+    result = xprintf_write_stdout(utf8_buf, strlen(utf8_buf));
 #endif
 
     XFree_System(utf8_buf);
@@ -251,6 +329,9 @@ int XPrintf_5(XChar* ch)
     if (!ch) return 0;
 
 #ifdef _WIN32
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (!g_xprintf_output_write)
+#endif
     XPrintf_initConsole();
 #endif
 
@@ -258,10 +339,19 @@ int XPrintf_5(XChar* ch)
     char buff[5] = { 0 };
 #if defined(_WIN32) && !XPRINTF_UTF8_CONSOLE
     /* GBK模式：XChar(UTF-16) -> GBK */
-    XChar_toLocalStream(&chs, 1, buff, 5);
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write)
+        XChar_toUtf8Stream(&chs, 1, (uint8_t*)buff, 5);
+    else
+#endif
+        XChar_toLocalStream(&chs, 1, buff, 5);
 #else
     /* UTF-8模式：XChar(UTF-16) -> UTF-8 */
     XChar_toUtf8Stream(&chs, 1, (uint8_t*)buff, 5);
 #endif
-    return printf("%s", buff);
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (g_xprintf_output_write)
+        return xprintf_write_redirect(buff, strlen(buff));
+#endif
+    return xprintf_write_stdout(buff, strlen(buff));
 }

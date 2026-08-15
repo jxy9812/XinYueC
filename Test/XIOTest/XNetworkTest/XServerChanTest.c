@@ -3,6 +3,7 @@
  * @brief      Server酱客户端本地 HTTP 行为和真实发送测试。
  */
 
+#include "XPrintf.h"
 #include "XServerChanTest.h"
 
 #include "XCoreApplication.h"
@@ -93,7 +94,7 @@ static void xserverchan_test_local_send(void)
     XServerChanResult_delete_base(result);
     XServerChan_delete_base(client);
     XHttpServer_delete_base(server);
-    printf("XServerChan 本地发送与 JSON 解析测试通过\n");
+    XPrintf("XServerChan 本地发送与 JSON 解析测试通过\n");
 }
 
 static void xserverchan_test_lifecycle(void)
@@ -125,7 +126,7 @@ static void xserverchan_test_lifecycle(void)
     XServerChan_delete_base(moved);
     XServerChan_delete_base(copy);
     XServerChan_delete_base(client);
-    printf("XServerChan 类生命周期、拷贝移动和 SendKey 校验测试通过\n");
+    XPrintf("XServerChan 类生命周期、拷贝移动和 SendKey 校验测试通过\n");
 }
 
 static void xserverchan_test_live_send(void)
@@ -147,17 +148,17 @@ static void xserverchan_test_live_send(void)
     size_t successCount = 0;
     size_t i;
 
-    printf("请输入 SendKey（不会打印或保存到源码）：");
+    XPrintf("请输入 SendKey（不会打印或保存到源码）：");
     fflush(stdout);
     if (scanf("%255s", sendKey) != 1 || !sendKey[0]) {
         memset(sendKey, 0, sizeof(sendKey));
-        printf("未读取到 SendKey，跳过真实发送测试\n");
+        XPrintf("未读取到 SendKey，跳过真实发送测试\n");
         return;
     }
     client = XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sendKey);
     memset(sendKey, 0, sizeof(sendKey));
     if (!client) {
-        printf("SendKey 无效，跳过真实发送测试\n");
+        XPrintf("SendKey 无效，跳过真实发送测试\n");
         return;
     }
     caPaths[0] = getenv("SSL_CERT_FILE");
@@ -170,34 +171,34 @@ static void xserverchan_test_live_send(void)
             break;
     }
     if (i == sizeof(caPaths) / sizeof(caPaths[0])) {
-        printf("未找到可用系统 CA，跳过真实发送测试（不关闭证书校验）\n");
+        XPrintf("未找到可用系统 CA，跳过真实发送测试（不关闭证书校验）\n");
         XServerChan_delete_base(client);
         return;
     }
     XServerChan_setTransferTimeout(client, 15000);
-    printf("开始真实发送 %zu 条测试消息\n", sizeof(cases) / sizeof(cases[0]));
+    XPrintf("开始真实发送 %zu 条测试消息\n", sizeof(cases) / sizeof(cases[0]));
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         XServerChanResult* result = XServerChan_sendBlocking(client,
             cases[i].m_title, cases[i].m_desp);
         if (result && XServerChanResult_isSuccess(result)) {
             ++successCount;
-            printf("真实消息[%zu]发送成功：HTTP=%d code=%d\n", i + 1,
+            XPrintf("真实消息[%zu]发送成功：HTTP=%d code=%d\n", i + 1,
                    XServerChanResult_httpStatusCode(result),
                    XServerChanResult_apiCode(result));
         } else {
             const XString* message = result ? XServerChanResult_message_const(result) : NULL;
-            printf("真实消息[%zu]发送失败：error=%d HTTP=%d code=%d\n", i + 1,
+            XPrintf("真实消息[%zu]发送失败：error=%d HTTP=%d code=%d\n", i + 1,
                    (int)XServerChanResult_error(result),
                    XServerChanResult_httpStatusCode(result),
                    XServerChanResult_apiCode(result));
             if (message && XString_toUtf8(message) && *XString_toUtf8(message))
-                printf("失败原因：%s\n", XString_toUtf8(message));
+                XPrintf("失败原因：%s\n", XString_toUtf8(message));
         }
         if (result) XServerChanResult_delete_base(result);
         XThread_msleep(200);
     }
     XServerChan_delete_base(client);
-    printf("真实发送测试完成：%zu/%zu 成功\n", successCount,
+    XPrintf("真实发送测试完成：%zu/%zu 成功\n", successCount,
            sizeof(cases) / sizeof(cases[0]));
 }
 

@@ -159,7 +159,7 @@ do { \
  */
 #if XCLASS_VTABLE_SHOW_SIZE
 #define XCLASS_SHOW_SIZE(Type, Value) \
-	do { printf(#Type " size:%zu\n", (size_t)(Value)); } while (0)
+	do { XPrintf(#Type " size:%zu\n", (size_t)(Value)); } while (0)
 #else
 #define XCLASS_SHOW_SIZE(Type, Value) do { } while (0)
 #endif

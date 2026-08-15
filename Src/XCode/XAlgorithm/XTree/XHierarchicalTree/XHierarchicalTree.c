@@ -1,4 +1,5 @@
-﻿#include"XHierarchicalTree.h"
+﻿#include "XPrintf.h"
+#include"XHierarchicalTree.h"
 size_t XHTreeNode_typeSize()
 {
 	return sizeof(XHTreeNode) + sizeof(struct XTreeNode*) * 2;
@@ -135,7 +136,7 @@ void XHTree_print(XHTreeNode* this_root, int depth)
 		return;
 	// 缩进表示层级
 	for (int i = 0; i < depth; i++) {
-		printf("  ");
+		XPrintf("  ");
 	}
 	//printf("%s\n", node->data);
 

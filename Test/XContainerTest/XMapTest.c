@@ -162,7 +162,7 @@ static void XMapTest_All(void)
     XMapTest_Stress();
     XPrintf("\n[XMap] 全部测试完成\n");
 #endif
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XMapTest(void)

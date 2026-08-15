@@ -3,6 +3,7 @@
  * @brief       XGui Qt 对齐回归测试（无平台 API、无菜单依赖）
  */
 
+#include "XPrintf.h"
 #include "XIcon.h"
 #include "XBitmap.h"
 #include "XData/XGeometry.h"
@@ -23,7 +24,7 @@ static int s_failures = 0;
 static void expect_true(bool condition, const char* name)
 {
     if (!condition) {
-        fprintf(stderr, "FAIL: %s\n", name);
+        XERROR_PRINTF("FAIL: %s\n", name);
         s_failures++;
     }
 }
@@ -660,7 +661,7 @@ int main(void)
     test_image_handler_registry();
     test_image_pixel_contract();
     if (s_failures != 0) {
-        fprintf(stderr, "%d XGui regression test(s) failed\n", s_failures);
+        XERROR_PRINTF("%d XGui regression test(s) failed\n", s_failures);
         return 1;
     }
     puts("XGui regression tests passed");

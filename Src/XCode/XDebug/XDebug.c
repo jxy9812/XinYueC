@@ -1,4 +1,5 @@
-﻿#include "XDebug.h"
+﻿#include "XPrintf.h"
+#include "XDebug.h"
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
@@ -420,11 +421,11 @@ XDebug* XDebug_flush_(XDebug* debug) {
     // 根据目标输出
     switch (debug->target) {
     case XDEBUG_TARGET_STDOUT:
-        printf("%s%s", location, final_output);
+        XPrintf("%s%s", location, final_output);
         fflush(stdout);
         break;
     case XDEBUG_TARGET_STDERR:
-        fprintf(stderr, "%s%s", location, final_output);
+        XERROR_PRINTF( "%s%s", location, final_output);
         fflush(stderr);
         break;
     case XDEBUG_TARGET_FILE:

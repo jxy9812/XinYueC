@@ -38,6 +38,25 @@ typedef enum XConsoleResult {
     XConsoleResult_Failed = -9          /**< 处理函数报告未分类失败。 */
 } XConsoleResult;
 
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+/**
+ * @brief 处理当前会话后续整行输入的回调。
+ * @details
+ * 设置后，Shell 会在普通命令解析之前把完整输入行交给该回调。回调返回
+ * 后仍由 Shell 统一完成统计、审计和传输层结果处理；回调只在调用期间借用
+ * line，不得保存指针。handler 和 userData 均由调用方管理。
+ * @param shell 当前 Shell 对象；只在回调期间借用。
+ * @param session 当前输入会话；只在回调期间借用。
+ * @param line UTF-8 输入行；不包含结尾 NUL，length 非零时不能为空。
+ * @param length line 的字节数；不包含结尾 NUL。
+ * @param userData 调用方上下文指针；Shell 不释放。
+ * @return 本次输入处理结果；返回 XConsoleResult_MoreOutput 表示仍处于交互状态。
+ */
+typedef XConsoleResult (*XConsoleShellInputLineHandler)(
+    XConsoleShell* shell, XConsoleShellSession* session,
+    const char* line, size_t length, void* userData);
+#endif
+
 /** @brief 命令权限和行为标志。 */
 typedef enum XConsoleCommandFlag {
     XConsoleCommandFlag_None = 0,

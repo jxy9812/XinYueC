@@ -1,4 +1,5 @@
-﻿#include"XCodeTest.h"
+﻿#include "XPrintf.h"
+#include"XCodeTest.h"
 #include"XMemory.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -8,58 +9,58 @@
 // 辅助函数：打印 XString 内容
 void print_xstring(const char* label, const XString* str) {
     if (str == NULL) {
-        printf("%s: (NULL)\n", label);
+        XPrintf("%s: (NULL)\n", label);
         return;
     }
     //XPrintf_(str);
-    printf("%s\n",XString_toUtf8(str));
+    XPrintf("%s\n",XString_toUtf8(str));
 }
 
 // 辅助函数：验证并打印日期
 void test_and_print_date(const char* label, XDate date) {
-    printf("\n--- %s ---\n", label);
-    printf("Valid: %s\n", XDate_isValid(&date) ? "Yes" : "No");
+    XPrintf("\n--- %s ---\n", label);
+    XPrintf("Valid: %s\n", XDate_isValid(&date) ? "Yes" : "No");
     if (XDate_isValid(&date)) {
-        printf("Year: %d, Month: %d, Day: %d\n",
+        XPrintf("Year: %d, Month: %d, Day: %d\n",
             XDate_year(&date), XDate_month(&date), XDate_day(&date));
-        printf("Day of Week: %d, Day of Year: %d\n",
+        XPrintf("Day of Week: %d, Day of Year: %d\n",
             XDate_dayOfWeek(&date), XDate_dayOfYear(&date));
-        printf("Days in Month/Year: %d / %d\n",
+        XPrintf("Days in Month/Year: %d / %d\n",
             XDate_daysInMonth(&date), XDate_daysInYear(&date));
     }
 }
 
 // 辅助函数：验证并打印时间
 void test_and_print_time(const char* label, XTime time) {
-    printf("\n--- %s ---\n", label);
-    printf("Valid: %s\n", XTime_isValid(&time) ? "Yes" : "No");
+    XPrintf("\n--- %s ---\n", label);
+    XPrintf("Valid: %s\n", XTime_isValid(&time) ? "Yes" : "No");
     if (XTime_isValid(&time)) {
-        printf("Hour: %d, Minute: %d, Second: %d, Millisecond: %d\n",
+        XPrintf("Hour: %d, Minute: %d, Second: %d, Millisecond: %d\n",
             XTime_hour(&time), XTime_minute(&time), XTime_second(&time), XTime_msec(&time));
     }
 }
 
 // 辅助函数：验证并打印日期时间
 void test_and_print_datetime(const char* label, XDateTime datetime) {
-    printf("\n--- %s ---\n", label);
-    printf("Valid: %s\n", XDateTime_isValid(&datetime) ? "Yes" : "No");
+    XPrintf("\n--- %s ---\n", label);
+    XPrintf("Valid: %s\n", XDateTime_isValid(&datetime) ? "Yes" : "No");
     if (XDateTime_isValid(&datetime)) {
         int64_t msecs_since_epoch = XDateTime_toMSecsSinceEpoch(&datetime);
-        printf("Timestamp (ms): %lld\n", (long long)msecs_since_epoch);
+        XPrintf("Timestamp (ms): %lld\n", (long long)msecs_since_epoch);
 
         XDate date = XDateTime_date(&datetime);
         XTime time = XDateTime_time(&datetime);
-        printf("Date: %d-%02d-%02d\n", XDate_year(&date), XDate_month(&date), XDate_day(&date));
-        printf("Time: %02d:%02d:%02d.%03d\n",
+        XPrintf("Date: %d-%02d-%02d\n", XDate_year(&date), XDate_month(&date), XDate_day(&date));
+        XPrintf("Time: %02d:%02d:%02d.%03d\n",
             XTime_hour(&time), XTime_minute(&time), XTime_second(&time), XTime_msec(&time));
     }
 }
 void XDateTimeTest()
 {
-    printf("=== XDate, XTime, XDateTime Comprehensive Test ===\n");
+    XPrintf("=== XDate, XTime, XDateTime Comprehensive Test ===\n");
 
     // ====== 1. XDate 测试 ======
-    printf("\n========== Testing XDate ==========\n");
+    XPrintf("\n========== Testing XDate ==========\n");
 
     // 1.1 有效性检查
     XDate invalid_date = XDate_create();
@@ -70,9 +71,9 @@ void XDateTimeTest()
     test_and_print_date("Valid Date (2023-12-25)", valid_date);
 
     // 1.3 静态方法测试
-    printf("\nStatic Validation: XDate_isValid_static(2023, 2, 29) = %s\n",
+    XPrintf("\nStatic Validation: XDate_isValid_static(2023, 2, 29) = %s\n",
         XDate_isValid_static(2023, 2, 29) ? "Valid" : "Invalid");
-    printf("Static Leap Year: XDate_isLeapYear_static(2024) = %s\n",
+    XPrintf("Static Leap Year: XDate_isLeapYear_static(2024) = %s\n",
         XDate_isLeapYear_static(2024) ? "Leap" : "Not Leap");
 
     // 1.4 日期运算
@@ -93,7 +94,7 @@ void XDateTimeTest()
     XString_delete_base(iso_str);
 
     // ====== 2. XTime 测试 ======
-    printf("\n========== Testing XTime ==========\n");
+    XPrintf("\n========== Testing XTime ==========\n");
 
     // 2.1 有效性检查
     XTime invalid_time = XTime_create();
@@ -113,7 +114,7 @@ void XDateTimeTest()
     // 2.4 时间差计算
     int secs_diff = XTime_secsTo(&valid_time, &time_plus_30s);
     int msecs_diff = XTime_msecsTo(&valid_time, &time_plus_30s);
-    printf("\nTime Difference: %d seconds, %d milliseconds\n", secs_diff, msecs_diff);
+    XPrintf("\nTime Difference: %d seconds, %d milliseconds\n", secs_diff, msecs_diff);
 
     // 2.5 格式化与解析 (简化版)
     XString* time_str = XTime_toString_format(&valid_time, "HH:mm:ss");
@@ -126,7 +127,7 @@ void XDateTimeTest()
     XString_delete_base(time_str);
 
     // ====== 3. XDateTime 测试 ======
-    printf("\n========== Testing XDateTime ==========\n");
+    XPrintf("\n========== Testing XDateTime ==========\n");
 
     // 3.1 有效性检查
     XDateTime invalid_datetime = XDateTime_create();
@@ -164,7 +165,7 @@ void XDateTimeTest()
     XString_delete_base(dt_iso_str);
     XString_delete_base(custom_format_str);
 
-    printf("\n=== All tests completed ===\n");
+    XPrintf("\n=== All tests completed ===\n");
     return 0;
 		XCoreApplication_exec();
 		//XThread_deleteLater(th);

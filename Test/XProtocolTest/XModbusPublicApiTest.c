@@ -1,4 +1,5 @@
-﻿#include <stdio.h>
+﻿#include "XPrintf.h"
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -25,8 +26,8 @@ static int g_pass;
 static int g_fail;
 
 #define CHECK(expr, name) do { \
-    if (expr) { ++g_pass; printf("  [通过] %s\n", name); } \
-    else { ++g_fail; printf("  [失败] %s\n", name); } \
+    if (expr) { ++g_pass; XPrintf("  [通过] %s\n", name); } \
+    else { ++g_fail; XPrintf("  [失败] %s\n", name); } \
 } while (0)
 
 static void delete_pdu(XModbusPdu *pdu)
@@ -357,7 +358,7 @@ void XModbusPublicApiTest(XVariant* data)
 {
     (void)data;
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("========== Modbus 公共 API 回归测试开始（Qt 6.8.3 对齐）==========\n");
+    XPrintf("========== Modbus 公共 API 回归测试开始（Qt 6.8.3 对齐）==========\n");
     g_pass = g_fail = 0;
     test_pdu();
     test_adu();
@@ -365,5 +366,5 @@ void XModbusPublicApiTest(XVariant* data)
     test_reply_device();
     test_server_request();
     test_tcp_loopback();
-    printf("========== Modbus 公共 API 回归测试结束：通过 %d，失败 %d ==========\n", g_pass, g_fail);
+    XPrintf("========== Modbus 公共 API 回归测试结束：通过 %d，失败 %d ==========\n", g_pass, g_fail);
 }

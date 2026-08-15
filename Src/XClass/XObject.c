@@ -1,4 +1,5 @@
-﻿#include "XObject.h"
+﻿#include "XPrintf.h"
+#include "XObject.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XThread.h"
@@ -933,8 +934,8 @@ void XObject_dumpObjectTree(const XObject* self)
 	(void)depth; // suppress unused warning
 
 	// Qt 6.8: 打印缩进 + 对象名
-	for (int i = 0; i < depth; i++) printf("    ");
-	printf("%s::%s\n",
+	for (int i = 0; i < depth; i++) XPrintf("    ");
+	XPrintf("%s::%s\n",
 		self->m_object_name ? XString_c_str(self->m_object_name) : "(unnamed)",
 		""); // flags placeholder
 
@@ -958,33 +959,33 @@ void XObject_dumpObjectInfo(const XObject* self)
 {
 	if (!self) return;
 
-	printf("OBJECT XObject::%s\n",
+	XPrintf("OBJECT XObject::%s\n",
 		self->m_object_name ? XString_c_str(self->m_object_name) : "(unnamed)");
 
 	// 线程信息
-	printf("  THREAD: %p\n", (void*)XObject_thread(self));
+	XPrintf("  THREAD: %p\n", (void*)XObject_thread(self));
 
 	// 父对象
 	if (self->m_parent) {
-		printf("  PARENT: %s\n",
+		XPrintf("  PARENT: %s\n",
 			self->m_parent->m_object_name ? XString_c_str(self->m_parent->m_object_name) : "(unnamed)");
 	} else {
-		printf("  PARENT: (none)\n");
+		XPrintf("  PARENT: (none)\n");
 	}
 
 	// 子对象数量
 	int child_count = self->m_children ? (int)XContainerSize(self->m_children) : 0;
-	printf("  CHILDREN: %d\n", child_count);
+	XPrintf("  CHILDREN: %d\n", child_count);
 
 	// 事件过滤器
 	int filter_count = self->m_filters ? (int)XContainerSize(self->m_filters) : 0;
-	printf("  EVENT FILTERS: %d\n", filter_count);
+	XPrintf("  EVENT FILTERS: %d\n", filter_count);
 
 	// 投递事件计数
-	printf("  POSTED EVENTS: %d\n", XAtomic_load_int32(&self->m_posted_events, XAtomic_MemoryOrder_Relaxed));
+	XPrintf("  POSTED EVENTS: %d\n", XAtomic_load_int32(&self->m_posted_events, XAtomic_MemoryOrder_Relaxed));
 
 	// 标志位
-	printf("  FLAGS: %s%s%s%s%s%s\n",
+	XPrintf("  FLAGS: %s%s%s%s%s%s\n",
 		self->is_widget ? "Widget " : "",
 		self->block_sig ? "BlockSig " : "",
 		self->was_deleted ? "WasDeleted " : "",

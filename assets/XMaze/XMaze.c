@@ -1,4 +1,5 @@
-﻿#include"XMaze.h"
+﻿#include "XPrintf.h"
+#include"XMaze.h"
 #include"XData/XGeometry.h"
 #include"XAlgorithm.h"
 #include"XClass.h"
@@ -11,9 +12,9 @@ void XMazePathPrintPoint(XVector* Path)
 	for_each_iterator(Path, XVector, it)
 	{
 		XPoint CurPoint = *(XPoint*)XVector_iterator_data(&it);//获取点
-		printf("(%d,%d) ", CurPoint.x, CurPoint.y);
+		XPrintf("(%d,%d) ", CurPoint.x, CurPoint.y);
 	}
-	printf("\n");
+	XPrintf("\n");
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
@@ -46,9 +47,9 @@ static void Print(const struct XVector* maze, const char* Wall, const char* Rout
 				strcpy(str, " ");
 				break;
 			}
-			printf("%s", str);
+			XPrintf("%s", str);
 		}
-		printf("\n");
+		XPrintf("\n");
 	}
 #else
 	IS_ON_DEBUG(XVector_ON);

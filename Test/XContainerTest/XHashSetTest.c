@@ -160,7 +160,7 @@ static void XHashSetTest_All(void)
     XHashSetTest_Stress();
     XPrintf("\n[XHashSet] 全部测试完成\n");
 #endif
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XHashSetTest(void)

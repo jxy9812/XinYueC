@@ -306,7 +306,7 @@ static void XContainerMemoryPoolTest(void)
     XContainerMemory_checkMultiPoolLimit();
     XPrintf("内存池测试结果：通过 %zu，失败 %zu\n",
         g_memory_test_passed, g_memory_test_failed);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XMenu_XContainerMemoryTest(XMenu* root)

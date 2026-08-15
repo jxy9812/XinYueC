@@ -30,7 +30,7 @@ static void XCQBasicTest(void)
     }
     XPrintf("\ncount=%zu (期望:0)\n", XCircularQueue_count_base(q));
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 2. 环绕(wraparound) -------- */
@@ -62,7 +62,7 @@ static void XCQWrapTest(void)
     }
     XPrintf("\n");
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 3. 自动扩容 -------- */
@@ -86,7 +86,7 @@ static void XCQAutoExpansionTest(void)
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XCircularQueue_empty_base(q));
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 4. isFull(容量固定) + push 满时行为 -------- */
@@ -107,7 +107,7 @@ static void XCQFullTest(void)
     XPrintf("满时再入队 返回=%d (期望:0) 计数=%zu\n",
         (int)ok, XCircularQueue_count_base(q));
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 5. remove(value, n) -------- */
@@ -131,7 +131,7 @@ static void XCQRemoveTest(void)
     }
     XPrintf("\n");
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 6. 大量数据（无扩容 + 满时丢弃） -------- */
@@ -158,7 +158,7 @@ static void XCQBulkTest(void)
     XPrintf("pushed=%zu popped=%zu rejected=%zu 剩余count=%zu\n",
         pushed, popped, rejected, XCircularQueue_count_base(q));
     XCircularQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 static void XCQAllTest(void)
@@ -171,7 +171,7 @@ static void XCQAllTest(void)
     XCQRemoveTest();
     XCQBulkTest();
     XPrintf("========== XCircularQueue 全部测试结束 ==========\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 #endif
 

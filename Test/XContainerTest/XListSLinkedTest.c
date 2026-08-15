@@ -641,7 +641,7 @@ static void XListSLinkedAllTest(void)
 	XListSLinkedIteratorTest();
 	XListSLinkedSafetyTest();
 	XPrintf("\n========== XListSLinked 全部测试结束 ==========\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XListSLinkedTest(XMenu* root)

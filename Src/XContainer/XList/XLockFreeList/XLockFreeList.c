@@ -1,4 +1,5 @@
-﻿#include"XLockFreeList.h"
+﻿#include "XPrintf.h"
+#include"XLockFreeList.h"
 #if XLockFreeList_ON
 #include <stdlib.h>
 #include <string.h>
@@ -122,7 +123,7 @@ static int _lfl_hp_acquire_slot(void)
         }
     }
     /* 槽用尽——测试规模内不应发生 */
-    fprintf(stderr, "[XLockFreeList] hazard-pointer 槽已用尽 (%d)\n",
+    XERROR_PRINTF( "[XLockFreeList] hazard-pointer 槽已用尽 (%d)\n",
             XLFL_HP_MAX_THREADS);
     abort();
 }

@@ -1,4 +1,5 @@
-﻿#include "XBalancedBinaryTree.h"
+﻿#include "XPrintf.h"
+#include "XBalancedBinaryTree.h"
 #include "XContainer.h"
 #include "XStack.h"
 #include <string.h>
@@ -247,7 +248,7 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XCompare compare, XCompareR
 	bool flag = XBBTree_insertAlign(this_root, NewNode, compare, lessRule, pvData, dataSize, memory);
 	if (!flag)
 	{
-		printf("节点插入失败\n");
+		XPrintf("节点插入失败\n");
 		return NULL;
 	}
 	XBBTree_SetLayerNumberAll(this_root, XBTreeNode_GetParent(NewNode));

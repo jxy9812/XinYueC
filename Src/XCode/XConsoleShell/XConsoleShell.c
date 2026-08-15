@@ -52,6 +52,23 @@
 
 static void VXConsoleShell_deinit(XObject* object);
 
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+/*
+ * XPrintf 的重定向回调只接收 UTF-8 字节；Shell 再根据当前工作区的 m_io
+ * 发送到本地控制台、SSH 或其他传输端。这样命令内部无需知道调用入口。
+ */
+static int64_t xcs_xprintf_write(void* userData, const char* data, size_t size)
+{
+    XConsoleShell* shell = (XConsoleShell*)userData;
+    if (!shell || (!data && size) || !XConsoleShell_write(shell, data, size))
+        return -1;
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    if (!XConsoleShell_flushOutput(shell)) return -1;
+#endif
+    return (int64_t)size;
+}
+#endif
+
 #if XCONSOLE_SHELL_ASYNC_ON
 static XEventType g_xcs_async_input_event = XEVENT_TYPE_NONE;
 
@@ -2226,6 +2243,10 @@ XConsoleResult XConsoleShell_processLine(XConsoleShell* self,
     size_t consumed = 0;
     int argc;
     int result;
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    XPrintfOutputScope outputScope = {0};
+    bool outputRedirected;
+#endif
     if (!self || (!line && length)) return XConsoleResult_InvalidArgument;
     if (!self->m_running) return XConsoleResult_NotSupported;
     /* 直接提交完整行意味着开始新的输入事务，清除上一条异常输入的丢弃态。 */
@@ -2249,6 +2270,21 @@ XConsoleResult XConsoleShell_processLine(XConsoleShell* self,
         XConsoleResult pendingResult = XConsoleShellVi_submitLine(
             self, &self->m_session, line, length);
         return xcs_finish_command(self, NULL, pendingResult);
+    }
+#endif
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    /* 交互式远程菜单等状态先消费完整输入行，不再进入普通命令解析。 */
+    if (self->m_session.inputLineHandler) {
+        XConsoleShellInputLineHandler handler = self->m_session.inputLineHandler;
+        void* handlerUserData = self->m_session.inputLineHandlerUserData;
+        outputRedirected = XPrintf_outputPush(&outputScope,
+                                               xcs_xprintf_write, self);
+        result = handler(self, &self->m_session, line, length,
+                         handlerUserData);
+        if (outputRedirected) XPrintf_outputPop(&outputScope);
+        if (result < XConsoleResult_Failed || result > XConsoleResult_MoreOutput)
+            result = XConsoleResult_Failed;
+        return xcs_finish_command(self, NULL, (XConsoleResult)result);
     }
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
@@ -2312,8 +2348,14 @@ XConsoleResult XConsoleShell_processLine(XConsoleShell* self,
 #if XCONSOLE_SHELL_DYNAMIC_REGISTER_ON
     ++self->m_commandExecutionDepth;
 #endif
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    outputRedirected = XPrintf_outputPush(&outputScope, xcs_xprintf_write, self);
+#endif
     result = command->handler(self, &self->m_session, argc,
                               self->m_arguments + consumed, command->userData);
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    if (outputRedirected) XPrintf_outputPop(&outputScope);
+#endif
     if (result < XConsoleResult_Failed || result > XConsoleResult_MoreOutput)
         result = XConsoleResult_Failed;
     {
@@ -2818,6 +2860,34 @@ void XConsoleShell_setAuthenticated(XConsoleShell* self, bool authenticated)
 {
     if (self) self->m_session.authenticated = authenticated;
 }
+
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+bool XConsoleShell_setInputLineHandler(
+    XConsoleShell* self, XConsoleShellSession* session,
+    XConsoleShellInputLineHandler handler, void* userData)
+{
+    size_t i;
+    if (!self || !session) return false;
+    if (session != &self->m_session) {
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+        bool belongs = false;
+        for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
+            if (session == &self->m_sessions[i] && self->m_sessions[i].m_open) {
+                belongs = true;
+                break;
+            }
+        }
+        if (!belongs) return false;
+#else
+        (void)i;
+        return false;
+#endif
+    }
+    session->inputLineHandler = handler;
+    session->inputLineHandlerUserData = handler ? userData : NULL;
+    return true;
+}
+#endif
 
 #if XCONSOLE_SHELL_HISTORY_ON
 size_t XConsoleShell_historyCount(const XConsoleShell* self)

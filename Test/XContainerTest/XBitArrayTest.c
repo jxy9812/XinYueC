@@ -137,7 +137,7 @@ static void XBitArrayTest_All(void)
     XBitArrayTest_Stress();
     XPrintf("\n[XBitArray] 全部测试完成\n");
 #endif
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XMenu_XBitArrayTest(XMenu* root)

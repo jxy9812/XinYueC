@@ -166,7 +166,7 @@ static void XHashMapTest_All(void)
     XHashMapTest_Stress();
     XPrintf("\n[XHashMap] 全部测试完成\n");
 #endif
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XHashMapTest(void)

@@ -10,6 +10,7 @@
  * 之后跨进程重启保持不变，避免客户端 known_hosts 指纹频繁变化。
  */
 
+#include "XPrintf.h"
 #include "XConsoleShell_XSsh.h"
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_IO_ON && \
@@ -25,7 +26,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #ifdef XCONSOLE_SHELL_XSSH_DEBUG
-#define XSSH_DBG(...) do { fprintf(stderr, "[XSSH] " __VA_ARGS__); fflush(stderr); } while (0)
+#define XSSH_DBG(...) do { XERROR_PRINTF("[XSSH] " __VA_ARGS__); } while (0)
 #else
 #define XSSH_DBG(...) do { } while (0)
 #endif

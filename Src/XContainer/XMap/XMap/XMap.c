@@ -1,4 +1,5 @@
-﻿#include "XMap.h"
+﻿#include "XPrintf.h"
+#include "XMap.h"
 #include "XVariantTypeOps.h"
 #if XMap_ON
 #include "XString.h"
@@ -647,12 +648,12 @@ XMap* XMap_create_ex(XMemoryType memory, const size_t keyTypeSize, const size_t 
 {
     if (keyTypeSize == 0 || valTypeSize == 0)
     {
-        printf("类型参数不能为0");
+        XPrintf("类型参数不能为0");
         return NULL;
     }
     if (compare == NULL)
     {
-        printf("compare比较函数NULL");
+        XPrintf("compare比较函数NULL");
         return NULL;
     }
     XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap), memory);
@@ -683,12 +684,12 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
         return;
     if (keyTypeSize == 0 || valTypeSize == 0)
     {
-        printf("类型参数不能为0");
+        XPrintf("类型参数不能为0");
         return;
     }
     if (compare == NULL)
     {
-        printf("compare比较函数NULL");
+        XPrintf("compare比较函数NULL");
         return;
     }
     XMapBase_init(this_map, keyTypeSize, valTypeSize, compare, useCow);

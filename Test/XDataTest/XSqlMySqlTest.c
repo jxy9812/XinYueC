@@ -5,6 +5,7 @@
  *             不直接包含 MySQL 客户端头文件。账号密码通过环境变量传入，
  *             避免写入源码和测试日志。
  */
+#include "XPrintf.h"
 #include "XSqlMySqlTest.h"
 #include "XSql.h"
 #include "XByteArray.h"
@@ -50,7 +51,7 @@ static XVariant* xmysql_test_string_value(const char* text)
 static void xmysql_test_print_error(const char* prefix, const XSqlError* error)
 {
     XString* text = error ? XSqlError_text(error) : NULL;
-    printf("MySQL：%s%s%s\n", prefix ? prefix : "错误",
+    XPrintf("MySQL：%s%s%s\n", prefix ? prefix : "错误",
            text && XString_length_base(text) > 0 ? "：" : "",
            text ? XString_toUtf8(text) : "未知错误");
     if (text) XString_delete_base(text);
@@ -59,7 +60,7 @@ static void xmysql_test_print_error(const char* prefix, const XSqlError* error)
 static bool xmysql_test_query_ok(const char* label, XSqlQuery* query)
 {
     bool ok = query && XSqlQuery_isActive(query);
-    printf("MySQL：%s：%s\n", label, ok ? "通过" : "失败");
+    XPrintf("MySQL：%s：%s\n", label, ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("查询错误", error);
@@ -84,7 +85,7 @@ static bool xmysql_test_affected_statement(const XSqlDatabase* database,
     XSqlQuery* query = XSqlDatabase_exec_utf8(database, sql);
     bool ok = xmysql_test_query_ok(label, query)
         && XSqlQuery_numRowsAffected(query) == expected;
-    printf("MySQL：%s影响行数：%s\n", label, ok ? "通过" : "失败");
+    XPrintf("MySQL：%s影响行数：%s\n", label, ok ? "通过" : "失败");
     if (query) XSqlQuery_delete_base(query);
     return ok;
 }
@@ -159,7 +160,7 @@ static bool xmysql_test_prepare_temporary_database(const char* host, int port,
         "SHOW DATABASES LIKE 'xin_sql_mysql_test_database'");
     ok = query && XSqlQuery_isActive(query);
     exists = ok && XSqlQuery_size(query) > 0;
-    printf("MySQL：检查临时测试库：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：检查临时测试库：%s\n", ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("检查临时测试库错误", error);
@@ -170,7 +171,7 @@ static bool xmysql_test_prepare_temporary_database(const char* host, int port,
         query = XSqlDatabase_exec_utf8(admin,
             "CREATE DATABASE `xin_sql_mysql_test_database` CHARACTER SET utf8mb4");
         ok = query && XSqlQuery_isActive(query);
-        printf("MySQL：创建临时测试库：%s\n", ok ? "通过" : "失败");
+        XPrintf("MySQL：创建临时测试库：%s\n", ok ? "通过" : "失败");
         if (!ok && query) {
             XSqlError* error = XSqlQuery_lastError(query);
             xmysql_test_print_error("创建临时测试库错误", error);
@@ -194,7 +195,7 @@ static void xmysql_test_drop_temporary_database(const char* host, int port,
     query = XSqlDatabase_exec_utf8(admin,
         "DROP DATABASE IF EXISTS `xin_sql_mysql_test_database`");
     if (query) {
-        printf("MySQL：删除临时测试库：%s\n",
+        XPrintf("MySQL：删除临时测试库：%s\n",
                XSqlQuery_isActive(query) ? "通过" : "失败");
         if (!XSqlQuery_isActive(query)) {
             XSqlError* error = XSqlQuery_lastError(query);
@@ -233,7 +234,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     pluginAvailable = query && XSqlQuery_isActive(query) && XSqlQuery_size(query) > 0;
     if (query) XSqlQuery_delete_base(query);
     if (!pluginAvailable) {
-        printf("MySQL：caching_sha2_password RSA 测试：服务器未安装插件，跳过\n");
+        XPrintf("MySQL：caching_sha2_password RSA 测试：服务器未安装插件，跳过\n");
         XSqlDatabase_close(admin);
         XSqlDatabase_removeDatabase("xsql-mysql-admin");
         XSqlDatabase_delete_base(admin);
@@ -253,7 +254,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     XSqlDatabase_removeDatabase("xsql-mysql-admin");
     XSqlDatabase_delete_base(admin);
     if (!created) {
-        printf("MySQL：caching_sha2_password RSA 测试账号创建：失败\n");
+        XPrintf("MySQL：caching_sha2_password RSA 测试账号创建：失败\n");
         return false;
     }
 
@@ -280,7 +281,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     } else {
         ok = false;
     }
-    printf("MySQL：caching_sha2_password 无 TLS RSA 认证：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：caching_sha2_password 无 TLS RSA 认证：%s\n", ok ? "通过" : "失败");
     if (!ok && rsaDatabase) {
         XSqlError* error = XSqlDatabase_lastError(rsaDatabase);
         xmysql_test_print_error("RSA 认证错误", error);
@@ -343,7 +344,7 @@ static bool xmysql_test_check_values(XSqlQuery* query)
     nullOk = XSqlQuery_isNull_utf8(query, "note");
     ok = idOk && nameOk && scoreOk && flagOk && payloadOk && noteOk && nullOk;
     if (!ok) {
-        printf("MySQL：字段值诊断：编号=%s，中文=%s，数值=%s，布尔=%s，BLOB=%s，NULL值=%s，NULL判断=%s\n",
+        XPrintf("MySQL：字段值诊断：编号=%s，中文=%s，数值=%s，布尔=%s，BLOB=%s，NULL值=%s，NULL判断=%s\n",
                idOk ? "通过" : "失败", nameOk ? "通过" : "失败",
                scoreOk ? "通过" : "失败", flagOk ? "通过" : "失败",
                payloadOk ? "通过" : "失败", noteOk ? "通过" : "失败",
@@ -399,7 +400,7 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
         XSqlQuery_bindValue(query, 5, categoryId, XSqlParamType_In);
         ok = XSqlQuery_exec(query);
     }
-    printf("MySQL：位置参数插入：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：位置参数插入：%s\n", ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("位置绑定错误", error);
@@ -424,7 +425,7 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
         XSqlQuery_bindValue_utf8(query, ":category", categoryId, XSqlParamType_In);
         ok = XSqlQuery_exec(query);
     }
-    printf("MySQL：命名参数插入：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：命名参数插入：%s\n", ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("命名绑定错误", error);
@@ -454,13 +455,13 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
     ok = ok && xmysql_test_query_ok("查询结果集", query)
         && XSqlQuery_isSelect(query) && XSqlQuery_size(query) == 2
         && xmysql_test_check_values(query);
-    printf("MySQL：NULL、BLOB、Unicode 和字段读取：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：NULL、BLOB、Unicode 和字段读取：%s\n", ok ? "通过" : "失败");
     if (query) {
         ok = ok && XSqlQuery_last(query) && XSqlQuery_previous(query)
             && XSqlQuery_seek(query, 0, false) && XSqlQuery_isValid(query);
-        printf("MySQL：首行、末行、上一行和定位：%s\n", ok ? "通过" : "失败");
+        XPrintf("MySQL：首行、末行、上一行和定位：%s\n", ok ? "通过" : "失败");
         XSqlQuery_finish(query);
-        printf("MySQL：结束结果集：%s\n", !XSqlQuery_isActive(query) ? "通过" : "失败");
+        XPrintf("MySQL：结束结果集：%s\n", !XSqlQuery_isActive(query) ? "通过" : "失败");
         XSqlQuery_delete_base(query);
         query = NULL;
     }
@@ -485,7 +486,7 @@ static bool xmysql_test_transactions(const XSqlDatabase* database, const XString
         if (value) XVariant_delete_base(value);
     }
     if (query) XSqlQuery_delete_base(query);
-    printf("MySQL：事务回滚：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：事务回滚：%s\n", ok ? "通过" : "失败");
     ok = ok && XSqlDatabase_transaction((XSqlDatabase*)database)
         && commitSql && xmysql_test_statement(database, "事务提交插入", XString_toUtf8(commitSql))
         && XSqlDatabase_commit((XSqlDatabase*)database);
@@ -497,7 +498,7 @@ static bool xmysql_test_transactions(const XSqlDatabase* database, const XString
         if (value) XVariant_delete_base(value);
     }
     if (query) XSqlQuery_delete_base(query);
-    printf("MySQL：事务提交：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：事务提交：%s\n", ok ? "通过" : "失败");
     if (sql) XString_delete_base(sql);
     if (insertSql) XString_delete_base(insertSql);
     if (commitSql) XString_delete_base(commitSql);
@@ -552,9 +553,9 @@ static bool xmysql_test_metadata_and_models(const XSqlDatabase* database,
         && relationDisplayColumn && relation;
     bool ok = tableOk && recordOk && temporalMetaOk && sqlTypeIdOk
         && indexOk && escapedOk && qualifiedEscapedOk && stringApiOk;
-    printf("MySQL：表、字段、主键和标识符元数据：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：表、字段、主键和标识符元数据：%s\n", ok ? "通过" : "失败");
     if (!ok) {
-        printf("MySQL：元数据诊断：表列表=%s，字段数=%d，日期类型=%s，主键字段数=%d，标识符转义=%s\n",
+        XPrintf("MySQL：元数据诊断：表列表=%s，字段数=%d，日期类型=%s，主键字段数=%d，标识符转义=%s\n",
                tableOk ? "通过" : "失败", record ? XSqlRecord_count(record) : -1,
                temporalMetaOk ? "通过" : "失败",
                index ? XSqlRecord_count(&index->m_parent) : -1,
@@ -566,13 +567,13 @@ static bool xmysql_test_metadata_and_models(const XSqlDatabase* database,
             && XSqlQueryModel_columnCount(queryModel) == 3;
         modelValue = XSqlQueryModel_data(queryModel, 0, 1, XSqlItemDataRole_Display);
         ok = ok && modelValue && XVariant_type(modelValue) == XVariantType_String;
-        printf("MySQL：查询模型：%s\n", ok ? "通过" : "失败");
+        XPrintf("MySQL：查询模型：%s\n", ok ? "通过" : "失败");
     }
     if (tableModel) {
         XSqlTableModel_setTable(tableModel, plainTable);
         XSqlTableModel_setFilter(tableModel, modelFilter);
         ok = ok && XSqlTableModel_select(tableModel) && XSqlTableModel_rowCount(tableModel) == 2;
-        printf("MySQL：表模型查询和过滤：%s\n", ok ? "通过" : "失败");
+        XPrintf("MySQL：表模型查询和过滤：%s\n", ok ? "通过" : "失败");
     }
     if (relationModel && relation) {
         XSqlRelationalTableModel_setTable(relationModel, plainTable);
@@ -580,11 +581,11 @@ static bool xmysql_test_metadata_and_models(const XSqlDatabase* database,
         ok = ok && XSqlRelationalTableModel_select(relationModel);
         relationValue = XSqlRelationalTableModel_data(relationModel, 0, 6, XSqlItemDataRole_Display);
         ok = ok && relationValue && XVariant_type(relationValue) == XVariantType_String;
-        printf("MySQL：关系表模型：%s\n", ok ? "通过" : "失败");
+        XPrintf("MySQL：关系表模型：%s\n", ok ? "通过" : "失败");
     }
     if (relationModel) {
         XSqlTableModel* editorModel = XSqlRelationalDelegate_createEditorModel(relationModel, 6);
-        printf("MySQL：关系委托编辑模型：%s\n", editorModel ? "通过" : "失败");
+        XPrintf("MySQL：关系委托编辑模型：%s\n", editorModel ? "通过" : "失败");
         ok = ok && editorModel != NULL;
     }
     if (modelValue) XVariant_delete_base(modelValue);
@@ -688,7 +689,7 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     if (sql) XString_delete_base(sql);
     if (!ok) {
         XSqlError* error = model ? XSqlQueryModel_lastError(&model->m_parent) : NULL;
-        printf("MySQL：表模型写回诊断：加载=%s（行数=%d），更新=%s，插入=%s，删除=%s，提交=%s\n",
+        XPrintf("MySQL：表模型写回诊断：加载=%s（行数=%d），更新=%s，插入=%s，删除=%s，提交=%s\n",
                selectOk ? "通过" : "失败", model ? XSqlTableModel_rowCount(model) : -1,
                updateOk ? "通过" : "失败",
                insertOk ? "通过" : "失败", removeOk ? "通过" : "失败",
@@ -700,7 +701,7 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     }
     if (model) XSqlTableModel_delete_base(model);
     if (plainTable) XString_delete_base(plainTable);
-    printf("MySQL：表模型插入、更新和删除写回：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：表模型插入、更新和删除写回：%s\n", ok ? "通过" : "失败");
     return ok;
 }
 
@@ -743,7 +744,7 @@ static bool xmysql_test_temporal_values(const XSqlDatabase* database, const XStr
         XSqlQuery_bindValue(query, 6, timeValue, XSqlParamType_In);
         ok = XSqlQuery_exec(query);
     }
-    printf("MySQL：日期时间对象绑定写入：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：日期时间对象绑定写入：%s\n", ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("日期时间绑定错误", error);
@@ -777,7 +778,7 @@ static bool xmysql_test_temporal_values(const XSqlDatabase* database, const XStr
             && readWideTime && XVariant_type(readWideTime) == XVariantType_String
             && wideTimeUtf8 && strncmp(wideTimeUtf8, "838:59:59", 9) == 0;
     }
-    printf("MySQL：DATE/DATETIME 类型读取、TIME 字符串范围兼容：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：DATE/DATETIME 类型读取、TIME 字符串范围兼容：%s\n", ok ? "通过" : "失败");
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("日期时间读取错误", error);
@@ -826,7 +827,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         && XSqlDriver_hasFeature_base(driver, XSqlDriverFeature_MultipleResultSets)
         && !XSqlDriver_hasFeature_base(driver, XSqlDriverFeature_CancelQuery)
         && !XSqlDriver_hasFeature_base(driver, XSqlDriverFeature_BatchOperations);
-    printf("MySQL：服务端预处理、多结果和 Qt 能力声明：%s\n",
+    XPrintf("MySQL：服务端预处理、多结果和 Qt 能力声明：%s\n",
            featureOk ? "通过" : "失败");
 
     query = XSqlDatabase_exec_utf8(database, "SELECT @@session.time_zone AS session_time_zone");
@@ -835,7 +836,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     timeZoneOk = text
         && XString_equals_utf8(text, "+00:00", XChar_CaseSensitive);
     featureOk = featureOk && timeZoneOk;
-    printf("MySQL：Qt 6.8 UTC 会话时区：%s\n", timeZoneOk ? "通过" : "失败");
+    XPrintf("MySQL：Qt 6.8 UTC 会话时区：%s\n", timeZoneOk ? "通过" : "失败");
     if (text) { XString_delete_base(text); text = NULL; }
     if (value) { XVariant_delete_base(value); value = NULL; }
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
@@ -847,7 +848,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         value = XSqlQuery_value(query, 0);
     featureOk = featureOk && value && XVariant_type(value) == XVariantType_Int32
         && XVariant_toInt32(value) == 1;
-    printf("MySQL：二进制预处理读取 TINYINT：%s\n", featureOk ? "通过" : "失败");
+    XPrintf("MySQL：二进制预处理读取 TINYINT：%s\n", featureOk ? "通过" : "失败");
     if (value) { XVariant_delete_base(value); value = NULL; }
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
     if (sql) { XString_delete_base(sql); sql = NULL; }
@@ -886,7 +887,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     text = value ? XVariant_toString(value) : NULL;
     featureOk = featureOk && text
         && XString_equals_utf8(text, "123.456789012345678901234567890", XChar_CaseSensitive);
-    printf("MySQL：DECIMAL 数值精度策略和高精度保持：%s\n", featureOk ? "通过" : "失败");
+    XPrintf("MySQL：DECIMAL 数值精度策略和高精度保持：%s\n", featureOk ? "通过" : "失败");
     if (text) XString_delete_base(text);
     if (value) XVariant_delete_base(value);
     if (query) { XSqlQuery_delete_base(query); query = NULL; }
@@ -927,7 +928,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     } else {
         featureOk = false;
     }
-    printf("MySQL：ValuesAsRows/ValuesAsColumns 批量回退：%s\n", featureOk ? "通过" : "失败");
+    XPrintf("MySQL：ValuesAsRows/ValuesAsColumns 批量回退：%s\n", featureOk ? "通过" : "失败");
     if (query) XSqlQuery_delete_base(query);
     if (sql) XString_delete_base(sql);
     if (names) XVariantList_delete_base(names);
@@ -960,7 +961,7 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
             && XSqlQuery_numRowsAffected(query) == -1;
         emptyRecord = query ? XSqlQuery_record(query) : NULL;
         multiResultOk = multiResultOk && emptyRecord && XSqlRecord_count(emptyRecord) == 0;
-        printf("MySQL：多语句多结果集及结束状态：%s\n", multiResultOk ? "通过" : "失败");
+        XPrintf("MySQL：多语句多结果集及结束状态：%s\n", multiResultOk ? "通过" : "失败");
         featureOk = featureOk && multiResultOk;
         if (emptyRecord) XSqlRecord_delete_base(emptyRecord);
         if (query) XSqlQuery_delete_base(query);
@@ -987,7 +988,7 @@ static bool xmysql_test_local_infile(XSqlDatabase* database)
 
     options = getenv("XMYSQL_TEST_OPTIONS");
     if (!options || !strstr(options, "MYSQL_OPT_LOCAL_INFILE=1")) {
-        printf("MySQL：LOAD DATA LOCAL INFILE：未显式启用，跳过\n");
+        XPrintf("MySQL：LOAD DATA LOCAL INFILE：未显式启用，跳过\n");
         return true;
     }
     variableQuery = XSqlDatabase_exec_utf8(database,
@@ -996,7 +997,7 @@ static bool xmysql_test_local_infile(XSqlDatabase* database)
         variable = XSqlQuery_value(variableQuery, 1);
     variableText = variable ? XVariant_toString(variable) : NULL;
     if (!variableText || !XString_equals_utf8(variableText, "ON", XChar_CaseInsensitive)) {
-        printf("MySQL：LOAD DATA LOCAL INFILE：服务器未启用，跳过\n");
+        XPrintf("MySQL：LOAD DATA LOCAL INFILE：服务器未启用，跳过\n");
         if (variableText) XString_delete_base(variableText);
         if (variable) XVariant_delete_base(variable);
         if (variableQuery) XSqlQuery_delete_base(variableQuery);
@@ -1033,7 +1034,7 @@ static bool xmysql_test_local_infile(XSqlDatabase* database)
     if (query && XSqlQuery_first(query)) value = XSqlQuery_value(query, 0);
     valueText = value ? XVariant_toString(value) : NULL;
     ok = ok && valueText && XString_equals_utf8(valueText, "local-infile-row", XChar_CaseSensitive);
-    printf("MySQL：LOAD DATA LOCAL INFILE：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：LOAD DATA LOCAL INFILE：%s\n", ok ? "通过" : "失败");
     if (query) XSqlQuery_delete_base(query);
     if (sql) XString_delete_base(sql);
     if (valueText) XString_delete_base(valueText);
@@ -1078,12 +1079,12 @@ bool XSqlMySqlTest_run(void)
     bool ok = true;
 
     if (!user || !user[0]) {
-        printf("MySQL：未配置服务器，已跳过真实联调。\n");
-        printf("MySQL：请设置 XMYSQL_TEST_HOST、XMYSQL_TEST_PORT、XMYSQL_TEST_DATABASE、XMYSQL_TEST_USER、XMYSQL_TEST_PASSWORD。未设置数据库时会自动创建临时测试库。\n");
+        XPrintf("MySQL：未配置服务器，已跳过真实联调。\n");
+        XPrintf("MySQL：请设置 XMYSQL_TEST_HOST、XMYSQL_TEST_PORT、XMYSQL_TEST_DATABASE、XMYSQL_TEST_USER、XMYSQL_TEST_PASSWORD。未设置数据库时会自动创建临时测试库。\n");
         return true;
     }
-    printf("\n开始---------------MySQL/MariaDB 联调测试---------------\n");
-    printf("MySQL：服务器 %s:%d，数据库 %s，用户 %s\n", host, xmysql_test_port(), databaseName, user);
+    XPrintf("\n开始---------------MySQL/MariaDB 联调测试---------------\n");
+    XPrintf("MySQL：服务器 %s:%d，数据库 %s，用户 %s\n", host, xmysql_test_port(), databaseName, user);
     database = XSqlDatabase_addDatabase(XSqlDriverType_MySql, "xsql-mysql-live");
     drivers = XSqlDatabase_drivers();
     driver = database ? XSqlDatabase_driver(database) : NULL;
@@ -1100,7 +1101,7 @@ bool XSqlMySqlTest_run(void)
         && XSqlDriver_driverType(driver) == XSqlDriverType_MySql
         && XString_equals_utf8(driverName, "QMYSQL", XChar_CaseSensitive)
         && hostText && databaseText && userText && passwordText && optionsText && table && category;
-    printf("MySQL：驱动注册和连接管理：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：驱动注册和连接管理：%s\n", ok ? "通过" : "失败");
     if (ok && useTemporaryDatabase)
         ok = xmysql_test_prepare_temporary_database(host, xmysql_test_port(), user,
                                                      password, &temporaryDatabaseCreated);
@@ -1113,7 +1114,7 @@ bool XSqlMySqlTest_run(void)
         XSqlDatabase_setConnectOptions(database, optionsText);
         ok = XSqlDatabase_open(database);
     }
-    printf("MySQL：打开连接：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：打开连接：%s\n", ok ? "通过" : "失败");
     if (!ok && database) {
         XSqlError* error = XSqlDatabase_lastError(database);
         xmysql_test_print_error("连接错误", error);
@@ -1143,7 +1144,7 @@ bool XSqlMySqlTest_run(void)
     ok = ok && xmysql_test_temporal_values(database, table);
     ok = ok && xmysql_test_extended_features(database, table);
     ok = ok && xmysql_test_local_infile(database);
-    printf("MySQL：完整联调结果：%s\n", ok ? "通过" : "失败");
+    XPrintf("MySQL：完整联调结果：%s\n", ok ? "通过" : "失败");
 
 cleanup:
     if (database && XSqlDatabase_isOpen(database)) {
@@ -1166,6 +1167,6 @@ cleanup:
     if (optionsText) XString_delete_base(optionsText);
     if (table) XString_delete_base(table);
     if (category) XString_delete_base(category);
-    printf("结束---------------MySQL/MariaDB 联调测试---------------\n\n");
+    XPrintf("结束---------------MySQL/MariaDB 联调测试---------------\n\n");
     return ok;
 }

@@ -43,7 +43,7 @@ static void XQueueBasicTest(void)
     XPrintf("\n剩余 empty=%d count=%zu (期望:1/0)\n",
         (int)XQueue_empty_base(q), XQueue_count_base(q));
     XQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 2. 移动语义 push_move / enqueue_move -------- */
@@ -63,7 +63,7 @@ static void XQueueMoveTest(void)
     }
     XPrintf("\n");
     XQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* -------- 3. 大量数据 / 稳定性 -------- */
@@ -85,7 +85,7 @@ static void XQueueBulkTest(void)
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XQueue_empty_base(q));
     XQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 #endif /* XQueue_ON */
 
@@ -126,7 +126,7 @@ static void XPriorityQueueBasicTest(void)
     XPrintf("\n");
     XPriorityQueue_delete_base(q);
     XVector_delete_base(v);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* 小顶堆（升序优先） */
@@ -146,7 +146,7 @@ static void XPriorityQueueAscTest(void)
     }
     XPrintf("\n");
     XPriorityQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 /* remove(value,n) 语义 */
@@ -168,7 +168,7 @@ static void XPriorityQueueRemoveTest(void)
     }
     XPrintf("\n");
     XPriorityQueue_delete_base(q);
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 #endif /* XPriorityQueue_ON */
 
@@ -182,7 +182,7 @@ static void XQueueAllTest(void)
     XQueueBulkTest();
 #endif
     XPrintf("========== XQueue 全部测试结束 ==========\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 static void XPriorityQueueAllTest(void)
@@ -194,7 +194,7 @@ static void XPriorityQueueAllTest(void)
     XPriorityQueueRemoveTest();
 #endif
     XPrintf("========== XPriorityQueue 全部测试结束 ==========\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XMenu_XQueueTest(XMenu* root)

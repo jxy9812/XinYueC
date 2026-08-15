@@ -11,7 +11,7 @@
 static void XPrintStr(const char* label, XString* s)
 {
 	XPrintf("%s", label);
-	if (s) { XPrintf_2(s); printf("\n"); }
+	if (s) { XPrintf_2(s); XPrintf("\n"); }
 	else XPrintf("NULL\n");
 }
 
@@ -775,11 +775,11 @@ static void XStringIteratorTest(void)
 			while (!XString_iterator_equality(&it, &endIt))
 			{
 				XChar ch = *(XChar*)XString_iterator_data(&it);
-				printf("%c ", (char)XChar_unicode(ch));
+				XPrintf("%c ", (char)XChar_unicode(ch));
 				XString_iterator_add(s, &it);
 			}
 		}
-		printf("\n");
+		XPrintf("\n");
 		XPrintf("反向: ");
 		{
 			XString_reverse_iterator it = XString_rbegin(s);
@@ -787,11 +787,11 @@ static void XStringIteratorTest(void)
 			while (!XString_reverse_iterator_equality(&it, &endIt))
 			{
 				XChar ch = *(XChar*)XString_reverse_iterator_data(&it);
-				printf("%c ", (char)XChar_unicode(ch));
+				XPrintf("%c ", (char)XChar_unicode(ch));
 				XString_reverse_iterator_add(s, &it);
 			}
 		}
-		printf("\n");
+		XPrintf("\n");
 		XString_delete_base(s);
 	}
 	// 空串迭代
@@ -1218,7 +1218,7 @@ static void XStringAllTest(void)
     XStringSafetyTest();
     XStringViewDelegationTest();
     XPrintf("========== XString全部测试结束 ==========\n");
-    XCoreApplication_quit();
+    //XCoreApplication_quit();
 }
 
 void XMenu_XStringTest(XMenu* root)

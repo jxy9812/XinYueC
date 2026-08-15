@@ -3,6 +3,7 @@
  * @brief      HTTP 核心数据模型和增量解析测试。
  */
 
+#include "XPrintf.h"
 #include "XHttpTest.h"
 
 #include "XHttpHeaders.h"
@@ -1859,7 +1860,7 @@ static void xhttp_test_manager_local(XVariant* data)
     XClass_delete_base((XClass*)reply);
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
-    printf("XNetworkAccessManager 本地 HTTP 测试通过\n");
+    XPrintf("XNetworkAccessManager 本地 HTTP 测试通过\n");
 }
 
 static void xhttp_test_manager_redirect(XVariant* data)
@@ -1887,7 +1888,7 @@ static void xhttp_test_manager_redirect(XVariant* data)
     XClass_delete_base((XClass*)reply);
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
-    printf("XNetworkAccessManager 重定向测试通过\n");
+    XPrintf("XNetworkAccessManager 重定向测试通过\n");
 }
 
 /* 本地服务端首次返回 401，认证信号同步填写凭据后管理器必须在新连接上重发。 */
@@ -1921,7 +1922,7 @@ static void xhttp_test_manager_authentication(XVariant* data)
     XClass_delete_base((XClass*)reply);
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
-    printf("XNetworkAccessManager Basic 认证重发测试通过\n");
+    XPrintf("XNetworkAccessManager Basic 认证重发测试通过\n");
 }
 
 /* 服务端同时给出 Basic 和 Digest 时，管理器必须选择优先级更高的 Digest 挑战。 */
@@ -1955,7 +1956,7 @@ static void xhttp_test_manager_digest_authentication(XVariant* data)
     XClass_delete_base((XClass*)reply);
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
-    printf("XNetworkAccessManager Digest 优先认证重发测试通过\n");
+    XPrintf("XNetworkAccessManager Digest 优先认证重发测试通过\n");
 }
 
 /* Digest 条件不满足时必须回退到同一响应中可用的 Basic 挑战。 */
@@ -1989,7 +1990,7 @@ static void xhttp_test_manager_authentication_fallback(XVariant* data)
     XClass_delete_base((XClass*)reply);
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
-    printf("XNetworkAccessManager Basic 回退认证测试通过\n");
+    XPrintf("XNetworkAccessManager Basic 回退认证测试通过\n");
 }
 
 /* 本地服务按 NTLM 空挑战、Type 2 挑战、最终成功的顺序验证管理器两阶段重发。 */
@@ -2037,7 +2038,7 @@ static void xhttp_test_manager_ntlm_authentication(XVariant* data)
     XClass_delete_base((XClass*)request);
     XClass_delete_base((XClass*)manager);
     XClass_delete_base((XClass*)server);
-    printf("XNetworkAccessManager NTLMv2 两阶段认证测试通过\n");
+    XPrintf("XNetworkAccessManager NTLMv2 两阶段认证测试通过\n");
 }
 
 static void xhttp_test_all(XVariant* data)
@@ -2077,7 +2078,7 @@ static void xhttp_test_all(XVariant* data)
     xhttp_test_manager_ssl_api();
     xhttp_test_request_factory_and_rest();
     xhttp_test_manager_ntlm_authentication(NULL);
-    printf("XHttp 本地核心行为测试通过\n");
+    XPrintf("XHttp 本地核心行为测试通过\n");
 }
 
 void XHttpTest_registerAll(XMenu* root)

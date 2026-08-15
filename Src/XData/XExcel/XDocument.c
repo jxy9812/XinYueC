@@ -3,6 +3,7 @@
  * @brief      XDocument 文档主类实现（对标 QXlsx::Document）
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XPrintf.h"
 #include "XDocument.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -1632,30 +1633,30 @@ static void parse_sheet_names_from_zip(const char* zipPath, SheetNameList* out)
     XString* zipPathStr = XString_create_utf8(zipPath);
     XZipReader* zip = XZipReader_create(zipPathStr);
     XString_delete_base(zipPathStr);
-    if (!zip) { printf("[LOAD_DBG] XZipReader_create failed\n"); return; }
+    if (!zip) { XPrintf("[LOAD_DBG] XZipReader_create failed\n"); return; }
 
     /* 调试：列出 ZIP 中所有文件 */
     XStringList* paths = XZipReader_filePaths(zip);
     if (paths) {
         size_t pc = XStringList_size_base(paths);
-        printf("[LOAD_DBG] zip contains %zu files:\n", pc);
+        XPrintf("[LOAD_DBG] zip contains %zu files:\n", pc);
         for (size_t pi = 0; pi < pc && pi < 20; pi++) {
             XString* p = (XString*)XStringList_at_base(paths, pi);
-            if (p) printf("[LOAD_DBG]   [%zu] %s\n", pi, XString_toUtf8(p));
+            if (p) XPrintf("[LOAD_DBG]   [%zu] %s\n", pi, XString_toUtf8(p));
         }
     } else {
-        printf("[LOAD_DBG] filePaths returned NULL\n");
+        XPrintf("[LOAD_DBG] filePaths returned NULL\n");
     }
 
     XString* wbPathStr = XString_create_utf8("xl/workbook.xml");
     XByteArray* wbXml = XZipReader_fileData(zip, wbPathStr);
     XString_delete_base(wbPathStr);
     XZipReader_delete(zip);
-    if (!wbXml) { printf("[LOAD_DBG] workbook.xml not found in zip\n"); return; }
+    if (!wbXml) { XPrintf("[LOAD_DBG] workbook.xml not found in zip\n"); return; }
 
     char* xml = (char*)XByteArray_data(wbXml);
     size_t xmlLen = XByteArray_size_base(wbXml);
-    printf("[LOAD_DBG] workbook.xml len=%zu content=%.200s\n", xmlLen, xml ? xml : "NULL");
+    XPrintf("[LOAD_DBG] workbook.xml len=%zu content=%.200s\n", xmlLen, xml ? xml : "NULL");
     if (xml && xmlLen > 0) {
         /*
          * XByteArray 内部缓冲可能没有为 '\0' 预留空间，直接写 xml[xmlLen]

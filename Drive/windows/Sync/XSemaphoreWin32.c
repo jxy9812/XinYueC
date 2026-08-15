@@ -1,4 +1,5 @@
 ﻿#ifdef _WIN32
+#include "XPrintf.h"
 #include "XSemaphore.h"
 #include "XMemory.h"
 #include <windows.h>
@@ -25,7 +26,7 @@ void XSemaphore_init(XSemaphore* sem, int32_t initial, int32_t maximum) {
         NULL                // 匿名信号量
     );
     if (sem->handle == NULL) {
-        printf("XSemaphore create failed: %d\n", GetLastError());
+        XPrintf("XSemaphore create failed: %d\n", GetLastError());
     }
 }
 

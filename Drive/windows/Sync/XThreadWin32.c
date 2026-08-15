@@ -1,4 +1,5 @@
 ﻿#ifdef _WIN32
+#include "XPrintf.h"
 #include"XThread.h"
 #include"XEvent.h"
 #include"XHashSet.h"
@@ -105,7 +106,7 @@ XThread_Priority XThread_priority(const XThread* thread)
     int currentWinPriority = GetThreadPriority(GetCurrentThread());
     if (currentWinPriority == THREAD_PRIORITY_ERROR_RETURN) {
         // 查询失败，返回默认值
-        printf("Failed to get main thread priority: %d\n", GetLastError());
+        XPrintf("Failed to get main thread priority: %d\n", GetLastError());
         return XThread_NormalPriority;
     }
 
@@ -213,14 +214,14 @@ void XThread_setPriority(XThread* Object, XThread_Priority priority)
     if (Object->m_isMainThread) {
         // 主线程：使用 GetCurrentThread() 获取当前线程的伪句柄
         if (!SetThreadPriority(GetCurrentThread(), winPriority)) {
-            printf("Failed to set main thread priority: %d\n", GetLastError());
+            XPrintf("Failed to set main thread priority: %d\n", GetLastError());
         }
     }
     else {
         // 工作线程：使用已保存的 m_handle
         if (Object->m_handle != NULL) {
             if (!SetThreadPriority(Object->m_handle, winPriority)) {
-                printf("Failed to set worker thread priority: %d\n", GetLastError());
+                XPrintf("Failed to set worker thread priority: %d\n", GetLastError());
             }
         }
     }

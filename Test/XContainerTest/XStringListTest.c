@@ -9,7 +9,7 @@
 
 static void XFor_each_XString(XString* string, void* args)
 {
-	printf("%s ", XString_c_str(string));
+	XPrintf("%s ", XString_c_str(string));
 }
 
 /**
@@ -480,7 +480,7 @@ void XStringListQtAlignTest()
 	}
 
 	XPrintf_3("\n========== XStringList Qt对齐测试结束 ==========\n");
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 /**
@@ -511,7 +511,7 @@ void XStringListTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XStringListTest(XMenu* root)

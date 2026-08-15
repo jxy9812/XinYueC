@@ -78,6 +78,10 @@ typedef struct XConsoleShellSession {
     void* userData;                                   /**< 会话私有数据；不释放。 */
     bool authenticated;                               /**< 是否已通过产品认证。 */
     bool cancelled;                                   /**< 当前命令是否取消。 */
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+    XConsoleShellInputLineHandler inputLineHandler;   /**< 后续整行输入处理器；NULL 表示走普通命令解析。 */
+    void* inputLineHandlerUserData;                   /**< 后续整行输入处理器上下文；Shell 不释放。 */
+#endif
 #if XCONSOLE_SHELL_LOGIN_ON
     char userName[XCONSOLE_SHELL_LOGIN_NAME_SIZE];    /**< 当前登录用户名；未登录时为空字符串。 */
     uint32_t uid;                                     /**< 当前账户 UID；未登录时为 UINT32_MAX。 */
@@ -513,6 +517,24 @@ XConsoleShellSession* XConsoleShell_session(XConsoleShell* self);
  * @return     无。self 为 NULL 时不修改任何状态。
  */
 void XConsoleShell_setAuthenticated(XConsoleShell* self, bool authenticated);
+
+#if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
+/**
+ * @brief 设置或清除当前会话的后续整行输入处理器。
+ * @details
+ * 处理器启用后，后续完整输入行会在普通命令解析前转交给 handler，适合
+ * SSH/Telnet 菜单、密码外的交互式子状态等非阻塞输入场景。handler 为 NULL
+ * 时清除处理器及其上下文。Shell 只借用 handler 和 userData。
+ * @param self Shell 对象；不能为空。
+ * @param session self 管理的会话；不能为空，默认会话或已打开附加会话均可。
+ * @param handler 行处理器；可为 NULL，表示清除当前处理器。
+ * @param userData handler 的上下文；handler 为 NULL 时忽略并清除。
+ * @return 设置成功返回 true；参数无效或会话不属于 self 返回 false。
+ */
+bool XConsoleShell_setInputLineHandler(
+    XConsoleShell* self, XConsoleShellSession* session,
+    XConsoleShellInputLineHandler handler, void* userData);
+#endif
 
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
 /**

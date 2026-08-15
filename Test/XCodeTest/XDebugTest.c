@@ -24,7 +24,7 @@ void XDebugTest()
 	XInfo_sprintf("Info");
 	XInfo_sprintf("Info");
 	XInfo_end_stream; // 释放
-	XCoreApplication_quit();
+	//XCoreApplication_quit();
 }
 
 void XMenu_XDebugTest(XMenu* root)

@@ -8,10 +8,10 @@
 #include <assert.h>
 // 辅助函数：打印缓冲区状态
 static void printBufferState(XRingChunk * chunk, const char* msg) {
-    printf("\n--- %s ---\n", msg);
-    printf("Capacity (logical): %zu\n", XRingChunk_capacity_base(chunk));
-    printf("Size (available): %zu\n", XRingChunk_available(chunk));
-    printf("Read Pos: %zu, Write Pos: %zu\n", chunk->m_readPos, chunk->m_writePos);
+    XPrintf("\n--- %s ---\n", msg);
+    XPrintf("Capacity (logical): %zu\n", XRingChunk_capacity_base(chunk));
+    XPrintf("Size (available): %zu\n", XRingChunk_available(chunk));
+    XPrintf("Read Pos: %zu, Write Pos: %zu\n", chunk->m_readPos, chunk->m_writePos);
 }
 
 // 辅助函数：验证缓冲区内容
@@ -19,12 +19,12 @@ static void assertBufferContent(XRingChunk* chunk, const char* expected, size_t 
     char* buffer = (char*)malloc(len);
     size_t read = XRingChunk_peek(chunk, buffer, len);
     if (read != len || memcmp(buffer, expected, len) != 0) {
-        printf("ERROR: Content mismatch!\n");
-        printf("Expected: ");
-        for (size_t i = 0; i < len; i++) printf("%02x ", (unsigned char)expected[i]);
-        printf("\nGot:      ");
-        for (size_t i = 0; i < read; i++) printf("%02x ", (unsigned char)buffer[i]);
-        printf("\n");
+        XPrintf("ERROR: Content mismatch!\n");
+        XPrintf("Expected: ");
+        for (size_t i = 0; i < len; i++) XPrintf("%02x ", (unsigned char)expected[i]);
+        XPrintf("\nGot:      ");
+        for (size_t i = 0; i < read; i++) XPrintf("%02x ", (unsigned char)buffer[i]);
+        XPrintf("\n");
         XFree_System(buffer);
         exit(1);
     }
@@ -32,12 +32,12 @@ static void assertBufferContent(XRingChunk* chunk, const char* expected, size_t 
 }
 void XRingChunkTest()
 {
-    printf("=== Starting XRingChunk Comprehensive Test ===\n");
+    XPrintf("=== Starting XRingChunk Comprehensive Test ===\n");
 
     // ==============================
     // 测试 1: 基本创建、写入、读取
     // ==============================
-    printf("\n[Test 1: Basic Create, Write, Read]\n");
+    XPrintf("\n[Test 1: Basic Create, Write, Read]\n");
     XRingChunk* chunk = XRingChunk_create(10); // 逻辑容量10字节
     assert(chunk != NULL);
 
@@ -57,7 +57,7 @@ void XRingChunkTest()
     // ========================================
 // 测试 2: 环绕写入 (Write Wrap-Around)
 // ========================================
-    printf("\n[Test 2: Write Wrap-Around]\n");
+    XPrintf("\n[Test 2: Write Wrap-Around]\n");
     chunk = XRingChunk_create(5); // 逻辑容量5字节
 
     // 写入4字节，使writePos=4
@@ -84,7 +84,7 @@ void XRingChunkTest()
     // ========================================
     // 测试 3: 环绕读取 (Read Wrap-Around)
     // ========================================
-    printf("\n[Test 3: Read Wrap-Around]\n");
+    XPrintf("\n[Test 3: Read Wrap-Around]\n");
     chunk = XRingChunk_create(5);
 
     // 先填满缓冲区
@@ -111,7 +111,7 @@ void XRingChunkTest()
     // ========================================
     // 测试 4: Peek 和 Skip 功能
     // ========================================
-    printf("\n[Test 4: Peek and Skip]\n");
+    XPrintf("\n[Test 4: Peek and Skip]\n");
     chunk = XRingChunk_create(10);
     XRingChunk_write(chunk, "PeekTest", 8);
 
@@ -135,7 +135,7 @@ void XRingChunkTest()
     // ========================================
     // 测试 5: Mark 和 ResetToMark 功能
     // ========================================
-    printf("\n[Test 5: Mark and ResetToMark]\n");
+    XPrintf("\n[Test 5: Mark and ResetToMark]\n");
     chunk = XRingChunk_create(10);
     XRingChunk_write(chunk, "MarkMe", 6);
 
@@ -163,7 +163,7 @@ void XRingChunkTest()
 
     // 测试 6: Unget 功能 (修正版 - Simple Case)
     // ========================================
-    printf("\n[Test 6: Unget - Simple Case (Fixed)]\n");
+    XPrintf("\n[Test 6: Unget - Simple Case (Fixed)]\n");
      chunk = XRingChunk_create(20); // 给足空间避免边界问题
     XRingChunk_write(chunk, "UngetSimple", 11);
 
@@ -192,7 +192,7 @@ void XRingChunkTest()
     // ===================================================
     // 测试 7: Unget 失败情况 (展示其设计局限性)
     // ===================================================
-    printf("\n[Test 7: Unget - Limitation (When readPos is small)]\n");
+    XPrintf("\n[Test 7: Unget - Limitation (When readPos is small)]\n");
     // 创建一个缓冲区，并让 readPos 变得很小
     chunk = XRingChunk_create(10);
     XRingChunk_write(chunk, "SmallReadPos", 13); // 写入13字节
@@ -204,7 +204,7 @@ void XRingChunkTest()
     // 现在尝试 unget 1个字节，应该成功，因为 12 >= 1
     size_t ungot = XRingChunk_unget(chunk, "X", 1); // 数据内容不重要
     assert(ungot == 1);
-    printf("  -> Unget succeeded when readPos=12.\n");
+    XPrintf("  -> Unget succeeded when readPos=12.\n");
 
     // 再读取1个字节，让 readPos 变成 13
     XRingChunk_read(chunk, readBuf, 1);
@@ -224,11 +224,11 @@ void XRingChunkTest()
     // 尝试 unget 4个字节。这应该失败，因为 3 < 4.
     ungot = XRingChunk_unget(chunk, "DATA", 4);
     if (ungot == 0) {
-        printf("  -> UNGET CORRECTLY FAILED! Because readPos(3) < size(4).\n");
-        printf("  -> This is the known limitation of the current simple unget implementation.\n");
+        XPrintf("  -> UNGET CORRECTLY FAILED! Because readPos(3) < size(4).\n");
+        XPrintf("  -> This is the known limitation of the current simple unget implementation.\n");
     }
     else {
-        printf("  -> Unexpectedly succeeded.\n");
+        XPrintf("  -> Unexpectedly succeeded.\n");
     }
 
     XRingChunk_delete_base(chunk);
@@ -237,7 +237,7 @@ void XRingChunkTest()
     // ========================================
     // 测试 8: 边界情况 - 零大小操作
     // ========================================
-    printf("\n[Test 8: Edge Cases - Zero Size Operations]\n");
+    XPrintf("\n[Test 8: Edge Cases - Zero Size Operations]\n");
     chunk = XRingChunk_create(5);
 
     assert(XRingChunk_write(chunk, "test", 0) == 0);
@@ -247,7 +247,7 @@ void XRingChunkTest()
 
     XRingChunk_delete_base(chunk);
 
-    printf("\n=== All Tests Completed Successfully! ===\n");
+    XPrintf("\n=== All Tests Completed Successfully! ===\n");
 	XCoreApplication_quit();
 }
 void XMenu_XRingChunkTest(XMenu* root)

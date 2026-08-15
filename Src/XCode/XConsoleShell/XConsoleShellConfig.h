@@ -299,6 +299,21 @@
      !XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON)
 #endif
 
+/**
+ * @brief XPrintf 远程输出重定向代码开关。
+ * @details
+ * 启用 SSH、Telnet、TCP、串口或通用 I/O 后端之一时，Shell 命令中的
+ * XPrintf 输出可能需要发送到当前传输端，因此编译输出作用域和线程局部
+ * 输出目标。所有远程后端关闭时，该宏为 0，XPrintf 不引入这部分代码。
+ */
+#define XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON \
+    (XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON || \
+     XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON || \
+     XCONSOLE_SHELL_XTCPSOCKET_BACKEND_ON || \
+     XCONSOLE_SHELL_XSERIALPORT_BACKEND_ON || \
+     XCONSOLE_SHELL_XIODEVICE_BACKEND_ON || \
+     XCONSOLE_SHELL_XTCPSERVER_RAW_BACKEND_ON)
+
 /** @brief 多会话固定槽位开关；开启后可管理默认会话之外的连接。 */
 #ifndef XCONSOLE_SHELL_MULTI_SESSION_ON
 #define XCONSOLE_SHELL_MULTI_SESSION_ON XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON

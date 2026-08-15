@@ -1,4 +1,5 @@
-﻿#include "XCoreApplication.h"
+﻿#include "XPrintf.h"
+#include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XEvent.h"
@@ -337,13 +338,13 @@ int XCoreApplication_exec()
 
     XThread* currentThread = XThread_currentThread();
     if (currentThread != g_mainThread) {
-        fprintf(stderr, "XCoreApplication::exec: 必须在主线程中调用\n");
+        XERROR_PRINTF( "XCoreApplication::exec: 必须在主线程中调用\n");
         return -1;
     }
 
     XThreadData* data = XObject_threadData((XObject*)app);
     if (data && XStack_size_base(&data->m_eventLoops) > 0) {
-        fprintf(stderr, "XCoreApplication::exec: 事件循环已在运行\n");
+        XERROR_PRINTF( "XCoreApplication::exec: 事件循环已在运行\n");
         return -1;
     }
 
@@ -595,7 +596,7 @@ void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
     if (!data) return;
 
     if (data->m_eventDispatcher) {
-        fprintf(stderr, "XCoreApplication::setEventDispatcher: 事件分发器已存在，无法替换\n");
+        XERROR_PRINTF( "XCoreApplication::setEventDispatcher: 事件分发器已存在，无法替换\n");
         return;
     }
 

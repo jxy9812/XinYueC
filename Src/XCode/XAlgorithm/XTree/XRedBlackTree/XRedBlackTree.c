@@ -1,4 +1,5 @@
-﻿#include"XRedBlackTree.h"
+﻿#include "XPrintf.h"
+#include"XRedBlackTree.h"
 #include"XClass.h"
 #include"XBalancedBinaryTree.h"
 #include<string.h>
@@ -478,7 +479,7 @@ XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XComp
 	bool flag = XBBTree_insertAlign(this_root, insertNode, compare, lessRule, NULL, 0, memory);//将数据插入到节点，并且链接
 	if (!flag)
 	{
-		printf("节点插入失败\n");
+		XPrintf("节点插入失败\n");
 		XTreeNode_delete((XTreeNode*)insertNode, memory); // 插入失败时释放节点
 		return NULL;
 	}

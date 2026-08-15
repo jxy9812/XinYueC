@@ -143,7 +143,7 @@ void XVariantListTest_stringList()
 		XVariant_delete_base(var);
 		for_each_iterator(list, XStringList, it)
 		{
-			printf("%s \n", XString_c_str(XStringList_iterator_data(&it)));
+			XPrintf("%s \n", XString_c_str(XStringList_iterator_data(&it)));
 		}
 		XStringList_delete_base(list);
 	}

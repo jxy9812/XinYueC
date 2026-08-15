@@ -7,21 +7,21 @@
 #include"XPrintf.h"
 #include <assert.h>
 static void print_buffer_status(const char* msg, const XRingBuffer* buffer) {
-	printf("\n--- %s ---\n", msg);
-	printf("Total Size (available): %zu\n", XRingBuffer_available(buffer));
-	printf("Current Read Chunk Index: %zu\n", buffer->m_currentReadChunk);
-	printf("Current Write Chunk Index: %zu\n", buffer->m_currentWriteChunk);
+	XPrintf("\n--- %s ---\n", msg);
+	XPrintf("Total Size (available): %zu\n", XRingBuffer_available(buffer));
+	XPrintf("Current Read Chunk Index: %zu\n", buffer->m_currentReadChunk);
+	XPrintf("Current Write Chunk Index: %zu\n", buffer->m_currentWriteChunk);
 }
 
 void XRingBufferTest()
 {
 	{
-        printf("=== Starting XRingBuffer Comprehensive Test ===\n");
+        XPrintf("=== Starting XRingBuffer Comprehensive Test ===\n");
 
         // ========================================
         // Test 1: Basic Create, Write, Read
         // ========================================
-        printf("\n[Test 1: Basic Create, Write, Read]\n");
+        XPrintf("\n[Test 1: Basic Create, Write, Read]\n");
         XRingBuffer* buffer = XRingBuffer_create(10); // Small chunk size to force wrap-around quickly
         assert(buffer != NULL);
 
@@ -41,7 +41,7 @@ void XRingBufferTest()
         // ========================================
      // Test 2: Write Across Multiple Chunks
      // ========================================
-        printf("\n[Test 2: Write Across Multiple Chunks]\n");
+        XPrintf("\n[Test 2: Write Across Multiple Chunks]\n");
         buffer = XRingBuffer_create(5); // Each chunk has a LOGICAL capacity of 4 bytes
         assert(buffer != NULL);
 
@@ -63,7 +63,7 @@ void XRingBufferTest()
         // ========================================
         // Test 3: Read/Write Wrap-Around with Partial Operations
         // ========================================
-        printf("\n[Test 3: Read/Write Wrap-Around with Partial Operations]\n");
+        XPrintf("\n[Test 3: Read/Write Wrap-Around with Partial Operations]\n");
         buffer = XRingBuffer_create(4); // Logical cap 3 per chunk
         assert(buffer != NULL);
 
@@ -100,7 +100,7 @@ void XRingBufferTest()
         // ========================================
         // Test 4: Peek and Skip
         // ========================================
-        printf("\n[Test 4: Peek and Skip]\n");
+        XPrintf("\n[Test 4: Peek and Skip]\n");
         buffer = XRingBuffer_create(10);
         assert(buffer != NULL);
 
@@ -129,7 +129,7 @@ void XRingBufferTest()
         // ========================================
         // Test 5: Global Mark and ResetToMark (Across Chunks)
         // ========================================
-        printf("\n[Test 5: Global Mark and ResetToMark (Across Chunks)]\n");
+        XPrintf("\n[Test 5: Global Mark and ResetToMark (Across Chunks)]\n");
         buffer = XRingBuffer_create(5); // Logical cap 4 per chunk
         assert(buffer != NULL);
 
@@ -168,7 +168,7 @@ void XRingBufferTest()
         // ========================================
         // Test 6: Edge Cases - Zero Size Operations
         // ========================================
-        printf("\n[Test 6: Edge Cases - Zero Size Operations]\n");
+        XPrintf("\n[Test 6: Edge Cases - Zero Size Operations]\n");
         buffer = XRingBuffer_create(10);
         assert(buffer != NULL);
 
@@ -185,7 +185,7 @@ void XRingBufferTest()
 
         XRingBuffer_delete_base(buffer);
 
-        printf("\n=== All XRingBuffer Tests Completed Successfully! ===\n");
+        XPrintf("\n=== All XRingBuffer Tests Completed Successfully! ===\n");
 	}
 }
 void XMenu_XRingBufferTest(XMenu* root)
