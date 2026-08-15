@@ -774,6 +774,7 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
     int64_t movedTop;
     int64_t movedRight;
     int64_t movedBottom;
+    XRect exposedRect;
     if (exposed) XRegion_clear(exposed);
     if (!self || !self->m_data || XPixmap_isNull(self) || imageWidth <= 0 || imageHeight <= 0)
         return;
@@ -800,9 +801,13 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
     srcBottom = destBottom < destBottom - (int64_t)dy ? destBottom : destBottom - (int64_t)dy;
     if (srcRight <= srcLeft || srcBottom <= srcTop)
     {
-        if (exposed) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)destTop,
-                                                        (int)(destRight - destLeft),
-                                                        (int)(destBottom - destTop)});
+        if (exposed) {
+            exposedRect.x = (int)destLeft;
+            exposedRect.y = (int)destTop;
+            exposedRect.width = (int)(destRight - destLeft);
+            exposedRect.height = (int)(destBottom - destTop);
+            XRegion_addRect(exposed, &exposedRect);
+        }
         return;
     }
     movedLeft = srcLeft + dx;
@@ -848,14 +853,34 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
     if (exposed)
     {
         const int64_t dWidth = destRight - destLeft;
-        if (movedTop > destTop) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)destTop,
-            (int)dWidth, (int)(movedTop - destTop)});
-        if (movedBottom < destBottom) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)movedBottom,
-            (int)dWidth, (int)(destBottom - movedBottom)});
-        if (movedLeft > destLeft) XRegion_addRect(exposed, &(XRect){(int)destLeft, (int)movedTop,
-            (int)(movedLeft - destLeft), (int)(movedBottom - movedTop)});
-        if (movedRight < destRight) XRegion_addRect(exposed, &(XRect){(int)movedRight, (int)movedTop,
-            (int)(destRight - movedRight), (int)(movedBottom - movedTop)});
+        if (movedTop > destTop) {
+            exposedRect.x = (int)destLeft;
+            exposedRect.y = (int)destTop;
+            exposedRect.width = (int)dWidth;
+            exposedRect.height = (int)(movedTop - destTop);
+            XRegion_addRect(exposed, &exposedRect);
+        }
+        if (movedBottom < destBottom) {
+            exposedRect.x = (int)destLeft;
+            exposedRect.y = (int)movedBottom;
+            exposedRect.width = (int)dWidth;
+            exposedRect.height = (int)(destBottom - movedBottom);
+            XRegion_addRect(exposed, &exposedRect);
+        }
+        if (movedLeft > destLeft) {
+            exposedRect.x = (int)destLeft;
+            exposedRect.y = (int)movedTop;
+            exposedRect.width = (int)(movedLeft - destLeft);
+            exposedRect.height = (int)(movedBottom - movedTop);
+            XRegion_addRect(exposed, &exposedRect);
+        }
+        if (movedRight < destRight) {
+            exposedRect.x = (int)movedRight;
+            exposedRect.y = (int)movedTop;
+            exposedRect.width = (int)(destRight - movedRight);
+            exposedRect.height = (int)(movedBottom - movedTop);
+            XRegion_addRect(exposed, &exposedRect);
+        }
     }
 }
 

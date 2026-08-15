@@ -171,6 +171,6 @@ XRestReply* XRestAccessManager_wrapReply(const XRestAccessManager* self, XHttpRe
 
 /* XClass create API default-memory wrappers. */
 #undef XRestAccessManager_create
-#define XRestAccessManager_create(...) XRestAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRestAccessManager_create(...) XRestAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XRESTACCESSMANAGER_H */

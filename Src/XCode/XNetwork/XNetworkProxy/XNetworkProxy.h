@@ -552,10 +552,10 @@ XNetworkProxy* XNetworkProxyFactory_systemProxyForQuery(const XNetworkProxyQuery
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkProxy_create
-#define XNetworkProxy_create(...) XNetworkProxy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkProxy_create() XNetworkProxy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XNetworkProxyFactory_create
-#define XNetworkProxyFactory_create(...) XNetworkProxyFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkProxyFactory_create(...) XNetworkProxyFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 #undef XNetworkProxyQuery_create
-#define XNetworkProxyQuery_create(...) XNetworkProxyQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkProxyQuery_create() XNetworkProxyQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XNETWORKPROXY_H

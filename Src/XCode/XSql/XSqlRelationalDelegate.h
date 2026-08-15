@@ -89,6 +89,6 @@ XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTab
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlRelationalDelegate_create
-#define XSqlRelationalDelegate_create(...) XSqlRelationalDelegate_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlRelationalDelegate_create() XSqlRelationalDelegate_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLRELATIONALDELEGATE_H */

@@ -144,6 +144,6 @@ void XTimerData_out(XTimerData* timer);
 
 /* XClass create API default-memory wrappers. */
 #undef XTimerData_create
-#define XTimerData_create(...) XTimerData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTimerData_create(...) XTimerData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !XTIMERS_H

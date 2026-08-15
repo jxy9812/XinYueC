@@ -252,7 +252,7 @@ static bool xssh_client_send_packet(XSshClient* self,
         if (!state->encActive || !xssh_hmac_sha256(state->macKeyC2S,
                 sizeof(state->macKeyC2S), macInput, 4 + total, mac) ||
             XCryptographic_aesCtrUpdateInto(&state->encOp, (char*)encoded,
-                sizeof(encoded), (XByteArrayView){ frame, (int64_t)total }).m_size !=
+                sizeof(encoded), XByteArrayView_create_data( frame, (int64_t)total )).m_size !=
                 (int64_t)total || !xssh_client_send_raw(self, encoded, total) ||
             !xssh_client_send_raw(self, mac, sizeof(mac))) return false;
     } else if (!xssh_client_send_raw(self, frame, total)) {
@@ -439,17 +439,17 @@ static bool xssh_client_setup_keys(XSshClient* self)
         !xssh_client_derive_key(self, 'D', keyS2C, keyS2CLen) ||
         !xssh_client_derive_key(self, 'E', macC2S, sizeof(macC2S)) ||
         !xssh_client_derive_key(self, 'F', macS2C, sizeof(macS2C))) return false;
-    if (!XCryptographic_aesCtrImportKey((XByteArrayView){ keyC2S, (int64_t)keyC2SLen },
+    if (!XCryptographic_aesCtrImportKey(XByteArrayView_create_data( keyC2S, (int64_t)keyC2SLen ),
                                             &state->cipherKeyC2S) ||
-        !XCryptographic_aesCtrImportKey((XByteArrayView){ keyS2C, (int64_t)keyS2CLen },
+        !XCryptographic_aesCtrImportKey(XByteArrayView_create_data( keyS2C, (int64_t)keyS2CLen ),
                                             &state->cipherKeyS2C))
         return false;
     memcpy(state->macKeyC2S, macC2S, sizeof(macC2S));
     memcpy(state->macKeyS2C, macS2C, sizeof(macS2C));
     if (!XCryptographic_aesCtrSetup(&state->encOp, state->cipherKeyC2S, true,
-                                        (XByteArrayView){ ivC2S, sizeof(ivC2S) }) ||
+                                        XByteArrayView_create_data( ivC2S, sizeof(ivC2S) )) ||
         !XCryptographic_aesCtrSetup(&state->decOp, state->cipherKeyS2C, false,
-                                        (XByteArrayView){ ivS2C, sizeof(ivS2C) })) return false;
+                                        XByteArrayView_create_data( ivS2C, sizeof(ivS2C) ))) return false;
     state->encActive = true;
     state->decActive = true;
     return true;
@@ -501,7 +501,7 @@ static bool xssh_client_parse_host_key(XSshClient* self,
         memcpy(state->hostKeyBlob, blob, blobLen);
         state->hostKeyBlobLen = blobLen;
         return XCryptographic_ecdsaImportPublicKey(XCryptographic_EcdsaAlgorithm_NistP256,
-            (XByteArrayView){ point, (int64_t)pointLen }, &state->hostPublicKey);
+            XByteArrayView_create_data( point, (int64_t)pointLen ), &state->hostPublicKey);
     }
 }
 
@@ -556,8 +556,8 @@ static bool xssh_client_verify_host_signature(XSshClient* self,
                           signatureHash)) return false;
     return XCryptographic_ecdsaVerifyHash(
         state->hostPublicKey,
-        (XByteArrayView){ signatureHash, sizeof(signatureHash) },
-        (XByteArrayView){ rawSignature, sizeof(rawSignature) });
+        XByteArrayView_create_data( signatureHash, sizeof(signatureHash) ),
+        XByteArrayView_create_data( rawSignature, sizeof(rawSignature) ));
 }
 
 static bool xssh_client_send_newkeys(XSshClient* self)
@@ -728,7 +728,7 @@ static XProtocolResult xssh_client_handle_kex_reply(XSshClient* self,
     /* ecdhKey was generated before sending SSH_MSG_KEX_ECDH_INIT. */
     sharedLen = (size_t)XCryptographic_ecdhAgreeInto(
         (char*)shared, sizeof(shared), state->ecdhKey,
-        (XByteArrayView){ serverPublic, (int64_t)serverPublicLen }).m_size;
+        XByteArrayView_create_data( serverPublic, (int64_t)serverPublicLen )).m_size;
     if (sharedLen == 0) return XProtocolResult_Failed;
     if (state->kexAlgorithm == XSshKexAlgorithm_Curve25519Sha256) {
         uint8_t any = 0;
@@ -921,7 +921,7 @@ static XProtocolResult xssh_client_process_one(XSshClient* self)
             if (state->rxLen < 4) return XProtocolResult_Ok;
             if (XCryptographic_aesCtrUpdateInto(&state->decOp,
                     (char*)state->lenPlain, sizeof(state->lenPlain),
-                    (XByteArrayView){ state->rxBuf, 4 }).m_size != 4)
+                    XByteArrayView_create_data( state->rxBuf, 4 )).m_size != 4)
                 return XProtocolResult_Failed;
             state->packetLen = xssh_client_get_u32(state->lenPlain);
             if (state->packetLen < 5 || state->packetLen > XSSH_CLIENT_MAX_PACKET ||
@@ -932,7 +932,7 @@ static XProtocolResult xssh_client_process_one(XSshClient* self)
         if (state->rxLen < totalCipher + XSSH_CLIENT_MAC_LEN) return XProtocolResult_Ok;
         if (XCryptographic_aesCtrUpdateInto(&state->decOp,
                 (char*)(plain + 4), sizeof(plain) - 4u,
-                (XByteArrayView){ state->rxBuf + 4, (int64_t)(totalCipher - 4u) }).m_size !=
+                XByteArrayView_create_data( state->rxBuf + 4, (int64_t)(totalCipher - 4u) )).m_size !=
             (int64_t)(totalCipher - 4u)) return XProtocolResult_Failed;
         memcpy(plain, state->lenPlain, 4);
         xssh_client_write_u32(macInput, state->recvSeq);

@@ -160,6 +160,6 @@ bool IOCP_bind(XSocketDescriptor socket, XObject* obj);
 
 /* XClass create API default-memory wrappers. */
 #undef XNetIoRingWin32_create
-#define XNetIoRingWin32_create(...) XNetIoRingWin32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetIoRingWin32_create() XNetIoRingWin32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XNETIORINGWIN32_H */

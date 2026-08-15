@@ -203,6 +203,6 @@ void XTimer_singleShot2(size_t msec,XSlotFunc1 slot_func);
 
 /* XClass create API default-memory wrappers. */
 #undef XTimer_create
-#define XTimer_create(...) XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTimer_create() XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // !XTimers_H

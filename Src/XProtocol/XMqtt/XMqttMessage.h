@@ -142,6 +142,6 @@ bool XMqttMessage_equal(const XMqttMessage* a, const XMqttMessage* b);
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttMessage_create
-#define XMqttMessage_create(...) XMqttMessage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttMessage_create() XMqttMessage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTMESSAGE_H

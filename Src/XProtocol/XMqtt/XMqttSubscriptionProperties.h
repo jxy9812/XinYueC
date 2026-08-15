@@ -182,8 +182,8 @@ void XMqttUnsubscriptionProperties_setUserProperties(XMqttUnsubscriptionProperti
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttSubscriptionProperties_create
-#define XMqttSubscriptionProperties_create(...) XMqttSubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttSubscriptionProperties_create() XMqttSubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XMqttUnsubscriptionProperties_create
-#define XMqttUnsubscriptionProperties_create(...) XMqttUnsubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttUnsubscriptionProperties_create() XMqttUnsubscriptionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTSUBSCRIPTIONPROPERTIES_H

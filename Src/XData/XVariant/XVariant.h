@@ -515,6 +515,6 @@ void XVariant_setDataRef(XVariant* var, void* data, size_t dataSize, int type);
 
 /* XClass create API default-memory wrappers. */
 #undef XVariant_create
-#define XVariant_create(...) XVariant_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XVariant_create(...) XVariant_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XVARIANT_H

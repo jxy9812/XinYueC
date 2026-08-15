@@ -412,6 +412,6 @@ void* XProcess_readyReadStandardError_signal(XProcess* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XProcess_create
-#define XProcess_create(...) XProcess_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XProcess_create() XProcess_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XPROCESS_H */

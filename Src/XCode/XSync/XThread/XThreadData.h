@@ -352,6 +352,6 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver);
 
 /* XClass create API default-memory wrappers. */
 #undef XEventDispatcher_create
-#define XEventDispatcher_create(...) XEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XEventDispatcher_create(...) XEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XTHREADDATA_H

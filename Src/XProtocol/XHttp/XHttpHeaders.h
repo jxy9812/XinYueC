@@ -569,6 +569,6 @@ void XHttpHeaders_swap(XHttpHeaders* lhs, XHttpHeaders* rhs);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpHeaders_create
-#define XHttpHeaders_create(...) XHttpHeaders_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpHeaders_create() XHttpHeaders_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTPHEADERS_H */

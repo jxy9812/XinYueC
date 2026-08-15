@@ -448,8 +448,8 @@ void XHttpServer_close(XHttpServer* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpServer_create
-#define XHttpServer_create(...) XHttpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpServer_create() XHttpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XHttpServerRequest_create
-#define XHttpServerRequest_create(...) XHttpServerRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpServerRequest_create() XHttpServerRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTPSERVER_H */

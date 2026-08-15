@@ -87,6 +87,6 @@ size_t XHttp1Configuration_numberOfConnectionsPerHost(const XHttp1Configuration*
 
 /* XClass create API default-memory wrappers. */
 #undef XHttp1Configuration_create
-#define XHttp1Configuration_create(...) XHttp1Configuration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp1Configuration_create() XHttp1Configuration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

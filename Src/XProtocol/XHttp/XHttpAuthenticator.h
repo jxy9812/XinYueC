@@ -179,6 +179,6 @@ bool XHttpAuthenticator_hasCredentials(const XHttpAuthenticator* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpAuthenticator_create
-#define XHttpAuthenticator_create(...) XHttpAuthenticator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpAuthenticator_create() XHttpAuthenticator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTPAUTHENTICATOR_H */

@@ -412,27 +412,27 @@ void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver);
 
 /* XClass create API default-memory wrappers. */
 #undef XChildEvent_create
-#define XChildEvent_create(...) XChildEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XChildEvent_create(...) XChildEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XDeferredDeleteEvent_create
-#define XDeferredDeleteEvent_create(...) XDeferredDeleteEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XDeferredDeleteEvent_create(...) XDeferredDeleteEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XDynamicPropertyChangeEvent_create
 #define XDynamicPropertyChangeEvent_create(name) \
 	XDynamicPropertyChangeEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, name)
 #undef XEvent_create
-#define XEvent_create(...) XEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XEvent_create(...) XEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XEventFunc_create
-#define XEventFunc_create(...) XEventFunc_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XEventFunc_create(...) XEventFunc_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XEventSockAct_create
-#define XEventSockAct_create(...) XEventSockAct_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XEventSockAct_create(...) XEventSockAct_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XEventSockClose_create
-#define XEventSockClose_create(...) XEventSockClose_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XEventSockClose_create(...) XEventSockClose_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XKeyEvent_create
-#define XKeyEvent_create(...) XKeyEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XKeyEvent_create(...) XKeyEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XMetaCallEvent_create
-#define XMetaCallEvent_create(...) XMetaCallEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XMetaCallEvent_create(...) XMetaCallEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XMouseEvent_create
-#define XMouseEvent_create(...) XMouseEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XMouseEvent_create(...) XMouseEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XTimerEvent_create
-#define XTimerEvent_create(...) XTimerEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, ##__VA_ARGS__)
+#define XTimerEvent_create(...) XTimerEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 
 #endif // !XDataFrameCommunicatorEvent_H

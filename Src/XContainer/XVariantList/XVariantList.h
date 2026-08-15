@@ -228,6 +228,6 @@ void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 
 /* XClass create API default-memory wrappers. */
 #undef XVariantList_create
-#define XVariantList_create(...) XVariantList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XVariantList_create() XVariantList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // !XVARIANTLIST_H

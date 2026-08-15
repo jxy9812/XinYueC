@@ -605,6 +605,6 @@ void* XFtp_done_signal(XFtp* ftp, bool error);
 
 /* XClass create API default-memory wrappers. */
 #undef XFtp_create
-#define XFtp_create(...) XFtp_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XFtp_create() XFtp_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XFTP_H

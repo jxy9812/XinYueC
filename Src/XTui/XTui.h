@@ -165,6 +165,6 @@ bool XTui_handleKey(XTui* self, const XTuiKeyEvent* event);
 
 /* XClass create API default-memory wrappers. */
 #undef XTui_create
-#define XTui_create(...) XTui_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTui_create() XTui_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_H */

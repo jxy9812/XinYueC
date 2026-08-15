@@ -40,6 +40,6 @@ typedef struct XSerialPort
 
 /* XClass create API default-memory wrappers. */
 #undef XSerialPort_create
-#define XSerialPort_create(...) XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSerialPort_create(...) XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // Win32

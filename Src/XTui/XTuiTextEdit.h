@@ -95,6 +95,6 @@ bool XTuiTextEdit_deleteChar(XTuiTextEdit* edit);
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiTextEdit_create
-#define XTuiTextEdit_create(...) XTuiTextEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiTextEdit_create() XTuiTextEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_TEXTEDIT_H */

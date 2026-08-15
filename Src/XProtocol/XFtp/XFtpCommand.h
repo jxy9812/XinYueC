@@ -104,6 +104,6 @@ void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg);
 
 /* XClass create API default-memory wrappers. */
 #undef XFtpCommand_create
-#define XFtpCommand_create(...) XFtpCommand_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XFtpCommand_create(...) XFtpCommand_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XFTP_COMMAND_H

@@ -140,7 +140,10 @@ void XTuiWidget_init(XTuiWidget* widget)
     memset(((XClass*)widget) + 1, 0, sizeof(XTuiWidget) - sizeof(XClass));
     XClass_init(widget);
     XClassGetVtable(widget) = XTuiWidget_class_init();
-    widget->m_rect = (XRect){0, 0, 1, 1};
+    widget->m_rect.x = 0;
+    widget->m_rect.y = 0;
+    widget->m_rect.width = 1;
+    widget->m_rect.height = 1;
     widget->m_visible = true;
     widget->m_enabled = true;
 }
@@ -211,7 +214,11 @@ void XTuiWidget_setRect(XTuiWidget* self, const XRect* rect)
 
 XRect XTuiWidget_rect(const XTuiWidget* self)
 {
-    XRect r = (XRect){0, 0, 1, 1};
+    XRect r;
+    r.x = 0;
+    r.y = 0;
+    r.width = 1;
+    r.height = 1;
     if (self)
         r = self->m_rect;
     return r;

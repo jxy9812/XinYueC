@@ -123,6 +123,6 @@ XString* XRestReply_errorString(const XRestReply* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XRestReply_create
-#define XRestReply_create(...) XRestReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRestReply_create(...) XRestReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XRESTREPLY_H */

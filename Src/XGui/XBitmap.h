@@ -158,7 +158,7 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out);
 
 /* XClass create API default-memory wrappers. */
 #undef XBitmap_create
-#define XBitmap_create(...) XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XBitmap_create() XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XBITMAP_H */
 

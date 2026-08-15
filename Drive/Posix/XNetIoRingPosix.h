@@ -125,6 +125,6 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData);
 
 /* XClass create API default-memory wrappers. */
 #undef XNetIoRingPosix_create
-#define XNetIoRingPosix_create(...) XNetIoRingPosix_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetIoRingPosix_create() XNetIoRingPosix_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XNETIORINGPOSIX_H */

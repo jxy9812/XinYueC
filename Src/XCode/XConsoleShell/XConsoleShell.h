@@ -718,6 +718,6 @@ void XConsoleShell_clearCancelled(XConsoleShell* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XConsoleShell_create
-#define XConsoleShell_create(...) XConsoleShell_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XConsoleShell_create(...) XConsoleShell_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XCONSOLE_SHELL_H */

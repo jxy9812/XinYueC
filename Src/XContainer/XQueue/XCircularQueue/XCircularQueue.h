@@ -273,6 +273,6 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 
 /* XClass create API default-memory wrappers. */
 #undef XCircularQueue_create
-#define XCircularQueue_create(...) XCircularQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XCircularQueue_create(...) XCircularQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

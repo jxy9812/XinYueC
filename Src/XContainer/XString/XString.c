@@ -591,7 +591,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
 
     // 步骤5：设置长度和终止符（与Qt QString一致，内部保留尾部0）
     str->parent.m_size = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
+    data[xchar_count] = 0;
 
     XString_deinitCache(str);
     Set_Class_IsHeap(str, true);
@@ -617,7 +617,7 @@ XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len)
     XChar* data = XString_data(str);
     xchar_count = XChar_fromLatin1Stream(latin1, len, data, (size_t)xchar_count + 1);
     str->parent.m_size = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
+    data[xchar_count] = 0;
     XString_deinitCache(str);
     Set_Class_IsHeap(str, true);
     return str;
@@ -644,7 +644,7 @@ XString* XString_create_with_length_utf32(const uint32_t* ucs4, size_t len)
     XChar* data = XString_data(str);
     xchar_count = XChar_fromUtf32Stream(ucs4, len, data, (size_t)xchar_count + 1);
     str->parent.m_size = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
+    data[xchar_count] = 0;
     XString_deinitCache(str);
     Set_Class_IsHeap(str, true);
     return str;
@@ -756,7 +756,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
 
     // 步骤6：设置长度和终止符（与Qt QString一致，内部保留尾部0）
     str->parent.m_size = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
+    data[xchar_count] = 0;
 
     XString_deinitCache(str);
     Set_Class_IsHeap(str, true);
@@ -1089,7 +1089,7 @@ bool XString_append(XString* str, const XString* app_str)
 
     // 更新长度和终止符
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size] = (XChar){ 0 };
+    XString_data(str)[new_size] = 0;
 
     // 清除缓存（内容已修改）
     XString_deinitCache(str);
@@ -1997,7 +1997,7 @@ XString* XString_toLower(const XString* str) {
     for (size_t i = 0; i < XString_length_base(result); i++) {
         data[i] = XChar_toLower(data[i]);
     }
-    data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
+    data[XString_length_base(result)] = 0;  // 更新结束符
 
     XString_deinitCache(result);
     return result;
@@ -2013,7 +2013,7 @@ XString* XString_toUpper(const XString* str) {
     for (size_t i = 0; i < XString_length_base(result); i++) {
         data[i] = XChar_toUpper(data[i]);
     }
-    data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
+    data[XString_length_base(result)] = 0;  // 更新结束符
 
     XString_deinitCache(result);
     return result;
@@ -2222,7 +2222,7 @@ void XString_truncate(XString* str, size_t position)
     // 截断长度（保留 position 个字符）
     str->parent.m_size = position;
     // 更新终止符
-    XString_data(str)[position] = (XChar){ 0 };
+    XString_data(str)[position] = 0;
 
     // 清除缓存（截断后缓存内容失效）
     XString_deinitCache(str);
@@ -2518,7 +2518,7 @@ void XString_resize_fill(XString* str, size_t size, XChar fillChar)
         }
     }
     XContainerSize(str) = size;
-    data[size] = (XChar){ 0 };
+    data[size] = 0;
     XString_deinitCache(str);
 }
 
@@ -2535,7 +2535,7 @@ bool XString_fill(XString* str, XChar ch, int64_t size)
         data[i] = ch;
     }
     XContainerSize(str) = new_size;
-    data[new_size] = (XChar){ 0 };
+    data[new_size] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -2589,7 +2589,7 @@ bool XString_slice(XString* str, size_t pos)
     XChar* data = XString_data(str);
     memmove(data, data + pos, new_len * sizeof(XChar));
     XContainerSize(str) = new_len;
-    data[new_len] = (XChar){ 0 };
+    data[new_len] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -2603,7 +2603,7 @@ bool XString_slice_2(XString* str, size_t pos, size_t n)
     XChar* data = XString_data(str);
     memmove(data, data + pos, n * sizeof(XChar));
     XContainerSize(str) = n;
-    data[n] = (XChar){ 0 };
+    data[n] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -2629,7 +2629,7 @@ XString* XString_toCaseFolded(const XString* str)
     for (size_t i = 0; i < XString_length_base(result); i++) {
         data[i] = XChar_toCaseFolded(data[i]);
     }
-    data[XString_length_base(result)] = (XChar){ 0 };
+    data[XString_length_base(result)] = 0;
     XString_deinitCache(result);
     return result;
 }
@@ -2684,7 +2684,7 @@ XString* XString_leftJustified(const XString* str, size_t width, XChar fill, boo
         data[i] = fill;
     }
     XContainerSize(result) = width;
-    data[width] = (XChar){ 0 };
+    data[width] = 0;
     XString_deinitCache(result);
     return result;
 }
@@ -2711,7 +2711,7 @@ XString* XString_rightJustified(const XString* str, size_t width, XChar fill, bo
     }
     memcpy(data + prefix, XString_cdata(str), len * sizeof(XChar));
     XContainerSize(result) = width;
-    data[width] = (XChar){ 0 };
+    data[width] = 0;
     XString_deinitCache(result);
     return result;
 }
@@ -2840,7 +2840,7 @@ bool XString_setUnicode(XString* str, const XChar* unicode, size_t size)
     XChar* data = XString_data(str);
     memcpy(data, unicode, size * sizeof(XChar));
     XContainerSize(str) = size;
-    data[size] = (XChar){ 0 };
+    data[size] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -2862,7 +2862,7 @@ bool XString_setUtf16(XString* str, const uint16_t* unicode, size_t size)
     if (xchar_count <= 0) return false;
 
     XContainerSize(str) = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
+    data[xchar_count] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -2908,7 +2908,7 @@ bool XString_remove_char(XString* str, XChar ch, XChar_CaseSensitivity cs)
 
     if (write_idx == len) return false; // 没有移除任何字符
     XContainerSize(str) = write_idx;
-    data[write_idx] = (XChar){ 0 };
+    data[write_idx] = 0;
     XString_deinitCache(str);
     return true;
 }
@@ -3334,7 +3334,7 @@ XString* XString_arg(const XString* str, const XString* a, int fieldWidth, XChar
         }
     }
     ret->parent.m_size = di;
-    dst[di] = (XChar){ 0 };
+    dst[di] = 0;
     XString_deinitCache(ret);
     return ret;
 }

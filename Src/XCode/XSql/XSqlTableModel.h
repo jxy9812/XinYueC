@@ -420,6 +420,6 @@ void* XSqlTableModel_beforeDelete_signal(XSqlTableModel* model, int row);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlTableModel_create
-#define XSqlTableModel_create(...) XSqlTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlTableModel_create(...) XSqlTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XSQLTABLEMODEL_H */

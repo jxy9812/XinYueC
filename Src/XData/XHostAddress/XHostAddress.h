@@ -315,6 +315,6 @@ bool XHostAddress_isIPv6Address(const char* address);
 
 /* XClass create API default-memory wrappers. */
 #undef XHostAddress_create
-#define XHostAddress_create(...) XHostAddress_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHostAddress_create() XHostAddress_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XHOSTADDRESS_H

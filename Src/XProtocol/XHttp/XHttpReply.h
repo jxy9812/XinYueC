@@ -425,6 +425,6 @@ void* XHttpReply_redirected_signal(XHttpReply* reply, const XUrl* target);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpReply_create
-#define XHttpReply_create(...) XHttpReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpReply_create(...) XHttpReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XHTTPREPLY_H */

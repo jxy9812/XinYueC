@@ -309,6 +309,6 @@ void XNetworkAddressEntry_swap(XNetworkAddressEntry* entry1, XNetworkAddressEntr
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkAddressEntry_create
-#define XNetworkAddressEntry_create(...) XNetworkAddressEntry_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkAddressEntry_create() XNetworkAddressEntry_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XNETWORKADDRESSENTRY_H

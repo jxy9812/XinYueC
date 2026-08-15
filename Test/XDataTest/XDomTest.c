@@ -18,7 +18,7 @@
 
 #define TEST_PASS(name) XPrintf("[通过] %s\n", name)
 #define TEST_FAIL(name, reason) XPrintf("[失败] %s: %s\n", name, reason)
-#define TEST_INFO(fmt, ...) XPrintf("[信息] " fmt "\n", ##__VA_ARGS__)
+#define TEST_INFO(...) XPrintf_line("[信息] ", __VA_ARGS__)
 
 static bool xdom_node_is_null(XDomNode* node)
 {

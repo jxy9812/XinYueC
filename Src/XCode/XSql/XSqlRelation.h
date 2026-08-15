@@ -165,6 +165,6 @@ bool XSqlRelation_isValid(const XSqlRelation* relation);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlRelation_create
-#define XSqlRelation_create(...) XSqlRelation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlRelation_create() XSqlRelation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLRELATION_H */

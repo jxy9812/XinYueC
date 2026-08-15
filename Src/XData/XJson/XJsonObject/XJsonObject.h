@@ -379,6 +379,6 @@ void XJsonObject_setVariant_ref(XVariant* variant, XJsonObject* object);
 
 /* XClass create API default-memory wrappers. */
 #undef XJsonObject_create
-#define XJsonObject_create(...) XJsonObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XJsonObject_create() XJsonObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XJSONOBJECT_H

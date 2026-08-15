@@ -107,7 +107,7 @@ XDebug* XDebug_reset_(XDebug* debug);          // 重置缓冲区
 #define XDebug_swrite(data,len)                         XDebug_write_(XDebug_ctx,data,len)
 #define XDebug_sputs(str)                               XDebug_puts_(XDebug_ctx,str)
 #define XDebug_sputc(c)                                 XDebug_putc_(XDebug_ctx,c)
-#define XDebug_sprintf(format,...)                      XDebug_printf_(XDebug_ctx,format,__VA_ARGS__)
+#define XDebug_sprintf(...)                             XDebug_printf_(XDebug_ctx, __VA_ARGS__)
 #define XDebug_svprintf(format,args)                    XDebug_vprintf_(XDebug_ctx,format,args)
 #define XDebug_sbool(value)                             XDebug_bool_(XDebug_ctx,value)
 #define XDebug_schar(value)                             XDebug_char_(XDebug_ctx,value)

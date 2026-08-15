@@ -449,6 +449,6 @@ int64_t XStringList_lastIndexOf_utf8(const XStringList* strList, const char* utf
 
 /* XClass create API default-memory wrappers. */
 #undef XStringList_create
-#define XStringList_create(...) XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XStringList_create() XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // !XSTRINGLIST_H

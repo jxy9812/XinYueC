@@ -368,6 +368,6 @@ XString* XFile_decodeName_2(const char* localFileName);
 
 /* XClass create API default-memory wrappers. */
 #undef XFile_create
-#define XFile_create(...) XFile_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XFile_create() XFile_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XFILE_H

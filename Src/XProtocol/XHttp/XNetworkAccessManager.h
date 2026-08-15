@@ -422,6 +422,6 @@ void* XNetworkAccessManager_proxyAuthenticationRequired_signal(
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkAccessManager_create
-#define XNetworkAccessManager_create(...) XNetworkAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkAccessManager_create() XNetworkAccessManager_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XNETWORKACCESSMANAGER_H */

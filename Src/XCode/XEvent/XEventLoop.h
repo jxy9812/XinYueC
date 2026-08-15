@@ -124,6 +124,6 @@ void XEventLoop_delay(size_t msec);
 
 /* XClass create API default-memory wrappers. */
 #undef XEventLoop_create
-#define XEventLoop_create(...) XEventLoop_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XEventLoop_create() XEventLoop_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XEVENTLOOP_H

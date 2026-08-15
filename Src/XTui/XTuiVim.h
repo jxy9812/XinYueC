@@ -299,6 +299,6 @@ bool XTuiVim_isInsertMode(const XTuiVim* vim);
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiVim_create
-#define XTuiVim_create(...) XTuiVim_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiVim_create() XTuiVim_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_VIM_H */

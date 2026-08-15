@@ -177,6 +177,72 @@ int XPrintf(const char* format, ...)
     return result;
 }
 
+/* 先格式化用户参数，再由 XPrintf 统一处理平台输出编码和换行。 */
+int XPrintf_context(const char* label, const char* file, const char* function,
+                    int line, const char* format, ...)
+{
+    va_list args;
+    va_list args_copy;
+    int body_len;
+    char* body;
+    int result;
+
+    if (!format) return 0;
+    va_start(args, format);
+    va_copy(args_copy, args);
+    body_len = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+    if (body_len < 0) {
+        va_end(args);
+        return 0;
+    }
+    body = (char*)XMalloc_System((size_t)body_len + 1u);
+    if (!body) {
+        va_end(args);
+        return 0;
+    }
+    vsnprintf(body, (size_t)body_len + 1u, format, args);
+    va_end(args);
+    if (label && label[0]) {
+        result = XPrintf("%s [FILE:%s][FUNC:%s][LINE:%d]\n->%s\n",
+                         label, file, function, line, body);
+    } else {
+        result = XPrintf("[FILE:%s][FUNC:%s][LINE:%d]\n->%s\n",
+                         file, function, line, body);
+    }
+    XFree_System(body);
+    return result;
+}
+
+int XPrintf_line(const char* prefix, const char* format, ...)
+{
+    va_list args;
+    va_list args_copy;
+    int body_len;
+    char* body;
+    int result;
+
+    if (!format) return 0;
+    va_start(args, format);
+    va_copy(args_copy, args);
+    body_len = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+    if (body_len < 0) {
+        va_end(args);
+        return 0;
+    }
+    body = (char*)XMalloc_System((size_t)body_len + 1u);
+    if (!body) {
+        va_end(args);
+        return 0;
+    }
+    vsnprintf(body, (size_t)body_len + 1u, format, args);
+    va_end(args);
+    result = XPrintf("%s%s\n", prefix ? prefix : "", body);
+    XFree_System(body);
+    return result;
+}
+
 /* ========================================================================== */
 /*                              XPrintf_5                                     */
 /* ========================================================================== */

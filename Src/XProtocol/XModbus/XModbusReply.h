@@ -272,6 +272,6 @@ void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbus
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusReply_create
-#define XModbusReply_create(...) XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusReply_create(...) XModbusReply_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XMODBUSREPLY_H

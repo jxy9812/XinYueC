@@ -154,6 +154,6 @@ void XTuiTerminal_leaveAlternateScreen(XTuiTerminal* terminal);
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiTerminal_create
-#define XTuiTerminal_create(...) XTuiTerminal_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiTerminal_create() XTuiTerminal_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_TERMINAL_H */

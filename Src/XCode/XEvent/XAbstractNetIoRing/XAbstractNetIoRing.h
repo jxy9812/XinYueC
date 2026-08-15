@@ -320,6 +320,6 @@ void XAbstractNetIoRing_pollLwip(void);
 
 /* XClass create API default-memory wrappers. */
 #undef XAbstractNetIoRing_create
-#define XAbstractNetIoRing_create(...) XAbstractNetIoRing_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XAbstractNetIoRing_create() XAbstractNetIoRing_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XABSTRACTNETIORING_H */

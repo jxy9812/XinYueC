@@ -56,6 +56,6 @@ bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
 
 /* XClass create API default-memory wrappers. */
 #undef XSwitchDeviceBase_create
-#define XSwitchDeviceBase_create(...) XSwitchDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSwitchDeviceBase_create() XSwitchDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

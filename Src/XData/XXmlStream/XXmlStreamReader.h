@@ -1535,6 +1535,6 @@ XXmlStreamEntityResolver* XXmlStreamReader_entityResolver(const XXmlStreamReader
 
 /* XClass create API default-memory wrappers. */
 #undef XXmlStreamReader_create
-#define XXmlStreamReader_create(...) XXmlStreamReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XXmlStreamReader_create() XXmlStreamReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XXMLSTREAMREADER_H */

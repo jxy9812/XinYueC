@@ -75,6 +75,6 @@ size_t XHrTimerGroup_count(XHrTimerGroup* group);
 
 /* XClass create API default-memory wrappers. */
 #undef XHrTimerGroup_create
-#define XHrTimerGroup_create(...) XHrTimerGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHrTimerGroup_create(...) XHrTimerGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !XHrTimerGroup_H

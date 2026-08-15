@@ -242,10 +242,10 @@ XHttp2HeaderList* XHttp2HeaderList_decode(const void* data, size_t size);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttp2HeaderDecoder_create
-#define XHttp2HeaderDecoder_create(...) XHttp2HeaderDecoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp2HeaderDecoder_create() XHttp2HeaderDecoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XHttp2HeaderEncoder_create
-#define XHttp2HeaderEncoder_create(...) XHttp2HeaderEncoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp2HeaderEncoder_create() XHttp2HeaderEncoder_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XHttp2HeaderList_create
-#define XHttp2HeaderList_create(...) XHttp2HeaderList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp2HeaderList_create() XHttp2HeaderList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTP2HEADERS_H */

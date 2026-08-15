@@ -237,6 +237,6 @@ void XSshServer_setUserNameResult(XSshServer* self,
 
 /* XClass create API default-memory wrappers. */
 #undef XSshServer_create
-#define XSshServer_create(...) XSshServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSshServer_create() XSshServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSSHSERVER_H */

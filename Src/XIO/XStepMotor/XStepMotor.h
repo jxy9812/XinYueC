@@ -119,6 +119,6 @@ void XStepMotor_setSpeedChangeCb(XStepMotor* motor, void (*speedChangeCb)(XStepM
 
 /* XClass create API default-memory wrappers. */
 #undef XStepMotor_create
-#define XStepMotor_create(...) XStepMotor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XStepMotor_create(...) XStepMotor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !StepMotor_H

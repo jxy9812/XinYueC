@@ -182,7 +182,14 @@ static XString chart_formula_for_range(const XChart* self, const XCellRange* ran
         XString_append_utf8(&formula, "'");
         const char* sheetName = XString_toUtf8(self->m_dataSheetName);
         for (const char* p = sheetName ? sheetName : ""; *p; ++p) {
-            XString_append_utf8(&formula, *p == '\'' ? "''" : (char[2]){ *p, '\0' });
+            if (*p == '\'') {
+                XString_append_utf8(&formula, "''");
+            } else {
+                char escaped[2];
+                escaped[0] = *p;
+                escaped[1] = '\0';
+                XString_append_utf8(&formula, escaped);
+            }
         }
         XString_append_utf8(&formula, "'!");
     }

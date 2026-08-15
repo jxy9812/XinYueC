@@ -270,6 +270,6 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity);
 
 /* XClass create API default-memory wrappers. */
 #undef XStack_create
-#define XStack_create(...) XStack_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XStack_create(...) XStack_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif  // !XSTACK_H

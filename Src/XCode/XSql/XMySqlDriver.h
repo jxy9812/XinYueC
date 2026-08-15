@@ -50,6 +50,6 @@ const XSqlMySqlClientApi* XMySqlDriver_clientApi(void);
 
 /* XClass create API default-memory wrappers. */
 #undef XMySqlDriver_create
-#define XMySqlDriver_create(...) XMySqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMySqlDriver_create() XMySqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XMYSQLDRIVER_H */

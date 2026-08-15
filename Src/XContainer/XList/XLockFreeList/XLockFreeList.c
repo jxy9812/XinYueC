@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdio.h>
 #include "XStack.h"
-#include "XLockFreeListConfig.h"
 #include "XAlgorithm.h"
 #include "XMemory.h"
 
@@ -100,15 +99,9 @@ typedef struct XLFL_RetiredNode {
     XMemory* memory;
 } XLFL_RetiredNode;
 
-#if defined(__GNUC__) || defined(__clang__)
-#define XLFL_THREAD_LOCAL __thread
-#else
-#define XLFL_THREAD_LOCAL _Thread_local
-#endif
-
-static XLFL_THREAD_LOCAL int t_lfl_slot = -1;
-static XLFL_THREAD_LOCAL XLFL_RetiredNode t_lfl_retired[XLFL_RETIRE_CAPACITY];
-static XLFL_THREAD_LOCAL int t_lfl_retired_n = 0;
+static XATOMIC_THREAD_LOCAL int t_lfl_slot = -1;
+static XATOMIC_THREAD_LOCAL XLFL_RetiredNode t_lfl_retired[XLFL_RETIRE_CAPACITY];
+static XATOMIC_THREAD_LOCAL int t_lfl_retired_n = 0;
 
 /* 为当前线程申请一个 HP 槽（终身持有，不释放）。返回槽下标；失败 abort。 */
 static int _lfl_hp_acquire_slot(void)
@@ -196,6 +189,7 @@ static void _lfl_scan_and_reclaim(void)
 
 static void _lfl_retire(XLockFreeListNode* node, XMemory* memory)
 {
+    XLFL_RetiredNode retired;
     if (node == NULL) return;
     if (t_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
         _lfl_scan_and_reclaim();
@@ -209,7 +203,9 @@ static void _lfl_retire(XLockFreeListNode* node, XMemory* memory)
             t_lfl_retired_n--;
         }
     }
-    t_lfl_retired[t_lfl_retired_n++] = (XLFL_RetiredNode){ node, memory };
+    retired.node = node;
+    retired.memory = memory;
+    t_lfl_retired[t_lfl_retired_n++] = retired;
     if (t_lfl_retired_n >= XLFL_RETIRE_THRESHOLD) {
         _lfl_scan_and_reclaim();
     }
@@ -343,9 +339,9 @@ bool VXListBase_push_back_node(XLockFreeList* this_list, XLockFreeListNode* node
             continue;
         }
         /* 尝试把 tail->next 从 NULL 变为 node */
-        void* expected_next = NULL;
+        uintptr_t expected_next = 0;
         if (XAtomic_compare_exchange_strong_uintptr_t(
-                (XAtomic_uintptr_t*)&tail->next, &expected_next, node,
+                (XAtomic_uintptr_t*)&tail->next, &expected_next, (uintptr_t)node,
                 XAtomic_MemoryOrder_Release, XAtomic_MemoryOrder_Relaxed)) {
             /* 尝试推进 m_tail —— 失败也无妨，会被后来者协助 */
             size_t expected = (size_t)(uintptr_t)tail;
@@ -381,9 +377,9 @@ bool VXListBase_push_front_node(XLockFreeList* this_list, XLockFreeListNode* nod
 
         XLockFreeListNode* first = _load_next(head);
         node->next = first;
-        void* expected = first;
+        uintptr_t expected = (uintptr_t)first;
         if (XAtomic_compare_exchange_strong_uintptr_t(
-                (XAtomic_uintptr_t*)&head->next, &expected, node,
+                (XAtomic_uintptr_t*)&head->next, &expected, (uintptr_t)node,
                 XAtomic_MemoryOrder_Release, XAtomic_MemoryOrder_Relaxed)) {
             /* 若原来 first==NULL，可能需要推进 tail 以指向 node（空表转非空） */
             if (first == NULL) {

@@ -527,6 +527,6 @@ void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*d
 
 /* XClass create API default-memory wrappers. */
 #undef XObject_create
-#define XObject_create(...) XObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XObject_create() XObject_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

@@ -499,6 +499,6 @@ void* XIODevice_readChannelFinished_signal(XIODevice* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XIODevice_create
-#define XIODevice_create(...) XIODevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XIODevice_create() XIODevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

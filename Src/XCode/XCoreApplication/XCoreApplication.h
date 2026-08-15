@@ -509,6 +509,6 @@ bool XCoreApplication_notifyInternal2(XObject* receiver, XEvent* event);
 
 /* XClass create API default-memory wrappers. */
 #undef XCoreApplication_create
-#define XCoreApplication_create(...) XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XCoreApplication_create(...) XCoreApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

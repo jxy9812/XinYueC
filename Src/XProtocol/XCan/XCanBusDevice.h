@@ -502,6 +502,6 @@ void* XCanBusDevice_stateChanged_signal(XCanBusDevice* dev, XCanBusDevice_State 
 
 /* XClass create API default-memory wrappers. */
 #undef XCanBusDevice_create
-#define XCanBusDevice_create(...) XCanBusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XCanBusDevice_create() XCanBusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XCANBUSDEVICE_H

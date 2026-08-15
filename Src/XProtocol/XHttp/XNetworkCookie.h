@@ -353,8 +353,8 @@ size_t XNetworkCookieJar_size(const XNetworkCookieJar* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkCookie_create
-#define XNetworkCookie_create(...) XNetworkCookie_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkCookie_create(...) XNetworkCookie_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 #undef XNetworkCookieJar_create
-#define XNetworkCookieJar_create(...) XNetworkCookieJar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkCookieJar_create() XNetworkCookieJar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

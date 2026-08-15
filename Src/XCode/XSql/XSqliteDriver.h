@@ -33,6 +33,6 @@ bool XSqliteDriver_register(void);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqliteDriver_create
-#define XSqliteDriver_create(...) XSqliteDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqliteDriver_create() XSqliteDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLITEDRIVER_H */

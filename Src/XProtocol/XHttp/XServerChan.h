@@ -292,6 +292,6 @@ XServerChanResult* XServerChan_sendBlocking(XServerChan* self,
 #define XServerChan_create() \
 	XServerChan_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
 #undef XServerChanResult_create
-#define XServerChanResult_create(...) XServerChanResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XServerChanResult_create() XServerChanResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSERVERCHAN_H */

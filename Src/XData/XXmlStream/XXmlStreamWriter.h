@@ -562,6 +562,6 @@ struct XIODevice* XXmlStreamWriter_device(const XXmlStreamWriter* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XXmlStreamWriter_create
-#define XXmlStreamWriter_create(...) XXmlStreamWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XXmlStreamWriter_create() XXmlStreamWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XXMLSTREAMWRITER_H */

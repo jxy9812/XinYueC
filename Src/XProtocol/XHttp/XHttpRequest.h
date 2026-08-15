@@ -474,6 +474,6 @@ XByteArray* XHttpRequest_toHttp1(const XHttpRequest* self, bool includeConnectio
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpRequest_create
-#define XHttpRequest_create(...) XHttpRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpRequest_create() XHttpRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTPREQUEST_H */

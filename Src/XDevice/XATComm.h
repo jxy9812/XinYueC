@@ -123,6 +123,6 @@ void* XATComm_timeout_signal(XATComm* comm, int opType);
 
 /* XClass create API default-memory wrappers. */
 #undef XATComm_create
-#define XATComm_create(...) XATComm_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XATComm_create(...) XATComm_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XATCOMM_H

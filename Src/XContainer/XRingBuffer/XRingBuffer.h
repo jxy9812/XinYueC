@@ -247,6 +247,6 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
 
 /* XClass create API default-memory wrappers. */
 #undef XRingBuffer_create
-#define XRingBuffer_create(...) XRingBuffer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRingBuffer_create(...) XRingBuffer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !XRINGBUFFER_H

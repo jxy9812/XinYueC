@@ -155,6 +155,6 @@ XColor XTuiColor_fromIndex(uint8_t index);
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiKeyEvent_create
-#define XTuiKeyEvent_create(...) XTuiKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiKeyEvent_create(...) XTuiKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XTUI_TYPES_H */

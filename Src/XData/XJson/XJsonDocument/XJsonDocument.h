@@ -305,6 +305,6 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
 
 /* XClass create API default-memory wrappers. */
 #undef XJsonDocument_create
-#define XJsonDocument_create(...) XJsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XJsonDocument_create() XJsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XJSONDOCUMENT_H

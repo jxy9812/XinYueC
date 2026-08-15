@@ -313,6 +313,6 @@ bool XSqlQuery_nextResult(XSqlQuery* query);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlQuery_create
-#define XSqlQuery_create(...) XSqlQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlQuery_create() XSqlQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLQUERY_H */

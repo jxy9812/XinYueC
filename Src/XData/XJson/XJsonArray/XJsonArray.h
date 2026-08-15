@@ -293,6 +293,6 @@ void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array);
 
 /* XClass create API default-memory wrappers. */
 #undef XJsonArray_create
-#define XJsonArray_create(...) XJsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XJsonArray_create() XJsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XJSONARRAY_H

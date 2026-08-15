@@ -279,6 +279,6 @@ void XBsonArray_setVariant_ref(XVariant* variant, XBsonArray* array);
 
 /* XClass create API default-memory wrappers. */
 #undef XBsonArray_create
-#define XBsonArray_create(...) XBsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XBsonArray_create() XBsonArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XBSONARRAY_H

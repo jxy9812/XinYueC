@@ -11,9 +11,10 @@ static void VXSqlDriverPlugin_deinit(XSqlDriverPlugin* plugin);
 
 XVtable* XSqlDriverPlugin_class_init(void)
 {
+    static void* table[] = { (void*)VXSqlDriverPlugin_create };
     XVTABLE_INIT_DEFAULT(XSqlDriverPlugin)
     XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){ VXSqlDriverPlugin_create }));
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriverPlugin_deinit);
     return XVTABLE_DEFAULT;
 }

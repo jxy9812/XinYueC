@@ -421,6 +421,6 @@ void* XSerialPort_breakEnabledChanged_signal(XSerialPort* port, bool enabled);
 
 /* XClass create API default-memory wrappers. */
 #undef XSerialPort_create
-#define XSerialPort_create(...) XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSerialPort_create() XSerialPort_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

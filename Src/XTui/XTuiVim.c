@@ -2552,8 +2552,14 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
         for (x = 0; x < r.width; ++x) XTuiScreen_setCell(screen, r.x + x, r.y + y, " ", XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
         if (vim->m_showLineNumbers && line >= 0) {
             char no[16]; int n = snprintf(no, sizeof(no), "%4d ", line + 1); int i;
+            char cell[2];
             if (n > numberWidth) n = numberWidth;
-            for (i = 0; i < n && i < r.width; ++i) XTuiScreen_setCell(screen, r.x + i, r.y + y, (char[]){no[i], '\0'}, XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
+            for (i = 0; i < n && i < r.width; ++i) {
+                cell[0] = no[i];
+                cell[1] = '\0';
+                XTuiScreen_setCell(screen, r.x + i, r.y + y, cell,
+                                   XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
+            }
             col = n;
         }
         while (text[pos] && col < r.width) {

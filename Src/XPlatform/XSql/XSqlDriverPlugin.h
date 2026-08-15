@@ -65,6 +65,6 @@ XSqlDriver* XSqlDriverPlugin_create_base(XSqlDriverPlugin* plugin, const char* k
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlDriverPlugin_create
-#define XSqlDriverPlugin_create(...) XSqlDriverPlugin_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlDriverPlugin_create() XSqlDriverPlugin_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLDRIVERPLUGIN_H */

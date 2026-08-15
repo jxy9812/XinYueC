@@ -314,6 +314,6 @@ void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkInterface_create
-#define XNetworkInterface_create(...) XNetworkInterface_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkInterface_create() XNetworkInterface_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XNETWORKINTERFACE_H

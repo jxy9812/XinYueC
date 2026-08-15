@@ -244,7 +244,7 @@ bool XPicture_isDetached(const XPicture* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XPicture_create
-#define XPicture_create(...) XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XPicture_create() XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XPICTURE_H */
 

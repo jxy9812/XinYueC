@@ -54,6 +54,6 @@ bool XTimeWheelGroup_GlobalExists(void);
 
 /* XClass create API default-memory wrappers. */
 #undef XTimeWheelGroup_create
-#define XTimeWheelGroup_create(...) XTimeWheelGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTimeWheelGroup_create(...) XTimeWheelGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !XTimeWheelGroup_H

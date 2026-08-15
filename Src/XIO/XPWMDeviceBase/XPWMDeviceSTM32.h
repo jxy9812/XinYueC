@@ -71,6 +71,6 @@ void XPWMDeviceSTM32_init(XPWMDeviceSTM32* pwm);
 
 /* XClass create API default-memory wrappers. */
 #undef XPWMDeviceSTM32_create
-#define XPWMDeviceSTM32_create(...) XPWMDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XPWMDeviceSTM32_create(...) XPWMDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

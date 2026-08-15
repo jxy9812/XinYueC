@@ -203,8 +203,8 @@ XMqttUserProperties* XMqttMessageStatusProperties_userProperties(const XMqttMess
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttMessageStatusProperties_create
-#define XMqttMessageStatusProperties_create(...) XMqttMessageStatusProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttMessageStatusProperties_create() XMqttMessageStatusProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XMqttPublishProperties_create
-#define XMqttPublishProperties_create(...) XMqttPublishProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttPublishProperties_create() XMqttPublishProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTPUBLISHPROPERTIES_H

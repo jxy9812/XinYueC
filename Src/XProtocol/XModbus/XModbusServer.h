@@ -176,6 +176,6 @@ void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterTyp
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusServer_create
-#define XModbusServer_create(...) XModbusServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusServer_create() XModbusServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSSERVER_H

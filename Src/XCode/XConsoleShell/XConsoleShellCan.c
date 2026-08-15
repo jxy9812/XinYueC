@@ -260,8 +260,12 @@ static int xcc_list(XConsoleShell* shell, XConsoleShellSession* session,
         char line[160];
         int written;
         XCanBusState state = XCanBusState_Unknown;
+        XCanChannel channel;
+        channel.m_controller = slot->controller;
+        channel.m_channel = slot->channel;
+        channel.m_name = slot->name;
         if (!slot->can || !xcc_authorized(shell, session,
-                &(XCanChannel){slot->controller, slot->channel, slot->name},
+                &channel,
                 XConsoleShellCanOperation_List, false))
             continue;
         if (XCan_getConfig(slot->can, &config)) {

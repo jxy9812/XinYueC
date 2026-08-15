@@ -339,6 +339,6 @@ void XIcon_setFallbackThemeName(const char* name);
 
 /* XClass create API default-memory wrappers. */
 #undef XIcon_create
-#define XIcon_create(...) XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XIcon_create() XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XICON_H */

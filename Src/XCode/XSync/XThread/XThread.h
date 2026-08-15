@@ -359,6 +359,6 @@ void XThread_yieldCurrentThread();
 
 /* XClass create API default-memory wrappers. */
 #undef XThread_create
-#define XThread_create(...) XThread_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XThread_create(...) XThread_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

@@ -97,6 +97,6 @@ bool XHttpServerRouter_handleRequest(const XHttpServerRouter* self,
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpServerRouter_create
-#define XHttpServerRouter_create(...) XHttpServerRouter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpServerRouter_create(...) XHttpServerRouter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XHTTPSERVERROUTER_H */

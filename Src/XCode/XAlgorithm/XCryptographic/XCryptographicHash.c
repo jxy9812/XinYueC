@@ -4054,6 +4054,8 @@ bool XCryptographic_lmotsCalculatePublicKeyCandidate(
     uint8_t digits[34];
     uint8_t hashedDigits[34][32];
     XByteArrayView parts[6];
+    const uint8_t domain81[2] = { 0x81, 0x81 };
+    const uint8_t domain80[2] = { 0x80, 0x80 };
     size_t digitIndex;
     unsigned int hashIndex;
 
@@ -4067,7 +4069,7 @@ bool XCryptographic_lmotsCalculatePublicKeyCandidate(
     xcryptographic_lms_put_u32_be(leafIdentifier, qBytes);
     parts[0] = keyIdentifier;
     parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x81, 0x81 }, 2);
+    parts[2] = XByteArrayView_create_data(domain81, 2);
     parts[3] = XByteArrayView_create_data(signature.m_data + 4, 32);
     parts[4] = message;
     if (!xcryptographic_lms_sha256_parts(parts, 5, digest)) return false;
@@ -4101,7 +4103,7 @@ bool XCryptographic_lmotsCalculatePublicKeyCandidate(
 
     parts[0] = keyIdentifier;
     parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x80, 0x80 }, 2);
+    parts[2] = XByteArrayView_create_data(domain80, 2);
     parts[3] = XByteArrayView_create_data((const uint8_t*)hashedDigits, sizeof(hashedDigits));
     parts[4] = XByteArrayView_create_data(NULL, 0);
     return xcryptographic_lms_sha256_parts(parts, 4, output);
@@ -4117,6 +4119,8 @@ bool XCryptographic_lmsVerify(
     uint8_t indexBytes[4];
     uint8_t qBytes[4];
     XByteArrayView parts[6];
+    const uint8_t domain82[2] = { 0x82, 0x82 };
+    const uint8_t domain83[2] = { 0x83, 0x83 };
     uint32_t leafIdentifier;
     uint32_t currentNode;
     unsigned int height;
@@ -4142,7 +4146,7 @@ bool XCryptographic_lmsVerify(
     xcryptographic_lms_put_u32_be(currentNode, qBytes);
     parts[0] = keyIdentifier;
     parts[1] = XByteArrayView_create_data(qBytes, 4);
-    parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x82, 0x82 }, 2);
+    parts[2] = XByteArrayView_create_data(domain82, 2);
     parts[3] = XByteArrayView_create_data(candidate, 32);
     if (!xcryptographic_lms_sha256_parts(parts, 4, node)) return false;
 
@@ -4152,7 +4156,7 @@ bool XCryptographic_lmsVerify(
         memcpy(path, signature.m_data + 1132 + height * 32, 32);
         parts[0] = keyIdentifier;
         parts[1] = XByteArrayView_create_data(indexBytes, 4);
-        parts[2] = XByteArrayView_create_data((const uint8_t[]) { 0x83, 0x83 }, 2);
+        parts[2] = XByteArrayView_create_data(domain83, 2);
         parts[3] = (currentNode & 1u) ? XByteArrayView_create_data(path, 32) : XByteArrayView_create_data(node, 32);
         parts[4] = (currentNode & 1u) ? XByteArrayView_create_data(node, 32) : XByteArrayView_create_data(path, 32);
         if (!xcryptographic_lms_sha256_parts(parts, 5, node)) return false;
@@ -4350,7 +4354,7 @@ XByteArrayView XCryptographic_hmacFinishInto(XCryptographic_HmacOperation* opera
     memcpy(buffer, outerResult.m_data, (size_t)hashLength);
     XCryptographic_hmacAbort(operation);
     XCryptographicHash_delete(outer);
-    return (XByteArrayView){ (const uint8_t*)buffer, hashLength };
+    return XByteArrayView_create_data((const uint8_t*)buffer, hashLength);
 
 cleanup:
     if (outer) XCryptographicHash_delete(outer);

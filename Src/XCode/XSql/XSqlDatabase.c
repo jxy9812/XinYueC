@@ -67,9 +67,10 @@ static void VXSqlDatabase_deinit(XSqlDatabase* database);
 
 XVtable* XSqlDriverCreatorBase_class_init(void)
 {
+    static void* table[] = { (void*)VXSqlDriverCreatorBase_createObject };
     XVTABLE_INIT_DEFAULT(XSqlDriverCreatorBase)
     XVTABLE_INHERIT_XCLASS(XClass);
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){ VXSqlDriverCreatorBase_createObject }));
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriverCreatorBase_deinit);
     return XVTABLE_DEFAULT;
 }

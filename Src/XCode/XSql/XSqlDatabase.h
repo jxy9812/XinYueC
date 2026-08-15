@@ -481,8 +481,8 @@ XSqlDriver* XSqlDatabase_driver(const XSqlDatabase* database);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlDatabase_create
-#define XSqlDatabase_create(...) XSqlDatabase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlDatabase_create() XSqlDatabase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XSqlDriverCreator_create
-#define XSqlDriverCreator_create(...) XSqlDriverCreator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlDriverCreator_create(...) XSqlDriverCreator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XSQLDATABASE_H */

@@ -64,6 +64,6 @@ uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
 
 /* XClass create API default-memory wrappers. */
 #undef XPWMDeviceBase_create
-#define XPWMDeviceBase_create(...) XPWMDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XPWMDeviceBase_create() XPWMDeviceBase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

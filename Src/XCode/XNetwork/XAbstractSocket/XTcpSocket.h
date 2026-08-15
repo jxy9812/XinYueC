@@ -111,6 +111,6 @@ XTcpSocket* XTcpSocket_create_ex(XMemoryType memory);
 
 /* XClass create API default-memory wrappers. */
 #undef XTcpSocket_create
-#define XTcpSocket_create(...) XTcpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTcpSocket_create() XTcpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XTCPSOCKET_H

@@ -177,6 +177,6 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
 
 /* XClass create API default-memory wrappers. */
 #undef XHttp2ClientSession_create
-#define XHttp2ClientSession_create(...) XHttp2ClientSession_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp2ClientSession_create() XHttp2ClientSession_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XHTTP2CLIENT_H */

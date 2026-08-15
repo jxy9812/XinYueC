@@ -265,6 +265,6 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 
 /* XClass create API default-memory wrappers. */
 #undef XPriorityQueue_create
-#define XPriorityQueue_create(...) XPriorityQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XPriorityQueue_create(...) XPriorityQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

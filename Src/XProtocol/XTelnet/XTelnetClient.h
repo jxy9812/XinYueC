@@ -95,6 +95,6 @@ void* XTelnetClient_errorOccurred_signal(XTelnetClient* self, int error);
 
 /* XClass create API default-memory wrappers. */
 #undef XTelnetClient_create
-#define XTelnetClient_create(...) XTelnetClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTelnetClient_create() XTelnetClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTELNETCLIENT_H */

@@ -268,8 +268,8 @@ void XNetworkDiskCache_clear(XNetworkDiskCache* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkCacheMetaData_create
-#define XNetworkCacheMetaData_create(...) XNetworkCacheMetaData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkCacheMetaData_create() XNetworkCacheMetaData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XNetworkDiskCache_create
-#define XNetworkDiskCache_create(...) XNetworkDiskCache_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkDiskCache_create() XNetworkDiskCache_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XNETWORKCACHE_H */

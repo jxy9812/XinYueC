@@ -2356,6 +2356,7 @@ static bool xcryptographic_aes_gcm_tag(XCryptographic_Key key,
 {
     XCryptographic_BlockCipherOperation blockOperation;
     XCryptographic_BlockCipherAlgorithm algorithm;
+    uint8_t zero[16] = { 0 };
     uint8_t hashSubkey[16];
     uint8_t initialCounter[16];
     uint8_t auth[16] = { 0 };
@@ -2378,7 +2379,7 @@ static bool xcryptographic_aes_gcm_tag(XCryptographic_Key key,
 
     if (!xcryptographic_aead_block_setup(&blockOperation, key, algorithm))
         goto cleanup;
-    xcryptographic_aead_block_crypt(&blockOperation, (const uint8_t[16]){ 0 }, hashSubkey);
+    xcryptographic_aead_block_crypt(&blockOperation, zero, hashSubkey);
     if (!xcryptographic_gcm_initial_counter(nonce, nonceLen, hashSubkey, initialCounter))
         goto cleanup;
     xcryptographic_gcm_ghash_update(auth, hashSubkey, associatedData, associatedDataLen);
@@ -2433,6 +2434,7 @@ static bool xcryptographic_aes_gcm_decrypt(XCryptographic_Key key,
     uint8_t hashSubkey[16];
     uint8_t initialCounter[16];
     uint8_t counter[16];
+    uint8_t zero[16] = { 0 };
     size_t offset = 0;
     bool result = false;
     memset(&blockOperation, 0, sizeof(blockOperation));
@@ -2443,7 +2445,7 @@ static bool xcryptographic_aes_gcm_decrypt(XCryptographic_Key key,
         goto cleanup;
     if (!xcryptographic_aead_block_setup(&blockOperation, key, algorithm))
         goto cleanup;
-    xcryptographic_aead_block_crypt(&blockOperation, (const uint8_t[16]){ 0 }, hashSubkey);
+    xcryptographic_aead_block_crypt(&blockOperation, zero, hashSubkey);
     if (!xcryptographic_gcm_initial_counter(nonce, nonceLen, hashSubkey, initialCounter))
         goto cleanup;
     memcpy(counter, initialCounter, sizeof(counter));
@@ -3387,14 +3389,15 @@ bool XCryptographic_aeadFinishInto(XCryptographic_AeadOperation* operation,
          operation->associatedDataLength != operation->expectedAssociatedDataLength)) return false;
     *outputLength = 0;
     if (operation->algorithm == XCryptographic_AeadAlgorithm_ChaCha20Poly1305) {
+        uint8_t zero[16] = { 0 };
         if (!operation->associatedDataFinalized) {
             if ((operation->associatedDataLength & 15u) != 0)
-                xcryptographic_poly1305_update(&operation->poly1305, (const uint8_t[16]){ 0 },
+                xcryptographic_poly1305_update(&operation->poly1305, zero,
                                                16u - (operation->associatedDataLength & 15u));
             operation->associatedDataFinalized = true;
         }
         if ((operation->dataLength & 15u) != 0)
-            xcryptographic_poly1305_update(&operation->poly1305, (const uint8_t[16]){ 0 },
+            xcryptographic_poly1305_update(&operation->poly1305, zero,
                                            16u - (operation->dataLength & 15u));
         xcryptographic_store_u64_le(block, (uint64_t)operation->associatedDataLength);
         xcryptographic_store_u64_le(block + 8, (uint64_t)operation->dataLength);
@@ -5264,6 +5267,7 @@ static void xcryptographic_p256_affine_double(
 {
     XCryptographic_Bn x2, numerator, denominator, inverse, lambda;
     XCryptographic_Bn x3, y3, t;
+    XCryptographic_Bn three;
     if (in->infinity || xcryptographic_bn_is_zero(&in->y)) {
         xcryptographic_p256_point_infinity(out);
         return;
@@ -5271,7 +5275,9 @@ static void xcryptographic_p256_affine_double(
     xcryptographic_bn_mul_mod(&x2, &in->x, &in->x, prime);
     xcryptographic_bn_add_mod(&numerator, &x2, &x2, prime);
     xcryptographic_bn_add_mod(&numerator, &numerator, &x2, prime);
-    xcryptographic_bn_sub_mod(&numerator, &numerator, &(XCryptographic_Bn){{3,0,0,0,0,0,0,0}}, prime);
+    xcryptographic_bn_zero(&three);
+    three.d[0] = 3;
+    xcryptographic_bn_sub_mod(&numerator, &numerator, &three, prime);
     xcryptographic_bn_add_mod(&denominator, &in->y, &in->y, prime);
     xcryptographic_bn_inverse_mod(&inverse, &denominator, prime);
     xcryptographic_bn_mul_mod(&lambda, &numerator, &inverse, prime);
@@ -5993,6 +5999,7 @@ static bool xcryptographic_secp256k1_parse(
     const uint8_t* input, size_t inputLen, XCryptographic_EcPoint* point)
 {
     XCryptographic_Bn prime, lhs, rhs, x2, x3;
+    XCryptographic_Bn seven;
     if (!input || inputLen != 65 || input[0] != 4 || !point) return false;
     xcryptographic_bn_from_be(&point->x, input + 1);
     xcryptographic_bn_from_be(&point->y, input + 33);
@@ -6002,8 +6009,10 @@ static bool xcryptographic_secp256k1_parse(
     xcryptographic_bn_mul_mod(&lhs, &point->y, &point->y, &prime);
     xcryptographic_bn_mul_mod(&x2, &point->x, &point->x, &prime);
     xcryptographic_bn_mul_mod(&x3, &x2, &point->x, &prime);
+    xcryptographic_bn_zero(&seven);
+    seven.d[0] = 7;
     xcryptographic_bn_add_mod(&rhs, &x3,
-                               &(XCryptographic_Bn){{7,0,0,0,0,0,0,0}},
+                               &seven,
                                &prime);
     if (xcryptographic_bn_cmp(&lhs, &rhs) != 0) return false;
     xcryptographic_bn_zero(&point->z);

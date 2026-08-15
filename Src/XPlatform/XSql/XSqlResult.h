@@ -489,6 +489,6 @@ void XSqlResult_resetBindCount(XSqlResult* result);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlResult_create
-#define XSqlResult_create(...) XSqlResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlResult_create(...) XSqlResult_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XSQLRESULT_H */

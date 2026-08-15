@@ -252,6 +252,6 @@ XQueue* XQueue_create_ex(XMemoryType memory,  size_t typeSize);
 
 /* XClass create API default-memory wrappers. */
 #undef XQueue_create
-#define XQueue_create(...) XQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XQueue_create(...) XQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif  // !XQUEUE_H

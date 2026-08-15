@@ -6,12 +6,17 @@ XString_reverse_iterator XString_rbegin(XString* str)
 	if (XString_isEmpty_base(str))
 		return XString_rend(str);
 	XChar* back = XString_data(str) + (XString_length_base(str) - 1);
-	return  (XString_reverse_iterator) { back };
+	XString_reverse_iterator result;
+	result.data = back;
+	return result;
 }
 
 XString_reverse_iterator XString_rend(XString* str)
 {
-	return  (XString_reverse_iterator) { 0 };
+	XString_reverse_iterator result;
+	(void)str;
+	result.data = NULL;
+	return result;
 }
 
 bool XString_reverse_iterator_isRend(const XString_reverse_iterator* it)

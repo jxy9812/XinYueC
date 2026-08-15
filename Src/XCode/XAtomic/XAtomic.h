@@ -98,6 +98,25 @@ typedef struct XAtomic_size_t { volatile size_t value; }  XAtomic_size_t;
  * @note 内部包含一个volatile修饰的void*指针，确保多线程环境下的可见性
  */
 typedef struct { volatile void* value; }  XAtomic_uintptr_t;
+
+/*
+ * @brief 原子模块统一提供线程局部存储限定符。
+ * @details
+ * 平台线程局部存储语法属于编译器/运行时实现细节，不能散落到无锁容器、
+ * 算法等上层模块中。各平台驱动只需要包含 XAtomic.h，即可通过这个限定符
+ * 声明真正的线程私有状态；上层代码不需要判断 MSVC、GCC 或 Clang。
+ */
+#if defined(_MSC_VER)
+#define XATOMIC_THREAD_LOCAL __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define XATOMIC_THREAD_LOCAL __thread
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define XATOMIC_THREAD_LOCAL _Thread_local
+#else
+/* 保留对旧式嵌入式编译器的语法兼容；使用锁自由容器时仍需提供 TLS。 */
+#define XATOMIC_THREAD_LOCAL _Thread_local
+#endif
+
 //创建原子变量
 #define XAtomic_create(type)    XCalloc_System(1,sizeof(XAtomic_##type))
 /**

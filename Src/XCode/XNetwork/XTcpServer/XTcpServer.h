@@ -338,6 +338,6 @@ void* XTcpServer_acceptError_signal(XTcpServer* server, XAbstractSocket_SocketEr
 
 /* XClass create API default-memory wrappers. */
 #undef XTcpServer_create
-#define XTcpServer_create(...) XTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTcpServer_create() XTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XTCPSERVER_H

@@ -138,6 +138,6 @@ bool XTuiWidget_isEnabled(const XTuiWidget* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiWidget_create
-#define XTuiWidget_create(...) XTuiWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiWidget_create() XTuiWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_WIDGET_H */

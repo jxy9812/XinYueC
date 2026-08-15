@@ -697,13 +697,13 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusExceptionResponse_create
-#define XModbusExceptionResponse_create(...) XModbusExceptionResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusExceptionResponse_create() XModbusExceptionResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XModbusPdu_create
-#define XModbusPdu_create(...) XModbusPdu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusPdu_create() XModbusPdu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XModbusRequest_create
-#define XModbusRequest_create(...) XModbusRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusRequest_create() XModbusRequest_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XModbusResponse_create
-#define XModbusResponse_create(...) XModbusResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusResponse_create() XModbusResponse_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSPDU_H
 

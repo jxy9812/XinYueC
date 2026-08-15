@@ -201,7 +201,7 @@ void XModbusRtuSerialServer_setInterFrameDelay(XModbusRtuSerialServer* server, i
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusRtuSerialServer_create
-#define XModbusRtuSerialServer_create(...) XModbusRtuSerialServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusRtuSerialServer_create() XModbusRtuSerialServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSRTUSERIALSERVER_H
 

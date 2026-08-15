@@ -776,6 +776,6 @@ void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key);
 
 /* XClass create API default-memory wrappers. */
 #undef XSslSocket_create
-#define XSslSocket_create(...) XSslSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSslSocket_create() XSslSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSSLSOCKET_H */

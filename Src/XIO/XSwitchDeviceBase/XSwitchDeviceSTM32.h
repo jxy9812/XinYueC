@@ -48,6 +48,6 @@ void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32* sw);
 
 /* XClass create API default-memory wrappers. */
 #undef XSwitchDeviceSTM32_create
-#define XSwitchDeviceSTM32_create(...) XSwitchDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSwitchDeviceSTM32_create(...) XSwitchDeviceSTM32_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

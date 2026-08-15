@@ -145,6 +145,6 @@ void* XModbusTcpServer_modbusClientDisconnected_signal(XModbusTcpServer* server,
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusTcpServer_create
-#define XModbusTcpServer_create(...) XModbusTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusTcpServer_create() XModbusTcpServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSTCPSERVER_H

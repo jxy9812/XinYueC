@@ -85,6 +85,6 @@ XRunnable* XRunnable_create_from_function(XCallableToRun function,XVarList* args
 
 /* XClass create API default-memory wrappers. */
 #undef XRunnable_create
-#define XRunnable_create(...) XRunnable_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRunnable_create() XRunnable_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XRUNNABLE_H

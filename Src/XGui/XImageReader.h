@@ -454,7 +454,7 @@ void XImageReader_setAllocationLimit(int mbLimit);
 
 /* XClass create API default-memory wrappers. */
 #undef XImageReader_create
-#define XImageReader_create(...) XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XImageReader_create() XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEREADER_H */
 

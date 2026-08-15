@@ -133,6 +133,6 @@ size_t XMqttTopicName_hash(const XMqttTopicName* name, size_t seed);
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttTopicName_create
-#define XMqttTopicName_create(...) XMqttTopicName_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttTopicName_create(...) XMqttTopicName_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XMQTTTOPICNAME_H

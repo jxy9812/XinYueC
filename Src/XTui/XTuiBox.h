@@ -72,6 +72,6 @@ void XTuiBox_setColors(XTuiBox* box, XColor borderFg, XColor borderBg, XColor co
 
 /* XClass create API default-memory wrappers. */
 #undef XTuiBox_create
-#define XTuiBox_create(...) XTuiBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTuiBox_create() XTuiBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTUI_BOX_H */

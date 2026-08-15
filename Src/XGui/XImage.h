@@ -584,6 +584,6 @@ const char* XImage_formatToStr(XImageFormat format);
 
 /* XClass create API default-memory wrappers. */
 #undef XImage_create
-#define XImage_create(...) XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XImage_create() XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGE_H */

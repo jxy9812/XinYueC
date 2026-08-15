@@ -260,6 +260,6 @@ void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
 
 /* XClass create API default-memory wrappers. */
 #undef XUdpSocket_create
-#define XUdpSocket_create(...) XUdpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XUdpSocket_create() XUdpSocket_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XUDPSOCKET_H

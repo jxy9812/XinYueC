@@ -511,7 +511,7 @@ static bool xssh_send_packet(XSshServer* adapter,
         }
         if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->encOp,
                 (char*)encoded, sizeof(encoded),
-                (XByteArrayView){ frame, (int64_t)total }).m_size != (int64_t)total) {
+                XByteArrayView_create_data( frame, (int64_t)total )).m_size != (int64_t)total) {
             XSSH_DATA(adapter)->closed = true;
             return false;
         }
@@ -574,9 +574,9 @@ static bool xssh_setup_keys(XSshServer* adapter)
     if (!xssh_derive_key(adapter, 'E', macC2S, sizeof(macC2S))) return false;
     if (!xssh_derive_key(adapter, 'F', macS2C, sizeof(macS2C))) return false;
 
-    if (!XCryptographic_aesCtrImportKey((XByteArrayView){ encC2S, (int64_t)encC2SLen },
+    if (!XCryptographic_aesCtrImportKey(XByteArrayView_create_data( encC2S, (int64_t)encC2SLen ),
                                         &XSSH_DATA(adapter)->cipherKeyC2S) ||
-        !XCryptographic_aesCtrImportKey((XByteArrayView){ encS2C, (int64_t)encS2CLen },
+        !XCryptographic_aesCtrImportKey(XByteArrayView_create_data( encS2C, (int64_t)encS2CLen ),
                                         &XSSH_DATA(adapter)->cipherKeyS2C))
         return false;
     memcpy(XSSH_DATA(adapter)->macKeyC2S, macC2S, sizeof(macC2S));
@@ -584,13 +584,13 @@ static bool xssh_setup_keys(XSshServer* adapter)
 
     if (!XCryptographic_aesCtrSetup(&XSSH_DATA(adapter)->encOp,
                                     XSSH_DATA(adapter)->cipherKeyS2C, true,
-                                    (XByteArrayView){ ivS2C, sizeof(ivS2C) }))
+                                    XByteArrayView_create_data( ivS2C, sizeof(ivS2C) )))
         return false;
     XSSH_DATA(adapter)->encActive = true;
 
     if (!XCryptographic_aesCtrSetup(&XSSH_DATA(adapter)->decOp,
                                     XSSH_DATA(adapter)->cipherKeyC2S, false,
-                                    (XByteArrayView){ ivC2S, sizeof(ivC2S) }))
+                                    XByteArrayView_create_data( ivC2S, sizeof(ivC2S) )))
         return false;
     XSSH_DATA(adapter)->decActive = true;
     return true;
@@ -631,7 +631,7 @@ static bool xssh_generate_host_key(XSshServer* adapter)
     /* 优先加载已持久化的主机密钥，保证跨进程重启后主机指纹不变。 */
     if (xssh_hostkey_load(privateBytes, sizeof(privateBytes), &privateLen)) {
         bool imported = XCryptographic_ecdsaImportPrivateKey(XCryptographic_EcdsaAlgorithm_NistP256,
-            (XByteArrayView){ privateBytes, (int64_t)privateLen },
+            XByteArrayView_create_data( privateBytes, (int64_t)privateLen ),
             &XSSH_DATA(adapter)->hostKey);
         memset(privateBytes, 0, sizeof(privateBytes));
         if (imported) {
@@ -1359,7 +1359,7 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
 
         sharedLen = (size_t)XCryptographic_ecdhAgreeInto(
             (char*)shared, sizeof(shared), XSSH_DATA(adapter)->ecdhKey,
-            (XByteArrayView){ qcString, (int64_t)qcStringLen }).m_size;
+            XByteArrayView_create_data( qcString, (int64_t)qcStringLen )).m_size;
         if (sharedLen == 0) {
             XSSH_DBG("raw key agreement failed len=%u\n", (unsigned)sharedLen);
             return XProtocolResult_Failed;
@@ -1443,7 +1443,7 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
      * 其中 ecdsa_signature_blob = mpint r || mpint s */
     sigLen = (size_t)XCryptographic_ecdsaSignHashInto(
         (char*)sig, sizeof(sig), XSSH_DATA(adapter)->hostKey,
-        (XByteArrayView){ signatureHash, XSSH_HASH_LEN }, false).m_size;
+        XByteArrayView_create_data( signatureHash, XSSH_HASH_LEN ), false).m_size;
     if (sigLen == 0) {
         XSSH_DBG("sign hash failed\n");
         return XProtocolResult_Failed;
@@ -2371,7 +2371,7 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
             if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->decOp,
                     (char*)XSSH_DATA(adapter)->lenPlain,
                     sizeof(XSSH_DATA(adapter)->lenPlain),
-                    (XByteArrayView){ XSSH_DATA(adapter)->rxBuf, 4 }).m_size != 4) {
+                    XByteArrayView_create_data( XSSH_DATA(adapter)->rxBuf, 4 )).m_size != 4) {
                 XSSH_DATA(adapter)->closed = true;
                 return XProtocolResult_Failed;
             }
@@ -2391,8 +2391,8 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
 
         if (XCryptographic_aesCtrUpdateInto(&XSSH_DATA(adapter)->decOp,
                 (char*)(plain + 4), totalCipher - 4,
-                (XByteArrayView){ XSSH_DATA(adapter)->rxBuf + 4,
-                                  (int64_t)(totalCipher - 4) }).m_size !=
+                XByteArrayView_create_data( XSSH_DATA(adapter)->rxBuf + 4,
+                                  (int64_t)(totalCipher - 4) )).m_size !=
             (int64_t)(totalCipher - 4)) {
             XSSH_DATA(adapter)->closed = true;
             return XProtocolResult_Failed;

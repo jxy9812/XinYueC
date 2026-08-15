@@ -360,9 +360,9 @@ void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State 
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusDevice_create
-#define XModbusDevice_create(...) XModbusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusDevice_create() XModbusDevice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XModbusRtuSerialClient_create
-#define XModbusRtuSerialClient_create(...) XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusRtuSerialClient_create() XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSDEVICE_H
 

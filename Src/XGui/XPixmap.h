@@ -425,7 +425,7 @@ void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out);
 
 /* XClass create API default-memory wrappers. */
 #undef XPixmap_create
-#define XPixmap_create(...) XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XPixmap_create() XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XPIXMAP_H */
 

@@ -332,6 +332,6 @@ bool XAbstractEventDispatcher_isMainThread(XAbstractEventDispatcher* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XAbstractEventDispatcher_create
-#define XAbstractEventDispatcher_create(...) XAbstractEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XAbstractEventDispatcher_create(...) XAbstractEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XABSTRACTEVENTDISPATCHER_H

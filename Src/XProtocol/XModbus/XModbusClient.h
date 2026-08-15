@@ -241,6 +241,6 @@ void* XModbusClient_timeoutChanged_signal(XModbusClient* client, int newTimeout)
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusClient_create
-#define XModbusClient_create(...) XModbusClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusClient_create() XModbusClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSCLIENT_H

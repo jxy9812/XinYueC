@@ -199,6 +199,6 @@ void* XThreadPool_tasksEmpty_signal(XThreadPool* pool);
 
 /* XClass create API default-memory wrappers. */
 #undef XThreadPool_create
-#define XThreadPool_create(...) XThreadPool_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XThreadPool_create(...) XThreadPool_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XTHREADPOOL_H

@@ -258,6 +258,6 @@ void XLockFreeQueue_delete_base(XLockFreeQueue* this_queue);
 
 /* XClass create API default-memory wrappers. */
 #undef XLockFreeQueue_create
-#define XLockFreeQueue_create(...) XLockFreeQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XLockFreeQueue_create(...) XLockFreeQueue_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif

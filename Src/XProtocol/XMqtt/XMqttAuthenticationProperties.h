@@ -154,6 +154,6 @@ void XMqttAuthenticationProperties_setUserProperties(XMqttAuthenticationProperti
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttAuthenticationProperties_create
-#define XMqttAuthenticationProperties_create(...) XMqttAuthenticationProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttAuthenticationProperties_create() XMqttAuthenticationProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTAUTHENTICATIONPROPERTIES_H

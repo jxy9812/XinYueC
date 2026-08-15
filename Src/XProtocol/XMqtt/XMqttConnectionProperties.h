@@ -448,10 +448,10 @@ XString* XMqttServerConnectionProperties_serverReference(const XMqttServerConnec
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttConnectionProperties_create
-#define XMqttConnectionProperties_create(...) XMqttConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttConnectionProperties_create() XMqttConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XMqttLastWillProperties_create
-#define XMqttLastWillProperties_create(...) XMqttLastWillProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttLastWillProperties_create() XMqttLastWillProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XMqttServerConnectionProperties_create
-#define XMqttServerConnectionProperties_create(...) XMqttServerConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttServerConnectionProperties_create() XMqttServerConnectionProperties_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTCONNECTIONPROPERTIES_H

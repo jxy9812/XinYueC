@@ -180,26 +180,30 @@ extern "C" {
 /* ========================================================================== */
 #define IS_ON_DEBUG(on)						ISNULL(on,"???????"#on",?CXinYueConfig.h")
 
+/** @brief 输出带文件、函数和行号上下文的格式化日志。 */
+int XPrintf_context(const char* label, const char* file, const char* function,
+                    int line, const char* format, ...);
+
 //??debug??????
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))
-#define XDEBUG_PRINTF(fmt,...) XPrintf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
+#define XDEBUG_PRINTF(...) XPrintf_context("", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #else
-#define XDEBUG_PRINTF(fmt,...)
+#define XDEBUG_PRINTF(...)
 #endif
 #else
 #if defined _DEBUG
-#define XDEBUG_PRINTF(fmt,...) XPrintf("Debug [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
+#define XDEBUG_PRINTF(...) XPrintf_context("Debug", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #else
-#define XDEBUG_PRINTF(fmt,...)
+#define XDEBUG_PRINTF(...)
 #endif
 #endif // !DEBUG_ON
 
 //??????????
 #if ((XERROR_ON))
-#define XERROR_PRINTF(fmt,...) XPrintf("XError [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
+#define XERROR_PRINTF(...) XPrintf_context("XError", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #else
-#define XERROR_PRINTF(fmt,...)
+#define XERROR_PRINTF(...)
 #endif
 
 #ifdef __cplusplus

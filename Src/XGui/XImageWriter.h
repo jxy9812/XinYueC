@@ -302,7 +302,7 @@ void* XImageWriter_imageFormatsForMimeType(const char* mimeType);
 
 /* XClass create API default-memory wrappers. */
 #undef XImageWriter_create
-#define XImageWriter_create(...) XImageWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XImageWriter_create() XImageWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEWRITER_H */
 

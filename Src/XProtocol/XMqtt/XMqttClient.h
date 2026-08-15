@@ -778,6 +778,6 @@ void* XMqttClient_authenticationFinished_signal(XMqttClient* client, const XMqtt
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttClient_create
-#define XMqttClient_create(...) XMqttClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttClient_create() XMqttClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMQTTCLIENT_H

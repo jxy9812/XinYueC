@@ -295,6 +295,6 @@ void XLockFreeList_delete_base(XLockFreeList* this_list);
 
 /* XClass create API default-memory wrappers. */
 #undef XLockFreeList_create
-#define XLockFreeList_create(...) XLockFreeList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XLockFreeList_create(...) XLockFreeList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XLockFreeList_H

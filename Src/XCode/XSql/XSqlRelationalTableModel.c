@@ -69,12 +69,13 @@ static bool xsql_relational_reserve(XSqlRelationalTableModel* model, size_t want
 
 XVtable* XSqlRelationalTableModel_class_init(void)
 {
+    static void* table[] = {
+        (void*)VXSqlRelationalTableModel_setRelation,
+        (void*)VXSqlRelationalTableModel_relationModel
+    };
     XVTABLE_INIT_DEFAULT(XSqlRelationalTableModel)
     XVTABLE_INHERIT_XCLASS(XSqlTableModel);
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
-        VXSqlRelationalTableModel_setRelation,
-        VXSqlRelationalTableModel_relationModel
-    }));
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlQueryModel_Clear, VXSqlRelationalTableModel_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlTableModel_Select, VXSqlRelationalTableModel_select);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlTableModel_SetTable, VXSqlRelationalTableModel_setTable);

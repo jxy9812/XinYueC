@@ -131,6 +131,6 @@ XMqttUserProperties* XMqttUserProperties_create(void);
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttStringPair_create
-#define XMqttStringPair_create(...) XMqttStringPair_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttStringPair_create(...) XMqttStringPair_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XMQTTTYPE_H

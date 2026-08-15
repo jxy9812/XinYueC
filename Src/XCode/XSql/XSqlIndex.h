@@ -85,6 +85,6 @@ void XSqlIndex_setDescending(XSqlIndex* index, int fieldIndex, bool descending);
 
 /* XClass create API default-memory wrappers. */
 #undef XSqlIndex_create
-#define XSqlIndex_create(...) XSqlIndex_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XSqlIndex_create() XSqlIndex_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XSQLINDEX_H */

@@ -294,6 +294,6 @@ XSerialPort* XModbusRtuSerialClient_serialPort(const XModbusRtuSerialClient* cli
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusRtuSerialClient_create
-#define XModbusRtuSerialClient_create(...) XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusRtuSerialClient_create() XModbusRtuSerialClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSRTUSERIALCLIENT_H

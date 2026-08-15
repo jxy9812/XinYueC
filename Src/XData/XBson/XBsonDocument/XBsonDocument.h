@@ -248,6 +248,6 @@ void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc);
 
 /* XClass create API default-memory wrappers. */
 #undef XBsonDocument_create
-#define XBsonDocument_create(...) XBsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XBsonDocument_create() XBsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XBSONDOCUMENT_H */

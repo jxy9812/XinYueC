@@ -237,6 +237,6 @@ void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
 
 /* XClass create API default-memory wrappers. */
 #undef XRingChunk_create
-#define XRingChunk_create(...) XRingChunk_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRingChunk_create(...) XRingChunk_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // !XRINGCHUNK_H

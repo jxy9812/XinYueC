@@ -267,7 +267,7 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
 
 /* XClass create API default-memory wrappers. */
 #undef XImageIOHandler_create
-#define XImageIOHandler_create(...) XImageIOHandler_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XImageIOHandler_create() XImageIOHandler_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEIOHANDLER_H */
 

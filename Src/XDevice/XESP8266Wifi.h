@@ -433,6 +433,6 @@ void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId);
 
 /* XClass create API default-memory wrappers. */
 #undef XESP8266Wifi_create
-#define XESP8266Wifi_create(...) XESP8266Wifi_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XESP8266Wifi_create(...) XESP8266Wifi_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XESP8266WIFI_H

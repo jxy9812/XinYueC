@@ -310,6 +310,6 @@ void XNetworkRequestFactory_clearAttributes(XNetworkRequestFactory* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XNetworkRequestFactory_create
-#define XNetworkRequestFactory_create(...) XNetworkRequestFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XNetworkRequestFactory_create() XNetworkRequestFactory_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XNETWORKREQUESTFACTORY_H */

@@ -239,6 +239,6 @@ void XTelnetServer_setUserNameResult(XTelnetServer* self,
 
 /* XClass create API default-memory wrappers. */
 #undef XTelnetServer_create
-#define XTelnetServer_create(...) XTelnetServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XTelnetServer_create() XTelnetServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XTELNETSERVER_H */

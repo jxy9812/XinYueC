@@ -24,6 +24,38 @@ typedef struct XByteArray
 {
 	XVector m_class;  ///< 继承自XVector基类，包含数据存储、大小、容量等核心成员
 } XByteArray;
+
+/*
+ * @brief 使用局部字节变量调用 XVector 查询接口。
+ * @details 避免使用 MSVC C 编译器不支持的 C99 复合字面量，同时保证
+ *          字节表达式只在一次函数调用中求值。
+ */
+static inline bool XByteArray_contains_byte(const XByteArray* array, uint8_t byte)
+{
+	return XVector_contains((const XVector*)array, &byte);
+}
+
+static inline int64_t XByteArray_indexOf_byte(const XByteArray* array,
+	uint8_t byte, int64_t from)
+{
+	return XVector_indexOf((const XVector*)array, &byte, from);
+}
+
+static inline int64_t XByteArray_lastIndexOf_byte(const XByteArray* array,
+	uint8_t byte, int64_t from)
+{
+	return XVector_lastIndexOf((const XVector*)array, &byte, from);
+}
+
+static inline bool XByteArray_startsWith_byte(const XByteArray* array, uint8_t byte)
+{
+	return XVector_startsWith((const XVector*)array, &byte);
+}
+
+static inline bool XByteArray_endsWith_byte(const XByteArray* array, uint8_t byte)
+{
+	return XVector_endsWith((const XVector*)array, &byte);
+}
 //============================= 创建与初始化 =============================
 
 /**
@@ -460,7 +492,7 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData);
 * @param byte  待查找字节（uint8_t）
 * @return 存在返回 true
 */
-#define XByteArray_contains(array, byte)  XVector_contains(array, &(uint8_t){(byte)})
+#define XByteArray_contains(array, byte)  XByteArray_contains_byte((array), (uint8_t)(byte))
 
 /**
 * @brief 查找指定字节首次出现位置——对齐 Qt QByteArray::indexOf(char, qsizetype from)
@@ -469,23 +501,23 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData);
 * @param from  起始索引
 * @return 找到返回索引，找不到返回 -1
 */
-#define XByteArray_indexOf(array, byte, from)     XVector_indexOf((const XVector*)(array), &(uint8_t){(byte)}, (from))
+#define XByteArray_indexOf(array, byte, from)     XByteArray_indexOf_byte((array), (uint8_t)(byte), (from))
 
 /**
 * @brief 查找指定字节最后一次出现位置——对齐 Qt QByteArray::lastIndexOf
 * @param from 反向起始索引，-1 表示从末尾开始
 */
-#define XByteArray_lastIndexOf(array, byte, from)     XVector_lastIndexOf((const XVector*)(array), &(uint8_t){(byte)}, (from))
+#define XByteArray_lastIndexOf(array, byte, from)     XByteArray_lastIndexOf_byte((array), (uint8_t)(byte), (from))
 
 /**
 * @brief 判断是否以指定字节开头——对齐 Qt QByteArray::startsWith(char)
 */
-#define XByteArray_startsWith(array, byte)     XVector_startsWith((const XVector*)(array), &(uint8_t){(byte)})
+#define XByteArray_startsWith(array, byte)     XByteArray_startsWith_byte((array), (uint8_t)(byte))
 
 /**
 * @brief 判断是否以指定字节结尾——对齐 Qt QByteArray::endsWith(char)
 */
-#define XByteArray_endsWith(array, byte)     XVector_endsWith((const XVector*)(array), &(uint8_t){(byte)})
+#define XByteArray_endsWith(array, byte)     XByteArray_endsWith_byte((array), (uint8_t)(byte))
 
 /**
 * @brief 按谓词条件删除元素——对齐 Qt QByteArray::removeIf

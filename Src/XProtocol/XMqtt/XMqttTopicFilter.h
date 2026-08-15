@@ -136,6 +136,6 @@ size_t XMqttTopicFilter_hash(const XMqttTopicFilter* filter, size_t seed);
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttTopicFilter_create
-#define XMqttTopicFilter_create(...) XMqttTopicFilter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttTopicFilter_create(...) XMqttTopicFilter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XMQTTTOPICFILTER_H

@@ -283,7 +283,7 @@ XByteArray* XHttpMultiPart_contentType(const XHttpMultiPart* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpPart_create
-#define XHttpPart_create(...) XHttpPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpPart_create() XHttpPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XHttpMultiPart_create
 #define XHttpMultiPart_create() \
 	XHttpMultiPart_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttpMultiPart_MixedType)

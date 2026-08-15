@@ -11,7 +11,7 @@
 // ==================== 测试辅助宏 ====================
 #define TEST_PASS(name) XPrintf("[PASS] %s\n", name)
 #define TEST_FAIL(name, reason) XPrintf("[FAIL] %s: %s\n", name, reason)
-#define TEST_INFO(fmt, ...) XPrintf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#define TEST_INFO(...) XPrintf_line("[INFO] ", __VA_ARGS__)
 
 // 性能测试配置
 #define PERFORMANCE_TEST_COUNT 250000

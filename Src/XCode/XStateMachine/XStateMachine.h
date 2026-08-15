@@ -326,8 +326,8 @@ void* XStateMachine_runningChanged_signal(XStateMachine* machine, bool running);
 #define XStateMachine_create() \
 	XStateMachine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XState_ExclusiveStates)
 #undef XStateMachine_SignalEvent_create
-#define XStateMachine_SignalEvent_create(...) XStateMachine_SignalEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XStateMachine_SignalEvent_create(...) XStateMachine_SignalEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 #undef XStateMachine_WrappedEvent_create
-#define XStateMachine_WrappedEvent_create(...) XStateMachine_WrappedEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XStateMachine_WrappedEvent_create(...) XStateMachine_WrappedEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XSTATEMACHINE_H

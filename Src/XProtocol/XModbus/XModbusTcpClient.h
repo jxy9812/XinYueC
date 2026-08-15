@@ -200,7 +200,7 @@ void XModbusTcpClient_init(XModbusTcpClient* client);
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusTcpClient_create
-#define XModbusTcpClient_create(...) XModbusTcpClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XModbusTcpClient_create() XModbusTcpClient_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XMODBUSTCPCLIENT_H
 

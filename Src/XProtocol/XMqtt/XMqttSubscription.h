@@ -191,6 +191,6 @@ void XMqttSubscription_setClient(XMqttSubscription* sub, void* client);
 
 /* XClass create API default-memory wrappers. */
 #undef XMqttSubscription_create
-#define XMqttSubscription_create(...) XMqttSubscription_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XMqttSubscription_create(...) XMqttSubscription_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XMQTTSUBSCRIPTION_H

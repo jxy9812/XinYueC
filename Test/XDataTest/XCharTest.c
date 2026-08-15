@@ -8,7 +8,7 @@
 // ==================== 测试辅助宏 ====================
 #define TEST_PASS(name) XPrintf("[PASS] %s\n", name)
 #define TEST_FAIL(name, reason) XPrintf("[FAIL] %s: %s\n", name, reason)
-#define TEST_INFO(fmt, ...) XPrintf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#define TEST_INFO(...) XPrintf_line("[INFO] ", __VA_ARGS__)
 
 // ==================== 测试函数声明 ====================
 static bool test_create_functions(void);

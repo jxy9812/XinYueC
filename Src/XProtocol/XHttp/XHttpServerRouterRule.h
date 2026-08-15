@@ -92,6 +92,6 @@ bool XHttpServerRouterRule_exec(const XHttpServerRouterRule* self,
 
 /* XClass create API default-memory wrappers. */
 #undef XHttpServerRouterRule_create
-#define XHttpServerRouterRule_create(...) XHttpServerRouterRule_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttpServerRouterRule_create(...) XHttpServerRouterRule_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif /* XHTTPSERVERROUTERRULE_H */

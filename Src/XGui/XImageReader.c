@@ -401,9 +401,13 @@ bool XImageReader_read(XImageReader* self, XImage* out)
 
     if (self->m_data->m_hasClipRect) {
         XImage clipped;
+        XRect clipRect;
         XImage_init(&clipped);
-        XImage_copyRect(out, &(XRect){self->m_data->m_clipX, self->m_data->m_clipY,
-                                     self->m_data->m_clipW, self->m_data->m_clipH}, &clipped);
+        clipRect.x = self->m_data->m_clipX;
+        clipRect.y = self->m_data->m_clipY;
+        clipRect.width = self->m_data->m_clipW;
+        clipRect.height = self->m_data->m_clipH;
+        XImage_copyRect(out, &clipRect, &clipped);
         XImage_deinit_base(out);
         XImage_move_base(out, &clipped);
         XImage_deinit_base(&clipped);

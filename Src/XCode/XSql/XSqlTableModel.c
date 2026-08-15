@@ -26,16 +26,17 @@ static XSqlRecord* xsql_table_key_values(const XSqlTableModel* model,
 
 XVtable* XSqlTableModel_class_init(void)
 {
+    static void* table[] = {
+        (void*)VXSqlTableModel_setTable, (void*)VXSqlTableModel_setEditStrategy,
+        (void*)VXSqlTableModel_setSort, (void*)VXSqlTableModel_setFilter,
+        (void*)VXSqlTableModel_revertRow, (void*)VXSqlTableModel_select,
+        (void*)VXSqlTableModel_selectRow, (void*)VXSqlTableModel_updateRowInTable,
+        (void*)VXSqlTableModel_insertRowIntoTable, (void*)VXSqlTableModel_deleteRowFromTable,
+        (void*)VXSqlTableModel_orderByClause, (void*)VXSqlTableModel_selectStatement
+    };
     XVTABLE_INIT_DEFAULT(XSqlTableModel)
     XVTABLE_INHERIT_XCLASS(XSqlQueryModel);
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
-        VXSqlTableModel_setTable, VXSqlTableModel_setEditStrategy,
-        VXSqlTableModel_setSort, VXSqlTableModel_setFilter,
-        VXSqlTableModel_revertRow, VXSqlTableModel_select,
-        VXSqlTableModel_selectRow, VXSqlTableModel_updateRowInTable,
-        VXSqlTableModel_insertRowIntoTable, VXSqlTableModel_deleteRowFromTable,
-        VXSqlTableModel_orderByClause, VXSqlTableModel_selectStatement
-    }));
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXSqlQueryModel_Clear, VXSqlTableModel_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlTableModel_deinit);
     return XVTABLE_DEFAULT;

@@ -150,6 +150,6 @@ uint32_t XHttp2Configuration_maxFrameSize(const XHttp2Configuration* self);
 
 /* XClass create API default-memory wrappers. */
 #undef XHttp2Configuration_create
-#define XHttp2Configuration_create(...) XHttp2Configuration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XHttp2Configuration_create() XHttp2Configuration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif

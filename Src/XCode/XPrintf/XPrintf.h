@@ -16,6 +16,8 @@ extern "C" {
  * @return 打印的字符数（参考 printf 返回值）
  */
 int XPrintf(const char* format, ...);
+/** @brief 打印带固定前缀和换行的格式化文本。 */
+int XPrintf_line(const char* prefix, const char* format, ...);
 /**
  * @brief 打印 XString 字符串（使用本地编码）
  * @param str XString 对象指针

@@ -724,10 +724,10 @@ XRegularExpression_MatchOptions XRegularExpressionMatchIterator_matchOptions(con
 
 /* XClass create API default-memory wrappers. */
 #undef XRegularExpression_create
-#define XRegularExpression_create(...) XRegularExpression_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRegularExpression_create() XRegularExpression_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XRegularExpressionMatch_create
-#define XRegularExpressionMatch_create(...) XRegularExpressionMatch_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRegularExpressionMatch_create() XRegularExpressionMatch_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XRegularExpressionMatchIterator_create
-#define XRegularExpressionMatchIterator_create(...) XRegularExpressionMatchIterator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, ##__VA_ARGS__)
+#define XRegularExpressionMatchIterator_create() XRegularExpressionMatchIterator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XREGULAREXPRESSION_H */

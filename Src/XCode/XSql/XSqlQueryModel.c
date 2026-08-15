@@ -15,12 +15,13 @@ static XSqlModelIndex VXSqlQueryModel_indexInQuery(const XSqlQueryModel* model, 
 
 XVtable* XSqlQueryModel_class_init(void)
 {
+    static void* table[] = {
+        (void*)VXSqlQueryModel_clear, (void*)VXSqlQueryModel_queryChange,
+        (void*)VXSqlQueryModel_indexInQuery
+    };
     XVTABLE_INIT_DEFAULT(XSqlQueryModel)
     XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(((void*[]){
-        VXSqlQueryModel_clear, VXSqlQueryModel_queryChange,
-        VXSqlQueryModel_indexInQuery
-    }));
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlQueryModel_deinit);
     return XVTABLE_DEFAULT;
 }
