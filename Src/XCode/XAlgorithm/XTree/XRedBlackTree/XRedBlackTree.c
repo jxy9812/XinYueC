@@ -245,7 +245,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 }
 //删除的是有两个孩子
 static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,
-	size_t dataSize, XMemory* memory)
+	size_t dataSize)
 {
 #if XVector_ON
 	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
@@ -262,17 +262,23 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 	if (dataSize > 0) 
 	{
-		char* tempBuffer = memory && memory->malloc
-			? (char*)memory->malloc(dataSize) : NULL; // 创建临时缓冲区
+		/*
+		 * 临时交换数据使用第三种内存池：小数据走快速池，大数据由混合池
+		 * 回退系统内存。节点所属的 memory 只用于节点生命周期管理，不能
+		 * 因为节点使用了其他内存方法而改变临时缓冲区的分配策略。
+		 */
+		XMemory* temporaryMemory = XMemory_method(XMEMORY_TYPE_HYBRID);
+		char* tempBuffer = temporaryMemory && temporaryMemory->malloc
+			? (char*)temporaryMemory->malloc(dataSize) : NULL;
 		if (tempBuffer == NULL) {
 			// 处理内存分配失败的情况，例如直接返回或采取其他措施
-			return;
+			return NULL;
 		}
 		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
 		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
 		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-		if (memory && memory->free)
-			memory->free(tempBuffer); // 释放临时缓冲区
+		if (temporaryMemory && temporaryMemory->free)
+			temporaryMemory->free(tempBuffer); // 使用分配时的混合池释放临时缓冲区
 	}
 	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
 	//memcpy();
@@ -315,7 +321,7 @@ XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode* find
 		++count;
 	if (count == 2) // 两个孩子
 	{
-		return TwoChild_erase(this_root, findErase, dataSize, memory);
+		return TwoChild_erase(this_root, findErase, dataSize);
 	}
 	else // 零个或一个孩子
 	{
