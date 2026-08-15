@@ -593,8 +593,8 @@ static bool xcs_complete_apply(XConsoleShell* self, size_t start, size_t end,
     return true;
 }
 
-/* 清空当前行并重绘提示符和补全后的输入行。 */
-static void xcs_complete_redraw(XConsoleShell* self)
+/* 清空当前行并重绘提示符和当前输入行；历史回填与补全共用。 */
+static void xcs_redraw_input_line(XConsoleShell* self)
 {
     if (!self) return;
     (void)XConsoleShell_writeUtf8(self, "\r\x1b[K");
@@ -603,6 +603,15 @@ static void xcs_complete_redraw(XConsoleShell* self)
     else
         (void)XConsoleShell_writeUtf8(self, "> ");
     (void)XConsoleShell_write(self, self->m_lineBuffer, self->m_lineLength);
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+    if (self->m_lineCursor < self->m_lineLength) {
+        char moveCursor[32];
+        size_t back = self->m_lineLength - self->m_lineCursor;
+        int written = snprintf(moveCursor, sizeof(moveCursor), "\x1b[%zuD", back);
+        if (written > 0 && (size_t)written < sizeof(moveCursor))
+            (void)XConsoleShell_write(self, moveCursor, (size_t)written);
+    }
+#endif
 }
 
 /* 列出歧义候选并重绘提示符与输入行。 */
@@ -612,13 +621,16 @@ static void xcs_complete_show_candidates(XConsoleShell* self,
 {
     size_t i;
     if (!self || !candidates) return;
+    /* 候选必须从下一行开始，不能直接接在当前命令后面。候选输出结束后再
+       重绘提示符与原输入行，保持 SSH/Telnet 和本地终端表现一致。 */
+    (void)XConsoleShell_writeUtf8(self, "\r\n");
     for (i = 0; i < count; ++i) {
         if (!candidates[i]) continue;
         (void)XConsoleShell_writeUtf8(self, candidates[i]);
         (void)XConsoleShell_writeUtf8(self, "  ");
     }
     (void)XConsoleShell_writeUtf8(self, "\r\n");
-    xcs_complete_redraw(self);
+    xcs_redraw_input_line(self);
 }
 
 static void xcs_complete_add_candidate(const char* candidate,
@@ -648,7 +660,7 @@ static void xcs_complete_finish(XConsoleShell* self,
             completed[len + 1u] = '\0';
             if (xcs_complete_apply(self, current->start, current->end,
                                    completed, len + 1u))
-                xcs_complete_redraw(self);
+                xcs_redraw_input_line(self);
         }
     } else if (count > 1) {
         xcs_complete_show_candidates(self, candidates, count);
@@ -974,7 +986,7 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
                 completed[outLen] = '\0';
                 if (xcs_complete_apply(self, current->start, current->end,
                                        completed, outLen))
-                    xcs_complete_redraw(self);
+                    xcs_redraw_input_line(self);
             }
         }
     } else if (matchCount > 1 && commonLength > filePrefixLength) {
@@ -1001,7 +1013,7 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
                 completed[outLen] = '\0';
                 if (xcs_complete_apply(self, current->start, current->end,
                                        completed, outLen))
-                    xcs_complete_redraw(self);
+                    xcs_redraw_input_line(self);
             }
         }
     } else if (matchCount > 1) {
@@ -1562,8 +1574,8 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     self->m_lineCursor = 0;
-    self->m_escapeState = 0;
 #endif
+    self->m_escapeState = 0;
 #if XCONSOLE_SHELL_STATS_ON
     self->m_processedLines = 0;
     self->m_successfulCommands = 0;
@@ -1931,8 +1943,8 @@ typedef struct XConsoleShellSessionSwap {
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     size_t lineCursor;                               /**< 切换前的行编辑光标。 */
-    uint8_t escapeState;                             /**< 切换前的转义状态。 */
 #endif
+    uint8_t escapeState;                             /**< 切换前的 ANSI 转义状态。 */
 } XConsoleShellSessionSwap;
 
 static bool xcs_is_session(const XConsoleShell* self,
@@ -1967,8 +1979,8 @@ static bool xcs_enter_session(XConsoleShell* self, XConsoleShellSession* session
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     swap->lineCursor = self->m_lineCursor;
-    swap->escapeState = self->m_escapeState;
 #endif
+    swap->escapeState = self->m_escapeState;
     self->m_io = session->m_io;
     self->m_session = *session;
     memcpy(self->m_lineBuffer, session->m_lineBuffer, sizeof(self->m_lineBuffer));
@@ -1983,8 +1995,8 @@ static bool xcs_enter_session(XConsoleShell* self, XConsoleShellSession* session
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     self->m_lineCursor = session->m_lineCursor;
-    self->m_escapeState = session->m_escapeState;
 #endif
+    self->m_escapeState = session->m_escapeState;
     return true;
 }
 
@@ -2006,7 +2018,13 @@ static void xcs_leave_session(XConsoleShell* self, XConsoleShellSession* session
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     session->m_lineCursor = self->m_lineCursor;
+#endif
     session->m_escapeState = self->m_escapeState;
+#if XCONSOLE_SHELL_EDITOR_ON
+    /* editorTui 内部借用了当前工作区的 session 地址。附加会话离开临时
+       工作区后，该地址会失效，必须恢复为 Shell 会话数组中的稳定地址，
+       否则 Vim 的重绘会写入主 Shell，并且只能等下一次输入才看起来刷新。 */
+    XConsoleShellVi_rebindSession(session);
 #endif
     self->m_io = swap->io;
     self->m_session = swap->session;
@@ -2022,8 +2040,8 @@ static void xcs_leave_session(XConsoleShell* self, XConsoleShellSession* session
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     self->m_lineCursor = swap->lineCursor;
-    self->m_escapeState = swap->escapeState;
 #endif
+    self->m_escapeState = swap->escapeState;
 }
 
 XConsoleShellSession* XConsoleShell_openSession(XConsoleShell* self,
@@ -2083,6 +2101,16 @@ XConsoleShellSession* XConsoleShell_findSession(XConsoleShell* self, uint32_t id
             return &self->m_sessions[i];
     }
     return NULL;
+}
+
+bool XConsoleShell_refreshForSession(XConsoleShell* self,
+                                     XConsoleShellSession* session)
+{
+    if (!self || !session || !xcs_is_session(self, session))
+        return false;
+    /* Vim 的尺寸查询和输出都通过 session 自己的 IO 完成，不需要把附加
+       会话复制到 Shell 主工作区；这样可以在协议 pump 中安全刷新。 */
+    return XConsoleShellVi_refresh(self, session);
 }
 
 XConsoleResult XConsoleShell_feedByteForSession(XConsoleShell* self,
@@ -2303,17 +2331,6 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
 {
     XConsoleResult result;
     if (!self) return XConsoleResult_InvalidArgument;
-#if XCONSOLE_SHELL_LOGIN_ON
-#if XCONSOLE_SHELL_LINE_EDITOR_ON
-    if (XConsoleShellLogin_isInputPending(&self->m_session) &&
-        self->m_escapeState) {
-        self->m_escapeState = 0;
-        return XConsoleResult_Ok;
-    }
-#endif
-    if (XConsoleShellLogin_isInputPending(&self->m_session) && byte == 0x1b)
-        return XConsoleResult_Ok;
-#endif
 #if XCONSOLE_SHELL_EDITOR_ON
     /* vim 插入模式下，所有输入字节直接交给编辑器逐字符处理，
        实现输入、回车换行、退格和 ESC 返回命令模式。 */
@@ -2324,57 +2341,80 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
 #if XCONSOLE_SHELL_STATS_ON
     ++self->m_inputBytes;
 #endif
-#if XCONSOLE_SHELL_LINE_EDITOR_ON
     if (self->m_escapeState) {
-        if (self->m_escapeState == 1 && byte == '[') {
-            self->m_escapeState = 2;
+        if (self->m_escapeState == 1u) {
+            if (byte == '[' || byte == 'O') {
+                /* 2 表示 CSI（ESC [），3 表示 SS3（ESC O）。 */
+                self->m_escapeState = byte == '[' ? 2u : 3u;
+                return XConsoleResult_Ok;
+            }
+            /* 单独 ESC 不应吞掉紧随其后的普通输入，例如 ESC 后输入 exit。
+               忽略 ESC，并让当前字节继续走正常输入路径。 */
+            self->m_escapeState = 0u;
+        } else if (byte >= 0x20u && byte <= 0x3fu) {
+            /* CSI/SS3 参数字节和中间字节必须全部消费，鼠标滚轮、修饰键
+               方向键及 bracketed-paste 序列都可能包含多个此类字节。 */
             return XConsoleResult_Ok;
-        }
-#if XCONSOLE_SHELL_HISTORY_ON
-        if (self->m_escapeState == 2 && (byte == 'A' || byte == 'B')) {
-            size_t target = self->m_historyCursor;
-            self->m_escapeState = 0;
-            if (self->m_historyCount == 0) return XConsoleResult_Ok;
-            if (byte == 'A') {
-                if (target == self->m_historyCount) target = self->m_historyCount - 1u;
-                else if (target > 0) --target;
-            } else {
-                if (target < self->m_historyCount - 1u) ++target;
-                else {
-                    self->m_historyCursor = self->m_historyCount;
-                    self->m_lineLength = 0;
-                    self->m_lineBuffer[0] = '\0';
-                    self->m_lineCursor = 0;
-                    return XConsoleResult_Ok;
+        } else if (byte >= 0x40u && byte <= 0x7eu) {
+            /* ANSI 最终字节结束整个序列。只处理 Shell 支持的方向键，
+               其余功能键和鼠标事件静默忽略，绝不能进入命令缓冲。 */
+            self->m_escapeState = 0u;
+#if XCONSOLE_SHELL_LINE_EDITOR_ON && XCONSOLE_SHELL_HISTORY_ON
+            if (byte == 'A' || byte == 'B') {
+                size_t target = self->m_historyCursor;
+                if (self->m_historyCount == 0) return XConsoleResult_Ok;
+                if (byte == 'A') {
+                    if (target == self->m_historyCount)
+                        target = self->m_historyCount - 1u;
+                    else if (target > 0)
+                        --target;
+                } else {
+                    if (target < self->m_historyCount - 1u) {
+                        ++target;
+                    } else {
+                        self->m_historyCursor = self->m_historyCount;
+                        self->m_lineLength = 0;
+                        self->m_lineBuffer[0] = '\0';
+                        self->m_lineCursor = 0;
+                        xcs_redraw_input_line(self);
+                        return XConsoleResult_Ok;
+                    }
                 }
+                {
+                    const char* text = XConsoleShell_historyAt(self, target);
+                    size_t length = strlen(text ? text : "");
+                    memcpy(self->m_lineBuffer, text ? text : "", length + 1u);
+                    self->m_lineLength = length;
+                    self->m_lineCursor = length;
+                    self->m_historyCursor = target;
+                }
+                /* SSH/Telnet 服务器会过滤方向键自身的回显；历史文本变化
+                   后必须主动清除旧输入并重画提示符，否则虽然内部缓冲已
+                   切换，用户看不到任何变化。 */
+                xcs_redraw_input_line(self);
+                return XConsoleResult_Ok;
             }
-            {
-                const char* text = XConsoleShell_historyAt(self, target);
-                size_t length = strlen(text ? text : "");
-                memcpy(self->m_lineBuffer, text ? text : "", length + 1u);
-                self->m_lineLength = length;
-                self->m_lineCursor = length;
-                self->m_historyCursor = target;
-            }
-            return XConsoleResult_Ok;
-        }
 #endif
-        if (self->m_escapeState == 2 && (byte == 'C' || byte == 'D')) {
-            self->m_escapeState = 0;
-            if (byte == 'C' && self->m_lineCursor < self->m_lineLength)
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+            if (byte == 'C' && self->m_lineCursor < self->m_lineLength) {
                 ++self->m_lineCursor;
-            else if (byte == 'D' && self->m_lineCursor > 0)
+                xcs_redraw_input_line(self);
+            } else if (byte == 'D' && self->m_lineCursor > 0) {
                 --self->m_lineCursor;
+                xcs_redraw_input_line(self);
+            }
+#endif
             return XConsoleResult_Ok;
+        } else {
+            /* 非法或被控制字符打断的序列立即复位，当前字节继续按普通
+               输入处理，避免残留状态吞掉下一条命令的首字符。 */
+            self->m_escapeState = 0u;
         }
-        self->m_escapeState = 0;
-        return XConsoleResult_Ok;
     }
     if (byte == 0x1b) {
-        self->m_escapeState = 1;
+        self->m_escapeState = 1u;
         return XConsoleResult_Ok;
     }
-#endif
     if (byte == 0x03 && XCONSOLE_SHELL_CANCEL_ON) {
 #if XCONSOLE_SHELL_LOGIN_ON
         if (XConsoleShellLogin_isInputPending(&self->m_session))
@@ -2447,11 +2487,14 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
 #endif
         ) {
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
+            bool redraw = self->m_lineCursor < self->m_lineLength;
             memmove(self->m_lineBuffer + self->m_lineCursor - 1u,
                     self->m_lineBuffer + self->m_lineCursor,
                     self->m_lineLength - self->m_lineCursor + 1u);
             --self->m_lineCursor;
             --self->m_lineLength;
+            if (redraw)
+                xcs_redraw_input_line(self);
 #else
             --self->m_lineLength;
 #endif
@@ -2467,6 +2510,7 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
                     self->m_lineLength - self->m_lineCursor);
             --self->m_lineLength;
             self->m_lineBuffer[self->m_lineLength] = '\0';
+            xcs_redraw_input_line(self);
         }
         return XConsoleResult_Ok;
     }
@@ -2482,6 +2526,9 @@ XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte)
                 self->m_lineBuffer + self->m_lineCursor,
                 self->m_lineLength - self->m_lineCursor + 1u);
         self->m_lineBuffer[self->m_lineCursor++] = (char)byte;
+        ++self->m_lineLength;
+        self->m_lineBuffer[self->m_lineLength] = '\0';
+        xcs_redraw_input_line(self);
     } else {
         self->m_lineBuffer[self->m_lineLength++] = (char)byte;
         self->m_lineCursor = self->m_lineLength;

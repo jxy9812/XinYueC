@@ -46,6 +46,9 @@ typedef struct XConsoleShellXTcpServerBinding {
     XConsoleShell* shell;                            /**< 借用的多会话 Shell；槽函数使用。 */
     XConsoleShellSession* session;                   /**< Shell 管理的附加会话。 */
     XTcpSocket* socket;                              /**< XTcpServer 借用的连接对象。 */
+    int terminalColumns;                              /**< 最近一次已观察到的 SSH 列数。 */
+    int terminalRows;                                 /**< 最近一次已观察到的 SSH 行数。 */
+    bool terminalSizeRefreshPending;                  /**< 是否需要在协议处理后重绘。 */
     XConsoleShellXTcpSocketAdapter adapter;          /**< 连接的 I/O 适配器。 */
     XConsoleShellXTcpServerProtocol protocol;        /**< 本连接使用的传输协议。 */
     /* SSH 与 Telnet 协议栈互斥，故共用一块存储。 */

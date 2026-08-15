@@ -33,6 +33,15 @@ static bool xvi_write_line(XConsoleShell* shell, const char* text);
 static bool xvi_make_path(const XConsoleShellSession* session, const char* input,
                           XString* output);
 
+/* 全屏 Vim 自己负责重绘终端，传输层不能再把键盘输入复制到屏幕上。
+   通过统一的 Shell I/O 回调关闭回显，SSH、Telnet 和本地终端都遵循同一
+   个生命周期；退出编辑器后必须恢复，避免影响后续 Shell 命令。 */
+static void xvi_set_input_echo(XConsoleShell* shell, bool enabled)
+{
+    if (shell && shell->m_io.inputEcho)
+        (void)shell->m_io.inputEcho(shell->m_io.userData, enabled);
+}
+
 #define XVI_TUI_MAX_BUFFERS XTUI_VIM_MAX_BUFFERS
 
 /** @brief XConsoleShell vi/vim 的全屏 TUI 会话私有结构。 */
@@ -106,6 +115,56 @@ static bool xvi_tui_save(XConsoleShell* shell, XConsoleShellSession* session,
     return tui && xvi_tui_save_buffer(shell, session, tui->vim, path);
 }
 
+/* 终端尺寸属于传输会话，而不是 Vim 固定配置。没有尺寸回调时使用默认
+   值；收到异常的大尺寸时限制在 XTui 屏幕缓冲的编译期容量内，避免将
+   不可信的 SSH window-change 值直接传给屏幕分配器。 */
+static bool xvi_tui_sync_size(XviTui* tui)
+{
+    int width = XCONSOLE_SHELL_TUI_WIDTH;
+    int height = XCONSOLE_SHELL_TUI_HEIGHT;
+    bool changed;
+    XRect rect;
+    const XConsoleShellIo* io;
+    if (!tui || !tui->shell || !tui->screen || !tui->terminal || !tui->vim)
+        return false;
+    io = &tui->shell->m_io;
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    /* 刷新指定附加会话时不能读取 Shell 当前临时工作区的 IO；适配器
+       在协议回调返回后直接传入原始 session，避免会话状态重入。 */
+    if (tui->session)
+        io = &tui->session->m_io;
+#endif
+    if (io->terminalSize) {
+        int remoteWidth = 0;
+        int remoteHeight = 0;
+        if (io->terminalSize(io->userData, &remoteWidth, &remoteHeight)) {
+            if (remoteWidth > 0) width = remoteWidth;
+            if (remoteHeight > 0) height = remoteHeight;
+        }
+    }
+    if (width < 1) width = 1;
+    if (height < 2) height = 2;
+    if (width > XTUI_SCREEN_MAX_COLUMNS) width = XTUI_SCREEN_MAX_COLUMNS;
+    if (height > XTUI_SCREEN_MAX_ROWS) height = XTUI_SCREEN_MAX_ROWS;
+    changed = XTuiScreen_width(tui->screen) != width ||
+              XTuiScreen_height(tui->screen) != height;
+    if (!XTuiScreen_resize(tui->screen, width, height))
+        return false;
+    XTuiTerminal_setSize(tui->terminal, width, height);
+    rect.x = 0;
+    rect.y = 0;
+    rect.width = width;
+    rect.height = height;
+    XTuiWidget_setRect((XTuiWidget*)tui->vim, &rect);
+    if (changed && tui->tui) {
+        /* 终端改变尺寸后，旧坐标对应的物理内容可能已经被终端重排；
+           清屏并使差异绘制快照失效，下一次刷新必须完整重画。 */
+        XTuiTerminal_clearScreen(tui->terminal);
+        XTui_invalidate(tui->tui);
+    }
+    return true;
+}
+
 #if XTUI_VIM_MULTIBUFFER_ON
 static void xvi_tui_attach(XviTui* tui, XTuiVim* vim)
 {
@@ -115,8 +174,8 @@ static void xvi_tui_attach(XviTui* tui, XTuiVim* vim)
     XTui_setRootWidget(tui->tui, (XTuiWidget*)vim);
     XTui_setFocusWidget(tui->tui, (XTuiWidget*)vim);
     rect.x = 0; rect.y = 0;
-    rect.width = XCONSOLE_SHELL_TUI_WIDTH;
-    rect.height = XCONSOLE_SHELL_TUI_HEIGHT;
+    rect.width = XTuiScreen_width(tui->screen);
+    rect.height = XTuiScreen_height(tui->screen);
     XTuiWidget_setRect((XTuiWidget*)vim, &rect);
 }
 
@@ -419,6 +478,7 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
         if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
         if (tui->tui) XTui_delete_base(tui->tui);
         XFree_System(tui);
+        xvi_set_input_echo(shell, true);
         session->editorTui = NULL;
         session->editorActive = false;
         session->suppressPrompt = false;
@@ -453,9 +513,9 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     tui->vim = XTuiVim_create();
     if (!tui->tui || !tui->screen || !tui->terminal || !tui->vim)
         goto fail;
+    if (!xvi_tui_sync_size(tui))
+        goto fail;
     XTuiTerminal_setWriteCallback(tui->terminal, xvi_tui_write, tui);
-    XTuiTerminal_setSize(tui->terminal, XCONSOLE_SHELL_TUI_WIDTH,
-                         XCONSOLE_SHELL_TUI_HEIGHT);
     for (i = 0; i < (int)session->editorLineCount; ++i)
         lines[i] = session->editorLines[i];
     /* 新文件行数为 0 时，向 TUI 提供一个空行作为初始缓冲。 */
@@ -471,11 +531,7 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     XTui_setTerminal(tui->tui, tui->terminal);
     XTui_setRootWidget(tui->tui, (XTuiWidget*)tui->vim);
     XTui_setFocusWidget(tui->tui, (XTuiWidget*)tui->vim);
-    {
-        XRect vimRect = { 0, 0, XCONSOLE_SHELL_TUI_WIDTH,
-                          XCONSOLE_SHELL_TUI_HEIGHT };
-        XTuiWidget_setRect((XTuiWidget*)tui->vim, &vimRect);
-    }
+    (void)xvi_tui_sync_size(tui);
     if (!XTui_start(tui->tui) || !XTui_refresh(tui->tui))
         goto fail;
     if (XString_size_base(path) >= sizeof(tui->path))
@@ -486,6 +542,7 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     session->editorModified = false;
     session->editorTui = tui;
     session->suppressPrompt = true;
+    xvi_set_input_echo(shell, false);
     return true;
 fail:
     if (tui->vim) XTuiVim_delete_base(tui->vim);
@@ -933,6 +990,7 @@ XConsoleResult XConsoleShellVi_feedByte(XConsoleShell* shell,
         char c = (char)byte;
         if (byte == 0x03)
             c = (char)0x1b; /* Ctrl+C 模拟 ESC。 */
+        (void)xvi_tui_sync_size(tui);
         XTui_feedInput(tui->tui, &c, 1);
         XTui_refresh(tui->tui);
         return xvi_tui_after_input(shell, session, tui);
@@ -1084,6 +1142,16 @@ bool XConsoleShellVi_isActive(const XConsoleShellSession* session)
     return session && session->editorActive;
 }
 
+void XConsoleShellVi_rebindSession(XConsoleShellSession* session)
+{
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    if (session && session->editorTui)
+        ((XviTui*)session->editorTui)->session = session;
+#else
+    (void)session;
+#endif
+}
+
 bool XConsoleShellVi_canBackspace(const XConsoleShellSession* session)
 {
     if (!session || !session->editorActive) return false;
@@ -1095,6 +1163,44 @@ bool XConsoleShellVi_canBackspace(const XConsoleShellSession* session)
     }
 #endif
     return session->editorInsertMode && session->editorInsertCursor > 0;
+}
+
+bool XConsoleShellVi_refresh(XConsoleShell* shell,
+                             XConsoleShellSession* session)
+{
+    if (!shell || !session || !XConsoleShellVi_isActive(session))
+        return false;
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    if (session->editorTui) {
+        XviTui* tui = (XviTui*)session->editorTui;
+        return xvi_tui_sync_size(tui) && XTui_refresh(tui->tui);
+    }
+#endif
+    return true;
+}
+
+bool XConsoleShellVi_processPendingInput(XConsoleShell* shell,
+                                         XConsoleShellSession* session)
+{
+#if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
+    XviTui* tui;
+    if (!shell || !session || !XConsoleShellVi_isActive(session) ||
+        !session->editorTui)
+        return false;
+    tui = (XviTui*)session->editorTui;
+    if (!tui->tui || !XTui_flushPendingInput(tui->tui))
+        return false;
+    /* 单独 ESC 已经由 XTui 派发给 Vim；这里补齐尺寸同步、绘制和动作
+       后处理，使没有后续键盘字节时也能立即看到命令模式状态。 */
+    (void)xvi_tui_sync_size(tui);
+    (void)XTui_refresh(tui->tui);
+    (void)xvi_tui_after_input(shell, session, tui);
+    return true;
+#else
+    (void)shell;
+    (void)session;
+    return false;
+#endif
 }
 
 void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
@@ -1109,6 +1215,7 @@ void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
         if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
         if (tui->tui) XTui_delete_base(tui->tui);
         XFree_System(tui);
+        xvi_set_input_echo(shell, true);
         session->editorTui = NULL;
         session->editorActive = false;
         session->suppressPrompt = false;

@@ -52,6 +52,11 @@
 typedef struct XConsoleShellTestTransport {
     char output[4096];
     size_t length;
+    bool inputEchoEnabled;
+    size_t inputEchoChanges;
+    int terminalColumns;
+    int terminalRows;
+    size_t terminalSizeQueries;
     uint8_t input[512];
     size_t inputLength;
     size_t inputPosition;
@@ -253,6 +258,30 @@ static int64_t XConsoleShellTest_write(void* userData, const void* data, size_t 
 static bool XConsoleShellTest_flush(void* userData)
 {
     return userData != NULL;
+}
+
+static bool XConsoleShellTest_inputEcho(void* userData, bool enabled)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    if (!transport) return false;
+    transport->inputEchoEnabled = enabled;
+    ++transport->inputEchoChanges;
+    return true;
+}
+
+static bool XConsoleShellTest_terminalSize(void* userData, int* columns,
+                                            int* rows)
+{
+    XConsoleShellTestTransport* transport =
+        (XConsoleShellTestTransport*)userData;
+    if (!transport || !columns || !rows || transport->terminalColumns <= 0 ||
+        transport->terminalRows <= 0)
+        return false;
+    ++transport->terminalSizeQueries;
+    *columns = transport->terminalColumns;
+    *rows = transport->terminalRows;
+    return true;
 }
 
 #if XCONSOLE_SHELL_LOG_ON
@@ -533,6 +562,38 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         }
         XCS_TEST_CHECK(foundChinese && !replacementCharacter,
                        "vim status renders complete utf8 cells");
+        {
+            const char* shortLines[] = { "one", "two", "three" };
+            int statusColumn = -1;
+            const XTuiCell* cell;
+            XTuiVim_setLines(vim, shortLines, 3);
+            rect.height = 5;
+            XTuiWidget_setRect((XTuiWidget*)vim, &rect);
+            if (!XTuiScreen_resize(screen, 40, 5)) {
+                XTuiScreen_delete_base(screen);
+                XTuiVim_delete_base(vim);
+                return false;
+            }
+            XTuiScreen_clear(screen);
+            if (!XTuiWidget_render_base((XTuiWidget*)vim, screen)) {
+                XTuiScreen_delete_base(screen);
+                XTuiVim_delete_base(vim);
+                return false;
+            }
+            cell = XTuiScreen_cell(screen, 0, 3);
+            XCS_TEST_CHECK(cell && strcmp(cell->m_utf8, " ") == 0,
+                           "vim does not number rows after end of file");
+            for (x = 0; x < 40; ++x) {
+                cell = XTuiScreen_cell(screen, x, 4);
+                if (cell && strcmp(cell->m_utf8, "\xe8\xa1\x8c") == 0) {
+                    statusColumn = x;
+                    break;
+                }
+            }
+            cell = statusColumn >= 0 ? XTuiScreen_cell(screen, statusColumn + 2, 4) : NULL;
+            XCS_TEST_CHECK(cell && strcmp(cell->m_utf8, "1") == 0,
+                           "vim status shows current line number");
+        }
         XTuiScreen_delete_base(screen);
     }
 #if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_REPLACE_ON
@@ -1457,9 +1518,29 @@ static bool XConsoleShellTest_runEditorCommands(
 
 #if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
     /* 打开新文件进入全屏 vim，随后用字节流驱动 XTui 状态机。 */
-    if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
-                                   XConsoleResult_MoreOutput, NULL))
-        goto cleanup;
+    {
+        size_t queries = transport->terminalSizeQueries;
+        if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
+                                       XConsoleResult_MoreOutput, NULL))
+            goto cleanup;
+        XCS_TEST_CHECK(transport->terminalSizeQueries > queries,
+                       "全屏 vim 查询会话终端尺寸");
+    }
+    XCS_TEST_CHECK(!transport->inputEchoEnabled,
+                   "全屏 vim 期间关闭输入回显");
+    /* 模拟 SSH window-change：尺寸变化必须先清理物理终端，再按新尺寸
+       完整绘制，不能只依赖差异快照留下旧窗口中的内容。 */
+    transport->length = 0;
+    transport->output[0] = '\0';
+    transport->terminalColumns = 60;
+    transport->terminalRows = 12;
+    XCS_TEST_CHECK(XConsoleShell_refreshForSession(
+                       shell, XConsoleShell_session(shell)),
+                   "vim 尺寸变化后刷新");
+    XCS_TEST_CHECK(transport->terminalSizeQueries > 0,
+                   "vim 尺寸变化重新查询终端尺寸");
+    XCS_TEST_CHECK(strstr(transport->output, "\x1b[2J\x1b[H") != NULL,
+                   "vim 尺寸变化发送完整清屏序列");
     XString_delete_base(command);
     command = NULL;
     /* i 进入插入模式，输入内容后 ESC 返回命令模式。 */
@@ -1480,7 +1561,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_feedEditor(shell, transport, "hello", 5,
                                       XConsoleResult_MoreOutput, NULL))
         goto cleanup;
-    /* 插入模式方向键：只移动光标，不得输出 abcd 或退出插入模式。 */
+    /* 插入模式方向键：只移动光标，不得产生任何输入回显或退出插入模式。 */
     if (!XConsoleShellTest_feedEditor(shell, transport,
                                       "\x1b[D\x1b[C\x1b[A\x1b[B", 12,
                                       XConsoleResult_MoreOutput, NULL))
@@ -1492,6 +1573,8 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_feedEditor(shell, transport, ":wq\n", 4,
                                       XConsoleResult_Ok, NULL))
         goto cleanup;
+    XCS_TEST_CHECK(transport->inputEchoEnabled,
+                   "vim 退出后恢复输入回显");
     fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
     size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
@@ -1779,6 +1862,11 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
 #endif
     if (!strstr(transport->output, "vi ") || !strstr(transport->output, "vim ")) {
         XPrintf("completion ambiguous output missing: [%s]\n", transport->output);
+        return false;
+    }
+    if (strncmp(transport->output, "\r\n", 2) != 0) {
+        XPrintf("completion candidates did not start on a new line: [%s]\n",
+                transport->output);
         return false;
     }
     /* 候选列出后行缓冲仍保留原词，用 Ctrl-C 清空后再测路径补全。 */
@@ -2155,10 +2243,15 @@ bool XConsoleShellTest_runAll(void)
     bool result;
 #endif
     memset(&transport, 0, sizeof(transport));
+    transport.inputEchoEnabled = true;
+    transport.terminalColumns = 80;
+    transport.terminalRows = 24;
     memset(&io, 0, sizeof(io));
     io.read = XConsoleShellTest_read;
     io.write = XConsoleShellTest_write;
     io.flush = XConsoleShellTest_flush;
+    io.inputEcho = XConsoleShellTest_inputEcho;
+    io.terminalSize = XConsoleShellTest_terminalSize;
 #if XCONSOLE_SHELL_LOG_ON
     io.log = XConsoleShellTest_log;
 #endif
@@ -2540,6 +2633,27 @@ bool XConsoleShellTest_runAll(void)
                            shell, secondary, "echo secondary", 14) == XConsoleResult_Ok &&
                            strstr(secondaryTransport.output, "secondary"),
                        "secondary session output");
+        {
+            static const uint8_t fragmentedCsi[] = {
+                0x1b, '[', '<', '6', '4', ';', '1', '0', ';', '1', '0', 'M',
+                'e', 'c', 'h', 'o', ' ', 'c', 's', 'i', '-', 's', 'e', 's',
+                's', 'i', 'o', 'n', '\n'
+            };
+            size_t i;
+            bool csiOk = true;
+            secondaryTransport.length = 0;
+            secondaryTransport.output[0] = '\0';
+            for (i = 0; i < sizeof(fragmentedCsi); ++i) {
+                if (XConsoleShell_feedByteForSession(
+                        shell, secondary, fragmentedCsi[i]) != XConsoleResult_Ok) {
+                    csiOk = false;
+                    break;
+                }
+            }
+            XCS_TEST_CHECK(csiOk &&
+                               strstr(secondaryTransport.output, "csi-session"),
+                           "secondary fragmented CSI does not enter command line");
+        }
         secondaryTransport.length = 0;
         secondaryTransport.output[0] = '\0';
         XCS_TEST_CHECK(XConsoleShell_feedDataForSession(shell, secondary, "echo buffered", 13) ==
@@ -2822,6 +2936,31 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShell_feedData(shell, "\x1b[A\n", 4) == XConsoleResult_Ok &&
                        strstr(transport.output, "browse"),
                    "history up arrow");
+    transport.length = 0;
+    transport.output[0] = '\0';
+    XCS_TEST_CHECK(XConsoleShell_feedData(shell, "move", 4) == XConsoleResult_Ok &&
+                       XConsoleShell_feedData(shell, "\x1b[D", 3) == XConsoleResult_Ok &&
+                       shell->m_lineCursor == 3u &&
+                       strcmp(shell->m_lineBuffer, "move") == 0 &&
+                       strstr(transport.output, "\x1b[1D") != NULL,
+                   "line editor left arrow redraw");
+    transport.length = 0;
+    transport.output[0] = '\0';
+    XCS_TEST_CHECK(XConsoleShell_feedData(shell, "X", 1) == XConsoleResult_Ok &&
+                       shell->m_lineCursor == 4u &&
+                       strcmp(shell->m_lineBuffer, "movXe") == 0 &&
+                       strstr(transport.output, "movXe") != NULL &&
+                       strstr(transport.output, "\x1b[1D") != NULL,
+                   "line editor middle insert redraw");
+    transport.length = 0;
+    transport.output[0] = '\0';
+    XCS_TEST_CHECK(XConsoleShell_feedData(shell, "\x04", 1) == XConsoleResult_Ok &&
+                       shell->m_lineCursor == 4u &&
+                       strcmp(shell->m_lineBuffer, "movX") == 0 &&
+                       strstr(transport.output, "movX") != NULL,
+                   "line editor delete redraw");
+    XCS_TEST_CHECK(XConsoleShell_feedData(shell, "\n", 1) == XConsoleResult_UnknownCommand,
+                   "line editor test line cleanup");
 #endif
     XConsoleShell_clearHistory(shell);
     XCS_TEST_CHECK(XConsoleShell_historyCount(shell) == 0, "history clear");
@@ -3428,6 +3567,32 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShell_feedData(shell, "ec\t completed\n", 14) == XConsoleResult_Ok &&
                        strstr(transport.output, "completed"), "tab completion");
 #endif
+    {
+        static const char standaloneEsc[] = "\x1b" "echo escape-clean\n";
+        static const char mouseCsi[] = "\x1b[<64;10;10Mecho csi-clean\n";
+        static const char functionSs3[] = "\x1bOPecho ss3-clean\n";
+        transport.length = 0;
+        transport.output[0] = '\0';
+        XCS_TEST_CHECK(
+            XConsoleShell_feedData(shell, standaloneEsc,
+                                   sizeof(standaloneEsc) - 1u) == XConsoleResult_Ok &&
+                strstr(transport.output, "escape-clean"),
+            "standalone ESC does not swallow next command byte");
+        transport.length = 0;
+        transport.output[0] = '\0';
+        XCS_TEST_CHECK(
+            XConsoleShell_feedData(shell, mouseCsi,
+                                   sizeof(mouseCsi) - 1u) == XConsoleResult_Ok &&
+                strstr(transport.output, "csi-clean"),
+            "mouse CSI sequence does not enter command line");
+        transport.length = 0;
+        transport.output[0] = '\0';
+        XCS_TEST_CHECK(
+            XConsoleShell_feedData(shell, functionSs3,
+                                   sizeof(functionSs3) - 1u) == XConsoleResult_Ok &&
+                strstr(transport.output, "ss3-clean"),
+            "SS3 sequence does not enter command line");
+    }
     session = XConsoleShell_session(shell);
     XCS_TEST_CHECK(session && session->currentPath[0] != '\0', "session cwd");
 #if XCONSOLE_SHELL_DATETIME_ON && XCONSOLE_SHELL_DATE_ON

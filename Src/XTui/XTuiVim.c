@@ -2550,17 +2550,21 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
         }
 #endif
         for (x = 0; x < r.width; ++x) XTuiScreen_setCell(screen, r.x + x, r.y + y, " ", XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
-        if (vim->m_showLineNumbers && line >= 0) {
+        if (vim->m_showLineNumbers) {
             char no[16]; int n = snprintf(no, sizeof(no), "%4d ", line + 1); int i;
-            char cell[2];
-            if (n > numberWidth) n = numberWidth;
-            for (i = 0; i < n && i < r.width; ++i) {
-                cell[0] = no[i];
-                cell[1] = '\0';
-                XTuiScreen_setCell(screen, r.x + i, r.y + y, cell,
-                                   XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
+            if (line >= 0 && line < vim->m_lineCount) {
+                char cell[2];
+                if (n > numberWidth) n = numberWidth;
+                for (i = 0; i < n && i < r.width; ++i) {
+                    cell[0] = no[i];
+                    cell[1] = '\0';
+                    XTuiScreen_setCell(screen, r.x + i, r.y + y, cell,
+                                       XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
+                }
             }
-            col = n;
+            /* 文件末尾后的屏幕空白仍需保留文本起始列，但不能显示虚假的
+               行号；这样普通模式和插入模式的布局保持一致。 */
+            col = numberWidth;
         }
         while (text[pos] && col < r.width) {
             int clen = xvim_utf8_len((unsigned char)text[pos]); char cell[XTUI_CELL_UTF8_MAX + 1]; int attr = 0;
@@ -2599,6 +2603,10 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
         char status[XTUI_VIM_STATUS_MAX + 1];
         const char* mode;
         int n, pos, column;
+        int currentLine = vim->m_cursorLine;
+        int lineCount = vim->m_lineCount > 0 ? vim->m_lineCount : 1;
+        if (currentLine < 0) currentLine = 0;
+        if (currentLine >= lineCount) currentLine = lineCount - 1;
 #if XTUI_VIM_SEARCH_ON
         if (vim->m_searchMode) mode = vim->m_searchBackward ? "?" : "/";
         else
@@ -2616,7 +2624,11 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
 #if XTUI_VIM_SEARCH_ON
         else if (vim->m_searchMode) n = snprintf(status, sizeof(status), "%s%s", mode, vim->m_search);
 #endif
-        else n = snprintf(status, sizeof(status), "%s %s%s  行 %d/%d 列 %d", mode, vim->m_path ? vim->m_path : "", vim->m_modified ? " [已修改]" : "", vim->m_cursorLine + 1, vim->m_lineCount, vim->m_cursorColumn + 1);
+        /* 行列信息放在路径前，窄终端或长路径截断时仍必须保留当前行。 */
+        else n = snprintf(status, sizeof(status), "%s  行 %d/%d 列 %d  %s%s", mode,
+                          currentLine + 1, lineCount, vim->m_cursorColumn + 1,
+                          vim->m_path ? vim->m_path : "",
+                          vim->m_modified ? " [已修改]" : "");
         if (n < 0) status[0] = '\0';
         else if ((size_t)n >= sizeof(status)) {
             pos = (int)sizeof(status) - 1;

@@ -1374,7 +1374,8 @@ static XConsoleResult xssh_handle_channel_request(XConsoleShellSshAdapter* adapt
         (void)name;
         (void)value;
         replyMsg = SSH_MSG_CHANNEL_SUCCESS;
-    } else if (typeLen == 12 && memcmp(type, "window-change", 12) == 0) {
+    } else if (typeLen == sizeof("window-change") - 1u &&
+               memcmp(type, "window-change", sizeof("window-change") - 1u) == 0) {
         if (off + 16 != len) return xssh_channel_protocol_error(adapter);
         xssh_get_u32(payload + off, &adapter->ptyColumns); off += 4;
         xssh_get_u32(payload + off, &adapter->ptyRows); off += 4;
@@ -1850,6 +1851,18 @@ static bool xssh_shell_input_echo(void* userData, bool enabled)
     return true;
 }
 
+static bool xssh_shell_terminal_size(void* userData, int* columns, int* rows)
+{
+    XConsoleShellSshAdapter* adapter = (XConsoleShellSshAdapter*)userData;
+    if (!adapter || !columns || !rows || !adapter->ptyRequested ||
+        adapter->ptyColumns == 0 || adapter->ptyRows == 0 ||
+        adapter->ptyColumns > 0x7fffffffU || adapter->ptyRows > 0x7fffffffU)
+        return false;
+    *columns = (int)adapter->ptyColumns;
+    *rows = (int)adapter->ptyRows;
+    return true;
+}
+
 /* 发送交互提示符：当前连接会话已登录显示“用户名> ”，未登录或未启用登录
  * 显示默认名。SSH 每个连接绑定独立会话，必须从 adapter->session 读取，不能
  * 读取 Shell 默认会话，否则登录后提示符不会切换到实际登录用户。 */
@@ -2094,6 +2107,7 @@ bool XConsoleShellSshAdapter_makeIo(XConsoleShellSshAdapter* adapter, XConsoleSh
     io->flush = xssh_shell_flush;
     io->cancelled = xssh_shell_cancelled;
     io->inputEcho = xssh_shell_input_echo;
+    io->terminalSize = xssh_shell_terminal_size;
     io->prompt = xssh_shell_prompt;
 #if XCONSOLE_SHELL_LOG_ON
     io->log = xssh_shell_log;

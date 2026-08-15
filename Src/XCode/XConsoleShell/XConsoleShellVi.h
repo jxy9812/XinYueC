@@ -44,6 +44,27 @@ bool XConsoleShellVi_isActive(const struct XConsoleShellSession* session);
 bool XConsoleShellVi_canBackspace(const struct XConsoleShellSession* session);
 
 /**
+ * @brief 按当前传输终端尺寸刷新活动的全屏 Vim。
+ * @param shell 当前 Shell；不能为空。
+ * @param session 当前会话；必须是 Shell 管理的活动编辑会话。
+ * @return 刷新成功或会话不是全屏 TUI 时返回 true；参数无效返回 false。
+ */
+bool XConsoleShellVi_refresh(struct XConsoleShell* shell,
+                             struct XConsoleShellSession* session);
+
+/**
+ * @brief 提交全屏 Vim 输入解析器中已超时的单独 ESC。
+ * @details
+ * 用于事件循环在没有新输入时推进 ESC/方向键判定。只有确实提交了一个
+ * Escape 按键并重绘了 Vim 时返回 true；普通行式编辑器或未超时返回 false。
+ * @param shell 当前 Shell；不能为空。
+ * @param session 当前会话；必须是 Shell 管理的活动编辑会话。
+ * @return 本次是否提交并重绘了 Escape 按键。
+ */
+bool XConsoleShellVi_processPendingInput(struct XConsoleShell* shell,
+                                         struct XConsoleShellSession* session);
+
+/**
  * @brief 取消当前会话的 vi/vim 编辑状态并恢复 Shell 提示符。
  * @param shell 当前 Shell；不能为空。
  * @param session 当前会话；可为 NULL。

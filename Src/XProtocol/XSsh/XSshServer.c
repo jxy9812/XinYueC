@@ -25,6 +25,7 @@
 #include "XRandomGenerator.h"
 #include "XString.h"
 #include "XCryptographic.h"
+#include <limits.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -181,8 +182,10 @@ typedef struct XSshServerData {
     char ptyTerm[64];
     bool ptyRequested;
     bool inputEcho;
+    XSshServerTerminalSizeChangedFn terminalSizeChanged;
+    void* terminalSizeChangedUserData;
     bool echoPendingCr;
-    bool echoEscape;
+    uint8_t echoEscape; /* 0 普通，1 已收 ESC，2 正在消费 CSI/SS3 序列。 */
     bool channelOpen;
     bool shellStarted;
     bool authDone;
@@ -710,6 +713,7 @@ static bool xssh_query_authenticate(XSshServer* adapter, const char* user, const
 static bool xssh_query_is_running(XSshServer* adapter);
 static bool xssh_query_close_requested(XSshServer* adapter);
 static bool xssh_query_suppress_prompt(XSshServer* adapter);
+static bool xssh_query_can_backspace(XSshServer* adapter);
 static size_t xssh_query_user_name(XSshServer* adapter, char* buffer, size_t capacity);
 static XProtocolResult xssh_feed_bytes(XSshServer* adapter, const void* data, size_t size);
 static void xssh_emit_prompt_after_line(XSshServer* adapter);
@@ -1740,7 +1744,6 @@ static XProtocolResult xssh_handle_channel_request(XSshServer* adapter,
     wantReply = payload[off++] != 0;
     if (!XSSH_DATA(adapter)->channelOpen || recipient != XSSH_DATA(adapter)->localChannel)
         return xssh_channel_protocol_error(adapter);
-
     if (typeLen == 5 && memcmp(type, "shell", 5) == 0) {
         if (off != len || XSSH_DATA(adapter)->shellStarted) {
             replyMsg = SSH_MSG_CHANNEL_FAILURE;
@@ -1790,6 +1793,9 @@ static XProtocolResult xssh_handle_channel_request(XSshServer* adapter,
             }
         }
         XSSH_DATA(adapter)->ptyRequested = true;
+        if (XSSH_DATA(adapter)->terminalSizeChanged)
+            XSSH_DATA(adapter)->terminalSizeChanged(
+                XSSH_DATA(adapter)->terminalSizeChangedUserData);
         replyMsg = SSH_MSG_CHANNEL_SUCCESS;
     } else if (typeLen == 3 && memcmp(type, "env", 3) == 0) {
         const uint8_t* name;
@@ -1803,12 +1809,16 @@ static XProtocolResult xssh_handle_channel_request(XSshServer* adapter,
         (void)name;
         (void)value;
         replyMsg = SSH_MSG_CHANNEL_SUCCESS;
-    } else if (typeLen == 12 && memcmp(type, "window-change", 12) == 0) {
+    } else if (typeLen == sizeof("window-change") - 1u &&
+               memcmp(type, "window-change", sizeof("window-change") - 1u) == 0) {
         if (off + 16 != len) return xssh_channel_protocol_error(adapter);
         xssh_get_u32(payload + off, &XSSH_DATA(adapter)->ptyColumns); off += 4;
         xssh_get_u32(payload + off, &XSSH_DATA(adapter)->ptyRows); off += 4;
         xssh_get_u32(payload + off, &XSSH_DATA(adapter)->ptyPixelWidth); off += 4;
         xssh_get_u32(payload + off, &XSSH_DATA(adapter)->ptyPixelHeight); off += 4;
+        if (XSSH_DATA(adapter)->terminalSizeChanged)
+            XSSH_DATA(adapter)->terminalSizeChanged(
+                XSSH_DATA(adapter)->terminalSizeChangedUserData);
         replyMsg = SSH_MSG_CHANNEL_SUCCESS;
     } else {
         /* Requests not implemented by this adapter (notably exec/subsystem)
@@ -1834,12 +1844,23 @@ static bool xssh_echo_channel_input(XSshServer* adapter,
     if (!XSSH_DATA(adapter)->ptyRequested || !XSSH_DATA(adapter)->inputEcho) return true;
     for (i = 0; i < size; ++i) {
         uint8_t byte = data[i];
-        if (XSSH_DATA(adapter)->echoEscape) {
-            if (byte >= '@' && byte <= '~') XSSH_DATA(adapter)->echoEscape = false;
+        if (XSSH_DATA(adapter)->echoEscape == 1u) {
+            /* ESC [ / ESC O 的最终字节可能在下一个 SSH 数据包到达，
+               状态必须保存在连接对象中，不能只看当前 data 块。 */
+            if (byte == '[' || byte == 'O') {
+                XSSH_DATA(adapter)->echoEscape = 2u;
+                continue;
+            }
+            XSSH_DATA(adapter)->echoEscape = 0u;
+        }
+        if (XSSH_DATA(adapter)->echoEscape == 2u) {
+            /* CSI/SS3 的最终字节范围为 0x40..0x7e；参数和中间字节
+               全部丢弃，避免方向键的 A/B/C/D 或鼠标参数出现在屏幕上。 */
+            if (byte >= '@' && byte <= '~') XSSH_DATA(adapter)->echoEscape = 0u;
             continue;
         }
         if (byte == 0x1b) {
-            XSSH_DATA(adapter)->echoEscape = true;
+            XSSH_DATA(adapter)->echoEscape = 1u;
             continue;
         }
         if (byte == '\r') {
@@ -1861,6 +1882,9 @@ static bool xssh_echo_channel_input(XSshServer* adapter,
         XSSH_DATA(adapter)->echoPendingCr = false;
         if (byte == '\b' || byte == 0x7f) {
             static const char erase[] = "\b \b";
+            /* 空输入行不能擦除 Shell 提示符；是否可退格由宿主根据当前
+               会话的行编辑器或 Vim 状态同步回填。 */
+            if (!xssh_query_can_backspace(adapter)) continue;
             if (echoLen && !XSshServer_write(adapter, echo, echoLen)) return false;
             echoLen = 0;
             if (!XSshServer_write(adapter, erase, sizeof(erase) - 1u)) return false;
@@ -1873,7 +1897,9 @@ static bool xssh_echo_channel_input(XSshServer* adapter,
             if (!XSshServer_write(adapter, interrupt, sizeof(interrupt) - 1u)) return false;
             continue;
         }
-        if (byte >= 0x20 || byte == '\t') {
+        /* Tab 是 Shell 行编辑器的补全命令，补全逻辑会自行清行并重绘完整
+           输入行；这里若回显制表符，只会在客户端留下不可见的空白位移。 */
+        if (byte >= 0x20 && byte != '\t') {
             if (echoLen == sizeof(echo) && !XSshServer_write(adapter, echo, echoLen))
                 return false;
             if (echoLen == sizeof(echo)) echoLen = 0;
@@ -1913,13 +1939,21 @@ static XProtocolResult xssh_handle_channel_data(XSshServer* adapter,
         while (pos < dataLen) {
             size_t end = pos;
             size_t segmentLen;
+            size_t segmentOffset;
             uint8_t terminator = 0;
             while (end < dataLen && data[end] != '\r' && data[end] != '\n') ++end;
             if (end < dataLen) terminator = data[end++];
             segmentLen = end - pos;
-            if (!xssh_echo_channel_input(adapter, data + pos, segmentLen))
-                return XProtocolResult_IoError;
-            result = xssh_feed_bytes(adapter, data + pos, segmentLen);
+            /* 回显与 Shell 必须逐字节保持顺序。客户端可能把 `abc<退格>`
+               合并在一个 SSH 数据包中，退格查询必须看到 abc 已进入行缓冲。 */
+            for (segmentOffset = 0; segmentOffset < segmentLen; ++segmentOffset) {
+                if (!xssh_echo_channel_input(adapter,
+                                             data + pos + segmentOffset, 1u))
+                    return XProtocolResult_IoError;
+                result = xssh_feed_bytes(adapter,
+                                         data + pos + segmentOffset, 1u);
+                if (result == XProtocolResult_IoError) break;
+            }
             if (result == XProtocolResult_IoError) break;
             if (segmentLen > (terminator ? 1u : 0u)) previousCr = false;
             if (terminator == '\r') {
@@ -2223,8 +2257,31 @@ bool XSshServer_setInputEcho(XSshServer* adapter, bool enabled)
     if (!adapter) return false;
     XSSH_DATA(adapter)->inputEcho = enabled;
     XSSH_DATA(adapter)->echoPendingCr = false;
-    XSSH_DATA(adapter)->echoEscape = false;
+    XSSH_DATA(adapter)->echoEscape = 0u;
     return true;
+}
+
+bool XSshServer_terminalSize(const XSshServer* adapter, int* columns, int* rows)
+{
+    const XSshServerData* data;
+    if (!adapter || !adapter->m_data || !columns || !rows)
+        return false;
+    data = XSSH_DATA(adapter);
+    if (!data->ptyRequested || data->ptyColumns == 0 || data->ptyRows == 0 ||
+        data->ptyColumns > (uint32_t)INT_MAX || data->ptyRows > (uint32_t)INT_MAX)
+        return false;
+    *columns = (int)data->ptyColumns;
+    *rows = (int)data->ptyRows;
+    return true;
+}
+
+void XSshServer_setTerminalSizeChangedCallback(
+    XSshServer* adapter, XSshServerTerminalSizeChangedFn callback, void* userData)
+{
+    if (!adapter || !adapter->m_data)
+        return;
+    XSSH_DATA(adapter)->terminalSizeChanged = callback;
+    XSSH_DATA(adapter)->terminalSizeChangedUserData = userData;
 }
 
 /* 发送交互提示符：当前连接会话已登录显示“用户名>”，未登录或未启用登录
@@ -2295,6 +2352,14 @@ static bool xssh_query_suppress_prompt(XSshServer* adapter)
     adapter->m_suppressPromptResult = false;
     XSshServer_suppressPromptRequested_signal(adapter);
     return adapter->m_suppressPromptResult;
+}
+
+static bool xssh_query_can_backspace(XSshServer* adapter)
+{
+    if (!adapter) return false;
+    adapter->m_canBackspaceResult = false;
+    XSshServer_canBackspaceRequested_signal(adapter);
+    return adapter->m_canBackspaceResult;
 }
 
 static size_t xssh_query_user_name(XSshServer* adapter,
@@ -2638,6 +2703,12 @@ void* XSshServer_suppressPromptRequested_signal(XSshServer* self)
                 NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
+void* XSshServer_canBackspaceRequested_signal(XSshServer* self)
+{
+    XEmitSignal(self, XSshServer_canBackspaceRequested_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
 void* XSshServer_userNameRequested_signal(XSshServer* self,
                                           char* buffer, size_t capacity)
 {
@@ -2684,6 +2755,11 @@ void XSshServer_setCloseRequestedResult(XSshServer* self, bool result)
 void XSshServer_setSuppressPromptResult(XSshServer* self, bool result)
 {
     if (self) self->m_suppressPromptResult = result;
+}
+
+void XSshServer_setCanBackspaceResult(XSshServer* self, bool result)
+{
+    if (self) self->m_canBackspaceResult = result;
 }
 
 void XSshServer_setUserNameResult(XSshServer* self,

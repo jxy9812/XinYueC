@@ -11,6 +11,10 @@
 #include <string.h>
 #include <stdint.h>
 
+#if XCONSOLE_SHELL_EDITOR_ON
+#include "XConsoleShellVi.h"
+#endif
+
 #if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
 #include "XSshServer.h"
 #include "XConsoleShellLogin.h"
@@ -87,6 +91,7 @@ static void xcs_tcpserver_ssh_auth_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_is_running_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_close_requested_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_suppress_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_ssh_can_backspace_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_user_name_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_closed_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_ssh_error_slot(XObject* receiver, XVarList* args);
@@ -174,6 +179,18 @@ static void xcs_tcpserver_ssh_suppress_slot(XObject* receiver, XVarList* args)
 #endif
 }
 
+static void xcs_tcpserver_ssh_can_backspace_slot(XObject* receiver, XVarList* args)
+{
+    XSshServer* server = (XSshServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+    XSshServer_setCanBackspaceResult(
+        server, binding && binding->shell && binding->session &&
+                XConsoleShell_canBackspace(binding->shell, binding->session));
+}
+
 static void xcs_tcpserver_ssh_user_name_slot(XObject* receiver, XVarList* args)
 {
     XSshServer* server = (XSshServer*)receiver;
@@ -232,6 +249,27 @@ static bool xcs_tcpserver_ssh_input_echo(void* userData, bool enabled)
     return server && XSshServer_setInputEcho(server, enabled);
 }
 
+static bool xcs_tcpserver_ssh_terminal_size(void* userData, int* columns,
+                                             int* rows)
+{
+    XSshServer* server = (XSshServer*)userData;
+    return server && XSshServer_terminalSize(server, columns, rows);
+}
+
+static void xcs_tcpserver_ssh_terminal_size_changed(void* userData)
+{
+    XSshServer* server = (XSshServer*)userData;
+    XConsoleShellXTcpServerBinding* binding;
+    if (!server) return;
+    binding = xcs_tcpserver_ssh_binding(server);
+    /* window-change 在 XSshServer_feedData 内部触发。只记录状态，等协议
+       数据处理返回到适配器 pump 后再输出 Vim ANSI 序列，避免协议解析与
+       Shell 会话切换/写出发生重入。尺寸差异也会在 pump 中兜底检测。 */
+    if (binding) {
+        binding->terminalSizeRefreshPending = true;
+    }
+}
+
 static void xcs_tcpserver_ssh_prompt(void* userData, XConsoleShell* shell)
 {
     XSshServer* server = (XSshServer*)userData;
@@ -261,6 +299,8 @@ static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
         return false;
     }
     XSshServer_setHostContext(server, binding);
+    XSshServer_setTerminalSizeChangedCallback(
+        server, xcs_tcpserver_ssh_terminal_size_changed, server);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
                       (XObject*)server, xcs_tcpserver_ssh_bytes_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_authenticateRequested_signal),
@@ -271,6 +311,8 @@ static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
                       (XObject*)server, xcs_tcpserver_ssh_close_requested_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_suppress_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
+                      (XObject*)server, xcs_tcpserver_ssh_can_backspace_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_userNameRequested_signal),
                       (XObject*)server, xcs_tcpserver_ssh_user_name_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_closed_signal),
@@ -282,6 +324,7 @@ static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
     shellIo->flush = xcs_tcpserver_ssh_flush_cb;
     shellIo->cancelled = xcs_tcpserver_ssh_cancelled;
     shellIo->inputEcho = xcs_tcpserver_ssh_input_echo;
+    shellIo->terminalSize = xcs_tcpserver_ssh_terminal_size;
     shellIo->prompt = xcs_tcpserver_ssh_prompt;
     shellIo->userData = server;
     return true;
@@ -328,6 +371,7 @@ static void xcs_tcpserver_telnet_bytes_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_is_running_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_close_requested_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_suppress_slot(XObject* receiver, XVarList* args);
+static void xcs_tcpserver_telnet_can_backspace_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_user_name_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_closed_slot(XObject* receiver, XVarList* args);
 static void xcs_tcpserver_telnet_error_slot(XObject* receiver, XVarList* args);
@@ -393,6 +437,18 @@ static void xcs_tcpserver_telnet_suppress_slot(XObject* receiver, XVarList* args
 #else
     XTelnetServer_setSuppressPromptResult(server, false);
 #endif
+}
+
+static void xcs_tcpserver_telnet_can_backspace_slot(XObject* receiver, XVarList* args)
+{
+    XTelnetServer* server = (XTelnetServer*)receiver;
+    XConsoleShellXTcpServerBinding* binding;
+    (void)args;
+    if (!server) return;
+    binding = xcs_tcpserver_telnet_binding(server);
+    XTelnetServer_setCanBackspaceResult(
+        server, binding && binding->shell && binding->session &&
+                XConsoleShell_canBackspace(binding->shell, binding->session));
 }
 
 static void xcs_tcpserver_telnet_user_name_slot(XObject* receiver, XVarList* args)
@@ -485,6 +541,8 @@ static bool xcs_tcpserver_telnet_setup(XConsoleShellXTcpServerBinding* binding,
                       (XObject*)server, xcs_tcpserver_telnet_close_requested_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XTelnetServer_suppressPromptRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_suppress_slot, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XTelnetServer_canBackspaceRequested_signal),
+                      (XObject*)server, xcs_tcpserver_telnet_can_backspace_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XTelnetServer_userNameRequested_signal),
                       (XObject*)server, xcs_tcpserver_telnet_user_name_slot, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XTelnetServer_closed_signal),
@@ -714,6 +772,18 @@ size_t XConsoleShellXTcpServerAdapter_pump(XConsoleShellXTcpServerAdapter* adapt
             (void)XConsoleShellXTcpServerAdapter_closeSession(adapter, binding->session);
             continue;
         }
+#if XCONSOLE_SHELL_EDITOR_ON
+        /* SSH/Telnet 的协议泵每轮都会运行，即使没有新字节也要推进
+           Vim 的 ESC 判定；否则单独按 ESC 会一直等到下一次输入。 */
+        if (binding->session &&
+            XConsoleShellVi_processPendingInput(adapter->shell, binding->session)) {
+            if (!ops->flush(binding)) {
+                (void)XConsoleShellXTcpServerAdapter_closeSession(
+                    adapter, binding->session);
+                continue;
+            }
+        }
+#endif
         /* 循环读取同一会话，直到本次暂时读不到更多数据，避免握手包被拆成
          * 多次到达时只消费第一片而遗留后续数据。 */
         for (;;) {
@@ -736,6 +806,31 @@ size_t XConsoleShellXTcpServerAdapter_pump(XConsoleShellXTcpServerAdapter* adapt
             (void)XConsoleShellXTcpServerAdapter_closeSession(adapter, binding->session);
             continue;
         }
+#if XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
+        if (binding->protocol == XConsoleShellXTcpServerProtocol_Ssh &&
+            binding->ssh && binding->session) {
+            int columns = 0;
+            int rows = 0;
+            bool validSize = XSshServer_terminalSize(binding->ssh, &columns, &rows);
+            bool changed = validSize &&
+                           (binding->terminalColumns != columns ||
+                            binding->terminalRows != rows);
+            if (validSize && (changed || binding->terminalSizeRefreshPending)) {
+                binding->terminalColumns = columns;
+                binding->terminalRows = rows;
+                binding->terminalSizeRefreshPending = false;
+                (void)XConsoleShell_refreshForSession(adapter->shell,
+                                                      binding->session);
+                /* 重绘发生在本轮输入 flush 之后；必须立即再次提交 Vim
+                   产生的 ANSI 数据，不能等下一次 SSH 输入事件才发送。 */
+                if (!ops->flush(binding)) {
+                    (void)XConsoleShellXTcpServerAdapter_closeSession(
+                        adapter, binding->session);
+                    continue;
+                }
+            }
+        }
+#endif
         if (XTcpSocket_state((XAbstractSocket*)binding->socket) !=
             XAbstractSocket_ConnectedState) {
             (void)XConsoleShellXTcpServerAdapter_closeSession(adapter, binding->session);

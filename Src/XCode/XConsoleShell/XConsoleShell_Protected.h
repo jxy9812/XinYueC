@@ -25,6 +25,18 @@
 extern "C" {
 #endif
 
+#if XCONSOLE_SHELL_EDITOR_ON
+/**
+ * @brief 修复全屏 Vim 对会话对象的借用指针。
+ * @details 多会话 Shell 为复用单会话解析器，会把附加会话暂时复制到
+ *          内部工作区。Vim 创建时可能暂时看到该工作区地址；切换结束后
+ *          必须把 Vim 的输出目标重新绑定到实际会话，避免输出落到主 Shell。
+ * @param session Shell 管理的实际会话；可为 NULL。
+ * @return 无。
+ */
+void XConsoleShellVi_rebindSession(XConsoleShellSession* session);
+#endif
+
 /**
  * @brief 执行 fs 命令树。
  * @param shell 当前 Shell；只在调用期间借用。

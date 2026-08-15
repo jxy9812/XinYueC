@@ -643,12 +643,12 @@
 
 /** @brief 启用 ANSI 行编辑，包括光标移动和退格处理。 */
 #ifndef XCONSOLE_SHELL_LINE_EDITOR_ON
-#define XCONSOLE_SHELL_LINE_EDITOR_ON 0
+#define XCONSOLE_SHELL_LINE_EDITOR_ON 1
 #endif
 
 /** @brief 启用固定容量历史命令缓冲。 */
 #ifndef XCONSOLE_SHELL_HISTORY_ON
-#define XCONSOLE_SHELL_HISTORY_ON 0
+#define XCONSOLE_SHELL_HISTORY_ON 1
 #endif
 
 /** @brief 启用命令补全回调和补全状态；对齐 Linux Shell 的 Tab 补全。 */

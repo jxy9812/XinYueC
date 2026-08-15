@@ -38,6 +38,9 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XSshServer)
 XCLASS_DEFINE_EXTEND_END(XSshServer, XObject)
 
+/** @brief SSH 客户端窗口尺寸变化通知；回调上下文由调用方拥有。 */
+typedef void (*XSshServerTerminalSizeChangedFn)(void* userData);
+
 /** @brief SSH 服务器协议栈。 */
 typedef struct XSshServer {
     XObject m_class;                    /**< 基类 XObject，提供信号槽机制。 */
@@ -52,6 +55,7 @@ typedef struct XSshServer {
         uint32_t m_isRunningResult : 1;      /**< isRunning 查询结果。 */
         uint32_t m_closeRequestedResult : 1; /**< closeRequested 查询结果。 */
         uint32_t m_suppressPromptResult : 1; /**< suppressPrompt 查询结果。 */
+        uint32_t m_canBackspaceResult : 1;   /**< 当前输入行是否允许退格。 */
         struct {
             char m_userNameResult[XSSH_LOGIN_NAME_SIZE]; /**< userName 查询结果。 */
             size_t m_userNameResultLen;  /**< userName 查询结果长度。 */
@@ -142,6 +146,25 @@ bool XSshServer_isClosed(const XSshServer* self);
 bool XSshServer_setInputEcho(XSshServer* self, bool enabled);
 
 /**
+ * @brief 获取 SSH 客户端当前请求的终端尺寸。
+ * @param self SSH 服务器；不能为 NULL。
+ * @param columns 输出列数；不能为 NULL。
+ * @param rows 输出行数；不能为 NULL。
+ * @return 已收到有效 pty-req 返回 true；否则返回 false。
+ * @note 客户端发送 window-change 后，后续查询会返回最新尺寸。
+ */
+bool XSshServer_terminalSize(const XSshServer* self, int* columns, int* rows);
+
+/**
+ * @brief 设置 SSH 客户端窗口变化通知回调。
+ * @param self SSH 服务器；不能为空。
+ * @param callback 收到 pty-req/window-change 后调用的回调；可为 NULL。
+ * @param userData 回调上下文；不由协议栈释放。
+ */
+void XSshServer_setTerminalSizeChangedCallback(
+    XSshServer* self, XSshServerTerminalSizeChangedFn callback, void* userData);
+
+/**
  * @brief 向设备发送当前会话提示符。
  * @param self SSH 服务器；不能为 NULL。
  * @return 写入成功返回 true。
@@ -190,6 +213,12 @@ void* XSshServer_closeRequested_signal(XSshServer* self);
  */
 void* XSshServer_suppressPromptRequested_signal(XSshServer* self);
 /**
+ * @brief 查询当前输入行是否允许退格；槽函数调用 setCanBackspaceResult 回填。
+ * @param self SSH 服务器。
+ * @return 信号返回值。
+ */
+void* XSshServer_canBackspaceRequested_signal(XSshServer* self);
+/**
  * @brief 查询用户名的信号；槽函数调用 setUserNameResult 回填。
  * @param self SSH 服务器。
  * @param buffer 输出缓冲区，具有 capacity 容量。
@@ -224,6 +253,8 @@ void XSshServer_setIsRunningResult(XSshServer* self, bool result);
 void XSshServer_setCloseRequestedResult(XSshServer* self, bool result);
 /** @brief 回填 suppressPrompt 结果 @param self SSH 服务器 @param result 是否抑制提示符 */
 void XSshServer_setSuppressPromptResult(XSshServer* self, bool result);
+/** @brief 回填 canBackspace 结果 @param self SSH 服务器 @param result 是否允许退格 */
+void XSshServer_setCanBackspaceResult(XSshServer* self, bool result);
 /** @brief 回填 userName 结果 @param self SSH 服务器 @param name 用户名；可为 NULL @param len 长度（不含 NUL） */
 void XSshServer_setUserNameResult(XSshServer* self,
                                   const char* name, size_t len);

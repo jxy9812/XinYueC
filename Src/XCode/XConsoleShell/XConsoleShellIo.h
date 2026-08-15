@@ -77,6 +77,15 @@ typedef void (*XConsoleInputDetachFn)(void* userData, struct XConsoleShell* shel
  */
 typedef bool (*XConsoleInputEchoFn)(void* userData, bool enabled);
 /**
+ * @brief 查询当前会话的终端尺寸。
+ * @param userData XConsoleShellIo::userData 借用上下文。
+ * @param columns 输出终端列数；不能为 NULL。
+ * @param rows 输出终端行数；不能为 NULL。
+ * @return 已知有效尺寸返回 true；非交互传输或暂时没有尺寸返回 false。
+ * @note SSH 的 pty/window-change 以及其他传输的窗口协商都可以通过此回调接入。
+ */
+typedef bool (*XConsoleTerminalSizeFn)(void* userData, int* columns, int* rows);
+/**
  * @brief 在一条完整命令处理结束后输出交互提示符。
  * @param userData XConsoleShellIo::userData 借用上下文。
  * @param shell 当前 Shell；仅在回调期间借用。
@@ -125,6 +134,7 @@ typedef struct XConsoleShellIo {
     XConsoleAuditFn audit;     /**< 命令结果审计回调；可为 NULL。 */
 #endif
     void* userData;            /**< 回调上下文；Shell 不释放。 */
+    XConsoleTerminalSizeFn terminalSize; /**< 查询终端尺寸；可为 NULL。 */
 } XConsoleShellIo;
 
 #ifdef __cplusplus

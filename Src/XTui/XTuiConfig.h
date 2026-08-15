@@ -65,6 +65,17 @@
 #define XTUI_INPUT_BUFFER_SIZE 64
 #endif
 
+/**
+ * @brief 单独 ESC 与方向键转义序列之间的判定窗口，单位为毫秒。
+ * @details
+ * 终端方向键通常以 ESC [ 或 ESC O 开头。解析器收到单独 ESC 时需要短暂
+ * 等待后续字节；超时后将其提交为普通 Escape 按键，避免 Vim 插入模式
+ * 按 ESC 后必须再输入一个字符才返回命令模式。
+ */
+#ifndef XTUI_ESCAPE_TIMEOUT_MS
+#define XTUI_ESCAPE_TIMEOUT_MS 50
+#endif
+
 /** @brief 文本编辑控件单行最大字符数（按 UTF-8 字节计）。 */
 #ifndef XTUI_TEXTEDIT_MAX_BYTES
 #define XTUI_TEXTEDIT_MAX_BYTES 256
@@ -201,6 +212,9 @@
 #endif
 #if (XTUI_CELL_UTF8_MAX < 1) || (XTUI_CELL_UTF8_MAX > 8)
 #error "XTui: 单元格 UTF-8 长度必须在 1 到 8 之间"
+#endif
+#if XTUI_ESCAPE_TIMEOUT_MS < 1
+#error "XTui: ESC 判定窗口必须大于等于 1 毫秒"
 #endif
 
 /* XTuiVim 子功能依赖检查。 */

@@ -59,7 +59,7 @@ typedef struct XTelnetServer {
         uint32_t m_afterCarriageReturn : 1; /**< 用于吞掉 CR 后的 NUL。 */
         uint32_t m_echoEnabled : 1;         /**< 服务端是否回显普通输入；密码输入时由 Shell 关闭。 */
         uint32_t m_echoPendingCr : 1;       /**< 已回显 CR，等待吞掉 LF 以避免重复。 */
-        uint32_t m_echoEscape : 1;          /**< 正在跳过 ESC 转义序列，不回显。 */
+        uint32_t m_echoEscape : 2;          /**< 回显转义状态：0 普通、1 ESC、2 CSI/SS3。 */
         uint32_t m_closed : 1;              /**< 是否已进入关闭状态。 */
     };
     /* 查询请求槽结果；同一时刻仅一个查询在途，故用联合压缩，布尔结果用位域。 */
@@ -68,6 +68,7 @@ typedef struct XTelnetServer {
         uint32_t m_isRunningResult : 1; /**< isRunning 查询结果。 */
         uint32_t m_closeRequestedResult : 1; /**< closeRequested 查询结果。 */
         uint32_t m_suppressPromptResult : 1; /**< suppressPrompt 查询结果。 */
+        uint32_t m_canBackspaceResult : 1; /**< 当前输入行是否允许退格。 */
         struct {
             char m_userNameResult[XTELNET_LOGIN_NAME_SIZE]; /**< userName 查询结果。 */
             size_t m_userNameResultLen; /**< userName 查询结果长度。 */
@@ -194,6 +195,12 @@ void* XTelnetServer_closeRequested_signal(XTelnetServer* self);
  */
 void* XTelnetServer_suppressPromptRequested_signal(XTelnetServer* self);
 /**
+ * @brief 查询当前输入行是否允许退格；槽函数调用 setCanBackspaceResult 回填。
+ * @param self Telnet 服务器。
+ * @return 信号返回值。
+ */
+void* XTelnetServer_canBackspaceRequested_signal(XTelnetServer* self);
+/**
  * @brief 查询用户名的信号；槽函数调用 setUserNameResult 回填。
  * @param self Telnet 服务器。
  * @param buffer 输出缓冲区，具有 capacity 容量。
@@ -226,6 +233,8 @@ void XTelnetServer_setIsRunningResult(XTelnetServer* self, bool result);
 void XTelnetServer_setCloseRequestedResult(XTelnetServer* self, bool result);
 /** @brief 回填 suppressPrompt 结果 @param self Telnet 服务器 @param result 是否抑制提示符 */
 void XTelnetServer_setSuppressPromptResult(XTelnetServer* self, bool result);
+/** @brief 回填 canBackspace 结果 @param self Telnet 服务器 @param result 是否允许退格 */
+void XTelnetServer_setCanBackspaceResult(XTelnetServer* self, bool result);
 /** @brief 回填 userName 结果 @param self Telnet 服务器 @param name 用户名；可为 NULL @param len 长度（不含 NUL） */
 void XTelnetServer_setUserNameResult(XTelnetServer* self,
                                      const char* name, size_t len);

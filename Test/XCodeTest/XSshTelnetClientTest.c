@@ -2,6 +2,7 @@
 #include "XSshClient.h"
 #include "XSshServer.h"
 #include "XTelnetClient.h"
+#include "XTelnetServer.h"
 #include "XIODevice.h"
 #include "XByteArray.h"
 #include "XMemory.h"
@@ -90,6 +91,8 @@ static const uint8_t* xshtelnet_test_output_data(const XSshTelnetTestDevice* dev
 
 static int xshtelnet_server_auth_count;
 static int xshtelnet_server_data_count;
+static int xshtelnet_server_tab_count;
+static size_t xshtelnet_server_line_length;
 static size_t xshtelnet_client_data_len;
 static uint8_t xshtelnet_client_payload[128];
 static bool xshtelnet_host_key_accept;
@@ -119,11 +122,33 @@ static void xshtelnet_server_suppress_prompt(XObject* receiver, XVarList* args)
     XSshServer_setSuppressPromptResult((XSshServer*)receiver, true);
 }
 
+static void xshtelnet_server_can_backspace(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XSshServer_setCanBackspaceResult((XSshServer*)receiver,
+                                     xshtelnet_server_line_length > 0);
+}
+
 static void xshtelnet_server_data(XObject* receiver, XVarList* args)
 {
+    const uint8_t* bytes;
+    size_t i;
     (void)receiver;
     XVarList_args_2(args, const void*, data, size_t, size);
-    if (data && size) ++xshtelnet_server_data_count;
+    if (!data || !size) return;
+    ++xshtelnet_server_data_count;
+    bytes = (const uint8_t*)data;
+    for (i = 0; i < size; ++i) {
+        if (bytes[i] == '\t') ++xshtelnet_server_tab_count;
+        if (bytes[i] == '\r' || bytes[i] == '\n') {
+            xshtelnet_server_line_length = 0;
+        } else if (bytes[i] == '\b' || bytes[i] == 0x7f) {
+            if (xshtelnet_server_line_length > 0)
+                --xshtelnet_server_line_length;
+        } else if (bytes[i] >= 0x20 && bytes[i] != '\t') {
+            ++xshtelnet_server_line_length;
+        }
+    }
 }
 
 static void xshtelnet_client_host_key(XObject* receiver, XVarList* args)
@@ -191,6 +216,8 @@ static bool xshtelnet_test_ssh(void)
                       (XObject*)server, xshtelnet_server_close_requested, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_suppressPromptRequested_signal),
                       (XObject*)server, xshtelnet_server_suppress_prompt, XConnectionType_Direct);
+    XObject_connect_1((XObject*)server, XSignal(XSshServer_canBackspaceRequested_signal),
+                      (XObject*)server, xshtelnet_server_can_backspace, XConnectionType_Direct);
     XObject_connect_1((XObject*)server, XSignal(XSshServer_bytesReceived_signal),
                       (XObject*)server, xshtelnet_server_data, XConnectionType_Direct);
     XObject_connect_1((XObject*)client, XSignal(XSshClient_hostKeyVerificationRequested_signal),
@@ -212,6 +239,7 @@ static bool xshtelnet_test_ssh(void)
     if (ready) {
         xshtelnet_client_data_len = 0;
         xshtelnet_server_data_count = 0;
+        xshtelnet_server_tab_count = 0;
         if (XSshClient_write(client, "input\n", 6) != 6) ready = false;
         if (ready && !xshtelnet_test_pump(clientDevice, &clientOffset,
                                           xshtelnet_feed_ssh_server, server)) ready = false;
@@ -221,6 +249,73 @@ static bool xshtelnet_test_ssh(void)
         ready = ready && xshtelnet_server_data_count > 0 &&
                 xshtelnet_client_data_len == 15 &&
                 memcmp(xshtelnet_client_payload, "input\r\noutput\r\n", 15) == 0;
+    }
+    if (ready) {
+        /* SSH 客户端会把一个终端按键拆成多个 SSH 数据包；回显过滤器
+           必须跨包保留 ESC/CSI 状态，Tab 也只能交给 Shell 补全，不能
+           在终端上形成不可见的空白位移。 */
+        static const uint8_t terminalInput[] = {
+            0x1b, '[', 'A', 0x1b, '[', 'B', 0x1b, '[', 'C', 0x1b, '[', 'D',
+            0x1b, 'O', 'A', 0x1b, 'O', 'B',
+            0x1b, '[', '<', '6', '4', ';', '1', '0', ';', '1', '0', 'M', '\t'
+        };
+        xshtelnet_client_data_len = 0;
+        xshtelnet_server_data_count = 0;
+        memset(xshtelnet_client_payload, 0, sizeof(xshtelnet_client_payload));
+        for (i = 0; i < sizeof(terminalInput) && ready; ++i) {
+            ready = XSshClient_write(client, terminalInput + i, 1) == 1;
+            if (ready) ready = xshtelnet_test_pump(clientDevice, &clientOffset,
+                                                   xshtelnet_feed_ssh_server,
+                                                   server);
+            if (ready) ready = xshtelnet_test_pump(serverDevice, &serverOffset,
+                                                   xshtelnet_feed_ssh_client,
+                                                   client);
+        }
+        ready = ready && xshtelnet_server_data_count > 0 &&
+                xshtelnet_server_tab_count == 1 &&
+                xshtelnet_client_data_len == 0;
+    }
+    if (ready) {
+        /* 空输入行收到退格时，服务端不能把 Shell 提示符当作输入擦除；
+           `a<退格>` 合并在同一 SSH 数据包时，查询还必须发生在 a 已投喂之后。 */
+        xshtelnet_client_data_len = 0;
+        xshtelnet_server_line_length = 0;
+        memset(xshtelnet_client_payload, 0, sizeof(xshtelnet_client_payload));
+        if (XSshClient_write(client, "\x7f", 1) != 1 ||
+            !xshtelnet_test_pump(clientDevice, &clientOffset,
+                                 xshtelnet_feed_ssh_server, server) ||
+            !xshtelnet_test_pump(serverDevice, &serverOffset,
+                                 xshtelnet_feed_ssh_client, client) ||
+            xshtelnet_client_data_len != 0)
+            ready = false;
+    }
+    if (ready) {
+        xshtelnet_client_data_len = 0;
+        xshtelnet_server_line_length = 0;
+        memset(xshtelnet_client_payload, 0, sizeof(xshtelnet_client_payload));
+        if (XSshClient_write(client, "a\x7f", 2) != 2 ||
+            !xshtelnet_test_pump(clientDevice, &clientOffset,
+                                 xshtelnet_feed_ssh_server, server) ||
+            !xshtelnet_test_pump(serverDevice, &serverOffset,
+                                 xshtelnet_feed_ssh_client, client) ||
+            xshtelnet_client_data_len != 4 ||
+            memcmp(xshtelnet_client_payload, "a\b \b", 4) != 0 ||
+            xshtelnet_server_line_length != 0)
+            ready = false;
+    }
+    if (ready) {
+        /* 全屏编辑器期间即使收到普通字符也不能由 SSH 服务端回显；
+           Vim 的屏幕刷新是唯一允许把内容写回终端的路径。 */
+        xshtelnet_client_data_len = 0;
+        if (!XSshServer_setInputEcho(server, false) ||
+            XSshClient_write(client, "abc", 3) != 3 ||
+            !xshtelnet_test_pump(clientDevice, &clientOffset,
+                                 xshtelnet_feed_ssh_server, server) ||
+            !xshtelnet_test_pump(serverDevice, &serverOffset,
+                                 xshtelnet_feed_ssh_client, client) ||
+            xshtelnet_client_data_len != 0)
+            ready = false;
+        (void)XSshServer_setInputEcho(server, true);
     }
 cleanup:
     if (client) XClass_delete_base((XClass*)client);
@@ -233,6 +328,9 @@ cleanup:
 static int xshtelnet_client_data_count;
 static char xshtelnet_telnet_text[64];
 static size_t xshtelnet_telnet_text_len;
+static size_t xshtelnet_telnet_server_data_len;
+static size_t xshtelnet_telnet_server_line_length;
+static int xshtelnet_telnet_server_tab_count;
 
 static void xshtelnet_telnet_data(XObject* receiver, XVarList* args)
 {
@@ -243,6 +341,95 @@ static void xshtelnet_telnet_data(XObject* receiver, XVarList* args)
         memcpy(xshtelnet_telnet_text + xshtelnet_telnet_text_len, data, size);
         xshtelnet_telnet_text_len += size;
     }
+}
+
+static void xshtelnet_telnet_server_data(XObject* receiver, XVarList* args)
+{
+    const uint8_t* bytes;
+    size_t i;
+    XVarList_args_2(args, const void*, data, size_t, size);
+    if (data) {
+        xshtelnet_telnet_server_data_len += size;
+        bytes = (const uint8_t*)data;
+        for (i = 0; i < size; ++i) {
+            if (bytes[i] == '\t') ++xshtelnet_telnet_server_tab_count;
+            if (bytes[i] == '\r' || bytes[i] == '\n') {
+                xshtelnet_telnet_server_line_length = 0;
+            } else if (bytes[i] == '\b' || bytes[i] == 0x7f) {
+                if (xshtelnet_telnet_server_line_length > 0)
+                    --xshtelnet_telnet_server_line_length;
+            } else if (bytes[i] >= 0x20 && bytes[i] != '\t') {
+                ++xshtelnet_telnet_server_line_length;
+            }
+        }
+    }
+    XTelnetServer_setBytesReceivedResult((XTelnetServer*)receiver,
+                                         (int)XProtocolResult_Ok);
+}
+
+static void xshtelnet_telnet_server_can_backspace(XObject* receiver,
+                                                  XVarList* args)
+{
+    (void)args;
+    XTelnetServer_setCanBackspaceResult(
+        (XTelnetServer*)receiver, xshtelnet_telnet_server_line_length > 0);
+}
+
+static bool xshtelnet_test_telnet_server_echo(void)
+{
+    XSshTelnetTestDevice* device = xshtelnet_test_device_create();
+    XTelnetServer* server = XTelnetServer_create();
+    static const uint8_t terminalInput[] = {
+        0x1b, '[', 'A', 0x1b, '[', 'B', 0x1b, 'O', 'C',
+        0x1b, '[', '<', '6', '4', ';', '1', ';', '1', 'M', '\t'
+    };
+    size_t outputBefore;
+    size_t i;
+    bool ok = false;
+    if (!device || !server) goto cleanup;
+    XObject_connect_1((XObject*)server,
+                      XSignal(XTelnetServer_bytesReceived_signal),
+                      (XObject*)server, xshtelnet_telnet_server_data,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)server,
+                      XSignal(XTelnetServer_canBackspaceRequested_signal),
+                      (XObject*)server, xshtelnet_telnet_server_can_backspace,
+                      XConnectionType_Direct);
+    if (!XTelnetServer_setDevice(server, (XIODevice*)device) ||
+        !XTelnetServer_start(server))
+        goto cleanup;
+    outputBefore = xshtelnet_test_output_size(device);
+    xshtelnet_telnet_server_data_len = 0;
+    xshtelnet_telnet_server_line_length = 0;
+    xshtelnet_telnet_server_tab_count = 0;
+    for (i = 0; i < sizeof(terminalInput); ++i) {
+        if (XTelnetServer_feedData(server, terminalInput + i, 1) !=
+            XProtocolResult_Ok)
+            goto cleanup;
+    }
+    ok = xshtelnet_telnet_server_data_len == sizeof(terminalInput) &&
+         xshtelnet_telnet_server_tab_count == 1 &&
+         xshtelnet_test_output_size(device) == outputBefore;
+    if (ok) {
+        /* 空行退格不应产生任何设备输出；已有字符时才输出擦除序列。 */
+        xshtelnet_telnet_server_line_length = 0;
+        if (XTelnetServer_feedData(server, "\x7f", 1) != XProtocolResult_Ok ||
+            xshtelnet_test_output_size(device) != outputBefore)
+            ok = false;
+    }
+    if (ok) {
+        xshtelnet_telnet_server_line_length = 0;
+        if (XTelnetServer_feedData(server, "a\x7f", 2) != XProtocolResult_Ok ||
+            xshtelnet_test_output_size(device) != outputBefore + 4 ||
+            memcmp(xshtelnet_test_output_data(device) + outputBefore,
+                   "a\b \b", 4) != 0 ||
+            xshtelnet_telnet_server_line_length != 0)
+            ok = false;
+    }
+cleanup:
+    if (server) XClass_delete_base((XClass*)server);
+    if (device) XClass_delete_base((XClass*)device);
+    return ok;
 }
 
 static bool xshtelnet_test_telnet(void)
@@ -281,7 +468,10 @@ bool XSshTelnetClientTest_runAll(void)
 {
     bool ssh = xshtelnet_test_ssh();
     bool telnet = xshtelnet_test_telnet();
+    bool telnetServer = xshtelnet_test_telnet_server_echo();
     XPrintf("SSH 客户端内存端到端测试: %s\n", ssh ? "通过" : "失败");
     XPrintf("Telnet 客户端协议测试: %s\n", telnet ? "通过" : "失败");
-    return ssh && telnet;
+    XPrintf("Telnet 服务端终端回显测试: %s\n",
+            telnetServer ? "通过" : "失败");
+    return ssh && telnet && telnetServer;
 }

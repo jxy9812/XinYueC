@@ -6,6 +6,7 @@
 #include "XTui.h"
 
 #if XTUI_ON && XTUI_SESSION_ON
+#include "XDateTime.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -141,6 +142,7 @@ static int feedByte(XTui* self, unsigned char c)
         if (c == 0x1B) {
             self->m_lastByteCR = false;
             self->m_parseState = XTuiParse_Esc;
+            self->m_escapeStartedMsecs = XDateTime_currentMSecsSinceEpoch();
             return 1;
         }
         if (c == '\r') {
@@ -195,21 +197,25 @@ static int feedByte(XTui* self, unsigned char c)
         if (c == '[') {
             self->m_parseState = XTuiParse_Csi;
             self->m_csiLength = 0;
+            self->m_escapeStartedMsecs = 0;
             return 1;
         }
         if (c == 'O') {
             self->m_parseState = XTuiParse_O;
+            self->m_escapeStartedMsecs = 0;
             return 1;
         }
         /* 单独的 ESC，然后按普通字节重新处理。 */
         postKeyEvent(self, XTuiKey_Escape, XKeyboardModifier_NoModifier);
         self->m_parseState = XTuiParse_Normal;
+        self->m_escapeStartedMsecs = 0;
         return feedByte(self, c);
 
     case XTuiParse_Csi:
         if (c >= 0x40 && c <= 0x7E) {
             parseCsiFinal(self, (char)c);
             self->m_parseState = XTuiParse_Normal;
+            self->m_escapeStartedMsecs = 0;
             return 1;
         }
         if (self->m_csiLength < sizeof(self->m_csiBuffer) - 1) {
@@ -222,10 +228,12 @@ static int feedByte(XTui* self, unsigned char c)
         if (c >= 0x40 && c <= 0x7E) {
             parseOFinal(self, (char)c);
             self->m_parseState = XTuiParse_Normal;
+            self->m_escapeStartedMsecs = 0;
             return 1;
         }
         postKeyEvent(self, XTuiKey_Escape, XKeyboardModifier_NoModifier);
         self->m_parseState = XTuiParse_Normal;
+        self->m_escapeStartedMsecs = 0;
         return feedByte(self, c);
     }
     return 1;
@@ -247,6 +255,7 @@ static void VXTui_deinit(XTui* self)
     self->m_focus = NULL;
     self->m_running = false;
     self->m_lastByteCR = false;
+    self->m_escapeStartedMsecs = 0;
 }
 
 static void VXTui_copy(XTui* dest, const XTui* src)
@@ -270,6 +279,7 @@ static void VXTui_copy(XTui* dest, const XTui* src)
     memcpy(dest->m_csiBuffer, src->m_csiBuffer, sizeof(src->m_csiBuffer));
     dest->m_utf8Pos = src->m_utf8Pos;
     dest->m_utf8Expected = src->m_utf8Expected;
+    dest->m_escapeStartedMsecs = src->m_escapeStartedMsecs;
     memcpy(dest->m_utf8Buf, src->m_utf8Buf, sizeof(src->m_utf8Buf));
 
     if (src->m_previousScreen) {
@@ -304,6 +314,7 @@ static void VXTui_move(XTui* dest, XTui* src)
     memcpy(dest->m_csiBuffer, src->m_csiBuffer, sizeof(src->m_csiBuffer));
     dest->m_utf8Pos = src->m_utf8Pos;
     dest->m_utf8Expected = src->m_utf8Expected;
+    dest->m_escapeStartedMsecs = src->m_escapeStartedMsecs;
     memcpy(dest->m_utf8Buf, src->m_utf8Buf, sizeof(src->m_utf8Buf));
 
     if (dest->m_previousScreen)
@@ -342,6 +353,7 @@ void XTui_init(XTui* tui)
     XClassGetVtable(tui) = XTui_class_init();
     tui->m_useAlternateScreen = true;
     tui->m_lastByteCR = false;
+    tui->m_escapeStartedMsecs = 0;
 }
 
 XTui* XTui_create_ex(XMemoryType memory)
@@ -466,6 +478,12 @@ bool XTui_refresh(XTui* self)
     return XTui_paint(self);
 }
 
+void XTui_invalidate(XTui* self)
+{
+    if (self && self->m_previousScreen)
+        XTuiScreen_clear(self->m_previousScreen);
+}
+
 bool XTui_paint(XTui* self)
 {
     if (!self || !self->m_screen || !self->m_terminal)
@@ -477,6 +495,10 @@ bool XTui_paint(XTui* self)
     XTuiScreen* prev = self->m_previousScreen;
     int w = XTuiScreen_width(cur);
     int h = XTuiScreen_height(cur);
+    XPoint currentCursor = XTuiScreen_cursor(cur);
+    XPoint previousCursor = XTuiScreen_cursor(prev);
+    bool cursorMoved = currentCursor.x != previousCursor.x ||
+                       currentCursor.y != previousCursor.y;
     if (XTuiScreen_width(prev) != w || XTuiScreen_height(prev) != h)
         XTuiScreen_resize(prev, w, h);
 
@@ -486,7 +508,10 @@ bool XTui_paint(XTui* self)
             const XTuiCell* p = XTuiScreen_cell(prev, x, y);
             if (!c)
                 continue;
-            if (p && memcmp(c, p, sizeof(XTuiCell)) == 0)
+            /* Vim 的行列信息位于底部状态行。光标移动时即使单元格快照
+               看起来相同，也重绘该行，避免终端残留内容覆盖当前行列。 */
+            if (p && !(cursorMoved && y == h - 1) &&
+                memcmp(c, p, sizeof(XTuiCell)) == 0)
                 continue;
 
             XTuiTerminal_moveTo(self->m_terminal, x, y);
@@ -515,6 +540,21 @@ int XTui_feedInput(XTui* self, const char* data, int length)
         ++consumed;
     }
     return consumed;
+}
+
+bool XTui_flushPendingInput(XTui* self)
+{
+    int64_t now;
+    if (!self || self->m_parseState != XTuiParse_Esc)
+        return false;
+    now = XDateTime_currentMSecsSinceEpoch();
+    if (self->m_escapeStartedMsecs <= 0 || now < self->m_escapeStartedMsecs ||
+        now - self->m_escapeStartedMsecs < (int64_t)XTUI_ESCAPE_TIMEOUT_MS)
+        return false;
+    self->m_parseState = XTuiParse_Normal;
+    self->m_escapeStartedMsecs = 0;
+    postKeyEvent(self, XTuiKey_Escape, XKeyboardModifier_NoModifier);
+    return true;
 }
 
 bool XTui_handleKey(XTui* self, const XTuiKeyEvent* event)

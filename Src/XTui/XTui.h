@@ -26,6 +26,7 @@ extern "C" {
 #include "XMemory.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /** @brief 输入解析器状态。 */
 typedef enum XTuiParseState
@@ -61,6 +62,7 @@ typedef struct XTui
     char           m_utf8Buf[XTUI_CELL_UTF8_MAX + 1];   /**< UTF-8 字符累积缓冲。 */
     size_t         m_utf8Pos;         /**< UTF-8 已累积字节数。 */
     size_t         m_utf8Expected;    /**< UTF-8 期望总字节数。 */
+    int64_t        m_escapeStartedMsecs; /**< 单独 ESC 等待开始时间；0 表示无等待。 */
     bool           m_running;         /**< 是否已进入全屏模式。 */
     bool           m_useAlternateScreen; /**< 是否使用备用屏幕；默认 true。 */
     bool           m_lastByteCR;      /**< 上次输入为 CR，用于合并 CRLF 回车。 */
@@ -134,6 +136,13 @@ void XTui_stop(XTui* self);
 bool XTui_refresh(XTui* self);
 
 /**
+ * @brief 使下一次绘制忽略旧屏幕快照。
+ * @details 用于终端尺寸变化或外部终端状态被清除后，强制完整重绘当前屏幕。
+ * @param self 目标 TUI 会话；可为 NULL。
+ */
+void XTui_invalidate(XTui* self);
+
+/**
  * @brief 把当前屏幕与上次快照做差异并绘制到终端。
  * @return true 表示完成；无终端或屏幕时返回 false。
  */
@@ -148,6 +157,17 @@ bool XTui_paint(XTui* self);
  * @return 已消费字节数。
  */
 int XTui_feedInput(XTui* self, const char* data, int length);
+
+/**
+ * @brief 提交已等待超时的单独 ESC 按键。
+ * @details
+ * 输入解析器需要等待极短时间来区分单独 ESC 与方向键的 ESC [ / ESC O
+ * 前缀。事件循环在没有新输入时应周期调用本函数；未达到判定窗口时不
+ * 产生事件，已超时则派发 Escape 并恢复普通解析状态。
+ * @param self 目标会话；可为 NULL。
+ * @return 本次是否提交了一个 Escape 按键。
+ */
+bool XTui_flushPendingInput(XTui* self);
 
 /**
  * @brief 把单个按键事件派发给焦点控件。

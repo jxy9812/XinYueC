@@ -120,8 +120,8 @@ typedef struct XConsoleShellSession {
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     size_t m_lineCursor;                              /**< 会话行编辑光标位置。 */
-    uint8_t m_escapeState;                            /**< 会话 ANSI 转义解析状态。 */
 #endif
+    uint8_t m_escapeState;                            /**< 会话 ANSI 转义状态：0 普通、1 ESC、2 CSI、3 SS3。 */
     bool m_closeRequested;                            /**< 附加会话已请求退出；所属 Shell 继续运行。 */
     bool m_open;                                      /**< 是否为已打开的附加会话。 */
     bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
@@ -198,8 +198,8 @@ typedef struct XConsoleShell {
 #endif
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     size_t m_lineCursor;                               /**< 行编辑光标位置。 */
-    uint8_t m_escapeState;                             /**< ANSI 转义序列解析状态。 */
 #endif
+    uint8_t m_escapeState;                             /**< ANSI 转义状态：0 普通、1 ESC、2 CSI、3 SS3。 */
 #if XCONSOLE_SHELL_STATS_ON
     uint64_t m_processedLines;                         /**< 已处理完整输入行数。 */
     uint64_t m_successfulCommands;                     /**< 成功命令数。 */
@@ -548,6 +548,16 @@ size_t XConsoleShell_sessionCount(const XConsoleShell* self);
  *             返回指针由 self 拥有，调用者不得释放。
  */
 XConsoleShellSession* XConsoleShell_findSession(XConsoleShell* self, uint32_t id);
+/**
+ * @brief 刷新指定会话的交互编辑器。
+ * @details 传输层收到终端 window-change 后可调用此函数，Shell 会切换到该
+ *          会话并立即刷新全屏 Vim；非编辑会话调用时不产生输出。
+ * @param self Shell 对象；不能为空。
+ * @param session self 管理的已打开会话；不能为空。
+ * @return 刷新成功返回 true；会话无效或刷新失败返回 false。
+ */
+bool XConsoleShell_refreshForSession(XConsoleShell* self,
+                                     XConsoleShellSession* session);
 /**
  * @brief      向指定会话输入一个字节。
  * @param      self Shell 对象；不能为空。

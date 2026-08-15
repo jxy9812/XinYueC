@@ -49,6 +49,8 @@ static bool xtelnet_reply(XTelnetServer* self, uint8_t command, uint8_t option)
     return xtelnet_write_all(self, bytes, sizeof(bytes));
 }
 
+static bool xtelnet_query_can_backspace(XTelnetServer* self);
+
 /* 原始写入：转义 IAC（0xFF）避免与命令序列混淆 */
 static int64_t xtelnet_write_raw(XTelnetServer* self,
                                  const void* data, size_t size)
@@ -108,12 +110,19 @@ static bool xtelnet_echo_byte(XTelnetServer* self, uint8_t byte)
     const uint8_t* text;
     size_t size;
     if (!self || !self->m_echoEnabled) return true;
-    if (self->m_echoEscape) {
-        if (byte >= '@' && byte <= '~') self->m_echoEscape = false;
+    if (self->m_echoEscape == 1u) {
+        if (byte == '[' || byte == 'O') {
+            self->m_echoEscape = 2u;
+            return true;
+        }
+        self->m_echoEscape = 0u;
+    }
+    if (self->m_echoEscape == 2u) {
+        if (byte >= '@' && byte <= '~') self->m_echoEscape = 0u;
         return true;
     }
     if (byte == 0x1b) {
-        self->m_echoEscape = true;
+        self->m_echoEscape = 1u;
         return true;
     }
     if (byte == '\r') {
@@ -129,6 +138,8 @@ static bool xtelnet_echo_byte(XTelnetServer* self, uint8_t byte)
     }
     self->m_echoPendingCr = false;
     if (byte == '\b' || byte == 0x7f) {
+        /* 空输入行不能擦除 Shell 提示符；是否可退格由宿主同步回填。 */
+        if (!xtelnet_query_can_backspace(self)) return true;
         text = (const uint8_t*)"\b \b";
         size = 3;
         return xtelnet_write_raw(self, text, size) == (int64_t)size;
@@ -138,7 +149,8 @@ static bool xtelnet_echo_byte(XTelnetServer* self, uint8_t byte)
         size = 4;
         return xtelnet_write_raw(self, text, size) == (int64_t)size;
     }
-    if (byte >= 0x20 || byte == '\t')
+    /* Tab 只驱动 Shell 补全，补全结果由 Shell 重绘，协议层不得回显空格。 */
+    if (byte >= 0x20 && byte != '\t')
         return xtelnet_write_raw(self, &byte, 1) == 1;
     return true;
 }
@@ -147,6 +159,8 @@ bool XTelnetServer_setInputEcho(XTelnetServer* self, bool enabled)
 {
     if (!self) return false;
     self->m_echoEnabled = enabled;
+    self->m_echoPendingCr = false;
+    self->m_echoEscape = 0u;
     return true;
 }
 
@@ -174,6 +188,14 @@ static bool xtelnet_query_suppress_prompt(XTelnetServer* self)
     self->m_suppressPromptResult = false;
     XTelnetServer_suppressPromptRequested_signal(self);
     return self->m_suppressPromptResult;
+}
+
+static bool xtelnet_query_can_backspace(XTelnetServer* self)
+{
+    if (!self) return false;
+    self->m_canBackspaceResult = false;
+    XTelnetServer_canBackspaceRequested_signal(self);
+    return self->m_canBackspaceResult;
 }
 
 static size_t xtelnet_query_user_name(XTelnetServer* self,
@@ -255,7 +277,7 @@ bool XTelnetServer_setDevice(XTelnetServer* self, XIODevice* device)
     self->m_afterCarriageReturn = false;
     self->m_echoEnabled = true;
     self->m_echoPendingCr = false;
-    self->m_echoEscape = false;
+    self->m_echoEscape = 0u;
     self->m_readyRead = XObject_connect_1((XObject*)device,
         XSignal(XIODevice_readyRead_signal), (XObject*)self,
         xtelnet_device_ready_read, XConnectionType_Direct);
@@ -416,6 +438,12 @@ void* XTelnetServer_suppressPromptRequested_signal(XTelnetServer* self)
                 NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
+void* XTelnetServer_canBackspaceRequested_signal(XTelnetServer* self)
+{
+    XEmitSignal(self, XTelnetServer_canBackspaceRequested_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
 void* XTelnetServer_userNameRequested_signal(XTelnetServer* self,
                                              char* buffer, size_t capacity)
 {
@@ -457,6 +485,11 @@ void XTelnetServer_setCloseRequestedResult(XTelnetServer* self, bool result)
 void XTelnetServer_setSuppressPromptResult(XTelnetServer* self, bool result)
 {
     if (self) self->m_suppressPromptResult = result;
+}
+
+void XTelnetServer_setCanBackspaceResult(XTelnetServer* self, bool result)
+{
+    if (self) self->m_canBackspaceResult = result;
 }
 
 void XTelnetServer_setUserNameResult(XTelnetServer* self,

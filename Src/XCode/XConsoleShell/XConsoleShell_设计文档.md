@@ -635,6 +635,7 @@ typedef struct XConsoleShellIo {
     XConsoleCancelFn cancelled;
     XConsoleInputAttachFn inputAttach;
     XConsoleInputDetachFn inputDetach;
+    XConsoleInputEchoFn inputEcho;
     XConsolePromptFn prompt;
 #if XCONSOLE_SHELL_LOG_ON
     XConsoleLogFn log;
@@ -643,10 +644,14 @@ typedef struct XConsoleShellIo {
     XConsoleAuditFn audit;
 #endif
     void* userData;
+    XConsoleTerminalSizeFn terminalSize;
 } XConsoleShellIo;
 ~~~
 
 write 允许短写，核心负责保留偏移和继续发送。userData 由调用方拥有，Shell 不释放它。
+terminalSize 为可选回调，用于返回当前会话的终端列数和行数。SSH 适配器从
+pty-req/window-change 获取该值，XTuiVim 打开文件和刷新时按该尺寸调整可视区域；
+没有终端尺寸的传输继续使用默认尺寸。
 
 首版公共入口：
 
