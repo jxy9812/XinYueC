@@ -69,7 +69,7 @@ typedef struct {
     /* 位域压缩：原 3×4=12B -> 4B，结构体从 24B 降至 16B */
     uint32_t m_events     : 5;  /**< 事件掩码（XSocketActType 位掩码，0-31） */
     uint32_t m_sourceType : 3;  /**< 事件来源（XAbstractNetIoRing_SourceType，0-4） */
-    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-4，预留扩展至 15） */
+    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-6，预留扩展至 15） */
     int      m_error      : 16; /**< 错误码（-32768~32767，覆盖 Windows/lwIP 错误码） */
     uint32_t              : 4;  /**< 保留位 */
 } XAbstractNetIoRing_SQEntry;
@@ -83,7 +83,7 @@ typedef struct {
     /* 位域压缩：原 3×4=12B -> 4B，结构体从 20B 降至 12B */
     uint32_t m_events     : 5;  /**< 事件掩码（XSocketActType 位掩码，0-31） */
     uint32_t m_sourceType : 3;  /**< 事件来源（XAbstractNetIoRing_SourceType，0-4） */
-    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-4，预留扩展至 15） */
+    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-6，预留扩展至 15） */
     int      m_error      : 16; /**< 错误码（-32768~32767） */
     uint32_t              : 4;  /**< 保留位 */
 } XAbstractNetIoRing_CQEntry;

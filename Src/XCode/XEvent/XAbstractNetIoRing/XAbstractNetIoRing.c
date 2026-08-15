@@ -171,6 +171,7 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
      * 当前统一走 Socket 事件路径。 */
     desc = XFd_get(entry->m_fd);
     if (!desc || !desc->ctx) return;
+    if ((XFdType)entry->m_fdType != (XFdType)desc->type) return;
     owner = (XObject*)desc->ctx;
 
     /* 原生套接字对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件。

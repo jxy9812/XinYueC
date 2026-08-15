@@ -270,6 +270,7 @@ typedef struct XConsoleShell {
     size_t m_asyncLastReadBytes;                     /**< 最近一次 pump 读取的字节数。 */
     XTimerId m_asyncPollTimer;                       /**< 事件模式下非阻塞输入轮询定时器。 */
     XAtomic_bool m_asyncInputAttached;               /**< 是否已调用输入源附加回调。 */
+    bool m_asyncInputEventDriven;                    /**< 输入源是否通过 I/O 事件环通知。 */
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
     XConsoleShellPingState m_ping;                    /**< 顶层 ping 异步状态。 */

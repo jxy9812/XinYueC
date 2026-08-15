@@ -10,6 +10,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle, XFd_type */
+#include "XAbstractNetIoRing.h"
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -32,6 +33,7 @@
 
 typedef struct XWin32ConsoleInputState {
     uint64_t magic;
+    XFd fd;
     HANDLE handle;
     HANDLE thread;
     HANDLE readPermit;
@@ -47,6 +49,38 @@ typedef struct XWin32ConsoleInputState {
 } XWin32ConsoleInputState;
 
 #define XWIN32_CONSOLE_INPUT_MAGIC UINT64_C(0x5843494E50555431)
+
+static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd)
+{
+    XFileDescriptor* descriptor = XFd_get(fd);
+    XWin32ConsoleInputState* state;
+    if (!descriptor || descriptor->type != XFD_TYPE_CONSOLE)
+        return NULL;
+    state = (XWin32ConsoleInputState*)descriptor->handle;
+    if (!state || state->magic != XWIN32_CONSOLE_INPUT_MAGIC)
+        return NULL;
+    return state;
+}
+
+static void XFileSystem_notifyConsoleInput(XWin32ConsoleInputState* state)
+{
+#if XAbstractNetIoRing_ON
+    XAbstractNetIoRing* ring;
+    XAbstractNetIoRing_CQEntry entry;
+    if (!state || state->fd == XFD_INVALID) return;
+    ring = XAbstractNetIoRing_global();
+    if (!ring || !XAbstractNetIoRing_isEnabled(ring)) return;
+    memset(&entry, 0, sizeof(entry));
+    entry.m_fd = state->fd;
+    entry.m_events = XSocketAct_Read;
+    entry.m_sourceType = XAbstractNetIoRing_Source_Custom;
+    entry.m_fdType = XFD_TYPE_CONSOLE;
+    if (XAbstractNetIoRing_pushCompletion(ring, &entry))
+        XAbstractNetIoRing_wakeUp_base(ring);
+#else
+    (void)state;
+#endif
+}
 
 static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
 {
@@ -74,6 +108,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
             if (!state->stopping)
                 state->error = error ? error : ERROR_READ_FAULT;
             ReleaseSRWLockExclusive(&state->lock);
+            XFileSystem_notifyConsoleInput(state);
             break;
         }
 
@@ -86,11 +121,13 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
         if (bytesRead == 0) {
             state->eof = true;
             ReleaseSRWLockExclusive(&state->lock);
+            XFileSystem_notifyConsoleInput(state);
             break;
         }
         if ((size_t)bytesRead > SIZE_MAX - state->size) {
             state->error = ERROR_NOT_ENOUGH_MEMORY;
             ReleaseSRWLockExclusive(&state->lock);
+            XFileSystem_notifyConsoleInput(state);
             break;
         }
         {
@@ -109,6 +146,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
                 if (!data) {
                     state->error = ERROR_NOT_ENOUGH_MEMORY;
                     ReleaseSRWLockExclusive(&state->lock);
+                    XFileSystem_notifyConsoleInput(state);
                     break;
                 }
                 state->data = data;
@@ -118,23 +156,13 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
             state->size = required;
         }
         ReleaseSRWLockExclusive(&state->lock);
+        XFileSystem_notifyConsoleInput(state);
 
         /* Wait until the event thread has consumed and processed this line.
          * This lets password/login handlers change console echo before the
          * next ReadConsole call begins. */
     }
     return ERROR_SUCCESS;
-}
-
-static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd,
-                                                               HANDLE handle)
-{
-    XWin32ConsoleInputState* state =
-        (XWin32ConsoleInputState*)XFd_ctx(fd);
-    if (!state || state->magic != XWIN32_CONSOLE_INPUT_MAGIC ||
-        state->handle != handle)
-        return NULL;
-    return state;
 }
 
 static void XFileSystem_destroyConsoleInputState(XWin32ConsoleInputState* state)
@@ -238,15 +266,21 @@ static int64_t fileTimeToUnixTime(const FILETIME* ft)
 }
 
 /**
- * @brief 通过 XFd 获取底层 Windows HANDLE（XFileDescriptor 表中存储的是 HANDLE）
+ * @brief 通过 XFd 获取底层 Windows HANDLE
  */
 static HANDLE XW32_getFile(XFd fd)
 {
-    if (fd < 0) return INVALID_HANDLE_VALUE;
-    HANDLE h = (HANDLE)XFd_handle(fd);
-    if (h == INVALID_HANDLE_VALUE || !h) return INVALID_HANDLE_VALUE;
-    if (XFd_type(fd) != XFD_TYPE_FILE) return INVALID_HANDLE_VALUE;
-    return h;
+    XFileDescriptor* descriptor = XFd_get(fd);
+    if (!descriptor) return INVALID_HANDLE_VALUE;
+    if (descriptor->type == XFD_TYPE_CONSOLE) {
+        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
+        return state ? state->handle : INVALID_HANDLE_VALUE;
+    }
+    if (descriptor->type != XFD_TYPE_FILE)
+        return INVALID_HANDLE_VALUE;
+    if (!descriptor->handle || descriptor->handle == INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
+    return (HANDLE)descriptor->handle;
 }
 
 /**
@@ -429,6 +463,7 @@ XFd XFileSystem_openStandardInput(int* error)
                 return XFD_INVALID;
             }
             state->magic = XWIN32_CONSOLE_INPUT_MAGIC;
+            state->fd = XFD_INVALID;
             state->handle = duplicate;
             InitializeSRWLock(&state->lock);
             state->readPermit = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -437,12 +472,13 @@ XFd XFileSystem_openStandardInput(int* error)
                 if (error) *error = XFileDevice_ResourceError;
                 return XFD_INVALID;
             }
-            fd = XFd_alloc(XFD_TYPE_FILE, duplicate, state);
+            fd = XFd_alloc(XFD_TYPE_CONSOLE, state, NULL);
             if (fd == XFD_INVALID) {
                 XFileSystem_destroyConsoleInputState(state);
                 if (error) *error = XFileDevice_ResourceError;
                 return XFD_INVALID;
             }
+            state->fd = fd;
             state->thread = CreateThread(NULL, 0, XFileSystem_consoleInputThread,
                                          state, 0, NULL);
             if (!state->thread) {
@@ -469,7 +505,7 @@ XFd XFileSystem_openStandardInput(int* error)
 void XFileSystem_close(XFd fd)
 {
     HANDLE h = XW32_getFile(fd);
-    XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd, h);
+    XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
     if (state) {
         XFd_setCtx(fd, NULL);
         XFileSystem_destroyConsoleInputState(state);
@@ -542,7 +578,7 @@ int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
         if (available == 0) return 0;
         request = (DWORD)((uint64_t)len < available ? (uint64_t)len : available);
     } else if (GetFileType(h) == FILE_TYPE_CHAR) {
-        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd, h);
+        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
         size_t count;
         if (!state) return -2;
         AcquireSRWLockExclusive(&state->lock);

@@ -61,6 +61,16 @@ static bool console_attach(void* userData, XConsoleShell* shell)
     if (!transport) return false;
     transport->inputFd = XFileSystem_openStandardInput(&error);
     transport->endOfInput = false;
+    if (transport->inputFd != XFD_INVALID && shell) {
+        XFd_setCtx(transport->inputFd, shell);
+        shell->m_asyncInputEventDriven =
+            XAbstractNetIoRing_global() != NULL &&
+            XAbstractNetIoRing_isEnabled(XAbstractNetIoRing_global()) &&
+            XFd_get(transport->inputFd) != NULL &&
+            XFd_type(transport->inputFd) == XFD_TYPE_CONSOLE;
+        if (shell->m_asyncInputEventDriven)
+            (void)XConsoleShell_notifyInput(shell);
+    }
     return transport->inputFd != XFD_INVALID;
 }
 
@@ -69,6 +79,7 @@ static void console_detach(void* userData, XConsoleShell* shell)
     MainConsoleTransport* transport = (MainConsoleTransport*)userData;
     (void)shell;
     if (!transport) return;
+    if (shell) shell->m_asyncInputEventDriven = false;
     if (transport->inputFd != XFD_INVALID) {
         XFileSystem_close(transport->inputFd);
         transport->inputFd = XFD_INVALID;

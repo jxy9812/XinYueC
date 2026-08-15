@@ -195,6 +195,7 @@ static bool VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd) {
 
     desc = XFd_get(fd);
     if (!desc || !desc->handle) return false;
+    if (desc->type == XFD_TYPE_CONSOLE) return false;
 
     return CreateIoCompletionPort((HANDLE)desc->handle, win->m_iocp,
                                   (ULONG_PTR)desc->ctx, 0) != NULL;

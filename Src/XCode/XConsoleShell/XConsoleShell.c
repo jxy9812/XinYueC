@@ -17,6 +17,7 @@
 #include "XCoreApplication.h"
 #include "XEvent.h"
 #include "XEventLoop.h"
+#include "XFileDescriptor.h"
 #include "XThread.h"
 #include "XVarList.h"
 #endif
@@ -129,7 +130,8 @@ static void xcs_async_thread(XThread* thread, XVarList* arguments)
             XThread_usleep(1000);
         if (thread->m_loop &&
             XAtomic_load_bool(&self->m_asyncInputAttached,
-                              XAtomic_MemoryOrder_Acquire))
+                              XAtomic_MemoryOrder_Acquire) &&
+            !self->m_asyncInputEventDriven)
             self->m_asyncPollTimer = XObject_startTimer_ms(
                 (XObject*)self, XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS,
                 XTimerType_CoarseTimer);
@@ -161,6 +163,19 @@ static bool VXConsoleShell_event(XObject* object, XEvent* event)
 {
     XConsoleShell* self = (XConsoleShell*)object;
     if (!self || !event) return false;
+#if XCONSOLE_SHELL_ASYNC_ON
+    if (event->type == XEVENT_TYPE_SOCK_ACT) {
+        XEventSockAct* socketEvent = (XEventSockAct*)event;
+        XFileDescriptor* descriptor = XFd_get(socketEvent->fd);
+        if (descriptor && descriptor->type == XFD_TYPE_CONSOLE &&
+            descriptor->ctx == self &&
+            (socketEvent->actType & XSocketAct_Read)) {
+            xcs_async_read_ready(self);
+            XEvent_accept(event);
+            return true;
+        }
+    }
+#endif
     if (event->type == self->m_asyncEventType &&
         event->type != XEVENT_TYPE_NONE) {
         XAtomic_store_bool(&self->m_asyncInputPosted, false,
@@ -1577,6 +1592,7 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
     self->m_asyncLastReadBytes = 0;
     self->m_asyncPollTimer = XTIMER_INVALID_ID;
     XAtomic_init(self->m_asyncInputAttached, false);
+    self->m_asyncInputEventDriven = false;
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
     memset(&self->m_ping, 0, sizeof(self->m_ping));
@@ -2558,6 +2574,7 @@ bool XConsoleShell_startAsync(XConsoleShell* self)
 {
     if (!self || !self->m_io.read || self->m_asyncEventType == XEVENT_TYPE_NONE)
         return false;
+    self->m_asyncInputEventDriven = false;
 #if XCONSOLE_SHELL_ASYNC_RUN_MODE == XCONSOLE_SHELL_ASYNC_MODE_THREAD
     {
         XVarList* arguments;
@@ -2632,7 +2649,8 @@ bool XConsoleShell_startAsync(XConsoleShell* self)
                        self->m_io.inputAttach != NULL,
                        XAtomic_MemoryOrder_Release);
     if (XAtomic_load_bool(&self->m_asyncInputAttached,
-                          XAtomic_MemoryOrder_Acquire)) {
+                          XAtomic_MemoryOrder_Acquire) &&
+        !self->m_asyncInputEventDriven) {
         self->m_asyncPollTimer = XObject_startTimer_ms(
             (XObject*)self, XCONSOLE_SHELL_ASYNC_POLL_INTERVAL_MS,
             XTimerType_CoarseTimer);
@@ -2680,6 +2698,7 @@ bool XConsoleShell_stopAsync(XConsoleShell* self, uint32_t timeoutMs)
         XAtomic_store_bool(&self->m_asyncInputAttached, false,
                            XAtomic_MemoryOrder_Release);
     }
+    self->m_asyncInputEventDriven = false;
     XAtomic_store_bool(&self->m_asyncRunning, false, XAtomic_MemoryOrder_Release);
     XAtomic_store_bool(&self->m_asyncInputPosted, false,
                        XAtomic_MemoryOrder_Release);
