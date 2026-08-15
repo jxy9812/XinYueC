@@ -140,7 +140,6 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 		XPointStep CurPoint = *(XPointStep*)XStack_top_base(StackPointAll);//获取栈顶保存的点
 		XStack_pop_base(StackPointAll);
 		//printf("%d\n", XStack_size_base(StackPointAll));
-		//gotoxy(0, 0);
 		//获取当前位置
 		int* pSign = ((int*)XVectorTwo_at(tempMaze, CurPoint.y, CurPoint.x));
 

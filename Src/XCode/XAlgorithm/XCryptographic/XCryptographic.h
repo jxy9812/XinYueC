@@ -134,38 +134,38 @@ bool XCryptographic_mldsa87Verify(
  * @note 密钥内容只在 XCryptographic 的对称加密、密钥交换和签名函数之间传递。
  */
 typedef enum XCryptographic_KeyType {
-    XCryptographic_KeyType_None = 0,
-    XCryptographic_KeyType_AesCtr,
-    XCryptographic_KeyType_AesGcm,
-    XCryptographic_KeyType_AesCcm,
-    XCryptographic_KeyType_AriaGcm,
-    XCryptographic_KeyType_AriaCcm,
-    XCryptographic_KeyType_CamelliaGcm,
-    XCryptographic_KeyType_CamelliaCcm,
-    XCryptographic_KeyType_ChaCha20Poly1305,
-    XCryptographic_KeyType_X25519,
-    XCryptographic_KeyType_X448,
-    XCryptographic_KeyType_EcdhNistP256,
-    XCryptographic_KeyType_EcdhNistP384,
-    XCryptographic_KeyType_EcdhNistP521,
-    XCryptographic_KeyType_EcdhSecp256k1,
-    XCryptographic_KeyType_EcdhBrainpoolP256r1,
-    XCryptographic_KeyType_EcdhBrainpoolP384r1,
-    XCryptographic_KeyType_EcdhBrainpoolP512r1,
-    XCryptographic_KeyType_EcdsaNistP256Private,
-    XCryptographic_KeyType_EcdsaNistP256Public,
-    XCryptographic_KeyType_EcdsaNistP384Private,
-    XCryptographic_KeyType_EcdsaNistP384Public,
-    XCryptographic_KeyType_EcdsaNistP521Private,
-    XCryptographic_KeyType_EcdsaNistP521Public,
-    XCryptographic_KeyType_EcdsaSecp256k1Private,
-    XCryptographic_KeyType_EcdsaSecp256k1Public,
-    XCryptographic_KeyType_EcdsaBrainpoolP256r1Private,
-    XCryptographic_KeyType_EcdsaBrainpoolP256r1Public,
-    XCryptographic_KeyType_EcdsaBrainpoolP384r1Private,
-    XCryptographic_KeyType_EcdsaBrainpoolP384r1Public,
-    XCryptographic_KeyType_EcdsaBrainpoolP512r1Private,
-    XCryptographic_KeyType_EcdsaBrainpoolP512r1Public
+    XCryptographic_KeyType_None = 0,                         /**< 未指定密钥类型。 */
+    XCryptographic_KeyType_AesCtr,                           /**< AES-CTR 对称密钥。 */
+    XCryptographic_KeyType_AesGcm,                            /**< AES-GCM 对称密钥。 */
+    XCryptographic_KeyType_AesCcm,                            /**< AES-CCM 对称密钥。 */
+    XCryptographic_KeyType_AriaGcm,                           /**< ARIA-GCM 对称密钥。 */
+    XCryptographic_KeyType_AriaCcm,                           /**< ARIA-CCM 对称密钥。 */
+    XCryptographic_KeyType_CamelliaGcm,                       /**< Camellia-GCM 对称密钥。 */
+    XCryptographic_KeyType_CamelliaCcm,                       /**< Camellia-CCM 对称密钥。 */
+    XCryptographic_KeyType_ChaCha20Poly1305,                  /**< ChaCha20-Poly1305 密钥。 */
+    XCryptographic_KeyType_X25519,                            /**< X25519 私钥或公钥材料。 */
+    XCryptographic_KeyType_X448,                              /**< X448 私钥或公钥材料。 */
+    XCryptographic_KeyType_EcdhNistP256,                      /**< NIST P-256 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhNistP384,                      /**< NIST P-384 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhNistP521,                      /**< NIST P-521 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhSecp256k1,                     /**< secp256k1 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhBrainpoolP256r1,               /**< brainpoolP256r1 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhBrainpoolP384r1,               /**< brainpoolP384r1 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdhBrainpoolP512r1,               /**< brainpoolP512r1 ECDH 密钥。 */
+    XCryptographic_KeyType_EcdsaNistP256Private,              /**< NIST P-256 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaNistP256Public,               /**< NIST P-256 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaNistP384Private,              /**< NIST P-384 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaNistP384Public,               /**< NIST P-384 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaNistP521Private,              /**< NIST P-521 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaNistP521Public,               /**< NIST P-521 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaSecp256k1Private,             /**< secp256k1 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaSecp256k1Public,              /**< secp256k1 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP256r1Private,       /**< brainpoolP256r1 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP256r1Public,        /**< brainpoolP256r1 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP384r1Private,       /**< brainpoolP384r1 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP384r1Public,        /**< brainpoolP384r1 ECDSA 公钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP512r1Private,       /**< brainpoolP512r1 ECDSA 私钥。 */
+    XCryptographic_KeyType_EcdsaBrainpoolP512r1Public         /**< brainpoolP512r1 ECDSA 公钥。 */
 } XCryptographic_KeyType;
 
 /**
@@ -197,28 +197,28 @@ typedef struct XCryptographic_CipherOperation {
 
 /** @brief ECDH 密钥协商算法。 */
 typedef enum XCryptographic_EcdhAlgorithm {
-    XCryptographic_EcdhAlgorithm_None = 0,
-    XCryptographic_EcdhAlgorithm_X25519,
-    XCryptographic_EcdhAlgorithm_X448,
-    XCryptographic_EcdhAlgorithm_NistP256,
-    XCryptographic_EcdhAlgorithm_NistP384,
-    XCryptographic_EcdhAlgorithm_NistP521,
-    XCryptographic_EcdhAlgorithm_Secp256k1,
-    XCryptographic_EcdhAlgorithm_BrainpoolP256r1,
-    XCryptographic_EcdhAlgorithm_BrainpoolP384r1,
-    XCryptographic_EcdhAlgorithm_BrainpoolP512r1
+    XCryptographic_EcdhAlgorithm_None = 0,             /**< 未指定 ECDH 算法。 */
+    XCryptographic_EcdhAlgorithm_X25519,               /**< Curve25519 X25519。 */
+    XCryptographic_EcdhAlgorithm_X448,                 /**< Curve448 X448。 */
+    XCryptographic_EcdhAlgorithm_NistP256,             /**< NIST P-256。 */
+    XCryptographic_EcdhAlgorithm_NistP384,             /**< NIST P-384。 */
+    XCryptographic_EcdhAlgorithm_NistP521,             /**< NIST P-521。 */
+    XCryptographic_EcdhAlgorithm_Secp256k1,            /**< secp256k1。 */
+    XCryptographic_EcdhAlgorithm_BrainpoolP256r1,      /**< brainpoolP256r1。 */
+    XCryptographic_EcdhAlgorithm_BrainpoolP384r1,      /**< brainpoolP384r1。 */
+    XCryptographic_EcdhAlgorithm_BrainpoolP512r1       /**< brainpoolP512r1。 */
 } XCryptographic_EcdhAlgorithm;
 
 /** @brief ECDSA 曲线算法。 */
 typedef enum XCryptographic_EcdsaAlgorithm {
-    XCryptographic_EcdsaAlgorithm_None = 0,
-    XCryptographic_EcdsaAlgorithm_NistP256,
-    XCryptographic_EcdsaAlgorithm_NistP384,
-    XCryptographic_EcdsaAlgorithm_NistP521,
-    XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,
-    XCryptographic_EcdsaAlgorithm_BrainpoolP384r1,
-    XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,
-    XCryptographic_EcdsaAlgorithm_Secp256k1
+    XCryptographic_EcdsaAlgorithm_None = 0,             /**< 未指定 ECDSA 曲线。 */
+    XCryptographic_EcdsaAlgorithm_NistP256,             /**< NIST P-256。 */
+    XCryptographic_EcdsaAlgorithm_NistP384,             /**< NIST P-384。 */
+    XCryptographic_EcdsaAlgorithm_NistP521,             /**< NIST P-521。 */
+    XCryptographic_EcdsaAlgorithm_BrainpoolP256r1,      /**< brainpoolP256r1。 */
+    XCryptographic_EcdsaAlgorithm_BrainpoolP384r1,      /**< brainpoolP384r1。 */
+    XCryptographic_EcdsaAlgorithm_BrainpoolP512r1,      /**< brainpoolP512r1。 */
+    XCryptographic_EcdsaAlgorithm_Secp256k1             /**< secp256k1。 */
 } XCryptographic_EcdsaAlgorithm;
 
 /**
@@ -394,8 +394,8 @@ void XCryptographic_destroyKey(XCryptographic_Key* key);
 
 /** @brief 可扩展输出函数（XOF）算法。 */
 typedef enum XCryptographic_XofAlgorithm {
-    XCryptographic_XofAlgorithm_Shake128 = 0,
-    XCryptographic_XofAlgorithm_Shake256
+    XCryptographic_XofAlgorithm_Shake128 = 0, /**< SHAKE128。 */
+    XCryptographic_XofAlgorithm_Shake256      /**< SHAKE256。 */
 } XCryptographic_XofAlgorithm;
 
 /**
@@ -452,19 +452,19 @@ void XCryptographic_xofAbort(XCryptographic_XofOperation* operation);
 
 /** @brief 分组密码算法。 */
 typedef enum XCryptographic_BlockCipherAlgorithm {
-    XCryptographic_BlockCipherAlgorithm_Aes = 0,
-    XCryptographic_BlockCipherAlgorithm_Aria,
-    XCryptographic_BlockCipherAlgorithm_Camellia
+    XCryptographic_BlockCipherAlgorithm_Aes = 0, /**< AES。 */
+    XCryptographic_BlockCipherAlgorithm_Aria,     /**< ARIA。 */
+    XCryptographic_BlockCipherAlgorithm_Camellia  /**< Camellia。 */
 } XCryptographic_BlockCipherAlgorithm;
 
 /** @brief 分组密码工作模式。 */
 typedef enum XCryptographic_BlockCipherMode {
-    XCryptographic_BlockCipherMode_EcbNoPadding = 0,
-    XCryptographic_BlockCipherMode_CbcNoPadding,
-    XCryptographic_BlockCipherMode_CbcPkcs7,
-    XCryptographic_BlockCipherMode_Cfb,
-    XCryptographic_BlockCipherMode_Ofb,
-    XCryptographic_BlockCipherMode_Xts
+    XCryptographic_BlockCipherMode_EcbNoPadding = 0, /**< ECB，无填充。 */
+    XCryptographic_BlockCipherMode_CbcNoPadding,      /**< CBC，无填充。 */
+    XCryptographic_BlockCipherMode_CbcPkcs7,          /**< CBC，PKCS#7 填充。 */
+    XCryptographic_BlockCipherMode_Cfb,               /**< CFB。 */
+    XCryptographic_BlockCipherMode_Ofb,               /**< OFB。 */
+    XCryptographic_BlockCipherMode_Xts                /**< XTS。 */
 } XCryptographic_BlockCipherMode;
 
 /**
@@ -699,13 +699,13 @@ void XCryptographic_aesCcmStarNoTagAbort(
 
 /** @brief AEAD 算法。 */
 typedef enum XCryptographic_AeadAlgorithm {
-    XCryptographic_AeadAlgorithm_AesGcm = 0,
-    XCryptographic_AeadAlgorithm_AesCcm,
-    XCryptographic_AeadAlgorithm_AriaGcm,
-    XCryptographic_AeadAlgorithm_AriaCcm,
-    XCryptographic_AeadAlgorithm_CamelliaGcm,
-    XCryptographic_AeadAlgorithm_CamelliaCcm,
-    XCryptographic_AeadAlgorithm_ChaCha20Poly1305
+    XCryptographic_AeadAlgorithm_AesGcm = 0,       /**< AES-GCM。 */
+    XCryptographic_AeadAlgorithm_AesCcm,           /**< AES-CCM。 */
+    XCryptographic_AeadAlgorithm_AriaGcm,          /**< ARIA-GCM。 */
+    XCryptographic_AeadAlgorithm_AriaCcm,          /**< ARIA-CCM。 */
+    XCryptographic_AeadAlgorithm_CamelliaGcm,      /**< Camellia-GCM。 */
+    XCryptographic_AeadAlgorithm_CamelliaCcm,      /**< Camellia-CCM。 */
+    XCryptographic_AeadAlgorithm_ChaCha20Poly1305  /**< ChaCha20-Poly1305。 */
 } XCryptographic_AeadAlgorithm;
 
 /** @brief Poly1305 流式状态。 */
@@ -1008,8 +1008,8 @@ XByteArrayView XCryptographic_pbkdf2AesCmacPrf128Into(
 
 /** @brief AES 密钥封装模式。 */
 typedef enum XCryptographic_KeyWrapMode {
-    XCryptographic_KeyWrapMode_Kw = 0,
-    XCryptographic_KeyWrapMode_Kwp = 1
+    XCryptographic_KeyWrapMode_Kw = 0, /**< RFC 3394，输入长度为 8 的倍数。 */
+    XCryptographic_KeyWrapMode_Kwp = 1 /**< RFC 5649，支持非 8 倍数长度。 */
 } XCryptographic_KeyWrapMode;
 
 /**
@@ -1078,11 +1078,23 @@ XByteArrayView XCryptographic_ffdhAgreeInto(
 
 // =============== ECDH 密钥导入 ===============
 
-/** @brief 从私钥标量导入 ECDH 密钥并计算公钥。 */
+/**
+ * @brief 从私钥标量导入 ECDH 密钥并计算公钥。
+ * @param algorithm ECDH 曲线或 Montgomery 算法。
+ * @param privateKey 私钥标量编码视图，长度必须符合 algorithm。
+ * @param result 输出密钥对象；成功后可用于 XCryptographic_ecdhAgree。
+ * @return 导入成功返回 true；算法关闭、编码或参数无效返回 false。
+ */
 bool XCryptographic_ecdhImportPrivateKey(
     XCryptographic_EcdhAlgorithm algorithm, XByteArrayView privateKey,
     XCryptographic_Key* result);
-/** @brief 导入 ECDH 对端公钥。 */
+/**
+ * @brief 导入 ECDH 对端公钥。
+ * @param algorithm ECDH 曲线或 Montgomery 算法。
+ * @param publicKey 对端公钥编码视图，长度和编码必须符合 algorithm。
+ * @param result 输出密钥对象；成功后包含可用于协商的公钥材料。
+ * @return 导入成功返回 true；算法关闭、编码或参数无效返回 false。
+ */
 bool XCryptographic_ecdhImportPublicKey(
     XCryptographic_EcdhAlgorithm algorithm, XByteArrayView publicKey,
     XCryptographic_Key* result);
@@ -1099,8 +1111,8 @@ bool XCryptographic_ecdhImportPublicKey(
 
 /** @brief ECJPAKE 协议角色。 */
 typedef enum XCryptographic_EcjPakeRole {
-    XCryptographic_EcjPakeRole_Client = 0,
-    XCryptographic_EcjPakeRole_Server
+    XCryptographic_EcjPakeRole_Client = 0, /**< ECJPAKE 客户端。 */
+    XCryptographic_EcjPakeRole_Server      /**< ECJPAKE 服务端。 */
 } XCryptographic_EcjPakeRole;
 
 /** @brief ECJPAKE 不透明协议上下文，仅支持 secp256r1 与 SHA-256。 */

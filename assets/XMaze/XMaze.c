@@ -110,14 +110,12 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 		*(int*)XVectorTwo_at_XPoint(tempMaze, CurPoint) = XMazePath;
 		//清屏
 #ifdef _WIN32
-		gotoxy(0, 0);
+		system("cls");
 #else
 		system("clear");
 #endif
 		//打印
 		Print(tempMaze, Wall, Route, Path);
-		//延迟
-		XDelay(msec);
 	}
 	XVectorTwo_delete(tempMaze);
 #else

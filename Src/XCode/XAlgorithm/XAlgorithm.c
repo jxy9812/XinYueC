@@ -5,15 +5,6 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-#include<time.h>
-#ifdef _WIN32
-#include<Windows.h>
-void gotoxy(short x, short y) 
-{
-	COORD coord = { x, y };
-	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
-}
-#endif // _Win32
 void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
@@ -106,17 +97,6 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
-}
-
-void XDelay(const size_t msec)
-{
-	clock_t  time_front = clock();
-	while (true)
-	{
-		clock_t time_after = clock();
-		if (time_after - time_front > msec)
-			break;
-	}
 }
 
 uint16_t SwapEndian16(uint16_t data, uint8_t mode)

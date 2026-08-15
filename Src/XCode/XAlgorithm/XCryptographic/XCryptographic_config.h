@@ -245,6 +245,7 @@
 #define XCRYPTOGRAPHIC_AES256_XTS_ON 1
 #endif
 
+/** @brief 启用 LMS/LM-OTS（RFC 8554）签名验证。 */
 #ifndef XCRYPTOGRAPHIC_LMS_ON
 #define XCRYPTOGRAPHIC_LMS_ON 1
 #endif
