@@ -30,6 +30,135 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
+typedef struct XWin32ConsoleInputState {
+    uint64_t magic;
+    HANDLE handle;
+    HANDLE thread;
+    HANDLE readPermit;
+    SRWLOCK lock;
+    char* data;
+    size_t size;
+    size_t capacity;
+    DWORD error;
+    bool eof;
+    bool stopping;
+    bool readRequested;
+    bool readInProgress;
+} XWin32ConsoleInputState;
+
+#define XWIN32_CONSOLE_INPUT_MAGIC UINT64_C(0x5843494E50555431)
+
+static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
+{
+    XWin32ConsoleInputState* state = (XWin32ConsoleInputState*)parameter;
+    char input[256];
+
+    if (!state) return ERROR_INVALID_PARAMETER;
+    for (;;) {
+        DWORD bytesRead = 0;
+        DWORD waitResult = WaitForSingleObject(state->readPermit, INFINITE);
+        if (waitResult != WAIT_OBJECT_0) return GetLastError();
+
+        AcquireSRWLockExclusive(&state->lock);
+        bool stopping = state->stopping;
+        state->readRequested = false;
+        if (!stopping) state->readInProgress = true;
+        ReleaseSRWLockExclusive(&state->lock);
+        if (stopping) break;
+
+        if (!ReadConsoleA(state->handle, input, (DWORD)sizeof(input),
+                          &bytesRead, NULL)) {
+            DWORD error = GetLastError();
+            AcquireSRWLockExclusive(&state->lock);
+            state->readInProgress = false;
+            if (!state->stopping)
+                state->error = error ? error : ERROR_READ_FAULT;
+            ReleaseSRWLockExclusive(&state->lock);
+            break;
+        }
+
+        AcquireSRWLockExclusive(&state->lock);
+        state->readInProgress = false;
+        if (state->stopping) {
+            ReleaseSRWLockExclusive(&state->lock);
+            break;
+        }
+        if (bytesRead == 0) {
+            state->eof = true;
+            ReleaseSRWLockExclusive(&state->lock);
+            break;
+        }
+        if ((size_t)bytesRead > SIZE_MAX - state->size) {
+            state->error = ERROR_NOT_ENOUGH_MEMORY;
+            ReleaseSRWLockExclusive(&state->lock);
+            break;
+        }
+        {
+            size_t required = state->size + (size_t)bytesRead;
+            if (required > state->capacity) {
+                size_t capacity = state->capacity ? state->capacity : 512u;
+                char* data;
+                while (capacity < required) {
+                    if (capacity > SIZE_MAX / 2u) {
+                        capacity = required;
+                        break;
+                    }
+                    capacity *= 2u;
+                }
+                data = (char*)XRealloc_System(state->data, capacity);
+                if (!data) {
+                    state->error = ERROR_NOT_ENOUGH_MEMORY;
+                    ReleaseSRWLockExclusive(&state->lock);
+                    break;
+                }
+                state->data = data;
+                state->capacity = capacity;
+            }
+            memcpy(state->data + state->size, input, (size_t)bytesRead);
+            state->size = required;
+        }
+        ReleaseSRWLockExclusive(&state->lock);
+
+        /* Wait until the event thread has consumed and processed this line.
+         * This lets password/login handlers change console echo before the
+         * next ReadConsole call begins. */
+    }
+    return ERROR_SUCCESS;
+}
+
+static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd,
+                                                               HANDLE handle)
+{
+    XWin32ConsoleInputState* state =
+        (XWin32ConsoleInputState*)XFd_ctx(fd);
+    if (!state || state->magic != XWIN32_CONSOLE_INPUT_MAGIC ||
+        state->handle != handle)
+        return NULL;
+    return state;
+}
+
+static void XFileSystem_destroyConsoleInputState(XWin32ConsoleInputState* state)
+{
+    if (!state) return;
+    AcquireSRWLockExclusive(&state->lock);
+    state->stopping = true;
+    ReleaseSRWLockExclusive(&state->lock);
+    if (state->readPermit) SetEvent(state->readPermit);
+    if (state->thread) {
+        (void)CancelSynchronousIo(state->thread);
+        if (state->handle && state->handle != INVALID_HANDLE_VALUE)
+            (void)CancelIoEx(state->handle, NULL);
+        (void)WaitForSingleObject(state->thread, INFINITE);
+        CloseHandle(state->thread);
+    }
+    if (state->readPermit) CloseHandle(state->readPermit);
+    if (state->handle && state->handle != INVALID_HANDLE_VALUE)
+        CloseHandle(state->handle);
+    if (state->data) XFree_System(state->data);
+    state->magic = 0;
+    XFree_System(state);
+}
+
 /* 重解析点结构体 */
 #pragma pack(push, 1)
 typedef struct _REPARSE_DATA_BUFFER {
@@ -271,6 +400,7 @@ XFd XFileSystem_openStandardInput(int* error)
     HANDLE source;
     HANDLE duplicate = INVALID_HANDLE_VALUE;
     DWORD type;
+    XFd fd;
     if (!GetStdHandle(STD_INPUT_HANDLE) ||
         GetStdHandle(STD_INPUT_HANDLE) == INVALID_HANDLE_VALUE) {
         if (error) *error = XFileDevice_OpenError;
@@ -288,14 +418,62 @@ XFd XFileSystem_openStandardInput(int* error)
         if (error) *error = XFileDevice_OpenError;
         return XFD_INVALID;
     }
+    if (type == FILE_TYPE_CHAR) {
+        DWORD mode;
+        if (GetConsoleMode(duplicate, &mode)) {
+            XWin32ConsoleInputState* state =
+                (XWin32ConsoleInputState*)XCalloc_System(1, sizeof(*state));
+            if (!state) {
+                CloseHandle(duplicate);
+                if (error) *error = XFileDevice_ResourceError;
+                return XFD_INVALID;
+            }
+            state->magic = XWIN32_CONSOLE_INPUT_MAGIC;
+            state->handle = duplicate;
+            InitializeSRWLock(&state->lock);
+            state->readPermit = CreateEventW(NULL, FALSE, FALSE, NULL);
+            if (!state->readPermit) {
+                XFileSystem_destroyConsoleInputState(state);
+                if (error) *error = XFileDevice_ResourceError;
+                return XFD_INVALID;
+            }
+            fd = XFd_alloc(XFD_TYPE_FILE, duplicate, state);
+            if (fd == XFD_INVALID) {
+                XFileSystem_destroyConsoleInputState(state);
+                if (error) *error = XFileDevice_ResourceError;
+                return XFD_INVALID;
+            }
+            state->thread = CreateThread(NULL, 0, XFileSystem_consoleInputThread,
+                                         state, 0, NULL);
+            if (!state->thread) {
+                XFd_setCtx(fd, NULL);
+                XFileSystem_destroyConsoleInputState(state);
+                XFd_free(fd);
+                if (error) *error = XFileDevice_ResourceError;
+                return XFD_INVALID;
+            }
+            if (error) *error = XFileDevice_NoError;
+            return fd;
+        }
+    }
+    fd = XFd_alloc(XFD_TYPE_FILE, duplicate, NULL);
+    if (fd == XFD_INVALID) {
+        CloseHandle(duplicate);
+        if (error) *error = XFileDevice_ResourceError;
+        return XFD_INVALID;
+    }
     if (error) *error = XFileDevice_NoError;
-    return XFd_alloc(XFD_TYPE_FILE, duplicate, NULL);
+    return fd;
 }
 
 void XFileSystem_close(XFd fd)
 {
     HANDLE h = XW32_getFile(fd);
-    if (h != INVALID_HANDLE_VALUE) {
+    XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd, h);
+    if (state) {
+        XFd_setCtx(fd, NULL);
+        XFileSystem_destroyConsoleInputState(state);
+    } else if (h != INVALID_HANDLE_VALUE) {
         CloseHandle(h);
     }
     XFd_free(fd);
@@ -364,12 +542,28 @@ int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
         if (available == 0) return 0;
         request = (DWORD)((uint64_t)len < available ? (uint64_t)len : available);
     } else if (GetFileType(h) == FILE_TYPE_CHAR) {
-        DWORD events = 0;
-        if (!GetNumberOfConsoleInputEvents(h, &events)) return -2;
-        if (events == 0) return 0;
-        request = (DWORD)((uint64_t)len > UINT32_MAX ? UINT32_MAX : (uint64_t)len);
-        if (!ReadConsoleA(h, buf, request, &bytesRead, NULL)) return -2;
-        return bytesRead ? (int64_t)bytesRead : 0;
+        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd, h);
+        size_t count;
+        if (!state) return -2;
+        AcquireSRWLockExclusive(&state->lock);
+        if (state->size == 0) {
+            DWORD stateError = state->error;
+            bool eof = state->eof;
+            bool requestRead = !stateError && !eof && !state->stopping &&
+                               !state->readRequested && !state->readInProgress;
+            if (requestRead) state->readRequested = true;
+            ReleaseSRWLockExclusive(&state->lock);
+            if (requestRead && !SetEvent(state->readPermit)) return -2;
+            if (stateError) return -2;
+            return eof ? -1 : 0;
+        }
+        count = (size_t)len < state->size ? (size_t)len : state->size;
+        memcpy(buf, state->data, count);
+        state->size -= count;
+        if (state->size)
+            memmove(state->data, state->data + count, state->size);
+        ReleaseSRWLockExclusive(&state->lock);
+        return (int64_t)count;
     } else {
         request = (DWORD)((uint64_t)len > UINT32_MAX ? UINT32_MAX : (uint64_t)len);
     }

@@ -414,8 +414,7 @@ int mbedtls_md_clone(mbedtls_md_context_t *dst,
         XCryptographicHash_copy(target, source);
         return 0;
     }
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (src->engine != dst->engine) {
         /* This can happen with src set to legacy because PSA wasn't ready
@@ -491,6 +490,7 @@ int mbedtls_md_clone(mbedtls_md_context_t *dst,
     }
 
     return 0;
+#endif
 }
 
 #define ALLOC(type)                                                   \
@@ -532,8 +532,7 @@ int mbedtls_md_setup(mbedtls_md_context_t *ctx, const mbedtls_md_info_t *md_info
         ctx->md_ctx = XCryptographicHash_create(algorithm);
         return ctx->md_ctx ? 0 : MBEDTLS_ERR_MD_ALLOC_FAILED;
     }
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (md_can_use_psa(ctx->md_info)) {
         ctx->md_ctx = mbedtls_calloc(1, sizeof(psa_hash_operation_t));
@@ -603,6 +602,7 @@ int mbedtls_md_setup(mbedtls_md_context_t *ctx, const mbedtls_md_info_t *md_info
     }
 
     return 0;
+#endif
 }
 #undef ALLOC
 
@@ -618,8 +618,7 @@ int mbedtls_md_starts(mbedtls_md_context_t *ctx)
     if (!ctx || !ctx->md_ctx) return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     XCryptographicHash_reset(md_xcryptographic_context(ctx->md_ctx));
     return 0;
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (ctx->engine == MBEDTLS_MD_ENGINE_PSA) {
         psa_algorithm_t alg = psa_alg_of_md(ctx->md_info);
@@ -677,6 +676,7 @@ int mbedtls_md_starts(mbedtls_md_context_t *ctx)
         default:
             return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
+#endif
 }
 
 int mbedtls_md_update(mbedtls_md_context_t *ctx, const unsigned char *input, size_t ilen)
@@ -697,8 +697,7 @@ int mbedtls_md_update(mbedtls_md_context_t *ctx, const unsigned char *input, siz
             XByteArrayView_create_data(input, (int64_t)ilen));
     }
     return 0;
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (ctx->engine == MBEDTLS_MD_ENGINE_PSA) {
         psa_status_t status = psa_hash_update(ctx->md_ctx, input, ilen);
@@ -756,6 +755,7 @@ int mbedtls_md_update(mbedtls_md_context_t *ctx, const unsigned char *input, siz
         default:
             return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
+#endif
 }
 
 int mbedtls_md_finish(mbedtls_md_context_t *ctx, unsigned char *output)
@@ -770,8 +770,7 @@ int mbedtls_md_finish(mbedtls_md_context_t *ctx, unsigned char *output)
     if (!ctx || !ctx->md_ctx || !ctx->md_info) return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     return md_xcryptographic_finish(
         md_xcryptographic_context(ctx->md_ctx), output, ctx->md_info->size);
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (ctx->engine == MBEDTLS_MD_ENGINE_PSA) {
         size_t size = ctx->md_info->size;
@@ -831,6 +830,7 @@ int mbedtls_md_finish(mbedtls_md_context_t *ctx, unsigned char *output)
         default:
             return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
+#endif
 }
 
 int mbedtls_md(const mbedtls_md_info_t *md_info, const unsigned char *input, size_t ilen,
@@ -853,8 +853,7 @@ int mbedtls_md(const mbedtls_md_info_t *md_info, const unsigned char *input, siz
             input, ilen, algorithm);
         return result.m_data ? 0 : MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
-#endif
-
+#else
 #if defined(MBEDTLS_MD_SOME_PSA)
     if (md_can_use_psa(md_info)) {
         size_t size = md_info->size;
@@ -913,6 +912,7 @@ int mbedtls_md(const mbedtls_md_info_t *md_info, const unsigned char *input, siz
         default:
             return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
     }
+#endif
 }
 
 unsigned char mbedtls_md_get_size(const mbedtls_md_info_t *md_info)
