@@ -15,6 +15,7 @@
 #include "XClass.h"           /* XClass_deinit_base（共享内存段释放） */
 #include "XCoreApplication.h" /* 移除已投递事件（关闭共享内存段） */
 #include "XDateTime.h"        /* 有界等待截止时间 */
+#include <winsock2.h>          /* FD_READ/FD_WRITE 事件掩码 */
 #include "XNetIoRingWin32.h"  /* IOCP 事件上下文与异步读辅助 */
 #include <windows.h>
 #include <io.h>
@@ -24,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <aclapi.h>
 #include <sddl.h>
 #include <direct.h>
@@ -56,6 +58,7 @@ typedef struct XFileSharedMemoryWin32 {
     size_t m_rxOffset;           /**< 异步接收缓冲已消费偏移 */
     int64_t m_readResult;        /**< 异步读完成结果（完成回调写入，>=0 字节数，<0 通道错误） */
     bool m_readPending;          /**< 是否有在途异步读（OVERLAPPED ReadFile 已提交未完成） */
+    bool m_iocpAssociated;       /**< 信令管道是否已关联到当前全局 IOCP */
     HANDLE mapHandle;            /**< 命名内存映射句柄（CreateFileMapping/OpenFileMapping） */
     HANDLE signalPipe;           /**< 信令管道句柄（\\.\pipe\<name>.sig） */
     bool created;                /**< 是否为创建方（创建方负责断开管道实例） */
@@ -696,16 +699,50 @@ int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
     if (!descriptor || !buf || len <= 0) return -1;
 
     /* 共享内存段：句柄是信令管道，WriteFile 发送信令字节。
-       写方向保持同步普通写（与 POSIX 一致：信令字节极小，无需异步写）。 */
+       写方向保持同步等待完成（与 POSIX 一致：信令字节极小）。 */
     if (descriptor->type == XFD_TYPE_MAPPING) {
         XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
-        DWORD bytesWritten = 0;
         if (!mapping || !mapping->signalPipe
             || mapping->signalPipe == INVALID_HANDLE_VALUE)
             return -1;
-        if (!WriteFile(mapping->signalPipe, buf, (DWORD)len, &bytesWritten, NULL))
-            return -1;
-        return (int64_t)bytesWritten;
+        /* 共享内存信令管道使用 FILE_FLAG_OVERLAPPED 以支持异步读，因此
+           不能再给 WriteFile 传 NULL OVERLAPPED。写操作仍在本调用内等待
+           完成，并通过事件句柄低位禁止把内部写完成投递到 IOCP。 */
+        {
+            int64_t totalWritten = 0;
+            while (totalWritten < len) {
+                OVERLAPPED overlapped;
+                HANDLE eventHandle;
+                DWORD bytesWritten = 0;
+                DWORD toWrite = (DWORD)((uint64_t)(len - totalWritten) > UINT32_MAX
+                                        ? UINT32_MAX
+                                        : (uint64_t)(len - totalWritten));
+                BOOL ok;
+
+                eventHandle = CreateEventW(NULL, TRUE, FALSE, NULL);
+                if (!eventHandle) return -1;
+                memset(&overlapped, 0, sizeof(overlapped));
+                /* 防止该内部写请求在已关联的 IOCP 上产生无法识别的完成包。 */
+                overlapped.hEvent = (HANDLE)((ULONG_PTR)eventHandle | 1u);
+                ok = WriteFile(mapping->signalPipe,
+                               (const char*)buf + totalWritten, toWrite,
+                               &bytesWritten, &overlapped);
+                if (!ok) {
+                    DWORD lastError = GetLastError();
+                    if (lastError != ERROR_IO_PENDING
+                        || WaitForSingleObject(eventHandle, INFINITE) != WAIT_OBJECT_0
+                        || !GetOverlappedResult(mapping->signalPipe, &overlapped,
+                                                &bytesWritten, FALSE)) {
+                        CloseHandle(eventHandle);
+                        return -1;
+                    }
+                }
+                CloseHandle(eventHandle);
+                if (bytesWritten == 0) break;
+                totalWritten += bytesWritten;
+            }
+            return totalWritten;
+        }
     }
 
     h = XW32_getFile(fd);
@@ -1320,14 +1357,34 @@ static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t 
 
 /* IOCP 完成回调：waitForEvents 从完成端口出队本读完成包后最先调用，
    context->finishedBytes 已由事件环写入实际传输字节数。本函数把结果
-   记录到 m_readResult 并清除在途标记。返回 true 表示继续让 CQ 条目
-   分发给事件接收者（与 POSIX 的 CQE 分发行为一致）。 */
+   记录到 m_readResult 并清除在途标记。返回 false 表示这是内部接收，
+   不再把 CQ 条目分发给应用层对象。 */
 static bool xfs_win32_shmReadCompletion(XEventContext_IOCP* context, void* userData)
 {
     XFileSharedMemoryWin32* m = (XFileSharedMemoryWin32*)userData;
     if (!m) return false;
     m->m_readResult = (int64_t)context->finishedBytes;
     m->m_readPending = false;
+    /* 这是 XFileSystem_read 的内部接收，不应再生成一个应用层 socket
+       事件；调用方会在 waitForEvents 返回后直接消费 m_readBuffer。 */
+    return false;
+}
+
+/* 确保信令管道已经绑定到当前全局 IOCP。共享内存可能在事件环创建前
+   打开，因此不能只在 openSharedMemory 中尝试一次绑定。 */
+static bool xfs_win32_shm_associate(XFileSharedMemoryWin32* m)
+{
+    XAbstractNetIoRing* ring;
+
+    if (!m || !m->signalPipe || m->signalPipe == INVALID_HANDLE_VALUE)
+        return false;
+    if (m->m_iocpAssociated) return true;
+    ring = XAbstractNetIoRing_global();
+    if (!ring || !XAbstractNetIoRing_isEnabled(ring)) return false;
+    if (!XNetIoRingWin32_assocHandle((XNetIoRingWin32*)ring, m->signalPipe,
+                                     (ULONG_PTR)&m->m_object))
+        return false;
+    m->m_iocpAssociated = true;
     return true;
 }
 
@@ -1344,7 +1401,7 @@ static bool xfs_win32_shm_armRead(XFd fdx, XFileSharedMemoryWin32* m)
         || m->signalPipe == INVALID_HANDLE_VALUE)
         return false;
     ring = XAbstractNetIoRing_global();
-    if (!ring) return false;
+    if (!ring || !xfs_win32_shm_associate(m)) return false;
 
     memset(&m->m_read, 0, sizeof(m->m_read));
     m->m_read.base.type = XEventContextType_Type_File;
@@ -1487,8 +1544,11 @@ static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
     /* 2. 无事件环（未创建事件调度器）的退化路径：直接在内核阻塞读，
           不轮询、不设接收超时；正常使用（XCoreApplication 事件循环）
           下不会走到这里。 */
-    if (!XAbstractNetIoRing_global())
-        return xfs_win32_shm_blockingRead(m, buf, len);
+    {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (!ring || !XAbstractNetIoRing_isEnabled(ring))
+            return xfs_win32_shm_blockingRead(m, buf, len);
+    }
 
     /* 3. 确保在途异步读后，通过事件环等待完成通知（不忙轮询）。 */
     if (!m->m_readPending) {
@@ -1642,9 +1702,11 @@ XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSi
     {
         XNetIoRingWin32* ring = (XNetIoRingWin32*)XAbstractNetIoRing_global();
         if (ring && hPipe && hPipe != INVALID_HANDLE_VALUE) {
-            XNetIoRingWin32_assocHandle(ring, hPipe,
-                                        (ULONG_PTR)&mapping->m_object);
-            (void)xfs_win32_shm_armRead(result, mapping);
+            if (XNetIoRingWin32_assocHandle(ring, hPipe,
+                                            (ULONG_PTR)&mapping->m_object)) {
+                mapping->m_iocpAssociated = true;
+                (void)xfs_win32_shm_armRead(result, mapping);
+            }
         }
     }
     XFree_System(wname);
@@ -1724,6 +1786,7 @@ bool XFileSystem_unmap(void* addr, int64_t size)
 
 /**
  * @brief 通过文件描述符设置文件时间
+ */
 bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
     HANDLE h = XW32_getFile(fd);
