@@ -30,9 +30,10 @@ typedef struct XMqttMessage {
     XMqttTopicName* m_topic;                ///< 主题
     XByteArray* m_payload;                  ///< 消息载荷
     uint16_t m_id;                          ///< 消息 ID
-    uint8_t m_qos;                          ///< 服务质量（0/1/2）
-    bool m_duplicate;                       ///< 是否重复投递
-    bool m_retain;                          ///< 是否保留
+    /* 紧凑标志位（位域优化：qos 2 bit + dup 1 bit + retain 1 bit） */
+    uint32_t m_qos : 2;                     ///< 服务质量（0/1/2）
+    uint32_t m_duplicate : 1;               ///< 是否重复投递
+    uint32_t m_retain : 1;                  ///< 是否保留
     XMqttPublishProperties* m_publishProperties; ///< 发布属性
 } XMqttMessage;
 

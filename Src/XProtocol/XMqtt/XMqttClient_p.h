@@ -25,7 +25,8 @@ typedef struct XMqttSubscriptionEntry {
     uint16_t identifier;                 ///< SUBSCRIBE/UNSUBSCRIBE 报文标识符，0 表示无效。
     XMqttTopicFilter* wireTopic;         ///< 发线上的主题过滤器副本，条目拥有其所有权。
     XMqttSubscription* subscription;    ///< 对应的公开订阅对象，借用指针。
-    bool unsubscribePending;             ///< 是否已发送取消订阅并等待 UNSUBACK。
+    /* 紧凑标志位（位域优化：unsubscribePending 1 bit） */
+    uint32_t unsubscribePending : 1;     ///< 是否已发送取消订阅并等待 UNSUBACK。
 } XMqttSubscriptionEntry;
 
 /**
@@ -36,8 +37,9 @@ typedef struct XMqttSubscriptionEntry {
  */
 typedef struct XMqttPendingPublish {
     uint16_t identifier;                 ///< PUBLISH 报文标识符。
-    uint8_t qos;                         ///< 发布时使用的 QoS 等级（1 或 2）。
-    uint8_t stage;                       ///< 当前 QoS 握手阶段，取值由协议实现维护。
+    /* 紧凑标志位（位域优化：qos 2 bit + stage 2 bit） */
+    uint32_t qos : 2;                    ///< 发布时使用的 QoS 等级（1 或 2）。
+    uint32_t stage : 2;                  ///< 当前 QoS 握手阶段，取值由协议实现维护。
 } XMqttPendingPublish;
 
 /**
@@ -65,11 +67,12 @@ struct XMqttClientPrivate {
     uint16_t nextPacketIdentifier;       ///< 下一个待分配的报文标识符，自动跳过 0 和占用值。
     XTimerId keepAliveTimer;             ///< 自动保活定时器 ID，无定时器时为 XTIMER_INVALID_ID。
     unsigned int pingTimeout;            ///< 已发出 PINGREQ 后的等待标志/超时状态。
-    bool ownsTransport;                  ///< 是否由客户端负责释放内部创建的传输对象。
-    bool encryptedRequested;             ///< 是否通过加密连接入口请求了 TLS 传输。
-    bool connectPacketSent;              ///< 本次连接是否已经发送 CONNECT，避免重复发送。
-    bool disconnectRequested;            ///< 是否已经请求主动断开并等待传输层结束。
-    bool processingInput;                ///< 是否正在解析输入，防止 readyRead 重入解析器。
+    /* 紧凑标志位（位域优化：5 个连接状态开关各 1 bit） */
+    uint32_t ownsTransport : 1;          ///< 是否由客户端负责释放内部创建的传输对象。
+    uint32_t encryptedRequested : 1;     ///< 是否通过加密连接入口请求了 TLS 传输。
+    uint32_t connectPacketSent : 1;      ///< 本次连接是否已经发送 CONNECT，避免重复发送。
+    uint32_t disconnectRequested : 1;    ///< 是否已经请求主动断开并等待传输层结束。
+    uint32_t processingInput : 1;        ///< 是否正在解析输入，防止 readyRead 重入解析器。
 };
 
 /**

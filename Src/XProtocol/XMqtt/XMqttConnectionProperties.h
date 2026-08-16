@@ -210,8 +210,9 @@ typedef struct XMqttConnectionProperties {
     uint16_t m_maximumReceive;            ///< 最大接收数
     uint32_t m_maximumPacketSize;         ///< 最大报文大小
     uint16_t m_maximumTopicAlias;         ///< 最大主题别名
-    bool m_requestResponseInformation;    ///< 请求响应信息
-    bool m_requestProblemInformation;     ///< 请求问题信息
+    /* 紧凑标志位（位域优化：两个请求开关各 1 bit） */
+    uint32_t m_requestResponseInformation : 1; ///< 请求响应信息
+    uint32_t m_requestProblemInformation : 1;  ///< 请求问题信息
     XMqttUserProperties* m_userProperties; ///< 用户属性
     XString* m_authenticationMethod;      ///< 认证方法
     XByteArray* m_authenticationData;     ///< 认证数据
@@ -284,19 +285,20 @@ XCLASS_DEFINE_EXTEND_END(XMqttServerConnectionProperties, XMqttConnectionPropert
  */
 typedef struct XMqttServerConnectionProperties {
     XMqttConnectionProperties m_base;        ///< 继承自连接属性基类
-    bool m_valid;                            ///< 是否已收到 CONNACK
     uint32_t m_availableProperties;          ///< 已设置的属性位标志
-    uint8_t m_maximumQoS;                    ///< 最大 QoS
-    bool m_retainAvailable;                  ///< 是否支持保留消息
-    bool m_clientIdAssigned;                 ///< 是否分配了客户端 ID
     XString* m_reason;                       ///< 原因字符串
-    uint8_t m_reasonCode;                    ///< 原因码
-    bool m_wildcardSupported;                ///< 是否支持通配符
-    bool m_subscriptionIdentifierSupported;  ///< 是否支持订阅标识符
-    bool m_sharedSubscriptionSupported;      ///< 是否支持共享订阅
     uint16_t m_serverKeepAlive;              ///< 服务端保活时间
     XString* m_responseInformation;          ///< 响应信息
     XString* m_serverReference;              ///< 服务端引用
+    /* 紧凑标志位（位域优化：valid 1 bit + maximumQoS 2 bit + 5 个开关各 1 bit + reasonCode 8 bit） */
+    uint32_t m_valid : 1;                    ///< 是否已收到 CONNACK
+    uint32_t m_maximumQoS : 2;               ///< 最大 QoS
+    uint32_t m_retainAvailable : 1;          ///< 是否支持保留消息
+    uint32_t m_clientIdAssigned : 1;         ///< 是否分配了客户端 ID
+    uint32_t m_reasonCode : 8;               ///< 原因码
+    uint32_t m_wildcardSupported : 1;        ///< 是否支持通配符
+    uint32_t m_subscriptionIdentifierSupported : 1; ///< 是否支持订阅标识符
+    uint32_t m_sharedSubscriptionSupported : 1;     ///< 是否支持共享订阅
 } XMqttServerConnectionProperties;
 
 /**

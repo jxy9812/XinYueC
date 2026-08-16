@@ -4,9 +4,10 @@
  * 通过此配置文件可以裁剪 XMqtt 协议内部的各个子功能：
  *   1. XMQTT_CLIENT_ON        - 客户端核心（XMqttClient / XMqttProtocol / XMqttType /
  *                               XMqttGlobal / XMqttMessage）
- *   2. XMQTT_TOPIC_ON         - 主题（XMqttTopicName / XMqttTopicFilter）
- *   3. XMQTT_SUBSCRIPTION_ON  - 订阅（XMqttSubscription / XMqttSubscriptionProperties）
- *   4. XMQTT_PROPERTIES_ON    - MQTT v5 属性集（XMqttAuthenticationProperties /
+ *   2. XMQTT_SERVER_ON        - 服务器核心（XMqttServer / XMqttTcpServer）
+ *   3. XMQTT_TOPIC_ON         - 主题（XMqttTopicName / XMqttTopicFilter）
+ *   4. XMQTT_SUBSCRIPTION_ON  - 订阅（XMqttSubscription / XMqttSubscriptionProperties）
+ *   5. XMQTT_PROPERTIES_ON    - MQTT v5 属性集（XMqttAuthenticationProperties /
  *                               XMqttConnectionProperties / XMqttPublishProperties /
  *                               XMqttSubscriptionProperties）
  *
@@ -39,19 +40,24 @@ extern "C" {
 #define XMQTT_CLIENT_ON 1
 #endif
 
+/** @brief 服务器核心（XMqttServer / XMqttTcpServer） */
+#ifndef XMQTT_SERVER_ON
+#define XMQTT_SERVER_ON XMQTT_ON
+#endif
+
 /** @brief 主题（XMqttTopicName / XMqttTopicFilter） */
 #ifndef XMQTT_TOPIC_ON
-#define XMQTT_TOPIC_ON XMQTT_CLIENT_ON
+#define XMQTT_TOPIC_ON (XMQTT_CLIENT_ON || XMQTT_SERVER_ON)
 #endif
 
 /** @brief 订阅（XMqttSubscription / XMqttSubscriptionProperties） */
 #ifndef XMQTT_SUBSCRIPTION_ON
-#define XMQTT_SUBSCRIPTION_ON XMQTT_CLIENT_ON
+#define XMQTT_SUBSCRIPTION_ON (XMQTT_CLIENT_ON || XMQTT_SERVER_ON)
 #endif
 
 /** @brief MQTT v5 属性集（XMqttAuthenticationProperties / XMqttConnectionProperties / XMqttPublishProperties / XMqttSubscriptionProperties） */
 #ifndef XMQTT_PROPERTIES_ON
-#define XMQTT_PROPERTIES_ON XMQTT_CLIENT_ON
+#define XMQTT_PROPERTIES_ON (XMQTT_CLIENT_ON || XMQTT_SERVER_ON)
 #endif
 
 #endif /* XMQTT_ON */

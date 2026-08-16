@@ -10,6 +10,7 @@
 #include "XMqttAuthenticationProperties.h"
 #include "XMqttClient.h"
 #include "XMqttSubscription.h"
+#include "XMqttServer.h"
 #include "XMemory.h"
 #include "XMenu.h"
 #include "XAction.h"
@@ -1247,6 +1248,273 @@ void XMqttClientTest(void)
 }
 
 /* ========================================================================
+ * 服务器相关测试的菜单包装（bool 返回值转菜单动作）
+ * ======================================================================== */
+static void XMqttServerUnitTestMenu(void)
+{
+    if (XMqttServerUnitTest_run())
+        XPrintf("========== XMqttServer 单元测试菜单执行: 通过 ==========\n");
+    else
+        XPrintf("========== XMqttServer 单元测试菜单执行: 失败 ==========\n");
+}
+
+static void XMqttTcpServerApiUnitTestMenu(void)
+{
+    if (XMqttTcpServerApiUnitTest_run())
+        XPrintf("========== XMqttTcpServer API 单元测试菜单执行: 通过 ==========\n");
+    else
+        XPrintf("========== XMqttTcpServer API 单元测试菜单执行: 失败 ==========\n");
+}
+
+static void XMqttTcpInteropTestMenu(void)
+{
+    if (XMqttTcpInteropTest_run())
+        XPrintf("========== MQTT 双进程联调菜单执行: 通过 ==========\n");
+    else
+        XPrintf("========== MQTT 双进程联调菜单执行: 失败 ==========\n");
+}
+
+/* ========================================================================
+ * 位域与联合体数据结构优化测试
+ * ========================================================================
+ * @return 全部通过返回 true（供自动化回归入口直接调用）。
+ * ======================================================================== */
+bool XMqttDataLayoutTest_run(void)
+{
+    int pass = 0, fail = 0;
+
+    XPrintf("========== XMqtt 位域/联合体数据结构测试开始 ==========\n");
+
+    /* ---------- 1. XMqttFixedHeader 固定头联合体布局与往返 ---------- */
+    {
+        if (sizeof(XMqttFixedHeader) == 1) {
+            XPrintf("  [通过] XMqttFixedHeader 联合体占用 1 字节\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttFixedHeader sizeof 期望 1, 实际 %zu\n",
+                    sizeof(XMqttFixedHeader)); fail++;
+        }
+    }
+    {
+        /* 构造 PUBLISH QoS1 + RETAIN：线上字节应为 0x33 */
+        XMqttFixedHeader fh;
+        fh.byte = 0;
+        fh.bits.type = 3;
+        fh.bits.qos = 1;
+        fh.bits.retain = 1;
+        fh.bits.dup = 0;
+        if (fh.byte == 0x33) {
+            XPrintf("  [通过] 联合体构造 PUBLISH QoS1+RETAIN 字节正确\n"); pass++;
+        } else {
+            XPrintf("  [失败] 构造字节期望 0x33, 实际 0x%02X\n", fh.byte); fail++;
+        }
+        /* 反向解析同一字节 */
+        XMqttFixedHeader r = { fh.byte };
+        if (r.bits.type == 3 && r.bits.qos == 1 && r.bits.retain == 1 && r.bits.dup == 0) {
+            XPrintf("  [通过] 联合体反向解析 PUBLISH 固定头正确\n"); pass++;
+        } else {
+            XPrintf("  [失败] 联合体反向解析结果不正确\n"); fail++;
+        }
+    }
+    {
+        /* 全组合遍历：type 0..15, qos 0..3, dup/retain 0/1 */
+        int total = 16 * 4 * 2 * 2;
+        int bad = 0;
+        for (int type = 0; type < 16 && !bad; type++)
+            for (int qos = 0; qos < 4 && !bad; qos++)
+                for (int dup = 0; dup < 2 && !bad; dup++)
+                    for (int retain = 0; retain < 2 && !bad; retain++) {
+                        XMqttFixedHeader w;
+                        w.byte = 0;
+                        w.bits.type = (uint8_t)type;
+                        w.bits.qos = (uint8_t)qos;
+                        w.bits.dup = (uint8_t)dup;
+                        w.bits.retain = (uint8_t)retain;
+                        uint8_t expect = (uint8_t)((type << 4) | (dup << 3) | (qos << 1) | retain);
+                        XMqttFixedHeader rt = { w.byte };
+                        if (w.byte != expect || rt.bits.type != (uint8_t)type ||
+                            rt.bits.qos != (uint8_t)qos || rt.bits.dup != (uint8_t)dup ||
+                            rt.bits.retain != (uint8_t)retain) bad++;
+                    }
+        if (!bad) {
+            XPrintf("  [通过] 联合体 %d 种组合字节往返一致\n", total); pass++;
+        } else {
+            XPrintf("  [失败] 联合体往返存在 %d 处不一致\n", bad); fail++;
+        }
+    }
+
+    /* ---------- 2. XMqttMessage 位域往返 ---------- */
+    {
+        int bad = 0;
+        for (int qos = 0; qos <= 2; qos++)
+            for (int dup = 0; dup < 2; dup++)
+                for (int retain = 0; retain < 2; retain++) {
+                    XMqttMessage* msg = XMqttMessage_create_full(
+                        "layout/topic", (const uint8_t*)"x", 1, 7,
+                        (uint8_t)qos, dup != 0, retain != 0);
+                    if (!msg || XMqttMessage_qos(msg) != (uint8_t)qos ||
+                        XMqttMessage_duplicate(msg) != (dup != 0) ||
+                        XMqttMessage_retain(msg) != (retain != 0)) bad++;
+                    if (msg) XMqttMessage_delete_base(msg);
+                }
+        if (!bad) {
+            XPrintf("  [通过] XMqttMessage qos/dup/retain 位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttMessage 位域往返存在错误\n"); fail++;
+        }
+    }
+
+    /* ---------- 3. XMqttClient 位域往返 ---------- */
+    {
+        XMqttClient* client = XMqttClient_create();
+        int bad = 0;
+        if (!client) bad++;
+        if (client) {
+            XMqttClient_setCleanSession(client, false);
+            if (XMqttClient_cleanSession(client) != false) bad++;
+            XMqttClient_setCleanSession(client, true);
+            if (XMqttClient_cleanSession(client) != true) bad++;
+            XMqttClient_setWillQoS(client, 2);
+            if (XMqttClient_willQoS(client) != 2) bad++;
+            XMqttClient_setWillQoS(client, 0);
+            if (XMqttClient_willQoS(client) != 0) bad++;
+            XMqttClient_setWillRetain(client, true);
+            if (XMqttClient_willRetain(client) != true) bad++;
+            XMqttClient_setAutoKeepAlive(client, false);
+            if (XMqttClient_autoKeepAlive(client) != false) bad++;
+        }
+        if (!bad) {
+            XPrintf("  [通过] XMqttClient 清洁会话/遗嘱/自动保活位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttClient 位域往返存在错误\n"); fail++;
+        }
+        if (client) XMqttClient_deleteLater(client);
+    }
+
+    /* ---------- 4. XMqttSubscription 位域往返 ---------- */
+    {
+        XMqttTopicFilter* filter = XMqttTopicFilter_create("layout/#");
+        XMqttSubscription* sub = XMqttSubscription_create(filter, 1);
+        int bad = 0;
+        if (!sub) bad++;
+        if (sub) {
+            XMqttSubscription_setState(sub, XMqttSubscription_Subscribed);
+            if (XMqttSubscription_state(sub) != XMqttSubscription_Subscribed) bad++;
+            XMqttSubscription_setQos(sub, 2);
+            if (XMqttSubscription_qos(sub) != 2) bad++;
+            sub->m_reasonCode = 0xFF;
+            if (XMqttSubscription_reasonCode(sub) != 0xFF) bad++;
+            sub->m_sharedSubscription = 1;
+            if (!XMqttSubscription_isSharedSubscription(sub)) bad++;
+            sub->m_sharedSubscription = 0;
+            if (XMqttSubscription_isSharedSubscription(sub)) bad++;
+        }
+        if (!bad) {
+            XPrintf("  [通过] XMqttSubscription 状态/QoS/原因码/共享标记位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttSubscription 位域往返存在错误\n"); fail++;
+        }
+        if (sub) XMqttSubscription_deleteLater(sub);
+        if (filter) XMqttTopicFilter_delete_base(filter);
+    }
+
+    /* ---------- 5. XMqttServer 位域往返 ---------- */
+    {
+        XMqttServer* server = XMqttServer_create();
+        int bad = 0;
+        if (!server) bad++;
+        if (server) {
+            XMqttServer_setMaximumQoS(server, 1);
+            if (XMqttServer_maximumQoS(server) != 1) bad++;
+            XMqttServer_setMaximumQoS(server, 2);
+            if (XMqttServer_maximumQoS(server) != 2) bad++;
+            XMqttServer_setRetainAvailable(server, false);
+            if (XMqttServer_retainAvailable(server) != false) bad++;
+            XMqttServer_setWildcardAvailable(server, false);
+            if (XMqttServer_wildcardAvailable(server) != false) bad++;
+            XMqttServer_setSubscriptionIdAvailable(server, false);
+            if (XMqttServer_subscriptionIdAvailable(server) != false) bad++;
+            XMqttServer_setSharedAvailable(server, false);
+            if (XMqttServer_sharedAvailable(server) != false) bad++;
+        }
+        if (!bad) {
+            XPrintf("  [通过] XMqttServer 最大 QoS/能力开关位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttServer 位域往返存在错误\n"); fail++;
+        }
+        if (server) XClass_delete_base((XClass*)server);
+    }
+
+    /* ---------- 6. XMqttConnectionProperties 位域往返 ---------- */
+    {
+        XMqttConnectionProperties* cp = XMqttConnectionProperties_create();
+        int bad = 0;
+        if (!cp) bad++;
+        if (cp) {
+            XMqttConnectionProperties_setRequestResponseInformation(cp, true);
+            if (XMqttConnectionProperties_requestResponseInformation(cp) != true) bad++;
+            XMqttConnectionProperties_setRequestResponseInformation(cp, false);
+            if (XMqttConnectionProperties_requestResponseInformation(cp) != false) bad++;
+            XMqttConnectionProperties_setRequestProblemInformation(cp, true);
+            if (XMqttConnectionProperties_requestProblemInformation(cp) != true) bad++;
+            XMqttConnectionProperties_setRequestProblemInformation(cp, false);
+            if (XMqttConnectionProperties_requestProblemInformation(cp) != false) bad++;
+        }
+        if (!bad) {
+            XPrintf("  [通过] XMqttConnectionProperties 请求信息位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttConnectionProperties 位域往返存在错误\n"); fail++;
+        }
+        if (cp) XMqttConnectionProperties_delete_base(cp);
+    }
+
+    /* ---------- 7. XMqttServerConnectionProperties 位域往返 ---------- */
+    {
+        XMqttServerConnectionProperties* sp = XMqttServerConnectionProperties_create();
+        int bad = 0;
+        if (!sp) bad++;
+        if (sp) {
+            sp->m_valid = 1;
+            if (!XMqttServerConnectionProperties_isValid(sp)) bad++;
+            sp->m_maximumQoS = 1;
+            if (XMqttServerConnectionProperties_maximumQoS(sp) != 1) bad++;
+            sp->m_maximumQoS = 2;
+            if (XMqttServerConnectionProperties_maximumQoS(sp) != 2) bad++;
+            sp->m_retainAvailable = 1;
+            if (!XMqttServerConnectionProperties_retainAvailable(sp)) bad++;
+            sp->m_clientIdAssigned = 1;
+            if (!XMqttServerConnectionProperties_clientIdAssigned(sp)) bad++;
+            sp->m_reasonCode = 0x9B;
+            if (XMqttServerConnectionProperties_reasonCode(sp) != 0x9B) bad++;
+            sp->m_wildcardSupported = 1;
+            if (!XMqttServerConnectionProperties_wildcardSupported(sp)) bad++;
+            sp->m_subscriptionIdentifierSupported = 1;
+            if (!XMqttServerConnectionProperties_subscriptionIdentifierSupported(sp)) bad++;
+            sp->m_sharedSubscriptionSupported = 1;
+            if (!XMqttServerConnectionProperties_sharedSubscriptionSupported(sp)) bad++;
+        }
+        if (!bad) {
+            XPrintf("  [通过] XMqttServerConnectionProperties 能力/原因码位域往返一致\n"); pass++;
+        } else {
+            XPrintf("  [失败] XMqttServerConnectionProperties 位域往返存在错误\n"); fail++;
+        }
+        if (sp) XMqttServerConnectionProperties_delete_base(sp);
+    }
+
+    XPrintf("========== XMqtt 位域/联合体数据结构测试完成: %d 通过, %d 失败 ==========\n",
+            pass, fail);
+    return fail == 0;
+}
+
+/* 菜单包装：bool 返回值转菜单动作 */
+static void XMqttDataLayoutTestMenu(void)
+{
+    if (XMqttDataLayoutTest_run())
+        XPrintf("========== XMqtt 位域/联合体数据结构测试菜单执行: 通过 ==========\n");
+    else
+        XPrintf("========== XMqtt 位域/联合体数据结构测试菜单执行: 失败 ==========\n");
+}
+
+/* ========================================================================
  * 菜单注册
  * ======================================================================== */
 void XMenu_XMqttTest(XMenu* root)
@@ -1301,11 +1569,27 @@ void XMenu_XMqttTest(XMenu* root)
         XAction_setAction(action, XMqttClientTest);
     }
     {
+        XAction* action = XMenu_addAction(menu, "位域/联合体数据结构测试");
+        XAction_setAction(action, XMqttDataLayoutTestMenu);
+    }
+    {
         XAction* action = XMenu_addAction(menu, "Qt6.8公开API与协议回归");
         XAction_setAction(action, XMqttPublicApiTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 服务器（固定端口 18884）");
+        XAction* action = XMenu_addAction(menu, "XMqttServer 协议引擎单元测试");
+        XAction_setAction(action, XMqttServerUnitTestMenu);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "XMqttTcpServer API 单元测试");
+        XAction_setAction(action, XMqttTcpServerApiUnitTestMenu);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "双进程 TCP 客户端/服务器联调测试");
+        XAction_setAction(action, XMqttTcpInteropTestMenu);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 服务器（固定端口 18885）");
         XAction_setAction(action, XMqttTcpServerIntegrationTest);
     }
     {

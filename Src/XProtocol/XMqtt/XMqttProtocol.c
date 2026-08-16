@@ -747,7 +747,13 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
     if (ok && client->m_protocolVersion == XMqttClient_MQTT_5_0)
         ok = mqtt_append_publish_properties(payload, properties, alias);
     if (ok) ok = mqtt_append(payload, message, messageLen);
-    uint8_t header = MQTT_PUBLISH | (retain ? 0x01U : 0) | (uint8_t)(qos << 1);
+    /* 用位域联合体构造固定头第一字节（避免手工移位/掩码） */
+    XMqttFixedHeader fixed;
+    fixed.byte = 0;
+    fixed.bits.type = (uint8_t)(MQTT_PUBLISH >> 4);
+    fixed.bits.qos = qos;
+    fixed.bits.retain = retain ? 1U : 0U;
+    uint8_t header = fixed.byte;
     if (ok) ok = mqtt_write_packet(client, header, payload);
     XByteArray_delete_base(payload);
     if (!ok) return -1;
@@ -1156,9 +1162,11 @@ static void mqtt_emit_incoming(XMqttClient* client, XMqttMessage* message)
 
 static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader* reader)
 {
-    uint8_t qos = (header >> 1) & 0x03U;
+    /* 用位域联合体解析固定头第一字节 */
+    XMqttFixedHeader fixed = { header };
+    uint8_t qos = (uint8_t)fixed.bits.qos;
     if (qos == 3) { reader->ok = false; return; }
-    if (qos == 0 && (header & 0x08U)) { reader->ok = false; return; }
+    if (qos == 0 && fixed.bits.dup) { reader->ok = false; return; }
     XString* topic = mqtt_read_string(reader);
     uint16_t identifier = qos ? mqtt_read_u16(reader) : 0;
     if (qos && !identifier) reader->ok = false;
@@ -1189,7 +1197,7 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
     if (!duplicateQos2) {
         XMqttMessage* message = XMqttMessage_create_full(
             XString_toUtf8(topic), reader->data + reader->pos, reader->size - reader->pos,
-            identifier, qos, (header & 0x08U) != 0, (header & 0x01U) != 0);
+            identifier, qos, fixed.bits.dup != 0, fixed.bits.retain != 0);
         if (!message) { XMqttTopicName_delete_base(topicName); reader->ok = false; goto cleanup; }
         if (message->m_publishProperties)
             XMqttPublishProperties_delete_base(message->m_publishProperties);

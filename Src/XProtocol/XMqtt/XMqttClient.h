@@ -112,14 +112,16 @@ typedef struct XMqttClient {
     /* 认证 */
     XString* m_username;                          ///< 用户名
     XString* m_password;                          ///< 密码
-    bool m_cleanSession;                          ///< 是否使用清洁会话
 
     /* 遗嘱消息 */
     XString* m_willTopic;                         ///< 遗嘱主题
-    uint8_t m_willQoS;                            ///< 遗嘱 QoS
     XByteArray* m_willMessage;                    ///< 遗嘱消息载荷
-    bool m_willRetain;                            ///< 遗嘱消息是否保留
-    bool m_autoKeepAlive;                         ///< 是否自动保活
+
+    /* 紧凑标志位（位域优化：cleanSession 1 bit + willQoS 2 bit + willRetain 1 bit + autoKeepAlive 1 bit） */
+    uint32_t m_cleanSession : 1;                  ///< 是否使用清洁会话
+    uint32_t m_willQoS : 2;                       ///< 遗嘱 QoS
+    uint32_t m_willRetain : 1;                    ///< 遗嘱消息是否保留
+    uint32_t m_autoKeepAlive : 1;                 ///< 是否自动保活
 
     /* MQTT 5.0 属性 */
     XMqttConnectionProperties* m_connectionProperties;     ///< 连接属性

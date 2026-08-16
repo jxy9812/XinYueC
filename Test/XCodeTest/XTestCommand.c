@@ -15,6 +15,7 @@
 #include "XConsoleShellBackendTest.h"
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
+#include "XProtocolTest.h"
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XMenuTest.h"
@@ -45,6 +46,18 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XCryptographicPrimitiveTest_runAll();
     } else if (strcmp(name, "xssl") == 0) {
         result = XSslTest_runAll();
+    } else if (strcmp(name, "xmqtt") == 0) {
+        result = XMqttTest_runAll();
+    } else if (strcmp(name, "xmqtt-tcp-api") == 0) {
+        result = XMqttTcpServerApiUnitTest_run();
+    } else if (strcmp(name, "xmqtt-unit") == 0) {
+        result = XMqttServerUnitTest_run();
+    } else if (strcmp(name, "xmqtt-tcp-server") == 0) {
+        result = XMqttTcpServerProcess_run();
+    } else if (strcmp(name, "xmqtt-tcp-client") == 0) {
+        result = XMqttTcpClientProcess_run();
+    } else if (strcmp(name, "xmqtt-tcp-interop") == 0) {
+        result = XMqttTcpInteropTest_run();
     } else {
         return XConsoleResult_UnknownCommand;
     }
@@ -61,7 +74,8 @@ static int xtest_run_all(XConsoleShell* shell)
     bool protocolClients = XSshTelnetClientTest_runAll();
     bool cryptographic = XCryptographicPrimitiveTest_runAll();
     bool ssl = XSslTest_runAll();
-    bool result = process && shellTest && backend && protocolClients && cryptographic && ssl;
+    bool mqtt = XMqttTest_runAll();
+    bool result = process && shellTest && backend && protocolClients && cryptographic && ssl && mqtt;
     if (!xtest_write(shell, result ? "Test all PASS\n" : "Test all FAIL\n"))
         return XConsoleResult_IoError;
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -166,6 +180,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
                            "  Test ssh-telnet-client\n"
                            "  Test xcryptographic\n"
                            "  Test xssl\n"
+                           "  Test xmqtt\n"
                            "  Test all\n")
                    ? XConsoleResult_Ok : XConsoleResult_IoError;
     }

@@ -44,13 +44,14 @@ XCLASS_DEFINE_END(XMqttSubscription)
  */
 typedef struct XMqttSubscription {
     XObject m_class;                              ///< 继承自 XObject
-    uint8_t m_state;                              ///< 订阅状态（XMqttSubscription_State）
-    uint8_t m_qos;                                ///< 订阅的 QoS
     XMqttTopicFilter* m_topic;                    ///< 订阅的主题过滤器
     XString* m_reason;                            ///< 原因字符串
-    uint8_t m_reasonCode;                         ///< 原因码（XMqtt_ReasonCode）
-    bool m_sharedSubscription;                    ///< 是否为共享订阅
     XString* m_sharedSubscriptionName;            ///< 共享订阅名称
+    /* 紧凑标志位（位域优化：state 3 bit + qos 2 bit + reasonCode 8 bit + shared 1 bit） */
+    uint32_t m_state : 3;                         ///< 订阅状态（XMqttSubscription_State）
+    uint32_t m_qos : 2;                           ///< 订阅的 QoS
+    uint32_t m_reasonCode : 8;                    ///< 原因码（XMqtt_ReasonCode）
+    uint32_t m_sharedSubscription : 1;            ///< 是否为共享订阅
     XMqttUserProperties* m_userProperties;        ///< 用户属性
     void* m_client;                               ///< 关联的 XMqttClient 指针（不拥有）
 } XMqttSubscription;

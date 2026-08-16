@@ -22,6 +22,7 @@
 #include "XSshTelnetClientTest.h"
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
+#include "XProtocolTest.h"
 #include "XTestCommand.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -57,6 +58,18 @@ static int main_run_test_path(const char* testPath)
         return XCryptographicPrimitiveTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xssl") == 0)
         return XSslTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt") == 0)
+        return XMqttTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt-tcp-api") == 0)
+        return XMqttTcpServerApiUnitTest_run() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt-unit") == 0)
+        return XMqttServerUnitTest_run() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt-tcp-server") == 0)
+        return XMqttTcpServerProcess_run() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt-tcp-client") == 0)
+        return XMqttTcpClientProcess_run() ? 0 : 1;
+    if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
+        return XMqttTcpInteropTest_run() ? 0 : 1;
     if (strcmp(testPath, "all") == 0) {
         bool process = XProcessTest_runAll();
         bool shell = XConsoleShellTest_runAll();
@@ -64,7 +77,8 @@ static int main_run_test_path(const char* testPath)
         bool clients = XSshTelnetClientTest_runAll();
         bool cryptographic = XCryptographicPrimitiveTest_runAll();
         bool ssl = XSslTest_runAll();
-        return process && shell && backend && clients && cryptographic && ssl ? 0 : 1;
+        bool mqtt = XMqttTest_runAll();
+        return process && shell && backend && clients && cryptographic && ssl && mqtt ? 0 : 1;
     }
     XPrintf("未知测试命令: %s\n", testPath);
     return 1;
@@ -79,6 +93,7 @@ static void main_print_test_list(void)
     XPrintf("  Test ssh-telnet-client\n");
     XPrintf("  Test xcryptographic\n");
     XPrintf("  Test xssl\n");
+    XPrintf("  Test xmqtt\n");
     XPrintf("  Test all\n");
     XPrintf("  --test esp8266-unit\n");
     XPrintf("  --test esp8266-auto\n");

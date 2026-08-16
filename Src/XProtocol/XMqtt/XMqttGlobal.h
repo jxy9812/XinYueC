@@ -79,6 +79,29 @@ typedef enum {
     XMqtt_ReasonCode_WildCardSubscriptionsNotSupported = 0xA2
 } XMqtt_ReasonCode;
 
+/**
+ * @brief MQTT 报文固定头第一字节联合体（位域解析）。
+ * @details 用于以位域方式读取或构造 MQTT 报文固定头的第一个字节，避免手工
+ *          移位/掩码。线上字节与各标志位的对应关系：
+ *          - bits.retain：bit0，RETAIN 标志；
+ *          - bits.qos：bit1-2，QoS 等级（0/1/2）；
+ *          - bits.dup：bit3，DUP 重发标志；
+ *          - bits.type：bit4-7，报文类型（低 4 位为 0x0 的报文类型常量，
+ *            例如 PUBLISH 的类型值为 0x3）。
+ * @note 位域声明顺序依赖小端序实现（x86/ARM 等主流平台均为小端，首个字段
+ *       占据最低位）；跨大端平台移植时需重新核对位序。
+ * @see XMqttProtocol.c、XMqttServer.c 中 MQTT_* 报文类型常量。
+ */
+typedef union XMqttFixedHeader {
+    uint8_t byte;                       ///< 固定头原始字节（线上格式）
+    struct {
+        uint8_t retain : 1;             ///< bit0：RETAIN 标志
+        uint8_t qos : 2;                ///< bit1-2：QoS 等级（0/1/2）
+        uint8_t dup : 1;                ///< bit3：DUP 重发标志
+        uint8_t type : 4;               ///< bit4-7：报文类型
+    } bits;
+} XMqttFixedHeader;
+
 #ifdef __cplusplus
 }
 #endif

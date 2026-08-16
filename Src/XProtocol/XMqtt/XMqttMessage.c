@@ -31,7 +31,13 @@ XMqttMessage* XMqttMessage_create_full(const char* topic, const uint8_t* payload
                                         uint16_t id, uint8_t qos, bool dup, bool retain)
 {
     XMqttMessage* msg = XMqttMessage_create();
-    if (msg) XMqttMessage_init_full(msg, topic, payload, payloadLen, id, qos, dup, retain);
+    if (msg) {
+        XMqttMessage_init_full(msg, topic, payload, payloadLen, id, qos, dup, retain);
+        /* init_full 内部会重新 memset 整块对象，因此这里要恢复堆所有权与内存方法标记，
+           否则 XClass_delete_base 只析构不会释放对象，造成堆泄漏。 */
+        Set_Class_Memory(msg, XCLASS_DEFAULT_MEMORY_TYPE);
+        Set_Class_IsHeap(msg, true);
+    }
     return msg;
 }
 
