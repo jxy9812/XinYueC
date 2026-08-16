@@ -38,7 +38,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
-/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.ctx 上）。
+/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 mapHandle（CreateFileMapping/OpenFileMapping）承载，信令
    通道由 signalPipe（\\.\pipe\<name>.sig 命名管道）承载，
    XFileSystem_map/unmap 使用 mapHandle。
@@ -48,7 +48,7 @@
    OVERLAPPED ReadFile，完成事件由 waitForEvents（GetQueuedCompletionStatus）
    处理并写入 m_readResult；XFileSystem_read 消费异步接收缓冲，无数据时
    通过事件环等待完成通知，不做任何轮询。
-   首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->ctx 作为
+   首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->object 作为
    事件接收者），关闭时通过 XClass_deinit_base 完整释放。 */
 typedef struct XFileSharedMemoryWin32 {
     XObject m_object;            /**< 嵌入式 XObject 基类（事件通知接收者，必须为首成员） */
@@ -93,9 +93,9 @@ static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
     XWin32ConsoleInputState* state;
-    if (!descriptor || descriptor->type != XFD_TYPE_CONSOLE)
+    if (!descriptor || descriptor->m_type != XFD_TYPE_CONSOLE)
         return NULL;
-    state = (XWin32ConsoleInputState*)descriptor->handle;
+    state = (XWin32ConsoleInputState*)descriptor->m_deviceCtx;
     if (!state || state->magic != XWIN32_CONSOLE_INPUT_MAGIC)
         return NULL;
     return state;
@@ -311,15 +311,15 @@ static HANDLE XW32_getFile(XFd fd)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
     if (!descriptor) return INVALID_HANDLE_VALUE;
-    if (descriptor->type == XFD_TYPE_CONSOLE) {
+    if (descriptor->m_type == XFD_TYPE_CONSOLE) {
         XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
         return state ? state->handle : INVALID_HANDLE_VALUE;
     }
-    if (descriptor->type != XFD_TYPE_FILE)
+    if (descriptor->m_type != XFD_TYPE_FILE)
         return INVALID_HANDLE_VALUE;
-    if (!descriptor->handle || descriptor->handle == INVALID_HANDLE_VALUE)
+    if (!descriptor->m_deviceCtx || descriptor->m_deviceCtx == INVALID_HANDLE_VALUE)
         return INVALID_HANDLE_VALUE;
-    return (HANDLE)descriptor->handle;
+    return (HANDLE)descriptor->m_deviceCtx;
 }
 
 /**
@@ -521,7 +521,7 @@ XFd XFileSystem_openStandardInput(int* error)
             state->thread = CreateThread(NULL, 0, XFileSystem_consoleInputThread,
                                          state, 0, NULL);
             if (!state->thread) {
-                XFd_setCtx(fd, NULL);
+                XFd_setObject(fd, NULL);
                 XFileSystem_destroyConsoleInputState(state);
                 XFd_free(fd);
                 if (error) *error = XFileDevice_ResourceError;
@@ -546,14 +546,14 @@ void XFileSystem_close(XFd fd)
     XFileDescriptor* descriptor = XFd_get(fd);
     XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
     if (state) {
-        XFd_setCtx(fd, NULL);
+        XFd_setObject(fd, NULL);
         XFileSystem_destroyConsoleInputState(state);
-    } else if (descriptor && descriptor->type == XFD_TYPE_MAPPING) {
+    } else if (descriptor && descriptor->m_type == XFD_TYPE_MAPPING) {
         /* 共享内存段：先取消并回收在途异步读（避免悬垂 OVERLAPPED 完成包
            指向已释放的读上下文），再释放信令管道与映射句柄，创建方断开
            管道实例，最后移除事件环可能已投递到本对象的未处理事件并释放
            嵌入式 XObject 基类。 */
-        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (mapping) {
             xfs_win32_shm_cancelRead(mapping);
             if (mapping->signalPipe && mapping->signalPipe != INVALID_HANDLE_VALUE) {
@@ -600,8 +600,8 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 
     /* 共享内存段：句柄是信令管道，走 IOCP 异步接收 + 库内部事件通知
        （xfs_win32_shmRead：消费异步缓冲，无数据时事件环等待完成，不轮询）。 */
-    if (descriptor->type == XFD_TYPE_MAPPING)
-        return xfs_win32_shmRead(fd, (XFileSharedMemoryWin32*)descriptor->ctx,
+    if (descriptor->m_type == XFD_TYPE_MAPPING)
+        return xfs_win32_shmRead(fd, (XFileSharedMemoryWin32*)descriptor->object,
                                  buf, len);
 
     h = XW32_getFile(fd);
@@ -700,8 +700,8 @@ int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 
     /* 共享内存段：句柄是信令管道，WriteFile 发送信令字节。
        写方向保持同步等待完成（与 POSIX 一致：信令字节极小）。 */
-    if (descriptor->type == XFD_TYPE_MAPPING) {
-        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+    if (descriptor->m_type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (!mapping || !mapping->signalPipe
             || mapping->signalPipe == INVALID_HANDLE_VALUE)
             return -1;
@@ -1293,7 +1293,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  *      该通道内置于平台实现，不新增任何公共 API。
  *
  * XFd 句柄为信令管道句柄，XFileSystem_read / XFileSystem_write 直接在
- * 信令通道上收发；ctx 保存映射句柄，XFileSystem_map / XFileSystem_close
+ * 信令通道上收发；object 保存映射句柄，XFileSystem_map / XFileSystem_close
  * 据此完成视图与释放。
  */
 
@@ -1738,9 +1738,9 @@ void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
     descriptor = XFd_get(fd);
     if (!descriptor) return NULL;
 
-    /* 共享内存段描述符：句柄是信令管道，映射句柄保存在 ctx。 */
-    if (descriptor->type == XFD_TYPE_MAPPING) {
-        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+    /* 共享内存段描述符：句柄是信令管道，映射句柄保存在 object。 */
+    if (descriptor->m_type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (!mapping || !mapping->mapHandle || mapping->mapHandle == INVALID_HANDLE_VALUE)
             return NULL;
         hMap = mapping->mapHandle;

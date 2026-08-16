@@ -184,8 +184,8 @@ static bool VXConsoleShell_event(XObject* object, XEvent* event)
     if (event->type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* socketEvent = (XEventSockAct*)event;
         XFileDescriptor* descriptor = XFd_get(socketEvent->fd);
-        if (descriptor && descriptor->type == XFD_TYPE_CONSOLE &&
-            descriptor->ctx == self &&
+        if (descriptor && descriptor->m_type == XFD_TYPE_CONSOLE &&
+            descriptor->object == self &&
             (socketEvent->actType & XSocketAct_Read)) {
             xcs_async_read_ready(self);
             XEvent_accept(event);

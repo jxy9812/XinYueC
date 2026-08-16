@@ -151,7 +151,7 @@ static bool VXAbstractNetIoRing_unregisterEvent(XAbstractNetIoRing* self, XFd fd
 
 /* 分发一条 CQ 完成事件到应用层。
  *
- * 从 CQ 条目提取 fd 和事件掩码，通过 XFd_get(fd)->ctx 获取 Socket 的
+ * 从 CQ 条目提取 fd 和事件掩码，通过 XFd_Get(fd)->object 获取 Socket 的
  * owner（XObject*），创建 XEventSockAct / XEventSockClose 并通过
  * XCoreApplication_postEvent 投递到应用层。
  *
@@ -170,9 +170,9 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
      * entry->m_fdType 可用于类型感知的分发（如区分 Socket/File/Timer），
      * 当前统一走 Socket 事件路径。 */
     desc = XFd_get(entry->m_fd);
-    if (!desc || !desc->ctx) return;
-    if ((XFdType)entry->m_fdType != (XFdType)desc->type) return;
-    owner = (XObject*)desc->ctx;
+    if (!desc || !desc->object) return;
+    if ((XFdType)entry->m_fdType != (XFdType)desc->m_type) return;
+    owner = (XObject*)desc->object;
 
     /* 原生套接字对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件。
      * 串口的异步读可以在超时或取消时以 0 字节完成，不表示连接关闭。 */

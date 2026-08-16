@@ -186,8 +186,8 @@ static void processOneCompletion(XAbstractNetIoRing* self, struct io_uring_cqe* 
                 timerEvent->spontaneous = true;
                 /* 从 fd 表获取 owner */
                 XFileDescriptor* desc = XFd_get(timerFd);
-                if (desc && desc->ctx) {
-                    XCoreApplication_postEvent((XObject*)desc->ctx,
+                if (desc && desc->object) {
+                    XCoreApplication_postEvent((XObject*)desc->object,
                                                timerEvent, XEVENT_PRIORITY_NORMAL);
                 }
             }

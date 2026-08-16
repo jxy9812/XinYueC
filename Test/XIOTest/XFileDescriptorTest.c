@@ -49,10 +49,10 @@ static void XFdTest_basic(void)
 
     /* 验证句柄 */
     XPrintf("fd1 handle=0x%p (期望 0x100), ctx=0x%p (期望 0xA00)\n",
-            XFd_handle(fd1), XFd_ctx(fd1));
+            XFd_handle(fd1), XFd_object(fd1));
 
     bool ok = (XFd_handle(fd1) == (void*)0x100)
-           && (XFd_ctx(fd1)    == (void*)0xA00)
+           && (XFd_object(fd1)    == (void*)0xA00)
            && (XFd_type(fd1)   == XFD_TYPE_FILE)
            && (XFd_handle(fd2) == (void*)0x200)
            && (XFd_type(fd2)   == XFD_TYPE_SOCKET)

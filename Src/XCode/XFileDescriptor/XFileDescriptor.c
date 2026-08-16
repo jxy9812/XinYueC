@@ -41,65 +41,63 @@ void XFd_init(void)
 {
     if (g_fdInitDone) return;
     XFIXEDPOOL_INIT(g_fdPool, sizeof(XFileDescriptor));
-    /* XFixedPool_init 内部已通过 initialize_free_list 设置链表，
-     * 用户数据区在 XFd_alloc 时 memset 清零 */
     g_fdInitDone = true;
 }
 
-XFd XFd_alloc(XFdType type, void* handle, void* ctx)
+XFd XFd_alloc(XFdType type, void* handle, void* object)
 {
+    XFileDescriptor* desc;
     if (!g_fdInitDone) XFd_init();
     if (!g_fdPool) return XFD_INVALID;
 
-    /* XFixedPool_malloc 返回空闲块指针 → 指针算术算出索引即 fd */
-    XFileDescriptor* desc = (XFileDescriptor*)XFixedPool_malloc(g_fdPool);
+    desc = (XFileDescriptor*)XFixedPool_malloc(g_fdPool);
     if (!desc) return XFD_INVALID;
 
     memset(desc, 0, sizeof(XFileDescriptor));
-    desc->handle = handle;
-    desc->ctx = ctx;
-    desc->type = type;
-    desc->refCount = 1;
-
+    desc->m_deviceCtx = handle;
+    desc->object = object;
+    desc->m_type = (uint8_t)type;
     return (XFd)XFd_indexOf(desc);
 }
 
 void XFd_free(XFd fd)
 {
+    XFileDescriptor* desc;
     if (fd < 0 || fd >= XFD_TABLE_SIZE) return;
-    XFileDescriptor* desc = XFd_byIndex((int)fd);
-    if ((XFdType)desc->type == XFD_TYPE_FREE) return; /* Double-free protection */
+    desc = XFd_byIndex((int)fd);
+    if ((XFdType)desc->m_type == XFD_TYPE_FREE) return; /* Double-free protection */
     memset(desc, 0, sizeof(XFileDescriptor));
     XFixedPool_free(g_fdPool, desc);
 }
 
 XFileDescriptor* XFd_get(XFd fd)
 {
+    XFileDescriptor* desc;
     if (fd < 0 || fd >= XFD_TABLE_SIZE) return NULL;
-    XFileDescriptor* desc = XFd_byIndex((int)fd);
-    return ((XFdType)desc->type != XFD_TYPE_FREE) ? desc : NULL;
+    desc = XFd_byIndex((int)fd);
+    return ((XFdType)desc->m_type != XFD_TYPE_FREE) ? desc : NULL;
 }
 
 void* XFd_handle(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
-    return desc ? desc->handle : NULL;
+    return desc ? desc->m_deviceCtx : NULL;
 }
 
 XFdType XFd_type(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
-    return desc ? (XFdType)desc->type : XFD_TYPE_FREE;
+    return desc ? (XFdType)desc->m_type : XFD_TYPE_FREE;
 }
 
-void* XFd_ctx(XFd fd)
+void* XFd_object(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
-    return desc ? desc->ctx : NULL;
+    return desc ? desc->object : NULL;
 }
 
-void XFd_setCtx(XFd fd, void* ctx)
+void XFd_setObject(XFd fd, void* object)
 {
     XFileDescriptor* desc = XFd_get(fd);
-    if (desc) desc->ctx = ctx;
+    if (desc) desc->object = object;
 }

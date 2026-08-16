@@ -194,11 +194,11 @@ static bool VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd) {
     if (!win || !win->m_iocp) return false;
 
     desc = XFd_get(fd);
-    if (!desc || !desc->handle) return false;
-    if (desc->type == XFD_TYPE_CONSOLE) return false;
+    if (!desc || !desc->m_deviceCtx) return false;
+    if (desc->m_type == XFD_TYPE_CONSOLE) return false;
 
-    return CreateIoCompletionPort((HANDLE)desc->handle, win->m_iocp,
-                                  (ULONG_PTR)desc->ctx, 0) != NULL;
+    return CreateIoCompletionPort((HANDLE)desc->m_deviceCtx, win->m_iocp,
+                                  (ULONG_PTR)desc->object, 0) != NULL;
 }
 
 /* 阻塞等待事件（虚函数） */

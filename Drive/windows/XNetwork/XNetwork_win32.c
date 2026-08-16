@@ -1281,7 +1281,7 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
     /* 关键：分配 XFd 并保存到 serverFd 字段。
      * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd，
      * 必须自己存。acceptContext.base.fd 使用 serverFd。
-     * dispatchCQEntry 通过 desc->ctx 找回 owner (XTcpServer) 并投递 XEventSockAct(Accept)。 */
+     * dispatchCQEntry 通过 desc->object 找回 owner (XTcpServer) 并投递 XEventSockAct(Accept)。 */
     {
         XFd xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
         if (xfd == XFD_INVALID) {

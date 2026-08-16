@@ -53,7 +53,7 @@
 #define __NR_io_uring_enter 426
 #endif
 
-/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.ctx 上）。
+/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 shmFd（shm_open 返回）承载，信令通道由 signalFd
    （Unix domain 流式套接字）承载，XFileSystem_map/unmap 使用 shmFd。
    信令通道的异步接收完全接入库内部事件通知系统（XAbstractNetIoRing
@@ -61,7 +61,7 @@
    openSharedMemory 建立信令套接字后即提交常驻异步 RECV，完成事件由
    waitForEvents 处理并写入 m_read.base.result；XFileSystem_read 消费
    异步接收缓冲，无数据时通过事件环等待完成通知，不做任何轮询。
-   首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->ctx 作为
+   首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->object 作为
    事件接收者），关闭时通过 XClass_deinit_base 完整释放。 */
 typedef struct XFileSharedMemoryPosix {
     XObject m_object;          /**< 嵌入式 XObject 基类（事件通知接收者，必须为首成员） */
@@ -89,7 +89,7 @@ static void xfs_posix_shm_cancelRead(XFileSharedMemoryPosix* m);
 static int XFS_getFd(XFd fdx) {
     XFileDescriptor* desc = XFd_get(fdx);
     if (!desc) return -1;
-    return (int)(intptr_t)desc->handle;
+    return (int)(intptr_t)desc->m_deviceCtx;
 }
 
 static bool XFS_writeAll(int fd, const void* buffer, size_t length)
@@ -199,11 +199,11 @@ XFd XFileSystem_openStandardInput(int* error)
 void XFileSystem_close(XFd fdx) {
     XFileDescriptor* desc = XFd_get(fdx);
     if (!desc) return;
-    if (desc->type == XFD_TYPE_MAPPING) {
+    if (desc->m_type == XFD_TYPE_MAPPING) {
         /* 共享内存段：先取消并回收在途异步读（避免悬垂 CQE），再释放
            信令套接字与段 fd，创建方删除信令路径，最后释放嵌入式
            XObject 基类与映射对象。 */
-        XFileSharedMemoryPosix* mapping = (XFileSharedMemoryPosix*)desc->ctx;
+        XFileSharedMemoryPosix* mapping = (XFileSharedMemoryPosix*)desc->object;
         if (mapping) {
             xfs_posix_shm_cancelRead(mapping);
             if (mapping->signalFd >= 0) close(mapping->signalFd);
@@ -218,7 +218,7 @@ void XFileSystem_close(XFd fdx) {
         XFd_free(fdx);
         return;
     }
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = (int)(intptr_t)desc->m_deviceCtx;
     close(fd);
     XFd_free(fdx);
 }
@@ -243,10 +243,10 @@ int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
     if (!desc || (len > 0 && !buf) || len < 0) return -1;
 
     /* 共享内存段的信令通道：走库内部事件通知的异步接收（io_uring 环）。 */
-    if (desc->type == XFD_TYPE_MAPPING)
-        return xfs_posix_shmRead(fdx, (XFileSharedMemoryPosix*)desc->ctx, buf, len);
+    if (desc->m_type == XFD_TYPE_MAPPING)
+        return xfs_posix_shmRead(fdx, (XFileSharedMemoryPosix*)desc->object, buf, len);
 
-    fd = (int)(intptr_t)desc->handle;
+    fd = (int)(intptr_t)desc->m_deviceCtx;
     n = read(fd, buf, (size_t)len);
     if (n >= 0) return (int64_t)n;
     if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
@@ -289,12 +289,12 @@ int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
 
     /* 共享内存段的信令通道：写方向保持同步普通写（信令字节极小，
        且与对端异步读路径互补，无需再提交异步写）。 */
-    if (desc->type == XFD_TYPE_MAPPING) {
-        XFileSharedMemoryPosix* m = (XFileSharedMemoryPosix*)desc->ctx;
+    if (desc->m_type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryPosix* m = (XFileSharedMemoryPosix*)desc->object;
         if (!m || m->signalFd < 0) return -1;
         fd = m->signalFd;
     } else {
-        fd = (int)(intptr_t)desc->handle;
+        fd = (int)(intptr_t)desc->m_deviceCtx;
     }
     n = write(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
@@ -790,7 +790,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  *      与网络套接字/串口的异步读完全一致，无需轮询共享内存状态字段。
  *      该通道内建于平台实现，不新增任何公共 API。
  *
- * XFd 句柄为信令套接字 fd，ctx 保存共享内存段 fd、路径信息与异步读
+ * XFd 句柄为信令套接字 fd，object 保存共享内存段 fd、路径信息与异步读
  * 事件上下文；XFileSystem_read / XFileSystem_write 在信令通道上收发
  * 通知字节，XFileSystem_map / XFileSystem_close 据此完成映射与释放。
  */
@@ -1184,13 +1184,13 @@ void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, int flags) {
     XFileDescriptor* desc = XFd_get(fdx);
     int fd;
     if (!desc) return NULL;
-    if (desc->type == XFD_TYPE_MAPPING) {
-        /* 共享内存段：句柄是信令套接字，真正的段 fd 保存在 ctx。 */
-        XFileSharedMemoryPosix* mapping = (XFileSharedMemoryPosix*)desc->ctx;
+    if (desc->m_type == XFD_TYPE_MAPPING) {
+        /* 共享内存段：句柄是信令套接字，真正的段 fd 保存在 object。 */
+        XFileSharedMemoryPosix* mapping = (XFileSharedMemoryPosix*)desc->object;
         if (!mapping || mapping->shmFd < 0) return NULL;
         fd = mapping->shmFd;
     } else {
-        fd = (int)(intptr_t)desc->handle;
+        fd = (int)(intptr_t)desc->m_deviceCtx;
     }
     if (fd < 0 || size <= 0) return NULL;
     int prot = PROT_READ;

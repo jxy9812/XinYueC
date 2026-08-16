@@ -3,7 +3,7 @@
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include "XIODevicePrivate.h"   /* XIODevicePrivate_getOrCreateReadBuffer */
 #include "XRingBuffer.h"        /* XRingBuffer_available */
-#include "XFileDescriptor.h"   /* XFd_setCtx */
+#include "XFileDescriptor.h"   /* XFd_setObject */
 #include "XAbstractNetIoRing.h"  /* XAbstractNetIoRing_global, registerEvent_base */
 
 #include <stdlib.h>
@@ -442,8 +442,8 @@ void XFileDevice_registerAsync(XFileDevice* device)
     if (!device) return;
     XFd fd = XIODevice_fd(&device->m_parent);
     if (fd < 0) return;
-    /* 设置 ctx 为 device 指针，供 IoRing 完成事件分发查找 owner */
-    XFd_setCtx(fd, (void*)device);
+    /* 设置 object 为 device 指针，供 IoRing 完成事件分发查找 owner */
+    XFd_setObject(fd, (void*)device);
     XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
     if (ring) {
         XAbstractNetIoRing_registerEvent_base(ring, fd);

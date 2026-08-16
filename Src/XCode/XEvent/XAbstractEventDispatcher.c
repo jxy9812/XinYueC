@@ -62,7 +62,7 @@ static bool console_attach(void* userData, XConsoleShell* shell)
     transport->inputFd = XFileSystem_openStandardInput(&error);
     transport->endOfInput = false;
     if (transport->inputFd != XFD_INVALID && shell) {
-        XFd_setCtx(transport->inputFd, shell);
+        XFd_setObject(transport->inputFd, shell);
         shell->m_asyncInputEventDriven =
             XAbstractNetIoRing_global() != NULL &&
             XAbstractNetIoRing_isEnabled(XAbstractNetIoRing_global()) &&
@@ -755,7 +755,7 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
             if (handle)
             {
                 timerInfo->Xhandle = handle;
-                desc->handle = timerInfo;
+                desc->m_deviceCtx = timerInfo;
                 return;
             }
         }
@@ -771,7 +771,7 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
     if (handle)
     {
         timerInfo->Xhandle = handle;
-        desc->handle = timerInfo;
+        desc->m_deviceCtx = timerInfo;
         XAbstractEventDispatcher_wakeUp_base(dispatcher);
         return;
     }
@@ -784,7 +784,7 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     if (timerId == XTIMER_INVALID_ID) return false;
     XFileDescriptor* desc = XFd_get(timerId);
     if (!desc) return false;
-    XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+    XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
     if (!timerInfo) return false;
 
     bool is_ok = false;
@@ -814,12 +814,12 @@ static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher*
     {
         XFileDescriptor* desc = XFd_get(i);
         if (!desc) continue;
-        if ((XFdType)desc->type != XFD_TYPE_TIMER) continue;
-        if (desc->ctx != object) continue;
+        if ((XFdType)desc->m_type != XFD_TYPE_TIMER) continue;
+        if (desc->object != object) continue;
         /* 检查所属线程 */
         if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
 
-        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
         if (!timerInfo) continue;
 
         if (timerInfo->timerType != XTimerType_PreciseTimer)
@@ -850,11 +850,11 @@ static XVector* VXAbstractEventDispatcher_timersForObject(const XAbstractEventDi
     {
         XFileDescriptor* desc = XFd_get(i);
         if (!desc) continue;
-        if ((XFdType)desc->type != XFD_TYPE_TIMER) continue;
-        if (desc->ctx != object) continue;
+        if ((XFdType)desc->m_type != XFD_TYPE_TIMER) continue;
+        if (desc->object != object) continue;
         if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
 
-        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
         if (!timerInfo) continue;
 
         XAbstractEventDispatcher_TimerInfoV2 info = {
@@ -1137,9 +1137,9 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     /* 虚函数在注册失败时会释放 fd。不要把一个未注册的 ID
      * 交给 XTimer，否则它会保持 running 并永久等待超时事件。 */
     XFileDescriptor* desc = XFd_get(fd);
-    if (!desc || (XFdType)desc->type != XFD_TYPE_TIMER || !desc->handle)
+    if (!desc || (XFdType)desc->m_type != XFD_TYPE_TIMER || !desc->m_deviceCtx)
     {
-        if (desc && (XFdType)desc->type == XFD_TYPE_TIMER)
+        if (desc && (XFdType)desc->m_type == XFD_TYPE_TIMER)
             XFd_free(fd);
         return XTIMER_INVALID_ID;
     }

@@ -166,7 +166,7 @@ bool XFile_open_2(XFile* file, XIODeviceBaseMode mode, XFilePermissions permissi
 /**
  * @brief 从文件描述符打开文件
  * @param file XFile 对象指针
- * @param fd XFileDescriptor 表索引（XFd，非 CRT fd），底层句柄存储于 XFileDescriptor.handle
+ * @param fd XFileDescriptor 表索引（XFd，非 CRT fd），底层句柄存储于 XFileDescriptor.m_deviceCtx
  * @param mode 打开模式
  * @param handleFlags 句柄标志
  * @return 成功返回 true，失败返回 false
