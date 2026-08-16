@@ -31,6 +31,17 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
+/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.ctx 上）。
+   段数据由 mapHandle（CreateFileMapping/OpenFileMapping）承载，信令
+   通道由 signalPipe（\\.\pipe\<name>.sig 命名管道）承载，
+   XFileSystem_read/write 直接在信令管道上阻塞收发通知字节，
+   XFileSystem_map/unmap 使用 mapHandle。 */
+typedef struct XFileSharedMemoryWin32 {
+    HANDLE mapHandle;   /**< 命名内存映射句柄（CreateFileMapping/OpenFileMapping） */
+    HANDLE signalPipe;  /**< 信令管道句柄（\\.\pipe\<name>.sig） */
+    bool created;       /**< 是否为创建方（创建方负责断开管道实例） */
+} XFileSharedMemoryWin32;
+
 typedef struct XWin32ConsoleInputState {
     uint64_t magic;
     XFd fd;
@@ -504,13 +515,27 @@ XFd XFileSystem_openStandardInput(int* error)
 
 void XFileSystem_close(XFd fd)
 {
-    HANDLE h = XW32_getFile(fd);
+    XFileDescriptor* descriptor = XFd_get(fd);
     XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
     if (state) {
         XFd_setCtx(fd, NULL);
         XFileSystem_destroyConsoleInputState(state);
-    } else if (h != INVALID_HANDLE_VALUE) {
-        CloseHandle(h);
+    } else if (descriptor && descriptor->type == XFD_TYPE_MAPPING) {
+        /* 共享内存段：句柄是信令管道，映射句柄保存在 ctx，两者都需释放。 */
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+        if (mapping) {
+            if (mapping->signalPipe && mapping->signalPipe != INVALID_HANDLE_VALUE) {
+                if (mapping->created) DisconnectNamedPipe(mapping->signalPipe);
+                CloseHandle(mapping->signalPipe);
+            }
+            if (mapping->mapHandle && mapping->mapHandle != INVALID_HANDLE_VALUE)
+                CloseHandle(mapping->mapHandle);
+            XFree_System(mapping);
+        }
+    } else {
+        HANDLE h = XW32_getFile(fd);
+        if (h != INVALID_HANDLE_VALUE)
+            CloseHandle(h);
     }
     XFd_free(fd);
 }
@@ -535,8 +560,27 @@ int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
 
 int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 {
-    HANDLE h = XW32_getFile(fd);
-    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -1;
+    XFileDescriptor* descriptor = XFd_get(fd);
+    HANDLE h;
+    if (!descriptor || !buf || len <= 0) return -1;
+
+    /* 共享内存段：句柄是信令管道，直接阻塞 ReadFile 等待对端信令字节，
+       与网络套接字的阻塞接收一致，不做可读量探测（避免忙轮询）。 */
+    if (descriptor->type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+        DWORD bytesRead = 0;
+        if (!mapping || !mapping->signalPipe
+            || mapping->signalPipe == INVALID_HANDLE_VALUE)
+            return -1;
+        if (!ReadFile(mapping->signalPipe, buf, (DWORD)len, &bytesRead, NULL)) {
+            if (GetLastError() == ERROR_BROKEN_PIPE) return -1;
+            return -1;
+        }
+        return (int64_t)bytesRead;
+    }
+
+    h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
 
     /* 管道和重定向输入先探测可读量，避免事件线程等待数据。 */
     if (GetFileType(h) == FILE_TYPE_PIPE) {
@@ -625,8 +669,24 @@ bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
 
 int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 {
-    HANDLE h = XW32_getFile(fd);
-    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -1;
+    XFileDescriptor* descriptor = XFd_get(fd);
+    HANDLE h;
+    if (!descriptor || !buf || len <= 0) return -1;
+
+    /* 共享内存段：句柄是信令管道，WriteFile 发送信令字节。 */
+    if (descriptor->type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+        DWORD bytesWritten = 0;
+        if (!mapping || !mapping->signalPipe
+            || mapping->signalPipe == INVALID_HANDLE_VALUE)
+            return -1;
+        if (!WriteFile(mapping->signalPipe, buf, (DWORD)len, &bytesWritten, NULL))
+            return -1;
+        return (int64_t)bytesWritten;
+    }
+
+    h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
     
     int64_t totalWritten = 0;
     while (totalWritten < len) {
@@ -1160,32 +1220,212 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
 }
 
 /* ============================================================================
- * 内存映射
- * ============================================================================ */
+ * 内存映射（3个）- 可选
+ * ============================================================================
+ *
+ * 共享内存段在 Windows 上由两块组成：
+ *   1. 命名内存映射（CreateFileMapping/OpenFileMapping）：存放跨进程数据，
+ *      通过 XFileSystem_map 建立视图；
+ *   2. 命名管道信令通道（\\.\pipe\<共享内存名>.sig）：数据方写完一块数据后
+ *      向管道写入 1 个信令字节，对端在管道上阻塞读取（ReadFile 内核等待，
+ *      参考网络套接字的异步接收），无需轮询共享内存状态字段。
+ *      该通道内置于平台实现，不新增任何公共 API。
+ *
+ * XFd 句柄为信令管道句柄，XFileSystem_read / XFileSystem_write 直接在
+ * 信令通道上收发；ctx 保存映射句柄，XFileSystem_map / XFileSystem_close
+ * 据此完成视图与释放。
+ */
+
+/* 将共享内存段名称整理为合法的信令管道名：
+   仅保留字母数字与 ._-，其余字符替换为 '_'，避免段名中的目录分隔符破坏
+   管道路径。失败（名称超长等）返回 false。 */
+static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t outLen)
+{
+    static const wchar_t prefix[] = L"\\\\.\\pipe\\";
+    size_t i, n, used;
+    if (!name || !out || outLen == 0) return false;
+    n = strlen(name);
+    if (n > 200) return false; /* 管道名长度限制，预留前缀与后缀 */
+    used = 0;
+    while (prefix[used] != L'\0' && used + 1 < outLen) {
+        out[used] = prefix[used];
+        ++used;
+    }
+    if (prefix[used] != L'\0') return false;
+    for (i = 0; i < n && used + 1 < outLen - 4; ++i) {
+        char c = name[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')
+            out[used++] = (wchar_t)c;
+        else
+            out[used++] = L'_';
+    }
+    {
+        static const wchar_t suffix[] = L".sig";
+        size_t k = 0;
+        while (suffix[k] != L'\0' && used + 1 < outLen) {
+            out[used++] = suffix[k];
+            ++k;
+        }
+        if (suffix[k] != L'\0') return false;
+    }
+    out[used] = L'\0';
+    return true;
+}
+
+XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+{
+    wchar_t* wname;
+    wchar_t signalPipeName[MAX_PATH];
+    const char* utf8Name;
+    HANDLE hMap = NULL;
+    HANDLE hPipe = NULL;
+    XFileSharedMemoryWin32* mapping = NULL;
+    XFd result = XFD_INVALID;
+    DWORD lastError = 0;
+
+    if (error) *error = 0;
+    if (!name || (create && maxSize <= 0)) {
+        if (error) *error = ERROR_INVALID_PARAMETER;
+        return XFD_INVALID;
+    }
+    wname = XStringToWidePath(name);
+    if (!wname) {
+        if (error) *error = ERROR_INVALID_PARAMETER;
+        return XFD_INVALID;
+    }
+
+    if (create) {
+        /* 页文件背书的命名内存段，供 MySQL 共享内存等服务端创建、客户端按名打开 */
+        DWORD sizeHigh = (DWORD)((uint64_t)maxSize >> 32);
+        DWORD sizeLow = (DWORD)((uint64_t)maxSize & 0xFFFFFFFF);
+        hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+                                  sizeHigh, sizeLow, wname);
+        if (!hMap) {
+            lastError = GetLastError();
+            goto fail;
+        }
+    } else {
+        hMap = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, wname);
+        if (!hMap) {
+            lastError = GetLastError();
+            goto fail;
+        }
+    }
+
+    /* 信令通道：命名管道。创建方建立管道实例并阻塞等待客户端连接，
+       客户端等待管道可用后连接（与网络套接字 accept/connect 语义一致）。 */
+    utf8Name = XString_toUtf8(name);
+    if (!utf8Name
+        || !xfs_win32_makeSignalPipeName(utf8Name, signalPipeName,
+                                         sizeof(signalPipeName) / sizeof(wchar_t))) {
+        lastError = ERROR_INVALID_PARAMETER;
+        goto fail;
+    }
+    if (create) {
+        hPipe = CreateNamedPipeW(signalPipeName,
+                                 PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 64, 64, 0, NULL);
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            lastError = GetLastError();
+            goto fail;
+        }
+        if (!ConnectNamedPipe(hPipe, NULL)) {
+            lastError = GetLastError();
+            if (lastError != ERROR_PIPE_CONNECTED) goto fail;
+            lastError = 0;
+        }
+    } else {
+        if (!WaitNamedPipeW(signalPipeName, 10000)) {
+            lastError = GetLastError();
+            goto fail;
+        }
+        hPipe = CreateFileW(signalPipeName, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                            OPEN_EXISTING, 0, NULL);
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            lastError = GetLastError();
+            goto fail;
+        }
+    }
+
+    mapping = (XFileSharedMemoryWin32*)XCalloc_System(1, sizeof(XFileSharedMemoryWin32));
+    if (!mapping) {
+        lastError = ERROR_NOT_ENOUGH_MEMORY;
+        goto fail;
+    }
+    mapping->mapHandle = hMap;
+    mapping->signalPipe = hPipe;
+    mapping->created = create;
+
+    result = XFd_alloc(XFD_TYPE_MAPPING, (void*)hPipe, mapping);
+    if (result < 0) {
+        lastError = ERROR_TOO_MANY_OPEN_FILES;
+        goto fail;
+    }
+    XFree_System(wname);
+    return result;
+
+fail:
+    if (hPipe && hPipe != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(hPipe);
+        CloseHandle(hPipe);
+    }
+    if (hMap) CloseHandle(hMap);
+    if (mapping) XFree_System(mapping);
+    XFree_System(wname);
+    if (error) *error = (int)lastError;
+    return XFD_INVALID;
+}
 
 void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
 {
+    XFileDescriptor* descriptor;
+    HANDLE hMap;
+    DWORD access;
+    DWORD offsetHigh;
+    DWORD offsetLow;
     if (fd < 0 || size <= 0) return NULL;
-    (void)flags;  /* Win32 端 MapPrivateOption 等价于 FILE_MAP_COPY */
+    descriptor = XFd_get(fd);
+    if (!descriptor) return NULL;
+
+    /* 共享内存段描述符：句柄是信令管道，映射句柄保存在 ctx。 */
+    if (descriptor->type == XFD_TYPE_MAPPING) {
+        XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->ctx;
+        if (!mapping || !mapping->mapHandle || mapping->mapHandle == INVALID_HANDLE_VALUE)
+            return NULL;
+        hMap = mapping->mapHandle;
+        access = (flags & 0x2) ? (FILE_MAP_READ | FILE_MAP_WRITE) : FILE_MAP_READ;
+        offsetHigh = (DWORD)((uint64_t)offset >> 32);
+        offsetLow = (DWORD)((uint64_t)offset & 0xFFFFFFFF);
+        return MapViewOfFile(hMap, access, offsetHigh, offsetLow, (SIZE_T)size);
+    }
     
-    HANDLE hFile = XW32_getFile(fd);
-    if (hFile == INVALID_HANDLE_VALUE) return NULL;
-    
-    DWORD protect = (flags & 0x2) ? PAGE_READWRITE : PAGE_READONLY;
-    DWORD sizeHigh = (DWORD)(size >> 32);
-    DWORD sizeLow = (DWORD)(size & 0xFFFFFFFF);
-    
-    HANDLE hMap = CreateFileMappingW(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
-    if (!hMap) return NULL;
-    
-    DWORD access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
-    DWORD offsetHigh = (DWORD)(offset >> 32);
-    DWORD offsetLow = (DWORD)(offset & 0xFFFFFFFF);
-    
-    void* address = MapViewOfFile(hMap, access, offsetHigh, offsetLow, (SIZE_T)size);
-    CloseHandle(hMap);
-    
-    return address;
+    {
+        HANDLE hFile = XW32_getFile(fd);
+        if (hFile == INVALID_HANDLE_VALUE) return NULL;
+
+        DWORD protect = (flags & 0x2) ? PAGE_READWRITE : PAGE_READONLY;
+        DWORD sizeHigh = (DWORD)((uint64_t)size >> 32);
+        DWORD sizeLow = (DWORD)((uint64_t)size & 0xFFFFFFFF);
+
+        HANDLE hMap2 = CreateFileMappingW(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
+        if (!hMap2) return NULL;
+
+        /* bit0=私有映射 → FILE_MAP_COPY（写时复制，不写回文件）；
+           bit0=共享映射且可写 → FILE_MAP_WRITE（共享可写，对齐 POSIX MAP_SHARED） */
+        if (flags & 0x1)
+            access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
+        else
+            access = (flags & 0x2) ? FILE_MAP_WRITE : FILE_MAP_READ;
+        offsetHigh = (DWORD)((uint64_t)offset >> 32);
+        offsetLow = (DWORD)((uint64_t)offset & 0xFFFFFFFF);
+
+        void* address = MapViewOfFile(hMap2, access, offsetHigh, offsetLow, (SIZE_T)size);
+        CloseHandle(hMap2);
+
+        return address;
+    }
 }
 
 bool XFileSystem_unmap(void* addr, int64_t size)
@@ -1197,13 +1437,6 @@ bool XFileSystem_unmap(void* addr, int64_t size)
 
 /**
  * @brief 通过文件描述符设置文件时间
- * @param fd 文件描述符（XFileDescriptor 表索引）
- * @param timeType 时间类型（访问时间/修改时间/创建时间）
- * @param newDate 新的 XDateTime 时间值（使用 XinYueC 自己的日期时间类型，不再使用 C time API）
- * @return 成功返回true
- * @note 直接操作已打开的 HANDLE，调用 SetFileTime。
- *       路径版需求由上层通过 open→setFileTime→close 组合实现。
- */
 bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
     HANDLE h = XW32_getFile(fd);

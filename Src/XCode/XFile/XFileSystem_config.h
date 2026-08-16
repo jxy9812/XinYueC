@@ -17,43 +17,43 @@
 extern "C" {
 #endif
 /* ========================================================================== */
-/*                        ???????????                                */
+/*                        模块总开关                                        */
 /* ========================================================================== */
-/** @brief XFile ??????? 0 ????? XFile ???? API ???????
- * @note ???? CXinYueConfig.h ??????????????????????
- *       ?????? CXinYueConfig.h ??????????????? */
+/** @brief XFile 模块总开关；置 0 时裁剪整个 XFile 对外公开 API 及所有子功能。
+ * @note 总开关在 CXinYueConfig.h 中统一定义，此处仅兜底默认值。
+ *       关闭后若仍有其它模块无条件引用 XFile 符号，需同步裁剪对应依赖。 */
 #ifndef XFILE_ON
 #define XFILE_ON 1
 #endif
 
 #if XFILE_ON
 
-/** @brief XDir ???????? */
+/** @brief 目录操作模块开关；关闭后 XDir 相关 API 不编译。 */
 #ifndef XDIR_ON
 #define XDIR_ON 1
 #endif
 
-/** @brief XFile ?????? */
+/** @brief 文件对象模块开关；关闭后 XFile 相关 API 不编译。 */
 #ifndef XFILE_OBJECT_ON
 #define XFILE_OBJECT_ON 1
 #endif
 
-/** @brief XFileDevice ????????? */
+/** @brief 设备文件模块开关；关闭后 XFileDevice 相关 API 不编译。 */
 #ifndef XFILEDEVICE_ON
 #define XFILEDEVICE_ON 1
 #endif
 
-/** @brief XFileInfo ???????? */
+/** @brief 文件信息模块开关；关闭后 XFileInfo 相关 API 不编译。 */
 #ifndef XFILEINFO_ON
 #define XFILEINFO_ON 1
 #endif
 
-/** @brief XSaveFile ???????? */
+/** @brief 保存文件模块开关；关闭后 XSaveFile 相关 API 不编译。 */
 #ifndef XSAVEFILE_ON
 #define XSAVEFILE_ON 1
 #endif
 
-/** @brief XStorageInfo ???????? */
+/** @brief 存储信息模块开关；关闭后 XStorageInfo 相关 API 不编译。 */
 #ifndef XSTORAGEINFO_ON
 #define XSTORAGEINFO_ON 1
 #endif

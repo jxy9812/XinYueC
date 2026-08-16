@@ -21,7 +21,7 @@
 #include "XSsl_platform.h"
 #include "XIODevice.h"
 #include "XFile.h"
-#include "XSqlMySqlClient_platform.h"
+#include "XMySqlSharedMemory.h"
 #include "zlib.h"
 
 #include <limits.h>
@@ -148,7 +148,7 @@ struct XSqlMySqlClient {
     bool m_localInfile;
     bool m_compress;
     bool m_useSharedMemory;
-    XSqlMySqlSharedMemory* m_sharedMemory;
+    XMySqlSharedMemory* m_sharedMemory;
     bool m_compressionActive;
     uint8_t m_compressedSendSequence;
     uint8_t m_compressedReadSequence;
@@ -339,7 +339,7 @@ static bool xmysql_socket_read(XSqlMySqlClient* client, void* data, size_t size,
     XIODevice* device;
     if (!client) return false;
     if (client->m_useSharedMemory)
-        return XSqlMySqlSharedMemory_read(client->m_sharedMemory, data, size, timeout);
+        return XMySqlSharedMemory_read(client->m_sharedMemory, data, size, timeout);
     device = (XIODevice*)client->m_socket;
     while (offset < size) {
         int64_t count = XIODevice_read_1(device, (char*)data + offset,
@@ -360,7 +360,7 @@ static bool xmysql_socket_write(XSqlMySqlClient* client, const void* data, size_
     XIODevice* device;
     if (!client) return false;
     if (client->m_useSharedMemory)
-        return XSqlMySqlSharedMemory_write(client->m_sharedMemory, data, size, timeout);
+        return XMySqlSharedMemory_write(client->m_sharedMemory, data, size, timeout);
     device = (XIODevice*)client->m_socket;
     while (offset < size) {
         int64_t count = XIODevice_write_1(device, (const char*)data + offset,
@@ -1449,7 +1449,7 @@ static XSqlMySqlClient* xmysql_client_create(void)
 static void xmysql_client_close(XSqlMySqlClient* client)
 {
     if (!client) return;
-    XSqlMySqlSharedMemory_close(client->m_sharedMemory);
+    XMySqlSharedMemory_close(client->m_sharedMemory);
     client->m_sharedMemory = NULL;
     client->m_useSharedMemory = false;
     if (client->m_socket) {
@@ -1608,13 +1608,9 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
 #endif
         } else if (xmysql_ascii_casecmp(protocol, "MEMORY") == 0
                    || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_MEMORY") == 0) {
-#if defined(_WIN32)
+            /* 共享内存传输为跨平台通用实现（XFileSystem 三个共享内存原语 +
+             * 共享内存原子状态轮询），Windows 与 POSIX 行为一致。 */
             useSharedMemory = true;
-#else
-            xmysql_set_error(client, "MySQL shared memory is only available on Windows", protocol,
-                             0, XSqlErrorType_ConnectionError);
-            return false;
-#endif
         } else {
             /* QMYSQL delegates this option to libmysql.  Its protocol parser
              * warns then falls back to MYSQL_PROTOCOL_DEFAULT. */
@@ -1801,8 +1797,16 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         }
     }
     if (useSharedMemory) {
-        client->m_sharedMemory = XSqlMySqlSharedMemory_open(
-            sharedMemoryBaseName, client->m_connectTimeout);
+        XString* sharedMemoryBaseNameText = XString_create_utf8(sharedMemoryBaseName);
+        if (!sharedMemoryBaseNameText) {
+            xmysql_set_error(client, "Unable to connect to MySQL shared memory",
+                             sharedMemoryBaseName, 0, XSqlErrorType_ConnectionError);
+            xmysql_client_close(client);
+            return false;
+        }
+        client->m_sharedMemory = XMySqlSharedMemory_open(sharedMemoryBaseNameText,
+                                                          client->m_connectTimeout);
+        XString_delete_base(sharedMemoryBaseNameText);
         if (!client->m_sharedMemory) {
             xmysql_set_error(client, "Unable to connect to MySQL shared memory",
                              sharedMemoryBaseName, 0, XSqlErrorType_ConnectionError);

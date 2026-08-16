@@ -10,6 +10,9 @@
 #include"XPrintf.h"
 #include"XFileDescriptor.h"
 #include"XDateTime.h"
+#include"XFileSystem.h"
+#include"XAbstractNetIoRing.h"
+#include"XThread.h"
 #include <string.h>
 
 /* ============================================================================
@@ -1120,6 +1123,196 @@ static void test_mmap(void)
 }
 
 /* ============================================================================
+ * 19.5 共享内存段 openSharedMemory / map / unmap（双进程信令同步联调）
+ *
+ * 设计说明：
+ * - create=true 的平台实现（POSIX accept / Windows 命名管道）会阻塞等待
+ *   对端连接，因此必须用两个独立进程（或 POSIX fork 出的父子进程）才能
+ *   完成一次完整的"创建-映射-写入-通知-读取"闭环；单进程串行调用两个
+ *   openSharedMemory 会互相阻塞，无法测通。
+ * - 数据写入与读取之间通过信令通道做 1 字节同步：服务端写完数据区后
+ *   写通知字节，客户端在信令通道上等待通知（走库内部事件通知，POSIX
+ *   为 io_uring 常驻异步接收 + 事件环唤醒，无事件环时退化为内核阻塞读），
+ *   收到通知后才读取数据区，避免读到写入前的零填充页。
+ * - 子进程（服务端）fork 后关闭全局 io_uring 环指针，避免父子进程共享
+ *   同一个内核环导致 SQE/CQE 交叉提交；子进程信令读退化为内核阻塞读，
+ *   父进程（客户端）保留事件环，完整走异步事件通知路径。
+ * ============================================================================ */
+
+#if defined(__unix__) || defined(__APPLE__) || defined(__BSD__)
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#endif
+
+/* 双进程联调写入的数据区内容与 0x55 填充校验长度 */
+#define XFILE_SHM_TEST_DATA "SHARED_MEMORY_TEST_1234"
+#define XFILE_SHM_TEST_DATA_LEN 24
+#define XFILE_SHM_TEST_FILL_LEN 256
+
+/* 子进程（服务端）：创建命名共享内存段 → 映射写入 → 信令通知 → 等待结束 */
+static void xfile_shm_server_run(const XString* name, int* result)
+{
+    XFd fd;
+    void* mapped = NULL;
+    char done = 0;
+    int64_t n;
+
+    *result = -1;
+
+    /* 子进程是 fork 出的独立进程，必须与父进程的事件环解耦：
+       关闭全局环指针后，本进程不会向父进程的 io_uring 环提交任何
+       SQE/CQE，信令读走内核阻塞退化路径。 */
+    XAbstractNetIoRing_setGlobal(NULL);
+
+    fd = XFileSystem_openSharedMemory(name, true, 4096, NULL);
+    if (fd < 0) { *result = 1; return; }
+    mapped = XFileSystem_map(fd, 0, 4096, 0x2);
+    if (!mapped) { XFileSystem_close(fd); *result = 2; return; }
+
+    /* 写入数据区 + 0x55 填充，并回读校验本端可见性 */
+    memset(mapped, 0x55, XFILE_SHM_TEST_FILL_LEN);
+    memcpy(mapped, XFILE_SHM_TEST_DATA, XFILE_SHM_TEST_DATA_LEN);
+    if (memcmp(mapped, XFILE_SHM_TEST_DATA, XFILE_SHM_TEST_DATA_LEN) != 0)
+        goto done;
+
+    /* 数据就绪：通过信令通道发 1 字节通知，对端收到后才读取数据区 */
+    {
+        char sig = 1;
+        n = XFileSystem_write(fd, &sig, 1);
+    }
+    if (n != 1) { *result = 4; goto done; }
+
+    /* 等待父进程校验完成后回发的结束信号 */
+    n = XFileSystem_read(fd, &done, 1);
+    if (n != 1 || done != 1) { *result = 5; goto done; }
+    *result = 0;
+
+done:
+    XFileSystem_unmap(mapped, 4096);
+    XFileSystem_close(fd);
+}
+
+/* 父进程（客户端）：按名打开 → 映射 → 信令等待通知 → 校验数据 → 回发结束 */
+static void xfile_shm_client_run(const XString* name, bool* ok)
+{
+    XFd fd;
+    void* mapped = NULL;
+    char sig = 0;
+    int64_t n;
+
+    *ok = false;
+
+    /* 服务端与客户端可能同时启动：客户端按网络套接字 connect 语义
+       在有限时间内重试打开（服务器先 shm_open 创段再 bind/listen）。 */
+    {
+        int attempt;
+        for (attempt = 0; attempt < 100; ++attempt) {
+            fd = XFileSystem_openSharedMemory(name, false, 0, NULL);
+            if (fd >= 0) break;
+            XThread_msleep(20);
+        }
+    }
+    if (fd < 0) return;
+    mapped = XFileSystem_map(fd, 0, 4096, 0x0);
+    if (!mapped) { XFileSystem_close(fd); return; }
+
+    /* 信令通道等待服务端"数据已就绪"通知（库内部事件通知路径） */
+    n = XFileSystem_read(fd, &sig, 1);
+    if (n != 1 || sig != 1) goto done;
+
+    /* 校验数据区与 0x55 填充区 */
+    if (memcmp(mapped, XFILE_SHM_TEST_DATA, XFILE_SHM_TEST_DATA_LEN) != 0)
+        goto done;
+    {
+        const unsigned char* p = (const unsigned char*)mapped;
+        int i;
+        bool fillOk = true;
+        for (i = XFILE_SHM_TEST_DATA_LEN; i < XFILE_SHM_TEST_FILL_LEN; ++i) {
+            if (p[i] != 0x55) { fillOk = false; break; }
+        }
+        if (!fillOk) goto done;
+    }
+
+    /* 校验通过：回发结束信号，服务端收到后解除映射并退出 */
+    {
+        char done = 1;
+        n = XFileSystem_write(fd, &done, 1);
+    }
+    if (n != 1) goto done;
+    *ok = true;
+
+done:
+    XFileSystem_unmap(mapped, 4096);
+    XFileSystem_close(fd);
+}
+
+static void test_shared_memory(void)
+{
+    XPrintf_3("\n--- 19.5 共享内存段 openSharedMemory / map / unmap（双进程联调） ---\n");
+
+    XString* name = XString_create_utf8("xin_yue_c_shared_memory_test");
+    XFd fd;
+    void* mapped;
+    XCoreApplication* testApp = NULL;
+
+    /* 确保库内部事件环存在：交互菜单宿主已创建则复用；独立测试则创建并释放 */
+    if (!XCoreApplication_instance()) {
+        int argc = 1;
+        char arg0[] = "xfile_shared_memory_test";
+        char* argv[] = { arg0, NULL };
+        testApp = XCoreApplication_create(argc, argv);
+    }
+
+#if defined(__unix__) || defined(__APPLE__) || defined(__BSD__)
+    /* 双进程联调：子进程为服务端（创建段），父进程为客户端（打开段） */
+    {
+        pid_t child = fork();
+        if (child < 0) {
+            CHECK(false, "fork 创建共享内存联调子进程失败");
+        } else if (child == 0) {
+            /* 子进程：服务端，完成创建/写入/通知后退出 */
+            int serverResult = -1;
+            xfile_shm_server_run(name, &serverResult);
+            _exit(serverResult);
+        } else {
+            /* 父进程：客户端，等待服务端就绪后联调 */
+            bool clientOk = false;
+            int status = 0;
+            xfile_shm_client_run(name, &clientOk);
+            waitpid(child, &status, 0);
+            CHECK(clientOk, "双进程共享内存数据一致（信令同步 + 事件通知）");
+            CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                  "服务端子进程正常退出");
+        }
+    }
+#else
+    /* 非 POSIX 平台：双进程联调不可用，仅保留参数校验路径 */
+    XPrintf_3("  [跳过] 非 POSIX 平台跳过双进程共享内存联调\n");
+#endif
+
+    /* 打开不存在的段应失败 */
+    {
+        XString* missing = XString_create_utf8("xin_yue_c_shared_memory_no_such");
+        fd = XFileSystem_openSharedMemory(missing, false, 0, NULL);
+        CHECK(fd < 0, "打开不存在的共享内存段应失败");
+        XString_delete_base(missing);
+    }
+
+    /* 参数校验：空名称或非法大小应失败 */
+    fd = XFileSystem_openSharedMemory(NULL, true, 4096, NULL);
+    CHECK(fd < 0, "空名称创建共享内存段应失败");
+    fd = XFileSystem_openSharedMemory(name, true, 0, NULL);
+    CHECK(fd < 0, "非法大小创建共享内存段应失败");
+
+    XString_delete_base(name);
+
+    /* 独立测试创建的事件环由本测试负责释放 */
+    if (testApp)
+        XCoreApplication_delete_base(testApp);
+}
+
+/* ============================================================================
  * 20. encodeName / decodeName
  * ============================================================================ */
 
@@ -1415,6 +1608,7 @@ void XFileTest()
     test_moveToTrash();
     test_moveToTrash_open();
     test_mmap();
+    test_shared_memory();
     test_encode_decode();
     test_append_mode();
     test_readwrite();

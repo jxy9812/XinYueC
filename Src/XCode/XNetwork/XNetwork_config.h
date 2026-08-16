@@ -21,53 +21,53 @@
 extern "C" {
 #endif
 /* ========================================================================== */
-/*                        ???????????                                */
+/*                        模块总开关                                        */
 /* ========================================================================== */
-/** @brief XNetwork ??????? 0 ????? XNetwork ???? API ???????
- * @note ???? CXinYueConfig.h ??????????????????????
- *       ?????? CXinYueConfig.h ??????????????? */
+/** @brief XNetwork 模块总开关；置 0 时裁剪整个 XNetwork 对外公开 API 及所有子功能。
+ * @note 总开关在 CXinYueConfig.h 中统一定义，此处仅兜底默认值。
+ *       关闭后若仍有其它模块无条件引用 XNetwork 符号，需同步裁剪对应依赖。 */
 #ifndef XNETWORK_ON
 #define XNETWORK_ON 1
 #endif
 
 #if XNETWORK_ON
 
-/** @brief XAbstractSocket / XTcpSocket ???????? */
+/** @brief 抽象套接字模块开关；关闭后 XAbstractSocket / XTcpSocket 相关 API 不编译。 */
 #ifndef XNETWORK_ABSTRACT_SOCKET_ON
 #define XNETWORK_ABSTRACT_SOCKET_ON 1
 #endif
 
-/** @brief XTcpServer TCP ?????? */
+/** @brief TCP 服务器模块开关；关闭后 XTcpServer 相关 API 不编译。 */
 #ifndef XNETWORK_TCPSERVER_ON
 #define XNETWORK_TCPSERVER_ON 1
 #endif
 
-/** @brief XUdpSocket UDP ?????? */
+/** @brief UDP 套接字模块开关；关闭后 XUdpSocket 相关 API 不编译。 */
 #ifndef XNETWORK_UDPSOCKET_ON
 #define XNETWORK_UDPSOCKET_ON 1
 #endif
 
-/** @brief XNetworkDatagram ?????????? */
+/** @brief 数据报模块开关；关闭后 XNetworkDatagram 相关 API 不编译。 */
 #ifndef XNETWORK_DATAGRAM_ON
 #define XNETWORK_DATAGRAM_ON 1
 #endif
 
-/** @brief XHostInfo ?????DNS ?????? */
+/** @brief 主机信息模块开关；关闭后 XHostInfo 相关 DNS API 不编译。 */
 #ifndef XNETWORK_HOSTINFO_ON
 #define XNETWORK_HOSTINFO_ON 1
 #endif
 
-/** @brief XNetworkInterface ????????? */
+/** @brief 网络接口模块开关；关闭后 XNetworkInterface 相关 API 不编译。 */
 #ifndef XNETWORK_INTERFACE_ON
 #define XNETWORK_INTERFACE_ON 1
 #endif
 
-/** @brief XNetworkProxy SOCKS5/HTTP ????? */
+/** @brief 代理模块开关；关闭后 XNetworkProxy SOCKS5/HTTP 相关 API 不编译。 */
 #ifndef XNETWORK_PROXY_ON
 #define XNETWORK_PROXY_ON 1
 #endif
 
-/** @brief XSslSocket TLS/SSL ?????? */
+/** @brief SSL 模块开关；关闭后 XSslSocket TLS/SSL 相关 API 不编译。 */
 #ifndef XNETWORK_SSL_ON
 #define XNETWORK_SSL_ON 1
 #endif

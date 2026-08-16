@@ -27,4 +27,21 @@ bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
     return false;
 }
 
+/**
+ * @brief 报告当前平台不支持命名共享内存段。
+ * @param name 共享内存段名称；存根不解引用。
+ * @param create 是否创建新段；存根忽略。
+ * @param maxSize 创建时的段大小；存根忽略。
+ * @param error 可选的错误码输出；写入 0（不支持的占位语义）。
+ * @return 始终返回 XFD_INVALID，表示本平台没有共享内存后端。
+ */
+XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+{
+    (void)name;
+    (void)create;
+    (void)maxSize;
+    if (error) *error = 0;
+    return XFD_INVALID;
+}
+
 #endif /* 非 POSIX、非 Windows 且未启用 FatFS */

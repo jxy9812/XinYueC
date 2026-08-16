@@ -1104,8 +1104,18 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
 }
 
 /* ============================================================================
- * 九、内存映射（2个）- 不支持
+ * 九、内存映射（3个）- 不支持
  * ============================================================================ */
+
+XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+{
+    /* FatFs 运行在无共享内存的嵌入式环境，命名共享内存段明确不支持 */
+    (void)name;
+    (void)create;
+    (void)maxSize;
+    if (error) *error = 0;
+    return XFD_INVALID;
+}
 
 void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
 {

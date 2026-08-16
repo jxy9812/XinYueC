@@ -17,10 +17,10 @@
 #if XNETWORK_ON
 #if XNETWORK_TCPSERVER_ON
 
-// ==================== 杈呭姪瀹?====================
+// ==================== 辅助宏 ====================
 #define getPriv(server) ((XNetworkSocketPrivate*)(server)->d_ptr)
 
-// ==================== 鍐呴儴铏氬嚱鏁板墠鍚戝０鏄?====================
+// ==================== 内部虚函数前向声明 ====================
 
 static void VXTcpServer_deinit(XTcpServer* server);
 static bool VXTcpServer_event(XTcpServer* server, XEvent* e);
@@ -40,19 +40,19 @@ XVtable* XTcpServer_class_init(void)
 		VXTcpServer_IncomingConnection
 	};
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-	// 閲嶈浇鏋愭瀯
+	// 重载析构
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTcpServer_deinit);
-	// 閲嶈浇浜嬩欢澶勭悊
+	// 重载事件处理
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXTcpServer_event);
 	XCLASS_SHOW_SIZE_DEFAULT(XTcpServer);
 	return XVTABLE_DEFAULT;
 }
 
-// ==================== 鍐呴儴铏氬嚱鏁板疄鐜?====================
+// ==================== 内部虚函数实现 ====================
 
 /**
- * @brief 浜嬩欢澶勭悊铏氬嚱鏁?
- * @note 澶勭悊 XEVENT_TYPE_SOCK_ACT 浜嬩欢锛屽綋鏈嶅姟鍣ㄥ鎺ュ瓧鍙鏃舵帴鍙楁柊杩炴帴
+ * @brief 事件处理虚函数
+ * @note 处理 XEVENT_TYPE_SOCK_ACT 事件，当服务器套接字可读时接受新连接
  */
 static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 {
@@ -62,9 +62,9 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 	if (e->type == XEVENT_TYPE_SOCK_ACT) {
 		XEventSockAct* sockAct = (XEventSockAct*)e;
 
-		// 妫€鏌ユ槸鍚︿负璇讳簨浠讹紙鏂拌繛鎺ュ埌杈撅級
+		// 检查是否为读事件（新连接到达）
 		if (sockAct->actType & XSocketAct_Accept) {
-			// 濡傛灉鏆傚仠鎺ュ彈杩炴帴锛屼笉澶勭悊
+			// 如果暂停接受连接，不处理
 			if (server->pauseAccepting) {
 				return true;
 			}
@@ -77,19 +77,19 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 				return true;
 			}
 
-			// 璋冪敤铏氬嚱鏁板鐞嗘柊杩炴帴
+			// 调用虚函数处理新连接
 			XTcpServer_incomingConnection_base(server, clientHandle);
 			XNetwork_serverAccept(server->d_ptr);
 		}
 		return true;
 	}
 	else if (e->type == XEVENT_TYPE_SOCK_CLOSE) {
-		// 鏈嶅姟鍣ㄥ鎺ュ瓧鍏抽棴
+		// 服务器套接字关闭
 		server->listening = false;
 		return true;
 	}
 
-	// 璋冪敤鐖剁被浜嬩欢澶勭悊
+	// 调用父类事件处理
 	return XClass_Parent(XObject, EXObject_Event, bool (*)(XObject*, XEvent*))((XObject*)server, e);
 }
 
@@ -135,12 +135,12 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 			XString_delete_base(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to create socket object");
-		// 鍏抽棴涓嶆帴鍙楃殑鍙ユ焺
+		// 关闭不接受的句柄
 		XNetwork_serverClose(getPriv(server), handle);
 		return;
 	}
 
-	// 璁剧疆鎻忚堪绗﹀拰鐘舵€侊紙鍐呴儴浼氬垱寤?XNetworkSocketPrivate 骞舵敞鍐屽埌浜嬩欢寰幆锛?
+	// 设置描述符和状态（内部会创建 XNetworkSocketPrivate 并注册到事件循环）
 	if (!XAbstractSocket_setSocketDescriptor_base(
 			(XAbstractSocket*)socket, handle,
 			XAbstractSocket_ConnectedState,
@@ -155,27 +155,27 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 		return;
 	}
 
-	// 璁剧疆涓烘湇鍔″櫒鐨勫瓙瀵硅薄
+	// 设置为服务器的子对象
 	XObject_setParent((XObject*)socket, (XObject*)server);
 
-	// 璁剧疆瀵圭鍦板潃鍜岀鍙ｏ紙浠?lastAcceptedAddr/lastAcceptedPort 鑾峰彇锛?
+	// 设置对端地址和端口（从 lastAcceptedAddr/lastAcceptedPort 获取）
 	XAbstractSocket_setPeerAddress((XAbstractSocket*)socket, &server->lastAcceptedAddr);
 	XAbstractSocket_setPeerPort((XAbstractSocket*)socket, server->lastAcceptedPort);
 
-	// 娣诲姞鍒板緟澶勭悊杩炴帴闃熷垪
+	// 添加到待处理连接队列
 	XTcpServer_addPendingConnection(server, socket);
 }
 
-// ==================== 鏋愭瀯鍑芥暟 ====================
+// ==================== 析构函数 ====================
 
 static void VXTcpServer_deinit(XTcpServer* server)
 {
 	if (!server) return;
-	// 鍏抽棴鏈嶅姟鍣紙浼氭竻鐞?d_ptr锛?
+	// 关闭服务器（会清理 d_ptr）
 	//XCoreApplication_sendPostedEvents(server, 0);
 	XTcpServer_close(server);
 	//XCoreApplication_sendPostedEvents(server,0);
-	// 娓呯悊寰呭鐞嗚繛鎺ラ槦鍒?
+	// 清理待处理连接队列
 	if (server->pendingConnections) {
 		int64_t count = XVector_size_base(server->pendingConnections);
 		int64_t i;
@@ -196,14 +196,14 @@ static void VXTcpServer_deinit(XTcpServer* server)
 		server->errorString = NULL;
 	}
 
-	// 閲婃斁鍦板潃缁撴瀯锛坈lose 涓凡閲嶇疆 serverAddress锛岃繖閲屽啀娆?deinit 鏄畨鍏ㄧ殑锛?
+	// 释放地址结构（close 中已重置 serverAddress，这里再次 deinit 是安全的）
 	XHostAddress_deinit_base(&server->serverAddress);
 	XHostAddress_deinit_base(&server->lastAcceptedAddr);
 	
-	// 閲婃斁浠ｇ悊璧勬簮
+	// 释放代理资源
 	XNetworkProxy_deinit_base(&server->proxy);
 	
-	// 璋冪敤鐖剁被鏋愭瀯锛圶Object 鈫?XClass锛?
+	// 调用父类析构（XObject → XClass）
 	XClass_Deinit_Parent(XObject, server);
 }
 
@@ -235,7 +235,7 @@ void XTcpServer_init(XTcpServer* server)
 	XHostAddress_init(&server->lastAcceptedAddr);
 	server->lastAcceptedPort = 0;
 
-	// 璁剧疆铏氬嚱鏁拌〃
+	// 设置虚函数表
 	XClassSetVtable(server, XTcpServer);
 }
 
@@ -249,7 +249,7 @@ XTcpServer* XTcpServer_create_ex(XMemoryType memory)
 	return server;
 }
 
-// ==================== 鏍稿績鍔熻兘 ====================
+// ==================== 核心功能 ====================
 
 bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t port)
 {
@@ -259,7 +259,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	// 纭繚缃戠粶瀛愮郴缁熷凡鍒濆鍖?
 	XNetwork_ensureInit();
 
-	// 浣跨敤榛樿鍦板潃
+	// 使用默认地址
 	XHostAddress listenAddr;
 	XHostAddress_init(&listenAddr);
 	if (address) {
@@ -269,8 +269,8 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	}
 	if (!server->d_ptr)
 		server->d_ptr = XNetwork_createSocketPrivate(server);
-	// 璋冪敤骞冲彴 API 鍒涘缓鏈嶅姟鍣?
-	// 娉ㄦ剰锛氫唬鐞嗘湇鍔″櫒鍔熻兘宸茬Щ鑷冲簲鐢ㄥ眰瀹炵幇锛屽钩鍙板眰涓嶅啀鎻愪緵浠ｇ悊API
+	// 调用平台 API 创建服务器
+	// 注意：代理服务器功能已移至应用层实现，平台层不再提供代理API
 	XServerHandle handle = XNetwork_serverCreate(server->d_ptr,
 		&listenAddr, port, server->listenBacklogSize, true);
 
@@ -320,7 +320,7 @@ bool XTcpServer_isListening(const XTcpServer* server)
 	return server->listening;
 }
 
-// ==================== 杩炴帴绠＄悊 ====================
+// ==================== 连接管理 ====================
 
 void XTcpServer_setMaxPendingConnections(XTcpServer* server, int numConnections)
 {
@@ -379,12 +379,12 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	if (!server) return false;
 	if (socketDescriptor < 0) return false;
 
-	// 濡傛灉宸茬粡鍦ㄧ洃鍚紝鍏堝叧闂?
+	// 如果已经在监听，先关闭
 	if (server->listening) {
 		XTcpServer_close(server);
 	}
 
-	// 鍒涘缓 XNetworkSocketPrivate 鐢ㄤ簬寮傛浜嬩欢閫氱煡
+	// 创建 XNetworkSocketPrivate 用于异步事件通知
 	XNetworkSocketPrivate* priv = XNetwork_createSocketPrivate(server);
 	if (!priv) return false;
 
@@ -394,7 +394,7 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 		return false;
 	}
 
-	// 淇濆瓨鐘舵€?
+	// 保存状态
 	server->d_ptr = priv;
 	//server->serverHandle = XSocketDescriptor_fromIntptr(socketDescriptor);
 	server->serverPort = XNetwork_serverPort(XNetwork_socketDescriptor(priv));
@@ -404,7 +404,7 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	return true;
 }
 
-// ==================== 杩炴帴澶勭悊 ====================
+// ==================== 连接处理 ====================
 
 bool XTcpServer_waitForNewConnection(XTcpServer* server, int msec, bool* timedOut)
 {
@@ -415,22 +415,22 @@ bool XTcpServer_waitForNewConnection(XTcpServer* server, int msec, bool* timedOu
 
 	if (timedOut) *timedOut = false;
 
-	// 濡傛灉宸叉湁寰呭鐞嗚繛鎺ワ紝鐩存帴杩斿洖
+	// 如果已有待处理连接，直接返回
 	if (XTcpServer_hasPendingConnections_base(server)) {
 		return true;
 	}
 
-	// 濡傛灉 msec == 0锛岄潪闃诲锛岀洿鎺ヨ繑鍥?
+	// 如果 msec == 0，非阻塞，直接返回
 	if (msec == 0) {
 		if (timedOut) *timedOut = true;
 		return false;
 	}
 
-	// 浣跨敤浜嬩欢寰幆绛夊緟鏂拌繛鎺?
+	// 使用事件循环等待新连接
 	uint64_t startTime = XDateTime_currentMSecsSinceEpoch();
 	
 	while (!XTcpServer_hasPendingConnections_base(server)) {
-		// 澶勭悊浜嬩欢
+		// 处理事件
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
 		
 		// 妫€鏌ヨ秴鏃?
@@ -473,7 +473,7 @@ char* XTcpServer_errorString(const XTcpServer* server)
 	if (!server) return NULL;
 	if (!server->errorString) return NULL;
 
-	// 杩斿洖鏂板垎閰嶇殑瀛楃涓插壇鏈?
+	// 返回新分配的字符串副本
 	const char* str = XString_toUtf8(server->errorString);
 	if (!str) return NULL;
 
@@ -485,7 +485,7 @@ char* XTcpServer_errorString(const XTcpServer* server)
 	return result;
 }
 
-// ==================== 鎺ュ彈鎺у埗 ====================
+// ==================== 接受控制 ====================
 
 void XTcpServer_pauseAccepting(XTcpServer* server)
 {
@@ -499,7 +499,7 @@ void XTcpServer_resumeAccepting(XTcpServer* server)
 	server->pauseAccepting = false;
 }
 
-// ==================== 浠ｇ悊璁剧疆 ====================
+// ==================== 代理设置 ====================
 
 void XTcpServer_setProxy(XTcpServer* server, const XNetworkProxy* proxy)
 {
@@ -560,11 +560,11 @@ void XTcpServer_addPendingConnection(XTcpServer* server, XTcpSocket* socket)
 	// 鍙戝皠 newConnection 淇″彿锛圦t 6.8 琛屼负锛?
 	XTcpServer_newConnection_signal(server);
 
-	// 鍙戝皠 pendingConnectionAvailable 淇″彿
+	// 发射 pendingConnectionAvailable 信号
 	XTcpServer_pendingConnectionAvailable_signal(server);
 }
 
-// ==================== 淇″彿瀹炵幇 ====================
+// ==================== 信号实现 ====================
 
 void* XTcpServer_newConnection_signal(XTcpServer* server)
 {

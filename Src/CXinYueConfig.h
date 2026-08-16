@@ -6,12 +6,12 @@ extern "C" {
 #endif
 
 /* ========================================================================== */
-/*                        ??/????????                                */
+/*                        平台/操作系统自动检测                                */
 /* ========================================================================== */
-/* ??????????? 1???? 0?
- * ??????FreeRTOS > Windows > POSIX(Linux/macOS/BSD) > ??
- * ???? #if XPLATFORM_WINDOWS / XPLATFORM_POSIX / XPLATFORM_FREERTOS /
- *       XPLATFORM_BAREMETAL ????????????? _WIN32/__linux__ ??
+/* 单平台互斥宏（仅一个为 1，其余为 0）
+ * 检测优先级：FreeRTOS > Windows > POSIX(Linux/macOS/BSD) > 裸机
+ * 用法：用 #if XPLATFORM_WINDOWS / XPLATFORM_POSIX / XPLATFORM_FREERTOS /
+ *       XPLATFORM_BAREMETAL 做平台条件编译，替代散落的 _WIN32/__linux__ 判断
  */
 #if defined(__FreeRTOS__)
   #define XPLATFORM_FREERTOS    1
@@ -35,26 +35,26 @@ extern "C" {
   #define XPLATFORM_BAREMETAL   1
 #endif
 
-/* ??????????????/POSIX/FreeRTOS ???? OS? */
+/* 派生宏：是否有操作系统（桌面/POSIX/FreeRTOS 均视为有 OS） */
 #define XPLATFORM_HAS_OS        (XPLATFORM_WINDOWS || XPLATFORM_POSIX || XPLATFORM_FREERTOS)
-/* ?????Windows / Linux / macOS????????????? */
+/* 桌面平台（Windows / Linux / macOS），用于选择大缓冲区等配置 */
 #define XPLATFORM_DESKTOP       (XPLATFORM_WINDOWS || XPLATFORM_POSIX)
 
-/* ? lwIP NO_SYS ?????????
- *   ???? -> NO_SYS=1??? sys_arch?? tcpip_thread?
- *   ? OS ?? -> NO_SYS=0??? sys_arch?lwIP ???? tcpip_thread?
- * @note ????? XNetwork_config.h ? XNETWORK_LWIP_NO_SYS ???
- *       ????? #define XNETWORK_LWIP_NO_SYS ?????? */
+/* 与 lwIP NO_SYS 对接的推荐默认值：
+ *   裸机环境 -> NO_SYS=1（最小 sys_arch，无 tcpip_thread）
+ *   有 OS 环境 -> NO_SYS=0（完整 sys_arch，lwIP 内部创建 tcpip_thread）
+ * @note 实际取值由 XNetwork_config.h 的 XNETWORK_LWIP_NO_SYS 引用，
+ *       用户可显式 #define XNETWORK_LWIP_NO_SYS 覆盖此默认值 */
 #define XPLATFORM_LWIP_NO_SYS_DEFAULT   (XPLATFORM_BAREMETAL ? 1 : 0)
 
 /* ========================================================================== */
-/*                        ???(???)????                               */
+/*                                字节序(大小端)自动检测                                */
 /* ========================================================================== */
-/* ?????????????????????
+/* 编译器预定义宏自动检测字节序，无需手动配置
  * GCC/Clang: __BYTE_ORDER__ + __ORDER_BIG_ENDIAN__
  * IAR/ARM:   __BIG_ENDIAN / __ARM_BIG_ENDIAN
- * MSVC:      x86/x64/ARM ?????
- * ????????????????: -DIS_BIG_ENDIAN=1 */
+ * MSVC:      x86/x64/ARM 均为小端序
+ * 若需手动指定，可在编译命令行覆盖: -DIS_BIG_ENDIAN=1 */
 #ifndef IS_BIG_ENDIAN
   #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
     #define IS_BIG_ENDIAN (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
@@ -68,14 +68,14 @@ extern "C" {
 #endif
 
 /* ========================================================================== */
-/*                        ??????                                        */
+/*                                   调试输出配置                                   */
 /* ========================================================================== */
 #define DEBUG_ON						0
-#define XERROR_ON						1//????
-#define DEMOTEST						1//????
+#define XERROR_ON						1//错误输出
+#define DEMOTEST						1//测试代码
 
 /* ========================================================================== */
-/*                        ????/??????                                */
+/*                                通用模块/编译开关配置                                 */
 /* ========================================================================== */
 #include"XClass/XClassConfig.h"
 #include"XContainer/XContainerConfig.h"
@@ -83,33 +83,33 @@ extern "C" {
 
 
 /* ========================================================================== */
-/*                        XSync ??????                             */
+/*                                XSync 同步模块开关                                */
 /* ========================================================================== */
-/** @brief XSync ??????? 0 ??????????????????
- * @note ??????? XSync_config.h ????XMUTEX_ON / XTHREAD_ON ???
- *       ??????????????? XSync ????????????? */
+/** @brief XSync 模块总开关；置 0 时裁剪整个 XSync 公共 API 和所有子功能。
+ * @note 详细的子功能开关在 XSync_config.h 中定义，如 XMUTEX_ON / XTHREAD_ON 等。
+ *       关闭后若仍有其它模块无条件引用 XSync 符号，需同步裁剪对应依赖。 */
 #ifndef XSYNC_ON
 #define XSYNC_ON 1
 #endif
 #include"XCode/XSync/XSync_config.h"
 
 /* ========================================================================== */
-/*                        XFile ????????                                */
+/*                              XFile 文件系统模块总开关                               */
 /* ========================================================================== */
-/** @brief XFile ??????? 0 ????? XFile ???? API ???????
- * @note ????? XFileSystem_config.h ??????? XFile ???????
- *       ????????????????????????/????? */
+/** @brief XFile 模块总开关；置 0 时裁剪整个 XFile 对外公开 API 及所有子功能。
+ * @note 详细的子功能开关在 XFileSystem_config.h 中定义，如 XDIR_ON / XFILE_OBJECT_ON 等。
+ *       关闭后若仍有其它模块无条件引用 XFile 符号，需同步裁剪对应依赖。 */
 #ifndef XFILE_ON
 #define XFILE_ON 1
 #endif
 #include"XCode/XFile/XFileSystem_config.h"
 
 /* ========================================================================== */
-/*                        XNetwork ????????                             */
+/*                             XNetwork 网络协议模块总开关                             */
 /* ========================================================================== */
-/** @brief XNetwork ??????? 0 ????? XNetwork ???? API ???????
- * @note ????? XNetwork_config.h ??????? XNetwork ???????
- *       ????????????????????????? */
+/** @brief XNetwork 模块总开关；置 0 时裁剪整个 XNetwork 对外公开 API 及所有子功能。
+ * @note 详细的子功能开关在 XNetwork_config.h 中定义，如 XNETWORK_TCPSERVER_ON 等。
+ *       关闭后若仍有其它模块无条件引用 XNetwork 符号，需同步裁剪对应依赖。 */
 #ifndef XNETWORK_ON
 #define XNETWORK_ON 1
 #endif
@@ -125,9 +125,9 @@ extern "C" {
 #include"XProtocol/XProtocol_config.h"
 
 /* ========================================================================== */
-/*                        XConsoleShell ??????                           */
+/*                             XConsoleShell 模块开关                             */
 /* ========================================================================== */
-/** @brief Shell ????? 0 ????? Shell ?? API ??????? */
+/** @brief XConsoleShell 模块总开关；置 0 时裁剪整个 Shell 公共 API 和所有子功能。 */
 #ifndef XCONSOLE_SHELL_ON
 #define XCONSOLE_SHELL_ON 1
 #endif
@@ -143,45 +143,45 @@ extern "C" {
 #include"XTui/XTuiConfig.h"
 
 /* ========================================================================== */
-/*                        XPrintf ??????                                */
+/*                               XPrintf 输出编码模式                               */
 /* ========================================================================== */
-/* XPRINTF_UTF8_CONSOLE = 1  ??????UTF-8?????UTF-8?Windows?????
- *                          - ???UTF-8?/utf-8????????UTF-8?????
- *                          - ?lwIP?SetConsoleOutputCP(CP_UTF8)??
- *                          - ????XPrintf???????????
- * XPRINTF_UTF8_CONSOLE = 0  ???????(GBK)???????GBK???????
- *                          - ??XChar_utf8ToGbkStream?UTF-8->GBK??
- *                          - ???????????GBK???
- * ???Linux/macOS??????UTF-8??????Windows */
+/* XPRINTF_UTF8_CONSOLE = 1  强制控制台为UTF-8，直接输出UTF-8（Windows桌面推荐）
+ *                          - 源码是UTF-8，/utf-8编译后字面量也是UTF-8，无需转换
+ *                          - 与lwIP的SetConsoleOutputCP(CP_UTF8)兼容
+ *                          - 首次调用XPrintf时自动设置控制台代码页
+ * XPRINTF_UTF8_CONSOLE = 0  转换为本地编码(GBK)后输出（嵌入式GBK串口终端推荐）
+ *                          - 调用XChar_utf8ToGbkStream做UTF-8->GBK转换
+ *                          - 适用于串口终端等只支持GBK的场景
+ * 注意：Linux/macOS始终直接输出UTF-8，此宏仅影响Windows */
 #define XPRINTF_UTF8_CONSOLE			1
 
 /* ========================================================================== */
-/*                        ??????                                        */
+/*                                   算法模块开关                                   */
 /* ========================================================================== */
 #define XBase64_ON						1
 #define	XAbstractNetIoRing_ON					1
 
 /* ========================================================================== */
-/*                        ???? ??????                                */
+/*                                事件投递 无锁队列大小                                 */
 /* ========================================================================== */
 #ifndef TryPostEvent_QueueSize
 #if XPLATFORM_DESKTOP
 #define TryPostEvent_QueueSize      512 
 #else
-#define TryPostEvent_QueueSize      64   /* ?????????RAM */
+#define TryPostEvent_QueueSize      64   /* 适配嵌入式设备节省RAM */
 #endif
 #endif
 
 /* ========================================================================== */
-/*                        ??/?????                                      */
+/*                                  调试/输出宏定义                                  */
 /* ========================================================================== */
-#define IS_ON_DEBUG(on)						ISNULL(on,"???????"#on",?CXinYueConfig.h")
+#define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在CXinYueConfig.h")
 
 /** @brief 输出带文件、函数和行号上下文的格式化日志。 */
 int XPrintf_context(const char* label, const char* file, const char* function,
                     int line, const char* format, ...);
 
-//??debug??????
+//定义debug信息输出方式
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))
 #define XDEBUG_PRINTF(...) XPrintf_context("", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
@@ -196,7 +196,7 @@ int XPrintf_context(const char* label, const char* file, const char* function,
 #endif
 #endif // !DEBUG_ON
 
-//??????????
+//定义错误信息输出方式
 #if ((XERROR_ON))
 #define XERROR_PRINTF(...) XPrintf_context("XError", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #else

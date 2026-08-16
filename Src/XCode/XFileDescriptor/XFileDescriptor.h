@@ -44,6 +44,7 @@ typedef enum {
     XFD_TYPE_TIMER,             /**< 定时器 */
     XFD_TYPE_DIR,               /**< 目录迭代器 */
     XFD_TYPE_CONSOLE,           /**< 带平台私有输入状态的控制台 */
+    XFD_TYPE_MAPPING,           /**< 共享内存映射段（命名内存段，供 XFileSystem_openSharedMemory 使用） */
 } XFdType;
 
 /* ============================================================================
