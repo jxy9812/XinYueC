@@ -176,10 +176,11 @@ typedef enum XDeviceError
  */
 typedef struct XDeviceOpenOptions
 {
-    int m_openMode;                          /**< 打开模式位组合，见 XFileInfo 的 XDeviceFile_* 打开模式。0 表示设备默认模式。 */
-    uint32_t m_flags;                        /**< XDeviceOpenFlag 位组合。 */
-    int64_t m_timeoutMs;                     /**< 打开操作超时毫秒；0 表示设备默认或无限等待。 */
     const XString* m_target;                 /**< 设备目标名称；文件为路径、网络 Connect 为主机名，其它设备按各自契约解释；仅在 XDevice_open 调用期间借用。 */
+    int64_t m_timeoutMs;                     /**< 打开操作超时毫秒；0 表示设备默认或无限等待。 */
+    uint32_t m_openMode : 13;                /**< 打开模式位组合；当前 XIODevice 标志最高使用 bit 12。 */
+    uint32_t m_flags    : 3;                 /**< XDeviceOpenFlag 位组合；保留一个扩展位。 */
+    uint32_t m_reserved : 16;                /**< 保留位，必须为 0。 */
 } XDeviceOpenOptions;
 
 /**
@@ -190,11 +191,11 @@ typedef struct XDeviceOpenOptions
 typedef struct XDevice
 {
     XClass m_class;                            /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
-    XDeviceType m_type;                        /**< 设备类型，取自 XDeviceType；内置设备由对应设备初始化时设置，外部注册设备为 XDeviceType_Class。 */
     XDeviceOpenOptions* m_defaultOpenOptions;  /**< 默认打开选项；借用指针，可为 NULL；子类可扩展 XDeviceOpenOptions 结构，并在此存储扩展结构体第一个成员 m_base 的地址。 */
     uint32_t m_capabilities;                   /**< XDeviceCap 位集合，表示设备通用 I/O 能力。 */
-    bool m_registered;                         /**< 该设备类对象是否已注册到 XDevice 注册表。 */
-    uint32_t m_refCount;                       /**< 设备类对象引用计数；由 XDevice_ref/XDevice_unref 管理，open 成功 +1、close -1。注册设备为静态单例，计数归零不释放；未注册的堆对象计数归零时自动释放。 */
+    uint32_t m_type       : 4;                 /**< 设备类型，XDeviceType；当前类型数量不超过 16。 */
+    uint32_t m_registered : 1;                 /**< 该设备类对象是否已注册到 XDevice 注册表。 */
+    uint32_t m_refCount  : 27;                 /**< 引用计数；足够覆盖设备类的实际并发打开数。 */
 } XDevice;
 /* ============================================================================
  * 设备打开上下文

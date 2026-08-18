@@ -403,7 +403,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  * @return 成功返回由调用方拥有的 XFd；失败返回 XFD_INVALID，调用方不得关闭该无效值。
  * @note 平台实现除命名共享内存段外，还会内建一个同名信令通道（POSIX 为
  *       Unix domain 流式套接字，Windows 为命名管道）。该 XFd 的
- *       XDeviceFile_map / XDeviceFile_unmap 用于访问共享内存数据区；
+ *       XDevice_control 的 XDeviceFileCommand_Map / Unmap 用于访问共享内存数据区；
  *       XDeviceFile_read / XDeviceFile_write 在信令通道上收发 1 字节通知
  *       （数据方写完一块后写通知字节，对端阻塞等待，参考网络套接字的异步
  *       接收，不需要轮询共享内存状态字段）。使用完毕后必须调用
@@ -414,32 +414,6 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  *       一致），create 为 false 时阻塞直到服务端就绪（与 connect 语义一致）。
  */
 XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error);
-
-/**
- * @brief 将文件的指定区域映射到进程地址空间。
- * @param fd 已打开的文件描述符；借用。对 XDeviceFile_openSharedMemory 返回的
- *           共享内存段描述符，映射的是命名共享内存段的数据区。
- * @param offset 映射起始字节偏移；必须非负。
- * @param size 映射长度，单位为字节；必须大于 0。
- * @param flags 映射标志位组合；bit0 表示私有映射（MAP_PRIVATE），bit1 表示
- *              请求可写映射（PROT_WRITE）。普通文件映射与共享内存段映射共用。
- * @return 映射成功返回可访问的首字节地址；失败返回 NULL。
- * @note 返回地址由调用方持有，必须使用同一 size 调用 XDeviceFile_unmap 解除
- *       映射。共享内存段描述符的映射视图由平台保存的段句柄建立（POSIX 为
- *       shm_open 的 shmFd，Windows 为 CreateFileMapping 的 mapHandle），
- *       与信令通道句柄相互独立。
- */
-void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags);
-
-/**
- * @brief 解除由 XDeviceFile_map 创建的内存映射。
- * @param addr XDeviceFile_map 成功返回的首字节地址；不能为 NULL。
- * @param size 与创建映射时相同的逻辑映射长度，单位为字节，必须大于 0。
- * @return 解除成功返回 true；参数无效或平台调用失败返回 false。
- * @note 调用成功后 addr 指向的内存不可再访问。共享内存段的解除映射只释放
- *       本进程的地址空间视图，不影响命名共享内存段本身与其他进程的视图。
- */
-bool XDeviceFile_unmap(void* addr, int64_t size);
 
 /* ============================================================================
  * 文件设备专有控制命令

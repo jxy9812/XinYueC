@@ -63,7 +63,7 @@ bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 
 /* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 shmFd（shm_open 返回）承载，信令通道由 signalFd
-   （Unix domain 流式套接字）承载，XDeviceFile_map/unmap 使用 shmFd。
+   （Unix domain 流式套接字）承载，XDeviceFileCommand_Map/Unmap 使用 shmFd。
    信令通道的异步接收完全接入库内部事件通知系统（XAbstractNetIoRing
    全局 io_uring 环，与网络套接字/串口的异步读一致）：
    openSharedMemory 建立信令套接字后即提交常驻异步 RECV，完成事件由
@@ -784,7 +784,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  * ============================================================================
  *
  * 共享内存段在 POSIX 上由两块组成：
- *   1. 命名共享内存段（shm_open）：存放跨进程数据，通过 XDeviceFile_map 映射；
+ *   1. 命名共享内存段（shm_open）：存放跨进程数据，通过 XDeviceFileCommand_Map 映射；
  *   2. 命名信令通道（Unix domain 流式套接字，路径 <共享内存名>.sig）：
  *      数据方写完一块数据后向通道写入 1 个信令字节，对端通过库内部
  *      事件通知系统（XAbstractNetIoRing 全局 io_uring 环）异步接收，
@@ -793,7 +793,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  *
  * XFd 句柄为信令套接字 fd，object 保存共享内存段 fd、路径信息与异步读
  * 事件上下文；XDeviceFile_legacyRead / XDeviceFile_legacyWrite 在信令通道上收发
- * 通知字节，XDeviceFile_map / XDeviceFile_legacyClose 据此完成映射与释放。
+ * 通知字节，XDeviceFileCommand_Map / XDeviceFile_legacyClose 据此完成映射与释放。
  */
 
 /* 信令通道默认目录（无 P_tmpdir 时回退 /tmp）。 */
@@ -1181,7 +1181,7 @@ fail:
 #define XFILE_PAGE_SIZE 4096
 #define XFILE_PAGE_MASK (XFILE_PAGE_SIZE - 1)
 
-void* XDeviceFile_map(XFd fdx, int64_t offset, int64_t size, int flags) {
+void* XDeviceFile_legacyMap(XFd fdx, int64_t offset, int64_t size, int flags) {
     XFileDescriptor* desc = XFd_get(fdx);
     int fd;
     if (!desc) return NULL;
@@ -1208,7 +1208,7 @@ void* XDeviceFile_map(XFd fdx, int64_t offset, int64_t size, int flags) {
     return (char*)base + delta;
 }
 
-bool XDeviceFile_unmap(void* addr, int64_t size) {
+bool XDeviceFile_legacyUnmap(void* addr, int64_t size) {
     if (!addr) return false;
     /* 同样需要将用户指针向下对齐到页, 并使用对齐后的 size */
     uintptr_t p = (uintptr_t)addr;

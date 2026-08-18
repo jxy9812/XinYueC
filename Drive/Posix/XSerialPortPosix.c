@@ -1,4 +1,9 @@
 #include "XDeviceSerialPort.h"
+
+#if defined(XSERIALPORT_USE_PLATFORM_API) && (defined(__linux__) || defined(__unix__) || defined(__APPLE__) || \
+    defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+    defined(__DragonFly__) || defined(__sun))
+
 #include "XMemory.h"
 #include "XVariant.h"
 #include "XVarList.h"
@@ -12,10 +17,6 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-
-#if defined(XSERIALPORT_USE_PLATFORM_API) && (defined(__linux__) || defined(__unix__) || defined(__APPLE__) || \
-    defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
-    defined(__DragonFly__) || defined(__sun))
 
 #ifndef CRTSCTS
 #define CRTSCTS 0

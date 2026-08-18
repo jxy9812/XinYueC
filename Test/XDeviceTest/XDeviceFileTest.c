@@ -16,7 +16,10 @@ bool XDeviceFileTest_runAll(void)
     puts("XDeviceFile test: SKIP");
     return true;
 #else
-#if defined(XFILE_USE_FATFS)
+#if defined(_WIN32)
+    /* 避免向 C: 根目录写文件；普通用户可在当前工作目录执行回归测试。 */
+    static const char testPathText[] = "xdevicefile-platform-test.bin";
+#elif defined(XFILE_USE_FATFS)
     static const char testPathText[] = "C:/xdevicefile-test.bin";
 #else
     static const char testPathText[] = "/tmp/xdevicefile-platform-test.bin";

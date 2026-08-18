@@ -7,7 +7,7 @@
  * （连接握手、分块帧协议、跨进程同步）。实现完全位于共享代码
  * （Src/XCode/XSql/XMySqlSharedMemory.c），不包含任何平台头文件：
  * 命名共享内存段的打开/映射/解除映射统一走 XDeviceFile_openSharedMemory /
- * XDeviceFile_map / XDeviceFile_unmap / XDeviceFile_close 三个共享内存
+ * XDevice_control(Map/Unmap) / XDeviceFile_close 三个共享内存
  * 原语。平台 XDeviceFile_openSharedMemory 会为每个段内建一个同名信令
  * 通道（POSIX 为 Unix domain 流式套接字，Windows 为命名管道），返回的
  * XFd 可直接用 XDeviceFile_read / XDeviceFile_write 收发信令字节；

@@ -133,10 +133,11 @@ typedef struct XDeviceSerialPortOpenOptions
     XSerialPort* m_owner;                    /**< 可选高层 XSerialPort 借用指针。 */
     const void* m_platformData;               /**< 平台配置借用指针；平台无额外配置时为 NULL。 */
     int32_t m_baudRate;                      /**< 波特率，必须大于 0。 */
-    XSerialPort_DataBits m_dataBits;         /**< 数据位。 */
-    XSerialPort_Parity m_parity;             /**< 校验方式。 */
-    XSerialPort_StopBits m_stopBits;         /**< 停止位。 */
-    XSerialPort_FlowControl m_flowControl;   /**< 流控方式。 */
+    uint32_t m_dataBits    : 4;              /**< 数据位。 */
+    uint32_t m_parity      : 3;              /**< 校验方式。 */
+    uint32_t m_stopBits    : 2;              /**< 停止位。 */
+    uint32_t m_flowControl : 2;              /**< 流控方式。 */
+    uint32_t m_reserved    : 21;             /**< 保留位，必须为 0。 */
     int64_t m_readBufferSize;                /**< 接收缓冲上限提示，单位字节。 */
 } XDeviceSerialPortOpenOptions;
 
@@ -196,20 +197,21 @@ typedef struct XDeviceSerialPortContext
     XSerialPort* m_owner;                     /**< 高层串口对象借用指针，可为 NULL。 */
     XRingBuffer* m_readBuffer;                /**< 已完成的异步读取数据，由上下文拥有。 */
     XRingBuffer* m_writeBuffer;               /**< 等待异步写入的数据，由上下文拥有。 */
-    int32_t m_baudRate;                       /**< 当前波特率。 */
-    XSerialPort_DataBits m_dataBits;          /**< 当前数据位。 */
-    XSerialPort_Parity m_parity;              /**< 当前校验方式。 */
-    XSerialPort_StopBits m_stopBits;          /**< 当前停止位。 */
-    XSerialPort_FlowControl m_flowControl;    /**< 当前流控方式。 */
-    XSerialPort_Error m_error;                /**< 最近一次串口错误。 */
-    int m_openMode;                           /**< XIODeviceBaseMode 位组合。 */
-    uint32_t m_flags;                         /**< XDeviceOpenFlag 位组合。 */
     const void* m_platformData;               /**< 平台配置借用指针。 */
     int64_t m_readBufferSize;                 /**< 接收缓冲上限提示。 */
     int64_t m_pendingWriteBytes;              /**< 已提交但尚未完成的写入字节数。 */
-    bool m_dataTerminalReady;                 /**< DTR 已设置状态。 */
-    bool m_requestToSend;                     /**< RTS 已设置状态。 */
-    bool m_breakEnabled;                      /**< Break 已设置状态。 */
+    int32_t m_baudRate;                       /**< 当前波特率。 */
+    uint32_t m_dataBits          : 4;         /**< 当前数据位。 */
+    uint32_t m_parity            : 3;         /**< 当前校验方式。 */
+    uint32_t m_stopBits          : 2;         /**< 当前停止位。 */
+    uint32_t m_flowControl       : 2;         /**< 当前流控方式。 */
+    uint32_t m_error             : 4;         /**< 最近一次串口错误。 */
+    uint32_t m_dataTerminalReady : 1;         /**< DTR 已设置状态。 */
+    uint32_t m_requestToSend     : 1;         /**< RTS 已设置状态。 */
+    uint32_t m_breakEnabled      : 1;         /**< Break 已设置状态。 */
+    uint32_t m_openMode          : 13;        /**< XIODeviceBaseMode 位组合。 */
+    uint32_t m_flags             : 2;         /**< XDeviceOpenFlag 位组合。 */
+    uint32_t m_reserved          : 1;         /**< 保留位，必须为 0。 */
 } XDeviceSerialPortContext;
 
 /** @brief XDeviceSerialPort 虚函数表；继承 XDevice，不新增虚槽。 */

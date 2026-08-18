@@ -223,16 +223,16 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_isServer = nopts->m_operation == XDeviceNetworkOpen_Listen ||
                       nopts->m_operation == XDeviceNetworkOpen_ListenAdopt;
     if (!ctx->m_isServer && nopts->m_owner) {
-        ctx->m_socket = (XAbstractSocket*)nopts->m_owner;
+        ctx->m_endpoint.m_socket = (XAbstractSocket*)nopts->m_owner;
     } else if (!ctx->m_isServer) {
-        ctx->m_socket = (XAbstractSocket*)calloc(1, sizeof(XAbstractSocket));
-        if (ctx->m_socket) {
-            XAbstractSocket_init(ctx->m_socket,
+        ctx->m_endpoint.m_socket = (XAbstractSocket*)calloc(1, sizeof(XAbstractSocket));
+        if (ctx->m_endpoint.m_socket) {
+            XAbstractSocket_init(ctx->m_endpoint.m_socket,
             nopts->m_socketType == XDeviceNetwork_Udp ? XAbstractSocket_UdpSocket : XAbstractSocket_TcpSocket);
         }
         ctx->m_ownsSocket = true;
     }
-    if (!ctx->m_isServer && !ctx->m_socket) {
+    if (!ctx->m_isServer && !ctx->m_endpoint.m_socket) {
         XClass_deinit_base((XClass*)&ctx->m_peerAddress);
         XDeviceNetwork_cleanup();
         XDeviceNetwork_deleteContext(ctx);
@@ -243,8 +243,8 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_base.m_fd = XFd_alloc(XFD_TYPE_CLASS, &ctx->m_base, ctx->m_owner);
     if (ctx->m_base.m_fd == XFD_INVALID) {
         if (ctx->m_ownsSocket) {
-            XClass_deinit_base((XClass*)ctx->m_socket);
-            free(ctx->m_socket);
+            XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+            free(ctx->m_endpoint.m_socket);
         }
         XClass_deinit_base((XClass*)&ctx->m_peerAddress);
         XDeviceNetwork_deleteContext(ctx);
@@ -256,7 +256,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     mode = nopts->m_base.m_openMode ? nopts->m_base.m_openMode : XIODevice_ReadWrite;
     ctx->m_openMode = mode;
     if (!ctx->m_isServer)
-        ctx->m_socket->base.m_openMode = (uint8_t)mode;
+        ctx->m_endpoint.m_socket->base.m_openMode = (uint8_t)mode;
 
     if (nopts->m_operation == XDeviceNetworkOpen_Listen) {
         if (nopts->m_address) {
@@ -265,18 +265,18 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             setAnyAddress(&anyAddress, nopts->m_protocol);
             bindAddress = &anyAddress;
         }
-        ctx->m_serverHandle = XDeviceNetwork_serverCreate(ctx->m_base.m_fd, bindAddress,
+        ctx->m_endpoint.m_serverHandle = XDeviceNetwork_serverCreate(ctx->m_base.m_fd, bindAddress,
             nopts->m_port, nopts->m_listenBacklog, nopts->m_reuseAddress);
-        operationOk = XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(ctx->m_serverHandle));
-        if (operationOk) actualPort = XDeviceNetwork_serverPort(ctx->m_serverHandle);
+        operationOk = XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(ctx->m_endpoint.m_serverHandle));
+        if (operationOk) actualPort = XDeviceNetwork_serverPort(ctx->m_endpoint.m_serverHandle);
         if (!nopts->m_address)
             XClass_deinit_base((XClass*)&anyAddress);
     } else if (nopts->m_operation == XDeviceNetworkOpen_ListenAdopt) {
         operationOk = nopts->m_socketDescriptor >= 0 &&
             XDeviceNetwork_serverSetDescriptor(ctx->m_base.m_fd, nopts->m_socketDescriptor);
         if (operationOk) {
-            ctx->m_serverHandle = nopts->m_socketDescriptor;
-            actualPort = XDeviceNetwork_serverPort(ctx->m_serverHandle);
+            ctx->m_endpoint.m_serverHandle = nopts->m_socketDescriptor;
+            actualPort = XDeviceNetwork_serverPort(ctx->m_endpoint.m_serverHandle);
         }
     } else if (nopts->m_operation == XDeviceNetworkOpen_Bind) {
         if (nopts->m_address) {
@@ -289,9 +289,9 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             nopts->m_reuseAddress, nopts->m_shareAddress, toNetworkSocketType(nopts->m_socketType));
         operationOk = actualPort != 0;
         if (operationOk) {
-            XAbstractSocket_setLocalAddress(ctx->m_socket, bindAddress);
-            XAbstractSocket_setLocalPort(ctx->m_socket, actualPort);
-            ctx->m_socket->state = XAbstractSocket_BoundState;
+            XAbstractSocket_setLocalAddress(ctx->m_endpoint.m_socket, bindAddress);
+            XAbstractSocket_setLocalPort(ctx->m_endpoint.m_socket, actualPort);
+            ctx->m_endpoint.m_socket->state = XAbstractSocket_BoundState;
         }
         if (!nopts->m_address)
             XClass_deinit_base((XClass*)&anyAddress);
@@ -300,30 +300,30 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
         operationOk = XDeviceNetwork_socketConnect(ctx->m_base.m_fd, nopts->m_base.m_target, nopts->m_port,
             toNetworkProtocol(nopts->m_protocol), toNetworkSocketType(nopts->m_socketType));
         if (operationOk) {
-            XAbstractSocket_setPeerPort(ctx->m_socket, nopts->m_port);
-            ctx->m_socket->state = XAbstractSocket_ConnectingState;
+            XAbstractSocket_setPeerPort(ctx->m_endpoint.m_socket, nopts->m_port);
+            ctx->m_endpoint.m_socket->state = XAbstractSocket_ConnectingState;
         }
     } else if (nopts->m_operation == XDeviceNetworkOpen_Adopt) {
         operationOk = nopts->m_socketDescriptor >= 0 &&
             XDeviceNetwork_socketSetDescriptor(ctx->m_base.m_fd, nopts->m_socketDescriptor,
                                                nopts->m_initialState, mode);
         if (operationOk)
-            ctx->m_socket->state = (XAbstractSocket_SocketState)nopts->m_initialState;
+            ctx->m_endpoint.m_socket->state = (XAbstractSocket_SocketState)nopts->m_initialState;
     } else if (nopts->m_operation == XDeviceNetworkOpen_Local) {
         operationOk = XDeviceNetwork_socketConnectLocal(ctx->m_base.m_fd, nopts->m_base.m_target,
             nopts->m_localStreamType, nopts->m_timeoutMs, toNetworkSocketType(nopts->m_socketType));
         if (operationOk)
-            ctx->m_socket->state = XAbstractSocket_ConnectedState;
+            ctx->m_endpoint.m_socket->state = XAbstractSocket_ConnectedState;
     }
 
     if (!operationOk) {
         if (ctx->m_isServer)
-            XDeviceNetwork_serverClose(ctx->m_base.m_fd, ctx->m_serverHandle);
+            XDeviceNetwork_serverClose(ctx->m_base.m_fd, ctx->m_endpoint.m_serverHandle);
         else
             XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
         if (ctx->m_ownsSocket) {
-            XClass_deinit_base((XClass*)ctx->m_socket);
-            free(ctx->m_socket);
+            XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+            free(ctx->m_endpoint.m_socket);
         }
         XClass_deinit_base((XClass*)&ctx->m_peerAddress);
         XFd_free(ctx->m_base.m_fd);
@@ -348,12 +348,12 @@ static void VXDeviceNetwork_close(XDevice* self, XDeviceContext* handle)
     (void)self;
     if (!ctx) return;
     if (ctx->m_isServer)
-        XDeviceNetwork_serverClose(ctx->m_base.m_fd, ctx->m_serverHandle);
+        XDeviceNetwork_serverClose(ctx->m_base.m_fd, ctx->m_endpoint.m_serverHandle);
     else
         XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
     if (ctx->m_ownsSocket) {
-        XClass_deinit_base((XClass*)ctx->m_socket);
-        free(ctx->m_socket);
+        XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+        free(ctx->m_endpoint.m_socket);
     }
     XClass_deinit_base((XClass*)&ctx->m_peerAddress);
     XDeviceNetwork_deleteContext(ctx);
@@ -366,10 +366,10 @@ static int64_t VXDeviceNetwork_read(XDevice* self, XDeviceContext* handle, void*
     XRingBuffer* readBuffer;
     int64_t result;
     (void)self;
-    if (!ctx || ctx->m_isServer || !ctx->m_socket || size < 0 || (!buffer && size > 0)) return -1;
+    if (!ctx || ctx->m_isServer || !ctx->m_endpoint.m_socket || size < 0 || (!buffer && size > 0)) return -1;
     if (size == 0) return 0;
-    readBuffer = XIODevicePrivate_getOrCreateReadBuffer(ctx->m_socket->base.m_d,
-                                                        ctx->m_socket->base.m_currentReadChannel);
+    readBuffer = XIODevicePrivate_getOrCreateReadBuffer(ctx->m_endpoint.m_socket->base.m_d,
+                                                        ctx->m_endpoint.m_socket->base.m_currentReadChannel);
     if (!readBuffer) return -1;
     result = XDeviceNetwork_socketRead(ctx->m_base.m_fd, buffer, size,
         toNetworkSocketType(ctx->m_socketType), readBuffer);
@@ -384,10 +384,10 @@ static int64_t VXDeviceNetwork_write(XDevice* self, XDeviceContext* handle, cons
     const XHostAddress* destination = NULL;
     int64_t result;
     (void)self;
-    if (!ctx || ctx->m_isServer || !ctx->m_socket || size < 0 || (!data && size > 0)) return -1;
+    if (!ctx || ctx->m_isServer || !ctx->m_endpoint.m_socket || size < 0 || (!data && size > 0)) return -1;
     if (size == 0) return 0;
-    writeBuffer = XIODevicePrivate_getOrCreateWriteBuffer(ctx->m_socket->base.m_d,
-                                                          ctx->m_socket->base.m_currentWriteChannel);
+    writeBuffer = XIODevicePrivate_getOrCreateWriteBuffer(ctx->m_endpoint.m_socket->base.m_d,
+                                                          ctx->m_endpoint.m_socket->base.m_currentWriteChannel);
     if (!writeBuffer) return -1;
     if (ctx->m_socketType == XDeviceNetwork_Udp) {
         if (!ctx->m_hasPeerAddress && !ctx->m_connectedMode) {
@@ -412,8 +412,8 @@ static bool VXDeviceNetwork_flush(XDevice* self, XDeviceContext* handle)
 {
     XDeviceNetworkContext* ctx = networkCtx(handle);
     (void)self;
-    if (!ctx || ctx->m_isServer || !ctx->m_socket) return false;
-    return XIODevice_bytesToWrite_base(&ctx->m_socket->base) == 0 &&
+    if (!ctx || ctx->m_isServer || !ctx->m_endpoint.m_socket) return false;
+    return XIODevice_bytesToWrite_base(&ctx->m_endpoint.m_socket->base) == 0 &&
            !XDeviceNetwork_socketWritePending(ctx->m_base.m_fd);
 }
 
@@ -485,7 +485,7 @@ static bool VXDeviceNetwork_getProperty(XDevice* self, XDeviceContext* handle, u
         XVariant_setValue_int(value, (int)ctx->m_base.m_lastError);
         return true;
     case XDeviceProperty_NativeHandle:
-        descriptor = ctx->m_isServer ? ctx->m_serverHandle :
+        descriptor = ctx->m_isServer ? ctx->m_endpoint.m_serverHandle :
             XDeviceNetwork_socketDescriptor(ctx->m_base.m_fd);
         XVariant_setValue_ptr(value, descriptor < 0 ? NULL : (void*)descriptor);
         return true;
@@ -500,8 +500,8 @@ static bool VXDeviceNetwork_getProperty(XDevice* self, XDeviceContext* handle, u
         return true;
     case XDeviceNetworkProperty_LocalPort:
         XVariant_setValue_int(value, ctx->m_isServer ?
-                              (int)XDeviceNetwork_serverPort(ctx->m_serverHandle) :
-                              (int)ctx->m_socket->localPort);
+                              (int)XDeviceNetwork_serverPort(ctx->m_endpoint.m_serverHandle) :
+                              (int)ctx->m_endpoint.m_socket->localPort);
         return true;
     case XDeviceNetworkProperty_PeerPort:
         XVariant_setValue_int(value, (int)ctx->m_peerPort);
@@ -576,7 +576,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
     switch (command) {
     case XDeviceCommand_Cancel:
         XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
-        ctx->m_socket->state = XAbstractSocket_UnconnectedState;
+        ctx->m_endpoint.m_socket->state = XAbstractSocket_UnconnectedState;
         return true;
     case XDeviceCommand_Poll:
         if (out) {
@@ -602,8 +602,8 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         return true;
     case XDeviceNetworkCommand_ContinueWrite:
         XDeviceNetwork_socketContinueWrite(ctx->m_base.m_fd,
-                                     XIODevicePrivate_getOrCreateWriteBuffer(ctx->m_socket->base.m_d,
-                                                                              ctx->m_socket->base.m_currentWriteChannel),
+                                     XIODevicePrivate_getOrCreateWriteBuffer(ctx->m_endpoint.m_socket->base.m_d,
+                                                                              ctx->m_endpoint.m_socket->base.m_currentWriteChannel),
                                      ctx->m_socketType == XDeviceNetwork_Udp);
         return true;
     case XDeviceNetworkCommand_SetSocketOption:

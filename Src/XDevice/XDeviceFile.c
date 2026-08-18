@@ -17,6 +17,8 @@ bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t flags, int* error);
 bool XDeviceFile_legacyFstat(XFd fd, XFileStat* stat);
 bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue);
+void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags);
+bool XDeviceFile_legacyUnmap(void* addr, int64_t size);
 
 #if XFILE_ON
 
@@ -33,9 +35,10 @@ bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue
 typedef struct XDeviceFileCtx
 {
     XDeviceContext m_base;  /* 第一个成员，打开上下文基类，子类按需扩展。 */
-    XFd m_fileFd;        /**< 原有文件系统内部描述符。 */
-    int m_openMode;      /**< 打开模式（XIODeviceBaseMode 位组合）。 */
-    uint32_t m_flags;    /**< XDeviceOpenFlag 位组合。 */
+    XFd m_fileFd;          /**< 原有文件系统内部描述符。 */
+    uint32_t m_openMode : 13; /**< 打开模式（XIODeviceBaseMode 位组合）。 */
+    uint32_t m_flags    : 3;  /**< XDeviceOpenFlag 位组合。 */
+    uint32_t m_reserved : 16; /**< 保留位，必须为 0。 */
 } XDeviceFileCtx;
 
 /* ============================================================================
@@ -243,7 +246,7 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
         size = XVarList_arg(arguments, int64_t);
         flags = XVarList_arg(arguments, int);
         address = ctx->m_fileFd == XFD_INVALID ? NULL :
-                  XDeviceFile_map(ctx->m_fileFd, offset, size, flags);
+                  XDeviceFile_legacyMap(ctx->m_fileFd, offset, size, flags);
         ok = address != NULL;
         if (ok) {
             memcpy(out->data, &address, sizeof(address));
@@ -256,7 +259,7 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
         XVarList_start(arguments);
         address = XVarList_arg(arguments, void*);
         size = XVarList_arg(arguments, int64_t);
-        ok = XDeviceFile_unmap(address, size);
+        ok = XDeviceFile_legacyUnmap(address, size);
         break;
     case XDeviceFileCommand_SetFileTime:
         if (!arguments || arguments->m_size != sizeof(XFileTime) + sizeof(int64_t))

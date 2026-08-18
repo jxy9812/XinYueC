@@ -9,6 +9,9 @@
 
 #include "XConsoleShell_Protected.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON
 
 #include "XMemory.h"
@@ -56,9 +59,6 @@ static XFd xcs_open_file(const XString* path, int mode, int* error)
 #if XCONSOLE_SHELL_CAN_ON
 #include "XConsoleShellCan.h"
 #endif
-#include <stdio.h>
-#include <string.h>
-
 static void VXConsoleShell_deinit(XObject* object);
 
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON

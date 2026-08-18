@@ -49,7 +49,7 @@ bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 /* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 mapHandle（CreateFileMapping/OpenFileMapping）承载，信令
    通道由 signalPipe（\\.\pipe\<name>.sig 命名管道）承载，
-   XDeviceFile_map/unmap 使用 mapHandle。
+   XDeviceFileCommand_Map/Unmap 使用 mapHandle。
    信令通道的异步接收完全接入库内部事件通知系统（XNetIoRingWin32
    全局 IOCP 完成端口，与网络套接字/串口的异步读一致）：
    openSharedMemory 建立信令管道后即关联 IOCP 并提交常驻异步
@@ -1279,7 +1279,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  *
  * 共享内存段在 Windows 上由两块组成：
  *   1. 命名内存映射（CreateFileMapping/OpenFileMapping）：存放跨进程数据，
- *      通过 XDeviceFile_map 建立视图；
+ *      通过 XDeviceFileCommand_Map 建立视图；
  *   2. 命名管道信令通道（\\.\pipe\<共享内存名>.sig）：数据方写完一块数据后
  *      向管道写入 1 个信令字节，对端通过 IOCP + 库内部事件通知异步接收
  *      （OVERLAPPED ReadFile 关联全局完成端口，与网络套接字/串口的异步
@@ -1287,7 +1287,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  *      该通道内置于平台实现，不新增任何公共 API。
  *
  * XFd 句柄为信令管道句柄，XDeviceFile_legacyRead / XDeviceFile_legacyWrite 直接在
- * 信令通道上收发；object 保存映射句柄，XDeviceFile_map / XDeviceFile_legacyClose
+ * 信令通道上收发；object 保存映射句柄，XDeviceFileCommand_Map / XDeviceFile_legacyClose
  * 据此完成视图与释放。
  */
 
@@ -1721,7 +1721,7 @@ fail:
     return XFD_INVALID;
 }
 
-void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
+void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
 {
     XFileDescriptor* descriptor;
     HANDLE hMap;
@@ -1771,7 +1771,7 @@ void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
     }
 }
 
-bool XDeviceFile_unmap(void* addr, int64_t size)
+bool XDeviceFile_legacyUnmap(void* addr, int64_t size)
 {
     (void)size;
     if (!addr) return false;

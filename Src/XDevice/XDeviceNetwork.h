@@ -218,22 +218,25 @@ XVector* XDeviceNetwork_lookupName(const XString* name);
  */
 typedef struct XDeviceNetworkContext {
     XDeviceContext m_base;                  /**< XDevice 上下文基类，必须位于首成员。 */
-    XAbstractSocket* m_socket;              /**< 可选的 XAbstractSocket 借用/自有对象。 */
-    XDeviceNetworkServerHandle m_serverHandle; /**< TCP 监听句柄；非服务端时无效。 */
+    union {
+        XAbstractSocket* m_socket;          /**< 客户端 XAbstractSocket 借用/自有对象。 */
+        XDeviceNetworkServerHandle m_serverHandle; /**< TCP 监听句柄。 */
+    } m_endpoint;                           /**< 客户端和服务端生命周期互斥的端点状态。 */
     void* m_owner;                          /**< XAbstractSocket 或 XTcpServer 借用指针。 */
     XVector* m_notifiers;                   /**< 平台事件通知器容器，由上下文拥有。 */
-    XDeviceNetworkSocketType m_socketType;  /**< TCP 或 UDP。 */
-    XDeviceNetworkProtocol m_protocol;      /**< 地址族选择。 */
-    uint32_t m_flags;                       /**< XDeviceOpenFlag 位组合。 */
-    int m_openMode;                         /**< XIODeviceBaseMode。 */
-    int64_t m_readBufferSize;               /**< 请求的接收缓冲容量。 */
     XHostAddress m_peerAddress;             /**< UDP 默认目标地址。 */
+    int64_t m_readBufferSize;               /**< 请求的接收缓冲容量。 */
     uint16_t m_peerPort;                    /**< UDP 默认目标端口。 */
-    bool m_hasPeerAddress;                  /**< m_peerAddress 是否有效。 */
-    bool m_connectedMode;                   /**< 是否已通过 connect 建立默认目标。 */
-    bool m_connected;                       /**< 平台已绑定、连接或正在监听。 */
-    bool m_ownsSocket;                      /**< m_socket 是否由上下文创建并销毁。 */
-    bool m_isServer;                        /**< 是否为 TCP 监听上下文。 */
+    uint32_t m_socketType     : 1;          /**< TCP 或 UDP。 */
+    uint32_t m_protocol       : 2;          /**< 地址族选择。 */
+    uint32_t m_flags          : 3;          /**< XDeviceOpenFlag 位组合。 */
+    uint32_t m_openMode       : 13;         /**< XIODeviceBaseMode。 */
+    uint32_t m_hasPeerAddress : 1;          /**< m_peerAddress 是否有效。 */
+    uint32_t m_connectedMode  : 1;          /**< 是否已通过 connect 建立默认目标。 */
+    uint32_t m_connected      : 1;          /**< 平台已绑定、连接或正在监听。 */
+    uint32_t m_ownsSocket     : 1;          /**< m_socket 是否由上下文创建并销毁。 */
+    uint32_t m_isServer       : 1;          /**< 是否为 TCP 监听上下文。 */
+    uint32_t m_reserved       : 8;          /**< 保留位，必须为 0。 */
 } XDeviceNetworkContext;
 
 
@@ -289,21 +292,22 @@ typedef enum XDeviceNetworkOpenOperation
 typedef struct XDeviceNetworkOpenOptions
 {
     XDeviceOpenOptions m_base;             /**< 通用设备打开选项。 */
-    XDeviceNetworkSocketType m_socketType; /**< TCP 或 UDP。 */
-    XDeviceNetworkProtocol m_protocol;     /**< IPv4、IPv6 或 Any。 */
-    XDeviceNetworkOpenOperation m_operation; /**< None、Connect 或 Bind。 */
     const XHostAddress* m_address;          /**< Bind 的本地地址。 */
-    uint16_t m_port;                        /**< Connect 目标或 Bind 本地端口。 */
-    bool m_reuseAddress;                    /**< Bind 时请求地址重用。 */
-    bool m_shareAddress;                    /**< Bind 时允许地址共享。 */
     const XHostAddress* m_peerAddress;      /**< UDP 写入的默认目标地址，可为 NULL。 */
-    uint16_t m_peerPort;                    /**< UDP 写入的默认目标端口。 */
     void* m_owner;                          /**< 可选的高层套接字或 TCP 服务器所有者；仅在 Open 调用期间借用。 */
     intptr_t m_socketDescriptor;            /**< Adopt 时接管的平台描述符，成功后所有权转移。 */
     int m_initialState;                     /**< Adopt 时的 XAbstractSocket_SocketState 值。 */
-    XDeviceNetworkLocalStreamType m_localStreamType; /**< Local 时的本地字节流类型。 */
     int m_timeoutMs;                        /**< Local 连接超时毫秒数；负数表示平台默认。 */
     int m_listenBacklog;                    /**< Listen 时的等待队列长度；必须为正数。 */
+    uint16_t m_port;                        /**< Connect 目标或 Bind 本地端口。 */
+    uint16_t m_peerPort;                    /**< UDP 写入的默认目标端口。 */
+    uint32_t m_socketType      : 1;         /**< TCP 或 UDP。 */
+    uint32_t m_protocol        : 2;         /**< IPv4、IPv6 或 Any。 */
+    uint32_t m_operation       : 3;         /**< None、Connect、Bind、Adopt、Local 或 Listen。 */
+    uint32_t m_reuseAddress    : 1;         /**< Bind 时请求地址重用。 */
+    uint32_t m_shareAddress    : 1;         /**< Bind 时允许地址共享。 */
+    uint32_t m_localStreamType : 2;         /**< Local 时的本地字节流类型。 */
+    uint32_t m_reserved        : 22;        /**< 保留位，必须为 0。 */
 } XDeviceNetworkOpenOptions;
 
 /** @brief 网络设备专有属性编号，从 XDeviceProperty_Count 开始分配。 */

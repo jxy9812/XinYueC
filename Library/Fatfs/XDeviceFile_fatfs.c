@@ -1134,7 +1134,7 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
     return XFD_INVALID;
 }
 
-void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
+void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || offset < 0 || size <= 0 || (uint64_t)size > UINT_MAX) return NULL;
@@ -1162,7 +1162,7 @@ void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
     return buf;
 }
 
-bool XDeviceFile_unmap(void* addr, int64_t size)
+bool XDeviceFile_legacyUnmap(void* addr, int64_t size)
 {
     if (!addr) return false;
     XFree_System(addr);

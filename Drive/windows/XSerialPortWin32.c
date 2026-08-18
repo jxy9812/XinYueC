@@ -1,6 +1,7 @@
+#include "XDeviceSerialPort.h"
+
 #if defined(_WIN32) && defined(XSERIALPORT_USE_PLATFORM_API)
 
-#include "XDeviceSerialPort.h"
 #include "XMemory.h"
 #include "XVariant.h"
 #include "XVarList.h"
