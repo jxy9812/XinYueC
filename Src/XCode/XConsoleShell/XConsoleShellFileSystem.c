@@ -2,7 +2,7 @@
  * @file XConsoleShellFileSystem.c
  * @brief XConsoleShell 内建 fs 命令。
  * @details
- * 所有文件、目录、重命名、复制和链接操作均通过 XFileSystem 公共 API；本文件
+ * 所有文件、目录、重命名、复制和链接操作均通过 XDeviceFile 公共 API；本文件
  * 不包含 open/read/write/stat/opendir 等平台接口。输出使用 Shell I/O 分块，
  * 目录迭代器、文件描述符和临时 XString 在所有返回路径成对释放。
  */
@@ -11,16 +11,37 @@
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_FILESYSTEM_ON
 
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XDateTime.h"
+#include "XVarList.h"
 #include <stdint.h>
 #include <string.h>
 
 static bool xfs_write(XConsoleShell* shell, const char* text)
 {
     return XConsoleShell_writeUtf8(shell, text ? text : "");
+}
+
+static XFd xfs_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
+
+static bool xfs_set_file_time(XFd fd, XFileTime timeType, int64_t timeValue)
+{
+    XVarList* input;
+    bool ok;
+    input = XVarList_Create(XVar(XFileTime, timeType), XVar(int64_t, timeValue));
+    if (!input) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_SetFileTime, input, NULL);
+    XVarList_delete(input);
+    return ok;
 }
 
 /* 拼接逻辑路径组件，统一使用单个 '/'，避免 C://name 之类的路径。 */
@@ -68,7 +89,7 @@ static bool xfs_make_path(const XConsoleShellSession* session, const char* input
         XString_delete_base(raw);
         raw = prefix;
     }
-    if (!XFileSystem_resolvePath(raw, output, XPathStyle_Absolute))
+    if (!XDeviceFile_resolvePath(raw, output, XPathStyle_Absolute))
         XString_assign(output, raw);
     XString_delete_base(raw);
     return XString_size_base(output) < XCONSOLE_SHELL_MAX_PATH;
@@ -98,7 +119,7 @@ static int xfs_cd(XConsoleShell* shell, XConsoleShellSession* session,
     if (argc > 1 || !path) ok = false;
     if (ok) {
         if (argc == 0) {
-            ok = XFileSystem_getSpecialPath(XSpecialPath_Home, path);
+            ok = XDeviceFile_getSpecialPath(XSpecialPath_Home, path);
         } else if (strcmp(argv[0], "-") == 0) {
             if (session->previousPath[0] == '\0') ok = false;
             else ok = XString_assign_utf8(path, session->previousPath);
@@ -107,7 +128,7 @@ static int xfs_cd(XConsoleShell* shell, XConsoleShellSession* session,
         }
     }
     if (ok && XString_size_base(path) >= sizeof(session->currentPath)) ok = false;
-    if (ok && !XFileSystem_stat(path, &stat)) ok = false;
+    if (ok && !XDeviceFile_stat(path, &stat)) ok = false;
     if (!ok || !stat.isDir) {
         if (path) XString_delete_base(path);
         return XConsoleResult_InvalidArgument;
@@ -204,7 +225,7 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
     line = (char*)XMalloc_System(lineCapacity);
     if (!line) return false;
     memset(&stat, 0, sizeof(stat));
-    if (!XFileSystem_stat(fullPath, &stat)) {
+    if (!XDeviceFile_stat(fullPath, &stat)) {
         XFree_System(line);
         return false;
     }
@@ -246,13 +267,13 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
     XDirIterator iterator;
     int result = XConsoleResult_Ok;
     if (!name || !child) result = XConsoleResult_Failed;
-    if (result == XConsoleResult_Ok) iterator = XFileSystem_opendir(path);
+    if (result == XConsoleResult_Ok) iterator = XDeviceFile_opendir(path);
     else iterator = NULL;
     if (!iterator) result = XConsoleResult_Failed;
     if (result == XConsoleResult_Ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XFileSystem_readdir(iterator, &entry)) {
+        while (XDeviceFile_readdir(iterator, &entry)) {
             const char* text = XString_toUtf8(name);
             if (entry.isHidden && !options->all &&
                 (!options->almostAll || strcmp(text, ".") == 0 ||
@@ -273,7 +294,7 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
                 break;
             }
         }
-        XFileSystem_closedir(iterator);
+        XDeviceFile_closedir(iterator);
     }
     if (name) XString_delete_base(name);
     if (child) XString_delete_base(child);
@@ -331,7 +352,7 @@ static int xfs_ls(XConsoleShell* shell, XConsoleShellSession* session,
         XDirEntry entry;
         const char* name;
         if (!path || !xfs_make_path(session, paths[i], path) ||
-            !XFileSystem_stat(path, &stat)) {
+            !XDeviceFile_stat(path, &stat)) {
             if (path) XString_delete_base(path);
             return XConsoleResult_Failed;
         }
@@ -402,6 +423,7 @@ static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
     XString* path = NULL;
     XFd fd = XFD_INVALID;
     XDateTime now;
+    XDeviceOpenOptions options;
     int64_t timestamp;
     int error = 0;
     bool noCreate = false;
@@ -421,20 +443,24 @@ static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
                 if (path) XString_delete_base(path);
                 return XConsoleResult_InvalidArgument;
             }
-            if (noCreate && !XFileSystem_exists(path)) {
+            if (noCreate && !XDeviceFile_exists(path)) {
                 XString_delete_base(path);
                 continue;
             }
-            fd = XFileSystem_open(path, XFileSystem_WriteOnly | (noCreate ? 0 : XFileSystem_Create), &error);
+            memset(&options, 0, sizeof(options));
+            options.m_openMode = XDeviceFile_WriteOnly |
+                                 (noCreate ? 0 : XDeviceFile_Create);
+            options.m_target = path;
+            fd = XDevice_open(XDeviceType_File, &options, &error);
             if (fd == XFD_INVALID) {
                 XString_delete_base(path);
                 return XConsoleResult_Failed;
             }
             now = XDateTime_currentDateTime();
             timestamp = XDateTime_toSecsSinceEpoch(&now);
-            ok = XFileSystem_setFileTime(fd, XFile_AccessTime, timestamp) &&
-                 XFileSystem_setFileTime(fd, XFile_ModificationTime, timestamp);
-            XFileSystem_close(fd);
+            ok = xfs_set_file_time(fd, XFile_AccessTime, timestamp) &&
+                 xfs_set_file_time(fd, XFile_ModificationTime, timestamp);
+            XDevice_close(fd);
             XString_delete_base(path);
             if (!ok) return XConsoleResult_Failed;
         }
@@ -533,7 +559,7 @@ static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
             return XConsoleResult_InvalidArgument;
         }
         if (symbolic) {
-            bool hasStat = XFileSystem_stat(path, &stat);
+            bool hasStat = XDeviceFile_stat(path, &stat);
             bool canExecute = hasStat && (stat.isDir ||
                 (stat.permissions & (XFile_ExeOwner | XFile_ExeGroup |
                                      XFile_ExeOther)) != 0);
@@ -543,7 +569,7 @@ static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
                 return XConsoleResult_InvalidArgument;
             }
         }
-        ok = XFileSystem_setPermissions(path, target);
+        ok = XDeviceFile_setPermissions(path, target);
         XString_delete_base(path);
         if (!ok) return XConsoleResult_Failed;
     }
@@ -587,10 +613,10 @@ static int xfs_readlink(XConsoleShell* shell, XConsoleShellSession* session,
             return XConsoleResult_InvalidArgument;
         }
         if (canonical) {
-            ok2 = XFileSystem_resolvePath(path, result, XPathStyle_Canonical);
+            ok2 = XDeviceFile_resolvePath(path, result, XPathStyle_Canonical);
         } else {
-            ok2 = XFileSystem_stat(path, &stat) && stat.isSymLink &&
-                  XFileSystem_readLink(path, result);
+            ok2 = XDeviceFile_stat(path, &stat) && stat.isSymLink &&
+                  XDeviceFile_readLink(path, result);
         }
         if (ok2) {
             ok2 = XConsoleShell_writeUtf8(shell, XString_toUtf8(result)) &&
@@ -615,7 +641,7 @@ static int xfs_realpath(XConsoleShell* shell, XConsoleShellSession* session,
         if (result) XString_delete_base(result);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_resolvePath(path, result, XPathStyle_Canonical) &&
+    ok = XDeviceFile_resolvePath(path, result, XPathStyle_Canonical) &&
          XConsoleShell_writeUtf8(shell, XString_toUtf8(result)) &&
          XConsoleShell_writeUtf8(shell, "\n");
     XString_delete_base(path);
@@ -666,16 +692,16 @@ static int xfs_truncate(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        if (noCreate && !XFileSystem_exists(path)) {
+        if (noCreate && !XDeviceFile_exists(path)) {
             XString_delete_base(path);
             continue;
         }
-        fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Truncate |
-                              (noCreate ? 0 : XFileSystem_Create), &error);
+        fd = xfs_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Truncate |
+                              (noCreate ? 0 : XDeviceFile_Create), &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
-        ok = XFileSystem_resize(fd, size);
-        XFileSystem_close(fd);
+        ok = XDeviceFile_resize(fd, size);
+        XDeviceFile_close(fd);
         if (!ok) return XConsoleResult_Failed;
     }
     return XConsoleResult_Ok;
@@ -695,7 +721,7 @@ static int xfs_df(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     }
     memset(&info, 0, sizeof(info));
-    if (!XFileSystem_getStorageInfo(path, &info)) {
+    if (!XDeviceFile_getStorageInfo(path, &info)) {
         XString_delete_base(path);
         return XConsoleResult_Failed;
     }
@@ -716,18 +742,18 @@ static bool xfs_du_size(const XString* path, int64_t* total)
     XDirEntry entry;
     XDirIterator iterator = NULL;
     bool ok = true;
-    if (!path || !total || !XFileSystem_stat(path, &stat)) return false;
+    if (!path || !total || !XDeviceFile_stat(path, &stat)) return false;
     *total += stat.size > 0 ? stat.size : 0;
     if (!stat.isDir) return true;
     name = XString_create();
     child = XString_create();
     if (!name || !child) ok = false;
-    if (ok) iterator = XFileSystem_opendir(path);
+    if (ok) iterator = XDeviceFile_opendir(path);
     if (ok && !iterator) ok = false;
     if (ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XFileSystem_readdir(iterator, &entry)) {
+        while (XDeviceFile_readdir(iterator, &entry)) {
             if (entry.isSymLink) continue;
             if (strcmp(XString_toUtf8(name), ".") == 0 ||
                 strcmp(XString_toUtf8(name), "..") == 0) continue;
@@ -738,7 +764,7 @@ static bool xfs_du_size(const XString* path, int64_t* total)
                 break;
             }
         }
-        XFileSystem_closedir(iterator);
+        XDeviceFile_closedir(iterator);
     }
     if (name) XString_delete_base(name);
     if (child) XString_delete_base(child);
@@ -827,10 +853,10 @@ static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        fd = xfs_open_file(path, XDeviceFile_ReadOnly, &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
-        while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+        while ((count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {
             bytes += count;
             for (j = 0; j < (size_t)count; ++j) {
                 if (buffer[j] == '\n') ++lines;
@@ -843,7 +869,7 @@ static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
                 }
             }
         }
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
         if (count < 0) return XConsoleResult_IoError;
         written = 0;
         column = 0;
@@ -966,29 +992,29 @@ static int xfs_head(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        fd = xfs_open_file(path, XDeviceFile_ReadOnly, &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
         if (pathCount > 1) {
             if (!XConsoleShell_writeUtf8(shell, "==> ") ||
                 !XConsoleShell_writeUtf8(shell, paths[i]) ||
                 !XConsoleShell_writeUtf8(shell, " <==\n")) {
-                XFileSystem_close(fd);
+                XDeviceFile_close(fd);
                 return XConsoleResult_IoError;
             }
         }
         while (current < lines &&
-               (count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+               (count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {
             size_t j;
             for (j = 0; j < (size_t)count && current < lines; ++j) {
                 if (!XConsoleShell_write(shell, buffer + j, 1)) {
-                    XFileSystem_close(fd);
+                    XDeviceFile_close(fd);
                     return XConsoleResult_IoError;
                 }
                 if (buffer[j] == '\n') ++current;
             }
         }
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
         if (count < 0) return XConsoleResult_IoError;
     }
     return XConsoleResult_Ok;
@@ -1036,11 +1062,11 @@ static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        fd = xfs_open_file(path, XDeviceFile_ReadOnly, &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
         offsets[offsetCount++] = 0;
-        while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+        while ((count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {
             for (j = 0; j < (size_t)count; ++j, ++position) {
                 if (buffer[j] == '\n') {
                     if (offsetCount < 128) offsets[offsetCount++] = position + 1;
@@ -1053,7 +1079,7 @@ static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
             }
         }
         if (count < 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             return XConsoleResult_IoError;
         }
         if (lines > 0) {
@@ -1061,28 +1087,28 @@ static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
                 if (!XConsoleShell_writeUtf8(shell, "==> ") ||
                     !XConsoleShell_writeUtf8(shell, paths[i]) ||
                     !XConsoleShell_writeUtf8(shell, " <==\n")) {
-                    XFileSystem_close(fd);
+                    XDeviceFile_close(fd);
                     return XConsoleResult_IoError;
                 }
             }
             if (lines < (int64_t)offsetCount)
                 start = offsets[offsetCount - 1u - (size_t)lines];
-            if (XFileSystem_seek(fd, start, XSeekSet) < 0) {
-                XFileSystem_close(fd);
+            if (XDeviceFile_seek(fd, start, XSeekSet) < 0) {
+                XDeviceFile_close(fd);
                 return XConsoleResult_IoError;
             }
-            while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+            while ((count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {
                 if (!XConsoleShell_write(shell, buffer, (size_t)count)) {
-                    XFileSystem_close(fd);
+                    XDeviceFile_close(fd);
                     return XConsoleResult_IoError;
                 }
             }
             if (count < 0) {
-                XFileSystem_close(fd);
+                XDeviceFile_close(fd);
                 return XConsoleResult_IoError;
             }
         }
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
     }
     return XConsoleResult_Ok;
 }
@@ -1107,23 +1133,23 @@ static int xfs_cmp(XConsoleShell* shell, XConsoleShellSession* session,
         if (right) XString_delete_base(right);
         return XConsoleResult_InvalidArgument;
     }
-    a = XFileSystem_open(left, XFileSystem_ReadOnly, &error);
-    b = XFileSystem_open(right, XFileSystem_ReadOnly, &error);
+    a = xfs_open_file(left, XDeviceFile_ReadOnly, &error);
+    b = xfs_open_file(right, XDeviceFile_ReadOnly, &error);
     XString_delete_base(left);
     XString_delete_base(right);
     if (a == XFD_INVALID || b == XFD_INVALID) {
-        if (a != XFD_INVALID) XFileSystem_close(a);
-        if (b != XFD_INVALID) XFileSystem_close(b);
+        if (a != XFD_INVALID) XDeviceFile_close(a);
+        if (b != XFD_INVALID) XDeviceFile_close(b);
         return XConsoleResult_Failed;
     }
     do {
-        acount = XFileSystem_read(a, leftBuffer, sizeof(leftBuffer));
-        bcount = XFileSystem_read(b, rightBuffer, sizeof(rightBuffer));
+        acount = XDeviceFile_read(a, leftBuffer, sizeof(leftBuffer));
+        bcount = XDeviceFile_read(b, rightBuffer, sizeof(rightBuffer));
         if (acount != bcount || acount < 0 || (acount > 0 &&
             memcmp(leftBuffer, rightBuffer, (size_t)acount) != 0)) equal = false;
     } while (equal && acount > 0);
-    XFileSystem_close(a);
-    XFileSystem_close(b);
+    XDeviceFile_close(a);
+    XDeviceFile_close(b);
     if (equal) return XConsoleResult_Ok;
     if (!XConsoleShell_writeUtf8(shell, "不同\n")) return XConsoleResult_IoError;
     return XConsoleResult_Failed;
@@ -1160,7 +1186,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
     XDirIterator iterator = NULL;
     int result = XConsoleResult_Ok;
     const char* base;
-    if (!path || !name || !child || !XFileSystem_stat(path, &stat)) result = XConsoleResult_Failed;
+    if (!path || !name || !child || !XDeviceFile_stat(path, &stat)) result = XConsoleResult_Failed;
     base = path ? XString_toUtf8(path) : NULL;
     if (result == XConsoleResult_Ok && (!pattern || xfs_glob_match_local(pattern, base +
         (strrchr(base, '/') ? (strrchr(base, '/') - base + 1) : 0)) &&
@@ -1181,12 +1207,12 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
         }
     }
     if (result == XConsoleResult_Ok && stat.isDir && (maxDepth < 0 || depth < maxDepth)) {
-        iterator = XFileSystem_opendir(path);
+        iterator = XDeviceFile_opendir(path);
         if (!iterator) result = XConsoleResult_Failed;
         if (result == XConsoleResult_Ok) {
             memset(&entry, 0, sizeof(entry));
             entry.name = name;
-            while (XFileSystem_readdir(iterator, &entry)) {
+            while (XDeviceFile_readdir(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
                 if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
                 if (!XString_assign_utf8(child, base) ||
@@ -1198,7 +1224,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
                                        maxDepth, mtimeDays, sizeBytes);
                 if (result < 0 || XConsoleShell_isCancelled(shell)) break;
             }
-            XFileSystem_closedir(iterator);
+            XDeviceFile_closedir(iterator);
         }
     }
     if (name) XString_delete_base(name);
@@ -1284,12 +1310,12 @@ static int xfs_tree_walk(XConsoleShell* shell, const XString* path, size_t depth
     int result = XConsoleResult_Ok;
     if (!name || !child || !base) result = XConsoleResult_Failed;
     if (result == XConsoleResult_Ok) {
-        iterator = XFileSystem_opendir(path);
+        iterator = XDeviceFile_opendir(path);
         if (!iterator) result = XConsoleResult_Failed;
         if (result == XConsoleResult_Ok) {
             memset(&entry, 0, sizeof(entry));
             entry.name = name;
-            while (XFileSystem_readdir(iterator, &entry)) {
+            while (XDeviceFile_readdir(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
                 size_t i;
                 if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0 || entry.isHidden) continue;
@@ -1307,7 +1333,7 @@ static int xfs_tree_walk(XConsoleShell* shell, const XString* path, size_t depth
                     if (result < 0) break;
                 }
             }
-            XFileSystem_closedir(iterator);
+            XDeviceFile_closedir(iterator);
         }
     }
     if (name) XString_delete_base(name);
@@ -1344,7 +1370,7 @@ static int xfs_file(XConsoleShell* shell, XConsoleShellSession* session,
     int written;
     (void)userData;
     if (argc != 1 || !path || !xfs_make_path(session, argv[0], path) ||
-        !XFileSystem_stat(path, &stat)) {
+        !XDeviceFile_stat(path, &stat)) {
         if (path) XString_delete_base(path);
         return XConsoleResult_Failed;
     }
@@ -1470,20 +1496,20 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        fd = xfs_open_file(path, XDeviceFile_ReadOnly, &error);
         XString_delete_base(path);
         if (fd == XFD_INVALID) return XConsoleResult_Failed;
-        if (offset > 0 && XFileSystem_seek(fd, offset, XSeekSet) < 0) {
-            XFileSystem_close(fd);
+        if (offset > 0 && XDeviceFile_seek(fd, offset, XSeekSet) < 0) {
+            XDeviceFile_close(fd);
             return XConsoleResult_IoError;
         }
         while (remaining > 0) {
             int64_t request = (int64_t)sizeof(buffer);
             size_t j;
             if (remaining < request) request = remaining;
-            count = XFileSystem_read(fd, buffer, request);
+            count = XDeviceFile_read(fd, buffer, request);
             if (count < 0) {
-                XFileSystem_close(fd);
+                XDeviceFile_close(fd);
                 return XConsoleResult_IoError;
             }
             if (count == 0) break;
@@ -1501,7 +1527,7 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
                                                (long long)(++lineNumber));
                         if (written < 0 || (size_t)written >= sizeof(num) ||
                             !XConsoleShell_write(shell, num, (size_t)written)) {
-                            XFileSystem_close(fd);
+                            XDeviceFile_close(fd);
                             return XConsoleResult_IoError;
                         }
                     }
@@ -1511,16 +1537,16 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
                 }
                 if (showTabs && ch == '\t') {
                     if (!XConsoleShell_writeUtf8(shell, "^I")) {
-                        XFileSystem_close(fd);
+                        XDeviceFile_close(fd);
                         return XConsoleResult_IoError;
                     }
                 } else if (!XConsoleShell_write(shell, (const char*)&ch, 1)) {
-                    XFileSystem_close(fd);
+                    XDeviceFile_close(fd);
                     return XConsoleResult_IoError;
                 }
                 if (ch == '\n') {
                     if (showEnds && !XConsoleShell_writeUtf8(shell, "$")) {
-                        XFileSystem_close(fd);
+                        XDeviceFile_close(fd);
                         return XConsoleResult_IoError;
                     }
                     atLineStart = true;
@@ -1528,11 +1554,11 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
             }
             remaining -= count;
             if (XConsoleShell_isCancelled(shell)) {
-                XFileSystem_close(fd);
+                XDeviceFile_close(fd);
                 return XConsoleResult_Cancelled;
             }
         }
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
         remaining = length;
         atLineStart = true;
         sawBlankLine = false;
@@ -1589,9 +1615,9 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
     if (!pathText) return XConsoleResult_InvalidArgument;
     path = XString_create();
     if (!path || !xfs_make_path(session, pathText, path)) goto failed;
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    fd = xfs_open_file(path, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto failed;
-    if (offset > 0 && XFileSystem_seek(fd, offset, XSeekSet) < 0) goto io_error;
+    if (offset > 0 && XDeviceFile_seek(fd, offset, XSeekSet) < 0) goto io_error;
     while (remaining > 0) {
         int64_t request = (int64_t)sizeof(buffer);
         int64_t count;
@@ -1599,7 +1625,7 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
         int written;
         int i;
         if (remaining < request) request = remaining;
-        count = XFileSystem_read(fd, buffer, request);
+        count = XDeviceFile_read(fd, buffer, request);
         if (count < 0) goto io_error;
         if (count == 0) break;
         written = snprintf(line, sizeof(line), "%08llx  ", (unsigned long long)offset);
@@ -1634,20 +1660,20 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
         if (offset > INT64_MAX - count) break;
         offset += count;
         if (XConsoleShell_isCancelled(shell)) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             XString_delete_base(path);
             return XConsoleResult_Cancelled;
         }
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     XString_delete_base(path);
     return XConsoleResult_Ok;
 io_error:
-    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (path) XString_delete_base(path);
     return XConsoleResult_IoError;
 failed:
-    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (path) XString_delete_base(path);
     return XConsoleResult_Failed;
 }
@@ -1679,7 +1705,7 @@ static int xfs_stat(XConsoleShell* shell, XConsoleShellSession* session,
     char number[32];
     (void)userData;
     if (argc != 1 || !path || !xfs_make_path(session, argv[0], path) ||
-        !XFileSystem_stat(path, &stat)) {
+        !XDeviceFile_stat(path, &stat)) {
         if (path) XString_delete_base(path);
         return XConsoleResult_Failed;
     }
@@ -1737,10 +1763,10 @@ static int xfs_remove(XConsoleShell* shell, XConsoleShellSession* session,
         }
         {
             XFileStat stat;
-            if (XFileSystem_stat(path, &stat) && stat.isDir && recursive)
-                ok = XFileSystem_rmdir(path, true) && ok;
+            if (XDeviceFile_stat(path, &stat) && stat.isDir && recursive)
+                ok = XDeviceFile_rmdir(path, true) && ok;
             else
-                ok = XFileSystem_removePermanent(path) && ok;
+                ok = XDeviceFile_removePermanent(path) && ok;
         }
         XString_delete_base(path);
     }
@@ -1770,7 +1796,7 @@ static int xfs_mkdir(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_mkdir(path, recursive) && ok;
+        ok = XDeviceFile_mkdir(path, recursive) && ok;
         XString_delete_base(path);
     }
     if (pathCount == 0) return XConsoleResult_InvalidArgument;
@@ -1802,7 +1828,7 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_rmdir(path, false) && ok;
+        ok = XDeviceFile_rmdir(path, false) && ok;
         if (parents && ok) {
             for (;;) {
                 const char* text = XString_toUtf8(path);
@@ -1811,7 +1837,7 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
                 slash = strrchr(text, '/');
                 if (!slash || slash == text) break;
                 XString_truncate(path, (size_t)(slash - text));
-                if (!XFileSystem_rmdir(path, false)) break;
+                if (!XDeviceFile_rmdir(path, false)) break;
             }
         }
         XString_delete_base(path);
@@ -1829,19 +1855,19 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
     XDirEntry entry;
     XDirIterator iterator = NULL;
     bool ok = true;
-    if (!source || !target || !XFileSystem_stat(source, &stat)) return false;
-    if (!stat.isDir) return XFileSystem_copy(source, target);
-    if (!XFileSystem_mkdir(target, false)) return false;
+    if (!source || !target || !XDeviceFile_stat(source, &stat)) return false;
+    if (!stat.isDir) return XDeviceFile_copy(source, target);
+    if (!XDeviceFile_mkdir(target, false)) return false;
     name = XString_create();
     childSource = XString_create();
     childTarget = XString_create();
     if (!name || !childSource || !childTarget) ok = false;
-    if (ok) iterator = XFileSystem_opendir(source);
+    if (ok) iterator = XDeviceFile_opendir(source);
     if (ok && !iterator) ok = false;
     if (ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XFileSystem_readdir(iterator, &entry)) {
+        while (XDeviceFile_readdir(iterator, &entry)) {
             const char* item = XString_toUtf8(name);
             if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
             if (!XString_assign(childSource, source) ||
@@ -1853,7 +1879,7 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
                 break;
             }
         }
-        XFileSystem_closedir(iterator);
+        XDeviceFile_closedir(iterator);
     }
     if (name) XString_delete_base(name);
     if (childSource) XString_delete_base(childSource);
@@ -1905,7 +1931,7 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
     }
     {
         XFileStat targetStat;
-        targetIsDir = XFileSystem_stat(target, &targetStat) && targetStat.isDir;
+        targetIsDir = XDeviceFile_stat(target, &targetStat) && targetStat.isDir;
     }
     if (sourceCount > 2 && !targetIsDir) {
         XString_delete_base(target);
@@ -1918,7 +1944,7 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
         const char* sourceName;
         if (!source || !destination || !xfs_make_path(session, sourceArgs[i], source) ||
             !xfs_make_path(session, sourceArgs[sourceCount - 1], destination) ||
-            !XFileSystem_stat(source, &stat)) {
+            !XDeviceFile_stat(source, &stat)) {
             if (source) XString_delete_base(source);
             if (destination) XString_delete_base(destination);
             ok = false;
@@ -1931,9 +1957,9 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
         }
         if (ok && force) {
             XFileStat destinationStat;
-            if (XFileSystem_stat(destination, &destinationStat))
-                ok = destinationStat.isDir ? XFileSystem_rmdir(destination, true) :
-                     XFileSystem_removePermanent(destination);
+            if (XDeviceFile_stat(destination, &destinationStat))
+                ok = destinationStat.isDir ? XDeviceFile_rmdir(destination, true) :
+                     XDeviceFile_removePermanent(destination);
         }
         if (ok) ok = xfs_copy_recursive(source, destination);
         XString_delete_base(source);
@@ -1969,7 +1995,7 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
     }
     {
         XFileStat targetStat;
-        targetIsDir = XFileSystem_stat(target, &targetStat) && targetStat.isDir;
+        targetIsDir = XDeviceFile_stat(target, &targetStat) && targetStat.isDir;
     }
     if (sourceCount > 2 && !targetIsDir) {
         XString_delete_base(target);
@@ -1991,10 +2017,10 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
             ok = xfs_append_path_component(destination, sourceName + 1);
         if (ok && force) {
             XFileStat targetStat;
-            if (XFileSystem_stat(destination, &targetStat))
-                ok = targetStat.isDir ? XFileSystem_rmdir(destination, true) : XFileSystem_removePermanent(destination);
+            if (XDeviceFile_stat(destination, &targetStat))
+                ok = targetStat.isDir ? XDeviceFile_rmdir(destination, true) : XDeviceFile_removePermanent(destination);
         }
-        if (ok) ok = XFileSystem_rename(source, destination);
+        if (ok) ok = XDeviceFile_rename(source, destination);
         XString_delete_base(source);
         XString_delete_base(destination);
         if (!ok) break;
@@ -2017,17 +2043,17 @@ static int xfs_write_file(XConsoleShell* shell, XConsoleShellSession* session,
         if (path) XString_delete_base(path);
         return XConsoleResult_InvalidArgument;
     }
-    fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Create |
-                          XFileSystem_Truncate, &error);
+    fd = xfs_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                          XDeviceFile_Truncate, &error);
     XString_delete_base(path);
     if (fd == XFD_INVALID) return XConsoleResult_Failed;
     for (i = 1; i < argc && ok; ++i) {
-        if (i > 1) ok = XFileSystem_write(fd, " ", 1) == 1;
-        if (ok) ok = XFileSystem_write(fd, argv[i], (int64_t)strlen(argv[i])) ==
+        if (i > 1) ok = XDeviceFile_write(fd, " ", 1) == 1;
+        if (ok) ok = XDeviceFile_write(fd, argv[i], (int64_t)strlen(argv[i])) ==
                          (int64_t)strlen(argv[i]);
     }
-    if (ok) ok = XFileSystem_flush(fd);
-    XFileSystem_close(fd);
+    if (ok) ok = XDeviceFile_flush(fd);
+    XDeviceFile_close(fd);
     return ok ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
 
@@ -2045,14 +2071,14 @@ static int xfs_link(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_link(target, link, XLinkType_Hard);
+    ok = XDeviceFile_link(target, link, XLinkType_Hard);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
 
 #if XCONSOLE_SHELL_FS_LN_ON
-/* POSIX ln 语义通过 XFileSystem_link 统一支持符号/硬链接。 */
+/* POSIX ln 语义通过 XDeviceFile_link 统一支持符号/硬链接。 */
 static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
                   int argc, const char* const* argv, void* userData)
 {
@@ -2096,7 +2122,7 @@ static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
         if (link) XString_delete_base(link);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_link(target, link, symbolic ? XLinkType_Symbolic : XLinkType_Hard);
+    ok = XDeviceFile_link(target, link, symbolic ? XLinkType_Symbolic : XLinkType_Hard);
     XString_delete_base(target);
     XString_delete_base(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
@@ -2126,7 +2152,7 @@ static int xfs_unlink(XConsoleShell* shell, XConsoleShellSession* session,
             if (path) XString_delete_base(path);
             return XConsoleResult_InvalidArgument;
         }
-        ok = XFileSystem_removePermanent(path) && ok;
+        ok = XDeviceFile_removePermanent(path) && ok;
         XString_delete_base(path);
     }
     if (pathCount == 0) return XConsoleResult_InvalidArgument;
@@ -2153,7 +2179,7 @@ static int xfs_format(XConsoleShell* shell, XConsoleShellSession* session,
         if (drive) XString_delete_base(drive);
         return XConsoleResult_InvalidArgument;
     }
-    ok = XFileSystem_format(drive, XFileSystemType_Auto, NULL,
+    ok = XDeviceFile_format(drive, XDeviceFileType_Auto, NULL,
                             argc == 2 ? XFileSystemFormat_Force : XFileSystemFormat_None,
                             0, xfs_format_progress, shell);
     XString_delete_base(drive);

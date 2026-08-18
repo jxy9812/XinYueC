@@ -334,7 +334,7 @@
 /* 4. 命令模块总开关                                                         */
 /* ==================================================================== */
 
-/** @brief 文件系统命令树总开关；命令通过 XFileSystem 公共 API 操作。 */
+/** @brief 文件系统命令树总开关；命令通过 XDeviceFile 公共 API 操作。 */
 #ifndef XCONSOLE_SHELL_FILESYSTEM_ON
 #define XCONSOLE_SHELL_FILESYSTEM_ON 1
 #endif
@@ -432,12 +432,12 @@
 /* 6. 文件系统子命令与编辑器                                                     */
 /* ==================================================================== */
 
-/** @brief 启用 `pwd`，输出 XFileSystem 当前路径。 */
+/** @brief 启用 `pwd`，输出 XDeviceFile 当前路径。 */
 #ifndef XCONSOLE_SHELL_FS_PWD_ON
 #define XCONSOLE_SHELL_FS_PWD_ON 1
 #endif
 
-/** @brief 启用 `cd`，切换 XFileSystem 当前路径。 */
+/** @brief 启用 `cd`，切换 XDeviceFile 当前路径。 */
 #ifndef XCONSOLE_SHELL_FS_CD_ON
 #define XCONSOLE_SHELL_FS_CD_ON 1
 #endif
@@ -717,7 +717,7 @@
 #define XCONSOLE_SHELL_USER_COMMANDS_ON 1
 #endif
 
-/** @brief 用户账户 JSON 文件默认路径；使用 XFileSystem 解析。 */
+/** @brief 用户账户 JSON 文件默认路径；使用 XDeviceFile 解析。 */
 #ifndef XCONSOLE_SHELL_LOGIN_CONFIG_PATH
 #define XCONSOLE_SHELL_LOGIN_CONFIG_PATH "xconsole_users.json"
 #endif

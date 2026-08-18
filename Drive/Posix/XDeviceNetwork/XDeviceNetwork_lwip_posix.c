@@ -1,8 +1,8 @@
 ﻿/**
- * @file XNetwork_lwip_posix.c
+ * @file XDeviceNetwork_lwip_posix.c
  * @brief lwIP Linux/macOS/BSD 平台 TAP/TUN 虚拟网卡实现
  *
- * 对标 Windows XNetwork_lwip_win32.c（Npcap 虚拟网卡实现）。
+ * 对标 Windows XDeviceNetwork_lwip_win32.c（Npcap 虚拟网卡实现）。
  *
  * 核心功能：
  *   1. 创建 TAP 虚拟网卡（Linux: /dev/net/tun，macOS: utun）
@@ -51,8 +51,14 @@
 #include <sys/sys_domain.h>
 #endif
 
-#include "XNetwork_lwip_platform.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+
+/* 仅供 lwIP 平台网卡实现使用；不暴露到 XDeviceNetwork 公共头。 */
+struct netif* XDeviceNetworkLwip_platform_init(void);
+void XDeviceNetworkLwip_platform_deinit(void);
+struct netif* XDeviceNetworkLwip_defaultNetif(void);
+void XDeviceNetworkLwip_setDefaultNetif(struct netif* netif);
+void XDeviceNetworkLwip_pollPcap(void);
 #include "XMemory.h"
 #include "XThread.h"
 #include "XPrintf.h"
@@ -98,16 +104,16 @@
 
 /* 互斥检查：确保且仅启用一种模式 */
 #if defined(LWIP_USE_DHCP) && defined(LWIP_USE_STATIC_IP)
-#error "XNetwork_lwip_posix: 不能同时启用 LWIP_USE_DHCP 和 LWIP_USE_STATIC_IP"
+#error "XDeviceNetwork_lwip_posix: 不能同时启用 LWIP_USE_DHCP 和 LWIP_USE_STATIC_IP"
 #endif
 #if defined(LWIP_USE_DHCP) && defined(LWIP_USE_PHYSICAL)
-#error "XNetwork_lwip_posix: 不能同时启用 LWIP_USE_DHCP 和 LWIP_USE_PHYSICAL"
+#error "XDeviceNetwork_lwip_posix: 不能同时启用 LWIP_USE_DHCP 和 LWIP_USE_PHYSICAL"
 #endif
 #if defined(LWIP_USE_STATIC_IP) && defined(LWIP_USE_PHYSICAL)
-#error "XNetwork_lwip_posix: 不能同时启用 LWIP_USE_STATIC_IP 和 LWIP_USE_PHYSICAL"
+#error "XDeviceNetwork_lwip_posix: 不能同时启用 LWIP_USE_STATIC_IP 和 LWIP_USE_PHYSICAL"
 #endif
 #if !defined(LWIP_USE_DHCP) && !defined(LWIP_USE_STATIC_IP) && !defined(LWIP_USE_PHYSICAL)
-#error "XNetwork_lwip_posix: 必须启用 LWIP_USE_DHCP、LWIP_USE_STATIC_IP 或 LWIP_USE_PHYSICAL 中的一种"
+#error "XDeviceNetwork_lwip_posix: 必须启用 LWIP_USE_DHCP、LWIP_USE_STATIC_IP 或 LWIP_USE_PHYSICAL 中的一种"
 #endif
 
 /* ================================================================
@@ -586,7 +592,7 @@ static bool get_interface_mac(const char* ifName, uint8_t* mac)
  * 平台初始化
  * ================================================================ */
 
-struct netif* XNetworkLwip_platform_init(void)
+struct netif* XDeviceNetworkLwip_platform_init(void)
 {
     LWIP_DBG("[平台初始化] 开始...\n");
 
@@ -615,7 +621,7 @@ struct netif* XNetworkLwip_platform_init(void)
                 netif_set_default(result);
                 g_loopbackNetif = result;
                 g_defaultLwipNetif = result;
-                XNetworkLwip_setDefaultNetif(result);
+                XDeviceNetworkLwip_setDefaultNetif(result);
                 LWIP_DBG("[回环] 创建回环网卡: %c%c%d\n",
                          result->name[0], result->name[1], result->num);
             } else {
@@ -691,7 +697,7 @@ struct netif* XNetworkLwip_platform_init(void)
             if (g_loopbackNetif) {
                 netif_set_default(result);
                 g_defaultLwipNetif = result;
-                XNetworkLwip_setDefaultNetif(result);
+                XDeviceNetworkLwip_setDefaultNetif(result);
             }
             LWIP_DBG("[物理网卡] 创建成功: %c%c%d (if_name=%s)\n",
                      result->name[0], result->name[1], result->num,
@@ -760,7 +766,7 @@ struct netif* XNetworkLwip_platform_init(void)
                 if (g_loopbackNetif) {
                     netif_set_default(result);
                     g_defaultLwipNetif = result;
-                    XNetworkLwip_setDefaultNetif(result);
+                    XDeviceNetworkLwip_setDefaultNetif(result);
                 }
             } else {
                 LWIP_DBG("[TAP] netif_add 失败\n");
@@ -848,7 +854,7 @@ struct netif* XNetworkLwip_platform_init(void)
     if (g_physCtxCount > 0 && g_physCtxs[0].netif) return g_physCtxs[0].netif;
 #endif
     /* The TAP interface is the external lwIP route.  Returning loopback here
-     * makes XNetwork_ensureInitialized() overwrite the TAP default netif,
+     * makes XDeviceNetwork_ensureInitialized() overwrite the TAP default netif,
      * sending DHCP/ARP frames through a non-Ethernet loopback interface. */
     if (g_tapCtxCount > 0 && g_tapCtxs[0].netif) return g_tapCtxs[0].netif;
     if (g_loopbackNetif) return g_loopbackNetif;
@@ -862,7 +868,7 @@ struct netif* XNetworkLwip_platform_init(void)
  * 平台清理
  * ================================================================ */
 
-void XNetworkLwip_platform_deinit(void)
+void XDeviceNetworkLwip_platform_deinit(void)
 {
 #ifdef LWIP_USE_PHYSICAL
     LWIP_DBG("[平台清理] 开始关闭 %d 个物理网卡...\n", g_physCtxCount);
@@ -908,7 +914,7 @@ void XNetworkLwip_platform_deinit(void)
  * 数据包轮询
  * ================================================================ */
 
-void XNetworkLwip_pollPcap(void)
+void XDeviceNetworkLwip_pollPcap(void)
 {
 #ifdef LWIP_USE_PHYSICAL
     /* 物理网卡模式：使用 pcap_dispatch 批量处理 */
@@ -955,12 +961,12 @@ void XNetworkLwip_pollPcap(void)
  * 默认 netif 管理
  * ================================================================ */
 
-bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* endpoint,
-                                 XNetworkLocalStreamType streamType,
+bool XDeviceNetwork_socketConnectLocal(XFd fd, const XString* endpoint,
+                                 XDeviceNetworkLocalStreamType streamType,
                                  int timeoutMs,
-                                 XNetworkSocketType sockType)
+                                 XDeviceNetworkSocketType sockType)
 {
-    (void)priv;
+    (void)fd;
     (void)endpoint;
     (void)streamType;
     (void)timeoutMs;
@@ -968,12 +974,12 @@ bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* end
     return false;
 }
 
-struct netif* XNetworkLwip_defaultNetif(void)
+struct netif* XDeviceNetworkLwip_defaultNetif(void)
 {
     return g_defaultLwipNetif;
 }
 
-void XNetworkLwip_setDefaultNetif(struct netif* netif)
+void XDeviceNetworkLwip_setDefaultNetif(struct netif* netif)
 {
     g_defaultLwipNetif = netif;
 }

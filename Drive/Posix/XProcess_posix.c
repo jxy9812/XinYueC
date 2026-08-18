@@ -3,7 +3,7 @@
  * @brief POSIX XProcess 和 XProcessEnvironment 后端。
  * @details
  * 本文件是 XinYueC 的内部平台后端，负责 pipe/fork/exec/wait 的系统边界；
- * 公共 XProcess 核心不包含这些头文件。文件重定向通过 XFileSystem 公共
+ * 公共 XProcess 核心不包含这些头文件。文件重定向通过 XDeviceFile 公共
  * API 打开，进程状态、错误和输出缓冲通过 XProcess_Protected.h 回写；系统
  * 环境枚举也在这里转换为 XProcessEnvironment 公共对象，避免拆分同一平台
  * 后端的源文件。
@@ -13,10 +13,11 @@
 
 #if XProcess_ON && (defined(__linux__) || defined(__APPLE__) || defined(__BSD__))
 
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XFileDescriptor.h"
 #include "XMemory.h"
 #include "XRingBuffer.h"
+#include "XVariant.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -52,6 +53,15 @@ typedef struct XProcessDetachedMessage {
     int32_t type;                /**< 0 为孙进程 PID，1 为错误码。 */
     int32_t value;               /**< PID 或 errno。 */
 } XProcessDetachedMessage;
+
+static XFd xpp_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static int xpp_set_nonblocking(int fd)
 {
@@ -140,19 +150,27 @@ static int xpp_open_redirect(const XString* path, bool write, bool append)
     XFd fd;
     if (!path || XString_isEmpty_base(path)) return -1;
     if (write) {
-        mode = XFileSystem_WriteOnly | XFileSystem_Create |
-               (append ? XFileSystem_Append : XFileSystem_Truncate);
+        mode = XDeviceFile_WriteOnly | XDeviceFile_Create |
+               (append ? XDeviceFile_Append : XDeviceFile_Truncate);
     } else {
-        mode = XFileSystem_ReadOnly;
+        mode = XDeviceFile_ReadOnly;
     }
-    fd = XFileSystem_open(path, mode, &error);
+    fd = xpp_open_file(path, mode, &error);
     if (fd == XFD_INVALID) return -1;
-    /* XFileSystem_open 返回的是拥有者句柄；复制底层 fd 后立即释放
-       XFd 包装，避免进程后端绕过库的生命周期管理造成 fd 表泄漏。 */
+    /* 设备句柄的 handle 是打开上下文，不是 POSIX 原生 fd；通过父类属性
+       取得借用的原生句柄，复制后再释放设备上下文。 */
     {
-        int raw = (int)(intptr_t)XFd_handle(fd);
-        int duplicate = raw >= 0 ? dup(raw) : -1;
-        XFileSystem_close(fd);
+        XVariant nativeHandle;
+        int raw = -1;
+        int duplicate;
+        memset(&nativeHandle, 0, sizeof(nativeHandle));
+        if (!XDevice_getProperty(fd, XDeviceProperty_NativeHandle, &nativeHandle)) {
+            XDevice_close(fd);
+            return -1;
+        }
+        raw = (int)(intptr_t)XVariant_toPtr(&nativeHandle);
+        duplicate = raw >= 0 ? dup(raw) : -1;
+        XDevice_close(fd);
         return duplicate;
     }
 }

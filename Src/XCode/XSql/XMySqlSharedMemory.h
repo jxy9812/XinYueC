@@ -6,11 +6,11 @@
  * 本接口描述 MySQL 客户端在本机使用共享内存连接 MySQL 服务器时所需的传输能力
  * （连接握手、分块帧协议、跨进程同步）。实现完全位于共享代码
  * （Src/XCode/XSql/XMySqlSharedMemory.c），不包含任何平台头文件：
- * 命名共享内存段的打开/映射/解除映射统一走 XFileSystem_openSharedMemory /
- * XFileSystem_map / XFileSystem_unmap / XFileSystem_close 三个共享内存
- * 原语。平台 XFileSystem_openSharedMemory 会为每个段内建一个同名信令
+ * 命名共享内存段的打开/映射/解除映射统一走 XDeviceFile_openSharedMemory /
+ * XDeviceFile_map / XDeviceFile_unmap / XDeviceFile_close 三个共享内存
+ * 原语。平台 XDeviceFile_openSharedMemory 会为每个段内建一个同名信令
  * 通道（POSIX 为 Unix domain 流式套接字，Windows 为命名管道），返回的
- * XFd 可直接用 XFileSystem_read / XFileSystem_write 收发信令字节；
+ * XFd 可直接用 XDeviceFile_read / XDeviceFile_write 收发信令字节；
  * 跨进程收发同步完全复刻网络套接字的异步接收语义：数据方写完一块后写
  * 通知字节，对端在信令通道上阻塞等待（非共享内存状态轮询），因此
  * Windows 与 POSIX（Linux/macOS/BSD）行为一致，Linux 同样支持本机

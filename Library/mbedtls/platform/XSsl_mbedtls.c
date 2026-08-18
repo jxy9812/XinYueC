@@ -7,7 +7,8 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
+#include "XVarList.h"
 #include <string.h>
 #include <stdio.h>
  /* 1. Memory bridge */
@@ -91,32 +92,54 @@ XSslContext* XSsl_contextCreate(XSslProtocol protocol) {
 }
 void XSsl_contextDestroy(XSslContext* c) { if (!c)return; mbedtls_ssl_config_free(&c->conf); XFree_System(c); }
 
-/* 6. File read helper (portable XFileSystem API, including FatFs) */
+static bool xssl_file_stat(XFd fd, XFileStat* stat)
+{
+    XFileStat result;
+    XVarList* output;
+    bool ok;
+    if (!stat) return false;
+    memset(&result, 0, sizeof(result));
+    output = XVarList_Create(XVar(XFileStat, result));
+    if (!output) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_GetFileStat, NULL, output);
+    if (ok) {
+        XVarList_start(output);
+        *stat = XVarList_arg(output, XFileStat);
+    }
+    XVarList_delete(output);
+    return ok;
+}
+
+/* 6. File read helper (portable XDevice API, including FatFs) */
 static unsigned char* xssl_read_file_all(const char* path, size_t* olen) {
     if (!path || !olen)return NULL; *olen = 0;
     XString* xn = XString_create_utf8(path);
     if (!xn)return NULL;
     int error = 0;
-    XFd fd = XFileSystem_open(xn, XIODevice_ReadOnly, &error);
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = XIODevice_ReadOnly;
+    options.m_target = xn;
+    XFd fd = XDevice_open(XDeviceType_File, &options, &error);
     XString_delete_base((XClass*)xn);
     if (fd == XFD_INVALID) return NULL;
     XFileStat stat;
-    if (!XFileSystem_fstat(fd, &stat) || stat.size <= 0) {
-        XFileSystem_close(fd);
+    if (!xssl_file_stat(fd, &stat) || stat.size <= 0) {
+        XDeviceFile_close(fd);
         return NULL;
     }
     int64_t fsize = stat.size;
     unsigned char* buf = (unsigned char*)XMalloc_System((size_t)fsize + 1);
-    if (!buf) { XFileSystem_close(fd); return NULL; }
+    if (!buf) { XDeviceFile_close(fd); return NULL; }
     /* Read the known file length directly and tolerate a platform backend
      * returning it in multiple chunks. */
     int64_t got = 0;
     while (got < fsize) {
-        int64_t n = XFileSystem_read(fd, (char*)buf + got, fsize - got);
+        int64_t n = XDeviceFile_read(fd, (char*)buf + got, fsize - got);
         if (n <= 0) break;
         got += n;
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     if (got < 0 || (size_t)got != (size_t)fsize) { XFree_System(buf); return NULL; }
     buf[fsize] = '\0'; *olen = (size_t)fsize; return buf;
 }

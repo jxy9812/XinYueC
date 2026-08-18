@@ -135,7 +135,7 @@ bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
                                      ULONG_PTR completionKey,
                                      LPOVERLAPPED overlapped);
 
-/* ==================== IOCP 兼容包装（供 XNetwork_win32.c / XSerialPortWin32.c 使用） ==================== */
+/* ==================== IOCP 兼容包装（供 XDeviceNetwork_win32.c / XSerialPortWin32.c 使用） ==================== */
 
 /**
  * @brief 获取全局 IOCP 完成端口句柄

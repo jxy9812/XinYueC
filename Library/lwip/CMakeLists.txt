@@ -1,6 +1,6 @@
 ﻿# ==================== lwIP 轻量级 TCP/IP 协议栈 ====================
 # 轻量级 TCP/IP 协议栈，适用于嵌入式/资源受限环境。
-# 包含 XinYueC 网络适配层（XNetwork_lwip.c / XNetwork_lwip_platform.h）。
+# 包含 XinYueC 网络适配层（XDeviceNetwork_lwip.c / XDeviceNetwork.h）。
 
 # --- 公开头文件路径（传播给链接方）---
 set(LWIP_PUBLIC_INCS

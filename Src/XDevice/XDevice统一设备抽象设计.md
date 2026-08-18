@@ -12,7 +12,7 @@
   继承 `XClass`，同时承担“后端基类”的职责（早期 `XDeviceBackend` 已合并进 `XDevice`）；
 - `XDeviceContext`：每次 `XDevice_open` 独立分配的打开上下文基类，虚函数统一收到
   `XDeviceContext*`，具体设备子类在首位扩展自己的私有状态；
-- `XDeviceFile`：内置文件设备示例，继承 `XDevice`，复用 `XFileSystem` 平台实现；
+- `XDeviceFile`：内置文件设备示例，继承 `XDevice`，复用 `XDeviceFile` 平台实现；
 - `XFileDescriptor`：极简统一句柄表槽位，只保存 `m_deviceCtx/object/m_type`。
 
 本设计放弃之前未提交的 `XDrive.h/XDrive.c` 方向，从上一次提交重新开始。
@@ -125,7 +125,7 @@ typedef struct XDeviceContext
 typedef struct XDeviceFileCtx
 {
     XDeviceContext m_base;      /* 第一个成员，打开上下文基类。 */
-    XFd m_fileFd;               /* XFileSystem 返回的文件描述符。 */
+    XFd m_fileFd;               /* XDeviceFile 返回的文件描述符。 */
     int m_openMode;             /* 打开模式。 */
     uint32_t m_flags;           /* 打开标志。 */
     uint64_t m_bufferSize;      /* 读写缓冲字节数；0 表示设备默认。 */
@@ -166,7 +166,7 @@ XDeviceContext* XDevice_handle(XFd fd);
 ```c
 typedef struct XDeviceOpenOptions
 {
-    int      m_openMode;    /* 打开模式位组合，见 XFileInfo 的 XFileSystem_* 模式；0 表示设备默认。 */
+    int      m_openMode;    /* 打开模式位组合，见 XFileInfo 的 XDeviceFile_* 模式；0 表示设备默认。 */
     uint32_t m_flags;       /* XDeviceOpenFlag 位组合。 */
     int64_t  m_timeoutMs;   /* 打开超时（毫秒）；0 表示设备默认或无限等待。 */
 } XDeviceOpenOptions;
@@ -233,7 +233,7 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 
 | 类型 | 设备类 | 复用实现 |
 | --- | --- | --- |
-| File | `XDeviceFile` | `XFileSystem_win32/posix/Fatfs` |
+| File | `XDeviceFile` | `XDeviceFile_win32/posix/Fatfs` |
 | Console | `XDeviceConsole` | 标准输入平台实现（待迁移） |
 | Dir | `XDeviceDir` | 目录迭代器平台实现（待迁移） |
 | Mapping | `XDeviceMapping` | 共享内存平台实现（待迁移） |
@@ -252,7 +252,7 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 | --- | --- | --- |
 | P0 | 删除旧 `XDrive.*` 和旧设计文档，新增 `XDevice/XDeviceFile` | 工作区干净，基线编译通过 |
 | P1 | `XFileDescriptor` 精简为 m_deviceCtx/object/m_type；`XDeviceContext` 从 fd 剥离并作基类；虚函数统一传 `XDeviceContext*` | 编译通过，旧调用方不变 |
-| P2 | 文件设备走 `XDeviceFile`，各平台替换 `XFileSystem` 平台实现 | 文件设备回归通过，`XFileSystem` 可移除 |
+| P2 | 文件设备走 `XDeviceFile`，各平台替换 `XDeviceFile` 平台实现 | 文件设备回归通过，`XDeviceFile` 可移除 |
 | P3 | 迁移 CONSOLE/DIR/MAPPING/SERIAL/TIMER/SOCKET 为 `XDevice` 子类 | 各设备回归通过 |
 | P4 | 新设备接入（GPIO/ADC/PWM/CAN/I2C/SPI/USB）；补 mock 设备测试 | `XDevice_openClass` 可打开任意注册设备 |
 

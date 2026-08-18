@@ -16,6 +16,9 @@
 #include "XStringList.h"
 #include "XPrintf.h"
 #include "XDeviceTest.h"
+#include "XDeviceFileTest.h"
+#include "XDeviceNetworkTest.h"
+#include "XDeviceSerialPortTest.h"
 #include "XProcessTest.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
@@ -23,6 +26,7 @@
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
 #include "XProtocolTest.h"
+#include "XDataTest.h"
 #include "XTestCommand.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -46,6 +50,14 @@ static int main_run_test_path(const char* testPath)
     }
     if (strcmp(testPath, "esp8266-unit") == 0)
         return XESP8266WifiTest_runUnit();
+    if (strcmp(testPath, "xdevice-file") == 0)
+        return XDeviceFileTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xdevice-network") == 0)
+        return XDeviceNetworkTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xdevice-serial-port") == 0)
+        return XDeviceSerialPortTest_runAll() ? 0 : 1;
+    if (strcmp(testPath, "xdata") == 0)
+        return XDataTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xprocess") == 0)
         return XProcessTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xconsole-shell") == 0)
@@ -71,6 +83,11 @@ static int main_run_test_path(const char* testPath)
     if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
         return XMqttTcpInteropTest_run() ? 0 : 1;
     if (strcmp(testPath, "all") == 0) {
+        bool esp8266 = XESP8266WifiTest_runUnit() == 0;
+        bool deviceFile = XDeviceFileTest_runAll();
+        bool deviceNetwork = XDeviceNetworkTest_runAll();
+        bool deviceSerialPort = XDeviceSerialPortTest_runAll();
+        bool data = XDataTest_runAll();
         bool process = XProcessTest_runAll();
         bool shell = XConsoleShellTest_runAll();
         bool backend = XConsoleShellBackendTest_runAll();
@@ -78,7 +95,7 @@ static int main_run_test_path(const char* testPath)
         bool cryptographic = XCryptographicPrimitiveTest_runAll();
         bool ssl = XSslTest_runAll();
         bool mqtt = XMqttTest_runAll();
-        return process && shell && backend && clients && cryptographic && ssl && mqtt ? 0 : 1;
+        return esp8266 && deviceFile && deviceNetwork && deviceSerialPort && data && process && shell && backend && clients && cryptographic && ssl && mqtt ? 0 : 1;
     }
     XPrintf("未知测试命令: %s\n", testPath);
     return 1;
@@ -97,6 +114,10 @@ static void main_print_test_list(void)
     XPrintf("  Test all\n");
     XPrintf("  --test esp8266-unit\n");
     XPrintf("  --test esp8266-auto\n");
+    XPrintf("  --test xdevice-file\n");
+    XPrintf("  --test xdevice-network\n");
+    XPrintf("  --test xdevice-serial-port\n");
+    XPrintf("  --test xdata\n");
     XPrintf("  --test all\n");
 }
 

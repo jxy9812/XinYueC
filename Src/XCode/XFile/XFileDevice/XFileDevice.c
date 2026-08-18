@@ -1,15 +1,79 @@
 ﻿#include "XFileDevice.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include "XIODevicePrivate.h"   /* XIODevicePrivate_getOrCreateReadBuffer */
 #include "XRingBuffer.h"        /* XRingBuffer_available */
 #include "XFileDescriptor.h"   /* XFd_setObject */
 #include "XAbstractNetIoRing.h"  /* XAbstractNetIoRing_global, registerEvent_base */
+#include "XVarList.h"
 
 #include <stdlib.h>
 #include <string.h>
 #if XFILE_ON
 #if XFILEDEVICE_ON
+
+static bool xfiledevice_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+{
+    XVarList* input;
+    bool ok;
+    input = XVarList_Create(XVar(XFileTime, timeType), XVar(int64_t, timeValue));
+    if (!input) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_SetFileTime, input, NULL);
+    XVarList_delete(input);
+    return ok;
+}
+
+static bool xfiledevice_getFileStat(XFd fd, XFileStat* stat)
+{
+    XFileStat result;
+    XVarList* output;
+    bool ok;
+    if (!stat) return false;
+    memset(&result, 0, sizeof(result));
+    output = XVarList_Create(XVar(XFileStat, result));
+    if (!output) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_GetFileStat, NULL, output);
+    if (ok) {
+        XVarList_start(output);
+        *stat = XVarList_arg(output, XFileStat);
+    }
+    XVarList_delete(output);
+    return ok;
+}
+
+static void* xfiledevice_map(XFd fd, int64_t offset, int64_t size, int flags)
+{
+    XVarList* input;
+    XVarList* output;
+    void* address = NULL;
+    bool ok;
+    input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size), XVar(int, flags));
+    output = XVarList_Create(XVar(void*, address));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return NULL;
+    }
+    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
+    if (ok) {
+        XVarList_start(output);
+        address = XVarList_arg(output, void*);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return address;
+}
+
+static bool xfiledevice_unmap(XFd fd, void* address, int64_t size)
+{
+    XVarList* input;
+    bool ok;
+    input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
+    if (!input) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
+    XVarList_delete(input);
+    return ok;
+}
 
 /* ============================================================================
  * 虚函数实现（重写父类虚函数）
@@ -49,7 +113,7 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
     if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return 0;
     }
-    int64_t rawPos = XFileSystem_pos(XIODevice_fd(&device->m_parent));
+    int64_t rawPos = XDeviceFile_pos(XIODevice_fd(&device->m_parent));
     /* Qt 行为: pos 需要减去读缓冲区中尚未消费的数据量 */
     XIODevice* io = (XIODevice*)&device->m_parent;
     if (io->m_d) {
@@ -73,7 +137,7 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
     }
     /* 外部进程可在设备保持打开时追加文件，不能以旧缓存作为当前大小。 */
     XFileStat stat;
-    if (!XFileSystem_fstat(XIODevice_fd(&device->m_parent), &stat)) return -1;
+    if (!xfiledevice_getFileStat(XIODevice_fd(&device->m_parent), &stat)) return -1;
     ((XFileDevice*)device)->m_cachedSize = stat.size;
     return stat.size;
 }
@@ -93,7 +157,7 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
     }
     
 
-    return XFileSystem_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
+    return XDeviceFile_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
 }
 
 /**
@@ -173,7 +237,7 @@ static int64_t VXFileDevice_readData(XFileDevice* device, char* data, int64_t ma
         return -1;
     }
 
-    return XFileSystem_read(XIODevice_fd(&device->m_parent), data, maxlen);
+    return XDeviceFile_read(XIODevice_fd(&device->m_parent), data, maxlen);
 }
 
 /**
@@ -193,7 +257,7 @@ static int64_t VXFileDevice_writeData(XFileDevice* device, const char* data, int
         return -1;
     }
     
-    return XFileSystem_write(XIODevice_fd(&device->m_parent), data, len);
+    return XDeviceFile_write(XIODevice_fd(&device->m_parent), data, len);
 }
 
 /**
@@ -214,7 +278,7 @@ static int64_t VXFileDevice_readLineData(XFileDevice* device, char* data, int64_
         char c;
     
         while (bytesRead < maxlen - 1) {
-        int64_t n = XFileSystem_read(XIODevice_fd(&device->m_parent), &c, 1);
+        int64_t n = XDeviceFile_read(XIODevice_fd(&device->m_parent), &c, 1);
         if (n <= 0) {
             break;
         }
@@ -253,7 +317,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
             int64_t remaining = maxSize - skipped;
             int64_t toRead = (remaining > (int64_t)sizeof(temp)) ? (int64_t)sizeof(temp) : remaining;
 
-            int64_t n = XFileSystem_read(XIODevice_fd(&device->m_parent), temp, toRead);
+            int64_t n = XDeviceFile_read(XIODevice_fd(&device->m_parent), temp, toRead);
             if (n <= 0) break;
             skipped += n;
         }
@@ -272,7 +336,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     
     int64_t actualSkip = newPos - currentPos;
     if (actualSkip > 0) {
-        XFileSystem_seek(XIODevice_fd(&device->m_parent), newPos, XSeekSet);
+        XDeviceFile_seek(XIODevice_fd(&device->m_parent), newPos, XSeekSet);
     }
     
     return actualSkip;
@@ -514,13 +578,13 @@ bool XFileDevice_setPermissions_base(XFileDevice* device, XFilePermissions permi
 }
 
 /* ============================================================================
- * 非虚函数 - 使用 XFileSystem API 实现
+ * 非虚函数 - 使用 XDeviceFile API 实现
  * ============================================================================ */
 
 bool XFileDevice_flush(XFileDevice* device)
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0) return false;
-    return XFileSystem_flush(XIODevice_fd(&device->m_parent));
+    return XDeviceFile_flush(XIODevice_fd(&device->m_parent));
 }
 
 XFd XFileDevice_handle(const XFileDevice* device)
@@ -535,7 +599,7 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time)
     if (!device || XIODevice_fd(&device->m_parent) < 0) return result;
     
     XFileStat stat;
-    if (!XFileSystem_fstat(XIODevice_fd(&device->m_parent), &stat)) return result;
+    if (!xfiledevice_getFileStat(XIODevice_fd(&device->m_parent), &stat)) return result;
     
     int64_t timestamp = 0;
     switch (time) {
@@ -554,26 +618,25 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time)
 bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time)
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0 || !newDate) return false;
-    /* 平台层 XFileSystem_setFileTime 接受 Unix 时间戳 (int64_t 秒).
-       XDateTime 的语义值 (秒数) 由 XDateTime_toSecsSinceEpoch 派生,
-       上层调到这里仍然是 XDateTime*, 转换在边界一次性完成. */
+    /* 时间参数按命令约定作为 XVarList(XFileTime, int64_t) 传入。 */
     int64_t timestamp = XDateTime_toSecsSinceEpoch(newDate);
     XFd fd = XIODevice_fd(&device->m_parent);
 
-    /* 优先使用 fd 版：直接操作已打开的句柄，无需路径。
-       Win32 后端通过 SetFileTime(HANDLE) 实现；
-       FatFs 后端无 f_futime 接口，返回 false。*/
-    if (XFileSystem_setFileTime(fd, time, timestamp))
+    if (xfiledevice_setFileTime(fd, time, timestamp))
         return true;
 
     /* 回退到路径版：打开文件→设置时间→关闭 */
     const XString* fileName = XFileDevice_fileName_base(device);
     if (!fileName) return false;
     int openErr = 0;
-    XFd tempFd = XFileSystem_open(fileName, XFileSystem_WriteOnly, &openErr);
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = XDeviceFile_WriteOnly;
+    options.m_target = fileName;
+    XFd tempFd = XDevice_open(XDeviceType_File, &options, &openErr);
     if (tempFd == XFD_INVALID) return false;
-    bool result = XFileSystem_setFileTime(tempFd, time, timestamp);
-    XFileSystem_close(tempFd);
+    bool result = xfiledevice_setFileTime(tempFd, time, timestamp);
+    XDevice_close(tempFd);
     return result;
 }
 
@@ -585,7 +648,7 @@ void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDe
     int mapFlags = (flags & XFileDevice_MapPrivateOption) ? 0x1 : 0x0;
     if (flags & XFileDevice_MapPrivateOption) writable = true;
     if (writable) mapFlags |= 0x2;
-    void* addr = XFileSystem_map(XIODevice_fd(&device->m_parent), offset, size, mapFlags);
+    void* addr = xfiledevice_map(XIODevice_fd(&device->m_parent), offset, size, mapFlags);
     if (addr) mmapTrack(addr, size);
     return addr;
 }
@@ -594,7 +657,7 @@ bool XFileDevice_unmap(XFileDevice* device, void* address)
 {
     if (!device || !address) return false;
     int64_t sz = mmapLookupSize(address);
-    bool ok = XFileSystem_unmap(address, sz);
+    bool ok = xfiledevice_unmap(XIODevice_fd(&device->m_parent), address, sz);
     if (ok) mmapUntrack(address);
     return ok;
 }

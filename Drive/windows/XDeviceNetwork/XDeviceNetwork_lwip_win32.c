@@ -1,5 +1,5 @@
 ﻿/**
- * @file XNetwork_lwip_win32.c
+ * @file XDeviceNetwork_lwip_win32.c
  * @brief lwIP Windows 平台虚拟网卡实现 - 基于 Npcap 虚拟网卡
  *
  * 基于 STM32F407+FreeRTOS 成功移植经验，适配 Windows + Npcap 平台。
@@ -32,8 +32,14 @@
 #include <time.h>
 #include <locale.h>
 
-#include "XNetwork_lwip_platform.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+
+/* 仅供 lwIP 平台网卡实现使用；不暴露到 XDeviceNetwork 公共头。 */
+struct netif* XDeviceNetworkLwip_platform_init(void);
+void XDeviceNetworkLwip_platform_deinit(void);
+struct netif* XDeviceNetworkLwip_defaultNetif(void);
+void XDeviceNetworkLwip_setDefaultNetif(struct netif* netif);
+void XDeviceNetworkLwip_pollPcap(void);
 #include "XMemory.h"
 #include "XThread.h"
 #include "XPrintf.h"
@@ -373,7 +379,7 @@ static void npcap_status_callback(struct netif* netif) {
     }
     if (setDefault && netif_default != netif) {
         netif_set_default(netif);
-        XNetworkLwip_setDefaultNetif(netif);
+        XDeviceNetworkLwip_setDefaultNetif(netif);
     }
     LWIP_DBG("[DHCP] lease %c%c%d ifIndex=%lu default=%d IP=%s MASK=%s GW=%s DEV=%s\n",
              netif->name[0], netif->name[1], netif->num,
@@ -456,7 +462,7 @@ static void pcapif_input_callback(u_char* user, const struct pcap_pkthdr* hdr, c
  *   pcap_dispatch(pa->adapter, -1, pcapif_input, (u_char*)pa);
  *   -1 表示处理当前 Npcap 缓冲区中所有可用包（非阻塞，处理完就返回）
  */
-void XNetworkLwip_pollPcap(void) {
+void XDeviceNetworkLwip_pollPcap(void) {
     for (int i = 0; i < g_npcapCtxCount; i++) {
         npcap_ctx_t* ctx = &g_npcapCtxs[i];
         if (!ctx->pcap || !ctx->netif) continue;
@@ -514,14 +520,14 @@ static err_t loopback_init(struct netif* netif) {
     return ERR_OK;
 }
 /* 平台初始化 - 创建回环网卡 + Npcap 虚拟网卡 */
-struct netif* XNetworkLwip_platform_init(void) {
+struct netif* XDeviceNetworkLwip_platform_init(void) {
     LWIP_DBG("[平台初始化] 开始...\n");
     memset(g_npcapCtxs, 0, sizeof(g_npcapCtxs));
     memset(g_rxCount, 0, sizeof(g_rxCount));
     memset(g_txCount, 0, sizeof(g_txCount));
     g_npcapCtxCount = 0;
     g_dhcpStarted = false;
-    XNetworkLwip_setDefaultNetif(NULL);
+    XDeviceNetworkLwip_setDefaultNetif(NULL);
 
     /* 第一步：创建回环网卡 lo0 (127.0.0.1) */
     ip4_addr_t loopIp, loopMask, loopGw;
@@ -616,7 +622,7 @@ struct netif* XNetworkLwip_platform_init(void) {
                             LWIP_DBG("[网卡] %c%c%d 静态IP模式创建成功\n", result->name[0], result->name[1], result->num);
                             if (!netif_default) {
                                 netif_set_default(result);
-                                XNetworkLwip_setDefaultNetif(result);
+                                XDeviceNetworkLwip_setDefaultNetif(result);
                             }
                         } else {
                             LWIP_DBG("[网卡] netif_add失败(静态IP模式), 释放预分配的netif\n");
@@ -710,7 +716,7 @@ struct netif* XNetworkLwip_platform_init(void) {
 }
 
 /* 平台清理 - 关闭所有 Npcap 网卡并释放资源 */
-void XNetworkLwip_platform_deinit(void) {
+void XDeviceNetworkLwip_platform_deinit(void) {
     LWIP_DBG("[平台清理] 开始关闭 %d 个Npcap虚拟网卡...\n", g_npcapCtxCount);
     for (int i = 0; i < g_npcapCtxCount; i++) {
         npcap_ctx_t* ctx = &g_npcapCtxs[i];
@@ -734,7 +740,7 @@ void XNetworkLwip_platform_deinit(void) {
     memset(g_npcapCtxs, 0, sizeof(g_npcapCtxs));
     memset(g_rxCount, 0, sizeof(g_rxCount));
     memset(g_txCount, 0, sizeof(g_txCount));
-    XNetworkLwip_setDefaultNetif(NULL);
+    XDeviceNetworkLwip_setDefaultNetif(NULL);
     unload_npcap();
     LWIP_DBG("[平台清理] 完成\n");
 }
@@ -744,12 +750,12 @@ void XNetworkLwip_platform_deinit(void) {
  * 默认 netif 管理
  * ================================================================ */
 
-bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* endpoint,
-                                 XNetworkLocalStreamType streamType,
+bool XDeviceNetwork_socketConnectLocal(XFd fd, const XString* endpoint,
+                                 XDeviceNetworkLocalStreamType streamType,
                                  int timeoutMs,
-                                 XNetworkSocketType sockType)
+                                 XDeviceNetworkSocketType sockType)
 {
-    (void)priv;
+    (void)fd;
     (void)endpoint;
     (void)streamType;
     (void)timeoutMs;
@@ -759,12 +765,12 @@ bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* end
 
 static struct netif* g_defaultLwipNetif = NULL;
 
-struct netif* XNetworkLwip_defaultNetif(void)
+struct netif* XDeviceNetworkLwip_defaultNetif(void)
 {
     return g_defaultLwipNetif;
 }
 
-void XNetworkLwip_setDefaultNetif(struct netif* netif)
+void XDeviceNetworkLwip_setDefaultNetif(struct netif* netif)
 {
     g_defaultLwipNetif = netif;
 }

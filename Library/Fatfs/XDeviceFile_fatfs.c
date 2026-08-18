@@ -3,8 +3,7 @@
 /* 仅在启用FatFS模式时编译此文件 */
 #if defined(XFILE_USE_FATFS)
 
-#include "XFileSystem.h"
-#include "XFileSystem_Fatfs_platform.h"  /* 平台抽象层 */
+#include "XDeviceFile.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -18,6 +17,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+/* 这些函数只服务于 XDeviceFile/XDevice 对旧 XFd 的兼容路径。 */
+void XDeviceFile_legacyClose(XFd fd);
+int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
+bool XDeviceFile_legacyFlush(XFd fd);
+bool XDeviceFile_legacyResize(XFd fd, int64_t size);
+
+/* diskio 平台文件只为本 FatFs 实现提供的内部适配符号，不进入 XDeviceFile 公共头。 */
+int XFATFS_platformDriveCount(void);
+bool XFATFS_platformDriveAt(int index, XString* path);
+int XFATFS_platformDrivePrefixToIndex(const char* prefix);
+bool XFATFS_platformCurrentPath(XString* path);
+bool XFATFS_platformSetCurrentPath(const XString* path);
+bool XFATFS_platformHomePath(XString* path);
+bool XFATFS_platformRootPath(XString* path);
+bool XFATFS_platformTempPath(XString* path);
 
 /* ============================================================================
  * RTC 函数 - get_fattime（Fatfs 要求的实时时钟，跨平台通用）
@@ -199,9 +216,9 @@ static const char* XFATFS_parseVolumeLocked(const char* utf8Path,
                                             size_t driveBufferSize)
 {
     if (!utf8Path || !outPath || !driveBuffer || driveBufferSize < 4 ||
-        XFatfsDrives_count() <= 0) return NULL;
+        XFATFS_platformDriveCount() <= 0) return NULL;
     /* 通过平台函数在驱动器前缀列表中查找索引 */
-    int bestIdx = XFatfsDrives_prefixToIndex(utf8Path);
+    int bestIdx = XFATFS_platformDrivePrefixToIndex(utf8Path);
     if (bestIdx >= 0) {
         if (bestIdx >= FF_VOLUMES) return NULL;
         /* 获取匹配的前缀长度（如 "C:"=2, "sd:"=3） */
@@ -210,7 +227,7 @@ static const char* XFATFS_parseVolumeLocked(const char* utf8Path,
         char driveName[64];
         const char* driveUtf8 = NULL;
         size_t bestLen = 0;
-        if (XFatfsDrives_at(bestIdx, xDrive)) {
+        if (XFATFS_platformDriveAt(bestIdx, xDrive)) {
             const char* driveText = XString_toUtf8(xDrive);
             if (driveText) {
                 bestLen = strlen(driveText);
@@ -423,11 +440,15 @@ static XFATFS_DirHandle* XFATFS_getDirHandle(XFd fd)
  * 一、核心文件操作（8个）
  * ============================================================================ */
 
-XFd XFileSystem_open(const XString* path, int mode, int* error)
+XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t openFlags, int* error)
 {
+    if (openFlags != XDeviceOpenFlag_None) {
+        if (error) *error = XFileDevice_OpenError;
+        return XFD_INVALID;
+    }
 #if FF_FS_READONLY
-    if (mode & (XFileSystem_WriteOnly | XFileSystem_ReadWrite | XFileSystem_Append |
-                XFileSystem_Truncate | XFileSystem_Create | XFileSystem_NewOnly)) {
+    if (mode & (XDeviceFile_WriteOnly | XDeviceFile_ReadWrite | XDeviceFile_Append |
+                XDeviceFile_Truncate | XDeviceFile_Create | XDeviceFile_NewOnly)) {
         if (error) *error = XFileDevice_PermissionsError;
         return XFD_INVALID;
     }
@@ -439,13 +460,13 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     }
     
     BYTE fatfsMode = 0;
-    if (mode & XFileSystem_ReadOnly) fatfsMode |= FA_READ;
-    if (mode & XFileSystem_WriteOnly) fatfsMode |= FA_WRITE;
-    if ((mode & XFileSystem_ReadWrite) == XFileSystem_ReadWrite) fatfsMode |= FA_READ | FA_WRITE;
-    if (mode & XFileSystem_Create)   fatfsMode |= FA_OPEN_ALWAYS;  /* 创建或打开已存在 */
-    if (mode & XFileSystem_NewOnly)  fatfsMode |= FA_CREATE_NEW;    /* 仅新建，存在则失败 */
-    if (mode & XFileSystem_Truncate) fatfsMode |= FA_CREATE_ALWAYS; /* 清空后打开 */
-    if (mode & XFileSystem_Append) fatfsMode |= FA_OPEN_APPEND;
+    if (mode & XDeviceFile_ReadOnly) fatfsMode |= FA_READ;
+    if (mode & XDeviceFile_WriteOnly) fatfsMode |= FA_WRITE;
+    if ((mode & XDeviceFile_ReadWrite) == XDeviceFile_ReadWrite) fatfsMode |= FA_READ | FA_WRITE;
+    if (mode & XDeviceFile_Create)   fatfsMode |= FA_OPEN_ALWAYS;  /* 创建或打开已存在 */
+    if (mode & XDeviceFile_NewOnly)  fatfsMode |= FA_CREATE_NEW;    /* 仅新建，存在则失败 */
+    if (mode & XDeviceFile_Truncate) fatfsMode |= FA_CREATE_ALWAYS; /* 清空后打开 */
+    if (mode & XDeviceFile_Append) fatfsMode |= FA_OPEN_APPEND;
     if (fatfsMode == 0) fatfsMode = FA_READ;
     
     /* 分配 XFATFS_FileHandle 包装（FIL + 路径），路径供 fstat/setFileTime 使用 */
@@ -479,7 +500,7 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
         return XFD_INVALID;
     }
     
-    if (mode & XFileSystem_Append) {
+    if (mode & XDeviceFile_Append) {
         f_lseek(&fh->fil, f_size(&fh->fil));
     }
     
@@ -487,18 +508,18 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     return fd;
 }
 
-XFd XFileSystem_openStandardInput(int* error)
+XFd XDeviceFile_openStandardInput(int* error)
 {
     if (error) *error = XFileDevice_OpenError;
     return XFD_INVALID;
 }
 
-void XFileSystem_close(XFd fd)
+void XDeviceFile_legacyClose(XFd fd)
 {
     XFATFS_freeFile(fd);
 }
 
-int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return -1;
@@ -513,7 +534,7 @@ int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
     return (int64_t)f_tell(fp);
 }
 
-int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
+int64_t XDeviceFile_legacyRead(XFd fd, void* buf, int64_t len)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || len < 0 || (len > 0 && !buf) || (uint64_t)len > UINT_MAX) return -1;
@@ -525,15 +546,7 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
     return (int64_t)bytesRead;
 }
 
-int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
-{
-    (void)fd;
-    (void)buf;
-    (void)len;
-    return -2;
-}
-
-bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
+bool XDeviceFile_legacySetStandardInputEcho(XFd fd, bool enabled)
 {
     /* FatFS 只提供块设备文件访问，不拥有终端控制台及回显状态。 */
     (void)fd;
@@ -541,7 +554,7 @@ bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
     return false;
 }
 
-int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* buf, int64_t len)
 {
 #if FF_FS_READONLY
     (void)fd;
@@ -560,7 +573,7 @@ int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 #endif
 }
 
-bool XFileSystem_flush(XFd fd)
+bool XDeviceFile_legacyFlush(XFd fd)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return false;
@@ -571,7 +584,7 @@ bool XFileSystem_flush(XFd fd)
 #endif
 }
 
-bool XFileSystem_resize(XFd fd, int64_t size)
+bool XDeviceFile_legacyResize(XFd fd, int64_t size)
 {
 #if FF_FS_READONLY
     (void)fd;
@@ -582,12 +595,16 @@ bool XFileSystem_resize(XFd fd, int64_t size)
     if (!fp || size < 0) return false;
     
     FSIZE_t oldPos = f_tell(fp);
+    FSIZE_t restorePos;
     if (f_lseek(fp, (FSIZE_t)size) != FR_OK) return false;
     if (f_truncate(fp) != FR_OK) {
         f_lseek(fp, oldPos);
         return false;
     }
-    f_lseek(fp, oldPos);
+    /* FatFs 在写模式下定位到 EOF 之后会扩展文件；截断后不能恢复一个
+       超过新大小的旧位置，否则会撤销刚完成的截断。 */
+    restorePos = oldPos > (FSIZE_t)size ? (FSIZE_t)size : oldPos;
+    f_lseek(fp, restorePos);
     return true;
 #endif
 }
@@ -596,7 +613,7 @@ bool XFileSystem_resize(XFd fd, int64_t size)
  * 二、文件属性操作（2个）
  * ============================================================================ */
 
-bool XFileSystem_stat(const XString* path, XFileStat* stat)
+bool XDeviceFile_stat(const XString* path, XFileStat* stat)
 {
     if (!path || !stat) return false;
     
@@ -607,7 +624,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     FRESULT fr = f_stat(fatfsPath, &fno);
     if (fr != FR_OK) {
         /* FatFs 某些版本对卷根目录的 f_stat 返回 FR_INVALID_NAME，
-         * 通过打开目录确认根路径存在，保持 XFileSystem_stat 的目录语义。 */
+         * 通过打开目录确认根路径存在，保持 XDeviceFile_stat 的目录语义。 */
         DIR rootDir;
         if (f_opendir(&rootDir, fatfsPath) == FR_OK) {
             f_closedir(&rootDir);
@@ -659,7 +676,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     return true;
 }
 
-bool XFileSystem_fstat(XFd fd, XFileStat* stat)
+bool XDeviceFile_legacyFstat(XFd fd, XFileStat* stat)
 {
     XFATFS_FileHandle* fh = XFATFS_getFileHandle(fd);
     if (!fh || !stat) return false;
@@ -703,7 +720,7 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 /* ============================================================================
  * 三、文件系统操作（4个）
  * ============================================================================ */
-bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath)
+bool XDeviceFile_remove(const XString* path, XRemoveMode mode, XString* trashPath)
 {
     (void)mode;
     (void)trashPath;
@@ -720,7 +737,7 @@ bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPat
 #endif
 }
 
-bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
+bool XDeviceFile_rename(const XString* oldPath, const XString* newPath)
 {
 #if FF_FS_READONLY
     (void)oldPath;
@@ -737,7 +754,7 @@ bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
 #endif
 }
 
-bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
+bool XDeviceFile_copy(const XString* srcPath, const XString* dstPath)
 {
 #if FF_FS_READONLY
     (void)srcPath;
@@ -785,7 +802,7 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
  * 四、目录操作（5个）
  * ============================================================================ */
 
-bool XFileSystem_mkdir(const XString* path, bool recursive)
+bool XDeviceFile_mkdir(const XString* path, bool recursive)
 {
 #if FF_FS_READONLY
     (void)path;
@@ -814,7 +831,7 @@ bool XFileSystem_mkdir(const XString* path, bool recursive)
 #endif
 }
 
-bool XFileSystem_rmdir(const XString* path, bool recursive)
+bool XDeviceFile_rmdir(const XString* path, bool recursive)
 {
 #if FF_FS_READONLY
     (void)path;
@@ -862,7 +879,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive)
         
         if (fno.fattrib & AM_DIR) {
             XString* subPath = XString_create_utf8(fullPath);
-            XFileSystem_rmdir(subPath, true);
+            XDeviceFile_rmdir(subPath, true);
             XString_delete_base(subPath);
         } else {
             f_unlink(fullPath);
@@ -874,7 +891,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive)
 #endif
 }
 
-XDirIterator XFileSystem_opendir(const XString* path)
+XDirIterator XDeviceFile_opendir(const XString* path)
 {
     if (!path) return NULL;
     
@@ -902,7 +919,7 @@ XDirIterator XFileSystem_opendir(const XString* path)
     return (XDirIterator)(uintptr_t)(fd + 1);
 }
 
-bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
+bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
 {
     if (!iter || !entry) return false;
     
@@ -928,7 +945,7 @@ bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
     return true;
 }
 
-void XFileSystem_closedir(XDirIterator iter)
+void XDeviceFile_closedir(XDirIterator iter)
 {
     if (!iter) return;
     
@@ -947,7 +964,7 @@ void XFileSystem_closedir(XDirIterator iter)
  * 五、路径操作（1个）
  * ============================================================================ */
 
-bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style)
+bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle style)
 {
     if (!path || !result) return false;
 
@@ -958,7 +975,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
 
     /* 无卷标且不以根斜杠开始的路径按 FatFs 当前目录解析。 */
-    bool hasVolume = XFatfsDrives_prefixToIndex(input) >= 0;
+    bool hasVolume = XFATFS_platformDrivePrefixToIndex(input) >= 0;
     const char* volumePath = input;
     if (hasVolume) {
         const char* colon = strchr(input, ':');
@@ -986,7 +1003,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
         int volIdx = resolvedFatfs[0] - '0';
         if (XFATFS_isVolumeAllocated(volIdx)) {
             XString* xDrive = XString_create();
-            if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
+            if (xDrive && XFATFS_platformDriveAt(volIdx, xDrive)) {
                 const char* driveUtf8 = XString_toUtf8(xDrive);
                 if (driveUtf8) {
                     snprintf(absPath, sizeof(absPath), "%s%s", driveUtf8, resolvedFatfs + 2);
@@ -1005,20 +1022,20 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
     (void)style;
     return true;
 }
-bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
+bool XDeviceFile_getSpecialPath(XSpecialPath type, XString* path)
 {
     if (!path) return false;
     switch (type) {
     case XSpecialPath_Current: {
         char cwd[256];
         FRESULT fr = XFATFS_getCurrentDirectory(cwd, sizeof(cwd));
-        if (fr != FR_OK) return XFatfsPath_current(path);
+        if (fr != FR_OK) return XFATFS_platformCurrentPath(path);
         
         if (cwd[0] >= '0' && cwd[0] <= '9' && cwd[1] == ':') {
             int volIdx = cwd[0] - '0';
             if (XFATFS_isVolumeAllocated(volIdx)) {
                 XString* xDrive = XString_create();
-                if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
+                if (xDrive && XFATFS_platformDriveAt(volIdx, xDrive)) {
                     const char* driveUtf8 = XString_toUtf8(xDrive);
                     if (driveUtf8) {
                         char converted[256];
@@ -1035,31 +1052,31 @@ bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
         return true;
     }
     case XSpecialPath_Home:
-        return XFatfsPath_home(path);
+        return XFATFS_platformHomePath(path);
     case XSpecialPath_Root:
-        return XFatfsPath_root(path);
+        return XFATFS_platformRootPath(path);
     case XSpecialPath_Temp:
-        return XFatfsPath_temp(path);
+        return XFATFS_platformTempPath(path);
     default:
         return false;
     }
 }
 
-bool XFileSystem_setCurrentPath(const XString* path)
+bool XDeviceFile_setCurrentPath(const XString* path)
 {
     if (!path) return false;
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return false;
     FRESULT fr = XFATFS_setCurrentDirectory(fatfsPath);
     if (fr == FR_OK) return true;
-    return XFatfsPath_setCurrent(path);
+    return XFATFS_platformSetCurrentPath(path);
 }
 
 /* ============================================================================
  * 七、符号链接操作（2个）- 不支持
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type)
+bool XDeviceFile_link(const XString* targetPath, const XString* linkPath, XLinkType type)
 {
     (void)targetPath;
     (void)linkPath;
@@ -1067,7 +1084,7 @@ bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkT
     return false;
 }
 
-bool XFileSystem_readLink(const XString* path, XString* target)
+bool XDeviceFile_readLink(const XString* path, XString* target)
 {
     (void)path;
     (void)target;
@@ -1079,7 +1096,7 @@ bool XFileSystem_readLink(const XString* path, XString* target)
  * 八、权限操作（1个）- 支持基本只读属性
  * ============================================================================ */
 
-bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions)
+bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permissions)
 {
 #if FF_FS_READONLY
     (void)path;
@@ -1107,7 +1124,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * 九、内存映射（3个）- 不支持
  * ============================================================================ */
 
-XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
 {
     /* FatFs 运行在无共享内存的嵌入式环境，命名共享内存段明确不支持 */
     (void)name;
@@ -1117,7 +1134,7 @@ XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSi
     return XFD_INVALID;
 }
 
-void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
+void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || offset < 0 || size <= 0 || (uint64_t)size > UINT_MAX) return NULL;
@@ -1145,7 +1162,7 @@ void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
     return buf;
 }
 
-bool XFileSystem_unmap(void* addr, int64_t size)
+bool XDeviceFile_unmap(void* addr, int64_t size)
 {
     if (!addr) return false;
     XFree_System(addr);
@@ -1161,7 +1178,7 @@ bool XFileSystem_unmap(void* addr, int64_t size)
  * @note FatFs 无 f_futime 接口，通过 XFATFS_FileHandle 中存储的路径
  *       调用 f_utime 实现。路径版需求由上层通过 open→setFileTime→close 组合实现。
  */
-bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
 #if FF_FS_READONLY
     (void)fd;
@@ -1193,14 +1210,14 @@ bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
  * 十二、驱动器列表
  * ============================================================================ */
 
-bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
+bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userData)
 {
     if (!callback) return false;
-    int count = XFatfsDrives_count();
+    int count = XFATFS_platformDriveCount();
     for (int i = 0; i < count; i++) {
         XString* path = XString_create();
         if (!path) return false;
-        bool ok = XFatfsDrives_at(i, path);
+        bool ok = XFATFS_platformDriveAt(i, path);
         if (!ok) { XString_delete_base(path); return false; }
         bool cont = callback(path, userData);
         XString_delete_base(path);
@@ -1213,7 +1230,7 @@ bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userDa
  * 十三、存储设备信息
  * ============================================================================ */
 
-bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
+bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
 {
 #if FF_FS_READONLY
     (void)path;
@@ -1261,12 +1278,12 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
  * 十四、磁盘格式化
  * ============================================================================ */
 
-bool XFileSystem_format(const XString* drive,
-                        XFileSystemType fsType,
+bool XDeviceFile_format(const XString* drive,
+                        XDeviceFileType fsType,
                         const XString* volumeName,
                         int flags,
                         int clusterSize,
-                        XFileSystemFormatProgress progress,
+                        XDeviceFileFormatProgress progress,
                         void* userData)
 {
 #if FF_FS_READONLY || !FF_USE_MKFS
@@ -1321,8 +1338,8 @@ bool XFileSystem_format(const XString* drive,
 
     memset(&opt, 0, sizeof(opt));
     opt.fmt = FM_ANY;
-    if (fsType == XFileSystemType_FAT32) opt.fmt = FM_FAT32;
-    else if (fsType == XFileSystemType_exFAT) opt.fmt = FM_EXFAT;
+    if (fsType == XDeviceFileType_FAT32) opt.fmt = FM_FAT32;
+    else if (fsType == XDeviceFileType_exFAT) opt.fmt = FM_EXFAT;
     if (clusterSize > 0) opt.au_size = (DWORD)clusterSize;
     if (progress && !progress(50, userData)) goto format_done;
     fr = f_mkfs(mountStr, &opt, work, sizeof(work));

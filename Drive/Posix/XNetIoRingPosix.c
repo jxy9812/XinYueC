@@ -209,6 +209,12 @@ static void processOneCompletion(XAbstractNetIoRing* self, struct io_uring_cqe* 
          * io_uring 下 eventMask 由调用者直接设置为 XSocketActType 值） */
         cqEntry.m_events = ctx->eventMask;
 
+        /* 取消请求只用于回收 user_data，不能在 fd 槽位复用后变成一条
+         * 新的连接事件。上下文结果仍在上面写回，供关闭路径确认 CQE 已
+         * 被消费。 */
+        if (ctx->eventMask == 0)
+            return;
+
         /* I/O 失败时：连接丢失等错误也标记为 Connect 事件 */
         if (res < 0 && cqEntry.m_events == 0) {
             cqEntry.m_events = XSocketAct_Connect;
@@ -471,7 +477,7 @@ XNetIoRingPosix* XNetIoRingPosix_create_ex(XMemoryType memory) {
 }
 
 /* ================================================================
- * io_uring 专属 API（供 XNetwork_posix.c / XSerialPortPosix.c 使用）
+ * io_uring 专属 API（供 XDeviceNetwork_posix.c / XSerialPortPosix.c 使用）
  * ================================================================ */
 int XNetIoRingPosix_ringFd(const XNetIoRingPosix* ring) {
     return ring ? ring->m_ringFd : -1;

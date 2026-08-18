@@ -31,7 +31,9 @@
 #include "XIODevicePrivate.h"
 #include "XEvent.h"
 #include "XEventType.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+#include "XVarList.h"
+#include "XVariant.h"
 #include "XFile.h"
 #include "XTypes.h"
 #include <stdlib.h>
@@ -109,6 +111,64 @@ typedef bool    (*Fn_event) (XAbstractSocket*, XEvent*);
 static size_t xssl_encrypted_tx_pending(const XSslSocket* self)
 {
     return self && self->encTxBuf ? XRingBuffer_available(self->encTxBuf) : 0;
+}
+
+static bool xssl_getSocketBool(const XAbstractSocket* socket, XDeviceProperty property, bool* value)
+{
+    XVariant result;
+    if (!socket || !value || socket->m_deviceFd == XFD_INVALID) return false;
+    memset(&result, 0, sizeof(result));
+    if (!XDevice_getProperty(socket->m_deviceFd, property, &result)) return false;
+    *value = XVariant_toBool(&result);
+    XVariant_clear(&result);
+    return true;
+}
+
+static size_t xssl_getSocketSize(const XAbstractSocket* socket, XDeviceProperty property)
+{
+    XVariant result;
+    size_t value = 0;
+    if (!socket || socket->m_deviceFd == XFD_INVALID) return 0;
+    memset(&result, 0, sizeof(result));
+    if (XDevice_getProperty(socket->m_deviceFd, property, &result))
+        value = XVariant_toSize_t(&result);
+    XVariant_clear(&result);
+    return value;
+}
+
+static const char* xssl_getSocketReadBuffer(XAbstractSocket* socket)
+{
+    const char* buffer = NULL;
+    XVarList* output;
+    bool ok;
+    if (!socket || socket->m_deviceFd == XFD_INVALID) return NULL;
+    output = XVarList_Create(XVar(const char*, buffer));
+    if (!output) return NULL;
+    ok = XDevice_control(socket->m_deviceFd, XDeviceNetworkCommand_GetReadBuffer, NULL, output);
+    if (ok) {
+        XVarList_start(output);
+        buffer = XVarList_arg(output, const char*);
+    }
+    XVarList_delete(output);
+    return buffer;
+}
+
+static bool xssl_controlSocketEvent(XAbstractSocket* socket, XEvent* event)
+{
+    XVarList* input;
+    bool ok;
+    if (!socket || !event || socket->m_deviceFd == XFD_INVALID) return false;
+    input = XVarList_Create(XVar(XEvent*, event));
+    if (!input) return false;
+    ok = XDevice_control(socket->m_deviceFd, XDeviceNetworkCommand_HandleEvent, input, NULL);
+    XVarList_delete(input);
+    return ok;
+}
+
+static bool xssl_controlSocket(XAbstractSocket* socket, XDeviceNetworkCommand command)
+{
+    return socket && socket->m_deviceFd != XFD_INVALID &&
+        XDevice_control(socket->m_deviceFd, command, NULL, NULL);
 }
 
 static bool xssl_queue_encrypted_tx(XSslSocket* self, const uint8_t* data, size_t len)
@@ -534,23 +594,23 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     if (sock->proxyHandshakeCtx) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
-    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)sock->d_ptr;
-    if (!priv || !sock->base.m_d) {
+    if (sock->m_deviceFd == XFD_INVALID || !sock->base.m_d) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
 
     XEventSockAct* sa = (XEventSockAct*)e;
     /* 驱动底层 IOCP/select 状态机（父类也是先调这一步） */
-    XNetwork_socketHandleEvent(priv, e);
+    xssl_controlSocketEvent(sock, e);
 
     /* Read：把底层刚读到的密文塞进 encRxBuf；不写 IODevice 读缓冲 */
     if (sa->actType & XSocketAct_Read) {
         /* 连接已断开：跳过密文写入和解密，防止将关闭后残留的垃圾数据
            写入 encRxBuf 并被 mbedTLS 尝试解密 */
         if (sock->state == XAbstractSocket_ConnectedState) {
-            size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
+            size_t bytesTransferred = xssl_getSocketSize(sock,
+                (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes);
             if (bytesTransferred > 0 && self->encRxBuf) {
-                const char* readBuf = XNetwork_socketReadBuffer(priv);
+                const char* readBuf = xssl_getSocketReadBuffer(sock);
                 if (readBuf) {
                     XRingBuffer_write(self->encRxBuf, readBuf, bytesTransferred);
                 }
@@ -559,13 +619,14 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
             xssl_drain_encrypted(self);
         }
         /* 继续投递下一次异步读（排空事件队列） */
-        XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
+        xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueRead);
     }
 
     /* Write：明文出站已由 xssl_v_writeData 走父类 writeData 完成；
        这里只处理底层写完成事件，emit bytesWritten 让上层继续写 */
     if (sa->actType & XSocketAct_Write) {
-        size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
+        size_t bytesWritten = xssl_getSocketSize(sock,
+            (XDeviceProperty)XDeviceNetworkProperty_WriteFinishedBytes);
         self->pendingAckedBytes += bytesWritten;
         xssl_flush_encrypted_tx(self);
         /* 上层收到通知后会继续提交明文。只有前一条 TLS 记录的密文尾部
@@ -575,16 +636,15 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
             self->pendingAckedBytes = 0;
             XIODevice_bytesWritten_signal((XIODevice*)sock, completed);
         }
-        int wch = XIODevice_currentWriteChannel((XIODevice*)sock);
-        struct XRingBuffer* wrb = XIODevicePrivate_getOrCreateWriteBuffer(sock->base.m_d, wch);
-        XNetwork_socketContinueWrite(priv, wrb, sock->socketType == XAbstractSocket_UdpSocket);
+        xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueWrite);
     }
 
     /* Connect：底层完成连接时切换状态 */
     if (sa->actType & XSocketAct_Connect) {
-        if (XNetwork_socketIsConnected(priv)) {
+        bool connected = false;
+        if (xssl_getSocketBool(sock, (XDeviceProperty)XDeviceNetworkProperty_Connected, &connected) && connected) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
-            XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
+            xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueRead);
         } else {
             XAbstractSocket_setSocketError(sock, XAbstractSocket_ConnectionRefusedError, "Connection failed");
             XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);

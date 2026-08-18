@@ -17,7 +17,7 @@
     XCONSOLE_SHELL_NETWORK_ON
 
 #include "XConsoleShellNetwork.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XNetworkInterface.h"
 #include "XNetworkAddressEntry.h"
 #include "XHostInfo.h"
@@ -265,7 +265,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_Failed;
     }
 #endif
-    if (!XNetwork_icmpEchoSupported()) {
+    if (!XDeviceNetwork_icmpEchoSupported()) {
         xcsn_write_line(shell, "ping: 当前网络后端未启用 ICMP Echo");
         return XConsoleResult_NotSupported;
     }
@@ -375,7 +375,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         static const uint8_t payload[] = "XinYueC-XConsoleShell-ICMP";
         for (i = 0; i < count; ++i) {
             uint32_t elapsed = 0;
-            bool ok = XNetwork_icmpEcho(target, 0x5859u, (uint16_t)(i + 1u), payload,
+            bool ok = XDeviceNetwork_icmpEcho(target, 0x5859u, (uint16_t)(i + 1u), payload,
                                         sizeof(payload) - 1u, (int)timeout, &elapsed);
             char line[192];
             ++total;
@@ -456,7 +456,7 @@ static bool xcsn_ping_send_one(XConsoleShell* shell)
     if (!shell || !shell->m_ping.active || !shell->m_ping.target)
         return false;
     state = &shell->m_ping;
-    ok = XNetwork_icmpEcho(state->target, 0x5859u,
+    ok = XDeviceNetwork_icmpEcho(state->target, 0x5859u,
                            (uint16_t)(state->sent + 1u), payload,
                            sizeof(payload) - 1u, (int)state->timeout,
                            &elapsed);

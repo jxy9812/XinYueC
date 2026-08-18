@@ -18,7 +18,7 @@
 #define _WIN32_WINNT 0x0600
 #endif
 
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XFileDescriptor.h"
 #include "XMemory.h"
 #include "XRingBuffer.h"
@@ -43,6 +43,15 @@ typedef struct XProcessWin32Backend {
     XRingBuffer* stderrBuffer;   /**< stderr 缓冲；对象拥有。 */
     XProcess* outputSinkProcess; /**< 标准输出目标；借用。 */
 } XProcessWin32Backend;
+
+static XFd xpw_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static bool xpw_valid_handle(HANDLE handle)
 {
@@ -202,14 +211,14 @@ static HANDLE xpw_open_redirect(const XString* path, bool write, bool append)
     HANDLE source;
     HANDLE duplicate;
     if (!path || XString_isEmpty_base(path)) return NULL;
-    mode = write ? (XFileSystem_WriteOnly | XFileSystem_Create |
-                    (append ? XFileSystem_Append : XFileSystem_Truncate))
-                 : XFileSystem_ReadOnly;
-    fd = XFileSystem_open(path, mode, &error);
+    mode = write ? (XDeviceFile_WriteOnly | XDeviceFile_Create |
+                    (append ? XDeviceFile_Append : XDeviceFile_Truncate))
+                 : XDeviceFile_ReadOnly;
+    fd = xpw_open_file(path, mode, &error);
     if (fd == XFD_INVALID) return NULL;
     source = (HANDLE)XFd_handle(fd);
     duplicate = xpw_duplicate_inheritable(source);
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     return duplicate;
 #endif
 }

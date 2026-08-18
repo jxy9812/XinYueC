@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 #include "XHostInfo.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVector.h"
@@ -282,13 +282,13 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     XHostInfo_setHostName(info, name);
     
     /* 调用 XNetwork 平台函数进行 DNS 查询 */
-    XNetwork_ensureInit();
+    XDeviceNetwork_ensureInit();
     
-    XVector* addrVec = XNetwork_lookupName(name);
+    XVector* addrVec = XDeviceNetwork_lookupName(name);
     if (!addrVec) {
         XHostInfo_setError(info, XHostInfo_HostNotFound);
-        int errCode = XNetwork_lastError();
-        char* errStr = XNetwork_errorString(errCode);
+        int errCode = XDeviceNetwork_lastError();
+        char* errStr = XDeviceNetwork_errorString(errCode);
         if (errStr) {
             info->errorString = XString_create_utf8(errStr);
             XFree_System(errStr);
@@ -322,14 +322,14 @@ XHostInfo* XHostInfo_fromName2(const char* name)
 }
 
 XString* XHostInfo_localHostName(void) {
-    XNetwork_ensureInit();
-    return XNetwork_localHostName();
+    XDeviceNetwork_ensureInit();
+    return XDeviceNetwork_localHostName();
 }
 
 XString* XHostInfo_localDomainName(void) {
     /* 应用层实现：从本地主机名提取域名 */
-    XNetwork_ensureInit();
-    XString* hostname = XNetwork_localHostName();
+    XDeviceNetwork_ensureInit();
+    XString* hostname = XDeviceNetwork_localHostName();
     if (!hostname) return NULL;
     
     /* 查找第一个点号，提取域名部分 */

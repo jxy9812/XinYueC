@@ -331,7 +331,7 @@ bool XNetIoRingWin32_postCompletion(XNetIoRingWin32* ring,
 }
 
 /* ================================================================
- * IOCP 兼容包装（供 XNetwork_win32.c / XSerialPortWin32.c 使用）
+ * IOCP 兼容包装（供 XDeviceNetwork_win32.c / XSerialPortWin32.c 使用）
  * ================================================================ */
 HANDLE IOCP_getGlobalPort(void) {
     XNetIoRingWin32* ring = (XNetIoRingWin32*)XAbstractNetIoRing_global();

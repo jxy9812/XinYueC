@@ -1,6 +1,6 @@
 ﻿/**
- * @file XFileSystem_posix.c
- * @brief XFileSystem POSIX 平台实现（Linux/macOS/BSD，支持 io_uring 异步 I/O）
+ * @file XDeviceFile_posix.c
+ * @brief XDeviceFile POSIX 平台实现（Linux/macOS/BSD，支持 io_uring 异步 I/O）
  *
  * 核心文件 I/O 操作（read/write/copy/flush）通过 io_uring 提交，
  * 使用 io_uring_enter 同步等待完成，实现真正异步 I/O 路径。
@@ -12,7 +12,7 @@
 #include "XFileSystem_config.h"
 #if defined(XFILE_USE_PLATFORM_API)
 
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XStorageInfo.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -40,6 +40,14 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
+
+/* 这些函数只服务于 XDeviceFile/XDevice 对旧 XFd 的兼容路径。 */
+void XDeviceFile_legacyClose(XFd fd);
+int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
+bool XDeviceFile_legacyFlush(XFd fd);
+bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 #ifdef __linux__
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
@@ -55,11 +63,11 @@
 
 /* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 shmFd（shm_open 返回）承载，信令通道由 signalFd
-   （Unix domain 流式套接字）承载，XFileSystem_map/unmap 使用 shmFd。
+   （Unix domain 流式套接字）承载，XDeviceFile_map/unmap 使用 shmFd。
    信令通道的异步接收完全接入库内部事件通知系统（XAbstractNetIoRing
    全局 io_uring 环，与网络套接字/串口的异步读一致）：
    openSharedMemory 建立信令套接字后即提交常驻异步 RECV，完成事件由
-   waitForEvents 处理并写入 m_read.base.result；XFileSystem_read 消费
+   waitForEvents 处理并写入 m_read.base.result；XDeviceFile_legacyRead 消费
    异步接收缓冲，无数据时通过事件环等待完成通知，不做任何轮询。
    首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->object 作为
    事件接收者），关闭时通过 XClass_deinit_base 完整释放。 */
@@ -77,7 +85,7 @@ typedef struct XFileSharedMemoryPosix {
 } XFileSharedMemoryPosix;
 
 /* 共享内存信令通道异步接收辅助函数（实现在"九、内存映射"小节）。
-   XFileSystem_read / XFileSystem_close 在文件前部使用，需要前置声明。 */
+   XDeviceFile_legacyRead / XDeviceFile_legacyClose 在文件前部使用，需要前置声明。 */
 static int64_t xfs_posix_shmRead(XFd fdx, XFileSharedMemoryPosix* m,
                                  void* buf, int64_t len);
 static void xfs_posix_shm_cancelRead(XFileSharedMemoryPosix* m);
@@ -157,16 +165,21 @@ static int64_t ioUringSyncIO(int fd, uint8_t opcode, void* buf, uint64_t len, in
  * 一、核心文件操作
  * ============================================================================ */
 
-XFd XFileSystem_open(const XString* path, int mode, int* error) {
+XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t openFlags, int* error) {
     if (!path) { if (error) *error = EINVAL; return XFD_INVALID; }
     const char* p = XString_toUtf8(path);
     int flags = 0;
-    if (mode & XFileSystem_ReadOnly) flags |= O_RDONLY;
-    if (mode & XFileSystem_WriteOnly) flags |= (mode & XFileSystem_ReadOnly) ? O_RDWR : O_WRONLY;
-    if (mode & XFileSystem_Append) flags |= O_APPEND;
-    if (mode & XFileSystem_Truncate) flags |= O_TRUNC;
-    if (mode & XFileSystem_NewOnly) flags |= O_CREAT | O_EXCL;
-    if (!(mode & XFileSystem_NewOnly) && (mode & XFileSystem_WriteOnly)) flags |= O_CREAT;
+    if (mode & XDeviceFile_ReadOnly) flags |= O_RDONLY;
+    if (mode & XDeviceFile_WriteOnly) flags |= (mode & XDeviceFile_ReadOnly) ? O_RDWR : O_WRONLY;
+    if (mode & XDeviceFile_Append) flags |= O_APPEND;
+    if (mode & XDeviceFile_Truncate) flags |= O_TRUNC;
+    if (mode & XDeviceFile_NewOnly) flags |= O_CREAT | O_EXCL;
+    if (!(mode & XDeviceFile_NewOnly) && (mode & XDeviceFile_WriteOnly)) flags |= O_CREAT;
+    if (openFlags & XDeviceOpenFlag_NonBlocking) flags |= O_NONBLOCK;
+    if (openFlags & XDeviceOpenFlag_Exclusive) {
+        if (!(flags & O_CREAT)) flags |= O_CREAT;
+        flags |= O_EXCL;
+    }
 
     int fd = open(p, flags, 0666);
     if (fd < 0) { if (error) *error = errno; return XFD_INVALID; }
@@ -174,7 +187,7 @@ XFd XFileSystem_open(const XString* path, int mode, int* error) {
     return XFd_alloc(XFD_TYPE_FILE, (void*)(intptr_t)fd, NULL);
 }
 
-XFd XFileSystem_openStandardInput(int* error)
+XFd XDeviceFile_openStandardInput(int* error)
 {
     int fd;
     int flags;
@@ -196,7 +209,7 @@ XFd XFileSystem_openStandardInput(int* error)
     return XFd_alloc(XFD_TYPE_FILE, (void*)(intptr_t)fd, NULL);
 }
 
-void XFileSystem_close(XFd fdx) {
+void XDeviceFile_legacyClose(XFd fdx) {
     XFileDescriptor* desc = XFd_get(fdx);
     if (!desc) return;
     if (desc->m_type == XFD_TYPE_MAPPING) {
@@ -223,7 +236,7 @@ void XFileSystem_close(XFd fdx) {
     XFd_free(fdx);
 }
 
-int64_t XFileSystem_seek(XFd fdx, int64_t offset, XSeekWhence whence) {
+int64_t XDeviceFile_legacySeek(XFd fdx, int64_t offset, XSeekWhence whence) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return -1;
     int flag;
@@ -236,7 +249,7 @@ int64_t XFileSystem_seek(XFd fdx, int64_t offset, XSeekWhence whence) {
     return (int64_t)lseek(fd, offset, flag);
 }
 
-int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
+int64_t XDeviceFile_legacyRead(XFd fdx, void* buf, int64_t len) {
     XFileDescriptor* desc = XFd_get(fdx);
     int fd;
     ssize_t n;
@@ -253,19 +266,7 @@ int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
     return -1;
 }
 
-int64_t XFileSystem_readStandardInput(XFd fdx, void* buf, int64_t len)
-{
-    int fd = XFS_getFd(fdx);
-    ssize_t n;
-    if (fd < 0 || !buf || len <= 0) return -2;
-    n = read(fd, buf, (size_t)len);
-    if (n > 0) return (int64_t)n;
-    if (n == 0) return -1;
-    if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-    return -2;
-}
-
-bool XFileSystem_setStandardInputEcho(XFd fdx, bool enabled)
+bool XDeviceFile_legacySetStandardInputEcho(XFd fdx, bool enabled)
 {
     int fd = XFS_getFd(fdx);
     struct termios attributes;
@@ -281,7 +282,7 @@ bool XFileSystem_setStandardInputEcho(XFd fdx, bool enabled)
     return tcsetattr(fd, TCSANOW, &attributes) == 0;
 }
 
-int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
+int64_t XDeviceFile_legacyWrite(XFd fdx, const void* buf, int64_t len) {
     XFileDescriptor* desc = XFd_get(fdx);
     int fd;
     ssize_t n;
@@ -300,14 +301,14 @@ int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
     return (n >= 0) ? (int64_t)n : -1;
 }
 
-bool XFileSystem_flush(XFd fdx) {
+bool XDeviceFile_legacyFlush(XFd fdx) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
 
     return fsync(fd) == 0;
 }
 
-bool XFileSystem_resize(XFd fdx, int64_t size) {
+bool XDeviceFile_legacyResize(XFd fdx, int64_t size) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
     return ftruncate(fd, size) == 0;
@@ -368,7 +369,7 @@ static void fillStat(struct stat* st, XFileStat* out) {
 #endif
 }
 
-bool XFileSystem_stat(const XString* path, XFileStat* out) {
+bool XDeviceFile_stat(const XString* path, XFileStat* out) {
     if (!path || !out) return false;
     struct stat st;
     if (stat(XString_toUtf8(path), &st) != 0) {
@@ -380,7 +381,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* out) {
     return true;
 }
 
-bool XFileSystem_fstat(XFd fdx, XFileStat* out) {
+bool XDeviceFile_legacyFstat(XFd fdx, XFileStat* out) {
     int fd = XFS_getFd(fdx);
     if (fd < 0 || !out) return false;
     struct stat st;
@@ -424,7 +425,7 @@ static bool xfs_moveToTrash(const XString* fileName, XString* pathInTrash) {
             struct passwd* pw = getpwuid(getuid());
             home = pw ? pw->pw_dir : NULL;
         }
-        if (!home) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
+        if (!home) return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL);
         snprintf(trashRoot, sizeof(trashRoot), "%s/.local/share/Trash", home);
     }
 
@@ -432,8 +433,8 @@ static bool xfs_moveToTrash(const XString* fileName, XString* pathInTrash) {
     char infoDir[4200];
     snprintf(filesDir, sizeof(filesDir), "%s/files", trashRoot);
     snprintf(infoDir, sizeof(infoDir), "%s/info", trashRoot);
-    if (!ensureTrashDir(filesDir, infoDir) && errno != EEXIST) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
-    if (!ensureTrashDir(infoDir, NULL) && errno != EEXIST) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
+    if (!ensureTrashDir(filesDir, infoDir) && errno != EEXIST) return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL);
+    if (!ensureTrashDir(infoDir, NULL) && errno != EEXIST) return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL);
 
     /* 2. 解析原文件 basename, 必要时按 XDateTime 时间戳去重 */
     const char* base = strrchr(src, '/');
@@ -454,38 +455,38 @@ static bool xfs_moveToTrash(const XString* fileName, XString* pathInTrash) {
         return true;
     }
     int sfd = open(src, O_RDONLY);
-    if (sfd < 0) return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL);
+    if (sfd < 0) return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL);
     int dfd = open(dest, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (dfd < 0) { close(sfd); return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL); }
+    if (dfd < 0) { close(sfd); return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL); }
     char buf[8192]; ssize_t n; bool ok = true;
     while ((n = read(sfd, buf, sizeof(buf))) > 0) {
         if (!XFS_writeAll(dfd, buf, (size_t)n)) { ok = false; break; }
     }
     if (n < 0) ok = false;
     close(sfd); close(dfd);
-    if (!ok) { unlink(dest); return XFileSystem_remove(fileName, XRemoveMode_Permanent, NULL); }
+    if (!ok) { unlink(dest); return XDeviceFile_remove(fileName, XRemoveMode_Permanent, NULL); }
     if (unlink(src) != 0) { unlink(dest); return false; }
     if (pathInTrash) XString_assign_utf8(pathInTrash, dest);
     return true;
 }
 
-bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath) {
+bool XDeviceFile_remove(const XString* path, XRemoveMode mode, XString* trashPath) {
     if (!path) return false;
     if (mode == XRemoveMode_Trash) return xfs_moveToTrash(path, trashPath);
     return unlink(XString_toUtf8(path)) == 0;
 }
 
-bool XFileSystem_rename(const XString* oldPath, const XString* newPath) {
+bool XDeviceFile_rename(const XString* oldPath, const XString* newPath) {
     if (!oldPath || !newPath) return false;
     /* Qt 行为: 目标文件已存在时 rename 失败 */
-    if (XFileSystem_exists(newPath)) return false;
+    if (XDeviceFile_exists(newPath)) return false;
     return rename(XString_toUtf8(oldPath), XString_toUtf8(newPath)) == 0;
 }
 
-bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
+bool XDeviceFile_copy(const XString* srcPath, const XString* dstPath) {
     if (!srcPath || !dstPath) return false;
     /* Qt 行为: 目标文件已存在时 copy 失败 */
-    if (XFileSystem_exists(dstPath)) return false;
+    if (XDeviceFile_exists(dstPath)) return false;
     const char* src = XString_toUtf8(srcPath);
     const char* dst = XString_toUtf8(dstPath);
     int sfd = open(src, O_RDONLY);
@@ -513,7 +514,7 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
  * 四、目录操作
  * ============================================================================ */
 
-bool XFileSystem_mkdir(const XString* path, bool recursive) {
+bool XDeviceFile_mkdir(const XString* path, bool recursive) {
     if (!path) return false;
     const char* p = XString_toUtf8(path);
     if (!p || !p[0]) return false;
@@ -542,7 +543,7 @@ bool XFileSystem_mkdir(const XString* path, bool recursive) {
     return false;
 }
 
-bool XFileSystem_rmdir(const XString* path, bool recursive) {
+bool XDeviceFile_rmdir(const XString* path, bool recursive) {
     if (!path) return false;
     const char* p = XString_toUtf8(path);
     if (!p || !p[0]) return false;
@@ -573,7 +574,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive) {
         if (lstat(fullPath, &st) == 0 && S_ISDIR(st.st_mode)) {
             XString* subPath = XString_create_utf8(fullPath);
             if (subPath) {
-                if (!XFileSystem_rmdir(subPath, true)) ok = false;
+                if (!XDeviceFile_rmdir(subPath, true)) ok = false;
                 XString_delete_base(subPath);
             } else ok = false;
         } else {
@@ -586,7 +587,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive) {
 
 typedef struct { DIR* dir; } PosixDirIter;
 
-XDirIterator XFileSystem_opendir(const XString* path) {
+XDirIterator XDeviceFile_opendir(const XString* path) {
     if (!path) return NULL;
     DIR* d = opendir(XString_toUtf8(path));
     if (!d) return NULL;
@@ -596,7 +597,7 @@ XDirIterator XFileSystem_opendir(const XString* path) {
     return (XDirIterator)iter;
 }
 
-bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry) {
+bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry) {
     if (!iter || !entry || !entry->name) return false;
     PosixDirIter* it = (PosixDirIter*)iter;
     struct dirent* de = readdir(it->dir);
@@ -618,7 +619,7 @@ bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry) {
     return true;
 }
 
-void XFileSystem_closedir(XDirIterator iter) {
+void XDeviceFile_closedir(XDirIterator iter) {
     if (!iter) return;
     PosixDirIter* it = (PosixDirIter*)iter;
     closedir(it->dir);
@@ -687,7 +688,7 @@ static bool XFS_normalizeAbsolutePath(const char* path, char* result, size_t cap
     return true;
 }
 
-bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style) {
+bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle style) {
     const char* value;
     if (!path || !result) return false;
     value = XString_toUtf8(path);
@@ -710,7 +711,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
  * 六、特殊路径
  * ============================================================================ */
 
-bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path) {
+bool XDeviceFile_getSpecialPath(XSpecialPath type, XString* path) {
     if (!path) return false;
     switch (type) {
     case XSpecialPath_Current: {
@@ -744,7 +745,7 @@ bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path) {
     }
 }
 
-bool XFileSystem_setCurrentPath(const XString* path) {
+bool XDeviceFile_setCurrentPath(const XString* path) {
     if (!path) return false;
     return chdir(XString_toUtf8(path)) == 0;
 }
@@ -753,13 +754,13 @@ bool XFileSystem_setCurrentPath(const XString* path) {
  * 七、符号链接操作
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type) {
+bool XDeviceFile_link(const XString* targetPath, const XString* linkPath, XLinkType type) {
     if (!targetPath || !linkPath) return false;
     if (type == XLinkType_Hard) return link(XString_toUtf8(targetPath), XString_toUtf8(linkPath)) == 0;
     return symlink(XString_toUtf8(targetPath), XString_toUtf8(linkPath)) == 0;
 }
 
-bool XFileSystem_readLink(const XString* path, XString* target) {
+bool XDeviceFile_readLink(const XString* path, XString* target) {
     if (!path || !target) return false;
     char buf[1024];
     ssize_t n = readlink(XString_toUtf8(path), buf, sizeof(buf) - 1);
@@ -773,7 +774,7 @@ bool XFileSystem_readLink(const XString* path, XString* target) {
  * 八、权限操作
  * ============================================================================ */
 
-bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions) {
+bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permissions) {
     if (!path) return false;
     return chmod(XString_toUtf8(path), xPermsToUnixMode(permissions)) == 0;
 }
@@ -783,7 +784,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * ============================================================================
  *
  * 共享内存段在 POSIX 上由两块组成：
- *   1. 命名共享内存段（shm_open）：存放跨进程数据，通过 XFileSystem_map 映射；
+ *   1. 命名共享内存段（shm_open）：存放跨进程数据，通过 XDeviceFile_map 映射；
  *   2. 命名信令通道（Unix domain 流式套接字，路径 <共享内存名>.sig）：
  *      数据方写完一块数据后向通道写入 1 个信令字节，对端通过库内部
  *      事件通知系统（XAbstractNetIoRing 全局 io_uring 环）异步接收，
@@ -791,8 +792,8 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  *      该通道内建于平台实现，不新增任何公共 API。
  *
  * XFd 句柄为信令套接字 fd，object 保存共享内存段 fd、路径信息与异步读
- * 事件上下文；XFileSystem_read / XFileSystem_write 在信令通道上收发
- * 通知字节，XFileSystem_map / XFileSystem_close 据此完成映射与释放。
+ * 事件上下文；XDeviceFile_legacyRead / XDeviceFile_legacyWrite 在信令通道上收发
+ * 通知字节，XDeviceFile_map / XDeviceFile_legacyClose 据此完成映射与释放。
  */
 
 /* 信令通道默认目录（无 P_tmpdir 时回退 /tmp）。 */
@@ -800,7 +801,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
 #define XFILE_SHM_SIGNAL_DIR "/tmp"
 #endif
 
-/* 信令通道异步读的有界等待片（毫秒）：XFileSystem_read 在无信令字节时
+/* 信令通道异步读的有界等待片（毫秒）：XDeviceFile_legacyRead 在无信令字节时
    通过事件环的 waitForEvents 最多阻塞该时长后返回 0，传输层据此检查
    整体超时；信令到达时事件环立即唤醒，不存在任何轮询。 */
 #define XFILE_SHM_SIGNAL_RCVTIMEO_MS 500
@@ -911,7 +912,7 @@ static int xfs_posix_signalConnect(const char* path)
  * 读取路径与网络套接字/串口完全一致：openSharedMemory 建立信令套接字
  * 后即提交常驻异步 RECV（IORING_OP_RECV，提交到 XAbstractNetIoRing
  * 全局 io_uring 环），完成事件由事件环的 waitForEvents（内核 poll
- * ring fd）处理并写入 m_read.base.result；XFileSystem_read 消费
+ * ring fd）处理并写入 m_read.base.result；XDeviceFile_legacyRead 消费
  * m_readBuffer 中的字节，无数据时通过事件环有界等待完成通知（超时片
  * 返回 0 供传输层检查整体截止时间），整个过程不轮询共享内存状态字段。
  * ============================================================================ */
@@ -996,7 +997,7 @@ static bool xfs_posix_shm_waitReadable(XFileSharedMemoryPosix* m)
     return false;
 }
 
-/* 取消在途异步读并回收完成事件（XFileSystem_close 关闭前调用）：
+/* 取消在途异步读并回收完成事件（XDeviceFile_legacyClose 关闭前调用）：
    提交 IORING_OP_ASYNC_CANCEL 后通过事件环有界等待被取消请求的 CQE
    到达（result 被写入 -ECANCELED 或实际结果），确保释放 mapping 前
    不存在悬垂 CQE 指向已释放的读上下文。 */
@@ -1032,7 +1033,7 @@ static void xfs_posix_shm_cancelRead(XFileSharedMemoryPosix* m)
 #endif
 }
 
-/* XFileSystem_read 的共享内存信令通道实现：
+/* XDeviceFile_legacyRead 的共享内存信令通道实现：
    优先消费异步接收缓冲；无数据时通过库内部事件环等待完成通知，
    超时片返回 0（调用方检查整体截止时间），对端关闭/通道错误返回 -1。 */
 static int64_t xfs_posix_shmRead(XFd fdx, XFileSharedMemoryPosix* m,
@@ -1092,7 +1093,7 @@ static int64_t xfs_posix_shmRead(XFd fdx, XFileSharedMemoryPosix* m,
     }
 }
 
-XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
 {
     const char* n;
     int shmFd = -1;
@@ -1180,7 +1181,7 @@ fail:
 #define XFILE_PAGE_SIZE 4096
 #define XFILE_PAGE_MASK (XFILE_PAGE_SIZE - 1)
 
-void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, int flags) {
+void* XDeviceFile_map(XFd fdx, int64_t offset, int64_t size, int flags) {
     XFileDescriptor* desc = XFd_get(fdx);
     int fd;
     if (!desc) return NULL;
@@ -1207,7 +1208,7 @@ void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, int flags) {
     return (char*)base + delta;
 }
 
-bool XFileSystem_unmap(void* addr, int64_t size) {
+bool XDeviceFile_unmap(void* addr, int64_t size) {
     if (!addr) return false;
     /* 同样需要将用户指针向下对齐到页, 并使用对齐后的 size */
     uintptr_t p = (uintptr_t)addr;
@@ -1230,7 +1231,7 @@ bool XFileSystem_unmap(void* addr, int64_t size) {
  * @note 使用 futimens 直接操作已打开的 fd。
  *       路径版需求由上层通过 open→setFileTime→close 组合实现。
  */
-bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
+bool XDeviceFile_legacySetFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
 
@@ -1266,7 +1267,7 @@ bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
  * 十一、驱动器列表
  * ============================================================================ */
 
-bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
+bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userData)
 {
     if (!callback) return false;
     XString* path = XString_create_utf8("/");
@@ -1280,7 +1281,7 @@ bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userDa
  * 十二、存储设备信息
  * ============================================================================ */
 
-bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
+bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info) {
     if (!path || !info) return false;
     memset(info, 0, sizeof(*info));
 
@@ -1355,9 +1356,9 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
  * 十三、磁盘格式化
  * ============================================================================ */
 
-bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
+bool XDeviceFile_format(const XString* drive, XDeviceFileType fsType,
                         const XString* volumeName, int flags, int clusterSize,
-                        XFileSystemFormatProgress progress, void* userData) {
+                        XDeviceFileFormatProgress progress, void* userData) {
     if (!drive) return false;
 
     const char* devPath = XString_toUtf8(drive);
@@ -1372,12 +1373,12 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
     /* 映射文件系统类型到 mkfs 命令 */
     const char* mkfsCmd = NULL;
     switch (fsType) {
-        case XFileSystemType_FAT32: mkfsCmd = "mkfs.vfat";  break;
-        case XFileSystemType_NTFS:  mkfsCmd = "mkfs.ntfs";  break;
-        case XFileSystemType_exFAT: mkfsCmd = "mkfs.exfat"; break;
-        case XFileSystemType_EXT4:  mkfsCmd = "mkfs.ext4";  break;
-        case XFileSystemType_F2FS:  mkfsCmd = "mkfs.f2fs";  break;
-        case XFileSystemType_Auto:
+        case XDeviceFileType_FAT32: mkfsCmd = "mkfs.vfat";  break;
+        case XDeviceFileType_NTFS:  mkfsCmd = "mkfs.ntfs";  break;
+        case XDeviceFileType_exFAT: mkfsCmd = "mkfs.exfat"; break;
+        case XDeviceFileType_EXT4:  mkfsCmd = "mkfs.ext4";  break;
+        case XDeviceFileType_F2FS:  mkfsCmd = "mkfs.f2fs";  break;
+        case XDeviceFileType_Auto:
         default:                    mkfsCmd = "mkfs.ext4";  break;
     }
 
@@ -1393,11 +1394,11 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
             /* ??: ?? mkfs -t ?? */
             const char* fstype = NULL;
             switch (fsType) {
-                case XFileSystemType_FAT32: fstype = "vfat";  break;
-                case XFileSystemType_NTFS:  fstype = "ntfs";  break;
-                case XFileSystemType_exFAT: fstype = "exfat"; break;
-                case XFileSystemType_EXT4:  fstype = "ext4";  break;
-                case XFileSystemType_F2FS:  fstype = "f2fs";  break;
+                case XDeviceFileType_FAT32: fstype = "vfat";  break;
+                case XDeviceFileType_NTFS:  fstype = "ntfs";  break;
+                case XDeviceFileType_exFAT: fstype = "exfat"; break;
+                case XDeviceFileType_EXT4:  fstype = "ext4";  break;
+                case XDeviceFileType_F2FS:  fstype = "f2fs";  break;
                 default:                    fstype = "ext4";  break;
             }
             cmdLen = snprintf(cmd, sizeof(cmd), "mkfs -t %s", fstype);
@@ -1408,7 +1409,7 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
 
     /* 快速格式化标志 */
     if (flags & XFileSystemFormat_Quick) {
-        if (fsType == XFileSystemType_EXT4 || fsType == XFileSystemType_Auto) {
+        if (fsType == XDeviceFileType_EXT4 || fsType == XDeviceFileType_Auto) {
             cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
                                " -E lazy_itable_init=1, lazy_journal_init=1");
         }
@@ -1421,10 +1422,10 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
 
     /* 簇大小（仅 FAT/exFAT 生效，ext4 使用 -b） */
     if (clusterSize > 0) {
-        if (fsType == XFileSystemType_FAT32 || fsType == XFileSystemType_exFAT) {
+        if (fsType == XDeviceFileType_FAT32 || fsType == XDeviceFileType_exFAT) {
             cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
                                " -s %d", clusterSize / 512);
-        } else if (fsType == XFileSystemType_EXT4 || fsType == XFileSystemType_Auto) {
+        } else if (fsType == XDeviceFileType_EXT4 || fsType == XDeviceFileType_Auto) {
             cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
                                " -b %d", clusterSize);
         }

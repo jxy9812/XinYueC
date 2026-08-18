@@ -1,5 +1,5 @@
 ﻿/**
- * @file XNetwork_win32.c
+ * @file XDeviceNetwork_win32.c
  * @brief Windows 平台网络实现（IOCP 异步 I/O）
  */
  /* ====== 配置文件 ====== */
@@ -18,7 +18,7 @@
 
 
 /* ====== 项目头文件 ====== */
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"
@@ -48,6 +48,16 @@
 
 #define XNETWORK_ICMP_HEADER_SIZE 8u
 
+typedef enum XMulticastOp {
+    XMC_Join, XMC_Leave, XMC_SetIf, XMC_GetIf,
+    XMC_SetTtl, XMC_GetTtl, XMC_SetLoop, XMC_GetLoop
+} XMulticastOp;
+
+/* 本文件内后置实现的钩子，不属于公共头文件契约。 */
+void XDeviceNetwork_socketDisconnect(XFd fd);
+int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle socketHandle,
+    XMulticastOp operation, void* argument);
+
 /* =========================================================================
  * 手动定义缺失的宏（兼容旧版 SDK）
  * ========================================================================= */
@@ -69,12 +79,12 @@
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
 
-bool XNetwork_icmpEchoSupported(void)
+bool XDeviceNetwork_icmpEchoSupported(void)
 {
     return true;
 }
 
-bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+bool XDeviceNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
                        uint16_t sequence, const void* payload, size_t payloadSize,
                        int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
 {
@@ -282,7 +292,7 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
  * 平台初始化
  * ========================================================================= */
 
-void XNetwork_ensureInit(void)
+void XDeviceNetwork_ensureInit(void)
 {
     if (InterlockedIncrement(&g_wsaRefCount) == 1) {
         WSADATA wsaData;
@@ -319,7 +329,7 @@ void XNetwork_ensureInit(void)
     }
 }
 
-void XNetwork_cleanup(void)
+void XDeviceNetwork_cleanup(void)
 {
     if (InterlockedDecrement(&g_wsaRefCount) == 0) {
         WSACleanup();
@@ -328,12 +338,16 @@ void XNetwork_cleanup(void)
     }
 }
 
-int XNetwork_lastError(void)
+void XDeviceNetwork_poll(void)
+{
+}
+
+int XDeviceNetwork_lastError(void)
 {
     return WSAGetLastError();
 }
 
-char* XNetwork_errorString(int errorCode)
+char* XDeviceNetwork_errorString(int errorCode)
 {
     char* buf = (char*)XMalloc_System(256);
     if (!buf) return NULL;
@@ -349,8 +363,8 @@ char* XNetwork_errorString(int errorCode)
  * 套接字私有数据结构（平台无关基类 + Win32 扩展）
  * ========================================================================= */
 
-typedef struct XNetworkSocketPrivateWin32 {
-    XNetworkSocketPrivate base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
+typedef struct XDeviceNetworkContextWin32 {
+    XDeviceNetworkContext base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
     SOCKET socket;                          ///< Windows SOCKET 句柄
     HANDLE namedPipe;                       ///< Windows named-pipe 流句柄
 
@@ -358,16 +372,12 @@ typedef struct XNetworkSocketPrivateWin32 {
     bool readPending;
     bool writePending;
     bool connectPending;
-    bool connected;
     bool autoRead;
     bool isServer;                          ///< 是否为服务器套接字
     bool acceptPending;                     ///< 是否有待处理的 Accept
     volatile LONG pendingIocpOperations;    ///< 生命周期引用：对象自身 + 尚未出队的重叠操作
     volatile LONG deletePending;            ///< 非零表示析构已开始，不再向应用层投递事件
 
-    /* 服务器专用：为 XFd_alloc 预分配的 fd，acceptContext.base.fd 使用。
-     * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd。 */
-    XFd serverFd;
 
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
@@ -396,45 +406,45 @@ typedef struct XNetworkSocketPrivateWin32 {
             SOCKET acceptSocket;                    ///< AcceptEx 创建的套接字
         };
     };
-} XNetworkSocketPrivateWin32;
+} XDeviceNetworkContextWin32;
 
 /* 便捷转换宏 */
-#define W32(p) ((XNetworkSocketPrivateWin32*)(p))
+#define W32(p) ((XDeviceNetworkContextWin32*)(p))
 
-static bool w32_has_stream_handle(const XNetworkSocketPrivateWin32* priv)
+static bool w32_has_stream_handle(const XDeviceNetworkContextWin32* priv)
 {
     return priv && (priv->socket != INVALID_SOCKET
                     || priv->namedPipe != INVALID_HANDLE_VALUE);
 }
 
-static void destroySocketPrivate(XNetworkSocketPrivateWin32* p)
+static void destroyContext(XDeviceNetworkContextWin32* p)
 {
     if (!p) return;
     XHostAddress_deinit_base(&p->pendingPeerAddr);
     XFree_System(p);
 }
 
-static void releaseSocketPrivate(XNetworkSocketPrivateWin32* p)
+static void releaseContext(XDeviceNetworkContextWin32* p)
 {
     if (InterlockedDecrement(&p->pendingIocpOperations) == 0)
-        destroySocketPrivate(p);
+        destroyContext(p);
 }
 
 static bool socketIocpOperationCompleted(XEventContext_IOCP* context, void* userData)
 {
-    XNetworkSocketPrivateWin32* p = (XNetworkSocketPrivateWin32*)userData;
+    XDeviceNetworkContextWin32* p = (XDeviceNetworkContextWin32*)userData;
     bool shouldDispatch;
     if (!p) return false;
 
     shouldDispatch = InterlockedCompareExchange(&p->deletePending, 0, 0) == 0 &&
-                     p->base.owner != NULL;
+                     p->base.m_owner != NULL;
     context->completionCallback = NULL;
     context->completionUserData = NULL;
-    releaseSocketPrivate(p);
+    releaseContext(p);
     return shouldDispatch;
 }
 
-static void trackSocketIocpOperation(XNetworkSocketPrivateWin32* p,
+static void trackSocketIocpOperation(XDeviceNetworkContextWin32* p,
                                      XEventContext_IOCP* context)
 {
     context->completionCallback = socketIocpOperationCompleted;
@@ -442,7 +452,7 @@ static void trackSocketIocpOperation(XNetworkSocketPrivateWin32* p,
     InterlockedIncrement(&p->pendingIocpOperations);
 }
 
-static void abandonSocketIocpOperation(XNetworkSocketPrivateWin32* p,
+static void abandonSocketIocpOperation(XDeviceNetworkContextWin32* p,
                                        XEventContext_IOCP* context)
 {
     context->completionCallback = NULL;
@@ -452,13 +462,13 @@ static void abandonSocketIocpOperation(XNetworkSocketPrivateWin32* p,
 
 /* Keep public endpoint properties aligned with the POSIX backend after an
  * outbound connection completes. */
-static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
+static void syncSocketEndpoints(XDeviceNetworkContext* priv)
 {
-    if (!priv || !priv->owner) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (!priv || !priv->m_owner) return;
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->socket == INVALID_SOCKET) return;
 
-    XAbstractSocket* socket = (XAbstractSocket*)priv->owner;
+    XAbstractSocket* socket = (XAbstractSocket*)priv->m_owner;
     struct sockaddr_storage address;
     int addressLength = sizeof(address);
     XHostAddress endpoint;
@@ -484,54 +494,31 @@ static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
  * 私有数据管理
  * ========================================================================= */
 
-XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
+XDeviceNetworkContext* XDeviceNetwork_createContext(void)
 {
-    XNetworkSocketPrivateWin32* p = (XNetworkSocketPrivateWin32*)XCalloc_System(1, sizeof(XNetworkSocketPrivateWin32));
+    XDeviceNetworkContextWin32* p = (XDeviceNetworkContextWin32*)XCalloc_System(1, sizeof(XDeviceNetworkContextWin32));
     if (!p) return NULL;
 
     p->socket = INVALID_SOCKET;
     p->namedPipe = INVALID_HANDLE_VALUE;
     p->acceptSocket = INVALID_SOCKET;
-    p->serverFd = XFD_INVALID;
-    p->base.owner = owner;
+    p->base.m_base.m_fd = XFD_INVALID;
     p->autoRead = true;
-    p->pendingIocpOperations = 1; /* XNetwork_deleteSocketPrivate releases this owner reference. */
+    p->pendingIocpOperations = 1; /* XDeviceNetwork_deleteContext releases this owner reference. */
 
     XHostAddress_init(&p->pendingPeerAddr);
     XHostAddress_setAddressSpecial(&p->pendingPeerAddr, XHostAddress_NullSpecial);
 
-    return (XNetworkSocketPrivate*)p;
+    return (XDeviceNetworkContext*)p;
 }
 
-void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
+void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv)
 {
     if (!priv) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (InterlockedExchange(&p->deletePending, 1) != 0) return;
 
-    /* 释放 XFd。
-     * 客户端路径：通过 XIODevice_fd((XIODevice*)priv->owner) 获取（owner 是 XAbstractSocket 子类）。
-     * 服务器路径：通过 W32(priv)->serverFd（owner 是 XTcpServer，不继承 XIODevice）。 */
-    if (W32(priv)->isServer) {
-        if (W32(priv)->serverFd != XFD_INVALID) {
-            /* 先注销 NetIoRing 事件源，再释放 fd */
-            XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
-            if (ring) {
-                XAbstractNetIoRing_unregisterEvent_base(ring, W32(priv)->serverFd);
-            }
-            XFd_free(W32(priv)->serverFd);
-            W32(priv)->serverFd = XFD_INVALID;
-        }
-    } else if (priv->owner) {
-        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-        if (xfd >= 0) {
-            XFd_free(xfd);
-            XIODevice_setFd((XIODevice*)priv->owner, XFD_INVALID);
-        }
-    }
-
-    priv->owner = NULL;
-    XNetwork_socketDisconnect(priv);
+    priv->m_owner = NULL;
     if (p->acceptSocket != INVALID_SOCKET) {
         closesocket(p->acceptSocket);
         p->acceptSocket = INVALID_SOCKET;
@@ -540,33 +527,30 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
     /* OVERLAPPED and receive buffers are embedded in p.  Canceling or
      * closing a handle still queues one completion for each pending I/O, so
      * p must remain alive until processOneCompletion has consumed them. */
-    releaseSocketPrivate(p);
+    releaseContext(p);
 }
 
-intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
+intptr_t XDeviceNetwork_socketDescriptor(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return -1;
     return W32(priv)->namedPipe != INVALID_HANDLE_VALUE
         ? (intptr_t)W32(priv)->namedPipe : (intptr_t)W32(priv)->socket;
 }
 
-bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
-{
-    return priv ? W32(priv)->connected : false;
-}
 /* =========================================================================
  * 异步读取启动
  * ========================================================================= */
 
-static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
+static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
 {
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (!p || p->readPending || !w32_has_stream_handle(p)) return;
     (void)isUdp;
 
     memset(&p->readContext, 0, sizeof(XEventContext_IOCP));
     p->readContext.base.type = XEventContextType_Type_Socket;
-    p->readContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
+    p->readContext.base.fd = priv->m_base.m_fd;
     p->readContext.socket = XSocketDescriptor_fromIntptr(
         p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
     p->readContext.eventMask = FD_READ;
@@ -628,10 +612,10 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
  * 异步写入启动
  * ========================================================================= */
 
-static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64_t len,
+static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64_t len,
     const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
 {
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (!p || p->writePending || !w32_has_stream_handle(p)) return;
     if (len <= 0 || len > XNETWORK_WRITE_BUFFER_SIZE) return;
     (void)destAddr; (void)destPort; (void)isUdp;
@@ -640,7 +624,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
 
     memset(&p->writeContext, 0, sizeof(XEventContext_IOCP));
     p->writeContext.base.type = XEventContextType_Type_Socket;
-    p->writeContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
+    p->writeContext.base.fd = priv->m_base.m_fd;
     p->writeContext.socket = XSocketDescriptor_fromIntptr(
         p->namedPipe != INVALID_HANDLE_VALUE ? (intptr_t)p->namedPipe : (intptr_t)p->socket);
     p->writeContext.eventMask = FD_WRITE;
@@ -701,17 +685,18 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
  * 核心操作实现
  * ========================================================================= */
 
-uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
+uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     uint16_t port, bool reuseAddr, bool shareAddr,
-    XNetworkSocketType sockType)
+    XDeviceNetworkSocketType sockType)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !address) return 0;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
 
-    XNetwork_ensureInit();
+    XDeviceNetwork_ensureInit();
     int af = (XHostAddress_protocol(address) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
-    int type = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
-    int proto = (sockType == XNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
+    int type = (sockType == XDeviceNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
+    int proto = (sockType == XDeviceNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
 
     p->socket = socket(af, type, proto);
     if (p->socket == INVALID_SOCKET) return 0;
@@ -746,39 +731,33 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         }
     }
 
-    if (!iocp_assoc(p->socket, priv->owner)) {
+    if (!iocp_assoc(p->socket, priv->m_owner)) {
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
         return 0;
     }
 
-    p->connected = true;
-    {
-        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-        if (xfd == XFD_INVALID) {
-            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-            XIODevice_setFd((XIODevice*)priv->owner, xfd);
-        }
-    }
+    p->base.m_connected = true;
 
-    if (sockType == XNetwork_Udp) startAsyncRead(priv, true);
+    if (sockType == XDeviceNetwork_Udp) startAsyncRead(priv, true);
     return actualPort;
 }
 
-bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
-    uint16_t port, XNetworkProtocol protocol,
-    XNetworkSocketType sockType, const void* proxy)
+bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
+    uint16_t port, XDeviceNetworkProtocol protocol,
+    XDeviceNetworkSocketType sockType)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !hostName) return false;
     const char* hostStr = XString_toUtf8(hostName);
     if (!hostStr) return false;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
 
-    XNetwork_ensureInit();
+    XDeviceNetwork_ensureInit();
     struct addrinfo hints = { 0 }, * result = NULL;
-    hints.ai_family = (protocol == XNetwork_IPv6) ? AF_INET6 :
-        (protocol == XNetwork_IPv4) ? AF_INET : AF_UNSPEC;
-    hints.ai_socktype = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
+    hints.ai_family = (protocol == XDeviceNetwork_IPv6) ? AF_INET6 :
+        (protocol == XDeviceNetwork_IPv4) ? AF_INET : AF_UNSPEC;
+    hints.ai_socktype = (sockType == XDeviceNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
 
     if (getaddrinfo(hostStr, NULL, &hints, &result) != 0) return false;
 
@@ -786,8 +765,8 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     while (ai && ai->ai_family != hints.ai_family) ai = ai->ai_next;
     if (!ai) ai = result;
 
-    int type = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
-    int proto = (sockType == XNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
+    int type = (sockType == XDeviceNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
+    int proto = (sockType == XDeviceNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
 
     p->socket = socket(ai->ai_family, type, proto);
     if (p->socket == INVALID_SOCKET) { freeaddrinfo(result); return false; }
@@ -803,7 +782,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         closesocket(p->socket); p->socket = INVALID_SOCKET; freeaddrinfo(result); return false;
     }
 
-    if (!iocp_assoc(p->socket, priv->owner)) {
+    if (!iocp_assoc(p->socket, priv->m_owner)) {
         closesocket(p->socket); p->socket = INVALID_SOCKET; freeaddrinfo(result); return false;
     }
 
@@ -827,17 +806,10 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     sa2addr(&destAddr, &p->pendingPeerAddr, &p->pendingPeerPort);
     p->pendingPeerPort = port;
 
-    if (sockType == XNetwork_Tcp && g_ConnectEx) {
-        {
-            XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-            if (xfd == XFD_INVALID) {
-                xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-                XIODevice_setFd((XIODevice*)priv->owner, xfd);
-            }
-        }
+    if (sockType == XDeviceNetwork_Tcp && g_ConnectEx) {
         memset(&p->connectContext, 0, sizeof(XEventContext_IOCP));
         p->connectContext.base.type = XEventContextType_Type_Socket;
-        p->connectContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
+        p->connectContext.base.fd = priv->m_base.m_fd;
         p->connectContext.socket = XSocketDescriptor_fromIntptr(p->socket);
         p->connectContext.eventMask = FD_CONNECT;
         trackSocketIocpOperation(p, &p->connectContext);
@@ -854,36 +826,29 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         return true;
     }
 
-    if (sockType == XNetwork_Udp) {
-        p->connected = true;
+    if (sockType == XDeviceNetwork_Udp) {
+        p->base.m_connected = true;
         p->connectPending = false;
-        {
-            XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-            if (xfd == XFD_INVALID) {
-                xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-                XIODevice_setFd((XIODevice*)priv->owner, xfd);
-            }
-        }
         startAsyncRead(priv, true);
         return true;
     }
     return true;
 }
 
-bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* pipePath,
-                                 XNetworkLocalStreamType streamType,
+bool XDeviceNetwork_socketConnectLocal(XFd xfd, const XString* pipePath,
+                                 XDeviceNetworkLocalStreamType streamType,
                                  int timeoutMs,
-                                 XNetworkSocketType sockType)
+                                 XDeviceNetworkSocketType sockType)
 {
-    XNetworkSocketPrivateWin32* p;
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextWin32* p;
     const char* pathText;
     char fullPath[512];
     HANDLE handle;
     DWORD mode = PIPE_READMODE_BYTE;
-    XFd xfd;
 
-    if (!priv || !pipePath || streamType != XNetwork_LocalStream_NamedPipe
-        || sockType != XNetwork_Tcp) return false;
+    if (!priv || !pipePath || streamType != XDeviceNetwork_LocalStream_NamedPipe
+        || sockType != XDeviceNetwork_Tcp) return false;
     pathText = XString_toUtf8(pipePath);
     if (!pathText || !pathText[0]) return false;
     if (strncmp(pathText, "\\\\.\\pipe\\", 9) == 0) {
@@ -895,7 +860,7 @@ bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* pip
     }
 
     p = W32(priv);
-    XNetwork_socketDisconnect(priv);
+    XDeviceNetwork_socketDisconnect(xfd);
     handle = CreateFileA(fullPath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
                          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
     if (handle == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY) {
@@ -906,35 +871,25 @@ bool XNetwork_socketConnectLocal(XNetworkSocketPrivate* priv, const XString* pip
     }
     if (handle == INVALID_HANDLE_VALUE) return false;
     if (!SetNamedPipeHandleState(handle, &mode, NULL, NULL)
-        || !iocp_assoc(handle, (XObject*)priv->owner)) {
+        || !iocp_assoc(handle, (XObject*)priv->m_owner)) {
         CloseHandle(handle);
         return false;
     }
 
     p->namedPipe = handle;
-    p->connected = true;
+    p->base.m_connected = true;
     p->connectPending = false;
     p->readPending = false;
     p->writePending = false;
-    xfd = XIODevice_fd((XIODevice*)priv->owner);
-    if (xfd == XFD_INVALID) {
-        xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-        if (xfd == XFD_INVALID) {
-            CloseHandle(p->namedPipe);
-            p->namedPipe = INVALID_HANDLE_VALUE;
-            p->connected = false;
-            return false;
-        }
-        XIODevice_setFd((XIODevice*)priv->owner, xfd);
-    }
     startAsyncRead(priv, false);
     return true;
 }
 
-void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
+void XDeviceNetwork_socketDisconnect(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
 
     if (p->socket != INVALID_SOCKET) {
         CancelIoEx((HANDLE)p->socket, NULL);
@@ -946,17 +901,18 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
         CloseHandle(p->namedPipe);
         p->namedPipe = INVALID_HANDLE_VALUE;
     }
-    p->connected = false;
+    p->base.m_connected = false;
     p->connectPending = false;
     p->readPending = false;
     p->writePending = false;
 }
 
-int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
-    XNetworkSocketType sockType, void* ringBuffer)
+int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
+    XDeviceNetworkSocketType sockType, void* ringBuffer)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !buf || len <= 0) return -1;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (!w32_has_stream_handle(p)) return -1;
 
     if (ringBuffer) {
@@ -970,12 +926,13 @@ int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
     return 0;
 }
 
-int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64_t len,
-    XNetworkSocketType sockType, const XHostAddress* destAddr,
+int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
+    XDeviceNetworkSocketType sockType, const XHostAddress* destAddr,
     uint16_t destPort, void* ringBuffer)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !buf || len <= 0) return -1;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (!w32_has_stream_handle(p)) return -1;
 
     if (ringBuffer) {
@@ -985,7 +942,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
             char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
             size_t toSend = XRingBuffer_read(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
             if (toSend > 0) {
-                startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, sockType == XNetwork_Udp);
+                startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, sockType == XDeviceNetwork_Udp);
             }
         }
     }
@@ -1001,14 +958,14 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
                                                      XNETWORK_WRITE_BUFFER_SIZE);
                     if (toSend > 0) {
                         startAsyncWrite(priv, tempBuf, toSend,
-                                        destAddr, destPort, sockType == XNetwork_Udp);
+                                        destAddr, destPort, sockType == XDeviceNetwork_Udp);
                     }
                 }
                 return len;
             }
             len = XNETWORK_WRITE_BUFFER_SIZE;
         }
-        startAsyncWrite(priv, buf, len, destAddr, destPort, sockType == XNetwork_Udp);
+        startAsyncWrite(priv, buf, len, destAddr, destPort, sockType == XDeviceNetwork_Udp);
         return len;
     }
 
@@ -1021,10 +978,11 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
 
 
 
-bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
+bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !event) return false;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
 
     XEvent* e = (XEvent*)event;
     if (e->type != XEVENT_TYPE_SOCK_ACT) return false;
@@ -1047,73 +1005,61 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
         if (soError == 0) {
             if (setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0) == 0) {
-                p->connected = true;
+                p->base.m_connected = true;
                 syncSocketEndpoints(priv);
             } else {
-                p->connected = false;
+                p->base.m_connected = false;
             }
         } else {
-            p->connected = false;
+            p->base.m_connected = false;
         }
         return true;
     }
     return false;
 }
 
-bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode)
+bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, int openMode)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
     if (!priv || fd == -1) return false;
     (void)openMode;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
 
     p->socket = (SOCKET)fd;
-    if (!iocp_assoc(p->socket, priv->owner)) { p->socket = INVALID_SOCKET; return false; }
-    p->connected = (state == 3);
-    {
-        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-        if (xfd == XFD_INVALID) {
-            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-            XIODevice_setFd((XIODevice*)priv->owner, xfd);
-        }
-    }
-    if (p->connected) { p->autoRead = true; startAsyncRead(priv, false); }
+    if (!iocp_assoc(p->socket, priv->m_owner)) { p->socket = INVALID_SOCKET; return false; }
+    p->base.m_connected = (state == 3);
+    if (p->base.m_connected) { p->autoRead = true; startAsyncRead(priv, false); }
     return true;
 }
 
-bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd)
+bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd)
 {
-    XNetworkSocketPrivateWin32* p;
-    XFd xfd;
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
+    XDeviceNetworkContextWin32* p;
 
     if (!priv || fd == -1) return false;
     p = W32(priv);
-    if (p->socket != INVALID_SOCKET || p->serverFd != XFD_INVALID) return false;
-    if (!iocp_assoc((SOCKET)fd, priv->owner)) return false;
+    if (p->socket != INVALID_SOCKET || p->isServer) return false;
+    if (!iocp_assoc((SOCKET)fd, priv->m_owner)) return false;
 
     p->socket = (SOCKET)fd;
     p->isServer = true;
-    p->connected = true;
-    xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-    if (xfd == XFD_INVALID) {
-        closesocket(p->socket);
-        p->socket = INVALID_SOCKET;
-        return false;
-    }
-    p->serverFd = xfd;
+    p->base.m_connected = true;
     return true;
 }
 
-bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value)
+bool XDeviceNetwork_socketSetOption(XFd xfd, int option, const void* value)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !value) return false;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->socket == INVALID_SOCKET) return false;
     int* intVal = (int*)value;
     switch (option) {
     case 0: return setsockopt(p->socket, IPPROTO_TCP, TCP_NODELAY, (char*)intVal, sizeof(int)) == 0;
     case 1: return setsockopt(p->socket, SOL_SOCKET, SO_KEEPALIVE, (char*)intVal, sizeof(int)) == 0;
-    case 2: return XNetwork_multicastOp((XSocketHandle)p->socket, XMC_SetTtl, intVal) == 0;
-    case 3: { bool enabled = (*intVal != 0); return XNetwork_multicastOp((XSocketHandle)p->socket, XMC_SetLoop, &enabled) == 0; }
+    case 2: return XDeviceNetwork_multicastOp((XDeviceNetworkSocketHandle)p->socket, XMC_SetTtl, intVal) == 0;
+    case 3: { bool enabled = (*intVal != 0); return XDeviceNetwork_multicastOp((XDeviceNetworkSocketHandle)p->socket, XMC_SetLoop, &enabled) == 0; }
     case 4: return setsockopt(p->socket, IPPROTO_IP, IP_TOS, (char*)intVal, sizeof(int)) == 0;
     case 5: return setsockopt(p->socket, SOL_SOCKET, SO_SNDBUF, (char*)intVal, sizeof(int)) == 0;
     case 6: return setsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)intVal, sizeof(int)) == 0;
@@ -1122,17 +1068,18 @@ bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const voi
     }
 }
 
-void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
+void* XDeviceNetwork_socketGetOption(XFd xfd, int option)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return NULL;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->socket == INVALID_SOCKET) return NULL;
     static int result; int optLen = sizeof(int);
     switch (option) {
     case 0: if (getsockopt(p->socket, IPPROTO_TCP, TCP_NODELAY, (char*)&result, &optLen) == 0) return &result; break;
     case 1: if (getsockopt(p->socket, SOL_SOCKET, SO_KEEPALIVE, (char*)&result, &optLen) == 0) return &result; break;
-    case 2: if (XNetwork_multicastOp((XSocketHandle)p->socket, XMC_GetTtl, &result) == 0) return &result; break;
-    case 3: { bool e = false; if (XNetwork_multicastOp((XSocketHandle)p->socket, XMC_GetLoop, &e) == 0) { result = e ? 1 : 0; return &result; } break; }
+    case 2: if (XDeviceNetwork_multicastOp((XDeviceNetworkSocketHandle)p->socket, XMC_GetTtl, &result) == 0) return &result; break;
+    case 3: { bool e = false; if (XDeviceNetwork_multicastOp((XDeviceNetworkSocketHandle)p->socket, XMC_GetLoop, &e) == 0) { result = e ? 1 : 0; return &result; } break; }
     case 4: if (getsockopt(p->socket, IPPROTO_IP, IP_TOS, (char*)&result, &optLen) == 0) return &result; break;
     case 5: if (getsockopt(p->socket, SOL_SOCKET, SO_SNDBUF, (char*)&result, &optLen) == 0) return &result; break;
     case 6: if (getsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)&result, &optLen) == 0) return &result; break;
@@ -1143,10 +1090,11 @@ void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
     return NULL;
 }
 
-void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
+void XDeviceNetwork_socketSetReadBufferSize(XFd xfd, int64_t size)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->socket == INVALID_SOCKET || size <= 0) return;
     int bufSize = (int)((size > INT_MAX) ? INT_MAX : size);
     setsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
@@ -1156,41 +1104,47 @@ void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
  * 异步读取状态
  * ========================================================================= */
 
-const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv)
+const char* XDeviceNetwork_socketReadBuffer(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? W32(priv)->readBuffer : NULL;
 }
 
-size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv)
+size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? W32(priv)->readContext.finishedBytes : 0;
 }
 
-size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv)
+size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? W32(priv)->writeContext.finishedBytes : 0;
 }
 
-bool XNetwork_socketWritePending(const XNetworkSocketPrivate* priv)
+bool XDeviceNetwork_socketWritePending(XFd xfd)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? W32(priv)->writePending : false;
 }
 
-void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
+void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     p->readPending = false;
-    if (p->autoRead && p->connected) startAsyncRead(priv, isUdp);
+    if (p->autoRead && p->base.m_connected) startAsyncRead(priv, isUdp);
 }
 
 /* =========================================================================
  * 异步 Accept（公开 API：启动首次异步接受）
  * ========================================================================= */
 
-bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
+bool XDeviceNetwork_serverAccept(XFd xfd)
 {
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (!p || p->socket == INVALID_SOCKET || !g_AcceptEx) return false;
     if (p->acceptPending) return true;
 
@@ -1206,9 +1160,7 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
 
     memset(&p->acceptContext, 0, sizeof(XEventContext_IOCP));
     p->acceptContext.base.type = XEventContextType_Type_Socket;
-    /* 关键：使用 serverFd 而不是 XIODevice_fd((XIODevice*)priv->owner)，
-     * 因为 priv->owner (XTcpServer) 不继承 XIODevice。 */
-    p->acceptContext.base.fd = p->serverFd;
+    p->acceptContext.base.fd = priv->m_base.m_fd;
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->acceptContext.eventMask = FD_ACCEPT;
     trackSocketIocpOperation(p, &p->acceptContext);
@@ -1231,12 +1183,13 @@ bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
  * TCP 服务器
  * ========================================================================= */
 
-XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddress* addr, uint16_t port,
+XDeviceNetworkServerHandle XDeviceNetwork_serverCreate(XFd deviceFd, const XHostAddress* addr, uint16_t port,
     int backlog, bool reuseAddr)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
     if (!priv) return -1;
-    XNetworkSocketPrivateWin32* p = W32(priv);
-    XNetwork_ensureInit();
+    XDeviceNetworkContextWin32* p = W32(priv);
+    XDeviceNetwork_ensureInit();
 
     int af = (XHostAddress_protocol(addr) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
 
@@ -1270,38 +1223,24 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
         return -1;
     }
 
-    if (!iocp_assoc(s, priv->owner)) {
+    if (!iocp_assoc(s, priv->m_owner)) {
         closesocket(s);
         return -1;
     }
     p->socket = s;
     p->isServer = true;
-    p->connected = true;
+    p->base.m_connected = true;
 
-    /* 关键：分配 XFd 并保存到 serverFd 字段。
-     * XTcpServer 不继承 XIODevice，所以不能通过 XIODevice_fd 获取 XFd，
-     * 必须自己存。acceptContext.base.fd 使用 serverFd。
-     * dispatchCQEntry 通过 desc->object 找回 owner (XTcpServer) 并投递 XEventSockAct(Accept)。 */
     {
-        XFd xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-        if (xfd == XFD_INVALID) {
-            closesocket(s);
-            p->socket = INVALID_SOCKET;
-            p->connected = false;
-            return -1;
-        }
-        p->serverFd = xfd;
-        /* 注册到 NetIoRing：建立 owner 关联，让 delete 时能正确注销 */
         XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
-        if (ring) {
-            XAbstractNetIoRing_registerEvent_base(ring, xfd);
-        }
+        if (ring)
+            XAbstractNetIoRing_registerEvent_base(ring, priv->m_base.m_fd);
     }
 
-    return (XServerHandle)s;
+    return (XDeviceNetworkServerHandle)s;
 }
 
-uint16_t XNetwork_serverPort(XServerHandle server)
+uint16_t XDeviceNetwork_serverPort(XDeviceNetworkServerHandle server)
 {
     if (server == -1) return 0;
 
@@ -1319,17 +1258,21 @@ uint16_t XNetwork_serverPort(XServerHandle server)
     return 0;
 }
 
-void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
+void XDeviceNetwork_serverClose(XFd xfd, XDeviceNetworkServerHandle server)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     SOCKET socketToClose = (SOCKET)server;
-    XNetworkSocketPrivateWin32* p = priv ? W32(priv) : NULL;
+    XDeviceNetworkContextWin32* p = priv ? W32(priv) : NULL;
     if (server == -1) return;
 
     if (p && p->socket == socketToClose) {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring)
+            XAbstractNetIoRing_unregisterEvent_base(ring, xfd);
         CancelIoEx((HANDLE)p->socket, NULL);
         closesocket(p->socket);
         p->socket = INVALID_SOCKET;
-        p->connected = false;
+        p->base.m_connected = false;
         if (p->acceptSocket != INVALID_SOCKET) {
             closesocket(p->acceptSocket);
             p->acceptSocket = INVALID_SOCKET;
@@ -1340,11 +1283,12 @@ void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
     }
 }
 
-XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
+XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd xfd,
     XHostAddress* clientAddr, uint16_t* clientPort)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return -1;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->acceptSocket == INVALID_SOCKET) return -1;
 
     SOCKET listenSocket = p->socket;
@@ -1378,20 +1322,20 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     SOCKET result = p->acceptSocket;
     p->acceptSocket = INVALID_SOCKET;
     p->acceptPending = false;
-    return (XSocketHandle)result;
+    return (XDeviceNetworkSocketHandle)result;
 }
 
 /* =========================================================================
  * DNS 查询
  * ========================================================================= */
 
-XVector* XNetwork_lookupName(const XString* name)
+XVector* XDeviceNetwork_lookupName(const XString* name)
 {
     if (!name) return NULL;
     const char* nameStr = XString_toUtf8(name);
     if (!nameStr) return NULL;
 
-    XNetwork_ensureInit();
+    XDeviceNetwork_ensureInit();
 
     struct addrinfo hints = { 0 }, * result = NULL;
     hints.ai_family = AF_UNSPEC;
@@ -1429,7 +1373,7 @@ XVector* XNetwork_lookupName(const XString* name)
     return vec;
 }
 
-XString* XNetwork_localHostName(void)
+XString* XDeviceNetwork_localHostName(void)
 {
     char buf[256] = { 0 };
     if (gethostname(buf, sizeof(buf)) == 0) {
@@ -1442,7 +1386,7 @@ XString* XNetwork_localHostName(void)
  * 网络接口枚举
  * ========================================================================= */
 
-XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
+XDeviceNetworkInterfaceIterator XDeviceNetwork_enumInterfacesBegin(void)
 {
     PIP_ADAPTER_ADDRESSES adapterAddresses = NULL;
     ULONG size = 0;
@@ -1459,10 +1403,10 @@ XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
         return NULL;
     }
 
-    return (XNetworkInterfaceIterator)adapterAddresses;
+    return (XDeviceNetworkInterfaceIterator)adapterAddresses;
 }
 
-XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
+XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIterator iter)
 {
     if (!iter) return NULL;
 
@@ -1578,7 +1522,7 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
     return iface;
 }
 
-void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
+void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter)
 {
     if (iter) {
         XFree_System(iter);
@@ -1592,7 +1536,7 @@ void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
  * 多播组（精简为2个API）
  * ========================================================================= */
 
-bool XNetwork_multicastGroup(XSocketHandle sock, bool join,
+bool XDeviceNetwork_multicastGroup(XDeviceNetworkSocketHandle sock, bool join,
     const XHostAddress* groupAddress, uint32_t ifIndex)
 {
     if (sock == -1 || !groupAddress) return false;
@@ -1617,7 +1561,7 @@ bool XNetwork_multicastGroup(XSocketHandle sock, bool join,
     }
 }
 
-int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg)
+int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op, void* arg)
 {
     if (sock == -1 || !arg) return -1;
 
@@ -1692,17 +1636,18 @@ int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg)
  * UDP 特有
  * ========================================================================= */
 
- /* XNetwork_hasPendingDatagrams 和 XNetwork_pendingDatagramSize 已移除
+ /* XDeviceNetwork_hasPendingDatagrams 和 XDeviceNetwork_pendingDatagramSize 已移除
   * 原因：在 IOCP 异步模型中，数据已被读取到 ringBuffer，
   * 请使用 XIODevice_bytesAvailable 检查待读取数据 */
 
-bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
+bool XDeviceNetwork_getLastDatagramSender(XFd xfd,
     XHostAddress* srcAddr, uint16_t* srcPort)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return false;
 
     /* 从 wp->fromAddr 获取发送者信息 */
-    const XNetworkSocketPrivateWin32* wp = (const XNetworkSocketPrivateWin32*)priv;
+    const XDeviceNetworkContextWin32* wp = (const XDeviceNetworkContextWin32*)priv;
 
     if (wp->fromAddrLen <= 0) {
         return false;
@@ -1715,29 +1660,11 @@ bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
     return true;
 }
 
-int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size,
-    const XHostAddress* address, uint16_t port)
-{
-    if (sock < 0 || !data || size <= 0 || !address) return -1;
-
-    struct sockaddr_storage dest;
-    int destLen = 0;
-    addr2sa(address, port, &dest, &destLen);
-
-    int result = sendto((SOCKET)sock, (const char*)data, (int)size, 0,
-        (struct sockaddr*)&dest, destLen);
-
-    if (result == SOCKET_ERROR) {
-        return -1;
-    }
-    return result;
-}
-
 /* =========================================================================
  * 代理隧道（已移至应用层实现）
  * ========================================================================= */
- /* 注意：XNetwork_socks5Connect、XNetwork_httpConnect、XNetwork_socks5Bind、
-  * XNetwork_serverCreateWithProxy、XNetwork_serverAcceptWithProxy
+ /* 注意：XDeviceNetwork_socks5Connect、XDeviceNetwork_httpConnect、XDeviceNetwork_socks5Bind、
+  * XDeviceNetwork_serverCreateWithProxy、XDeviceNetwork_serverAcceptWithProxy
   * 这些代理相关函数已从平台层移除，请在 XNetworkProxy 模块或应用层实现 */
 
   /* =========================================================================
@@ -1747,7 +1674,7 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 
-bool XNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outProxy)
+bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outProxy)
 {
     if (!outProxy) return false;
 
@@ -1858,7 +1785,7 @@ typedef struct {
     char* targetName;
 } WinGssapiContext;
 
-int XNetwork_gssapiAuth(const XString* serviceName,
+int XDeviceNetwork_gssapiAuth(const XString* serviceName,
     const XByteArray* inputToken,
     XByteArray* outputToken,
     void** context)
@@ -1963,10 +1890,11 @@ int XNetwork_gssapiAuth(const XString* serviceName,
     /* 失败 */
     return -1;
 }
-void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
+void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool isUdp)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !ringBuffer) return;
-    XNetworkSocketPrivateWin32* p = W32(priv);
+    XDeviceNetworkContextWin32* p = W32(priv);
     if (p->writePending || !w32_has_stream_handle(p)) return;
     struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
     size_t pending = XRingBuffer_available(rb);

@@ -2,7 +2,7 @@
  * @file XConsoleShellLogin.c
  * @brief XConsoleShell 登录、账户持久化和 Linux 风格用户命令实现。
  * @details
- * 用户库只通过 XFileSystem 公共 API 操作本地 JSON 文件；密码不保存明文，
+ * 用户库只通过 XDeviceFile 公共 API 操作本地 JSON 文件；密码不保存明文，
  * 使用随机盐和迭代 HMAC-SHA256 摘要。首个 useradd 在账户库不存在时创建
  * UID/GID 为 0 的管理员账户，之后的账户变更必须由管理员执行。
  */
@@ -14,7 +14,7 @@
 
 #include "XByteArray.h"
 #include "XCryptographic.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XJsonArray.h"
 #include "XJsonDocument.h"
 #include "XJsonObject.h"
@@ -45,6 +45,15 @@ typedef struct XConsoleShellLoginRecord {
 } XConsoleShellLoginRecord;
 
 static const char g_hex[] = "0123456789abcdef";
+
+static XFd xlogin_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static void xlogin_secure_zero(void* data, size_t size)
 {
@@ -346,7 +355,7 @@ static bool xlogin_load(XConsoleShell* shell,
     *exists = false;
     path = XString_create_utf8(xlogin_path(shell));
     if (!path) return false;
-    if (!XFileSystem_stat(path, &stat) || !stat.exists) {
+    if (!XDeviceFile_stat(path, &stat) || !stat.exists) {
         XString_delete_base(path);
         return true;
     }
@@ -356,19 +365,19 @@ static bool xlogin_load(XConsoleShell* shell,
         XString_delete_base(path);
         return false;
     }
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    fd = xlogin_open_file(path, XDeviceFile_ReadOnly, &error);
     XString_delete_base(path);
     if (fd == XFD_INVALID) return false;
     while (readSize < (size_t)stat.size) {
-        int64_t got = XFileSystem_read(fd, buffer + readSize,
+        int64_t got = XDeviceFile_read(fd, buffer + readSize,
                                        (int64_t)((size_t)stat.size - readSize));
         if (got <= 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             return false;
         }
         readSize += (size_t)got;
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     buffer[readSize] = '\0';
     text = XString_create_with_length_utf8(buffer, readSize);
     document = text ? XJsonDocument_fromString(text) : NULL;
@@ -471,28 +480,28 @@ static bool xlogin_save(XConsoleShell* shell,
     text = XJsonDocument_toString(document, XJsonDocument_Indented);
     path = XString_create_utf8(xlogin_path(shell));
     if (!text || !path) goto cleanup;
-    fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Create |
-                               XFileSystem_Truncate, &error);
+    fd = xlogin_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                               XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) goto cleanup;
     {
         const char* utf8 = XString_toUtf8(text);
         size_t total = XString_toUtf8_length(text);
         size_t written = 0;
         while (written < total) {
-            int64_t part = XFileSystem_write(fd, utf8 + written,
+            int64_t part = XDeviceFile_write(fd, utf8 + written,
                                              (int64_t)(total - written));
             if (part <= 0) goto cleanup;
             written += (size_t)part;
         }
     }
-    if (!XFileSystem_flush(fd)) goto cleanup;
-    XFileSystem_close(fd);
+    if (!XDeviceFile_flush(fd)) goto cleanup;
+    XDeviceFile_close(fd);
     fd = XFD_INVALID;
     /* Linux 使用 0600；FatFs 等不支持权限的后端将忽略失败。 */
-    (void)XFileSystem_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
+    (void)XDeviceFile_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
     ok = true;
 cleanup:
-    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (path) XString_delete_base(path);
     if (text) XString_delete_base(text);
     if (document) XJsonDocument_delete(document);

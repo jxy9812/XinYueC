@@ -23,13 +23,13 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef void* XNetworkInterfaceIterator;
+typedef void* XDeviceNetworkInterfaceIterator;
 
 /* 网络接口枚举器（前向声明） */
 struct XNetworkInterface;
-XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void);
-struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter);
-void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter);
+XDeviceNetworkInterfaceIterator XDeviceNetwork_enumInterfacesBegin(void);
+struct XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIterator iter);
+void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter);
 
 
 // =============== 枚举定义 ===============

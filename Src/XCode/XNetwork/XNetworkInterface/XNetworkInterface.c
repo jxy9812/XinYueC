@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XNetworkInterface.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include <string.h>
@@ -289,20 +289,20 @@ XVector* XNetworkInterface_allInterfaces(void)
     XContainerSetDataCopyMethod(result, XNetworkInterface_copy_base);
     XContainerSetDataMoveMethod(result, XNetworkInterface_move_base);
     XContainerSetDataDeinitMethod(result, XNetworkInterface_deinit_base);
-    XNetworkInterfaceIterator iter = XNetwork_enumInterfacesBegin();
+    XDeviceNetworkInterfaceIterator iter = XDeviceNetwork_enumInterfacesBegin();
     if (!iter) {
         XVector_delete_base(result);
         return NULL;
     }   
     
     XNetworkInterface* iface;
-    while ((iface = XNetwork_enumInterfacesNext(iter)) != NULL) {
+    while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
         /* 接口信息已在平台层填充完毕，直接添加到结果向量 */
         XVector_push_back_move_1_base(result, iface);
         XNetworkInterface_delete_base(iface);
     }
     
-    XNetwork_enumInterfacesEnd(iter);
+    XDeviceNetwork_enumInterfacesEnd(iter);
     return result;
 }
 
@@ -356,23 +356,23 @@ int XNetworkInterface_interfaceIndexFromName(const XString* name)
 {
     if (!name) return -1;
     
-    XNetworkInterfaceIterator iter = XNetwork_enumInterfacesBegin();
+    XDeviceNetworkInterfaceIterator iter = XDeviceNetwork_enumInterfacesBegin();
     if (!iter) return -1;
     
     XNetworkInterface* iface;
-    while ((iface = XNetwork_enumInterfacesNext(iter)) != NULL) {
+    while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
         if (iface->name) {
             if (XString_compare(iface->name, name) == XCompare_Equality) {
                 int index = iface->index;
                 XNetworkInterface_delete_base(iface);
-                XNetwork_enumInterfacesEnd(iter);
+                XDeviceNetwork_enumInterfacesEnd(iter);
                 return index;
             }
         }
         XNetworkInterface_delete_base(iface);
     }
     
-    XNetwork_enumInterfacesEnd(iter);
+    XDeviceNetwork_enumInterfacesEnd(iter);
     return -1;
 }
 
@@ -380,21 +380,21 @@ XString* XNetworkInterface_interfaceNameFromIndex(int index)
 {
     if (index <= 0) return NULL;
     
-    XNetworkInterfaceIterator iter = XNetwork_enumInterfacesBegin();
+    XDeviceNetworkInterfaceIterator iter = XDeviceNetwork_enumInterfacesBegin();
     if (!iter) return NULL;
     
     XNetworkInterface* iface;
-    while ((iface = XNetwork_enumInterfacesNext(iter)) != NULL) {
+    while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
         if (iface->index == index) {
             XString* result = XString_create_copy(iface->name);
             XNetworkInterface_delete_base(iface);
-            XNetwork_enumInterfacesEnd(iter);
+            XDeviceNetwork_enumInterfacesEnd(iter);
             return result;
         }
         XNetworkInterface_delete_base(iface);
     }
     
-    XNetwork_enumInterfacesEnd(iter);
+    XDeviceNetwork_enumInterfacesEnd(iter);
     return NULL;
 }
 

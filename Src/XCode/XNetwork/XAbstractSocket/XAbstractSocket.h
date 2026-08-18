@@ -180,6 +180,7 @@ typedef struct XAbstractSocket {
     XProxyHandshakeContext* proxyHandshakeCtx;      ///< 代理握手上下文（异步握手时使用）
 
     struct XAbstractSocketPrivate* d_ptr;           ///< 私有数据指针（PIMPL）
+    XFd m_deviceFd;                                 ///< XDeviceNetwork 打开的统一设备 fd；平台原生 fd 仍由 XIODevice 持有。
     int64_t readBufferSize;                         ///< 读缓冲区大小（字节），-1 表示无限制
 } XAbstractSocket;
 

@@ -7,7 +7,7 @@
  *
  * XConsoleShell 是 XObject 派生对象，使用固定行缓冲和固定命令指针表，
  * 支持 UART、USB CDC、RTT、TCP 或自定义传输的回调接入。Shell 不调用平台
- * 文件、进程、终端或网络接口；文件命令通过 XFileSystem，外部进程仅在
+ * 文件、进程、终端或网络接口；文件命令通过 XDeviceFile，外部进程仅在
  * XCONSOLE_SHELL_EXTERNAL_PROCESS_ON 且 XProcess_ON 时通过 XProcess 公共 API。
  * 对象默认非线程安全，userData、命令字符串和静态命令表均由调用方拥有。
  */

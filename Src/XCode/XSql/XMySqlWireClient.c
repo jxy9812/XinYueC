@@ -1608,7 +1608,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
 #endif
         } else if (xmysql_ascii_casecmp(protocol, "MEMORY") == 0
                    || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_MEMORY") == 0) {
-            /* 共享内存传输为跨平台通用实现（XFileSystem 三个共享内存原语 +
+            /* 共享内存传输为跨平台通用实现（XDeviceFile 三个共享内存原语 +
              * 共享内存原子状态轮询），Windows 与 POSIX 行为一致。 */
             useSharedMemory = true;
         } else {
@@ -1819,7 +1819,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         if (!namedPipeText
             || !XAbstractSocket_connectLocalStream_private((XAbstractSocket*)client->m_socket,
                                                            namedPipeText,
-                                                           XNetwork_LocalStream_NamedPipe,
+                                                           XDeviceNetwork_LocalStream_NamedPipe,
                                                            client->m_connectTimeout)) {
             if (namedPipeText) XString_delete_base(namedPipeText);
             xmysql_set_error(client, "Unable to connect to MySQL named pipe", namedPipe, 0,
@@ -1834,7 +1834,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         if (!unixSocketText
             || !XAbstractSocket_connectLocalStream_private((XAbstractSocket*)client->m_socket,
                                                             unixSocketText,
-                                                            XNetwork_LocalStream_UnixSocket,
+                                                            XDeviceNetwork_LocalStream_UnixSocket,
                                                             client->m_connectTimeout)) {
             if (unixSocketText) XString_delete_base(unixSocketText);
             xmysql_set_error(client, "Unable to connect to MySQL Unix socket", unixSocket, 0,

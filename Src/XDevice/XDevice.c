@@ -1,9 +1,21 @@
 ﻿#include "XDevice.h"
 #include "XDeviceFile.h"
+#include "XDeviceNetwork.h"
+#include "XDeviceSerialPort.h"
 #include "XFileDescriptor.h"
 #include "XVariant.h"
+#include "XVarList.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* 兼容旧 XFd 文件描述符的内部实现，不属于 XDevice 公共 API。 */
+void XDeviceFile_legacyClose(XFd fd);
+int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
+bool XDeviceFile_legacyFlush(XFd fd);
+bool XDeviceFile_legacyResize(XFd fd, int64_t size);
+bool XDeviceFile_legacySetStandardInputEcho(XFd fd, bool enabled);
 
 /* ============================================================================
  * 后端注册表（静态注册，不动态加载）
@@ -34,7 +46,8 @@ static bool VXDevice_resize(XDevice* self, XDeviceContext* handle, int64_t size)
 static bool VXDevice_setProperty(XDevice* self, XDeviceContext* handle, uint32_t property, const XVariant* value);
 static bool VXDevice_getProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value);
 static bool VXDevice_queryProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value);
-static bool VXDevice_control(XDevice* self, XDeviceContext* handle, uint32_t command, const XVariant* in, XVariant* out);
+static bool VXDevice_control(XDevice* self, XDeviceContext* handle, uint32_t command,
+                             const XVarList* in, XVarList* out);
 
 XVtable* XDevice_class_init(void)
 {
@@ -155,7 +168,8 @@ static bool VXDevice_queryProperty(XDevice* self, XDeviceContext* handle, uint32
 	return false;
 }
 
-static bool VXDevice_control(XDevice* self, XDeviceContext* handle, uint32_t command, const XVariant* in, XVariant* out)
+static bool VXDevice_control(XDevice* self, XDeviceContext* handle, uint32_t command,
+                             const XVarList* in, XVarList* out)
 {
 	(void)self; (void)handle; (void)command; (void)in; (void)out;
 	return false;
@@ -227,7 +241,8 @@ static bool XDevice_dispatchQueryProperty(XDevice* self, XDeviceContext* handle,
 	return XClassGetVirtualFunc(self, EXDevice_QueryProperty, XDeviceQueryPropertyFn)(self, handle, property, value);
 }
 
-static bool XDevice_dispatchControl(XDevice* self, XDeviceContext* handle, uint32_t command, const XVariant* in, XVariant* out)
+static bool XDevice_dispatchControl(XDevice* self, XDeviceContext* handle, uint32_t command,
+                                    const XVarList* in, XVarList* out)
 {
 	if (ISNULL(self, "") || ISNULL(handle, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_Control, XDeviceControlFn)(self, handle, command, in, out);
@@ -326,6 +341,14 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 			XDeviceFile_register();
 			device = XDevice_find(className);
 		}
+		if (!device && strcmp(className, "socket") == 0) {
+			XDeviceNetwork_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "serial") == 0) {
+			XDeviceSerialPort_register();
+			device = XDevice_find(className);
+		}
 	}
 	if (!device) {
 		if (err) *err = (int)XDeviceError_NotFound;
@@ -348,15 +371,18 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 		if (err && *err == 0) *err = (int)XDeviceError_IoFail;
 		return XFD_INVALID;
 	}
-	fd = XFd_alloc(XFD_TYPE_CLASS, ctx, NULL);
-	if (fd == XFD_INVALID) {
-		XDevice_dispatchClose(device, ctx);
-		if (err) *err = (int)XDeviceError_OutOfMemory;
-		return XFD_INVALID;
+	fd = ctx->m_fd;
+	if (fd == XFD_INVALID || XFd_type(fd) != XFD_TYPE_CLASS || XFd_handle(fd) != ctx) {
+		fd = XFd_alloc(XFD_TYPE_CLASS, ctx, NULL);
+		if (fd == XFD_INVALID) {
+			XDevice_dispatchClose(device, ctx);
+			if (err) *err = (int)XDeviceError_OutOfMemory;
+			return XFD_INVALID;
+		}
+		ctx->m_fd = fd;
 	}
 	ctx->m_device = device;
 	ctx->m_state = (uint16_t)XDeviceState_Active;
-	ctx->m_ioMode = (uint16_t)XDeviceIoMode_Sync;
 	ctx->m_pendingOps = 0;
 	ctx->m_lastError = (int16_t)XDeviceError_None;
 	XDevice_ref(device);
@@ -369,6 +395,13 @@ void XDevice_close(XFd fd)
 	XDeviceContext* ctx;
 	XDevice* device;
 	if (!desc) return;
+	if ((XFdType)desc->m_type != XFD_TYPE_CLASS) {
+		if ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+			(XFdType)desc->m_type == XFD_TYPE_MAPPING ||
+			(XFdType)desc->m_type == XFD_TYPE_CONSOLE)
+			XDeviceFile_legacyClose(fd);
+		return;
+	}
 	ctx = (XDeviceContext*)desc->m_deviceCtx;
 	device = ctx ? ctx->m_device : NULL;
 	if (ctx) ctx->m_state = (uint16_t)XDeviceState_Closing;
@@ -393,6 +426,11 @@ int64_t XDevice_read(XFd fd, void* buffer, int64_t size)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
 	int64_t ret;
+	XFileDescriptor* desc = XFd_get(fd);
+	if (!ctx && desc && ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+		(XFdType)desc->m_type == XFD_TYPE_MAPPING ||
+		(XFdType)desc->m_type == XFD_TYPE_CONSOLE))
+		return XDeviceFile_legacyRead(fd, buffer, size);
 	if (!ctx || !buffer || size < 0) {
 		if (ctx) ctx->m_lastError = (int16_t)XDeviceError_InvalidArgument;
 		return -1;
@@ -406,6 +444,10 @@ int64_t XDevice_write(XFd fd, const void* data, int64_t size)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
 	int64_t ret;
+	XFileDescriptor* desc = XFd_get(fd);
+	if (!ctx && desc && ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+		(XFdType)desc->m_type == XFD_TYPE_MAPPING))
+		return XDeviceFile_legacyWrite(fd, data, size);
 	if (!ctx || !data || size < 0) {
 		if (ctx) ctx->m_lastError = (int16_t)XDeviceError_InvalidArgument;
 		return -1;
@@ -419,6 +461,10 @@ int64_t XDevice_seek(XFd fd, int64_t offset, XDeviceSeekWhence whence)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
 	int64_t ret;
+	XFileDescriptor* desc = XFd_get(fd);
+	if (!ctx && desc && ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+		(XFdType)desc->m_type == XFD_TYPE_MAPPING))
+		return XDeviceFile_legacySeek(fd, offset, (XSeekWhence)whence);
 	if (!ctx) return -1;
 	ret = XDevice_dispatchSeek(ctx->m_device, ctx, offset, (int)whence);
 	if (ret < 0) ctx->m_lastError = (int16_t)XDeviceError_IoFail;
@@ -428,6 +474,10 @@ int64_t XDevice_seek(XFd fd, int64_t offset, XDeviceSeekWhence whence)
 bool XDevice_flush(XFd fd)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
+	XFileDescriptor* desc = XFd_get(fd);
+	if (!ctx && desc && ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+		(XFdType)desc->m_type == XFD_TYPE_MAPPING))
+		return XDeviceFile_legacyFlush(fd);
 	if (!ctx) return false;
 	return XDevice_dispatchFlush(ctx->m_device, ctx);
 }
@@ -435,6 +485,10 @@ bool XDevice_flush(XFd fd)
 bool XDevice_resize(XFd fd, int64_t size)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
+	XFileDescriptor* desc = XFd_get(fd);
+	if (!ctx && desc && ((XFdType)desc->m_type == XFD_TYPE_FILE ||
+		(XFdType)desc->m_type == XFD_TYPE_MAPPING))
+		return size >= 0 && XDeviceFile_legacyResize(fd, size);
 	if (!ctx || size < 0) {
 		if (ctx) ctx->m_lastError = (int16_t)XDeviceError_InvalidArgument;
 		return false;
@@ -492,10 +546,22 @@ bool XDevice_queryProperty(XFd fd, XDeviceProperty property, XVariant* value)
 	return false;
 }
 
-bool XDevice_control(XFd fd, uint32_t command, const XVariant* in, XVariant* out)
+bool XDevice_control(XFd fd, uint32_t command, const XVarList* in, XVarList* out)
 {
 	XDeviceContext* ctx = XDevice_getCtx(fd);
-	if (!ctx) return false;
+	if (!ctx) {
+		XFileDescriptor* desc = XFd_get(fd);
+		XVarList* input = (XVarList*)in;
+		bool enabled;
+		if (!desc || ((XFdType)desc->m_type != XFD_TYPE_CONSOLE &&
+			(XFdType)desc->m_type != XFD_TYPE_FILE) ||
+			command != XDeviceFileCommand_SetStandardInputEcho || !input || out ||
+			input->m_size != sizeof(enabled))
+			return false;
+		XVarList_start(input);
+		enabled = XVarList_arg(input, bool);
+		return XDeviceFile_legacySetStandardInputEcho(fd, enabled);
+	}
 	return XDevice_dispatchControl(ctx->m_device, ctx, command, in, out);
 }
 
@@ -513,5 +579,8 @@ XDevice* XDevice_class(XFd fd)
 
 XDeviceContext* XDevice_handle(XFd fd)
 {
-	return XDevice_getCtx(fd);
+	XFileDescriptor* descriptor = XFd_get(fd);
+	if (!descriptor || (XFdType)descriptor->m_type != XFD_TYPE_CLASS)
+		return NULL;
+	return (XDeviceContext*)descriptor->m_deviceCtx;
 }

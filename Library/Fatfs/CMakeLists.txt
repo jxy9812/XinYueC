@@ -1,6 +1,6 @@
 ﻿# ==================== FatFs 文件系统 ====================
 # 通用的 FAT/exFAT 文件系统模块，适用于嵌入式系统。
-# 包含 XinYueC 文件系统适配层（XFileSystem_Fatfs.c / XFileSystem_Fatfs_platform.h）。
+# 包含 XinYueC 文件系统适配层（XDeviceFile_fatfs.c，接口统一声明在 XDeviceFile.h）。
 
 # --- 公开头文件路径（传播给链接方）---
 set(FATFS_PUBLIC_INCS

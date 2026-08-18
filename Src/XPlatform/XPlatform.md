@@ -257,7 +257,7 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 | ODBC | 已定义适配通道，生产驱动尚未实现 |
 | Custom | Test/XDataTest/XSqlTest.c 中已有内存测试驱动 |
 
-嵌入式优先建议先使用 SQLite 源码后端。当前 `Library/sqlite` 编译 SQLite 3.49.1 amalgamation，并通过 `sqlite3_xin_memory.c` 将 SQLite 初始化前的内存申请接到 XMemory。文件型数据库统一使用 `xin_xfile` VFS，VFS 直接调用 XFile 模块的 `XFileSystem_*` 抽象接口；桌面、FatFs 或其他嵌入式文件系统只需要替换 XFile 后端。`:memory:` 数据库仍然使用 SQLite 内置内存路径。XinYueC 的 XSqliteDriver 不需要修改。
+嵌入式优先建议先使用 SQLite 源码后端。当前 `Library/sqlite` 编译 SQLite 3.49.1 amalgamation，并通过 `sqlite3_xin_memory.c` 将 SQLite 初始化前的内存申请接到 XMemory。文件型数据库统一使用 `xin_xfile` VFS，VFS 直接调用 XFile 模块的 `XDeviceFile_*` 抽象接口；桌面、FatFs 或其他嵌入式文件系统只需要替换 XFile 后端。`:memory:` 数据库仍然使用 SQLite 内置内存路径。XinYueC 的 XSqliteDriver 不需要修改。
 
 `XSqlTableModel` 维护新增、修改和已删除行的独立状态；提交时以修改前的主键值生成 `WHERE` 条件，分别执行插入、更新和删除。`OnFieldChange` 会立即写回既有行的字段或整行修改，并立即删除既有行；新行仍等待完整编辑后由 `submit()` 或 `submitAll()` 写入。`XSqlQueryModel` 支持对已缓存结果列插入和删除，这些列只影响模型缓存，不会改写原始查询或数据库。结果集和模型仍一次性缓存，因此 `fetchMore()` 不是流式加载接口。
 
@@ -295,15 +295,15 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 - `XSqlDatabase_addDatabase(XSqlDriverType_Sqlite, name)` 会自动注册内置源码创建器，不需要动态插件。
 - `Library/sqlite/sqlite3.c` 和 `sqlite3.h` 是可替换的源码组件；当前来自 Qt 6.8.3 自带的 SQLite 3.49.1。
 - `Library/sqlite/sqlite3_xin_memory.c` 使用带对齐头的 XMemory 包装器提供 SQLite allocator，避免适配层直接使用 C 分配函数。
-- `Library/sqlite/sqlite3_xin_vfs.c` 实现 `xin_xfile` VFS，文件打开、删除、定位、读写、扩容、刷新和大小查询均通过 XFile 的 `XFileSystem_*` 抽象接口。
-- 当前 VFS 同时支持 SQLite rollback journal 和 WAL 共享映射；WAL 的 `-shm` 区域通过 `XFileSystem_map`/`XFileSystem_unmap` 管理。VFS 使用 XMutex 保护按数据库路径组织的锁组，并为 SQLite 的 8 个 WAL 锁槽分别使用 XReadWriteLock；XFile 尚未提供跨进程锁契约，产品需要多进程并发时应先扩展 XFile 抽象接口。
+- `Library/sqlite/sqlite3_xin_vfs.c` 实现 `xin_xfile` VFS，文件打开、删除、定位、读写、扩容、刷新和大小查询均通过 XFile 的 `XDeviceFile_*` 抽象接口。
+- 当前 VFS 同时支持 SQLite rollback journal 和 WAL 共享映射；WAL 的 `-shm` 区域通过 `XDeviceFile_map`/`XDeviceFile_unmap` 管理。VFS 使用 XMutex 保护按数据库路径组织的锁组，并为 SQLite 的 8 个 WAL 锁槽分别使用 XReadWriteLock；XFile 尚未提供跨进程锁契约，产品需要多进程并发时应先扩展 XFile 抽象接口。
 
 ### MySQL 和 MariaDB
 
 - 使用 XSqlDriverType_MySql 和 XSqlDbmsType_MySql。
 - `Src/XPlatform/XSql/XSqlMySqlClient.h` 定义不包含 `mysql.h` 的客户端函数表；驱动只依赖这个抽象接口。
 - 默认实现为 `Src/XCode/XSql/XMySqlWireClient.c`，使用 `XSslSocket`（未启用时按普通 TCP 工作）、`XCryptographicHash`、`XByteArray` 和 `XMemory` 实现 MySQL 文本及二进制协议。
-- `XMySqlWireClient.c` 只调用 `XSsl_platform.h` 的抽象接口，不再包含任何平台专属传输模块；MySQL 共享内存传输由通用代码 `Src/XCode/XSql/XMySqlSharedMemory.c` 实现，不包含平台头文件：命名共享内存段的打开/映射/解除映射统一走 `XFileSystem_openSharedMemory`/`XFileSystem_map`/`XFileSystem_unmap`/`XFileSystem_close` 三个共享内存原语，平台 `XFileSystem_openSharedMemory` 会为每个段内建一个同名信令通道（POSIX 为 Unix domain 流式套接字，Windows 为命名管道），传输层在该通道上做异步接收（阻塞等待通知字节，参考网络套接字异步接收，不做共享内存状态轮询），因此 Windows 与 POSIX（Linux/macOS/BSD）行为一致，Linux 同样支持本机共享内存连接。RSA 公钥加密由 SSL 后端实现，不得把 `windows.h`、`HANDLE`、mbedTLS 或 PSA API 带入协议层。
+- `XMySqlWireClient.c` 只调用 `XSsl_platform.h` 的抽象接口，不再包含任何平台专属传输模块；MySQL 共享内存传输由通用代码 `Src/XCode/XSql/XMySqlSharedMemory.c` 实现，不包含平台头文件：命名共享内存段的打开/映射/解除映射统一走 `XDeviceFile_openSharedMemory`/`XDeviceFile_map`/`XDeviceFile_unmap`/`XDeviceFile_close` 三个共享内存原语，平台 `XDeviceFile_openSharedMemory` 会为每个段内建一个同名信令通道（POSIX 为 Unix domain 流式套接字，Windows 为命名管道），传输层在该通道上做异步接收（阻塞等待通知字节，参考网络套接字异步接收，不做共享内存状态轮询），因此 Windows 与 POSIX（Linux/macOS/BSD）行为一致，Linux 同样支持本机共享内存连接。RSA 公钥加密由 SSL 后端实现，不得把 `windows.h`、`HANDLE`、mbedTLS 或 PSA API 带入协议层。
 - `Src/XCode/XSql/XMySqlDriver.c` 负责连接、事务、文本占位符转义、结果集缓存、字段类型转换、最后插入 ID 和元数据。
 - 对照 Qt 6.8 `qsql_mysql.cpp`，公共驱动接口已经覆盖 `open/close/createResult/tables/primaryIndex/record/formatValue/handle/escapeIdentifier`、事务、数值精度策略和 `XSqlResult::nextResult`；`XSqlDatabase_moveToThread/thread` 也已接入 XinYueC 的 `XObject` 线程亲和性。
 - Qt QMYSQL 的能力位语义保持一致：`MultipleResultSets`、查询大小、BLOB、Unicode、最后插入 ID 和预处理查询可用；`NamedPlaceholders`、`BatchOperations`、`FinishQuery`、`CancelQuery` 不在驱动能力位中伪造为原生支持。命名绑定和 `execBatch(ValuesAsRows)` 仍由公共结果层按 Qt 的兼容回退规则完成。
@@ -314,7 +314,7 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 - POSIX 上空主机名配合默认协议使用 `/run/mysqld/mysqld.sock`，`MYSQL_OPT_PROTOCOL=TCP` 强制 TCP，`SOCKET` 使用该默认路径，也可用 `UNIX_SOCKET` 覆盖；Windows 等不具备 Unix domain socket 的平台明确返回连接错误。Windows 上 `MYSQL_OPT_PROTOCOL=PIPE` 使用 IOCP named pipe 流，默认 `\\.\\pipe\\MySQL`，可通过 `UNIX_SOCKET` 指定自定义管道名；空协议或显式 `DEFAULT` 配合主机名 `.` 同样选择默认管道。
 - `MYSQL_OPT_PROTOCOL=MEMORY` 走 `XMySqlSharedMemory` 传输：客户端与服务器通过命名共享内存段通信（连接协商段 `<BASE>_CONNECT_DATA` 完成握手，数据段 `<BASE>_<编号>_DATA` 含服务器→客户端与客户端→服务器两条 16000 字节通道，与官方 MySQL 16KB 分块帧对齐），段内原子字段仅作防御性标记，真正的同步由平台内建信令通道完成（数据方写完一块写 `'D'` 通知，对端读完后写 `'S'` 释放空间，关闭写 `'C'`，全部阻塞等待、无轮询）。`MYSQL_SHARED_MEMORY_BASE_NAME` 指定基础段名（默认 `MYSQL`）。`PIPE` 是 Windows 本地传输，不进行 TLS，`SSL_MODE=REQUIRED`、`VERIFY_CA` 或 `VERIFY_IDENTITY` 会明确拒绝；非 Windows 选择 `PIPE` 返回平台限制错误。`SSL_CIPHER` 支持 mbedTLS 名称及常用 OpenSSL/libmysql 名称，未知密码套件会在 TLS 握手前报错；`SSL_CAPATH` 由 mbedTLS 加载 CA 目录，`SSL_CRL` 加载 CRL 文件，`SSL_CRLPATH` 遍历 CRL 目录；`CLIENT_COMPRESS` 使用 zlib 压缩协议并支持压缩包内多个普通 MySQL 包；本地文件读取只有显式设置 `MYSQL_OPT_LOCAL_INFILE=1` 才启用。连接成功后会按 Qt 6.8 的规则探测 `COM_STMT_PREPARE`，并据服务端事务能力位动态返回 `hasFeature`；支持预处理时设置会话时区为 UTC。连接按 Qt 的线程亲和性规则拒绝跨线程共享，结果集按 Qt QMYSQL 的 `mysql_store_result()` 语义一次性缓存，不把流式读取伪造为驱动能力位。
 - Windows 验收待办：需在 Windows 上启动启用 named pipe 的 MySQL 服务，使用 `XMYSQL_TEST_OPTIONS=MYSQL_OPT_PROTOCOL=PIPE;SSL_MODE=DISABLED` 运行 `XSqlMySqlTest`，并覆盖默认和自定义 `UNIX_SOCKET` 管道名、连接超时、认证、预处理、压缩、多结果集及断开清理。当前环境没有 Windows 编译器或 Windows MySQL 服务，因此上述路径只有源码和 Linux 非支持路径验证，尚无 Windows 实机证据。
-- Windows `XNETWORK_USE_LWIP` 后端当前仅负责 lwIP/Npcap 网络接口，`XNetwork_socketConnectLocal()` 不实现 Windows named pipe；因此该后端的 `MYSQL_OPT_PROTOCOL=PIPE` 仍待增加宿主 Win32 本地流适配。Unix domain socket 与 Windows named pipe 都不是 lwIP TCP/IP 协议栈功能，不能用 loopback TCP 代替。
+- Windows `XNETWORK_USE_LWIP` 后端当前仅负责 lwIP/Npcap 网络接口，`XDeviceNetwork_socketConnectLocal()` 不实现 Windows named pipe；因此该后端的 `MYSQL_OPT_PROTOCOL=PIPE` 仍待增加宿主 Win32 本地流适配。Unix domain socket 与 Windows named pipe 都不是 lwIP TCP/IP 协议栈功能，不能用 loopback TCP 代替。
 - MySQL/MariaDB 是网络数据库，不使用 SQLite 的 XFile VFS；嵌入式移植需要提供 XinYueC 网络抽象，数据库文件仍由服务器端管理。
 - 元数据和 SQL 方言不要泄漏到 XSqlQueryModel 或 XSqlTableModel。
 

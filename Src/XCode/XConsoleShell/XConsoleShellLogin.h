@@ -2,7 +2,7 @@
  * @file XConsoleShellLogin.h
  * @brief XConsoleShell 的登录、用户管理和 Linux 风格账户权限 API。
  * @details
- * 账户数据只通过 XFileSystem 和 XJsonDocument 读写产品指定的 JSON 文件，
+ * 账户数据只通过 XDeviceFile 和 XJsonDocument 读写产品指定的 JSON 文件，
  * 不访问宿主机 /etc/passwd、Windows 注册表或其他平台账户数据库。用户记录
  * 保存用户名、UID、主 GID、附加组、Shell 权限位和加盐密码摘要；登录成功后
  * 写入当前会话，提示符可据此显示用户名。登录和改密密码通过下一行交互输入，

@@ -21,7 +21,7 @@
 #if XPROTOCOL_ON && XSSH_ON && XSSH_SERVER_ON
 
 #include "XVarList.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
@@ -258,6 +258,15 @@ static bool xssh_key_is_valid(const XCryptographic_Key* key)
 static void xssh_write_u32(uint8_t* p, uint32_t v);
 static void xssh_get_u32(const uint8_t* p, uint32_t* v);
 
+static XFd xssh_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
+
 static const char* xssh_hostkey_path(void)
 {
     return XSSH_HOSTKEY_FILE;
@@ -274,8 +283,8 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
         return false;
     path = XString_create_utf8(xssh_hostkey_path());
     if (!path) return false;
-    fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Create |
-                               XFileSystem_Truncate, &error);
+    fd = xssh_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                               XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) {
         XString_delete_base(path);
         return false;
@@ -285,10 +294,10 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
     xssh_write_u32(header + 8, (uint32_t)keyLen);
     done = 0;
     while (done < sizeof(header)) {
-        int64_t n = XFileSystem_write(fd, header + done,
+        int64_t n = XDeviceFile_write(fd, header + done,
                                       (int64_t)(sizeof(header) - done));
         if (n <= 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             XString_delete_base(path);
             return false;
         }
@@ -296,23 +305,23 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
     }
     done = 0;
     while (done < keyLen) {
-        int64_t n = XFileSystem_write(fd, keyBytes + done,
+        int64_t n = XDeviceFile_write(fd, keyBytes + done,
                                       (int64_t)(keyLen - done));
         if (n <= 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             XString_delete_base(path);
             return false;
         }
         done += (size_t)n;
     }
-    if (!XFileSystem_flush(fd)) {
-        XFileSystem_close(fd);
+    if (!XDeviceFile_flush(fd)) {
+        XDeviceFile_close(fd);
         XString_delete_base(path);
         return false;
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     /* 主机密钥属敏感材料，尽力限制为仅属主可读写。 */
-    (void)XFileSystem_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
+    (void)XDeviceFile_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
     XString_delete_base(path);
     return true;
 }
@@ -331,21 +340,21 @@ static bool xssh_hostkey_load(uint8_t* keyBytes, size_t keyCap, size_t* keyLen)
     if (!keyBytes || !keyLen || keyCap < XSSH_HOSTKEY_MAX_BYTES) return false;
     path = XString_create_utf8(xssh_hostkey_path());
     if (!path) return false;
-    if (!XFileSystem_stat(path, &stat) || !stat.exists || !stat.isFile ||
+    if (!XDeviceFile_stat(path, &stat) || !stat.exists || !stat.isFile ||
         stat.size < (int64_t)XSSH_HOSTKEY_FILE_HEADER ||
         stat.size > (int64_t)(XSSH_HOSTKEY_FILE_HEADER + XSSH_HOSTKEY_MAX_BYTES)) {
         XString_delete_base(path);
         return false;
     }
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    fd = xssh_open_file(path, XDeviceFile_ReadOnly, &error);
     XString_delete_base(path);
     if (fd == XFD_INVALID) return false;
     done = 0;
     while (done < sizeof(header)) {
-        int64_t n = XFileSystem_read(fd, header + done,
+        int64_t n = XDeviceFile_read(fd, header + done,
                                      (int64_t)(sizeof(header) - done));
         if (n <= 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             return false;
         }
         done += (size_t)n;
@@ -357,19 +366,19 @@ static bool xssh_hostkey_load(uint8_t* keyBytes, size_t keyCap, size_t* keyLen)
         version != XSSH_HOSTKEY_FILE_VERSION ||
         len == 0 || len > XSSH_HOSTKEY_MAX_BYTES ||
         (uint64_t)len != (uint64_t)(stat.size - (int64_t)XSSH_HOSTKEY_FILE_HEADER)) {
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
         return false;
     }
     done = 0;
     while (done < len) {
-        int64_t n = XFileSystem_read(fd, keyBytes + done, (int64_t)(len - done));
+        int64_t n = XDeviceFile_read(fd, keyBytes + done, (int64_t)(len - done));
         if (n <= 0) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             return false;
         }
         done += (size_t)n;
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     *keyLen = len;
     return true;
 }

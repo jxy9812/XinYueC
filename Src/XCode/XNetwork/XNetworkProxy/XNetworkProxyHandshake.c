@@ -10,7 +10,7 @@
 #include "XDateTime.h"
 #include "XBase64.h"
 #include "XMemory.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XRandomGenerator.h"
 #include <stdlib.h>
 #include <string.h>
@@ -1797,7 +1797,7 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                     
                     // 调用平台GSSAPI认证
                     XString* svcStr = XString_create_utf8(serviceName);
-                    int gssResult = XNetwork_gssapiAuth(svcStr, NULL, outputToken, &ctx->gssContext);
+                    int gssResult = XDeviceNetwork_gssapiAuth(svcStr, NULL, outputToken, &ctx->gssContext);
                     XString_delete_base(svcStr);
                     
                     if (gssResult >= 0 && XByteArray_size_base(outputToken) > 0) {
@@ -2050,9 +2050,9 @@ bool XNetworkProxy_getSystemProxy(
     }
     
     // 首先尝试平台特定的系统代理获取（Windows/macOS）
-    // XNetwork_getSystemProxy 在 Windows 上使用 WinHTTP，在其他平台可能使用不同机制
+    // XDeviceNetwork_getSystemProxy 在 Windows 上使用 WinHTTP，在其他平台可能使用不同机制
     XString* queryUrlStr = queryUrl ? XString_create_utf8(queryUrl) : NULL;
-    bool sysProxyOk = XNetwork_getSystemProxy(queryUrlStr, outProxy);
+    bool sysProxyOk = XDeviceNetwork_getSystemProxy(queryUrlStr, outProxy);
     XString_delete_base(queryUrlStr);
     if (sysProxyOk) {
         // 平台函数成功获取代理

@@ -26,7 +26,7 @@
 #define LWIP_NET_DEBUG            0
 #endif
 #if LWIP_NET_DEBUG
-  /* 适配层自定义调试输出，用于 XNetwork_lwip.c / sys_arch.c 等 */
+  /* 适配层自定义调试输出，用于 XDeviceNetwork_lwip.c / sys_arch.c 等 */
   #define LWIP_DBG(fmt, ...)  XPrintf(fmt, ##__VA_ARGS__)
 #else
   #define LWIP_DBG(fmt, ...)
@@ -39,7 +39,7 @@
 /* NO_SYS 受 XNETWORK_LWIP_NO_SYS 控制（见 XNetwork_config.h）
  *   0 = OS 模式：完整 sys_arch（线程/信号量/邮箱/互斥锁），lwIP 内部创建 tcpip_thread
  *   1 = 裸机模式：最小 sys_arch（仅 sys_arch_protect / sys_now 等），无 tcpip_thread
- * 裸机模式下需手动调用 lwip_init() 和 XNetworkLwip_ensureNetworkReady() */
+ * 裸机模式下需手动调用 lwip_init() 和 XDeviceNetwork_ensureInit() */
 #define NO_SYS                  1 //当前架构始终裸机模式效率最高
 
 /* ================================================================

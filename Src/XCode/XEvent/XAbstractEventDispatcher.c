@@ -10,7 +10,8 @@
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+#include "XVarList.h"
 #if (XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
      XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_MULTI_SESSION_ON && \
      XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON) && \
@@ -23,7 +24,7 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
 #include "XConsoleShell.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XPrintf.h"
 #include <stdio.h>
 #endif
@@ -37,7 +38,7 @@ static XMutex* global_mutex = NULL;
     XCONSOLE_SHELL_ASYNC_ON
 
 typedef struct MainConsoleTransport {
-    XFd inputFd;     /* 由 XFileSystem 管理的非阻塞标准输入描述符。 */
+    XFd inputFd;     /* 由 XDeviceFile 管理的非阻塞标准输入描述符。 */
     bool endOfInput; /* 标准输入已到文件尾。 */
 } MainConsoleTransport;
 
@@ -47,10 +48,8 @@ static int64_t console_read(void* userData, void* data, size_t size)
     int64_t result;
     if (!transport || (!data && size) || size == 0 ||
         transport->inputFd == XFD_INVALID) return -1;
-    result = XFileSystem_readStandardInput(transport->inputFd, data,
-                                            (int64_t)size);
-    if (result == -1) transport->endOfInput = true;
-    return result == -2 ? -1 : result;
+    result = XDevice_read(transport->inputFd, data, (int64_t)size);
+    return result;
 }
 
 static bool console_attach(void* userData, XConsoleShell* shell)
@@ -59,7 +58,7 @@ static bool console_attach(void* userData, XConsoleShell* shell)
     int error = 0;
     (void)shell;
     if (!transport) return false;
-    transport->inputFd = XFileSystem_openStandardInput(&error);
+    transport->inputFd = XDeviceFile_openStandardInput(&error);
     transport->endOfInput = false;
     if (transport->inputFd != XFD_INVALID && shell) {
         XFd_setObject(transport->inputFd, shell);
@@ -81,7 +80,7 @@ static void console_detach(void* userData, XConsoleShell* shell)
     if (!transport) return;
     if (shell) shell->m_asyncInputEventDriven = false;
     if (transport->inputFd != XFD_INVALID) {
-        XFileSystem_close(transport->inputFd);
+        XDeviceFile_close(transport->inputFd);
         transport->inputFd = XFD_INVALID;
     }
 }
@@ -89,8 +88,15 @@ static void console_detach(void* userData, XConsoleShell* shell)
 static bool console_input_echo(void* userData, bool enabled)
 {
     MainConsoleTransport* transport = (MainConsoleTransport*)userData;
+    XVarList* input;
+    bool ok;
     if (!transport || transport->inputFd == XFD_INVALID) return false;
-    return XFileSystem_setStandardInputEcho(transport->inputFd, enabled);
+    input = XVarList_Create(XVar(bool, enabled));
+    if (!input) return false;
+    ok = XDevice_control(transport->inputFd,
+                         XDeviceFileCommand_SetStandardInputEcho, input, NULL);
+    XVarList_delete(input);
+    return ok;
 }
 
 static void console_prompt(void* userData, XConsoleShell* shell)

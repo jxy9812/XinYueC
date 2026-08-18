@@ -22,8 +22,17 @@
 #include "XVarList.h"
 #endif
 #if XCONSOLE_SHELL_FILESYSTEM_ON
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XString.h"
+
+static XFd xcs_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON
 #include "XConsoleShellNetwork.h"
@@ -396,16 +405,16 @@ static int xcs_source(XConsoleShell* shell, XConsoleShellSession* session,
         }
     }
     if (result == XConsoleResult_Ok &&
-        !XFileSystem_resolvePath(rawPath, path, XPathStyle_Absolute))
+        !XDeviceFile_resolvePath(rawPath, path, XPathStyle_Absolute))
         result = XConsoleResult_Failed;
     if (result == XConsoleResult_Ok) {
-        fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+        fd = xcs_open_file(path, XDeviceFile_ReadOnly, &error);
         if (fd == XFD_INVALID) result = XConsoleResult_Failed;
     }
     if (result == XConsoleResult_Ok) {
         ++shell->m_scriptDepth;
         for (;;) {
-            int64_t count = XFileSystem_read(fd, bytes, sizeof(bytes));
+            int64_t count = XDeviceFile_read(fd, bytes, sizeof(bytes));
             size_t i;
             if (count < 0) {
                 result = XConsoleResult_IoError;
@@ -437,7 +446,7 @@ static int xcs_source(XConsoleShell* shell, XConsoleShellSession* session,
         }
         --shell->m_scriptDepth;
     }
-    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (rawPath) XString_delete_base(rawPath);
     if (path) XString_delete_base(path);
     return result;
@@ -939,9 +948,9 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
     if (!entryName) goto cleanup;
     memset(&entry, 0, sizeof(entry));
     entry.name = entryName;
-    iterator = XFileSystem_opendir(dirPath);
+    iterator = XDeviceFile_opendir(dirPath);
     if (!iterator) goto cleanup;
-    while (XFileSystem_readdir(iterator, &entry)) {
+    while (XDeviceFile_readdir(iterator, &entry)) {
         const char* name = XString_toUtf8(entryName);
         size_t nameLen = name ? strlen(name) : 0;
         if (!name || !nameLen) continue;
@@ -969,7 +978,7 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
         }
         ++matchCount;
     }
-    XFileSystem_closedir(iterator);
+    XDeviceFile_closedir(iterator);
     iterator = NULL;
     if (matchCount == 1 && uniqueName) {
         char raw[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
@@ -1038,9 +1047,9 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
         XDirIterator listIterator;
         const char* ptrs[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS];
         size_t listCount = 0;
-        listIterator = XFileSystem_opendir(dirPath);
+        listIterator = XDeviceFile_opendir(dirPath);
         if (listIterator) {
-            while (XFileSystem_readdir(listIterator, &entry) &&
+            while (XDeviceFile_readdir(listIterator, &entry) &&
                    listCount < XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS) {
                 const char* name = XString_toUtf8(entryName);
                 size_t nameLen = name ? strlen(name) : 0;
@@ -1093,12 +1102,12 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
                     }
                 }
             }
-            XFileSystem_closedir(listIterator);
+            XDeviceFile_closedir(listIterator);
         }
         if (listCount) xcs_complete_show_candidates(self, ptrs, listCount);
     }
 cleanup:
-    if (iterator) XFileSystem_closedir(iterator);
+    if (iterator) XDeviceFile_closedir(iterator);
     if (entryName) XString_delete_base(entryName);
     if (dirPath) XString_delete_base(dirPath);
 }
@@ -1570,7 +1579,7 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
 #if XCONSOLE_SHELL_FILESYSTEM_ON
     {
         XString* current = XString_create();
-        if (current && XFileSystem_getSpecialPath(XSpecialPath_Current, current) &&
+        if (current && XDeviceFile_getSpecialPath(XSpecialPath_Current, current) &&
             XString_size_base(current) < sizeof(self->m_session.currentPath)) {
             strncpy(self->m_session.currentPath, XString_toUtf8(current),
                     sizeof(self->m_session.currentPath) - 1);

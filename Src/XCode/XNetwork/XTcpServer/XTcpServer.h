@@ -20,6 +20,7 @@ extern "C" {
 #include "XAbstractSocket.h"
 #include "XNetworkProxy.h"
 #include "XSocketDescriptor.h"
+#include "XFileDescriptor.h"
 #include "XVector.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -51,7 +52,7 @@ XCLASS_DEFINE_END(XTcpServer)
  */
 typedef struct XTcpServer {
     XObject base;                              ///< 继承 XObject
-    void* d_ptr;                               ///< XNetworkSocketPrivate*（服务器套接字平台私有数据）
+    XFd m_deviceFd;                            ///< XDeviceNetwork 的统一监听设备 fd。
     XHostAddress serverAddress;                ///< 服务器监听地址
     uint16_t serverPort;                       ///< 服务器监听端口
     bool listening;                            ///< 是否正在监听

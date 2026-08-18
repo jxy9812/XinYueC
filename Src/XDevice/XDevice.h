@@ -19,6 +19,8 @@ extern "C" {
 /* 前向声明：设备打开选项中的路径使用 XString，避免在公共头引入完整 XString 头。 */
 struct XString;
 typedef struct XString XString;
+struct XVarList;
+typedef struct XVarList XVarList;
 
 /* ============================================================================
  * 虚函数表定义
@@ -87,7 +89,7 @@ typedef enum XDeviceOpenFlag
 
 /**
  * @brief 设备属性编号枚举。
- * @details 设备专有属性从 XDeviceProperty_DeviceBase 起分配。
+ * @details 设备专有属性从 XDeviceProperty_Count 起分配。
  */
 typedef enum XDeviceProperty
 {
@@ -99,19 +101,20 @@ typedef enum XDeviceProperty
     XDeviceProperty_LastError   = 0x0005,       /**< 最近一次错误码，值为 int。 */
     XDeviceProperty_Size         = 0x0006,       /**< 设备当前大小（字节），值为 int64_t。 */
     XDeviceProperty_NativeHandle = 0x0100,      /**< 原生平台句柄，值为借用 void*。 */
-    XDeviceProperty_DeviceBase  = 0x00010000    /**< 设备专有属性起始编号。 */
+    XDeviceProperty_DeviceBase  = 0x00010000,   /**< 设备专有属性保留编号。 */
+    XDeviceProperty_Count                         /**< 父类属性数量；子类从此值继续编号。 */
 } XDeviceProperty;
 
 /**
  * @brief 设备命令编号枚举。
- * @details 设备专有命令从 XDeviceCommand_DeviceBase 起分配。
+ * @details 设备专有命令从父类命令枚举的 Count 值起继续分配。
  */
 typedef enum XDeviceCommand
 {
-    XDeviceCommand_None       = 0,            /**< 空命令。 */
-    XDeviceCommand_Cancel     = 0x0001,       /**< 取消在途异步 I/O。 */
-    XDeviceCommand_Poll       = 0x0002,       /**< 轮询设备就绪事件。 */
-    XDeviceCommand_DeviceBase = 0x00010000    /**< 设备专有命令起始编号。 */
+    XDeviceCommand_None       = 0,            /**< 空命令；in/out 均为 NULL。 */
+    XDeviceCommand_Cancel     = 0x0001,       /**< 取消在途异步 I/O；in/out 均为 NULL。 */
+    XDeviceCommand_Poll       = 0x0002,       /**< 查询设备就绪状态；in 为 NULL，out 为 XVarList(bool)。 */
+    XDeviceCommand_Count                      /**< 父类命令数量；子类从此值继续编号。 */
 } XDeviceCommand;
 
 
@@ -173,9 +176,10 @@ typedef enum XDeviceError
  */
 typedef struct XDeviceOpenOptions
 {
-    int m_openMode;                          /**< 打开模式位组合，见 XFileInfo 的 XFileSystem_* 打开模式。0 表示设备默认模式。 */
+    int m_openMode;                          /**< 打开模式位组合，见 XFileInfo 的 XDeviceFile_* 打开模式。0 表示设备默认模式。 */
     uint32_t m_flags;                        /**< XDeviceOpenFlag 位组合。 */
     int64_t m_timeoutMs;                     /**< 打开操作超时毫秒；0 表示设备默认或无限等待。 */
+    const XString* m_target;                 /**< 设备目标名称；文件为路径、网络 Connect 为主机名，其它设备按各自契约解释；仅在 XDevice_open 调用期间借用。 */
 } XDeviceOpenOptions;
 
 /**
@@ -209,6 +213,7 @@ typedef struct XDeviceContext
     uint16_t m_pendingOps : 8;          /**< 在途异步操作数。 */
     uint16_t m_reserved   : 4;          /**< 预留位，必须为 0。 */
     int16_t  m_lastError;               /**< 最近一次错误码（XDeviceError）。 */
+    XFd      m_fd;                      /**< 持有本上下文的统一描述符；打开阶段可由子类预先绑定。 */
 } XDeviceContext;
 
 
@@ -225,7 +230,7 @@ typedef bool  (*XDeviceResizeFn)(XDevice* self, XDeviceContext* ctx, int64_t siz
 typedef bool  (*XDeviceSetPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, const XVariant* value);
 typedef bool  (*XDeviceGetPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, XVariant* value);
 typedef bool  (*XDeviceQueryPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, XVariant* value);
-typedef bool  (*XDeviceControlFn)(XDevice* self, XDeviceContext* ctx, uint32_t command, const XVariant* in, XVariant* out);
+typedef bool  (*XDeviceControlFn)(XDevice* self, XDeviceContext* ctx, uint32_t command, const XVarList* in, XVarList* out);
 
 /**
  * @brief 初始化 XDevice 类的共享虚函数表。
@@ -377,12 +382,16 @@ bool XDevice_queryProperty(XFd fd, XDeviceProperty property, XVariant* value);
 /**
  * @brief 执行设备专用命令。
  * @param fd      设备句柄；必须由 XDevice_open/openClass 返回。
- * @param command 命令码；通用命令见 XDeviceCommand，设备专有命令从 DeviceBase 起。
- * @param in      命令入参；借用指针，可为 NULL。
- * @param out     命令出参；借用指针，可为 NULL。
+ * @param command 命令码；通用命令见 XDeviceCommand，子类命令从父类 Count 值继续编号。
+ * @param in      命令输入参数列表；借用指针，可为 NULL。参数顺序和实际类型由 command
+ *                所属枚举值注释定义，调用期间不得释放或修改。
+ * @param out     命令输出参数列表；借用指针，可为 NULL。调用方按命令注释预先创建
+ *                对应类型和顺序的槽位，设备仅在调用期间覆写槽位中的值。
  * @return 命令执行成功返回 true，失败返回 false。
+ * @note XDevice_control 不取得 in/out 的所有权，也不保存其地址；调用方负责在返回后
+ *       使用 XVarList_delete 释放由 XVarList_Create 创建的列表。
  */
-bool XDevice_control(XFd fd, uint32_t command, const XVariant* in, XVariant* out);
+bool XDevice_control(XFd fd, uint32_t command, const XVarList* in, XVarList* out);
 
 /**
  * @brief 读取设备最近一次错误码。
@@ -402,6 +411,7 @@ XDevice* XDevice_class(XFd fd);
  * @brief 获取 fd 对应的设备打开上下文句柄。
  * @param fd 设备句柄；必须由 XDevice_open/openClass 返回。
  * @return Open 虚函数返回的 XDeviceContext 打开上下文基类指针（借用指针，由描述符持有，调用方不得释放；无效句柄返回 NULL）。
+ * @note Close 虚函数执行期间仍可取得上下文，供子类取消平台异步操作；Close 返回后 fd 立即失效。
  */
 XDeviceContext* XDevice_handle(XFd fd);
 

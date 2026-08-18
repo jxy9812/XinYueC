@@ -15,9 +15,18 @@
 
 #if XCONSOLE_SHELL_EXECUTOR_ON && XCONSOLE_SHELL_EXTERNAL_PROCESS_ON && XProcess_ON
 #include "XProcess.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XMemory.h"
 #include <string.h>
+
+static XFd xexec_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static XString* xexec_resolve_path(const XConsoleShellSession* session,
                                    const char* rawPath)
@@ -39,7 +48,7 @@ static XString* xexec_resolve_path(const XConsoleShellSession* session,
                !XString_append_utf8(path, rawPath)) {
         goto fail;
     }
-    if (!XFileSystem_resolvePath(path, resolved, XPathStyle_Absolute))
+    if (!XDeviceFile_resolvePath(path, resolved, XPathStyle_Absolute))
         XString_assign(resolved, path);
     XString_delete_base(path);
     return resolved;
@@ -62,25 +71,25 @@ static bool xexec_write_redirect(const XConsoleShellSession* session,
     if (!session || !path || !bytes) return false;
     filePath = xexec_resolve_path(session, path);
     if (!filePath) return false;
-    fd = XFileSystem_open(filePath, XFileSystem_WriteOnly | XFileSystem_Create |
-                          (append ? XFileSystem_Append : XFileSystem_Truncate), &error);
+    fd = xexec_open_file(filePath, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                          (append ? XDeviceFile_Append : XDeviceFile_Truncate), &error);
     XString_delete_base(filePath);
     if (fd == XFD_INVALID) return false;
     size = XByteArray_size_base(bytes);
     data = (const uint8_t*)XByteArray_data(bytes);
     while (offset < size) {
-        int64_t written = XFileSystem_write(fd, data + offset, (int64_t)(size - offset));
+        int64_t written = XDeviceFile_write(fd, data + offset, (int64_t)(size - offset));
         if (written <= 0 || (size_t)written > size - offset) {
-            XFileSystem_close(fd);
+            XDeviceFile_close(fd);
             return false;
         }
         offset += (size_t)written;
     }
-    if (!XFileSystem_flush(fd)) {
-        XFileSystem_close(fd);
+    if (!XDeviceFile_flush(fd)) {
+        XDeviceFile_close(fd);
         return false;
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     return true;
 }
 

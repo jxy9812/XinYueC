@@ -1,282 +1,218 @@
-﻿#ifdef USE_STDPERIPH_DRIVER
-#include"XSerialPortSTM32.h"
-#include"XInterrupt.h"
-#include"XQueueBase.h"
-static void USARTCallback(XSerialPort* serial);
-static void VXSerialPort_NVIC_Init(XSerialPort* serial);//中断初始化
-static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode);
-static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize);//写入
-static size_t VXIODevice_writeFull(XSerialPort* serial);//将剩余的数据刷入设备
-static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize);//读取
-static void VXIODevice_close(XSerialPort* serial);
-static void VXIODevice_poll(XSerialPort* serial);
-static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count);
-static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count);
-static size_t VXIODevice_getBytesAvailable(XSerialPort* serial);
-XVtable* XSerialPort_class_init()
+#include "XDeviceSerialPort.h"
+#include "XSerialPortSTM32.h"
+#include "XIODevice.h"
+#include "XMemory.h"
+#include "XVariant.h"
+#include "XVarList.h"
+#include "XString.h"
+#include "XRingBuffer.h"
+#include <string.h>
+
+#if defined(USE_STDPERIPH_DRIVER) && defined(STM32F40_41xxx)
+
+#include "stm32f4xx.h"
+
+typedef struct XDeviceSerialPortStm32Context
 {
-    XVTABLE_INIT_DEFAULT_SIZE(XSERIALPORT_VTABLE_SIZE)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XSerialPort");
-        //继承类
-        XVTABLE_INHERIT_XCLASS(XIODevice);
-    //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
-    //XVTABLE_OVERLOAD_DEFAULT( EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
-    //XVTABLE_OVERLOAD_DEFAULT( EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
-    XCLASS_SHOW_SIZE_DEFAULT(XSerialPort);
-    return XVTABLE_DEFAULT;
+    XDeviceSerialPortContext m_base;
+    USART_TypeDef* m_usart;
+    XDeviceSerialPortStm32Config m_config;
+} XDeviceSerialPortStm32Context;
+
+static XDeviceSerialPortStm32Context* stm32Context(XFd fd)
+{
+    return (XDeviceSerialPortStm32Context*)XDevice_handle(fd);
 }
 
-void XSerialPort_init(XSerialPort* serial)
+static bool stm32ApplyConfig(XDeviceSerialPortStm32Context* context)
 {
-    if (serial == NULL)
-        return;
-    memset(((XSerialPortBase*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XSerialPortBase));
-    XSerialPortBase_init(serial);
-    XClassGetVtable(serial) = XSerialPort_class_init();
-}
-#endif
-
-#ifdef USE_STDPERIPH_DRIVER
-XSerialPort* XSerialPort_create_ex(XMemoryType memory, XUsartGPIO* TX, XUsartGPIO* RX)
-{
-    XSerialPort* serial = XMalloc_System(sizeof(XSerialPort));
-    if (serial == NULL)
-        return serial;
-    XSerialPort_init(serial);
-    serial->TX = *TX;
-    serial->RX = *RX;
-    return serial;
-}
-#endif
-
-
-//启用标准库
-#ifdef USE_STDPERIPH_DRIVER
-typedef struct Usart
-{
-    uint8_t   GPIO_AF_USARTX;
-    uint32_t  USARTX;
-    uint32_t  USARTX_Clock;
-}Usart;
-
-//启用了F4系列
-#ifdef STM32F40_41xxx
-#include"stm32f4xx.h"
-#define USART_COUNT 6 //
-static XSerialPort* openUsart[USART_COUNT] = { 0 };//打开的串口
-XSerialPort* XSerialPort_global(uint8_t port)
-{
-    if (port < 1 || port>6)
-        return NULL;
-    return openUsart[port - 1];
-}
-void VXSerialPort_NVIC_Init(XSerialPort* serial)
-{
-    if (serial == NULL || serial->USARTX == 0)
-        return;
-    USART_ClearFlag(serial->USARTX, USART_FLAG_TC);
-    if (((XIODevice*)serial)->m_readBuffer != NULL)
-    {
-        USART_ITConfig(serial->USARTX, USART_IT_RXNE, ENABLE);//开启相关中断
-        NVIC_InitTypeDef NVIC_InitStructure;
-        //Usart1 NVIC 配置
-        if (serial->m_class.m_portNum == 1)
-            NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;//串口1中断通道
-        else if (serial->m_class.m_portNum == 2)
-            NVIC_InitStructure.NVIC_IRQChannel = USART2_IRQn;//串口2中断通道
-        else if (serial->m_class.m_portNum == 3)
-            NVIC_InitStructure.NVIC_IRQChannel = USART3_IRQn;//串口3中断通道
-        else if (serial->m_class.m_portNum == 6)
-            NVIC_InitStructure.NVIC_IRQChannel = USART6_IRQn;//串口6中断通道
-        NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;//抢占优先级
-        NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;		//子优先级
-        NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			//IRQ通道使能
-        NVIC_Init(&NVIC_InitStructure);	//根据指定的参数初始化VIC寄存器、
-        XInterrupt_addUSARTxCallback(serial->m_class.m_portNum, USARTCallback, serial);
-    }
-    else
-    {
-        USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
-        XInterrupt_removeUSARTxCallback(serial->m_class.m_portNum, USARTCallback, serial);
-    }
-}
-bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
-{
-    if (XSerialPort_isOpen(serial))
-        return true;//已经打开了
-    uint8_t portIndex = ((XSerialPortBase*)serial)->m_portNum - 1;
-    if (openUsart[portIndex] != NULL || (!(mode & XIODevice_ReadOnly | mode & XIODevice_WriteOnly)))
-        return false;//已经被打开了打开失败
-
-    Usart Usart1 = { GPIO_AF_USART1,USART1,RCC_APB2Periph_USART1 };
-    Usart Usart2 = { GPIO_AF_USART2,USART2,RCC_APB1Periph_USART2 };
-    Usart Usart3 = { GPIO_AF_USART3,USART3,RCC_APB1Periph_USART3 };
-    Usart Usart6 = { GPIO_AF_USART6,USART6,RCC_APB2Periph_USART6 };
-    Usart usart[] = { Usart1,Usart2,Usart3,{0},{0},Usart6 };
-    //GPIO端口设置
-    GPIO_InitTypeDef GPIO_InitStructure;
-    USART_InitTypeDef USART_InitStructure;
-    //NVIC_InitTypeDef NVIC_InitStructure;
-
-    RCC_AHB1PeriphClockCmd(serial->TX.GPIO_Clock, ENABLE); //使能GPIOA时钟
-    RCC_AHB1PeriphClockCmd(serial->RX.GPIO_Clock, ENABLE); //使能GPIOA时钟
-    if (portIndex == 0 || portIndex == 5)
-    {//RCC_APB2Periph_USART1 USART1和USART6 在总线APB2
-        RCC_APB2PeriphClockCmd(usart[portIndex].USARTX_Clock, ENABLE);//使能USART时钟
-    }
-    else
-    {//RCC_APB1Periph_USART2 USART2和USART3 在总线APB2
-        RCC_APB1PeriphClockCmd(usart[portIndex].USARTX_Clock, ENABLE);//使能USART时钟
-    }
-
-    //串口1对应引脚复用映射
-    GPIO_PinAFConfig(serial->TX.GPIOX, serial->TX.GPIO_PinSourceX, usart[portIndex].GPIO_AF_USARTX); //GPIOA9复用为USART1
-    GPIO_PinAFConfig(serial->RX.GPIOX, serial->RX.GPIO_PinSourceX, usart[portIndex].GPIO_AF_USARTX); //GPIOA10复用为USART1
-
-    //USART1端口配置
-    GPIO_InitStructure.GPIO_Pin = serial->TX.GPIO_Pin_X; //GPIO
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;//复用功能
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;	//速度100MHz
-    GPIO_InitStructure.GPIO_OType = GPIO_OType_PP; //推挽复用输出
-    GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP; //上拉
-    GPIO_Init(serial->TX.GPIOX, &GPIO_InitStructure); //初始化
-
-    GPIO_InitStructure.GPIO_Pin = serial->RX.GPIO_Pin_X; //GPIO
-    GPIO_Init(serial->RX.GPIOX, &GPIO_InitStructure); //初始化
-
-    //USART1 初始化设置
-    USART_InitStructure.USART_BaudRate = ((XSerialPortBase*)serial)->m_baudRate;//波特率设置
-    //数据位设置
-    if (((XSerialPortBase*)serial)->m_dataBits == XSerialPort_Data9)
-        USART_InitStructure.USART_WordLength = USART_WordLength_9b;//字长为9位数据格式
-    else
-        USART_InitStructure.USART_WordLength = USART_WordLength_8b;//字长为8位数据格式
-    //停止位设置
-    if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_OneStop)
-        USART_InitStructure.USART_StopBits = USART_StopBits_1;//一个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort__ZeroPointFive)
-        USART_InitStructure.USART_StopBits = USART_StopBits_0_5;//0.5个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_OneAndHalfStop)
-        USART_InitStructure.USART_StopBits = USART_StopBits_1_5;//1.5个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_TwoStop)
-        USART_InitStructure.USART_StopBits = USART_StopBits_2;//2个停止位
-    //奇偶校验位
-    if (((XSerialPortBase*)serial)->m_parity == XSerialPort_NoParity)
-    {
-        USART_InitStructure.USART_Parity = USART_Parity_No;//无奇偶校验位
-        USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, DISABLE);//关闭奇偶校验错中断
-    }
-    else if (((XSerialPortBase*)serial)->m_parity == XSerialPort_OddParity)
-    {
-        USART_InitStructure.USART_Parity = USART_Parity_Odd;//奇校验位
-        USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, ENABLE);//使能奇偶校验错中断
-    }
-    else if (((XSerialPortBase*)serial)->m_parity == XSerialPort_EvenParity)
-    {
-        USART_InitStructure.USART_Parity = USART_Parity_Even;//偶校验位
-        USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, ENABLE);//使能奇偶校验错中断
-    }
-    //硬件数据流控制
-    if (((XSerialPortBase*)serial)->m_flowControl == XSerialPort_NoFlowControl)
-        USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;//无硬件数据流控制
-    else if (((XSerialPortBase*)serial)->m_flowControl == XSerialPort_HardwareControl)
-        USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_RTS_CTS;//硬件流控制（RTS/CTS）
-    //收发模式
-    USART_InitStructure.USART_Mode = ((mode & XIODevice_ReadOnly) ? USART_Mode_Rx : 0) | ((mode & XIODevice_WriteOnly) ? USART_Mode_Tx : 0);	//收发模式
-    USART_Init(usart[portIndex].USARTX, &USART_InitStructure); //初始化串口
-
-    USART_Cmd(usart[portIndex].USARTX, ENABLE);  //使能串口
-
-    serial->USARTX = usart[portIndex].USARTX;
-    ((XIODevice*)serial)->m_openMode = mode;
-    openUsart[portIndex] = serial;
-    VXSerialPort_NVIC_Init(serial);
+    USART_InitTypeDef config;
+    if (!context || !context->m_usart) return false;
+    if (context->m_base.m_dataBits < XSerialPort_Data8 ||
+        context->m_base.m_parity == XSerialPort_SpaceParity ||
+        context->m_base.m_parity == XSerialPort_MarkParity ||
+        context->m_base.m_flowControl == XSerialPort_SoftwareControl ||
+        context->m_base.m_flowControl == XSerialPort_BothControl) return false;
+    USART_StructInit(&config);
+    config.USART_BaudRate = context->m_base.m_baudRate;
+    config.USART_WordLength = context->m_base.m_dataBits == XSerialPort_Data9 ?
+                              USART_WordLength_9b : USART_WordLength_8b;
+    config.USART_StopBits = context->m_base.m_stopBits == XSerialPort__ZeroPointFive ?
+                            USART_StopBits_0_5 :
+                            context->m_base.m_stopBits == XSerialPort_OneAndHalfStop ?
+                            USART_StopBits_1_5 :
+                            context->m_base.m_stopBits == XSerialPort_TwoStop ?
+                            USART_StopBits_2 : USART_StopBits_1;
+    config.USART_Parity = context->m_base.m_parity == XSerialPort_EvenParity ?
+                          USART_Parity_Even :
+                          context->m_base.m_parity == XSerialPort_OddParity ?
+                          USART_Parity_Odd : USART_Parity_No;
+    config.USART_HardwareFlowControl = context->m_base.m_flowControl == XSerialPort_HardwareControl ?
+                                       USART_HardwareFlowControl_RTS_CTS :
+                                       USART_HardwareFlowControl_None;
+    config.USART_Mode = ((context->m_base.m_openMode & XIODevice_ReadOnly) ? USART_Mode_Rx : 0) |
+                        ((context->m_base.m_openMode & XIODevice_WriteOnly) ? USART_Mode_Tx : 0);
+    USART_Init(context->m_usart, &config);
+    USART_Cmd(context->m_usart, ENABLE);
     return true;
 }
-size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize)
-{
-    XIODevice* io = (XIODevice*)serial;
-    if (io->m_openMode & XIODevice_WriteOnly == 0)
-        return 0;
-    if (io->m_writeBuffer == NULL)
-    {//没有写入缓冲区
-        while (USART_GetFlagStatus(serial->USARTX, USART_FLAG_TC) == RESET);
-        for (size_t i = 0; i < maxSize; i++)
-        {
-            USART_SendData(serial->USARTX, data[i]);
-            while (USART_GetFlagStatus(serial->USARTX, USART_FLAG_TC) == RESET);
-        }
-        return maxSize;
-    }
-    //调用父类方法初始化缓冲区
-    return XVtableGetFunc(XIODevice_class_init(), EXIODevice_Write, size_t(*)(XSerialPort*, const char*, size_t))(serial, data, maxSize);
-}
-size_t VXIODevice_writeFull(XSerialPort* serial)
-{
-    XIODevice* io = serial;
-    if (io->m_writeBuffer == NULL)
-        return 0;
-    char c;
-    size_t count = 0;
-    while (USART_GetFlagStatus(serial->USARTX, USART_FLAG_TC) == RESET);
-    while (XQueueBase_receive_base(io->m_writeBuffer, &c))
-    {
-        USART_SendData(serial->USARTX, c);
-        while (USART_GetFlagStatus(serial->USARTX, USART_FLAG_TC) == RESET);
-    }
 
+static bool stm32ConfigurePins(XDeviceSerialPortStm32Context* context)
+{
+    GPIO_InitTypeDef gpio;
+    uint8_t af;
+    uint32_t clock;
+    bool apb2;
+    if (!context) return false;
+    switch (context->m_config.m_portNumber) {
+    case 1: af = GPIO_AF_USART1; clock = RCC_APB2Periph_USART1; apb2 = true; break;
+    case 2: af = GPIO_AF_USART2; clock = RCC_APB1Periph_USART2; apb2 = false; break;
+    case 3: af = GPIO_AF_USART3; clock = RCC_APB1Periph_USART3; apb2 = false; break;
+    case 6: af = GPIO_AF_USART6; clock = RCC_APB2Periph_USART6; apb2 = true; break;
+    default: return false;
+    }
+    RCC_AHB1PeriphClockCmd(context->m_config.m_tx.m_gpioClock, ENABLE);
+    RCC_AHB1PeriphClockCmd(context->m_config.m_rx.m_gpioClock, ENABLE);
+    if (apb2) RCC_APB2PeriphClockCmd(clock, ENABLE);
+    else RCC_APB1PeriphClockCmd(clock, ENABLE);
+    GPIO_PinAFConfig((GPIO_TypeDef*)(uintptr_t)context->m_config.m_tx.m_gpio,
+                     context->m_config.m_tx.m_pinSource, af);
+    GPIO_PinAFConfig((GPIO_TypeDef*)(uintptr_t)context->m_config.m_rx.m_gpio,
+                     context->m_config.m_rx.m_pinSource, af);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin = context->m_config.m_tx.m_pin;
+    gpio.GPIO_Mode = GPIO_Mode_AF;
+    gpio.GPIO_Speed = GPIO_Speed_100MHz;
+    gpio.GPIO_OType = GPIO_OType_PP;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init((GPIO_TypeDef*)(uintptr_t)context->m_config.m_tx.m_gpio, &gpio);
+    gpio.GPIO_Pin = context->m_config.m_rx.m_pin;
+    GPIO_Init((GPIO_TypeDef*)(uintptr_t)context->m_config.m_rx.m_gpio, &gpio);
+    return true;
+}
+
+XDeviceSerialPortContext* XDeviceSerialPort_platformCreateContext(void)
+{
+    XDeviceSerialPortStm32Context* context =
+        (XDeviceSerialPortStm32Context*)XCalloc_System(1, sizeof(*context));
+    return context ? &context->m_base : NULL;
+}
+
+void XDeviceSerialPort_platformDeleteContext(XDeviceSerialPortContext* context)
+{
+    XFree_System(context);
+}
+
+bool XDeviceSerialPort_platformOpen(XFd fd, const XString* portName)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    const XDeviceSerialPortStm32Config* config;
+    (void)portName;
+    if (!context || !context->m_base.m_platformData) return false;
+    config = (const XDeviceSerialPortStm32Config*)context->m_base.m_platformData;
+    context->m_config = *config;
+    context->m_usart = (USART_TypeDef*)(uintptr_t)config->m_usart;
+    return stm32ConfigurePins(context) && stm32ApplyConfig(context);
+}
+
+void XDeviceSerialPort_platformClose(XFd fd)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    if (context && context->m_usart) {
+        USART_Cmd(context->m_usart, DISABLE);
+        context->m_usart = NULL;
+    }
+}
+
+int64_t XDeviceSerialPort_platformRead(XFd fd, void* buffer, int64_t size)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    uint8_t* output = (uint8_t*)buffer;
+    int64_t count = 0;
+    if (!context || !context->m_usart || !output || size <= 0) return -1;
+    while (count < size && USART_GetFlagStatus(context->m_usart, USART_FLAG_RXNE) != RESET)
+        output[count++] = (uint8_t)USART_ReceiveData(context->m_usart);
     return count;
 }
-size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
-{
-    XIODevice* io = (XIODevice*)serial;
-    if (io->m_openMode & XIODevice_ReadOnly == 0)
-        return 0;
-    if (io->m_readBuffer == NULL)
-    {//没有输入缓冲区
-        if (USART_GetFlagStatus(serial->USARTX, USART_FLAG_RXNE) == SET)
-        {
-            *data = (char)USART_ReceiveData(serial->USARTX);
-            return 1;
-        }
-        return 0;
-    }
-    //调用父类方法初始化缓冲区
-    return XVtableGetFunc(XIODevice_class_init(), EXIODevice_Read, size_t(*)(XSerialPort*, char*, size_t))(serial, data, maxSize);
-}
-void VXIODevice_close(XSerialPort* serial)
-{
-    if (!XSerialPort_isOpen(serial))
-        return true;//已经关闭了
-    XIODevice_aboutToClose_signal(serial);
-    XIODevice_writeFull_base(serial);
-    USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
-    USART_Cmd(serial->USARTX, DISABLE);  //关闭串口
-    serial->USARTX = NULL;
-    openUsart[serial->m_class.m_portNum - 1] = NULL;
-    ((XIODevice*)serial)->m_openMode = XIODevice_NotOpen;
-}
-void USARTCallback(XSerialPort* serial)
-{//中断中调用
-    if (USART_GetITStatus(serial->USARTX, USART_IT_RXNE) != RESET)
-    {
-        uint8_t r = USART_ReceiveData(serial->USARTX);
-        XQueueBase_push_base(((XIODevice*)openUsart[serial->m_class.m_portNum - 1])->m_readBuffer, &r); \
-    }
-}
-void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)
-{
-    //调用父类方法初始化缓冲区
-    XVtableGetFunc(XIODevice_class_init(), EXIODevice_SetReadBuffer, void(*)(XSerialPort*, size_t))(serial, count);
-    VXSerialPort_NVIC_Init(serial);
-}
-#endif
-#endif
 
+int64_t XDeviceSerialPort_platformWrite(XFd fd, const void* data, int64_t size)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    const uint8_t* input = (const uint8_t*)data;
+    int64_t count = 0;
+    if (!context || !context->m_usart || !input || size <= 0) return -1;
+    while (count < size && USART_GetFlagStatus(context->m_usart, USART_FLAG_TXE) != RESET)
+        USART_SendData(context->m_usart, input[count++]);
+    return count;
+}
+
+bool XDeviceSerialPort_platformFlush(XFd fd)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    return context && context->m_usart &&
+           USART_GetFlagStatus(context->m_usart, USART_FLAG_TC) != RESET;
+}
+
+bool XDeviceSerialPort_platformSetProperty(XFd fd, uint32_t property, const XVariant* value)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    (void)value;
+    if (!context || !context->m_usart || !value) return false;
+    switch (property) {
+    case XDeviceSerialPortProperty_BaudRate:
+    case XDeviceSerialPortProperty_DataBits:
+    case XDeviceSerialPortProperty_Parity:
+    case XDeviceSerialPortProperty_StopBits:
+    case XDeviceSerialPortProperty_FlowControl:
+        return stm32ApplyConfig(context);
+    case XDeviceSerialPortProperty_ReadBufferSize:
+        return XVariant_toInt64(value) > 0;
+    default:
+        return false;
+    }
+}
+
+bool XDeviceSerialPort_platformGetProperty(XFd fd, uint32_t property, XVariant* value)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    if (!context || !context->m_usart || !value) return false;
+    switch (property) {
+    case XDeviceProperty_NativeHandle:
+        XVariant_setValue_ptr(value, context->m_usart); return true;
+    case XDeviceSerialPortProperty_BytesAvailable:
+        XVariant_setValue_int64(value, USART_GetFlagStatus(context->m_usart, USART_FLAG_RXNE) != RESET ? 1 : 0); return true;
+    case XDeviceSerialPortProperty_PinoutSignals:
+        XVariant_setValue_int(value, XSerialPort_NoSignal); return true;
+    default:
+        return false;
+    }
+}
+
+bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command,
+                                       const XVarList* input, XVarList* output)
+{
+    XDeviceSerialPortStm32Context* context = stm32Context(fd);
+    (void)input; (void)output;
+    if (!context || !context->m_usart) return false;
+    if (command == XDeviceSerialPortCommand_Clear) {
+        while (USART_GetFlagStatus(context->m_usart, USART_FLAG_RXNE) != RESET)
+            (void)USART_ReceiveData(context->m_usart);
+        return true;
+    }
+    return command == XDeviceSerialPortCommand_HandleEvent || command == XDeviceCommand_Cancel;
+}
+
+#elif defined(XSERIALPORT_USE_STM32)
+
+XDeviceSerialPortContext* XDeviceSerialPort_platformCreateContext(void) { return NULL; }
+void XDeviceSerialPort_platformDeleteContext(XDeviceSerialPortContext* context) { (void)context; }
+bool XDeviceSerialPort_platformOpen(XFd fd, const XString* path) { (void)fd; (void)path; return false; }
+void XDeviceSerialPort_platformClose(XFd fd) { (void)fd; }
+int64_t XDeviceSerialPort_platformRead(XFd fd, void* buffer, int64_t size) { (void)fd; (void)buffer; (void)size; return -1; }
+int64_t XDeviceSerialPort_platformWrite(XFd fd, const void* data, int64_t size) { (void)fd; (void)data; (void)size; return -1; }
+bool XDeviceSerialPort_platformFlush(XFd fd) { (void)fd; return false; }
+bool XDeviceSerialPort_platformSetProperty(XFd fd, uint32_t property, const XVariant* value) { (void)fd; (void)property; (void)value; return false; }
+bool XDeviceSerialPort_platformGetProperty(XFd fd, uint32_t property, XVariant* value) { (void)fd; (void)property; (void)value; return false; }
+bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command, const XVarList* input, XVarList* output) { (void)fd; (void)command; (void)input; (void)output; return false; }
+
+#endif

@@ -66,15 +66,15 @@ typedef enum XFileTime {
 
 /* XFileSystemOpenMode 已统一到 XIODeviceBaseMode（位值完全对齐）
  * 以下宏保留向后兼容性，直接映射到 XIODevice_* */
-#define XFileSystem_ReadOnly   XIODevice_ReadOnly
-#define XFileSystem_WriteOnly  XIODevice_WriteOnly
-#define XFileSystem_ReadWrite  XIODevice_ReadWrite
-#define XFileSystem_Append     XIODevice_Append
-#define XFileSystem_Truncate   XIODevice_Truncate
-#define XFileSystem_Create     XIODevice_Create
-#define XFileSystem_NewOnly    XIODevice_NewOnly
-#define XFileSystem_Existing   XIODevice_Existing
-#define XFileSystem_Text       XIODevice_Text
+#define XDeviceFile_ReadOnly   XIODevice_ReadOnly
+#define XDeviceFile_WriteOnly  XIODevice_WriteOnly
+#define XDeviceFile_ReadWrite  XIODevice_ReadWrite
+#define XDeviceFile_Append     XIODevice_Append
+#define XDeviceFile_Truncate   XIODevice_Truncate
+#define XDeviceFile_Create     XIODevice_Create
+#define XDeviceFile_NewOnly    XIODevice_NewOnly
+#define XDeviceFile_Existing   XIODevice_Existing
+#define XDeviceFile_Text       XIODevice_Text
 /* ============================================================================
  * 文件属性结构体（纯数据结构，供平台层使用）
  *

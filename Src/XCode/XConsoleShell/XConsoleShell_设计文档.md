@@ -7,7 +7,7 @@
 - 语言：C99，兼容 C++11 调用
 - 目标：裸机、自研 RTOS、FreeRTOS、Zephyr 适配环境、嵌入式 Linux
 - 主要依赖：CXinYueConfig.h、XMemory.h、XObject.h、XPrintf.h
-- 可选库依赖：XFileSystem.h、XIODevice.h、XSerialPort.h、XTcpSocket.h、XTcpServer.h、XEventLoop.h
+- 可选库依赖：XDeviceFile.h、XIODevice.h、XSerialPort.h、XTcpSocket.h、XTcpServer.h、XEventLoop.h
 
 本文档引用仓库根目录的《代码风格，类的创建，虚函数的重载注意，api命名风格和注意事项.md》。该规范是本模块公共头文件、生命周期、内存分配、错误处理、平台适配、第三方适配和测试实现的约束；若本文档与该规范冲突，以仓库规范和实际公共 API 约定为准。
 
@@ -63,7 +63,7 @@ Zephyr Shell 和 FreeRTOS-Plus-CLI 只作为行为参考，不作为本项目的
 | 历史/补全 | 独立开关，默认关闭 |
 | 传输层 | 通过 XinYueC 的 XIODevice、XSerialPort、XTcpSocket、XTcpServer 接入；回调只作为扩展 |
 | 输出 | 支持同步分块输出；异步输出单独开关 |
-| 文件命令 | 基于 XFileSystem，不调用平台文件 API |
+| 文件命令 | 基于 XDeviceFile，不调用平台文件 API |
 | 进程执行 | 当前不提供任意外部进程执行；仅执行已注册的 XinYueC 命令回调 |
 | 命令注册 | 默认静态表；动态注册为可选能力 |
 
@@ -309,7 +309,7 @@ XCONSOLE_SHELL_STATS_ON
 | 文件写入、删除、格式化 | 0 | 危险操作必须由产品显式开启 |
 | LINE_EDITOR/HISTORY/COMPLETION | 0 | 默认节省 RAM/Flash |
 | EXTERNAL_PROCESS/PIPE/REDIRECT/PROCESS_ASYNC | 0 | 依赖 XProcess 公共 API，默认关闭并需要产品白名单 |
-| SCRIPT | 0 | 依赖 FILESYSTEM 和 XFileSystem，默认关闭；不依赖 XProcess |
+| SCRIPT | 0 | 依赖 FILESYSTEM 和 XDeviceFile，默认关闭；不依赖 XProcess |
 | AUTH/PERMISSION/AUDIT | 0 | 产品必须提供凭据和策略 |
 | XIODevice/XSerialPort/XTcpSocket/XTcpServer 后端 | 0 | 由产品显式选择库级对象 |
 
@@ -402,7 +402,7 @@ bool XConsoleShell_notifyInput(XConsoleShell* self);
 
 事件调度器模式要求 Shell 已经属于当前线程，并且产品主循环最终进入
 `XCoreApplication_exec()` 或等价的 `XEventLoop_exec()`。POSIX/Windows 标准输入可使用
-`XFileSystem_openStandardInput()` 和 `XFileSystem_readStandardInput()`，默认入口已经
+`XDeviceFile_openStandardInput()` 和 `XDeviceFile_readStandardInput()`，默认入口已经
 采用该非阻塞适配；普通文件描述符传输可以由产品用 `XSocketNotifier` 监听可读事件，
 再调用 `notifyInput()`。UART、RTT 和无文件描述符设备由驱动任务在可安全调用库 API 的
 上下文中调用同一函数。中断服务程序不得直接执行 `notifyInput()`，应先投递到驱动任务
@@ -486,7 +486,7 @@ MULTI_SESSION 关闭
 
 允许使用的调用边界只有 XinYueC 公共 API：
 
-- 文件：XFile、XDir、XFileInfo、XFileSystem_*。
+- 文件：XFile、XDir、XFileInfo、XDeviceFile_*。
 - 输入输出：XIODevice、XIODevice_*、XSerialPort_*。
 - 网络：XTcpSocket_*、XTcpServer_*、XAbstractSocket_*。
 - 事件和定时：XEventLoop、XEvent、XTimer、XSignal。
@@ -519,7 +519,7 @@ XConsoleShellCommand       内建/用户命令
                  v                           v
           XConsoleShellFileSystem     XConsoleShellExecutor
                  |                           |
-          XFileSystem API             XinYueC 库级对象 API
+          XDeviceFile API             XinYueC 库级对象 API
 ~~~
 
 核心层和对象适配层不得直接包含 UART、POSIX、FreeRTOS、Zephyr 或 Win32 头文件。适配层只包含 XinYueC 公共头文件，遵循仓库的通用对象、公共抽象、既有库后端三层结构；底层平台差异只能留在已有 XinYueC 后端内部。
@@ -743,7 +743,7 @@ typedef struct XConsoleShellSession {
 } XConsoleShellSession;
 ~~~
 
-cd 仅修改会话 currentPath。文件命令把逻辑路径解析为 XString 后调用 XFileSystem_resolvePath，不调用进程全局 XFileSystem_setCurrentPath，避免多线程和多会话互相影响。
+cd 仅修改会话 currentPath。文件命令把逻辑路径解析为 XString 后调用 XDeviceFile_resolvePath，不调用进程全局 XDeviceFile_setCurrentPath，避免多线程和多会话互相影响。
 
 ## 9. 解析和输出
 
@@ -914,17 +914,17 @@ Linux POSIX 后端已实现上述全部命令及列出的常用参数。每个�
 因此 `ln` 只接受显式的 `-s/--symbolic` 符号链接形式；`chown/chgrp`、`mkfifo/mknod`、`mount/umount`
 和 `umask` 仍不注册，不能用平台 API 绕过这一边界。
 
-- ls 使用 XFileSystem_opendir/readdir/closedir。
+- ls 使用 XDeviceFile_opendir/readdir/closedir。
 - cat 固定块读取，持续检查取消，绝不把完整文件读入内存。
 - hexdump 每次读取 16 字节，支持 `-s/--skip/--offset` 和 `-n/--length`，输出偏移、十六进制字节和 ASCII 侧栏。
-- stat 使用 XFileSystem_stat。
+- stat 使用 XDeviceFile_stat。
 - 文件和目录句柄无论成功、失败、取消或短写都必须关闭。
 - format 默认关闭，并要求危险命令确认。
 - POSIX format 只接受块设备路径；目录和普通文件直接失败，不会调用格式化工具。
 
 `vi`/`vim` 是独立的文件编辑命令，默认开启（`XCONSOLE_SHELL_EDITOR_ON`）。打开
 文件后进入编辑状态，后续输入由 Shell 直接分流到编辑器状态机，不进入历史、
-tokenizer 和普通权限判断；编辑器只通过 `XFileSystem` 公共 API 读取和写回文件。
+tokenizer 和普通权限判断；编辑器只通过 `XDeviceFile` 公共 API 读取和写回文件。
 
 - `XCONSOLE_SHELL_EDITOR_TUI_ON` 为 1 时使用 XTui 全屏 `XTuiVim` 控件，行为对齐
   Linux vim 的常用编辑操作；置 0 时回退到精简行式编辑器（`i`/`a` 插入、`d` 删除、
@@ -983,7 +983,7 @@ net ping <address>
 该开关默认仍为 0。产品开启后必须在静态命令表或产品层增加程序白名单、参数长度限制、输出上限、超时、取消、认证和审计策略；Shell 不接受字符串 shell 语法，不自动启用管道。
 打开 `XCONSOLE_SHELL_REDIRECT_ON` 后，exec 支持显式参数
 `--stdin <path>`、`--stdout <path>`、`--stderr <path>` 和 `--append`（同时接受
-单独的 `<`、`>`、`2>` 标记），输出通过 XFileSystem 公共 API 写入目标文件。XProcess
+单独的 `<`、`>`、`2>` 标记），输出通过 XDeviceFile 公共 API 写入目标文件。XProcess
 自身的管道、环境、工作目录、重定向和 detached 行为由 XProcess 公共模块负责，并有独立
 回归与泄漏测试。
 打开 `XCONSOLE_SHELL_PIPE_ON` 后，exec 支持
@@ -1141,7 +1141,7 @@ Shell；若产品在独立任务中轮询，仍需把所有 Shell API 调用纳�
 
 基线配置：256 字节行缓冲、16 参数、静态 64 命令、单会话、关闭编辑/历史/进程。
 
-- Shell 常驻 RAM 目标不超过 4 KiB，不含 XFileSystem 后端和产品命令上下文。
+- Shell 常驻 RAM 目标不超过 4 KiB，不含 XDeviceFile 后端和产品命令上下文。
 - 核心 Flash 增量目标不超过 16 KiB；文件命令单独测量。
 - 每条核心命令不产生长期堆分配。
 
@@ -1289,7 +1289,7 @@ definite、indirect、possible 的新增泄漏均须归零。第三方库已有�
 
 ### 阶段二：文件系统
 
-接入 XFileSystem，完成会话逻辑路径；先实现只读命令，再逐项开启写命令；补齐大文件、大目录、取消、短写、错误和泄漏测试。
+接入 XDeviceFile，完成会话逻辑路径；先实现只读命令，再逐项开启写命令；补齐大文件、大目录、取消、短写、错误和泄漏测试。
 
 ### 阶段三：交互与后端
 
@@ -1317,7 +1317,7 @@ source 脚本和 PROCESS_ASYNC 适配；异步 exec 不组合管道、重定向�
 2. 总开关关闭时不引入 Shell 代码和平台依赖。
 3. 每个功能开关可独立关闭并通过编译。
 4. 裸机/RTOS 不依赖 system；有 OS 的进程执行有白名单和超时。
-5. 文件命令全部通过 XFileSystem，不绕过平台抽象。
+5. 文件命令全部通过 XDeviceFile，不绕过平台抽象。
 6. 正常、错误、取消、短写和容量路径都有测试。
 7. 全仓库测试通过。
 8. ASan/UBSan/LSan 和 Valgrind 无新增错误或泄漏。
@@ -1371,7 +1371,7 @@ I2C 支持 `list`、`open`、`info`、`read`、可选 `write` 和 `writeread`，
 登录总开关会同步开启 `XCONSOLE_SHELL_AUTH_ON` 和 `XCONSOLE_SHELL_PERMISSION_ON`，产品可以在配置头文件中
 显式关闭整个登录模块。账户文件默认是当前会话目录下的 `xconsole_users.json`，也可
 通过 `XConsoleShellLogin_setDatabasePath()` 为每个 Shell 设置路径。文件读写只经过
-`XFileSystem`，解析和生成只经过 `XJsonDocument`，不读取宿主机 `/etc/passwd`、
+`XDeviceFile`，解析和生成只经过 `XJsonDocument`，不读取宿主机 `/etc/passwd`、
 `/etc/shadow`、Windows 注册表或任何平台账户数据库。
 
 JSON 根对象包含 `version` 和 `users` 数组；每个用户记录包含 `name`、`uid`、`gid`、
@@ -1410,5 +1410,5 @@ UID、GID、权限掩码和锁定状态，二者都不显示盐或摘要。
 `XinYueC> ` 变为 `<username>> `，注销后恢复。`uid=0` 自动补齐危险和管理员位；其他
 用户的危险命令需要 `XConsoleShellPermission_Dangerous`，管理员命令还需要
 `XConsoleShellPermission_Administrator`。这些是 Shell 应用层权限，不会伪装或切换
-宿主机进程的真实 Linux UID/GID，文件系统实际访问仍由 `XFileSystem` 后端和宿主系统
+宿主机进程的真实 Linux UID/GID，文件系统实际访问仍由 `XDeviceFile` 后端和宿主系统
 权限共同决定。

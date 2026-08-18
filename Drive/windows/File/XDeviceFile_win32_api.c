@@ -5,7 +5,7 @@
 /* 仅在启用平台API模式时编译此文件 */
 #if defined(XFILE_USE_PLATFORM_API)
 
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -34,6 +34,14 @@
 #include <shobjidl.h>
 #include <objbase.h>
 
+/* 这些函数只服务于 XDeviceFile/XDevice 对旧 XFd 的兼容路径。 */
+void XDeviceFile_legacyClose(XFd fd);
+int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
+bool XDeviceFile_legacyFlush(XFd fd);
+bool XDeviceFile_legacyResize(XFd fd, int64_t size);
+
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -41,12 +49,12 @@
 /* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
    段数据由 mapHandle（CreateFileMapping/OpenFileMapping）承载，信令
    通道由 signalPipe（\\.\pipe\<name>.sig 命名管道）承载，
-   XFileSystem_map/unmap 使用 mapHandle。
+   XDeviceFile_map/unmap 使用 mapHandle。
    信令通道的异步接收完全接入库内部事件通知系统（XNetIoRingWin32
    全局 IOCP 完成端口，与网络套接字/串口的异步读一致）：
    openSharedMemory 建立信令管道后即关联 IOCP 并提交常驻异步
    OVERLAPPED ReadFile，完成事件由 waitForEvents（GetQueuedCompletionStatus）
-   处理并写入 m_readResult；XFileSystem_read 消费异步接收缓冲，无数据时
+   处理并写入 m_readResult；XDeviceFile_legacyRead 消费异步接收缓冲，无数据时
    通过事件环等待完成通知，不做任何轮询。
    首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->object 作为
    事件接收者），关闭时通过 XClass_deinit_base 完整释放。 */
@@ -65,7 +73,7 @@ typedef struct XFileSharedMemoryWin32 {
 } XFileSharedMemoryWin32;
 
 /* 共享内存信令通道异步接收辅助函数（实现在"内存映射"小节）。
-   XFileSystem_read / XFileSystem_close 在文件前部使用，需要前置声明。 */
+   XDeviceFile_legacyRead / XDeviceFile_legacyClose 在文件前部使用，需要前置声明。 */
 static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
                                  void* buf, int64_t len);
 static void xfs_win32_shm_cancelRead(XFileSharedMemoryWin32* m);
@@ -89,7 +97,7 @@ typedef struct XWin32ConsoleInputState {
 
 #define XWIN32_CONSOLE_INPUT_MAGIC UINT64_C(0x5843494E50555431)
 
-static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd)
+static XWin32ConsoleInputState* XDeviceFile_consoleInputState(XFd fd)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
     XWin32ConsoleInputState* state;
@@ -101,7 +109,7 @@ static XWin32ConsoleInputState* XFileSystem_consoleInputState(XFd fd)
     return state;
 }
 
-static void XFileSystem_notifyConsoleInput(XWin32ConsoleInputState* state)
+static void XDeviceFile_notifyConsoleInput(XWin32ConsoleInputState* state)
 {
 #if XAbstractNetIoRing_ON
     XAbstractNetIoRing* ring;
@@ -121,7 +129,7 @@ static void XFileSystem_notifyConsoleInput(XWin32ConsoleInputState* state)
 #endif
 }
 
-static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
+static DWORD WINAPI XDeviceFile_consoleInputThread(LPVOID parameter)
 {
     XWin32ConsoleInputState* state = (XWin32ConsoleInputState*)parameter;
     char input[256];
@@ -147,7 +155,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
             if (!state->stopping)
                 state->error = error ? error : ERROR_READ_FAULT;
             ReleaseSRWLockExclusive(&state->lock);
-            XFileSystem_notifyConsoleInput(state);
+            XDeviceFile_notifyConsoleInput(state);
             break;
         }
 
@@ -160,13 +168,13 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
         if (bytesRead == 0) {
             state->eof = true;
             ReleaseSRWLockExclusive(&state->lock);
-            XFileSystem_notifyConsoleInput(state);
+            XDeviceFile_notifyConsoleInput(state);
             break;
         }
         if ((size_t)bytesRead > SIZE_MAX - state->size) {
             state->error = ERROR_NOT_ENOUGH_MEMORY;
             ReleaseSRWLockExclusive(&state->lock);
-            XFileSystem_notifyConsoleInput(state);
+            XDeviceFile_notifyConsoleInput(state);
             break;
         }
         {
@@ -185,7 +193,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
                 if (!data) {
                     state->error = ERROR_NOT_ENOUGH_MEMORY;
                     ReleaseSRWLockExclusive(&state->lock);
-                    XFileSystem_notifyConsoleInput(state);
+                    XDeviceFile_notifyConsoleInput(state);
                     break;
                 }
                 state->data = data;
@@ -195,7 +203,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
             state->size = required;
         }
         ReleaseSRWLockExclusive(&state->lock);
-        XFileSystem_notifyConsoleInput(state);
+        XDeviceFile_notifyConsoleInput(state);
 
         /* Wait until the event thread has consumed and processed this line.
          * This lets password/login handlers change console echo before the
@@ -204,7 +212,7 @@ static DWORD WINAPI XFileSystem_consoleInputThread(LPVOID parameter)
     return ERROR_SUCCESS;
 }
 
-static void XFileSystem_destroyConsoleInputState(XWin32ConsoleInputState* state)
+static void XDeviceFile_destroyConsoleInputState(XWin32ConsoleInputState* state)
 {
     if (!state) return;
     AcquireSRWLockExclusive(&state->lock);
@@ -312,7 +320,7 @@ static HANDLE XW32_getFile(XFd fd)
     XFileDescriptor* descriptor = XFd_get(fd);
     if (!descriptor) return INVALID_HANDLE_VALUE;
     if (descriptor->m_type == XFD_TYPE_CONSOLE) {
-        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
+        XWin32ConsoleInputState* state = XDeviceFile_consoleInputState(fd);
         return state ? state->handle : INVALID_HANDLE_VALUE;
     }
     if (descriptor->m_type != XFD_TYPE_FILE)
@@ -400,8 +408,12 @@ static bool fillFileStat(const XString* path, WIN32_FILE_ATTRIBUTE_DATA* attrDat
  * 核心文件操作
  * ============================================================================ */
 
-XFd XFileSystem_open(const XString* path, int mode, int* error)
+XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t openFlags, int* error)
 {
+    if (openFlags & XDeviceOpenFlag_NonBlocking) {
+        if (error) *error = XFileDevice_OpenError;
+        return XFD_INVALID;
+    }
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) {
         if (error) *error = XFileDevice_ResourceError;
@@ -409,35 +421,35 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     }
     
     DWORD desiredAccess = 0;
-    DWORD shareMode = FILE_SHARE_READ;
+    DWORD shareMode = (openFlags & XDeviceOpenFlag_Exclusive) ? 0 : FILE_SHARE_READ;
     DWORD creationDisposition = OPEN_EXISTING;
     
     switch (mode & 0x3) {
-    case XFileSystem_ReadOnly:
+    case XDeviceFile_ReadOnly:
         desiredAccess |= GENERIC_READ;
         break;
-    case XFileSystem_WriteOnly:
+    case XDeviceFile_WriteOnly:
         desiredAccess |= GENERIC_WRITE;
         break;
-    case XFileSystem_ReadWrite:
+    case XDeviceFile_ReadWrite:
         desiredAccess |= GENERIC_READ | GENERIC_WRITE;
         break;
     default:
         break;
     }
     
-    if (mode & XFileSystem_Append) {
+    if (mode & XDeviceFile_Append) {
         desiredAccess |= GENERIC_WRITE;
         creationDisposition = OPEN_ALWAYS;
-    } else if (mode & XFileSystem_Truncate) {
+    } else if (mode & XDeviceFile_Truncate) {
         creationDisposition = CREATE_ALWAYS;
-    } else if (mode & XFileSystem_NewOnly) {
+    } else if (mode & XDeviceFile_NewOnly) {
         creationDisposition = CREATE_NEW;
-    } else if (mode & XFileSystem_Existing) {
+    } else if (mode & XDeviceFile_Existing) {
         creationDisposition = OPEN_EXISTING;
-    } else if (mode & XFileSystem_Create) {
+    } else if (mode & XDeviceFile_Create) {
         creationDisposition = OPEN_ALWAYS;
-    } else if (mode & XFileSystem_WriteOnly) {
+    } else if (mode & XDeviceFile_WriteOnly) {
         creationDisposition = OPEN_ALWAYS;
     }
     
@@ -458,7 +470,7 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
         return XFD_INVALID;
     }
     
-    if (mode & XFileSystem_Append) {
+    if (mode & XDeviceFile_Append) {
         LARGE_INTEGER zero;
         zero.QuadPart = 0;
         SetFilePointerEx(hFile, zero, NULL, FILE_END);
@@ -468,7 +480,7 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     return fd;
 }
 
-XFd XFileSystem_openStandardInput(int* error)
+XFd XDeviceFile_openStandardInput(int* error)
 {
     HANDLE source;
     HANDLE duplicate = INVALID_HANDLE_VALUE;
@@ -507,22 +519,22 @@ XFd XFileSystem_openStandardInput(int* error)
             InitializeSRWLock(&state->lock);
             state->readPermit = CreateEventW(NULL, FALSE, FALSE, NULL);
             if (!state->readPermit) {
-                XFileSystem_destroyConsoleInputState(state);
+                XDeviceFile_destroyConsoleInputState(state);
                 if (error) *error = XFileDevice_ResourceError;
                 return XFD_INVALID;
             }
             fd = XFd_alloc(XFD_TYPE_CONSOLE, state, NULL);
             if (fd == XFD_INVALID) {
-                XFileSystem_destroyConsoleInputState(state);
+                XDeviceFile_destroyConsoleInputState(state);
                 if (error) *error = XFileDevice_ResourceError;
                 return XFD_INVALID;
             }
             state->fd = fd;
-            state->thread = CreateThread(NULL, 0, XFileSystem_consoleInputThread,
+            state->thread = CreateThread(NULL, 0, XDeviceFile_consoleInputThread,
                                          state, 0, NULL);
             if (!state->thread) {
                 XFd_setObject(fd, NULL);
-                XFileSystem_destroyConsoleInputState(state);
+                XDeviceFile_destroyConsoleInputState(state);
                 XFd_free(fd);
                 if (error) *error = XFileDevice_ResourceError;
                 return XFD_INVALID;
@@ -541,13 +553,13 @@ XFd XFileSystem_openStandardInput(int* error)
     return fd;
 }
 
-void XFileSystem_close(XFd fd)
+void XDeviceFile_legacyClose(XFd fd)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
-    XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
+    XWin32ConsoleInputState* state = XDeviceFile_consoleInputState(fd);
     if (state) {
         XFd_setObject(fd, NULL);
-        XFileSystem_destroyConsoleInputState(state);
+        XDeviceFile_destroyConsoleInputState(state);
     } else if (descriptor && descriptor->m_type == XFD_TYPE_MAPPING) {
         /* 共享内存段：先取消并回收在途异步读（避免悬垂 OVERLAPPED 完成包
            指向已释放的读上下文），再释放信令管道与映射句柄，创建方断开
@@ -574,7 +586,7 @@ void XFileSystem_close(XFd fd)
     XFd_free(fd);
 }
 
-int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return -1;
@@ -592,11 +604,36 @@ int64_t XFileSystem_seek(XFd fd, int64_t offset, XSeekWhence whence)
     return (int64_t)newpos.QuadPart;
 }
 
-int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
+int64_t XDeviceFile_legacyRead(XFd fd, void* buf, int64_t len)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
     HANDLE h;
-    if (!descriptor || !buf || len <= 0) return -1;
+    if (!descriptor || (len > 0 && !buf) || len < 0) return -1;
+    if (len == 0) return 0;
+
+    if (descriptor->m_type == XFD_TYPE_CONSOLE) {
+        XWin32ConsoleInputState* state = XDeviceFile_consoleInputState(fd);
+        size_t count;
+        if (!state) return -1;
+        AcquireSRWLockExclusive(&state->lock);
+        if (state->size == 0) {
+            DWORD stateError = state->error;
+            bool eof = state->eof;
+            bool requestRead = !stateError && !eof && !state->stopping &&
+                               !state->readRequested && !state->readInProgress;
+            if (requestRead) state->readRequested = true;
+            ReleaseSRWLockExclusive(&state->lock);
+            if (requestRead && !SetEvent(state->readPermit)) return -1;
+            return stateError ? -1 : 0;
+        }
+        count = (size_t)len < state->size ? (size_t)len : state->size;
+        memcpy(buf, state->data, count);
+        state->size -= count;
+        if (state->size)
+            memmove(state->data, state->data + count, state->size);
+        ReleaseSRWLockExclusive(&state->lock);
+        return (int64_t)count;
+    }
 
     /* 共享内存段：句柄是信令管道，走 IOCP 异步接收 + 库内部事件通知
        （xfs_win32_shmRead：消费异步缓冲，无数据时事件环等待完成，不轮询）。 */
@@ -633,50 +670,7 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
     return totalRead;
 }
 
-int64_t XFileSystem_readStandardInput(XFd fd, void* buf, int64_t len)
-{
-    HANDLE h = XW32_getFile(fd);
-    DWORD available = 0;
-    DWORD bytesRead = 0;
-    DWORD request;
-    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -2;
-    if (GetFileType(h) == FILE_TYPE_PIPE) {
-        if (!PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
-            return GetLastError() == ERROR_BROKEN_PIPE ? -1 : -2;
-        }
-        if (available == 0) return 0;
-        request = (DWORD)((uint64_t)len < available ? (uint64_t)len : available);
-    } else if (GetFileType(h) == FILE_TYPE_CHAR) {
-        XWin32ConsoleInputState* state = XFileSystem_consoleInputState(fd);
-        size_t count;
-        if (!state) return -2;
-        AcquireSRWLockExclusive(&state->lock);
-        if (state->size == 0) {
-            DWORD stateError = state->error;
-            bool eof = state->eof;
-            bool requestRead = !stateError && !eof && !state->stopping &&
-                               !state->readRequested && !state->readInProgress;
-            if (requestRead) state->readRequested = true;
-            ReleaseSRWLockExclusive(&state->lock);
-            if (requestRead && !SetEvent(state->readPermit)) return -2;
-            if (stateError) return -2;
-            return eof ? -1 : 0;
-        }
-        count = (size_t)len < state->size ? (size_t)len : state->size;
-        memcpy(buf, state->data, count);
-        state->size -= count;
-        if (state->size)
-            memmove(state->data, state->data + count, state->size);
-        ReleaseSRWLockExclusive(&state->lock);
-        return (int64_t)count;
-    } else {
-        request = (DWORD)((uint64_t)len > UINT32_MAX ? UINT32_MAX : (uint64_t)len);
-    }
-    if (!ReadFile(h, buf, request, &bytesRead, NULL)) return -2;
-    return bytesRead ? (int64_t)bytesRead : -1;
-}
-
-bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
+bool XDeviceFile_legacySetStandardInputEcho(XFd fd, bool enabled)
 {
     HANDLE h = XW32_getFile(fd);
     DWORD mode;
@@ -692,7 +686,7 @@ bool XFileSystem_setStandardInputEcho(XFd fd, bool enabled)
     return SetConsoleMode(h, mode) != 0;
 }
 
-int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* buf, int64_t len)
 {
     XFileDescriptor* descriptor = XFd_get(fd);
     HANDLE h;
@@ -763,14 +757,14 @@ int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
     return totalWritten;
 }
 
-bool XFileSystem_flush(XFd fd)
+bool XDeviceFile_legacyFlush(XFd fd)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     return FlushFileBuffers(h) != 0;
 }
 
-bool XFileSystem_resize(XFd fd, int64_t size)
+bool XDeviceFile_legacyResize(XFd fd, int64_t size)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE || size < 0) return false;
@@ -801,7 +795,7 @@ bool XFileSystem_resize(XFd fd, int64_t size)
  * 文件属性操作
  * ============================================================================ */
 
-bool XFileSystem_stat(const XString* path, XFileStat* stat)
+bool XDeviceFile_stat(const XString* path, XFileStat* stat)
 {
     if (!path || !stat) return false;
     
@@ -809,7 +803,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     return fillFileStat(path, &attrData, stat);
 }
 
-bool XFileSystem_fstat(XFd fd, XFileStat* stat)
+bool XDeviceFile_legacyFstat(XFd fd, XFileStat* stat)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE || !stat) return false;
@@ -843,7 +837,7 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 }
 
 
-bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPath)
+bool XDeviceFile_remove(const XString* path, XRemoveMode mode, XString* trashPath)
 {
     if (!path) return false;
 
@@ -884,7 +878,7 @@ bool XFileSystem_remove(const XString* path, XRemoveMode mode, XString* trashPat
     return result != 0;
 }
 
-bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
+bool XDeviceFile_rename(const XString* oldPath, const XString* newPath)
 {
     if (!oldPath || !newPath) return false;
     
@@ -904,7 +898,7 @@ bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
     return result != 0;
 }
 
-bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
+bool XDeviceFile_copy(const XString* srcPath, const XString* dstPath)
 {
     if (!srcPath || !dstPath) return false;
     
@@ -928,7 +922,7 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
  * 目录操作
  * ============================================================================ */
 
-bool XFileSystem_mkdir(const XString* path, bool recursive)
+bool XDeviceFile_mkdir(const XString* path, bool recursive)
 {
     if (!path) return false;
     
@@ -984,7 +978,7 @@ bool XFileSystem_mkdir(const XString* path, bool recursive)
     return result;
 }
 
-bool XFileSystem_rmdir(const XString* path, bool recursive) {
+bool XDeviceFile_rmdir(const XString* path, bool recursive) {
     if (!path) return false;
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
@@ -1015,7 +1009,7 @@ struct DirIteratorData {
     bool firstEntry;
 };
 
-XDirIterator XFileSystem_opendir(const XString* path)
+XDirIterator XDeviceFile_opendir(const XString* path)
 {
     if (!path) return NULL;
     
@@ -1043,7 +1037,7 @@ XDirIterator XFileSystem_opendir(const XString* path)
     return (XDirIterator)iter;
 }
 
-bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
+bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
 {
     if (!iter || !entry) return false;
     struct DirIteratorData* data = (struct DirIteratorData*)iter;
@@ -1072,7 +1066,7 @@ bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
     return true;
 }
 
-void XFileSystem_closedir(XDirIterator iter)
+void XDeviceFile_closedir(XDirIterator iter)
 {
     if (!iter) return;
     struct DirIteratorData* data = (struct DirIteratorData*)iter;
@@ -1084,7 +1078,7 @@ void XFileSystem_closedir(XDirIterator iter)
  * 路径操作
  * ============================================================================ */
 
-bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style)
+bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle style)
 {
     if (!path || !result) return false;
     
@@ -1133,7 +1127,7 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
  * 六、特殊路径
  * ============================================================================ */
 
-bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
+bool XDeviceFile_getSpecialPath(XSpecialPath type, XString* path)
 {
     if (!path) return false;
     switch (type) {
@@ -1181,7 +1175,7 @@ bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
     }
 }
 
-bool XFileSystem_setCurrentPath(const XString* path)
+bool XDeviceFile_setCurrentPath(const XString* path)
 {
     if (!path) return false;
     wchar_t* wpath = XStringToWidePath(path);
@@ -1195,7 +1189,7 @@ bool XFileSystem_setCurrentPath(const XString* path)
  * 符号链接操作
  * ============================================================================ */
 
-bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkType type)
+bool XDeviceFile_link(const XString* targetPath, const XString* linkPath, XLinkType type)
 {
     if (!targetPath || !linkPath) return false;
 
@@ -1225,7 +1219,7 @@ bool XFileSystem_link(const XString* targetPath, const XString* linkPath, XLinkT
     return result != 0;
 }
 
-bool XFileSystem_readLink(const XString* path, XString* target)
+bool XDeviceFile_readLink(const XString* path, XString* target)
 {
     if (!path || !target) return false;
     
@@ -1254,7 +1248,7 @@ bool XFileSystem_readLink(const XString* path, XString* target)
  * 权限操作
  * ============================================================================ */
 
-bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions)
+bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permissions)
 {
     if (!path) return false;
     
@@ -1285,15 +1279,15 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  *
  * 共享内存段在 Windows 上由两块组成：
  *   1. 命名内存映射（CreateFileMapping/OpenFileMapping）：存放跨进程数据，
- *      通过 XFileSystem_map 建立视图；
+ *      通过 XDeviceFile_map 建立视图；
  *   2. 命名管道信令通道（\\.\pipe\<共享内存名>.sig）：数据方写完一块数据后
  *      向管道写入 1 个信令字节，对端通过 IOCP + 库内部事件通知异步接收
  *      （OVERLAPPED ReadFile 关联全局完成端口，与网络套接字/串口的异步
  *      读一致），无需轮询共享内存状态字段。
  *      该通道内置于平台实现，不新增任何公共 API。
  *
- * XFd 句柄为信令管道句柄，XFileSystem_read / XFileSystem_write 直接在
- * 信令通道上收发；object 保存映射句柄，XFileSystem_map / XFileSystem_close
+ * XFd 句柄为信令管道句柄，XDeviceFile_legacyRead / XDeviceFile_legacyWrite 直接在
+ * 信令通道上收发；object 保存映射句柄，XDeviceFile_map / XDeviceFile_legacyClose
  * 据此完成视图与释放。
  */
 
@@ -1334,7 +1328,7 @@ static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t 
     return true;
 }
 
-/* 信令通道异步读的有界等待片（毫秒）：XFileSystem_read 在无信令字节时
+/* 信令通道异步读的有界等待片（毫秒）：XDeviceFile_legacyRead 在无信令字节时
    通过事件环的 waitForEvents 最多阻塞该时长后返回 0，传输层据此检查
    整体超时；信令到达时事件环立即唤醒，不存在任何轮询。 */
 #define XFILE_SHM_SIGNAL_RCVTIMEO_MS 500
@@ -1350,7 +1344,7 @@ static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t 
  * 即把管道句柄关联到 XAbstractNetIoRing 全局 IOCP 完成端口，并提交常驻
  * 异步 OVERLAPPED ReadFile；完成事件由事件环的 waitForEvents
  * （GetQueuedCompletionStatus）出队，先经完成回调把结果写入 m_readResult
- * 并清除在途标记；XFileSystem_read 消费 m_readBuffer 中的字节，无数据时
+ * 并清除在途标记；XDeviceFile_legacyRead 消费 m_readBuffer 中的字节，无数据时
  * 通过事件环有界等待完成通知（超时片返回 0 供传输层检查整体截止时间），
  * 整个过程不轮询共享内存状态字段。
  * ============================================================================ */
@@ -1365,7 +1359,7 @@ static bool xfs_win32_shmReadCompletion(XEventContext_IOCP* context, void* userD
     if (!m) return false;
     m->m_readResult = (int64_t)context->finishedBytes;
     m->m_readPending = false;
-    /* 这是 XFileSystem_read 的内部接收，不应再生成一个应用层 socket
+    /* 这是 XDeviceFile_legacyRead 的内部接收，不应再生成一个应用层 socket
        事件；调用方会在 waitForEvents 返回后直接消费 m_readBuffer。 */
     return false;
 }
@@ -1491,7 +1485,7 @@ static int64_t xfs_win32_shm_blockingRead(XFileSharedMemoryWin32* m,
     return (int64_t)bytesRead;
 }
 
-/* 取消在途异步读并回收完成事件（XFileSystem_close 关闭前调用）：
+/* 取消在途异步读并回收完成事件（XDeviceFile_legacyClose 关闭前调用）：
    提交 CancelIoEx 后通过事件环有界等待该读的完成包出队（完成回调会
    清除 m_readPending 并写入结果），确保释放 mapping 前不存在悬垂
    OVERLAPPED 完成包指向已释放的读上下文（与 POSIX 的 ASYNC_CANCEL
@@ -1518,7 +1512,7 @@ static void xfs_win32_shm_cancelRead(XFileSharedMemoryWin32* m)
     m->m_rxOffset = 0;
 }
 
-/* XFileSystem_read 的共享内存信令通道实现：
+/* XDeviceFile_legacyRead 的共享内存信令通道实现：
    优先消费异步接收缓冲；无数据时通过库内部事件环等待完成通知，
    超时片返回 0（调用方检查整体截止时间），对端关闭/通道错误返回 -1。 */
 static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
@@ -1578,7 +1572,7 @@ static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
     }
 }
 
-XFd XFileSystem_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
+XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSize, int* error)
 {
     wchar_t* wname;
     wchar_t signalPipeName[MAX_PATH];
@@ -1727,7 +1721,7 @@ fail:
     return XFD_INVALID;
 }
 
-void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
+void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
 {
     XFileDescriptor* descriptor;
     HANDLE hMap;
@@ -1777,7 +1771,7 @@ void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, int flags)
     }
 }
 
-bool XFileSystem_unmap(void* addr, int64_t size)
+bool XDeviceFile_unmap(void* addr, int64_t size)
 {
     (void)size;
     if (!addr) return false;
@@ -1787,7 +1781,7 @@ bool XFileSystem_unmap(void* addr, int64_t size)
 /**
  * @brief 通过文件描述符设置文件时间
  */
-bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -1817,7 +1811,7 @@ bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
  * 驱动器列表
  * ============================================================================ */
 
-bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userData)
+bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userData)
 {
     if (!callback) return false;
     
@@ -1845,7 +1839,7 @@ bool XFileSystem_enumerateDrives(XFileSystemDriveCallback callback, void* userDa
  * 存储设备信息
  * ============================================================================ */
 
-bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
+bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
 {
     if (!path || !info) return false;
     
@@ -1950,12 +1944,12 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
  * 
  * 这里使用SHFormatDrive，因为它最安全且由系统处理
  */
-bool XFileSystem_format(const XString* drive, 
-                        XFileSystemType fsType,
+bool XDeviceFile_format(const XString* drive,
+                        XDeviceFileType fsType,
                         const XString* volumeName,
                         int flags,
                         int clusterSize,
-                        XFileSystemFormatProgress progress,
+                        XDeviceFileFormatProgress progress,
                         void* userData)
 {
     if (!drive) return false;

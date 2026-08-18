@@ -389,12 +389,12 @@ extern "C" {
 
 /* 检查是否同时启用了多个模式 */
 #if defined(XFILE_USE_PLATFORM_API) && defined(XFILE_USE_FATFS)
-#error "XFileSystem: 不能同时启用多个文件系统后端，请只选择一种模式"
+#error "XDeviceFile: 不能同时启用多个文件系统后端，请只选择一种模式"
 #endif
 
 /* 检查是否未启用任何模式 */
 #if !defined(XFILE_USE_PLATFORM_API) && !defined(XFILE_USE_FATFS)
-#error "XFileSystem: 必须启用至少一个文件系统后端模式"
+#error "XDeviceFile: 必须启用至少一个文件系统后端模式"
 #endif
 
 /* ========================================================================== */

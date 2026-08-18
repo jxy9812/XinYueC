@@ -1,5 +1,5 @@
 ﻿#include "XFile.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +31,11 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     if (!file || !file->m_fileName) return false;
     
     int error = 0;
-    XFd fd = XFileSystem_open(file->m_fileName, (int)mode, &error);
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = (int)mode;
+    options.m_target = file->m_fileName;
+    XFd fd = XDevice_open(XDeviceType_File, &options, &error);
     
     if (fd < 0) {
         file->m_parent.m_error = error;
@@ -58,7 +62,7 @@ static void VXFile_close(XIODevice* device)
     XFileDevice_unregisterAsync(&file->m_parent);
     
     if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-        XFileSystem_close(XIODevice_fd(device));
+        XDeviceFile_close(XIODevice_fd(device));
     }
     
     XIODevice_setFd(device, XFD_INVALID);
@@ -69,7 +73,7 @@ static void VXFile_close(XIODevice* device)
 static bool VXFile_resize(XFileDevice* device, int64_t sz)
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0) return false;
-    return XFileSystem_resize(XIODevice_fd(&device->m_parent), sz);
+    return XDeviceFile_resize(XIODevice_fd(&device->m_parent), sz);
 }
 
 static XFilePermissions VXFile_permissions(const XFileDevice* device)
@@ -78,7 +82,7 @@ static XFilePermissions VXFile_permissions(const XFileDevice* device)
     if (!file || !file->m_fileName) return 0;
     
     XFileStat stat;
-    if (!XFileSystem_stat(file->m_fileName, &stat)) return 0;
+    if (!XDeviceFile_stat(file->m_fileName, &stat)) return 0;
     return stat.permissions;
 }
 
@@ -87,7 +91,7 @@ static bool VXFile_setPermissions(XFileDevice* device, XFilePermissions permissi
     const XFile* file = (const XFile*)device;
     if (!file || !file->m_fileName) return false;
     
-    return XFileSystem_setPermissions(file->m_fileName, permissions);
+    return XDeviceFile_setPermissions(file->m_fileName, permissions);
 }
 
 static void VXFile_deinit(XFile* file)
@@ -208,7 +212,7 @@ bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHa
 }
 
 /* ============================================================================
- * 文件操作（静态函数使用 XFileSystem API）
+ * 文件操作（静态函数使用 XDeviceFile API）
  * ============================================================================ */
 
 bool XFile_exists(const XFile* file)
@@ -220,7 +224,7 @@ bool XFile_exists(const XFile* file)
 bool XFile_exists_static(const XString* fileName)
 {
     if (!fileName) return false;
-    return XFileSystem_exists(fileName);
+    return XDeviceFile_exists(fileName);
 }
 
 bool XFile_remove(XFile* file)
@@ -236,7 +240,7 @@ bool XFile_remove(XFile* file)
 bool XFile_remove_static(const XString* fileName)
 {
     if (!fileName) return false;
-    return XFileSystem_removePermanent(fileName);
+    return XDeviceFile_removePermanent(fileName);
 }
 
 bool XFile_rename(XFile* file, const XString* newName)
@@ -252,7 +256,7 @@ bool XFile_rename(XFile* file, const XString* newName)
 bool XFile_rename_static(const XString* oldName, const XString* newName)
 {
     if (!oldName || !newName) return false;
-    return XFileSystem_rename(oldName, newName);
+    return XDeviceFile_rename(oldName, newName);
 }
 
 bool XFile_copy(XFile* file, const XString* newName)
@@ -268,7 +272,7 @@ bool XFile_copy(XFile* file, const XString* newName)
 bool XFile_copy_static(const XString* fileName, const XString* newName)
 {
     if (!fileName || !newName) return false;
-    return XFileSystem_copy(fileName, newName);
+    return XDeviceFile_copy(fileName, newName);
 }
 
 bool XFile_link(XFile* file, const XString* linkName)
@@ -280,7 +284,7 @@ bool XFile_link(XFile* file, const XString* linkName)
 bool XFile_link_static(const XString* fileName, const XString* linkName)
 {
     if (!fileName || !linkName) return false;
-    return XFileSystem_link(fileName, linkName, XLinkType_Symbolic);
+    return XDeviceFile_link(fileName, linkName, XLinkType_Symbolic);
 }
 
 bool XFile_moveToTrash(XFile* file)
@@ -298,10 +302,10 @@ bool XFile_moveToTrash_static(const XString* fileName, XString* pathInTrash)
     /*
      * Qt 行为: QFile::moveToTrash() 在 Windows 上用 SHFileOperation(FO_DELETE|FOF_ALLOWUNDO),
      * 在 Unix 上 (Freedesktop.org Trash v1.0) 把文件 move 到 ~/.local/share/Trash/files.
-     * 平台层已经实现 XFileSystem_remove(Trash), 这里仅做一次抽象调用;
+     * 平台层已经实现 XDeviceFile_remove(Trash), 这里仅做一次抽象调用;
      * 不可用时平台层自行退化到永久删除。
      */
-    return XFileSystem_remove(fileName, XRemoveMode_Trash, pathInTrash);
+    return XDeviceFile_remove(fileName, XRemoveMode_Trash, pathInTrash);
 }
 
 XString* XFile_symLinkTarget(const XFile* file)
@@ -316,7 +320,7 @@ XString* XFile_symLinkTarget_static(const XString* fileName)
     XString* target = XString_create();
     if (!target) return NULL;
     
-    if (!XFileSystem_readLink(fileName, target)) {
+    if (!XDeviceFile_readLink(fileName, target)) {
         XString_delete_base(target);
         return NULL;
     }

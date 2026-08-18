@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
 // C 璇█瀹炵幇 Qt6 QTcpServer锛岀户鎵胯嚜 XObject銆?
-// 基于 XNetwork.h 提供的 TCP 服务器平台 API。
+// 基于 XDeviceNetwork.h 提供的 TCP 服务器平台 API。
 
 #include "XTcpServer.h"
 #include "XTcpSocket.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+#include "XVarList.h"
+#include "XVariant.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XEvent.h"
@@ -17,8 +19,22 @@
 #if XNETWORK_ON
 #if XNETWORK_TCPSERVER_ON
 
-// ==================== 辅助宏 ====================
-#define getPriv(server) ((XNetworkSocketPrivate*)(server)->d_ptr)
+static bool xtcpserver_control(XTcpServer* server, XDeviceNetworkCommand command,
+                               const XVarList* input, XVarList* output)
+{
+	if (!server || server->m_deviceFd == XFD_INVALID) return false;
+	return XDevice_control(server->m_deviceFd, command, input, output);
+}
+
+static void xtcpserver_closeAcceptedSocket(XTcpServer* server, XDeviceNetworkSocketHandle handle)
+{
+	XVarList* input;
+	if (!server || handle < 0) return;
+	input = XVarList_Create(XVar(XDeviceNetworkSocketHandle, handle));
+	if (!input) return;
+	(void)xtcpserver_control(server, XDeviceNetworkCommand_CloseAcceptedSocket, input, NULL);
+	XVarList_delete(input);
+}
 
 // ==================== 内部虚函数前向声明 ====================
 
@@ -69,17 +85,24 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 				return true;
 			}
 
-			XSocketHandle clientHandle = XNetwork_serverGetAcceptedSocket(server->d_ptr,
-				&server->lastAcceptedAddr, &server->lastAcceptedPort);
+				XDeviceNetworkSocketHandle clientHandle = -1;
+				XDeviceNetworkSocketHandle* handleOut = &clientHandle;
+				XHostAddress* addressOut = &server->lastAcceptedAddr;
+				uint16_t* portOut = &server->lastAcceptedPort;
+				XVarList* output = XVarList_Create(XVar(XDeviceNetworkSocketHandle*, handleOut),
+					XVar(XHostAddress*, addressOut), XVar(uint16_t*, portOut));
+				bool accepted = output && xtcpserver_control(server,
+					XDeviceNetworkCommand_GetAcceptedSocket, NULL, output);
+				if (output) XVarList_delete(output);
 
-			if (!XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(clientHandle))) {
+				if (!accepted || !XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(clientHandle))) {
 				// 娌℃湁鏇村杩炴帴鍙帴鍙?
 				return true;
 			}
 
 			// 调用虚函数处理新连接
 			XTcpServer_incomingConnection_base(server, clientHandle);
-			XNetwork_serverAccept(server->d_ptr);
+				(void)xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL);
 		}
 		return true;
 	}
@@ -136,11 +159,11 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 		}
 		server->errorString = XString_create_utf8("Failed to create socket object");
 		// 关闭不接受的句柄
-		XNetwork_serverClose(getPriv(server), handle);
+			xtcpserver_closeAcceptedSocket(server, handle);
 		return;
 	}
 
-	// 设置描述符和状态（内部会创建 XNetworkSocketPrivate 并注册到事件循环）
+	// 设置描述符和状态（内部会创建 XDeviceNetworkContext 并注册到事件循环）
 	if (!XAbstractSocket_setSocketDescriptor_base(
 			(XAbstractSocket*)socket, handle,
 			XAbstractSocket_ConnectedState,
@@ -151,7 +174,7 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 			XString_delete_base(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to set socket descriptor");
-		XNetwork_serverClose(getPriv(server), handle);
+			xtcpserver_closeAcceptedSocket(server, handle);
 		return;
 	}
 
@@ -171,7 +194,7 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 static void VXTcpServer_deinit(XTcpServer* server)
 {
 	if (!server) return;
-	// 关闭服务器（会清理 d_ptr）
+	// 关闭服务器（会释放统一设备 fd）
 	//XCoreApplication_sendPostedEvents(server, 0);
 	XTcpServer_close(server);
 	//XCoreApplication_sendPostedEvents(server,0);
@@ -217,7 +240,7 @@ void XTcpServer_init(XTcpServer* server)
 	XObject_init(&server->base);
 
 	// 鍒濆鍖栨垚鍛?
-	server->d_ptr = NULL;
+	server->m_deviceFd = XFD_INVALID;
 	//server->serverHandle = XSocketDescriptor_Invalid();
 	XHostAddress_init(&server->serverAddress);
 	server->serverPort = 0;
@@ -253,11 +276,11 @@ XTcpServer* XTcpServer_create_ex(XMemoryType memory)
 
 bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t port)
 {
+	XDeviceNetworkOpenOptions options;
+	XVariant value;
+	int error = XDeviceError_None;
 	if (!server) return false;
 	if (server->listening) return false;
-
-	// 纭繚缃戠粶瀛愮郴缁熷凡鍒濆鍖?
-	XNetwork_ensureInit();
 
 	// 使用默认地址
 	XHostAddress listenAddr;
@@ -267,14 +290,18 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	} else {
 		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnySpecial);
 	}
-	if (!server->d_ptr)
-		server->d_ptr = XNetwork_createSocketPrivate(server);
-	// 调用平台 API 创建服务器
-	// 注意：代理服务器功能已移至应用层实现，平台层不再提供代理API
-	XServerHandle handle = XNetwork_serverCreate(server->d_ptr,
-		&listenAddr, port, server->listenBacklogSize, true);
-
-	if (!XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(handle))) {
+	memset(&options, 0, sizeof(options));
+	options.m_base.m_openMode = XIODevice_ReadWrite;
+	options.m_socketType = XDeviceNetwork_Tcp;
+	options.m_protocol = (XDeviceNetworkProtocol)XHostAddress_protocol(&listenAddr);
+	options.m_operation = XDeviceNetworkOpen_Listen;
+	options.m_address = &listenAddr;
+	options.m_port = port;
+	options.m_reuseAddress = true;
+	options.m_owner = server;
+	options.m_listenBacklog = server->listenBacklogSize;
+	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
+	if (server->m_deviceFd == XFD_INVALID) {
 		XHostAddress_deinit_base(&listenAddr);
 		server->lastError = XAbstractSocket_AddressInUseError;
 		if (server->errorString) {
@@ -283,16 +310,25 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 		server->errorString = XString_create_utf8("Failed to bind to address");
 		return false;
 	}
-	//server->serverHandle = XSocketDescriptor_fromIntptr(handle);
 	XHostAddress_deinit_base(&server->serverAddress);
 	XHostAddress_copy_base(&server->serverAddress, &listenAddr);
 	XHostAddress_deinit_base(&listenAddr);
-	server->serverPort = XNetwork_serverPort(handle);
+	memset(&value, 0, sizeof(value));
+	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
+		XDevice_close(server->m_deviceFd);
+		server->m_deviceFd = XFD_INVALID;
+		return false;
+	}
+	server->serverPort = (uint16_t)XVariant_toInt(&value);
+	XVariant_clear(&value);
 	server->listening = true;
 	server->pauseAccepting = false;
 
 	/* 启动首次异步 Accept（serverCreate 仅创建，accept 由用户层显式启动） */
-	XNetwork_serverAccept(server->d_ptr);
+	if (!xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL)) {
+		XTcpServer_close(server);
+		return false;
+	}
 
 	return true;
 }
@@ -300,14 +336,9 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 void XTcpServer_close(XTcpServer* server)
 {
 	if (!server) return;
-	if (!server->listening) return;
-
-	XNetwork_serverClose(server->d_ptr, XTcpServer_socketDescriptor(server));
-
-	if (server->d_ptr) {
-		XNetwork_deleteSocketPrivate(server->d_ptr);
-		server->d_ptr = NULL;
-	}
+	if (server->m_deviceFd == XFD_INVALID) return;
+	XDevice_close(server->m_deviceFd);
+	server->m_deviceFd = XFD_INVALID;
 	server->listening = false;
 	server->serverPort = 0;
 	XHostAddress_deinit_base(&server->serverAddress);
@@ -370,12 +401,18 @@ const XHostAddress* XTcpServer_serverAddress(const XTcpServer* server)
 
 intptr_t XTcpServer_socketDescriptor(const XTcpServer* server)
 {
-	if (!server||!server->d_ptr) return -1;
-	return XNetwork_socketDescriptor(server->d_ptr);
+	XVariant value;
+	if (!server || server->m_deviceFd == XFD_INVALID) return -1;
+	memset(&value, 0, sizeof(value));
+	if (!XDevice_getProperty(server->m_deviceFd, XDeviceProperty_NativeHandle, &value)) return -1;
+	return (intptr_t)XVariant_toPtr(&value);
 }
 
 bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescriptor)
 {
+	XDeviceNetworkOpenOptions options;
+	XVariant value;
+	int error = XDeviceError_None;
 	if (!server) return false;
 	if (socketDescriptor < 0) return false;
 
@@ -384,22 +421,27 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 		XTcpServer_close(server);
 	}
 
-	// 创建 XNetworkSocketPrivate 用于异步事件通知
-	XNetworkSocketPrivate* priv = XNetwork_createSocketPrivate(server);
-	if (!priv) return false;
-
-	// TCP server 不是 XIODevice，使用服务器专用的描述符接管路径。
-	if (!XNetwork_serverSetDescriptor(priv, socketDescriptor)) {
-		XNetwork_deleteSocketPrivate(priv);
+	memset(&options, 0, sizeof(options));
+	options.m_base.m_openMode = XIODevice_ReadWrite;
+	options.m_socketType = XDeviceNetwork_Tcp;
+	options.m_protocol = XDeviceNetwork_Any;
+	options.m_operation = XDeviceNetworkOpen_ListenAdopt;
+	options.m_socketDescriptor = socketDescriptor;
+	options.m_owner = server;
+	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
+	if (server->m_deviceFd == XFD_INVALID) return false;
+	memset(&value, 0, sizeof(value));
+	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
+		XTcpServer_close(server);
 		return false;
 	}
-
-	// 保存状态
-	server->d_ptr = priv;
-	//server->serverHandle = XSocketDescriptor_fromIntptr(socketDescriptor);
-	server->serverPort = XNetwork_serverPort(XNetwork_socketDescriptor(priv));
+	server->serverPort = (uint16_t)XVariant_toInt(&value);
+	XVariant_clear(&value);
 	server->listening = true;
-	XNetwork_serverAccept(server->d_ptr);
+	if (!xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL)) {
+		XTcpServer_close(server);
+		return false;
+	}
 
 	return true;
 }

@@ -3,15 +3,33 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XUdpSocket.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
+#include "XVarList.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include <string.h>
 #if XNETWORK_ON
 #if XNETWORK_UDPSOCKET_ON
 
-/* Helper macro to get private data from socket */
-#define GET_PRIV(sock) ((XNetworkSocketPrivate*)(sock)->base.d_ptr)
+static bool xudpsocket_control(XUdpSocket* socket, XDeviceNetworkCommand command,
+                               const XVarList* input, XVarList* output)
+{
+    if (!socket || socket->base.m_deviceFd == XFD_INVALID) return false;
+    return XDevice_control(socket->base.m_deviceFd, command, input, output);
+}
+
+static bool xudpsocket_setMulticastGroup(XUdpSocket* socket, bool join,
+                                         const XHostAddress* group, uint32_t interfaceIndex)
+{
+    XVarList* input;
+    bool ok;
+    input = XVarList_Create(XVar(bool, join), XVar(const XHostAddress*, group),
+                            XVar(uint32_t, interfaceIndex));
+    if (!input) return false;
+    ok = xudpsocket_control(socket, XDeviceNetworkCommand_SetMulticastGroup, input, NULL);
+    XVarList_delete(input);
+    return ok;
+}
 
 /* ============================================================================
  * 虚函数表初始化
@@ -74,9 +92,6 @@ int64_t XUdpSocket_readDatagram(XUdpSocket* sock, char* data, int64_t maxSize,
 {
     if (!sock || !data || maxSize <= 0) return -1;
     
-    XNetworkSocketPrivate* priv = GET_PRIV(sock);
-    if (!priv) return -1;
-    
     /* 使用父类 XAbstractSocket 的 read 方法读取数据 */
     int64_t bytesRead = XAbstractSocket_read(&sock->base, data, maxSize);
     
@@ -84,7 +99,13 @@ int64_t XUdpSocket_readDatagram(XUdpSocket* sock, char* data, int64_t maxSize,
     
     /* 获取发送者地址信息 */
     if (address || port) {
-        XNetwork_getLastDatagramSender(priv, address, port);
+        XVarList* output = XVarList_Create(XVar(XHostAddress*, address), XVar(uint16_t*, port));
+        if (!output) return -1;
+        if (!xudpsocket_control(sock, XDeviceNetworkCommand_GetLastDatagramSender, NULL, output)) {
+            XVarList_delete(output);
+            return -1;
+        }
+        XVarList_delete(output);
     }
     
     return bytesRead;
@@ -144,14 +165,26 @@ int64_t XUdpSocket_writeDatagram(XUdpSocket* sock, const char* data, int64_t siz
 {
     if (!sock || !data || size <= 0 || !address) return -1;
     
-    XNetworkSocketPrivate* priv = GET_PRIV(sock);
-    if (!priv) return -1;
-    
-    /* 使用平台层的 socketWrite 进行 UDP 发送 */
-    /* UDP 使用同步发送 */
-      intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-      if (sd < 0) return -1;
-      return XNetwork_sendDatagram(sd, data, size, address, port);
+    XVarList* input;
+    XVarList* output;
+    int64_t written = -1;
+    bool ok;
+    input = XVarList_Create(XVar(const void*, data), XVar(int64_t, size),
+                            XVar(const XHostAddress*, address), XVar(uint16_t, port));
+    output = XVarList_Create(XVar(int64_t, written));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return -1;
+    }
+    ok = xudpsocket_control(sock, XDeviceNetworkCommand_SendDatagram, input, output);
+    if (ok) {
+        XVarList_start(output);
+        written = XVarList_arg(output, int64_t);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return ok ? written : -1;
 }
 
 int64_t XUdpSocket_writeDatagram_2(XUdpSocket* sock, const XByteArray* datagram,
@@ -199,10 +232,7 @@ bool XUdpSocket_joinMulticastGroup(XUdpSocket* sock, const XHostAddress* groupAd
 {
     if (!sock || !groupAddress) return false;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return false;
-    
-    return XNetwork_multicastGroup(sd, true, groupAddress, 0);
+    return xudpsocket_setMulticastGroup(sock, true, groupAddress, 0);
 }
 
 bool XUdpSocket_joinMulticastGroup_2(XUdpSocket* sock, const XHostAddress* groupAddress,
@@ -210,24 +240,18 @@ bool XUdpSocket_joinMulticastGroup_2(XUdpSocket* sock, const XHostAddress* group
 {
     if (!sock || !groupAddress) return false;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return false;
-    
     /* TODO: 从 XNetworkInterface 获取接口索引 */
     uint32_t ifIndex = 0;
     (void)iface;
     
-    return XNetwork_multicastGroup(sd, true, groupAddress, ifIndex);
+    return xudpsocket_setMulticastGroup(sock, true, groupAddress, ifIndex);
 }
 
 bool XUdpSocket_leaveMulticastGroup(XUdpSocket* sock, const XHostAddress* groupAddress)
 {
     if (!sock || !groupAddress) return false;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return false;
-    
-    return XNetwork_multicastGroup(sd, false, groupAddress, 0);
+    return xudpsocket_setMulticastGroup(sock, false, groupAddress, 0);
 }
 
 bool XUdpSocket_leaveMulticastGroup_2(XUdpSocket* sock, const XHostAddress* groupAddress,
@@ -235,36 +259,35 @@ bool XUdpSocket_leaveMulticastGroup_2(XUdpSocket* sock, const XHostAddress* grou
 {
     if (!sock || !groupAddress) return false;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return false;
-    
     /* TODO: 从 XNetworkInterface 获取接口索引 */
     uint32_t ifIndex = 0;
     (void)iface;
     
-    return XNetwork_multicastGroup(sd, false, groupAddress, ifIndex);
+    return xudpsocket_setMulticastGroup(sock, false, groupAddress, ifIndex);
 }
 
 uint32_t XUdpSocket_multicastInterface(const XUdpSocket* sock)
 {
     if (!sock) return 0;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return 0;
-    
     uint32_t ifIndex = 0;
-    XNetwork_multicastOp(sd, XMC_GetIf, &ifIndex);
-    return ifIndex;
+    uint32_t* interfaceIndexOut = &ifIndex;
+    XVarList* output = XVarList_Create(XVar(uint32_t*, interfaceIndexOut));
+    bool ok;
+    if (!output) return 0;
+    ok = xudpsocket_control((XUdpSocket*)sock, XDeviceNetworkCommand_GetMulticastInterface, NULL, output);
+    XVarList_delete(output);
+    return ok ? ifIndex : 0;
 }
 
 void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
 {
     if (!sock) return;
     
-    intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
-    if (sd < 0) return;
-    
-    XNetwork_multicastOp(sd, XMC_SetIf, &interfaceIndex);
+    XVarList* input = XVarList_Create(XVar(uint32_t, interfaceIndex));
+    if (!input) return;
+    (void)xudpsocket_control(sock, XDeviceNetworkCommand_SetMulticastInterface, input, NULL);
+    XVarList_delete(input);
 }
 #endif // XNETWORK_UDPSOCKET_ON
 #endif /* XNETWORK_ON */

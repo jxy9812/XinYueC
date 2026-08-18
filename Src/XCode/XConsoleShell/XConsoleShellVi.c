@@ -5,7 +5,7 @@
  * 编辑器使用会话状态机复用 Shell 的“下一行输入”路由：`vi <path>` 打开文件
  * 后进入命令模式，后续输入行由 Shell 分流到 XConsoleShellVi_submitLine。
  * 命令模式支持 `:w`、`:q`、`:q!`、`:wq`/`:x` 保存退出，以及 `i`/`a` 插入、
- * `d` 删除、`r` 替换和 `p` 重新显示。文件读写只通过 XFileSystem 公共 API。
+ * `d` 删除、`r` 替换和 `p` 重新显示。文件读写只通过 XDeviceFile 公共 API。
  */
 
 #include "XConsoleShell_Protected.h"
@@ -14,13 +14,22 @@
     XCONSOLE_SHELL_EDITOR_ON
 
 #include "XConsoleShellVi.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XString.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static XFd xvi_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 #if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
 #include "XTui.h"
@@ -87,8 +96,8 @@ static bool xvi_tui_save_buffer(XConsoleShell* shell,
     pathObj = XString_create_utf8(path);
     if (!pathObj)
         return false;
-    fd = XFileSystem_open(pathObj, XFileSystem_WriteOnly | XFileSystem_Create |
-                          XFileSystem_Truncate, &error);
+    fd = xvi_open_file(pathObj, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                          XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) {
         XString_delete_base(pathObj);
         return false;
@@ -97,14 +106,14 @@ static bool xvi_tui_save_buffer(XConsoleShell* shell,
         const char* line = XTuiVim_line(vim, i);
         size_t length = strlen(line ? line : "");
         if (length &&
-            XFileSystem_write(fd, line, (int64_t)length) != (int64_t)length)
+            XDeviceFile_write(fd, line, (int64_t)length) != (int64_t)length)
             ok = false;
-        if (ok && XFileSystem_write(fd, "\n", 1) != 1)
+        if (ok && XDeviceFile_write(fd, "\n", 1) != 1)
             ok = false;
     }
     if (ok)
-        ok = XFileSystem_flush(fd);
-    XFileSystem_close(fd);
+        ok = XDeviceFile_flush(fd);
+    XDeviceFile_close(fd);
     XString_delete_base(pathObj);
     return ok;
 }
@@ -591,7 +600,7 @@ static bool xvi_make_path(const XConsoleShellSession* session, const char* input
         XString_delete_base(raw);
         raw = prefix;
     }
-    if (!XFileSystem_resolvePath(raw, output, XPathStyle_Absolute))
+    if (!XDeviceFile_resolvePath(raw, output, XPathStyle_Absolute))
         XString_assign(output, raw);
     XString_delete_base(raw);
     return XString_size_base(output) < XCONSOLE_SHELL_MAX_PATH;
@@ -628,14 +637,14 @@ static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
     size_t i;
     (void)shell;
     session->editorLineCount = 0;
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    fd = xvi_open_file(path, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) return true; /* 新文件：空缓冲。 */
-    while ((count = XFileSystem_read(fd, buffer, sizeof(buffer))) > 0) {
+    while ((count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {
         for (i = 0; i < (size_t)count; ++i) {
             char c = buffer[i];
             if (c == '\n') {
                 if (session->editorLineCount >= XCONSOLE_SHELL_EDITOR_MAX_LINES) {
-                    XFileSystem_close(fd);
+                    XDeviceFile_close(fd);
                     return false;
                 }
                 pending[pendingLength] = '\0';
@@ -648,7 +657,7 @@ static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
             }
         }
     }
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
     if (count < 0) return false;
     if (session->editorLineCount >= XCONSOLE_SHELL_EDITOR_MAX_LINES)
         return false;
@@ -667,19 +676,19 @@ static bool xvi_save_lines(XConsoleShell* shell, XConsoleShellSession* session,
     size_t i;
     bool ok = true;
     (void)shell;
-    fd = XFileSystem_open(path, XFileSystem_WriteOnly | XFileSystem_Create |
-                          XFileSystem_Truncate, &error);
+    fd = xvi_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                          XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) return false;
     for (i = 0; i < session->editorLineCount && ok; ++i) {
         const char* line = session->editorLines[i];
         size_t length = strlen(line);
         if (length &&
-            XFileSystem_write(fd, line, (int64_t)length) != (int64_t)length)
+            XDeviceFile_write(fd, line, (int64_t)length) != (int64_t)length)
             ok = false;
-        if (ok && XFileSystem_write(fd, "\n", 1) != 1) ok = false;
+        if (ok && XDeviceFile_write(fd, "\n", 1) != 1) ok = false;
     }
-    if (ok) ok = XFileSystem_flush(fd);
-    XFileSystem_close(fd);
+    if (ok) ok = XDeviceFile_flush(fd);
+    XDeviceFile_close(fd);
     return ok;
 }
 

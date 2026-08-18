@@ -1,11 +1,22 @@
-﻿#include "XDeviceFile.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XFileSystem_config.h"
 #include "XFileInfo.h"
 #include "XVariant.h"
+#include "XVarList.h"
 #include "XFileDescriptor.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* 兼容旧 XFd 文件描述符的内部实现，不属于 XDeviceFile 公共 API。 */
+void XDeviceFile_legacyClose(XFd fd);
+int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
+int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
+int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
+bool XDeviceFile_legacyFlush(XFd fd);
+bool XDeviceFile_legacyResize(XFd fd, int64_t size);
+XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t flags, int* error);
+bool XDeviceFile_legacyFstat(XFd fd, XFileStat* stat);
+bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue);
 
 #if XFILE_ON
 
@@ -15,16 +26,16 @@
 /**
  * @brief 文件设备打开上下文。
  * @details 每个 XDevice_open/openClass 调用独立分配一份，持有该次打开对应的
- *          底层 XFileSystem 文件描述符和打开选项，保证共享注册单例可并发打开。
+ *          原有文件系统内部 XFd 和打开选项，保证共享注册
+ *          单例可并发打开。
  *          首成员为 XDeviceContext 基类，文件设备专有数据放在基类之后扩展。
  */
 typedef struct XDeviceFileCtx
 {
     XDeviceContext m_base;  /* 第一个成员，打开上下文基类，子类按需扩展。 */
-    XFd m_fileFd;        /**< XFileSystem 返回的文件描述符；XFD_INVALID 表示无效。 */
+    XFd m_fileFd;        /**< 原有文件系统内部描述符。 */
     int m_openMode;      /**< 打开模式（XIODeviceBaseMode 位组合）。 */
     uint32_t m_flags;    /**< XDeviceOpenFlag 位组合。 */
-    uint64_t m_bufferSize; /**< 请求的读写缓冲字节数；0 表示设备默认。 */
 } XDeviceFileCtx;
 
 /* ============================================================================
@@ -39,6 +50,8 @@ static bool  VXDeviceFile_flush(XDevice* self, XDeviceContext* handle);
 static bool  VXDeviceFile_resize(XDevice* self, XDeviceContext* handle, int64_t size);
 static bool  VXDeviceFile_getProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value);
 static bool  VXDeviceFile_queryProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value);
+static bool  VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t command,
+                                  const XVarList* in, XVarList* out);
 
 /* ============================================================================
  * 类虚函数表
@@ -56,6 +69,7 @@ XVtable* XDeviceFile_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Resize, VXDeviceFile_resize);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_GetProperty, VXDeviceFile_getProperty);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_QueryProperty, VXDeviceFile_queryProperty);
+    XVTABLE_OVERLOAD_DEFAULT(EXDevice_Control, VXDeviceFile_control);
     XCLASS_SET_CLASS_NAME_DEFAULT("file");
     XCLASS_SHOW_SIZE_DEFAULT(XDeviceFile);
     return XVTABLE_DEFAULT;
@@ -87,10 +101,9 @@ XDeviceFile* XDeviceFile_create(void)
  * ============================================================================ */
 static XDeviceContext* VXDeviceFile_open(XDevice* self, const XDeviceOpenOptions* opts, int* err)
 {
-    const XDeviceFileOpenOptions* fopts;
     XDeviceFileCtx* ctx = NULL;
-    XFd fileFd;
     int mode;
+    XFd fileFd;
     int fsErr = 0;
 
     (void)self;
@@ -98,16 +111,15 @@ static XDeviceContext* VXDeviceFile_open(XDevice* self, const XDeviceOpenOptions
         if (err) *err = (int)XDeviceError_InvalidArgument;
         return NULL;
     }
-    fopts = (const XDeviceFileOpenOptions*)opts;
-    if (!fopts->m_path) {
+    if (!opts->m_target) {
         if (err) *err = (int)XDeviceError_InvalidArgument;
         return NULL;
     }
 
-    mode = fopts->m_base.m_openMode;
-    if (mode == 0) mode = (int)XFileSystem_ReadWrite;
+    mode = opts->m_openMode;
+    if (mode == 0) mode = (int)XDeviceFile_ReadWrite;
 
-    fileFd = XFileSystem_open(fopts->m_path, mode, &fsErr);
+    fileFd = XDeviceFile_legacyOpen(opts->m_target, mode, opts->m_flags, &fsErr);
     if (fileFd == XFD_INVALID) {
         if (err) *err = (int)XDeviceError_IoFail;
         return NULL;
@@ -115,14 +127,13 @@ static XDeviceContext* VXDeviceFile_open(XDevice* self, const XDeviceOpenOptions
 
     ctx = (XDeviceFileCtx*)calloc(1, sizeof(XDeviceFileCtx));
     if (ISNULL(ctx, "")) {
-        XFileSystem_close(fileFd);
+        XDeviceFile_legacyClose(fileFd);
         if (err) *err = (int)XDeviceError_OutOfMemory;
         return NULL;
     }
     ctx->m_fileFd = fileFd;
     ctx->m_openMode = mode;
-    ctx->m_flags = fopts->m_base.m_flags;
-    ctx->m_bufferSize = fopts->m_bufferSize;
+    ctx->m_flags = opts->m_flags;
     ctx->m_base.m_device = self;
     ctx->m_base.m_state = (uint16_t)XDeviceState_Active;
     ctx->m_base.m_ioMode = (uint16_t)XDeviceIoMode_Sync;
@@ -138,7 +149,7 @@ static void VXDeviceFile_close(XDevice* self, XDeviceContext* handle)
     (void)self;
     if (ctx) {
         if (ctx->m_fileFd != XFD_INVALID)
-            XFileSystem_close(ctx->m_fileFd);
+            XDeviceFile_legacyClose(ctx->m_fileFd);
         free(ctx);
     }
 }
@@ -149,7 +160,7 @@ static int64_t VXDeviceFile_read(XDevice* self, XDeviceContext* handle, void* bu
     (void)self;
     if (!ctx || ctx->m_fileFd == XFD_INVALID || !buffer && size > 0)
         return -1;
-    return XFileSystem_read(ctx->m_fileFd, buffer, size);
+    return XDeviceFile_legacyRead(ctx->m_fileFd, buffer, size);
 }
 
 static int64_t VXDeviceFile_write(XDevice* self, XDeviceContext* handle, const void* data, int64_t size)
@@ -158,7 +169,7 @@ static int64_t VXDeviceFile_write(XDevice* self, XDeviceContext* handle, const v
     (void)self;
     if (!ctx || ctx->m_fileFd == XFD_INVALID || (!data && size > 0))
         return -1;
-    return XFileSystem_write(ctx->m_fileFd, data, size);
+    return XDeviceFile_legacyWrite(ctx->m_fileFd, data, size);
 }
 
 static int64_t VXDeviceFile_seek(XDevice* self, XDeviceContext* handle, int64_t offset, int whence)
@@ -174,7 +185,7 @@ static int64_t VXDeviceFile_seek(XDevice* self, XDeviceContext* handle, int64_t 
     case XDeviceSeekWhence_End:     fsWhence = XSeekEnd; break;
     default: return -1;
     }
-    return XFileSystem_seek(ctx->m_fileFd, offset, fsWhence);
+    return XDeviceFile_legacySeek(ctx->m_fileFd, offset, fsWhence);
 }
 
 static bool VXDeviceFile_flush(XDevice* self, XDeviceContext* handle)
@@ -183,7 +194,7 @@ static bool VXDeviceFile_flush(XDevice* self, XDeviceContext* handle)
     (void)self;
     if (!ctx || ctx->m_fileFd == XFD_INVALID)
         return false;
-    return XFileSystem_flush(ctx->m_fileFd);
+    return XDeviceFile_legacyFlush(ctx->m_fileFd);
 }
 
 static bool VXDeviceFile_resize(XDevice* self, XDeviceContext* handle, int64_t size)
@@ -192,7 +203,75 @@ static bool VXDeviceFile_resize(XDevice* self, XDeviceContext* handle, int64_t s
     (void)self;
     if (!ctx || ctx->m_fileFd == XFD_INVALID || size < 0)
         return false;
-    return XFileSystem_resize(ctx->m_fileFd, size);
+    return XDeviceFile_legacyResize(ctx->m_fileFd, size);
+}
+
+static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t command,
+                                 const XVarList* in, XVarList* out)
+{
+    XDeviceFileCtx* ctx = (XDeviceFileCtx*)handle;
+    XVarList* arguments = (XVarList*)in;
+    XFileTime timeType;
+    int64_t timeValue;
+    int64_t offset;
+    int64_t size;
+    int flags;
+    void* address;
+    XFileStat stat;
+    bool ok;
+    (void)self;
+    if (!ctx) {
+        return false;
+    }
+
+    switch ((XDeviceFileCommand)command) {
+    case XDeviceFileCommand_GetFileStat:
+        if (arguments || !out || out->m_size != sizeof(XFileStat))
+            return false;
+        ok = ctx->m_fileFd != XFD_INVALID && XDeviceFile_legacyFstat(ctx->m_fileFd, &stat);
+        if (ok) {
+            memcpy(out->data, &stat, sizeof(stat));
+            XVarList_start(out);
+        }
+        break;
+    case XDeviceFileCommand_Map:
+        if (!arguments || arguments->m_size != sizeof(int64_t) + sizeof(int64_t) + sizeof(int) ||
+            !out || out->m_size != sizeof(void*))
+            return false;
+        XVarList_start(arguments);
+        offset = XVarList_arg(arguments, int64_t);
+        size = XVarList_arg(arguments, int64_t);
+        flags = XVarList_arg(arguments, int);
+        address = ctx->m_fileFd == XFD_INVALID ? NULL :
+                  XDeviceFile_map(ctx->m_fileFd, offset, size, flags);
+        ok = address != NULL;
+        if (ok) {
+            memcpy(out->data, &address, sizeof(address));
+            XVarList_start(out);
+        }
+        break;
+    case XDeviceFileCommand_Unmap:
+        if (!arguments || arguments->m_size != sizeof(void*) + sizeof(int64_t))
+            return false;
+        XVarList_start(arguments);
+        address = XVarList_arg(arguments, void*);
+        size = XVarList_arg(arguments, int64_t);
+        ok = XDeviceFile_unmap(address, size);
+        break;
+    case XDeviceFileCommand_SetFileTime:
+        if (!arguments || arguments->m_size != sizeof(XFileTime) + sizeof(int64_t))
+            return false;
+        XVarList_start(arguments);
+        timeType = XVarList_arg(arguments, XFileTime);
+        timeValue = XVarList_arg(arguments, int64_t);
+        ok = ctx->m_fileFd != XFD_INVALID &&
+             XDeviceFile_legacySetFileTime(ctx->m_fileFd, timeType, timeValue);
+        break;
+    default:
+        return false;
+    }
+    ctx->m_base.m_lastError = (int16_t)(ok ? XDeviceError_None : XDeviceError_IoFail);
+    return ok;
 }
 
 static bool VXDeviceFile_getProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value)
@@ -208,7 +287,7 @@ static bool VXDeviceFile_getProperty(XDevice* self, XDeviceContext* handle, uint
     case XDeviceProperty_Size:
     {
         XFileStat st;
-        if (ctx->m_fileFd == XFD_INVALID || !XFileSystem_fstat(ctx->m_fileFd, &st))
+        if (ctx->m_fileFd == XFD_INVALID || !XDeviceFile_legacyFstat(ctx->m_fileFd, &st))
             return false;
         XVariant_setValue_int64(value, st.size);
         return true;
@@ -252,7 +331,7 @@ static bool VXDeviceFile_queryProperty(XDevice* self, XDeviceContext* handle, ui
     case XDeviceProperty_Size:
     {
         XFileStat st;
-        if (ctx->m_fileFd == XFD_INVALID || !XFileSystem_fstat(ctx->m_fileFd, &st))
+        if (ctx->m_fileFd == XFD_INVALID || !XDeviceFile_legacyFstat(ctx->m_fileFd, &st))
             return false;
         XVariant_setValue_int64(value, st.size);
         return true;

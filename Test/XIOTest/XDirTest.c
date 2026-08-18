@@ -7,7 +7,7 @@
 #include"XString.h"
 #include"XStringList.h"
 #include"XFileInfo.h"
-#include"XFileSystem.h"
+#include"XDeviceFile.h"
 #include"XStorageInfo.h"
 #include"XPrintf.h"
 
@@ -232,7 +232,7 @@ void XDirTest_fatfs(void)
     XPrintf_3("========== 1. 枚举驱动器 ==========\n");
     XStringList* drives = XStringList_create();
     if (!drives) return;
-    if (!XFileSystem_enumerateDrives(xdirtest_fatfs_drive_callback, drives) ||
+    if (!XDeviceFile_enumerateDrives(xdirtest_fatfs_drive_callback, drives) ||
         XStringList_size_base(drives) == 0) {
         XPrintf_3("没有可用的驱动器，测试终止。\n");
         XStringList_delete_base(drives);
@@ -248,7 +248,7 @@ void XDirTest_fatfs(void)
         infos[i] = (XStorageInfoData*)XMalloc_System(sizeof(XStorageInfoData));
         memset(infos[i], 0, sizeof(XStorageInfoData));
         infos[i]->fileSystemType = XString_create();
-        XFileSystem_getStorageInfo(drivePath, infos[i]);
+        XDeviceFile_getStorageInfo(drivePath, infos[i]);
 
         XPrintf("  [%d] ", i);
         XPrintf_2(drivePath);

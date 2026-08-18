@@ -3,7 +3,7 @@
  * @brief XConsoleShell 全量核心回归测试。
  * @details
  * 模拟传输只使用固定数组，write 每次故意短写以验证 Shell 的背压循环。
- * 文件测试通过 XFileSystem 公共 API 创建和清理测试文件，不使用平台文件接口。
+ * 文件测试通过 XDeviceFile 公共 API 创建和清理测试文件，不使用平台文件接口。
  */
 
 #include "XConsoleShellTest.h"
@@ -12,7 +12,7 @@
 #if XCONSOLE_SHELL_ON
 
 #include "XConsoleShell.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XPrintf.h"
@@ -30,7 +30,7 @@
 #include "XSystem.h"
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #endif
 #if XCONSOLE_SHELL_MEMORY_ON && XCONSOLE_SHELL_MEMORY_POOL_ON
 #include "XMultiPool.h"
@@ -48,6 +48,15 @@
 #include "XConsoleShell_XTcpServer.h"
 #endif
 #include <string.h>
+
+static XFd xcs_test_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 typedef struct XConsoleShellTestTransport {
     char output[4096];
@@ -1448,13 +1457,13 @@ static bool XConsoleShellTest_runFileCommands(
 #endif
 
     if (!temp || !root ||
-        !XFileSystem_getSpecialPath(XSpecialPath_Temp, temp) ||
+        !XDeviceFile_getSpecialPath(XSpecialPath_Temp, temp) ||
         !XString_assign_fmt_utf8(root, "%s/xconsole-shell-linux-%lld",
                                  XString_toUtf8(temp),
                                  (long long)XDateTime_currentMSecsSinceEpoch())) {
         goto cleanup;
     }
-    if (XFileSystem_exists(root) || !XFileSystem_mkdir(root, false)) goto cleanup;
+    if (XDeviceFile_exists(root) || !XDeviceFile_mkdir(root, false)) goto cleanup;
     rootCreated = true;
 
     source = XString_create_fmt_utf8("%s/source.txt", XString_toUtf8(root));
@@ -1485,14 +1494,14 @@ static bool XConsoleShellTest_runFileCommands(
     if (!XConsoleShellTest_runLine(shell, transport, "fs pwd", XConsoleResult_Ok,
                                    XString_toUtf8(root))) goto cleanup;
 #if XCONSOLE_SHELL_FS_LS_ON
-    longFd = XFileSystem_open(longPath, XFileSystem_WriteOnly | XFileSystem_Create |
-                              XFileSystem_Truncate, &longError);
+    longFd = xcs_test_open_file(longPath, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                              XDeviceFile_Truncate, &longError);
     if (longFd == XFD_INVALID) goto cleanup;
-    if (XFileSystem_write(longFd, "x", 1) != 1) {
-        XFileSystem_close(longFd);
+    if (XDeviceFile_write(longFd, "x", 1) != 1) {
+        XDeviceFile_close(longFd);
         goto cleanup;
     }
-    XFileSystem_close(longFd);
+    XDeviceFile_close(longFd);
     {
         XString* command = XString_create_fmt_utf8("ls %s", XString_toUtf8(longName));
         if (!command || !XConsoleShellTest_runLine(shell, transport,
@@ -1514,11 +1523,11 @@ static bool XConsoleShellTest_runFileCommands(
 #endif
     if (!XConsoleShellTest_runLine(shell, transport, "fs mkdir nested/deep --parents",
                                    XConsoleResult_Ok, NULL) ||
-        !XFileSystem_stat(nested, &stat) || !stat.isDir) goto cleanup;
+        !XDeviceFile_stat(nested, &stat) || !stat.isDir) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport,
                                    "fs write source.txt alpha beta gamma",
                                    XConsoleResult_Ok, NULL)) goto cleanup;
-    if (!XFileSystem_stat(source, &stat) || !stat.isFile || stat.size != 16) goto cleanup;
+    if (!XDeviceFile_stat(source, &stat) || !stat.isFile || stat.size != 16) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs cat source.txt",
                                    XConsoleResult_Ok, "alpha beta gamma")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport,
@@ -1530,35 +1539,35 @@ static bool XConsoleShellTest_runFileCommands(
                                    XConsoleResult_Ok, "source.txt")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs cp source.txt copy.txt",
                                    XConsoleResult_Ok, NULL) ||
-        !XFileSystem_stat(copy, &stat) || !stat.isFile) goto cleanup;
+        !XDeviceFile_stat(copy, &stat) || !stat.isFile) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs mv copy.txt moved.txt",
                                    XConsoleResult_Ok, NULL) ||
-        XFileSystem_exists(copy) || !XFileSystem_exists(moved)) goto cleanup;
+        XDeviceFile_exists(copy) || !XDeviceFile_exists(moved)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs link source.txt link.txt",
                                    XConsoleResult_Ok, NULL) ||
-        !XFileSystem_exists(link)) goto cleanup;
+        !XDeviceFile_exists(link)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs cat link.txt",
                                    XConsoleResult_Ok, "alpha beta gamma")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs rm link.txt",
-                                   XConsoleResult_Ok, NULL) || XFileSystem_exists(link)) goto cleanup;
+                                   XConsoleResult_Ok, NULL) || XDeviceFile_exists(link)) goto cleanup;
 #if XCONSOLE_SHELL_FS_LN_ON && XCONSOLE_SHELL_FS_UNLINK_ON
     if (!XConsoleShellTest_runLine(shell, transport, "ln -s source.txt link.txt",
                                    XConsoleResult_Ok, NULL) ||
         !XConsoleShellTest_runLine(shell, transport, "unlink link.txt",
-                                   XConsoleResult_Ok, NULL) || XFileSystem_exists(link)) goto cleanup;
+                                   XConsoleResult_Ok, NULL) || XDeviceFile_exists(link)) goto cleanup;
 #endif
     if (!XConsoleShellTest_runLine(shell, transport, "fs ls .",
                                    XConsoleResult_Ok, "source.txt")) goto cleanup;
     if (strstr(transport->output, "link.txt")) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "rm -rf nested",
-                                   XConsoleResult_Ok, NULL) || XFileSystem_exists(nested)) goto cleanup;
+                                   XConsoleResult_Ok, NULL) || XDeviceFile_exists(nested)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs mkdir nested/deep -p",
                                    XConsoleResult_Ok, NULL) ||
         !XConsoleShellTest_runLine(shell, transport, "rm -rf nested",
-                                   XConsoleResult_Ok, NULL) || XFileSystem_exists(nested)) goto cleanup;
+                                   XConsoleResult_Ok, NULL) || XDeviceFile_exists(nested)) goto cleanup;
     if (!XConsoleShellTest_runLine(shell, transport, "fs ls .",
                                    XConsoleResult_Ok, "source.txt")) goto cleanup;
-    if (!XFileSystem_stat(source, &stat)) {
+    if (!XDeviceFile_stat(source, &stat)) {
         XPrintf("[FAIL] 删除前源文件不存在: %s\n", XString_toUtf8(source));
         goto cleanup;
     }
@@ -1578,7 +1587,7 @@ static bool XConsoleShellTest_runFileCommands(
                                    XConsoleResult_Ok, NULL) ||
         !XConsoleShellTest_runLine(shell, transport, "fs rm moved.txt",
                                    XConsoleResult_Ok, NULL) ||
-        XFileSystem_exists(source) || XFileSystem_exists(moved)) goto cleanup;
+        XDeviceFile_exists(source) || XDeviceFile_exists(moved)) goto cleanup;
 #if XCONSOLE_SHELL_FS_FORMAT_ON
     if (!XConsoleShellTest_runLine(shell, transport, "fs format .",
                                    XConsoleResult_Failed, NULL)) goto cleanup;
@@ -1586,7 +1595,7 @@ static bool XConsoleShellTest_runFileCommands(
     ok = true;
 
 cleanup:
-    if (rootCreated && root) XFileSystem_rmdir(root, true);
+    if (rootCreated && root) XDeviceFile_rmdir(root, true);
     if (source) XString_delete_base(source);
     if (copy) XString_delete_base(copy);
     if (moved) XString_delete_base(moved);
@@ -1624,12 +1633,12 @@ static bool XConsoleShellTest_runEditorCommands(
     bool rootCreated = false;
 
     if (!temp || !root ||
-        !XFileSystem_getSpecialPath(XSpecialPath_Temp, temp) ||
+        !XDeviceFile_getSpecialPath(XSpecialPath_Temp, temp) ||
         !XString_assign_fmt_utf8(root, "%s/xconsole-shell-vi-%lld",
                                  XString_toUtf8(temp),
                                  (long long)XDateTime_currentMSecsSinceEpoch()))
         goto cleanup;
-    if (XFileSystem_exists(root) || !XFileSystem_mkdir(root, false)) goto cleanup;
+    if (XDeviceFile_exists(root) || !XDeviceFile_mkdir(root, false)) goto cleanup;
     rootCreated = true;
     file = XString_create_fmt_utf8("%s/edit.txt", XString_toUtf8(root));
     if (!file) goto cleanup;
@@ -1697,10 +1706,10 @@ static bool XConsoleShellTest_runEditorCommands(
         goto cleanup;
     XCS_TEST_CHECK(transport->inputEchoEnabled,
                    "vim 退出后恢复输入回显");
-    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(file, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "hello") == NULL || strstr(content, "abcd") != NULL)
@@ -1747,17 +1756,17 @@ static bool XConsoleShellTest_runEditorCommands(
         !XConsoleShellTest_feedEditor(shell, transport, ":wq\n", 4,
                                       XConsoleResult_Ok, NULL))
         goto cleanup;
-    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(file, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "helloA") == NULL) goto cleanup;
-    fd = XFileSystem_open(other, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(other, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "B") == NULL) goto cleanup;
@@ -1787,10 +1796,10 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_feedEditor(shell, transport, ":q!\n", 4,
                                       XConsoleResult_Ok, NULL))
         goto cleanup;
-    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(file, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "discarded") != NULL)
@@ -1819,10 +1828,10 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, ":wq",
                                    XConsoleResult_Ok, "已保存"))
         goto cleanup;
-    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(file, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "first line") == NULL ||
@@ -1861,10 +1870,10 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, ":q!",
                                    XConsoleResult_Ok, NULL))
         goto cleanup;
-    fd = XFileSystem_open(file, XFileSystem_ReadOnly, &error);
+    fd = xcs_test_open_file(file, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) goto cleanup;
-    size = XFileSystem_read(fd, content, (int64_t)sizeof(content) - 1);
-    XFileSystem_close(fd);
+    size = XDeviceFile_read(fd, content, (int64_t)sizeof(content) - 1);
+    XDeviceFile_close(fd);
     if (size <= 0) goto cleanup;
     content[size] = '\0';
     if (strstr(content, "discarded") != NULL)
@@ -1874,7 +1883,7 @@ static bool XConsoleShellTest_runEditorCommands(
     ok = true;
 
 cleanup:
-    if (rootCreated && root) XFileSystem_rmdir(root, true);
+    if (rootCreated && root) XDeviceFile_rmdir(root, true);
     if (file) XString_delete_base(file);
     if (other) XString_delete_base(other);
     if (command) XString_delete_base(command);
@@ -1917,7 +1926,7 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
 
     crlfPath = XString_create_utf8("xconsole_shell_crlf_users_test.json");
     XCS_TEST_CHECK(crlfPath != NULL, "crlf login path");
-    XFileSystem_removePermanent(crlfPath);
+    XDeviceFile_removePermanent(crlfPath);
     crlfShell = XConsoleShell_create(&crlfIo);
     XCS_TEST_CHECK(crlfShell != NULL, "crlf shell create");
     XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
@@ -1951,7 +1960,7 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
                    "password prompts separated by newline");
     ok = true;
 
-    XFileSystem_removePermanent(crlfPath);
+    XDeviceFile_removePermanent(crlfPath);
     if (crlfShell) XConsoleShell_delete_base(crlfShell);
     XString_delete_base(crlfPath);
     return ok;
@@ -2012,12 +2021,12 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         int error = 0;
         bool ok = false;
         if (!testPath) return false;
-        XFileSystem_removePermanent(testPath);
-        wfd = XFileSystem_open(testPath, XFileSystem_WriteOnly |
-                               XFileSystem_Truncate, &error);
+        XDeviceFile_removePermanent(testPath);
+        wfd = xcs_test_open_file(testPath, XDeviceFile_WriteOnly |
+                               XDeviceFile_Truncate, &error);
         if (wfd != XFD_INVALID) {
-            ok = XFileSystem_write(wfd, "COMPLETE_OK", 11) == 11;
-            XFileSystem_close(wfd);
+            ok = XDeviceFile_write(wfd, "COMPLETE_OK", 11) == 11;
+            XDeviceFile_close(wfd);
         }
         XString_delete_base(testPath);
         if (!ok) return false;
@@ -2036,7 +2045,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
     {
         XString* cleanupPath = XString_create_utf8("/tmp/xcs_complete_test_file.txt");
         if (cleanupPath) {
-            XFileSystem_removePermanent(cleanupPath);
+            XDeviceFile_removePermanent(cleanupPath);
             XString_delete_base(cleanupPath);
         }
     }
@@ -2051,17 +2060,17 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         bool ok = true;
         if (!dirA || !dirB || !fileN) { ok = false; }
         else {
-            XFileSystem_mkdir(dirA, false);
-            XFileSystem_mkdir(dirB, false);
+            XDeviceFile_mkdir(dirA, false);
+            XDeviceFile_mkdir(dirB, false);
             {
                 XFd wfd;
                 int e = 0;
-                XFileSystem_removePermanent(fileN);
-                wfd = XFileSystem_open(fileN, XFileSystem_WriteOnly |
-                                       XFileSystem_Truncate, &e);
+                XDeviceFile_removePermanent(fileN);
+                wfd = xcs_test_open_file(fileN, XDeviceFile_WriteOnly |
+                                       XDeviceFile_Truncate, &e);
                 if (wfd != XFD_INVALID) {
-                    ok = XFileSystem_write(wfd, "N", 1) == 1;
-                    XFileSystem_close(wfd);
+                    ok = XDeviceFile_write(wfd, "N", 1) == 1;
+                    XDeviceFile_close(wfd);
                 }
             }
         }
@@ -2106,9 +2115,9 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
                 XConsoleShell_feedData(shell, "\x03", 1) != XConsoleResult_Cancelled)
                 ok = false;
         }
-        if (dirA) XFileSystem_rmdir(dirA, false);
-        if (dirB) XFileSystem_rmdir(dirB, false);
-        if (fileN) XFileSystem_removePermanent(fileN);
+        if (dirA) XDeviceFile_rmdir(dirA, false);
+        if (dirB) XDeviceFile_rmdir(dirB, false);
+        if (fileN) XDeviceFile_removePermanent(fileN);
         XString_delete_base(dirA);
         XString_delete_base(dirB);
         XString_delete_base(fileN);
@@ -2122,12 +2131,12 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         int error = 0;
         bool ok = false;
         if (!spaced) return false;
-        XFileSystem_removePermanent(spaced);
-        wfd = XFileSystem_open(spaced, XFileSystem_WriteOnly |
-                               XFileSystem_Truncate, &error);
+        XDeviceFile_removePermanent(spaced);
+        wfd = xcs_test_open_file(spaced, XDeviceFile_WriteOnly |
+                               XDeviceFile_Truncate, &error);
         if (wfd != XFD_INVALID) {
-            ok = XFileSystem_write(wfd, "SPACE_OK", 8) == 8;
-            XFileSystem_close(wfd);
+            ok = XDeviceFile_write(wfd, "SPACE_OK", 8) == 8;
+            XDeviceFile_close(wfd);
         }
         if (!ok) {
             XString_delete_base(spaced);
@@ -2136,24 +2145,24 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "cat /tmp/xcs\\ compl\t\n", 21) != XConsoleResult_Ok) {
-            XFileSystem_removePermanent(spaced);
+            XDeviceFile_removePermanent(spaced);
             XString_delete_base(spaced);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
-            XFileSystem_removePermanent(spaced);
+            XDeviceFile_removePermanent(spaced);
             XString_delete_base(spaced);
             return false;
         }
 #endif
         if (!strstr(transport->output, "SPACE_OK")) {
             XPrintf("escaped-space path output missing: [%s]\n", transport->output);
-            XFileSystem_removePermanent(spaced);
+            XDeviceFile_removePermanent(spaced);
             XString_delete_base(spaced);
             return false;
         }
-        XFileSystem_removePermanent(spaced);
+        XDeviceFile_removePermanent(spaced);
         XString_delete_base(spaced);
     }
     /* 6. fs cd 子命令参数目录补全 */
@@ -2162,7 +2171,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         bool ok = true;
         XConsoleResult r6;
         if (!subDir) return false;
-        XFileSystem_mkdir(subDir, false);
+        XDeviceFile_mkdir(subDir, false);
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         r6 = XConsoleShell_feedData(shell, "fs cd /tmp/xcs_complete_dir_a\t", 30);
@@ -2183,7 +2192,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
                     ok = false;
             }
         }
-        XFileSystem_rmdir(subDir, false);
+        XDeviceFile_rmdir(subDir, false);
         XString_delete_base(subDir);
         if (!ok) return false;
     }
@@ -2242,12 +2251,12 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         int error = 0;
         bool ok = false;
         if (!script) return false;
-        XFileSystem_removePermanent(script);
-        wfd = XFileSystem_open(script, XFileSystem_WriteOnly |
-                               XFileSystem_Truncate, &error);
+        XDeviceFile_removePermanent(script);
+        wfd = xcs_test_open_file(script, XDeviceFile_WriteOnly |
+                               XDeviceFile_Truncate, &error);
         if (wfd != XFD_INVALID) {
-            ok = XFileSystem_write(wfd, "#! /bin/sh\n", 11) == 11;
-            XFileSystem_close(wfd);
+            ok = XDeviceFile_write(wfd, "#! /bin/sh\n", 11) == 11;
+            XDeviceFile_close(wfd);
         }
         if (!ok) {
             XString_delete_base(script);
@@ -2256,13 +2265,13 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "cd /tmp\n", 8) != XConsoleResult_Ok) {
-            XFileSystem_removePermanent(script);
+            XDeviceFile_removePermanent(script);
             XString_delete_base(script);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
-            XFileSystem_removePermanent(script);
+            XDeviceFile_removePermanent(script);
             XString_delete_base(script);
             return false;
         }
@@ -2270,24 +2279,24 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "./xcs_complete_sc\t", 18) != XConsoleResult_Ok) {
-            XFileSystem_removePermanent(script);
+            XDeviceFile_removePermanent(script);
             XString_delete_base(script);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
-            XFileSystem_removePermanent(script);
+            XDeviceFile_removePermanent(script);
             XString_delete_base(script);
             return false;
         }
 #endif
         if (!strstr(transport->output, "./xcs_complete_script.sh")) {
             XPrintf("./ command path completion missing: [%s]\n", transport->output);
-            XFileSystem_removePermanent(script);
+            XDeviceFile_removePermanent(script);
             XString_delete_base(script);
             return false;
         }
-        XFileSystem_removePermanent(script);
+        XDeviceFile_removePermanent(script);
         XString_delete_base(script);
         /* 清空上一轮补全留下的活动行，避免影响引号补全用例。 */
         memset(transport->output, 0, sizeof(transport->output));
@@ -2309,12 +2318,12 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         int error = 0;
         bool ok = false;
         if (!q) return false;
-        XFileSystem_removePermanent(q);
-        wfd = XFileSystem_open(q, XFileSystem_WriteOnly |
-                               XFileSystem_Truncate, &error);
+        XDeviceFile_removePermanent(q);
+        wfd = xcs_test_open_file(q, XDeviceFile_WriteOnly |
+                               XDeviceFile_Truncate, &error);
         if (wfd != XFD_INVALID) {
-            ok = XFileSystem_write(wfd, "QUOTE_OK", 8) == 8;
-            XFileSystem_close(wfd);
+            ok = XDeviceFile_write(wfd, "QUOTE_OK", 8) == 8;
+            XDeviceFile_close(wfd);
         }
         if (!ok) {
             XString_delete_base(q);
@@ -2325,25 +2334,25 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         {
             XConsoleResult rq = XConsoleShell_feedData(shell, "cat \"/tmp/xcs compl\t\n", 21);
             if (rq != XConsoleResult_Ok) {
-                XFileSystem_removePermanent(q);
+                XDeviceFile_removePermanent(q);
                 XString_delete_base(q);
                 return false;
             }
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
-            XFileSystem_removePermanent(q);
+            XDeviceFile_removePermanent(q);
             XString_delete_base(q);
             return false;
         }
 #endif
         if (!strstr(transport->output, "QUOTE_OK")) {
             XPrintf("quoted path completion missing: [%s]\n", transport->output);
-            XFileSystem_removePermanent(q);
+            XDeviceFile_removePermanent(q);
             XString_delete_base(q);
             return false;
         }
-        XFileSystem_removePermanent(q);
+        XDeviceFile_removePermanent(q);
         XString_delete_base(q);
     }
 #endif
@@ -2387,7 +2396,7 @@ bool XConsoleShellTest_runAll(void)
     {
         XString* loginPath = XString_create_utf8("xconsole_shell_users_test.json");
         XCS_TEST_CHECK(loginPath != NULL, "login test path");
-        XFileSystem_removePermanent(loginPath);
+        XDeviceFile_removePermanent(loginPath);
         XCS_TEST_CHECK(XConsoleShellLogin_setDatabasePath(
                            shell, "xconsole_shell_users_test.json"),
                        "set login database path");
@@ -2423,11 +2432,11 @@ bool XConsoleShellTest_runAll(void)
             char loginJson[XCONSOLE_SHELL_LOGIN_CONFIG_MAX_BYTES + 1u];
             int loginError = 0;
             int64_t loginSize;
-            loginFd = XFileSystem_open(loginPath, XFileSystem_ReadOnly, &loginError);
+            loginFd = xcs_test_open_file(loginPath, XDeviceFile_ReadOnly, &loginError);
             XCS_TEST_CHECK(loginFd != XFD_INVALID, "login database persisted");
-            loginSize = XFileSystem_read(loginFd, loginJson,
+            loginSize = XDeviceFile_read(loginFd, loginJson,
                                          (int64_t)sizeof(loginJson) - 1);
-            XFileSystem_close(loginFd);
+            XDeviceFile_close(loginFd);
             XCS_TEST_CHECK(loginSize > 0 && loginSize < (int64_t)sizeof(loginJson),
                            "login database readable");
             loginJson[loginSize] = '\0';
@@ -2663,7 +2672,7 @@ bool XConsoleShellTest_runAll(void)
                                                  "权限不足"),
                        "logout requires login again");
 #endif
-        XFileSystem_removePermanent(loginPath);
+        XDeviceFile_removePermanent(loginPath);
         XString_delete_base(loginPath);
         XConsoleShell_setAuthenticated(shell, true);
         XConsoleShell_session(shell)->permissionMask = UINT32_MAX;
@@ -3831,29 +3840,29 @@ bool XConsoleShellTest_runAll(void)
 #endif
     filePath = XString_create_utf8("xconsole_shell_test.txt");
     XCS_TEST_CHECK(filePath != NULL, "file path");
-    XFileSystem_removePermanent(filePath);
-    fd = XFileSystem_open(filePath, XFileSystem_WriteOnly | XFileSystem_Create |
-                          XFileSystem_Truncate, &error);
+    XDeviceFile_removePermanent(filePath);
+    fd = xcs_test_open_file(filePath, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                          XDeviceFile_Truncate, &error);
     XCS_TEST_CHECK(fd != XFD_INVALID, "create shell file");
-    XCS_TEST_CHECK(XFileSystem_write(fd, fileText, sizeof(fileText) - 1) ==
+    XCS_TEST_CHECK(XDeviceFile_write(fd, fileText, sizeof(fileText) - 1) ==
                        (int64_t)(sizeof(fileText) - 1), "write shell file");
-    XFileSystem_close(fd);
+    XDeviceFile_close(fd);
 #if XCONSOLE_SHELL_SCRIPT_ON
     {
         XString* scriptPath = XString_create_utf8("xconsole_shell_script.txt");
         const char scriptText[] = "echo scripted\n";
         XCS_TEST_CHECK(scriptPath != NULL, "script path");
-        fd = XFileSystem_open(scriptPath, XFileSystem_WriteOnly | XFileSystem_Create |
-                              XFileSystem_Truncate, &error);
+        fd = xcs_test_open_file(scriptPath, XDeviceFile_WriteOnly | XDeviceFile_Create |
+                              XDeviceFile_Truncate, &error);
         XCS_TEST_CHECK(fd != XFD_INVALID, "create script file");
-        XCS_TEST_CHECK(XFileSystem_write(fd, scriptText, sizeof(scriptText) - 1) ==
+        XCS_TEST_CHECK(XDeviceFile_write(fd, scriptText, sizeof(scriptText) - 1) ==
                            (int64_t)(sizeof(scriptText) - 1), "write script file");
-        XFileSystem_close(fd);
+        XDeviceFile_close(fd);
         XCS_TEST_CHECK(XConsoleShell_processLine(shell, "source xconsole_shell_script.txt",
                                                  strlen("source xconsole_shell_script.txt")) ==
                            XConsoleResult_Ok && strstr(transport.output, "scripted"),
                        "source command");
-        XFileSystem_removePermanent(scriptPath);
+        XDeviceFile_removePermanent(scriptPath);
         XString_delete_base(scriptPath);
     }
 #endif
@@ -3885,7 +3894,7 @@ bool XConsoleShellTest_runAll(void)
                    "chmod octal");
     {
         XFileStat st;
-        if (XFileSystem_stat(filePath, &st)) {
+        if (XDeviceFile_stat(filePath, &st)) {
             XCS_TEST_CHECK((st.permissions & XFile_ReadOwner) != 0 &&
                                (st.permissions & XFile_WriteOwner) != 0 &&
                                (st.permissions &
@@ -3900,7 +3909,7 @@ bool XConsoleShellTest_runAll(void)
                    "chmod symbolic add");
     {
         XFileStat st;
-        if (XFileSystem_stat(filePath, &st)) {
+        if (XDeviceFile_stat(filePath, &st)) {
             XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0,
                            "chmod symbolic owner execute");
         }
@@ -3911,7 +3920,7 @@ bool XConsoleShellTest_runAll(void)
                    "chmod symbolic clear write");
     {
         XFileStat st;
-        if (XFileSystem_stat(filePath, &st)) {
+        if (XDeviceFile_stat(filePath, &st)) {
             XCS_TEST_CHECK((st.permissions &
                             (XFile_WriteOwner | XFile_WriteGroup |
                              XFile_WriteOther)) == 0,
@@ -3930,7 +3939,7 @@ bool XConsoleShellTest_runAll(void)
                    "chmod symbolic X on plain file");
     {
         XFileStat st;
-        if (XFileSystem_stat(filePath, &st)) {
+        if (XDeviceFile_stat(filePath, &st)) {
             XCS_TEST_CHECK((st.permissions &
                             (XFile_ExeOwner | XFile_ExeGroup |
                              XFile_ExeOther)) == 0,
@@ -3949,7 +3958,7 @@ bool XConsoleShellTest_runAll(void)
                    "chmod symbolic X propagates exec");
     {
         XFileStat st;
-        if (XFileSystem_stat(filePath, &st)) {
+        if (XDeviceFile_stat(filePath, &st)) {
             XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0 &&
                                (st.permissions & XFile_ExeGroup) != 0 &&
                                (st.permissions & XFile_ExeOther) != 0,
@@ -3967,13 +3976,13 @@ bool XConsoleShellTest_runAll(void)
     {
         XString* dir = XString_create_utf8("xconsole_shell_test_dir");
         XFileStat st;
-        if (dir && XFileSystem_stat(dir, &st)) {
+        if (dir && XDeviceFile_stat(dir, &st)) {
             XCS_TEST_CHECK((st.permissions & XFile_ExeOwner) != 0 &&
                                (st.permissions & XFile_ExeGroup) != 0 &&
                                (st.permissions & XFile_ExeOther) != 0,
                            "chmod symbolic X exec on directory");
         }
-        if (dir) XFileSystem_removePermanent(dir);
+        if (dir) XDeviceFile_removePermanent(dir);
         XString_delete_base(dir);
     }
     XCS_TEST_CHECK(XConsoleShellTest_runLine(
@@ -4114,7 +4123,7 @@ bool XConsoleShellTest_runAll(void)
         char redirectText[32] = {0};
         int redirectError = 0;
         XCS_TEST_CHECK(redirectPath != NULL, "redirect path");
-        XFileSystem_removePermanent(redirectPath);
+        XDeviceFile_removePermanent(redirectPath);
         {
             XConsoleResult redirectResult = XConsoleShell_processLine(
                 shell,
@@ -4123,14 +4132,14 @@ bool XConsoleShellTest_runAll(void)
             XCS_TEST_CHECK(redirectResult == XConsoleResult_Ok,
                            "redirect command");
         }
-        redirectFd = XFileSystem_open(redirectPath, XFileSystem_ReadOnly, &redirectError);
+        redirectFd = xcs_test_open_file(redirectPath, XDeviceFile_ReadOnly, &redirectError);
         XCS_TEST_CHECK(redirectFd != XFD_INVALID, "redirect output file");
-        XCS_TEST_CHECK(XFileSystem_read(redirectFd, redirectText,
+        XCS_TEST_CHECK(XDeviceFile_read(redirectFd, redirectText,
                                         (int64_t)sizeof(redirectText) - 1) == 10 &&
                            strcmp(redirectText, "redirected") == 0,
                        "redirect output content");
-        XFileSystem_close(redirectFd);
-        XFileSystem_removePermanent(redirectPath);
+        XDeviceFile_close(redirectFd);
+        XDeviceFile_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
 #endif
@@ -4150,7 +4159,7 @@ bool XConsoleShellTest_runAll(void)
     XCS_TEST_CHECK(XConsoleShellTest_runVimAdvanced(),
                    "vim Linux behavior commands");
 #endif
-    XFileSystem_removePermanent(filePath);
+    XDeviceFile_removePermanent(filePath);
     XString_delete_base(filePath);
 #if XCONSOLE_SHELL_COMPLETION_ON
     XCS_TEST_CHECK(XConsoleShellTest_runCompletion(shell, &transport),

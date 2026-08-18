@@ -12,6 +12,7 @@
 #include "XEvent.h"
 #include "XCoreApplication.h"
 #include "XFileDescriptor.h"
+#include "XDevice.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -22,11 +23,11 @@
  * 仅在 XNETWORK_USE_LWIP 模式下编译。
  * ================================================================ */
 #ifdef XNETWORK_USE_LWIP
-#include "XNetwork_lwip_platform.h"
+#include "XDeviceNetwork.h"
 #include "lwip/opt.h"     /* NO_SYS 宏定义 */
 #include "lwip/sys.h"     /* sys_prot_t, sys_arch_protect/unprotect */
 
-/* 核心锁：与 XNetwork_lwip.c 的 XNET_LWIP_LOCK 保持一致
+/* 核心锁：与 XDeviceNetwork_lwip.c 的 XNET_LWIP_LOCK 保持一致
  *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect（递归锁）
  *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
  *   NO_SYS=0: tcpip_thread 处理锁，pollLwip 无需额外锁 */
@@ -62,10 +63,20 @@ typedef int XNetIoRingLwipLock;
  */
 void XAbstractNetIoRing_pollLwip(void) {
     XNetIoRingLwipLock p = LWIP_LOCK();
-    XNetworkLwip_pollPcap();
+    XDeviceNetwork_poll();
     LWIP_UNLOCK(p);
 }
 #endif /* XNETWORK_USE_LWIP */
+
+static bool xabstractnetioring_is_socket_fd(const XAbstractNetIoRing_CQEntry* entry)
+{
+    XDevice* device;
+    if (!entry) return false;
+    if (entry->m_fdType == XFD_TYPE_SOCKET) return true;
+    if (entry->m_fdType != XFD_TYPE_CLASS) return false;
+    device = XDevice_class(entry->m_fd);
+    return device && device->m_type == XDeviceType_Socket;
+}
 
 /* ================================================================
  * 全局单例
@@ -179,7 +190,7 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
     if (entry->m_bytes == 0 &&
         (entry->m_events & XSocketAct_Read) &&
         entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO &&
-        entry->m_fdType == XFD_TYPE_SOCKET) {
+        xabstractnetioring_is_socket_fd(entry)) {
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->posted = true;

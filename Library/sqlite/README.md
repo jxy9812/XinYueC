@@ -11,14 +11,14 @@ SQLite is initialized.
 
 The amalgamation is a replaceable source component. File-backed SQLite
 connections use the `xin_xfile` VFS in `sqlite3_xin_vfs.c`. Its file operations
-call the platform-neutral `XFileSystem_*` API from XinYueC's XFile module;
+call the platform-neutral `XDeviceFile_*` API from XinYueC's XFile module;
 there is no POSIX, Win32, or FatFs call in the SQLite adapter. An embedded
 target may keep the same `XSqliteDriver` adapter and replace the SQLite source,
 compile options, or XFile backend without changing the public SQL classes.
 
 The VFS supports both SQLite's rollback-journal path and WAL shared mapping.
 WAL regions are opened as the `-shm` sidecar and mapped through
-`XFileSystem_map`/`XFileSystem_unmap`. The VFS uses an `XMutex`-protected
+`XDeviceFile_map`/`XDeviceFile_unmap`. The VFS uses an `XMutex`-protected
 path registry and one `XReadWriteLock` for each SQLite WAL lock slot, so
 connections in the same process share the lock group. Targets that need
 multiple processes must add inter-process locking to the XFile abstract API.

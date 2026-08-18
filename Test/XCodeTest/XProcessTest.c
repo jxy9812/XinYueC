@@ -17,7 +17,7 @@
 #include "XString.h"
 #include "XStringList.h"
 #include "XByteArray.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XMemory.h"
 #include "XPrintf.h"
 #include <string.h>
@@ -29,6 +29,15 @@
             return false; \
         } \
     } while (0)
+
+static XFd xprocesstest_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static bool XProcessTest_environment(void)
 {
@@ -377,7 +386,7 @@ static bool XProcessTest_outputProcess(void)
 static bool XProcessTest_redirect(void)
 {
 #if defined(XFILE_USE_FATFS) && !defined(XFILE_USE_PLATFORM_API)
-    /* 子进程运行在宿主系统，无法通过 XFileSystem 访问 FatFS 虚拟卷。 */
+    /* 子进程运行在宿主系统，无法通过 XDeviceFile 访问 FatFS 虚拟卷。 */
     XPrintf("[SKIP] XProcess 文件重定向（FatFS 虚拟卷不对宿主子进程开放）\n");
     return true;
 #else
@@ -393,13 +402,13 @@ static bool XProcessTest_redirect(void)
                      XProcess_start_utf8(process, "sh", arguments, 2,
                                          XIODevice_ReadOnly), "redirect start");
     XPTEST_CHECK(XProcess_waitForFinished(process, 3000), "redirect wait");
-    fd = XFileSystem_open(path, XFileSystem_ReadOnly, &error);
+    fd = xprocesstest_open_file(path, XDeviceFile_ReadOnly, &error);
     XPTEST_CHECK(fd != XFD_INVALID, "redirect open");
-    n = XFileSystem_read(fd, buffer, sizeof(buffer) - 1);
-    XFileSystem_close(fd);
+    n = XDeviceFile_read(fd, buffer, sizeof(buffer) - 1);
+    XDeviceFile_close(fd);
     XPTEST_CHECK(n == 10 && memcmp(buffer, "redirected", 10) == 0, "redirect content");
     XProcess_delete_base(process);
-    XFileSystem_removePermanent(path);
+    XDeviceFile_removePermanent(path);
     XString_delete_base(path);
     return true;
 #endif
@@ -687,12 +696,12 @@ static bool XProcessTest_windowsRunAll(void)
     }
     XProcess_delete_base(process);
     process = NULL;
-    fd = XFileSystem_open(redirectPath, XFileSystem_ReadOnly, &fdError);
-    fileSize = fd == XFD_INVALID ? -1 : XFileSystem_read(fd, fileData, sizeof(fileData) - 1);
-    if (fd != XFD_INVALID) XFileSystem_close(fd);
+    fd = xprocesstest_open_file(redirectPath, XDeviceFile_ReadOnly, &fdError);
+    fileSize = fd == XFD_INVALID ? -1 : XDeviceFile_read(fd, fileData, sizeof(fileData) - 1);
+    if (fd != XFD_INVALID) XDeviceFile_close(fd);
     if (fileSize != 12 || memcmp(fileData, "redirected\r\n", 12) != 0)
         goto cleanup_redirect;
-    XFileSystem_removePermanent(redirectPath);
+    XDeviceFile_removePermanent(redirectPath);
     XString_delete_base(redirectPath);
     redirectPath = NULL;
 
@@ -730,7 +739,7 @@ static bool XProcessTest_windowsRunAll(void)
 cleanup_process:
     if (process) XProcess_delete_base(process);
     if (!result && redirectPath) {
-        XFileSystem_removePermanent(redirectPath);
+        XDeviceFile_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
     return result;
@@ -738,7 +747,7 @@ cleanup_process:
 cleanup_redirect:
     if (process) XProcess_delete_base(process);
     if (redirectPath) {
-        XFileSystem_removePermanent(redirectPath);
+        XDeviceFile_removePermanent(redirectPath);
         XString_delete_base(redirectPath);
     }
     return false;

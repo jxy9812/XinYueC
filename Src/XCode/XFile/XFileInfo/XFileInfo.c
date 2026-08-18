@@ -1,5 +1,5 @@
 ﻿#include "XFileInfo.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -398,7 +398,7 @@ bool XFileInfo_isRelative(const XFileInfo* info)
 }
 
 /* ============================================================================
- * 内部辅助函数 - 使用 XFileSystem API
+ * 内部辅助函数 - 使用 XDeviceFile API
  * ============================================================================ */
 
 static void XFileInfo_updateCache(XFileInfo* info)
@@ -407,7 +407,7 @@ static void XFileInfo_updateCache(XFileInfo* info)
     if (info->m_cacheValid && info->m_caching) return;
     
     // 直接拷贝整个 XFileStat 结构
-    if (!XFileSystem_stat(info->m_filePath, &info->m_stat)) {
+    if (!XDeviceFile_stat(info->m_filePath, &info->m_stat)) {
         info->m_stat.exists = false;
         info->m_stat.isFile = false;
         info->m_stat.isDir = false;
@@ -427,7 +427,7 @@ XString* XFileInfo_absoluteFilePath(const XFileInfo* info)
     XString* result = XString_create();
     if (!result) return NULL;
     
-    if (!XFileSystem_resolvePath(info->m_filePath, result, XPathStyle_Absolute)) {
+    if (!XDeviceFile_resolvePath(info->m_filePath, result, XPathStyle_Absolute)) {
         XString_delete_base(result);
         return NULL;
     }
@@ -482,7 +482,7 @@ bool XFileInfo_exists(const XFileInfo* info)
 bool XFileInfo_exists_static(const XString* path)
 {
     if (!path) return false;
-    return XFileSystem_exists(path);
+    return XDeviceFile_exists(path);
 }
 
 void XFileInfo_stat(XFileInfo* info)
@@ -771,7 +771,7 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
     XString* target = XString_create();
     if (!target) return NULL;
     
-    if (!XFileSystem_readLink(info->m_filePath, target)) {
+    if (!XDeviceFile_readLink(info->m_filePath, target)) {
         XString_delete_base(target);
         return NULL;
     }

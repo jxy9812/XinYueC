@@ -10,7 +10,7 @@
 #include "XNetwork_config.h"
 
 #include "XAbstractSocket.h"
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +29,7 @@ extern "C" {
  */
 bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
                                                 const XString* endpoint,
-                                                XNetworkLocalStreamType streamType,
+                                                XDeviceNetworkLocalStreamType streamType,
                                                 int timeoutMs);
 
 #endif // XNETWORK_ABSTRACT_SOCKET_ON

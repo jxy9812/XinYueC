@@ -1,17 +1,17 @@
 ﻿/**
- * @file XNetwork_lwip.c
+ * @file XDeviceNetwork_lwip.c
  * @brief lwIP 平台网络实现（平台无关 + Raw API 回调模式）
  *
  * 架构分层：
- *   XNetwork.h                             -> 统一平台抽象接口
- *   +-- XNetwork_win32.c                   -> Windows IOCP 实现
- *   +-- XNetwork_lwip.c（本文件）          -> lwIP 适配层（平台无关）
- *       +-- XNetwork_lwip_win32.c          -> Npcap 虚拟网卡（Windows 平台）
+ *   XDeviceNetwork.h                             -> 统一平台抽象接口
+ *   +-- XDeviceNetwork_win32.c                   -> Windows IOCP 实现
+ *   +-- XDeviceNetwork_lwip.c（本文件）          -> lwIP 适配层（平台无关）
+ *       +-- XDeviceNetwork_lwip_win32.c          -> Npcap 虚拟网卡（Windows 平台）
  *
  * 运行原理：
  *   1. lwip_init() 初始化 lwIP 协议栈
  *   2. XTimeWheelGroup 定时器每 LWIP_TICK_MS 毫秒触发（默认 5ms），
- *      a) 轮询虚拟网卡数据包（XNetworkLwip_pollPcap）
+ *      a) 轮询虚拟网卡数据包（XDeviceNetworkLwip_pollPcap）
  *      b) lwIP 定时器由 LWIP_TIMERS_CUSTOM 直接对接 XTimeWheelGroup，无需轮询
  *      c) 向应用线程投递事件通知
  *   3. 应用线程通过 Raw API 操作，sys_arch_protect 提供递归锁保护
@@ -25,13 +25,13 @@
 #include "XNetwork_config.h"
 #ifdef XNETWORK_USE_LWIP
 
-#include "XNetwork.h"
+#include "XDeviceNetwork.h"
 #include "XAbstractSocket.h"
-#include "XNetwork_lwip_platform.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"
 #include "XMemory.h"
+#include "XRingBuffer.h"
 #include "XHostAddress.h"
 #include "XByteArray.h"
 #include "XNetworkInterface.h"
@@ -81,6 +81,17 @@
 #include <string.h>
 #include <stdio.h>
 
+/* 仅供 lwIP 适配层和所选平台网卡实现之间链接，不属于 XDeviceNetwork 公共头。 */
+struct netif* XDeviceNetworkLwip_platform_init(void);
+void XDeviceNetworkLwip_platform_deinit(void);
+int XDeviceNetworkLwip_err_to_errno(int errorCode);
+void XDeviceNetworkLwip_pollPcap(void);
+
+typedef enum XMulticastOp {
+    XMC_Join, XMC_Leave, XMC_SetIf, XMC_GetIf,
+    XMC_SetTtl, XMC_GetTtl, XMC_SetLoop, XMC_GetLoop
+} XMulticastOp;
+
 /* ================================================================
  * Core locking abstraction
  *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
@@ -105,11 +116,11 @@ typedef int XNetLwipCoreLock;
 /* ================================================================
  * 内部宏常量
  * ================================================================ */
-#define L4P(p) ((XNetworkSocketPrivateLwip*)(p))
+#define L4P(p) ((XDeviceNetworkContextLwip*)(p))
 /* lwIP 网卡轮询周期，可通过 XNETWORK_LWIP_TICK_MS 配置 */
 #define LWIP_TICK_MS XNETWORK_LWIP_TICK_MS
 
-typedef struct XNetworkSocketPrivateLwip XNetworkSocketPrivateLwip;
+typedef struct XDeviceNetworkContextLwip XDeviceNetworkContextLwip;
 
 /* ================================================================
  * 全局状态
@@ -133,8 +144,8 @@ static struct {
  * 封装 lwIP 的 TCP/UDP PCB 指针和状态信息。
  * 每个 XAbstractSocket 对应一个此结构体实例。
  * ================================================================ */
-typedef struct XNetworkSocketPrivateLwip {
-    XNetworkSocketPrivate base;    /* 基类：owner + notifiers (16 字节) */
+typedef struct XDeviceNetworkContextLwip {
+    XDeviceNetworkContext base;    /* 基类：owner + notifiers (16 字节) */
     XFd fd;                       /* 缓存的文件描述符（避免回调中 vtable 查找） */
     struct tcp_pcb* tpcb;          /* TCP 协议控制块 */
     struct udp_pcb* upcb;          /* UDP 协议控制块 */
@@ -148,10 +159,9 @@ typedef struct XNetworkSocketPrivateLwip {
     ip_addr_t fromAddr;            /* UDP 数据报来源地址 (IPv4=4 字节) */
     uint16_t fromPort;             /* UDP 数据报来源端口 */
     uint16_t rxCapacity;           /* 懒分配接收缓冲容量，复用原对齐空隙 */
-    /* 位域压缩：8 个布尔(8位) + sockType(2位) + lastErr(8位) = 18 位，合并到 4 字节
-     * 原本 8 个 bool(8字节) + sockType(4字节) + lastErr(4字节) + 对齐填充
+    /* 位域压缩：7 个布尔(7位) + sockType(2位) + lastErr(8位) = 17 位，合并到 4 字节
+     * 原本 7 个 bool(7字节) + sockType(4字节) + lastErr(4字节) + 对齐填充
      * 现压缩为 4 字节，结构体从 ~104 字节减至 88 字节 */
-    unsigned connected   : 1;      /* 是否已连接 */
     unsigned isServer    : 1;      /* 是否为服务端 */
     unsigned closing     : 1;      /* 是否正在关闭 */
     unsigned connectDone : 1;      /* 连接完成标记 */
@@ -162,7 +172,7 @@ typedef struct XNetworkSocketPrivateLwip {
     unsigned sockType    : 2;      /* Socket 类型 (0=TCP, 1=UDP) */
     unsigned listenBacklog : 8;    /* TCP 服务端监听队列，0=使用配置默认值 */
     int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
-} XNetworkSocketPrivateLwip;
+} XDeviceNetworkContextLwip;
 
 /* Raw API 回调在描述符接管辅助函数之前声明。 */
 static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err);
@@ -172,7 +182,7 @@ static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb);
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err);
 
 /* 接收缓冲按需分配，未收数据的 socket 不占用缓冲预算。 */
-static bool reserve_rx_buffer(XNetworkSocketPrivateLwip* s, u16_t required)
+static bool reserve_rx_buffer(XDeviceNetworkContextLwip* s, u16_t required)
 {
     char* resized;
 
@@ -186,7 +196,7 @@ static bool reserve_rx_buffer(XNetworkSocketPrivateLwip* s, u16_t required)
 
 /* 优先使用配置容量以吸收连续报文、提高大内存设备吞吐；若该分配因
  * 内存压力失败，退化到只容纳当前整包，后续依靠 TCP 背压继续传输。 */
-static bool reserve_tcp_rx_buffer(XNetworkSocketPrivateLwip* s, u16_t required)
+static bool reserve_tcp_rx_buffer(XDeviceNetworkContextLwip* s, u16_t required)
 {
     const u16_t configured = (u16_t)XNETWORK_LWIP_RECV_BUFFER_SIZE;
 
@@ -235,17 +245,16 @@ static void dispose_tcp_pcb(struct tcp_pcb** pcb)
  * 调用时机：lwIP 回调函数设置标志位之后、返回之前。
  * 已在核心锁保护下执行（回调由 lwIP 核心在锁内调用）。
  */
-static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
+static void push_socket_cq(XDeviceNetworkContextLwip* s, uint32_t actType) {
 #if XAbstractNetIoRing_ON
-    if (!s || !s->base.owner || actType == 0) return;
+    if (!s || !s->base.m_owner || actType == 0) return;
 
     XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
     if (!ring) return;
 
     XFd fd = s->fd;
     if (fd == XFD_INVALID) {
-        /* 回调在 ensure_xfd 之前触发（极少）：直接从设备获取并缓存 */
-        fd = XIODevice_fd((XIODevice*)s->base.owner);
+        fd = s->base.m_base.m_fd;
         s->fd = fd;
     }
 
@@ -284,18 +293,18 @@ static void addr_to_ip(const XHostAddress* a, ip_addr_t* ip) {
 }
 
 #if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
-typedef struct XNetworkIcmpWait {
+typedef struct XDeviceNetworkIcmpWait {
     volatile bool done;
     volatile bool matched;
     uint16_t identifier;
     uint16_t sequence;
     bool isIpv6;
-} XNetworkIcmpWait;
+} XDeviceNetworkIcmpWait;
 
 static u8_t xnetwork_icmp_recv(void* argument, struct raw_pcb* pcb,
                                struct pbuf* packet, const ip_addr_t* source)
 {
-    XNetworkIcmpWait* wait = (XNetworkIcmpWait*)argument;
+    XDeviceNetworkIcmpWait* wait = (XDeviceNetworkIcmpWait*)argument;
     struct icmp_echo_hdr echo;
     u16_t headerLength;
     (void)pcb;
@@ -329,7 +338,7 @@ static u8_t xnetwork_icmp_recv(void* argument, struct raw_pcb* pcb,
 }
 #endif
 
-bool XNetwork_icmpEchoSupported(void)
+bool XDeviceNetwork_icmpEchoSupported(void)
 {
 #if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
     return true;
@@ -338,14 +347,14 @@ bool XNetwork_icmpEchoSupported(void)
 #endif
 }
 
-bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
+bool XDeviceNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
                        uint16_t sequence, const void* payload, size_t payloadSize,
                        int timeoutMilliseconds, uint32_t* elapsedMilliseconds)
 {
 #if LWIP_RAW && (LWIP_IPV4 || LWIP_IPV6)
     struct raw_pcb* pcb = NULL;
     struct pbuf* packet = NULL;
-    XNetworkIcmpWait wait;
+    XDeviceNetworkIcmpWait wait;
     ip_addr_t target;
     size_t packetSize;
     uint64_t start;
@@ -435,11 +444,11 @@ bool XNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
 #if NO_SYS
         {
             XNetLwipCoreLock lock = XNET_LWIP_LOCK();
-            XNetworkLwip_pollPcap();
+            XDeviceNetworkLwip_pollPcap();
             XNET_LWIP_UNLOCK(lock);
         }
 #else
-        XNetworkLwip_pollPcap();
+        XDeviceNetworkLwip_pollPcap();
 #endif
         XThread_msleep(5);
     }
@@ -478,13 +487,13 @@ static void ip_to_addr(const ip_addr_t* ip, XHostAddress* a) {
 
 /* Keep XAbstractSocket endpoint properties consistent with the POSIX and
  * Windows backends after a Raw API connection completes or is adopted. */
-static void syncSocketEndpoints(XNetworkSocketPrivate* priv)
+static void syncSocketEndpoints(XDeviceNetworkContext* priv)
 {
-    if (!priv || !priv->owner) return;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    if (!priv || !priv->m_owner) return;
+    XDeviceNetworkContextLwip* s = L4P(priv);
     if (s->isServer) return;
 
-    XAbstractSocket* socket = (XAbstractSocket*)priv->owner;
+    XAbstractSocket* socket = (XAbstractSocket*)priv->m_owner;
     XHostAddress endpoint;
     XHostAddress_init(&endpoint);
     if (s->tpcb) {
@@ -525,41 +534,36 @@ static struct udp_pcb* createUdpPcb(const ip_addr_t* address)
 #endif
 }
 
-/* 确保 Socket 已分配文件描述符，供事件系统地址查找 */
-static void ensure_xfd(XNetworkSocketPrivate* priv) {
-    if (!priv || !priv->owner) return;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+/* 将 lwIP 回调状态绑定到已由 XDevice_open 分配的唯一设备描述符。 */
+static void ensure_xfd(XDeviceNetworkContext* priv) {
+    if (!priv) return;
+    XDeviceNetworkContextLwip* s = L4P(priv);
     if (s->fd != XFD_INVALID) return;
-    s->fd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-    /* XTcpServer 只继承 XObject，不能走 XIODevice 的 fd 字段。 */
-    if (!s->isServer) {
-        XIODevice_setFd((XIODevice*)priv->owner, s->fd);
-    }
+    s->fd = priv->m_base.m_fd;
 }
 
 /*
  * lwIP 没有原生 socket descriptor。对外暴露 XFd 表索引，索引的 handle
  * 指向 Raw API 私有对象；接管时转移 tcp_pcb 的所有权，而不是转换裸指针。
  */
-static XNetworkSocketPrivateLwip* descriptor_private(XFd fd)
+static XDeviceNetworkContextLwip* descriptor_private(XFd fd)
 {
-    if (fd == XFD_INVALID || XFd_type(fd) != XFD_TYPE_SOCKET) return NULL;
-    return (XNetworkSocketPrivateLwip*)XFd_handle(fd);
+    if (fd == XFD_INVALID || !XFd_get(fd)) return NULL;
+    return (XDeviceNetworkContextLwip*)XFd_handle(fd);
 }
 
-static void release_detached_private(XNetworkSocketPrivateLwip* s)
+static void release_detached_private(XDeviceNetworkContextLwip* s)
 {
-    if (!s || s->base.owner) return;
+    if (!s || s->base.m_owner) return;
     if (s->rxBuf) XFree_System(s->rxBuf);
-    if (s->base.notifiers) XVector_delete_base((XClass*)s->base.notifiers);
+    if (s->base.m_notifiers) XVector_delete_base((XClass*)s->base.m_notifiers);
     XFree_System(s);
 }
 
-static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
+static bool adopt_connected_descriptor(XDeviceNetworkContextLwip* target,
                                        XFd sourceFd)
 {
-    XNetworkSocketPrivateLwip* source = descriptor_private(sourceFd);
-    XFd targetFd;
+    XDeviceNetworkContextLwip* source = descriptor_private(sourceFd);
     XNetLwipCoreLock prot;
 
     if (!target || !source || source == target || source->isServer ||
@@ -567,17 +571,14 @@ static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
         return false;
     }
 
-    targetFd = XFd_alloc(XFD_TYPE_SOCKET, target, target->base.owner);
-    if (targetFd == XFD_INVALID) return false;
-
     prot = XNET_LWIP_LOCK();
     target->tpcb = source->tpcb;
-    target->connected = source->connected;
+    target->base.m_connected = source->base.m_connected;
     target->closing = source->closing;
     target->hasReadData = source->hasReadData;
     target->hasWriteDone = source->hasWriteDone;
     target->hasError = source->hasError;
-    target->sockType = XNetwork_Tcp;
+    target->sockType = XDeviceNetwork_Tcp;
     /* target 尚未接管任何 PCB；直接转移接收缓冲区，避免 accepted socket
      * 接管时重新分配和复制一份数据。source 随后释放 target 的旧缓冲。 */
     {
@@ -598,7 +599,7 @@ static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
     tcp_poll(target->tpcb, tcpPollCb, 2);
 
     source->tpcb = NULL;
-    source->connected = false;
+    source->base.m_connected = false;
     source->closing = false;
     source->hasReadData = false;
     source->hasWriteDone = false;
@@ -607,18 +608,17 @@ static bool adopt_connected_descriptor(XNetworkSocketPrivateLwip* target,
     source->rxTotal = 0;
     XNET_LWIP_UNLOCK(prot);
 
-    target->fd = targetFd;
+    target->fd = target->base.m_base.m_fd;
     XFd_free(sourceFd);
     source->fd = XFD_INVALID;
     release_detached_private(source);
     return true;
 }
 
-static bool adopt_server_descriptor(XNetworkSocketPrivateLwip* target,
+static bool adopt_server_descriptor(XDeviceNetworkContextLwip* target,
                                     XFd sourceFd)
 {
-    XNetworkSocketPrivateLwip* source = descriptor_private(sourceFd);
-    XFd targetFd;
+    XDeviceNetworkContextLwip* source = descriptor_private(sourceFd);
     XNetLwipCoreLock prot;
 
     if (!target || !source || source == target || !source->isServer ||
@@ -626,25 +626,22 @@ static bool adopt_server_descriptor(XNetworkSocketPrivateLwip* target,
         return false;
     }
 
-    targetFd = XFd_alloc(XFD_TYPE_SOCKET, target, target->base.owner);
-    if (targetFd == XFD_INVALID) return false;
-
     prot = XNET_LWIP_LOCK();
     target->tpcb = source->tpcb;
-    target->connected = true;
+    target->base.m_connected = true;
     target->closing = false;
     target->hasAccept = false;
     target->isServer = true;
-    target->sockType = XNetwork_Tcp;
+    target->sockType = XDeviceNetwork_Tcp;
     tcp_arg(target->tpcb, target);
     tcp_accept(target->tpcb, tcpAcceptCb);
 
     source->tpcb = NULL;
-    source->connected = false;
+    source->base.m_connected = false;
     source->hasAccept = false;
     XNET_LWIP_UNLOCK(prot);
 
-    target->fd = targetFd;
+    target->fd = target->base.m_base.m_fd;
     XFd_free(sourceFd);
     source->fd = XFD_INVALID;
     release_detached_private(source);
@@ -655,7 +652,7 @@ static bool adopt_server_descriptor(XNetworkSocketPrivateLwip* target,
 /* ================================================================
  * 错误码转换：lwIP err_t -> 类 POSIX errno
  * ================================================================ */
-int XNetworkLwip_err_to_errno(int e) {
+int XDeviceNetworkLwip_err_to_errno(int e) {
     switch (e) {
     case ERR_OK:         return 0;
     case ERR_MEM:        return -1;
@@ -692,7 +689,7 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
 
     (void)pcb;
     (void)err;
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (!s) {
         if (p) pbuf_free(p);
         return ERR_OK;
@@ -722,14 +719,14 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
     s->hasReadData = true;
     push_socket_cq(s, XSocketAct_Read);
     pbuf_free(p);
-    /* tcp_recved 延迟到 XNetwork_socketContinueRead 中调用，避免窗口管理过早 */
+    /* tcp_recved 延迟到 XDeviceNetwork_socketContinueRead 中调用，避免窗口管理过早 */
     return ERR_OK;
 }
 
 /* TCP 发送完成回调 */
 static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
     (void)pcb;
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (s) { s->writeFinished += len; s->hasWriteDone = true; }
     push_socket_cq(s, XSocketAct_Write);
     return ERR_OK;
@@ -737,12 +734,12 @@ static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
 
 /* TCP 错误回调 */
 static void tcpErrCb(void* arg, err_t err) {
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (s) {
         s->closing = true; s->hasError = true;
-        s->lastErr = err; g_state.lastError = XNetworkLwip_err_to_errno(err);
+        s->lastErr = err; g_state.lastError = XDeviceNetworkLwip_err_to_errno(err);
         s->tpcb = NULL;
-        s->connected = false;  /* 标记为未连接，确保 Connect 通知走失败分支 */
+        s->base.m_connected = false;  /* 标记为未连接，确保 Connect 通知走失败分支 */
         push_socket_cq(s, XSocketAct_Connect);
     }
 }
@@ -757,14 +754,14 @@ static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb) {
 /* TCP 连接完成回调 */
 static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
     (void)pcb;
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (!s) return ERR_ABRT;
     if (err == ERR_OK) {
-        s->connected = true; s->connectDone = true;
+        s->base.m_connected = true; s->connectDone = true;
         LWIP_DBG("[TCP连接] 连接成功\n");
     } else {
         s->hasError = true; s->lastErr = err;
-        g_state.lastError = XNetworkLwip_err_to_errno(err);
+        g_state.lastError = XDeviceNetworkLwip_err_to_errno(err);
         LWIP_DBG("[TCP连接] 连接失败, err=%d\n", (int)err);
     }
     push_socket_cq(s, XSocketAct_Connect);
@@ -775,18 +772,18 @@ static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
  * 为客户端 Socket 分配私有数据，存入服务端 pendingAccept 字段 */
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     (void)err;
-    XNetworkSocketPrivateLwip* ss = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* ss = (XDeviceNetworkContextLwip*)arg;
     if (!ss || !newPcb) return ERR_ABRT;
 
     /* 为新客户端分配 Socket 私有数据结构 */
-    XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*cs));
+    XDeviceNetworkContextLwip* cs = (XDeviceNetworkContextLwip*)XMalloc_System(sizeof(*cs));
     if (!cs) return ERR_MEM;
     memset(cs, 0, sizeof(*cs));
     cs->fd = XFd_alloc(XFD_TYPE_SOCKET, cs, NULL);
     if (cs->fd == XFD_INVALID) { XFree_System(cs); return ERR_MEM; }
     cs->tpcb = newPcb;
-    cs->connected = true;
-    cs->sockType = XNetwork_Tcp;
+    cs->base.m_connected = true;
+    cs->sockType = XDeviceNetwork_Tcp;
     /* 注册 TCP 回调 */
     tcp_arg(newPcb, cs);
     tcp_recv(newPcb, tcpRecvCb);
@@ -806,7 +803,7 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
 static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
                       const ip_addr_t* addr, u16_t port) {
     (void)pcb;
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (!s || !p) return;
     if (addr) s->fromAddr = *addr;
     s->fromPort = port;
@@ -836,7 +833,7 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
  * 平台初始化/清理
  * ================================================================ */
 
-void XNetwork_ensureInit(void) {
+void XDeviceNetwork_ensureInit(void) {
     if (g_state.inited) { g_state.ref++; return; }
     LWIP_DBG("[lwIP初始化] 开始初始化 lwIP 协议栈...\n");
 
@@ -852,7 +849,7 @@ void XNetwork_ensureInit(void) {
 #endif
 
     /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
-    struct netif* nif = XNetworkLwip_platform_init();
+    struct netif* nif = XDeviceNetworkLwip_platform_init();
     if (nif) {
         LWIP_DBG("[lwIP初始化] 平台网卡初始化成功\n");
     } else {
@@ -864,7 +861,7 @@ void XNetwork_ensureInit(void) {
     LWIP_DBG("[lwIP初始化] 完成，引用计数=%d\n", g_state.ref);
 }
 
-void XNetwork_cleanup(void) {
+void XDeviceNetwork_cleanup(void) {
     if (!g_state.inited) return;
     g_state.ref--;
     if (g_state.ref > 0) return;
@@ -872,15 +869,19 @@ void XNetwork_cleanup(void) {
     LWIP_DBG("[lwIP清理] 开始清理...\n");
 
     /* 平台网卡清理 */
-    XNetworkLwip_platform_deinit();
+    XDeviceNetworkLwip_platform_deinit();
 
     g_state.inited = 0;
     LWIP_DBG("[lwIP清理] 完成\n");
 }
 
+void XDeviceNetwork_poll(void) {
+    XDeviceNetworkLwip_pollPcap();
+}
+
 /* 错误信息 */
-int XNetwork_lastError(void) { return g_state.lastError; }
-char* XNetwork_errorString(int errorCode) {
+int XDeviceNetwork_lastError(void) { return g_state.lastError; }
+char* XDeviceNetwork_errorString(int errorCode) {
     char* s = (char*)XMalloc_System(64);
     if (s) snprintf(s, 64, "lwIP error: %d", errorCode);
     return s;
@@ -890,19 +891,19 @@ char* XNetwork_errorString(int errorCode) {
  * Socket 创建/销毁
  * ================================================================ */
 
-XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner) {
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*s));
+XDeviceNetworkContext* XDeviceNetwork_createContext(void) {
+    XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)XMalloc_System(sizeof(*s));
     if (!s) return NULL;
     memset(s, 0, sizeof(*s));
     s->fd = XFD_INVALID;
-    s->base.owner = owner;
-    s->base.notifiers = XVector_create(sizeof(void*));
-    return (XNetworkSocketPrivate*)s;
+    s->base.m_base.m_fd = XFD_INVALID;
+    s->base.m_notifiers = XVector_create(sizeof(void*));
+    return (XDeviceNetworkContext*)s;
 }
 
-void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
+void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv) {
     if (!priv) return;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
 
     /* 关闭 lwIP PCB，需要持有核心锁 */
     if (s->tpcb || s->upcb || s->pendingAccept) {
@@ -910,28 +911,21 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
         dispose_tcp_pcb(&s->tpcb);
         if (s->upcb) { udp_remove(s->upcb); s->upcb = NULL; }
         if (s->pendingAccept) {
-            XNetworkSocketPrivateLwip* cs =
-                (XNetworkSocketPrivateLwip*)s->pendingAccept;
+            XDeviceNetworkContextLwip* cs =
+                (XDeviceNetworkContextLwip*)s->pendingAccept;
             dispose_tcp_pcb(&cs->tpcb);
         }
         XNET_LWIP_UNLOCK(prot);
     }
 
     /* 释放资源 */
-    if (s->fd != XFD_INVALID) {
-        if (!s->isServer && s->base.owner &&
-            XIODevice_fd((XIODevice*)s->base.owner) == s->fd) {
-            XIODevice_setFd((XIODevice*)s->base.owner, XFD_INVALID);
-        }
-        XFd_free(s->fd);
-        s->fd = XFD_INVALID;
-    }
+    s->fd = XFD_INVALID;
     if (s->rxBuf) XFree_System(s->rxBuf);
-    if (s->base.notifiers) XVector_delete_base((XClass*)s->base.notifiers);
+    if (s->base.m_notifiers) XVector_delete_base((XClass*)s->base.m_notifiers);
 
     /* 清理未领取的 Accept 连接 */
     if (s->pendingAccept) {
-        XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)s->pendingAccept;
+        XDeviceNetworkContextLwip* cs = (XDeviceNetworkContextLwip*)s->pendingAccept;
         if (cs->fd != XFD_INVALID) {
             XFd_free(cs->fd);
             cs->fd = XFD_INVALID;
@@ -943,27 +937,24 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
     XFree_System(s);
 }
 
-intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv) {
+intptr_t XDeviceNetwork_socketDescriptor(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? (intptr_t)L4P(priv)->fd : -1;
 }
-bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv) {
-    return priv ? L4P(priv)->connected : false;
-}
-
-
 /* ================================================================
  * Socket ??
  *
  * 基于 lwIP Raw API 回调的 TCP 服务端绑定（非阻塞模式）。
- * 回调模式中 XNetwork_socketBind 分配 TCP PCB 并立刻返回。
+ * 回调模式中 XDeviceNetwork_socketBind 分配 TCP PCB 并立刻返回。
  * ================================================================ */
-uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
+uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
                               uint16_t port, bool reuseAddr, bool shareAddr,
-                              XNetworkSocketType sockType) {
+                              XDeviceNetworkSocketType sockType) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)reuseAddr; (void)shareAddr;  /* lwIP Raw API 不支持 SO_REUSEADDR */
     if (!priv) return 0;
-    XNetwork_ensureInit();
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetwork_ensureInit();
+    XDeviceNetworkContextLwip* s = L4P(priv);
     s->sockType = (int)sockType;
 
     /* 地址转换 */
@@ -971,7 +962,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     if (address) addr_to_ip(address, &bindAddr); else bindAddr = *IP_ADDR_ANY;
 
     err_t err;
-    if (sockType == XNetwork_Tcp) {
+    if (sockType == XDeviceNetwork_Tcp) {
         /* TCP 服务端：创建 PCB 并开始监听 */
         s->tpcb = createTcpPcb(&bindAddr);
         if (!s->tpcb) return 0;
@@ -998,11 +989,12 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
             udp_remove(s->upcb); s->upcb = NULL; return 0;
         }
         udp_recv(s->upcb, udpRecvCb, s);
-        s->connected = true;
-        LWIP_DBG("[绑定] UDP port=%d\n", (int)port);
+        s->base.m_connected = true;
+        LWIP_DBG("[绑定] UDP requested=%d local=%d\n", (int)port,
+                 (int)s->upcb->local_port);
     }
     ensure_xfd(priv);
-    return sockType == XNetwork_Tcp ? s->tpcb->local_port : s->upcb->local_port;
+    return sockType == XDeviceNetwork_Tcp ? s->tpcb->local_port : s->upcb->local_port;
 }
 
 
@@ -1048,11 +1040,11 @@ static bool ensure_network_ready(uint32_t timeoutMs) {
 #if NO_SYS
         {
             XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-            XNetworkLwip_pollPcap();
+            XDeviceNetworkLwip_pollPcap();
             XNET_LWIP_UNLOCK(prot);
         }
 #else
-        XNetworkLwip_pollPcap();
+        XDeviceNetworkLwip_pollPcap();
 #endif
         XThread_msleep(50);
     }
@@ -1138,11 +1130,11 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
 #if NO_SYS
             {
                 XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-                XNetworkLwip_pollPcap();
+                XDeviceNetworkLwip_pollPcap();
                 XNET_LWIP_UNLOCK(prot);
             }
 #else
-            XNetworkLwip_pollPcap();
+            XDeviceNetworkLwip_pollPcap();
 #endif
             XThread_msleep(20);
         }
@@ -1167,34 +1159,41 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
 /* ================================================================
  * Socket 连接
  * ================================================================ */
-bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
-                            uint16_t port, XNetworkProtocol protocol,
-                            XNetworkSocketType sockType) {
+bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
+                            uint16_t port, XDeviceNetworkProtocol protocol,
+                            XDeviceNetworkSocketType sockType) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    bool isLiteralAddress;
     (void)protocol;
     if (!priv || !hostName) return false;
     const char* hostStr = XString_toUtf8(hostName);
     if (!hostStr) return false;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
-    XNetwork_ensureInit();
+    XDeviceNetworkContextLwip* s = L4P(priv);
+    XDeviceNetwork_ensureInit();
     s->sockType = (int)sockType;
 
-    /* A connection without an independent DHCP lease has no valid source
-     * address.  Fail now instead of transmitting from 0.0.0.0 or sharing
-     * the host platform address. */
-    if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) return false;
-
-    /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
-    if (!lwip_resolve_name(hostStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
-        LWIP_DBG("[连接] DNS和IP解析均失败\n");
-        return false;
+    isLiteralAddress = ipaddr_aton(hostStr, &ip);
+    if (isLiteralAddress) {
+        /* Local loopback is usable without an external TAP/DHCP lease. */
+        if (!ip_addr_isloopback(&ip) &&
+            !ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
+            return false;
+        }
+    } else {
+        /* A hostname still requires an independent source address before DNS. */
+        if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS) ||
+            !lwip_resolve_name(hostStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
+            LWIP_DBG("[连接] DNS和IP解析均失败\n");
+            return false;
+        }
     }
     LWIP_DBG("[连接] 目标IP解析成功\n");
     LWIP_DBG("[连接] 默认网卡=%s\n",
              netif_default ? ip4addr_ntoa(ip_2_ip4(&netif_default->ip_addr)) : "NULL");
 
     err_t err;
-    if (sockType == XNetwork_Tcp) {
+    if (sockType == XDeviceNetwork_Tcp) {
         /* TCP 客户端连接 */
         s->tpcb = createTcpPcb(&ip);
         LWIP_DBG("[连接] tcp_new=%p\n", (void*)s->tpcb);
@@ -1214,7 +1213,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
         udp_recv(s->upcb, udpRecvCb, s);
         err = udp_connect(s->upcb, &ip, port);
         if (err != ERR_OK) { udp_remove(s->upcb); s->upcb = NULL; return false; }
-        s->connected = true;
+        s->base.m_connected = true;
         s->connectDone = true;
         push_socket_cq(s, XSocketAct_Connect);
     }
@@ -1223,14 +1222,15 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
 }
 
 /* 断开连接 */
-void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv) {
+void XDeviceNetwork_socketDisconnect(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     dispose_tcp_pcb(&s->tpcb);
     if (s->upcb) { udp_remove(s->upcb); s->upcb = NULL; }
     XNET_LWIP_UNLOCK(prot);
-    s->connected = false;
+    s->base.m_connected = false;
 }
 
 
@@ -1239,11 +1239,12 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv) {
  * ================================================================ */
 
 /* 从 Socket 读取数据到用户缓冲区 */
-int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
-                            XNetworkSocketType sockType, void* ringBuffer) {
+int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
+                            XDeviceNetworkSocketType sockType, void* ringBuffer) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)sockType; (void)ringBuffer;
     if (!priv || !buf || len <= 0) return -1;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     if (s->rxPos <= 0) return 0;
     int copy = s->rxPos < (int)len ? s->rxPos : (int)len;
     memcpy(buf, s->rxBuf, copy);
@@ -1253,16 +1254,17 @@ int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
 }
 
 /* 向 Socket 写入数据 */
-int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64_t len,
-                             XNetworkSocketType sockType, const XHostAddress* destAddr,
+int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
+                             XDeviceNetworkSocketType sockType, const XHostAddress* destAddr,
                              uint16_t destPort, void* ringBuffer) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)ringBuffer;
     if (!priv || !buf || len <= 0) return -1;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
 
     err_t err;
-    if (sockType == XNetwork_Tcp) {
+    if (sockType == XDeviceNetwork_Tcp) {
         if (!s->tpcb) { XNET_LWIP_UNLOCK(prot); return -1; }
         u16_t sndBuf = tcp_sndbuf(s->tpcb);
         u16_t toWrite = (u16_t)((len > sndBuf) ? sndBuf : len);
@@ -1300,13 +1302,14 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
  * ================================================================ */
 
 /* 处理 Socket 事件：清除标志位并返回是否有事件 */
-bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
+bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !event) return false;
     XEvent* e = (XEvent*)event;
     if (e->type != XEVENT_TYPE_SOCK_ACT) return false;
 
     XEventSockAct* sockAct = (XEventSockAct*)e;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     bool hasEvent = false;
 
@@ -1315,7 +1318,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
      * 不清除 hasReadData--后者由后续 Read 事件处理。 */
     if ((sockAct->actType & XSocketAct_Connect) &&
         (s->connectDone || s->hasError)) {
-        if (s->connected && !s->isServer) syncSocketEndpoints(priv);
+        if (s->base.m_connected && !s->isServer) syncSocketEndpoints(priv);
         s->connectDone = false;
         s->hasError = false;
         s->closing = false;  /* 连接错误/完成时一并清除关闭标志 */
@@ -1349,58 +1352,81 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
     return hasEvent;
 }
 
-bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode) {
-    XNetworkSocketPrivateLwip* target;
+bool XDeviceNetwork_socketSetDescriptor(XFd deviceFd, intptr_t fd, int state, int openMode) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
+    XDeviceNetworkContextLwip* target;
 
     (void)openMode;
     if (!priv || fd < 0 || state != 3) return false;
     target = L4P(priv);
     if (!adopt_connected_descriptor(target, (XFd)fd)) return false;
-    if (target->base.owner) {
-        XIODevice_setFd((XIODevice*)target->base.owner, target->fd);
-    }
     syncSocketEndpoints(priv);
     return true;
 }
 
-bool XNetwork_serverSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd) {
-    XNetworkSocketPrivateLwip* target;
+bool XDeviceNetwork_serverSetDescriptor(XFd deviceFd, intptr_t fd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
+    XDeviceNetworkContextLwip* target;
 
     if (!priv || fd < 0) return false;
     target = L4P(priv);
     return adopt_server_descriptor(target, (XFd)fd);
 }
 
-bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value) {
+bool XDeviceNetwork_socketSetOption(XFd xfd, int option, const void* value) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)priv; (void)option; (void)value;
     return false;
 }
 
-void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option) {
+void* XDeviceNetwork_socketGetOption(XFd xfd, int option) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)priv; (void)option;
     return NULL;
 }
 
-void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size) {
+void XDeviceNetwork_socketSetReadBufferSize(XFd xfd, int64_t size) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     (void)priv; (void)size;
 }
 
-const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv) {
+const char* XDeviceNetwork_socketReadBuffer(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? L4P(priv)->rxBuf : NULL;
 }
 
-size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv) {
+size_t XDeviceNetwork_socketReadFinishedBytes(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? (size_t)L4P(priv)->rxTotal : 0;
 }
 
-size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv) {
+size_t XDeviceNetwork_socketWriteFinishedBytes(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     return priv ? L4P(priv)->lastWriteFinished : 0;
 }
 
-void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
+bool XDeviceNetwork_socketWritePending(XFd xfd)
+{
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextLwip* s;
+    bool pending;
+    XNetLwipCoreLock prot;
+
+    if (!priv) return false;
+    s = L4P((XDeviceNetworkContext*)priv);
+    prot = XNET_LWIP_LOCK();
+    /* Raw API TCP data remains pending while it is queued or unacknowledged.
+     * UDP writes are submitted synchronously and therefore have no pending state. */
+    pending = s->tpcb != NULL && (s->tpcb->unsent != NULL || s->tpcb->unacked != NULL);
+    XNET_LWIP_UNLOCK(prot);
+    return pending;
+}
+
+void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
     (void)isUdp;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     size_t consumed = (size_t)s->rxTotal;
     if (s->rxPos > (int)consumed) {
@@ -1426,27 +1452,29 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
     XNET_LWIP_UNLOCK(prot);
 }
 
-XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddress* addr,
+XDeviceNetworkServerHandle XDeviceNetwork_serverCreate(XFd deviceFd, const XHostAddress* addr,
                                      uint16_t port, int backlog, bool reuseAddr) {
-    if (!priv) return (XServerHandle)(-1);
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(deviceFd);
+    if (!priv) return (XDeviceNetworkServerHandle)(-1);
     if (backlog > 0) {
         L4P(priv)->listenBacklog = (unsigned)(backlog > 255 ? 255 : backlog);
     } else {
         L4P(priv)->listenBacklog = 0;
     }
-    uint16_t actualPort = XNetwork_socketBind(priv, addr, port, reuseAddr, false, XNetwork_Tcp);
-    if (actualPort == 0) return (XServerHandle)(-1);
-    return (XServerHandle)L4P(priv)->fd;
+    uint16_t actualPort = XDeviceNetwork_socketBind(deviceFd, addr, port, reuseAddr, false, XDeviceNetwork_Tcp);
+    if (actualPort == 0) return (XDeviceNetworkServerHandle)(-1);
+    return (XDeviceNetworkServerHandle)L4P(priv)->fd;
 }
 
-bool XNetwork_serverAccept(XNetworkSocketPrivate* priv) {
+bool XDeviceNetwork_serverAccept(XFd xfd) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     /* lwIP 通过 tcp_accept 回调接受连接（在 socketBind 中已设置），此处无需操作 */
     (void)priv;
     return true;
 }
 
-uint16_t XNetwork_serverPort(XServerHandle server) {
-    XNetworkSocketPrivateLwip* s;
+uint16_t XDeviceNetwork_serverPort(XDeviceNetworkServerHandle server) {
+    XDeviceNetworkContextLwip* s;
 
     if (server < 0) return 0;
     s = descriptor_private((XFd)server);
@@ -1454,8 +1482,9 @@ uint16_t XNetwork_serverPort(XServerHandle server) {
     return s->tpcb->local_port;
 }
 
-void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server) {
-    XNetworkSocketPrivateLwip* s;
+void XDeviceNetwork_serverClose(XFd xfd, XDeviceNetworkServerHandle server) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    XDeviceNetworkContextLwip* s;
 
     (void)priv;
     if (server < 0) return;
@@ -1466,34 +1495,35 @@ void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server) {
     XNET_LWIP_UNLOCK(prot);
     /* 有 owner 的服务端私有对象仍由 XTcpServer 销毁，保持服务端标记，
      * 避免析构时把 XTcpServer 误当作 XIODevice。 */
-    if (!s->base.owner) s->isServer = false;
+    if (!s->base.m_owner) s->isServer = false;
 
     /* 失败的 accepted socket 没有 XObject owner，由此路径负责回收。 */
-    if (!s->base.owner) {
+    if (!s->base.m_owner) {
         XFd_free(s->fd);
         s->fd = XFD_INVALID;
         release_detached_private(s);
     }
 }
 
-XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
+XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd xfd,
                                                 XHostAddress* clientAddr, uint16_t* clientPort) {
-    if (!priv) return (XSocketHandle)(-1);
-    XNetworkSocketPrivateLwip* s = L4P(priv);
-    if (!s->pendingAccept) return (XSocketHandle)(-1);
-    XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)s->pendingAccept;
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
+    if (!priv) return (XDeviceNetworkSocketHandle)(-1);
+    XDeviceNetworkContextLwip* s = L4P(priv);
+    if (!s->pendingAccept) return (XDeviceNetworkSocketHandle)(-1);
+    XDeviceNetworkContextLwip* cs = (XDeviceNetworkContextLwip*)s->pendingAccept;
     s->pendingAccept = NULL;
     if (clientAddr && cs->tpcb) ip_to_addr(&cs->tpcb->remote_ip, clientAddr);
     if (clientPort && cs->tpcb) *clientPort = cs->tpcb->remote_port;
     LWIP_DBG("[TCP服务] 领取客户端Socket=%p\n", (void*)cs);
-    return (XSocketHandle)cs->fd;
+    return (XDeviceNetworkSocketHandle)cs->fd;
 }
 
-XVector* XNetwork_lookupName(const XString* name) {
+XVector* XDeviceNetwork_lookupName(const XString* name) {
     if (!name) return NULL;
     const char* nameStr = XString_toUtf8(name);
     if (!nameStr) return NULL;
-    XNetwork_ensureInit();
+    XDeviceNetwork_ensureInit();
 
     /* Name lookup also needs a usable source address for DNS traffic. */
     if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
@@ -1516,21 +1546,21 @@ XVector* XNetwork_lookupName(const XString* name) {
     return vec;
 }
 
-XString* XNetwork_localHostName(void) {
+XString* XDeviceNetwork_localHostName(void) {
     return XString_create_utf8("lwip-device");
 }
 
 typedef struct { struct netif* next; int idx; } LwipIfIter;
 
-XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void) {
-    XNetwork_ensureInit();
+XDeviceNetworkInterfaceIterator XDeviceNetwork_enumInterfacesBegin(void) {
+    XDeviceNetwork_ensureInit();
     LwipIfIter* it = (LwipIfIter*)XMalloc_System(sizeof(LwipIfIter));
     if (!it) return NULL;
     it->next = netif_list; it->idx = 0;
-    return (XNetworkInterfaceIterator)it;
+    return (XDeviceNetworkInterfaceIterator)it;
 }
 
-XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) {
+XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIterator iter) {
     LwipIfIter* it = (LwipIfIter*)iter;
     if (!it || !it->next) return NULL;
     struct netif* nif = it->next; it->next = nif->next;
@@ -1567,42 +1597,28 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) {
     return iface;
 }
 
-void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter) { if (iter) XFree_System(iter); }
+void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter) { if (iter) XFree_System(iter); }
 
-bool XNetwork_multicastGroup(XSocketHandle sock, bool join, const XHostAddress* group, uint32_t ifIdx) {
+bool XDeviceNetwork_multicastGroup(XDeviceNetworkSocketHandle sock, bool join, const XHostAddress* group, uint32_t ifIdx) {
     (void)sock; (void)join; (void)group; (void)ifIdx; return false;
 }
-int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg) {
+int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op, void* arg) {
     (void)sock; (void)op; (void)arg; return -1;
 }
 
-bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv, XHostAddress* src, uint16_t* port) {
+bool XDeviceNetwork_getLastDatagramSender(XFd xfd, XHostAddress* src, uint16_t* port) {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return false;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
+    XDeviceNetworkContextLwip* s = L4P(priv);
     if (src) ip_to_addr(&s->fromAddr, src);
     if (port) *port = s->fromPort;
     return true;
 }
 
-int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t sz,
-                               const XHostAddress* addr, uint16_t port) {
-    XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)sock;
-    if (!s || !s->upcb || !data || sz <= 0) return -1;
-    ip_addr_t dst; addr_to_ip(addr, &dst);
-    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)sz, PBUF_RAM);
-    if (!p) return -1;
-    memcpy(p->payload, data, (size_t)sz);
-    XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-    err_t e = udp_sendto(s->upcb, p, &dst, port);
-    XNET_LWIP_UNLOCK(prot);
-    pbuf_free(p);
-    return (e == ERR_OK) ? sz : -1;
-}
-
-bool XNetwork_getSystemProxy(const XString* url, XNetworkProxy* out) {
+bool XDeviceNetwork_getSystemProxy(const XString* url, XNetworkProxy* out) {
     (void)url; (void)out; return false;
 }
-int XNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* out, void** ctx) {
+int XDeviceNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* out, void** ctx) {
     (void)name; (void)in; (void)out; (void)ctx; return -1;
 }
 
@@ -1611,11 +1627,12 @@ int XNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* o
  * 环形缓冲区中待发送的明文已在 xssl_v_writeData -> BIO -> parent writeData
  * 路径中完成加密并发送，无需额外操作。
  * ================================================================ */
-void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
+void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool isUdp)
 {
+    XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !ringBuffer) return;
     (void)isUdp;
     /* lwIP: 写入通过 tcp_write/tcp_output 同步完成，
-     * 环形缓冲区数据已在 XNetwork_socketWrite 路径中处理完毕。 */
+     * 环形缓冲区数据已在 XDeviceNetwork_socketWrite 路径中处理完毕。 */
 }
 #endif /* XNETWORK_USE_LWIP */

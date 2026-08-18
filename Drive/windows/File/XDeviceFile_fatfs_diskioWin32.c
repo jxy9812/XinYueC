@@ -7,7 +7,7 @@
 
 #include "ff.h"           /* LBA_t 等类型定义 */
 #include "diskio.h"
-#include "XFileSystem_Fatfs_platform.h"
+#include "XDeviceFile.h"
 #include "XString.h"
 #include "XMemory.h"
 #include <stdio.h>
@@ -351,7 +351,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
 }
 
 /* ============================================================================
- * XFileSystem_Fatfs_platform.h 平台实现（5个）
+ * FatFs 平台内部适配实现
  * ============================================================================ */
 
 /* ---- 驱动器信息 ---- */
@@ -360,19 +360,19 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
 /* 文件镜像模式：使用宏预定义的驱动器列表 */
 static const char* g_fileDrivePrefixes[] = { XFILE_FATFS_FILEMODE_DRIVE_STRS };
 
-int XFatfsDrives_count(void)
+int XFATFS_platformDriveCount(void)
 {
     return XFILE_FATFS_FILEMODE_DRIVE_COUNT;
 }
 
-bool XFatfsDrives_at(int index, XString* path)
+bool XFATFS_platformDriveAt(int index, XString* path)
 {
     if (!path || index < 0 || index >= XFILE_FATFS_FILEMODE_DRIVE_COUNT) return false;
     XString_assign_utf8(path, g_fileDrivePrefixes[index]);
     return true;
 }
 
-int XFatfsDrives_prefixToIndex(const char* prefix)
+int XFATFS_platformDrivePrefixToIndex(const char* prefix)
 {
     if (!prefix) return -1;
     size_t prefixLen = strlen(prefix);
@@ -388,7 +388,7 @@ int XFatfsDrives_prefixToIndex(const char* prefix)
 #else
 /* 物理磁盘模式：枚举系统逻辑驱动器 */
 
-int XFatfsDrives_count(void)
+int XFATFS_platformDriveCount(void)
 {
     DWORD mask = GetLogicalDrives();
     int count = 0;
@@ -396,7 +396,7 @@ int XFatfsDrives_count(void)
     return count;
 }
 
-bool XFatfsDrives_at(int index, XString* path)
+bool XFATFS_platformDriveAt(int index, XString* path)
 {
     if (!path || index < 0) return false;
 
@@ -412,7 +412,7 @@ bool XFatfsDrives_at(int index, XString* path)
     return false;
 }
 
-int XFatfsDrives_prefixToIndex(const char* prefix)
+int XFATFS_platformDrivePrefixToIndex(const char* prefix)
 {
     if (!prefix) return -1;
     /* 物理磁盘模式：匹配单字母+冒号前缀（如 "C:", "C:/", "D:\"） */
@@ -435,7 +435,7 @@ int XFatfsDrives_prefixToIndex(const char* prefix)
 
 /* ---- 特殊路径 ---- */
 
-bool XFatfsPath_home(XString* path)
+bool XFATFS_platformHomePath(XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
@@ -452,7 +452,7 @@ bool XFatfsPath_home(XString* path)
 #endif
 }
 
-bool XFatfsPath_root(XString* path)
+bool XFATFS_platformRootPath(XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
@@ -474,7 +474,7 @@ bool XFatfsPath_root(XString* path)
 #endif
 }
 
-bool XFatfsPath_current(XString* path)
+bool XFATFS_platformCurrentPath(XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
@@ -491,13 +491,13 @@ bool XFatfsPath_current(XString* path)
 #endif
 }
 
-bool XFatfsPath_setCurrent(const XString* path)
+bool XFATFS_platformSetCurrentPath(const XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0
     const char* utf8 = XString_toUtf8(path);
     if (!utf8) return false;
-    int index = XFatfsDrives_prefixToIndex(utf8);
+    int index = XFATFS_platformDrivePrefixToIndex(utf8);
     const char* rest = utf8;
     if (index >= 0) {
         const char* colon = strchr(utf8, ':');
@@ -520,7 +520,7 @@ bool XFatfsPath_setCurrent(const XString* path)
 #endif
 }
 
-bool XFatfsPath_temp(XString* path)
+bool XFATFS_platformTempPath(XString* path)
 {
     if (!path) return false;
 #if XFILE_FATFS_DISKIO_MODE == 0

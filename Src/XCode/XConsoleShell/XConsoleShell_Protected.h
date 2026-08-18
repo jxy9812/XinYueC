@@ -3,7 +3,7 @@
  * @brief XConsoleShell 内部子模块契约。
  * @details
  * 仅 XConsoleShell 实现文件和可选文件/进程执行子模块包含。声明不暴露
- * 平台句柄，文件操作由 XConsoleShellFileSystem 通过 XFileSystem 公共 API
+ * 平台句柄，文件操作由 XConsoleShellFileSystem 通过 XDeviceFile 公共 API
  * 完成，外部进程由 XConsoleShellExecutor 通过 XProcess 公共 API 完成。
  */
 

@@ -2,12 +2,13 @@
 
 #include "XDateTime.h"
 #include "XAtomic.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XMemory.h"
 #include "XMutex.h"
 #include "XRandomGenerator.h"
 #include "XReadWriteLock.h"
 #include "XThread.h"
+#include "XVarList.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -29,9 +30,70 @@ typedef struct XSqliteLockGroup {
 static XMutex* g_xsqlite_lockRegistryMutex;
 static XSqliteLockGroup g_xsqlite_lockGroups[XSQLITE_LOCK_GROUP_MAX];
 
+static XFd xsqlite_open_file(const XString* path, int mode, int* error)
+{
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
+
+static bool xsqlite_file_stat(XFd fd, XFileStat* stat)
+{
+    XFileStat result;
+    XVarList* output;
+    bool ok;
+    if (!stat) return false;
+    memset(&result, 0, sizeof(result));
+    output = XVarList_Create(XVar(XFileStat, result));
+    if (!output) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_GetFileStat, NULL, output);
+    if (ok) {
+        XVarList_start(output);
+        *stat = XVarList_arg(output, XFileStat);
+    }
+    XVarList_delete(output);
+    return ok;
+}
+
+static void* xsqlite_file_map(XFd fd, int64_t offset, int64_t size, int flags)
+{
+    XVarList* input;
+    XVarList* output;
+    void* address = NULL;
+    bool ok;
+    input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size), XVar(int, flags));
+    output = XVarList_Create(XVar(void*, address));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return NULL;
+    }
+    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
+    if (ok) {
+        XVarList_start(output);
+        address = XVarList_arg(output, void*);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return address;
+}
+
+static bool xsqlite_file_unmap(XFd fd, void* address, int64_t size)
+{
+    XVarList* input;
+    bool ok;
+    input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
+    if (!input) return false;
+    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
+    XVarList_delete(input);
+    return ok;
+}
+
 /*
  * SQLite calls this VFS for all file-backed databases.  The implementation
- * deliberately stops at XFileSystem.h so the SQLite source does not
+ * deliberately stops at XDeviceFile.h so the SQLite source does not
  * know whether the target uses POSIX, Win32, FatFs, or another XFile backend.
  */
 typedef struct XSqliteFile {
@@ -199,11 +261,11 @@ static int xsqlite_file_close(sqlite3_file* file)
     if (xsqlite_file_shm_unmap(file, sqliteFile->m_deleteOnClose) != SQLITE_OK)
         result = SQLITE_IOERR_CLOSE;
     if (sqliteFile->m_fd != XFD_INVALID) {
-        XFileSystem_close(sqliteFile->m_fd);
+        XDeviceFile_close(sqliteFile->m_fd);
         sqliteFile->m_fd = XFD_INVALID;
     }
     if (sqliteFile->m_deleteOnClose && sqliteFile->m_path
-        && !XFileSystem_removePermanent(sqliteFile->m_path)) {
+        && !XDeviceFile_removePermanent(sqliteFile->m_path)) {
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_path) {
@@ -225,8 +287,8 @@ static int xsqlite_file_read(sqlite3_file* file, void* buffer, int amount,
     int64_t readSize;
     if (!xsqlite_file_is_open(sqliteFile) || !buffer || amount < 0 || offset < 0)
         return SQLITE_IOERR_READ;
-    if (XFileSystem_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
-    readSize = XFileSystem_read(sqliteFile->m_fd, buffer, amount);
+    if (XDeviceFile_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
+    readSize = XDeviceFile_read(sqliteFile->m_fd, buffer, amount);
     if (readSize == amount) return SQLITE_OK;
     if (readSize >= 0 && readSize < amount) {
         memset((uint8_t*)buffer + readSize, 0, (size_t)amount - (size_t)readSize);
@@ -242,8 +304,8 @@ static int xsqlite_file_write(sqlite3_file* file, const void* buffer, int amount
     int64_t written;
     if (!xsqlite_file_is_open(sqliteFile) || !buffer || amount < 0 || offset < 0)
         return SQLITE_IOERR_WRITE;
-    if (XFileSystem_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
-    written = XFileSystem_write(sqliteFile->m_fd, buffer, amount);
+    if (XDeviceFile_seek(sqliteFile->m_fd, offset, XSeekSet) < 0) return SQLITE_IOERR_SEEK;
+    written = XDeviceFile_write(sqliteFile->m_fd, buffer, amount);
     return written == amount ? SQLITE_OK : SQLITE_IOERR_WRITE;
 }
 
@@ -251,7 +313,7 @@ static int xsqlite_file_truncate(sqlite3_file* file, sqlite3_int64 size)
 {
     XSqliteFile* sqliteFile = xsqlite_file_cast(file);
     if (!xsqlite_file_is_open(sqliteFile) || size < 0) return SQLITE_IOERR_TRUNCATE;
-    return XFileSystem_resize(sqliteFile->m_fd, size) ? SQLITE_OK : SQLITE_IOERR_TRUNCATE;
+    return XDeviceFile_resize(sqliteFile->m_fd, size) ? SQLITE_OK : SQLITE_IOERR_TRUNCATE;
 }
 
 static int xsqlite_file_sync(sqlite3_file* file, int flags)
@@ -259,7 +321,7 @@ static int xsqlite_file_sync(sqlite3_file* file, int flags)
     XSqliteFile* sqliteFile = xsqlite_file_cast(file);
     (void)flags;
     if (!xsqlite_file_is_open(sqliteFile)) return SQLITE_IOERR_FSYNC;
-    return XFileSystem_flush(sqliteFile->m_fd) ? SQLITE_OK : SQLITE_IOERR_FSYNC;
+    return XDeviceFile_flush(sqliteFile->m_fd) ? SQLITE_OK : SQLITE_IOERR_FSYNC;
 }
 
 static int xsqlite_file_size(sqlite3_file* file, sqlite3_int64* size)
@@ -267,7 +329,7 @@ static int xsqlite_file_size(sqlite3_file* file, sqlite3_int64* size)
     XSqliteFile* sqliteFile = xsqlite_file_cast(file);
     XFileStat stat;
     if (!xsqlite_file_is_open(sqliteFile) || !size) return SQLITE_IOERR_FSTAT;
-    if (!XFileSystem_fstat(sqliteFile->m_fd, &stat)) return SQLITE_IOERR_FSTAT;
+    if (!xsqlite_file_stat(sqliteFile->m_fd, &stat)) return SQLITE_IOERR_FSTAT;
     *size = (sqlite3_int64)stat.size;
     return SQLITE_OK;
 }
@@ -276,7 +338,7 @@ static int xsqlite_file_size(sqlite3_file* file, sqlite3_int64* size)
  * XFile currently exposes no portable inter-process byte-range lock.  Keep
  * SQLite's lock state per opened handle so normal single-connection and
  * single-process use follows SQLite's state machine.  A target that needs
- * multi-process locking can extend XFileSystem.h without changing
+ * multi-process locking can extend XDeviceFile.h without changing
  * the SQL public layer.
  */
 static int xsqlite_file_lock(sqlite3_file* file, int level)
@@ -360,7 +422,7 @@ static int xsqlite_file_shm_open(XSqliteFile* sqliteFile)
     mode = sqliteFile->m_readOnly
         ? (XIODevice_ReadOnly | XIODevice_Existing)
         : (XIODevice_ReadWrite | XIODevice_Create);
-    sqliteFile->m_shmFd = XFileSystem_open(sqliteFile->m_shmPath, mode, &error);
+    sqliteFile->m_shmFd = xsqlite_open_file(sqliteFile->m_shmPath, mode, &error);
     if (sqliteFile->m_shmFd == XFD_INVALID) {
         XString_delete_base(sqliteFile->m_shmPath);
         sqliteFile->m_shmPath = NULL;
@@ -393,14 +455,14 @@ static int xsqlite_file_shm_map(sqlite3_file* file, int page, int pageSize,
     if (code != SQLITE_OK) return code;
     offset = (sqlite3_int64)page * (sqlite3_int64)pageSize;
     wantedSize = offset + pageSize;
-    if (!XFileSystem_fstat(sqliteFile->m_shmFd, &stat)) return SQLITE_IOERR_FSTAT;
+    if (!xsqlite_file_stat(sqliteFile->m_shmFd, &stat)) return SQLITE_IOERR_FSTAT;
     if ((sqlite3_int64)stat.size < wantedSize) {
         if (!extend || sqliteFile->m_readOnly) return SQLITE_OK;
-        if (!XFileSystem_resize(sqliteFile->m_shmFd, wantedSize))
+        if (!XDeviceFile_resize(sqliteFile->m_shmFd, wantedSize))
             return SQLITE_IOERR_SHMSIZE;
     }
-    address = XFileSystem_map(sqliteFile->m_shmFd, offset, pageSize,
-                              sqliteFile->m_readOnly ? 0 : 0x2);
+    address = xsqlite_file_map(sqliteFile->m_shmFd, offset, pageSize,
+                               sqliteFile->m_readOnly ? 0 : 0x2);
     if (!address) return SQLITE_IOERR_MMAP;
     sqliteFile->m_shmRegions[page].m_address = address;
     sqliteFile->m_shmRegions[page].m_size = pageSize;
@@ -489,12 +551,12 @@ static int xsqlite_file_shm_unmap(sqlite3_file* file, int deleteFlag)
     }
     xsqlite_file_shm_clear(sqliteFile);
     if (sqliteFile->m_shmFd != XFD_INVALID) {
-        XFileSystem_close(sqliteFile->m_shmFd);
+        XDeviceFile_close(sqliteFile->m_shmFd);
         sqliteFile->m_shmFd = XFD_INVALID;
     }
     if (deleteFlag && sqliteFile->m_shmPath
-        && XFileSystem_exists(sqliteFile->m_shmPath)
-        && !XFileSystem_removePermanent(sqliteFile->m_shmPath)) {
+        && XDeviceFile_exists(sqliteFile->m_shmPath)
+        && !XDeviceFile_removePermanent(sqliteFile->m_shmPath)) {
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_shmPath) {
@@ -510,8 +572,9 @@ static void xsqlite_file_shm_clear(XSqliteFile* sqliteFile)
     if (!sqliteFile) return;
     for (index = 0; index < sqliteFile->m_shmRegionCount; ++index) {
         if (sqliteFile->m_shmRegions[index].m_address) {
-            XFileSystem_unmap(sqliteFile->m_shmRegions[index].m_address,
-                              sqliteFile->m_shmRegions[index].m_size);
+            (void)xsqlite_file_unmap(sqliteFile->m_shmFd,
+                                     sqliteFile->m_shmRegions[index].m_address,
+                                     sqliteFile->m_shmRegions[index].m_size);
         }
     }
     if (sqliteFile->m_shmRegions) XFree_System(sqliteFile->m_shmRegions);
@@ -557,7 +620,7 @@ static int xsqlite_vfs_open(sqlite3_vfs* vfs, sqlite3_filename name,
         return SQLITE_NOMEM;
     }
     mode = xsqlite_file_open_mode(flags);
-    sqliteFile->m_fd = XFileSystem_open(path, mode, &error);
+    sqliteFile->m_fd = xsqlite_open_file(path, mode, &error);
     if (sqliteFile->m_fd == XFD_INVALID) {
         XString_delete_base(path);
         sqliteFile->m_parent.pMethods = NULL;
@@ -570,7 +633,7 @@ static int xsqlite_vfs_open(sqlite3_vfs* vfs, sqlite3_filename name,
     if (flags & SQLITE_OPEN_MAIN_DB) {
         sqliteFile->m_lockGroup = xsqlite_lock_group_acquire(path);
         if (!sqliteFile->m_lockGroup) {
-            XFileSystem_close(sqliteFile->m_fd);
+            XDeviceFile_close(sqliteFile->m_fd);
             sqliteFile->m_fd = XFD_INVALID;
             XString_delete_base(sqliteFile->m_path);
             sqliteFile->m_path = NULL;
@@ -592,11 +655,11 @@ static int xsqlite_vfs_delete(sqlite3_vfs* vfs, const char* name, int syncDir)
     if (!name) return SQLITE_IOERR_DELETE;
     path = XString_create_utf8(name);
     if (!path) return SQLITE_NOMEM;
-    if (!XFileSystem_exists(path)) {
+    if (!XDeviceFile_exists(path)) {
         XString_delete_base(path);
         return SQLITE_OK;
     }
-    if (!XFileSystem_removePermanent(path)) {
+    if (!XDeviceFile_removePermanent(path)) {
         XString_delete_base(path);
         return SQLITE_IOERR_DELETE;
     }
@@ -613,7 +676,7 @@ static int xsqlite_vfs_access(sqlite3_vfs* vfs, const char* name, int flags, int
     *result = 0;
     path = XString_create_utf8(name);
     if (!path) return SQLITE_NOMEM;
-    if (!XFileSystem_stat(path, &stat)) {
+    if (!XDeviceFile_stat(path, &stat)) {
         XString_delete_base(path);
         return SQLITE_OK;
     }

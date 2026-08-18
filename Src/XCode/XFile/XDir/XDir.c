@@ -1,5 +1,5 @@
 ﻿#include "XDir.h"
-#include "XFileSystem.h"
+#include "XDeviceFile.h"
 #include "XSort.h"
 #include "XCompare.h"
 #include "XMemory.h"
@@ -917,7 +917,7 @@ XStringList* XDir_searchPaths(const XString* prefix)
 }
 
 /* ============================================================================
- * 目录内容（使用 XFileSystem API）
+ * 目录内容（使用 XDeviceFile API）
  * ============================================================================ */
 
 XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
@@ -931,7 +931,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     XVector* entryInfos = XVector_create(sizeof(XDirEntryInfo));
     if (!entryInfos) return NULL;
     
-    XDirIterator iter = XFileSystem_opendir(dir->m_path);
+    XDirIterator iter = XDeviceFile_opendir(dir->m_path);
     if (!iter) {
         XVector_delete_base(entryInfos);
         return XStringList_create();
@@ -940,12 +940,12 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     XDirEntry entry;
     entry.name = XString_create();
     if (!entry.name) {
-        XFileSystem_closedir(iter);
+        XDeviceFile_closedir(iter);
         XVector_delete_base(entryInfos);
         return XStringList_create();
     }
     
-    while (XFileSystem_readdir(iter, &entry)) {
+    while (XDeviceFile_readdir(iter, &entry)) {
         if ((actualFilters & XDir_NoDotAndDotDot) == XDir_NoDotAndDotDot) {
             if (XString_equals_utf8(entry.name, ".", XChar_CaseSensitive) ||
                 XString_equals_utf8(entry.name, "..", XChar_CaseSensitive)) {
@@ -1003,7 +1003,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     }
     
     XString_delete_base(entry.name);
-    XFileSystem_closedir(iter);
+    XDeviceFile_closedir(iter);
     
     if ((actualSort & XDir_SortByMask) != XDir_Unsorted && XVector_size_base(entryInfos) > 1) {
         g_sortContext.flags = actualSort;
@@ -1031,7 +1031,7 @@ bool XDir_mkdir(XDir* dir, const XString* dirName)
     if (!dir || !dirName) return false;
     XString* fullPath = XDir_filePath(dir, dirName);
     if (!fullPath) return false;
-    bool result = XFileSystem_mkdir(fullPath, false);
+    bool result = XDeviceFile_mkdir(fullPath, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1041,7 +1041,7 @@ bool XDir_mkpath(XDir* dir, const XString* dirPath)
     if (!dir || !dirPath) return false;
     XString* fullPath = XDir_filePath(dir, dirPath);
     if (!fullPath) return false;
-    bool result = XFileSystem_mkdir(fullPath, true);
+    bool result = XDeviceFile_mkdir(fullPath, true);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1051,7 +1051,7 @@ bool XDir_rmdir(XDir* dir, const XString* dirName)
     if (!dir || !dirName) return false;
     XString* fullPath = XDir_filePath(dir, dirName);
     if (!fullPath) return false;
-    bool result = XFileSystem_rmdir(fullPath, false);
+    bool result = XDeviceFile_rmdir(fullPath, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1061,7 +1061,7 @@ bool XDir_rmpath(XDir* dir, const XString* dirPath)
     if (!dir || !dirPath) return false;
     XString* fullPath = XDir_filePath(dir, dirPath);
     if (!fullPath) return false;
-    bool result = XFileSystem_rmdir(fullPath, false);
+    bool result = XDeviceFile_rmdir(fullPath, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1069,7 +1069,7 @@ bool XDir_rmpath(XDir* dir, const XString* dirPath)
 bool XDir_removeRecursively(XDir* dir)
 {
     if (!dir || !dir->m_path) return false;
-    return XFileSystem_rmdir(dir->m_path, true);
+    return XDeviceFile_rmdir(dir->m_path, true);
 }
 
 bool XDir_remove(XDir* dir, const XString* fileName)
@@ -1077,7 +1077,7 @@ bool XDir_remove(XDir* dir, const XString* fileName)
     if (!dir || !fileName) return false;
     XString* fullPath = XDir_filePath(dir, fileName);
     if (!fullPath) return false;
-    bool result = XFileSystem_removePermanent(fullPath);
+    bool result = XDeviceFile_removePermanent(fullPath);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1092,7 +1092,7 @@ bool XDir_rename(XDir* dir, const XString* oldName, const XString* newName)
         if (newPath) XString_delete_base(newPath);
         return false;
     }
-    bool result = XFileSystem_rename(oldPath, newPath);
+    bool result = XDeviceFile_rename(oldPath, newPath);
     XString_delete_base(oldPath);
     XString_delete_base(newPath);
     return result;
@@ -1101,7 +1101,7 @@ bool XDir_rename(XDir* dir, const XString* oldName, const XString* newName)
 bool XDir_exists_1(const XDir* dir)
 {
     if (!dir || !dir->m_path) return false;
-    return XFileSystem_exists(dir->m_path);
+    return XDeviceFile_exists(dir->m_path);
 }
 
 bool XDir_exists_2(const XDir* dir, const XString* name)
@@ -1109,7 +1109,7 @@ bool XDir_exists_2(const XDir* dir, const XString* name)
     if (!dir || !name) return false;
     XString* fullPath = XDir_filePath(dir, name);
     if (!fullPath) return false;
-    bool result = XFileSystem_exists(fullPath);
+    bool result = XDeviceFile_exists(fullPath);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1118,7 +1118,7 @@ bool XDir_isReadable(const XDir* dir)
 {
     if (!dir || !dir->m_path) return false;
     XFileStat stat;
-    if (!XFileSystem_stat(dir->m_path, &stat)) return false;
+    if (!XDeviceFile_stat(dir->m_path, &stat)) return false;
     return stat.isReadable;
 }
 
@@ -1166,7 +1166,7 @@ XString* XDir_absolutePath(const XDir* dir)
     if (!dir || !dir->m_path) return NULL;
     XString* result = XString_create();
     if (!result) return NULL;
-    if (!XFileSystem_resolvePath(dir->m_path, result, XPathStyle_Absolute)) {
+    if (!XDeviceFile_resolvePath(dir->m_path, result, XPathStyle_Absolute)) {
         XString_delete_base(result);
         return NULL;
     }
@@ -1178,7 +1178,7 @@ XString* XDir_canonicalPath(const XDir* dir)
     if (!dir || !dir->m_path) return NULL;
     XString* result = XString_create();
     if (!result) return NULL;
-    if (!XFileSystem_resolvePath(dir->m_path, result, XPathStyle_Canonical)) {
+    if (!XDeviceFile_resolvePath(dir->m_path, result, XPathStyle_Canonical)) {
         XString_delete_base(result);
         return NULL;
     }
@@ -1204,12 +1204,12 @@ bool XDir_cd(XDir* dir, const XString* dirName)
     if (!dir || !dirName) return false;
     XString* newPath = XDir_filePath(dir, dirName);
     if (!newPath) return false;
-    if (!XFileSystem_exists(newPath)) {
+    if (!XDeviceFile_exists(newPath)) {
         XString_delete_base(newPath);
         return false;
     }
     XFileStat stat;
-    if (!XFileSystem_stat(newPath, &stat) || !stat.isDir) {
+    if (!XDeviceFile_stat(newPath, &stat) || !stat.isDir) {
         XString_delete_base(newPath);
         return false;
     }
@@ -1241,7 +1241,7 @@ XString* XDir_currentPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_getSpecialPath(XSpecialPath_Current, path)) {
+    if (!XDeviceFile_getSpecialPath(XSpecialPath_Current, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1251,14 +1251,14 @@ XString* XDir_currentPath(void)
 bool XDir_setCurrent(const XString* path)
 {
     if (!path) return false;
-    return XFileSystem_setCurrentPath(path);
+    return XDeviceFile_setCurrentPath(path);
 }
 
 XString* XDir_homePath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_getSpecialPath(XSpecialPath_Home, path)) {
+    if (!XDeviceFile_getSpecialPath(XSpecialPath_Home, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1269,7 +1269,7 @@ XString* XDir_rootPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_getSpecialPath(XSpecialPath_Root, path)) {
+    if (!XDeviceFile_getSpecialPath(XSpecialPath_Root, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1280,7 +1280,7 @@ XString* XDir_tempPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_getSpecialPath(XSpecialPath_Temp, path)) {
+    if (!XDeviceFile_getSpecialPath(XSpecialPath_Temp, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1301,7 +1301,7 @@ XStringList* XDir_drives(void)
 {
     XStringList* result = XStringList_create();
     if (!result) return NULL;
-    if (!XFileSystem_enumerateDrives(xdir_drives_callback, result) &&
+    if (!XDeviceFile_enumerateDrives(xdir_drives_callback, result) &&
         XStringList_size_base(result) == 0) {
         XStringList_delete_base(result);
         return NULL;

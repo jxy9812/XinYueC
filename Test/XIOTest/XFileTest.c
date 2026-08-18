@@ -10,7 +10,7 @@
 #include"XPrintf.h"
 #include"XFileDescriptor.h"
 #include"XDateTime.h"
-#include"XFileSystem.h"
+#include"XDeviceFile.h"
 #include"XAbstractNetIoRing.h"
 #include"XThread.h"
 #include <string.h>
@@ -21,6 +21,14 @@
 
 static int g_pass = 0;
 static int g_fail = 0;
+
+static XFd xfiletest_open_file(const XString* path, int mode, int* error) {
+    XDeviceOpenOptions options;
+    memset(&options, 0, sizeof(options));
+    options.m_openMode = mode;
+    options.m_target = path;
+    return XDevice_open(XDeviceType_File, &options, error);
+}
 
 static void CHECK(bool cond, const char* msg) {
     if (cond) {
@@ -248,10 +256,10 @@ static void test_open_from_fd(void)
     XIODevice_close_base((XIODevice*)f);
     XFile_deleteLater(f);
 
-    /* 通过 XFileSystem_open 获取 XFd，再用 XFile_open_3 */
+    /* 通过 XDeviceFile_open 获取 XFd，再用 XFile_open_3 */
     int err = 0;
-    XFd fd = XFileSystem_open(fn, XIODevice_ReadOnly, &err);
-    CHECK(fd >= 0, "XFileSystem_open 获取 fd 成功");
+    XFd fd = xfiletest_open_file(fn, XIODevice_ReadOnly, &err);
+    CHECK(fd >= 0, "XDeviceFile_open 获取 fd 成功");
 
     if (fd >= 0) {
         XFile* f2 = XFile_create();
@@ -1165,10 +1173,10 @@ static void xfile_shm_server_run(const XString* name, int* result)
        SQE/CQE，信令读走内核阻塞退化路径。 */
     XAbstractNetIoRing_setGlobal(NULL);
 
-    fd = XFileSystem_openSharedMemory(name, true, 4096, NULL);
+    fd = XDeviceFile_openSharedMemory(name, true, 4096, NULL);
     if (fd < 0) { *result = 1; return; }
-    mapped = XFileSystem_map(fd, 0, 4096, 0x2);
-    if (!mapped) { XFileSystem_close(fd); *result = 2; return; }
+    mapped = XDeviceFile_map(fd, 0, 4096, 0x2);
+    if (!mapped) { XDeviceFile_close(fd); *result = 2; return; }
 
     /* 写入数据区 + 0x55 填充，并回读校验本端可见性 */
     memset(mapped, 0x55, XFILE_SHM_TEST_FILL_LEN);
@@ -1179,18 +1187,18 @@ static void xfile_shm_server_run(const XString* name, int* result)
     /* 数据就绪：通过信令通道发 1 字节通知，对端收到后才读取数据区 */
     {
         char sig = 1;
-        n = XFileSystem_write(fd, &sig, 1);
+        n = XDeviceFile_write(fd, &sig, 1);
     }
     if (n != 1) { *result = 4; goto done; }
 
     /* 等待父进程校验完成后回发的结束信号 */
-    n = XFileSystem_read(fd, &done, 1);
+    n = XDeviceFile_read(fd, &done, 1);
     if (n != 1 || done != 1) { *result = 5; goto done; }
     *result = 0;
 
 done:
-    XFileSystem_unmap(mapped, 4096);
-    XFileSystem_close(fd);
+    XDeviceFile_unmap(mapped, 4096);
+    XDeviceFile_close(fd);
 }
 
 /* 父进程（客户端）：按名打开 → 映射 → 信令等待通知 → 校验数据 → 回发结束 */
@@ -1208,17 +1216,17 @@ static void xfile_shm_client_run(const XString* name, bool* ok)
     {
         int attempt;
         for (attempt = 0; attempt < 100; ++attempt) {
-            fd = XFileSystem_openSharedMemory(name, false, 0, NULL);
+            fd = XDeviceFile_openSharedMemory(name, false, 0, NULL);
             if (fd >= 0) break;
             XThread_msleep(20);
         }
     }
     if (fd < 0) return;
-    mapped = XFileSystem_map(fd, 0, 4096, 0x0);
-    if (!mapped) { XFileSystem_close(fd); return; }
+    mapped = XDeviceFile_map(fd, 0, 4096, 0x0);
+    if (!mapped) { XDeviceFile_close(fd); return; }
 
     /* 信令通道等待服务端"数据已就绪"通知（库内部事件通知路径） */
-    n = XFileSystem_read(fd, &sig, 1);
+    n = XDeviceFile_read(fd, &sig, 1);
     if (n != 1 || sig != 1) goto done;
 
     /* 校验数据区与 0x55 填充区 */
@@ -1237,14 +1245,14 @@ static void xfile_shm_client_run(const XString* name, bool* ok)
     /* 校验通过：回发结束信号，服务端收到后解除映射并退出 */
     {
         char done = 1;
-        n = XFileSystem_write(fd, &done, 1);
+        n = XDeviceFile_write(fd, &done, 1);
     }
     if (n != 1) goto done;
     *ok = true;
 
 done:
-    XFileSystem_unmap(mapped, 4096);
-    XFileSystem_close(fd);
+    XDeviceFile_unmap(mapped, 4096);
+    XDeviceFile_close(fd);
 }
 
 static void test_shared_memory(void)
@@ -1294,15 +1302,15 @@ static void test_shared_memory(void)
     /* 打开不存在的段应失败 */
     {
         XString* missing = XString_create_utf8("xin_yue_c_shared_memory_no_such");
-        fd = XFileSystem_openSharedMemory(missing, false, 0, NULL);
+        fd = XDeviceFile_openSharedMemory(missing, false, 0, NULL);
         CHECK(fd < 0, "打开不存在的共享内存段应失败");
         XString_delete_base(missing);
     }
 
     /* 参数校验：空名称或非法大小应失败 */
-    fd = XFileSystem_openSharedMemory(NULL, true, 4096, NULL);
+    fd = XDeviceFile_openSharedMemory(NULL, true, 4096, NULL);
     CHECK(fd < 0, "空名称创建共享内存段应失败");
-    fd = XFileSystem_openSharedMemory(name, true, 0, NULL);
+    fd = XDeviceFile_openSharedMemory(name, true, 0, NULL);
     CHECK(fd < 0, "非法大小创建共享内存段应失败");
 
     XString_delete_base(name);
