@@ -1,6 +1,13 @@
 ﻿#ifndef XESP8266WIFI_H
 #define XESP8266WIFI_H
 
+/**
+ * @file XESP8266Wifi.h
+ * @brief ESP8266 AT 指令 WiFi 模块接口。
+ * @details XESP8266Wifi 复用 XATComm 的命令/响应能力，面向使用 ESP8266 AT
+ *          固件的嵌入式场景；底层 XIODevice 和信号对象均由调用方管理。
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,98 +18,98 @@ extern "C" {
 #include "XCircularQueue.h"
 
 /**
- * @brief ESP8266-01 WiFi模块AT指令操作类
+ * @brief ESP8266-01 WiFi 模块 AT 指令操作类。
  * @details 继承自 XATComm，通过外部传入的 XIODevice 接口与模块通信，
- * 支持所有ESP8266-01S的AT指令操作。所有操作默认异步执行，通过信号通知结果，
+ * 支持 ESP8266-01S 的 AT 指令操作。所有操作默认异步执行，通过信号通知结果，
  * 同时提供同步等待方法。
  */
 XCLASS_DEFINE_BEGING(XESP8266Wifi)
 XCLASS_DEFINE_EXTEND_END(XESP8266Wifi, XATComm)
 
 /**
- * @brief ESP8266工作模式枚举
+ * @brief ESP8266 工作模式枚举。
  */
 typedef enum 
 {
-    XESP8266_Mode_STA = 1,        // 客户端模式（连接外部WiFi）
-    XESP8266_Mode_AP = 2,         // 接入点模式（自身作为WiFi热点）
-    XESP8266_Mode_STA_AP = 3      // 混合模式（同时作为客户端和接入点）
+    XESP8266_Mode_STA = 1,        /**< STA 客户端模式（连接外部 WiFi）。 */
+    XESP8266_Mode_AP = 2,         /**< AP 接入点模式（自身作为 WiFi 热点）。 */
+    XESP8266_Mode_STA_AP = 3      /**< 混合模式（同时作为客户端和接入点）。 */
 }XESP8266WifiMode;
 
 /**
- * @brief ESP8266 AP模式加密方式枚举
- * @details 对应AT+CWSAP指令的加密方式参数，不同值代表不同的WiFi加密协议
+ * @brief ESP8266 AP 模式加密方式枚举。
+ * @details 对应 AT+CWSAP 指令的加密方式参数，不同值代表不同的 WiFi 加密协议。
  */
 typedef enum {
-    XESP8266_Encrypt_None = 0,        // 不加密 (无密码)
-    XESP8266_Encrypt_WEP = 1,         // WEP加密 (有线等效加密，安全性较低，不推荐)
-    XESP8266_Encrypt_WPA_PSK = 2,     // WPA-PSK加密 (WiFi Protected Access - Pre-Shared Key，较安全)
-    XESP8266_Encrypt_WPA2_PSK = 3,    // WPA2-PSK加密 (WPA2增强版，安全性更高，推荐使用)
-    XESP8266_Encrypt_WPA_WPA2_PSK = 4 // WPA/WPA2混合模式 (同时支持WPA和WPA2，兼容性更好)
+    XESP8266_Encrypt_None = 0,        /**< 不加密（无密码）。 */
+    XESP8266_Encrypt_WEP = 1,         /**< WEP 加密，安全性较低。 */
+    XESP8266_Encrypt_WPA_PSK = 2,     /**< WPA-PSK 加密。 */
+    XESP8266_Encrypt_WPA2_PSK = 3,    /**< WPA2-PSK 加密，安全性较高。 */
+    XESP8266_Encrypt_WPA_WPA2_PSK = 4 /**< WPA/WPA2 混合模式。 */
 } XESP8266WifiEncryption;
 
 /**
- * @brief 连接状态枚举
+ * @brief 连接状态枚举。
  */
 typedef enum {
-    XESP8266_Status_Disconnected = 0,  // 未连接
-    XESP8266_Status_Connecting = 1,    // 连接中
-    XESP8266_Status_Connected = 2,     // 已连接
-    XESP8266_Status_Error = 3          // 错误状态
+    XESP8266_Status_Disconnected = 0,  /**< 未连接。 */
+    XESP8266_Status_Connecting = 1,    /**< 正在连接。 */
+    XESP8266_Status_Connected = 2,     /**< 已连接。 */
+    XESP8266_Status_Error = 3           /**< 连接错误。 */
 } XESP8266WifiStatus;
 
 /**
- * @brief 网络协议类型
+ * @brief 网络协议类型。
  */
 typedef enum {
-    XESP8266_Protocol_TCP = 0,    // TCP协议
-    XESP8266_Protocol_UDP = 1     // UDP协议
+    XESP8266_Protocol_TCP = 0,    /**< TCP 协议。 */
+    XESP8266_Protocol_UDP = 1     /**< UDP 协议。 */
 } XESP8266WifiProtocol;
 
 /**
- * @brief AT指令操作类型
+ * @brief AT 指令操作类型。
  */
 typedef enum {
-    XESP8266_Op_None,               // 无操作
-    XESP8266_Op_GetLocalIP,         // 获取本地IP地址
-    XESP8266_Op_TestAT,             // 测试AT指令
-    XESP8266_Op_Reset,              // 重置模块
-    XESP8266_Op_SetMode,            // 设置工作模式
-    XESP8266_Op_SetMultiConnMode,   // 设置多连接模式
-    XESP8266_Op_ConnectWiFi,        // 连接WiFi
-    XESP8266_Op_DisconnectWiFi,     // 断开WiFi连接
-    XESP8266_Op_ConfigAP,           // 配置AP模式
-    XESP8266_Op_ConnectServer,      // 连接服务器
-    XESP8266_Op_DisconnectServer,   // 断开服务器连接
-    XESP8266_Op_WriteData,          // 写入数据
-    XESP8266_Op_RecvData,           // 接收数据
-    XESP8266_Op_StartServer,        // 启动服务器
-    XESP8266_Op_StopServer,         // 停止服务器
-    XESP8266_Op_SetTransparent,     // 进入透传模式
-    XESP8266_Op_EnterTransparent,   // 进入透传模式
-    XESP8266_Op_ExitTransparent     // 退出透传模式
+    XESP8266_Op_None,               /**< 无操作。 */
+    XESP8266_Op_GetLocalIP,         /**< 获取本地 IP 地址。 */
+    XESP8266_Op_TestAT,             /**< 测试 AT 指令。 */
+    XESP8266_Op_Reset,              /**< 重置模块。 */
+    XESP8266_Op_SetMode,            /**< 设置工作模式。 */
+    XESP8266_Op_SetMultiConnMode,   /**< 设置多连接模式。 */
+    XESP8266_Op_ConnectWiFi,        /**< 连接 WiFi。 */
+    XESP8266_Op_DisconnectWiFi,     /**< 断开 WiFi 连接。 */
+    XESP8266_Op_ConfigAP,           /**< 配置 AP 模式。 */
+    XESP8266_Op_ConnectServer,      /**< 连接服务器。 */
+    XESP8266_Op_DisconnectServer,   /**< 断开服务器连接。 */
+    XESP8266_Op_WriteData,          /**< 写入数据。 */
+    XESP8266_Op_RecvData,           /**< 接收数据。 */
+    XESP8266_Op_StartServer,        /**< 启动服务器。 */
+    XESP8266_Op_StopServer,         /**< 停止服务器。 */
+    XESP8266_Op_SetTransparent,     /**< 设置透传模式。 */
+    XESP8266_Op_EnterTransparent,   /**< 进入透传模式。 */
+    XESP8266_Op_ExitTransparent     /**< 退出透传模式。 */
 } XESP8266WifiOpType;
 
-// 最大支持连接数（ESP8266固件通常支持5个）
+/** @brief 最大支持连接数（ESP8266 固件通常支持 5 个）。 */
 #define XESP8266_MAX_CONNS 5
 
 /** 每个连接的读写缓冲区大小（字节） */
 #define XESP8266_BUFFER_SIZE 4096
 
 /**
- * 单个连接的信息
+ * @brief 单个连接的信息。
  */
 typedef struct 
 {
-    int connId;                   // 连接ID（0~4）
-    char ip[16];                  // 对端IP
-    bool isServer;                // 是否为服务器模式下的客户端连接
-    uint16_t port;                // 对端端口
-    int remaining_recv_size;      // 接收大小
-    XESP8266WifiProtocol protocol;// 协议（TCP/UDP）
-    XESP8266WifiStatus status;    // 连接状态
-    XCircularQueue* m_readBuffer; // 读取缓冲区
-    XCircularQueue* m_writeBuffer;// 写入缓冲区
+    int connId;                   /**< 连接 ID（0 到 XESP8266_MAX_CONNS-1）。 */
+    char ip[16];                  /**< 对端 IPv4 文本地址（含结尾 NUL）。 */
+    bool isServer;                /**< 是否为服务器模式下的客户端连接。 */
+    uint16_t port;                /**< 对端端口。 */
+    int remaining_recv_size;      /**< 尚未解析或接收的数据量。 */
+    XESP8266WifiProtocol protocol;/**< 传输协议（TCP/UDP）。 */
+    XESP8266WifiStatus status;    /**< 当前连接状态。 */
+    XCircularQueue* m_readBuffer; /**< 读取缓冲区，由连接对象拥有。 */
+    XCircularQueue* m_writeBuffer;/**< 写入缓冲区，由连接对象拥有。 */
 } XESP8266ConnInfo;
 
 /**
@@ -112,36 +119,38 @@ typedef struct
  */
 typedef struct XESP8266Wifi 
 {
-    XATComm m_base;                       // 继承 XATComm（AT 通信引擎）
+    XATComm m_base;                       /**< XATComm 基类，必须是第一个成员。 */
     
-    XESP8266WifiStatus m_wifiStatus;      // WiFi连接状态
-    XESP8266WifiMode m_wifiMode;          // 工作模式缓存
-    bool m_transparentMode;               // 透传模式标志
-    bool m_multiConnMode;                 // 多连接模式标志（AT+CIPMUX=1）
+    XESP8266WifiStatus m_wifiStatus;      /**< WiFi 连接状态缓存。 */
+    XESP8266WifiMode m_wifiMode;          /**< 工作模式缓存。 */
+    bool m_transparentMode;               /**< 透传模式标志。 */
+    bool m_multiConnMode;                 /**< 多连接模式标志（AT+CIPMUX=1）。 */
     
-    XString* m_ssid;                      // WiFi名称缓存
-    XString* m_password;                  // WiFi密码缓存
-    XHostAddress m_localIP;               // 本地IP地址缓存
+    XString* m_ssid;                      /**< WiFi 名称缓存，由对象拥有。 */
+    XString* m_password;                  /**< WiFi 密码缓存，由对象拥有。 */
+    XHostAddress m_localIP;               /**< 本地 IP 地址缓存。 */
     XHostAddress m_netmask;             ///< 子网掩码
     XHostAddress m_gateway;             ///< 网关
-    int m_pendingConnId;                  // 等待结果的连接ID
-    XESP8266WifiStatus m_pendingStatus;   // 等待的连接结果状态
+    int m_pendingConnId;                  /**< 等待结果的连接 ID。 */
+    XESP8266WifiStatus m_pendingStatus;   /**< 等待的连接结果状态。 */
     
-    XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  // 连接数组
-    int m_activeConnCount;                // 活跃连接数
+    XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  /**< 固定大小的连接数组。 */
+    int m_activeConnCount;                /**< 当前活跃连接数。 */
 } XESP8266Wifi;
+/** @brief 初始化 ESP8266 WiFi 类虚函数表。 @return 共享虚函数表，失败返回 NULL。 */
 XVtable* XESP8266Wifi_class_init(void);
 /**
  * @brief 初始化ESP8266设备
- * @param device XESP8266Wifi对象指针
- * @param io 底层IO设备指针(外部提供，必须已初始化)
+ * @param device XESP8266Wifi 对象指针；不能为 NULL。
+ * @param io 底层 I/O 设备指针；外部提供且必须已初始化，函数只借用不释放。
  */
 void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io);
 
 /**
  * @brief 创建ESP8266设备实例
- * @param io 底层IO设备指针(外部提供，必须已初始化)
- * @return 成功返回XESP8266Wifi对象指针，失败返回NULL
+ * @param memory 对象分配使用的内存类型。
+ * @param io 底层 I/O 设备指针；外部提供且必须已初始化，函数只借用不释放。
+ * @return 成功返回新对象指针；失败返回 NULL，调用方负责释放对象。
  */
 XESP8266Wifi* XESP8266Wifi_create_ex(XMemoryType memory,  XIODevice* io);
 

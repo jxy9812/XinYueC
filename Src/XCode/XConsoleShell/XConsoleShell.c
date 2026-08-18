@@ -26,6 +26,7 @@
 #endif
 #if XCONSOLE_SHELL_FILESYSTEM_ON
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XString.h"
 
 static XFd xcs_open_file(const XString* path, int mode, int* error)
@@ -891,7 +892,7 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
     XString* dirPath = NULL;
     XString* entryName = NULL;
     XDirEntry entry;
-    XDirIterator iterator = NULL;
+    XFd iterator = XFD_INVALID;
     size_t matchCount = 0;
     char decodedPrefix[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
     size_t decodedPrefixLength = 0;
@@ -948,9 +949,9 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
     if (!entryName) goto cleanup;
     memset(&entry, 0, sizeof(entry));
     entry.name = entryName;
-    iterator = XDeviceFile_opendir(dirPath);
-    if (!iterator) goto cleanup;
-    while (XDeviceFile_readdir(iterator, &entry)) {
+    iterator = XDeviceDir_openPath(dirPath, NULL);
+    if (iterator == XFD_INVALID) goto cleanup;
+    while (XDeviceDir_readNext(iterator, &entry)) {
         const char* name = XString_toUtf8(entryName);
         size_t nameLen = name ? strlen(name) : 0;
         if (!name || !nameLen) continue;
@@ -978,8 +979,8 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
         }
         ++matchCount;
     }
-    XDeviceFile_closedir(iterator);
-    iterator = NULL;
+    XDeviceDir_close(iterator);
+    iterator = XFD_INVALID;
     if (matchCount == 1 && uniqueName) {
         char raw[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
         char completed[XCONSOLE_SHELL_LINE_BUFFER_SIZE];
@@ -1044,12 +1045,12 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
         }
     } else if (matchCount > 1) {
         /* 无共同前缀，列出候选。 */
-        XDirIterator listIterator;
+        XFd listIterator = XFD_INVALID;
         const char* ptrs[XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS];
         size_t listCount = 0;
-        listIterator = XDeviceFile_opendir(dirPath);
-        if (listIterator) {
-            while (XDeviceFile_readdir(listIterator, &entry) &&
+        listIterator = XDeviceDir_openPath(dirPath, NULL);
+        if (listIterator != XFD_INVALID) {
+            while (XDeviceDir_readNext(listIterator, &entry) &&
                    listCount < XCONSOLE_SHELL_COMPLETION_MAX_OPTIONS) {
                 const char* name = XString_toUtf8(entryName);
                 size_t nameLen = name ? strlen(name) : 0;
@@ -1102,12 +1103,12 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
                     }
                 }
             }
-            XDeviceFile_closedir(listIterator);
+            XDeviceDir_close(listIterator);
         }
         if (listCount) xcs_complete_show_candidates(self, ptrs, listCount);
     }
 cleanup:
-    if (iterator) XDeviceFile_closedir(iterator);
+    if (iterator != XFD_INVALID) XDeviceDir_close(iterator);
     if (entryName) XString_delete_base(entryName);
     if (dirPath) XString_delete_base(dirPath);
 }

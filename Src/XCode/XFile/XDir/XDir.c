@@ -1,5 +1,6 @@
 ﻿#include "XDir.h"
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XSort.h"
 #include "XCompare.h"
 #include "XMemory.h"
@@ -917,7 +918,7 @@ XStringList* XDir_searchPaths(const XString* prefix)
 }
 
 /* ============================================================================
- * 目录内容（使用 XDeviceFile API）
+ * 目录内容（使用 XDeviceDir API）
  * ============================================================================ */
 
 XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
@@ -931,8 +932,8 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     XVector* entryInfos = XVector_create(sizeof(XDirEntryInfo));
     if (!entryInfos) return NULL;
     
-    XDirIterator iter = XDeviceFile_opendir(dir->m_path);
-    if (!iter) {
+    XFd iter = XDeviceDir_openPath(dir->m_path, NULL);
+    if (iter == XFD_INVALID) {
         XVector_delete_base(entryInfos);
         return XStringList_create();
     }
@@ -940,12 +941,12 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     XDirEntry entry;
     entry.name = XString_create();
     if (!entry.name) {
-        XDeviceFile_closedir(iter);
+        XDeviceDir_close(iter);
         XVector_delete_base(entryInfos);
         return XStringList_create();
     }
     
-    while (XDeviceFile_readdir(iter, &entry)) {
+    while (XDeviceDir_readNext(iter, &entry)) {
         if ((actualFilters & XDir_NoDotAndDotDot) == XDir_NoDotAndDotDot) {
             if (XString_equals_utf8(entry.name, ".", XChar_CaseSensitive) ||
                 XString_equals_utf8(entry.name, "..", XChar_CaseSensitive)) {
@@ -1003,7 +1004,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     }
     
     XString_delete_base(entry.name);
-    XDeviceFile_closedir(iter);
+    XDeviceDir_close(iter);
     
     if ((actualSort & XDir_SortByMask) != XDir_Unsorted && XVector_size_base(entryInfos) > 1) {
         g_sortContext.flags = actualSort;

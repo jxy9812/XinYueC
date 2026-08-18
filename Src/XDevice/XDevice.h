@@ -27,17 +27,17 @@ typedef struct XVarList XVarList;
  * ============================================================================ */
 /** @brief XDevice 类虚函数表；继承 XClass 后追加 Open 以后的新槽位。 */
 XCLASS_DEFINE_BEGING(XDevice)
-XCLASS_DEFINE_ENUM(XDevice, Open) = XCLASS_VTABLE_GET_SIZE(XClass),
-XCLASS_DEFINE_ENUM(XDevice, Close),
-XCLASS_DEFINE_ENUM(XDevice, Read),
-XCLASS_DEFINE_ENUM(XDevice, Write),
-XCLASS_DEFINE_ENUM(XDevice, Seek),
-XCLASS_DEFINE_ENUM(XDevice, Flush),
-XCLASS_DEFINE_ENUM(XDevice, Resize),
-XCLASS_DEFINE_ENUM(XDevice, SetProperty),
-XCLASS_DEFINE_ENUM(XDevice, GetProperty),
-XCLASS_DEFINE_ENUM(XDevice, QueryProperty),
-XCLASS_DEFINE_ENUM(XDevice, Control),
+XCLASS_DEFINE_ENUM(XDevice, Open) = XCLASS_VTABLE_GET_SIZE(XClass), /**< 打开设备上下文。 */
+XCLASS_DEFINE_ENUM(XDevice, Close),                            /**< 关闭并释放设备上下文。 */
+XCLASS_DEFINE_ENUM(XDevice, Read),                             /**< 同步读取数据。 */
+XCLASS_DEFINE_ENUM(XDevice, Write),                            /**< 同步写入数据。 */
+XCLASS_DEFINE_ENUM(XDevice, Seek),                             /**< 调整读写位置。 */
+XCLASS_DEFINE_ENUM(XDevice, Flush),                            /**< 刷新设备缓冲。 */
+XCLASS_DEFINE_ENUM(XDevice, Resize),                           /**< 调整设备大小。 */
+XCLASS_DEFINE_ENUM(XDevice, SetProperty),                      /**< 设置设备属性。 */
+XCLASS_DEFINE_ENUM(XDevice, GetProperty),                      /**< 获取设备属性。 */
+XCLASS_DEFINE_ENUM(XDevice, QueryProperty),                    /**< 查询设备属性是否支持。 */
+XCLASS_DEFINE_ENUM(XDevice, Control),                          /**< 执行设备专用命令。 */
 XCLASS_DEFINE_END(XDevice)
 
 /* ============================================================================
@@ -55,7 +55,7 @@ typedef enum XDeviceType
     XDeviceType_Serial,      /**< 串口设备。 */
     XDeviceType_Timer,       /**< 定时器。 */
     XDeviceType_Dir,         /**< 目录迭代器。 */
-    XDeviceType_Console,     /**< 控制台。 */
+    XDeviceType_Console,     /**< 控制台标准输入设备。 */
     XDeviceType_Mapping,     /**< 共享内存映射段。 */
     XDeviceType_Class,       /**< 外部注册设备，按类别名打开。 */
     XDeviceType_Count        /**< 类型数量边界，不是有效设备。 */
@@ -221,16 +221,27 @@ typedef struct XDeviceContext
 /* ============================================================================
  * 虚函数指针类型
  * ============================================================================ */
+/** @brief Open 虚函数签名。@param self 设备类；@param opts 借用打开选项；@param err 错误码输出，可为 NULL。@return 新上下文，失败返回 NULL。 */
 typedef XDeviceContext* (*XDeviceOpenFn)(XDevice* self, const XDeviceOpenOptions* opts, int* err);
+/** @brief Close 虚函数签名。@param self 设备类；@param ctx 待关闭上下文，由设备拥有。 */
 typedef void  (*XDeviceCloseFn)(XDevice* self, XDeviceContext* ctx);
+/** @brief Read 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param buffer 输出缓冲区；@param size 缓冲区容量。@return 读取字节数，失败为 -1。 */
 typedef int64_t (*XDeviceReadFn)(XDevice* self, XDeviceContext* ctx, void* buffer, int64_t size);
+/** @brief Write 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param data 输入数据；@param size 数据字节数。@return 写入字节数，失败为 -1。 */
 typedef int64_t (*XDeviceWriteFn)(XDevice* self, XDeviceContext* ctx, const void* data, int64_t size);
+/** @brief Seek 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param offset 偏移量；@param whence 定位基准。@return 新位置，失败为 -1。 */
 typedef int64_t (*XDeviceSeekFn)(XDevice* self, XDeviceContext* ctx, int64_t offset, int whence);
+/** @brief Flush 虚函数签名。@param self 设备类；@param ctx 打开上下文。@return 成功返回 true。 */
 typedef bool  (*XDeviceFlushFn)(XDevice* self, XDeviceContext* ctx);
+/** @brief Resize 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param size 目标大小。@return 成功返回 true。 */
 typedef bool  (*XDeviceResizeFn)(XDevice* self, XDeviceContext* ctx, int64_t size);
+/** @brief SetProperty 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param property 属性号；@param value 新值借用指针。@return 成功返回 true。 */
 typedef bool  (*XDeviceSetPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, const XVariant* value);
+/** @brief GetProperty 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param property 属性号；@param value 输出值。@return 成功返回 true。 */
 typedef bool  (*XDeviceGetPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, XVariant* value);
+/** @brief QueryProperty 虚函数签名。参数含义同 GetProperty；用于探测/读取属性。 */
 typedef bool  (*XDeviceQueryPropertyFn)(XDevice* self, XDeviceContext* ctx, uint32_t property, XVariant* value);
+/** @brief Control 虚函数签名。@param self 设备类；@param ctx 打开上下文；@param command 命令号；@param in 输入列表借用；@param out 输出列表借用。@return 成功返回 true。 */
 typedef bool  (*XDeviceControlFn)(XDevice* self, XDeviceContext* ctx, uint32_t command, const XVarList* in, XVarList* out);
 
 /**
@@ -334,7 +345,7 @@ int64_t XDevice_write(XFd fd, const void* data, int64_t size);
  * @param fd     设备句柄；必须由 XDevice_open/openClass 返回。
  * @param offset 新位置偏移量；单位字节，负值合法性取决于 whence。
  * @param whence 定位基准，取自 XDeviceSeekWhence 枚举。
- * @return 后的绝对位置；不支持定位或失败返回 -1。
+ * @return 新的绝对位置；不支持定位或失败返回 -1。
  */
 int64_t XDevice_seek(XFd fd, int64_t offset, XDeviceSeekWhence whence);
 

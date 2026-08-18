@@ -1640,7 +1640,7 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op,
   * 原因：在 IOCP 异步模型中，数据已被读取到 ringBuffer，
   * 请使用 XIODevice_bytesAvailable 检查待读取数据 */
 
-bool XDeviceNetwork_getLastDatagramSender(XFd xfd,
+bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
     XHostAddress* srcAddr, uint16_t* srcPort)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);

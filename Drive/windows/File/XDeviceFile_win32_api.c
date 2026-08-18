@@ -6,6 +6,7 @@
 #if defined(XFILE_USE_PLATFORM_API)
 
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -1009,7 +1010,7 @@ struct DirIteratorData {
     bool firstEntry;
 };
 
-XDirIterator XDeviceFile_opendir(const XString* path)
+void* XDeviceDir_platformOpen(const XString* path)
 {
     if (!path) return NULL;
     
@@ -1034,13 +1035,13 @@ XDirIterator XDeviceFile_opendir(const XString* path)
     }
     
     iter->firstEntry = true;
-    return (XDirIterator)iter;
+    return (void*)iter;
 }
 
-bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
+bool XDeviceDir_platformRead(void* backendHandle, XDirEntry* entry)
 {
-    if (!iter || !entry) return false;
-    struct DirIteratorData* data = (struct DirIteratorData*)iter;
+    if (!backendHandle || !entry) return false;
+    struct DirIteratorData* data = (struct DirIteratorData*)backendHandle;
     
     BOOL result;
     if (data->firstEntry) {
@@ -1066,10 +1067,10 @@ bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
     return true;
 }
 
-void XDeviceFile_closedir(XDirIterator iter)
+void XDeviceDir_platformClose(void* backendHandle)
 {
-    if (!iter) return;
-    struct DirIteratorData* data = (struct DirIteratorData*)iter;
+    if (!backendHandle) return;
+    struct DirIteratorData* data = (struct DirIteratorData*)backendHandle;
     FindClose(data->hFind);
     XFree_System(data);
 }

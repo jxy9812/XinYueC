@@ -344,6 +344,82 @@ static bool VXDeviceFile_queryProperty(XDevice* self, XDeviceContext* handle, ui
     }
 }
 
+bool XDeviceFile_getFileStat(XFd fd, XFileStat* stat)
+{
+    XVarList* output;
+    XFileStat value;
+    bool result;
+    if (!stat) return false;
+    memset(&value, 0, sizeof(value));
+    output = XVarList_Create(XVar(XFileStat, value));
+    if (!output) return false;
+    result = XDevice_control(fd, XDeviceFileCommand_GetFileStat, NULL, output);
+    if (result) {
+        XVarList_start(output);
+        value = XVarList_arg(output, XFileStat);
+        *stat = value;
+    }
+    XVarList_delete(output);
+    return result;
+}
+
+void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
+{
+    XVarList* input;
+    XVarList* output;
+    void* address = NULL;
+    bool result;
+    input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size),
+        XVar(int, flags));
+    output = XVarList_Create(XVar(void*, address));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return NULL;
+    }
+    result = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
+    if (result) {
+        XVarList_start(output);
+        address = XVarList_arg(output, void*);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return result ? address : NULL;
+}
+
+bool XDeviceFile_unmap(XFd fd, void* address, int64_t size)
+{
+    XVarList* input;
+    bool result;
+    input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceFile_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+{
+    XVarList* input;
+    bool result;
+    input = XVarList_Create(XVar(XFileTime, timeType), XVar(int64_t, timeValue));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceFileCommand_SetFileTime, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceFile_setStandardInputEcho(XFd fd, bool enabled)
+{
+    XVarList* input;
+    bool result;
+    input = XVarList_Create(XVar(bool, enabled));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceFileCommand_SetStandardInputEcho, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
 /* ============================================================================
  * 注册
  * ============================================================================ */

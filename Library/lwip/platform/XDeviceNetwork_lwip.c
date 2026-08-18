@@ -1606,7 +1606,7 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op,
     (void)sock; (void)op; (void)arg; return -1;
 }
 
-bool XDeviceNetwork_getLastDatagramSender(XFd xfd, XHostAddress* src, uint16_t* port) {
+bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd, XHostAddress* src, uint16_t* port) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return false;
     XDeviceNetworkContextLwip* s = L4P(priv);

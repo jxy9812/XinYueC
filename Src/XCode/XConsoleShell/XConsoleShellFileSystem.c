@@ -2,9 +2,10 @@
  * @file XConsoleShellFileSystem.c
  * @brief XConsoleShell 内建 fs 命令。
  * @details
- * 所有文件、目录、重命名、复制和链接操作均通过 XDeviceFile 公共 API；本文件
- * 不包含 open/read/write/stat/opendir 等平台接口。输出使用 Shell I/O 分块，
- * 目录迭代器、文件描述符和临时 XString 在所有返回路径成对释放。
+ * 文件、路径、重命名、复制和链接操作通过 XDeviceFile 公共 API，目录句柄和
+ * 遍历通过 XDeviceDir 公共 API；本文件不包含 open/read/write/stat/opendir 等
+ * 平台接口。输出使用 Shell I/O 分块，目录句柄、文件描述符和临时 XString
+ * 在所有返回路径成对释放。
  */
 
 #include "XConsoleShell_Protected.h"
@@ -12,6 +13,7 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_FILESYSTEM_ON
 
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XDateTime.h"
@@ -264,16 +266,15 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
     XString* name = XString_create();
     XString* child = XString_create();
     XDirEntry entry;
-    XDirIterator iterator;
+    XFd iterator = XFD_INVALID;
     int result = XConsoleResult_Ok;
     if (!name || !child) result = XConsoleResult_Failed;
-    if (result == XConsoleResult_Ok) iterator = XDeviceFile_opendir(path);
-    else iterator = NULL;
-    if (!iterator) result = XConsoleResult_Failed;
+    if (result == XConsoleResult_Ok) iterator = XDeviceDir_openPath(path, NULL);
+    if (iterator == XFD_INVALID) result = XConsoleResult_Failed;
     if (result == XConsoleResult_Ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XDeviceFile_readdir(iterator, &entry)) {
+        while (XDeviceDir_readNext(iterator, &entry)) {
             const char* text = XString_toUtf8(name);
             if (entry.isHidden && !options->all &&
                 (!options->almostAll || strcmp(text, ".") == 0 ||
@@ -294,7 +295,7 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
                 break;
             }
         }
-        XDeviceFile_closedir(iterator);
+        XDeviceDir_close(iterator);
     }
     if (name) XString_delete_base(name);
     if (child) XString_delete_base(child);
@@ -740,7 +741,7 @@ static bool xfs_du_size(const XString* path, int64_t* total)
     XString* name = NULL;
     XString* child = NULL;
     XDirEntry entry;
-    XDirIterator iterator = NULL;
+    XFd iterator = XFD_INVALID;
     bool ok = true;
     if (!path || !total || !XDeviceFile_stat(path, &stat)) return false;
     *total += stat.size > 0 ? stat.size : 0;
@@ -748,12 +749,12 @@ static bool xfs_du_size(const XString* path, int64_t* total)
     name = XString_create();
     child = XString_create();
     if (!name || !child) ok = false;
-    if (ok) iterator = XDeviceFile_opendir(path);
-    if (ok && !iterator) ok = false;
+    if (ok) iterator = XDeviceDir_openPath(path, NULL);
+    if (ok && iterator == XFD_INVALID) ok = false;
     if (ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XDeviceFile_readdir(iterator, &entry)) {
+        while (XDeviceDir_readNext(iterator, &entry)) {
             if (entry.isSymLink) continue;
             if (strcmp(XString_toUtf8(name), ".") == 0 ||
                 strcmp(XString_toUtf8(name), "..") == 0) continue;
@@ -764,7 +765,7 @@ static bool xfs_du_size(const XString* path, int64_t* total)
                 break;
             }
         }
-        XDeviceFile_closedir(iterator);
+        XDeviceDir_close(iterator);
     }
     if (name) XString_delete_base(name);
     if (child) XString_delete_base(child);
@@ -1183,7 +1184,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
     XString* name = XString_create();
     XString* child = XString_create();
     XDirEntry entry;
-    XDirIterator iterator = NULL;
+    XFd iterator = XFD_INVALID;
     int result = XConsoleResult_Ok;
     const char* base;
     if (!path || !name || !child || !XDeviceFile_stat(path, &stat)) result = XConsoleResult_Failed;
@@ -1207,12 +1208,12 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
         }
     }
     if (result == XConsoleResult_Ok && stat.isDir && (maxDepth < 0 || depth < maxDepth)) {
-        iterator = XDeviceFile_opendir(path);
-        if (!iterator) result = XConsoleResult_Failed;
+        iterator = XDeviceDir_openPath(path, NULL);
+        if (iterator == XFD_INVALID) result = XConsoleResult_Failed;
         if (result == XConsoleResult_Ok) {
             memset(&entry, 0, sizeof(entry));
             entry.name = name;
-            while (XDeviceFile_readdir(iterator, &entry)) {
+            while (XDeviceDir_readNext(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
                 if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
                 if (!XString_assign_utf8(child, base) ||
@@ -1224,7 +1225,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
                                        maxDepth, mtimeDays, sizeBytes);
                 if (result < 0 || XConsoleShell_isCancelled(shell)) break;
             }
-            XDeviceFile_closedir(iterator);
+            XDeviceDir_close(iterator);
         }
     }
     if (name) XString_delete_base(name);
@@ -1305,17 +1306,17 @@ static int xfs_tree_walk(XConsoleShell* shell, const XString* path, size_t depth
     XString* name = XString_create();
     XString* child = XString_create();
     XDirEntry entry;
-    XDirIterator iterator;
+    XFd iterator = XFD_INVALID;
     const char* base = path ? XString_toUtf8(path) : NULL;
     int result = XConsoleResult_Ok;
     if (!name || !child || !base) result = XConsoleResult_Failed;
     if (result == XConsoleResult_Ok) {
-        iterator = XDeviceFile_opendir(path);
-        if (!iterator) result = XConsoleResult_Failed;
+        iterator = XDeviceDir_openPath(path, NULL);
+        if (iterator == XFD_INVALID) result = XConsoleResult_Failed;
         if (result == XConsoleResult_Ok) {
             memset(&entry, 0, sizeof(entry));
             entry.name = name;
-            while (XDeviceFile_readdir(iterator, &entry)) {
+            while (XDeviceDir_readNext(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
                 size_t i;
                 if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0 || entry.isHidden) continue;
@@ -1333,7 +1334,7 @@ static int xfs_tree_walk(XConsoleShell* shell, const XString* path, size_t depth
                     if (result < 0) break;
                 }
             }
-            XDeviceFile_closedir(iterator);
+            XDeviceDir_close(iterator);
         }
     }
     if (name) XString_delete_base(name);
@@ -1853,7 +1854,7 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
     XString* childSource = NULL;
     XString* childTarget = NULL;
     XDirEntry entry;
-    XDirIterator iterator = NULL;
+    XFd iterator = XFD_INVALID;
     bool ok = true;
     if (!source || !target || !XDeviceFile_stat(source, &stat)) return false;
     if (!stat.isDir) return XDeviceFile_copy(source, target);
@@ -1862,12 +1863,12 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
     childSource = XString_create();
     childTarget = XString_create();
     if (!name || !childSource || !childTarget) ok = false;
-    if (ok) iterator = XDeviceFile_opendir(source);
-    if (ok && !iterator) ok = false;
+    if (ok) iterator = XDeviceDir_openPath(source, NULL);
+    if (ok && iterator == XFD_INVALID) ok = false;
     if (ok) {
         memset(&entry, 0, sizeof(entry));
         entry.name = name;
-        while (XDeviceFile_readdir(iterator, &entry)) {
+        while (XDeviceDir_readNext(iterator, &entry)) {
             const char* item = XString_toUtf8(name);
             if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
             if (!XString_assign(childSource, source) ||
@@ -1879,7 +1880,7 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
                 break;
             }
         }
-        XDeviceFile_closedir(iterator);
+        XDeviceDir_close(iterator);
     }
     if (name) XString_delete_base(name);
     if (childSource) XString_delete_base(childSource);

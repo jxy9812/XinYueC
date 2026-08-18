@@ -50,7 +50,7 @@ void XDeviceNetwork_serverClose(XFd fd, XDeviceNetworkServerHandle server);
 uint16_t XDeviceNetwork_serverPort(XDeviceNetworkServerHandle server);
 XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd fd,
     XHostAddress* clientAddress, uint16_t* clientPort);
-bool XDeviceNetwork_getLastDatagramSender(XFd fd,
+bool XDeviceNetwork_platformGetLastDatagramSender(XFd fd,
     XHostAddress* sourceAddress, uint16_t* sourcePort);
 
 typedef enum XMulticastOp {
@@ -528,6 +528,334 @@ static bool VXDeviceNetwork_queryProperty(XDevice* self, XDeviceContext* handle,
     return VXDeviceNetwork_getProperty(self, handle, property, value);
 }
 
+static bool networkGetPropertyVariant(XFd fd, XDeviceNetworkProperty property,
+    XVariant* value)
+{
+    bool result;
+    memset(value, 0, sizeof(*value));
+    XVariant_init(value, NULL, 0, XVariantType_NULL);
+    result = XDevice_getProperty(fd, (XDeviceProperty)property, value);
+    if (!result)
+        XVariant_deinit_base((XClass*)value);
+    return result;
+}
+
+static bool networkSetPropertyValue(XFd fd, XDeviceNetworkProperty property,
+    const void* data, size_t size, int type)
+{
+    XVariant value;
+    bool result;
+    memset(&value, 0, sizeof(value));
+    XVariant_init(&value, (void*)data, size, type);
+    result = XDevice_setProperty(fd, (XDeviceProperty)property, &value);
+    XVariant_deinit_base((XClass*)&value);
+    return result;
+}
+
+bool XDeviceNetwork_getSocketType(XFd fd, XDeviceNetworkSocketType* value)
+{
+    XVariant variant;
+    bool result;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_SocketType, &variant))
+        return false;
+    *value = (XDeviceNetworkSocketType)XVariant_toInt(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    result = isSocketTypeValid(*value);
+    return result;
+}
+
+bool XDeviceNetwork_getProtocol(XFd fd, XDeviceNetworkProtocol* value)
+{
+    XVariant variant;
+    bool result;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_Protocol, &variant))
+        return false;
+    *value = (XDeviceNetworkProtocol)XVariant_toInt(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    result = isProtocolValid(*value);
+    return result;
+}
+
+bool XDeviceNetwork_getConnected(XFd fd, bool* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_Connected, &variant))
+        return false;
+    *value = XVariant_toBool(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    return true;
+}
+
+bool XDeviceNetwork_getLocalPort(XFd fd, uint16_t* value)
+{
+    XVariant variant;
+    int64_t port;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_LocalPort, &variant))
+        return false;
+    port = XVariant_toInt64(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    if (port < 0 || port > UINT16_MAX) return false;
+    *value = (uint16_t)port;
+    return true;
+}
+
+bool XDeviceNetwork_getPeerPort(XFd fd, uint16_t* value)
+{
+    XVariant variant;
+    int64_t port;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_PeerPort, &variant))
+        return false;
+    port = XVariant_toInt64(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    if (port < 0 || port > UINT16_MAX) return false;
+    *value = (uint16_t)port;
+    return true;
+}
+
+bool XDeviceNetwork_setPeerPort(XFd fd, uint16_t value)
+{
+    return networkSetPropertyValue(fd, XDeviceNetworkProperty_PeerPort, &value,
+        sizeof(value), XVariantType_Uint16);
+}
+
+bool XDeviceNetwork_getReadBufferSize(XFd fd, int64_t* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_ReadBufferSize, &variant))
+        return false;
+    *value = XVariant_toInt64(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    return true;
+}
+
+bool XDeviceNetwork_setReadBufferSize(XFd fd, int64_t value)
+{
+    if (value < 0) return false;
+    return networkSetPropertyValue(fd, XDeviceNetworkProperty_ReadBufferSize,
+        &value, sizeof(value), XVariantType_Int64);
+}
+
+bool XDeviceNetwork_getReadFinishedBytes(XFd fd, size_t* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_ReadFinishedBytes, &variant))
+        return false;
+    *value = XVariant_toSize_t(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    return true;
+}
+
+bool XDeviceNetwork_getWriteFinishedBytes(XFd fd, size_t* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_WriteFinishedBytes, &variant))
+        return false;
+    *value = XVariant_toSize_t(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    return true;
+}
+
+bool XDeviceNetwork_getWritePending(XFd fd, bool* value)
+{
+    XVariant variant;
+    if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_WritePending, &variant))
+        return false;
+    *value = XVariant_toBool(&variant);
+    XVariant_deinit_base((XClass*)&variant);
+    return true;
+}
+
+static bool networkControlSimple(XFd fd, XDeviceNetworkCommand command)
+{
+    return XDevice_control(fd, command, NULL, NULL);
+}
+
+bool XDeviceNetwork_handleEvent(XFd fd, XEvent* event)
+{
+    XVarList* input;
+    bool result;
+    if (!event) return false;
+    input = XVarList_Create(XVar(XEvent*, event));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_HandleEvent, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceNetwork_continueRead(XFd fd)
+{
+    return networkControlSimple(fd, XDeviceNetworkCommand_ContinueRead);
+}
+
+bool XDeviceNetwork_continueWrite(XFd fd)
+{
+    return networkControlSimple(fd, XDeviceNetworkCommand_ContinueWrite);
+}
+
+bool XDeviceNetwork_setSocketOption(XFd fd, int option, const XVariant* value)
+{
+    XVarList* input;
+    bool result;
+    if (!value) return false;
+    input = XVarList_Create(XVar(int, option), XVar(const XVariant*, value));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_SetSocketOption, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceNetwork_getSocketOption(XFd fd, int option, int* value)
+{
+    XVarList* input;
+    XVarList* output;
+    int optionValue = 0;
+    bool result;
+    if (!value) return false;
+    input = XVarList_Create(XVar(int, option));
+    output = XVarList_Create(XVar(int, optionValue));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return false;
+    }
+    result = XDevice_control(fd, XDeviceNetworkCommand_GetSocketOption, input, output);
+    if (result) {
+        XVarList_start(output);
+        *value = XVarList_arg(output, int);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_getLastDatagramSender(XFd fd, XHostAddress* address, uint16_t* port)
+{
+    XVarList* output;
+    XHostAddress* addressOut = address;
+    uint16_t* portOut = port;
+    bool result;
+    if (!address && !port) return false;
+    output = XVarList_Create(XVar(XHostAddress*, addressOut), XVar(uint16_t*, portOut));
+    if (!output) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_GetLastDatagramSender, NULL, output);
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_getReadBuffer(XFd fd, const char** buffer)
+{
+    XVarList* output;
+    const char* value = NULL;
+    bool result;
+    if (!buffer) return false;
+    output = XVarList_Create(XVar(const char*, value));
+    if (!output) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_GetReadBuffer, NULL, output);
+    if (result) {
+        XVarList_start(output);
+        *buffer = XVarList_arg(output, const char*);
+    }
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_sendDatagram(XFd fd, const void* data, int64_t size,
+    const XHostAddress* address, uint16_t port, int64_t* written)
+{
+    XVarList* input;
+    XVarList* output;
+    int64_t resultValue = -1;
+    bool result;
+    if (!data || size < 0 || !address || !written) return false;
+    input = XVarList_Create(XVar(const void*, data), XVar(int64_t, size),
+        XVar(const XHostAddress*, address), XVar(uint16_t, port));
+    output = XVarList_Create(XVar(int64_t, resultValue));
+    if (!input || !output) {
+        if (input) XVarList_delete(input);
+        if (output) XVarList_delete(output);
+        return false;
+    }
+    result = XDevice_control(fd, XDeviceNetworkCommand_SendDatagram, input, output);
+    if (result) {
+        XVarList_start(output);
+        *written = XVarList_arg(output, int64_t);
+    }
+    XVarList_delete(input);
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_setMulticastGroup(XFd fd, bool join,
+    const XHostAddress* group, uint32_t interfaceIndex)
+{
+    XVarList* input;
+    bool result;
+    if (!group) return false;
+    input = XVarList_Create(XVar(bool, join), XVar(const XHostAddress*, group),
+        XVar(uint32_t, interfaceIndex));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_SetMulticastGroup, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceNetwork_setMulticastInterface(XFd fd, uint32_t interfaceIndex)
+{
+    XVarList* input;
+    bool result;
+    input = XVarList_Create(XVar(uint32_t, interfaceIndex));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_SetMulticastInterface, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
+bool XDeviceNetwork_getMulticastInterface(XFd fd, uint32_t* interfaceIndex)
+{
+    XVarList* output;
+    uint32_t* value = interfaceIndex;
+    bool result;
+    if (!interfaceIndex) return false;
+    output = XVarList_Create(XVar(uint32_t*, value));
+    if (!output) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_GetMulticastInterface, NULL, output);
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_continueAccept(XFd fd)
+{
+    return networkControlSimple(fd, XDeviceNetworkCommand_ContinueAccept);
+}
+
+bool XDeviceNetwork_getAcceptedSocket(XFd fd, XDeviceNetworkSocketHandle* handle,
+    XHostAddress* address, uint16_t* port)
+{
+    XVarList* output;
+    XDeviceNetworkSocketHandle* handleOut = handle;
+    XHostAddress* addressOut = address;
+    uint16_t* portOut = port;
+    bool result;
+    if (!handle) return false;
+    output = XVarList_Create(XVar(XDeviceNetworkSocketHandle*, handleOut),
+        XVar(XHostAddress*, addressOut), XVar(uint16_t*, portOut));
+    if (!output) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_GetAcceptedSocket, NULL, output);
+    XVarList_delete(output);
+    return result;
+}
+
+bool XDeviceNetwork_closeAcceptedSocket(XFd fd, XDeviceNetworkSocketHandle handle)
+{
+    XVarList* input;
+    bool result;
+    input = XVarList_Create(XVar(XDeviceNetworkSocketHandle, handle));
+    if (!input) return false;
+    result = XDevice_control(fd, XDeviceNetworkCommand_CloseAcceptedSocket, input, NULL);
+    XVarList_delete(input);
+    return result;
+}
+
 static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint32_t command,
                                     const XVarList* in, XVarList* out)
 {
@@ -645,7 +973,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         port = XVarList_arg(out, uint16_t*);
         if (!address && !port)
             return setContextError(ctx, XDeviceError_InvalidArgument);
-        if (!XDeviceNetwork_getLastDatagramSender(ctx->m_base.m_fd, address, port)) {
+        if (!XDeviceNetwork_platformGetLastDatagramSender(ctx->m_base.m_fd, address, port)) {
             return setContextError(ctx, XDeviceError_IoFail);
         }
         XVarList_start(out);

@@ -10,6 +10,7 @@
  */
 
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 
 #if !defined(__linux__) && !defined(__APPLE__) && !defined(__BSD__) && \
     !defined(_WIN32) && !defined(XFILE_USE_FATFS)
@@ -42,6 +43,30 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
     (void)maxSize;
     if (error) *error = 0;
     return XFD_INVALID;
+}
+
+/**
+ * @brief 未知平台的目录打开存根。
+ * @return 始终返回 NULL，表示没有可用的目录后端。
+ */
+void* XDeviceDir_platformOpen(const XString* path)
+{
+    (void)path;
+    return NULL;
+}
+
+/** @brief 未知平台的目录读取存根，始终报告失败。 */
+bool XDeviceDir_platformRead(void* backendHandle, XDirEntry* entry)
+{
+    (void)backendHandle;
+    (void)entry;
+    return false;
+}
+
+/** @brief 未知平台的目录关闭存根。 */
+void XDeviceDir_platformClose(void* backendHandle)
+{
+    (void)backendHandle;
 }
 
 #endif /* 非 POSIX、非 Windows 且未启用 FatFS */

@@ -4,6 +4,7 @@
 #if defined(XFILE_USE_FATFS)
 
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -425,15 +426,6 @@ static void XFATFS_freeFile(XFd fd)
     if (fh) f_close(&fh->fil);
     XFd_free(fd);
     if (fh) XFree_System(fh);
-}
-
-/** 通过 XFd 获取 FatFs 目录句柄包装 */
-static XFATFS_DirHandle* XFATFS_getDirHandle(XFd fd)
-{
-    if (fd < 0) return NULL;
-    XFATFS_DirHandle* dh = (XFATFS_DirHandle*)XFd_handle(fd);
-    if (!dh || XFd_type(fd) != XFD_TYPE_DIR) return NULL;
-    return dh;
 }
 
 /* ============================================================================
@@ -891,14 +883,14 @@ bool XDeviceFile_rmdir(const XString* path, bool recursive)
 #endif
 }
 
-XDirIterator XDeviceFile_opendir(const XString* path)
+void* XDeviceDir_platformOpen(const XString* path)
 {
     if (!path) return NULL;
     
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return NULL;
     
-    /* 分配 XFATFS_DirHandle 包装，通过 XFileDescriptor 表管理（XFD_TYPE_DIR） */
+    /* 分配不透明的 FatFs 目录后端句柄；外层 XDeviceDirContext 管理 XFd。 */
     XFATFS_DirHandle* dh = (XFATFS_DirHandle*)XMalloc_System(sizeof(XFATFS_DirHandle));
     if (!dh) return NULL;
     memset(dh, 0, sizeof(XFATFS_DirHandle));
@@ -908,26 +900,13 @@ XDirIterator XDeviceFile_opendir(const XString* path)
         return NULL;
     }
     
-    XFd fd = XFd_alloc(XFD_TYPE_DIR, dh, NULL);
-    if (fd == XFD_INVALID) {
-        f_closedir(&dh->dir);
-        XFree_System(dh);
-        return NULL;
-    }
-    
-    /* XDirIterator 使用 NULL 表示失败，不能直接把合法的 fd=0 转成指针。 */
-    return (XDirIterator)(uintptr_t)(fd + 1);
+    return (void*)dh;
 }
 
-bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
+bool XDeviceDir_platformRead(void* backendHandle, XDirEntry* entry)
 {
-    if (!iter || !entry) return false;
-    
-    uintptr_t encoded = (uintptr_t)iter;
-    if (encoded == 0) return false;
-    XFd fd = (XFd)(encoded - 1);
-    XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
-    if (!dh) return false;
+    XFATFS_DirHandle* dh = (XFATFS_DirHandle*)backendHandle;
+    if (!dh || !entry) return false;
     
     FRESULT fr = f_readdir(&dh->dir, &dh->info);
     if (fr != FR_OK || dh->info.fname[0] == 0) return false;
@@ -945,19 +924,13 @@ bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry)
     return true;
 }
 
-void XDeviceFile_closedir(XDirIterator iter)
+void XDeviceDir_platformClose(void* backendHandle)
 {
-    if (!iter) return;
-    
-    uintptr_t encoded = (uintptr_t)iter;
-    if (encoded == 0) return;
-    XFd fd = (XFd)(encoded - 1);
-    XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
+    XFATFS_DirHandle* dh = (XFATFS_DirHandle*)backendHandle;
     if (dh) {
         f_closedir(&dh->dir);
+        XFree_System(dh);
     }
-    XFd_free(fd);
-    if (dh) XFree_System(dh);
 }
 
 /* ============================================================================

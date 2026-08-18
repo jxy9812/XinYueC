@@ -1548,7 +1548,7 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op,
  * UDP 特有
  * ========================================================================= */
 
-bool XDeviceNetwork_getLastDatagramSender(XFd xfd,
+bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
                                      XHostAddress* srcAddr, uint16_t* srcPort)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);

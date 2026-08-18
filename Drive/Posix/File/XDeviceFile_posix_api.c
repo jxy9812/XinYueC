@@ -13,6 +13,7 @@
 #if defined(XFILE_USE_PLATFORM_API)
 
 #include "XDeviceFile.h"
+#include "XDeviceDir.h"
 #include "XStorageInfo.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -587,19 +588,19 @@ bool XDeviceFile_rmdir(const XString* path, bool recursive) {
 
 typedef struct { DIR* dir; } PosixDirIter;
 
-XDirIterator XDeviceFile_opendir(const XString* path) {
+void* XDeviceDir_platformOpen(const XString* path) {
     if (!path) return NULL;
     DIR* d = opendir(XString_toUtf8(path));
     if (!d) return NULL;
     PosixDirIter* iter = (PosixDirIter*)XMalloc_System(sizeof(PosixDirIter));
     if (!iter) { closedir(d); return NULL; }
     iter->dir = d;
-    return (XDirIterator)iter;
+    return (void*)iter;
 }
 
-bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry) {
-    if (!iter || !entry || !entry->name) return false;
-    PosixDirIter* it = (PosixDirIter*)iter;
+bool XDeviceDir_platformRead(void* backendHandle, XDirEntry* entry) {
+    if (!backendHandle || !entry || !entry->name) return false;
+    PosixDirIter* it = (PosixDirIter*)backendHandle;
     struct dirent* de = readdir(it->dir);
     if (!de) return false;
     unsigned char type = de->d_type;
@@ -619,9 +620,9 @@ bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry) {
     return true;
 }
 
-void XDeviceFile_closedir(XDirIterator iter) {
-    if (!iter) return;
-    PosixDirIter* it = (PosixDirIter*)iter;
+void XDeviceDir_platformClose(void* backendHandle) {
+    if (!backendHandle) return;
+    PosixDirIter* it = (PosixDirIter*)backendHandle;
     closedir(it->dir);
     XFree_System(it);
 }

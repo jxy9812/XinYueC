@@ -234,8 +234,8 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 | 类型 | 设备类 | 复用实现 |
 | --- | --- | --- |
 | File | `XDeviceFile` | `XDeviceFile_win32/posix/Fatfs` |
-| Console | `XDeviceConsole` | 标准输入平台实现（待迁移） |
-| Dir | `XDeviceDir` | 目录迭代器平台实现（待迁移） |
+| Console | `XDeviceConsole` | 标准输入平台实现（已接入 XDevice 门面） |
+| Dir | `XDeviceDir` | 目录迭代器平台实现（已接入 XDevice 门面） |
 | Mapping | `XDeviceMapping` | 共享内存平台实现（待迁移） |
 | Serial | `XDeviceSerialPort` | `XSerialPortWin32/Posix/STM32`（待迁移） |
 | Timer | `XDeviceTimer` | `XAbstractEventDispatcher` 定时器（待迁移） |

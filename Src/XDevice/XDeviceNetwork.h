@@ -44,6 +44,7 @@ extern "C" {
  */
 typedef struct XNetworkInterface XNetworkInterface;
 typedef struct XAbstractSocket XAbstractSocket;
+typedef struct XEvent XEvent;
 
 typedef struct XVariant XVariant;
 
@@ -313,15 +314,16 @@ typedef struct XDeviceNetworkOpenOptions
 /** @brief 网络设备专有属性编号，从 XDeviceProperty_Count 开始分配。 */
 typedef enum XDeviceNetworkProperty
 {
-    XDeviceNetworkProperty_SocketType = XDeviceProperty_Count,
-    XDeviceNetworkProperty_Protocol,
-    XDeviceNetworkProperty_Connected,
-    XDeviceNetworkProperty_LocalPort,
-    XDeviceNetworkProperty_PeerPort,
-    XDeviceNetworkProperty_ReadBufferSize,
-    XDeviceNetworkProperty_ReadFinishedBytes,
-    XDeviceNetworkProperty_WriteFinishedBytes,
-    XDeviceNetworkProperty_WritePending
+    XDeviceNetworkProperty_SocketType = XDeviceProperty_Count, /**< 套接字类型，值为 XDeviceNetworkSocketType。 */
+    XDeviceNetworkProperty_Protocol,                            /**< 地址族，值为 XDeviceNetworkProtocol。 */
+    XDeviceNetworkProperty_Connected,                           /**< 是否已连接或监听，值为 bool。 */
+    XDeviceNetworkProperty_LocalPort,                            /**< 本地端口，值为 uint16_t。 */
+    XDeviceNetworkProperty_PeerPort,                             /**< 默认对端端口，值为 uint16_t。 */
+    XDeviceNetworkProperty_ReadBufferSize,                      /**< 接收缓冲容量，值为 int64_t。 */
+    XDeviceNetworkProperty_ReadFinishedBytes,                   /**< 最近一次异步读取完成字节数，值为 size_t。 */
+    XDeviceNetworkProperty_WriteFinishedBytes,                  /**< 最近一次异步写入完成字节数，值为 size_t。 */
+    XDeviceNetworkProperty_WritePending,                        /**< 是否存在待完成写入，值为 bool。 */
+    XDeviceNetworkProperty_Count                                 /**< 网络属性数量边界，不是有效属性。 */
 } XDeviceNetworkProperty;
 
 /** @brief 网络设备专有控制命令。 */
@@ -369,11 +371,94 @@ typedef struct XDeviceNetwork
     XDevice m_base;
 } XDeviceNetwork;
 
+/** @brief 初始化网络设备类虚函数表。 @return 共享虚函数表，失败返回 NULL。 */
 XVtable* XDeviceNetwork_class_init(void);
+/** @brief 初始化已分配的网络设备对象。 @param self 待初始化对象，不能为 NULL。 */
 void XDeviceNetwork_init(XDeviceNetwork* self);
+/** @brief 创建网络设备类对象。 @return 新对象，失败返回 NULL；调用方负责释放。 */
 XDeviceNetwork* XDeviceNetwork_create(void);
 
-/** @brief 注册类别名为 "socket" 的内置网络设备，函数可重复调用。 */
+/** @brief 复用 XDevice 的通用设备操作；参数契约与父类 API 相同。 */
+#define XDeviceNetwork_open(options, error) \
+    XDevice_open(XDeviceType_Socket, \
+        (const XDeviceOpenOptions*)(options), (error))
+#define XDeviceNetwork_close   XDevice_close
+#define XDeviceNetwork_read    XDevice_read
+#define XDeviceNetwork_write   XDevice_write
+#define XDeviceNetwork_flush   XDevice_flush
+#define XDeviceNetwork_control XDevice_control
+
+/* 属性便捷 API；实现统一转发到 XDevice_getProperty/setProperty。 */
+/** @param fd 网络设备句柄；@param value 输出套接字类型；@return 成功返回 true。 */
+bool XDeviceNetwork_getSocketType(XFd fd, XDeviceNetworkSocketType* value);
+/** @param fd 网络设备句柄；@param value 输出地址族；@return 成功返回 true。 */
+bool XDeviceNetwork_getProtocol(XFd fd, XDeviceNetworkProtocol* value);
+/** @param fd 网络设备句柄；@param value 输出连接/监听状态；@return 成功返回 true。 */
+bool XDeviceNetwork_getConnected(XFd fd, bool* value);
+/** @param fd 网络设备句柄；@param value 输出本地端口；@return 成功返回 true。 */
+bool XDeviceNetwork_getLocalPort(XFd fd, uint16_t* value);
+/** @param fd 网络设备句柄；@param value 输出默认对端端口；@return 成功返回 true。 */
+bool XDeviceNetwork_getPeerPort(XFd fd, uint16_t* value);
+/** @param fd 网络设备句柄；@param value 新的默认对端端口；@return 成功返回 true。 */
+bool XDeviceNetwork_setPeerPort(XFd fd, uint16_t value);
+/** @param fd 网络设备句柄；@param value 输出接收缓冲容量；@return 成功返回 true。 */
+bool XDeviceNetwork_getReadBufferSize(XFd fd, int64_t* value);
+/** @param fd 网络设备句柄；@param value 新的接收缓冲容量，必须非负；@return 成功返回 true。 */
+bool XDeviceNetwork_setReadBufferSize(XFd fd, int64_t value);
+/** @param fd 网络设备句柄；@param value 输出最近一次读取完成字节数；@return 成功返回 true。 */
+bool XDeviceNetwork_getReadFinishedBytes(XFd fd, size_t* value);
+/** @param fd 网络设备句柄；@param value 输出最近一次写入完成字节数；@return 成功返回 true。 */
+bool XDeviceNetwork_getWriteFinishedBytes(XFd fd, size_t* value);
+/** @param fd 网络设备句柄；@param value 输出是否有待完成写入；@return 成功返回 true。 */
+bool XDeviceNetwork_getWritePending(XFd fd, bool* value);
+
+/* 命令便捷 API；实现统一转发到 XDevice_control。 */
+/** @param fd 网络设备句柄；@param event 平台事件输入，调用期间借用；@return 处理成功返回 true。 */
+bool XDeviceNetwork_handleEvent(XFd fd, XEvent* event);
+/** @param fd 网络设备句柄；@return 命令提交成功返回 true。 */
+bool XDeviceNetwork_continueRead(XFd fd);
+/** @param fd 网络设备句柄；@return 命令提交成功返回 true。 */
+bool XDeviceNetwork_continueWrite(XFd fd);
+/** @param fd 网络设备句柄；@param option 平台套接字选项号；@param value 选项值，只读借用；@return 设置成功返回 true。 */
+bool XDeviceNetwork_setSocketOption(XFd fd, int option, const XVariant* value);
+/** @param fd 网络设备句柄；@param option 平台套接字选项号；@param value 输出选项值；@return 获取成功返回 true。 */
+bool XDeviceNetwork_getSocketOption(XFd fd, int option, int* value);
+/** @param fd 网络设备句柄；@param address 输出发送方地址；@param port 输出发送方端口；@return 成功返回 true。 */
+bool XDeviceNetwork_getLastDatagramSender(XFd fd, XHostAddress* address, uint16_t* port);
+/** @param fd 网络设备句柄；@param buffer 输出内部读缓冲区指针；@return 成功返回 true；指针在下一次继续读取或关闭前有效。 */
+bool XDeviceNetwork_getReadBuffer(XFd fd, const char** buffer);
+/**
+ * @brief 向指定 UDP 端点发送数据。
+ * @param fd 网络设备句柄；@param data 数据缓冲区，借用；@param size 数据字节数。
+ * @param address 目标地址，借用；@param port 目标端口；@param written 可选输出实际写入字节数。
+ * @return 命令成功执行返回 true，失败返回 false。
+ */
+bool XDeviceNetwork_sendDatagram(XFd fd, const void* data, int64_t size,
+    const XHostAddress* address, uint16_t port, int64_t* written);
+/**
+ * @brief 加入或离开 UDP 多播组。
+ * @param fd 网络设备句柄；@param join true 加入，false 离开；@param group 多播地址，借用。
+ * @param interfaceIndex 网卡接口索引；@return 设置成功返回 true。
+ */
+bool XDeviceNetwork_setMulticastGroup(XFd fd, bool join,
+    const XHostAddress* group, uint32_t interfaceIndex);
+/** @param fd 网络设备句柄；@param interfaceIndex 多播接口索引；@return 设置成功返回 true。 */
+bool XDeviceNetwork_setMulticastInterface(XFd fd, uint32_t interfaceIndex);
+/** @param fd 网络设备句柄；@param interfaceIndex 输出多播接口索引；@return 获取成功返回 true。 */
+bool XDeviceNetwork_getMulticastInterface(XFd fd, uint32_t* interfaceIndex);
+/** @param fd 监听网络设备句柄；@return 命令提交成功返回 true。 */
+bool XDeviceNetwork_continueAccept(XFd fd);
+/**
+ * @brief 取出最近接受的客户端套接字。
+ * @param fd 监听网络设备句柄；@param handle 输出平台套接字句柄；@param address 输出对端地址；@param port 输出对端端口。
+ * @return 成功返回 true；成功后 handle 所有权转移给调用方，须按平台约定接管或关闭。
+ */
+bool XDeviceNetwork_getAcceptedSocket(XFd fd, XDeviceNetworkSocketHandle* handle,
+    XHostAddress* address, uint16_t* port);
+/** @param fd 监听网络设备句柄；@param handle 尚未接管的已接受套接字句柄；@return 关闭成功返回 true。 */
+bool XDeviceNetwork_closeAcceptedSocket(XFd fd, XDeviceNetworkSocketHandle handle);
+
+/** @brief 注册类别名为 "socket" 的内置网络设备，函数可重复调用。 @return 成功返回 true。 */
 bool XDeviceNetwork_register(void);
 
 #endif /* XNETWORK_ON */

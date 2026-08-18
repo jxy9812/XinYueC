@@ -2,16 +2,15 @@
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
-#include "XTimeWheelGroup.h"
+#include "XDeviceTimerPrivate.h"
 #include "XAbstractNativeEventFilter.h"
 #include "XThreadData.h"
 #include "XThread.h"
-#include "XHrTimerGroup.h"
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
 #include "XDeviceNetwork.h"
-#include "XVarList.h"
+#include "XDeviceConsole.h"
 #if (XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
      XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_MULTI_SESSION_ON && \
      XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON) && \
@@ -24,7 +23,6 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
 #include "XConsoleShell.h"
-#include "XDeviceFile.h"
 #include "XPrintf.h"
 #include <stdio.h>
 #endif
@@ -38,7 +36,8 @@ static XMutex* global_mutex = NULL;
     XCONSOLE_SHELL_ASYNC_ON
 
 typedef struct MainConsoleTransport {
-    XFd inputFd;     /* 由 XDeviceFile 管理的非阻塞标准输入描述符。 */
+    XFd inputFd;     /* 控制台设备 XFd。 */
+    XFd backendFd;   /* 平台后端 XFd，仅用于事件 owner 绑定。 */
     bool endOfInput; /* 标准输入已到文件尾。 */
 } MainConsoleTransport;
 
@@ -58,15 +57,17 @@ static bool console_attach(void* userData, XConsoleShell* shell)
     int error = 0;
     (void)shell;
     if (!transport) return false;
-    transport->inputFd = XDeviceFile_openStandardInput(&error);
+    transport->inputFd = XDeviceConsole_openStandardInput(&error);
+    transport->backendFd = XDeviceConsole_backendFd(transport->inputFd);
     transport->endOfInput = false;
     if (transport->inputFd != XFD_INVALID && shell) {
-        XFd_setObject(transport->inputFd, shell);
+        if (transport->backendFd != XFD_INVALID)
+            XFd_setObject(transport->backendFd, shell);
         shell->m_asyncInputEventDriven =
             XAbstractNetIoRing_global() != NULL &&
             XAbstractNetIoRing_isEnabled(XAbstractNetIoRing_global()) &&
-            XFd_get(transport->inputFd) != NULL &&
-            XFd_type(transport->inputFd) == XFD_TYPE_CONSOLE;
+            XFd_get(transport->backendFd) != NULL &&
+            XFd_type(transport->backendFd) == XFD_TYPE_CONSOLE;
         if (shell->m_asyncInputEventDriven)
             (void)XConsoleShell_notifyInput(shell);
     }
@@ -79,24 +80,20 @@ static void console_detach(void* userData, XConsoleShell* shell)
     (void)shell;
     if (!transport) return;
     if (shell) shell->m_asyncInputEventDriven = false;
+    if (transport->backendFd != XFD_INVALID)
+        XFd_setObject(transport->backendFd, NULL);
     if (transport->inputFd != XFD_INVALID) {
-        XDeviceFile_close(transport->inputFd);
+        XDeviceConsole_close(transport->inputFd);
         transport->inputFd = XFD_INVALID;
     }
+    transport->backendFd = XFD_INVALID;
 }
 
 static bool console_input_echo(void* userData, bool enabled)
 {
     MainConsoleTransport* transport = (MainConsoleTransport*)userData;
-    XVarList* input;
-    bool ok;
     if (!transport || transport->inputFd == XFD_INVALID) return false;
-    input = XVarList_Create(XVar(bool, enabled));
-    if (!input) return false;
-    ok = XDevice_control(transport->inputFd,
-                         XDeviceFileCommand_SetStandardInputEcho, input, NULL);
-    XVarList_delete(input);
-    return ok;
+    return XDeviceConsole_setEcho(transport->inputFd, enabled);
 }
 
 static void console_prompt(void* userData, XConsoleShell* shell)
@@ -324,6 +321,7 @@ static bool console_shell_attach(XAbstractEventDispatcher* self)
     transport = (MainConsoleTransport*)XCalloc_System(1, sizeof(MainConsoleTransport));
     if (!transport) return false;
     transport->inputFd = XFD_INVALID;
+    transport->backendFd = XFD_INVALID;
     transport->endOfInput = false;
     shell = create_shell(transport);
     if (!shell) {
@@ -402,6 +400,8 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->m_ioRing = NULL;
     XAtomic_init(dp->m_interrupt, false);
     dp->m_threadData = NULL;
+    /* 进程级时间轮只由 XDeviceTimer 初始化；每线程红黑树保持按需创建。 */
+    (void)XDeviceTimer_register();
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
     dp->m_consoleTransport = NULL;
@@ -446,11 +446,7 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
         dp->m_consoleTransport = NULL;
     }
 #endif
-    if (dp->m_hrtimerGroup)
-    {
-        XClass_delete_base(dp->m_hrtimerGroup);
-        dp->m_hrtimerGroup = NULL;
-    }
+    /* 高精度红黑树由 XDeviceTimer 统一管理，但实例仍归当前调度器所有。 */
     if (dp->notifiers)
     {
         XHashMap_delete_base(dp->notifiers);
@@ -536,17 +532,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     XAtomic_store_bool(&self->d_ptr->m_interrupt, false, XAtomic_MemoryOrder_Release);
 
     /* 1. 先处理定时器任务 */
-    if (XAbstractEventDispatcher_isMainThread(self) && XTimeWheelGroup_GlobalExists())
-    {
-        if (XTimeWheelGroup_count(XTimeWheelGroup_global()))
-        {
-            XTimeWheelGroup_handler_base(XTimeWheelGroup_global());
-        }
-    }
-    if (self->d_ptr->m_hrtimerGroup)
-    {
-        XHrTimerGroup_handler_base(self->d_ptr->m_hrtimerGroup);
-    }
+    XDeviceTimer_process(self, XAbstractEventDispatcher_isMainThread(self));
     XAbstractNetIoRing* ioRing = self->d_ptr->m_ioRing;
     if (XAbstractEventDispatcher_isMainThread(self))
     {
@@ -628,10 +614,9 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     {
         /* 计算超时：优先使用高精度定时器的下次到期时间 */
         int timeoutMs = -1;
-        if (self->d_ptr->m_hrtimerGroup &&
-            XHrTimerGroup_count(self->d_ptr->m_hrtimerGroup))
+        if (XDeviceTimer_nextPreciseDeadline(self) != UINT64_MAX)
         {
-            int64_t ns = XHrTimerGroup_getNextExpireTime(self->d_ptr->m_hrtimerGroup)
+            int64_t ns = (int64_t)XDeviceTimer_nextPreciseDeadline(self)
                        - XDateTime_currentNSecsSinceEpoch();
             timeoutMs = (int)(ns / 1000000);
             if (timeoutMs < 0) timeoutMs = 0;
@@ -748,38 +733,18 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
     XTimerData_setTimerCallback(&data, TimerCallback);
     XTimerData_setUserData(&data, object);
 
-    if (timerType != XTimerType_PreciseTimer)
     {
-        size_t intervalMs = (intervalNs + 999999) / 1000000;
-        if (timerType == XTimerType_VeryCoarseTimer)
-            intervalMs=((intervalMs + 999) / 1000) * 1000;
-        XTimeWheelGroup* group = XTimeWheelGroup_global();
-        if (group && XTimeWheelGroup_max_time(group) > intervalMs)
+        XTimerType actualType;
+        XHandle handle;
+        if (XDeviceTimer_schedule(dispatcher, &data, intervalNs, timerType,
+                &actualType, &handle))
         {
-            XTimerData_setInterval(&data, intervalMs);
-            XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
-            if (handle)
-            {
-                timerInfo->Xhandle = handle;
-                desc->m_deviceCtx = timerInfo;
-                return;
-            }
+            timerInfo->timerType = actualType;
+            timerInfo->Xhandle = handle;
+            desc->m_deviceCtx = timerInfo;
+            XAbstractEventDispatcher_wakeUp_base(dispatcher);
+            return;
         }
-    }
-    if (dispatcher->d_ptr->m_hrtimerGroup == NULL)
-    {
-        dispatcher->d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
-        XHrTimerGroup_setHighResTimeFunc(dispatcher->d_ptr->m_hrtimerGroup,XDateTime_currentNSecsSinceEpoch);
-    }
-    timerInfo->timerType = XTimerType_PreciseTimer;
-    XTimerData_setInterval(&data, intervalNs);
-    XHandle handle = XHrTimerGroup_addTimerNs_base(dispatcher->d_ptr->m_hrtimerGroup, data);
-    if (handle)
-    {
-        timerInfo->Xhandle = handle;
-        desc->m_deviceCtx = timerInfo;
-        XAbstractEventDispatcher_wakeUp_base(dispatcher);
-        return;
     }
     XFree_Hybrid(timerInfo);
     XFd_free(timerId);
@@ -794,14 +759,7 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     if (!timerInfo) return false;
 
     bool is_ok = false;
-    if (timerInfo->timerType != XTimerType_PreciseTimer)
-    {
-        is_ok = XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
-    }
-    else
-    {
-        is_ok = XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
-    }
+    is_ok = XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->Xhandle);
     /* 无论 removeTimer 是否成功，都释放 timerInfo 和 XFd，防止泄漏。
      * removeTimer 可能因 tick 已分离节点而返回 false，但定时器已停止。 */
     XFree_Hybrid(timerInfo);
@@ -828,14 +786,7 @@ static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher*
         XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
         if (!timerInfo) continue;
 
-        if (timerInfo->timerType != XTimerType_PreciseTimer)
-        {
-            XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
-        }
-        else
-        {
-            XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
-        }
+        XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->Xhandle);
         XFree_Hybrid(timerInfo);
         XFd_free(i);
         found = true;
@@ -917,6 +868,7 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 void VXAbstractEventDispatcher_deinit(XAbstractEventDispatcher* self)
 {
     if (self->d_ptr) {
+        XDeviceTimer_releaseDispatcher(self);
         XAbstractEventDispatcherPrivate_deinit(self->d_ptr);
         XFree_System(self->d_ptr);
         self->d_ptr = NULL;

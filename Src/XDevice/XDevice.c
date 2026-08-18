@@ -2,6 +2,9 @@
 #include "XDeviceFile.h"
 #include "XDeviceNetwork.h"
 #include "XDeviceSerialPort.h"
+#include "XDeviceTimer.h"
+#include "XDeviceDir.h"
+#include "XDeviceConsole.h"
 #include "XFileDescriptor.h"
 #include "XVariant.h"
 #include "XVarList.h"
@@ -347,6 +350,18 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 		}
 		if (!device && strcmp(className, "serial") == 0) {
 			XDeviceSerialPort_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "timer") == 0) {
+			XDeviceTimer_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "dir") == 0) {
+			XDeviceDir_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "console") == 0) {
+			XDeviceConsole_register();
 			device = XDevice_find(className);
 		}
 	}

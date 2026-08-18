@@ -56,31 +56,14 @@ typedef struct XDeviceFile
     XDevice m_base;
 } XDeviceFile;
 
+/** @brief 初始化文件设备类虚函数表。 @return 共享虚函数表，失败返回 NULL。 */
 XVtable* XDeviceFile_class_init(void);
+/** @brief 初始化已分配的文件设备对象。 @param self 待初始化对象，不能为 NULL。 */
 void XDeviceFile_init(XDeviceFile* self);
+/** @brief 创建文件设备类对象。 @return 新对象，失败返回 NULL；调用方负责释放。 */
 XDeviceFile* XDeviceFile_create(void);
+/** @brief 注册文件设备类别。 @return 首次注册或已注册返回 true，失败返回 false。 */
 bool XDeviceFile_register(void);
-
-/* ============================================================================
- * 目录迭代器
- * ============================================================================ */
-
-/**
- * @brief 目录迭代器返回的一项目录条目。
- * @details 调用 XDeviceFile_readdir 前，调用者必须创建 name 指向的 XString。
- *          平台层只写入该 XString，不取得其所有权；其余字段由平台层覆盖写入。
- */
-typedef struct XDirEntry {
-    XString* name;            /**< 调用方拥有且已初始化的输出文件名 XString；不能为 NULL。 */
-    uint8_t isDir       : 1;  /**< 条目是否为目录；0 或 1。 */
-    uint8_t isFile      : 1;  /**< 条目是否为普通文件；0 或 1。 */
-    uint8_t isSymLink   : 1;  /**< 条目是否为符号链接或等效重解析点；0 或 1。 */
-    uint8_t isHidden    : 1;  /**< 条目是否为平台定义的隐藏文件；0 或 1。 */
-    uint8_t _reserved   : 4;  /**< 保留位；调用方不得读取、修改或持久化。 */
-} XDirEntry;
-
-/** @brief 不透明目录迭代器句柄；NULL 表示创建失败或无效句柄。 */
-typedef void* XDirIterator;
 
 /* ============================================================================
  * 路径解析风格
@@ -109,7 +92,6 @@ typedef enum {
  * ============================================================================ */
 
 /**
-/**
  * @brief 打开平台标准输入并配置为非阻塞读取。
  * @param error 可选的调用方错误码存储；成功时写入 0，失败时写入平台错误码。
  * @return 成功返回由调用方拥有的 XFd；平台没有标准输入或操作失败返回 XFD_INVALID。
@@ -124,7 +106,10 @@ XFd XDeviceFile_openStandardInput(int* error);
  * @details XDeviceFile 不重复声明同签名的公共实现；具体文件设备通过重载
  *          EXDevice_Close/Read/Write/Seek/Flush/Resize 完成实际行为。
  */
+#define XDeviceFile_open(options, error) \
+    XDevice_open(XDeviceType_File, (const XDeviceOpenOptions*)(options), (error))
 #define XDeviceFile_close XDevice_close
+#define XDeviceFile_control XDevice_control
 
 /**
  * @brief 文件定位基准。
@@ -288,30 +273,6 @@ bool XDeviceFile_mkdir(const XString* path, bool recursive);
  */
 bool XDeviceFile_rmdir(const XString* path, bool recursive);
 
-/**
- * @brief 打开目录并创建迭代器。
- * @param path 待遍历目录路径；借用，不能为 NULL。
- * @return 新建的目录迭代器；调用方必须使用 XDeviceFile_closedir 释放，失败返回 NULL。
- */
-XDirIterator XDeviceFile_opendir(const XString* path);
-
-/**
- * @brief 从目录迭代器读取下一个条目。
- * @param iter 由 XDeviceFile_opendir 返回的有效迭代器；借用，不能为 NULL。
- * @param entry 调用方提供的条目输出存储；不能为 NULL，entry->name 必须为已初始化的 XString。
- * @return 成功读取一个条目返回 true；到达末尾或发生错误返回 false。
- * @note 仅当返回 true 时 entry 内容有效；调用方可通过额外平台错误信息区分末尾与失败。
- */
-bool XDeviceFile_readdir(XDirIterator iter, XDirEntry* entry);
-
-/**
- * @brief 关闭目录迭代器并释放关联资源。
- * @param iter 由 XDeviceFile_opendir 返回的迭代器；可为 NULL，此时不执行任何操作。
- * @return 无。
- * @note 调用后 iter 失效。
- */
-void XDeviceFile_closedir(XDirIterator iter);
-
 /* ============================================================================
  * 五、路径操作（1个）- 必需实现
  * ============================================================================ */
@@ -435,6 +396,52 @@ typedef enum XDeviceFileCommand
     XDeviceFileCommand_Count
         /**< 文件命令数量；文件子类从此值继续编号，不可传给 XDevice_control。 */
 } XDeviceFileCommand;
+
+/**
+ * @brief 查询已打开文件的属性。
+ * @param fd 已打开的文件设备句柄；借用。
+ * @param stat 调用方提供的输出结构；不能为 NULL。
+ * @return 成功返回 true，失败返回 false。
+ * @note 内部发送 XDeviceFileCommand_GetFileStat，不接管 stat 的所有权。
+ */
+bool XDeviceFile_getFileStat(XFd fd, XFileStat* stat);
+
+/**
+ * @brief 映射文件的一段区域到进程地址空间。
+ * @param fd 已打开的文件设备句柄；借用。
+ * @param offset 映射起始偏移，单位字节。
+ * @param size 映射长度，必须大于 0。
+ * @param flags 平台映射选项位组合，取值由文件后端约定。
+ * @return 成功返回映射地址（由设备后端管理），失败返回 NULL。
+ * @note 映射成功后必须使用同一 fd、地址和长度调用 XDeviceFile_unmap；地址不应释放。
+ */
+void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags);
+
+/**
+ * @brief 解除文件区域映射。
+ * @param fd 创建映射时使用的文件设备句柄；借用。
+ * @param address XDeviceFile_map 返回的映射地址。
+ * @param size 映射长度，必须与 map 调用一致。
+ * @return 成功返回 true，失败返回 false。
+ */
+bool XDeviceFile_unmap(XFd fd, void* address, int64_t size);
+
+/**
+ * @brief 修改已打开文件的指定时间戳。
+ * @param fd 已打开的文件设备句柄；借用。
+ * @param timeType 要修改的时间类型，取值为 XFileTime。
+ * @param timeValue 时间值，单位和纪元由 XDateTime/XFileTime 约定。
+ * @return 修改成功返回 true，失败返回 false。
+ */
+bool XDeviceFile_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue);
+
+/**
+ * @brief 设置标准输入终端的回显状态。
+ * @param fd 已打开的标准输入文件设备句柄；借用。
+ * @param enabled true 开启回显，false 关闭回显。
+ * @return 设置成功返回 true，失败返回 false。
+ */
+bool XDeviceFile_setStandardInputEcho(XFd fd, bool enabled);
 
 /* ============================================================================
  * 十一、驱动器列表（1个）- 可选
