@@ -1159,39 +1159,6 @@ static void test_mmap(void)
 #define XFILE_SHM_TEST_DATA_LEN 24
 #define XFILE_SHM_TEST_FILL_LEN 256
 
-static void* xfiletest_map(XFd fd, int64_t offset, int64_t size, int flags)
-{
-    XVarList* input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size),
-                                      XVar(int, flags));
-    XVarList* output;
-    void* address = NULL;
-    bool ok;
-    if (!input) return NULL;
-    output = XVarList_Create(XVar(void*, address));
-    if (!output) {
-        XVarList_delete(input);
-        return NULL;
-    }
-    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
-    if (ok) {
-        XVarList_start(output);
-        address = XVarList_arg(output, void*);
-    }
-    XVarList_delete(input);
-    XVarList_delete(output);
-    return address;
-}
-
-static bool xfiletest_unmap(XFd fd, void* address, int64_t size)
-{
-    XVarList* input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
-    bool ok;
-    if (!input) return false;
-    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
-    XVarList_delete(input);
-    return ok;
-}
-
 /* 子进程（服务端）：创建命名共享内存段 → 映射写入 → 信令通知 → 等待结束 */
 static void xfile_shm_server_run(const XString* name, int* result)
 {
@@ -1209,7 +1176,7 @@ static void xfile_shm_server_run(const XString* name, int* result)
 
     fd = XDeviceFile_openSharedMemory(name, true, 4096, NULL);
     if (fd < 0) { *result = 1; return; }
-    mapped = xfiletest_map(fd, 0, 4096, 0x2);
+    mapped = XDeviceFile_map(fd, 0, 4096, 0x2);
     if (!mapped) { XDeviceFile_close(fd); *result = 2; return; }
 
     /* 写入数据区 + 0x55 填充，并回读校验本端可见性 */
@@ -1231,7 +1198,7 @@ static void xfile_shm_server_run(const XString* name, int* result)
     *result = 0;
 
 done:
-    xfiletest_unmap(fd, mapped, 4096);
+    XDeviceFile_unmap(fd, mapped, 4096);
     XDeviceFile_close(fd);
 }
 
@@ -1256,7 +1223,7 @@ static void xfile_shm_client_run(const XString* name, bool* ok)
         }
     }
     if (fd < 0) return;
-    mapped = xfiletest_map(fd, 0, 4096, 0x0);
+    mapped = XDeviceFile_map(fd, 0, 4096, 0x0);
     if (!mapped) { XDeviceFile_close(fd); return; }
 
     /* 信令通道等待服务端"数据已就绪"通知（库内部事件通知路径） */
@@ -1285,7 +1252,7 @@ static void xfile_shm_client_run(const XString* name, bool* ok)
     *ok = true;
 
 done:
-    xfiletest_unmap(fd, mapped, 4096);
+    XDeviceFile_unmap(fd, mapped, 4096);
     XDeviceFile_close(fd);
 }
 

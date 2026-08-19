@@ -2,13 +2,108 @@
 #include "CXinYueConfig.h"
 #include "XDevice.h"
 #include "XDeviceFile.h"
+#include "XAbstractNetIoRing.h"
 #include "XFileInfo.h"
 #include "XString.h"
+#include "XThread.h"
 #include "XVariant.h"
 #include "XVarList.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+
+#if (defined(__unix__) || defined(__APPLE__) || defined(__BSD__)) && \
+    defined(XFILE_USE_PLATFORM_API)
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int XDeviceFileTest_sharedMemoryServer(const XString* name)
+{
+    static const char payload[] = "XDeviceFile shared mapping";
+    XFd fd = XFD_INVALID;
+    void* address = NULL;
+    char acknowledgement = 0;
+    char signal = 1;
+    int result = 1;
+
+    /* fork 后不复用父进程的 io_uring，信令读取退化为内核阻塞路径。 */
+    XAbstractNetIoRing_setGlobal(NULL);
+    fd = XDeviceFile_openSharedMemory(name, true, 256, NULL);
+    if (fd == XFD_INVALID) goto cleanup;
+    address = XDeviceFile_map(fd, 0, 256, 0x2);
+    if (!address) goto cleanup;
+    memset(address, 0, 256);
+    memcpy(address, payload, sizeof(payload));
+    if (XDevice_write(fd, &signal, 1) != 1 ||
+        XDevice_read(fd, &acknowledgement, 1) != 1 || acknowledgement != 1)
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    if (address) (void)XDeviceFile_unmap(fd, address, 256);
+    if (fd != XFD_INVALID) XDevice_close(fd);
+    return result;
+}
+
+static bool XDeviceFileTest_sharedMemory(void)
+{
+    static const char payload[] = "XDeviceFile shared mapping";
+    XString* name;
+    XFd fd = XFD_INVALID;
+    void* address = NULL;
+    pid_t child;
+    int status = 0;
+    int attempt;
+    char signal = 0;
+    char acknowledgement = 0;
+    bool ok = false;
+
+    name = XString_create_utf8("xdevicefile-shared-mapping-test");
+    if (!name) return false;
+    child = fork();
+    if (child == 0)
+        _exit(XDeviceFileTest_sharedMemoryServer(name));
+    if (child < 0) goto cleanup;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        fd = XDeviceFile_openSharedMemory(name, false, 0, NULL);
+        if (fd != XFD_INVALID) break;
+        XThread_msleep(20);
+    }
+    if (fd == XFD_INVALID) {
+        (void)kill(child, SIGTERM);
+        goto wait_child;
+    }
+    address = XDeviceFile_map(fd, 0, 256, 0);
+    if (!address || XDevice_read(fd, &signal, 1) != 1 || signal != 1 ||
+        memcmp(address, payload, sizeof(payload)) != 0)
+        goto acknowledge;
+    acknowledgement = 1;
+    ok = true;
+
+acknowledge:
+    (void)XDevice_write(fd, &acknowledgement, 1);
+    if (address) {
+        (void)XDeviceFile_unmap(fd, address, 256);
+        address = NULL;
+    }
+    XDevice_close(fd);
+    fd = XFD_INVALID;
+
+wait_child:
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0)
+        ok = false;
+
+cleanup:
+    if (address) (void)XDeviceFile_unmap(fd, address, 256);
+    if (fd != XFD_INVALID) XDevice_close(fd);
+    XString_delete_base((XClass*)name);
+    return ok;
+}
+#endif
 
 bool XDeviceFileTest_runAll(void)
 {
@@ -97,43 +192,26 @@ bool XDeviceFileTest_runAll(void)
         failedStep = "file stat result";
         goto cleanup;
     }
-#if defined(XFILE_USE_PLATFORM_API)
-    {
-        int64_t offset = 0;
-        int64_t size = 4;
-        int flags = 0;
-        commandInput = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size),
-                                       XVar(int, flags));
-        commandOutput = XVarList_Create(XVar(void*, mapped));
-    }
-    if (!commandInput || !commandOutput ||
-        !XDevice_control(fd, XDeviceFileCommand_Map, commandInput, commandOutput)) {
+    mapped = XDeviceFile_map(fd, 0, 4, 0x2);
+    if (!mapped) {
         failedStep = "map command";
         goto cleanup;
     }
-    XVarList_start(commandOutput);
-    mapped = XVarList_arg(commandOutput, void*);
-    XVarList_delete(commandInput);
-    XVarList_delete(commandOutput);
-    commandInput = NULL;
-    commandOutput = NULL;
     if (!mapped || memcmp(mapped, firstData, 4) != 0) {
         failedStep = "map result";
         goto cleanup;
     }
-    {
-        int64_t size = 4;
-        commandInput = XVarList_Create(XVar(void*, mapped), XVar(int64_t, size));
-    }
-    if (!commandInput || !XDevice_control(fd, XDeviceFileCommand_Unmap,
-                                          commandInput, NULL)) {
+    memcpy(mapped, "ABCD", 4);
+    if (!XDeviceFile_unmap(fd, mapped, 4)) {
         failedStep = "unmap command";
         goto cleanup;
     }
-    XVarList_delete(commandInput);
-    commandInput = NULL;
     mapped = NULL;
-#endif
+    if (!XDevice_flush(fd) || XDevice_seek(fd, 0, XDeviceSeekWhence_Begin) != 0 ||
+        XDevice_read(fd, readBuffer, 4) != 4 || memcmp(readBuffer, "ABCD", 4) != 0) {
+        failedStep = "mapped writeback";
+        goto cleanup;
+    }
     {
         XFileTime timeType = XFile_ModificationTime;
         int64_t timeValue = 1700000000;
@@ -185,24 +263,25 @@ bool XDeviceFileTest_runAll(void)
         goto cleanup;
     }
     memset(readBuffer, 0, sizeof(readBuffer));
-    if (XDevice_read(fd, readBuffer, 2) != 2 || memcmp(readBuffer, firstData, 2) != 0) {
+    if (XDevice_read(fd, readBuffer, 2) != 2 || memcmp(readBuffer, "AB", 2) != 0) {
         failedStep = "read-only verification";
         goto cleanup;
     }
+#if (defined(__unix__) || defined(__APPLE__) || defined(__BSD__)) && \
+    defined(XFILE_USE_PLATFORM_API)
+    if (!XDeviceFileTest_sharedMemory()) {
+        failedStep = "shared-memory map command";
+        goto cleanup;
+    }
+#endif
 
     ok = true;
 
 cleanup:
     if (commandInput) XVarList_delete(commandInput);
     if (commandOutput) XVarList_delete(commandOutput);
-    if (mapped && fd != XFD_INVALID) {
-        int64_t size = 4;
-        commandInput = XVarList_Create(XVar(void*, mapped), XVar(int64_t, size));
-        if (commandInput) {
-            (void)XDevice_control(fd, XDeviceFileCommand_Unmap, commandInput, NULL);
-            XVarList_delete(commandInput);
-        }
-    }
+    if (mapped && fd != XFD_INVALID)
+        (void)XDeviceFile_unmap(fd, mapped, 4);
     if (fd != XFD_INVALID) XDevice_close(fd);
     (void)XDeviceFile_removePermanent(path);
     XString_delete_base((XClass*)path);

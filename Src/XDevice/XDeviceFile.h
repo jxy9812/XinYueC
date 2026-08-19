@@ -19,7 +19,7 @@
  * 六、特殊路径（2个）- 合并了5个路径函数为 getSpecialPath + setCurrentPath
  * 七、链接操作（2个）- 可选（link 合并了符号/硬链接）
  * 八、权限操作（1个）- 可选
- * 九、内存映射（3个）- 可选
+ * 九、内存映射控制命令（归属文件设备）
  * 十、文件时间修改（1个）- 仅fd版，路径版由上层 open→setFileTime→close 组合
  * 十一、驱动器列表（1个）- 可选（enumerateDrives 合并 count/at）
  * 十二、存储设备信息（1个）- 可选
@@ -351,7 +351,7 @@ bool XDeviceFile_readLink(const XString* path, XString* target);
 bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permissions);
 
 /* ============================================================================
- * 九、内存映射（3个）- 可选
+ * 九、命名共享内存和内存映射
  * ============================================================================ */
 
 /**
@@ -364,7 +364,7 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
  * @return 成功返回由调用方拥有的 XFd；失败返回 XFD_INVALID，调用方不得关闭该无效值。
  * @note 平台实现除命名共享内存段外，还会内建一个同名信令通道（POSIX 为
  *       Unix domain 流式套接字，Windows 为命名管道）。该 XFd 的
- *       XDevice_control 的 XDeviceFileCommand_Map / Unmap 用于访问共享内存数据区；
+ *       XDeviceFile_map / XDeviceFile_unmap 用于访问共享内存数据区；
  *       XDeviceFile_read / XDeviceFile_write 在信令通道上收发 1 字节通知
  *       （数据方写完一块后写通知字节，对端阻塞等待，参考网络套接字的异步
  *       接收，不需要轮询共享内存状态字段）。使用完毕后必须调用
@@ -386,9 +386,11 @@ typedef enum XDeviceFileCommand
     XDeviceFileCommand_GetFileStat = XDeviceCommand_Count
         /**< 查询已打开文件属性；in 为 NULL，out 为 XVarList(XFileStat stat)。 */,
     XDeviceFileCommand_Map
-        /**< 映射文件区域；in 为 XVarList(int64_t offset, int64_t size, int flags)，out 为 XVarList(void* address)。 */,
+        /**< 映射文件或命名共享内存区域；in 为 XVarList(int64_t offset, int64_t size, int flags)，
+             flags 的 bit0 为私有映射（修改不回写），bit1 为可写映射（文件必须以写模式打开），
+             out 为 XVarList(void* address)，地址只借用至 Unmap 或 Close。 */,
     XDeviceFileCommand_Unmap
-        /**< 解除文件映射；in 为 XVarList(void* address, int64_t size)，out 为 NULL。 */,
+        /**< 解除当前 XDeviceFile 句柄创建的映射；in 为 XVarList(void* address, int64_t size)，out 为 NULL。 */,
     XDeviceFileCommand_SetFileTime
         /**< 设置文件时间；in 为 XVarList(XFileTime timeType, int64_t timeValue)，out 为 NULL。 */,
     XDeviceFileCommand_SetStandardInputEcho
@@ -408,21 +410,25 @@ bool XDeviceFile_getFileStat(XFd fd, XFileStat* stat);
 
 /**
  * @brief 映射文件的一段区域到进程地址空间。
- * @param fd 已打开的文件设备句柄；借用。
- * @param offset 映射起始偏移，单位字节。
+ * @param fd 已打开的文件设备或命名共享内存设备句柄；借用。
+ * @param offset 映射起始偏移，单位为字节，必须为非负值。
  * @param size 映射长度，必须大于 0。
- * @param flags 平台映射选项位组合，取值由文件后端约定。
+ * @param flags 映射选项位组合；bit0 表示私有映射，bit1 表示可写映射。
  * @return 成功返回映射地址（由设备后端管理），失败返回 NULL。
- * @note 映射成功后必须使用同一 fd、地址和长度调用 XDeviceFile_unmap；地址不应释放。
+ * @note 本函数只是 XDevice_control(fd, XDeviceFileCommand_Map, ...) 的便捷包装，
+ *       不包含独立的映射实现。映射成功后必须使用同一 fd、地址和长度调用
+ *       XDeviceFile_unmap；地址不应由调用方释放。可写映射要求 fd 以写模式打开。
  */
 void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags);
 
 /**
- * @brief 解除文件区域映射。
- * @param fd 创建映射时使用的文件设备句柄；借用。
- * @param address XDeviceFile_map 返回的映射地址。
+ * @brief 解除文件或命名共享内存区域映射。
+ * @param fd 创建映射时使用的文件设备或命名共享内存设备句柄；借用。
+ * @param address XDeviceFile_map 返回的映射地址；不能为 NULL。
  * @param size 映射长度，必须与 map 调用一致。
  * @return 成功返回 true，失败返回 false。
+ * @note 本函数只是 XDevice_control(fd, XDeviceFileCommand_Unmap, ...) 的便捷包装，
+ *       只允许解除当前 fd 创建的映射。FatFs 的可写临时映射会在解除时回写文件。
  */
 bool XDeviceFile_unmap(XFd fd, void* address, int64_t size);
 

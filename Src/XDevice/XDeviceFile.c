@@ -36,10 +36,26 @@ typedef struct XDeviceFileCtx
 {
     XDeviceContext m_base;  /* 第一个成员，打开上下文基类，子类按需扩展。 */
     XFd m_fileFd;          /**< 原有文件系统内部描述符。 */
+    struct XDeviceFileMapping* m_mappings; /**< 当前打开实例持有的映射链表。 */
     uint32_t m_openMode : 13; /**< 打开模式（XIODeviceBaseMode 位组合）。 */
     uint32_t m_flags    : 3;  /**< XDeviceOpenFlag 位组合。 */
     uint32_t m_reserved : 16; /**< 保留位，必须为 0。 */
 } XDeviceFileCtx;
+
+/**
+ * @brief 文件设备内部映射记录。
+ * @details POSIX/Windows 只需要记录真实映射的地址和长度；FatFs 没有
+ *          mmap，legacyMap 返回临时缓冲，因此还要保存源文件偏移和标志，
+ *          在 flush、unmap 或 close 时把共享可写映射回写到文件。
+ */
+typedef struct XDeviceFileMapping
+{
+    void* m_address;                 /**< 对外返回的映射地址。 */
+    int64_t m_offset;                /**< 映射在源文件中的起始偏移。 */
+    int64_t m_size;                  /**< 映射长度。 */
+    int m_flags;                     /**< bit0 私有映射，bit1 可写映射。 */
+    struct XDeviceFileMapping* m_next; /**< 下一个映射记录。 */
+} XDeviceFileMapping;
 
 /* ============================================================================
  * 虚函数原型（内部实现前缀 V + 类名，按代码风格指南执行）
@@ -55,6 +71,57 @@ static bool  VXDeviceFile_getProperty(XDevice* self, XDeviceContext* handle, uin
 static bool  VXDeviceFile_queryProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value);
 static bool  VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t command,
                                   const XVarList* in, XVarList* out);
+
+static bool VXDeviceFile_writeBackMapping(XDeviceFileCtx* ctx,
+                                          XDeviceFileMapping* mapping)
+{
+#if defined(XFILE_USE_FATFS)
+    int64_t oldPosition;
+    int64_t written;
+    if (!ctx || !mapping || !(mapping->m_flags & 0x2) ||
+        (mapping->m_flags & 0x1))
+        return true;
+    oldPosition = XDeviceFile_legacySeek(ctx->m_fileFd, 0, XSeekCur);
+    if (oldPosition < 0 ||
+        XDeviceFile_legacySeek(ctx->m_fileFd, mapping->m_offset, XSeekSet) < 0)
+        return false;
+    written = XDeviceFile_legacyWrite(ctx->m_fileFd, mapping->m_address,
+                                      mapping->m_size);
+    if (XDeviceFile_legacySeek(ctx->m_fileFd, oldPosition, XSeekSet) < 0)
+        return false;
+    return written == mapping->m_size;
+#else
+    (void)ctx;
+    (void)mapping;
+    return true;
+#endif
+}
+
+static bool VXDeviceFile_flushMappings(XDeviceFileCtx* ctx)
+{
+    XDeviceFileMapping* mapping;
+    if (!ctx) return false;
+    for (mapping = ctx->m_mappings; mapping; mapping = mapping->m_next) {
+        if (!VXDeviceFile_writeBackMapping(ctx, mapping)) return false;
+    }
+    return true;
+}
+
+static void VXDeviceFile_releaseMappings(XDeviceFileCtx* ctx)
+{
+    XDeviceFileMapping* mapping;
+    XDeviceFileMapping* next;
+    if (!ctx) return;
+    mapping = ctx->m_mappings;
+    while (mapping) {
+        next = mapping->m_next;
+        (void)VXDeviceFile_writeBackMapping(ctx, mapping);
+        (void)XDeviceFile_legacyUnmap(mapping->m_address, mapping->m_size);
+        free(mapping);
+        mapping = next;
+    }
+    ctx->m_mappings = NULL;
+}
 
 /* ============================================================================
  * 类虚函数表
@@ -151,6 +218,7 @@ static void VXDeviceFile_close(XDevice* self, XDeviceContext* handle)
     XDeviceFileCtx* ctx = (XDeviceFileCtx*)handle;
     (void)self;
     if (ctx) {
+        VXDeviceFile_releaseMappings(ctx);
         if (ctx->m_fileFd != XFD_INVALID)
             XDeviceFile_legacyClose(ctx->m_fileFd);
         free(ctx);
@@ -197,6 +265,7 @@ static bool VXDeviceFile_flush(XDevice* self, XDeviceContext* handle)
     (void)self;
     if (!ctx || ctx->m_fileFd == XFD_INVALID)
         return false;
+    if (!VXDeviceFile_flushMappings(ctx)) return false;
     return XDeviceFile_legacyFlush(ctx->m_fileFd);
 }
 
@@ -220,6 +289,8 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
     int64_t size;
     int flags;
     void* address;
+    XDeviceFileMapping* mapping;
+    XDeviceFileMapping* previous;
     XFileStat stat;
     bool ok;
     (void)self;
@@ -245,10 +316,24 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
         offset = XVarList_arg(arguments, int64_t);
         size = XVarList_arg(arguments, int64_t);
         flags = XVarList_arg(arguments, int);
+        if (offset < 0 || size <= 0 || offset > INT64_MAX - size ||
+            ((flags & 0x2) && !(ctx->m_openMode & XIODevice_WriteOnly)))
+            return false;
         address = ctx->m_fileFd == XFD_INVALID ? NULL :
                   XDeviceFile_legacyMap(ctx->m_fileFd, offset, size, flags);
         ok = address != NULL;
         if (ok) {
+            mapping = (XDeviceFileMapping*)calloc(1, sizeof(*mapping));
+            if (!mapping) {
+                (void)XDeviceFile_legacyUnmap(address, size);
+                return false;
+            }
+            mapping->m_address = address;
+            mapping->m_offset = offset;
+            mapping->m_size = size;
+            mapping->m_flags = flags;
+            mapping->m_next = ctx->m_mappings;
+            ctx->m_mappings = mapping;
             memcpy(out->data, &address, sizeof(address));
             XVarList_start(out);
         }
@@ -259,7 +344,20 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
         XVarList_start(arguments);
         address = XVarList_arg(arguments, void*);
         size = XVarList_arg(arguments, int64_t);
+        previous = NULL;
+        mapping = ctx->m_mappings;
+        while (mapping && (mapping->m_address != address || mapping->m_size != size)) {
+            previous = mapping;
+            mapping = mapping->m_next;
+        }
+        if (!mapping) return false;
+        if (!VXDeviceFile_writeBackMapping(ctx, mapping)) return false;
         ok = XDeviceFile_legacyUnmap(address, size);
+        if (ok) {
+            if (previous) previous->m_next = mapping->m_next;
+            else ctx->m_mappings = mapping->m_next;
+            free(mapping);
+        }
         break;
     case XDeviceFileCommand_SetFileTime:
         if (!arguments || arguments->m_size != sizeof(XFileTime) + sizeof(int64_t))
@@ -369,8 +467,9 @@ void* XDeviceFile_map(XFd fd, int64_t offset, int64_t size, int flags)
     XVarList* output;
     void* address = NULL;
     bool result;
+
     input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size),
-        XVar(int, flags));
+                            XVar(int, flags));
     output = XVarList_Create(XVar(void*, address));
     if (!input || !output) {
         if (input) XVarList_delete(input);
@@ -391,6 +490,7 @@ bool XDeviceFile_unmap(XFd fd, void* address, int64_t size)
 {
     XVarList* input;
     bool result;
+
     input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
     if (!input) return false;
     result = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);

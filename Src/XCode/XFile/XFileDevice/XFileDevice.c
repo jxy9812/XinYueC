@@ -41,40 +41,6 @@ static bool xfiledevice_getFileStat(XFd fd, XFileStat* stat)
     return ok;
 }
 
-static void* xfiledevice_map(XFd fd, int64_t offset, int64_t size, int flags)
-{
-    XVarList* input;
-    XVarList* output;
-    void* address = NULL;
-    bool ok;
-    input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size), XVar(int, flags));
-    output = XVarList_Create(XVar(void*, address));
-    if (!input || !output) {
-        if (input) XVarList_delete(input);
-        if (output) XVarList_delete(output);
-        return NULL;
-    }
-    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
-    if (ok) {
-        XVarList_start(output);
-        address = XVarList_arg(output, void*);
-    }
-    XVarList_delete(input);
-    XVarList_delete(output);
-    return address;
-}
-
-static bool xfiledevice_unmap(XFd fd, void* address, int64_t size)
-{
-    XVarList* input;
-    bool ok;
-    input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
-    if (!input) return false;
-    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
-    XVarList_delete(input);
-    return ok;
-}
-
 /* ============================================================================
  * 虚函数实现（重写父类虚函数）
  * ============================================================================ */
@@ -648,7 +614,7 @@ void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDe
     int mapFlags = (flags & XFileDevice_MapPrivateOption) ? 0x1 : 0x0;
     if (flags & XFileDevice_MapPrivateOption) writable = true;
     if (writable) mapFlags |= 0x2;
-    void* addr = xfiledevice_map(XIODevice_fd(&device->m_parent), offset, size, mapFlags);
+    void* addr = XDeviceFile_map(XIODevice_fd(&device->m_parent), offset, size, mapFlags);
     if (addr) mmapTrack(addr, size);
     return addr;
 }
@@ -657,7 +623,7 @@ bool XFileDevice_unmap(XFileDevice* device, void* address)
 {
     if (!device || !address) return false;
     int64_t sz = mmapLookupSize(address);
-    bool ok = xfiledevice_unmap(XIODevice_fd(&device->m_parent), address, sz);
+    bool ok = XDeviceFile_unmap(XIODevice_fd(&device->m_parent), address, sz);
     if (ok) mmapUntrack(address);
     return ok;
 }

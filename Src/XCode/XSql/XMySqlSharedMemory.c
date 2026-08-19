@@ -9,7 +9,7 @@
  *   会为每个段内建一个信令通道（POSIX 为 Unix domain 流式套接字，
  *   Windows 为命名管道），返回的 XFd 可直接用 XDeviceFile_read /
  *   XDeviceFile_write 在信令通道上收发 1 字节通知；
- * - XDevice_control(Map/Unmap)：建立/解除共享内存视图；
+ * - XDeviceFile_map/XDeviceFile_unmap：建立/解除共享内存视图；
  * - XDeviceFile_close：释放共享内存段描述符。
  *
  * 跨进程收发同步完全复刻网络套接字的异步接收语义，不做共享内存状态字段
@@ -42,7 +42,6 @@
 #include "XString.h"
 #include "XDateTime.h"
 #include "XThread.h"
-#include "XVarList.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -85,39 +84,6 @@ typedef char xmysql_shm_layout_check_segment[
     (sizeof(XMySqlSharedMemorySegment) == 4 + 2 * (12 + XMYSQL_SHARED_MEMORY_DATA_SIZE)) ? 1 : -1];
 typedef char xmysql_shm_layout_check_connect[
     (sizeof(XMySqlSharedMemoryConnect) == 16) ? 1 : -1];
-
-static void* xmysql_shm_map(XFd fd, int64_t offset, int64_t size, int flags)
-{
-    XVarList* input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size),
-                                      XVar(int, flags));
-    XVarList* output;
-    void* address = NULL;
-    bool ok;
-    if (!input) return NULL;
-    output = XVarList_Create(XVar(void*, address));
-    if (!output) {
-        XVarList_delete(input);
-        return NULL;
-    }
-    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
-    if (ok) {
-        XVarList_start(output);
-        address = XVarList_arg(output, void*);
-    }
-    XVarList_delete(input);
-    XVarList_delete(output);
-    return address;
-}
-
-static bool xmysql_shm_unmap(XFd fd, void* address, int64_t size)
-{
-    XVarList* input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
-    bool ok;
-    if (!input) return false;
-    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
-    XVarList_delete(input);
-    return ok;
-}
 
 /* 计算信令字节对应的等待掩码位（DATA/SPACE/CLOSE 各占一位）。 */
 static uint32_t xmysql_shm_signal_mask(uint8_t sig)
@@ -221,8 +187,8 @@ static void xmysql_shm_release_resources(XMySqlSharedMemory* shared)
 {
     if (!shared) return;
     if (shared->m_segment) {
-        xmysql_shm_unmap(shared->m_signalFd, shared->m_segment,
-                         (int64_t)sizeof(XMySqlSharedMemorySegment));
+        XDeviceFile_unmap(shared->m_signalFd, shared->m_segment,
+                          (int64_t)sizeof(XMySqlSharedMemorySegment));
         shared->m_segment = NULL;
     }
     if (shared->m_signalFd >= 0) {
@@ -269,7 +235,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
     XString_delete_base(name);
     name = NULL;
     if (connectFd < 0) goto fail;
-    connectMap = (XMySqlSharedMemoryConnect*)xmysql_shm_map(
+    connectMap = (XMySqlSharedMemoryConnect*)XDeviceFile_map(
         connectFd, 0, (int64_t)sizeof(XMySqlSharedMemoryConnect), 0x2);
     if (!connectMap) goto fail;
 
@@ -287,8 +253,8 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
     XAtomic_store_uint32(&connectMap->request, 0u, XAtomic_MemoryOrder_Release);
     if (!xmysql_shm_send_signal(connectFd, XMYSQL_SHM_SIGNAL_SPACE)) goto fail;
 
-    xmysql_shm_unmap(connectFd, connectMap,
-                     (int64_t)sizeof(XMySqlSharedMemoryConnect));
+    XDeviceFile_unmap(connectFd, connectMap,
+                      (int64_t)sizeof(XMySqlSharedMemoryConnect));
     connectMap = NULL;
     XDeviceFile_close(connectFd);
     connectFd = XFD_INVALID;
@@ -316,7 +282,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
     shared = (XMySqlSharedMemory*)XCalloc_System(1, sizeof(XMySqlSharedMemory));
     if (!shared) goto fail;
     shared->m_signalFd = connectFd;
-    shared->m_segment = (XMySqlSharedMemorySegment*)xmysql_shm_map(
+    shared->m_segment = (XMySqlSharedMemorySegment*)XDeviceFile_map(
         connectFd, 0, (int64_t)sizeof(XMySqlSharedMemorySegment), 0x2);
     if (!shared->m_segment) goto fail;
 
@@ -337,8 +303,8 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
 fail:
     if (name) XString_delete_base(name);
     if (connectMap)
-        xmysql_shm_unmap(connectFd, connectMap,
-                         (int64_t)sizeof(XMySqlSharedMemoryConnect));
+        XDeviceFile_unmap(connectFd, connectMap,
+                          (int64_t)sizeof(XMySqlSharedMemoryConnect));
     if (connectFd >= 0)
         XDeviceFile_close(connectFd);
     if (shared) {

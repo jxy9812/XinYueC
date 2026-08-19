@@ -19,6 +19,8 @@ int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
 bool XDeviceFile_legacyFlush(XFd fd);
 bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 bool XDeviceFile_legacySetStandardInputEcho(XFd fd, bool enabled);
+void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags);
+bool XDeviceFile_legacyUnmap(void* address, int64_t size);
 
 /* ============================================================================
  * 后端注册表（静态注册，不动态加载）
@@ -307,7 +309,6 @@ const char* XDevice_typeClassName(XDeviceType type)
 	case XDeviceType_Timer:    return "timer";
 	case XDeviceType_Dir:      return "dir";
 	case XDeviceType_Console:  return "console";
-	case XDeviceType_Mapping:  return "mapping";
 	default:                   return NULL;
 	}
 }
@@ -568,14 +569,51 @@ bool XDevice_control(XFd fd, uint32_t command, const XVarList* in, XVarList* out
 		XFileDescriptor* desc = XFd_get(fd);
 		XVarList* input = (XVarList*)in;
 		bool enabled;
-		if (!desc || ((XFdType)desc->m_type != XFD_TYPE_CONSOLE &&
-			(XFdType)desc->m_type != XFD_TYPE_FILE) ||
-			command != XDeviceFileCommand_SetStandardInputEcho || !input || out ||
-			input->m_size != sizeof(enabled))
+		int64_t offset;
+		int64_t size;
+		int flags;
+		void* address;
+		if (!desc) return false;
+		if (command == XDeviceFileCommand_SetStandardInputEcho) {
+			if (((XFdType)desc->m_type != XFD_TYPE_CONSOLE &&
+				(XFdType)desc->m_type != XFD_TYPE_FILE) || !input || out ||
+				input->m_size != sizeof(enabled))
+				return false;
+			XVarList_start(input);
+			enabled = XVarList_arg(input, bool);
+			return XDeviceFile_legacySetStandardInputEcho(fd, enabled);
+		}
+		/* 命名共享内存仍由平台创建信令 XFd；其数据区映射作为文件命令转发。 */
+		if ((XFdType)desc->m_type != XFD_TYPE_FILE &&
+			(XFdType)desc->m_type != XFD_TYPE_MAPPING)
 			return false;
-		XVarList_start(input);
-		enabled = XVarList_arg(input, bool);
-		return XDeviceFile_legacySetStandardInputEcho(fd, enabled);
+		if (command == XDeviceFileCommand_Map) {
+			if (!input || !out ||
+				input->m_size != sizeof(offset) + sizeof(size) + sizeof(flags) ||
+				out->m_size != sizeof(address))
+				return false;
+			XVarList_start(input);
+			offset = XVarList_arg(input, int64_t);
+			size = XVarList_arg(input, int64_t);
+			flags = XVarList_arg(input, int);
+			if (offset < 0 || size <= 0 || offset > INT64_MAX - size)
+				return false;
+			address = XDeviceFile_legacyMap(fd, offset, size, flags);
+			if (!address) return false;
+			memcpy(out->data, &address, sizeof(address));
+			XVarList_start(out);
+			return true;
+		}
+		if (command == XDeviceFileCommand_Unmap) {
+			if (!input || out ||
+				input->m_size != sizeof(address) + sizeof(size))
+				return false;
+			XVarList_start(input);
+			address = XVarList_arg(input, void*);
+			size = XVarList_arg(input, int64_t);
+			return size > 0 && XDeviceFile_legacyUnmap(address, size);
+		}
+		return false;
 	}
 	return XDevice_dispatchControl(ctx->m_device, ctx, command, in, out);
 }

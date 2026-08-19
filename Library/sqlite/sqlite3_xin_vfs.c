@@ -57,40 +57,6 @@ static bool xsqlite_file_stat(XFd fd, XFileStat* stat)
     return ok;
 }
 
-static void* xsqlite_file_map(XFd fd, int64_t offset, int64_t size, int flags)
-{
-    XVarList* input;
-    XVarList* output;
-    void* address = NULL;
-    bool ok;
-    input = XVarList_Create(XVar(int64_t, offset), XVar(int64_t, size), XVar(int, flags));
-    output = XVarList_Create(XVar(void*, address));
-    if (!input || !output) {
-        if (input) XVarList_delete(input);
-        if (output) XVarList_delete(output);
-        return NULL;
-    }
-    ok = XDevice_control(fd, XDeviceFileCommand_Map, input, output);
-    if (ok) {
-        XVarList_start(output);
-        address = XVarList_arg(output, void*);
-    }
-    XVarList_delete(input);
-    XVarList_delete(output);
-    return address;
-}
-
-static bool xsqlite_file_unmap(XFd fd, void* address, int64_t size)
-{
-    XVarList* input;
-    bool ok;
-    input = XVarList_Create(XVar(void*, address), XVar(int64_t, size));
-    if (!input) return false;
-    ok = XDevice_control(fd, XDeviceFileCommand_Unmap, input, NULL);
-    XVarList_delete(input);
-    return ok;
-}
-
 /*
  * SQLite calls this VFS for all file-backed databases.  The implementation
  * deliberately stops at XDeviceFile.h so the SQLite source does not
@@ -461,8 +427,8 @@ static int xsqlite_file_shm_map(sqlite3_file* file, int page, int pageSize,
         if (!XDeviceFile_resize(sqliteFile->m_shmFd, wantedSize))
             return SQLITE_IOERR_SHMSIZE;
     }
-    address = xsqlite_file_map(sqliteFile->m_shmFd, offset, pageSize,
-                               sqliteFile->m_readOnly ? 0 : 0x2);
+    address = XDeviceFile_map(sqliteFile->m_shmFd, offset, pageSize,
+                              sqliteFile->m_readOnly ? 0 : 0x2);
     if (!address) return SQLITE_IOERR_MMAP;
     sqliteFile->m_shmRegions[page].m_address = address;
     sqliteFile->m_shmRegions[page].m_size = pageSize;
@@ -572,9 +538,9 @@ static void xsqlite_file_shm_clear(XSqliteFile* sqliteFile)
     if (!sqliteFile) return;
     for (index = 0; index < sqliteFile->m_shmRegionCount; ++index) {
         if (sqliteFile->m_shmRegions[index].m_address) {
-            (void)xsqlite_file_unmap(sqliteFile->m_shmFd,
-                                     sqliteFile->m_shmRegions[index].m_address,
-                                     sqliteFile->m_shmRegions[index].m_size);
+            (void)XDeviceFile_unmap(sqliteFile->m_shmFd,
+                                    sqliteFile->m_shmRegions[index].m_address,
+                                    sqliteFile->m_shmRegions[index].m_size);
         }
     }
     if (sqliteFile->m_shmRegions) XFree_System(sqliteFile->m_shmRegions);

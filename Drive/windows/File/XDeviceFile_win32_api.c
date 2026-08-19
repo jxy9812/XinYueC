@@ -1729,9 +1729,23 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
     DWORD access;
     DWORD offsetHigh;
     DWORD offsetLow;
-    if (fd < 0 || size <= 0) return NULL;
+    SYSTEM_INFO systemInfo;
+    uint64_t granularity;
+    uint64_t alignedOffset;
+    uint64_t delta;
+    SIZE_T viewSize;
+    void* address;
+    if (fd < 0 || offset < 0 || size <= 0) return NULL;
     descriptor = XFd_get(fd);
     if (!descriptor) return NULL;
+
+    GetSystemInfo(&systemInfo);
+    granularity = systemInfo.dwAllocationGranularity;
+    if (!granularity) return NULL;
+    alignedOffset = (uint64_t)offset - ((uint64_t)offset % granularity);
+    delta = (uint64_t)offset - alignedOffset;
+    if ((uint64_t)size > (uint64_t)SIZE_MAX - delta) return NULL;
+    viewSize = (SIZE_T)((uint64_t)size + delta);
 
     /* 共享内存段描述符：句柄是信令管道，映射句柄保存在 object。 */
     if (descriptor->m_type == XFD_TYPE_MAPPING) {
@@ -1739,10 +1753,14 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
         if (!mapping || !mapping->mapHandle || mapping->mapHandle == INVALID_HANDLE_VALUE)
             return NULL;
         hMap = mapping->mapHandle;
-        access = (flags & 0x2) ? (FILE_MAP_READ | FILE_MAP_WRITE) : FILE_MAP_READ;
-        offsetHigh = (DWORD)((uint64_t)offset >> 32);
-        offsetLow = (DWORD)((uint64_t)offset & 0xFFFFFFFF);
-        return MapViewOfFile(hMap, access, offsetHigh, offsetLow, (SIZE_T)size);
+        if (flags & 0x1)
+            access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
+        else
+            access = (flags & 0x2) ? FILE_MAP_WRITE : FILE_MAP_READ;
+        offsetHigh = (DWORD)(alignedOffset >> 32);
+        offsetLow = (DWORD)(alignedOffset & 0xFFFFFFFF);
+        address = MapViewOfFile(hMap, access, offsetHigh, offsetLow, viewSize);
+        return address ? (char*)address + delta : NULL;
     }
     
     {
@@ -1750,10 +1768,8 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
         if (hFile == INVALID_HANDLE_VALUE) return NULL;
 
         DWORD protect = (flags & 0x2) ? PAGE_READWRITE : PAGE_READONLY;
-        DWORD sizeHigh = (DWORD)((uint64_t)size >> 32);
-        DWORD sizeLow = (DWORD)((uint64_t)size & 0xFFFFFFFF);
-
-        HANDLE hMap2 = CreateFileMappingW(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
+        /* 最大长度为 0 表示使用文件当前长度，允许视图从任意文件偏移开始。 */
+        HANDLE hMap2 = CreateFileMappingW(hFile, NULL, protect, 0, 0, NULL);
         if (!hMap2) return NULL;
 
         /* bit0=私有映射 → FILE_MAP_COPY（写时复制，不写回文件）；
@@ -1762,21 +1778,29 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
             access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
         else
             access = (flags & 0x2) ? FILE_MAP_WRITE : FILE_MAP_READ;
-        offsetHigh = (DWORD)((uint64_t)offset >> 32);
-        offsetLow = (DWORD)((uint64_t)offset & 0xFFFFFFFF);
+        offsetHigh = (DWORD)(alignedOffset >> 32);
+        offsetLow = (DWORD)(alignedOffset & 0xFFFFFFFF);
 
-        void* address = MapViewOfFile(hMap2, access, offsetHigh, offsetLow, (SIZE_T)size);
+        address = MapViewOfFile(hMap2, access, offsetHigh, offsetLow, viewSize);
         CloseHandle(hMap2);
 
-        return address;
+        return address ? (char*)address + delta : NULL;
     }
 }
 
 bool XDeviceFile_legacyUnmap(void* addr, int64_t size)
 {
+    SYSTEM_INFO systemInfo;
+    uintptr_t address;
+    uintptr_t granularity;
     (void)size;
     if (!addr) return false;
-    return UnmapViewOfFile(addr) != 0;
+    GetSystemInfo(&systemInfo);
+    granularity = (uintptr_t)systemInfo.dwAllocationGranularity;
+    if (!granularity) return false;
+    address = (uintptr_t)addr;
+    address -= address % granularity;
+    return UnmapViewOfFile((void*)address) != 0;
 }
 
 /**

@@ -2,7 +2,7 @@
  * @file       XDevice.h
  * @brief      统一设备抽象公开门面（XDevice + XFd）。
  * @details    XDevice 是设备的多态基类（继承 XClass），同时是对外统一门面 API。
- *             具体设备（文件、目录、控制台、共享内存、串口、定时器、套接字、
+ *             具体设备（文件、目录、控制台、串口、定时器、套接字、
  *             GPIO/ADC/PWM/CAN/I2C/SPI/USB 等）通过继承 XDevice、注册类别名即可
  *             接入；所有设备以 XFd 句柄对外暴露。只依赖 XinYueC 抽象层，禁止
  *             直接调用 Win32、POSIX 等平台 API。
@@ -56,7 +56,6 @@ typedef enum XDeviceType
     XDeviceType_Timer,       /**< 定时器。 */
     XDeviceType_Dir,         /**< 目录迭代器。 */
     XDeviceType_Console,     /**< 控制台标准输入设备。 */
-    XDeviceType_Mapping,     /**< 共享内存映射段。 */
     XDeviceType_Class,       /**< 外部注册设备，按类别名打开。 */
     XDeviceType_Count        /**< 类型数量边界，不是有效设备。 */
 } XDeviceType;

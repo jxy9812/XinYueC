@@ -25,7 +25,7 @@
 | 统一句柄 | `XFd` | 既有，所有设备统一使用 |
 | 统一设备门面/基类 | `XDevice_*` / `XDevice` | 公共 API 前缀；类名即设备类别 |
 | 打开上下文基类 | `XDeviceContext` | 每次 open 唯一分配，子类首位扩展 |
-| 具体设备类 | `XDeviceFile`、`XDeviceSocket`、`XDeviceSerialPort`、`XDeviceTimer`、`XDeviceDir`、`XDeviceConsole`、`XDeviceMapping`、`XDeviceGpio`... | 按设备命名 |
+| 具体设备类 | `XDeviceFile`、`XDeviceSocket`、`XDeviceSerialPort`、`XDeviceTimer`、`XDeviceDir`、`XDeviceConsole`、`XDeviceGpio`... | 按设备命名 |
 | 内部描述符表 | `XFileDescriptor` | 保留，内部实现，不对外 |
 | 类内部虚函数实现 | `VXDeviceFile_*` | `V` + 类名 + `_` + 函数名 |
 
@@ -236,7 +236,6 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 | File | `XDeviceFile` | `XDeviceFile_win32/posix/Fatfs` |
 | Console | `XDeviceConsole` | 标准输入平台实现（已接入 XDevice 门面） |
 | Dir | `XDeviceDir` | 目录迭代器平台实现（已接入 XDevice 门面） |
-| Mapping | `XDeviceMapping` | 共享内存平台实现（待迁移） |
 | Serial | `XDeviceSerialPort` | `XSerialPortWin32/Posix/STM32`（待迁移） |
 | Timer | `XDeviceTimer` | `XAbstractEventDispatcher` 定时器（待迁移） |
 | Socket | `XDeviceSocket` | `XNetwork`（Bind/Connect/Listen/Accept）（待迁移） |
