@@ -18,6 +18,8 @@ extern "C" {
 #include "XIODevice.h"
 #include "XClass.h"
 #include "XTypes.h"
+#include "XString.h"
+#include "XStringList.h"
 
 
 /* ========== XImageReader 虚函数表枚举 ========== */
@@ -65,45 +67,61 @@ void XImageReader_init(XImageReader* self);
  * @brief      使用设备初始化图像读取器
  * @param self   待初始化的 XImageReader 对象指针
  * @param device XIODevice 指针
- * @param format 格式字符串（可为空字符串，表示自动检测）
+ * @param format XString 格式（可为空，表示自动检测）
  */
-void XImageReader_init_device(XImageReader* self, XIODevice* device, const char* format);
+void XImageReader_init_device(XImageReader* self, XIODevice* device, const XString* format);
+
+/** @brief 使用 UTF-8 格式字符串初始化读取器的兼容重载。 */
+void XImageReader_init_device_2(XImageReader* self, XIODevice* device, const char* format);
 
 /**
  * @brief      使用文件名初始化图像读取器
  * @param self     待初始化的 XImageReader 对象指针
- * @param fileName 文件名
- * @param format   格式字符串（可为空字符串，表示自动检测）
+ * @param fileName XString 文件名
+ * @param format   XString 格式（可为空，表示自动检测）
  */
-void XImageReader_init_file(XImageReader* self, const char* fileName, const char* format);
+void XImageReader_init_file(XImageReader* self, const XString* fileName, const XString* format);
+
+/** @brief 使用 UTF-8 文件名和格式初始化读取器的兼容重载。 */
+void XImageReader_init_file_2(XImageReader* self, const char* fileName, const char* format);
 
 /**
  * @brief      释放 XImageReader 资源
  * @param self 待释放的 XImageReader 对象指针
  */
-void XImageReader_deinit(XImageReader* self);
-
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XImageReader_deinit_base(XImageReader* self);
+/** @brief 通过 XClass 虚表释放读取器资源。 @param self 待读取器指针。 */
+#define XImageReader_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的图像读取器。 @param self 待读取器指针。 */
+#define XImageReader_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 格式设置 ========== */
 
 /**
  * @brief      设置图像格式
  * @param self   目标 XImageReader 对象指针
- * @param format 格式字符串
+ * @param format XString 格式
  */
-void XImageReader_setFormat(XImageReader* self, const char* format);
+void XImageReader_setFormat(XImageReader* self, const XString* format);
+
+/** @brief 使用 UTF-8 格式字符串设置图像格式的兼容重载。 */
+void XImageReader_setFormat_2(XImageReader* self, const char* format);
 
 /**
  * @brief      获取图像格式
  * @param self 目标 XImageReader 对象指针
  * @return 格式字符串
  */
-const char* XImageReader_format(const XImageReader* self);
+XString* XImageReader_format(const XImageReader* self);
+
+/** @brief 获取内部格式字符串引用；返回值由读取器持有。 */
+const XString* XImageReader_format_const(const XImageReader* self);
+
+/** @brief 获取 UTF-8 兼容格式字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageReader_format_2(const XImageReader* self);
 
 /**
  * @brief      设置是否自动检测图像格式
@@ -152,16 +170,25 @@ XIODevice* XImageReader_device(const XImageReader* self);
 /**
  * @brief      设置文件名
  * @param self     目标 XImageReader 对象指针
- * @param fileName 文件名
+ * @param fileName XString 文件名
  */
-void XImageReader_setFileName(XImageReader* self, const char* fileName);
+void XImageReader_setFileName(XImageReader* self, const XString* fileName);
+
+/** @brief 使用 UTF-8 文件名设置文件名的兼容重载。 */
+void XImageReader_setFileName_2(XImageReader* self, const char* fileName);
 
 /**
  * @brief      获取文件名
  * @param self 目标 XImageReader 对象指针
  * @return 文件名
  */
-const char* XImageReader_fileName(const XImageReader* self);
+XString* XImageReader_fileName(const XImageReader* self);
+
+/** @brief 获取内部文件名字符串引用；返回值由读取器持有。 */
+const XString* XImageReader_fileName_const(const XImageReader* self);
+
+/** @brief 获取 UTF-8 兼容文件名字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageReader_fileName_2(const XImageReader* self);
 
 /* ========== 图像信息 ========== */
 
@@ -183,7 +210,7 @@ void XImageReader_size(const XImageReader* self, XSize* out);
  * @param self 目标 XImageReader 对象指针
  * @return 文本键列表字符串数组
  */
-void* XImageReader_textKeys(const XImageReader* self);
+XStringList* XImageReader_textKeys(const XImageReader* self);
 
 /**
  * @brief      获取指定键的文本
@@ -191,7 +218,14 @@ void* XImageReader_textKeys(const XImageReader* self);
  * @param key  文本键
  * @return 文本值字符串
  */
-const char* XImageReader_text(const XImageReader* self, const char* key);
+XString* XImageReader_text(const XImageReader* self, const XString* key);
+/**
+ * @brief 使用 UTF-8 键获取文本元数据的兼容重载。
+ * @param self 读取器对象指针。
+ * @param key UTF-8 编码的文本键。
+ * @return UTF-8 文本值指针，由内部缓存持有，不得释放；未找到时返回 NULL。
+ */
+const char* XImageReader_text_2(const XImageReader* self, const char* key);
 
 /* ========== 裁剪与缩放 ========== */
 
@@ -300,14 +334,20 @@ bool XImageReader_autoTransform(const XImageReader* self);
  * @param self 目标 XImageReader 对象指针
  * @return 子类型字符串
  */
-const char* XImageReader_subType(const XImageReader* self);
+XString* XImageReader_subType(const XImageReader* self);
+
+/** @brief 获取内部子类型字符串引用；BMP 读取器没有子类型时返回 NULL。 */
+const XString* XImageReader_subType_const(const XImageReader* self);
+
+/** @brief 获取 UTF-8 兼容子类型字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageReader_subType_2(const XImageReader* self);
 
 /**
  * @brief      获取支持的子类型列表
  * @param self 目标 XImageReader 对象指针
  * @return 支持的子类型列表
  */
-void* XImageReader_supportedSubTypes(const XImageReader* self);
+XStringList* XImageReader_supportedSubTypes(const XImageReader* self);
 
 /* ========== 读取操作 ========== */
 
@@ -390,7 +430,13 @@ XImageReaderError XImageReader_error(const XImageReader* self);
  * @param self 目标 XImageReader 对象指针
  * @return 错误描述字符串
  */
-const char* XImageReader_errorString(const XImageReader* self);
+XString* XImageReader_errorString(const XImageReader* self);
+
+/** @brief 获取内部错误描述引用。 */
+const XString* XImageReader_errorString_const(const XImageReader* self);
+
+/** @brief 获取 UTF-8 兼容错误描述；返回值由内部 XString 缓存持有。 */
+const char* XImageReader_errorString_2(const XImageReader* self);
 
 /**
  * @brief      判断是否支持指定选项
@@ -407,34 +453,52 @@ bool XImageReader_supportsOption(const XImageReader* self, XImageIOHandlerOption
  * @param fileName 文件名
  * @return 格式字符串
  */
-const char* XImageReader_imageFormat(const char* fileName);
+XString* XImageReader_imageFormat(const XString* fileName);
+/**
+ * @brief 使用 UTF-8 文件名探测图像格式的兼容重载。
+ * @param fileName UTF-8 编码的文件名。
+ * @return UTF-8 格式名指针，由内部静态表持有；失败时返回 NULL，不得释放。
+ */
+const char* XImageReader_imageFormat_2(const char* fileName);
 
 /**
  * @brief      通过设备检测图像格式
  * @param device XIODevice 指针
  * @return 格式字符串
  */
-const char* XImageReader_imageFormatDevice(XIODevice* device);
+XString* XImageReader_imageFormatDevice(XIODevice* device);
+/**
+ * @brief 从设备探测图像格式并返回 UTF-8 兼容指针。
+ * @param device 输入设备指针，由调用方持有。
+ * @return UTF-8 格式名指针，由内部缓存持有；失败时返回 NULL。
+ */
+const char* XImageReader_imageFormatDevice_2(XIODevice* device);
 
 /**
  * @brief      获取支持的图像格式列表
- * @return 新分配的 XVector（元素为 const char*）；调用者负责
- *         使用 XVector_delete_base 释放向量，元素字符串由库静态持有
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责使用
+ *         XStringList_delete_base 释放列表，元素由列表拥有
  */
-void* XImageReader_supportedImageFormats();
+XStringList* XImageReader_supportedImageFormats();
 
 /**
  * @brief      获取支持的 MIME 类型列表
- * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责释放列表
  */
-void* XImageReader_supportedMimeTypes();
+XStringList* XImageReader_supportedMimeTypes();
 
 /**
  * @brief      获取指定 MIME 类型对应的图像格式列表
  * @param mimeType MIME 类型字符串
- * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责释放列表
  */
-void* XImageReader_imageFormatsForMimeType(const char* mimeType);
+XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType);
+/**
+ * @brief 使用 UTF-8 MIME 类型查询格式列表的兼容重载。
+ * @param mimeType UTF-8 编码的 MIME 类型。
+ * @return 新建的 XStringList；调用方负责释放。
+ */
+XStringList* XImageReader_imageFormatsForMimeType_2(const char* mimeType);
 
 /**
  * @brief      获取内存分配限制（MB）
@@ -457,5 +521,3 @@ void XImageReader_setAllocationLimit(int mbLimit);
 #define XImageReader_create() XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEREADER_H */
-
-

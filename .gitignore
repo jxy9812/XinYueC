@@ -383,3 +383,10 @@ XinYueCConfigVersion.cmake
 xconsole_users.json
 # XConsoleShell SSH 主机密钥（运行时生成，敏感，不应入库）
 xconsole_ssh_hostkey.bin
+
+# 个人/编辑器/工具配置（默认不入库，工作区副本保留在磁盘）
+.codex/
+.vscode/
+
+# 模板归档（可保留工作区副本，不纳入版本跟踪）
+XCTemplate.zip

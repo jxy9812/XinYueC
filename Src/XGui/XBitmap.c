@@ -8,6 +8,7 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XVariant.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -73,12 +74,21 @@ void XBitmap_init_size(XBitmap* self, const XSize* size)
         XBitmap_init(self);
 }
 
-void XBitmap_init_file(XBitmap* self, const char* fileName, const char* format)
+void XBitmap_init_file_2(XBitmap* self, const char* fileName, const char* format)
+{
+    XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
+    XString* formatString = format ? XString_create_utf8(format) : NULL;
+    XBitmap_init_file(self, fileNameString, formatString);
+    if (fileNameString) XString_delete_base((XClass*)fileNameString);
+    if (formatString) XString_delete_base((XClass*)formatString);
+}
+
+void XBitmap_init_file(XBitmap* self, const XString* fileName, const XString* format)
 {
     if (ISNULL(self, "XBitmap")) return;
     XBitmap_init(self);
     XImage img;
-    XImage_init_file(&img, fileName, format);
+    XImage_init_file_2(&img, XString_toUtf8(fileName), XString_toUtf8(format));
     if (!XImage_isNull(&img))
     {
         XImage mono;
@@ -98,51 +108,57 @@ void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other)
     XBitmap_fromPixmap(other, self);
 }
 
-void XBitmap_copy(XBitmap* self, const XBitmap* other)
+void XBitmap_swap(XBitmap* self, XBitmap* other)
 {
-    if (ISNULL(self, "XBitmap") || ISNULL(other, "XBitmap")) return;
-    if (!XClassIsVtableNull(self))
-        XBitmap_deinit_base(self);
-    XBitmap_init(self);
-    XBitmap_copy_base(self, other);
-}
-
-void XBitmap_deinit(XBitmap* self)
-{
-    XBitmap_deinit_base(self);
-}
-
-void XBitmap_copy_base(XBitmap* dest, const XBitmap* src)
-{
-    if (ISNULL(dest, "XBitmap") || ISNULL(src, "XBitmap")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XBitmap*, const XBitmap*))(dest, src);
-}
-
-void XBitmap_deinit_base(XBitmap* self)
-{
-    if (ISNULL(self, "XBitmap")) return;
-    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XBitmap*))(self);
+    if (!self || !other || self == other) return;
+    XPixmap_swap((XPixmap*)self, (XPixmap*)other);
+    XClassSetVtable(self, XBitmap);
+    XClassSetVtable(other, XBitmap);
 }
 
 
-
-void XBitmap_delete_base(XBitmap* self)
-{
-    XClass_delete_base((XClass*)self);
-}
 void XBitmap_clear(XBitmap* self)
 {
     XPixmap_fill((XPixmap*)self, 0xFF000000); // color0
 }
 
-void XBitmap_transformed(const XBitmap* self, float m00, float m01, float m02,
-                         float m10, float m11, float m12, XBitmap* out)
+void XBitmap_transformed_2(const XBitmap* self, float m00, float m01, float m02,
+                           float m10, float m11, float m12, XBitmap* out)
 {
     if (!out) return;
     XPixmap_transformed((const XPixmap*)self, m00, m01, m02, m10, m11, m12, 0, (XPixmap*)out);
     XClassSetVtable(out, XBitmap);
+}
+
+void XBitmap_transformed(const XBitmap* self, const XImageTransform* matrix,
+                         XBitmap* out)
+{
+    XImage source;
+    XImage transformed;
+    if (!out) return;
+    if (!self || !matrix) {
+        XBitmap_init(out);
+        return;
+    }
+    XImage_init(&source);
+    XImage_init(&transformed);
+    XPixmap_toImage((const XPixmap*)self, &source);
+    XImage_transformed(&source, matrix, 0, &transformed);
+    XBitmap_fromImage(&transformed, 0, out);
+    XImage_deinit_base(&source);
+    XImage_deinit_base(&transformed);
+}
+
+XVariant* XBitmap_toVariant(const XBitmap* self)
+{
+    return XVariant_create_ptr((void*)self);
+}
+
+XBitmap* XBitmap_fromVariant(const XVariant* variant)
+{
+    if (!variant || XVariant_type((XVariant*)variant) != XVariantType_Ptr)
+        return NULL;
+    return (XBitmap*)XVariant_toPtr(variant);
 }
 
 void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out)
@@ -150,9 +166,11 @@ void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out)
     if (!image || !out) return;
     if (XImage_isNull(image))
     {
+        if (!XClassIsVtableNull(out)) XBitmap_deinit_base(out);
         XBitmap_init(out);
         return;
     }
+    if (!XClassIsVtableNull(out)) XBitmap_deinit_base(out);
     XImage mono;
     XImage_init(&mono);
     XImage_convertToFormat(image, XImageFormat_MonoLSB, flags, &mono);
@@ -183,8 +201,8 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
 {
     if (!pixmap || !out) return;
     XImage img;
+    XImage_init(&img);   /* XPixmap_toImage 要求 out 为已初始化/空的 XImage 对象 */
     XPixmap_toImage(pixmap, &img);
     XBitmap_fromImage(&img, 0, out);
     XImage_deinit_base(&img);
 }
-

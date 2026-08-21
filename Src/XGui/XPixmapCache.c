@@ -2,12 +2,58 @@
  * @file       XPixmapCache.c
  * @brief      XPixmapCache 全局像素图缓存类实现（对标 Qt 6.8 QPixmapCache）
  * @author     XinYueC 团队
+ * @note       修复项：
+ *             1. 新增原子自旋锁，所有缓存结构操作线程安全；
+ *             2. Key 数据引用计数/序列号/有效性改为原子访问；
+ *             3. findKey 未命中、removeKey 调用后按 Qt 语义使键失效；
+ *             4. replace 改为同键原位替换，键及所有副本保持有效；
+ *             5. 序列号原子分配，哈希不再依赖未初始化的死字段。
+ *             6. insert 覆盖旧字符串键时使用内部无锁路径，避免递归上锁。
  ******************************************************************************/
 #include "XPixmapCache.h"
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
+
+/* ========== 缓存保护锁 ========== */
+
+/**
+ * @brief      缓存原子自旋锁
+ * @note       使用 XAtomic 提供的 CAS 原语实现，不依赖平台互斥 API，
+ *             保证裁剪 XSync 后仍可用，并保持嵌入式友好。
+ */
+typedef struct XPixmapCacheLock
+{
+    XAtomic_bool m_state;       /**< 锁状态：false=未锁定，true=已锁定 */
+}XPixmapCacheLock;
+
+static XPixmapCacheLock g_cacheLock = { { false } };
+
+/**
+ * @brief      获取缓存锁（原子自旋等待）
+ * @note       临界区均为有界操作，自旋等待可保证嵌入式环境的确定性与安全性。
+ */
+static void cacheLockAcquire(void)
+{
+    for (;;)
+    {
+        bool expected = false;
+        if (XAtomic_compare_exchange_strong_bool(&g_cacheLock.m_state, &expected, true,
+                                                 XAtomic_MemoryOrder_AcqRel,
+                                                 XAtomic_MemoryOrder_Acquire))
+            return;
+        XAtomic_memory_barrier_acquire();
+    }
+}
+
+/**
+ * @brief      释放缓存锁
+ */
+static void cacheLockRelease(void)
+{
+    XAtomic_store_bool(&g_cacheLock.m_state, false, XAtomic_MemoryOrder_Release);
+}
 
 /* ========== 缓存数据结构 ========== */
 
@@ -16,22 +62,25 @@
  */
 typedef struct XCacheEntry
 {
-    char*            m_key;       /**< 字符串键（可为 NULL） */
+    XString*         m_key;       /**< 字符串键（可为 NULL） */
     XPixmapCacheKeyData* m_keyData; /**< 共享 Key 数据（可为 NULL） */
     XPixmap          m_pixmap;    /**< 缓存的像素图 */
     struct XCacheEntry* m_next;   /**< 链表下一项 */
-    int              m_size;      /**< 缓存项大小估计 */
+    int              m_size;      /**< 缓存项大小估计（KB） */
     bool             m_hasStringKey; /**< 是否有字符串键 */
 }XCacheEntry;
 
 /**
  * @brief      全局缓存状态
+ * @note       g_cache 与 g_cacheLock 配套使用：任何对缓存的
+ *             m_head/m_cacheSize/m_entryCount/m_cacheLimit 的读写都必须在
+ *             cacheLockAcquire/cacheLockRelease 之间完成。
  */
 static struct
 {
-    XCacheEntry* m_head;      /**< 链表头 */
+    XCacheEntry* m_head;      /**< 链表头（LRU 头部 = 最近使用） */
     int64_t      m_cacheSize; /**< 当前缓存总大小（估计值，KB） */
-    int          m_cacheLimit;/**< 缓存大小限制（KB） */
+    int          m_cacheLimit;/**< 缓存大小限制（KB）；0 = 禁用缓存 */
     int          m_entryCount;/**< 条目数量 */
 } g_cache = {NULL, 0, 10240, 0};  // 默认限制 10MB
 
@@ -39,30 +88,57 @@ static struct
 
 /**
  * @brief      XPixmapCacheKey 私有数据
+ * @note       引用计数、序列号与有效性均为原子变量，可跨线程安全访问；
+ *             缓存操作在持有缓存锁时修改有效性，键用户可无锁读取。
  */
 typedef struct XPixmapCacheKeyData
 {
-    XAtomic_int32_t  m_refCount;    /**< 引用计数 */
-    int64_t          m_cacheKey;    /**< 像素图缓存键值 */
-    int              m_serial;      /**< 序列号 */
-    bool             m_isValid;     /**< 是否有效 */
+    XAtomic_int32_t  m_refCount;    /**< 引用计数（缓存项持有 1 份 + 每个键持有 1 份） */
+    XAtomic_uint32_t m_serial;      /**< 全局唯一序列号（原子分配，用于哈希） */
+    XAtomic_bool     m_isValid;     /**< 是否有效（原子访问） */
 }XPixmapCacheKeyData;
 
-static int g_keySerialCounter = 0;
+/** @brief 全局键序列号计数器（原子分配，保证多线程唯一性）。 */
+static XAtomic_uint32_t g_keySerialCounter = { 1u };
 
+/**
+ * @brief      原子分配下一个键序列号（0 不会被分配）
+ */
+static uint32_t nextKeySerial(void)
+{
+    uint32_t serial;
+    do
+    {
+        serial = XAtomic_fetch_add_uint32(&g_keySerialCounter, 1u,
+                                          XAtomic_MemoryOrder_Relaxed);
+    }
+    while (serial == 0u);
+    return serial;
+}
+
+/**
+ * @brief      创建键数据对象
+ * @param valid 初始有效性
+ * @return 新键数据指针；失败返回 NULL
+ */
 static XPixmapCacheKeyData* XPixmapCacheKeyData_create(bool valid)
 {
     XPixmapCacheKeyData* d = (XPixmapCacheKeyData*)XMalloc_System(sizeof(XPixmapCacheKeyData));
     if (!d) return NULL;
     memset(d, 0, sizeof(XPixmapCacheKeyData));
     XAtomic_init(d->m_refCount, 1);
-    d->m_serial = (g_keySerialCounter++);
-    d->m_isValid = valid;
+    XAtomic_init(d->m_serial, nextKeySerial());
+    XAtomic_init(d->m_isValid, valid);
     return d;
 }
 
-static void XPixmapCacheKeyData_ref(XPixmapCacheKeyData* d) { if (d) XAtomic_fetch_add_int32(&d->m_refCount, 1, XAtomic_MemoryOrder_SeqCst); }
+/** @brief 增加键数据引用计数。 */
+static void XPixmapCacheKeyData_ref(XPixmapCacheKeyData* d)
+{
+    if (d) XAtomic_fetch_add_int32(&d->m_refCount, 1, XAtomic_MemoryOrder_SeqCst);
+}
 
+/** @brief 减少键数据引用计数，归零时释放。 */
 static void XPixmapCacheKeyData_unref(XPixmapCacheKeyData* d)
 {
     if (!d) return;
@@ -94,12 +170,30 @@ void XPixmapCacheKey_deinit(XPixmapCacheKey* key)
 
 bool XPixmapCacheKey_isValid(const XPixmapCacheKey* key)
 {
-    return key && key->m_data && key->m_data->m_isValid;
+    return key && key->m_data &&
+           XAtomic_load_bool(&key->m_data->m_isValid, XAtomic_MemoryOrder_Acquire);
+}
+
+/** @brief 使键数据失效（原子写入；在缓存锁保护下调用以保证互斥）。 */
+static void XPixmapCacheKeyData_invalidate(XPixmapCacheKeyData* data)
+{
+    if (data)
+        XAtomic_store_bool(&data->m_isValid, false, XAtomic_MemoryOrder_Release);
 }
 
 bool XPixmapCacheKey_equals(const XPixmapCacheKey* a, const XPixmapCacheKey* b)
 {
     return a && b && a->m_data == b->m_data;
+}
+
+uint64_t XPixmapCacheKey_hash(const XPixmapCacheKey* key)
+{
+    uint64_t value;
+    if (!XPixmapCacheKey_isValid(key)) return 0;
+    value = (uint64_t)XAtomic_load_uint32(&key->m_data->m_serial,
+                                          XAtomic_MemoryOrder_Relaxed);
+    value ^= 0x9e3779b97f4a7c15ULL + (value << 6) + (value >> 2);
+    return value;
 }
 
 void XPixmapCacheKey_swap(XPixmapCacheKey* a, XPixmapCacheKey* b)
@@ -113,7 +207,8 @@ void XPixmapCacheKey_swap(XPixmapCacheKey* a, XPixmapCacheKey* b)
 /* ========== 缓存管理 ========== */
 
 /**
- * @brief      估算像素图大小
+ * @brief      估算像素图大小（KB）
+ * @note       1 KB = 1024 字节；至少返回 1，保证零尺寸/空像素图也能计入开销。
  */
 static int estimateSize(const XPixmap* pixmap)
 {
@@ -125,19 +220,28 @@ static int estimateSize(const XPixmap* pixmap)
     return size > INT_MAX ? INT_MAX : (int)size;
 }
 
+/**
+ * @brief      释放缓存条目资源（调用方需已持有缓存锁或处于单线程初始化）
+ * @note       释放字符串键与像素图；共享 Key 数据先标记失效再解除
+ *             缓存项持有的引用（用户键持有的引用由调用方负责释放）。
+ */
 static void destroyEntry(XCacheEntry* entry)
 {
     if (!entry) return;
     if (entry->m_keyData)
     {
-        entry->m_keyData->m_isValid = false;
+        XPixmapCacheKeyData_invalidate(entry->m_keyData);
         XPixmapCacheKeyData_unref(entry->m_keyData);
     }
-    XFree_System(entry->m_key);
+    if (entry->m_key) XString_delete_base((XClass*)entry->m_key);
     XPixmap_deinit_base(&entry->m_pixmap);
     XFree_System(entry);
 }
 
+/**
+ * @brief      从链表中摘除并销毁条目（调用方需已持有缓存锁）
+ * @param link 指向待摘除条目前置链接的指针
+ */
 static void unlinkAndDestroy(XCacheEntry** link)
 {
     XCacheEntry* entry = *link;
@@ -147,6 +251,10 @@ static void unlinkAndDestroy(XCacheEntry** link)
     destroyEntry(entry);
 }
 
+/**
+ * @brief      将命中条目移动到链表头部（标记最近使用，调用方需已持有缓存锁）
+ * @param link 指向命中条目前置链接的指针
+ */
 static void touchEntry(XCacheEntry** link)
 {
     XCacheEntry* entry;
@@ -158,9 +266,9 @@ static void touchEntry(XCacheEntry** link)
 }
 
 /**
- * @brief      移除缓存项，释放空间
+ * @brief      按 LRU 顺序移除链表尾部条目，直到总开销不超限制（调用方需已持有缓存锁）
  */
-static void trimCache()
+static void trimCache(void)
 {
     while (g_cache.m_cacheSize > g_cache.m_cacheLimit && g_cache.m_head)
     {
@@ -170,39 +278,87 @@ static void trimCache()
     }
 }
 
+/**
+ * @brief      内部移除：通过字符串键移除首个匹配条目（调用方需已持有缓存锁）
+ */
+static void removeByStringLocked(const XString* key)
+{
+    XCacheEntry** pp;
+    if (!key || XString_isEmpty_base((const XContainer*)key)) return;
+    pp = &g_cache.m_head;
+    while (*pp)
+    {
+        XCacheEntry* entry = *pp;
+        if (entry->m_hasStringKey && entry->m_key &&
+            XString_equals(entry->m_key, key, XChar_CaseSensitive))
+        {
+            *pp = entry->m_next;
+            g_cache.m_cacheSize -= entry->m_size;
+            g_cache.m_entryCount--;
+            destroyEntry(entry);
+            return;
+        }
+        pp = &entry->m_next;
+    }
+}
+
 /* ========== XPixmapCache API ========== */
 
-int XPixmapCache_cacheLimit() { return g_cache.m_cacheLimit; }
+int XPixmapCache_cacheLimit(void)
+{
+    int limit;
+    cacheLockAcquire();
+    limit = g_cache.m_cacheLimit;
+    cacheLockRelease();
+    return limit;
+}
 
 void XPixmapCache_setCacheLimit(int limit)
 {
-    g_cache.m_cacheLimit = limit;
+    cacheLockAcquire();
+    g_cache.m_cacheLimit = limit < 0 ? 0 : limit;
     trimCache();
+    cacheLockRelease();
 }
 
-bool XPixmapCache_find(const char* key, XPixmap* pixmap)
+bool XPixmapCache_find(const XString* key, XPixmap* pixmap)
 {
     XCacheEntry** link;
-    if (!key || !key[0]) return false;
+    bool found = false;
+    if (!key || XString_isEmpty_base((const XContainer*)key)) return false;
+    cacheLockAcquire();
     link = &g_cache.m_head;
     while (*link)
     {
         XCacheEntry* entry = *link;
-        if (entry->m_hasStringKey && entry->m_key && strcmp(entry->m_key, key) == 0)
+        if (entry->m_hasStringKey && entry->m_key &&
+            XString_equals(entry->m_key, key, XChar_CaseSensitive))
         {
             if (pixmap) XPixmap_copy_base(pixmap, &entry->m_pixmap);
             touchEntry(link);
-            return true;
+            found = true;
+            break;
         }
         link = &entry->m_next;
     }
-    return false;
+    cacheLockRelease();
+    return found;
+}
+
+bool XPixmapCache_find_2(const char* key, XPixmap* pixmap)
+{
+    XString* value = key ? XString_create_utf8(key) : NULL;
+    bool result = XPixmapCache_find(value, pixmap);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
 }
 
 bool XPixmapCache_findKey(const XPixmapCacheKey* key, XPixmap* pixmap)
 {
     XCacheEntry** link;
+    bool found = false;
     if (!XPixmapCacheKey_isValid(key)) return false;
+    cacheLockAcquire();
     link = &g_cache.m_head;
     while (*link)
     {
@@ -211,27 +367,38 @@ bool XPixmapCache_findKey(const XPixmapCacheKey* key, XPixmap* pixmap)
         {
             if (pixmap) XPixmap_copy_base(pixmap, &entry->m_pixmap);
             touchEntry(link);
-            return true;
+            found = true;
+            break;
         }
         link = &entry->m_next;
     }
-    key->m_data->m_isValid = false;
-    return false;
+    if (!found)
+    {
+        /* 对标 Qt：缓存项已不存在时 Key 立即失效（所有副本共享同一数据） */
+        XPixmapCacheKeyData_invalidate(key->m_data);
+    }
+    cacheLockRelease();
+    return found;
 }
 
-bool XPixmapCache_insert(const char* key, const XPixmap* pixmap)
+bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
 {
     int cost;
-    if (!key || !key[0] || !pixmap) return false;
-    XPixmapCache_remove(key);
+    XCacheEntry* entry;
+    if (!key || XString_isEmpty_base((const XContainer*)key) || !pixmap) return false;
+    cacheLockAcquire();
+    removeByStringLocked(key);   /* 同键覆盖：先移除旧项（避免重复节点） */
     cost = estimateSize(pixmap);
-    if (cost > g_cache.m_cacheLimit) return false;
-    XCacheEntry* entry = (XCacheEntry*)XMalloc_System(sizeof(XCacheEntry));
-    if (!entry) return false;
+    if (cost <= 0 || cost > g_cache.m_cacheLimit)
+    {
+        cacheLockRelease();
+        return false;
+    }
+    entry = (XCacheEntry*)XMalloc_System(sizeof(XCacheEntry));
+    if (!entry) { cacheLockRelease(); return false; }
     memset(entry, 0, sizeof(XCacheEntry));
-    entry->m_key = (char*)XMalloc_System(strlen(key) + 1);
-    if (!entry->m_key) { XFree_System(entry); return false; }
-    strcpy(entry->m_key, key);
+    entry->m_key = XString_create_copy(key);
+    if (!entry->m_key) { XFree_System(entry); cacheLockRelease(); return false; }
     XPixmap_init(&entry->m_pixmap);
     XPixmap_copy_base(&entry->m_pixmap, pixmap);
     entry->m_size = cost;
@@ -241,20 +408,57 @@ bool XPixmapCache_insert(const char* key, const XPixmap* pixmap)
     g_cache.m_cacheSize += entry->m_size;
     g_cache.m_entryCount++;
     trimCache();
+    cacheLockRelease();
     return true;
+}
+
+bool XPixmapCache_insert_2(const char* key, const XPixmap* pixmap)
+{
+    XString* value = key ? XString_create_utf8(key) : NULL;
+    bool result = XPixmapCache_insert(value, pixmap);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
 }
 
 bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
 {
     int cost;
     XPixmapCacheKeyData* keyData;
+    XCacheEntry* entry;
     if (!pixmap || !key) return false;
+    cacheLockAcquire();
+    /* 若该 Key 已关联缓存项，先移除旧项，避免复用键插入产生孤儿节点。
+     * 注意：仅当 Key 当前持有非空数据（复用旧键）时才需摘除旧条目；
+     * 全新/已失效的 Key 其 m_data 为 NULL，而字符串键条目同样以 NULL
+     * 作为 m_keyData，若不判空会误删无关的字符串键条目。 */
+    if (key->m_data)
+    {
+        XCacheEntry** oldLink = &g_cache.m_head;
+        while (*oldLink)
+        {
+            if ((*oldLink)->m_keyData == key->m_data)
+            {
+                unlinkAndDestroy(oldLink);
+                break;
+            }
+            oldLink = &(*oldLink)->m_next;
+        }
+    }
     cost = estimateSize(pixmap);
-    if (cost > g_cache.m_cacheLimit) return false;
+    if (cost <= 0 || cost > g_cache.m_cacheLimit)
+    {
+        cacheLockRelease();
+        return false;
+    }
     keyData = XPixmapCacheKeyData_create(true);
-    if (!keyData) return false;
-    XCacheEntry* entry = (XCacheEntry*)XMalloc_System(sizeof(XCacheEntry));
-    if (!entry) { XPixmapCacheKeyData_unref(keyData); return false; }
+    if (!keyData) { cacheLockRelease(); return false; }
+    entry = (XCacheEntry*)XMalloc_System(sizeof(XCacheEntry));
+    if (!entry)
+    {
+        XPixmapCacheKeyData_unref(keyData);
+        cacheLockRelease();
+        return false;
+    }
     memset(entry, 0, sizeof(XCacheEntry));
     XPixmap_init(&entry->m_pixmap);
     XPixmap_copy_base(&entry->m_pixmap, pixmap);
@@ -264,43 +468,85 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
     g_cache.m_head = entry;
     g_cache.m_cacheSize += entry->m_size;
     g_cache.m_entryCount++;
+    /* Key 取得一份独立引用；旧键引用被释放（空键时为 NULL 无操作） */
     XPixmapCacheKeyData_ref(keyData);
     XPixmapCacheKeyData_unref(key->m_data);
     key->m_data = keyData;
     trimCache();
+    cacheLockRelease();
     return true;
 }
 
 bool XPixmapCache_replace(XPixmapCacheKey* key, const XPixmap* pixmap)
 {
+    int cost;
+    XCacheEntry** pp;
+    bool found = false;
     if (!XPixmapCacheKey_isValid(key) || !pixmap) return false;
-    XPixmapCache_removeKey(key);
-    return XPixmapCache_insertKey(pixmap, key);
-}
-
-void XPixmapCache_remove(const char* key)
-{
-    if (!key) return;
-    XCacheEntry** pp = &g_cache.m_head;
+    cacheLockAcquire();
+    cost = estimateSize(pixmap);
+    if (cost <= 0 || cost > g_cache.m_cacheLimit)
+    {
+        cacheLockRelease();
+        return false;
+    }
+    pp = &g_cache.m_head;
     while (*pp)
     {
         XCacheEntry* entry = *pp;
-        if (entry->m_hasStringKey && entry->m_key && strcmp(entry->m_key, key) == 0)
+        if (entry->m_keyData == key->m_data)
         {
+            /* 同键原位替换：Key 及其所有副本保持有效（对标 Qt） */
             *pp = entry->m_next;
             g_cache.m_cacheSize -= entry->m_size;
             g_cache.m_entryCount--;
-            destroyEntry(entry);
-            return;
+            XPixmap_deinit_base(&entry->m_pixmap);
+            if (entry->m_key) XString_delete_base((XClass*)entry->m_key);
+            entry->m_key = NULL;
+            entry->m_keyData = key->m_data;   /* 复用原 Key 数据，键保持有效 */
+            XPixmap_init(&entry->m_pixmap);
+            XPixmap_copy_base(&entry->m_pixmap, pixmap);
+            entry->m_size = cost;
+            entry->m_next = g_cache.m_head;
+            g_cache.m_head = entry;
+            g_cache.m_cacheSize += entry->m_size;
+            g_cache.m_entryCount++;
+            trimCache();
+            found = true;
+            break;
         }
         pp = &entry->m_next;
     }
+    cacheLockRelease();
+    if (!found)
+    {
+        /* 键有效但对应项缺失（理论罕见）：按新插入处理，键保持有效 */
+        found = XPixmapCache_insertKey(pixmap, key);
+    }
+    return found;
+}
+
+void XPixmapCache_remove(const XString* key)
+{
+    if (!key || XString_isEmpty_base((const XContainer*)key)) return;
+    cacheLockAcquire();
+    removeByStringLocked(key);
+    cacheLockRelease();
+}
+
+void XPixmapCache_remove_2(const char* key)
+{
+    XString* value = key ? XString_create_utf8(key) : NULL;
+    XPixmapCache_remove(value);
+    if (value) XString_delete_base((XClass*)value);
 }
 
 void XPixmapCache_removeKey(const XPixmapCacheKey* key)
 {
+    XCacheEntry** pp;
     if (!XPixmapCacheKey_isValid(key)) return;
-    XCacheEntry** pp = &g_cache.m_head;
+    cacheLockAcquire();
+    pp = &g_cache.m_head;
     while (*pp)
     {
         XCacheEntry* entry = *pp;
@@ -310,16 +556,20 @@ void XPixmapCache_removeKey(const XPixmapCacheKey* key)
             g_cache.m_cacheSize -= entry->m_size;
             g_cache.m_entryCount--;
             destroyEntry(entry);
-            return;
+            break;
         }
         pp = &entry->m_next;
     }
-    key->m_data->m_isValid = false;
+    /* 对标 Qt：remove 调用后键立即失效（无论是否找到对应项） */
+    XPixmapCacheKeyData_invalidate(key->m_data);
+    cacheLockRelease();
 }
 
-void XPixmapCache_clear()
+void XPixmapCache_clear(void)
 {
-    XCacheEntry* entry = g_cache.m_head;
+    XCacheEntry* entry;
+    cacheLockAcquire();
+    entry = g_cache.m_head;
     while (entry)
     {
         XCacheEntry* next = entry->m_next;
@@ -329,4 +579,5 @@ void XPixmapCache_clear()
     g_cache.m_head = NULL;
     g_cache.m_cacheSize = 0;
     g_cache.m_entryCount = 0;
+    cacheLockRelease();
 }

@@ -68,7 +68,7 @@ static void XBitmapCopyTest(void)
         XBitmap a, b;
         XBitmap_init_ex(&a, 15, 25);
         XBitmap_init(&b);
-        XBitmap_copy(&b, &a);
+        XBitmap_copy_base(&b, &a);
         XPrintf("copy: b.w=%d (期望:15), b.h=%d (期望:25)\n", XPixmap_width((XPixmap*)&b), XPixmap_height((XPixmap*)&b));
         XBitmap_deinit_base(&a);
         XBitmap_deinit_base(&b);
@@ -90,7 +90,7 @@ static void XBitmapOperationTest(void)
     {
         XBitmap out;
         XBitmap_init(&out);
-        XBitmap_transformed(&b, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, &out);
+        XBitmap_transformed_2(&b, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, &out);
         XPrintf("transformed(identity): w=%d, h=%d\n", XPixmap_width((XPixmap*)&out), XPixmap_height((XPixmap*)&out));
         XBitmap_deinit_base(&out);
     }
@@ -161,5 +161,3 @@ void XMenu_XBitmapTest(XMenu* root)
     XAction_setAction(action, XBitmapStaticTest);
 }
 #endif // DEMOTEST
-
-

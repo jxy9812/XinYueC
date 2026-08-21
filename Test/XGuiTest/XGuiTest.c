@@ -12,8 +12,12 @@ void XMenu_XGuiTest(XMenu* root)
     XMenu_XBitmapTest(menu);
     XMenu_XIconTest(menu);
     XMenu_XPictureTest(menu);
+    XMenu_XPainterTest(menu);
     XMenu_XPixmapCacheTest(menu);
     XMenu_XImageIOHandlerTest(menu);
     XMenu_XImageReaderTest(menu);
     XMenu_XImageWriterTest(menu);
+#if XIMAGECODEC_ON
+    XMenu_XImageCodecTest(menu);
+#endif
 }

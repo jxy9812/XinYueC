@@ -75,21 +75,21 @@ static void XPixmapCacheRegressionTest(void)
     XPixmapCacheKey_copy(&copy, &key);
     XPixmapCache_removeKey(&key);
     assert(!XPixmapCacheKey_isValid(&key) && !XPixmapCacheKey_isValid(&copy));
-    assert(XPixmapCache_insert("duplicate", &p10));
-    assert(XPixmapCache_insert("duplicate", &p20));
-    assert(XPixmapCache_find("duplicate", &out) && XPixmap_width(&out) == 20);
+    assert(XPixmapCache_insert_2("duplicate", &p10));
+    assert(XPixmapCache_insert_2("duplicate", &p20));
+    assert(XPixmapCache_find_2("duplicate", &out) && XPixmap_width(&out) == 20);
     XPixmapCache_clear();
     XPixmapCache_setCacheLimit(8);
-    assert(XPixmapCache_insert("a", &p32));
-    assert(XPixmapCache_insert("b", &p32));
-    assert(XPixmapCache_find("a", NULL));
-    assert(XPixmapCache_insert("c", &p32));
-    assert(XPixmapCache_find("a", NULL));
-    assert(!XPixmapCache_find("b", NULL));
-    assert(XPixmapCache_find("c", NULL));
+    assert(XPixmapCache_insert_2("a", &p32));
+    assert(XPixmapCache_insert_2("b", &p32));
+    assert(XPixmapCache_find_2("a", NULL));
+    assert(XPixmapCache_insert_2("c", &p32));
+    assert(XPixmapCache_find_2("a", NULL));
+    assert(!XPixmapCache_find_2("b", NULL));
+    assert(XPixmapCache_find_2("c", NULL));
     XPixmapCache_setCacheLimit(-1);
-    assert(!XPixmapCache_find("a", NULL));
-    assert(!XPixmapCache_insert("rejected", &p10));
+    assert(!XPixmapCache_find_2("a", NULL));
+    assert(!XPixmapCache_insert_2("rejected", &p10));
     XPixmapCache_clear();
     XPixmapCache_setCacheLimit(oldLimit);
     XPixmapCacheKey_deinit(&copy);
@@ -116,7 +116,7 @@ static void XPixmapCacheOperationTest(void)
     {
         XPixmap p;
         XPixmap_init_ex(&p, 100, 100);
-        bool ok = XPixmapCache_insert("test_key", &p);
+        bool ok = XPixmapCache_insert_2("test_key", &p);
         XPrintf("insert('test_key'): %s (期望:是)\n", ok ? "是" : "否");
         XPixmap_deinit_base(&p);
     }
@@ -124,7 +124,7 @@ static void XPixmapCacheOperationTest(void)
     {
         XPixmap out;
         XPixmap_init(&out);
-        bool found = XPixmapCache_find("test_key", &out);
+        bool found = XPixmapCache_find_2("test_key", &out);
         XPrintf("find('test_key'): found=%s (期望:是), w=%d (期望:100)\n",
             found ? "是" : "否", XPixmap_width(&out));
         XPixmap_deinit_base(&out);
@@ -133,7 +133,7 @@ static void XPixmapCacheOperationTest(void)
     {
         XPixmap out;
         XPixmap_init(&out);
-        bool found = XPixmapCache_find("nonexistent", &out);
+        bool found = XPixmapCache_find_2("nonexistent", &out);
         XPrintf("find('nonexistent'): found=%s (期望:否)\n", found ? "是" : "否");
         XPixmap_deinit_base(&out);
     }
@@ -175,11 +175,11 @@ static void XPixmapCacheOperationTest(void)
         XPixmap_deinit_base(&p);
     }
     /* 移除字符串键 */
-    XPixmapCache_remove("test_key");
+    XPixmapCache_remove_2("test_key");
     {
         XPixmap out;
         XPixmap_init(&out);
-        bool found = XPixmapCache_find("test_key", &out);
+        bool found = XPixmapCache_find_2("test_key", &out);
         XPrintf("remove后 find('test_key'): found=%s (期望:否)\n", found ? "是" : "否");
         XPixmap_deinit_base(&out);
     }
@@ -187,14 +187,14 @@ static void XPixmapCacheOperationTest(void)
     {
         XPixmap p;
         XPixmap_init_ex(&p, 10, 10);
-        XPixmapCache_insert("key1", &p);
-        XPixmapCache_insert("key2", &p);
+        XPixmapCache_insert_2("key1", &p);
+        XPixmapCache_insert_2("key2", &p);
         XPixmap_deinit_base(&p);
         XPixmapCache_clear();
         {
             XPixmap out;
             XPixmap_init(&out);
-            XPrintf("clear后 find('key1'): found=%s (期望:否)\n", XPixmapCache_find("key1", &out) ? "是" : "否");
+            XPrintf("clear后 find('key1'): found=%s (期望:否)\n", XPixmapCache_find_2("key1", &out) ? "是" : "否");
             XPixmap_deinit_base(&out);
         }
     }

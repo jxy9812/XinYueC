@@ -68,6 +68,35 @@ typedef enum XImageInvertMode
     XImageInvertMode_InvertRgba   /**< 反色所有分量（包括 Alpha） */
 } XImageInvertMode;
 
+/** @brief 像素格式的通道模型（对标 Qt QPixelFormat::ColorModel）。 */
+typedef enum XPixelFormatModel
+{
+    XPixelFormatModel_Invalid = 0,
+    XPixelFormatModel_Mono,
+    XPixelFormatModel_Indexed,
+    XPixelFormatModel_Gray,
+    XPixelFormatModel_RGB,
+    XPixelFormatModel_BGR,
+    XPixelFormatModel_CMYK
+} XPixelFormatModel;
+
+/** @brief 图像像素布局描述（对标 Qt QPixelFormat）。 */
+typedef struct XPixelFormat
+{
+    XPixelFormatModel m_model; /**< 颜色通道模型。 */
+    uint8_t m_redSize; /**< 红色通道位数。 */
+    uint8_t m_greenSize; /**< 绿色通道位数。 */
+    uint8_t m_blueSize; /**< 蓝色通道位数。 */
+    uint8_t m_alphaSize; /**< Alpha 通道位数。 */
+    uint8_t m_cyanSize; /**< 青色通道位数。 */
+    uint8_t m_magentaSize; /**< 品红通道位数。 */
+    uint8_t m_yellowSize; /**< 黄色通道位数。 */
+    uint8_t m_blackSize; /**< 黑色通道位数。 */
+    uint8_t m_channelCount; /**< 通道总数。 */
+    bool m_premultiplied; /**< 是否使用预乘 Alpha。 */
+    bool m_byteOrdered; /**< 是否按字节序排列通道。 */
+} XPixelFormat;
+
 /**
  * @brief      获取像素格式的位深度
  * @param format 像素格式
@@ -103,6 +132,13 @@ int XImageFormat_bytesPerLineAlignment(XImageFormat format);
  * @return 每行字节数
  */
 int XImageFormat_bytesPerLine(int width, XImageFormat format);
+
+/**
+ * @brief 获取指定图像格式的通道布局描述。
+ * @param format 图像格式枚举值。
+ * @return 像素通道布局描述；未知格式返回无效布局。
+ */
+XPixelFormat XImageFormat_pixelFormat(XImageFormat format);
 
 #ifdef __cplusplus
 }

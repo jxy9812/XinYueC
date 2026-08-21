@@ -16,6 +16,8 @@ extern "C" {
 #include "XImageIOHandler.h"
 #include "XIODevice.h"
 #include "XClass.h"
+#include "XString.h"
+#include "XStringList.h"
 
 
 /* ========== XImageWriter 虚函数表枚举 ========== */
@@ -62,45 +64,61 @@ void XImageWriter_init(XImageWriter* self);
  * @brief      使用设备初始化图像写入器
  * @param self   待初始化的 XImageWriter 对象指针
  * @param device XIODevice 指针
- * @param format 格式字符串
+ * @param format XString 格式（可为空，表示自动检测）
  */
-void XImageWriter_init_device(XImageWriter* self, XIODevice* device, const char* format);
+void XImageWriter_init_device(XImageWriter* self, XIODevice* device, const XString* format);
+
+/** @brief 使用 UTF-8 格式字符串初始化写入器的兼容重载。 */
+void XImageWriter_init_device_2(XImageWriter* self, XIODevice* device, const char* format);
 
 /**
  * @brief      使用文件名初始化图像写入器
  * @param self     待初始化的 XImageWriter 对象指针
- * @param fileName 文件名
- * @param format   格式字符串（可为空字符串，表示从扩展名自动检测）
+ * @param fileName XString 文件名
+ * @param format   XString 格式（可为空，表示从扩展名自动检测）
  */
-void XImageWriter_init_file(XImageWriter* self, const char* fileName, const char* format);
+void XImageWriter_init_file(XImageWriter* self, const XString* fileName, const XString* format);
+
+/** @brief 使用 UTF-8 文件名和格式初始化写入器的兼容重载。 */
+void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const char* format);
 
 /**
  * @brief      释放 XImageWriter 资源
  * @param self 待释放的 XImageWriter 对象指针
  */
-void XImageWriter_deinit(XImageWriter* self);
-
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XImageWriter_deinit_base(XImageWriter* self);
+/** @brief 通过 XClass 虚表释放写入器资源。 @param self 待写入器指针。 */
+#define XImageWriter_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的图像写入器。 @param self 待写入器指针。 */
+#define XImageWriter_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 格式设置 ========== */
 
 /**
  * @brief      设置图像格式
  * @param self   目标 XImageWriter 对象指针
- * @param format 格式字符串
+ * @param format XString 格式
  */
-void XImageWriter_setFormat(XImageWriter* self, const char* format);
+void XImageWriter_setFormat(XImageWriter* self, const XString* format);
+
+/** @brief 使用 UTF-8 格式字符串设置图像格式的兼容重载。 */
+void XImageWriter_setFormat_2(XImageWriter* self, const char* format);
 
 /**
  * @brief      获取图像格式
  * @param self 目标 XImageWriter 对象指针
  * @return 格式字符串
  */
-const char* XImageWriter_format(const XImageWriter* self);
+XString* XImageWriter_format(const XImageWriter* self);
+
+/** @brief 获取内部格式字符串引用；返回值由写入器持有。 */
+const XString* XImageWriter_format_const(const XImageWriter* self);
+
+/** @brief 获取 UTF-8 兼容格式字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageWriter_format_2(const XImageWriter* self);
 
 /* ========== 设备与文件 ========== */
 
@@ -121,16 +139,25 @@ XIODevice* XImageWriter_device(const XImageWriter* self);
 /**
  * @brief      设置文件名
  * @param self     目标 XImageWriter 对象指针
- * @param fileName 文件名
+ * @param fileName XString 文件名
  */
-void XImageWriter_setFileName(XImageWriter* self, const char* fileName);
+void XImageWriter_setFileName(XImageWriter* self, const XString* fileName);
+
+/** @brief 使用 UTF-8 文件名设置文件名的兼容重载。 */
+void XImageWriter_setFileName_2(XImageWriter* self, const char* fileName);
 
 /**
  * @brief      获取文件名
  * @param self 目标 XImageWriter 对象指针
  * @return 文件名
  */
-const char* XImageWriter_fileName(const XImageWriter* self);
+XString* XImageWriter_fileName(const XImageWriter* self);
+
+/** @brief 获取内部文件名字符串引用；返回值由写入器持有。 */
+const XString* XImageWriter_fileName_const(const XImageWriter* self);
+
+/** @brief 获取 UTF-8 兼容文件名字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageWriter_fileName_2(const XImageWriter* self);
 
 /* ========== 参数设置 ========== */
 
@@ -165,23 +192,32 @@ int XImageWriter_compression(const XImageWriter* self);
 /**
  * @brief      设置子类型
  * @param self 目标 XImageWriter 对象指针
- * @param type 子类型字符串
+ * @param type XString 子类型
  */
-void XImageWriter_setSubType(XImageWriter* self, const char* type);
+void XImageWriter_setSubType(XImageWriter* self, const XString* type);
+
+/** @brief 使用 UTF-8 子类型字符串设置图像子类型的兼容重载。 */
+void XImageWriter_setSubType_2(XImageWriter* self, const char* type);
 
 /**
  * @brief      获取子类型
  * @param self 目标 XImageWriter 对象指针
  * @return 子类型字符串
  */
-const char* XImageWriter_subType(const XImageWriter* self);
+XString* XImageWriter_subType(const XImageWriter* self);
+
+/** @brief 获取内部子类型字符串引用。 */
+const XString* XImageWriter_subType_const(const XImageWriter* self);
+
+/** @brief 获取 UTF-8 兼容子类型字符串；返回值由内部 XString 缓存持有。 */
+const char* XImageWriter_subType_2(const XImageWriter* self);
 
 /**
  * @brief      获取支持的子类型列表
  * @param self 目标 XImageWriter 对象指针
  * @return 支持的子类型列表
  */
-void* XImageWriter_supportedSubTypes(const XImageWriter* self);
+XStringList* XImageWriter_supportedSubTypes(const XImageWriter* self);
 
 /**
  * @brief      设置是否启用优化写入
@@ -231,7 +267,10 @@ void XImageWriter_setTransformation(XImageWriter* self, XImageIOHandlerTransform
  * @param key  文本键
  * @param text 文本值
  */
-void XImageWriter_setText(XImageWriter* self, const char* key, const char* text);
+void XImageWriter_setText(XImageWriter* self, const XString* key, const XString* text);
+
+/** @brief 使用 XString 设置文本元数据；BMP 编码器不序列化该元数据。 */
+void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* text);
 
 /* ========== 写入操作 ========== */
 
@@ -264,7 +303,13 @@ XImageWriterError XImageWriter_error(const XImageWriter* self);
  * @param self 目标 XImageWriter 对象指针
  * @return 错误描述字符串
  */
-const char* XImageWriter_errorString(const XImageWriter* self);
+XString* XImageWriter_errorString(const XImageWriter* self);
+
+/** @brief 获取内部错误描述引用。 */
+const XString* XImageWriter_errorString_const(const XImageWriter* self);
+
+/** @brief 获取 UTF-8 兼容错误描述；返回值由内部 XString 缓存持有。 */
+const char* XImageWriter_errorString_2(const XImageWriter* self);
 
 /**
  * @brief      判断是否支持指定选项
@@ -278,23 +323,29 @@ bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption
 
 /**
  * @brief      获取支持的图像格式列表
- * @return 新分配的 XVector（元素为 const char*）；调用者负责
- *         使用 XVector_delete_base 释放向量，元素字符串由库静态持有
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责使用
+ *         XStringList_delete_base 释放列表，元素由列表拥有
  */
-void* XImageWriter_supportedImageFormats();
+XStringList* XImageWriter_supportedImageFormats();
 
 /**
  * @brief      获取支持的 MIME 类型列表
- * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责释放列表
  */
-void* XImageWriter_supportedMimeTypes();
+XStringList* XImageWriter_supportedMimeTypes();
 
 /**
  * @brief      获取指定 MIME 类型对应的图像格式列表
  * @param mimeType MIME 类型字符串
- * @return 新分配的 XVector（元素为 const char*）；调用者负责释放向量
+ * @return 新分配的 XStringList（元素为 XString）；调用者负责释放列表
  */
-void* XImageWriter_imageFormatsForMimeType(const char* mimeType);
+XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType);
+/**
+ * @brief 使用 UTF-8 MIME 类型查询可写格式列表的兼容重载。
+ * @param mimeType UTF-8 编码的 MIME 类型。
+ * @return 新建的 XStringList；调用方负责使用 XStringList_delete_base 释放。
+ */
+XStringList* XImageWriter_imageFormatsForMimeType_2(const char* mimeType);
 
 #ifdef __cplusplus
 }
@@ -305,4 +356,3 @@ void* XImageWriter_imageFormatsForMimeType(const char* mimeType);
 #define XImageWriter_create() XImageWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEWRITER_H */
-

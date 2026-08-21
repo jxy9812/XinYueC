@@ -26,6 +26,9 @@ extern "C" {
     /* XPicture 测试 */
     void XMenu_XPictureTest(XMenu* root);
 
+    /* XPainter 测试 */
+    void XMenu_XPainterTest(XMenu* root);
+
     /* XPixmapCache 测试 */
     void XMenu_XPixmapCacheTest(XMenu* root);
 
@@ -37,6 +40,11 @@ extern "C" {
 
     /* XImageWriter 测试 */
     void XMenu_XImageWriterTest(XMenu* root);
+
+#if XIMAGECODEC_ON
+    /* XImageCodec 测试 */
+    void XMenu_XImageCodecTest(XMenu* root);
+#endif
 #endif // DEMOTEST
 
 #ifdef __cplusplus

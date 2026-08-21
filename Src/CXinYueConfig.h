@@ -141,6 +141,17 @@ extern "C" {
 #define XTUI_ON 1
 #endif
 #include"XTui/XTuiConfig.h"
+/* ========================================================================== */
+/*                     XImageCodec 图像编解码模块开关                         */
+/* ========================================================================== */
+/** @brief XImageCodec 模块总开关；置 0 时裁剪整个图像编解码公共 API 和所有子格式。
+ * @note 详细的子格式开关在 XImageCodec_config.h 中定义，如 XIMAGECODEC_BMP_ON
+ *       等；关闭后若仍有其它模块无条件引用 XImageCodec 符号，需同步裁剪对应依赖。 */
+#ifndef XIMAGECODEC_ON
+#define XIMAGECODEC_ON 1
+#endif
+#include"XGui/XImageCodec/XImageCodec_config.h"
+
 
 /* ========================================================================== */
 /*                               XPrintf 输出编码模式                               */

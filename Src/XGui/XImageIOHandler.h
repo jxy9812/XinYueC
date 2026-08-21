@@ -16,6 +16,7 @@ extern "C" {
 #include "XImageFormat.h"
 #include "XClass.h"
 #include "XIODevice.h"
+#include "XString.h"
 
 /**
  * @brief      XImageIOHandler 图像选项枚举（对标 Qt 6.8 QImageIOHandler::ImageOption）
@@ -57,6 +58,23 @@ typedef enum XImageIOHandlerTransformation
     XImageIOHandlerTransformation_FlipAndRotate90  = 6,   /**< 翻转并旋转 90 度 */
     XImageIOHandlerTransformation_Rotate270        = 7    /**< 旋转 270 度 */
 } XImageIOHandlerTransformation;
+
+/**
+ * @brief 图像处理器选项的可移植 C 值容器。
+ * @note option/setOption 的 out/value 参数按选项使用对应成员；未知选项返回 false。
+ */
+typedef struct XImageIOHandlerOptionValue
+{
+    XSize size; /**< 尺寸选项值。 */
+    XRect rect; /**< 矩形选项值。 */
+    uint32_t color; /**< ARGB32 颜色选项值。 */
+    int integer; /**< 整数选项值。 */
+    float real; /**< 浮点选项值。 */
+    bool boolean; /**< 布尔选项值。 */
+    XImageFormat format; /**< 图像格式选项值。 */
+    XImageIOHandlerTransformation transformation; /**< 变换选项值。 */
+    const XString* string; /**< 由调用方持有的字符串对象，不转移所有权。 */
+} XImageIOHandlerOptionValue;
 
 /* 前向声明 */
 typedef struct XImageIOHandlerPrivate XImageIOHandlerPrivate;
@@ -112,13 +130,14 @@ void XImageIOHandler_init(XImageIOHandler* self);
  * @brief      释放 XImageIOHandler 资源
  * @param self 待释放的 XImageIOHandler 对象指针
  */
-void XImageIOHandler_deinit(XImageIOHandler* self);
-
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XImageIOHandler_deinit_base(XImageIOHandler* self);
+/** @brief 通过 XClass 虚表释放处理器资源。 @param self 待释放的处理器指针。 */
+#define XImageIOHandler_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的图像处理器。 @param self 待删除的处理器指针。 */
+#define XImageIOHandler_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 设备管理 ========== */
 
@@ -141,14 +160,32 @@ XIODevice* XImageIOHandler_device(const XImageIOHandler* self);
  * @param self   目标 XImageIOHandler 对象指针
  * @param format 格式字符串
  */
-void XImageIOHandler_setFormat(XImageIOHandler* self, const char* format);
+void XImageIOHandler_setFormat(XImageIOHandler* self, const XString* format);
+/**
+ * @brief 使用 UTF-8 格式名设置图像格式的兼容重载。
+ * @param self 目标处理器对象指针。
+ * @param format UTF-8 编码的格式名；可为 NULL。
+ */
+void XImageIOHandler_setFormat_2(XImageIOHandler* self, const char* format);
 
 /**
  * @brief      获取图像格式
  * @param self 目标 XImageIOHandler 对象指针
  * @return 格式字符串
  */
-const char* XImageIOHandler_format(const XImageIOHandler* self);
+XString* XImageIOHandler_format(const XImageIOHandler* self);
+/**
+ * @brief 获取图像格式的内部只读引用。
+ * @param self 处理器对象指针。
+ * @return 内部 XString 引用；对象无格式时返回 NULL，不得释放。
+ */
+const XString* XImageIOHandler_format_const(const XImageIOHandler* self);
+/**
+ * @brief 获取图像格式的 UTF-8 兼容指针。
+ * @param self 处理器对象指针。
+ * @return UTF-8 格式名指针，由内部缓存持有，不得释放。
+ */
+const char* XImageIOHandler_format_2(const XImageIOHandler* self);
 
 /* ========== 虚函数（供子类重载） ========== */
 
@@ -199,6 +236,11 @@ void XImageIOHandler_setOption_base(XImageIOHandler* self, XImageIOHandlerOption
  * @return 支持返回 true
  */
 bool XImageIOHandler_supportsOption_base(const XImageIOHandler* self, XImageIOHandlerOption option);
+
+/** @brief 获取基类保存的选项值，适用于未被子类重载的处理器。 */
+bool XImageIOHandler_optionValue(const XImageIOHandler* self,
+                                 XImageIOHandlerOption option,
+                                 XImageIOHandlerOptionValue* out);
 
 /**
  * @brief      虚函数：跳转到下一帧
@@ -270,4 +312,3 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
 #define XImageIOHandler_create() XImageIOHandler_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XIMAGEIOHANDLER_H */
-

@@ -190,6 +190,18 @@ XExample* XExample_create_move(XExample* other);//移动构造
 #define XExample_copy_base XClass_copy_base //拷贝，用宏复用父类
 #define XExample_move_base XClass_move_base //移动，用宏复用父类
 
+// 继承 XClass 的类型只公开 XType_copy_base/XType_move_base、
+// XType_deinit_base/XType_delete_base，不公开同名的 XType_copy/XType_move/
+// XType_deinit。上述 base/delete 入口均直接宏替换为带 XClass 指针转换的
+// XClass_copy_base/XClass_move_base/XClass_deinit_base/XClass_delete_base；真正的资源复制、移动
+// 逻辑只实现 VXType_copy/VXType_move 并注册到虚表。这样保证未初始化目标
+// 的兜底初始化、COW 引用计数和派生类重载行为始终由同一入口处理。
+
+// 生命周期同样只保留 XType_deinit_base/XType_delete_base：两者分别宏映射
+// 到 XClass_deinit_base/XClass_delete_base。禁止为继承 XClass 的类型声明或
+// 实现 XType_deinit、XType_copy、XType_move 这类非 base 转发 API；栈对象和
+// 堆对象都必须通过对应的 base 入口释放，虚表中的 VXType_deinit 只负责具体资源清理。
+
 // ==================== 功能函数 ====================
 void XExample_setValue(XExample* obj, int value);
 void XExample_setData(XExample* obj, XString* value);
@@ -587,6 +599,24 @@ XObject_deleteLater(obj);
 | `XType_setXxx_ref_2(XType*, ptr)` | 引用语义的重载（不拷贝） |
 | `XType_setXxx_utf8(XType*, const char*)` | UTF-8 编码版本 |
 | `XType_setXxx_gbk(XType*, const char*)` | GBK 编码版本 |
+
+### 字符串 API 主次顺序与 UTF-8 兼容重载
+
+库内字符串对象统一使用 `XString`，对外 API 的主版本必须优先采用 `XString`：
+
+```c
+void XImage_setText(XImage* self, const XString* key, const XString* value);
+void XImage_setText_2(XImage* self, const char* key, const char* value);
+```
+
+- 原名（无数字后缀）是 `XString` 版本，负责实际逻辑、复制和生命周期管理。
+- `_2` 是 `const char*` UTF-8 兼容重载；它只负责创建临时 `XString` 并转发到原名版本，禁止直接维护另一份字符串状态。
+- `char*` 参数均按 UTF-8 解码，不得把它当作本地编码、GBK 或可写缓冲区。
+- 字符串成员、私有状态和容器元素禁止以 `char*` 长期保存；需要字符串所有权时使用 `XString*`，需要多个字符串时使用 `XStringList`。
+- 返回字符串时，原名优先返回新建的 `XString*`；需要借用内部对象时使用 `*_const`，并在注释中明确禁止释放和修改。`const char*` 兼容返回值只能来自临时转换缓存或 `_2` 包装，不得成为核心存储。
+- 不要用 `_2` 表示 XString 版本；`_2` 只表示 UTF-8 `const char*` 兼容参数或返回值。
+
+构造函数、静态工厂、文件名、格式名、主题名、错误描述、文本元数据、缓存键和 MIME 类型均遵循此规则。新增重载时先实现 XString 主版本，再实现 UTF-8 `_2` 转发版本。
 
 ### 获取函数命名
 
@@ -1196,6 +1226,40 @@ XFileSystem API（通用层，Src/ 中）
 ---
 
 ## 容器与数据结构规范
+
+### 容器优先与字符串列表
+
+实现类的动态数据必须优先复用 `Src/XContainer` 中已有容器，禁止在业务类中重新设计同等功能的裸数组、长度字段和手工扩容逻辑：
+
+- 多个 `XString` 使用 `XStringList`；键值成对时使用两个对应索引的 `XStringList`，或使用已有的映射/键值容器。
+- 连续的非字符串对象使用 `XVector` 或其类型别名；字节使用 `XByteArray`；映射使用 `XMap/XHashMap`。
+- 容器字段应嵌入对象或由对象明确拥有，并在 `init` 中初始化，在 `deinit_base`/私有释放路径中调用对应的 `*_deinit_base` 或 `*_clear_base`。不得把容器元素指针直接当作独立堆对象数组管理。
+- `XStringList` 的元素类型是 `XString` 对象，不是 `char*`。插入 XString 使用 `XStringList_push_back_base`/`XStringList_push_back_move_base`，插入 UTF-8 使用 `XStringList_push_back_utf8`；读取使用 `XStringList_at_base` 并按 `XString*` 处理。
+- 容器复制、移动和写时复制必须使用容器已有的 `*_copy_base`、`*_move_base`、`*_clear_base` 等接口，不能用 `memcpy` 复制含有所有权或虚函数表的元素。
+- 容器 API 的返回对象、借用指针和删除方式必须在头文件注释中写明；调用方不得释放 `at/front/back` 返回的内部元素。
+
+示例：
+
+```c
+typedef struct XExamplePrivate {
+    XStringList m_names;       /**< 对象拥有的字符串列表 */
+    XVector     m_items;       /**< 对象拥有的连续元素容器 */
+} XExamplePrivate;
+
+static void XExamplePrivate_init(XExamplePrivate* data)
+{
+    XStringList_init(&data->m_names);
+    XVector_init(&data->m_items, sizeof(XItem), true);
+}
+```
+
+禁止示例：
+
+```c
+char** m_names;
+int m_nameCount;
+/* 手工 XMalloc/realloc/free、memcpy 和逐项 delete */
+```
 
 ### 继承层次
 

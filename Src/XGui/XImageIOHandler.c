@@ -16,7 +16,9 @@
 typedef struct XImageIOHandlerPrivate
 {
     XIODevice*  m_device;   /**< IO 设备 */
-    char*       m_format;   /**< 格式字符串 */
+    XString*    m_format;   /**< 格式字符串（UTF-8） */
+    uint32_t m_optionMask;
+    XImageIOHandlerOptionValue m_options[XImageIOHandlerOption_ImageTransformation + 1];
 }XImageIOHandlerPrivate;
 
 static void VXImageIOHandler_deinit(XImageIOHandler* self)
@@ -24,10 +26,16 @@ static void VXImageIOHandler_deinit(XImageIOHandler* self)
     if (ISNULL(self, "XImageIOHandler")) return;
     if (self->m_data)
     {
-        if (self->m_data->m_format) XFree_System(self->m_data->m_format);
+        if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
         XFree_System(self->m_data);
         self->m_data = NULL;
     }
+}
+
+static bool XImageIOHandler_optionValid(XImageIOHandlerOption option)
+{
+    return option >= XImageIOHandlerOption_Size &&
+           option <= XImageIOHandlerOption_ImageTransformation;
 }
 
 static bool VXImageIOHandler_canRead(const XImageIOHandler* self)
@@ -52,24 +60,21 @@ static bool VXImageIOHandler_write(XImageIOHandler* self, const XImage* image)
 
 static bool VXImageIOHandler_option(const XImageIOHandler* self, XImageIOHandlerOption option, void* out)
 {
-    (void)self;
-    (void)option;
-    (void)out;
-    return false;
+    return XImageIOHandler_optionValue(self, option,
+                                       (XImageIOHandlerOptionValue*)out);
 }
 
 static void VXImageIOHandler_setOption(XImageIOHandler* self, XImageIOHandlerOption option, const void* value)
 {
-    (void)self;
-    (void)option;
-    (void)value;
+    if (!self || !self->m_data || !value || !XImageIOHandler_optionValid(option)) return;
+    self->m_data->m_options[option] = *(const XImageIOHandlerOptionValue*)value;
+    self->m_data->m_optionMask |= (uint32_t)1u << (unsigned)option;
 }
 
 static bool VXImageIOHandler_supportsOption(const XImageIOHandler* self, XImageIOHandlerOption option)
 {
-    (void)self;
-    (void)option;
-    return false;
+    return self && self->m_data && XImageIOHandler_optionValid(option) &&
+           (self->m_data->m_optionMask & ((uint32_t)1u << (unsigned)option)) != 0;
 }
 
 static bool VXImageIOHandler_jumpToNextImage(XImageIOHandler* self)
@@ -156,14 +161,6 @@ void XImageIOHandler_init(XImageIOHandler* self)
     if (self->m_data) memset(self->m_data, 0, sizeof(XImageIOHandlerPrivate));
 }
 
-void XImageIOHandler_deinit(XImageIOHandler* self) { XImageIOHandler_deinit_base(self); }
-
-void XImageIOHandler_deinit_base(XImageIOHandler* self)
-{
-    if (ISNULL(self, "XImageIOHandler") || ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XImageIOHandler*))(self);
-}
-
 void XImageIOHandler_setDevice(XImageIOHandler* self, XIODevice* device)
 {
     if (self && self->m_data) self->m_data->m_device = device;
@@ -174,17 +171,34 @@ XIODevice* XImageIOHandler_device(const XImageIOHandler* self)
     return (self && self->m_data) ? self->m_data->m_device : NULL;
 }
 
-void XImageIOHandler_setFormat(XImageIOHandler* self, const char* format)
+void XImageIOHandler_setFormat(XImageIOHandler* self, const XString* format)
 {
     if (!self || !self->m_data) return;
-    if (self->m_data->m_format) XFree_System(self->m_data->m_format);
-    self->m_data->m_format = format ? (char*)XMalloc_System(strlen(format) + 1) : NULL;
-    if (format && self->m_data->m_format) strcpy(self->m_data->m_format, format);
+    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+    self->m_data->m_format = format ? XString_create_copy(format) : NULL;
 }
 
-const char* XImageIOHandler_format(const XImageIOHandler* self)
+void XImageIOHandler_setFormat_2(XImageIOHandler* self, const char* format)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    XImageIOHandler_setFormat(self, value);
+    if (value) XString_delete_base((XClass*)value);
+}
+
+const XString* XImageIOHandler_format_const(const XImageIOHandler* self)
 {
     return (self && self->m_data) ? self->m_data->m_format : NULL;
+}
+
+XString* XImageIOHandler_format(const XImageIOHandler* self)
+{
+    const XString* value = XImageIOHandler_format_const(self);
+    return value ? XString_create_copy(value) : XString_create();
+}
+
+const char* XImageIOHandler_format_2(const XImageIOHandler* self)
+{
+    return XString_toUtf8(XImageIOHandler_format_const(self));
 }
 
 bool XImageIOHandler_canRead_base(const XImageIOHandler* self)
@@ -222,6 +236,17 @@ bool XImageIOHandler_supportsOption_base(const XImageIOHandler* self, XImageIOHa
 {
     if (ISNULL(self, "XImageIOHandler") || ISNULL(XClassGetVtable(self), "Vtable")) return false;
     return XClassGetVirtualFunc(self, EXImageIOHandler_SupportsOption, bool(*)(const XImageIOHandler*, XImageIOHandlerOption))(self, option);
+}
+
+bool XImageIOHandler_optionValue(const XImageIOHandler* self,
+                                 XImageIOHandlerOption option,
+                                 XImageIOHandlerOptionValue* out)
+{
+    if (!self || !self->m_data || !out || !XImageIOHandler_optionValid(option) ||
+        !(self->m_data->m_optionMask & ((uint32_t)1u << (unsigned)option)))
+        return false;
+    *out = self->m_data->m_options[option];
+    return true;
 }
 
 bool XImageIOHandler_jumpToNextImage_base(XImageIOHandler* self)

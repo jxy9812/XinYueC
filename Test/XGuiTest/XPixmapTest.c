@@ -67,7 +67,7 @@ static void XPixmapCopyMoveTest(void)
         XPixmap a, b;
         XPixmap_init_ex(&a, 10, 10);
         XPixmap_init(&b);
-        XPixmap_copy(&b, &a);
+        XPixmap_copy_base(&b, &a);
         XPrintf("copy: b.w=%d (期望:10), a.null=%s (期望:否)\n", XPixmap_width(&b), XPixmap_isNull(&a) ? "是" : "否");
         XPixmap_deinit_base(&a);
         XPixmap_deinit_base(&b);
@@ -76,7 +76,7 @@ static void XPixmapCopyMoveTest(void)
         XPixmap a, b;
         XPixmap_init_ex(&a, 20, 30);
         XPixmap_init(&b);
-        XPixmap_move(&b, &a);
+        XPixmap_move_base(&b, &a);
         XPrintf("move: b.w=%d (期望:20), a.isNull=%s (期望:是)\n", XPixmap_width(&b), XPixmap_isNull(&a) ? "是" : "否");
         XPixmap_deinit_base(&a);
         XPixmap_deinit_base(&b);
@@ -240,5 +240,4 @@ void XMenu_XPixmapTest(XMenu* root)
     XAction_setAction(action, XPixmapConvertTest);
 }
 #endif // DEMOTEST
-
 

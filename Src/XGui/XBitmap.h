@@ -15,6 +15,9 @@ extern "C" {
 #include "XPixmap.h"
 #include "XClass.h"
 
+/** @brief XVariant 前向声明，用于 QBitmap/QVariant 兼容适配。 */
+typedef struct XVariant XVariant;
+
 
 /* ========== XBitmap 虚函数表枚举 ========== */
 XCLASS_DEFINE_BEGING(XBitmap)
@@ -68,7 +71,14 @@ void XBitmap_init_size(XBitmap* self, const XSize* size);
  * @param fileName 文件名
  * @param format   图像格式字符串（NULL 表示自动检测）
  */
-void XBitmap_init_file(XBitmap* self, const char* fileName, const char* format);
+void XBitmap_init_file(XBitmap* self, const XString* fileName, const XString* format);
+/**
+ * @brief 使用 UTF-8 文件名和格式初始化位图的兼容重载。
+ * @param self 待初始化的 XBitmap 对象指针。
+ * @param fileName UTF-8 编码的文件名；可为 NULL。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ */
+void XBitmap_init_file_2(XBitmap* self, const char* fileName, const char* format);
 
 /**
  * @brief      从 XPixmap 创建位图（内部使用，弃用提示：请使用 fromPixmap）
@@ -82,32 +92,47 @@ void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other);
  * @param self 目标 XBitmap 对象指针
  * @param other 源 XBitmap 对象指针
  */
-void XBitmap_copy(XBitmap* self, const XBitmap* other);
 
 /**
  * @brief      释放 XBitmap 资源
  * @param self 待释放的 XBitmap 对象指针
  */
-void XBitmap_deinit(XBitmap* self);
-
 /**
  * @brief      虚函数调度：拷贝
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-void XBitmap_copy_base(XBitmap* dest, const XBitmap* src);
+/**
+ * @brief 通过 XClass 虚表复制位图。
+ * @param self 目标位图对象指针，可为未初始化对象。
+ * @param other 源位图对象指针。
+ */
+#define XBitmap_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/**
+ * @brief 通过 XClass 虚表移动位图。
+ * @param self 目标位图对象指针，可为未初始化对象。
+ * @param other 源位图对象指针；移动后资源归目标所有。
+ */
+#define XBitmap_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XBitmap_deinit_base(XBitmap* self);
+/** @brief 通过 XClass 虚表释放位图资源。 @param self 待释放的位图对象指针。 */
+#define XBitmap_deinit_base(self) XClass_deinit_base((XClass*)(self))
+
+/** @brief 交换两个位图的数据所有权。 */
+void XBitmap_swap(XBitmap* self, XBitmap* other);
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
-void XBitmap_delete_base(XBitmap* self);
+/** @brief 删除堆上的位图对象。 @param self 待删除的位图对象指针。 */
+#define XBitmap_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 操作方法 ========== */
 
@@ -123,8 +148,36 @@ void XBitmap_clear(XBitmap* self);
  * @param m00-m23 变换矩阵参数
  * @param out     输出结果位图指针
  */
-void XBitmap_transformed(const XBitmap* self, float m00, float m01, float m02,
-                         float m10, float m11, float m12, XBitmap* out);
+void XBitmap_transformed(const XBitmap* self, const XImageTransform* matrix,
+                         XBitmap* out);
+
+/**
+ * @brief 使用六个浮点参数执行仿射变换的兼容 API。
+ * @param self 源位图对象指针。
+ * @param m00,m01,m02,m10,m11,m12 仿射变换矩阵参数。
+ * @param out 输出位图对象指针，旧内容会被释放。
+ */
+void XBitmap_transformed_2(const XBitmap* self, float m00, float m01, float m02,
+                           float m10, float m11, float m12, XBitmap* out);
+
+/**
+ * @brief 将位图封装为 XVariant 借用指针。
+ * @param self 源位图对象指针；Variant 不接管其生命周期。
+ * @return 存储 XBitmap* 的 XVariant；失败返回 NULL。
+ * @note 该接口用于 C API 的 QVariant 兼容适配，Variant 复制后仍指向同一对象。
+ */
+XVariant* XBitmap_toVariant(const XBitmap* self);
+
+/**
+ * @brief 从 XVariant 取得位图借用指针。
+ * @param variant 变体对象指针。
+ * @return 变体中保存的 XBitmap*；类型不匹配返回 NULL。
+ */
+XBitmap* XBitmap_fromVariant(const XVariant* variant);
+
+/** @brief 保留与 XVariant 类型适配命名一致的创建/读取宏。 */
+#define XVariant_create_Bitmap XBitmap_toVariant
+#define XVariant_toBitmap      XBitmap_fromVariant
 
 /* ========== 静态方法 ========== */
 
@@ -161,5 +214,3 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out);
 #define XBitmap_create() XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XBITMAP_H */
-
-

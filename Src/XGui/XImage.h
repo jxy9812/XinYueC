@@ -12,8 +12,12 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "XImageFormat.h"
+#include "XColorSpace.h"
 #include "XData/XGeometry.h"
+#include "XData/XColor/XColor.h"
+#include "XString.h"
 #include "XClass.h"
 #include "XTypes.h"
 #include "XMemory.h"
@@ -24,6 +28,35 @@ XCLASS_DEFINE_BEGING(XImage)
 XCLASS_DEFINE_EXTEND_END(XImage, XClass)
 /* 前向声明 */
 typedef struct XImageData XImageData;
+typedef struct XIODevice XIODevice;
+
+/**
+ * @brief      XImage 二维齐次变换矩阵（对标 Qt 6.8 QTransform）。
+ * @note       坐标变换为：
+ *       x'=(m11*x+m21*y+dx)/(m13*x+m23*y+m33)，
+ *       y'=(m12*x+m22*y+dy)/(m13*x+m23*y+m33)。
+ *       m13/m23/m33 追加在旧六参数结构之后；旧代码只初始化六个字段时，
+ *       会按 m13=0、m23=0、m33=1 的仿射矩阵处理。
+ */
+typedef struct XImageTransform
+{
+    float m11;
+    float m12;
+    float m21;
+    float m22;
+    float dx;
+    float dy;
+    float m13; /**< X 透视系数；仿射变换为 0。 */
+    float m23; /**< Y 透视系数；仿射变换为 0。 */
+    float m33; /**< 齐次缩放系数；旧六参数矩阵默认按 1 处理。 */
+} XImageTransform;
+
+/** @brief XImage 掩码颜色匹配模式。 */
+typedef enum XImageMaskMode
+{
+    XImageMask_InColor = 0,
+    XImageMask_OutColor = 1
+} XImageMaskMode;
 
 /**
  * @brief      XImage 图像类结构体（对标 Qt 6.8 QImage）
@@ -34,6 +67,9 @@ typedef struct XImage
     XClass    m_class;       /**< 继承的基类成员 */
     XImageData* m_data;       /**< 图像数据私有指针（内部引用计数管理） */
 }XImage;
+
+/** @brief XVariant 前向声明，用于 XImage 的值类型适配接口。 */
+typedef struct XVariant XVariant;
 
 /**
  * @brief      初始化 XImage 类的虚函数表
@@ -83,53 +119,64 @@ void XImage_init_ex_2(XImage* self, int width, int height, XImageFormat format,
  * @param fileName 文件名
  * @param format  图像格式字符串（如 "PNG"、"JPEG"，NULL 表示自动检测）
  */
-void XImage_init_file(XImage* self, const char* fileName, const char* format);
+void XImage_init_file(XImage* self, const XString* fileName, const XString* format);
+/**
+ * @brief 使用 UTF-8 文件名和格式初始化图像的兼容重载。
+ * @param self 待初始化的 XImage 对象指针。
+ * @param fileName UTF-8 编码的文件名；可为 NULL。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ */
+void XImage_init_file_2(XImage* self, const char* fileName, const char* format);
 
 /**
  * @brief      复制构造函数
  * @param self 目标 XImage 对象指针
  * @param other 源 XImage 对象指针
  */
-void XImage_copy(XImage* self, const XImage* other);
 
 /**
  * @brief      移动构造函数
  * @param self 目标 XImage 对象指针
  * @param other 源 XImage 对象指针（移动后源对象变为空）
  */
-void XImage_move(XImage* self, XImage* other);
 
 /**
  * @brief      释放 XImage 资源
  * @param self 待释放的 XImage 对象指针
  */
-void XImage_deinit(XImage* self);
-
 /**
  * @brief      虚函数调度：拷贝
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-void XImage_copy_base(XImage* dest, const XImage* src);
-
 /**
- * @brief      虚函数调度：移动
- * @param dest 目标对象指针
- * @param src  源对象指针（移动后源对象变为空）
+ * @brief 通过 XClass 虚表复制图像。
+ * @param self 目标图像对象指针。
+ * @param other 源图像对象指针。
  */
-void XImage_move_base(XImage* dest, XImage* src);
+#define XImage_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/**
+ * @brief 通过 XClass 虚表移动图像。
+ * @param self 目标图像对象指针。
+ * @param other 源图像对象指针；移动后源对象为空。
+ */
+#define XImage_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XImage_deinit_base(XImage* self);
+/** @brief 通过 XClass 虚表释放图像资源。 @param self 待释放的图像对象指针。 */
+#define XImage_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
-void XImage_delete_base(XImage* self);
+/** @brief 删除堆上的图像对象。 @param self 待删除的图像对象指针。 */
+#define XImage_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 
@@ -175,12 +222,68 @@ void XImage_rect(const XImage* self, XRect* out);
  */
 int XImage_depth(const XImage* self);
 
+/** @brief 获取实际使用的位平面数（RGB32 等格式不计未使用的填充位）。 */
+int XImage_bitPlaneCount(const XImage* self);
+
 /**
  * @brief      获取图像格式
  * @param self 目标 XImage 对象指针
  * @return 像素格式枚举值
  */
 XImageFormat XImage_format(const XImage* self);
+
+/** @brief 获取当前图像像素布局描述（对标 QImage::pixelFormat）。 */
+XPixelFormat XImage_pixelFormat(const XImage* self);
+
+/**
+ * @brief 获取图像色彩空间（对标 QImage::colorSpace）。
+ * @param self 源图像对象指针。
+ * @return 图像当前色彩空间值；未设置时返回无效色彩空间。
+ */
+XColorSpace XImage_colorSpace(const XImage* self);
+/**
+ * @brief 设置图像色彩空间（对标 QImage::setColorSpace）。
+ * @param self 目标图像对象指针。
+ * @param colorSpace 要写入的色彩空间值。
+ */
+void XImage_setColorSpace(XImage* self, XColorSpace colorSpace);
+
+/**
+ * @brief 判断图像是否带有有效色彩空间。
+ * @param self 待检查的图像对象指针。
+ * @return 已设置有效色彩空间返回 true，否则返回 false。
+ */
+bool XImage_hasColorSpace(const XImage* self);
+
+/**
+ * @brief 将图像转换到目标色彩空间并返回新图像。
+ * @param self 源图像对象指针。
+ * @param colorSpace 目标色彩空间。
+ * @param flags 转换标志。
+ * @param out 输出图像对象指针，旧内容会被释放。
+ */
+void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
+                                  uint32_t flags, XImage* out);
+/**
+ * @brief 就地转换图像到目标色彩空间。
+ * @param self 目标图像对象指针。
+ * @param colorSpace 目标色彩空间。
+ * @param flags 转换标志。
+ * @return 转换成功返回 true，否则返回 false。
+ */
+bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
+                                uint32_t flags);
+
+/**
+ * @brief 应用显式颜色变换并输出指定像素格式。
+ * @param self 源图像对象指针。
+ * @param transform 源色彩空间到目标色彩空间的变换描述。
+ * @param format 输出像素格式。
+ * @param flags 转换标志。
+ * @param out 输出图像对象指针，旧内容会被释放。
+ */
+void XImage_applyColorTransform(const XImage* self, const XColorTransform* transform,
+                                XImageFormat format, uint32_t flags, XImage* out);
 
 /**
  * @brief      获取颜色表中的颜色数量
@@ -239,6 +342,39 @@ bool XImage_hasAlpha(const XImage* self);
  * @return 全为灰度返回 true，否则返回 false
  */
 bool XImage_allGray(const XImage* self);
+
+/** @brief 判断图像是否为灰度图像（Qt QImage::isGrayscale 对应接口）。 */
+bool XImage_isGrayscale(const XImage* self);
+
+/** @brief 获取指定坐标的 XColor 值。 */
+XColor XImage_pixelColor(const XImage* self, int x, int y);
+
+/** @brief 设置指定坐标的 XColor 值。 */
+void XImage_setPixelColor(XImage* self, int x, int y, const XColor* color);
+
+/**
+ * @brief 复制颜色表到调用方缓冲区。
+ * @param out 缓冲区；可为空以仅查询数量
+ * @param maxCount out 可写入的最大颜色数
+ * @return 颜色表项数量
+ */
+int XImage_colorTable(const XImage* self, uint32_t* out, int maxCount);
+
+/** @brief 设置索引图像颜色表。 */
+void XImage_setColorTable(XImage* self, const uint32_t* colors, int count);
+
+/** @brief 用另一幅图像的 Alpha 通道替换当前图像 Alpha。 */
+bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel);
+
+/** @brief 创建 Alpha 掩码图像（Mono 格式）。 */
+void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out);
+
+/** @brief 根据边角背景创建启发式掩码。 */
+void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out);
+
+/** @brief 根据颜色创建掩码。 */
+void XImage_createMaskFromColor(const XImage* self, uint32_t color,
+                                XImageMaskMode mode, XImage* out);
 
 /**
  * @brief      填充矩形区域
@@ -451,6 +587,33 @@ void XImage_scaledToWidth(const XImage* self, int width, uint32_t mode, XImage* 
  */
 void XImage_scaledToHeight(const XImage* self, int height, uint32_t mode, XImage* out);
 
+/** @brief 返回矩阵作用于图像边界后的平移修正和边界尺寸。 */
+void XImage_trueMatrix(const XImageTransform* matrix, int width, int height,
+                       XImageTransform* out, XSize* transformedSize);
+
+/** @brief 按仿射矩阵变换图像，当前使用最近邻采样。 */
+void XImage_transformed(const XImage* self, const XImageTransform* matrix,
+                        uint32_t mode, XImage* out);
+
+/**
+ * @brief 将图像对象封装为 XVariant 借用指针。
+ * @param self 源图像对象指针；Variant 不接管其生命周期。
+ * @return 存储 XImage* 的 XVariant；失败返回 NULL。
+ * @note 该接口用于 C API 的 QVariant 兼容适配，Variant 复制后仍是同一借用对象。
+ */
+XVariant* XImage_toVariant(const XImage* self);
+
+/**
+ * @brief 从 XVariant 取得图像借用指针。
+ * @param variant 变体对象指针。
+ * @return 变体中保存的 XImage*；类型不匹配返回 NULL。
+ */
+XImage* XImage_fromVariant(const XVariant* variant);
+
+/** @brief 保留与 XVariant 类型适配命名一致的创建/读取宏。 */
+#define XVariant_create_Image XImage_toVariant
+#define XVariant_toImage      XImage_fromVariant
+
 /* ========== 文件操作 ========== */
 
 /**
@@ -460,7 +623,15 @@ void XImage_scaledToHeight(const XImage* self, int height, uint32_t mode, XImage
  * @param format   图像格式字符串（NULL 表示自动检测）
  * @return 加载成功返回 true，失败返回 false
  */
-bool XImage_load(XImage* self, const char* fileName, const char* format);
+bool XImage_load(XImage* self, const XString* fileName, const XString* format);
+/**
+ * @brief 使用 UTF-8 文件名和格式加载图像的兼容重载。
+ * @param self 目标图像对象指针。
+ * @param fileName UTF-8 编码的文件名。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @return 加载成功返回 true，失败返回 false。
+ */
+bool XImage_load_2(XImage* self, const char* fileName, const char* format);
 
 /**
  * @brief      从内存数据加载图像
@@ -470,7 +641,16 @@ bool XImage_load(XImage* self, const char* fileName, const char* format);
  * @param format 图像格式字符串（NULL 表示自动检测）
  * @return 加载成功返回 true，失败返回 false
  */
-bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const char* format);
+bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const XString* format);
+/**
+ * @brief 使用 UTF-8 格式名从内存数据加载图像的兼容重载。
+ * @param self 目标图像对象指针。
+ * @param data 图像数据缓冲区。
+ * @param len 缓冲区字节数。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @return 加载成功返回 true，失败返回 false。
+ */
+bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const char* format);
 
 /**
  * @brief      保存图像到文件
@@ -480,7 +660,103 @@ bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const char*
  * @param quality  质量参数（-1 表示默认）
  * @return 保存成功返回 true，失败返回 false
  */
-bool XImage_save(const XImage* self, const char* fileName, const char* format, int quality);
+bool XImage_save(const XImage* self, const XString* fileName, const XString* format, int quality);
+/**
+ * @brief 使用 UTF-8 文件名和格式保存图像的兼容重载。
+ * @param self 源图像对象指针。
+ * @param fileName UTF-8 编码的目标文件名。
+ * @param format UTF-8 编码的格式名；可为 NULL 以按扩展名判断。
+ * @param quality 编码质量，-1 表示使用默认值。
+ * @return 保存成功返回 true，失败返回 false。
+ */
+bool XImage_save_2(const XImage* self, const char* fileName, const char* format, int quality);
+
+/**
+ * @brief 从 XIODevice 读取图像；设备由调用方持有。
+ * @param self 目标图像对象指针。
+ * @param device 输入设备指针。
+ * @param format XString 格式名；可为 NULL 以自动检测。
+ * @return 读取成功返回 true，失败返回 false。
+ */
+bool XImage_loadDevice(XImage* self, XIODevice* device, const XString* format);
+/**
+ * @brief 使用 UTF-8 格式名从 XIODevice 读取图像的兼容重载。
+ * @param self 目标图像对象指针。
+ * @param device 输入设备指针。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @return 读取成功返回 true，失败返回 false。
+ */
+bool XImage_loadDevice_2(XImage* self, XIODevice* device, const char* format);
+
+/**
+ * @brief 将图像写入 XIODevice；设备由调用方持有。
+ * @param self 源图像对象指针。
+ * @param device 输出设备指针。
+ * @param format XString 格式名；可为 NULL 以按设备或扩展名判断。
+ * @param quality 编码质量，-1 表示使用默认值。
+ * @return 写入成功返回 true，失败返回 false。
+ */
+bool XImage_saveDevice(const XImage* self, XIODevice* device, const XString* format, int quality);
+/**
+ * @brief 使用 UTF-8 格式名将图像写入 XIODevice 的兼容重载。
+ * @param self 源图像对象指针。
+ * @param device 输出设备指针。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动判断。
+ * @param quality 编码质量，-1 表示使用默认值。
+ * @return 写入成功返回 true，失败返回 false。
+ */
+bool XImage_saveDevice_2(const XImage* self, XIODevice* device, const char* format, int quality);
+
+/* ========== 文本元数据 ========== */
+
+/** @brief 获取文本元数据项数量。 */
+int XImage_textCount(const XImage* self);
+
+/** @brief 按索引获取文本元数据键副本；调用者负责释放返回的 XString。 */
+XString* XImage_textKey(const XImage* self, int index);
+/**
+ * @brief 获取文本元数据键的内部只读引用。
+ * @param self 图像对象指针。
+ * @param index 元数据索引。
+ * @return 内部 XString 引用；索引无效时返回 NULL，不得释放。
+ */
+const XString* XImage_textKey_const(const XImage* self, int index);
+/**
+ * @brief 获取文本元数据键的 UTF-8 兼容指针。
+ * @param self 图像对象指针。
+ * @param index 元数据索引。
+ * @return UTF-8 指针；由内部缓存持有，不得释放。
+ */
+const char* XImage_textKey_2(const XImage* self, int index);
+
+/** @brief 按 XString 键获取文本元数据值副本；调用者负责释放返回的 XString。 */
+XString* XImage_text(const XImage* self, const XString* key);
+/**
+ * @brief 使用 UTF-8 键获取文本元数据值的兼容重载。
+ * @param self 图像对象指针。
+ * @param key UTF-8 编码的元数据键。
+ * @return 内部文本值的 UTF-8 指针，由图像对象持有，不得释放；未找到时返回 NULL。
+ */
+const char* XImage_text_2(const XImage* self, const char* key);
+
+/** @brief 设置 UTF-8 文本元数据。重复键会覆盖原值。 */
+void XImage_setText(XImage* self, const XString* key, const XString* value);
+
+/**
+ * @brief 获取对象持有的文本元数据引用，不复制。
+ * @param self 图像对象指针。
+ * @param key XString 元数据键。
+ * @return 内部只读值引用；未找到时返回 NULL，不得释放。
+ */
+const XString* XImage_text_const(const XImage* self, const XString* key);
+
+/**
+ * @brief 使用 UTF-8 字符串设置文本元数据，转发到 XString 版本。
+ * @param self 目标图像对象指针。
+ * @param key UTF-8 编码的元数据键。
+ * @param value UTF-8 编码的元数据值。
+ */
+void XImage_setText_2(XImage* self, const char* key, const char* value);
 
 /* ========== 辅助数据 ========== */
 
@@ -569,14 +845,28 @@ bool XImage_isDetached(const XImage* self);
  * @param format 图像格式字符串（NULL 表示自动检测）
  * @param out    输出结果图像指针
  */
-void XImage_fromData(const uint8_t* data, int size, const char* format, XImage* out);
+void XImage_fromData(const uint8_t* data, int size, const XString* format, XImage* out);
+/**
+ * @brief 使用 UTF-8 格式名从内存数据创建图像的兼容重载。
+ * @param data 原始图像数据缓冲区。
+ * @param size 数据字节数。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @param out 输出图像对象指针，旧内容会被释放。
+ */
+void XImage_fromData_2(const uint8_t* data, int size, const char* format, XImage* out);
 
 /**
  * @brief      将图像转换为指定格式的像素数据
  * @param format 像素格式
  * @return 像素格式描述
  */
-const char* XImage_formatToStr(XImageFormat format);
+XString* XImage_formatToStr(XImageFormat format);
+/**
+ * @brief 获取图像格式对应的 UTF-8 名称兼容指针。
+ * @param format 图像格式枚举值。
+ * @return 静态 UTF-8 字符串；未知格式返回 NULL。
+ */
+const char* XImage_formatToStr_2(XImageFormat format);
 
 #ifdef __cplusplus
 }

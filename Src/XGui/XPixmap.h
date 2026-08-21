@@ -24,6 +24,8 @@ XCLASS_DEFINE_EXTEND_END(XPixmap, XClass)
 
 /* 前向声明 */
 typedef struct XPlatformPixmap XPlatformPixmap;
+typedef struct XBitmap XBitmap;
+typedef struct XImageReader XImageReader;
 
 /**
  * @brief      XPixmap 像素图类结构体（对标 Qt 6.8 QPixmap）
@@ -75,7 +77,15 @@ void XPixmap_init_size(XPixmap* self, const XSize* size);
  * @param format   图像格式字符串（NULL 表示自动检测）
  * @param flags    转换标志
  */
-void XPixmap_init_file(XPixmap* self, const char* fileName, const char* format, uint32_t flags);
+void XPixmap_init_file(XPixmap* self, const XString* fileName, const XString* format, uint32_t flags);
+/**
+ * @brief 使用 UTF-8 文件名和格式初始化像素图的兼容重载。
+ * @param self 待初始化的像素图对象指针。
+ * @param fileName UTF-8 编码的文件名；可为 NULL。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @param flags 图像转换标志。
+ */
+void XPixmap_init_file_2(XPixmap* self, const char* fileName, const char* format, uint32_t flags);
 
 /**
  * @brief      从 XImage 创建像素图
@@ -93,46 +103,50 @@ void XPixmap_init_bitmap_image(XPixmap* self, const XImage* image, uint32_t flag
  * @param self 目标 XPixmap 对象指针
  * @param other 源 XPixmap 对象指针
  */
-void XPixmap_copy(XPixmap* self, const XPixmap* other);
 
 /**
  * @brief      移动构造函数
  * @param self 目标 XPixmap 对象指针
  * @param other 源 XPixmap 对象指针（移动后源对象变为空）
  */
-void XPixmap_move(XPixmap* self, XPixmap* other);
 
 /**
  * @brief      释放 XPixmap 资源
  * @param self 待释放的 XPixmap 对象指针
  */
-void XPixmap_deinit(XPixmap* self);
-
 /**
  * @brief      虚函数调度：拷贝
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-void XPixmap_copy_base(XPixmap* dest, const XPixmap* src);
-
 /**
- * @brief      虚函数调度：移动
- * @param dest 目标对象指针
- * @param src  源对象指针（移动后源对象变为空）
+ * @brief 通过 XClass 虚表复制像素图。
+ * @param self 目标像素图对象指针。
+ * @param other 源像素图对象指针。
  */
-void XPixmap_move_base(XPixmap* dest, XPixmap* src);
+#define XPixmap_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/**
+ * @brief 通过 XClass 虚表移动像素图。
+ * @param self 目标像素图对象指针。
+ * @param other 源像素图对象指针；移动后源对象为空。
+ */
+#define XPixmap_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XPixmap_deinit_base(XPixmap* self);
+/** @brief 通过 XClass 虚表释放像素图资源。 @param self 待释放的像素图指针。 */
+#define XPixmap_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
-void XPixmap_delete_base(XPixmap* self);
+/** @brief 删除堆上的像素图对象。 @param self 待删除的像素图指针。 */
+#define XPixmap_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 
@@ -198,7 +212,17 @@ void XPixmap_fill(XPixmap* self, uint32_t color);
  * @param self 目标 XPixmap 对象指针
  * @param out  输出掩码位图指针
  */
-void XPixmap_mask(const XPixmap* self, XPixmap* out);
+void XPixmap_mask(const XPixmap* self, XBitmap* out);
+
+/** @brief 返回像素图掩码的旧 XPixmap 兼容版本。 */
+void XPixmap_mask_2(const XPixmap* self, XPixmap* out);
+
+/**
+ * @brief 获取单色位图掩码（对齐 QPixmap::mask()）。
+ * @param self 源像素图
+ * @param out 输出 XBitmap；调用者负责初始化或反初始化已有对象
+ */
+void XPixmap_maskBitmap(const XPixmap* self, XBitmap* out);
 
 /**
  * @brief      设置掩码位图
@@ -279,6 +303,20 @@ void XPixmap_scaledToHeight(const XPixmap* self, int height, uint32_t mode, XPix
 void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
                          float m10, float m11, float m12, uint32_t mode, XPixmap* out);
 
+/**
+ * @brief 计算变换后包围盒所需的真实变换矩阵（对齐 QPixmap::trueMatrix）。
+ * @param matrix 输入二维仿射矩阵
+ * @param width 源宽度
+ * @param height 源高度
+ * @param out 输出平移修正后的矩阵
+ */
+void XPixmap_trueMatrix(const XImageTransform* matrix, int width, int height,
+                        XImageTransform* out);
+
+/** @brief 使用六参数仿射矩阵的兼容重载。 */
+void XPixmap_trueMatrix_2(float m00, float m01, float m02, float m10, float m11,
+                          float m12, int width, int height, XImageTransform* out);
+
 /* ========== 转换方法 ========== */
 
 /**
@@ -302,7 +340,7 @@ void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out);
  * @param flags  转换标志
  * @param out    输出像素图指针
  */
-void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out);
+void XPixmap_fromImageReader(XImageReader* reader, uint32_t flags, XPixmap* out);
 
 /** @brief 将图像转换到现有像素图；失败时保留原像素图。 */
 bool XPixmap_convertFromImage(XPixmap* self, const XImage* image, uint32_t flags);
@@ -320,7 +358,16 @@ void XPixmap_swap(XPixmap* self, XPixmap* other);
  * @param flags    转换标志
  * @return 加载成功返回 true，失败返回 false
  */
-bool XPixmap_load(XPixmap* self, const char* fileName, const char* format, uint32_t flags);
+bool XPixmap_load(XPixmap* self, const XString* fileName, const XString* format, uint32_t flags);
+/**
+ * @brief 使用 UTF-8 文件名和格式加载像素图的兼容重载。
+ * @param self 目标像素图对象指针。
+ * @param fileName UTF-8 编码的文件名。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @param flags 图像转换标志。
+ * @return 加载成功返回 true，失败返回 false。
+ */
+bool XPixmap_load_2(XPixmap* self, const char* fileName, const char* format, uint32_t flags);
 
 /**
  * @brief      从内存数据加载像素图
@@ -331,7 +378,17 @@ bool XPixmap_load(XPixmap* self, const char* fileName, const char* format, uint3
  * @param flags  转换标志
  * @return 加载成功返回 true，失败返回 false
  */
-bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const char* format, uint32_t flags);
+bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const XString* format, uint32_t flags);
+/**
+ * @brief 使用 UTF-8 格式名从内存数据加载像素图的兼容重载。
+ * @param self 目标像素图对象指针。
+ * @param buf 图像数据缓冲区。
+ * @param len 数据字节数。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @param flags 图像转换标志。
+ * @return 加载成功返回 true，失败返回 false。
+ */
+bool XPixmap_loadFromData_2(XPixmap* self, const uint8_t* buf, uint32_t len, const char* format, uint32_t flags);
 
 /**
  * @brief      保存像素图到文件
@@ -341,7 +398,64 @@ bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const
  * @param quality  质量参数（-1 表示默认）
  * @return 保存成功返回 true，失败返回 false
  */
-bool XPixmap_save(const XPixmap* self, const char* fileName, const char* format, int quality);
+bool XPixmap_save(const XPixmap* self, const XString* fileName, const XString* format, int quality);
+/**
+ * @brief 使用 UTF-8 文件名和格式保存像素图的兼容重载。
+ * @param self 源像素图对象指针。
+ * @param fileName UTF-8 编码的目标文件名。
+ * @param format UTF-8 编码的格式名；可为 NULL 以按扩展名判断。
+ * @param quality 编码质量，-1 表示默认值。
+ * @return 保存成功返回 true，失败返回 false。
+ */
+bool XPixmap_save_2(const XPixmap* self, const char* fileName, const char* format, int quality);
+/**
+ * @brief 从 XIODevice 读取像素图；设备由调用方持有。
+ * @param self 目标像素图对象指针。
+ * @param device 输入设备指针。
+ * @param format XString 格式名；可为 NULL 以自动检测。
+ * @param flags 图像转换标志。
+ * @return 读取成功返回 true，失败返回 false。
+ */
+bool XPixmap_loadDevice(XPixmap* self, XIODevice* device, const XString* format, uint32_t flags);
+/**
+ * @brief 使用 UTF-8 格式名从 XIODevice 读取像素图的兼容重载。
+ * @param self 目标像素图对象指针。
+ * @param device 输入设备指针。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
+ * @param flags 图像转换标志。
+ * @return 读取成功返回 true，失败返回 false。
+ */
+bool XPixmap_loadDevice_2(XPixmap* self, XIODevice* device, const char* format, uint32_t flags);
+/**
+ * @brief 将像素图写入 XIODevice；设备由调用方持有。
+ * @param self 源像素图对象指针。
+ * @param device 输出设备指针。
+ * @param format XString 格式名；可为 NULL 以自动判断。
+ * @param quality 编码质量，-1 表示默认值。
+ * @return 写入成功返回 true，失败返回 false。
+ */
+bool XPixmap_saveDevice(const XPixmap* self, XIODevice* device, const XString* format, int quality);
+/**
+ * @brief 使用 UTF-8 格式名将像素图写入 XIODevice 的兼容重载。
+ * @param self 源像素图对象指针。
+ * @param device 输出设备指针。
+ * @param format UTF-8 编码的格式名；可为 NULL 以自动判断。
+ * @param quality 编码质量，-1 表示默认值。
+ * @return 写入成功返回 true，失败返回 false。
+ */
+bool XPixmap_saveDevice_2(const XPixmap* self, XIODevice* device, const char* format, int quality);
+/**
+ * @brief 获取像素图后端设备类型。
+ * @param self 像素图对象指针。
+ * @return 后端设备类型编号；空像素图返回 0。
+ */
+int XPixmap_devType(const XPixmap* self);
+/**
+ * @brief 获取像素图绘制引擎句柄。
+ * @param self 像素图对象指针。
+ * @return 绘制引擎句柄；当前无原生绘制引擎时返回 NULL。
+ */
+void* XPixmap_paintEngine(const XPixmap* self);
 
 /* ========== 其他 ========== */
 
@@ -428,4 +542,3 @@ void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out);
 #define XPixmap_create() XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XPIXMAP_H */
-

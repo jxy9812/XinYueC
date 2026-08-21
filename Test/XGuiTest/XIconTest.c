@@ -52,7 +52,7 @@ static void XIconCopyMoveTest(void)
         XIcon a, b;
         XIcon_init_pixmap(&a, &p);
         XIcon_init(&b);
-        XIcon_copy(&b, &a);
+        XIcon_copy_base(&b, &a);
         XPrintf("copy: b.isNull=%s (期望:否)\n", XIcon_isNull(&b) ? "是" : "否");
         XIcon_deinit_base(&a);
         XIcon_deinit_base(&b);
@@ -64,7 +64,7 @@ static void XIconCopyMoveTest(void)
         XIcon a, b;
         XIcon_init_pixmap(&a, &p);
         XIcon_init(&b);
-        XIcon_move(&b, &a);
+        XIcon_move_base(&b, &a);
         XPrintf("move: b.isNull=%s (期望:否), a.isNull=%s (期望:是)\n",
             XIcon_isNull(&b) ? "是" : "否", XIcon_isNull(&a) ? "是" : "否");
         XIcon_deinit_base(&a);
@@ -154,5 +154,4 @@ void XMenu_XIconTest(XMenu* root)
     XAction_setAction(action, XIconExtraTest);
 }
 #endif // DEMOTEST
-
 

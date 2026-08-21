@@ -7,6 +7,7 @@
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XImageReader.h"
+#include "XBitmap.h"
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -72,7 +73,7 @@ static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image)
     if (!d) return NULL;
     memset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
-    XImage_copy(&d->m_image, image);
+    XImage_copy_base(&d->m_image, image);
     d->m_devicePixelRatio = XImage_devicePixelRatio(image);
     if (!(d->m_devicePixelRatio > 0.0f)) d->m_devicePixelRatio = 1.0f;
     d->m_serialNumber = g_pixmapSerialCounter;
@@ -174,7 +175,16 @@ void XPixmap_init_size(XPixmap* self, const XSize* size)
         XPixmap_init(self);
 }
 
-void XPixmap_init_file(XPixmap* self, const char* fileName, const char* format, uint32_t flags)
+void XPixmap_init_file_2(XPixmap* self, const char* fileName, const char* format, uint32_t flags)
+{
+    XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
+    XString* formatString = format ? XString_create_utf8(format) : NULL;
+    XPixmap_init_file(self, fileNameString, formatString, flags);
+    if (fileNameString) XString_delete_base((XClass*)fileNameString);
+    if (formatString) XString_delete_base((XClass*)formatString);
+}
+
+void XPixmap_init_file(XPixmap* self, const XString* fileName, const XString* format, uint32_t flags)
 {
     XPixmap_init(self);
     XPixmap_load(self, fileName, format, flags);
@@ -194,57 +204,6 @@ void XPixmap_init_bitmap_image(XPixmap* self, const XImage* image, uint32_t flag
         self->m_data->m_isQBitmap = true;
 }
 
-void XPixmap_copy(XPixmap* self, const XPixmap* other)
-{
-    if (ISNULL(self, "XPixmap") || ISNULL(other, "XPixmap")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XPixmap_deinit_base(self);
-    XPixmap_init(self);
-    XPixmap_copy_base(self, other);
-}
-
-void XPixmap_move(XPixmap* self, XPixmap* other)
-{
-    if (ISNULL(self, "XPixmap") || ISNULL(other, "XPixmap")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XPixmap_deinit_base(self);
-    XPixmap_init(self);
-    XPixmap_move_base(self, other);
-}
-
-void XPixmap_deinit(XPixmap* self)
-{
-    XPixmap_deinit_base(self);
-}
-
-void XPixmap_copy_base(XPixmap* dest, const XPixmap* src)
-{
-    if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XPixmap*, const XPixmap*))(dest, src);
-}
-void XPixmap_move_base(XPixmap* dest, XPixmap* src)
-{
-    if (ISNULL(dest, "XPixmap") || ISNULL(src, "XPixmap")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XPixmap*, XPixmap*))(dest, src);
-}
-
-void XPixmap_deinit_base(XPixmap* self)
-{
-    if (ISNULL(self, "XPixmap")) return;
-    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XPixmap*))(self);
-}
-
-
-
-void XPixmap_delete_base(XPixmap* self)
-{
-    XClass_delete_base((XClass*)self);
-}
 /* ========== 查询方法 ========== */
 
 bool XPixmap_isNull(const XPixmap* self)
@@ -299,7 +258,7 @@ void XPixmap_fill(XPixmap* self, uint32_t color)
     XPlatformPixmap_touch(self->m_data);
 }
 
-void XPixmap_mask(const XPixmap* self, XPixmap* out)
+void XPixmap_mask_2(const XPixmap* self, XPixmap* out)
 {
     if (!out) return;
     if (!self || !self->m_data || XPixmap_isNull(self))
@@ -327,6 +286,25 @@ void XPixmap_mask(const XPixmap* self, XPixmap* out)
     }
     XPixmap_init_bitmap_image(out, &maskImage, 0);
     XImage_deinit_base(&maskImage);
+}
+
+void XPixmap_maskBitmap(const XPixmap* self, XBitmap* out)
+{
+    XPixmap_mask(self, out);
+}
+
+void XPixmap_mask(const XPixmap* self, XBitmap* out)
+{
+    XPixmap mask;
+    if (!out) return;
+    if (!XClassIsVtableNull(out)) XBitmap_deinit_base(out);
+    XBitmap_init(out);
+    XPixmap_init(&mask);
+    XPixmap_mask_2(self, &mask);
+    if (!XPixmap_isNull(&mask)
+        && XPixmap_width(&mask) > 0 && XPixmap_height(&mask) > 0)
+        XBitmap_init_pixmap(out, &mask);
+    XPixmap_deinit_base(&mask);
 }
 
 void XPixmap_setMask(XPixmap* self, const XPixmap* mask)
@@ -637,6 +615,26 @@ void XPixmap_transformed(const XPixmap* self, float m00, float m01, float m02,
     XImage_deinit_base(&transformed);
 }
 
+void XPixmap_trueMatrix(const XImageTransform* matrix, int width, int height,
+                        XImageTransform* out)
+{
+    if (!out) return;
+    XImage_trueMatrix(matrix, width, height, out, NULL);
+}
+
+void XPixmap_trueMatrix_2(float m00, float m01, float m02, float m10, float m11,
+                          float m12, int width, int height, XImageTransform* out)
+{
+    XImageTransform matrix = {0};
+    matrix.m11 = m00;
+    matrix.m12 = m10;
+    matrix.m21 = m01;
+    matrix.m22 = m11;
+    matrix.dx = m02;
+    matrix.dy = m12;
+    XPixmap_trueMatrix(&matrix, width, height, out);
+}
+
 /* ========== 转换方法 ========== */
 
 void XPixmap_toImage(const XPixmap* self, XImage* out)
@@ -658,7 +656,7 @@ void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out)
     XPixmap_init_image(out, image, flags);
 }
 
-void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out)
+void XPixmap_fromImageReader(XImageReader* reader, uint32_t flags, XPixmap* out)
 {
     (void)flags;
     if (!reader || !out) return;
@@ -671,6 +669,54 @@ void XPixmap_fromImageReader(void* reader, uint32_t flags, XPixmap* out)
         XPixmap_resetOutput(out);
     }
     XImage_deinit_base(&image);
+}
+
+bool XPixmap_loadDevice_2(XPixmap* self, XIODevice* device, const char* format, uint32_t flags)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    bool result = XPixmap_loadDevice(self, device, value, flags);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
+}
+
+bool XPixmap_loadDevice(XPixmap* self, XIODevice* device, const XString* format, uint32_t flags)
+{
+    XImage image;
+    bool result;
+    if (!self || !device) return false;
+    XImage_init(&image);
+    result = XImage_loadDevice(&image, device, format);
+    if (result) {
+        XPixmap_resetOutput(self);
+        XPixmap_init_image(self, &image, flags);
+    }
+    XImage_deinit_base(&image);
+    return result;
+}
+
+bool XPixmap_saveDevice_2(const XPixmap* self, XIODevice* device, const char* format, int quality)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    bool result = XPixmap_saveDevice(self, device, value, quality);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
+}
+
+bool XPixmap_saveDevice(const XPixmap* self, XIODevice* device, const XString* format, int quality)
+{
+    if (!self || !self->m_data || !device) return false;
+    return XImage_saveDevice(&self->m_data->m_image, device, format, quality);
+}
+
+int XPixmap_devType(const XPixmap* self)
+{
+    return (self && self->m_data) ? 1 : 0;
+}
+
+void* XPixmap_paintEngine(const XPixmap* self)
+{
+    (void)self;
+    return NULL;
 }
 
 bool XPixmap_convertFromImage(XPixmap* self, const XImage* image, uint32_t flags)
@@ -696,13 +742,13 @@ void XPixmap_swap(XPixmap* self, XPixmap* other)
 
 /* ========== 文件操作 ========== */
 
-bool XPixmap_load(XPixmap* self, const char* fileName, const char* format, uint32_t flags)
+bool XPixmap_load_2(XPixmap* self, const char* fileName, const char* format, uint32_t flags)
 {
     (void)flags;
     if (!self || !fileName) return false;
     XImage image;
     XImage_init(&image);
-    bool ok = XImage_load(&image, fileName, format);
+    bool ok = XImage_load_2(&image, fileName, format);
     if (ok) {
         XPixmap_resetOutput(self);
         XPixmap_init_image(self, &image, flags);
@@ -711,13 +757,18 @@ bool XPixmap_load(XPixmap* self, const char* fileName, const char* format, uint3
     return ok;
 }
 
-bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const char* format, uint32_t flags)
+bool XPixmap_load(XPixmap* self, const XString* fileName, const XString* format, uint32_t flags)
+{
+    return XPixmap_load_2(self, XString_toUtf8(fileName), XString_toUtf8(format), flags);
+}
+
+bool XPixmap_loadFromData_2(XPixmap* self, const uint8_t* buf, uint32_t len, const char* format, uint32_t flags)
 {
     (void)flags;
     if (!self || !buf || len > (uint32_t)INT_MAX) return false;
     XImage image;
     XImage_init(&image);
-    bool ok = XImage_loadFromData(&image, buf, (int)len, format);
+    bool ok = XImage_loadFromData_2(&image, buf, (int)len, format);
     if (ok) {
         XPixmap_resetOutput(self);
         XPixmap_init_image(self, &image, flags);
@@ -726,11 +777,23 @@ bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len, const
     return ok;
 }
 
-bool XPixmap_save(const XPixmap* self, const char* fileName, const char* format, int quality)
+bool XPixmap_loadFromData(XPixmap* self, const uint8_t* buf, uint32_t len,
+                           const XString* format, uint32_t flags)
+{
+    return XPixmap_loadFromData_2(self, buf, len, XString_toUtf8(format), flags);
+}
+
+bool XPixmap_save_2(const XPixmap* self, const char* fileName, const char* format, int quality)
 {
     if (!self || !self->m_data || XPixmap_isNull(self) || !fileName)
         return false;
-    return XImage_save(&self->m_data->m_image, fileName, format, quality);
+    return XImage_save_2(&self->m_data->m_image, fileName, format, quality);
+}
+
+bool XPixmap_save(const XPixmap* self, const XString* fileName,
+                  const XString* format, int quality)
+{
+    return XPixmap_save_2(self, XString_toUtf8(fileName), XString_toUtf8(format), quality);
 }
 
 /* ========== 其他 ========== */

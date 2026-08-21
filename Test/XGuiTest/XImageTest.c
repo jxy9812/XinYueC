@@ -66,7 +66,7 @@ static void XImageCopyMoveTest(void)
         XImage a, b;
         XImage_init_ex(&a, 10, 10, XImageFormat_ARGB32);
         XImage_init(&b);
-        XImage_copy(&b, &a);
+        XImage_copy_base(&b, &a);
         XPrintf("copy: b.w=%d (期望:10), b.h=%d (期望:10), a.null=%s (期望:否)\n",
             XImage_width(&b), XImage_height(&b), XImage_isNull(&a) ? "是" : "否");
         XImage_deinit_base(&a);
@@ -76,7 +76,7 @@ static void XImageCopyMoveTest(void)
         XImage a, b;
         XImage_init_ex(&a, 20, 30, XImageFormat_RGB32);
         XImage_init(&b);
-        XImage_move(&b, &a);
+        XImage_move_base(&b, &a);
         XPrintf("move: b.w=%d (期望:20), b.h=%d (期望:30), a.isNull=%s (期望:是)\n",
             XImage_width(&b), XImage_height(&b), XImage_isNull(&a) ? "是" : "否");
         XImage_deinit_base(&a);
@@ -317,5 +317,4 @@ void XMenu_XImageTest(XMenu* root)
     XAction_setAction(action, XImageFillTest);
 }
 #endif // DEMOTEST
-
 

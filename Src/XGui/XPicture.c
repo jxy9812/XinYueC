@@ -4,14 +4,17 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPicture.h"
+#include "XPainter.h"
 #include "XImage.h"
+#include "XIODevice.h"
+#include "XByteArray.h"
+#include "XFile.h"
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <limits.h>
 #include <math.h>
 
@@ -160,13 +163,6 @@ typedef struct XPicturePrivate
     int              m_boundingH;   /**< 边界矩形高度 */
 }XPicturePrivate;
 
-void XPainter_init(XPainter* self, void* userData)
-{
-    if (!self) return;
-    memset(self, 0, sizeof(*self));
-    self->userData = userData;
-}
-
 static XPicturePrivate* XPicturePrivate_create(int formatVersion)
 {
     XPicturePrivate* d = (XPicturePrivate*)XMalloc_System(sizeof(XPicturePrivate));
@@ -279,6 +275,26 @@ XPicture* XPicture_create_ex(XMemoryType memory)
     return self;
 }
 
+XPicture* XPicture_create_copy(const XPicture* other, XMemoryType memory)
+{
+    XPicture* self;
+    if (!other) return NULL;
+    self = XPicture_create_ex(memory);
+    if (!self) return NULL;
+    XPicture_copy_base(self, other);
+    return self;
+}
+
+XPicture* XPicture_create_move(XPicture* other, XMemoryType memory)
+{
+    XPicture* self;
+    if (!other) return NULL;
+    self = XPicture_create_ex(memory);
+    if (!self) return NULL;
+    XPicture_move_base(self, other);
+    return self;
+}
+
 void XPicture_init(XPicture* self, int formatVersion)
 {
     if (ISNULL(self, "XPicture")) return;
@@ -288,52 +304,19 @@ void XPicture_init(XPicture* self, int formatVersion)
     self->m_data = XPicturePrivate_create(formatVersion);
 }
 
-void XPicture_copy(XPicture* self, const XPicture* other)
+void XPicture_swap(XPicture* self, XPicture* other)
 {
-    if (ISNULL(self, "XPicture") || ISNULL(other, "XPicture")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XPicture_deinit_base(self);
-    XPicture_init(self, -1);
-    XPicture_copy_base(self, other);
-}
-void XPicture_deinit(XPicture* self) { XPicture_deinit_base(self); }
-void XPicture_copy_base(XPicture* dest, const XPicture* src)
-{
-    if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XPicture*, const XPicture*))(dest, src);
-}
-void XPicture_move(XPicture* self, XPicture* other)
-{
-    if (ISNULL(self, "XPicture") || ISNULL(other, "XPicture")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XPicture_deinit_base(self);
-    XPicture_init(self, -1);
-    XPicture_move_base(self, other);
-}
-
-void XPicture_move_base(XPicture* dest, XPicture* src)
-{
-    if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XPicture*, XPicture*))(dest, src);
-}
-
-void XPicture_deinit_base(XPicture* self)
-{
-    if (ISNULL(self, "XPicture")) return;
-    VXPicture_deinit(self);
-}
-
-
-
-void XPicture_delete_base(XPicture* self)
-{
-    XClass_delete_base((XClass*)self);
+    XPicturePrivate* data;
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XPicture_init(self, -1);
+    if (XClassIsVtableNull(other)) XPicture_init(other, -1);
+    data = self->m_data;
+    self->m_data = other->m_data;
+    other->m_data = data;
 }
 bool XPicture_isNull(const XPicture* self) { return !self || !self->m_data || self->m_data->m_isNull; }
+int XPicture_devType(const XPicture* self) { return XPicture_isNull(self) ? 0 : 1; }
+void* XPicture_paintEngine(const XPicture* self) { (void)self; return NULL; }
 uint32_t XPicture_size(const XPicture* self) { return (self && self->m_data) ? self->m_data->m_dataSize : 0; }
 const char* XPicture_data(const XPicture* self) { return (self && self->m_data) ? self->m_data->m_data : NULL; }
 
@@ -659,8 +642,8 @@ bool XPicture_play(XPicture* self, XPainter* painter)
         offset += XPICTURE_RECORD_HEADER_SIZE;
         if (opcode == XPictureOpcode_DrawLine)
         {
-            if (!painter->drawLine) return false;
-            ok = painter->drawLine(painter, (int)XPicture_getI32(payload + 0),
+            if (!painter->m_drawLine) return false;
+            ok = painter->m_drawLine(painter, (int)XPicture_getI32(payload + 0),
                                    (int)XPicture_getI32(payload + 4),
                                    (int)XPicture_getI32(payload + 8),
                                    (int)XPicture_getI32(payload + 12));
@@ -668,24 +651,24 @@ bool XPicture_play(XPicture* self, XPainter* painter)
         else if (opcode == XPictureOpcode_FillRect)
         {
             XRect rect;
-            if (!painter->fillRect) return false;
+            if (!painter->m_fillRect) return false;
             rect.x = (int)XPicture_getI32(payload + 0);
             rect.y = (int)XPicture_getI32(payload + 4);
             rect.width = (int)XPicture_getI32(payload + 8);
             rect.height = (int)XPicture_getI32(payload + 12);
-            ok = painter->fillRect(painter, &rect, XPicture_getU32(payload + 16));
+            ok = painter->m_fillRect(painter, &rect, XPicture_getU32(payload + 16));
         }
         else if (opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore)
         {
             if (opcode == XPictureOpcode_Save)
             {
-                if (!painter->save) return false;
-                ok = painter->save(painter);
+                if (!painter->m_save) return false;
+                ok = painter->m_save(painter);
             }
             else
             {
-                if (!painter->restore) return false;
-                ok = painter->restore(painter);
+                if (!painter->m_restore) return false;
+                ok = painter->m_restore(painter);
             }
         }
         else if (opcode == XPictureOpcode_DrawImage)
@@ -702,7 +685,7 @@ bool XPicture_play(XPicture* self, XPainter* painter)
             const uint8_t* imageData;
             XImage image;
             uint32_t i;
-            if (!painter->drawImage) return false;
+            if (!painter->m_drawImage) return false;
             imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
             imageBytes = (uint8_t*)XMalloc_System(imageSize);
             if (!imageBytes) return false;
@@ -732,7 +715,7 @@ bool XPicture_play(XPicture* self, XPainter* painter)
                     XImage_setColor(&image, (int)i,
                                     XPicture_getU32(payload + XPICTURE_IMAGE_FIXED_SIZE + i * 4u));
             }
-            ok = painter->drawImage(painter, &image,
+            ok = painter->m_drawImage(painter, &image,
                                     (int)XPicture_getI32(payload + 0),
                                     (int)XPicture_getI32(payload + 4));
             XImage_deinit_base(&image);
@@ -742,63 +725,85 @@ bool XPicture_play(XPicture* self, XPainter* painter)
     }
     return true;
 }
-bool XPicture_load(XPicture* self, const char* fileName)
+bool XPicture_load(XPicture* self, const XString* fileName)
 {
-    FILE* file;
-    long length;
-    char* data = NULL;
+    XFile* file; XByteArray* bytes; size_t size; bool success = false;
+    if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
+    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); XPicture_reset(self); return false; }
+    bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
+    if (bytes && size > 0 && size <= UINT32_MAX && ((!XPicture_magicMatches(XByteArray_data(bytes), (uint32_t)size)) || XPicture_validateStreamData((const char*)XByteArray_data(bytes), (uint32_t)size))) { XPicture_setData(self, (const char*)XByteArray_data(bytes), (uint32_t)size); success = XPicture_size(self) == (uint32_t)size; }
+    if (bytes) XByteArray_delete_base((XClass*)bytes); if (!success) XPicture_reset(self); return success;
+}
+
+bool XPicture_load_2(XPicture* self, const char* fileName)
+{
+    XString* value = fileName ? XString_create_utf8(fileName) : NULL;
+    bool result = XPicture_load(self, value);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
+}
+
+bool XPicture_load_device(XPicture* self, XIODevice* device)
+{
+    XByteArray* bytes;
+    size_t size;
     bool success = false;
-    if (!self || !self->m_data || !fileName || !fileName[0]) return false;
-    file = fopen(fileName, "rb");
-    if (!file)
+    if (!self || !self->m_data || !device) return false;
+    bytes = XIODevice_readAll_3(device);
+    size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
+    if (bytes && size <= UINT32_MAX && size != 0)
     {
-        XPicture_reset(self);
-        return false;
-    }
-    if (fseek(file, 0, SEEK_END) == 0)
-    {
-        length = ftell(file);
-        if (length > 0 && (unsigned long)length <= UINT32_MAX && fseek(file, 0, SEEK_SET) == 0)
+        const char* data = XByteArray_constData(bytes);
+        if ((!XPicture_magicMatches((const uint8_t*)data, (uint32_t)size) ||
+             XPicture_validateStreamData(data, (uint32_t)size)))
         {
-            data = (char*)XMalloc_System((size_t)length);
-            if (data && fread(data, 1, (size_t)length, file) == (size_t)length)
-            {
-                if (XPicture_magicMatches((const uint8_t*)data, (uint32_t)length) &&
-                    !XPicture_validateStreamData(data, (uint32_t)length))
-                {
-                    success = false;
-                }
-                else
-                {
-                    XPicture_setData(self, data, (uint32_t)length);
-                    success = XPicture_size(self) == (uint32_t)length;
-                }
-            }
+            XPicture_setData(self, data, (uint32_t)size);
+            success = XPicture_size(self) == (uint32_t)size;
         }
     }
-    XFree_System(data);
-    if (fclose(file) != 0) success = false;
+    if (bytes) XByteArray_delete_base((XClass*)bytes);
     if (!success) XPicture_reset(self);
     return success;
 }
 
-bool XPicture_save(const XPicture* self, const char* fileName)
+bool XPicture_save(const XPicture* self, const XString* fileName)
 {
-    FILE* file;
-    size_t size;
-    bool success;
-    if (!self || !self->m_data || !fileName || !fileName[0]) return false;
+    XFile* file; size_t size; bool success;
+    if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
     if (XPicture_magicMatches((const uint8_t*)self->m_data->m_data,
                               self->m_data->m_dataSize) &&
         !XPicture_validateStreamData(self->m_data->m_data,
                                      self->m_data->m_dataSize))
         return false;
-    file = fopen(fileName, "wb");
-    if (!file) return false;
+    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) { if (file) XClass_delete_base((XClass*)file); return false; }
     size = self->m_data->m_dataSize;
-    success = (size == 0 || fwrite(self->m_data->m_data, 1, size, file) == size);
-    if (fclose(file) != 0) success = false;
+    success = size == 0 || XIODevice_write_1((XIODevice*)file, self->m_data->m_data, (int64_t)size) == (int64_t)size;
+    XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file);
     return success;
+}
+
+bool XPicture_save_2(const XPicture* self, const char* fileName)
+{
+    XString* value = fileName ? XString_create_utf8(fileName) : NULL;
+    bool result = XPicture_save(self, value);
+    if (value) XString_delete_base((XClass*)value);
+    return result;
+}
+
+bool XPicture_save_device(const XPicture* self, XIODevice* device)
+{
+    int64_t written;
+    uint32_t size;
+    if (!self || !self->m_data || !device) return false;
+    if (XPicture_magicMatches((const uint8_t*)self->m_data->m_data,
+                              self->m_data->m_dataSize) &&
+        !XPicture_validateStreamData(self->m_data->m_data,
+                                     self->m_data->m_dataSize))
+        return false;
+    size = self->m_data->m_dataSize;
+    if (size == 0) return XIODevice_flush(device);
+    written = XIODevice_write_1(device, self->m_data->m_data, size);
+    return written == (int64_t)size && XIODevice_flush(device);
 }
 
 void XPicture_detach(XPicture* self)
@@ -820,4 +825,3 @@ bool XPicture_isDetached(const XPicture* self)
 {
     return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
 }
-

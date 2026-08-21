@@ -1,0 +1,570 @@
+﻿/**
+ * @file       XMovie.c
+ * @brief      XMovie 单帧/动画读取控制实现。
+ */
+#include "XMovie.h"
+#include "XMemory.h"
+#include "XVarList.h"
+#include <string.h>
+
+struct XMoviePrivate
+{
+    XImageReader*       m_reader;             /**< 对象拥有的图像读取器。 */
+    XImage              m_currentImage;      /**< 当前帧图像。 */
+    XPixmap             m_currentPixmap;     /**< 当前帧像素图。 */
+    XColor              m_backgroundColor;   /**< 当前背景色值。 */
+    XRect               m_frameRect;         /**< 当前帧矩形。 */
+    XSize               m_scaledSize;        /**< 读取器缩放尺寸。 */
+    XString*            m_fileName;          /**< 文件名；对象拥有。 */
+    XString*            m_format;            /**< 格式；对象拥有。 */
+    XString*            m_errorString;      /**< 最近一次错误文本；对象拥有。 */
+    XImageReaderError   m_error;             /**< 最近一次错误。 */
+    XMovieState         m_state;             /**< 当前播放状态。 */
+    XMovieCacheMode     m_cacheMode;         /**< 缓存策略。 */
+    int                 m_speed;             /**< 播放速度百分比。 */
+    int                 m_currentFrame;      /**< 当前帧编号，未加载时为 -1。 */
+};
+
+static void VXMovie_deinit(XMovie* self);
+static void VXMovie_copy(XMovie* self, const XMovie* other);
+static void VXMovie_move(XMovie* self, XMovie* other);
+
+static void XMovie_clearCurrent(XMoviePrivate* data)
+{
+    if (!data) return;
+    XImage_deinit_base(&data->m_currentImage);
+    XImage_init(&data->m_currentImage);
+    XPixmap_deinit_base(&data->m_currentPixmap);
+    XPixmap_init(&data->m_currentPixmap);
+    memset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
+    data->m_currentFrame = -1;
+}
+
+static void XMovie_clearPrivate(XMoviePrivate* data)
+{
+    if (!data) return;
+    if (data->m_reader) {
+        XClass_delete_base((XClass*)data->m_reader);
+        data->m_reader = NULL;
+    }
+    XMovie_clearCurrent(data);
+    if (data->m_fileName) XString_delete_base((XClass*)data->m_fileName);
+    if (data->m_format) XString_delete_base((XClass*)data->m_format);
+    if (data->m_errorString) XString_delete_base((XClass*)data->m_errorString);
+    data->m_fileName = NULL;
+    data->m_format = NULL;
+    data->m_errorString = NULL;
+}
+
+static XString* XMovie_copyString(const XString* value)
+{
+    return value ? XString_create_copy(value) : NULL;
+}
+
+static void XMovie_setError(XMovie* self, XImageReaderError error,
+                            const XString* message)
+{
+    XMoviePrivate* data;
+    if (!self || !(data = self->m_data)) return;
+    data->m_error = error;
+    if (data->m_errorString) XString_delete_base((XClass*)data->m_errorString);
+    data->m_errorString = message ? XString_create_copy(message) : XString_create();
+}
+
+static void XMovie_captureReaderError(XMovie* self)
+{
+    XMoviePrivate* data;
+    XString* message;
+    if (!self || !(data = self->m_data) || !data->m_reader) return;
+    message = XImageReader_errorString(data->m_reader);
+    XMovie_setError(self, XImageReader_error(data->m_reader), message);
+    if (message) XString_delete_base((XClass*)message);
+}
+
+static void XMovie_setState(XMovie* self, XMovieState state)
+{
+    if (!self || !self->m_data || self->m_data->m_state == state) return;
+    self->m_data->m_state = state;
+    XMovie_stateChanged_signal(self, state);
+}
+
+static XImageReader* XMovie_cloneReader(const XImageReader* source)
+{
+    XImageReader* copy;
+    const XString* value;
+    XSize size;
+    XRect rect;
+    if (!source) return NULL;
+    copy = XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!copy) return NULL;
+    if (XImageReader_device(source)) {
+        XImageReader_setDevice(copy, XImageReader_device(source));
+    } else {
+        value = XImageReader_fileName_const(source);
+        if (value && !XString_isEmpty_base((const XContainer*)value))
+            XImageReader_setFileName(copy, value);
+    }
+    value = XImageReader_format_const(source);
+    if (value && !XString_isEmpty_base((const XContainer*)value)) XImageReader_setFormat(copy, value);
+    XImageReader_setAutoDetectImageFormat(copy,
+                                          XImageReader_autoDetectImageFormat(source));
+    XImageReader_setDecideFormatFromContent(copy,
+                                             XImageReader_decideFormatFromContent(source));
+    XImageReader_setQuality(copy, XImageReader_quality(source));
+    XImageReader_scaledSize(source, &size);
+    if (size.width || size.height) XImageReader_setScaledSize(copy, &size);
+    XImageReader_clipRect(source, &rect);
+    if (rect.width || rect.height) XImageReader_setClipRect(copy, &rect);
+    XImageReader_scaledClipRect(source, &rect);
+    if (rect.width || rect.height) XImageReader_setScaledClipRect(copy, &rect);
+    XImageReader_setAutoTransform(copy, XImageReader_autoTransform(source));
+    return copy;
+}
+
+static bool XMovie_loadFrame(XMovie* self, int frameNumber)
+{
+    XMoviePrivate* data;
+    XImage image;
+    XRect oldRect;
+    bool resized;
+    if (!self || !(data = self->m_data) || !data->m_reader || frameNumber != 0)
+        return false;
+    if (!XImageReader_jumpToImage(data->m_reader, frameNumber)) {
+        XMovie_captureReaderError(self);
+        return false;
+    }
+    XImage_init(&image);
+    if (!XImageReader_read(data->m_reader, &image)) {
+        XMovie_captureReaderError(self);
+        XImage_deinit_base(&image);
+        return false;
+    }
+    oldRect = data->m_frameRect;
+    XImage_deinit_base(&data->m_currentImage);
+    XImage_move_base(&data->m_currentImage, &image);
+    XImage_deinit_base(&image);
+    XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
+    XImage_rect(&data->m_currentImage, &data->m_frameRect);
+    data->m_currentFrame = frameNumber;
+    XMovie_captureReaderError(self);
+    resized = oldRect.width != data->m_frameRect.width ||
+              oldRect.height != data->m_frameRect.height;
+    if (resized && oldRect.width != 0 && oldRect.height != 0)
+        XMovie_resized_signal(self, &(XSize){data->m_frameRect.width,
+                                             data->m_frameRect.height});
+    XMovie_frameChanged_signal(self, frameNumber);
+    XMovie_updated_signal(self, &data->m_frameRect);
+    return true;
+}
+
+XVtable* XMovie_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XMovie)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMovie_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMovie_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXMovie_move);
+    return XVTABLE_DEFAULT;
+}
+
+XMovie* XMovie_create_ex(XMemoryType memory)
+{
+    XMovie* self = (XMovie*)XMemory_malloc(sizeof(XMovie), memory);
+    if (!self) return NULL;
+    XMovie_init(self);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+void XMovie_init(XMovie* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(XMovie));
+    XObject_init((XObject*)self);
+    XClassSetVtable(self, XMovie);
+    self->m_data = (XMoviePrivate*)XMalloc_System(sizeof(XMoviePrivate));
+    if (!self->m_data) return;
+    memset(self->m_data, 0, sizeof(XMoviePrivate));
+    self->m_data->m_reader = XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    XImage_init(&self->m_data->m_currentImage);
+    XPixmap_init(&self->m_data->m_currentPixmap);
+    self->m_data->m_backgroundColor = XColor_create();
+    self->m_data->m_errorString = XString_create();
+    self->m_data->m_error = XImageReaderError_UnknownError;
+    self->m_data->m_state = XMovieState_NotRunning;
+    self->m_data->m_cacheMode = XMovieCacheMode_CacheNone;
+    self->m_data->m_speed = 100;
+    self->m_data->m_currentFrame = -1;
+}
+
+void XMovie_init_device(XMovie* self, XIODevice* device, const XString* format)
+{
+    XMovie_init(self);
+    if (!self || !self->m_data) return;
+    XMovie_setDevice(self, device);
+    XMovie_setFormat(self, format);
+}
+
+void XMovie_init_device_2(XMovie* self, XIODevice* device, const char* format)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    XMovie_init_device(self, device, value);
+    if (value) XString_delete_base((XClass*)value);
+}
+
+void XMovie_init_file(XMovie* self, const XString* fileName, const XString* format)
+{
+    XMovie_init(self);
+    if (!self || !self->m_data) return;
+    XMovie_setFileName(self, fileName);
+    XMovie_setFormat(self, format);
+}
+
+void XMovie_init_file_2(XMovie* self, const char* fileName, const char* format)
+{
+    XString* file = fileName ? XString_create_utf8(fileName) : NULL;
+    XString* type = format ? XString_create_utf8(format) : NULL;
+    XMovie_init_file(self, file, type);
+    if (file) XString_delete_base((XClass*)file);
+    if (type) XString_delete_base((XClass*)type);
+}
+
+XMovie* XMovie_create_device_ex(XMemoryType memory, XIODevice* device,
+                                const XString* format)
+{
+    XMovie* self = XMovie_create_ex(memory);
+    if (self) {
+        XMovie_setDevice(self, device);
+        XMovie_setFormat(self, format);
+    }
+    return self;
+}
+
+XMovie* XMovie_create_device_ex_2(XMemoryType memory, XIODevice* device,
+                                  const char* format)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    XMovie* self = XMovie_create_device_ex(memory, device, value);
+    if (value) XString_delete_base((XClass*)value);
+    return self;
+}
+
+XMovie* XMovie_create_file_ex(XMemoryType memory, const XString* fileName,
+                               const XString* format)
+{
+    XMovie* self = XMovie_create_ex(memory);
+    if (self) {
+        XMovie_setFileName(self, fileName);
+        XMovie_setFormat(self, format);
+    }
+    return self;
+}
+
+XMovie* XMovie_create_file_ex_2(XMemoryType memory, const char* fileName,
+                                const char* format)
+{
+    XString* file = fileName ? XString_create_utf8(fileName) : NULL;
+    XString* type = format ? XString_create_utf8(format) : NULL;
+    XMovie* self = XMovie_create_file_ex(memory, file, type);
+    if (file) XString_delete_base((XClass*)file);
+    if (type) XString_delete_base((XClass*)type);
+    return self;
+}
+
+static void VXMovie_deinit(XMovie* self)
+{
+    if (!self) return;
+    if (self->m_data) {
+        XMovie_clearPrivate(self->m_data);
+        XFree_System(self->m_data);
+        self->m_data = NULL;
+    }
+    XClass_Deinit_Parent(XObject, (XObject*)self);
+}
+
+static void VXMovie_copy(XMovie* self, const XMovie* other)
+{
+    XMoviePrivate* source;
+    if (!self || !other || self == other || !(source = other->m_data)) return;
+    if (XClassIsVtableNull(self)) XMovie_init(self);
+    if (!self->m_data) return;
+    XMovie_clearPrivate(self->m_data);
+    memset(self->m_data, 0, sizeof(XMoviePrivate));
+    self->m_data->m_reader = XMovie_cloneReader(source->m_reader);
+    XImage_init(&self->m_data->m_currentImage);
+    XImage_copy_base(&self->m_data->m_currentImage, &source->m_currentImage);
+    XPixmap_init(&self->m_data->m_currentPixmap);
+    XPixmap_copy_base(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
+    self->m_data->m_backgroundColor = source->m_backgroundColor;
+    self->m_data->m_frameRect = source->m_frameRect;
+    self->m_data->m_scaledSize = source->m_scaledSize;
+    self->m_data->m_fileName = XMovie_copyString(source->m_fileName);
+    self->m_data->m_format = XMovie_copyString(source->m_format);
+    self->m_data->m_errorString = XMovie_copyString(source->m_errorString);
+    self->m_data->m_error = source->m_error;
+    self->m_data->m_state = source->m_state;
+    self->m_data->m_cacheMode = source->m_cacheMode;
+    self->m_data->m_speed = source->m_speed;
+    self->m_data->m_currentFrame = source->m_currentFrame;
+}
+
+static void VXMovie_move(XMovie* self, XMovie* other)
+{
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XMovie_init(self);
+    if (!self->m_data) return;
+    XMovie_clearPrivate(self->m_data);
+    XFree_System(self->m_data);
+    self->m_data = other->m_data;
+    other->m_data = NULL;
+}
+
+
+XStringList* XMovie_supportedFormats(void) { return XImageReader_supportedImageFormats(); }
+
+void XMovie_setDevice(XMovie* self, XIODevice* device)
+{
+    if (!self || !self->m_data || !self->m_data->m_reader) return;
+    XMovie_stop(self);
+    XMovie_clearCurrent(self->m_data);
+    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    self->m_data->m_fileName = NULL;
+    XImageReader_setDevice(self->m_data->m_reader, device);
+    XMovie_setError(self, XImageReaderError_UnknownError, NULL);
+}
+
+XIODevice* XMovie_device(const XMovie* self)
+{
+    return self && self->m_data && self->m_data->m_reader
+        ? XImageReader_device(self->m_data->m_reader) : NULL;
+}
+
+void XMovie_setFileName(XMovie* self, const XString* fileName)
+{
+    XString* copy;
+    if (!self || !self->m_data || !self->m_data->m_reader) return;
+    XMovie_stop(self);
+    XMovie_clearCurrent(self->m_data);
+    copy = fileName ? XString_create_copy(fileName) : NULL;
+    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    self->m_data->m_fileName = copy;
+    XImageReader_setFileName(self->m_data->m_reader, fileName);
+    XMovie_setError(self, XImageReaderError_UnknownError, NULL);
+}
+
+void XMovie_setFileName_2(XMovie* self, const char* fileName)
+{
+    XString* value = fileName ? XString_create_utf8(fileName) : NULL;
+    XMovie_setFileName(self, value);
+    if (value) XString_delete_base((XClass*)value);
+}
+
+XString* XMovie_fileName(const XMovie* self)
+{
+    const XString* value = XMovie_fileName_const(self);
+    return value ? XString_create_copy(value) : XString_create();
+}
+const XString* XMovie_fileName_const(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_fileName : NULL; }
+const char* XMovie_fileName_2(const XMovie* self)
+{ return XString_toUtf8(XMovie_fileName_const(self)); }
+
+void XMovie_setFormat(XMovie* self, const XString* format)
+{
+    XString* copy;
+    if (!self || !self->m_data || !self->m_data->m_reader) return;
+    copy = format ? XString_create_copy(format) : NULL;
+    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+    self->m_data->m_format = copy;
+    XImageReader_setFormat(self->m_data->m_reader, format);
+    XMovie_clearCurrent(self->m_data);
+}
+void XMovie_setFormat_2(XMovie* self, const char* format)
+{
+    XString* value = format ? XString_create_utf8(format) : NULL;
+    XMovie_setFormat(self, value);
+    if (value) XString_delete_base((XClass*)value);
+}
+XString* XMovie_format(const XMovie* self)
+{
+    const XString* value = XMovie_format_const(self);
+    return value ? XString_create_copy(value) : XString_create();
+}
+const XString* XMovie_format_const(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_format : NULL; }
+const char* XMovie_format_2(const XMovie* self)
+{ return XString_toUtf8(XMovie_format_const(self)); }
+
+void XMovie_setBackgroundColor(XMovie* self, const XColor* color)
+{
+    if (!self || !self->m_data || !color) return;
+    self->m_data->m_backgroundColor = *color;
+    if (self->m_data->m_reader && XColor_isValid(color))
+        XImageReader_setBackgroundColor(self->m_data->m_reader, XColor_rgba(color));
+}
+XColor XMovie_backgroundColor(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_backgroundColor : XColor_create(); }
+XMovieState XMovie_state(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_state : XMovieState_NotRunning; }
+void XMovie_frameRect(const XMovie* self, XRect* out)
+{
+    if (!out) return;
+    if (!self || !self->m_data) memset(out, 0, sizeof(*out));
+    else *out = self->m_data->m_frameRect;
+}
+void XMovie_currentImage(const XMovie* self, XImage* out)
+{
+    if (!out) return;
+    if (XClassIsVtableNull(out)) XImage_init(out);
+    else XImage_deinit_base(out);
+    if (self && self->m_data) XImage_copy_base(out, &self->m_data->m_currentImage);
+}
+void XMovie_currentPixmap(const XMovie* self, XPixmap* out)
+{
+    if (!out) return;
+    if (XClassIsVtableNull(out)) XPixmap_init(out);
+    else XPixmap_deinit_base(out);
+    if (self && self->m_data) XPixmap_copy_base(out, &self->m_data->m_currentPixmap);
+}
+bool XMovie_isValid(const XMovie* self)
+{ return self && self->m_data && self->m_data->m_reader &&
+         XImageReader_canRead(self->m_data->m_reader); }
+XImageReaderError XMovie_lastError(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_error : XImageReaderError_UnknownError; }
+XString* XMovie_lastErrorString(const XMovie* self)
+{
+    const XString* value = XMovie_lastErrorString_const(self);
+    return value ? XString_create_copy(value) : XString_create();
+}
+const XString* XMovie_lastErrorString_const(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_errorString : NULL; }
+const char* XMovie_lastErrorString_2(const XMovie* self)
+{ return XString_toUtf8(XMovie_lastErrorString_const(self)); }
+
+bool XMovie_jumpToFrame(XMovie* self, int frameNumber)
+{
+    return XMovie_loadFrame(self, frameNumber);
+}
+int XMovie_loopCount(const XMovie* self)
+{ return self && self->m_data && self->m_data->m_reader ? XImageReader_loopCount(self->m_data->m_reader) : 0; }
+int XMovie_frameCount(const XMovie* self)
+{ return self && self->m_data && self->m_data->m_reader ? XImageReader_imageCount(self->m_data->m_reader) : 0; }
+int XMovie_nextFrameDelay(const XMovie* self)
+{ return self && self->m_data && self->m_data->m_reader ? XImageReader_nextImageDelay(self->m_data->m_reader) : 0; }
+int XMovie_currentFrameNumber(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_currentFrame : -1; }
+int XMovie_speed(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_speed : 100; }
+void XMovie_setSpeed(XMovie* self, int percentSpeed)
+{ if (self && self->m_data) self->m_data->m_speed = percentSpeed < 0 ? 0 : percentSpeed; }
+void XMovie_scaledSize(const XMovie* self, XSize* out)
+{
+    if (!out) return;
+    if (!self || !self->m_data) memset(out, 0, sizeof(*out));
+    else *out = self->m_data->m_scaledSize;
+}
+void XMovie_setScaledSize(XMovie* self, const XSize* size)
+{
+    if (!self || !self->m_data || !size) return;
+    self->m_data->m_scaledSize = *size;
+    if (self->m_data->m_reader) XImageReader_setScaledSize(self->m_data->m_reader, size);
+    XMovie_clearCurrent(self->m_data);
+}
+XMovieCacheMode XMovie_cacheMode(const XMovie* self)
+{ return self && self->m_data ? self->m_data->m_cacheMode : XMovieCacheMode_CacheNone; }
+void XMovie_setCacheMode(XMovie* self, XMovieCacheMode mode)
+{ if (self && self->m_data) self->m_data->m_cacheMode = mode == XMovieCacheMode_CacheAll ? mode : XMovieCacheMode_CacheNone; }
+
+void XMovie_start(XMovie* self)
+{
+    XString* message;
+    if (!self || !self->m_data) return;
+    if (!XMovie_isValid(self)) {
+        message = XString_create_utf8("Image source is not readable");
+        XMovie_setError(self, XImageReaderError_UnsupportedFormatError, message);
+        if (message) XString_delete_base((XClass*)message);
+        XMovie_error_signal(self, XMovie_lastError(self));
+        return;
+    }
+    if (!XMovie_loadFrame(self, 0)) {
+        XMovie_error_signal(self, XMovie_lastError(self));
+        return;
+    }
+    XMovie_setState(self, XMovieState_Running);
+    XMovie_started_signal(self);
+    /* A BMP reader exposes exactly one frame. Finish synchronously instead of
+       scheduling a timer that would imply unsupported animation semantics. */
+    XMovie_setState(self, XMovieState_NotRunning);
+    XMovie_finished_signal(self);
+}
+
+bool XMovie_jumpToNextFrame(XMovie* self)
+{
+    (void)self;
+    return false;
+}
+void XMovie_setPaused(XMovie* self, bool paused)
+{
+    if (!self || !self->m_data) return;
+    if (paused) {
+        if (self->m_data->m_state == XMovieState_Running)
+            XMovie_setState(self, XMovieState_Paused);
+    } else if (self->m_data->m_state == XMovieState_Paused) {
+        XMovie_start(self);
+    }
+}
+void XMovie_stop(XMovie* self)
+{
+    if (!self || !self->m_data) return;
+    XMovie_setState(self, XMovieState_NotRunning);
+}
+
+static void XMovie_emit(XMovie* self, size_t signal, XVarList* args)
+{
+    if (self && ((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else if (args) XVarList_delete(args);
+}
+
+void* XMovie_started_signal(XMovie* self)
+{
+    XMovie_emit(self, (size_t)XMovie_started_signal, NULL);
+    return (void*)(size_t)XMovie_started_signal;
+}
+void* XMovie_resized_signal(XMovie* self, const XSize* size)
+{
+    XSize value = size ? *size : (XSize){0, 0};
+    XMovie_emit(self, (size_t)XMovie_resized_signal, XVarList_Create(XVar(XSize, value)));
+    return (void*)(size_t)XMovie_resized_signal;
+}
+void* XMovie_updated_signal(XMovie* self, const XRect* rect)
+{
+    XRect value = rect ? *rect : (XRect){0, 0, 0, 0};
+    XMovie_emit(self, (size_t)XMovie_updated_signal, XVarList_Create(XVar(XRect, value)));
+    return (void*)(size_t)XMovie_updated_signal;
+}
+void* XMovie_stateChanged_signal(XMovie* self, XMovieState state)
+{
+    XMovie_emit(self, (size_t)XMovie_stateChanged_signal,
+                XVarList_Create(XVar(XMovieState, state)));
+    return (void*)(size_t)XMovie_stateChanged_signal;
+}
+void* XMovie_error_signal(XMovie* self, XImageReaderError error)
+{
+    XMovie_emit(self, (size_t)XMovie_error_signal,
+                XVarList_Create(XVar(XImageReaderError, error)));
+    return (void*)(size_t)XMovie_error_signal;
+}
+void* XMovie_finished_signal(XMovie* self)
+{
+    XMovie_emit(self, (size_t)XMovie_finished_signal, NULL);
+    return (void*)(size_t)XMovie_finished_signal;
+}
+void* XMovie_frameChanged_signal(XMovie* self, int frameNumber)
+{
+    XMovie_emit(self, (size_t)XMovie_frameChanged_signal,
+                XVarList_Create(XVar(int, frameNumber)));
+    return (void*)(size_t)XMovie_frameChanged_signal;
+}

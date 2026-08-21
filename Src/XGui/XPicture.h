@@ -15,32 +15,14 @@ extern "C" {
 #include "XClass.h"
 #include "XData/XGeometry.h"
 #include "XTypes.h"
+#include "XString.h"
+
+typedef struct XIODevice XIODevice;
 
 /* XPicture owns a small, portable command stream.  XPainter deliberately
  * contains callbacks only; it has no dependency on a windowing toolkit. */
 typedef struct XImage XImage;
 typedef struct XPainter XPainter;
-
-typedef bool (*XPainter_drawLine)(XPainter* painter, int x1, int y1,
-                                  int x2, int y2);
-typedef bool (*XPainter_fillRect)(XPainter* painter, const XRect* rect,
-                                  uint32_t color);
-typedef bool (*XPainter_drawImage)(XPainter* painter, const XImage* image,
-                                   int x, int y);
-typedef bool (*XPainter_save)(XPainter* painter);
-typedef bool (*XPainter_restore)(XPainter* painter);
-
-struct XPainter
-{
-    void* userData;
-    XPainter_drawLine drawLine;
-    XPainter_fillRect fillRect;
-    XPainter_drawImage drawImage;
-    XPainter_save save;
-    XPainter_restore restore;
-};
-
-void XPainter_init(XPainter* self, void* userData);
 
 /* Stream constants are part of the XGui C ABI.  The byte stream is always
  * little-endian, regardless of the host architecture. */
@@ -87,6 +69,12 @@ XVtable* XPicture_class_init();
  */
 XPicture* XPicture_create_ex(XMemoryType memory);
 
+/** @brief 由已有记录创建深拷贝对象。 */
+XPicture* XPicture_create_copy(const XPicture* other, XMemoryType memory);
+
+/** @brief 创建对象并转移已有记录的所有权。 */
+XPicture* XPicture_create_move(XPicture* other, XMemoryType memory);
+
 /**
  * @brief      初始化 XPicture 实例
  * @param self          待初始化的 XPicture 对象指针
@@ -99,46 +87,53 @@ void XPicture_init(XPicture* self, int formatVersion);
  * @param self 目标 XPicture 对象指针
  * @param other 源 XPicture 对象指针
  */
-void XPicture_copy(XPicture* self, const XPicture* other);
 
 /**
  * @brief      移动构造函数
  * @param self 目标 XPicture 对象指针
  * @param other 源 XPicture 对象指针（移动后源对象变为空）
  */
-void XPicture_move(XPicture* self, XPicture* other);
 
 /**
  * @brief      释放 XPicture 资源
  * @param self 待释放的 XPicture 对象指针
  */
-void XPicture_deinit(XPicture* self);
+/** @brief 交换两个记录对象的数据所有权。 */
+void XPicture_swap(XPicture* self, XPicture* other);
 
 /**
  * @brief      虚函数调度：拷贝
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-void XPicture_copy_base(XPicture* dest, const XPicture* src);
-
 /**
- * @brief      虚函数调度：移动
- * @param dest 目标对象指针
- * @param src  源对象指针（移动后源对象变为空）
+ * @brief 通过 XClass 虚表复制绘图记录。
+ * @param self 目标绘图记录对象指针。
+ * @param other 源绘图记录对象指针。
  */
-void XPicture_move_base(XPicture* dest, XPicture* src);
+#define XPicture_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/**
+ * @brief 通过 XClass 虚表移动绘图记录。
+ * @param self 目标绘图记录对象指针。
+ * @param other 源绘图记录对象指针；移动后源对象为空。
+ */
+#define XPicture_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-void XPicture_deinit_base(XPicture* self);
+/** @brief 通过 XClass 虚表释放绘图记录。 @param self 待释放的绘图记录指针。 */
+#define XPicture_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
-void XPicture_delete_base(XPicture* self);
+/** @brief 删除堆上的绘图记录对象。 @param self 待删除的绘图记录指针。 */
+#define XPicture_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 
@@ -148,6 +143,12 @@ void XPicture_delete_base(XPicture* self);
  * @return 为 null 返回 true
  */
 bool XPicture_isNull(const XPicture* self);
+
+/** @brief 返回绘图设备类型（对标 QPicture::devType）。 */
+int XPicture_devType(const XPicture* self);
+
+/** @brief 返回底层绘图引擎；纯 C 记录无独立引擎时返回 NULL。 */
+void* XPicture_paintEngine(const XPicture* self);
 
 /**
  * @brief      获取绘图记录数据大小
@@ -197,12 +198,55 @@ bool XPicture_play(XPicture* self, XPainter* painter);
 
 /* Record commands into the portable stream.  All functions return false on
  * overflow, allocation failure, malformed existing data, or invalid input. */
+/**
+ * @brief 记录绘制直线命令。
+ * @param self 目标图片对象指针。
+ * @param x1 起点 X 坐标。
+ * @param y1 起点 Y 坐标。
+ * @param x2 终点 X 坐标。
+ * @param y2 终点 Y 坐标。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
 bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
+/**
+ * @brief 记录填充矩形命令。
+ * @param self 目标图片对象指针。
+ * @param rect 要填充的矩形。
+ * @param color 填充颜色，使用 ARGB32 表示。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
 bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color);
+/**
+ * @brief 记录绘制图像命令。
+ * @param self 目标图片对象指针。
+ * @param image 待绘制的源图像。
+ * @param x 目标左上角 X 坐标。
+ * @param y 目标左上角 Y 坐标。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
 bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y);
+/**
+ * @brief 记录保存绘制状态命令。
+ * @param self 目标图片对象指针。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
 bool XPicture_recordSave(XPicture* self);
+/**
+ * @brief 记录恢复绘制状态命令。
+ * @param self 目标图片对象指针。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
 bool XPicture_recordRestore(XPicture* self);
+/**
+ * @brief 清除图片中的全部绘制命令。
+ * @param self 目标图片对象指针。
+ */
 void XPicture_clearCommands(XPicture* self);
+/**
+ * @brief 检查图片数据是否为当前命令流格式。
+ * @param self 图片对象指针。
+ * @return 数据有效返回 true，否则返回 false。
+ */
 bool XPicture_isValidStream(const XPicture* self);
 
 /* ========== 文件操作 ========== */
@@ -213,7 +257,22 @@ bool XPicture_isValidStream(const XPicture* self);
  * @param fileName 文件名
  * @return 加载成功返回 true
  */
-bool XPicture_load(XPicture* self, const char* fileName);
+bool XPicture_load(XPicture* self, const XString* fileName);
+/**
+ * @brief 使用 UTF-8 文件名加载图片的兼容重载。
+ * @param self 目标图片对象指针。
+ * @param fileName UTF-8 编码的文件名。
+ * @return 加载成功返回 true，失败返回 false。
+ */
+bool XPicture_load_2(XPicture* self, const char* fileName);
+
+/**
+ * @brief 从 XIODevice 读取绘图记录。
+ * @param self 目标图片对象指针。
+ * @param device 输入设备指针，由调用方持有。
+ * @return 读取成功返回 true，否则返回 false。
+ */
+bool XPicture_load_device(XPicture* self, XIODevice* device);
 
 /**
  * @brief      保存绘图记录到文件
@@ -221,7 +280,22 @@ bool XPicture_load(XPicture* self, const char* fileName);
  * @param fileName 文件名
  * @return 保存成功返回 true
  */
-bool XPicture_save(const XPicture* self, const char* fileName);
+bool XPicture_save(const XPicture* self, const XString* fileName);
+/**
+ * @brief 使用 UTF-8 文件名保存图片的兼容重载。
+ * @param self 源图片对象指针。
+ * @param fileName UTF-8 编码的目标文件名。
+ * @return 保存成功返回 true，失败返回 false。
+ */
+bool XPicture_save_2(const XPicture* self, const char* fileName);
+
+/**
+ * @brief 将绘图记录写入 XIODevice。
+ * @param self 源图片对象指针。
+ * @param device 输出设备指针，由调用方持有。
+ * @return 写入成功返回 true，否则返回 false。
+ */
+bool XPicture_save_device(const XPicture* self, XIODevice* device);
 
 /* ========== 数据分离 ========== */
 
@@ -245,6 +319,7 @@ bool XPicture_isDetached(const XPicture* self);
 /* XClass create API default-memory wrappers. */
 #undef XPicture_create
 #define XPicture_create() XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+#define XPicture_create_copy_default(other) XPicture_create_copy((other), XCLASS_DEFAULT_MEMORY_TYPE)
+#define XPicture_create_move_default(other) XPicture_create_move((other), XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif /* XPICTURE_H */
-

@@ -40,7 +40,7 @@ static void XImageReaderFormatTest(void)
     XPrintf("===== 格式设置测试 =====\n");
     XImageReader reader;
     XImageReader_init(&reader);
-    XImageReader_setFormat(&reader, "PNG");
+    XImageReader_setFormat_2(&reader, "PNG");
     XPrintf("setFormat('PNG'): format=%s (期望:PNG)\n", XImageReader_format(&reader));
     XImageReader_setAutoDetectImageFormat(&reader, false);
     XPrintf("setAutoDetect(false): autoDetect=%s (期望:否)\n", XImageReader_autoDetectImageFormat(&reader) ? "是" : "否");
@@ -61,7 +61,7 @@ static void XImageReaderFileTest(void)
     XImageReader reader;
     XImageReader_init(&reader);
     /* 设置文件名 */
-    XImageReader_setFileName(&reader, "test.png");
+    XImageReader_setFileName_2(&reader, "test.png");
     XPrintf("setFileName('test.png'): fileName=%s\n", XImageReader_fileName(&reader) ? XImageReader_fileName(&reader) : "NULL");
     /* 设置裁剪矩形 */
     XRect clipRect = {10, 10, 50, 50};
@@ -156,5 +156,4 @@ void XMenu_XImageReaderTest(XMenu* root)
     XAction_setAction(action, XImageReaderStaticTest);
 }
 #endif // DEMOTEST
-
 

@@ -32,7 +32,7 @@ static void XImageWriterCreateTest(void)
     /* init_file */
     {
         XImageWriter writer;
-        XImageWriter_init_file(&writer, "output.png", "PNG");
+        XImageWriter_init_file_2(&writer, "output.png", "PNG");
         XPrintf("init_file('output.png','PNG'): fileName=%s, format=%s\n",
             XImageWriter_fileName(&writer) ? XImageWriter_fileName(&writer) : "NULL",
             XImageWriter_format(&writer) ? XImageWriter_format(&writer) : "NULL");
@@ -50,7 +50,7 @@ static void XImageWriterParamTest(void)
     XImageWriter writer;
     XImageWriter_init(&writer);
     /* 格式 */
-    XImageWriter_setFormat(&writer, "JPEG");
+    XImageWriter_setFormat_2(&writer, "JPEG");
     XPrintf("setFormat('JPEG'): format=%s (期望:JPEG)\n", XImageWriter_format(&writer));
     /* 质量 */
     XImageWriter_setQuality(&writer, 90);
@@ -59,7 +59,7 @@ static void XImageWriterParamTest(void)
     XImageWriter_setCompression(&writer, 5);
     XPrintf("setCompression(5): compression=%d (期望:5)\n", XImageWriter_compression(&writer));
     /* 子类型 */
-    XImageWriter_setSubType(&writer, "baseline");
+    XImageWriter_setSubType_2(&writer, "baseline");
     XPrintf("setSubType('baseline'): subType=%s\n", XImageWriter_subType(&writer) ? XImageWriter_subType(&writer) : "NULL");
     /* 优化写入 */
     XImageWriter_setOptimizedWrite(&writer, true);
@@ -71,7 +71,7 @@ static void XImageWriterParamTest(void)
     XImageWriter_setTransformation(&writer, XImageIOHandlerTransformation_Rotate90);
     XPrintf("setTransformation(Rotate90): transform=%d (期望:4)\n", XImageWriter_transformation(&writer));
     /* 文件名 */
-    XImageWriter_setFileName(&writer, "output.jpg");
+    XImageWriter_setFileName_2(&writer, "output.jpg");
     XPrintf("setFileName('output.jpg'): fileName=%s\n", XImageWriter_fileName(&writer) ? XImageWriter_fileName(&writer) : "NULL");
     XImageWriter_deinit_base(&writer);
     XPrintf("\n");
@@ -120,5 +120,4 @@ void XMenu_XImageWriterTest(XMenu* root)
     XAction_setAction(action, XImageWriterWriteTest);
 }
 #endif // DEMOTEST
-
 

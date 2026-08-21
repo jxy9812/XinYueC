@@ -34,7 +34,7 @@ static void XImageIOHandlerDeviceTest(void)
     XImageIOHandler handler;
     XImageIOHandler_init(&handler);
     /* 设置格式 */
-    XImageIOHandler_setFormat(&handler, "PNG");
+    XImageIOHandler_setFormat_2(&handler, "PNG");
     XPrintf("setFormat('PNG'): format=%s (期望:PNG)\n", XImageIOHandler_format(&handler));
     XImageIOHandler_deinit_base(&handler);
     XPrintf("\n");
@@ -114,5 +114,4 @@ void XMenu_XImageIOHandlerTest(XMenu* root)
     XAction_setAction(action, XImageIOHandlerStaticTest);
 }
 #endif // DEMOTEST
-
 

@@ -4,16 +4,21 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImage.h"
+#include "XImageCodec.h"
 #include "XImageFormat.h"
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
+#include "XIODevice.h"
+#include "XByteArray.h"
+#include "XStringList.h"
+#include "XVariant.h"
+#include "XFile.h"
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
-#include <stdio.h>
-#include <ctype.h>
+#include <math.h>
 
 /* ========== 私有数据结构 ========== */
 
@@ -29,6 +34,7 @@ typedef struct XImageData
     int              m_depth;            /**< 位深度 */
     int              m_bytesPerLine;     /**< 每行字节数 */
     XImageFormat     m_format;           /**< 像素格式 */
+    XColorSpace      m_colorSpace;       /**< 色彩空间描述 */
     int              m_colorCount;       /**< 颜色表颜色数量 */
     uint32_t*        m_colorTable;       /**< 颜色表指针 */
     int              m_dpmX;             /**< X 方向分辨率（点/米） */
@@ -42,9 +48,16 @@ typedef struct XImageData
     void*            m_cleanupInfo;      /**< 清理回调参数 */
     int64_t          m_cacheKey;         /**< 缓存键值 */
     int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
+    XStringList      m_textKeys;         /**< 文本元数据键列表 */
+    XStringList      m_textValues;       /**< 文本元数据值列表 */
 }XImageData;
 
 static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
+
+static uint8_t XImage_luma(uint32_t color);
+static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color);
+static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb);
+bool XImage_allGray(const XImage* self);
 
 static int64_t XImageData_nextCacheKey(void)
 {
@@ -59,6 +72,13 @@ static void XImageData_markDirty(XImageData* d)
 {
     if (d)
         d->m_cacheKey = XImageData_nextCacheKey();
+}
+
+static void XImageData_clearText(XImageData* d)
+{
+    if (!d) return;
+    XStringList_clear_base((XContainer*)&d->m_textKeys);
+    XStringList_clear_base((XContainer*)&d->m_textValues);
 }
 
 /**
@@ -97,11 +117,14 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     XImageData* d = (XImageData*)XMalloc_System(sizeof(XImageData));
     if (!d) return NULL;
     memset(d, 0, sizeof(XImageData));
+    XStringList_init(&d->m_textKeys);
+    XStringList_init(&d->m_textValues);
 
     XAtomic_init(d->m_refCount, 1);
     d->m_width = width;
     d->m_height = height;
     d->m_format = format;
+    d->m_colorSpace = XColorSpace_create();
     d->m_depth = depth;
     d->m_devicePixelRatio = 1.0f;
     d->m_cleanupFunc = cleanupFunc;
@@ -166,6 +189,7 @@ static void XImageData_unref(XImageData* d)
         }
         if (d->m_colorTable)
             XFree_System(d->m_colorTable);
+        XImageData_clearText(d);
         XFree_System(d);
     }
 }
@@ -186,6 +210,7 @@ static XImageData* XImageData_clone(const XImageData* source)
     copy->m_devicePixelRatio = source->m_devicePixelRatio;
     copy->m_offsetX = source->m_offsetX;
     copy->m_offsetY = source->m_offsetY;
+    copy->m_colorSpace = source->m_colorSpace;
     if (source->m_colorCount > 0 && source->m_colorTable)
     {
         if ((size_t)source->m_colorCount > SIZE_MAX / sizeof(uint32_t))
@@ -203,6 +228,8 @@ static XImageData* XImageData_clone(const XImageData* source)
                (size_t)source->m_colorCount * sizeof(uint32_t));
         copy->m_colorCount = source->m_colorCount;
     }
+    XStringList_copy_base((XClass*)&copy->m_textKeys, (const XClass*)&source->m_textKeys);
+    XStringList_copy_base((XClass*)&copy->m_textValues, (const XClass*)&source->m_textValues);
     return copy;
 }
 
@@ -298,64 +325,21 @@ void XImage_init_ex_2(XImage* self, int width, int height, XImageFormat format,
     if (self->m_data) self->m_data->m_devicePixelRatio = 1.0f;
 }
 
-void XImage_init_file(XImage* self, const char* fileName, const char* format)
+void XImage_init_file_2(XImage* self, const char* fileName, const char* format)
+{
+    XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
+    XString* formatString = format ? XString_create_utf8(format) : NULL;
+    XImage_init_file(self, fileNameString, formatString);
+    if (fileNameString) XString_delete_base((XClass*)fileNameString);
+    if (formatString) XString_delete_base((XClass*)formatString);
+}
+
+void XImage_init_file(XImage* self, const XString* fileName, const XString* format)
 {
     XImage_init(self);
     XImage_load(self, fileName, format);
 }
 
-void XImage_copy(XImage* self, const XImage* other)
-{
-    if (ISNULL(self, "XImage") || ISNULL(other, "XImage")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XImage_deinit_base(self);
-    XImage_init(self);
-    XImage_copy_base(self, other);
-}
-
-void XImage_move(XImage* self, XImage* other)
-{
-    if (ISNULL(self, "XImage") || ISNULL(other, "XImage")) return;
-    if (self == other) return;
-    if (!XClassIsVtableNull(self))
-        XImage_deinit_base(self);
-    XImage_init(self);
-    XImage_move_base(self, other);
-}
-
-void XImage_deinit(XImage* self)
-{
-    XImage_deinit_base(self);
-}
-
-void XImage_copy_base(XImage* dest, const XImage* src)
-{
-    if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XImage*, const XImage*))(dest, src);
-}
-
-void XImage_move_base(XImage* dest, XImage* src)
-{
-    if (ISNULL(dest, "XImage") || ISNULL(src, "XImage")) return;
-    if (ISNULL(XClassGetVtable(src), "Vtable")) return;
-    XClassGetVirtualFunc(src, EXClass_Move, void(*)(XImage*, XImage*))(dest, src);
-}
-
-void XImage_deinit_base(XImage* self)
-{
-    if (ISNULL(self, "XImage")) return;
-    if (ISNULL(XClassGetVtable(self), "Vtable")) return;
-    XClassGetVirtualFunc(self, EXClass_Deinit, void(*)(XImage*))(self);
-}
-
-
-
-void XImage_delete_base(XImage* self)
-{
-    XClass_delete_base((XClass*)self);
-}
 /* ========== 查询方法 ========== */
 
 bool XImage_isNull(const XImage* self)
@@ -398,9 +382,196 @@ int XImage_depth(const XImage* self)
     return (self && self->m_data) ? self->m_data->m_depth : 0;
 }
 
+int XImage_bitPlaneCount(const XImage* self)
+{
+    XImageFormat format = XImage_format(self);
+    switch (format)
+    {
+        case XImageFormat_RGB32:
+        case XImageFormat_RGBX8888:
+            return 24;
+        case XImageFormat_RGBX64:
+        case XImageFormat_RGBX16FPx4:
+            return 48;
+        case XImageFormat_RGBX32FPx4:
+            return 96;
+        case XImageFormat_BGR30:
+        case XImageFormat_RGB30:
+            return 30;
+        default:
+            return XImage_depth(self);
+    }
+}
+
 XImageFormat XImage_format(const XImage* self)
 {
     return (self && self->m_data) ? self->m_data->m_format : XImageFormat_Invalid;
+}
+
+XPixelFormat XImage_pixelFormat(const XImage* self)
+{
+    return XImageFormat_pixelFormat(XImage_format(self));
+}
+
+XColorSpace XImage_colorSpace(const XImage* self)
+{
+    if (self && self->m_data)
+        return self->m_data->m_colorSpace;
+    return XColorSpace_create();
+}
+
+void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
+{
+    if (!self || !self->m_data) return;
+    XImage_detach(self);
+    if (self->m_data)
+    {
+        self->m_data->m_colorSpace = colorSpace;
+        XImageData_markDirty(self->m_data);
+    }
+}
+
+bool XImage_hasColorSpace(const XImage* self)
+{
+    return self && self->m_data && XColorSpace_isValid(&self->m_data->m_colorSpace);
+}
+
+static float XImage_decodeTransfer(float value, XColorSpaceTransferFunction transfer,
+                                   float gamma)
+{
+    if (value <= 0.0f) return 0.0f;
+    if (value >= 1.0f) return 1.0f;
+    switch (transfer)
+    {
+        case XColorSpaceTransfer_Linear: return value;
+        case XColorSpaceTransfer_SRgb:
+            return value <= 0.04045f ? value / 12.92f : powf((value + 0.055f) / 1.055f, 2.4f);
+        case XColorSpaceTransfer_Gamma22:
+        case XColorSpaceTransfer_Gamma28:
+            return powf(value, gamma > 0.0f ? gamma :
+                        (transfer == XColorSpaceTransfer_Gamma28 ? 2.8f : 2.2f));
+        default:
+            return value;
+    }
+}
+
+static float XImage_encodeTransfer(float value, XColorSpaceTransferFunction transfer,
+                                   float gamma)
+{
+    if (value <= 0.0f) return 0.0f;
+    if (value >= 1.0f) return 1.0f;
+    switch (transfer)
+    {
+        case XColorSpaceTransfer_Linear: return value;
+        case XColorSpaceTransfer_SRgb:
+            return value <= 0.0031308f ? value * 12.92f : 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
+        case XColorSpaceTransfer_Gamma22:
+        case XColorSpaceTransfer_Gamma28:
+            return powf(value, 1.0f / (gamma > 0.0f ? gamma :
+                        (transfer == XColorSpaceTransfer_Gamma28 ? 2.8f : 2.2f)));
+        default:
+            return value;
+    }
+}
+
+static uint8_t XImage_colorSpaceChannel(float value)
+{
+    if (!(value > 0.0f)) return 0;
+    if (value >= 1.0f) return 255;
+    return (uint8_t)(value * 255.0f + 0.5f);
+}
+
+static void XImage_convertColorSpacePixels(const XImage* source,
+                                           XImage* target,
+                                           XColorSpace sourceSpace,
+                                           XColorSpace targetSpace)
+{
+    const bool sourceKnown = XColorSpace_isValid(&sourceSpace);
+    const bool targetKnown = XColorSpace_isValid(&targetSpace);
+    if (!source || !target || !sourceKnown || !targetKnown) return;
+    if (XColorSpace_equals(&sourceSpace, &targetSpace)) return;
+    const int width = XImage_width(source), height = XImage_height(source);
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            const uint32_t argb = XImage_pixel(source, x, y);
+            const float r = XImage_encodeTransfer(
+                XImage_decodeTransfer((float)((argb >> 16) & 0xffu) / 255.0f,
+                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
+                targetSpace.m_transferFunction, targetSpace.m_gamma);
+            const float g = XImage_encodeTransfer(
+                XImage_decodeTransfer((float)((argb >> 8) & 0xffu) / 255.0f,
+                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
+                targetSpace.m_transferFunction, targetSpace.m_gamma);
+            const float b = XImage_encodeTransfer(
+                XImage_decodeTransfer((float)(argb & 0xffu) / 255.0f,
+                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
+                targetSpace.m_transferFunction, targetSpace.m_gamma);
+            XImage_setPixel(target, x, y,
+                            (argb & 0xff000000u) |
+                            ((uint32_t)XImage_colorSpaceChannel(r) << 16) |
+                            ((uint32_t)XImage_colorSpaceChannel(g) << 8) |
+                            XImage_colorSpaceChannel(b));
+        }
+    }
+}
+
+void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
+                                  uint32_t flags, XImage* out)
+{
+    (void)flags;
+    if (!out) return;
+    if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace))
+    {
+        XImage_init(out);
+        return;
+    }
+    if (out == self)
+    {
+        XImage_convertToColorSpace(out, colorSpace, flags);
+        return;
+    }
+    XImage_copy_base(out, self);
+    XImage_convertColorSpacePixels(self, out, self->m_data->m_colorSpace, colorSpace);
+    XImage_setColorSpace(out, colorSpace);
+}
+
+bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
+                                uint32_t flags)
+{
+    (void)flags;
+    if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace)) return false;
+    const XColorSpace sourceSpace = self->m_data->m_colorSpace;
+    if (!XColorSpace_isValid(&sourceSpace)) return false;
+    XImage_detach(self);
+    XImage_convertColorSpacePixels(self, self, sourceSpace, colorSpace);
+    self->m_data->m_colorSpace = colorSpace;
+    XImageData_markDirty(self->m_data);
+    return true;
+}
+
+void XImage_applyColorTransform(const XImage* self, const XColorTransform* transform,
+                                XImageFormat format, uint32_t flags, XImage* out)
+{
+    if (!self || !out || !transform || !XColorSpace_isValid(&transform->m_target))
+    {
+        if (out) XImage_init(out);
+        return;
+    }
+    XColorSpace source = transform->m_source;
+    if (!XColorSpace_isValid(&source)) source = XImage_colorSpace(self);
+    XImage_copy_base(out, self);
+    if (format != XImageFormat_Invalid && format != XImage_format(out))
+    {
+        XImage converted;
+        XImage_init(&converted);
+        XImage_convertToFormat(out, format, flags, &converted);
+        XImage_move_base(out, &converted);
+        XImage_deinit_base(&converted);
+    }
+    XImage_convertColorSpacePixels(self, out, source, transform->m_target);
+    XImage_setColorSpace(out, transform->m_target);
 }
 
 int XImage_colorCount(const XImage* self)
@@ -449,6 +620,38 @@ void XImage_setColor(XImage* self, int index, uint32_t color)
     XImageData_markDirty(self->m_data);
 }
 
+int XImage_colorTable(const XImage* self, uint32_t* out, int maxCount)
+{
+    int count;
+    if (!self || !self->m_data) return 0;
+    count = self->m_data->m_colorCount;
+    if (out && maxCount > 0 && self->m_data->m_colorTable)
+    {
+        int copyCount = count < maxCount ? count : maxCount;
+        memcpy(out, self->m_data->m_colorTable, (size_t)copyCount * sizeof(uint32_t));
+    }
+    return count;
+}
+
+void XImage_setColorTable(XImage* self, const uint32_t* colors, int count)
+{
+    if (!self || !self->m_data || count < 0 || (count > 0 && !colors)) return;
+    if (count > 256 || (size_t)count > SIZE_MAX / sizeof(uint32_t)) return;
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    uint32_t* replacement = NULL;
+    if (count > 0)
+    {
+        replacement = (uint32_t*)XMalloc_System((size_t)count * sizeof(uint32_t));
+        if (!replacement) return;
+        memcpy(replacement, colors, (size_t)count * sizeof(uint32_t));
+    }
+    XFree_System(self->m_data->m_colorTable);
+    self->m_data->m_colorTable = replacement;
+    self->m_data->m_colorCount = count;
+    XImageData_markDirty(self->m_data);
+}
+
 void XImage_fill(XImage* self, uint32_t color)
 {
     if (!self || !self->m_data || !self->m_data->m_data) return;
@@ -470,6 +673,114 @@ bool XImage_hasAlpha(const XImage* self)
             if ((XImage_pixel(self, x, y) >> 24) != 0xFFu)
                 return true;
     return false;
+}
+
+bool XImage_isGrayscale(const XImage* self)
+{
+    return XImage_allGray(self);
+}
+
+XColor XImage_pixelColor(const XImage* self, int x, int y)
+{
+    if (!XImage_valid(self, x, y)) return XColor_create();
+    return XColor_create_argb(XImage_pixel(self, x, y));
+}
+
+void XImage_setPixelColor(XImage* self, int x, int y, const XColor* color)
+{
+    if (!color || !XColor_isValid(color)) return;
+    XImage_setPixel(self, x, y, XColor_rgba(color));
+}
+
+bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
+{
+    if (!self || !self->m_data || !alphaChannel || !alphaChannel->m_data ||
+        self->m_data->m_width != alphaChannel->m_data->m_width ||
+        self->m_data->m_height != alphaChannel->m_data->m_height)
+        return false;
+    if (!XImage_hasAlphaChannel(self))
+    {
+        XImage converted;
+        XImage_init(&converted);
+        XImage_convertToFormat(self, XImageFormat_ARGB32, 0, &converted);
+        if (XImage_isNull(&converted)) return false;
+        XImage_deinit_base(self);
+        self->m_data = converted.m_data;
+        converted.m_data = NULL;
+        XImage_deinit_base(&converted);
+    }
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return false;
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
+        {
+            uint32_t color = XImage_pixel(self, x, y);
+            uint32_t source = XImage_pixel(alphaChannel, x, y);
+            uint8_t alpha = XImage_hasAlphaChannel(alphaChannel)
+                ? (uint8_t)(source >> 24) : XImage_luma(source);
+            XImage_writePixelValue(self->m_data, x, y,
+                                   (color & 0x00ffffffu) | ((uint32_t)alpha << 24));
+        }
+    XImageData_markDirty(self->m_data);
+    return true;
+}
+
+static void XImage_initMask(const XImage* source, XImage* out)
+{
+    if (!out) return;
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+    XImage_init(out);
+    if (!source || !source->m_data || source->m_data->m_width <= 0 || source->m_data->m_height <= 0)
+        return;
+    XImage_init_ex(out, source->m_data->m_width, source->m_data->m_height, XImageFormat_Mono);
+    if (!out->m_data) return;
+    {
+        const uint32_t colors[2] = {0xff000000u, 0xffffffffu};
+        XImage_setColorTable(out, colors, 2);
+    }
+}
+
+void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
+{
+    (void)flags;
+    XImage_initMask(self, out);
+    if (!out || !out->m_data || !self || !self->m_data) return;
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
+        {
+            uint32_t alpha = XImage_pixel(self, x, y) >> 24;
+            XImage_writePixelIndex(out->m_data, x, y, alpha != 0 ? 1u : 0u);
+        }
+}
+
+void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
+{
+    uint32_t background;
+    (void)clipTight;
+    XImage_initMask(self, out);
+    if (!out || !out->m_data || !self || !self->m_data) return;
+    background = XImage_pixel(self, 0, 0) & 0x00ffffffu;
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
+        {
+            uint32_t pixel = XImage_pixel(self, x, y) & 0x00ffffffu;
+            XImage_writePixelIndex(out->m_data, x, y, pixel == background ? 0u : 1u);
+        }
+}
+
+void XImage_createMaskFromColor(const XImage* self, uint32_t color,
+                                XImageMaskMode mode, XImage* out)
+{
+    XImage_initMask(self, out);
+    if (!out || !out->m_data || !self || !self->m_data) return;
+    color &= 0x00ffffffu;
+    for (int y = 0; y < self->m_data->m_height; ++y)
+        for (int x = 0; x < self->m_data->m_width; ++x)
+        {
+            bool equal = (XImage_pixel(self, x, y) & 0x00ffffffu) == color;
+            bool opaque = mode == XImageMask_InColor ? equal : !equal;
+            XImage_writePixelIndex(out->m_data, x, y, opaque ? 1u : 0u);
+        }
 }
 
 /* ========== 像素数据访问 ========== */
@@ -1241,7 +1552,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
     if (self && out && (!horizontal && !vertical ||
                         (self->m_data && self->m_data->m_width <= 1 && self->m_data->m_height <= 1)))
     {
-        if ((const XImage*)out != self) XImage_copy(out, self);
+        if ((const XImage*)out != self) XImage_copy_base(out, self);
         return;
     }
     if (self && (const XImage*)out == self)
@@ -1494,156 +1805,354 @@ void XImage_scaledToHeight(const XImage* self, int height, uint32_t mode, XImage
     XImage_scaled(self, width, height, 0, mode, out);
 }
 
-/* ========== 文件操作 ========== */
-
-static uint16_t XImage_readLe16(const uint8_t* p)
+/* 将旧六参数仿射结构归一化为 Qt QTransform 同布局的 3x3 矩阵。 */
+static void XImage_transformMatrix(const XImageTransform* matrix, float out[9])
 {
-    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
-}
-
-static uint32_t XImage_readLe32(const uint8_t* p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void XImage_writeLe16(uint8_t* p, uint16_t value)
-{
-    p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8);
-}
-
-static void XImage_writeLe32(uint8_t* p, uint32_t value)
-{
-    p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8);
-    p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
-}
-
-static bool XImage_isBmpFormat(const char* format)
-{
-    return !format ||
-        (tolower((unsigned char)format[0]) == 'b' &&
-         tolower((unsigned char)format[1]) == 'm' &&
-         tolower((unsigned char)format[2]) == 'p' && format[3] == '\0');
-}
-
-bool XImage_load(XImage* self, const char* fileName, const char* format)
-{
-    if (!self || !fileName || !XImage_isBmpFormat(format)) return false;
-    FILE* file = fopen(fileName, "rb");
-    if (!file) return false;
-    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return false; }
-    long length = ftell(file);
-    if (length <= 0 || length > INT_MAX || fseek(file, 0, SEEK_SET) != 0)
-    { fclose(file); return false; }
-    uint8_t* bytes = (uint8_t*)XMalloc_System((size_t)length);
-    if (!bytes) { fclose(file); return false; }
-    bool readOk = fread(bytes, 1, (size_t)length, file) == (size_t)length;
-    fclose(file);
-    bool result = readOk && XImage_loadFromData(self, bytes, (int)length, format);
-    XFree_System(bytes);
-    return result;
-}
-
-bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const char* format)
-{
-    if (!self || !data || len < 54 || !XImage_isBmpFormat(format) ||
-        data[0] != 'B' || data[1] != 'M') return false;
-    uint32_t pixelOffset = XImage_readLe32(data + 10);
-    uint32_t dibSize = XImage_readLe32(data + 14);
-    int32_t width = (int32_t)XImage_readLe32(data + 18);
-    int32_t signedHeight = (int32_t)XImage_readLe32(data + 22);
-    uint16_t planes = XImage_readLe16(data + 26);
-    uint16_t bitsPerPixel = XImage_readLe16(data + 28);
-    uint32_t compression = XImage_readLe32(data + 30);
-    if (dibSize < 40 || (uint64_t)14 + dibSize > (uint32_t)len || width <= 0 ||
-        signedHeight == 0 || signedHeight == INT32_MIN || planes != 1 ||
-        (bitsPerPixel != 24 && bitsPerPixel != 32) || compression != 0)
-        return false;
-    int height = signedHeight < 0 ? -signedHeight : signedHeight;
-    uint64_t rowBytes = ((uint64_t)(uint32_t)width * bitsPerPixel + 31u) / 32u * 4u;
-    uint64_t imageBytes = rowBytes * (uint32_t)height;
-    if (rowBytes > INT_MAX || pixelOffset < 14u + dibSize ||
-        (uint64_t)pixelOffset + imageBytes > (uint32_t)len)
-        return false;
-
-    XImage temp;
-    XImage_init_ex(&temp, width, height,
-                   bitsPerPixel == 24 ? XImageFormat_RGB888 : XImageFormat_ARGB32);
-    if (XImage_isNull(&temp)) return false;
-    for (int y = 0; y < height; ++y)
-    {
-        int sourceY = signedHeight < 0 ? y : height - 1 - y;
-        const uint8_t* source = data + pixelOffset + (size_t)sourceY * (size_t)rowBytes;
-        uint8_t* target = temp.m_data->m_data + (size_t)y * temp.m_data->m_bytesPerLine;
-        for (int x = 0; x < width; ++x)
-        {
-            if (bitsPerPixel == 32)
-                memcpy(target + x * 4, source + x * 4, 4);
-            else
-            {
-                target[x * 3] = source[x * 3 + 2];
-                target[x * 3 + 1] = source[x * 3 + 1];
-                target[x * 3 + 2] = source[x * 3];
-            }
-        }
+    static const float identity[9] = {1.0f, 0.0f, 0.0f,
+                                      0.0f, 1.0f, 0.0f,
+                                      0.0f, 0.0f, 1.0f};
+    if (!matrix) {
+        memcpy(out, identity, sizeof(identity));
+        return;
     }
-    XImage_deinit_base(self);
-    self->m_data = temp.m_data;
-    temp.m_data = NULL;
+    out[0] = matrix->m11;
+    out[1] = matrix->m21;
+    out[2] = matrix->dx;
+    out[3] = matrix->m12;
+    out[4] = matrix->m22;
+    out[5] = matrix->dy;
+    out[6] = matrix->m13;
+    out[7] = matrix->m23;
+    out[8] = matrix->m33;
+    /* C aggregate initializers from the old API leave the new fields zero. */
+    if (fabsf(out[6]) < 1.0e-8f && fabsf(out[7]) < 1.0e-8f &&
+        fabsf(out[8]) < 1.0e-8f)
+        out[8] = 1.0f;
+}
+
+static bool XImage_transformInverse(const float matrix[9], float inverse[9])
+{
+    float c00 = matrix[4] * matrix[8] - matrix[5] * matrix[7];
+    float c01 = matrix[2] * matrix[7] - matrix[1] * matrix[8];
+    float c02 = matrix[1] * matrix[5] - matrix[2] * matrix[4];
+    float c10 = matrix[5] * matrix[6] - matrix[3] * matrix[8];
+    float c11 = matrix[0] * matrix[8] - matrix[2] * matrix[6];
+    float c12 = matrix[2] * matrix[3] - matrix[0] * matrix[5];
+    float c20 = matrix[3] * matrix[7] - matrix[4] * matrix[6];
+    float c21 = matrix[1] * matrix[6] - matrix[0] * matrix[7];
+    float c22 = matrix[0] * matrix[4] - matrix[1] * matrix[3];
+    float determinant = matrix[0] * c00 + matrix[1] * c10 + matrix[2] * c20;
+    if (fabsf(determinant) < 1.0e-8f || !isfinite(determinant))
+        return false;
+    inverse[0] = c00 / determinant; inverse[1] = c01 / determinant; inverse[2] = c02 / determinant;
+    inverse[3] = c10 / determinant; inverse[4] = c11 / determinant; inverse[5] = c12 / determinant;
+    inverse[6] = c20 / determinant; inverse[7] = c21 / determinant; inverse[8] = c22 / determinant;
     return true;
 }
 
-bool XImage_save(const XImage* self, const char* fileName, const char* format, int quality)
+void XImage_trueMatrix(const XImageTransform* matrix, int width, int height,
+                       XImageTransform* out, XSize* transformedSize)
 {
-    (void)quality;
-    if (!self || XImage_isNull(self) || !fileName || !XImage_isBmpFormat(format)) return false;
-    bool withAlpha = XImage_hasAlphaChannel(self);
-    XImage converted;
-    XImage_init(&converted);
-    XImage_convertToFormat(self, withAlpha ? XImageFormat_ARGB32 : XImageFormat_RGB888, 0, &converted);
-    if (XImage_isNull(&converted)) return false;
-    uint16_t bpp = withAlpha ? 32 : 24;
-    uint64_t rowBytes64 = ((uint64_t)(uint32_t)XImage_width(&converted) * bpp + 31u) / 32u * 4u;
-    uint64_t imageBytes64 = rowBytes64 * (uint32_t)XImage_height(&converted);
-    if (imageBytes64 > UINT32_MAX - 54u)
-    { XImage_deinit_base(&converted); return false; }
-    uint32_t rowBytes = (uint32_t)rowBytes64;
-    uint32_t imageBytes = (uint32_t)imageBytes64;
-    uint8_t header[54] = {0};
-    header[0] = 'B'; header[1] = 'M';
-    XImage_writeLe32(header + 2, 54u + imageBytes);
-    XImage_writeLe32(header + 10, 54u);
-    XImage_writeLe32(header + 14, 40u);
-    XImage_writeLe32(header + 18, (uint32_t)XImage_width(&converted));
-    XImage_writeLe32(header + 22, (uint32_t)XImage_height(&converted));
-    XImage_writeLe16(header + 26, 1u);
-    XImage_writeLe16(header + 28, bpp);
-    XImage_writeLe32(header + 34, imageBytes);
-    FILE* file = fopen(fileName, "wb");
-    if (!file) { XImage_deinit_base(&converted); return false; }
-    bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header);
-    uint8_t padding[3] = {0};
-    int pixelBytes = bpp / 8;
-    for (int y = XImage_height(&converted) - 1; ok && y >= 0; --y)
+    float m[9];
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    bool valid = true;
+    XImage_transformMatrix(matrix, m);
+    for (int i = 0; i < 4; ++i)
     {
-        const uint8_t* source = XImage_constScanLine(&converted, y);
-        for (int x = 0; ok && x < XImage_width(&converted); ++x)
+        float x = (i & 1) ? (float)width : 0.0f;
+        float y = (i & 2) ? (float)height : 0.0f;
+        float denominator = m[6] * x + m[7] * y + m[8];
+        float transformedX;
+        float transformedY;
+        if (fabsf(denominator) < 1.0e-8f || !isfinite(denominator)) {
+            valid = false;
+            break;
+        }
+        transformedX = (m[0] * x + m[1] * y + m[2]) / denominator;
+        transformedY = (m[3] * x + m[4] * y + m[5]) / denominator;
+        if (!isfinite(transformedX) || !isfinite(transformedY)) {
+            valid = false;
+            break;
+        }
+        if (i == 0 || transformedX < minX) minX = transformedX;
+        if (i == 0 || transformedY < minY) minY = transformedY;
+        if (i == 0 || transformedX > maxX) maxX = transformedX;
+        if (i == 0 || transformedY > maxY) maxY = transformedY;
+    }
+    if (!valid) {
+        if (out) memset(out, 0, sizeof(*out));
+        if (transformedSize) { transformedSize->width = 0; transformedSize->height = 0; }
+        return;
+    }
+    int resultWidth = (int)ceilf(maxX - floorf(minX));
+    int resultHeight = (int)ceilf(maxY - floorf(minY));
+    if (resultWidth < 0) resultWidth = 0;
+    if (resultHeight < 0) resultHeight = 0;
+    if (out)
+    {
+        out->m11 = m[0] - floorf(minX) * m[6];
+        out->m21 = m[1] - floorf(minX) * m[7];
+        out->dx  = m[2] - floorf(minX) * m[8];
+        out->m12 = m[3] - floorf(minY) * m[6];
+        out->m22 = m[4] - floorf(minY) * m[7];
+        out->dy  = m[5] - floorf(minY) * m[8];
+        out->m13 = m[6]; out->m23 = m[7]; out->m33 = m[8];
+    }
+    if (transformedSize) {
+        transformedSize->width = resultWidth;
+        transformedSize->height = resultHeight;
+    }
+}
+
+void XImage_transformed(const XImage* self, const XImageTransform* matrix,
+                        uint32_t mode, XImage* out)
+{
+    XImageTransform adjusted;
+    XSize size;
+    float transform[9];
+    float inverse[9];
+    (void)mode;
+    if (!out) return;
+    /* QImage::transformed returns a value; preserve the source when the C
+     * output parameter aliases it. */
+    if (self == out && self)
+    {
+        XImage sourceCopy;
+        XImage_init(&sourceCopy);
+        XImage_copy_base(&sourceCopy, self);
+        XImage_transformed(&sourceCopy, matrix, mode, out);
+        XImage_deinit_base(&sourceCopy);
+        return;
+    }
+    XImage_trueMatrix(matrix, self ? XImage_width(self) : 0,
+                      self ? XImage_height(self) : 0, &adjusted, &size);
+    if (!self || !self->m_data || size.width <= 0 || size.height <= 0)
+    {
+        XImage_init(out);
+        return;
+    }
+    XImage_transformMatrix(&adjusted, transform);
+    if (!XImage_transformInverse(transform, inverse))
+    {
+        XImage_init(out);
+        return;
+    }
+    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+    XImage_init(out);
+    XImage_init_ex(out, size.width, size.height, self->m_data->m_format);
+    if (!out->m_data) return;
+    for (int y = 0; y < size.height; ++y)
+        for (int x = 0; x < size.width; ++x)
         {
-            if (withAlpha)
-                ok = fwrite(source + x * 4, 1, 4, file) == 4;
-            else
+            float tx = (float)x + 0.5f;
+            float ty = (float)y + 0.5f;
+            float sourceW = inverse[6] * tx + inverse[7] * ty + inverse[8];
+            float sourceX;
+            float sourceY;
+            if (fabsf(sourceW) < 1.0e-8f || !isfinite(sourceW)) continue;
+            sourceX = (inverse[0] * tx + inverse[1] * ty + inverse[2]) / sourceW - 0.5f;
+            sourceY = (inverse[3] * tx + inverse[4] * ty + inverse[5]) / sourceW - 0.5f;
+            int sx = (int)floorf(sourceX + 0.5f);
+            int sy = (int)floorf(sourceY + 0.5f);
+            if (sx >= 0 && sy >= 0 && sx < self->m_data->m_width && sy < self->m_data->m_height)
             {
-                uint8_t bgr[3] = {source[x * 3 + 2], source[x * 3 + 1], source[x * 3]};
-                ok = fwrite(bgr, 1, 3, file) == 3;
+                if (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB)
+                    XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, sx, sy));
+                else
+                    XImage_writePixelValue(out->m_data, x, y, XImage_pixel(self, sx, sy));
             }
         }
-        uint32_t paddingBytes = rowBytes - (uint32_t)XImage_width(&converted) * pixelBytes;
-        if (ok && paddingBytes)
-            ok = fwrite(padding, 1, paddingBytes, file) == paddingBytes;
+}
+
+/* ========== 文件操作 ========== */
+
+bool XImage_load_2(XImage* self, const char* fileName, const char* format)
+{
+    XString* path; XString* type; XFile* file; XByteArray* bytes; bool result;
+    if (!self || !fileName) return false;
+    path = XString_create_utf8(fileName); type = format ? XString_create_utf8(format) : NULL;
+    file = path ? XFile_create_2(path) : NULL;
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); return false; }
+    bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file);
+    result = bytes && XByteArray_size_base((const XContainer*)bytes) <= INT_MAX && XImage_loadFromData(self, XByteArray_data(bytes), (int)XByteArray_size_base((const XContainer*)bytes), type);
+    if (bytes) XByteArray_delete_base((XClass*)bytes); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); return result;
+}
+
+bool XImage_load(XImage* self, const XString* fileName, const XString* format)
+{
+    return XImage_load_2(self, XString_toUtf8(fileName), XString_toUtf8(format));
+}
+
+bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const char* format)
+{
+    XString* type = NULL;
+    bool result = false;
+    if (!self || !data || len <= 0) return false;
+#if XIMAGECODEC_ON
+    {
+        XImageCodecFormat codecFormat = XImageCodec_formatFromName_2(format);
+        type = (format && format[0]) ? XString_create_utf8(format) : NULL;
+        if (codecFormat == XImageCodecFormat_Unknown)
+            codecFormat = XImageCodec_detect(data, (size_t)len);
+        result = XImageCodec_decode(data, (size_t)len, codecFormat, self);
     }
-    if (fclose(file) != 0) ok = false;
-    XImage_deinit_base(&converted);
-    return ok;
+#endif
+    if (type) XString_delete_base((XClass*)type);
+    return result;
+}
+
+bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const XString* format)
+{
+    return XImage_loadFromData_2(self, data, len, XString_toUtf8(format));
+}
+
+bool XImage_save_2(const XImage* self, const char* fileName, const char* format, int quality)
+{
+    XString* path; XString* type; XString* extension = NULL; XFile* file = NULL; XByteArray* bytes = NULL; bool ok = false;
+    if (!self || !fileName) return false;
+    path = XString_create_utf8(fileName); type = format ? XString_create_utf8(format) : NULL;
+    if (!type) { const char* dot = strrchr(fileName, '.'); extension = dot ? XString_create_utf8(dot + 1) : NULL; }
+#if XIMAGECODEC_ON
+    {
+        XImageCodecFormat codecFormat = XImageCodec_formatFromName(type ? type : extension);
+        file = path ? XFile_create_2(path) : NULL; bytes = XByteArray_create();
+        ok = file && bytes && codecFormat != XImageCodecFormat_Unknown && XImageCodec_encode(self, codecFormat, quality, bytes) && XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create) && XIODevice_write_1((XIODevice*)file, (const char*)XByteArray_data(bytes), (int64_t)XByteArray_size_base((const XContainer*)bytes)) == (int64_t)XByteArray_size_base((const XContainer*)bytes);
+    }
+#endif
+    if (file) { XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); } if (bytes) XByteArray_delete_base((XClass*)bytes); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); if (extension) XString_delete_base((XClass*)extension); return ok;
+}
+
+bool XImage_save(const XImage* self, const XString* fileName, const XString* format, int quality)
+{
+    return XImage_save_2(self, XString_toUtf8(fileName), XString_toUtf8(format), quality);
+}
+
+bool XImage_loadDevice_2(XImage* self, XIODevice* device, const char* format)
+{
+    XByteArray* bytes;
+    bool result;
+    if (!self || !device || !XIODevice_isOpen(device) || !XIODevice_isReadable(device)) return false;
+    bytes = XIODevice_readAll_3(device);
+    if (!bytes) return false;
+    result = XImage_loadFromData_2(self, XByteArray_data(bytes),
+                                 (int)XByteArray_size_base((const XContainer*)bytes), format);
+    XByteArray_delete_base((XClass*)bytes);
+    return result;
+}
+
+bool XImage_loadDevice(XImage* self, XIODevice* device, const XString* format)
+{
+    return XImage_loadDevice_2(self, device, XString_toUtf8(format));
+}
+
+bool XImage_saveDevice_2(const XImage* self, XIODevice* device, const char* format, int quality)
+{
+    XString* type = format ? XString_create_utf8(format) : NULL; XByteArray* bytes = XByteArray_create(); bool openedHere = false, ok = false;
+#if XIMAGECODEC_ON
+    { XImageCodecFormat codecFormat = XImageCodec_formatFromName(type);
+    if (self && device && bytes && codecFormat != XImageCodecFormat_Unknown && XImageCodec_encode(self, codecFormat, quality, bytes)) { if (!XIODevice_isOpen(device)) { openedHere = XIODevice_open_base(device, XIODevice_WriteOnly | XIODevice_Truncate); } else openedHere = false; ok = (XIODevice_isWritable(device) && XIODevice_write_1(device, (const char*)XByteArray_data(bytes), (int64_t)XByteArray_size_base((const XContainer*)bytes)) == (int64_t)XByteArray_size_base((const XContainer*)bytes)); if (openedHere) XIODevice_close_base(device); } }
+#endif
+    if (bytes) XByteArray_delete_base((XClass*)bytes); if (type) XString_delete_base((XClass*)type); return ok;
+}
+
+bool XImage_saveDevice(const XImage* self, XIODevice* device, const XString* format, int quality)
+{
+    return XImage_saveDevice_2(self, device, XString_toUtf8(format), quality);
+}
+
+int XImage_textCount(const XImage* self)
+{
+    return self && self->m_data ? (int)XStringList_size_base((const XContainer*)&self->m_data->m_textKeys) : 0;
+}
+
+const char* XImage_textKey_2(const XImage* self, int index)
+{
+    return XString_toUtf8(XImage_textKey_const(self, index));
+}
+
+const XString* XImage_textKey_const(const XImage* self, int index)
+{
+    if (!self || !self->m_data || index < 0 || index >= XImage_textCount(self)) return NULL;
+    return (const XString*)XStringList_at_base((const XVector*)&self->m_data->m_textKeys, index);
+}
+
+XString* XImage_textKey(const XImage* self, int index)
+{
+    const XString* value = XImage_textKey_const(self, index);
+    return value ? XString_create_copy(value) : XString_create();
+}
+
+const char* XImage_text_2(const XImage* self, const char* key)
+{
+    XString* keyString;
+    const XString* value;
+    if (!key) return NULL;
+    keyString = XString_create_utf8(key);
+    if (!keyString) return NULL;
+    value = XImage_text_const(self, keyString);
+    XString_delete_base((XClass*)keyString);
+    return value ? XString_toUtf8(value) : NULL;
+}
+
+void XImage_setText_2(XImage* self, const char* key, const char* value)
+{
+    XString* keyString;
+    XString* valueString;
+    if (!key || !value) return;
+    keyString = XString_create_utf8(key);
+    valueString = XString_create_utf8(value);
+    if (keyString && valueString) XImage_setText(self, keyString, valueString);
+    if (keyString) XString_delete_base((XClass*)keyString);
+    if (valueString) XString_delete_base((XClass*)valueString);
+}
+
+XString* XImage_text(const XImage* self, const XString* key)
+{
+    const XString* value = XImage_text_const(self, key);
+    return value ? XString_create_copy(value) : XString_create();
+}
+
+const XString* XImage_text_const(const XImage* self, const XString* key)
+{
+    int count;
+    if (!self || !self->m_data || !key) return NULL;
+    count = XImage_textCount(self);
+    for (int i = 0; i < count; ++i)
+    {
+        const XString* item = (const XString*)XStringList_at_base((const XVector*)&self->m_data->m_textKeys, i);
+        if (item && XString_equals(item, key, XChar_CaseSensitive))
+            return (const XString*)XStringList_at_base((const XVector*)&self->m_data->m_textValues, i);
+    }
+    return NULL;
+}
+
+void XImage_setText(XImage* self, const XString* key, const XString* value)
+{
+    int count;
+    if (!self || !self->m_data || !key || !value) return;
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    count = XImage_textCount(self);
+    for (int i = 0; i < count; ++i)
+    {
+        XString* item = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textKeys, i);
+        if (item && XString_equals(item, key, XChar_CaseSensitive))
+        {
+            XString* target = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textValues, i);
+            if (!target) return;
+            XString_copy_base((XClass*)target, (const XClass*)value);
+            XImageData_markDirty(self->m_data);
+            return;
+        }
+    }
+    if (!XStringList_push_back_base((XVector*)&self->m_data->m_textKeys, (void*)key) ||
+        !XStringList_push_back_base((XVector*)&self->m_data->m_textValues, (void*)value))
+    {
+        if (XImage_textCount(self) > count)
+            XStringList_remove_base((XVector*)&self->m_data->m_textKeys, count, 1);
+        return;
+    }
+    XImageData_markDirty(self->m_data);
 }
 
 /* ========== 辅助数据 ========== */
@@ -1699,6 +2208,18 @@ void XImage_offset(const XImage* self, XPoint* out)
     }
 }
 
+XVariant* XImage_toVariant(const XImage* self)
+{
+    return XVariant_create_ptr((void*)self);
+}
+
+XImage* XImage_fromVariant(const XVariant* variant)
+{
+    if (!variant || XVariant_type((XVariant*)variant) != XVariantType_Ptr)
+        return NULL;
+    return (XImage*)XVariant_toPtr(variant);
+}
+
 void XImage_setOffset(XImage* self, const XPoint* pos)
 {
     if (!self || !self->m_data || !pos) return;
@@ -1736,13 +2257,20 @@ bool XImage_isDetached(const XImage* self)
 
 /* ========== 静态工具方法 ========== */
 
-void XImage_fromData(const uint8_t* data, int size, const char* format, XImage* out)
+void XImage_fromData_2(const uint8_t* data, int size, const char* format, XImage* out)
+{
+    XString* formatString = format ? XString_create_utf8(format) : NULL;
+    XImage_fromData(data, size, formatString, out);
+    if (formatString) XString_delete_base((XClass*)formatString);
+}
+
+void XImage_fromData(const uint8_t* data, int size, const XString* format, XImage* out)
 {
     XImage_init(out);
     XImage_loadFromData(out, data, size, format);
 }
 
-const char* XImage_formatToStr(XImageFormat format)
+const char* XImage_formatToStr_2(XImageFormat format)
 {
     switch (format)
     {
@@ -1785,6 +2313,11 @@ const char* XImage_formatToStr(XImageFormat format)
         case XImageFormat_CMYK8888: return "CMYK8888";
         default: return "Unknown";
     }
+}
+
+XString* XImage_formatToStr(XImageFormat format)
+{
+    return XString_create_utf8(XImage_formatToStr_2(format));
 }
 
 
