@@ -438,7 +438,7 @@ XString* XAnyStringView_toString(const XAnyStringView* self);
 #ifdef __cplusplus
 }
 #endif
-#include "XAnyStringView_iterator/XAnyStringView_iterator.h"    ///< XAnyStringView 正向迭代器
-#include "XAnyStringView_iterator/XAnyStringView_reverse_iterator.h"  ///< XAnyStringView 反向迭代器
+#include "XAnyStringView_iterator.h"    ///< XAnyStringView 正向迭代器
+#include "XAnyStringView_reverse_iterator.h"  ///< XAnyStringView 反向迭代器
 
 #endif // !XANYSTRINGVIEW_H

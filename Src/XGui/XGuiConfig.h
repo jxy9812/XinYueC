@@ -1,0 +1,183 @@
+﻿/****************************************************************************
+ * @file       XGuiConfig.h
+ * @brief      XGui 模块总开关与子功能配置。
+ * @details    CXinYueConfig.h 只保留 XGUI_ON 总开关入口；所有 GUI 子开关
+ *             在本文件集中定义。嵌入式构建只需 -DXGUI_ON=0 即可裁剪整个
+ *             XGui，同时保留各子开关名称供桌面构建做精细裁剪。
+ ****************************************************************************/
+#ifndef XGUICONFIG_H
+#define XGUICONFIG_H
+
+#include "CXinYueConfig.h"
+
+#ifndef XGUI_ON
+#define XGUI_ON 1
+#endif
+
+/* 图像与窗口基础模块。 */
+#ifndef XIMAGECODEC_ON
+#define XIMAGECODEC_ON 1
+#endif
+#ifndef XSCREEN_ON
+#define XSCREEN_ON 1
+#endif
+#ifndef XSURFACEFORMAT_ON
+#define XSURFACEFORMAT_ON 1
+#endif
+#ifndef XCURSOR_ON
+#define XCURSOR_ON 1
+#endif
+#ifndef XWINDOW_ON
+#define XWINDOW_ON 1
+#endif
+#ifndef XACCESSIBLE_ON
+#define XACCESSIBLE_ON 1
+#endif
+
+/* 应用、样式、剪贴板与 MIME。 */
+#ifndef XGUIAPPLICATION_ON
+#define XGUIAPPLICATION_ON 1
+#endif
+#ifndef XSTYLEHINTS_ON
+#define XSTYLEHINTS_ON 1
+#endif
+#ifndef XCLIPBOARD_ON
+#define XCLIPBOARD_ON 1
+#endif
+#ifndef XMIMEDATA_ON
+#define XMIMEDATA_ON 1
+#endif
+#ifndef XPALETTE_ON
+#define XPALETTE_ON 1
+#endif
+
+/* 平台集成与平台资源。 */
+#ifndef XPLATFORMINTEGRATION_ON
+#define XPLATFORMINTEGRATION_ON 1
+#endif
+#ifndef XPLATFORMNATIVEINTERFACE_ON
+#define XPLATFORMNATIVEINTERFACE_ON 1
+#endif
+#ifndef XPLATFORMWINDOW_ON
+#define XPLATFORMWINDOW_ON 1
+#endif
+#ifndef XPLATFORMINPUTCTX_ON
+#define XPLATFORMINPUTCTX_ON 1
+#endif
+#ifndef XBACKINGSTORE_ON
+#define XBACKINGSTORE_ON 1
+#endif
+#ifndef XPLATFORMBACKINGSTORE_ON
+#define XPLATFORMBACKINGSTORE_ON 1
+#endif
+
+/* 控件、布局、输入法与窗口事件。 */
+#ifndef XAPPLICATION_ON
+#define XAPPLICATION_ON 1
+#endif
+#ifndef XWIDGET_ON
+#define XWIDGET_ON 1
+#endif
+#ifndef XLAYOUT_ON
+#define XLAYOUT_ON 1
+#endif
+#ifndef XINPUTMETHOD_ON
+#define XINPUTMETHOD_ON 1
+#endif
+#ifndef XWINDOWEVENT_ON
+#define XWINDOWEVENT_ON 1
+#endif
+#ifndef XWINDOWSYSTEMINTERFACE_ON
+#define XWINDOWSYSTEMINTERFACE_ON 1
+#endif
+
+/* 原生窗口与系统无障碍平台后端。 */
+#ifndef XPLATFORMNATIVEWINDOW_ON
+#define XPLATFORMNATIVEWINDOW_ON 1
+#endif
+#ifndef XPLATFORMNATIVEWINDOW_X11_ON
+#define XPLATFORMNATIVEWINDOW_X11_ON 1
+#endif
+#ifndef XPLATFORMNATIVEWINDOW_WIN32_ON
+#define XPLATFORMNATIVEWINDOW_WIN32_ON 1
+#endif
+#ifndef XPLATFORMACCESSIBILITY_ATSPI_ON
+#define XPLATFORMACCESSIBILITY_ATSPI_ON 1
+#endif
+#ifndef XPLATFORMACCESSIBILITY_UIA_ON
+#define XPLATFORMACCESSIBILITY_UIA_ON 1
+#endif
+
+/* 保留原有模块依赖：布局和控件级应用不能脱离其承载对象单独存在。 */
+#if !XWIDGET_ON || !XGUIAPPLICATION_ON || !XWINDOW_ON
+#undef XLAYOUT_ON
+#define XLAYOUT_ON 0
+#endif
+#if !XGUIAPPLICATION_ON
+#undef XAPPLICATION_ON
+#define XAPPLICATION_ON 0
+#endif
+
+/* XGui 总开关关闭时，所有 GUI 子模块统一裁剪。 */
+#if !XGUI_ON
+#undef XIMAGECODEC_ON
+#define XIMAGECODEC_ON 0
+#undef XSCREEN_ON
+#define XSCREEN_ON 0
+#undef XSURFACEFORMAT_ON
+#define XSURFACEFORMAT_ON 0
+#undef XCURSOR_ON
+#define XCURSOR_ON 0
+#undef XWINDOW_ON
+#define XWINDOW_ON 0
+#undef XACCESSIBLE_ON
+#define XACCESSIBLE_ON 0
+#undef XGUIAPPLICATION_ON
+#define XGUIAPPLICATION_ON 0
+#undef XSTYLEHINTS_ON
+#define XSTYLEHINTS_ON 0
+#undef XCLIPBOARD_ON
+#define XCLIPBOARD_ON 0
+#undef XMIMEDATA_ON
+#define XMIMEDATA_ON 0
+#undef XPALETTE_ON
+#define XPALETTE_ON 0
+#undef XPLATFORMINTEGRATION_ON
+#define XPLATFORMINTEGRATION_ON 0
+#undef XPLATFORMNATIVEINTERFACE_ON
+#define XPLATFORMNATIVEINTERFACE_ON 0
+#undef XPLATFORMWINDOW_ON
+#define XPLATFORMWINDOW_ON 0
+#undef XPLATFORMINPUTCTX_ON
+#define XPLATFORMINPUTCTX_ON 0
+#undef XBACKINGSTORE_ON
+#define XBACKINGSTORE_ON 0
+#undef XPLATFORMBACKINGSTORE_ON
+#define XPLATFORMBACKINGSTORE_ON 0
+#undef XAPPLICATION_ON
+#define XAPPLICATION_ON 0
+#undef XWIDGET_ON
+#define XWIDGET_ON 0
+#undef XLAYOUT_ON
+#define XLAYOUT_ON 0
+#undef XINPUTMETHOD_ON
+#define XINPUTMETHOD_ON 0
+#undef XWINDOWEVENT_ON
+#define XWINDOWEVENT_ON 0
+#undef XWINDOWSYSTEMINTERFACE_ON
+#define XWINDOWSYSTEMINTERFACE_ON 0
+#undef XPLATFORMNATIVEWINDOW_ON
+#define XPLATFORMNATIVEWINDOW_ON 0
+#undef XPLATFORMNATIVEWINDOW_X11_ON
+#define XPLATFORMNATIVEWINDOW_X11_ON 0
+#undef XPLATFORMNATIVEWINDOW_WIN32_ON
+#define XPLATFORMNATIVEWINDOW_WIN32_ON 0
+#undef XPLATFORMACCESSIBILITY_ATSPI_ON
+#define XPLATFORMACCESSIBILITY_ATSPI_ON 0
+#undef XPLATFORMACCESSIBILITY_UIA_ON
+#define XPLATFORMACCESSIBILITY_UIA_ON 0
+#endif
+
+#include "Graphics/XImageCodec/XImageCodec_config.h"
+
+#endif /* XGUICONFIG_H */

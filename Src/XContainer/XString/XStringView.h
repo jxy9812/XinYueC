@@ -668,8 +668,8 @@ float XStringView_toFloat(const XStringView* self, bool* ok);
 */
 double XStringView_toDouble(const XStringView* self, bool* ok);
 
-#include "XStringView_iterator/XStringView_iterator.h"    ///< XStringView 正向迭代器
-#include "XStringView_iterator/XStringView_reverse_iterator.h"  ///< XStringView 反向迭代器
+#include "XStringView_iterator.h"    ///< XStringView 正向迭代器
+#include "XStringView_reverse_iterator.h"  ///< XStringView 反向迭代器
 
 #ifdef __cplusplus
 }

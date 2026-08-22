@@ -62,34 +62,8 @@ void XPrintf_outputPop(XPrintfOutputScope* scope)
 /*                        Windows 控制台编码控制                               */
 /* ========================================================================== */
 #ifdef _WIN32
-#include <windows.h>
-#include <locale.h>
-
-#if XPRINTF_UTF8_CONSOLE
-/* UTF-8模式：首次调用时将控制台切换为UTF-8，后续直接输出UTF-8 */
-static void XPrintf_initConsole(void)
-{
-    static int s_done = 0;
-    if (s_done) return;
-    s_done = 1;
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-    setlocale(LC_ALL, ".utf8");
-}
-#else
-/* GBK模式：首次调用时确保控制台为系统ANSI代码页(CP_ACP)，与GBK转换匹配 */
-static void XPrintf_initConsole(void)
-{
-    static int s_done = 0;
-    if (s_done) return;
-    s_done = 1;
-    UINT acp = GetACP();
-    if (GetConsoleOutputCP() != acp)
-        SetConsoleOutputCP(acp);
-    if (GetConsoleCP() != acp)
-        SetConsoleCP(acp);
-}
-#endif
+/* Windows 控制台代码页切换由 Drive/windows 提供；公共 Src 不包含平台头。 */
+extern void XPrintf_platformInitConsole(void);
 #endif /* _WIN32 */
 
 /* ========================================================================== */
@@ -109,7 +83,7 @@ int XPrintf_2(const XString* str)
     }
 #endif
 #ifdef _WIN32
-    XPrintf_initConsole();
+    XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
     return xprintf_write_stdout(utf8, strlen(utf8));
 #else

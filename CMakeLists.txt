@@ -69,6 +69,59 @@ add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${
 # XRandomGenerator_*、XTimerData_* 等），与 XinYueC 存在双向依赖，无法独立为动态库。
 # 因此保持为静态库，由 XinYueC 动态库统一链接。
 
+# ==================== X11（Linux 原生窗口后端） =====================
+# XPlatformNativeWindow_posix.c 需要 Xlib 头与运行库。检测到 X11 时注入
+# XINYUE_C_HAS_X11=1 编译宏并公开链接 X11 库（静态库 PUBLIC 传播给可执行程序，
+# 动态库 PRIVATE 仅自身链接阶段解析）；未检出时 Posix 原生窗口文件整段被
+# 守卫裁剪，由 Drive/XPlatformNativeWindow_unsupported.c 兜底，XWindow 回落
+# 虚拟 WId 行为，嵌入式构建不受影响。
+if(UNIX AND NOT APPLE)
+    find_package(X11)
+    if(X11_FOUND)
+        add_compile_definitions(XINYUE_C_HAS_X11=1)
+        include_directories(${X11_INCLUDE_DIRS})
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${X11_LIBRARIES})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${X11_LIBRARIES})
+    endif()
+
+    # XPlatformGraphics 的 GLX 后端只在同时检测到 X11 与 OpenGL 时启用。
+    # Vulkan 单独按库存在性启用，保持图形模块可独立裁剪。
+    find_package(OpenGL QUIET)
+    if(X11_FOUND AND OPENGL_FOUND)
+        add_compile_definitions(XINYUE_C_HAS_OPENGL=1)
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${OPENGL_gl_LIBRARY})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${OPENGL_gl_LIBRARY})
+    endif()
+    find_library(XINYUE_VULKAN_LIBRARY NAMES vulkan)
+    if(XINYUE_VULKAN_LIBRARY)
+        add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_VULKAN_LIBRARY})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_VULKAN_LIBRARY})
+    endif()
+
+    # Linux AT-SPI 辅助功能后端使用 dbus-1；缺失开发包时自动回退 Drive
+    # 存根，嵌入式配置不会引入 D-Bus 依赖。
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(XINYUE_DBUS QUIET dbus-1)
+        if(XINYUE_DBUS_FOUND)
+            add_compile_definitions(XINYUE_C_HAS_DBUS=1)
+            include_directories(${XINYUE_DBUS_INCLUDE_DIRS})
+            link_directories(${XINYUE_DBUS_LIBRARY_DIRS})
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_DBUS_LIBRARIES})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_DBUS_LIBRARIES})
+        endif()
+        pkg_check_modules(XINYUE_FONTCONFIG QUIET fontconfig)
+        if(XINYUE_FONTCONFIG_FOUND)
+            add_compile_definitions(XINYUE_C_HAS_FONTCONFIG=1)
+            include_directories(${XINYUE_FONTCONFIG_INCLUDE_DIRS})
+            link_directories(${XINYUE_FONTCONFIG_LIBRARY_DIRS})
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_FONTCONFIG_LIBRARIES})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_FONTCONFIG_LIBRARIES})
+        endif()
+    endif()
+endif()
+
 # ==================== zlib（压缩库）====================
 # 以子目录静态库方式集成，详见 Library/zlib/CMakeLists.txt
 add_subdirectory(Library/zlib)
@@ -105,11 +158,15 @@ target_link_libraries(${EXPORT_NAME} PRIVATE zlib)
 # 链接 FatFs 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE fatfs)
 target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
-# Windows XSystem 后端使用 Advapi32 调整关机权限，并通过 User32 请求系统
-# 复位或重启。静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
+# Windows 平台依赖：
+# - Advapi32：XSystem 后端调整关机权限；
+# - User32：窗口类注册/句柄操作/消息泵（XPlatformNativeWindow_win32.c）；
+# - Gdi32：DIB 后备缓冲 + BitBlt/SetDIBitsToDevice 上屏
+#   （XPlatformBackingStore_win32.c / XPlatformNativeWindow_win32.c）。
+# 静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
 if(WIN32)
-    target_link_libraries(${EXPORT_NAME}S PUBLIC advapi32 user32)
-    target_link_libraries(${EXPORT_NAME} PRIVATE advapi32 user32)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC advapi32 user32 gdi32 opengl32 vulkan-1 imm32 shell32 ole32 uiautomationcore)
+    target_link_libraries(${EXPORT_NAME} PRIVATE advapi32 user32 gdi32 opengl32 vulkan-1 imm32 shell32 ole32 uiautomationcore)
 endif()
 # Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
 # 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator，
@@ -168,6 +225,29 @@ if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== Linux X11 XDND 跨客户端端到端测试 ====================
+# 用独立 Xlib 客户端模拟拖放源，验证 XDND 状态应答、Selection 数据传输和
+# XDropEvent 负载。仅 Linux 且已找到 X11 时构建，嵌入式裁剪不引入平台依赖。
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND X11_FOUND)
+    add_executable(XGuiXdnd_Test
+        "./xgui_xdnd_test.c"
+    )
+    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
+endif()
+
+# ==================== XGui 第一个真实窗口程序 ====================
+# 桌面原生窗口验收样例：XWindow + XGuiApplication + XBackingStore 走完整的
+# 「平台原生窗口（X11/Win32）-> 事件注入 -> 重绘 -> 上屏」链路。
+# 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
+add_executable(XGuiWindowDemo_Test
+    "./xgui_window_demo.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 #安装

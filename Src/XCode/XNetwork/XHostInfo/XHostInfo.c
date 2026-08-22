@@ -559,8 +559,11 @@ static void ensureCacheInit(void) {
     if (XAtomic_compare_exchange_strong_int32(&g_cacheManager.initialized, &expected, 1,
             XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
         g_cacheManager.mutex = XMutex_create(XLock_NonRecursive);
-        /* 使用XHashMap_Create宏创建缓存，键为XString，值为XHostInfoCacheEntry */
-        g_cacheManager.cache = XHashMap_Create(XString, XHostInfoCacheEntry, XString_compare);
+        /* 使用 XString_hash 内容哈希创建缓存，键为 XString，值为 XHostInfoCacheEntry；
+         * 直接对 XString 原始字节哈希会因内部缓冲地址不同导致查找失效。 */
+        g_cacheManager.cache = XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+            sizeof(XString), sizeof(XHostInfoCacheEntry),
+            XString_hash, XString_compare, true);
         XAtomic_store_int32(&g_cacheManager.initialized, 2, XAtomic_MemoryOrder_Release);
     } else if (expected == 1) {
         while (XAtomic_load_int32(&g_cacheManager.initialized, XAtomic_MemoryOrder_Acquire) != 2) {

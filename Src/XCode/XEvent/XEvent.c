@@ -12,15 +12,19 @@
 #include"XThreadData.h"
 #include<stdlib.h>
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
+static void VXEvent_copy(XEvent* dest, const XEvent* src);
 static XEvent* VXEvent_default_clone(const XEvent* event);
 
+static void VXKeyEvent_copy(XKeyEvent* dest, const XKeyEvent* src);
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event);
+static void VXMouseEvent_copy(XMouseEvent* dest, const XMouseEvent* src);
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event);
 
 static XVtable* XKeyEvent_class_init(void)
 {
 	XVTABLE_INIT_DEFAULT(XKeyEvent)
 	XVTABLE_INHERIT_XCLASS(XEvent);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXKeyEvent_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXKeyEvent_clone);
 	return XVTABLE_DEFAULT;
 }
@@ -29,6 +33,7 @@ static XVtable* XMouseEvent_class_init(void)
 {
 	XVTABLE_INIT_DEFAULT(XMouseEvent)
 	XVTABLE_INHERIT_XCLASS(XEvent);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMouseEvent_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXMouseEvent_clone);
 	return XVTABLE_DEFAULT;
 }
@@ -43,6 +48,7 @@ XVtable* XEvent_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXEvent_copy);
 	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
 	XCLASS_SHOW_SIZE_DEFAULT(XEvent);
 	return XVTABLE_DEFAULT;
@@ -242,6 +248,7 @@ void XKeyEvent_init(XKeyEvent* event, XEventType type, int key, XKeyboardModifie
 	event->m_class.input_event = true;
 	event->m_key = key;
 	event->m_modifiers = modifiers;
+	event->m_autoRepeat = false;
 }
 
 int XKeyEvent_key(const XKeyEvent* event)
@@ -252,6 +259,16 @@ int XKeyEvent_key(const XKeyEvent* event)
 XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event)
 {
 	return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
+}
+
+bool XKeyEvent_autoRepeat(const XKeyEvent* event)
+{
+	return event && event->m_autoRepeat;
+}
+
+void XKeyEvent_setAutoRepeat(XKeyEvent* event, bool autoRepeat)
+{
+	if (event) event->m_autoRepeat = autoRepeat;
 }
 
 XMouseEvent* XMouseEvent_create_ex(XMemoryType memory, XEventType type, XMouseButton button,
@@ -276,6 +293,7 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
 	event->m_class.pointer_event = true;
 	event->m_class.single_point_event = true;
 	event->m_button = button;
+	event->m_buttons = button;
 	event->m_modifiers = modifiers;
 	event->m_position = position;
 }
@@ -283,6 +301,16 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
 XMouseButton XMouseEvent_button(const XMouseEvent* event)
 {
 	return event ? event->m_button : XMouseButton_NoButton;
+}
+
+XMouseButton XMouseEvent_buttons(const XMouseEvent* event)
+{
+	return event ? event->m_buttons : XMouseButton_NoButton;
+}
+
+void XMouseEvent_setButtons(XMouseEvent* event, XMouseButton buttons)
+{
+	if (event) event->m_buttons = buttons;
 }
 
 XKeyboardModifiers XMouseEvent_modifiers(const XMouseEvent* event)
@@ -464,32 +492,75 @@ void VXEvent_default_setAccepted(XEvent* event, bool accepted)
 	if (event) event->accepted = accepted;
 }
 
+/** @brief XEvent 的 Copy 实现：只复制基类数据区，保持 dest 的类身份。
+ *  虚表为空时先按基类初始化（此时 type 会被覆盖为 src 的负载）。 */
+static void VXEvent_copy(XEvent* dest, const XEvent* src)
+{
+	if (ISNULL(dest, "XEvent") || ISNULL(src, "XEvent")) return;
+	if (dest == src) return;
+	if (XClassIsVtableNull(dest))
+		XEvent_init(dest, 0);
+	memcpy((char*)dest + sizeof(XClass),
+	       (const char*)src + sizeof(XClass),
+	       sizeof(XEvent) - sizeof(XClass));
+}
+
+/** @brief 基类 Clone 默认实现：只负责分配，复制全部收敛到 Copy（EXClass_Copy）。
+ *  分配后继承 src 的虚表保持多态身份，随后经虚表派发复制数据区。 */
 XEvent* VXEvent_default_clone(const XEvent* event)
 {
 	XEvent* copy = (XEvent*)XClass_Malloc(XEvent);
-	if (copy) {
-		memcpy(copy, event, sizeof(XEvent));
-		Set_Class_IsHeap(copy, true);
-	}
+	if (!copy) return NULL;
+	XClassGetVtable(copy) = XClassGetVtable(event);
+	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Set_Class_IsHeap(copy, true);
+	XClass_copy_base(copy, event);
 	return copy;
+}
+
+/** @brief XKeyEvent 的 Copy 实现：先复制基类部分，再复制按键字段。 */
+static void VXKeyEvent_copy(XKeyEvent* dest, const XKeyEvent* src)
+{
+	if (ISNULL(dest, "XKeyEvent") || ISNULL(src, "XKeyEvent")) return;
+	if (dest == src) return;
+	XClass_Parent(XEvent, EXClass_Copy, void(*)(XEvent*, const XEvent*))(
+		(XEvent*)dest, (const XEvent*)src);
+	dest->m_key = src->m_key;
+	dest->m_modifiers = src->m_modifiers;
+	dest->m_autoRepeat = src->m_autoRepeat;
 }
 
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
 {
 	XKeyEvent* copy = XClass_Malloc(XKeyEvent);
-	if (copy) {
-		memcpy(copy, event, sizeof(XKeyEvent));
-		Set_Class_IsHeap(copy, true);
-	}
+	if (!copy) return NULL;
+	XClassGetVtable(copy) = XClassGetVtable(event);
+	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Set_Class_IsHeap(copy, true);
+	XClass_copy_base(copy, event);
 	return (XEvent*)copy;
+}
+
+/** @brief XMouseEvent 的 Copy 实现：先复制基类部分，再复制鼠标字段。 */
+static void VXMouseEvent_copy(XMouseEvent* dest, const XMouseEvent* src)
+{
+	if (ISNULL(dest, "XMouseEvent") || ISNULL(src, "XMouseEvent")) return;
+	if (dest == src) return;
+	XClass_Parent(XEvent, EXClass_Copy, void(*)(XEvent*, const XEvent*))(
+		(XEvent*)dest, (const XEvent*)src);
+	dest->m_button = src->m_button;
+	dest->m_buttons = src->m_buttons;
+	dest->m_modifiers = src->m_modifiers;
+	dest->m_position = src->m_position;
 }
 
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event)
 {
 	XMouseEvent* copy = XClass_Malloc(XMouseEvent);
-	if (copy) {
-		memcpy(copy, event, sizeof(XMouseEvent));
-		Set_Class_IsHeap(copy, true);
-	}
+	if (!copy) return NULL;
+	XClassGetVtable(copy) = XClassGetVtable(event);
+	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Set_Class_IsHeap(copy, true);
+	XClass_copy_base(copy, event);
 	return (XEvent*)copy;
 }

@@ -848,7 +848,7 @@ open、close 和 irq 配置属于危险管理员操作。XCONSOLE_SHELL_GPIO_REQ
 引脚，避免误操作 Flash、JTAG 或电源控制线。中断回调只原子增加事件计数，irq wait
 在普通任务上下文调用 XGpio_processEvents()，不在中断上下文输出文本。
 
-Linux 后端位于 Drive/Posix/XGpio_posix.c，优先使用 GPIO character device ABI v2，
+Linux 后端位于 Drive/Posix/Device/XGpio_posix.c，优先使用 GPIO character device ABI v2，
 不支持 v2 的内核退回 ABI v1 基本输入输出；非 Linux 平台由安全存根返回
 XGpioError_Unsupported，产品可在对应 Drive 目录提供完整后端。GPIO Shell 默认
 不启用，启用后仍可单独裁剪每个子命令；XGPIO_TEST_BACKEND 只用于测试目标，

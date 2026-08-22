@@ -1,6 +1,6 @@
 ﻿#include "XPrintf.h"
 #include"XMaze.h"
-#include"XData/XGeometry.h"
+#include"XGeometry.h"
 #include"XAlgorithm.h"
 #include"XClass.h"
 #include<string.h>

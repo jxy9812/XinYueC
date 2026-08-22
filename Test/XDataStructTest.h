@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include"CXinYueConfig.h"
 #include"XClass.h"
-//#include"XContainerTest/XContainerTest.h"
+//#include"XContainerTest.h"
 
 #if DEMOTEST
 	//排序算法测试

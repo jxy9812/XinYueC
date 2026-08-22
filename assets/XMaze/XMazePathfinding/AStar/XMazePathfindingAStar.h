@@ -6,7 +6,7 @@ extern "C" {
 typedef struct XVector XVector;
 #include<stdbool.h>
 #include"XMaze.h"
-#include"XData/XGeometry.h"
+#include"XGeometry.h"
 
 #define StraightLine  10//直线
 #define ObliqueLine  14//斜线

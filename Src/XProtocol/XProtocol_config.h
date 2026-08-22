@@ -88,13 +88,13 @@ extern "C" {
 #endif
 
 /* 引入各协议子配置文件 */
-#include "XCan/XCan_config.h"
-#include "XModbus/XModbus_config.h"
-#include "XMqtt/XMqtt_config.h"
-#include "XFtp/XFtp_config.h"
-#include "XHttp/XHttp_config.h"
-#include "XSsh/XSsh_config.h"
-#include "XTelnet/XTelnet_config.h"
+#include "XCan_config.h"
+#include "XModbus_config.h"
+#include "XMqtt_config.h"
+#include "XFtp_config.h"
+#include "XHttp_config.h"
+#include "XSsh_config.h"
+#include "XTelnet_config.h"
 
 #endif /* XPROTOCOL_ON */
 

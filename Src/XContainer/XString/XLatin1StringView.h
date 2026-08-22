@@ -465,10 +465,10 @@ XLatin1StringView XLatin1StringView_trimmed(const XLatin1StringView* self);
 */
 XString* XLatin1StringView_toString(const XLatin1StringView* self);
 
-#include "XLatin1StringView_iterator/XLatin1StringView_iterator.h"    ///< XLatin1StringView 正向迭代器
-#include "XLatin1StringView_iterator/XLatin1StringView_reverse_iterator.h"  ///< XLatin1StringView 反向迭代器
+#include "XLatin1StringView_iterator.h"    ///< XLatin1StringView 正向迭代器
+#include "XLatin1StringView_reverse_iterator.h"  ///< XLatin1StringView 反向迭代器
 
 #ifdef __cplusplus
 }
 #endif
-#endif // !XLATIN1STRINGVIEW_H#endif // !XLATIN1STRINGVIEW_H
+#endif // !XLATIN1STRINGVIEW_H

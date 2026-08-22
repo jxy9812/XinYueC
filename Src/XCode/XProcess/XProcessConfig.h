@@ -11,7 +11,7 @@
 #define XPROCESS_CONFIG_H
 
 /* 允许直接包含本文件的用户获得与 CXinYueConfig 相同的容器开关。 */
-#include "XContainer/XContainerConfig.h"
+#include "XContainerConfig.h"
 
 /** @brief XProcess 总开关；1 启用公开进程 API，0 从构建中裁剪整个模块。 */
 #ifndef XProcess_ON

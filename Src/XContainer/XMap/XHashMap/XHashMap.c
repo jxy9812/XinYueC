@@ -795,7 +795,8 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 
 XVariantHashMap* XHashMap_create_XVariantHashMap()
 {
-    XHashMap* hash = XHashMap_Create(XString, XVariant, XString_compare);
+    XHashMap* hash = XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+        sizeof(XString), sizeof(XVariant), XString_hash, XString_compare, true);
     if (hash == NULL)
         return NULL;
     XMapBaseSetKeyCopyMethod(hash, XString_copy_base);

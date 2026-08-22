@@ -547,6 +547,23 @@ const bool XLess_XString(const XString* str1, const XString* str2);
  */
 int32_t XString_compare(const XString* str1, const XString* str2);
 
+/**
+ * @brief      计算 XString 的内容哈希（64 位）。
+ * @details    哈希输入为字符串的字符内容（UTF-16 XChar 数组字节），与
+ *             XString_compare/XString_equals 的相等语义一致，因此内容相同、
+ *             存储位置不同的两个 XString 必然得到相同哈希值。
+ *             该函数签名与 XHashFunc（XHashMap/XHashSet 的哈希回调）兼容，
+ *             可用于以 XString 为键的哈希容器；传入的 keyTypeSize 参数仅为
+ *             保持回调类型一致，实际不参与计算。
+ * @param      key              指向 XString 的指针（回调约定：const void*）。
+ * @param      keyTypeSize      键类型大小（sizeof(XString)），本函数忽略。
+ * @return     返回字符串内容的 64 位哈希值；key 为 NULL 时返回 0。
+ * @note       不要对 XString 对象做原始字节哈希：其内部数据指针随拷贝
+ *             变化，内容相同的两个对象原始字节不同，会导致哈希表
+ *             查找/删除失效。使用本函数确保"内容相等 <-> 哈希相等"。
+ */
+uint64_t XString_hash(const void* key, size_t keyTypeSize);
+
 /** @brief 深复制创建存储 XString 的 XVariant。 */
 XVariant* XString_toVariant(const XString* str);
 /** @brief 移动创建存储 XString 的 XVariant。 */

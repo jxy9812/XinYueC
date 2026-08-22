@@ -77,9 +77,9 @@ extern "C" {
 /* ========================================================================== */
 /*                                通用模块/编译开关配置                                 */
 /* ========================================================================== */
-#include"XClass/XClassConfig.h"
-#include"XContainer/XContainerConfig.h"
-#include"XCode/XProcess/XProcessConfig.h"
+#include"XClassConfig.h"
+#include"XContainerConfig.h"
+#include"XProcessConfig.h"
 
 
 /* ========================================================================== */
@@ -91,7 +91,7 @@ extern "C" {
 #ifndef XSYNC_ON
 #define XSYNC_ON 1
 #endif
-#include"XCode/XSync/XSync_config.h"
+#include"XSync_config.h"
 
 /* ========================================================================== */
 /*                              XFile 文件系统模块总开关                               */
@@ -102,7 +102,7 @@ extern "C" {
 #ifndef XFILE_ON
 #define XFILE_ON 1
 #endif
-#include"XCode/XFile/XFileSystem_config.h"
+#include"XFileSystem_config.h"
 
 /* ========================================================================== */
 /*                             XNetwork 网络协议模块总开关                             */
@@ -113,7 +113,7 @@ extern "C" {
 #ifndef XNETWORK_ON
 #define XNETWORK_ON 1
 #endif
-#include"XCode/XNetwork/XNetwork_config.h"
+#include"XNetwork_config.h"
 
 /* ========================================================================== */
 /*                        XProtocol 协议栈模块                             */
@@ -122,7 +122,7 @@ extern "C" {
 #ifndef XPROTOCOL_ON
 #define XPROTOCOL_ON 1
 #endif
-#include"XProtocol/XProtocol_config.h"
+#include"XProtocol_config.h"
 
 /* ========================================================================== */
 /*                             XConsoleShell 模块开关                             */
@@ -131,7 +131,7 @@ extern "C" {
 #ifndef XCONSOLE_SHELL_ON
 #define XCONSOLE_SHELL_ON 1
 #endif
-#include"XCode/XConsoleShell/XConsoleShellConfig.h"
+#include"XConsoleShellConfig.h"
 
 /* ========================================================================== */
 /*                        XTui TUI 模块开关                              */
@@ -140,18 +140,12 @@ extern "C" {
 #ifndef XTUI_ON
 #define XTUI_ON 1
 #endif
-#include"XTui/XTuiConfig.h"
-/* ========================================================================== */
-/*                     XImageCodec 图像编解码模块开关                         */
-/* ========================================================================== */
-/** @brief XImageCodec 模块总开关；置 0 时裁剪整个图像编解码公共 API 和所有子格式。
- * @note 详细的子格式开关在 XImageCodec_config.h 中定义，如 XIMAGECODEC_BMP_ON
- *       等；关闭后若仍有其它模块无条件引用 XImageCodec 符号，需同步裁剪对应依赖。 */
-#ifndef XIMAGECODEC_ON
-#define XIMAGECODEC_ON 1
+#include"XTuiConfig.h"
+/* GUI 子开关集中由 Src/XGui/XGuiConfig.h 管理；这里不再定义 GUI 子宏。 */
+#ifndef XGUI_ON
+#define XGUI_ON 1
 #endif
-#include"XGui/XImageCodec/XImageCodec_config.h"
-
+#include "XGui/XGuiConfig.h"
 
 /* ========================================================================== */
 /*                               XPrintf 输出编码模式                               */

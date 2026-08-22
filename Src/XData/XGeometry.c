@@ -694,3 +694,75 @@ void XPoint_setVariant(XVariant* variant, XPoint point)
     }
     *(XPoint*)variant->m_data = point;
 }
+
+/* ==================== XPointF 浮点点坐标 ==================== */
+
+void XPointF_init(XPointF* self, float x, float y)
+{
+    if (!self) return;
+    self->x = x;
+    self->y = y;
+}
+
+bool XPointF_isNull(const XPointF* self)
+{
+    float ax = self ? (self->x < 0.0f ? -self->x : self->x) : 0.0f;
+    float ay = self ? (self->y < 0.0f ? -self->y : self->y) : 0.0f;
+    return ax < 1e-6f && ay < 1e-6f;
+}
+
+XPoint XPointF_toPoint(const XPointF* self)
+{
+    XPoint out;
+    float x = self ? self->x : 0.0f;
+    float y = self ? self->y : 0.0f;
+    /* Qt qRound：加 0.5 后向零方向截断（负数需先取反再截断保持一致）。 */
+    if (x >= 0.0f) { out.x = (int)(x + 0.5f); }
+    else { out.x = -(int)(-x + 0.5f); }
+    if (y >= 0.0f) { out.y = (int)(y + 0.5f); }
+    else { out.y = -(int)(-y + 0.5f); }
+    return out;
+}
+
+XPointF XPointF_add(const XPointF* lhs, const XPointF* rhs)
+{
+    XPointF out;
+    out.x = (lhs ? lhs->x : 0.0f) + (rhs ? rhs->x : 0.0f);
+    out.y = (lhs ? lhs->y : 0.0f) + (rhs ? rhs->y : 0.0f);
+    return out;
+}
+
+XPointF XPointF_subtract(const XPointF* lhs, const XPointF* rhs)
+{
+    XPointF out;
+    out.x = (lhs ? lhs->x : 0.0f) - (rhs ? rhs->x : 0.0f);
+    out.y = (lhs ? lhs->y : 0.0f) - (rhs ? rhs->y : 0.0f);
+    return out;
+}
+
+/* ==================== XMargins 边距 ==================== */
+
+void XMargins_init(XMargins* self, int left, int top, int right, int bottom)
+{
+    if (!self) return;
+    self->left = left;
+    self->top = top;
+    self->right = right;
+    self->bottom = bottom;
+}
+
+bool XMargins_isNull(const XMargins* self)
+{
+    return !self || (self->left == 0 && self->top == 0 &&
+                     self->right == 0 && self->bottom == 0);
+}
+
+int XMargins_horizontal(const XMargins* self)
+{
+    return self ? self->left + self->right : 0;
+}
+
+int XMargins_vertical(const XMargins* self)
+{
+    return self ? self->top + self->bottom : 0;
+}

@@ -7,7 +7,7 @@ typedef struct XVector XVector;
 #include<stdbool.h>
 #include"XMaze.h"
 #include"XVector.h"
-#include"XData/XGeometry.h"
+#include"XGeometry.h"
 #include"XStack.h"
 //带步数
 typedef struct XPointStep

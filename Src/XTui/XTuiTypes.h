@@ -11,8 +11,8 @@
 #define XTUI_TYPES_H
 
 #include "XTuiConfig.h"
-#include "XData/XGeometry.h"
-#include "XData/XColor/XColor.h"
+#include "XGeometry.h"
+#include "XColor.h"
 #include "XEvent.h"
 
 #ifdef __cplusplus

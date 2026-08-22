@@ -12,7 +12,7 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XAtomic.h"
 #include"XSocketDescriptor.h"
-#include"XData/XGeometry.h"
+#include"XGeometry.h"
 typedef struct XThreadData XThreadData;
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);
@@ -147,14 +147,188 @@ typedef enum XMouseButton {
     XMouseButton_ForwardButton = 0x00000010  ///< 鼠标前进键。
 } XMouseButton;
 
+/**
+ * @brief 与平台无关的按键码（对标 Qt 6.8 Qt::Key 取值约定）。
+ * @details 按键码使用统一约定，平台后端（X11/Win32）在事件注入前把
+ *          原生键值映射为下列取值，应用代码只依赖本枚举：
+ *          - 可打印字符：直接使用 ASCII/Unicode 码位（如 'A'=0x41、
+ *            '1'=0x31、空格=0x20），0 表示无按键；
+ *          - 特殊功能键：使用 0x01000000 起的保留区间，取值与
+ *            Qt::Key 完全一致，未来迁移 Qt 时可逐位对齐。
+ *          方向键/回车/退格等功能键与 Qt::Key 同名同值。
+ */
+typedef enum XKey {
+    XKey_None = 0,                    /**< 无按键（与 Qt::Key_unknown 语义区分，值为 0）。 */
+    XKey_Space = 0x20,                /**< 空格键。 */
+    XKey_Exclam = 0x21,               /**< 惊叹号 !。 */
+    XKey_QuoteDbl = 0x22,             /**< 双引号 "。 */
+    XKey_NumberSign = 0x23,           /**< 井号 #。 */
+    XKey_Dollar = 0x24,               /**< 美元符 $。 */
+    XKey_Percent = 0x25,              /**< 百分号 %。 */
+    XKey_Ampersand = 0x26,            /**< 与号 &。 */
+    XKey_Apostrophe = 0x27,           /**< 单引号 '。 */
+    XKey_ParenLeft = 0x28,            /**< 左括号 (。 */
+    XKey_ParenRight = 0x29,           /**< 右括号 )。 */
+    XKey_Asterisk = 0x2a,             /**< 星号 *。 */
+    XKey_Plus = 0x2b,                 /**< 加号 +。 */
+    XKey_Comma = 0x2c,                /**< 逗号 ,。 */
+    XKey_Minus = 0x2d,                /**< 减号 -。 */
+    XKey_Period = 0x2e,               /**< 句点 .。 */
+    XKey_Slash = 0x2f,                /**< 斜杠 /。 */
+    XKey_0 = 0x30,                    /**< 数字 0。 */
+    XKey_1 = 0x31,                    /**< 数字 1。 */
+    XKey_2 = 0x32,                    /**< 数字 2。 */
+    XKey_3 = 0x33,                    /**< 数字 3。 */
+    XKey_4 = 0x34,                    /**< 数字 4。 */
+    XKey_5 = 0x35,                    /**< 数字 5。 */
+    XKey_6 = 0x36,                    /**< 数字 6。 */
+    XKey_7 = 0x37,                    /**< 数字 7。 */
+    XKey_8 = 0x38,                    /**< 数字 8。 */
+    XKey_9 = 0x39,                    /**< 数字 9。 */
+    XKey_Colon = 0x3a,                /**< 冒号 :。 */
+    XKey_Semicolon = 0x3b,            /**< 分号 ;。 */
+    XKey_Less = 0x3c,                 /**< 小于号 <。 */
+    XKey_Equal = 0x3d,                /**< 等号 =。 */
+    XKey_Greater = 0x3e,              /**< 大于号 >。 */
+    XKey_Question = 0x3f,             /**< 问号 ?。 */
+    XKey_At = 0x40,                   /**< @ 符号。 */
+    XKey_A = 0x41,                    /**< 字母 A。 */
+    XKey_B = 0x42,                    /**< 字母 B。 */
+    XKey_C = 0x43,                    /**< 字母 C。 */
+    XKey_D = 0x44,                    /**< 字母 D。 */
+    XKey_E = 0x45,                    /**< 字母 E。 */
+    XKey_F = 0x46,                    /**< 字母 F。 */
+    XKey_G = 0x47,                    /**< 字母 G。 */
+    XKey_H = 0x48,                    /**< 字母 H。 */
+    XKey_I = 0x49,                    /**< 字母 I。 */
+    XKey_J = 0x4a,                    /**< 字母 J。 */
+    XKey_K = 0x4b,                    /**< 字母 K。 */
+    XKey_L = 0x4c,                    /**< 字母 L。 */
+    XKey_M = 0x4d,                    /**< 字母 M。 */
+    XKey_N = 0x4e,                    /**< 字母 N。 */
+    XKey_O = 0x4f,                    /**< 字母 O。 */
+    XKey_P = 0x50,                    /**< 字母 P。 */
+    XKey_Q = 0x51,                    /**< 字母 Q。 */
+    XKey_R = 0x52,                    /**< 字母 R。 */
+    XKey_S = 0x53,                    /**< 字母 S。 */
+    XKey_T = 0x54,                    /**< 字母 T。 */
+    XKey_U = 0x55,                    /**< 字母 U。 */
+    XKey_V = 0x56,                    /**< 字母 V。 */
+    XKey_W = 0x57,                    /**< 字母 W。 */
+    XKey_X = 0x58,                    /**< 字母 X。 */
+    XKey_Y = 0x59,                    /**< 字母 Y。 */
+    XKey_Z = 0x5a,                    /**< 字母 Z。 */
+    XKey_BracketLeft = 0x5b,          /**< 左方括号 [。 */
+    XKey_Backslash = 0x5c,            /**< 反斜杠 \。 */
+    XKey_BracketRight = 0x5d,         /**< 右方括号 ]。 */
+    XKey_AsciiCircum = 0x5e,          /**< 脱字符 ^。 */
+    XKey_Underscore = 0x5f,           /**< 下划线 _。 */
+    XKey_QuoteLeft = 0x60,            /**< 反引号 `。 */
+    XKey_a = 0x61,                    /**< 小写字母 a。 */
+    XKey_b = 0x62,                    /**< 小写字母 b。 */
+    XKey_c = 0x63,                    /**< 小写字母 c。 */
+    XKey_d = 0x64,                    /**< 小写字母 d。 */
+    XKey_e = 0x65,                    /**< 小写字母 e。 */
+    XKey_f = 0x66,                    /**< 小写字母 f。 */
+    XKey_g = 0x67,                    /**< 小写字母 g。 */
+    XKey_h = 0x68,                    /**< 小写字母 h。 */
+    XKey_i = 0x69,                    /**< 小写字母 i。 */
+    XKey_j = 0x6a,                    /**< 小写字母 j。 */
+    XKey_k = 0x6b,                    /**< 小写字母 k。 */
+    XKey_l = 0x6c,                    /**< 小写字母 l。 */
+    XKey_m = 0x6d,                    /**< 小写字母 m。 */
+    XKey_n = 0x6e,                    /**< 小写字母 n。 */
+    XKey_o = 0x6f,                    /**< 小写字母 o。 */
+    XKey_p = 0x70,                    /**< 小写字母 p。 */
+    XKey_q = 0x71,                    /**< 小写字母 q。 */
+    XKey_r = 0x72,                    /**< 小写字母 r。 */
+    XKey_s = 0x73,                    /**< 小写字母 s。 */
+    XKey_t = 0x74,                    /**< 小写字母 t。 */
+    XKey_u = 0x75,                    /**< 小写字母 u。 */
+    XKey_v = 0x76,                    /**< 小写字母 v。 */
+    XKey_w = 0x77,                    /**< 小写字母 w。 */
+    XKey_x = 0x78,                    /**< 小写字母 x。 */
+    XKey_y = 0x79,                    /**< 小写字母 y。 */
+    XKey_z = 0x7a,                    /**< 小写字母 z。 */
+    XKey_BraceLeft = 0x7b,            /**< 左花括号 {。 */
+    XKey_Bar = 0x7c,                  /**< 竖线 |。 */
+    XKey_BraceRight = 0x7d,           /**< 右花括号 }。 */
+    XKey_AsciiTilde = 0x7e,           /**< 波浪号 ~。 */
+    XKey_Escape = 0x01000000,         /**< Esc 键。 */
+    XKey_Tab = 0x01000001,            /**< Tab 键。 */
+    XKey_Backtab = 0x01000002,        /**< 反向 Tab（Shift+Tab）。 */
+    XKey_Backspace = 0x01000003,      /**< 退格键。 */
+    XKey_Return = 0x01000004,         /**< 回车键（主键盘）。 */
+    XKey_Enter = 0x01000005,          /**< 小键盘回车（与 Return 区分）。 */
+    XKey_Insert = 0x01000006,         /**< 插入键。 */
+    XKey_Delete = 0x01000007,         /**< 删除键。 */
+    XKey_Pause = 0x01000008,          /**< 暂停键。 */
+    XKey_Print = 0x01000009,          /**< 打印屏幕键。 */
+    XKey_SysReq = 0x0100000a,         /**< SysReq 键。 */
+    XKey_Clear = 0x0100000b,          /**< 清除键。 */
+    XKey_Home = 0x01000010,           /**< Home 键。 */
+    XKey_End = 0x01000011,            /**< End 键。 */
+    XKey_Left = 0x01000012,           /**< 左方向键。 */
+    XKey_Up = 0x01000013,             /**< 上方向键。 */
+    XKey_Right = 0x01000014,          /**< 右方向键。 */
+    XKey_Down = 0x01000015,           /**< 下方向键。 */
+    XKey_PageUp = 0x01000016,         /**< 上一页键。 */
+    XKey_PageDown = 0x01000017,       /**< 下一页键。 */
+    XKey_Shift = 0x01000020,          /**< Shift 修饰键。 */
+    XKey_Control = 0x01000021,        /**< Control 修饰键。 */
+    XKey_Meta = 0x01000022,           /**< Meta/Super 修饰键。 */
+    XKey_Alt = 0x01000023,            /**< Alt 修饰键。 */
+    XKey_AltGr = 0x01001103,          /**< AltGr 修饰键。 */
+    XKey_CapsLock = 0x01000024,       /**< CapsLock 切换键。 */
+    XKey_NumLock = 0x01000025,        /**< NumLock 切换键。 */
+    XKey_ScrollLock = 0x01000026,     /**< ScrollLock 切换键。 */
+    XKey_F1 = 0x01000030,             /**< F1 功能键。 */
+    XKey_F2 = 0x01000031,             /**< F2 功能键。 */
+    XKey_F3 = 0x01000032,             /**< F3 功能键。 */
+    XKey_F4 = 0x01000033,             /**< F4 功能键。 */
+    XKey_F5 = 0x01000034,             /**< F5 功能键。 */
+    XKey_F6 = 0x01000035,             /**< F6 功能键。 */
+    XKey_F7 = 0x01000036,             /**< F7 功能键。 */
+    XKey_F8 = 0x01000037,             /**< F8 功能键。 */
+    XKey_F9 = 0x01000038,             /**< F9 功能键。 */
+    XKey_F10 = 0x01000039,            /**< F10 功能键。 */
+    XKey_F11 = 0x0100003a,            /**< F11 功能键。 */
+    XKey_F12 = 0x0100003b,            /**< F12 功能键。 */
+    XKey_F13 = 0x0100003c,            /**< F13 功能键。 */
+    XKey_F14 = 0x0100003d,            /**< F14 功能键。 */
+    XKey_F15 = 0x0100003e,            /**< F15 功能键。 */
+    XKey_F16 = 0x0100003f,            /**< F16 功能键。 */
+    XKey_F17 = 0x01000040,            /**< F17 功能键。 */
+    XKey_F18 = 0x01000041,            /**< F18 功能键。 */
+    XKey_F19 = 0x01000042,            /**< F19 功能键。 */
+    XKey_F20 = 0x01000043,            /**< F20 功能键。 */
+    XKey_F21 = 0x01000044,            /**< F21 功能键。 */
+    XKey_F22 = 0x01000045,            /**< F22 功能键。 */
+    XKey_F23 = 0x01000046,            /**< F23 功能键。 */
+    XKey_F24 = 0x01000047,            /**< F24 功能键。 */
+    XKey_F25 = 0x01000048,            /**< F25 功能键。 */
+    XKey_F26 = 0x01000049,            /**< F26 功能键。 */
+    XKey_F27 = 0x0100004a,            /**< F27 功能键。 */
+    XKey_F28 = 0x0100004b,            /**< F28 功能键。 */
+    XKey_F29 = 0x0100004c,            /**< F29 功能键。 */
+    XKey_F30 = 0x0100004d,            /**< F30 功能键。 */
+    XKey_F31 = 0x0100004e,            /**< F31 功能键。 */
+    XKey_F32 = 0x0100004f,            /**< F32 功能键。 */
+    XKey_F33 = 0x01000050,            /**< F33 功能键。 */
+    XKey_F34 = 0x01000051,            /**< F34 功能键。 */
+    XKey_F35 = 0x01000052             /**< F35 功能键。 */
+} XKey;
+
+
 /** @brief 携带按键和修饰键数据的键盘事件。 */
 XCLASS_DEFINE_BEGING(XKeyEvent)
 XCLASS_DEFINE_EXTEND_END(XKeyEvent, XEvent)
 
 typedef struct XKeyEvent {
     XEvent m_class;                 ///< 继承 XEvent。
-    int m_key;                      ///< 与平台无关的按键码。
+    int m_key;                      ///< 与平台无关的按键码（XKey 枚举或 ASCII 码位）。
     XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
+    bool m_autoRepeat;              ///< 是否为系统自动重复产生（按住不放）。
 } XKeyEvent;
 
 /**
@@ -186,6 +360,18 @@ int XKeyEvent_key(const XKeyEvent* event);
  * @return 修饰键组合；event 为 NULL 时返回 NoModifier。
  */
 XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event);
+/**
+ * @brief 判断是否为系统自动重复产生的按键事件（对标 QKeyEvent::isAutoRepeat）。
+ * @param event 键盘事件实例。
+ * @return true 表示按住按键不放由系统重复产生；false 为首次按下/释放。
+ */
+bool XKeyEvent_autoRepeat(const XKeyEvent* event);
+/**
+ * @brief 设置自动重复标志（平台后端注入重复按键时使用）。
+ * @param event 键盘事件实例；不可为 NULL。
+ * @param autoRepeat 目标状态。
+ */
+void XKeyEvent_setAutoRepeat(XKeyEvent* event, bool autoRepeat);
 
 #define XKeyEvent_delete_base XEvent_delete_base
 #define XKeyEvent_deinit_base XEvent_deinit_base
@@ -196,7 +382,8 @@ XCLASS_DEFINE_EXTEND_END(XMouseEvent, XEvent)
 
 typedef struct XMouseEvent {
     XEvent m_class;                 ///< 继承 XEvent。
-    XMouseButton m_button;          ///< 触发事件的鼠标按键。
+    XMouseButton m_button;          ///< 触发该事件的鼠标按键；移动事件为 NoButton。
+    XMouseButton m_buttons;         ///< 事件发生时所有处于按下状态的鼠标按键（位掩码）。
     XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
     XPoint m_position;              ///< 事件源对象局部坐标。
 } XMouseEvent;
@@ -228,6 +415,20 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
  * @return 鼠标按键；event 为 NULL 时返回 NoButton。
  */
 XMouseButton XMouseEvent_button(const XMouseEvent* event);
+/**
+ * @brief 获取事件发生时处于按下状态的全部鼠标按键（对标 QMouseEvent::buttons）。
+ * @param event 鼠标事件实例。
+ * @return 按键位掩码组合；event 为 NULL 时返回 NoButton。
+ * @note 移动/滚轮事件也填写该字段，供应用判断拖拽等状态。
+ */
+XMouseButton XMouseEvent_buttons(const XMouseEvent* event);
+/**
+ * @brief 设置事件发生时处于按下状态的全部鼠标按键（平台后端注入时使用）。
+ * @param event 鼠标事件实例；不可为 NULL。
+ * @param buttons 按键位掩码组合。
+ */
+void XMouseEvent_setButtons(XMouseEvent* event, XMouseButton buttons);
+
 /**
  * @brief 获取修饰键位掩码。
  * @param event 鼠标事件实例。

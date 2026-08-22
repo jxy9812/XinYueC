@@ -12,8 +12,8 @@
 #ifndef XCONSOLE_SHELL_CONFIG_H
 #define XCONSOLE_SHELL_CONFIG_H
 
-#include "XContainer/XContainerConfig.h"
-#include "XCode/XProcess/XProcessConfig.h"
+#include "XContainerConfig.h"
+#include "XProcessConfig.h"
 /* Shell 入口也提供 XTuiVim 子功能覆盖，定义在引用 XTuiConfig.h 之前，
  * 这样产品只需配置 XConsoleShellConfig.h 即可裁剪嵌入式 Vim。 */
 #if defined(XCONSOLE_SHELL_VIM_ON) && !defined(XTUI_VIM_ON)

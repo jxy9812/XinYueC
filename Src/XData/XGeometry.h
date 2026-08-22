@@ -92,6 +92,59 @@ XPoint XPoint_add(const XPoint* lhs, const XPoint* rhs);
 XPoint XPoint_subtract(const XPoint* lhs, const XPoint* rhs);
 
 
+
+/* ========== 浮点点坐标类型（对标 Qt 6.8 QPointF） ========== */
+
+/**
+ * @brief      二维浮点点坐标（对标 Qt 6.8 QPointF）
+ * @note       使用浮点数表示 x/y 坐标，用于高精度全局/局部坐标换算
+ *             （如 QWindow::mapToGlobal/mapFromGlobal 的浮点版本）。
+ */
+typedef struct XPointF
+{
+    float x;    /**< X 坐标 */
+    float y;    /**< Y 坐标 */
+} XPointF;
+
+/**
+ * @brief      初始化 XPointF 对象
+ * @param self 目标 XPointF 对象指针
+ * @param x    X 坐标
+ * @param y    Y 坐标
+ */
+void XPointF_init(XPointF* self, float x, float y);
+
+/**
+ * @brief      判断点是否为零点（坐标均小于 1e-6）
+ * @param self 目标 XPointF 对象指针
+ * @return     坐标均接近 0 时返回 true；空指针也视为零点
+ */
+bool XPointF_isNull(const XPointF* self);
+
+/**
+ * @brief      返回 XPointF 的整型截断版本（对标 QPointF::toPoint）
+ * @param self 目标 XPointF 对象指针；可为 NULL 按零点处理
+ * @return     四舍五入取整后的 XPoint
+ * @details    Qt 使用 qRound：x + 0.5 向下取整；本实现保持一致。
+ */
+XPoint XPointF_toPoint(const XPointF* self);
+
+/**
+ * @brief      逐分量相加两个浮点点
+ * @param lhs  左操作数；可为空，按零点处理
+ * @param rhs  右操作数；可为空，按零点处理
+ * @return     逐分量相加后的点
+ */
+XPointF XPointF_add(const XPointF* lhs, const XPointF* rhs);
+
+/**
+ * @brief      逐分量相减两个浮点点
+ * @param lhs  被减点；可为空，按零点处理
+ * @param rhs  减数点；可为空，按零点处理
+ * @return     逐分量相减后的点
+ */
+XPointF XPointF_subtract(const XPointF* lhs, const XPointF* rhs);
+
 /* ========== 基础几何类型 ========== */
 
 /**
@@ -142,6 +195,53 @@ typedef struct XRectF
  * @brief      区域类型（对标 Qt 6.8 QRegion）
  * @note       表示一个复杂区域，由矩形列表组成
  */
+
+/* ========== 边距类型（对标 Qt 6.8 QMargins） ========== */
+
+/**
+ * @brief      窗口/布局边距（对标 Qt 6.8 QMargins）
+ * @note       以整数像素描述四周留白；用于 QWindow::frameMargins()、
+ *             布局系统等场景。
+ */
+typedef struct XMargins
+{
+    int left;   /**< 左边距 */
+    int top;    /**< 上边距 */
+    int right;  /**< 右边距 */
+    int bottom; /**< 下边距 */
+} XMargins;
+
+/**
+ * @brief      初始化 XMargins 对象
+ * @param self  目标 XMargins 对象指针
+ * @param left  左边距
+ * @param top   上边距
+ * @param right 右边距
+ * @param bottom 下边距
+ */
+void XMargins_init(XMargins* self, int left, int top, int right, int bottom);
+
+/**
+ * @brief      判断边距是否全部为零
+ * @param self 目标 XMargins 对象指针
+ * @return     四边均为 0 时返回 true；空指针也视为零边距
+ */
+bool XMargins_isNull(const XMargins* self);
+
+/**
+ * @brief      返回水平方向总边距（left + right）
+ * @param self 目标 XMargins 对象指针；可为 NULL 按 0 处理
+ * @return     水平总边距
+ */
+int XMargins_horizontal(const XMargins* self);
+
+/**
+ * @brief      返回垂直方向总边距（top + bottom）
+ * @param self 目标 XMargins 对象指针；可为 NULL 按 0 处理
+ * @return     垂直总边距
+ */
+int XMargins_vertical(const XMargins* self);
+
 typedef struct XRegion
 {
     XRect* rects;     /**< 矩形数组 */

@@ -13,7 +13,7 @@
 #define XCONSOLE_SHELL_TASKS_H
 
 #include "XConsoleShellCommand.h"
-#include "XPlatform/XTask.h"
+#include "XTask.h"
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_TASKS_ON

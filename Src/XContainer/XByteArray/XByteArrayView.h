@@ -635,8 +635,8 @@ double XByteArrayView_toDouble(const XByteArrayView* self, bool* ok);
 */
 bool XByteArrayView_isValidUtf8(const XByteArrayView* self);
 
-#include "XByteArrayView_iterator/XByteArrayView_iterator.h"    ///< XByteArrayView 正向迭代器
-#include "XByteArrayView_iterator/XByteArrayView_reverse_iterator.h"  ///< XByteArrayView 反向迭代器
+#include "XByteArrayView_iterator.h"    ///< XByteArrayView 正向迭代器
+#include "XByteArrayView_reverse_iterator.h"  ///< XByteArrayView 反向迭代器
 
 #ifdef __cplusplus
 }

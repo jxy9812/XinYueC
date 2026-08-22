@@ -600,10 +600,10 @@ float XUtf8StringView_toFloat(const XUtf8StringView* self, bool* ok);
 */
 double XUtf8StringView_toDouble(const XUtf8StringView* self, bool* ok);
 
-#include "XUtf8StringView_iterator/XUtf8StringView_iterator.h"    ///< XUtf8StringView 正向迭代器
-#include "XUtf8StringView_iterator/XUtf8StringView_reverse_iterator.h"  ///< XUtf8StringView 反向迭代器
+#include "XUtf8StringView_iterator.h"    ///< XUtf8StringView 正向迭代器
+#include "XUtf8StringView_reverse_iterator.h"  ///< XUtf8StringView 反向迭代器
 
 #ifdef __cplusplus
 }
 #endif
-#endif // !XUTF8STRINGVIEW_H#endif // !XUTF8STRINGVIEW_H
+#endif // !XUTF8STRINGVIEW_H

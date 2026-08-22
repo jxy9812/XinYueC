@@ -8,6 +8,7 @@
 #include <limits.h>
 #include "XStringList.h"
 #include "XStringView.h"
+#include "XCryptographic.h"
 
 XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XString_copy_base,
 	XString_move_base, XString_clear_base, XString_deinit_base,
@@ -140,6 +141,7 @@ void XString_setVariant_utf8(XVariant* var, const char* utf8)
 	XString_assign_utf8(XVariant_data(var), utf8);
 }
 #if XRegularExpression_ON
+#include "XCryptographic.h"
 #include "XRegularExpression.h"
 #endif
 
@@ -1762,6 +1764,27 @@ int32_t XString_compare(const XString* str1, const XString* str2)
     XStringView v1 = XStringView_create_string(str1);
     XStringView v2 = XStringView_create_string(str2);
     return (int32_t)XStringView_compare(&v1, &v2, 1);
+}
+
+uint64_t XString_hash(const void* key, size_t keyTypeSize)
+{
+    const XString* str;
+    const XChar* data;
+    size_t len;
+    (void)keyTypeSize;  /* 保持 XHashFunc 回调签名一致，哈希不依赖类型大小 */
+
+    if (!key)
+        return 0;
+    str = (const XString*)key;
+    len = XString_length_base(str);
+    /* 空串内容唯一确定，直接返回固定哈希；data 为 NULL 也安全。 */
+    if (len == 0)
+        return XCryptographicHash_value(NULL, 0, XCryptographicHash_XxHash64);
+    data = XString_unicode(str);
+    /* 以 UTF-16 字符数组字节为输入，与 XString_equals 的逐字符比较语义一致：
+     * 内容相等的字符串必然得到相同哈希值（与对象内部缓冲区地址无关）。 */
+    return XCryptographicHash_value(data, len * sizeof(XChar),
+                                    XCryptographicHash_XxHash64);
 }
 
 bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs)
