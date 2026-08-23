@@ -1,13 +1,12 @@
-﻿// XAbstractNetIoRing.c
+// XAbstractNetIoRing.c
 //
 // 基类实现：提供 class_init、9 个虚函数的默认实现（平台无关）、
-// SQ/CQ 队列管理、全局单例、lwIP pcap 轮询、虚函数调度入口。
+// SQ/CQ 队列管理、全局单例、虚函数调度入口。
 // 子类（XNetIoRingWin32 等）通过继承本类，仅重载平台特定的虚函数。
 //
-// 原 XNetIoRing_lwip.c 内容已合并至此（pollLwip + 默认虚函数实现）。
+// 虚函数调度入口 + 平台默认实现。
 #include "XAbstractNetIoRing.h"
 #if XAbstractNetIoRing_ON
-#include "XNetwork_config.h"   /* XNETWORK_USE_LWIP 宏定义 */
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
@@ -16,57 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* ================================================================
- * lwIP pcap 轮询（通用实现，平台无关）
- *
- * 原 XNetIoRing_lwip.c 内容合并至此。
- * 仅在 XNETWORK_USE_LWIP 模式下编译。
- * ================================================================ */
-#ifdef XNETWORK_USE_LWIP
-#include "XDeviceNetwork.h"
-#include "lwip/opt.h"     /* NO_SYS 宏定义 */
-#include "lwip/sys.h"     /* sys_prot_t, sys_arch_protect/unprotect */
 
-/* 核心锁：与 XDeviceNetwork_lwip.c 的 XNET_LWIP_LOCK 保持一致
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect（递归锁）
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
- *   NO_SYS=0: tcpip_thread 处理锁，pollLwip 无需额外锁 */
-#if NO_SYS && SYS_LIGHTWEIGHT_PROT
-extern sys_prot_t sys_arch_protect(void);
-extern void sys_arch_unprotect(sys_prot_t pval);
-typedef sys_prot_t XNetIoRingLwipLock;
-#define LWIP_LOCK()        sys_arch_protect()
-#define LWIP_UNLOCK(l)     sys_arch_unprotect(l)
-#elif NO_SYS
-typedef int XNetIoRingLwipLock;
-#define LWIP_LOCK()        0
-#define LWIP_UNLOCK(l)     (void)(l)
-#else
-typedef int XNetIoRingLwipLock;
-#define LWIP_LOCK()        0
-#define LWIP_UNLOCK(l)     (void)(l)
-#endif
-
-/**
- * @brief 轮询 lwIP pcap 网卡数据包
- *
- * 由 XAbstractEventDispatcher_processEvents 在每次事件循环迭代中调用，
- * 在 processReady 之前执行。
- *
- * 仅负责 pcap 数据包轮询，将网卡数据喂入 lwIP 协议栈。
- * lwIP 处理数据包后触发 Raw API 回调，回调中直接通过
- * push_socket_cq() 将 Socket 事件推入 IoRing CQ，
- * 随后由 processReady 的 drainCQ 统一分发。
- *
- * 注意：Socket 事件不再通过轮询获取，而是由回调直接投递，
- * 大幅提高响应速度（O(1) per event vs O(n) per iteration）。
- */
-void XAbstractNetIoRing_pollLwip(void) {
-    XNetIoRingLwipLock p = LWIP_LOCK();
-    XDeviceNetwork_poll();
-    LWIP_UNLOCK(p);
-}
-#endif /* XNETWORK_USE_LWIP */
 
 static bool xabstractnetioring_is_socket_fd(const XAbstractNetIoRing_CQEntry* entry)
 {

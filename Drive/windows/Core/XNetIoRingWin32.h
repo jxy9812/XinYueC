@@ -74,6 +74,8 @@ typedef struct XEventContext_IOCP {
     void* buffer;                       /**< 数据缓冲区 */
     size_t bufferSize;                  /**< 缓冲区大小 */
     size_t finishedBytes;               /**< 完成字节数 */
+    DWORD nativeError;                  /**< 原生完成错误码；成功为 ERROR_SUCCESS */
+    bool completed;                      /**< 原生 I/O 是否成功完成 */
     XEventContextCompletionCallback completionCallback; /**< 完成包出队后的生命周期/投递过滤回调 */
     void* completionUserData;           /**< completionCallback 的调用方上下文 */
 } XEventContext_IOCP;

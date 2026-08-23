@@ -390,3 +390,6 @@ xconsole_ssh_hostkey.bin
 
 # 模板归档（可保留工作区副本，不纳入版本跟踪）
 XCTemplate.zip
+
+# TinyUSB 下载缓存（源码已解压到 Library/tinyusb/src/）
+Library/tinyusb/*.zip

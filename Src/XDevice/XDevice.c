@@ -5,6 +5,8 @@
 #include "XDeviceTimer.h"
 #include "XDeviceDir.h"
 #include "XDeviceConsole.h"
+#include "XDeviceUsbHost.h"
+#include "XDeviceUsbGadget.h"
 #include "XFileDescriptor.h"
 #include "XVariant.h"
 #include "XVarList.h"
@@ -363,6 +365,14 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 		}
 		if (!device && strcmp(className, "console") == 0) {
 			XDeviceConsole_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "usbhost") == 0) {
+			XDeviceUsbHost_register();
+			device = XDevice_find(className);
+		}
+		if (!device && strcmp(className, "usbgadget") == 0) {
+			XDeviceUsbGadget_register();
 			device = XDevice_find(className);
 		}
 	}

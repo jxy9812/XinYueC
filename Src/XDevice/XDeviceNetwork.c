@@ -7,11 +7,20 @@
 #include "XEvent.h"
 #include "XVariant.h"
 #include "XVarList.h"
+#include "XAbstractEventDispatcher.h"
 #include "XMemory.h"
 #include <stdlib.h>
 #include <string.h>
 
 #if XNETWORK_ON && XNETWORK_ABSTRACT_SOCKET_ON
+
+#if XNETWORK_USE_LWIP
+/* 前置声明：定义在文件底部（g_deviceNetwork 附近） */
+static bool xLwipEventLoopPoll(void* userData);
+static XHandle g_lwipPollHandle;
+static int g_lwipDeviceCount;
+#endif /* XNETWORK_USE_LWIP */
+
 
 /* 所选平台在自己的 .c 中实现这些钩子；它们不是 XDeviceNetwork 公共 API。 */
 XDeviceNetworkContext* XDeviceNetwork_createContext(void);
@@ -225,7 +234,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     if (!ctx->m_isServer && nopts->m_owner) {
         ctx->m_endpoint.m_socket = (XAbstractSocket*)nopts->m_owner;
     } else if (!ctx->m_isServer) {
-        ctx->m_endpoint.m_socket = (XAbstractSocket*)calloc(1, sizeof(XAbstractSocket));
+        ctx->m_endpoint.m_socket = (XAbstractSocket*)XCalloc_System(1, sizeof(XAbstractSocket));
         if (ctx->m_endpoint.m_socket) {
             XAbstractSocket_init(ctx->m_endpoint.m_socket,
             nopts->m_socketType == XDeviceNetwork_Udp ? XAbstractSocket_UdpSocket : XAbstractSocket_TcpSocket);
@@ -244,7 +253,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     if (ctx->m_base.m_fd == XFD_INVALID) {
         if (ctx->m_ownsSocket) {
             XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
-            free(ctx->m_endpoint.m_socket);
+            XFree_System(ctx->m_endpoint.m_socket);
         }
         XClass_deinit_base((XClass*)&ctx->m_peerAddress);
         XDeviceNetwork_deleteContext(ctx);
@@ -323,7 +332,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
         if (ctx->m_ownsSocket) {
             XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
-            free(ctx->m_endpoint.m_socket);
+            XFree_System(ctx->m_endpoint.m_socket);
         }
         XClass_deinit_base((XClass*)&ctx->m_peerAddress);
         XFd_free(ctx->m_base.m_fd);
@@ -339,6 +348,15 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_base.m_pendingOps = 0;
     ctx->m_base.m_lastError = (int16_t)XDeviceError_None;
     if (err) *err = (int)XDeviceError_None;
+
+#if XNETWORK_USE_LWIP
+    /* 打开第一个网络设备时，向事件循环注册 lwIP 轮询回调 */
+    if (g_lwipDeviceCount == 0) {
+        g_lwipPollHandle = XAbstractEventDispatcher_addPollCallback(
+            xLwipEventLoopPoll, NULL);
+    }
+    ++g_lwipDeviceCount;
+#endif /* XNETWORK_USE_LWIP */
     return &ctx->m_base;
 }
 
@@ -353,11 +371,22 @@ static void VXDeviceNetwork_close(XDevice* self, XDeviceContext* handle)
         XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
     if (ctx->m_ownsSocket) {
         XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
-        free(ctx->m_endpoint.m_socket);
+        XFree_System(ctx->m_endpoint.m_socket);
     }
     XClass_deinit_base((XClass*)&ctx->m_peerAddress);
     XDeviceNetwork_deleteContext(ctx);
     XDeviceNetwork_cleanup();
+
+#if XNETWORK_USE_LWIP
+    /* 关闭最后一个网络设备时，从事件循环注销 lwIP 轮询回调 */
+    if (g_lwipDeviceCount > 0) {
+        --g_lwipDeviceCount;
+        if (g_lwipDeviceCount == 0 && g_lwipPollHandle) {
+            XAbstractEventDispatcher_removePollCallback(g_lwipPollHandle);
+            g_lwipPollHandle = NULL;
+        }
+    }
+#endif /* XNETWORK_USE_LWIP */
 }
 
 static int64_t VXDeviceNetwork_read(XDevice* self, XDeviceContext* handle, void* buffer, int64_t size)
@@ -1066,6 +1095,50 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         return false;
     }
 }
+
+#if XNETWORK_USE_LWIP
+#include "lwip/opt.h"     /* NO_SYS 宏定义 */
+#include "lwip/sys.h"     /* sys_prot_t, sys_arch_protect/unprotect */
+
+/* lwIP 协议栈锁：
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect（递归锁）
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
+ *   NO_SYS=0: tcpip_thread 处理锁，poll 无需额外锁 */
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
+extern sys_prot_t sys_arch_protect(void);
+extern void sys_arch_unprotect(sys_prot_t pval);
+typedef sys_prot_t XLwipPollLock;
+#define XLWIP_LOCK()        sys_arch_protect()
+#define XLWIP_UNLOCK(l)     sys_arch_unprotect(l)
+#elif NO_SYS
+typedef int XLwipPollLock;
+#define XLWIP_LOCK()        0
+#define XLWIP_UNLOCK(l)     (void)(l)
+#else
+typedef int XLwipPollLock;
+#define XLWIP_LOCK()        0
+#define XLWIP_UNLOCK(l)     (void)(l)
+#endif
+
+/* 事件循环轮询回调句柄；打开第一个网络设备时注册，关闭最后一个时注销。 */
+static XHandle g_lwipPollHandle = NULL;
+static int g_lwipDeviceCount = 0;
+
+/* 轮询 lwIP pcap 网卡数据包，加锁调用 XDeviceNetwork_poll()。 */
+static void xLwipPollInternal(void) {
+    XLwipPollLock p = XLWIP_LOCK();
+    XDeviceNetwork_poll();
+    XLWIP_UNLOCK(p);
+}
+
+/* 事件循环轮询回调 */
+static bool xLwipEventLoopPoll(void* userData)
+{
+    (void)userData;
+    xLwipPollInternal();
+    return true;
+}
+#endif /* XNETWORK_USE_LWIP */
 
 static XDeviceNetwork g_deviceNetwork;
 

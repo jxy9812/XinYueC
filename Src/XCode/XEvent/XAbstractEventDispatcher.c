@@ -1,4 +1,4 @@
-﻿#include "XAbstractEventDispatcher.h"
+#include "XAbstractEventDispatcher.h"
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
@@ -393,6 +393,74 @@ static void global_init();
 // === 虚函数表初始化 ================================================
 // ===================================================================
 
+/* ======================================================================
+ * 周期轮询回调（USB Host/Gadget、串口等需周期处理的设备）
+ * ====================================================================== */
+
+typedef struct XAbstractEventDispatcher_PollEntry
+{
+    XAbstractEventDispatcher_PollCallback m_callback;
+    void* m_userData;
+    struct XAbstractEventDispatcher_PollEntry* m_next;
+    bool m_removed;
+} XAbstractEventDispatcher_PollEntry;
+
+static void xPollDispatch(XAbstractEventDispatcherPrivate* dp)
+{
+    XAbstractEventDispatcher_PollEntry* entry;
+    XAbstractEventDispatcher_PollEntry** pp;
+    if (!dp || !dp->m_pollCallbacks) return;
+    /* 调用所有未标记删除的回调 */
+    entry = (XAbstractEventDispatcher_PollEntry*)dp->m_pollCallbacks;
+    while (entry) {
+        XAbstractEventDispatcher_PollEntry* next = entry->m_next;
+        if (!entry->m_removed && entry->m_callback) {
+            entry->m_callback(entry->m_userData);
+        }
+        entry = next;
+    }
+    /* 懒回收已删除的节点 */
+    pp = (XAbstractEventDispatcher_PollEntry**)&dp->m_pollCallbacks;
+    while (*pp) {
+        if ((*pp)->m_removed) {
+            XAbstractEventDispatcher_PollEntry* dead = *pp;
+            *pp = dead->m_next;
+            XFree_System(dead);
+        } else {
+            pp = &(*pp)->m_next;
+        }
+    }
+}
+
+XHandle XAbstractEventDispatcher_addPollCallback(
+    XAbstractEventDispatcher_PollCallback callback, void* userData)
+{
+    XAbstractEventDispatcher* disp = XAbstractEventDispatcher_instance(NULL);
+    XAbstractEventDispatcherPrivate* dp;
+    XAbstractEventDispatcher_PollEntry* entry;
+    if (!disp || !callback) return NULL;
+    dp = disp->d_ptr;
+    if (!dp) return NULL;
+    entry = (XAbstractEventDispatcher_PollEntry*)XCalloc_System(1, sizeof(*entry));
+    if (!entry) return NULL;
+    entry->m_callback = callback;
+    entry->m_userData = userData;
+    entry->m_next = (XAbstractEventDispatcher_PollEntry*)dp->m_pollCallbacks;
+    entry->m_removed = false;
+    dp->m_pollCallbacks = entry;
+    return (XHandle)entry;
+}
+
+void XAbstractEventDispatcher_removePollCallback(XHandle handle)
+{
+    XAbstractEventDispatcher_PollEntry* entry = (XAbstractEventDispatcher_PollEntry*)handle;
+    if (!entry) return;
+    entry->m_removed = true;
+    /* 实际释放在下一次 xPollDispatch 中懒回收 */
+}
+
+/* ====================================================================== */
+
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
@@ -533,14 +601,15 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 
     /* 1. 先处理定时器任务 */
     XDeviceTimer_process(self, XAbstractEventDispatcher_isMainThread(self));
+
+    /* 周期轮询回调（USB Host/Gadget、串口等需周期处理的设备） */
+    xPollDispatch(self->d_ptr);
     XAbstractNetIoRing* ioRing = self->d_ptr->m_ioRing;
     if (XAbstractEventDispatcher_isMainThread(self))
     {
         /* 2. 处理 I/O 事件（仅主线程轮询共享 IOCP/epoll 完成端口，
          *    工作线程不触碰共享 IOCP，防止窃取主线程的 I/O 完成事件） */
-#ifdef XNETWORK_USE_LWIP
-        XAbstractNetIoRing_pollLwip();
-#endif
+
         if (ioRing && XAbstractNetIoRing_isEnabled(ioRing))
         {
             XAbstractNetIoRing_processReady(ioRing);

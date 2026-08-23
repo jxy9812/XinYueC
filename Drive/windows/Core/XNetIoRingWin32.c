@@ -138,6 +138,8 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
         }
 
         ioCtx->finishedBytes = bytesTransferred;
+        ioCtx->nativeError = success ? ERROR_SUCCESS : lastError;
+        ioCtx->completed = success != FALSE;
 
         /* The callback may release the allocation containing ioCtx.  Copy
          * every needed field first and do not touch ioCtx afterwards.  A

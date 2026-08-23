@@ -1,4 +1,4 @@
-﻿#请求CAMKE的最小构建版本
+#请求CAMKE的最小构建版本
 cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
@@ -122,6 +122,31 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+# POSIX USB Host 后端使用 libusb-1.0。该探测独立于 Linux 桌面图形依赖，
+# 因而同样覆盖 macOS、BSD 和裁剪后的嵌入式 Linux 系统。
+if(UNIX)
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(XINYUE_LIBUSB QUIET libusb-1.0)
+    endif()
+    if(XINYUE_LIBUSB_FOUND)
+        add_compile_definitions(XINYUE_C_HAS_LIBUSB=1)
+        include_directories(${XINYUE_LIBUSB_INCLUDE_DIRS})
+        link_directories(${XINYUE_LIBUSB_LIBRARY_DIRS})
+        target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARIES})
+        target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARIES})
+    else()
+        find_path(XINYUE_LIBUSB_INCLUDE_DIR libusb-1.0/libusb.h)
+        find_library(XINYUE_LIBUSB_LIBRARY NAMES usb-1.0 libusb-1.0)
+        if(XINYUE_LIBUSB_INCLUDE_DIR AND XINYUE_LIBUSB_LIBRARY)
+            add_compile_definitions(XINYUE_C_HAS_LIBUSB=1)
+            include_directories(${XINYUE_LIBUSB_INCLUDE_DIR})
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_LIBUSB_LIBRARY})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARY})
+        endif()
+    endif()
+endif()
+
 # ==================== zlib（压缩库）====================
 # 以子目录静态库方式集成，详见 Library/zlib/CMakeLists.txt
 add_subdirectory(Library/zlib)
@@ -136,6 +161,11 @@ add_subdirectory(Library/lwip)
 add_subdirectory(Library/mbedtls)
 # ==================== PCRE2（Qt 6.8 正则表达式引擎）====================
 add_subdirectory(Library/pcre2)
+# ==================== TinyUSB（嵌入式 USB 协议栈）====================
+# 以子目录静态库方式集成，详见 Library/tinyusb/CMakeLists.txt
+# 默认不启用，仅嵌入式构建通过 XINYUE_C_HAS_TINYUSB 开启。
+add_subdirectory(Library/tinyusb)
+
 # ==================== SQLite（源码方式集成）====================
 # SQLite 作为可替换的源码组件编译，适配器不依赖系统 libsqlite3。
 add_subdirectory(Library/sqlite)
@@ -175,7 +205,7 @@ if(WIN32)
         set(XINYUE_WIN32_VULKAN_VAR Vulkan::Vulkan)
         message(STATUS "Vulkan found: ${Vulkan_INCLUDE_DIRS}")
     endif()
-    set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore)
+    set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore setupapi winusb cfgmgr32 hid)
     if(XINYUE_WIN32_VULKAN_VAR)
         list(APPEND XINYUE_WIN32_LIBS ${XINYUE_WIN32_VULKAN_VAR})
     endif()

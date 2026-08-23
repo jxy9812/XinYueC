@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XAbstractEventDispatcher.h
  * @brief 事件调度器抽象基类（仅新版高精度 API，对标 Qt 7+ QAbstractEventDispatcher）。
  *
@@ -71,6 +71,8 @@ typedef struct XAbstractEventDispatcherPrivate
     void* m_consoleTelnetServer;  ///< 默认 Shell 的 Telnet TCP Server（由调度器持有）
     void* m_consoleTelnetAdapter; ///< 默认 Shell 的 Telnet 多会话适配器（由调度器持有）
 #endif
+    /* 周期轮询回调链表（USB Host/Gadget、串口等需在事件循环中定期处理的设备） */
+    struct XAbstractEventDispatcher_PollEntry* m_pollCallbacks;
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);
@@ -298,6 +300,29 @@ XTimerId XAbstractEventDispatcher_registerTimer(
  * @return 调度器指针。
  */
 XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread);
+
+/**
+ * @brief  周期轮询回调类型。
+ * @param  userData  注册时传入的用户数据。
+ * @return 保留，当前应返回 true。
+ */
+typedef bool (*XAbstractEventDispatcher_PollCallback)(void* userData);
+
+/**
+ * @brief  向当前线程的事件调度器注册一个周期轮询回调。
+ * @details 每次 processEvents 都会调用一次回调，用于 USB、串口等需周期处理的设备。
+ * @param  callback  轮询回调，不能为 NULL。
+ * @param  userData  回调用户数据，只借用。
+ * @return 注册句柄；失败返回 NULL。
+ */
+XHandle XAbstractEventDispatcher_addPollCallback(
+    XAbstractEventDispatcher_PollCallback callback, void* userData);
+
+/**
+ * @brief  注销周期轮询回调。
+ * @param  handle  注册时返回的句柄。
+ */
+void XAbstractEventDispatcher_removePollCallback(XHandle handle);
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON

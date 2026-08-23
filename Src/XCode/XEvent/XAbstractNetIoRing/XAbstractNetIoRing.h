@@ -1,4 +1,4 @@
-﻿// XAbstractNetIoRing.h
+// XAbstractNetIoRing.h
 #ifndef XABSTRACTNETIORING_H
 #define XABSTRACTNETIORING_H
 
@@ -225,7 +225,7 @@ void XAbstractNetIoRing_processSource_base(XAbstractNetIoRing* ring, const XAbst
 /**
  * @brief 轮询平台 I/O，将完成事件推入 CQ（虚函数）
  * @param ring XAbstractNetIoRing 实例指针
- * @note 平台后端实现：Win32 调用 GetQueuedCompletionStatus，lwIP 调用 pcap 轮询
+ * @note 平台后端实现：Win32 调用 GetQueuedCompletionStatus，POSIX 调用 epoll_wait
  */
 void XAbstractNetIoRing_pollPlatform_base(XAbstractNetIoRing* ring);
 
@@ -265,7 +265,7 @@ void XAbstractNetIoRing_dispatchCQEntry_base(XAbstractNetIoRing* ring, const XAb
  * @param ring      XAbstractNetIoRing 实例指针
  * @param timeoutMs 超时毫秒数（-1=无限等待，0=立即返回）
  * @note 平台后端实现：Win32 调用 GetQueuedCompletionStatus(timeout)，
- *       lwIP 裸机直接返回（单线程不阻塞）
+ *       裸机/非阻塞平台直接返回
  */
 void XAbstractNetIoRing_waitForEvents_base(XAbstractNetIoRing* ring, int timeoutMs);
 
@@ -273,7 +273,7 @@ void XAbstractNetIoRing_waitForEvents_base(XAbstractNetIoRing* ring, int timeout
  * @brief 唤醒阻塞中的 WaitForEvents（虚函数）
  * @param ring XAbstractNetIoRing 实例指针
  * @note 平台后端实现：Win32 调用 PostQueuedCompletionStatus，
- *       lwIP 裸机空操作（单线程无需唤醒）
+ *       裸机/非阻塞平台为空操作
  */
 void XAbstractNetIoRing_wakeUp_base(XAbstractNetIoRing* ring);
 
