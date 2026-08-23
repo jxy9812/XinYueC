@@ -14,7 +14,7 @@
 #include "XMemory.h"
 #include <windows.h>
 #include <ole2.h>
-#include <uiautomationcore.h>
+#include <UIAutomation.h>
 #include <string.h>
 
 typedef struct XPlatformAccessibilityWin32

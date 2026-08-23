@@ -10,7 +10,6 @@
 #include "XMemory.h"
 #include <windows.h>
 #include <GL/gl.h>
-#include <vulkan/vulkan.h>
 #include <string.h>
 
 typedef struct XWin32OpenGLState
@@ -20,10 +19,14 @@ typedef struct XWin32OpenGLState
     HGLRC m_context;
 } XWin32OpenGLState;
 
+#if defined(XINYUE_C_HAS_VULKAN)
+#include <vulkan/vulkan.h>
+
 typedef struct XWin32VulkanState
 {
     VkInstance m_instance;
 } XWin32VulkanState;
+#endif /* XINYUE_C_HAS_VULKAN */
 
 typedef struct XWin32OffscreenState
 {
@@ -116,6 +119,7 @@ void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState,
     return (void*)procedure;
 }
 
+#if defined(XINYUE_C_HAS_VULKAN)
 bool XPlatformGraphicsDriver_vulkanAvailable(void)
 {
     return GetModuleHandleW(L"vulkan-1.dll") != NULL ||
@@ -173,6 +177,19 @@ void XPlatformGraphicsDriver_destroyVulkan(void* nativeState)
     if (state->m_instance) vkDestroyInstance(state->m_instance, NULL);
     XFree_System(state);
 }
+#else
+bool XPlatformGraphicsDriver_vulkanAvailable(void) { return false; }
+bool XPlatformGraphicsDriver_createVulkan(void** nativeState,
+                                          uint32_t* physicalDeviceCount,
+                                          uint32_t* apiVersion)
+{
+    if (nativeState) *nativeState = NULL;
+    if (physicalDeviceCount) *physicalDeviceCount = 0;
+    if (apiVersion) *apiVersion = 0;
+    return false;
+}
+void XPlatformGraphicsDriver_destroyVulkan(void* nativeState) { (void)nativeState; }
+#endif /* XINYUE_C_HAS_VULKAN */
 
 bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
                                              void** nativeState)

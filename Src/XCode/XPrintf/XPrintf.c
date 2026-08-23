@@ -3,6 +3,7 @@
 #include "XAtomic.h"
 #endif
 #include <limits.h>
+#include <string.h>
 #include"XString.h"
 #include"XByteArray.h"
 
@@ -107,7 +108,7 @@ int XPrintf_3(const char* utf8_str)
 #endif
 
 #ifdef _WIN32
-    XPrintf_initConsole();
+    XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
     return xprintf_write_stdout(utf8_str, strlen(utf8_str));
@@ -139,9 +140,9 @@ int XPrintf_3(const char* utf8_str)
 int XPrintf_4(const XByteArray* array)
 {
     size_t len;
-    if(!array||XByteArray_isEmpty_base(array))
+    if(!array||XByteArray_isEmpty_base((const XContainer*)array))
         return 0;
-    len = XByteArray_size_base(array);
+    len = XByteArray_size_base((const XContainer*)array);
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write)
         return xprintf_write_redirect(XByteArray_data((XByteArray*)array), len);
@@ -194,7 +195,7 @@ int XPrintf(const char* format, ...)
     /* 步骤3：根据模式输出 */
     result = 0;
 #ifdef _WIN32
-    XPrintf_initConsole();
+    XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
     result = xprintf_write_stdout(utf8_buf, strlen(utf8_buf));
@@ -306,7 +307,7 @@ int XPrintf_5(XChar* ch)
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (!g_xprintf_output_write)
 #endif
-    XPrintf_initConsole();
+    XPrintf_platformInitConsole();
 #endif
 
     XChar chs[] = { *ch, 0 };
@@ -315,13 +316,13 @@ int XPrintf_5(XChar* ch)
     /* GBK模式：XChar(UTF-16) -> GBK */
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write)
-        XChar_toUtf8Stream(&chs, 1, (uint8_t*)buff, 5);
+        XChar_toUtf8Stream(chs, 1, (uint8_t*)buff, 5);
     else
 #endif
-        XChar_toLocalStream(&chs, 1, buff, 5);
+        XChar_toLocalStream(chs, 1, buff, 5);
 #else
     /* UTF-8模式：XChar(UTF-16) -> UTF-8 */
-    XChar_toUtf8Stream(&chs, 1, (uint8_t*)buff, 5);
+    XChar_toUtf8Stream(chs, 1, (uint8_t*)buff, 5);
 #endif
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write)

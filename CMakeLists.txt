@@ -165,8 +165,22 @@ target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
 #   （XPlatformBackingStore_win32.c / XPlatformNativeWindow_win32.c）。
 # 静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
 if(WIN32)
-    target_link_libraries(${EXPORT_NAME}S PUBLIC advapi32 user32 gdi32 opengl32 vulkan-1 imm32 shell32 ole32 uiautomationcore)
-    target_link_libraries(${EXPORT_NAME} PRIVATE advapi32 user32 gdi32 opengl32 vulkan-1 imm32 shell32 ole32 uiautomationcore)
+    # Vulkan 仅由 XPlatformGraphics_win32.c 的可选后端使用；
+    # 本机未安装 Vulkan SDK 时不定义 XINYUE_C_HAS_VULKAN，
+    # 不包含 vulkan.h 也不链接 Vulkan::Vulkan，避免无 Vulkan 环境编译失败。
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
+        include_directories(${Vulkan_INCLUDE_DIRS})
+        set(XINYUE_WIN32_VULKAN_VAR Vulkan::Vulkan)
+        message(STATUS "Vulkan found: ${Vulkan_INCLUDE_DIRS}")
+    endif()
+    set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore)
+    if(XINYUE_WIN32_VULKAN_VAR)
+        list(APPEND XINYUE_WIN32_LIBS ${XINYUE_WIN32_VULKAN_VAR})
+    endif()
+    target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_WIN32_LIBS})
+    target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_WIN32_LIBS})
 endif()
 # Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
 # 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator，
