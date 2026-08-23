@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "CXinYueConfig.h"
+#include "XPrintf.h"
 #include "XEvent.h"
 #include "XDateTime.h"
 #include "XGuiApplication.h"
@@ -321,14 +322,14 @@ int main(int argc, char* argv[])
     /* 1) 初始化 XGuiApplication（进程内单例）。 */
     app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
     if (!app) {
-        fprintf(stderr, "XGuiWindowDemo: XGuiApplication_create_ex 失败\n");
+        XPrintf("XGuiWindowDemo: XGuiApplication_create_ex 失败\n");
         return 1;
     }
 
     /* 2) 创建演示窗口并设置标题/几何（原生窗口在首次显示时惰性创建）。 */
     win = DemoWin_create();
     if (!win) {
-        fprintf(stderr, "XGuiWindowDemo: DemoWin_create 失败\n");
+        XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
         XGuiApplication_delete_base(app);
         return 1;
     }
@@ -339,14 +340,14 @@ int main(int argc, char* argv[])
     gni = XGuiApplication_platformNativeInterface();
     gpi = (gni) ? XPlatformNativeInterface_integration(gni) : NULL;
     if (!gni || !gpi) {
-        fprintf(stderr, "XGuiWindowDemo: 平台原生接口不可用（XPLATFORMNATIVEWINDOW_ON?）\n");
+        XPrintf("XGuiWindowDemo: 平台原生接口不可用（XPLATFORMNATIVEWINDOW_ON?）\n");
         XWindow_delete_base((XClass*)win);
         XGuiApplication_delete_base(app);
         return 1;
     }
     pw = XPlatformIntegration_createPlatformWindow(gpi, (XWindow*)win);
     if (!pw) {
-        fprintf(stderr, "XGuiWindowDemo: createPlatformWindow 失败\n");
+        XPrintf("XGuiWindowDemo: createPlatformWindow 失败\n");
         XWindow_delete_base((XClass*)win);
         XGuiApplication_delete_base(app);
         return 1;
@@ -355,7 +356,7 @@ int main(int argc, char* argv[])
     /* 4) 创建后备存储：paintDevice 为 XImage 软件缓冲，随后 XPainter 直绘。 */
     store = XBackingStore_create((XWindow*)win);
     if (!store) {
-        fprintf(stderr, "XGuiWindowDemo: XBackingStore_create 失败\n");
+        XPrintf("XGuiWindowDemo: XBackingStore_create 失败\n");
         XWindow_delete_base((XClass*)win);
         XGuiApplication_delete_base(app);
         return 1;
@@ -366,7 +367,7 @@ int main(int argc, char* argv[])
     XWindow_showNormal((XWindow*)win);
     startMsec = XDateTime_currentMSecsSinceEpoch();
     ok = XPlatformIntegration_isNativeWindowAvailable(gpi);
-    printf("XGuiWindowDemo: 原生窗口可用=%s 屏幕尺寸=%.0fx%.0f\n",
+    XPrintf("XGuiWindowDemo: 原生窗口可用=%s 屏幕尺寸=%.0fx%.0f\n",
            ok ? "是" : "否",
            (double)XWindow_width((XWindow*)win),
            (double)XWindow_height((XWindow*)win));
@@ -381,7 +382,7 @@ int main(int argc, char* argv[])
         XGuiApplication_processEvents(XEventLoop_AllEvents);
     }
 
-    printf("XGuiWindowDemo: 退出事件循环（关闭=%s 自动退出=%d）\n",
+    XPrintf("XGuiWindowDemo: 退出事件循环（关闭=%s 自动退出=%d）\n",
            win->m_closed ? "是" : "否", autoSeconds);
 
     /* 6) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
@@ -389,7 +390,7 @@ int main(int argc, char* argv[])
     win->m_store = NULL;
     XWindow_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);
-    printf("XGuiWindowDemo: 已退出\n");
+    XPrintf("XGuiWindowDemo: 已退出\n");
     return 0;
 }
 
@@ -398,7 +399,7 @@ int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
-    fprintf(stderr, "XGuiWindowDemo: 本演示需要 XGUIAPPLICATION_ON / XWINDOW_ON / "
+    XPrintf("XGuiWindowDemo: 本演示需要 XGUIAPPLICATION_ON / XWINDOW_ON / "
                     "XBACKINGSTORE_ON / XPLATFORMINTEGRATION_ON / "
                     "XPLATFORMNATIVEWINDOW_ON。\n");
     return 2;
