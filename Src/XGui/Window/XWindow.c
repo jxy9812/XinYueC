@@ -464,14 +464,19 @@ static void VXWindow_deinit(XWindow* self)
        entry in allWindows()/topLevelWindows(). */
     XGuiApplication_removeWindow(self);
 #endif /* XGUIAPPLICATION_ON */
-    if (data->m_title) XString_delete_base((XClass*)data->m_title);
-    if (data->m_filePath) XString_delete_base((XClass*)data->m_filePath);
-    if (data->m_icon) XIcon_delete_base(data->m_icon);
  #if XACCESSIBLE_ON
-    XPlatformAccessibility_notifyWindow(XAccessibleEvent_ObjectDestroyed, self);
+    /* 通知销毁前必须保留标题与平台句柄：Windows UIA 驱动会调用 winId()
+       查询 HWND；若窗口已在 WM_CLOSE 中先执行 XWindow_destroy（m_created
+       已为 false），此处不再重复通知，否则 winId() 会重建已销毁的原生窗口
+       并读取已释放的标题（访问冲突）。 */
+    if (data->m_created)
+        XPlatformAccessibility_notifyWindow(XAccessibleEvent_ObjectDestroyed, self);
     if (data->m_accessibleRoot)
         XAccessible_delete_base(data->m_accessibleRoot);
  #endif
+    if (data->m_title) XString_delete_base((XClass*)data->m_title);
+    if (data->m_filePath) XString_delete_base((XClass*)data->m_filePath);
+    if (data->m_icon) XIcon_delete_base(data->m_icon);
 #if XCURSOR_ON
     XWindow_clearCursor(data);
 #endif
