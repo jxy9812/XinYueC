@@ -123,22 +123,23 @@ static void VXImageIOHandler_currentImageRect(const XImageIOHandler* self, XRect
 
 XVtable* XImageIOHandler_class_init()
 {
+    void* table[] = { (void*)VXImageIOHandler_canRead,
+                      (void*)VXImageIOHandler_read,
+                      (void*)VXImageIOHandler_write,
+                      (void*)VXImageIOHandler_option,
+                      (void*)VXImageIOHandler_setOption,
+                      (void*)VXImageIOHandler_supportsOption,
+                      (void*)VXImageIOHandler_jumpToNextImage,
+                      (void*)VXImageIOHandler_jumpToImage,
+                      (void*)VXImageIOHandler_loopCount,
+                      (void*)VXImageIOHandler_imageCount,
+                      (void*)VXImageIOHandler_nextImageDelay,
+                      (void*)VXImageIOHandler_currentImageNumber,
+                      (void*)VXImageIOHandler_currentImageRect };
     XVTABLE_INIT_DEFAULT(XImageIOHandler)
     XVTABLE_INHERIT_XCLASS(XClass);
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImageIOHandler_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VXImageIOHandler_canRead);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Read, VXImageIOHandler_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Write, VXImageIOHandler_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Option, VXImageIOHandler_option);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SetOption, VXImageIOHandler_setOption);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SupportsOption, VXImageIOHandler_supportsOption);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_JumpToNextImage, VXImageIOHandler_jumpToNextImage);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_JumpToImage, VXImageIOHandler_jumpToImage);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_LoopCount, VXImageIOHandler_loopCount);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_ImageCount, VXImageIOHandler_imageCount);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_NextImageDelay, VXImageIOHandler_nextImageDelay);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CurrentImageNumber, VXImageIOHandler_currentImageNumber);
-    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CurrentImageRect, VXImageIOHandler_currentImageRect);
     return XVTABLE_DEFAULT;
 }
 

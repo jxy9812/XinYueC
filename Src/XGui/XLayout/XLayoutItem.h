@@ -53,32 +53,30 @@ typedef struct XSpacerItem XSpacerItem;
 
 /* ==================== 对齐标志（对标 Qt::Alignment） ==================== */
 
-/**
- * @brief      布局对齐标志（对标 Qt 6.8 Qt::Alignment，数值一致）。
- * @details    水平/垂直两组位可以按位或组合（如 Center）；
- *             Leading/Trailing 是 Left/Right 的语义别名（按控件布局
- *             方向解释，当前 XLayout 实现按 LeftToRight 处理，与 Qt
- *             默认布局方向一致）。不是所有组合对每种布局都有意义，
- *             盒式布局只使用垂直组对齐（主方向的条目），网格布局
- *             对水平/垂直组都使用。
- */
-typedef enum XLayoutAlignment
-{
-    XLayoutAlignment_Left          = 0x0001, /**< 水平左对齐（对标 Qt::AlignLeft）。 */
-    XLayoutAlignment_Leading       = 0x0001, /**< 水平起始对齐（同 Left；对标 AlignLeading）。 */
-    XLayoutAlignment_Right         = 0x0002, /**< 水平右对齐（对标 Qt::AlignRight）。 */
-    XLayoutAlignment_Trailing      = 0x0002, /**< 水平末尾对齐（同 Right；对标 AlignTrailing）。 */
-    XLayoutAlignment_HCenter       = 0x0004, /**< 水平居中（对标 Qt::AlignHCenter）。 */
-    XLayoutAlignment_Justify       = 0x0008, /**< 水平两端对齐（对标 Qt::AlignJustify）。 */
-    XLayoutAlignment_Absolute      = 0x0010, /**< 忽略布局方向强制左右语义（对标 AlignAbsolute）。 */
-    XLayoutAlignment_HorizontalMask = 0x000f,/**< 水平对齐掩码（Left|Right|HCenter|Justify）。 */
-    XLayoutAlignment_Top           = 0x0020, /**< 垂直顶部对齐（对标 Qt::AlignTop）。 */
-    XLayoutAlignment_Bottom        = 0x0040, /**< 垂直底部对齐（对标 Qt::AlignBottom）。 */
-    XLayoutAlignment_VCenter       = 0x0080, /**< 垂直居中（对标 Qt::AlignVCenter）。 */
-    XLayoutAlignment_Baseline      = 0x0100, /**< 按基线对齐（对标 AlignBaseline；当前布局按顶对齐妥协）。 */
-    XLayoutAlignment_VerticalMask  = 0x01e0, /**< 垂直对齐掩码（Top|Bottom|VCenter|Baseline）。 */
-    XLayoutAlignment_Center        = 0x0084  /**< 水平+垂直居中（HCenter|VCenter）。 */
-} XLayoutAlignment;
+/* XAlignment 为控件/布局共用对齐枚举；此处仅保留 XLayoutAlignment* 兼容
+ * 别名，使既有布局代码无需迁移即可继续使用旧名称。 */
+#include "XAlignment.h"
+
+/** @brief 布局对齐标志（兼容旧名称，等价 XAlignment）。 */
+typedef XAlignment XLayoutAlignment;
+/** @brief 布局对齐标志组合类型（兼容旧名称，等价 XAlignments）。 */
+typedef XAlignments XLayoutAlignments;
+
+#define XLayoutAlignment_Left                  XAlignment_Left
+#define XLayoutAlignment_Leading               XAlignment_Leading
+#define XLayoutAlignment_Right                 XAlignment_Right
+#define XLayoutAlignment_Trailing              XAlignment_Trailing
+#define XLayoutAlignment_HCenter               XAlignment_HCenter
+#define XLayoutAlignment_Justify               XAlignment_Justify
+#define XLayoutAlignment_Absolute              XAlignment_Absolute
+#define XLayoutAlignment_HorizontalMask        XAlignment_HorizontalMask
+#define XLayoutAlignment_Top                   XAlignment_Top
+#define XLayoutAlignment_Bottom                XAlignment_Bottom
+#define XLayoutAlignment_VCenter               XAlignment_VCenter
+#define XLayoutAlignment_Baseline              XAlignment_Baseline
+#define XLayoutAlignment_VerticalMask          XAlignment_VerticalMask
+#define XLayoutAlignment_Center                XAlignment_Center
+
 typedef uint32_t XLayoutAlignments; /**< 布局对齐标志组合类型。 */
 
 /* ==================== 伸展方向（对标 Qt::Orientations） ==================== */

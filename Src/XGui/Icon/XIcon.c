@@ -12,6 +12,8 @@
 #include "XStringList.h"
 #include "XPainter.h"
 #include "XIconEngine.h"
+#include "XIconThemeEngine.h"
+#include "XIconThemeInternal.h"
 #include <limits.h>
 #include <string.h>
 #include <stdlib.h>
@@ -583,11 +585,6 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     int drawX;
     int drawY;
     bool saved = true;
-    if (self && self->m_data && self->m_data->m_engine) {
-        XRect rect = {x, y, w, h};
-        XIconEngine_paint_base(self->m_data->m_engine, painter, &rect, mode, state);
-        return;
-    }
     if (!self || !target || !target->m_drawImage || w <= 0 || h <= 0) return;
     XIcon_actualSize(self, w, h, mode, state, &actual);
     if (actual.width <= 0 || actual.height <= 0) return;
@@ -599,6 +596,11 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     else if ((alignment & 2u) != 0u) drawX += w - actual.width;
     if ((alignment & 128u) != 0u) drawY += (h - actual.height) / 2;
     else if ((alignment & 64u) != 0u) drawY += h - actual.height;
+    if (self && self->m_data && self->m_data->m_engine) {
+        XRect rect = {drawX, drawY, actual.width, actual.height};
+        XIconEngine_paint_base(self->m_data->m_engine, painter, &rect, mode, state);
+        return;
+    }
     if (target->m_save) saved = target->m_save(target);
     XPixmap_init(&pixmap);
     XImage_init(&image);
@@ -731,34 +733,36 @@ const char* XIcon_name_2(const XIcon* self)
         ? XString_toUtf8(self->m_data->m_name) : "";
 }
 
-void XIcon_fromTheme_2(const char* name, const XIcon* fallback, XIcon* out)
+static void XIcon_fromThemeImpl(const XString* nameString,
+                                  const char* utf8Name,
+                                  const XIcon* fallback, XIcon* out)
 {
-    XPixmap pixmap;
+    XString* created = NULL;
+    XIconThemeEngine* engine;
     if (!out) return;
-    XIcon_init(out);
-    XPixmap_init(&pixmap);
-    if (name && XIcon_resolveThemePixmap(name, &pixmap)) {
-        XIcon_addPixmap(out, &pixmap, XIconMode_Normal, XIconState_Off);
-        XIconPrivate_setName(out->m_data, name);
+    if (!nameString && utf8Name) {
+        created = XString_create_utf8(utf8Name);
+        nameString = created;
     }
-    XPixmap_deinit_base(&pixmap);
+    XIcon_init(out);
+    if (nameString) {
+        engine = XIconThemeEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                            nameString);
+        if (engine) XIcon_init_engine(out, (XIconEngine*)engine);
+    }
+    if (created) XString_delete_base((XClass*)created);
     if (XIcon_isNull(out) && fallback)
         XIcon_copy_base(out, fallback);
 }
 
+void XIcon_fromTheme_2(const char* name, const XIcon* fallback, XIcon* out)
+{
+    XIcon_fromThemeImpl(NULL, name, fallback, out);
+}
+
 void XIcon_fromTheme(const XString* name, const XIcon* fallback, XIcon* out)
 {
-    XPixmap pixmap;
-    if (!out) return;
-    XIcon_init(out);
-    XPixmap_init(&pixmap);
-    if (name && XIcon_resolveThemePixmap(XString_toUtf8(name), &pixmap)) {
-        XIcon_addPixmap(out, &pixmap, XIconMode_Normal, XIconState_Off);
-        XIconPrivate_setName_2(out->m_data, name);
-    }
-    XPixmap_deinit_base(&pixmap);
-    if (XIcon_isNull(out) && fallback)
-        XIcon_copy_base(out, fallback);
+    XIcon_fromThemeImpl(name, NULL, fallback, out);
 }
 
 bool XIcon_hasThemeIcon_2(const char* name)

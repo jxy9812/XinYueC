@@ -1270,7 +1270,7 @@ static int64_t XChar_from_floating_point(double value, char format, XChar* out, 
     size_t frac_len = 0; size_t exp_len = 0;
     if (prec > 0) {
         frac_len = 1 + (size_t)prec;
-        if (format=='g'||format=='G') { double tf = frac; size_t lnz = 0; for (int i=0;i<prec;i++){tf*=10.0;int d=(int)tf;if(d!=0)lnz=(size_t)i;tf-=(double)d;} if (lnz==0&&tf<0.5)frac_len=0; else frac_len=1+(lnz+1); }
+        if (format=='g'||format=='G') { double tf = frac; size_t lnz = 0; bool hasDigit = false; for (int i=0;i<prec;i++){tf*=10.0;int d=(int)tf;if(d!=0){hasDigit=true;lnz=(size_t)i;}tf-=(double)d;} if (!hasDigit&&tf<0.5)frac_len=0; else frac_len=1+(hasDigit?(lnz+1):1); }
     }
     if (sci) { exp_len = 1 + 1 + 2; if (abs(exponent) >= 100) exp_len++; if (exponent == 0) exp_len = 1 + 1 + 2; }
     size_t req = sign_len + int_len + frac_len + exp_len;

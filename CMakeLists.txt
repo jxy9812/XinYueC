@@ -270,6 +270,12 @@ if(UNIX)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+enable_testing()
+add_test(NAME XGuiRegression COMMAND XGuiRegression_Test)
+# CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
+# 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
+set_tests_properties(XGuiRegression PROPERTIES
+    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 
 # ==================== Linux X11 XDND 跨客户端端到端测试 ====================
 # 用独立 Xlib 客户端模拟拖放源，验证 XDND 状态应答、Selection 数据传输和
@@ -281,8 +287,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND X11_FOUND)
     target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
 endif()
 
-# ==================== XGui 第一个真实窗口程序 ====================
-# 桌面原生窗口验收样例：XWindow + XGuiApplication + XBackingStore 走完整的
+# ==================== XGui 统一可视化控件测试程序 ====================
+# 桌面原生窗口控件验收入口：XWindow + XGuiApplication + XBackingStore 走完整的
 # 「平台原生窗口（X11/Win32）-> 事件注入 -> 重绘 -> 上屏」链路。
 # 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
 add_executable(XGuiWindowDemo_Test

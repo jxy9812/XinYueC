@@ -14,6 +14,7 @@
 #include "XImageCodec_config.h"
 #include "XMemory.h"
 #include <ctype.h>
+#include <limits.h>
 #include <string.h>
 
 #if XIMAGECODEC_ON
@@ -133,6 +134,139 @@ XString* XImageCodec_formatName(XImageCodecFormat format)
 const char* XImageCodec_formatName_2(XImageCodecFormat format)
 {
     return codec_formatNameUtf8(format);
+}
+
+/* JPEG SOF 尺寸探测：轻量扫描段标记，不解码像素数据。 */
+static bool codec_probeJpegSize(const uint8_t* data, size_t size,
+                                int* width, int* height)
+{
+    size_t pos;
+    int marker;
+    int precedence;
+    if (!data || size < 4 || data[0] != 0xff || data[1] != 0xd8 ||
+        !width || !height)
+        return false;
+    pos = 2;
+    /* 跳过 SOI 后可能出现若干 0xff 填充字节。 */
+    while (pos < size && data[pos] == 0xff) ++pos;
+    if (pos >= size) return false;
+    marker = data[pos++];
+    if (marker == 0xd9 || marker == 0x00) return false;
+    /* 标记拥有段长：0xD8(S0I)、0x01(TEM)、D0..D7(重启) 无段长。 */
+    precedence = marker == 0xd8 || marker == 0x01 ||
+                 (marker >= 0xd0 && marker <= 0xd7);
+    if (!precedence) {
+        uint16_t len;
+        size_t segLen;
+        if (pos + 2 > size) return false;
+        len = XImageCodecInternal_readU16BE(data + pos);
+        segLen = (size_t)len;
+        if (segLen < 2 || pos + segLen > size) return false;
+        pos += segLen;
+    }
+    while (pos + 1 < size) {
+        while (pos < size && data[pos] != 0xff) ++pos;
+        if (pos + 1 >= size) return false;
+        if (data[pos + 1] == 0x00) { /* 字节填充，继续查找后续 0xff。 */
+            pos += 2;
+            continue;
+        }
+        ++pos;
+        if (data[pos] == 0xff) continue; /* 连续 0xff，继续收缩标记。 */
+        marker = data[pos++];
+        if (marker == 0x00) continue;
+        if (marker >= 0xd0 && marker <= 0xd7) continue; /* 重启标记。 */
+        if (marker == 0xda || marker == 0xd9) return false;
+        if (pos + 2 > size) return false;
+        if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 &&
+            marker != 0xc8 && marker != 0xcc) {
+            uint16_t segLen2 = XImageCodecInternal_readU16BE(data + pos);
+            uint32_t h, w;
+            size_t body;
+            if (segLen2 < 5 || pos + (size_t)segLen2 > size) return false;
+            body = pos + 2;
+            h = (uint32_t)XImageCodecInternal_readU16BE(data + body + 1);
+            w = (uint32_t)XImageCodecInternal_readU16BE(data + body + 3);
+            if (h == 0 || w == 0 || h > (uint32_t)INT_MAX ||
+                w > (uint32_t)INT_MAX)
+                return false;
+            *height = (int)h;
+            *width = (int)w;
+            return true;
+        }
+        {
+            uint16_t len2 = XImageCodecInternal_readU16BE(data + pos);
+            if (len2 < 2 || pos + (size_t)len2 > size) return false;
+            pos += (size_t)len2;
+        }
+    }
+    return false;
+}
+
+bool XImageCodec_probeSize(const uint8_t* data, size_t size,
+                           XImageCodecFormat format,
+                           int* width, int* height)
+{
+    if (!data || !width || !height) return false;
+    if (format == XImageCodecFormat_Unknown)
+        format = XImageCodec_detect(data, size);
+    switch (format) {
+#if XIMAGECODEC_BMP_ON
+        case XImageCodecFormat_Bmp: {
+            int32_t signedWidth;
+            int32_t signedHeight;
+            if (size < 26 || data[0] != 'B' || data[1] != 'M') return false;
+            signedWidth = (int32_t)XImageCodecInternal_readU32LE(data + 18);
+            signedHeight = (int32_t)XImageCodecInternal_readU32LE(data + 22);
+            if (signedWidth <= 0 || signedHeight == 0 ||
+                signedWidth > INT_MAX || signedHeight == INT32_MIN)
+                return false;
+            if (signedHeight < 0) signedHeight = -signedHeight;
+            *width = (int)signedWidth;
+            *height = (int)signedHeight;
+            return true;
+        }
+#endif
+#if XIMAGECODEC_PNG_ON
+        case XImageCodecFormat_Png: {
+            uint32_t w, h;
+            if (size < 24 ||
+                memcmp(data, "\x89PNG\r\n\x1a\n", 8) != 0) return false;
+            w = XImageCodecInternal_readU32BE(data + 16);
+            h = XImageCodecInternal_readU32BE(data + 20);
+            if (w == 0 || h == 0 || w > (uint32_t)INT_MAX ||
+                h > (uint32_t)INT_MAX)
+                return false;
+            *width = (int)w;
+            *height = (int)h;
+            return true;
+        }
+#endif
+#if XIMAGECODEC_GIF_ON
+        case XImageCodecFormat_Gif: {
+            uint16_t w, h;
+            if (size < 10 ||
+                (memcmp(data, "GIF87a", 6) != 0 &&
+                 memcmp(data, "GIF89a", 6) != 0)) return false;
+            w = XImageCodecInternal_readU16LE(data + 6);
+            h = XImageCodecInternal_readU16LE(data + 8);
+            if (w == 0 || h == 0) return false;
+            *width = (int)w;
+            *height = (int)h;
+            return true;
+        }
+#endif
+#if XIMAGECODEC_JPEG_ON
+        case XImageCodecFormat_Jpeg:
+            return codec_probeJpegSize(data, size, width, height);
+#endif
+#if XIMAGECODEC_SVG_ON
+        case XImageCodecFormat_Svg:
+            return XImageCodecInternal_probeSvgSize(data, size, width, height);
+#endif
+        default:
+            return false;
+    }
 }
 
 bool XImageCodec_canDecode(XImageCodecFormat format)

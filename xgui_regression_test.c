@@ -1,16 +1,24 @@
-﻿/**
+/**
  * @file        xgui_regression_test.c
- * @brief       XGui Qt 对齐回归测试（无平台 API、无菜单依赖）
+ * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
+ * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
+ *              IO、位图与像素图、图标、图片、绘制器、控件、布局和图形后端。
+ *              需要真实桌面协议或人工窗口观察的独立端到端测试、演示程序不在此文件内。
  */
 
 #include "XPrintf.h"
 #include "XIcon.h"
+#include "XIconThemeEngine.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
 #include "XImage.h"
 #include "XImageCodec.h"
 #include "XImageReader.h"
 #include "XImageWriter.h"
+#if XIMAGEIOPLUGIN_ON
+#include "XImageIOPlugin.h"
+#include "XImagePluginRegistry.h"
+#endif /* XIMAGEIOPLUGIN_ON */
 #include "XMovie.h"
 #include "XPicture.h"
 #include "XPainter.h"
@@ -33,6 +41,12 @@
 #if XWIDGET_ON
 #include "XWidget.h"
 #endif /* XWIDGET_ON */
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+#include "XLabel.h"
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#if XWIDGET_ON && XPUSHBUTTON_ON
+#include "XPushButton.h"
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XAccessible.h"
 #include "XPlatformAccessibility.h"
@@ -64,6 +78,23 @@ static void expect_true(bool condition, const char* name)
         XERROR_PRINTF("FAIL: %s\n", name);
         s_failures++;
     }
+}
+
+/** @brief 统计图像中与指定背景色不同的像素数量。 */
+static size_t image_count_non_background(const XImage* image,
+                                         uint32_t background)
+{
+    size_t count = 0;
+    int x;
+    int y;
+    if (!image) return 0;
+    for (y = 0; y < XImage_height(image); ++y) {
+        for (x = 0; x < XImage_width(image); ++x) {
+            if (XImage_pixel(image, x, y) != background)
+                ++count;
+        }
+    }
+    return count;
 }
 
 #if XIMAGECODEC_ON
@@ -500,6 +531,7 @@ static void test_pixmap_cache_contract(void)
 
 #if defined(__unix__)
 #include <pthread.h>
+#include <math.h>
 #include <stdio.h>
 
 typedef struct CacheStressCtx
@@ -640,7 +672,9 @@ static void test_painter_raster_contract(void)
     XPainter painter;
     XRect rect = { 1, 1, 4, 3 };
     XRect outline = { 1, 1, 5, 4 };
+#if XPAINTER_CLIP_ON
     XRect clip = { 2, 2, 3, 3 };
+#endif
     XRect one = { 0, 0, 1, 1 };
     XRect empty = { 0, 0, 0, 0 };
     XImage tile;
@@ -694,8 +728,9 @@ static void test_painter_raster_contract(void)
     expect_true(XImage_pixel(&image, 0, 5) == 0, "raster thick line boundary");
     XPainter_setPenWidth(&painter, 1);
 
-    /* 裁剪矩形（设备坐标，在变换之后生效） */
-    XPainter_setClipRect(&painter, &clip);
+    /* 裁剪矩形使用逻辑坐标并在设置时映射到设备坐标。 */
+#if XPAINTER_CLIP_ON
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_ReplaceClip);
     expect_true(XPainter_hasClipping(&painter), "raster clip active");
     rect.x = 2; rect.y = 2; rect.width = 4; rect.height = 4;
     expect_true(XPainter_fillRect(&painter, &rect, 0xff0000ffu),
@@ -707,8 +742,9 @@ static void test_painter_raster_contract(void)
     expect_true(XImage_pixel(&image, 5, 2) == 0xffff0000u,
                 "raster clip keeps previous outline");
     expect_true(XImage_pixel(&image, 5, 5) == 0, "raster clip lower margin");
-    XPainter_setClipRect(&painter, NULL);
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
     expect_true(!XPainter_hasClipping(&painter), "raster clip cleared");
+#endif /* XPAINTER_CLIP_ON */
 
     /* save/restore 恢复画笔/画刷/变换 */
     XPainter_setPen(&painter, 0xff00ff00u);
@@ -801,6 +837,1475 @@ static void test_painter_raster_contract(void)
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
 }
+
+
+static void test_painter_extra_alignment(void)
+{
+    XImage image;
+    XPainter painter;
+    XRect r1 = { 1, 1, 2, 2 };
+    XRect er = { 2, 4, 2, 2 };
+#if XPAINTER_CLIP_ON
+    XRect clip = { 2, 2, 3, 3 };
+    XRect clipIntersection = { 3, 1, 3, 3 };
+    XRect logicalClip = { 1, 1, 2, 2 };
+    XRect all = { 0, 0, 8, 8 };
+    XRect emptyClip = { 0, 0, 0, 0 };
+    XRect clipOut;
+    XRect zero = { 0, 0, 0, 0 };
+#endif
+    XPoint lines[4] = { {1,1}, {3,3}, {5,1}, {5,3} };
+#if XPAINTER_POLYGON_ON
+    XPoint pts[3] = { {2,2}, {10,2}, {2,9} };
+#endif
+
+    XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "extra alignment begins raster");
+
+    /* 批量矩形 */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenWidth(&painter, 1);
+    expect_true(XPainter_drawRects(&painter, &r1, 1), "extra drawRects");
+    expect_true(XPainter_drawRects(&painter, NULL, 0),
+                "extra drawRects empty no-op");
+    expect_true(XImage_pixel(&image, 1, 1) == 0xffff0000u,
+                "extra drawRects corner tl");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xffff0000u,
+                "extra drawRects corner br");
+
+    /* 批量直线 */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPen(&painter, 0xff00ff00u);
+    expect_true(XPainter_drawLines(&painter, lines, 2), "extra drawLines");
+    expect_true(XPainter_drawLines(&painter, NULL, 0),
+                "extra drawLines empty no-op");
+    expect_true(XImage_pixel(&image, 1, 1) == 0xff00ff00u,
+                "extra drawLines first start");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xff00ff00u,
+                "extra drawLines first end");
+    expect_true(XImage_pixel(&image, 5, 1) == 0xff00ff00u,
+                "extra drawLines second start");
+    expect_true(XImage_pixel(&image, 5, 3) == 0xff00ff00u,
+                "extra drawLines second end");
+
+    /* 背景颜色 + eraseRect */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setBackground(&painter, 0xff4080ffu);
+    expect_true(XPainter_background(&painter) == 0xff4080ffu,
+                "extra background getter");
+    expect_true(XPainter_eraseRect(&painter, &er), "extra eraseRect");
+    expect_true(XImage_pixel(&image, 2, 4) == 0xff4080ffu,
+                "extra eraseRect top-left");
+    expect_true(XImage_pixel(&image, 3, 5) == 0xff4080ffu,
+                "extra eraseRect bottom-right");
+    expect_true(XImage_pixel(&image, 1, 4) == 0,
+                "extra eraseRect stays outside");
+
+    /* ClipOperation：替换、相交、关闭及逻辑坐标映射。 */
+#if XPAINTER_CLIP_ON
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_ReplaceClip);
+    clipOut = zero;
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 2 && clipOut.y == 2 && clipOut.width == 3 &&
+                clipOut.height == 3, "extra clipBoundingRect active");
+    XPainter_setClipRect(&painter, &clipIntersection,
+                         XPainterClipOperation_IntersectClip);
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 3 && clipOut.y == 2 && clipOut.width == 2 &&
+                clipOut.height == 2, "extra IntersectClip bounding rect");
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_fillRect(&painter, &all, 0xff224466u),
+                "extra IntersectClip fill");
+    expect_true(XImage_pixel(&image, 3, 2) == 0xff224466u &&
+                XImage_pixel(&image, 4, 3) == 0xff224466u,
+                "extra IntersectClip keeps intersection pixels");
+    expect_true(XImage_pixel(&image, 2, 2) == 0u &&
+                XImage_pixel(&image, 5, 3) == 0u,
+                "extra IntersectClip rejects outside pixels");
+    XPainter_setClipping(&painter, false);
+    expect_true(!XPainter_hasClipping(&painter), "extra setClipping off");
+    clipOut = zero;
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 3 && clipOut.y == 2 && clipOut.width == 2 &&
+                clipOut.height == 2,
+                "extra clipBoundingRect kept while disabled");
+    XPainter_setClipping(&painter, true);
+    expect_true(XPainter_hasClipping(&painter), "extra setClipping on");
+    XPainter_setClipRect(&painter, NULL, XPainterClipOperation_NoClip);
+    expect_true(XPainter_hasClipping(&painter), "extra null clip is no-op");
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
+    expect_true(!XPainter_hasClipping(&painter), "extra NoClip clears clipping");
+    XPainter_setClipping(&painter, true);
+    expect_true(!XPainter_hasClipping(&painter),
+                "extra NoClip cannot be re-enabled without a new clip");
+    XPainter_setClipRect(&painter, &emptyClip,
+                         XPainterClipOperation_ReplaceClip);
+    expect_true(XPainter_hasClipping(&painter), "extra empty ReplaceClip remains active");
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_fillRect(&painter, &all, 0xff6688aau),
+                "extra empty ReplaceClip fill command");
+    expect_true(XImage_pixel(&image, 0, 0) == 0u,
+                "extra empty ReplaceClip rejects all pixels");
+    clipOut = zero;
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 0 && clipOut.y == 0 && clipOut.width == 0 &&
+                clipOut.height == 0,
+                "extra clipBoundingRect empty clip");
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
+
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 2.0f, 1.0f);
+    XPainter_setClipRect(&painter, &logicalClip,
+                         XPainterClipOperation_ReplaceClip);
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 1 && clipOut.y == 1 && clipOut.width == 2 &&
+                clipOut.height == 2, "extra clip uses logical coordinates");
+    expect_true(XPainter_fillRect(&painter, &all, 0xffaa6633u),
+                "extra transformed clip fill");
+    expect_true(XImage_pixel(&image, 3, 2) == 0xffaa6633u &&
+                XImage_pixel(&image, 4, 3) == 0xffaa6633u,
+                "extra transformed clip maps to device");
+    expect_true(XImage_pixel(&image, 2, 2) == 0u,
+                "extra transformed clip rejects device exterior");
+    XPainter_resetTransform(&painter);
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 3 && clipOut.y == 2 && clipOut.width == 2 &&
+                clipOut.height == 2,
+                "extra clipBoundingRect follows current logical transform");
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
+#endif /* XPAINTER_CLIP_ON */
+
+#if XPAINTER_POLYGON_ON
+    /* 凸多边形：无 filled 参数，始终用当前画刷填充 */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setBrush(&painter, 0xff000080u);
+    expect_true(XPainter_drawConvexPolygon(&painter, pts, 3),
+                "extra drawConvexPolygon");
+    expect_true(XImage_pixel(&image, 3, 4) == 0xff000080u,
+                "extra convex polygon fills interior");
+    expect_true(XImage_pixel(&image, 5, 2) == 0xff00ff00u,
+                "extra convex polygon edge uses current pen");
+    expect_true(XImage_pixel(&image, 1, 5) == 0,
+                "extra convex polygon stays outside");
+#endif
+
+    expect_true(XPainter_end(&painter), "extra alignment end");
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+static void test_painter_draw_picture_align(void)
+{
+    XPicture picture;
+    XImage target;
+    XPainter painter;
+
+    /* 录制：红色水平线段 (0,0)-(2,0)。 */
+    XPicture_init(&picture, -1);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_picture(&painter, &picture), "drawPicture record begin");
+    XPainter_setPen(&painter, 0xffff0000u);
+    expect_true(XPainter_drawLine(&painter, 0, 0, 2, 0), "drawPicture record line");
+    expect_true(XPainter_end(&painter), "drawPicture record end");
+    expect_true(XPicture_isValidStream(&picture), "drawPicture stream valid");
+
+    /* 回放到新位置：坐标 (4,3) 起绘制。 */
+    XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff00ff00u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &target), "drawPicture target begin");
+    /* XPicture 回放沿用调用者当前画笔颜色（与本项目既有录制语义一致）。 */
+    XPainter_setPen(&painter, 0xffff0000u);
+    expect_true(XPainter_drawPicture(&painter, &picture, 4, 3),
+                "drawPicture at position");
+    expect_true(XImage_pixel(&target, 4, 3) == 0xffff0000u,
+                "drawPicture start painted");
+    expect_true(XImage_pixel(&target, 6, 3) == 0xffff0000u,
+                "drawPicture end painted");
+    expect_true(XImage_pixel(&target, 0, 3) == 0xff00ff00u &&
+                XImage_pixel(&target, 4, 0) == 0xff00ff00u,
+                "drawPicture leaves outside green");
+    expect_true(!XPainter_drawPicture(&painter, NULL, 0, 0),
+                "drawPicture NULL picture returns false");
+    expect_true(XPainter_end(&painter), "drawPicture target end");
+
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&picture);
+}
+
+#if XPAINTER_SHAPE_ON
+static void test_painter_shape_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XRect ellipseRect  = { 0, 0, 20, 10 };
+    XRect fullSweep    = { 0, 0, 20, 10 };
+    XRect roundRect    = { 0, 0, 20, 10 };
+
+    XImage_init_ex(&image, 32, 16, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "shape painter begins raster");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setBrush(&painter, 0xff0000ffu);
+
+    /* 椭圆：内部用画刷填充、轮廓用画笔描出 */
+    expect_true(XPainter_drawEllipse(&painter, &ellipseRect),
+                "drawEllipse on raster");
+    expect_true(XImage_pixel(&image, 10, 5) == 0xff0000ffu,
+                "ellipse interior brush color");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "ellipse top outline pen color");
+    expect_true(XImage_pixel(&image, 20, 5) == 0xffff0000u,
+                "ellipse right outline pen color");
+    expect_true(XImage_pixel(&image, 21, 5) == 0xff000000u,
+                "ellipse outside remains background");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 圆弧：完整一圈，只描边不填充 */
+    expect_true(XPainter_drawArc(&painter, &fullSweep,
+                                 0, 16 * 360), "drawArc full sweep");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "arc top pixel");
+    expect_true(XImage_pixel(&image, 20, 5) == 0xffff0000u,
+                "arc right pixel");
+    expect_true(XImage_pixel(&image, 10, 5) == 0xff000000u,
+                "arc interior not filled");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 扇形：填充内部 + 轮廓与半径线 */
+    expect_true(XPainter_drawPie(&painter, &fullSweep,
+                                 0, 16 * 360, true), "drawPie filled");
+    expect_true(XImage_pixel(&image, 10, 5) == 0xffff0000u,
+                "pie center covered by radial outline");
+    expect_true(XImage_pixel(&image, 12, 8) == 0xff0000ffu,
+                "pie interior brush color");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "pie arc outline");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 弦：填充内部 + 闭合弦轮廓 */
+    expect_true(XPainter_drawChord(&painter, &fullSweep,
+                                   0, 16 * 360, true), "drawChord filled");
+    expect_true(XImage_pixel(&image, 10, 5) == 0xff0000ffu,
+                "chord center brush color");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "chord top outline");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 圆角矩形：角被切掉、内部填充、上边中点描边 */
+    expect_true(XPainter_drawRoundedRect(&painter, &roundRect, 4, 4),
+                "drawRoundedRect");
+    expect_true(XImage_pixel(&image, 10, 5) == 0xff0000ffu,
+                "rounded rect interior brush");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "rounded rect top edge pen");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xff000000u,
+                "rounded rect corner cut away");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+typedef struct ShapeCapture
+{
+    int m_count;
+    XPainterShapeOp m_ops[5];
+    XRect m_rects[5];
+    int m_startAngles[5];
+    int m_spanAngles[5];
+    bool m_filled[5];
+    int m_xRadius[5];
+    int m_yRadius[5];
+} ShapeCapture;
+
+static bool test_shape_capture_proc(XPainter* painter, XPainterShapeOp op,
+                                    const XRect* rect, int startAngle,
+                                    int spanAngle, bool filled,
+                                    int xRadius, int yRadius)
+{
+    ShapeCapture* capture = (ShapeCapture*)painter->m_userData;
+    expect_true(capture != NULL, "shape capture user data");
+    if (capture && capture->m_count < 5)
+    {
+        int i = capture->m_count;
+        capture->m_ops[i] = op;
+        capture->m_rects[i] = *rect;
+        capture->m_startAngles[i] = startAngle;
+        capture->m_spanAngles[i] = spanAngle;
+        capture->m_filled[i] = filled;
+        capture->m_xRadius[i] = xRadius;
+        capture->m_yRadius[i] = yRadius;
+        ++capture->m_count;
+    }
+    return true;
+}
+
+static void test_painter_shape_callback_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    ShapeCapture capture;
+    XRect ellipseRect  = { 0, 0, 20, 10 };
+    XRect fullSweep    = { 0, 0, 20, 10 };
+    XRect roundRect    = { 0, 0, 20, 10 };
+
+    capture.m_count = 0;
+    XImage_init_ex(&image, 32, 16, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, &capture);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "shape callback painter begins raster");
+    painter.m_drawShape = test_shape_capture_proc;
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setBrush(&painter, 0xff0000ffu);
+
+    expect_true(XPainter_drawEllipse(&painter, &ellipseRect),
+                "shape callback ellipse");
+    expect_true(XPainter_drawArc(&painter, &fullSweep, 90, 16 * 120),
+                "shape callback arc");
+    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 16 * 90, true),
+                "shape callback pie");
+    expect_true(XPainter_drawChord(&painter, &fullSweep, 45, 16 * 60, true),
+                "shape callback chord");
+    expect_true(XPainter_drawRoundedRect(&painter, &roundRect, 4, 4),
+                "shape callback rounded rect");
+
+    expect_true(capture.m_count == 5, "shape callback captures all five ops");
+    if (capture.m_count == 5)
+    {
+        expect_true(capture.m_ops[0] == XPainterShapeOp_Ellipse &&
+                    capture.m_spanAngles[0] == 0, "ellipse op params");
+        expect_true(capture.m_ops[1] == XPainterShapeOp_Arc &&
+                    capture.m_startAngles[1] == 90 &&
+                    capture.m_spanAngles[1] == 16 * 120 &&
+                    !capture.m_filled[1], "arc op params");
+        expect_true(capture.m_ops[2] == XPainterShapeOp_Pie &&
+                    capture.m_filled[2], "pie op params");
+        expect_true(capture.m_ops[3] == XPainterShapeOp_Chord &&
+                    capture.m_filled[3], "chord op params");
+        expect_true(capture.m_ops[4] == XPainterShapeOp_RoundedRect &&
+                    capture.m_xRadius[4] == 4 &&
+                    capture.m_yRadius[4] == 4, "rounded rect op params");
+    }
+
+    capture.m_count = 0;
+    expect_true(XPainter_drawArc(&painter, &fullSweep, 0, 0),
+                "zero span arc no-op");
+    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 0, true),
+                "zero span pie no-op");
+    expect_true(XPainter_drawChord(&painter, &fullSweep, 0, 0, true),
+                "zero span chord no-op");
+    expect_true(capture.m_count == 0, "zero span calls do not dispatch");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_SHAPE_ON */
+
+#if XPAINTER_POLYGON_ON
+static void test_painter_polygon_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XPoint tri[3] = { { 2, 2 }, { 10, 2 }, { 2, 9 } };
+    XPoint linePts[2] = { { 0, 0 }, { 9, 0 } };
+    XPoint pts[3] = { { 0, 0 }, { 3, 3 }, { 6, 0 } };
+
+    XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "polygon painter begins raster");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setBrush(&painter, 0xff0000ffu);
+
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "drawPolygon filled triangle");
+    expect_true(XImage_pixel(&image, 3, 4) == 0xff0000ffu,
+                "polygon interior brush");
+    expect_true(XImage_pixel(&image, 8, 4) == 0xffff0000u,
+                "polygon edge outline pen color");
+    expect_true(XImage_pixel(&image, 9, 5) == 0xff000000u,
+                "polygon outside blank");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolyline(&painter, linePts, 2),
+                "drawPolyline");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 5, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 9, 0) == 0xffff0000u,
+                "polyline drawn end to end");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPoints(&painter, pts, 3), "drawPoints");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 3, 3) == 0xffff0000u &&
+                XImage_pixel(&image, 6, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 1, 1) == 0xff000000u,
+                "drawPoints plots each point");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+typedef struct PolygonCapture
+{
+    int m_polylineCalls;
+    int m_polygonCalls;
+    int m_pointsCalls;
+    int m_polylineCount;
+    int m_polygonCount;
+    int m_pointsCount;
+    bool m_polygonFilled;
+    XPoint m_points[3];
+} PolygonCapture;
+
+static bool test_polyline_capture_proc(XPainter* painter,
+                                       const XPoint* points, int count)
+{
+    PolygonCapture* cap = (PolygonCapture*)painter->m_userData;
+    if (!cap) return true;
+    ++cap->m_polylineCalls;
+    cap->m_polylineCount = count;
+    if (count <= 0 || count > 3) return true;
+    memcpy(cap->m_points, points, (size_t)count * sizeof(cap->m_points[0]));
+    return true;
+}
+
+static bool test_polygon_capture_proc(XPainter* painter,
+                                      const XPoint* points, int count,
+                                      bool filled)
+{
+    PolygonCapture* cap = (PolygonCapture*)painter->m_userData;
+    if (!cap) return true;
+    ++cap->m_polygonCalls;
+    cap->m_polygonCount = count;
+    cap->m_polygonFilled = filled;
+    if (count <= 0 || count > 3) return true;
+    memcpy(cap->m_points, points, (size_t)count * sizeof(cap->m_points[0]));
+    return true;
+}
+
+static bool test_points_capture_proc(XPainter* painter,
+                                     const XPoint* points, int count)
+{
+    PolygonCapture* cap = (PolygonCapture*)painter->m_userData;
+    if (!cap) return true;
+    ++cap->m_pointsCalls;
+    cap->m_pointsCount = count;
+    if (count <= 0 || count > 3) return true;
+    memcpy(cap->m_points, points, (size_t)count * sizeof(cap->m_points[0]));
+    return true;
+}
+
+static void test_painter_polygon_callback_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    PolygonCapture cap;
+    XPoint linePts[2] = { { 0, 0 }, { 9, 0 } };
+    XPoint tri[3] = { { 2, 2 }, { 10, 2 }, { 2, 9 } };
+    XPoint pts[3] = { { 0, 0 }, { 3, 3 }, { 6, 0 } };
+
+    memset(&cap, 0, sizeof(cap));
+    XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, &cap);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "polygon callback painter begins raster");
+    painter.m_drawPolyline = test_polyline_capture_proc;
+    painter.m_drawPolygon = test_polygon_capture_proc;
+    painter.m_drawPoints = test_points_capture_proc;
+
+    expect_true(XPainter_drawPolyline(&painter, linePts, 2),
+                "polygon callback polyline");
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "polygon callback polygon");
+    expect_true(XPainter_drawPoints(&painter, pts, 3),
+                "polygon callback points");
+
+    expect_true(cap.m_polylineCalls == 1 && cap.m_polygonCalls == 1 &&
+                cap.m_pointsCalls == 1, "polygon callbacks all dispatch once");
+    expect_true(cap.m_polylineCount == 2 && cap.m_polygonCount == 3 &&
+                cap.m_pointsCount == 3, "polygon callback counts match");
+    expect_true(cap.m_polygonFilled, "polygon callback carries filled");
+    expect_true(cap.m_points[0].x == 0 && cap.m_points[1].x == 3 &&
+                cap.m_points[2].x == 6, "points callback payload copied");
+
+    memset(&cap, 0, sizeof(cap));
+    expect_true(XPainter_drawConvexPolygon(&painter, tri, 3),
+                "convex polygon callback route");
+    expect_true(cap.m_polygonCalls == 1 && cap.m_polygonFilled &&
+                cap.m_polygonCount == 3,
+                "convex polygon routes through polygon callback");
+
+    memset(&cap, 0, sizeof(cap));
+    expect_true(XPainter_drawPolyline(&painter, NULL, 5),
+                "polyline NULL points is no-op");
+    expect_true(XPainter_drawPolygon(&painter, NULL, 5, true),
+                "polygon NULL points is no-op");
+    expect_true(XPainter_drawPoints(&painter, NULL, 5),
+                "points NULL array is no-op");
+    expect_true(XPainter_drawPolyline(&painter, linePts, 0),
+                "polyline zero count is no-op");
+    expect_true(XPainter_drawPolygon(&painter, linePts, 0, true),
+                "polygon zero count is no-op");
+    expect_true(XPainter_drawPoints(&painter, linePts, 0),
+                "points zero count is no-op");
+    expect_true(cap.m_polylineCalls == 0 && cap.m_polygonCalls == 0 &&
+                cap.m_pointsCalls == 0,
+                "invalid polygon calls do not dispatch callbacks");
+
+    XPainter_end(&painter);
+    expect_true(painter.m_drawPolyline == NULL &&
+                painter.m_drawPolygon == NULL &&
+                painter.m_drawPoints == NULL,
+                "polygon callbacks cleared at end");
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_POLYGON_ON */
+
+#if XPAINTER_PENSTYLE_ON
+static void test_painter_penstyle_contract(void)
+{
+    XImage image;
+    XPainter painter;
+
+    XImage_init_ex(&image, 12, 2, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "penstyle painter begins raster");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenWidth(&painter, 1);
+
+    expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_SolidLine,
+                "default pen style solid");
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+    expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_DashLine,
+                "pen style set/get");
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_SquareCap);
+    expect_true(XPainter_penCapStyle(&painter) == XPainterPenCapStyle_SquareCap,
+                "pen cap style set/get");
+    XPainter_setPenJoinStyle(&painter, XPainterPenJoinStyle_RoundJoin);
+    expect_true(XPainter_penJoinStyle(&painter) == XPainterPenJoinStyle_RoundJoin,
+                "pen join style set/get");
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+
+    expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
+                "dashed line on raster");
+    /* 数据序列 4 画 / 3 空 / 2 收尾：0-3 与 7-9 被画，4-6 留空 */
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 4, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 7, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 9, 0) == 0xffff0000u,
+                "dashed line draw segments painted");
+    expect_true(XImage_pixel(&image, 5, 0) == 0xff000000u &&
+                XImage_pixel(&image, 6, 0) == 0xff000000u,
+                "dashed line gaps remain blank");
+
+    XPainter_setPenStyle(&painter, XPainterPenStyle_NoPen);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
+                "NoPen line is a no-op that reports success");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xff000000u &&
+                XImage_pixel(&image, 9, 0) == 0xff000000u,
+                "NoPen keeps raster untouched");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+static void test_painter_picture_penstyle_replay_contract(void)
+{
+    XPicture picture;
+    XImage target;
+    XPainter painter;
+
+    XPicture_init(&picture, -1);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_picture(&painter, &picture),
+                "penstyle record starts");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+    expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
+                "dashed line recorded");
+    expect_true(XPainter_end(&painter), "penstyle record ends");
+    expect_true(XPicture_isValidStream(&picture),
+                "dashed stream valid");
+
+    XImage_init_ex(&target, 12, 2, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "penstyle replay starts");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+    expect_true(XPicture_play(&picture, &painter),
+                "dashed picture replays");
+    expect_true(XImage_pixel(&target, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&target, 4, 0) == 0xffff0000u &&
+                XImage_pixel(&target, 7, 0) == 0xffff0000u &&
+                XImage_pixel(&target, 9, 0) == 0xffff0000u,
+                "dash replay paints exact dash segments");
+    expect_true(XImage_pixel(&target, 5, 0) == 0xff000000u &&
+                XImage_pixel(&target, 6, 0) == 0xff000000u,
+                "dash replay preserves gaps");
+    expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_DashLine,
+                "replay restores caller pen style");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XPicture_deinit_base(&picture);
+    XImage_deinit_base(&target);
+}
+#endif /* XPAINTER_PENSTYLE_ON */
+
+#if XPAINTER_BRUSH_ON && XPAINTER_POLYGON_ON
+static void test_painter_brush_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XPoint tri[3] = { { 0, 0 }, { 12, 0 }, { 0, 12 } };
+    XRect rect = { 0, 0, 12, 12 };
+    XPainterGradient grad;
+    XPainterBrush brush;
+
+    XImage_init_ex(&image, 16, 16, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "brush painter begins raster");
+    XPainter_setPen(&painter, 0xffff0000u);
+    XPainter_setPenWidth(&painter, 1);
+
+    /* 纯色画刷：setBrush 后 fillRect_2 / polygon 填充取画刷颜色 */
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_SolidPattern);
+    XPainter_setBrush(&painter, 0xff00aa00u);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_SolidPattern,
+                "brush style set/get");
+    expect_true(XPainter_brushColor(&painter) == 0xff00aa00u,
+                "brush color follows setBrush");
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "solid brush triangle fill");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xff00aa00u,
+                "solid brush polygon interior");
+    expect_true(XImage_pixel(&image, 14, 14) == 0xff000000u,
+                "solid brush outside blank");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 线性渐变色：左白右黑，逐像素渐变 */
+    XPainterGradient_initLinear(&grad, 0.0f, 0.0f, 12.0f, 0.0f);
+    XPainterGradient_addStop(&grad, 0.0f, 0xffffffffu);
+    XPainterGradient_addStop(&grad, 1.0f, 0xff000000u);
+    XPainter_setBrushGradient(&painter, &grad);
+    expect_true(XPainter_brushStyle(&painter) ==
+                XPainterBrushStyle_LinearGradientPattern,
+                "gradient brush style set");
+    XPainter_brush(&painter, &brush);
+    expect_true(brush.m_style == XPainterBrushStyle_LinearGradientPattern &&
+                brush.m_gradient.m_stopCount == 2 &&
+                brush.m_gradient.m_stops[0].m_color == 0xffffffffu &&
+                brush.m_gradient.m_stops[1].m_color == 0xff000000u,
+                "XPainter_brush returns gradient description");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "gradient brush triangle fill");
+    {
+        uint32_t left  = XImage_pixel(&image, 1, 1);
+        uint32_t right = XImage_pixel(&image, 10, 1);
+        uint32_t lr = (left  >> 16) & 255u;
+        uint32_t rr = (right >> 16) & 255u;
+        expect_true(lr > rr && rr < 250u && rr >= 10u,
+                    "linear gradient interpolates along x");
+    }
+
+    /* 径向渐变（中心白、边缘黑） */
+    XPainterGradient_initRadial(&grad, 6.0f, 6.0f, 12.0f, 6.0f, 6.0f);
+    XPainterGradient_addStop(&grad, 0.0f, 0xffffffffu);
+    XPainterGradient_addStop(&grad, 1.0f, 0xff000000u);
+    XPainter_setBrushGradient(&painter, &grad);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "radial gradient triangle fill");
+    {
+        uint32_t center = XImage_pixel(&image, 6, 1); /* 更靠近中心 */
+        uint32_t edge   = XImage_pixel(&image, 1, 1);
+        uint32_t ir = (center >> 16) & 255u;
+        uint32_t rr = (edge   >> 16) & 255u;
+        expect_true(ir > rr,
+                    "radial gradient brightens toward center");
+    }
+
+    /* 锥形渐变：不同角度颜色不同 */
+    XPainterGradient_initConical(&grad, 6.0f, 6.0f, 0.0f);
+    XPainterGradient_addStop(&grad, 0.0f, 0xffffffffu);
+    XPainterGradient_addStop(&grad, 0.5f, 0xffff0000u);
+    XPainterGradient_addStop(&grad, 1.0f, 0xff00ff00u);
+    XPainter_setBrushGradient(&painter, &grad);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+                "conical gradient triangle fill");
+    {
+        uint32_t a = XImage_pixel(&image, 1, 1);
+        uint32_t b = XImage_pixel(&image, 10, 1);
+        expect_true(a != b, "conical gradient varies with angle");
+    }
+
+    /* 无画刷：轮廓多边形不填充内部 */
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_NoBrush);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, false),
+                "NoBrush polygon outline only");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xff000000u &&
+                XImage_pixel(&image, 2, 0) == 0xffff0000u,
+                "NoBrush leaves polygon interior empty");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPolygon(&painter, tri, 3, true) &&
+                XImage_pixel(&image, 3, 3) == 0xff000000u,
+                "NoBrush filled request keeps interior empty");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_BRUSH_ON && XPAINTER_POLYGON_ON */
+
+#if XPAINTER_TEXTLAYOUT_ON
+static void test_painter_text_layout_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XRect lineRect  = { 0, 0, 40, 16 };
+    XRect multiRect = { 0, 0, 40, 32 };
+    XRect vRect     = { 0, 0, 40, 48 };
+    XRect wrapRect  = { 0, 0, 16, 48 };
+
+    XImage_init_ex(&image, 40, 48, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "text layout painter begins raster");
+    XPainter_setPen(&painter, 0xffffffffu);
+    XPainter_setPenWidth(&painter, 1);
+
+    /* 左/顶对齐单行 */
+    expect_true(XPainter_drawTextRect(&painter, &lineRect,
+                                      XPAINTER_TEXT_ALIGN_LEFT |
+                                      XPAINTER_TEXT_ALIGN_TOP,
+                                      "AA", 0xffffffffu),
+                "drawTextRect single line top/left");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu,
+                "text rect first glyph starts at column 2");
+    expect_true(XImage_pixel(&image, 1, 0) == 0xff000000u,
+                "text rect left margin blank");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffffffffu,
+                "text rect second glyph starts at column 10");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 水平居中 */
+    expect_true(XPainter_drawTextRect(&painter, &lineRect,
+                                      XPAINTER_TEXT_ALIGN_HCENTER,
+                                      "AA", 0xffffffffu),
+                "drawTextRect horizontal center");
+    expect_true(XImage_pixel(&image, 14, 0) == 0xffffffffu,
+                "centered text first glyph near column 14");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xff000000u,
+                "centered text left margin blank");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 多行：两行按 16px 行高逐行下移 */
+    expect_true(XPainter_drawTextRect(&painter, &multiRect,
+                                      XPAINTER_TEXT_ALIGN_LEFT |
+                                      XPAINTER_TEXT_ALIGN_TOP,
+                                      "A\nA", 0xffffffffu),
+                "drawTextRect two lines");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu,
+                "multiline first line glyph");
+    expect_true(XImage_pixel(&image, 2, 16) == 0xffffffffu,
+                "multiline second line glyph");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 垂直居中与底对齐 */
+    expect_true(XPainter_drawTextRect(&painter, &vRect,
+                                      XPAINTER_TEXT_ALIGN_VCENTER,
+                                      "A", 0xffffffffu),
+                "drawTextRect vertical center");
+    expect_true(XImage_pixel(&image, 2, 16) == 0xffffffffu,
+                "vertically centered text glyph row 16");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &vRect,
+                                      XPAINTER_TEXT_ALIGN_BOTTOM,
+                                      "A", 0xffffffffu),
+                "drawTextRect bottom align");
+    expect_true(XImage_pixel(&image, 2, 32) == 0xffffffffu,
+                "bottom aligned text glyph row 32");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+
+    /* 按词换行：两行像素都出现 */
+    expect_true(XPainter_drawTextRect(&painter, &wrapRect,
+                                      XPAINTER_TEXT_WORD_WRAP,
+                                      "AB CD", 0xffffffffu),
+                "drawTextRect word wrap runs");
+    {
+        int topHas = 0, bottomHas = 0;
+        int row, col;
+        for (row = 0; row < 16; ++row)
+            for (col = 0; col < 16; ++col)
+                if (XImage_pixel(&image, col, row) == 0xffffffffu) topHas = 1;
+        for (row = 32; row < 48; ++row)
+            for (col = 0; col < 16; ++col)
+                if (XImage_pixel(&image, col, row) == 0xffffffffu) bottomHas = 1;
+        expect_true(topHas && bottomHas,
+                    "word wrap produces two visual lines");
+    }
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_TEXTLAYOUT_ON */
+
+#if XPAINTER_PATH_ON
+static void test_painter_path_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XPainterPath path;
+    XRect small = { 0, 0, 24, 30 };
+
+    XImage_init_ex(&image, 40, 40, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "path painter begins raster");
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setPen(&painter, 0xffffffffu);
+    XPainter_setBrush(&painter, 0xffff0000u);
+
+    /* 多边形路径：闭合子路径填充 + 描边 */
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 2.0f),
+                "path moveTo");
+    expect_true(XPainterPath_lineTo(&path, 10.0f, 2.0f),
+                "path lineTo");
+    expect_true(XPainterPath_lineTo(&path, 10.0f, 10.0f),
+                "path lineTo 2");
+    expect_true(XPainterPath_lineTo(&path, 2.0f, 10.0f),
+                "path lineTo 3");
+    expect_true(XPainterPath_closeSubpath(&path),
+                "path closeSubpath");
+    expect_true(XPainterPath_elementCount(&path) == 5,
+                "path element count");
+
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPath(&painter, &path),
+                "drawPath polygon fill+stroke");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xffff0000u,
+                "drawPath interior brush");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xffffffffu,
+                "drawPath edge pen");
+    expect_true(XImage_pixel(&image, 12, 2) == 0xff000000u,
+                "drawPath outside empty");
+
+    /* fillPath 只填充内部 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_fillPath(&painter, &path),
+                "fillPath fills interior");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xffff0000u,
+                "fillPath interior brush");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xffff0000u,
+                "fillPath edge also filled");
+
+    /* strokePath 只描边：NoBrush 下内部保持黑色 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_strokePath(&painter, &path),
+                "strokePath draws outline");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xffffffffu,
+                "strokePath edge pen");
+#if XPAINTER_BRUSH_ON
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_NoBrush);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_strokePath(&painter, &path),
+                "strokePath no brush outline");
+    expect_true(XImage_pixel(&image, 2, 2) == 0xffffffffu &&
+                XImage_pixel(&image, 3, 3) == 0xff000000u,
+                "strokePath no interior fill with NoBrush");
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_SolidPattern);
+#endif /* XPAINTER_BRUSH_ON */
+
+    /* quadTo：折线展平后控制点附近应出现曲线像素 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 20.0f),
+                "quad path moveTo");
+    expect_true(XPainterPath_quadTo(&path, 10.0f, 4.0f, 18.0f, 20.0f),
+                "quad path quadTo");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_strokePath(&painter, &path),
+                "strokePath quad");
+    {
+        int hit = 0, r, c;
+        for (r = 8; r <= 16; ++r)
+            for (c = 7; c <= 13; ++c)
+                if (XImage_pixel(&image, c, r) == 0xffffffffu)
+                    hit = 1;
+        expect_true(hit, "quad flatten approaches middle");
+    }
+
+    /* cubicTo：三次贝塞尔展平后中间段出现曲线像素 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 30.0f),
+                "cubic path moveTo");
+    expect_true(XPainterPath_cubicTo(&path, 8.0f, 22.0f, 14.0f, 22.0f,
+                                     18.0f, 30.0f),
+                "cubic path cubicTo");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_strokePath(&painter, &path),
+                "strokePath cubic");
+    {
+        int hit = 0, r, c;
+        for (r = 20; r <= 26; ++r)
+            for (c = 9; c <= 13; ++c)
+                if (XImage_pixel(&image, c, r) == 0xffffffffu)
+                    hit = 1;
+        expect_true(hit, "cubic flatten approaches middle");
+    }
+
+    /* addRect/addEllipse 便捷构造 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_addRect(&path, &small),
+                "path addRect");
+    expect_true(XPainterPath_elementCount(&path) == 5,
+                "addRect element count");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawPath(&painter, &path),
+                "drawPath addRect");
+    expect_true(XImage_pixel(&image, 3, 5) == 0xffff0000u,
+                "addRect interior filled");
+
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_addEllipse(&path, &small),
+                "path addEllipse");
+    expect_true(XPainterPath_elementCount(&path) >= 64,
+                "addEllipse flattens to many elements");
+
+    XPainterPath_deinit(&path);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+typedef struct PathCapture
+{
+    int m_calls;                 /**< 回调调用次数，用于契约断言。 */
+    XPainterPathOp m_lastOp;     /**< 最近一次命令枚举。 */
+    int m_elementCount;          /**< 最近一次回调收到的元素数。 */
+} PathCapture;
+
+static bool test_path_capture_proc(XPainter* painter, XPainterPathOp op,
+                                   const struct XPainterPath* path)
+{
+    PathCapture* cap = (PathCapture*)painter->m_userData;
+    if (!cap) return true;
+    ++cap->m_calls;
+    cap->m_lastOp = op;
+    if (path) cap->m_elementCount = path->m_elementCount;
+    return true;
+}
+
+static void test_painter_path_callback_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XPainterPath path;
+    PathCapture cap;
+
+    XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    memset(&cap, 0, sizeof(cap));
+    XPainter_init(&painter, &cap);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "path callback painter begins raster");
+    painter.m_drawPath = test_path_capture_proc;
+
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 2.0f),
+                "callback path moveTo");
+    expect_true(XPainterPath_lineTo(&path, 10.0f, 2.0f),
+                "callback path lineTo");
+    expect_true(XPainterPath_lineTo(&path, 10.0f, 10.0f),
+                "callback path lineTo 2");
+    expect_true(XPainterPath_lineTo(&path, 2.0f, 10.0f),
+                "callback path lineTo 3");
+    expect_true(XPainterPath_closeSubpath(&path),
+                "callback path closeSubpath");
+
+    expect_true(XPainter_drawPath(&painter, &path),
+                "path callback drawPath");
+    expect_true(cap.m_calls == 1 && cap.m_lastOp == XPainterPathOp_Draw &&
+                cap.m_elementCount == 5,
+                "path callback draw op and count");
+
+    memset(&cap, 0, sizeof(cap));
+    expect_true(XPainter_fillPath(&painter, &path),
+                "path callback fillPath");
+    expect_true(cap.m_calls == 1 && cap.m_lastOp == XPainterPathOp_Fill &&
+                cap.m_elementCount == 5,
+                "path callback fill op and count");
+
+    memset(&cap, 0, sizeof(cap));
+    expect_true(XPainter_strokePath(&painter, &path),
+                "path callback strokePath");
+    expect_true(cap.m_calls == 1 && cap.m_lastOp == XPainterPathOp_Stroke &&
+                cap.m_elementCount == 5,
+                "path callback stroke op and count");
+
+    memset(&cap, 0, sizeof(cap));
+    expect_true(XPainter_drawPath(&painter, NULL),
+                "path callback NULL is no-op");
+    expect_true(XPainter_fillPath(&painter, NULL),
+                "path fill callback NULL is no-op");
+    expect_true(XPainter_strokePath(&painter, NULL),
+                "path stroke callback NULL is no-op");
+    expect_true(cap.m_calls == 0,
+                "NULL path does not dispatch callback");
+
+    memset(&cap, 0, sizeof(cap));
+    {
+        XPainterPath empty;
+        XPainterPath_init(&empty);
+        expect_true(XPainter_drawPath(&painter, &empty),
+                    "empty path callback no-op");
+        expect_true(XPainter_fillPath(&painter, &empty),
+                    "empty fill path callback no-op");
+        expect_true(XPainter_strokePath(&painter, &empty),
+                    "empty stroke path callback no-op");
+        XPainterPath_deinit(&empty);
+    }
+    expect_true(cap.m_calls == 0,
+                "empty path does not dispatch callback");
+
+    XPainter_end(&painter);
+    expect_true(painter.m_drawPath == NULL,
+                "path callback cleared at end");
+    XPainterPath_deinit(&path);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_PATH_ON */
+
+static void test_painter_transform_contract(void)
+{
+    XImage image;
+    XImage tile;
+    XPainter painter;
+    XImageTransform m;
+    XRect one = { 0, 0, 1, 1 };
+
+    XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "transform painter begins raster");
+
+    /* 初始恒等 */
+#if XPAINTER_WORLD_MATRIX_ON
+    expect_true(!XPainter_worldMatrixEnabled(&painter),
+                "initial world matrix is disabled");
+#endif /* XPAINTER_WORLD_MATRIX_ON */
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.m11 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m22 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m33 - 1.0f) < 1.0e-4f &&
+                fabsf(m.dx) < 1.0e-4f && fabsf(m.dy) < 1.0e-4f,
+                "initial transform identity");
+
+#if XPAINTER_VIEW_TRANSFORM_ON
+    {
+        XRect window = { 1, 1, 2, 2 };
+        XRect viewport = { 3, 3, 4, 4 };
+        XRect result;
+
+        XPainter_window(&painter, &result);
+        expect_true(result.x == 0 && result.y == 0 &&
+                    result.width == 8 && result.height == 8,
+                    "image painter defaults window to device rect");
+        XPainter_viewport(&painter, &result);
+        expect_true(result.x == 0 && result.y == 0 &&
+                    result.width == 8 && result.height == 8,
+                    "image painter defaults viewport to device rect");
+        expect_true(!XPainter_viewTransformEnabled(&painter),
+                    "initial view transform is disabled");
+
+        XPainter_setWindow(&painter, &window);
+        XPainter_setViewport(&painter, &viewport);
+        expect_true(XPainter_viewTransformEnabled(&painter),
+                    "setting window and viewport enables view transform");
+        XPainter_combinedTransform(&painter, &m);
+        expect_true(fabsf(m.m11 - 2.0f) < 1.0e-4f &&
+                    fabsf(m.m22 - 2.0f) < 1.0e-4f &&
+                    fabsf(m.dx - 1.0f) < 1.0e-4f &&
+                    fabsf(m.dy - 1.0f) < 1.0e-4f,
+                    "combined transform includes window viewport scale and offset");
+        XPainter_setPen(&painter, 0xffffffffu);
+        expect_true(XPainter_drawPoint(&painter, 2, 2),
+                    "view transform draws logical point");
+        expect_true(XImage_pixel(&image, 5, 5) == 0xffffffffu &&
+                    XImage_pixel(&image, 2, 2) == 0xff000000u,
+                    "window viewport maps logical point to device point");
+        XPainter_transform(&painter, &m);
+        expect_true(fabsf(m.m11 - 1.0f) < 1.0e-4f &&
+                    fabsf(m.m22 - 1.0f) < 1.0e-4f &&
+                    fabsf(m.dx) < 1.0e-4f && fabsf(m.dy) < 1.0e-4f,
+                    "world transform excludes view transform");
+
+        XPainter_setViewTransformEnabled(&painter, false);
+        expect_true(!XPainter_viewTransformEnabled(&painter),
+                    "view transform can be disabled");
+        XPainter_window(&painter, &result);
+        expect_true(result.x == 1 && result.y == 1 &&
+                    result.width == 2 && result.height == 2,
+                    "disabled view transform preserves window");
+        XPainter_setPen(&painter, 0xffff0000u);
+        expect_true(XPainter_drawPoint(&painter, 1, 1) &&
+                    XImage_pixel(&image, 1, 1) == 0xffff0000u,
+                    "disabled view transform draws in logical device coordinates");
+        expect_true(XPainter_save(&painter),
+                    "save keeps disabled view transform state");
+        XPainter_setViewTransformEnabled(&painter, true);
+        expect_true(XPainter_viewTransformEnabled(&painter),
+                    "view transform re-enables after save");
+        expect_true(XPainter_restore(&painter) &&
+                    !XPainter_viewTransformEnabled(&painter),
+                    "restore recovers disabled view transform state");
+        XPainter_resetTransform(&painter);
+        XPainter_window(&painter, &result);
+        expect_true(result.x == 0 && result.y == 0 &&
+                    result.width == 8 && result.height == 8 &&
+                    !XPainter_viewTransformEnabled(&painter),
+                    "reset transform restores default window and disables view transform");
+        XPainter_viewport(&painter, &result);
+        expect_true(result.x == 0 && result.y == 0 &&
+                    result.width == 8 && result.height == 8,
+                    "reset transform restores default viewport");
+    }
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
+
+    /* 平移 */
+    XPainter_translate(&painter, 5.0f, 7.0f);
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.dx - 5.0f) < 1.0e-4f &&
+                fabsf(m.dy - 7.0f) < 1.0e-4f,
+                "translate stores world offset");
+
+#if XPAINTER_WORLD_MATRIX_ON
+    expect_true(XPainter_worldMatrixEnabled(&painter),
+                "translate enables world matrix");
+    XPainter_setWorldMatrixEnabled(&painter, false);
+    expect_true(!XPainter_worldMatrixEnabled(&painter),
+                "world matrix can be disabled");
+    XPainter_worldTransform(&painter, &m);
+    expect_true(fabsf(m.dx - 5.0f) < 1.0e-4f &&
+                fabsf(m.dy - 7.0f) < 1.0e-4f,
+                "disabled world matrix retains transform");
+    XPainter_setPen(&painter, 0xffffffffu);
+    expect_true(XPainter_drawPoint(&painter, 1, 0),
+                "disabled world matrix draws point");
+    expect_true(XImage_pixel(&image, 1, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 6, 7) == 0xff000000u,
+                "disabled world matrix leaves line in logical position");
+    expect_true(XPainter_fillRect(&painter, &one, 0xffff0000u),
+                "disabled world matrix fills rect");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 5, 7) == 0xff000000u,
+                "disabled world matrix leaves fill in logical position");
+    XImage_init_ex(&tile, 1, 1, XImageFormat_ARGB32);
+    XImage_fillRect(&tile, NULL, 0xff0000ffu);
+    expect_true(XPainter_drawImage(&painter, &tile, 2, 0),
+                "disabled world matrix draws image");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xff0000ffu &&
+                XImage_pixel(&image, 7, 7) == 0xff000000u,
+                "disabled world matrix leaves image in logical position");
+    XImage_deinit_base(&tile);
+    expect_true(XPainter_save(&painter),
+                "save keeps disabled world matrix state");
+    XPainter_setWorldMatrixEnabled(&painter, true);
+    expect_true(XPainter_worldMatrixEnabled(&painter),
+                "world matrix re-enables after save");
+    expect_true(XPainter_restore(&painter) &&
+                !XPainter_worldMatrixEnabled(&painter),
+                "restore recovers disabled world matrix state");
+    XPainter_setWorldMatrixEnabled(&painter, true);
+#endif /* XPAINTER_WORLD_MATRIX_ON */
+
+    /* 旋转 90 度（顺时针，y 向下） */
+    XPainter_resetTransform(&painter);
+    XPainter_rotate(&painter, 90.0f);
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.m11) < 1.0e-4f &&
+                fabsf(m.m12 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m21 + 1.0f) < 1.0e-4f &&
+                fabsf(m.m22) < 1.0e-4f,
+                "rotate 90 stores clockwise matrix");
+
+    /* 切变 sh=1, sv=0：x'=x+y */
+    XPainter_resetTransform(&painter);
+    XPainter_shear(&painter, 1.0f, 0.0f);
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.m11 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m21 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m12) < 1.0e-4f &&
+                fabsf(m.m22 - 1.0f) < 1.0e-4f,
+                "shear stores x by y matrix");
+
+    /* worldTransform/setWorldTransform 替换与组合语义 */
+    XPainter_resetTransform(&painter);
+    XPainter_worldTransform(&painter, &m);
+    expect_true(fabsf(m.m11 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m22 - 1.0f) < 1.0e-4f &&
+                fabsf(m.m33 - 1.0f) < 1.0e-4f,
+                "resetTransform restores identity world transform");
+    memset(&m, 0, sizeof(m));
+    m.m11 = 2.0f;
+    m.m22 = 3.0f;
+    m.dx = 1.0f;
+    m.dy = 2.0f;
+    m.m33 = 1.0f;
+    XPainter_setWorldTransform(&painter, &m, false);
+    XPainter_worldTransform(&painter, &m);
+    expect_true(m.m11 == 2.0f && m.m22 == 3.0f && m.dx == 1.0f,
+                "worldTransform reads matrix");
+    memset(&m, 0, sizeof(m));
+    m.m11 = 1.0f;
+    m.m22 = 1.0f;
+    m.m33 = 1.0f;
+    m.dx = 1.0f;
+    XPainter_setWorldTransform(&painter, &m, true);
+    XPainter_worldTransform(&painter, &m);
+    expect_true(fabsf(m.m11 - 2.0f) < 1.0e-4f &&
+                fabsf(m.m22 - 3.0f) < 1.0e-4f &&
+                fabsf(m.dx - 3.0f) < 1.0e-4f &&
+                fabsf(m.dy - 2.0f) < 1.0e-4f,
+                "setWorldTransform combine composes with current matrix");
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+#if XPAINTER_TEXTLAYOUT_ON
+static void test_painter_text_flags_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XRect wide = { 0, 0, 80, 24 };
+    XRect narrow = { 0, 0, 8, 16 };
+    XRect skipRect = { 0, 0, 40, 24 };
+    XRect directionRect = { 0, 0, 40, 16 };
+    int hasPix = 0;
+
+    XImage_init_ex(&image, 80, 48, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    XPainter_init(&painter, NULL);
+#if XPAINTER_RENDERHINT_ON
+    expect_true(XPainter_renderHints(&painter) == 0u,
+                "renderHints is empty while painter is inactive");
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    expect_true(XPainter_renderHints(&painter) == 0u,
+                "setRenderHint is ignored while painter is inactive");
+#endif /* XPAINTER_RENDERHINT_ON */
+    expect_true(XPainter_begin_image(&painter, &image),
+                "text flags painter begins raster");
+#if XPAINTER_RENDERHINT_ON
+    expect_true(XPainter_renderHints(&painter) ==
+                XPainterRenderHint_TextAntialiasing,
+                "render hints default to TextAntialiasing");
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    expect_true(XPainter_testRenderHint(&painter,
+                                        XPainterRenderHint_Antialiasing),
+                "setRenderHint enables Antialiasing");
+    XPainter_setRenderHints(&painter,
+                            XPainterRenderHint_Antialiasing |
+                            XPainterRenderHint_TextAntialiasing,
+                            false);
+    expect_true(!XPainter_testRenderHint(&painter,
+                                         XPainterRenderHint_Antialiasing) &&
+                !XPainter_testRenderHint(&painter,
+                                         XPainterRenderHint_TextAntialiasing),
+                "setRenderHints clears requested bits");
+    XPainter_setRenderHint(&painter, XPainterRenderHint_TextAntialiasing,
+                           true);
+#endif /* XPAINTER_RENDERHINT_ON */
+    XPainter_setPen(&painter, 0xffffffffu);
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setBrush(&painter, 0xffffffffu);
+
+    /* DontPrint：不绘制任何像素 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &skipRect,
+                                      XPAINTER_TEXT_DONT_PRINT,
+                                      "AAA", 0xffffffffu),
+                "drawTextRect DontPrint returns true");
+    hasPix = 0;
+    {
+        int r, c;
+        for (r = 0; r < 24; ++r)
+            for (c = 0; c < 40; ++c)
+                if (XImage_pixel(&image, c, r) == 0xffffffffu)
+                    hasPix = 1;
+    }
+    expect_true(!hasPix, "DontPrint draws nothing");
+
+    /* SingleLine：换行视为空格，不拆行 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &skipRect,
+                                      XPAINTER_TEXT_SINGLE_LINE,
+                                      "A\nBC", 0xffffffffu),
+                "drawTextRect SingleLine");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 18, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 26, 0) == 0xffffffffu,
+                "SingleLine renders one line with newline as space");
+    hasPix = 0;
+    {
+        int r, c;
+        for (r = 16; r < 24; ++r)
+            for (c = 0; c < 40; ++c)
+                if (XImage_pixel(&image, c, r) == 0xffffffffu)
+                    hasPix = 1;
+    }
+    expect_true(!hasPix, "SingleLine keeps second row empty");
+
+    /* ExpandTabs：制表符推进到第 8 个字符位 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &wide,
+                                      XPAINTER_TEXT_EXPAND_TABS,
+                                      "A\tB", 0xffffffffu),
+                "drawTextRect ExpandTabs");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 66, 0) == 0xffffffffu,
+                "ExpandTabs places B at tab stop");
+
+    /* Justify：把行内额外宽度分配到空格 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &skipRect,
+                                      XPAINTER_TEXT_ALIGN_JUSTIFY |
+                                      XPAINTER_TEXT_JUSTIFICATION_FORCED,
+                                      "A B", 0xffffffffu),
+                "drawTextRect Justify");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 34, 0) == 0xffffffffu,
+                "Justify stretches space to right edge");
+
+    /* 默认裁剪到矩形；关闭裁剪能力时两种标志都允许越界绘制。 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &narrow,
+                                      XPAINTER_TEXT_SINGLE_LINE,
+                                      "AA", 0xffffffffu),
+                "drawTextRect default clip");
+#if XPAINTER_CLIP_ON
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 10, 0) == 0xff000000u,
+                "default clips second glyph to rect");
+#else
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 10, 0) == 0xffffffffu,
+                "clip-disabled build lets second glyph overflow");
+#endif /* XPAINTER_CLIP_ON */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &narrow,
+                                      XPAINTER_TEXT_SINGLE_LINE |
+                                      XPAINTER_TEXT_DONT_CLIP,
+                                      "AA", 0xffffffffu),
+                "drawTextRect DontClip");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffffffffu,
+                "DontClip lets second glyph overflow");
+
+    /* ShowMnemonic：& 转义下一字符并加下划线 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &skipRect,
+                                      XPAINTER_TEXT_SHOW_MNEMONIC,
+                                      "&A", 0xffffffffu),
+                "drawTextRect ShowMnemonic");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu,
+                "ShowMnemonic renders underlined glyph");
+    expect_true(XImage_pixel(&image, 2, 16) == 0xffffffffu,
+                "ShowMnemonic underline below baseline");
+
+    /* HideMnemonic：& 转义下一字符但不加下划线 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &skipRect,
+                                      XPAINTER_TEXT_HIDE_MNEMONIC,
+                                      "&A", 0xffffffffu),
+                "drawTextRect HideMnemonic");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 2, 16) == 0xff000000u,
+                "HideMnemonic renders glyph without underline");
+
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    /* 布局方向：RTL 时视觉左对齐翻转为右对齐，AlignAbsolute 保持物理左对齐。 */
+    expect_true(XPainter_layoutDirection(&painter) ==
+                XPainterLayoutDirection_Auto,
+                "layout direction defaults to Auto");
+    XPainter_setLayoutDirection(&painter,
+                                XPainterLayoutDirection_RightToLeft);
+    expect_true(XPainter_layoutDirection(&painter) ==
+                XPainterLayoutDirection_RightToLeft,
+                "layout direction getter returns RTL");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &directionRect,
+                                      XPAINTER_TEXT_ALIGN_LEFT,
+                                      "AA", 0xffffffffu),
+                "RTL layout draw succeeds");
+    expect_true(XImage_pixel(&image, 26, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 2, 0) == 0xff000000u,
+                "RTL flips logical left alignment to right");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &directionRect,
+                                      XPAINTER_TEXT_ALIGN_LEFT |
+                                      XPAINTER_TEXT_ALIGN_ABSOLUTE,
+                                      "AA", 0xffffffffu),
+                "absolute alignment draw succeeds");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 26, 0) == 0xff000000u,
+                "AlignAbsolute keeps physical left alignment");
+    XPainter_setLayoutDirection(&painter,
+                                XPainterLayoutDirection_LeftToRight);
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_TEXTLAYOUT_ON */
 
 static void test_painter_record_play_contract(void)
 {
@@ -949,6 +2454,50 @@ static void test_icon_device_pixel_ratio(void)
     XPixmap_deinit_base(&normal);
 }
 
+
+static void test_icon_theme_engine_contract(void)
+{
+    XPixmap fallbackPixmap;
+    XIcon fallbackIcon;
+    XIcon icon;
+    XIcon missing;
+    XString* key;
+    XString* name;
+    XIconThemeEngine* engine;
+    XIconEngine* clone;
+
+    XPixmap_init_ex(&fallbackPixmap, 4, 4);
+    XIcon_init_pixmap(&fallbackIcon, &fallbackPixmap);
+
+    XIcon_fromTheme_2("__xinyuec_no_such_theme_icon__", &fallbackIcon, &icon);
+    expect_true(!XIcon_isNull(&icon), "theme icon fallback keeps non-null");
+
+    XIcon_fromTheme_2("__xinyuec_no_such_theme_icon__", NULL, &missing);
+    expect_true(XIcon_isNull(&missing), "theme icon without fallback is null");
+
+    engine = XIconThemeEngine_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                          "__xinyuec_no_such_theme_icon__");
+    expect_true(engine != NULL, "theme engine create");
+    name = XIconEngine_iconName_base((const XIconEngine*)engine);
+    expect_true(name != NULL && !XString_isEmpty_base((const XContainer*)name),
+                "theme engine iconName");
+    key = XIconEngine_key_base((const XIconEngine*)engine);
+    expect_true(key != NULL && !XString_isEmpty_base((const XContainer*)key),
+                "theme engine key");
+    clone = XIconEngine_clone_base((const XIconEngine*)engine);
+    expect_true(clone != NULL, "theme engine clone");
+    if (clone) XIconEngine_delete_base(clone);
+    if (key) XString_delete_base((XClass*)key);
+    if (name) XString_delete_base((XClass*)name);
+    if (engine) XIconThemeEngine_delete_base(engine);
+
+    XIcon_deinit_base(&missing);
+    XIcon_deinit_base(&icon);
+    XIcon_deinit_base(&fallbackIcon);
+    XPixmap_deinit_base(&fallbackPixmap);
+}
+
+
 #if XIMAGECODEC_ON
 static void test_icon_add_file_size(void)
 {
@@ -1027,6 +2576,206 @@ static void test_image_device_io(void)
     XImage_deinit_base(&source);
 }
 
+#if XIMAGEIOPLUGIN_ON
+
+static int g_mockImageWidth;
+static int g_mockImageHeight;
+static uint32_t g_mockImagePixels[4];
+
+XCLASS_DEFINE_BEGING(TestImageHandler)
+XCLASS_DEFINE_EXTEND_END(TestImageHandler, XImageIOHandler)
+
+typedef struct TestImageHandler
+{
+    XImageIOHandler m_base;
+} TestImageHandler;
+
+static bool VTestImageHandler_canRead(const XImageIOHandler* self)
+{
+    (void)self;
+    return g_mockImageWidth > 0 && g_mockImageHeight > 0;
+}
+
+static bool VTestImageHandler_read(XImageIOHandler* self, XImage* image)
+{
+    int x;
+    int y;
+    (void)self;
+    if (!image || g_mockImageWidth <= 0 || g_mockImageHeight <= 0)
+        return false;
+    if (g_mockImageWidth * g_mockImageHeight > 4)
+        return false;
+    if (!XClassIsVtableNull(image))
+        XImage_deinit_base(image);
+    XImage_init(image);
+    XImage_init_ex(image, g_mockImageWidth, g_mockImageHeight, XImageFormat_ARGB32);
+    if (XImage_isNull(image))
+        return false;
+    for (y = 0; y < g_mockImageHeight; ++y)
+        for (x = 0; x < g_mockImageWidth; ++x)
+            XImage_setPixel(image, x, y, g_mockImagePixels[y * g_mockImageWidth + x]);
+    return !XImage_isNull(image);
+}
+
+static bool VTestImageHandler_write(XImageIOHandler* self, const XImage* image)
+{
+    int x;
+    int y;
+    (void)self;
+    if (!image || XImage_isNull(image))
+        return false;
+    g_mockImageWidth = XImage_width(image);
+    g_mockImageHeight = XImage_height(image);
+    if (g_mockImageWidth <= 0 || g_mockImageHeight <= 0 ||
+        g_mockImageWidth * g_mockImageHeight > 4)
+        return false;
+    for (y = 0; y < g_mockImageHeight; ++y)
+        for (x = 0; x < g_mockImageWidth; ++x)
+            g_mockImagePixels[y * g_mockImageWidth + x] = XImage_pixel(image, x, y);
+    return true;
+}
+
+static bool VTestImageHandler_option(const XImageIOHandler* self,
+                                     XImageIOHandlerOption option,
+                                     void* out)
+{
+    (void)self;
+    if (option == XImageIOHandlerOption_Size && out) {
+        XSize* size = (XSize*)out;
+        size->width = g_mockImageWidth;
+        size->height = g_mockImageHeight;
+        return true;
+    }
+    return false;
+}
+
+static XVtable* TestImageHandler_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(TestImageHandler)
+    XVTABLE_INHERIT_XCLASS(XImageIOHandler);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VTestImageHandler_canRead);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Read, VTestImageHandler_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Write, VTestImageHandler_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Option, VTestImageHandler_option);
+    return XVTABLE_DEFAULT;
+}
+
+static TestImageHandler* TestImageHandler_create(void)
+{
+    TestImageHandler* self = (TestImageHandler*)XMemory_malloc(
+        sizeof(TestImageHandler), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(TestImageHandler));
+    XImageIOHandler_init(&self->m_base);
+    XClassSetVtable(self, TestImageHandler);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+XCLASS_DEFINE_BEGING(TestImagePlugin)
+XCLASS_DEFINE_EXTEND_END(TestImagePlugin, XImageIOPlugin)
+
+typedef struct TestImagePlugin
+{
+    XImageIOPlugin m_base;
+    XStringList* m_keys;
+    XStringList* m_filters;
+    XStringList* m_mimes;
+} TestImagePlugin;
+
+static uint32_t VTestImagePlugin_capabilities(const XImageIOPlugin* self,
+                                              XIODevice* device,
+                                              const XString* format)
+{
+    (void)self;
+    (void)device;
+    (void)format;
+    return (uint32_t)(XImageIOPlugin_CanRead | XImageIOPlugin_CanWrite);
+}
+
+static XImageIOHandler* VTestImagePlugin_create(XImageIOPlugin* self,
+                                                XIODevice* device,
+                                                const XString* format)
+{
+    TestImageHandler* handler;
+    (void)self;
+    (void)format;
+    handler = TestImageHandler_create();
+    if (handler)
+        XImageIOHandler_setDevice((XImageIOHandler*)handler, device);
+    return (XImageIOHandler*)handler;
+}
+
+static XStringList* VTestImagePlugin_keys(const XImageIOPlugin* self)
+{
+    return self ? ((TestImagePlugin*)self)->m_keys : NULL;
+}
+
+static XStringList* VTestImagePlugin_nameFilters(const XImageIOPlugin* self)
+{
+    return self ? ((TestImagePlugin*)self)->m_filters : NULL;
+}
+
+static XStringList* VTestImagePlugin_mimeTypes(const XImageIOPlugin* self)
+{
+    return self ? ((TestImagePlugin*)self)->m_mimes : NULL;
+}
+
+static void VTestImagePlugin_deinit(XImageIOPlugin* self)
+{
+    TestImagePlugin* plugin = (TestImagePlugin*)self;
+    if (!plugin) return;
+    if (plugin->m_keys) XStringList_delete_base((XClass*)plugin->m_keys);
+    if (plugin->m_filters) XStringList_delete_base((XClass*)plugin->m_filters);
+    if (plugin->m_mimes) XStringList_delete_base((XClass*)plugin->m_mimes);
+    plugin->m_keys = NULL;
+    plugin->m_filters = NULL;
+    plugin->m_mimes = NULL;
+    XClass_Deinit_Parent(XImageIOPlugin, self);
+}
+
+static XVtable* TestImagePlugin_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(TestImagePlugin)
+    XVTABLE_INHERIT_XCLASS(XImageIOPlugin);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VTestImagePlugin_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOPlugin_Capabilities, VTestImagePlugin_capabilities);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOPlugin_Create, VTestImagePlugin_create);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOPlugin_Keys, VTestImagePlugin_keys);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOPlugin_NameFilters, VTestImagePlugin_nameFilters);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOPlugin_MimeTypes, VTestImagePlugin_mimeTypes);
+    return XVTABLE_DEFAULT;
+}
+
+static TestImagePlugin* TestImagePlugin_create(void)
+{
+    TestImagePlugin* self = (TestImagePlugin*)XMemory_malloc(
+        sizeof(TestImagePlugin), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(TestImagePlugin));
+    XImageIOPlugin_init(&self->m_base);
+    self->m_keys = XStringList_create();
+    self->m_filters = XStringList_create();
+    self->m_mimes = XStringList_create();
+    if (!self->m_keys || !self->m_filters || !self->m_mimes) {
+        if (self->m_keys) XStringList_delete_base((XClass*)self->m_keys);
+        if (self->m_filters) XStringList_delete_base((XClass*)self->m_filters);
+        if (self->m_mimes) XStringList_delete_base((XClass*)self->m_mimes);
+        XFree_System(self);
+        return NULL;
+    }
+    XStringList_push_back_utf8(self->m_keys, "mock");
+    XStringList_push_back_utf8(self->m_filters, "*.mock");
+    XStringList_push_back_utf8(self->m_mimes, "image/x-xinyue-mock");
+    XClassSetVtable(self, TestImagePlugin);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+#endif /* XIMAGEIOPLUGIN_ON */
+
 static void test_image_handler_registry(void)
 {
     XStringList* readerFormats = XImageReader_supportedImageFormats();
@@ -1035,16 +2784,36 @@ static void test_image_handler_registry(void)
     XStringList* writerFormats = XImageWriter_supportedImageFormats();
     XStringList* writerUnknown = XImageWriter_imageFormatsForMimeType_2("image/png");
     const XString* format;
+    int formatCount = 0;
 
+#if XIMAGECODEC_BMP_ON
+    ++formatCount;
+#endif
+#if XIMAGECODEC_PNG_ON
+    ++formatCount;
+#endif
+#if XIMAGECODEC_JPEG_ON
+    ++formatCount;
+#endif
+#if XIMAGECODEC_GIF_ON
+    ++formatCount;
+#endif
+#if XIMAGECODEC_SVG_ON
+    ++formatCount;
+#endif
+#if XIMAGEIOPLUGIN_ON
+    expect_true(XImagePluginRegistry_pluginCount() >= 1,
+                "built-in image plugin auto-registers");
+#endif
     format = readerFormats ? (const XString*)XStringList_at_base((const XVector*)readerFormats, 0) : NULL;
-    expect_true(readerFormats && XStringList_size_base((const XContainer*)readerFormats) == 5 && format &&
+    expect_true(readerFormats && XStringList_size_base((const XContainer*)readerFormats) == (size_t)formatCount && format &&
                 XString_equals_utf8(format, "bmp", XChar_CaseSensitive), "reader registry exposes BMP codec");
-    expect_true(readerMimes && XStringList_size_base((const XContainer*)readerMimes) == 5,
+    expect_true(readerMimes && XStringList_size_base((const XContainer*)readerMimes) == (size_t)formatCount,
                 "reader registry exposes built-in MIME types");
     expect_true(readerBmp && XStringList_size_base((const XContainer*)readerBmp) == 1,
                 "reader MIME lookup is case insensitive");
     format = writerFormats ? (const XString*)XStringList_at_base((const XVector*)writerFormats, 0) : NULL;
-    expect_true(writerFormats && XStringList_size_base((const XContainer*)writerFormats) == 5 && format &&
+    expect_true(writerFormats && XStringList_size_base((const XContainer*)writerFormats) == (size_t)formatCount && format &&
                 XString_equals_utf8(format, "bmp", XChar_CaseSensitive), "writer registry exposes BMP codec");
     expect_true(writerUnknown && XStringList_size_base((const XContainer*)writerUnknown) == 1,
                 "writer MIME lookup returns the matching codec format");
@@ -1056,13 +2825,99 @@ static void test_image_handler_registry(void)
     if (writerUnknown) XStringList_delete_base((XClass*)writerUnknown);
 }
 
+static void test_image_plugin_registry_integration(void)
+{
+#if XIMAGEIOPLUGIN_ON
+    TestImagePlugin* plugin;
+    XImage source;
+    XImage loaded;
+    XImageWriter writer;
+    XImageReader reader;
+    XStringList* formats;
+    XStringList* mimes;
+    XString* format;
+    const char* fileName = "xgui_mock_plugin.bin";
+    XString* fileNameObject;
+    bool ok;
+
+    plugin = TestImagePlugin_create();
+    expect_true(plugin != NULL, "mock plugin is created");
+    if (!plugin) return;
+    expect_true(XImagePluginRegistry_addPlugin((XImageIOPlugin*)plugin),
+                "mock plugin registers into registry");
+    fileNameObject = XString_create_utf8(fileName);
+    expect_true(fileNameObject != NULL, "mock file name is created");
+    if (!fileNameObject) {
+        XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin);
+        XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+        return;
+    }
+    g_mockImageWidth = 0;
+    g_mockImageHeight = 0;
+
+    formats = XImageReader_supportedImageFormats();
+    expect_true(formats != NULL &&
+                XStringList_contains_utf8(formats, "mock", XChar_CaseInsensitive),
+                "reader formats include registered plugin");
+    mimes = XImageWriter_imageFormatsForMimeType_2("image/x-xinyue-mock");
+    format = mimes && XStringList_size_base((const XContainer*)mimes) == 1
+        ? (XString*)XStringList_at_base((XVector*)mimes, 0) : NULL;
+    expect_true(mimes != NULL &&
+                XStringList_size_base((const XContainer*)mimes) == 1 && format &&
+                XString_equals_utf8(format, "mock", XChar_CaseSensitive),
+                "writer MIME lookup resolves plugin format");
+    if (formats) XStringList_delete_base((XClass*)formats);
+    if (mimes) XStringList_delete_base((XClass*)mimes);
+
+    XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
+    XImage_setPixel(&source, 0, 0, 0xff112233u);
+    XImage_setPixel(&source, 1, 0, 0xff445566u);
+    XImage_setPixel(&source, 0, 1, 0xff778899u);
+    XImage_setPixel(&source, 1, 1, 0xffaabbccu);
+
+    XFile_remove_static(fileNameObject);
+    XImageWriter_init_file_2(&writer, fileName, "mock");
+    expect_true(XImageWriter_canWrite(&writer), "plugin writer canWrite reports mock");
+    ok = XImageWriter_write(&writer, &source);
+    expect_true(ok, "plugin writer receives image through registry");
+    XImageWriter_deinit_base(&writer);
+
+    XImage_init(&loaded);
+    XImageReader_init_file_2(&reader, fileName, "mock");
+    expect_true(XImageReader_canRead(&reader), "plugin reader canRead reports mock");
+    ok = XImageReader_read(&reader, &loaded);
+    expect_true(ok, "plugin reader loads image through registry");
+    expect_true(XImage_width(&loaded) == 2 && XImage_height(&loaded) == 2,
+                "plugin round trip preserves dimensions");
+    expect_true(XImage_pixel(&loaded, 0, 0) == 0xff112233u &&
+                XImage_pixel(&loaded, 1, 0) == 0xff445566u &&
+                XImage_pixel(&loaded, 0, 1) == 0xff778899u &&
+                XImage_pixel(&loaded, 1, 1) == 0xffaabbccu,
+                "plugin round trip preserves pixels");
+
+    XImageReader_deinit_base(&reader);
+    XImage_deinit_base(&loaded);
+    XImage_deinit_base(&source);
+
+    expect_true(XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin),
+                "mock plugin is removed from registry");
+    XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+    XFile_remove_static(fileNameObject);
+    XString_delete_base((XClass*)fileNameObject);
+#else
+    expect_true(true, "plugin registry integration is disabled by XIMAGEIOPLUGIN_ON");
+#endif /* XIMAGEIOPLUGIN_ON */
+}
+
 static void test_image_codec_round_trip(void)
 {
     XImage source, decoded;
     XByteArray* encoded;
     const XImageCodecFormat formats[] = {XImageCodecFormat_Bmp, XImageCodecFormat_Png,
-                                         XImageCodecFormat_Jpeg, XImageCodecFormat_Gif,
-                                         XImageCodecFormat_Svg};
+#if XIMAGECODEC_JPEG_ON
+                                         XImageCodecFormat_Jpeg,
+#endif
+                                         XImageCodecFormat_Gif, XImageCodecFormat_Svg};
     XImage_init_ex(&source, 3, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xffff0000u); XImage_setPixel(&source, 1, 0, 0xff00ff00u); XImage_setPixel(&source, 2, 0, 0xff0000ffu);
     XImage_setPixel(&source, 0, 1, 0x80402010u); XImage_setPixel(&source, 1, 1, 0xffffffffu); XImage_setPixel(&source, 2, 1, 0xff102030u);
@@ -1070,6 +2925,15 @@ static void test_image_codec_round_trip(void)
         encoded = XByteArray_create(); XImage_init(&decoded);
         expect_true(encoded && XImageCodec_canEncode(formats[i]) && XImageCodec_encode(&source, formats[i], -1, encoded), "codec encodes format independently");
         expect_true(encoded && XImageCodec_detect(XByteArray_data(encoded), XByteArray_size_base((const XContainer*)encoded)) == formats[i], "codec detects encoded format");
+        {
+            int pw = 0, ph = 0;
+            expect_true(encoded &&
+                        XImageCodec_probeSize(XByteArray_data(encoded),
+                                              XByteArray_size_base((const XContainer*)encoded),
+                                              XImageCodecFormat_Unknown, &pw, &ph) &&
+                        pw == 3 && ph == 2,
+                        "codec probeSize reads dimensions without full decode");
+        }
         expect_true(encoded && XImageCodec_decode(XByteArray_data(encoded), XByteArray_size_base((const XContainer*)encoded), XImageCodecFormat_Unknown, &decoded), "codec decodes format independently");
         expect_true(XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2, "codec round trip preserves dimensions");
         XImage_deinit_base(&decoded); if (encoded) XByteArray_delete_base((XClass*)encoded);
@@ -1147,6 +3011,7 @@ static void test_codec_pixel_round_trip(void)
     XImage_deinit_base(&decoded);
     if (encoded) XByteArray_delete_base((XClass*)encoded);
 
+#if XIMAGECODEC_JPEG_ON
     /* JPEG：有损格式，使用 24x16 平滑渐变做往返，容差校验单通道误差 */
     {
         XImage jpegSrc;
@@ -1194,6 +3059,7 @@ static void test_codec_pixel_round_trip(void)
         if (encoded) XByteArray_delete_base((XClass*)encoded);
         XImage_deinit_base(&jpegSrc);
     }
+#endif /* XIMAGECODEC_JPEG_ON */
     XImage_deinit_base(&source);
 }
 
@@ -1231,6 +3097,7 @@ static void test_codec_reject_malformed(void)
                 "null image encode rejected");
     expect_true(encoded && !XImageCodec_encode(&nullImage, XImageCodecFormat_Png, -1, encoded),
                 "null (empty) XImage encode rejected");
+#if XIMAGECODEC_JPEG_ON
     /* JPEG 已有内置后端：正常图像编码应成功，空图像仍应被拒绝 */
     {
         XImage jpegSrc;
@@ -1242,6 +3109,7 @@ static void test_codec_reject_malformed(void)
                     "JPEG 空图像编码被拒绝");
         XImage_deinit_base(&jpegSrc);
     }
+#endif /* XIMAGECODEC_JPEG_ON */
     XImage_deinit_base(&out);
     XImage_deinit_base(&nullImage);
     if (encoded) XByteArray_delete_base((XClass*)encoded);
@@ -1249,12 +3117,15 @@ static void test_codec_reject_malformed(void)
 
 static void test_codec_detect_only(void)
 {
+#if XIMAGECODEC_JPEG_ON
     static const uint8_t jpegHeader[] = {0xff, 0xd8, 0xff, 0xe0};
+#endif
     static const uint8_t gifHeader[] = {'G', 'I', 'F', '8', '9', 'a'};
     static const uint8_t bmpHeader[] = {'B', 'M', 0, 0};
     static const uint8_t svgHeader[] = {'<', 's', 'v', 'g', ' ', 'x'};
     XImage out;
     XImage_init(&out);
+#if XIMAGECODEC_JPEG_ON
     expect_true(XImageCodec_detect(jpegHeader, sizeof(jpegHeader)) == XImageCodecFormat_Jpeg,
                 "JPEG 文件头可识别");
     expect_true(XImageCodec_canDecode(XImageCodecFormat_Jpeg) &&
@@ -1263,6 +3134,7 @@ static void test_codec_detect_only(void)
     expect_true(!XImageCodec_decode(jpegHeader, sizeof(jpegHeader),
                                     XImageCodecFormat_Unknown, &out),
                 "JPEG 裸文件头数据解码被拒绝");
+#endif
     expect_true(XImageCodec_detect(gifHeader, sizeof(gifHeader)) == XImageCodecFormat_Gif &&
                 XImageCodec_detect(bmpHeader, sizeof(bmpHeader)) == XImageCodecFormat_Bmp &&
                 XImageCodec_detect(svgHeader, sizeof(svgHeader)) == XImageCodecFormat_Svg,
@@ -1939,9 +3811,16 @@ static void test_codec_gif_animation(void)
 
 static void test_codec_upper_layer_files(void)
 {
-    static const char* files[] = {"xgui_rt.bmp", "xgui_rt.png", "xgui_rt.jpg",
+    static const char* files[] = {"xgui_rt.bmp", "xgui_rt.png",
+#if XIMAGECODEC_JPEG_ON
+                                  "xgui_rt.jpg",
+#endif
                                   "xgui_rt.gif", "xgui_rt.svg"};
-    static const char* fmts[] = {"bmp", "png", "jpeg", "gif", "svg"};
+    static const char* fmts[] = {"bmp", "png",
+#if XIMAGECODEC_JPEG_ON
+                                 "jpeg",
+#endif
+                                 "gif", "svg"};
     XImage source, loaded;
     size_t i;
 
@@ -1969,9 +3848,16 @@ static void test_codec_upper_layer_files(void)
 
 static void test_codec_upper_layer_devices(void)
 {
-    static const char* files[] = {"xgui_dev.bmp", "xgui_dev.png", "xgui_dev.jpg",
+    static const char* files[] = {"xgui_dev.bmp", "xgui_dev.png",
+#if XIMAGECODEC_JPEG_ON
+                                  "xgui_dev.jpg",
+#endif
                                   "xgui_dev.gif", "xgui_dev.svg"};
-    static const char* fmts[] = {"bmp", "png", "jpeg", "gif", "svg"};
+    static const char* fmts[] = {"bmp", "png",
+#if XIMAGECODEC_JPEG_ON
+                                 "jpeg",
+#endif
+                                 "gif", "svg"};
     XImage source, loaded;
     XFile file;
     XImageWriter writer;
@@ -1998,6 +3884,12 @@ static void test_codec_upper_layer_devices(void)
         if (XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
             XImageReader_init_device_2(&reader, (XIODevice*)&file, fmts[i]);
             XImage_init(&loaded);
+            {
+                XSize probedSize;
+                XImageReader_size(&reader, &probedSize);
+                expect_true(probedSize.width == 2 && probedSize.height == 2,
+                            "XImageReader size probes device prefix (各格式)");
+            }
             expect_true(XImageReader_canRead(&reader) &&
                         XImageReader_read(&reader, &loaded),
                         "XImageReader 设备读（各格式）");
@@ -6917,6 +8809,504 @@ static void test_gpu_contract(void)
 }
 #endif /* XPLATFORMINTEGRATION_ON */
 
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+typedef struct LabelProbe
+{
+    int activated;
+    int hovered;
+    const char* lastLink;
+    char linkBuffer[96];
+} LabelProbe;
+
+static LabelProbe g_labelProbe;
+
+static void label_probe_activatedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, XString*, link);
+    ++g_labelProbe.activated;
+    if (link && XString_toUtf8(link)) {
+        size_t n = XString_toUtf8_length(link);
+        if (n >= sizeof(g_labelProbe.linkBuffer))
+            n = sizeof(g_labelProbe.linkBuffer) - 1;
+        memcpy(g_labelProbe.linkBuffer, XString_toUtf8(link), n);
+        g_labelProbe.linkBuffer[n] = '\0';
+        g_labelProbe.lastLink = g_labelProbe.linkBuffer;
+    } else {
+        g_labelProbe.lastLink = NULL;
+    }
+}
+
+static void label_probe_hoveredSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, XString*, link);
+    ++g_labelProbe.hovered;
+    if (link && XString_toUtf8(link)) {
+        size_t n = XString_toUtf8_length(link);
+        if (n >= sizeof(g_labelProbe.linkBuffer))
+            n = sizeof(g_labelProbe.linkBuffer) - 1;
+        memcpy(g_labelProbe.linkBuffer, XString_toUtf8(link), n);
+        g_labelProbe.linkBuffer[n] = '\0';
+        g_labelProbe.lastLink = g_labelProbe.linkBuffer;
+    } else {
+        g_labelProbe.lastLink = NULL;
+    }
+}
+
+/** @brief XLabel 控件的 Qt 对齐契约测试。 */
+static void test_label_contract(void)
+{
+    XLabel label;
+    XLabel* zero;
+    const XString* text;
+    XString* sel;
+    XPixmap pm;
+    XPixmap got;
+    XPixmap empty;
+    XPicture* pic;
+    XPicture* gotPic;
+    XSize size;
+    XImage image;
+    XImage scaledImage;
+    XPainter painter;
+    XRect drawRect;
+    XSize normalTextSize;
+    XSize scaledTextSize;
+    size_t normalTextPixels;
+    size_t scaledTextPixels;
+
+    memset(&label, 0, sizeof(label));
+    XLabel_init(&label, NULL, 0);
+    expect_true(XLabel_text(&label) == NULL ||
+                XString_toUtf8_length(XLabel_text(&label)) == 0,
+                "XLabel 默认文本为空");
+    expect_true(XLabel_textFormat(&label) == XLabelTextFormat_AutoText,
+                "XLabel 默认 AutoText");
+    expect_true(!XLabel_wordWrap(&label), "XLabel 默认不换行");
+    expect_true(XLabel_indent(&label) == -1, "XLabel 默认 indent=-1");
+    expect_true(XLabel_margin(&label) == 0, "XLabel 默认 margin=0");
+    expect_true(!XLabel_hasScaledContents(&label),
+                "XLabel 默认不缩放内容");
+    expect_true(XLabel_buddy(&label) == NULL, "XLabel 默认无伙伴");
+    expect_true(!XLabel_openExternalLinks(&label),
+                "XLabel 默认不打开外链");
+    expect_true((XLabel_textInteractionFlags(&label) &
+                 XLabelTextInteraction_LinksAccessibleByMouse) != 0,
+                "XLabel 默认鼠标可访问链接");
+    expect_true(!XLabel_hasSelectedText(&label),
+                "XLabel 默认无选择文本");
+    expect_true(XLabel_selectionStart(&label) == -1,
+                "XLabel 默认选择起点 -1");
+    size = XLabel_sizeHint(&label);
+    expect_true(size.width >= 0 && size.height >= 0,
+                "XLabel 空文本 sizeHint 有效");
+    size = XLabel_minimumSizeHint(&label);
+    expect_true(size.width >= 0 && size.height >= 0,
+                "XLabel 空文本 minimumSizeHint 有效");
+
+    XLabel_setText_2(&label, "Hello");
+    text = XLabel_text(&label);
+    expect_true(text != NULL &&
+                strcmp(XString_toUtf8(text), "Hello") == 0,
+                "XLabel_setText_2 文本写入");
+    expect_true(XLabel_heightForWidth(&label, 64) > 0,
+                "XLabel 文本 heightForWidth>0");
+    XLabel_setNum(&label, 42);
+    text = XLabel_text(&label);
+    expect_true(text != NULL &&
+                strcmp(XString_toUtf8(text), "42") == 0,
+                "XLabel_setNum(int) 十进制文本");
+    XLabel_setNum_2(&label, 1.5);
+    text = XLabel_text(&label);
+    expect_true(text != NULL &&
+                strcmp(XString_toUtf8(text), "1.5") == 0,
+                "XLabel_setNum(double) %g 文本");
+
+    XLabel_setTextFormat(&label, XLabelTextFormat_PlainText);
+    expect_true(XLabel_textFormat(&label) == XLabelTextFormat_PlainText,
+                "XLabel setTextFormat 读写");
+    XLabel_setWordWrap(&label, true);
+    expect_true(XLabel_wordWrap(&label), "XLabel setWordWrap true");
+    XLabel_setAlignment(&label, 0);
+    expect_true(XLabel_alignment(&label) == 0, "XLabel setAlignment 0");
+    XLabel_setIndent(&label, 2);
+    expect_true(XLabel_indent(&label) == 2, "XLabel setIndent 2");
+    XLabel_setMargin(&label, 3);
+    expect_true(XLabel_margin(&label) == 3, "XLabel setMargin 3");
+    XLabel_setScaledContents(&label, true);
+    expect_true(XLabel_hasScaledContents(&label),
+                "XLabel setScaledContents true");
+    XLabel_setOpenExternalLinks(&label, true);
+    expect_true(XLabel_openExternalLinks(&label),
+                "XLabel setOpenExternalLinks true");
+    XLabel_setTextInteractionFlags(&label,
+        XLabelTextInteraction_TextSelectableByMouse);
+    expect_true((XLabel_textInteractionFlags(&label) &
+                 XLabelTextInteraction_TextSelectableByMouse) != 0,
+                "XLabel 文本可选交互标志");
+
+    XLabel_setSelection(&label, 1, 3);
+    expect_true(XLabel_hasSelectedText(&label),
+                "XLabel setSelection 产生选择");
+    expect_true(XLabel_selectionStart(&label) == 1,
+                "XLabel selectionStart 读取");
+    sel = XLabel_selectedText(&label);
+    expect_true(sel != NULL, "XLabel selectedText 非空");
+    if (sel) {
+        expect_true(strcmp(XString_toUtf8(sel), ".5") == 0,
+                    "XLabel selectedText 按 UTF-16 区间截取");
+        XString_delete_base((XClass*)sel);
+    }
+    XLabel_setSelection(&label, -1, -1);
+    expect_true(!XLabel_hasSelectedText(&label),
+                "XLabel setSelection(-1,-1) 清除选择");
+
+    XPixmap_init_ex(&pm, 5, 4);
+    XLabel_setPixmap(&label, &pm);
+    got = XLabel_pixmap(&label);
+    expect_true(XPixmap_width(&got) == 5 && XPixmap_height(&got) == 4,
+                "XLabel setPixmap/pixmap 尺寸往返");
+    XPixmap_deinit_base(&got);
+    XLabel_clear(&label);
+    empty = XLabel_pixmap(&label);
+    expect_true(XPixmap_isNull(&empty), "XLabel clear 清空像素图");
+    XPixmap_deinit_base(&empty);
+    XPixmap_deinit_base(&pm);
+
+    pic = XPicture_create();
+    expect_true(pic != NULL, "XLabel 测试绘图记录创建");
+    if (pic) {
+        XRect picRect = { 0, 0, 1, 1 };
+        XPicture_recordFillRect(pic, &picRect, 0xff3070ffu);
+    }
+    XLabel_setPicture(&label, pic);
+    gotPic = XLabel_picture(&label);
+    expect_true(gotPic != NULL, "XLabel setPicture/picture 往返");
+    XLabel_clear(&label);
+    gotPic = XLabel_picture(&label);
+    expect_true(gotPic == NULL, "XLabel clear 清空绘图记录");
+    XPicture_delete_base((XClass*)pic);
+
+    XLabel_setText_2(&label, "A");
+    XWidget_resize((XWidget*)&label, 24, 16);
+    XImage_init_ex(&image, 24, 16, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFFFFFFFFu);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "XLabel 绘制测试绑定图像");
+    XLabel_drawContents(&label, &painter);
+    expect_true(XPainter_end(&painter), "XLabel 绘制测试结束");
+    XPainter_deinit(&painter);
+    drawRect.x = 1; drawRect.y = 1; drawRect.width = 22; drawRect.height = 14;
+    expect_true(XImage_pixel(&image, drawRect.x + 2,
+                             drawRect.y + 7) != 0xFFFFFFFFu,
+                "XLabel 离屏绘制产生非背景像素");
+    XImage_deinit_base(&image);
+
+    /* 文字模式也必须使用 XFont 的整数倍缩放，而非只缩放像素图内容。 */
+    XLabel_setText_2(&label, "Scale");
+    XLabel_setAlignment(&label, XAlignment_Left | XAlignment_Top);
+    XLabel_setMargin(&label, 0);
+    XLabel_setIndent(&label, 0);
+    XLabel_setWordWrap(&label, false);
+    XWidget_resize((XWidget*)&label, 96, 64);
+    XLabel_setTextPixelSize(&label, 16);
+    normalTextSize = XLabel_sizeHint(&label);
+    XImage_init_ex(&image, 96, 64, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFFFFFFFFu);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "XLabel 默认字号绘制绑定图像");
+    XLabel_drawContents(&label, &painter);
+    expect_true(XPainter_end(&painter), "XLabel 默认字号绘制结束");
+    XPainter_deinit(&painter);
+    normalTextPixels = image_count_non_background(&image, 0xFFFFFFFFu);
+    expect_true(normalTextPixels > 0,
+                "XLabel 默认字号实际显示文字");
+
+    XLabel_setTextPixelSize(&label, 32);
+    expect_true(XLabel_textPixelSize(&label) == 32,
+                "XLabel 文字缩放字号读回");
+    scaledTextSize = XLabel_sizeHint(&label);
+    expect_true(scaledTextSize.width > normalTextSize.width &&
+                scaledTextSize.height > normalTextSize.height,
+                "XLabel 放大文字尺寸提示同步增长");
+    XImage_init_ex(&scaledImage, 96, 64, XImageFormat_ARGB32);
+    XImage_fill(&scaledImage, 0xFFFFFFFFu);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &scaledImage),
+                "XLabel 放大字号绘制绑定图像");
+    XLabel_drawContents(&label, &painter);
+    expect_true(XPainter_end(&painter), "XLabel 放大字号绘制结束");
+    XPainter_deinit(&painter);
+    scaledTextPixels = image_count_non_background(&scaledImage, 0xFFFFFFFFu);
+    expect_true(scaledTextPixels > normalTextPixels,
+                "XLabel 放大字号实际文字像素增长");
+    XImage_deinit_base(&scaledImage);
+    XImage_deinit_base(&image);
+
+    memset(&g_labelProbe, 0, sizeof(g_labelProbe));
+    zero = XLabel_create(NULL, 0);
+    expect_true(zero != NULL, "XLabel_create 创建信号探针对象");
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XLabel_linkActivated_signal(zero, NULL),
+                      label_probe_activatedSlot);
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XLabel_linkHovered_signal(zero, NULL),
+                      label_probe_hoveredSlot);
+    {
+        XString* linkText = XString_create_utf8("https://example.test");
+        XLabel_linkActivated_signal(zero, linkText);
+        expect_true(g_labelProbe.activated == 1 &&
+                    g_labelProbe.lastLink != NULL &&
+                    strcmp(g_labelProbe.lastLink, "https://example.test") == 0,
+                    "XLabel linkActivated 信号参数");
+        XString_delete_base((XClass*)linkText);
+    }
+    XLabel_delete_base(zero);
+
+    XLabel_deinit_base(&label);
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+#if XWIDGET_ON && XPUSHBUTTON_ON
+typedef struct ButtonProbe
+{
+    int pressed;
+    int released;
+    int clicked;
+    int toggled;
+    bool lastClicked;
+    bool lastToggled;
+} ButtonProbe;
+
+static ButtonProbe g_buttonProbe;
+
+static void button_probe_pressedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++g_buttonProbe.pressed;
+}
+
+static void button_probe_releasedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++g_buttonProbe.released;
+}
+
+static void button_probe_clickedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, bool, checked);
+    ++g_buttonProbe.clicked;
+    g_buttonProbe.lastClicked = checked;
+}
+
+static void button_probe_toggledSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, bool, checked);
+    ++g_buttonProbe.toggled;
+    g_buttonProbe.lastToggled = checked;
+}
+
+/** @brief XPushButton 按钮的 Qt 对齐契约测试。 */
+static void test_pushbutton_contract(void)
+{
+    XPushButton button;
+    XPushButton* zero;
+    XPixmap pm;
+    XIcon icon;
+    XIcon gotIcon;
+    XSize size;
+    XPoint pos;
+    XImage image;
+    XPainter painter;
+    XMenu* menu;
+
+    memset(&button, 0, sizeof(button));
+    XPushButton_init(&button, NULL, 0);
+    expect_true(XPushButton_text(&button) == NULL ||
+                XString_toUtf8_length(XPushButton_text(&button)) == 0,
+                "XPushButton 默认文本为空");
+    gotIcon = XPushButton_icon(&button);
+    expect_true(XIcon_isNull(&gotIcon), "XPushButton 默认图标为空");
+    XIcon_deinit_base(&gotIcon);
+    expect_true(!XPushButton_isCheckable(&button),
+                "XPushButton 默认不可选中");
+    expect_true(!XPushButton_isChecked(&button),
+                "XPushButton 默认未选中");
+    expect_true(!XPushButton_isDown(&button), "XPushButton 默认未按下");
+    expect_true(!XPushButton_autoRepeat(&button),
+                "XPushButton 默认无自动重复");
+    expect_true(XPushButton_autoRepeatDelay(&button) == 300,
+                "XPushButton 自动重复延迟默认 300");
+    expect_true(XPushButton_autoRepeatInterval(&button) == 100,
+                "XPushButton 自动重复间隔默认 100");
+    expect_true(!XPushButton_autoExclusive(&button),
+                "XPushButton 默认非自动互斥");
+    expect_true(!XPushButton_isDefault(&button),
+                "XPushButton 默认非默认按钮");
+    expect_true(!XPushButton_isFlat(&button), "XPushButton 默认非扁平");
+    expect_true(XPushButton_menu(&button) == NULL,
+                "XPushButton 默认无菜单");
+    expect_true(XWidget_focusPolicy((XWidget*)&button) ==
+                    XWidgetFocusPolicy_StrongFocus,
+                "XPushButton 默认 StrongFocus");
+    size = XPushButton_sizeHint(&button);
+    expect_true(size.width >= 0 && size.height >= 0,
+                "XPushButton sizeHint 有效");
+    size = XPushButton_minimumSizeHint(&button);
+    expect_true(size.width >= 0 && size.height >= 0,
+                "XPushButton minimumSizeHint 有效");
+
+    XPushButton_setText_2(&button, "OK");
+    expect_true(strcmp(XString_toUtf8(XPushButton_text(&button)), "OK") == 0,
+                "XPushButton setText_2 写入");
+    XPushButton_setAutoRepeat(&button, true);
+    expect_true(XPushButton_autoRepeat(&button),
+                "XPushButton setAutoRepeat true");
+    XPushButton_setAutoRepeatDelay(&button, 250);
+    XPushButton_setAutoRepeatInterval(&button, 80);
+    expect_true(XPushButton_autoRepeatDelay(&button) == 250 &&
+                XPushButton_autoRepeatInterval(&button) == 80,
+                "XPushButton 自动重复参数");
+    XPushButton_setAutoExclusive(&button, true);
+    expect_true(XPushButton_autoExclusive(&button),
+                "XPushButton setAutoExclusive true");
+
+    XPixmap_init_ex(&pm, 3, 2);
+    XIcon_init_pixmap(&icon, &pm);
+    XPushButton_setIcon(&button, &icon);
+    gotIcon = XPushButton_icon(&button);
+    expect_true(!XIcon_isNull(&gotIcon), "XPushButton 设置图标非空");
+    XIcon_deinit_base(&gotIcon);
+    XIcon_deinit_base(&icon);
+    XPixmap_deinit_base(&pm);
+
+    zero = XPushButton_create(NULL, 0);
+    expect_true(zero != NULL, "XPushButton_create 创建");
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XPushButton_pressed_signal(zero),
+                      button_probe_pressedSlot);
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XPushButton_released_signal(zero),
+                      button_probe_releasedSlot);
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XPushButton_clicked_signal(zero, false),
+                      button_probe_clickedSlot);
+    XObject_connect_2((XObject*)zero,
+                      (size_t)XPushButton_toggled_signal(zero, false),
+                      button_probe_toggledSlot);
+
+    XPushButton_setChecked(zero, true);
+    expect_true(!XPushButton_isChecked(zero),
+                "非可选中按钮 setChecked(true) 不生效");
+    XPushButton_toggle(zero);
+    expect_true(!XPushButton_isChecked(zero),
+                "非可选中按钮 toggle 不生效");
+    XPushButton_setCheckable(zero, true);
+    XPushButton_toggle(zero);
+    expect_true(XPushButton_isChecked(zero) &&
+                g_buttonProbe.toggled == 1 &&
+                g_buttonProbe.lastToggled,
+                "XPushButton checkable+toggle 发 toggled");
+    XPushButton_toggle(zero);
+    expect_true(!XPushButton_isChecked(zero) &&
+                g_buttonProbe.toggled == 2 &&
+                !g_buttonProbe.lastToggled,
+                "XPushButton toggle 反向切换");
+
+    XPushButton_setCheckable(zero, false);
+    XPushButton_click(zero);
+    expect_true(g_buttonProbe.pressed == 1 &&
+                g_buttonProbe.released == 1 &&
+                g_buttonProbe.clicked == 1 &&
+                !g_buttonProbe.lastClicked &&
+                g_buttonProbe.toggled == 2,
+                "XPushButton 非可选中 click 只发基本信号");
+    XPushButton_setCheckable(zero, true);
+    XPushButton_click(zero);
+    expect_true(XPushButton_isChecked(zero) &&
+                g_buttonProbe.clicked == 2 &&
+                g_buttonProbe.lastClicked &&
+                g_buttonProbe.toggled == 3 &&
+                g_buttonProbe.lastToggled,
+                "XPushButton 可选中 click 换选中并发 full 信号");
+
+    XWidget_resize((XWidget*)zero, 80, 30);
+    XPoint_init(&pos, 40, 15);
+    expect_true(XPushButton_hitButton(zero, &pos),
+                "XPushButton hitButton 矩形内命中");
+    XPoint_init(&pos, -1, -1);
+    expect_true(!XPushButton_hitButton(zero, &pos),
+                "XPushButton hitButton 矩形外不命中");
+    expect_true(g_buttonProbe.released == 2,
+                "XPushButton click 累计 released");
+    XPushButton_setDown(zero, true);
+    expect_true(XPushButton_isDown(zero),
+                "XPushButton setDown true");
+    expect_true(g_buttonProbe.released == 2,
+                "XPushButton setDown 不发射 released");
+    XPushButton_setDown(zero, false);
+    expect_true(g_buttonProbe.released == 2,
+                "XPushButton 取消按下不发射 released");
+    XWidget_setEnabled((XWidget*)zero, false);
+    XPushButton_click(zero);
+    expect_true(g_buttonProbe.pressed == 2,
+                "XPushButton 禁用时 click 直接返回");
+    XWidget_setEnabled((XWidget*)zero, true);
+
+    XPushButton_setDefault(zero, true);
+    expect_true(XPushButton_isDefault(zero),
+                "XPushButton setDefault 生效");
+    expect_true(!XPushButton_autoDefault(zero),
+                "XPushButton setDefault 不修改 autoDefault");
+    XPushButton_setDefault(zero, false);
+    expect_true(!XPushButton_isDefault(zero),
+                "XPushButton 取消默认状态");
+    XPushButton_setAutoDefault(zero, true);
+    expect_true(XPushButton_autoDefault(zero),
+                "XPushButton setAutoDefault true");
+    XPushButton_setFlat(zero, true);
+    expect_true(XPushButton_isFlat(zero),
+                "XPushButton setFlat true");
+
+    menu = XMenu_create("Options");
+    expect_true(menu != NULL, "按钮菜单测试对象创建");
+    if (menu) {
+        XPushButton_setMenu(zero, menu);
+        expect_true(XPushButton_menu(zero) == menu,
+                    "XPushButton setMenu/menu 往返");
+        XPushButton_setMenu(zero, NULL);
+        expect_true(XPushButton_menu(zero) == NULL,
+                    "XPushButton setMenu(NULL) 清空");
+        XMenu_delete(menu);
+    }
+
+    XPushButton_setText_2(zero, "B");
+    XWidget_resize((XWidget*)zero, 24, 16);
+    XImage_init_ex(&image, 24, 16, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFF000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "按钮绘制测试绑定图像");
+    XPushButton_drawContents(zero, &painter);
+    expect_true(XPainter_end(&painter), "按钮绘制测试结束");
+    XPainter_deinit(&painter);
+    expect_true(XImage_pixel(&image, 12, 8) != 0xFF000000u,
+                "按钮离屏绘制产生非背景像素");
+    XImage_deinit_base(&image);
+
+    XPushButton_delete_base((XClass*)zero);
+    XPushButton_deinit_base(&button);
+}
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+
 int main(void)
 {
     test_geometry_contract();
@@ -6925,6 +9315,7 @@ int main(void)
     test_icon_sizes();
     test_icon_matching();
     test_icon_device_pixel_ratio();
+    test_icon_theme_engine_contract();
 #if XIMAGECODEC_ON
     test_icon_add_file_size();
 #endif /* XIMAGECODEC_ON */
@@ -6934,10 +9325,37 @@ int main(void)
 #endif
     test_picture_play_contract();
     test_painter_raster_contract();
+    test_painter_extra_alignment();
+    test_painter_draw_picture_align();
+    test_painter_transform_contract();
+#if XPAINTER_PATH_ON
+    test_painter_path_contract();
+    test_painter_path_callback_contract();
+#endif /* XPAINTER_PATH_ON */
+#if XPAINTER_SHAPE_ON
+    test_painter_shape_contract();
+    test_painter_shape_callback_contract();
+#endif /* XPAINTER_SHAPE_ON */
+#if XPAINTER_POLYGON_ON
+    test_painter_polygon_contract();
+    test_painter_polygon_callback_contract();
+#endif /* XPAINTER_POLYGON_ON */
+#if XPAINTER_PENSTYLE_ON
+    test_painter_penstyle_contract();
+    test_painter_picture_penstyle_replay_contract();
+#endif /* XPAINTER_PENSTYLE_ON */
+#if XPAINTER_BRUSH_ON && XPAINTER_POLYGON_ON
+    test_painter_brush_contract();
+#endif /* XPAINTER_BRUSH_ON && XPAINTER_POLYGON_ON */
+#if XPAINTER_TEXTLAYOUT_ON
+    test_painter_text_layout_contract();
+    test_painter_text_flags_contract();
+#endif /* XPAINTER_TEXTLAYOUT_ON */
     test_painter_record_play_contract();
 #if XIMAGECODEC_ON
     test_image_device_io();
     test_image_handler_registry();
+    test_image_plugin_registry_integration();
     test_image_codec_round_trip();
     test_codec_pixel_round_trip();
     test_codec_reject_malformed();
@@ -6971,6 +9389,12 @@ int main(void)
 #if XWIDGET_ON
     test_widget_contract();
 #endif /* XWIDGET_ON */
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    test_label_contract();
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    test_pushbutton_contract();
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 #if XLAYOUT_ON
     test_layout_item_contract();
     test_layout_widget_integration();

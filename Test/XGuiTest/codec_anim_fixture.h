@@ -1,6 +1,6 @@
 ﻿/** @file codec_anim_fixture.h
  * @brief XImageCodec GIF 动画测试夹具（4 帧多帧动画 GIF89a）。
- * @note  由 Test/XGuiTest 与 xgui_regression_test.c 共用：
+ * @note  供统一自动回归入口 xgui_regression_test.c 使用：
  *        4x2 画布、4 帧（含透明色、处置方式 RestoreBackground/Keep、
  *        Netscape 循环扩展），验证 XImageCodec_decodeAnimation 的多帧语义。
  */

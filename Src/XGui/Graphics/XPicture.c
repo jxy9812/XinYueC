@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPicture.c
  * @brief      XPicture 绘图指令记录与回放类实现（对标 Qt 6.8 QPicture）
  * @author     XinYueC 团队
@@ -623,7 +623,11 @@ static void XPicture_imageDataCleanup(void* info)
     XFree_System(info);
 }
 
-bool XPicture_play(XPicture* self, XPainter* painter)
+/*
+ * 录制时虚线/点线已被拆分为若干实线段；回放时若画笔仍为虚线样式会被
+ * 二次拆分，因此回放期间强制改用实线画笔，结束后恢复调用方原样式。
+ */
+static bool XPicture_play_inner(XPicture* self, XPainter* painter)
 {
     const uint8_t* bytes;
     uint32_t offset, commandCount, index;
@@ -725,6 +729,24 @@ bool XPicture_play(XPicture* self, XPainter* painter)
     }
     return true;
 }
+
+bool XPicture_play(XPicture* self, XPainter* painter)
+{
+    bool ok;
+#if XPAINTER_PENSTYLE_ON
+    XPainterPenStyle savedStyle = painter
+        ? painter->m_state.m_penStyle : XPainterPenStyle_SolidLine;
+    if (painter)
+        painter->m_state.m_penStyle = XPainterPenStyle_SolidLine;
+#endif /* XPAINTER_PENSTYLE_ON */
+    ok = XPicture_play_inner(self, painter);
+#if XPAINTER_PENSTYLE_ON
+    if (painter)
+        painter->m_state.m_penStyle = savedStyle;
+#endif /* XPAINTER_PENSTYLE_ON */
+    return ok;
+}
+
 bool XPicture_load(XPicture* self, const XString* fileName)
 {
     XFile* file; XByteArray* bytes; size_t size; bool success = false;

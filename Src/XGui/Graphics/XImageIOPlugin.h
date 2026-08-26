@@ -18,12 +18,15 @@ XCLASS_DEFINE_ENUM(XImageIOPlugin, Capabilities) = XCLASS_VTABLE_GET_SIZE(XObjec
 XCLASS_DEFINE_ENUM(XImageIOPlugin, Create),
 XCLASS_DEFINE_ENUM(XImageIOPlugin, Keys),
 XCLASS_DEFINE_ENUM(XImageIOPlugin, NameFilters),
+XCLASS_DEFINE_ENUM(XImageIOPlugin, MimeTypes),
 XCLASS_DEFINE_END(XImageIOPlugin)
 
 typedef enum XImageIOPluginCapability
 {
     XImageIOPlugin_CanRead = 0x01, /**< 插件支持读取图像。 */
-    XImageIOPlugin_CanWrite = 0x02 /**< 插件支持写入图像。 */
+    XImageIOPlugin_CanWrite = 0x02, /**< 插件支持写入图像。 */
+    XImageIOPlugin_CanReadIncremental = 0x04 /**< 插件支持增量读取。
+        * 对标 Qt 6.8 qimageiohandler.h:111 的 CanReadIncremental。 */
 } XImageIOPluginCapability;
 
 /**
@@ -94,6 +97,14 @@ XImageIOHandler* XImageIOPlugin_create_base(XImageIOPlugin* self, XIODevice* dev
  * @return XStringList 指针；返回对象由插件管理，调用方不得释放。
  */
 XStringList* XImageIOPlugin_keys_base(const XImageIOPlugin* self);
+
+/**
+ * @brief 获取插件支持的 MIME 类型列表，每个元素与 keys_base 返回的
+ *        格式键一一对应；列出该格式对应的 image/* MIME 类型。
+ * @param self 插件指针。
+ * @return XStringList 指针；返回对象由插件管理，调用方不得释放。
+ */
+XStringList* XImageIOPlugin_mimeTypes_base(const XImageIOPlugin* self);
 
 /**
  * @brief 获取插件支持的文件名过滤器列表。

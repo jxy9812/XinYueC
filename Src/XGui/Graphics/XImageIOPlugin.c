@@ -16,6 +16,8 @@ static XStringList* VXImageIOPlugin_keys(const XImageIOPlugin* self)
 { (void)self; return XStringList_create(); }
 static XStringList* VXImageIOPlugin_nameFilters(const XImageIOPlugin* self)
 { (void)self; return XStringList_create(); }
+static XStringList* VXImageIOPlugin_mimeTypes(const XImageIOPlugin* self)
+{ (void)self; return XStringList_create(); }
 static void VXImageIOPlugin_deinit(XImageIOPlugin* self)
 { if (self) XClass_Deinit_Parent(XObject, (XObject*)self); }
 
@@ -24,7 +26,8 @@ XVtable* XImageIOPlugin_class_init(void)
     void* table[] = { (void*)VXImageIOPlugin_capabilities,
                       (void*)VXImageIOPlugin_create,
                       (void*)VXImageIOPlugin_keys,
-                      (void*)VXImageIOPlugin_nameFilters };
+                      (void*)VXImageIOPlugin_nameFilters,
+                      (void*)VXImageIOPlugin_mimeTypes };
     XVTABLE_INIT_DEFAULT(XImageIOPlugin)
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -62,4 +65,7 @@ XStringList* XImageIOPlugin_keys_base(const XImageIOPlugin* self)
     XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }
 XStringList* XImageIOPlugin_nameFilters_base(const XImageIOPlugin* self)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_NameFilters,
+    XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }
+XStringList* XImageIOPlugin_mimeTypes_base(const XImageIOPlugin* self)
+{ return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_MimeTypes,
     XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }

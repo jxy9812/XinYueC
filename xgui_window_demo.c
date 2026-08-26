@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * @file       xgui_window_demo.c
- * @brief      XGui 第一个真实原生窗口演示程序（Linux X11 / Windows Win32）。
- * @details    本程序演示 XGui 完整窗口链路：
+ * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
+ * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
  *             - XGuiApplication_create_ex 初始化应用单例；
  *             - 经平台原生接口拿到 XPlatformIntegration；
  *             - XPlatformIntegration_createPlatformWindow 挂接原生窗口
@@ -12,6 +12,8 @@
  *             - WM 删除（标题栏 X）触发 CloseEvent -> 接受后关闭退出。
  *             窗口绘制完全走 XImage/XPainter 软件路径，不依赖任何平台
  *             图形 API；平台差异全部隔离在 Drive 后端。
+ *             新增控件时在本文件追加可见场景；自动断言仍统一放在
+ *             xgui_regression_test.c，避免菜单式测试程序重复。
  *             运行：./bin/XGuiWindowDemo_Test [自动退出秒数]
  *                   - 不带参数：常驻，等待窗口标题栏关闭；
  *                   - 带参数：运行指定秒数后自动退出（供无窗口管理器的
@@ -34,6 +36,7 @@
 #include "XBackingStore.h"
 #include "XImage.h"
 #include "XPainter.h"
+#include "XLabel.h"
 
 #if XGUIAPPLICATION_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
     XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
@@ -84,6 +87,37 @@ static void demo_draw_checker(XPainter* painter, int x0, int y0,
     }
 }
 
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+/**
+ * @brief 在窗口后备缓冲中绘制一个可见的 XLabel 测试场景。
+ * @param painter 已绑定后备缓冲的绘制器。
+ * @param x 标签在窗口客户区中的横坐标。
+ * @param y 标签在窗口客户区中的纵坐标。
+ * @param width 标签可用宽度。
+ * @param height 标签可用高度。
+ * @param text 要显示的 ASCII 文本。
+ * @param pixelSize 标签文字像素高度，16 为原始点阵字号，32 为两倍放大。
+ */
+static void demo_draw_label(XPainter* painter, int x, int y, int width,
+                            int height, const char* text, int pixelSize)
+{
+    XLabel label;
+    if (!painter || width <= 0 || height <= 0) return;
+    memset(&label, 0, sizeof(label));
+    XLabel_init(&label, NULL, 0);
+    XLabel_setText_2(&label, text);
+    XLabel_setTextPixelSize(&label, pixelSize);
+    XLabel_setAlignment(&label, XAlignment_Left | XAlignment_Top);
+    XWidget_resize((XWidget*)&label, width, height);
+    if (XPainter_save(painter)) {
+        XPainter_translate(painter, (float)x, (float)y);
+        XLabel_drawContents(&label, painter);
+        XPainter_restore(painter);
+    }
+    XLabel_deinit_base(&label);
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 /** @brief 重绘整个窗口：resize 后备存储 -> 绘制 -> flush 提交原生窗口。 */
 static void demo_repaint(DemoWin* self)
 {
@@ -121,8 +155,15 @@ static void demo_repaint(DemoWin* self)
         demo_fill_rect(&painter, 0, 0, w, 40, 0xff1f4e79u);
         /* 中部棋盘格纹理。 */
         demo_draw_checker(&painter, 20, 60, 8, 5, 24);
-        /* 左侧信息面板。 */
-        demo_fill_rect(&painter, 230, 60, 190, 40, 0xff2e8b57u);
+        /* GUI 控件可视化测试面板：同一文字的原始字号与两倍字号。 */
+        demo_fill_rect(&painter, 230, 60, 270, 100, 0xffdcefe2u);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        demo_draw_label(&painter, 246, 70, 238, 20, "XLabel 1x", 16);
+        demo_draw_label(&painter, 246, 106, 238, 40, "XLabel 2x", 32);
+#else
+        /* 组件被嵌入式配置裁剪时保留面板，便于确认裁剪后的可视状态。 */
+        XPainter_drawText(&painter, 246, 92, "XLabel disabled", 0xff202020u);
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
         /* 状态栏。 */
         demo_fill_rect(&painter, 0, h - 28, w, 28, 0xff3a3a3au);
         XPainter_end(&painter);
@@ -333,7 +374,7 @@ int main(int argc, char* argv[])
         XGuiApplication_delete_base(app);
         return 1;
     }
-    XWindow_setTitle_2((XWindow*)win, "XinYueC 原生窗口演示 (X11/Win32)");
+    XWindow_setTitle_2((XWindow*)win, "XinYueC GUI 控件可视化测试 (X11/Win32)");
     XWindow_setGeometry((XWindow*)win, 60, 60, 520, 360);
 
     /* 3) 挂接平台原生接口与平台窗口句柄。 */

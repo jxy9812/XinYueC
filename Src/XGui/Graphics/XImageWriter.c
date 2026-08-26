@@ -5,6 +5,8 @@
  ******************************************************************************/
 #include "XImageWriter.h"
 #include "XImageCodec.h"
+#include "XImagePluginRegistry.h"
+#include "XFile.h"
 #include "XByteArray.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -29,6 +31,17 @@ static XStringList* XImageWriter_makeStringList(const char* const* values, size_
     return result;
 }
 
+static void XImageWriter_makeStringList_prefix(XStringList* result, const char* const* values, size_t count)
+{
+    size_t i;
+    if (!result || !values) return;
+    for (i = 0; i < count; ++i) {
+        if (values[i] && values[i][0] &&
+            !XStringList_contains_utf8(result, values[i], XChar_CaseInsensitive))
+            XStringList_push_back_utf8(result, values[i]);
+    }
+}
+
 static XStringList* XImageWriter_supportedFormats(void)
 {
     XStringList* result = XStringList_create();
@@ -38,6 +51,24 @@ static XStringList* XImageWriter_supportedFormats(void)
     for (i = 0; i < sizeof(g_imageWriterFormats) / sizeof(g_imageWriterFormats[0]); ++i)
         if (XImageCodec_canEncode(XImageCodec_formatFromName_2(g_imageWriterFormats[i])))
             XStringList_push_back_utf8(result, g_imageWriterFormats[i]);
+#endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_supportedImageFormats(false);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
 #endif
     return result;
 }
@@ -59,8 +90,10 @@ static bool XImageWriter_mimeEquals(const char* mimeType, const char* expected)
 typedef struct XImageWriterPrivate
 {
     XIODevice*  m_device;            /**< IO 设备 */
+    XIODevice*  m_fileDevice;        /**< 由写入器内部打开的文件设备 */
     XString*    m_fileName;          /**< 文件名（UTF-8） */
     XString*    m_format;            /**< 格式字符串（UTF-8） */
+    XImageIOHandler* m_handler;      /**< 当前插件处理器 */
     int         m_quality;           /**< 质量参数 */
     int         m_compression;       /**< 压缩参数 */
     XString*    m_subType;           /**< 子类型 */
@@ -70,6 +103,102 @@ typedef struct XImageWriterPrivate
     XImageWriterError m_error;       /**< 错误码 */
     XString*    m_errorString;       /**< 错误描述 */
 }XImageWriterPrivate;
+
+static void XImageWriter_releaseHandler(XImageWriterPrivate* data)
+{
+    if (!data) return;
+    if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
+    data->m_handler = NULL;
+    if (data->m_fileDevice) {
+        if (XIODevice_isOpen(data->m_fileDevice)) XIODevice_close_base(data->m_fileDevice);
+        XClass_delete_base((XClass*)data->m_fileDevice);
+    }
+    data->m_fileDevice = NULL;
+}
+
+static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
+{
+    const XString* format;
+    if (!self || !self->m_data) return XString_create();
+    format = self->m_data->m_format;
+    if (format && !XContainer_isEmpty_base((const XContainer*)format))
+        return XString_create_copy(format);
+    if (self->m_data->m_fileName) {
+        const char* fileName = XString_toUtf8(self->m_data->m_fileName);
+        const char* dot = fileName ? strrchr(fileName, '.') : NULL;
+        if (dot && dot[1]) return XString_create_utf8(dot + 1);
+    }
+    return XString_create();
+}
+
+static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
+{
+    XImageWriterPrivate* data;
+    XString* format;
+    if (!self || !(data = self->m_data)) return NULL;
+    if (data->m_handler) return data->m_handler;
+#if XIMAGEIOPLUGIN_ON
+    format = XImageWriter_resolveFormatForHandler(self);
+    if (!format) return NULL;
+    if (!XContainer_isEmpty_base((const XContainer*)format)) {
+        if (data->m_device) {
+            data->m_handler = XImagePluginRegistry_createWriteHandler(data->m_device, format);
+            XString_delete_base((XClass*)format);
+            return data->m_handler;
+        }
+        if (data->m_fileName) {
+            XFile* file = XFile_create_2(data->m_fileName);
+            if (file && XIODevice_open_base((XIODevice*)file,
+                        XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
+                data->m_handler = XImagePluginRegistry_createWriteHandler((XIODevice*)file, format);
+                if (data->m_handler) {
+                    data->m_fileDevice = (XIODevice*)file;
+                    XString_delete_base((XClass*)format);
+                    return data->m_handler;
+                }
+                XIODevice_close_base((XIODevice*)file);
+            }
+            if (file) XClass_delete_base((XClass*)file);
+        }
+    }
+    XString_delete_base((XClass*)format);
+#else
+    (void)self;
+    (void)format;
+#endif
+    return NULL;
+}
+
+static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
+                                              const XImageWriterPrivate* data)
+{
+    XImageIOHandlerOptionValue value;
+    if (!handler || !data) return;
+    memset(&value, 0, sizeof(value));
+    if (data->m_quality >= 0) {
+        value.integer = data->m_quality;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Quality, &value);
+    }
+    if (data->m_compression >= 0) {
+        memset(&value, 0, sizeof(value));
+        value.integer = data->m_compression;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_CompressionRatio, &value);
+    }
+    if (data->m_subType && !XContainer_isEmpty_base((const XContainer*)data->m_subType)) {
+        memset(&value, 0, sizeof(value));
+        value.string = data->m_subType;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_SubType, &value);
+    }
+    memset(&value, 0, sizeof(value));
+    value.boolean = data->m_optimizedWrite;
+    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_OptimizedWrite, &value);
+    memset(&value, 0, sizeof(value));
+    value.boolean = data->m_progressiveScan;
+    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite, &value);
+    memset(&value, 0, sizeof(value));
+    value.transformation = data->m_transformation;
+    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ImageTransformation, &value);
+}
 
 static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, const char* message)
 {
@@ -85,12 +214,19 @@ static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, c
 
 static bool XImageWriter_isSupportedFormat(const char* format)
 {
+    if (!format || !format[0]) return false;
 #if XIMAGECODEC_ON
-    return format && format[0] && XImageCodec_canEncode(XImageCodec_formatFromName_2(format));
-#else
-    (void)format;
-    return false;
+    if (XImageCodec_canEncode(XImageCodec_formatFromName_2(format))) return true;
 #endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XString* value = XString_create_utf8(format);
+        bool supported = value && XImagePluginRegistry_supportsWriteFormat(value);
+        if (value) XString_delete_base((XClass*)value);
+        if (supported) return true;
+    }
+#endif
+    return false;
 }
 
 static bool XImageWriter_fileLooksSupported(const char* fileName)
@@ -191,6 +327,7 @@ static void VXImageWriter_deinit(XImageWriter* self)
     if (ISNULL(self, "XImageWriter")) return;
     if (self->m_data)
     {
+        XImageWriter_releaseHandler(self->m_data);
         if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
         if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
         if (self->m_data->m_subType) XString_delete_base((XClass*)self->m_data->m_subType);
@@ -274,6 +411,7 @@ void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const ch
 void XImageWriter_setFormat(XImageWriter* self, const XString* format)
 {
     if (!self || !self->m_data) return;
+    XImageWriter_releaseHandler(self->m_data);
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
     self->m_data->m_format = format ? XString_create_copy(format) : NULL;
 }
@@ -300,6 +438,7 @@ const char* XImageWriter_format_2(const XImageWriter* self)
 void XImageWriter_setDevice(XImageWriter* self, XIODevice* device)
 {
     if (!self || !self->m_data) return;
+    XImageWriter_releaseHandler(self->m_data);
     self->m_data->m_device = device;
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
@@ -311,6 +450,7 @@ XIODevice* XImageWriter_device(const XImageWriter* self)
 void XImageWriter_setFileName(XImageWriter* self, const XString* fileName)
 {
     if (!self || !self->m_data) return;
+    XImageWriter_releaseHandler(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
     self->m_data->m_device = NULL;
@@ -447,40 +587,52 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
         source = &transformed;
         transformedInitialized = true;
     }
-    if (!self->m_data->m_fileName && !self->m_data->m_device)
-        XImageWriter_setError(self, XImageWriterError_DeviceError, "No image destination is set");
-    else if (!self->m_data->m_fileName) {
-        XByteArray* bytes = XByteArray_create();
-#if XIMAGECODEC_ON
-        XImageCodecFormat format = XImageCodec_formatFromName(self->m_data->m_format);
-        bool ok = XImageWriter_canWrite(self) && XImageCodec_encode(source, format, self->m_data->m_quality, bytes) &&
-                  XImageWriter_writeDevice(self->m_data->m_device, bytes);
-#else
-        bool ok = false;
-#endif
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
-        if (!ok)
-            XImageWriter_setError(self, XImageWriterError_DeviceError,
-                                  "Image could not be written to the device");
-        else {
-            XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
-            if (transformedInitialized) XImage_deinit_base(&transformed);
-            return true;
+    {
+        bool wrote = false;
+        XImageWriter_ensureHandler(self);
+        if (self->m_data->m_handler) {
+            XImageWriter_applyHandlerSettings(self->m_data->m_handler, self->m_data);
+            wrote = XImageIOHandler_write_base(self->m_data->m_handler, source);
+            if (wrote)
+                wrote = XIODevice_flush(self->m_data->m_fileDevice ?
+                                        self->m_data->m_fileDevice : self->m_data->m_device);
+            XImageWriter_releaseHandler(self->m_data);
+            if (wrote) {
+                XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
+                if (transformedInitialized) XImage_deinit_base(&transformed);
+                return true;
+            }
         }
-    }
-    else if (!XImageWriter_canWrite(self))
-        XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
-                              "The requested image format has no built-in encoder");
-    else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
-                          XString_toUtf8(self->m_data->m_format), self->m_data->m_quality))
-        XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
-    else {
-        XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
+        if (!self->m_data->m_fileName && !self->m_data->m_device) {
+            XImageWriter_setError(self, XImageWriterError_DeviceError, "No image destination is set");
+        } else if (!self->m_data->m_fileName) {
+            XByteArray* bytes = XByteArray_create();
+#if XIMAGECODEC_ON
+            XImageCodecFormat format = XImageCodec_formatFromName(self->m_data->m_format);
+            bool ok = XImageWriter_canWrite(self) && XImageCodec_encode(source, format, self->m_data->m_quality, bytes) &&
+                      XImageWriter_writeDevice(self->m_data->m_device, bytes);
+#else
+            bool ok = false;
+#endif
+            if (bytes) XByteArray_delete_base((XClass*)bytes);
+            if (!ok)
+                XImageWriter_setError(self, XImageWriterError_DeviceError,
+                                      "Image could not be written to the device");
+            else
+                wrote = true;
+        } else if (!XImageWriter_canWrite(self)) {
+            XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
+                                  "The requested image format has no built-in encoder");
+        } else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
+                              XString_toUtf8(self->m_data->m_format), self->m_data->m_quality)) {
+            XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
+        } else {
+            wrote = true;
+        }
+        if (wrote) XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
         if (transformedInitialized) XImage_deinit_base(&transformed);
-        return true;
+        return wrote;
     }
-    if (transformedInitialized) XImage_deinit_base(&transformed);
-    return false;
 }
 
 XImageWriterError XImageWriter_error(const XImageWriter* self)
@@ -519,20 +671,58 @@ XStringList* XImageWriter_supportedMimeTypes()
         if (XImageCodec_canEncode(XImageCodec_formatFromName_2(g_imageWriterFormats[i])))
             XStringList_push_back_utf8(result, g_imageWriterMimeTypes[i]);
 #endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_supportedMimeTypes(false);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
+#endif
     return result;
 }
 
 XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType)
 {
     const char* mime = XString_toUtf8(mimeType);
+    XStringList* result = XImageWriter_makeStringList(NULL, 0);
+    if (!result) return NULL;
     if (mime) {
-        if (XImageWriter_mimeEquals(mime, "image/bmp") && XImageWriter_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; return XImageWriter_makeStringList(value, 1); }
-        if (XImageWriter_mimeEquals(mime, "image/png") && XImageWriter_isSupportedFormat("png")) { const char* value[] = {"png"}; return XImageWriter_makeStringList(value, 1); }
-        if (XImageWriter_mimeEquals(mime, "image/gif") && XImageWriter_isSupportedFormat("gif")) { const char* value[] = {"gif"}; return XImageWriter_makeStringList(value, 1); }
-        if (XImageWriter_mimeEquals(mime, "image/jpeg") && XImageWriter_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; return XImageWriter_makeStringList(value, 1); }
-        if (XImageWriter_mimeEquals(mime, "image/svg+xml") && XImageWriter_isSupportedFormat("svg")) { const char* value[] = {"svg"}; return XImageWriter_makeStringList(value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/bmp") && XImageWriter_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/png") && XImageWriter_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/gif") && XImageWriter_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/jpeg") && XImageWriter_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/svg+xml") && XImageWriter_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageWriter_makeStringList_prefix(result, value, 1); }
     }
-    return XImageWriter_makeStringList(NULL, 0);
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_imageFormatsForMimeType(mimeType, false);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
+#endif
+    return result;
 }
 
 XStringList* XImageWriter_imageFormatsForMimeType_2(const char* mimeType)

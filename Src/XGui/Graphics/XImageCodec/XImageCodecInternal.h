@@ -206,6 +206,19 @@ bool XImageCodecInternal_encodeJpeg(const XImage* image, int quality,
 bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out);
 
 /**
+ * @brief 从 SVG 数据中探测默认宽与高。
+ * @param data   输入 SVG 数据；不能为 NULL。
+ * @param size   输入数据字节数。
+ * @param width  输出宽度；成功后大于 0。
+ * @param height 输出高度；成功后大于 0。
+ * @return 成功返回 true；无宽高/viewBox 或解析失败返回 false。
+ * @note 优先读取根 svg 的 width/height 属性，缺失时回退 viewBox 尺寸，
+ *       与解码路径的尺寸选择一致，不解码整幅图像。
+ */
+bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
+                                      int* width, int* height);
+
+/**
  * @brief 将 XImage 编码为 SVG 数据。
  * @param image 输入图像；不能为 NULL。
  * @param out   输出字节数组；不能为 NULL。

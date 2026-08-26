@@ -317,6 +317,52 @@ int XFont_pixelSize(const XFont* self);
  */
 void XFont_setPixelSize(XFont* self, int pixelSize);
 
+/* ========== 点阵字体整倍缩放算法（内置位图字体共用小工具） ========== */
+
+/**
+ * @brief      读取字体像素字号，未设置（<=0）时回落默认值。
+ * @param self 目标 XFont 对象指针；NULL 返回默认值。
+ * @param defaultPixelSize 未设置字号时的回落像素高度。
+ * @return 生效的像素字号。
+ */
+int XFont_bitmapPixelSize(const XFont* self, int defaultPixelSize);
+
+/**
+ * @brief      计算内置点阵字体的整倍缩放系数（最近邻）。
+ * @details    给定基准字体高度与目标字号高度，返回
+ *             scale = max(1, ceil(target / base))，使任何位图字体
+ *             （8x16、6x13、12x24…）都可按统一算法整倍放大：
+ *             有效高 = base x scale、有效宽 = 对应原始度量 x scale。
+ * @param basePixelHeight 基准点阵字体高度（<=0 按 1 处理）。
+ * @param targetPixelHeight 目标像素高度（<=0 视为 base 本身）。
+ * @return 整倍缩放系数（>=1）。
+ */
+int XFont_bitmapScale(int basePixelHeight, int targetPixelHeight);
+
+/**
+ * @brief      计算整倍缩放后的尺寸。
+ * @param baseSize 原始某一度量（字宽/行高/基线高/字间距…）。
+ * @param scale    缩放系数（<1 按 1 处理）。
+ * @return baseSize x max(1, scale)。
+ */
+int XFont_bitmapScaledSize(int baseSize, int scale);
+
+/**
+ * @brief      按字体像素字号计算键入内置位图字体的整倍缩放系数。
+ * @param self 目标 XFont 对象指针；NULL 返回 1。
+ * @param basePixelHeight 该位图字体的基准高度（如 16）。
+ * @return 整倍缩放系数（>=1）。
+ */
+int XFont_bitmapScaleForFont(const XFont* self, int basePixelHeight);
+
+/**
+ * @brief      按字体像素字号计算内建位图字体的有效像素高。
+ * @param self 目标 XFont 对象指针；NULL 返回 basePixelHeight。
+ * @param basePixelHeight 该位图字体的基准高度（如 16）。
+ * @return 有效像素高度 = basePixelHeight x scale。
+ */
+int XFont_bitmapHeightForFont(const XFont* self, int basePixelHeight);
+
 /**
  * @brief      获取字重
  * @param self 目标 XFont 对象指针

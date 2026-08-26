@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XGuiConfig.h
  * @brief      XGui 模块总开关与子功能配置。
  * @details    CXinYueConfig.h 只保留 XGUI_ON 总开关入口；所有 GUI 子开关
@@ -50,6 +50,9 @@
 #ifndef XPALETTE_ON
 #define XPALETTE_ON 1
 #endif
+#ifndef XIMAGEIOPLUGIN_ON
+#define XIMAGEIOPLUGIN_ON 1
+#endif
 
 /* 平台集成与平台资源。 */
 #ifndef XPLATFORMINTEGRATION_ON
@@ -71,12 +74,59 @@
 #define XPLATFORMBACKINGSTORE_ON 1
 #endif
 
+/* 绘图与窗口基础模块。 */
+#ifndef XPAINTER_ON
+#define XPAINTER_ON 1
+#endif
+#ifndef XPAINTER_SHAPE_ON
+#define XPAINTER_SHAPE_ON 1
+#endif
+#ifndef XPAINTER_POLYGON_ON
+#define XPAINTER_POLYGON_ON 1
+#endif
+#ifndef XPAINTER_PENSTYLE_ON
+#define XPAINTER_PENSTYLE_ON 1
+#endif
+#ifndef XPAINTER_BRUSH_ON
+#define XPAINTER_BRUSH_ON 1
+#endif
+#ifndef XPAINTER_PATH_ON
+#define XPAINTER_PATH_ON 1
+#endif
+#ifndef XPAINTER_TEXTLAYOUT_ON
+#define XPAINTER_TEXTLAYOUT_ON 1
+#endif
+#ifndef XPAINTER_LAYOUT_DIRECTION_ON
+#define XPAINTER_LAYOUT_DIRECTION_ON 1
+#endif
+#ifndef XPAINTER_RENDERHINT_ON
+#define XPAINTER_RENDERHINT_ON 1
+#endif
+#ifndef XPAINTER_WORLD_MATRIX_ON
+#define XPAINTER_WORLD_MATRIX_ON 1
+#endif
+#ifndef XPAINTER_VIEW_TRANSFORM_ON
+#define XPAINTER_VIEW_TRANSFORM_ON 1
+#endif
+#ifndef XPAINTER_CLIP_ON
+#define XPAINTER_CLIP_ON 1
+#endif
+
 /* 控件、布局、输入法与窗口事件。 */
 #ifndef XAPPLICATION_ON
 #define XAPPLICATION_ON 1
 #endif
 #ifndef XWIDGET_ON
 #define XWIDGET_ON 1
+#endif
+#ifndef XFRAME_ON
+#define XFRAME_ON 1
+#endif
+#ifndef XLABEL_ON
+#define XLABEL_ON 1
+#endif
+#ifndef XPUSHBUTTON_ON
+#define XPUSHBUTTON_ON 1
 #endif
 #ifndef XLAYOUT_ON
 #define XLAYOUT_ON 1
@@ -112,6 +162,16 @@
 #if !XWIDGET_ON || !XGUIAPPLICATION_ON || !XWINDOW_ON
 #undef XLAYOUT_ON
 #define XLAYOUT_ON 0
+#undef XFRAME_ON
+#define XFRAME_ON 0
+#undef XLABEL_ON
+#define XLABEL_ON 0
+#undef XPUSHBUTTON_ON
+#define XPUSHBUTTON_ON 0
+#endif
+#if !XFRAME_ON
+#undef XLABEL_ON
+#define XLABEL_ON 0
 #endif
 #if !XGUIAPPLICATION_ON
 #undef XAPPLICATION_ON
@@ -142,6 +202,8 @@
 #define XMIMEDATA_ON 0
 #undef XPALETTE_ON
 #define XPALETTE_ON 0
+#undef XIMAGEIOPLUGIN_ON
+#define XIMAGEIOPLUGIN_ON 0
 #undef XPLATFORMINTEGRATION_ON
 #define XPLATFORMINTEGRATION_ON 0
 #undef XPLATFORMNATIVEINTERFACE_ON
@@ -158,6 +220,12 @@
 #define XAPPLICATION_ON 0
 #undef XWIDGET_ON
 #define XWIDGET_ON 0
+#undef XFRAME_ON
+#define XFRAME_ON 0
+#undef XLABEL_ON
+#define XLABEL_ON 0
+#undef XPUSHBUTTON_ON
+#define XPUSHBUTTON_ON 0
 #undef XLAYOUT_ON
 #define XLAYOUT_ON 0
 #undef XINPUTMETHOD_ON

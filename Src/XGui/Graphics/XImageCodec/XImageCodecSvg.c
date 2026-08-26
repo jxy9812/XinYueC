@@ -2756,6 +2756,205 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
 
 #endif /* XIMAGECODEC_SVG_VECTOR_ON */
 
+#if !XIMAGECODEC_SVG_VECTOR_ON
+/* 基础 SVG 尺寸字符串解析：供裁剪掉矢量渲染后的尺寸探测/解码使用。 */
+static bool svgParseLengthSimple(const char* s, double* out)
+{
+    double value = 0.0;
+    const char* p = s;
+    bool digits = false;
+    bool dot = false;
+    bool quoted = false;
+    if (!s || !out) return false;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (*p == '=' || *p == ':') {
+        ++p;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    }
+    if (*p == '"' || *p == '\'') {
+        quoted = true;
+        ++p;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    }
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10.0 + (double)(*p - '0');
+        digits = true;
+        ++p;
+    }
+    if (*p == '.') {
+        double scale = 0.1;
+        ++p; dot = true;
+        while (*p >= '0' && *p <= '9') {
+            value += (double)(*p - '0') * scale;
+            scale *= 0.1;
+            digits = true;
+            ++p;
+        }
+    }
+    if (!digits) return false;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (*p == 'p' && p[1] == 'x') p += 2;
+    if (*p == '%' || *p == 'e' || *p == 'm' || *p == 'p' ||
+        *p == 'c' || *p == 'v' || *p == 'i' || *p == 'q') return false;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (quoted && (*p == '"' || *p == '\'')) ++p;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    *out = value;
+    return true;
+}
+
+static bool svgParseNumberListSimple(const char* s, double* values,
+                                     int count, int* outCount)
+{
+    int n = 0;
+    if (!s || !values || !outCount) return false;
+    for (;;) {
+        double value = 0.0;
+        double scale = 0.1;
+        bool digits = false;
+        bool dot = false;
+        const char* p = s;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' ||
+               *p == ',') ++p;
+        if (*p == '=' || *p == ':') {
+            ++p;
+            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+        }
+        if (*p == '"' || *p == '\'') ++p;
+        if (!*p) break;
+        s = p;
+        while (*p && ((*p >= '0' && *p <= '9') || *p == '.')) {
+            if (*p == '.') {
+                if (dot) break;
+                dot = true;
+            } else {
+                digits = true;
+                if (!dot) {
+                    value = value * 10.0 + (double)(*p - '0');
+                } else {
+                    value += (double)(*p - '0') * scale;
+                    scale *= 0.1;
+                }
+            }
+            ++p;
+        }
+        if (!digits) break;
+        if (n >= count) break;
+        values[n++] = value;
+        while (*s && *s != ',' && *s != ' ' && *s != '\t' &&
+               *s != '\r' && *s != '\n') ++s;
+    }
+    *outCount = n;
+    if (n < count) return false;
+    return true;
+}
+
+static int svgClipSimple(int v, int lo, int hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+#endif /* !XIMAGECODEC_SVG_VECTOR_ON */
+
+/* ===================================================================== */
+/* SVG 默认尺寸探测                                                        */
+/* ===================================================================== */
+/**
+ * @brief 从 SVG 数据中探测默认宽与高。
+ * @param data   输入 SVG 数据；不能为 NULL。
+ * @param size   输入数据字节数。
+ * @param width  输出宽度；成功后大于 0。
+ * @param height 输出高度；成功后大于 0。
+ * @return 成功返回 true；无宽高/viewBox 或解析失败返回 false。
+ * @note 优先读取根 svg 的 width/height 属性，缺失时回退 viewBox 尺寸，
+ *       与解密路径的尺寸选择一致；不创建图像、不解码完整像素。
+ */
+bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
+                                      int* width, int* height)
+{
+#if XIMAGECODEC_SVG_VECTOR_ON
+    SvgArena arena;
+    SvgNode* root;
+    const char* v;
+    double dims[2] = {0.0, 0.0};
+    double widthD = 0.0, heightD = 0.0;
+    int ok = 0;
+    if (!data || !size || !width || !height) return false;
+    svgArenaInit(&arena);
+    root = svgParseDom((const char*)data, size, &arena);
+    if (!root || strcmp(root->m_name, "svg") != 0) {
+        svgArenaCleanup(&arena);
+        return false;
+    }
+    v = svgNodeAttr(root, "width");
+    if (v && svgParseLength(v, &dims[0]) && dims[0] > 0.0) widthD = dims[0];
+    v = svgNodeAttr(root, "height");
+    if (v && svgParseLength(v, &dims[1]) && dims[1] > 0.0) heightD = dims[1];
+    if (widthD <= 0.0 || heightD <= 0.0) {
+        const char* vb = svgNodeAttr(root, "viewBox");
+        double values[4];
+        int n = 0;
+        if (vb && svgParseNumberList(vb, values, 4, &n) && n == 4 &&
+            values[2] > 0.0 && values[3] > 0.0) {
+            if (widthD <= 0.0) widthD = values[2];
+            if (heightD <= 0.0) heightD = values[3];
+        }
+    }
+    if (widthD <= 0.0 || heightD <= 0.0 || widthD > (double)INT_MAX ||
+        heightD > (double)INT_MAX) {
+        svgArenaCleanup(&arena);
+        return false;
+    }
+    *width = svgClip((int)(widthD + 0.5), 1, 16384);
+    *height = svgClip((int)(heightD + 0.5), 1, 16384);
+    ok = 1;
+    svgArenaCleanup(&arena);
+    return ok != 0;
+#else
+    char* text;
+    const char* widthAttr = NULL;
+    const char* heightAttr = NULL;
+    const char* viewBox = NULL;
+    double widthD = 0.0, heightD = 0.0;
+    if (!data || !size || !width || !height) return false;
+    text = (char*)XMalloc_System(size + 1);
+    if (!text) return false;
+    memcpy(text, data, size);
+    text[size] = '\0';
+    widthAttr = strstr(text, "width");
+    heightAttr = strstr(text, "height");
+    viewBox = strstr(text, "viewBox");
+    if (widthAttr &&
+        (size_t)(widthAttr - text) < size) {
+        double v;
+        if (svgParseLengthSimple(widthAttr + 5, &v) && v > 0.0) widthD = v;
+    }
+    if (heightAttr &&
+        (size_t)(heightAttr - text) < size) {
+        double v;
+        if (svgParseLengthSimple(heightAttr + 6, &v) && v > 0.0) heightD = v;
+    }
+    if ((widthD <= 0.0 || heightD <= 0.0) && viewBox &&
+        (size_t)(viewBox - text) < size) {
+        double values[4] = {0.0, 0.0, 0.0, 0.0};
+        int n = 0;
+        if (svgParseNumberListSimple(viewBox + 7, values, 4, &n) &&
+            n == 4 && values[2] > 0.0 && values[3] > 0.0) {
+            if (widthD <= 0.0) widthD = values[2];
+            if (heightD <= 0.0) heightD = values[3];
+        }
+    }
+    XFree_System(text);
+    if (widthD <= 0.0 || heightD <= 0.0 || widthD > (double)INT_MAX ||
+        heightD > (double)INT_MAX)
+        return false;
+    *width = svgClipSimple((int)(widthD + 0.5), 1, 16384);
+    *height = svgClipSimple((int)(heightD + 0.5), 1, 16384);
+    return true;
+#endif
+}
+
 /* ===================================================================== */
 /* SVG 统一解码入口                                                        */
 /* ===================================================================== */

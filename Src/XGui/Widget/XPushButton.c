@@ -1,0 +1,1030 @@
+﻿/******************************************************************************
+ * @file       XPushButton.c
+ * @brief      XPushButton 按钮控件实现（对标 Qt 6.8 QPushButton / QAbstractButton）。
+ * @details    实现要点：
+ *             - 继承 XWidget，把 QAbstractButton 与 QPushButton 常用公共行为
+ *               折叠进单类；生命周期走 XClass 体系：XPushButton_init/create_ex
+ *               挂 XPushButton 虚表；
+ *             - 文本/图标/选中/按下/自动重复/自动默认等状态位全部对齐
+ *               Qt 6.8 默认值；setCheckable(false) 清空 checked，setDefault 只
+ *               改 defaultButton，autoDefault() 在 Auto 三态下返回 false；
+ *             - 点击：click() 禁用直接返回，内部按下/释放流程按
+ *               QAbstractButton::click 重放 pressed/released/clicked/toggled；
+ *             - 鼠标左键命中按下/移出释放/移回按下按 QAbstractButton 语义
+ *               处理；键盘 Space 按键模拟按下/释放，Return/Enter 仅在默认或
+ *               autoDefault 生效时触发 click；
+ *             - 绘制：XPainter 输出 raised/sunken/flat 外观，文本经当前
+ *               XFont（内置 8x16 点阵字库回退），图标走 XIcon_paint；
+ *             - 不依赖任何平台 API；嵌入式由 XPUSHBUTTON_ON 裁剪。
+ * @note       近似边界：autoExclusive 仅保存标志、按钮组互斥登记未实现；
+ *             animateClick 无动画定时器直接 click()；QDialog 下的
+ *             autoDefault 自动解析、样式 bevel、快捷键与真实平台菜单弹层
+ *             未实现；菜单关联接口按 Qt 借用语义提供，showMenu 仅同步
+ *             按下状态并重绘，不进入阻塞式弹层循环。
+ * @author     XinYueC 团队
+ ******************************************************************************/
+#include "XPushButton.h"
+#include "XPainter.h"
+#include "XPalette.h"
+#include "XColor.h"
+#include "XFont.h"
+#include "XVarList.h"
+#include "XWindowEvent.h"
+#include "XMemory.h"
+#include "XString.h"
+#include "XAlignment.h"
+#include <string.h>
+
+#if XWIDGET_ON && XPUSHBUTTON_ON
+
+/* ==================== 内部工具 ==================== */
+
+/** @brief 从控件调色板读取颜色；调色板裁剪时回退黑色。 */
+static uint32_t pushbutton_color(const XPushButton* self,
+                                 XPaletteColorGroup group,
+                                 XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette;
+    XColor color;
+    if (!self) return 0xFF000000u;
+    palette = XWidget_palette((const XWidget*)self);
+    color = XPalette_color(&palette, group, role);
+    return XColor_rgba(&color);
+#else
+    (void)self;
+    (void)group;
+    (void)role;
+    return 0xFF000000u;
+#endif /* XPALETTE_ON */
+}
+
+/** @brief 内部按下状态切换（仅在状态变化时重绘并发射按下/释放信号）。 */
+static void pushbutton_setDownInternal(XPushButton* self, bool down)
+{
+    if (!self || self->m_down == down) return;
+    self->m_down = down;
+    XWidget_repaint((XWidget*)self);
+    if (down)
+        XPushButton_pressed_signal(self);
+    else
+        XPushButton_released_signal(self);
+}
+
+/** @brief 发射无参数信号；无接收者时立即释放参数列表。 */
+static void pushbutton_emitVoid(XPushButton* self, size_t signal)
+{
+    XVarList* args = XVarList_create(0);
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射携带 bool 参数的信号；无接收者时立即释放参数列表。 */
+static void pushbutton_emitBool(XPushButton* self, size_t signal, bool value)
+{
+    XVarList* args = XVarList_Create(XVar(bool, value));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 是否三态 Auto 且当前上下文判定为对话框默认按钮。 */
+static bool pushbutton_autoDefaultActive(const XPushButton* self)
+{
+    (void)self;
+    return false; /* 无对话框上下文；Auto 三态按 Qt 语义返回 false */
+}
+
+/** @brief 是否把当前尺寸视为显式图标尺寸。 */
+static bool pushbutton_hasIconSize(const XPushButton* self)
+{
+    return self && XSize_isValid(&self->m_iconSize) &&
+           self->m_iconSize.width > 0 && self->m_iconSize.height > 0;
+}
+
+/** @brief 返回按钮图标用于尺寸提示的渲染尺寸（未显式设置按 PM_ButtonIconSize=16）。 */
+static XSize pushbutton_hintIconSize(const XPushButton* self)
+{
+    XSize out;
+    XSize_init(&out, 16, 16);
+    if (pushbutton_hasIconSize(self))
+        out = self->m_iconSize;
+    return out;
+}
+
+/** @brief 按 Qt 6.8 QPushButton::sizeHint 内容语义计算建议尺寸。 */
+static XSize pushbutton_computeSizeHint(const XPushButton* self)
+{
+    XSize out;
+    XSize iconSize;
+    const char* text;
+    bool hasIcon;
+    bool empty;
+    int w = 0;
+    int h = 0;
+    XFont font;
+    if (!self) { XSize_init(&out, -1, -1); return out; }
+    hasIcon = !XIcon_isNull(&self->m_icon);
+    if (hasIcon) {
+        iconSize = pushbutton_hintIconSize(self);
+        w += iconSize.width + 4;
+        if (h < iconSize.height) h = iconSize.height;
+    }
+    font = XWidget_font((XWidget*)self);
+    text = self->m_text ? XString_toUtf8(self->m_text) : NULL;
+    if (!text) text = "";
+    empty = text[0] == '\0';
+    if (empty) {
+        int placeholder;
+        placeholder = XPainter_textWidth(&font, "XXXX");
+        if (!w) w += placeholder;
+        if (!h) h = XPainter_textHeight(&font);
+    } else {
+        w += XPainter_textWidth(&font, text);
+        if (h < XPainter_textHeight(&font))
+            h = XPainter_textHeight(&font);
+    }
+    XFont_deinit(&font);
+    if (self->m_menu)
+        w += 12; /* PM_MenuButtonIndicator */
+    w += 6 + 4; /* PM_ButtonMargin + PM_DefaultFrameWidth * 2 */
+    h += 6 + 4;
+    XSize_init(&out, w, h);
+    return out;
+}
+
+/** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */
+static void pushbutton_refreshSizeHint(XPushButton* self)
+{
+    XSize hint;
+    if (!self) return;
+    hint = pushbutton_computeSizeHint(self);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+}
+
+/* ==================== 信号（对标 QAbstractButton/QPushButton） ==================== */
+
+void* XPushButton_pressed_signal(XPushButton* self)
+{
+    if (!self) return (void*)(size_t)XPushButton_pressed_signal;
+    pushbutton_emitVoid(self, (size_t)XPushButton_pressed_signal);
+    return (void*)(size_t)XPushButton_pressed_signal;
+}
+
+void* XPushButton_released_signal(XPushButton* self)
+{
+    if (!self) return (void*)(size_t)XPushButton_released_signal;
+    pushbutton_emitVoid(self, (size_t)XPushButton_released_signal);
+    return (void*)(size_t)XPushButton_released_signal;
+}
+
+void* XPushButton_clicked_signal(XPushButton* self, bool checked)
+{
+    if (!self) return (void*)(size_t)XPushButton_clicked_signal;
+    pushbutton_emitBool(self, (size_t)XPushButton_clicked_signal, checked);
+    return (void*)(size_t)XPushButton_clicked_signal;
+}
+
+void* XPushButton_toggled_signal(XPushButton* self, bool checked)
+{
+    if (!self) return (void*)(size_t)XPushButton_toggled_signal;
+    pushbutton_emitBool(self, (size_t)XPushButton_toggled_signal, checked);
+    return (void*)(size_t)XPushButton_toggled_signal;
+}
+
+/* ==================== 生命周期（对标 QPushButton 构造/析构） ==================== */
+
+static void VXPushButton_copy(XPushButton* self, const XPushButton* other);
+static void VXPushButton_move(XPushButton* self, XPushButton* other);
+static void VXPushButton_deinit(XPushButton* self);
+
+void XPushButton_init(XPushButton* self, XWidget* parent, XWidgetFlags flags)
+{
+    XWidgetSizePolicy policy;
+    if (!self) return;
+    memset(self, 0, sizeof(XPushButton));
+    XWidget_init(&self->m_base, parent, flags);
+    XClassSetVtable(self, XPushButton);
+    self->m_text = XString_create();
+    XIcon_init(&self->m_icon);
+    self->m_iconSize.width = 0;
+    self->m_iconSize.height = 0;
+    self->m_checkable = false;
+    self->m_checked = false;
+    self->m_down = false;
+    self->m_pressed = false;
+    self->m_autoRepeat = false;
+    self->m_autoExclusive = false;
+    self->m_flat = false;
+    self->m_defaultButton = false;
+    self->m_autoDefault = XPushButtonAutoDefault_Auto;
+    self->m_autoRepeatDelay = 300;
+    self->m_autoRepeatInterval = 100;
+    policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Minimum,
+                                         XWidgetSizePolicy_Fixed,
+                                         XWidgetSizePolicyControl_PushButton);
+    XWidget_setSizePolicyFull((XWidget*)self, &policy);
+    XWidget_setForegroundRole((XWidget*)self, XPaletteColorRole_ButtonText);
+    XWidget_setBackgroundRole((XWidget*)self, XPaletteColorRole_Button);
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    pushbutton_refreshSizeHint(self);
+}
+
+XPushButton* XPushButton_create_ex(XMemoryType memory, XWidget* parent,
+                                   XWidgetFlags flags)
+{
+    XPushButton* self = (XPushButton*)XMemory_malloc(sizeof(XPushButton), memory);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(XPushButton));
+    XPushButton_init(self, parent, flags);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+/* ==================== 文本（对标 QAbstractButton） ==================== */
+
+const XString* XPushButton_text(const XPushButton* self)
+{
+    return self ? self->m_text : NULL;
+}
+
+void XPushButton_setText(XPushButton* self, const XString* text)
+{
+    XString* copy;
+    if (!self) return;
+    if (self->m_text && text &&
+        XString_equals(self->m_text, text, XChar_CaseSensitive))
+        return;
+    copy = text ? XString_create_copy(text) : XString_create();
+    if (!copy) return;
+    if (self->m_text)
+        XString_delete_base((XClass*)self->m_text);
+    self->m_text = copy;
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+void XPushButton_setText_2(XPushButton* self, const char* utf8)
+{
+    XString* s;
+    if (!self) return;
+    s = XString_create_utf8(utf8 ? utf8 : "");
+    if (!s) return;
+    XPushButton_setText(self, s);
+    XString_delete_base((XClass*)s);
+}
+
+/* ==================== 图标（对标 QAbstractButton） ==================== */
+
+XIcon XPushButton_icon(const XPushButton* self)
+{
+    XIcon out;
+    XIcon_init(&out);
+    if (self)
+        XIcon_copy_base(&out, &self->m_icon);
+    return out;
+}
+
+void XPushButton_setIcon(XPushButton* self, const XIcon* icon)
+{
+    if (!self) return;
+    XIcon_deinit_base(&self->m_icon);
+    XIcon_init(&self->m_icon);
+    if (icon && !XIcon_isNull(icon))
+        XIcon_copy_base(&self->m_icon, icon);
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+XSize XPushButton_iconSize(const XPushButton* self)
+{
+    XSize out;
+    out.width = 0;
+    out.height = 0;
+    if (!self) return out;
+    out = self->m_iconSize;
+    return out;
+}
+
+void XPushButton_setIconSize(XPushButton* self, const XSize* size)
+{
+    XSize s;
+    if (!self) return;
+    s.width = 0;
+    s.height = 0;
+    if (size && size->width > 0 && size->height > 0) {
+        s.width = size->width;
+        s.height = size->height;
+    }
+    if (self->m_iconSize.width == s.width &&
+        self->m_iconSize.height == s.height)
+        return;
+    self->m_iconSize = s;
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+/* ==================== 选中/按下/自动重复（对标 QAbstractButton） ==================== */
+
+bool XPushButton_isCheckable(const XPushButton* self)
+{
+    return self ? self->m_checkable : false;
+}
+
+void XPushButton_setCheckable(XPushButton* self, bool checkable)
+{
+    bool old;
+    if (!self || self->m_checkable == checkable) return;
+    old = self->m_checkable;
+    self->m_checkable = checkable;
+    if (old && !checkable && self->m_checked) {
+        self->m_checked = false;
+        XWidget_update((XWidget*)self);
+        pushbutton_emitBool(self, (size_t)XPushButton_toggled_signal, false);
+    }
+    if (self->m_checkable != old)
+        XWidget_update((XWidget*)self);
+}
+
+bool XPushButton_isChecked(const XPushButton* self)
+{
+    return self ? self->m_checked : false;
+}
+
+void XPushButton_setChecked(XPushButton* self, bool checked)
+{
+    bool old;
+    if (!self || !self->m_checkable) return;
+    old = self->m_checked;
+    if (old == checked) return;
+    self->m_checked = checked;
+    XWidget_update((XWidget*)self);
+    pushbutton_emitBool(self, (size_t)XPushButton_toggled_signal, checked);
+}
+
+void XPushButton_toggle(XPushButton* self)
+{
+    if (!self || !self->m_checkable) return;
+    XPushButton_setChecked(self, !self->m_checked);
+}
+
+bool XPushButton_isDown(const XPushButton* self)
+{
+    return self ? self->m_down : false;
+}
+
+void XPushButton_setDown(XPushButton* self, bool down)
+{
+    if (!self || self->m_down == down) return;
+    self->m_down = down;
+    XWidget_repaint((XWidget*)self);
+}
+
+bool XPushButton_autoRepeat(const XPushButton* self)
+{
+    return self ? self->m_autoRepeat : false;
+}
+
+void XPushButton_setAutoRepeat(XPushButton* self, bool repeat)
+{
+    if (self)
+        self->m_autoRepeat = repeat;
+}
+
+int XPushButton_autoRepeatDelay(const XPushButton* self)
+{
+    return self ? self->m_autoRepeatDelay : 0;
+}
+
+void XPushButton_setAutoRepeatDelay(XPushButton* self, int delay)
+{
+    if (self)
+        self->m_autoRepeatDelay = delay < 0 ? 0 : delay;
+}
+
+int XPushButton_autoRepeatInterval(const XPushButton* self)
+{
+    return self ? self->m_autoRepeatInterval : 0;
+}
+
+void XPushButton_setAutoRepeatInterval(XPushButton* self, int interval)
+{
+    if (self)
+        self->m_autoRepeatInterval = interval < 0 ? 0 : interval;
+}
+
+bool XPushButton_autoExclusive(const XPushButton* self)
+{
+    return self ? self->m_autoExclusive : false;
+}
+
+void XPushButton_setAutoExclusive(XPushButton* self, bool exclusive)
+{
+    if (self)
+        self->m_autoExclusive = exclusive;
+}
+
+/* ==================== 点击/命中（对标 QAbstractButton） ==================== */
+
+void XPushButton_click(XPushButton* self)
+{
+    bool downWas, wasChecked;
+    if (!self) return;
+    if (!XWidget_isEnabled((XWidget*)self)) return;
+    downWas = self->m_down;
+    pushbutton_setDownInternal(self, true);
+    if (!downWas)
+        pushbutton_setDownInternal(self, false);
+    else {
+        self->m_down = false;
+        XWidget_repaint((XWidget*)self);
+        XPushButton_released_signal(self);
+    }
+    wasChecked = self->m_checked;
+    if (self->m_checkable) {
+        self->m_checked = !wasChecked;
+        XWidget_update((XWidget*)self);
+    }
+    XPushButton_clicked_signal(self, self->m_checked);
+    if (self->m_checkable && wasChecked != self->m_checked)
+        XPushButton_toggled_signal(self, self->m_checked);
+}
+
+void XPushButton_animateClick(XPushButton* self)
+{
+    XPushButton_click(self);
+}
+
+bool XPushButton_hitButton(const XPushButton* self, const XPoint* pos)
+{
+    XRect rect;
+    if (!self || !pos) return false;
+    rect = XWidget_rect((const XWidget*)self);
+    return XRect_contains(&rect, pos->x, pos->y);
+}
+
+/* ==================== 默认/扁平（对标 QPushButton） ==================== */
+
+bool XPushButton_autoDefault(const XPushButton* self)
+{
+    if (!self) return false;
+    if (self->m_autoDefault == XPushButtonAutoDefault_On)
+        return true;
+    if (self->m_autoDefault == XPushButtonAutoDefault_Off)
+        return false;
+    return pushbutton_autoDefaultActive(self);
+}
+
+void XPushButton_setAutoDefault(XPushButton* self, bool enable)
+{
+    XPushButtonAutoDefault value;
+    if (!self) return;
+    value = enable ? XPushButtonAutoDefault_On : XPushButtonAutoDefault_Off;
+    if (self->m_autoDefault == value) return;
+    self->m_autoDefault = value;
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+bool XPushButton_isDefault(const XPushButton* self)
+{
+    return self ? self->m_defaultButton : false;
+}
+
+void XPushButton_setDefault(XPushButton* self, bool enable)
+{
+    if (!self || self->m_defaultButton == enable) return;
+    self->m_defaultButton = enable;
+    XWidget_update((XWidget*)self);
+}
+
+bool XPushButton_isFlat(const XPushButton* self)
+{
+    return self ? self->m_flat : false;
+}
+
+void XPushButton_setFlat(XPushButton* self, bool flat)
+{
+    if (!self || self->m_flat == flat) return;
+    self->m_flat = flat;
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+/* ==================== 菜单（对标 QPushButton setMenu/menu/showMenu） ==================== */
+
+void XPushButton_setMenu(XPushButton* self, XMenu* menu)
+{
+    if (!self || self->m_menu == menu) return;
+    self->m_menu = menu;
+    pushbutton_refreshSizeHint(self);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+}
+
+XMenu* XPushButton_menu(const XPushButton* self)
+{
+    return self ? self->m_menu : NULL;
+}
+
+void XPushButton_showMenu(XPushButton* self)
+{
+    if (!self || !self->m_menu) return;
+    if (!XWidget_isEnabled((XWidget*)self)) return;
+    self->m_down = true;
+    XWidget_repaint((XWidget*)self);
+}
+
+/* ==================== 尺寸（对标 QPushButton sizeHint/minimumSizeHint） ==================== */
+
+XSize XPushButton_sizeHint(const XPushButton* self)
+{
+    return pushbutton_computeSizeHint(self);
+}
+
+XSize XPushButton_minimumSizeHint(const XPushButton* self)
+{
+    return pushbutton_computeSizeHint(self);
+}
+
+/* ==================== 绘制（对标 QPushButton::paintEvent 内容） ==================== */
+
+void XPushButton_drawContents(XPushButton* self, XPainter* painter)
+{
+    XRect rect, content;
+    uint32_t bg, textColor, light, dark, mid;
+    XPaletteColorGroup group;
+    bool pressed;
+    XFont font;
+    const char* text;
+    bool drawIcon;
+    int iconW, iconH, iconX, iconY;
+
+    if (!self || !painter) return;
+    if (!XPainter_save(painter)) return;
+    rect = XWidget_rect((XWidget*)self);
+    group = XWidget_isEnabled((XWidget*)self) ? XPaletteColorGroup_Current
+                                              : XPaletteColorGroup_Disabled;
+#if XPALETTE_ON
+    light = pushbutton_color(self, group, XPaletteColorRole_Light);
+    dark = pushbutton_color(self, group, XPaletteColorRole_Dark);
+    mid = pushbutton_color(self, group, XPaletteColorRole_Mid);
+#else
+    light = 0xFFE0E0E0u;
+    dark = 0xFF808080u;
+    mid = 0xFFA0A0A0u;
+#endif
+    bg = pushbutton_color(self, group, XPaletteColorRole_Button);
+    textColor = pushbutton_color(self, group, XPaletteColorRole_ButtonText);
+    if (bg == 0u)
+        bg = 0xFFCFCFCFu;
+    pressed = self->m_down || self->m_checked;
+
+    XPainter_fillRect(painter, &rect, bg);
+    if (!self->m_flat && rect.width > 2 && rect.height > 2) {
+        XRect edge;
+        if (!pressed) {
+            edge.x = rect.x; edge.y = rect.y;
+            edge.width = rect.width; edge.height = 1;
+            XPainter_fillRect(painter, &edge, light);
+            edge.x = rect.x; edge.y = rect.y;
+            edge.width = 1; edge.height = rect.height;
+            XPainter_fillRect(painter, &edge, light);
+            edge.x = rect.x; edge.y = rect.y + rect.height - 1;
+            edge.width = rect.width; edge.height = 1;
+            XPainter_fillRect(painter, &edge, dark);
+            edge.x = rect.x + rect.width - 1; edge.y = rect.y;
+            edge.width = 1; edge.height = rect.height;
+            XPainter_fillRect(painter, &edge, mid);
+        } else {
+            edge.x = rect.x; edge.y = rect.y;
+            edge.width = rect.width; edge.height = 1;
+            XPainter_fillRect(painter, &edge, dark);
+            edge.x = rect.x; edge.y = rect.y;
+            edge.width = 1; edge.height = rect.height;
+            XPainter_fillRect(painter, &edge, mid);
+            edge.x = rect.x; edge.y = rect.y + rect.height - 1;
+            edge.width = rect.width; edge.height = 1;
+            XPainter_fillRect(painter, &edge, light);
+            edge.x = rect.x + rect.width - 1; edge.y = rect.y;
+            edge.width = 1; edge.height = rect.height;
+            XPainter_fillRect(painter, &edge, light);
+        }
+    }
+
+    font = XWidget_font((XWidget*)self);
+    XPainter_setFont(painter, &font);
+    XFont_deinit(&font);
+    text = XString_toUtf8(self->m_text ? self->m_text : NULL);
+    drawIcon = !XIcon_isNull(&self->m_icon);
+    iconW = 16;
+    iconH = 16;
+    if (pushbutton_hasIconSize(self)) {
+        iconW = self->m_iconSize.width;
+        iconH = self->m_iconSize.height;
+    }
+    content = rect;
+    if (drawIcon) {
+        iconX = rect.x + (rect.width - iconW) / 2;
+        iconY = rect.y + (rect.height - iconH) / 2;
+        if (text && text[0] != '\0') {
+            iconX = rect.x + 4;
+            iconY = rect.y + (rect.height - iconH) / 2;
+            content.x += iconW + 4;
+            content.width -= iconW + 4;
+        }
+        XIcon_paint(&self->m_icon, painter, iconX, iconY, iconW, iconH,
+                    XAlignment_Center,
+                    XWidget_isEnabled((XWidget*)self) ? XIconMode_Normal
+                                                      : XIconMode_Disabled,
+                    self->m_checked ? XIconState_On : XIconState_Off);
+    }
+    if (text && text[0] != '\0') {
+        if (content.width < 4) content.width = 4;
+        XPainter_drawTextRect(painter, &content,
+                              XPAINTER_TEXT_CENTER | XPAINTER_TEXT_SINGLE_LINE,
+                              text, textColor);
+    }
+    if (self->m_menu && rect.width >= 12 && rect.height >= 7) {
+        int arrowX = rect.x + rect.width - 9;
+        int arrowY = rect.y + (rect.height / 2) - 2;
+        XRect tri;
+        tri.x = arrowX + 2; tri.y = arrowY; tri.width = 1; tri.height = 1;
+        XPainter_fillRect(painter, &tri, textColor);
+        tri.x = arrowX + 1; tri.y = arrowY + 1; tri.width = 3; tri.height = 1;
+        XPainter_fillRect(painter, &tri, textColor);
+        tri.x = arrowX; tri.y = arrowY + 2; tri.width = 5; tri.height = 1;
+        XPainter_fillRect(painter, &tri, textColor);
+        tri.x = arrowX + 1; tri.y = arrowY + 3; tri.width = 3; tri.height = 1;
+        XPainter_fillRect(painter, &tri, textColor);
+        tri.x = arrowX + 2; tri.y = arrowY + 4; tri.width = 1; tri.height = 1;
+        XPainter_fillRect(painter, &tri, textColor);
+    }
+    XPainter_restore(painter);
+}
+
+/* ==================== 虚槽实现（对标 QAbstractButton/QPushButton 事件） ==================== */
+
+static bool pushbutton_ignoreDisabledEvent(XWidget* self, XEvent* event)
+{
+    XEventType type;
+    if (!self || XWidget_isEnabled(self)) return false;
+    type = event ? XEvent_type(event) : XEVENT_TYPE_NONE;
+    switch (type) {
+    case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
+    case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
+    case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
+    case XEVENT_TYPE_MOUSE_MOVE:
+    case XEVENT_TYPE_CONTEXT_MENU:
+    case XEVENT_TYPE_HOVER_ENTER:
+    case XEVENT_TYPE_HOVER_LEAVE:
+    case XEVENT_TYPE_HOVER_MOVE:
+        if (event) XEvent_accept(event);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool VXPushButton_event(XWidget* self, XEvent* event)
+{
+    if (pushbutton_ignoreDisabledEvent(self, event))
+        return true;
+    return XClass_Parent(XWidget, EXObject_Event,
+                         bool(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+static void VXPushButton_changeEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button;
+    XEventType type;
+    if (!self || !event) return;
+    type = XEvent_type(event);
+    button = (XPushButton*)self;
+    if (type == XEVENT_TYPE_ENABLED_CHANGE &&
+        !XWidget_isEnabled(self) && button->m_down) {
+        button->m_down = false;
+        XWidget_repaint(self);
+        XPushButton_released_signal(button);
+    }
+    XClass_Parent(XWidget, EXWidget_ChangeEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+static void VXPushButton_paintEvent(XWidget* self, XEvent* event)
+{
+#if !XPALETTE_ON || !XWINDOWEVENT_ON
+    (void)self;
+    (void)event;
+    return;
+#else
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+#if XPAINTER_CLIP_ON
+    XPaintEvent* pe;
+    XRect clip;
+#endif
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+#if XPAINTER_CLIP_ON
+    pe = (XPaintEvent*)event;
+#endif
+    image = XWidget_paintDevice(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPAINTER_CLIP_ON
+    clip = XPaintEvent_rect(pe);
+    XPainter_setClipRect(&painter, &clip, XPainterClipOperation_ReplaceClip);
+#endif
+    XPushButton_drawContents((XPushButton*)self, &painter);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+#endif /* XPALETTE_ON && XWINDOWEVENT_ON */
+}
+
+static void VXPushButton_mousePressCommon(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    bool hit;
+    if (!button || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)
+        return;
+    me = (XMouseEvent*)event;
+    if (me->m_button != XMouseButton_LeftButton) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = me->m_position;
+    hit = XPushButton_hitButton((const XPushButton*)button, &pos);
+    if (hit) {
+        button->m_pressed = true;
+        pushbutton_setDownInternal(button, true);
+        XEvent_accept(event);
+        return;
+    }
+    if (button->m_down)
+        pushbutton_setDownInternal(button, false);
+    XEvent_ignore(event);
+}
+
+static void VXPushButton_mousePressEvent(XWidget* self, XEvent* event)
+{
+    VXPushButton_mousePressCommon(self, event);
+}
+
+static void VXPushButton_mouseDoubleClickEvent(XWidget* self, XEvent* event)
+{
+    VXPushButton_mousePressCommon(self, event);
+}
+
+static void VXPushButton_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    bool hit;
+    if (!button || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    me = (XMouseEvent*)event;
+    button->m_pressed = false;
+    if (!button->m_down) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = me->m_position;
+    hit = XPushButton_hitButton((const XPushButton*)button, &pos);
+    if (hit) {
+        XPushButton_click(button);
+        XEvent_accept(event);
+        return;
+    }
+    pushbutton_setDownInternal(button, false);
+    XEvent_ignore(event);
+}
+
+static void VXPushButton_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    bool hit;
+    if (!button || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    me = (XMouseEvent*)event;
+    if ((me->m_buttons & XMouseButton_LeftButton) == 0 || !button->m_pressed) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = me->m_position;
+    hit = XPushButton_hitButton((const XPushButton*)button, &pos);
+    if (hit != button->m_down) {
+        pushbutton_setDownInternal(button, hit);
+        XEvent_accept(event);
+        return;
+    }
+    if (hit)
+        XEvent_accept(event);
+    else
+        XEvent_ignore(event);
+}
+
+static void VXPushButton_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XKeyEvent* ke;
+    int key;
+    if (!button || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
+    ke = (XKeyEvent*)event;
+    key = ke->m_key;
+    if (key == XKey_Space && !ke->m_autoRepeat) {
+        pushbutton_setDownInternal(button, true);
+        XEvent_accept(event);
+        return;
+    }
+    if (key == XKey_Return || key == XKey_Enter) {
+        if (XPushButton_autoDefault(button) || XPushButton_isDefault(button)) {
+            XPushButton_click(button);
+            XEvent_accept(event);
+            return;
+        }
+    }
+    XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+static void VXPushButton_keyReleaseEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    XKeyEvent* ke;
+    int key;
+    if (!button || !event) return;
+    if (XEvent_type(event) != XEVENT_TYPE_KEY_RELEASE) return;
+    ke = (XKeyEvent*)event;
+    key = ke->m_key;
+    if (key == XKey_Space && !ke->m_autoRepeat && button->m_down) {
+        XPushButton_click(button);
+        XEvent_accept(event);
+        return;
+    }
+    if (event) XEvent_ignore(event);
+}
+
+static void VXPushButton_focusInEvent(XWidget* self, XEvent* event)
+{
+    if (self && event)
+        XClass_Parent(XWidget, EXWidget_FocusInEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+static void VXPushButton_focusOutEvent(XWidget* self, XEvent* event)
+{
+    XPushButton* button = (XPushButton*)self;
+    if (button && button->m_down) {
+        button->m_down = false;
+        XWidget_repaint((XWidget*)button);
+        XPushButton_released_signal(button);
+    }
+    if (self && event)
+        XClass_Parent(XWidget, EXWidget_FocusOutEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/* ==================== 复制/移动/析构（对标 XClass 生命周期） ==================== */
+
+static void VXPushButton_copy(XPushButton* self, const XPushButton* other)
+{
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XPushButton_init(self, NULL, 0);
+    XClass_Parent(XWidget, EXClass_Copy,
+                  void(*)(XWidget*, const XWidget*))((XWidget*)self,
+                                                     (const XWidget*)other);
+    if (self->m_text) {
+        XString_delete_base((XClass*)self->m_text);
+        self->m_text = NULL;
+    }
+    XIcon_deinit_base(&self->m_icon);
+    XIcon_init(&self->m_icon);
+    self->m_text = other->m_text ? XString_create_copy(other->m_text)
+                                 : XString_create();
+    XIcon_copy_base(&self->m_icon, &other->m_icon);
+    self->m_iconSize = other->m_iconSize;
+    self->m_checkable = other->m_checkable;
+    self->m_checked = other->m_checked;
+    self->m_down = other->m_down;
+    self->m_pressed = other->m_pressed;
+    self->m_autoRepeat = other->m_autoRepeat;
+    self->m_autoExclusive = other->m_autoExclusive;
+    self->m_flat = other->m_flat;
+    self->m_defaultButton = other->m_defaultButton;
+    self->m_autoDefault = other->m_autoDefault;
+    self->m_autoRepeatDelay = other->m_autoRepeatDelay;
+    self->m_autoRepeatInterval = other->m_autoRepeatInterval;
+    self->m_menu = other->m_menu;
+}
+
+static void VXPushButton_move(XPushButton* self, XPushButton* other)
+{
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XPushButton_init(self, NULL, 0);
+    XClass_Parent(XWidget, EXClass_Move,
+                  void(*)(XWidget*, XWidget*))((XWidget*)self, (XWidget*)other);
+    if (self->m_text) {
+        XString_delete_base((XClass*)self->m_text);
+        self->m_text = NULL;
+    }
+    XIcon_deinit_base(&self->m_icon);
+    XIcon_init(&self->m_icon);
+    self->m_text = other->m_text;
+    XIcon_move_base(&self->m_icon, &other->m_icon);
+    XIcon_init(&other->m_icon);
+    other->m_text = XString_create();
+    self->m_iconSize = other->m_iconSize;
+    other->m_iconSize.width = 0;
+    other->m_iconSize.height = 0;
+    self->m_checkable = other->m_checkable;
+    self->m_checked = other->m_checked;
+    self->m_down = other->m_down;
+    self->m_pressed = other->m_pressed;
+    self->m_autoRepeat = other->m_autoRepeat;
+    self->m_autoExclusive = other->m_autoExclusive;
+    self->m_flat = other->m_flat;
+    self->m_defaultButton = other->m_defaultButton;
+    self->m_autoDefault = other->m_autoDefault;
+    self->m_autoRepeatDelay = other->m_autoRepeatDelay;
+    self->m_autoRepeatInterval = other->m_autoRepeatInterval;
+    self->m_menu = other->m_menu;
+    other->m_menu = NULL;
+    other->m_checkable = false;
+    other->m_checked = false;
+    other->m_down = false;
+    other->m_pressed = false;
+    other->m_autoRepeat = false;
+    other->m_autoExclusive = false;
+    other->m_flat = false;
+    other->m_defaultButton = false;
+    other->m_autoDefault = XPushButtonAutoDefault_Auto;
+    other->m_autoRepeatDelay = 300;
+    other->m_autoRepeatInterval = 100;
+}
+
+static void VXPushButton_deinit(XPushButton* self)
+{
+    if (!self) return;
+    if (self->m_text) {
+        XString_delete_base((XClass*)self->m_text);
+        self->m_text = NULL;
+    }
+    XIcon_deinit_base(&self->m_icon);
+    self->m_menu = NULL;
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
+/* ==================== 类虚表 ==================== */
+
+XVtable* XPushButton_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XPushButton)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXPushButton_event);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXPushButton_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXPushButton_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXPushButton_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXPushButton_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXPushButton_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXPushButton_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXPushButton_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent, VXPushButton_keyReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VXPushButton_focusInEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VXPushButton_focusOutEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPushButton_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPushButton_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPushButton_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */

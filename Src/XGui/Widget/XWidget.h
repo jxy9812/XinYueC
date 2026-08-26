@@ -53,6 +53,7 @@ extern "C" {
 #include "XGeometry.h"
 #include "XEvent.h"
 #include "XString.h"
+#include "XFont.h"
 #if XWINDOW_ON
 #include "XWindow.h"
 #endif /* XWINDOW_ON */
@@ -183,6 +184,8 @@ typedef enum XWidgetAttribute
     XWidgetAttribute_DeleteOnClose           = 55,  /**< 关闭后删除对象（对标 WA_DeleteOnClose）。 */
     XWidgetAttribute_RightToLeft             = 56,  /**< 从右到左布局（对标 WA_RightToLeft）。 */
     XWidgetAttribute_SetLayoutDirection      = 57,  /**< 已设置布局方向（对标 WA_SetLayoutDirection）。 */
+    XWidgetAttribute_WState_OwnSizePolicy   = 68,  /**< 内部：尺寸策略由 setFrameStyle 等按形状接管（对标
+                                                    WA_WState_OwnSizePolicy，数值与 Qt 6.8 一致）。 */
     XWidgetAttribute_ShowModal               = 70,  /**< 显示为模态（对标 WA_ShowModal，历史属性）。 */
     XWidgetAttribute_NoMousePropagation      = 73,  /**< 不向父传播鼠标事件（对标 WA_NoMousePropagation）。 */
     XWidgetAttribute_Hover                   = 74,  /**< 悬停时接收 paint（对标 WA_Hover）。 */
@@ -353,7 +356,7 @@ typedef void (*XWidgetEventSlot)(XWidget* self, XEvent* event);
  * @brief XWidget 虚函数表枚举。
  * @details 前 3 个槽位继承自 XClass（Copy/Move/Deinit）；XObject 的
  *          Event/EventFilter/ChildEvent/... 槽位由 XVTABLE_INHERIT_XCLASS
- *          (XObject) 继承；下述 17 个新槽位从 XCLASS_VTABLE_GET_SIZE(XObject)
+ *          (XObject) 继承；下述 18 个新槽位从 XCLASS_VTABLE_GET_SIZE(XObject)
  *          开始追加，分别对标 QWidget 的 paintEvent / resizeEvent / ... /
  *          hideEvent。 */
 XCLASS_DEFINE_BEGING(XWidget)
@@ -379,6 +382,7 @@ XCLASS_DEFINE_ENUM(XWidget, MouseMoveEvent),
 XCLASS_DEFINE_ENUM(XWidget, WheelEvent),
 XCLASS_DEFINE_ENUM(XWidget, ShowEvent),
 XCLASS_DEFINE_ENUM(XWidget, HideEvent),
+XCLASS_DEFINE_ENUM(XWidget, ChangeEvent),
 XCLASS_DEFINE_END(XWidget)
 
 /**
@@ -433,6 +437,9 @@ typedef struct XWidget
     uint32_t                m_acceptDrops : 1;       /**< 接受拖放。 */
     XRect                   m_windowRect;      /**< 几何矩形（父坐标系）。 */
     XRect                   m_contentsRect;    /**< 客户区（自身坐标）。 */
+    XMargins                m_contentsMargins; /**< 内容边距（对标 QWidget::contentsMargins）。 */
+    XPaletteColorRole       m_backgroundRole;  /**< 背景颜色角色（默认 Window，对标 backgroundRole）。 */
+    XPaletteColorRole       m_foregroundRole;  /**< 前景颜色角色（默认 NoRole，对标 foregroundRole）。 */
     XSize                   m_minimumSize;     /**< 最小尺寸。 */
     XSize                   m_maximumSize;     /**< 最大尺寸。 */
     XSize                   m_baseSize;        /**< 基准尺寸。 */
@@ -451,6 +458,7 @@ typedef struct XWidget
     XCursor*                m_cursor;          /**< 自定义光标（拥有；仅 XCURSOR_ON）。 */
     XIcon                   m_icon;            /**< 窗口图标（值类型 refcount 共享）。 */
     XPalette                m_palette;         /**< 控件调色板（值类型）。 */
+    XFont                   m_font;            /**< 控件字体（值类型；对标 QWidget::font）。 */
     XRegion                 m_dirty;           /**< 待重绘区域（拥有）。 */
     XRegion                 m_staticContents;  /**< 静态内容区域（拥有）。 */
     XWidgetWindow*          m_windowHandle;    /**< 顶层桥接窗口（拥有；内部类）。 */
@@ -549,6 +557,14 @@ int XWidget_height(const XWidget* self);
 XSize XWidget_size(const XWidget* self);
 /** @brief 返回客户区矩形 0,0,w,h（对标 QWidget::rect）。 */
 XRect XWidget_rect(const XWidget* self);
+/** @brief 返回内容矩形（客体：包含内容边距的客户区，对标 QWidget::contentsRect）。 */
+XRect XWidget_contentsRect(const XWidget* self);
+/** @brief 返回内容边距（对标 QWidget::contentsMargins）。 */
+XMargins XWidget_contentsMargins(const XWidget* self);
+/** @brief 设置内容边距（对标 QWidget::setContentsMargins）。 */
+void XWidget_setContentsMargins(XWidget* self, int left, int top, int right, int bottom);
+/** @brief 清除内容边距（对标 QWidget::unsetContentsMargins）。 */
+void XWidget_unsetContentsMargins(XWidget* self);
 /** @brief 返回几何矩形（父坐标系，对标 QWidget::geometry）。 */
 XRect XWidget_geometry(const XWidget* self);
 /** @brief 返回框架几何（顶层控件=geometry；子控件=geometry，对标 frameGeometry）。 */
@@ -568,6 +584,8 @@ XRect XWidget_normalGeometry(const XWidget* self);
 void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h);
 /** @brief 设置几何矩形（对标 QWidget::setGeometry(const QRect&)）。 */
 void XWidget_setGeometryRect(XWidget* self, const XRect* rect);
+/** @brief 通知布局系统几何/尺寸约束可能变化（对标 QWidget::updateGeometry）。 */
+void XWidget_updateGeometry(XWidget* self);
 /** @brief 移动位置（对标 QWidget::move(int,int)）。 */
 void XWidget_move(XWidget* self, int x, int y);
 /** @brief 移动位置（对标 QWidget::move(const QPoint&)）。 */
@@ -829,10 +847,22 @@ void XWidget_setToolTip(XWidget* self, const XString* tip);
 int XWidget_toolTipDuration(const XWidget* self);
 /** @brief 设置工具提示时长（对标 QWidget::setToolTipDuration）。 */
 void XWidget_setToolTipDuration(XWidget* self, int msec);
+/** @brief 返回控件字体副本（对标 QWidget::font）。 */
+XFont XWidget_font(const XWidget* self);
+/** @brief 设置控件字体（对标 QWidget::setFont）。 */
+void XWidget_setFont(XWidget* self, const XFont* font);
 /** @brief 查询调色板（对标 QWidget::palette；未设置时返回应用调色板）。 */
 XPalette XWidget_palette(const XWidget* self);
 /** @brief 设置调色板（对标 QWidget::setPalette）。 */
 void XWidget_setPalette(XWidget* self, const XPalette* palette);
+/** @brief 查询背景颜色角色（对标 QWidget::backgroundRole）。 */
+XPaletteColorRole XWidget_backgroundRole(const XWidget* self);
+/** @brief 设置背景颜色角色（对标 QWidget::setBackgroundRole）。 */
+void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role);
+/** @brief 查询前景颜色角色（对标 QWidget::foregroundRole）。 */
+XPaletteColorRole XWidget_foregroundRole(const XWidget* self);
+/** @brief 设置前景颜色角色（对标 QWidget::setForegroundRole）。 */
+void XWidget_setForegroundRole(XWidget* self, XPaletteColorRole role);
 
 /* ==================== 绘制闭环（对标 QWidget update/repaint） ==================== */
 
@@ -911,7 +941,7 @@ void XWidget_setLayout(XWidget* self, XLayout* layout);
 
 /**
  * @brief      控件事件总入口（对标 QWidget::event）。
- * @details    按 XEventType 分派到 17 个事件虚函数；未识别事件回退
+ * @details    按 XEventType 分派到 18 个事件虚函数；未识别事件回退
  *             XObject 默认 Event 实现。
  * @return     事件已处理返回 true。
  */
@@ -957,6 +987,8 @@ void XWidget_wheelEvent_base(XWidget* self, XEvent* event);
 void XWidget_showEvent_base(XWidget* self, XEvent* event);
 /** @brief 隐藏事件槽（对标 QWidget::hideEvent）。 */
 void XWidget_hideEvent_base(XWidget* self, XEvent* event);
+/** @brief 属性/状态变更事件槽（对标 QWidget::changeEvent）。 */
+void XWidget_changeEvent_base(XWidget* self, XEvent* event);
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 

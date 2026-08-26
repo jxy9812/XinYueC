@@ -507,6 +507,9 @@ static bool xlinuxGadgetHandleSetup(XLinuxGadgetController* controller,
     return true;
 }
 
+bool XDeviceUsbGadget_platformStart(void* controller);
+bool XDeviceUsbGadget_platformStop(void* controller);
+
 void* XDeviceUsbGadget_platformCreate(const XDeviceUsbGadgetConfig* config, int* error)
 {
     XLinuxGadgetController* controller;

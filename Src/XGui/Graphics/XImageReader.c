@@ -5,6 +5,7 @@
  ******************************************************************************/
 #include "XImageReader.h"
 #include "XImageCodec.h"
+#include "XImagePluginRegistry.h"
 #include "XByteArray.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -34,6 +35,17 @@ static XStringList* XImageReader_makeStringList(const char* const* values, size_
     return result;
 }
 
+static void XImageReader_makeStringList_prefix(XStringList* result, const char* const* values, size_t count)
+{
+    size_t i;
+    if (!result || !values) return;
+    for (i = 0; i < count; ++i) {
+        if (values[i] && values[i][0] &&
+            !XStringList_contains_utf8(result, values[i], XChar_CaseInsensitive))
+            XStringList_push_back_utf8(result, values[i]);
+    }
+}
+
 static XStringList* XImageReader_supportedFormats(void)
 {
     XStringList* result = XStringList_create();
@@ -43,6 +55,24 @@ static XStringList* XImageReader_supportedFormats(void)
     for (i = 0; i < sizeof(g_imageReaderFormats) / sizeof(g_imageReaderFormats[0]); ++i)
         if (XImageCodec_canDecode(XImageCodec_formatFromName_2(g_imageReaderFormats[i])))
             XStringList_push_back_utf8(result, g_imageReaderFormats[i]);
+#endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_supportedImageFormats(true);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
 #endif
     return result;
 }
@@ -76,11 +106,21 @@ static const char* XImageReader_detectSignature(const unsigned char* data, size_
 
 static bool XImageReader_isSupportedFormat(const char* format)
 {
+    if (!format || !format[0]) return true;
 #if XIMAGECODEC_ON
-    return !format || !format[0] || XImageCodec_canDecode(XImageCodec_formatFromName_2(format));
-#else
-    return !format || !format[0];
+    if (XImageCodec_canDecode(XImageCodec_formatFromName_2(format))) return true;
 #endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XString* value = XString_create_utf8(format);
+        bool supported = value && XImagePluginRegistry_supportsReadFormat(value);
+        if (value) XString_delete_base((XClass*)value);
+        if (supported) return true;
+    }
+#else
+    (void)format;
+#endif
+    return false;
 }
 
 /**
@@ -113,6 +153,7 @@ typedef struct XImageReaderPrivate
     XImageReaderError m_error;       /**< 错误码 */
     XString*    m_errorString;       /**< 错误描述 */
     XImageIOHandler* m_handler;      /**< 内部 IO 处理器 */
+    XIODevice*      m_fileDevice;   /**< 内部文件设备；由读取器拥有，供插件处理器使用 */
     int         m_sizeW;             /**< 已探测图像宽度 */
     int         m_sizeH;             /**< 已探测图像高度 */
     bool        m_hasSize;           /**< 是否已探测到图像尺寸 */
@@ -163,17 +204,22 @@ static bool XImageReader_probeBmpSize(const unsigned char* data, size_t size,
 
 static bool XImageReader_probeSize(XImageReader* self)
 {
-    unsigned char header[54];
+    enum { XIMAGE_READER_PROBE_MAX = 262144 };
+    unsigned char header[XIMAGE_READER_PROBE_MAX];
     size_t size = 0;
     XFile* fileObject;
     XByteArray* bytes;
     if (!self || !self->m_data) return false;
     if (self->m_data->m_hasSize) return true;
-    if (self->m_data->m_fileName) {
+    if (self->m_data->m_sourceBytes) {
+        size = XByteArray_size_base((const XContainer*)self->m_data->m_sourceBytes);
+        if (size > sizeof(header)) size = sizeof(header);
+        memcpy(header, XByteArray_data(self->m_data->m_sourceBytes), size);
+    } else if (self->m_data->m_fileName) {
         fileObject = XFile_create_2(self->m_data->m_fileName);
         if (!fileObject || !XIODevice_open_base((XIODevice*)fileObject, XIODevice_ReadOnly)) { if (fileObject) XClass_delete_base((XClass*)fileObject); return false; }
         bytes = XIODevice_readAll_3((XIODevice*)fileObject); XIODevice_close_base((XIODevice*)fileObject); XClass_delete_base((XClass*)fileObject);
-        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); memcpy(header, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
+        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); if (size) memcpy(header, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
     } else if (self->m_data->m_device) {
         bytes = XIODevice_peek_3(self->m_data->m_device, (int64_t)sizeof(header));
         if (!bytes) return false;
@@ -185,9 +231,10 @@ static bool XImageReader_probeSize(XImageReader* self)
         return false;
     }
 #if XIMAGECODEC_ON
-    if (size >= 24 && XImageCodec_detect(header, size) == XImageCodecFormat_Png) { self->m_data->m_sizeW = (int)XImageReader_readBe32(header + 16); self->m_data->m_sizeH = (int)XImageReader_readBe32(header + 20); }
-    else if (size >= 10 && (XImageCodec_detect(header, size) == XImageCodecFormat_Gif)) { self->m_data->m_sizeW = (int)XImageReader_readLe16(header + 6); self->m_data->m_sizeH = (int)XImageReader_readLe16(header + 8); }
-    else if (!XImageReader_probeBmpSize(header, size, &self->m_data->m_sizeW, &self->m_data->m_sizeH)) return false;
+    if (size && !XImageCodec_probeSize(header, size, XImageCodecFormat_Unknown,
+                                       &self->m_data->m_sizeW,
+                                       &self->m_data->m_sizeH))
+        return false;
 #else
     if (!XImageReader_probeBmpSize(header, size, &self->m_data->m_sizeW, &self->m_data->m_sizeH)) return false;
 #endif
@@ -204,6 +251,46 @@ static void XImageReader_setError(XImageReader* self, XImageReaderError error, c
     if (message) self->m_data->m_errorString = XString_create_utf8(message);
 }
 
+static void XImageReader_releaseHandler(XImageReaderPrivate* data)
+{
+    if (!data) return;
+    if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
+    data->m_handler = NULL;
+    if (data->m_fileDevice) XClass_delete_base((XClass*)data->m_fileDevice);
+    data->m_fileDevice = NULL;
+}
+
+static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
+{
+    XImageReaderPrivate* data;
+    if (!self || !(data = self->m_data)) return NULL;
+    if (data->m_handler) return data->m_handler;
+#if XIMAGEIOPLUGIN_ON
+    if (data->m_device) {
+        data->m_handler = XImagePluginRegistry_createReadHandler(data->m_device, data->m_format);
+        return data->m_handler;
+    }
+    if (data->m_fileName) {
+        XFile* file = XFile_create_2(data->m_fileName);
+        if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+            if (file) XClass_delete_base((XClass*)file);
+            return NULL;
+        }
+        data->m_handler = XImagePluginRegistry_createReadHandler((XIODevice*)file, data->m_format);
+        if (data->m_handler) {
+            data->m_fileDevice = (XIODevice*)file;
+            return data->m_handler;
+        }
+        XIODevice_close_base((XIODevice*)file);
+        XClass_delete_base((XClass*)file);
+        return NULL;
+    }
+#else
+    (void)self;
+#endif
+    return NULL;
+}
+
 static void VXImageReader_deinit(XImageReader* self)
 {
     if (ISNULL(self, "XImageReader")) return;
@@ -212,7 +299,7 @@ static void VXImageReader_deinit(XImageReader* self)
         if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
         if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
         if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
-        if (self->m_data->m_handler) XImageIOHandler_deinit_base(self->m_data->m_handler);
+        XImageReader_releaseHandler(self->m_data);
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
         if (self->m_data->m_animation) XImageCodecAnimation_delete(self->m_data->m_animation);
         if (self->m_data->m_sourceBytes) XByteArray_delete_base((XClass*)self->m_data->m_sourceBytes);
@@ -359,6 +446,7 @@ void XImageReader_setFormat(XImageReader* self, const XString* format)
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageReader_clearAnimation(self->m_data);
 #endif
+    XImageReader_releaseHandler(self->m_data);
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
     self->m_data->m_format = format ? XString_create_copy(format) : NULL;
     self->m_data->m_hasSize = false;
@@ -384,13 +472,13 @@ const char* XImageReader_format_2(const XImageReader* self)
 { return XString_toUtf8(XImageReader_format_const(self)); }
 
 void XImageReader_setAutoDetectImageFormat(XImageReader* self, bool enabled)
-{ if (self && self->m_data) { self->m_data->m_autoDetectFormat = enabled; self->m_data->m_hasSize = false; } }
+{ if (self && self->m_data) { XImageReader_releaseHandler(self->m_data); self->m_data->m_autoDetectFormat = enabled; self->m_data->m_hasSize = false; } }
 
 bool XImageReader_autoDetectImageFormat(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_autoDetectFormat : true; }
 
 void XImageReader_setDecideFormatFromContent(XImageReader* self, bool ignored)
-{ if (self && self->m_data) { self->m_data->m_decideFromContent = ignored; self->m_data->m_autoDetectFormat = !ignored; self->m_data->m_hasSize = false; } }
+{ if (self && self->m_data) { XImageReader_releaseHandler(self->m_data); self->m_data->m_decideFromContent = ignored; self->m_data->m_autoDetectFormat = !ignored; self->m_data->m_hasSize = false; } }
 
 bool XImageReader_decideFormatFromContent(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_decideFromContent : false; }
@@ -401,6 +489,7 @@ void XImageReader_setDevice(XImageReader* self, XIODevice* device)
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageReader_clearAnimation(self->m_data);
 #endif
+    XImageReader_releaseHandler(self->m_data);
     self->m_data->m_device = device;
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
@@ -416,6 +505,7 @@ void XImageReader_setFileName(XImageReader* self, const XString* fileName)
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageReader_clearAnimation(self->m_data);
 #endif
+    XImageReader_releaseHandler(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
     self->m_data->m_device = NULL;
@@ -447,6 +537,7 @@ void XImageReader_size(const XImageReader* self, XSize* out)
     out->width = 0;
     out->height = 0;
     if (!self || !self->m_data) return;
+    XImageReader_ensureHandler((XImageReader*)self);
     if (self->m_data->m_handler &&
         XImageIOHandler_option_base(self->m_data->m_handler,
                                     XImageIOHandlerOption_Size, out))
@@ -597,26 +688,17 @@ XStringList* XImageReader_supportedSubTypes(const XImageReader* self)
 bool XImageReader_canRead(const XImageReader* self)
 {
     if (!self || !self->m_data) return false;
-    if (self->m_data->m_handler) return XImageIOHandler_canRead_base(self->m_data->m_handler);
+    if (XImageReader_ensureHandler((XImageReader*)self))
+        return XImageIOHandler_canRead_base(self->m_data->m_handler);
     if (self->m_data->m_format &&
         !XImageReader_isSupportedFormat(XString_toUtf8(self->m_data->m_format))) return false;
     if (self->m_data->m_device) {
         if (!self->m_data->m_autoDetectFormat && !self->m_data->m_format) return false;
-        const char* detected = XImageReader_imageFormatDevice_2(self->m_data->m_device);
-#if XIMAGECODEC_ON
-        return detected && XImageCodec_canDecode(XImageCodec_formatFromName_2(detected));
-#else
-        return false;
-#endif
+        return XImageReader_isSupportedFormat(XImageReader_imageFormatDevice_2(self->m_data->m_device));
     }
     if (!self->m_data->m_fileName) return false;
     if (!self->m_data->m_autoDetectFormat && !self->m_data->m_format) return false;
-    const char* detected = XImageReader_imageFormat_2(XString_toUtf8(self->m_data->m_fileName));
-#if XIMAGECODEC_ON
-    return detected && XImageCodec_canDecode(XImageCodec_formatFromName_2(detected));
-#else
-    return false;
-#endif
+    return XImageReader_isSupportedFormat(XImageReader_imageFormat_2(XString_toUtf8(self->m_data->m_fileName)));
 }
 
 bool XImageReader_read(XImageReader* self, XImage* out)
@@ -649,7 +731,9 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         }
     }
 #endif
-    if (self->m_data->m_handler)
+    if (!loadedByHandler)
+        XImageReader_ensureHandler(self);
+    if (!loadedByHandler && self->m_data->m_handler)
     {
         loadedByHandler = XImageIOHandler_read_base(self->m_data->m_handler, out);
         if (!loadedByHandler) {
@@ -896,22 +980,60 @@ XStringList* XImageReader_supportedMimeTypes()
         if (XImageCodec_canDecode(XImageCodec_formatFromName_2(g_imageReaderFormats[i])))
             XStringList_push_back_utf8(result, g_imageReaderMimeTypes[i]);
 #endif
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_supportedMimeTypes(true);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
+#endif
     return result;
 }
 
 XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
 {
     const char* mime = XString_toUtf8(mimeType);
+    XStringList* result = XImageReader_makeStringList(NULL, 0);
+    if (!result) return NULL;
     if (mime) {
-        if (XImageReader_mimeEquals(mime, "image/bmp") && XImageReader_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; return XImageReader_makeStringList(value, 1); }
-        if (XImageReader_mimeEquals(mime, "image/png") && XImageReader_isSupportedFormat("png")) { const char* value[] = {"png"}; return XImageReader_makeStringList(value, 1); }
-        if (XImageReader_mimeEquals(mime, "image/gif") && XImageReader_isSupportedFormat("gif")) { const char* value[] = {"gif"}; return XImageReader_makeStringList(value, 1); }
-        if (XImageReader_mimeEquals(mime, "image/jpeg") && XImageReader_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; return XImageReader_makeStringList(value, 1); }
-        if (XImageReader_mimeEquals(mime, "image/svg+xml") && XImageReader_isSupportedFormat("svg")) { const char* value[] = {"svg"}; return XImageReader_makeStringList(value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/bmp") && XImageReader_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/png") && XImageReader_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/gif") && XImageReader_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/jpeg") && XImageReader_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/svg+xml") && XImageReader_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageReader_makeStringList_prefix(result, value, 1); }
     }
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* plugin = XImagePluginRegistry_imageFormatsForMimeType(mimeType, true);
+        int64_t n;
+        int64_t j;
+        if (plugin) {
+            n = XStringList_size_base((XContainer*)plugin);
+            for (j = 0; j < n; ++j) {
+                XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
+                const char* value = XString_toUtf8(item);
+                if (value && value[0] &&
+                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    XStringList_push_back_utf8(result, value);
+            }
+            XStringList_delete_base((XClass*)plugin);
+        }
+    }
+#endif
     /* Match Qt's value-returning API: an unknown MIME type is an empty list,
        rather than a list containing an unrelated fallback format. */
-    return XImageReader_makeStringList(NULL, 0);
+    return result;
 }
 
 XStringList* XImageReader_imageFormatsForMimeType_2(const char* mimeType)

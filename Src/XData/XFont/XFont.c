@@ -269,6 +269,45 @@ void XFont_setPixelSize(XFont* self, int pixelSize)
     if (self) self->m_pixelSize = pixelSize;
 }
 
+int XFont_bitmapPixelSize(const XFont* self, int defaultPixelSize)
+{
+    if (self && self->m_pixelSize > 0)
+        return self->m_pixelSize;
+    return defaultPixelSize;
+}
+
+int XFont_bitmapScale(int basePixelHeight, int targetPixelHeight)
+{
+    int base = basePixelHeight > 0 ? basePixelHeight : 1;
+    int target = targetPixelHeight;
+    int scale;
+    if (target <= 0)
+        target = base;
+    scale = (target + base - 1) / base;
+    if (scale < 1)
+        scale = 1;
+    return scale;
+}
+
+int XFont_bitmapScaledSize(int baseSize, int scale)
+{
+    int factor = scale > 1 ? scale : 1;
+    return baseSize * factor;
+}
+
+int XFont_bitmapScaleForFont(const XFont* self, int basePixelHeight)
+{
+    return XFont_bitmapScale(basePixelHeight,
+                             XFont_bitmapPixelSize(self, basePixelHeight));
+}
+
+int XFont_bitmapHeightForFont(const XFont* self, int basePixelHeight)
+{
+    return XFont_bitmapScaledSize(basePixelHeight,
+                                  XFont_bitmapScaleForFont(self,
+                                                           basePixelHeight));
+}
+
 int XFont_weight(const XFont* self)
 {
     return self ? self->m_weight : XFont_Normal;

@@ -78,6 +78,20 @@ bool XImageCodec_canDecode(XImageCodecFormat format);
 bool XImageCodec_canEncode(XImageCodecFormat format);
 
 /**
+ * @brief 从内存编码数据中探测图像宽度与高度。
+ * @param data   输入图像数据；不能为 NULL。
+ * @param size   输入数据字节数。
+ * @param width  输出图像宽度；成功后填写大于 0 的值。
+ * @param height 输出图像高度；成功后填写大于 0 的值。
+ * @param format 指定格式；Unknown 时根据文件头自动识别。
+ * @return 成功探测到尺寸返回 true，数据无效或不支持的格式返回 false。
+ * @note 仅读取格式文件头或足够的前段数据，不解码完整像素数据。
+ */
+bool XImageCodec_probeSize(const uint8_t* data, size_t size,
+                           XImageCodecFormat format,
+                           int* width, int* height);
+
+/**
  * @brief 获取格式的标准小写名称。
  * @param format 待查询格式。
  * @return 新建的 XString 名称（调用者负责释放）；未知格式返回空字符串。

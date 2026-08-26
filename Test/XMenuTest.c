@@ -19,7 +19,6 @@
 #include"XDeviceTest.h"
 #include"XMemoryTest.h"
 #include"XDataTest.h"
-#include"XGuiTest.h"
 XMenu* XMenuTest_create()
 {
 	XMenu* root = XMenu_create("测试代码");
@@ -32,7 +31,6 @@ XMenu* XMenuTest_create()
 	XMenu_XTimerTest(root);
 	XMenu_XMemoryTest(root);
 	XMenu_XDataTest(root);
-	XMenu_XGuiTest(root);
 	return root;
 }
 

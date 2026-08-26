@@ -31,7 +31,7 @@
  *                递归子控件（区域逐层裁剪）-> endPaint -> flush 上屏 ->
  *                清空脏区，默认 paintEvent 按 autoFillBackground 填充
  *                XPaletteColorRole_Window 底色；
- *              - 事件分派：XWidget_event_base 按 XEventType 分派到 17 个
+ *              - 事件分派：XWidget_event_base 按 XEventType 分派到 18 个
  *                事件虚函数槽（paintEvent/resizeEvent/moveEvent/closeEvent/
  *                focusInEvent/focusOutEvent/enterEvent/leaveEvent/keyPressEvent/
  *                keyReleaseEvent/mousePressEvent/mouseReleaseEvent/
@@ -119,6 +119,7 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event);
 /** @brief XWidgetWindow 类虚函数表初始化（内部类，堆窗口对象使用）。 */
 XVtable* XWidgetWindow_class_init(void);
 static void XWidget_recomputeGeometry(XWidget* self, const XRect* old);
+static void XWidget_updateContentsRect(XWidget* self);
 static void XWidget_propagateVisibility(XWidget* self, bool parentVisible);
 static XWidget* XWidget_topLevel(const XWidget* self);
 static XWidgetWindow* XWidget_createWindow(XWidget* top);
@@ -964,7 +965,8 @@ XVtable* XWidget_class_init(void)
         XWidget_ignoreEvent_default,       /* MouseMoveEvent */
         XWidget_ignoreEvent_default,       /* WheelEvent */
         XWidget_noopEvent_default,         /* ShowEvent */
-        XWidget_noopEvent_default          /* HideEvent */
+        XWidget_noopEvent_default,         /* HideEvent */
+        XWidget_noopEvent_default          /* ChangeEvent */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -993,6 +995,10 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_updatesEnabled = 1;
     XRect_init(&self->m_windowRect, 0, 0, 0, 0);
     XRect_init(&self->m_contentsRect, 0, 0, 0, 0);
+    XMargins_init(&self->m_contentsMargins, 0, 0, 0, 0);
+    XFont_init(&self->m_font);
+    self->m_backgroundRole = XPaletteColorRole_Window;
+    self->m_foregroundRole = XPaletteColorRole_NoRole;
     XSize_init(&self->m_minimumSize, 0, 0);
     XSize_init(&self->m_maximumSize, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
     XSize_init(&self->m_baseSize, -1, -1);
@@ -1076,6 +1082,7 @@ static void VXWidget_deinit(XWidget* self)
         self->m_cursor = NULL;
     }
 #endif /* XCURSOR_ON */
+    XFont_deinit(&self->m_font);
     XIcon_deinit_base(&self->m_icon);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
@@ -1104,6 +1111,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     }
 #endif /* XCURSOR_ON */
     self->m_cursor = NULL;
+    XFont_deinit(&self->m_font);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
@@ -1127,6 +1135,9 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_acceptDrops = other->m_acceptDrops;
     self->m_windowRect = other->m_windowRect;
     self->m_contentsRect = other->m_contentsRect;
+    self->m_contentsMargins = other->m_contentsMargins;
+    self->m_backgroundRole = other->m_backgroundRole;
+    self->m_foregroundRole = other->m_foregroundRole;
     self->m_minimumSize = other->m_minimumSize;
     self->m_maximumSize = other->m_maximumSize;
     self->m_baseSize = other->m_baseSize;
@@ -1149,6 +1160,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #else
     self->m_palette = other->m_palette;
 #endif
+    XFont_copy(&self->m_font, &other->m_font);
     XIcon_copy_base(&self->m_icon, &other->m_icon);
 #if XCURSOR_ON
     if (other->m_cursor) {
@@ -1194,6 +1206,7 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     }
 #endif
     XIcon_move_base(&self->m_icon, &other->m_icon);
+    XFont_move(&self->m_font, &other->m_font);
 #if XLAYOUT_ON
     /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。 */
     self->m_layout = other->m_layout;
@@ -1229,6 +1242,9 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_acceptDrops = other->m_acceptDrops;
     self->m_windowRect = other->m_windowRect;
     self->m_contentsRect = other->m_contentsRect;
+    self->m_contentsMargins = other->m_contentsMargins;
+    self->m_backgroundRole = other->m_backgroundRole;
+    self->m_foregroundRole = other->m_foregroundRole;
     self->m_minimumSize = other->m_minimumSize;
     self->m_maximumSize = other->m_maximumSize;
     self->m_baseSize = other->m_baseSize;
@@ -1352,6 +1368,49 @@ XRect XWidget_rect(const XWidget* self)
     return out;
 }
 
+XRect XWidget_contentsRect(const XWidget* self)
+{
+    XRect out;
+    if (!self) { XRect_init(&out, 0, 0, 0, 0); return out; }
+    out = self->m_contentsRect;
+    return out;
+}
+
+XMargins XWidget_contentsMargins(const XWidget* self)
+{
+    XMargins out;
+    if (!self) { XMargins_init(&out, 0, 0, 0, 0); return out; }
+    out = self->m_contentsMargins;
+    return out;
+}
+
+void XWidget_setContentsMargins(XWidget* self, int left, int top,
+                                int right, int bottom)
+{
+    if (!self) return;
+    if (self->m_contentsMargins.left == left &&
+        self->m_contentsMargins.top == top &&
+        self->m_contentsMargins.right == right &&
+        self->m_contentsMargins.bottom == bottom)
+        return;
+    XMargins_init(&self->m_contentsMargins, left, top, right, bottom);
+    XWidget_updateContentsRect(self);
+    XWidget_updateGeometry(self);
+    XWidget_update(self);
+}
+
+void XWidget_unsetContentsMargins(XWidget* self)
+{
+    if (!self) return;
+    if (self->m_contentsMargins.left == 0 && self->m_contentsMargins.top == 0 &&
+        self->m_contentsMargins.right == 0 && self->m_contentsMargins.bottom == 0)
+        return;
+    XMargins_init(&self->m_contentsMargins, 0, 0, 0, 0);
+    XWidget_updateContentsRect(self);
+    XWidget_updateGeometry(self);
+    XWidget_update(self);
+}
+
 XRect XWidget_geometry(const XWidget* self)
 {
     XRect out;
@@ -1397,6 +1456,23 @@ XRect XWidget_normalGeometry(const XWidget* self)
     return out;
 }
 
+/** @brief 根据窗口几何与内容边距刷新内容矩形（对标 Qt QWidgetPrivate::setContentsRect 后的 crect 语义）。 */
+static void XWidget_updateContentsRect(XWidget* self)
+{
+    int width, height;
+    if (!self) return;
+    width = self->m_windowRect.width - self->m_contentsMargins.left -
+            self->m_contentsMargins.right;
+    height = self->m_windowRect.height - self->m_contentsMargins.top -
+             self->m_contentsMargins.bottom;
+    if (width < 0) width = 0;
+    if (height < 0) height = 0;
+    self->m_contentsRect.x = self->m_contentsMargins.left;
+    self->m_contentsRect.y = self->m_contentsMargins.top;
+    self->m_contentsRect.width = width;
+    self->m_contentsRect.height = height;
+}
+
 /** @brief 几何字段刷新：位置/尺寸变化时派发 MOVE/RESIZE 事件并同步客户区。 */
 static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
 {
@@ -1410,10 +1486,7 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
     sizeChanged = (old.width != self->m_windowRect.width) ||
                   (old.height != self->m_windowRect.height);
     if (!posChanged && !sizeChanged) return;
-    self->m_contentsRect.x = 0;
-    self->m_contentsRect.y = 0;
-    self->m_contentsRect.width = self->m_windowRect.width;
-    self->m_contentsRect.height = self->m_windowRect.height;
+    XWidget_updateContentsRect(self);
     if (posChanged) {
         XEvent event;
         XEvent_init(&event, XEVENT_TYPE_MOVE);
@@ -1481,6 +1554,24 @@ void XWidget_setGeometryRect(XWidget* self, const XRect* rect)
 {
     if (!self || !rect) return;
     XWidget_setGeometry(self, rect->x, rect->y, rect->width, rect->height);
+}
+
+void XWidget_updateGeometry(XWidget* self)
+{
+    XWidget* parent;
+    if (!self) return;
+#if XLAYOUT_ON
+    if (self->m_layout) {
+        XLayout_activate(self->m_layout);
+        return;
+    }
+    parent = XWidget_parentWidget(self);
+    if (parent && parent->m_layout)
+        XLayout_activate(parent->m_layout);
+#else
+    parent = XWidget_parentWidget(self);
+    (void)parent;
+#endif /* XLAYOUT_ON */
 }
 
 void XWidget_move(XWidget* self, int x, int y)
@@ -1737,6 +1828,9 @@ void XWidget_setSizePolicy(XWidget* self,
                            XWidgetSizePolicyPolicy vertical)
 {
     if (!self) return;
+    /* 显式调用 setSizePolicy 标记 OwnSizePolicy（对标 Qt WA_WState_OwnSizePolicy）；
+     * XFrame::setFrameStyle 据此判断是否需要按形状接管尺寸策略。 */
+    XWidget_setAttribute(self, XWidgetAttribute_WState_OwnSizePolicy, true);
     self->m_sizePolicy.m_horizontalPolicy = (uint8_t)horizontal;
     self->m_sizePolicy.m_verticalPolicy = (uint8_t)vertical;
 }
@@ -1744,6 +1838,7 @@ void XWidget_setSizePolicy(XWidget* self,
 void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy)
 {
     if (!self || !policy) return;
+    XWidget_setAttribute(self, XWidgetAttribute_WState_OwnSizePolicy, true);
     self->m_sizePolicy = *policy;
 }
 
@@ -2658,6 +2753,28 @@ void XWidget_setToolTipDuration(XWidget* self, int msec)
     self->m_toolTipDuration = msec;
 }
 
+XFont XWidget_font(const XWidget* self)
+{
+    XFont out;
+    XFont_init(&out);
+    if (!self)
+        return out;
+    XFont_copy_base(&out, &self->m_font);
+    return out;
+}
+
+void XWidget_setFont(XWidget* self, const XFont* font)
+{
+    XFont temp;
+    if (!self || !font) return;
+    XFont_init(&temp);
+    XFont_copy_base(&temp, font);
+    XFont_deinit(&self->m_font);
+    XFont_move(&self->m_font, &temp);
+    XWidget_updateGeometry(self);
+    XWidget_update(self);
+}
+
 XPalette XWidget_palette(const XWidget* self)
 {
     XPalette out;
@@ -2701,6 +2818,32 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
     XPalette_copy(&self->m_palette, palette);
     XWidget_update(self);
 #endif /* XPALETTE_ON */
+}
+
+XPaletteColorRole XWidget_backgroundRole(const XWidget* self)
+{
+    return self ? self->m_backgroundRole : XPaletteColorRole_Window;
+}
+
+void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role)
+{
+    if (!self) return;
+    if (self->m_backgroundRole == role) return;
+    self->m_backgroundRole = role;
+    XWidget_update(self);
+}
+
+XPaletteColorRole XWidget_foregroundRole(const XWidget* self)
+{
+    return self ? self->m_foregroundRole : XPaletteColorRole_NoRole;
+}
+
+void XWidget_setForegroundRole(XWidget* self, XPaletteColorRole role)
+{
+    if (!self) return;
+    if (self->m_foregroundRole == role) return;
+    self->m_foregroundRole = role;
+    XWidget_update(self);
 }
 
 /* ==================== 更新使能与背景（对标 QWidget） ==================== */
@@ -2975,6 +3118,16 @@ bool XWidget_event_base(XWidget* self, XEvent* event)
     case XEVENT_TYPE_HIDE:
         XWidget_hideEvent_base(self, event);
         return true;
+    case XEVENT_TYPE_LOCALE_CHANGE:
+    case XEVENT_TYPE_LANGUAGE_CHANGE:
+    case XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE:
+    case XEVENT_TYPE_STYLE_CHANGE:
+    case XEVENT_TYPE_FONT_CHANGE:
+    case XEVENT_TYPE_ENABLED_CHANGE:
+    case XEVENT_TYPE_WINDOW_STATE_CHANGE:
+    case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
+        XWidget_changeEvent_base(self, event);
+        return true;
     default:
         /* 未识别事件回退 XObject 默认 Event 实现（对标 QWidget::event 尾部）。 */
         return XClass_Parent(XObject, EXObject_Event,
@@ -2982,7 +3135,7 @@ bool XWidget_event_base(XWidget* self, XEvent* event)
     }
 }
 
-/* ==================== 17 个公开事件槽入口（XWidget_*_base） ==================== */
+/* ==================== 18 个公开事件槽入口（XWidget_*_base） ==================== */
 
 /** @brief 生成公开事件槽入口：经对象虚表安全调用对应槽位。 */
 #define XWIDGET_VT_DISPATCH(FuncName, SlotEnum) \
@@ -3014,6 +3167,7 @@ XWIDGET_VT_DISPATCH(mouseMoveEvent, EXWidget_MouseMoveEvent)
 XWIDGET_VT_DISPATCH(wheelEvent, EXWidget_WheelEvent)
 XWIDGET_VT_DISPATCH(showEvent, EXWidget_ShowEvent)
 XWIDGET_VT_DISPATCH(hideEvent, EXWidget_HideEvent)
+XWIDGET_VT_DISPATCH(changeEvent, EXWidget_ChangeEvent)
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 
