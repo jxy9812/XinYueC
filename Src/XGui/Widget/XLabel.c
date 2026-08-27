@@ -42,7 +42,6 @@
 #include "XCursor.h"
 #include "XFont8x16.h"
 #include <string.h>
-#include <errno.h>
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -74,6 +73,24 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos);
 static int label_posToUtf16(const XLabel* self, const XPoint* pos);
 static void label_selectFromAnchor(XLabel* self, int pos);
 static int label_currentCursor(const XLabel* self);
+
+/** @brief 按控件布局方向转换逻辑水平对齐（对标 QStyle::visualAlignment）。 */
+static XAlignments label_visualAlignment(const XLabel* self,
+                                         XAlignments alignment)
+{
+    XWidgetLayoutDirection direction;
+    if (!(alignment & XAlignment_HorizontalMask))
+        alignment |= XAlignment_Left;
+    if (alignment & XAlignment_Absolute)
+        return alignment;
+    if (!(alignment & (XAlignment_Left | XAlignment_Right)))
+        return alignment;
+    direction = XWidget_layoutDirection((const XWidget*)self);
+    if (direction == XWidgetLayoutDirection_RightToLeft)
+        alignment ^= (XAlignment_Left | XAlignment_Right);
+    alignment |= XAlignment_Absolute;
+    return alignment;
+}
 
 /* ==================== UTF-8 / UTF-16 长度小工具（复用 XChar 语义） ==================== */
 
@@ -758,9 +775,6 @@ static int label_layout(const char* utf8, int availWidth, bool wrap,
     if (cap < 1) cap = 1;
     lines = (LabelLine*)XMemory_malloc(
         sizeof(LabelLine) * (size_t)cap, XMEMORY_TYPE_MULTIPOOL);
-    if (getenv("XLABEL_DEBUG"))
-        fprintf(stderr, "[XLabel] layout malloc size=%zu cap=%d result=%p errno=%d\n",
-                sizeof(LabelLine)*(size_t)cap, cap, (void*)lines, errno);
     if (!lines) { if (outLines) *outLines = NULL; return 0; }
     while (1) {
         int segEnd = segStart;
@@ -827,7 +841,7 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
     hextra = 2 * self->m_margin;
     vextra = hextra;
     XRect_init(&br, 0, 0, 0, 0);
-    align = self->m_alignment;
+    align = label_visualAlignment(self, self->m_alignment);
     if (!XPixmap_isNull(&self->m_pixmap)) {
         br.width = XPixmap_width(&self->m_pixmap);
         br.height = XPixmap_height(&self->m_pixmap);
@@ -910,7 +924,7 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
     int indent, m;
     int textH;
     int yo;
-    XAlignments align = self->m_alignment;
+    XAlignments align = label_visualAlignment(self, self->m_alignment);
     const char* utf8;
     if (!out) return;
     out->m_lines = NULL;
@@ -1010,16 +1024,8 @@ static void label_drawLine(XPainter* painter, const char* utf8,
         } else {
             color = textColor;
         }
-        if (getenv("XLABEL_DEBUG"))
-            fprintf(stderr, "  glyph p=%d gx=%d base=%d ch='%c' color=%06x\n",
-                    p, gx, baselineY, utf8[p], (unsigned)color);
         XPainter_drawGlyph(painter, gx, baselineY,
                           &utf8[p], color);
-        if (getenv("XLABEL_DEBUG")) {
-            XRect under = { gx, baselineY + XFONT8X16_DESCENT * scale,
-                            adv, scale };
-            XPainter_fillRect(painter, &under, linkColor);
-        }
         gx += adv;
         p += glyphLen;
         u16 += u16len;
@@ -1035,15 +1041,8 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
     int i, utf16pos;
     int selStart, selEnd;
     uint32_t textColor, hlBg, hlFg, linkColor;
-    if (getenv("XLABEL_DEBUG"))
-        fprintf(stderr, "[XLabel] drawTextContent enter isText=%d dtext=%p dlen=%d\n",
-                self->m_isTextLabel, (void*)self->m_displayText,
-                self->m_displayText?(int)strlen(XString_toUtf8(self->m_displayText)):0);
     if (!self->m_isTextLabel || !self->m_displayText) return;
     label_computeLayout(self, cr, &layout);
-    if (getenv("XLABEL_DEBUG"))
-        fprintf(stderr, "[XLabel] after layout lines=%d linesptr=%p\n",
-                layout.m_lineCount, (void*)layout.m_lines);
     if (layout.m_lineCount <= 0 || !layout.m_lines) return;
     utf8 = XString_toUtf8(self->m_displayText);
     selStart = self->m_selectionStart;
@@ -1057,18 +1056,10 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
         XPainter_setFont(painter, &font);
         XFont_deinit(&font);
     }
-    if (getenv("XLABEL_DEBUG")) {
-        fprintf(stderr, "[XLabel] drawTextContent cr=(%d,%d,%d,%d) lines=%d rect=(%d,%d,%d,%d) text=%s\n",
-                cr->x, cr->y, cr->width, cr->height, layout.m_lineCount,
-                layout.m_rect.x, layout.m_rect.y, layout.m_rect.width, layout.m_rect.height,
-                XString_toUtf8(self->m_displayText));
-        for (i = 0; i < layout.m_lineCount; ++i)
-            fprintf(stderr, "  line[%d] start=%d end=%d w=%d\n", i,
-                    layout.m_lines[i].m_start, layout.m_lines[i].m_end, layout.m_lines[i].m_width);
-    }
     utf16pos = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
-        int x = label_lineX(&layout, i, self->m_alignment);
+        int x = label_lineX(&layout, i,
+                            label_visualAlignment(self, self->m_alignment));
         int top = layout.m_rect.y + i * label_lineHeight(self);
         int baselineY = top + label_ascent(self);
         label_drawLine(painter, utf8,
@@ -1109,19 +1100,27 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
         XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
         return -1;
     }
-    lineIndex = (pos->y - layout.m_rect.y) / 16;
+    {
+        int lineHeight = label_lineHeight(self);
+        lineIndex = lineHeight > 0
+            ? (pos->y - layout.m_rect.y) / lineHeight : 0;
+    }
     if (lineIndex < 0 || lineIndex >= layout.m_lineCount) {
         XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
         return -1;
     }
     {
-        int x = label_lineX(&layout, lineIndex, self->m_alignment);
+        int x = label_lineX(&layout, lineIndex,
+                            label_visualAlignment(self, self->m_alignment));
         int lw = layout.m_lines[lineIndex].m_width;
         if (pos->x < x || pos->x >= x + lw) {
             XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
             return -1;
         }
-        glyphIndex = (pos->x - x) / 8;
+        {
+            int advance = label_advance(self);
+            glyphIndex = advance > 0 ? (pos->x - x) / advance : 0;
+        }
     }
     utf8 = XString_toUtf8(self->m_displayText);
     byte = layout.m_lines[lineIndex].m_start;
@@ -1216,7 +1215,8 @@ static int label_posToUtf16(const XLabel* self, const XPoint* pos)
         XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
         return total;
     }
-    x = label_lineX(&layout, lineIndex, self->m_alignment);
+    x = label_lineX(&layout, lineIndex,
+                    label_visualAlignment(self, self->m_alignment));
     lw = layout.m_lines[lineIndex].m_width;
     lineGlyphs = label_glyphCountForRange(utf8,
                                           layout.m_lines[lineIndex].m_start,
@@ -1305,31 +1305,36 @@ static void label_drawPixmap(XLabel* self, XPainter* painter,
     XImage image;
     XPixmap scaledPm;
     int x, y, w, h;
-    if (!self || !painter || !pm || XPixmap_isNull(pm)) return;
+    if (!self || !painter || !pm || !cr || XPixmap_isNull(pm)) return;
     w = XPixmap_width(pm);
     h = XPixmap_height(pm);
     if (w <= 0 || h <= 0) return;
     if (self->m_scaledContents) {
         if (cr->width <= 0 || cr->height <= 0) return;
         XPixmap_init(&scaledPm);
+        XImage_init(&image);
         XPixmap_scaled(pm, cr->width, cr->height, 0, 0, &scaledPm);
         XPixmap_toImage(&scaledPm, &image);
         XPainter_drawImage(painter, &image, cr->x, cr->y);
+        XImage_deinit_base(&image);
         XPixmap_deinit_base(&scaledPm);
         return;
     }
     x = cr->x;
     y = cr->y;
-    if (self->m_alignment & XAlignment_Right)
+    XAlignments align = label_visualAlignment(self, self->m_alignment);
+    if (align & XAlignment_Right)
         x = cr->x + cr->width - w;
-    else if (self->m_alignment & XAlignment_HCenter)
+    else if (align & XAlignment_HCenter)
         x = cr->x + (cr->width - w) / 2;
-    if (self->m_alignment & XAlignment_Bottom)
+    if (align & XAlignment_Bottom)
         y = cr->y + cr->height - h;
-    else if (self->m_alignment & XAlignment_VCenter)
+    else if (align & XAlignment_VCenter)
         y = cr->y + (cr->height - h) / 2;
+    XImage_init(&image);
     XPixmap_toImage(pm, &image);
     XPainter_drawImage(painter, &image, x, y);
+    XImage_deinit_base(&image);
 }
 
 /** @brief 在客户区绘制像素图/绘图记录/影片/文本（对标 QLabel::paintEvent 内容部分）。 */
@@ -1342,11 +1347,6 @@ static void label_drawContent(XLabel* self, XPainter* painter)
     cr.y += self->m_margin;
     cr.width -= self->m_margin * 2;
     cr.height -= self->m_margin * 2;
-    if (getenv("XLABEL_DEBUG"))
-        fprintf(stderr, "[XLabel] drawContent text=%d movie=%d pix=%d pic=%d cr=(%d,%d,%d,%d)\n",
-                self->m_isTextLabel, self->m_movie!=NULL,
-                !XPixmap_isNull(&self->m_pixmap), self->m_picture!=NULL,
-                cr.x, cr.y, cr.width, cr.height);
     if (self->m_movie) {
         XPixmap pm;
         XPixmap_init(&pm);
@@ -1628,15 +1628,17 @@ static void VXLabel_keyPressEvent(XWidget* self, XEvent* event)
 /** @brief 焦点进入：交父类默认处理。 */
 static void VXLabel_focusInEvent(XWidget* self, XEvent* event)
 {
-    (void)self;
-    (void)event;
+    if (self && event)
+        XClass_Parent(XFrame, EXWidget_FocusInEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 焦点离开：交父类默认处理。 */
 static void VXLabel_focusOutEvent(XWidget* self, XEvent* event)
 {
-    (void)self;
-    (void)event;
+    if (self && event)
+        XClass_Parent(XFrame, EXWidget_FocusOutEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 深拷贝：父类拷贝后深拷文本/绘图记录/链接，像素图共享。 */
@@ -2012,7 +2014,10 @@ XMovie* XLabel_movie(const XLabel* self)
 
 void XLabel_setMovie(XLabel* self, XMovie* movie)
 {
-    if (!self || self->m_movie == movie) return;
+    /* Qt QLabel::setMovie() always clears the previous contents, even when
+       the same QMovie pointer is supplied again.  Keep that observable
+       reset semantics; the movie itself remains borrowed by the label. */
+    if (!self) return;
     label_clearContents(self);
     self->m_movie = movie;
     label_updateLabel(self);
@@ -2206,6 +2211,17 @@ void XLabel_setTextInteractionFlags(XLabel* self,
     else
         policy = XWidgetFocusPolicy_NoFocus;
     XWidget_setFocusPolicy((XWidget*)self, policy);
+    /* Qt destroys QLabel's text control when neither keyboard nor mouse
+       selection remains enabled.  Any active cursor selection therefore
+       becomes unavailable through hasSelectedText()/selectedText(). */
+    if (self->m_effectiveTextFormat == XLabelTextFormat_PlainText &&
+        (flags & (XLabelTextInteraction_TextSelectableByKeyboard |
+                  XLabelTextInteraction_TextSelectableByMouse)) == 0u) {
+        self->m_selectionStart = -1;
+        self->m_selectionLength = 0;
+        self->m_selectionAnchor = -1;
+        self->m_textSelecting = false;
+    }
     label_updateMouseTracking(self);
     XWidget_update((XWidget*)self);
 }
@@ -2216,6 +2232,17 @@ void XLabel_setSelection(XLabel* self, int start, int length)
 {
     int total;
     if (!self) return;
+    /* QLabelPrivate::needTextControl() keeps a control for rich text, for
+       selectable text, or whenever the label has a non-NoFocus policy (for
+       example LinksAccessibleByKeyboard sets StrongFocus).  Mirror that
+       condition so programmatic selection is not rejected merely because
+       the selectable flags are absent. */
+    if (self->m_effectiveTextFormat == XLabelTextFormat_PlainText &&
+        (self->m_textInteractionFlags &
+         (XLabelTextInteraction_TextSelectableByMouse |
+          XLabelTextInteraction_TextSelectableByKeyboard)) == 0u &&
+        XWidget_focusPolicy((XWidget*)self) == XWidgetFocusPolicy_NoFocus)
+        return;
     self->m_textSelecting = false;
     if (start < 0 || length < 0) {
         self->m_selectionStart = -1;
@@ -2279,9 +2306,6 @@ void XLabel_drawContents(XLabel* self, XPainter* painter)
     if (!self || !painter) return;
     {
         int saved = XPainter_save(painter);
-        if (getenv("XLABEL_DEBUG"))
-            fprintf(stderr, "[XLabel] XLabel_drawContents enter self=%p save=%d yet=%d\n",
-                    (void*)self, saved, self?self->m_isTextLabel:0);
         if (saved) {
             XFrame_drawFrame((XFrame*)self, painter);
             label_drawContent(self, painter);

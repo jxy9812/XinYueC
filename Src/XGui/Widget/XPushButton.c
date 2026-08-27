@@ -628,7 +628,6 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
 
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    XFont_deinit(&font);
     text = XString_toUtf8(self->m_text ? self->m_text : NULL);
     drawIcon = !XIcon_isNull(&self->m_icon);
     iconW = 16;
@@ -655,10 +654,23 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
     }
     if (text && text[0] != '\0') {
         if (content.width < 4) content.width = 4;
+#if XPAINTER_TEXTLAYOUT_ON
         XPainter_drawTextRect(painter, &content,
-                              XPAINTER_TEXT_CENTER | XPAINTER_TEXT_SINGLE_LINE,
+                              XPAINTER_TEXT_ALIGN_CENTER | XPAINTER_TEXT_SINGLE_LINE,
                               text, textColor);
+#else
+        /* 文本布局被裁剪时保留按钮可用性：用点阵字体度量做单行居中。 */
+        {
+            int textW = XPainter_textWidth(&font, text);
+            int textH = XPainter_textHeight(&font);
+            int ascent = XPainter_textAscent(&font);
+            int textX = content.x + (content.width - textW) / 2;
+            int baseline = content.y + (content.height - textH) / 2 + ascent;
+            XPainter_drawText(painter, textX, baseline, text, textColor);
+        }
+#endif /* XPAINTER_TEXTLAYOUT_ON */
     }
+    XFont_deinit(&font);
     if (self->m_menu && rect.width >= 12 && rect.height >= 7) {
         int arrowX = rect.x + rect.width - 9;
         int arrowY = rect.y + (rect.height / 2) - 2;

@@ -31,7 +31,7 @@ typedef enum XAlignment
     XAlignment_HCenter       = 0x0004, /**< 水平居中（对标 Qt::AlignHCenter）。 */
     XAlignment_Justify       = 0x0008, /**< 水平两端对齐（对标 Qt::AlignJustify）。 */
     XAlignment_Absolute      = 0x0010, /**< 忽略布局方向强制左右语义（对标 AlignAbsolute）。 */
-    XAlignment_HorizontalMask = 0x000f,/**< 水平对齐掩码（Left|Right|HCenter|Justify）。 */
+    XAlignment_HorizontalMask = 0x001f,/**< 水平对齐掩码（含 AlignAbsolute）。 */
     XAlignment_Top           = 0x0020, /**< 垂直顶部对齐（对标 Qt::AlignTop）。 */
     XAlignment_Bottom        = 0x0040, /**< 垂直底部对齐（对标 Qt::AlignBottom）。 */
     XAlignment_VCenter       = 0x0080, /**< 垂直居中（对标 Qt::AlignVCenter）。 */

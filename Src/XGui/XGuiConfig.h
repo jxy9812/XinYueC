@@ -90,6 +90,21 @@
 #ifndef XPAINTER_BRUSH_ON
 #define XPAINTER_BRUSH_ON 1
 #endif
+#ifndef XPAINTER_BRUSH_ORIGIN_ON
+#define XPAINTER_BRUSH_ORIGIN_ON 1
+#endif
+#ifndef XPAINTER_BACKGROUND_ON
+#define XPAINTER_BACKGROUND_ON 1
+#endif
+#ifndef XPAINTER_PIXMAP_ON
+#define XPAINTER_PIXMAP_ON 1
+#endif
+#ifndef XPAINTER_IMAGE_RECT_ON
+#define XPAINTER_IMAGE_RECT_ON 1
+#endif
+#ifndef XPAINTER_TILED_PIXMAP_ON
+#define XPAINTER_TILED_PIXMAP_ON 1
+#endif
 #ifndef XPAINTER_PATH_ON
 #define XPAINTER_PATH_ON 1
 #endif
@@ -110,6 +125,9 @@
 #endif
 #ifndef XPAINTER_CLIP_ON
 #define XPAINTER_CLIP_ON 1
+#endif
+#ifndef XPAINTER_CLIP_REGION_ON
+#define XPAINTER_CLIP_REGION_ON 1
 #endif
 
 /* 控件、布局、输入法与窗口事件。 */

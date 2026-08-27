@@ -953,7 +953,8 @@ Qt 源码依据：
   `setLayoutDirection(Qt::LayoutDirection)` 与 `layoutDirection() const` 的
   公共签名。
 - `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:7357-7372`：
-  默认方向为 `LayoutDirectionAuto`，setter/getter 直接读写 painter state。
+  setter 仅在 painter state 存在时写入；无状态 getter 返回 `LayoutDirectionAuto`，
+  `QPainterState::init()` 则取应用的有效方向（默认 LTR）。
 - `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:7139-7160`：
   `TextForceLeftToRight/TextForceRightToLeft` 优先级、绘制器方向回退、
   `visualAlignment` 与 RTL 条件下的 `TextExpandTabs` 规则。
@@ -969,10 +970,10 @@ Qt 源码依据：
   `XPainterState.m_layoutDirection` 状态字段、`AlignAbsolute` 数值位
   `0x0010` 及 `XPainter_setLayoutDirection/layoutDirection` 声明，数值与 Qt
   对齐。
-- `Src/XGui/Graphics/XPainter.c`：默认状态为 Auto；setter 对非法枚举值回退
-  Auto；`drawTextRect` 按 ForceLTR/ForceRTL、绘制器方向或首个强 RTL 码点
+- `Src/XGui/Graphics/XPainter.c`：未激活查询返回 Auto，激活状态初始化为应用有效
+  方向；setter 对非法枚举值回退 Auto；`drawTextRect` 按 ForceLTR/ForceRTL、绘制器方向或首个强 RTL 码点
   决定方向，再执行视觉左右交换和 Qt 条件制表符展开。
-- `xgui_regression_test.c`：增加默认 Auto、RTL 左对齐翻转、
+- `xgui_regression_test.c`：增加未激活 Auto、激活默认 LTR、RTL 左对齐翻转、
   `AlignAbsolute` 保持物理左对齐及 getter/setter 回归断言。
 
 验证结果：
@@ -1188,7 +1189,7 @@ Qt 源码依据：
 近似边界与未完成项：
 
 - 当前只实现矩形裁剪；Qt 的 `setClipRegion`、`setClipPath` 与复杂区域运算尚未
-  引入对应 XRegion/XPainterPath 裁剪接口。
+  引入对应 XRegion/XPainterPath 裁剪接口（区域接口已在 10.53 增补）。
 - 旋转或错切后的矩形在软件后端以设备坐标轴对齐包围盒裁剪；这不同于 Qt 保留的
   精确变换后区域，不能宣称该情形已逐像素完全对齐。
 - XPicture 指令流尚不记录裁剪操作，回放仍使用目标绘制器的当前裁剪状态。
@@ -1247,3 +1248,1013 @@ CTest 项 `XGuiRegression`。它直接以断言式结果返回失败状态，集
 `./bin/XGuiWindowDemo_Test` 后，应在棋盘格右侧同时看到两行黑色文字，第二行高度和字宽
 均为第一行的两倍；标题为“XinYueC GUI 控件可视化测试 (X11/Win32)”。当
 `XLABEL_ON=0` 时，面板改显示 `XLabel disabled`，使嵌入式裁剪状态可见。
+
+### 10.52 2026-08-27 XPainter Qt 6.8 状态、画刷与裁剪对齐
+
+本节优先核对 `Src/XGui/Graphics/XPainter.h`/`.c` 与 Qt 6.8
+`QPainter`/`QBrush` 的状态语义，并保留嵌入式可裁剪配置。对齐以 Qt 源码行为为准，
+不把项目额外提供的旧式便利函数当作 Qt 公共 API。
+
+Qt 源码依据：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:1660-1795`、
+  `1848-1885`：`begin`/`end` 对活动状态、无效设备和状态栈清理的处理。
+- `qpainter.cpp:2015-2055`、`2324-2378`：不透明度默认值、活动状态写入、合成模式
+  默认值和非法/不支持模式的拒绝语义。
+- `qpainter.cpp:2419-2460`、`2632-2655`、`7915-7994`：`setClipping` 保留已保存
+  裁剪描述、`clipBoundingRect` 查询以及世界/组合变换状态。
+- `qpainter.cpp:3611-3788`、`3807-3858`、`6892-6905`、`6920-6930`、
+  `7357-7375`：画笔、画刷、背景、字体、渲染提示、视图变换和布局方向的活动状态
+  约束及默认值。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qbrush.cpp:1553-1630`：
+  渐变停止点范围检查、排序、同位置覆盖和空停止点的黑到白隐式渐变。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qtransform.cpp:352-455`：
+  变换矩阵 mutator 的参数与组合规则。
+
+实现范围：
+
+- `XPainter_begin_image`/`XPainter_begin_picture` 在已有活动绑定时返回 `false`，并
+  保留原设备与状态；`XPainter_end` 仅对活动绘制器成功，符合 Qt 的生命周期约定。
+- `XPainter_drawRect` 先按当前画刷填充，再按当前画笔绘制四条边；默认画刷为
+  `NoBrush`，因此默认只描边。`XPainter_fillRect_2` 改为读取当前画刷，分别处理
+  `NoBrush`、纯色和渐变画刷，空矩形仍是成功的无操作；未绑定设备时所有非空
+  绘制请求（包括 NoBrush 的 `fillRect_2`）返回失败。
+- 渐变停止点使用有限值和 `[0,1]` 范围检查，按位置排序，同位置停止点覆盖旧颜色；
+  软件路径在没有停止点时使用 Qt 对应的黑到白端点插值。线段、折线、多边形、路径
+  和渐变填充的便携回调失败会向上传播，不再静默报告成功。
+- 变换、画笔/画刷、背景、字体、透明度、布局方向和合成模式的写入均要求 painter
+  处于活动状态；`setOpacity(NaN)` 按 Qt 的边界行为归一为 `0`。当前只接受
+  `SourceOver` 与 `Source` 合成模式，其他枚举值保持先前状态。
+- 路径曲线展平、动态顶点扩容、矩阵角点映射和失败清理均补充了空指针及分配失败
+  处理；`XPAINTER_PATH_ON` 可独立开启，路径回调与基础回调一样传播失败。
+- `XPainter_config.h` 的 `XPAINTER_*_ON` 开关继续控制画刷、路径、形状、多边形、
+  文本布局、世界矩阵、视图变换和裁剪。`XPAINTER_SHAPE_ON=0`、
+  `XPAINTER_POLYGON_ON=0`、`XPAINTER_BRUSH_ON=0`、`XPAINTER_PATH_ON=1` 等裁剪组合
+  不会暴露被禁用的公共类型或调用路径，适合资源受限的嵌入式构建。
+
+验证结果：
+
+- 默认配置：`cmake --build build --target XGuiRegression_Test --clean-first -j1`、
+  `./bin/XGuiRegression_Test` 和 `ctest --test-dir build --output-on-failure` 均通过，
+  CTest 为 1/1。
+- 路径裁剪配置 `build-crop-path` 使用
+  `-DXPAINTER_SHAPE_ON=0 -DXPAINTER_POLYGON_ON=0 -DXPAINTER_BRUSH_ON=0
+  -DXPAINTER_PATH_ON=1 -DXPAINTER_TEXTLAYOUT_ON=0 -DXPAINTER_WORLD_MATRIX_ON=0
+  -DXPAINTER_VIEW_TRANSFORM_ON=0 -DXPAINTER_CLIP_ON=0`，目标和统一回归程序均通过。
+- 最小裁剪配置 `build-crop-min` 进一步关闭形状、多边形、画笔样式、画刷、路径、
+  文本布局、布局方向、渲染提示、世界矩阵、视图变换和裁剪，仍能成功配置、构建并
+  通过同一 `XGuiRegression_Test`；该结果证明基础线段、矩形、显式颜色填充和点阵
+  文本路径可独立保留。
+- 完整默认构建 `cmake --build build -j1` 成功。构建仍报告工程既有的非 XPainter 警告，
+  例如 `Library/zlib/zconf.h:255` 的预处理指令和多个 `XClass` 类型转换警告，因而
+  不宣称“零警告”。本轮未在受控 `ptrace` 环境重复运行 LSan；此前环境会因
+  LeakSanitizer 不支持 `ptrace` 子进程而中止，泄漏状态仍需目标机单独确认。
+
+近似边界与未完成项：
+
+- 合成模式已覆盖 Qt 6.8 的 24 个 Porter-Duff/SVG 模式和 14 个 RasterOp 模式；
+  RasterOp 在软件 XImage 后端按完整 ARGB32 像素逐位运算。
+- 软件渐变、路径曲线展平、复杂多边形及旋转/错切后的裁剪仍是便携近似实现；裁剪
+  使用设备坐标轴对齐包围盒，不能宣称与 Qt 的精确逐像素区域完全一致。
+- 当前公共 API 仍未覆盖 Qt 的 `QBrush`/`QPen` 全部构造重载、`drawImage` 的
+  `sourceRect`/pixmap 变体、区域/路径裁剪、背景模式与图片序列化中的完整 painter
+  状态。后续按 XGui 优先级继续补齐。
+
+本节不创建提交、不推送代码；工作树中的既有修改保持原样。
+
+### 10.59 2026-08-27 XPainter 变换组合顺序与画刷回调状态
+
+本轮继续按 Qt 6.8 的矩阵乘法顺序和多边形画刷语义修正 XPainter：
+
+- Qt 依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:7947-7983`，
+  `setWorldTransform(matrix, true)` 将新矩阵放在当前矩阵左侧；依据
+  `qtransform.cpp:816-950`，`QTransform` 的 `a * b` 映射顺序为先作用 `a`、再作用
+  `b`。XPainter 现在在 `setTransform(..., true)` 中使用 `matrix * current`，而
+  `translate/scale/rotate/shear` 按 Qt 的便捷操作将新变换左乘当前矩阵。
+- Qt 依据 `qpainter.cpp:7900-7904`、`qpainter.cpp` 的
+  `combinedTransform()` 实现，组合查询按 world * view 顺序；XPainter 的实际绘制、
+  组合查询和设备变换查询已统一使用该顺序，避免非交换矩阵下平移与缩放结果反转。
+- `XPainter_drawPolygon` 的便携回调 `filled` 现在由当前画刷决定；`NoBrush` 仅描边，
+  与 Qt `drawPolygon` 的当前 `QBrush::style()` 语义一致。原生/嵌入式回调仍可依据
+  该字段自行选择填充实现。
+
+验证结果：默认 `XGuiRegression_Test` 构建并运行通过，新增非交换矩阵组合和
+`NoBrush` 多边形回调断言；`build-crop-min` 裁剪配置构建并运行通过，随后已重新构建
+默认回归二进制。`git diff --check` 无空白错误。完整工程既有的跨类型和第三方警告仍然
+存在，因此不宣称全工程零警告；AddressSanitizer 回归在 `detect_leaks=0` 下通过，当前
+受控环境的 LSan 仍受 `ptrace` 限制。
+
+近似边界：XPainter 仍以单精度矩阵、整数 XRect 和便携软件光栅化为主，复杂 QTransform
+透视、QPainterPath 精确裁剪及抗锯齿像素覆盖尚未达到 Qt 光栅引擎的逐像素一致性。
+
+### 10.53 2026-08-27 XPainter QRegion 区域裁剪对齐
+
+在 10.52 矩形裁剪基础上补齐 Qt 6.8 的区域裁剪入口，并保持独立裁剪开关，
+用于资源受限的嵌入式配置。
+
+Qt 源码依据：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:167-190`：
+  `clipRegion()` 与 `setClipRegion()` 的公共签名及逻辑坐标约定。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2464-2565`：
+  区域裁剪查询、`NoClip` 清空、`IntersectClip` 求交及逆矩阵回映射规则。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2797-2870`：
+  区域裁剪写入时的活动状态检查、未启用时相交转替换以及状态记录规则。
+- `/home/xinyue/Code/XinYueC/Src/XData/XGeometry.h:245-570` 与
+  `XGeometry.c:477-660`：`XRegion` 的初始化、合并、交集、包围矩形和点包含
+  操作，全部使用项目内存接口。
+
+实现范围：
+
+- `XPainter_config.h` 新增 `XPAINTER_CLIP_REGION_ON`，依赖 `XPAINTER_CLIP_ON`；
+  关闭后不暴露区域 API，也不增加状态对象大小。
+- `XPainterState` 保存设备坐标区域，`save/restore/end` 对区域数组进行深拷贝和
+  释放，避免状态栈浅拷贝造成双重释放或悬垂指针。
+- `XPainter_setClipRegion` 支持 `ReplaceClip`、`IntersectClip`、`NoClip`，区域中
+  每个逻辑矩形按当前组合变换映射后参与软件像素裁剪；`XPainter_clipRegion`
+  逆变换输出逻辑坐标区域，关闭 clipping 后仍保留查询描述，符合 Qt 的状态语义。
+- 统一回归新增不相邻矩形、区域间隙、区域查询以及 save/restore 恢复测试；区域
+  裁剪会在后续多边形测试前显式关闭，避免跨用例污染。
+
+验证结果与边界：
+
+- 默认 `XGuiRegression_Test` 通过；ASan `detect_leaks=0:abort_on_error=1` 通过，
+  未发现越界或 use-after-free。LSan 仍受当前受控环境 `ptrace` 限制，未宣称泄漏
+  检查通过。
+- `XPAINTER_CLIP_REGION_ON=0` 的裁剪配置应仅保留矩形接口；非恒等变换下区域
+  输出按整数轴对齐包围矩形离散化，复杂路径裁剪和 `QPainter::setClipPath` 仍未
+  实现；XPicture 录制仍不序列化裁剪状态。
+
+### 10.54 2026-08-27 XPainter 形状公共签名清理
+
+本轮继续按 Qt 6.8 `QPainter` 公共头文件清理 XPainter 的历史 C 扩展参数：
+
+- Qt 依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:277-297`：
+  `drawPolygon(const QPoint*, int, Qt::FillRule)`、`drawPie(const QRect&, int, int)`
+  和 `drawChord(const QRect&, int, int)` 不带独立的 `filled` 布尔参数；是否填充由
+  当前 `QBrush::style()` 决定。
+- `XPainter_drawPolygon` 现为 `(XPainter*, const XPoint*, int, XPainterFillRule)`，
+  `XPainter_drawPie`/`XPainter_drawChord` 现为 `(XPainter*, const XRect*, int, int)`；
+  `NoBrush` 时只描边，其他画刷按当前状态填充，公共调用不再覆盖画刷状态。
+- `XPainterDrawShapeProc` 和 `XPainterDrawPolygonProc` 仍是便携后端回调的工程扩展，
+  其 `filled` 字段只用于内部描述“当前画刷是否应参与填充”，不是 Qt 对外 API，
+  以便在无原生图形引擎的嵌入式后端保留一次回调派发。
+- 统一回归已同步删除所有旧式 `filled` 实参，并保留 `SolidPattern`、渐变和
+  `NoBrush` 三种状态的像素断言；`drawConvexPolygon` 继续无额外参数，与 Qt 头文件
+  一致。`XPainterFillRule` 对应 Qt 的 `OddEvenFill`（默认）和 `WindingFill`，
+  当前扫描线实现同时支持两种规则。
+
+验证结果：`cmake --build build --target XGuiRegression_Test --clean-first -j1` 成功，
+随后 `./bin/XGuiRegression_Test` 与 `ctest --test-dir build --output-on-failure` 均通过
+（1/1）；`git diff --check` 无空白错误。完整构建输出仍含仓库既有的第三方和跨类型警告，
+不宣称全工程零警告；未提交、未推送。
+
+### 10.55 2026-08-27 XPainter 多边形 FillRule 对齐
+
+本轮继续对齐 Qt 6.8 `QPainter::drawPolygon` 的填充规则参数，并保持嵌入式可裁剪：
+
+- Qt 依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:277-280`，
+  `drawPolygon` 的最后参数为 `Qt::FillRule`，默认值是 `Qt::OddEvenFill`；
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:4548-4629` 说明
+  多边形首尾隐式闭合、画刷参与填充，并将规则传给绘图引擎。
+- XPainter 增加 `XPainterFillRule_OddEven`/`XPainterFillRule_Winding`，公共
+  `XPainter_drawPolygon` 接口签名与 Qt 语义对应；非法枚举值归一化为默认奇偶规则。
+  `XPainter_drawConvexPolygon` 固定走奇偶规则，符合 Qt 凸多边形接口不带规则参数。
+- 软件扫描线保存交点横坐标和边方向：奇偶规则按排序交点两两配对，绕组规则仅在
+  非零绕组区间的进入/退出边界生成填充跨度；当前仍采用整数像素覆盖的便携近似，
+  不模拟 Qt 光栅引擎的抗锯齿和半像素采样。
+- `XPainterDrawPolygonProc` 的 `filled` 保留为便携后端扩展，同时新增 `fillRule`，
+  使原生回调可以选择与 Qt 对应的填充算法；旧式公共 `filled` 参数已删除。
+- `XPAINTER_POLYGON_ON=0` 时多边形公共 API 和回调仍整体裁剪；填充规则枚举保持
+  轻量定义，以便形状/路径内部在其他裁剪组合下复用统一扫描线类型。
+
+验证：默认 `XGuiRegression_Test` 已重新编译并通过，`ctest` 1/1 通过；回调测试
+验证 Winding 规则原样传递，NULL/少于两个顶点仍是无操作。后续应补充自交多边形的
+像素 fixture，并继续核对 Qt 的抗锯齿、复杂路径和设备后端行为。未提交、未推送。
+
+### 10.61 2026-08-27 XPainter QTransform 矩阵乘法与便捷变换顺序
+
+本轮依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qtransform.cpp:29-59`
+的点映射字段布局及 `816-950` 的 `QTransform::operator*` 展开式，修正
+`painterMatrixMultiply`：`XImageTransform` 现在按
+`[m11 m12 m13; m21 m22 m23; dx dy m33]` 行向量布局逐项计算，与 Qt 的
+`m11/m12/m21/m22/m31/m32/m13/m23/m33` 一一对应。此前实现误将字段当作列向量，
+会在缩放、平移组合时产生错误偏移。
+
+对照 Qt `QTransform::translate/scale/shear/rotate`（同文件 `352-520`）的分支更新，
+`XPainter_translate/scale/rotate/shear` 统一改为“新矩阵左乘当前矩阵”；这与 Qt
+在缩放后平移按缩放系数放大偏移、平移后缩放保持原偏移的行为一致。`setWorldTransform`
+继续使用 `matrix * current`，`combinedTransform` 继续使用 `world * view`，与
+`qpainter.cpp:7947-7983` 保持同一组合顺序。
+
+回归新增非交换顺序断言：缩放 `(2,3)` 且偏移 `(1,2)` 后平移 `(4,5)` 得到偏移
+`(9,17)`；平移 `(1,2)` 后缩放 `(2,3)` 保留偏移 `(1,2)`。默认和裁剪配置均覆盖这些
+分支。软件后端仍使用单精度浮点，透视与抗锯齿由便携实现近似；未提交、未推送。
+
+### 10.56 2026-08-27 XPainter QPen 默认状态对齐
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpen.cpp:226-266`
+及 `qpainter.cpp:3611-3642`，修正 XPainter 画笔状态：Qt 默认 `QPen` 为黑色、1
+像素、`SolidLine`、`SquareCap`、`BevelJoin`；`setPen(const QColor&)` 构造新的
+实线画笔并恢复同样的宽度/端点/连接默认值。`XPainterPenCapStyle` 和
+`XPainterPenJoinStyle` 的枚举值现采用 Qt 的位值（`0x00/0x10/0x20` 与
+`0x00/0x40/0x80`），默认查询和颜色重载均与 Qt 一致。`XPainter_setPenWidth`、
+`setPenStyle` 等独立 C API 保留为嵌入式便携扩展，但须在 `setPen` 之后调用以覆盖
+默认状态。
+
+回归新增默认端点/连接断言，并验证设置虚线、宽度、圆头/圆角后再调用颜色版
+`setPen` 会恢复 Qt 默认状态。实现仍不模拟 Qt 光栅引擎真实端点几何，当前字段主要
+供状态查询与后端回调使用。未提交、未推送。
+
+### 10.57 2026-08-27 XPainter 设备变换查询对齐
+
+Qt 6.8 在 `qpainter.h:197` 暴露 `QPainter::deviceTransform()`，实现见
+`qpainter.cpp:7896-7904`。XPainter 新增 `XPainter_deviceTransform` 并复用组合
+变换计算；内置 XImage 与 XPicture 后端都以 `(0,0)` 为设备原点，没有平台窗口的
+额外偏移，因此结果与 `XPainter_combinedTransform` 一致，未激活时返回单位矩阵。
+回归在 window/viewport 映射启用时增加设备变换的系数与偏移断言，不新增状态，兼容
+现有裁剪开关。
+
+### 10.58 2026-08-27 XPainter 画笔/画刷样式重载与矩形规范化
+
+继续核对 Qt 6.8 的状态重载和椭圆/弧形输入处理：
+
+- Qt 依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:3611-3686`、
+  `3726-3780`：`setPen(Qt::PenStyle)` 使用黑色、1 像素和默认端点/拐角重新构造
+  画笔；`setBrush(Qt::BrushStyle)` 使用黑色画刷并替换原样式，非法样式退化为空画刷。
+- 新增 `XPainter_setPen_2` 与 `XPainter_setBrush_2`，分别对应上述两个 Qt 重载；
+  两者都要求绘制器处于活动状态，调用后清除旧的宽度、端点、拐角或渐变状态，
+  使后续 `pen()`/`brush()` 查询与 Qt 的替换语义一致。原有颜色版和独立样式 setter
+  继续作为 C 便携接口保留。
+- Qt 依据 `qpainter.cpp:3963-4040`、`4070-4130`、`4154-4185`、`4225-4250`：
+  椭圆、圆弧、扇形和弦形先对 `QRect/QRectF` 做 normalized；扇形额外将起始角
+  归一化到 `[0, 5760)`。XPainter 现在通过 `XRect_normalized` 传递规范化矩形，
+  扇形按同一 1/16 度规则归一化，并让形状回调的 `filled` 准确反映当前 `QBrush`
+  是否为 NoBrush。圆角矩形同样在半径处理前规范化输入矩形。
+
+验证结果：默认 `XGuiRegression_Test` 新增样式重载、NoPen/NoBrush、负尺寸矩形和
+回调填充状态断言，构建、回归和 CTest 均通过；默认全工程构建仍只有仓库既有警告。
+已保留所有裁剪开关，未提交、未推送；抗锯齿与浮点 QRectF 仍由整数 XRect 的便携
+实现近似。
+
+### 10.60 2026-08-27 XPainter Qt 画笔/画刷枚举值对齐
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/global/qnamespace.h:1091-1099`
+和 `1119-1139`，XPainter 的 `XPainterPenStyle`/`XPainterBrushStyle` 数值现与 Qt
+一致：加入 `CustomDashLine=6`，补齐 2-14 的内置画刷图案，渐变样式固定为
+15/16/17，`TexturePattern=24`。这样录制流、外部回调和跨模块状态传递不会因自定义
+枚举值偏移而误判样式。
+
+`CustomDashLine` 在没有动态 `QPen::setDashPattern` 存储时使用确定性的默认虚线节距；
+内置图案和纹理在软件后端使用当前纯色填充，属于嵌入式裁剪下的明确近似。对照
+`qbrush.cpp:342-355`、`433-452` 与 `653-662`，`XPainter_setBrush_2` 对渐变/纹理
+样式按 Qt 的 `QBrush(color, style)` 规则归一为空画刷，独立
+`XPainter_setBrushStyle` 对同样样式保持原画刷状态；其他未知枚举值原样保留。默认
+回归、最小裁剪回归、CTest 和 `git diff --check` 均通过。
+
+### 10.62 2026-08-27 XPainter QPen 宽度边界对齐
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpen.cpp:588-598`
+的 `QPen::setWidth(int)` 实现，XPainter 的画笔宽度状态现遵循相同边界：宽度 `0`
+保留为 cosmetic pen，负值及大于等于 `1 << 15` 的值被拒绝且不改变原状态。软件
+光栅路径在实际逐像素绘制时仍把 cosmetic 宽度解释为一像素，从而分别满足 Qt 的
+状态查询语义和嵌入式后端的整数像素约束；状态结构注释同步标明 `0` 的特殊含义。
+
+本轮统一回归新增宽度为 0、-1 和 32768 的断言，并确认恢复到 1 像素后既有线型测试
+保持不变。默认 `XGuiRegression_Test` 构建、运行和 CTest 1/1 通过；所有功能裁剪的
+`build-crop-min` 构建及 CTest 通过；AddressSanitizer 在 `detect_leaks=0` 下通过，
+未发现越界或 use-after-free。LSan 仍受受控环境 `ptrace` 限制，不能宣称泄漏检查
+通过；构建输出中的信号宏和跨类型警告为既有问题。
+
+近似边界：XPainter 保留的 `setPenWidth` 是面向 C/嵌入式调用的便携接口，不提供 Qt
+`QPen::widthF` 的浮点状态；宽度大于 1 的软件光栅仍采用整数平行偏移，端点几何、
+抗锯齿和复杂变换下的真实覆盖率与 Qt 原生光栅引擎存在差异。
+
+### 10.63 2026-08-27 XPainter CompositionMode 与背景模式对齐
+
+本轮继续对齐 Qt 6.8 `QPainter` 状态接口：
+
+- Qt 依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:97-140`，
+  补齐 `CompositionMode_SourceOver` 至 `CompositionMode_Exclusion` 的 24 个同序枚举；
+  `qpainter.cpp:2324-2369` 说明非扩展设备按能力拒绝不支持模式，而 XImage 软件后端
+  具备完整 Porter-Duff/SVG 混合路径。
+- `painterComposeColor` 先将 XImage 的非预乘 ARGB 转为预乘分量，按
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2168-2258` 描述的
+  Porter-Duff 和 SVG 1.2 规则计算，再还原非预乘颜色；`SourceOver`、`Source`、
+  `Clear`、`Destination` 等状态均通过统一 `painterRaster_putPixel` 路径生效。
+  Qt RasterOp 的 14 个枚举值按原序声明并由 XImage 后端逐位实现；不超出 Qt 6.8
+  范围的值均可设置，越界值仍保持原状态。
+- Qt 依据 `qpainter.h:160-161` 与 `qpainter.cpp:3565-3603` 增加
+  `XPainterBackgroundMode_Transparent/Opaque`、`XPainter_setBackgroundMode` 和
+  `XPainter_backgroundMode`；状态随 `save/restore` 保存，默认值为 Transparent，
+  与背景颜色 setter 分离，便于嵌入式文本后端按需实现 Opaque 背景。
+- `XPainter_config.h` 增加 `XPAINTER_BACKGROUND_ON`，关闭后裁剪背景模式枚举、字段
+  和 API，不影响 `XPainter_setBackground` 颜色接口。
+
+验证：默认 `XGuiRegression_Test` 构建、运行和 CTest 1/1 通过；回归覆盖 24 个合成
+模式的状态设置、Clear 清除目标、Destination 保留目标及背景模式非法值保持状态。
+此前 `build-crop-min`、ASan（`detect_leaks=0`）已通过；LSan 受受控环境 ptrace 限制，
+未宣称泄漏检查通过。浮点混合使用 8 位预乘近似，QPainterPath 裁剪和设备抗锯齿仍属于
+未实现边界；RasterOp 位操作已在 10.77 条目中补齐；未提交、未推送。
+
+### 10.64 2026-08-27 XPainter drawImage 目标/源矩形重载与嵌入式裁剪
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:362-379`
+和 `qpainter.cpp:5103-5208` 的 `drawImage(targetRect, image, sourceRect)`
+重载，XPainter 新增 `XPainter_drawImageRect`。接口要求目标矩形、源图像和源矩形
+均非空；目标宽度或高度为零、或源区域裁剪后为空时按 Qt 无操作语义返回 true，
+未激活绘制器或非法输入返回 false。源宽度/高度非正的“取到图像边缘”、目标负尺寸
+以及源越界比例裁剪规则已在 10.76 条目中补齐并取代本条目的早期简化描述。
+
+软件 XImage 后端逐目标像素逆映射到用户坐标，在源矩形内使用最近邻采样，并复用
+既有裁剪、整体透明度、合成模式和透视矩阵路径；Picture 后端通过
+`XImage_copyRect` 截取源区域，再用 `XImage_scaled` 生成目标尺寸，最后写入已有
+DrawImage opcode，避免扩展持久化格式。新增
+`XPAINTER_IMAGE_RECT_ON` 开关可在嵌入式构建中裁剪该重载，位置绘制的
+`XPainter_drawImage` 不受影响。
+
+同时移除 XPainter.c 对 `<stdlib.h>` 的依赖，使用 `int64_t` 绝对值比较避免引入
+标准库内存接口；默认回归新增源/目标矩形缩放、像素分区及空目标矩形断言。
+
+验证：默认 `XGuiRegression_Test` 和 CTest 1/1 通过；
+`build-crop-background-off`（`XPAINTER_BACKGROUND_ON=0`）构建、运行和 CTest 通过；
+`git diff --check` 通过。软件路径仍采用最近邻和整数像素覆盖，Picture 录制不保存
+调用时的变换/裁剪状态，属于现有便携 Picture opcode 的已知边界；未提交、未推送。
+
+### 10.65 2026-08-27 XPainter 背景画刷重载与 Opaque 文本行为
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:3794-3822`
+及 `7403-7418`，`QPainter::setBackground(const QBrush&)` 保存完整背景画刷，
+初始化状态为不透明白色实心画刷；`qpainter.h:160-161` 规定该画刷只在
+`OpaqueMode` 绘制不透明文本、点阵线和位图时生效。XPainter 在现有 C 画刷结构
+基础上增加 `XPainter_setBackground_2` 与 `XPainter_backgroundBrush`，并让颜色版
+`XPainter_setBackground` 同步更新背景画刷的实心颜色和样式。背景画刷随
+`XPainter_save/restore` 状态栈复制，默认值为 `SolidPattern/#ffffffff`，与 Qt
+`QPainterState::init()` 一致。
+
+点阵文本路径在 `XPainterBackgroundMode_Opaque` 下先填充每个 8x16 字形单元，再
+绘制前景字形；渐变背景使用其基色，`NoBrush` 不填充。该策略保持固定内存和
+整数像素成本，适用于嵌入式后端，但与 Qt 复杂字体 glyph bounds、渐变采样以及
+点阵线/位图背景的完整引擎语义仍有差异。接口由
+`XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON` 双开关裁剪；关闭任一开关时不暴露
+背景画刷字段、重载或实现，保留便携颜色接口。
+
+验证：默认 `XGuiRegression_Test` 构建、运行和 CTest 1/1 通过；另以
+`-DXPAINTER_BRUSH_ON=0` 构建 `build-crop-bgbrush-off` 并运行同一统一回归，确认
+背景画刷字段、样式枚举和样式专用断言均被裁剪，测试仍输出
+`XGui regression tests passed`。为此在 `test_painter_shape_callback_contract` 与
+`test_painter_polygon_callback_contract` 中增加 `XPAINTER_BRUSH_ON` 条件，使关闭
+画刷时仍验证矩形规范化和回调派发，但不引用不存在的 `NoBrush` 样式符号。裁剪产物
+完成后已重新构建默认配置并恢复共享 `bin/XGuiRegression_Test`。构建输出仍含仓库
+既有的信号宏、跨类型删除和 const 丢弃警告，未宣称零警告；未提交、未推送。
+
+### 10.66 2026-08-27 XPainter 未激活状态查询语义对齐
+
+本轮针对 Qt 6.8 在绘制器未激活时的状态查询行为做了逐项核对：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:3593-3603`
+  规定 `backgroundMode()` 在没有绘制引擎时返回 `TransparentMode`；
+  `7369-7375` 规定无状态时 `layoutDirection()` 返回 `Qt::LayoutDirectionAuto`。
+- `qpainter.cpp:2384-2392` 的 `background()` 在未激活时读取 `fakeState()->brush`；
+  `qpainter_p.h:148-153` 说明该虚拟状态使用默认 `QBrush`，而
+  `qbrush.cpp:321-339,393-403` 明确默认值为 `NoBrush` 与不透明黑色。
+- 同一虚拟状态规则还覆盖 `qpainter.cpp:6875-6909` 的空 `renderHints()`、
+  `6918-6925` 的 `viewTransformEnabled()==false` 和 `2877-2885` 的
+  `worldMatrixEnabled()==false`；XPainter 原有实现已保持这些默认值。
+
+实现调整：`XPainter_backgroundMode`、`XPainter_layoutDirection` 在 `self==NULL`
+或设备类型为 `None` 时分别返回 Transparent/Auto，不再暴露已保留的状态栈值；
+`XPainter_backgroundBrush` 在同样条件下输出 Qt 默认的 `NoBrush/#ff000000`，活动
+绘制器仍返回当前完整画刷。新增回归断言覆盖这三种未激活查询，同时保留活动状态、
+非法 setter 保持原值以及 `save()/restore()` 的行为。画刷实现和查询均受
+`XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON` 控制，便于嵌入式裁剪。
+
+另外，`XPainter_drawImageRect` 对源坐标采样使用 `floorf`，避免负坐标 C 截断导致
+错误采样；源越界处理的最终比例裁剪语义见 10.76 条目。
+
+验证：默认配置执行 `cmake --build build --target XGuiRegression_Test -j1`、
+`./bin/XGuiRegression_Test` 和 CTest 1/1 均通过；输出中的 `XError` 仅为回归程序
+既有的非法父窗口及空事件释放诊断。此前 `build-crop-bgbrush-off`
+（`XPAINTER_BRUSH_ON=0`）构建、运行和 CTest 均通过，随后已重新构建默认二进制。
+构建仍报告仓库其他模块已有的信号宏、跨类型删除和 const 丢弃警告，未宣称零警告；
+LSan 仍受受控环境 ptrace 限制，未宣称泄漏检查通过。渐变背景、复杂字体字形、
+点阵线/位图背景、最近邻缩放和复杂字体字形仍是 XPainter 的已知近似边界；RasterOp
+位操作已在 10.77 条目中补齐；未提交、未推送。
+
+### 10.76 2026-08-27 XPainter drawImageRect 参数与越界裁剪修正
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:5158-5208`
+及 `qpainter.h:770-774`，`QPainter::drawImage(const QRect&, ...)` 先转换为
+`QRectF`，再执行以下参数规则：源宽度或高度小于等于零时取从源起点到图像边缘；
+目标宽度或高度小于零时取源尺寸除以图像 `devicePixelRatio`；源矩形超出图像左/上/右/下
+边界时按源到目标的比例裁掉对应目标区域（左/上越界还会平移目标起点）；任一最终目标轴
+为零或源区域为空时直接返回。该行为与“交换负尺寸边界”不同，也不把越界目标像素写成
+透明色。
+
+`XPainter_drawImageRect` 现在由 `painterPrepareImageRect` 统一计算上述浮点参数：
+软件光栅路径以整理后的目标矩形逆变换采样，源裁剪后的比例和目标平移与 Qt 一致；
+Picture 路径使用整理后的整数源区域和四舍五入后的目标尺寸复用现有 DrawImage opcode，
+因此 `devicePixelRatio` 非整数或裁剪比例产生亚像素目标时仍有便携格式的整数取整边界。
+目标零宽/零高仍保持无操作成功，源宽/高零值则按 Qt “取到边缘”解释。
+
+回归 `test_painter_raster_contract` 新增负目标宽度、零源宽度取边缘、源左越界裁剪并平移
+目标三组像素断言；默认配置 `XGuiRegression_Test` 通过。Qt 规则依据和实现均在
+`Src/XGui/Graphics/XPainter.c` 的 `painterPrepareImageRect`、
+`painterMapImageRectCorners` 与 `painterRaster_drawImageRect` 中保留中文注释。
+构建输出仍含仓库既有信号宏、const 丢弃和跨类型删除警告；LSan 受受控环境 ptrace
+限制，未宣称泄漏检查通过；未提交、未推送。
+
+### 10.67 2026-08-27 XPainter eraseRect 背景画刷语义
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:6554-6564`，
+`QPainter::eraseRect` 等价于把当前 `state->bgBrush` 传给 `fillRect`，而不是仅以
+`background().color()` 填充。XPainter 现将 `XPainter_eraseRect` 在
+`XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON` 开启时临时切换到
+`m_backgroundBrush`，复用 `XPainter_fillRect_2` 的 `NoBrush`、纯色和渐变路径，
+随后恢复前景画刷状态；背景画刷不再污染后续普通填充。关闭背景画刷能力时保留
+颜色版兼容实现，满足嵌入式裁剪。
+
+统一回归新增实心背景画刷、前景画刷保持不变及 `NoBrush` 背景不写像素断言；默认
+`XGuiRegression_Test` 构建、运行和 CTest 1/1 通过，`git diff --check` 通过。
+构建仍报告仓库其他模块已有的信号宏、跨类型删除和 const 丢弃警告；LSan 受受控
+环境 ptrace 限制，未宣称泄漏检查通过。Picture 后端对复杂渐变的录制仍通过已有
+便携填充 opcode 退化为分段颜色，属于已知近似边界；未提交、未推送。
+
+### 10.68 2026-08-27 XPainter 总开关裁剪联动
+
+修正 `Src/XGui/Graphics/XPainter_config.h` 中总开关的实际行为：当
+`XPAINTER_ON=0` 时，现在同步把形状、多边形、画笔样式、画刷、背景、图像源/目标
+矩形、路径、文本布局、布局方向、渲染提示、世界矩阵、视图变换、矩形裁剪及区域
+裁剪开关置零。由此所有对应枚举、状态字段、公共扩展 API 和静态实现会从预处理
+结果中裁剪；基础 XPainter 生命周期、直线/矩形/图像位置绘制、透明度和基础变换
+仍保留，便于依赖库在同一头文件下完成最小嵌入式构建。
+
+依据 `XGuiConfig.h` 的 `XGUI_ON`/子开关集中配置约定，本联动避免了此前总开关为零
+但可选 API 仍被暴露的配置不一致。验证：`build-crop-painter-off` 使用
+`-DXPAINTER_ON=0` 成功构建 `XinYueCS` 与统一 `XGuiRegression_Test`，运行及 CTest
+1/1 通过；随后重新构建默认 `build` 目标并确认默认回归、CTest 1/1、`git diff --check`
+均通过。完整构建仍有仓库既有跨类型指针、信号宏和 const 丢弃警告，未宣称零警告；
+LSan 受受控环境 ptrace 限制，未宣称泄漏检查通过。未提交、未推送。
+
+### 10.69 2026-08-27 XPainter 组合模式透明像素边界
+
+对照 Qt 6.8 `qpainter.cpp:2168-2258` 的 Porter-Duff 逐像素定义，软件
+`painterComposeColor` 对 `Clear`、`Source`、`Destination` 以及
+`SourceOver` 的全透明源/空目标增加直接返回路径：Clear 始终输出
+`0x00000000`，Source/Destination 保留原始 ARGB32（包括半透明 RGB），
+透明源覆盖不改变目标，透明目标下 SourceOver 直接返回源。这样避免了
+预乘/反预乘往返造成的半透明通道舍入漂移，同时不影响 SourceIn、Atop、Xor
+及 SVG 混合模式的预乘计算。
+
+统一回归新增半透明 Source、Destination、透明 SourceOver 及 14 个 RasterOp 的精确
+像素断言，并保留非法枚举断言为“保留调用前的 SourceOver 状态”。默认配置重新构建、
+运行及 CTest 1/1 通过；`build-crop-painter-off`（`XPAINTER_ON=0`）重新构建、
+运行及 CTest 1/1 通过，随后恢复默认 `bin/XGuiRegression_Test`。构建输出仍有
+回归程序中既有的信号宏、跨类型删除和 const 丢弃警告，未宣称零警告；LSan 受
+受控环境 ptrace 限制，未宣称泄漏检查通过。浮点颜色仍按 8 位整数预乘近似，抗锯齿
+和复杂字体排版属于未完成边界；未提交、未推送。
+
+### 10.70 2026-08-27 XPainter NoClip 查询记录对齐
+
+根据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2743-2776`
+和 `2401-2447`，`setClipRect(..., Qt::NoClip)` 会把裁剪操作标记为
+`NoClip` 并令 `hasClipping()` 返回 false，但仍保留这一次记录；因此随后的
+`clipBoundingRect()` 和 `clipRegion()` 会分别返回传入的矩形/区域，而不是空值。
+区域重载在 `qpainter.cpp:2795-2845` 遵循相同规则。
+
+XPainter 现把 NoClip 的逻辑矩形或区域映射后保存在 `m_clipRect/m_clipRegion`，将
+`m_hasClipRect` 保持为 true、`m_clipOperation` 设为 NoClip、`m_hasClip` 设为 false；
+查询接口允许读取该记录，而 `setClipping(true)` 仍因 NoClip 标记拒绝重新启用，和 Qt
+的 `clipInfo.constLast().operation == Qt::NoClip` 守卫一致。统一回归新增矩形和区域
+查询断言，并保留空裁剪、禁用后保留查询以及重新设置有效裁剪的覆盖。
+
+验证：默认 `XGuiRegression_Test` 构建、运行、CTest 1/1 通过；随后将以
+`-DXPAINTER_ON=0` 的 `build-crop-painter-off` 重新构建并运行同一测试，完成后恢复
+默认二进制。构建输出中的信号宏、跨类型删除和 const 丢弃警告属于仓库既有问题，未
+宣称零警告；LSan 仍受受控环境 ptrace 限制，未宣称泄漏检查通过。复杂路径裁剪和
+浮点区域离散化仍为便携近似边界；未提交、未推送。
+
+### 10.71 2026-08-27 XPainter 非激活背景颜色查询对齐
+
+Qt 6.8 `QPainter::background()` 在绘制器未激活时读取 `fakeState()->brush`
+（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2384-2392`）；
+`QPainterDummyState` 的默认 `QBrush` 是 `NoBrush`，其颜色为不透明黑色。XPainter
+的颜色便捷查询 `XPainter_background()` 现区分三种状态：空指针仍返回 0 作为 C API
+错误值，非空但未绑定设备返回 `0xff000000`，活动设备返回当前背景画刷颜色，和
+Qt 的虚拟状态/活动状态分支一致。完整背景画刷查询此前已按同一规则返回
+`NoBrush/#ff000000`。
+
+统一回归新增未激活背景颜色断言，并保留活动背景颜色、背景画刷和 `save()/restore()`
+覆盖。默认构建、运行、CTest 以及 `XPAINTER_ON=0` 裁剪配置将在本轮验证；构建中
+已有信号宏、跨类型删除和 const 丢弃警告仍需单独治理，不能宣称零警告；LSan 受
+受控环境 ptrace 限制，不能宣称泄漏检查通过。未提交、未推送。
+
+### 10.72 2026-08-27 XPainter 空裁剪矩形坐标保留
+
+Qt 6.8 `QPainter::clipBoundingRect()` 会遍历保存的裁剪记录并映射回逻辑坐标，
+即使记录对应空矩形，也不会丢弃其原点（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2632-2674`）。
+`setClipRect()` 对 `QRect`/`QRectF` 的记录与 `NoClip` 清理规则见同文件
+`2688-2776`；实测 `(2,2,0,0)` 查询得到 `(2,2,0,0)`，`NoClip` 传入空矩形同样保留
+坐标但 `hasClipping()` 为 false。
+
+XPainter 的裁剪矩形映射不再对零宽或零高提前返回，而是继续映射退化矩形四角，保存
+变换后的原点和零尺寸；`clipBoundingRect()` 也允许查询零尺寸记录。有效裁剪仍按
+轴对齐包围盒参与像素裁剪，未设置记录时继续返回零矩形。统一回归新增非零原点空矩形
+断言，覆盖 ReplaceClip 后的查询行为；默认配置与 `build-crop-painter-off` 裁剪配置均
+构建并运行通过。构建输出仍有仓库回归程序既有的信号宏、const 丢弃和跨类型删除警告，
+不宣称零警告；LSan 受受控环境 ptrace 限制，未宣称泄漏检查通过。未提交、未推送。
+
+### 10.73 2026-08-27 XPainter 画刷样式切换清理渐变载荷
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qbrush.cpp:550-590`
+的 `QBrush::detach()` 以及 `653-662` 的 `QBrush::setStyle()`：样式参数先经过
+`qbrush_check_type()` 校验，渐变/纹理样式调用被拒绝；从渐变样式切换到任何普通
+样式时会分离为新的 `QBrushData`，因此旧渐变停止点、几何参数不再属于当前画刷。
+
+XPainter_setBrushStyle 继续拒绝三个渐变样式和 TexturePattern；当当前画刷是任一
+渐变样式且目标样式合法时，先清零 `m_gradient` 再保存新样式，使 XPainter_brush()
+的结构化查询与 Qt 的数据分离语义一致。统一回归新增“渐变切换到 SolidPattern 后
+停止点数量为零”的断言，并保留非法渐变样式被拒绝的覆盖。
+
+验证：默认 `XGuiRegression_Test` 构建、运行、CTest 1/1 通过；随后以
+`-DXPAINTER_ON=0` 的 `build-crop-painter-off` 构建并运行统一测试，最后恢复默认
+二进制。构建输出仍有回归测试中既有的信号宏、跨类型删除及 const 丢弃警告，未宣称
+零警告；LSan 受受控环境 ptrace 限制，未宣称泄漏检查通过。纹理画刷尚未提供图像
+载荷，复杂 Qt 画刷共享数据生命周期仍属未完成边界；未提交、未推送。
+
+### 10.74 2026-08-27 XPainter drawRect 退化矩形与 QRect 边界对齐
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:3215-3248`
+中 `QPainter::drawRect` 的 QRect 重载定义，以及 Qt 光栅后端对整数矩形边界的
+实测结果，整数 QRect 的描边边界使用 `x + width` 与 `y + height`，因此宽度或高度
+单轴为零时仍绘制一条包含端点的直线；仅宽高同时为零才是空操作。负宽高先交换两条
+几何边，保留规范化后的端点。填充仍按 `QRect::size()` 的宽高写入，画笔随后覆盖
+描边，符合 Qt 文档“填充尺寸为 rectangle.size、描边尺寸另加画笔宽度”的约定。
+
+XPainter_drawRect 不再把所有非正尺寸直接返回。函数内使用 64 位边界计算并显式交换
+负尺寸，保留零轴长度，同时将右下端点按 Qt 的包含式整数边界传给四条 drawLine；渐变
+画刷多边形也统一使用规范化后的四角，避免负高度仍引用原始坐标。极端 int 溢出在
+转换到回调前钳位到 `INT_MIN..INT_MAX`，不调用标准库分配或平台 API。头文件注释已
+说明 NULL/双零尺寸、单轴退化和负尺寸行为。
+
+统一回归在 `test_painter_raster_contract` 新增零宽垂直线与负宽高矩形的像素断言，并
+更新原有边框、裁剪、批量矩形及 Picture 回放断言到 Qt 的 `x + width/y + height`
+边界。默认配置重新构建并运行 `./bin/XGuiRegression_Test`，随后以
+`-DXPAINTER_ON=0` 的 `build-crop-painter-off` 重新构建运行同一测试，最后恢复默认
+测试二进制；两套运行均通过，`ctest --test-dir build --output-on-failure` 为 1/1。
+构建输出仍包含回归程序既有的信号宏、跨类型删除和 const 丢弃警告，不能宣称零警告；
+LSan 在受控环境受 ptrace 限制，不能宣称泄漏检查通过。浮点 QRectF、抗锯齿笔宽以及
+复杂画刷仍是后续对齐边界；未提交、未推送。
+
+### 10.75 2026-08-27 XPainter fillRect 负尺寸 QRect 规范化
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:6670-6725`
+的 `fillRect(QRect, QBrush/QColor)` 实现（其非扩展路径通过 NoPen 的
+`drawRect` 完成填充）以及 `3215-3248` 的整数矩形约定，并用 Qt Raster 实测
+`QPainter::fillRect(QRect(5,5,w,2))`：
+宽度 `-2`、`-1` 会分别填充交换边界后的 2、1 列，宽度为零才是空操作。换言之，
+`fillRect` 的负尺寸不能沿用 `QRect::isEmpty()` 的直接返回逻辑，而应先交换
+`x` 与 `x + width`、`y` 与 `y + height`，再按正区域填充。
+
+XPainter 新增 `painterNormalizeFillRect`，在 64 位边界上计算并钳位后供
+`XPainter_fillRect`、`fillRect_2` 和背景 `eraseRect` 共用；渐变画刷四角也改用
+规范化坐标。这样软件光栅、Picture 录制回放和外部填充回调的输入边界保持一致，
+零宽/零高仍返回成功但不写像素，NULL 仍按 C API 错误返回 false。
+
+统一回归在 `test_painter_raster_contract` 增加负宽填充的像素断言（规范化区域
+`x=3..4`），默认 `XGuiRegression_Test`、`build-crop-painter-off`（`XPAINTER_ON=0`）
+均构建并运行通过，默认 `ctest --test-dir build --output-on-failure` 为 1/1；完整
+默认工程构建成功。构建日志仍有仓库既有的信号宏、跨类型删除和 const 丢弃警告，
+因此不能宣称零警告；LSan 受受控环境 ptrace 限制，不能宣称泄漏检查通过。浮点
+QRectF、抗锯齿及复杂画刷仍待后续对齐；未提交、未推送。
+
+### 10.77 2026-08-27 XPainter RasterOp 组合模式对齐
+
+依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2240-2365`，
+`QPainter::CompositionMode` 在具备 RasterOp 能力的光栅设备上支持 14 个逐位模式：
+SourceOrDestination、SourceAndDestination、SourceXorDestination、
+NotSourceAndNotDestination、NotSourceOrNotDestination、NotSourceXorDestination、
+NotSource、NotSourceAndDestination、SourceAndNotDestination、NotSourceOrDestination、
+SourceOrNotDestination、ClearDestination、SetDestination 和 NotDestination。XPainter
+现按完整 `uint32_t` ARGB32 像素执行与 Qt 定义一致的位运算，不经过 Alpha 预乘或颜色
+反预乘；其中 `NotSourceXorDestination` 按 Qt 文档解释为 `((NOT source) XOR destination)`。
+
+`XPainter_setCompositionMode` 现在接受 Qt 6.8 的 38 项连续枚举范围（24 个
+Porter-Duff/SVG 加 14 个 RasterOp），超出范围的值继续保持旧状态。RasterOp 直接
+复用 `painterRaster_putPixel`，因此仍受当前设备有效范围、裁剪和整体不透明度影响；
+不透明度为 1.0 时源像素按原始 ARGB32 位模式参与运算。统一回归在
+`test_painter_raster_contract` 中逐项验证 14 个 setter/getter 结果和像素值，并保留
+非法枚举拒绝断言。
+
+默认 `XGuiRegression_Test`、完整工程构建和 CTest 1/1 均通过；此前的
+`XPAINTER_ON=0` 裁剪配置回归也已通过并恢复默认测试二进制。构建输出仍含仓库既有的
+信号宏、跨类型删除、const 丢弃和预处理警告，不能宣称零警告；LSan 受受控环境
+`ptrace` 限制，未宣称泄漏检查通过。抗锯齿和复杂字体排版仍属于近似边界；未提交、未推送。
+
+### 10.78 2026-08-27 XPainter 多边形像素中心边界对齐
+
+Qt 6.8 的光栅引擎在 `fillPath()` 中把变换后的路径交给扫描转换器；未开启抗锯齿时直接按设备空间栅格化（依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpaintengine_raster.cpp:1331-1359`）。整数和浮点多边形先转换为 `QVectorPath` 再扫描填充，轴对齐矩形可走 `drawRects()` 优化（同文件 `1846-1875`、`1880-1915`、`1921-1938`）。Qt 扫描转换器以半像素偏移建立边交点（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qrasterizer.cpp:193-206`、`551-590`），并以像素中心决定当前扫描线和交点的覆盖像素。
+
+XPainter 新增 `painterSpanPixelRange()`，统一将浮点 span 转换为首尾像素：首像素为 `ceil(left - 0.5)`，末像素为 `floor(right - 0.5)`；整数轴对齐矩形右/下边保持排他，斜边交点落在像素中心时保留 Qt 的覆盖像素。用户空间和设备空间扫描填充都采用该规则；图像后端的实色和渐变多边形统一在设备空间扫描，缩放/旋转时不会把逻辑边界误当设备像素，Picture 录制仍保留用户空间逐行命令以维持可移植性。
+
+统一回归在 `test_painter_polygon_contract` 增加 `(2,2)-(6,6)` 半开矩形边界断言，保留三角形实色、渐变和路径覆盖。默认 `XGuiRegression_Test`、`build-crop-painter-off`（`XPAINTER_ON=0`）构建运行均通过；恢复默认产物后 `ctest --test-dir build --output-on-failure` 为 1/1，完整默认工程构建退出码为 0。构建输出仍有仓库既有信号宏、跨类型删除、const 丢弃及第三方预处理警告，不能宣称零警告；LSan 受受控环境 `ptrace` 限制，未宣称泄漏检查通过。抗锯齿、多边形复杂度上限和纹理画刷仍属于后续边界；未提交、未推送。
+
+### 10.79 2026-08-27 XPainter 轴向线端点样式对齐
+
+Qt 6.8 光栅后端在 `stroke()` 的整数轴向线快速路径中区分 `FlatCap`、`SquareCap` 和 `RoundCap`：线段先按变换后的设备坐标栅格化，方头按半线宽向两端延伸，圆头使用圆形端点覆盖；退化线段仅在非 FlatCap 时绘制端点（依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpaintengine_raster.cpp:1550-1607`）。虚线段还将 `SquareCap` 传入扫描转换器，端点规则见同文件 `3192-3239`。
+
+XPainter 新增轴向整数线专用路径：FlatCap 保持终点排他，SquareCap 按半线宽外扩，RoundCap 按像素中心到有限线段的距离取圆头；水平和垂直线均覆盖，斜线继续保留轻量 Bresenham 近似。退化点在宽度 1 时保证三种端点样式均覆盖中心像素，宽线的 RoundCap 使用圆形覆盖，其余样式使用 Qt 兼容方块近似。回归新增三种宽度 1 端点断言，并在裁剪测试前恢复原有边框状态。
+
+默认 `XGuiRegression_Test` 与 `XPAINTER_ON=0` 裁剪配置均构建、运行通过；构建输出包含仓库既有信号宏、跨类型删除和 const 丢弃警告，不能宣称零警告。LSan 受受控环境 `ptrace` 限制，未宣称泄漏检查通过；斜线精确描边、复杂 JoinStyle、抗锯齿和自定义 dash pattern 仍是后续边界。未提交、未推送。
+
+### 10.80 2026-08-27 XPainter 布局方向未激活状态对齐
+
+Qt 6.8 的 `QPainter::setLayoutDirection()` 只在绘制器状态对象存在时写入方向；
+`begin()` 之前没有状态对象，因此此时 setter 被忽略。对应源码为
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:7357-7362`；
+`layoutDirection()` 在存在状态时返回保存值、无状态时返回 `Auto`，对应
+`qpainter.cpp:7369-7373`。
+
+XPainter 以 `m_deviceKind != None` 表示状态已激活，只有激活后才接受布局方向 setter；
+未激活 getter 返回 `Auto`，非法枚举仍归一化为 `Auto`。回归覆盖“begin 前设置 RTL
+被忽略、begin 后默认为 Auto、激活后设置 RTL 并恢复 Auto”的路径。默认配置、
+`XPAINTER_ON=0` 裁剪配置和 CTest 均通过；
+完整构建中仍存在仓库既有信号宏、跨类型删除、const 丢弃及第三方预处理警告，不能
+宣称零警告。LSan 受受控环境 `ptrace` 限制，未宣称泄漏检查通过；RTL 字体排版本身
+仍是后续近似边界。该结论更正此前 10.45/10.52 中将布局方向 setter 归为“必须激活”
+的概括；其他状态 setter 的激活约束保持不变。未提交、未推送。
+
+### 10.81 2026-08-27 XPainter 文本换行标志对齐
+
+Qt 6.8 `qt_format_text()` 仅在 `TextWordWrap` 或 `TextWrapAnywhere` 置位时把
+矩形宽度传给文本布局；无换行标志时使用足够大的行宽，长文本保持同一行并由
+`TextDontClip`/默认裁剪决定可见范围。`TextWrapAnywhere` 还会将布局的换行模式
+设为 `QTextOption::WrapAnywhere`。依据为
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:7126-7133`
+和 `7252-7254`。
+
+XPainter 的 `drawTextRect()` 现在区分三种情况：普通文本只按显式换行分行，
+`XPAINTER_TEXT_WORD_WRAP` 按空格优先、长单词再按字符拆分，
+`XPAINTER_TEXT_WRAP_ANYWHERE` 按矩形宽度逐字符换行；强制两端对齐继续启用布局宽度。
+回归新增窄矩形长文本断言，验证无换行标志不会把第二字形移到下一行，并验证
+`WrapAnywhere` 会产生第二行。默认配置、`XPAINTER_ON=0` 裁剪配置、CTest 与完整
+工程构建均通过；构建中的仓库既有警告和受控环境 LSan `ptrace` 限制仍按前节记录，
+未宣称零警告或泄漏检查通过。复杂字体宽度、双向排版和富文本仍属后续边界。未提交、未推送。
+
+### 10.82 2026-08-27 XPainter 渐变画刷颜色状态对齐
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qbrush.cpp:509-532`
+的 `QBrush(const QGradient&)`：渐变画刷由无效 `QColor()` 构造，其
+`color().rgb()` 按 Qt 语义返回 `0xff000000`；渐变停止点由独立的渐变数据保存。
+当前 `XPainter_setBrushGradient()` 在复制渐变描述时同步设置 `m_brushColor` 与
+`m_brush.m_color` 为 `0xff000000`，避免沿用先前纯色画刷的可观察状态；传入 NULL
+仍仅清空渐变载荷并恢复实色样式，保留已有画刷颜色，作为嵌入式 C API 的可逆便捷
+入口。`XPainter_setBrush_2()` 和 `XPainter_setBrushStyle()` 对 Qt 拒绝直接构造
+渐变样式的行为保持不变（依据 `qbrush.cpp:342-355,653-661`）。
+
+回归在 `test_painter_brush_contract` 增加渐变设置后 `XPainter_brushColor()` 为
+opaque black 的断言。默认 `XGuiRegression_Test`、`XPAINTER_ON=0` 裁剪配置、CTest
+及完整工程构建均需重新验证；构建中仓库既有信号宏、跨类型删除、const 丢弃和第三方
+预处理警告继续单独记录，LSan 受受控环境 ptrace 限制，不宣称零警告或泄漏检查通过。
+纹理画刷图像载荷、复杂渐变坐标模式和完整 QGradient 生命周期仍属未完成边界；未提交、未推送。
+
+### 10.83 2026-08-27 XPainter 多子路径状态对齐
+
+Qt 6.8 的 `QPainterPath::moveTo()` 会开始新的子路径并隐式结束上一子路径，
+其实现更新当前子路径起点（依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath.cpp:651-697`）。
+`closeSubpath()` 不把 Close 元素写入路径数组，而是在末点未回到起点时补一条
+`LineTo`，并标记后续绘制需要新的 MoveTo（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath.cpp:638-648`
+和 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath_p.h:240-264`）。
+
+XPainter 的路径光栅回放在处理 `MoveTo` 时先完成上一子路径的填充/描边，再重置
+顶点缓存后写入新起点，避免两个不相交子路径之间产生虚假连接；闭合状态依据
+末点与子路径起点相等识别，不再依赖自定义 Close 元素。回归在
+`test_painter_path_contract` 中新增两个不相连
+矩形的填充断言，确认两个内部像素着色而中间间隔保持背景色。
+
+默认 `XGuiRegression_Test` 与 `build-crop-painter-off` 裁剪配置均构建、运行通过；
+随后恢复默认测试二进制，`git diff --check` 通过。构建输出仍含仓库既有信号宏、跨类型
+删除和 const 丢弃警告，不能宣称零警告；受控环境 LSan 的 ptrace 限制仍未宣称泄漏检查
+通过。路径填充规则仍固定 OddEven，曲线采用有限段数展平，属于后续精度边界；未提交、未推送。
+
+### 10.84 2026-08-27 XPainterPath 空路径与重复元素边界对齐
+
+Qt 6.8 的 `QPainterPath` 在空对象上调用 `lineTo()`、`quadTo()` 或
+`cubicTo()` 时会先建立默认 `(0,0)` 的 MoveTo 元素；实现通过
+`ensureData()` 创建起点，并在 `lineTo()` 中调用 `maybeMoveTo()`（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath.cpp:518-535`
+和 `731-740`，以及 `qpainterpath_p.h:257-264`）。连续 `moveTo()` 在上一元素
+仍为 MoveTo 时更新该元素而不重复追加（`qpainterpath.cpp:687-696`），同点
+`lineTo()` 和控制点/终点完全重合的曲线则直接忽略。空 `closeSubpath()` 是无操作，
+对应 `qpainterpath.cpp:638-648`。
+
+XPainterPath 现按上述规则处理：空路径的线段/曲线自动补零点起始元素，连续
+MoveTo 合并，同点线段和退化曲线不追加元素，空 closeSubpath 返回成功但不改变路径；
+无效浮点坐标按 Qt 的“忽略调用”语义处理。`closeSubpath()` 后维护
+`m_requireMoveTo` 状态，使下一条线段/曲线先追加当前点的隐式 MoveTo，避免把新子路径
+错误连接到已闭合子路径。`addRect()` 在宽高均为零时无操作，
+单轴为零及负尺寸继续保留退化/反向子路径构造。统一回归新增空路径、重复 MoveTo、
+重复 LineTo、空 closeSubpath 以及闭合后隐式 MoveTo 断言。
+
+默认 `XGuiRegression_Test` 已构建运行通过；`build-crop-painter-off` 裁剪配置及其
+CTest 已复验通过，随后已恢复默认构建目录中的测试二进制。构建输出仍有仓库既有信号
+宏、跨类型删除和 const 丢弃警告，不能宣称零警告；曲线仍以固定采样段数展平，路径填充
+规则仍固定 OddEven，属于后续精度边界。未提交、未推送。
+
+### 10.85 2026-08-27 XPainterPath 椭圆尺寸边界对齐
+
+Qt 6.8 `QPainterPath::addEllipse()` 仅在矩形宽高同时为零（`isNull()`）时返回，
+负尺寸和单轴零尺寸仍会通过 `qt_curves_for_arc()` 生成退化或反向椭圆路径，见
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath.cpp:1093-1119`。
+XPainterPath 现仅对宽高同时为零做无操作，其他尺寸统一生成 64 段闭合折线路径，
+并在回归中覆盖负宽度、零高度及空椭圆三种情况。未实现 Qt 的精确三次贝塞尔椭圆
+控制点，当前仍以固定折线采样近似；未提交、未推送。
+
+### 10.86 2026-08-27 XPainterPath 曲线元素序列对齐
+
+Qt 6.8 的 `QPainterPath::ElementType` 只公开四类元素：`MoveToElement`、
+`LineToElement`、`CurveToElement` 和 `CurveToDataElement`，声明位于
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainterpath.h:31-35`。
+`cubicTo()` 追加一个 `CurveToElement` 加两个 `CurveToDataElement`，并在追加前
+跳过完全退化曲线（`qpainterpath.cpp:760-804`）；`quadTo()` 将二次控制点按
+`c1=(prev+2*c)/3`、`c2=(end+2*c)/3` 转换后调用 `cubicTo()`
+（`qpainterpath.cpp:832-865`）。
+
+XPainterPath 已删除自定义的 `QuadTo`、`CubicTo`、`CloseSubpath` 元素类型，
+枚举和存储序列与 Qt 四类元素一致。`quadTo()`、`cubicTo()` 统一追加三元素曲线
+序列，路径回放只接受合法的三元素组合并按固定段数展平；畸形的孤立
+`CurveToData` 会拒绝绘制。回归覆盖二次、三次曲线的像素结果和既有路径回调契约。
+固定段数展平仍是与 Qt 高精度曲线算法的近似边界；未提交、未推送。
+
+### 10.87 2026-08-27 XPainter Qt 对齐标志名补齐
+
+依据 Qt 6.8 `qnamespace.h:141-185` 的 `AlignmentFlag`/`TextFlag` 定义，补齐
+XPainter 文本标志的公开同名项：`AlignLeading`、`AlignTrailing`、水平/垂直
+掩码、`AlignBaseline`、`AlignCenter` 以及 `TextForceLeftToRight`/
+`TextForceRightToLeft`。数值保持与 Qt 完全一致，其中 `AlignBaseline` 与
+`TextSingleLine` 的 `0x0100` 冲突按 Qt 原注释保留。删除了 Qt 不存在的旧文本别名
+`XPAINTER_TEXT_CENTER`、`XPAINTER_TEXT_FORCE_LTR/RTL`，库内调用统一使用 Qt 对应的
+`XPAINTER_TEXT_ALIGN_CENTER`、`XPAINTER_TEXT_FORCE_LEFT_TO_RIGHT`/
+`XPAINTER_TEXT_FORCE_RIGHT_TO_LEFT`。同时删除了已不参与路径回放的
+二次曲线展平辅助函数，避免裁剪构建产生无用静态符号。默认工程已完成全量构建，
+`./bin/XGuiRegression_Test` 与 `ctest --test-dir build --output-on-failure` 均通过；
+`build-crop-painter-off`（`-DXPAINTER_ON=0`）清洁构建及统一回归也通过，验证后已恢复
+默认配置测试二进制。构建输出仍包含仓库既有的信号宏、跨类型删除、const 丢弃及第三方
+预处理警告，不能宣称零警告；LSan 受受控环境 ptrace 限制，不能宣称泄漏检查通过。
+实现定位：`Src/XGui/Graphics/XPainter.h:393-420` 为规范标志及 Qt 数值，
+`Src/XGui/Graphics/XPainter.c:4984-4987` 为规范强制布局方向分支，
+`Src/XGui/Widget/XPushButton.c:657-660` 为按钮文本的规范居中调用；上述调用点
+均已通过默认与 `XPAINTER_ON=0` 两套构建验证。
+当前仍保留点阵字体、固定段数曲线展平等嵌入式近似边界；未提交、未推送。
+
+### 10.88 2026-08-27 XPainter 布局方向头文件契约修正
+
+复核 Qt 6.8 `QPainter::setLayoutDirection()` 实现后，修正
+`Src/XGui/Graphics/XPainter.h:1508-1512` 的公开注释：未激活绘制器没有
+`QPainterState`，setter 必须忽略，getter 返回 `Auto`；只有激活状态才保存方向，
+并随 `save()/restore()` 管理，`end()` 后回到 `Auto`。实现仍位于
+`Src/XGui/Graphics/XPainter.c:4678-4698`，行为与 10.80 所记录的
+`qpainter.cpp:7357-7373` 一致。本轮重新完成默认工程和 `XPAINTER_ON=0` 裁剪工程
+构建，统一 `XGuiRegression_Test` 与 CTest 均通过；构建日志仍含仓库既有警告，
+LSan 仍受受控环境 `ptrace` 限制，不能宣称零警告或泄漏检查通过。未提交、未推送。
+
+### 10.89 2026-08-27 XLabel setMovie 重设语义对齐
+
+依据 Qt 6.8 `QLabel::setMovie()`（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel.cpp:1231-1249`），
+每次调用都会先清除旧文本、像素图和绘图记录；传入空影片时保持空内容，影片指针由
+标签借用。修正 `Src/XGui/Widget/XLabel.c:2013-2021`，移除同一 `XMovie*` 的提前返回，
+使重复设置同一影片也执行清理和刷新，随后仍保存借用指针。统一回归在
+`xgui_regression_test.c:test_label_contract` 增加“首次设置与同指针重设均清空文本”的断言，
+默认构建、CTest、`XGuiRegression_Test` 以及 `XPAINTER_ON=0` 裁剪构建后的统一回归均通过。XLabel 的
+资源提供器、点阵字体、最小富文本解析和影片信号仍是嵌入式适配边界；未提交、未推送。
+
+### 10.90 2026-08-27 XLabel 文本选择控制生命周期对齐
+
+Qt 6.8 `QLabelPrivate::needTextControl()` 仅在富文本、可选交互标志或非
+`NoFocus` 焦点策略下建立文本控制（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel_p.h:62-68`）；
+`setSelection()` 在没有控制对象时不执行
+（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel.cpp:700-708`），但富文本即使没有选择标志也会建立
+控制对象。据此修正
+`Src/XGui/Widget/XLabel.c:2195-2238`：关闭鼠标/键盘文本选择时清除已有选择和
+拖选状态（仅纯文本）；纯文本无选择交互标志时 `XLabel_setSelection()` 直接无操作，
+恢复可选标志后才允许建立程序化选择；富文本仍允许程序化选择。统一回归新增关闭
+交互清选、无权限 setSelection 无操作、恢复权限后可选及富文本无交互仍可选四项断言。
+默认构建、CTest、统一回归和 `XPAINTER_ON=0` 裁剪回归均
+通过；仓库既有编译警告与受控环境 LSan 限制仍按前节记录，未提交、未推送。
+
+### 10.91 2026-08-27 XPainter deinit 资源生命周期对齐
+
+Qt 6.8 `QPainter::~QPainter()` 在结束活动绘制设备后释放私有状态；已经结束
+的绘制器不会再次暴露可复用的状态对象（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:1848-1898`）。
+原实现的 `XPainter_deinit()` 无条件调用 `XPainter_end()`，而 `end()` 为支持后续
+复用会重新初始化默认 `XFont` 与 `XRegion`，因此最终 deinit 会遗留一次默认状态
+资源。修正 `Src/XGui/Graphics/XPainter.h:547-550`、
+`Src/XGui/Graphics/XPainter.c:2211-2235`：增加 `m_initialized` 生命周期标记；
+`init()` 设置标记，`deinit()` 仅对已初始化对象执行结束和最终状态释放，随后清零
+对象并允许重复 deinit；begin/end 也拒绝已 deinit 对象，避免在无 vtable 状态上继续
+绘制。统一回归新增“deinit 后不可复用”和“重复 deinit 无诊断”断言。
+默认构建、CTest、统一回归及 `XPAINTER_ON=0` 裁剪回归均通过；构建日志中的既有
+信号宏、跨类型删除和第三方预处理警告未因本改动增加，LSan 仍受受控环境 ptrace
+限制，不能宣称零泄漏。未提交、未推送。
+
+### 10.92 2026-08-27 XPainter 画刷原点接口对齐
+
+Qt 6.8 在 `QPainter` 中公开 `brushOrigin()` 及 `setBrushOrigin()` 的
+`QPointF`/`QPoint`/整数重载；未激活绘制器的查询返回空点，激活后原点属于
+`QPainterState`，并由 `save()/restore()` 保存（`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:163-166,698-705`，
+`qpainter.cpp:2065-2124`）。光栅引擎把原点平移到画刷矩阵中
+（`qpaintengine_raster_p.h:252-258`），因此采样逻辑坐标时应减去画刷原点。
+
+XPainter 新增 `XPAINTER_BRUSH_ORIGIN_ON` 独立裁剪开关，以及
+`XPainter_setBrushOrigin(float,float)` 与 `XPainter_brushOrigin(XPoint*)`。
+原点以浮点保存，查询按 `XPointF_toPoint()` 的 Qt 四舍五入规则输出整数，默认
+为 `(0,0)`，未激活 setter 忽略；状态栈自动复制原点，线性/径向/锥形渐变在用户
+及设备扫描路径都减去原点。统一回归覆盖浮点四舍五入和 save/restore 恢复。
+默认构建、`XGuiRegression_Test`、CTest 以及 `XPAINTER_ON=0` 裁剪构建后的统一回归均已通过；
+完整工程构建也通过。构建输出仍包含仓库既有信号宏、跨类型删除和第三方预处理警告，
+不能宣称零警告；`XPAINTER_ON=0` 时总开关同步裁剪该状态。
+实现定位：`Src/XGui/Graphics/XPainter.h:464-467` 保存原点状态，
+`XPainter.h:1246-1263` 声明裁剪 API，`XPainter.c:2001-2014` 和
+`2133-2146` 在用户/设备扫描路径应用坐标偏移，`XPainter.c:4200-4224`
+实现 setter/getter，`XPainter_config.h:18-23,81-83,138-140` 定义总开关联动和
+独立裁剪开关。图案纹理和精确抗锯齿渐变仍是嵌入式近似边界，未提交、未推送。
+
+### 10.93 2026-08-27 XLabel 非 NoFocus 时的程序化选择对齐
+
+Qt 6.8 `QLabelPrivate::needTextControl()` 在富文本、可选中文本交互标志或
+标签焦点策略不是 `Qt::NoFocus` 时建立文本控制（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel_p.h:62-68`）。
+`QLabel::setTextInteractionFlags()` 在 `LinksAccessibleByKeyboard` 时设置
+`StrongFocus`，而 `setSelection()` 只要已有控制对象就执行（依据
+`qlabel.cpp:660-682,700-708`）。原 XLabel 仅检查鼠标/键盘可选标志，导致
+`LinksAccessibleByKeyboard` 场景错误拒绝程序化选区。
+
+修正 `Src/XGui/Widget/XLabel.c:2233-2243`：纯文本在无可选标志时，只有焦点策略
+仍为 `NoFocus` 才无操作；`StrongFocus`/`ClickFocus` 等非 `NoFocus` 状态现在允许
+设置 UTF-16 选区，富文本行为保持不变。`xgui_regression_test.c:test_label_contract`
+新增键盘链接交互设置 `StrongFocus`、随后允许 `setSelection(0,1)` 的断言。
+默认构建、`XGuiRegression_Test` 与 `build-crop-painter-off` 裁剪回归均通过；构建中
+仓库既有信号宏、跨类型删除、const 丢弃及第三方预处理警告仍存在，不能宣称零警告。
+LSan 受受控环境 ptrace 限制，不能宣称泄漏检查通过。鼠标/键盘完整 QTextControl
+事件模型仍是嵌入式近似边界；未提交、未推送。
+
+### 10.94 2026-08-27 XPainter QPixmap 绘制适配与高分辨率尺寸对齐
+
+Qt 6.8 提供 `QPainter::drawPixmap()` 的位置重载和目标/源矩形重载（声明见
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:306-345`）。位置重载
+在像素图非空时读取物理宽高，并把目标矩形设置为
+`width / devicePixelRatio()`、`height / devicePixelRatio()`；实现位于
+`qpainter.cpp:4770-4866`。矩形重载会对非正源宽高、负目标宽高、源区域越界及
+设备像素比进行裁剪和比例换算（`qpainter.cpp:4866-4956`），然后转交绘制引擎。
+
+XPainter 新增 `XPAINTER_PIXMAP_ON` 独立裁剪开关（总开关关闭时强制为 0），并在
+`Src/XGui/XGuiConfig.h` 提供默认配置。`XPainter_drawPixmap()` 和点重载复用
+`XPixmap_toImage()`，避免在 `Src/` 引入任何平台 API；设备像素比不是 1 时构造
+逻辑目标矩形并调用现有 `XPainter_drawImageRect()`，否则走图像快速路径。矩形接口
+`XPainter_drawPixmapRect()` 直接把源物理像素矩形交给 `drawImageRect`，因此继承其
+负尺寸、非正源尺寸、越界裁剪、变换、裁剪、透明度和合成规则。实现定位为
+`Src/XGui/Graphics/XPainter.h:722-762`、`XPainter.c:2745-2829`，转换依赖
+`XPixmap.c:640-648` 的 `XPixmap_toImage()`，设备像素比查询依赖
+`XPixmap.c:981-983`。
+
+统一回归在 `xgui_regression_test.c:test_painter_raster_contract` 增加普通像素图、
+`devicePixelRatio=2` 逻辑尺寸、位置点重载、目标/源矩形缩放及空指针错误处理断言
+（`xgui_regression_test.c:681-690,1092-1125`）。默认配置和 `XPAINTER_ON=0` 裁剪配置
+均完成 `XGuiRegression_Test` 构建运行，回归通过；随后默认配置全量构建、CTest、
+统一回归和 `git diff --check` 均已完成并通过。与 Qt 的差异是 XPainter 坐标结构使用整数 `XRect/XPoint`，
+因此浮点目标位置和亚像素尺寸按现有 `painterRound()` 取整；`drawPixmapFragments()`、
+纹理画刷及 QBitmap 专用背景模拟仍未纳入嵌入式子集。构建中的仓库既有信号宏、跨类型
+删除、const 丢弃和第三方预处理警告仍需单独治理，不能宣称零警告；受控环境 LSan
+仍受 ptrace 限制，不能宣称泄漏检查通过。未提交、未推送。
+
+### 10.95 2026-08-27 XPainter QPixmap 平铺绘制与裁剪联动
+
+Qt 6.8 的 `QPainter::drawTiledPixmap(const QRectF&, const QPixmap&, const QPointF&)`
+先对目标为空和像素图为空做无操作判断，再把偏移按像素图宽高取模（负值向后环绕），
+最后交给绘制引擎的 tiled texture 路径；公共声明见
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:306-308,708-715`，
+参数整理和设备像素比处理见 `qpainter.cpp:6389-6468`，光栅后端纹理平铺见
+`qpaintengine_raster.cpp:2443-2508`。
+
+XPainter 增加 `XPAINTER_TILED_PIXMAP_ON` 开关。该开关在总开关关闭、像素图关闭或
+图像目标/源矩形关闭时自动置 0，避免裁剪配置暴露无法实现的接口。开启时新增
+`XPainter_drawTiledPixmap()`：先通过 `XPixmap_toImage()` 取得共享图像数据，按
+`devicePixelRatio()` 计算逻辑 tile 尺寸，对负偏移执行非负取模，再以边缘 tile 的
+目标/源矩形调用现有 `XPainter_drawImageRect()`。因此当前变换、裁剪、透明度和合成
+模式保持一致，且不在 `Src/` 引入平台 API。实现位于
+`Src/XGui/Graphics/XPainter.c:2833-2920`，声明位于
+`Src/XGui/Graphics/XPainter.h:763-793`，配置位于
+`Src/XGui/Graphics/XPainter_config.h:39-45,91-99,168-180`。
+
+统一回归在 `test_painter_raster_contract` 使用红、绿、蓝、黄四像素图案验证偏移为
+`(1,1)` 时的首 tile、重复周期和右下边缘裁剪，并继续验证负偏移回绕和空指针错误
+（`xgui_regression_test.c:1097-1158`）。默认构建、
+`XPAINTER_ON=0`、`XPAINTER_IMAGE_RECT_ON=0` 三种配置均完成回归构建运行；默认配置
+全量构建、CTest、统一回归和 `git diff --check` 通过。与 Qt 的差异是公开接口使用
+整数 `XRect/XPoint`，浮点目标和偏移按整数取整；QBitmap 背景模拟、复杂纹理优化和
+非整数设备像素比的亚像素采样仍属于嵌入式近似。仓库既有编译警告与受控环境 LSan
+ptrace 限制仍未解决，不能宣称零警告或泄漏检查通过。未提交、未推送。
+
+### 10.96 2026-08-27 XPainter 集中式裁剪默认值对齐
+
+Qt 6.8 将画刷原点、背景模式、像素图、图像矩形和裁剪区域作为 `QPainter` 的
+独立状态/绘制能力：画刷原点由 `QPainterState` 保存并可通过
+`setBrushOrigin()`/`brushOrigin()` 访问（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.h:163-166,698-705`），
+像素图位置/矩形/平铺绘制分别由 `qpainter.h:306-308,708-715` 声明，矩形裁剪与
+区域裁剪由 `QPainter::setClipRect`、`setClipRegion` 状态实现。此前这些能力仅在
+`XPainter_config.h` 中有默认值，直接包含公共 `XGuiConfig.h` 的裁剪用户无法稳定
+获得相同开关集合。
+
+修正 `Src/XGui/XGuiConfig.h:77-131`：为 `XPAINTER_BRUSH_ORIGIN_ON`、
+`XPAINTER_BACKGROUND_ON`、`XPAINTER_PIXMAP_ON`、`XPAINTER_IMAGE_RECT_ON`、
+`XPAINTER_TILED_PIXMAP_ON`、`XPAINTER_CLIP_REGION_ON` 以及已有绘图能力统一提供
+可覆盖的 `#ifndef` 默认值。`Src/XGui/Graphics/XPainter_config.h:78-112` 的
+`XPAINTER_ON=0` 总开关仍会将所有子开关强制置 0；`XPainter_config.h:114-229`
+继续执行平铺像素图对像素图/图像矩形、区域裁剪对矩形裁剪的依赖裁剪，确保用户
+显式 `-D` 配置与 Qt 对应 API 的能力边界一致。该改动只涉及头文件配置，不在
+`Src/` 引入平台 API，也不改变默认开启行为。
+
+验证结果：重新生成默认 Debug 构建目录后，`XGuiRegression_Test` 构建、统一回归、
+CTest（1/1）和 `git diff --check` 均通过；`XPAINTER_ON=0` 裁剪构建及回归也通过。
+构建输出仍有仓库既有的跨类型删除、信号宏、const 丢弃和第三方 zlib 预处理警告，
+这些警告与本轮配置改动无关，不能宣称零警告；受控环境 LSan 仍受 ptrace 限制，不能
+宣称零泄漏。未提交、未推送。
+
+### 10.97 2026-08-27 XLabel 缩放文本链接命中与对齐掩码修正
+
+Qt 6.8 的 `QLabel::setAlignment()` 先按 `AlignVertical_Mask|AlignHorizontal_Mask`
+保留标志，其中水平掩码包含 `AlignAbsolute=0x0010`（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/global/qnamespace.h:144-164`，
+实现见 `widgets/widgets/qlabel.cpp:403-418`）。修正
+`Src/XGui/XAlignment.h:27-40` 的 `XAlignment_HorizontalMask` 为 `0x001f`，并在
+`xgui_regression_test.c:9800-9810` 验证 `Right|Bottom|Absolute` 的读回与恢复。
+
+Qt 标签的鼠标事件由文本控制器按当前文档布局处理（`qlabel.cpp:828-842`）；文本
+布局的行高随字体变化，绘制路径也按当前字体和控件尺寸计算（`qlabel.cpp:980-1048`）。
+原 `label_hitLinkAt()` 固定使用默认 16 像素行高与 8 像素字宽，字号放大后会把点击
+位置映射到错误行/字形。修正 `Src/XGui/Widget/XLabel.c:1112-1131`，改用已有
+`label_lineHeight()` 和 `label_advance()`，保持点阵字体缩放与绘制/选择几何一致。
+
+回归在 `xgui_regression_test.c:9879-9918` 新增 32 像素富文本链接按下/释放测试，
+验证实际缩放坐标发出 `linkActivated`。默认构建、`XGuiRegression_Test` 运行均通过；
+本轮编译仍保留仓库既有信号宏、跨类型删除、const 丢弃和第三方预处理警告，不能
+宣称零警告。LSan 受受控环境 ptrace 限制，不能宣称零泄漏。完整 QTextControl 键盘
+导航、上下文菜单及外部链接打开仍是嵌入式近似边界；未提交、未推送。
+
+### 10.98 2026-08-27 XLabel 焦点事件链与父类分发
+
+Qt 6.8 的 `QLabel::focusInEvent()` 和 `focusOutEvent()` 在处理文本控制器后继续调用 `QFrame` 父类事件（依据
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel.cpp:866-897`）。修正
+`Src/XGui/Widget/XLabel.c:1602-1616` 中的 `VXLabel_focusInEvent()` 和
+`VXLabel_focusOutEvent()`，使焦点事件经 `XClass_Parent(XFrame, ...)` 传递至
+`XFrame`，与 Qt 的 `QLabel -> QFrame` 事件链一致。同时移除
+`XLabel.c` 离屏绘制路径中的环境变量调试输出及不再需要的 `errno` 依赖。
+
+Qt 在失去焦点时还会通过 `QTextControl` 按焦点原因保留或清除选区；当前嵌入实现不含
+`QTextControl`，且 `XFocusReason` 没有 Qt 的 `PopupFocusReason`，因此文本选区保留、快捷键导航与上下文菜单仍属嵌入式近似。默认与裁剪构建、`XGuiRegression_Test`、CTest 均通过；构建输出仍保留仓库既有警告，LSan 受受控环境 ptrace 限制，不宣称零警告或零泄漏。未提交、未推送。
+
+### 10.99 2026-08-27 XLabel RTL 视觉对齐与像素图生命周期
+
+Qt 6.8 的 `QGuiApplicationPrivate::visualAlignment()` 在没有水平对齐标志时补上
+`AlignLeft`，并在未设置 `AlignAbsolute` 时按布局方向交换 `AlignLeft/AlignRight`
+（依据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/kernel/qguiapplication_p.h:174-184`）。
+`QLabel::sizeForWidth()` 和 `paintEvent()` 分别在
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets/qlabel.cpp:541-560,962-978`
+使用该视觉对齐结果。`Src/XGui/Widget/XLabel.c:78-96` 新增
+`label_visualAlignment()`，并在文本布局、文本命中、文本绘制及像素图绘制路径
+（`XLabel.c:844-927,1062-1114,1219,1323-1336`）统一调用；`AlignAbsolute` 保持
+物理左右位置，RTL 下逻辑 `AlignLeft` 转为右侧。回归用例
+`xgui_regression_test.c:10039-10083` 在 64x32 画布上比较 LTR/RTL 的非背景像素
+起点，验证视觉位置确实翻转。
+
+同时修正 `label_drawPixmap()` 的临时图像生命周期：在调用 `XPixmap_toImage()` 前
+显式 `XImage_init()`，缩放与普通绘制分支分别在完成后调用
+`XImage_deinit_base()`（`XLabel.c:1302-1337`）。这样遵守 `XPixmap_toImage()` 对
+输出对象先释放再初始化的约定，避免未初始化栈对象导致的未定义行为和重复绘制资源
+泄漏。该修正复用现有 `XPainter_drawPixmap()` 的图像转换模式，不引入平台 API。
+
+验证结果：默认 `build` 配置重新构建 `XGuiRegression_Test` 并运行通过；
+`build-crop-painter-off`（`XPAINTER_ON=0`）裁剪配置重新构建并运行通过。两种配置均
+覆盖 RTL 标签绘制和图像路径。CTest 继续通过 1/1；构建输出仍有仓库既有的信号宏、
+跨类型删除、const 丢弃及第三方预处理警告，不能宣称零警告。受控环境 LSan 受 ptrace
+限制，不能宣称零泄漏。完整富文本双向排版、复杂脚本 shaping、QTextControl 选区及
+样式引擎仍是嵌入式近似边界。未提交、未推送。
+
+### 10.100 2026-08-27 XGui 当前进度检查点
+
+本次自动任务暂停前的工作树已包含：图像 Handler/插件注册表与 BMP/PNG/JPEG/GIF/SVG
+内置编解码路径，XIcon 主题引擎及主题/后备搜索路径，XPainter 平铺像素图、形状、
+裁剪和布局方向能力，以及 XLabel 的 Qt 6.8 对齐、缩放链接命中、焦点父类分发和
+RTL 视觉对齐。XLabel 像素图绘制临时 `XImage` 已按 `XPixmap_toImage()` 生命周期
+要求初始化并在缩放/普通分支释放；相关依据和回归断言见 10.97-10.99。
+
+已验证配置：默认 `build` 全量构建、`XGuiRegression_Test`、CTest（1/1）通过；
+`build-crop-painter-off` 的 `XPAINTER_ON=0` 裁剪构建与回归通过；`git diff --check`
+通过。构建日志中的跨类型删除、信号宏、const 丢弃及第三方预处理警告是仓库既有
+问题，未宣称零警告；受控环境 LSan 受 ptrace 限制，未宣称零泄漏。尚未完成的优先项
+包括完整 freedesktop `index.theme` 继承/Context 规则、QIcon 缓存与序列化、更多
+XPainter 便携 opcode、畸形图像/mask/Picture fixture 以及 QImage color-space/文本
+元数据扩展。当前改动未提交、未推送。

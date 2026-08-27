@@ -627,7 +627,7 @@ static void XPicture_imageDataCleanup(void* info)
  * 录制时虚线/点线已被拆分为若干实线段；回放时若画笔仍为虚线样式会被
  * 二次拆分，因此回放期间强制改用实线画笔，结束后恢复调用方原样式。
  */
-static bool XPicture_play_inner(XPicture* self, XPainter* painter)
+static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
 {
     const uint8_t* bytes;
     uint32_t offset, commandCount, index;
@@ -730,7 +730,7 @@ static bool XPicture_play_inner(XPicture* self, XPainter* painter)
     return true;
 }
 
-bool XPicture_play(XPicture* self, XPainter* painter)
+bool XPicture_play(const XPicture* self, XPainter* painter)
 {
     bool ok;
 #if XPAINTER_PENSTYLE_ON

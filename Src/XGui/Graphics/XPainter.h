@@ -6,8 +6,9 @@
  *             - XPainter_begin_image()：把绘制命令输出到 XImage（软件光栅化）；
  *             - XPainter_begin_picture()：把绘制命令录制到 XPicture（矢量，
  *               可保存/加载/回放）。
- *             XPainter 通过五个回调（m_drawLine / m_fillRect / m_drawImage /
- *             m_save / m_restore）把图形操作派发给当前设备后端，因此上层
+ *             XPainter 通过基础回调（m_drawLine / m_fillRect / m_drawImage /
+ *             m_save / m_restore）及可选的形状、折线、多边形和路径回调把
+ *             图形操作派发给当前设备后端，因此上层
  *             也可以自定义回调实现自己的绘制引擎（如 XIcon、测试探针），
  *             无需依赖任何平台 API，可在嵌入式环境直接使用。
  ******************************************************************************/
@@ -25,7 +26,10 @@ extern "C" {
 #include "XPainter_config.h"
 #include "XFont.h"
 
-/* XPicture_play() 通过 XPainter 的五类回调派发指令；完整回调签名见下。 */
+/* XPixmap 仅在像素图适配接口中使用，采用前向声明避免头文件依赖环。 */
+typedef struct XPixmap XPixmap;
+
+/* XPicture_play() 通过 XPainter 的基础及可选高层回调派发指令；完整回调签名见下。 */
 
 /**
  * @brief      绘制直线回调原型。
@@ -101,7 +105,18 @@ typedef bool (*XPainterDrawShapeProc)(XPainter* painter, XPainterShapeOp op,
                                      int xRadius, int yRadius);
 #endif /* XPAINTER_SHAPE_ON */
 
+/**
+ * @brief 多边形填充规则（对标 Qt::FillRule）。
+ * @note OddEven 按射线交点奇偶性填充；Winding 按边方向绕组数非零填充。
+ */
+typedef enum XPainterFillRule
+{
+    XPainterFillRule_OddEven = 0, /**< 奇偶填充（Qt::OddEvenFill）。 */
+    XPainterFillRule_Winding = 1  /**< 非零绕组填充（Qt::WindingFill）。 */
+} XPainterFillRule;
+
 #if XPAINTER_POLYGON_ON
+
 /**
  * @brief      折线绘制回调原型。
  * @param painter 绘制器对象指针。
@@ -118,11 +133,13 @@ typedef bool (*XPainterDrawPolylineProc)(XPainter* painter,
  * @param points 顶点数组；回调应只读该数组，数组由调用方保持有效至函数返回。
  * @param count 顶点数量。
  * @param filled 是否要求使用当前画刷填充内部。
+ * @param fillRule 填充规则（对标 Qt::FillRule）。
  * @return 绘制成功返回 true。
  */
 typedef bool (*XPainterDrawPolygonProc)(XPainter* painter,
                                         const XPoint* points, int count,
-                                        bool filled);
+                                        bool filled,
+                                        XPainterFillRule fillRule);
 
 /**
  * @brief      点集绘制回调原型。
@@ -164,13 +181,78 @@ typedef bool (*XPainterDrawPathProc)(XPainter* painter, XPainterPathOp op,
 #endif /* XPAINTER_PATH_ON */
 
 /**
- * @brief      合成模式枚举（对标 QPainter::CompositionMode）。
+ * @brief      合成模式枚举（对标 Qt 6.8 QPainter::CompositionMode）。
+ * @note       全部 38 个值与 Qt 完全同序；软件 XImage 后端实现
+ *             前 24 个 Porter-Duff 与 SVG 1.2 混合模式，以及对完整
+ *             ARGB32 像素执行逐位运算的 14 个 RasterOp 模式。
  */
 typedef enum XPainterCompositionMode
 {
-    XPainterCompositionMode_SourceOver = 0, /**< 源覆盖模式（默认，带 Alpha 混合） */
-    XPainterCompositionMode_Source = 1      /**< 源替换模式（整体覆盖目标像素） */
+    XPainterCompositionMode_SourceOver = 0,       /**< 源覆盖模式。 */
+    XPainterCompositionMode_DestinationOver = 1,  /**< 目标覆盖源。 */
+    XPainterCompositionMode_Clear = 2,            /**< 清除源和目标交集。 */
+    XPainterCompositionMode_Source = 3,            /**< 源替换目标。 */
+    XPainterCompositionMode_Destination = 4,       /**< 保留目标。 */
+    XPainterCompositionMode_SourceIn = 5,          /**< 源保留在目标不透明区域。 */
+    XPainterCompositionMode_DestinationIn = 6,     /**< 目标保留在源不透明区域。 */
+    XPainterCompositionMode_SourceOut = 7,         /**< 源位于目标外部。 */
+    XPainterCompositionMode_DestinationOut = 8,    /**< 目标位于源外部。 */
+    XPainterCompositionMode_SourceAtop = 9,        /**< 源覆盖在目标上且受目标覆盖范围限制。 */
+    XPainterCompositionMode_DestinationAtop = 10, /**< 目标覆盖在源上且受源覆盖范围限制。 */
+    XPainterCompositionMode_Xor = 11,              /**< 源与目标的互斥区域。 */
+    XPainterCompositionMode_Plus = 12,             /**< 源目标颜色与 Alpha 相加并钳位。 */
+    XPainterCompositionMode_Multiply = 13,         /**< 乘法混合。 */
+    XPainterCompositionMode_Screen = 14,           /**< 滤色混合。 */
+    XPainterCompositionMode_Overlay = 15,          /**< 叠加混合。 */
+    XPainterCompositionMode_Darken = 16,           /**< 取较暗颜色。 */
+    XPainterCompositionMode_Lighten = 17,           /**< 取较亮颜色。 */
+    XPainterCompositionMode_ColorDodge = 18,       /**< 颜色减淡。 */
+    XPainterCompositionMode_ColorBurn = 19,        /**< 颜色加深。 */
+    XPainterCompositionMode_HardLight = 20,        /**< 强光。 */
+    XPainterCompositionMode_SoftLight = 21,        /**< 柔光。 */
+    XPainterCompositionMode_Difference = 22,       /**< 差值。 */
+    XPainterCompositionMode_Exclusion = 23,        /**< 排除。 */
+    XPainterCompositionMode_RasterOp_SourceOrDestination = 24,
+                                                     /**< ROP：源或目标。 */
+    XPainterCompositionMode_RasterOp_SourceAndDestination = 25,
+                                                     /**< ROP：源与目标。 */
+    XPainterCompositionMode_RasterOp_SourceXorDestination = 26,
+                                                     /**< ROP：源异或目标。 */
+    XPainterCompositionMode_RasterOp_NotSourceAndNotDestination = 27,
+                                                     /**< ROP：非源且非目标。 */
+    XPainterCompositionMode_RasterOp_NotSourceOrNotDestination = 28,
+                                                     /**< ROP：非源或非目标。 */
+    XPainterCompositionMode_RasterOp_NotSourceXorDestination = 29,
+                                                     /**< ROP：非源异或非目标。 */
+    XPainterCompositionMode_RasterOp_NotSource = 30, /**< ROP：非源。 */
+    XPainterCompositionMode_RasterOp_NotSourceAndDestination = 31,
+                                                     /**< ROP：非源且目标。 */
+    XPainterCompositionMode_RasterOp_SourceAndNotDestination = 32,
+                                                     /**< ROP：源且非目标。 */
+    XPainterCompositionMode_RasterOp_NotSourceOrDestination = 33,
+                                                     /**< ROP：非源或目标。 */
+    XPainterCompositionMode_RasterOp_SourceOrNotDestination = 34,
+                                                     /**< ROP：源或非目标。 */
+    XPainterCompositionMode_RasterOp_ClearDestination = 35,
+                                                     /**< ROP：清除目标。 */
+    XPainterCompositionMode_RasterOp_SetDestination = 36,
+                                                     /**< ROP：设置目标。 */
+    XPainterCompositionMode_RasterOp_NotDestination = 37
+                                                     /**< ROP：非目标。 */
 } XPainterCompositionMode;
+
+#if XPAINTER_BACKGROUND_ON
+/**
+ * @brief 背景填充模式（对标 Qt 6.8 Qt::BGMode）。
+ * @note TransparentMode 为 QPainter 默认值；OpaqueMode 只在需要绘制
+ *       不透明文本或点阵图案时使用当前 background 画刷。
+ */
+typedef enum XPainterBackgroundMode
+{
+    XPainterBackgroundMode_Transparent = 0, /**< 透明背景（默认）。 */
+    XPainterBackgroundMode_Opaque = 1       /**< 使用背景颜色填充。 */
+} XPainterBackgroundMode;
+#endif /* XPAINTER_BACKGROUND_ON */
 
 #if XPAINTER_CLIP_ON
 /**
@@ -209,23 +291,24 @@ typedef enum XPainterPenStyle
     XPainterPenStyle_DashLine = 2,   /**< 虚线 */
     XPainterPenStyle_DotLine = 3,    /**< 点线 */
     XPainterPenStyle_DashDotLine = 4,    /**< 一点一划 */
-    XPainterPenStyle_DashDotDotLine = 5 /**< 两点一划 */
+    XPainterPenStyle_DashDotDotLine = 5, /**< 两点一划 */
+    XPainterPenStyle_CustomDashLine = 6 /**< 自定义虚线（当前使用默认虚线近似） */
 } XPainterPenStyle;
 
 /** @brief 画笔端点样式（对标 Qt 6.8 QPen::CapStyle）。 */
 typedef enum XPainterPenCapStyle
 {
-    XPainterPenCapStyle_FlatCap = 0,  /**< 平头端点 */
-    XPainterPenCapStyle_SquareCap = 1,/**< 方头端点（含半线宽外延） */
-    XPainterPenCapStyle_RoundCap = 2  /**< 圆头端点（同样可用作圆点） */
+    XPainterPenCapStyle_FlatCap = 0x00,   /**< 平头端点 */
+    XPainterPenCapStyle_SquareCap = 0x10, /**< 方头端点（含半线宽外延） */
+    XPainterPenCapStyle_RoundCap = 0x20   /**< 圆头端点（同样可用作圆点） */
 } XPainterPenCapStyle;
 
 /** @brief 画笔拐角样式（对标 Qt 6.8 QPen::JoinStyle）。 */
 typedef enum XPainterPenJoinStyle
 {
-    XPainterPenJoinStyle_MiterJoin = 0, /**< 斜接拐角（默认） */
-    XPainterPenJoinStyle_BevelJoin = 1, /**< 平切拐角 */
-    XPainterPenJoinStyle_RoundJoin = 2  /**< 圆角拐角 */
+    XPainterPenJoinStyle_MiterJoin = 0x00, /**< 斜接拐角 */
+    XPainterPenJoinStyle_BevelJoin = 0x40, /**< 平切拐角（默认） */
+    XPainterPenJoinStyle_RoundJoin = 0x80  /**< 圆角拐角 */
 } XPainterPenJoinStyle;
 #endif /* XPAINTER_PENSTYLE_ON */
 
@@ -235,9 +318,23 @@ typedef enum XPainterBrushStyle
 {
     XPainterBrushStyle_NoBrush = 0,              /**< 不填充 */
     XPainterBrushStyle_SolidPattern = 1,         /**< 纯色填充 */
-    XPainterBrushStyle_LinearGradientPattern = 2,/**< 线性渐变色 */
-    XPainterBrushStyle_RadialGradientPattern = 3,/**< 径向渐变色 */
-    XPainterBrushStyle_ConicalGradientPattern = 4 /**< 锥形渐变色 */
+    XPainterBrushStyle_Dense1Pattern = 2,         /**< 12.5% 密度图案 */
+    XPainterBrushStyle_Dense2Pattern = 3,         /**< 25% 密度图案 */
+    XPainterBrushStyle_Dense3Pattern = 4,         /**< 37.5% 密度图案 */
+    XPainterBrushStyle_Dense4Pattern = 5,         /**< 50% 密度图案 */
+    XPainterBrushStyle_Dense5Pattern = 6,         /**< 62.5% 密度图案 */
+    XPainterBrushStyle_Dense6Pattern = 7,         /**< 75% 密度图案 */
+    XPainterBrushStyle_Dense7Pattern = 8,         /**< 87.5% 密度图案 */
+    XPainterBrushStyle_HorPattern = 9,            /**< 水平线图案 */
+    XPainterBrushStyle_VerPattern = 10,           /**< 垂直线图案 */
+    XPainterBrushStyle_CrossPattern = 11,         /**< 十字线图案 */
+    XPainterBrushStyle_BDiagPattern = 12,         /**< 反斜线图案 */
+    XPainterBrushStyle_FDiagPattern = 13,         /**< 正斜线图案 */
+    XPainterBrushStyle_DiagCrossPattern = 14,     /**< 交叉斜线图案 */
+    XPainterBrushStyle_LinearGradientPattern = 15,/**< 线性渐变色 */
+    XPainterBrushStyle_RadialGradientPattern = 16,/**< 径向渐变色 */
+    XPainterBrushStyle_ConicalGradientPattern = 17,/**< 锥形渐变色 */
+    XPainterBrushStyle_TexturePattern = 24        /**< 纹理图案（当前退化为纯色） */
 } XPainterBrushStyle;
 
 /** @brief 渐变色类型（对标 Qt 6.8 QGradient::Type）。 */
@@ -291,14 +388,26 @@ typedef uint32_t XPainterTextFlags;
 enum
 {
     XPAINTER_TEXT_ALIGN_LEFT    = 0x0001u,  /**< 水平左对齐（AlignLeft）。 */
+    XPAINTER_TEXT_ALIGN_LEADING = XPAINTER_TEXT_ALIGN_LEFT, /**< 前导对齐别名（AlignLeading）。 */
     XPAINTER_TEXT_ALIGN_RIGHT   = 0x0002u,  /**< 水平右对齐（AlignRight）。 */
+    XPAINTER_TEXT_ALIGN_TRAILING = XPAINTER_TEXT_ALIGN_RIGHT, /**< 尾随对齐别名（AlignTrailing）。 */
     XPAINTER_TEXT_ALIGN_HCENTER = 0x0004u,  /**< 水平居中（AlignHCenter）。 */
     XPAINTER_TEXT_ALIGN_JUSTIFY = 0x0008u,  /**< 两端对齐（AlignJustify）。 */
     XPAINTER_TEXT_ALIGN_ABSOLUTE = 0x0010u, /**< 左右对齐不随布局方向翻转（AlignAbsolute）。 */
+    XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK = XPAINTER_TEXT_ALIGN_LEFT |
+                                          XPAINTER_TEXT_ALIGN_RIGHT |
+                                          XPAINTER_TEXT_ALIGN_HCENTER |
+                                          XPAINTER_TEXT_ALIGN_JUSTIFY |
+                                          XPAINTER_TEXT_ALIGN_ABSOLUTE, /**< 水平对齐掩码。 */
     XPAINTER_TEXT_ALIGN_TOP     = 0x0020u,  /**< 垂直顶对齐（AlignTop）。 */
     XPAINTER_TEXT_ALIGN_BOTTOM  = 0x0040u,  /**< 垂直底对齐（AlignBottom）。 */
     XPAINTER_TEXT_ALIGN_VCENTER = 0x0080u,  /**< 垂直居中（AlignVCenter）。 */
-    XPAINTER_TEXT_CENTER = XPAINTER_TEXT_ALIGN_HCENTER | XPAINTER_TEXT_ALIGN_VCENTER,
+    XPAINTER_TEXT_ALIGN_BASELINE = 0x0100u, /**< 基线对齐（AlignBaseline）；与 TextSingleLine 同值。 */
+    XPAINTER_TEXT_ALIGN_VERTICAL_MASK = XPAINTER_TEXT_ALIGN_TOP |
+                                        XPAINTER_TEXT_ALIGN_BOTTOM |
+                                        XPAINTER_TEXT_ALIGN_VCENTER |
+                                        XPAINTER_TEXT_ALIGN_BASELINE, /**< 垂直对齐掩码。 */
+    XPAINTER_TEXT_ALIGN_CENTER = XPAINTER_TEXT_ALIGN_HCENTER | XPAINTER_TEXT_ALIGN_VCENTER, /**< 居中对齐（AlignCenter）。 */
     XPAINTER_TEXT_SINGLE_LINE        = 0x0100u, /**< 单行模式（TextSingleLine）。 */
     XPAINTER_TEXT_DONT_CLIP          = 0x0200u, /**< 不裁剪到矩形（TextDontClip）。 */
     XPAINTER_TEXT_EXPAND_TABS        = 0x0400u, /**< 制表符展开（TextExpandTabs）。 */
@@ -308,8 +417,8 @@ enum
     XPAINTER_TEXT_DONT_PRINT         = 0x4000u, /**< 不打印文本（TextDontPrint）。 */
     XPAINTER_TEXT_HIDE_MNEMONIC      = 0x8000u, /**< 隐藏助记键（TextHideMnemonic）。 */
     XPAINTER_TEXT_JUSTIFICATION_FORCED = 0x10000u, /**< 强制两端对齐（仅标记，不产生拉伸）。 */
-    XPAINTER_TEXT_FORCE_LTR          = 0x20000u, /**< 强制从左到右（当前仅左对齐）。 */
-    XPAINTER_TEXT_FORCE_RTL          = 0x40000u, /**< 强制从右到左（未实现 RTL 字库）。 */
+    XPAINTER_TEXT_FORCE_LEFT_TO_RIGHT = 0x20000u, /**< 强制从左到右（TextForceLeftToRight）。 */
+    XPAINTER_TEXT_FORCE_RIGHT_TO_LEFT = 0x40000u, /**< 强制从右到左（TextForceRightToLeft）。 */
     XPAINTER_TEXT_LONGEST_VARIANT    = 0x80000u, /**< 多变体取最长（当前无多变体）。 */
     XPAINTER_TEXT_INCLUDE_TRAILING_SPACES = 0x08000000u /**< 包含行尾空格（TextIncludeTrailingSpaces）。 */
 };
@@ -346,21 +455,34 @@ typedef struct XPainterState
 {
 #if XPAINTER_PENSTYLE_ON
     XPainterPenStyle m_penStyle;          /**< 画笔线段样式（对标 QPen::style）。 */
-    XPainterPenCapStyle m_penCap;         /**< 画笔端点样式（对标 QPen::capStyle）。 */
-    XPainterPenJoinStyle m_penJoin;       /**< 画笔拐角样式（对标 QPen::joinStyle）。 */
+    XPainterPenCapStyle m_penCap;         /**< 画笔端点样式（默认 SquareCap）。 */
+    XPainterPenJoinStyle m_penJoin;       /**< 画笔拐角样式（默认 BevelJoin）。 */
 #endif
     uint32_t m_penColor;        /**< 画笔颜色（ARGB32）。 */
-    int m_penWidth;             /**< 画笔宽度（像素，>=1）。 */
+    int m_penWidth;             /**< 画笔宽度（像素；0 表示 cosmetic）。 */
     uint32_t m_brushColor;      /**< 画刷颜色（ARGB32）。 */
 #if XPAINTER_BRUSH_ON
     XPainterBrush m_brush;      /**< 完整画刷描述（对标 QBrush，含样式与渐变色）。 */
 #endif
+#if XPAINTER_BRUSH_ORIGIN_ON
+    float m_brushOriginX;       /**< 画刷原点 X（对标 QPainter::brushOrigin）。 */
+    float m_brushOriginY;       /**< 画刷原点 Y（对标 QPainter::brushOrigin）。 */
+#endif
     uint32_t m_backgroundColor; /**< 背景颜色（ARGB32，默认不透明白；对标 QPainter::setBackground）。 */
+#if XPAINTER_BACKGROUND_ON
+    XPainterBackgroundMode m_backgroundMode; /**< 背景填充模式（默认 Transparent）。 */
+#if XPAINTER_BRUSH_ON
+    XPainterBrush m_backgroundBrush; /**< 背景画刷（对标 QPainter::background）。 */
+#endif /* XPAINTER_BRUSH_ON */
+#endif /* XPAINTER_BACKGROUND_ON */
 #if XPAINTER_CLIP_ON
     bool m_hasClip;             /**< 是否启用裁剪（false 表示不裁剪）。 */
     bool m_hasClipRect;         /**< 是否保存过可重新启用的裁剪记录。 */
     XRect m_clipRect;           /**< 当前组合裁剪的设备坐标包围矩形。 */
     XPainterClipOperation m_clipOperation; /**< 最近一次裁剪操作。 */
+#if XPAINTER_CLIP_REGION_ON
+    XRegion m_clipRegion;       /**< 当前组合裁剪的设备坐标区域。 */
+#endif /* XPAINTER_CLIP_REGION_ON */
 #endif /* XPAINTER_CLIP_ON */
     XImageTransform m_transform; /**< 用户坐标到设备坐标的变换矩阵。 */
 #if XPAINTER_WORLD_MATRIX_ON
@@ -426,6 +548,7 @@ typedef struct XPainter
     XPainterState* m_stateStack;      /**< 状态栈动态数组。 */
     int m_stateCount;                 /**< 栈内状态数量。 */
     int m_stateCapacity;              /**< 栈容量。 */
+    bool m_initialized;               /**< 是否已完成 init 且尚未 deinit。 */
 } XPainter;
 
 /* ========== 生命周期 ========== */
@@ -450,7 +573,8 @@ void XPainter_deinit(XPainter* self);
  * @param self 绘制器指针。
  * @param image 目标图像；可为任意像素格式，空图像返回 false。
  * @return 绑定成功返回 true。
- * @note       绑定时自动结束上一次绑定；图像所有权仍归调用方。
+ * @note       已有活动绑定时返回 false，原绑定与状态保持不变；需先调用
+ *             XPainter_end() 再绑定新图像。图像所有权仍归调用方。
  */
 bool XPainter_begin_image(XPainter* self, XImage* image);
 
@@ -459,14 +583,15 @@ bool XPainter_begin_image(XPainter* self, XImage* image);
  * @param self 绘制器指针。
  * @param picture 目标图片；录制命令会追加入其现有指令流。
  * @return 绑定成功返回 true。
- * @note       绑定时自动结束上一次绑定；图片所有权仍归调用方。
+ * @note       已有活动绑定时返回 false，原绑定与状态保持不变；需先调用
+ *             XPainter_end() 再绑定新图片。图片所有权仍归调用方。
  */
 bool XPainter_begin_picture(XPainter* self, XPicture* picture);
 
 /**
  * @brief      结束绘制：解除设备绑定、清空状态栈并恢复默认状态。
  * @param self 绘制器指针。
- * @return 结束成功返回 true。
+ * @return 原先处于活动状态且已解除绑定返回 true；未激活时返回 false。
  */
 bool XPainter_end(XPainter* self);
 
@@ -522,10 +647,12 @@ bool XPainter_drawPoint(XPainter* self, int x, int y);
 bool XPainter_drawPoint_2(XPainter* self, const XPoint* point);
 
 /**
- * @brief      绘制矩形边框（用当前画笔，沿四条边内侧各一像素）。
+ * @brief      绘制矩形（先用当前画刷填充，再用当前画笔描边，对标
+ *             QPainter::drawRect）。
  * @param self 绘制器指针。
- * @param rect 矩形；NULL 或空矩形视为无操作返回 true。
- * @return 绘制成功返回 true。
+ * @param rect 矩形；NULL 或宽高同时为零时视为无操作返回 true；仅一轴为零
+ *             时仍按 Qt 的退化矩形规则绘制一条线，负尺寸按几何边规范化。
+ * @return 绘制成功返回 true；默认 NoBrush 时只绘制边框。
  */
 bool XPainter_drawRect(XPainter* self, const XRect* rect);
 
@@ -551,23 +678,25 @@ bool XPainter_drawLines(XPainter* self, const XPoint* pointPairs, int pairCount)
 /**
  * @brief      填充矩形（对标 QPainter::fillRect，显式颜色）。
  * @param self 绘制器指针。
- * @param rect 矩形；NULL 返回 false，空矩形视为无操作返回 true。
+ * @param rect 矩形；NULL 返回 false；宽高任一为零时无操作返回 true，负宽/高
+ *             按 Qt QRect 的几何边交换后填充。
  * @param color ARGB32 填充颜色。
- * @return 填充成功返回 true。
+ * @return 填充成功返回 true；当前画刷为 NoBrush 时按 Qt 语义成功但不写像素。
  */
 bool XPainter_fillRect(XPainter* self, const XRect* rect, uint32_t color);
 /**
- * @brief      用当前画刷颜色填充矩形的重载版本。
+ * @brief      用当前画刷填充矩形的重载版本。
  * @param self 绘制器指针。
- * @param rect 矩形；NULL 返回 false，空矩形视为无操作返回 true。
- * @return 填充成功返回 true。
+ * @param rect 矩形；NULL 返回 false；宽高任一为零时无操作返回 true，负宽/高
+ *             按 Qt QRect 的几何边交换后使用当前画刷填充。
+ * @return 填充成功返回 true；支持当前画刷的 NoBrush、纯色和渐变样式。
  */
 bool XPainter_fillRect_2(XPainter* self, const XRect* rect);
 
 /**
- * @brief      用背景颜色擦除矩形区域（对标 QPainter::eraseRect）。
+ * @brief      用背景画刷擦除矩形区域（对标 QPainter::eraseRect）。
  * @param self 绘制器指针。
- * @param rect 目标矩形；NULL 或空矩形视为无操作返回 true。
+ * @param rect 目标矩形；NULL 返回 false，空矩形视为无操作返回 true。
  * @return 成功返回 true；未绑定设备返回 false。
  */
 bool XPainter_eraseRect(XPainter* self, const XRect* rect);
@@ -590,6 +719,90 @@ bool XPainter_drawImage(XPainter* self, const XImage* image, int x, int y);
  */
 bool XPainter_drawImage_2(XPainter* self, const XImage* image, const XPoint* pos);
 
+#if XPAINTER_PIXMAP_ON
+/**
+ * @brief      在指定位置绘制像素图（对标 Qt 6.8 QPainter::drawPixmap）。
+ * @details    实现通过 XPixmap_toImage 复用 XImage 绘制后端；设备像素比
+ *             大于 0 时，像素图物理尺寸按 ratio 换算为逻辑目标尺寸，
+ *             与 Qt 的高分辨率像素图规则一致。空像素图是成功的无操作，
+ *             空指针或未激活绘制器按本库布尔接口约定返回 false。
+ * @param self   绘制器指针。
+ * @param pixmap 源像素图；不取得所有权。
+ * @param x      逻辑目标左上角 X 坐标。
+ * @param y      逻辑目标左上角 Y 坐标。
+ * @return 绘制成功或空像素图无操作返回 true。
+ */
+bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y);
+/**
+ * @brief      以位置点绘制像素图的重载版本。
+ * @param self   绘制器指针。
+ * @param pixmap 源像素图；不取得所有权。
+ * @param pos    逻辑目标左上角位置；NULL 返回 false。
+ * @return 绘制成功返回 true。
+ */
+bool XPainter_drawPixmap_2(XPainter* self, const XPixmap* pixmap,
+                           const XPoint* pos);
+#if XPAINTER_IMAGE_RECT_ON
+/**
+ * @brief      把像素图源矩形缩放绘制到目标矩形（对标 Qt
+ *             QPainter::drawPixmap(const QRect&, const QPixmap&, const QRect&)）。
+ * @details    源矩形使用像素图物理像素坐标；目标矩形使用绘制器逻辑坐标。
+ *             负目标尺寸、非正源尺寸和越界裁剪复用 drawImageRect 的 Qt
+ *             规则。像素图设备像素比仅影响点位置重载的默认目标尺寸。
+ * @param self       绘制器指针。
+ * @param targetRect 逻辑目标矩形；NULL 返回 false。
+ * @param pixmap     源像素图；NULL 返回 false。
+ * @param sourceRect 源物理像素矩形；NULL 返回 false。
+ * @return 绘制成功或空像素图无操作返回 true。
+ */
+bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
+                             const XPixmap* pixmap,
+                             const XRect* sourceRect);
+#endif /* XPAINTER_IMAGE_RECT_ON */
+
+#if XPAINTER_TILED_PIXMAP_ON
+/**
+ * @brief      在目标矩形内重复平铺像素图（对标 Qt 6.8
+ *             QPainter::drawTiledPixmap）。
+ * @details    偏移量位于绘制器逻辑坐标系，与像素图设备像素比无关；偏移
+ *             会按逻辑 tile 尺寸取模，负值向后环绕。实现把像素图转换为
+ *             XImage，并通过 drawImageRect 逐块绘制，因此继承当前变换、
+ *             裁剪、透明度和合成模式。目标矩形使用半开区间 [x,x+w)×[y,y+h)，
+ *             非正宽高视为空操作。该能力同时依赖像素图和目标/源矩形开关，
+ *             关闭任一开关即可从嵌入式固件裁剪掉。
+ * @param self   绘制器指针；NULL 返回 false。
+ * @param rect   逻辑目标矩形；NULL 返回 false，非正宽高返回 true。
+ * @param pixmap 源像素图；不取得所有权；空像素图返回 true。
+ * @param offset 逻辑平铺偏移；可为 NULL，等价于 (0,0)。
+ * @return 绘制成功或空目标/空像素图无操作返回 true；输入指针无效或
+ *         当前绘制器未绑定设备时返回 false。
+ */
+bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
+                              const XPixmap* pixmap,
+                              const XPoint* offset);
+#endif /* XPAINTER_TILED_PIXMAP_ON */
+#endif /* XPAINTER_PIXMAP_ON */
+
+#if XPAINTER_IMAGE_RECT_ON
+/**
+ * @brief      在目标矩形内绘制源图像的指定区域（对标 Qt 6.8
+ *             QPainter::drawImage(const QRect&, const QImage&, const QRect&)）。
+ * @details    目标矩形和源矩形均使用像素坐标；软件光栅后端采用最近邻
+ *             采样并保留当前变换、裁剪、透明度和合成模式。目标宽高为负
+ *             时按 Qt 规则改用源区域尺寸，源宽高为非正值时取到图像边缘；
+ *             源矩形越界部分按比例裁剪并同步调整目标区域。目标宽高为零、
+ *             源区域裁剪后为空或图像为空时无操作并返回 true。
+ * @param self       绘制器指针。
+ * @param targetRect 目标矩形；NULL 返回 false。
+ * @param image      源图像；NULL 返回 false。
+ * @param sourceRect 源图像矩形；NULL 返回 false。
+ * @return 绘制成功返回 true；未绑定设备、矩阵不可逆或回调失败返回 false。
+ */
+bool XPainter_drawImageRect(XPainter* self, const XRect* targetRect,
+                            const XImage* image,
+                            const XRect* sourceRect);
+#endif /* XPAINTER_IMAGE_RECT_ON */
+
 /**
  * @brief      在指定位置回放绘图记录（对标 QPainter::drawPicture）。
  * @details    内部 save + translate(x,y) + XPicture_play + restore，
@@ -600,7 +813,7 @@ bool XPainter_drawImage_2(XPainter* self, const XImage* image, const XPoint* pos
  * @param y 目标左上角 Y 坐标。
  * @return 回放成功返回 true；未绑定设备返回 false。
  */
-bool XPainter_drawPicture(XPainter* self, XPicture* picture, int x, int y);
+bool XPainter_drawPicture(XPainter* self, const XPicture* picture, int x, int y);
 
 #if XPAINTER_SHAPE_ON
 
@@ -629,11 +842,10 @@ bool XPainter_drawArc(XPainter* self, const XRect* rect,
  * @param rect 外接矩形；NULL 返回 false，空矩形视为无操作返回 true。
  * @param startAngle 起始角，1/16 度。
  * @param spanAngle 跨越角，1/16 度；0 视为无操作返回 true。
- * @param filled 是否用当前画刷填充内部。
  * @return 绘制成功返回 true；未绑定设备返回 false。
  */
 bool XPainter_drawPie(XPainter* self, const XRect* rect,
-                      int startAngle, int spanAngle, bool filled);
+                      int startAngle, int spanAngle);
 
 /**
  * @brief      绘制弦形（对标 QPainter::drawChord）。
@@ -641,11 +853,10 @@ bool XPainter_drawPie(XPainter* self, const XRect* rect,
  * @param rect 外接矩形；NULL 返回 false，空矩形视为无操作返回 true。
  * @param startAngle 起始角，1/16 度。
  * @param spanAngle 跨越角，1/16 度；0 视为无操作返回 true。
- * @param filled 是否用当前画刷填充内部。
  * @return 绘制成功返回 true；未绑定设备返回 false。
  */
 bool XPainter_drawChord(XPainter* self, const XRect* rect,
-                        int startAngle, int spanAngle, bool filled);
+                        int startAngle, int spanAngle);
 
 /**
  * @brief      绘制圆角矩形（对标 QPainter::drawRoundedRect）。
@@ -665,7 +876,7 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
 /**
  * @brief      绘制折线（对标 QPainter::drawPolyline）。
  * @param self 绘制器指针。
- * @param points 顶点数组；NULL 或 count<=0 视为无操作返回 true。
+ * @param points 顶点数组；NULL 或 count<2 视为无操作返回 true。
  * @param count 顶点数量。
  * @return 绘制成功返回 true；未绑定设备返回 false。
  */
@@ -674,20 +885,20 @@ bool XPainter_drawPolyline(XPainter* self, const XPoint* points, int count);
 /**
  * @brief      绘制多边形（对标 QPainter::drawPolygon）。
  * @param self 绘制器指针。
- * @param points 顶点数组；NULL 或 count<=0 视为无操作返回 true。
+ * @param points 顶点数组；NULL 或 count<2 视为无操作返回 true。
  * @param count 顶点数量。
- * @param filled 是否用当前画刷填充内部。
+ * @param fillRule 填充规则（对标 Qt::FillRule）。
  * @return 绘制成功返回 true；未绑定设备返回 false。
  */
 bool XPainter_drawPolygon(XPainter* self, const XPoint* points, int count,
-                          bool filled);
+                          XPainterFillRule fillRule);
 
 /**
  * @brief      绘制凸多边形（对标 QPainter::drawConvexPolygon）。
  * @details    Qt 的该接口始终用当前画刷填充、当前画笔描边，因此无填充
  *             参数；内部当前复用 drawPolygon 的扫描线实现，不区分凸凹性。
  * @param self 绘制器指针。
- * @param points 顶点数组；NULL 或 count<=0 视为无操作返回 true。
+ * @param points 顶点数组；NULL 或 count<2 视为无操作返回 true。
  * @param count 顶点数量。
  * @return 成功返回 true。
  */
@@ -711,17 +922,18 @@ bool XPainter_drawPoints(XPainter* self, const XPoint* points, int count);
 /** @brief 路径元素类型（对标 QPainterPath::ElementType 的常用子集）。 */
 typedef enum XPainterPathElementType
 {
-    XPainterPathElement_MoveTo = 0,    /**< 移动当前位置。 */
-    XPainterPathElement_LineTo = 1,    /**< 直线段。 */
-    XPainterPathElement_QuadTo = 2,    /**< 二次贝塞尔曲线段。 */
-    XPainterPathElement_CubicTo = 3,   /**< 三次贝塞尔曲线段。 */
-    XPainterPathElement_CloseSubpath = 4 /**< 闭合子路径。 */
+    XPainterPathElement_MoveTo = 0,       /**< 移动当前位置。 */
+    XPainterPathElement_LineTo = 1,       /**< 直线段。 */
+    XPainterPathElement_CurveTo = 2,      /**< 三次曲线第一控制点。 */
+    XPainterPathElement_CurveToData = 3   /**< 三次曲线第二控制点或终点。 */
 } XPainterPathElementType;
 
 /** @brief 路径元素（固定三组坐标，插值语义随类型变化）。
  *  - MoveTo/LineTo：目标点在 m_x1/m_y1；
- *  - QuadTo：控制点在 m_x1/m_y1、终点在 m_x2/m_y2；
- *  - CubicTo：控制点 1=m_x1/m_y1、控制点 2=m_x2/m_y2、终点=m_x3/m_y3。 */
+ *  - CurveTo：第一控制点在 m_x1/m_y1；
+ *  - CurveToData：第二控制点或终点在 m_x1/m_y1；其余字段保留为零。
+ *   一个完整三次曲线由 CurveTo、CurveToData、CurveToData 连续三元素组成，
+ *   与 Qt 的 QPainterPath::ElementType 序列一致。 */
 typedef struct XPainterPathElement
 {
     XPainterPathElementType m_type; /**< 元素类型。 */
@@ -743,6 +955,7 @@ typedef struct XPainterPath
     XPainterPathElement* m_elements; /**< 元素数组。 */
     float m_currentX, m_currentY;    /**< 当前点。 */
     float m_subpathStartX, m_subpathStartY; /**< 当前子路径起点。 */
+    bool m_requireMoveTo;       /**< 闭合后下一段曲线是否需隐式追加 MoveTo。 */
 } XPainterPath;
 
 /**
@@ -761,34 +974,39 @@ void XPainterPath_deinit(XPainterPath* self);
  */
 bool XPainterPath_moveTo(XPainterPath* self, float x, float y);
 /**
- * @brief 追加直线段到 (x,y)（对标 lineTo）。
- * @return 成功返回 true；内存不足返回 false。
+ * @brief 追加直线段到 (x,y)（对标 lineTo）。空路径以 (0,0) 为隐式起点。
+ * @return 成功返回 true；内存不足返回 false；无效浮点坐标按 Qt 语义忽略。
  */
 bool XPainterPath_lineTo(XPainterPath* self, float x, float y);
 /**
- * @brief 追加二次贝塞尔曲线段（对标 quadTo）。
- * @return 成功返回 true；内存不足返回 false。
+ * @brief 追加二次贝塞尔曲线段（对标 quadTo）。空路径以 (0,0) 为隐式起点；
+ *        内部按 Qt 公式转换为 CurveTo、CurveToData、CurveToData 三元素。
+ * @return 成功返回 true；内存不足返回 false；无效浮点坐标按 Qt 语义忽略。
  */
 bool XPainterPath_quadTo(XPainterPath* self, float cx, float cy,
                          float x, float y);
 /**
- * @brief 追加三次贝塞尔曲线段（对标 cubicTo）。
- * @return 成功返回 true；内存不足返回 false。
+ * @brief 追加三次贝塞尔曲线段（对标 cubicTo）。空路径以 (0,0) 为隐式起点；
+ *        内部追加 CurveTo、CurveToData、CurveToData 三元素。
+ * @return 成功返回 true；内存不足返回 false；无效浮点坐标按 Qt 语义忽略。
  */
 bool XPainterPath_cubicTo(XPainterPath* self, float c1x, float c1y,
                           float c2x, float c2y, float x, float y);
 /**
- * @brief 闭合当前子路径（后半段可继续追加段；对标 closeSubpath）。
+ * @brief 闭合当前子路径（必要时追加回起点的 LineTo，后续追加段隐式新起点；
+ *        对标 closeSubpath）。空路径无操作。
  * @return 成功返回 true；内存不足返回 false。
  */
 bool XPainterPath_closeSubpath(XPainterPath* self);
 /**
- * @brief 追加一个矩形子路径（MoveTo→LineTo×3→Close）。
+ * @brief 追加一个矩形子路径（MoveTo→LineTo×3→Close）；宽高均为零时无操作，
+ *        单轴为零或负值仍保留 Qt 的退化/反向几何。
  * @return 成功返回 true；内存不足返回 false。
  */
 bool XPainterPath_addRect(XPainterPath* self, const XRect* rect);
 /**
- * @brief 追加一个椭圆子路径（按 64 段折线逼近圆弧）。
+ * @brief 追加一个椭圆子路径（按 64 段折线逼近圆弧）；宽高同时为零时无操作，
+ *        负尺寸或单轴零尺寸仍保留 Qt 的退化/反向几何。
  * @return 成功返回 true；内存不足返回 false。
  */
 bool XPainterPath_addEllipse(XPainterPath* self, const XRect* rect);
@@ -824,24 +1042,6 @@ bool XPainter_strokePath(XPainter* self, const XPainterPath* path);
 /* ========== 内置点阵文本（对标 QPainter::drawText 最小字集，字体由 XFont 选择） ========== */
 
 /**
- * @brief      绘制一行点阵文本（对标 QPainter::drawText 的单行子集）。
- * @details    字库选择走 XFont：XFont_setFamily 选择内置字库，像素字号经
- *             XFont_bitmap* 算法算出整倍缩放，不依赖平台字体/资源：
- *             - 字库选择 XFont_setFamily，字号缩放由 XFont 像素字号决定；
- *             - x 为第一字形左上角 X，baselineY 为基线 Y（字形顶部在
- *               baselineY - ascent，底部在 baselineY + descent - 1）；
- *             - 遇 '\n' 停止，其余控制字符占一个字宽但不绘制；
- *             - 文本经 XPainter_fillRect 逐运行段输出，自动受当前
- *               裁剪矩形/变换约束；绑定 XPicture 后端时录制为填充指令；
- *             - 常与 XLabel 的纯文本显示配合。
- * @param self 绘制器指针。
- * @param x 起点 X 坐标。
- * @param baselineY 基线 Y 坐标。
- * @param utf8 UTF-8 单行文本；NULL 或空字符串视为无操作返回 true。
- * @param color ARGB32 文本颜色。
- * @return 绘制成功返回 true；未绑定设备返回 false。
- */
-/**
  * @brief      在矩形区域内按对齐/换行标志绘制文本（对标 Qt 6.8
  *             QPainter::drawText(const QRect&, int, const QString&)）。
  * @details    使用绘制器当前字体；返回 false 表示设备无效或输入为空。
@@ -855,6 +1055,17 @@ bool XPainter_strokePath(XPainter* self, const XPainterPath* path);
 bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                            const char* utf8, uint32_t color);
 
+/**
+ * @brief      绘制一行点阵文本（对标 QPainter::drawText 的单行子集）。
+ * @details    使用当前 XFont，x 为首字形左上角，baselineY 为基线；遇换行符停止，
+ *             控制字符占位但不绘制，输出仍受当前变换、裁剪和透明度状态约束。
+ * @param self 绘制器指针。
+ * @param x 字形左上角 X 坐标。
+ * @param baselineY 文本基线 Y 坐标。
+ * @param utf8 UTF-8 单行文本；NULL 或空字符串视为无操作返回 true。
+ * @param color ARGB32 文本颜色。
+ * @return 绘制成功返回 true；未绑定设备返回 false。
+ */
 bool XPainter_drawText(XPainter* self, int x, int baselineY,
                        const char* utf8, uint32_t color);
 /**
@@ -904,7 +1115,7 @@ int XPainter_textWidthRange(const XFont* font, const char* utf8,
 /* ========== 当前字体（对标 QPainter::setFont/font） ========== */
 
 /**
- * @brief      设置绘制文本时使用的字体（对标 QPainter::setFont）。
+ * @brief      设置绘制文本时使用的字体（对标 QPainter::setFont）；未激活时忽略。
  * @details    drawText/drawGlyph 使用绘制器当前字体；字体家族选择内置
  *             XFont 字库、像素字号决定整倍缩放（XFont_setFamily 等）。
  * @param self 绘制器指针。
@@ -936,11 +1147,23 @@ bool XPainter_restore(XPainter* self);
 /* ========== 画笔 / 画刷 ========== */
 
 /**
- * @brief      设置画笔颜色（对标 QPainter::setPen，颜色版）。
+ * @brief      设置画笔颜色（对标 QPainter::setPen，颜色版）；未激活时忽略。
  * @param self 绘制器指针。
  * @param color ARGB32 颜色。
+ * @note       与 Qt 的 QColor 重载一致，同时恢复 1 像素实线、SquareCap
+ *             和 BevelJoin；需要其他样式时应在此调用后再设置。
  */
 void XPainter_setPen(XPainter* self, uint32_t color);
+#if XPAINTER_PENSTYLE_ON
+/**
+ * @brief 设置画笔样式重载（对标 QPainter::setPen(Qt::PenStyle）。
+ * @details 设置为指定样式、黑色、1 像素宽、SquareCap 和 BevelJoin；
+ *          NoPen 会关闭线段绘制。
+ * @param self 绘制器指针；未激活时忽略。
+ * @param style 画笔样式。
+ */
+void XPainter_setPen_2(XPainter* self, XPainterPenStyle style);
+#endif /* XPAINTER_PENSTYLE_ON */
 /**
  * @brief      获取当前画笔颜色。
  * @param self 绘制器指针。
@@ -948,7 +1171,9 @@ void XPainter_setPen(XPainter* self, uint32_t color);
  */
 uint32_t XPainter_penColor(const XPainter* self);
 /**
- * @brief      设置画笔宽度（像素，小于 1 按 1 处理）。
+ * @brief      设置画笔宽度（对标 QPen::setWidth）；未激活时忽略。
+ * @details    宽度 0 表示 cosmetic pen，绘制时保持一像素宽且不随变换
+ *             缩放；负值或大于等于 32768 的值超出 Qt 范围，调用被忽略。
  * @param self 绘制器指针。
  * @param width 画笔宽度。
  */
@@ -960,11 +1185,20 @@ void XPainter_setPenWidth(XPainter* self, int width);
  */
 int XPainter_penWidth(const XPainter* self);
 /**
- * @brief      设置画刷颜色（fillRect_2 使用）。
+ * @brief      设置画刷颜色（fillRect_2 使用）；未激活时忽略。
  * @param self 绘制器指针。
  * @param color ARGB32 颜色。
  */
 void XPainter_setBrush(XPainter* self, uint32_t color);
+#if XPAINTER_BRUSH_ON
+/**
+ * @brief 设置画刷样式重载（对标 QPainter::setBrush(Qt::BrushStyle)）。
+ * @details 样式版使用黑色画刷；NoBrush 关闭填充，渐变样式清空旧渐变参数。
+ * @param self 绘制器指针；未激活时忽略。
+ * @param style 画刷样式。
+ */
+void XPainter_setBrush_2(XPainter* self, XPainterBrushStyle style);
+#endif /* XPAINTER_BRUSH_ON */
 /**
  * @brief      获取当前画刷颜色。
  * @param self 绘制器指针。
@@ -973,7 +1207,7 @@ void XPainter_setBrush(XPainter* self, uint32_t color);
 uint32_t XPainter_brushColor(const XPainter* self);
 
 /**
- * @brief      设置背景颜色（对标 QPainter::setBackground）。
+ * @brief      设置背景颜色（对标 QPainter::setBackground）；未激活时忽略。
  * @param self 绘制器指针。
  * @param color ARGB32 背景颜色，默认不透明白。
  */
@@ -982,22 +1216,58 @@ void XPainter_setBackground(XPainter* self, uint32_t color);
 /**
  * @brief      获取当前背景颜色（对标 QPainter::background 的颜色部分）。
  * @param self 绘制器指针。
- * @return 背景颜色；self 为 NULL 返回 0。
+ * @return 活动绘制器的背景画刷颜色；未激活时返回 Qt 虚拟默认画刷的黑色，
+ *         self 为 NULL 返回 0。
  */
 uint32_t XPainter_background(const XPainter* self);
+
+#if XPAINTER_BACKGROUND_ON
+#if XPAINTER_BRUSH_ON
+/**
+ * @brief 设置完整背景画刷（对标 QPainter::setBackground(const QBrush&)）。
+ * @param self 绘制器指针；未激活时忽略。
+ * @param brush 背景画刷；NULL 时不修改状态。
+ * @note 画刷的样式、颜色和渐变参数会随 save()/restore() 保存；Opaque
+ *       文本背景当前按画刷颜色填充，渐变背景在嵌入式文本路径中退化为
+ *       画刷基色，其他绘制命令不会隐式填充背景。
+ */
+void XPainter_setBackground_2(XPainter* self, const XPainterBrush* brush);
+
+/**
+ * @brief 获取完整背景画刷（对标 QPainter::background()）。
+ * @param self 绘制器指针；NULL 或未激活时输出 Qt 默认的 NoBrush/黑色。
+ * @param out 输出画刷结构体；NULL 时忽略。
+ */
+void XPainter_backgroundBrush(const XPainter* self, XPainterBrush* out);
+#endif /* XPAINTER_BRUSH_ON */
+
+/**
+ * @brief 设置背景填充模式（对标 QPainter::setBackgroundMode）。
+ * @param self 绘制器指针；未激活时忽略。
+ * @param mode Transparent 或 Opaque；非法值保持原状态。
+ */
+void XPainter_setBackgroundMode(XPainter* self, XPainterBackgroundMode mode);
+
+/**
+ * @brief 获取当前背景填充模式（对标 QPainter::backgroundMode）。
+ * @param self 绘制器指针；NULL 返回 Transparent。
+ * @return 当前背景模式。
+ */
+XPainterBackgroundMode XPainter_backgroundMode(const XPainter* self);
+#endif /* XPAINTER_BACKGROUND_ON */
 
 #if XPAINTER_PENSTYLE_ON
 /* ========== 画笔样式（对标 QPen Style/CapStyle/JoinStyle） ========== */
 
-/** @brief 设置画笔线段样式（对标 QPen::setStyle）。 */
+/** @brief 设置画笔线段样式（对标 QPen::setStyle）；未激活时忽略。 */
 void XPainter_setPenStyle(XPainter* self, XPainterPenStyle style);
 /** @brief 获取当前画笔线段样式。 */
 XPainterPenStyle XPainter_penStyle(const XPainter* self);
-/** @brief 设置画笔端点样式（对标 QPen::setCapStyle）。 */
+/** @brief 设置画笔端点样式（对标 QPen::setCapStyle）；未激活时忽略。 */
 void XPainter_setPenCapStyle(XPainter* self, XPainterPenCapStyle cap);
 /** @brief 获取当前画笔端点样式。 */
 XPainterPenCapStyle XPainter_penCapStyle(const XPainter* self);
-/** @brief 设置画笔拐角样式（对标 QPen::setJoinStyle）。 */
+/** @brief 设置画笔拐角样式（对标 QPen::setJoinStyle）；未激活时忽略。 */
 void XPainter_setPenJoinStyle(XPainter* self, XPainterPenJoinStyle join);
 /** @brief 获取当前画笔拐角样式。 */
 XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
@@ -1007,15 +1277,17 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
 /* ========== 画刷样式与渐变色（对标 QBrush/QGradient） ========== */
 
 /**
- * @brief 设置画刷样式（对标 QBrush::setStyle）。
+ * @brief 设置画刷样式（对标 QBrush::setStyle）；未激活或非法样式时忽略。
  * @param self 绘制器指针。
- * @param style 画刷样式；超出范围按 SolidPattern 处理。
+ * @param style 画刷样式；数值与 Qt::BrushStyle 一致。
+ * @note Dense/Hor/Ver/Diag 图案和 TexturePattern 在软件后端退化为当前
+ *       纯色，渐变样式使用 XPainter_setBrushGradient 提供的渐变参数。
  */
 void XPainter_setBrushStyle(XPainter* self, XPainterBrushStyle style);
 /** @brief 获取当前画刷样式。 */
 XPainterBrushStyle XPainter_brushStyle(const XPainter* self);
 /**
- * @brief 设置渐变色画刷（对标 QBrush(QGradient)）。
+ * @brief 设置渐变色画刷（对标 QBrush(QGradient)）；未激活时忽略。
  * @param self 绘制器指针。
  * @param gradient 渐变色描述；NULL 恢复纯色画刷。
  */
@@ -1033,10 +1305,29 @@ void XPainterGradient_initRadial(XPainterGradient* gradient,
 /** @brief 初始化一个锥形渐变色描述。 */
 void XPainterGradient_initConical(XPainterGradient* gradient,
                                   float cx, float cy, float angleDeg);
-/** @brief 追加一个渐变色停止点（最多 XPAINTER_GRADIENT_MAX_STOPS 个）。 */
+/** @brief 设置一个渐变色停止点（按位置排序；同位置覆盖；越界忽略）。 */
 void XPainterGradient_addStop(XPainterGradient* gradient,
                               float position, uint32_t color);
 #endif /* XPAINTER_BRUSH_ON */
+
+#if XPAINTER_BRUSH_ORIGIN_ON
+/**
+ * @brief 设置画刷原点（对标 QPainter::setBrushOrigin）。
+ * @details 原点定义画刷坐标系的 (0,0)，渐变和嵌入式画刷采样均会使用该
+ *          偏移；绘制器未激活时调用被忽略。浮点参数同时覆盖 Qt 的
+ *          QPointF 重载，传入整数即可获得 QPoint/int 重载效果。
+ * @param self 绘制器指针。
+ * @param x 画刷原点 X 坐标。
+ * @param y 画刷原点 Y 坐标。
+ */
+void XPainter_setBrushOrigin(XPainter* self, float x, float y);
+/**
+ * @brief 获取画刷原点（对标 QPainter::brushOrigin）。
+ * @param self 绘制器指针；未激活或为空时输出 (0,0)。
+ * @param out 输出整型点；按 Qt QPointF::toPoint() 规则四舍五入。
+ */
+void XPainter_brushOrigin(const XPainter* self, XPoint* out);
+#endif /* XPAINTER_BRUSH_ORIGIN_ON */
 
 /* ========== 裁剪 ========== */
 
@@ -1067,12 +1358,35 @@ void XPainter_setClipping(XPainter* self, bool enable);
 
 /**
  * @brief      获取当前裁剪边界矩形（对标 QPainter::clipBoundingRect）。
- * @details    有已设置的有效裁剪矩形时返回该矩形（含 setClipping(false)
- *             关闭后仍保留的场景）；未设置过或传入空矩形清除后输出零矩形。
+ * @details    有已设置的裁剪记录时返回该矩形（含 setClipping(false)
+ *             或 NoClip 关闭后仍保留的场景）；空矩形保留其坐标并返回零宽高，
+ *             未设置过时输出零矩形。
  * @param self 绘制器指针。
  * @param out 输出矩形。
  */
 void XPainter_clipBoundingRect(const XPainter* self, XRect* out);
+
+#if XPAINTER_CLIP_REGION_ON
+/**
+ * @brief 设置区域裁剪（对标 QPainter::setClipRegion）。
+ * @param self 绘制器指针。
+ * @param region 逻辑坐标区域；NULL 视为空操作，不改变当前状态。
+ * @param operation 裁剪操作；非法值按 ReplaceClip 处理。
+ * @note 区域中的整数矩形按当前组合变换映射到设备坐标；关闭
+ *       XPAINTER_CLIP_REGION_ON 后该接口不会暴露，适合极小固件。
+ */
+void XPainter_setClipRegion(XPainter* self, const XRegion* region,
+                            XPainterClipOperation operation);
+
+/**
+ * @brief 获取当前区域裁剪（对标 QPainter::clipRegion）。
+ * @param self 绘制器指针；未激活时输出空区域。
+ * @param out 输出区域；调用方负责在使用后调用 XRegion_deinit。
+ * @note 输出使用当前逻辑坐标；非恒等变换下按逆变换后的整数包围矩形
+ *       表示，与 QPainter 对复杂浮点区域的离散化规则一致。
+ */
+void XPainter_clipRegion(const XPainter* self, XRegion* out);
+#endif /* XPAINTER_CLIP_REGION_ON */
 #endif /* XPAINTER_CLIP_ON */
 
 /* ========== 变换 ========== */
@@ -1164,6 +1478,14 @@ bool XPainter_worldMatrixEnabled(const XPainter* self);
  * @param out 输出组合矩阵；可为 NULL。
  */
 void XPainter_combinedTransform(const XPainter* self, XImageTransform* out);
+/**
+ * @brief 获取逻辑坐标到设备坐标的变换矩阵（对标 QPainter::deviceTransform）。
+ * @details 对内置 XImage/XPicture 后端，设备原点没有额外偏移，因此结果与
+ *          XPainter_combinedTransform 相同；未激活时输出单位矩阵。
+ * @param self 绘制器指针。
+ * @param out 输出设备变换矩阵；可为 NULL。
+ */
+void XPainter_deviceTransform(const XPainter* self, XImageTransform* out);
 #if XPAINTER_VIEW_TRANSFORM_ON
 /**
  * @brief      设置逻辑窗口矩形并启用视图变换（对标 QPainter::setWindow）。
@@ -1213,7 +1535,7 @@ bool XPainter_viewTransformEnabled(const XPainter* self);
 /* ========== 透明度与合成 ========== */
 
 /**
- * @brief      设置整体不透明度（0.0~1.0，越界自动钳位）。
+ * @brief      设置整体不透明度（0.0~1.0，越界自动钳位）；未激活时忽略。
  * @param self 绘制器指针。
  * @param opacity 不透明度。
  */
@@ -1221,13 +1543,13 @@ void XPainter_setOpacity(XPainter* self, float opacity);
 /**
  * @brief      获取当前不透明度。
  * @param self 绘制器指针。
- * @return 不透明度（0.0~1.0）。
+ * @return 不透明度（0.0~1.0）；self 为 NULL 时返回默认值 1.0。
  */
 float XPainter_opacity(const XPainter* self);
 /**
- * @brief      设置合成模式。
+ * @brief      设置合成模式；未激活或超出 Qt 6.8 枚举范围的值忽略。
  * @param self 绘制器指针。
- * @param mode 合成模式。
+ * @param mode Qt 6.8 的 24 个 Porter-Duff/SVG 和 14 个 RasterOp 模式值。
  */
 void XPainter_setCompositionMode(XPainter* self, XPainterCompositionMode mode);
 /**
@@ -1275,6 +1597,9 @@ bool XPainter_testRenderHint(const XPainter* self, XPainterRenderHint hint);
 #if XPAINTER_LAYOUT_DIRECTION_ON
 /**
  * @brief 设置文本布局方向（对标 QPainter::setLayoutDirection）。
+ * @details 与 Qt 6.8 一致，绘制器未激活时没有状态对象，调用会被忽略；
+ *          空指针调用同样被忽略。激活后设置的方向随 save()/restore()
+ *          保存，并在 end() 后恢复为 Auto。
  * @param self 绘制器指针。
  * @param direction 布局方向；非法值按 Auto 处理。
  */
@@ -1284,7 +1609,7 @@ void XPainter_setLayoutDirection(XPainter* self,
 /**
  * @brief 获取文本布局方向（对标 QPainter::layoutDirection）。
  * @param self 绘制器指针。
- * @return 当前方向；self 为空时返回 Auto。
+ * @return 当前保存方向；self 为空时返回 Auto。
  */
 XPainterLayoutDirection XPainter_layoutDirection(const XPainter* self);
 #endif /* XPAINTER_LAYOUT_DIRECTION_ON */

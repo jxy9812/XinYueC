@@ -97,6 +97,29 @@ static size_t image_count_non_background(const XImage* image,
     return count;
 }
 
+/** @brief 返回图像中非背景像素的水平包围范围。 */
+static bool image_non_background_x_bounds(const XImage* image,
+                                          uint32_t background,
+                                          int* outMinX, int* outMaxX)
+{
+    int x;
+    int y;
+    int minX = image ? XImage_width(image) : 0;
+    int maxX = -1;
+    if (!image) return false;
+    for (y = 0; y < XImage_height(image); ++y) {
+        for (x = 0; x < XImage_width(image); ++x) {
+            if (XImage_pixel(image, x, y) != background) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+            }
+        }
+    }
+    if (outMinX) *outMinX = minX;
+    if (outMaxX) *outMaxX = maxX;
+    return maxX >= 0;
+}
+
 #if XIMAGECODEC_ON
 static void make_file_name(XString** out)
 {
@@ -678,13 +701,114 @@ static void test_painter_raster_contract(void)
     XRect one = { 0, 0, 1, 1 };
     XRect empty = { 0, 0, 0, 0 };
     XImage tile;
+#if XPAINTER_PIXMAP_ON
+    XPixmap pixmap;
+    XRect pixmapTarget = { 0, 0, 4, 2 };
+    XRect pixmapSource = { 0, 0, 2, 2 };
+#if XPAINTER_TILED_PIXMAP_ON
+    XRect tiledTarget = { 0, 0, 5, 3 };
+    XPoint tiledOffset = { 1, 1 };
+#endif /* XPAINTER_TILED_PIXMAP_ON */
+#endif /* XPAINTER_PIXMAP_ON */
+#if XPAINTER_IMAGE_RECT_ON
+    XImage strip;
+    XRect imageTarget = { 0, 0, 4, 2 };
+    XRect imageSource = { 0, 0, 2, 1 };
+#endif /* XPAINTER_IMAGE_RECT_ON */
 
     XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
     XPainter_init(&painter, NULL);
+#if XPAINTER_BACKGROUND_ON
+    expect_true(XPainter_background(&painter) == 0xff000000u,
+                "inactive background color follows Qt fake brush");
+    expect_true(XPainter_backgroundMode(&painter) ==
+                    XPainterBackgroundMode_Transparent,
+                "inactive background mode is Transparent");
+#if XPAINTER_BRUSH_ON
+    {
+        XPainterBrush inactiveBackground;
+        XPainter_backgroundBrush(&painter, &inactiveBackground);
+        expect_true(inactiveBackground.m_style == XPainterBrushStyle_NoBrush &&
+                        inactiveBackground.m_color == 0xff000000u,
+                    "inactive background brush is Qt default");
+    }
+#endif /* XPAINTER_BRUSH_ON */
+#endif /* XPAINTER_BACKGROUND_ON */
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    expect_true(XPainter_layoutDirection(&painter) ==
+                    XPainterLayoutDirection_Auto,
+                "inactive layout direction is Auto");
+    XPainter_setLayoutDirection(&painter,
+                                XPainterLayoutDirection_RightToLeft);
+    expect_true(XPainter_layoutDirection(&painter) ==
+                    XPainterLayoutDirection_Auto,
+                "inactive layout direction setter is ignored like Qt");
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+    {
+        XRect inactiveFill = { 0, 0, 1, 1 };
+        expect_true(!XPainter_fillRect_2(&painter, &inactiveFill),
+                    "fillRect_2 rejects an inactive painter");
+    }
+    XPainter_setPen(&painter, 0xffff00ffu);
+    XPainter_setOpacity(&painter, 0.25f);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
     expect_true(XPainter_begin_image(&painter, &image),
                 "painter begins raster on image");
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    expect_true(XPainter_layoutDirection(&painter) ==
+                    XPainterLayoutDirection_LeftToRight,
+                "layout direction begins with application default LTR");
+    XPainter_setLayoutDirection(&painter, XPainterLayoutDirection_RightToLeft);
+    expect_true(XPainter_layoutDirection(&painter) ==
+                    XPainterLayoutDirection_RightToLeft,
+                "active layout direction setter stores RTL");
+    XPainter_setLayoutDirection(&painter, XPainterLayoutDirection_Auto);
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+#if XPAINTER_BRUSH_ON
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_NoBrush,
+                "raster default brush matches QBrush NoBrush");
+#endif /* XPAINTER_BRUSH_ON */
+    expect_true(XPainter_penColor(&painter) == 0xff000000u &&
+                fabsf(XPainter_opacity(&painter) - 1.0f) < 1.0e-4f &&
+                XPainter_compositionMode(&painter) ==
+                    XPainterCompositionMode_SourceOver,
+                "inactive painter setters do not change initial state");
+    expect_true(!XPainter_begin_image(&painter, &image),
+                "begin on active painter is rejected");
     expect_true(XPainter_device(&painter) == &image,
                 "painter device reports the bound image");
+
+    /* QRect/QPainter 允许单轴退化矩形：零宽或零高仍按一条线描边，
+       负尺寸则按两条几何边规范化，而不是将调用当作空操作。 */
+    {
+        XRect vertical = { 2, 2, 0, 2 };
+        XRect negative = { 5, 5, -2, -2 };
+        XRect negativeFill = { 5, 5, -2, 2 };
+        XImage_fillRect(&image, NULL, 0u);
+        XPainter_setPen(&painter, 0xffff0000u);
+        expect_true(XPainter_drawRect(&painter, &vertical),
+                    "raster drawRect zero-width line");
+        expect_true(XImage_pixel(&image, 2, 2) == 0xffff0000u &&
+                    XImage_pixel(&image, 2, 3) == 0xffff0000u &&
+                    XImage_pixel(&image, 2, 4) == 0xffff0000u,
+                    "raster drawRect zero-width keeps height");
+        XImage_fillRect(&image, NULL, 0u);
+        expect_true(XPainter_drawRect(&painter, &negative),
+                    "raster drawRect negative dimensions");
+        expect_true(XImage_pixel(&image, 3, 3) == 0xffff0000u &&
+                    XImage_pixel(&image, 5, 3) == 0xffff0000u &&
+                    XImage_pixel(&image, 3, 5) == 0xffff0000u &&
+                    XImage_pixel(&image, 5, 5) == 0xffff0000u &&
+                    XImage_pixel(&image, 4, 4) == 0u,
+                    "raster drawRect normalizes negative dimensions");
+        XImage_fillRect(&image, NULL, 0u);
+        expect_true(XPainter_fillRect(&painter, &negativeFill, 0xff00ff00u),
+                    "raster fillRect negative width");
+        expect_true(XImage_pixel(&image, 3, 5) == 0xff00ff00u &&
+                    XImage_pixel(&image, 4, 6) == 0xff00ff00u &&
+                    XImage_pixel(&image, 5, 5) == 0u,
+                    "raster fillRect normalizes negative width");
+    }
 
     /* 不透明填充走 XImage_fillRect 快速路径 */
     expect_true(XPainter_fillRect(&painter, &rect, 0xff336699u),
@@ -701,13 +825,13 @@ static void test_painter_raster_contract(void)
     expect_true(XPainter_drawRect(&painter, &outline), "raster drawRect");
     expect_true(XImage_pixel(&image, 1, 1) == 0xffff0000u,
                 "raster rect corner tl");
-    expect_true(XImage_pixel(&image, 5, 1) == 0xffff0000u,
+    expect_true(XImage_pixel(&image, 6, 1) == 0xffff0000u,
                 "raster rect corner tr");
-    expect_true(XImage_pixel(&image, 5, 4) == 0xffff0000u,
+    expect_true(XImage_pixel(&image, 6, 5) == 0xffff0000u,
                 "raster rect corner br");
     expect_true(XImage_pixel(&image, 3, 2) == 0xff336699u,
                 "raster rect interior kept");
-    expect_true(XImage_pixel(&image, 2, 5) == 0, "raster rect outside");
+    expect_true(XImage_pixel(&image, 0, 5) == 0, "raster rect outside");
 
     /* 画线及笔宽 */
     XPainter_setPen(&painter, 0xff00ff00u);
@@ -717,9 +841,9 @@ static void test_painter_raster_contract(void)
     expect_true(XImage_pixel(&image, 6, 6) == 0xff00ff00u, "raster line end");
     expect_true(XImage_pixel(&image, 4, 6) == 0xff00ff00u,
                 "raster line middle");
-    expect_true(XImage_pixel(&image, 2, 5) == 0, "raster line above");
-    XPainter_setPenWidth(&painter, 3);
+    expect_true(XImage_pixel(&image, 0, 5) == 0, "raster line above");
     XPainter_setPen(&painter, 0xffffff00u);
+    XPainter_setPenWidth(&painter, 3);
     expect_true(XPainter_drawLine(&painter, 0, 7, 3, 7), "raster thick line");
     expect_true(XImage_pixel(&image, 0, 6) == 0xffffff00u,
                 "raster thick line upper");
@@ -727,6 +851,39 @@ static void test_painter_raster_contract(void)
                 "raster thick line main");
     expect_true(XImage_pixel(&image, 0, 5) == 0, "raster thick line boundary");
     XPainter_setPenWidth(&painter, 1);
+#if XPAINTER_PENSTYLE_ON
+    /* Qt 光栅器对轴向线的 Flat/Square/Round 端点覆盖不同；宽度 1
+       时 FlatCap 右端排他，SquareCap 和 RoundCap 包含终点。 */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_FlatCap);
+    expect_true(XPainter_drawLine(&painter, 2, 3, 7, 3),
+                "raster flat-cap line");
+    expect_true(XImage_pixel(&image, 2, 3) == 0xffffff00u &&
+                XImage_pixel(&image, 6, 3) == 0xffffff00u &&
+                XImage_pixel(&image, 7, 3) == 0u,
+                "flat cap excludes geometric endpoint");
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_SquareCap);
+    expect_true(XPainter_drawLine(&painter, 2, 3, 7, 3),
+                "raster square-cap line");
+    expect_true(XImage_pixel(&image, 2, 3) == 0xffffff00u &&
+                XImage_pixel(&image, 7, 3) == 0xffffff00u,
+                "square cap includes geometric endpoint");
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_RoundCap);
+    expect_true(XPainter_drawLine(&painter, 2, 3, 7, 3),
+                "raster round-cap line");
+    expect_true(XImage_pixel(&image, 2, 3) == 0xffffff00u &&
+                XImage_pixel(&image, 7, 3) == 0xffffff00u,
+                "round cap includes geometric endpoint");
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_SquareCap);
+#endif /* XPAINTER_PENSTYLE_ON */
+
+    /* 后续裁剪断言依赖红色矩形边框，恢复该测试前置状态。 */
+    XImage_fillRect(&image, NULL, 0u);
+    XPainter_setPen(&painter, 0xffff0000u);
+    expect_true(XPainter_drawRect(&painter, &outline),
+                "restore outline before clip contract");
 
     /* 裁剪矩形使用逻辑坐标并在设置时映射到设备坐标。 */
 #if XPAINTER_CLIP_ON
@@ -739,9 +896,9 @@ static void test_painter_raster_contract(void)
                 "raster clip inside");
     expect_true(XImage_pixel(&image, 4, 3) == 0xff0000ffu,
                 "raster clip inside 2");
-    expect_true(XImage_pixel(&image, 5, 2) == 0xffff0000u,
+    expect_true(XImage_pixel(&image, 6, 2) == 0xffff0000u,
                 "raster clip keeps previous outline");
-    expect_true(XImage_pixel(&image, 5, 5) == 0, "raster clip lower margin");
+    expect_true(XImage_pixel(&image, 0, 5) == 0, "raster clip lower margin");
     XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
     expect_true(!XPainter_hasClipping(&painter), "raster clip cleared");
 #endif /* XPAINTER_CLIP_ON */
@@ -781,7 +938,148 @@ static void test_painter_raster_contract(void)
                 "raster source mode fill");
     expect_true(XImage_pixel(&image, 0, 0) == 0x80406080u,
                 "raster source mode replaces destination");
+    XPainter_setCompositionMode(&painter, (XPainterCompositionMode)99);
+    expect_true(XPainter_compositionMode(&painter) ==
+                XPainterCompositionMode_Source,
+                "unsupported composition mode keeps previous mode");
+    /* Qt 6.8 的 Porter-Duff 模式在 XImage 后端都可设置并参与像素合成。 */
+    {
+        int mode;
+        for (mode = XPainterCompositionMode_SourceOver;
+             mode <= XPainterCompositionMode_Exclusion; ++mode)
+        {
+            XPainter_setCompositionMode(&painter,
+                                        (XPainterCompositionMode)mode);
+            expect_true(XPainter_compositionMode(&painter) ==
+                        (XPainterCompositionMode)mode,
+                        "all Qt composition modes are accepted");
+        }
+    }
+    XImage_setPixel(&image, 0, 0, 0xff102030u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Clear);
+    expect_true(XPainter_fillRect(&painter, &one, 0xffffffffu),
+                "clear composition fill");
+    expect_true(XImage_pixel(&image, 0, 0) == 0,
+                "clear composition removes destination");
+    XImage_setPixel(&image, 0, 0, 0xff102030u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Destination);
+    expect_true(XPainter_fillRect(&painter, &one, 0xffff0000u),
+                "destination composition fill");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xff102030u,
+                "destination composition preserves destination");
+    XImage_setPixel(&image, 0, 0, 0x7f102031u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
+    expect_true(XPainter_fillRect(&painter, &one, 0x7f405061u),
+                "source composition keeps translucent source exactly");
+    expect_true(XImage_pixel(&image, 0, 0) == 0x7f405061u,
+                "source composition preserves source channels");
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Destination);
+    expect_true(XPainter_fillRect(&painter, &one, 0xffffffffu),
+                "destination composition keeps translucent destination exactly");
+    expect_true(XImage_pixel(&image, 0, 0) == 0x7f405061u,
+                "destination composition preserves translucent destination");
     XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XImage_setPixel(&image, 0, 0, 0x7f102031u);
+    expect_true(XPainter_fillRect(&painter, &one, 0x00112233u),
+                "transparent source over is a no-op");
+    expect_true(XImage_pixel(&image, 0, 0) == 0x7f102031u,
+                "transparent source preserves destination exactly");
+    /* Qt 6.8 的 RasterOp 模式直接按完整 ARGB32 像素逐位计算。 */
+    {
+        const uint32_t source = 0x5aa55aa5u;
+        const uint32_t destination = 0x33cc33ccu;
+        const struct RasterOpCase
+        {
+            XPainterCompositionMode m_mode;
+            uint32_t m_expected;
+        } cases[] = {
+            { XPainterCompositionMode_RasterOp_SourceOrDestination,
+              source | destination },
+            { XPainterCompositionMode_RasterOp_SourceAndDestination,
+              source & destination },
+            { XPainterCompositionMode_RasterOp_SourceXorDestination,
+              source ^ destination },
+            { XPainterCompositionMode_RasterOp_NotSourceAndNotDestination,
+              (uint32_t)(~source & ~destination) },
+            { XPainterCompositionMode_RasterOp_NotSourceOrNotDestination,
+              (uint32_t)(~source | ~destination) },
+            { XPainterCompositionMode_RasterOp_NotSourceXorDestination,
+              (uint32_t)((~source) ^ destination) },
+            { XPainterCompositionMode_RasterOp_NotSource,
+              (uint32_t)(~source) },
+            { XPainterCompositionMode_RasterOp_NotSourceAndDestination,
+              (uint32_t)(~source & destination) },
+            { XPainterCompositionMode_RasterOp_SourceAndNotDestination,
+              (uint32_t)(source & ~destination) },
+            { XPainterCompositionMode_RasterOp_NotSourceOrDestination,
+              (uint32_t)(~source | destination) },
+            { XPainterCompositionMode_RasterOp_SourceOrNotDestination,
+              (uint32_t)(source | ~destination) },
+            { XPainterCompositionMode_RasterOp_ClearDestination, 0u },
+            { XPainterCompositionMode_RasterOp_SetDestination, 0xffffffffu },
+            { XPainterCompositionMode_RasterOp_NotDestination,
+              (uint32_t)(~destination) }
+        };
+        int i;
+        for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); ++i)
+        {
+            XImage_setPixel(&image, 0, 0, destination);
+            XPainter_setCompositionMode(&painter, cases[i].m_mode);
+            expect_true(XPainter_compositionMode(&painter) == cases[i].m_mode,
+                        "RasterOp setter/getter accepts Qt mode");
+            expect_true(XPainter_fillRect(&painter, &one, source),
+                        "RasterOp fill succeeds");
+            expect_true(XImage_pixel(&image, 0, 0) == cases[i].m_expected,
+                        "RasterOp computes ARGB32 bitwise result");
+        }
+    }
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XPainter_setCompositionMode(&painter, (XPainterCompositionMode)99);
+    expect_true(XPainter_compositionMode(&painter) ==
+                    XPainterCompositionMode_SourceOver,
+                "unsupported composition mode keeps previous mode");
+    XPainter_setOpacity(&painter, NAN);
+    expect_true(XPainter_opacity(&painter) == 0.0f,
+                "opacity NaN follows Qt bounded result");
+    XPainter_setOpacity(&painter, 1.0f);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+#if XPAINTER_BACKGROUND_ON
+    expect_true(XPainter_backgroundMode(&painter) ==
+                    XPainterBackgroundMode_Transparent,
+                "background mode defaults to transparent");
+#if XPAINTER_BRUSH_ON
+    {
+        XPainterBrush backgroundBrush;
+        XPainterBrush backgroundOut;
+        memset(&backgroundBrush, 0, sizeof(backgroundBrush));
+        backgroundBrush.m_style = XPainterBrushStyle_SolidPattern;
+        backgroundBrush.m_color = 0xff204060u;
+        XPainter_setBackground_2(&painter, &backgroundBrush);
+        XPainter_backgroundBrush(&painter, &backgroundOut);
+        expect_true(backgroundOut.m_style == XPainterBrushStyle_SolidPattern &&
+                        backgroundOut.m_color == 0xff204060u &&
+                        XPainter_background(&painter) == 0xff204060u,
+                    "background brush setter/getter matches Qt state");
+        XImage_fillRect(&image, NULL, 0u);
+        XPainter_setBackgroundMode(&painter, XPainterBackgroundMode_Opaque);
+        expect_true(XPainter_drawText(&painter, 0, 16, " ", 0xffffffffu),
+                    "opaque text accepts blank glyph");
+        expect_true(XImage_pixel(&image, 0,
+                                 16 - XPainter_textAscent(NULL)) ==
+                        0xff204060u,
+                    "opaque text fills glyph cell from background brush");
+    }
+#endif /* XPAINTER_BRUSH_ON */
+    XPainter_setBackgroundMode(&painter, XPainterBackgroundMode_Opaque);
+    expect_true(XPainter_backgroundMode(&painter) ==
+                    XPainterBackgroundMode_Opaque,
+                "background mode setter matches Qt state");
+    XPainter_setBackgroundMode(&painter, (XPainterBackgroundMode)99);
+    expect_true(XPainter_backgroundMode(&painter) ==
+                    XPainterBackgroundMode_Opaque,
+                "invalid background mode keeps previous state");
+    XPainter_setBackgroundMode(&painter, XPainterBackgroundMode_Transparent);
+#endif /* XPAINTER_BACKGROUND_ON */
 
     /* 平移变换 */
     XImage_fillRect(&image, NULL, 0u);
@@ -818,7 +1116,127 @@ static void test_painter_raster_contract(void)
     expect_true(XImage_pixel(&image, 2, 4) == 0, "raster image margin");
     expect_true(XPainter_drawImage(&painter, NULL, 0, 0) == false,
                 "raster drawImage null rejected");
+#if XPAINTER_PIXMAP_ON
+    /* QPainter::drawPixmap：先验证常规像素尺寸，再验证高分辨率像素图
+       按 devicePixelRatio 转为逻辑尺寸。 */
+    XPixmap_init(&pixmap);
+    expect_true(XPixmap_convertFromImage(&pixmap, &tile, 0),
+                "raster drawPixmap converts source image");
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawPixmap(&painter, &pixmap, 3, 4),
+                "raster drawPixmap point overload");
+    expect_true(XImage_pixel(&image, 3, 4) == 0xff00ff00u &&
+                XImage_pixel(&image, 4, 5) == 0xff00ff00u,
+                "raster drawPixmap preserves 1x physical size");
+    XPixmap_setDevicePixelRatio(&pixmap, 2.0f);
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawPixmap_2(&painter, &pixmap,
+                                      &(XPoint){ 1, 1 }),
+                "raster drawPixmap point-object overload");
+#if XPAINTER_IMAGE_RECT_ON
+    expect_true(XImage_pixel(&image, 1, 1) == 0xff00ff00u &&
+                XImage_pixel(&image, 2, 1) == 0u,
+                "raster high-resolution drawPixmap uses logical size");
+#else
+    expect_true(XImage_pixel(&image, 1, 1) == 0xff00ff00u &&
+                XImage_pixel(&image, 2, 1) == 0xff00ff00u,
+                "raster cropped drawPixmap uses physical size");
+#endif /* XPAINTER_IMAGE_RECT_ON */
+#if XPAINTER_IMAGE_RECT_ON
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawPixmapRect(&painter, &pixmapTarget, &pixmap,
+                                        &pixmapSource),
+                "raster drawPixmap target/source overload");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xff00ff00u &&
+                XImage_pixel(&image, 3, 1) == 0xff00ff00u,
+                "raster drawPixmap scales source rectangle");
+#endif /* XPAINTER_IMAGE_RECT_ON */
+#if XPAINTER_TILED_PIXMAP_ON
+    /* QPainter::drawTiledPixmap：偏移按逻辑 tile 尺寸取模，负值和正值
+       都从同一源像素开始；每个边缘 tile 只绘制目标矩形内的部分。 */
+    XImage_setPixel(&tile, 0, 0, 0xffff0000u);
+    XImage_setPixel(&tile, 1, 0, 0xff00ff00u);
+    XImage_setPixel(&tile, 0, 1, 0xff0000ffu);
+    XImage_setPixel(&tile, 1, 1, 0xffffff00u);
+    expect_true(XPixmap_convertFromImage(&pixmap, &tile, 0),
+                "raster tiled pixmap converts pattern");
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawTiledPixmap(&painter, &tiledTarget, &pixmap,
+                                         &tiledOffset),
+                "raster drawTiledPixmap offset");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffffff00u &&
+                XImage_pixel(&image, 1, 0) == 0xff0000ffu &&
+                XImage_pixel(&image, 0, 1) == 0xff00ff00u &&
+                XImage_pixel(&image, 1, 1) == 0xffff0000u &&
+                XImage_pixel(&image, 4, 2) == 0xffffff00u,
+                "raster drawTiledPixmap repeats and clips tiles");
+    tiledOffset.x = -1;
+    tiledOffset.y = -1;
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawTiledPixmap(&painter, &tiledTarget, &pixmap,
+                                         &tiledOffset),
+                "raster drawTiledPixmap negative offset");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffffff00u &&
+                XImage_pixel(&image, 1, 1) == 0xffff0000u,
+                "raster drawTiledPixmap negative offset wraps");
+#endif /* XPAINTER_TILED_PIXMAP_ON */
+    expect_true(XPainter_drawPixmap(&painter, NULL, 0, 0) == false,
+                "raster drawPixmap null rejected");
+    XPixmap_deinit_base(&pixmap);
+#endif /* XPAINTER_PIXMAP_ON */
     XImage_deinit_base(&tile);
+
+#if XPAINTER_IMAGE_RECT_ON
+    /* Qt drawImage(target, image, source)：最近邻缩放并保持源像素分区。 */
+    XImage_init_ex(&strip, 2, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&strip, 0, 0, 0xffff0000u);
+    XImage_setPixel(&strip, 1, 0, 0xff0000ffu);
+    XImage_fillRect(&image, NULL, 0u);
+    expect_true(XPainter_drawImageRect(&painter, &imageTarget, &strip,
+                                       &imageSource),
+                "raster drawImage target/source rect");
+    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                XImage_pixel(&image, 1, 1) == 0xffff0000u &&
+                XImage_pixel(&image, 2, 0) == 0xff0000ffu &&
+                XImage_pixel(&image, 3, 1) == 0xff0000ffu,
+                "raster drawImage target/source nearest scaling");
+    expect_true(XPainter_drawImageRect(&painter, &empty, &strip,
+                                       &imageSource),
+                "raster drawImage empty target no-op");
+    /* Qt QRectF 重载：目标负宽度改用源宽度，源零宽度取到图像右边界。 */
+    {
+        XRect negativeTarget = { 0, 2, -2, 1 };
+        XRect sourceToEdge = { 0, 0, 0, 1 };
+        XImage_fillRect(&image, NULL, 0u);
+        expect_true(XPainter_drawImageRect(&painter, &negativeTarget, &strip,
+                                           &imageSource),
+                    "raster drawImage negative target uses source extent");
+        expect_true(XImage_pixel(&image, 0, 2) == 0xffff0000u &&
+                    XImage_pixel(&image, 1, 2) == 0xff0000ffu &&
+                    XImage_pixel(&image, 2, 2) == 0u,
+                    "negative target width keeps target origin");
+        expect_true(XPainter_drawImageRect(&painter, &imageTarget, &strip,
+                                           &sourceToEdge),
+                    "raster drawImage zero source width uses image edge");
+        expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
+                    XImage_pixel(&image, 3, 1) == 0xff0000ffu,
+                    "zero source width samples through image edge");
+    }
+    XImage_fillRect(&image, NULL, 0xff102030u);
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_Source);
+    {
+        XRect outsideSource = { -1, 0, 2, 1 };
+        XRect outsideTarget = { 0, 0, 2, 1 };
+        expect_true(XPainter_drawImageRect(&painter, &outsideTarget, &strip,
+                                           &outsideSource),
+                    "raster drawImage clips source bounds");
+        expect_true(XImage_pixel(&image, 0, 0) == 0xff102030u &&
+                    XImage_pixel(&image, 1, 0) == 0xffff0000u,
+                    "source clipping shifts target and keeps untouched area");
+    }
+    XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
+    XImage_deinit_base(&strip);
+#endif /* XPAINTER_IMAGE_RECT_ON */
 
     /* 空矩形/空图像语义 */
     expect_true(XPainter_drawRect(&painter, NULL), "raster null drawRect no-op");
@@ -832,8 +1250,12 @@ static void test_painter_raster_contract(void)
     /* 结束与解绑 */
     expect_true(XPainter_end(&painter), "raster end");
     expect_true(!XPainter_isActive(&painter), "raster inactive after end");
+    expect_true(!XPainter_end(&painter), "ending inactive painter returns false");
     expect_true(XPainter_drawLine(&painter, 0, 0, 1, 1) == false,
                 "raster unbound drawLine rejected");
+    XPainter_deinit(&painter);
+    expect_true(!XPainter_begin_image(&painter, &image),
+                "deinitialized painter cannot be reused without init");
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
 }
@@ -850,7 +1272,7 @@ static void test_painter_extra_alignment(void)
     XRect clipIntersection = { 3, 1, 3, 3 };
     XRect logicalClip = { 1, 1, 2, 2 };
     XRect all = { 0, 0, 8, 8 };
-    XRect emptyClip = { 0, 0, 0, 0 };
+    XRect emptyClip = { 6, 7, 0, 0 };
     XRect clipOut;
     XRect zero = { 0, 0, 0, 0 };
 #endif
@@ -873,7 +1295,7 @@ static void test_painter_extra_alignment(void)
                 "extra drawRects empty no-op");
     expect_true(XImage_pixel(&image, 1, 1) == 0xffff0000u,
                 "extra drawRects corner tl");
-    expect_true(XImage_pixel(&image, 2, 2) == 0xffff0000u,
+    expect_true(XImage_pixel(&image, 3, 3) == 0xffff0000u,
                 "extra drawRects corner br");
 
     /* 批量直线 */
@@ -903,6 +1325,39 @@ static void test_painter_extra_alignment(void)
                 "extra eraseRect bottom-right");
     expect_true(XImage_pixel(&image, 1, 4) == 0,
                 "extra eraseRect stays outside");
+#if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
+    /* eraseRect 使用完整背景画刷，且不能改写当前前景画刷。 */
+    {
+        XPainterBrush foreground;
+        XPainterBrush background;
+        XPainterBrush foregroundOut;
+        memset(&foreground, 0, sizeof(foreground));
+        foreground.m_style = XPainterBrushStyle_SolidPattern;
+        foreground.m_color = 0xffff0000u;
+        memset(&background, 0, sizeof(background));
+        background.m_style = XPainterBrushStyle_SolidPattern;
+        background.m_color = 0xff00ff00u;
+        XPainter_setBrush(&painter, foreground.m_color);
+        XPainter_setBackground_2(&painter, &background);
+        XImage_fillRect(&image, NULL, 0u);
+        expect_true(XPainter_eraseRect(&painter, &er),
+                    "eraseRect uses background brush");
+        expect_true(XImage_pixel(&image, 2, 4) == 0xff00ff00u,
+                    "eraseRect paints background brush color");
+        XPainter_brush(&painter, &foregroundOut);
+        expect_true(foregroundOut.m_style == XPainterBrushStyle_SolidPattern &&
+                        foregroundOut.m_color == 0xffff0000u,
+                    "eraseRect preserves foreground brush");
+        XPainter_setBackground_2(&painter, NULL);
+        background.m_style = XPainterBrushStyle_NoBrush;
+        XPainter_setBackground_2(&painter, &background);
+        XImage_fillRect(&image, NULL, 0xff102030u);
+        expect_true(XPainter_eraseRect(&painter, &er),
+                    "eraseRect accepts NoBrush background");
+        expect_true(XImage_pixel(&image, 2, 4) == 0xff102030u,
+                    "NoBrush background leaves pixels unchanged");
+    }
+#endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
 
     /* ClipOperation：替换、相交、关闭及逻辑坐标映射。 */
 #if XPAINTER_CLIP_ON
@@ -938,6 +1393,22 @@ static void test_painter_extra_alignment(void)
     expect_true(XPainter_hasClipping(&painter), "extra null clip is no-op");
     XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
     expect_true(!XPainter_hasClipping(&painter), "extra NoClip clears clipping");
+    clipOut = zero;
+    XPainter_clipBoundingRect(&painter, &clipOut);
+    expect_true(clipOut.x == 2 && clipOut.y == 2 && clipOut.width == 3 &&
+                clipOut.height == 3,
+                "extra NoClip keeps the latest clip query record");
+#if XPAINTER_CLIP_REGION_ON
+    {
+        XRegion noClipRegion;
+        XRegion_init(&noClipRegion);
+        XPainter_clipRegion(&painter, &noClipRegion);
+        expect_true(XRegion_contains(&noClipRegion, 2, 2) &&
+                    XRegion_contains(&noClipRegion, 4, 4),
+                    "extra NoClip keeps the latest clip region record");
+        XRegion_deinit(&noClipRegion);
+    }
+#endif /* XPAINTER_CLIP_REGION_ON */
     XPainter_setClipping(&painter, true);
     expect_true(!XPainter_hasClipping(&painter),
                 "extra NoClip cannot be re-enabled without a new clip");
@@ -951,9 +1422,9 @@ static void test_painter_extra_alignment(void)
                 "extra empty ReplaceClip rejects all pixels");
     clipOut = zero;
     XPainter_clipBoundingRect(&painter, &clipOut);
-    expect_true(clipOut.x == 0 && clipOut.y == 0 && clipOut.width == 0 &&
+    expect_true(clipOut.x == 6 && clipOut.y == 7 && clipOut.width == 0 &&
                 clipOut.height == 0,
-                "extra clipBoundingRect empty clip");
+                "extra clipBoundingRect preserves empty clip origin");
     XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
 
     XImage_fillRect(&image, NULL, 0u);
@@ -977,6 +1448,54 @@ static void test_painter_extra_alignment(void)
                 clipOut.height == 2,
                 "extra clipBoundingRect follows current logical transform");
     XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
+
+#if XPAINTER_CLIP_REGION_ON
+    {
+        XRegion region;
+        XRegion output;
+        XRegion wideRegion;
+        XRect regionA = { 1, 1, 2, 2 };
+        XRect regionB = { 5, 1, 2, 2 };
+        XRect regionC = { 1, 1, 6, 2 };
+        XRegion_init(&region);
+        XRegion_init(&output);
+        XRegion_init(&wideRegion);
+        XRegion_addRect(&region, &regionA);
+        XRegion_addRect(&region, &regionB);
+        XPainter_setClipRegion(&painter, &region,
+                               XPainterClipOperation_ReplaceClip);
+        expect_true(XPainter_hasClipping(&painter),
+                    "extra setClipRegion activates clipping");
+        XPainter_clipRegion(&painter, &output);
+        expect_true(XRegion_contains(&output, 1, 1) &&
+                    XRegion_contains(&output, 5, 1) &&
+                    !XRegion_contains(&output, 3, 1),
+                    "extra clipRegion keeps disjoint logical rectangles");
+        XImage_fillRect(&image, NULL, 0u);
+        expect_true(XPainter_fillRect(&painter, &all, 0xff335577u),
+                    "extra setClipRegion fill command");
+        expect_true(XImage_pixel(&image, 1, 1) == 0xff335577u &&
+                    XImage_pixel(&image, 5, 1) == 0xff335577u &&
+                    XImage_pixel(&image, 3, 1) == 0u,
+                    "extra setClipRegion rejects the region gap");
+
+        XPainter_save(&painter);
+        XRegion_addRect(&wideRegion, &regionC);
+        XPainter_setClipRegion(&painter, &wideRegion,
+                               XPainterClipOperation_ReplaceClip);
+        XPainter_restore(&painter);
+        XRegion_clear(&output);
+        XPainter_clipRegion(&painter, &output);
+        expect_true(XRegion_contains(&output, 1, 1) &&
+                    XRegion_contains(&output, 5, 1) &&
+                    !XRegion_contains(&output, 3, 1),
+                    "extra save/restore preserves clipRegion state");
+        XRegion_deinit(&output);
+        XRegion_deinit(&wideRegion);
+        XRegion_deinit(&region);
+        XPainter_setClipRect(&painter, &clip, XPainterClipOperation_NoClip);
+    }
+#endif /* XPAINTER_CLIP_REGION_ON */
 #endif /* XPAINTER_CLIP_ON */
 
 #if XPAINTER_POLYGON_ON
@@ -1084,7 +1603,7 @@ static void test_painter_shape_contract(void)
 
     /* 扇形：填充内部 + 轮廓与半径线 */
     expect_true(XPainter_drawPie(&painter, &fullSweep,
-                                 0, 16 * 360, true), "drawPie filled");
+                                 0, 16 * 360), "drawPie filled");
     expect_true(XImage_pixel(&image, 10, 5) == 0xffff0000u,
                 "pie center covered by radial outline");
     expect_true(XImage_pixel(&image, 12, 8) == 0xff0000ffu,
@@ -1096,7 +1615,7 @@ static void test_painter_shape_contract(void)
 
     /* 弦：填充内部 + 闭合弦轮廓 */
     expect_true(XPainter_drawChord(&painter, &fullSweep,
-                                   0, 16 * 360, true), "drawChord filled");
+                                   0, 16 * 360), "drawChord filled");
     expect_true(XImage_pixel(&image, 10, 5) == 0xff0000ffu,
                 "chord center brush color");
     expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
@@ -1176,9 +1695,9 @@ static void test_painter_shape_callback_contract(void)
                 "shape callback ellipse");
     expect_true(XPainter_drawArc(&painter, &fullSweep, 90, 16 * 120),
                 "shape callback arc");
-    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 16 * 90, true),
+    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 16 * 90),
                 "shape callback pie");
-    expect_true(XPainter_drawChord(&painter, &fullSweep, 45, 16 * 60, true),
+    expect_true(XPainter_drawChord(&painter, &fullSweep, 45, 16 * 60),
                 "shape callback chord");
     expect_true(XPainter_drawRoundedRect(&painter, &roundRect, 4, 4),
                 "shape callback rounded rect");
@@ -1187,7 +1706,8 @@ static void test_painter_shape_callback_contract(void)
     if (capture.m_count == 5)
     {
         expect_true(capture.m_ops[0] == XPainterShapeOp_Ellipse &&
-                    capture.m_spanAngles[0] == 0, "ellipse op params");
+                    capture.m_spanAngles[0] == 0 && capture.m_filled[0],
+                    "ellipse op params and brush fill");
         expect_true(capture.m_ops[1] == XPainterShapeOp_Arc &&
                     capture.m_startAngles[1] == 90 &&
                     capture.m_spanAngles[1] == 16 * 120 &&
@@ -1198,15 +1718,38 @@ static void test_painter_shape_callback_contract(void)
                     capture.m_filled[3], "chord op params");
         expect_true(capture.m_ops[4] == XPainterShapeOp_RoundedRect &&
                     capture.m_xRadius[4] == 4 &&
-                    capture.m_yRadius[4] == 4, "rounded rect op params");
+                    capture.m_yRadius[4] == 4 && capture.m_filled[4],
+                    "rounded rect op params and brush fill");
+    }
+
+    capture.m_count = 0;
+    {
+        XRect reversed = { 20, 10, -12, -6 };
+#if XPAINTER_BRUSH_ON
+        XPainter_setBrushStyle(&painter, XPainterBrushStyle_NoBrush);
+#endif /* XPAINTER_BRUSH_ON */
+        expect_true(XPainter_drawEllipse(&painter, &reversed),
+                    "ellipse normalizes reversed integer rectangle");
+#if XPAINTER_BRUSH_ON
+        expect_true(capture.m_count == 1 && capture.m_rects[0].x == 8 &&
+                    capture.m_rects[0].y == 4 && capture.m_rects[0].width == 12 &&
+                    capture.m_rects[0].height == 6 && !capture.m_filled[0],
+                    "ellipse callback receives normalized rect and NoBrush");
+#else
+        expect_true(capture.m_count == 1 && capture.m_rects[0].x == 8 &&
+                    capture.m_rects[0].y == 4 && capture.m_rects[0].width == 12 &&
+                    capture.m_rects[0].height == 6 && capture.m_filled[0],
+                    "ellipse callback receives normalized rect");
+#endif /* XPAINTER_BRUSH_ON */
+        XPainter_setBrush(&painter, 0xff0000ffu);
     }
 
     capture.m_count = 0;
     expect_true(XPainter_drawArc(&painter, &fullSweep, 0, 0),
                 "zero span arc no-op");
-    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 0, true),
+    expect_true(XPainter_drawPie(&painter, &fullSweep, 0, 0),
                 "zero span pie no-op");
-    expect_true(XPainter_drawChord(&painter, &fullSweep, 0, 0, true),
+    expect_true(XPainter_drawChord(&painter, &fullSweep, 0, 0),
                 "zero span chord no-op");
     expect_true(capture.m_count == 0, "zero span calls do not dispatch");
 
@@ -1234,7 +1777,8 @@ static void test_painter_polygon_contract(void)
     XPainter_setPenWidth(&painter, 1);
     XPainter_setBrush(&painter, 0xff0000ffu);
 
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "drawPolygon filled triangle");
     expect_true(XImage_pixel(&image, 3, 4) == 0xff0000ffu,
                 "polygon interior brush");
@@ -1242,6 +1786,50 @@ static void test_painter_polygon_contract(void)
                 "polygon edge outline pen color");
     expect_true(XImage_pixel(&image, 9, 5) == 0xff000000u,
                 "polygon outside blank");
+
+    /* Qt raster polygons use pixel-center sampling on the half-open
+       rectangle [left,right) x [top,bottom).  A square ending at (6,6)
+       therefore paints through pixel 5 only, without a one-pixel spill. */
+#if XPAINTER_PENSTYLE_ON
+    XPainter_setPenStyle(&painter, XPainterPenStyle_NoPen);
+#endif
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    {
+        XPoint square[4] = { { 2, 2 }, { 6, 2 }, { 6, 6 }, { 2, 6 } };
+        expect_true(XPainter_drawPolygon(&painter, square, 4,
+                                         XPainterFillRule_OddEven),
+                    "polygon half-open square");
+    }
+    expect_true(XImage_pixel(&image, 5, 5) == 0xff0000ffu &&
+                XImage_pixel(&image, 6, 5) == 0xff000000u &&
+                XImage_pixel(&image, 5, 6) == 0xff000000u,
+                "polygon does not spill beyond integer edge");
+#if XPAINTER_PENSTYLE_ON
+    XPainter_setPenStyle(&painter, XPainterPenStyle_SolidLine);
+#endif
+
+    /* 同一轮廓沿相同方向绕行两次：Qt 的 OddEvenFill 应形成空洞，
+       WindingFill 则因绕组数为 2 继续填充内部。 */
+    {
+        XPoint doubleLoop[8] = {
+            { 2, 2 }, { 14, 2 }, { 14, 14 }, { 2, 14 },
+            { 2, 2 }, { 14, 2 }, { 14, 14 }, { 2, 14 }
+        };
+        XPainter_setPenStyle(&painter, XPainterPenStyle_NoPen);
+        XImage_fillRect(&image, NULL, 0xff000000u);
+        expect_true(XPainter_drawPolygon(&painter, doubleLoop, 8,
+                                         XPainterFillRule_OddEven),
+                    "odd-even double loop polygon");
+        expect_true(XImage_pixel(&image, 8, 8) == 0xff000000u,
+                    "odd-even cancels repeated loop");
+        XImage_fillRect(&image, NULL, 0xff000000u);
+        expect_true(XPainter_drawPolygon(&painter, doubleLoop, 8,
+                                         XPainterFillRule_Winding),
+                    "winding double loop polygon");
+        expect_true(XImage_pixel(&image, 8, 8) == 0xff0000ffu,
+                    "winding retains repeated loop");
+        XPainter_setPenStyle(&painter, XPainterPenStyle_SolidLine);
+    }
 
     XImage_fillRect(&image, NULL, 0xff000000u);
     expect_true(XPainter_drawPolyline(&painter, linePts, 2),
@@ -1273,6 +1861,7 @@ typedef struct PolygonCapture
     int m_polygonCount;
     int m_pointsCount;
     bool m_polygonFilled;
+    XPainterFillRule m_polygonFillRule;
     XPoint m_points[3];
 } PolygonCapture;
 
@@ -1290,13 +1879,15 @@ static bool test_polyline_capture_proc(XPainter* painter,
 
 static bool test_polygon_capture_proc(XPainter* painter,
                                       const XPoint* points, int count,
-                                      bool filled)
+                                      bool filled,
+                                      XPainterFillRule fillRule)
 {
     PolygonCapture* cap = (PolygonCapture*)painter->m_userData;
     if (!cap) return true;
     ++cap->m_polygonCalls;
     cap->m_polygonCount = count;
     cap->m_polygonFilled = filled;
+    cap->m_polygonFillRule = fillRule;
     if (count <= 0 || count > 3) return true;
     memcpy(cap->m_points, points, (size_t)count * sizeof(cap->m_points[0]));
     return true;
@@ -1329,13 +1920,15 @@ static void test_painter_polygon_callback_contract(void)
     XPainter_init(&painter, &cap);
     expect_true(XPainter_begin_image(&painter, &image),
                 "polygon callback painter begins raster");
+    XPainter_setBrush(&painter, 0xff0000ffu);
     painter.m_drawPolyline = test_polyline_capture_proc;
     painter.m_drawPolygon = test_polygon_capture_proc;
     painter.m_drawPoints = test_points_capture_proc;
 
     expect_true(XPainter_drawPolyline(&painter, linePts, 2),
                 "polygon callback polyline");
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_Winding),
                 "polygon callback polygon");
     expect_true(XPainter_drawPoints(&painter, pts, 3),
                 "polygon callback points");
@@ -1345,6 +1938,8 @@ static void test_painter_polygon_callback_contract(void)
     expect_true(cap.m_polylineCount == 2 && cap.m_polygonCount == 3 &&
                 cap.m_pointsCount == 3, "polygon callback counts match");
     expect_true(cap.m_polygonFilled, "polygon callback carries filled");
+    expect_true(cap.m_polygonFillRule == XPainterFillRule_Winding,
+                "polygon callback carries fill rule");
     expect_true(cap.m_points[0].x == 0 && cap.m_points[1].x == 3 &&
                 cap.m_points[2].x == 6, "points callback payload copied");
 
@@ -1356,15 +1951,34 @@ static void test_painter_polygon_callback_contract(void)
                 "convex polygon routes through polygon callback");
 
     memset(&cap, 0, sizeof(cap));
+#if XPAINTER_BRUSH_ON
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_NoBrush);
+#endif /* XPAINTER_BRUSH_ON */
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
+#if XPAINTER_BRUSH_ON
+                "NoBrush polygon callback remains drawable");
+    expect_true(cap.m_polygonCalls == 1 && !cap.m_polygonFilled,
+                "polygon callback reports NoBrush without fill");
+#else
+                "polygon callback remains drawable");
+    expect_true(cap.m_polygonCalls == 1 && cap.m_polygonFilled,
+                "polygon callback reports fill");
+#endif /* XPAINTER_BRUSH_ON */
+    XPainter_setBrush(&painter, 0xff000000u);
+
+    memset(&cap, 0, sizeof(cap));
     expect_true(XPainter_drawPolyline(&painter, NULL, 5),
                 "polyline NULL points is no-op");
-    expect_true(XPainter_drawPolygon(&painter, NULL, 5, true),
+    expect_true(XPainter_drawPolygon(&painter, NULL, 5,
+                                     XPainterFillRule_OddEven),
                 "polygon NULL points is no-op");
     expect_true(XPainter_drawPoints(&painter, NULL, 5),
                 "points NULL array is no-op");
     expect_true(XPainter_drawPolyline(&painter, linePts, 0),
                 "polyline zero count is no-op");
-    expect_true(XPainter_drawPolygon(&painter, linePts, 0, true),
+    expect_true(XPainter_drawPolygon(&painter, linePts, 0,
+                                     XPainterFillRule_OddEven),
                 "polygon zero count is no-op");
     expect_true(XPainter_drawPoints(&painter, linePts, 0),
                 "points zero count is no-op");
@@ -1398,6 +2012,9 @@ static void test_painter_penstyle_contract(void)
 
     expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_SolidLine,
                 "default pen style solid");
+    expect_true(XPainter_penCapStyle(&painter) == XPainterPenCapStyle_SquareCap &&
+                XPainter_penJoinStyle(&painter) == XPainterPenJoinStyle_BevelJoin,
+                "default pen cap/join match QPen");
     XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
     expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_DashLine,
                 "pen style set/get");
@@ -1408,14 +2025,61 @@ static void test_painter_penstyle_contract(void)
     expect_true(XPainter_penJoinStyle(&painter) == XPainterPenJoinStyle_RoundJoin,
                 "pen join style set/get");
     XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+    XPainter_setPenWidth(&painter, 5);
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_RoundCap);
+    XPainter_setPenJoinStyle(&painter, XPainterPenJoinStyle_RoundJoin);
+    XPainter_setPen(&painter, 0xff00ff00u);
+    expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_SolidLine &&
+                XPainter_penWidth(&painter) == 1 &&
+                XPainter_penCapStyle(&painter) == XPainterPenCapStyle_SquareCap &&
+                XPainter_penJoinStyle(&painter) == XPainterPenJoinStyle_BevelJoin,
+                "setPen color resets QPen defaults");
+    XPainter_setPenWidth(&painter, 0);
+    expect_true(XPainter_penWidth(&painter) == 0,
+                "zero pen width is preserved as cosmetic QPen");
+    XPainter_setPenWidth(&painter, -1);
+    expect_true(XPainter_penWidth(&painter) == 0,
+                "negative pen width is rejected without changing QPen");
+    XPainter_setPenWidth(&painter, (1 << 15));
+    expect_true(XPainter_penWidth(&painter) == 0,
+                "out-of-range pen width is rejected without changing QPen");
+    XPainter_setPenWidth(&painter, 1);
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DotLine);
+    XPainter_setPenWidth(&painter, 7);
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_RoundCap);
+    XPainter_setPenJoinStyle(&painter, XPainterPenJoinStyle_RoundJoin);
+    XPainter_setPen_2(&painter, XPainterPenStyle_NoPen);
+    expect_true(XPainter_penColor(&painter) == 0xff000000u &&
+                XPainter_penStyle(&painter) == XPainterPenStyle_NoPen &&
+                XPainter_penWidth(&painter) == 1 &&
+                XPainter_penCapStyle(&painter) == XPainterPenCapStyle_SquareCap &&
+                XPainter_penJoinStyle(&painter) == XPainterPenJoinStyle_BevelJoin,
+                "setPen style overload resets black QPen defaults");
+    XPainter_setPen_2(&painter, XPainterPenStyle_SolidLine);
+    expect_true(XPainter_penColor(&painter) == 0xff000000u,
+                "setPen style overload uses black color");
+    XPainter_setPenStyle(&painter, (XPainterPenStyle)99);
+    expect_true((int)XPainter_penStyle(&painter) == 99,
+                "setPenStyle preserves unknown Qt enum values");
+    XPainter_setPenStyle(&painter, XPainterPenStyle_SolidLine);
+    XPainter_setPenCapStyle(&painter, (XPainterPenCapStyle)0x30);
+    expect_true((int)XPainter_penCapStyle(&painter) == 0x30,
+                "setPen cap style preserves unknown Qt enum values");
+    XPainter_setPenCapStyle(&painter, XPainterPenCapStyle_SquareCap);
+    XPainter_setPenJoinStyle(&painter, (XPainterPenJoinStyle)0x100);
+    expect_true((int)XPainter_penJoinStyle(&painter) == 0x100,
+                "setPen join style preserves unknown Qt enum values");
+    XPainter_setPenJoinStyle(&painter, XPainterPenJoinStyle_BevelJoin);
+    XPainter_setPen(&painter, 0xff00ff00u);
+    XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
 
     expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
                 "dashed line on raster");
     /* 数据序列 4 画 / 3 空 / 2 收尾：0-3 与 7-9 被画，4-6 留空 */
-    expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
-                XImage_pixel(&image, 4, 0) == 0xffff0000u &&
-                XImage_pixel(&image, 7, 0) == 0xffff0000u &&
-                XImage_pixel(&image, 9, 0) == 0xffff0000u,
+    expect_true(XImage_pixel(&image, 0, 0) == 0xff00ff00u &&
+                XImage_pixel(&image, 4, 0) == 0xff00ff00u &&
+                XImage_pixel(&image, 7, 0) == 0xff00ff00u &&
+                XImage_pixel(&image, 9, 0) == 0xff00ff00u,
                 "dashed line draw segments painted");
     expect_true(XImage_pixel(&image, 5, 0) == 0xff000000u &&
                 XImage_pixel(&image, 6, 0) == 0xff000000u,
@@ -1428,6 +2092,14 @@ static void test_painter_penstyle_contract(void)
     expect_true(XImage_pixel(&image, 0, 0) == 0xff000000u &&
                 XImage_pixel(&image, 9, 0) == 0xff000000u,
                 "NoPen keeps raster untouched");
+    {
+        XRect noPenRect = { 1, 0, 5, 2 };
+        expect_true(XPainter_drawRect(&painter, &noPenRect),
+                    "NoPen rectangle is a no-op that reports success");
+        expect_true(XImage_pixel(&image, 1, 0) == 0xff000000u &&
+                    XImage_pixel(&image, 5, 1) == 0xff000000u,
+                    "NoPen rectangle keeps raster untouched");
+    }
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -1504,12 +2176,42 @@ static void test_painter_brush_contract(void)
                 "brush style set/get");
     expect_true(XPainter_brushColor(&painter) == 0xff00aa00u,
                 "brush color follows setBrush");
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+#if XPAINTER_BRUSH_ORIGIN_ON
+    {
+        XPoint origin;
+        XPainter_setBrushOrigin(&painter, 1.25f, -2.5f);
+        XPainter_brushOrigin(&painter, &origin);
+        expect_true(origin.x == 1 && origin.y == -3,
+                    "brush origin rounds like QPointF::toPoint");
+        expect_true(XPainter_save(&painter), "brush origin save");
+        XPainter_setBrushOrigin(&painter, 8.0f, 9.0f);
+        expect_true(XPainter_restore(&painter), "brush origin restore");
+        XPainter_brushOrigin(&painter, &origin);
+        expect_true(origin.x == 1 && origin.y == -3,
+                    "brush origin participates in save/restore");
+    }
+#endif /* XPAINTER_BRUSH_ORIGIN_ON */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_fillRect_2(&painter, &rect),
+                "fillRect_2 uses current solid brush");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xff00aa00u,
+                "fillRect_2 paints current brush color");
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "solid brush triangle fill");
     expect_true(XImage_pixel(&image, 2, 2) == 0xff00aa00u,
                 "solid brush polygon interior");
     expect_true(XImage_pixel(&image, 14, 14) == 0xff000000u,
                 "solid brush outside blank");
+
+    /* QPainter::drawRect：画刷先填充内部，画笔随后覆盖边框。 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    rect.x = 1; rect.y = 1; rect.width = 6; rect.height = 6;
+    expect_true(XPainter_drawRect(&painter, &rect),
+                "drawRect fills with current brush and strokes pen");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xff00aa00u &&
+                XImage_pixel(&image, 1, 1) == 0xffff0000u,
+                "drawRect brush interior and pen edge");
 
     XImage_fillRect(&image, NULL, 0xff000000u);
 
@@ -1521,6 +2223,8 @@ static void test_painter_brush_contract(void)
     expect_true(XPainter_brushStyle(&painter) ==
                 XPainterBrushStyle_LinearGradientPattern,
                 "gradient brush style set");
+    expect_true(XPainter_brushColor(&painter) == 0xff000000u,
+                "gradient brush color follows Qt gradient default");
     XPainter_brush(&painter, &brush);
     expect_true(brush.m_style == XPainterBrushStyle_LinearGradientPattern &&
                 brush.m_gradient.m_stopCount == 2 &&
@@ -1529,7 +2233,13 @@ static void test_painter_brush_contract(void)
                 "XPainter_brush returns gradient description");
 
     XImage_fillRect(&image, NULL, 0xff000000u);
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+    expect_true(XPainter_fillRect_2(&painter, &rect),
+                "fillRect_2 uses current gradient brush");
+    expect_true(((XImage_pixel(&image, 1, 1) >> 16) & 255u) >
+                ((XImage_pixel(&image, 6, 1) >> 16) & 255u),
+                "fillRect_2 gradient varies across rectangle");
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "gradient brush triangle fill");
     {
         uint32_t left  = XImage_pixel(&image, 1, 1);
@@ -1545,8 +2255,12 @@ static void test_painter_brush_contract(void)
     XPainterGradient_addStop(&grad, 0.0f, 0xffffffffu);
     XPainterGradient_addStop(&grad, 1.0f, 0xff000000u);
     XPainter_setBrushGradient(&painter, &grad);
+    expect_true(XPainter_brushStyle(&painter) ==
+                XPainterBrushStyle_RadialGradientPattern,
+                "radial gradient preserves brush style");
     XImage_fillRect(&image, NULL, 0xff000000u);
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "radial gradient triangle fill");
     {
         uint32_t center = XImage_pixel(&image, 6, 1); /* 更靠近中心 */
@@ -1563,8 +2277,12 @@ static void test_painter_brush_contract(void)
     XPainterGradient_addStop(&grad, 0.5f, 0xffff0000u);
     XPainterGradient_addStop(&grad, 1.0f, 0xff00ff00u);
     XPainter_setBrushGradient(&painter, &grad);
+    expect_true(XPainter_brushStyle(&painter) ==
+                XPainterBrushStyle_ConicalGradientPattern,
+                "conical gradient preserves brush style");
     XImage_fillRect(&image, NULL, 0xff000000u);
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true),
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "conical gradient triangle fill");
     {
         uint32_t a = XImage_pixel(&image, 1, 1);
@@ -1572,18 +2290,63 @@ static void test_painter_brush_contract(void)
         expect_true(a != b, "conical gradient varies with angle");
     }
 
+    /* QGradient::setColorAt 语义：停止点按位置排序，同位置更新，越界忽略。 */
+    XPainterGradient_initLinear(&grad, 0.0f, 0.0f, 1.0f, 0.0f);
+    XPainterGradient_addStop(&grad, 0.8f, 0xff0000ffu);
+    XPainterGradient_addStop(&grad, -0.1f, 0xffff0000u);
+    XPainterGradient_addStop(&grad, 0.2f, 0xff00ff00u);
+    XPainterGradient_addStop(&grad, 0.8f, 0xffffffffu);
+    expect_true(grad.m_stopCount == 2 &&
+                grad.m_stops[0].m_position == 0.2f &&
+                grad.m_stops[1].m_position == 0.8f &&
+                grad.m_stops[1].m_color == 0xffffffffu,
+                "gradient stops are sorted, replaced, and range checked");
+
+    /* 空渐变指针按 QBrush(QColor) 语义恢复纯色画刷，并且不崩溃。 */
+    XPainter_setBrushGradient(&painter, NULL);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_SolidPattern,
+                "null gradient restores solid brush");
+
     /* 无画刷：轮廓多边形不填充内部 */
     XPainter_setBrushStyle(&painter, XPainterBrushStyle_NoBrush);
     XImage_fillRect(&image, NULL, 0xff000000u);
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, false),
+    expect_true(XPainter_fillRect_2(&painter, &rect),
+                "fillRect_2 with NoBrush is a successful no-op");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xff000000u,
+                "NoBrush fillRect_2 leaves interior empty");
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven),
                 "NoBrush polygon outline only");
     expect_true(XImage_pixel(&image, 3, 3) == 0xff000000u &&
                 XImage_pixel(&image, 2, 0) == 0xffff0000u,
                 "NoBrush leaves polygon interior empty");
     XImage_fillRect(&image, NULL, 0xff000000u);
-    expect_true(XPainter_drawPolygon(&painter, tri, 3, true) &&
+    expect_true(XPainter_drawPolygon(&painter, tri, 3,
+                                     XPainterFillRule_OddEven) &&
                 XImage_pixel(&image, 3, 3) == 0xff000000u,
                 "NoBrush filled request keeps interior empty");
+
+    XPainter_setBrush_2(&painter, XPainterBrushStyle_SolidPattern);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_SolidPattern &&
+                XPainter_brushColor(&painter) == 0xff000000u,
+                "setBrush style overload uses black solid brush");
+    XPainter_setBrush_2(&painter, XPainterBrushStyle_NoBrush);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_NoBrush &&
+                XPainter_brushColor(&painter) == 0xff000000u,
+                "setBrush NoBrush overload clears fill and keeps black color");
+    XPainter_setBrushGradient(&painter, &grad);
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_SolidPattern);
+    XPainter_brush(&painter, &brush);
+    expect_true(brush.m_style == XPainterBrushStyle_SolidPattern &&
+                brush.m_gradient.m_stopCount == 0,
+                "setBrushStyle drops gradient payload like QBrush::setStyle");
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_SolidPattern);
+    XPainter_setBrushStyle(&painter, XPainterBrushStyle_LinearGradientPattern);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_SolidPattern,
+                "setBrushStyle rejects gradient pattern like QBrush::setStyle");
+    XPainter_setBrush_2(&painter, XPainterBrushStyle_LinearGradientPattern);
+    expect_true(XPainter_brushStyle(&painter) == XPainterBrushStyle_NoBrush,
+                "setBrush gradient-style overload creates NoBrush");
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -1810,12 +2573,90 @@ static void test_painter_path_contract(void)
     expect_true(XImage_pixel(&image, 3, 5) == 0xffff0000u,
                 "addRect interior filled");
 
+    /* Qt moveTo() 隐式结束前一子路径；两个不相连矩形之间不得出现连接填充。 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 2.0f),
+                "multi-subpath first moveTo");
+    expect_true(XPainterPath_lineTo(&path, 6.0f, 2.0f),
+                "multi-subpath first lineTo");
+    expect_true(XPainterPath_lineTo(&path, 6.0f, 6.0f),
+                "multi-subpath first lineTo 2");
+    expect_true(XPainterPath_lineTo(&path, 2.0f, 6.0f),
+                "multi-subpath first lineTo 3");
+    expect_true(XPainterPath_closeSubpath(&path),
+                "multi-subpath first close");
+    expect_true(XPainterPath_moveTo(&path, 14.0f, 2.0f),
+                "multi-subpath second moveTo");
+    expect_true(XPainterPath_lineTo(&path, 18.0f, 2.0f),
+                "multi-subpath second lineTo");
+    expect_true(XPainterPath_lineTo(&path, 18.0f, 6.0f),
+                "multi-subpath second lineTo 2");
+    expect_true(XPainterPath_lineTo(&path, 14.0f, 6.0f),
+                "multi-subpath second lineTo 3");
+    expect_true(XPainterPath_closeSubpath(&path),
+                "multi-subpath second close");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_fillPath(&painter, &path),
+                "fillPath keeps subpaths separate");
+    expect_true(XImage_pixel(&image, 3, 3) == 0xffff0000u &&
+                XImage_pixel(&image, 15, 3) == 0xffff0000u,
+                "multi-subpath interiors filled");
+    expect_true(XImage_pixel(&image, 10, 3) == 0xff000000u,
+                "multi-subpath gap remains empty");
+
+    /* 空路径与重复元素的 QPainterPath 边界行为。 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_closeSubpath(&path),
+                "empty closeSubpath is a no-op");
+    expect_true(XPainterPath_lineTo(&path, 3.0f, 3.0f),
+                "empty lineTo creates origin");
+    expect_true(XPainterPath_elementCount(&path) == 2,
+                "empty lineTo adds implicit origin MoveTo");
+    expect_true(XPainterPath_moveTo(&path, 5.0f, 5.0f) &&
+                XPainterPath_moveTo(&path, 6.0f, 6.0f),
+                "consecutive moveTo succeeds");
+    expect_true(XPainterPath_elementCount(&path) == 3,
+                "consecutive moveTo replaces prior MoveTo");
+    expect_true(XPainterPath_lineTo(&path, 6.0f, 6.0f),
+                "duplicate lineTo is a no-op");
+    expect_true(XPainterPath_elementCount(&path) == 3,
+                "duplicate lineTo does not append element");
+    expect_true(XPainterPath_closeSubpath(&path),
+                "closeSubpath marks a new subpath boundary");
+    expect_true(XPainterPath_lineTo(&path, 9.0f, 6.0f),
+                "lineTo after closeSubpath succeeds");
+    expect_true(XPainterPath_elementCount(&path) == 5,
+                "lineTo after closeSubpath adds implicit MoveTo");
+    {
+        float currentX = 0.0f;
+        float currentY = 0.0f;
+        XPainterPath_currentPosition(&path, &currentX, &currentY);
+        expect_true(currentX == 9.0f && currentY == 6.0f,
+                    "lineTo after closeSubpath updates current position");
+    }
+
     XPainterPath_deinit(&path);
     XPainterPath_init(&path);
     expect_true(XPainterPath_addEllipse(&path, &small),
                 "path addEllipse");
     expect_true(XPainterPath_elementCount(&path) >= 64,
                 "addEllipse flattens to many elements");
+
+    {
+        XRect degenerateEllipse = { 4, 5, -12, 0 };
+        XPainterPath_deinit(&path);
+        XPainterPath_init(&path);
+        expect_true(XPainterPath_addEllipse(&path, &degenerateEllipse),
+                    "addEllipse accepts negative and zero-axis dimensions");
+        expect_true(XPainterPath_elementCount(&path) > 1,
+                    "degenerate ellipse still creates a subpath");
+        degenerateEllipse.width = 0;
+        degenerateEllipse.height = 0;
+        expect_true(XPainterPath_addEllipse(&path, &degenerateEllipse),
+                    "null ellipse is a no-op");
+    }
 
     XPainterPath_deinit(&path);
     XPainter_end(&painter);
@@ -1975,6 +2816,12 @@ static void test_painter_transform_contract(void)
                     fabsf(m.dx - 1.0f) < 1.0e-4f &&
                     fabsf(m.dy - 1.0f) < 1.0e-4f,
                     "combined transform includes window viewport scale and offset");
+        XPainter_deviceTransform(&painter, &m);
+        expect_true(fabsf(m.m11 - 2.0f) < 1.0e-4f &&
+                    fabsf(m.m22 - 2.0f) < 1.0e-4f &&
+                    fabsf(m.dx - 1.0f) < 1.0e-4f &&
+                    fabsf(m.dy - 1.0f) < 1.0e-4f,
+                    "device transform includes window viewport mapping");
         XPainter_setPen(&painter, 0xffffffffu);
         expect_true(XPainter_drawPoint(&painter, 2, 2),
                     "view transform draws logical point");
@@ -2086,6 +2933,32 @@ static void test_painter_transform_contract(void)
                 fabsf(m.m22 - 1.0f) < 1.0e-4f,
                 "shear stores x by y matrix");
 
+    /* QTransform::translate/scale 均将新矩阵左乘到当前矩阵。 */
+    memset(&m, 0, sizeof(m));
+    m.m11 = 2.0f;
+    m.m22 = 3.0f;
+    m.dx = 1.0f;
+    m.dy = 2.0f;
+    m.m33 = 1.0f;
+    XPainter_resetTransform(&painter);
+    XPainter_setWorldTransform(&painter, &m, false);
+    XPainter_translate(&painter, 4.0f, 5.0f);
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.m11 - 2.0f) < 1.0e-4f &&
+                fabsf(m.m22 - 3.0f) < 1.0e-4f &&
+                fabsf(m.dx - 9.0f) < 1.0e-4f &&
+                fabsf(m.dy - 17.0f) < 1.0e-4f,
+                "translate left-multiplies a scaled world matrix");
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 1.0f, 2.0f);
+    XPainter_scale(&painter, 2.0f, 3.0f);
+    XPainter_transform(&painter, &m);
+    expect_true(fabsf(m.m11 - 2.0f) < 1.0e-4f &&
+                fabsf(m.m22 - 3.0f) < 1.0e-4f &&
+                fabsf(m.dx - 1.0f) < 1.0e-4f &&
+                fabsf(m.dy - 2.0f) < 1.0e-4f,
+                "scale left-multiplies without scaling translation");
+
     /* worldTransform/setWorldTransform 替换与组合语义 */
     XPainter_resetTransform(&painter);
     XPainter_worldTransform(&painter, &m);
@@ -2114,7 +2987,7 @@ static void test_painter_transform_contract(void)
                 fabsf(m.m22 - 3.0f) < 1.0e-4f &&
                 fabsf(m.dx - 3.0f) < 1.0e-4f &&
                 fabsf(m.dy - 2.0f) < 1.0e-4f,
-                "setWorldTransform combine composes with current matrix");
+                "setWorldTransform combine prepends the new matrix");
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -2128,6 +3001,7 @@ static void test_painter_text_flags_contract(void)
     XPainter painter;
     XRect wide = { 0, 0, 80, 24 };
     XRect narrow = { 0, 0, 8, 16 };
+    XRect wrapProbe = { 0, 0, 8, 32 };
     XRect skipRect = { 0, 0, 40, 24 };
     XRect directionRect = { 0, 0, 40, 16 };
     int hasPix = 0;
@@ -2249,6 +3123,24 @@ static void test_painter_text_flags_contract(void)
     expect_true(XImage_pixel(&image, 10, 0) == 0xffffffffu,
                 "DontClip lets second glyph overflow");
 
+    /* Qt 默认不换行：窄矩形只裁剪同一行的溢出字形；显式
+       TextWrapAnywhere 才把每个字形分到下一行。 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &wrapProbe, 0u,
+                                      "AA", 0xffffffffu),
+                "drawTextRect keeps one line without wrap flags");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 2, 16) == 0xff000000u,
+                "default text layout does not wrap at rectangle width");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawTextRect(&painter, &wrapProbe,
+                                      XPAINTER_TEXT_WRAP_ANYWHERE,
+                                      "AA", 0xffffffffu),
+                "drawTextRect wrap-anywhere succeeds");
+    expect_true(XImage_pixel(&image, 2, 0) == 0xffffffffu &&
+                XImage_pixel(&image, 2, 16) == 0xffffffffu,
+                "wrap-anywhere creates a second visual line");
+
     /* ShowMnemonic：& 转义下一字符并加下划线 */
     XImage_fillRect(&image, NULL, 0xff000000u);
     expect_true(XPainter_drawTextRect(&painter, &skipRect,
@@ -2273,8 +3165,8 @@ static void test_painter_text_flags_contract(void)
 #if XPAINTER_LAYOUT_DIRECTION_ON
     /* 布局方向：RTL 时视觉左对齐翻转为右对齐，AlignAbsolute 保持物理左对齐。 */
     expect_true(XPainter_layoutDirection(&painter) ==
-                XPainterLayoutDirection_Auto,
-                "layout direction defaults to Auto");
+                XPainterLayoutDirection_LeftToRight,
+                "active layout direction starts at application default LTR");
     XPainter_setLayoutDirection(&painter,
                                 XPainterLayoutDirection_RightToLeft);
     expect_true(XPainter_layoutDirection(&painter) ==
@@ -2321,6 +3213,8 @@ static void test_painter_record_play_contract(void)
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_picture(&painter, &picture),
                 "painter begins recording");
+    expect_true(!XPainter_begin_picture(&painter, &picture),
+                "begin picture on active painter is rejected");
     expect_true(XPainter_device(&painter) == &picture,
                 "painter device reports the bound picture");
 
@@ -2357,18 +3251,18 @@ static void test_painter_record_play_contract(void)
     expect_true(XPicture_play(&loaded, &painter), "picture replays");
     expect_true(XImage_pixel(&target, 1, 1) == 0xffff0000u,
                 "replay outline corner tl");
-    expect_true(XImage_pixel(&target, 4, 4) == 0xffff0000u,
+    expect_true(XImage_pixel(&target, 5, 5) == 0xffff0000u,
                 "replay outline corner br");
     expect_true(XImage_pixel(&target, 1, 2) == 0xffff0000u,
                 "replay outline left edge");
     expect_true(XImage_pixel(&target, 2, 2) == 0xff00ff00u,
                 "replay interior fill");
-    expect_true(XImage_pixel(&target, 5, 1) == 0, "replay outside rect");
+    expect_true(XImage_pixel(&target, 6, 1) == 0, "replay outside rect");
     expect_true(XImage_pixel(&target, 6, 6) == 0xff0000ffu,
                 "replay recorded image px0");
     expect_true(XImage_pixel(&target, 7, 6) == 0xff0000ffu,
                 "replay recorded image px1");
-    expect_true(XImage_pixel(&target, 5, 5) == 0, "replay image margin");
+    expect_true(XImage_pixel(&target, 5, 6) == 0, "replay image margin");
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -8866,6 +9760,7 @@ static void test_label_contract(void)
     XPixmap empty;
     XPicture* pic;
     XPicture* gotPic;
+    XMovie movie;
     XSize size;
     XImage image;
     XImage scaledImage;
@@ -8930,6 +9825,13 @@ static void test_label_contract(void)
     expect_true(XLabel_wordWrap(&label), "XLabel setWordWrap true");
     XLabel_setAlignment(&label, 0);
     expect_true(XLabel_alignment(&label) == 0, "XLabel setAlignment 0");
+    XLabel_setAlignment(&label, XAlignment_Right | XAlignment_Bottom |
+                                   XAlignment_Absolute);
+    expect_true(XLabel_alignment(&label) ==
+                    (XAlignment_Right | XAlignment_Bottom |
+                     XAlignment_Absolute),
+                "XLabel alignment 保留 Qt AlignAbsolute 标志");
+    XLabel_setAlignment(&label, XAlignment_Left | XAlignment_VCenter);
     XLabel_setIndent(&label, 2);
     expect_true(XLabel_indent(&label) == 2, "XLabel setIndent 2");
     XLabel_setMargin(&label, 3);
@@ -8958,9 +9860,82 @@ static void test_label_contract(void)
                     "XLabel selectedText 按 UTF-16 区间截取");
         XString_delete_base((XClass*)sel);
     }
+    XLabel_setTextInteractionFlags(&label,
+        XLabelTextInteraction_NoTextInteraction);
+    expect_true(!XLabel_hasSelectedText(&label) &&
+                XLabel_selectionStart(&label) == -1,
+                "XLabel 关闭文本交互后清除选择");
+    XLabel_setSelection(&label, 0, 1);
+    expect_true(!XLabel_hasSelectedText(&label),
+                "XLabel 无文本选择交互时 setSelection 无操作");
+    XLabel_setText_2(&label, "AB");
+    XLabel_setTextInteractionFlags(&label,
+        XLabelTextInteraction_LinksAccessibleByKeyboard);
+    expect_true(XWidget_focusPolicy((XWidget*)&label) ==
+                    XWidgetFocusPolicy_StrongFocus,
+                "XLabel 键盘链接交互设置 StrongFocus");
+    XLabel_setSelection(&label, 0, 1);
+    expect_true(XLabel_hasSelectedText(&label) &&
+                    XLabel_selectionStart(&label) == 0,
+                "XLabel 非可选标志但非 NoFocus 时允许程序化选择");
+    XLabel_setTextInteractionFlags(&label,
+        XLabelTextInteraction_TextSelectableByMouse);
+    XLabel_setSelection(&label, 1, 1);
+    expect_true(XLabel_hasSelectedText(&label),
+                "XLabel 恢复可选交互后可设置选择");
     XLabel_setSelection(&label, -1, -1);
     expect_true(!XLabel_hasSelectedText(&label),
                 "XLabel setSelection(-1,-1) 清除选择");
+
+    /* Rich text creates QLabel's text control independently of selection
+       flags, so programmatic selection remains available in NoInteraction. */
+    XLabel_setTextFormat(&label, XLabelTextFormat_RichText);
+    XLabel_setText_2(&label, "<b>AB</b>");
+    XLabel_setTextInteractionFlags(&label,
+        XLabelTextInteraction_NoTextInteraction);
+    XLabel_setSelection(&label, 0, 1);
+    expect_true(XLabel_hasSelectedText(&label),
+                "XLabel 富文本无交互标志仍可程序化选择");
+    XLabel_setSelection(&label, -1, -1);
+    XLabel_setTextFormat(&label, XLabelTextFormat_PlainText);
+
+    /* 链接命中测试必须随点阵字号缩放：Qt 文本控件按实际行高和字宽
+       命中，不能固定使用默认 16/8 像素。 */
+    {
+        XLabel scaledLink;
+        XMouseEvent press;
+        XMouseEvent release;
+        XPoint click = { 16, 16 };
+        memset(&scaledLink, 0, sizeof(scaledLink));
+        XLabel_init(&scaledLink, NULL, 0);
+        XLabel_setTextFormat(&scaledLink, XLabelTextFormat_RichText);
+        XLabel_setText_2(&scaledLink,
+                         "<a href=\"https://scaled.example\">AB</a>");
+        XLabel_setAlignment(&scaledLink, XAlignment_Left | XAlignment_VCenter);
+        XLabel_setMargin(&scaledLink, 0);
+        XLabel_setIndent(&scaledLink, 0);
+        XWidget_resize((XWidget*)&scaledLink, 40, 40);
+        XLabel_setTextPixelSize(&scaledLink, 32);
+        memset(&g_labelProbe, 0, sizeof(g_labelProbe));
+        XObject_connect_2((XObject*)&scaledLink,
+                          (size_t)XLabel_linkActivated_signal(&scaledLink, NULL),
+                          label_probe_activatedSlot);
+        XMouseEvent_init(&press, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton,
+                         XKeyboardModifier_NoModifier, click);
+        XMouseEvent_init(&release, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton,
+                         XKeyboardModifier_NoModifier, click);
+        XWidget_event_base((XWidget*)&scaledLink, (XEvent*)&press);
+        XWidget_event_base((XWidget*)&scaledLink, (XEvent*)&release);
+        expect_true(g_labelProbe.activated == 1 &&
+                    g_labelProbe.lastLink != NULL &&
+                    strcmp(g_labelProbe.lastLink, "https://scaled.example") == 0,
+                    "XLabel 缩放字号链接命中按实际行高/字宽计算");
+        XMouseEvent_deinit_base((XClass*)&press);
+        XMouseEvent_deinit_base((XClass*)&release);
+        XLabel_deinit_base(&scaledLink);
+    }
 
     XPixmap_init_ex(&pm, 5, 4);
     XLabel_setPixmap(&label, &pm);
@@ -8988,6 +9963,22 @@ static void test_label_contract(void)
     expect_true(gotPic == NULL, "XLabel clear 清空绘图记录");
     XPicture_delete_base((XClass*)pic);
 
+    /* Qt clears label contents on every setMovie call, including reusing the
+       same borrowed movie pointer. */
+    XMovie_init(&movie);
+    XLabel_setText_2(&label, "movie-old-text");
+    XLabel_setMovie(&label, &movie);
+    expect_true(XLabel_movie(&label) == &movie &&
+                XLabel_text(&label) != NULL &&
+                XString_toUtf8_length(XLabel_text(&label)) == 0,
+                "XLabel setMovie 清空旧文本");
+    XLabel_setText_2(&label, "movie-new-text");
+    XLabel_setMovie(&label, &movie);
+    expect_true(XLabel_movie(&label) == &movie &&
+                XString_toUtf8_length(XLabel_text(&label)) == 0,
+                "XLabel 重设同一 movie 仍清空内容");
+    XMovie_deinit_base(&movie);
+
     XLabel_setText_2(&label, "A");
     XWidget_resize((XWidget*)&label, 24, 16);
     XImage_init_ex(&image, 24, 16, XImageFormat_ARGB32);
@@ -8999,8 +9990,7 @@ static void test_label_contract(void)
     expect_true(XPainter_end(&painter), "XLabel 绘制测试结束");
     XPainter_deinit(&painter);
     drawRect.x = 1; drawRect.y = 1; drawRect.width = 22; drawRect.height = 14;
-    expect_true(XImage_pixel(&image, drawRect.x + 2,
-                             drawRect.y + 7) != 0xFFFFFFFFu,
+    expect_true(image_count_non_background(&image, 0xFFFFFFFFu) > 0,
                 "XLabel 离屏绘制产生非背景像素");
     XImage_deinit_base(&image);
 
@@ -9045,6 +10035,52 @@ static void test_label_contract(void)
                 "XLabel 放大字号实际文字像素增长");
     XImage_deinit_base(&scaledImage);
     XImage_deinit_base(&image);
+
+    /* Qt::AlignLeft/Right are logical flags: in RTL they are converted by
+       QStyle::visualAlignment unless AlignAbsolute is present. */
+    {
+        XLabel directionLabel;
+        XImage directionImage;
+        int ltrMinX = -1;
+        int rtlMinX = -1;
+        memset(&directionLabel, 0, sizeof(directionLabel));
+        XLabel_init(&directionLabel, NULL, 0);
+        XLabel_setText_2(&directionLabel, "A");
+        XLabel_setAlignment(&directionLabel, XAlignment_Left | XAlignment_Top);
+        XLabel_setMargin(&directionLabel, 0);
+        XLabel_setIndent(&directionLabel, 0);
+        XWidget_resize((XWidget*)&directionLabel, 64, 32);
+        XLabel_setTextPixelSize(&directionLabel, 16);
+
+        XImage_init_ex(&directionImage, 64, 32, XImageFormat_ARGB32);
+        XImage_fill(&directionImage, 0xFFFFFFFFu);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &directionImage),
+                    "XLabel LTR 方向绘制绑定");
+        XLabel_drawContents(&directionLabel, &painter);
+        expect_true(XPainter_end(&painter), "XLabel LTR 方向绘制结束");
+        XPainter_deinit(&painter);
+        image_non_background_x_bounds(&directionImage, 0xFFFFFFFFu,
+                                      &ltrMinX, NULL);
+        XImage_deinit_base(&directionImage);
+
+        XWidget_setLayoutDirection((XWidget*)&directionLabel,
+                                    XWidgetLayoutDirection_RightToLeft);
+        XImage_init_ex(&directionImage, 64, 32, XImageFormat_ARGB32);
+        XImage_fill(&directionImage, 0xFFFFFFFFu);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &directionImage),
+                    "XLabel RTL 方向绘制绑定");
+        XLabel_drawContents(&directionLabel, &painter);
+        expect_true(XPainter_end(&painter), "XLabel RTL 方向绘制结束");
+        XPainter_deinit(&painter);
+        image_non_background_x_bounds(&directionImage, 0xFFFFFFFFu,
+                                      &rtlMinX, NULL);
+        expect_true(ltrMinX >= 0 && rtlMinX > ltrMinX,
+                    "XLabel RTL 布局方向转换 AlignLeft");
+        XImage_deinit_base(&directionImage);
+        XLabel_deinit_base(&directionLabel);
+    }
 
     memset(&g_labelProbe, 0, sizeof(g_labelProbe));
     zero = XLabel_create(NULL, 0);

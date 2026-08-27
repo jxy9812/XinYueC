@@ -315,6 +315,25 @@ int XLabel_margin(const XLabel* self);
 /** @brief 设置内容边距（对标 QLabel::setMargin）。 */
 void XLabel_setMargin(XLabel* self, int margin);
 
+/**
+ * @brief      返回标签当前字体像素高度（XinYueC 便携扩展）。
+ * @details    读取控件当前 XFont 的像素高度。Qt QLabel 没有同名公共
+ *             函数，严格 Qt 代码可改用 XWidget_font 查询字体对象。
+ * @param      self 标签对象；NULL 返回 0。
+ * @return     当前字体像素高度；无有效字体时返回 0。
+ */
+int XLabel_textPixelSize(const XLabel* self);
+
+/**
+ * @brief      设置标签字体像素高度（XinYueC 便携扩展）。
+ * @details    更新当前 XFont 的像素高度，并触发布局提示和重绘；用于
+ *             无字体数据库的嵌入式点阵渲染。Qt QLabel 通常通过
+ *             QWidget::setFont 设置字体。
+ * @param      self 标签对象；NULL 时忽略。
+ * @param      pixelHeight 目标像素高度；小于等于 0 时恢复默认字号。
+ */
+void XLabel_setTextPixelSize(XLabel* self, int pixelHeight);
+
 /** @brief 查询内容缩放（对标 QLabel::hasScaledContents，默认 false）。 */
 bool XLabel_hasScaledContents(const XLabel* self);
 /**

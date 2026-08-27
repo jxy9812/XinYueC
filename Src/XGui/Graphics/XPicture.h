@@ -190,11 +190,11 @@ void XPicture_setBoundingRect(XPicture* self, const XRect* rect);
 
 /**
  * @brief      回放绘图指令到指定的纯 C XPainter
- * @param self    目标 XPicture 对象指针
+ * @param self    目标 XPicture 对象指针；回放期间只读
  * @param painter XPainter 指针；NULL 仅对空记录有效
  * @return 回放成功返回 true
  */
-bool XPicture_play(XPicture* self, XPainter* painter);
+bool XPicture_play(const XPicture* self, XPainter* painter);
 
 /* Record commands into the portable stream.  All functions return false on
  * overflow, allocation failure, malformed existing data, or invalid input. */
