@@ -260,11 +260,15 @@ static void* svgArenaAlloc(SvgArena* a, size_t size, bool* ok)
 {
     SvgArenaBlock* b;
     size_t blockSize;
+    size_t alignedUsed;
+    const size_t alignment = sizeof(void*);
     if (size == 0) size = 1;
     b = a->m_head;
-    if (b && b->m_cap - b->m_used >= size) {
-        uint8_t* p = b->m_data + b->m_used;
-        b->m_used += size;
+    /* DOM 节点和属性包含指针，竞技场内每次分配都必须保持指针对齐。 */
+    alignedUsed = b ? (b->m_used + alignment - 1) & ~(alignment - 1) : 0;
+    if (b && alignedUsed <= b->m_cap && b->m_cap - alignedUsed >= size) {
+        uint8_t* p = b->m_data + alignedUsed;
+        b->m_used = alignedUsed + size;
         return p;
     }
     blockSize = size > SVG_ARENA_BLOCK ? size : SVG_ARENA_BLOCK;

@@ -7,7 +7,7 @@
  *               挂 XPushButton 虚表；
  *             - 文本/图标/选中/按下/自动重复/自动默认等状态位全部对齐
  *               Qt 6.8 默认值；setCheckable(false) 清空 checked，setDefault 只
- *               改 defaultButton，autoDefault() 在 Auto 三态下返回 false；
+ *               改 defaultButton，autoDefault() 在 Auto 三态下解析父对话框链；
  *             - 点击：click() 禁用直接返回，内部按下/释放流程按
  *               QAbstractButton::click 重放 pressed/released/clicked/toggled；
  *             - 鼠标左键命中按下/移出释放/移回按下按 QAbstractButton 语义
@@ -17,10 +17,9 @@
  *               XFont（内置 8x16 点阵字库回退），图标走 XIcon_paint；
  *             - 不依赖任何平台 API；嵌入式由 XPUSHBUTTON_ON 裁剪。
  * @note       近似边界：autoExclusive 仅保存标志、按钮组互斥登记未实现；
- *             animateClick 无动画定时器直接 click()；QDialog 下的
- *             autoDefault 自动解析、样式 bevel、快捷键与真实平台菜单弹层
- *             未实现；菜单关联接口按 Qt 借用语义提供，showMenu 仅同步
- *             按下状态并重绘，不进入阻塞式弹层循环。
+ *             animateClick 无动画定时器直接 click()；样式 bevel、快捷键
+ *             与真实平台菜单弹层未实现；菜单关联接口按 Qt 借用语义提供，
+ *             showMenu 仅同步按下状态并重绘，不进入阻塞式弹层循环。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPushButton.h"
@@ -95,11 +94,20 @@ static void pushbutton_emitBool(XPushButton* self, size_t signal, bool value)
         XVarList_delete(args);
 }
 
-/** @brief 是否三态 Auto 且当前上下文判定为对话框默认按钮。 */
+/** @brief 是否三态 Auto 且当前上下文判定为对话框默认按钮。
+ * @details 对标 Qt 6.8 QPushButtonPrivate::dialogParent/autoDefault：
+ *          沿父链向上遍历到第一个窗口前，若命中窗口类型为 Dialog 的
+ *          父控件则返回 true；按钮自身为窗口或父链无对话框返回 false。 */
 static bool pushbutton_autoDefaultActive(const XPushButton* self)
 {
-    (void)self;
-    return false; /* 无对话框上下文；Auto 三态按 Qt 语义返回 false */
+    const XWidget* p = (const XWidget*)self;
+
+    while (p && !XWidget_isWindow(p)) {
+        p = XWidget_parentWidget(p);
+        if (p && XWidget_windowType(p) == XWindowType_Dialog)
+            return true;
+    }
+    return false;
 }
 
 /** @brief 是否把当前尺寸视为显式图标尺寸。 */
@@ -345,17 +353,12 @@ bool XPushButton_isCheckable(const XPushButton* self)
 
 void XPushButton_setCheckable(XPushButton* self, bool checkable)
 {
-    bool old;
     if (!self || self->m_checkable == checkable) return;
-    old = self->m_checkable;
     self->m_checkable = checkable;
-    if (old && !checkable && self->m_checked) {
+    /* QAbstractButton::setCheckable(false) 静默清除 checked，不发 toggled。 */
+    if (!checkable)
         self->m_checked = false;
-        XWidget_update((XWidget*)self);
-        pushbutton_emitBool(self, (size_t)XPushButton_toggled_signal, false);
-    }
-    if (self->m_checkable != old)
-        XWidget_update((XWidget*)self);
+    XWidget_update((XWidget*)self);
 }
 
 bool XPushButton_isChecked(const XPushButton* self)
@@ -411,7 +414,7 @@ int XPushButton_autoRepeatDelay(const XPushButton* self)
 void XPushButton_setAutoRepeatDelay(XPushButton* self, int delay)
 {
     if (self)
-        self->m_autoRepeatDelay = delay < 0 ? 0 : delay;
+        self->m_autoRepeatDelay = delay;
 }
 
 int XPushButton_autoRepeatInterval(const XPushButton* self)
@@ -422,7 +425,7 @@ int XPushButton_autoRepeatInterval(const XPushButton* self)
 void XPushButton_setAutoRepeatInterval(XPushButton* self, int interval)
 {
     if (self)
-        self->m_autoRepeatInterval = interval < 0 ? 0 : interval;
+        self->m_autoRepeatInterval = interval;
 }
 
 bool XPushButton_autoExclusive(const XPushButton* self)
@@ -438,28 +441,29 @@ void XPushButton_setAutoExclusive(XPushButton* self, bool exclusive)
 
 /* ==================== 点击/命中（对标 QAbstractButton） ==================== */
 
-void XPushButton_click(XPushButton* self)
+static void pushbutton_clickInternal(XPushButton* self, bool emitPressed)
 {
-    bool downWas, wasChecked;
+    bool wasChecked;
     if (!self) return;
     if (!XWidget_isEnabled((XWidget*)self)) return;
-    downWas = self->m_down;
-    pushbutton_setDownInternal(self, true);
-    if (!downWas)
-        pushbutton_setDownInternal(self, false);
-    else {
-        self->m_down = false;
+    if (emitPressed) {
+        /* QAbstractButton::click() 即使当前已 down 也会重新发 pressed。 */
+        self->m_down = true;
         XWidget_repaint((XWidget*)self);
-        XPushButton_released_signal(self);
+        XPushButton_pressed_signal(self);
     }
+    self->m_down = false;
+    XWidget_repaint((XWidget*)self);
     wasChecked = self->m_checked;
-    if (self->m_checkable) {
-        self->m_checked = !wasChecked;
-        XWidget_update((XWidget*)self);
-    }
+    if (self->m_checkable)
+        XPushButton_setChecked(self, !wasChecked);
+    XPushButton_released_signal(self);
     XPushButton_clicked_signal(self, self->m_checked);
-    if (self->m_checkable && wasChecked != self->m_checked)
-        XPushButton_toggled_signal(self, self->m_checked);
+}
+
+void XPushButton_click(XPushButton* self)
+{
+    pushbutton_clickInternal(self, true);
 }
 
 void XPushButton_animateClick(XPushButton* self)
@@ -830,7 +834,9 @@ static void VXPushButton_mouseReleaseEvent(XWidget* self, XEvent* event)
     pos = me->m_position;
     hit = XPushButton_hitButton((const XPushButton*)button, &pos);
     if (hit) {
-        XPushButton_click(button);
+        /* 鼠标释放前已经发过 pressed；Qt 的内部 click() 从 down=false
+           开始，仅执行 nextCheckState、released、clicked。 */
+        pushbutton_clickInternal(button, false);
         XEvent_accept(event);
         return;
     }
@@ -899,7 +905,8 @@ static void VXPushButton_keyReleaseEvent(XWidget* self, XEvent* event)
     ke = (XKeyEvent*)event;
     key = ke->m_key;
     if (key == XKey_Space && !ke->m_autoRepeat && button->m_down) {
-        XPushButton_click(button);
+        /* 空格按下已发 pressed，释放阶段不重复发 pressed。 */
+        pushbutton_clickInternal(button, false);
         XEvent_accept(event);
         return;
     }

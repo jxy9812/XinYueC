@@ -9,6 +9,8 @@
 #include "XPrintf.h"
 #include "XIcon.h"
 #include "XIconThemeEngine.h"
+#include "XIconThemeInternal.h"
+#include "XDir.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
 #include "XImage.h"
@@ -16,6 +18,8 @@
 #include "XImageReader.h"
 #include "XImageWriter.h"
 #if XIMAGEIOPLUGIN_ON
+
+static bool g_mockConsumeCapabilities = false;
 #include "XImageIOPlugin.h"
 #include "XImagePluginRegistry.h"
 #endif /* XIMAGEIOPLUGIN_ON */
@@ -32,6 +36,7 @@
 #include "codec_assets_fixture.h"
 #include "XStringList.h"
 #include "XVector.h"
+#include <stdlib.h>
 #if XSCREEN_ON
 #include "XScreen.h"
 #endif /* XSCREEN_ON */
@@ -44,6 +49,9 @@
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XLabel.h"
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#if XWIDGET_ON && XFRAME_ON
+#include "XFrame.h"
+#endif /* XWIDGET_ON && XFRAME_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
@@ -66,9 +74,13 @@
 #if XLAYOUT_ON && XLAYOUT_GRID_ON
 #include "XGridLayout.h"
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
+#if XLAYOUT_ON && XLAYOUT_STACKED_ON
+#include "XStackedLayout.h"
+#endif /* XLAYOUT_ON && XLAYOUT_STACKED_ON */
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 static int s_failures = 0;
 
@@ -79,6 +91,57 @@ static void expect_true(bool condition, const char* name)
         s_failures++;
     }
 }
+
+#if XWIDGET_ON && XFRAME_ON
+/** @brief XFrame 几何、样式和 short 线宽存储契约测试（对标 Qt 6.8 QFrame）。 */
+static void test_frame_contract(void)
+{
+    XFrame frame;
+    XRect wanted;
+    XRect got;
+    int style;
+
+    memset(&frame, 0, sizeof(frame));
+    XFrame_init(&frame, NULL, 0);
+    XWidget_setGeometry(&frame.m_base, 0, 0, 100, 80);
+    XFrame_setFrameStyle(&frame,
+                         (int)XFrameShape_Box | (int)XFrameShadow_Raised);
+    XFrame_setLineWidth(&frame, 2);
+    XFrame_setMidLineWidth(&frame, 1);
+    expect_true(XFrame_frameWidth(&frame) == 5,
+                "QFrame Box/Raised frameWidth=2*line+mid");
+
+    style = 0x14000 | (int)XFrameShape_Panel | (int)XFrameShadow_Sunken;
+    XFrame_setFrameStyle(&frame, style);
+    expect_true(XFrame_frameStyle(&frame) == (int)(short)style &&
+                XFrame_frameShape(&frame) == XFrameShape_Panel &&
+                XFrame_frameShadow(&frame) == XFrameShadow_Sunken,
+                "QFrame setFrameStyle 按 short 截断并按掩码读取形状/阴影");
+
+    wanted.x = 10;
+    wanted.y = 8;
+    wanted.width = 60;
+    wanted.height = 40;
+    XFrame_setFrameRect(&frame, &wanted);
+    got = XFrame_frameRect(&frame);
+    expect_true(got.x == wanted.x && got.y == wanted.y &&
+                got.width == wanted.width && got.height == wanted.height,
+                "QFrame setFrameRect 非全控件矩形往返保持一致");
+
+    XFrame_setFrameRect(&frame, NULL);
+    got = XFrame_frameRect(&frame);
+    expect_true(got.x == 0 && got.y == 0 && got.width == 100 && got.height == 80,
+                "QFrame null frameRect 回退到控件矩形");
+
+    XFrame_setLineWidth(&frame, -1);
+    expect_true(XFrame_lineWidth(&frame) == (int)(short)-1,
+                "QFrame setLineWidth 按 short 语义保存负值");
+    XFrame_setMidLineWidth(&frame, 65537);
+    expect_true(XFrame_midLineWidth(&frame) == (int)(short)65537,
+                "QFrame setMidLineWidth 按 short 语义保存溢出值");
+    XFrame_deinit_base(&frame);
+}
+#endif /* XWIDGET_ON && XFRAME_ON */
 
 /** @brief 统计图像中与指定背景色不同的像素数量。 */
 static size_t image_count_non_background(const XImage* image,
@@ -127,6 +190,583 @@ static void make_file_name(XString** out)
 }
 #endif /* XIMAGECODEC_ON */
 
+#if XIMAGECODEC_ON
+static bool test_write_text_file(const char* path, const char* text)
+{
+    XString* pathString;
+    XFile* file;
+    bool ok;
+
+    pathString = XString_create_utf8(path);
+    if (!pathString) return false;
+    file = XFile_create_2(pathString);
+    ok = false;
+    if (file && XIODevice_open_base((XIODevice*)file,
+                                    XIODevice_WriteOnly | XIODevice_NewOnly)) {
+        XIODevice_write_1((XIODevice*)file, text, (int64_t)strlen(text));
+        XIODevice_close_base((XIODevice*)file);
+        ok = true;
+    }
+    if (file) XClass_delete_base((XClass*)file);
+    XString_delete_base((XClass*)pathString);
+    return ok;
+}
+
+static bool test_write_binary_file(const char* path, const void* data,
+                                   size_t size, bool replace)
+{
+    XString* pathString;
+    XFile* file;
+    bool ok;
+
+    pathString = XString_create_utf8(path);
+    if (!pathString) return false;
+    file = XFile_create_2(pathString);
+    ok = file && (!replace || !XFile_exists(file) || XFile_remove(file));
+    if (ok && data && XIODevice_open_base((XIODevice*)file,
+                                          XIODevice_WriteOnly | XIODevice_NewOnly)) {
+        ok = XIODevice_write_1((XIODevice*)file, (const char*)data,
+                               (int64_t)size) == (int64_t)size;
+        XIODevice_close_base((XIODevice*)file);
+    } else {
+        ok = false;
+    }
+    if (file) XClass_delete_base((XClass*)file);
+    XString_delete_base((XClass*)pathString);
+    return ok;
+}
+
+static void test_cache_be16(uint8_t* data, size_t offset, uint16_t value)
+{
+    data[offset] = (uint8_t)(value >> 8);
+    data[offset + 1u] = (uint8_t)value;
+}
+
+static void test_cache_be32(uint8_t* data, size_t offset, uint32_t value)
+{
+    data[offset] = (uint8_t)(value >> 24);
+    data[offset + 1u] = (uint8_t)(value >> 16);
+    data[offset + 2u] = (uint8_t)(value >> 8);
+    data[offset + 3u] = (uint8_t)value;
+}
+
+static size_t test_make_icon_theme_cache(uint8_t* data, size_t capacity)
+{
+    static const char iconName[] = "example-icon";
+    static const char appDirectory[] = "48x48/apps";
+    static const char statusDirectory[] = "48x48/status";
+    const size_t size = 112u;
+    if (!data || capacity < size) return 0;
+    memset(data, 0, size);
+    test_cache_be16(data, 0, 1);       /* VERSION_MAJOR */
+    test_cache_be32(data, 4, 16);      /* hash table */
+    test_cache_be32(data, 8, 40);      /* directory list */
+    test_cache_be32(data, 16, 1);      /* one hash bucket */
+    test_cache_be32(data, 20, 24);     /* bucket -> node */
+    test_cache_be32(data, 24, 0);      /* node.next */
+    test_cache_be32(data, 28, 72);     /* node.name */
+    test_cache_be32(data, 32, 52);     /* node.directory list */
+    test_cache_be32(data, 40, 2);      /* two directories */
+    test_cache_be32(data, 44, 88);
+    test_cache_be32(data, 48, 99);
+    test_cache_be32(data, 52, 2);      /* two icon entries */
+    test_cache_be16(data, 56, 0);
+    test_cache_be16(data, 64, 1);
+    memcpy(data + 72, iconName, sizeof(iconName));
+    memcpy(data + 88, appDirectory, sizeof(appDirectory));
+    memcpy(data + 99, statusDirectory, sizeof(statusDirectory));
+    return size;
+}
+
+static bool test_replace_text_file(const char* path, const char* text)
+{
+    XString* pathString;
+    XFile* file;
+    bool ok;
+
+    pathString = XString_create_utf8(path);
+    if (!pathString) return false;
+    file = XFile_create_2(pathString);
+    ok = file && (!XFile_exists(file) || XFile_remove(file));
+    if (ok && XIODevice_open_base((XIODevice*)file,
+                                  XIODevice_WriteOnly | XIODevice_NewOnly)) {
+        XIODevice_write_1((XIODevice*)file, text, (int64_t)strlen(text));
+        XIODevice_close_base((XIODevice*)file);
+    } else {
+        ok = false;
+    }
+    if (file) XClass_delete_base((XClass*)file);
+    XString_delete_base((XClass*)pathString);
+    return ok;
+}
+
+static bool test_make_theme_dir(const char* root, const char* relative)
+{
+    XString* rootString;
+    XString* relativeString;
+    XDir* dir;
+    bool ok;
+
+    rootString = XString_create_utf8(root);
+    relativeString = XString_create_utf8(relative);
+    dir = rootString ? XDir_create_2(rootString) : NULL;
+    ok = dir && XDir_mkpath(dir, relativeString);
+    if (dir) XDir_delete_base((XClass*)dir);
+    if (relativeString) XString_delete_base((XClass*)relativeString);
+    if (rootString) XString_delete_base((XClass*)rootString);
+    return ok;
+}
+
+static void test_icon_theme_index_inherits(void)
+{
+    const char* tmpRoot = "xgui_icon_theme_tmp";
+    XString* rootString = NULL;
+    XDir* rootDir = NULL;
+    XStringList* oldPaths = NULL;
+    XStringList* oldFallbackPaths = NULL;
+    XStringList* newPaths = NULL;
+    XString* oldTheme = NULL;
+    XString* oldFallback = NULL;
+    XImage image;
+    XPixmap pixmap;
+
+    rootString = XString_create_utf8(tmpRoot);
+    rootDir = rootString ? XDir_create_2(rootString) : NULL;
+    if (rootDir) XDir_removeRecursively(rootDir);
+
+    expect_true(test_make_theme_dir(tmpRoot, "Base/48x48/apps"),
+                "index.theme fixture creates Base directory");
+    expect_true(test_make_theme_dir(tmpRoot, "Base/48x48/status"),
+                "index.theme fixture creates Base status directory");
+    expect_true(test_make_theme_dir(tmpRoot, "Child/48x48/apps"),
+                "index.theme fixture creates Child directory");
+    expect_true(test_write_text_file(
+                    "xgui_icon_theme_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\n"
+                    "Directories=48x48/apps,48x48/status\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n\n"
+                    "[48x48/status]\nSize=48\nType=Fixed\nContext=Status\n"),
+                "index.theme fixture writes Base metadata");
+    expect_true(test_write_text_file(
+                    "xgui_icon_theme_tmp/Child/index.theme",
+                    "[Icon Theme]\nName=Child\nDirectories=48x48/apps\n"
+                    "Inherits=Base\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n"),
+                "index.theme fixture writes Child metadata");
+
+    XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff336699u);
+    expect_true(XImage_save_2(&image,
+                    "xgui_icon_theme_tmp/Base/48x48/apps/example-icon.bmp",
+                    "BMP", -1),
+                "index.theme fixture writes application parent icon");
+    XImage_fill(&image, 0xff33cc66u);
+    expect_true(XImage_save_2(&image,
+                    "xgui_icon_theme_tmp/Base/48x48/status/example-icon.bmp",
+                    "BMP", -1),
+                "index.theme fixture writes generic fallback icon");
+    XImage_deinit_base(&image);
+
+    {
+        uint8_t cacheData[112];
+        size_t cacheSize = test_make_icon_theme_cache(cacheData,
+                                                      sizeof(cacheData));
+        expect_true(cacheSize > 0 && test_write_binary_file(
+                        "xgui_icon_theme_tmp/Base/icon-theme.cache",
+                        cacheData, cacheSize, false),
+                    "index.theme fixture writes valid icon-theme.cache");
+    }
+
+    oldPaths = XIcon_themeSearchPaths_2();
+    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldTheme = XIcon_themeName();
+    oldFallback = XIcon_fallbackThemeName();
+
+    newPaths = XStringList_create();
+    if (newPaths) XStringList_push_back_utf8(newPaths, tmpRoot);
+    XIcon_setThemeSearchPaths(newPaths);
+    XIcon_setFallbackSearchPaths(newPaths);
+    XIcon_setThemeName_2("Child");
+    XIcon_setFallbackThemeName_2("hicolor");
+
+    XPixmap_init(&pixmap);
+    expect_true(XIconInternal_resolveThemePixmapSize(
+                    "example-icon", 48, &pixmap),
+                "index.theme Inherits resolves parent theme icon");
+    expect_true(XIcon_hasThemeIcon_2("example-icon"),
+                "XIcon_hasThemeIcon uses the same inherited theme lookup");
+    if (!XPixmap_isNull(&pixmap)) {
+        expect_true(XPixmap_width(&pixmap) == 48 &&
+                    XPixmap_height(&pixmap) == 48,
+                    "index.theme inherited icon keeps target size");
+    }
+    XPixmap_deinit_base(&pixmap);
+
+    {
+        uint8_t filteredCache[112];
+        size_t filteredSize = test_make_icon_theme_cache(
+            filteredCache, sizeof(filteredCache));
+        expect_true(test_make_theme_dir(tmpRoot, "Base/cache-only"),
+                    "icon-theme.cache fixture creates cache-only directory");
+        memcpy(filteredCache + 88, "cache-only", 11);
+        memcpy(filteredCache + 99, "cache-only", 11);
+        expect_true(filteredSize > 0 && test_write_binary_file(
+                        "xgui_icon_theme_tmp/Base/icon-theme.cache",
+                        filteredCache, filteredSize, true),
+                    "icon-theme.cache fixture writes filtered directory list");
+        XPixmap_init(&pixmap);
+        expect_true(!XIconInternal_resolveThemePixmapSize(
+                        "example-icon", 48, &pixmap),
+                    "valid icon-theme.cache filters directories like Qt");
+        XPixmap_deinit_base(&pixmap);
+    }
+
+    {
+        static const uint8_t corruptCache[] = {0, 0, 0, 0};
+        expect_true(test_write_binary_file(
+                        "xgui_icon_theme_tmp/Base/icon-theme.cache",
+                        corruptCache, sizeof(corruptCache), true),
+                    "corrupt icon-theme.cache fixture writes");
+        XPixmap_init(&pixmap);
+        expect_true(XIconInternal_resolveThemePixmapSize(
+                        "example-icon", 48, &pixmap),
+                    "corrupt icon-theme.cache falls back to directory scan");
+        XPixmap_deinit_base(&pixmap);
+    }
+
+    XPixmap_init(&pixmap);
+    expect_true(XIconInternal_resolveThemePixmapSize(
+                    "example-icon-tool", 48, &pixmap),
+                "dash generic fallback resolves shorter icon name");
+    if (!XPixmap_isNull(&pixmap)) {
+        expect_true(XPixmap_width(&pixmap) == 48 &&
+                    XPixmap_height(&pixmap) == 48,
+                    "dash fallback icon keeps target size");
+        XImage_init(&image);
+        XPixmap_toImage(&pixmap, &image);
+        expect_true((XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0x33cc66u,
+                    "dash fallback skips Application/MimeType contexts");
+        XImage_deinit_base(&image);
+    }
+    XPixmap_deinit_base(&pixmap);
+
+    XIcon_setThemeSearchPaths(oldPaths);
+    XIcon_setFallbackSearchPaths(oldFallbackPaths);
+    XIcon_setThemeName(oldTheme);
+    XIcon_setFallbackThemeName(oldFallback);
+
+    if (rootDir) {
+        XDir_removeRecursively(rootDir);
+        XDir_delete_base((XClass*)rootDir);
+    }
+    if (rootString) XString_delete_base((XClass*)rootString);
+    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
+    if (oldTheme) XString_delete_base((XClass*)oldTheme);
+    if (oldFallback) XString_delete_base((XClass*)oldFallback);
+    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+}
+
+static void test_icon_theme_engine_paint_scales_to_rect(void)
+{
+    const char* tmpRoot = "xgui_icon_theme_engine_paint_tmp";
+    XString* rootString = NULL;
+    XDir* rootDir = NULL;
+    XStringList* oldPaths = NULL;
+    XStringList* oldFallbackPaths = NULL;
+    XStringList* newPaths = NULL;
+    XString* oldTheme = NULL;
+    XString* oldFallback = NULL;
+    XImage source;
+    XImage target;
+    XPainter painter;
+    XRect rect;
+    XIconThemeEngine* engine;
+
+    rootString = XString_create_utf8(tmpRoot);
+    rootDir = rootString ? XDir_create_2(rootString) : NULL;
+    if (rootDir) XDir_removeRecursively(rootDir);
+
+    expect_true(test_make_theme_dir(tmpRoot, "Base/48x48/apps"),
+                "theme engine paint creates theme directory");
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\nDirectories=48x48/apps\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n"),
+                "theme engine paint writes index.theme");
+
+    XImage_init_ex(&source, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&source, 0xff33cc66u);
+    expect_true(XImage_save_2(
+                    &source,
+                    "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/example-icon.bmp",
+                    "BMP", -1),
+                "theme engine paint writes theme icon BMP");
+    XImage_deinit_base(&source);
+
+    oldPaths = XIcon_themeSearchPaths_2();
+    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldTheme = XIcon_themeName();
+    oldFallback = XIcon_fallbackThemeName();
+    newPaths = XStringList_create();
+    if (newPaths) XStringList_push_back_utf8(newPaths, tmpRoot);
+    XIcon_setThemeSearchPaths(newPaths);
+    XIcon_setFallbackSearchPaths(newPaths);
+    XIcon_setThemeName_2("Base");
+    XIcon_setFallbackThemeName_2("hicolor");
+
+    engine = XIconThemeEngine_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                          "example-icon");
+    expect_true(engine != NULL, "theme engine paint creates engine");
+    if (!engine) {
+        XIcon_setThemeSearchPaths(oldPaths);
+        XIcon_setFallbackSearchPaths(oldFallbackPaths);
+        XIcon_setThemeName(oldTheme);
+        XIcon_setFallbackThemeName(oldFallback);
+        if (rootDir) {
+            XDir_removeRecursively(rootDir);
+            XDir_delete_base((XClass*)rootDir);
+        }
+        if (rootString) XString_delete_base((XClass*)rootString);
+        if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+        if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
+        if (oldTheme) XString_delete_base((XClass*)oldTheme);
+        if (oldFallback) XString_delete_base((XClass*)oldFallback);
+        if (newPaths) XStringList_delete_base((XClass*)newPaths);
+        return;
+    }
+    {
+        XPixmap invalidScale;
+        XSize requested = {8, 8};
+        XPixmap_init(&invalidScale);
+        XIconEngine_scaledPixmap_base((const XIconEngine*)engine, &requested,
+                                       XIconMode_Normal, XIconState_Off, 0.0f,
+                                       &invalidScale);
+        expect_true(XPixmap_isNull(&invalidScale),
+                    "theme engine rejects non-positive scaledPixmap ratio");
+        XPixmap_deinit_base(&invalidScale);
+    }
+    {
+        XPixmap invalidScale;
+        XSize requested = {8, 8};
+        XPixmap_init(&invalidScale);
+        XIconEngine_scaledPixmap_base((const XIconEngine*)engine, &requested,
+                                       XIconMode_Normal, XIconState_Off, NAN,
+                                       &invalidScale);
+        expect_true(XPixmap_isNull(&invalidScale),
+                    "theme engine rejects NaN scaledPixmap ratio");
+        XPixmap_deinit_base(&invalidScale);
+        XPixmap_init(&invalidScale);
+        XIconEngine_scaledPixmap_base((const XIconEngine*)engine, &requested,
+                                       XIconMode_Normal, XIconState_Off,
+                                       INFINITY, &invalidScale);
+        expect_true(XPixmap_isNull(&invalidScale),
+                    "theme engine rejects infinite scaledPixmap ratio");
+        XPixmap_deinit_base(&invalidScale);
+    }
+    {
+        XIcon themedIcon;
+        XIconThemeEngine* measureEngine;
+        XSize actual;
+        measureEngine = XIconThemeEngine_create_2_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        XIcon_init_engine(&themedIcon, (XIconEngine*)measureEngine);
+        XIcon_actualSize(&themedIcon, 24, 18, XIconMode_Normal,
+                         XIconState_Off, &actual);
+        expect_true(actual.width == 18 && actual.height == 18,
+                    "theme icon actualSize uses the smaller request edge");
+        XIcon_actualSize(&themedIcon, 96, 80, XIconMode_Normal,
+                         XIconState_Off, &actual);
+        expect_true(actual.width == 48 && actual.height == 48,
+                    "fixed theme actualSize never exceeds source directory size");
+        XIcon_deinit_base(&themedIcon);
+    }
+    {
+        XIcon sizedIcon;
+        XIconThemeEngine* sizedEngine;
+        XVector sizes;
+        XSize* available;
+        XPixmap normalPixmap;
+        XPixmap hiDpiPixmap;
+        sizedEngine = XIconThemeEngine_create_2_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        XIcon_init_engine(&sizedIcon, (XIconEngine*)sizedEngine);
+        XVector_init(&sizes, sizeof(XSize), true);
+        XIcon_availableSizes(&sizedIcon, XIconMode_Normal, XIconState_Off,
+                             &sizes);
+        available = (XSize*)XVector_at_base(&sizes, 0);
+        expect_true(XVector_size_base((const XContainer*)&sizes) == 1 &&
+                    available && available->width == 48 &&
+                    available->height == 48,
+                    "theme icon availableSizes reports index.theme size");
+        XPixmap_init(&normalPixmap);
+        XIcon_pixmap(&sizedIcon, 24, 18, XIconMode_Normal,
+                     XIconState_Off, &normalPixmap);
+        expect_true(XPixmap_width(&normalPixmap) == 18 &&
+                    XPixmap_height(&normalPixmap) == 18,
+                    "theme icon pixmap uses the smaller request edge");
+        XPixmap_init(&hiDpiPixmap);
+        XIcon_pixmapRatio(&sizedIcon, 24, 18, 2.0f, XIconMode_Normal,
+                          XIconState_Off, &hiDpiPixmap);
+        expect_true(XPixmap_width(&hiDpiPixmap) == 36 &&
+                    XPixmap_height(&hiDpiPixmap) == 36 &&
+                    XPixmap_devicePixelRatio(&hiDpiPixmap) == 2.0f,
+                    "theme icon scaledPixmap uses physical smaller edge");
+        XPixmap_deinit_base(&hiDpiPixmap);
+        XPixmap_deinit_base(&normalPixmap);
+        XVector_deinit_base((XClass*)&sizes);
+        XIcon_deinit_base(&sizedIcon);
+    }
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\nDirectories=48x48/apps\n\n"
+                    "[48x48/apps]\nSize=48\nType=Scalable\nMinSize=1\n"
+                    "MaxSize=128\nContext=Applications\n"),
+                "theme engine paint rewrites scalable metadata");
+    {
+        XIcon scalableIcon;
+        XIconThemeEngine* scalableEngine;
+        XSize scalableActual;
+        scalableEngine = XIconThemeEngine_create_2_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        XIcon_init_engine(&scalableIcon, (XIconEngine*)scalableEngine);
+        XIcon_actualSize(&scalableIcon, 24, 18, XIconMode_Normal,
+                         XIconState_Off, &scalableActual);
+        expect_true(scalableActual.width == 24 &&
+                    scalableActual.height == 18,
+                    "theme scalable actualSize preserves request rectangle");
+        XIcon_deinit_base(&scalableIcon);
+    }
+    XImage_init_ex(&target, 60, 30, XImageFormat_ARGB32);
+    XImage_fill(&target, 0xff000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "theme engine paint begins image");
+    rect.x = 4;
+    rect.y = 2;
+    rect.width = 24;
+    rect.height = 18;
+    XIconEngine_paint_base((const XIconEngine*)engine, &painter, &rect,
+                           XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter), "theme engine paint ends image");
+    XPainter_deinit(&painter);
+
+    expect_true((XImage_pixel(&target, rect.x, rect.y) & 0x00ffffffu) == 0x33cc66u,
+                "theme engine paint fills target top-left");
+    expect_true((XImage_pixel(&target, rect.x + rect.width - 1,
+                              rect.y + rect.height - 1) & 0x00ffffffu) == 0x33cc66u,
+                "theme engine paint fills target bottom-right");
+    expect_true((XImage_pixel(&target, rect.x - 1, rect.y + rect.height / 2) & 0x00ffffffu) == 0x0u,
+                "theme engine paint leaves left background");
+    expect_true((XImage_pixel(&target, rect.x + rect.width,
+                              rect.y + rect.height / 2) & 0x00ffffffu) == 0x0u,
+                "theme engine paint leaves right background");
+
+    XImage_deinit_base(&target);
+    XIconThemeEngine_delete_base(engine);
+
+    XIcon_setThemeSearchPaths(oldPaths);
+    XIcon_setFallbackSearchPaths(oldFallbackPaths);
+    XIcon_setThemeName(oldTheme);
+    XIcon_setFallbackThemeName(oldFallback);
+    if (rootDir) {
+        XDir_removeRecursively(rootDir);
+        XDir_delete_base((XClass*)rootDir);
+    }
+    if (rootString) XString_delete_base((XClass*)rootString);
+    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
+    if (oldTheme) XString_delete_base((XClass*)oldTheme);
+    if (oldFallback) XString_delete_base((XClass*)oldFallback);
+    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+}
+
+static void test_icon_theme_scale_selection(void)
+{
+    const char* tmpRoot = "xgui_icon_theme_scale_tmp";
+    XString* rootString = NULL;
+    XDir* rootDir = NULL;
+    XStringList* oldPaths = NULL;
+    XStringList* oldFallbackPaths = NULL;
+    XStringList* newPaths = NULL;
+    XString* oldTheme = NULL;
+    XString* oldFallback = NULL;
+    XImage image;
+    XPixmap pixmap;
+    XImage decoded;
+
+    rootString = XString_create_utf8(tmpRoot);
+    rootDir = rootString ? XDir_create_2(rootString) : NULL;
+    if (rootDir) XDir_removeRecursively(rootDir);
+    expect_true(test_make_theme_dir(tmpRoot, "Base/36x36/apps"),
+                "scaled theme fixture creates 1x directory");
+    expect_true(test_make_theme_dir(tmpRoot, "Base/24x24/apps"),
+                "scaled theme fixture creates 2x directory");
+    expect_true(test_write_text_file(
+                    "xgui_icon_theme_scale_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\n"
+                    "Directories=36x36/apps,24x24/apps\n\n"
+                    "[36x36/apps]\nSize=36\nType=Fixed\nScale=1\n"
+                    "Context=Applications\n\n"
+                    "[24x24/apps]\nSize=24\nType=Fixed\nScale=2\n"
+                    "Context=Applications\n"),
+                "scaled theme fixture writes Scale metadata");
+
+    XImage_init_ex(&image, 36, 36, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xffcc3333u);
+    expect_true(XImage_save_2(
+                    &image,
+                    "xgui_icon_theme_scale_tmp/Base/36x36/apps/example-icon.bmp",
+                    "BMP", -1),
+                "scaled theme fixture writes 1x icon");
+    XImage_fill(&image, 0xff3366ccu);
+    expect_true(XImage_save_2(
+                    &image,
+                    "xgui_icon_theme_scale_tmp/Base/24x24/apps/example-icon.bmp",
+                    "BMP", -1),
+                "scaled theme fixture writes 2x icon");
+    XImage_deinit_base(&image);
+
+    oldPaths = XIcon_themeSearchPaths_2();
+    oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    oldTheme = XIcon_themeName();
+    oldFallback = XIcon_fallbackThemeName();
+    newPaths = XStringList_create();
+    if (newPaths) XStringList_push_back_utf8(newPaths, tmpRoot);
+    XIcon_setThemeSearchPaths(newPaths);
+    XIcon_setFallbackSearchPaths(newPaths);
+    XIcon_setThemeName_2("Base");
+    XIcon_setFallbackThemeName_2("hicolor");
+
+    XPixmap_init(&pixmap);
+    expect_true(XIconInternal_resolveThemePixmapSizeScale(
+                    "example-icon", 24, 2, 36, &pixmap),
+                "scaled theme fixture resolves requested directory Scale");
+    XImage_init(&decoded);
+    XPixmap_toImage(&pixmap, &decoded);
+    expect_true(XPixmap_width(&pixmap) == 36 && XPixmap_height(&pixmap) == 36 &&
+                    (XImage_pixel(&decoded, 0, 0) & 0x00ffffffu) == 0x3366ccu,
+                "1.5x request prefers 2x directory over equal physical 1x");
+    XImage_deinit_base(&decoded);
+    XPixmap_deinit_base(&pixmap);
+
+    XIcon_setThemeSearchPaths(oldPaths);
+    XIcon_setFallbackSearchPaths(oldFallbackPaths);
+    XIcon_setThemeName(oldTheme);
+    XIcon_setFallbackThemeName(oldFallback);
+    if (rootDir) {
+        XDir_removeRecursively(rootDir);
+        XDir_delete_base((XClass*)rootDir);
+    }
+    if (rootString) XString_delete_base((XClass*)rootString);
+    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
+    if (oldTheme) XString_delete_base((XClass*)oldTheme);
+    if (oldFallback) XString_delete_base((XClass*)oldFallback);
+    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+}
+#endif /* XIMAGECODEC_ON */
+
 typedef struct PictureProbe
 {
     int lineCalls;
@@ -135,6 +775,15 @@ typedef struct PictureProbe
     int restoreCalls;
     int imageCalls;
     bool imagePayloadOk;
+    int shapeCalls;
+    int polylineCalls;
+    int polygonCalls;
+    int pointsCalls;
+    int pathCalls;
+    bool shapeOpOk;
+    bool polygonOk;
+    bool pointsOk;
+    bool pathOk;
 } PictureProbe;
 
 static bool picture_probe_line(XPainter* p, int x1, int y1, int x2, int y2)
@@ -167,6 +816,74 @@ static bool picture_probe_restore(XPainter* p)
     return true;
 }
 
+#if XPAINTER_SHAPE_ON
+static bool picture_probe_shape(XPainter* p, XPainterShapeOp op,
+                                const XRect* r, int startAngle, int spanAngle,
+                                bool filled, int xRadius, int yRadius)
+{
+    PictureProbe* probe = (PictureProbe*)p->m_userData;
+    ++probe->shapeCalls;
+    probe->shapeOpOk = op == XPainterShapeOp_RoundedRect &&
+                       r && r->x == 10 && r->y == 20 &&
+                       r->width == 5 && r->height == 7 &&
+                       startAngle == 0 && spanAngle == 0 && filled &&
+                       xRadius == 2 && yRadius == 3;
+    return probe->shapeOpOk;
+}
+#endif /* XPAINTER_SHAPE_ON */
+
+#if XPAINTER_POLYGON_ON
+static bool picture_probe_polyline(XPainter* p, const XPoint* points,
+                                   int count)
+{
+    PictureProbe* probe = (PictureProbe*)p->m_userData;
+    ++probe->polylineCalls;
+    return points && count == 2 && points[0].x == 1 && points[0].y == 2 &&
+           points[1].x == 3 && points[1].y == 4;
+}
+
+static bool picture_probe_polygon(XPainter* p, const XPoint* points, int count,
+                                  bool filled, XPainterFillRule fillRule)
+{
+    PictureProbe* probe = (PictureProbe*)p->m_userData;
+    ++probe->polygonCalls;
+    probe->polygonOk = points && count == 3 && filled &&
+                       fillRule == XPainterFillRule_Winding &&
+                       points[0].x == 0 && points[0].y == 0 &&
+                       points[1].x == 4 && points[1].y == 0 &&
+                       points[2].x == 0 && points[2].y == 3;
+    return probe->polygonOk;
+}
+
+static bool picture_probe_points(XPainter* p, const XPoint* points, int count)
+{
+    PictureProbe* probe = (PictureProbe*)p->m_userData;
+    ++probe->pointsCalls;
+    probe->pointsOk = points && count == 2 &&
+                      points[0].x == 7 && points[0].y == 8 &&
+                      points[1].x == 9 && points[1].y == 10;
+    return probe->pointsOk;
+}
+#endif /* XPAINTER_POLYGON_ON */
+
+#if XPAINTER_PATH_ON
+static bool picture_probe_path(XPainter* p, XPainterPathOp op,
+                               const struct XPainterPath* path)
+{
+    PictureProbe* probe = (PictureProbe*)p->m_userData;
+    ++probe->pathCalls;
+    probe->pathOk = op == XPainterPathOp_Draw && path &&
+                    path->m_elementCount == 5 &&
+                    path->m_elements[0].m_type == XPainterPathElement_MoveTo &&
+                    path->m_elements[0].m_x1 == 1.0f &&
+                    path->m_elements[0].m_y1 == 1.0f &&
+                    path->m_elements[4].m_type == XPainterPathElement_LineTo &&
+                    path->m_elements[4].m_x1 == 1.0f &&
+                    path->m_elements[4].m_y1 == 1.0f;
+    return probe->pathOk;
+}
+#endif /* XPAINTER_PATH_ON */
+
 static bool picture_probe_image(XPainter* p, const XImage* image, int x, int y)
 {
     PictureProbe* probe = (PictureProbe*)p->m_userData;
@@ -190,6 +907,20 @@ static void test_pixmap_lifecycle(void)
     XPixmap_init_ex(&source, 2, 3);
     XPixmap_fill(&source, 0xff336699u);
     XPixmap_setDevicePixelRatio(&source, 2.0f);
+    {
+        XSizeF independent;
+        XPixmap_deviceIndependentSize(&source, &independent);
+        expect_true(fabsf(independent.width - 1.0f) < 1.0e-5f &&
+                    fabsf(independent.height - 1.5f) < 1.0e-5f,
+                    "pixmap deviceIndependentSize divides by DPR");
+        XPixmap_setDevicePixelRatio(&source, 0.0f);
+        expect_true(XPixmap_devicePixelRatio(&source) == 0.0f,
+                    "QPixmap-compatible devicePixelRatio accepts zero");
+        XPixmap_setDevicePixelRatio(&source, -2.0f);
+        expect_true(XPixmap_devicePixelRatio(&source) == -2.0f,
+                    "QPixmap-compatible devicePixelRatio accepts negative values");
+        XPixmap_setDevicePixelRatio(&source, 2.0f);
+    }
 
     memset(&copied, 0, sizeof(copied));
     XPixmap_copy_base(&copied, &source);
@@ -438,6 +1169,77 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XPixmap_deinit_base(&pixmap);
 }
 
+static void test_pixmap_mask_lifecycle(void)
+{
+    XPixmap source;
+    XPixmap target;
+    XPixmap wrongMask;
+    XBitmap mask;
+    XImage image;
+    XImage result;
+
+    XPixmap_init_ex(&source, 3, 2);
+    XPixmap_fill(&source, 0xff336699u);
+    XPixmap_init(&target);
+    XPixmap_copy_base(&target, &source);
+    expect_true(!XPixmap_isDetached(&source),
+                "pixmap copy shares storage before mask mutation");
+
+    XImage_init_ex(&image, 3, 2, XImageFormat_MonoLSB);
+    XImage_fill(&image, 0);
+    XImage_setPixel(&image, 1, 0, 1);
+    XImage_setPixel(&image, 1, 1, 1);
+    XBitmap_init(&mask);
+    XBitmap_fromImage(&image, 0, &mask);
+    XImage_deinit_base(&image);
+
+    XPixmap_setMask(&source, (const XPixmap*)&mask);
+    XImage_init(&result);
+    XPixmap_toImage(&source, &result);
+    expect_true(XPixmap_isDetached(&source) &&
+                (XImage_pixel(&result, 0, 0) >> 24) == 0 &&
+                (XImage_pixel(&result, 1, 0) >> 24) == 0xff &&
+                (XImage_pixel(&result, 0, 1) >> 24) == 0 &&
+                (XImage_pixel(&result, 1, 1) >> 24) == 0xff,
+                "pixmap setMask applies mono mask and detaches shared storage");
+
+    XPixmap_toImage(&target, &result);
+    expect_true((XImage_pixel(&result, 0, 0) >> 24) == 0xff &&
+                (XImage_pixel(&result, 1, 0) >> 24) == 0xff,
+                "pixmap target copy is unchanged by source setMask");
+
+    XBitmap_clear(&mask);
+    XPixmap_toImage(&source, &result);
+    expect_true((XImage_pixel(&result, 0, 0) >> 24) == 0 &&
+                (XImage_pixel(&result, 1, 0) >> 24) == 0xff,
+                "modifying source mask after setMask does not change target");
+
+    XPixmap_setMask(&source, NULL);
+    XPixmap_toImage(&source, &result);
+    expect_true(XImage_pixel(&result, 0, 0) == 0xff000000u &&
+                XImage_pixel(&result, 1, 0) == 0xff336699u,
+                "pixmap null mask clears previous transparent pixels");
+
+    XPixmap_init_ex(&wrongMask, 2, 2);
+    XPixmap_setMask(&source, (const XPixmap*)&wrongMask);
+    XPixmap_toImage(&source, &result);
+    expect_true(XImage_pixel(&result, 0, 0) == 0xff000000u &&
+                XImage_pixel(&result, 1, 0) == 0xff336699u,
+                "pixmap setMask with mismatched size is a no-op");
+
+    XPixmap_setMask(&source, (const XPixmap*)&source);
+    XPixmap_toImage(&source, &result);
+    expect_true(XImage_pixel(&result, 0, 0) == 0xff000000u &&
+                XImage_pixel(&result, 1, 0) == 0xff336699u,
+                "pixmap self mask is a no-op");
+
+    XImage_deinit_base(&result);
+    XPixmap_deinit_base(&wrongMask);
+    XBitmap_deinit_base(&mask);
+    XPixmap_deinit_base(&target);
+    XPixmap_deinit_base(&source);
+}
+
 static void test_pixmap_cache_contract(void)
 {
     int oldLimit = XPixmapCache_cacheLimit();
@@ -672,6 +1474,70 @@ static void test_picture_play_contract(void)
                 "picture dispatch calls each command exactly once");
     expect_true(probe.imageCalls == 1 && probe.imagePayloadOk,
                 "picture replay reconstructs image metadata and pixels");
+#if XPAINTER_SHAPE_ON
+    {
+        XRect shapeRect = { 10, 20, 5, 7 };
+        painter.m_drawShape = picture_probe_shape;
+        expect_true(XPicture_recordDrawShape(&picture,
+                                             (int)XPainterShapeOp_RoundedRect,
+                                             &shapeRect, 0, 0, true, 2, 3),
+                    "recordDrawShape stores a portable shape command");
+    }
+#endif /* XPAINTER_SHAPE_ON */
+#if XPAINTER_POLYGON_ON
+    {
+        XPoint polylinePoints[2] = { { 1, 2 }, { 3, 4 } };
+        XPoint polygonPoints[3] = { { 0, 0 }, { 4, 0 }, { 0, 3 } };
+        XPoint pointSet[2] = { { 7, 8 }, { 9, 10 } };
+        painter.m_drawPolyline = picture_probe_polyline;
+        painter.m_drawPolygon = picture_probe_polygon;
+        painter.m_drawPoints = picture_probe_points;
+        expect_true(XPicture_recordDrawPolyline(&picture, polylinePoints, 2),
+                    "recordDrawPolyline stores a portable polyline command");
+        expect_true(XPicture_recordDrawPolygon(&picture, polygonPoints, 3,
+                                               true,
+                                               (int)XPainterFillRule_Winding),
+                    "recordDrawPolygon stores a portable polygon command");
+        expect_true(XPicture_recordDrawPoints(&picture, pointSet, 2),
+                    "recordDrawPoints stores a portable point-set command");
+    }
+#endif /* XPAINTER_POLYGON_ON */
+#if XPAINTER_PATH_ON
+    {
+        XPainterPath probePath;
+        XPainterPath_init(&probePath);
+        expect_true(XPainterPath_moveTo(&probePath, 1.0f, 1.0f) &&
+                    XPainterPath_lineTo(&probePath, 6.0f, 1.0f) &&
+                    XPainterPath_lineTo(&probePath, 6.0f, 6.0f) &&
+                    XPainterPath_lineTo(&probePath, 1.0f, 6.0f) &&
+                    XPainterPath_closeSubpath(&probePath),
+                    "picture probe path construction");
+        painter.m_drawPath = picture_probe_path;
+        expect_true(XPicture_recordDrawPath(&picture,
+                                            (int)XPainterPathOp_Draw,
+                                            &probePath),
+                    "recordDrawPath stores a portable path command");
+        XPainterPath_deinit(&probePath);
+    }
+#endif /* XPAINTER_PATH_ON */
+    expect_true(XPicture_isValidStream(&picture),
+                "recorded high-level picture commands remain a valid stream");
+    expect_true(XPicture_play(&picture, &painter),
+                "recorded high-level picture dispatches through XPainter");
+#if XPAINTER_SHAPE_ON
+    expect_true(probe.shapeCalls == 1 && probe.shapeOpOk,
+                "picture replay dispatches shape payload once");
+#endif /* XPAINTER_SHAPE_ON */
+#if XPAINTER_POLYGON_ON
+    expect_true(probe.polylineCalls == 1 && probe.polygonCalls == 1 &&
+                probe.pointsCalls == 1 && probe.polygonOk && probe.pointsOk,
+                "picture replay dispatches polyline/polygon/points payloads");
+#endif /* XPAINTER_POLYGON_ON */
+#if XPAINTER_PATH_ON
+    expect_true(probe.pathCalls == 1 && probe.pathOk &&
+                probe.lineCalls == 2,
+                "picture replay dispatches path as a single command");
+#endif /* XPAINTER_PATH_ON */
     {
         XPicture loaded;
         XPicture_init(&loaded, -1);
@@ -688,6 +1554,140 @@ static void test_picture_play_contract(void)
     XImage_deinit_base(&image);
     XPicture_deinit_base(&picture);
 }
+
+#if XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON
+/** @brief 校验 XPainter 录制后端把高层绘制指令原样写入 XPicture。 */
+static void test_picture_painter_high_level_record_link(void)
+{
+    XPicture picture;
+    XPainter record;
+    XPainter image;
+    XImage target;
+    XRect ellipseRect = { 2, 2, 16, 8 };
+    XPoint polyline[3] = { { 20, 2 }, { 26, 2 }, { 26, 6 } };
+    XPoint polygon[4] = { { 2, 10 }, { 8, 10 }, { 8, 15 }, { 2, 15 } };
+    XPoint points[3] = { { 20, 10 }, { 24, 12 }, { 22, 14 } };
+
+    XPicture_init(&picture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &picture),
+                "high-level record begins picture");
+    XPainter_setPen(&record, 0xffff0000u);
+    XPainter_setPenWidth(&record, 1);
+    XPainter_setBrush(&record, 0xff0000ffu);
+    expect_true(XPainter_drawEllipse(&record, &ellipseRect),
+                "recorded drawEllipse uses high-level shape opcode");
+    expect_true(XPainter_drawPolyline(&record, polyline, 3),
+                "recorded drawPolyline uses high-level polyline opcode");
+    expect_true(XPainter_drawPolygon(&record, polygon, 4,
+                                     XPainterFillRule_OddEven),
+                "recorded drawPolygon uses high-level polygon opcode");
+    expect_true(XPainter_drawPoints(&record, points, 3),
+                "recorded drawPoints uses high-level points opcode");
+    expect_true(XPainter_end(&record),
+                "high-level record picture ends");
+    expect_true(XPicture_isValidStream(&picture) &&
+                XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
+                "high-level record produces a valid non-empty stream");
+
+    XImage_init_ex(&target, 32, 18, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&image, NULL);
+    expect_true(XPainter_begin_image(&image, &target),
+                "high-level replay begins software raster");
+    XPainter_setPen(&image, 0xffff0000u);
+    XPainter_setPenWidth(&image, 1);
+    XPainter_setBrush(&image, 0xff0000ffu);
+    expect_true(XPicture_play(&picture, &image),
+                "high-level picture replays through software raster");
+    expect_true(XImage_pixel(&target, 10, 6) == 0xff0000ffu,
+                "replayed ellipse fills recorded brush color");
+    expect_true(XImage_pixel(&target, 10, 2) == 0xffff0000u &&
+                XImage_pixel(&target, 18, 6) == 0xffff0000u,
+                "replayed ellipse outlines with recorded pen color");
+    expect_true(XImage_pixel(&target, 20, 2) == 0xffff0000u &&
+                XImage_pixel(&target, 26, 6) == 0xffff0000u,
+                "replayed polyline paints both segments");
+    expect_true(XImage_pixel(&target, 4, 12) == 0xff0000ffu &&
+                XImage_pixel(&target, 8, 12) == 0xffff0000u &&
+                XImage_pixel(&target, 9, 12) == 0xff000000u,
+                "replayed polygon fills, outlines, and stays outside");
+    expect_true(XImage_pixel(&target, 20, 10) == 0xffff0000u &&
+                XImage_pixel(&target, 24, 12) == 0xffff0000u &&
+                XImage_pixel(&target, 22, 14) == 0xffff0000u &&
+                XImage_pixel(&target, 21, 11) == 0xff000000u,
+                "replayed points plot each recorded point only");
+
+    expect_true(XPainter_end(&image), "high-level replay picture ends");
+    XPainter_deinit(&image);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&picture);
+}
+#endif /* XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON */
+
+#if XPAINTER_PATH_ON
+/** @brief 校验 XPainter 的 Picture 后端把路径命令作为独立 opcode 录制并回放。 */
+static void test_picture_painter_path_record_link(void)
+{
+    XPicture picture;
+    XPainter record;
+    XPainter image;
+    XImage target;
+    XPainterPath path;
+
+    XPicture_init(&picture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &picture),
+                "path record begins picture");
+    XPainter_setPen(&record, 0xffff0000u);
+    XPainter_setPenWidth(&record, 1);
+    XPainter_setBrush(&record, 0xff0000ffu);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 2.0f) &&
+                XPainterPath_lineTo(&path, 10.0f, 2.0f) &&
+                XPainterPath_lineTo(&path, 10.0f, 10.0f) &&
+                XPainterPath_lineTo(&path, 2.0f, 10.0f) &&
+                XPainterPath_closeSubpath(&path),
+                "path record test path construction");
+    expect_true(XPainter_drawPath(&record, &path),
+                "drawPath records a portable path draw opcode");
+    expect_true(XPainter_fillPath(&record, &path),
+                "fillPath records a portable path fill opcode");
+    expect_true(XPainter_strokePath(&record, &path),
+                "strokePath records a portable path stroke opcode");
+    expect_true(XPainter_end(&record),
+                "path record picture ends");
+    expect_true(XPicture_isValidStream(&picture) &&
+                XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
+                "path record produces a valid non-empty stream");
+
+    XImage_init_ex(&target, 32, 18, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&image, NULL);
+    expect_true(XPainter_begin_image(&image, &target),
+                "path replay begins software raster");
+    XPainter_setPen(&image, 0xffff0000u);
+    XPainter_setPenWidth(&image, 1);
+    XPainter_setBrush(&image, 0xff0000ffu);
+    expect_true(XPicture_play(&picture, &image),
+                "path picture replays through software raster");
+    expect_true(XImage_pixel(&target, 3, 3) == 0xff0000ffu,
+                "replayed drawPath+fillPath keeps interior brush color");
+    expect_true(XImage_pixel(&target, 2, 2) == 0xffff0000u &&
+                XImage_pixel(&target, 10, 5) == 0xffff0000u,
+                "replayed strokePath keeps outline pen color");
+    expect_true(XImage_pixel(&target, 12, 12) == 0xff000000u,
+                "replayed path stays outside path bounds");
+
+    expect_true(XPainter_end(&image), "path replay picture ends");
+    XPainter_deinit(&image);
+    XPainter_deinit(&record);
+    XPainterPath_deinit(&path);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&picture);
+}
+#endif /* XPAINTER_PATH_ON */
 
 static void test_painter_raster_contract(void)
 {
@@ -1599,6 +2599,18 @@ static void test_painter_shape_contract(void)
     expect_true(XImage_pixel(&image, 10, 5) == 0xff000000u,
                 "arc interior not filled");
 
+    /* Qt 角度约定：0 度在 3 点钟，正 90 度沿逆时针到 12 点钟；
+       用四分之一圆弧区分设备 Y 轴方向，避免整圆测试掩盖反向错误。 */
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_drawArc(&painter, &fullSweep, 0, 16 * 90),
+                "arc quarter sweep");
+    expect_true(XImage_pixel(&image, 20, 5) == 0xffff0000u,
+                "quarter arc starts at three o'clock");
+    expect_true(XImage_pixel(&image, 10, 0) == 0xffff0000u,
+                "quarter arc positive sweep reaches twelve o'clock");
+    expect_true(XImage_pixel(&image, 10, 10) == 0xff000000u,
+                "quarter arc positive sweep does not reach six o'clock");
+
     XImage_fillRect(&image, NULL, 0xff000000u);
 
     /* 扇形：填充内部 + 轮廓与半径线 */
@@ -1720,6 +2732,16 @@ static void test_painter_shape_callback_contract(void)
                     capture.m_xRadius[4] == 4 &&
                     capture.m_yRadius[4] == 4 && capture.m_filled[4],
                     "rounded rect op params and brush fill");
+    }
+
+    /* Qt 在半径任一非正时先退化为 drawRect，不分派 RoundedRect 回调。 */
+    capture.m_count = 0;
+    {
+        XRect zeroRadius = { 0, 0, 20, 10 };
+        expect_true(XPainter_drawRoundedRect(&painter, &zeroRadius, 0, 4),
+                    "rounded rect zero radius falls back to drawRect");
+        expect_true(capture.m_count == 0,
+                    "zero radius does not dispatch rounded rect callback");
     }
 
     capture.m_count = 0;
@@ -3272,6 +4294,51 @@ static void test_painter_record_play_contract(void)
     XPicture_deinit_base(&picture);
 }
 
+/** @brief 校验 Picture 记录并回放画笔状态 opcode，避免回放沿用调用方画笔。 */
+static void test_painter_picture_pen_state_record(void)
+{
+    XPicture picture;
+    XPainter record;
+    XPainter replay;
+    XImage target;
+
+    XPicture_init(&picture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &picture),
+                "pen state record begins picture");
+    XPainter_setPen(&record, 0xff20c060u);
+#if XPAINTER_PENSTYLE_ON
+    XPainter_setPenWidth(&record, 3);
+    XPainter_setPenStyle(&record, XPainterPenStyle_SolidLine);
+#endif /* XPAINTER_PENSTYLE_ON */
+    expect_true(XPainter_drawLine(&record, 1, 1, 4, 1),
+                "pen state record draws line");
+    expect_true(XPainter_end(&record), "pen state record ends picture");
+    expect_true(XPicture_isValidStream(&picture),
+                "pen state record stream is valid");
+
+    XImage_init_ex(&target, 8, 4, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&replay, NULL);
+    expect_true(XPainter_begin_image(&replay, &target),
+                "pen state replay begins image");
+    XPainter_setPen(&replay, 0xffff0000u);
+    expect_true(XPicture_play(&picture, &replay),
+                "pen state replay applies recorded pen");
+    expect_true(XImage_pixel(&target, 1, 1) == 0xff20c060u &&
+                XImage_pixel(&target, 4, 1) == 0xff20c060u,
+                "pen state replay uses recorded color");
+#if XPAINTER_PENSTYLE_ON
+    expect_true(XPainter_penWidth(&replay) == 3,
+                "pen state replay uses recorded width");
+#endif /* XPAINTER_PENSTYLE_ON */
+    XPainter_end(&replay);
+    XPainter_deinit(&replay);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&picture);
+}
+
 
 static void test_icon_matching(void)
 {
@@ -3320,6 +4387,9 @@ static void test_icon_device_pixel_ratio(void)
     XPixmap out;
     XIcon icon;
     XIcon highIcon;
+    XIcon mixedIcon;
+    XVector sizes;
+    XSize* size;
 
     XPixmap_init_ex(&normal, 32, 32);
     XIcon_init_pixmap(&icon, &normal);
@@ -3344,8 +4414,180 @@ static void test_icon_device_pixel_ratio(void)
 
     XPixmap_deinit_base(&out);
     XIcon_deinit_base(&highIcon);
+
+    /* Qt prefers the exact DPR when identical logical sizes exist, then sizes
+     * the returned source against the requested device size. */
+    XIcon_init(&mixedIcon);
+    XIcon_addPixmap(&mixedIcon, &normal, XIconMode_Normal, XIconState_Off);
+    XIcon_addPixmap(&mixedIcon, &highResolution, XIconMode_Normal, XIconState_Off);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, 1.0f,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
+                XPixmap_devicePixelRatio(&out) == 1.0f,
+                "icon 1x request chooses the 1x source over the 2x source");
+    XPixmap_deinit_base(&out);
+
+    /* QIcon treats zero and sub-normal DPR requests as the ordinary 1x path. */
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, 0.0f,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
+                XPixmap_devicePixelRatio(&out) == 1.0f,
+                "icon non-positive DPR request uses the ordinary 1x path");
+    XPixmap_deinit_base(&out);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, 0.5f,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
+                XPixmap_devicePixelRatio(&out) == 1.0f,
+                "icon sub-normal DPR request uses the ordinary 1x path");
+    XPixmap_deinit_base(&out);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, NAN,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
+                XPixmap_devicePixelRatio(&out) == 1.0f,
+                "icon NaN DPR request uses the ordinary 1x path");
+    XPixmap_deinit_base(&out);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, INFINITY,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_isNull(&out),
+                "icon infinite DPR request returns null safely");
+    XPixmap_deinit_base(&out);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 32, 32, 2.0f,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 64 && XPixmap_height(&out) == 64 &&
+                XPixmap_devicePixelRatio(&out) == 2.0f,
+                "icon 2x request chooses the 2x source");
+    XPixmap_deinit_base(&out);
+
+    XPixmap_init(&out);
+    XIcon_pixmapRatio(&mixedIcon, 20, 20, 2.0f,
+                      XIconMode_Normal, XIconState_Off, &out);
+    expect_true(XPixmap_width(&out) == 40 && XPixmap_height(&out) == 40 &&
+                XPixmap_devicePixelRatio(&out) == 2.0f,
+                "icon 2x source scales down to the requested device size");
+    XPixmap_deinit_base(&out);
+
+    XVector_init(&sizes, sizeof(XSize), true);
+    XIcon_availableSizes(&mixedIcon, XIconMode_Normal, XIconState_Off, &sizes);
+    size = XVector_size_base((const XContainer*)&sizes) == 1
+        ? (XSize*)XVector_at_base(&sizes, 0) : NULL;
+    expect_true(size && size->width == 32 && size->height == 32,
+                "icon availableSizes deduplicates identical logical sizes");
+    XVector_deinit_base((XClass*)&sizes);
+
+    XIcon_deinit_base(&mixedIcon);
     XPixmap_deinit_base(&highResolution);
     XPixmap_deinit_base(&normal);
+}
+
+static void test_icon_style_helper(void)
+{
+    XImage baseImage;
+    XImage disabledImage;
+    XImage selectedImage;
+    XPixmap source;
+    XPixmap disabled;
+    XPixmap selected;
+    XIcon icon;
+    uint32_t basePixel;
+    uint32_t disabledPixel;
+    uint32_t selectedPixel;
+    bool alphaPreserved;
+
+    XPixmap_init_ex(&source, 16, 16);
+    XImage_init_ex(&baseImage, 16, 16, XImageFormat_ARGB32);
+    XImage_fill(&baseImage, 0xff336699u);
+    XPixmap_fromImage(&baseImage, 0, &source);
+
+    XIcon_init_pixmap(&icon, &source);
+
+    XPixmap_init(&disabled);
+    XIcon_pixmap(&icon, 16, 16, XIconMode_Disabled, XIconState_Off, &disabled);
+    expect_true(!XPixmap_isNull(&disabled), "disabled icon style produces non-null pixmap");
+    XImage_init(&disabledImage);
+    XPixmap_toImage(&disabled, &disabledImage);
+    disabledPixel = XImage_pixel(&disabledImage, 0, 0);
+    alphaPreserved = ((disabledPixel >> 24) & 0xffu) == 0xffu;
+    expect_true(alphaPreserved && disabledPixel != 0xff336699u,
+                "disabled icon style keeps opaque alpha and recolorizes pixels");
+
+    XPixmap_init(&selected);
+    XIcon_pixmap(&icon, 16, 16, XIconMode_Selected, XIconState_Off, &selected);
+    expect_true(!XPixmap_isNull(&selected), "selected icon style produces non-null pixmap");
+    XImage_init(&selectedImage);
+    XPixmap_toImage(&selected, &selectedImage);
+    selectedPixel = XImage_pixel(&selectedImage, 0, 0);
+    basePixel = 0xff336699u;
+    alphaPreserved = ((selectedPixel >> 24) & 0xffu) == 0xffu;
+    expect_true(alphaPreserved && selectedPixel != basePixel &&
+                ((selectedPixel >> 16) & 0xffu) >= ((basePixel >> 16) & 0xffu) &&
+                ((selectedPixel >> 8) & 0xffu) >= ((basePixel >> 8) & 0xffu) &&
+                (selectedPixel & 0xffu) >= (basePixel & 0xffu),
+                "selected icon style keeps opaque alpha and pulls pixels toward highlight");
+
+    XImage_deinit_base(&selectedImage);
+    XPixmap_deinit_base(&selected);
+    XImage_deinit_base(&disabledImage);
+    XPixmap_deinit_base(&disabled);
+    XIcon_deinit_base(&icon);
+    XImage_deinit_base(&baseImage);
+    XPixmap_deinit_base(&source);
+}
+
+static void test_icon_scaled_pixmap_cache(void)
+{
+    XPixmap source;
+    XPixmap first;
+    XPixmap second;
+    XPixmap afterClear;
+    XIcon icon;
+    int64_t firstKey;
+    int64_t secondKey;
+
+    XPixmap_init_ex(&source, 32, 32);
+    XIcon_init_pixmap(&icon, &source);
+
+    XPixmap_init(&first);
+    XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
+                      XIconMode_Normal, XIconState_Off, &first);
+    firstKey = XPixmap_cacheKey(&first);
+    expect_true(firstKey != 0 && XPixmap_width(&first) == 20 &&
+                XPixmap_height(&first) == 20,
+                "icon scaled pixmap first generation produces a 20x20 pixmap");
+
+    XPixmap_init(&second);
+    XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
+                      XIconMode_Normal, XIconState_Off, &second);
+    secondKey = XPixmap_cacheKey(&second);
+    expect_true(secondKey == firstKey && XPixmap_width(&second) == 20 &&
+                XPixmap_height(&second) == 20,
+                "icon scaled pixmap second request hits the same cache entry");
+
+    XPixmapCache_clear();
+
+    XPixmap_init(&afterClear);
+    XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
+                      XIconMode_Normal, XIconState_Off, &afterClear);
+    expect_true(XPixmap_cacheKey(&afterClear) != firstKey &&
+                XPixmap_width(&afterClear) == 20 &&
+                XPixmap_height(&afterClear) == 20,
+                "icon scaled pixmap cache clear forces a new pixmap generation");
+
+    XPixmap_deinit_base(&afterClear);
+    XPixmap_deinit_base(&second);
+    XPixmap_deinit_base(&first);
+    XIcon_deinit_base(&icon);
+    XPixmap_deinit_base(&source);
 }
 
 
@@ -3391,6 +4633,121 @@ static void test_icon_theme_engine_contract(void)
     XPixmap_deinit_base(&fallbackPixmap);
 }
 
+static void test_icon_engine_hook_contract(void)
+{
+    XIconEngine* engine;
+    XPixmap pixmap;
+    XIconEngineScaledPixmapArgument argument;
+    bool isNull = true;
+
+    engine = XIconEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    expect_true(engine != NULL, "icon engine base create for hook contract");
+    if (!engine) return;
+
+    XIconEngine_virtualHook_base(engine, XIconEngine_IsNullHook, &isNull);
+    expect_true(isNull, "icon engine IsNullHook default preserves caller value");
+    isNull = false;
+    XIconEngine_virtualHook_base(engine, XIconEngine_IsNullHook, &isNull);
+    expect_true(!isNull, "icon engine IsNullHook false value remains false");
+
+    XPixmap_init(&pixmap);
+    argument.size.width = 0;
+    argument.size.height = 16;
+    argument.mode = XIconMode_Normal;
+    argument.state = XIconState_Off;
+    argument.scale = 2.0f;
+    argument.pixmap = &pixmap;
+    XIconEngine_virtualHook_base(engine, XIconEngine_ScaledPixmapHook, &argument);
+    expect_true(XPixmap_isNull(&pixmap),
+                "icon engine ScaledPixmapHook rejects non-positive dimensions");
+
+    argument.size.width = 8;
+    argument.size.height = 8;
+    argument.scale = 0.0f;
+    XIconEngine_virtualHook_base(engine, XIconEngine_ScaledPixmapHook, &argument);
+    expect_true(XPixmap_isNull(&pixmap),
+                "icon engine ScaledPixmapHook rejects non-positive scale");
+
+    argument.scale = NAN;
+    XIconEngine_virtualHook_base(engine, XIconEngine_ScaledPixmapHook, &argument);
+    expect_true(XPixmap_isNull(&pixmap),
+                "icon engine ScaledPixmapHook rejects NaN scale");
+
+    argument.scale = INFINITY;
+    XIconEngine_virtualHook_base(engine, XIconEngine_ScaledPixmapHook, &argument);
+    expect_true(XPixmap_isNull(&pixmap),
+                "icon engine ScaledPixmapHook rejects infinite scale");
+
+    argument.scale = 2.0f;
+    XIconEngine_virtualHook_base(engine, XIconEngine_ScaledPixmapHook, &argument);
+    expect_true(!XPixmap_isNull(&pixmap) && XPixmap_width(&pixmap) == 16 &&
+                    XPixmap_height(&pixmap) == 16 &&
+                    XPixmap_devicePixelRatio(&pixmap) == 2.0f,
+                "base icon engine scaled hook uses painted physical pixmap");
+
+    XPixmap_deinit_base(&pixmap);
+    XIconEngine_delete_base(engine);
+}
+
+static void test_icon_paint_visual_alignment(void)
+{
+    XPixmap source;
+    XImage target;
+    XIcon icon;
+    XPainter painter;
+    PictureProbe probe = { 0, 0, 0, 0, 0, false };
+    uint32_t background = 0xff000000u;
+    uint32_t pixelColor = 0xff336699u;
+
+    XPixmap_init_ex(&source, 4, 2);
+    XPixmap_fill(&source, pixelColor);
+    XIcon_init_pixmap(&icon, &source);
+
+    XImage_init_ex(&target, 20, 10, XImageFormat_ARGB32);
+    XImage_fill(&target, background);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint alignment begins image");
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Left,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter), "icon paint alignment ends LTR image");
+    expect_true((XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u &&
+                (XImage_pixel(&target, 4, 0) & 0x00ffffffu) == 0x0u,
+                "icon paint Left alignment starts at the visual left edge");
+
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    XImage_fill(&target, background);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint alignment begins RTL image");
+    XPainter_setLayoutDirection(&painter, XPainterLayoutDirection_RightToLeft);
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Left,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter), "icon paint alignment ends RTL image");
+    expect_true((XImage_pixel(&target, 16, 0) & 0x00ffffffu) == 0x336699u &&
+                (XImage_pixel(&target, 15, 0) & 0x00ffffffu) == 0x0u,
+                "icon paint Leading alignment mirrors to the visual right in RTL");
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+
+    /* QIcon::paint 的状态保存必须成对发生；没有 save 回调时不能误调用 restore。 */
+    XImage_fill(&target, background);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint unpaired state begins image");
+    painter.m_userData = &probe;
+    painter.m_save = NULL;
+    painter.m_restore = picture_probe_restore;
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Left,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(probe.restoreCalls == 0 &&
+                (XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+                "icon paint does not restore without a successful save");
+    expect_true(XPainter_end(&painter), "icon paint unpaired state ends image");
+
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&target);
+    XIcon_deinit_base(&icon);
+    XPixmap_deinit_base(&source);
+}
+
 
 #if XIMAGECODEC_ON
 static void test_icon_add_file_size(void)
@@ -3398,6 +4755,7 @@ static void test_icon_add_file_size(void)
     XImage image;
     XIcon icon;
     XVector sizes;
+    XPixmap loaded;
     XSize* size;
 
     XImage_init_ex(&image, 3, 2, XImageFormat_ARGB32);
@@ -3408,6 +4766,7 @@ static void test_icon_add_file_size(void)
     XIcon_init(&icon);
     XIcon_addFile_2(&icon, "xgui_icon_add_file.bmp", 8, 6,
                   XIconMode_Normal, XIconState_Off);
+    expect_true(!XIcon_isNull(&icon), "icon addFile entry is present before load");
     XVector_init(&sizes, sizeof(XSize), true);
     XIcon_availableSizes(&icon, XIconMode_Normal, XIconState_Off, &sizes);
     size = XVector_size_base((const XContainer*)&sizes) == 1
@@ -3415,6 +4774,19 @@ static void test_icon_add_file_size(void)
     expect_true(size && size->width == 8 && size->height == 6,
                 "icon addFile stores the requested raster size");
 
+    XPixmap_init(&loaded);
+    XIcon_pixmap(&icon, 16, 16, XIconMode_Normal, XIconState_Off, &loaded);
+    expect_true(!XPixmap_isNull(&loaded),
+                "icon addFile entry loads on first pixmap request");
+
+    XVector_clear_base((XContainer*)&sizes);
+    XIcon_availableSizes(&icon, XIconMode_Normal, XIconState_Off, &sizes);
+    size = XVector_size_base((const XContainer*)&sizes) == 1
+        ? (XSize*)XVector_at_base(&sizes, 0) : NULL;
+    expect_true(size && size->width == 3 && size->height == 2,
+                "icon addFile entry reports native size after load");
+
+    XPixmap_deinit_base(&loaded);
     XVector_deinit_base((XClass*)&sizes);
     XIcon_deinit_base(&icon);
     XImage_deinit_base(&image);
@@ -3430,7 +4802,10 @@ static void test_image_device_io(void)
     XImage source;
     XImage loaded;
     XImageWriter writer;
+    XImageWriter file_writer;
     XImageReader reader;
+    XImageReader autodetect;
+    const char* autodetectedFormat;
     bool ok;
 
     make_file_name(&file_name);
@@ -3438,6 +4813,17 @@ static void test_image_device_io(void)
     XImage_setPixel(&source, 0, 0, 0xffff0000u);
     XImage_setPixel(&source, 1, 0, 0xff00ff00u);
     XImage_setPixel(&source, 2, 0, 0xff0000ffu);
+
+    /* 文件名构造器应立即持有可观察的内部设备，并按 Qt 规则保留初始错误文本；
+       未指定格式时 canWrite() 通过文件后缀推断 BMP。 */
+    XImageWriter_init_file_2(&file_writer, XString_toUtf8(file_name), NULL);
+    expect_true(XImageWriter_device(&file_writer) != NULL,
+                "file writer exposes its internally-owned device");
+    expect_true(strcmp(XImageWriter_errorString_2(&file_writer), "Unknown error") == 0,
+                "file writer initializes the unknown error string");
+    expect_true(XImageWriter_canWrite(&file_writer),
+                "file writer infers BMP format from the filename suffix");
+    XImageWriter_deinit_base(&file_writer);
 
     XFile_init_2(&file, file_name);
     ok = XFile_open_2(&file, XIODevice_WriteOnly, 0);
@@ -3452,6 +4838,12 @@ static void test_image_device_io(void)
     XFile_init_2(&file, file_name);
     ok = XFile_open_2(&file, XIODevice_ReadOnly, 0);
     expect_true(ok, "opens BMP input device");
+    XImageReader_init_device_2(&autodetect, (XIODevice*)&file, NULL);
+    autodetectedFormat = XImageReader_format_2(&autodetect);
+    expect_true(autodetectedFormat &&
+                strcmp(autodetectedFormat, "bmp") == 0,
+                "reader format reports detected handler format");
+    XImageReader_deinit_base(&autodetect);
     XImageReader_init_device_2(&reader, (XIODevice*)&file, "BMP");
     expect_true(XImageReader_canRead(&reader), "device reader detects BMP");
     XImage_init(&loaded);
@@ -3475,6 +4867,11 @@ static void test_image_device_io(void)
 static int g_mockImageWidth;
 static int g_mockImageHeight;
 static uint32_t g_mockImagePixels[4];
+static bool g_mockSuffixOnlyCapabilities;
+static bool g_mockRejectSuffixCanRead;
+static XString g_mockExpectedWriterDescription;
+static bool g_mockWriterDescriptionCheck;
+static bool g_mockWriterDescriptionMatched;
 
 XCLASS_DEFINE_BEGING(TestImageHandler)
 XCLASS_DEFINE_EXTEND_END(TestImageHandler, XImageIOHandler)
@@ -3482,11 +4879,15 @@ XCLASS_DEFINE_EXTEND_END(TestImageHandler, XImageIOHandler)
 typedef struct TestImageHandler
 {
     XImageIOHandler m_base;
+    XString         m_description;
 } TestImageHandler;
 
 static bool VTestImageHandler_canRead(const XImageIOHandler* self)
 {
-    (void)self;
+    const XString* format = XImageIOHandler_format_const(self);
+    if (g_mockRejectSuffixCanRead && format &&
+        XString_equals_utf8(format, "bmp", XChar_CaseInsensitive))
+        return false;
     return g_mockImageWidth > 0 && g_mockImageHeight > 0;
 }
 
@@ -3515,7 +4916,15 @@ static bool VTestImageHandler_write(XImageIOHandler* self, const XImage* image)
 {
     int x;
     int y;
-    (void)self;
+    if (g_mockWriterDescriptionCheck) {
+        XImageIOHandlerOptionValue value;
+        memset(&value, 0, sizeof(value));
+        g_mockWriterDescriptionMatched =
+            XImageIOHandler_optionValue(self, XImageIOHandlerOption_Description, &value) &&
+            value.string &&
+            XString_equals(value.string, &g_mockExpectedWriterDescription,
+                           XChar_CaseSensitive);
+    }
     if (!image || XImage_isNull(image))
         return false;
     g_mockImageWidth = XImage_width(image);
@@ -3533,14 +4942,44 @@ static bool VTestImageHandler_option(const XImageIOHandler* self,
                                      XImageIOHandlerOption option,
                                      void* out)
 {
-    (void)self;
+    TestImageHandler* handler = (TestImageHandler*)self;
     if (option == XImageIOHandlerOption_Size && out) {
         XSize* size = (XSize*)out;
         size->width = g_mockImageWidth;
         size->height = g_mockImageHeight;
         return true;
     }
+    if (option == XImageIOHandlerOption_Description && out && handler) {
+        XImageIOHandlerOptionValue* value =
+            (XImageIOHandlerOptionValue*)out;
+        value->string = &handler->m_description;
+        return true;
+    }
     return false;
+}
+
+static void VTestImageHandler_setOption(XImageIOHandler* self,
+                                        XImageIOHandlerOption option,
+                                        const void* value)
+{
+    if (option == XImageIOHandlerOption_Description)
+        XImageIOHandler_storeOptionValue(self, option, value);
+}
+
+static bool VTestImageHandler_supportsOption(const XImageIOHandler* self,
+                                             XImageIOHandlerOption option)
+{
+    (void)self;
+    return option == XImageIOHandlerOption_Size ||
+           option == XImageIOHandlerOption_Description;
+}
+
+static void VTestImageHandler_deinit(XImageIOHandler* self)
+{
+    TestImageHandler* handler = (TestImageHandler*)self;
+    if (!handler) return;
+    XString_deinit_base((XClass*)&handler->m_description);
+    XClass_Deinit_Parent(XImageIOHandler, self);
 }
 
 static XVtable* TestImageHandler_class_init(void)
@@ -3551,6 +4990,10 @@ static XVtable* TestImageHandler_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Read, VTestImageHandler_read);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Write, VTestImageHandler_write);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Option, VTestImageHandler_option);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SetOption, VTestImageHandler_setOption);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SupportsOption,
+                             VTestImageHandler_supportsOption);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VTestImageHandler_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -3561,6 +5004,9 @@ static TestImageHandler* TestImageHandler_create(void)
     if (!self) return NULL;
     memset(self, 0, sizeof(TestImageHandler));
     XImageIOHandler_init(&self->m_base);
+    XString_init(&self->m_description);
+    XString_assign_utf8(&self->m_description,
+                        "Title:   Sunset  \n\nAuthor:  Alice\n\nDescription:  demo");
     XClassSetVtable(self, TestImageHandler);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
@@ -3582,8 +5028,14 @@ static uint32_t VTestImagePlugin_capabilities(const XImageIOPlugin* self,
                                               XIODevice* device,
                                               const XString* format)
 {
+    char consumed;
     (void)self;
-    (void)device;
+    /* 用于验证注册表遵守 Qt 的设备位置保护契约；真实插件可能读取魔数。 */
+    if (g_mockConsumeCapabilities && device)
+        (void)XIODevice_read_1(device, &consumed, 1);
+    if (g_mockSuffixOnlyCapabilities &&
+        (!format || XContainer_isEmpty_base((const XContainer*)format)))
+        return 0;
     (void)format;
     return (uint32_t)(XImageIOPlugin_CanRead | XImageIOPlugin_CanWrite);
 }
@@ -3672,13 +5124,33 @@ static TestImagePlugin* TestImagePlugin_create(void)
 
 static void test_image_handler_registry(void)
 {
+    XImageIOHandler baseHandler;
+    XImageIOHandlerOptionValue baseOption;
     XStringList* readerFormats = XImageReader_supportedImageFormats();
     XStringList* readerMimes = XImageReader_supportedMimeTypes();
-    XStringList* readerBmp = XImageReader_imageFormatsForMimeType_2("IMAGE/BMP");
+    XStringList* readerBmp = XImageReader_imageFormatsForMimeType_2("image/bmp");
+    XStringList* readerUpperBmp = XImageReader_imageFormatsForMimeType_2("IMAGE/BMP");
     XStringList* writerFormats = XImageWriter_supportedImageFormats();
     XStringList* writerUnknown = XImageWriter_imageFormatsForMimeType_2("image/png");
+    XStringList* writerUpperPng = XImageWriter_imageFormatsForMimeType_2("IMAGE/PNG");
     const XString* format;
     int formatCount = 0;
+
+    /* QImageIOHandler 基类 setOption() 为空操作，不能凭调用痕迹报告支持。 */
+    XImageIOHandler_init(&baseHandler);
+    memset(&baseOption, 0, sizeof(baseOption));
+    baseOption.integer = 75;
+    XImageIOHandler_setOption_base(&baseHandler,
+                                   XImageIOHandlerOption_Quality,
+                                   &baseOption);
+    expect_true(!XImageIOHandler_supportsOption_base(
+                    &baseHandler, XImageIOHandlerOption_Quality),
+                "base image handler keeps unsupported options disabled");
+    expect_true(!XImageIOHandler_option_base(
+                    &baseHandler, XImageIOHandlerOption_Quality,
+                    &baseOption),
+                "base image handler option remains empty after setOption");
+    XImageIOHandler_deinit_base(&baseHandler);
 
 #if XIMAGECODEC_BMP_ON
     ++formatCount;
@@ -3705,18 +5177,296 @@ static void test_image_handler_registry(void)
     expect_true(readerMimes && XStringList_size_base((const XContainer*)readerMimes) == (size_t)formatCount,
                 "reader registry exposes built-in MIME types");
     expect_true(readerBmp && XStringList_size_base((const XContainer*)readerBmp) == 1,
-                "reader MIME lookup is case insensitive");
+                "reader MIME lookup resolves exact MIME type");
+    expect_true(readerUpperBmp && XStringList_size_base((const XContainer*)readerUpperBmp) == 0,
+                "reader MIME lookup keeps Qt case-sensitive MIME semantics");
     format = writerFormats ? (const XString*)XStringList_at_base((const XVector*)writerFormats, 0) : NULL;
     expect_true(writerFormats && XStringList_size_base((const XContainer*)writerFormats) == (size_t)formatCount && format &&
                 XString_equals_utf8(format, "bmp", XChar_CaseSensitive), "writer registry exposes BMP codec");
     expect_true(writerUnknown && XStringList_size_base((const XContainer*)writerUnknown) == 1,
                 "writer MIME lookup returns the matching codec format");
+    expect_true(writerUpperPng && XStringList_size_base((const XContainer*)writerUpperPng) == 0,
+                "writer MIME lookup keeps Qt case-sensitive MIME semantics");
 
     if (readerFormats) XStringList_delete_base((XClass*)readerFormats);
     if (readerMimes) XStringList_delete_base((XClass*)readerMimes);
     if (readerBmp) XStringList_delete_base((XClass*)readerBmp);
+    if (readerUpperBmp) XStringList_delete_base((XClass*)readerUpperBmp);
     if (writerFormats) XStringList_delete_base((XClass*)writerFormats);
     if (writerUnknown) XStringList_delete_base((XClass*)writerUnknown);
+    if (writerUpperPng) XStringList_delete_base((XClass*)writerUpperPng);
+}
+
+/* 对齐 Qt QImageReader::setDecideFormatFromContent 的独立状态语义。 */
+static void test_image_reader_decide_format_state(void)
+{
+    XImageReader reader;
+    XImageReader empty;
+    XImageReader fileReader;
+    XImageReader autoReader;
+    XImageReader wrongSuffixReader;
+    XImageReader strictReader;
+    XImageReader contentReader;
+    XImageReader extensionReader;
+    XImageReader extensionAutoReader;
+    XImage autoImage;
+    XImage autoFixture;
+    XImage wrongSuffixImage;
+    XImage contentImage;
+    XImage extensionImage;
+    XImage extensionAutoImage;
+    XImage dprImage;
+    XImageReader dprReader;
+    XString* autoFileName;
+    XImage strictImage;
+    XRect emptyRect;
+
+    XImageReader_init(&reader);
+    expect_true(XImageReader_autoDetectImageFormat(&reader),
+                "image reader enables auto detection by default");
+    XImageReader_setAutoDetectImageFormat(&reader, false);
+    XImageReader_setFormat_2(&reader, "unsupported-format");
+    XImageReader_setDecideFormatFromContent(&reader, true);
+    expect_true(XImageReader_decideFormatFromContent(&reader),
+                "image reader enables content-based format decision");
+    expect_true(!XImageReader_autoDetectImageFormat(&reader),
+                "content decision does not mutate auto-detect state");
+    XImageReader_setDecideFormatFromContent(&reader, false);
+    expect_true(!XImageReader_decideFormatFromContent(&reader),
+                "image reader disables content-based format decision");
+    XImageReader_deinit_base(&reader);
+
+    XImageReader_init_file_2(&fileReader, "xgui_reader_lifecycle_missing.bmp", NULL);
+    expect_true(XImageReader_device(&fileReader) != NULL,
+                "file image reader exposes its internally-owned device");
+    expect_true(XImageReader_fileName_2(&fileReader) &&
+                strcmp(XImageReader_fileName_2(&fileReader),
+                       "xgui_reader_lifecycle_missing.bmp") == 0,
+                "file image reader preserves the configured file name");
+    XImageReader_deinit_base(&fileReader);
+
+    /* 自动探测开启且无显式格式时，Qt 先尝试文件后缀插件，再允许内置
+       处理器按内容读取；该路径不能因 format 为空而提前报错。 */
+    XImage_init_ex(&autoFixture, 1, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&autoFixture, 0, 0, 0xff0a1b2cu);
+    expect_true(XImage_save_2(&autoFixture,
+                              "xgui_reader_autodetect.bmp", NULL, -1),
+                "writes fixture for automatic format detection");
+    XImageReader_init_file_2(&autoReader, "xgui_reader_autodetect.bmp", NULL);
+    XImage_init(&autoImage);
+    expect_true(XImageReader_imageFormatValue(&autoReader) == XImageFormat_RGB32,
+                "reader imageFormat probes BMP header as RGB32");
+    expect_true(XImageReader_read(&autoReader, &autoImage) &&
+                XImage_width(&autoImage) == 1 &&
+                XImage_height(&autoImage) == 1 &&
+                XImage_pixel(&autoImage, 0, 0) == 0xff0a1b2cu,
+                "reader with autodetect loads a BMP without explicit format");
+    XImage_deinit_base(&autoImage);
+    XImageReader_deinit_base(&autoReader);
+    autoFileName = XString_create_utf8("xgui_reader_autodetect.bmp");
+    if (autoFileName) {
+        XFile_remove_static(autoFileName);
+        XString_delete_base((XClass*)autoFileName);
+    }
+
+#if XIMAGECODEC_BMP_ON
+    /* Qt 的 decideFormatFromContent 会忽略显式格式和文件扩展名，即使
+       autoDetectImageFormat 同时关闭，也应按设备内容选择 BMP 处理器。 */
+    expect_true(XImage_save_2(&autoFixture,
+                              "xgui_reader_decide_content.bmp", "bmp", -1),
+                "writes fixture for content-only format decision");
+    XImageReader_init_file_2(&contentReader,
+                             "xgui_reader_decide_content.bmp",
+                             "unsupported-format");
+    XImageReader_setAutoDetectImageFormat(&contentReader, false);
+    XImageReader_setDecideFormatFromContent(&contentReader, true);
+    XImage_init(&contentImage);
+    expect_true(XImageReader_read(&contentReader, &contentImage) &&
+                XImage_width(&contentImage) == 1 &&
+                XImage_height(&contentImage) == 1 &&
+                XImage_pixel(&contentImage, 0, 0) == 0xff0a1b2cu,
+                "content decision ignores explicit format and reads by content");
+    XImage_deinit_base(&contentImage);
+    XImageReader_deinit_base(&contentReader);
+    autoFileName = XString_create_utf8("xgui_reader_decide_content.bmp");
+    if (autoFileName) {
+        XFile_remove_static(autoFileName);
+        XString_delete_base((XClass*)autoFileName);
+    }
+#endif
+
+    /* Qt 读取成功后从文件基名末尾的 @2x..@9x 推导设备像素比。 */
+    expect_true(XImage_save_2(&autoFixture,
+                              "xgui_reader_autodetect@2x.bmp", NULL, -1),
+                "writes fixture for @2x device pixel ratio detection");
+    XImageReader_init_file_2(&dprReader,
+                             "xgui_reader_autodetect@2x.bmp", NULL);
+    XImage_init(&dprImage);
+    expect_true(XImageReader_read(&dprReader, &dprImage) &&
+                XImage_devicePixelRatio(&dprImage) == 2.0f,
+                "reader assigns DPR from @2x file name suffix");
+    XImage_deinit_base(&dprImage);
+    XImageReader_deinit_base(&dprReader);
+    autoFileName = XString_create_utf8("xgui_reader_autodetect@2x.bmp");
+    if (autoFileName) {
+        XFile_remove_static(autoFileName);
+        XString_delete_base((XClass*)autoFileName);
+    }
+
+    /* Qt 在后缀处理器不能确认内容时继续按内容回退；错误的 .bmp 后缀
+       不应阻止 PNG 内置处理器被选中。 */
+#if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
+    XImageReader_init_file_2(&wrongSuffixReader,
+                             "xgui_reader_wrong_suffix.bmp", NULL);
+    XImage_init(&wrongSuffixImage);
+    expect_true(XImage_save_2(&autoFixture,
+                              "xgui_reader_wrong_suffix.bmp", "png", -1),
+                "writes wrong-suffix content fixture");
+    expect_true(XImageReader_read(&wrongSuffixReader, &wrongSuffixImage) &&
+                XImage_width(&wrongSuffixImage) == 1 &&
+                XImage_height(&wrongSuffixImage) == 1 &&
+                XImage_pixel(&wrongSuffixImage, 0, 0) == 0xff0a1b2cu,
+                "reader falls back from wrong suffix to content format");
+    XImage_deinit_base(&wrongSuffixImage);
+    XImageReader_deinit_base(&wrongSuffixReader);
+    autoFileName = XString_create_utf8("xgui_reader_wrong_suffix.bmp");
+    if (autoFileName) {
+        XFile_remove_static(autoFileName);
+        XString_delete_base((XClass*)autoFileName);
+    }
+#endif
+#if XIMAGECODEC_ON && XIMAGECODEC_BMP_ON
+    /* QImageReader::setFileName() 在原路径不存在时按支持格式追加后缀；
+       显式 bmp 应优先于排序后的其它格式尝试。 */
+    expect_true(XImage_save_2(&autoFixture,
+                              "xgui_reader_default_extension.bmp", "bmp", -1),
+                "writes fixture for default extension probing");
+    XImageReader_init_file_2(&extensionReader,
+                             "xgui_reader_default_extension", "bmp");
+    XImage_init(&extensionImage);
+    expect_true(XImageReader_read(&extensionReader, &extensionImage) &&
+                XImage_width(&extensionImage) == 1 &&
+                XImage_height(&extensionImage) == 1 &&
+                XImage_pixel(&extensionImage, 0, 0) == 0xff0a1b2cu,
+                "reader probes supported extension when base path is missing");
+    expect_true(XImageReader_fileName_2(&extensionReader) &&
+                strcmp(XImageReader_fileName_2(&extensionReader),
+                       "xgui_reader_default_extension.bmp") == 0,
+                "reader exposes the successfully probed file name");
+    XImage_deinit_base(&extensionImage);
+    XImageReader_deinit_base(&extensionReader);
+    XImageReader_init_file_2(&extensionAutoReader,
+                             "xgui_reader_default_extension", NULL);
+    XImage_init(&extensionAutoImage);
+    expect_true(XImageReader_read(&extensionAutoReader, &extensionAutoImage) &&
+                XImage_width(&extensionAutoImage) == 1 &&
+                XImage_height(&extensionAutoImage) == 1 &&
+                XImage_pixel(&extensionAutoImage, 0, 0) == 0xff0a1b2cu,
+                "reader prioritizes the selected extension during autodetect");
+    XImage_deinit_base(&extensionAutoImage);
+    XImageReader_deinit_base(&extensionAutoReader);
+    autoFileName = XString_create_utf8("xgui_reader_default_extension.bmp");
+    if (autoFileName) {
+        XFile_remove_static(autoFileName);
+        XString_delete_base((XClass*)autoFileName);
+    }
+#endif
+
+    XImage_deinit_base(&autoFixture);
+
+    /* Qt 在关闭自动探测且未指定格式时不会根据文件名后缀创建处理器，
+       即使文件名带有 .bmp 也应直接返回 UnsupportedFormatError。 */
+    XImageReader_init_file_2(&strictReader,
+                             "xgui_reader_no_auto_missing.bmp", NULL);
+    XImageReader_setAutoDetectImageFormat(&strictReader, false);
+    XImage_init(&strictImage);
+    expect_true(!XImageReader_canRead(&strictReader) &&
+                XImageReader_error(&strictReader) ==
+                    XImageReaderError_UnsupportedFormatError,
+                "reader canRead reports unsupported format when autodetect is disabled");
+    expect_true(!XImageReader_read(&strictReader, &strictImage),
+                "reader without autodetect or explicit format refuses to read");
+    expect_true(XImageReader_error(&strictReader) ==
+                    XImageReaderError_UnsupportedFormatError,
+                "reader without autodetect reports unsupported format");
+    XImage_deinit_base(&strictImage);
+    XImageReader_deinit_base(&strictReader);
+
+    XImageReader_init(&empty);
+    expect_true(strcmp(XImageReader_errorString_2(&empty), "Unknown error") == 0,
+                "image reader returns Qt Unknown error text before any failure");
+    {
+        XString* initialError = XImageReader_errorString(&empty);
+        expect_true(initialError &&
+                    XString_equals_utf8(initialError, "Unknown error",
+                                        XChar_CaseSensitive),
+                    "image reader value errorString returns Unknown error text");
+        if (initialError) XString_delete_base((XClass*)initialError);
+    }
+    expect_true(XImageReader_imageFormatValue(&empty) == XImageFormat_Invalid,
+                "reader imageFormat is invalid without an ImageFormat option");
+    XImageReader_setBackgroundColor(&empty, 0xff102030u);
+    expect_true(XImageReader_backgroundColor(&empty) == 0,
+                "image reader backgroundColor is invalid without a BackgroundColor option");
+    expect_true(!XImageReader_supportsOption(
+                    &empty, XImageIOHandlerOption_BackgroundColor),
+                "image reader ignores backgroundColor when the handler does not support it");
+    expect_true(!XImageReader_supportsOption(&empty,
+                                             XImageIOHandlerOption_Size),
+                "image reader supportsOption returns false without a handler");
+    expect_true(XImageReader_loopCount(&empty) == -1,
+                "image reader loopCount returns -1 when handler initialization fails");
+    expect_true(XImageReader_imageCount(&empty) == -1,
+                "image reader imageCount returns -1 when handler initialization fails");
+    expect_true(XImageReader_nextImageDelay(&empty) == -1,
+                "image reader nextImageDelay returns -1 when handler initialization fails");
+    expect_true(XImageReader_currentImageNumber(&empty) == -1,
+                "image reader currentImageNumber returns -1 when handler initialization fails");
+    XImageReader_currentImageRect(&empty, &emptyRect);
+    expect_true(emptyRect.x == 0 && emptyRect.y == 0 &&
+                emptyRect.width == 0 && emptyRect.height == 0,
+                "image reader currentImageRect returns an empty rect without a handler");
+    XImageReader_deinit_base(&empty);
+}
+
+/* 对齐 Qt QImageReader::setAllocationLimit 的负值忽略与零值禁用语义。 */
+static void test_image_reader_allocation_limit(void)
+{
+    const char* environment = getenv("QT_IMAGEIO_MAXALLOC");
+    int original = XImageReader_allocationLimit();
+    if (environment && (strcmp(environment, "7") == 0 ||
+                        strcmp(environment, "0x7") == 0 ||
+                        strcmp(environment, "0b111") == 0 ||
+                        strcmp(environment, " 7 ") == 0 ||
+                        strcmp(environment, "+7") == 0 ||
+                        strcmp(environment, " +7 ") == 0 ||
+                        strcmp(environment, " 0x7 ") == 0 ||
+                        strcmp(environment, " 0b111 ") == 0))
+    {
+        expect_true(original == 7,
+                    "image reader allocation limit honors QT_IMAGEIO_MAXALLOC");
+        XImageReader_setAllocationLimit(8);
+        expect_true(XImageReader_allocationLimit() == 7,
+                    "environment allocation limit overrides setter values");
+        XImageReader_setAllocationLimit(-1);
+        expect_true(XImageReader_allocationLimit() == 7,
+                    "environment allocation limit overrides negative setter path");
+        XImageReader_setAllocationLimit(0);
+        expect_true(XImageReader_allocationLimit() == 7,
+                    "environment allocation limit keeps zero setter overridden");
+        XImageReader_setAllocationLimit(original);
+        return;
+    }
+    XImageReader_setAllocationLimit(8);
+    expect_true(XImageReader_allocationLimit() == 8,
+                "image reader allocation limit accepts nonnegative values");
+    XImageReader_setAllocationLimit(-1);
+    expect_true(XImageReader_allocationLimit() == 8,
+                "image reader allocation limit ignores negative values");
+    XImageReader_setAllocationLimit(0);
+    expect_true(XImageReader_allocationLimit() == 0,
+                "image reader allocation limit zero disables checking");
+    XImageReader_setAllocationLimit(original);
 }
 
 static void test_image_plugin_registry_integration(void)
@@ -3770,15 +5520,65 @@ static void test_image_plugin_registry_integration(void)
     XImage_setPixel(&source, 1, 1, 0xffaabbccu);
 
     XFile_remove_static(fileNameObject);
+    XString_init(&g_mockExpectedWriterDescription);
+    XString_assign_utf8(&g_mockExpectedWriterDescription,
+                        "Title: Example\n\nAuthor: Alice");
+    g_mockWriterDescriptionCheck = true;
+    g_mockWriterDescriptionMatched = false;
     XImageWriter_init_file_2(&writer, fileName, "mock");
     expect_true(XImageWriter_canWrite(&writer), "plugin writer canWrite reports mock");
+    expect_true(XImageWriter_supportsOption(&writer,
+                                            XImageIOHandlerOption_Description),
+                "writer exposes plugin Description option");
+    XImageWriter_setText_2(&writer, "  Title  ", "  Example\t");
+    XImageWriter_setText_2(&writer, " Author ", " Alice ");
     ok = XImageWriter_write(&writer, &source);
     expect_true(ok, "plugin writer receives image through registry");
+    expect_true(g_mockWriterDescriptionMatched,
+                "writer simplifies and forwards Description metadata");
     XImageWriter_deinit_base(&writer);
+    g_mockWriterDescriptionCheck = false;
+    XString_deinit_base((XClass*)&g_mockExpectedWriterDescription);
 
     XImage_init(&loaded);
     XImageReader_init_file_2(&reader, fileName, "mock");
     expect_true(XImageReader_canRead(&reader), "plugin reader canRead reports mock");
+    {
+        XStringList* textKeys = XImageReader_textKeys(&reader);
+        XString* titleKey = XString_create_utf8("Title");
+        XString* authorKey = XString_create_utf8("Author");
+        XString* descriptionKey = XString_create_utf8("Description");
+        XString* title = XImageReader_text(&reader, titleKey);
+        XString* author = XImageReader_text(&reader, authorKey);
+        XString* description = XImageReader_text(&reader, descriptionKey);
+        XString* missingKey = XString_create_utf8("Missing");
+        XString* missing = XImageReader_text(&reader, missingKey);
+        expect_true(textKeys && XStringList_size_base((const XContainer*)textKeys) == 3,
+                    "reader parses handler Description keys");
+        expect_true(textKeys &&
+                    XString_equals_utf8((const XString*)XStringList_at_base(
+                        (XVector*)textKeys, 0), "Author", XChar_CaseSensitive) &&
+                    XString_equals_utf8((const XString*)XStringList_at_base(
+                        (XVector*)textKeys, 1), "Description", XChar_CaseSensitive) &&
+                    XString_equals_utf8((const XString*)XStringList_at_base(
+                        (XVector*)textKeys, 2), "Title", XChar_CaseSensitive),
+                    "reader text keys follow QMap sort order");
+        expect_true(title && XString_equals_utf8(title, "Sunset", XChar_CaseSensitive) &&
+                    author && XString_equals_utf8(author, "Alice", XChar_CaseSensitive) &&
+                    description && XString_equals_utf8(description, "demo", XChar_CaseSensitive),
+                    "reader text values are simplified");
+        expect_true(missing && XString_isEmpty_base((const XContainer*)missing),
+                    "reader missing text key returns empty string");
+        if (textKeys) XStringList_delete_base((XClass*)textKeys);
+        if (titleKey) XString_delete_base((XClass*)titleKey);
+        if (authorKey) XString_delete_base((XClass*)authorKey);
+        if (descriptionKey) XString_delete_base((XClass*)descriptionKey);
+        if (missingKey) XString_delete_base((XClass*)missingKey);
+        if (title) XString_delete_base((XClass*)title);
+        if (author) XString_delete_base((XClass*)author);
+        if (description) XString_delete_base((XClass*)description);
+        if (missing) XString_delete_base((XClass*)missing);
+    }
     ok = XImageReader_read(&reader, &loaded);
     expect_true(ok, "plugin reader loads image through registry");
     expect_true(XImage_width(&loaded) == 2 && XImage_height(&loaded) == 2,
@@ -3796,6 +5596,143 @@ static void test_image_plugin_registry_integration(void)
     expect_true(XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin),
                 "mock plugin is removed from registry");
     XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+    /* Qt 先尝试外部插件，再回退到内置处理器；同名 bmp 插件应覆盖内置 BMP。 */
+    {
+        TestImagePlugin* overridePlugin = TestImagePlugin_create();
+        XString* overrideKey = NULL;
+        XImage overrideLoaded;
+        XImageReader overrideReader;
+        XString* overrideFileName = XString_create_utf8("xgui_override.bmp");
+        XFile* overrideSeed = NULL;
+        bool overrideAdded = false;
+        if (overridePlugin) {
+            overrideKey = (XString*)XStringList_at_base(
+                (XVector*)overridePlugin->m_keys, 0);
+            if (overrideKey)
+                XString_assign_utf8(overrideKey, "bmp");
+            overrideAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)overridePlugin);
+        }
+        overrideSeed = overrideFileName ? XFile_create_2(overrideFileName) : NULL;
+        if (overrideSeed && XIODevice_open_base((XIODevice*)overrideSeed,
+                                                XIODevice_WriteOnly)) {
+            char seed = 'x';
+            (void)XIODevice_write_1((XIODevice*)overrideSeed, &seed, 1);
+            XIODevice_close_base((XIODevice*)overrideSeed);
+        }
+        expect_true(overrideSeed != NULL,
+                    "writes fixture for external plugin precedence");
+        if (overrideSeed)
+            XClass_delete_base((XClass*)overrideSeed);
+        g_mockImageWidth = 1;
+        g_mockImageHeight = 1;
+        g_mockImagePixels[0] = 0xffa1b2c3u;
+        XImage_init(&overrideLoaded);
+        XImageReader_init_file_2(&overrideReader, "xgui_override.bmp", "bmp");
+        expect_true(overrideAdded && XImageReader_read(&overrideReader, &overrideLoaded) &&
+                    XImage_width(&overrideLoaded) == 1 &&
+                    XImage_height(&overrideLoaded) == 1 &&
+                    XImage_pixel(&overrideLoaded, 0, 0) == 0xffa1b2c3u,
+                    "external same-format plugin overrides builtin BMP handler");
+        XImageReader_deinit_base(&overrideReader);
+        XImage_deinit_base(&overrideLoaded);
+        if (overrideAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)overridePlugin);
+        if (overridePlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)overridePlugin);
+        if (overrideFileName) {
+            XFile_remove_static(overrideFileName);
+            XString_delete_base((XClass*)overrideFileName);
+        }
+    }
+    /* Qt 对外部后缀处理器的 canRead() 失败继续按内容回退；验证同名
+       bmp 插件拒绝内容时不会阻断内置 BMP 处理器。 */
+    {
+        TestImagePlugin* suffixPlugin = TestImagePlugin_create();
+        XString* suffixKey = NULL;
+        XImage fallbackSource;
+        XImage fallbackLoaded;
+        XImageReader fallbackReader;
+        const char* suffixFile = "xgui_external_wrong_suffix.bmp";
+        bool suffixAdded = false;
+        if (suffixPlugin) {
+            suffixKey = (XString*)XStringList_at_base(
+                (XVector*)suffixPlugin->m_keys, 0);
+            if (suffixKey)
+                XString_assign_utf8(suffixKey, "bmp");
+            suffixAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)suffixPlugin);
+        }
+        XImage_init_ex(&fallbackSource, 1, 1, XImageFormat_ARGB32);
+        XImage_setPixel(&fallbackSource, 0, 0, 0xff13579bu);
+        expect_true(XImage_save_2(&fallbackSource, suffixFile, "bmp", -1),
+                    "writes fixture for external suffix canRead fallback");
+        g_mockImageWidth = 1;
+        g_mockImageHeight = 1;
+        g_mockImagePixels[0] = 0xff2468acu;
+        g_mockSuffixOnlyCapabilities = true;
+        g_mockRejectSuffixCanRead = true;
+        XImage_init(&fallbackLoaded);
+        XImageReader_init_file_2(&fallbackReader, suffixFile, NULL);
+        expect_true(suffixAdded && XImageReader_read(&fallbackReader, &fallbackLoaded) &&
+                    XImage_width(&fallbackLoaded) == 1 &&
+                    XImage_height(&fallbackLoaded) == 1 &&
+                    XImage_pixel(&fallbackLoaded, 0, 0) == 0xff13579bu,
+                    "failed external suffix canRead falls back to content handler");
+        XImageReader_deinit_base(&fallbackReader);
+        XImage_deinit_base(&fallbackLoaded);
+        XImage_deinit_base(&fallbackSource);
+        g_mockSuffixOnlyCapabilities = false;
+        g_mockRejectSuffixCanRead = false;
+        if (suffixAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)suffixPlugin);
+        if (suffixPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)suffixPlugin);
+        {
+            XString* suffixName = XString_create_utf8(suffixFile);
+            if (suffixName) {
+                XFile_remove_static(suffixName);
+                XString_delete_base((XClass*)suffixName);
+            }
+        }
+    }
+    /* Qt qimagereader.cpp 在 capabilities()/create() 后恢复非顺序设备位置。 */
+    {
+        XFile* seedFile = XFile_create_2(fileNameObject);
+        XFile* probeFile = XFile_create_2(fileNameObject);
+        XString* detected;
+        int64_t before;
+        int64_t after;
+        char seed = 'x';
+        if (seedFile && XIODevice_open_base((XIODevice*)seedFile, XIODevice_WriteOnly)) {
+            (void)XIODevice_write_1((XIODevice*)seedFile, &seed, 1);
+            XIODevice_close_base((XIODevice*)seedFile);
+        }
+        if (seedFile) XClass_delete_base((XClass*)seedFile);
+        expect_true(probeFile &&
+                    XIODevice_open_base((XIODevice*)probeFile, XIODevice_ReadOnly),
+                    "plugin probe file opens for position contract");
+        if (probeFile && XIODevice_isOpen((XIODevice*)probeFile)) {
+            /* 重新注册测试插件，使其 capabilities() 消费一个字节。 */
+            plugin = TestImagePlugin_create();
+            expect_true(plugin && XImagePluginRegistry_addPlugin((XImageIOPlugin*)plugin),
+                        "consuming probe plugin registers");
+            g_mockConsumeCapabilities = true;
+            before = XIODevice_pos_base((XIODevice*)probeFile);
+            detected = XImagePluginRegistry_detectReadFormat((XIODevice*)probeFile);
+            after = XIODevice_pos_base((XIODevice*)probeFile);
+            expect_true(detected && XString_equals_utf8(detected, "mock", XChar_CaseInsensitive),
+                        "content probe finds consuming plugin");
+            expect_true(before == after,
+                        "plugin capability probing preserves non-sequential device position");
+            if (detected) XString_delete_base((XClass*)detected);
+            g_mockConsumeCapabilities = false;
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin);
+            XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+            XIODevice_close_base((XIODevice*)probeFile);
+        }
+        if (probeFile) XClass_delete_base((XClass*)probeFile);
+    }
     XFile_remove_static(fileNameObject);
     XString_delete_base((XClass*)fileNameObject);
 #else
@@ -3956,6 +5893,240 @@ static void test_codec_pixel_round_trip(void)
 #endif /* XIMAGECODEC_JPEG_ON */
     XImage_deinit_base(&source);
 }
+
+#if XIMAGECODEC_BMP_ON
+static void bmp_le16(uint8_t* p, uint16_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static void bmp_le32(uint8_t* p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+/* 构造 BMP 测试字节，所有未显式填写区域补零。 */
+static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
+                            uint32_t width, int32_t height, uint16_t planes,
+                            uint16_t bpp, uint32_t compression)
+{
+    XByteArray* b;
+    uint8_t* d;
+    b = XByteArray_create();
+    if (!b) return NULL;
+    if (!XByteArray_resize_base((XVector*)b, total)) {
+        XByteArray_delete_base((XClass*)b);
+        return NULL;
+    }
+    d = XByteArray_data(b);
+    memset(d, 0, total);
+    d[0] = 'B';
+    d[1] = 'M';
+    bmp_le32(d + 2, (uint32_t)total);
+    bmp_le32(d + 10, offset);
+    bmp_le32(d + 14, dib);
+    if (dib == 12) {
+        if (total >= 26u) {
+            bmp_le16(d + 18, (uint16_t)width);
+            bmp_le16(d + 20, (uint16_t)(int16_t)height);
+            bmp_le16(d + 22, planes);
+            bmp_le16(d + 24, bpp);
+        }
+    } else if (total >= 34u) {
+        bmp_le32(d + 18, width);
+        bmp_le32(d + 22, (uint32_t)height);
+        bmp_le16(d + 26, planes);
+        bmp_le16(d + 28, bpp);
+        bmp_le32(d + 30, compression);
+    }
+    return b;
+}
+
+static void bmp_expect_reject(XByteArray* b, const char* name)
+{
+    bool rejected = false;
+    if (b) {
+        XImage out;
+        XImage_init(&out);
+        rejected = !XImageCodec_decode(XByteArray_data(b),
+                                       XByteArray_size_base((const XContainer*)b),
+                                       XImageCodecFormat_Bmp, &out);
+        XImage_deinit_base(&out);
+    }
+    expect_true(rejected, name);
+    if (b) XByteArray_delete_base((XClass*)b);
+}
+
+static void test_codec_bmp_malformed(void)
+{
+    XByteArray* b;
+    XImage out;
+
+    XImage_init(&out);
+    expect_true(!XImageCodec_decode((const uint8_t*)"BM", 2,
+                                    XImageCodecFormat_Bmp, &out),
+                "BMP header smaller than 26 bytes rejected");
+    XImage_deinit_base(&out);
+
+    bmp_expect_reject(bmp_make(20, 0, 40, 1, 1, 1, 24, 0),
+                      "truncated DIB header rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 0, 1, 1, 24, 0),
+                      "zero width BMP rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 0, 1, 24, 0),
+                      "zero height BMP rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 1, 2, 24, 0),
+                      "invalid planes count rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 1, 1, 15, 0),
+                      "unsupported bit depth rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 1, 1, 2, 0),
+                      "Qt BMP reader rejects 2-bit depth");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 1, 1, 24, 99),
+                      "unknown compression type rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 1, 1, 1, 32, 6),
+                      "Qt BMP reader rejects alpha-bitfields compression");
+    bmp_expect_reject(bmp_make(70, 54, 40, 1, 1, 1, 24, 1),
+                      "RLE8 mismatch with 24 bit depth rejected");
+    bmp_expect_reject(bmp_make(60, 54, 40, 1, 1, 1, 32, 3),
+                      "BITFIELDS without mask block rejected");
+    bmp_expect_reject(bmp_make(60, 54, 40, 1, 1, 1, 8, 0),
+                      "truncated 8-bit palette rejected");
+    bmp_expect_reject(bmp_make(56, 54, 40, 2, 1, 1, 24, 0),
+                      "truncated pixel data rejected");
+    bmp_expect_reject(bmp_make(58, 54, 40, 16385, 1, 1, 24, 0),
+                      "oversized BMP dimensions rejected");
+
+#if XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON
+    /* Qt 对超出当前行剩余宽度的 RLE 行程按行钳制，而不是解码失败。 */
+    b = bmp_make(824, 822, 40, 2, 1, 1, 8, 1);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        d[822] = 3;   /* 计数超过宽度，余下应被钳到当前行尾 */
+        d[823] = 1;
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_width(&out) == 2 && XImage_height(&out) == 1 &&
+                XImage_pixelIndex(&out, 0, 0) == 1 &&
+                XImage_pixelIndex(&out, 1, 0) == 1,
+                "RLE8 overrun clamps to current row like Qt");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+#endif /* XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON */
+
+#if XIMAGECODEC_BMP_INDEXED_ON
+    /* Qt 使用 biClrUsed 限制调色板读取数量；1 位图输出 Mono，并在
+       颜色表亮度顺序相反时翻转存储位与颜色表。 */
+    b = bmp_make(64, 60, 40, 8, 1, 1, 1, 0);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        bmp_le32(d + 46, 2);
+        d[54] = 0xff; d[55] = 0xff; d[56] = 0xff;
+        d[57] = 0; d[58] = 0; d[59] = 0;
+        d[60] = 0x80; /* 索引 1：黑色 */
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_format(&out) == XImageFormat_Mono &&
+                XImage_colorCount(&out) == 2 &&
+                XImage_pixel(&out, 0, 0) == 0xff000000u &&
+                XImage_pixel(&out, 1, 0) == 0xffffffffu,
+                "1-bit BMP maps to Mono and preserves palette order");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+
+    b = bmp_make(64, 60, 40, 8, 1, 1, 1, 0);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        bmp_le32(d + 46, 2);
+        d[54] = 0; d[55] = 0; d[56] = 0;
+        d[57] = 0xff; d[58] = 0xff; d[59] = 0xff;
+        d[60] = 0x40; /* 索引 0/1：较暗颜色在首像素，Qt 会交换索引与颜色表 */
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_format(&out) == XImageFormat_Mono &&
+                XImage_pixel(&out, 0, 0) == 0xff000000u &&
+                XImage_pixel(&out, 1, 0) == 0xffffffffu,
+                "1-bit BMP swaps reversed palette polarity like Qt");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+
+    b = bmp_make(61, 57, 40, 8, 1, 1, 1, 0);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        bmp_le32(d + 46, 1);
+        d[54] = 0; d[55] = 0; d[56] = 0;
+        d[57] = 0;
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_format(&out) == XImageFormat_Mono &&
+                XImage_colorCount(&out) == 1 &&
+                XImage_pixel(&out, 0, 0) == 0xff000000u,
+                "1-bit BMP honors a reduced biClrUsed palette");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+#endif /* XIMAGECODEC_BMP_INDEXED_ON */
+}
+
+static void test_codec_bmp_alpha_semantics(void)
+{
+    XByteArray* plain;
+    XByteArray* v4;
+    XImage out;
+
+    /* BI_RGB 32 位：Qt 将最高字节视为未使用，结果必须保持不透明。 */
+    plain = bmp_make(58, 54, 40, 1, 1, 1, 32, 0);
+    if (plain) {
+        uint8_t* data = XByteArray_data(plain);
+        data[54] = 0x33;
+        data[55] = 0x22;
+        data[56] = 0x11;
+        data[57] = 0x01;
+    }
+    XImage_init(&out);
+    expect_true(plain && XImageCodec_decode(
+                    XByteArray_data(plain),
+                    XByteArray_size_base((const XContainer*)plain),
+                    XImageCodecFormat_Bmp, &out) &&
+                XImage_pixel(&out, 0, 0) == 0xff112233u,
+                "plain BI_RGB 32-bit BMP keeps pixels opaque");
+    XImage_deinit_base(&out);
+    if (plain) XByteArray_delete_base((XClass*)plain);
+
+    /* V4 头显式声明 0xff000000 Alpha 掩码时，Qt 才读取最高字节。 */
+    v4 = bmp_make(126, 122, 108, 1, 1, 1, 32, 0);
+    if (v4) {
+        uint8_t* data = XByteArray_data(v4);
+        bmp_le32(data + 14 + 52, 0xff000000u);
+        data[122] = 0x33;
+        data[123] = 0x22;
+        data[124] = 0x11;
+        data[125] = 0x01;
+    }
+    XImage_init(&out);
+    expect_true(v4 && XImageCodec_decode(
+                    XByteArray_data(v4),
+                    XByteArray_size_base((const XContainer*)v4),
+                    XImageCodecFormat_Bmp, &out) &&
+                XImage_pixel(&out, 0, 0) == 0x01112233u,
+                "V4 BI_RGB BMP honors an explicit alpha mask");
+    XImage_deinit_base(&out);
+    if (v4) XByteArray_delete_base((XClass*)v4);
+}
+#endif /* XIMAGECODEC_BMP_ON */
 
 static void test_codec_reject_malformed(void)
 {
@@ -4293,7 +6464,7 @@ static void test_codec_bmp_extended_assets(void)
     static const struct Case cases[] = {
         /* 资产规范：逻辑行自上而下；bottom-up 文件按规范倒序存储，
            解码器只翻转一次行序。期望值以解码器实测语义为准。 */
-        {"codec_bmp_palette1.bmp", 8, 2, XImageFormat_Indexed8,
+        {"codec_bmp_palette1.bmp", 8, 2, XImageFormat_Mono,
          {0,0,0xff000000u}, {2,0,0xffffffffu}, {0,1,0xff000000u}, {7,1,0xffffffffu}},
         {"codec_bmp_palette2.bmp", 8, 2, XImageFormat_Indexed8,
          {0,0,0xff000000u}, {1,0,0xffff0000u}, {0,1,0xff0000ffu}, {3,1,0xff000000u}},
@@ -4331,6 +6502,15 @@ static void test_codec_bmp_extended_assets(void)
         const CodecAssetFixture* asset = codec_asset_fixture_find(c->file);
         XImage image;
         const struct Pt* pts[4] = {&c->p0, &c->p1, &c->p2, &c->p3};
+        if (strcmp(c->file, "codec_bmp_palette2.bmp") == 0) {
+            XImage_init(&image);
+            expect_true(asset != NULL &&
+                        !XImage_loadFromData_2(&image, asset->data,
+                                               (int)asset->size, "bmp"),
+                        "Qt BMP reader rejects 2-bit palette assets");
+            XImage_deinit_base(&image);
+            continue;
+        }
         XImage_init(&image);
         expect_true(asset != NULL && XImage_loadFromData_2(&image, asset->data, (int)asset->size, "bmp") &&
                     XImage_width(&image) == c->w && XImage_height(&image) == c->h,
@@ -4441,6 +6621,67 @@ static void test_codec_jpeg_extended_assets(void)
         }
         XImage_deinit_base(&image);
     }
+}
+
+/* 对齐 Qt 6.8 qjpeghandler.cpp:389-395：JFIF 的 dpi/dpcm 密度写入
+   QImage::dotsPerMeterX/Y。这里只改动 APP0 的密度字段，压缩数据保持不变。 */
+static void test_codec_jpeg_jfif_density(void)
+{
+    const CodecAssetFixture* asset =
+        codec_asset_fixture_find("codec_jpeg_baseline.jpg");
+    XByteArray* bytes;
+    XImage image;
+    uint8_t* data;
+
+    bytes = XByteArray_create();
+    expect_true(asset != NULL && bytes != NULL,
+                "JPEG JFIF 密度夹具可用");
+    if (!asset || !bytes) {
+        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        return;
+    }
+    expect_true(XByteArray_resize_base((XVector*)bytes, asset->size),
+                "JPEG JFIF 密度夹具复制成功");
+    data = XByteArray_data(bytes);
+    if (!data || asset->size < 20) {
+        expect_true(false, "JPEG JFIF APP0 头完整");
+        XByteArray_delete_base((XClass*)bytes);
+        return;
+    }
+    memcpy(data, asset->data, asset->size);
+    expect_true(data[0] == 0xff && data[1] == 0xd8 &&
+                data[2] == 0xff && data[3] == 0xe0 &&
+                data[6] == 'J' && data[7] == 'F' && data[8] == 'I' &&
+                data[9] == 'F' && data[10] == 0,
+                "JPEG JFIF APP0 标识正确");
+
+    /* APP0 固定布局：unit@13，X density@14..15，Y density@16..17。 */
+    data[13] = 1;   /* dots/inch */
+    data[14] = 1; data[15] = 44;   /* 300 dpi */
+    data[16] = 0; data[17] = 150;  /* 150 dpi */
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(XByteArray_data(bytes),
+                                   XByteArray_size_base((const XContainer*)bytes),
+                                   XImageCodecFormat_Jpeg, &image),
+                "JPEG JFIF dpi 解码成功");
+    expect_true(XImage_dotsPerMeterX(&image) == 11811 &&
+                XImage_dotsPerMeterY(&image) == 5905,
+                "JPEG JFIF dpi 转每米点数与 Qt 一致");
+    XImage_deinit_base(&image);
+
+    data[13] = 2;   /* dots/cm */
+    data[14] = 0; data[15] = 37;
+    data[16] = 0; data[17] = 42;
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(XByteArray_data(bytes),
+                                   XByteArray_size_base((const XContainer*)bytes),
+                                   XImageCodecFormat_Jpeg, &image),
+                "JPEG JFIF dpcm 解码成功");
+    expect_true(XImage_dotsPerMeterX(&image) == 3700 &&
+                XImage_dotsPerMeterY(&image) == 4200,
+                "JPEG JFIF dpcm 转每米点数与 Qt 一致");
+    XImage_deinit_base(&image);
+    XByteArray_delete_base((XClass*)bytes);
 }
 #endif /* XIMAGECODEC_JPEG_ON */
 
@@ -4807,12 +7048,139 @@ static void test_image_pixel_contract(void)
     XImage premultiplied;
     XImage converted;
     XImage indexed;
+    XImage grayscale;
+    XImage cmyk;
+    XImage pm64;
+    XImage sameSpace;
+    XImage reinterpret;
+    XImage reinterpretCopy;
     XImage copy;
     const uint32_t customPalette[2] = { 0xff000000u, 0xffffffffu };
+    uint32_t largePalette[257];
+    XColor indexedColor;
+
+    /* QColorSpace 6.8 的命名空间、模型和自定义原色查询契约。 */
+    {
+        XColorSpace invalid = XColorSpace_create();
+        XColorSpace named;
+        XColorSpacePrimariesData primaries;
+        XColorSpacePrimariesData customPrimaries = {
+            { 0.3127f, 0.3290f }, { 0.640f, 0.330f },
+            { 0.300f, 0.600f }, { 0.150f, 0.060f }
+        };
+        XColorSpace gray;
+        expect_true(!XColorSpace_isValid(&invalid) &&
+                    XColorSpace_primaries(&invalid) == XColorSpacePrimaries_Custom &&
+                    XColorSpace_transferFunction(&invalid) == XColorSpaceTransfer_Custom &&
+                    XColorSpace_transformModel(&invalid) == XColorSpaceTransform_ThreeComponentMatrix &&
+                    XColorSpace_colorModel(&invalid) == XColorSpaceModel_Undefined,
+                    "QColorSpace default is invalid and has default query values");
+        named = XColorSpace_create_named(XColorSpaceNamed_DisplayP3);
+        expect_true(XColorSpace_isValid(&named) &&
+                    XColorSpace_primaries(&named) == XColorSpacePrimaries_DciP3D65 &&
+                    XColorSpace_transferFunction(&named) == XColorSpaceTransfer_SRgb &&
+                    XColorSpace_colorModel(&named) == XColorSpaceModel_Rgb &&
+                    strcmp(XColorSpace_description(&named), "Display P3") == 0,
+                    "QColorSpace DisplayP3 uses DCI-P3 D65 primaries and sRGB transfer");
+        expect_true(XColorSpace_primariesData(&named, &primaries) &&
+                    fabsf(primaries.m_redPoint.x - 0.680f) < 1.0e-5f &&
+                    fabsf(primaries.m_greenPoint.y - 0.690f) < 1.0e-5f,
+                    "QColorSpace returns predefined chromaticities");
+        named = XColorSpace_create_named(XColorSpaceNamed_AdobeRgb);
+        expect_true(XColorSpace_isValid(&named) &&
+                    XColorSpace_transferFunction(&named) == XColorSpaceTransfer_Gamma &&
+                    fabsf(XColorSpace_gamma(&named) - 2.19921875f) < 1.0e-5f,
+                    "QColorSpace AdobeRGB uses Qt gamma 2.19921875");
+        named = XColorSpace_create_custom(&customPrimaries,
+                                          XColorSpaceTransfer_Gamma, 2.2f);
+        XColorSpace_setDescription(&named, "custom RGB");
+        expect_true(XColorSpace_isValid(&named) &&
+                    XColorSpace_primaries(&named) == XColorSpacePrimaries_Custom &&
+                    XColorSpace_primariesData(&named, &primaries) &&
+                    strcmp(XColorSpace_description(&named), "custom RGB") == 0,
+                    "QColorSpace custom RGB retains chromaticities and description");
+        gray = XColorSpace_create_gray((XPointF){ 0.3457f, 0.3585f },
+                                       XColorSpaceTransfer_Linear, 0.0f);
+        expect_true(XColorSpace_isValid(&gray) &&
+                    XColorSpace_colorModel(&gray) == XColorSpaceModel_Gray &&
+                    !XColorSpace_primariesData(&gray, &primaries),
+                    "QColorSpace supports valid custom grayscale metadata");
+        {
+            XColorSpace gammaA = XColorSpace_create_ex(
+                XColorSpacePrimaries_SRgb, XColorSpaceTransfer_Gamma, 2.2f);
+            XColorSpace gammaB = XColorSpace_create_ex(
+                XColorSpacePrimaries_SRgb, XColorSpaceTransfer_Gamma,
+                2.2f + 1.0f / 1024.0f);
+            expect_true(XColorSpace_equals(&gammaA, &gammaB),
+                        "QColorSpace Gamma equality uses 1/512 tolerance");
+        }
+    }
 
     XImage_init(&copy);
+    XImage_init(&pm64);
     XImage_init(&converted);
+    XImage_init(&grayscale);
+    XImage_init(&cmyk);
+    XImage_init(&sameSpace);
+    XImage_init(&reinterpret);
+    XImage_init(&reinterpretCopy);
     XImage_init_ex(&premultiplied, 1, 1, XImageFormat_ARGB32_Premultiplied);
+    XImage_setText_2(&premultiplied, "foo", "bar");
+    XImage_setText_2(&premultiplied, "foo2", "bar2");
+    XImage_setColorSpace(&premultiplied, XColorSpace_sRgb());
+    {
+        const int64_t colorSpaceKey = XImage_cacheKey(&premultiplied);
+        XImage_setColorSpace(&premultiplied, XColorSpace_sRgb());
+        expect_true(XImage_cacheKey(&premultiplied) == colorSpaceKey,
+                    "setColorSpace with the same value is a no-op");
+        expect_true(XImage_convertToColorSpace(&premultiplied, XColorSpace_sRgb(), 0) &&
+                    XImage_cacheKey(&premultiplied) == colorSpaceKey,
+                    "convertToColorSpace with the same value is a no-op");
+        XImage_convertedToColorSpace(&premultiplied, XColorSpace_sRgb(), 0, &sameSpace);
+        expect_true(!XImage_isNull(&sameSpace) &&
+                    XImage_cacheKey(&sameSpace) == colorSpaceKey,
+                    "convertedToColorSpace with the same value shares image data");
+        XImage_convertedToColorSpace(&premultiplied, XColorSpace_create(), 0, &sameSpace);
+        expect_true(XImage_isNull(&sameSpace),
+                    "convertedToColorSpace rejects an invalid target");
+    }
+    XImage_setDevicePixelRatio(&premultiplied, 2.0f);
+    XImage_setDotsPerMeterX(&premultiplied, 2835);
+    {
+        XString* allText = XImage_text(&premultiplied, NULL);
+        expect_true(allText && XString_equals_utf8(allText, "foo: bar\n\nfoo2: bar2",
+                                                    XChar_CaseSensitive),
+                    "XImage text(NULL) aggregates all metadata");
+        if (allText) XString_delete_base((XClass*)allText);
+    }
+    XImage_convertToFormat(&premultiplied, XImageFormat_RGB32, 0, &converted);
+    expect_true(XImage_textCount(&converted) == 2 &&
+                XString_equals_utf8(XImage_textKey_const(&converted, 0), "foo",
+                                    XChar_CaseSensitive) &&
+                XString_equals_utf8(XImage_textKey_const(&converted, 1), "foo2",
+                                    XChar_CaseSensitive),
+                "convertToFormat preserves text keys");
+    {
+        XString* convertedText = XImage_text(&converted, NULL);
+        expect_true(convertedText &&
+                    XString_equals_utf8(convertedText, "foo: bar\n\nfoo2: bar2",
+                                        XChar_CaseSensitive),
+                    "convertToFormat preserves aggregated image text");
+        if (convertedText) XString_delete_base((XClass*)convertedText);
+    }
+    {
+        XColorSpace convertedSpace = XImage_colorSpace(&converted);
+        expect_true(XImage_hasColorSpace(&converted) &&
+                    XColorSpace_isSRgb(&convertedSpace) &&
+                    XImage_devicePixelRatio(&converted) == 2.0f &&
+                    XImage_dotsPerMeterX(&converted) == 2835,
+                    "convertToFormat preserves color space and physical metadata");
+    }
+    {
+        const char* convertedText = XImage_text_2(&converted, "foo");
+        expect_true(convertedText && strcmp(convertedText, "bar") == 0,
+                    "XImage text_2 finds an exact metadata key");
+    }
     XImage_setPixel(&premultiplied, 0, 0, 0x80800000u);
     expect_true((XImage_pixel(&premultiplied, 0, 0) & 0x00ff0000u) >= 0x007f0000u &&
                 (XImage_pixel(&premultiplied, 0, 0) & 0x00ff0000u) <= 0x00810000u,
@@ -4821,33 +7189,148 @@ static void test_image_pixel_contract(void)
     expect_true(XImage_pixel(&converted, 0, 0) == 0x80800000u,
                 "premultiplied conversion does not unpremultiply twice");
 
+    XImage_init_ex(&pm64, 1, 1, XImageFormat_RGBA64_Premultiplied);
+    XImage_fill(&pm64, 0x80402010u);
+    {
+        uint16_t channel;
+        const uint8_t* raw = XImage_bits(&pm64);
+        memcpy(&channel, raw, sizeof(channel));
+        expect_true(channel == 0x4040u,
+                    "fill(uint) keeps unpremultiplied red in RGBA64 storage");
+        memcpy(&channel, raw + 2, sizeof(channel));
+        expect_true(channel == 0x2020u,
+                    "fill(uint) keeps unpremultiplied green in RGBA64 storage");
+        memcpy(&channel, raw + 4, sizeof(channel));
+        expect_true(channel == 0x1010u,
+                    "fill(uint) keeps unpremultiplied blue in RGBA64 storage");
+        memcpy(&channel, raw + 6, sizeof(channel));
+        expect_true(channel == 0x8080u,
+                    "fill(uint) keeps unpremultiplied alpha in RGBA64 storage");
+    }
+    XImage_deinit_base(&pm64);
+
     XImage_init_ex(&rgba, 2, 1, XImageFormat_RGBA8888);
     XImage_setPixel(&rgba, 0, 0, 0x80402010u);
     expect_true(XImage_pixel(&rgba, 0, 0) == 0x80402010u,
                 "RGBA8888 pixel access uses RGBA byte order");
     XImage_fill(&rgba, 0xff112233u);
-    expect_true(XImage_pixel(&rgba, 1, 0) == 0xff112233u &&
-                !XImage_hasAlpha(&rgba), "fill resets RGBA alpha to opaque");
+    {
+        const uint8_t* raw = XImage_bits(&rgba);
+#if IS_BIG_ENDIAN
+        expect_true(raw && raw[0] == 0xffu && raw[1] == 0x11u &&
+                    raw[2] == 0x22u && raw[3] == 0x33u,
+                    "fill(uint) writes the host-order RGBA8888 storage value");
+#else
+        expect_true(raw && raw[0] == 0x33u && raw[1] == 0x22u &&
+                    raw[2] == 0x11u && raw[3] == 0xffu,
+                    "fill(uint) writes the host-order RGBA8888 storage value");
+#endif
+    }
     XImage_setPixel(&rgba, 1, 0, 0x80112233u);
     expect_true(XImage_hasAlpha(&rgba), "alpha detection covers RGBA8888");
     XImage_setDevicePixelRatio(&rgba, 2.0f);
     XImage_copy_base(&copy, &rgba);
     expect_true(XImage_devicePixelRatio(&copy) == 2.0f,
                 "device pixel ratio survives image copy");
+    {
+        XSizeF independent;
+        XImage_deviceIndependentSize(&rgba, &independent);
+        expect_true(fabsf(independent.width - 1.0f) < 1.0e-5f &&
+                    fabsf(independent.height - 0.5f) < 1.0e-5f,
+                    "deviceIndependentSize divides pixel dimensions by DPR");
+        XImage_setDevicePixelRatio(&rgba, 0.0f);
+        expect_true(XImage_devicePixelRatio(&rgba) == 0.0f,
+                    "QImage-compatible devicePixelRatio accepts zero");
+        XImage_setDevicePixelRatio(&rgba, -2.0f);
+        expect_true(XImage_devicePixelRatio(&rgba) == -2.0f,
+                    "QImage-compatible devicePixelRatio accepts negative values");
+        XImage_setDevicePixelRatio(&rgba, 2.0f);
+    }
     XImage_invertPixels(&rgba, XImageInvertMode_InvertRgb);
-    expect_true(XImage_pixel(&rgba, 0, 0) == 0xffeeddccu,
+    expect_true(XImage_pixel(&rgba, 0, 0) == 0xffccddeeU,
                 "invertPixels preserves alpha and inverts RGB");
     XImage_rgbSwapped(&rgba, &copy);
-    expect_true(XImage_pixel(&copy, 0, 0) == 0xffccddeeU,
+    expect_true(XImage_pixel(&copy, 0, 0) == 0xffeeddccU,
                 "rgbSwapped preserves RGBA alpha and swaps RGB");
     XImage_mirrored(&rgba, true, false, &copy);
     expect_true(XImage_pixel(&copy, 0, 0) == 0x80eeddccu,
                 "mirrored uses pixel coordinates for RGBA images");
 
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
+    XImage_setColorSpace(&indexed, XColorSpace_sRgb());
+    expect_true(XImage_hasColorSpace(&indexed),
+                "indexed image accepts an RGB color space");
+    XImage_init_ex(&grayscale, 1, 1, XImageFormat_Grayscale8);
+    XImage_setColorSpace(&grayscale, XColorSpace_sRgb());
+    expect_true(XImage_hasColorSpace(&grayscale),
+                "grayscale image accepts an RGB color space");
+    {
+        XColorSpace graySpace = XColorSpace_create_gray(
+            (XPointF){ 0.3127f, 0.3290f }, XColorSpaceTransfer_Linear, 0.0f);
+        XColorSpace storedSpace;
+        XImage_setColorSpace(&grayscale, graySpace);
+        storedSpace = XImage_colorSpace(&grayscale);
+        expect_true(XImage_hasColorSpace(&grayscale) &&
+                    XColorSpace_colorModel(&storedSpace) == XColorSpaceModel_Gray,
+                    "grayscale image accepts a grayscale color space");
+    }
+    XImage_init_ex(&cmyk, 1, 1, XImageFormat_CMYK8888);
+    XImage_setColorSpace(&cmyk, XColorSpace_sRgb());
+    expect_true(!XImage_hasColorSpace(&cmyk),
+                "CMYK image rejects an incompatible RGB color space");
+    {
+        XColorSpace graySpace = XColorSpace_create_gray(
+            (XPointF){ 0.3127f, 0.3290f }, XColorSpaceTransfer_Linear, 0.0f);
+        XImage_init_ex(&rgba, 1, 1, XImageFormat_ARGB32);
+        XImage_setColorSpace(&rgba, graySpace);
+    }
+    expect_true(!XImage_hasColorSpace(&rgba),
+                "RGB image rejects an incompatible grayscale color space");
+    for (int i = 0; i < 257; ++i)
+        largePalette[i] = 0xff000000u | (uint32_t)i;
+    XImage_setColorTable(&indexed, largePalette, 257);
+    expect_true(XImage_colorCount(&indexed) == 257 &&
+                XImage_color(&indexed, 256) == largePalette[256],
+                "setColorTable accepts palettes larger than the pixel index range");
+    XImage_setColorCount(&indexed, -1);
+    expect_true(XImage_colorCount(&indexed) == 0,
+                "setColorCount treats negative values as clearing the palette");
+    XImage_setColorTable(&indexed, customPalette, 2);
     XImage_setColorCount(&indexed, 2);
+    {
+        const int64_t paletteKey = XImage_cacheKey(&indexed);
+        XImage_setColorCount(&indexed, 2);
+        expect_true(XImage_cacheKey(&indexed) == paletteKey,
+                    "setColorCount with the current size is a no-op");
+    }
     XImage_setColor(&indexed, 0, 0xff102030u);
     XImage_setColor(&indexed, 1, 0xffa0b0c0u);
+    XImage_setColor(&indexed, 4, 0xff405060u);
+    expect_true(XImage_colorCount(&indexed) == 5 &&
+                XImage_color(&indexed, 0) == 0xff102030u &&
+                XImage_color(&indexed, 4) == 0xff405060u,
+                "setColor expands a palette for an in-range index");
+    XImage_setPixel(&indexed, 0, 0, 1);
+    indexedColor = XColor_create_rgb(0xff, 0x00, 0x00, 0xff);
+    XImage_setPixelColor(&indexed, 0, 0, &indexedColor);
+    expect_true(XImage_pixelIndex(&indexed, 0, 0) == 1,
+                "setPixelColor rejects indexed storage without changing the index");
+    XImage_setColorCount(&indexed, 8);
+    XImage_fill(&indexed, 0x00000105u);
+    expect_true(XImage_pixelIndex(&indexed, 0, 0) == 5,
+                "fill(uint) keeps only the low byte for indexed images");
+    {
+        XImage mono;
+        XImage_init_ex(&mono, 3, 1, XImageFormat_MonoLSB);
+        XImage_fill(&mono, 3u);
+        expect_true(XImage_pixelIndex(&mono, 0, 0) == 1 &&
+                    XImage_pixelIndex(&mono, 2, 0) == 1,
+                    "fill(uint) uses the low bit for monochrome images");
+        XImage_fill(&mono, 2u);
+        expect_true(XImage_pixelIndex(&mono, 0, 0) == 0,
+                    "fill(uint) clears monochrome pixels for an even value");
+        XImage_deinit_base(&mono);
+    }
     XImage_setPixel(&indexed, 0, 0, 1);
     expect_true(XImage_pixelIndex(&indexed, 0, 0) == 1 &&
                 XImage_pixel(&indexed, 0, 0) == 0xffa0b0c0u,
@@ -4861,11 +7344,131 @@ static void test_image_pixel_contract(void)
                 XImage_color(&indexed, 1) == customPalette[1],
                 "indexed conversion accepts an explicit color table");
 
+    XImage_init_ex(&reinterpret, 1, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&reinterpret, 0, 0, 0xff102030u);
+    {
+        const int64_t reinterpretKey = XImage_cacheKey(&reinterpret);
+        expect_true(XImage_reinterpretAsFormat(&reinterpret, XImageFormat_ARGB32) &&
+                    XImage_cacheKey(&reinterpret) == reinterpretKey,
+                    "reinterpretAsFormat with the same format is a no-op");
+        expect_true(!XImage_reinterpretAsFormat(&reinterpret, XImageFormat_RGB16) &&
+                    XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
+                    XImage_cacheKey(&reinterpret) == reinterpretKey,
+                    "reinterpretAsFormat rejects a different storage depth");
+        XImage_copy_base(&reinterpretCopy, &reinterpret);
+        expect_true(XImage_reinterpretAsFormat(&reinterpretCopy, XImageFormat_RGB32) &&
+                    XImage_format(&reinterpretCopy) == XImageFormat_RGB32 &&
+                    XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
+                    XImage_cacheKey(&reinterpretCopy) != reinterpretKey,
+                    "reinterpretAsFormat detaches shared image data");
+    }
+    XImage_setColorCount(&indexed, 2);
+    expect_true(XImage_reinterpretAsFormat(&indexed, XImageFormat_Grayscale8) &&
+                XImage_colorCount(&indexed) == 2,
+                "reinterpretAsFormat retains the existing color table");
+
     XImage_deinit_base(&copy);
     XImage_deinit_base(&converted);
     XImage_deinit_base(&premultiplied);
     XImage_deinit_base(&indexed);
+    XImage_deinit_base(&grayscale);
+    XImage_deinit_base(&cmyk);
+    XImage_deinit_base(&sameSpace);
+    XImage_deinit_base(&reinterpret);
+    XImage_deinit_base(&reinterpretCopy);
     XImage_deinit_base(&rgba);
+}
+
+
+
+/**
+ * @brief 验证 QImage 文本元数据使用 QMap 按键排序、允许空 key/value。
+ * @note 对齐 Qt 6.8 QImage::text/setText/textKeys：text("") 返回聚合文本，
+ *       setText 重复键覆盖原值，textKeys 返回升序键序列。
+ */
+static void test_image_text_metadata_sorted_map(void)
+{
+    XImage image;
+    XImage copy;
+    XStringList* textKeys;
+    XStringList* emptyTextKeys;
+    const XString* textKey0;
+    const XString* copyTextKey0;
+    const char* text1;
+    const char* text2;
+    const char* text3;
+    const char* allText;
+
+    XImage_init(&copy);
+    XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32);
+    XImage_setText_2(&image, "zeta", "1");
+    XImage_setText_2(&image, "alpha", "2");
+    XImage_setText_2(&image, "", "empty");
+    XImage_setText_2(&image, "alpha", "22");
+    XImage_setText_2(&image, "empty-value", "");
+
+    expect_true(XImage_textCount(&image) == 4,
+                "QImage text metadata count after inserts and overwrite");
+    textKey0 = XImage_textKey_const(&image, 0);
+    text1 = XImage_textKey_2(&image, 1);
+    text2 = XImage_textKey_2(&image, 2);
+    text3 = XImage_textKey_2(&image, 3);
+    expect_true(textKey0 && XString_isEmpty_base((const XContainer*)textKey0) &&
+                text1 && strcmp(text1, "alpha") == 0 &&
+                text2 && strcmp(text2, "empty-value") == 0 &&
+                text3 && strcmp(text3, "zeta") == 0,
+                "QImage textKeys returns QMap ascending order");
+
+    textKeys = XImage_textKeys(&image);
+    expect_true(textKeys && XStringList_size_base((const XContainer*)textKeys) == 4 &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                    (const XVector*)textKeys, 1), "alpha", XChar_CaseSensitive) &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                    (const XVector*)textKeys, 3), "zeta", XChar_CaseSensitive),
+                "QImage textKeys returns a sorted deep-copy list");
+    if (textKeys)
+    {
+        XStringList_push_back_utf8(textKeys, "independent");
+        expect_true(XStringList_size_base((const XContainer*)textKeys) == 5 &&
+                    XImage_textCount(&image) == 4,
+                    "QImage textKeys result detaches on list mutation");
+        XStringList_delete_base((XClass*)textKeys);
+    }
+    emptyTextKeys = XImage_textKeys(NULL);
+    expect_true(emptyTextKeys &&
+                XStringList_size_base((const XContainer*)emptyTextKeys) == 0,
+                "null QImage textKeys returns an empty list");
+    if (emptyTextKeys) XStringList_delete_base((XClass*)emptyTextKeys);
+
+    expect_true(XImage_text_2(&image, "alpha") &&
+                strcmp(XImage_text_2(&image, "alpha"), "22") == 0,
+                "setText overwrites an existing key in place");
+    expect_true(XImage_text_2(&image, "empty-value") != NULL &&
+                strcmp(XImage_text_2(&image, "empty-value"), "") == 0,
+                "existing empty value is distinct from a missing key");
+    expect_true(XImage_text_2(&image, "missing") != NULL &&
+                strcmp(XImage_text_2(&image, "missing"), "") == 0,
+                "missing text key returns an empty string like Qt");
+    expect_true(XImage_text_2(NULL, "missing") != NULL &&
+                strcmp(XImage_text_2(NULL, "missing"), "") == 0,
+                "null QImage text returns an empty string like Qt");
+
+    allText = XImage_text_2(&image, "");
+    expect_true(allText &&
+                strcmp(allText, ": empty\n\nalpha: 22\n\nempty-value: \n\nzeta: 1") == 0,
+                "text(\"\") aggregates all text in sorted key order");
+
+    XImage_copy_base(&copy, &image);
+    copyTextKey0 = XImage_textKey_const(&copy, 0);
+    expect_true(XImage_textCount(&copy) == 4 &&
+                copyTextKey0 && XString_isEmpty_base((const XContainer*)copyTextKey0) &&
+                strcmp(XImage_textKey_2(&copy, 1), "alpha") == 0 &&
+                strcmp(XImage_textKey_2(&copy, 2), "empty-value") == 0 &&
+                strcmp(XImage_textKey_2(&copy, 3), "zeta") == 0,
+                "image copy preserves sorted text metadata order");
+
+    XImage_deinit_base(&copy);
+    XImage_deinit_base(&image);
 }
 
 
@@ -8434,9 +11037,9 @@ static void test_widget_contract(void)
     expect_true(geo != NULL, "XWidget_create(NULL) 顶层控件");
     expect_true(XWidget_isWindow(&geo->m_base), "无父控件默认顶层");
     expect_true(XWidget_x(&geo->m_base) == 0 && XWidget_y(&geo->m_base) == 0 &&
-                XWidget_width(&geo->m_base) == 0 &&
-                XWidget_height(&geo->m_base) == 0,
-                "XWidget 默认几何 (0,0,0,0)");
+                XWidget_width(&geo->m_base) == 640 &&
+                XWidget_height(&geo->m_base) == 480,
+                "XWidget 顶层默认几何 (0,0,640,480)");
     expect_true(XWidget_isEnabled(&geo->m_base), "XWidget 默认启用");
     expect_true(!XWidget_isVisible(&geo->m_base), "XWidget 默认不可见");
     expect_true(XWidget_isHidden(&geo->m_base), "XWidget 默认隐藏");
@@ -8456,6 +11059,18 @@ static void test_widget_contract(void)
                 "XWidget 默认尺寸策略 Preferred/Preferred");
     expect_true(XWidget_windowTitle(&geo->m_base) == NULL,
                 "XWidget 默认无窗口标题");
+    {
+        TestWidget* childDefault = TestWidget_create(&geo->m_base);
+        expect_true(childDefault != NULL, "XWidget 子控件默认几何创建");
+        if (childDefault) {
+            expect_true(XWidget_x(&childDefault->m_base) == 0 &&
+                        XWidget_y(&childDefault->m_base) == 0 &&
+                        XWidget_width(&childDefault->m_base) == 100 &&
+                        XWidget_height(&childDefault->m_base) == 30,
+                        "XWidget 子控件默认几何 (0,0,100,30)");
+            XWidget_delete_base((XClass*)childDefault);
+        }
+    }
     XWidget_setAttribute(&geo->m_base, XWidgetAttribute_StaticContents, true);
     expect_true(XWidget_testAttribute(&geo->m_base,
                                       XWidgetAttribute_StaticContents),
@@ -8518,6 +11133,25 @@ static void test_widget_contract(void)
     expect_true(!XWidget_isEnabled(&geo->m_base), "setEnabled(false)");
     XWidget_setEnabled(&geo->m_base, true);
     expect_true(XWidget_isEnabled(&geo->m_base), "setEnabled(true)");
+    {
+        TestWidget* child = TestWidget_create(&geo->m_base);
+        expect_true(child != NULL, "父子启用传播创建子控件");
+        if (child) {
+            XWidget_setEnabled(&geo->m_base, false);
+            expect_true(!XWidget_isEnabled(&child->m_base) &&
+                        XWidget_testAttribute(&child->m_base,
+                                              XWidgetAttribute_Disabled),
+                        "父控件禁用同步子控件 Disabled");
+            XWidget_setEnabled(&child->m_base, false);
+            XWidget_setEnabled(&geo->m_base, true);
+            expect_true(!XWidget_isEnabled(&child->m_base),
+                        "父控件恢复时保留子控件显式禁用");
+            XWidget_setEnabled(&child->m_base, true);
+            expect_true(XWidget_isEnabled(&child->m_base),
+                        "子控件显式启用后恢复可用");
+        }
+        XWidget_setEnabled(&geo->m_base, true);
+    }
 
     /* ---------- 标题/透明度 ---------- */
     title = XString_create_utf8("XWidget 契约测试");
@@ -8652,6 +11286,37 @@ static void test_widget_contract(void)
         expect_true(visA->showCount == 1 && visB->showCount == 1,
                     "可见性传播仅发一次 showEvent");
 
+        /* isVisibleTo() 只判断 self 到 ancestor 之前的显式隐藏状态：
+         * ancestor 本身隐藏不影响结果；无关 ancestor 继续检查到顶层，
+         * ancestor=NULL 才等价于 isVisible()。使用独立树避免改变下方
+         * 可见性传播计数。 */
+        {
+            TestWidget* probeRoot = TestWidget_create(NULL);
+            TestWidget* probeParent = probeRoot
+                ? TestWidget_create(&probeRoot->m_base) : NULL;
+            TestWidget* probeChild = probeParent
+                ? TestWidget_create(&probeParent->m_base) : NULL;
+            TestWidget* unrelated = TestWidget_create(NULL);
+            if (probeRoot && probeParent && probeChild && unrelated) {
+                XWidget_show(&probeRoot->m_base);
+                XWidget_show(&probeParent->m_base);
+                XWidget_show(&probeChild->m_base);
+                expect_true(XWidget_isVisibleTo(&probeChild->m_base,
+                                                &unrelated->m_base),
+                            "isVisibleTo 无关 ancestor 仍检查到顶层");
+                XWidget_hide(&probeParent->m_base);
+                expect_true(XWidget_isVisibleTo(&probeChild->m_base,
+                                                &probeParent->m_base),
+                            "isVisibleTo 不检查 ancestor 自身隐藏状态");
+                expect_true(!XWidget_isVisibleTo(&probeChild->m_base, NULL),
+                            "isVisibleTo(NULL) 等价于有效可见状态");
+            }
+            if (probeChild) XWidget_delete_base((XClass*)probeChild);
+            if (probeParent) XWidget_delete_base((XClass*)probeParent);
+            if (probeRoot) XWidget_delete_base((XClass*)probeRoot);
+            if (unrelated) XWidget_delete_base((XClass*)unrelated);
+        }
+
         /* 命中测试（子控件必须可见才可命中；逆序 Z 序） */
         hit = XWidget_childAt_2(&visA->m_base, 20, 20);
         expect_true(hit == &visB->m_base, "childAt 命中孙控件");
@@ -8710,6 +11375,40 @@ static void test_widget_contract(void)
         XWidget_delete_base((XClass*)visB);
         XWidget_delete_base((XClass*)visA);
         XWidget_delete_base((XClass*)visRoot);
+    }
+    {
+        TestWidget* reparentRoot = TestWidget_create(NULL);
+        TestWidget* reparentA = TestWidget_create(&reparentRoot->m_base);
+        TestWidget* reparentB = TestWidget_create(&reparentRoot->m_base);
+        TestWidget* reparentChild = TestWidget_create(&reparentA->m_base);
+        XWidget_setGeometry(&reparentA->m_base, 0, 0, 120, 80);
+        XWidget_setGeometry(&reparentB->m_base, 140, 0, 120, 80);
+        XWidget_setGeometry(&reparentChild->m_base, 12, 14, 40, 20);
+        XWidget_show(&reparentRoot->m_base);
+        XWidget_show(&reparentA->m_base);
+        XWidget_show(&reparentB->m_base);
+        XWidget_show(&reparentChild->m_base);
+        expect_true(XWidget_isVisible(&reparentChild->m_base),
+                    "setParent 前子控件可见");
+        XWidget_setParentPlain(&reparentChild->m_base, &reparentB->m_base);
+        expect_true(XWidget_parentWidget(&reparentChild->m_base) ==
+                        &reparentB->m_base,
+                    "setParentPlain 更新父控件");
+        expect_true(!XWidget_isVisible(&reparentChild->m_base) &&
+                        XWidget_isHidden(&reparentChild->m_base),
+                    "setParentPlain 后控件隐藏且需显式 show");
+        expect_true(XWidget_x(&reparentChild->m_base) == 0 &&
+                        XWidget_y(&reparentChild->m_base) == 0 &&
+                        XWidget_width(&reparentChild->m_base) == 40 &&
+                        XWidget_height(&reparentChild->m_base) == 20,
+                    "setParentPlain 将子控件位置归零并保持尺寸");
+        XWidget_show(&reparentChild->m_base);
+        expect_true(XWidget_isVisible(&reparentChild->m_base),
+                    "setParentPlain 后显式 show 恢复可见");
+        XWidget_delete_base((XClass*)reparentChild);
+        XWidget_delete_base((XClass*)reparentB);
+        XWidget_delete_base((XClass*)reparentA);
+        XWidget_delete_base((XClass*)reparentRoot);
     }
 #if XWINDOW_ON && XACCESSIBLE_ON
     {
@@ -9677,6 +12376,133 @@ static void test_layout_total_extended(void)
 #endif /* XLAYOUT_ON && XLAYOUT_TOTAL_ON && XLAYOUT_BOX_ON */
 }
 
+#if XLAYOUT_STACKED_ON
+#if XWIDGET_ON && XPUSHBUTTON_ON && XFRAME_ON && XLABEL_ON
+/** @brief 堆叠布局按钮联动探针：把 clicked 槽转换为下一页索引。 */
+typedef struct StackedButtonProbe
+{
+    XLabel receiver; /**< 作为信号槽接收者的 XLabel 基类对象。 */
+    XStackedLayout* stack; /**< 被槽函数切换的堆叠布局借用指针。 */
+    int clicked; /**< 已接收 clicked 信号次数。 */
+} StackedButtonProbe;
+
+static void stacked_button_next_clickedSlot(XObject* receiver,
+                                            XVarList* args)
+{
+    StackedButtonProbe* probe = (StackedButtonProbe*)receiver;
+    int index;
+    int count;
+    (void)args;
+    if (!probe || !probe->stack) return;
+    index = XStackedLayout_currentIndex(probe->stack);
+    count = XStackedLayout_count(probe->stack);
+    if (count <= 0) return;
+    XStackedLayout_setCurrentIndex(probe->stack, (index + 1) % count);
+    ++probe->clicked;
+}
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON && XFRAME_ON && XLABEL_ON */
+
+/** @brief XStackedLayout 契约：页面索引、可见性、几何分配与移除。 */
+static void test_stacked_layout_contract(void)
+{
+    XStackedLayout stack;
+    TestWidget* first;
+    TestWidget* second;
+    XRect rect;
+    XLayoutItem* taken;
+
+    /* 页面允许扩展，几何断言才能覆盖 QStackedLayout 的整矩形分配。 */
+    first = layout_make_growable_widget(40, 24);
+    second = layout_make_growable_widget(64, 32);
+    expect_true(first != NULL && second != NULL,
+                "stacked layout 页面控件创建");
+    if (!first || !second) return;
+
+    XWidget_setGeometry((XWidget*)g_layoutTestHost, 0, 0, 240, 120);
+    XWidget_show((XWidget*)g_layoutTestHost);
+    XStackedLayout_init(&stack);
+    expect_true(XStackedLayout_currentIndex(&stack) == -1,
+                "stacked layout 初始 currentIndex=-1");
+    expect_true(XStackedLayout_addWidget(&stack, &first->m_base) == 0,
+                "stacked layout addWidget 返回 0");
+    expect_true(XStackedLayout_addWidget(&stack, &second->m_base) == 1,
+                "stacked layout addWidget 返回 1");
+    expect_true(XStackedLayout_count(&stack) == 2 &&
+                XStackedLayout_currentWidget(&stack) == &first->m_base,
+                "stacked layout 当前页为首项");
+    expect_true(XWidget_isVisible(&first->m_base) &&
+                !XWidget_isVisible(&second->m_base),
+                "StackOne 仅首项可见");
+
+    XRect_init(&rect, 5, 7, 180, 90);
+    XLayoutItem_setGeometry_base((XLayoutItem*)&stack, &rect);
+    expect_true(XWidget_geometry(&first->m_base).x == 5 &&
+                XWidget_geometry(&first->m_base).y == 7 &&
+                XWidget_geometry(&first->m_base).width == 180 &&
+                XWidget_geometry(&first->m_base).height == 90,
+                "StackOne 几何分配给当前页");
+    expect_true(XWidget_geometry(&second->m_base).width != 180 ||
+                XWidget_geometry(&second->m_base).height != 90,
+                "StackOne 不改非当前页几何");
+
+#if XWIDGET_ON && XPUSHBUTTON_ON && XFRAME_ON && XLABEL_ON
+    {
+        XPushButton nextButton;
+        StackedButtonProbe probe;
+        memset(&probe, 0, sizeof(probe));
+        XPushButton_init(&nextButton, NULL, 0);
+        XLabel_init(&probe.receiver, NULL, 0);
+        probe.stack = &stack;
+        XObject_connect_1((XObject*)&nextButton,
+                          (size_t)XPushButton_clicked_signal(NULL, false),
+                          (XObject*)&probe.receiver,
+                          stacked_button_next_clickedSlot,
+                          XConnectionType_Direct);
+        XPushButton_click(&nextButton);
+        expect_true(probe.clicked == 1 &&
+                    XStackedLayout_currentIndex(&stack) == 1 &&
+                    XStackedLayout_currentWidget(&stack) == &second->m_base,
+                    "XPushButton clicked 槽联动 XStackedLayout 切到下一页");
+        XLabel_deinit_base(&probe.receiver);
+        XPushButton_deinit_base(&nextButton);
+    }
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON && XFRAME_ON && XLABEL_ON */
+
+    XStackedLayout_setCurrentIndex(&stack, 1);
+    expect_true(XStackedLayout_currentIndex(&stack) == 1 &&
+                XStackedLayout_currentWidget(&stack) == &second->m_base,
+                "setCurrentIndex 切换当前页");
+    expect_true(!XWidget_isVisible(&first->m_base) &&
+                XWidget_isVisible(&second->m_base),
+                "切换后 StackOne 可见性更新");
+
+    /* 让当前页拥有非空几何，同时故意改变非当前页，验证 StackAll
+     * 以 currentWidget()->geometry() 覆盖全部页面。 */
+    XWidget_setGeometry(&first->m_base, 1, 2, 11, 12);
+    XWidget_setGeometry(&second->m_base, 5, 7, 180, 90);
+    XStackedLayout_setStackingMode(&stack, XStackedLayoutStackAll);
+    expect_true(XStackedLayout_stackingMode(&stack) ==
+                    XStackedLayoutStackAll,
+                "setStackingMode(StackAll) 生效");
+    expect_true(XWidget_isVisible(&first->m_base) &&
+                XWidget_isVisible(&second->m_base),
+                "StackAll 所有页面可见");
+    expect_true(XWidget_geometry(&first->m_base).x == 5 &&
+                XWidget_geometry(&first->m_base).y == 7 &&
+                XWidget_geometry(&first->m_base).width == 180 &&
+                XWidget_geometry(&first->m_base).height == 90,
+                "StackAll 同步当前页几何到其他页面");
+
+    taken = XLayout_takeAt_base((XLayout*)&stack, 1);
+    expect_true(taken != NULL && XStackedLayout_count(&stack) == 1 &&
+                XStackedLayout_currentIndex(&stack) == 0 &&
+                XStackedLayout_currentWidget(&stack) == &first->m_base,
+                "移除当前页后索引回退到剩余页面");
+    if (taken) XLayoutItem_delete_base(taken);
+    XStackedLayout_deinit_base(&stack);
+}
+#endif /* XLAYOUT_STACKED_ON */
+
 
 #endif /* XLAYOUT_ON */
 
@@ -10149,6 +12975,33 @@ static void button_probe_toggledSlot(XObject* sender, XVarList* args)
     g_buttonProbe.lastToggled = checked;
 }
 
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+typedef struct ButtonLinkProbe
+{
+    XLabel label;
+    int pressed;
+    int released;
+} ButtonLinkProbe;
+
+static void button_link_pressedSlot(XObject* receiver, XVarList* args)
+{
+    ButtonLinkProbe* probe = (ButtonLinkProbe*)receiver;
+    (void)args;
+    if (!probe) return;
+    ++probe->pressed;
+    XLabel_setText_2(&probe->label, "Pressed");
+}
+
+static void button_link_releasedSlot(XObject* receiver, XVarList* args)
+{
+    ButtonLinkProbe* probe = (ButtonLinkProbe*)receiver;
+    (void)args;
+    if (!probe) return;
+    ++probe->released;
+    XLabel_setText_2(&probe->label, "Released");
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 /** @brief XPushButton 按钮的 Qt 对齐契约测试。 */
 static void test_pushbutton_contract(void)
 {
@@ -10274,6 +13127,20 @@ static void test_pushbutton_contract(void)
                 g_buttonProbe.lastToggled,
                 "XPushButton 可选中 click 换选中并发 full 信号");
 
+    /* Qt setCheckable(false) 会静默清除 checked，不额外发 toggled。 */
+    {
+        int toggledBefore = g_buttonProbe.toggled;
+        XPushButton_setCheckable(zero, false);
+        expect_true(!XPushButton_isChecked(zero) &&
+                    g_buttonProbe.toggled == toggledBefore,
+                    "XPushButton 关闭 checkable 静默清除 checked");
+    }
+    XPushButton_setAutoRepeatDelay(zero, -5);
+    XPushButton_setAutoRepeatInterval(zero, -7);
+    expect_true(XPushButton_autoRepeatDelay(zero) == -5 &&
+                XPushButton_autoRepeatInterval(zero) == -7,
+                "XPushButton 自动重复参数保留负值");
+
     XWidget_resize((XWidget*)zero, 80, 30);
     XPoint_init(&pos, 40, 15);
     expect_true(XPushButton_hitButton(zero, &pos),
@@ -10341,25 +13208,314 @@ static void test_pushbutton_contract(void)
     XPushButton_delete_base((XClass*)zero);
     XPushButton_deinit_base(&button);
 }
+
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+/** @brief XPushButton 与 XLabel 的信号槽联动测试（对标窗口演示中的按压文字切换）。 */
+static void test_pushbutton_label_signal_slot_link(void)
+{
+    XPushButton button;
+    ButtonLinkProbe link;
+    const char* text;
+
+    memset(&button, 0, sizeof(button));
+    memset(&link, 0, sizeof(link));
+    XPushButton_init(&button, NULL, 0);
+    XLabel_init(&link.label, NULL, 0);
+    XLabel_setText_2(&link.label, "Released");
+
+    XObject_connect_1((XObject*)&button,
+                      (size_t)XPushButton_pressed_signal(NULL),
+                      (XObject*)&link, button_link_pressedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&button,
+                      (size_t)XPushButton_released_signal(NULL),
+                      (XObject*)&link, button_link_releasedSlot,
+                      XConnectionType_Direct);
+
+    XPushButton_setDown(&button, true);
+    XPushButton_pressed_signal(&button);
+    text = XString_toUtf8(XLabel_text(&link.label));
+    expect_true(link.pressed == 1 && link.released == 0 &&
+                text != NULL && strcmp(text, "Pressed") == 0,
+                "XPushButton pressed 信号槽更新标签为 Pressed");
+
+    XPushButton_setDown(&button, false);
+    XPushButton_released_signal(&button);
+    text = XString_toUtf8(XLabel_text(&link.label));
+    expect_true(link.pressed == 1 && link.released == 1 &&
+                text != NULL && strcmp(text, "Released") == 0,
+                "XPushButton released 信号槽更新标签为 Released");
+
+    XLabel_deinit_base(&link.label);
+    XPushButton_deinit_base(&button);
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+/** @brief XPushButton 鼠标/键盘输入事件契约测试（对标 Qt 6.8 QAbstractButton 事件语义）。 */
+static void test_pushbutton_input_event_contract(void)
+{
+    XPushButton button;
+    XPushButton kb;
+    XPushButton def;
+    XMouseEvent press;
+    XMouseEvent release;
+    XMouseEvent pressOut;
+    XMouseEvent releaseOut;
+    XMouseEvent moveOut;
+    XMouseEvent moveIn;
+    XKeyEvent keyPress;
+    XKeyEvent keyRelease;
+    XPoint inside = { 10, 10 };
+    XPoint outside = { 200, 200 };
+
+    memset(&button, 0, sizeof(button));
+    XPushButton_init(&button, NULL, 0);
+    XWidget_resize((XWidget*)&button, 80, 40);
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XObject_connect_2((XObject*)&button,
+                      (size_t)XPushButton_pressed_signal(&button),
+                      button_probe_pressedSlot);
+    XObject_connect_2((XObject*)&button,
+                      (size_t)XPushButton_released_signal(&button),
+                      button_probe_releasedSlot);
+    XObject_connect_2((XObject*)&button,
+                      (size_t)XPushButton_clicked_signal(&button, false),
+                      button_probe_clickedSlot);
+    XObject_connect_2((XObject*)&button,
+                      (size_t)XPushButton_toggled_signal(&button, false),
+                      button_probe_toggledSlot);
+
+    /* 命中控件内部按下：accept，置 down 并发 pressed。 */
+    XMouseEvent_init(&press, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&press);
+    expect_true(XEvent_isAccepted((XEvent*)&press),
+                "XPushButton 命中按下 accept");
+    expect_true(XPushButton_isDown(&button),
+                "XPushButton 命中按下置 down");
+    expect_true(g_buttonProbe.pressed == 1,
+                "XPushButton 命中按下发 pressed");
+
+    /* 控件内部释放：走 click 路径，发 released/clicked。 */
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XMouseEvent_init(&release, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&release);
+    expect_true(XEvent_isAccepted((XEvent*)&release),
+                "XPushButton 命中释放 accept");
+    expect_true(g_buttonProbe.pressed == 0 &&
+                g_buttonProbe.released == 1 &&
+                g_buttonProbe.clicked == 1,
+                "XPushButton 命中释放触发点击信号");
+    expect_true(!XPushButton_isDown(&button),
+                "XPushButton 点击完成后恢复非按下");
+    expect_true(!XPushButton_isChecked(&button),
+                "XPushButton 非可选中点击不改 checked");
+
+    /* 外部按下不命中：ignore，不发 pressed。 */
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XMouseEvent_init(&pressOut, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, outside);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&pressOut);
+    expect_true(!XEvent_isAccepted((XEvent*)&pressOut),
+                "XPushButton 外部按下 ignore");
+    expect_true(!XPushButton_isDown(&button) &&
+                g_buttonProbe.pressed == 0,
+                "XPushButton 外部按下不置按下");
+
+    /* 未按下时外部/内部释放都不触发 click。 */
+    XMouseEvent_init(&releaseOut, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, outside);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&releaseOut);
+    expect_true(!XEvent_isAccepted((XEvent*)&releaseOut) &&
+                g_buttonProbe.clicked == 0,
+                "XPushButton 未按下时释放不点击");
+
+    /* 按住状态移出：down 取消并发 released；移回：恢复 down 并发 pressed。 */
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XMouseEvent_init(&press, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&press);
+    expect_true(XPushButton_isDown(&button),
+                "XPushButton 拖拽测试先按下");
+
+    XMouseEvent_init(&moveOut, XEVENT_TYPE_MOUSE_MOVE,
+                     XMouseButton_NoButton,
+                     XKeyboardModifier_NoModifier, outside);
+    XMouseEvent_setButtons(&moveOut, XMouseButton_LeftButton);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&moveOut);
+    expect_true(XEvent_isAccepted((XEvent*)&moveOut),
+                "XPushButton 按住移出 accept");
+    expect_true(!XPushButton_isDown(&button) &&
+                g_buttonProbe.released == 1,
+                "XPushButton 按住移出取消 down 并发 released");
+
+    XMouseEvent_init(&moveIn, XEVENT_TYPE_MOUSE_MOVE,
+                     XMouseButton_NoButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XMouseEvent_setButtons(&moveIn, XMouseButton_LeftButton);
+    XWidget_event_base((XWidget*)&button, (XEvent*)&moveIn);
+    expect_true(XEvent_isAccepted((XEvent*)&moveIn) &&
+                XPushButton_isDown(&button) &&
+                g_buttonProbe.pressed == 2,
+                "XPushButton 按住移回恢复 down 并发 pressed");
+
+    XPushButton_setDown(&button, false);
+
+    /* Space 首按/释放按 Qt 语义模拟完整点击。 */
+    memset(&kb, 0, sizeof(kb));
+    XPushButton_init(&kb, NULL, 0);
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XObject_connect_2((XObject*)&kb,
+                      (size_t)XPushButton_pressed_signal(&kb),
+                      button_probe_pressedSlot);
+    XObject_connect_2((XObject*)&kb,
+                      (size_t)XPushButton_released_signal(&kb),
+                      button_probe_releasedSlot);
+    XObject_connect_2((XObject*)&kb,
+                      (size_t)XPushButton_clicked_signal(&kb, false),
+                      button_probe_clickedSlot);
+    XKeyEvent_init(&keyPress, XEVENT_TYPE_KEY_PRESS, XKey_Space,
+                   XKeyboardModifier_NoModifier);
+    XKeyEvent_setAutoRepeat(&keyPress, false);
+    XWidget_event_base((XWidget*)&kb, (XEvent*)&keyPress);
+    expect_true(XEvent_isAccepted((XEvent*)&keyPress) &&
+                XPushButton_isDown(&kb) &&
+                g_buttonProbe.pressed == 1,
+                "XPushButton Space 按下 accept 并置 down");
+
+    XKeyEvent_init(&keyRelease, XEVENT_TYPE_KEY_RELEASE, XKey_Space,
+                   XKeyboardModifier_NoModifier);
+    XKeyEvent_setAutoRepeat(&keyRelease, false);
+    XWidget_event_base((XWidget*)&kb, (XEvent*)&keyRelease);
+    expect_true(XEvent_isAccepted((XEvent*)&keyRelease) &&
+                !XPushButton_isDown(&kb) &&
+                g_buttonProbe.pressed == 1 &&
+                g_buttonProbe.released == 1 &&
+                g_buttonProbe.clicked == 1,
+                "XPushButton Space 释放触发完整点击");
+
+    /* Return/Enter 在 default 按钮上触发 click（对标 QPushButton）。 */
+    memset(&def, 0, sizeof(def));
+    XPushButton_init(&def, NULL, 0);
+    XPushButton_setDefault(&def, true);
+    memset(&g_buttonProbe, 0, sizeof(g_buttonProbe));
+    XObject_connect_2((XObject*)&def,
+                      (size_t)XPushButton_clicked_signal(&def, false),
+                      button_probe_clickedSlot);
+    XKeyEvent_init(&keyPress, XEVENT_TYPE_KEY_PRESS, XKey_Return,
+                   XKeyboardModifier_NoModifier);
+    XWidget_event_base((XWidget*)&def, (XEvent*)&keyPress);
+    expect_true(XEvent_isAccepted((XEvent*)&keyPress) &&
+                g_buttonProbe.clicked == 1,
+                "XPushButton default 按钮 Return 触发 click");
+
+    XKeyEvent_deinit_base((XClass*)&keyRelease);
+    XKeyEvent_deinit_base((XClass*)&keyPress);
+    XMouseEvent_deinit_base((XClass*)&moveIn);
+    XMouseEvent_deinit_base((XClass*)&moveOut);
+    XMouseEvent_deinit_base((XClass*)&releaseOut);
+    XMouseEvent_deinit_base((XClass*)&pressOut);
+    XMouseEvent_deinit_base((XClass*)&release);
+    XMouseEvent_deinit_base((XClass*)&press);
+    XPushButton_deinit_base(&def);
+    XPushButton_deinit_base(&kb);
+    XPushButton_deinit_base(&button);
+}
+
+/** @brief XPushButton autoDefault 的父对话框链契约测试（对标 Qt 6.8 QPushButtonPrivate::dialogParent）。 */
+static void test_pushbutton_auto_default_dialog_parent(void)
+{
+    XWidget dialog;
+    XWidget window;
+    XWidget container;
+    XPushButton inDialog;
+    XPushButton inWindow;
+    XPushButton inNested;
+
+    memset(&dialog, 0, sizeof(dialog));
+    XWidget_init(&dialog, NULL, (XWidgetFlags)XWindowType_Dialog);
+    expect_true(XWidget_isWindow(&dialog) &&
+                XWidget_windowType(&dialog) == XWindowType_Dialog,
+                "对话框父对象为 Dialog 顶层窗口");
+
+    memset(&inDialog, 0, sizeof(inDialog));
+    XPushButton_init(&inDialog, &dialog, 0);
+    expect_true(XPushButton_autoDefault(&inDialog),
+                "Auto 三态在直接父对话框下返回 true");
+    XPushButton_setAutoDefault(&inDialog, false);
+    expect_true(!XPushButton_autoDefault(&inDialog),
+                "对话框父 + setAutoDefault(false) 返回 false");
+    XPushButton_setAutoDefault(&inDialog, true);
+    expect_true(XPushButton_autoDefault(&inDialog),
+                "对话框父 + setAutoDefault(true) 返回 true");
+
+    memset(&container, 0, sizeof(container));
+    XWidget_init(&container, &dialog, 0);
+    memset(&inNested, 0, sizeof(inNested));
+    XPushButton_init(&inNested, &container, 0);
+    expect_true(!XWidget_isWindow(&container) &&
+                XPushButton_autoDefault(&inNested),
+                "Auto 三态经中间子控件仍解析到对话框父返回 true");
+
+    memset(&window, 0, sizeof(window));
+    XWidget_init(&window, NULL, (XWidgetFlags)XWindowType_Widget);
+    expect_true(XWidget_isWindow(&window) &&
+                XWidget_windowType(&window) == XWindowType_Window,
+                "普通顶层父对象为 Window 类型");
+    memset(&inWindow, 0, sizeof(inWindow));
+    XPushButton_init(&inWindow, &window, 0);
+    expect_true(!XPushButton_autoDefault(&inWindow),
+                "Auto 三态在普通窗口父下返回 false");
+    XPushButton_setAutoDefault(&inWindow, true);
+    expect_true(XPushButton_autoDefault(&inWindow),
+                "普通窗口父 + setAutoDefault(true) 返回 true");
+
+    XPushButton_deinit_base(&inNested);
+    XWidget_deinit_base(&container);
+    XPushButton_deinit_base(&inWindow);
+    XWidget_deinit_base(&window);
+    XPushButton_deinit_base(&inDialog);
+    XWidget_deinit_base(&dialog);
+}
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 
 int main(void)
 {
     test_geometry_contract();
     test_pixmap_scroll_and_bitmap_alias();
+    test_pixmap_mask_lifecycle();
     test_pixmap_lifecycle();
     test_icon_sizes();
     test_icon_matching();
     test_icon_device_pixel_ratio();
+    test_icon_scaled_pixmap_cache();
+    test_icon_style_helper();
     test_icon_theme_engine_contract();
+    test_icon_engine_hook_contract();
+    test_icon_paint_visual_alignment();
 #if XIMAGECODEC_ON
     test_icon_add_file_size();
+    test_icon_theme_index_inherits();
+    test_icon_theme_engine_paint_scales_to_rect();
+    test_icon_theme_scale_selection();
 #endif /* XIMAGECODEC_ON */
     test_pixmap_cache_contract();
 #if defined(__unix__)
     test_pixmap_cache_concurrency();
 #endif
     test_picture_play_contract();
+#if XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON
+    test_picture_painter_high_level_record_link();
+#endif /* XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON */
+#if XPAINTER_PATH_ON
+    test_picture_painter_path_record_link();
+#endif /* XPAINTER_PATH_ON */
     test_painter_raster_contract();
     test_painter_extra_alignment();
     test_painter_draw_picture_align();
@@ -10388,6 +13544,9 @@ int main(void)
     test_painter_text_flags_contract();
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     test_painter_record_play_contract();
+    test_painter_picture_pen_state_record();
+    test_image_reader_decide_format_state();
+    test_image_reader_allocation_limit();
 #if XIMAGECODEC_ON
     test_image_device_io();
     test_image_handler_registry();
@@ -10395,6 +13554,10 @@ int main(void)
     test_image_codec_round_trip();
     test_codec_pixel_round_trip();
     test_codec_reject_malformed();
+#if XIMAGECODEC_BMP_ON
+    test_codec_bmp_malformed();
+    test_codec_bmp_alpha_semantics();
+#endif /* XIMAGECODEC_BMP_ON */
     test_codec_detect_only();
     test_codec_decode_real_assets();
     test_codec_png_palette_round_trip();
@@ -10413,6 +13576,7 @@ int main(void)
     test_codec_upper_layer_devices();
 #endif /* XIMAGECODEC_ON */
     test_image_pixel_contract();
+    test_image_text_metadata_sorted_map();
 #if XSCREEN_ON
     test_screen_contract();
 #endif /* XSCREEN_ON */
@@ -10425,16 +13589,27 @@ int main(void)
 #if XWIDGET_ON
     test_widget_contract();
 #endif /* XWIDGET_ON */
+#if XWIDGET_ON && XFRAME_ON
+    test_frame_contract();
+#endif /* XWIDGET_ON && XFRAME_ON */
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     test_label_contract();
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
     test_pushbutton_contract();
+    test_pushbutton_input_event_contract();
+    test_pushbutton_auto_default_dialog_parent();
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    test_pushbutton_label_signal_slot_link();
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 #if XLAYOUT_ON
     test_layout_item_contract();
     test_layout_widget_integration();
     test_layout_total_extended();
+#if XLAYOUT_STACKED_ON
+    test_stacked_layout_contract();
+#endif /* XLAYOUT_STACKED_ON */
 #endif /* XLAYOUT_ON */
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
     test_box_layout_contract();

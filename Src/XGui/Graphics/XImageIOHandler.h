@@ -17,6 +17,7 @@ extern "C" {
 #include "XClass.h"
 #include "XIODevice.h"
 #include "XString.h"
+#include "XStringList.h"
 
 /**
  * @brief      XImageIOHandler 图像选项枚举（对标 Qt 6.8 QImageIOHandler::ImageOption）
@@ -74,6 +75,7 @@ typedef struct XImageIOHandlerOptionValue
     XImageFormat format; /**< 图像格式选项值。 */
     XImageIOHandlerTransformation transformation; /**< 变换选项值。 */
     const XString* string; /**< 由调用方持有的字符串对象，不转移所有权。 */
+    XStringList* stringList; /**< 字符串列表选项值；由调用方持有，不转移所有权。 */
 } XImageIOHandlerOptionValue;
 
 /* 前向声明 */
@@ -241,6 +243,18 @@ bool XImageIOHandler_supportsOption_base(const XImageIOHandler* self, XImageIOHa
 bool XImageIOHandler_optionValue(const XImageIOHandler* self,
                                  XImageIOHandlerOption option,
                                  XImageIOHandlerOptionValue* out);
+
+/**
+ * @brief 保存由具体处理器接受的选项值。
+ * @param self 目标处理器对象指针。
+ * @param option 要保存的选项枚举。
+ * @param value 选项值指针；内容会按值复制，字符串指针仍由调用方管理。
+ * @note 这是供具体处理器重载 setOption() 使用的内部辅助函数；基类默认
+ *       setOption() 不保存选项，以保持 Qt QImageIOHandler 的空实现语义。
+ */
+void XImageIOHandler_storeOptionValue(XImageIOHandler* self,
+                                       XImageIOHandlerOption option,
+                                       const void* value);
 
 /**
  * @brief      虚函数：跳转到下一帧

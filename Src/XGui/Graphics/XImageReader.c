@@ -20,6 +20,93 @@
 #include <limits.h>
 
 static int g_imageReaderAllocationLimitMb = 256;
+static bool g_imageReaderAllocationEnvResolved = false;
+static int g_imageReaderAllocationEnvLimitMb = -1;
+
+/*
+ * Qt 6.8 仅在首次读取 allocationLimit() 时解析 QT_IMAGEIO_MAXALLOC；
+ * 解析采用 base=0 的整数规则（含 0x/0b 前缀和首尾空白），非法、溢出或负值（除 -0）
+ * 均视为未设置，随后使用运行时 setter 保存的值。
+ */
+static bool XImageReader_asciiSpace(char value)
+{
+    return value == ' ' || value == '\t' || value == '\n' ||
+           value == '\r' || value == '\f' || value == '\v';
+}
+
+static int XImageReader_digitValue(char value)
+{
+    if (value >= '0' && value <= '9') return (int)(value - '0');
+    if (value >= 'a' && value <= 'z') return (int)(value - 'a') + 10;
+    if (value >= 'A' && value <= 'Z') return (int)(value - 'A') + 10;
+    return -1;
+}
+
+static bool XImageReader_parseAllocationEnvironment(const char* text, int* value)
+{
+    const char* cursor;
+    const char* end;
+    unsigned long long magnitude = 0;
+    unsigned long long limit;
+    int base = 0;
+    bool negative = false;
+    bool hasDigit = false;
+
+    /* qEnvironmentVariableIntValue 限制缓冲区长度以覆盖所有合法 int。 */
+    if (!text || !value || strlen(text) > 13u) return false;
+    cursor = text;
+    end = text + strlen(text);
+    while (cursor < end && XImageReader_asciiSpace(*cursor)) ++cursor;
+    if (cursor < end && (*cursor == '+' || *cursor == '-')) {
+        negative = *cursor == '-';
+        ++cursor;
+    }
+    if (cursor >= end) return false;
+
+    if (*cursor == '0') {
+        if (cursor + 1 < end && (cursor[1] == 'b' || cursor[1] == 'B')) {
+            base = 2;
+            cursor += 2;
+        } else if (cursor + 1 < end && (cursor[1] == 'x' || cursor[1] == 'X')) {
+            base = 16;
+            cursor += 2;
+        } else {
+            base = 8;
+        }
+    } else {
+        base = 10;
+    }
+    limit = negative ? 2147483648ULL : 2147483647ULL;
+    while (cursor < end) {
+        int digit = XImageReader_digitValue(*cursor);
+        if (digit < 0 || digit >= base) break;
+        hasDigit = true;
+        if (magnitude > (limit - (unsigned)digit) / (unsigned)base)
+            return false;
+        magnitude = magnitude * (unsigned)base + (unsigned)digit;
+        ++cursor;
+    }
+    if (!hasDigit) return false;
+    while (cursor < end && XImageReader_asciiSpace(*cursor)) ++cursor;
+    /* Qt 的有符号转换允许 -0，其他负值才会被 allocationLimit() 忽略。 */
+    if (cursor != end || (negative && magnitude != 0)) return false;
+    *value = (int)magnitude;
+    return true;
+}
+
+static int XImageReader_effectiveAllocationLimit(void)
+{
+    if (!g_imageReaderAllocationEnvResolved)
+    {
+        const char* text = getenv("QT_IMAGEIO_MAXALLOC");
+        int parsed = -1;
+        if (XImageReader_parseAllocationEnvironment(text, &parsed))
+            g_imageReaderAllocationEnvLimitMb = parsed;
+        g_imageReaderAllocationEnvResolved = true;
+    }
+    return g_imageReaderAllocationEnvLimitMb >= 0
+        ? g_imageReaderAllocationEnvLimitMb : g_imageReaderAllocationLimitMb;
+}
 
 /* Keep discovery aligned with the independent XImageCodec registry. */
 static const char* const g_imageReaderFormats[] = { "bmp", "png", "jpeg", "gif", "svg" };
@@ -74,18 +161,17 @@ static XStringList* XImageReader_supportedFormats(void)
         }
     }
 #endif
+    /* Qt QImageReader::supportedImageFormats() sorts and removes duplicates. */
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
     return result;
 }
 
 static bool XImageReader_mimeEquals(const char* mimeType, const char* expected)
 {
-    size_t i;
-    if (!mimeType) return false;
-    for (i = 0; expected[i] && mimeType[i]; ++i) {
-        if (tolower((unsigned char)mimeType[i]) !=
-            tolower((unsigned char)expected[i])) return false;
-    }
-    return expected[i] == '\0' && mimeType[i] == '\0';
+    /* Qt QImageReaderWriterHelpers 按 QByteArray 值精确匹配 MIME；
+       仅格式名本身按大小写不敏感处理。 */
+    return mimeType && expected && strcmp(mimeType, expected) == 0;
 }
 
 static bool XImageReader_mimeIsBmp(const char* mimeType)
@@ -123,6 +209,8 @@ static bool XImageReader_isSupportedFormat(const char* format)
     return false;
 }
 
+static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self);
+
 /**
  * @brief      XImageReader 私有数据
  */
@@ -147,13 +235,16 @@ typedef struct XImageReaderPrivate
     int         m_scaledClipW;       /**< 缩放裁剪矩形宽度 */
     int         m_scaledClipH;       /**< 缩放裁剪矩形高度 */
     bool        m_hasScaledClipRect; /**< 是否有缩放裁剪矩形 */
-    uint32_t    m_bgColor;           /**< 背景色 */
-    bool        m_hasBgColor;        /**< 是否有背景色 */
     bool        m_autoTransform;     /**< 是否自动变换 */
     XImageReaderError m_error;       /**< 错误码 */
     XString*    m_errorString;       /**< 错误描述 */
     XImageIOHandler* m_handler;      /**< 内部 IO 处理器 */
     XIODevice*      m_fileDevice;   /**< 内部文件设备；由读取器拥有，供插件处理器使用 */
+    XString*        m_detectedFormat; /**< 自动探测到的格式缓存；由读取器拥有 */
+    XStringList     m_textKeys;      /**< 处理器描述解析出的文本键列表 */
+    XStringList     m_textValues;    /**< 与文本键按索引对应的文本值列表 */
+    XString         m_textCache;     /**< UTF-8 兼容重载的最近一次文本缓存 */
+    bool            m_textLoaded;    /**< 是否已尝试从处理器读取描述文本 */
     int         m_sizeW;             /**< 已探测图像宽度 */
     int         m_sizeH;             /**< 已探测图像高度 */
     bool        m_hasSize;           /**< 是否已探测到图像尺寸 */
@@ -163,6 +254,145 @@ typedef struct XImageReaderPrivate
     XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备。 */
 #endif
 }XImageReaderPrivate;
+
+static void XImageReader_clearText(XImageReaderPrivate* data)
+{
+    if (!data) return;
+    XStringList_clear_base((XContainer*)&data->m_textKeys);
+    XStringList_clear_base((XContainer*)&data->m_textValues);
+    data->m_textLoaded = false;
+}
+
+static void XImageReader_clearDetectedFormat(XImageReaderPrivate* data)
+{
+    if (!data) return;
+    if (data->m_detectedFormat)
+        XString_delete_base((XClass*)data->m_detectedFormat);
+    data->m_detectedFormat = NULL;
+}
+
+/* 将 Description 中的一个键值写入有序列表；重复键按 QMap 规则覆盖旧值。 */
+static void XImageReader_storeText(XImageReaderPrivate* data,
+                                   const XString* key,
+                                   const XString* value)
+{
+    int count;
+    int insertIndex = 0;
+    int i;
+    if (!data || !key || !value ||
+        XString_isEmpty_base((const XContainer*)key))
+        return;
+    count = (int)XStringList_size_base((const XContainer*)&data->m_textKeys);
+    for (i = 0; i < count; ++i) {
+        XString* item = (XString*)XStringList_at_base(
+            (XVector*)&data->m_textKeys, i);
+        if (!item) continue;
+        if (XString_equals(item, key, XChar_CaseSensitive)) {
+            XString* target = (XString*)XStringList_at_base(
+                (XVector*)&data->m_textValues, i);
+            if (target)
+                XString_copy_base((XClass*)target, (const XClass*)value);
+            return;
+        }
+        if (XString_compare(item, key) > 0) {
+            insertIndex = i;
+            break;
+        }
+        insertIndex = i + 1;
+    }
+    if (!XStringList_insert_base((XVector*)&data->m_textKeys,
+                                 insertIndex, (void*)key))
+        return;
+    if (!XStringList_insert_base((XVector*)&data->m_textValues,
+                                 insertIndex, (void*)value)) {
+        XStringList_remove_base((XVector*)&data->m_textKeys,
+                                insertIndex, 1);
+    }
+}
+
+/* 对齐 qt_getImageTextFromDescription：键值由空行分隔，值采用 simplified。 */
+static void XImageReader_loadText(XImageReader* self)
+{
+    XImageReaderPrivate* data;
+    XImageIOHandlerOptionValue optionValue;
+    XString* description;
+    XStringList* pairs;
+    int64_t count;
+    int64_t i;
+    if (!self || !(data = self->m_data) || data->m_textLoaded)
+        return;
+    data->m_textLoaded = true;
+    if (!XImageReader_ensureHandler(self))
+        return;
+    if (!XImageIOHandler_supportsOption_base(data->m_handler,
+                                             XImageIOHandlerOption_Description))
+        return;
+    memset(&optionValue, 0, sizeof(optionValue));
+    if (!XImageIOHandler_option_base(data->m_handler,
+                                     XImageIOHandlerOption_Description,
+                                     &optionValue) || !optionValue.string)
+        return;
+    description = XString_create_copy(optionValue.string);
+    if (!description)
+        return;
+    pairs = XString_split_utf8(description, "\n\n", XChar_CaseSensitive);
+    XString_delete_base((XClass*)description);
+    if (!pairs)
+        return;
+    count = (int64_t)XStringList_size_base((const XContainer*)pairs);
+    for (i = 0; i < count; ++i) {
+        XString* pair = (XString*)XStringList_at_base((XVector*)pairs, i);
+        XString* simplified;
+        const char* raw;
+        const char* colon;
+        const char* space;
+        XString* key = NULL;
+        XString* value = NULL;
+        size_t keyLength;
+        if (!pair) continue;
+        simplified = XString_simplified(pair);
+        raw = XString_toUtf8(pair);
+        if (!raw) {
+            if (simplified) XString_delete_base((XClass*)simplified);
+            continue;
+        }
+        colon = strchr(raw, ':');
+        if (!colon) {
+            if (simplified) XString_delete_base((XClass*)simplified);
+            continue;
+        }
+        space = strchr(raw, ' ');
+        /* Qt 的 QStringView::indexOf(u' ') 在未找到时返回 -1，
+           因此“没有空格”同样满足 indexOf(' ') < 冒号位置。 */
+        if (!space || space < colon) {
+            key = XString_create_utf8("Description");
+            value = simplified;
+            simplified = NULL;
+        } else {
+            keyLength = (size_t)(colon - raw);
+            key = XString_create_with_length_utf8(raw, keyLength);
+            /* qt_getImageTextFromDescription 使用 pair.mid(index + 2)，
+               即冒号及其后一个字符一起跳过，再执行 simplified。 */
+            value = XString_create_utf8(colon[1] ? colon + 2 : colon + 1);
+            if (key) {
+                XString* normalized = XString_simplified(key);
+                XString_delete_base((XClass*)key);
+                key = normalized;
+            }
+            if (value) {
+                XString* normalized = XString_simplified(value);
+                XString_delete_base((XClass*)value);
+                value = normalized;
+            }
+        }
+        if (key && value)
+            XImageReader_storeText(data, key, value);
+        if (key) XString_delete_base((XClass*)key);
+        if (value) XString_delete_base((XClass*)value);
+        if (simplified) XString_delete_base((XClass*)simplified);
+    }
+    XStringList_delete_base((XClass*)pairs);
+}
 
 static uint32_t XImageReader_readLe32(const unsigned char* data)
 {
@@ -256,38 +486,273 @@ static void XImageReader_releaseHandler(XImageReaderPrivate* data)
     if (!data) return;
     if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
     data->m_handler = NULL;
-    if (data->m_fileDevice) XClass_delete_base((XClass*)data->m_fileDevice);
+    /* 文件名构造的设备归读取器所有；重建处理器时只关闭并复用它。 */
+    if (data->m_fileDevice && XIODevice_isOpen(data->m_fileDevice))
+        XIODevice_close_base(data->m_fileDevice);
+    XImageReader_clearDetectedFormat(data);
+    XImageReader_clearText(data);
+}
+
+static void XImageReader_releaseOwnedDevice(XImageReaderPrivate* data)
+{
+    if (!data || !data->m_fileDevice) return;
+    if (XIODevice_isOpen(data->m_fileDevice))
+        XIODevice_close_base(data->m_fileDevice);
+    if (data->m_device == data->m_fileDevice)
+        data->m_device = NULL;
+    XClass_delete_base((XClass*)data->m_fileDevice);
     data->m_fileDevice = NULL;
+}
+
+/*
+ * QFileInfo::suffix() 对应的轻量级文件名后缀提取。后缀仅用于自动格式
+ * 探测；显式 setFormat() 或 decideFormatFromContent() 时由调用方忽略。
+ */
+static XString* XImageReader_fileSuffix(const XString* fileName)
+{
+    const char* utf8;
+    const char* base;
+    const char* dot;
+    XString* suffix;
+    XString* lower;
+    if (!fileName || XContainer_isEmpty_base((const XContainer*)fileName))
+        return NULL;
+    utf8 = XString_toUtf8(fileName);
+    if (!utf8) return NULL;
+    /* QFileInfo::suffix() only examines the final path component.  A dot in
+       a parent directory must never become the image format suffix. */
+    base = strrchr(utf8, '/');
+    {
+        const char* backslash = strrchr(utf8, '\\');
+        if (backslash && (!base || backslash > base)) base = backslash;
+    }
+    base = base ? base + 1 : utf8;
+    dot = strrchr(base, '.');
+    if (!dot || !dot[1]) return NULL;
+    suffix = XString_create_utf8(dot + 1);
+    if (!suffix) return NULL;
+    lower = XString_toLower(suffix);
+    XString_delete_base((XClass*)suffix);
+    return lower;
+}
+
+/*
+ * 对齐 Qt QImageReader::read() 成功后的高 DPI 文件名约定：
+ * QFileInfo(fileName).baseName().right(3) 为 @2x..@9x 时设置 DPR。
+ * 环境变量 QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING 非空时禁用该行为，
+ * 与 Qt 的一次性 disableNxImageLoading 初始化语义一致。
+ */
+static float XImageReader_fileDevicePixelRatio(const XString* fileName)
+{
+    const char* utf8;
+    const char* base;
+    const char* dot;
+    size_t length;
+    static int disableNxImageLoading = -1;
+    if (!fileName || XContainer_isEmpty_base((const XContainer*)fileName))
+        return 1.0f;
+    /* Qt uses a function-local static initialized once, so later environment
+       changes do not alter the reader behavior in the same process. */
+    if (disableNxImageLoading < 0) {
+        const char* disable = getenv("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
+        disableNxImageLoading = disable && disable[0] ? 1 : 0;
+    }
+    if (disableNxImageLoading) return 0.0f;
+    utf8 = XString_toUtf8(fileName);
+    if (!utf8) return 0.0f;
+    base = strrchr(utf8, '/');
+    {
+        const char* backslash = strrchr(utf8, '\\');
+        if (backslash && (!base || backslash > base)) base = backslash;
+    }
+    base = base ? base + 1 : utf8;
+    dot = strrchr(base, '.');
+    length = dot ? (size_t)(dot - base) : strlen(base);
+    if (length < 3 || base[length - 3] != '@' ||
+        base[length - 1] != 'x' || base[length - 2] < '2' ||
+        base[length - 2] > '9')
+        return 0.0f;
+    return (float)(base[length - 2] - '0');
+}
+
+static XIODevice* XImageReader_ensureOwnedDevice(XImageReaderPrivate* data)
+{
+    XFile* file;
+    if (!data || !data->m_fileName ||
+        XContainer_isEmpty_base((const XContainer*)data->m_fileName))
+        return NULL;
+    if (data->m_fileDevice) return data->m_fileDevice;
+    file = XFile_create_2(data->m_fileName);
+    if (!file) return NULL;
+    data->m_fileDevice = (XIODevice*)file;
+    data->m_device = data->m_fileDevice;
+    return data->m_fileDevice;
+}
+
+/*
+ * 对齐 QImageReaderPrivate::initHandler() 的文件扩展名回退：当
+ * setFileName() 对应的原路径打不开且启用自动探测时，按支持格式逐个
+ * 尝试“原路径.扩展名”。成功后 QFile/fileName() 应暴露实际打开的路径，
+ * 读取器内部配置的文件名也同步为该路径。列表由项目固定容量注册表
+ * 生成，所有临时字符串均走 XString 项目内存接口。
+ */
+static bool XImageReader_tryDefaultExtensions(XImageReaderPrivate* data)
+{
+    XFile* file;
+    XStringList* extensions;
+    XString* original;
+    int64_t count;
+    int64_t preferred = -1;
+    int64_t pass;
+    if (!data || !data->m_autoDetectFormat ||
+        !(file = (XFile*)data->m_fileDevice) ||
+        !data->m_fileName || XContainer_isEmpty_base((const XContainer*)data->m_fileName))
+        return false;
+    extensions = XImageReader_supportedFormats();
+    if (!extensions) return false;
+    original = XString_create_copy(data->m_fileName);
+    if (!original) {
+        XStringList_delete_base((XClass*)extensions);
+        return false;
+    }
+    count = (int64_t)XStringList_size_base((const XContainer*)extensions);
+    /* Qt 将显式格式对应的后缀换到首位，以减少无谓的文件探测。 */
+    if (data->m_format &&
+        !XContainer_isEmpty_base((const XContainer*)data->m_format)) {
+        for (pass = 0; pass < count; ++pass) {
+            XString* item = (XString*)XStringList_at_base(
+                (XVector*)extensions, pass);
+            if (item && XString_equals(item, data->m_format,
+                                       XChar_CaseInsensitive)) {
+                preferred = pass;
+                break;
+            }
+        }
+    }
+    for (pass = 0; pass < count; ++pass) {
+        int64_t index = preferred >= 0
+            ? (pass == 0 ? preferred : (pass <= preferred ? pass - 1 : pass))
+            : pass;
+        XString* extension;
+        XString* candidate;
+        extension = (XString*)XStringList_at_base((XVector*)extensions, index);
+        if (!extension || XContainer_isEmpty_base((const XContainer*)extension))
+            continue;
+        candidate = XString_create_copy(original);
+        if (!candidate || !XString_append_utf8(candidate, ".") ||
+            !XString_append(candidate, extension)) {
+            if (candidate) XString_delete_base((XClass*)candidate);
+            continue;
+        }
+        XFile_setFileName(file, candidate);
+        if (XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+            XString_delete_base((XClass*)data->m_fileName);
+            data->m_fileName = candidate;
+            XString_delete_base((XClass*)original);
+            XStringList_delete_base((XClass*)extensions);
+            return true;
+        }
+        XString_delete_base((XClass*)candidate);
+    }
+    /* 所有候选都失败时恢复 QFile 的原始名称，保持 fileName() 契约。 */
+    XFile_setFileName(file, original);
+    XString_delete_base((XClass*)original);
+    XStringList_delete_base((XClass*)extensions);
+    return false;
 }
 
 static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
 {
     XImageReaderPrivate* data;
+    const XString* handlerFormat;
+    XString* suffixFormat = NULL;
+    XIODevice* device;
     if (!self || !(data = self->m_data)) return NULL;
     if (data->m_handler) return data->m_handler;
-#if XIMAGEIOPLUGIN_ON
-    if (data->m_device) {
-        data->m_handler = XImagePluginRegistry_createReadHandler(data->m_device, data->m_format);
-        return data->m_handler;
+    /* QImageReader 在关闭自动探测且未指定格式时不会创建处理器；
+       不能因内部编解码器仍可用而偷偷回退到内容探测。 */
+    if (!data->m_autoDetectFormat && !data->m_format &&
+        !data->m_decideFromContent) {
+        XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
+                              "Unsupported image format");
+        return NULL;
     }
-    if (data->m_fileName) {
-        XFile* file = XFile_create_2(data->m_fileName);
-        if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-            if (file) XClass_delete_base((XClass*)file);
+    /* Qt 的 decideFormatFromContent 只忽略显式格式/扩展名，仍保留
+       autoDetectImageFormat 的独立状态；内容探测通过空格式交给插件。 */
+    handlerFormat = data->m_decideFromContent ? NULL : data->m_format;
+    if (!handlerFormat && data->m_autoDetectFormat && !data->m_decideFromContent &&
+        data->m_fileName)
+        suffixFormat = XImageReader_fileSuffix(data->m_fileName);
+    if (!handlerFormat) handlerFormat = suffixFormat;
+    device = data->m_device ? data->m_device : XImageReader_ensureOwnedDevice(data);
+    if (!device) {
+        XImageReader_setError(self, XImageReaderError_DeviceError,
+                              "Invalid device");
+        return NULL;
+    }
+    if (!XIODevice_isOpen(device) &&
+        !XIODevice_open_base(device, XIODevice_ReadOnly)) {
+        if (!XImageReader_tryDefaultExtensions(data)) {
+            XImageReader_setError(self,
+                                  data->m_fileDevice
+                                      ? XImageReaderError_FileNotFoundError
+                                      : XImageReaderError_DeviceError,
+                                  data->m_fileDevice ? "File not found"
+                                                     : "Invalid device");
+            if (suffixFormat)
+                XString_delete_base((XClass*)suffixFormat);
             return NULL;
         }
-        data->m_handler = XImagePluginRegistry_createReadHandler((XIODevice*)file, data->m_format);
+        /* tryDefaultExtensions() has already opened the owned file. */
+        /* QFileInfo::suffix() is evaluated again after Qt has selected the
+           successfully opened candidate, so the matching suffix plugin keeps
+           its priority even when no explicit format was supplied. */
+        if (!handlerFormat && !data->m_decideFromContent &&
+            data->m_autoDetectFormat && data->m_fileName) {
+            suffixFormat = XImageReader_fileSuffix(data->m_fileName);
+            handlerFormat = suffixFormat;
+        }
+    }
+#if XIMAGEIOPLUGIN_ON
+    if (device) {
+        data->m_handler = XImagePluginRegistry_createReadHandlerEx(
+            device, handlerFormat, data->m_autoDetectFormat,
+            data->m_decideFromContent);
+        /* Qt 在文件后缀命中插件后仍调用处理器 canRead()；错误后缀时
+           销毁该处理器并继续按内容探测。保存设备位置，避免自定义插件
+           的 canRead() 消费窥视数据影响后续处理。 */
+        if (data->m_handler && suffixFormat) {
+            int64_t position = XIODevice_isSequential(device)
+                ? -1 : XIODevice_pos_base(device);
+            bool canRead = XImageIOHandler_canRead_base(data->m_handler);
+            if (position >= 0)
+                (void)XIODevice_seek_base(device, position);
+            if (!canRead) {
+                XImageIOHandler_delete_base(data->m_handler);
+                data->m_handler = NULL;
+            }
+        }
         if (data->m_handler) {
-            data->m_fileDevice = (XIODevice*)file;
+            if (suffixFormat) XString_delete_base((XClass*)suffixFormat);
             return data->m_handler;
         }
-        XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
-        return NULL;
+        /* 仅自动探测模式会产生 suffixFormat；此时与 Qt 一样，后缀
+           处理器拒绝内容后改用空格式进行插件/内置处理器探测。 */
+        if (suffixFormat && data->m_autoDetectFormat &&
+            !data->m_decideFromContent) {
+            data->m_handler = XImagePluginRegistry_createReadHandlerContentFallback(
+                device, suffixFormat);
+            if (data->m_handler) {
+                XString_delete_base((XClass*)suffixFormat);
+                return data->m_handler;
+            }
+        }
     }
 #else
     (void)self;
+    (void)device;
 #endif
+    if (suffixFormat) XString_delete_base((XClass*)suffixFormat);
     return NULL;
 }
 
@@ -300,6 +765,10 @@ static void VXImageReader_deinit(XImageReader* self)
         if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
         if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
         XImageReader_releaseHandler(self->m_data);
+        XImageReader_releaseOwnedDevice(self->m_data);
+        XStringList_deinit_base((XClass*)&self->m_data->m_textKeys);
+        XStringList_deinit_base((XClass*)&self->m_data->m_textValues);
+        XString_deinit_base((XClass*)&self->m_data->m_textCache);
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
         if (self->m_data->m_animation) XImageCodecAnimation_delete(self->m_data->m_animation);
         if (self->m_data->m_sourceBytes) XByteArray_delete_base((XClass*)self->m_data->m_sourceBytes);
@@ -396,9 +865,16 @@ void XImageReader_init(XImageReader* self)
     if (self->m_data)
     {
         memset(self->m_data, 0, sizeof(XImageReaderPrivate));
+        XStringList_init(&self->m_data->m_textKeys);
+        XStringList_init(&self->m_data->m_textValues);
+        XString_init(&self->m_data->m_textCache);
         self->m_data->m_autoDetectFormat = true;
+        /* QSize 默认值为 (-1,-1)，表示未请求缩放。 */
+        self->m_data->m_scaledW = -1;
+        self->m_data->m_scaledH = -1;
         self->m_data->m_quality = -1;
         self->m_data->m_error = XImageReaderError_UnknownError;
+        self->m_data->m_errorString = XString_create();
     }
 }
 
@@ -428,6 +904,8 @@ void XImageReader_init_file(XImageReader* self, const XString* fileName, const X
         if (fileName) self->m_data->m_fileName = XString_create_copy(fileName);
         if (format && !XContainer_isEmpty_base((const XContainer*)format))
             self->m_data->m_format = XString_create_copy(format);
+        if (self->m_data->m_fileName)
+            (void)XImageReader_ensureOwnedDevice(self->m_data);
     }
 }
 
@@ -443,13 +921,8 @@ void XImageReader_init_file_2(XImageReader* self, const char* fileName, const ch
 void XImageReader_setFormat(XImageReader* self, const XString* format)
 {
     if (!self || !self->m_data) return;
-#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    XImageReader_clearAnimation(self->m_data);
-#endif
-    XImageReader_releaseHandler(self->m_data);
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
     self->m_data->m_format = format ? XString_create_copy(format) : NULL;
-    self->m_data->m_hasSize = false;
 }
 
 void XImageReader_setFormat_2(XImageReader* self, const char* format)
@@ -460,7 +933,33 @@ void XImageReader_setFormat_2(XImageReader* self, const char* format)
 }
 
 const XString* XImageReader_format_const(const XImageReader* self)
-{ return (self && self->m_data) ? self->m_data->m_format : NULL; }
+{
+    XImageReaderPrivate* data;
+    XIODevice* device;
+    const XString* handlerFormat;
+    if (!self || !(data = self->m_data)) return NULL;
+    if (data->m_format &&
+        !XContainer_isEmpty_base((const XContainer*)data->m_format))
+        return data->m_format;
+    XImageReader_ensureHandler((XImageReader*)self);
+    if (data->m_handler) {
+        /* QImageReader::format() 只有在处理器确认 canRead() 后才返回
+           处理器格式；处理器存在但无法读取时必须返回空格式。 */
+        if (!XImageIOHandler_canRead_base(data->m_handler))
+            return NULL;
+        handlerFormat = XImageIOHandler_format_const(data->m_handler);
+        if (handlerFormat &&
+            !XContainer_isEmpty_base((const XContainer*)handlerFormat))
+            return handlerFormat;
+    }
+    device = data->m_device ? data->m_device : data->m_fileDevice;
+    if (!device) return NULL;
+    if (!data->m_detectedFormat)
+        data->m_detectedFormat = XImageReader_imageFormatDevice(device);
+    return data->m_detectedFormat &&
+           !XContainer_isEmpty_base((const XContainer*)data->m_detectedFormat)
+        ? data->m_detectedFormat : NULL;
+}
 
 XString* XImageReader_format(const XImageReader* self)
 {
@@ -472,13 +971,13 @@ const char* XImageReader_format_2(const XImageReader* self)
 { return XString_toUtf8(XImageReader_format_const(self)); }
 
 void XImageReader_setAutoDetectImageFormat(XImageReader* self, bool enabled)
-{ if (self && self->m_data) { XImageReader_releaseHandler(self->m_data); self->m_data->m_autoDetectFormat = enabled; self->m_data->m_hasSize = false; } }
+{ if (self && self->m_data) self->m_data->m_autoDetectFormat = enabled; }
 
 bool XImageReader_autoDetectImageFormat(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_autoDetectFormat : true; }
 
-void XImageReader_setDecideFormatFromContent(XImageReader* self, bool ignored)
-{ if (self && self->m_data) { XImageReader_releaseHandler(self->m_data); self->m_data->m_decideFromContent = ignored; self->m_data->m_autoDetectFormat = !ignored; self->m_data->m_hasSize = false; } }
+void XImageReader_setDecideFormatFromContent(XImageReader* self, bool enabled)
+{ if (self && self->m_data) self->m_data->m_decideFromContent = enabled; }
 
 bool XImageReader_decideFormatFromContent(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_decideFromContent : false; }
@@ -490,6 +989,11 @@ void XImageReader_setDevice(XImageReader* self, XIODevice* device)
     XImageReader_clearAnimation(self->m_data);
 #endif
     XImageReader_releaseHandler(self->m_data);
+    XImageReader_releaseOwnedDevice(self->m_data);
+    /* QImageReader::setDevice() 清空处理器解析出的文本；同时丢弃依赖旧
+       设备内容的格式/尺寸缓存，避免下一次 format()/size() 复用旧探测结果。 */
+    XImageReader_clearDetectedFormat(self->m_data);
+    XImageReader_clearText(self->m_data);
     self->m_data->m_device = device;
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
@@ -506,9 +1010,15 @@ void XImageReader_setFileName(XImageReader* self, const XString* fileName)
     XImageReader_clearAnimation(self->m_data);
 #endif
     XImageReader_releaseHandler(self->m_data);
+    XImageReader_releaseOwnedDevice(self->m_data);
+    /* 新文件名对应新设备，所有内容派生状态都必须失效。 */
+    XImageReader_clearDetectedFormat(self->m_data);
+    XImageReader_clearText(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
     self->m_data->m_device = NULL;
+    if (self->m_data->m_fileName)
+        (void)XImageReader_ensureOwnedDevice(self->m_data);
     self->m_data->m_hasSize = false;
 }
 
@@ -548,23 +1058,79 @@ void XImageReader_size(const XImageReader* self, XSize* out)
     }
 }
 
+XImageFormat XImageReader_imageFormatValue(const XImageReader* self)
+{
+    XImageIOHandlerOptionValue value;
+    if (!self || !self->m_data ||
+        !XImageReader_ensureHandler((XImageReader*)self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_ImageFormat))
+        return XImageFormat_Invalid;
+    memset(&value, 0, sizeof(value));
+    if (!XImageIOHandler_option_base(self->m_data->m_handler,
+                                     XImageIOHandlerOption_ImageFormat,
+                                     &value))
+        return XImageFormat_Invalid;
+    return value.format;
+}
+
 XStringList* XImageReader_textKeys(const XImageReader* self)
 {
-    (void)self;
-    return XImageReader_makeStringList(NULL, 0);
+    XImageReaderPrivate* data;
+    XImageReader_loadText((XImageReader*)self);
+    data = (self) ? self->m_data : NULL;
+    return data ? XStringList_create_copy(&data->m_textKeys)
+                : XImageReader_makeStringList(NULL, 0);
 }
 XString* XImageReader_text(const XImageReader* self, const XString* key)
 {
-    (void)self;
-    (void)key;
+    XImageReaderPrivate* data;
+    int64_t count;
+    int64_t i;
+    XImageReader_loadText((XImageReader*)self);
+    data = (self) ? self->m_data : NULL;
+    if (!data || !key) return XString_create();
+    count = (int64_t)XStringList_size_base((const XContainer*)&data->m_textKeys);
+    for (i = 0; i < count; ++i) {
+        const XString* item = (const XString*)XStringList_at_base(
+            (XVector*)&data->m_textKeys, i);
+        if (item && XString_equals(item, key, XChar_CaseSensitive)) {
+            const XString* value = (const XString*)XStringList_at_base(
+                (XVector*)&data->m_textValues, i);
+            return value ? XString_create_copy(value) : XString_create();
+        }
+    }
     return XString_create();
 }
 
 const char* XImageReader_text_2(const XImageReader* self, const char* key)
 {
-    (void)self;
-    (void)key;
-    return NULL;
+    XString* keyString;
+    XString* value;
+    const char* utf8;
+    static const char empty[] = "";
+    /* Qt 的 QString 重载无法传入空指针；C 兼容重载将空键映射为空值，
+       与 text() 的缺失键结果保持一致。 */
+    if (!key) return empty;
+    keyString = XString_create_utf8(key);
+    if (!keyString) return NULL;
+    value = XImageReader_text(self, keyString);
+    XString_delete_base((XClass*)keyString);
+    if (!value) return empty;
+    utf8 = XString_toUtf8(value);
+    if (!utf8 || !utf8[0]) {
+        XString_delete_base((XClass*)value);
+        return empty;
+    }
+    /* 兼容重载返回读取器内部缓存；下一次调用会覆盖该缓存。 */
+    if (self && self->m_data) {
+        XString_copy_base((XClass*)&self->m_data->m_textCache,
+                          (const XClass*)value);
+        XString_delete_base((XClass*)value);
+        return XString_toUtf8(&self->m_data->m_textCache);
+    }
+    XString_delete_base((XClass*)value);
+    return empty;
 }
 
 void XImageReader_setClipRect(XImageReader* self, const XRect* rect)
@@ -633,10 +1199,32 @@ void XImageReader_scaledClipRect(const XImageReader* self, XRect* out)
 }
 
 void XImageReader_setBackgroundColor(XImageReader* self, uint32_t color)
-{ if (self && self->m_data) { self->m_data->m_bgColor = color; self->m_data->m_hasBgColor = true; } }
+{
+    XImageIOHandlerOptionValue value;
+    if (!self || !self->m_data || !XImageReader_ensureHandler(self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_BackgroundColor))
+        return;
+    memset(&value, 0, sizeof(value));
+    value.color = color;
+    XImageIOHandler_setOption_base(self->m_data->m_handler,
+                                   XImageIOHandlerOption_BackgroundColor,
+                                   &value);
+}
 
 uint32_t XImageReader_backgroundColor(const XImageReader* self)
-{ return (self && self->m_data) ? self->m_data->m_bgColor : 0; }
+{
+    XImageIOHandlerOptionValue value;
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_BackgroundColor))
+        return 0;
+    memset(&value, 0, sizeof(value));
+    return XImageIOHandler_option_base(self->m_data->m_handler,
+                                       XImageIOHandlerOption_BackgroundColor,
+                                       &value)
+        ? value.color : 0;
+}
 
 bool XImageReader_supportsAnimation(const XImageReader* self)
 {
@@ -654,7 +1242,19 @@ bool XImageReader_supportsAnimation(const XImageReader* self)
 }
 
 XImageIOHandlerTransformation XImageReader_transformation(const XImageReader* self)
-{ (void)self; return XImageIOHandlerTransformation_None; }
+{
+    XImageIOHandlerOptionValue value;
+    if (!self || !self->m_data ||
+        !XImageReader_ensureHandler((XImageReader*)self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_ImageTransformation))
+        return XImageIOHandlerTransformation_None;
+    memset(&value, 0, sizeof(value));
+    return XImageIOHandler_option_base(self->m_data->m_handler,
+                                       XImageIOHandlerOption_ImageTransformation,
+                                       &value)
+        ? value.transformation : XImageIOHandlerTransformation_None;
+}
 
 void XImageReader_setAutoTransform(XImageReader* self, bool enabled)
 { if (self && self->m_data) self->m_data->m_autoTransform = enabled; }
@@ -664,25 +1264,46 @@ bool XImageReader_autoTransform(const XImageReader* self)
 
 XString* XImageReader_subType(const XImageReader* self)
 {
-    (void)self;
-    return XString_create();
+    const XString* value = XImageReader_subType_const(self);
+    return value ? XString_create_copy(value) : XString_create();
 }
 
 const XString* XImageReader_subType_const(const XImageReader* self)
 {
-    (void)self;
-    return NULL;
+    XImageIOHandlerOptionValue value;
+    if (!self || !self->m_data ||
+        !XImageReader_ensureHandler((XImageReader*)self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_SubType))
+        return NULL;
+    memset(&value, 0, sizeof(value));
+    if (!XImageIOHandler_option_base(self->m_data->m_handler,
+                                     XImageIOHandlerOption_SubType, &value) ||
+        !value.string || XContainer_isEmpty_base((const XContainer*)value.string))
+        return NULL;
+    return value.string;
 }
 
 const char* XImageReader_subType_2(const XImageReader* self)
 {
-    (void)self;
-    return NULL;
+    return XString_toUtf8(XImageReader_subType_const(self));
 }
 XStringList* XImageReader_supportedSubTypes(const XImageReader* self)
 {
-    (void)self;
-    return XImageReader_makeStringList(NULL, 0);
+    XImageIOHandlerOptionValue value;
+    XStringList* result;
+    if (!self || !self->m_data ||
+        !XImageReader_ensureHandler((XImageReader*)self) ||
+        !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                             XImageIOHandlerOption_SupportedSubTypes))
+        return XImageReader_makeStringList(NULL, 0);
+    memset(&value, 0, sizeof(value));
+    if (!XImageIOHandler_option_base(self->m_data->m_handler,
+                                     XImageIOHandlerOption_SupportedSubTypes,
+                                     &value) || !value.stringList)
+        return XImageReader_makeStringList(NULL, 0);
+    result = XStringList_create_copy(value.stringList);
+    return result ? result : XImageReader_makeStringList(NULL, 0);
 }
 
 bool XImageReader_canRead(const XImageReader* self)
@@ -690,7 +1311,7 @@ bool XImageReader_canRead(const XImageReader* self)
     if (!self || !self->m_data) return false;
     if (XImageReader_ensureHandler((XImageReader*)self))
         return XImageIOHandler_canRead_base(self->m_data->m_handler);
-    if (self->m_data->m_format &&
+    if (!self->m_data->m_decideFromContent && self->m_data->m_format &&
         !XImageReader_isSupportedFormat(XString_toUtf8(self->m_data->m_format))) return false;
     if (self->m_data->m_device) {
         if (!self->m_data->m_autoDetectFormat && !self->m_data->m_format) return false;
@@ -704,19 +1325,111 @@ bool XImageReader_canRead(const XImageReader* self)
 bool XImageReader_read(XImageReader* self, XImage* out)
 {
     bool loadedByHandler = false;
+    bool supportScaledSize = false;
+    bool supportClipRect = false;
+    bool supportScaledClipRect = false;
+    bool clipRectNull;
+    bool scaledClipRectNull;
+    bool clipRectValid;
+    bool scaledClipRectValid;
+    bool scaledSizeValid;
     XSize requestedSize;
+    XSize scaledSize;
+    XImageIOHandlerOptionValue optionValue;
     if (!self || !self->m_data || !out) return false;
+    if (!self->m_data->m_autoDetectFormat &&
+        !self->m_data->m_decideFromContent &&
+        (!self->m_data->m_format ||
+         XContainer_isEmpty_base((const XContainer*)self->m_data->m_format))) {
+        XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
+                              "Unsupported image format");
+        return false;
+    }
     XImageReader_size(self, &requestedSize);
-    if (g_imageReaderAllocationLimitMb > 0 && requestedSize.width > 0 &&
-        requestedSize.height > 0) {
-        uint64_t pixels = (uint64_t)(unsigned)requestedSize.width *
-                          (uint64_t)(unsigned)requestedSize.height;
-        uint64_t limit = (uint64_t)(unsigned)g_imageReaderAllocationLimitMb *
-                         1024u * 1024u;
-        if (pixels > limit / 4u) {
-            XImageReader_setError(self, XImageReaderError_InvalidDataError,
-                                  "Image exceeds the configured allocation limit");
-            return false;
+    {
+        int allocationLimitMb = XImageReader_effectiveAllocationLimit();
+        if (allocationLimitMb > 0 && requestedSize.width > 0 &&
+            requestedSize.height > 0) {
+            uint64_t pixels = (uint64_t)(unsigned)requestedSize.width *
+                              (uint64_t)(unsigned)requestedSize.height;
+            uint64_t limit = (uint64_t)(unsigned)allocationLimitMb *
+                             1024u * 1024u;
+            if (pixels > limit / 4u) {
+                XImageReader_setError(self, XImageReaderError_InvalidDataError,
+                                      "Image exceeds the configured allocation limit");
+                return false;
+            }
+        }
+    }
+    scaledSize.width = self->m_data->m_scaledW;
+    scaledSize.height = self->m_data->m_scaledH;
+    if ((scaledSize.width <= 0 && scaledSize.height > 0) ||
+        (scaledSize.height <= 0 && scaledSize.width > 0)) {
+        /* Qt 在只给出一个维度时按原始尺寸保持宽高比。 */
+        if (requestedSize.width > 0 && requestedSize.height > 0) {
+            if (scaledSize.width <= 0)
+                scaledSize.width = (int)((double)requestedSize.width *
+                                          (double)scaledSize.height /
+                                          (double)requestedSize.height + 0.5);
+            else
+                scaledSize.height = (int)((double)requestedSize.height *
+                                           (double)scaledSize.width /
+                                           (double)requestedSize.width + 0.5);
+        }
+    }
+    /* QRect::isNull() 仅由宽高同时为零决定，未设置的默认矩形也为空；
+       QRect::isValid() 则允许零宽或零高，只拒绝负尺寸。 */
+    clipRectNull = !self->m_data->m_hasClipRect ||
+        (self->m_data->m_clipW == 0 && self->m_data->m_clipH == 0);
+    scaledClipRectNull = !self->m_data->m_hasScaledClipRect ||
+        (self->m_data->m_scaledClipW == 0 && self->m_data->m_scaledClipH == 0);
+    clipRectValid = self->m_data->m_hasClipRect &&
+        self->m_data->m_clipW >= 0 && self->m_data->m_clipH >= 0;
+    scaledClipRectValid = self->m_data->m_hasScaledClipRect &&
+        self->m_data->m_scaledClipW >= 0 && self->m_data->m_scaledClipH >= 0;
+    scaledSizeValid = self->m_data->m_hasScaledSize &&
+        scaledSize.width >= 0 && scaledSize.height >= 0;
+    if (self->m_data->m_handler) {
+        supportScaledSize = scaledSizeValid &&
+            XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                                XImageIOHandlerOption_ScaledSize);
+        supportClipRect = !clipRectNull &&
+            XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                                XImageIOHandlerOption_ClipRect);
+        supportScaledClipRect = !scaledClipRectNull &&
+            XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                                XImageIOHandlerOption_ScaledClipRect);
+        memset(&optionValue, 0, sizeof(optionValue));
+        if (supportScaledSize && (supportClipRect || clipRectNull)) {
+            optionValue.size = scaledSize;
+            XImageIOHandler_setOption_base(self->m_data->m_handler,
+                                           XImageIOHandlerOption_ScaledSize,
+                                           &optionValue);
+        }
+        if (supportClipRect) {
+            optionValue.rect.x = self->m_data->m_clipX;
+            optionValue.rect.y = self->m_data->m_clipY;
+            optionValue.rect.width = self->m_data->m_clipW;
+            optionValue.rect.height = self->m_data->m_clipH;
+            XImageIOHandler_setOption_base(self->m_data->m_handler,
+                                           XImageIOHandlerOption_ClipRect,
+                                           &optionValue);
+        }
+        if (supportScaledClipRect) {
+            optionValue.rect.x = self->m_data->m_scaledClipX;
+            optionValue.rect.y = self->m_data->m_scaledClipY;
+            optionValue.rect.width = self->m_data->m_scaledClipW;
+            optionValue.rect.height = self->m_data->m_scaledClipH;
+            XImageIOHandler_setOption_base(self->m_data->m_handler,
+                                           XImageIOHandlerOption_ScaledClipRect,
+                                           &optionValue);
+        }
+        if (XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                                XImageIOHandlerOption_Quality)) {
+            optionValue.integer = self->m_data->m_quality;
+            XImageIOHandler_setOption_base(self->m_data->m_handler,
+                                           XImageIOHandlerOption_Quality,
+                                           &optionValue);
         }
     }
     if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
@@ -737,18 +1450,25 @@ bool XImageReader_read(XImageReader* self, XImage* out)
     {
         loadedByHandler = XImageIOHandler_read_base(self->m_data->m_handler, out);
         if (!loadedByHandler) {
-            XImageReader_setError(self, XImageReaderError_InvalidDataError, "Image handler failed to read data");
+            XImageReader_setError(self, XImageReaderError_InvalidDataError, "Unable to read image data");
             return false;
         }
     }
     if (!loadedByHandler && self->m_data->m_fileName)
     {
-        if (!XImageReader_isSupportedFormat(XString_toUtf8(self->m_data->m_format))) {
+        /* 无显式格式时，Qt 仅在关闭自动探测的严格模式下拒绝；自动探测
+           开启则允许内置解码器按内容识别，显式未知格式仍立即报错。 */
+        if (!self->m_data->m_decideFromContent &&
+            ((!self->m_data->m_autoDetectFormat && !self->m_data->m_format) ||
+             (self->m_data->m_format &&
+              !XImageReader_isSupportedFormat(
+                  XString_toUtf8(self->m_data->m_format))))) {
             XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
                                   "The requested image format has no built-in decoder");
             return false;
         }
         if (!XImage_load_2(out, XString_toUtf8(self->m_data->m_fileName),
+                         self->m_data->m_decideFromContent ? NULL :
                          XString_toUtf8(self->m_data->m_format))) {
             if (!XFile_exists_static(self->m_data->m_fileName))
                 XImageReader_setError(self, XImageReaderError_FileNotFoundError,
@@ -765,7 +1485,8 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         int64_t size = bytes ? (int64_t)XByteArray_size_base((const XContainer*)bytes) : 0;
         bool ok = bytes && size <= INT_MAX &&
                   XImage_loadFromData_2(out, (const uint8_t*)XByteArray_data(bytes),
-                                      (int)size, XString_toUtf8(self->m_data->m_format));
+                                      (int)size, self->m_data->m_decideFromContent ? NULL :
+                                      XString_toUtf8(self->m_data->m_format));
         if (bytes) XByteArray_delete_base((XClass*)bytes);
         if (!ok) {
             XImageReader_setError(self, XImageReaderError_InvalidDataError,
@@ -777,41 +1498,100 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         return false;
     }
 
-    if (self->m_data->m_hasClipRect) {
-        XImage clipped;
-        XRect clipRect;
-        XImage_init(&clipped);
-        clipRect.x = self->m_data->m_clipX;
-        clipRect.y = self->m_data->m_clipY;
-        clipRect.width = self->m_data->m_clipW;
-        clipRect.height = self->m_data->m_clipH;
-        XImage_copyRect(out, &clipRect, &clipped);
-        XImage_deinit_base(out);
-        XImage_move_base(out, &clipped);
-        XImage_deinit_base(&clipped);
+    /* 对处理器不支持的选项提供 Qt 兼容的软件回退，执行顺序为
+       clip -> scale -> scaledClip；处理器已支持的步骤不重复执行。 */
+    if (supportClipRect) {
+        if (supportScaledSize) {
+            if (!supportScaledClipRect && !scaledClipRectNull) {
+                XImage clipped;
+                XRect clipRect = { self->m_data->m_scaledClipX,
+                                   self->m_data->m_scaledClipY,
+                                   self->m_data->m_scaledClipW,
+                                   self->m_data->m_scaledClipH };
+                XImage_init(&clipped);
+                XImage_copyRect(out, &clipRect, &clipped);
+                XImage_deinit_base(out);
+                XImage_move_base(out, &clipped);
+                XImage_deinit_base(&clipped);
+            }
+        } else if (!supportScaledClipRect) {
+            if (scaledSizeValid) {
+                XImage scaled;
+                XImage_init(&scaled);
+                XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
+                XImage_deinit_base(out);
+                XImage_move_base(out, &scaled);
+                XImage_deinit_base(&scaled);
+            }
+            if (scaledClipRectValid) {
+                XImage clipped;
+                XRect clipRect = { self->m_data->m_scaledClipX,
+                                   self->m_data->m_scaledClipY,
+                                   self->m_data->m_scaledClipW,
+                                   self->m_data->m_scaledClipH };
+                XImage_init(&clipped);
+                XImage_copyRect(out, &clipRect, &clipped);
+                XImage_deinit_base(out);
+                XImage_move_base(out, &clipped);
+                XImage_deinit_base(&clipped);
+            }
+        }
+    } else if (supportScaledSize && clipRectNull) {
+        if (!supportScaledClipRect && scaledClipRectValid) {
+            XImage clipped;
+            XRect clipRect = { self->m_data->m_scaledClipX,
+                               self->m_data->m_scaledClipY,
+                               self->m_data->m_scaledClipW,
+                               self->m_data->m_scaledClipH };
+            XImage_init(&clipped);
+            XImage_copyRect(out, &clipRect, &clipped);
+            XImage_deinit_base(out);
+            XImage_move_base(out, &clipped);
+            XImage_deinit_base(&clipped);
+        }
+    } else if (!supportScaledClipRect) {
+        if (!clipRectNull && clipRectValid) {
+            XImage clipped;
+            XRect clipRect = { self->m_data->m_clipX,
+                               self->m_data->m_clipY,
+                               self->m_data->m_clipW,
+                               self->m_data->m_clipH };
+            XImage_init(&clipped);
+            XImage_copyRect(out, &clipRect, &clipped);
+            XImage_deinit_base(out);
+            XImage_move_base(out, &clipped);
+            XImage_deinit_base(&clipped);
+        }
+        if (scaledSizeValid) {
+            XImage scaled;
+            XImage_init(&scaled);
+            XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
+            XImage_deinit_base(out);
+            XImage_move_base(out, &scaled);
+            XImage_deinit_base(&scaled);
+        }
+        if (scaledClipRectValid) {
+            XImage clipped;
+            XRect clipRect = { self->m_data->m_scaledClipX,
+                               self->m_data->m_scaledClipY,
+                               self->m_data->m_scaledClipW,
+                               self->m_data->m_scaledClipH };
+            XImage_init(&clipped);
+            XImage_copyRect(out, &clipRect, &clipped);
+            XImage_deinit_base(out);
+            XImage_move_base(out, &clipped);
+            XImage_deinit_base(&clipped);
+        }
     }
-    if (self->m_data->m_hasScaledSize && self->m_data->m_scaledW > 0 && self->m_data->m_scaledH > 0) {
-        XImage scaled;
-        XImage_init(&scaled);
-        XImage_scaled(out, self->m_data->m_scaledW, self->m_data->m_scaledH, 0, 0, &scaled);
-        XImage_deinit_base(out);
-        XImage_move_base(out, &scaled);
-        XImage_deinit_base(&scaled);
+    /* 成功读取后按文件名设置高 DPI 设备像素比；设备输入没有文件名时
+       保持图像原有 DPR，和 Qt 的 QFileInfo(filename) 路径一致。 */
+    if (self->m_data->m_fileName) {
+        const float ratio = XImageReader_fileDevicePixelRatio(
+            self->m_data->m_fileName);
+        /* 无 @Nx 后缀时保留处理器设置的 DPR；Qt 只在匹配后缀时写入。 */
+        if (ratio > 1.0f)
+            XImage_setDevicePixelRatio(out, ratio);
     }
-    if (self->m_data->m_hasScaledClipRect) {
-        XImage clipped;
-        XRect clipRect;
-        XImage_init(&clipped);
-        clipRect.x = self->m_data->m_scaledClipX;
-        clipRect.y = self->m_data->m_scaledClipY;
-        clipRect.width = self->m_data->m_scaledClipW;
-        clipRect.height = self->m_data->m_scaledClipH;
-        XImage_copyRect(out, &clipRect, &clipped);
-        XImage_deinit_base(out);
-        XImage_move_base(out, &clipped);
-        XImage_deinit_base(&clipped);
-    }
-    XImageReader_setError(self, XImageReaderError_UnknownError, NULL);
     return !XImage_isNull(out);
 }
 
@@ -843,10 +1623,13 @@ bool XImageReader_jumpToImage(XImageReader* self, int imageNumber)
 int XImageReader_loopCount(const XImageReader* self)
 {
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    return (self && self->m_data && XImageReader_prepareAnimation((XImageReader*)self) && self->m_data->m_animation) ? self->m_data->m_animation->loopCount : 0;
-#else
-    (void)self; return 0;
+    if (self && self->m_data && XImageReader_prepareAnimation((XImageReader*)self) &&
+        self->m_data->m_animation)
+        return self->m_data->m_animation->loopCount;
 #endif
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
+        return -1;
+    return XImageIOHandler_loopCount_base(self->m_data->m_handler);
 }
 int XImageReader_imageCount(const XImageReader* self)
 {
@@ -854,7 +1637,9 @@ int XImageReader_imageCount(const XImageReader* self)
     if (self && self->m_data && XImageReader_prepareAnimation((XImageReader*)self) && self->m_data->m_animation)
         return self->m_data->m_animation->frameCount;
 #endif
-    return XImageReader_canRead(self) ? 1 : 0;
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
+        return -1;
+    return XImageIOHandler_imageCount_base(self->m_data->m_handler);
 }
 int XImageReader_nextImageDelay(const XImageReader* self)
 {
@@ -864,28 +1649,43 @@ int XImageReader_nextImageDelay(const XImageReader* self)
         if (frame >= 0 && frame < self->m_data->m_animation->frameCount)
             return self->m_data->m_animation->frames[frame].delayMs;
     }
-#else
-    (void)self;
 #endif
-    return 0;
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
+        return -1;
+    return XImageIOHandler_nextImageDelay_base(self->m_data->m_handler);
 }
 int XImageReader_currentImageNumber(const XImageReader* self)
 {
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    return self && self->m_data ? self->m_data->m_currentImageNumber : 0;
-#else
-    (void)self; return 0;
+    if (self && self->m_data && self->m_data->m_animation)
+        return self->m_data->m_currentImageNumber;
 #endif
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
+        return -1;
+    return XImageIOHandler_currentImageNumber_base(self->m_data->m_handler);
 }
 
 void XImageReader_currentImageRect(const XImageReader* self, XRect* out)
 {
-    XSize size;
     if (!out) return;
     memset(out, 0, sizeof(XRect));
-    XImageReader_size(self, &size);
-    out->width = size.width;
-    out->height = size.height;
+#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
+    if (self && self->m_data && XImageReader_prepareAnimation((XImageReader*)self) &&
+        self->m_data->m_animation) {
+        int frame = self->m_data->m_currentImageNumber;
+        if (frame >= 0 && frame < self->m_data->m_animation->frameCount) {
+            const XImageCodecFrame* value = &self->m_data->m_animation->frames[frame];
+            out->x = value->left;
+            out->y = value->top;
+            out->width = value->width;
+            out->height = value->height;
+            return;
+        }
+    }
+#endif
+    if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
+        return;
+    XImageIOHandler_currentImageRect_base(self->m_data->m_handler, out);
 }
 
 XImageReaderError XImageReader_error(const XImageReader* self)
@@ -894,40 +1694,44 @@ XImageReaderError XImageReader_error(const XImageReader* self)
 XString* XImageReader_errorString(const XImageReader* self)
 {
     const XString* value = XImageReader_errorString_const(self);
-    return value ? XString_create_copy(value) : XString_create();
+    if (!value || XContainer_isEmpty_base((const XContainer*)value))
+        return XString_create_utf8("Unknown error");
+    return XString_create_copy(value);
 }
 
 const XString* XImageReader_errorString_const(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_errorString : NULL; }
 
 const char* XImageReader_errorString_2(const XImageReader* self)
-{ return XString_toUtf8(XImageReader_errorString_const(self)); }
+{
+    const XString* value = XImageReader_errorString_const(self);
+    static const char unknown[] = "Unknown error";
+    const char* utf8;
+    if (!value || XContainer_isEmpty_base((const XContainer*)value))
+        return unknown;
+    utf8 = XString_toUtf8(value);
+    return utf8 && utf8[0] ? utf8 : unknown;
+}
 
 bool XImageReader_supportsOption(const XImageReader* self, XImageIOHandlerOption option)
 {
-    if (self && self->m_data && self->m_data->m_handler &&
-        XImageIOHandler_supportsOption_base(self->m_data->m_handler, option))
-        return true;
-    switch (option) {
-    case XImageIOHandlerOption_Size:
-    case XImageIOHandlerOption_ImageFormat:
-        return true;
-    default:
-        return false;
-    }
+    XImageIOHandler* handler;
+    if (!self || !self->m_data) return false;
+    /* Qt 6.8 supportsOption() 先初始化处理器，再完全透传处理器能力。 */
+    handler = XImageReader_ensureHandler((XImageReader*)self);
+    return handler && XImageIOHandler_supportsOption_base(handler, option);
 }
 
 XString* XImageReader_imageFormat(const XString* fileName)
 {
-    unsigned char signature[16];
-    size_t size; XFile* file; XByteArray* bytes;
+    XFile* file;
+    XString* result;
     if (!fileName) return XString_create();
     file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); return XString_create(); }
-    bytes = XIODevice_peek_3((XIODevice*)file, sizeof(signature)); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); if (!bytes) return XString_create(); size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(signature)) size = sizeof(signature); memcpy(signature, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
-    {
-        const char* format = XImageReader_detectSignature(signature, size);
-        return format ? XString_create_utf8(format) : XString_create();
-    }
+    result = XImageReader_imageFormatDevice((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XClass_delete_base((XClass*)file);
+    return result;
 }
 
 const char* XImageReader_imageFormat_2(const char* fileName)
@@ -939,7 +1743,12 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
 {
     XByteArray* bytes;
     const char* result = NULL;
+    XString* pluginFormat;
     if (!device) return XString_create();
+    pluginFormat = XImagePluginRegistry_detectReadFormat(device);
+    if (pluginFormat && !XContainer_isEmpty_base((const XContainer*)pluginFormat))
+        return pluginFormat;
+    if (pluginFormat) XString_delete_base((XClass*)pluginFormat);
     bytes = XIODevice_peek_3(device, 16);
     if (bytes) {
         result = XImageReader_detectSignature(
@@ -952,17 +1761,19 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
 
 const char* XImageReader_imageFormatDevice_2(XIODevice* device)
 {
-    XByteArray* bytes;
-    const char* result = NULL;
-    if (!device) return NULL;
-    bytes = XIODevice_peek_3(device, 16);
-    if (bytes) {
-        result = XImageReader_detectSignature(
-            (const unsigned char*)XByteArray_data(bytes),
-            (size_t)XByteArray_size_base((const XContainer*)bytes));
-        XByteArray_delete_base((XClass*)bytes);
+    XString* value;
+    const char* utf8;
+    static char format[16];
+    value = XImageReader_imageFormatDevice(device);
+    utf8 = XString_toUtf8(value);
+    if (utf8) {
+        strncpy(format, utf8, sizeof(format) - 1);
+        format[sizeof(format) - 1] = '\0';
+    } else {
+        format[0] = '\0';
     }
-    return result;
+    if (value) XString_delete_base((XClass*)value);
+    return format[0] ? format : NULL;
 }
 
 XStringList* XImageReader_supportedImageFormats()
@@ -998,6 +1809,9 @@ XStringList* XImageReader_supportedMimeTypes()
         }
     }
 #endif
+    /* Qt QImageReader::supportedMimeTypes() 按字节序排序并去重。 */
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
     return result;
 }
 
@@ -1033,6 +1847,8 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
 #endif
     /* Match Qt's value-returning API: an unknown MIME type is an empty list,
        rather than a list containing an unrelated fallback format. */
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
     return result;
 }
 
@@ -1043,8 +1859,10 @@ XStringList* XImageReader_imageFormatsForMimeType_2(const char* mimeType)
     if (value) XString_delete_base((XClass*)value);
     return result;
 }
-int XImageReader_allocationLimit() { return g_imageReaderAllocationLimitMb; }
+int XImageReader_allocationLimit() { return XImageReader_effectiveAllocationLimit(); }
 void XImageReader_setAllocationLimit(int mbLimit)
 {
-    g_imageReaderAllocationLimitMb = mbLimit < 0 ? 0 : mbLimit;
+    /* Qt 6.8 ignores negative values; zero explicitly disables the check. */
+    if (mbLimit >= 0)
+        g_imageReaderAllocationLimitMb = mbLimit;
 }

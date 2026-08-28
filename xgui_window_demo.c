@@ -26,6 +26,7 @@
 
 #include "CXinYueConfig.h"
 #include "XPrintf.h"
+#include "XObject.h"
 #include "XEvent.h"
 #include "XDateTime.h"
 #include "XGuiApplication.h"
@@ -37,6 +38,12 @@
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
+#if XWIDGET_ON && XPUSHBUTTON_ON
+#include "XPushButton.h"
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+#include "XStackedLayout.h"
+#endif
 
 #if XGUIAPPLICATION_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
     XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
@@ -52,6 +59,24 @@ typedef struct DemoWin
     XWindow         m_base;  /**< 基类；必须是第一个成员。 */
     XBackingStore*  m_store; /**< 后备存储借用指针（随窗口生命周期）。 */
     bool            m_closed; /**< CloseEvent 被接受后置真，驱动主循环退出。 */
+    bool            m_buttonDown; /**< XPushButton 当前是否处于按下状态。 */
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    XPushButton     m_button; /**< 常驻按钮控件：输入与信号都走控件自身。 */
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel          m_linkLabel; /**< 常驻联动标签：按下/松开文本由按钮信号槽更新。 */
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    XStackedLayout  m_stackLayout; /**< 堆叠页面布局：展示 StackOne 页面切换策略。 */
+    XLabel          m_stackPageOne; /**< 堆叠布局第一个页面控件。 */
+    XLabel          m_stackPageTwo; /**< 堆叠布局第二个页面控件。 */
+#if XPUSHBUTTON_ON
+    XPushButton     m_stackPrevButton; /**< 堆叠布局上一页按钮。 */
+    XPushButton     m_stackNextButton; /**< 堆叠布局下一页按钮。 */
+    bool            m_stackPrevDown; /**< 上一页按钮当前是否处于按下状态。 */
+    bool            m_stackNextDown; /**< 下一页按钮当前是否处于按下状态。 */
+#endif
+#endif
 } DemoWin;
 
 /* ---------------- 绘制 ----------------
@@ -164,6 +189,81 @@ static void demo_repaint(DemoWin* self)
         /* 组件被嵌入式配置裁剪时保留面板，便于确认裁剪后的可视状态。 */
         XPainter_drawText(&painter, 246, 92, "XLabel disabled", 0xff202020u);
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+        /* XPushButton 可视化面板：常驻按钮 + 联动标签，按下/松开通过信号槽切换。 */
+        demo_fill_rect(&painter, 230, 180, 270, 100, 0xffe6eef7u);
+#if XWIDGET_ON && XPUSHBUTTON_ON
+        {
+            XRect geo = XWidget_geometry((XWidget*)&self->m_button);
+            if (XPainter_save(&painter)) {
+                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
+                XPushButton_drawContents(&self->m_button, &painter);
+                XPainter_restore(&painter);
+            }
+        }
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        {
+            XRect geo = XWidget_geometry((XWidget*)&self->m_linkLabel);
+            if (XPainter_save(&painter)) {
+                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
+                XLabel_drawContents(&self->m_linkLabel, &painter);
+                XPainter_restore(&painter);
+            }
+        }
+#else
+        XPainter_drawText(&painter, 382, 204,
+                          self->m_buttonDown ? "Pressed" : "Released",
+                          0xff202020u);
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#else
+        XPainter_drawText(&painter, 246, 212, "XPushButton disabled",
+                          0xff202020u);
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+        /* 堆叠布局面板：页面控件由同一窗口父对象管理，布局只分配页面几何。 */
+        demo_fill_rect(&painter, 20, 180, 190, 140, 0xffffedcfu);
+        XPainter_drawText(&painter, 32, 202, "XStackedLayout", 0xff202020u);
+        {
+            XRect stackRect;
+            XWidget* current;
+            XRect geo;
+            XRect_init(&stackRect, 32, 220, 166, 48);
+            demo_fill_rect(&painter, stackRect.x, stackRect.y,
+                           stackRect.width, stackRect.height, 0xffffffffu);
+            XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
+                                          &stackRect);
+            current = XStackedLayout_currentWidget(&self->m_stackLayout);
+            if (current) {
+                geo = XWidget_geometry(current);
+                if (XPainter_save(&painter)) {
+                    XPainter_translate(&painter, (float)geo.x, (float)geo.y);
+                    XLabel_drawContents((XLabel*)current, &painter);
+                    XPainter_restore(&painter);
+                }
+            }
+        }
+#if XPUSHBUTTON_ON
+        {
+            XRect geo;
+            geo = XWidget_geometry((XWidget*)&self->m_stackPrevButton);
+            if (XPainter_save(&painter)) {
+                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
+                XPushButton_drawContents(&self->m_stackPrevButton, &painter);
+                XPainter_restore(&painter);
+            }
+            geo = XWidget_geometry((XWidget*)&self->m_stackNextButton);
+            if (XPainter_save(&painter)) {
+                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
+                XPushButton_drawContents(&self->m_stackNextButton, &painter);
+                XPainter_restore(&painter);
+            }
+        }
+#endif /* XPUSHBUTTON_ON */
+#else
+        /* 堆叠布局被裁剪时保留面板占位，便于截图确认裁剪结果。 */
+        demo_fill_rect(&painter, 20, 180, 190, 100, 0xffffedcfu);
+        XPainter_drawText(&painter, 32, 232, "XStackedLayout disabled",
+                          0xff202020u);
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
         /* 状态栏。 */
         demo_fill_rect(&painter, 0, h - 28, w, 28, 0xff3a3a3au);
         XPainter_end(&painter);
@@ -175,6 +275,73 @@ static void demo_repaint(DemoWin* self)
     XBackingStore_flush(store, &region, (XWindow*)self, &offset);
     XRegion_deinit(&region);
 }
+
+/* ==================== 信号槽 ==================== */
+
+#if XWIDGET_ON && XPUSHBUTTON_ON
+/** @brief 按钮 pressed 信号槽：置按下状态并更新联动标签。 */
+static void demo_button_pressedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    (void)args;
+    if (!self) return;
+    self->m_buttonDown = true;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_linkLabel, "Pressed");
+#endif
+    demo_repaint(self);
+}
+
+/** @brief 按钮 released 信号槽：清除按下状态并更新联动标签。 */
+static void demo_button_releasedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    (void)args;
+    if (!self) return;
+    self->m_buttonDown = false;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_linkLabel, "Released");
+#endif
+    demo_repaint(self);
+}
+
+#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/** @brief 上一页按钮 clicked 槽：循环切换到堆叠布局的上一页。 */
+static void demo_stack_prev_clickedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int index;
+    int count;
+    (void)args;
+    if (!self) return;
+    index = XStackedLayout_currentIndex(&self->m_stackLayout);
+    count = XStackedLayout_count(&self->m_stackLayout);
+    if (count <= 0) return;
+    if (index <= 0) index = count - 1;
+    else --index;
+    XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
+    XPrintf("XGuiWindowDemo: stacked page=%d (prev)\n", index);
+    demo_repaint(self);
+}
+
+/** @brief 下一页按钮 clicked 槽：循环切换到堆叠布局的下一页。 */
+static void demo_stack_next_clickedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int index;
+    int count;
+    (void)args;
+    if (!self) return;
+    index = XStackedLayout_currentIndex(&self->m_stackLayout);
+    count = XStackedLayout_count(&self->m_stackLayout);
+    if (count <= 0) return;
+    index = (index + 1) % count;
+    XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
+    XPrintf("XGuiWindowDemo: stacked page=%d (next)\n", index);
+    demo_repaint(self);
+}
+#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 
 /* ==================== 事件槽重载 ==================== */
 
@@ -234,11 +401,52 @@ static void VDemoWin_keyReleaseEvent(XWindow* self, XEvent* event)
 static void VDemoWin_mousePressEvent(XWindow* self, XEvent* event)
 {
     XMouseEvent* me;
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    XRect geo;
+    XPoint pos;
+#endif
     XClass_Parent(XWindow, EXWindow_MousePressEvent, XWindowEventSlot)(self, event);
     me = (XMouseEvent*)event;
     printf("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
            (int)XMouseEvent_button(me), (unsigned)XMouseEvent_buttons(me),
            (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    geo = XWidget_geometry((XWidget*)&((DemoWin*)self)->m_button);
+    pos = XMouseEvent_position(me);
+    if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
+        pos.x >= geo.x && pos.x < geo.x + geo.width &&
+        pos.y >= geo.y && pos.y < geo.y + geo.height) {
+        DemoWin* win = (DemoWin*)self;
+        if (!win->m_buttonDown) {
+            XPushButton_setDown(&win->m_button, true);
+            XPushButton_pressed_signal(&win->m_button);
+        }
+    }
+#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    {
+        DemoWin* win = (DemoWin*)self;
+        XRect prevGeo = XWidget_geometry((XWidget*)&win->m_stackPrevButton);
+        XRect nextGeo = XWidget_geometry((XWidget*)&win->m_stackNextButton);
+        if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
+            pos.x >= prevGeo.x && pos.x < prevGeo.x + prevGeo.width &&
+            pos.y >= prevGeo.y && pos.y < prevGeo.y + prevGeo.height) {
+            if (!win->m_stackPrevDown) {
+                win->m_stackPrevDown = true;
+                XPushButton_setDown(&win->m_stackPrevButton, true);
+                XPushButton_pressed_signal(&win->m_stackPrevButton);
+            }
+        } else if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
+                   pos.x >= nextGeo.x && pos.x < nextGeo.x + nextGeo.width &&
+                   pos.y >= nextGeo.y && pos.y < nextGeo.y + nextGeo.height) {
+            if (!win->m_stackNextDown) {
+                win->m_stackNextDown = true;
+                XPushButton_setDown(&win->m_stackNextButton, true);
+                XPushButton_pressed_signal(&win->m_stackNextButton);
+            }
+        }
+    }
+#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+#endif
 }
 
 /** @brief MouseReleaseEvent：打印释放键/坐标。 */
@@ -250,6 +458,40 @@ static void VDemoWin_mouseReleaseEvent(XWindow* self, XEvent* event)
     printf("XGuiWindowDemo: mouseRelease button=%d buttons=0x%x pos=(%d,%d)\n",
            (int)XMouseEvent_button(me), (unsigned)XMouseEvent_buttons(me),
            (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
+        ((DemoWin*)self)->m_buttonDown) {
+        DemoWin* win = (DemoWin*)self;
+        XPushButton_setDown(&win->m_button, false);
+        XPushButton_released_signal(&win->m_button);
+    }
+#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    {
+        DemoWin* win = (DemoWin*)self;
+        XPoint pos = XMouseEvent_position(me);
+        XRect prevGeo = XWidget_geometry((XWidget*)&win->m_stackPrevButton);
+        XRect nextGeo = XWidget_geometry((XWidget*)&win->m_stackNextButton);
+        bool prevHit = pos.x >= prevGeo.x && pos.x < prevGeo.x + prevGeo.width &&
+                       pos.y >= prevGeo.y && pos.y < prevGeo.y + prevGeo.height;
+        bool nextHit = pos.x >= nextGeo.x && pos.x < nextGeo.x + nextGeo.width &&
+                       pos.y >= nextGeo.y && pos.y < nextGeo.y + nextGeo.height;
+        if (win->m_stackPrevDown) {
+            win->m_stackPrevDown = false;
+            XPushButton_setDown(&win->m_stackPrevButton, false);
+            XPushButton_released_signal(&win->m_stackPrevButton);
+            if (prevHit)
+                XPushButton_clicked_signal(&win->m_stackPrevButton, false);
+        }
+        if (win->m_stackNextDown) {
+            win->m_stackNextDown = false;
+            XPushButton_setDown(&win->m_stackNextButton, false);
+            XPushButton_released_signal(&win->m_stackNextButton);
+            if (nextHit)
+                XPushButton_clicked_signal(&win->m_stackNextButton, false);
+        }
+    }
+#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+#endif
 }
 
 /** @brief MouseDoubleClickEvent：打印双击键/坐标。 */
@@ -340,6 +582,61 @@ static DemoWin* DemoWin_create(void)
     XClassSetVtable(self, DemoWin);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    XPushButton_init(&self->m_button, NULL, 0);
+    XPushButton_setText_2(&self->m_button, "XPushButton");
+    XWidget_setGeometry((XWidget*)&self->m_button, 246, 190, 128, 36);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_init(&self->m_linkLabel, NULL, 0);
+    XLabel_setText_2(&self->m_linkLabel, "Released");
+    XLabel_setTextPixelSize(&self->m_linkLabel, 16);
+    XLabel_setAlignment(&self->m_linkLabel, XAlignment_Left | XAlignment_Top);
+    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 382, 190, 108, 36);
+#endif
+    XObject_connect_1((XObject*)&self->m_button,
+                      (size_t)XPushButton_pressed_signal(NULL),
+                      (XObject*)self, demo_button_pressedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_button,
+                      (size_t)XPushButton_released_signal(NULL),
+                      (XObject*)self, demo_button_releasedSlot,
+                      XConnectionType_Direct);
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    XStackedLayout_init(&self->m_stackLayout);
+    /* DemoWin 的基类是 XWindow 而非 XWidget；页面由布局管理几何，
+       绘制时由演示窗口显式调用，因此不能把 XWindow 强转为父控件。 */
+    XLabel_init(&self->m_stackPageOne, NULL, 0);
+    XLabel_setText_2(&self->m_stackPageOne, "Stacked page 1");
+    XLabel_setTextPixelSize(&self->m_stackPageOne, 16);
+    XLabel_setAlignment(&self->m_stackPageOne,
+                        XAlignment_HCenter | XAlignment_VCenter);
+    XLabel_init(&self->m_stackPageTwo, NULL, 0);
+    XLabel_setText_2(&self->m_stackPageTwo, "Stacked page 2");
+    XLabel_setTextPixelSize(&self->m_stackPageTwo, 16);
+    XLabel_setAlignment(&self->m_stackPageTwo,
+                        XAlignment_HCenter | XAlignment_VCenter);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_stackPageOne);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_stackPageTwo);
+#if XPUSHBUTTON_ON
+    XPushButton_init(&self->m_stackPrevButton, NULL, 0);
+    XPushButton_setText_2(&self->m_stackPrevButton, "< Prev");
+    XWidget_setGeometry((XWidget*)&self->m_stackPrevButton, 32, 274, 78, 30);
+    XPushButton_init(&self->m_stackNextButton, NULL, 0);
+    XPushButton_setText_2(&self->m_stackNextButton, "Next >");
+    XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 120, 274, 78, 30);
+    XObject_connect_1((XObject*)&self->m_stackPrevButton,
+                      (size_t)XPushButton_clicked_signal(NULL, false),
+                      (XObject*)self, demo_stack_prev_clickedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_stackNextButton,
+                      (size_t)XPushButton_clicked_signal(NULL, false),
+                      (XObject*)self, demo_stack_next_clickedSlot,
+                      XConnectionType_Direct);
+#endif /* XPUSHBUTTON_ON */
+#endif
     return self;
 }
 
@@ -429,6 +726,19 @@ int main(int argc, char* argv[])
     /* 6) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
     XBackingStore_delete_base((XClass*)store);
     win->m_store = NULL;
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    XPushButton_deinit_base(&win->m_button);
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_deinit_base(&win->m_linkLabel);
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+#if XPUSHBUTTON_ON
+    XPushButton_deinit_base(&win->m_stackPrevButton);
+    XPushButton_deinit_base(&win->m_stackNextButton);
+#endif
+    XStackedLayout_deinit_base(&win->m_stackLayout);
+#endif
     XWindow_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);
     XPrintf("XGuiWindowDemo: 已退出\n");

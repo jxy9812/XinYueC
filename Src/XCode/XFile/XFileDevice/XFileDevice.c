@@ -113,6 +113,7 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
  */
 static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
 {
+    bool result;
     if (!device || XIODevice_fd(&device->m_parent) < 0 || pos < 0) {
         return false;
     }
@@ -122,8 +123,17 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
         return false;
     }
     
-
-    return XDeviceFile_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
+    result = XDeviceFile_seek(XIODevice_fd(&device->m_parent), pos, XSeekSet) >= 0;
+    if (result && device->m_parent.m_d) {
+        /* seek() invalidates QIODevice's read-ahead buffer.  Keeping bytes
+           prefetched by peek() after moving the file descriptor would make
+           the next read duplicate the prefix and truncate the payload. */
+        struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(
+            device->m_parent.m_d, device->m_parent.m_currentReadChannel);
+        if (readBuf)
+            XRingBuffer_reset(readBuf);
+    }
+    return result;
 }
 
 /**
@@ -173,6 +183,9 @@ static int64_t VXFileDevice_bytesAvailable(const XFileDevice* device)
     int64_t fileSize = XFileDevice_size_base(device);
     int64_t currentPos = XFileDevice_pos_base(device);
     
+    /* VXFileDevice_pos() already subtracts the unread ring-buffer bytes from
+       the raw descriptor position, so this is the logical QIODevice position
+       and must not add the buffer a second time. */
     return fileSize - currentPos;
 }
 

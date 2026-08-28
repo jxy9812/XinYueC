@@ -514,7 +514,7 @@ float XPixmap_devicePixelRatio(const XPixmap* self);
 /**
  * @brief      设置设备像素比
  * @param self         目标 XPixmap 对象指针
- * @param scaleFactor  缩放因子
+ * @param scaleFactor  设备像素比；Qt 允许零和负值，接口按原值保存
  */
 void XPixmap_setDevicePixelRatio(XPixmap* self, float scaleFactor);
 
@@ -522,6 +522,7 @@ void XPixmap_setDevicePixelRatio(XPixmap* self, float scaleFactor);
  * @brief      获取与设备无关的尺寸
  * @param self 目标 XPixmap 对象指针
  * @param out  输出尺寸结构体指针
+ * @return 无返回值；空像素图输出 (0,0)，其余情况为像素尺寸除以设备像素比
  */
 void XPixmap_deviceIndependentSize(const XPixmap* self, XSizeF* out);
 

@@ -23,6 +23,7 @@ typedef struct XIODevice XIODevice;
  * contains callbacks only; it has no dependency on a windowing toolkit. */
 typedef struct XImage XImage;
 typedef struct XPainter XPainter;
+struct XPainterPath;
 
 /* Stream constants are part of the XGui C ABI.  The byte stream is always
  * little-endian, regardless of the host architecture. */
@@ -37,7 +38,13 @@ typedef enum XPictureOpcode
     XPictureOpcode_FillRect = 2,
     XPictureOpcode_DrawImage = 3,
     XPictureOpcode_Save = 4,
-    XPictureOpcode_Restore = 5
+    XPictureOpcode_Restore = 5,
+    XPictureOpcode_DrawShape = 6,
+    XPictureOpcode_DrawPolyline = 7,
+    XPictureOpcode_DrawPolygon = 8,
+    XPictureOpcode_DrawPoints = 9,
+    XPictureOpcode_DrawPath = 10,
+    XPictureOpcode_SetPen = 11 /**< 完整画笔状态（对标 QPicture PdcSetPen）。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -209,6 +216,18 @@ bool XPicture_play(const XPicture* self, XPainter* painter);
  */
 bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
 /**
+ * @brief 记录完整画笔状态命令（对标 Qt QPicturePaintEngine::updatePen）。
+ * @param self 目标图片对象指针。
+ * @param color 画笔 ARGB32 颜色。
+ * @param style 画笔线段样式数值；与 XPainterPenStyle 枚举一致。
+ * @param width 画笔宽度；0 表示 cosmetic 画笔。
+ * @param cap 画笔端点样式数值；与 XPainterPenCapStyle 枚举一致。
+ * @param join 画笔拐角样式数值；与 XPainterPenJoinStyle 枚举一致。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
+                           int width, int cap, int join);
+/**
  * @brief 记录填充矩形命令。
  * @param self 目标图片对象指针。
  * @param rect 要填充的矩形。
@@ -216,6 +235,60 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
  * @return 命令写入成功返回 true，否则返回 false。
  */
 bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color);
+/**
+ * @brief 记录高层形状命令（椭圆/圆弧/扇形/弦/圆角矩形）。
+ * @param self 目标图片对象指针。
+ * @param shapeOp XPainterShapeOp 枚举数值；1=椭圆、2=圆弧、3=扇形、
+ *                4=弦、5=圆角矩形。
+ * @param rect 形状外接矩形，回放时使用记录当时的归一化矩形。
+ * @param startAngle 起始角，单位 1/16 度；无角度形状传 0。
+ * @param spanAngle 跨越角，单位 1/16 度；无角度形状传 0。
+ * @param filled 是否同时按记录时的画刷状态填充内部。
+ * @param xRadius X 方向圆角半径；非圆角形状传 0。
+ * @param yRadius Y 方向圆角半径；非圆角形状传 0。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawShape(XPicture* self, int shapeOp, const XRect* rect,
+                              int startAngle, int spanAngle, bool filled,
+                              int xRadius, int yRadius);
+/**
+ * @brief 记录折线命令（对标 QPicture 中 drawPolyline 的独立路径命令）。
+ * @param self 目标图片对象指针。
+ * @param points 顶点数组。
+ * @param count 顶点数量；少于 2 时按无操作返回 true。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPolyline(XPicture* self, const XPoint* points,
+                                 int count);
+/**
+ * @brief 记录多边形命令（对标 QPicture 中 drawPolygon 的独立路径命令）。
+ * @param self 目标图片对象指针。
+ * @param points 顶点数组。
+ * @param count 顶点数量；少于 2 时按无操作返回 true。
+ * @param filled 是否按记录时的画刷状态填充内部。
+ * @param fillRule XPainterFillRule 枚举数值；0=奇偶、1=非零绕组。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPolygon(XPicture* self, const XPoint* points, int count,
+                                bool filled, int fillRule);
+/**
+ * @brief 记录点集命令（对标 QPicture 中 drawPoints 的独立路径命令）。
+ * @param self 目标图片对象指针。
+ * @param points 点集数组。
+ * @param count 点数量；少于 1 时按无操作返回 true。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPoints(XPicture* self, const XPoint* points, int count);
+/**
+ * @brief 记录路径绘制命令（对标 QPicture 中 drawPath/fillPath/strokePath
+ *        对应的 PdcDrawPath 指令）。
+ * @param self 目标图片对象指针。
+ * @param pathOp XPainterPathOp 枚举数值；1=drawPath、2=fillPath、3=strokePath。
+ * @param path 要记录的路径对象；NULL 或空路径按无操作返回 true。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPath(XPicture* self, int pathOp,
+                             const struct XPainterPath* path);
 /**
  * @brief 记录绘制图像命令。
  * @param self 目标图片对象指针。

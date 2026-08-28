@@ -1788,17 +1788,16 @@ static void label_updateLabel(XLabel* self)
     XWidget_update((XWidget*)self);
 }
 
-/** @brief 按内容与交互标志刷新鼠标跟踪（富文本或链接可访问时开启）。 */
+/** @brief 按 Qt 规则更新鼠标跟踪（富文本时开启，切回纯文本不关闭）。 */
 static void label_updateMouseTracking(XLabel* self)
 {
-    bool need;
     if (!self) return;
-    need = (self->m_effectiveTextFormat != XLabelTextFormat_PlainText) ||
-           (self->m_textInteractionFlags &
-            XLabelTextInteraction_LinksAccessibleByMouse) != 0 ||
-           (self->m_textInteractionFlags &
-            XLabelTextInteraction_TextSelectableByMouse) != 0;
-    XWidget_setMouseTracking((XWidget*)self, need);
+    /* QLabel::setText() 只在生效格式为富文本时调用 setMouseTracking(true)。
+       Qt 明确保留从富文本切回纯文本后的跟踪状态，因此这里不能把它
+       依据交互标志重新计算后关闭，也不能因默认 LinksAccessibleByMouse
+       而额外打开。 */
+    if (self->m_effectiveTextFormat != XLabelTextFormat_PlainText)
+        XWidget_setMouseTracking((XWidget*)self, true);
 }
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */

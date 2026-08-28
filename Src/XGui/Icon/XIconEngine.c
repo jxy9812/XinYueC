@@ -7,6 +7,9 @@
 #include "XMemory.h"
 #include "XObject.h"
 #include "XPicture.h"
+#include "XPainter.h"
+#include <limits.h>
+#include <math.h>
 #include <string.h>
 
 static void VXIconEngine_paint(const XIconEngine* self, void* painter, const XRect* rect,
@@ -22,7 +25,37 @@ static void VXIconEngine_actualSize(const XIconEngine* self, const XSize* size,
 
 static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
                                 XIconMode mode, XIconState state, XPixmap* out)
-{ (void)self; (void)size; (void)mode; (void)state; if (out) XPixmap_init(out); }
+{
+    XImage image;
+    XPainter painter;
+    XRect rect;
+    bool active;
+    if (!out) return;
+    XPixmap_init(out);
+    if (!size || size->width <= 0 || size->height <= 0) return;
+
+    /* 对标 Qt 6.8 QIconEngine::pixmap：先创建请求尺寸的像素图，
+       再通过 QPainter 调用 paint() 填充，而不是直接返回空对象。 */
+    XImage_init_ex(&image, size->width, size->height,
+                   XImageFormat_ARGB32_Premultiplied);
+    if (XImage_isNull(&image)) {
+        XImage_deinit_base(&image);
+        return;
+    }
+    XPainter_init(&painter, NULL);
+    active = XPainter_begin_image(&painter, &image);
+    if (active) {
+        rect.x = 0;
+        rect.y = 0;
+        rect.width = size->width;
+        rect.height = size->height;
+        XIconEngine_paint_base(self, &painter, &rect, mode, state);
+        XPainter_end(&painter);
+        XPixmap_init_image(out, &image, 0);
+    }
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
 
 static void VXIconEngine_addPixmap(XIconEngine* self, const XPixmap* pixmap,
                                    XIconMode mode, XIconState state)
@@ -52,25 +85,68 @@ static XString* VXIconEngine_iconName(const XIconEngine* self)
 { (void)self; return XString_create(); }
 
 static bool VXIconEngine_isNull(const XIconEngine* self)
-{ (void)self; return false; }
+{
+    bool isNull = false;
+    /* Qt 的非钩子实现先将结果设为 false，再让 virtual_hook(IsNullHook)
+       由派生引擎决定是否改写；默认钩子不修改该值。 */
+    XIconEngine_virtualHook_base(self, XIconEngine_IsNullHook, &isNull);
+    return isNull;
+}
 
 static void VXIconEngine_scaledPixmap(const XIconEngine* self, const XSize* size,
                                       XIconMode mode, XIconState state, float scale,
                                       XPixmap* out)
 {
-    XSize physical;
+    XIconEngineScaledPixmapArgument argument;
     if (!out) return;
     XPixmap_init(out);
     if (!size) return;
-    if (scale <= 0.0f) scale = 1.0f;
-    physical.width = (int)((float)size->width * scale + 0.5f);
-    physical.height = (int)((float)size->height * scale + 0.5f);
-    XIconEngine_pixmap_base(self, &physical, mode, state, out);
-    if (!XPixmap_isNull(out)) XPixmap_setDevicePixelRatio(out, scale);
+    argument.size = *size;
+    argument.mode = mode;
+    argument.state = state;
+    argument.scale = scale;
+    argument.pixmap = out;
+    /* Qt 的默认实现通过 ScaledPixmapHook 间接调用 pixmap()；派生引擎
+       可以只重载 hook 来提供主题或高 DPI 专用资源。 */
+    XIconEngine_virtualHook_base(self, XIconEngine_ScaledPixmapHook, &argument);
 }
 
 static void VXIconEngine_virtualHook(const XIconEngine* self, int id, void* data)
-{ (void)self; (void)id; (void)data; }
+{
+    XIconEngineScaledPixmapArgument* argument;
+    XSize physical;
+    float scale;
+    if (!data) return;
+    if (id != XIconEngine_ScaledPixmapHook) return;
+    argument = (XIconEngineScaledPixmapArgument*)data;
+    if (!argument->pixmap) return;
+    /* QIconEngine::virtual_hook() 通过值语义替换 QPixmap；先释放调用方
+       原有输出，使无效尺寸也得到空像素图而不会残留旧内容。 */
+    if (!XClassIsVtableNull(argument->pixmap))
+        XPixmap_deinit_base(argument->pixmap);
+    XPixmap_init(argument->pixmap);
+    if (argument->size.width <= 0 || argument->size.height <= 0)
+        return;
+    /* Qt 的 QSize * qreal 在非正比例下产生非正尺寸，QPixmap 最终为空；
+       不把错误的比例悄悄改写成 1.0。NaN/无穷值也必须在转换前拒绝，
+       避免 C 浮点到整数转换的未定义行为。 */
+    scale = argument->scale;
+    if (!(scale > 0.0f) || !isfinite(scale)) return;
+    {
+        double width = (double)argument->size.width * (double)scale;
+        double height = (double)argument->size.height * (double)scale;
+        if (width > (double)INT_MAX - 0.5 ||
+            height > (double)INT_MAX - 0.5)
+            return;
+        physical.width = (int)(width + 0.5);
+        physical.height = (int)(height + 0.5);
+    }
+    if (physical.width <= 0 || physical.height <= 0) return;
+    XIconEngine_pixmap_base(self, &physical, argument->mode, argument->state,
+                            argument->pixmap);
+    if (!XPixmap_isNull(argument->pixmap))
+        XPixmap_setDevicePixelRatio(argument->pixmap, scale);
+}
 
 static void VXIconEngine_deinit(XIconEngine* self)
 { if (self) XClass_Deinit_Parent(XClass, (XClass*)self); }

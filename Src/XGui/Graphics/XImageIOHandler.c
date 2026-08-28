@@ -8,7 +8,6 @@
 #include "XVtable.h"
 #include "XMemory.h"
 #include <string.h>
-#include <stdlib.h>
 
 /**
  * @brief      XImageIOHandler 私有数据
@@ -60,21 +59,24 @@ static bool VXImageIOHandler_write(XImageIOHandler* self, const XImage* image)
 
 static bool VXImageIOHandler_option(const XImageIOHandler* self, XImageIOHandlerOption option, void* out)
 {
-    return XImageIOHandler_optionValue(self, option,
-                                       (XImageIOHandlerOptionValue*)out);
+    (void)self;
+    (void)option;
+    (void)out;
+    return false;
 }
 
 static void VXImageIOHandler_setOption(XImageIOHandler* self, XImageIOHandlerOption option, const void* value)
 {
-    if (!self || !self->m_data || !value || !XImageIOHandler_optionValid(option)) return;
-    self->m_data->m_options[option] = *(const XImageIOHandlerOptionValue*)value;
-    self->m_data->m_optionMask |= (uint32_t)1u << (unsigned)option;
+    (void)self;
+    (void)option;
+    (void)value;
 }
 
 static bool VXImageIOHandler_supportsOption(const XImageIOHandler* self, XImageIOHandlerOption option)
 {
-    return self && self->m_data && XImageIOHandler_optionValid(option) &&
-           (self->m_data->m_optionMask & ((uint32_t)1u << (unsigned)option)) != 0;
+    (void)self;
+    (void)option;
+    return false;
 }
 
 static bool VXImageIOHandler_jumpToNextImage(XImageIOHandler* self)
@@ -248,6 +250,16 @@ bool XImageIOHandler_optionValue(const XImageIOHandler* self,
         return false;
     *out = self->m_data->m_options[option];
     return true;
+}
+
+void XImageIOHandler_storeOptionValue(XImageIOHandler* self,
+                                       XImageIOHandlerOption option,
+                                       const void* value)
+{
+    if (!self || !self->m_data || !value || !XImageIOHandler_optionValid(option))
+        return;
+    self->m_data->m_options[option] = *(const XImageIOHandlerOptionValue*)value;
+    self->m_data->m_optionMask |= (uint32_t)1u << (unsigned)option;
 }
 
 bool XImageIOHandler_jumpToNextImage_base(XImageIOHandler* self)

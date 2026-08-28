@@ -21,6 +21,7 @@ extern "C" {
 #include "XClass.h"
 #include "XTypes.h"
 #include "XMemory.h"
+#include "XStringList.h"
 
 
 /* ========== XImage 虚函数表枚举 ========== */
@@ -310,17 +311,17 @@ uint32_t XImage_color(const XImage* self, int index);
 /**
  * @brief      设置颜色表中指定索引的颜色值
  * @param self     目标 XImage 对象指针
- * @param index    颜色索引
+ * @param index    颜色索引；索引在当前位深范围内且超出颜色表时会自动扩展颜色表
  * @param color    ARGB 颜色值（0xAARRGGBB）
  */
 void XImage_setColor(XImage* self, int index, uint32_t color);
 
 /**
- * @brief      将所有颜色表的颜色值设置为指定颜色
- * @param self     目标 XImage 对象指针
- * @param color    ARGB 颜色值
+ * @brief      按存储像素值填充整幅图像（对标 QImage::fill(uint)）
+ * @param self  目标 XImage 对象指针
+ * @param pixel 原始像素值；位深不足时只使用低位，单色图只使用最低位
  */
-void XImage_fill(XImage* self, uint32_t color);
+void XImage_fill(XImage* self, uint32_t pixel);
 
 /**
  * @brief      判断图像是否包含 Alpha 通道
@@ -377,7 +378,7 @@ void XImage_createMaskFromColor(const XImage* self, uint32_t color,
                                 XImageMaskMode mode, XImage* out);
 
 /**
- * @brief      填充矩形区域
+ * @brief      以 ARGB 颜色填充矩形区域
  * @param self  目标 XImage 对象指针
  * @param rect  矩形区域指针（NULL 表示填充整个图像）
  * @param color ARGB 颜色值
@@ -712,6 +713,14 @@ bool XImage_saveDevice_2(const XImage* self, XIODevice* device, const char* form
 /** @brief 获取文本元数据项数量。 */
 int XImage_textCount(const XImage* self);
 
+/**
+ * @brief 获取图像文本元数据键的深复制列表。
+ * @param self 图像对象指针；空图像也会返回空列表。
+ * @return 新建的 XStringList；调用者负责使用 XStringList_delete_base 释放。
+ * @note 返回列表按键的升序排列，修改返回列表不会影响图像自身。
+ */
+XStringList* XImage_textKeys(const XImage* self);
+
 /** @brief 按索引获取文本元数据键副本；调用者负责释放返回的 XString。 */
 XString* XImage_textKey(const XImage* self, int index);
 /**
@@ -729,13 +738,17 @@ const XString* XImage_textKey_const(const XImage* self, int index);
  */
 const char* XImage_textKey_2(const XImage* self, int index);
 
-/** @brief 按 XString 键获取文本元数据值副本；调用者负责释放返回的 XString。 */
+/**
+ * @brief 按 XString 键获取文本元数据值副本；调用者负责释放返回的 XString。
+ * @note 键为 NULL 或空字符串时返回全部文本元数据的聚合结果，
+ *       格式为 "key: value\n\n..."（结尾多余的空行会被去掉，value 经过简化）。
+ */
 XString* XImage_text(const XImage* self, const XString* key);
 /**
  * @brief 使用 UTF-8 键获取文本元数据值的兼容重载。
  * @param self 图像对象指针。
  * @param key UTF-8 编码的元数据键。
- * @return 内部文本值的 UTF-8 指针，由图像对象持有，不得释放；未找到时返回 NULL。
+ * @return 内部文本值的 UTF-8 指针，由图像对象持有，不得释放；空图像或未找到时返回空串。
  */
 const char* XImage_text_2(const XImage* self, const char* key);
 
@@ -796,9 +809,17 @@ void XImage_setDotsPerMeterY(XImage* self, int val);
 float XImage_devicePixelRatio(const XImage* self);
 
 /**
+ * @brief 获取图像的设备无关尺寸（对标 QImage::deviceIndependentSize）。
+ * @param self 目标图像对象指针。
+ * @param out 输出浮点尺寸；空图像输出 (0,0)，输出指针可为 NULL。
+ * @note 结果等于像素尺寸除以 devicePixelRatio；比例为零时遵循 C 浮点除法语义。
+ */
+void XImage_deviceIndependentSize(const XImage* self, XSizeF* out);
+
+/**
  * @brief      设置设备像素比
  * @param self 目标 XImage 对象指针
- * @param scaleFactor 正数设备像素比
+ * @param scaleFactor 设备像素比；Qt 允许零和负值，接口按原值保存
  */
 void XImage_setDevicePixelRatio(XImage* self, float scaleFactor);
 

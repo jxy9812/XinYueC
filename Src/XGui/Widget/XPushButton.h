@@ -25,8 +25,9 @@
  *             与 XSTRING_ON（文本存储）；XICON_ON 关闭时图标接口保持
  *             空图标回退语义。
  * @note       近似边界：QAbstractButton 的按钮组（autoExclusive 仅保存
- *             标志，按钮互斥登记未实现）、快捷键、QDialog 下的 autoDefault
- *             自动解析、样式表/主题 bevel 与自动重复定时器不实现；菜单
+ *             标志，按钮互斥登记未实现）、快捷键、样式表/主题 bevel 与
+ *             自动重复定时器不实现；autoDefault 已实现父对话框链自动
+ *             解析（对标 Qt 6.8 QPushButtonPrivate::dialogParent）；菜单
  *             关联（setMenu/menu/showMenu）已实现但真实平台弹层未接入；
  *             hitButton 按控件矩形命中（Qt bevel 区域在无主题时可视为
  *             控件矩形）。详细说明见 XGui.md。
@@ -180,7 +181,8 @@ void XPushButton_setIconSize(XPushButton* self, const XSize* size);
 bool XPushButton_isCheckable(const XPushButton* self);
 /**
  * @brief      设置按钮是否可选中（对标 QAbstractButton::setCheckable）。
- * @details    由可选中切回非可选中时，Qt 不清除选中位；本实现保持同语义。
+ * @details    由可选中切回非可选中时，Qt 静默清除选中位且不发射
+ *             toggled；本实现保持同语义。
  */
 void XPushButton_setCheckable(XPushButton* self, bool checkable);
 /** @brief 查询按钮是否选中（对标 QAbstractButton::isChecked，默认 false）。 */
@@ -213,11 +215,11 @@ bool XPushButton_autoRepeat(const XPushButton* self);
 void XPushButton_setAutoRepeat(XPushButton* self, bool repeat);
 /** @brief 查询自动重复开始延迟（毫秒；默认 300）。 */
 int XPushButton_autoRepeatDelay(const XPushButton* self);
-/** @brief 设置自动重复开始延迟（毫秒；负值钳位 0）。 */
+/** @brief 设置自动重复开始延迟（毫秒；按 Qt 语义保存调用方整数）。 */
 void XPushButton_setAutoRepeatDelay(XPushButton* self, int delay);
 /** @brief 查询自动重复间隔（毫秒；默认 100）。 */
 int XPushButton_autoRepeatInterval(const XPushButton* self);
-/** @brief 设置自动重复间隔（毫秒；负值钳位 0）。 */
+/** @brief 设置自动重复间隔（毫秒；按 Qt 语义保存调用方整数）。 */
 void XPushButton_setAutoRepeatInterval(XPushButton* self, int interval);
 /** @brief 查询自动互斥标志（对标 QAbstractButton::autoExclusive；默认 false）。 */
 bool XPushButton_autoExclusive(const XPushButton* self);

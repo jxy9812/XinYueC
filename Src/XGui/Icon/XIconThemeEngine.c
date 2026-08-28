@@ -7,18 +7,25 @@
  ******************************************************************************/
 #include "XIconThemeEngine.h"
 #include "XIconThemeInternal.h"
+#include "XIconScaledPixmapCache.h"
+#include "XIconStyleHelper.h"
 #include "XPainter.h"
 #include "XPixmap.h"
 #include "XImage.h"
 #include "XMemory.h"
+#include <limits.h>
+#include <math.h>
 #include <string.h>
 
 static void themeEngine_pixmapForSize(const XIconThemeEngine* self,
-                                      int targetSize, XPixmap* out)
+                                      int targetSize, int iconScale,
+                                      int outputSize, XPixmap* out)
 {
-    if (!self || !self->m_iconName || !out || targetSize <= 0) return;
-    XIconInternal_resolveThemePixmapSize(
-        XString_toUtf8(self->m_iconName), targetSize, out);
+    if (!self || !self->m_iconName || !out || targetSize <= 0 ||
+        iconScale <= 0 || outputSize <= 0) return;
+    XIconInternal_resolveThemePixmapSizeScale(
+        XString_toUtf8(self->m_iconName), targetSize, iconScale, outputSize,
+        out);
 }
 
 static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
@@ -27,21 +34,53 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
 {
     XPainter* target = (XPainter*)painter;
     XPixmap pixmap;
+    XPixmap scaled;
+    const XPixmap* drawPixmap;
     XImage image;
+    XRect sourceRect;
     bool saved = false;
-    (void)mode;
     (void)state;
     if (!self || !target || !rect || !target->m_drawImage) return;
     XPixmap_init(&pixmap);
-    themeEngine_pixmapForSize(self, rect->width, &pixmap);
+    XPixmap_init(&scaled);
+    drawPixmap = &pixmap;
+    themeEngine_pixmapForSize(self, rect->width, 1, rect->width, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
+        XPixmap styled;
+        XPixmap_init(&styled);
+        XIconStyleHelper_apply(mode, &pixmap, &styled);
+        if (!XPixmap_isNull(&styled))
+        {
+            XPixmap_deinit_base(&pixmap);
+            XPixmap_move_base(&pixmap, &styled);
+        }
+        XPixmap_deinit_base(&styled);
+        if (XPixmap_width(&pixmap) != rect->width ||
+            XPixmap_height(&pixmap) != rect->height) {
+            XPixmap_scaled(&pixmap, rect->width, rect->height,
+                           0, 0, &scaled);
+            if (!XPixmap_isNull(&scaled)) drawPixmap = &scaled;
+        }
         XImage_init(&image);
-        XPixmap_toImage(&pixmap, &image);
+        XPixmap_toImage(drawPixmap, &image);
         if (target->m_save) saved = target->m_save(target);
+        sourceRect.x = 0;
+        sourceRect.y = 0;
+        sourceRect.width = XPixmap_width(drawPixmap);
+        sourceRect.height = XPixmap_height(drawPixmap);
+#if XPAINTER_IMAGE_RECT_ON
+        if (XImage_width(&image) == rect->width &&
+            XImage_height(&image) == rect->height)
+            target->m_drawImage(target, &image, rect->x, rect->y);
+        else
+            XPainter_drawImageRect(target, rect, &image, &sourceRect);
+#else
         target->m_drawImage(target, &image, rect->x, rect->y);
+#endif
         if (saved && target->m_restore) target->m_restore(target);
         XImage_deinit_base(&image);
     }
+    XPixmap_deinit_base(&scaled);
     XPixmap_deinit_base(&pixmap);
 }
 
@@ -57,14 +96,30 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
     out->width = 0;
     out->height = 0;
     if (!self || !size || size->width <= 0 || size->height <= 0) return;
-    target = size->width > size->height ? size->width : size->height;
-    out->width = size->width;
-    out->height = size->height;
+    if (self->m_iconName && XIconInternal_themeHasScalable(
+            XString_toUtf8(self->m_iconName))) {
+        /* QIconLoaderEngine returns the complete requested rectangle for a
+           scalable entry (SVG), rather than reducing it to a square. */
+        *out = *size;
+        return;
+    }
+    /* QIconLoaderEngine::entryForSize() matches the smaller edge of the
+       requested rectangle; fixed/threshold entries never exceed it. */
+    target = size->width < size->height ? size->width : size->height;
     XPixmap_init(&pixmap);
-    themeEngine_pixmapForSize(self, target, &pixmap);
-    if (XPixmap_isNull(&pixmap)) {
+    if (!XIconInternal_resolveThemePixmapSourceSize(
+            XString_toUtf8(self->m_iconName), target, &pixmap) ||
+        XPixmap_isNull(&pixmap)) {
         out->width = 0;
         out->height = 0;
+    } else {
+        int source = XPixmap_width(&pixmap) < XPixmap_height(&pixmap)
+                   ? XPixmap_width(&pixmap) : XPixmap_height(&pixmap);
+        if (source > target) source = target;
+        if (source > 0) {
+            out->width = source;
+            out->height = source;
+        }
     }
     XPixmap_deinit_base(&pixmap);
 }
@@ -73,14 +128,25 @@ static void VXIconThemeEngine_pixmap(const XIconThemeEngine* self,
                                      const XSize* size, XIconMode mode,
                                      XIconState state, XPixmap* out)
 {
+    XPixmap styled;
     int target;
-    (void)mode;
     (void)state;
     if (!out) return;
     XPixmap_init(out);
     if (!self || !size || size->width <= 0 || size->height <= 0) return;
-    target = size->width > size->height ? size->width : size->height;
-    themeEngine_pixmapForSize(self, target, out);
+    /* QIconLoaderEngine::entryForSize() matches the smaller request edge. */
+    target = size->width < size->height ? size->width : size->height;
+    themeEngine_pixmapForSize(self, target, 1, target, out);
+    if (!XPixmap_isNull(out)) {
+        XPixmap_init(&styled);
+        XIconStyleHelper_apply(mode, out, &styled);
+        if (!XPixmap_isNull(&styled))
+        {
+            XPixmap_deinit_base(out);
+            XPixmap_move_base(out, &styled);
+        }
+        XPixmap_deinit_base(&styled);
+    }
 }
 
 static void VXIconThemeEngine_addPixmap(XIconThemeEngine* self,
@@ -139,10 +205,10 @@ static void VXIconThemeEngine_availableSizes(const XIconThemeEngine* self,
                                              XIconMode mode, XIconState state,
                                              XVector* out)
 {
-    (void)self;
     (void)mode;
     (void)state;
-    if (out) XVector_clear_base((XContainer*)out);
+    if (!out || !self || !self->m_iconName) return;
+    XIconInternal_availableThemeSizes(XString_toUtf8(self->m_iconName), out);
 }
 
 static XString* VXIconThemeEngine_iconName(const XIconThemeEngine* self)
@@ -169,17 +235,59 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
                                            XPixmap* out)
 {
     int target;
-    float ratio = scale > 0.0f ? scale : 1.0f;
-    (void)mode;
+    float ratio = scale;
+    double physical;
+    double dprScaled;
+    const char* iconName;
+    int dprThousand;
+    int iconScale;
+    double scaleCeil;
     (void)state;
     if (!out) return;
     XPixmap_init(out);
-    if (!size || size->width <= 0 || size->height <= 0) return;
-    target = (int)((double)(size->width > size->height
-                            ? size->width : size->height) * ratio + 0.5);
+    if (!size || size->width <= 0 || size->height <= 0 ||
+        !(scale > 0.0f) || !isfinite(scale)) return;
+    /* The theme entry is selected from min(width,height), then scaled in
+       physical pixels; this keeps non-square requests within the target. */
+    physical = (double)(size->width < size->height
+                        ? size->width : size->height) * (double)ratio + 0.5;
+    if (physical > (double)INT_MAX) return;
+    target = (int)physical;
     if (target <= 0) return;
-    themeEngine_pixmapForSize(self, target, out);
-    if (!XPixmap_isNull(out)) XPixmap_setDevicePixelRatio(out, ratio);
+    scaleCeil = ceil((double)ratio);
+    if (scaleCeil > (double)INT_MAX) return;
+    iconScale = (int)scaleCeil;
+    if (iconScale <= 0) iconScale = 1;
+    iconName = (self && self->m_iconName) ? XString_toUtf8(self->m_iconName) : NULL;
+    dprScaled = (double)ratio * 1000.0 + 0.5;
+    dprThousand = dprScaled > (double)INT_MAX
+        ? INT_MAX : (int)dprScaled;
+    if (iconName && XIconScaledPixmapCache_find(
+            "qt_icon_theme/", iconName,
+            XIconStyleHelper_paletteCacheKey(), mode, target, target,
+            dprThousand, out))
+        return;
+    themeEngine_pixmapForSize(self,
+                              size->width < size->height ? size->width :
+                              size->height,
+                              iconScale, target, out);
+    if (!XPixmap_isNull(out)) {
+        XPixmap styled;
+        XPixmap_init(&styled);
+        XIconStyleHelper_apply(mode, out, &styled);
+        if (!XPixmap_isNull(&styled))
+        {
+            XPixmap_deinit_base(out);
+            XPixmap_move_base(out, &styled);
+        }
+        XPixmap_deinit_base(&styled);
+        XPixmap_setDevicePixelRatio(out, ratio);
+        if (iconName)
+            XIconScaledPixmapCache_insert(
+                "qt_icon_theme/", iconName,
+                XIconStyleHelper_paletteCacheKey(), mode,
+                XPixmap_width(out), XPixmap_height(out), dprThousand, out);
+    }
 }
 
 static void VXIconThemeEngine_virtualHook(const XIconThemeEngine* self,

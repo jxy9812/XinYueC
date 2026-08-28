@@ -43,6 +43,18 @@ typedef struct XIconEngine
 } XIconEngine;
 
 /**
+ * @brief 图标引擎扩展钩子编号（对标 Qt 6.8 QIconEngine::IconEngineHook）。
+ *
+ * @details 编号用于保持二进制兼容，调用方通过
+ * XIconEngine_virtualHook_base() 传递扩展参数；未知编号必须被安全忽略。
+ */
+typedef enum XIconEngineHook
+{
+    XIconEngine_IsNullHook = 3, /**< 查询引擎是否表示空图标。 */
+    XIconEngine_ScaledPixmapHook = 4 /**< 按设备像素比获取像素图。 */
+} XIconEngineHook;
+
+/**
  * @brief 缩放图标参数结构。
  * @note 用于 scaledPixmap 虚函数传递目标尺寸、状态和缩放比例。
  */

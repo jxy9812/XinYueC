@@ -258,11 +258,11 @@ void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIco
 void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconState state, XPixmap* out);
 
 /**
- * @brief      获取带设备像素比的像素图
+ * @brief      获取带设备像素比的像素图，按 Qt 的 DPR 优先策略选择资源
  * @param self             目标 XIcon 对象指针
- * @param width            目标宽度
- * @param height           目标高度
- * @param devicePixelRatio 设备像素比
+ * @param width            目标逻辑宽度
+ * @param height           目标逻辑高度
+ * @param devicePixelRatio 设备像素比；输出会覆盖 width×height×DPR 的物理尺寸
  * @param mode             图标模式
  * @param state            图标状态
  * @param out              输出像素图指针
@@ -271,7 +271,7 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
                        XIconMode mode, XIconState state, XPixmap* out);
 
 /**
- * @brief      获取图标实际渲染尺寸
+ * @brief      获取图标实际渲染逻辑尺寸；内部按 DPR=1 搜索资源
  * @param self   目标 XIcon 对象指针
  * @param width  目标宽度
  * @param height 目标高度
@@ -333,7 +333,7 @@ void XIcon_addFile_2(XIcon* self, const char* fileName, int width, int height,
                      XIconMode mode, XIconState state);
 
 /**
- * @brief      获取可用尺寸列表
+ * @brief      获取可用逻辑尺寸列表；@2x 等资源按设备像素比归一后去重
  * @param self  目标 XIcon 对象指针
  * @param mode  图标模式
  * @param state 图标状态

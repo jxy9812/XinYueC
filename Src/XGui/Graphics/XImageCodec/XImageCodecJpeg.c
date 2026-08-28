@@ -498,6 +498,9 @@ typedef struct JpegCtx
     int                quant[4][64]; /**< 量化表（DQT 8/16 位统一展开） */
     bool               haveQuant[4];
     int                restart;      /**< 重启动间隔（MCU 数），0=无 */
+    int                densityUnit;  /**< JFIF 密度单位：1=dpi，2=dpcm，0=未指定 */
+    int                densityX;     /**< JFIF X 方向密度（原始单位） */
+    int                densityY;     /**< JFIF Y 方向密度（原始单位） */
     uint8_t            arithDcL[4];  /**< 算术 DC 条件 L（默认 0） */
     uint8_t            arithDcU[4];  /**< 算术 DC 条件 U（默认 1） */
     uint8_t            arithAcK[4];  /**< 算术 AC 条件 K（默认 5） */
@@ -1169,7 +1172,7 @@ static bool jpegDecodeBlockHuffDcFirst(JpegCtx* ctx, int frameIdx,
     s = jpegDecodeSymbol(b, &ctx->huff[0][tdc]);
     if (s < 0) return false;
     ctx->dcPred[frameIdx] += jpegReceiveExtend(b, s);
-    coeff[0] = ctx->dcPred[frameIdx] << al;
+    coeff[0] = ctx->dcPred[frameIdx] * (int32_t)(1u << al);
     return !b->error;
 }
 
@@ -1203,7 +1206,7 @@ static bool jpegDecodeBlockHuffAcFirst(JpegCtx* ctx, const JpegScan* sc,
                 k += r;
                 if (k > sc->Se) return false;
                 coeff[jpegZigzagNatural[k]] =
-                    jpegReceiveExtend(b, ss) << sc->Al;
+                    jpegReceiveExtend(b, ss) * (int32_t)(1u << sc->Al);
                 ++k;
             } else if (r == 15) {
                 k += 15; /* ZRL：跳过 15 个零，配合循环前进共 16 */
@@ -1785,6 +1788,36 @@ static bool jpegParseAdobe(const uint8_t* data, size_t size, size_t* pos,
     return true;
 }
 
+/* 解析 JFIF APP0 段的像素密度。
+ * Qt 6.8 的 JPEG handler 直接采用 libjpeg 暴露的 density_unit、X_density
+ * 和 Y_density；这里保留同样的原始单位，输出阶段再转换为每米点数。 */
+static bool jpegParseJfif(const uint8_t* data, size_t size, size_t* pos,
+                          JpegCtx* ctx)
+{
+    int segLen;
+    size_t end;
+    size_t payload;
+
+    if (*pos + 2 > size) return false;
+    segLen = jpegReadBe16(data, size, pos);
+    if (segLen < 2) return false;
+    end = *pos + (size_t)(segLen - 2);
+    if (end > size) return false;
+    payload = end - *pos;
+    /* JFIF 固定头至少包含标识、版本、单位、两个密度和缩略图尺寸。 */
+    if (payload >= 14 && memcmp(data + *pos, "JFIF\0", 5) == 0 &&
+        ctx->densityUnit == 0) {
+        int unit = data[*pos + 7];
+        if (unit == 1 || unit == 2) {
+            ctx->densityUnit = unit;
+            ctx->densityX = ((int)data[*pos + 8] << 8) | data[*pos + 9];
+            ctx->densityY = ((int)data[*pos + 10] << 8) | data[*pos + 11];
+        }
+    }
+    *pos = end;
+    return true;
+}
+
 /* 分配帧所有分量的样本平面（渐进式额外分配系数平面）。 */
 static bool jpegAllocatePlanes(JpegCtx* ctx)
 {
@@ -1955,6 +1988,14 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
     XImage_deinit_base(out);
     out->m_data = temp.m_data;
     temp.m_data = NULL;
+    if (ctx->densityUnit == 1) {
+        /* 2.54 cm/in = 127/50 cm/in，按 Qt 的正数截断语义计算。 */
+        XImage_setDotsPerMeterX(out, (ctx->densityX * 5000) / 127);
+        XImage_setDotsPerMeterY(out, (ctx->densityY * 5000) / 127);
+    } else if (ctx->densityUnit == 2) {
+        XImage_setDotsPerMeterX(out, ctx->densityX * 100);
+        XImage_setDotsPerMeterY(out, ctx->densityY * 100);
+    }
     return true;
 }
 
@@ -2027,6 +2068,9 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
             if (ctx.restart < 0) goto done;
         } else if (marker == 0xEE) {
             if (!jpegParseAdobe(data, size, &pos, &ctx))
+                goto done;
+        } else if (marker == 0xE0) {
+            if (!jpegParseJfif(data, size, &pos, &ctx))
                 goto done;
         } else if (marker >= 0xC0 && marker <= 0xCF &&
                    marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {

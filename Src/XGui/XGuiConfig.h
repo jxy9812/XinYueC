@@ -149,6 +149,9 @@
 #ifndef XLAYOUT_ON
 #define XLAYOUT_ON 1
 #endif
+#ifndef XLAYOUT_STACKED_ON
+#define XLAYOUT_STACKED_ON 1
+#endif
 #ifndef XINPUTMETHOD_ON
 #define XINPUTMETHOD_ON 1
 #endif

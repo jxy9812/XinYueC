@@ -213,9 +213,10 @@ static void frame_drawShadePanel(XPainter* painter, const XRect* r,
     for (i = 0; i < lineWidth; ++i) {
         /* 上边：(x, y+i) -> (x+w-2-i, y+i) */
         XPainter_drawLine(painter, x, y + i, x + w - 2 - i, y + i);
-        /* 左边：(x+lw+i, y+h-2) -> (x+lw+i, y+lw-i) */
-        XPainter_drawLine(painter, x + lineWidth + i, y + h - 2,
-                          x + lineWidth + i, y + lineWidth - i);
+        /* 左边：(x+i, y+h-2) -> (x+i, y-i)，与 qDrawShadePanel
+           的逐层折线坐标一致。 */
+        XPainter_drawLine(painter, x + i, y + h - 2,
+                          x + i, y - i);
     }
     XPainter_setPen(painter, pen2);
     for (i = 0; i < lineWidth; ++i) {
@@ -639,7 +640,8 @@ void XFrame_setFrameStyle(XFrame* self, int style)
         XWidget_setAttribute(&self->m_base,
                              XWidgetAttribute_WState_OwnSizePolicy, false);
     }
-    self->m_frameStyle = style & (XFrameStyleMask_Shape | XFrameStyleMask_Shadow);
+    /* Qt 6.8 stores QFramePrivate::frameStyle through short(style). */
+    self->m_frameStyle = (int)(short)style;
     /* sizeHint：HLine=(-1,3)、VLine=(3,-1)、其余保持基类（-1,-1 默认）。 */
     shape = self->m_frameStyle & XFrameStyleMask_Shape;
     if (shape == XFrameShape_HLine)
@@ -676,8 +678,7 @@ int XFrame_lineWidth(const XFrame* self)
 void XFrame_setLineWidth(XFrame* self, int width)
 {
     if (!self) return;
-    if (width < 0) width = 0;
-    if (width > 255) width = 255;
+    /* Qt 将 int 转为 short 保存，不做范围钳位。 */
     if ((short)width == self->m_lineWidth) return;
     self->m_lineWidth = (short)width;
     XFrame_updateFrameWidth(self);
@@ -691,8 +692,7 @@ int XFrame_midLineWidth(const XFrame* self)
 void XFrame_setMidLineWidth(XFrame* self, int width)
 {
     if (!self) return;
-    if (width < 0) width = 0;
-    if (width > 255) width = 255;
+    /* Qt 将 int 转为 short 保存，不做范围钳位。 */
     if ((short)width == self->m_midLineWidth) return;
     self->m_midLineWidth = (short)width;
     XFrame_updateFrameWidth(self);
@@ -722,14 +722,30 @@ void XFrame_setFrameRect(XFrame* self, const XRect* rect)
     XRect adj;
     int rightMargin, bottomMargin;
     if (!self) return;
-    cr = (rect && rect->width > 0 && rect->height > 0)
-             ? *rect
-             : XWidget_rect(&self->m_base);
+    if (rect && rect->width > 0 && rect->height > 0) {
+        cr = *rect;
+    } else {
+        /* QRect() 无效时 QFrame 回退到 QWidget::rect()，而不是当前
+           contentsRect()；后者可能已经因上一次 setFrameRect 带有边距。 */
+        XRect_init(&cr, 0, 0,
+                   XWidget_width(&self->m_base),
+                   XWidget_height(&self->m_base));
+    }
     adj = XRect_adjusted(&cr,
                          self->m_leftFrameWidth, self->m_topFrameWidth,
                          -self->m_rightFrameWidth, -self->m_bottomFrameWidth);
-    rightMargin = XRect_right(&cr) - XRect_right(&adj);
-    bottomMargin = XRect_bottom(&cr) - XRect_bottom(&adj);
+    /* QFrame 使用 widget rect() 的右下边界计算内容边距；不能使用
+       调用方传入的 frame rect 右下边界，否则非全控件矩形会偏移。 */
+    {
+        XRect widgetRect;
+        /* QWidget::rect() 使用自身坐标系原点；内容矩形的原点可能已因
+           margins 偏移，不能直接用内容矩形的右下边界。 */
+        XRect_init(&widgetRect, 0, 0,
+                   XWidget_width(&self->m_base),
+                   XWidget_height(&self->m_base));
+        rightMargin = XRect_right(&widgetRect) - XRect_right(&adj);
+        bottomMargin = XRect_bottom(&widgetRect) - XRect_bottom(&adj);
+    }
     XWidget_setContentsMargins(&self->m_base,
                               adj.x, adj.y, rightMargin, bottomMargin);
 }

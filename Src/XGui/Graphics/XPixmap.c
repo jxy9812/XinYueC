@@ -75,7 +75,6 @@ static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image)
     XAtomic_init(d->m_refCount, 1);
     XImage_copy_base(&d->m_image, image);
     d->m_devicePixelRatio = XImage_devicePixelRatio(image);
-    if (!(d->m_devicePixelRatio > 0.0f)) d->m_devicePixelRatio = 1.0f;
     d->m_serialNumber = g_pixmapSerialCounter;
     d->m_cacheKey = XPlatformPixmap_nextCacheKey();
     return d;
@@ -254,7 +253,9 @@ void XPixmap_fill(XPixmap* self, uint32_t color)
 {
     if (!self || !self->m_data) return;
     XPixmap_detach(self);
-    XImage_fill(&self->m_data->m_image, color);
+    /* QPixmap::fill() takes a color; XImage::fill() mirrors QImage's raw
+       pixel overload, so route through the color-aware rectangle helper. */
+    XImage_fillRect(&self->m_data->m_image, NULL, color);
     XPlatformPixmap_touch(self->m_data);
 }
 
@@ -312,6 +313,8 @@ void XPixmap_setMask(XPixmap* self, const XPixmap* mask)
     if (!self || !self->m_data || XPixmap_isNull(self)) return;
     if (mask && !XPixmap_isNull(mask) &&
         (XPixmap_width(mask) != XPixmap_width(self) || XPixmap_height(mask) != XPixmap_height(self)))
+        return;
+    if (mask && mask->m_data == self->m_data)
         return;
 
     XPixmap_detach(self);
@@ -985,7 +988,7 @@ float XPixmap_devicePixelRatio(const XPixmap* self)
 
 void XPixmap_setDevicePixelRatio(XPixmap* self, float scaleFactor)
 {
-    if (!self || !self->m_data || scaleFactor <= 0.0f || scaleFactor == self->m_data->m_devicePixelRatio) return;
+    if (XPixmap_isNull(self) || scaleFactor == self->m_data->m_devicePixelRatio) return;
     XPixmap_detach(self);
     self->m_data->m_devicePixelRatio = scaleFactor;
     XPlatformPixmap_touch(self->m_data);

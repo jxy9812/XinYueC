@@ -8,7 +8,8 @@
  *                                QVBoxLayout）；
  *          3. XLAYOUT_GRID_ON   - XGridLayout（行列伸缩网格布局；
  *                                对标 Qt 6.8 QGridLayout）；
- *          4. XLAYOUT_SPACER_ON - 公开空白条目 XSpacerItem 工厂/查询
+ *          4. XLAYOUT_STACKED_ON - XStackedLayout 堆叠布局；
+ *          5. XLAYOUT_SPACER_ON - 公开空白条目 XSpacerItem 工厂/查询
  *                                （对标 Qt 6.8 QSpacerItem）。
  *        基础条目类 XLayoutItem 与抽象基类 XLayout 随总开关 XLAYOUT_ON
  *        一起裁剪，不设独立开关。关闭某个布局类型开关后：
@@ -59,6 +60,13 @@ extern "C" {
  *  伸缩、行列最小高度/宽度、行列间距与原点角。 */
 #ifndef XLAYOUT_GRID_ON
 #define XLAYOUT_GRID_ON 1
+#endif
+
+/** @brief XStackedLayout 堆叠布局开关；置 0 时裁剪该类公共 API。
+ *  XStackedLayout 对标 Qt 6.8 QStackedLayout，提供页面插入、当前页
+ *  切换、StackOne/StackAll 可见性策略以及堆叠页面尺寸协商。 */
+#ifndef XLAYOUT_STACKED_ON
+#define XLAYOUT_STACKED_ON 1
 #endif
 
 /** @brief 公开空白条目（XSpacerItem）工厂/查询开关。

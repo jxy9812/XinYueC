@@ -69,6 +69,31 @@ XImageIOHandler* XImagePluginRegistry_createReadHandler(XIODevice* device,
                                                         const XString* format);
 
 /**
+ * @brief 按 Qt QImageReader 的探测策略创建读取处理器。
+ * @param device 待读取设备，不能为 NULL。
+ * @param format 规范化前的格式名；可为空以便内容探测。
+ * @param autoDetectImageFormat 是否允许自动格式与内容探测。
+ * @param decideFormatFromContent 是否忽略格式名并仅根据内容选择处理器。
+ * @return 新建处理器，所有权交给调用方；无匹配处理器时返回 NULL。
+ * @note 该接口用于 XImageReader 保持“关闭自动探测”与“从内容决定格式”的
+ *       独立语义；普通调用方可继续使用 createReadHandler()。
+ */
+XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
+    XIODevice* device, const XString* format,
+    bool autoDetectImageFormat, bool decideFormatFromContent);
+
+/**
+ * @brief 后缀处理器拒绝内容后按内容创建回退处理器。
+ * @param device 待读取设备，不能为 NULL。
+ * @param rejectedFormat 已拒绝的后缀格式；可为 NULL，表示无须跳过外部插件。
+ * @return 新建处理器，所有权交给调用方；无匹配处理器时返回 NULL。
+ * @note 该入口对应 Qt 在 qimagereader.cpp 中跳过 suffixPluginIndex 的内容探测：
+ *       只跳过首个匹配该后缀的外部插件，内置处理器仍参与内容识别。
+ */
+XImageIOHandler* XImagePluginRegistry_createReadHandlerContentFallback(
+    XIODevice* device, const XString* rejectedFormat);
+
+/**
  * @brief 为设备创建图像写入处理器。
  * @param device 待写入的设备指针，不能为 NULL。
  * @param format 图像格式；不能为空，写入处理器必须明确格式。
@@ -90,6 +115,14 @@ bool XImagePluginRegistry_supportsReadFormat(const XString* format);
  * @return 至少一个插件声明支持写入该格式时返回 true。
  */
 bool XImagePluginRegistry_supportsWriteFormat(const XString* format);
+
+/**
+ * @brief 根据设备内容发现可读取的插件格式。
+ * @param device 待读取设备；插件应按 Qt 约定使用窥视操作，不消费设备数据。
+ * @return 新建的格式字符串；成功时返回插件声明的格式键，未发现时返回空字符串。
+ *         调用方负责释放返回对象。
+ */
+XString* XImagePluginRegistry_detectReadFormat(XIODevice* device);
 
 /**
  * @brief 合并插件声明支持的图像格式列表。

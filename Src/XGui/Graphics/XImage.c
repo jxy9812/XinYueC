@@ -50,6 +50,7 @@ typedef struct XImageData
     int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
     XStringList      m_textKeys;         /**< 文本元数据键列表 */
     XStringList      m_textValues;       /**< 文本元数据值列表 */
+    XString          m_textAll;          /**< 空键聚合文本缓存（对标 text("") 的稳定返回） */
 }XImageData;
 
 static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
@@ -57,6 +58,11 @@ static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
 static uint8_t XImage_luma(uint32_t color);
 static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color);
 static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb);
+static void XImage_store16(uint8_t* p, uint16_t value);
+static void XImage_store32(uint8_t* p, uint32_t value);
+static uint16_t XImage_floatToHalf(float value);
+static float XImage_halfToFloat(uint16_t value);
+static uint16_t XImage_premultiply16(uint16_t value, uint16_t alpha);
 bool XImage_allGray(const XImage* self);
 
 static int64_t XImageData_nextCacheKey(void)
@@ -79,6 +85,155 @@ static void XImageData_clearText(XImageData* d)
     if (!d) return;
     XStringList_clear_base((XContainer*)&d->m_textKeys);
     XStringList_clear_base((XContainer*)&d->m_textValues);
+    XString_clear_base((XContainer*)&d->m_textAll);
+}
+
+static void XImageData_clearTextAll(XImageData* d)
+{
+    if (d)
+        XString_clear_base((XContainer*)&d->m_textAll);
+}
+
+/**
+ * @brief 反初始化图像文本元数据。
+ * @param d 待反初始化的图像数据对象。
+ * @note XStringList 的 clear 仅改变元素数量；最终释放前必须逐项反初始化
+ *       嵌入的 XString，才能释放每个字符串的共享字符缓冲和 UTF-8 缓存。
+ */
+static void XImageData_deinitText(XImageData* d)
+{
+    size_t count;
+    size_t i;
+    if (!d)
+        return;
+
+    /* 文本列表采用隐式共享；先分离，避免销毁当前图像时修改其他副本。 */
+    XVector_detach((XVector*)&d->m_textKeys);
+    XVector_detach((XVector*)&d->m_textValues);
+    count = XStringList_size_base((const XContainer*)&d->m_textKeys);
+    for (i = 0; i < count; ++i)
+    {
+        XString* item = (XString*)XStringList_at_base(
+            (XVector*)&d->m_textKeys, (int64_t)i);
+        if (item)
+            XString_deinit_base((XClass*)item);
+    }
+    XContainerSize((XContainer*)&d->m_textKeys) = 0;
+    count = XStringList_size_base((const XContainer*)&d->m_textValues);
+    for (i = 0; i < count; ++i)
+    {
+        XString* item = (XString*)XStringList_at_base(
+            (XVector*)&d->m_textValues, (int64_t)i);
+        if (item)
+            XString_deinit_base((XClass*)item);
+    }
+    XContainerSize((XContainer*)&d->m_textValues) = 0;
+
+    XStringList_deinit_base((XClass*)&d->m_textKeys);
+    XStringList_deinit_base((XClass*)&d->m_textValues);
+    XString_deinit_base((XClass*)&d->m_textAll);
+}
+
+/**
+ * @brief 复制不随像素格式转换丢失的图像元数据。
+ * @note 对标 Qt 6.8 的 copyMetadata 语义：变换不复制颜色表，
+ *       但保留物理分辨率、设备像素比、偏移、文本元数据和色彩空间。
+ */
+static void XImageData_copyMetadata(XImageData* dst, const XImageData* src)
+{
+    int count;
+    if (!dst || !src) return;
+    dst->m_dpmX = src->m_dpmX;
+    dst->m_dpmY = src->m_dpmY;
+    dst->m_devicePixelRatio = src->m_devicePixelRatio;
+    dst->m_offsetX = src->m_offsetX;
+    dst->m_offsetY = src->m_offsetY;
+    dst->m_colorSpace = src->m_colorSpace;
+    count = (int)XStringList_size_base((const XContainer*)&src->m_textKeys);
+    for (int i = 0; i < count; ++i)
+    {
+        const XString* item = (const XString*)XStringList_at_base(
+            (const XVector*)&src->m_textKeys, i);
+        if (!item)
+            continue;
+        XStringList_push_back_base((XVector*)&dst->m_textKeys, (void*)item);
+        item = (const XString*)XStringList_at_base(
+            (const XVector*)&src->m_textValues, i);
+        if (item)
+            XStringList_push_back_base((XVector*)&dst->m_textValues, (void*)item);
+    }
+}
+
+/**
+ * @brief 聚合全部文本元数据（对标 QImage::text("")）。
+ * @note 按键排序（等价 QMap<QString, QString>）；每个条目格式为 "key: value\n\n"，
+ *       结尾多余的 "\n\n" 会被去掉，value 按 Qt 语义经过 simplified。
+ */
+static XString* XImageData_buildAllText(const XImageData* d)
+{
+    XString* result;
+    int count;
+    const char* emptyUtf8 = "";
+    if (!d) return XString_create_utf8("");
+    result = XString_create_utf8("");
+    if (!result) return NULL;
+    count = (int)XStringList_size_base((const XContainer*)&d->m_textKeys);
+    for (int i = 0; i < count; ++i)
+    {
+        const XString* key = (const XString*)XStringList_at_base(
+            (const XVector*)&d->m_textKeys, i);
+        const XString* value = (const XString*)XStringList_at_base(
+            (const XVector*)&d->m_textValues, i);
+        const char* keyUtf8;
+        XString* simplified;
+        const char* valueUtf8;
+        if (!key || !value) continue;
+        keyUtf8 = XString_isEmpty_base((const XContainer*)key)
+                  ? emptyUtf8
+                  : XString_toUtf8(key);
+        simplified = XString_simplified(value);
+        if (!simplified) continue;
+        valueUtf8 = XString_isEmpty_base((const XContainer*)simplified)
+                    ? emptyUtf8
+                    : XString_toUtf8(simplified);
+        if (XString_isEmpty_base((const XContainer*)key) == false && !keyUtf8)
+        {
+            XString_delete_base((XClass*)simplified);
+            XString_delete_base((XClass*)result);
+            return NULL;
+        }
+        if (XString_isEmpty_base((const XContainer*)simplified) == false && !valueUtf8)
+        {
+            XString_delete_base((XClass*)simplified);
+            XString_delete_base((XClass*)result);
+            return NULL;
+        }
+        if ((XString_isEmpty_base((const XContainer*)key) ||
+             XString_append_utf8(result, keyUtf8)) &&
+            XString_append_utf8(result, ": ") &&
+            (XString_isEmpty_base((const XContainer*)simplified) ||
+             XString_append_utf8(result, valueUtf8)) &&
+            XString_append_utf8(result, "\n\n"))
+        {
+            /* 每个条目成功追加。 */
+        }
+        else
+        {
+            XString_delete_base((XClass*)simplified);
+            XString_delete_base((XClass*)result);
+            return NULL;
+        }
+        XString_delete_base((XClass*)simplified);
+    }
+    {
+        size_t length = XString_length_base((const XContainer*)result);
+        const uint16_t* data = XString_utf16(result);
+        if (length >= 2 && data &&
+            data[length - 1] == (uint16_t)0x000a &&
+            data[length - 2] == (uint16_t)0x000a)
+            XString_truncate(result, length - 2);
+    }
+    return result;
 }
 
 /**
@@ -119,6 +274,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     memset(d, 0, sizeof(XImageData));
     XStringList_init(&d->m_textKeys);
     XStringList_init(&d->m_textValues);
+    XString_init(&d->m_textAll);
 
     XAtomic_init(d->m_refCount, 1);
     d->m_width = width;
@@ -145,6 +301,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
         d->m_data = (uint8_t*)XMalloc_System(totalSize);
         if (!d->m_data)
         {
+            XImageData_deinitText(d);
             XFree_System(d);
             return NULL;
         }
@@ -189,7 +346,7 @@ static void XImageData_unref(XImageData* d)
         }
         if (d->m_colorTable)
             XFree_System(d->m_colorTable);
-        XImageData_clearText(d);
+        XImageData_deinitText(d);
         XFree_System(d);
     }
 }
@@ -205,12 +362,7 @@ static XImageData* XImageData_clone(const XImageData* source)
         return NULL;
     memcpy(copy->m_data, source->m_data,
            (size_t)source->m_bytesPerLine * (size_t)source->m_height);
-    copy->m_dpmX = source->m_dpmX;
-    copy->m_dpmY = source->m_dpmY;
-    copy->m_devicePixelRatio = source->m_devicePixelRatio;
-    copy->m_offsetX = source->m_offsetX;
-    copy->m_offsetY = source->m_offsetY;
-    copy->m_colorSpace = source->m_colorSpace;
+    XImageData_copyMetadata(copy, source);
     if (source->m_colorCount > 0 && source->m_colorTable)
     {
         if ((size_t)source->m_colorCount > SIZE_MAX / sizeof(uint32_t))
@@ -228,8 +380,6 @@ static XImageData* XImageData_clone(const XImageData* source)
                (size_t)source->m_colorCount * sizeof(uint32_t));
         copy->m_colorCount = source->m_colorCount;
     }
-    XStringList_copy_base((XClass*)&copy->m_textKeys, (const XClass*)&source->m_textKeys);
-    XStringList_copy_base((XClass*)&copy->m_textValues, (const XClass*)&source->m_textValues);
     return copy;
 }
 
@@ -420,9 +570,53 @@ XColorSpace XImage_colorSpace(const XImage* self)
     return XColorSpace_create();
 }
 
+/*
+ * QImage 只允许给当前像素模型可表达的图像附加有效色彩空间。
+ * 本实现支持的 XColorSpace 均为 RGB 原色模型，因此 RGB/BGR、索引、
+ * 单色和灰度格式都可使用；Alpha8 不含颜色，按 Qt 规则对任意空间兼容；
+ * CMYK 与未知模型必须拒绝。目标色彩空间无效时由调用者直接放行。
+ */
+static XColorSpaceColorModel XImage_pixelColorModel(const XImage* self)
+{
+    const XImageFormat format = XImage_format(self);
+    const XPixelFormat pixel = XImageFormat_pixelFormat(format);
+    if (format == XImageFormat_Alpha8)
+        return XColorSpaceModel_Undefined;
+    switch (pixel.m_model)
+    {
+        case XPixelFormatModel_Mono:
+        case XPixelFormatModel_Gray:
+            return XColorSpaceModel_Gray;
+        case XPixelFormatModel_Indexed:
+        case XPixelFormatModel_RGB:
+        case XPixelFormatModel_BGR:
+            return XColorSpaceModel_Rgb;
+        case XPixelFormatModel_CMYK:
+            return XColorSpaceModel_Cmyk;
+        default:
+            return XColorSpaceModel_Undefined;
+    }
+}
+
+static bool XImage_colorSpaceCompatible(const XImage* self,
+                                         const XColorSpace* colorSpace)
+{
+    const XColorSpaceColorModel dataModel = XImage_pixelColorModel(self);
+    const XColorSpaceColorModel targetModel = XColorSpace_colorModel(colorSpace);
+    if (dataModel == XColorSpaceModel_Undefined)
+        return true; /* Alpha 数据不含颜色，可附加任意有效空间。 */
+    if (targetModel == dataModel)
+        return true;
+    /* Qt 允许将 RGB 色彩空间元数据附加到灰度像素。 */
+    return dataModel == XColorSpaceModel_Gray && targetModel == XColorSpaceModel_Rgb;
+}
+
 void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
 {
     if (!self || !self->m_data) return;
+    if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace)) return;
+    if (XColorSpace_isValid(&colorSpace) &&
+        !XImage_colorSpaceCompatible(self, &colorSpace)) return;
     XImage_detach(self);
     if (self->m_data)
     {
@@ -524,6 +718,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
     if (!out) return;
     if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace))
     {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
         XImage_init(out);
         return;
     }
@@ -533,6 +728,26 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
         return;
     }
     XImage_copy_base(out, self);
+    /* Qt changes to a color-capable format when the source model cannot
+     * represent the target color space (for example CMYK -> RGB).  The
+     * current XColorSpace value type describes RGB spaces only, so ARGB32 is
+     * the canonical target for that conversion. */
+    if (!XImage_colorSpaceCompatible(self, &colorSpace))
+    {
+        XImage converted;
+        XImage_init(&converted);
+        XImage_convertToFormat(self, XImageFormat_ARGB32, flags, &converted);
+        if (XImage_isNull(&converted))
+        {
+            XImage_deinit_base(out);
+            XImage_init(out);
+            XImage_deinit_base(&converted);
+            return;
+        }
+        XImage_deinit_base(out);
+        XImage_move_base(out, &converted);
+        XImage_deinit_base(&converted);
+    }
     XImage_convertColorSpacePixels(self, out, self->m_data->m_colorSpace, colorSpace);
     XImage_setColorSpace(out, colorSpace);
 }
@@ -542,6 +757,12 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
 {
     (void)flags;
     if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace)) return false;
+    if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace)) return true;
+    if (!XImage_colorSpaceCompatible(self, &colorSpace))
+    {
+        if (!XImage_convertToFormatInPlace(self, XImageFormat_ARGB32, flags))
+            return false;
+    }
     const XColorSpace sourceSpace = self->m_data->m_colorSpace;
     if (!XColorSpace_isValid(&sourceSpace)) return false;
     XImage_detach(self);
@@ -556,7 +777,11 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
 {
     if (!self || !out || !transform || !XColorSpace_isValid(&transform->m_target))
     {
-        if (out) XImage_init(out);
+        if (out)
+        {
+            if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+            XImage_init(out);
+        }
         return;
     }
     XColorSpace source = transform->m_source;
@@ -581,8 +806,21 @@ int XImage_colorCount(const XImage* self)
 
 void XImage_setColorCount(XImage* self, int count)
 {
-    if (!self || !self->m_data || count < 0 ||
-        (size_t)count > SIZE_MAX / sizeof(uint32_t)) return;
+    if (!self || !self->m_data) return;
+    if (count == self->m_data->m_colorCount ||
+        (count <= 0 && self->m_data->m_colorCount == 0)) return;
+    /* Qt treats every non-positive count as a request to clear the table. */
+    if (count <= 0)
+    {
+        XImage_detach(self);
+        if (!XImage_isDetached(self)) return;
+        XFree_System(self->m_data->m_colorTable);
+        self->m_data->m_colorTable = NULL;
+        self->m_data->m_colorCount = 0;
+        XImageData_markDirty(self->m_data);
+        return;
+    }
+    if ((size_t)count > SIZE_MAX / sizeof(uint32_t)) return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
     uint32_t* replacement = NULL;
@@ -612,10 +850,21 @@ uint32_t XImage_color(const XImage* self, int index)
 
 void XImage_setColor(XImage* self, int index, uint32_t color)
 {
-    if (!self || !self->m_data || !self->m_data->m_colorTable) return;
-    if (index < 0 || index >= self->m_data->m_colorCount) return;
+    int maxIndex;
+    if (!self || !self->m_data) return;
+    /* QImage permits palette entries up to the storage depth even when the
+     * current table is shorter, growing the table to index + 1 first. */
+    if (index < 0 || self->m_data->m_depth > 8) return;
+    maxIndex = 1 << self->m_data->m_depth;
+    if (index >= maxIndex) return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
+    if (index >= self->m_data->m_colorCount)
+    {
+        XImage_setColorCount(self, index + 1);
+        if (!self->m_data->m_colorTable || index >= self->m_data->m_colorCount)
+            return;
+    }
     self->m_data->m_colorTable[index] = color;
     XImageData_markDirty(self->m_data);
 }
@@ -636,7 +885,7 @@ int XImage_colorTable(const XImage* self, uint32_t* out, int maxCount)
 void XImage_setColorTable(XImage* self, const uint32_t* colors, int count)
 {
     if (!self || !self->m_data || count < 0 || (count > 0 && !colors)) return;
-    if (count > 256 || (size_t)count > SIZE_MAX / sizeof(uint32_t)) return;
+    if ((size_t)count > SIZE_MAX / sizeof(uint32_t)) return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
     uint32_t* replacement = NULL;
@@ -652,10 +901,135 @@ void XImage_setColorTable(XImage* self, const uint32_t* colors, int count)
     XImageData_markDirty(self->m_data);
 }
 
-void XImage_fill(XImage* self, uint32_t color)
+void XImage_fill(XImage* self, uint32_t pixel)
 {
+    XImageData* d;
+    int x, y;
     if (!self || !self->m_data || !self->m_data->m_data) return;
-    XImage_fillRect(self, NULL, color);
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    d = self->m_data;
+
+    /* QImage::fill(uint) writes a storage pixel, rather than converting the
+       value through QColor.  Keep the same depth-specific truncation and
+       reserved-bit rules while retaining XinYueC's portable byte layouts. */
+    if (d->m_depth == 1)
+    {
+        const size_t bytes = ((size_t)d->m_width + 7u) / 8u;
+        const int value = (pixel & 1u) ? 0xff : 0;
+        for (y = 0; y < d->m_height; ++y)
+            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+                   value, bytes);
+    }
+    else if (d->m_depth == 8)
+    {
+        const uint8_t value = (uint8_t)pixel;
+        for (y = 0; y < d->m_height; ++y)
+            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+                   value, (size_t)d->m_width);
+    }
+    else if (d->m_depth == 16)
+    {
+        uint16_t value = (uint16_t)pixel;
+        if (d->m_format == XImageFormat_RGB444) value = (uint16_t)(value | 0xf000u);
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+                XImage_store16(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 2u, value);
+    }
+    else if (d->m_depth == 24)
+    {
+        uint32_t value = pixel & 0x00ffffffu;
+        uint8_t bytes[3];
+        if (d->m_format == XImageFormat_RGB666) value |= 0x00fc0000u;
+        bytes[0] = (uint8_t)(value >> 16);
+        bytes[1] = (uint8_t)(value >> 8);
+        bytes[2] = (uint8_t)value;
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+                memcpy(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 3u,
+                       bytes, sizeof(bytes));
+    }
+    else if (d->m_format >= XImageFormat_RGBX16FPx4 &&
+             d->m_format <= XImageFormat_RGBA16FPx4_Premultiplied)
+    {
+        const float r = ((float)((pixel >> 16) & 0xffu)) / 255.0f;
+        const float g = ((float)((pixel >> 8) & 0xffu)) / 255.0f;
+        const float b = ((float)(pixel & 0xffu)) / 255.0f;
+        const float a = d->m_format == XImageFormat_RGBX16FPx4
+            ? 1.0f : ((float)((pixel >> 24) & 0xffu)) / 255.0f;
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+            {
+                uint8_t* p = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 8u;
+                XImage_store16(p, XImage_floatToHalf(r));
+                XImage_store16(p + 2, XImage_floatToHalf(g));
+                XImage_store16(p + 4, XImage_floatToHalf(b));
+                XImage_store16(p + 6, XImage_floatToHalf(a));
+            }
+    }
+    else if (d->m_depth == 64)
+    {
+        const uint16_t r = (uint16_t)(((pixel >> 16) & 0xffu) * 257u);
+        const uint16_t g = (uint16_t)(((pixel >> 8) & 0xffu) * 257u);
+        const uint16_t b = (uint16_t)((pixel & 0xffu) * 257u);
+        const uint16_t a = d->m_format == XImageFormat_RGBX64
+            ? 0xffffu : (uint16_t)(((pixel >> 24) & 0xffu) * 257u);
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+            {
+                uint8_t* p = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 8u;
+                XImage_store16(p, r); XImage_store16(p + 2, g);
+                XImage_store16(p + 4, b); XImage_store16(p + 6, a);
+            }
+    }
+    else if (d->m_depth == 128)
+    {
+        const float r = ((float)((pixel >> 16) & 0xffu)) / 255.0f;
+        const float g = ((float)((pixel >> 8) & 0xffu)) / 255.0f;
+        const float b = ((float)(pixel & 0xffu)) / 255.0f;
+        const float a = d->m_format == XImageFormat_RGBX32FPx4
+            ? 1.0f : ((float)((pixel >> 24) & 0xffu)) / 255.0f;
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+            {
+                uint8_t* p = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 16u;
+                memcpy(p, &r, sizeof(float)); memcpy(p + 4, &g, sizeof(float));
+                memcpy(p + 8, &b, sizeof(float)); memcpy(p + 12, &a, sizeof(float));
+            }
+    }
+    else
+    {
+        uint32_t value = pixel;
+        if (d->m_format == XImageFormat_RGB32) value |= 0xff000000u;
+        if (d->m_format == XImageFormat_RGBX8888)
+        {
+#if IS_BIG_ENDIAN
+            value = (value & 0xffffff00u) | 0x000000ffu;
+#else
+            value = (value & 0x00ffffffu) | 0xff000000u;
+#endif
+        }
+        if (d->m_format == XImageFormat_BGR30 || d->m_format == XImageFormat_RGB30)
+            value |= 0xc0000000u;
+        if (d->m_format == XImageFormat_RGB32 ||
+            d->m_format == XImageFormat_ARGB32 ||
+            d->m_format == XImageFormat_ARGB32_Premultiplied ||
+            d->m_format == XImageFormat_RGBX8888 ||
+            d->m_format == XImageFormat_RGBA8888 ||
+            d->m_format == XImageFormat_RGBA8888_Premultiplied ||
+            d->m_format == XImageFormat_BGR30 || d->m_format == XImageFormat_RGB30 ||
+            d->m_format == XImageFormat_A2BGR30_Premultiplied ||
+            d->m_format == XImageFormat_A2RGB30_Premultiplied ||
+            d->m_format == XImageFormat_CMYK8888)
+            for (y = 0; y < d->m_height; ++y)
+                for (x = 0; x < d->m_width; ++x)
+                    XImage_store32(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 4u, value);
+        else
+            for (y = 0; y < d->m_height; ++y)
+                for (x = 0; x < d->m_width; ++x)
+                    XImage_writePixelValue(d, x, y, pixel);
+    }
+    XImageData_markDirty(d);
 }
 
 bool XImage_hasAlphaChannel(const XImage* self)
@@ -689,6 +1063,13 @@ XColor XImage_pixelColor(const XImage* self, int x, int y)
 void XImage_setPixelColor(XImage* self, int x, int y, const XColor* color)
 {
     if (!color || !XColor_isValid(color)) return;
+    if (!self || !self->m_data) return;
+    /* QImage refuses QColor writes to monochrome and paletted storage;
+     * callers must use setPixel() with an explicit palette index instead. */
+    if (self->m_data->m_format == XImageFormat_Mono ||
+        self->m_data->m_format == XImageFormat_MonoLSB ||
+        self->m_data->m_format == XImageFormat_Indexed8)
+        return;
     XImage_setPixel(self, x, y, XColor_rgba(color));
 }
 
@@ -934,6 +1315,20 @@ static uint8_t XImage_unpremultiply8(uint8_t value, uint8_t alpha)
     if (alpha == 0 || alpha == 255) return value;
     unsigned result = ((unsigned)value * 255u + alpha / 2u) / alpha;
     return (uint8_t)(result > 255u ? 255u : result);
+}
+
+static uint16_t XImage_unpremultiply16(uint16_t value, uint16_t alpha)
+{
+    uint64_t result;
+    if (alpha == 0 || alpha == 65535) return value;
+    result = ((uint64_t)value * 65535u + alpha / 2u) / alpha;
+    return (uint16_t)(result > 65535u ? 65535u : result);
+}
+
+static uint16_t XImage_premultiply16(uint16_t value, uint16_t alpha)
+{
+    uint64_t product = (uint64_t)value * alpha;
+    return (uint16_t)((product + (product >> 16) + 0x8000u) >> 16);
 }
 
 static uint16_t XImage_floatToHalf(float value)
@@ -1391,11 +1786,7 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
     if (rw <= 0 || rh <= 0) return;
     XImage_init_ex(out, rw, rh, self->m_data->m_format);
     if (!out->m_data) return;
-    out->m_data->m_dpmX = self->m_data->m_dpmX;
-    out->m_data->m_dpmY = self->m_data->m_dpmY;
-    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-    out->m_data->m_offsetX = self->m_data->m_offsetX;
-    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    XImageData_copyMetadata(out->m_data, self->m_data);
     if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System((size_t)self->m_data->m_colorCount * sizeof(uint32_t));
@@ -1444,11 +1835,7 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
                                      format, 0, NULL, NULL, NULL);
     if (!out->m_data)
         return;
-    out->m_data->m_dpmX = self->m_data->m_dpmX;
-    out->m_data->m_dpmY = self->m_data->m_dpmY;
-    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-    out->m_data->m_offsetX = self->m_data->m_offsetX;
-    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    XImageData_copyMetadata(out->m_data, self->m_data);
     if (format == XImageFormat_Mono || format == XImageFormat_MonoLSB)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System(2 * sizeof(uint32_t));
@@ -1500,8 +1887,7 @@ void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
     XImage_convertToFormat(self, format, flags, out);
     if (!out || !out->m_data || !colorTable || colorCount <= 0 ||
         (format != XImageFormat_Mono && format != XImageFormat_MonoLSB &&
-         format != XImageFormat_Indexed8) ||
-        (format == XImageFormat_Indexed8 && colorCount > 256))
+         format != XImageFormat_Indexed8))
         return;
     XImage_setColorCount(out, colorCount);
     if (!out->m_data->m_colorTable || out->m_data->m_colorCount != colorCount)
@@ -1531,19 +1917,19 @@ bool XImage_convertToFormatInPlace(XImage* self, XImageFormat format, uint32_t f
 bool XImage_reinterpretAsFormat(XImage* self, XImageFormat format)
 {
     if (!self || !self->m_data || format <= XImageFormat_Invalid || format >= XImageFormat_NImageFormats) return false;
-    // 检查格式兼容性（相同位深度）
+    if (self->m_data->m_format == format)
+        return true;
+    /* QImage only permits a reinterpretation when the storage depth is
+     * unchanged.  Detach shared data, but keep a unique image's cache key
+     * because the bytes themselves are not modified. */
     if (XImageFormat_bitDepth(self->m_data->m_format) != XImageFormat_bitDepth(format))
         return false;
-    XImage_detach(self);
+    if (!XImage_isDetached(self))
+        XImage_detach(self);
+    if (!XImage_isDetached(self))
+        return false;
     self->m_data->m_format = format;
     self->m_data->m_depth = XImageFormat_bitDepth(format);
-    if (format != XImageFormat_Indexed8 && format != XImageFormat_Mono && format != XImageFormat_MonoLSB)
-    {
-        XFree_System(self->m_data->m_colorTable);
-        self->m_data->m_colorTable = NULL;
-        self->m_data->m_colorCount = 0;
-    }
-    XImageData_markDirty(self->m_data);
     return true;
 }
 
@@ -2065,6 +2451,13 @@ int XImage_textCount(const XImage* self)
     return self && self->m_data ? (int)XStringList_size_base((const XContainer*)&self->m_data->m_textKeys) : 0;
 }
 
+XStringList* XImage_textKeys(const XImage* self)
+{
+    if (!self || !self->m_data)
+        return XStringList_create();
+    return XStringList_create_copy(&self->m_data->m_textKeys);
+}
+
 const char* XImage_textKey_2(const XImage* self, int index)
 {
     return XString_toUtf8(XImage_textKey_const(self, index));
@@ -2086,12 +2479,36 @@ const char* XImage_text_2(const XImage* self, const char* key)
 {
     XString* keyString;
     const XString* value;
-    if (!key) return NULL;
+    XString* aggregated;
+    static const char emptyUtf8[] = "";
+    /* QImage::text() 返回值类型是 QString：空图像、空键和缺失键均为
+       空字符串，而不是可区分的空指针。 */
+    if (!self || !self->m_data || !key) return emptyUtf8;
     keyString = XString_create_utf8(key);
     if (!keyString) return NULL;
+    if (XString_isEmpty_base((const XContainer*)keyString))
+    {
+        if (XString_isEmpty_base((const XContainer*)&self->m_data->m_textAll))
+        {
+            aggregated = XImageData_buildAllText(self->m_data);
+            if (!aggregated)
+            {
+                XString_delete_base((XClass*)keyString);
+                return NULL;
+            }
+            XString_assign(&self->m_data->m_textAll, aggregated);
+            XString_delete_base((XClass*)aggregated);
+        }
+        XString_delete_base((XClass*)keyString);
+        if (XString_isEmpty_base((const XContainer*)&self->m_data->m_textAll))
+            return emptyUtf8;
+        return XString_toUtf8(&self->m_data->m_textAll);
+    }
     value = XImage_text_const(self, keyString);
-    XString_delete_base((XClass*)keyString);
-    return value ? XString_toUtf8(value) : NULL;
+    if (keyString) XString_delete_base((XClass*)keyString);
+    if (!value) return emptyUtf8;
+    return XString_isEmpty_base((const XContainer*)value) ? emptyUtf8
+                                                          : XString_toUtf8(value);
 }
 
 void XImage_setText_2(XImage* self, const char* key, const char* value)
@@ -2108,14 +2525,22 @@ void XImage_setText_2(XImage* self, const char* key, const char* value)
 
 XString* XImage_text(const XImage* self, const XString* key)
 {
-    const XString* value = XImage_text_const(self, key);
-    return value ? XString_create_copy(value) : XString_create();
+    if (!self || !self->m_data) return XString_create_utf8("");
+    if (!key || XString_isEmpty_base((const XContainer*)key))
+    {
+        XString* aggregated = XImageData_buildAllText(self->m_data);
+        return aggregated ? aggregated : XString_create_utf8("");
+    }
+    {
+        const XString* value = XImage_text_const(self, key);
+        return value ? XString_create_copy(value) : XString_create_utf8("");
+    }
 }
 
 const XString* XImage_text_const(const XImage* self, const XString* key)
 {
     int count;
-    if (!self || !self->m_data || !key) return NULL;
+    if (!self || !self->m_data || !key || XString_isEmpty_base((const XContainer*)key)) return NULL;
     count = XImage_textCount(self);
     for (int i = 0; i < count; ++i)
     {
@@ -2129,6 +2554,7 @@ const XString* XImage_text_const(const XImage* self, const XString* key)
 void XImage_setText(XImage* self, const XString* key, const XString* value)
 {
     int count;
+    int insertIndex = 0;
     if (!self || !self->m_data || !key || !value) return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
@@ -2136,22 +2562,31 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
     for (int i = 0; i < count; ++i)
     {
         XString* item = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textKeys, i);
-        if (item && XString_equals(item, key, XChar_CaseSensitive))
+        if (!item) continue;
+        if (XString_equals(item, key, XChar_CaseSensitive))
         {
             XString* target = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textValues, i);
             if (!target) return;
             XString_copy_base((XClass*)target, (const XClass*)value);
+            XImageData_clearTextAll(self->m_data);
             XImageData_markDirty(self->m_data);
             return;
         }
+        if (XString_compare(item, key) > 0)
+        {
+            insertIndex = i;
+            break;
+        }
+        insertIndex = i + 1;
     }
-    if (!XStringList_push_back_base((XVector*)&self->m_data->m_textKeys, (void*)key) ||
-        !XStringList_push_back_base((XVector*)&self->m_data->m_textValues, (void*)value))
+    if (!XStringList_insert_base((XVector*)&self->m_data->m_textKeys, insertIndex, (void*)key) ||
+        !XStringList_insert_base((XVector*)&self->m_data->m_textValues, insertIndex, (void*)value))
     {
         if (XImage_textCount(self) > count)
-            XStringList_remove_base((XVector*)&self->m_data->m_textKeys, count, 1);
+            XStringList_remove_base((XVector*)&self->m_data->m_textKeys, insertIndex, 1);
         return;
     }
+    XImageData_clearTextAll(self->m_data);
     XImageData_markDirty(self->m_data);
 }
 
@@ -2185,13 +2620,26 @@ void XImage_setDotsPerMeterY(XImage* self, int val)
 
 float XImage_devicePixelRatio(const XImage* self)
 {
-    return (self && self->m_data && self->m_data->m_devicePixelRatio > 0.0f)
-        ? self->m_data->m_devicePixelRatio : 1.0f;
+    return (self && self->m_data) ? self->m_data->m_devicePixelRatio : 1.0f;
+}
+
+void XImage_deviceIndependentSize(const XImage* self, XSizeF* out)
+{
+    float ratio;
+    if (!out) return;
+    if (!self || !self->m_data) {
+        out->width = 0.0f;
+        out->height = 0.0f;
+        return;
+    }
+    ratio = self->m_data->m_devicePixelRatio;
+    out->width = (float)self->m_data->m_width / ratio;
+    out->height = (float)self->m_data->m_height / ratio;
 }
 
 void XImage_setDevicePixelRatio(XImage* self, float scaleFactor)
 {
-    if (!self || !self->m_data || scaleFactor <= 0.0f || scaleFactor == XImage_devicePixelRatio(self))
+    if (!self || !self->m_data || scaleFactor == XImage_devicePixelRatio(self))
         return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
@@ -2377,7 +2825,10 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
     const int depth = self->m_data->m_depth;
-    if (XImageFormat_isPremultiplied(self->m_data->m_format))
+    if (XImageFormat_isPremultiplied(self->m_data->m_format) &&
+        self->m_data->m_format != XImageFormat_RGBA64_Premultiplied &&
+        self->m_data->m_format != XImageFormat_RGBA16FPx4_Premultiplied &&
+        self->m_data->m_format != XImageFormat_RGBA32FPx4_Premultiplied)
     {
         XImageFormat original = self->m_data->m_format;
         XImageFormat intermediate = depth > 128 ? XImageFormat_RGBA32FPx4 :
@@ -2412,6 +2863,88 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
             for (int i = 0; i < count; ++i) line[i] ^= 0xffu;
         }
     }
+    else if (self->m_data->m_format >= XImageFormat_RGBX16FPx4 &&
+             self->m_data->m_format <= XImageFormat_RGBA16FPx4_Premultiplied)
+    {
+        const bool premultiplied = self->m_data->m_format == XImageFormat_RGBA16FPx4_Premultiplied;
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            size_t count = (size_t)self->m_data->m_bytesPerLine / 8u;
+            for (size_t x = 0; x < count; ++x)
+            {
+                uint8_t* p = line + x * 8u;
+                float r = XImage_halfToFloat(XImage_load16(p));
+                float g = XImage_halfToFloat(XImage_load16(p + 2));
+                float b = XImage_halfToFloat(XImage_load16(p + 4));
+                float a = XImage_halfToFloat(XImage_load16(p + 6));
+                if (premultiplied)
+                {
+                    if (a <= 0.0f) r = g = b = a = 0.0f;
+                    else if (a < 1.0f) { r /= a; g /= a; b /= a; }
+                }
+                r = 1.0f - r; g = 1.0f - g; b = 1.0f - b;
+                if (mode == XImageInvertMode_InvertRgba) a = 1.0f - a;
+                if (premultiplied) { r *= a; g *= a; b *= a; }
+                XImage_store16(p, XImage_floatToHalf(r));
+                XImage_store16(p + 2, XImage_floatToHalf(g));
+                XImage_store16(p + 4, XImage_floatToHalf(b));
+                if (mode == XImageInvertMode_InvertRgba || premultiplied)
+                    XImage_store16(p + 6, XImage_floatToHalf(a));
+            }
+        }
+    }
+    else if (self->m_data->m_format == XImageFormat_RGBA64_Premultiplied)
+    {
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            size_t count = (size_t)self->m_data->m_bytesPerLine / 8u;
+            for (size_t x = 0; x < count; ++x)
+            {
+                uint8_t* p = line + x * 8u;
+                uint16_t a = XImage_load16(p + 6);
+                uint16_t r = XImage_unpremultiply16(XImage_load16(p), a);
+                uint16_t g = XImage_unpremultiply16(XImage_load16(p + 2), a);
+                uint16_t b = XImage_unpremultiply16(XImage_load16(p + 4), a);
+                r = (uint16_t)~r; g = (uint16_t)~g; b = (uint16_t)~b;
+                if (mode == XImageInvertMode_InvertRgba) a = (uint16_t)~a;
+                XImage_store16(p, XImage_premultiply16(r, a));
+                XImage_store16(p + 2, XImage_premultiply16(g, a));
+                XImage_store16(p + 4, XImage_premultiply16(b, a));
+                if (mode == XImageInvertMode_InvertRgba)
+                    XImage_store16(p + 6, a);
+            }
+        }
+    }
+    else if (self->m_data->m_format >= XImageFormat_RGBX32FPx4 &&
+             self->m_data->m_format <= XImageFormat_RGBA32FPx4_Premultiplied)
+    {
+        const bool premultiplied = self->m_data->m_format == XImageFormat_RGBA32FPx4_Premultiplied;
+        for (int y = 0; y < self->m_data->m_height; ++y)
+        {
+            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
+            for (int x = 0; x < self->m_data->m_width; ++x)
+            {
+                uint8_t* p = line + (size_t)x * 16u;
+                float r, g, b, a;
+                memcpy(&r, p, sizeof(float)); memcpy(&g, p + 4, sizeof(float));
+                memcpy(&b, p + 8, sizeof(float)); memcpy(&a, p + 12, sizeof(float));
+                if (premultiplied)
+                {
+                    if (a <= 0.0f) r = g = b = a = 0.0f;
+                    else if (a < 1.0f) { r /= a; g /= a; b /= a; }
+                }
+                r = 1.0f - r; g = 1.0f - g; b = 1.0f - b;
+                if (mode == XImageInvertMode_InvertRgba) a = 1.0f - a;
+                if (premultiplied) { r *= a; g *= a; b *= a; }
+                memcpy(p, &r, sizeof(float)); memcpy(p + 4, &g, sizeof(float));
+                memcpy(p + 8, &b, sizeof(float));
+                if (mode == XImageInvertMode_InvertRgba || premultiplied)
+                    memcpy(p + 12, &a, sizeof(float));
+            }
+        }
+    }
     else if (depth == 64)
     {
         for (int y = 0; y < self->m_data->m_height; ++y)
@@ -2424,32 +2957,55 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
             }
         }
     }
-    else if (depth == 128)
-    {
-        for (int y = 0; y < self->m_data->m_height; ++y)
-        {
-            uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
-            for (int x = 0; x < self->m_data->m_width; ++x)
-            {
-                float value;
-                for (int c = 0; c < 3; ++c) { memcpy(&value, line + x * 16 + c * 4, sizeof(value)); value = 1.0f - value; memcpy(line + x * 16 + c * 4, &value, sizeof(value)); }
-                if (mode == XImageInvertMode_InvertRgba) { memcpy(&value, line + x * 16 + 12, sizeof(value)); value = 1.0f - value; memcpy(line + x * 16 + 12, &value, sizeof(value)); }
-            }
-        }
-    }
     else
     {
-        uint32_t xorbits = mode == XImageInvertMode_InvertRgba ? 0xffffffffu : 0x00ffffffu;
-        if (self->m_data->m_format == XImageFormat_RGBX8888) xorbits = 0x00ffffffu;
-        if (self->m_data->m_format == XImageFormat_RGBA8888 && mode == XImageInvertMode_InvertRgb) xorbits = 0x00ffffffu;
-        if (self->m_data->m_format == XImageFormat_RGB30 || self->m_data->m_format == XImageFormat_BGR30) xorbits = 0x3fffffffu;
+        uint32_t xorbits;
+        switch (self->m_data->m_format)
+        {
+            case XImageFormat_RGB32:
+                /* RGB32 has an opaque storage byte which Qt never inverts. */
+                xorbits = 0x00ffffffu;
+                break;
+            case XImageFormat_ARGB32:
+                xorbits = mode == XImageInvertMode_InvertRgba ? 0xffffffffu : 0x00ffffffu;
+                break;
+            case XImageFormat_RGBX8888:
+#if IS_BIG_ENDIAN
+                xorbits = 0xffffff00u;
+#else
+                xorbits = 0x00ffffffu;
+#endif
+                break;
+            case XImageFormat_RGBA8888:
+                if (mode == XImageInvertMode_InvertRgba)
+                    xorbits = 0xffffffffu;
+                else
+                {
+#if IS_BIG_ENDIAN
+                    xorbits = 0xffffff00u;
+#else
+                    xorbits = 0x00ffffffu;
+#endif
+                }
+                break;
+            case XImageFormat_BGR30:
+            case XImageFormat_RGB30:
+                xorbits = 0x3fffffffu;
+                break;
+            case XImageFormat_CMYK8888:
+                /* Qt marks invertPixels(CMYK8888) unreachable; leave storage unchanged. */
+                return;
+            default:
+                return;
+        }
         for (int y = 0; y < self->m_data->m_height; ++y)
         {
             uint8_t* line = self->m_data->m_data + (size_t)y * (size_t)self->m_data->m_bytesPerLine;
-            for (int x = 0; x < self->m_data->m_width; ++x)
+            size_t count = (size_t)self->m_data->m_bytesPerLine / 4u;
+            for (size_t x = 0; x < count; ++x)
             {
-                uint32_t value = XImage_load32(line + x * 4);
-                XImage_store32(line + x * 4, value ^ xorbits);
+                uint32_t value = XImage_load32(line + x * 4u);
+                XImage_store32(line + x * 4u, value ^ xorbits);
             }
         }
     }

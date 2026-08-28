@@ -269,7 +269,14 @@ void XImageWriter_setTransformation(XImageWriter* self, XImageIOHandlerTransform
  */
 void XImageWriter_setText(XImageWriter* self, const XString* key, const XString* text);
 
-/** @brief 使用 XString 设置文本元数据；BMP 编码器不序列化该元数据。 */
+/**
+ * @brief 使用 UTF-8 键和值设置文本元数据。
+ * @param self 目标写入器对象指针。
+ * @param key 文本键；Qt 语义会先去除首尾空白并合并内部空白。
+ * @param text 文本值；Qt 语义会先去除首尾空白并合并内部空白。
+ * @note 多次调用会以两个换行符拼接为 Description 选项；最终是否写入由
+ *       当前图像处理器的 Description 能力决定。
+ */
 void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* text);
 
 /* ========== 写入操作 ========== */

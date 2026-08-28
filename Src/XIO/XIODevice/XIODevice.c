@@ -380,11 +380,17 @@ int64_t XIODevice_peek_1(XIODevice* self, char* data, int64_t maxlen)
 
 int64_t XIODevice_peek_2(XIODevice* self, XByteArray* buff, int64_t maxlen)
 {
-	if (!self || !buff) return 0;
-	int64_t len = XIODevice_bytesAvailable_base(self);
-	len = len > maxlen ? maxlen : len;
-	XByteArray_resize_base(buff, len);
-	return XIODevice_peek_1(self, XContainerDataAddr(buff), len);
+	int64_t len;
+	if (!self || !buff || maxlen <= 0) return 0;
+	/* Qt QIODevice::peek() may fill the requested amount from the backing
+	 * device even when the internal read buffer currently contains less data.
+	 * Looking only at bytesAvailable() here made a preceding short plugin
+	 * probe permanently truncate every later probe (notably SVG dimensions). */
+	if (!XByteArray_resize_base(buff, maxlen)) return 0;
+	len = XIODevice_peek_1(self, XContainerDataAddr(buff), maxlen);
+	if (len < 0) len = 0;
+	XContainerSize(buff) = (size_t)len;
+	return len;
 }
 
 XByteArray* XIODevice_peek_3(XIODevice* self, int64_t maxlen)

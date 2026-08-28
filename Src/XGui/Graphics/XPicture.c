@@ -22,6 +22,16 @@ static const uint8_t g_xpictureMagic[XPICTURE_MAGIC_SIZE] =
     { 'X', 'P', 'I', 'C', 'T', 'U', 'R', 'E' };
 
 enum { XPICTURE_IMAGE_FIXED_SIZE = 52 };
+enum
+{
+    XPICTURE_SHAPE_PAYLOAD_SIZE = 40,
+    XPICTURE_POINT_HEADER_SIZE = 4,
+    XPICTURE_POLYGON_HEADER_SIZE = 12,
+    XPICTURE_MAX_POINTS = 65535,
+    XPICTURE_PATH_HEADER_SIZE = 8,
+    XPICTURE_PATH_ELEMENT_SIZE = 12,
+    XPICTURE_MAX_PATH_ELEMENTS = 65535
+};
 
 static uint16_t XPicture_getU16(const uint8_t* p)
 {
@@ -37,6 +47,14 @@ static uint32_t XPicture_getU32(const uint8_t* p)
 static int32_t XPicture_getI32(const uint8_t* p)
 {
     return (int32_t)XPicture_getU32(p);
+}
+
+static float XPicture_getF32(const uint8_t* p)
+{
+    uint32_t bits = XPicture_getU32(p);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
 }
 
 static void XPicture_putU16(uint8_t* p, uint16_t value)
@@ -56,6 +74,13 @@ static void XPicture_putU32(uint8_t* p, uint32_t value)
 static void XPicture_putI32(uint8_t* p, int32_t value)
 {
     XPicture_putU32(p, (uint32_t)value);
+}
+
+static void XPicture_putF32(uint8_t* p, float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    XPicture_putU32(p, bits);
 }
 
 static uint32_t XPicture_checksum(const uint8_t* data, uint32_t size)
@@ -106,6 +131,80 @@ static bool XPicture_validateImagePayload(const uint8_t* payload, uint32_t lengt
     return true;
 }
 
+static bool XPicture_validatePointsPayload(const uint8_t* payload,
+                                              uint32_t length,
+                                              uint32_t minCount,
+                                              uint32_t headerSize)
+{
+    uint32_t count;
+    uint64_t required;
+    if (!payload || length < headerSize) return false;
+    count = XPicture_getU32(payload);
+    if (count < minCount || count > XPICTURE_MAX_POINTS) return false;
+    required = (uint64_t)headerSize + (uint64_t)count * 8u;
+    return required == length;
+}
+
+static bool XPicture_validateShapePayload(const uint8_t* payload,
+                                          uint32_t length)
+{
+    if (!payload || length != XPICTURE_SHAPE_PAYLOAD_SIZE) return false;
+    if (XPicture_getI32(payload) < 1 || XPicture_getI32(payload) > 5)
+        return false;
+    return XPicture_getU32(payload + 28u) <= 1u;
+}
+
+static bool XPicture_validatePolygonPayload(const uint8_t* payload,
+                                            uint32_t length)
+{
+    if (!XPicture_validatePointsPayload(payload, length, 2u,
+                                        XPICTURE_POLYGON_HEADER_SIZE))
+        return false;
+    return XPicture_getU32(payload + 4u) <= 1u &&
+           XPicture_getU32(payload + 8u) <= 1u;
+}
+
+#if XPAINTER_PATH_ON
+static bool XPicture_validatePathPayload(const uint8_t* payload,
+                                         uint32_t length)
+{
+    uint32_t op, count, i, pendingCurveData = 0u;
+    uint64_t required;
+    if (!payload || length < XPICTURE_PATH_HEADER_SIZE) return false;
+    op = XPicture_getU32(payload);
+    count = XPicture_getU32(payload + 4);
+    if (op < (uint32_t)XPainterPathOp_Draw ||
+        op > (uint32_t)XPainterPathOp_Stroke ||
+        count == 0u || count > XPICTURE_MAX_PATH_ELEMENTS)
+        return false;
+    required = (uint64_t)XPICTURE_PATH_HEADER_SIZE +
+               (uint64_t)count * XPICTURE_PATH_ELEMENT_SIZE;
+    if (required != length) return false;
+    for (i = 0; i < count; ++i)
+    {
+        const uint8_t* element = payload + XPICTURE_PATH_HEADER_SIZE +
+                                 i * XPICTURE_PATH_ELEMENT_SIZE;
+        uint32_t type = XPicture_getU32(element);
+        if (type > (uint32_t)XPainterPathElement_CurveToData)
+            return false;
+        if (!isfinite(XPicture_getF32(element + 4)) ||
+            !isfinite(XPicture_getF32(element + 8)))
+            return false;
+        if (type == (uint32_t)XPainterPathElement_CurveTo)
+            pendingCurveData = 2u;
+        else if (type == (uint32_t)XPainterPathElement_CurveToData)
+        {
+            if (pendingCurveData == 0u)
+                return false;
+            --pendingCurveData;
+        }
+        else
+            pendingCurveData = 0u;
+    }
+    return pendingCurveData == 0u;
+}
+#endif /* XPAINTER_PATH_ON */
+
 static bool XPicture_validateStreamData(const char* data, uint32_t size)
 {
     const uint8_t* bytes = (const uint8_t*)data;
@@ -134,13 +233,47 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         offset += XPICTURE_RECORD_HEADER_SIZE;
         if (length > size - offset) return false;
         payload = bytes + offset;
+        if (opcode < XPictureOpcode_DrawLine || opcode > XPictureOpcode_SetPen)
+            return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
+            (opcode == XPictureOpcode_SetPen && length != 20u) ||
             (opcode == XPictureOpcode_FillRect && length != 20u) ||
             (opcode == XPictureOpcode_DrawImage &&
              !XPicture_validateImagePayload(payload, length)) ||
-            ((opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore) && length != 0u) ||
-            opcode < XPictureOpcode_DrawLine || opcode > XPictureOpcode_Restore)
+            ((opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore) && length != 0u))
             return false;
+#if XPAINTER_SHAPE_ON
+        if (opcode == XPictureOpcode_DrawShape &&
+            !XPicture_validateShapePayload(payload, length))
+            return false;
+#else
+        if (opcode == XPictureOpcode_DrawShape)
+            return false;
+#endif
+#if XPAINTER_POLYGON_ON
+        if ((opcode == XPictureOpcode_DrawPolyline &&
+             !XPicture_validatePointsPayload(payload, length, 2u,
+                                             XPICTURE_POINT_HEADER_SIZE)) ||
+            (opcode == XPictureOpcode_DrawPolygon &&
+             !XPicture_validatePolygonPayload(payload, length)) ||
+            (opcode == XPictureOpcode_DrawPoints &&
+             !XPicture_validatePointsPayload(payload, length, 1u,
+                                             XPICTURE_POINT_HEADER_SIZE)))
+            return false;
+#else
+        if (opcode == XPictureOpcode_DrawPolyline ||
+            opcode == XPictureOpcode_DrawPolygon ||
+            opcode == XPictureOpcode_DrawPoints)
+            return false;
+#endif
+#if XPAINTER_PATH_ON
+        if (opcode == XPictureOpcode_DrawPath &&
+            !XPicture_validatePathPayload(payload, length))
+            return false;
+#else
+        if (opcode == XPictureOpcode_DrawPath)
+            return false;
+#endif
         offset += length;
     }
     return offset == size && commandBytes == offset - XPICTURE_HEADER_SIZE;
@@ -512,6 +645,20 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2)
     return true;
 }
 
+bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
+                           int width, int cap, int join)
+{
+    uint8_t payload[20];
+    if (!self) return false;
+    XPicture_putU32(payload + 0, color);
+    XPicture_putI32(payload + 4, style);
+    XPicture_putI32(payload + 8, width);
+    XPicture_putI32(payload + 12, cap);
+    XPicture_putI32(payload + 16, join);
+    return XPicture_appendRecord(self, XPictureOpcode_SetPen, payload,
+                                 sizeof(payload));
+}
+
 bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color)
 {
     uint8_t payload[20];
@@ -526,6 +673,222 @@ bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color)
     XPicture_updateBounds(self, rect);
     return true;
 }
+
+static void XPicture_updatePointsBounds(XPicture* self,
+                                            const XPoint* points, int count)
+{
+    XRect bounds;
+    int64_t left, top, right, bottom;
+    int i;
+    if (!points || count <= 0) return;
+    left = right = points[0].x;
+    top = bottom = points[0].y;
+    for (i = 1; i < count; ++i)
+    {
+        if (points[i].x < left) left = points[i].x;
+        if (points[i].x > right) right = points[i].x;
+        if (points[i].y < top) top = points[i].y;
+        if (points[i].y > bottom) bottom = points[i].y;
+    }
+    if (right - left >= INT_MAX || bottom - top >= INT_MAX) return;
+    bounds.x = (int)left;
+    bounds.y = (int)top;
+    bounds.width = (int)(right - left + 1);
+    bounds.height = (int)(bottom - top + 1);
+    XPicture_updateBounds(self, &bounds);
+}
+
+bool XPicture_recordDrawShape(XPicture* self, int shapeOp, const XRect* rect,
+                              int startAngle, int spanAngle, bool filled,
+                              int xRadius, int yRadius)
+{
+    uint8_t payload[XPICTURE_SHAPE_PAYLOAD_SIZE];
+    XRect normalized;
+    if (!self || !rect) return false;
+    normalized = XRect_normalized(rect);
+    if (normalized.width <= 0 || normalized.height <= 0 || shapeOp < 1 ||
+        shapeOp > 5)
+        return true;
+    memset(payload, 0, sizeof(payload));
+    XPicture_putI32(payload + 0, shapeOp);
+    XPicture_putI32(payload + 4, normalized.x);
+    XPicture_putI32(payload + 8, normalized.y);
+    XPicture_putI32(payload + 12, normalized.width);
+    XPicture_putI32(payload + 16, normalized.height);
+    XPicture_putI32(payload + 20, startAngle);
+    XPicture_putI32(payload + 24, spanAngle);
+    XPicture_putU32(payload + 28, filled ? 1u : 0u);
+    XPicture_putI32(payload + 32, xRadius);
+    XPicture_putI32(payload + 36, yRadius);
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawShape, payload,
+                               sizeof(payload)))
+        return false;
+    XPicture_updateBounds(self, &normalized);
+    return true;
+}
+
+bool XPicture_recordDrawPolyline(XPicture* self, const XPoint* points,
+                                 int count)
+{
+    uint8_t* payload;
+    uint32_t countU;
+    uint32_t payloadSize;
+    int i;
+    if (!self || !points || count < 2) return true;
+    if (count > XPICTURE_MAX_POINTS) return false;
+    countU = (uint32_t)count;
+    payloadSize = XPICTURE_POINT_HEADER_SIZE + countU * 8u;
+    payload = (uint8_t*)XMalloc_System(payloadSize);
+    if (!payload) return false;
+    XPicture_putU32(payload, countU);
+    for (i = 0; i < count; ++i)
+    {
+        XPicture_putI32(payload + 4 + (uint32_t)i * 8u, points[i].x);
+        XPicture_putI32(payload + 8 + (uint32_t)i * 8u, points[i].y);
+    }
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPolyline, payload,
+                               payloadSize))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updatePointsBounds(self, points, count);
+    return true;
+}
+
+bool XPicture_recordDrawPolygon(XPicture* self, const XPoint* points, int count,
+                                bool filled, int fillRule)
+{
+    uint8_t* payload;
+    uint32_t countU;
+    uint32_t payloadSize;
+    int i;
+    if (!self || !points || count < 2) return true;
+    if (count > XPICTURE_MAX_POINTS || fillRule < 0 || fillRule > 1)
+        return false;
+    countU = (uint32_t)count;
+    payloadSize = XPICTURE_POLYGON_HEADER_SIZE + countU * 8u;
+    payload = (uint8_t*)XMalloc_System(payloadSize);
+    if (!payload) return false;
+    XPicture_putU32(payload, countU);
+    XPicture_putU32(payload + 4, filled ? 1u : 0u);
+    XPicture_putU32(payload + 8, (uint32_t)fillRule);
+    for (i = 0; i < count; ++i)
+    {
+        XPicture_putI32(payload + 12 + (uint32_t)i * 8u, points[i].x);
+        XPicture_putI32(payload + 16 + (uint32_t)i * 8u, points[i].y);
+    }
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPolygon, payload,
+                               payloadSize))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updatePointsBounds(self, points, count);
+    return true;
+}
+
+bool XPicture_recordDrawPoints(XPicture* self, const XPoint* points, int count)
+{
+    uint8_t* payload;
+    uint32_t countU;
+    uint32_t payloadSize;
+    int i;
+    if (!self || !points || count < 1) return true;
+    if (count > XPICTURE_MAX_POINTS) return false;
+    countU = (uint32_t)count;
+    payloadSize = XPICTURE_POINT_HEADER_SIZE + countU * 8u;
+    payload = (uint8_t*)XMalloc_System(payloadSize);
+    if (!payload) return false;
+    XPicture_putU32(payload, countU);
+    for (i = 0; i < count; ++i)
+    {
+        XPicture_putI32(payload + 4 + (uint32_t)i * 8u, points[i].x);
+        XPicture_putI32(payload + 8 + (uint32_t)i * 8u, points[i].y);
+    }
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPoints, payload,
+                               payloadSize))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updatePointsBounds(self, points, count);
+    return true;
+}
+
+#if XPAINTER_PATH_ON
+static void XPicture_updatePathBounds(XPicture* self,
+                                      const XPainterPath* path)
+{
+    XRect bounds;
+    float minX, minY, maxX, maxY;
+    int i, left, top, right, bottom;
+    if (!self || !path || path->m_elementCount <= 0) return;
+    minX = maxX = path->m_elements[0].m_x1;
+    minY = maxY = path->m_elements[0].m_y1;
+    for (i = 1; i < path->m_elementCount; ++i)
+    {
+        float x = path->m_elements[i].m_x1;
+        float y = path->m_elements[i].m_y1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+    left = (int)floorf(minX);
+    top = (int)floorf(minY);
+    right = (int)ceilf(maxX);
+    bottom = (int)ceilf(maxY);
+    if (right - left >= INT_MAX || bottom - top >= INT_MAX ||
+        left < INT_MIN || top < INT_MIN || left > INT_MAX || top > INT_MAX)
+        return;
+    bounds.x = left;
+    bounds.y = top;
+    bounds.width = right - left + 1;
+    bounds.height = bottom - top + 1;
+    XPicture_updateBounds(self, &bounds);
+}
+
+bool XPicture_recordDrawPath(XPicture* self, int pathOp,
+                             const struct XPainterPath* path)
+{
+    uint8_t* payload;
+    uint32_t countU, payloadSize;
+    uint32_t i;
+    if (!self || !path || path->m_elementCount <= 0) return true;
+    if (pathOp < (int)XPainterPathOp_Draw || pathOp > (int)XPainterPathOp_Stroke)
+        return false;
+    if (path->m_elementCount > XPICTURE_MAX_PATH_ELEMENTS) return false;
+    countU = (uint32_t)path->m_elementCount;
+    payloadSize = XPICTURE_PATH_HEADER_SIZE +
+                  countU * XPICTURE_PATH_ELEMENT_SIZE;
+    payload = (uint8_t*)XMalloc_System(payloadSize);
+    if (!payload) return false;
+    XPicture_putU32(payload, (uint32_t)pathOp);
+    XPicture_putU32(payload + 4, countU);
+    for (i = 0; i < countU; ++i)
+    {
+        uint8_t* dest = payload + XPICTURE_PATH_HEADER_SIZE +
+                        i * XPICTURE_PATH_ELEMENT_SIZE;
+        const XPainterPathElement* element = &path->m_elements[i];
+        XPicture_putU32(dest, (uint32_t)element->m_type);
+        XPicture_putF32(dest + 4, element->m_x1);
+        XPicture_putF32(dest + 8, element->m_y1);
+    }
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPath, payload,
+                               payloadSize))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updatePathBounds(self, path);
+    return true;
+}
+#endif /* XPAINTER_PATH_ON */
 
 bool XPicture_recordSave(XPicture* self)
 {
@@ -623,6 +986,60 @@ static void XPicture_imageDataCleanup(void* info)
     XFree_System(info);
 }
 
+#if XPAINTER_PATH_ON
+static bool XPicture_rebuildPath(const uint8_t* payload, XPainterPath* path)
+{
+    uint32_t count, i;
+    bool ok;
+    count = XPicture_getU32(payload + 4);
+    XPainterPath_init(path);
+    for (i = 0; i < count; ++i)
+    {
+        const uint8_t* element = payload + XPICTURE_PATH_HEADER_SIZE +
+                                 i * XPICTURE_PATH_ELEMENT_SIZE;
+        uint32_t type = XPicture_getU32(element);
+        float x = XPicture_getF32(element + 4);
+        float y = XPicture_getF32(element + 8);
+        if (type == (uint32_t)XPainterPathElement_MoveTo)
+            ok = XPainterPath_moveTo(path, x, y);
+        else if (type == (uint32_t)XPainterPathElement_LineTo)
+            ok = XPainterPath_lineTo(path, x, y);
+        else if (type == (uint32_t)XPainterPathElement_CurveTo)
+        {
+            const uint8_t* e1;
+            const uint8_t* e2;
+            if (i + 2u >= count)
+            {
+                XPainterPath_deinit(path);
+                return false;
+            }
+            e1 = element + XPICTURE_PATH_ELEMENT_SIZE;
+            e2 = e1 + XPICTURE_PATH_ELEMENT_SIZE;
+            if (XPicture_getU32(e1) != (uint32_t)XPainterPathElement_CurveToData ||
+                XPicture_getU32(e2) != (uint32_t)XPainterPathElement_CurveToData)
+            {
+                XPainterPath_deinit(path);
+                return false;
+            }
+            ok = XPainterPath_cubicTo(path, x, y,
+                                      XPicture_getF32(e1 + 4),
+                                      XPicture_getF32(e1 + 8),
+                                      XPicture_getF32(e2 + 4),
+                                      XPicture_getF32(e2 + 8));
+            i += 2u;
+        }
+        else
+            ok = false;
+        if (!ok)
+        {
+            XPainterPath_deinit(path);
+            return false;
+        }
+    }
+    return true;
+}
+#endif /* XPAINTER_PATH_ON */
+
 /*
  * 录制时虚线/点线已被拆分为若干实线段；回放时若画笔仍为虚线样式会被
  * 二次拆分，因此回放期间强制改用实线画笔，结束后恢复调用方原样式。
@@ -644,7 +1061,25 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
         const uint8_t* payload = bytes + offset + XPICTURE_RECORD_HEADER_SIZE;
         bool ok = false;
         offset += XPICTURE_RECORD_HEADER_SIZE;
-        if (opcode == XPictureOpcode_DrawLine)
+        if (opcode == XPictureOpcode_SetPen)
+        {
+            /* QPicture 的 updatePen 记录的是完整 QPen。这里保留同一
+               个便携快照；未编译的可选样式字段使用流中的值而不会
+               影响基础颜色 ABI。回放不调用公开 setter，避免在 Picture
+               后端上再次追加 SetPen 命令。 */
+            painter->m_state.m_penColor = XPicture_getU32(payload + 0);
+#if XPAINTER_PENSTYLE_ON
+            painter->m_state.m_penStyle =
+                (XPainterPenStyle)XPicture_getI32(payload + 4);
+            painter->m_state.m_penWidth = XPicture_getI32(payload + 8);
+            painter->m_state.m_penCap =
+                (XPainterPenCapStyle)XPicture_getI32(payload + 12);
+            painter->m_state.m_penJoin =
+                (XPainterPenJoinStyle)XPicture_getI32(payload + 16);
+#endif /* XPAINTER_PENSTYLE_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_DrawLine)
         {
             if (!painter->m_drawLine) return false;
             ok = painter->m_drawLine(painter, (int)XPicture_getI32(payload + 0),
@@ -662,6 +1097,149 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             rect.height = (int)XPicture_getI32(payload + 12);
             ok = painter->m_fillRect(painter, &rect, XPicture_getU32(payload + 16));
         }
+#if XPAINTER_SHAPE_ON
+        else if (opcode == XPictureOpcode_DrawShape)
+        {
+            XRect rect;
+            XPainterShapeOp shapeOp = (XPainterShapeOp)XPicture_getI32(payload);
+            int startAngle = (int)XPicture_getI32(payload + 20);
+            int spanAngle = (int)XPicture_getI32(payload + 24);
+            bool filled = XPicture_getU32(payload + 28) != 0u;
+            int xRadius = (int)XPicture_getI32(payload + 32);
+            int yRadius = (int)XPicture_getI32(payload + 36);
+            rect.x = (int)XPicture_getI32(payload + 4);
+            rect.y = (int)XPicture_getI32(payload + 8);
+            rect.width = (int)XPicture_getI32(payload + 12);
+            rect.height = (int)XPicture_getI32(payload + 16);
+            if (painter->m_drawShape)
+            {
+                ok = painter->m_drawShape(painter, shapeOp, &rect,
+                                         startAngle, spanAngle, filled,
+                                         xRadius, yRadius);
+            }
+            else
+            {
+                if (painter->m_deviceKind == XPainterDevice_None)
+                    return false;
+                switch (shapeOp)
+                {
+                case XPainterShapeOp_Ellipse:
+                    ok = XPainter_drawEllipse(painter, &rect);
+                    break;
+                case XPainterShapeOp_Arc:
+                    ok = XPainter_drawArc(painter, &rect, startAngle, spanAngle);
+                    break;
+                case XPainterShapeOp_Pie:
+                    ok = XPainter_drawPie(painter, &rect, startAngle, spanAngle);
+                    break;
+                case XPainterShapeOp_Chord:
+                    ok = XPainter_drawChord(painter, &rect, startAngle, spanAngle);
+                    break;
+                case XPainterShapeOp_RoundedRect:
+                    ok = XPainter_drawRoundedRect(painter, &rect, xRadius, yRadius);
+                    break;
+                default:
+                    return false;
+                }
+            }
+        }
+#endif /* XPAINTER_SHAPE_ON */
+#if XPAINTER_POLYGON_ON
+        else if (opcode == XPictureOpcode_DrawPolyline ||
+                 opcode == XPictureOpcode_DrawPolygon ||
+                 opcode == XPictureOpcode_DrawPoints)
+        {
+            uint32_t count = XPicture_getU32(payload);
+            XPoint* pts;
+            uint32_t base = (opcode == XPictureOpcode_DrawPolygon)
+                                ? 12u : 4u;
+            uint32_t i;
+            if (count == 0u) return false;
+            pts = (XPoint*)XMalloc_System((size_t)count * sizeof(XPoint));
+            if (!pts) return false;
+            for (i = 0; i < count; ++i)
+            {
+                pts[i].x = (int)XPicture_getI32(payload + base + i * 8u);
+                pts[i].y = (int)XPicture_getI32(payload + base + i * 8u + 4u);
+            }
+            if (opcode == XPictureOpcode_DrawPolyline)
+            {
+                if (painter->m_drawPolyline)
+                    ok = painter->m_drawPolyline(painter, pts, (int)count);
+                else
+                {
+                    if (painter->m_deviceKind == XPainterDevice_None)
+                    {
+                        XFree_System(pts);
+                        return false;
+                    }
+                    ok = XPainter_drawPolyline(painter, pts, (int)count);
+                }
+            }
+            else if (opcode == XPictureOpcode_DrawPolygon)
+            {
+                bool filled = XPicture_getU32(payload + 4) != 0u;
+                XPainterFillRule fillRule =
+                    (XPainterFillRule)XPicture_getU32(payload + 8);
+                if (painter->m_drawPolygon)
+                    ok = painter->m_drawPolygon(painter, pts, (int)count,
+                                                filled, fillRule);
+                else
+                {
+                    if (painter->m_deviceKind == XPainterDevice_None)
+                    {
+                        XFree_System(pts);
+                        return false;
+                    }
+                    (void)filled;
+                    ok = XPainter_drawPolygon(painter, pts, (int)count,
+                                              fillRule);
+                }
+            }
+            else
+            {
+                if (painter->m_drawPoints)
+                    ok = painter->m_drawPoints(painter, pts, (int)count);
+                else
+                {
+                    if (painter->m_deviceKind == XPainterDevice_None)
+                    {
+                        XFree_System(pts);
+                        return false;
+                    }
+                    ok = XPainter_drawPoints(painter, pts, (int)count);
+                }
+            }
+            XFree_System(pts);
+        }
+#endif /* XPAINTER_POLYGON_ON */
+#if XPAINTER_PATH_ON
+        else if (opcode == XPictureOpcode_DrawPath)
+        {
+            XPainterPath path;
+            XPainterPathOp pathOp = (XPainterPathOp)XPicture_getU32(payload);
+            if (!XPicture_rebuildPath(payload, &path)) return false;
+            if (painter->m_drawPath)
+                ok = painter->m_drawPath(painter, pathOp, &path);
+            else
+            {
+                if (painter->m_deviceKind == XPainterDevice_None)
+                {
+                    XPainterPath_deinit(&path);
+                    return false;
+                }
+                if (pathOp == XPainterPathOp_Draw)
+                    ok = XPainter_drawPath(painter, &path);
+                else if (pathOp == XPainterPathOp_Fill)
+                    ok = XPainter_fillPath(painter, &path);
+                else if (pathOp == XPainterPathOp_Stroke)
+                    ok = XPainter_strokePath(painter, &path);
+                else
+                    ok = false;
+            }
+            XPainterPath_deinit(&path);
+        }
+#endif /* XPAINTER_PATH_ON */
         else if (opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore)
         {
             if (opcode == XPictureOpcode_Save)

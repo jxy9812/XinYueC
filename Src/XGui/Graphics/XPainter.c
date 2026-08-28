@@ -1586,6 +1586,54 @@ static bool painterRecord_drawImage(XPainter* self, const XImage* image,
            XPicture_recordDrawImage(self->m_picture, image, x, y);
 }
 
+#if XPAINTER_SHAPE_ON
+static bool painterRecord_drawShape(XPainter* self, XPainterShapeOp op,
+                                    const XRect* rect, int startAngle,
+                                    int spanAngle, bool filled,
+                                    int xRadius, int yRadius)
+{
+    return self && self->m_picture && rect &&
+           XPicture_recordDrawShape(self->m_picture, (int)op, rect,
+                                    startAngle, spanAngle, filled,
+                                    xRadius, yRadius);
+}
+#endif /* XPAINTER_SHAPE_ON */
+
+#if XPAINTER_POLYGON_ON
+static bool painterRecord_drawPolyline(XPainter* self,
+                                       const XPoint* points, int count)
+{
+    return self && self->m_picture && points &&
+           XPicture_recordDrawPolyline(self->m_picture, points, count);
+}
+
+static bool painterRecord_drawPolygon(XPainter* self,
+                                      const XPoint* points, int count,
+                                      bool filled,
+                                      XPainterFillRule fillRule)
+{
+    return self && self->m_picture && points &&
+           XPicture_recordDrawPolygon(self->m_picture, points, count,
+                                      filled, (int)fillRule);
+}
+
+static bool painterRecord_drawPoints(XPainter* self,
+                                     const XPoint* points, int count)
+{
+    return self && self->m_picture && points &&
+           XPicture_recordDrawPoints(self->m_picture, points, count);
+}
+#endif /* XPAINTER_POLYGON_ON */
+
+#if XPAINTER_PATH_ON
+static bool painterRecord_drawPath(XPainter* self, XPainterPathOp op,
+                                   const XPainterPath* path)
+{
+    return self && self->m_picture && path &&
+           XPicture_recordDrawPath(self->m_picture, (int)op, path);
+}
+#endif /* XPAINTER_PATH_ON */
+
 /**
  * @brief      录制保存：先把当前状态压栈，录制成功才保留。
  */
@@ -1611,6 +1659,29 @@ static bool painterRecord_restore(XPainter* self)
     if (!XPicture_recordRestore(self->m_picture)) return false;
     painterStatePop(self);
     return true;
+}
+
+/* Qt 的 QPicturePaintEngine 在画笔状态脏标志变化时会写入 PdcSetPen。
+   XPainter 的便携流采用固定宽度快照，故即使可选的画笔样式能力被裁剪，
+   基础颜色仍可跨配置回放。调用方已经先更新本地状态；记录失败不回滚
+   setter 的 Qt 一致无返回值语义。 */
+static void painterRecord_penState(XPainter* self)
+{
+    int style = 1;
+    int width;
+    int cap = 0x10;
+    int join = 0x40;
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    width = self->m_state.m_penWidth;
+#if XPAINTER_PENSTYLE_ON
+    style = (int)self->m_state.m_penStyle;
+    cap = (int)self->m_state.m_penCap;
+    join = (int)self->m_state.m_penJoin;
+#endif /* XPAINTER_PENSTYLE_ON */
+    (void)XPicture_recordSetPen(self->m_picture, self->m_state.m_penColor,
+                                style, width, cap, join);
 }
 
 
@@ -2202,8 +2273,8 @@ static bool painterFillPolygonShape(XPainter* self, int n,
 /**
  * @brief      计算圆弧上若干采样点。
  * @param cx/cy/rx/ry 椭圆中心与半径。
- * @param startA 起始角（弧度）。
- * @param spanA  跨度角（弧度，可负）。
+ * @param startA 起始角（弧度，0 度位于 3 点钟方向，正角度逆时针）。
+ * @param spanA  跨度角（弧度，可负；在设备坐标中需反转 Y 轴）。
  * @param maxPts 最多采样点数。
  * @param xs/ys  输出坐标数组。
  * @param outN   输出实际点数。
@@ -2221,7 +2292,9 @@ static void painterArcPoints(float cx, float cy, float rx, float ry,
         float t = (float)i / (float)count;
         float a = startA + spanA * t;
         xs[i] = cx + rx * cosf(a);
-        ys[i] = cy + ry * sinf(a);
+        /* Qt 的角度约定以数学坐标为准，设备 Y 轴向下时反转正弦项，
+           使正跨度从 3 点钟方向沿逆时针方向经过 12 点钟方向。 */
+        ys[i] = cy - ry * sinf(a);
     }
     if (outN) *outN = count + 1;
 }
@@ -2304,15 +2377,15 @@ bool XPainter_begin_picture(XPainter* self, XPicture* picture)
     self->m_save = painterRecord_save;
     self->m_restore = painterRecord_restore;
 #if XPAINTER_SHAPE_ON
-    self->m_drawShape = NULL;
+    self->m_drawShape = painterRecord_drawShape;
 #endif
 #if XPAINTER_POLYGON_ON
-    self->m_drawPolyline = NULL;
-    self->m_drawPolygon = NULL;
-    self->m_drawPoints = NULL;
+    self->m_drawPolyline = painterRecord_drawPolyline;
+    self->m_drawPolygon = painterRecord_drawPolygon;
+    self->m_drawPoints = painterRecord_drawPoints;
 #endif
 #if XPAINTER_PATH_ON
-    self->m_drawPath = NULL;
+    self->m_drawPath = painterRecord_drawPath;
 #endif
 #if XPAINTER_VIEW_TRANSFORM_ON
     painterResetViewTransform(self);
@@ -3513,12 +3586,14 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
     normalized = XRect_normalized(rect);
     x = normalized.x; y = normalized.y; w = normalized.width; h = normalized.height;
     if (w <= 0 || h <= 0) return true;
+    /* Qt 在扩展引擎分派之前处理非正半径：任一半径小于等于零时
+       直接退化为普通矩形，因此不能把该输入交给圆角专用回调。 */
+    if (xr <= 0.0f || yr <= 0.0f)
+        return XPainter_drawRect(self, rect);
     if (self->m_drawShape)
         return self->m_drawShape(self, XPainterShapeOp_RoundedRect, &normalized,
                                  0, 0, painterBrushShouldFill(self),
                                  xRadius, yRadius);
-    if (xr <= 0.0f || yr <= 0.0f)
-        return XPainter_drawRect(self, rect);
     if (xr > (float)w * 0.5f) xr = (float)w * 0.5f;
     if (yr > (float)h * 0.5f) yr = (float)h * 0.5f;
     perCorner = 6;
@@ -4132,6 +4207,7 @@ void XPainter_setPen(XPainter* self, uint32_t color)
         self->m_state.m_penCap = XPainterPenCapStyle_SquareCap;
         self->m_state.m_penJoin = XPainterPenJoinStyle_BevelJoin;
 #endif /* XPAINTER_PENSTYLE_ON */
+        painterRecord_penState(self);
     }
 }
 
@@ -4146,6 +4222,7 @@ void XPainter_setPen_2(XPainter* self, XPainterPenStyle style)
     self->m_state.m_penStyle = style;
     self->m_state.m_penCap = XPainterPenCapStyle_SquareCap;
     self->m_state.m_penJoin = XPainterPenJoinStyle_BevelJoin;
+    painterRecord_penState(self);
 }
 #endif /* XPAINTER_PENSTYLE_ON */
 
@@ -4164,6 +4241,7 @@ void XPainter_setPenWidth(XPainter* self, int width)
     if (width < 0 || width >= (1 << 15))
         return;
     self->m_state.m_penWidth = width;
+    painterRecord_penState(self);
 }
 
 int XPainter_penWidth(const XPainter* self)
@@ -4214,6 +4292,7 @@ void XPainter_setPenStyle(XPainter* self, XPainterPenStyle style)
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     /* 对标 QPen::setStyle：Qt 不会替调用者校验枚举范围。 */
     self->m_state.m_penStyle = style;
+    painterRecord_penState(self);
 }
 
 XPainterPenStyle XPainter_penStyle(const XPainter* self)
@@ -4226,6 +4305,7 @@ void XPainter_setPenCapStyle(XPainter* self, XPainterPenCapStyle cap)
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     /* 对标 QPen::setCapStyle：未知位值原样保留。 */
     self->m_state.m_penCap = cap;
+    painterRecord_penState(self);
 }
 
 XPainterPenCapStyle XPainter_penCapStyle(const XPainter* self)
@@ -4238,6 +4318,7 @@ void XPainter_setPenJoinStyle(XPainter* self, XPainterPenJoinStyle join)
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     /* 对标 QPen::setJoinStyle：未知位值原样保留。 */
     self->m_state.m_penJoin = join;
+    painterRecord_penState(self);
 }
 
 XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self)

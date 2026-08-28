@@ -79,6 +79,54 @@ static XImageCodecFormat builtin_detectWithDevice(XIODevice* device)
     return format;
 }
 
+/* 按 Qt QBmpHandler::option(ImageFormat) 规则从 BMP 信息头推导像素格式。
+ * 仅窥视固定头部，不改变设备当前位置，也不触发整幅图像分配。 */
+static XImageFormat builtin_bmpImageFormat(XIODevice* device)
+{
+    XByteArray* bytes;
+    const uint8_t* data;
+    size_t size;
+    uint16_t bpp;
+    if (!device) return XImageFormat_Invalid;
+    bytes = XIODevice_peek_3(device, 34);
+    if (!bytes) return XImageFormat_Invalid;
+    data = (const uint8_t*)XByteArray_data(bytes);
+    size = (size_t)XByteArray_size_base((const XContainer*)bytes);
+    if (!data || size < 34 || data[0] != 'B' || data[1] != 'M') {
+        XByteArray_delete_base((XClass*)bytes);
+        return XImageFormat_Invalid;
+    }
+    bpp = (uint16_t)data[28] | ((uint16_t)data[29] << 8);
+    XByteArray_delete_base((XClass*)bytes);
+    switch (bpp) {
+        case 32:
+        case 24:
+        case 16:
+            return XImageFormat_RGB32;
+        case 8:
+        case 4:
+            return XImageFormat_Indexed8;
+        default:
+            return XImageFormat_Mono;
+    }
+}
+
+static XImageFormat builtin_imageFormat(XImageIOHandler* self)
+{
+    XImageCodecFormat format;
+    if (!self) return XImageFormat_Invalid;
+    format = builtin_formatFromString(XImageIOHandler_format_const(self));
+    if (format == XImageCodecFormat_Unknown)
+        format = builtin_detectWithDevice(XImageIOHandler_device(self));
+    if (format == XImageCodecFormat_Bmp)
+        return builtin_bmpImageFormat(XImageIOHandler_device(self));
+    /* The portable codec facade currently normalizes non-BMP decoded output
+       to ARGB32; keep that as the handler's conservative image format. */
+    if (format != XImageCodecFormat_Unknown)
+        return XImageFormat_ARGB32;
+    return XImageFormat_Invalid;
+}
+
 static bool builtin_writeBytes(XIODevice* device, const XByteArray* bytes)
 {
     const char* data;
@@ -99,13 +147,19 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
 {
     XIODevice* device;
     XImageCodecFormat format;
+    XImageCodecFormat detected;
     if (!self) return false;
     device = XImageIOHandler_device(self);
     if (!device) return false;
     format = builtin_formatFromString(XImageIOHandler_format_const(self));
     if (format == XImageCodecFormat_Unknown)
         format = builtin_detectWithDevice(device);
-    return format != XImageCodecFormat_Unknown && XImageCodec_canDecode(format);
+    if (format == XImageCodecFormat_Unknown || !XImageCodec_canDecode(format))
+        return false;
+    /* Qt treats the explicit format as a hint.  A readable handler still has
+     * to validate the device contents before accepting unrelated bytes. */
+    detected = builtin_detectWithDevice(device);
+    return detected == format;
 }
 
 static bool VXImageBuiltinHandler_read(XImageIOHandler* self, XImage* image)
@@ -155,11 +209,31 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
     return ok;
 }
 
+static void VXImageBuiltinHandler_setOption(XImageIOHandler* self,
+                                             XImageIOHandlerOption option,
+                                             const void* value)
+{
+    if (option == XImageIOHandlerOption_Quality)
+        XImageIOHandler_storeOptionValue(self, option, value);
+}
+
+static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
+                                         XImageIOHandlerOption option,
+                                         void* out)
+{
+    XImageIOHandlerOptionValue* value = (XImageIOHandlerOptionValue*)out;
+    if (option != XImageIOHandlerOption_ImageFormat || !value)
+        return false;
+    value->format = builtin_imageFormat((XImageIOHandler*)self);
+    return value->format != XImageFormat_Invalid;
+}
+
 static bool VXImageBuiltinHandler_supportsOption(const XImageIOHandler* self,
                                                  XImageIOHandlerOption option)
 {
     (void)self;
-    return option == XImageIOHandlerOption_Quality;
+    return option == XImageIOHandlerOption_Quality ||
+           option == XImageIOHandlerOption_ImageFormat;
 }
 
 static XVtable* XImageBuiltinHandler_class_init(void)
@@ -169,6 +243,8 @@ static XVtable* XImageBuiltinHandler_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VXImageBuiltinHandler_canRead);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Read, VXImageBuiltinHandler_read);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Write, VXImageBuiltinHandler_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Option, VXImageBuiltinHandler_option);
+    XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SetOption, VXImageBuiltinHandler_setOption);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_SupportsOption, VXImageBuiltinHandler_supportsOption);
     return XVTABLE_DEFAULT;
 }
@@ -191,12 +267,26 @@ static uint32_t VXImageBuiltinPlugin_capabilities(const XImageIOPlugin* self,
                                                   const XString* format)
 {
     uint32_t capability = builtin_capabilityForFormat(format);
+    XImageCodecFormat requested;
+    XImageCodecFormat detected;
     (void)self;
-    if (capability || (format && !XContainer_isEmpty_base((const XContainer*)format)))
+    if (format && !XContainer_isEmpty_base((const XContainer*)format)) {
+        if (!device) return capability;
+        requested = builtin_formatFromString(format);
+        if (requested == XImageCodecFormat_Unknown)
+            return 0;
+        detected = builtin_detectWithDevice(device);
+        /* Writing does not inspect the output device.  Reading does, as
+         * required by QImageIOPlugin::capabilities(). */
+        if (detected != requested)
+            capability &= ~(uint32_t)XImageIOPlugin_CanRead;
         return capability;
-    if (device && XImageCodec_canDecode(builtin_detectWithDevice(device)))
-        capability |= (uint32_t)XImageIOPlugin_CanRead;
-    return capability;
+    }
+    if (!device) return capability;
+    detected = builtin_detectWithDevice(device);
+    return (detected != XImageCodecFormat_Unknown &&
+            XImageCodec_canDecode(detected))
+        ? (uint32_t)XImageIOPlugin_CanRead : 0;
 }
 
 static XImageIOHandler* VXImageBuiltinPlugin_create(XImageIOPlugin* self,

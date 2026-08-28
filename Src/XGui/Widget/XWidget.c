@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * @file       XWidget.c
- * @brief      XWidget 控件基类实现（对标 Qt 6.8 QWidget，实现全部公开 API）。
- * @details    本文件实现 XWidget 的完整行为语义，逐一与 Qt 6.8
+ * @brief      XWidget 控件基类实现（对标 Qt 6.8 QWidget 的嵌入式 API）。
+ * @details    本文件实现 XWidget 已覆盖行为的 Qt 6.8 语义，逐一与 Qt 6.8
  *             qwidget.cpp / qwidget_p.h / qwidgetwindow.cpp 对齐：
  *              - 生命周期与属性：XObject 继承、控件属性位集（XWidgetAttribute
  *                与 Qt 数值一致）、窗口标志/类型（复用 XWindowFlags/XWindowType）；
@@ -127,6 +127,11 @@ static void XWidget_destroyWindow(XWidget* top);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
+static void XWidget_propagateEnabled(XWidget* self, bool enabled);
+static XEvent* XWidget_createPaintEvent(const XWidget* source);
+static void XWidget_propagateLayoutDirection(XWidget* self,
+                                             XWidgetLayoutDirection direction);
+static void XWidget_clearUnderMouseRecursive(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
@@ -173,15 +178,44 @@ static XWidget* XWidget_topLevel(const XWidget* self)
     return (XWidget*)w;
 }
 
+/** @brief 创建与 XWindowEvent 解析约定一致的绘制事件。 */
+static XEvent* XWidget_createPaintEvent(const XWidget* source)
+{
+    XRegion region;
+    XRect rect;
+    XWidget* top;
+    XEvent* event;
+    if (!source) return NULL;
+    XRegion_init(&region);
+    top = XWidget_topLevel(source);
+    if (top && top->m_dirty.count > 0)
+        XRegion_copy(&top->m_dirty, &region);
+    else {
+        rect = source->m_contentsRect;
+        XRegion_addRect(&region, &rect);
+    }
+#if XWINDOWEVENT_ON
+    event = (XEvent*)XPaintEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                           XEVENT_TYPE_PAINT, &region);
+#else
+    (void)region;
+    event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_PAINT);
+#endif /* XWINDOWEVENT_ON */
+    XRegion_deinit(&region);
+    return event;
+}
+
 /** @brief 判断 self 是否 child 的祖先控件。 */
 static bool XWidget_isAncestor(const XWidget* self, const XWidget* child)
 {
-    const XObject* parent;
-    if (!self || !child || self == child) return false;
-    parent = XObject_parent((XObject*)child);
-    while (parent) {
-        if ((const XWidget*)parent == self) return true;
-        parent = XObject_parent(parent);
+    const XWidget* widget;
+    if (!self || !child) return false;
+    widget = child;
+    while (widget) {
+        if (widget == self) return true;
+        /* QWidget::isAncestorOf() 不跨越另一个顶层窗口的边界。 */
+        if (widget != child && widget->m_isWindow) return false;
+        widget = (const XWidget*)XObject_parent((XObject*)widget);
     }
     return false;
 }
@@ -229,8 +263,7 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         /* 显示：若窗口句柄存在且 PendingUpdate 则投递 PAINT。 */
         if (self->m_windowHandle &&
             (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_PendingUpdate))) {
-            XEvent* event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                             XEVENT_TYPE_PAINT);
+            XEvent* event = XWidget_createPaintEvent(self);
             if (event)
                 XCoreApplication_postEvent((XObject*)self->m_windowHandle,
                                            event, 0);
@@ -267,8 +300,7 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         widget->m_visible = newVisible ? 1 : 0;
         if (newVisible) {
             if (widget->m_windowHandle) {
-                XEvent* event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                                 XEVENT_TYPE_PAINT);
+                XEvent* event = XWidget_createPaintEvent(widget);
                 if (event)
                     XCoreApplication_postEvent((XObject*)widget->m_windowHandle,
                                                event, 0);
@@ -425,6 +457,59 @@ static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason)
 #endif /* XAPPLICATION_ON */
 }
 
+/** @brief 向子控件传播 Qt WA_Disabled 语义，保留子控件的显式禁用状态。 */
+static void XWidget_propagateEnabled(XWidget* self, bool enabled)
+{
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!self) return;
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* widget;
+        bool oldEnabled;
+        bool newEnabled;
+        XEvent event;
+        if (!child || !child->is_widget) continue;
+        widget = (XWidget*)child;
+        /* 启用父控件时，显式禁用的子控件及其子树保持禁用；父控件
+         * 禁用时仍需给所有子控件置 WA_Disabled，保持属性可观察性。 */
+        if (enabled && XWidget_attrTest(&widget->m_attributes,
+                                        XWidgetAttribute_ForceDisabled))
+            continue;
+        oldEnabled = XWidget_isEnabled(widget);
+        widget->m_enabled = enabled ? 1 : 0;
+        XWidget_attrSet(&widget->m_attributes, XWidgetAttribute_Disabled,
+                        !enabled);
+        newEnabled = XWidget_isEnabled(widget);
+        if (oldEnabled != newEnabled) {
+            XEvent_init(&event, XEVENT_TYPE_ENABLED_CHANGE);
+            XWidget_event_base(widget, &event);
+            XWidget_update(widget);
+        }
+        XWidget_propagateEnabled(widget, enabled);
+    }
+}
+
+/** @brief 清除控件及其子树的 WA_UnderMouse 状态。 */
+static void XWidget_clearUnderMouseRecursive(XWidget* self)
+{
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!self) return;
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse, false);
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        if (child && child->is_widget)
+            XWidget_clearUnderMouseRecursive((XWidget*)child);
+    }
+}
+
 /** @brief 把局部区域折算到顶层坐标后并入顶层脏区。 */
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
 {
@@ -445,8 +530,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     XRegion_deinit(&translated);
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
     if (top->m_windowHandle && top->m_visible) {
-        XEvent* event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                         XEVENT_TYPE_PAINT);
+        XEvent* event = XWidget_createPaintEvent(top);
         if (event)
             XCoreApplication_postEvent((XObject*)top->m_windowHandle, event, 0);
     }
@@ -917,6 +1001,7 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_ENTER:
         return XWidget_dispatchPointerEvent(top, event);
     case XEVENT_TYPE_LEAVE:
+        XWidget_clearUnderMouseRecursive(top);
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
     case XEVENT_TYPE_KEY_PRESS:
@@ -989,12 +1074,21 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_isWindow = (!parent ||
                         (self->m_windowFlags & (XWindowFlags)XWindowType_Window)) ? 1 : 0;
     self->m_focusPolicy = XWidgetFocusPolicy_NoFocus;
-    self->m_contextMenuPolicy = XWidgetContextMenuPolicy_NoContextMenu;
+    /* Qt QWidget 的默认值是 DefaultContextMenu，不是 NoContextMenu。 */
+    self->m_contextMenuPolicy = XWidgetContextMenuPolicy_DefaultContextMenu;
     self->m_layoutDirection = XWidgetLayoutDirection_LeftToRight;
     self->m_enabled = 1;
     self->m_updatesEnabled = 1;
-    XRect_init(&self->m_windowRect, 0, 0, 0, 0);
-    XRect_init(&self->m_contentsRect, 0, 0, 0, 0);
+    /* QWidgetPrivate::init 设置 WA_WState_Hidden：新控件在显式
+     * show() 前保持隐藏，父控件首次显示时不会误显示该子控件。 */
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_WState_Hidden, true);
+    /* QWidgetPrivate::init 在 create() 前为控件预置几何：顶层窗口
+     * 640x480，子控件 100x30。该尺寸不是布局结果，而是首个显式
+     * setGeometry/布局激活前 QWidget::geometry() 的默认值。 */
+    XRect_init(&self->m_windowRect, 0, 0, parent ? 100 : 640,
+               parent ? 30 : 480);
+    XRect_init(&self->m_contentsRect, 0, 0, self->m_windowRect.width,
+               self->m_windowRect.height);
     XMargins_init(&self->m_contentsMargins, 0, 0, 0, 0);
     XFont_init(&self->m_font);
     self->m_backgroundRole = XPaletteColorRole_Window;
@@ -1175,7 +1269,8 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_windowHandle = NULL;
     self->m_backingStore = NULL;
 #if XWINDOW_ON && XACCESSIBLE_ON
-    self->m_accessible = XAccessible_createForWidget(self);
+    if (!self->m_accessible)
+        self->m_accessible = XAccessible_createForWidget(self);
 #endif
 #if XLAYOUT_ON
     /* 布局为借用指针，不随控件拷贝（对标 Qt：布局对象独立拥有）。 */
@@ -1281,6 +1376,24 @@ void XWidget_setAttribute(XWidget* self, XWidgetAttribute attribute, bool on)
 {
     if (!self) return;
     XWidget_attrSet(&self->m_attributes, attribute, on);
+    /* 这些属性在 QWidget 中同时驱动对应的便捷查询接口；保持字段与
+     * 位集一致，避免通过 setAttribute() 设置后读到旧状态。 */
+    switch (attribute) {
+    case XWidgetAttribute_MouseTracking:
+        self->m_mouseTracking = on ? 1 : 0;
+        break;
+    case XWidgetAttribute_TabletTracking:
+        self->m_tabletTracking = on ? 1 : 0;
+        break;
+    case XWidgetAttribute_AcceptDrops:
+        self->m_acceptDrops = on ? 1 : 0;
+        break;
+    case XWidgetAttribute_UpdatesDisabled:
+        self->m_updatesEnabled = on ? 0 : 1;
+        break;
+    default:
+        break;
+    }
 }
 
 bool XWidget_testAttribute(const XWidget* self, XWidgetAttribute attribute)
@@ -1291,6 +1404,12 @@ bool XWidget_testAttribute(const XWidget* self, XWidgetAttribute attribute)
 bool XWidget_isWindow(const XWidget* self)
 {
     return self ? (self->m_isWindow != 0) : false;
+}
+
+bool XWidget_isTopLevel(const XWidget* self)
+{
+    /* isTopLevel() 是 Qt 中 isWindow() 的历史兼容拼写。 */
+    return XWidget_isWindow(self);
 }
 
 XWindowType XWidget_windowType(const XWidget* self)
@@ -1328,6 +1447,18 @@ void XWidget_overrideWindowFlags(XWidget* self, XWidgetFlags flags)
 {
     if (!self) return;
     self->m_windowFlags = flags;
+}
+
+void XWidget_setWindowFlag(XWidget* self, XWidgetFlags flag, bool on)
+{
+    XWidgetFlags flags;
+    if (!self) return;
+    flags = self->m_windowFlags;
+    if (on)
+        flags |= flag;
+    else
+        flags &= ~flag;
+    XWidget_setWindowFlags(self, flags);
 }
 
 /* ==================== 几何体系 ==================== */
@@ -1530,6 +1661,9 @@ void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h)
     maxH = self->m_maximumSize.height;
     w = XWidget_clampSize(w, minW, maxW);
     h = XWidget_clampSize(h, minH, maxH);
+    /* Qt::setGeometry() 明确置位两类历史状态，即使新旧矩形相同。 */
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, true);
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Moved, true);
     if (x == self->m_windowRect.x && y == self->m_windowRect.y &&
         w == self->m_windowRect.width && h == self->m_windowRect.height)
         return;
@@ -1538,11 +1672,6 @@ void XWidget_setGeometry(XWidget* self, int x, int y, int w, int h)
     self->m_windowRect.y = y;
     self->m_windowRect.width = w;
     self->m_windowRect.height = h;
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized,
-                    w != self->m_contentsRect.width ||
-                    h != self->m_contentsRect.height);
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Moved,
-                    x != self->m_contentsRect.x || y != self->m_contentsRect.y);
     XWidget_recomputeGeometry(self, &old);
     XWidget_syncWindowGeometry(self);
 #if XWINDOW_ON && XACCESSIBLE_ON
@@ -1576,9 +1705,15 @@ void XWidget_updateGeometry(XWidget* self)
 
 void XWidget_move(XWidget* self, int x, int y)
 {
+    bool resized;
     if (!self) return;
+    resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
     XWidget_setGeometry(self, x, y, self->m_windowRect.width,
                         self->m_windowRect.height);
+    /* move() 只置 WA_Moved；setGeometry 的共享实现产生的新增
+     * WA_Resized 状态在尺寸未变时恢复。 */
+    if (!resized)
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, false);
 }
 
 void XWidget_movePoint(XWidget* self, const XPoint* pos)
@@ -1589,8 +1724,13 @@ void XWidget_movePoint(XWidget* self, const XPoint* pos)
 
 void XWidget_resize(XWidget* self, int w, int h)
 {
+    bool moved;
     if (!self) return;
+    moved = XWidget_testAttribute(self, XWidgetAttribute_Moved);
     XWidget_setGeometry(self, self->m_windowRect.x, self->m_windowRect.y, w, h);
+    /* resize() 只置 WA_Resized；保留此前已经置位的 WA_Moved。 */
+    if (!moved)
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Moved, false);
 }
 
 void XWidget_resizeSize(XWidget* self, const XSize* size)
@@ -1601,9 +1741,24 @@ void XWidget_resizeSize(XWidget* self, const XSize* size)
 
 void XWidget_setFixedSize(XWidget* self, int w, int h)
 {
+    XSize oldMinimum;
+    XSize oldMaximum;
+    int fixedW;
+    int fixedH;
+    bool changed;
+    if (!self) return;
+    oldMinimum = self->m_minimumSize;
+    oldMaximum = self->m_maximumSize;
     XWidget_setMinimumSize(self, w, h);
     XWidget_setMaximumSize(self, w, h);
-    XWidget_resize(self, w, h);
+    fixedW = XWidget_clampSize(w, 0, XWIDGET_MAX_SIZE);
+    fixedH = XWidget_clampSize(h, 0, XWIDGET_MAX_SIZE);
+    changed = oldMinimum.width != self->m_minimumSize.width ||
+              oldMinimum.height != self->m_minimumSize.height ||
+              oldMaximum.width != self->m_maximumSize.width ||
+              oldMaximum.height != self->m_maximumSize.height;
+    if (changed && (fixedW != XWIDGET_MAX_SIZE || fixedH != XWIDGET_MAX_SIZE))
+        XWidget_resize(self, fixedW, fixedH);
 }
 
 void XWidget_setFixedSizeSize(XWidget* self, const XSize* size)
@@ -1612,13 +1767,34 @@ void XWidget_setFixedSizeSize(XWidget* self, const XSize* size)
     XWidget_setFixedSize(self, size->width, size->height);
 }
 
+void XWidget_setFixedWidth(XWidget* self, int width)
+{
+    if (!self) return;
+    XWidget_setMinimumWidth(self, width);
+    XWidget_setMaximumWidth(self, width);
+}
+
+void XWidget_setFixedHeight(XWidget* self, int height)
+{
+    if (!self) return;
+    XWidget_setMinimumHeight(self, height);
+    XWidget_setMaximumHeight(self, height);
+}
+
 void XWidget_adjustSize(XWidget* self)
 {
     XSize hint;
+    XRect children;
     if (!self) return;
     hint = XWidget_sizeHint(self);
-    if (!XSize_isValid(&hint))
-        XSize_init(&hint, 0, 0);
+    if (!XSize_isValid(&hint)) {
+        /* QWidgetPrivate::adjustedSize() falls back to childrenRect when
+         * sizeHint() is invalid; an empty child union leaves the size alone. */
+        children = XWidget_childrenRect(self);
+        if (children.width == 0 && children.height == 0) return;
+        hint.width = children.width + 2 * children.x;
+        hint.height = children.height + 2 * children.y;
+    }
     XWidget_resize(self, hint.width, hint.height);
 }
 
@@ -1635,11 +1811,16 @@ XSize XWidget_minimumSize(const XWidget* self)
 void XWidget_setMinimumSize(XWidget* self, int w, int h)
 {
     int minW, minH;
+    bool resized;
     if (!self) return;
+    /* Qt 使用 QWIDGETSIZE_MAX 表示未设置的最小尺寸。 */
+    if (w == XWIDGET_MAX_SIZE) w = 0;
+    if (h == XWIDGET_MAX_SIZE) h = 0;
     minW = XWidget_clampSize(w, 0, XWIDGET_MAX_SIZE);
     minH = XWidget_clampSize(h, 0, XWIDGET_MAX_SIZE);
-    if (self->m_maximumSize.width < minW) self->m_maximumSize.width = minW;
-    if (self->m_maximumSize.height < minH) self->m_maximumSize.height = minH;
+    if (self->m_minimumSize.width == minW &&
+        self->m_minimumSize.height == minH)
+        return;
     self->m_minimumSize.width = minW;
     self->m_minimumSize.height = minH;
 #if XWINDOW_ON
@@ -1648,10 +1829,13 @@ void XWidget_setMinimumSize(XWidget* self, int w, int h)
                                &self->m_minimumSize);
     }
 #endif /* XWINDOW_ON */
-    if (self->m_windowRect.width < minW || self->m_windowRect.height < minH)
+    if (self->m_windowRect.width < minW || self->m_windowRect.height < minH) {
+        resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
         XWidget_resize(self,
                        self->m_windowRect.width < minW ? minW : self->m_windowRect.width,
                        self->m_windowRect.height < minH ? minH : self->m_windowRect.height);
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+    }
 }
 
 void XWidget_setMinimumSizeSize(XWidget* self, const XSize* size)
@@ -1683,11 +1867,13 @@ XSize XWidget_maximumSize(const XWidget* self)
 void XWidget_setMaximumSize(XWidget* self, int w, int h)
 {
     int maxW, maxH;
+    bool resized;
     if (!self) return;
     maxW = XWidget_clampSize(w, 0, XWIDGET_MAX_SIZE);
     maxH = XWidget_clampSize(h, 0, XWIDGET_MAX_SIZE);
-    if (maxW < self->m_minimumSize.width) self->m_minimumSize.width = maxW;
-    if (maxH < self->m_minimumSize.height) self->m_minimumSize.height = maxH;
+    if (self->m_maximumSize.width == maxW &&
+        self->m_maximumSize.height == maxH)
+        return;
     self->m_maximumSize.width = maxW;
     self->m_maximumSize.height = maxH;
 #if XWINDOW_ON
@@ -1696,10 +1882,13 @@ void XWidget_setMaximumSize(XWidget* self, int w, int h)
                                &self->m_maximumSize);
     }
 #endif /* XWINDOW_ON */
-    if (self->m_windowRect.width > maxW || self->m_windowRect.height > maxH)
+    if (self->m_windowRect.width > maxW || self->m_windowRect.height > maxH) {
+        resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
         XWidget_resize(self,
                        self->m_windowRect.width > maxW ? maxW : self->m_windowRect.width,
                        self->m_windowRect.height > maxH ? maxH : self->m_windowRect.height);
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+    }
 }
 
 void XWidget_setMaximumSizeSize(XWidget* self, const XSize* size)
@@ -1766,6 +1955,10 @@ XSize XWidget_sizeHint(const XWidget* self)
 {
     XSize out;
     if (!self) { XSize_init(&out, -1, -1); return out; }
+#if XLAYOUT_ON
+    if (self->m_layout)
+        return XLayout_totalSizeHint(self->m_layout);
+#endif /* XLAYOUT_ON */
     out = self->m_sizeHint;
     return out;
 }
@@ -1774,6 +1967,10 @@ XSize XWidget_minimumSizeHint(const XWidget* self)
 {
     XSize out;
     if (!self) { XSize_init(&out, -1, -1); return out; }
+#if XLAYOUT_ON
+    if (self->m_layout)
+        return XLayout_totalMinimumSize(self->m_layout);
+#endif /* XLAYOUT_ON */
     out = self->m_minimumSizeHint;
     return out;
 }
@@ -1794,7 +1991,13 @@ int XWidget_heightForWidth(const XWidget* self, int width)
 {
     int height;
     XSize hint;
-    if (!self || !XWidgetSizePolicy_hasHeightForWidth(&self->m_sizePolicy))
+    if (!self) return -1;
+#if XLAYOUT_ON
+    if (self->m_layout &&
+        XLayoutItem_hasHeightForWidth_base((const XLayoutItem*)self->m_layout))
+        return XLayout_totalHeightForWidth(self->m_layout, width);
+#endif /* XLAYOUT_ON */
+    if (!XWidget_hasHeightForWidth(self))
         return -1;
     if (self->m_heightForWidthHandler)
         height = self->m_heightForWidthHandler((XWidget*)self, width,
@@ -1807,6 +2010,18 @@ int XWidget_heightForWidth(const XWidget* self, int width)
     if (height > self->m_maximumSize.height) height = self->m_maximumSize.height;
     if (height < self->m_minimumSize.height) height = self->m_minimumSize.height;
     return height;
+}
+
+bool XWidget_hasHeightForWidth(const XWidget* self)
+{
+    if (!self) return false;
+#if XLAYOUT_ON
+    if (self->m_layout)
+        return XLayoutItem_hasHeightForWidth_base(
+            (const XLayoutItem*)self->m_layout);
+#endif /* XLAYOUT_ON */
+    return self->m_heightForWidthHandler != NULL ||
+           XWidgetSizePolicy_hasHeightForWidth(&self->m_sizePolicy);
 }
 
 void XWidget_setHeightForWidthHandler(XWidget* self,
@@ -1851,8 +2066,22 @@ XWidget* XWidget_parentWidget(const XWidget* self)
 
 void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
 {
+    XWidget* oldParent;
+    bool parentChanged;
     bool wasWindow;
     if (!self) return;
+    /* QWidget 禁止把控件设置为自身或其后代；C 接口采用安全返回，
+     * 避免破坏 XObject 的父子链。 */
+    if (self == parent) return;
+    oldParent = XWidget_parentWidget(self);
+    parentChanged = oldParent != parent;
+    if (parentChanged) {
+        /* Qt setParent() 会让已生效可见的控件先变为不可见，调用方需
+         * 显式 show()；尚未生效但已显式 show 的控件保留该状态，
+         * 以便挂入可见父控件后按 Qt 的 showChildren 规则恢复。 */
+        if (self->m_visible)
+            XWidget_setVisible(self, false);
+    }
     wasWindow = (self->m_isWindow != 0);
     self->m_windowFlags = flags;
     if (!parent && !(flags & (XWidgetFlags)XWindowType_Window))
@@ -1869,6 +2098,12 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
         XApplication_registerTopLevelWidget(self);
 #endif
     XObject_setParent((XObject*)self, parent ? (XObject*)parent : NULL);
+    if (parentChanged && parent) {
+        /* QWidget::setParent(QWidget*) 将子控件移到新父控件的 (0,0)，
+         * 宽高保持不变；setGeometry 同时发出 MOVE 事件并刷新内容矩形。 */
+        XWidget_setGeometry(self, 0, 0, self->m_windowRect.width,
+                            self->m_windowRect.height);
+    }
     /* 父链变化后重算生效可见状态。 */
     {
         bool newVisible = self->m_explicitShow;
@@ -1891,7 +2126,11 @@ void XWidget_setParentPlain(XWidget* self, XWidget* parent)
 {
     XWidgetFlags flags;
     if (!self) return;
-    flags = self->m_windowFlags;
+    /* QWidget::setParent(QWidget*) 对同一父控件直接返回。 */
+    if (XWidget_parentWidget(self) == parent) return;
+    /* QWidget::setParent(QWidget*) 传递 windowFlags() 去除
+     * Qt::WindowType_Mask；否则顶层控件重新挂接后仍会被识别为窗口。 */
+    flags = self->m_windowFlags & (XWidgetFlags)~0xffu;
     XWidget_setParent(self, parent, flags);
 }
 
@@ -1954,7 +2193,7 @@ XRect XWidget_childrenRect(const XWidget* self)
         XWidget* widget;
         if (!child || !child->is_widget) continue;
         widget = (XWidget*)child;
-        if (!widget->m_visible) continue;
+        if (widget->m_isWindow || !widget->m_visible) continue;
         if (first) {
             out = widget->m_windowRect;
             first = false;
@@ -1980,7 +2219,7 @@ XRegion XWidget_childrenRegion(const XWidget* self)
         XWidget* widget;
         if (!child || !child->is_widget) continue;
         widget = (XWidget*)child;
-        if (!widget->m_visible) continue;
+        if (widget->m_isWindow || !widget->m_visible) continue;
         XRegion_addRect(&out, &widget->m_windowRect);
     }
     return out;
@@ -2056,6 +2295,34 @@ XPoint XWidget_mapFromGlobal(const XWidget* self, const XPoint* global)
     return out;
 }
 
+XPoint XWidget_mapToParent(const XWidget* self, const XPoint* local)
+{
+    XPoint out;
+    XPoint_init(&out, 0, 0);
+    if (!self || !local) return out;
+    /* 无父控件时 Qt 定义为 mapToGlobal。 */
+    if (!XObject_parent((XObject*)self))
+        return XWidget_mapToGlobal(self, local);
+    /* QWidget 使用 geometry/crect 的 topLeft()；本项目对应的父坐标
+     * 原点是 m_windowRect，而 m_contentsRect 只表示客户区内边距。 */
+    out.x = local->x + self->m_windowRect.x;
+    out.y = local->y + self->m_windowRect.y;
+    return out;
+}
+
+XPoint XWidget_mapFromParent(const XWidget* self, const XPoint* parent)
+{
+    XPoint out;
+    XPoint_init(&out, 0, 0);
+    if (!self || !parent) return out;
+    /* 无父控件时 Qt 定义为 mapFromGlobal。 */
+    if (!XObject_parent((XObject*)self))
+        return XWidget_mapFromGlobal(self, parent);
+    out.x = parent->x - self->m_windowRect.x;
+    out.y = parent->y - self->m_windowRect.y;
+    return out;
+}
+
 XPoint XWidget_mapTo(const XWidget* self, const XWidget* target, const XPoint* local)
 {
     XPoint global;
@@ -2093,19 +2360,17 @@ bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
 {
     const XWidget* w;
     if (!self) return false;
-    if (ancestor && ancestor != self && !XWidget_isAncestorOf(ancestor, self))
-        return false;
-    /* 沿父链逐级检查：祖先为 NULL 时检查到顶层窗口为止。 */
+    if (!ancestor)
+        return XWidget_isVisible(self);
+    /* Qt 6.8 的实现不会验证 ancestor 是否确为祖先，也不会检查
+     * ancestor 自身的显式隐藏状态：循环只检查 self 到 ancestor
+     * 之前的父链，遇到窗口或父链末端即返回当前节点的 isHidden 结果。 */
     w = self;
-    while (w) {
-        if (!w->m_explicitShow) return false;
-        if (w == ancestor)
-            return !w->m_isWindow || w->m_visible != 0;
-        if (w->m_isWindow)
-            return w->m_visible != 0;
+    while (w && w->m_explicitShow && !w->m_isWindow &&
+           XObject_parent((XObject*)w) &&
+           XObject_parent((XObject*)w) != (const XObject*)ancestor)
         w = (const XWidget*)XObject_parent((XObject*)w);
-    }
-    return true;
+    return w && w->m_explicitShow;
 }
 
 void XWidget_setVisible(XWidget* self, bool visible)
@@ -2140,6 +2405,11 @@ void XWidget_show(XWidget* self)
 void XWidget_hide(XWidget* self)
 {
     XWidget_setVisible(self, false);
+}
+
+void XWidget_setHidden(XWidget* self, bool hidden)
+{
+    XWidget_setVisible(self, !hidden);
 }
 
 void XWidget_showNormal(XWidget* self)
@@ -2230,6 +2500,15 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
     self->m_windowState = state;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setWindowStates((XWindow*)self->m_windowHandle, state);
+}
+
+void XWidget_overrideWindowState(XWidget* self, XWindowStates state)
+{
+    if (!self) return;
+    /* 对标 QWidget::overrideWindowState：只覆盖逻辑状态，不请求平台窗口，
+     * 也不维护 normalGeometry。当前事件系统没有 isOverride 标志，故不伪造
+     * 状态变更事件。 */
+    self->m_windowState = state;
 }
 
 XWindowModality XWidget_windowModality(const XWidget* self)
@@ -2382,41 +2661,66 @@ void XWidget_setWindowModified(XWidget* self, bool modified)
 bool XWidget_isEnabled(const XWidget* self)
 {
     if (!self) return false;
-    return self->m_enabled != 0 &&
-           !XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Disabled) &&
-           !XWidget_attrTest(&self->m_attributes, XWidgetAttribute_ForceDisabled);
+    /* QWidget::isEnabled() 的实现只观察 WA_Disabled；WA_ForceDisabled
+     * 仅用于 setEnabled() 的递归传播筛选，不能单独改变查询结果。 */
+    return !XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Disabled);
 }
 
 void XWidget_setEnabled(XWidget* self, bool enabled)
 {
+    bool oldEnabled;
+    XEvent event;
+    XWidget* parent;
     if (!self) return;
-    self->m_enabled = enabled ? 1 : 0;
+    /* 先读取当前有效状态，再写入显式 ForceDisabled 请求；否则禁用请求
+     * 会先改变 isEnabled() 的观察值，导致 Qt 的状态转换被短路。 */
+    oldEnabled = XWidget_isEnabled(self);
+    /* Qt 先记录显式请求。因此在禁用父控件下调用 setEnabled(true) 时，
+     * 会清除 WA_ForceDisabled，但保留继承得到的 WA_Disabled，直到父控件
+     * 再次启用后才恢复有效状态。 */
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_ForceDisabled,
+                    !enabled);
+    /* QWidget 不允许在禁用的非窗口父控件下显式重新启用子控件；
+     * 父控件重新启用时由传播逻辑统一恢复未显式禁用的子控件。 */
+    parent = XWidget_parentWidget(self);
+    if (enabled && !self->m_isWindow && parent && !XWidget_isEnabled(parent))
+        return;
+    if (oldEnabled == enabled) return;
+    self->m_enabled = enabled ? 1 : 0;
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Disabled,
                     !enabled);
     if (!enabled && g_focusWidget == self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
+    if (oldEnabled != enabled) {
+        XEvent_init(&event, XEVENT_TYPE_ENABLED_CHANGE);
+        XWidget_event_base(self, &event);
+    }
+    XWidget_propagateEnabled(self, enabled);
     XWidget_update(self);
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged, self);
 #endif
 }
 
+void XWidget_setDisabled(XWidget* self, bool disabled)
+{
+    XWidget_setEnabled(self, !disabled);
+}
+
 bool XWidget_isEnabledTo(const XWidget* self, const XWidget* ancestor)
 {
     const XWidget* w;
     if (!self) return false;
-    if (ancestor && ancestor != self && !XWidget_isAncestorOf(ancestor, self))
-        return false;
     w = self;
-    while (w) {
-        if (!w->m_enabled ||
-            XWidget_attrTest(&w->m_attributes, XWidgetAttribute_Disabled) ||
-            XWidget_attrTest(&w->m_attributes, XWidgetAttribute_ForceDisabled))
-            return false;
-        if (w == ancestor) break;
+    /* 对齐 QWidget::isEnabledTo：只检查显式禁用标志，并在当前窗口
+     * 边界停止；传播得到的 WA_Disabled 不应被重复解释。 */
+    while (!XWidget_attrTest(&w->m_attributes,
+                             XWidgetAttribute_ForceDisabled) &&
+           !w->m_isWindow && XObject_parent((XObject*)w) &&
+           XObject_parent((XObject*)w) != (const XObject*)ancestor)
         w = (const XWidget*)XObject_parent((XObject*)w);
-    }
-    return true;
+    return !XWidget_attrTest(&w->m_attributes,
+                             XWidgetAttribute_ForceDisabled);
 }
 
 XWidgetFocusPolicy XWidget_focusPolicy(const XWidget* self)
@@ -2447,7 +2751,8 @@ XWidget* XWidget_focusWidget(const XWidget* self)
 
 void XWidget_setFocus(XWidget* self)
 {
-    XWidget_setFocusReason(self, XFocusReason_NoReason);
+    /* QWidget::setFocus() 内联实现使用 Qt::OtherFocusReason。 */
+    XWidget_setFocusReason(self, XFocusReason_Other);
 }
 
 void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
@@ -2572,6 +2877,12 @@ bool XWidget_hasMouseTracking(const XWidget* self)
                                     XWidgetAttribute_MouseTracking)) : false;
 }
 
+bool XWidget_underMouse(const XWidget* self)
+{
+    return self ? XWidget_attrTest(&self->m_attributes,
+                                   XWidgetAttribute_UnderMouse) : false;
+}
+
 void XWidget_setMouseTracking(XWidget* self, bool enable)
 {
     if (!self) return;
@@ -2614,6 +2925,39 @@ void XWidget_setContextMenuPolicy(XWidget* self,
     self->m_contextMenuPolicy = (uint32_t)policy;
 }
 
+/** @brief 向未显式指定方向的非窗口子控件传播布局方向。 */
+static void XWidget_propagateLayoutDirection(XWidget* self,
+                                             XWidgetLayoutDirection direction)
+{
+    const XVector* children;
+    size_t n;
+    size_t i;
+    if (!self) return;
+    children = XObject_children((XObject*)self);
+    n = children ? XVector_size_base((const XContainer*)children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        XWidget* widget;
+        XEvent event;
+        if (!child || !child->is_widget) continue;
+        widget = (XWidget*)child;
+        if (widget->m_isWindow ||
+            XWidget_attrTest(&widget->m_attributes,
+                             XWidgetAttribute_SetLayoutDirection))
+            continue;
+        if (widget->m_layoutDirection != (uint32_t)direction) {
+            widget->m_layoutDirection = (uint32_t)direction;
+            XWidget_attrSet(&widget->m_attributes,
+                            XWidgetAttribute_RightToLeft,
+                            direction == XWidgetLayoutDirection_RightToLeft);
+            XEvent_init(&event, XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE);
+            XWidget_event_base(widget, &event);
+            XWidget_update(widget);
+        }
+        XWidget_propagateLayoutDirection(widget, direction);
+    }
+}
+
 XLayout* XWidget_layout(const XWidget* self)
 {
 #if XLAYOUT_ON
@@ -2650,23 +2994,57 @@ XWidgetLayoutDirection XWidget_layoutDirection(const XWidget* self)
 
 void XWidget_setLayoutDirection(XWidget* self, XWidgetLayoutDirection direction)
 {
+    bool changed;
+    XEvent event;
     if (!self) return;
+    changed = self->m_layoutDirection != (uint32_t)direction;
     self->m_layoutDirection = (uint32_t)direction;
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetLayoutDirection,
                     true);
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_RightToLeft,
                     direction == XWidgetLayoutDirection_RightToLeft);
+    if (changed) {
+        XEvent_init(&event, XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE);
+        XWidget_event_base(self, &event);
+    }
+    XWidget_propagateLayoutDirection(self, direction);
     XWidget_update(self);
 }
 
 void XWidget_unsetLayoutDirection(XWidget* self)
 {
+    XWidgetLayoutDirection direction;
+    XWidget* parent;
+    bool changed;
+    XEvent event;
     if (!self) return;
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetLayoutDirection,
                     false);
-    /* 回退到父/应用方向：本项目无应用方向设施，统一回退 LTR。 */
-    self->m_layoutDirection = XWidgetLayoutDirection_LeftToRight;
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_RightToLeft, false);
+    /* 优先继承父控件方向；无父控件时按 Qt 默认 LTR。 */
+    parent = XWidget_parentWidget(self);
+    direction = parent ? (XWidgetLayoutDirection)parent->m_layoutDirection
+                       : XWidgetLayoutDirection_LeftToRight;
+    changed = self->m_layoutDirection != (uint32_t)direction;
+    self->m_layoutDirection = (uint32_t)direction;
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_RightToLeft,
+                    direction == XWidgetLayoutDirection_RightToLeft);
+    if (changed) {
+        XEvent_init(&event, XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE);
+        XWidget_event_base(self, &event);
+    }
+    XWidget_propagateLayoutDirection(self, direction);
+    XWidget_update(self);
+}
+
+bool XWidget_isRightToLeft(const XWidget* self)
+{
+    return self && self->m_layoutDirection ==
+                       (uint32_t)XWidgetLayoutDirection_RightToLeft;
+}
+
+bool XWidget_isLeftToRight(const XWidget* self)
+{
+    return !XWidget_isRightToLeft(self);
 }
 
 /* ==================== 光标/提示/调色板（对标 QWidget） ==================== */
@@ -3051,6 +3429,30 @@ bool XWidget_event_base(XWidget* self, XEvent* event)
     XEventType type;
     if (!self || !event) return false;
     type = XEvent_type(event);
+    /* QWidget::event 丢弃禁用控件的数位板、触摸、鼠标、键盘、滚轮及
+     * 上下文菜单输入；返回 false 让上层派发器按现有传播规则继续处理。 */
+    if (!XWidget_isEnabled(self)) {
+        switch (type) {
+        case XEVENT_TYPE_TABLET_PRESS:
+        case XEVENT_TYPE_TABLET_RELEASE:
+        case XEVENT_TYPE_TABLET_MOVE:
+        case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
+        case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
+        case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
+        case XEVENT_TYPE_MOUSE_MOVE:
+        case XEVENT_TYPE_TOUCH_BEGIN:
+        case XEVENT_TYPE_TOUCH_UPDATE:
+        case XEVENT_TYPE_TOUCH_END:
+        case XEVENT_TYPE_TOUCH_CANCEL:
+        case XEVENT_TYPE_WHEEL:
+        case XEVENT_TYPE_KEY_PRESS:
+        case XEVENT_TYPE_KEY_RELEASE:
+        case XEVENT_TYPE_CONTEXT_MENU:
+            return false;
+        default:
+            break;
+        }
+    }
     switch (type) {
     case XEVENT_TYPE_PAINT:
         XWidget_paintEvent_base(self, event);
@@ -3071,9 +3473,13 @@ bool XWidget_event_base(XWidget* self, XEvent* event)
         XWidget_focusOutEvent_base(self, event);
         return true;
     case XEVENT_TYPE_ENTER:
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
+                        true);
         XWidget_enterEvent_base(self, event);
         return true;
     case XEVENT_TYPE_LEAVE:
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
+                        false);
         XWidget_leaveEvent_base(self, event);
         return true;
     case XEVENT_TYPE_KEY_PRESS:
@@ -3233,8 +3639,12 @@ void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
     posChanged = (old.x != geometry->x) || (old.y != geometry->y);
     sizeChanged = (old.width != geometry->width) ||
                   (old.height != geometry->height);
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Moved, posChanged);
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, sizeChanged);
+    /* 平台同步同样对应 Qt 的 WA_Moved/WA_Resized 历史状态位；只置位，
+     * 不因后续仅改变另一维而丢失已有状态。 */
+    if (posChanged)
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Moved, true);
+    if (sizeChanged)
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, true);
     if (posChanged) {
         XEvent event;
         XEvent_init(&event, XEVENT_TYPE_MOVE);

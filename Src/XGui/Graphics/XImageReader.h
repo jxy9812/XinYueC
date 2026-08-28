@@ -53,6 +53,7 @@ typedef struct XImageReader
 
 /**
  * @brief      在堆上创建 XImageReader 实例
+ * @param memory 对象使用的项目内存类型。
  * @return     指向新创建的 XImageReader 对象的指针，失败返回 NULL
  */
 XImageReader* XImageReader_create_ex(XMemoryType memory);
@@ -71,7 +72,12 @@ void XImageReader_init(XImageReader* self);
  */
 void XImageReader_init_device(XImageReader* self, XIODevice* device, const XString* format);
 
-/** @brief 使用 UTF-8 格式字符串初始化读取器的兼容重载。 */
+/**
+ * @brief 使用 UTF-8 格式字符串初始化读取器的兼容重载。
+ * @param self 待读取器对象指针。
+ * @param device 输入设备指针，由调用方持有。
+ * @param format UTF-8 格式名；传入 NULL 或空串表示自动检测。
+ */
 void XImageReader_init_device_2(XImageReader* self, XIODevice* device, const char* format);
 
 /**
@@ -82,17 +88,14 @@ void XImageReader_init_device_2(XImageReader* self, XIODevice* device, const cha
  */
 void XImageReader_init_file(XImageReader* self, const XString* fileName, const XString* format);
 
-/** @brief 使用 UTF-8 文件名和格式初始化读取器的兼容重载。 */
+/**
+ * @brief 使用 UTF-8 文件名和格式初始化读取器的兼容重载。
+ * @param self 待读取器对象指针。
+ * @param fileName UTF-8 文件名；传入 NULL 表示未设置文件。
+ * @param format UTF-8 格式名；传入 NULL 或空串表示自动检测。
+ */
 void XImageReader_init_file_2(XImageReader* self, const char* fileName, const char* format);
 
-/**
- * @brief      释放 XImageReader 资源
- * @param self 待释放的 XImageReader 对象指针
- */
-/**
- * @brief      虚函数调度：释放
- * @param self 待释放的对象指针
- */
 /** @brief 通过 XClass 虚表释放读取器资源。 @param self 待读取器指针。 */
 #define XImageReader_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像读取器。 @param self 待读取器指针。 */
@@ -107,7 +110,11 @@ void XImageReader_init_file_2(XImageReader* self, const char* fileName, const ch
  */
 void XImageReader_setFormat(XImageReader* self, const XString* format);
 
-/** @brief 使用 UTF-8 格式字符串设置图像格式的兼容重载。 */
+/**
+ * @brief 使用 UTF-8 格式字符串设置图像格式的兼容重载。
+ * @param self 目标读取器对象指针。
+ * @param format UTF-8 格式名；传入 NULL 或空串表示自动检测。
+ */
 void XImageReader_setFormat_2(XImageReader* self, const char* format);
 
 /**
@@ -117,10 +124,19 @@ void XImageReader_setFormat_2(XImageReader* self, const char* format);
  */
 XString* XImageReader_format(const XImageReader* self);
 
-/** @brief 获取内部格式字符串引用；返回值由读取器持有。 */
+/**
+ * @brief 获取内部格式字符串引用。
+ * @param self 读取器对象指针。
+ * @return 显式设置的格式，或自动探测后处理器报告的格式；返回值由读取器持有，
+ *         对象无设备、格式不支持或探测失败时返回 NULL。
+ */
 const XString* XImageReader_format_const(const XImageReader* self);
 
-/** @brief 获取 UTF-8 兼容格式字符串；返回值由内部 XString 缓存持有。 */
+/**
+ * @brief 获取 UTF-8 兼容格式字符串。
+ * @param self 读取器对象指针。
+ * @return UTF-8 格式名；返回值由读取器内部字符串或探测缓存持有，不得释放。
+ */
 const char* XImageReader_format_2(const XImageReader* self);
 
 /**
@@ -140,9 +156,9 @@ bool XImageReader_autoDetectImageFormat(const XImageReader* self);
 /**
  * @brief      设置是否根据内容决定格式
  * @param self    目标 XImageReader 对象指针
- * @param ignored 参数（保留，当前未使用）
+ * @param enabled 是否忽略显式格式和文件扩展名并按设备内容决定格式
  */
-void XImageReader_setDecideFormatFromContent(XImageReader* self, bool ignored);
+void XImageReader_setDecideFormatFromContent(XImageReader* self, bool enabled);
 
 /**
  * @brief      查询是否根据内容决定格式
@@ -200,15 +216,18 @@ const char* XImageReader_fileName_2(const XImageReader* self);
 void XImageReader_size(const XImageReader* self, XSize* out);
 
 /**
- * @brief      获取图像格式类型
- * @param self 目标 XImageReader 对象指针
- * @return 图像格式枚举
+ * @brief 获取处理器报告的图像像素格式。
+ * @param self 读取器对象指针。
+ * @return 处理器支持 ImageFormat 选项时返回图像格式，否则返回
+ *         XImageFormat_Invalid；该查询不会读取图像像素数据。
  */
+XImageFormat XImageReader_imageFormatValue(const XImageReader* self);
 
 /**
- * @brief      获取文本键列表
- * @param self 目标 XImageReader 对象指针
- * @return 文本键列表字符串数组
+ * @brief 获取图像描述中的文本键列表。
+ * @param self 读取器对象指针。
+ * @return 新建的文本键列表；键按 Qt QMap 规则排序，调用方负责释放；处理器不支持
+ *         Description 或读取器无效时返回空列表。
  */
 XStringList* XImageReader_textKeys(const XImageReader* self);
 
@@ -216,14 +235,14 @@ XStringList* XImageReader_textKeys(const XImageReader* self);
  * @brief      获取指定键的文本
  * @param self 目标 XImageReader 对象指针
  * @param key  文本键
- * @return 文本值字符串
+ * @return 文本值字符串；未找到时返回空字符串对象，调用方负责释放。
  */
 XString* XImageReader_text(const XImageReader* self, const XString* key);
 /**
  * @brief 使用 UTF-8 键获取文本元数据的兼容重载。
  * @param self 读取器对象指针。
  * @param key UTF-8 编码的文本键。
- * @return UTF-8 文本值指针，由内部缓存持有，不得释放；未找到时返回 NULL。
+ * @return UTF-8 文本值指针，由内部缓存持有，不得释放；空键或未找到时返回空串。
  */
 const char* XImageReader_text_2(const XImageReader* self, const char* key);
 
@@ -286,16 +305,17 @@ void XImageReader_setScaledClipRect(XImageReader* self, const XRect* rect);
 void XImageReader_scaledClipRect(const XImageReader* self, XRect* out);
 
 /**
- * @brief      设置背景色
- * @param self  目标 XImageReader 对象指针
- * @param color ARGB 颜色值
+ * @brief 设置图像处理器读取时使用的背景色。
+ * @param self 目标 XImageReader 对象指针。
+ * @param color ARGB32 颜色值；仅在当前处理器支持 BackgroundColor 时生效。
  */
 void XImageReader_setBackgroundColor(XImageReader* self, uint32_t color);
 
 /**
- * @brief      获取背景色
- * @param self 目标 XImageReader 对象指针
- * @return ARGB 颜色值
+ * @brief 获取图像处理器当前使用的背景色。
+ * @param self 读取器对象指针。
+ * @return 处理器支持 BackgroundColor 时返回其 ARGB32 选项值；不支持、未初始化或
+ *         选项查询失败时返回 0，表示无效背景色。
  */
 uint32_t XImageReader_backgroundColor(const XImageReader* self);
 
@@ -363,6 +383,8 @@ bool XImageReader_canRead(const XImageReader* self);
  * @param self 目标 XImageReader 对象指针
  * @param out  输出图像指针
  * @return 读取成功返回 true
+ * @note 文件名基名末尾为 @2x 至 @9x 时，成功读取的图像设备像素比按 Qt 规则设置；
+ *       设置 QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING 非空可禁用该推导。
  */
 bool XImageReader_read(XImageReader* self, XImage* out);
 
@@ -432,10 +454,10 @@ XImageReaderError XImageReader_error(const XImageReader* self);
  */
 XString* XImageReader_errorString(const XImageReader* self);
 
-/** @brief 获取内部错误描述引用。 */
+/** @brief 获取内部错误描述引用；未设置错误文本时返回空值对象。 */
 const XString* XImageReader_errorString_const(const XImageReader* self);
 
-/** @brief 获取 UTF-8 兼容错误描述；返回值由内部 XString 缓存持有。 */
+/** @brief 获取 UTF-8 兼容错误描述；无错误文本时返回稳定的 "Unknown error"。 */
 const char* XImageReader_errorString_2(const XImageReader* self);
 
 /**
@@ -509,6 +531,7 @@ int XImageReader_allocationLimit();
 /**
  * @brief      设置内存分配限制（MB）
  * @param mbLimit 限制值（MB）
+ * @note       负值按 Qt 语义被忽略；传入 0 可关闭内存分配检查。
  */
 void XImageReader_setAllocationLimit(int mbLimit);
 

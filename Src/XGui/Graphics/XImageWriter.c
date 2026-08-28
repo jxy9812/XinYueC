@@ -14,7 +14,6 @@
 #include "XStringList.h"
 #include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <limits.h>
 
 /* Keep writer discovery aligned with XImageCodec capabilities. */
@@ -70,18 +69,17 @@ static XStringList* XImageWriter_supportedFormats(void)
         }
     }
 #endif
+    /* Qt QImageWriter::supportedMimeTypes() sorts and removes duplicates. */
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
     return result;
 }
 
 static bool XImageWriter_mimeEquals(const char* mimeType, const char* expected)
 {
-    size_t i;
-    if (!mimeType) return false;
-    for (i = 0; expected[i] && mimeType[i]; ++i) {
-        if (tolower((unsigned char)mimeType[i]) !=
-            tolower((unsigned char)expected[i])) return false;
-    }
-    return expected[i] == '\0' && mimeType[i] == '\0';
+    /* Qt QImageReaderWriterHelpers 按 QByteArray 值精确匹配 MIME；格式名
+       本身才按大小写不敏感规则规范化。 */
+    return mimeType && expected && strcmp(mimeType, expected) == 0;
 }
 
 /**
@@ -96,6 +94,7 @@ typedef struct XImageWriterPrivate
     XImageIOHandler* m_handler;      /**< 当前插件处理器 */
     int         m_quality;           /**< 质量参数 */
     int         m_compression;       /**< 压缩参数 */
+    XString*    m_description;       /**< 按 Qt 格式拼接的文本描述元数据 */
     XString*    m_subType;           /**< 子类型 */
     bool        m_optimizedWrite;    /**< 是否优化写入 */
     bool        m_progressiveScan;   /**< 是否渐进式扫描 */
@@ -109,11 +108,43 @@ static void XImageWriter_releaseHandler(XImageWriterPrivate* data)
     if (!data) return;
     if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
     data->m_handler = NULL;
-    if (data->m_fileDevice) {
-        if (XIODevice_isOpen(data->m_fileDevice)) XIODevice_close_base(data->m_fileDevice);
-        XClass_delete_base((XClass*)data->m_fileDevice);
-    }
+}
+
+static void XImageWriter_releaseOwnedDevice(XImageWriterPrivate* data)
+{
+    XIODevice* owned;
+    if (!data || !(owned = data->m_fileDevice)) return;
+    if (XIODevice_isOpen(owned)) XIODevice_close_base(owned);
+    if (data->m_device == owned) data->m_device = NULL;
+    XClass_delete_base((XClass*)owned);
     data->m_fileDevice = NULL;
+}
+
+static XIODevice* XImageWriter_ensureOwnedDevice(XImageWriterPrivate* data)
+{
+    XFile* file;
+    if (!data) return NULL;
+    if (data->m_fileDevice) return data->m_fileDevice;
+    if (!data->m_fileName ||
+        XContainer_isEmpty_base((const XContainer*)data->m_fileName))
+        return NULL;
+    file = XFile_create_2(data->m_fileName);
+    if (!file) return NULL;
+    data->m_fileDevice = (XIODevice*)file;
+    data->m_device = data->m_fileDevice;
+    return data->m_fileDevice;
+}
+
+/* The handler is transient, while a QFile created from setFileName() is
+   owned by the writer for the complete writer lifetime, just like Qt. */
+static void XImageWriter_releaseTransientState(XImageWriterPrivate* data)
+{
+    if (!data) return;
+    XImageWriter_releaseHandler(data);
+    if (data->m_fileDevice) {
+        /* The owned file device remains observable through device(). */
+        if (XIODevice_isOpen(data->m_fileDevice)) XIODevice_close_base(data->m_fileDevice);
+    }
 }
 
 static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
@@ -125,7 +156,12 @@ static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
         return XString_create_copy(format);
     if (self->m_data->m_fileName) {
         const char* fileName = XString_toUtf8(self->m_data->m_fileName);
-        const char* dot = fileName ? strrchr(fileName, '.') : NULL;
+        const char* base = fileName ? strrchr(fileName, '/') : NULL;
+        const char* dot;
+        const char* backslash = fileName ? strrchr(fileName, '\\') : NULL;
+        if (backslash && (!base || backslash > base)) base = backslash;
+        base = base ? base + 1 : fileName;
+        dot = base ? strrchr(base, '.') : NULL;
         if (dot && dot[1]) return XString_create_utf8(dot + 1);
     }
     return XString_create();
@@ -147,18 +183,21 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
             return data->m_handler;
         }
         if (data->m_fileName) {
-            XFile* file = XFile_create_2(data->m_fileName);
-            if (file && XIODevice_open_base((XIODevice*)file,
-                        XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
-                data->m_handler = XImagePluginRegistry_createWriteHandler((XIODevice*)file, format);
+            XIODevice* file = XImageWriter_ensureOwnedDevice(data);
+            if (file && !XIODevice_isOpen(file) &&
+                XIODevice_open_base(file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
+                data->m_handler = XImagePluginRegistry_createWriteHandler(file, format);
                 if (data->m_handler) {
-                    data->m_fileDevice = (XIODevice*)file;
                     XString_delete_base((XClass*)format);
                     return data->m_handler;
                 }
-                XIODevice_close_base((XIODevice*)file);
+            } else if (file && XIODevice_isOpen(file)) {
+                data->m_handler = XImagePluginRegistry_createWriteHandler(file, format);
+                if (data->m_handler) {
+                    XString_delete_base((XClass*)format);
+                    return data->m_handler;
+                }
             }
-            if (file) XClass_delete_base((XClass*)file);
         }
     }
     XString_delete_base((XClass*)format);
@@ -175,29 +214,43 @@ static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
     XImageIOHandlerOptionValue value;
     if (!handler || !data) return;
     memset(&value, 0, sizeof(value));
-    if (data->m_quality >= 0) {
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Quality)) {
         value.integer = data->m_quality;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Quality, &value);
     }
-    if (data->m_compression >= 0) {
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_CompressionRatio)) {
         memset(&value, 0, sizeof(value));
         value.integer = data->m_compression;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_CompressionRatio, &value);
     }
-    if (data->m_subType && !XContainer_isEmpty_base((const XContainer*)data->m_subType)) {
+    if (data->m_description &&
+        !XContainer_isEmpty_base((const XContainer*)data->m_description) &&
+        XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Description)) {
+        memset(&value, 0, sizeof(value));
+        value.string = data->m_description;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Description, &value);
+    }
+    if (data->m_subType && !XContainer_isEmpty_base((const XContainer*)data->m_subType) &&
+        XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_SubType)) {
         memset(&value, 0, sizeof(value));
         value.string = data->m_subType;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_SubType, &value);
     }
-    memset(&value, 0, sizeof(value));
-    value.boolean = data->m_optimizedWrite;
-    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_OptimizedWrite, &value);
-    memset(&value, 0, sizeof(value));
-    value.boolean = data->m_progressiveScan;
-    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite, &value);
-    memset(&value, 0, sizeof(value));
-    value.transformation = data->m_transformation;
-    XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ImageTransformation, &value);
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_OptimizedWrite)) {
+        memset(&value, 0, sizeof(value));
+        value.boolean = data->m_optimizedWrite;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_OptimizedWrite, &value);
+    }
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite)) {
+        memset(&value, 0, sizeof(value));
+        value.boolean = data->m_progressiveScan;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite, &value);
+    }
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_ImageTransformation)) {
+        memset(&value, 0, sizeof(value));
+        value.transformation = data->m_transformation;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ImageTransformation, &value);
+    }
 }
 
 static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, const char* message)
@@ -231,9 +284,16 @@ static bool XImageWriter_isSupportedFormat(const char* format)
 
 static bool XImageWriter_fileLooksSupported(const char* fileName)
 {
+    const char* base;
     const char* dot;
     if (!fileName) return false;
-    dot = strrchr(fileName, '.');
+    base = strrchr(fileName, '/');
+    {
+        const char* backslash = strrchr(fileName, '\\');
+        if (backslash && (!base || backslash > base)) base = backslash;
+    }
+    base = base ? base + 1 : fileName;
+    dot = strrchr(base, '.');
     return dot && XImageWriter_isSupportedFormat(dot + 1);
 }
 
@@ -327,9 +387,11 @@ static void VXImageWriter_deinit(XImageWriter* self)
     if (ISNULL(self, "XImageWriter")) return;
     if (self->m_data)
     {
-        XImageWriter_releaseHandler(self->m_data);
+        XImageWriter_releaseTransientState(self->m_data);
+        XImageWriter_releaseOwnedDevice(self->m_data);
         if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
         if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+        if (self->m_data->m_description) XString_delete_base((XClass*)self->m_data->m_description);
         if (self->m_data->m_subType) XString_delete_base((XClass*)self->m_data->m_subType);
         if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
         XFree_System(self->m_data);
@@ -367,6 +429,9 @@ void XImageWriter_init(XImageWriter* self)
         self->m_data->m_quality = -1;
         self->m_data->m_compression = -1;
         self->m_data->m_error = XImageWriterError_UnknownError;
+        /* Qt 6.8 initializes errorString together with UnknownError.  Keep
+         * the string observable even before the first failed operation. */
+        self->m_data->m_errorString = XString_create_utf8("Unknown error");
     }
 }
 
@@ -396,6 +461,8 @@ void XImageWriter_init_file(XImageWriter* self, const XString* fileName, const X
         if (fileName) self->m_data->m_fileName = XString_create_copy(fileName);
         if (format && !XContainer_isEmpty_base((const XContainer*)format))
             self->m_data->m_format = XString_create_copy(format);
+        if (self->m_data->m_fileName)
+            (void)XImageWriter_ensureOwnedDevice(self->m_data);
     }
 }
 
@@ -411,7 +478,6 @@ void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const ch
 void XImageWriter_setFormat(XImageWriter* self, const XString* format)
 {
     if (!self || !self->m_data) return;
-    XImageWriter_releaseHandler(self->m_data);
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
     self->m_data->m_format = format ? XString_create_copy(format) : NULL;
 }
@@ -438,22 +504,25 @@ const char* XImageWriter_format_2(const XImageWriter* self)
 void XImageWriter_setDevice(XImageWriter* self, XIODevice* device)
 {
     if (!self || !self->m_data) return;
-    XImageWriter_releaseHandler(self->m_data);
+    XImageWriter_releaseTransientState(self->m_data);
+    XImageWriter_releaseOwnedDevice(self->m_data);
     self->m_data->m_device = device;
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
 }
 
 XIODevice* XImageWriter_device(const XImageWriter* self)
-{ return (self && self->m_data) ? self->m_data->m_device : NULL; }
+{ return (self && self->m_data) ?
+        (self->m_data->m_device ? self->m_data->m_device : self->m_data->m_fileDevice) : NULL; }
 
 void XImageWriter_setFileName(XImageWriter* self, const XString* fileName)
 {
     if (!self || !self->m_data) return;
-    XImageWriter_releaseHandler(self->m_data);
+    XImageWriter_releaseTransientState(self->m_data);
+    XImageWriter_releaseOwnedDevice(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
-    self->m_data->m_device = NULL;
+    self->m_data->m_device = XImageWriter_ensureOwnedDevice(self->m_data);
 }
 
 void XImageWriter_setFileName_2(XImageWriter* self, const char* fileName)
@@ -515,8 +584,22 @@ const char* XImageWriter_subType_2(const XImageWriter* self)
 
 XStringList* XImageWriter_supportedSubTypes(const XImageWriter* self)
 {
-    (void)self;
-    return XImageWriter_makeStringList(NULL, 0);
+    XImageIOHandler* handler;
+    XImageIOHandlerOptionValue value;
+    XStringList* result;
+    if (!self || !self->m_data) return XImageWriter_makeStringList(NULL, 0);
+    handler = XImageWriter_ensureHandler((XImageWriter*)self);
+    if (!handler ||
+        !XImageIOHandler_supportsOption_base(handler,
+                                             XImageIOHandlerOption_SupportedSubTypes))
+        return XImageWriter_makeStringList(NULL, 0);
+    memset(&value, 0, sizeof(value));
+    if (!XImageIOHandler_option_base(handler,
+                                     XImageIOHandlerOption_SupportedSubTypes,
+                                     &value) || !value.stringList)
+        return XImageWriter_makeStringList(NULL, 0);
+    result = XStringList_create_copy(value.stringList);
+    return result ? result : XImageWriter_makeStringList(NULL, 0);
 }
 
 void XImageWriter_setOptimizedWrite(XImageWriter* self, bool optimize)
@@ -539,11 +622,40 @@ void XImageWriter_setTransformation(XImageWriter* self, XImageIOHandlerTransform
 
 void XImageWriter_setText(XImageWriter* self, const XString* key, const XString* text)
 {
-    /* The built-in BMP encoder has no metadata block.  Keep this setter
-       intentionally side-effect free and report false from supportsOption;
-       callers can therefore distinguish an accepted API surface from data
-       that will actually be serialized. */
-    (void)self; (void)key; (void)text;
+    XString* normalizedKey;
+    XString* normalizedText;
+    XString* description;
+    bool ok = true;
+    if (!self || !self->m_data) return;
+
+    /* Qt 6.8 stores one Description string: key and value are simplified
+       independently and successive records are separated by two newlines.
+       The selected handler decides whether this metadata is serialized. */
+    normalizedKey = XString_simplified(key);
+    normalizedText = XString_simplified(text);
+    if (!normalizedKey || !normalizedText) {
+        if (normalizedKey) XString_delete_base((XClass*)normalizedKey);
+        if (normalizedText) XString_delete_base((XClass*)normalizedText);
+        return;
+    }
+    description = self->m_data->m_description
+        ? XString_create_copy(self->m_data->m_description)
+        : XString_create();
+    if (!description) ok = false;
+    if (ok && !XString_isEmpty_base((const XContainer*)description))
+        ok = XString_append_utf8(description, "\n\n");
+    if (ok) ok = XString_append(description, normalizedKey);
+    if (ok) ok = XString_append_utf8(description, ": ");
+    if (ok) ok = XString_append(description, normalizedText);
+    if (ok) {
+        if (self->m_data->m_description)
+            XString_delete_base((XClass*)self->m_data->m_description);
+        self->m_data->m_description = description;
+        description = NULL;
+    }
+    if (description) XString_delete_base((XClass*)description);
+    XString_delete_base((XClass*)normalizedKey);
+    XString_delete_base((XClass*)normalizedText);
 }
 
 void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* text)
@@ -557,14 +669,68 @@ void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* tex
 
 bool XImageWriter_canWrite(const XImageWriter* self)
 {
+    const char* format;
     if (!self || !self->m_data) return false;
-    if (!self->m_data->m_fileName && !self->m_data->m_device) return false;
-    if (self->m_data->m_format && !XContainer_isEmpty_base((const XContainer*)self->m_data->m_format) &&
-        !XImageWriter_isSupportedFormat(XString_toUtf8(self->m_data->m_format))) return false;
-    return self->m_data->m_fileName ?
-        (self->m_data->m_format && !XContainer_isEmpty_base((const XContainer*)self->m_data->m_format) ? true :
-         XImageWriter_fileLooksSupported(XString_toUtf8(self->m_data->m_fileName))) :
-        (self->m_data->m_format && !XContainer_isEmpty_base((const XContainer*)self->m_data->m_format));
+    if (!self->m_data->m_device &&
+        (!self->m_data->m_fileName ||
+         XContainer_isEmpty_base((const XContainer*)self->m_data->m_fileName))) {
+        XImageWriter_setError((XImageWriter*)self, XImageWriterError_DeviceError,
+                               "Device is not set");
+        return false;
+    }
+
+    /* QImageWriter opens an assigned device on demand and then verifies its
+       write mode before asking the image plugin for a handler. */
+    if (self->m_data->m_device) {
+        if (!XIODevice_isOpen(self->m_data->m_device) &&
+            !XIODevice_open_base(self->m_data->m_device, XIODevice_WriteOnly)) {
+            XImageWriter_setError((XImageWriter*)self, XImageWriterError_DeviceError,
+                                   "Cannot open device for writing");
+            return false;
+        }
+        if (!XIODevice_isWritable(self->m_data->m_device)) {
+            XImageWriter_setError((XImageWriter*)self, XImageWriterError_DeviceError,
+                                   "Device not writable");
+            return false;
+        }
+    }
+
+    format = self->m_data->m_format ?
+        XString_toUtf8(self->m_data->m_format) : NULL;
+    if (!format || !format[0]) {
+        /* A filename-backed writer derives the format from its suffix even
+           though Qt exposes the internally-owned QFile through device(). */
+        if ((!self->m_data->m_fileName && self->m_data->m_device) ||
+            !XImageWriter_fileLooksSupported(
+                XString_toUtf8(self->m_data->m_fileName))) {
+            XImageWriter_setError((XImageWriter*)self,
+                                   XImageWriterError_UnsupportedFormatError,
+                                   "Unsupported image format");
+            return false;
+        }
+    } else if (!XImageWriter_isSupportedFormat(format)) {
+        XImageWriter_setError((XImageWriter*)self,
+                               XImageWriterError_UnsupportedFormatError,
+                               "Unsupported image format");
+        return false;
+    }
+
+    /* For plugin-backed formats this also mirrors Qt's handler creation in
+       canWriteHelper(); direct codecs continue through the fallback path. */
+    if (self->m_data->m_device || self->m_data->m_fileName) {
+        XImageIOHandler* handler = XImageWriter_ensureHandler((XImageWriter*)self);
+#if XIMAGEIOPLUGIN_ON
+        if (!handler) {
+            XImageWriter_setError((XImageWriter*)self,
+                                   XImageWriterError_UnsupportedFormatError,
+                                   "Unsupported image format");
+            return false;
+        }
+#else
+        (void)handler;
+#endif
+    }
+    return true;
 }
 
 bool XImageWriter_write(XImageWriter* self, const XImage* image)
@@ -572,67 +738,86 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
     XImage transformed;
     const XImage* source = image;
     bool transformedInitialized = false;
+    bool wrote = false;
     if (!self || !self->m_data || !image || XImage_isNull(image))
     {
         if (self && self->m_data)
-            XImageWriter_setError(self, XImageWriterError_InvalidImageError, "Cannot write a null image");
+            XImageWriter_setError(self, XImageWriterError_InvalidImageError, "Image is empty");
         return false;
     }
-    if (self->m_data->m_transformation != XImageIOHandlerTransformation_None) {
-        if (!XImageWriter_applyTransformation(image, self->m_data->m_transformation, &transformed)) {
+    /* Qt checks the image before canWrite(), so an invalid image never opens
+       a file as a side effect. */
+    if (!XImageWriter_canWrite(self)) return false;
+
+    XImageWriter_ensureHandler(self);
+    if (self->m_data->m_handler) {
+        if (self->m_data->m_transformation != XImageIOHandlerTransformation_None &&
+            !XImageIOHandler_supportsOption_base(
+                self->m_data->m_handler,
+                XImageIOHandlerOption_ImageTransformation)) {
+            if (!XImageWriter_applyTransformation(image, self->m_data->m_transformation,
+                                                   &transformed)) {
+                XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
+                                       "The requested image transformation is unsupported");
+                XImageWriter_releaseHandler(self->m_data);
+                return false;
+            }
+            source = &transformed;
+            transformedInitialized = true;
+        }
+        XImageWriter_applyHandlerSettings(self->m_data->m_handler, self->m_data);
+        wrote = XImageIOHandler_write_base(self->m_data->m_handler, source);
+        if (wrote)
+            wrote = XIODevice_flush(self->m_data->m_fileDevice ?
+                                    self->m_data->m_fileDevice : self->m_data->m_device);
+        XImageWriter_releaseHandler(self->m_data);
+        if (wrote) {
+            if (transformedInitialized) XImage_deinit_base(&transformed);
+            return true;
+        }
+    }
+
+    /* Direct codecs do not have an XImageIOHandler.  They therefore receive
+       the transformed image here, matching Qt's fallback transform path. */
+    if (!transformedInitialized &&
+        self->m_data->m_transformation != XImageIOHandlerTransformation_None) {
+        if (!XImageWriter_applyTransformation(image, self->m_data->m_transformation,
+                                               &transformed)) {
             XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
-                                  "The requested image transformation is unsupported");
+                                   "The requested image transformation is unsupported");
             return false;
         }
         source = &transformed;
         transformedInitialized = true;
     }
-    {
-        bool wrote = false;
-        XImageWriter_ensureHandler(self);
-        if (self->m_data->m_handler) {
-            XImageWriter_applyHandlerSettings(self->m_data->m_handler, self->m_data);
-            wrote = XImageIOHandler_write_base(self->m_data->m_handler, source);
-            if (wrote)
-                wrote = XIODevice_flush(self->m_data->m_fileDevice ?
-                                        self->m_data->m_fileDevice : self->m_data->m_device);
-            XImageWriter_releaseHandler(self->m_data);
-            if (wrote) {
-                XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
-                if (transformedInitialized) XImage_deinit_base(&transformed);
-                return true;
-            }
-        }
-        if (!self->m_data->m_fileName && !self->m_data->m_device) {
-            XImageWriter_setError(self, XImageWriterError_DeviceError, "No image destination is set");
-        } else if (!self->m_data->m_fileName) {
-            XByteArray* bytes = XByteArray_create();
+    if (!self->m_data->m_fileName && !self->m_data->m_device) {
+        XImageWriter_setError(self, XImageWriterError_DeviceError, "Device is not set");
+    } else if (!self->m_data->m_fileName) {
+        XByteArray* bytes = XByteArray_create();
 #if XIMAGECODEC_ON
-            XImageCodecFormat format = XImageCodec_formatFromName(self->m_data->m_format);
-            bool ok = XImageWriter_canWrite(self) && XImageCodec_encode(source, format, self->m_data->m_quality, bytes) &&
-                      XImageWriter_writeDevice(self->m_data->m_device, bytes);
+        XImageCodecFormat format = XImageCodec_formatFromName(self->m_data->m_format);
+        bool ok = bytes && XImageCodec_encode(source, format, self->m_data->m_quality, bytes) &&
+                  XImageWriter_writeDevice(self->m_data->m_device, bytes);
 #else
-            bool ok = false;
+        bool ok = false;
 #endif
-            if (bytes) XByteArray_delete_base((XClass*)bytes);
-            if (!ok)
-                XImageWriter_setError(self, XImageWriterError_DeviceError,
-                                      "Image could not be written to the device");
-            else
-                wrote = true;
-        } else if (!XImageWriter_canWrite(self)) {
-            XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
-                                  "The requested image format has no built-in encoder");
-        } else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
-                              XString_toUtf8(self->m_data->m_format), self->m_data->m_quality)) {
-            XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
-        } else {
+        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        if (!ok)
+            XImageWriter_setError(self, XImageWriterError_DeviceError,
+                                  "Image could not be written to the device");
+        else
             wrote = true;
-        }
-        if (wrote) XImageWriter_setError(self, XImageWriterError_UnknownError, NULL);
-        if (transformedInitialized) XImage_deinit_base(&transformed);
-        return wrote;
+    } else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
+                              XString_toUtf8(self->m_data->m_format), self->m_data->m_quality)) {
+        XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
+    } else {
+        wrote = true;
     }
+    /* QImageWriter::write() does not clear a previous error on success; the
+       initial Unknown error string therefore remains observable until a new
+       failure replaces it. */
+    if (transformedInitialized) XImage_deinit_base(&transformed);
+    return wrote;
 }
 
 XImageWriterError XImageWriter_error(const XImageWriter* self)
@@ -652,8 +837,16 @@ const char* XImageWriter_errorString_2(const XImageWriter* self)
 
 bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption option)
 {
-    (void)self;
-    return option == XImageIOHandlerOption_ImageTransformation;
+    XImageIOHandler* handler;
+    if (!self || !self->m_data) return false;
+    handler = XImageWriter_ensureHandler((XImageWriter*)self);
+    if (!handler) {
+        XImageWriter_setError((XImageWriter*)self,
+                               XImageWriterError_UnsupportedFormatError,
+                               "Unsupported image format");
+        return false;
+    }
+    return XImageIOHandler_supportsOption_base(handler, option);
 }
 
 XStringList* XImageWriter_supportedImageFormats()
@@ -689,6 +882,8 @@ XStringList* XImageWriter_supportedMimeTypes()
         }
     }
 #endif
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
     return result;
 }
 
