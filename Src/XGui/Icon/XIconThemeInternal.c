@@ -989,6 +989,42 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
     return true;
 }
 
+/*
+ * 与 theme_tryParsedDir() 配对的登记查询。Qt QIconLoader 先用
+ * QFile::exists() 建立 PixmapEntry/ScalableEntry，实际文件解码延迟到
+ * pixmap() 调用；因此这里故意不调用 theme_loadFile()，损坏文件也应
+ * 作为已登记条目参与 isNull()/hasThemeIcon() 判定。
+ */
+static bool theme_tryParsedDirExists(const ThemeContext* ctx, size_t dirIndex,
+                                     const char* root, const char* theme,
+                                     const char* name)
+{
+    const XString* dirStr;
+    const char* dir;
+    size_t extIndex;
+    char path[1024];
+    if (!ctx || !ctx->m_dirs || !root || !root[0] || !theme || !theme[0] ||
+        !name || !name[0] || dirIndex >= ctx->m_metaCount)
+        return false;
+    dirStr = (const XString*)XStringList_at_base(
+        (const XVector*)ctx->m_dirs, (int64_t)dirIndex);
+    dir = dirStr ? XString_toUtf8(dirStr) : NULL;
+    if (!dir || !dir[0]) return false;
+    if (theme_cacheDirState(root, theme, name, dir) == 0)
+        return false;
+    for (extIndex = 0; extIndex < sizeof(theme_import_exts) /
+             sizeof(theme_import_exts[0]); ++extIndex) {
+        const char* ext = theme_import_exts[extIndex];
+        if (!theme_extAllowed(ext)) continue;
+        if (snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
+                     dir, name, ext) < 0 ||
+            !theme_fileExists(path))
+            continue;
+        return true;
+    }
+    return false;
+}
+
 static bool theme_tryParsedTheme(const ThemeContext* ctx,
                                  const char* root, const char* theme,
                                  const char* name, int target, int iconScale,
@@ -1264,6 +1300,142 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     theme_visitPop(visited);
     themeContext_deinit(&ctx);
     return foundParent || dashFound;
+}
+
+/*
+ * 只按主题目录登记关系查找图标。该路径复用与 theme_searchTheme() 相同
+ * 的 Inherits、hicolor 和短横线回退顺序，但将“文件存在”作为命中条件，
+ * 不触发图像解码，从而符合 QIconLoaderEngine::isNull() 的条目语义。
+ */
+static bool theme_searchThemeExists(const XStringList* paths,
+                                    const char* theme, const char* name,
+                                    int target, int iconScale,
+                                    const char* fallbackTheme,
+                                    ThemeVisitStack* visited,
+                                    bool genericFallback,
+                                    bool allowDashFallback)
+{
+    ThemeContext ctx;
+    XStringList* parents = NULL;
+    size_t pathIndex;
+    size_t dirIndex;
+    size_t parentIndex;
+    bool parsed = false;
+    bool local = false;
+    if (!paths || !theme || !theme[0] || !name || !name[0] || !visited ||
+        theme_visitContains(visited, theme))
+        return false;
+    theme_visitPush(visited, theme);
+    themeContext_init(&ctx);
+    for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+             (const XContainer*)paths); ++pathIndex) {
+        const XString* rootStr = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
+        if (!root || !root[0]) continue;
+        if (!parsed && theme_parseIndexFile(root, theme, &ctx))
+            parsed = true;
+    }
+    if (parsed) {
+        for (dirIndex = 0; dirIndex < ctx.m_metaCount && !local; ++dirIndex) {
+            const ThemeDirInfo* info = &ctx.m_meta[dirIndex];
+            if (info->m_type == ThemeDir_Invalid ||
+                (genericFallback &&
+                 (info->m_context == ThemeDir_Applications ||
+                  info->m_context == ThemeDir_MimeTypes)) ||
+                !theme_directoryMatches(info, target, iconScale))
+                continue;
+            for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+                     (const XContainer*)paths); ++pathIndex) {
+                const XString* rootStr = (const XString*)XStringList_at_base(
+                    (const XVector*)paths, (int64_t)pathIndex);
+                const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
+                if (theme_tryParsedDirExists(&ctx, dirIndex, root, theme,
+                                             name)) {
+                    local = true;
+                    break;
+                }
+            }
+        }
+    } else {
+        /* 无 index.theme 时仅保留项目已有的传统目录约定。 */
+        for (dirIndex = 0; dirIndex < sizeof(theme_size_dirs) /
+                 sizeof(theme_size_dirs[0]) && !local; ++dirIndex) {
+            int logicalSize = theme_parseSize(theme_size_dirs[dirIndex]);
+            size_t contextIndex;
+            (void)logicalSize;
+            for (contextIndex = 0; contextIndex < sizeof(theme_context_dirs) /
+                     sizeof(theme_context_dirs[0]) && !local; ++contextIndex) {
+                for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+                         (const XContainer*)paths); ++pathIndex) {
+                    const XString* rootStr = (const XString*)XStringList_at_base(
+                        (const XVector*)paths, (int64_t)pathIndex);
+                    const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
+                    char path[1024];
+                    size_t extIndex;
+                    if (!root || !root[0]) continue;
+                    for (extIndex = 0; extIndex < sizeof(theme_import_exts) /
+                             sizeof(theme_import_exts[0]); ++extIndex) {
+                        const char* ext = theme_import_exts[extIndex];
+                        if (!theme_extAllowed(ext)) continue;
+                        if (snprintf(path, sizeof(path), "%s/%s/%s/%s%s",
+                                     root, theme, theme_size_dirs[dirIndex],
+                                     theme_context_dirs[contextIndex], name,
+                                     ext) >= 0 && theme_fileExists(path)) {
+                            local = true;
+                            break;
+                        }
+                    }
+                    if (local) break;
+                }
+            }
+        }
+    }
+    if (local) {
+        theme_visitPop(visited);
+        themeContext_deinit(&ctx);
+        return true;
+    }
+    parents = theme_parentsFor(&ctx, fallbackTheme);
+    if (parents) {
+        for (parentIndex = 0; parentIndex < (size_t)XStringList_size_base(
+                 (const XContainer*)parents); ++parentIndex) {
+            const XString* parentStr = (const XString*)XStringList_at_base(
+                (const XVector*)parents, (int64_t)parentIndex);
+            const char* parent = parentStr ? XString_toUtf8(parentStr) : NULL;
+            if (parent && theme_searchThemeExists(paths, parent, name, target,
+                                                  iconScale, fallbackTheme,
+                                                  visited, genericFallback,
+                                                  false)) {
+                local = true;
+                break;
+            }
+        }
+    }
+    if (!local && allowDashFallback) {
+        size_t nameLen = strlen(name);
+        while (nameLen > 2) {
+            char dashName[1024];
+            size_t dashPos = theme_lastDash(name, nameLen);
+            ThemeVisitStack fresh;
+            if (dashPos == (size_t)-1 || dashPos == 0 ||
+                dashPos >= sizeof(dashName)) break;
+            nameLen = dashPos;
+            memcpy(dashName, name, nameLen);
+            dashName[nameLen] = '\0';
+            memset(&fresh, 0, sizeof(fresh));
+            if (theme_searchThemeExists(paths, theme, dashName, target,
+                                        iconScale, fallbackTheme, &fresh,
+                                        true, true)) {
+                local = true;
+                break;
+            }
+        }
+    }
+    theme_stringListDelete(parents);
+    theme_visitPop(visited);
+    themeContext_deinit(&ctx);
+    return local;
 }
 
 static bool theme_scaledToSize(XPixmap* pixmap, int target)
@@ -1573,6 +1745,32 @@ static bool theme_loadFallback(const XStringList* paths, const char* name,
     return false;
 }
 
+/* 与 theme_loadFallback() 对应的登记查询，只检查文件目录项是否存在。 */
+static bool theme_fallbackEntryExists(const XStringList* paths,
+                                      const char* name)
+{
+    size_t pathIndex;
+    if (!paths || !name || !name[0]) return false;
+    for (pathIndex = 0; pathIndex < XStringList_size_base(
+             (XContainer*)paths); ++pathIndex) {
+        const XString* pathString = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = pathString ? XString_toUtf8(pathString) : NULL;
+        size_t extIndex;
+        char filePath[1024];
+        if (!root || !root[0]) continue;
+        for (extIndex = 0; extIndex < sizeof(theme_fallback_exts) /
+                 sizeof(theme_fallback_exts[0]); ++extIndex) {
+            const char* ext = theme_fallback_exts[extIndex];
+            if (!theme_extAllowed(ext)) continue;
+            if (snprintf(filePath, sizeof(filePath), "%s/%s%s", root,
+                         name, ext) >= 0 && theme_fileExists(filePath))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool theme_collectFallbackSizes(const XStringList* paths,
                                        const char* name, XVector* out)
 {
@@ -1818,6 +2016,47 @@ bool XIconInternal_themeHasScalable(const char* name)
         found = theme_collectScalable(themePaths, fallbackUtf8, name,
                                       NULL, &visited);
     }
+
+    if (themeName) XString_delete_base((XClass*)themeName);
+    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    theme_stringListDelete(themePaths);
+    theme_stringListDelete(fallbackPaths);
+    return found;
+}
+
+bool XIconInternal_themeHasIcon(const char* name)
+{
+    XStringList* themePaths = NULL;
+    XStringList* fallbackPaths = NULL;
+    XString* themeName = NULL;
+    XString* fallbackThemeName = NULL;
+    const char* themeUtf8 = NULL;
+    const char* fallbackUtf8 = NULL;
+    ThemeVisitStack visited;
+    bool found = false;
+    if (!name || !name[0]) return false;
+
+    themePaths = XIcon_themeSearchPaths_2();
+    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themeName = XIcon_themeName();
+    fallbackThemeName = XIcon_fallbackThemeName();
+    if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
+        themeUtf8 = XString_toUtf8(themeName);
+    if (fallbackThemeName && !XString_isEmpty_base(
+            (const XContainer*)fallbackThemeName))
+        fallbackUtf8 = XString_toUtf8(fallbackThemeName);
+
+    memset(&visited, 0, sizeof(visited));
+    if (themeUtf8)
+        found = theme_searchThemeExists(themePaths, themeUtf8, name, 48, 1,
+                                        fallbackUtf8, &visited, false, true);
+    if (!found && fallbackUtf8) {
+        memset(&visited, 0, sizeof(visited));
+        found = theme_searchThemeExists(themePaths, fallbackUtf8, name, 48, 1,
+                                        NULL, &visited, false, true);
+    }
+    if (!found)
+        found = theme_fallbackEntryExists(fallbackPaths, name);
 
     if (themeName) XString_delete_base((XClass*)themeName);
     if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);

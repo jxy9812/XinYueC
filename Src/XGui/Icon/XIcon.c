@@ -1236,8 +1236,6 @@ bool XIcon_hasThemeIcon_2(const char* name)
 
 bool XIcon_hasThemeIcon(const XString* name)
 {
-    XPixmap pixmap;
-    bool found;
     const char* nameUtf8;
     if (!name || XString_isEmpty_base((const XContainer*)name)) return false;
     nameUtf8 = XString_toUtf8(name);
@@ -1245,10 +1243,9 @@ bool XIcon_hasThemeIcon(const XString* name)
        handled by fromTheme() as ordinary file icons whose engine has no
        theme name, so they must not be reported as theme icons. */
     if (!nameUtf8 || nameUtf8[0] == '/' || nameUtf8[0] == ':') return false;
-    XPixmap_init(&pixmap);
-    found = XIconInternal_resolveThemePixmap(nameUtf8, &pixmap);
-    XPixmap_deinit_base(&pixmap);
-    return found;
+    /* 与 QIcon::hasThemeIcon() 的 QIconLoaderEngine::isNull() 一致：
+       文件条目已登记即可命中，实际解码延迟到 pixmap()/paint()。 */
+    return XIconInternal_themeHasIcon(nameUtf8);
 }
 
 static const char* XIcon_themeIconNameUtf8(XIconThemeIcon icon)

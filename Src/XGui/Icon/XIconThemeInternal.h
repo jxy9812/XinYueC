@@ -27,6 +27,12 @@ bool XIconInternal_resolveThemePixmapSourceSize(const char* name, int size,
 bool XIconInternal_availableThemeSizes(const char* name, XVector* out);
 /* 判断主题图标是否命中可缩放目录，用于 actualSize 的矩形语义。 */
 bool XIconInternal_themeHasScalable(const char* name);
+/*
+ * 仅判断主题引擎是否登记了图标条目，不读取或解码像素数据。
+ * 该查询对应 Qt QIconLoaderEngine::isNull() 的延迟加载语义：文件存在
+ * 即视为已有条目，损坏内容留给实际绘制或 pixmap() 阶段报告失败。
+ */
+bool XIconInternal_themeHasIcon(const char* name);
 
 #ifdef __cplusplus
 }

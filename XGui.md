@@ -6244,3 +6244,26 @@ DPR 返回设备无关尺寸；普通 DPR 路径直接调用引擎。DPR 修正�
 边界：`XIcon_actualSizeRatio()` 是 C API 对 Qt 隐含应用 DPR 的显式入口，调用方需传入
 窗口或屏幕 DPR；系统 QApplication 的全局 DPR 获取仍由上层窗口模块负责。自定义引擎若
 返回超出请求的尺寸，函数保留 Qt 引擎结果语义，不额外裁剪其异常输出。
+
+### 10.238 2026-08-29 QIcon 主题条目登记与延迟解码
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:476-535`
+的 `findIconHelper()`：主题查找先依据 `QFile::exists()` 登记 PNG/SVG 条目，实际像素
+读取延迟到 `PixmapEntry::pixmap()`；`qiconloader.cpp:954-967` 的
+`QIconLoaderEngine::isNull()` 仅检查条目集合是否为空，不会因文件内容损坏提前判空。
+独立回退文件同样在 `:572-610` 先判断文件存在，再由引擎稍后读取。
+
+实现范围：`Src/XGui/Icon/XIconThemeInternal.c` 新增登记查询链，沿当前主题、索引目录、
+`Inherits`、后备主题、短横线名称回退及独立 `fallbackSearchPaths()` 检查文件存在性，
+不调用图像解码器；`XIconThemeEngine.c` 的 `isNull()` 和 `XIcon.c` 的
+`hasThemeIcon()` 改用该查询。正常 `pixmap()`/`paint()` 仍走原有解码路径，损坏条目
+在实际取图时返回空像素图，避免把登记状态与解码状态混为一谈。
+
+回归：`xgui_regression_test.c:test_icon_theme_index_inherits()` 新增损坏 BMP 主题条目，
+验证 `XIcon_isNull()`/`XIcon_hasThemeIcon()` 保持非空而 `XIcon_pixmap()` 在解码阶段失败。
+默认 `build` 与 `build-crop-painter-off` 均完成全量构建、`XGuiRegression_Test` 和 CTest，
+`git diff --check` 通过。构建仍报告工程既有 XSignal/XEvent 类型警告；环境没有独立
+LSan/Valgrind 可执行文件，未宣称零警告或零泄漏。
+
+边界：主题索引和独立回退仍使用项目支持的 PNG/SVG/XPM/BMP 扩展集合，平台原生
+`QFactoryLoader` 排序及逐帧/流式图像解码不在该嵌入式登记查询内；缺失文件仍不会登记。

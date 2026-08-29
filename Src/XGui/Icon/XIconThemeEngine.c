@@ -224,14 +224,10 @@ static XString* VXIconThemeEngine_iconName(const XIconThemeEngine* self)
 
 static bool VXIconThemeEngine_isNull(const XIconThemeEngine* self)
 {
-    XPixmap pixmap;
-    bool found;
     if (!self || !self->m_iconName) return true;
-    XPixmap_init(&pixmap);
-    found = XIconInternal_resolveThemePixmap(
-        XString_toUtf8(self->m_iconName), &pixmap);
-    XPixmap_deinit_base(&pixmap);
-    return !found;
+    /* Qt QIconLoaderEngine::isNull() 只判断主题条目是否登记，不提前
+       解码文件；损坏图标仍保持非空，直到 pixmap()/paint() 才失败。 */
+    return !XIconInternal_themeHasIcon(XString_toUtf8(self->m_iconName));
 }
 
 static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,

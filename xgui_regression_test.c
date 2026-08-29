@@ -546,6 +546,30 @@ static void test_icon_theme_index_inherits(void)
     XPixmap_deinit_base(&pixmap);
     XIcon_setThemeName_2("Child");
 
+    {
+        static const uint8_t corruptIcon[] = {
+            0x58, 0x47, 0x55, 0x49, 0x43, 0x4f, 0x52, 0x52, 0x55, 0x50, 0x54
+        };
+        XIcon corrupt;
+        XPixmap corruptPixmap;
+        expect_true(test_write_binary_file(
+                        "xgui_icon_theme_tmp/Base/48x48/apps/corrupt-icon.bmp",
+                        corruptIcon, sizeof(corruptIcon), true),
+                    "indexed theme fixture writes corrupt registered icon");
+        XIcon_init(&corrupt);
+        XIcon_fromTheme_2("corrupt-icon", NULL, &corrupt);
+        expect_true(!XIcon_isNull(&corrupt) &&
+                    XIcon_hasThemeIcon_2("corrupt-icon"),
+                    "registered corrupt theme file keeps icon engine non-null");
+        XPixmap_init(&corruptPixmap);
+        XIcon_pixmap(&corrupt, 48, 48, XIconMode_Normal, XIconState_Off,
+                     &corruptPixmap);
+        expect_true(XPixmap_isNull(&corruptPixmap),
+                    "corrupt registered theme file fails only when decoded");
+        XPixmap_deinit_base(&corruptPixmap);
+        XIcon_deinit_base(&corrupt);
+    }
+
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSize(
                     "example-icon-tool", 48, &pixmap),
