@@ -262,10 +262,12 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
  * @param self             目标 XIcon 对象指针
  * @param width            目标逻辑宽度
  * @param height           目标逻辑高度
- * @param devicePixelRatio 设备像素比；输出会覆盖 width×height×DPR 的物理尺寸
+ * @param devicePixelRatio 设备像素比；大于 1 时向引擎请求高 DPI 资源，并根据
+ *                         实际返回像素尺寸修正输出设备像素比；不大于 1 时按普通
+ *                         DPI 路径返回并固定输出比例为 1。
  * @param mode             图标模式
  * @param state            图标状态
- * @param out              输出像素图指针
+ * @param out              输出像素图指针；调用方负责释放已有内容，返回空图时保持空对象
  */
 void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out);

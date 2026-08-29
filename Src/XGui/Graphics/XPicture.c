@@ -25,6 +25,7 @@ enum { XPICTURE_IMAGE_FIXED_SIZE = 52 };
 enum
 {
     XPICTURE_SHAPE_PAYLOAD_SIZE = 40,
+    XPICTURE_TRANSFORM_PAYLOAD_SIZE = 40,
     XPICTURE_POINT_HEADER_SIZE = 4,
     XPICTURE_POLYGON_HEADER_SIZE = 12,
     XPICTURE_MAX_POINTS = 65535,
@@ -81,6 +82,28 @@ static void XPicture_putF32(uint8_t* p, float value)
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     XPicture_putU32(p, bits);
+}
+
+static bool XPicture_transformIsFinite(const XImageTransform* matrix)
+{
+    return matrix && isfinite(matrix->m11) && isfinite(matrix->m12) &&
+           isfinite(matrix->m21) && isfinite(matrix->m22) &&
+           isfinite(matrix->dx) && isfinite(matrix->dy) &&
+           isfinite(matrix->m13) && isfinite(matrix->m23) &&
+           isfinite(matrix->m33);
+}
+
+static bool XPicture_payloadFloatsAreFinite(const uint8_t* payload,
+                                            uint32_t count)
+{
+    uint32_t i;
+    if (!payload) return false;
+    for (i = 0; i < count; ++i)
+    {
+        if (!isfinite(XPicture_getF32(payload + i * 4u)))
+            return false;
+    }
+    return true;
 }
 
 static uint32_t XPicture_checksum(const uint8_t* data, uint32_t size)
@@ -233,14 +256,50 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         offset += XPICTURE_RECORD_HEADER_SIZE;
         if (length > size - offset) return false;
         payload = bytes + offset;
-        if (opcode < XPictureOpcode_DrawLine || opcode > XPictureOpcode_SetPen)
+        if (opcode < XPictureOpcode_DrawLine ||
+            opcode > XPictureOpcode_SetViewTransformEnabled)
             return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
             (opcode == XPictureOpcode_SetPen && length != 20u) ||
+            (opcode == XPictureOpcode_SetOpacity && length != 4u) ||
+            (opcode == XPictureOpcode_SetCompositionMode && length != 4u) ||
+            (opcode == XPictureOpcode_SetRenderHints && length != 4u) ||
+            (opcode == XPictureOpcode_SetBrushOrigin && length != 8u) ||
+            (opcode == XPictureOpcode_SetTransform &&
+             length != XPICTURE_TRANSFORM_PAYLOAD_SIZE) ||
+            (opcode == XPictureOpcode_SetWindow && length != 16u) ||
+            (opcode == XPictureOpcode_SetViewport && length != 16u) ||
+            (opcode == XPictureOpcode_SetViewTransformEnabled &&
+             length != 4u) ||
+            (opcode == XPictureOpcode_SetBackgroundColor && length != 4u) ||
+            (opcode == XPictureOpcode_SetBackgroundMode && length != 4u) ||
+            (opcode == XPictureOpcode_SetBrush && length != 8u) ||
             (opcode == XPictureOpcode_FillRect && length != 20u) ||
             (opcode == XPictureOpcode_DrawImage &&
              !XPicture_validateImagePayload(payload, length)) ||
             ((opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore) && length != 0u))
+            return false;
+        if (opcode == XPictureOpcode_SetOpacity)
+        {
+            float opacity = XPicture_getF32(payload);
+            if (!isfinite(opacity) || opacity < 0.0f || opacity > 1.0f)
+                return false;
+        }
+        if (opcode == XPictureOpcode_SetCompositionMode &&
+            (XPicture_getI32(payload) <
+                 (int32_t)XPainterCompositionMode_SourceOver ||
+             XPicture_getI32(payload) >
+                 (int32_t)XPainterCompositionMode_RasterOp_NotDestination))
+            return false;
+        if (opcode == XPictureOpcode_SetBrushOrigin &&
+            !XPicture_payloadFloatsAreFinite(payload, 2u))
+            return false;
+        if (opcode == XPictureOpcode_SetTransform &&
+            (!XPicture_payloadFloatsAreFinite(payload, 9u) ||
+             XPicture_getU32(payload + 36u) > 1u))
+            return false;
+        if (opcode == XPictureOpcode_SetBackgroundMode &&
+            XPicture_getU32(payload) > 1u)
             return false;
 #if XPAINTER_SHAPE_ON
         if (opcode == XPictureOpcode_DrawShape &&
@@ -274,6 +333,9 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (opcode == XPictureOpcode_DrawPath)
             return false;
 #endif
+        if (opcode == XPictureOpcode_SetViewTransformEnabled &&
+            XPicture_getU32(payload) > 1u)
+            return false;
         offset += length;
     }
     return offset == size && commandBytes == offset - XPICTURE_HEADER_SIZE;
@@ -657,6 +719,159 @@ bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
     XPicture_putI32(payload + 16, join);
     return XPicture_appendRecord(self, XPictureOpcode_SetPen, payload,
                                  sizeof(payload));
+}
+
+bool XPicture_recordSetOpacity(XPicture* self, float opacity)
+{
+    uint8_t payload[4];
+    if (!self || !isfinite(opacity)) return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    XPicture_putF32(payload, opacity);
+    return XPicture_appendRecord(self, XPictureOpcode_SetOpacity, payload,
+                                 sizeof(payload));
+}
+
+bool XPicture_recordSetCompositionMode(XPicture* self, int mode)
+{
+    uint8_t payload[4];
+    if (!self || mode < (int)XPainterCompositionMode_SourceOver ||
+        mode > (int)XPainterCompositionMode_RasterOp_NotDestination)
+        return false;
+    XPicture_putI32(payload, mode);
+    return XPicture_appendRecord(self, XPictureOpcode_SetCompositionMode,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetRenderHints(XPicture* self, uint32_t hints)
+{
+    uint8_t payload[4];
+    if (!self) return false;
+    /* Qt QPicturePaintEngine::updateRenderHints serializes the complete
+       RenderHints bit field as one quint32 (qpaintengine_pic.cpp:274-281).
+       Keep the bit field opaque so future hint bits remain stream-compatible. */
+    XPicture_putU32(payload, hints);
+    return XPicture_appendRecord(self, XPictureOpcode_SetRenderHints,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetBrushOrigin(XPicture* self, float x, float y)
+{
+    uint8_t payload[8];
+    if (!self || !isfinite(x) || !isfinite(y)) return false;
+    /* Qt QPicturePaintEngine::updateBrushOrigin() serializes one QPointF
+       (qpaintengine_pic.cpp:194-202).  The portable stream stores the two
+       coordinates as IEEE-754 single precision values, matching XPainter's
+       existing brush-origin state and avoiding host ABI padding. */
+    XPicture_putF32(payload + 0u, x);
+    XPicture_putF32(payload + 4u, y);
+    return XPicture_appendRecord(self, XPictureOpcode_SetBrushOrigin,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetTransform(XPicture* self,
+                                 const XImageTransform* matrix,
+                                 bool enabled)
+{
+    uint8_t payload[XPICTURE_TRANSFORM_PAYLOAD_SIZE];
+    if (!self || !XPicture_transformIsFinite(matrix)) return false;
+    /* Qt QPicturePaintEngine::updateMatrix() writes the complete QTransform
+       followed by a combine flag (qpaintengine_pic.cpp:235-243).  The
+       embedded state keeps the world matrix and its enable bit separately,
+       so this fixed record carries nine floats followed by a four-byte
+       enable flag.  No host alignment or bool representation is exposed. */
+    XPicture_putF32(payload + 0u, matrix->m11);
+    XPicture_putF32(payload + 4u, matrix->m12);
+    XPicture_putF32(payload + 8u, matrix->m21);
+    XPicture_putF32(payload + 12u, matrix->m22);
+    XPicture_putF32(payload + 16u, matrix->dx);
+    XPicture_putF32(payload + 20u, matrix->dy);
+    XPicture_putF32(payload + 24u, matrix->m13);
+    XPicture_putF32(payload + 28u, matrix->m23);
+    XPicture_putF32(payload + 32u, matrix->m33);
+    XPicture_putU32(payload + 36u, enabled ? 1u : 0u);
+    return XPicture_appendRecord(self, XPictureOpcode_SetTransform,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetWindow(XPicture* self, const XRect* window)
+{
+    uint8_t payload[16];
+    if (!self || !window) return false;
+    /* QPainter::setWindow() stores all four QRect integers and then marks the
+       transform dirty.  The portable record keeps the rectangle independent
+       from the host ABI; zero or negative extents remain representable and
+       are rejected only when the effective transform is used. */
+    XPicture_putI32(payload + 0u, window->x);
+    XPicture_putI32(payload + 4u, window->y);
+    XPicture_putI32(payload + 8u, window->width);
+    XPicture_putI32(payload + 12u, window->height);
+    return XPicture_appendRecord(self, XPictureOpcode_SetWindow,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetViewport(XPicture* self, const XRect* viewport)
+{
+    uint8_t payload[16];
+    if (!self || !viewport) return false;
+    /* QPainter::setViewport() follows the same fixed QRect state update as
+       setWindow().  Preserve every integer exactly for later queries. */
+    XPicture_putI32(payload + 0u, viewport->x);
+    XPicture_putI32(payload + 4u, viewport->y);
+    XPicture_putI32(payload + 8u, viewport->width);
+    XPicture_putI32(payload + 12u, viewport->height);
+    return XPicture_appendRecord(self, XPictureOpcode_SetViewport,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetViewTransformEnabled(XPicture* self, bool enabled)
+{
+    uint8_t payload[4];
+    if (!self) return false;
+    /* Keep bool representation explicit: the validator accepts only 0/1 so
+       malformed streams cannot introduce an ambiguous view state. */
+    XPicture_putU32(payload, enabled ? 1u : 0u);
+    return XPicture_appendRecord(self, XPictureOpcode_SetViewTransformEnabled,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetBackgroundColor(XPicture* self, uint32_t color)
+{
+    uint8_t payload[4];
+    if (!self) return false;
+    /* Qt QPicturePaintEngine::updateBackground() first writes the background
+       color as PdcSetBkColor (qpaintengine_pic.cpp:219-231).  Qt playback
+       restores this as a solid brush color; the portable stream stores only
+       the fixed ARGB32 color and applies that same solid-brush rule. */
+    XPicture_putU32(payload, color);
+    return XPicture_appendRecord(self, XPictureOpcode_SetBackgroundColor,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetBackgroundMode(XPicture* self, int mode)
+{
+    uint8_t payload[4];
+    if (!self || (mode != 0 && mode != 1)) return false;
+    /* Qt updateBackground() emits PdcSetBkMode separately from the color.
+       The embedded representation deliberately accepts only the two Qt
+       modes: 0 transparent and 1 opaque (qpaintengine_pic.cpp:219-231). */
+    XPicture_putI32(payload, mode);
+    return XPicture_appendRecord(self, XPictureOpcode_SetBackgroundMode,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetBrush(XPicture* self, int style, uint32_t color)
+{
+    uint8_t payload[8];
+    if (!self) return false;
+    /* Qt QPicturePaintEngine::updateBrush() serializes a QBrush object
+       (qpaintengine_pic.cpp:176-184).  This embedded opcode intentionally
+       carries only the fixed basic style/color subset, matching the
+       XPainter portable brush state without host-dependent QBrush data. */
+    XPicture_putI32(payload + 0u, style);
+    XPicture_putU32(payload + 4u, color);
+    return XPicture_appendRecord(self, XPictureOpcode_SetBrush,
+                                 payload, sizeof(payload));
 }
 
 bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color)
@@ -1077,6 +1292,149 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             painter->m_state.m_penJoin =
                 (XPainterPenJoinStyle)XPicture_getI32(payload + 16);
 #endif /* XPAINTER_PENSTYLE_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetOpacity)
+        {
+            painter->m_state.m_opacity = XPicture_getF32(payload);
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetCompositionMode)
+        {
+            painter->m_state.m_compositionMode =
+                (XPainterCompositionMode)XPicture_getI32(payload);
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetRenderHints)
+        {
+#if XPAINTER_RENDERHINT_ON
+            /* Replay updates the painter state directly, just like the
+               existing pen/opacity/composition state opcodes.  Calling the
+               public setter would append a second command on a Picture
+               backend and would reject an inactive callback-only painter. */
+            painter->m_state.m_renderHints = XPicture_getU32(payload);
+#endif /* XPAINTER_RENDERHINT_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetBrushOrigin)
+        {
+#if XPAINTER_BRUSH_ORIGIN_ON
+            /* Restore the exact float state.  Calling setBrushOrigin() would
+               append a new record when replaying into a Picture backend. */
+            painter->m_state.m_brushOriginX = XPicture_getF32(payload + 0u);
+            painter->m_state.m_brushOriginY = XPicture_getF32(payload + 4u);
+#endif /* XPAINTER_BRUSH_ORIGIN_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetTransform)
+        {
+            /* Restore matrix state directly.  Calling public setters while
+               replaying into a Picture backend would append duplicate
+               records, and would also lose the disabled-world-matrix bit. */
+            painter->m_state.m_transform.m11 =
+                XPicture_getF32(payload + 0u);
+            painter->m_state.m_transform.m12 =
+                XPicture_getF32(payload + 4u);
+            painter->m_state.m_transform.m21 =
+                XPicture_getF32(payload + 8u);
+            painter->m_state.m_transform.m22 =
+                XPicture_getF32(payload + 12u);
+            painter->m_state.m_transform.dx =
+                XPicture_getF32(payload + 16u);
+            painter->m_state.m_transform.dy =
+                XPicture_getF32(payload + 20u);
+            painter->m_state.m_transform.m13 =
+                XPicture_getF32(payload + 24u);
+            painter->m_state.m_transform.m23 =
+                XPicture_getF32(payload + 28u);
+            painter->m_state.m_transform.m33 =
+                XPicture_getF32(payload + 32u);
+#if XPAINTER_WORLD_MATRIX_ON
+            painter->m_state.m_worldMatrixEnabled =
+                XPicture_getU32(payload + 36u) != 0u;
+#endif /* XPAINTER_WORLD_MATRIX_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetWindow)
+        {
+#if XPAINTER_VIEW_TRANSFORM_ON
+            /* Restore the complete logical window without calling the public
+               setter, which would append a duplicate record on a Picture
+               backend.  Qt enables view mapping after setWindow(). */
+            painter->m_state.m_window.x =
+                (int)XPicture_getI32(payload + 0u);
+            painter->m_state.m_window.y =
+                (int)XPicture_getI32(payload + 4u);
+            painter->m_state.m_window.width =
+                (int)XPicture_getI32(payload + 8u);
+            painter->m_state.m_window.height =
+                (int)XPicture_getI32(payload + 12u);
+            painter->m_state.m_viewTransformEnabled = true;
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetViewport)
+        {
+#if XPAINTER_VIEW_TRANSFORM_ON
+            /* Restore the complete device viewport and mirror
+               QPainter::setViewport()'s immediate enable semantics. */
+            painter->m_state.m_viewport.x =
+                (int)XPicture_getI32(payload + 0u);
+            painter->m_state.m_viewport.y =
+                (int)XPicture_getI32(payload + 4u);
+            painter->m_state.m_viewport.width =
+                (int)XPicture_getI32(payload + 8u);
+            painter->m_state.m_viewport.height =
+                (int)XPicture_getI32(payload + 12u);
+            painter->m_state.m_viewTransformEnabled = true;
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetViewTransformEnabled)
+        {
+#if XPAINTER_VIEW_TRANSFORM_ON
+            /* The fixed bool payload has already been range-checked by the
+               stream validator; replay only restores state. */
+            painter->m_state.m_viewTransformEnabled =
+                XPicture_getU32(payload) != 0u;
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetBackgroundColor)
+        {
+            /* QPicture playback restores PdcSetBkColor as a solid brush.
+               Update the always-present color state first; the optional
+               background brush mirrors it only when both features exist. */
+            painter->m_state.m_backgroundColor = XPicture_getU32(payload);
+#if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
+            painter->m_state.m_backgroundBrush.m_style =
+                XPainterBrushStyle_SolidPattern;
+            painter->m_state.m_backgroundBrush.m_color =
+                painter->m_state.m_backgroundColor;
+            memset(&painter->m_state.m_backgroundBrush.m_gradient, 0,
+                   sizeof(painter->m_state.m_backgroundBrush.m_gradient));
+#endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetBackgroundMode)
+        {
+#if XPAINTER_BACKGROUND_ON
+            painter->m_state.m_backgroundMode =
+                (XPainterBackgroundMode)XPicture_getI32(payload);
+#endif /* XPAINTER_BACKGROUND_ON */
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetBrush)
+        {
+            painter->m_state.m_brushColor = XPicture_getU32(payload + 4u);
+#if XPAINTER_BRUSH_ON
+            painter->m_state.m_brush.m_style =
+                (XPainterBrushStyle)XPicture_getI32(payload + 0u);
+            painter->m_state.m_brush.m_color =
+                painter->m_state.m_brushColor;
+            memset(&painter->m_state.m_brush.m_gradient, 0,
+                   sizeof(painter->m_state.m_brush.m_gradient));
+#endif /* XPAINTER_BRUSH_ON */
             ok = true;
         }
         else if (opcode == XPictureOpcode_DrawLine)

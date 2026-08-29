@@ -15,7 +15,8 @@ extern "C" {
 
 /**
  * @brief      XImage 像素格式枚举（对标 Qt 6.8 QImage::Format）
- * @note       枚举值保持与 Qt 6.8 完全一致，便于格式转换和兼容
+ * @note       格式名称和映射语义与 Qt 6.8 对齐；XPixelFormat 辅助枚举属于
+ *             XinYueC 兼容层，调用方应通过转换函数使用，不依赖其底层数值。
  */
 typedef enum XImageFormat
 {
@@ -71,14 +72,60 @@ typedef enum XImageInvertMode
 /** @brief 像素格式的通道模型（对标 Qt QPixelFormat::ColorModel）。 */
 typedef enum XPixelFormatModel
 {
-    XPixelFormatModel_Invalid = 0,
-    XPixelFormatModel_Mono,
-    XPixelFormatModel_Indexed,
-    XPixelFormatModel_Gray,
-    XPixelFormatModel_RGB,
-    XPixelFormatModel_BGR,
-    XPixelFormatModel_CMYK
+    XPixelFormatModel_Invalid = 0, /**< 无效模型。 */
+    XPixelFormatModel_RGB,          /**< 红绿蓝通道模型。 */
+    XPixelFormatModel_BGR,          /**< 蓝绿红通道模型。 */
+    XPixelFormatModel_Indexed,      /**< 颜色索引模型；Mono 也使用此模型。 */
+    XPixelFormatModel_Gray,         /**< 灰度通道模型。 */
+    XPixelFormatModel_CMYK,         /**< 青品红黄黑通道模型。 */
+    XPixelFormatModel_HSL,          /**< HSL 通道模型。 */
+    XPixelFormatModel_HSV,          /**< HSV 通道模型。 */
+    XPixelFormatModel_YUV,          /**< YUV 通道模型。 */
+    XPixelFormatModel_Alpha,        /**< 仅 Alpha 通道模型。 */
+    /* 保留旧接口名称，并提供 Qt 使用的灰度命名。 */
+    XPixelFormatModel_Mono = XPixelFormatModel_Indexed, /**< 旧版单色模型别名，现按索引模型处理。 */
+    XPixelFormatModel_Grayscale = XPixelFormatModel_Gray /**< Qt 灰度模型名称别名。 */
 } XPixelFormatModel;
+
+/** @brief Alpha 通道是否参与颜色表示（对标 Qt QPixelFormat::AlphaUsage）。 */
+typedef enum XPixelFormatAlphaUsage
+{
+    XPixelFormatAlpha_Ignores = 0, /**< 存在填充 Alpha 位但读取时忽略。 */
+    XPixelFormatAlpha_Uses = 1,    /**< Alpha 位参与颜色表示。 */
+    XPixelFormatAlpha_IgnoresAlpha = XPixelFormatAlpha_Ignores, /**< Qt 忽略 Alpha 的名称别名。 */
+    XPixelFormatAlpha_UsesAlpha = XPixelFormatAlpha_Uses /**< Qt 使用 Alpha 的名称别名。 */
+} XPixelFormatAlphaUsage;
+
+/** @brief Alpha 通道在像素中的逻辑位置（对标 Qt QPixelFormat::AlphaPosition）。 */
+typedef enum XPixelFormatAlphaPosition
+{
+    XPixelFormatAlpha_AtBeginning = 0, /**< Alpha 位位于通道序列前端。 */
+    XPixelFormatAlpha_AtEnd = 1        /**< Alpha 位位于通道序列末端。 */
+} XPixelFormatAlphaPosition;
+
+/** @brief Alpha 是否为预乘形式（对标 Qt QPixelFormat::AlphaPremultiplied）。 */
+typedef enum XPixelFormatAlphaPremultiplied
+{
+    XPixelFormatAlpha_NotPremultiplied = 0, /**< 未预乘 Alpha。 */
+    XPixelFormatAlpha_Premultiplied = 1     /**< 已预乘 Alpha。 */
+} XPixelFormatAlphaPremultiplied;
+
+/** @brief 通道数值的数据类型解释（对标 Qt QPixelFormat::TypeInterpretation）。 */
+typedef enum XPixelFormatTypeInterpretation
+{
+    XPixelFormatType_UnsignedInteger = 0, /**< 无符号整数。 */
+    XPixelFormatType_UnsignedShort = 1,   /**< 无符号短整数。 */
+    XPixelFormatType_UnsignedByte = 2,    /**< 无符号字节。 */
+    XPixelFormatType_FloatingPoint = 3   /**< 浮点数。 */
+} XPixelFormatTypeInterpretation;
+
+/** @brief 通道数据的字节序（对标 Qt QPixelFormat::ByteOrder）。 */
+typedef enum XPixelFormatByteOrder
+{
+    XPixelFormatByteOrder_LittleEndian = 0, /**< 小端序。 */
+    XPixelFormatByteOrder_BigEndian = 1,    /**< 大端序。 */
+    XPixelFormatByteOrder_CurrentSystemEndian = 2 /**< 本机字节序。 */
+} XPixelFormatByteOrder;
 
 /** @brief 图像像素布局描述（对标 Qt QPixelFormat）。 */
 typedef struct XPixelFormat
@@ -92,10 +139,25 @@ typedef struct XPixelFormat
     uint8_t m_magentaSize; /**< 品红通道位数。 */
     uint8_t m_yellowSize; /**< 黄色通道位数。 */
     uint8_t m_blackSize; /**< 黑色通道位数。 */
+    uint8_t m_fourthSize; /**< 第四个通道位数；CMYK 时与青色到黑色字段对应。 */
+    uint8_t m_fifthSize; /**< 第五个通道位数；QPixelFormat 保留通道。 */
     uint8_t m_channelCount; /**< 通道总数。 */
     bool m_premultiplied; /**< 是否使用预乘 Alpha。 */
-    bool m_byteOrdered; /**< 是否按字节序排列通道。 */
+    bool m_byteOrdered; /**< 旧版字节排列标志，保留供兼容代码读取。 */
+    XPixelFormatAlphaUsage m_alphaUsage; /**< Alpha 是否参与颜色表示。 */
+    XPixelFormatAlphaPosition m_alphaPosition; /**< Alpha 的逻辑位置。 */
+    XPixelFormatTypeInterpretation m_typeInterpretation; /**< 通道数据类型解释。 */
+    XPixelFormatByteOrder m_byteOrder; /**< 通道数据字节序。 */
+    uint8_t m_subEnum; /**< YUV 等扩展模型的子枚举值。 */
 } XPixelFormat;
+
+/**
+ * @brief 比较两个完整像素格式描述是否相同。
+ * @param left 左侧像素格式描述。
+ * @param right 右侧像素格式描述。
+ * @return 所有模型、通道和存储语义均相同返回 true，否则返回 false。
+ */
+bool XPixelFormat_equals(const XPixelFormat* left, const XPixelFormat* right);
 
 /**
  * @brief      获取像素格式的位深度
@@ -139,6 +201,20 @@ int XImageFormat_bytesPerLine(int width, XImageFormat format);
  * @return 像素通道布局描述；未知格式返回无效布局。
  */
 XPixelFormat XImageFormat_pixelFormat(XImageFormat format);
+
+/**
+ * @brief 将图像格式转换为完整像素格式描述（对标 QImage::toPixelFormat）。
+ * @param format 图像格式枚举值；无效值返回空像素格式。
+ * @return 与图像格式对应的像素布局和存储语义。
+ */
+XPixelFormat XImageFormat_toPixelFormat(XImageFormat format);
+
+/**
+ * @brief 将完整像素格式描述转换回图像格式（对标 QImage::toImageFormat）。
+ * @param format 像素格式描述。
+ * @return 精确匹配的图像格式；没有匹配项返回 Invalid。
+ */
+XImageFormat XImageFormat_toImageFormat(XPixelFormat format);
 
 #ifdef __cplusplus
 }

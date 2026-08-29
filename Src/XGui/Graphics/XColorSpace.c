@@ -114,6 +114,96 @@ static bool xcolorspace_valid_transfer(XColorSpaceTransferFunction transfer,
     }
 }
 
+static void xcolorspace_set_description(XColorSpace* self, const char* text);
+
+/* Qt QColorSpace 将自动识别名称与 setDescription() 的用户文本分开保存。
+   用户文本为空时 description() 才回退到自动名称；这两个字段都不参与
+   色彩空间相等比较。 */
+static void xcolorspace_set_user_description(XColorSpace* self,
+                                              const char* text)
+{
+    size_t length;
+    if (!self) return;
+    self->m_userDescription[0] = '\0';
+    if (!text) return;
+    length = strlen(text);
+    if (length >= sizeof(self->m_userDescription))
+        length = sizeof(self->m_userDescription) - 1u;
+    memcpy(self->m_userDescription, text, length);
+    self->m_userDescription[length] = '\0';
+}
+
+static void xcolorspace_recompute_valid(XColorSpace* self)
+{
+    if (!self) return;
+    if (self->m_colorModel == XColorSpaceModel_Gray)
+        self->m_valid = xcolorspace_valid_xy(self->m_primariesData.m_whitePoint) &&
+                         self->m_primariesData.m_whitePoint.y > 0.0f &&
+                         xcolorspace_valid_transfer(self->m_transferFunction,
+                                                    self->m_gamma);
+    else
+        self->m_valid = self->m_colorModel == XColorSpaceModel_Rgb &&
+                         xcolorspace_valid_primaries(&self->m_primariesData) &&
+                         xcolorspace_valid_transfer(self->m_transferFunction,
+                                                    self->m_gamma);
+}
+
+static void xcolorspace_identify(XColorSpace* self)
+{
+    if (!self || !self->m_valid) return;
+    self->m_namedColorSpace = XColorSpaceNamed_Unknown;
+    self->m_description[0] = '\0';
+    if (self->m_primaries == XColorSpacePrimaries_SRgb &&
+        self->m_transferFunction == XColorSpaceTransfer_SRgb)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_SRgb;
+        xcolorspace_set_description(self, "sRGB");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_SRgb &&
+             self->m_transferFunction == XColorSpaceTransfer_Linear)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_SRgbLinear;
+        xcolorspace_set_description(self, "Linear sRGB");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_AdobeRgb &&
+             self->m_transferFunction == XColorSpaceTransfer_Gamma &&
+             fabsf(self->m_gamma - 2.19921875f) < (1.0f / 1024.0f))
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_AdobeRgb;
+        xcolorspace_set_description(self, "Adobe RGB");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_DciP3D65 &&
+             self->m_transferFunction == XColorSpaceTransfer_SRgb)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_DisplayP3;
+        xcolorspace_set_description(self, "Display P3");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_ProPhotoRgb &&
+             self->m_transferFunction == XColorSpaceTransfer_ProPhotoRgb)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_ProPhotoRgb;
+        xcolorspace_set_description(self, "ProPhoto RGB");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_Bt2020 &&
+             self->m_transferFunction == XColorSpaceTransfer_Bt2020)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_Bt2020;
+        xcolorspace_set_description(self, "BT.2020");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_Bt2020 &&
+             self->m_transferFunction == XColorSpaceTransfer_St2084)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_Bt2100Pq;
+        xcolorspace_set_description(self, "BT.2100(PQ)");
+    }
+    else if (self->m_primaries == XColorSpacePrimaries_Bt2020 &&
+             self->m_transferFunction == XColorSpaceTransfer_Hlg)
+    {
+        self->m_namedColorSpace = XColorSpaceNamed_Bt2100Hlg;
+        xcolorspace_set_description(self, "BT.2100(HLG)");
+    }
+}
+
 static void xcolorspace_set_description(XColorSpace* self, const char* text)
 {
     size_t length;
@@ -281,6 +371,15 @@ bool XColorSpace_isValid(const XColorSpace* self)
     return self && self->m_valid;
 }
 
+bool XColorSpace_isValidTarget(const XColorSpace* self)
+{
+    /* 当前实现不持有 ElementListProcessing 的单向变换表；所有有效
+       实例都是可逆的三分量矩阵模型，故目标有效性等于整体有效性。 */
+    return XColorSpace_isValid(self) &&
+           XColorSpace_transformModel(self) ==
+               XColorSpaceTransform_ThreeComponentMatrix;
+}
+
 bool XColorSpace_isSRgb(const XColorSpace* self)
 {
     return XColorSpace_isValid(self) &&
@@ -313,6 +412,90 @@ XColorSpaceColorModel XColorSpace_colorModel(const XColorSpace* self)
     return self ? self->m_colorModel : XColorSpaceModel_Undefined;
 }
 
+XPointF XColorSpace_whitePoint(const XColorSpace* self)
+{
+    XPointF result = { 0.0f, 0.0f };
+    if (!self) return result;
+    return self->m_primariesData.m_whitePoint;
+}
+
+void XColorSpace_setWhitePoint(XColorSpace* self, XPointF whitePoint)
+{
+    if (!self || !xcolorspace_valid_xy(whitePoint) || whitePoint.y <= 0.0f)
+        return;
+    if (self->m_valid &&
+        self->m_primariesData.m_whitePoint.x == whitePoint.x &&
+        self->m_primariesData.m_whitePoint.y == whitePoint.y)
+        return;
+    self->m_primariesData.m_whitePoint = whitePoint;
+    self->m_primaries = XColorSpacePrimaries_Custom;
+    self->m_namedColorSpace = XColorSpaceNamed_Unknown;
+    self->m_description[0] = '\0';
+    /* Qt treats an undefined space with a white point as grayscale metadata.
+       It remains invalid until a transfer function is supplied. */
+    if (self->m_colorModel == XColorSpaceModel_Undefined)
+        self->m_colorModel = XColorSpaceModel_Gray;
+}
+
+void XColorSpace_setPrimaries(XColorSpace* self,
+                              XColorSpacePrimaries primaries)
+{
+    XColorSpacePrimariesData data;
+    if (!self || primaries == XColorSpacePrimaries_Custom) return;
+    data = xcolorspace_predefined_primaries(primaries);
+    if (!xcolorspace_valid_primaries(&data)) return;
+    if (self->m_primaries == primaries && self->m_colorModel == XColorSpaceModel_Rgb)
+        return;
+    self->m_primaries = primaries;
+    self->m_primariesData = data;
+    self->m_colorModel = XColorSpaceModel_Rgb;
+    self->m_namedColorSpace = XColorSpaceNamed_Unknown;
+    self->m_description[0] = '\0';
+    xcolorspace_recompute_valid(self);
+    xcolorspace_identify(self);
+}
+
+void XColorSpace_setTransferFunction(
+    XColorSpace* self,
+    XColorSpaceTransferFunction transferFunction,
+    float gamma)
+{
+    if (!self || transferFunction == XColorSpaceTransfer_Custom) return;
+    /* Qt compares the caller's raw gamma before normalizing the default.
+       This preserves the distinction between an explicit zero and the
+       already-normalized approximate gamma of a predefined curve. */
+    if (self->m_transferFunction == transferFunction &&
+        self->m_gamma == gamma)
+        return;
+    /* QColorSpace::setTransferFunction() on a default-constructed object
+       creates an RGB private value with custom (and therefore still
+       incomplete) primaries.  Preserve that observable ColorModel even
+       though the resulting space remains invalid until primaries are set. */
+    if (self->m_colorModel == XColorSpaceModel_Undefined)
+        self->m_colorModel = XColorSpaceModel_Rgb;
+    if (!(gamma > 0.0f)) gamma = xcolorspace_default_gamma(transferFunction);
+    self->m_transferFunction = transferFunction;
+    self->m_gamma = gamma;
+    self->m_namedColorSpace = XColorSpaceNamed_Unknown;
+    self->m_description[0] = '\0';
+    xcolorspace_recompute_valid(self);
+    xcolorspace_identify(self);
+}
+
+XColorSpace XColorSpace_withTransferFunction(
+    const XColorSpace* self,
+    XColorSpaceTransferFunction transferFunction,
+    float gamma)
+{
+    XColorSpace result;
+    if (!self) return XColorSpace_create();
+    result = *self;
+    if (!self->m_valid || transferFunction == XColorSpaceTransfer_Custom)
+        return result;
+    XColorSpace_setTransferFunction(&result, transferFunction, gamma);
+    return result;
+}
+
 bool XColorSpace_primariesData(const XColorSpace* self,
                                XColorSpacePrimariesData* out)
 {
@@ -325,12 +508,14 @@ bool XColorSpace_primariesData(const XColorSpace* self,
 
 const char* XColorSpace_description(const XColorSpace* self)
 {
-    return self ? self->m_description : "";
+    if (!self) return "";
+    return self->m_userDescription[0] != '\0' ? self->m_userDescription
+                                               : self->m_description;
 }
 
 void XColorSpace_setDescription(XColorSpace* self, const char* description)
 {
-    xcolorspace_set_description(self, description);
+    xcolorspace_set_user_description(self, description);
 }
 
 bool XColorSpace_equals(const XColorSpace* left, const XColorSpace* right)

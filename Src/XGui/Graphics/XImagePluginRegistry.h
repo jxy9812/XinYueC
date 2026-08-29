@@ -26,7 +26,9 @@ extern "C" {
 #endif
 
 /**
- * @brief 清空注册表。
+ * @brief 清空注册表中的显式插件。
+ * @details 该操作不释放插件对象；下次访问注册表时会重新发现内置插件。
+ *          这与 Qt 内置 imageformats 处理器始终可用的行为一致。
  * @note 不释放插件对象，调用方仍需自行管理插件生命周期。
  */
 void XImagePluginRegistry_clear(void);
@@ -41,8 +43,9 @@ bool XImagePluginRegistry_addPlugin(XImageIOPlugin* plugin);
 /**
  * @brief 从注册表移除指定插件。
  * @param plugin 待移除插件对象。
- * @return 找到并移除返回 true；未注册则返回 false。
- * @note 不释放插件对象；移除后调用方可安全销毁插件。
+ * @return 找到并移除返回 true；未注册或插件为内置插件时返回 false。
+ * @note 不释放插件对象；移除后调用方可安全销毁插件。内置插件属于进程
+ *       级固定处理器，不能被移除。
  */
 bool XImagePluginRegistry_removePlugin(XImageIOPlugin* plugin);
 

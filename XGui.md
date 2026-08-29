@@ -1,13 +1,14 @@
 # XGui 进度文档
 
-> 最后更新：2026-08-28 Asia/Shanghai
+> 最后更新：2026-08-29 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
 
 ## 1. 当前任务目标
 
-XGui 布局系统 **100% 对齐 Qt 6.8**：PC 端全功能可用，嵌入式通过
-`Src/XGui/XLayout/XLayout_config.h` 的宏开关裁剪扩展功能。
+XGui 布局系统核心 API 已按 Qt 6.8 对齐：PC 端功能可用，嵌入式通过
+`Src/XGui/XLayout/XLayout_config.h` 的宏开关裁剪扩展功能；动态插件、ICC
+色彩配置等桌面 Qt 扩展仍保留在文末边界说明中。
 
 - 总开关：`XLAYOUT_ON`（在 `Src/CXinYueConfig.h` 统一定义）
 - 子开关：`XLAYOUT_BOX_ON` / `XLAYOUT_GRID_ON` / `XLAYOUT_SPACER_ON` /
@@ -15,8 +16,8 @@ XGui 布局系统 **100% 对齐 Qt 6.8**：PC 端全功能可用，嵌入式通�
 
 ## 2. 仓库状态
 
-- HEAD：`73329dbd` feat(usb): 统一 USB Host/Gadget 设备层并接入 Windows/Linux/TinyUSB 平台后端
-- 工作树：**保留全部改动（约 39 项）**，不清理、不丢失、不 push
+- HEAD：`321f5dd1` feat(xgui): 完整推进 Qt 6.8 图形与布局对齐
+- 工作树：**保留本轮代理改动（22 个文件）**，不清理、不丢失、不 push
 - 构建验证入口：`build/`（out-of-source CMake），测试程序
   `bin/XGuiRegression_Test`
 - 分支/提交约定：默认分支前缀 `codex/`；**不要 push**（除非用户明确要求）
@@ -34,7 +35,7 @@ XGui 布局系统 **100% 对齐 Qt 6.8**：PC 端全功能可用，嵌入式通�
 
 ## 3. 已完成工作概览
 
-### 3.1 图像体系（已完整提交 HEAD `d73aeb26`）
+### 3.1 图像体系（已纳入 HEAD `321f5dd1`，本轮继续补齐行为）
 
 - XImageCodec 五格式完整编解码：BMP（24/32 无压缩正/倒序）、PNG（8 位
   0/2/4/6 型、反滤波 0~4、无 Adam7、无调色板型）、JPEG（基线 SOF0、
@@ -4720,3 +4721,1501 @@ CTest（1/1）及 `git diff --check` 通过。构建保留仓库既有函数指�
 
 当前边界：`XColorSpace` 仍未承载 ICC 原始数据、逐通道 LUT 及完整 CMYK/元素列表处理，
 因此实际颜色变换仍是现有 RGB 传递函数的便携近似；目标变换模型的细粒度策略待后续扩展。
+
+### 10.182 2026-08-29 XImagePluginRegistry 全局锁与内置处理器生命周期对齐
+
+本轮对照 Qt 6.8 图像插件辅助层和工厂加载器实现：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereaderwriterhelpers.cpp:18-20`
+  声明进程级 `QFactoryLoader` 与配套 `QMutex`；`:69-75` 的 `pluginLoader()` 在访问
+  loader 前加锁，并通过共享指针析构器解锁。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereaderwriterhelpers.cpp:84-100`
+  说明内置格式与插件格式合并后排序、去重；`:45-67` 说明插件 MIME 元数据与能力位
+  共同决定公开列表。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:201-219`、
+  `:221-254` 说明插件探测期间保存并恢复非顺序设备位置；内置处理器属于始终可用的
+  基础路径。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/plugin/qfactoryloader.cpp:293-388`
+  展示目录发现、元数据解析、键映射更新及插件 `PreventUnloadHint`；`:588-610` 展示
+  键映射建立和大小写不敏感的索引查找。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImagePluginRegistry.c:10-75` 增加基于 `XAtomic_uintptr_t` 的
+  原子懒初始化递归互斥锁；注册、移除、清理、格式/MIME 查询、内容探测以及读写处理器
+  创建均在统一锁下执行。递归属性覆盖 `ensureBuiltin()` 调用 `addPlugin()`，以及插件
+  `capabilities()`/`create()` 回调再次查询注册表的场景。
+- `Src/XGui/Graphics/XImagePluginRegistry.c:199-294` 让清理操作清零残留槽位并保留“下次
+  查询自动恢复内置插件”的状态；禁止移除 `XImageBuiltinPlugin_instance()`，保持 Qt
+  内置 imageformats 处理器不随外部插件管理接口消失。同步补齐成功/失败路径的解锁。
+- `Src/XGui/Graphics/XImagePluginRegistry.h:28-50` 明确 `clear()` 与
+  `removePlugin()` 的生命周期和内置插件约束；`xgui_regression_test.c:5740-5754`
+  增加清空、不可移除和恢复 BMP 能力的回归断言。
+
+验证结果：默认 `cmake --build build --target XGuiRegression_Test -j1` 成功，运行
+`./bin/XGuiRegression_Test` 通过；`build-crop-painter-off` 裁剪配置同样重建并运行
+通过。`ctest --test-dir build --output-on-failure` 为 1/1 通过，`git diff --check`
+通过。构建输出仅保留仓库已有的函数指针兼容、const 丢弃及第三方预处理警告；本轮未执行
+新的 ASan/LSan，不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：该改动只保护 XGui 的固定容量静态注册表和显式 `addPlugin()` 接口；Qt
+`QFactoryLoader` 的目录扫描、动态库元数据解析、键冲突优先级和不可卸载动态库仍不引入
+到嵌入式核心。`pluginAt()` 返回借用指针，调用方仍必须保证外部插件对象存活；跨线程
+持有该指针时需由调用方配合注册表生命周期管理。
+
+### 10.183 2026-08-29 内置 JPEG `jpg` 别名与 MIME 元数据对齐
+
+本轮依据 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimageiohandler.cpp:195-205`：
+图像插件元数据要求每个格式键都有对应 MIME，JPEG 示例同时公开 `jpg`、`jpeg`，且二者
+均映射到 `image/jpeg`；`qimagereader.cpp:1476-1481` 也将 JPG 作为公开格式名称。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageBuiltinPlugin.c:18-25,371-378` 内置插件新增 `jpg` 键、
+  `*.jpg` 文件过滤器和重复的 `image/jpeg` MIME，并按数组实际长度初始化三组元数据，
+  保证后续新增别名不会被固定循环次数截断。已有 `XImageCodec_formatFromName()` 已将
+  `jpg` 与 `jpeg` 归一到同一 JPEG 编解码器，因此显式格式、后缀和编码能力自动复用。
+- `xgui_regression_test.c:5300-5320` 将 JPEG 双键纳入格式数量断言，并验证 reader 列表
+  同时包含 `jpg`/`jpeg`；MIME 列表继续验证 Qt 排序去重后的单个 `image/jpeg`。
+
+验证结果：默认构建 `XGuiRegression_Test` 与运行通过；`build-crop-painter-off` 裁剪构建
+与运行通过；CTest 1/1 通过，`git diff --check` 通过。构建仍保留仓库已有警告，本轮未
+执行新的 ASan/LSan，不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：JPEG 仍使用当前项目便携 Codec 的图像质量与元数据能力；Qt 动态 imageformats
+目录发现和真正 JPEG 插件的全部 `QImageIOHandler` 选项不在本轮范围内。
+
+### 10.184 2026-08-29 XPainter Picture 不透明度与合成模式状态对齐
+
+本轮对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:147-174`
+（`QPicturePaintEngine::updateCompositionMode()` 和 `updateOpacity()` 将状态写入
+`PdcSetCompositionMode`、`PdcSetOpacity`），以及
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpicture.cpp:820-832`
+（Picture 回放时按记录顺序恢复合成模式和不透明度）。
+
+实现范围：
+
+- `Src/XGui/Graphics/XPicture.h:35-50,232-245` 新增 `SetOpacity` 与
+  `SetCompositionMode` 两个连续 opcode 及固定长度记录接口；保留原有 1~11
+  命令编号，便携流版本仍为 1。
+- `Src/XGui/Graphics/XPicture.c:236-247,651-685,1089-1117` 增加 4 字节浮点不透明度
+  和 4 字节合成模式的流校验、记录和回放；记录接口拒绝非有限不透明度与越界合成模式，
+  回放直接更新目标 XPainter 状态，避免 Picture 后端递归生成状态命令。
+- `Src/XGui/Graphics/XPainter.c:1687-1707,4950-4984` 在 Picture 后端接入状态记录；
+  setter 先按 Qt 语义钳制/校验并忽略未变化值，再写入状态 opcode。软件后端沿用已有
+  不透明度和 38 种合成模式实现。
+- `xgui_regression_test.c:4432-4480,13708` 增加跨 Picture 回放的状态和像素断言，确认
+  `Clear` 会清除目标矩形而不影响外部像素。
+
+验证结果：默认 `cmake --build build --target XGuiRegression_Test -j1` 和运行回归通过；
+`build-crop-painter-off` 重新构建并运行回归通过，随后恢复默认构建产物；构建输出保留仓库既有函数指针、const 丢弃及第三方
+预处理警告，未执行新的 ASan/LSan，不能宣称零警告或零泄漏。`git diff --check` 通过。
+修改未提交、未推送。
+
+当前边界：仅补齐 QPicture 的不透明度和合成模式状态；画刷、背景、变换、裁剪、字体、
+渲染提示等 Qt 状态 opcode 仍未进入便携 Picture 流。4 字节 float 是嵌入式 ABI 的有界
+表示，不能表示 Qt 在桌面平台上的完整 `qreal` 双精度值。
+
+### 10.185 2026-08-29 图标主题回退与图像文本元数据空白规则对齐
+
+本轮补充对照 Qt 6.8：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:446-570,572-604,612-626`
+  的主题索引、传统目录图标和 `fallbackThemeName` 查找流程；有主题名时回退主题仍使用
+  `themeSearchPaths()`，`fallbackSearchPaths()` 仅服务于无主题名的独立文件回退。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:1376-1390,1414-1421`
+  的 `QIcon::fromTheme()` 路径处理语义：绝对路径直接按文件图标创建，不交给主题加载器。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:6459-6490` 中
+  `qt_getImageTextFromDescription()` 的键值解析：普通键保留原始空白，值执行 simplified，
+  空白条目被忽略；`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagewriter.cpp:609-623`
+  的 `QImageWriter::setText()` 对键和值分别 simplified，并用两个换行符拼接 Description。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeInternal.c:1468-1474` 将带 `fallbackThemeName` 的传统图标查找
+  改为从主题搜索路径读取，避免错误使用独立文件回退目录；`Src/XGui/Icon/XIcon.c:938-976`
+  对绝对路径直接构造文件图标。`xgui_regression_test.c:471-557` 增加不同搜索根目录的
+  传统 fallback 主题测试，并校验图标尺寸与像素。
+- `Src/XGui/Graphics/XImageReader.c:313-395` 调整 Description 解析：保留普通键原始空白、
+  仅用简化结果判空，并忽略空白记录；`xgui_regression_test.c:5144-5718` 扩展 mock
+  Description，覆盖制表符键、QMap 排序和文本值简化规则。
+
+验证结果：默认 `cmake --build build -j1`、`./bin/XGuiRegression_Test`、
+`ctest --test-dir build --output-on-failure` 均通过；`build-crop-painter-off` 完整构建及
+回归同样通过，随后恢复默认构建产物。`git diff --check` 通过。完整构建仍显示仓库既有
+函数指针、const 丢弃及第三方预处理警告；未执行新的 ASan/LSan，不能宣称零警告或零泄漏。
+修改未提交、未推送。
+
+当前边界：主题目录扫描、index.theme 完整继承和动态插件发现仍使用现有嵌入式实现；文本
+元数据仍限制在 Description 选项，未扩展 Qt 的任意键值容器和逐格式私有元数据。
+
+### 10.186 2026-08-29 最终 ASan/LeakSanitizer 回归记录
+
+为覆盖本轮图像插件、图标主题、文本元数据和 Picture 状态改动，重新生成了 `build-asan`
+ 配置并构建 `XGuiRegression_Test`。执行 `ASAN_OPTIONS=detect_leaks=1:halt_on_error=0`
+ 后，全部 XGui 回归断言通过；LeakSanitizer 报告 `102130 byte(s) leaked in 458 allocation(s)`。
+其中主要来源为 Mesa `libGLX_mesa.so` 及 fontconfig 的进程级资源，另有既有
+`XImage_setDevicePixelRatio()` 克隆路径（`Src/XGui/Graphics/XImage.c:2690`）和
+`XPlatformNativeWindow_grabWindow()` 截图路径（`Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:1382`）。
+该结果与仓库历史外部后端泄漏基线同类，不能据此宣称本轮零泄漏；ASan 构建期间仍保留
+仓库既有类型指针、const 丢弃及第三方预处理警告。随后已重新执行默认 `cmake --build
+build -j1`，恢复 `bin/XGuiRegression_Test` 为非 ASan 版本。
+
+### 10.187 2026-08-29 图标主题引擎 key 对齐
+
+本轮补充对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:954-967`：
+`QIconLoaderEngine::key()` 返回固定引擎类型名，图标名称由独立的 `iconName()` 提供，
+不能将主题图标名拼接进引擎 key。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeEngine.c:174-180` 将 `XIconThemeEngine_key()` 固定为
+  `QIconLoaderEngine`，保留名称查询由 `iconName()` 完成。
+- `xgui_regression_test.c:4761-4762` 增加精确 key 字符串断言，防止引擎类型标识回退为
+  主题 URI 或混入图标名。
+
+验证结果：默认和 `build-crop-painter-off` 配置的 XGui 回归均通过，默认全量构建及
+CTest 1/1 通过，`git diff --check` 通过。构建仍保留仓库既有类型指针、const 丢弃和
+CMake 第三方预处理警告；未执行新的 ASan/LSan，不能宣称零警告或零泄漏。修改未提交、
+未推送。
+
+当前边界：引擎 key 已与 Qt 类型标识一致，但 XIconEngine 的主题缓存、动态主题插件
+发现和完整 index.theme 继承仍采用嵌入式实现，尚未引入桌面 Qt 的动态库扫描。
+
+### 10.188 2026-08-29 索引主题为空目录时的继承语义
+
+本轮继续对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp`：
+
+- `:347-420` 由 `index.theme` 的 `Directories` 构建主题内容目录；索引文件存在但目录
+  为空时，主题仍然有效，不应回退到传统尺寸/上下文目录约定。
+- `:422-436` 规定父主题、fallback 主题以及最终 `hicolor` 的继承顺序。
+- `:446-467` 规定无效索引主题不加载自身图标内容；`:469-535` 负责有效索引主题的
+  内容目录和索引目录搜索。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeInternal.c:1075-1098` 的 `theme_searchTheme()` 在成功解析
+  `index.theme` 后，无论 `Directories` 条目数量，都只按索引目录和 `Inherits` 继续查找；
+  只有完全没有索引文件时才启用内置的传统目录约定。
+- `Src/XGui/Icon/XIconThemeInternal.c:1261-1268` 的 `theme_collectSizes()` 使用同一判定，
+  防止空索引主题错误报告伪造的 `size x size` 图标尺寸。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的 `XGuiRegression_Test` 均通过；
+默认全量构建、CTest 1/1 和 `git diff --check` 通过。构建仍保留仓库既有函数指针、const
+丢弃及第三方预处理警告；ASan/LSan 仍有 10.186 所记录的进程级资源和既有克隆路径泄漏，
+不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：该修正只覆盖索引主题为空目录时的本地内容与继承判定；Qt 桌面版动态主题
+发现、完整 `index.theme` 继承冲突优先级和缓存失效策略仍未引入嵌入式核心。
+
+### 10.189 2026-08-29 XPainter Picture 渲染提示状态对齐
+
+本轮对照 Qt 6.8：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:274-281`：
+  `QPicturePaintEngine::updateRenderHints()` 将完整渲染提示掩码写入
+  `PdcSetRenderHint`。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:6866-6883`：
+  `QPainter::setRenderHints()` 按位开启或清除掩码，并在每次调用后标记
+  `DirtyHints`，即使掩码没有实际变化也会保留该状态更新时序。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpicture_p.h:100-103`：
+  `PdcSetRenderHint` 使用 `quint32` 负载。
+
+实现范围：
+
+- `Src/XGui/Graphics/XPicture.h:50,253` 新增连续便携 opcode
+  `SetRenderHints=14` 和 `XPicture_recordSetRenderHints()`；
+  `Src/XGui/Graphics/XPicture.c:237-244,688-696,1131-1140` 完成 4 字节
+  little-endian 掩码的流校验、记录与回放。渲染提示关闭时仍消费该记录，保证
+  裁剪配置下 Picture 流的前向兼容。
+- `Src/XGui/Graphics/XPainter.c:1709-1723,5087-5110` 在 Picture 后端记录
+  每次启用的完整掩码；单个位和批量位操作都复用 Qt 的按位语义，并保留重复调用
+  的记录时序。
+- `xgui_regression_test.c:4657-4711` 增加 `test_painter_picture_render_hints_record()`，验证
+  单个位开启、批量开启、单个位清除以及 Picture 回放后的最终掩码和查询结果。
+  额外覆盖重复批量设置，确认 Qt 的每次 `DirtyHints` 时序均保留在便携流中。
+
+验证结果：默认与 `build-crop-painter-off` 的 `XGuiRegression_Test` 均通过；默认
+目标重新链接后运行回归与 CTest 1/1 通过，`git diff --check` 通过。完整构建输出仍
+包含仓库既有函数指针、const 丢弃和第三方预处理警告；ASan/LSan 的进程级资源及既有
+克隆路径泄漏见 10.186，不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：仅序列化渲染提示位集合并恢复 `XPainter` 状态；画刷、背景、变换、裁剪、
+字体和渲染设备私有状态仍未加入自定义 Picture 流，底层便携回调能力也不因该 opcode
+而扩展。
+
+### 10.190 2026-08-29 图像处理器失败后的格式回退顺序
+
+本轮继续对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:201-254`：
+带后缀或显式格式时先尝试对应插件；该插件创建处理器失败后，自动探测阶段跳过同一
+后缀插件，只继续尝试其它插件，然后再进入内置处理器回退。非顺序设备在能力探测和
+处理器创建前后恢复设备位置。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImagePluginRegistry.c:307-373` 记录显式格式首个命中的插件；若其
+  `create()` 返回空，在后续自动探测中跳过该插件，避免重复调用失败对象，同时允许
+  其它插件和内置编解码器继续接管。
+- 既有注册表互斥锁、能力探测位置恢复和内置插件排序逻辑保持不变，显式插件仍优先于
+  内置处理器，注册表不取得插件对象所有权。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的 `XGuiRegression_Test` 均通过；
+默认目标重新链接后回归与 CTest 1/1 通过，`git diff --check` 通过。全量构建仍保留
+仓库既有函数指针、const 丢弃及第三方预处理警告；ASan/LSan 结果沿用 10.186，不能
+宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：动态 `QFactoryLoader` 目录扫描、插件库加载/卸载及 Qt 私有后缀映射仍未引入
+嵌入式核心；当前规则覆盖固定容量注册表内的显式插件和内置处理器。
+
+### 10.191 2026-08-29 XPainter Picture 画刷原点状态对齐
+
+本轮对照 Qt 6.8：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:194-203`：
+  `QPicturePaintEngine::updateBrushOrigin()` 将 `QPointF` 作为一次完整状态记录写入
+  Picture；`:483-496` 的脏状态调度保证画刷原点变化后执行该更新。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2093-2112`：
+  `QPainter::setBrushOrigin()` 更新两个坐标并标记 `DirtyBrushOrigin`；Picture
+  引擎会保留每次调用的状态更新时序。
+
+实现范围：
+
+- `Src/XGui/Graphics/XPicture.h:49,259` 新增连续便携 opcode
+  `SetBrushOrigin=15` 与 `XPicture_recordSetBrushOrigin()`；
+  `Src/XGui/Graphics/XPicture.c:231-246,701-713,1157-1165` 使用两个固定宽度
+  little-endian IEEE-754 `float`（共 8 字节）写入、严格校验并直接恢复回放状态。
+  校验器最大 opcode 与长度判断同步覆盖 15；即使 `XPAINTER_BRUSH_ORIGIN_ON` 关闭，
+  回放仍消费该记录，保证裁剪构建下流格式兼容。
+- `Src/XGui/Graphics/XPainter.c:1724-1738,4567-4577` 在 Picture 后端为每次有效
+  坐标设置追加完整坐标记录，查询接口按 `XPointF_toPoint()` 的对称四舍五入语义
+  返回整数点。
+- `xgui_regression_test.c:4713-4754,14551-14553` 验证记录流有效、回放成功以及
+  `(1.25,-2.5)` 回放为 `(1,-3)`；默认与裁剪配置均执行该测试（裁剪配置下该测试
+  由编译开关省略，但协议校验路径仍覆盖）。测试同时断言重复坐标设置产生两条
+  `SetBrushOrigin` 记录，与 Qt 每次 `DirtyBrushOrigin` 更新一致。
+
+验证结果：默认 `build` 目标构建、`./bin/XGuiRegression_Test` 与 CTest 1/1 通过；
+`build-crop-painter-off` 目标构建及回归同样通过；`git diff --check` 通过。构建仍有
+仓库既有 `XSignal` 函数指针、const 丢弃及第三方预处理警告；LSan 仍受 10.186 所述
+进程级资源与既有克隆路径泄漏影响，不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：该协议只恢复画刷原点状态，不增加 QBrush、背景、变换、裁剪区域、字体或
+设备私有状态的序列化；浮点负载采用便携单精度，未表达 Qt `QPointF` 可能保留的更高
+精度。
+
+### 10.192 2026-08-29 图标主题索引、缩放与独立回退对齐
+
+本轮对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp`：
+
+- `:347-420`：主题目录先以 `index.theme` 是否存在判定有效性，再读取
+  `Directories`、`Size/Type/Scale/Threshold` 与 `Inherits`；索引存在但目录为空时
+  仍是有效主题。
+- `:422-436`：父主题、配置的 fallback 主题以及最终 `hicolor` 的继承顺序。
+- `:446-535`：有效索引主题按内容目录和索引目录查找 PNG/SVG；无效索引主题不加载
+  自身内容。
+- `:572-609`：主题外回退只按 PNG、XPM、SVG 顺序，首个存在文件即停止。
+- `:794-847`：`Scale` 必须精确匹配，Fixed/Scalable/Threshold 按元数据计算距离；
+  `:912-937`：仅在源图大于请求尺寸时按比例缩小，不放大较小图。
+- `:954-967`：图标引擎 `key()` 固定返回 `QIconLoaderEngine`，图标名由
+  `iconName()` 单独提供。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeInternal.c:49-53,816-877,1182-1210` 分离独立回退扩展名、
+  按原始 `Scale/Threshold` 参与匹配和距离计算，并采用 KeepAspectRatio 只缩小策略；
+  `:1280-1298,1653-1666` 在有效 `index.theme`（包括空 `Directories`）下禁止传统
+  目录伪探测，索引失败时才继续 fallback 搜索。
+- `Src/XGui/Icon/XIconThemeInternal.c:1467-1514` 独立回退尺寸保留实际图片矩形，
+  与首个可加载文件停止规则一致；SVG 支持仍受 `XICON_THEME_SVG_AVAILABLE` 裁剪开关
+  控制。
+- `Src/XGui/Icon/XIconThemeEngine.c:174-180` 返回固定引擎 key；
+  `Src/XGui/Icon/XIcon.c:935-976` 对绝对路径直接构造文件图标，避免把路径误当主题名。
+
+验证结果：默认与 `build-crop-painter-off` 的 XGui 回归目标均通过，CTest 1/1 通过；
+`git diff --check` 通过。保留 10.186 的既有警告和 LSan 泄漏边界，未提交、未推送。
+
+当前边界：未实现 Qt 桌面版 `QFactoryLoader` 动态主题发现、GTK 缓存完整格式及缓存
+失效策略；主题索引解析仍是嵌入式固定容量实现。
+
+### 10.193 2026-08-29 图像处理器前置条件与失败回退顺序
+
+本轮对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp`：
+
+- `:143-149`：自动格式探测关闭且格式为空时，`createReadHandlerHelper()` 直接返回
+  空处理器。
+- `:201-219`：先尝试后缀对应插件并恢复非顺序设备位置；插件创建失败后，
+  `:221-254` 的自动探测会跳过同一后缀插件，继续其它插件和内置处理器。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImagePluginRegistry.c:306-373` 在注册表入口复现无格式前置条件，
+  同时记录显式格式首个命中插件；其 `create()` 失败后自动探测阶段跳过该对象，保留
+  其它插件及内置编解码器接管机会。能力探测、创建前后设备位置恢复和显式插件优先级
+  保持不变。
+- `Src/XGui/Graphics/XImageBuiltinPlugin.c:20-24` 将内置声明扩展为 BMP/PNG/JPG/JPEG/
+  GIF/SVG，JPEG 别名共享 MIME `image/jpeg`，文件过滤器包含 `*.jpg`；初始化按声明
+  数组长度遍历，避免新增格式遗漏。
+- `Src/XGui/Graphics/XImageReader.c:313-405` 按 Qt `qt_getImageTextFromDescription()`
+  规则分隔空行记录：普通键保留键原始空白、值统一 `simplified()`，空记录和空键忽略，
+  重复键按有序列表覆盖。
+
+验证结果：默认和裁剪构建的 XGui 回归目标均通过，CTest 1/1 与 `git diff --check`
+ 通过；构建保留仓库既有警告，LSan 边界沿用 10.186，未提交、未推送。
+
+当前边界：不包含 Qt `QFactoryLoader` 动态插件目录扫描、共享库装卸和私有后缀映射；
+  注册表仍使用固定容量、显式生命周期的嵌入式插件集合。
+
+### 10.194 2026-08-29 QImage 色彩空间目标模型兼容性
+
+本轮对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage_p.h:470-490`：
+  `qt_compatibleColorModelSource()` 允许灰度输入附加 RGB 色彩空间，
+  `qt_compatibleColorModelTarget()` 允许灰度输出通过 `ThreeComponentMatrix` 转换到
+  任意明确颜色模型；`qimage.cpp:5038-5065,5360-5384` 在目标模型不兼容时改走转换路径。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImage.c:601-630,753-806` 保留元数据附加的灰度到 RGB 规则，新增
+  转换目标判定：灰度像素在目标色彩空间声明三分量矩阵时可进入转换路径，未定义目标
+  模型仍拒绝；Alpha-only 数据继续视为可附加任意有效色彩空间。
+- 转换入口复用现有 `XColorSpaceTransform` 与项目内存/拷贝接口，不引入平台 API 或
+  标准库分配器。
+
+验证结果：默认与 `build-crop-painter-off` 回归目标均通过，CTest 1/1、
+`git diff --check` 通过。既有构建警告及 10.186 的 LSan 泄漏仍存在，不能宣称零警告
+或零泄漏；修改未提交、未推送。
+
+当前边界：ICC profile、逐通道 LUT、`ElementListProcessing` 元素列表和完整
+`QColorTransform` 矩阵仍未实现；该实现只覆盖当前便携色彩空间转换接口可表达的模型
+兼容性判定。
+
+### 10.195 2026-08-29 XPainter Picture 世界变换状态对齐
+
+本轮对照 Qt 6.8：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:235-243`：
+  `QPicturePaintEngine::updateMatrix()` 在脏变换状态更新时写入完整
+  `QTransform` 和 combine 标志；`:483-496` 的 `updateState()` 负责调度该状态更新。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2849-2867,2893-2978`：
+  世界矩阵启用位只有在实际变化时更新，平移、缩放、旋转、错切和显式世界矩阵设置
+  都会重新提交变换状态；`:7915-7963` 的重置/设置世界矩阵路径同样更新该状态。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpicture.cpp:778-840`：
+  Picture 回放把世界矩阵和启用状态恢复到目标 `QPainter`，而不是把状态变化再次
+  记录到目标 Picture。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qtransform.cpp:1036-1055`：
+  `QTransform` 的标准数据流格式依次写入九个 `double` 矩阵元素；本项目因此明确把
+  单精度负载标为嵌入式协议边界，而不是宣称字节级 Qt 数据流兼容。
+
+实现范围：
+
+- `Src/XGui/Graphics/XPicture.h:46-51,263-273` 新增连续便携 opcode
+  `SetTransform=16` 与 `XPicture_recordSetTransform()`，公共接口和字段含义使用全中文
+  注释。`Src/XGui/Graphics/XPicture.c:28,246-256,727-750` 使用固定 40 字节负载，按
+  `m11,m12,m21,m22,dx,dy,m13,m23,m33` 顺序写入九个 little-endian IEEE-754 单精度值，
+  最后写入四字节启用标志；记录前拒绝空指针和非有限矩阵，校验器严格验证 opcode 与
+  负载长度。
+- `Src/XGui/Graphics/XPainter.c:1740-1757,4819-4936` 在 Picture 后端为世界矩阵
+  变更追加完整状态记录；重置、显式设置、平移、缩放、旋转、错切和启用位变更均覆盖。
+  启用位未改变时直接返回，与 Qt 的 no-op 语义一致。回放在
+  `Src/XGui/Graphics/XPicture.c:1204-1231` 直接恢复矩阵和启用位，避免重复记录。
+- `xgui_regression_test.c:4676-4726,14074` 增加矩阵记录、校验、平移回放以及默认/裁剪
+  配置下启用位语义的回归覆盖；即使 `XPAINTER_WORLD_MATRIX_ON=0`，协议记录仍被消费，
+  以保持跨配置流兼容。
+
+验证结果：`cmake --build build --target XGuiRegression_Test -j1`、
+`./bin/XGuiRegression_Test`、`cmake --build build-crop-painter-off --target
+XGuiRegression_Test -j1`、裁剪配置回归、`ctest --test-dir build --output-on-failure`
+（1/1）和 `git diff --check` 均通过。构建仍输出仓库既有 `XSignal`/`XEvent` 函数指针、
+const 丢弃及第三方预处理警告；LSan 仍受既有进程级资源和克隆路径泄漏影响，不能宣称
+零警告或零泄漏。修改未提交、未推送。
+
+当前边界：Qt `QTransform` 序列化使用 double，本协议为匹配 `XImageTransform` 和嵌入式
+固定宽度而使用 float，存在精度收窄；自定义流暂未提供 Qt 的 view/window/viewport、裁剪
+区域、画刷、背景和字体状态 opcode，因此本轮只恢复世界矩阵，不把这些状态近似编码为
+有效矩阵。
+
+### 10.196 2026-08-29 QImageReader 畸形 BMP 与插件创建失败回归
+
+本轮审计对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:201-254`：显式后缀
+  插件优先尝试；插件 `create()` 失败后继续其它插件和内置处理器，自动探测阶段跳过
+  已失败的同一后缀插件。
+- `qimagereader.cpp:295-337`：后缀处理器的 `canRead()` 失败后恢复设备位置并继续按
+  内容探测；`qimagereader.cpp:1110-1116`：`canRead()` 只做轻量格式判断，并不保证
+  数据完整；`qimagereader.cpp:1160-1218`：实际解码失败返回 `InvalidDataError`。
+- `qimageiohandler.h:24-40,41-60,69-78`：处理器的 `canRead()`、`read()` 和描述文本
+  接口分别承担格式识别、完整解码与元数据职责。
+
+实现范围：
+
+- `xgui_regression_test.c:6610-6643` 新增截断 BMP fixture：验证可识别但可能损坏的
+  文件仍可通过 `XImageReader_canRead()`，而像素区截断必须由 `read()` 拒绝并设置
+  `XImageReaderError_InvalidDataError`，输出保持空图像，不暴露部分解码结果。
+- `xgui_regression_test.c:6112-6162` 新增外部 BMP 插件 `create()` 失败回归：验证
+  内置 BMP 处理器继续接管并正确还原像素；测试插件仍验证设备位置保护和显式后缀
+  失败后的内容回退。
+- 测试中的工厂开关 `g_mockRejectCreate` 位于
+  `xgui_regression_test.c:20-27,5431-5444`，只影响测试插件，不改变生产实现。
+
+验证结果：默认 `cmake --build build --target XGuiRegression_Test -j1`、
+`./bin/XGuiRegression_Test`、`ctest --test-dir build --output-on-failure`（1/1）均通过；
+`build-crop-painter-off` 的同名目标和回归程序也通过。`git diff --check` 通过。构建中
+仍有仓库既有的 XClass/XSignal/XEvent 类型警告，且沿用 10.186 的 LSan 泄漏边界，不能
+宣称零警告或零泄漏；本轮未提交、未推送。
+
+当前边界：该回归覆盖嵌入式注册表的创建失败回退，不等同于 Qt 桌面版 `QFactoryLoader`
+的动态目录扫描、共享库装卸和私有插件元数据映射；`canRead()` 仍只验证格式前缀，
+畸形数据的完整性只在 `read()` 阶段判定。
+
+### 10.197 2026-08-29 XIcon 高 DPI 引擎结果修正
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:911-930`：高 DPI
+  `QIcon::pixmap()` 将设备无关尺寸传给 `scaledPixmap()`，再依据引擎实际返回的
+  物理像素尺寸修正结果设备像素比；普通 DPI 路径固定为 1.0。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconengine.cpp:236-303`：图标
+  引擎的默认缩放实现允许返回小于请求尺寸的像素图，调用方不能假定输出尺寸必然
+  等于请求尺寸。
+
+实现范围：
+
+- `Src/XGui/Icon/XIcon.c:493-519,732-778` 为自定义引擎高 DPI 路径增加有限浮点到
+  整数的物理目标尺寸转换，并使用实际输出宽高计算设备像素比；拒绝非有限比例和
+  超出 `INT_MAX` 的中间结果，避免未定义整数转换。普通 DPI 及内置资源路径保持
+  输出比例为 1.0 或沿用现有按实际尺寸缩放逻辑。
+- `Src/XGui/Icon/XIcon.h:262-271` 补充设备像素比、实际输出尺寸与空结果处理的
+  中文公共接口注释。
+
+验证结果：默认和裁剪配置的 XGui 回归目标、回归程序、CTest 1/1 及
+`git diff --check` 均通过。构建仍保留仓库既有函数指针/const 警告，LSan 沿用
+10.186 的进程级资源泄漏边界，不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：自定义引擎仍由调用方提供，未实现 Qt 桌面版应用级全局 DPR 查询、动态
+插件发现与平台主题缓存；协议和像素尺寸使用项目的 `float`/整数接口，不承诺 Qt
+内部 `qreal` 的双精度字节级一致性。
+
+### 10.198 2026-08-29 QIcon 主题名称与文件路径判定
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:1376-1388`：
+  `QIcon::fromTheme()` 仅在 `QDir::isAbsolutePath()` 为真时把输入当作文件名；
+  相对路径形式仍按主题名称查找。Qt `QDir::isRelativePath()` 的实现位于
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/io/qdir.cpp:2438-2441`，并明确将
+  以冒号开头的 `:/...` 资源路径视为绝对路径。
+- `qicon.cpp:1431-1437`：`QIcon::hasThemeIcon()` 通过 `fromTheme()` 后比较引擎
+  名称，因此绝对文件路径不会被当作主题图标命中。
+
+实现范围：
+
+- `Src/XGui/Icon/XIcon.c:985-993` 让 `XIcon_fromTheme()` 对 Unix `/` 和 Qt 资源
+  `:/` 绝对路径直接走普通文件图标构造，不把它们交给主题引擎。
+- `Src/XGui/Icon/XIconThemeInternal.c:1554-1561` 将内部直接文件加载条件收窄为
+  Unix 绝对路径 `/` 或 Qt 资源绝对路径 `:/`；`./icon`、`dir/icon` 等相对字符串
+  继续进入主题和独立回退搜索路径，避免工作目录文件意外绕过主题规则。
+- `Src/XGui/Icon/XIcon.c:1032-1042` 让 `XIcon_hasThemeIcon()` 对绝对文件路径直接
+  返回 false（包括 `:/` 资源路径），与 Qt 的文件图标/主题图标区分一致。
+- `xgui_regression_test.c:633-637` 增加相对独立文件和 Qt 资源路径不应被
+  `hasThemeIcon()` 报告为主题图标的回归断言。
+
+验证结果：默认和 `build-crop-painter-off` 的 XGui 回归目标及程序均通过，默认
+CTest 1/1、`git diff --check` 通过；保留仓库既有构建警告和 10.186 所述 LSan 边界，
+不能宣称零警告或零泄漏。修改未提交、未推送。
+
+当前边界：路径语义按 Unix `/` 和 Qt 资源 `:/` 绝对路径实现；Windows 驱动器路径
+以及平台主题动态发现仍属于嵌入式实现边界。
+
+### 10.199 2026-08-29 QImage 灰度判定与元数据无变化语义
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:2868-2942`：
+  `QImage::allGray()` 对 Mono、MonoLSB 和 Indexed8 检查完整颜色表，而不是只检查
+  被像素引用的条目；Alpha8 返回 false，Grayscale8/16 返回 true，空图返回 true。
+- `qimage.cpp:2944-2974`：`QImage::isGrayscale()` 区分空图、原生灰度格式、深度
+  32/24/16 的 `allGray()` 路径和 Indexed8 的规范表 `qRgb(i,i,i)`，Mono 的深度 1
+  路径返回 false。
+- `qimage.cpp:4112-4142`：`setDotsPerMeterX/Y()` 对零值和相同值直接早退，不触发
+  元数据分离；`qimage.cpp:4166-4176`：`setOffset()` 对相同坐标直接早退。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImage.c:1070-1102,2646-2672,2723-2734,2831-2871`：补齐
+  `XImage_isGrayscale()` 的 Qt 深度/格式分支；`XImage_allGray()` 按完整颜色表
+  判定索引和单色图像，并正确处理空图、Alpha8、Grayscale8/16；dpm 与 offset
+  setter 对零值、相同值以及分离失败均无副作用。
+- `xgui_regression_test.c:7996-8060,14174`：新增空图、索引色未引用调色板、规范
+  灰度表、Mono/原生灰度格式以及 metadata cacheKey 无变化回归。
+
+验证结果：默认配置 `cmake --build build --target XGuiRegression_Test -j1` 和
+`./bin/XGuiRegression_Test` 通过；`git diff --check` 通过。裁剪配置仍需主线程
+串行完成；构建输出保留仓库既有 XSignal/XEvent 等警告，不能宣称零警告或零泄漏。
+
+当前边界：XImage 支持的浮点、16/64 位及 CMYK 格式继续通过便携 ARGB 读取路径
+判断灰度，数值转换遵循当前 XImage 像素解码精度；ICC/LUT 色彩空间和 Qt 桌面版
+隐式共享私有数据布局仍不属于此 C99 嵌入式实现。
+
+### 10.200 2026-08-29 QImageReader 描述文本解析边界对齐
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:6468-6483`：
+  `qt_getImageTextFromDescription()` 按空行分段，冒号前出现空格时将整段作为
+  `Description`，普通键保留原始键空白并对值执行 `simplified()`；无冒号段仍按
+  `left(-1)` 与 `mid(index + 2)` 规则处理。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:560-570,882-903`：
+  `QImageReaderPrivate::getText()` 惰性读取 `Description`，`textKeys()` 返回有序
+  键，`text(key)` 返回对应值或空字符串。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageReader.c:315-409`：描述解析改用 `XString` UTF-16 字符
+  索引，而不是 UTF-8 字节偏移，修复非 ASCII 键在冒号处的边界；保持 Qt 的
+  `Description`/普通键分支、值跳过冒号后一个字符、无冒号段 `mid(1)` 和空键过滤
+  语义。
+- `xgui_regression_test.c:5392-5402,5955-6005`：插件描述加入无冒号 `BareText`
+  段，验证键按 QMap 顺序返回、值按 Qt 规则得到 `areText`，同时保留原有普通键
+  空白、Description 简化和缺失键空值覆盖。
+
+验证结果：默认配置 `cmake --build build --target XGuiRegression_Test -j1`、
+`./bin/XGuiRegression_Test`、`ctest --test-dir build --output-on-failure`（1/1）
+通过；`build-crop-painter-off` 的 XGuiRegression 目标、CTest 1/1 也通过；
+`git diff --check` 通过。构建保留仓库既有 XSignal/XEvent 等警告，且没有可用的
+LSan 专用可执行文件，不能宣称零警告或零泄漏。
+
+当前边界：Qt 的 QString 使用 UTF-16 代码单元，XString 同样使用 UTF-16；C 兼容
+接口仍以 UTF-8 输入输出。动态图片插件发现、桌面版 `QFactoryLoader` 元数据和
+非 Description 专用图像文本选项仍由嵌入式插件注册表承载。
+
+### 10.201 2026-08-29 QImage 元数据分离与 QImageReader 变换选项
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:1139-1159`：
+  `QImage::detachMetadata()` 只在隐式共享时复制数据，并由调用方选择是否递增
+  `detach_no`；`qimage.cpp:4112-4142,4166-4174` 对 dpm 和 offset 的零值、相同值
+  直接早退。
+- `qimage.cpp:4184-4236`：文本键按有序映射返回，`text("")` 将键和值以
+  `": "` 和空行连接，普通值使用 `simplified()`；`qimage.cpp:4509-4528`：
+  `cacheKey()` 由序列号和分离序号构成，元数据写入不应伪装为像素变化。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:1010-1015`：
+  `supportsAnimation()` 通过处理器的 `Animation` 选项查询；
+  `qimagereader.cpp:1060-1080,1170-1280`：`autoTransform` 在读取成功后应用处理器
+  方向，且先完成高 DPI 文件名后缀处理。
+- `qimage.cpp:6443-6455`：`qt_imageTransform()` 的方向顺序为先镜像/翻转，再做
+  90 度旋转；`Rotate270` 单独走逆时针旋转路径。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImage.c:632-642,2031-2060,2394-2432,2656-2825`：新增
+  元数据专用分离路径，色彩空间、文本、DPI、DPR 和 offset 的修改只在共享时
+  克隆数据；唯一数据的 `cacheKey` 保持不变，分离失败时不写入。镜像和矩阵变换
+  复制完整物理元数据、文本及色彩空间，避免变换结果丢失 QImage 元数据。
+- `Src/XGui/Graphics/XImageReader.c:1243-1265,1268-1321,1404-1676`：动画能力
+  查询除内置 GIF 外透传通用处理器的 `Animation` 选项；读取成功且启用
+  `autoTransform` 时，按 Qt 顺序实现 Mirror、Flip、Rotate180、Rotate90、
+  Rotate270 及组合方向。
+- `xgui_regression_test.c:5968-6057,8046-8140,8148-8224`：覆盖自定义处理器的
+  动画/方向选项、顺时针 90 度像素方向、镜像元数据保留，以及唯一/共享图像的
+  元数据 cacheKey 与文本隔离语义。
+
+验证结果：`build-crop-painter-off` 的
+`cmake --build build-crop-painter-off --target XGuiRegression_Test -j1` 目标构建已完成，
+随后运行 `./bin/XGuiRegression_Test` 通过；默认配置
+`cmake --build build --target XGuiRegression_Test -j1` 和
+`ctest --test-dir build --output-on-failure`（1/1）也通过。并行写入期间曾出现
+`QImage format toPixelFormat/toImageFormat round trip` 与
+`QImage fill(QColor) stores premultiplied RGB without double conversion` 两项暂时失败，
+在相关 `XImageFormat`/`fillColor` 改动完成后已不再复现，当前不属于本轮失败。构建
+输出仍保留仓库原有 `XSignal`/`XEvent` 等警告，且没有可用的 LSan 专用可执行文件，
+不能宣称零警告或零泄漏；`git diff --check` 当前通过。
+
+当前边界：`XColorSpace` 仍未实现 ICC profile、逐通道 LUT 和 `QColorTransform`
+矩阵；自动方向使用现有便携浮点最近邻矩阵变换，不能承诺 Qt 内部高精度缩放的
+字节级一致性。动态图片插件发现和桌面版 `QFactoryLoader` 元数据仍由嵌入式插件
+注册表承载。
+
+### 10.202 2026-08-29 QPixelFormat 静态映射与 QColor 填充对齐
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5940-6429`：
+  `pixelformats` 静态表、`QImage::pixelFormat()`、`toPixelFormat()` 和
+  `toImageFormat()` 的格式顺序、通道位数、Alpha 用法、预乘状态、类型解释及
+  字节序语义。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/kernel/qpixelformat.h:68-161,209-238`：
+  `ColorModel`、Alpha 枚举、`channelCount()`、扩展通道和
+  `CurrentSystemEndian` 解析规则。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:1847-1930`：
+  `QImage::fill(const QColor&)` 对预乘、索引、单色、灰度和浮点格式的分支语义。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.h:219-230`：
+  `mirror()` 与 `rgbSwap()` 的兼容别名接口。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageFormat.h:73-163` 扩展 `XPixelFormat` 模型、Alpha
+  用法/位置、预乘、类型解释、字节序、第四/第五通道和 YUV 子枚举字段；保留
+  原有 `XPixelFormatModel_Mono`/`XPixelFormatModel_Gray` 名称，并提供
+  `Grayscale`、`UsesAlpha`、`IgnoresAlpha` Qt 兼容别名。
+- `Src/XGui/Graphics/XImageFormat.c:121-422` 以 Qt 静态表逐格式构造完整描述，
+  将 `CurrentSystemEndian` 解析为实际本机端序；`XPixelFormat_equals()` 比较
+  所有存储语义（忽略仅为旧接口保留的 `m_byteOrdered` 标志），反向转换保持
+  Qt 的等价格式首项规则（`MonoLSB` 回映射为 `Mono`）。
+- `Src/XGui/Graphics/XImage.c:1048-1105,1668-1820` 新增 QColor 语义填充，覆盖
+  预乘/非预乘 RGB、16/24/30/64/浮点、索引色、单色及 CMYK；`XImage_mirror()`
+  与 `XImage_rgbSwap()` 提供 Qt 兼容就地别名。
+- `xgui_regression_test.c:7954-8030,14345` 验证全部公开格式往返、Alpha/索引/
+  灰度字段、预乘颜色填充、单色/索引调色板分支及别名调用。
+
+验证结果：默认配置全量构建 `cmake --build build -j1`、
+`./bin/XGuiRegression_Test`、`ctest --test-dir build --output-on-failure`（1/1）
+通过；裁剪配置 `build-crop-painter-off` 也完成 `cmake --build
+build-crop-painter-off -j1` 全量构建、`./bin/XGuiRegression_Test` 和 CTest（1/1），
+两套构建输出仅保留仓库已有的 `XSignal`、`XEvent`、函数指针兼容性等警告。
+当前环境没有可用的 LSan 专用可执行文件，不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：`XPixelFormat` 为 C 结构体而非 Qt 的 64 位压缩值，新增字段保持可读性
+和嵌入式 ABI；YUV/HSL/HSV 等模型仅提供描述枚举，当前 XImage 存储格式没有对应
+具体转换器。桌面 Qt 动态格式插件与私有 `QPixelLayout` 仍不属于本实现范围。
+
+### 10.203 2026-08-29 QColorSpace isValidTarget 目标空间判定
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.h:126-130`：
+  `TransformModel`、`ColorModel` 和 `isValidTarget()` 的公开 API 位置。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:1159-1181`：
+  三分量矩阵模型要求空间本身有效；元素列表模型则要求存在有效源变换。
+
+实现范围：
+
+- `Src/XGui/Graphics/XColorSpace.h:196-205` 新增完整中文注释和
+  `XColorSpace_isValidTarget()` 声明。
+- `Src/XGui/Graphics/XColorSpace.c:284-291` 按当前 C99 值类型的能力执行目标判定：
+  仅当空间有效且变换模型为 `ThreeComponentMatrix` 时返回 true，不伪造 Qt
+  `ElementListProcessing` 的单向变换表。
+- `xgui_regression_test.c:7638-7648` 覆盖无效空间拒绝及命名 Display P3 接受。
+
+验证结果：默认和 `build-crop-painter-off` 配置的 `XGuiRegression_Test` 均重新构建、
+运行通过，CTest 均为 1/1；`git diff --check` 通过。构建输出仍保留仓库已有
+`XSignal`/`XEvent` 等警告，环境没有可用的 LSan 专用可执行文件，不能宣称零警告
+或零泄漏；修改未提交、未推送。
+
+当前边界：XColorSpace 仍不承载 ICC 原始 profile、逐通道 LUT 及完整
+`ElementListProcessing` 数据，因此目标判定只能覆盖三分量矩阵模型；相关扩展需先
+设计可裁剪的资源容器，不能用布尔标志近似 Qt 的可逆性。
+
+### 10.204 2026-08-29 QColorSpace 白点读写 API
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.h:102-107,126-130`：
+  `whitePoint()`、`setWhitePoint()` 以及颜色模型和变换模型查询接口。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:1026-1069`：
+  白点读取、空对象返回空坐标、写入后将预定义原色转为 Custom，以及无效传递函数
+  仍保留白点元数据的行为。
+
+实现范围：
+
+- `Src/XGui/Graphics/XColorSpace.h:247-269` 新增 `XColorSpace_whitePoint()` 和
+  `XColorSpace_setWhitePoint()` 的完整中文注释与声明。
+- `Src/XGui/Graphics/XColorSpace.c:325-352` 读取当前值类型保存的白点；设置时校验
+  有限 CIE xy 范围，清除命名空间和描述，并保持 Qt 对未完成传递函数的无效状态。
+  未定义模型设置白点后标记为 Gray，便于后续补充传递函数。
+- `xgui_regression_test.c:7653-7688` 覆盖 Display P3 白点、白点修改后的 Custom
+  语义、灰度白点查询，以及无效空间保留白点元数据。
+
+验证结果：默认配置 `XGuiRegression_Test` 目标构建、回归程序和 CTest 1/1 通过；
+`build-crop-painter-off` 目标构建和 CTest 1/1 同样通过；`git diff --check` 通过。
+构建输出仍有仓库既有 `XSignal`/`XEvent` 等警告，环境没有可用的 LSan 专用可执行文件，
+不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：项目值类型没有 Qt 私有 `QColorMatrix`，因此设置白点只更新可见元数据，
+不执行 Qt 的 Bradford 色彩适应和 RGB 矩阵重标定；ICC profile、逐通道 LUT 和
+`ElementListProcessing` 仍未实现。
+
+### 10.205 2026-08-29 QColorSpace 原色与传递函数值操作
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:832-949`：
+  `setTransferFunction()`、`withTransferFunction()` 的 Custom 早退、源对象不变和
+  描述清除语义。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:965-1023`：
+  `setPrimaries()` 预定义原色替换、RGB 模型和命名空间重置语义。
+
+实现范围：
+
+- `Src/XGui/Graphics/XColorSpace.h:268-307` 新增
+  `XColorSpace_setPrimaries()`、`XColorSpace_setTransferFunction()` 和
+  `XColorSpace_withTransferFunction()`，公共注释全部为中文。
+- `Src/XGui/Graphics/XColorSpace.c:50-66,350-420` 按 RGB/Gray 模型重算有效性；
+  Custom 输入按 Qt 语义忽略，修改会清除命名空间和描述文本，副本接口不改变源值。
+- `xgui_regression_test.c:7689-7715` 覆盖 sRGB 到 Linear 的副本转换、BT.2020
+  原色替换、描述清除以及 Custom 传递函数早退。
+
+验证结果：默认配置 `XGuiRegression_Test` 构建、运行通过；
+`build-crop-painter-off` 目标构建、回归和 CTest 1/1 通过；`git diff --check` 通过。
+构建输出保留仓库既有 `XSignal`/`XEvent` 等警告，环境没有可用的 LSan 专用可执行文件，
+不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：传递函数表重载、ICC profile 和 Qt 私有矩阵仍未加入 C99 值类型；
+`setPrimaries()` 仅替换保存的原色坐标，不执行 Qt 内部色彩适应矩阵重建。
+
+### 10.206 2026-08-29 QColorSpace 转换前置条件与 Gamma 短路修正
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:832-850`：
+  `setTransferFunction()` 先用调用者传入的原始 Gamma 判断无变化，再清除描述并
+  归一化预定义传递函数的默认 Gamma。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5046-5065,5114-5126,5199-5209`：
+  QImage 色彩转换要求目标通过 `isValidTarget()`，并在显式变换时拒绝无效或不兼容
+  的源模型，不能只写入目标元数据。
+
+实现范围：
+
+- `Src/XGui/Graphics/XColorSpace.c:398-410` 调整 setter 的比较顺序，重复设置
+  `sRGB, 0` 会保持原有描述文本，随后才按 Qt 规则补入近似 Gamma。
+- `Src/XGui/Graphics/XImage.c:735-815` 将 `convertedToColorSpace()`、
+  `convertToColorSpace()` 和显式变换统一收紧到有效目标；显式变换在源空间无效或
+  与像素模型不兼容时清空输出，避免产生伪造的目标色彩空间。
+- `xgui_regression_test.c:7758-7767` 新增 `ElementListProcessing` 目标拒绝回归。
+
+验证结果：默认和 `build-crop-painter-off` 配置的 XGuiRegression_Test 目标构建、
+回归程序及 CTest 均通过；`git diff --check` 通过。构建仍有仓库既有的
+`XSignal`、`XEvent`、zlib 条件指令及函数指针兼容性警告；当前环境无可用 LSan
+专用可执行文件，不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：C99 值类型仍未保存 Qt 的 ICC/LUT/ElementList 数据，像素转换实现只处理
+传递函数曲线，尚未重建不同原色/白点之间的 XYZ 矩阵；在补齐可裁剪矩阵协议前，
+不得将不同原色转换描述为与 Qt 完全等价。
+
+### 10.207 2026-08-29 Alpha8 非预乘像素格式映射修正
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:6229-6241`：
+  `QImage::Format_Alpha8` 使用单独的 Alpha 模型和 `NotPremultiplied` 标志；
+  该格式仅存储透明度分量，不应被解释为预乘颜色。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5940-6410`：
+  Qt 的像素格式映射表保持 Alpha8 的非预乘语义，转换到 `QPixelFormat` 时不能
+  沿用带颜色通道格式的预乘默认值。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageFormat.c:320-325` 将 Alpha8 映射的 alpha 标志改为
+  `XPixelFormatAlpha_NotPremultiplied`，其余模型、位宽和类型保持不变。
+- `xgui_regression_test.c:8039-8045` 增加非预乘断言，防止 Alpha8 映射回归为预乘。
+
+验证结果：默认配置和 `build-crop-painter-off` 配置的 `XGuiRegression_Test` 目标
+均重新构建，回归程序及 CTest 均通过；`git diff --check` 通过。构建输出仍有仓库
+已有 `XSignal`/`XEvent` 等警告，环境没有可用的 LSan 专用可执行文件，不能宣称
+零警告或零泄漏；修改未提交、未推送。
+
+当前边界：项目 `XPixelFormat` 辅助枚举值与 Qt 内部枚举值不要求数值相同，映射
+通过显式表保持语义兼容；其他格式的通道排列和预乘规则仍以该表为唯一来源。
+
+### 10.208 2026-08-29 QImageReader 格式确认与无效裁剪边界
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:143-254,258-337`
+  的 `createReadHandlerHelper()`：静态设备格式查询必须先创建处理器并调用
+  `canRead()`，只有确认内容可读后才接受处理器格式；内置处理器仍可按内容回退。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/tools/qrect.h:164-171`：
+  `QRect(width,height)` 的 `isNull()` 只表示宽高同时为零，而 `isValid()` 要求
+  左上角不超过右下角，因此零宽或零高的非 null 矩形仍然无效。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageReader.c:1459-1468,1823-1858`：软件裁剪的有效性
+  改为宽高均大于零；`XImageReader_imageFormatDevice()` 改为使用空格式创建
+  handler，调用 `canRead()` 后复制其格式，失败时再回退到固定编解码器签名，
+  避免仅凭插件 `capabilities()` 对错误数据误报格式。
+- `xgui_regression_test.c:6696-6744,14445`：新增零宽、零高非空裁剪
+  回归，确认读取成功且保持完整图像尺寸。
+
+验证结果：默认配置 `cmake --build build --target XGuiRegression_Test -j1` 通过，
+`./bin/XGuiRegression_Test` 通过，`git diff --check` 通过。构建仍有仓库既有的
+`XSignal`/`XEvent` 等函数指针与限定符警告，当前环境没有可用 LSan 专用可执行文件，
+不能宣称零警告或零泄漏。
+
+当前边界：`XImagePluginRegistry` 仍是嵌入式静态注册表，不执行 Qt
+`QFactoryLoader("imageformats")` 的动态目录扫描；完整 Qt 图像处理器选项和动态
+插件热加载仍未实现。
+
+### 10.209 2026-08-29 QIcon 主题引擎尺寸选择与稳定键
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:783-787,849-873`：
+  `QIconLoaderEngine::entryForSize()` 以请求矩形的较小边匹配主题资源，绘制阶段
+  再将选中的 pixmap 铺到完整目标矩形；非正方形请求不能只用宽度决定资源档位。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:572-610`：
+  主题引擎 `key()` 返回固定的引擎类型名，图标名称由独立的 `iconName()` 接口
+  提供，不能把名称拼接进引擎键值。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeEngine.c:31-68` 在 `paint()` 中按目标矩形较小边选择
+  主题资源，再按 Qt 行为缩放到完整目标矩形，保留状态样式处理和 painter 保存/
+  恢复语义。
+- `Src/XGui/Icon/XIconThemeEngine.c:179-185` 将主题引擎键固定为
+  `QIconLoaderEngine`，与 `xgui_regression_test.c:5010-5014` 的既有回归断言一致。
+
+验证结果：默认配置和 `build-crop-painter-off` 配置均完成全量构建，CTest 的
+`XGuiRegression` 均为 1/1 通过；`git diff --check` 通过。构建输出仍包含仓库已有
+的 `XSignal`、`XEvent`、zlib 条件指令及函数指针兼容性警告，环境无可用的 LSan
+专用可执行文件，不能宣称零警告或零泄漏；修改未提交、未推送。
+
+当前边界：主题目录解析和动态 `QFactoryLoader` 插件发现仍采用项目静态注册表；
+完整 Qt 引擎的多状态缓存、SVG 原生渲染和平台主题监听尚未加入嵌入式裁剪实现。
+
+### 10.210 2026-08-29 XImage/XPixmap 生命周期与泄漏复核
+
+本轮依据现有 Qt 6.8 图像值语义及项目对象生命周期约束，对 ASan/LSan 报告逐条复核：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:1847-1930`：
+  QImage 隐式共享数据在重新赋值或销毁前必须释放旧引用，分离后的数据由最后一个
+  引用负责回收；测试不得在仍持有像素数据时直接覆盖值对象。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpixmap.cpp:550-610`：
+  QPixmap 从图像构造会替换内部数据，但对象本身的分配类别不随数据替换改变。
+
+实现范围：
+
+- `xgui_regression_test.c:7955-7959` 在复用已有 `XImage` 前显式调用
+  `XImage_deinit_base()`，覆盖共享数据分离后再次初始化的释放路径，避免测试代码
+  绕过引用计数直接覆盖对象而泄漏克隆数据。
+- `xgui_regression_test.c:1307-1308,1329-1330` 在栈对象传入
+  `XPixmap_init_image()` 前显式初始化对象，避免裁剪配置下未初始化虚表被误判为可
+  反初始化对象。
+- `Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:1322-1398` 和
+  `Drive/windows/Graphics/XPlatformNativeWindow_win32.c:1036-1149` 的真实抓屏路径
+  先在栈上调用 `XPixmap_init_image()`，再用 `XPixmap_move_base()` 转移到
+  `XPixmap_create()` 返回的堆对象；这样不读取未初始化栈对象的虚表，也不会因
+  `XPixmap_init_image()` 清零堆对象而丢失 `delete_base()` 所需的堆标志。
+- `Src/XGui/Graphics/XPixmap.h:88-97` 补充初始化前置条件的中文注释，明确重复
+  初始化应由调用方先执行 `XPixmap_deinit_base()`。
+
+验证结果：
+
+- `build-asan` 目标构建及 `ASAN_OPTIONS=detect_leaks=1:halt_on_error=1` 回归程序通过
+  项目自有泄漏检查；LSan 仅报告 Mesa `libGLX_mesa.so.0` 和 Fontconfig 的进程级
+  缓存分配（约 101 KiB），没有 `XinYueC` 栈帧，不能将环境缓存泄漏宣称为项目零泄漏。
+- 默认 `build` 与 `build-crop-painter-off` 配置随后均完成全量构建，回归程序和 CTest 的
+  `XGuiRegression` 均为 1/1；`git diff --check` 通过。构建仍有仓库既有
+  `XSignal`/`XEvent`、zlib 条件指令和限定符相关警告，未宣称零警告；修改未提交、未推送。
+
+当前边界：`XImage_init_ex()` 对未初始化对象和已初始化对象的调用约定仍由调用方负责，
+本轮仅修复已发现的测试复用点；若未来需要公开“重新初始化”接口，应新增显式
+`reinit` 函数而不能依赖读取未初始化对象的虚表指针。
+
+### 10.211 2026-08-29 QPicture 背景状态记录与回放
+
+本轮按 Qt 6.8 `QPicturePaintEngine::updateBackground()` 对齐背景状态的两条独立
+记录：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:219-231`：
+  先写入 `PdcSetBkColor` 的颜色，再写入 `PdcSetBkMode` 的透明/不透明模式；
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpicture.cpp:833-840`：回放时分别
+  调用背景颜色与背景模式接口。
+- `Src/XGui/Graphics/XPicture.h:52-53,264-267` 新增连续 opcode 17/18 及固定四字节
+  负载接口；`XPicture.c:247-262,754-782,1260-1290` 完成长度校验、录制和直接状态
+  回放，避免 Picture 后端重入时追加重复记录。
+- `Src/XGui/Graphics/XPainter.c:1764-1789,1790-1851` 在背景状态发生设置时记录，
+  背景模式沿用 Qt 对同值设置的早退语义；
+  回放将颜色同步到可选实心背景画刷，裁剪关闭时仍消费记录以保持流兼容。
+- `xgui_regression_test.c:4599-4640` 新增背景颜色/模式录制与回放断言，并纳入主回归
+  调用；默认与 `build-crop-painter-off` 配置的目标构建、CTest 和 `git diff --check`
+  均通过；ASan/LSan 运行未发现 XinYueC 堆栈泄漏，仅报告 Mesa 与 Fontconfig 的
+  进程级缓存分配。
+
+当前边界：Qt 的 `QBrush` 背景对象可包含渐变、纹理和变换，当前便携流只表达固体
+ARGB 颜色及两种背景模式；完整画刷资源协议仍待后续设计，不能用单一颜色近似宣称
+完整 `QBrush` 字节级兼容。
+
+### 10.212 2026-08-29 QPicture 基础画刷状态记录
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qpaintengine_pic.cpp:176-184`：
+  `QPicturePaintEngine::updateBrush()` 在画刷状态变脏时写入 `PdcSetBrush`，其
+  负载包含完整 `QBrush` 对象。
+
+实现范围：
+
+- `Src/XGui/Graphics/XPicture.h:54,270-278` 新增 `SetBrush=19` 及
+  `XPicture_recordSetBrush()`；协议采用 4 字节样式值和 4 字节 ARGB32 颜色的
+  固定小端负载，校验器严格检查 8 字节长度。
+- `Src/XGui/Graphics/XPicture.c:247-262,780-790,1211-1320` 完成基础画刷的流校验、
+  记录与直接状态回放；回放不经公共 setter，避免 Picture 目标重复追加记录。
+- `Src/XGui/Graphics/XPainter.c:1787-1801,4373-4385,4389-4405,4511-4533`：
+  画刷颜色、样式 setter 在 Picture 后端追加基础画刷记录；`setBrush(QColor)`
+  同时重置为实心样式并清空旧渐变载荷。
+- `xgui_regression_test.c:4756-4797,14554-14556`：新增固定记录长度、回放颜色和
+  样式断言，并纳入默认与裁剪配置主回归。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 配置的 XGuiRegression_Test
+目标构建、回归程序和 CTest 均通过；`git diff --check` 通过。构建仍有仓库既有
+`XSignal`/`XEvent` 等警告，ASan/LSan 仅报告 Mesa 与 Fontconfig 进程级缓存，未
+发现 XinYueC 代码栈泄漏；未宣称零警告或零泄漏，修改未提交、未推送。
+
+当前边界：该 opcode 只表达普通样式和 ARGB32 基色；渐变、纹理、画刷变换及其
+资源数据未进入便携协议，因此不能替代 Qt 完整 `QBrush` 序列化。
+
+### 10.213 2026-08-29 QIcon 索引主题权威性与独立回退顺序
+
+本轮对照 Qt 6.8 源码：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:347-420`：
+  主题目录存在 `index.theme` 即视为有效索引主题；图标查找只遍历索引声明的
+  `contentDirs` 和 `keyList`，未声明的根目录文件不能绕过索引。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:446-570`：
+  主题条目仅接受带有效 `Size` 的目录组；`Scale`、`Threshold` 按元数据原值参与
+  尺寸匹配。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:572-607`：
+  独立回退文件按 `fallbackSearchPaths()` 目录顺序，依次检查 PNG、XPM、SVG，
+  命中首个存在文件后停止后续搜索。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:783-873`：
+  固定/可缩放资源在目标尺寸大于源尺寸时按 KeepAspectRatio 缩小，不对较小回退
+  文件强制放大；非正方形目标按较小边选资源。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeInternal.c:46-60,111-125,246-273` 增加独立回退后缀
+  白名单、文件存在性检查和缓存偏移加法溢出防护；避免损坏或越界的主题缓存
+  误读为有效索引。
+- `Src/XGui/Icon/XIconThemeInternal.c:660-678,855-910,1119-1143,1314-1330`：
+  无 `Size` 的索引组标记为无效，`Scale=0` 和负 `Threshold` 不静默归一化；空
+  `Directories` 的索引主题仍阻止 legacy 目录探测，并继续按 `Inherits` 回退。
+- `Src/XGui/Icon/XIconThemeInternal.c:1466-1541,1649-1658`：索引主题存在时
+  禁止根目录 legacy 文件越过 `Directories`；独立回退只在 fallback 搜索路径中
+  按 Qt 顺序选取首个存在文件，且保留文件实际矩形尺寸和按比例缩小语义。
+- `xgui_regression_test.c:436-488,491-576,578-691,14498-14501`：新增未声明根
+  目录图标拒绝、fallbackThemeName 传统主题、独立回退路径/尺寸及首个文件优先级
+  回归夹具。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 配置的 XGuiRegression_Test
+目标构建、回归程序和 CTest 均通过；`git diff --check` 通过。构建仍保留仓库既有
+`XSignal`/`XEvent` 等警告，ASan/LSan 仅见 Mesa 与 Fontconfig 进程级缓存分配，未
+发现 XinYueC 代码栈泄漏；未宣称零警告或零泄漏，修改未提交、未推送。
+
+当前边界：主题解析仍是静态 C 实现，不提供 Qt `QFactoryLoader` 动态插件扫描、
+GTK 缓存热更新或平台主题监听；XPM 解码能力继续受 `XIMAGECODEC_XPM_ON` 裁剪开关
+限制。
+
+### 10.214 2026-08-29 QIcon GTK 缓存偏移回绕安全复核
+
+本轮继续对照 Qt 6.8 的缓存读取边界：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:232-248`：
+  `read16()`/`read32()` 每次读取前检查对齐与文件范围；
+  `:252-282`：缓存初始化校验目录列表；`:297-345`：哈希桶、节点和目录列表
+  的每个偏移都必须保持有效。
+
+实现范围：
+
+- `Src/XGui/Icon/XIconThemeInternal.c:153-176` 增加
+  `theme_cacheAddOffset()` 和 `theme_cacheRange()`；哈希表、目录表、链表节点及
+  图标目录列表的长度和下标计算，均先检查 32 位偏移回绕，再执行文件范围读取。
+- `theme_cacheFresh()` 与 `theme_cacheDirState()` 对有效缓存的目录匹配、时间戳判定和
+  回退顺序保持不变；畸形缓存按 Qt 语义降级为无效缓存并回到完整目录扫描。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的 `XGuiRegression_Test` 目标
+构建和回归均通过；`git diff --check` 通过。测试输出中的既有 `XWindow`/`XClass`
+错误日志未新增失败；修改未提交、未推送。
+
+当前边界：仍只读取 GTK `icon-theme.cache` 版本 1，不生成或更新缓存，也未实现 Qt
+桌面端动态主题插件、缓存监听和多状态 `QPixmapCache`；本轮仅补充畸形偏移的整数范围
+与回绕安全性。
+
+### 10.215 2026-08-29 默认与裁剪配置最终回归复核
+
+本轮未新增 API，复核当前 22 个修改文件的构建产物与测试覆盖：
+
+- `build-crop-painter-off`：`XGuiRegression_Test` 目标重新编译并运行通过，确认
+  关闭 `XPainter` 绘制扩展开关时，图像、图标主题、Picture 流校验和布局回归仍可
+  正常裁剪链接。
+- `build`：默认配置目标重新构建后运行 `./bin/XGuiRegression_Test` 通过，`ctest
+  --test-dir build --output-on-failure` 为 1/1 通过。
+- `git diff --check` 通过；工作树仅保留本轮既有 22 个修改文件，未提交、未推送。
+
+构建输出继续包含仓库既有 `XSignal`、`XEvent`、容器继承接口等兼容性警告；ASan/LSan
+复核仍只见 Mesa 与 Fontconfig 的进程级缓存分配，未见 XinYueC 代码栈泄漏，因此不
+宣称零警告或零泄漏。
+
+当前边界：本次仅完成最终配置复核，不扩展 Qt 桌面版动态插件扫描、ICC/LUT 色彩
+配置、复杂 `QBrush` 资源协议或 GTK 缓存生成/热更新；这些边界沿用 10.189--10.214。
+
+### 10.216 2026-08-29 QImage 显式目标格式的颜色变换模型切换
+
+本轮依据 Qt 6.8 的 `QImage::colorTransformed`/`applyColorTransform` 语义复核显式
+目标格式路径：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5199-5209`：不带目标
+  格式的 `applyColorTransform` 在源/目标模型不兼容时拒绝无需格式切换的变换；
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5360-5390`：不带目标
+  格式的 `colorTransformed` 在模型切换时选择 RGB、灰度或 CMYK 的兼容默认格式；
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:5445-5462`：带显式
+  `toFormat` 的重载只校验所选输出格式能否承载目标颜色模型，允许调用方明确请求
+  RGB 到 `Grayscale8` 等模型切换。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImage.c:809-895` 调整 `XImage_applyColorTransform` 的前置
+  校验：先校验源空间和源像素模型，再将显式输出格式映射到其自身颜色模型；不再
+  用源像素模型错误拦截合法的显式模型切换。未指定格式时仍按目标模型选择
+  `ARGB32`、`Grayscale8` 或 `CMYK8888` 默认输出。
+- `xgui_regression_test.c:7789,7909,7938-7953,8170-8175` 新增独立输出图像和
+  RGB 源到灰度目标的回归断言，并按 `XImage_init`/`XImage_deinit_base` 生命周期
+  管理对象。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的
+`XGuiRegression_Test` 目标均构建成功，回归程序通过；默认 `ctest --test-dir build
+--output-on-failure` 为 1/1 通过；`git diff --check` 通过。构建仍保留仓库既有
+`XSignal`、`XEvent`、限定符和容器接口警告，ASan/LSan 仅见 Mesa/Fontconfig 进程级
+缓存分配，未宣称零警告或零泄漏。
+
+当前边界：颜色变换仍采用项目现有的传递函数近似，不包含 Qt ICC/LUT、矩阵精度及
+高位深自动格式选择；无目标格式的便捷重载尚未另行扩展，调用方需使用现有带格式
+接口传入 `XImageFormat_Invalid` 或明确格式。
+
+### 10.217 2026-08-29 QImage 掩码工厂的位序与边缘语义
+
+本轮对照 Qt 6.8 图像实现：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:3109-3125`：
+  `createAlphaMask()` 对空图像和 `Format_RGB32` 返回空图像，其余格式输出
+  `Format_MonoLSB`，并通过 `dither_to_Mono(..., fromalpha=true)` 生成 Alpha 掩码，
+  最后只复制物理元数据。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:3153-3242`：
+  `createHeuristicMask()` 使用四角投票选择背景色，从四条边剥离边缘连通背景，
+  忽略 Alpha；`clipTight=false` 时额外保留非背景像素四邻域。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:3257-3290`：
+  `createMaskFromColor()` 输出 `MonoLSB`，对 32 位源比较完整 `QRgb`（包括 Alpha），
+  `MaskOutColor` 再反转掩码位，并复制物理元数据。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImage.c:1325-1521`：掩码初始化统一返回 `MonoLSB`；Alpha
+  掩码使用白色/黑色两项颜色表和默认 `alpha >= 128` 阈值，RGB32 走 Qt 兼容的空图像
+  分支；启发式掩码加入非 32 位源先转 `RGB32`、四角背景投票、边缘四邻域 BFS 和
+  `clipTight` 扩展；颜色掩码按完整 ARGB 比较并支持 In/Out 两种模式。队列容量、
+  字节乘法和项目内存分配均有溢出/失败保护。
+- `Src/XGui/Graphics/XImage.h:387-413`：补充三个公共函数的中文参数、返回值和
+  近似边界说明。
+- `xgui_regression_test.c:8195-8272,14643-14646`：新增 Alpha 128 阈值、MonoLSB
+  颜色表、ARGB Alpha 区分、MaskOut 反转、封闭背景孔洞及 `clipTight=false` 邻域
+  回归断言。
+
+同轮还完成高位深 `pixelColor()` 读取：对照
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:2705-2760`，
+`Src/XGui/Graphics/XImage.c:1236-1277,1600-1695` 对 `Grayscale16`、`RGBX64`、
+`RGBA64` 和 `RGBA64_Premultiplied` 保留 16 位通道精度并按预乘规则反解；回归断言位于
+`xgui_regression_test.c:8371-8400`。
+
+验证结果：默认配置 `build` 的 `XGuiRegression_Test` 目标重新构建并运行通过；此前
+默认与 `build-crop-painter-off` 的全量构建、回归程序和 CTest 均通过。构建仍有仓库
+既有 `XSignal`、`XEvent`、zlib 条件指令和限定符警告，ASan/LSan 仅报告 Mesa 与
+Fontconfig 的进程级缓存，未宣称零警告或零泄漏；`git diff --check` 通过，修改未提交、
+未推送。
+
+当前边界：`flags` 目前只实现 Qt 默认 Alpha 阈值模式，Ordered/Diffuse 抖动尚未进入
+便携实现；深度为 1 的异常无颜色表输入未复刻 Qt 内部 Indexed8 转换的全部细节；启发式
+队列分配失败时保留全不透明掩码作为降级结果。
+
+### 10.218 2026-08-29 QImage 掩码深度一与整行反转补齐
+
+本轮针对上一节留下的两个边界再次对照 Qt 6.8：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:3120-3124`：深度为 1
+  的 Alpha 掩码先转换到 `Format_Indexed8`，因此单色图像颜色表中的 Alpha 分量必须
+  参与掩码生成。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:3280-3290`：
+  `createMaskFromColor()` 先将 `MonoLSB` 掩码清零，`MaskOutColor` 再调用
+  `invertPixels()`，其按字节反转也会覆盖每行末尾的填充位。
+
+实现与回归：
+
+- `Src/XGui/Graphics/XImage.c:1353-1377` 对深度一源图像复用 `Indexed8` 转换后再
+  生成 Alpha 掩码；`XImage.c:1523-1550` 显式清零输出并按字节完成 OutColor 反转，
+  保持填充位与 Qt 一致。
+- `xgui_regression_test.c:8239-8249,8251-8260` 新增单色颜色表 Alpha 检查和 3 像素
+  掩码首字节 `0xfb` 的填充位反转检查。
+
+默认 `build` 与 `build-crop-painter-off` 均完成全量构建、回归程序和 CTest；
+`git diff --check` 通过。构建中的 `XSignal`、`XEvent` 等警告属于既有工程问题，
+ASan/LSan 仍受 Mesa/Fontconfig 进程级缓存影响，未宣称零警告或零泄漏；修改未提交、
+未推送。
+
+### 10.219 2026-08-29 内置图像插件 JPEG 别名与 BMP ImageFormat 语义补齐
+
+本轮继续对照 Qt 6.8 图像处理器与插件实现：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/plugins/imageformats/jpeg/jpeg.json:1-4`：
+  JPEG 插件公开 `jpg`、`jpeg`、`jfif` 三个格式键，三个键均对应 `image/jpeg`；
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimageiohandler.cpp:191-205`
+  说明插件元数据中的格式键、MIME 类型应保持一一对应。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qbmphandler.cpp:61-102`、
+  `:858-895`：BMP 处理器接受 12 字节旧式 DIB 头；现代 32 位 V4/V5 位域且存在
+  Alpha 掩码时，`option(ImageFormat)` 返回 `ARGB32`，普通 BI_RGB 返回 `RGB32`。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageCodec/XImageCodec.c:45-50` 增加 `jfif` 到 JPEG 格式名归一化，
+  与已有 `jpg`/`jpeg` 共用同一编解码实现。
+- `Src/XGui/Graphics/XImageBuiltinPlugin.c:18-28` 注册 `jfif`、`*.jfif` 和重复的
+  `image/jpeg` MIME；`builtin_bmpImageFormat()` 同时解析旧式 12 字节 DIB、现代 DIB 的
+  压缩字段和 V4/V5 Alpha 掩码，避免 ImageFormat 选项错误报告。
+- 同文件 `VXImageBuiltinPlugin_create()` 在直接工厂调用时绑定传入格式；此前只有注册表
+  外层会补设格式，直接创建后调用写入会因格式为空而失败，现与 Qt `create()` 契约一致。
+- `xgui_regression_test.c:5696-5700,5720-5724` 将 JPEG 三键纳入内置插件发现断言。
+
+当前边界：SVGZ 仍未注册，因为当前 SVG 便携解码器没有 gzip 解压；内置 Handler 的
+`Size`、描述、压缩比等完整 Qt 选项仍需各格式协议/元数据支持，不能仅通过声明能力模拟。
+
+### 10.220 2026-08-29 SVG Handler 头部探测边界收紧
+
+本轮继续对照 Qt SVG 处理器的格式判断：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtsvg/src/svg/qsvgtinydocument.cpp:42-50`：
+  `hasSvgHeader()` 仅接受以 `<svg` 或 `<!DOCTYPE svg` 开头的内容；XML 声明或
+  注释开头必须在同一探测缓冲区内继续出现 SVG 根元素/DOCTYPE，普通 XML 文档不能
+  被识别为图像。
+- `/home/xinyue/Qt/6.8.3/Src/qtsvg/src/svg/qsvgtinydocument.cpp:538-570`：
+  `isLikelySvg()` 将上述判断限制在设备前 4096 字节，并保留 BOM/压缩流探测边界。
+
+实现范围：
+
+- `Src/XGui/Graphics/XImageCodec/XImageCodec.c:99-132` 收紧 SVG 识别：删除“任意
+  `<?xml` 即命中”的过宽分支，改为仅当 XML 声明/前置注释后续确实出现 `<svg` 或
+  `<!DOCTYPE svg` 才返回 Svg；直接根元素与 DOCTYPE 仍保持原有快速路径。长度判断改为
+  减法形式，避免不可信 `size_t` 加法回绕。
+- `xgui_regression_test.c:6928-6950` 增加普通 XML 拒绝和 XML 后续 SVG 接受的头部夹具。
+
+验证结果：默认 `build` 的 `XGuiRegression_Test` 目标构建、回归程序和 CTest 均通过；
+保留既有 `XSignal`/`XEvent` 等工程警告。SVG 识别仍是便携 ASCII 前缀探测，不包含
+Qt 的 UTF-16 `QTextStream` 解码和 gzip `svgz` 内容膨胀；这些能力受当前编解码器裁剪
+边界限制，未将探测近似宣称为完整 Qt 实现。修改未提交、未推送。
+
+### 10.221 2026-08-29 SVG Handler 长前导探测窗口
+
+Qt `QSvgTinyDocument::isLikelySvg()` 在设备前 4096 字节内检查 XML 声明、注释和
+DOCTYPE 后的 SVG 根元素（`qsvgtinydocument.cpp:538-570`）。内置插件此前只窥视
+16 字节，导致合法但前导较长的 SVG 在 `canRead()` 和注册表探测中被错误拒绝。
+
+`Src/XGui/Graphics/XImageBuiltinPlugin.c:74` 现统一使用 4096 字节有界窥视，保留
+其他格式探测的无副作用语义，并与 `XImageCodec_detect()` 的 XML 前缀规则一致。该
+调整只扩大固定探测窗口，不改变任何格式编解码或内存分配策略。默认 `build` 与
+`build-crop-painter-off` 的构建、XGuiRegression_Test 和 CTest 均已通过；SVGZ gzip
+解压和 UTF-16 文本流仍属于未实现边界。
+
+### 10.222 2026-08-29 QPicture 绘制状态记录扩展
+
+对照 Qt Picture 绘制引擎的状态刷新路径：
+
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpaintengine_pic.cpp:176-202`
+  序列化画刷、画刷原点和不透明度；`:219-243` 序列化背景色、背景模式和变换矩阵；
+  `:247-281`、`:483-496` 调度裁剪与渲染提示状态。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2093-2112`、
+  `:6830-6883`、`:6953-7083` 分别定义画刷原点、不透明度/渲染提示和窗口、视口、
+  视图变换启用状态的变更语义。
+
+实现范围：`XPictureOpcode_SetOpacity` 至 `SetViewTransformEnabled`（12--22）采用
+固定 little-endian 负载，新增严格长度校验、记录函数及回放状态恢复；`XPainter` 仅在
+值实际变化时写入记录，批量渲染提示按位更新并保留 Qt 的 on/off 语义。画刷和背景目前
+记录便携协议可表达的基础样式/颜色，完整 QBrush 渐变、纹理、复杂背景画刷及裁剪区域
+仍未伪造为已支持；回放在对应裁剪开关关闭时仍消费记录以保持流兼容。
+
+验证结果：默认与 `build-crop-painter-off` 均完成全量构建、XGuiRegression_Test、CTest，
+并通过 `git diff --check`。现有 `XSignal`、`XEvent`、zlib 条件指令和限定符警告仍存在；
+ASan/LSan 仅能观察到 Mesa/Fontconfig 进程级缓存，未宣称零警告或零泄漏。
+
+### 10.223 2026-08-29 JPEG MIME 三别名与写入器能力查询
+
+Qt JPEG 插件元数据 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/plugins/imageformats/jpeg/jpeg.json:1-4`
+公开 `jpg`、`jpeg`、`jfif` 三个格式键且均为 `image/jpeg`；QImage I/O 处理器元数据
+契约见 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimageiohandler.cpp:191-205`。
+
+`XImageReader` 与 `XImageWriter` 现在在 MIME 反查中返回三个 JPEG 别名，支持格式列表
+同步包含 `jfif`，并按 Qt 规则对 MIME 值精确匹配后去重排序。写入器在已设置格式但尚未
+绑定设备时创建空设备处理器，使 `supportsOption()` 可以查询格式能力；实际
+`canWrite()`/`write()` 仍拒绝无设备状态，不会绕过 I/O 校验。新增回归断言覆盖读写器
+三别名反查及 JPEG 开关关闭时的空结果；注册表的通用 MIME 回退表也将缺失元数据的
+`jfif` 键归一到 `image/jpeg`。
+
+边界：当前便携实现仍只提供 BMP、PNG、JPEG/JFIF、GIF、SVG 等已注册编解码器；SVGZ
+压缩解码和其他插件的动态发现仍由裁剪配置决定。
+
+### 10.224 2026-08-29 主题图标候选格式与独立回退排序
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:479-528`
+的候选遍历及
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qiconloader.cpp:849-873` 的尺寸距离计算：
+同一尺寸的主题条目优先选择 PNG，
+再选择 SVG、XPM、BMP；精确尺寸优先于非精确尺寸，非精确时按距离及格式优先级
+稳定选择。`lookupFallbackIcon()` 的独立文件回退只扫描
+`fallbackSearchPaths()`，并按 PNG、XPM、SVG 后缀顺序处理（Qt 源码对应
+`qiconloader.cpp` 的回退查找分支）。
+
+`Src/XGui/Icon/XIconThemeInternal.c` 现记录扩展名优先级，分两阶段选择精确尺寸和
+最小距离候选；带 `index.theme` 的主题不再被无索引旧式目录绕过，空
+`Directories` 会继续走 `Inherits`。独立回退文件仅在文件确实存在时尝试一次，解码
+失败不会错误抢占后续路径；`availableSizes()` 保留独立文件的原始矩形尺寸。缩放
+仅在资源超过请求边界时执行，并使用 KeepAspectRatio，避免非方形图标被拉伸。
+
+验证结果：默认 `build` 的 XGuiRegression_Test 构建、程序运行和 CTest 均通过，
+`git diff --check` 通过。当前边界仍包括 Qt 桌面版动态主题插件发现、完整 SVG 解码
+以及平台特定主题目录；这些能力受嵌入式资源和编解码器裁剪开关限制。
+
+### 10.225 2026-08-29 BMP OS/2 Core Header 有符号尺寸语义
+
+Qt 6.8 的 `read_dib_infoheader()` 在
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qbmphandler.cpp:188-208`
+中将 12 字节 OS/2 Core Header 的宽高读入 `qint16`，随后按普通 BMP 规则拒绝
+非正宽度、零高度，并对负高度执行倒行序读取；这与较大 Windows DIB 头使用
+32 位有符号宽高的路径不同。
+
+实现范围：`Src/XGui/Graphics/XImageCodec/XImageCodecBmp.c:162-178` 现在在
+`dib == 12` 时先按 `int16_t` 解释宽高，再进入统一的尺寸/面积校验，因而拒绝
+`0x8000` 等负宽度编码，同时保留负高度的顶行序语义。`xgui_regression_test.c`
+的 BMP 畸形夹具新增负宽度拒绝和负高度两行 24 位像素顺序断言，覆盖解码结果的
+尺寸及首尾颜色。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的增量目标构建、
+`XGuiRegression_Test`、CTest 以及 `git diff --check` 均通过；构建仍仅报告工程
+既有 XSignal/XEvent 等警告。BMP 的 OS/2 调色板、压缩格式和其他 DIB 版本仍受
+现有 `XIMAGECODEC_BMP_*` 裁剪开关约束，未宣称超出开关范围的完整 Qt 支持。
+
+### 10.226 2026-08-29 QIcon 同 DPR 候选按物理面积匹配
+
+- Qt 依据：`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:232-245`
+  的 `bestSizeScaleMatch()` 在候选 DPR 相同时以 `area(size * scale)` 与条目的
+  `size`（`QPixmap::size()` 物理像素）比较；`:417-427` 的 `addPixmap()` 也以
+  物理尺寸和 DPR 判断同一条目。
+- 修复：`XIconPrivate_bestSizeScaleMatch()` 不再把逻辑面积直接和物理请求面积
+  混比，新增 `XIconPrivate_entryPhysicalArea()`，对已加载条目取 XPixmap 物理宽高，
+  对延迟文件条目取请求尺寸；请求尺寸按 DPR 安全取整并限制到 `INT_MAX` 后比较，
+  保持“最小但不小于请求”的 Qt 选择规则。
+- 回归：`test_icon_device_pixel_ratio()` 加入 16x16 与 32x32 逻辑尺寸、同为 2x
+  DPR 且颜色不同的资源，请求 10x10@2x 时确认选择较小的 16x16 资源并得到
+  20x20 物理输出；默认与裁剪构建均通过。
+- 边界：不同 DPR 的优先级、模式/状态回退和缓存键逻辑保持现有实现；Qt 平台
+  图标引擎的系统主题与样式辅助仍受 XGui 可移植裁剪限制。
+
+### 10.227 2026-08-29 QIcon addPixmap 重复条目替换
+
+- Qt 依据：`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:417-427`
+  的 `QPixmapIconEngine::addPixmap()` 以 mode、state、物理像素尺寸和
+  `devicePixelRatio()` 识别同一条目；命中后原地替换像素图并清空文件名，未命中
+  才追加新条目。
+- 修复：`XIconPrivate_addEntry()` 现在遍历同模式/状态条目，分别比较物理宽高和
+  DPR；延迟文件条目按其请求尺寸和 DPR=1 参与匹配。命中后释放旧文件名、复制新
+  XPixmap、清零请求尺寸并标记已加载，随后更新缓存键；面积相同但宽高不同的资源
+  不会误替换。
+- 回归：`test_icon_matching()` 先添加 16x16 绿色替换图，再以同模式/状态添加
+  同尺寸资源，确认取图像素来自新资源且没有重复条目；默认与裁剪配置均通过。
+- 边界：Qt 的 `QPixmapCache` 全局缓存和平台样式变换仍由 XGui 的可移植缓存/样式
+  辅助实现承载，条目选择与替换语义已按上述源码对齐。
+
+### 10.228 2026-08-29 GIF GCE 生命周期、背景处置与读取器跳帧回退
+
+对照 Qt 6.8 GIF 处理器 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/plugins/imageformats/gif/qgifhandler.cpp`：
+
+- `:143-192` 在下一帧开始前应用上一帧的处置方式；RestoreBackground 在存在
+  透明索引时清透明，否则使用逻辑屏幕背景调色板色。
+- `:609-625` 将 GCE 的延迟小于两个百分之一秒钳制为 100ms，并使 GCE 只影响
+  紧随其后的图像描述。
+- `:1037-1043`、`:1181-1193` 以内部 `loopCnt=-1` 表示没有 Netscape 扩展，公开
+  为 `loopCount()==0`；Netscape 原始计数 0 才公开为无限循环 `-1`。
+- `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:1296-1317`
+  要求读取器跳帧直接委托已初始化处理器的虚函数。
+
+实现范围：`XImageCodecGif.c` 解析 LSD 背景索引，首帧局部画布按 Qt 规则初始化，
+RestoreBackground 按透明标志或背景色清理；每个图像描述完成后清零 GCE 待处理状态，
+延迟执行 Qt 最小值钳制，并修正无 Netscape 扩展的循环次数映射。`XImageReader` 在
+GIF 动画缓存未建立或非 GIF 格式时回退 `jumpToNextImage_base`/`jumpToImage_base`，
+不再伪造单帧成功。
+
+验证：默认 `build` 的 `XGuiRegression_Test` 和 CTest 通过，覆盖 4 帧 GIF 的背景
+恢复、无 Netscape 单帧 GIF 的 `loopCount()==0`、GCE 零延迟钳制为 100ms；
+`git diff --check` 通过。构建仍有工程既有 XSignal/XEvent 等警告，未宣称零警告或
+零泄漏；动画缓存及 SVG/JPEG 等其他裁剪配置需在对应构建中继续验证。
+
+边界：GIF 的 Q_TRANSPARENT 颜色值在 XImage 中统一为透明黑色 ARGB32；透明 GCE
+和无全局调色板时无法恢复的背景仍采用项目透明色约定。非 GIF 自定义处理器是否
+实现跳帧由其虚表能力决定，基类默认仍返回 false。
+
+### 10.229 2026-08-29 QColorSpace 用户描述回退
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:1387-1415`：
+`setDescription()` 保存独立的用户描述，`description()` 在用户描述为空时回退到
+预定义或自动识别的原始名称；描述文本不参与色彩空间相等比较。
+
+实现范围：`XColorSpace` 新增固定大小的 `m_userDescription` 字段，保留
+`m_description` 作为自动描述；`XColorSpace_setDescription()` 只修改用户字段，
+`XColorSpace_description()` 按 Qt 规则优先返回用户文本，清空后恢复自动名称。新增
+回归覆盖自定义描述清空、sRGB 用户描述设置及清空后的 `sRGB` 回退。
+
+验证结果：默认 `build` 与 `build-crop-painter-off` 的 `XGuiRegression_Test` 目标构建、
+回归程序、CTest 和 `git diff --check` 均通过；构建保留工程既有 XSignal/XEvent 等警告，
+无可用 LSan 专用可执行文件，未宣称零警告或零泄漏。
+
+边界：ICC profile、逐通道 LUT、ElementListProcessing 及 XYZ/色适应矩阵仍未纳入
+C99 值类型；这些扩展需资源容器后再实现，当前仅保证描述字段的 Qt 行为。
+
+### 10.230 2026-08-29 QColorSpace 默认传递函数设置模型
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qcolorspace.cpp:162-171`
+的 `QColorSpacePrivate(Primaries::Custom, transferFunction, gamma)` 构造：默认
+`QColorSpace` 调用 `setTransferFunction()` 时会创建 RGB 颜色模型，虽然没有原色矩阵
+所以仍然无效。
+
+实现范围：`XColorSpace_setTransferFunction()` 在未定义模型上首次设置非 Custom 传递
+函数前标记 RGB，保留 Qt 的传递函数和默认 Gamma 查询结果；已定义 Gray/RGB 模型不
+改变。回归覆盖默认对象设置 Linear 后仍无效但模型为 RGB。
+
+验证结果：默认和 `build-crop-painter-off` 的目标构建、回归程序、CTest 及
+`git diff --check` 均通过；既有工程警告和无 LSan 专用可执行文件的限制保持不变。
+
+### 10.231 2026-08-29 QPicture 状态记录畸形流校验
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/painting/qpainter.cpp:2036-2054`
+的 `setOpacity()` 钳位规则、`:2324-2364` 的合成模式状态更新以及
+`:3565-3588` 的背景模式枚举；Picture 状态记录布局依据
+`qpaintengine_pic.cpp:121-174,194-204,219-245`。便携协议的状态字段在录制
+入口已使用有限单精度与固定枚举/布尔编码，外部 `setData()` 仍可能直接注入负载，
+因此校验器必须在长度检查之外拒绝无法由公共 setter 产生的状态。
+
+实现范围：`Src/XGui/Graphics/XPicture.c:96-108,281-306` 新增固定宽度浮点有限性
+检查，并对 `SetOpacity` 限定 0..1、`SetCompositionMode` 限定 Qt 38 个连续值、
+`SetTransform` 的九个矩阵元素和启用位、`SetBrushOrigin` 两个坐标以及
+`SetBackgroundMode` 的 0/1 编码执行验证。画笔样式、端点和连接样式仍保留未知值，
+与 Qt setter 原样保存枚举的行为一致。
+
+回归：`xgui_regression_test.c:97-181` 录制合法状态命令后重算 XPicture FNV 校验和，
+分别注入 NaN 不透明度、越界合成模式、NaN 画刷原点、非法变换启用位和非法背景模式，
+确认 `XPicture_isValidStream()` 全部拒绝，同时不影响合法状态回放。
+
+验证结果：默认 `build` 和 `build-crop-painter-off` 的 `XGuiRegression_Test` 目标构建、
+回归程序、CTest 以及 `git diff --check` 均通过。构建仍保留工程既有 XSignal/XEvent
+等警告，环境没有独立 LSan 可执行文件，未宣称零警告或零泄漏。
+
+边界：协议仍是 XGui 自有连续 opcode，不直接兼容 Qt 二进制 QPicture；渐变/纹理画刷、
+裁剪区域和字体等未编码状态继续按已有文档边界处理。Qt 允许的浮点 NaN 仅存在于
+未激活或外部手工构造的调用场景，便携流为确定性安全格式而拒绝这些值。
+
+### 10.232 2026-08-29 QImageReader 扩展名回退与动画连续读取状态
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:497-555`
+的 `initHandler()`：文件不存在且启用自动探测时，读取器按支持格式追加扩展名，打开
+成功后继续用实际文件名选择处理器；`format()` 在处理器 `canRead()` 成功时返回格式，
+因此读取完成到 EOF 后再次查询可能返回空。对照同文件 `:1110-1127`，连续 `read()`
+必须返回动画下一帧，全部帧读完后返回空图像。GIF 处理器的帧号初值和递增依据为
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/plugins/imageformats/gif/qgifhandler.cpp:1037-1044,1097-1122`。
+
+实现范围：`XImageReader_ensureHandler()` 在默认扩展探测成功后重新计算实际候选文件
+后缀，避免原始未知后缀继续影响插件优先级；`XImageReader_format_const()` 保持
+Qt 的 `canRead()` 门槛，同时允许首次读取前查询新后缀格式。GIF 动画缓存新增“待读
+帧”状态，首次 `read()` 从帧 0 开始，`jumpToImage()`/`jumpToNextImage()` 定位后下
+一次 `read()` 读取目标帧，成功读取后清除待定位状态；缓存存在但已读完时直接返回
+失败，不回退为重复首帧的普通解码路径。
+
+回归：`xgui_regression_test.c` 覆盖未知 `.bad` 后缀追加 `.bmp`、实际文件名暴露、
+首次读取前格式查询，以及 GIF 首次连续两次 `read()` 分别得到第 0/1 帧；默认
+`build` 与 `build-crop-painter-off` 的目标构建、程序运行和 CTest 均通过，
+`git diff --check` 通过。构建仍保留工程既有 XSignal/XEvent 等警告，未宣称零警告
+或零泄漏。
+
+边界：GIF 仍采用完整数据缓存解码，未实现 Qt 增量 `imageIsComing()` 的流式行为；
+自定义插件的动画连续读取和后缀冲突选择仍由其 `XImageIOHandler` 虚表能力决定。
+
+补充修正：依据同一 `QImageReader::canRead()` 实现（`:1110-1115`），在
+`XIMAGEIOPLUGIN_ON` 开启时处理器创建失败直接返回 `false`，不再以文件名后缀或
+格式签名替代真实 handler 的 `canRead()`；插件发现裁剪关闭时才保留内置编解码器的
+签名回退，以维持该配置的可用性。该差异属于嵌入式裁剪边界，已在默认与裁剪配置的
+回归中分别验证。
+
+### 10.233 2026-08-29 显式格式插件首选与内置回退
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:221-254`
+的 `createReadHandlerHelper()`：自动探测关闭且给出显式格式时，只查询格式映射中
+首个声明 `CanRead` 的插件；该插件 `create()` 失败后不再尝试第二个同键插件，而是
+进入内置处理器路径。自动探测开启时，插件仍按注册顺序选择，后缀命中插件在内容
+校验失败后才跳过并回退到其它插件/内置处理器（源码 `:295-337`）。
+
+实现范围：`XImagePluginRegistry_createReadHandlerEx()` 为关闭自动探测的显式格式增加
+“首个可读插件即停止”分支；若首个外部工厂返回空，则单独尝试内置插件，保持外部
+插件覆盖和 Qt 内置回退顺序。自动探测与 `decideFormatFromContent` 的既有路径不变，
+仍由 `XImageReader` 负责对后缀处理器执行 `canRead()` 并恢复设备位置。
+
+回归：新增重复 `bmp` 键外部插件且强制 `create()` 失败的测试，分别覆盖自动探测开启
+的后缀回退和显式 `format="bmp"`、自动探测关闭时的内置 BMP 回退；默认 `build` 与
+`build-crop-painter-off` 均完成全量构建、XGuiRegression_Test、CTest，程序与测试
+全部通过，`git diff --check` 通过。工程既有 XSignal/XEvent 等编译警告仍存在，
+环境没有独立 LSan 可执行文件，未宣称零警告或零泄漏。
+
+边界：注册表使用固定容量和显式注册顺序模拟 Qt `QFactoryLoader`；系统目录中的动态
+imageformats 插件发现、同优先级插件的 Qt 元数据排序以及未实现的格式仍由嵌入式裁剪
+开关决定。
+
+### 10.234 2026-08-29 QIcon 延迟文件条目按请求尺寸选帧
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:290-315` 的
+`QPixmapIconEngine::bestMatch()`：延迟文件条目取图时先以 `size * scale` 作为物理
+目标尺寸，若处理器支持 `Size` 选项则先逐帧查询尺寸并定位精确帧；无法定位时回到
+逐帧 `read()`，保存最后一个成功帧，之后把该帧转换为像素图并设置请求 DPR。
+
+实现范围：`Src/XGui/Icon/XIcon.c` 的 `XIconPrivate_loadFileEntry()` 现在通过
+`XImageReader_supportsOption(Size)`、`size()`、`jumpToNextImage()` 和
+`jumpToImage(0)` 完成同等选择，并在浮点尺寸转换前检查 `INT_MAX`，避免异常 DPR
+导致未定义的浮点到整数转换。普通单帧文件及 GIF 逻辑屏幕帧均保持原有加载结果，失败
+时不改变延迟条目状态。
+
+验证：默认 `build` 已完成全量构建、`XGuiRegression_Test` 和 CTest，程序通过；
+`git diff --check` 通过。
+
+边界：当前 GIF 动画缓存按逻辑屏幕统一帧尺寸，无法构造 Qt 那种每帧独立尺寸的多帧
+资源；该情形仍由处理器的 `Size`/跳帧能力决定。图标主题引擎和自定义
+`XIconEngine` 的延迟加载行为不受此内置像素图路径影响。
+
+### 10.235 2026-08-29 QImageWriter 失败时清理新建目标文件
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagewriter.cpp:252-278`
+的 `QImageWriterPrivate::canWriteHelper()` 与 `:622-638` 的 `QImageWriter::canWrite()`：
+文件名构造器会在能力检查时按需打开内部 `QFile`；如果设备、格式或处理器检查失败，
+而目标文件原先不存在，外层逻辑会删除该次检查创建的空文件，避免失败调用留下副作用。
+
+实现范围：`Src/XGui/Graphics/XImageWriter.c` 新增失败清理辅助函数，在文件名写入器
+检测到目标此前不存在时记录 `removeOnFailure`；设备打开失败、不可写、格式不支持或
+处理器创建失败的所有返回路径都会先关闭内部文件并删除该目标。已存在的文件不受影响，
+外部传入设备仍保持调用方所有权。
+
+回归：`xgui_regression_test.c` 新增未知格式文件名用例，验证 `canWrite()` 返回设备/格式
+失败且 `xgui_writer_failed_cleanup.unknown` 不存在；默认 `build` 与
+`build-crop-painter-off` 的目标构建、回归程序和 CTest 均通过，`git diff --check`
+通过。
+
+边界：Qt 的 `QFile` 生命周期和系统错误文本在本项目中由 `XFile`/`XIODevice` 提供，
+错误字符串仍使用现有跨平台固定文本；外部非文件设备失败时不执行文件删除逻辑。
+
+### 10.236 2026-08-29 静态图像格式探测确认处理器可读性
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimagereader.cpp:1458-1467`
+的 `QImageReader::imageFormat(QIODevice *)`：注册表能力声明只用于筛选候选插件，
+最终格式必须来自已创建处理器并通过 `QImageIOHandler::canRead()` 的结果；同时对非顺序
+设备恢复探测前的位置。
+
+实现范围：`Src/XGui/Graphics/XImagePluginRegistry.c` 新增处理器级探测辅助函数，
+`XImagePluginRegistry_detectReadFormat()` 对每个声明 `CanRead` 的格式创建处理器、调用
+`canRead()` 后才返回格式名，并在创建和校验前后恢复设备位置。该路径覆盖带格式键和空格式
+内容探测两种插件；内置处理器仍沿用其 `peek()` 语义，外部插件按位置恢复规则处理。
+
+回归：扩展 `xgui_regression_test.c` 插件探测测试，先验证会消费设备的插件仍返回 `mock`
+且位置不变，再让同一插件处理器报告不可读，确认 `detectReadFormat()` 返回空字符串并保持
+位置不变。默认构建及 `XGuiRegression_Test` 通过，`git diff --check` 通过。
+
+边界：`capabilities()` 和 `canRead()` 的具体内容校验仍由各插件实现；内置 BMP 处理器与
+Qt `QBmpHandler::canRead()` 一样主要检查文件签名，截断像素区由后续 `read()` 报告无效数据。

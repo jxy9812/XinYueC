@@ -46,6 +46,12 @@ static const char* theme_import_exts[] = {
     ".png", ".svg", ".xpm", ".bmp", ""
 };
 
+/* Qt QIconLoader::lookupFallbackIcon() 只把这三种后缀作为主题外的
+ * 独立回退文件；主题目录内部仍由 theme_import_exts 按编解码器裁剪。 */
+static const char* theme_fallback_exts[] = {
+    ".png", ".xpm", ".svg"
+};
+
 /* XDG 目录名中的尺寸为十进制，例如 48x48。 */
 static int theme_parseSize(const char* s)
 {
@@ -105,6 +111,20 @@ static bool theme_loadFile(const char* path, XPixmap* out)
     return ok;
 }
 
+/* Qt lookupFallbackIcon() 先检查条目是否存在，再决定是否尝试解码；
+ * 因而“文件存在但内容损坏”也必须阻止后续扩展名和搜索目录抢占。 */
+static bool theme_fileExists(const char* path)
+{
+    XString* fileName;
+    bool exists;
+    if (!path || !path[0]) return false;
+    fileName = XString_create_utf8(path);
+    if (!fileName) return false;
+    exists = XFileInfo_exists_static(fileName);
+    XString_delete_base((XClass*)fileName);
+    return exists;
+}
+
 static bool theme_extAllowed(const char* ext)
 {
 #if XICON_THEME_SVG_AVAILABLE
@@ -112,6 +132,24 @@ static bool theme_extAllowed(const char* ext)
 #else
     return !(ext[0] == '.' && ext[1] == 's' && ext[2] == 'v' && ext[3] == 'g');
 #endif
+}
+
+/*
+ * Qt QIconLoader::findIconHelper() 将同一尺寸的 PNG 条目排在 SVG、XPM
+ * 等可替代格式之前。主题文件的扩展名探测顺序也必须保留这个优先级，
+ * 否则当一个目录同时提供 PNG 和 SVG 时，逐目录立即返回会让 SVG 抢先。
+ * 数值越小表示优先级越高；未知扩展名放到最后，空扩展名仍可作为项目
+ * 的裁剪格式，但不应覆盖标准图像格式。
+ */
+static int theme_extPriority(const char* ext)
+{
+    if (!ext) return INT_MAX;
+    if (strcmp(ext, ".png") == 0) return 0;
+    if (strcmp(ext, ".svg") == 0) return 1;
+    if (strcmp(ext, ".xpm") == 0) return 2;
+    if (strcmp(ext, ".bmp") == 0) return 3;
+    if (ext[0] == '\0') return 4;
+    return 5;
 }
 
 /*
@@ -128,6 +166,29 @@ static bool theme_cacheRead16(const uint8_t* data, size_t length,
     *out = (uint16_t)(((uint16_t)data[offset] << 8) |
                       (uint16_t)data[offset + 1u]);
     return true;
+}
+
+/*
+ * 缓存中的偏移和条目下标均为 32 位值。必须在相加前检查回绕，不能
+ * 依赖相加后的偏移再由 theme_cacheRead32() 检查，否则大偏移可能回到
+ * 文件头而被误判为合法记录。
+ */
+static bool theme_cacheAddOffset(uint32_t base, uint64_t delta,
+                                 uint32_t* out)
+{
+    if (!out || delta > (uint64_t)UINT32_MAX - (uint64_t)base)
+        return false;
+    *out = (uint32_t)((uint64_t)base + delta);
+    return true;
+}
+
+/* 检查缓存文件中从 offset 开始的完整字节区间。 */
+static bool theme_cacheRange(const uint8_t* data, size_t length,
+                             uint32_t offset, uint64_t bytes)
+{
+    if (!data || (uint64_t)offset > (uint64_t)length)
+        return false;
+    return bytes <= (uint64_t)length - (uint64_t)offset;
 }
 
 static bool theme_cacheRead32(const uint8_t* data, size_t length,
@@ -203,15 +264,14 @@ static bool theme_cacheFresh(const uint8_t* data, size_t length,
                              int64_t cacheStamp)
 {
     uint32_t i;
+    uint32_t entryOffset;
     char themePath[1024];
     int written;
     bool themePresent;
     int64_t themeStamp;
     if (!data || !root || !theme || cacheStamp <= 0 ||
-        (uint64_t)dirListOffset > (uint64_t)length ||
-        length - (size_t)dirListOffset < 4u ||
-        (uint64_t)dirListLength >
-            (uint64_t)((length - (size_t)dirListOffset - 4u) / 4u))
+        !theme_cacheRange(data, length, dirListOffset,
+                          4u + 4u * (uint64_t)dirListLength))
         return false;
     written = snprintf(themePath, sizeof(themePath), "%s/%s", root, theme);
     if (written < 0 || (size_t)written >= sizeof(themePath)) return false;
@@ -223,8 +283,9 @@ static bool theme_cacheFresh(const uint8_t* data, size_t length,
         char dirPath[1024];
         bool present;
         int64_t dirStamp;
-        if (!theme_cacheRead32(data, length, dirListOffset + 4u + i * 4u,
-                               &dirOffset) ||
+        if (!theme_cacheAddOffset(dirListOffset,
+                                  4u + 4u * (uint64_t)i, &entryOffset) ||
+            !theme_cacheRead32(data, length, entryOffset, &dirOffset) ||
             !theme_cacheString(data, length, dirOffset))
             return false;
         {
@@ -282,45 +343,62 @@ static int theme_cacheDirState(const char* root, const char* theme,
         !theme_cacheRead32(data, length, hashOffset, &hashBucketCount) ||
         !theme_cacheRead32(data, length, dirListOffset, &dirListLength) ||
         hashBucketCount == 0 ||
-        hashBucketCount > (uint32_t)((length - (size_t)hashOffset - 4u) / 4u) ||
-        dirListLength > (uint32_t)((length - (size_t)dirListOffset - 4u) / 4u) ||
+        !theme_cacheRange(data, length, hashOffset,
+                          4u + 4u * (uint64_t)hashBucketCount) ||
+        !theme_cacheRange(data, length, dirListOffset,
+                          4u + 4u * (uint64_t)dirListLength) ||
         !theme_cacheFresh(data, length, dirListOffset, dirListLength, root,
                           theme, cacheStamp))
         goto done;
 
     bucketIndex = theme_cacheHash(name) % hashBucketCount;
-    if (!theme_cacheRead32(data, length, hashOffset + 4u + bucketIndex * 4u,
-                           &bucketOffset))
-        goto done;
+    {
+        uint32_t bucketEntryOffset;
+        if (!theme_cacheAddOffset(hashOffset,
+                                  4u + 4u * (uint64_t)bucketIndex,
+                                  &bucketEntryOffset) ||
+            !theme_cacheRead32(data, length, bucketEntryOffset,
+                               &bucketOffset))
+            goto done;
+    }
     while (bucketOffset != 0u) {
         uint32_t nextOffset;
         uint32_t nameOffset;
         uint32_t listOffset;
         uint32_t listLength;
         uint32_t listIndex;
-        if (bucketOffset > (uint32_t)length ||
-            length - (size_t)bucketOffset < 12u ||
+        uint32_t nameFieldOffset;
+        uint32_t listFieldOffset;
+        if (!theme_cacheRange(data, length, bucketOffset, 12u) ||
             (bucketOffset & 3u) != 0u ||
             ++nodeCount > (uint32_t)(length / 12u + 1u) ||
+            !theme_cacheAddOffset(bucketOffset, 4u, &nameFieldOffset) ||
+            !theme_cacheAddOffset(bucketOffset, 8u, &listFieldOffset) ||
             !theme_cacheRead32(data, length, bucketOffset, &nextOffset) ||
-            !theme_cacheRead32(data, length, bucketOffset + 4u, &nameOffset) ||
-            !theme_cacheRead32(data, length, bucketOffset + 8u, &listOffset) ||
+            !theme_cacheRead32(data, length, nameFieldOffset, &nameOffset) ||
+            !theme_cacheRead32(data, length, listFieldOffset, &listOffset) ||
             !theme_cacheString(data, length, nameOffset) ||
             !theme_cacheRead32(data, length, listOffset, &listLength) ||
-            listLength > (uint32_t)((length - (size_t)listOffset - 4u) / 8u))
+            !theme_cacheRange(data, length, listOffset,
+                              4u + 8u * (uint64_t)listLength))
             goto done;
         if (strcmp(theme_cacheString(data, length, nameOffset), name) == 0) {
             for (listIndex = 0; listIndex < listLength; ++listIndex) {
                 uint16_t directoryIndex;
                 uint32_t directoryOffset;
+                uint32_t listEntryOffset;
+                uint32_t directoryEntryOffset;
                 const char* cachedDirectory;
-                if (!theme_cacheRead16(data, length,
-                                       listOffset + 4u + listIndex * 8u,
+                if (!theme_cacheAddOffset(listOffset,
+                                          4u + 8u * (uint64_t)listIndex,
+                                          &listEntryOffset) ||
+                    !theme_cacheRead16(data, length, listEntryOffset,
                                        &directoryIndex) ||
                     directoryIndex >= dirListLength ||
-                    !theme_cacheRead32(data, length,
-                                       dirListOffset + 4u +
-                                       (uint32_t)directoryIndex * 4u,
+                    !theme_cacheAddOffset(dirListOffset,
+                                          4u + 4u * (uint64_t)directoryIndex,
+                                          &directoryEntryOffset) ||
+                    !theme_cacheRead32(data, length, directoryEntryOffset,
                                        &directoryOffset) ||
                     !(cachedDirectory = theme_cacheString(data, length,
                                                           directoryOffset)))
@@ -617,7 +695,10 @@ static void themeContext_finalizeDirs(ThemeContext* self)
             if (info->m_minSize < 0) info->m_minSize = info->m_size;
             if (info->m_maxSize < 0) info->m_maxSize = info->m_size;
         } else {
-            info->m_type = ThemeDir_Fallback;
+            /* Qt QIconTheme 仅从 index.theme 中带正 Size 的组建立
+               QIconDirInfo；缺少 Size 的组不是主题内的 Fallback 目录。
+               Fallback 只用于主题外的独立文件条目。 */
+            info->m_type = ThemeDir_Invalid;
         }
     }
 }
@@ -809,7 +890,9 @@ static bool theme_directoryMatches(const ThemeDirInfo* info, int iconsize,
 {
     int scale;
     if (!info || iconsize <= 0 || iconscale <= 0) return false;
-    scale = info->m_scale > 0 ? info->m_scale : 1;
+    /* Qt directoryMatchesSize() 直接比较元数据 Scale；显式 Scale=0
+       不得被当成默认的 1 倍目录。 */
+    scale = info->m_scale;
     if (scale != iconscale) return false;
     if (info->m_type == ThemeDir_Fixed)
         return info->m_size == iconsize;
@@ -836,7 +919,8 @@ static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
     int scaledHigh;
     if (!info || iconsize <= 0 || iconscale <= 0) return INT_MAX;
     if (info->m_type == ThemeDir_Fallback) return 0;
-    scale = info->m_scale > 0 ? info->m_scale : 1;
+    /* Qt directorySizeDistance() 同样使用原始 Scale 值。 */
+    scale = info->m_scale;
     scaledIconSize = iconsize * iconscale;
     size = info->m_size > 0 ? info->m_size * scale : 0;
     minSize = info->m_minSize > 0 ? info->m_minSize * scale : size;
@@ -854,8 +938,9 @@ static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
     }
     if (info->m_type == ThemeDir_Invalid) return INT_MAX;
     if (size <= 0) return INT_MAX;
-    scaledLow = size - (info->m_threshold > 0 ? info->m_threshold * scale : 0);
-    scaledHigh = size + (info->m_threshold > 0 ? info->m_threshold * scale : 0);
+    /* Threshold 的负值也按 Qt 的原始算式保留，不要静默改成零。 */
+    scaledLow = size - info->m_threshold * scale;
+    scaledHigh = size + info->m_threshold * scale;
     scaledMin = info->m_minSize > 0 ? info->m_minSize * scale : size;
     scaledMax = info->m_maxSize > 0 ? info->m_maxSize * scale : size;
     if (scaledIconSize < scaledLow) return scaledMin - scaledIconSize;
@@ -866,7 +951,8 @@ static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
 static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
                                const char* root, const char* theme,
                                const char* name, int target, int iconScale,
-                               XPixmap* out, int* distance)
+                               XPixmap* out, int* distance,
+                               int* formatPriority)
 {
     const XString* dirStr;
     const char* dir;
@@ -876,6 +962,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
     bool loaded = false;
     if (!ctx || !root || !theme || !name) return false;
     if (dirIndex >= ctx->m_metaCount || !ctx->m_dirs) return false;
+    if (formatPriority) *formatPriority = INT_MAX;
     dirStr = (const XString*)XStringList_at_base(
         (const XVector*)ctx->m_dirs, (int64_t)dirIndex);
     dir = dirStr ? XString_toUtf8(dirStr) : NULL;
@@ -893,6 +980,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
                  name, ext);
         if (theme_loadFile(path, out)) {
             loaded = true;
+            if (formatPriority) *formatPriority = theme_extPriority(ext);
             break;
         }
     }
@@ -909,6 +997,8 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
 {
     size_t di;
     bool found = false;
+    bool foundExact = false;
+    int bestFormatPriority = INT_MAX;
     if (!ctx) return false;
 
     /* QIconLoaderEngine::entryForSize() gives exact Scale/size matches a
@@ -916,6 +1006,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
     for (di = 0; di < ctx->m_metaCount; ++di) {
         XPixmap candidate;
         int distance = INT_MAX;
+        int formatPriority = INT_MAX;
         if (skipGenericContext &&
             (ctx->m_meta[di].m_context == ThemeDir_Applications ||
              ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
@@ -924,34 +1015,43 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
             continue;
         XPixmap_init(&candidate);
         if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
-                                       iconScale, &candidate, &distance)) {
-            if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
-            XPixmap_move_base(best, &candidate);
-            XPixmap_deinit_base(&candidate);
-            *bestDistance = 0;
-            return true;
+                                       iconScale, &candidate, &distance,
+                                       &formatPriority)) {
+            if (distance == 0 &&
+                (!foundExact || formatPriority < bestFormatPriority)) {
+                if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
+                XPixmap_move_base(best, &candidate);
+                *bestDistance = 0;
+                bestFormatPriority = formatPriority;
+                foundExact = true;
+            }
         }
         XPixmap_deinit_base(&candidate);
     }
+    if (foundExact) return true;
 
     /* No exact match: choose the first minimum-distance entry, as Qt does. */
     for (di = 0; di < ctx->m_metaCount; ++di) {
         XPixmap candidate;
         int distance = INT_MAX;
+        int formatPriority = INT_MAX;
         if (skipGenericContext &&
             (ctx->m_meta[di].m_context == ThemeDir_Applications ||
              ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
             continue;
         XPixmap_init(&candidate);
         if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
-                                       iconScale, &candidate, &distance) &&
-            distance < *bestDistance) {
+                                       iconScale, &candidate, &distance,
+                                       &formatPriority) &&
+            (distance < *bestDistance ||
+             (distance == *bestDistance &&
+              formatPriority < bestFormatPriority))) {
             if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
             XPixmap_move_base(best, &candidate);
             XPixmap_deinit_base(&candidate);
             *bestDistance = distance;
+            bestFormatPriority = formatPriority;
             found = true;
-            if (distance == 0) return true;
         } else {
             XPixmap_deinit_base(&candidate);
         }
@@ -1069,7 +1169,10 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     }
 
     XPixmap_init(&best);
-    if (parsed && ctx.m_metaCount > 0) {
+    if (parsed) {
+        /* Qt QIconTheme treats an existing index.theme as authoritative.  An
+           empty Directories list has no local entries and must proceed to
+           Inherits, rather than probing legacy size/context directories. */
         for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
                  (XContainer*)paths); ++pathIndex) {
             const XString* rootStr = (const XString*)XStringList_at_base(
@@ -1083,6 +1186,8 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             }
         }
     } else {
+        /* Only themes without index.theme use the embedded legacy directory
+           convention; a malformed/empty indexed theme is not legacy. */
         for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
                  (XContainer*)paths); ++pathIndex) {
             const XString* rootStr = (const XString*)XStringList_at_base(
@@ -1165,13 +1270,22 @@ static bool theme_scaledToSize(XPixmap* pixmap, int target)
 {
     int w;
     int h;
+    int targetWidth;
+    int targetHeight;
     XPixmap scaled;
     if (!pixmap || XPixmap_isNull(pixmap) || target <= 1) return false;
     w = XPixmap_width(pixmap);
     h = XPixmap_height(pixmap);
-    if (w == target && h == target) return true;
+    if (w <= 0 || h <= 0) return false;
+    /* 对齐 Qt QPixmapIconEngine::adjustSize(expected, source)：小于请求
+       尺寸的回退文件保持原尺寸，只有超出请求边界时才按比例缩小。 */
+    targetWidth = target;
+    targetHeight = target;
+    if (w <= targetWidth && h <= targetHeight) return true;
     XPixmap_init(&scaled);
-    XPixmap_scaled(pixmap, target, target, 0, 0, &scaled);
+    /* aspectMode=1 是 KeepAspectRatio；这样 7x5 文件在 18x18 请求下
+       保持为 18x13，而不是被拉伸成 18x18。 */
+    XPixmap_scaled(pixmap, targetWidth, targetHeight, 1, 0, &scaled);
     if (!XPixmap_isNull(&scaled)) {
         XPixmap_deinit_base(pixmap);
         XPixmap_move_base(pixmap, &scaled);
@@ -1250,7 +1364,9 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
         if (!parsed && theme_parseIndexFile(root, theme, &ctx))
             parsed = true;
     }
-    if (parsed && ctx.m_metaCount > 0) {
+    if (parsed) {
+        /* As in QIconTheme, an existing index.theme suppresses legacy
+           directory probing even when it declares no content directories. */
         for (dirIndex = 0; dirIndex < ctx.m_metaCount; ++dirIndex) {
             const XString* dirStr = (const XString*)XStringList_at_base(
                 (const XVector*)ctx.m_dirs, (int64_t)dirIndex);
@@ -1384,7 +1500,28 @@ static bool theme_loadLegacy(const XStringList* paths, const char* theme,
                              const char* name, XPixmap* out)
 {
     size_t pathIndex;
+    bool indexedTheme = false;
     if (!paths) return false;
+    if (theme && theme[0]) {
+        /* QIconTheme 遍历全部 themeSearchPaths() 后，只要其中任一路径
+           存在 index.theme，整个主题就按索引格式处理；不能因为另一
+           个搜索根没有索引，就让其根目录旧式文件绕过 Directories。 */
+        for (pathIndex = 0; pathIndex < XStringList_size_base(
+                 (XContainer*)paths); ++pathIndex) {
+            const XString* path = (const XString*)XStringList_at_base(
+                (const XVector*)paths, (int64_t)pathIndex);
+            const char* root = path ? XString_toUtf8(path) : NULL;
+            char indexPath[1024];
+            if (!root || !root[0]) continue;
+            snprintf(indexPath, sizeof(indexPath), "%s/%s/index.theme",
+                     root, theme);
+            if (theme_fileExists(indexPath)) {
+                indexedTheme = true;
+                break;
+            }
+        }
+        if (indexedTheme) return false;
+    }
     for (pathIndex = 0; pathIndex < XStringList_size_base(
              (XContainer*)paths); ++pathIndex) {
         const XString* path = (const XString*)XStringList_at_base(
@@ -1404,6 +1541,84 @@ static bool theme_loadLegacy(const XStringList* paths, const char* theme,
                 theme_buildRootPath(filePath, sizeof(filePath), root, name, ext);
             }
             if (theme_loadFile(filePath, out)) return true;
+        }
+    }
+    return false;
+}
+
+/* 对齐 Qt QIconLoader::lookupFallbackIcon：每个目录只选第一个命中的
+ * png/xpm/svg 文件，目录顺序优先于后续目录。 */
+static bool theme_loadFallback(const XStringList* paths, const char* name,
+                               XPixmap* out)
+{
+    size_t pathIndex;
+    if (!paths || !name || !name[0]) return false;
+    for (pathIndex = 0; pathIndex < XStringList_size_base(
+             (XContainer*)paths); ++pathIndex) {
+        const XString* path = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = path ? XString_toUtf8(path) : NULL;
+        size_t extIndex;
+        char filePath[1024];
+        if (!root || !root[0]) continue;
+        for (extIndex = 0; extIndex < sizeof(theme_fallback_exts) /
+                 sizeof(theme_fallback_exts[0]); ++extIndex) {
+            const char* ext = theme_fallback_exts[extIndex];
+            if (!theme_extAllowed(ext)) continue;
+            theme_buildRootPath(filePath, sizeof(filePath), root, name, ext);
+            if (!theme_fileExists(filePath)) continue;
+            return theme_loadFile(filePath, out);
+        }
+    }
+    return false;
+}
+
+static bool theme_collectFallbackSizes(const XStringList* paths,
+                                       const char* name, XVector* out)
+{
+    size_t pathIndex;
+    if (!paths || !name || !name[0] || !out) return false;
+    for (pathIndex = 0; pathIndex < XStringList_size_base(
+             (XContainer*)paths); ++pathIndex) {
+        const XString* path = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = path ? XString_toUtf8(path) : NULL;
+        size_t extIndex;
+        char filePath[1024];
+        if (!root || !root[0]) continue;
+        for (extIndex = 0; extIndex < sizeof(theme_fallback_exts) /
+                 sizeof(theme_fallback_exts[0]); ++extIndex) {
+            const char* ext = theme_fallback_exts[extIndex];
+            XPixmap pixmap;
+            XSize size;
+            size_t sizeIndex;
+            bool duplicate = false;
+            if (!theme_extAllowed(ext)) continue;
+            theme_buildRootPath(filePath, sizeof(filePath), root, name, ext);
+            if (!theme_fileExists(filePath)) continue;
+            XPixmap_init(&pixmap);
+            if (!theme_loadFile(filePath, &pixmap)) {
+                XPixmap_deinit_base(&pixmap);
+                return false;
+            }
+            size.width = XPixmap_width(&pixmap);
+            size.height = XPixmap_height(&pixmap);
+            if (size.width > 0 && size.height > 0) {
+                for (sizeIndex = 0; sizeIndex < XVector_size_base(
+                         (const XContainer*)out); ++sizeIndex) {
+                    const XSize* existing = (const XSize*)XVector_at_base(
+                        out, (int64_t)sizeIndex);
+                    if (existing && existing->width == size.width &&
+                        existing->height == size.height) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) XVector_push_back_1_base(out, &size);
+            }
+            XPixmap_deinit_base(&pixmap);
+            /* lookupFallbackIcon() stops at the first existing file. */
+            return size.width > 0 && size.height > 0;
         }
     }
     return false;
@@ -1430,7 +1645,12 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     if (outputSize <= 0) outputSize = size;
     XPixmap_init(out);
 
-    if (name[0] == '/' || name[0] == '.' || strchr(name, '/')) {
+    /* QIcon::fromTheme() only treats an absolute path as a file icon.  This
+       includes Unix paths and Qt resource paths beginning with ":/".  A
+       relative name such as "./foo" or "dir/foo" remains a theme name;
+       resolving it from the process working directory would also make
+       hasThemeIcon() report standalone files as theme entries. */
+    if (name[0] == '/' || name[0] == ':') {
         if (theme_loadFile(name, out)) {
             if (scaleToSize)
                 theme_scaledToSize(out, outputSize);
@@ -1468,13 +1688,15 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
         any = theme_loadLegacy(themePaths, themeUtf8, name, &best);
     }
     if (!any && fallbackUtf8) {
-        any = theme_loadLegacy(fallbackPaths, fallbackUtf8, name, &best);
+        /* Qt QIconLoader 对 fallbackThemeName 仍在 themeSearchPaths()
+           中查找；fallbackSearchPaths() 只用于无主题名的独立文件回退。 */
+        any = theme_loadLegacy(themePaths, fallbackUtf8, name, &best);
     }
     if (!any) {
-        any = theme_loadLegacy(themePaths, NULL, name, &best);
-    }
-    if (!any) {
-        any = theme_loadLegacy(fallbackPaths, NULL, name, &best);
+        /* Qt QIconLoader::lookupFallbackIcon() 只扫描
+           fallbackSearchPaths()，不把 themeSearchPaths() 当作独立文件
+           目录；这样主题路径中的散落文件不会错误地抢占回退主题。 */
+        any = theme_loadFallback(fallbackPaths, name, &best);
     }
 
     found = any && !XPixmap_isNull(&best);
@@ -1551,6 +1773,12 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
     if (fallbackUtf8)
         found = theme_collectSizes(themePaths, fallbackUtf8, name, NULL,
                                    &visited, out) || found;
+    if (!found) {
+        /* Qt QIconLoaderEngine::availableSizes() 对 Fallback 条目委托给
+           QIcon(file).availableSizes()；独立 PNG/XPM/SVG 的原始矩形尺寸
+           因而必须保留，不能按主题目录一律返回 size x size。 */
+        found = theme_collectFallbackSizes(fallbackPaths, name, out);
+    }
 
     if (themeName) XString_delete_base((XClass*)themeName);
     if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);

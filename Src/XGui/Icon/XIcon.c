@@ -170,10 +170,55 @@ static void XIconPrivate_setName_2(XIconPrivate* d, const XString* name)
     XIconPrivate_touch(d);
 }
 
+static int64_t XIconPrivate_areaOf(int width, int height);
+static int64_t XIconPrivate_entryPhysicalArea(const XIconEntry* entry);
+
 static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconMode mode, XIconState state)
 {
     XIconEntry entry;
+    size_t i;
     if (!d || !pixmap || XPixmap_isNull(pixmap)) return;
+    /* 对标 QPixmapIconEngine::addPixmap()：相同 mode/state、物理尺寸和
+       DPR 的条目就地替换，避免重复条目改变匹配顺序或 availableSizes。 */
+    for (i = 0; i < XVector_size_base((XContainer*)&d->m_entries); ++i)
+    {
+        XIconEntry* existing = (XIconEntry*)XVector_at_base(
+            &d->m_entries, (int64_t)i);
+        int existingWidth;
+        int existingHeight;
+        float existingScale;
+        if (!existing || existing->m_mode != mode || existing->m_state != state)
+            continue;
+        if (existing->m_fileName && !existing->m_loaded)
+        {
+            existingWidth = existing->m_requestedSize.width;
+            existingHeight = existing->m_requestedSize.height;
+            existingScale = 1.0f;
+        }
+        else
+        {
+            existingWidth = XPixmap_width(&existing->m_pixmap);
+            existingHeight = XPixmap_height(&existing->m_pixmap);
+            existingScale = XPixmap_devicePixelRatio(&existing->m_pixmap);
+        }
+        if (existingWidth != XPixmap_width(pixmap) ||
+            existingHeight != XPixmap_height(pixmap) ||
+            existingScale != XPixmap_devicePixelRatio(pixmap))
+            continue;
+        if (existing->m_fileName)
+        {
+            XString_delete_base((XClass*)existing->m_fileName);
+            existing->m_fileName = NULL;
+        }
+        XPixmap_deinit_base(&existing->m_pixmap);
+        XPixmap_init(&existing->m_pixmap);
+        XPixmap_copy_base(&existing->m_pixmap, pixmap);
+        existing->m_requestedSize.width = 0;
+        existing->m_requestedSize.height = 0;
+        existing->m_loaded = true;
+        XIconPrivate_touch(d);
+        return;
+    }
     memset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
     XPixmap_copy_base(&entry.m_pixmap, pixmap);
@@ -412,25 +457,120 @@ static void XIconPrivate_entryLogicalSize(const XIconEntry* entry, XSize* out)
     out->height = (int)((float)XPixmap_height(&entry->m_pixmap) / scale + 0.5f);
 }
 
-/* 惰性加载 addFile 条目；加载失败时保持条目未加载并返回 false。 */
-static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry)
+/* 返回候选条目的物理像素面积。
+ * Qt 的 QPixmapIconEngineEntry::size 保存的是 pixmap.size()（物理尺寸），
+ * 因此同一 DPR 下的 bestSizeScaleMatch 必须在物理单位比较候选与请求，
+ * 不能把逻辑尺寸直接和已经乘过 DPR 的请求面积混用。 */
+static int64_t XIconPrivate_entryPhysicalArea(const XIconEntry* entry)
 {
-    XPixmap loaded;
+    if (!entry) return 0;
+    if (entry->m_fileName && !entry->m_loaded)
+        return XIconPrivate_areaOf(entry->m_requestedSize.width,
+                                   entry->m_requestedSize.height);
+    return XIconPrivate_areaOf(XPixmap_width(&entry->m_pixmap),
+                               XPixmap_height(&entry->m_pixmap));
+}
+
+/* 惰性加载 addFile 条目；按 Qt QPixmapIconEngine::bestMatch() 的逻辑，
+ * 优先选择请求物理尺寸的帧，找不到时保留最后成功读取的帧。 */
+static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry,
+                                       int requestedWidth, int requestedHeight,
+                                       float scale)
+{
+    XImageReader reader;
+    XImage image;
+    XImage previous;
+    XSize target;
+    double targetWidth;
+    double targetHeight;
+    XSize frameSize;
+    XSize readerSize;
+    bool exact = false;
+    bool readAny = false;
+    bool hasSize = false;
+    bool ok;
     (void)d;
     if (!entry || !entry->m_fileName || entry->m_loaded)
         return entry != NULL && entry->m_loaded;
-    XPixmap_init(&loaded);
-    if (!XPixmap_load(&loaded, entry->m_fileName, NULL, 0) ||
-        XPixmap_isNull(&loaded))
-    {
-        XPixmap_deinit_base(&loaded);
+    if (requestedWidth <= 0 || requestedHeight <= 0 ||
+        !(scale > 0.0f) || !isfinite(scale))
+        return false;
+    targetWidth = (double)requestedWidth * (double)scale + 0.5;
+    targetHeight = (double)requestedHeight * (double)scale + 0.5;
+    if (targetWidth <= 0.0 || targetHeight <= 0.0 ||
+        targetWidth > (double)INT_MAX || targetHeight > (double)INT_MAX)
+        return false;
+    target.width = (int)targetWidth;
+    target.height = (int)targetHeight;
+
+    XImageReader_init_file(&reader, entry->m_fileName, NULL);
+    XImage_init(&image);
+    XImage_init(&previous);
+    hasSize = XImageReader_supportsOption(&reader, XImageIOHandlerOption_Size);
+    if (hasSize) {
+        /* 尺寸查询本身不读取像素；对支持 Size 的处理器，先寻找精确帧。 */
+        XImageReader_size(&reader, &readerSize);
+        if (readerSize.width == target.width && readerSize.height == target.height)
+            exact = true;
+        while (!exact && XImageReader_jumpToNextImage(&reader)) {
+            XImageReader_size(&reader, &readerSize);
+            if (readerSize.width == target.width && readerSize.height == target.height)
+                exact = true;
+        }
+        if (exact)
+            ok = XImageReader_read(&reader, &image);
+        else {
+            (void)XImageReader_jumpToImage(&reader, 0);
+            ok = false;
+        }
+    } else {
+        ok = false;
+    }
+
+    if (!ok) {
+        /* Qt 在无法通过 Size 选中时回到逐帧 read()，并保留最后一帧。 */
+        (void)XImageReader_jumpToImage(&reader, 0);
+        while (XImageReader_read(&reader, &image)) {
+            readAny = true;
+            frameSize.width = XImage_width(&image);
+            frameSize.height = XImage_height(&image);
+            if (frameSize.width == target.width && frameSize.height == target.height) {
+                exact = true;
+                break;
+            }
+            XImage_deinit_base(&previous);
+            XImage_init(&previous);
+            XImage_copy_base(&previous, &image);
+            XImage_deinit_base(&image);
+            XImage_init(&image);
+        }
+        if (!exact && XImage_isNull(&image) && !XImage_isNull(&previous)) {
+            XImage_move_base(&image, &previous);
+            XImage_init(&previous);
+        }
+        ok = readAny || !XImage_isNull(&image);
+    }
+
+    if (!ok || XImage_isNull(&image)) {
+        XImage_deinit_base(&previous);
+        XImage_deinit_base(&image);
+        XImageReader_deinit_base(&reader);
         return false;
     }
+
     XPixmap_deinit_base(&entry->m_pixmap);
-    XPixmap_init(&entry->m_pixmap);
-    XPixmap_move_base(&entry->m_pixmap, &loaded);
-    XPixmap_deinit_base(&loaded);
+    XPixmap_init_image(&entry->m_pixmap, &image, 0);
+    if (XPixmap_isNull(&entry->m_pixmap)) {
+        XImage_deinit_base(&previous);
+        XImage_deinit_base(&image);
+        XImageReader_deinit_base(&reader);
+        return false;
+    }
+    XPixmap_setDevicePixelRatio(&entry->m_pixmap, scale);
     entry->m_loaded = true;
+    XImage_deinit_base(&previous);
+    XImage_deinit_base(&image);
+    XImageReader_deinit_base(&reader);
     return true;
 }
 
@@ -493,6 +633,29 @@ static float XIconPrivate_pixmapDevicePixelRatio(float displayRatio,
     return (adjusted > 1.0) ? (float)adjusted : 1.0f;
 }
 
+/* 将逻辑请求尺寸转换为 Qt QIcon::pixmap() 使用的物理目标尺寸。
+ * 该转换只用于 DPR 修正，不改变传给图标引擎的逻辑尺寸；浮点结果
+ * 超出 int 范围时必须拒绝，避免把未定义的浮点到整数转换带入公共 API。 */
+static bool XIconPrivate_physicalTargetSize(int width, int height,
+                                            float devicePixelRatio,
+                                            int* targetWidth,
+                                            int* targetHeight)
+{
+    double scaledWidth;
+    double scaledHeight;
+    if (!targetWidth || !targetHeight || width <= 0 || height <= 0 ||
+        !(devicePixelRatio > 0.0f) || !isfinite(devicePixelRatio))
+        return false;
+    scaledWidth = (double)width * (double)devicePixelRatio + 0.5;
+    scaledHeight = (double)height * (double)devicePixelRatio + 0.5;
+    if (scaledWidth <= 0.0 || scaledHeight <= 0.0 ||
+        scaledWidth > (double)INT_MAX || scaledHeight > (double)INT_MAX)
+        return false;
+    *targetWidth = (int)scaledWidth;
+    *targetHeight = (int)scaledHeight;
+    return *targetWidth > 0 && *targetHeight > 0;
+}
+
 /* 对标 QPixmapIconEngine::bestSizeScaleMatch()：先按 DPR 打分，优先匹配目标
  * DPR，其次取误差最小；DPR 相同时再按逻辑面积进行尺寸匹配。 */
 static const XIconEntry* XIconPrivate_bestSizeScaleMatch(int width, int height,
@@ -506,8 +669,6 @@ static const XIconEntry* XIconPrivate_bestSizeScaleMatch(int width, int height,
     float scoreRight;
     float absLeft;
     float absRight;
-    XSize logicalLeft;
-    XSize logicalRight;
     int64_t requestedArea;
     int64_t areaLeft;
     int64_t areaRight;
@@ -527,13 +688,17 @@ static const XIconEntry* XIconPrivate_bestSizeScaleMatch(int width, int height,
         return (absLeft < absRight) ? left : right;
     }
 
-    requestedArea = XIconPrivate_areaOf(
-        (width > 0) ? (int)((float)width * scale + 0.5f) : 0,
-        (height > 0) ? (int)((float)height * scale + 0.5f) : 0);
-    XIconPrivate_entryLogicalSize(left, &logicalLeft);
-    XIconPrivate_entryLogicalSize(right, &logicalRight);
-    areaLeft = XIconPrivate_areaOf(logicalLeft.width, logicalLeft.height);
-    areaRight = XIconPrivate_areaOf(logicalRight.width, logicalRight.height);
+    {
+        double scaledWidth = (double)width * (double)scale + 0.5;
+        double scaledHeight = (double)height * (double)scale + 0.5;
+        int requestedWidth = (scaledWidth <= 0.0) ? 0
+            : (scaledWidth > (double)INT_MAX ? INT_MAX : (int)scaledWidth);
+        int requestedHeight = (scaledHeight <= 0.0) ? 0
+            : (scaledHeight > (double)INT_MAX ? INT_MAX : (int)scaledHeight);
+        requestedArea = XIconPrivate_areaOf(requestedWidth, requestedHeight);
+    }
+    areaLeft = XIconPrivate_entryPhysicalArea(left);
+    areaRight = XIconPrivate_entryPhysicalArea(right);
     if (areaLeft >= requestedArea && areaRight >= requestedArea)
         return (areaLeft < areaRight) ? left : right;
     if (areaLeft < requestedArea && areaRight < requestedArea)
@@ -632,7 +797,8 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         d, width, height, devicePixelRatio, mode, state);
     if (!best) return;
     if (best->m_fileName && !best->m_loaded &&
-        !XIconPrivate_loadFileEntry((XIconPrivate*)d, (XIconEntry*)best))
+        !XIconPrivate_loadFileEntry((XIconPrivate*)d, (XIconEntry*)best,
+                                     width, height, devicePixelRatio))
         return;
     actual.width = XPixmap_width(&best->m_pixmap);
     actual.height = XPixmap_height(&best->m_pixmap);
@@ -709,6 +875,8 @@ void XIcon_pixmapExtent(const XIcon* self, int extent, XIconMode mode, XIconStat
 void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePixelRatio,
                        XIconMode mode, XIconState state, XPixmap* out)
 {
+    int targetWidth;
+    int targetHeight;
     if (!out) return;
     if (devicePixelRatio <= 0.0f) devicePixelRatio = 1.0f;
     if (self && self->m_data && self->m_data->m_engine) {
@@ -717,6 +885,18 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
         if (devicePixelRatio > 1.0f) {
             XIconEngine_scaledPixmap_base(self->m_data->m_engine, &size, mode,
                                           state, devicePixelRatio, out);
+            /* Qt 6.8 QIcon::pixmap() 修正的是引擎返回像素图的 DPR，而
+               不是无条件采用请求比例。自定义引擎可能返回较小或非正方
+               形资源，因此必须使用实际物理尺寸重新计算。 */
+            if (!XPixmap_isNull(out) &&
+                XIconPrivate_physicalTargetSize(width, height,
+                                                devicePixelRatio,
+                                                &targetWidth, &targetHeight)) {
+                float outputRatio = XIconPrivate_pixmapDevicePixelRatio(
+                    devicePixelRatio, targetWidth, targetHeight,
+                    XPixmap_width(out), XPixmap_height(out));
+                XPixmap_setDevicePixelRatio(out, outputRatio);
+            }
         } else {
             XIconEngine_pixmap_base(self->m_data->m_engine, &size, mode, state,
                                     out);
@@ -938,6 +1118,7 @@ static void XIcon_fromThemeImpl(const XString* nameString,
 {
     XString* created = NULL;
     XIconThemeEngine* engine;
+    const char* nameUtf8;
     if (!out) return;
     if (!nameString && utf8Name) {
         created = XString_create_utf8(utf8Name);
@@ -945,6 +1126,14 @@ static void XIcon_fromThemeImpl(const XString* nameString,
     }
     XIcon_init(out);
     if (nameString) {
+        nameUtf8 = XString_toUtf8(nameString);
+        /* Qt QIcon::fromTheme() 对绝对路径直接构造文件图标；Unix 的 `/`
+           路径和 Qt 资源的 `:/` 路径都不应交给 QIconLoader 当作主题名。 */
+        if (nameUtf8 && (nameUtf8[0] == '/' || nameUtf8[0] == ':')) {
+            XIcon_deinit_base(out);
+            XIcon_init_file(out, nameString);
+            goto fromTheme_done;
+        }
         engine = XIconThemeEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                             nameString);
         if (engine && out->m_data) {
@@ -961,6 +1150,7 @@ static void XIcon_fromThemeImpl(const XString* nameString,
             XIconEngine_delete_base((XIconEngine*)engine);
         }
     }
+fromTheme_done:
     if (created) XString_delete_base((XClass*)created);
     if (XIcon_isNull(out) && fallback)
         XIcon_copy_base(out, fallback);
@@ -988,9 +1178,15 @@ bool XIcon_hasThemeIcon(const XString* name)
 {
     XPixmap pixmap;
     bool found;
+    const char* nameUtf8;
     if (!name || XString_isEmpty_base((const XContainer*)name)) return false;
+    nameUtf8 = XString_toUtf8(name);
+    /* Qt QIcon::hasThemeIcon() delegates to fromTheme().  Absolute paths are
+       handled by fromTheme() as ordinary file icons whose engine has no
+       theme name, so they must not be reported as theme icons. */
+    if (!nameUtf8 || nameUtf8[0] == '/' || nameUtf8[0] == ':') return false;
     XPixmap_init(&pixmap);
-    found = XIconInternal_resolveThemePixmap(XString_toUtf8(name), &pixmap);
+    found = XIconInternal_resolveThemePixmap(nameUtf8, &pixmap);
     XPixmap_deinit_base(&pixmap);
     return found;
 }

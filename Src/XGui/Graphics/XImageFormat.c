@@ -5,6 +5,7 @@
  * @note       提供像素格式的位深度、Alpha 通道判断等辅助函数
  ******************************************************************************/
 #include "XImageFormat.h"
+#include "CXinYueConfig.h"
 #include <stddef.h>
 #include <limits.h>
 
@@ -117,147 +118,313 @@ int XImageFormat_bytesPerLine(int width, XImageFormat format)
     return bytesPerLine > 0 && bytesPerLine <= INT_MAX ? (int)bytesPerLine : 0;
 }
 
-XPixelFormat XImageFormat_pixelFormat(XImageFormat format)
+static XPixelFormat XPixelFormat_make(XPixelFormatModel model,
+                                      uint8_t first, uint8_t second,
+                                      uint8_t third, uint8_t fourth,
+                                      uint8_t fifth, uint8_t alpha,
+                                      XPixelFormatAlphaUsage alphaUsage,
+                                      XPixelFormatAlphaPosition alphaPosition,
+                                      XPixelFormatAlphaPremultiplied premultiplied,
+                                      XPixelFormatTypeInterpretation type)
 {
-    XPixelFormat result = { XPixelFormatModel_Invalid, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false };
+    XPixelFormat result = { 0 };
+    const XPixelFormatByteOrder sourceByteOrder =
+        XPixelFormatByteOrder_CurrentSystemEndian;
+    result.m_model = model;
+    result.m_redSize = first;
+    result.m_greenSize = second;
+    result.m_blueSize = third;
+    result.m_alphaSize = alpha;
+    result.m_fourthSize = fourth;
+    result.m_fifthSize = fifth;
+    result.m_premultiplied = premultiplied == XPixelFormatAlpha_Premultiplied;
+    result.m_alphaUsage = alphaUsage;
+    result.m_alphaPosition = alphaPosition;
+    result.m_typeInterpretation = type;
+    /* QPixelFormat receives CurrentSystemEndian in the static table, then
+       resolves it in its constructor before byteOrder() exposes the value. */
+#if IS_BIG_ENDIAN
+    result.m_byteOrder = sourceByteOrder == XPixelFormatByteOrder_CurrentSystemEndian
+        ? XPixelFormatByteOrder_BigEndian : sourceByteOrder;
+#else
+    result.m_byteOrder = sourceByteOrder == XPixelFormatByteOrder_CurrentSystemEndian
+        ? XPixelFormatByteOrder_LittleEndian : sourceByteOrder;
+#endif
+    result.m_channelCount = (uint8_t)((first != 0) + (second != 0) +
+                                      (third != 0) + (fourth != 0) +
+                                      (fifth != 0) + (alpha != 0));
+    if (model == XPixelFormatModel_CMYK)
+    {
+        result.m_cyanSize = first;
+        result.m_magentaSize = second;
+        result.m_yellowSize = third;
+        result.m_blackSize = fourth;
+    }
+    return result;
+}
+
+bool XPixelFormat_equals(const XPixelFormat* left, const XPixelFormat* right)
+{
+    if (!left || !right) return left == right;
+    return left->m_model == right->m_model &&
+           left->m_redSize == right->m_redSize &&
+           left->m_greenSize == right->m_greenSize &&
+           left->m_blueSize == right->m_blueSize &&
+           left->m_alphaSize == right->m_alphaSize &&
+           left->m_cyanSize == right->m_cyanSize &&
+           left->m_magentaSize == right->m_magentaSize &&
+           left->m_yellowSize == right->m_yellowSize &&
+           left->m_blackSize == right->m_blackSize &&
+           left->m_fourthSize == right->m_fourthSize &&
+           left->m_fifthSize == right->m_fifthSize &&
+           left->m_channelCount == right->m_channelCount &&
+           left->m_premultiplied == right->m_premultiplied &&
+           left->m_alphaUsage == right->m_alphaUsage &&
+           left->m_alphaPosition == right->m_alphaPosition &&
+           left->m_typeInterpretation == right->m_typeInterpretation &&
+           left->m_byteOrder == right->m_byteOrder &&
+           left->m_subEnum == right->m_subEnum;
+}
+
+XPixelFormat XImageFormat_toPixelFormat(XImageFormat format)
+{
     switch (format)
     {
         case XImageFormat_Mono:
         case XImageFormat_MonoLSB:
-            result.m_model = XPixelFormatModel_Mono;
-            result.m_channelCount = 1;
-            result.m_redSize = 1;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_Indexed, 1, 0, 0, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_Indexed8:
-            result.m_model = XPixelFormatModel_Indexed;
-            result.m_channelCount = 1;
-            break;
-        case XImageFormat_Alpha8:
-            result.m_model = XPixelFormatModel_Gray;
-            result.m_channelCount = 1;
-            result.m_alphaSize = 8;
-            break;
-        case XImageFormat_Grayscale8:
-            result.m_model = XPixelFormatModel_Gray;
-            result.m_channelCount = 1;
-            result.m_redSize = 8;
-            break;
-        case XImageFormat_Grayscale16:
-            result.m_model = XPixelFormatModel_Gray;
-            result.m_channelCount = 1;
-            result.m_redSize = 16;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_Indexed, 8, 0, 0, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_RGB32:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_ARGB32:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_ARGB32_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 8;
-            result.m_alphaSize = format == XImageFormat_RGB32 ? 0 : 8;
-            result.m_premultiplied = format == XImageFormat_ARGB32_Premultiplied;
-            result.m_byteOrdered = true;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_RGB16:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_blueSize = 5;
-            result.m_greenSize = 6;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 5, 6, 5, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_ARGB8565_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 5, 6, 5, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
+        case XImageFormat_RGB666:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 6, 6, 6, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
+        case XImageFormat_ARGB6666_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 6, 6, 6, 0, 0, 6,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_RGB555:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 5;
-            break;
-        case XImageFormat_RGB444:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 4;
-            break;
-        case XImageFormat_ARGB4444_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = result.m_alphaSize = 4;
-            result.m_premultiplied = true;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 5, 5, 5, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_ARGB8555_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 5, 5, 5, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_RGB888:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 8;
-            break;
-        case XImageFormat_BGR888:
-            result.m_model = XPixelFormatModel_BGR;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 8;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
+        case XImageFormat_RGB444:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 4, 4, 4, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_ARGB4444_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 4, 4, 4, 0, 0, 4,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedShort);
         case XImageFormat_RGBX8888:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 8;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_RGBA8888:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_RGBA8888_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = result.m_alphaSize = 8;
-            result.m_premultiplied = format == XImageFormat_RGBA8888_Premultiplied;
-            break;
-        case XImageFormat_RGBX64:
-        case XImageFormat_RGBA64:
-        case XImageFormat_RGBA64_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 16;
-            result.m_alphaSize = format == XImageFormat_RGBX64 ? 0 : 16;
-            result.m_premultiplied = format == XImageFormat_RGBA64_Premultiplied;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 8, 8, 8, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_BGR30:
-        case XImageFormat_RGB30:
-            result.m_model = format == XImageFormat_BGR30 ? XPixelFormatModel_BGR : XPixelFormatModel_RGB;
-            result.m_channelCount = 3;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 10;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_BGR, 10, 10, 10, 0, 0, 2,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_A2BGR30_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_BGR, 10, 10, 10, 0, 0, 2,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
+        case XImageFormat_RGB30:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 10, 10, 10, 0, 0, 2,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         case XImageFormat_A2RGB30_Premultiplied:
-            result.m_model = format == XImageFormat_A2BGR30_Premultiplied ? XPixelFormatModel_BGR : XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 10;
-            result.m_alphaSize = 2;
-            result.m_premultiplied = true;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 10, 10, 10, 0, 0, 2,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedInteger);
+        case XImageFormat_Alpha8:
+            return XPixelFormat_make(XPixelFormatModel_Alpha, 0, 0, 0, 0, 0, 8,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
+        case XImageFormat_Grayscale8:
+            return XPixelFormat_make(XPixelFormatModel_Gray, 8, 0, 0, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
+        case XImageFormat_RGBX64:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_RGBA64:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_RGBA64_Premultiplied:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_Grayscale16:
+            return XPixelFormat_make(XPixelFormatModel_Gray, 16, 0, 0, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedShort);
+        case XImageFormat_BGR888:
+            return XPixelFormat_make(XPixelFormatModel_BGR, 8, 8, 8, 0, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedByte);
         case XImageFormat_RGBX16FPx4:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_RGBA16FPx4:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_RGBA16FPx4_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 16;
-            result.m_alphaSize = format == XImageFormat_RGBX16FPx4 ? 0 : 16;
-            result.m_premultiplied = format == XImageFormat_RGBA16FPx4_Premultiplied;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 16, 16, 16, 0, 0, 16,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_RGBX32FPx4:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 32, 32, 32, 0, 0, 32,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_RGBA32FPx4:
+            return XPixelFormat_make(XPixelFormatModel_RGB, 32, 32, 32, 0, 0, 32,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_RGBA32FPx4_Premultiplied:
-            result.m_model = XPixelFormatModel_RGB;
-            result.m_channelCount = 4;
-            result.m_redSize = result.m_greenSize = result.m_blueSize = 32;
-            result.m_alphaSize = format == XImageFormat_RGBX32FPx4 ? 0 : 32;
-            result.m_premultiplied = format == XImageFormat_RGBA32FPx4_Premultiplied;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_RGB, 32, 32, 32, 0, 0, 32,
+                                     XPixelFormatAlpha_Uses,
+                                     XPixelFormatAlpha_AtEnd,
+                                     XPixelFormatAlpha_Premultiplied,
+                                     XPixelFormatType_FloatingPoint);
         case XImageFormat_CMYK8888:
-            result.m_model = XPixelFormatModel_CMYK;
-            result.m_channelCount = 4;
-            result.m_cyanSize = result.m_magentaSize = result.m_yellowSize = result.m_blackSize = 8;
-            break;
+            return XPixelFormat_make(XPixelFormatModel_CMYK, 8, 8, 8, 8, 0, 0,
+                                     XPixelFormatAlpha_Ignores,
+                                     XPixelFormatAlpha_AtBeginning,
+                                     XPixelFormatAlpha_NotPremultiplied,
+                                     XPixelFormatType_UnsignedInteger);
         default:
-            if (format >= XImageFormat_RGB666 && format <= XImageFormat_ARGB8555_Premultiplied)
-            {
-                result.m_model = XPixelFormatModel_RGB;
-                result.m_channelCount = 3;
-                result.m_redSize = result.m_greenSize = result.m_blueSize = 6;
-                result.m_alphaSize = (format == XImageFormat_ARGB6666_Premultiplied) ? 6 :
-                    (format == XImageFormat_ARGB8555_Premultiplied ? 8 : 0);
-                result.m_premultiplied = result.m_alphaSize != 0;
-            }
-            break;
+            return (XPixelFormat){ 0 };
     }
+}
+
+XPixelFormat XImageFormat_pixelFormat(XImageFormat format)
+{
+    XPixelFormat result = XImageFormat_toPixelFormat(format);
+    /* 保留旧版字段的历史含义；新代码应使用 m_byteOrder。 */
+    result.m_byteOrdered = format == XImageFormat_RGB32 ||
+                           format == XImageFormat_ARGB32 ||
+                           format == XImageFormat_ARGB32_Premultiplied;
     return result;
+}
+
+XImageFormat XImageFormat_toImageFormat(XPixelFormat format)
+{
+    int i;
+    XPixelFormat candidate;
+    for (i = 0; i < XImageFormat_NImageFormats; ++i)
+    {
+        candidate = XImageFormat_toPixelFormat((XImageFormat)i);
+        if (XPixelFormat_equals(&format, &candidate))
+            return (XImageFormat)i;
+    }
+    return XImageFormat_Invalid;
 }

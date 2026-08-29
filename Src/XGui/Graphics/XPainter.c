@@ -1684,6 +1684,154 @@ static void painterRecord_penState(XPainter* self)
                                 style, width, cap, join);
 }
 
+/* Qt 的 QPicturePaintEngine 在 DirtyOpacity 时写入 PdcSetOpacity。
+   XPainter 采用有限的 float 状态，因此使用与当前状态相同的四字节
+   便携表示；回放直接更新状态，避免在 Picture 后端再次追加命令。 */
+static void painterRecord_opacity(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetOpacity(self->m_picture, self->m_state.m_opacity);
+}
+
+/* Qt 的 QPicturePaintEngine 在 DirtyCompositionMode 时写入
+   PdcSetCompositionMode；有效枚举范围由 XPainter setter 先行校验。 */
+static void painterRecord_compositionMode(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetCompositionMode(
+        self->m_picture, (int)self->m_state.m_compositionMode);
+}
+
+#if XPAINTER_RENDERHINT_ON
+/* Qt QPicturePaintEngine::updateRenderHints() writes the complete hint mask
+   as one PdcSetRenderHint record (qpaintengine_pic.cpp:274-281).  Recording
+   the post-update mask, rather than an individual bit, also preserves the
+   semantics of QPainter::setRenderHints(mask, on) when several bits change. */
+static void painterRecord_renderHints(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetRenderHints(self->m_picture,
+                                        self->m_state.m_renderHints);
+}
+#endif /* XPAINTER_RENDERHINT_ON */
+
+#if XPAINTER_BRUSH_ORIGIN_ON
+/* Qt QPicturePaintEngine::updateBrushOrigin() writes one QPointF after a
+   DirtyBrushOrigin update (qpaintengine_pic.cpp:194-202, 483-496).  The
+   portable stream stores the same two coordinates as fixed-width floats,
+   matching XPainterState and avoiding host-dependent QPointF padding. */
+static void painterRecord_brushOrigin(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetBrushOrigin(self->m_picture,
+                                        self->m_state.m_brushOriginX,
+                                        self->m_state.m_brushOriginY);
+}
+#endif /* XPAINTER_BRUSH_ORIGIN_ON */
+
+/* Qt QPicturePaintEngine::updateMatrix() serializes the complete matrix
+   after every DirtyTransform update (qpaintengine_pic.cpp:235-243 and
+   :491).  Keep
+   the world-matrix enable bit beside the matrix because XPainter stores the
+   disabled matrix for worldTransform() queries while omitting it from the
+   effective raster transform. */
+static void painterRecord_transform(XPainter* self)
+{
+    bool enabled = true;
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+#if XPAINTER_WORLD_MATRIX_ON
+    enabled = self->m_state.m_worldMatrixEnabled;
+#endif /* XPAINTER_WORLD_MATRIX_ON */
+    (void)XPicture_recordSetTransform(self->m_picture,
+                                      &self->m_state.m_transform,
+                                      enabled);
+}
+
+#if XPAINTER_VIEW_TRANSFORM_ON
+/* Qt QPainter serializes window/viewport changes through DirtyTransform.
+   Keep the two rectangles as separate fixed records because either setter
+   may be called independently and the portable stream must preserve the
+   corresponding query state as well as the effective mapping. */
+static void painterRecord_window(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetWindow(self->m_picture, &self->m_state.m_window);
+}
+
+static void painterRecord_viewport(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetViewport(self->m_picture,
+                                     &self->m_state.m_viewport);
+}
+
+static void painterRecord_viewTransformEnabled(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetViewTransformEnabled(
+        self->m_picture, self->m_state.m_viewTransformEnabled);
+}
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
+
+/* Qt QPicturePaintEngine::updateBackground() records PdcSetBkColor as a
+   separate fixed-color command (qpaintengine_pic.cpp:219-231).  Keep this
+   record independent of the optional background-brush feature so cropped
+   builds still preserve QPainter::background(). */
+static void painterRecord_backgroundColor(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetBackgroundColor(self->m_picture,
+                                            self->m_state.m_backgroundColor);
+}
+
+#if XPAINTER_BACKGROUND_ON
+/* Qt writes PdcSetBkMode beside PdcSetBkColor.  The setter validates the
+   two Qt modes before this recorder is reached, so the payload is fixed and
+   replay validation remains deterministic. */
+static void painterRecord_backgroundMode(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetBackgroundMode(
+        self->m_picture, (int)self->m_state.m_backgroundMode);
+}
+#endif /* XPAINTER_BACKGROUND_ON */
+
+/* Qt updateBrush() writes PdcSetBrush whenever DirtyBrush changes.  The
+   embedded record deliberately covers only the fixed style/color subset;
+   variable gradient and texture payloads remain outside this opcode. */
+static void painterRecord_brush(XPainter* self)
+{
+    int style = 0;
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+#if XPAINTER_BRUSH_ON
+    style = (int)self->m_state.m_brush.m_style;
+#endif /* XPAINTER_BRUSH_ON */
+    (void)XPicture_recordSetBrush(self->m_picture, style,
+                                  self->m_state.m_brushColor);
+}
+
 
 /* ========== 画笔样式（虚线/点线） ========== */
 
@@ -1697,6 +1845,7 @@ void XPainter_setBackground(XPainter* self, uint32_t color)
     memset(&self->m_state.m_backgroundBrush.m_gradient, 0,
            sizeof(self->m_state.m_backgroundBrush.m_gradient));
 #endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
+    painterRecord_backgroundColor(self);
 }
 
 uint32_t XPainter_background(const XPainter* self)
@@ -1717,6 +1866,7 @@ void XPainter_setBackground_2(XPainter* self, const XPainterBrush* brush)
         return;
     self->m_state.m_backgroundBrush = *brush;
     self->m_state.m_backgroundColor = brush->m_color;
+    painterRecord_backgroundColor(self);
 }
 
 void XPainter_backgroundBrush(const XPainter* self, XPainterBrush* out)
@@ -1742,7 +1892,10 @@ void XPainter_setBackgroundMode(XPainter* self, XPainterBackgroundMode mode)
     if (mode != XPainterBackgroundMode_Transparent &&
         mode != XPainterBackgroundMode_Opaque)
         return;
+    if (self->m_state.m_backgroundMode == mode)
+        return;
     self->m_state.m_backgroundMode = mode;
+    painterRecord_backgroundMode(self);
 }
 
 XPainterBackgroundMode XPainter_backgroundMode(const XPainter* self)
@@ -4261,6 +4414,7 @@ void XPainter_setBrush(XPainter* self, uint32_t color)
     memset(&self->m_state.m_brush.m_gradient, 0,
            sizeof(self->m_state.m_brush.m_gradient));
 #endif /* XPAINTER_BRUSH_ON */
+    painterRecord_brush(self);
 }
 
 #if XPAINTER_BRUSH_ON
@@ -4279,6 +4433,7 @@ void XPainter_setBrush_2(XPainter* self, XPainterBrushStyle style)
     self->m_state.m_brush.m_style = style;
     memset(&self->m_state.m_brush.m_gradient, 0,
            sizeof(self->m_state.m_brush.m_gradient));
+    painterRecord_brush(self);
 }
 #endif /* XPAINTER_BRUSH_ON */
 
@@ -4406,6 +4561,7 @@ void XPainter_setBrushStyle(XPainter* self, XPainterBrushStyle style)
                sizeof(self->m_state.m_brush.m_gradient));
     }
     self->m_state.m_brush.m_style = style;
+    painterRecord_brush(self);
 }
 
 XPainterBrushStyle XPainter_brushStyle(const XPainter* self)
@@ -4466,6 +4622,9 @@ void XPainter_setBrushOrigin(XPainter* self, float x, float y)
         return;
     self->m_state.m_brushOriginX = x;
     self->m_state.m_brushOriginY = y;
+    /* Qt QPainter::setBrushOrigin() 每次调用都会标记 DirtyBrushOrigin；
+       Picture 后端因此也要保留重复设置，不能按值去重。 */
+    painterRecord_brushOrigin(self);
 }
 
 void XPainter_brushOrigin(const XPainter* self, XPoint* out)
@@ -4753,6 +4912,7 @@ void XPainter_setTransform(XPainter* self, const XImageTransform* matrix,
 #if XPAINTER_WORLD_MATRIX_ON
     self->m_state.m_worldMatrixEnabled = true;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
+    painterRecord_transform(self);
 }
 
 void XPainter_transform(const XPainter* self, XImageTransform* out)
@@ -4779,6 +4939,15 @@ void XPainter_resetTransform(XPainter* self)
 #if XPAINTER_VIEW_TRANSFORM_ON
     painterResetViewTransform(self);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+    painterRecord_transform(self);
+#if XPAINTER_VIEW_TRANSFORM_ON
+    /* resetTransform() also resets the embedded window/viewport contract;
+       emit those fixed records after the matrix record so Picture replay
+       reaches the same final state. */
+    painterRecord_window(self);
+    painterRecord_viewport(self);
+    painterRecord_viewTransformEnabled(self);
+#endif /* XPAINTER_VIEW_TRANSFORM_ON */
 }
 
 void XPainter_translate(XPainter* self, float dx, float dy)
@@ -4791,6 +4960,7 @@ void XPainter_translate(XPainter* self, float dx, float dy)
 #if XPAINTER_WORLD_MATRIX_ON
     self->m_state.m_worldMatrixEnabled = true;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
+    painterRecord_transform(self);
 }
 
 void XPainter_scale(XPainter* self, float sx, float sy)
@@ -4803,6 +4973,7 @@ void XPainter_scale(XPainter* self, float sx, float sy)
 #if XPAINTER_WORLD_MATRIX_ON
     self->m_state.m_worldMatrixEnabled = true;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
+    painterRecord_transform(self);
 }
 
 void XPainter_rotate(XPainter* self, float degrees)
@@ -4815,6 +4986,7 @@ void XPainter_rotate(XPainter* self, float degrees)
 #if XPAINTER_WORLD_MATRIX_ON
     self->m_state.m_worldMatrixEnabled = true;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
+    painterRecord_transform(self);
 }
 
 void XPainter_shear(XPainter* self, float sh, float sv)
@@ -4827,6 +4999,7 @@ void XPainter_shear(XPainter* self, float sh, float sv)
 #if XPAINTER_WORLD_MATRIX_ON
     self->m_state.m_worldMatrixEnabled = true;
 #endif /* XPAINTER_WORLD_MATRIX_ON */
+    painterRecord_transform(self);
 }
 
 void XPainter_setWorldTransform(XPainter* self, const XImageTransform* matrix,
@@ -4845,7 +5018,10 @@ void XPainter_setWorldMatrixEnabled(XPainter* self, bool enabled)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return;
+    if (self->m_state.m_worldMatrixEnabled == enabled)
+        return;
     self->m_state.m_worldMatrixEnabled = enabled;
+    painterRecord_transform(self);
 }
 
 bool XPainter_worldMatrixEnabled(const XPainter* self)
@@ -4877,6 +5053,11 @@ void XPainter_setWindow(XPainter* self, const XRect* window)
         return;
     self->m_state.m_window = *window;
     self->m_state.m_viewTransformEnabled = true;
+    painterRecord_window(self);
+    /* Picture 录制器的默认 viewport 可能是零矩形，而回放到 XImage
+       时目标设备会有自己的默认 viewport；同步另一侧状态，避免单独
+       setWindow() 时错误继承回放目标的默认值。 */
+    painterRecord_viewport(self);
 }
 
 void XPainter_window(const XPainter* self, XRect* out)
@@ -4897,6 +5078,10 @@ void XPainter_setViewport(XPainter* self, const XRect* viewport)
         return;
     self->m_state.m_viewport = *viewport;
     self->m_state.m_viewTransformEnabled = true;
+    painterRecord_viewport(self);
+    /* 同理，保留录制时的逻辑 window，确保单独 setViewport() 的 Picture
+       在不同设备尺寸上仍得到同一组合变换。 */
+    painterRecord_window(self);
 }
 
 void XPainter_viewport(const XPainter* self, XRect* out)
@@ -4915,7 +5100,10 @@ void XPainter_setViewTransformEnabled(XPainter* self, bool enabled)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return;
+    if (self->m_state.m_viewTransformEnabled == enabled)
+        return;
     self->m_state.m_viewTransformEnabled = enabled;
+    painterRecord_viewTransformEnabled(self);
 }
 
 bool XPainter_viewTransformEnabled(const XPainter* self)
@@ -4927,12 +5115,17 @@ bool XPainter_viewTransformEnabled(const XPainter* self)
 
 void XPainter_setOpacity(XPainter* self, float opacity)
 {
+    float oldOpacity;
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     /* qBound(0, qMin(1, NaN)) 的 Qt 6.8 结果为 0。 */
     if (isnan(opacity)) opacity = 0.0f;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
+    oldOpacity = self->m_state.m_opacity;
+    if (opacity == oldOpacity)
+        return;
     self->m_state.m_opacity = opacity;
+    painterRecord_opacity(self);
 }
 
 float XPainter_opacity(const XPainter* self)
@@ -4950,7 +5143,10 @@ void XPainter_setCompositionMode(XPainter* self, XPainterCompositionMode mode)
     if (mode < XPainterCompositionMode_SourceOver ||
         mode > XPainterCompositionMode_RasterOp_NotDestination)
         return;
+    if (mode == self->m_state.m_compositionMode)
+        return;
     self->m_state.m_compositionMode = mode;
+    painterRecord_compositionMode(self);
 }
 
 XPainterCompositionMode XPainter_compositionMode(const XPainter* self)
@@ -4969,6 +5165,7 @@ void XPainter_setRenderHint(XPainter* self, XPainterRenderHint hint,
         self->m_state.m_renderHints |= (XPainterRenderHints)hint;
     else
         self->m_state.m_renderHints &= ~((XPainterRenderHints)hint);
+    painterRecord_renderHints(self);
 }
 
 void XPainter_setRenderHints(XPainter* self, XPainterRenderHints hints,
@@ -4980,6 +5177,7 @@ void XPainter_setRenderHints(XPainter* self, XPainterRenderHints hints,
         self->m_state.m_renderHints |= hints;
     else
         self->m_state.m_renderHints &= ~hints;
+    painterRecord_renderHints(self);
 }
 
 XPainterRenderHints XPainter_renderHints(const XPainter* self)

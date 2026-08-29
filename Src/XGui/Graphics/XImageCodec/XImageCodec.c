@@ -44,7 +44,8 @@ XImageCodecFormat XImageCodec_formatFromName(const XString* format)
 #endif
 #if XIMAGECODEC_JPEG_ON
     if (codec_is_name(format, "jpg") ||
-        codec_is_name(format, "jpeg"))
+        codec_is_name(format, "jpeg") ||
+        codec_is_name(format, "jfif"))
         return XImageCodecFormat_Jpeg;
 #endif
 #if XIMAGECODEC_GIF_ON
@@ -93,6 +94,8 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
 #if XIMAGECODEC_SVG_ON
     {
         size_t pos = 0;
+        size_t scan;
+        bool prefixed = false;
         /* Accept BOM/ASCII whitespace before an XML declaration or root SVG.
          * This is common for hand-authored files and remains bounded so format
          * probing never scans an untrusted large buffer. */
@@ -100,14 +103,31 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
             pos = 3;
         while (pos < size && (data[pos] == ' ' || data[pos] == '\t' ||
                               data[pos] == '\r' || data[pos] == '\n')) ++pos;
-        if (pos + 5 <= size && data[pos] == '<' && data[pos + 1] == '?' )
-            return XImageCodecFormat_Svg;
-        if (pos + 4 <= size && data[pos] == '<' && data[pos + 1] == 's' &&
+        if (size - pos >= 4 && data[pos] == '<' && data[pos + 1] == 's' &&
             data[pos + 2] == 'v' && data[pos + 3] == 'g')
             return XImageCodecFormat_Svg;
-        if (pos + 4 <= size && data[pos] == '<' && data[pos + 1] == 'S' &&
-            data[pos + 2] == 'V' && data[pos + 3] == 'G')
+        if (size - pos >= 13 && data[pos] == '<' && data[pos + 1] == '!' &&
+            memcmp(data + pos, "<!DOCTYPE svg", 13) == 0)
             return XImageCodecFormat_Svg;
+        /* QSvgTinyDocument::hasSvgHeader() accepts an XML declaration or
+         * leading comment only when the same bounded prefix also contains
+         * an SVG root/doctype.  Do the same instead of accepting every XML
+         * document as an image. */
+        if (size - pos >= 5 && data[pos] == '<' && data[pos + 1] == '?')
+            prefixed = memcmp(data + pos, "<?xml", 5) == 0;
+        else if (size - pos >= 4 && data[pos] == '<' && data[pos + 1] == '!' &&
+                 data[pos + 2] == '-' && data[pos + 3] == '-')
+            prefixed = true;
+        if (prefixed) {
+            for (scan = pos + 1; scan <= size - 4; ++scan) {
+                if (data[scan] == '<' && data[scan + 1] == 's' &&
+                    data[scan + 2] == 'v' && data[scan + 3] == 'g')
+                    return XImageCodecFormat_Svg;
+                if (size - scan >= 13 && data[scan] == '<' &&
+                    memcmp(data + scan, "<!DOCTYPE svg", 13) == 0)
+                    return XImageCodecFormat_Svg;
+            }
+        }
     }
 #endif
     return XImageCodecFormat_Unknown;

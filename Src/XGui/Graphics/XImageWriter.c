@@ -13,12 +13,14 @@
 #include "XMemory.h"
 #include "XStringList.h"
 #include <string.h>
-#include <stdlib.h>
 #include <limits.h>
 
 /* Keep writer discovery aligned with XImageCodec capabilities. */
-static const char* const g_imageWriterFormats[] = { "bmp", "png", "jpeg", "gif", "svg" };
-static const char* const g_imageWriterMimeTypes[] = { "image/bmp", "image/png", "image/jpeg", "image/gif", "image/svg+xml" };
+static const char* const g_imageWriterFormats[] =
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg" };
+static const char* const g_imageWriterMimeTypes[] =
+    { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
+      "image/gif", "image/svg+xml" };
 
 static XStringList* XImageWriter_makeStringList(const char* const* values, size_t count)
 {
@@ -147,6 +149,20 @@ static void XImageWriter_releaseTransientState(XImageWriterPrivate* data)
     }
 }
 
+/* 对标 QImageWriter::canWrite() 对 QFile 的失败清理：检查过程中若新建了
+ * 一个原本不存在的目标文件，而后设备/格式校验失败，则删除该空文件。 */
+static void XImageWriter_removeNewFileOnFailure(XImageWriter* self,
+                                                bool removeOnFailure)
+{
+    XImageWriterPrivate* data;
+    if (!removeOnFailure || !self || !(data = self->m_data) ||
+        !data->m_fileDevice || !data->m_fileName)
+        return;
+    if (XIODevice_isOpen(data->m_fileDevice))
+        XIODevice_close_base(data->m_fileDevice);
+    (void)XFile_remove_static(data->m_fileName);
+}
+
 static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
 {
     const XString* format;
@@ -198,6 +214,16 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
                     return data->m_handler;
                 }
             }
+        }
+        /* Qt QImageWriter::supportsOption() is valid after setFormat() even
+           before a device is assigned.  Create the format handler with a
+           null device for that capability query; canWrite()/write() still
+           reject the missing device before using it. */
+        if (!data->m_handler && !data->m_fileName)
+            data->m_handler = XImagePluginRegistry_createWriteHandler(NULL, format);
+        if (data->m_handler) {
+            XString_delete_base((XClass*)format);
+            return data->m_handler;
         }
     }
     XString_delete_base((XClass*)format);
@@ -670,6 +696,7 @@ void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* tex
 bool XImageWriter_canWrite(const XImageWriter* self)
 {
     const char* format;
+    bool removeOnFailure = false;
     if (!self || !self->m_data) return false;
     if (!self->m_data->m_device &&
         (!self->m_data->m_fileName ||
@@ -679,6 +706,9 @@ bool XImageWriter_canWrite(const XImageWriter* self)
         return false;
     }
 
+    if (self->m_data->m_fileDevice && self->m_data->m_fileName)
+        removeOnFailure = !XFile_exists_static(self->m_data->m_fileName);
+
     /* QImageWriter opens an assigned device on demand and then verifies its
        write mode before asking the image plugin for a handler. */
     if (self->m_data->m_device) {
@@ -686,11 +716,15 @@ bool XImageWriter_canWrite(const XImageWriter* self)
             !XIODevice_open_base(self->m_data->m_device, XIODevice_WriteOnly)) {
             XImageWriter_setError((XImageWriter*)self, XImageWriterError_DeviceError,
                                    "Cannot open device for writing");
+            XImageWriter_removeNewFileOnFailure((XImageWriter*)self,
+                                                removeOnFailure);
             return false;
         }
         if (!XIODevice_isWritable(self->m_data->m_device)) {
             XImageWriter_setError((XImageWriter*)self, XImageWriterError_DeviceError,
                                    "Device not writable");
+            XImageWriter_removeNewFileOnFailure((XImageWriter*)self,
+                                                removeOnFailure);
             return false;
         }
     }
@@ -706,12 +740,16 @@ bool XImageWriter_canWrite(const XImageWriter* self)
             XImageWriter_setError((XImageWriter*)self,
                                    XImageWriterError_UnsupportedFormatError,
                                    "Unsupported image format");
+            XImageWriter_removeNewFileOnFailure((XImageWriter*)self,
+                                                removeOnFailure);
             return false;
         }
     } else if (!XImageWriter_isSupportedFormat(format)) {
         XImageWriter_setError((XImageWriter*)self,
                                XImageWriterError_UnsupportedFormatError,
                                "Unsupported image format");
+        XImageWriter_removeNewFileOnFailure((XImageWriter*)self,
+                                            removeOnFailure);
         return false;
     }
 
@@ -724,6 +762,8 @@ bool XImageWriter_canWrite(const XImageWriter* self)
             XImageWriter_setError((XImageWriter*)self,
                                    XImageWriterError_UnsupportedFormatError,
                                    "Unsupported image format");
+            XImageWriter_removeNewFileOnFailure((XImageWriter*)self,
+                                                removeOnFailure);
             return false;
         }
 #else
@@ -896,7 +936,10 @@ XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType)
         if (XImageWriter_mimeEquals(mime, "image/bmp") && XImageWriter_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageWriter_makeStringList_prefix(result, value, 1); }
         if (XImageWriter_mimeEquals(mime, "image/png") && XImageWriter_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageWriter_makeStringList_prefix(result, value, 1); }
         if (XImageWriter_mimeEquals(mime, "image/gif") && XImageWriter_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageWriter_makeStringList_prefix(result, value, 1); }
-        if (XImageWriter_mimeEquals(mime, "image/jpeg") && XImageWriter_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/jpeg") && XImageWriter_isSupportedFormat("jpeg")) {
+            const char* value[] = {"jpg", "jpeg", "jfif"};
+            XImageWriter_makeStringList_prefix(result, value, 3);
+        }
         if (XImageWriter_mimeEquals(mime, "image/svg+xml") && XImageWriter_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageWriter_makeStringList_prefix(result, value, 1); }
     }
 #if XIMAGEIOPLUGIN_ON

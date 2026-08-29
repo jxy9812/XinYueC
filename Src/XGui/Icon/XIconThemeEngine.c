@@ -38,13 +38,18 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
     const XPixmap* drawPixmap;
     XImage image;
     XRect sourceRect;
+    int targetSize;
     bool saved = false;
     (void)state;
     if (!self || !target || !rect || !target->m_drawImage) return;
     XPixmap_init(&pixmap);
     XPixmap_init(&scaled);
     drawPixmap = &pixmap;
-    themeEngine_pixmapForSize(self, rect->width, 1, rect->width, &pixmap);
+    /* Qt 6.8 QIconLoaderEngine::paint() 将 rect.size() 交给 pixmap()；
+       entryForSize() 以矩形较小边匹配主题目录，不能按宽度单独选图。
+       主题图标随后仍需铺满目标矩形，因此仅改变资源选择尺寸。 */
+    targetSize = rect->width < rect->height ? rect->width : rect->height;
+    themeEngine_pixmapForSize(self, targetSize, 1, targetSize, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
         XPixmap_init(&styled);
@@ -173,10 +178,10 @@ static void VXIconThemeEngine_addFile(XIconThemeEngine* self,
 
 static XString* VXIconThemeEngine_key(const XIconThemeEngine* self)
 {
-    XString* base = XString_create_utf8("qicon://theme/");
-    if (base && self && self->m_iconName)
-        XString_append(base, self->m_iconName);
-    return base;
+    (void)self;
+    /* Qt 6.8 QIconLoaderEngine::key() 返回固定引擎类型名；图标名称由
+       iconName() 单独提供，不能拼进 key，否则引擎类型无法稳定识别。 */
+    return XString_create_utf8("QIconLoaderEngine");
 }
 
 static XIconEngine* VXIconThemeEngine_clone(const XIconThemeEngine* self)

@@ -162,9 +162,15 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
     offset = XImageCodecInternal_readU32LE(data + 10);
     dib = XImageCodecInternal_readU32LE(data + 14);
     if (dib == 12) {
+        int16_t oldWidth;
+        int16_t oldHeight;
         if (size < 26) return false;
-        width32 = XImageCodecInternal_readU16LE(data + 18);
-        signedHeight = XImageCodecInternal_readU16LE(data + 20);
+        /* Qt 的 BMP_INFOHDR 解析将 OS/2 core header 的宽高读入
+         * qint16；保留符号才能正确拒绝负宽度并支持倒行序负高度。 */
+        oldWidth = (int16_t)XImageCodecInternal_readU16LE(data + 18);
+        oldHeight = (int16_t)XImageCodecInternal_readU16LE(data + 20);
+        width32 = (uint32_t)(int32_t)oldWidth;
+        signedHeight = (int32_t)oldHeight;
         planes = XImageCodecInternal_readU16LE(data + 22);
         bpp = XImageCodecInternal_readU16LE(data + 24);
     } else {

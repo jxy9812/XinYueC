@@ -109,8 +109,13 @@ static int XImageReader_effectiveAllocationLimit(void)
 }
 
 /* Keep discovery aligned with the independent XImageCodec registry. */
-static const char* const g_imageReaderFormats[] = { "bmp", "png", "jpeg", "gif", "svg" };
-static const char* const g_imageReaderMimeTypes[] = { "image/bmp", "image/png", "image/jpeg", "image/gif", "image/svg+xml" };
+/* Qt JPEG 插件公开 jpg、jpeg、jfif 三个格式键；保持读取器在插件
+   裁剪关闭时也能发现同一组别名，MIME 列表随后按值去重。 */
+static const char* const g_imageReaderFormats[] =
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg" };
+static const char* const g_imageReaderMimeTypes[] =
+    { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
+      "image/gif", "image/svg+xml" };
 
 static XStringList* XImageReader_makeStringList(const char* const* values, size_t count)
 {
@@ -251,6 +256,7 @@ typedef struct XImageReaderPrivate
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageCodecAnimation* m_animation; /**< GIF 动画缓存；由读取器拥有。 */
     int         m_currentImageNumber; /**< 当前帧编号。 */
+    bool        m_imageJumpPending; /**< 是否已定位到下一次 read() 的目标帧。 */
     XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备。 */
 #endif
 }XImageReaderPrivate;
@@ -310,7 +316,8 @@ static void XImageReader_storeText(XImageReaderPrivate* data,
     }
 }
 
-/* 对齐 qt_getImageTextFromDescription：键值由空行分隔，值采用 simplified。 */
+/* 对齐 qt_getImageTextFromDescription：键值由空行分隔，值采用 simplified；
+   普通键保留原始空白，只用 trimmed 结果判断是否为空。 */
 static void XImageReader_loadText(XImageReader* self)
 {
     XImageReaderPrivate* data;
@@ -343,41 +350,54 @@ static void XImageReader_loadText(XImageReader* self)
     for (i = 0; i < count; ++i) {
         XString* pair = (XString*)XStringList_at_base((XVector*)pairs, i);
         XString* simplified;
-        const char* raw;
-        const char* colon;
-        const char* space;
+        int64_t colonIndex;
+        int64_t spaceIndex;
         XString* key = NULL;
         XString* value = NULL;
-        size_t keyLength;
         if (!pair) continue;
         simplified = XString_simplified(pair);
-        raw = XString_toUtf8(pair);
-        if (!raw) {
+        if (!simplified || XString_isEmpty_base((const XContainer*)simplified)) {
             if (simplified) XString_delete_base((XClass*)simplified);
             continue;
         }
-        colon = strchr(raw, ':');
-        if (!colon) {
-            if (simplified) XString_delete_base((XClass*)simplified);
-            continue;
-        }
-        space = strchr(raw, ' ');
+        /* QStringView::indexOf() 以 UTF-16 代码单元计数；不能用 UTF-8
+           字节偏移切割，否则非 ASCII 键会在冒号处产生错误边界。 */
+        colonIndex = XString_indexOf_char(pair, (XChar)':', 0,
+                                          XChar_CaseSensitive);
+        spaceIndex = XString_indexOf_char(pair, (XChar)' ', 0,
+                                          XChar_CaseSensitive);
         /* Qt 的 QStringView::indexOf(u' ') 在未找到时返回 -1，
            因此“没有空格”同样满足 indexOf(' ') < 冒号位置。 */
-        if (!space || space < colon) {
+        if (colonIndex >= 0 && spaceIndex < colonIndex) {
             key = XString_create_utf8("Description");
             value = simplified;
             simplified = NULL;
         } else {
-            keyLength = (size_t)(colon - raw);
-            key = XString_create_with_length_utf8(raw, keyLength);
-            /* qt_getImageTextFromDescription 使用 pair.mid(index + 2)，
-               即冒号及其后一个字符一起跳过，再执行 simplified。 */
-            value = XString_create_utf8(colon[1] ? colon + 2 : colon + 1);
+            /* Qt 的 left(-1) 返回整个字符串；因此无冒号的非空段也
+               保留为键，并使用 mid(1) 作为对应值。 */
+            key = XString_left(pair, colonIndex >= 0
+                                      ? (size_t)colonIndex : SIZE_MAX);
             if (key) {
-                XString* normalized = XString_simplified(key);
-                XString_delete_base((XClass*)key);
-                key = normalized;
+                XString* keyCheck = XString_simplified(key);
+                if (!keyCheck || XString_isEmpty_base((const XContainer*)keyCheck)) {
+                    if (keyCheck) XString_delete_base((XClass*)keyCheck);
+                    XString_delete_base((XClass*)key);
+                    key = NULL;
+                } else {
+                    XString_delete_base((XClass*)keyCheck);
+                }
+            }
+            /* qt_getImageTextFromDescription 使用 pair.mid(index + 2)，
+               即冒号及其后一个字符一起跳过，再执行 simplified；无冒号
+               时 index 为 -1，等价于从第二个 UTF-16 字符开始。 */
+            {
+                size_t valuePos = colonIndex >= 0
+                    ? (size_t)colonIndex + 2u : 1u;
+                size_t pairLength = XString_length_base(
+                    (const XContainer*)pair);
+                value = XString_mid(pair, valuePos,
+                                    valuePos < pairLength
+                                        ? pairLength - valuePos : 0u);
             }
             if (value) {
                 XString* normalized = XString_simplified(value);
@@ -667,6 +687,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     const XString* handlerFormat;
     XString* suffixFormat = NULL;
     XIODevice* device;
+    bool hasExplicitFormat;
     if (!self || !(data = self->m_data)) return NULL;
     if (data->m_handler) return data->m_handler;
     /* QImageReader 在关闭自动探测且未指定格式时不会创建处理器；
@@ -679,7 +700,9 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     }
     /* Qt 的 decideFormatFromContent 只忽略显式格式/扩展名，仍保留
        autoDetectImageFormat 的独立状态；内容探测通过空格式交给插件。 */
-    handlerFormat = data->m_decideFromContent ? NULL : data->m_format;
+    hasExplicitFormat = !data->m_decideFromContent && data->m_format &&
+        !XContainer_isEmpty_base((const XContainer*)data->m_format);
+    handlerFormat = hasExplicitFormat ? data->m_format : NULL;
     if (!handlerFormat && data->m_autoDetectFormat && !data->m_decideFromContent &&
         data->m_fileName)
         suffixFormat = XImageReader_fileSuffix(data->m_fileName);
@@ -707,8 +730,10 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
         /* QFileInfo::suffix() is evaluated again after Qt has selected the
            successfully opened candidate, so the matching suffix plugin keeps
            its priority even when no explicit format was supplied. */
-        if (!handlerFormat && !data->m_decideFromContent &&
+        if (!hasExplicitFormat && !data->m_decideFromContent &&
             data->m_autoDetectFormat && data->m_fileName) {
+            if (suffixFormat)
+                XString_delete_base((XClass*)suffixFormat);
             suffixFormat = XImageReader_fileSuffix(data->m_fileName);
             handlerFormat = suffixFormat;
         }
@@ -786,7 +811,8 @@ static void XImageReader_clearAnimation(XImageReaderPrivate* data)
     data->m_animation = NULL;
     if (data->m_sourceBytes) XByteArray_delete_base((XClass*)data->m_sourceBytes);
     data->m_sourceBytes = NULL;
-    data->m_currentImageNumber = 0;
+    data->m_currentImageNumber = -1;
+    data->m_imageJumpPending = false;
 }
 
 static bool XImageReader_prepareAnimation(XImageReader* self)
@@ -833,7 +859,10 @@ static bool XImageReader_prepareAnimation(XImageReader* self)
         return false;
     }
     data->m_sourceBytes = bytes;
-    data->m_currentImageNumber = 0;
+    /* QGifHandler::frameNumber 在首次 read() 前为 -1；read() 成功后
+       才递增到首帧编号。 */
+    data->m_currentImageNumber = -1;
+    data->m_imageJumpPending = false;
     return true;
 }
 #endif
@@ -1048,10 +1077,15 @@ void XImageReader_size(const XImageReader* self, XSize* out)
     out->height = 0;
     if (!self || !self->m_data) return;
     XImageReader_ensureHandler((XImageReader*)self);
-    if (self->m_data->m_handler &&
-        XImageIOHandler_option_base(self->m_data->m_handler,
-                                    XImageIOHandlerOption_Size, out))
+    if (self->m_data->m_handler) {
+        /* Qt 只在处理器声明支持 Size 时查询该选项；处理器已经存在但
+           不支持时不能再用通用探测替代，否则会改变自定义插件语义。 */
+        if (XImageIOHandler_supportsOption_base(self->m_data->m_handler,
+                                                 XImageIOHandlerOption_Size))
+            (void)XImageIOHandler_option_base(self->m_data->m_handler,
+                                              XImageIOHandlerOption_Size, out);
         return;
+    }
     if (XImageReader_probeSize((XImageReader*)self)) {
         out->width = self->m_data->m_sizeW;
         out->height = self->m_data->m_sizeH;
@@ -1228,17 +1262,82 @@ uint32_t XImageReader_backgroundColor(const XImageReader* self)
 
 bool XImageReader_supportsAnimation(const XImageReader* self)
 {
-#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
+    XImageIOHandlerOptionValue value;
+    XImageIOHandler* handler;
     if (!self || !self->m_data) return false;
-    if (self->m_data->m_format &&
-        !XContainer_isEmpty_base((const XContainer*)self->m_data->m_format) &&
-        XImageCodec_formatFromName(self->m_data->m_format) != XImageCodecFormat_Gif)
-        return false;
-    return XImageReader_prepareAnimation((XImageReader*)self);
-#else
-    (void)self;
-    return false;
+#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
+    if (!self->m_data->m_format ||
+        XContainer_isEmpty_base((const XContainer*)self->m_data->m_format) ||
+        XImageCodec_formatFromName(self->m_data->m_format) == XImageCodecFormat_Gif) {
+        if (XImageReader_prepareAnimation((XImageReader*)self))
+            return true;
+    }
 #endif
+    /* Qt QImageReader::supportsAnimation() 透传处理器的 Animation 选项，
+       因此非 GIF 的插件格式也必须经过这一条通用路径。 */
+    handler = XImageReader_ensureHandler((XImageReader*)self);
+    if (!handler || !XImageIOHandler_supportsOption_base(
+            handler, XImageIOHandlerOption_Animation))
+        return false;
+    memset(&value, 0, sizeof(value));
+    return XImageIOHandler_option_base(handler,
+                                       XImageIOHandlerOption_Animation,
+                                       &value) && value.boolean;
+}
+
+/* 按 Qt qt_imageTransform 的顺序应用处理器方向元数据：先镜像，再旋转。 */
+static void XImageReader_applyAutoTransform(
+    XImage* image, XImageIOHandlerTransformation transformation)
+{
+    XImageTransform matrix;
+    XImage rotated;
+    int width;
+    int height;
+    bool rotate90;
+    bool rotate270;
+    if (!image || XImage_isNull(image) ||
+        transformation == XImageIOHandlerTransformation_None)
+        return;
+    rotate90 = transformation == XImageIOHandlerTransformation_Rotate90 ||
+               transformation == XImageIOHandlerTransformation_MirrorAndRotate90 ||
+               transformation == XImageIOHandlerTransformation_FlipAndRotate90;
+    rotate270 = transformation == XImageIOHandlerTransformation_Rotate270;
+    if (!rotate90 && !rotate270) {
+        XImage_mirroredInPlace(
+            image,
+            transformation == XImageIOHandlerTransformation_Mirror ||
+                transformation == XImageIOHandlerTransformation_Rotate180,
+            transformation == XImageIOHandlerTransformation_Flip ||
+                transformation == XImageIOHandlerTransformation_Rotate180);
+        return;
+    }
+    if (rotate90 && transformation != XImageIOHandlerTransformation_Rotate90)
+        XImage_mirroredInPlace(
+            image,
+            transformation == XImageIOHandlerTransformation_MirrorAndRotate90,
+            transformation == XImageIOHandlerTransformation_FlipAndRotate90);
+    width = XImage_width(image);
+    height = XImage_height(image);
+    memset(&matrix, 0, sizeof(matrix));
+    matrix.m11 = 0.0f;
+    matrix.m22 = 0.0f;
+    matrix.m33 = 1.0f;
+    if (rotate270) {
+        matrix.m12 = -1.0f;
+        matrix.m21 = 1.0f;
+        matrix.dy = (float)width;
+    } else {
+        matrix.m12 = 1.0f;
+        matrix.m21 = -1.0f;
+        matrix.dx = (float)height;
+    }
+    XImage_init(&rotated);
+    XImage_transformed(image, &matrix, 0, &rotated);
+    if (!XImage_isNull(&rotated)) {
+        XImage_deinit_base(image);
+        XImage_move_base(image, &rotated);
+    }
+    XImage_deinit_base(&rotated);
 }
 
 XImageIOHandlerTransformation XImageReader_transformation(const XImageReader* self)
@@ -1311,6 +1410,13 @@ bool XImageReader_canRead(const XImageReader* self)
     if (!self || !self->m_data) return false;
     if (XImageReader_ensureHandler((XImageReader*)self))
         return XImageIOHandler_canRead_base(self->m_data->m_handler);
+#if XIMAGEIOPLUGIN_ON
+    /* 与 QImageReader::canRead() 一致：插件发现开启时，处理器创建失败
+       即表示当前设备没有可读处理器，不能仅凭后缀或签名报告 true。 */
+    return false;
+#else
+    /* 裁剪掉 XImageIOPlugin 后，内置 XImageCodec 仍由 read()/load() 提供
+       兼容路径；此时保留签名探测，避免关闭插件发现使内置能力不可见。 */
     if (!self->m_data->m_decideFromContent && self->m_data->m_format &&
         !XImageReader_isSupportedFormat(XString_toUtf8(self->m_data->m_format))) return false;
     if (self->m_data->m_device) {
@@ -1320,11 +1426,13 @@ bool XImageReader_canRead(const XImageReader* self)
     if (!self->m_data->m_fileName) return false;
     if (!self->m_data->m_autoDetectFormat && !self->m_data->m_format) return false;
     return XImageReader_isSupportedFormat(XImageReader_imageFormat_2(XString_toUtf8(self->m_data->m_fileName)));
+#endif
 }
 
 bool XImageReader_read(XImageReader* self, XImage* out)
 {
     bool loadedByHandler = false;
+    bool animationPrepared = false;
     bool supportScaledSize = false;
     bool supportClipRect = false;
     bool supportScaledClipRect = false;
@@ -1378,15 +1486,15 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         }
     }
     /* QRect::isNull() 仅由宽高同时为零决定，未设置的默认矩形也为空；
-       QRect::isValid() 则允许零宽或零高，只拒绝负尺寸。 */
+       QRect::isValid() 要求宽高均为正值，零宽或零高虽非 null 仍无效。 */
     clipRectNull = !self->m_data->m_hasClipRect ||
         (self->m_data->m_clipW == 0 && self->m_data->m_clipH == 0);
     scaledClipRectNull = !self->m_data->m_hasScaledClipRect ||
         (self->m_data->m_scaledClipW == 0 && self->m_data->m_scaledClipH == 0);
     clipRectValid = self->m_data->m_hasClipRect &&
-        self->m_data->m_clipW >= 0 && self->m_data->m_clipH >= 0;
+        self->m_data->m_clipW > 0 && self->m_data->m_clipH > 0;
     scaledClipRectValid = self->m_data->m_hasScaledClipRect &&
-        self->m_data->m_scaledClipW >= 0 && self->m_data->m_scaledClipH >= 0;
+        self->m_data->m_scaledClipW > 0 && self->m_data->m_scaledClipH > 0;
     scaledSizeValid = self->m_data->m_hasScaledSize &&
         scaledSize.width >= 0 && scaledSize.height >= 0;
     if (self->m_data->m_handler) {
@@ -1435,15 +1543,27 @@ bool XImageReader_read(XImageReader* self, XImage* out)
     if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    if (XImageReader_prepareAnimation(self)) {
+    animationPrepared = XImageReader_prepareAnimation(self);
+    if (animationPrepared) {
         XImageCodecAnimation* animation = self->m_data->m_animation;
-        int frame = self->m_data->m_currentImageNumber;
+        int frame = self->m_data->m_imageJumpPending
+            ? self->m_data->m_currentImageNumber
+            : self->m_data->m_currentImageNumber + 1;
+        if (frame < 0) frame = 0;
         if (animation && frame >= 0 && frame < animation->frameCount) {
             XImage_copy_base(out, &animation->frames[frame].image);
             loadedByHandler = !XImage_isNull(out);
+            if (loadedByHandler) {
+                self->m_data->m_currentImageNumber = frame;
+                self->m_data->m_imageJumpPending = false;
+            }
         }
     }
 #endif
+    /* 已成功建立 GIF 动画缓存时，读完最后一帧必须像 QGifHandler 一样
+       直接返回失败，不能再退回普通单帧处理器重复首帧。 */
+    if (animationPrepared && !loadedByHandler)
+        return false;
     if (!loadedByHandler)
         XImageReader_ensureHandler(self);
     if (!loadedByHandler && self->m_data->m_handler)
@@ -1592,6 +1712,8 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         if (ratio > 1.0f)
             XImage_setDevicePixelRatio(out, ratio);
     }
+    if (self->m_data->m_autoTransform)
+        XImageReader_applyAutoTransform(out, XImageReader_transformation(self));
     return !XImage_isNull(out);
 }
 
@@ -1601,24 +1723,32 @@ bool XImageReader_jumpToNextImage(XImageReader* self)
     if (XImageReader_prepareAnimation(self) && self->m_data->m_animation &&
         self->m_data->m_currentImageNumber + 1 < self->m_data->m_animation->frameCount) {
         ++self->m_data->m_currentImageNumber;
+        self->m_data->m_imageJumpPending = true;
         return true;
     }
-#else
-    (void)self;
 #endif
-    return false;
+    /* 非 GIF 或动画缓存构建失败时，遵循 QImageIOHandler 的通用虚函数语义。 */
+    if (!self || !self->m_data || !XImageReader_ensureHandler(self))
+        return false;
+    return XImageIOHandler_jumpToNextImage_base(self->m_data->m_handler);
 }
 bool XImageReader_jumpToImage(XImageReader* self, int imageNumber)
 {
+    if (imageNumber < 0) return false;
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    if (imageNumber < 0 || !XImageReader_prepareAnimation(self) ||
-        !self->m_data->m_animation || imageNumber >= self->m_data->m_animation->frameCount)
-        return false;
-    self->m_data->m_currentImageNumber = imageNumber;
-    return true;
-#else
-    return imageNumber == 0 && XImageReader_canRead(self);
+    if (XImageReader_prepareAnimation(self) && self->m_data->m_animation) {
+        if (imageNumber >= self->m_data->m_animation->frameCount)
+            return false;
+        self->m_data->m_currentImageNumber = imageNumber;
+        self->m_data->m_imageJumpPending = true;
+        return true;
+    }
 #endif
+    /* 非 GIF 或动画缓存构建失败时，委托处理器而非伪造单帧成功。 */
+    if (!self || !self->m_data || !XImageReader_ensureHandler(self))
+        return false;
+    return XImageIOHandler_jumpToImage_base(self->m_data->m_handler,
+                                            imageNumber);
 }
 int XImageReader_loopCount(const XImageReader* self)
 {
@@ -1741,14 +1871,32 @@ const char* XImageReader_imageFormat_2(const char* fileName)
 
 XString* XImageReader_imageFormatDevice(XIODevice* device)
 {
+    XImageIOHandler* handler;
     XByteArray* bytes;
     const char* result = NULL;
-    XString* pluginFormat;
     if (!device) return XString_create();
-    pluginFormat = XImagePluginRegistry_detectReadFormat(device);
-    if (pluginFormat && !XContainer_isEmpty_base((const XContainer*)pluginFormat))
-        return pluginFormat;
-    if (pluginFormat) XString_delete_base((XClass*)pluginFormat);
+    /* Qt QImageReader::imageFormat(QIODevice*) 先创建空格式处理器，再
+       调用其 canRead()，只有处理器确认内容可读时才接受其 format()；不能
+       仅凭插件 capabilities() 宣称支持某个格式。内置处理器没有可报告
+       的格式名时，再由下面的签名探测返回固定编解码器名称。 */
+#if XIMAGEIOPLUGIN_ON
+    handler = XImagePluginRegistry_createReadHandlerEx(device, NULL, true, false);
+    if (handler) {
+        if (XImageIOHandler_canRead_base(handler)) {
+            const XString* handlerFormat =
+                XImageIOHandler_format_const(handler);
+            if (handlerFormat &&
+                !XContainer_isEmpty_base((const XContainer*)handlerFormat)) {
+                XString* format = XString_create_copy(handlerFormat);
+                XImageIOHandler_delete_base(handler);
+                if (format) return format;
+            }
+        }
+        XImageIOHandler_delete_base(handler);
+    }
+#else
+    (void)handler;
+#endif
     bytes = XIODevice_peek_3(device, 16);
     if (bytes) {
         result = XImageReader_detectSignature(
@@ -1824,7 +1972,10 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
         if (XImageReader_mimeEquals(mime, "image/bmp") && XImageReader_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageReader_makeStringList_prefix(result, value, 1); }
         if (XImageReader_mimeEquals(mime, "image/png") && XImageReader_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageReader_makeStringList_prefix(result, value, 1); }
         if (XImageReader_mimeEquals(mime, "image/gif") && XImageReader_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageReader_makeStringList_prefix(result, value, 1); }
-        if (XImageReader_mimeEquals(mime, "image/jpeg") && XImageReader_isSupportedFormat("jpeg")) { const char* value[] = {"jpeg"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/jpeg") && XImageReader_isSupportedFormat("jpeg")) {
+            const char* value[] = {"jpg", "jpeg", "jfif"};
+            XImageReader_makeStringList_prefix(result, value, 3);
+        }
         if (XImageReader_mimeEquals(mime, "image/svg+xml") && XImageReader_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageReader_makeStringList_prefix(result, value, 1); }
     }
 #if XIMAGEIOPLUGIN_ON

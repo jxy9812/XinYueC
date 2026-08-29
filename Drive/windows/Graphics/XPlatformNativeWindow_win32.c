@@ -1044,6 +1044,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     BITMAPINFO info;
     uint8_t* pixels;
     XImage image;
+    XPixmap captured;
     XPixmap* result;
     RECT client;
     int targetWidth;
@@ -1131,12 +1132,18 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     DeleteObject(bitmap);
     DeleteDC(memoryDc);
     ReleaseDC(hwnd, sourceDc);
+    /* 先在栈上构造像素图，再移动到堆对象；XPixmap_init_image() 的公开
+     * 初始化约定允许未初始化栈对象，不能直接覆盖 create() 返回值，
+     * 否则会清掉 delete_base 所需的堆标志。 */
+    XPixmap_init_image(&captured, &image, 0);
     result = XPixmap_create();
     if (!result) {
+        XPixmap_deinit_base(&captured);
         XImage_deinit_base(&image);
         return NULL;
     }
-    XPixmap_init_image(result, &image, 0);
+    XPixmap_move_base(result, &captured);
+    XPixmap_deinit_base(&captured);
     XImage_deinit_base(&image);
     return result;
 }

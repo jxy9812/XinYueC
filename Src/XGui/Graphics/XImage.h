@@ -324,6 +324,15 @@ void XImage_setColor(XImage* self, int index, uint32_t color);
 void XImage_fill(XImage* self, uint32_t pixel);
 
 /**
+ * @brief 按 QColor 语义填充整幅图像（对标 QImage::fill(const QColor&)）。
+ * @param self 目标 XImage 对象指针。
+ * @param color 要填充的颜色；无效颜色不会改变图像。
+ * @note 索引图像使用颜色表中的精确项，找不到时使用索引 0；单色图像仅
+ *       在颜色为不透明白色时写入 1，其余颜色写入 0。
+ */
+void XImage_fillColor(XImage* self, const XColor* color);
+
+/**
  * @brief      判断图像是否包含 Alpha 通道
  * @param self 目标 XImage 对象指针
  * @return 包含 Alpha 通道返回 true，否则返回 false
@@ -347,7 +356,15 @@ bool XImage_allGray(const XImage* self);
 /** @brief 判断图像是否为灰度图像（Qt QImage::isGrayscale 对应接口）。 */
 bool XImage_isGrayscale(const XImage* self);
 
-/** @brief 获取指定坐标的 XColor 值。 */
+/**
+ * @brief 获取指定坐标的 XColor 值。
+ * @param self 目标图像对象指针。
+ * @param x 像素横坐标，必须位于 [0,width) 范围内。
+ * @param y 像素纵坐标，必须位于 [0,height) 范围内。
+ * @return 坐标有效时返回像素颜色；坐标无效或图像为空时返回无效颜色。
+ * @note 对 Grayscale16、RGBX64、RGBA64 和 RGBA64_Premultiplied 保留原生
+ *       16 位通道精度；预乘格式返回的颜色按 Qt 规则还原为非预乘分量。
+ */
 XColor XImage_pixelColor(const XImage* self, int x, int y);
 
 /** @brief 设置指定坐标的 XColor 值。 */
@@ -367,13 +384,33 @@ void XImage_setColorTable(XImage* self, const uint32_t* colors, int count);
 /** @brief 用另一幅图像的 Alpha 通道替换当前图像 Alpha。 */
 bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel);
 
-/** @brief 创建 Alpha 掩码图像（Mono 格式）。 */
+/**
+ * @brief      根据图像 Alpha 通道创建一位 MonoLSB 掩码。
+ * @param self 源图像对象指针；为空或 RGB32 时输出空图像。
+ * @param flags 图像转换标志；当前实现保留 Qt 默认阈值模式（Alpha 大于等于
+ *              128 生成不透明位），其他抖动标志在便携实现中暂不展开。
+ * @param out 输出掩码图像指针；已有内容会先释放，掩码颜色表为白色/黑色。
+ * @note 深度为 1 的 Mono/MonoLSB 图像会先转为 Indexed8，使原颜色表中的
+ *       Alpha 分量参与阈值判断；输出始终使用小端位序 MonoLSB。
+ */
 void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out);
 
-/** @brief 根据边角背景创建启发式掩码。 */
+/**
+ * @brief      根据四角投票和边缘连通背景创建 MonoLSB 启发式掩码。
+ * @param self 源图像对象指针；Alpha 通道会被忽略，仅比较 RGB。
+ * @param clipTight 为 true 时只剥离边缘连通背景；为 false 时额外保留非背景
+ *                  像素四邻域，得到较宽松的覆盖区域。
+ * @param out 输出掩码图像指针；已有内容会先释放，并复制物理元数据。
+ */
 void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out);
 
-/** @brief 根据颜色创建掩码。 */
+/**
+ * @brief      根据完整 ARGB 颜色值创建 MonoLSB 掩码。
+ * @param self 源图像对象指针；为空时输出空图像。
+ * @param color 要匹配的 0xAARRGGBB 颜色，Alpha 也参与比较。
+ * @param mode InColor 将匹配像素设为不透明，OutColor 将匹配像素设为透明。
+ * @param out 输出掩码图像指针；已有内容会先释放，并复制物理元数据。
+ */
 void XImage_createMaskFromColor(const XImage* self, uint32_t color,
                                 XImageMaskMode mode, XImage* out);
 
@@ -547,6 +584,14 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
 void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical);
 
 /**
+ * @brief 就地镜像图像的兼容别名（对标 QImage::mirror）。
+ * @param self 目标 XImage 对象指针。
+ * @param horizontal 是否沿垂直轴镜像。
+ * @param vertical 是否沿水平轴镜像。
+ */
+void XImage_mirror(XImage* self, bool horizontal, bool vertical);
+
+/**
  * @brief      交换 RGB 和 BGR 通道
  * @param self 目标 XImage 对象指针
  * @param out  输出结果图像指针
@@ -558,6 +603,12 @@ void XImage_rgbSwapped(const XImage* self, XImage* out);
  * @param self 目标 XImage 对象指针
  */
 void XImage_rgbSwappedInPlace(XImage* self);
+
+/**
+ * @brief 就地交换 RGB 和 BGR 通道的兼容别名。
+ * @param self 目标 XImage 对象指针。
+ */
+void XImage_rgbSwap(XImage* self);
 
 /**
  * @brief      缩放图像

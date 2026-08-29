@@ -58,11 +58,16 @@ static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
 static uint8_t XImage_luma(uint32_t color);
 static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color);
 static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb);
+static uint16_t XImage_load16(const uint8_t* p);
 static void XImage_store16(uint8_t* p, uint16_t value);
 static void XImage_store32(uint8_t* p, uint32_t value);
 static uint16_t XImage_floatToHalf(float value);
 static float XImage_halfToFloat(uint16_t value);
+static uint16_t XImage_unpremultiply16(uint16_t value, uint16_t alpha);
 static uint16_t XImage_premultiply16(uint16_t value, uint16_t alpha);
+static XColor XImage_colorFrom16(uint16_t red, uint16_t green,
+                                 uint16_t blue, uint16_t alpha);
+static void XImage_detachMetadata(XImage* self);
 bool XImage_allGray(const XImage* self);
 
 static int64_t XImageData_nextCacheKey(void)
@@ -584,7 +589,6 @@ static XColorSpaceColorModel XImage_pixelColorModel(const XImage* self)
         return XColorSpaceModel_Undefined;
     switch (pixel.m_model)
     {
-        case XPixelFormatModel_Mono:
         case XPixelFormatModel_Gray:
             return XColorSpaceModel_Gray;
         case XPixelFormatModel_Indexed:
@@ -598,17 +602,49 @@ static XColorSpaceColorModel XImage_pixelColorModel(const XImage* self)
     }
 }
 
+static bool XImage_colorSpaceSourceCompatibleModel(
+    XColorSpaceColorModel dataModel, XColorSpaceColorModel targetModel)
+{
+    if (dataModel == XColorSpaceModel_Undefined)
+        return true; /* Alpha 数据不含颜色，可附加任意有效空间。 */
+    if (targetModel == XColorSpaceModel_Undefined)
+        return false;
+    if (targetModel == dataModel)
+        return true;
+    return dataModel == XColorSpaceModel_Gray &&
+           targetModel == XColorSpaceModel_Rgb;
+}
+
+static bool XImage_colorSpaceTargetCompatibleModel(
+    XColorSpaceColorModel dataModel, const XColorSpace* colorSpace)
+{
+    const XColorSpaceColorModel targetModel = XColorSpace_colorModel(colorSpace);
+    if (dataModel == XColorSpaceModel_Undefined)
+        return true;
+    if (targetModel == XColorSpaceModel_Undefined)
+        return false;
+    if (targetModel == dataModel)
+        return true;
+    return dataModel == XColorSpaceModel_Gray &&
+           XColorSpace_transformModel(colorSpace) ==
+               XColorSpaceTransform_ThreeComponentMatrix;
+}
+
 static bool XImage_colorSpaceCompatible(const XImage* self,
                                          const XColorSpace* colorSpace)
 {
     const XColorSpaceColorModel dataModel = XImage_pixelColorModel(self);
     const XColorSpaceColorModel targetModel = XColorSpace_colorModel(colorSpace);
-    if (dataModel == XColorSpaceModel_Undefined)
-        return true; /* Alpha 数据不含颜色，可附加任意有效空间。 */
-    if (targetModel == dataModel)
-        return true;
-    /* Qt 允许将 RGB 色彩空间元数据附加到灰度像素。 */
-    return dataModel == XColorSpaceModel_Gray && targetModel == XColorSpaceModel_Rgb;
+    return XImage_colorSpaceSourceCompatibleModel(dataModel, targetModel);
+}
+
+/* 对齐 Qt qt_compatibleColorModelTarget：灰度数据可通过三分量矩阵
+   转换到任意带明确颜色模型的目标空间，不限于 RGB。 */
+static bool XImage_colorSpaceTargetCompatible(const XImage* self,
+                                               const XColorSpace* colorSpace)
+{
+    const XColorSpaceColorModel dataModel = XImage_pixelColorModel(self);
+    return XImage_colorSpaceTargetCompatibleModel(dataModel, colorSpace);
 }
 
 void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
@@ -617,12 +653,10 @@ void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
     if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace)) return;
     if (XColorSpace_isValid(&colorSpace) &&
         !XImage_colorSpaceCompatible(self, &colorSpace)) return;
-    XImage_detach(self);
-    if (self->m_data)
-    {
-        self->m_data->m_colorSpace = colorSpace;
-        XImageData_markDirty(self->m_data);
-    }
+    /* Qt 的 setColorSpace() 只分离元数据；唯一数据的 cacheKey 不变。 */
+    XImage_detachMetadata(self);
+    if (!XImage_isDetached(self)) return;
+    self->m_data->m_colorSpace = colorSpace;
 }
 
 bool XImage_hasColorSpace(const XImage* self)
@@ -716,7 +750,9 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
 {
     (void)flags;
     if (!out) return;
-    if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace))
+    if (!self || !self->m_data ||
+        !XColorSpace_isValid(&self->m_data->m_colorSpace) ||
+        !XColorSpace_isValidTarget(&colorSpace))
     {
         if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
         XImage_init(out);
@@ -732,7 +768,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
      * represent the target color space (for example CMYK -> RGB).  The
      * current XColorSpace value type describes RGB spaces only, so ARGB32 is
      * the canonical target for that conversion. */
-    if (!XImage_colorSpaceCompatible(self, &colorSpace))
+    if (!XImage_colorSpaceTargetCompatible(self, &colorSpace))
     {
         XImage converted;
         XImage_init(&converted);
@@ -756,9 +792,11 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
                                 uint32_t flags)
 {
     (void)flags;
-    if (!self || !self->m_data || !XColorSpace_isValid(&colorSpace)) return false;
+    if (!self || !self->m_data ||
+        !XColorSpace_isValid(&self->m_data->m_colorSpace) ||
+        !XColorSpace_isValidTarget(&colorSpace)) return false;
     if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace)) return true;
-    if (!XImage_colorSpaceCompatible(self, &colorSpace))
+    if (!XImage_colorSpaceTargetCompatible(self, &colorSpace))
     {
         if (!XImage_convertToFormatInPlace(self, XImageFormat_ARGB32, flags))
             return false;
@@ -775,7 +813,10 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
 void XImage_applyColorTransform(const XImage* self, const XColorTransform* transform,
                                 XImageFormat format, uint32_t flags, XImage* out)
 {
-    if (!self || !out || !transform || !XColorSpace_isValid(&transform->m_target))
+    XColorSpace source;
+    XImageFormat outputFormat = format;
+    if (!self || !out || !transform ||
+        !XColorSpace_isValidTarget(&transform->m_target))
     {
         if (out)
         {
@@ -784,14 +825,73 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         }
         return;
     }
-    XColorSpace source = transform->m_source;
+    source = transform->m_source;
     if (!XColorSpace_isValid(&source)) source = XImage_colorSpace(self);
+    if (!XColorSpace_isValid(&source) ||
+        !XImage_colorSpaceCompatible(self, &source))
+    {
+        if (out != self)
+        {
+            XImage_deinit_base(out);
+            XImage_init(out);
+        }
+        return;
+    }
+    if (outputFormat == XImageFormat_Invalid &&
+        !XImage_colorSpaceTargetCompatible(self, &transform->m_target))
+    {
+        switch (XColorSpace_colorModel(&transform->m_target))
+        {
+            case XColorSpaceModel_Rgb: outputFormat = XImageFormat_ARGB32; break;
+            case XColorSpaceModel_Gray: outputFormat = XImageFormat_Grayscale8; break;
+            case XColorSpaceModel_Cmyk: outputFormat = XImageFormat_CMYK8888; break;
+            default: outputFormat = XImageFormat_Invalid; break;
+        }
+        if (outputFormat == XImageFormat_Invalid)
+        {
+            if (out != self)
+            {
+                XImage_deinit_base(out);
+                XImage_init(out);
+            }
+            return;
+        }
+    }
+    if (outputFormat != XImageFormat_Invalid)
+    {
+        /* Qt permits a model switch when the caller explicitly chooses a
+           compatible output format (for example RGB -> Grayscale8).  Only
+           the selected format's own model is constrained here; checking the
+           source model first would incorrectly reject that valid path. */
+        const XPixelFormat outputPixel = XImageFormat_toPixelFormat(outputFormat);
+        XColorSpaceColorModel outputModel;
+        switch (outputPixel.m_model)
+        {
+            case XPixelFormatModel_Gray: outputModel = XColorSpaceModel_Gray; break;
+            case XPixelFormatModel_CMYK: outputModel = XColorSpaceModel_Cmyk; break;
+            case XPixelFormatModel_Alpha: outputModel = XColorSpaceModel_Undefined; break;
+            case XPixelFormatModel_Indexed:
+            case XPixelFormatModel_RGB:
+            case XPixelFormatModel_BGR: outputModel = XColorSpaceModel_Rgb; break;
+            default: outputModel = XColorSpaceModel_Undefined; break;
+        }
+        if (!XImage_colorSpaceTargetCompatibleModel(outputModel,
+                                                     &transform->m_target))
+        {
+            if (out != self)
+            {
+                XImage_deinit_base(out);
+                XImage_init(out);
+            }
+            return;
+        }
+    }
     XImage_copy_base(out, self);
-    if (format != XImageFormat_Invalid && format != XImage_format(out))
+    if (outputFormat != XImageFormat_Invalid && outputFormat != XImage_format(out))
     {
         XImage converted;
         XImage_init(&converted);
-        XImage_convertToFormat(out, format, flags, &converted);
+        XImage_convertToFormat(out, outputFormat, flags, &converted);
         XImage_move_base(out, &converted);
         XImage_deinit_base(&converted);
     }
@@ -1032,6 +1132,57 @@ void XImage_fill(XImage* self, uint32_t pixel)
     XImageData_markDirty(d);
 }
 
+void XImage_fillColor(XImage* self, const XColor* color)
+{
+    XImageData* d;
+    uint32_t argb;
+    int x, y;
+    if (!self || !self->m_data || !color || !XColor_isValid(color)) return;
+    XImage_detach(self);
+    if (!XImage_isDetached(self)) return;
+    d = self->m_data;
+    argb = ((uint32_t)XColor_alpha(color) << 24) |
+           ((uint32_t)XColor_red(color) << 16) |
+           ((uint32_t)XColor_green(color) << 8) |
+           (uint32_t)XColor_blue(color);
+
+    /* QColor::fill handles indexed and monochrome images through their
+       palette/index semantics rather than converting the value as a color. */
+    if (d->m_format == XImageFormat_Mono || d->m_format == XImageFormat_MonoLSB)
+    {
+        const size_t bytes = ((size_t)d->m_width + 7u) / 8u;
+        const int value = argb == 0xffffffffu ? 0xff : 0;
+        for (y = 0; y < d->m_height; ++y)
+            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+                   value, bytes);
+    }
+    else if (d->m_format == XImageFormat_Indexed8)
+    {
+        uint32_t index = 0;
+        if (d->m_colorTable)
+        {
+            for (int i = 0; i < d->m_colorCount; ++i)
+            {
+                if (d->m_colorTable[i] == argb)
+                {
+                    index = (uint32_t)i;
+                    break;
+                }
+            }
+        }
+        for (y = 0; y < d->m_height; ++y)
+            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+                   (int)(uint8_t)index, (size_t)d->m_width);
+    }
+    else
+    {
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+                XImage_writePixelValue(d, x, y, argb);
+    }
+    XImageData_markDirty(d);
+}
+
 bool XImage_hasAlphaChannel(const XImage* self)
 {
     return (self && self->m_data) ? XImageFormat_hasAlpha(self->m_data->m_format) : false;
@@ -1051,12 +1202,77 @@ bool XImage_hasAlpha(const XImage* self)
 
 bool XImage_isGrayscale(const XImage* self)
 {
-    return XImage_allGray(self);
+    XImageFormat format;
+    int depth;
+
+    /* QImage distinguishes an image made only of grayscale pixels from an
+     * image whose indexed palette is the canonical i -> (i, i, i) table.
+     * In particular, a null image is not a grayscale image, and a
+     * monochrome image has depth one and therefore falls through to false. */
+    if (!self || !self->m_data) return false;
+    format = self->m_data->m_format;
+    if (format == XImageFormat_Alpha8) return false;
+    if (format == XImageFormat_Grayscale8 || format == XImageFormat_Grayscale16)
+        return true;
+
+    depth = self->m_data->m_depth;
+    if (depth == 32 || depth == 24 || depth == 16)
+        return XImage_allGray(self);
+    if (depth == 8 && format == XImageFormat_Indexed8)
+    {
+        int i;
+        for (i = 0; i < self->m_data->m_colorCount; ++i)
+        {
+            uint32_t expected = 0xff000000u | ((uint32_t)i * 0x010101u);
+            if (!self->m_data->m_colorTable ||
+                self->m_data->m_colorTable[i] != expected)
+                return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 XColor XImage_pixelColor(const XImage* self, int x, int y)
 {
+    const XImageData* data;
+    const uint8_t* line;
+    const uint8_t* pixel;
+    uint16_t red;
+    uint16_t green;
+    uint16_t blue;
+    uint16_t alpha;
     if (!XImage_valid(self, x, y)) return XColor_create();
+
+    /* Qt 6.8 keeps the native QRgba64 value for these formats.  The normal
+       XImage_pixel() API intentionally returns an 8-bit ARGB compatibility
+       value, so using it here would make QColor::pixelColor lose precision. */
+    data = self->m_data;
+    line = data->m_data + (size_t)y * (size_t)data->m_bytesPerLine;
+    if (data->m_format == XImageFormat_Grayscale16)
+    {
+        red = XImage_load16(line + (size_t)x * 2u);
+        return XImage_colorFrom16(red, red, red, 65535u);
+    }
+    if (data->m_format == XImageFormat_RGBX64 ||
+        data->m_format == XImageFormat_RGBA64 ||
+        data->m_format == XImageFormat_RGBA64_Premultiplied)
+    {
+        pixel = line + (size_t)x * 8u;
+        red = XImage_load16(pixel);
+        green = XImage_load16(pixel + 2u);
+        blue = XImage_load16(pixel + 4u);
+        alpha = data->m_format == XImageFormat_RGBX64
+            ? 65535u : XImage_load16(pixel + 6u);
+        if (data->m_format == XImageFormat_RGBA64_Premultiplied)
+        {
+            /* QRgba64::unpremultiplied() returns the transparent value as-is. */
+            red = XImage_unpremultiply16(red, alpha);
+            green = XImage_unpremultiply16(green, alpha);
+            blue = XImage_unpremultiply16(blue, alpha);
+        }
+        return XImage_colorFrom16(red, green, blue, alpha);
+    }
     return XColor_create_argb(XImage_pixel(self, x, y));
 }
 
@@ -1106,62 +1322,232 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     return true;
 }
 
-static void XImage_initMask(const XImage* source, XImage* out)
+static void XImage_initMask(const XImage* source, XImage* out,
+                            bool withColorTable)
 {
     if (!out) return;
     if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     if (!source || !source->m_data || source->m_data->m_width <= 0 || source->m_data->m_height <= 0)
         return;
-    XImage_init_ex(out, source->m_data->m_width, source->m_data->m_height, XImageFormat_Mono);
+    /* Qt 的所有 QImage 掩码工厂均返回小端位序 MonoLSB。 */
+    XImage_init_ex(out, source->m_data->m_width, source->m_data->m_height,
+                   XImageFormat_MonoLSB);
     if (!out->m_data) return;
+    if (withColorTable)
     {
-        const uint32_t colors[2] = {0xff000000u, 0xffffffffu};
-        XImage_setColorTable(out, colors, 2);
+        /* dither_to_Mono() 使用 color0=白、color1=黑；Alpha 掩码和启发式
+           掩码因此与 Qt pixel() 的颜色表语义一致。 */
+        const uint32_t qtColors[2] = {0xffffffffu, 0xff000000u};
+        XImage_setColorTable(out, qtColors, 2);
     }
+    /* 掩码只继承物理元数据；Qt 的 copyPhysicalMetadata() 不传播文本、
+       色彩空间或原图颜色表。 */
+    out->m_data->m_dpmX = source->m_data->m_dpmX;
+    out->m_data->m_dpmY = source->m_data->m_dpmY;
+    out->m_data->m_devicePixelRatio = source->m_data->m_devicePixelRatio;
+    out->m_data->m_offsetX = source->m_data->m_offsetX;
+    out->m_data->m_offsetY = source->m_data->m_offsetY;
 }
 
 void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
 {
-    (void)flags;
-    XImage_initMask(self, out);
+    if (!out) return;
+    if (!self || !self->m_data || self->m_data->m_format == XImageFormat_RGB32)
+    {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
+    if (self->m_data->m_depth == 1)
+    {
+        /* Qt routes monochrome images through Indexed8 so the alpha values
+           in their two-entry color table participate in dithering. */
+        XImage indexed;
+        XImage_init(&indexed);
+        XImage_convertToFormat(self, XImageFormat_Indexed8, flags, &indexed);
+        if (!XImage_isNull(&indexed))
+            XImage_createAlphaMask(&indexed, flags, out);
+        else
+        {
+            if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+            XImage_init(out);
+        }
+        XImage_deinit_base(&indexed);
+        return;
+    }
+    XImage_initMask(self, out, true);
     if (!out || !out->m_data || !self || !self->m_data) return;
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)
         {
             uint32_t alpha = XImage_pixel(self, x, y) >> 24;
-            XImage_writePixelIndex(out->m_data, x, y, alpha != 0 ? 1u : 0u);
+            /* Qt 的默认 AlphaDither 为阈值模式，alpha >= 128 才生成
+               不透明位；不能把任意非零 Alpha 都视为不透明。 */
+            XImage_writePixelIndex(out->m_data, x, y, alpha >= 128u ? 1u : 0u);
         }
+    XImageData_markDirty(out->m_data);
+}
+
+static bool XImage_maskBit(const XImageData* data, int x, int y)
+{
+    const uint8_t* line;
+    uint8_t mask;
+    if (!data || !data->m_data || x < 0 || y < 0 ||
+        x >= data->m_width || y >= data->m_height)
+        return false;
+    line = data->m_data + (size_t)y * (size_t)data->m_bytesPerLine;
+    mask = (uint8_t)(1u << ((unsigned)x & 7u));
+    return (line[(unsigned)x >> 3] & mask) != 0;
+}
+
+static void XImage_maskSetBit(XImageData* data, int x, int y, bool value)
+{
+    uint8_t* line;
+    uint8_t mask;
+    if (!data || !data->m_data || x < 0 || y < 0 ||
+        x >= data->m_width || y >= data->m_height)
+        return;
+    line = data->m_data + (size_t)y * (size_t)data->m_bytesPerLine;
+    mask = (uint8_t)(1u << ((unsigned)x & 7u));
+    if (value) line[(unsigned)x >> 3] |= mask;
+    else line[(unsigned)x >> 3] &= (uint8_t)~mask;
 }
 
 void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
 {
     uint32_t background;
-    (void)clipTight;
-    XImage_initMask(self, out);
+    int width;
+    int height;
+    size_t count;
+    size_t head;
+    size_t tail;
+    size_t* queue;
+    if (self && self->m_data && self->m_data->m_depth != 32)
+    {
+        /* Qt 6.8 首先把非 32 位源图像转换为 RGB32，再运行启发式算法；
+           这样索引表、灰度和低位深格式都沿用统一的 RGB 像素解释。 */
+        XImage image32;
+        XImage_init(&image32);
+        XImage_convertToFormat(self, XImageFormat_RGB32, 0, &image32);
+        if (!XImage_isNull(&image32))
+            XImage_createHeuristicMask(&image32, clipTight, out);
+        else
+            XImage_initMask(self, out, true);
+        XImage_deinit_base(&image32);
+        return;
+    }
+    XImage_initMask(self, out, true);
     if (!out || !out->m_data || !self || !self->m_data) return;
+    width = self->m_data->m_width;
+    height = self->m_data->m_height;
+    if (width <= 0 || height <= 0) return;
+
+    /* 与 Qt PIX 宏一致：启发式掩码忽略 Alpha，仅比较 RGB。四角投票
+       选择背景色，再从四条边向内剥离连通背景。 */
     background = XImage_pixel(self, 0, 0) & 0x00ffffffu;
-    for (int y = 0; y < self->m_data->m_height; ++y)
-        for (int x = 0; x < self->m_data->m_width; ++x)
-        {
-            uint32_t pixel = XImage_pixel(self, x, y) & 0x00ffffffu;
-            XImage_writePixelIndex(out->m_data, x, y, pixel == background ? 0u : 1u);
-        }
+    if (background != (XImage_pixel(self, width - 1, 0) & 0x00ffffffu) &&
+        background != (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) &&
+        background != (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu))
+    {
+        background = XImage_pixel(self, width - 1, 0) & 0x00ffffffu;
+        if (background != (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu) &&
+            background != (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) &&
+            (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) ==
+                (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu))
+            background = XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu;
+    }
+
+    /* 输出初始为全不透明，队列中的位清零即表示已剥离的透明背景。 */
+    memset(out->m_data->m_data, 0xff,
+           (size_t)out->m_data->m_bytesPerLine * (size_t)height);
+    if ((size_t)width > SIZE_MAX / (size_t)height)
+        return;
+    count = (size_t)width * (size_t)height;
+    if (count > SIZE_MAX / sizeof(size_t))
+        return;
+    queue = (size_t*)XMalloc_System(count * sizeof(size_t));
+    if (!queue)
+        return;
+    head = 0;
+    tail = 0;
+#define XIMAGE_QUEUE_BACKGROUND(px, py) \
+    do { \
+        int _qx = (px); int _qy = (py); \
+        if (_qx >= 0 && _qy >= 0 && _qx < width && _qy < height && \
+            XImage_maskBit(out->m_data, _qx, _qy) && \
+            ((XImage_pixel(self, _qx, _qy) & 0x00ffffffu) == background)) { \
+            XImage_maskSetBit(out->m_data, _qx, _qy, false); \
+            queue[tail++] = (size_t)_qy * (size_t)width + (size_t)_qx; \
+        } \
+    } while (0)
+    for (int x = 0; x < width; ++x)
+    {
+        XIMAGE_QUEUE_BACKGROUND(x, 0);
+        if (height > 1) XIMAGE_QUEUE_BACKGROUND(x, height - 1);
+    }
+    for (int y = 1; y + 1 < height; ++y)
+    {
+        XIMAGE_QUEUE_BACKGROUND(0, y);
+        if (width > 1) XIMAGE_QUEUE_BACKGROUND(width - 1, y);
+    }
+    while (head < tail)
+    {
+        const size_t index = queue[head++];
+        const int x = (int)(index % (size_t)width);
+        const int y = (int)(index / (size_t)width);
+        XIMAGE_QUEUE_BACKGROUND(x - 1, y);
+        XIMAGE_QUEUE_BACKGROUND(x + 1, y);
+        XIMAGE_QUEUE_BACKGROUND(x, y - 1);
+        XIMAGE_QUEUE_BACKGROUND(x, y + 1);
+    }
+#undef XIMAGE_QUEUE_BACKGROUND
+    XFree_System(queue);
+
+    if (!clipTight)
+    {
+        /* Qt 在非紧致模式下把非背景像素的四邻域也标为不透明。 */
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+                if ((XImage_pixel(self, x, y) & 0x00ffffffu) != background)
+                {
+                    XImage_maskSetBit(out->m_data, x - 1, y, true);
+                    XImage_maskSetBit(out->m_data, x + 1, y, true);
+                    XImage_maskSetBit(out->m_data, x, y - 1, true);
+                    XImage_maskSetBit(out->m_data, x, y + 1, true);
+                }
+    }
+    XImageData_markDirty(out->m_data);
 }
 
 void XImage_createMaskFromColor(const XImage* self, uint32_t color,
                                 XImageMaskMode mode, XImage* out)
 {
-    XImage_initMask(self, out);
+    XImage_initMask(self, out, false);
     if (!out || !out->m_data || !self || !self->m_data) return;
-    color &= 0x00ffffffu;
+    memset(out->m_data->m_data, 0,
+           (size_t)out->m_data->m_bytesPerLine *
+           (size_t)out->m_data->m_height);
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)
         {
-            bool equal = (XImage_pixel(self, x, y) & 0x00ffffffu) == color;
-            bool opaque = mode == XImageMask_InColor ? equal : !equal;
-            XImage_writePixelIndex(out->m_data, x, y, opaque ? 1u : 0u);
+            /* Qt 比较完整 QRgb（包括 Alpha），而不是仅比较 RGB。 */
+            bool equal = XImage_pixel(self, x, y) == color;
+            XImage_writePixelIndex(out->m_data, x, y, equal ? 1u : 0u);
         }
+    if (mode == XImageMask_OutColor)
+    {
+        /* QImage::invertPixels() complements the packed bytes, therefore
+           trailing padding bits are complemented as well. */
+        for (int y = 0; y < out->m_data->m_height; ++y)
+        {
+            uint8_t* line = out->m_data->m_data +
+                (size_t)y * (size_t)out->m_data->m_bytesPerLine;
+            for (int byte = 0; byte < out->m_data->m_bytesPerLine; ++byte)
+                line[byte] = (uint8_t)~line[byte];
+        }
+    }
+    XImageData_markDirty(out->m_data);
 }
 
 /* ========== 像素数据访问 ========== */
@@ -1323,6 +1709,29 @@ static uint16_t XImage_unpremultiply16(uint16_t value, uint16_t alpha)
     if (alpha == 0 || alpha == 65535) return value;
     result = ((uint64_t)value * 65535u + alpha / 2u) / alpha;
     return (uint16_t)(result > 65535u ? 65535u : result);
+}
+
+/**
+ * @brief 从 16 位无预乘分量构造 XColor。
+ * @param red 红色分量，范围为 0~65535。
+ * @param green 绿色分量，范围为 0~65535。
+ * @param blue 蓝色分量，范围为 0~65535。
+ * @param alpha Alpha 分量，范围为 0~65535。
+ * @return 保留完整 16 位精度的 RGB 颜色。
+ * @note QColor::pixelColor() 对高位深图像直接返回 QRgba64；不能先经过
+ *       8 位 ARGB 中间值，否则低 8 位会在读取时永久丢失。
+ */
+static XColor XImage_colorFrom16(uint16_t red, uint16_t green,
+                                 uint16_t blue, uint16_t alpha)
+{
+    XColor color = XColor_create();
+    color.m_spec = XColor_Rgb;
+    color.m_alpha = alpha;
+    color.m_comp1 = red;
+    color.m_comp2 = green;
+    color.m_comp3 = blue;
+    color.m_comp4 = 0;
+    return color;
 }
 
 static uint16_t XImage_premultiply16(uint16_t value, uint16_t alpha)
@@ -1961,11 +2370,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
     if (!self || !self->m_data || !self->m_data->m_data) return;
     XImage_init_ex(out, self->m_data->m_width, self->m_data->m_height, self->m_data->m_format);
     if (!out->m_data) return;
-    out->m_data->m_dpmX = self->m_data->m_dpmX;
-    out->m_data->m_dpmY = self->m_data->m_dpmY;
-    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-    out->m_data->m_offsetX = self->m_data->m_offsetX;
-    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    XImageData_copyMetadata(out->m_data, self->m_data);
     if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System(
@@ -2005,6 +2410,11 @@ void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
     XImage_deinit_base(self);
     self->m_data = temp.m_data;
     temp.m_data = NULL;
+}
+
+void XImage_mirror(XImage* self, bool horizontal, bool vertical)
+{
+    XImage_mirroredInPlace(self, horizontal, vertical);
 }
 
 void XImage_rgbSwapped(const XImage* self, XImage* out)
@@ -2085,6 +2495,11 @@ void XImage_rgbSwappedInPlace(XImage* self)
     XImage_deinit_base(self);
     self->m_data = temp.m_data;
     temp.m_data = NULL;
+}
+
+void XImage_rgbSwap(XImage* self)
+{
+    XImage_rgbSwappedInPlace(self);
 }
 
 void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMode, uint32_t mode, XImage* out)
@@ -2327,6 +2742,7 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
     XImage_init(out);
     XImage_init_ex(out, size.width, size.height, self->m_data->m_format);
     if (!out->m_data) return;
+    XImageData_copyMetadata(out->m_data, self->m_data);
     for (int y = 0; y < size.height; ++y)
         for (int x = 0; x < size.width; ++x)
         {
@@ -2556,7 +2972,8 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
     int count;
     int insertIndex = 0;
     if (!self || !self->m_data || !key || !value) return;
-    XImage_detach(self);
+    /* 文本属于 QImage 的元数据，不应使唯一图像的 cacheKey 递增。 */
+    XImage_detachMetadata(self);
     if (!XImage_isDetached(self)) return;
     count = XImage_textCount(self);
     for (int i = 0; i < count; ++i)
@@ -2569,7 +2986,6 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
             if (!target) return;
             XString_copy_base((XClass*)target, (const XClass*)value);
             XImageData_clearTextAll(self->m_data);
-            XImageData_markDirty(self->m_data);
             return;
         }
         if (XString_compare(item, key) > 0)
@@ -2587,7 +3003,6 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
         return;
     }
     XImageData_clearTextAll(self->m_data);
-    XImageData_markDirty(self->m_data);
 }
 
 /* ========== 辅助数据 ========== */
@@ -2599,10 +3014,12 @@ int XImage_dotsPerMeterX(const XImage* self)
 
 void XImage_setDotsPerMeterX(XImage* self, int val)
 {
-    if (!self || !self->m_data) return;
-    XImage_detach(self);
+    /* Qt treats zero as the default/unset value and does not detach or
+     * mutate metadata for it; repeated values are also strict no-ops. */
+    if (!self || !self->m_data || val == 0 || self->m_data->m_dpmX == val) return;
+    XImage_detachMetadata(self);
+    if (!XImage_isDetached(self)) return;
     self->m_data->m_dpmX = val;
-    XImageData_markDirty(self->m_data);
 }
 
 int XImage_dotsPerMeterY(const XImage* self)
@@ -2612,10 +3029,12 @@ int XImage_dotsPerMeterY(const XImage* self)
 
 void XImage_setDotsPerMeterY(XImage* self, int val)
 {
-    if (!self || !self->m_data) return;
-    XImage_detach(self);
+    /* Qt treats zero as the default/unset value and does not detach or
+     * mutate metadata for it; repeated values are also strict no-ops. */
+    if (!self || !self->m_data || val == 0 || self->m_data->m_dpmY == val) return;
+    XImage_detachMetadata(self);
+    if (!XImage_isDetached(self)) return;
     self->m_data->m_dpmY = val;
-    XImageData_markDirty(self->m_data);
 }
 
 float XImage_devicePixelRatio(const XImage* self)
@@ -2641,10 +3060,9 @@ void XImage_setDevicePixelRatio(XImage* self, float scaleFactor)
 {
     if (!self || !self->m_data || scaleFactor == XImage_devicePixelRatio(self))
         return;
-    XImage_detach(self);
+    XImage_detachMetadata(self);
     if (!XImage_isDetached(self)) return;
     self->m_data->m_devicePixelRatio = scaleFactor;
-    XImageData_markDirty(self->m_data);
 }
 
 void XImage_offset(const XImage* self, XPoint* out)
@@ -2671,10 +3089,12 @@ XImage* XImage_fromVariant(const XVariant* variant)
 void XImage_setOffset(XImage* self, const XPoint* pos)
 {
     if (!self || !self->m_data || !pos) return;
-    XImage_detach(self);
+    if (self->m_data->m_offsetX == pos->x && self->m_data->m_offsetY == pos->y)
+        return;
+    XImage_detachMetadata(self);
+    if (!XImage_isDetached(self)) return;
     self->m_data->m_offsetX = pos->x;
     self->m_data->m_offsetY = pos->y;
-    XImageData_markDirty(self->m_data);
 }
 
 int64_t XImage_cacheKey(const XImage* self)
@@ -2696,6 +3116,26 @@ void XImage_detach(XImage* self)
     }
     if (XImage_isDetached(self))
         XImageData_markDirty(self->m_data);
+}
+
+/*
+ * 对齐 QImage::detachMetadata(false)：只有共享数据需要复制，唯一数据
+ * 直接复用；无论哪条路径都不递增 cacheKey 的 detach 序号。这样色彩空间、
+ * 文本、DPI、DPR 和 offset 等元数据修改不会伪装成像素数据修改。
+ */
+static void XImage_detachMetadata(XImage* self)
+{
+    if (!self || !self->m_data) return;
+    if (XAtomic_load_int32(&self->m_data->m_refCount,
+                           XAtomic_MemoryOrder_Relaxed) > 1)
+    {
+        XImageData* newData = XImageData_clone(self->m_data);
+        if (newData)
+        {
+            XImageData_unref(self->m_data);
+            self->m_data = newData;
+        }
+    }
 }
 
 bool XImage_isDetached(const XImage* self)
@@ -2775,8 +3215,34 @@ XString* XImage_formatToStr(XImageFormat format)
 
 bool XImage_allGray(const XImage* self)
 {
-    if (!self || !self->m_data || !self->m_data->m_data)
-        return false;
+    int i;
+    if (!self || !self->m_data) return true;
+    switch (self->m_data->m_format)
+    {
+        case XImageFormat_Mono:
+        case XImageFormat_MonoLSB:
+        case XImageFormat_Indexed8:
+            /* QImage checks the whole color table, including entries not
+             * referenced by a pixel. An empty table is vacuously gray. */
+            for (i = 0; i < self->m_data->m_colorCount; ++i)
+            {
+                uint32_t color;
+                if (!self->m_data->m_colorTable) return false;
+                color = self->m_data->m_colorTable[i];
+                if (((color >> 16) & 255u) != ((color >> 8) & 255u) ||
+                    ((color >> 8) & 255u) != (color & 255u))
+                    return false;
+            }
+            return true;
+        case XImageFormat_Alpha8:
+            return false;
+        case XImageFormat_Grayscale8:
+        case XImageFormat_Grayscale16:
+            return true;
+        default:
+            break;
+    }
+    if (!self->m_data->m_data) return false;
     if (self->m_data->m_width <= 0 || self->m_data->m_height <= 0) return false;
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)

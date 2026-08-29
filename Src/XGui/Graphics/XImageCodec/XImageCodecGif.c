@@ -203,13 +203,17 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
 {
     uint16_t screenW, screenH;
     uint8_t packed;
+    uint8_t backgroundIndex;
     size_t pos = 13;
     uint8_t globalPalette[768];
     size_t globalCount = 0;
+    uint32_t backgroundColor = 0x00000000u;
+    bool hasBackgroundColor = false;
     XImage canvas;
     XImage previous;
     int count = 0;
-    int loop = 0;
+    /* Qt QGIFFormat 使用 -1 表示未出现 Netscape 扩展；对外映射为 0（播放一次）。 */
+    int loop = -1;
     bool pendingTransparency = false;
     uint8_t pendingTransparentIndex = 0;
     int pendingDelayMs = 0;
@@ -223,10 +227,19 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
     screenW = XImageCodecInternal_readU16LE(data + 6);
     screenH = XImageCodecInternal_readU16LE(data + 8);
     packed = data[10];
+    backgroundIndex = data[11];
     if (!screenW || !screenH) return false;
     if (!gifReadPalette(data, size, &pos, packed, globalPalette,
                         &globalCount))
         return false;
+    if (globalCount && backgroundIndex < globalCount)
+    {
+        backgroundColor = 0xff000000u |
+            ((uint32_t)globalPalette[(size_t)backgroundIndex * 3] << 16) |
+            ((uint32_t)globalPalette[(size_t)backgroundIndex * 3 + 1] << 8) |
+            globalPalette[(size_t)backgroundIndex * 3 + 2];
+        hasBackgroundColor = true;
+    }
 
     XImage_init_ex(&canvas, screenW, screenH, XImageFormat_ARGB32);
     if (XImage_isNull(&canvas)) return false;
@@ -248,9 +261,12 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 flags = data[pos + 1];
                 pendingTransparency = (flags & 1u) != 0;
                 pendingTransparentIndex = data[pos + 4];
-                pendingDelayMs =
-                    (int)((uint16_t)(data[pos + 2] |
-                                     ((uint16_t)data[pos + 3] << 8))) * 10;
+                {
+                    uint16_t delay = (uint16_t)(data[pos + 2] |
+                                                ((uint16_t)data[pos + 3] << 8));
+                    /* Qt QGIFFormat 将过短延迟钳制为 10 个百分之一秒。 */
+                    pendingDelayMs = (int)(delay < 2 ? 10 : delay) * 10;
+                }
                 pendingDisposal = ((flags >> 2) & 7u);
                 if (pendingDisposal > 3) pendingDisposal = 0;
                 pos += 6;
@@ -262,7 +278,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 if (pos >= size) goto done;
                 len = data[pos++];
                 if (len > size - pos) goto done;
-                if (len == 11 && !memcmp(data + pos, "NETSCAPE2.0", 11)) {
+                if (len >= 8 && !memcmp(data + pos, "NETSCAPE", 8)) {
                     pos += len;
                     if (pos + 4 <= size && data[pos] == 3 &&
                         data[pos + 1] == 1) {
@@ -320,6 +336,11 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             if (minCode < 2 || minCode > 8) goto done;
             compressed = gifCollectSubBlocks(data, size, &pos, &compressedSize);
             if (!compressed) goto done;
+
+            /* 首帧为局部图像时，Qt 先按逻辑屏幕背景初始化剩余画布。 */
+            if (!seen && (left || top || width < screenW || height < screenH))
+                XImage_fill(&canvas, pendingTransparency ? 0x00000000u :
+                            backgroundColor);
 
             /* 记录当前帧绘制前的画布快照（RestorePrevious 使用）。 */
             {
@@ -406,7 +427,13 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             rect.x = left; rect.y = top;
             rect.width = width; rect.height = height;
             if (pendingDisposal == 2) {
-                XImage_fillRect(&canvas, &rect, 0x00000000u);
+                /* GIF 处置 2 恢复逻辑屏幕背景；没有全局背景色时才使用透明色。 */
+                uint32_t disposalColor = backgroundColor;
+                if (pendingTransparency)
+                    disposalColor = 0x00000000u;
+                else if (!hasBackgroundColor)
+                    disposalColor = XImage_pixel(&canvas, 0, 0);
+                XImage_fillRect(&canvas, &rect, disposalColor);
             } else if (pendingDisposal == 3) {
                 XImage snapshot;
                 XImage_init(&snapshot);
@@ -420,13 +447,19 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 snapshot.m_data = NULL;
                 XImage_deinit_base(&snapshot);
             }
+            /* GCE 只作用于紧随其后的一个图像描述，不能泄漏到下一帧。 */
+            pendingTransparency = false;
+            pendingTransparentIndex = 0;
+            pendingDelayMs = 0;
+            pendingDisposal = 0;
             continue;
         }
         goto done;
     }
 done:
     if (outCount) *outCount = count;
-    if (outLoop) *outLoop = loop == 0 ? -1 : loop;
+    if (outLoop)
+        *outLoop = loop == 0 ? -1 : (loop < 0 ? 0 : loop);
     XImage_deinit_base(&canvas);
     XImage_deinit_base(&previous);
     return ok;

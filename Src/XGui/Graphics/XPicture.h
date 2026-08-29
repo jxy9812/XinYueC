@@ -19,14 +19,13 @@ extern "C" {
 
 typedef struct XIODevice XIODevice;
 
-/* XPicture owns a small, portable command stream.  XPainter deliberately
- * contains callbacks only; it has no dependency on a windowing toolkit. */
+/* XPicture 持有紧凑的便携命令流；XPainter 仅保存回调，不依赖窗口工具包。 */
 typedef struct XImage XImage;
 typedef struct XPainter XPainter;
+typedef struct XImageTransform XImageTransform;
 struct XPainterPath;
 
-/* Stream constants are part of the XGui C ABI.  The byte stream is always
- * little-endian, regardless of the host architecture. */
+/* 流常量属于 XGui C ABI；无论主机架构如何，字节流始终采用小端序。 */
 #define XPICTURE_STREAM_VERSION 1u
 #define XPICTURE_HEADER_SIZE 40u
 #define XPICTURE_RECORD_HEADER_SIZE 8u
@@ -44,7 +43,18 @@ typedef enum XPictureOpcode
     XPictureOpcode_DrawPolygon = 8,
     XPictureOpcode_DrawPoints = 9,
     XPictureOpcode_DrawPath = 10,
-    XPictureOpcode_SetPen = 11 /**< 完整画笔状态（对标 QPicture PdcSetPen）。 */
+    XPictureOpcode_SetPen = 11, /**< 完整画笔状态（对标 QPicture PdcSetPen）。 */
+    XPictureOpcode_SetOpacity = 12, /**< 绘制器不透明度（对标 PdcSetOpacity）。 */
+    XPictureOpcode_SetCompositionMode = 13, /**< 合成模式（对标 PdcSetCompositionMode）。 */
+    XPictureOpcode_SetRenderHints = 14, /**< 渲染提示位（对标 PdcSetRenderHint）。 */
+    XPictureOpcode_SetBrushOrigin = 15, /**< 画刷原点（对标 PdcSetBrushOrigin）。 */
+    XPictureOpcode_SetTransform = 16, /**< 世界变换矩阵（对标 PdcSetWMatrix）。 */
+    XPictureOpcode_SetBackgroundColor = 17, /**< 背景颜色（对标 PdcSetBkColor）。 */
+    XPictureOpcode_SetBackgroundMode = 18, /**< 背景模式（对标 PdcSetBkMode）。 */
+    XPictureOpcode_SetBrush = 19, /**< 基础画刷样式与颜色（对标 PdcSetBrush）。 */
+    XPictureOpcode_SetWindow = 20, /**< 逻辑窗口矩形（对标 QPainter::setWindow）。 */
+    XPictureOpcode_SetViewport = 21, /**< 设备视口矩形（对标 QPainter::setViewport）。 */
+    XPictureOpcode_SetViewTransformEnabled = 22 /**< 视图变换启用状态。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -203,8 +213,7 @@ void XPicture_setBoundingRect(XPicture* self, const XRect* rect);
  */
 bool XPicture_play(const XPicture* self, XPainter* painter);
 
-/* Record commands into the portable stream.  All functions return false on
- * overflow, allocation failure, malformed existing data, or invalid input. */
+/* 将命令写入便携流；溢出、分配失败、已有数据畸形或输入无效时返回 false。 */
 /**
  * @brief 记录绘制直线命令。
  * @param self 目标图片对象指针。
@@ -227,6 +236,84 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
  */
 bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
                            int width, int cap, int join);
+/**
+ * @brief 记录绘制器整体不透明度。
+ * @param self 目标图片对象指针。
+ * @param opacity 不透明度，范围为 0.0 到 1.0；调用方应传入有限值。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetOpacity(XPicture* self, float opacity);
+/**
+ * @brief 记录绘制器合成模式。
+ * @param self 目标图片对象指针。
+ * @param mode 合成模式数值，与 XPainterCompositionMode 枚举一致。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetCompositionMode(XPicture* self, int mode);
+/**
+ * @brief 记录绘制器渲染提示位集合。
+ * @param self 目标图片对象指针。
+ * @param hints 渲染提示位集合，与 XPainterRenderHints 数值一致。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetRenderHints(XPicture* self, uint32_t hints);
+/**
+ * @brief 记录画刷原点。
+ * @param self 目标图片对象指针。
+ * @param x 画刷原点 X 坐标，使用单精度便携表示。
+ * @param y 画刷原点 Y 坐标，使用单精度便携表示。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetBrushOrigin(XPicture* self, float x, float y);
+/** @brief 记录背景颜色；回放时恢复为实心背景画刷。 */
+bool XPicture_recordSetBackgroundColor(XPicture* self, uint32_t color);
+/** @brief 记录背景填充模式；0 为透明，1 为不透明。 */
+bool XPicture_recordSetBackgroundMode(XPicture* self, int mode);
+/**
+ * @brief 记录基础画刷状态。
+ * @param self 目标图片对象指针。
+ * @param style 画刷样式枚举数值；便携流固定记录四字节整数。
+ * @param color 画刷基色，使用 ARGB32 表示。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 该接口只覆盖普通样式和基色；渐变、纹理等 QBrush 资源不在此
+ *       固定负载中编码，调用方应为这些样式保留原有边界语义。
+ */
+bool XPicture_recordSetBrush(XPicture* self, int style, uint32_t color);
+/**
+ * @brief 记录世界变换矩阵及其启用状态。
+ * @param self 目标图片对象指针。
+ * @param matrix 世界变换矩阵；九个元素按 XImageTransform 字段顺序记录。
+ * @param enabled 是否在回放绘制中应用该世界矩阵。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 便携流使用九个 IEEE-754 单精度值和一个无符号启用标志；这与
+ *       XPainter 的矩阵状态宽度一致，不暴露主机结构体填充或字节序。
+ */
+bool XPicture_recordSetTransform(XPicture* self,
+                                 const XImageTransform* matrix,
+                                 bool enabled);
+/**
+ * @brief 记录逻辑窗口矩形及其视图变换启用状态。
+ * @param self 目标图片对象指针。
+ * @param window 逻辑坐标窗口；矩形四个整数按固定宽度写入。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note Qt 的 setWindow 会保留任意整数矩形，并立即刷新组合矩阵；本记录
+ *       不对宽高作有效性裁剪，以便退化窗口的错误行为由回放绘制阶段处理。
+ */
+bool XPicture_recordSetWindow(XPicture* self, const XRect* window);
+/**
+ * @brief 记录设备视口矩形及其视图变换启用状态。
+ * @param self 目标图片对象指针。
+ * @param viewport 设备坐标视口；矩形四个整数按固定宽度写入。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetViewport(XPicture* self, const XRect* viewport);
+/**
+ * @brief 记录 window/viewport 视图变换是否启用。
+ * @param self 目标图片对象指针。
+ * @param enabled true 表示应用视图映射，false 表示暂时忽略映射。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetViewTransformEnabled(XPicture* self, bool enabled);
 /**
  * @brief 记录填充矩形命令。
  * @param self 目标图片对象指针。
@@ -389,7 +476,7 @@ bool XPicture_isDetached(const XPicture* self);
 }
 #endif
 
-/* XClass create API default-memory wrappers. */
+/* XClass 创建 API 的默认内存类型封装。 */
 #undef XPicture_create
 #define XPicture_create() XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #define XPicture_create_copy_default(other) XPicture_create_copy((other), XCLASS_DEFAULT_MEMORY_TYPE)

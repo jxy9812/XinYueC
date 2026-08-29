@@ -89,7 +89,8 @@ void XPixmap_init_file_2(XPixmap* self, const char* fileName, const char* format
 
 /**
  * @brief      从 XImage 创建像素图
- * @param self   待初始化的 XPixmap 对象指针
+ * @param self   待初始化的 XPixmap 对象指针；调用前应为未初始化对象，
+ *               或已通过 XPixmap_deinit_base() 释放的平台数据
  * @param image  源 XImage 对象指针
  * @param flags  转换标志
  */

@@ -113,7 +113,8 @@ typedef struct XColorSpace
     XColorSpaceTransformModel m_transformModel; /**< 色彩变换模型。 */
     XColorSpaceColorModel m_colorModel; /**< RGB、Gray、CMYK 或未知模型。 */
     XColorSpacePrimariesData m_primariesData; /**< 自定义或预定义原色坐标。 */
-    char m_description[64]; /**< 可选短描述；超长内容会被截断。 */
+    char m_description[64]; /**< 自动识别或预定义的短描述；超长内容会被截断。 */
+    char m_userDescription[64]; /**< 用户设置的短描述；为空时回退到自动描述。 */
 } XColorSpace;
 
 /**
@@ -196,6 +197,15 @@ XColorSpace XColorSpace_dciP3(void);
 bool XColorSpace_isValid(const XColorSpace* self);
 
 /**
+ * @brief 判断色彩空间是否可作为颜色变换的目标空间。
+ * @param self 待检查的色彩空间指针。
+ * @return 可以作为目标空间返回 true，否则返回 false。
+ * @note 当前 C99 值类型仅承载三分量矩阵模型，因此对有效空间与
+ *       Qt QColorSpace::isValidTarget() 的结果相同。
+ */
+bool XColorSpace_isValidTarget(const XColorSpace* self);
+
+/**
  * @brief 判断色彩空间是否为标准 sRGB。
  * @param self 待检查的色彩空间指针。
  * @return 为标准 sRGB 返回 true，否则返回 false。
@@ -236,6 +246,55 @@ XColorSpaceTransformModel XColorSpace_transformModel(const XColorSpace* self);
  * @return 空指针或未知空间返回 Undefined。
  */
 XColorSpaceColorModel XColorSpace_colorModel(const XColorSpace* self);
+
+/**
+ * @brief 查询色彩空间白点的 CIE xy 坐标。
+ * @param self 待读取的色彩空间指针。
+ * @return 已保存白点时返回其坐标；空指针或未设置白点时返回 (0,0)。
+ */
+XPointF XColorSpace_whitePoint(const XColorSpace* self);
+
+/**
+ * @brief 设置色彩空间白点的 CIE xy 坐标。
+ * @param self 待修改的色彩空间指针。
+ * @param whitePoint 新白点坐标；必须满足 CIE xy 有限范围约束。
+ * @note 修改会将预定义原色标记为 Custom，并清除命名空间和描述文本；当前
+ *       C99 值类型不保存 Qt 的色彩适应矩阵，因此只更新可见白点元数据。
+ */
+void XColorSpace_setWhitePoint(XColorSpace* self, XPointF whitePoint);
+
+/**
+ * @brief 将原色集合替换为预定义原色。
+ * @param self 待修改的色彩空间指针。
+ * @param primaries 新的原色集合；Custom 不执行修改。
+ * @note 修改会清除命名空间和描述文本，并保留当前传递函数。
+ */
+void XColorSpace_setPrimaries(XColorSpace* self,
+                              XColorSpacePrimaries primaries);
+
+/**
+ * @brief 修改色彩空间的传递函数。
+ * @param self 待修改的色彩空间指针。
+ * @param transferFunction 新传递函数；Custom 不执行修改。
+ * @param gamma Gamma 函数伽马值；传入非正值时使用实现的默认近似值。
+ * @note 修改会清除命名空间和描述文本，并保持原色及颜色模型。
+ */
+void XColorSpace_setTransferFunction(
+    XColorSpace* self,
+    XColorSpaceTransferFunction transferFunction,
+    float gamma);
+
+/**
+ * @brief 创建一个仅替换传递函数的色彩空间副本。
+ * @param self 源色彩空间指针。
+ * @param transferFunction 新传递函数；Custom 或无效源空间返回原副本。
+ * @param gamma Gamma 函数伽马值；传入非正值时使用实现的默认近似值。
+ * @return 修改后的值副本，不改变源对象。
+ */
+XColorSpace XColorSpace_withTransferFunction(
+    const XColorSpace* self,
+    XColorSpaceTransferFunction transferFunction,
+    float gamma);
 
 /**
  * @brief 查询自定义或预定义原色坐标。

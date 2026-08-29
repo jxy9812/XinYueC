@@ -138,7 +138,7 @@ typedef enum XImageCodecFrameDisposal
 {
     XImageCodecFrameDisposal_None = 0,           /**< 未指定/忽略。 */
     XImageCodecFrameDisposal_Keep = 1,           /**< 保留上一帧（默认）。 */
-    XImageCodecFrameDisposal_RestoreBackground = 2, /**< 恢复为背景（透明）。 */
+    XImageCodecFrameDisposal_RestoreBackground = 2, /**< 恢复逻辑屏幕背景；透明 GCE 时为透明色。 */
     XImageCodecFrameDisposal_RestorePrevious = 3    /**< 恢复为上一帧画布。 */
 } XImageCodecFrameDisposal;
 
