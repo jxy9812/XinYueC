@@ -894,6 +894,10 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                          XIconState_Off, &actual);
         expect_true(actual.width == 48 && actual.height == 48,
                     "fixed theme actualSize never exceeds source directory size");
+        XIcon_actualSizeRatio(&themedIcon, 24, 18, 2.0f,
+                              XIconMode_Normal, XIconState_Off, &actual);
+        expect_true(actual.width == 18 && actual.height == 18,
+                    "fixed theme high-DPI actualSize returns physical result as logical size");
         XIcon_deinit_base(&themedIcon);
     }
     {
@@ -950,6 +954,11 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         expect_true(scalableActual.width == 24 &&
                     scalableActual.height == 18,
                     "theme scalable actualSize preserves request rectangle");
+        XIcon_actualSizeRatio(&scalableIcon, 24, 18, 2.0f,
+                              XIconMode_Normal, XIconState_Off, &scalableActual);
+        expect_true(scalableActual.width == 24 &&
+                    scalableActual.height == 18,
+                    "theme scalable high-DPI actualSize restores logical rectangle");
         XIcon_deinit_base(&scalableIcon);
     }
     XImage_init_ex(&target, 60, 30, XImageFormat_ARGB32);
@@ -5099,6 +5108,14 @@ static void test_icon_device_pixel_ratio(void)
                 XPixmap_devicePixelRatio(&out) == 2.0f,
                 "icon DPR preserves a matching high-resolution source");
 
+    {
+        XSize actual;
+        XIcon_actualSizeRatio(&highIcon, 32, 32, 2.0f,
+                              XIconMode_Normal, XIconState_Off, &actual);
+        expect_true(actual.width == 32 && actual.height == 32,
+                    "icon high-DPI actualSize returns logical dimensions");
+    }
+
     XPixmap_deinit_base(&out);
     XIcon_deinit_base(&highIcon);
 
@@ -5191,6 +5208,14 @@ static void test_icon_device_pixel_ratio(void)
                 XPixmap_devicePixelRatio(&out) == 2.0f,
                 "icon 2x source scales down to the requested device size");
     XPixmap_deinit_base(&out);
+
+    {
+        XSize actual;
+        XIcon_actualSizeRatio(&mixedIcon, 32, 32, 2.0f,
+                              XIconMode_Normal, XIconState_Off, &actual);
+        expect_true(actual.width == 32 && actual.height == 32,
+                    "icon high-DPI actualSize keeps the logical request bounded");
+    }
 
     XVector_init(&sizes, sizeof(XSize), true);
     XIcon_availableSizes(&mixedIcon, XIconMode_Normal, XIconState_Off, &sizes);

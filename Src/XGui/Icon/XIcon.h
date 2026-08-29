@@ -283,6 +283,21 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
  */
 void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XSize* out);
 
+/**
+ * @brief      获取指定设备像素比下的图标实际逻辑尺寸
+ * @param self             目标 XIcon 对象指针
+ * @param width            目标逻辑宽度
+ * @param height           目标逻辑高度
+ * @param devicePixelRatio 设备像素比；大于 1 时先按物理尺寸查询引擎
+ * @param mode             图标显示模式
+ * @param state            图标状态
+ * @param out              输出逻辑尺寸；无效请求或无法生成资源时为零尺寸
+ * @note       对标 Qt 6.8 QIcon::actualSize() 的高 DPI 路径，结果仍以逻辑像素表示。
+ */
+void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
+                           float devicePixelRatio, XIconMode mode,
+                           XIconState state, XSize* out);
+
 /* ========== 绘制方法 ========== */
 
 /**

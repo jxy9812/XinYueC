@@ -953,6 +953,66 @@ void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, 
     out->height = (int)(sourceHeight * scale + 0.5f);
 }
 
+/* 对标 Qt 6.8 QIcon::actualSize() 的高 DPI 路径：引擎收到物理请求，
+ * 返回的物理尺寸再按实际像素量修正 DPR，最后还原为逻辑尺寸。 */
+void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
+                           float devicePixelRatio, XIconMode mode,
+                           XIconState state, XSize* out)
+{
+    int targetWidth;
+    int targetHeight;
+    XSize actual;
+    float outputRatio;
+    if (!out) return;
+    out->width = 0;
+    out->height = 0;
+    if (!self || !self->m_data || width <= 0 || height <= 0)
+        return;
+    /* NaN 与 Qt 的 !(ratio > 1) 分支一致；无穷值不能安全转换为尺寸。 */
+    if (!(devicePixelRatio > 1.0f)) {
+        XIcon_actualSize(self, width, height, mode, state, out);
+        return;
+    }
+    if (!isfinite(devicePixelRatio) ||
+        !XIconPrivate_physicalTargetSize(width, height, devicePixelRatio,
+                                         &targetWidth, &targetHeight))
+        return;
+
+    actual.width = 0;
+    actual.height = 0;
+    if (self->m_data->m_engine) {
+        XSize requested = { targetWidth, targetHeight };
+        XIconEngine_actualSize_base(self->m_data->m_engine, &requested,
+                                    mode, state, &actual);
+    } else {
+        const XIconEntry* best = XIconPrivate_bestEntryScale(
+            self->m_data, targetWidth, targetHeight, 1.0f, mode, state);
+        if (!best) return;
+        if (best->m_fileName && !best->m_loaded &&
+            !XIconPrivate_loadFileEntry((XIconPrivate*)self->m_data,
+                                         (XIconEntry*)best,
+                                         targetWidth, targetHeight, 1.0f))
+            return;
+        actual.width = XPixmap_width(&best->m_pixmap);
+        actual.height = XPixmap_height(&best->m_pixmap);
+        XIconPrivate_adjustSize(targetWidth, targetHeight,
+                                actual.width, actual.height, &actual);
+    }
+    if (actual.width <= 0 || actual.height <= 0)
+        return;
+    outputRatio = XIconPrivate_pixmapDevicePixelRatio(
+        devicePixelRatio, targetWidth, targetHeight,
+        actual.width, actual.height);
+    if (!(outputRatio > 0.0f) || !isfinite(outputRatio))
+        return;
+    out->width = (int)((double)actual.width / outputRatio + 0.5);
+    out->height = (int)((double)actual.height / outputRatio + 0.5);
+    if (out->width < 0 || out->height < 0) {
+        out->width = 0;
+        out->height = 0;
+    }
+}
+
 void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
                  uint32_t alignment, XIconMode mode, XIconState state)
 {

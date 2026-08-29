@@ -6219,3 +6219,28 @@ imageformats 插件发现、同优先级插件的 Qt 元数据排序以及未实
 
 边界：`capabilities()` 和 `canRead()` 的具体内容校验仍由各插件实现；内置 BMP 处理器与
 Qt `QBmpHandler::canRead()` 一样主要检查文件签名，截断像素区由后续 `read()` 报告无效数据。
+
+### 10.237 2026-08-29 QIcon 高 DPI actualSize 逻辑尺寸还原
+
+对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:966-978` 的
+`QIcon::actualSize()`：设备像素比大于 1 时先把逻辑请求尺寸乘以 DPR 交给引擎，
+再用 `QIconPrivate::pixmapDevicePixelRatio()` 修正引擎实际返回的物理尺寸，最后除以
+DPR 返回设备无关尺寸；普通 DPR 路径直接调用引擎。DPR 修正公式依据同文件
+`:149-166`，尺寸除法采用 `QSize::operator/` 在
+`/home/xinyue/Qt/6.8.3/Src/qtbase/src/corelib/tools/qsize.h:74-75,184-189`
+中的四舍五入语义。
+
+实现范围：`Src/XGui/Icon/XIcon.h` 新增 `XIcon_actualSizeRatio()`。引擎图标按物理请求
+调用 `XIconEngine_actualSize_base()`；内置像素图按 Qt `QPixmapIconEngine::actualSize()`
+的 scale=1 选择并以物理目标尺寸约束资源，随后统一按实际物理尺寸修正输出 DPR、还原逻辑
+尺寸。DPR 不大于 1 或 NaN 复用普通 `XIcon_actualSize()`；正无穷、尺寸溢出和非有限结果
+直接返回零尺寸，避免嵌入式 C API 的浮点到整数未定义转换。
+
+回归：`xgui_regression_test.c` 覆盖 2x 高分辨率像素图、混合 1x/2x 资源、固定主题目录、
+可缩放主题，以及普通路径的逻辑尺寸上限；默认 `build` 的全量构建、`XGuiRegression_Test`
+和 CTest 通过，`git diff --check` 通过。构建仍显示工程既有 XSignal/XEvent 等类型警告，
+环境没有独立 LSan/Valgrind 工具，未宣称零警告或零泄漏。
+
+边界：`XIcon_actualSizeRatio()` 是 C API 对 Qt 隐含应用 DPR 的显式入口，调用方需传入
+窗口或屏幕 DPR；系统 QApplication 的全局 DPR 获取仍由上层窗口模块负责。自定义引擎若
+返回超出请求的尺寸，函数保留 Qt 引擎结果语义，不额外裁剪其异常输出。
