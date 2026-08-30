@@ -107,6 +107,17 @@ void XApplication_init(XApplication* self, int argc, char** argv);
  */
 XApplication* XApplication_create_ex(XMemoryType memory, int argc, char** argv);
 
+/** @brief 通过 XClass 虚表释放 XApplication 资源（栈/外部存储对象使用）。 */
+#define XApplication_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的 XApplication 对象。 */
+#define XApplication_delete_base(self) XClass_delete_base((XClass*)(self))
+/** @brief 深拷贝 XApplication 资源。 */
+#define XApplication_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动 XApplication 资源。 */
+#define XApplication_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
+
 /**
  * @brief      查询唯一 XApplication 实例（对标 QApplication::instance）。
  * @details    仅当应用以 XApplication_create_ex 创建时返回本类型指针；

@@ -120,6 +120,12 @@ int XInputMethodEvent_replacementLength(const XInputMethodEvent* event);
 int XInputMethodEvent_cursorPosition(const XInputMethodEvent* event);
 int XInputMethodEvent_anchorPosition(const XInputMethodEvent* event);
 #define XInputMethodEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝输入法事件对象。 */
+#define XInputMethodEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动输入法事件对象。 */
+#define XInputMethodEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XInputMethodEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
@@ -160,6 +166,12 @@ XPoint XDropEvent_globalPosition(const XDropEvent* event);
 XString* XDropEvent_mimeType(const XDropEvent* event);
 XString* XDropEvent_data(const XDropEvent* event);
 #define XDropEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝拖放事件对象。 */
+#define XDropEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动拖放事件对象。 */
+#define XDropEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XDropEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
@@ -209,6 +221,12 @@ XSize XResizeEvent_normalSize(const XResizeEvent* event);
 XSize XResizeEvent_normalOldSize(const XResizeEvent* event);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XResizeEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝调整大小事件对象。 */
+#define XResizeEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动调整大小事件对象。 */
+#define XResizeEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XResizeEvent_deinit_base XEvent_deinit_base
 
@@ -253,6 +271,12 @@ void XExposeEvent_init(XExposeEvent* event, XEventType type,
 XRegion XExposeEvent_region(const XExposeEvent* event);
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
 #define XExposeEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝暴露事件对象。 */
+#define XExposeEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动暴露事件对象。 */
+#define XExposeEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
 #define XExposeEvent_deinit_base XEvent_deinit_base
 
@@ -298,6 +322,12 @@ XRegion XPaintEvent_region(const XPaintEvent* event);
 XRect XPaintEvent_rect(const XPaintEvent* event);
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
 #define XPaintEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝绘制事件对象。 */
+#define XPaintEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动绘制事件对象。 */
+#define XPaintEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
 #define XPaintEvent_deinit_base XEvent_deinit_base
 
@@ -326,6 +356,12 @@ XCloseEvent* XCloseEvent_create_ex(XMemoryType memory, XEventType type);
 void XCloseEvent_init(XCloseEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XCloseEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝关闭事件对象。 */
+#define XCloseEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动关闭事件对象。 */
+#define XCloseEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XCloseEvent_deinit_base XEvent_deinit_base
 
@@ -353,6 +389,12 @@ XShowEvent* XShowEvent_create_ex(XMemoryType memory, XEventType type);
 void XShowEvent_init(XShowEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XShowEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝显示事件对象。 */
+#define XShowEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动显示事件对象。 */
+#define XShowEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XShowEvent_deinit_base XEvent_deinit_base
 
@@ -380,6 +422,12 @@ XHideEvent* XHideEvent_create_ex(XMemoryType memory, XEventType type);
 void XHideEvent_init(XHideEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XHideEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝隐藏事件对象。 */
+#define XHideEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动隐藏事件对象。 */
+#define XHideEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XHideEvent_deinit_base XEvent_deinit_base
 
@@ -418,6 +466,12 @@ XFocusReason XFocusEvent_reason(const XFocusEvent* event);
 void XFocusEvent_setReason(XFocusEvent* event, XFocusReason reason);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XFocusEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝焦点事件对象。 */
+#define XFocusEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动焦点事件对象。 */
+#define XFocusEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XFocusEvent_deinit_base XEvent_deinit_base
 
@@ -478,6 +532,12 @@ XMouseButton XWheelEvent_buttons(const XWheelEvent* event);
 XKeyboardModifiers XWheelEvent_modifiers(const XWheelEvent* event);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XWheelEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝滚轮事件对象。 */
+#define XWheelEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动滚轮事件对象。 */
+#define XWheelEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XWheelEvent_deinit_base XEvent_deinit_base
 
@@ -517,6 +577,12 @@ XPoint XEnterEvent_position(const XEnterEvent* event);
 XPoint XEnterEvent_globalPosition(const XEnterEvent* event);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XEnterEvent_delete_base XEvent_delete_base
+/** @brief 深拷贝指针进入事件对象。 */
+#define XEnterEvent_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动指针进入事件对象。 */
+#define XEnterEvent_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XEnterEvent_deinit_base XEvent_deinit_base
 

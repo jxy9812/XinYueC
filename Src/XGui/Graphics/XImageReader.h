@@ -97,6 +97,11 @@ void XImageReader_init_file(XImageReader* self, const XString* fileName, const X
 void XImageReader_init_file_2(XImageReader* self, const char* fileName, const char* format);
 
 /** @brief 通过 XClass 虚表释放读取器资源。 @param self 待读取器指针。 */
+#define XImageReader_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 通过 XClass 虚表移动读取器资源。 @param self 目标读取器指针。 @param other 源读取器指针。 */
+#define XImageReader_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XImageReader_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像读取器。 @param self 待读取器指针。 */
 #define XImageReader_delete_base(self) XClass_delete_base((XClass*)(self))

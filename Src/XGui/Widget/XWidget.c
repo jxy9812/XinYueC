@@ -1176,7 +1176,7 @@ static void VXWidget_deinit(XWidget* self)
         self->m_cursor = NULL;
     }
 #endif /* XCURSOR_ON */
-    XFont_deinit(&self->m_font);
+    XFont_deinit_base(&self->m_font);
     XIcon_deinit_base(&self->m_icon);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
@@ -1205,7 +1205,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     }
 #endif /* XCURSOR_ON */
     self->m_cursor = NULL;
-    XFont_deinit(&self->m_font);
+    XFont_deinit_base(&self->m_font);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
@@ -1254,7 +1254,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #else
     self->m_palette = other->m_palette;
 #endif
-    XFont_copy(&self->m_font, &other->m_font);
+    XFont_copy_base(&self->m_font, &other->m_font);
     XIcon_copy_base(&self->m_icon, &other->m_icon);
 #if XCURSOR_ON
     if (other->m_cursor) {
@@ -1301,7 +1301,7 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     }
 #endif
     XIcon_move_base(&self->m_icon, &other->m_icon);
-    XFont_move(&self->m_font, &other->m_font);
+    XFont_move_base(&self->m_font, &other->m_font);
 #if XLAYOUT_ON
     /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。 */
     self->m_layout = other->m_layout;
@@ -3147,8 +3147,8 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     if (!self || !font) return;
     XFont_init(&temp);
     XFont_copy_base(&temp, font);
-    XFont_deinit(&self->m_font);
-    XFont_move(&self->m_font, &temp);
+    XFont_deinit_base(&self->m_font);
+    XFont_move_base(&self->m_font, &temp);
     XWidget_updateGeometry(self);
     XWidget_update(self);
 }

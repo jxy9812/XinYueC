@@ -146,48 +146,111 @@ static int label_displayByteLen(const XString* display)
 static int label_pixelSize(const XLabel* self)
 {
     XFont f;
+    XFontBitmapInfo info;
     int px;
-    if (!self) return XFONT8X16_HEIGHT;
+    if (!self) return XFONT_DEFAULT_PIXEL_SIZE > 0
+                       ? XFONT_DEFAULT_PIXEL_SIZE : XFONT8X16_HEIGHT;
     f = XWidget_font((XWidget*)self);
-    px = XFont_bitmapPixelSize(&f, XFONT8X16_HEIGHT);
-    XFont_deinit(&f);
+    memset(&info, 0, sizeof(info));
+    info.m_height = XFONT8X16_HEIGHT;
+    info.m_rowBytes = 1;
+    (void)XFont_bitmapFontInfo(&f, &info);
+    px = XFont_bitmapPixelSize(&f, info.m_height);
+    XFont_deinit_base(&f);
     return px;
 }
 
-/** @brief 返回整倍缩放系数（复用 XFont 的通用位图缩放算法）。 */
-static int label_scale(const XLabel* self)
+/** @brief 读取当前字体字库度量；不可用时回退内置 8x16 度量。 */
+static XFontBitmapInfo label_bitmapInfo(const XLabel* self)
+{
+    XFontBitmapInfo info;
+    XFont f;
+    memset(&info, 0, sizeof(info));
+    info.m_width = XFONT8X16_WIDTH;
+    info.m_height = XFONT8X16_HEIGHT;
+    info.m_ascent = XFONT8X16_ASCENT;
+    info.m_descent = XFONT8X16_DESCENT;
+    info.m_rowBytes = 1;
+    info.m_bpp = 1;
+    if (!self)
+        return info;
+    f = XWidget_font((XWidget*)self);
+    (void)XFont_bitmapFontInfo(&f, &info);
+    XFont_deinit_base(&f);
+    return info;
+}
+
+/** @brief 返回按目标像素字号计算的实际缩放因子。 */
+static float label_scale(const XLabel* self)
 {
     XFont f;
-    int sc;
-    if (!self) return 1;
+    XFontBitmapInfo info;
+    float sc;
+    if (!self) return 1.0f;
     f = XWidget_font((XWidget*)self);
-    sc = XFont_bitmapScaleForFont(&f, XFONT8X16_HEIGHT);
-    XFont_deinit(&f);
+    memset(&info, 0, sizeof(info));
+    info.m_height = XFONT8X16_HEIGHT;
+    info.m_rowBytes = 1;
+    info.m_bpp = 1;
+    (void)XFont_bitmapFontInfo(&f, &info);
+    sc = (float)(XFont_pixelSize(&f) > 0 ? XFont_pixelSize(&f) : info.m_height) /
+         (float)(info.m_height > 0 ? info.m_height : 1);
+    XFont_deinit_base(&f);
     return sc;
+}
+
+/** @brief 将字库度量按当前字体的最终像素高度换算为设备像素。 */
+static int label_scaledMetric(const XLabel* self, int baseMetric)
+{
+    float value;
+    if (baseMetric <= 0)
+        return 0;
+    value = (float)baseMetric * (float)label_scale(self);
+    return value < 1.0f ? 1 : (int)(value + 0.5f);
+}
+
+static int label_scaledMetricValue(int baseMetric, float scale)
+{
+    float value;
+    if (baseMetric <= 0 || !(scale > 0.0f))
+        return 0;
+    value = (float)baseMetric * scale;
+    return value < 1.0f ? 1 : (int)(value + 0.5f);
 }
 
 /** @brief 缩放后单字宽（= 8 x scale）。 */
 static int label_advance(const XLabel* self)
 {
-    return XFONT8X16_WIDTH * label_scale(self);
+    return label_scaledMetric(self, label_bitmapInfo(self).m_width);
+}
+
+/** @brief 返回一个 UTF-8 字形按当前 LVGL 字库计算后的设备宽度。 */
+static int label_glyphAdvance(const XFont* font, const char* utf8,
+                              int glyphLen, int fallback)
+{
+    int width;
+    if (!utf8 || glyphLen <= 0)
+        return fallback > 0 ? fallback : 1;
+    width = XPainter_textWidthRange(font, utf8, 0, glyphLen);
+    return width > 0 ? width : (fallback > 0 ? fallback : 1);
 }
 
 /** @brief 缩放后行高（= 16 x scale）。 */
 static int label_lineHeight(const XLabel* self)
 {
-    return XFONT8X16_HEIGHT * label_scale(self);
+    return label_scaledMetric(self, label_bitmapInfo(self).m_height);
 }
 
 /** @brief 缩放后基线以上高度（= 13 x scale）。 */
 static int label_ascent(const XLabel* self)
 {
-    return XFONT8X16_ASCENT * label_scale(self);
+    return label_scaledMetric(self, label_bitmapInfo(self).m_ascent);
 }
 
 /** @brief 缩放后基线以下高度（= 3 x scale）。 */
 static int label_descent(const XLabel* self)
 {
-    return XFONT8X16_DESCENT * label_scale(self);
+    return label_scaledMetric(self, label_bitmapInfo(self).m_descent);
 }
 
 /* ==================== 信号发射（复用 XObject 信号机制） ==================== */
@@ -605,16 +668,14 @@ void label_freeLinks(XLabel* self)
 
 /** @brief 把一个单词按可用宽度硬切为多行（等宽字体每字形 8*scale 像素）。 */
 static void label_emitHardBreak(const char* utf8, int start, int end,
-                                int availWidth, int scale, LabelLine* lines,
+                                int availWidth, int glyphW, LabelLine* lines,
                                 int* count, int cap)
 {
-    int glyphW;
     int maxGlyphs;
     int p = start;
     int lineStart = start;
     int glyphs = 0;
-    if (scale < 1) scale = 1;
-    glyphW = XFONT8X16_WIDTH * scale;
+    if (glyphW < 1) glyphW = XFONT8X16_WIDTH;
     maxGlyphs = availWidth / glyphW;
     if (maxGlyphs < 1) maxGlyphs = 1;
     while (p < end) {
@@ -651,8 +712,19 @@ static void label_layoutSegment(const char* utf8, int start, int end,
     int lineWidth = 0;
     int lastWordEnd = start;
     bool haveWord = false;
-    int scale = XFont_bitmapScaleForFont(font, XFONT8X16_HEIGHT);
-    if (scale < 1) scale = 1;
+    float scale;
+    XFontBitmapInfo bitmapInfo;
+    memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+    bitmapInfo.m_width = XFONT8X16_WIDTH;
+    bitmapInfo.m_height = XFONT8X16_HEIGHT;
+    bitmapInfo.m_ascent = XFONT8X16_ASCENT;
+    bitmapInfo.m_descent = XFONT8X16_DESCENT;
+    bitmapInfo.m_rowBytes = 1;
+    bitmapInfo.m_bpp = 1;
+    (void)XFont_bitmapFontInfo(font, &bitmapInfo);
+    scale = (float)(XFont_pixelSize(font) > 0 ? XFont_pixelSize(font) : bitmapInfo.m_height) /
+            (float)(bitmapInfo.m_height > 0 ? bitmapInfo.m_height : 1);
+    if (!(scale > 0.0f)) scale = 1.0f;
     if (!wrap) {
         if (*count < cap) {
             lines[*count].m_start = start;
@@ -715,11 +787,14 @@ static void label_layoutSegment(const char* utf8, int start, int end,
         wordWidth = XPainter_textWidthRange(font, utf8, wordStart,
                                            wordEnd);
         spaceWidth = (haveWord ? (wordStart - lastWordEnd) *
-                                     XFONT8X16_WIDTH * scale : 0);
+                                      label_scaledMetricValue(bitmapInfo.m_width,
+                                                              scale) : 0);
         if (!haveWord) {
             if (wordWidth > availWidth) {
                 label_emitHardBreak(utf8, wordStart, wordEnd, availWidth,
-                                    scale, lines, count, cap);
+                                    label_scaledMetricValue(bitmapInfo.m_width,
+                                                            scale),
+                                    lines, count, cap);
                 lastWordEnd = wordEnd;
                 lineStart = wordEnd;
                 lineWidth = 0;
@@ -810,7 +885,7 @@ static void label_textBlockSize(const XLabel* self, int layoutWidth,
     {
         XFont font = XWidget_font((XWidget*)self);
         n = label_layout(utf8, layoutWidth, wrap, &font, &lines);
-        XFont_deinit(&font);
+        XFont_deinit_base(&font);
     }
     for (i = 0; i < n; ++i)
         if (lines[i].m_width > w) w = lines[i].m_width;
@@ -945,7 +1020,7 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
                                         self->m_wordWrap ? availWidth : -1,
                                         self->m_wordWrap, &font,
                                         &out->m_lines);
-        XFont_deinit(&font);
+        XFont_deinit_base(&font);
     }
     textH = out->m_lineCount * label_lineHeight(self);
     out->m_rect.x = cr->x;
@@ -990,20 +1065,34 @@ static void label_drawLine(XPainter* painter, const char* utf8,
     int p = start;
     int gx = x;
     int u16 = utf16Offset;
-    int scale;
-    int adv;
+    float scale;
+    int fallbackAdvance;
+    XFontBitmapInfo bitmapInfo;
     fnt = XPainter_font(painter);
-    scale = (fnt ? XFont_bitmapScaleForFont(fnt, XFONT8X16_HEIGHT) : 1);
-    if (scale < 1) scale = 1;
-    adv = XFONT8X16_WIDTH * scale;
+    memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+    bitmapInfo.m_width = XFONT8X16_WIDTH;
+    bitmapInfo.m_height = XFONT8X16_HEIGHT;
+    bitmapInfo.m_ascent = XFONT8X16_ASCENT;
+    bitmapInfo.m_descent = XFONT8X16_DESCENT;
+    bitmapInfo.m_rowBytes = 1;
+    bitmapInfo.m_bpp = 1;
+    if (fnt)
+        (void)XFont_bitmapFontInfo(fnt, &bitmapInfo);
+    scale = (fnt ? (float)(XFont_pixelSize(fnt) > 0 ? XFont_pixelSize(fnt) : bitmapInfo.m_height) /
+                    (float)(bitmapInfo.m_height > 0 ? bitmapInfo.m_height : 1) : 1);
+    if (!(scale > 0.0f)) scale = 1.0f;
+    fallbackAdvance = label_scaledMetricValue(bitmapInfo.m_width, scale);
     while (p < end) {
         int glyphLen = label_utf8len(&utf8[p]);
+        int glyphAdvance;
         int u16len;
         int li;
         bool selected;
         bool inLink;
         uint32_t color;
         if (glyphLen <= 0) break;
+        glyphAdvance = label_glyphAdvance(fnt, &utf8[p], glyphLen,
+                                          fallbackAdvance);
         u16len = label_utf16len(&utf8[p]);
         selected = (selStart >= 0) &&
                    (u16 < selEnd) && (u16 + u16len > selStart);
@@ -1015,8 +1104,10 @@ static void label_drawLine(XPainter* painter, const char* utf8,
             }
         }
         if (selected) {
-            XRect r = { gx, baselineY - XFONT8X16_ASCENT * scale,
-                        adv, XFONT8X16_HEIGHT * scale };
+            XRect r = { gx, baselineY - label_scaledMetricValue(
+                                      bitmapInfo.m_ascent, scale),
+                        glyphAdvance,
+                        label_scaledMetricValue(bitmapInfo.m_height, scale) };
             XPainter_fillRect(painter, &r, hlBg);
             color = hlFg;
         } else if (inLink) {
@@ -1026,7 +1117,7 @@ static void label_drawLine(XPainter* painter, const char* utf8,
         }
         XPainter_drawGlyph(painter, gx, baselineY,
                           &utf8[p], color);
-        gx += adv;
+        gx += glyphAdvance;
         p += glyphLen;
         u16 += u16len;
     }
@@ -1054,7 +1145,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
     {
         XFont font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
-        XFont_deinit(&font);
+        XFont_deinit_base(&font);
     }
     utf16pos = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
@@ -1109,6 +1200,7 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
         XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
         return -1;
     }
+    utf8 = XString_toUtf8(self->m_displayText);
     {
         int x = label_lineX(&layout, lineIndex,
                             label_visualAlignment(self, self->m_alignment));
@@ -1118,11 +1210,25 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
             return -1;
         }
         {
-            int advance = label_advance(self);
-            glyphIndex = advance > 0 ? (pos->x - x) / advance : 0;
+            XFont font = XWidget_font((XWidget*)self);
+            int cursor = x;
+            int byteAt = layout.m_lines[lineIndex].m_start;
+            glyphIndex = 0;
+            while (byteAt < layout.m_lines[lineIndex].m_end) {
+                int glyphLen = label_utf8len(&utf8[byteAt]);
+                int glyphWidth;
+                if (glyphLen <= 0) break;
+                glyphWidth = label_glyphAdvance(
+                    &font, &utf8[byteAt], glyphLen, label_advance(self));
+                if (pos->x < cursor + glyphWidth / 2)
+                    break;
+                cursor += glyphWidth;
+                byteAt += glyphLen;
+                ++glyphIndex;
+            }
+            XFont_deinit_base(&font);
         }
     }
-    utf8 = XString_toUtf8(self->m_displayText);
     byte = layout.m_lines[lineIndex].m_start;
     g = 0;
     while (g < glyphIndex && byte < layout.m_lines[lineIndex].m_end) {
@@ -1226,8 +1332,23 @@ static int label_posToUtf16(const XLabel* self, const XPoint* pos)
     else if (pos->x >= x + lw)
         glyphIndex = lineGlyphs;
     else {
-        int adv = label_advance(self);
-        glyphIndex = adv > 0 ? (pos->x - x) / adv : 0;
+        XFont font = XWidget_font((XWidget*)self);
+        int cursor = x;
+        int p = layout.m_lines[lineIndex].m_start;
+        glyphIndex = 0;
+        while (p < layout.m_lines[lineIndex].m_end) {
+            int glyphLen = label_utf8len(&utf8[p]);
+            int glyphWidth;
+            if (glyphLen <= 0) break;
+            glyphWidth = label_glyphAdvance(
+                &font, &utf8[p], glyphLen, label_advance(self));
+            if (pos->x < cursor + glyphWidth / 2)
+                break;
+            cursor += glyphWidth;
+            p += glyphLen;
+            ++glyphIndex;
+        }
+        XFont_deinit_base(&font);
         if (glyphIndex > lineGlyphs) glyphIndex = lineGlyphs;
     }
     byte = layout.m_lines[lineIndex].m_start;
@@ -2108,19 +2229,16 @@ void XLabel_setTextPixelSize(XLabel* self, int pixelHeight)
 {
     XFont source;
     XFont font;
-    int h;
     if (!self) return;
-    if (pixelHeight <= 0) pixelHeight = XFONT8X16_HEIGHT;
-    h = (pixelHeight + XFONT8X16_HEIGHT - 1) / XFONT8X16_HEIGHT;
-    if (h < 1) h = 1;
-    /* 写入基类 XFont.pixelSize，再经 XWidget_setFont 统一刷新 */
     source = XWidget_font((XWidget*)self);
+    if (pixelHeight <= 0) pixelHeight = label_bitmapInfo(self).m_height;
+    /* 写入基类 XFont.pixelSize，再经 XWidget_setFont 统一刷新 */
     XFont_init(&font);
     XFont_copy_base(&font, &source);
-    XFont_deinit(&source);
-    XFont_setPixelSize(&font, XFont_bitmapScaledSize(XFONT8X16_HEIGHT, h));
+    XFont_deinit_base(&source);
+    XFont_setPixelSize(&font, pixelHeight);
     XWidget_setFont((XWidget*)self, &font);
-    XFont_deinit(&font);
+    XFont_deinit_base(&font);
 }
 
 bool XLabel_hasScaledContents(const XLabel* self)

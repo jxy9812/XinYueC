@@ -15,7 +15,6 @@
  ******************************************************************************/
 #include "XPainter.h"
 #include "XMemory.h"
-#include "XFont8x16.h"
 #if XPAINTER_PIXMAP_ON
 #include "XPixmap.h"
 #endif /* XPAINTER_PIXMAP_ON */
@@ -27,13 +26,26 @@
 #include <limits.h>
 
 /* ========== 文本绘制工具前向声明（drawTextRect 使用，定义在文件末尾文本段） ========== */
-typedef struct PainterBitmapFontTable PainterBitmapFontTable;
-static const PainterBitmapFontTable* painterBitmapFont(const XFont* font);
-static int painterBitmapScaleForFont(const XFont* font);
+typedef struct PainterBitmapFontTable
+{
+    int m_width;
+    int m_height;
+    int m_ascent;
+    int m_descent;
+    int m_rowBytes;
+    int m_bpp;
+} PainterBitmapFontTable;
+static PainterBitmapFontTable painterBitmapFont(const XFont* font);
+static float painterBitmapScaleForFont(const XFont* font);
 static uint32_t painter8x16DecodeNext(const char** p);
 static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                        int baselineY, uint32_t color,
-                                       const unsigned char* glyph, int scale);
+                                       const unsigned char* glyph, float scale,
+                                       const PainterBitmapFontTable* table,
+                                       const XFontGlyphDsc* dsc);
+static int painter8x16GlyphAdvance(const XFontGlyphDsc* dsc,
+                                   const PainterBitmapFontTable* table,
+                                   float scale);
 static uint32_t painter8x16DecodeNextBounded(const char** p, const char* end);
 
 /* ========== 内部常量 ========== */
@@ -627,7 +639,8 @@ static bool painterStatePush(XPainter* self)
     {
         XFont fontCopy;
         XPainterState* saved = &self->m_stateStack[self->m_stateCount];
-        XFont_copy(&fontCopy, &saved->m_font);
+        XFont_init(&fontCopy);
+        XFont_copy_base(&fontCopy, &saved->m_font);
         saved->m_font = fontCopy;
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         XRegion_init(&saved->m_clipRegion);
@@ -646,7 +659,7 @@ static void painterStatePop(XPainter* self)
 {
     if (!self || self->m_stateCount <= 0) return;
     --self->m_stateCount;
-    XFont_deinit(&self->m_state.m_font);
+    XFont_deinit_base(&self->m_state.m_font);
     {
         XFont fontCopy;
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
@@ -656,10 +669,11 @@ static void painterStatePop(XPainter* self)
                      &regionCopy);
         XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
-        XFont_copy(&fontCopy, &self->m_stateStack[self->m_stateCount].m_font);
+        XFont_init(&fontCopy);
+        XFont_copy_base(&fontCopy, &self->m_stateStack[self->m_stateCount].m_font);
         self->m_state = self->m_stateStack[self->m_stateCount];
         self->m_state.m_font = fontCopy;
-        XFont_deinit(&self->m_stateStack[self->m_stateCount].m_font);
+        XFont_deinit_base(&self->m_stateStack[self->m_stateCount].m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         self->m_state.m_clipRegion = regionCopy;
         XRegion_deinit(&self->m_stateStack[self->m_stateCount].m_clipRegion);
@@ -2533,7 +2547,7 @@ void XPainter_deinit(XPainter* self)
     if (!self) return;
     if (!self->m_initialized) return;
     XPainter_end(self);
-    XFont_deinit(&self->m_state.m_font);
+    XFont_deinit_base(&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -2609,13 +2623,13 @@ bool XPainter_end(XPainter* self)
         int i;
         for (i = 0; i < self->m_stateCount; ++i)
         {
-            XFont_deinit(&self->m_stateStack[i].m_font);
+            XFont_deinit_base(&self->m_stateStack[i].m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
             XRegion_deinit(&self->m_stateStack[i].m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
         }
     }
-    XFont_deinit(&self->m_state.m_font);
+    XFont_deinit_base(&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -3216,9 +3230,9 @@ bool XPainter_drawPicture(XPainter* self, const XPicture* picture, int x, int y)
 void XPainter_setFont(XPainter* self, const XFont* font)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
-    XFont_deinit(&self->m_state.m_font);
+    XFont_deinit_base(&self->m_state.m_font);
     if (font)
-        XFont_copy(&self->m_state.m_font, font);
+        XFont_copy_base(&self->m_state.m_font, font);
     else
         XFont_init(&self->m_state.m_font);
 }
@@ -3228,7 +3242,7 @@ const XFont* XPainter_font(const XPainter* self)
     return self ? &self->m_state.m_font : NULL;
 }
 
-/* ========== 内置 8x16 点阵文本（数据来自 XFont8x16，算法在本文件实现） ========== */
+/* ========== 内置点阵文本（数据来自 XFont provider，算法在本文件实现） ========== */
 
 /* ---------- 内部工具：UTF-8 解码 / 缩放 / 逐字形绘制 ---------- */
 
@@ -3349,30 +3363,524 @@ invalid:
     return 0xFFFDu;
 }
 
-/** @brief 规范化整倍缩放系数（<1 按 1 处理；统一复用 XFont 位图缩放算法）。 */
-static int painter8x16Scale(int scale)
+/** @brief 将位图坐标映射到当前 XFont_setPixelSize() 的设备像素。 */
+static int painter8x16Edge(int base, float scale)
 {
-    return XFont_bitmapScaledSize(1, scale);
+    float value;
+    if (base < 0 || !(scale > 0.0f) || !isfinite(scale))
+        return 0;
+    value = (float)base * scale;
+    return value > 0.0f ? (int)(value + 0.5f) : 0;
+}
+
+static int painter8x16Metric(int base, float scale)
+{
+    int value = painter8x16Edge(base, scale);
+    return value > 0 ? value : (base > 0 ? 1 : 0);
 }
 
 /**
- * @brief      逐运行段绘制一个 8x16 字形（最近邻整倍缩放）。
+ * @brief      计算 LVGL 字形描述中的设备坐标顶部。
+ * @details    与 LVGL lv_draw_label.c 保持相同的公式：
+ *             line_top + (line_height - base_line) - box_h - ofs_y。
+ *             这里 baselineY 已经是 line_top + (line_height - base_line)，
+ *             因此字形顶部为 baselineY - box_h - ofs_y。
+ */
+static float painter8x16GlyphOriginY(int baselineY, float transformY,
+                                     float scale,
+                                     const PainterBitmapFontTable* table,
+                                     const XFontGlyphDsc* dsc)
+{
+    float boxHeight = dsc ? (float)dsc->box_h
+                          : (table ? (float)table->m_height : 0.0f);
+    float ofsY = dsc ? (float)dsc->ofs_y : 0.0f;
+    return (float)baselineY + transformY - (boxHeight + ofsY) * scale;
+}
+
+/**
+ * @brief      读取原始点阵单元。
+ * @details    每个单元的用户空间范围严格为 [x,x+1) x [y,y+1)，与
+ *             最近邻缩放路径填充的矩形完全一致；范围外按背景处理。
+ */
+static int painter8x16MaskValue(const unsigned char* glyph,
+                                const PainterBitmapFontTable* table,
+                                int x, int y)
+{
+    if (!glyph || !table || x < 0 || x >= table->m_width ||
+        y < 0 || y >= table->m_height)
+        return 0;
+    if (table->m_bpp == 1)
+        return (glyph[y * table->m_rowBytes + x / 8] &
+                (0x80u >> (x % 8))) != 0u ? 1 : 0;
+    if (table->m_bpp > 1)
+    {
+        int bit;
+        int value = 0;
+        int i;
+        /* LVGL fmt_txt stores every pixel MSB first, including 4bpp data. */
+        for (i = 0; i < table->m_bpp; ++i)
+        {
+            bit = x * table->m_bpp + i;
+            value = (value << 1) |
+                    ((glyph[y * table->m_rowBytes + bit / 8] >>
+                      (7 - (bit % 8))) & 1u);
+        }
+        return value;
+    }
+    return 0;
+}
+
+static int painter8x16MaskBit(const unsigned char* glyph,
+                              const PainterBitmapFontTable* table,
+                              int x, int y)
+{
+    return painter8x16MaskValue(glyph, table, x, y) != 0 ? 1 : 0;
+}
+
+static int painter8x16FloorInt(float value);
+static int painter8x16CeilInt(float value);
+
+/** @brief 读取 LVGL 灰度单元的归一化覆盖率。 */
+static float painter8x16MaskCoverage(const unsigned char* glyph,
+                                     const PainterBitmapFontTable* table,
+                                     int x, int y)
+{
+    int value;
+    if (!glyph || !table || table->m_bpp <= 0)
+        return 0.0f;
+    value = painter8x16MaskValue(glyph, table, x, y);
+    if (value <= 0)
+        return 0.0f;
+    if (table->m_bpp == 1)
+        return 1.0f;
+    return (float)value / (float)((1u << table->m_bpp) - 1u);
+}
+
+#define XPAINTER_TEXT_AA_CORNER_RADIUS 0.35f
+#define XPAINTER_TEXT_AA_DIAGONAL_RADIUS 0.28f
+
+/** @brief 判断黑色单元的某个外凸转角是否暴露在轮廓上。 */
+static bool painter8x16CornerExposed(const unsigned char* glyph,
+                                     const PainterBitmapFontTable* table,
+                                     int cellX, int cellY, int cornerX,
+                                     int cornerY)
+{
+    return painter8x16MaskBit(glyph, table, cellX + cornerX, cellY) == 0 &&
+           painter8x16MaskBit(glyph, table, cellX, cellY + cornerY) == 0 &&
+           painter8x16MaskBit(glyph, table, cellX + cornerX,
+                              cellY + cornerY) == 0;
+}
+
+/**
+ * @brief 判断黑色单元是否只通过一个角与另一个黑色单元相接。
+ * @details 两个正交邻居为空而对角邻居为黑时，点阵轮廓在这里会形成
+ *          最明显的阶梯尖角；该规则只处理这个局部角，不触碰三黑一白
+ *          的连续笔画转角。
+ */
+static bool painter8x16DiagonalCorner(const unsigned char* glyph,
+                                      const PainterBitmapFontTable* table,
+                                      int cellX, int cellY, int cornerX,
+                                      int cornerY)
+{
+    int sideA = painter8x16MaskBit(glyph, table, cellX + cornerX, cellY);
+    int sideB = painter8x16MaskBit(glyph, table, cellX, cellY + cornerY);
+    int diagonal = painter8x16MaskBit(glyph, table, cellX + cornerX,
+                                      cellY + cornerY);
+    return sideA == 0 && sideB == 0 && diagonal != 0;
+}
+
+/** @brief 判断黑色单元是否处于黑白边界上。 */
+static bool painter8x16BoundaryCell(const unsigned char* glyph,
+                                    const PainterBitmapFontTable* table,
+                                    int cellX, int cellY)
+{
+    return painter8x16MaskBit(glyph, table, cellX, cellY) &&
+           (painter8x16MaskBit(glyph, table, cellX - 1, cellY) == 0 ||
+            painter8x16MaskBit(glyph, table, cellX + 1, cellY) == 0 ||
+            painter8x16MaskBit(glyph, table, cellX, cellY - 1) == 0 ||
+            painter8x16MaskBit(glyph, table, cellX, cellY + 1) == 0);
+}
+
+/**
+ * @brief      对单个黑色点阵单元的外凸角做局部圆弧重建。
+ * @details    半径小于源单元的一半，只重建暴露的外凸角；直边和黑色
+ *             单元内部完全不变。这样 2x 放大时至少有约一个设备像素
+ *             的灰度过渡，能消除点阵台阶，同时不会侵蚀细笔画主体。
+ *             圆弧是四分之一圆的等价低成本表示，适合无第三方库的嵌入式
+ *             光栅路径；目标像素覆盖率仍由外层采样得到。
+ */
+static float painter8x16SmoothMaskSample(const unsigned char* glyph,
+                                         const PainterBitmapFontTable* table,
+                                         float sourceX, float sourceY)
+{
+    const float radius = XPAINTER_TEXT_AA_CORNER_RADIUS;
+    int cellX;
+    int cellY;
+    float localX;
+    float localY;
+    if (!glyph || !isfinite(sourceX) || !isfinite(sourceY))
+        return 0.0f;
+    cellX = painter8x16FloorInt(sourceX);
+    cellY = painter8x16FloorInt(sourceY);
+    localX = sourceX - (float)cellX;
+    localY = sourceY - (float)cellY;
+    if (!painter8x16MaskBit(glyph, table, cellX, cellY))
+        return 0.0f;
+
+    /* 凸角使用几何圆弧。直边严格保留点阵单元的 0/1 覆盖，避免在长
+       直边上叠加一圈灰边；目标像素跨过直边时，外层面积采样自然会
+       产生真实覆盖率。 */
+    if (localX < radius && localY < radius &&
+        painter8x16CornerExposed(glyph, table, cellX, cellY, -1, -1))
+    {
+        float dx = radius - localX;
+        float dy = radius - localY;
+        return dx * dx + dy * dy <= radius * radius ? 1.0f : 0.0f;
+    }
+    if (localX >= 1.0f - radius && localY < radius &&
+        painter8x16CornerExposed(glyph, table, cellX, cellY, 1, -1))
+    {
+        float dx = localX - (1.0f - radius);
+        float dy = radius - localY;
+        return dx * dx + dy * dy <= radius * radius ? 1.0f : 0.0f;
+    }
+    if (localX < radius && localY >= 1.0f - radius &&
+        painter8x16CornerExposed(glyph, table, cellX, cellY, -1, 1))
+    {
+        float dx = radius - localX;
+        float dy = localY - (1.0f - radius);
+        return dx * dx + dy * dy <= radius * radius ? 1.0f : 0.0f;
+    }
+    if (localX >= 1.0f - radius && localY >= 1.0f - radius &&
+        painter8x16CornerExposed(glyph, table, cellX, cellY, 1, 1))
+    {
+        float dx = localX - (1.0f - radius);
+        float dy = localY - (1.0f - radius);
+        return dx * dx + dy * dy <= radius * radius ? 1.0f : 0.0f;
+    }
+
+    /* 对角相接的两个黑色单元只共享一个顶点。用更小的局部曲线削掉
+       这个顶点周围的尖角，既不把它们桥接起来，也不削弱连续笔画。 */
+    {
+        const float diagonalRadius = XPAINTER_TEXT_AA_DIAGONAL_RADIUS;
+        float dx;
+        float dy;
+        if (localX < diagonalRadius && localY < diagonalRadius &&
+            painter8x16DiagonalCorner(glyph, table, cellX, cellY, -1, -1))
+        {
+            dx = diagonalRadius - localX;
+            dy = diagonalRadius - localY;
+            return dx * dx + dy * dy > diagonalRadius * diagonalRadius
+                       ? 1.0f : 0.0f;
+        }
+        if (localX >= 1.0f - diagonalRadius && localY < diagonalRadius &&
+            painter8x16DiagonalCorner(glyph, table, cellX, cellY, 1, -1))
+        {
+            dx = localX - (1.0f - diagonalRadius);
+            dy = diagonalRadius - localY;
+            return dx * dx + dy * dy > diagonalRadius * diagonalRadius
+                       ? 1.0f : 0.0f;
+        }
+        if (localX < diagonalRadius && localY >= 1.0f - diagonalRadius &&
+            painter8x16DiagonalCorner(glyph, table, cellX, cellY, -1, 1))
+        {
+            dx = diagonalRadius - localX;
+            dy = localY - (1.0f - diagonalRadius);
+            return dx * dx + dy * dy > diagonalRadius * diagonalRadius
+                       ? 1.0f : 0.0f;
+        }
+        if (localX >= 1.0f - diagonalRadius &&
+            localY >= 1.0f - diagonalRadius &&
+            painter8x16DiagonalCorner(glyph, table, cellX, cellY, 1, 1))
+        {
+            dx = localX - (1.0f - diagonalRadius);
+            dy = localY - (1.0f - diagonalRadius);
+            return dx * dx + dy * dy > diagonalRadius * diagonalRadius
+                       ? 1.0f : 0.0f;
+        }
+    }
+
+    return 1.0f;
+}
+
+/**
+ * @brief      计算放大后目标像素的真实点阵单元覆盖率。
+ * @details    pixelX/pixelY 是目标像素左上角相对字形原点的设备坐标。
+ *             目标像素反投影到点阵坐标后，使用固定 16x16 子采样估计黑色
+ *             源单元的面积。每个源单元都是 [x,x+1) x [y,y+1)，所以黑色
+ *             单元内部严格保持 1.0；外凸角和对角接缝使用局部曲线
+ *             产生中间值，白色区域不会被扩张。
+ *             该实现不依赖距离场或 smoothstep，避免量化误差造成的细笔画
+ *             断裂。
+ */
+static float painter8x16GlyphCoverage(const unsigned char* glyph,
+                                       const PainterBitmapFontTable* table,
+                                       float pixelX, float pixelY,
+                                       float scale)
+{
+    enum { XPAINTER_TEXT_AA_GRID = 16 };
+    float left;
+    float top;
+    float right;
+    float bottom;
+    float area = 0.0f;
+    int firstX;
+    int lastX;
+    int firstY;
+    int lastY;
+    int cellY;
+    if (!glyph || !table || !(scale > 0.0f) || !isfinite(scale))
+        return 0.0f;
+    left = pixelX / (float)scale;
+    top = pixelY / (float)scale;
+    right = (pixelX + 1.0f) / (float)scale;
+    bottom = (pixelY + 1.0f) / (float)scale;
+    if (right <= 0.0f || left >= (float)table->m_width ||
+        bottom <= 0.0f || top >= (float)table->m_height)
+        return 0.0f;
+    /* 首先保留精确面积结果，直边和内部源单元不会因滤波变淡。 */
+    firstX = painter8x16FloorInt(left);
+    lastX = painter8x16CeilInt(right) - 1;
+    firstY = painter8x16FloorInt(top);
+    lastY = painter8x16CeilInt(bottom) - 1;
+    for (cellY = firstY; cellY <= lastY; ++cellY)
+    {
+        float cellTop = (float)cellY;
+        float cellBottom = cellTop + 1.0f;
+        float overlapY = fminf(bottom, cellBottom) -
+                         fmaxf(top, cellTop);
+        int cellX;
+        if (overlapY <= 0.0f)
+            continue;
+        for (cellX = firstX; cellX <= lastX; ++cellX)
+        {
+            float cellLeft;
+            float cellRight;
+            float overlapX;
+            {
+                int mask = painter8x16MaskValue(glyph, table, cellX, cellY);
+                float maskCoverage;
+                if (mask == 0)
+                    continue;
+                maskCoverage = painter8x16MaskCoverage(glyph, table,
+                                                       cellX, cellY);
+                cellLeft = (float)cellX;
+                cellRight = cellLeft + 1.0f;
+                overlapX = fminf(right, cellRight) -
+                           fmaxf(left, cellLeft);
+                if (overlapX > 0.0f)
+                    area += overlapX * overlapY * maskCoverage;
+            }
+        }
+    }
+    area *= scale * scale;
+    /* LVGL 多 bpp 位图已经携带字形边缘覆盖率。直接对这些覆盖率做
+       面积采样，原生字号（scale=1）就会得到与 LVGL 相同的 0/85/170/255
+       边缘；缩放时也只会在目标像素真实跨过源单元边界的位置产生过渡。
+       不能再走二值的圆角/双线性重建，否则会丢掉 LVGL 的灰度层次，细节
+       会变成断裂或刺状边缘。 */
+    if (table->m_bpp > 1)
+    {
+        if (area <= 0.0f) return 0.0f;
+        if (area >= 1.0f) return 1.0f;
+        return area;
+    }
+    /* 只有真实外凸角使用局部子像素覆盖；直边直接返回精确矩形面积。 */
+    {
+        int hasFeature = 0;
+        int y;
+        for (y = firstY; y <= lastY && !hasFeature; ++y)
+        {
+            int x;
+            for (x = firstX; x <= lastX && !hasFeature; ++x)
+            {
+                if (painter8x16BoundaryCell(glyph, table, x, y) &&
+                    fminf(right, (float)x + 1.0f) > fmaxf(left, (float)x) &&
+                    fminf(bottom, (float)y + 1.0f) > fmaxf(top, (float)y))
+                    hasFeature = 1;
+            }
+        }
+        if (hasFeature)
+        {
+            float covered = 0.0f;
+            int sy;
+            for (sy = 0; sy < XPAINTER_TEXT_AA_GRID; ++sy)
+            {
+                int sx;
+                float sampleY = (pixelY +
+                                 ((float)sy + 0.5f) /
+                                 (float)XPAINTER_TEXT_AA_GRID) /
+                                (float)scale;
+                for (sx = 0; sx < XPAINTER_TEXT_AA_GRID; ++sx)
+                {
+                    float sampleX = (pixelX +
+                                     ((float)sx + 0.5f) /
+                                     (float)XPAINTER_TEXT_AA_GRID) /
+                                    (float)scale;
+                    covered += painter8x16SmoothMaskSample(
+                        glyph, table, sampleX, sampleY);
+                }
+            }
+            return covered /
+                   (float)(XPAINTER_TEXT_AA_GRID * XPAINTER_TEXT_AA_GRID);
+        }
+    }
+    if (area <= 0.0f)
+        return 0.0f;
+    if (area >= 1.0f)
+        return 1.0f;
+    return area;
+}
+
+/** @brief 把有限浮点坐标向下取整并限制到 int 范围。 */
+static int painter8x16FloorInt(float value)
+{
+    float result;
+    if (!isfinite(value))
+        return 0;
+    result = floorf(value);
+    if (result <= (float)INT_MIN)
+        return INT_MIN;
+    if (result >= (float)INT_MAX)
+        return INT_MAX;
+    return (int)result;
+}
+
+/** @brief 把有限浮点坐标向上取整并限制到 int 范围。 */
+static int painter8x16CeilInt(float value)
+{
+    float result;
+    if (!isfinite(value))
+        return 0;
+    result = ceilf(value);
+    if (result <= (float)INT_MIN)
+        return INT_MIN;
+    if (result >= (float)INT_MAX)
+        return INT_MAX;
+    return (int)result;
+}
+
+/**
+ * @brief      判断当前文字是否可以走无变换的软件抗锯齿路径。
+ * @note       变换后的点阵字形仍交给原有矩形路径处理，避免直接写设备
+ *             像素时绕过世界/视图变换；后续矢量字形后端可覆盖该限制。
+ */
+static bool painter8x16CanAntialias(const XPainter* painter)
+{
+    XImageTransform transform;
+    if (!painter || painter->m_deviceKind != XPainterDevice_Image ||
+        !painter->m_image)
+        return false;
+#if XPAINTER_RENDERHINT_ON
+    if ((painter->m_state.m_renderHints &
+         XPainterRenderHint_TextAntialiasing) == 0u)
+        return false;
+#else
+    return false;
+#endif /* XPAINTER_RENDERHINT_ON */
+    if (!painterEffectiveTransform(&painter->m_state, &transform))
+        return false;
+    /* 仅支持单位缩放/旋转的平移。整数 translate 与旧矩形路径完全
+       重合；分数平移也按目标像素真实面积处理，便于离屏绘制验证。 */
+    return fabsf(transform.m11 - 1.0f) < 0.0001f &&
+           fabsf(transform.m12) < 0.0001f &&
+           fabsf(transform.m21) < 0.0001f &&
+           fabsf(transform.m22 - 1.0f) < 0.0001f &&
+           fabsf(transform.m13) < 0.0001f &&
+           fabsf(transform.m23) < 0.0001f &&
+           fabsf(transform.m33 - 1.0f) < 0.0001f &&
+           isfinite(transform.dx) && isfinite(transform.dy);
+}
+
+/**
+ * @brief      以覆盖率绘制放大后的点阵字形。
+ * @details    颜色覆盖率通过 Alpha 参与现有合成器，因而保留当前透明度、
+ *             裁剪和 CompositionMode 语义；记录后端继续使用原有矩形命令。
+ */
+static void painter8x16DrawGlyphAntialiased(XPainter* painter, int x,
+                                             int baselineY, uint32_t color,
+                                             const unsigned char* glyph,
+                                             float scale,
+                                             const PainterBitmapFontTable* table,
+                                             const XFontGlyphDsc* dsc)
+{
+    uint32_t effective;
+    XImageTransform transform;
+    float originX;
+    float originY;
+    float glyphWidth;
+    float glyphHeight;
+    int firstX;
+    int lastX;
+    int firstY;
+    int lastY;
+    int y;
+    if (!painter || !glyph || !table || !(scale > 0.0f) || !isfinite(scale))
+        return;
+    if (!painterEffectiveTransform(&painter->m_state, &transform))
+        return;
+    effective = painterApplyOpacity(color, painter->m_state.m_opacity);
+    glyphWidth = (float)(dsc ? dsc->box_w : table->m_width) * scale;
+    glyphHeight = (float)(dsc ? dsc->box_h : table->m_height) * scale;
+    originX = (float)x + transform.dx +
+              (float)(dsc ? dsc->ofs_x : 0) * scale;
+    originY = painter8x16GlyphOriginY(baselineY, transform.dy, scale, table,
+                                      dsc);
+    firstX = painter8x16FloorInt(originX);
+    lastX = painter8x16CeilInt(originX + glyphWidth) - 1;
+    firstY = painter8x16FloorInt(originY);
+    lastY = painter8x16CeilInt(originY + glyphHeight) - 1;
+    /* 避免字形在设备外时逐像素走完整个巨大坐标范围。 */
+    if (firstX < 0) firstX = 0;
+    if (firstY < 0) firstY = 0;
+    if (lastX >= XImage_width(painter->m_image))
+        lastX = XImage_width(painter->m_image) - 1;
+    if (lastY >= XImage_height(painter->m_image))
+        lastY = XImage_height(painter->m_image) - 1;
+    for (y = firstY; y <= lastY; ++y)
+    {
+        int pixelX;
+        for (pixelX = firstX; pixelX <= lastX; ++pixelX)
+        {
+            float coverage = painter8x16GlyphCoverage(
+                glyph, table, (float)pixelX - originX,
+                (float)y - originY, scale);
+            unsigned alpha;
+            if (coverage <= 0.0f)
+                continue;
+            if (coverage > 1.0f)
+                coverage = 1.0f;
+            alpha = (unsigned)(coverage * 255.0f + 0.5f);
+            if (alpha != 0u)
+                painterRaster_putPixel(painter, pixelX, y,
+                                        painterApplyOpacityByte(effective,
+                                                                 (uint8_t)alpha));
+        }
+    }
+}
+
+/**
+ * @brief      逐运行段绘制一个 8x16 字形（放大时默认使用覆盖率抗锯齿）。
  * @param painter 绘制器指针（非空，文本 API 入口已校验设备）。
  * @param x 缩放后字形左上角 X。
  * @param baselineY 缩放后基线 Y（字形顶部 = baselineY - ASCENT*scale）。
  * @param color ARGB32 颜色。
- * @param glyph 16 字节字形行数据。
- * @param scale 整倍缩放系数（<1 按 1 处理）。
+ * @param glyph 连续行位图数据，每行 table->m_rowBytes 字节。
+ * @param scale 按目标字号计算的实际缩放因子。
  */
 static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                        int baselineY, uint32_t color,
-                                       const unsigned char* glyph, int scale)
+                                       const unsigned char* glyph, float scale,
+                                       const PainterBitmapFontTable* table,
+                                       const XFontGlyphDsc* dsc)
 {
     int row;
-    int s;
-    if (!painter || !glyph)
+    int width;
+    int height;
+    if (!painter || !glyph || !table)
         return;
-    s = painter8x16Scale(scale);
+    width = painter8x16Metric(dsc ? dsc->box_w : table->m_width, scale);
+    height = painter8x16Metric(dsc ? dsc->box_h : table->m_height, scale);
 #if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
     /* Qt 的 OpaqueMode 会先以 background() 画刷覆盖字形单元，再绘制
        字形前景。嵌入式点阵字体没有复杂 glyph bounds，因此按完整 8x16
@@ -3382,25 +3890,45 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
     {
         XRect backgroundRect;
         backgroundRect.x = x;
-        backgroundRect.y = baselineY - XFONT8X16_ASCENT * s;
-        backgroundRect.width = XFONT8X16_WIDTH * s;
-        backgroundRect.height = XFONT8X16_HEIGHT * s;
+        backgroundRect.y = baselineY - painter8x16Metric(
+                                      (dsc ? dsc->box_h : table->m_height) +
+                                          (dsc ? dsc->ofs_y : 0),
+                                      scale);
+        backgroundRect.width = painter8x16Metric(
+            dsc ? dsc->box_w : table->m_width, scale);
+        backgroundRect.height = painter8x16Metric(
+            dsc ? dsc->box_h : table->m_height, scale);
         XPainter_fillRect(painter, &backgroundRect,
                           painter->m_state.m_backgroundBrush.m_color);
     }
 #endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
-    for (row = 0; row < XFONT8X16_HEIGHT; ++row)
+    if ((table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
+        painter8x16CanAntialias(painter))
     {
-        unsigned bits = glyph[row];
+        painter8x16DrawGlyphAntialiased(painter, x, baselineY, color,
+                                         glyph, scale, table, dsc);
+        return;
+    }
+    for (row = 0; row < (dsc ? dsc->box_h : table->m_height); ++row)
+    {
+        unsigned bits = 0u;
         int col = 0;
+        for (col = 0; col < (dsc ? dsc->box_w : table->m_width); ++col)
+        {
+            int value = painter8x16MaskValue(glyph, table, col, row);
+            if (value >= (table->m_bpp > 1
+                              ? (1 << (table->m_bpp - 1)) : 1))
+                bits |= 1u << col;
+        }
         if (bits == 0u)
             continue;
-        while (col < XFONT8X16_WIDTH)
+        col = 0;
+        while (col < (dsc ? dsc->box_w : table->m_width))
         {
             int runStart = -1;
             int runLen = 0;
             /* 合并连续置位像素为一个填充矩形（位 0 为最左像素）。 */
-            while (col < XFONT8X16_WIDTH &&
+            while (col < (dsc ? dsc->box_w : table->m_width) &&
                    (bits & (1u << col)) != 0u)
             {
                 if (runStart < 0) runStart = col;
@@ -3410,13 +3938,24 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
             if (runStart >= 0)
             {
                 XRect r;
-                r.x = x + runStart * s;
-                r.y = baselineY - XFONT8X16_ASCENT * s + row * s;
-                r.width = runLen * s;
-                r.height = s;
+                {
+                     int left = x + painter8x16Edge(runStart +
+                                     (dsc ? dsc->ofs_x : 0), scale);
+                     int right = x + painter8x16Edge(runStart + runLen +
+                                      (dsc ? dsc->ofs_x : 0), scale);
+                    r.x = left;
+                    r.y = baselineY - painter8x16Metric(
+                                      (dsc ? dsc->box_h : table->m_height) +
+                                          (dsc ? dsc->ofs_y : 0),
+                                      scale) +
+                          painter8x16Edge(row, scale);
+                    r.width = right - left;
+                    r.height = painter8x16Edge(row + 1, scale) -
+                               painter8x16Edge(row, scale);
+                }
                 XPainter_fillRect(painter, &r, color);
             }
-            if (col < XFONT8X16_WIDTH)
+             if (col < (dsc ? dsc->box_w : table->m_width))
                 ++col; /* 跳过 0 位 */
         }
     }
@@ -3425,48 +3964,70 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
 /* ---------- 内置点阵字库表（字体由 XFont 的 family 选择） ---------- */
 
 /** @brief 内置点阵字库数据描述（后续新增字库只需在表中追加）。 */
-typedef struct PainterBitmapFontTable
+/** @brief 由 XFont 选择点阵字库及其度量（未知 family 回退默认字库）。 */
+static PainterBitmapFontTable painterBitmapFont(const XFont* font)
 {
-    const char* m_family;   /**< 家族名；空串表示默认回退字库。 */
-    int m_width;            /**< 原始字宽（像素）。 */
-    int m_height;           /**< 原始行高（像素）。 */
-    int m_ascent;           /**< 原始基线上高度（像素）。 */
-    int m_descent;          /**< 原始基线下高度（像素）。 */
-    void (*m_loadGlyph)(uint32_t cp, unsigned char* out); /**< 字形数据读取。 */
-} PainterBitmapFontTable;
-
-/** @brief 当前内置字库表（数据来自 XFont8x16；算法统一在 XFont/本文件）。 */
-static const PainterBitmapFontTable kPainterBitmapFonts[] =
-{
-    { "",           XFONT8X16_WIDTH, XFONT8X16_HEIGHT,
-      XFONT8X16_ASCENT, XFONT8X16_DESCENT, XFont8x16_loadGlyph },
-    { "8x16",       XFONT8X16_WIDTH, XFONT8X16_HEIGHT,
-      XFONT8X16_ASCENT, XFONT8X16_DESCENT, XFont8x16_loadGlyph },
-    { "Monospace",  XFONT8X16_WIDTH, XFONT8X16_HEIGHT,
-      XFONT8X16_ASCENT, XFONT8X16_DESCENT, XFont8x16_loadGlyph }
-};
-
-/** @brief 由 XFont 选择内置点阵字库（未知 family 回退默认字库）。 */
-static const PainterBitmapFontTable* painterBitmapFont(const XFont* font)
-{
-    const char* family = font ? XFont_family(font) : "";
-    size_t i;
-    if (family && family[0] != '\0')
+    PainterBitmapFontTable table;
+    XFontBitmapInfo info;
+    memset(&table, 0, sizeof(table));
+    if (XFont_bitmapFontInfo(font, &info))
     {
-        for (i = 1; i < sizeof(kPainterBitmapFonts) /
-                            sizeof(kPainterBitmapFonts[0]); ++i)
-        {
-            if (strcmp(family, kPainterBitmapFonts[i].m_family) == 0)
-                return &kPainterBitmapFonts[i];
-        }
+        table.m_width = info.m_width;
+        table.m_height = info.m_height;
+        table.m_ascent = info.m_ascent;
+        table.m_descent = info.m_descent;
+        table.m_rowBytes = info.m_rowBytes;
+        table.m_bpp = info.m_bpp;
     }
-    return &kPainterBitmapFonts[0];
+    return table;
 }
 
-/** @brief 由 XFont 像素字号计算整倍缩放系数（NULL 按默认字库 = 1 倍）。 */
-static int painterBitmapScaleForFont(const XFont* font)
+/** @brief 由 XFont_setPixelSize() 计算实际位图缩放因子。 */
+static float painterBitmapScaleForFont(const XFont* font)
 {
-    return XFont_bitmapScaleForFont(font, XFONT8X16_HEIGHT);
+    PainterBitmapFontTable table = painterBitmapFont(font);
+    int target = XFont_pixelSize(font);
+    if (target <= 0) target = table.m_height;
+    return (float)target / (float)(table.m_height > 0 ? table.m_height : 1);
+}
+
+static int painter8x16GlyphAdvance(const XFontGlyphDsc* dsc,
+                                   const PainterBitmapFontTable* table,
+                                   float scale)
+{
+    float value;
+    if (dsc && dsc->adv_w != 0u) {
+        value = ((float)dsc->adv_w / 16.0f) * scale;
+        return value < 1.0f ? 1 : (int)(value + 0.5f);
+    }
+    return painter8x16Metric(table ? table->m_width : 0, scale);
+}
+
+static int painterCodepointAdvance(const XFont* font,
+                                   const PainterBitmapFontTable* table,
+                                   float scale, uint32_t cp)
+{
+    XFontGlyphDsc dsc;
+    return XFont_bitmapLoadGlyph(font, cp, &dsc, NULL, 0)
+        ? painter8x16GlyphAdvance(&dsc, table, scale)
+        : painter8x16Metric(table ? table->m_width : 0, scale);
+}
+
+static bool painterLoadGlyph(const XFont* font, uint32_t cp,
+                             PainterBitmapFontTable* table,
+                             XFontGlyphDsc* dsc, unsigned char* data,
+                             size_t dataSize)
+{
+    XFontBitmapInfo info;
+    if (!table || !dsc || !data ||
+        !XFont_bitmapLoadGlyph(font, cp, dsc, data, dataSize))
+        return false;
+    if (!XFont_bitmapFontInfo(font, &info)) return false;
+    table->m_width = dsc->box_w;
+    table->m_height = dsc->box_h;
+    table->m_rowBytes = XFont_bitmapGlyphRowBytes(dsc, info.m_bpp);
+    table->m_bpp = info.m_bpp;
+    return table->m_width > 0 && table->m_height > 0 && table->m_rowBytes > 0;
 }
 
 /* ---------- 公开文本 API（字体由 XFont 选择，无字库专用命名） ---------- */
@@ -3474,8 +4035,8 @@ static int painterBitmapScaleForFont(const XFont* font)
 bool XPainter_drawText(XPainter* self, int x, int baselineY,
                        const char* utf8, uint32_t color)
 {
-    const PainterBitmapFontTable* table;
-    int scale;
+    PainterBitmapFontTable table;
+    float scale;
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return false;
     if (!utf8 || utf8[0] == '\0')
@@ -3492,16 +4053,22 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
             cp = painter8x16DecodeNext(&p);
             if (cp < 0x20u)
             {
-                x += table->m_width * scale; /* 控制字符：占位不画 */
+                x += painter8x16Metric(table.m_width, scale); /* 控制字符：占位不画 */
                 continue;
             }
             {
-                unsigned char glyphData[XFONT8X16_HEIGHT];
-                table->m_loadGlyph(cp, glyphData);
+                unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
+                                         XFONT_BITMAP_MAX_ROW_BYTES];
+                XFontGlyphDsc dsc;
+                PainterBitmapFontTable glyphTable = table;
+                if (!painterLoadGlyph(&self->m_state.m_font, cp, &glyphTable,
+                                      &dsc, glyphData, sizeof(glyphData)))
+                    continue;
                 painter8x16DrawGlyphScaled(self, x, baselineY, color,
-                                           glyphData, scale);
+                                           glyphData, scale, &glyphTable, &dsc);
+                x += painter8x16GlyphAdvance(&dsc, &table, scale);
             }
-            x += table->m_width * scale;
+            if (cp < 0x20u) continue;
         }
     }
     return true;
@@ -3509,44 +4076,51 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
 
 int XPainter_textWidth(const XFont* font, const char* utf8)
 {
-    const PainterBitmapFontTable* table = painterBitmapFont(font);
+    PainterBitmapFontTable table = painterBitmapFont(font);
     const char* p;
-    int scale;
-    int count = 0;
+    float scale;
+    int width = 0;
     if (!utf8)
         return 0;
     scale = painterBitmapScaleForFont(font);
     p = utf8;
     while (*p != '\0' && *p != '\n')
     {
-        (void)painter8x16DecodeNext(&p);
-        ++count;
+        uint32_t cp = painter8x16DecodeNext(&p);
+        XFontGlyphDsc dsc;
+        if (XFont_bitmapLoadGlyph(font, cp, &dsc, NULL, 0))
+            width += painter8x16GlyphAdvance(&dsc, &table, scale);
+        else
+            width += painter8x16Metric(table.m_width, scale);
     }
-    return count * table->m_width * scale;
+    return width;
 }
 
 int XPainter_textHeight(const XFont* font)
 {
-    return XFont_bitmapScaledSize(painterBitmapFont(font)->m_height,
-                                  painterBitmapScaleForFont(font));
+    PainterBitmapFontTable table = painterBitmapFont(font);
+    return XFont_pixelSize(font) > 0 ? XFont_pixelSize(font) : table.m_height;
 }
 
 int XPainter_textAscent(const XFont* font)
 {
-    return XFont_bitmapScaledSize(painterBitmapFont(font)->m_ascent,
-                                  painterBitmapScaleForFont(font));
+    PainterBitmapFontTable table = painterBitmapFont(font);
+    return painter8x16Metric(table.m_ascent,
+                             painterBitmapScaleForFont(font));
 }
 
 int XPainter_textDescent(const XFont* font)
 {
-    return XFont_bitmapScaledSize(painterBitmapFont(font)->m_descent,
-                                  painterBitmapScaleForFont(font));
+    PainterBitmapFontTable table = painterBitmapFont(font);
+    return painter8x16Metric(table.m_descent,
+                             painterBitmapScaleForFont(font));
 }
 
 int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
                        const char* utf8, uint32_t color)
 {
-    int scale;
+    PainterBitmapFontTable table;
+    float scale;
     const char* p;
     const char* start;
     uint32_t cp;
@@ -3563,12 +4137,18 @@ int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
     drawable = (self != NULL) && (self->m_deviceKind != XPainterDevice_None);
     if (!drawable)
         return adv;
+    table = painterBitmapFont(&self->m_state.m_font);
     scale = painterBitmapScaleForFont(&self->m_state.m_font);
     {
-        unsigned char glyphData[XFONT8X16_HEIGHT];
-        painterBitmapFont(&self->m_state.m_font)->m_loadGlyph(cp, glyphData);
+        unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
+                                 XFONT_BITMAP_MAX_ROW_BYTES];
+        XFontGlyphDsc dsc;
+        PainterBitmapFontTable glyphTable = table;
+        if (!painterLoadGlyph(&self->m_state.m_font, cp, &glyphTable, &dsc,
+                              glyphData, sizeof(glyphData)))
+            return adv;
         painter8x16DrawGlyphScaled(self, x, baselineY, color,
-                                   glyphData, scale);
+                                   glyphData, scale, &glyphTable, &dsc);
     }
     return adv;
 }
@@ -3576,11 +4156,11 @@ int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
 int XPainter_textWidthRange(const XFont* font, const char* utf8,
                             int startByte, int endByte)
 {
-    const PainterBitmapFontTable* table = painterBitmapFont(font);
+    PainterBitmapFontTable table = painterBitmapFont(font);
     const char* p;
     const char* end;
-    int scale;
-    int count = 0;
+    float scale;
+    int width = 0;
     if (!utf8 || startByte < 0)
         return 0;
     scale = painterBitmapScaleForFont(font);
@@ -3593,9 +4173,9 @@ int XPainter_textWidthRange(const XFont* font, const char* utf8,
         uint32_t cp = painter8x16DecodeNextBounded(&p, end);
         if (cp == 0u)
             break;
-        ++count;
+        width += painterCodepointAdvance(font, &table, scale, cp);
     }
-    return count * table->m_width * scale;
+    return width;
 }
 
 #if (XPAINTER_SHAPE_ON) || (XPAINTER_POLYGON_ON) || (XPAINTER_PATH_ON)
@@ -5356,8 +5936,10 @@ static bool painterTextHasRTL(const char* utf8)
  * @brief 计算一行点阵文本的像素宽度（含制表符展开与助记键配对）。
  * @note  mnemonicMode 为 0 时按字面字符计算；1/2 时 '&x'/'&&' 仅占一个字形位。
  */
-static int painterTextLinePixelWidth(const char* start, const char* end,
-                                     int charW, bool expandTabs,
+static int painterTextLinePixelWidth(const XFont* font,
+                                     const PainterBitmapFontTable* table,
+                                     float scale, const char* start,
+                                     const char* end, int charW, bool expandTabs,
                                      int mnemonicMode)
 {
     int col = 0;
@@ -5376,7 +5958,7 @@ static int painterTextLinePixelWidth(const char* start, const char* end,
                               ? painter8x16DecodeNext(&following)
                               : 0u;
             ++col;
-            width += charW;
+            width += painterCodepointAdvance(font, table, scale, fc);
             if (fc != 0u)
                 p = following;   /* 转义对：&x 或 && 只占一个字形位 */
             else
@@ -5392,7 +5974,7 @@ static int painterTextLinePixelWidth(const char* start, const char* end,
         else
         {
             ++col;
-            width += charW;
+            width += painterCodepointAdvance(font, table, scale, cp);
         }
         p = next;
     }
@@ -5400,31 +5982,39 @@ static int painterTextLinePixelWidth(const char* start, const char* end,
 }
 
 /** @brief 绘制一个字形（control 仅占位不画），underline 时画下划线。 */
-static void painterDrawCodepoint(XPainter* self,
+static int painterDrawCodepoint(XPainter* self,
                                  const PainterBitmapFontTable* table,
-                                 int scale, int x, int baselineY,
+                                 float scale, int x, int baselineY,
                                  uint32_t cp, uint32_t color,
                                  bool underline)
 {
-    unsigned char glyphData[XFONT8X16_HEIGHT];
+    unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
+                             XFONT_BITMAP_MAX_ROW_BYTES];
+    XFontGlyphDsc dsc;
+    PainterBitmapFontTable glyphTable;
     if (cp < 0x20u)
-        return;
-    table->m_loadGlyph(cp, glyphData);
-    painter8x16DrawGlyphScaled(self, x, baselineY, color, glyphData, scale);
+        return painter8x16Metric(table ? table->m_width : 0, scale);
+    glyphTable = *table;
+    if (!painterLoadGlyph(&self->m_state.m_font, cp, &glyphTable, &dsc,
+                          glyphData, sizeof(glyphData)))
+        return painter8x16Metric(table ? table->m_width : 0, scale);
+    painter8x16DrawGlyphScaled(self, x, baselineY, color, glyphData, scale,
+                               &glyphTable, &dsc);
     if (underline)
     {
         XRect r;
         r.x = x;
-        r.y = baselineY + XFONT8X16_DESCENT * scale;
-        r.width = table->m_width * scale;
-        r.height = scale;
+        r.y = baselineY + painter8x16Metric(table->m_descent, scale);
+        r.width = painter8x16Metric(table->m_width, scale);
+        r.height = painter8x16Metric(1, scale);
         XPainter_fillRect(self, &r, color);
     }
+    return painter8x16GlyphAdvance(&dsc, table, scale);
 }
 
 /** @brief 用当前字体绘制一段 UTF-8 运行段（仅单行，不做换行）。 */
 static void painterDrawTextRun(XPainter* self,
-                               const PainterBitmapFontTable* table, int scale,
+                               const PainterBitmapFontTable* table, float scale,
                                int x, int baselineY,
                                const char* start, const char* end,
                                uint32_t color,
@@ -5475,16 +6065,14 @@ static void painterDrawTextRun(XPainter* self,
             {
                 if (fc == '&')
                 {
-                    painterDrawCodepoint(self, table, scale, x, baselineY,
-                                         '&', color, false);
-                    x += table->m_width * scale;
+                    x += painterDrawCodepoint(self, table, scale, x, baselineY,
+                                              '&', color, false);
                     ++col;
                     p = following;
                     continue;
                 }
-                painterDrawCodepoint(self, table, scale, x, baselineY,
-                                     fc, color, mnemonicMode == 1);
-                x += table->m_width * scale;
+                x += painterDrawCodepoint(self, table, scale, x, baselineY,
+                                          fc, color, mnemonicMode == 1);
                 ++col;
                 p = following;
                 continue;
@@ -5494,7 +6082,7 @@ static void painterDrawTextRun(XPainter* self,
         if (expandTabs && cp == '\t')
         {
             int adv = 8 - (col % 8);
-            x += adv * table->m_width * scale;
+            x += adv * painter8x16Metric(table->m_width, scale);
             col += adv;
             p = next;
             continue;
@@ -5504,9 +6092,8 @@ static void painterDrawTextRun(XPainter* self,
             x += spaceBonus + (spaceDrawn < spaceRem ? 1 : 0);
             ++spaceDrawn;
         }
-        painterDrawCodepoint(self, table, scale, x, baselineY,
-                             cp, color, false);
-        x += table->m_width * scale;
+        x += painterDrawCodepoint(self, table, scale, x, baselineY,
+                                  cp, color, false);
         ++col;
         p = next;
     }
@@ -5515,8 +6102,8 @@ static void painterDrawTextRun(XPainter* self,
 bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                            const char* utf8, uint32_t color)
 {
-    const PainterBitmapFontTable* table;
-    int scale;
+    PainterBitmapFontTable table;
+    float scale;
     int charW;
     int maxChars;
     int lineCap;
@@ -5554,7 +6141,7 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
 
     table = painterBitmapFont(&self->m_state.m_font);
     scale = painterBitmapScaleForFont(&self->m_state.m_font);
-    charW = table->m_width * scale;
+    charW = painter8x16Metric(table.m_width, scale);
     lineCap = (int)(sizeof(lines) / sizeof(lines[0]));
     wrap = (flags & XPAINTER_TEXT_WORD_WRAP) != 0u;
     wrapAnywhere = (flags & XPAINTER_TEXT_WRAP_ANYWHERE) != 0u;
@@ -5689,8 +6276,8 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
         return true;
     }
 
-    lineH = table->m_height * scale;
-    ascent = table->m_ascent * scale;
+    lineH = painter8x16Metric(table.m_height, scale);
+    ascent = painter8x16Metric(table.m_ascent, scale);
     totalH = lineCount * lineH;
 
     if ((flags & XPAINTER_TEXT_ALIGN_VCENTER) != 0u)
@@ -5702,7 +6289,8 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
 
     for (i = 0; i < lineCount; ++i)
     {
-        int lineW = painterTextLinePixelWidth(lines[i].m_start,
+        int lineW = painterTextLinePixelWidth(&self->m_state.m_font, &table,
+                                              scale, lines[i].m_start,
                                               lines[i].m_end, charW,
                                               expandTabs, mnemonicMode);
         int justifyExtra = 0;
@@ -5720,7 +6308,7 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
         else if ((flags & XPAINTER_TEXT_ALIGN_HCENTER) != 0u)
             x = rect->x + (rect->width - lineW) / 2;
 
-        painterDrawTextRun(self, table, scale, x, baselineY,
+         painterDrawTextRun(self, &table, scale, x, baselineY,
                            lines[i].m_start, lines[i].m_end, color,
                            expandTabs, justifyExtra, mnemonicMode);
         yTop += lineH;

@@ -120,6 +120,17 @@ XVBoxLayout* XVBoxLayout_create(XWidget* parent);
  */
 XBoxLayout* XBoxLayout_create(XBoxLayoutDirection direction, XWidget* parent);
 
+/** @brief 通过 XClass 虚表释放盒式布局资源。 */
+#define XBoxLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的盒式布局对象。 */
+#define XBoxLayout_delete_base(self) XClass_delete_base((XClass*)(self))
+/** @brief 深拷贝盒式布局配置，不复制条目树。 */
+#define XBoxLayout_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动盒式布局及条目所有权。 */
+#define XBoxLayout_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
+
 /* ==================== 方向访问 ==================== */
 
 /**

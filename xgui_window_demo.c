@@ -120,16 +120,25 @@ static void demo_draw_checker(XPainter* painter, int x0, int y0,
  * @param y 标签在窗口客户区中的纵坐标。
  * @param width 标签可用宽度。
  * @param height 标签可用高度。
- * @param text 要显示的 ASCII 文本。
+ * @param text 要显示的 UTF-8 文本。
  * @param pixelSize 标签文字像素高度，16 为原始点阵字号，32 为两倍放大。
+ * @param family 点阵字库 family；NULL 使用当前默认字库。
  */
 static void demo_draw_label(XPainter* painter, int x, int y, int width,
-                            int height, const char* text, int pixelSize)
+                            int height, const char* text, int pixelSize,
+                            const char* family)
 {
     XLabel label;
     if (!painter || width <= 0 || height <= 0) return;
     memset(&label, 0, sizeof(label));
     XLabel_init(&label, NULL, 0);
+    if (family)
+    {
+        XFont labelFont = XWidget_font((XWidget*)&label);
+        XFont_setFamily(&labelFont, family);
+        XWidget_setFont((XWidget*)&label, &labelFont);
+        XFont_deinit_base(&labelFont);
+    }
     XLabel_setText_2(&label, text);
     XLabel_setTextPixelSize(&label, pixelSize);
     XLabel_setAlignment(&label, XAlignment_Left | XAlignment_Top);
@@ -183,8 +192,12 @@ static void demo_repaint(DemoWin* self)
         /* GUI 控件可视化测试面板：同一文字的原始字号与两倍字号。 */
         demo_fill_rect(&painter, 230, 60, 270, 100, 0xffdcefe2u);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-        demo_draw_label(&painter, 246, 70, 238, 20, "XLabel 1x", 16);
-        demo_draw_label(&painter, 246, 106, 238, 40, "XLabel 2x", 32);
+        demo_draw_label(&painter, 246, 70, 238, 20,
+                        "XLabel 1x \xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95", 16,
+                        "XFont8x16");
+        demo_draw_label(&painter, 246, 106, 238, 40,
+                        "XLabel 32px \xE4\xB8\xAD\xE6\x96\x87", 40,
+                        "XFont32x32");
 #else
         /* 组件被嵌入式配置裁剪时保留面板，便于确认裁剪后的可视状态。 */
         XPainter_drawText(&painter, 246, 92, "XLabel disabled", 0xff202020u);

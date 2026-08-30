@@ -137,6 +137,11 @@ void XImageIOHandler_init(XImageIOHandler* self);
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放处理器资源。 @param self 待释放的处理器指针。 */
+#define XImageIOHandler_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 通过 XClass 虚表移动处理器资源。 @param self 目标处理器指针。 @param other 源处理器指针。 */
+#define XImageIOHandler_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XImageIOHandler_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像处理器。 @param self 待删除的处理器指针。 */
 #define XImageIOHandler_delete_base(self) XClass_delete_base((XClass*)(self))

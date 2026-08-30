@@ -62,6 +62,11 @@ void XImageIOPlugin_init(XImageIOPlugin* self);
  * @param self 待释放的插件指针。
  */
 /** @brief 通过 XClass 虚表释放插件资源。 @param self 待释放的插件指针。 */
+#define XImageIOPlugin_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 通过 XClass 虚表移动插件资源。 @param self 目标插件指针。 @param other 源插件指针。 */
+#define XImageIOPlugin_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XImageIOPlugin_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**

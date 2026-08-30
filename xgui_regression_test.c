@@ -13,6 +13,10 @@
 #include "XDir.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
+#include "XFont.h"
+#include "XFont8x16.h"
+#include "XFont16x16.h"
+#include "XFont32x32.h"
 #include "XImage.h"
 #include "XImageCodec.h"
 #include "XImageReader.h"
@@ -1309,6 +1313,96 @@ static void test_icon_theme_scale_selection(void)
     if (newPaths) XStringList_delete_base((XClass*)newPaths);
 }
 #endif /* XIMAGECODEC_ON */
+
+static bool test_bitmap_provider_loadGlyph(uint32_t cp, unsigned char* out,
+                                           size_t outSize)
+{
+    if (!out || outSize < 4u)
+        return false;
+    memset(out, 0, outSize);
+    if (cp == (uint32_t)'A')
+    {
+        out[0] = 0x06u;
+        out[1] = 0x09u;
+        out[2] = 0x0Fu;
+        out[3] = 0x09u;
+    }
+    return true;
+}
+
+#if XFONT_FILE_ON
+static void test_font_lvgl_bin_files(void)
+{
+    XFont font;
+    XFontBitmapInfo info;
+    XFontGlyphDsc dsc;
+    unsigned char glyph[40u * XFONT_BITMAP_MAX_ROW_BYTES];
+    bool infoOk;
+    bool glyphOk;
+    bool glyphHasInk;
+    size_t glyphIndex;
+    XFont_init(&font);
+    XFont_setFamily(&font, "XFont8x16");
+    memset(&info, 0, sizeof(info));
+    memset(&dsc, 0, sizeof(dsc));
+    memset(glyph, 0, sizeof(glyph));
+    expect_true(XFont_bitmapFontInfo(&font, &info) &&
+                    XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &dsc,
+                                          glyph, sizeof(glyph)) &&
+                    info.m_width == 8 && info.m_height == 16 &&
+                    info.m_bpp == 1 && dsc.adv_w == 128 &&
+                    glyph[0] != 0u,
+                "XFont 直接读取 LVGL 8x16 bin 字形");
+    XFont_setFamily(&font, "XFont16x16");
+    memset(&info, 0, sizeof(info));
+    memset(&dsc, 0, sizeof(dsc));
+    memset(glyph, 0, sizeof(glyph));
+    infoOk = XFont_bitmapFontInfo(&font, &info);
+    glyphOk = XFont_bitmapLoadGlyph(&font, 0x4E2Du, &dsc,
+                                    glyph, sizeof(glyph));
+    glyphHasInk = false;
+    for (glyphIndex = 0u; glyphIndex < sizeof(glyph); ++glyphIndex)
+        if (glyph[glyphIndex] != 0u) {
+            glyphHasInk = true;
+            break;
+        }
+    expect_true(infoOk && glyphOk && glyphHasInk &&
+                    info.m_width == 16 && info.m_bpp == 2 &&
+                    dsc.adv_w == 256 && dsc.box_w > 0,
+                "XFont 直接读取 LVGL 16x16 2bpp bin 字形");
+    XFont_setFamily(&font, "XFont32x32");
+    memset(&info, 0, sizeof(info));
+    memset(&dsc, 0, sizeof(dsc));
+    memset(glyph, 0, sizeof(glyph));
+    expect_true(XFont_bitmapFontInfo(&font, &info) &&
+                    XFont_bitmapLoadGlyph(&font, 0x4E2Du, &dsc,
+                                          glyph, sizeof(glyph)) &&
+                    info.m_width == 32 && info.m_height == 40 &&
+                    info.m_bpp == 2 && dsc.adv_w > 0 && dsc.box_w > 0,
+                "XFont 直接读取 LVGL 32x32 2bpp bin 字形");
+    {
+        char fullPath[XFONT_EXTERNAL_FONT_PATH_MAX];
+        int pathLength = snprintf(fullPath, sizeof(fullPath),
+                                  "%s/XFont16x16.bin",
+                                  XFONT_EXTERNAL_FONT_DIR);
+        XFont_setFamily(&font, fullPath);
+        memset(&info, 0, sizeof(info));
+        expect_true(pathLength > 0 &&
+                        (size_t)pathLength < sizeof(fullPath) &&
+                        XFont_bitmapFontInfo(&font, &info) &&
+                        info.m_width == 16 && info.m_bpp == 2,
+                    "XFont_setFamily 支持外挂字库完整路径");
+    }
+    XFont_deinit_base(&font);
+}
+#endif /* XFONT_FILE_ON */
+
+static const XFontBitmapProvider g_testBitmapProvider = {
+    "Regression4x4",
+    { 4, 4, 3, 1, 1, 1 },
+    NULL,
+    test_bitmap_provider_loadGlyph
+};
 
 typedef struct PictureProbe
 {
@@ -4248,6 +4342,179 @@ static void test_painter_text_layout_contract(void)
     XImage_deinit_base(&image);
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
+
+#if XPAINTER_RENDERHINT_ON
+static void test_painter_text_antialiasing_contract(void)
+{
+    XImage image;
+    XPainter painter;
+    XFont font;
+    unsigned char glyph[XFONT8X16_HEIGHT * XFONT8X16_ROW_BYTES];
+    XFontGlyphDsc glyphDsc;
+    int expectedBlackPixels = 0;
+    int actualBlackPixels = 0;
+    int intermediatePixels = 0;
+    int row;
+    int col;
+
+    XImage_init_ex(&image, 32, 40, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_init(&painter, NULL);
+    XFont_init(&font);
+    XFont_setPixelSize(&font, 32);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "text antialias painter begins raster");
+    XPainter_setFont(&painter, &font);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "scaled text draws with antialiasing");
+    memset(&glyphDsc, 0, sizeof(glyphDsc));
+    expect_true(XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &glyphDsc,
+                                        glyph, sizeof(glyph)),
+                "generic LVGL glyph reader loads ASCII");
+    for (row = 0; row < glyphDsc.box_h; ++row)
+        for (col = 0; col < glyphDsc.box_w; ++col)
+            if ((glyph[row * XFONT8X16_ROW_BYTES] & (0x80u >> col)) != 0u)
+                expectedBlackPixels += 4;
+    for (row = 0; row < 32; ++row)
+        for (col = 0; col < 16; ++col)
+        {
+            uint32_t pixel = XImage_pixel(&image, col, row);
+            if (pixel == 0xff000000u)
+                ++actualBlackPixels;
+            else if (pixel != 0xffffffffu)
+                ++intermediatePixels;
+        }
+    expect_true(actualBlackPixels < expectedBlackPixels,
+                "integer-aligned scaled text smooths exposed corners");
+    expect_true(intermediatePixels > 0,
+                "integer-aligned scaled text has local edge coverage");
+    expect_true(XImage_pixel(&image, 4, 0) != 0xffffffffu &&
+                XImage_pixel(&image, 2, 16) == 0xff000000u,
+                "scaled text keeps solid interior pixels opaque");
+
+    /* pixelSize 是最终显示高度，不应先量化为基准字库的整数倍。 */
+    XFont_setPixelSize(&font, 24);
+    expect_true(XPainter_textHeight(&font) == 24 &&
+                XPainter_textWidth(&font, "A") == 12,
+                "pixelSize 直接决定位图文字最终尺寸");
+    XFont_setPixelSize(&font, 32);
+
+    memset(&glyphDsc, 0, sizeof(glyphDsc));
+    expect_true(XFont_bitmapLoadGlyph(&font, 0x4E2Du, &glyphDsc,
+                                        glyph, sizeof(glyph)),
+                "generic LVGL glyph reader loads UTF-8 中文码点");
+    expect_true(glyphDsc.box_w == XFONT8X16_WIDTH &&
+                glyphDsc.box_h == XFONT8X16_HEIGHT &&
+                glyphDsc.adv_w == XFONT8X16_WIDTH * 16u,
+                "8x16 provider exposes the registered CJK glyph metrics");
+
+    /* 分数平移使目标像素真实跨过 A 的左侧黑白边界；覆盖率来自
+       局部几何覆盖，不来自全局距离平滑。 */
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 0.5f, 0.0f);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "fractionally translated scaled text draws");
+    expect_true(XImage_pixel(&image, 4, 0) != 0xff000000u &&
+                XImage_pixel(&image, 4, 0) != 0xffffffffu,
+                "cross-boundary text pixel has intermediate coverage");
+    /* 像素 3 位于 A 中部横杠的连续黑色内部，作为“内部保持不透明”
+       的稳定探针；边界像素 4 则验证了分数平移的面积覆盖。 */
+    expect_true(XImage_pixel(&image, 3, 16) == 0xff000000u,
+                "cross-boundary text keeps the stroke interior opaque");
+
+    /* 整数平移必须仍然保持点阵单元与设备像素一一对应。 */
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 3.0f, 2.0f);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "integer-translated scaled text draws");
+    expect_true(XImage_pixel(&image, 7, 2) != 0xffffffffu &&
+                XImage_pixel(&image, 6, 2) == 0xffffffffu,
+                "integer translate preserves scaled glyph alignment");
+
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_setRenderHint(&painter, XPainterRenderHint_TextAntialiasing,
+                           false);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "scaled text draws with antialiasing disabled");
+    expect_true(XImage_pixel(&image, 4, 0) == 0xff000000u,
+                "disabling text antialiasing restores hard edge");
+    XPainter_setRenderHint(&painter, XPainterRenderHint_TextAntialiasing,
+                           true);
+
+    /* 对角黑单元之间的空白不能被桥接算法扩成黑色凸点。X 的该探针
+       位于原始字形的空白单元，必须保持背景色。 */
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    expect_true(XPainter_drawText(&painter, 0, 26, "X", 0xff000000u),
+                "diagonal text draws without bridge artifacts");
+    expect_true(XImage_pixel(&image, 6, 3) == 0xffffffffu,
+                "diagonal text keeps exterior corner background");
+
+    XFont_deinit_base(&font);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XPAINTER_RENDERHINT_ON */
+
+#if XFONT_BUILTIN_32X32_ON
+static void test_painter_native_32x32_font(void)
+{
+    XImage image;
+    XPainter painter;
+    XFont font;
+    XFontBitmapInfo info;
+    XFontGlyphDsc dsc;
+    unsigned char glyph[XFONT_BITMAP_MAX_HEIGHT * XFONT_BITMAP_MAX_ROW_BYTES];
+    int intermediatePixels = 0;
+    int nonWhitePixels = 0;
+    int row;
+    int col;
+
+    XImage_init_ex(&image, 64, 48, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_init(&painter, NULL);
+    XFont_init(&font);
+    XFont_setFamily(&font, "32x32");
+    XFont_setPixelSize(&font, 40);
+    memset(&info, 0, sizeof(info));
+    memset(&dsc, 0, sizeof(dsc));
+    memset(glyph, 0, sizeof(glyph));
+    expect_true(XFont_bitmapFontInfo(&font, &info) &&
+                    info.m_width == 32 && info.m_height == 40 &&
+                    info.m_bpp == 2,
+                "32x32 provider exposes native LVGL metrics");
+    expect_true(XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &dsc,
+                                      glyph, sizeof(glyph)) &&
+                    dsc.box_w > 0 && dsc.box_h > 0,
+                "32x32 provider loads native LVGL glyph");
+    expect_true(XPainter_begin_image(&painter, &image),
+                "32x32 native font begins raster");
+    XPainter_setFont(&painter, &font);
+    expect_true(XPainter_drawText(&painter, 2, 31, "A", 0xff000000u),
+                "32x32 native font draws without rescaling");
+    for (row = 0; row < 40; ++row)
+        for (col = 0; col < 64; ++col)
+        {
+            uint32_t pixel = XImage_pixel(&image, col, row);
+            if (pixel != 0xffffffffu)
+                ++nonWhitePixels;
+            if (pixel != 0xffffffffu && pixel != 0xff000000u)
+                ++intermediatePixels;
+        }
+    expect_true(nonWhitePixels > 0 && intermediatePixels > 0,
+                "32x32 native 2bpp keeps LVGL gray edge coverage");
+    expect_true(XPainter_textHeight(&font) == 40,
+                "32x32 native font keeps line height");
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XFont_deinit_base(&font);
+    XImage_deinit_base(&image);
+}
+#endif /* XFONT_BUILTIN_32X32_ON */
 
 #if XPAINTER_PATH_ON
 static void test_painter_path_contract(void)
@@ -12873,6 +13140,73 @@ static void test_gui_application_contract(void)
 
     font = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, "Sans", 13, 400, false);
     expect_true(font != NULL, "font 创建");
+    {
+        XFont defaultFont;
+        XFontBitmapInfo bitmapInfo;
+        XFont_init(&defaultFont);
+        memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+        expect_true(strcmp(XFont_family(&defaultFont), XFONT_DEFAULT_FAMILY) == 0 &&
+                    XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
+                    bitmapInfo.m_width == XFONT8X16_WIDTH &&
+                    bitmapInfo.m_height == XFONT8X16_HEIGHT,
+                    "font 默认家族与点阵字库度量");
+        XFont_setFamily(&defaultFont, "XFont8x16");
+        expect_true(XFont_bitmapFontInfo(&defaultFont, &bitmapInfo),
+                    "font setFamily 选择点阵字库");
+        XFont_setFamily(&defaultFont, "Regression4x4");
+        memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+        {
+            unsigned char providerGlyph[XFONT_BITMAP_MAX_HEIGHT];
+            XFontGlyphDsc glyphDsc;
+            memset(providerGlyph, 0, sizeof(providerGlyph));
+            memset(&glyphDsc, 0, sizeof(glyphDsc));
+            expect_true(XFont_registerBitmapProvider(&g_testBitmapProvider) &&
+                        XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
+                        bitmapInfo.m_width == 4 && bitmapInfo.m_height == 4 &&
+                        XFont_bitmapLoadGlyph(&defaultFont, (uint32_t)'A',
+                                                &glyphDsc, providerGlyph,
+                                                sizeof(providerGlyph)) &&
+                        providerGlyph[0] == 0x06u && providerGlyph[2] == 0x0Fu,
+                        "font 注册并选择外部 provider");
+        }
+        XFont_setFamily(&defaultFont, "XFont16x16");
+        {
+            unsigned char glyph16[XFONT_BITMAP_MAX_HEIGHT *
+                                  XFONT_BITMAP_MAX_ROW_BYTES];
+            XFontGlyphDsc glyphDsc;
+            size_t i;
+            bool hasInk = false;
+            memset(&glyphDsc, 0, sizeof(glyphDsc));
+            memset(glyph16, 0, sizeof(glyph16));
+            if (XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
+                XFont_bitmapLoadGlyph(&defaultFont, 0x4E2Du, &glyphDsc,
+                                        glyph16, sizeof(glyph16)))
+            {
+                for (i = 0; i < sizeof(glyph16); ++i)
+                    hasInk = hasInk || glyph16[i] != 0u;
+            }
+            expect_true(bitmapInfo.m_width == XFONT16X16_WIDTH &&
+                        bitmapInfo.m_height == 19 &&
+                        bitmapInfo.m_bpp == XFONT16X16_BPP &&
+                        bitmapInfo.m_rowBytes == XFONT16X16_ROW_BYTES &&
+                        glyphDsc.box_w > 0 && glyphDsc.box_w <= 16 &&
+                        glyphDsc.box_h > 0 &&
+                        glyphDsc.box_h <= XFONT_BITMAP_MAX_HEIGHT &&
+                        glyphDsc.adv_w == 256 &&
+                        hasInk,
+                        "font 选择 16x16 provider 并读取 UTF-8 中文字形");
+            expect_true(XPainter_textWidth(&defaultFont, "中") == 16,
+                        "16x16 provider 使用真实字宽测量中文");
+            XFont_setPixelSize(&defaultFont, 24);
+            expect_true(XPainter_textHeight(&defaultFont) == 24 &&
+                        XPainter_textWidth(&defaultFont, "中") == 20,
+                        "16x16 provider 按目标像素高度缩放");
+        }
+        XFont_deinit_base(&defaultFont);
+    }
+#if XFONT_FILE_ON
+    test_font_lvgl_bin_files();
+#endif /* XFONT_FILE_ON */
     XGuiApplication_setFont(font);
     expect_true(g_guiAppProbe.fontChanged == 1 && g_guiAppProbe.lastFont != NULL,
                 "setFont 发射 fontChanged");
@@ -12892,6 +13226,24 @@ static void test_gui_application_contract(void)
                 XGuiApplication_font() == NULL,
                 "setFont(NULL) 清空并发射");
     XFont_delete_base(font);
+
+    {
+        XFont moveSource;
+        XFont moveDest;
+        XFont_init_ex(&moveSource, "Move Sans", 17, XFont_Bold, true);
+        XFont_setStyleName(&moveSource, "Moved Style");
+        XFont_init_ex(&moveDest, "Old Sans", 9, XFont_Normal, false);
+        XFont_move_base(&moveDest, &moveSource);
+        expect_true(strcmp(XFont_family(&moveDest), "Move Sans") == 0 &&
+                    strcmp(XFont_styleName(&moveDest), "Moved Style") == 0 &&
+                    XFont_pointSize(&moveDest) == 17 &&
+                    XFont_bold(&moveDest) && XFont_italic(&moveDest) &&
+                    XFont_family(&moveSource)[0] == '\0' &&
+                    XFont_styleName(&moveSource)[0] == '\0',
+                    "font move_base 转移资源和值并清空源对象");
+        XFont_deinit_base(&moveDest);
+        XFont_deinit_base(&moveSource);
+    }
 
 #if XPALETTE_ON
     {
@@ -16196,7 +16548,7 @@ static void test_label_contract(void)
                 "XLabel 离屏绘制产生非背景像素");
     XImage_deinit_base(&image);
 
-    /* 文字模式也必须使用 XFont 的整数倍缩放，而非只缩放像素图内容。 */
+    /* 文字模式也必须使用 XFont 的目标像素字号，而非只缩放像素图内容。 */
     XLabel_setText_2(&label, "Scale");
     XLabel_setAlignment(&label, XAlignment_Left | XAlignment_Top);
     XLabel_setMargin(&label, 0);
@@ -16926,6 +17278,12 @@ int main(void)
     test_painter_text_layout_contract();
     test_painter_text_flags_contract();
 #endif /* XPAINTER_TEXTLAYOUT_ON */
+#if XPAINTER_RENDERHINT_ON
+    test_painter_text_antialiasing_contract();
+#endif /* XPAINTER_RENDERHINT_ON */
+#if XFONT_BUILTIN_32X32_ON
+    test_painter_native_32x32_font();
+#endif /* XFONT_BUILTIN_32X32_ON */
     test_painter_record_play_contract();
     test_painter_picture_pen_state_record();
     test_painter_picture_opacity_composition_record();

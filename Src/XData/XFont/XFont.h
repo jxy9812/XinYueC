@@ -14,7 +14,106 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include "XClass.h"
+#include "XFont_config.h"
 #include "XString.h"
+
+/** @brief XFont 点阵字库的行度量及缺省字形度量，单位均为像素。 */
+typedef struct XFontBitmapInfo
+{
+    int m_width;       /**< 字形宽度；不得超过 XFONT_BITMAP_MAX_WIDTH。 */
+    int m_height;      /**< 字形行数；不得超过 XFONT_BITMAP_MAX_HEIGHT。 */
+    int m_ascent;      /**< 基线以上高度；范围为 0 到 m_height。 */
+    int m_descent;     /**< 基线以下高度；范围为 0 到 m_height。 */
+    int m_rowBytes;    /**< 每行字节数；由宽度和 bpp 决定。 */
+    int m_bpp;         /**< 每像素位数；按 LVGL fmt_txt 支持 1/2/4/8bpp。 */
+} XFontBitmapInfo;
+
+/**
+ * @brief LVGL fmt_txt 字形描述的无依赖镜像。
+ * @details 字段名称、顺序和位宽与 LVGL 的
+ *          lv_font_fmt_txt_glyph_dsc_t 保持一致，XFont 不需要包含 LVGL
+ *          头文件。bitmap_index 指向 glyph_bitmap，adv_w 为 8.4 定点数。
+ */
+typedef struct XFontGlyphDsc
+{
+#if XFONT_LVGL_FMT_TXT_LARGE
+    uint32_t bitmap_index;
+    uint32_t adv_w;
+    uint16_t box_w;
+    uint16_t box_h;
+    int16_t ofs_x;
+    int16_t ofs_y;
+#else
+    uint32_t bitmap_index : 20;
+    uint32_t adv_w : 12;
+    uint8_t box_w;
+    uint8_t box_h;
+    int8_t ofs_x;
+    int8_t ofs_y;
+#endif
+} XFontGlyphDsc;
+
+/** @brief LVGL fmt_txt cmap 类型。数值与 LVGL 保持一致。 */
+typedef enum XFontCmapType
+{
+    XFontCmapFormat0Full = 0,
+    XFontCmapSparseFull = 1,
+    XFontCmapFormat0Tiny = 2,
+    XFontCmapSparseTiny = 3
+} XFontCmapType;
+
+/** @brief LVGL fmt_txt 字符映射描述。 */
+typedef struct XFontCmap
+{
+    uint32_t range_start;
+    uint16_t range_length;
+    uint16_t glyph_id_start;
+    const uint16_t* unicode_list;
+    const void* glyph_id_ofs_list;
+    uint16_t list_length;
+    /* Keep the enum member, alignment, and size identical to LVGL. */
+    XFontCmapType type;
+} XFontCmap;
+
+/**
+ * @brief LVGL fmt_txt 字体数据描述的无依赖镜像。
+ * @details 可将 LVGL 生成的 glyph_bitmap、glyph_dsc 和 cmaps 指针直接
+ *          填入该结构；bitmap_format 目前支持 LVGL 的 plain(0) 格式。
+ */
+typedef struct XFontBitmapData
+{
+    const uint8_t* glyph_bitmap;
+    const XFontGlyphDsc* glyph_dsc;
+    const XFontCmap* cmaps;
+    const void* kern_dsc;
+    uint16_t kern_scale;
+    uint16_t cmap_num : 9;
+    uint16_t bpp : 4;
+    uint16_t kern_classes : 1;
+    uint16_t bitmap_format : 2;
+} XFontBitmapData;
+
+/**
+ * @brief XFont 点阵字库 provider。
+ * @details m_family 为静态存储期的家族名；注册表只保存该指针，不复制
+ *          字符串。m_data 非空时使用 LVGL fmt_txt 数据；m_loadGlyph 仅
+ *          用于文件字库和需要动态取字形的后端。二者都不需要 LVGL 运行时。
+ */
+typedef struct XFontBitmapProvider
+{
+    const char* m_family;
+    XFontBitmapInfo m_info;
+    const XFontBitmapData* m_data;
+    bool (*m_loadGlyph)(uint32_t cp, unsigned char* out, size_t outSize);
+} XFontBitmapProvider;
+
+/** @brief 把 LVGL 的 lv_font_t 描述转换为 XFont provider 初始化项。 */
+#define XFONT_BITMAP_PROVIDER_FROM_LVGL(familyName, lvglFontPtr, glyphWidth, glyphRowBytes, glyphBpp) \
+    { (familyName), \
+      { (glyphWidth), (lvglFontPtr)->line_height, \
+        (lvglFontPtr)->line_height - (lvglFontPtr)->base_line, \
+        (lvglFontPtr)->base_line, (glyphRowBytes), (glyphBpp) }, \
+      (const XFontBitmapData*)(lvglFontPtr)->dsc, NULL }
 
 /* ========== XFont 虚函数表枚举 ========== */
 XCLASS_DEFINE_BEGING(XFont)
@@ -147,14 +246,14 @@ typedef enum XFont_SpacingType
  */
 typedef struct XFont
 {
-    XClass   m_class;      /**< 继承的基类成员 */
-    XString* m_family;     /**< 字体家族名称 */
-    XString* m_styleName;  /**< 样式名称 */
-    double   m_pointSizeF; /**< 点大小（浮点） */
-    int      m_pixelSize;  /**< 像素大小（-1 表示未设置） */
-    int      m_weight;     /**< 字重（XFont_Weight 枚举值） */
-    int      m_style;      /**< 样式（XFont_Style 枚举值） */
-    int      m_stretch;    /**< 拉伸（XFont_Stretch 枚举值） */
+    XClass   m_class;      /**< 第一个成员；由 XClass 管理，调用者禁止手工修改。 */
+    XString* m_family;     /**< 字体家族名称；对象拥有，可为 NULL，不可直接修改。 */
+    XString* m_styleName;  /**< 样式名称；对象拥有，可为 NULL，不可直接修改。 */
+    double   m_pointSizeF; /**< 点大小（point）；由属性 API 修改，不限制为整数。 */
+    int      m_pixelSize;  /**< 像素大小；<=0 表示未设置，由属性 API 修改。 */
+    int      m_weight;     /**< 字重；通常为 100 到 900，遵循 XFont_Weight。 */
+    int      m_style;      /**< 样式；取 XFont_Style 枚举值。 */
+    int      m_stretch;    /**< 拉伸；取 XFont_Stretch 枚举值。 */
     uint32_t m_underline       : 1; /**< 是否有下划线 */
     uint32_t m_strikeOut       : 1; /**< 是否有删除线 */
     uint32_t m_overline        : 1; /**< 是否有上划线 */
@@ -183,12 +282,15 @@ XVtable* XFont_class_init(void);
 /* ========== 创建与初始化 ========== */
 
 /**
- * @brief      在堆上创建 XFont 实例
+ * @brief      在堆上创建 XFont 实例。
+ * @details    新对象使用 XFONT_DEFAULT_* 配置的默认字体参数；调用方必须用
+ *             XFont_delete_base 释放返回对象。
  * @return     指向新创建的 XFont 对象的指针，失败返回 NULL
  */
 /**
- * @brief      在堆上创建 XFont 实例（含家族和大小）
- * @param family   字体家族名称
+ * @brief      在堆上创建 XFont 实例（含家族和大小）。
+ * @param memory     对象使用的 XMemory 类型。
+ * @param family   字体家族名称，或 LVGL --format bin 字库文件路径
  * @param pointSize 点大小（-1 表示默认）
  * @param weight   字重（-1 表示默认）
  * @param italic   是否斜体
@@ -197,53 +299,53 @@ XVtable* XFont_class_init(void);
 XFont* XFont_create_ex(XMemoryType memory, const char* family, int pointSize, int weight, bool italic);
 
 /**
- * @brief      初始化 XFont 实例
- * @param self 待初始化的 XFont 对象指针
+ * @brief      初始化 XFont 实例。
+ * @details    self 必须指向调用方提供的未初始化存储；重复初始化前应先调用
+ *             XFont_deinit_base。默认参数来自 XFONT_DEFAULT_* 配置。
+ * @param self 待初始化的 XFont 对象指针；NULL 时不执行任何操作。
+ * @return     无；self 为 NULL 时对象状态不变。
  */
 void XFont_init(XFont* self);
 
 /**
- * @brief      初始化 XFont 实例（含家族和大小）
+ * @brief      初始化 XFont 实例（含家族和大小）。
  * @param self      待初始化的 XFont 对象指针
- * @param family    字体家族名称
- * @param pointSize 点大小（-1 表示默认）
- * @param weight    字重（-1 表示默认）
- * @param italic    是否斜体
+ * @param family    字体家族名称；NULL 使用 XFONT_DEFAULT_FAMILY，不取得调用者所有权。
+ * @param pointSize 点大小（<=0 使用 XFONT_DEFAULT_POINT_SIZE）。
+ * @param weight    字重（<=0 使用 XFONT_DEFAULT_WEIGHT）。
+ * @param italic    是否斜体；true 时启用，false 使用 XFONT_DEFAULT_ITALIC。
+ * @return          无；参数非法时保持已初始化对象的默认值。
  */
 void XFont_init_ex(XFont* self, const char* family, int pointSize, int weight, bool italic);
 
-/**
- * @brief      复制构造函数
- * @param self 目标 XFont 对象指针
- * @param other 源 XFont 对象指针
- */
-void XFont_copy(XFont* self, const XFont* other);
+/* ========== XClass 生命周期与虚函数调度 ========== */
 
 /**
- * @brief      移动构造函数
- * @param self 目标 XFont 对象指针
- * @param other 源 XFont 对象指针（移动后源对象变为空）
+ * @brief 深拷贝字体资源到目标对象。
+ * @param self 目标对象；未初始化时虚函数会先调用 XFont_init。
+ * @param other 源对象；只读借用，不取得所有权。
+ * @return 无；self 与 other 相同或任一指针为 NULL 时不执行。
  */
-void XFont_move(XFont* self, XFont* other);
-
+#define XFont_copy_base XClass_copy_base
 /**
- * @brief      释放 XFont 资源
- * @param self 待释放的 XFont 对象指针
+ * @brief 转移字体资源到目标对象并清空源对象。
+ * @param self 目标对象；未初始化时虚函数会先调用 XFont_init。
+ * @param other 源对象；移动后仍需调用 XFont_deinit_base，家族和样式指针为空。
+ * @return 无；self 与 other 相同或任一指针为 NULL 时不执行。
  */
-void XFont_deinit(XFont* self);
-
+#define XFont_move_base XClass_move_base
 /**
- * @brief      在堆上删除 XFont 实例
- * @param self 待删除的 XFont 对象指针
+ * @brief 反初始化字体对象并释放其拥有的字符串资源。
+ * @param self 已由 XFont_init 初始化的栈对象；NULL 时不执行。
+ * @return 无；反初始化后必须重新 init 才能使用。
  */
-void XFont_delete(XFont* self);
-
-/* ========== 虚函数调度 ========== */
-
-void XFont_copy_base(XFont* dest, const XFont* src);
-void XFont_move_base(XFont* dest, XFont* src);
-void XFont_deinit_base(XFont* self);
-void XFont_delete_base(XFont* self);
+#define XFont_deinit_base XClass_deinit_base
+/**
+ * @brief 反初始化并释放堆上的 XFont 对象。
+ * @param self 由 XFont_create_ex 创建的堆对象；NULL 时不执行。
+ * @return 无；不能用于栈对象。
+ */
+#define XFont_delete_base XClass_delete_base
 
 /* ========== 属性访问 ========== */
 
@@ -257,7 +359,9 @@ const char* XFont_family(const XFont* self);
 /**
  * @brief      设置字体家族名称
  * @param self   目标 XFont 对象指针
- * @param family 字体家族名称
+ * @param family 字体家族名称（例如 "XFont8x16" 使用已注册字库）；若名称未注册，
+ *               则按 XFONT_EXTERNAL_FONT_DIR/<family>.bin 查找外挂字库；也可
+ *               传入外挂字库完整路径（可带或不带 ".bin" 后缀）。
  */
 void XFont_setFamily(XFont* self, const char* family);
 
@@ -317,7 +421,37 @@ int XFont_pixelSize(const XFont* self);
  */
 void XFont_setPixelSize(XFont* self, int pixelSize);
 
-/* ========== 点阵字体整倍缩放算法（内置位图字体共用小工具） ========== */
+/**
+ * @brief 查询 XFont 当前选择的点阵字库。
+ * @param self 字体对象；NULL 使用默认字库。
+ * @param info 调用方提供的度量输出空间。
+ * @return 找到可用字库返回 true，否则返回 false，info 保持不变。
+ */
+bool XFont_bitmapFontInfo(const XFont* self, XFontBitmapInfo* info);
+
+/**
+ * @brief 查找字形并按需读取其 LVGL 紧凑位图。
+ * @details dsc 必须非空；out 可为 NULL，此时只查询 descriptor，不复制
+ *          位图。LVGL 的连续 bit 流会被展开为每行对齐的输出，行跨度为
+ *          ceil(box_w * bpp / 8)，不是字体的最大宽度。这样查询和加载共用
+ *          一个入口，避免重复 API。
+ */
+bool XFont_bitmapLoadGlyph(const XFont* self, uint32_t cp,
+                           XFontGlyphDsc* dsc, unsigned char* out,
+                           size_t outSize);
+
+/** @brief 计算 LVGL bpp 点阵字形每行的存储字节数。 */
+int XFont_bitmapGlyphRowBytes(const XFontGlyphDsc* dsc, int bpp);
+
+/**
+ * @brief 注册一个静态点阵字库 provider。
+ * @param provider provider 描述；其中 family 字符串必须保持有效。
+ * @return 注册或替换成功返回 true；参数、度量或容量非法返回 false。
+ * @note 同名 provider 会替换旧注册；调用应发生在多线程启动前。
+ */
+bool XFont_registerBitmapProvider(const XFontBitmapProvider* provider);
+
+/* ========== 点阵字体显示尺寸算法（内置位图字体共用小工具） ========== */
 
 /**
  * @brief      读取字体像素字号，未设置（<=0）时回落默认值。
@@ -326,42 +460,6 @@ void XFont_setPixelSize(XFont* self, int pixelSize);
  * @return 生效的像素字号。
  */
 int XFont_bitmapPixelSize(const XFont* self, int defaultPixelSize);
-
-/**
- * @brief      计算内置点阵字体的整倍缩放系数（最近邻）。
- * @details    给定基准字体高度与目标字号高度，返回
- *             scale = max(1, ceil(target / base))，使任何位图字体
- *             （8x16、6x13、12x24…）都可按统一算法整倍放大：
- *             有效高 = base x scale、有效宽 = 对应原始度量 x scale。
- * @param basePixelHeight 基准点阵字体高度（<=0 按 1 处理）。
- * @param targetPixelHeight 目标像素高度（<=0 视为 base 本身）。
- * @return 整倍缩放系数（>=1）。
- */
-int XFont_bitmapScale(int basePixelHeight, int targetPixelHeight);
-
-/**
- * @brief      计算整倍缩放后的尺寸。
- * @param baseSize 原始某一度量（字宽/行高/基线高/字间距…）。
- * @param scale    缩放系数（<1 按 1 处理）。
- * @return baseSize x max(1, scale)。
- */
-int XFont_bitmapScaledSize(int baseSize, int scale);
-
-/**
- * @brief      按字体像素字号计算键入内置位图字体的整倍缩放系数。
- * @param self 目标 XFont 对象指针；NULL 返回 1。
- * @param basePixelHeight 该位图字体的基准高度（如 16）。
- * @return 整倍缩放系数（>=1）。
- */
-int XFont_bitmapScaleForFont(const XFont* self, int basePixelHeight);
-
-/**
- * @brief      按字体像素字号计算内建位图字体的有效像素高。
- * @param self 目标 XFont 对象指针；NULL 返回 basePixelHeight。
- * @param basePixelHeight 该位图字体的基准高度（如 16）。
- * @return 有效像素高度 = basePixelHeight x scale。
- */
-int XFont_bitmapHeightForFont(const XFont* self, int basePixelHeight);
 
 /**
  * @brief      获取字重

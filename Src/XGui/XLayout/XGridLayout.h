@@ -175,6 +175,17 @@ void XGridLayout_init(XGridLayout* self);
  */
 XGridLayout* XGridLayout_create(XWidget* parent);
 
+/** @brief 通过 XClass 虚表释放网格布局资源。 */
+#define XGridLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
+/** @brief 删除堆上的网格布局对象。 */
+#define XGridLayout_delete_base(self) XClass_delete_base((XClass*)(self))
+/** @brief 深拷贝网格布局配置，不复制条目树。 */
+#define XGridLayout_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 移动网格布局及条目所有权。 */
+#define XGridLayout_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
+
 /* ==================== 间距（对标 QGridLayout） ==================== */
 
 /**

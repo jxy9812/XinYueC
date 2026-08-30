@@ -423,7 +423,7 @@ const char* XFormat_fontName_utf8(const XFormat* self);
 /**
  * @brief      获取字体对象
  * @param self 指针
- * @return     新创建的字体对象，调用者负责调用 XFont_delete 释放；失败返回 NULL
+ * @return     新创建的字体对象，调用者负责调用 XFont_delete_base 释放；失败返回 NULL
  */
 XFont* XFormat_font(const XFormat* self);
 

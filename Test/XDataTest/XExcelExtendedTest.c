@@ -959,8 +959,8 @@ static bool test_support_modules(void)
           XFont_pointSize(returnedFont) == 13 && XFont_bold(returnedFont) &&
           XFont_italic(returnedFont) && XFont_underline(returnedFont) &&
           XFont_strikeOut(returnedFont), "XFormat 字体对象 API 完整复制支持的 XFont 属性");
-    if (sourceFont) XFont_delete(sourceFont);
-    if (returnedFont) XFont_delete(returnedFont);
+    if (sourceFont) XFont_delete_base(sourceFont);
+    if (returnedFont) XFont_delete_base(returnedFont);
     XFormat_delete(fontFormat);
     XString_deinit_base(dateCode);
     XString_deinit_base(elapsedCode);

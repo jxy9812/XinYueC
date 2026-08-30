@@ -91,6 +91,11 @@ void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const ch
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放写入器资源。 @param self 待写入器指针。 */
+#define XImageWriter_copy_base(self, other) \
+    XClass_copy_base((XClass*)(self), (const XClass*)(other))
+/** @brief 通过 XClass 虚表移动写入器资源。 @param self 目标写入器指针。 @param other 源写入器指针。 */
+#define XImageWriter_move_base(self, other) \
+    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XImageWriter_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像写入器。 @param self 待写入器指针。 */
 #define XImageWriter_delete_base(self) XClass_delete_base((XClass*)(self))
