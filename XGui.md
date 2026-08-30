@@ -8087,3 +8087,26 @@ Mono/MonoLSB 与 Indexed8 的范围拒绝检查，匹配 Qt 的无副作用行�
 
 边界：轻量 C99 实现不引入 Qt 私有 `QImageData`/动态插件对象；掩码算法仍使用项目
 现有软件队列和像素访问接口，未增加平台 SIMD 优化。
+
+### 10.325 2026-08-30 QIcon::addFile 有效零尺寸请求
+
+本轮对照 Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qicon.cpp:447-469`：
+`QPixmapIconEngine::addFile()` 通过 `QSize::isValid()` 判断是否指定尺寸，而
+`QSize::isValid()` 对宽高均为非负值返回 true。因此 `QSize(0,0)` 或单个分量为零的
+尺寸仍属于显式条目；只有负分量才进入“加入文件中的全部图像”分支。显式零尺寸条目
+在取图时可作为空占位，不应被改写成全部帧加载。
+
+实现范围：`Src/XGui/Icon/XIcon.c:251-266` 的惰性文件条目校验改为拒绝负尺寸、保留
+零尺寸；`Src/XGui/Icon/XIcon.c:1210-1224` 的 `XIcon_addFile()` 分支改用宽高非负
+判断，与 Qt `QSize::isValid()` 一致。`Src/XGui/Icon/XIcon.h:324-357` 更新公共契约，
+明确负值代表无效尺寸/全部帧而零值仍是指定请求。回归夹具
+`xgui_regression_test.c:6128-6148` 添加 `0x0` 请求并断言 `availableSizes()` 保留
+零尺寸显式占位。
+
+验证：默认 `build` 与 `build-crop-jpeg` 的 `XGuiRegression_Test` 目标构建、程序运行
+和 CTest 均通过；随后默认 `build` 全量构建通过，`git diff --check` 通过。保留工程既有
+函数指针、const/XEvent 和信号宏编译警告及预期 `XError` 诊断。本轮未运行 ASan、UBSan
+或 Valgrind，不能宣称无泄漏。
+
+边界：轻量图标引擎仍不实现 Qt 的 ICO 专用高质量帧筛选和动态图标引擎插件扫描；负尺寸
+的无尺寸路径继续依赖现有 `XImageReader` 多帧能力与裁剪配置策略。

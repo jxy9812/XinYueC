@@ -250,7 +250,9 @@ static void XIconPrivate_addFileEntry(XIconPrivate* d, const XString* fileName,
                                       XIconMode mode, XIconState state)
 {
     XIconEntry entry;
-    if (!d || !fileName || width <= 0 || height <= 0) return;
+    /* Qt QPixmapIconEngine uses QSize::isValid(): zero dimensions are valid
+       explicit requests; only negative components mean "all frames". */
+    if (!d || !fileName || width < 0 || height < 0) return;
     if (!XIconPrivate_canReadFile(fileName)) return;
     memset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
@@ -1207,7 +1209,10 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
         return;
     }
     XIcon_detach(self);
-    if (width > 0 && height > 0)
+    /* QSize::isValid() is width >= 0 && height >= 0 in Qt 6.8.  Keep
+       zero-sized requests as an explicit placeholder instead of treating
+       them as the no-size/all-frames overload. */
+    if (width >= 0 && height >= 0)
     {
         XIconPrivate_addFileEntry(self->m_data, fileName, width, height,
                                   mode, state);

@@ -330,8 +330,8 @@ void XIcon_addPixmap(XIcon* self, const XPixmap* pixmap, XIconMode mode, XIconSt
  * @brief      添加文件到图标
  * @param self     目标 XIcon 对象指针
  * @param fileName 文件名
- * @param width    目标宽度（0 表示使用原始尺寸）
- * @param height   目标高度（0 表示使用原始尺寸）
+ * @param width    目标宽度；宽高均为非负值时表示指定尺寸，负值表示使用原始尺寸/全部帧
+ * @param height   目标高度；宽高均为非负值时表示指定尺寸，负值表示使用原始尺寸/全部帧
  * @param mode     图标模式
  * @param state    图标状态
  */
@@ -341,8 +341,8 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
  * @brief 使用 UTF-8 文件名添加图标资源的兼容重载。
  * @param self 目标图标对象指针。
  * @param fileName UTF-8 编码的图标文件名。
- * @param width 目标宽度，0 表示使用原始尺寸。
- * @param height 目标高度，0 表示使用原始尺寸。
+ * @param width 目标宽度；宽高均为非负值时表示指定尺寸，负值表示使用原始尺寸/全部帧。
+ * @param height 目标高度；宽高均为非负值时表示指定尺寸，负值表示使用原始尺寸/全部帧。
  * @param mode 图标显示模式。
  * @param state 图标状态。
  */

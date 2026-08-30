@@ -6089,7 +6089,9 @@ static void test_icon_add_file_size(void)
 {
     XImage image;
     XIcon icon;
+    XIcon zeroSizeIcon;
     XVector sizes;
+    XVector zeroSizes;
     XPixmap loaded;
     XSize* size;
 
@@ -6121,7 +6123,22 @@ static void test_icon_add_file_size(void)
     expect_true(size && size->width == 3 && size->height == 2,
                 "icon addFile entry reports native size after load");
 
+    /* Qt qicon.cpp:447-469 uses QSize::isValid(), so QSize(0,0) is an
+       explicit placeholder rather than the all-frames branch. */
+    XIcon_init(&zeroSizeIcon);
+    XIcon_addFile_2(&zeroSizeIcon, "xgui_icon_add_file.bmp", 0, 0,
+                    XIconMode_Normal, XIconState_Off);
+    XVector_init(&zeroSizes, sizeof(XSize), true);
+    XIcon_availableSizes(&zeroSizeIcon, XIconMode_Normal, XIconState_Off,
+                         &zeroSizes);
+    size = XVector_size_base((const XContainer*)&zeroSizes) == 1
+        ? (XSize*)XVector_at_base(&zeroSizes, 0) : NULL;
+    expect_true(size && size->width == 0 && size->height == 0,
+                "icon addFile keeps zero QSize as explicit placeholder");
+
     XPixmap_deinit_base(&loaded);
+    XVector_deinit_base((XClass*)&zeroSizes);
+    XIcon_deinit_base(&zeroSizeIcon);
     XVector_deinit_base((XClass*)&sizes);
     XIcon_deinit_base(&icon);
     XImage_deinit_base(&image);
