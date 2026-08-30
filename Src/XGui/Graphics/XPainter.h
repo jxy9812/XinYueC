@@ -549,6 +549,7 @@ typedef struct XPainter
     int m_stateCount;                 /**< 栈内状态数量。 */
     int m_stateCapacity;              /**< 栈容量。 */
     bool m_initialized;               /**< 是否已完成 init 且尚未 deinit。 */
+    bool m_replaying;                 /**< 是否正在回放 Picture，禁止重复记录状态命令。 */
 } XPainter;
 
 /* ========== 生命周期 ========== */

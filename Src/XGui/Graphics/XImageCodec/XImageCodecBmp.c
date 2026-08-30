@@ -43,20 +43,51 @@ static uint8_t bmpPackedIndex(const uint8_t* row, size_t x, int bpp)
     return (uint8_t)((row[bitIndex >> 3] >> shift) & mask);
 }
 
-/* 把位掩码中的字段值展开为 8 位分量。 */
+/* 计算 Qt qbmphandler.cpp::calc_shift() 使用的最低有效位位置。 */
+static uint32_t bmpMaskShift(uint32_t mask)
+{
+    uint32_t result = 0;
+    while ((mask >= 0x100u) || (!(mask & 1u) && mask)) {
+        ++result;
+        mask >>= 1;
+    }
+    return result;
+}
+
+/* 计算 Qt qbmphandler.cpp::calc_scale() 使用的位复制缩放量。 */
+static uint32_t bmpMaskScale(uint32_t lowMask)
+{
+    uint32_t result = 8;
+    while (lowMask && result) {
+        --result;
+        lowMask >>= 1;
+    }
+    return result;
+}
+
+/* 把位掩码中的字段值展开为 8 位分量。
+ * Qt 不使用四舍五入除法，而是用 apply_scale() 重复高位填充低位。
+ * 例如 5 位值 3 的结果是 24 而不是 25；保留这个细节可避免
+ * RGB555/RGB565 夹具在少数通道值上与 Qt 不一致。 */
 static uint8_t bmpMaskTo8(uint32_t value, uint32_t mask)
 {
-    uint32_t shift, bits;
+    uint32_t shift;
+    uint32_t scale;
+    uint32_t filled;
+    uint32_t result;
     if (!mask) return 0;
-    shift = 0;
-    while (shift < 32 && !((mask >> shift) & 1u)) ++shift;
-    bits = mask >> shift;
-    while (bits > 1 && !(bits & 1u)) bits >>= 1;
-    {
-        uint32_t max = bits;
-        uint32_t v = ((uint32_t)value & mask) >> shift;
-        return (uint8_t)((v * 255u + max / 2u) / max);
-    }
+    shift = bmpMaskShift(mask);
+    scale = bmpMaskScale(mask >> shift);
+    result = (value & mask) >> shift;
+    if (!(scale & 7u))
+        return (uint8_t)result;
+    filled = 8u - scale;
+    result <<= scale;
+    do {
+        result |= result >> filled;
+        filled <<= 1;
+    } while (filled < 8u);
+    return (uint8_t)result;
 }
 
 /* RLE8/RLE4 解压到 width*height 的索引缓冲区。 */
@@ -117,13 +148,26 @@ static bool bmpRleDecode(const uint8_t* src, size_t size, int bpp,
                     break;
                 }
                 default: {                          /* 绝对模式 */
-                    int n = value;
+                    int encoded = value;
                     int max = (y >= height) ? 0 : bmpRleRowRemaining(x, width);
+                    int n = encoded;
+                    if (n > max) n = max;
+                    /* Qt qbmphandler.cpp:449-453/514-519 先把绝对块
+                     * 的计数钳到当前行余量，再读取钳制后的 payload。
+                     * 例如宽度为 2 而命令计数为 4 时，Qt 只要求两个
+                     * 像素的字节；按原始计数检查会错误拒绝同样的流。 */
                     size_t need = bpp == 8
                         ? (size_t)n + ((size_t)n & 1u)   /* 8 位逐字节，奇数补齐 */
                         : (size_t)((n + 1) / 2);         /* 4 位每字节两个像素 */
+                    /* RLE4 绝对模式的像素数据按字对齐。Qt 的条件
+                     * `(((n & 3) + 1) & 2) == 2` 等价于余数为 1 或 2；
+                     * 这里的 n 已是 Qt 钳制后的计数，其中值 2 本身
+                     * 是 Delta 控制码，实际绝对块从 3 开始，但 6、10
+                     * 等合法块仍必须消费一个填充字节，否则下一条命令
+                     * 的首字节会被误读为当前流的一部分。 */
+                    if (bpp == 4 && ((n & 3) == 1 || (n & 3) == 2))
+                        ++need;
                     if (pos + need > size) return false;
-                    if (n > max) n = max;
                     for (int i = 0; i < n; ++i) {
                         int idx;
                         if (!bmpRleAbsRead(src, pos, i, bpp, &idx))
@@ -144,15 +188,16 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
 {
     uint32_t offset, dib, compression = 0, clrUsed = 0;
     int32_t signedHeight;
+    int32_t pelsPerMeterX = 0, pelsPerMeterY = 0;
     uint32_t width32;
     int width, height;
     uint16_t planes, bpp;
     uint32_t maskR = 0, maskG = 0, maskB = 0, maskA = 0;
     uint32_t rgbAlphaMask = 0;
     bool bottomUp, hasMasks = false, hasV45 = false;
+    bool coreHeader;
     size_t palettePos, paletteEntries = 0, paletteEntryBytes = 3;
     uint32_t palette[256];
-    bool paletteAlpha = false;
     uint8_t* indexBuffer = NULL;
     XImage temp;
     bool ok = false;
@@ -161,6 +206,11 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         return false;
     offset = XImageCodecInternal_readU32LE(data + 10);
     dib = XImageCodecInternal_readU32LE(data + 14);
+    /* Qt qbmphandler.cpp:77-102 仅把 biSize==12 作为 OS/2 Core
+       Header。其它未知长度虽同样走旧式宽高兼容解析，但 read_dib_body
+       仍按实际 biSize 定位调色板，且按非 12 字节头读取四字节条目；
+       不能把所有未知值都折叠成 12，否则会从错误位置读取颜色表。 */
+    coreHeader = dib == 12;
     if (dib == 12) {
         int16_t oldWidth;
         int16_t oldHeight;
@@ -173,20 +223,31 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         signedHeight = (int32_t)oldHeight;
         planes = XImageCodecInternal_readU16LE(data + 22);
         bpp = XImageCodecInternal_readU16LE(data + 24);
-    } else {
-        if (dib < 40 || size < 14u + dib) return false;
+    } else if (dib == 40 || dib == 64 || dib == 108 || dib == 124) {
+        if (size < 14u + dib) return false;
         width32 = XImageCodecInternal_readU32LE(data + 18);
         signedHeight = (int32_t)XImageCodecInternal_readU32LE(data + 22);
         planes = XImageCodecInternal_readU16LE(data + 26);
         bpp = XImageCodecInternal_readU16LE(data + 28);
-        if (dib >= 40)
-            compression = XImageCodecInternal_readU32LE(data + 30);
-        if (dib >= 40)
-            clrUsed = XImageCodecInternal_readU32LE(data + 46);
-        if (dib == 52 || dib == 56 || dib == 108 || dib == 124)
+        compression = XImageCodecInternal_readU32LE(data + 30);
+        pelsPerMeterX = (int32_t)XImageCodecInternal_readU32LE(data + 38);
+        pelsPerMeterY = (int32_t)XImageCodecInternal_readU32LE(data + 42);
+        clrUsed = XImageCodecInternal_readU32LE(data + 46);
+        if (dib == 108 || dib == 124)
             hasV45 = true;
-        if (dib >= 108)
+        if (hasV45)
             rgbAlphaMask = XImageCodecInternal_readU32LE(data + 14u + 52u);
+    } else {
+        /* Qt qbmphandler.cpp:77-102 对未知 DIB 长度走旧 Windows
+         * 兼容分支：只读取有符号 16 位宽高、平面和位深，并把压缩、
+         * 分辨率及调色板数量清零。不能把任意 >=40 的长度当作现代
+         * 头，否则畸形文件中偏移 30/46 的随机字节会改变解码路径。 */
+        int16_t oldWidth = (int16_t)XImageCodecInternal_readU16LE(data + 18);
+        int16_t oldHeight = (int16_t)XImageCodecInternal_readU16LE(data + 20);
+        width32 = (uint32_t)(int32_t)oldWidth;
+        signedHeight = (int32_t)oldHeight;
+        planes = XImageCodecInternal_readU16LE(data + 22);
+        bpp = XImageCodecInternal_readU16LE(data + 24);
     }
     if (width32 == 0 || width32 > (uint32_t)INT_MAX ||
         signedHeight == 0 || signedHeight == INT32_MIN)
@@ -256,18 +317,31 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
             maskG = XImageCodecInternal_readU32LE(mp + 4);
             maskB = XImageCodecInternal_readU32LE(mp + 8);
         }
-        if (!maskR || !maskG || !maskB) return false;
+        /* Qt qbmphandler.cpp:331-338 不把零掩码视为格式错误：
+         * calc_shift/calc_scale 会令对应通道解码为 0。这里只检查
+         * 掩码数据块完整存在，保留 Qt 对畸形但可读 BITFIELDS 的行为。 */
     }
 
     /* 调色板（仅索引色）：位于 DIB 头（及可选掩码）之后。 */
-    palettePos = 14 + (dib == 12 ? 12u : (size_t)dib);
+    palettePos = 14 + (size_t)dib;
     if (hasMasks && !hasV45) palettePos += (size_t)(bpp == 32 ? 16 : 12);
-    paletteEntryBytes = (dib >= 108) ? 4u : 3u;
+    /* Qt qbmphandler.cpp:306 对除 12 字节 Core Header 外的索引 BMP
+     * 读取四字节调色板条目；第 4 字节只被消费，不参与 qRgb()。
+     * 40 字节 Windows INFOHEADER 同样优先使用四字节条目。项目早期
+     * 已内嵌的 RLE/索引夹具曾按三字节条目生成，且像素偏移恰好落在
+     * palettePos + 3*n；为保持这些嵌入式资源可用，仅在像素偏移明确
+     * 容不下四字节而能容下三字节时回退。这样标准资产仍完全走 Qt
+     * 的四字节路径，回退也不会通过“文件剩余长度”猜测而误读截断
+     * 的标准 BMP。对应 Qt 的标准依据仍是 qbmphandler.cpp:303-313。 */
+    paletteEntryBytes = coreHeader ? 3u : 4u;
     if (bpp <= 8) {
         size_t needEntries;
         if (clrUsed > 256u) return false;
         needEntries = clrUsed ? (size_t)clrUsed : ((size_t)1u << bpp);
         if (needEntries == 0 || needEntries > 256u) return false;
+        if (dib == 40 && offset < palettePos + needEntries * 4u &&
+            offset == palettePos + needEntries * 3u)
+            paletteEntryBytes = 3u;
         for (size_t i = 0; i < needEntries; ++i) {
             if (palettePos + (i + 1) * paletteEntryBytes > size)
                 return false;
@@ -276,11 +350,8 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         for (size_t i = 0; i < needEntries; ++i) {
             const uint8_t* p = data + palettePos + i * paletteEntryBytes;
             uint32_t c = bmpPaletteEntry(p, paletteEntryBytes);
-            if (paletteEntryBytes == 4) {
-                uint8_t a = p[3];
-                if (a != 255u) paletteAlpha = true;
-                c = ((uint32_t)a << 24) | (c & 0x00ffffffu);
-            }
+            /* Qt qbmphandler.cpp:307-313 以 qRgb(rgb[2], rgb[1], rgb[0])
+             * 设置颜色表，第四个保留字节（通常写为零）始终被忽略。 */
             palette[i] = c;
         }
     }
@@ -308,7 +379,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         size_t stride = (((size_t)width * (size_t)bpp) + 31u) / 32u * 4u;
         size_t count = (size_t)width * (size_t)height;
         XImageFormat fmt = bpp == 1 ? XImageFormat_Mono :
-            (paletteAlpha ? XImageFormat_ARGB32 : XImageFormat_Indexed8);
+            XImageFormat_Indexed8;
         indexBuffer = (uint8_t*)XMalloc_System(count);
         if (!indexBuffer) return false;
         /* 未覆盖到的剩余像素补 0：RLE 流允许不显式铺满整行，未写区域按索引 0 处理。 */
@@ -331,6 +402,14 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         if (XImage_isNull(&temp)) goto bmp_done;
         if (fmt == XImageFormat_Indexed8 || fmt == XImageFormat_Mono)
             XImage_setColorTable(&temp, palette, (int)paletteEntries);
+        /* The BMP reader preserves raw indices even when biClrUsed is
+         * smaller than an RLE payload index.  Qt's private decoder writes the
+         * scanline bytes directly; routing through public QImage::setPixel()
+         * would (correctly for callers) reject those indices. */
+        {
+            uint8_t* tempBits = XImage_bits(&temp);
+            int tempStride = XImage_bytesPerLine(&temp);
+            if (!tempBits || tempStride <= 0) goto bmp_done;
         for (int y = 0; y < height; ++y) {
             /* 未压缩索引色在填充阶段已把文件行序翻转为逻辑行序；
              * RLE 解出的行序仍是文件行序（bottom-up 文件首行是图像底行），
@@ -338,14 +417,27 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
             int srcRow = (rle && bottomUp) ? height - 1 - y : y;
             for (int x = 0; x < width; ++x) {
                 uint8_t idx = indexBuffer[(size_t)srcRow * width + x];
-                if (idx >= paletteEntries) idx = 0;
                 if (fmt == XImageFormat_Indexed8 || fmt == XImageFormat_Mono) {
-                    XImage_setPixel(&temp, x, y, (uint32_t)idx);
+                    /* Qt 的 QImage 在 Indexed8/Mono 路径保存文件中的原始
+                     * 索引，即使该索引超出 biClrUsed；只有随后调用
+                     * QImage::pixel() 取颜色时，越界表项才表现为 0 色。
+                     * 因此这里不能像 RGB 转换路径那样预先把索引钳为 0。 */
+                    if (fmt == XImageFormat_Indexed8)
+                        tempBits[(size_t)y * (size_t)tempStride + (size_t)x] = idx;
+                    else {
+                        unsigned mask = 0x80u >> ((unsigned)x & 7u);
+                        uint8_t* byte = tempBits + (size_t)y * (size_t)tempStride + ((unsigned)x >> 3);
+                        if (idx & 1u) *byte |= (uint8_t)mask;
+                        else *byte &= (uint8_t)~mask;
+                    }
                 } else {
+                    /* 该分支目前仅保留给未来的索引到 RGB 转换格式；
+                     * 转换成颜色时才按 Qt 的越界表项语义返回 0。 */
                     XImage_setPixel(&temp, x, y,
                         idx < paletteEntries ? palette[idx] : 0u);
                 }
             }
+        }
         }
         /* Qt 的 1 位 BMP 约定颜色表中较亮颜色对应索引 0；若文件
          * 颜色表顺序相反，同时翻转存储位和颜色表，保持 QImage::pixel
@@ -393,10 +485,12 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                         g = bmpMaskTo8(v, maskG);
                         b = bmpMaskTo8(v, maskB);
                     } else {
-                        /* 缺省 5-5-5（高位未使用） */
-                        r = (uint8_t)(((v >> 10) & 0x1fu) * 255 / 31);
-                        g = (uint8_t)(((v >> 5) & 0x1fu) * 255 / 31);
-                        b = (uint8_t)((v & 0x1fu) * 255 / 31);
+                        /* Qt qbmphandler.cpp:345-353 使用 5-5-5 掩码；
+                         * 通过 bmpMaskTo8() 保留 apply_scale() 的位复制
+                         * 规则，而不是看似等价但在少数值上不同的除法。 */
+                        r = bmpMaskTo8(v, 0x7c00u);
+                        g = bmpMaskTo8(v, 0x03e0u);
+                        b = bmpMaskTo8(v, 0x001fu);
                     }
                     c = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
                         ((uint32_t)g << 8) | b;
@@ -431,6 +525,11 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
             }
         }
     }
+    /* Qt qbmphandler.cpp:355-356 直接把 BMP 的每米点数写入
+     * QImage；传入 0 时 XImage 保留其默认分辨率，效果与 Qt
+     * 新建图像的默认 3937 dots/meter 一致。 */
+    XImage_setDotsPerMeterX(&temp, pelsPerMeterX);
+    XImage_setDotsPerMeterY(&temp, pelsPerMeterY);
     XImage_deinit_base(out);
     out->m_data = temp.m_data;
     temp.m_data = NULL;

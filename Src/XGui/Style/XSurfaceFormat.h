@@ -70,7 +70,10 @@ typedef enum XSurfaceFormatProfile
  *             缓冲大小均为 -1（未指定）、采样数 -1、交换行为 Default、可渲染
  *             类型 Default、profile NoProfile、OpenGL 主版本 2 次版本 0、
  *             交换间隔 1（垂直同步）、无立体缓冲、无格式选项、色彩空间为空。
- *             所有字段均为值语义，可直接赋值拷贝。
+ *             所有字段均为值语义，可直接赋值拷贝。Qt 的 operator== 只比较
+ *             其实现中列出的格式字段，不比较 renderableType 和 colorSpace；
+ *             XSurfaceFormat_equals() 保持这一行为，m_stereo 仅为 C 接口兼容
+ *             缓存，也不参与相等判断。
  */
 typedef struct XSurfaceFormat
 {
@@ -228,7 +231,7 @@ XSurfaceFormatSwapBehavior XSurfaceFormat_swapBehavior(const XSurfaceFormat* sel
 /**
  * @brief      判断格式是否包含 Alpha 缓冲（对标 QSurfaceFormat::hasAlpha）。
  * @param      self 目标格式；可为 NULL。
- * @return     alphaBufferSize >= 0 时返回 true。
+ * @return     alphaBufferSize > 0 时返回 true；默认值 -1 和零位请求返回 false。
  */
 bool XSurfaceFormat_hasAlpha(const XSurfaceFormat* self);
 
@@ -383,8 +386,10 @@ void XSurfaceFormat_setColorSpace(XSurfaceFormat* self, XColorSpace colorSpace);
 
 /**
  * @brief      设置进程级默认表面格式（对标 QSurfaceFormat::setDefaultFormat）。
- * @details    后续 XSurfaceFormat_create() 的默认值取自该默认格式；入参为
- *             NULL 时恢复 Qt 标准的出厂默认值。仅保存值，不解析原生格式。
+ * @details    该格式供窗口/上下文初始化路径读取；普通
+ *             XSurfaceFormat_create() 始终使用 Qt 标准出厂默认值，不受此
+ *             全局格式影响。入参为 NULL 时恢复 Qt 标准的出厂默认值。仅保存
+ *             值，不解析原生格式。
  * @param      format 默认格式；可为 NULL 恢复出厂默认。
  */
 void XSurfaceFormat_setDefaultFormat(const XSurfaceFormat* format);
@@ -396,7 +401,14 @@ void XSurfaceFormat_setDefaultFormat(const XSurfaceFormat* format);
  */
 XSurfaceFormat XSurfaceFormat_defaultFormat(void);
 
-/** @brief 判断两个表面格式是否完全相等（所有字段逐项比较）。 */
+/**
+ * @brief      判断两个表面格式是否相等。
+ * @details    按 Qt 6.8 QSurfaceFormat::operator== 的字段集合比较；该集合
+ *             不包含可渲染类型、色彩空间和 C 兼容缓存字段 m_stereo。
+ * @param      lhs 左侧格式；两个参数同时为空时返回 true。
+ * @param      rhs 右侧格式；仅一个参数为空时返回 false。
+ * @return     若 Qt 相等比较中的全部字段一致则返回 true。
+ */
 bool XSurfaceFormat_equals(const XSurfaceFormat* lhs, const XSurfaceFormat* rhs);
 
 #endif /* XSURFACEFORMAT_ON */

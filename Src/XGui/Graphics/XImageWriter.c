@@ -96,6 +96,7 @@ typedef struct XImageWriterPrivate
     XImageIOHandler* m_handler;      /**< 当前插件处理器 */
     int         m_quality;           /**< 质量参数 */
     int         m_compression;       /**< 压缩参数 */
+    float       m_gamma;             /**< Gamma 参数，Qt 默认值为 0.0 */
     XString*    m_description;       /**< 按 Qt 格式拼接的文本描述元数据 */
     XString*    m_subType;           /**< 子类型 */
     bool        m_optimizedWrite;    /**< 是否优化写入 */
@@ -137,8 +138,9 @@ static XIODevice* XImageWriter_ensureOwnedDevice(XImageWriterPrivate* data)
     return data->m_fileDevice;
 }
 
-/* The handler is transient, while a QFile created from setFileName() is
-   owned by the writer for the complete writer lifetime, just like Qt. */
+/* Qt keeps the handler for the complete writer lifetime.  Releasing it is
+   therefore part of setDevice(), setFileName(), and deinitialization, not
+   part of write().  The owned QFile follows the same lifetime rule. */
 static void XImageWriter_releaseTransientState(XImageWriterPrivate* data)
 {
     if (!data) return;
@@ -248,6 +250,13 @@ static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
         memset(&value, 0, sizeof(value));
         value.integer = data->m_compression;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_CompressionRatio, &value);
+    }
+    if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Gamma)) {
+        /* 对齐 Qt 6.8 qimagewriter.cpp:668-669；即使没有公共 Gamma
+           setter，默认的 0.0 仍需传给支持该选项的处理器。 */
+        memset(&value, 0, sizeof(value));
+        value.real = data->m_gamma;
+        XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Gamma, &value);
     }
     if (data->m_description &&
         !XContainer_isEmpty_base((const XContainer*)data->m_description) &&
@@ -454,6 +463,9 @@ void XImageWriter_init(XImageWriter* self)
         memset(self->m_data, 0, sizeof(XImageWriterPrivate));
         self->m_data->m_quality = -1;
         self->m_data->m_compression = -1;
+        /* QImageWriterPrivate 将 gamma 初始化为 0.0，并在 write() 中
+           对声明支持 Gamma 的处理器无条件应用该默认值。 */
+        self->m_data->m_gamma = 0.0f;
         self->m_data->m_error = XImageWriterError_UnknownError;
         /* Qt 6.8 initializes errorString together with UnknownError.  Keep
          * the string observable even before the first failed operation. */
@@ -778,6 +790,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
     XImage transformed;
     const XImage* source = image;
     bool transformedInitialized = false;
+    bool handlerAttempted = false;
     bool wrote = false;
     if (!self || !self->m_data || !image || XImage_isNull(image))
     {
@@ -791,6 +804,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
 
     XImageWriter_ensureHandler(self);
     if (self->m_data->m_handler) {
+        handlerAttempted = true;
         if (self->m_data->m_transformation != XImageIOHandlerTransformation_None &&
             !XImageIOHandler_supportsOption_base(
                 self->m_data->m_handler,
@@ -799,7 +813,6 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
                                                    &transformed)) {
                 XImageWriter_setError(self, XImageWriterError_UnsupportedFormatError,
                                        "The requested image transformation is unsupported");
-                XImageWriter_releaseHandler(self->m_data);
                 return false;
             }
             source = &transformed;
@@ -807,13 +820,26 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
         }
         XImageWriter_applyHandlerSettings(self->m_data->m_handler, self->m_data);
         wrote = XImageIOHandler_write_base(self->m_data->m_handler, source);
-        if (wrote)
-            wrote = XIODevice_flush(self->m_data->m_fileDevice ?
-                                    self->m_data->m_fileDevice : self->m_data->m_device);
-        XImageWriter_releaseHandler(self->m_data);
+        /* QImageWriter flushes only a QFileDevice (qimagewriter.cpp:685-686),
+           and deliberately ignores QFileDevice::flush()'s return value before
+           returning success (qimagewriter.cpp:683-687).  An arbitrary
+           caller-owned QIODevice is not flushed by the wrapper. */
+        if (wrote && self->m_data->m_fileDevice)
+            (void)XIODevice_flush(self->m_data->m_fileDevice);
         if (wrote) {
             if (transformedInitialized) XImage_deinit_base(&transformed);
             return true;
+        }
+        /* Qt QImageWriter::write() returns immediately when the selected
+           handler rejects the image.  Do not retry through XImage_save_2():
+           that fallback would duplicate output and could silently switch
+           formats after a plugin has already accepted the request. */
+        if (handlerAttempted) {
+            if (transformedInitialized) XImage_deinit_base(&transformed);
+            /* Qt returns directly from handler->write() here and does not
+               replace imageWriterError/errorString (qimagewriter.cpp:683-684).
+               Preserve the previously observable status for repeated writes. */
+            return false;
         }
     }
 

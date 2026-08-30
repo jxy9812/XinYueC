@@ -2,7 +2,9 @@
  * @file       XBitmap.h
  * @brief      XBitmap 单色位图类（对标 Qt 6.8 QBitmap）
  * @author     XinYueC 团队
- * @note       继承自 XPixmap，提供单色（1 位）位图功能，用于掩码、蒙版等操作
+ * @note       继承自 XPixmap，提供单色（1 位）位图功能，用于掩码、蒙版等操作。
+ *             非空位图使用 MonoLSB 存储，颜色表固定遵循 Qt::color0=白色、
+ *             Qt::color1=黑色；空位图的深度为 0。
  ******************************************************************************/
 #ifndef XBITMAP_H
 #define XBITMAP_H
@@ -51,7 +53,8 @@ XBitmap* XBitmap_create_ex(XMemoryType memory);
 void XBitmap_init(XBitmap* self);
 
 /**
- * @brief      使用指定宽度和高度创建位图
+ * @brief      使用指定宽度和高度创建位图；像素内容按 Qt 约定未初始化，
+ *             实际嵌入式存储会以零位开始。
  * @param self   待初始化的 XBitmap 对象指针
  * @param width  位图宽度
  * @param height 位图高度
@@ -137,7 +140,7 @@ void XBitmap_swap(XBitmap* self, XBitmap* other);
 /* ========== 操作方法 ========== */
 
 /**
- * @brief      清除位图（填充为 color0，即全 0）
+ * @brief      清除位图（填充为 Qt::color0，即白色和全 0 位）
  * @param self 目标 XBitmap 对象指针
  */
 void XBitmap_clear(XBitmap* self);
@@ -183,25 +186,25 @@ XBitmap* XBitmap_fromVariant(const XVariant* variant);
 
 /**
  * @brief      从 XImage 创建位图
- * @param image 源 XImage 对象指针
- * @param flags 转换标志
- * @param out   输出位图指针
+ * @param image 源 XImage 对象指针；为空图像时输出空位图
+ * @param flags 转换标志；位图转换始终强制使用 MonoLSB 存储
+ * @param out   输出位图指针；旧内容会被释放，成功后颜色表为白色/黑色
  */
 void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out);
 
 /**
  * @brief      从原始位数据创建位图
- * @param size       尺寸结构体指针
- * @param bits       原始位数据指针
- * @param monoFormat 单色格式（默认 XImageFormat_MonoLSB）
- * @param out        输出位图指针
+ * @param size       尺寸结构体指针；宽度和高度必须为正数
+ * @param bits       原始位数据指针；每行按输入位序紧密排列
+ * @param monoFormat 单色格式（仅允许 Mono 或 MonoLSB）
+ * @param out        输出位图指针；旧内容会被释放
  */
 void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoFormat, XBitmap* out);
 
 /**
  * @brief      从 XPixmap 创建位图
- * @param pixmap 源 XPixmap 对象指针
- * @param out    输出位图指针
+ * @param pixmap 源 XPixmap 对象指针；空图像时输出空位图
+ * @param out    输出位图指针；源为现有一位 XBitmap 时共享底层数据，否则抖动转换
  */
 void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out);
 

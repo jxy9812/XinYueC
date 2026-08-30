@@ -43,31 +43,34 @@ static XColorSpacePrimariesData xcolorspace_predefined_primaries(
     switch (primaries)
     {
         case XColorSpacePrimaries_SRgb:
-            result.m_whitePoint = xcolorspace_point(0.3127f, 0.3290f);
+            /* Qt 6.8 QColorVector::D65Chromaticity() uses these exact
+               constants; keeping the extra digits matters to callers that
+               query a predefined QColorSpace white point. */
+            result.m_whitePoint = xcolorspace_point(0.31271f, 0.32902f);
             result.m_redPoint = xcolorspace_point(0.640f, 0.330f);
             result.m_greenPoint = xcolorspace_point(0.300f, 0.600f);
             result.m_bluePoint = xcolorspace_point(0.150f, 0.060f);
             break;
         case XColorSpacePrimaries_AdobeRgb:
-            result.m_whitePoint = xcolorspace_point(0.3127f, 0.3290f);
+            result.m_whitePoint = xcolorspace_point(0.31271f, 0.32902f);
             result.m_redPoint = xcolorspace_point(0.640f, 0.330f);
             result.m_greenPoint = xcolorspace_point(0.210f, 0.710f);
             result.m_bluePoint = xcolorspace_point(0.150f, 0.060f);
             break;
         case XColorSpacePrimaries_DciP3D65:
-            result.m_whitePoint = xcolorspace_point(0.3127f, 0.3290f);
+            result.m_whitePoint = xcolorspace_point(0.31271f, 0.32902f);
             result.m_redPoint = xcolorspace_point(0.680f, 0.320f);
             result.m_greenPoint = xcolorspace_point(0.265f, 0.690f);
             result.m_bluePoint = xcolorspace_point(0.150f, 0.060f);
             break;
         case XColorSpacePrimaries_ProPhotoRgb:
-            result.m_whitePoint = xcolorspace_point(0.3457f, 0.3585f);
+            result.m_whitePoint = xcolorspace_point(0.34567f, 0.35850f);
             result.m_redPoint = xcolorspace_point(0.7347f, 0.2653f);
             result.m_greenPoint = xcolorspace_point(0.1596f, 0.8404f);
             result.m_bluePoint = xcolorspace_point(0.0366f, 0.0001f);
             break;
         case XColorSpacePrimaries_Bt2020:
-            result.m_whitePoint = xcolorspace_point(0.3127f, 0.3290f);
+            result.m_whitePoint = xcolorspace_point(0.31271f, 0.32902f);
             result.m_redPoint = xcolorspace_point(0.708f, 0.292f);
             result.m_greenPoint = xcolorspace_point(0.170f, 0.797f);
             result.m_bluePoint = xcolorspace_point(0.131f, 0.046f);
@@ -431,6 +434,8 @@ void XColorSpace_setWhitePoint(XColorSpace* self, XPointF whitePoint)
     self->m_primaries = XColorSpacePrimaries_Custom;
     self->m_namedColorSpace = XColorSpaceNamed_Unknown;
     self->m_description[0] = '\0';
+    /* Qt qcolorspace.cpp:1051-1054 clears only the automatic description;
+       setDescription() text remains visible after editing the white point. */
     /* Qt treats an undefined space with a white point as grayscale metadata.
        It remains invalid until a transfer function is supplied. */
     if (self->m_colorModel == XColorSpaceModel_Undefined)
@@ -451,8 +456,30 @@ void XColorSpace_setPrimaries(XColorSpace* self,
     self->m_colorModel = XColorSpaceModel_Rgb;
     self->m_namedColorSpace = XColorSpaceNamed_Unknown;
     self->m_description[0] = '\0';
+    /* Qt qcolorspace.cpp:977-980 preserves userDescription while replacing
+       the automatic profile description and primaries. */
     xcolorspace_recompute_valid(self);
     xcolorspace_identify(self);
+}
+
+void XColorSpace_setPrimariesData(XColorSpace* self,
+                                  const XColorSpacePrimariesData* primaries)
+{
+    if (!self || !xcolorspace_valid_primaries(primaries))
+        return;
+    if (self->m_primaries == XColorSpacePrimaries_Custom &&
+        memcmp(&self->m_primariesData, primaries,
+               sizeof(*primaries)) == 0 &&
+        self->m_colorModel == XColorSpaceModel_Rgb)
+        return;
+    self->m_primaries = XColorSpacePrimaries_Custom;
+    self->m_primariesData = *primaries;
+    self->m_colorModel = XColorSpaceModel_Rgb;
+    self->m_namedColorSpace = XColorSpaceNamed_Unknown;
+    self->m_description[0] = '\0';
+    /* The custom-primaries overload follows Qt's setPrimaries() rule:
+       qcolorspace.cpp:1009-1012 clears only the automatic description. */
+    xcolorspace_recompute_valid(self);
 }
 
 void XColorSpace_setTransferFunction(
@@ -478,6 +505,8 @@ void XColorSpace_setTransferFunction(
     self->m_gamma = gamma;
     self->m_namedColorSpace = XColorSpaceNamed_Unknown;
     self->m_description[0] = '\0';
+    /* Qt qcolorspace.cpp:846-850 preserves userDescription when changing
+       the transfer function; only the guessed profile name is invalidated. */
     xcolorspace_recompute_valid(self);
     xcolorspace_identify(self);
 }

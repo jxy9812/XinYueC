@@ -517,6 +517,15 @@ typedef struct ThemeVisitStack
     size_t      m_count;     /**< 当前访问深度 */
 } ThemeVisitStack;
 
+/* 这些辅助函数在主题递归实现之后定义；提前声明以保持 C99 下的严格
+ * 原型检查，同时让“按请求尺寸选择条目类型”的审计逻辑集中在一起。 */
+static XStringList* theme_parentsFor(const ThemeContext* ctx,
+                                     const char* fallbackTheme);
+static size_t theme_lastDash(const char* name, size_t len);
+static bool theme_visitContains(const ThemeVisitStack* stack, const char* name);
+static void theme_visitPush(ThemeVisitStack* stack, const char* name);
+static void theme_visitPop(ThemeVisitStack* stack);
+
 static bool theme_keyEquals(const char* a, const char* b)
 {
     if (!a || !b) return false;
@@ -1022,6 +1031,271 @@ static bool theme_tryParsedDirExists(const ThemeContext* ctx, size_t dirIndex,
             continue;
         return true;
     }
+    return false;
+}
+
+/*
+ * 返回某个已解析主题目录中图标文件的格式优先级。这里必须只检查文件
+ * 是否存在，不能调用 theme_loadFile()：QIconLoader::findIconHelper() 先
+ * 按 QFile::exists() 建立条目，actualSize() 随后依据该条目的目录元数据
+ * 决定 Scalable/Fixed 语义，文件损坏不应让另一个格式或父主题改变条目
+ * 选择。返回 INT_MAX 表示没有可用文件。
+ */
+static int theme_parsedDirFormatPriority(const ThemeContext* ctx,
+                                         size_t dirIndex,
+                                         const char* root,
+                                         const char* theme,
+                                         const char* name)
+{
+    const XString* dirString;
+    const char* dir;
+    size_t extIndex;
+    char path[1024];
+    if (!ctx || !ctx->m_dirs || !root || !root[0] || !theme || !theme[0] ||
+        !name || !name[0] || dirIndex >= ctx->m_metaCount)
+        return INT_MAX;
+    dirString = (const XString*)XStringList_at_base(
+        (const XVector*)ctx->m_dirs, (int64_t)dirIndex);
+    dir = dirString ? XString_toUtf8(dirString) : NULL;
+    if (!dir || !dir[0] || theme_cacheDirState(root, theme, name, dir) == 0)
+        return INT_MAX;
+    for (extIndex = 0; extIndex < sizeof(theme_import_exts) /
+             sizeof(theme_import_exts[0]); ++extIndex) {
+        const char* ext = theme_import_exts[extIndex];
+        int written;
+        if (!theme_extAllowed(ext)) continue;
+        written = snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
+                           dir, name, ext);
+        if (written < 0 || (size_t)written >= sizeof(path)) continue;
+        if (theme_fileExists(path)) return theme_extPriority(ext);
+    }
+    return INT_MAX;
+}
+
+/*
+ * 在单个 index.theme 上实现 QIconLoaderEngine::entryForSize() 的“先精确、
+ * 后最小距离”选择，但只返回目录类型。Qt 的条目列表会把 PNG 放到 SVG
+ * 之前；当多个目录同样匹配时，格式优先级必须先于目录距离相同情况下
+ * 的后出现条目。该函数不读取像素，因此与真正 pixmap() 的延迟解码一致。
+ */
+static bool theme_selectParsedEntryType(const ThemeContext* ctx,
+                                        const XStringList* paths,
+                                        const char* rootTheme,
+                                        const char* name,
+                                        int target,
+                                        int iconScale,
+                                        bool skipGenericContext,
+                                        bool* scalable)
+{
+    size_t dirIndex;
+    size_t pathIndex;
+    bool exactFound = false;
+    size_t selectedIndex = 0;
+    int selectedPriority = INT_MAX;
+    int selectedDistance = INT_MAX;
+    if (scalable) *scalable = false;
+    if (!ctx || !paths || !rootTheme || !rootTheme[0] || !name || !name[0] ||
+        target <= 0 || iconScale <= 0 || !scalable)
+        return false;
+
+    /* 与 qiconloader.cpp:825-834 的第一轮 exact match 对齐。 */
+    for (dirIndex = 0; dirIndex < ctx->m_metaCount; ++dirIndex) {
+        const ThemeDirInfo* info = &ctx->m_meta[dirIndex];
+        int priority = INT_MAX;
+        if (info->m_type == ThemeDir_Invalid ||
+            (skipGenericContext &&
+             (info->m_context == ThemeDir_Applications ||
+              info->m_context == ThemeDir_MimeTypes)) ||
+            !theme_directoryMatches(info, target, iconScale))
+            continue;
+        for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+                 (const XContainer*)paths); ++pathIndex) {
+            const XString* rootString = (const XString*)XStringList_at_base(
+                (const XVector*)paths, (int64_t)pathIndex);
+            const char* root = rootString ? XString_toUtf8(rootString) : NULL;
+            int candidatePriority = theme_parsedDirFormatPriority(
+                ctx, dirIndex, root, rootTheme, name);
+            if (candidatePriority < priority) priority = candidatePriority;
+        }
+        if (priority == INT_MAX) continue;
+        if (!exactFound || priority < selectedPriority) {
+            exactFound = true;
+            selectedIndex = dirIndex;
+            selectedPriority = priority;
+        }
+    }
+    if (exactFound) {
+        *scalable = ctx->m_meta[selectedIndex].m_type == ThemeDir_Scalable;
+        return true;
+    }
+
+    /* 与 qiconloader.cpp:837-853 的最近距离选择对齐。 */
+    for (dirIndex = 0; dirIndex < ctx->m_metaCount; ++dirIndex) {
+        const ThemeDirInfo* info = &ctx->m_meta[dirIndex];
+        int distance = theme_dirDistance(info, target, iconScale);
+        int priority = INT_MAX;
+        if (info->m_type == ThemeDir_Invalid ||
+            (skipGenericContext &&
+             (info->m_context == ThemeDir_Applications ||
+              info->m_context == ThemeDir_MimeTypes)))
+            continue;
+        for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+                 (const XContainer*)paths); ++pathIndex) {
+            const XString* rootString = (const XString*)XStringList_at_base(
+                (const XVector*)paths, (int64_t)pathIndex);
+            const char* root = rootString ? XString_toUtf8(rootString) : NULL;
+            int candidatePriority = theme_parsedDirFormatPriority(
+                ctx, dirIndex, root, rootTheme, name);
+            if (candidatePriority < priority) priority = candidatePriority;
+        }
+        if (priority == INT_MAX) continue;
+        if (distance < selectedDistance ||
+            (distance == selectedDistance && priority < selectedPriority)) {
+            selectedDistance = distance;
+            selectedPriority = priority;
+            selectedIndex = dirIndex;
+        }
+    }
+    if (selectedDistance == INT_MAX) return false;
+    *scalable = ctx->m_meta[selectedIndex].m_type == ThemeDir_Scalable;
+    return true;
+}
+
+/* 在无 index.theme 的嵌入式旧式目录布局中，只有 scalable 目录具备
+ * 可缩放实际尺寸语义；其余目录沿用固定方形图标契约。 */
+static bool theme_selectLegacyEntryType(const XStringList* paths,
+                                        const char* theme,
+                                        const char* name,
+                                        bool* scalable)
+{
+    size_t dirIndex;
+    size_t contextIndex;
+    size_t pathIndex;
+    if (scalable) *scalable = false;
+    if (!paths || !theme || !theme[0] || !name || !name[0] || !scalable)
+        return false;
+    for (dirIndex = 0; dirIndex < sizeof(theme_size_dirs) /
+             sizeof(theme_size_dirs[0]); ++dirIndex) {
+        for (contextIndex = 0; contextIndex < sizeof(theme_context_dirs) /
+                 sizeof(theme_context_dirs[0]); ++contextIndex) {
+            for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+                     (const XContainer*)paths); ++pathIndex) {
+                const XString* rootString = (const XString*)XStringList_at_base(
+                    (const XVector*)paths, (int64_t)pathIndex);
+                const char* root = rootString ? XString_toUtf8(rootString) : NULL;
+                size_t extIndex;
+                char path[1024];
+                if (!root || !root[0]) continue;
+                for (extIndex = 0; extIndex < sizeof(theme_import_exts) /
+                         sizeof(theme_import_exts[0]); ++extIndex) {
+                    const char* ext = theme_import_exts[extIndex];
+                    int written;
+                    if (!theme_extAllowed(ext)) continue;
+                    written = snprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
+                                       root, theme, theme_size_dirs[dirIndex],
+                                       theme_context_dirs[contextIndex], name,
+                                       ext);
+                    if (written < 0 || (size_t)written >= sizeof(path) ||
+                        !theme_fileExists(path))
+                        continue;
+                    *scalable = strcmp(theme_size_dirs[dirIndex], "scalable") == 0;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/* 递归选择当前主题、Inherits、hicolor 及短横线回退实际使用的目录类型。 */
+static bool theme_selectEntryType(const XStringList* paths,
+                                  const char* theme,
+                                  const char* name,
+                                  int target,
+                                  const char* fallbackTheme,
+                                  ThemeVisitStack* visited,
+                                  bool genericFallback,
+                                  bool allowDashFallback,
+                                  bool* scalable)
+{
+    ThemeContext ctx;
+    XStringList* parents = NULL;
+    bool parsed = false;
+    bool local = false;
+    bool selectedScalable = false;
+    size_t pathIndex;
+    size_t parentIndex;
+    if (scalable) *scalable = false;
+    if (!paths || !theme || !theme[0] || !name || !name[0] || target <= 0 ||
+        !visited || !scalable || theme_visitContains(visited, theme))
+        return false;
+    theme_visitPush(visited, theme);
+    themeContext_init(&ctx);
+    for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+             (const XContainer*)paths); ++pathIndex) {
+        const XString* rootString = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = rootString ? XString_toUtf8(rootString) : NULL;
+        if (!root || !root[0]) continue;
+        if (!parsed && theme_parseIndexFile(root, theme, &ctx)) parsed = true;
+    }
+    if (parsed) {
+        local = theme_selectParsedEntryType(&ctx, paths, theme, name, target, 1,
+                                            genericFallback, &selectedScalable);
+    } else {
+        local = theme_selectLegacyEntryType(paths, theme, name,
+                                             &selectedScalable);
+    }
+    if (local) {
+        *scalable = selectedScalable;
+        theme_visitPop(visited);
+        themeContext_deinit(&ctx);
+        return true;
+    }
+
+    parents = theme_parentsFor(&ctx, fallbackTheme);
+    if (parents) {
+        for (parentIndex = 0; parentIndex < (size_t)XStringList_size_base(
+                 (const XContainer*)parents); ++parentIndex) {
+            const XString* parentString = (const XString*)XStringList_at_base(
+                (const XVector*)parents, (int64_t)parentIndex);
+            const char* parent = parentString ? XString_toUtf8(parentString) : NULL;
+            if (parent && theme_selectEntryType(paths, parent, name, target,
+                                                fallbackTheme, visited,
+                                                genericFallback, false,
+                                                scalable)) {
+                theme_stringListDelete(parents);
+                theme_visitPop(visited);
+                themeContext_deinit(&ctx);
+                return true;
+            }
+        }
+    }
+    if (allowDashFallback) {
+        size_t nameLen = strlen(name);
+        while (nameLen > 2) {
+            char dashName[1024];
+            size_t dashPos = theme_lastDash(name, nameLen);
+            ThemeVisitStack fresh;
+            if (dashPos == (size_t)-1 || dashPos == 0 ||
+                dashPos >= sizeof(dashName)) break;
+            nameLen = dashPos;
+            memcpy(dashName, name, nameLen);
+            dashName[nameLen] = '\0';
+            memset(&fresh, 0, sizeof(fresh));
+            if (theme_selectEntryType(paths, theme, dashName, target,
+                                      fallbackTheme, &fresh, true, true,
+                                      scalable)) {
+                theme_stringListDelete(parents);
+                theme_visitPop(visited);
+                themeContext_deinit(&ctx);
+                return true;
+            }
+        }
+    }
+    theme_stringListDelete(parents);
+    theme_visitPop(visited);
+    themeContext_deinit(&ctx);
     return false;
 }
 
@@ -1583,7 +1857,9 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
             }
         }
     }
-    parents = theme_parentsFor(&ctx, fallbackTheme);
+    /* QIconLoaderEngine::availableSizes() only follows Inherits when the
+       current theme did not register any entry for this icon. */
+    parents = !found ? theme_parentsFor(&ctx, fallbackTheme) : NULL;
     if (parents) {
         for (parentIndex = 0; parentIndex < (size_t)XStringList_size_base(
                  (const XContainer*)parents); ++parentIndex) {
@@ -1968,7 +2244,7 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
         found = theme_collectSizes(themePaths, themeUtf8, name, fallbackUtf8,
                                    &visited, out) || found;
     memset(&visited, 0, sizeof(visited));
-    if (fallbackUtf8)
+    if (!found && fallbackUtf8)
         found = theme_collectSizes(themePaths, fallbackUtf8, name, NULL,
                                    &visited, out) || found;
     if (!found) {
@@ -2024,6 +2300,86 @@ bool XIconInternal_themeHasScalable(const char* name)
     return found;
 }
 
+/* 独立回退文件在 Qt 中对应 PixmapEntry（png/xpm）或 ScalableEntry（svg）。
+ * 与 theme_fallbackEntryExists() 相同，文件存在即停止当前搜索目录，哪怕
+ * 内容稍后解码失败；这保证 actualSize() 不会因损坏的首选文件改选后缀。 */
+static bool theme_fallbackSelectedType(const XStringList* paths,
+                                       const char* name,
+                                       bool* scalable)
+{
+    size_t pathIndex;
+    if (scalable) *scalable = false;
+    if (!paths || !name || !name[0] || !scalable) return false;
+    for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
+             (const XContainer*)paths); ++pathIndex) {
+        const XString* rootString = (const XString*)XStringList_at_base(
+            (const XVector*)paths, (int64_t)pathIndex);
+        const char* root = rootString ? XString_toUtf8(rootString) : NULL;
+        size_t extIndex;
+        if (!root || !root[0]) continue;
+        for (extIndex = 0; extIndex < sizeof(theme_fallback_exts) /
+                 sizeof(theme_fallback_exts[0]); ++extIndex) {
+            const char* ext = theme_fallback_exts[extIndex];
+            char path[1024];
+            int written;
+            if (!theme_extAllowed(ext)) continue;
+            written = snprintf(path, sizeof(path), "%s/%s%s", root, name, ext);
+            if (written < 0 || (size_t)written >= sizeof(path) ||
+                !theme_fileExists(path))
+                continue;
+            *scalable = strcmp(ext, ".svg") == 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool XIconInternal_themeUsesScalableEntry(const char* name, int size)
+{
+    XStringList* themePaths = NULL;
+    XStringList* fallbackPaths = NULL;
+    XString* themeName = NULL;
+    XString* fallbackThemeName = NULL;
+    const char* themeUtf8 = NULL;
+    const char* fallbackUtf8 = NULL;
+    ThemeVisitStack visited;
+    bool found = false;
+    bool scalable = false;
+    if (!name || !name[0] || size <= 0) return false;
+
+    /* QIconThemeEngine 只接收主题名称；绝对路径由 XIcon 文件引擎处理，
+       不应在这里把它当作主题外的 SVG 回退再解释一次。 */
+    if (name[0] == '/' || name[0] == ':') return false;
+    themePaths = XIcon_themeSearchPaths_2();
+    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themeName = XIcon_themeName();
+    fallbackThemeName = XIcon_fallbackThemeName();
+    if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
+        themeUtf8 = XString_toUtf8(themeName);
+    if (fallbackThemeName && !XString_isEmpty_base(
+            (const XContainer*)fallbackThemeName))
+        fallbackUtf8 = XString_toUtf8(fallbackThemeName);
+
+    memset(&visited, 0, sizeof(visited));
+    if (themeUtf8)
+        found = theme_selectEntryType(themePaths, themeUtf8, name, size,
+                                      fallbackUtf8, &visited, false, true,
+                                      &scalable);
+    if (!found && fallbackUtf8) {
+        memset(&visited, 0, sizeof(visited));
+        found = theme_selectEntryType(themePaths, fallbackUtf8, name, size,
+                                      NULL, &visited, false, true, &scalable);
+    }
+    if (!found)
+        found = theme_fallbackSelectedType(fallbackPaths, name, &scalable);
+
+    if (themeName) XString_delete_base((XClass*)themeName);
+    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    theme_stringListDelete(themePaths);
+    theme_stringListDelete(fallbackPaths);
+    return found && scalable;
+}
+
 bool XIconInternal_themeHasIcon(const char* name)
 {
     XStringList* themePaths = NULL;
@@ -2063,4 +2419,88 @@ bool XIconInternal_themeHasIcon(const char* name)
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found;
+}
+
+/* 复用登记查询并关闭其自身的短横线回退，便于调用方知道实际命中的
+ * 候选名称。Qt 的 findIconHelper() 先完整遍历主题继承链，再逐级截断
+ * 名称；因此这里不能让一次递归同时继续尝试下一级短横线名称。 */
+static bool theme_exactEntryExists(const XStringList* paths,
+                                   const char* theme, const char* name,
+                                   const char* fallbackTheme)
+{
+    ThemeVisitStack visited;
+    if (!paths || !theme || !theme[0] || !name || !name[0]) return false;
+    memset(&visited, 0, sizeof(visited));
+    return theme_searchThemeExists(paths, theme, name, 48, 1,
+                                   fallbackTheme, &visited, false, false);
+}
+
+XString* XIconInternal_resolveThemeIconName(const char* name)
+{
+    XStringList* themePaths = NULL;
+    XStringList* fallbackPaths = NULL;
+    XString* themeName = NULL;
+    XString* fallbackThemeName = NULL;
+    const char* themeUtf8 = NULL;
+    const char* fallbackUtf8 = NULL;
+    XString* result = NULL;
+    size_t nameLen;
+    bool primaryChecked = false;
+
+    if (!name || !name[0] || name[0] == '/' || name[0] == ':') return NULL;
+    themePaths = XIcon_themeSearchPaths_2();
+    fallbackPaths = XIcon_fallbackSearchPaths_2();
+    themeName = XIcon_themeName();
+    fallbackThemeName = XIcon_fallbackThemeName();
+    if (themeName && !XString_isEmpty_base((const XContainer*)themeName))
+        themeUtf8 = XString_toUtf8(themeName);
+    if (fallbackThemeName && !XString_isEmpty_base(
+            (const XContainer*)fallbackThemeName))
+        fallbackUtf8 = XString_toUtf8(fallbackThemeName);
+
+    /* 先按原始名称搜索主题和继承链，命中名称仍是请求名称。 */
+    if (themeUtf8) {
+        primaryChecked = true;
+        if (theme_exactEntryExists(themePaths, themeUtf8, name,
+                                    fallbackUtf8)) {
+            result = XString_create_utf8(name);
+            goto resolve_name_done;
+        }
+    }
+    if (fallbackUtf8 && (!primaryChecked ||
+                         !theme_exactEntryExists(themePaths, themeUtf8,
+                                                  name, fallbackUtf8)) &&
+        theme_exactEntryExists(themePaths, fallbackUtf8, name, NULL)) {
+        result = XString_create_utf8(name);
+        goto resolve_name_done;
+    }
+    if (theme_fallbackEntryExists(fallbackPaths, name)) {
+        result = XString_create_utf8(name);
+        goto resolve_name_done;
+    }
+
+    /* 原始名称未命中后，Qt 逐级去掉最后一个短横线，首次命中即停止。 */
+    nameLen = strlen(name);
+    while (nameLen > 2 && !result) {
+        char dashName[1024];
+        size_t dashPos = theme_lastDash(name, nameLen);
+        if (dashPos == (size_t)-1 || dashPos == 0 ||
+            dashPos >= sizeof(dashName)) break;
+        nameLen = dashPos;
+        memcpy(dashName, name, nameLen);
+        dashName[nameLen] = '\0';
+        if ((themeUtf8 && theme_exactEntryExists(themePaths, themeUtf8,
+                                                  dashName, fallbackUtf8)) ||
+            (fallbackUtf8 && theme_exactEntryExists(themePaths, fallbackUtf8,
+                                                    dashName, NULL)) ||
+            theme_fallbackEntryExists(fallbackPaths, dashName))
+            result = XString_create_utf8(dashName);
+    }
+
+resolve_name_done:
+    if (themeName) XString_delete_base((XClass*)themeName);
+    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    theme_stringListDelete(themePaths);
+    theme_stringListDelete(fallbackPaths);
+    return result;
 }

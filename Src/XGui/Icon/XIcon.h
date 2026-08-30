@@ -442,8 +442,11 @@ bool XIcon_hasThemeIconType(XIconThemeIcon icon);
 XString* XIcon_themeIconName(XIconThemeIcon icon);
 
 /**
- * @brief      获取主题搜索路径列表
- * @return 搜索路径字符串数组（XStringList*）
+ * @brief 获取主题搜索路径列表。
+ * @return 新建的搜索路径列表；调用方负责释放。用户路径为空时至少
+ *         返回 Qt 兼容的 `:/icons` 内置资源目录。
+ * @note 平台提供的系统主题路径需由调用方通过设置接口显式注入；返回
+ *       的默认资源项不会写回用户路径存储。
  */
 XStringList* XIcon_themeSearchPaths();
 

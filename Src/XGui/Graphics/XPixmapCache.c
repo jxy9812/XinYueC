@@ -3,18 +3,58 @@
  * @brief      XPixmapCache 全局像素图缓存类实现（对标 Qt 6.8 QPixmapCache）
  * @author     XinYueC 团队
  * @note       修复项：
- *             1. 新增原子自旋锁，所有缓存结构操作线程安全；
+ *             1. 新增原子自旋锁，保护缓存内部链表和引用计数；
  *             2. Key 数据引用计数/序列号/有效性改为原子访问；
  *             3. findKey 未命中、removeKey 调用后按 Qt 语义使键失效；
- *             4. replace 改为同键原位替换，键及所有副本保持有效；
+ *             4. replace 按 Qt 6.8 语义先移除旧键，再向调用者绑定新键；
  *             5. 序列号原子分配，哈希不再依赖未初始化的死字段。
  *             6. insert 覆盖旧字符串键时使用内部无锁路径，避免递归上锁。
  ******************************************************************************/
 #include "XPixmapCache.h"
 #include "XMemory.h"
+#include "XCoreApplication.h"
+#include "XSync_config.h"
+#if XSYNC_ON && XTHREADDATA_ON && XTHREAD_ON
+#include "XThread.h"
+#include "XThreadData.h"
+#endif
 #include <string.h>
-#include <stdlib.h>
 #include <limits.h>
+
+/*
+ * QPixmapCache 的互斥锁只保证内部数据结构不会被并发破坏，并不意味着
+ * 公共缓存 API 可以从任意线程调用。Qt 6.8 在每个公共操作前调用
+ * qt_pixmapcache_thread_test()，非主线程的查找、插入、限制、移除和清空
+ * 都会被忽略。本地 XThreadData 已经提供了同样的主线程标识，因此这里
+ * 只通过 XCore/XSync 抽象调用，避免把平台线程 API 泄漏到 XGui。
+ */
+static bool cacheThreadAllowed(void)
+{
+#if XSYNC_ON && XTHREADDATA_ON && XTHREAD_ON
+    if (XThread_isMainThread())
+        return true;
+
+    /*
+     * 与 Qt 的 QThreadData::current(true) 保持一致：没有应用对象时，
+     * 第一次在当前线程取得线程数据的线程会成为 adopted main thread。
+     * 这使得不创建 XCoreApplication 的独立 XGui 调用仍可正常工作；
+     * 一旦主线程数据已经建立，工作线程不会再被提升为主线程。
+     */
+    if (!XThreadData_mainThread())
+    {
+        XThreadData* current = XThreadData_current();
+        if (current)
+        {
+            XThreadData_initMainThread(NULL);
+            return XThread_isMainThread();
+        }
+    }
+    return false;
+#else
+    /* 关闭线程对象或同步线程数据后，库退化为单线程模型。 */
+    return true;
+#endif
+}
 
 /* ========== 缓存保护锁 ========== */
 
@@ -307,6 +347,9 @@ static void removeByStringLocked(const XString* key)
 int XPixmapCache_cacheLimit(void)
 {
     int limit;
+    /* 对标 qpixmapcache.cpp:529-534：非主线程查询返回 0，且不触碰缓存。 */
+    if (!cacheThreadAllowed())
+        return 0;
     cacheLockAcquire();
     limit = g_cache.m_cacheLimit;
     cacheLockRelease();
@@ -315,8 +358,12 @@ int XPixmapCache_cacheLimit(void)
 
 void XPixmapCache_setCacheLimit(int limit)
 {
+    /* 对标 qpixmapcache.cpp:544-549：非主线程设置被忽略。负值本身不归零，
+     * QCache 会保留该值并拒绝所有正开销条目。 */
+    if (!cacheThreadAllowed())
+        return;
     cacheLockAcquire();
-    g_cache.m_cacheLimit = limit < 0 ? 0 : limit;
+    g_cache.m_cacheLimit = limit;
     trimCache();
     cacheLockRelease();
 }
@@ -325,6 +372,9 @@ bool XPixmapCache_find(const XString* key, XPixmap* pixmap)
 {
     XCacheEntry** link;
     bool found = false;
+    /* 对标 qpixmapcache.cpp:426-434：线程检查位于键检查之前。 */
+    if (!cacheThreadAllowed())
+        return false;
     if (!key || XString_isEmpty_base((const XContainer*)key)) return false;
     cacheLockAcquire();
     link = &g_cache.m_head;
@@ -347,6 +397,8 @@ bool XPixmapCache_find(const XString* key, XPixmap* pixmap)
 
 bool XPixmapCache_find_2(const char* key, XPixmap* pixmap)
 {
+    if (!cacheThreadAllowed())
+        return false;
     XString* value = key ? XString_create_utf8(key) : NULL;
     bool result = XPixmapCache_find(value, pixmap);
     if (value) XString_delete_base((XClass*)value);
@@ -357,6 +409,10 @@ bool XPixmapCache_findKey(const XPixmapCacheKey* key, XPixmap* pixmap)
 {
     XCacheEntry** link;
     bool found = false;
+    /* 非主线程必须在检查 Key 有效性之前返回；因此不会因线程限制而
+     * 意外使调用者持有的有效 Key 失效。 */
+    if (!cacheThreadAllowed())
+        return false;
     if (!XPixmapCacheKey_isValid(key)) return false;
     cacheLockAcquire();
     link = &g_cache.m_head;
@@ -385,6 +441,8 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
 {
     int cost;
     XCacheEntry* entry;
+    if (!cacheThreadAllowed())
+        return false;
     if (!key || XString_isEmpty_base((const XContainer*)key) || !pixmap) return false;
     cacheLockAcquire();
     removeByStringLocked(key);   /* 同键覆盖：先移除旧项（避免重复节点） */
@@ -414,6 +472,8 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
 
 bool XPixmapCache_insert_2(const char* key, const XPixmap* pixmap)
 {
+    if (!cacheThreadAllowed())
+        return false;
     XString* value = key ? XString_create_utf8(key) : NULL;
     bool result = XPixmapCache_insert(value, pixmap);
     if (value) XString_delete_base((XClass*)value);
@@ -425,7 +485,7 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
     int cost;
     XPixmapCacheKeyData* keyData;
     XCacheEntry* entry;
-    if (!pixmap || !key) return false;
+    if (!cacheThreadAllowed() || !pixmap || !key) return false;
     cacheLockAcquire();
     /* 若该 Key 已关联缓存项，先移除旧项，避免复用键插入产生孤儿节点。
      * 注意：仅当 Key 当前持有非空数据（复用旧键）时才需摘除旧条目；
@@ -479,55 +539,27 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
 
 bool XPixmapCache_replace(XPixmapCacheKey* key, const XPixmap* pixmap)
 {
-    int cost;
-    XCacheEntry** pp;
-    bool found = false;
-    if (!XPixmapCacheKey_isValid(key) || !pixmap) return false;
-    cacheLockAcquire();
-    cost = estimateSize(pixmap);
-    if (cost <= 0 || cost > g_cache.m_cacheLimit)
-    {
-        cacheLockRelease();
+    /*
+     * Qt 6.8 的 replace 是头文件内联兼容接口（qpixmapcache.h:62-69）：
+     * 先 remove(key)，再将 insert(pixmap) 生成的新 Key 赋回调用者。旧
+     * KeyData 会在 remove 时失效，所以 key 的所有旧副本也会失效；只有
+     * 调用者传入的这个 Key 在插入成功后重新绑定到新的 KeyData。这样
+     * replace 的行为与“remove 后重新 insert”完全一致，也正确处理新
+     * 像素图超出限制或内存分配失败的情况（key 最终保持无效）。
+     */
+    if (!cacheThreadAllowed() || !XPixmapCacheKey_isValid(key) || !pixmap)
         return false;
-    }
-    pp = &g_cache.m_head;
-    while (*pp)
-    {
-        XCacheEntry* entry = *pp;
-        if (entry->m_keyData == key->m_data)
-        {
-            /* 同键原位替换：Key 及其所有副本保持有效（对标 Qt） */
-            *pp = entry->m_next;
-            g_cache.m_cacheSize -= entry->m_size;
-            g_cache.m_entryCount--;
-            XPixmap_deinit_base(&entry->m_pixmap);
-            if (entry->m_key) XString_delete_base((XClass*)entry->m_key);
-            entry->m_key = NULL;
-            entry->m_keyData = key->m_data;   /* 复用原 Key 数据，键保持有效 */
-            XPixmap_init(&entry->m_pixmap);
-            XPixmap_copy_base(&entry->m_pixmap, pixmap);
-            entry->m_size = cost;
-            entry->m_next = g_cache.m_head;
-            g_cache.m_head = entry;
-            g_cache.m_cacheSize += entry->m_size;
-            g_cache.m_entryCount++;
-            trimCache();
-            found = true;
-            break;
-        }
-        pp = &entry->m_next;
-    }
-    cacheLockRelease();
-    if (!found)
-    {
-        /* 键有效但对应项缺失（理论罕见）：按新插入处理，键保持有效 */
-        found = XPixmapCache_insertKey(pixmap, key);
-    }
-    return found;
+    XPixmapCache_removeKey(key);
+    if (!XPixmapCache_insertKey(pixmap, key))
+        return false;
+    return XPixmapCacheKey_isValid(key);
 }
 
 void XPixmapCache_remove(const XString* key)
 {
+    /* 对标 qpixmapcache.cpp:554-559：非主线程移除请求被忽略。 */
+    if (!cacheThreadAllowed())
+        return;
     if (!key || XString_isEmpty_base((const XContainer*)key)) return;
     cacheLockAcquire();
     removeByStringLocked(key);
@@ -536,6 +568,8 @@ void XPixmapCache_remove(const XString* key)
 
 void XPixmapCache_remove_2(const char* key)
 {
+    if (!cacheThreadAllowed())
+        return;
     XString* value = key ? XString_create_utf8(key) : NULL;
     XPixmapCache_remove(value);
     if (value) XString_delete_base((XClass*)value);
@@ -544,6 +578,9 @@ void XPixmapCache_remove_2(const char* key)
 void XPixmapCache_removeKey(const XPixmapCacheKey* key)
 {
     XCacheEntry** pp;
+    /* 线程门控必须先于 Key 有效性检查，保持 Qt 非主线程的无副作用语义。 */
+    if (!cacheThreadAllowed())
+        return;
     if (!XPixmapCacheKey_isValid(key)) return;
     cacheLockAcquire();
     pp = &g_cache.m_head;
@@ -568,6 +605,10 @@ void XPixmapCache_removeKey(const XPixmapCacheKey* key)
 void XPixmapCache_clear(void)
 {
     XCacheEntry* entry;
+    /* 对标 qpixmapcache.cpp:574-587：正常运行期间仅主线程可清空；
+     * 应用进入 closingDown 阶段后，Qt 允许清理线程不再满足主线程检查。 */
+    if (!XCoreApplication_closingDown() && !cacheThreadAllowed())
+        return;
     cacheLockAcquire();
     entry = g_cache.m_head;
     while (entry)

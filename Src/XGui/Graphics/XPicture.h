@@ -54,7 +54,10 @@ typedef enum XPictureOpcode
     XPictureOpcode_SetBrush = 19, /**< 基础画刷样式与颜色（对标 PdcSetBrush）。 */
     XPictureOpcode_SetWindow = 20, /**< 逻辑窗口矩形（对标 QPainter::setWindow）。 */
     XPictureOpcode_SetViewport = 21, /**< 设备视口矩形（对标 QPainter::setViewport）。 */
-    XPictureOpcode_SetViewTransformEnabled = 22 /**< 视图变换启用状态。 */
+    XPictureOpcode_SetViewTransformEnabled = 22, /**< 视图变换启用状态。 */
+    XPictureOpcode_SetClipEnabled = 23, /**< 裁剪启用状态（对标 PdcSetClipEnabled）。 */
+    XPictureOpcode_SetClipRect = 24, /**< 矩形裁剪（对标 PdcSetClipRegion 的矩形子集）。 */
+    XPictureOpcode_SetClipRegion = 25 /**< 区域裁剪（对标 PdcSetClipRegion）。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -314,6 +317,35 @@ bool XPicture_recordSetViewport(XPicture* self, const XRect* viewport);
  * @return 命令写入成功返回 true，否则返回 false。
  */
 bool XPicture_recordSetViewTransformEnabled(XPicture* self, bool enabled);
+/**
+ * @brief 记录裁剪启用状态。
+ * @param self 目标图片对象指针。
+ * @param enabled true 表示启用当前裁剪，false 表示暂时禁用。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetClipEnabled(XPicture* self, bool enabled);
+/**
+ * @brief 记录矩形裁剪及其组合操作。
+ * @param self 目标图片对象指针。
+ * @param rect 逻辑坐标裁剪矩形。
+ * @param operation XPainterClipOperation 数值：0=NoClip、1=ReplaceClip、
+ *                2=IntersectClip。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordSetClipRect(XPicture* self, const XRect* rect,
+                                int operation);
+/**
+ * @brief 记录区域裁剪及其组合操作。
+ * @param self 目标图片对象指针。
+ * @param region 逻辑坐标矩形区域；允许为空区域。
+ * @param operation XPainterClipOperation 数值：0=NoClip、1=ReplaceClip、
+ *                2=IntersectClip。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 区域以固定宽度矩形数组编码，保持 Qt PdcSetClipRegion 的可回放
+ *       语义；复杂路径裁剪不在此接口中编码。
+ */
+bool XPicture_recordSetClipRegion(XPicture* self, const XRegion* region,
+                                  int operation);
 /**
  * @brief 记录填充矩形命令。
  * @param self 目标图片对象指针。

@@ -309,11 +309,15 @@ void XImageIOHandler_currentImageRect_base(const XImageIOHandler* self, XRect* o
 /* ========== 静态工具 ========== */
 
 /**
- * @brief      分配图像内存
- * @param size   尺寸指针
- * @param format 像素格式
- * @param image  输出图像指针
- * @return 分配成功返回 true
+ * @brief      按图像处理器规则分配输出图像内存。
+ * @param size   目标图像尺寸；宽度和高度必须都大于零。
+ * @param format 目标像素格式；必须位于 Invalid 与 NImageFormats 之间。
+ * @param image  输出图像对象；调用方负责先完成 XImage_init，成功后获得
+ *               已分离的有效图像，失败时保留原有图像内容。
+ * @return 参数、分配上限和内存均满足要求时返回 true，否则返回 false。
+ * @note 对齐 Qt 6.8 QImageIOHandler::allocateImage：同尺寸同格式只执行
+ *       detach；新分配按不低于 32 位的有效深度检查 QImageReader 的 MB
+ *       上限，且失败不会覆盖输出图像。
  */
 bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImage* image);
 

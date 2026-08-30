@@ -296,7 +296,8 @@ XVtable* XWindow_class_init(void);
  *             最小尺寸 (0,0)、最大尺寸 (16777215,16777215)、基准尺寸与
  *             步进 (0,0)、模态 NonModal、无父窗口/瞬态父窗口、标题与
  *             文件路径为空、平台句柄 NULL、无遮罩、光标为空、默认表面
- *             格式（XSurfaceFormat_create）。
+ *             格式（XSurfaceFormat_defaultFormat）；该值反映进程级默认表面
+ *             格式，窗口创建后可通过 XWindow_setFormat 覆盖。
  * @param      self 待初始化的对象指针；生命周期结束时必须成对调用
  *             XWindow_deinit_base。
  */

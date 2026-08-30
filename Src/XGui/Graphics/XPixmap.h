@@ -28,6 +28,18 @@ typedef struct XBitmap XBitmap;
 typedef struct XImageReader XImageReader;
 
 /**
+ * @brief XPixmap 图像转换标志（数值对齐 Qt 6.8 Qt::ImageConversionFlag）。
+ * @note NoOpaqueDetection 禁止把实际全不透明的输入降为 RGB32；
+ *       NoFormatConversion 保留输入格式。其余颜色/抖动标志由 XImage
+ *       转换层解释或按当前后端能力处理。
+ */
+typedef enum XPixmapImageConversionFlag
+{
+    XPixmapImageConversion_NoOpaqueDetection = 0x00000100,
+    XPixmapImageConversion_NoFormatConversion = 0x00000200
+} XPixmapImageConversionFlag;
+
+/**
  * @brief      XPixmap 像素图类结构体（对标 Qt 6.8 QPixmap）
  * @note       继承自 XClass，提供屏幕优化的像素图显示功能
  */

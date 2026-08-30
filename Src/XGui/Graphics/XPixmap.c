@@ -66,17 +66,63 @@ static XPlatformPixmap* XPlatformPixmap_create(int width, int height)
     return d;
 }
 
-static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image)
+static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image,
+                                                        uint32_t flags,
+                                                        bool bitmap)
 {
-    if (!image) return NULL;
-    XPlatformPixmap* d = (XPlatformPixmap*)XMalloc_System(sizeof(XPlatformPixmap));
-    if (!d) return NULL;
+    XImage converted;
+    const XImage* source = image;
+    XImageFormat targetFormat;
+    bool convertedActive = false;
+    XPlatformPixmap* d;
+    if (!image || XImage_isNull(image)) return NULL;
+
+    /* Qt 6.8 qpixmap_raster.cpp:269-308 selects the preferred raster format:
+       opaque images use RGB32, alpha images use premultiplied ARGB32, and a
+       depth-one source is expanded to one of those 32-bit formats.  The
+       explicit NoFormatConversion and NoOpaqueDetection flags are preserved
+       here so callers can request the source format or retain an alpha plane. */
+    if (!(flags & XPixmapImageConversion_NoFormatConversion))
+    {
+        if (bitmap)
+            targetFormat = XImageFormat_MonoLSB;
+        else if (XImage_depth(image) == 1)
+            targetFormat = XImage_hasAlphaChannel(image)
+                ? XImageFormat_ARGB32_Premultiplied : XImageFormat_RGB32;
+        else
+            targetFormat = (XImage_hasAlphaChannel(image) &&
+                            ((flags & XPixmapImageConversion_NoOpaqueDetection) ||
+                             XImage_hasAlpha(image)))
+                ? XImageFormat_ARGB32_Premultiplied : XImageFormat_RGB32;
+        if (targetFormat != XImage_format(image))
+        {
+            XImage_init(&converted);
+            XImage_convertToFormat(image, targetFormat, flags, &converted);
+            if (XImage_isNull(&converted))
+            {
+                XImage_deinit_base(&converted);
+                return NULL;
+            }
+            source = &converted;
+            convertedActive = true;
+        }
+    }
+
+    d = (XPlatformPixmap*)XMalloc_System(sizeof(XPlatformPixmap));
+    if (!d)
+    {
+        if (convertedActive)
+            XImage_deinit_base(&converted);
+        return NULL;
+    }
     memset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
-    XImage_copy_base(&d->m_image, image);
-    d->m_devicePixelRatio = XImage_devicePixelRatio(image);
+    XImage_copy_base(&d->m_image, source);
+    d->m_devicePixelRatio = XImage_devicePixelRatio(source);
     d->m_serialNumber = g_pixmapSerialCounter;
     d->m_cacheKey = XPlatformPixmap_nextCacheKey();
+    if (convertedActive)
+        XImage_deinit_base(&converted);
     return d;
 }
 
@@ -193,12 +239,14 @@ void XPixmap_init_image(XPixmap* self, const XImage* image, uint32_t flags)
 {
     if (ISNULL(self, "XPixmap") || ISNULL(image, "XImage")) return;
     XPixmap_init(self);
-    self->m_data = XPlatformPixmap_createFromImage(image);
+    self->m_data = XPlatformPixmap_createFromImage(image, flags, false);
 }
 
 void XPixmap_init_bitmap_image(XPixmap* self, const XImage* image, uint32_t flags)
 {
-    XPixmap_init_image(self, image, flags);
+    if (ISNULL(self, "XPixmap") || ISNULL(image, "XImage")) return;
+    XPixmap_init(self);
+    self->m_data = XPlatformPixmap_createFromImage(image, flags, true);
     if (self && self->m_data)
         self->m_data->m_isQBitmap = true;
 }
@@ -655,7 +703,7 @@ void XPixmap_fromImage(const XImage* image, uint32_t flags, XPixmap* out)
 {
     if (!out) return;
     XPixmap_resetOutput(out);
-    if (!image) return;
+    if (!image || XImage_isNull(image)) return;
     XPixmap_init_image(out, image, flags);
 }
 
@@ -725,9 +773,18 @@ void* XPixmap_paintEngine(const XPixmap* self)
 bool XPixmap_convertFromImage(XPixmap* self, const XImage* image, uint32_t flags)
 {
     XPlatformPixmap* replacement;
-    (void)flags;
-    if (!self || !image || XImage_isNull(image)) return false;
-    replacement = XPlatformPixmap_createFromImage(image);
+    if (!self) return false;
+    /* Qt 6.8 qpixmap.cpp:969-976 first detaches and then assigns the result
+       of fromImage(); a null QImage therefore clears the old pixmap and
+       returns false instead of leaving stale contents behind. */
+    if (!image || XImage_isNull(image))
+    {
+        if (self->m_data)
+            XPlatformPixmap_unref(self->m_data);
+        self->m_data = NULL;
+        return false;
+    }
+    replacement = XPlatformPixmap_createFromImage(image, flags, false);
     if (!replacement) return false;
     if (self->m_data) XPlatformPixmap_unref(self->m_data);
     self->m_data = replacement;
@@ -952,12 +1009,18 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
 
 int64_t XPixmap_cacheKey(const XPixmap* self)
 {
-    return (self && self->m_data) ? self->m_data->m_cacheKey : 0;
+    /* Qt 6.8 qpixmap.cpp:882-888 returns zero for a null pixmap, including
+       the (invalid) state where a platform wrapper has no image contents. */
+    return XPixmap_isNull(self) ? 0 : self->m_data->m_cacheKey;
 }
 
 bool XPixmap_isDetached(const XPixmap* self)
 {
-    return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
+    /* Qt 6.8 qpixmap.cpp:955-957 reports false for a default/null pixmap;
+       only an existing platform object with one owner is detached. */
+    return self && self->m_data &&
+           XAtomic_load_int32(&self->m_data->m_refCount,
+                              XAtomic_MemoryOrder_Relaxed) == 1;
 }
 
 void XPixmap_detach(XPixmap* self)
@@ -965,7 +1028,9 @@ void XPixmap_detach(XPixmap* self)
     if (!self || !self->m_data) return;
     if (XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) > 1)
     {
-        XPlatformPixmap* newData = XPlatformPixmap_createFromImage(&self->m_data->m_image);
+        XPlatformPixmap* newData = XPlatformPixmap_createFromImage(
+            &self->m_data->m_image, XPixmapImageConversion_NoFormatConversion,
+            self->m_data->m_isQBitmap);
         if (newData)
         {
             newData->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
@@ -1006,7 +1071,8 @@ void XPixmap_deviceIndependentSize(const XPixmap* self, XSizeF* out)
 
 void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out)
 {
-    if (!image || !out) return;
+    if (!out) return;
     XPixmap_resetOutput(out);
-    out->m_data = XPlatformPixmap_createFromImage(image);
+    if (!image || XImage_isNull(image)) return;
+    out->m_data = XPlatformPixmap_createFromImage(image, flags, false);
 }

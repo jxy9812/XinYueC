@@ -184,6 +184,28 @@ static void test_picture_malformed_state_records(void)
     expect_true(test_picture_invalid_u32(&picture, 48u, 2u),
                 "picture validator rejects invalid background mode");
     XPicture_deinit_base(&picture);
+
+#if XPAINTER_PATH_ON
+    {
+        XPainterPath path;
+        XPicture_init(&picture, -1);
+        XPainterPath_init(&path);
+        expect_true(XPainterPath_moveTo(&path, 0.0f, 0.0f) &&
+                    XPainterPath_cubicTo(&path, 1.0f, 0.0f,
+                                         2.0f, 1.0f, 3.0f, 3.0f) &&
+                    XPicture_recordDrawPath(&picture,
+                                            (int)XPainterPathOp_Draw,
+                                            &path),
+                    "malformed-path fixture records cubic path");
+        /* The first CurveToData starts at header 40 + record 8 + path
+           header 8 + MoveTo 12 + CurveTo 12 = byte 80. */
+        expect_true(test_picture_invalid_u32(
+                        &picture, 80u, (uint32_t)XPainterPathElement_MoveTo),
+                    "picture validator rejects interrupted cubic path");
+        XPainterPath_deinit(&path);
+        XPicture_deinit_base(&picture);
+    }
+#endif /* XPAINTER_PATH_ON */
 }
 
 #if XWIDGET_ON && XFRAME_ON
@@ -411,6 +433,33 @@ static bool test_make_theme_dir(const char* root, const char* relative)
     return ok;
 }
 
+/**
+ * @brief 验证主题搜索路径为空时仍保留 Qt 的内置资源目录。
+ * @details Qt QIconLoader::themeSearchPaths() 在用户列表为空时会懒加载
+ *          平台路径并追加 :/icons；XGui 平台路径由 Drive 层裁剪，公共
+ *          层至少必须提供该资源路径，且不应把默认项写回用户列表。
+ */
+static void test_icon_default_theme_search_path(void)
+{
+    XStringList* oldPaths = XIcon_themeSearchPaths_2();
+    XStringList* emptyPaths = XStringList_create();
+    XStringList* defaults = NULL;
+    bool hasResourcePath = false;
+
+    XIcon_setThemeSearchPaths(emptyPaths);
+    defaults = XIcon_themeSearchPaths_2();
+    if (defaults)
+        hasResourcePath = XStringList_contains_utf8(
+            defaults, ":/icons", XChar_CaseSensitive);
+    expect_true(hasResourcePath,
+                "空主题搜索路径保留 Qt 内置 :/icons 资源目录");
+
+    XIcon_setThemeSearchPaths(oldPaths);
+    if (defaults) XStringList_delete_base((XClass*)defaults);
+    if (emptyPaths) XStringList_delete_base((XClass*)emptyPaths);
+    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+}
+
 static void test_icon_theme_index_inherits(void)
 {
     const char* tmpRoot = "xgui_icon_theme_tmp";
@@ -528,6 +577,52 @@ static void test_icon_theme_index_inherits(void)
         XPixmap_deinit_base(&pixmap);
     }
 
+    /* Qt QIconLoaderEngine::availableSizes() 只有当前主题没有条目时才
+       递归 Inherits；子主题的 48px 条目不应混入父主题的 32px 尺寸。 */
+    expect_true(test_make_theme_dir(tmpRoot, "Base/32x32/status"),
+                "availableSizes fixture creates parent-only size directory");
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\n"
+                    "Directories=48x48/apps,48x48/status,32x32/status\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n\n"
+                    "[48x48/status]\nSize=48\nType=Fixed\nContext=Status\n\n"
+                    "[32x32/status]\nSize=32\nType=Fixed\nContext=Status\n"),
+                "availableSizes fixture updates parent metadata");
+    XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff663399u);
+    expect_true(XImage_save_2(
+                    &image,
+                    "xgui_icon_theme_tmp/Child/48x48/apps/split-size-icon.bmp",
+                    "BMP", -1),
+                "availableSizes fixture writes child icon");
+    XImage_deinit_base(&image);
+    XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff996633u);
+    expect_true(XImage_save_2(
+                    &image,
+                    "xgui_icon_theme_tmp/Base/32x32/status/split-size-icon.bmp",
+                    "BMP", -1),
+                "availableSizes fixture writes parent icon");
+    XImage_deinit_base(&image);
+    {
+        XIcon splitIcon;
+        XVector splitSizes;
+        XSize* splitSize = NULL;
+        XIcon_fromTheme_2("split-size-icon", NULL, &splitIcon);
+        XVector_init(&splitSizes, sizeof(XSize), true);
+        XIcon_availableSizes(&splitIcon, XIconMode_Normal, XIconState_Off,
+                             &splitSizes);
+        if (XVector_size_base((const XContainer*)&splitSizes) == 1)
+            splitSize = (XSize*)XVector_at_base(&splitSizes, 0);
+        expect_true(splitSize && splitSize->width == 48 &&
+                    splitSize->height == 48 &&
+                    XVector_size_base((const XContainer*)&splitSizes) == 1,
+                    "availableSizes stops at child theme entries");
+        XVector_deinit_base((XClass*)&splitSizes);
+        XIcon_deinit_base(&splitIcon);
+    }
+
     /* Qt 6.8 treats an existing index.theme as authoritative.  A file in
        Base/ itself is therefore not a theme entry when Base/index.theme does
        not declare that location. */
@@ -561,6 +656,43 @@ static void test_icon_theme_index_inherits(void)
         expect_true(!XIcon_isNull(&corrupt) &&
                     XIcon_hasThemeIcon_2("corrupt-icon"),
                     "registered corrupt theme file keeps icon engine non-null");
+
+        /* Qt QIcon::fromTheme(name, fallback) also falls back when the
+           registered engine reports no available sizes.  A corrupt file is
+           intentionally still registered by isNull(), while its deferred
+           size query is empty because decoding cannot discover metadata. */
+        {
+            XPixmap fallbackPixmap;
+            XIcon fallbackIcon;
+            XIcon corruptWithFallback;
+            XPixmap fallbackResult;
+            XPixmap_init_ex(&fallbackPixmap, 2, 2);
+            XPixmap_fill(&fallbackPixmap, 0xff224466u);
+            XIcon_init_pixmap(&fallbackIcon, &fallbackPixmap);
+            XIcon_init(&corruptWithFallback);
+            XIcon_fromTheme_2("corrupt-icon", &fallbackIcon,
+                              &corruptWithFallback);
+            XPixmap_init(&fallbackResult);
+            XIcon_pixmap(&corruptWithFallback, 2, 2,
+                         XIconMode_Normal, XIconState_Off, &fallbackResult);
+            expect_true(!XPixmap_isNull(&fallbackResult) &&
+                        XPixmap_width(&fallbackResult) == 2 &&
+                        XPixmap_height(&fallbackResult) == 2,
+                        "theme engine with empty sizes returns fallback icon");
+            if (!XPixmap_isNull(&fallbackResult)) {
+                XImage fallbackImage;
+                XImage_init(&fallbackImage);
+                XPixmap_toImage(&fallbackResult, &fallbackImage);
+                expect_true((XImage_pixel(&fallbackImage, 0, 0) &
+                             0x00ffffffu) == 0x224466u,
+                            "empty-size theme fallback preserves fallback pixels");
+                XImage_deinit_base(&fallbackImage);
+            }
+            XPixmap_deinit_base(&fallbackResult);
+            XIcon_deinit_base(&corruptWithFallback);
+            XIcon_deinit_base(&fallbackIcon);
+            XPixmap_deinit_base(&fallbackPixmap);
+        }
         XPixmap_init(&corruptPixmap);
         XIcon_pixmap(&corrupt, 48, 48, XIconMode_Normal, XIconState_Off,
                      &corruptPixmap);
@@ -574,6 +706,17 @@ static void test_icon_theme_index_inherits(void)
     expect_true(XIconInternal_resolveThemePixmapSize(
                     "example-icon-tool", 48, &pixmap),
                 "dash generic fallback resolves shorter icon name");
+    {
+        XString* matchedName = XIconInternal_resolveThemeIconName(
+            "example-icon-tool");
+        expect_true(matchedName &&
+                    XString_equals_utf8(matchedName, "example-icon",
+                                         XChar_CaseSensitive),
+                    "theme engine reports the name selected by dash fallback");
+        if (matchedName) XString_delete_base((XClass*)matchedName);
+    }
+    expect_true(!XIcon_hasThemeIcon_2("example-icon-tool"),
+                "hasThemeIcon rejects a name satisfied only by dash fallback");
     if (!XPixmap_isNull(&pixmap)) {
         expect_true(XPixmap_width(&pixmap) == 48 &&
                     XPixmap_height(&pixmap) == 48,
@@ -985,6 +1128,58 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "theme scalable high-DPI actualSize restores logical rectangle");
         XIcon_deinit_base(&scalableIcon);
     }
+#if XIMAGECODEC_PNG_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON
+    /* Qt qiconloader.cpp:825-834 先按请求尺寸选中具体条目，再由
+       qiconloader.cpp:878-880 判断 Scalable。主题同时提供固定 PNG 与
+       Scalable SVG 时，不能因为主题中存在 SVG 就让固定 PNG 也返回任意
+       请求矩形。此夹具分别命中两个条目，覆盖这一容易被全局扫描掩盖的
+       元数据边界。 */
+    expect_true(test_make_theme_dir(
+                    tmpRoot, "Base/scalable/apps"),
+                "mixed theme fixture creates scalable directory");
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\n"
+                    "Directories=48x48/apps,scalable/apps\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\n"
+                    "Context=Applications\n\n"
+                    "[scalable/apps]\nSize=48\nType=Scalable\n"
+                    "MinSize=1\nMaxSize=128\nContext=Applications\n"),
+                "mixed theme fixture writes fixed and scalable metadata");
+    XImage_init_ex(&source, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&source, 0xffcc6633u);
+    expect_true(XImage_save_2(
+                    &source,
+                    "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/"
+                    "mixed-icon.png",
+                    "PNG", -1),
+                "mixed theme fixture writes fixed PNG");
+    XImage_deinit_base(&source);
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/scalable/apps/"
+                    "mixed-icon.svg",
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" "
+                    "width=\"24\" height=\"18\"><rect width=\"24\" "
+                    "height=\"18\" fill=\"#3366cc\"/></svg>\n"),
+                "mixed theme fixture writes scalable SVG");
+    {
+        XIcon mixedIcon;
+        XIconThemeEngine* mixedEngine;
+        XSize mixedActual;
+        mixedEngine = XIconThemeEngine_create_2_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, "mixed-icon");
+        XIcon_init_engine(&mixedIcon, (XIconEngine*)mixedEngine);
+        XIcon_actualSize(&mixedIcon, 48, 48, XIconMode_Normal,
+                         XIconState_Off, &mixedActual);
+        expect_true(mixedActual.width == 48 && mixedActual.height == 48,
+                    "mixed theme actualSize selects fixed PNG entry");
+        XIcon_actualSize(&mixedIcon, 24, 18, XIconMode_Normal,
+                         XIconState_Off, &mixedActual);
+        expect_true(mixedActual.width == 24 && mixedActual.height == 18,
+                    "mixed theme actualSize selects scalable SVG entry");
+        XIcon_deinit_base(&mixedIcon);
+    }
+#endif /* XIMAGECODEC_PNG_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON */
     XImage_init_ex(&target, 60, 30, XImageFormat_ARGB32);
     XImage_fill(&target, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -1251,6 +1446,9 @@ static void test_pixmap_lifecycle(void)
     XPixmap copied;
     XPixmap transformed;
     XImage image;
+    XImage rgb16;
+    XImage nullImage;
+    XPixmap converted;
 
     XPixmap_init_ex(&source, 2, 3);
     XPixmap_fill(&source, 0xff336699u);
@@ -1296,6 +1494,47 @@ static void test_pixmap_lifecycle(void)
     XPixmap_fromImage(NULL, 0, &target);
     expect_true(XPixmap_isNull(&target),
                 "pixmap from image clears the output for a null image");
+    expect_true(XPixmap_cacheKey(&target) == 0,
+                "null pixmap has the Qt-compatible zero cache key");
+    expect_true(!XPixmap_isDetached(&target),
+                "null pixmap is not detached, matching QPixmap");
+
+    /* Qt 6.8 qpixmap_raster.cpp:269-308 converts ordinary opaque input to
+       the preferred 32-bit RGB format, while NoFormatConversion preserves
+       the source format and NoOpaqueDetection retains an alpha format. */
+    XImage_init_ex(&rgb16, 1, 1, XImageFormat_RGB16);
+    XPixmap_init(&converted);
+    XPixmap_fromImage(&rgb16, 0, &converted);
+    expect_true(XPixmap_depth(&converted) == 32 &&
+                !XPixmap_hasAlphaChannel(&converted),
+                "pixmap fromImage promotes opaque RGB16 to 32-bit depth");
+    XPixmap_fromImage(&rgb16, XPixmapImageConversion_NoFormatConversion,
+                      &converted);
+    expect_true(XPixmap_depth(&converted) == 16,
+                "pixmap fromImage NoFormatConversion preserves source depth");
+    XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff102030u);
+    XPixmap_fromImage(&image, XPixmapImageConversion_NoOpaqueDetection,
+                      &converted);
+    expect_true(XPixmap_hasAlphaChannel(&converted) &&
+                XPixmap_depth(&converted) == 32,
+                "pixmap fromImage NoOpaqueDetection retains alpha format");
+    {
+        int64_t before = XPixmap_cacheKey(&converted);
+        expect_true(XPixmap_convertFromImage(&converted, &rgb16, 0) &&
+                    XPixmap_cacheKey(&converted) != before,
+                    "pixmap convertFromImage changes cache key on replacement");
+    }
+    XImage_init(&nullImage);
+    expect_true(!XPixmap_convertFromImage(&converted, &nullImage, 0) &&
+                XPixmap_isNull(&converted) && XPixmap_cacheKey(&converted) == 0,
+                "pixmap convertFromImage null input clears old contents");
+    XImage_deinit_base(&nullImage);
+    XPixmap_fromImageInPlace(NULL, 0, &converted);
+    expect_true(XPixmap_isNull(&converted) && XPixmap_cacheKey(&converted) == 0,
+                "pixmap fromImageInPlace null input clears the output");
+    XImage_deinit_base(&rgb16);
+    XPixmap_deinit_base(&converted);
 
     XImage_deinit_base(&image);
     XPixmap_deinit_base(&target);
@@ -1442,6 +1681,8 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XBitmap bitmap;
     XBitmap mask;
     XBitmap transformed;
+    XBitmap dataBitmap;
+    XImage dataBitmapImage;
 
     XImage_init_ex(&image, 4, 2, XImageFormat_ARGB32);
     for (int y = 0; y < 2; ++y)
@@ -1500,6 +1741,29 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XImage_deinit_base(&image);
 
     XBitmap_init_ex(&bitmap, 2, 2);
+    {
+        const XSize dataSize = {2, 1};
+        const uint8_t dataBits[1] = {0x01};
+        uint32_t colors[2] = {0, 0};
+        XBitmap_init(&dataBitmap);
+        XBitmap_fromData(&dataSize, dataBits, XImageFormat_MonoLSB, &dataBitmap);
+        XImage_init(&dataBitmapImage);
+        XPixmap_toImage((const XPixmap*)&dataBitmap, &dataBitmapImage);
+        XImage_colorTable(&dataBitmapImage, colors, 2);
+        expect_true(XImage_format(&dataBitmapImage) == XImageFormat_MonoLSB &&
+                    XImage_colorTable(&dataBitmapImage, NULL, 0) == 2 &&
+                    colors[0] == 0xffffffffu && colors[1] == 0xff000000u &&
+                    XImage_pixel(&dataBitmapImage, 0, 0) == 0xff000000u &&
+                    XImage_pixel(&dataBitmapImage, 1, 0) == 0xffffffffu,
+                    "bitmap fromData keeps Qt color0/color1 and bit order");
+        XBitmap_clear(&dataBitmap);
+        XPixmap_toImage((const XPixmap*)&dataBitmap, &dataBitmapImage);
+        expect_true(XImage_pixel(&dataBitmapImage, 0, 0) == 0xffffffffu &&
+                    XImage_pixel(&dataBitmapImage, 1, 0) == 0xffffffffu,
+                    "bitmap clear fills Qt color0");
+        XImage_deinit_base(&dataBitmapImage);
+        XBitmap_deinit_base(&dataBitmap);
+    }
     XBitmap_init(&transformed);
     XBitmap_transformed_2(&bitmap, 1.0f, 0.0f, 0.0f,
                         0.0f, 1.0f, 0.0f, &transformed);
@@ -1590,6 +1854,91 @@ static void test_pixmap_mask_lifecycle(void)
     XPixmap_deinit_base(&source);
 }
 
+static void test_bitmap_qt_contract(void)
+{
+    const uint32_t bitmapColors[2] = {0xffffffffu, 0xff000000u};
+    const uint8_t lsbBits[1] = {0x05u};
+    const uint8_t msbBits[1] = {0xa0u};
+    const XSize size = {3, 1};
+    XBitmap bitmap;
+    XBitmap fromData;
+    XBitmap fromMsb;
+    XBitmap alias;
+    XImage image;
+
+    /* QBitmap(int,int) is a one-bit, little-endian bitmap with Qt::color0
+       (white) at index 0 and Qt::color1 (black) at index 1. */
+    XBitmap_init_ex(&bitmap, 3, 1);
+    XImage_init(&image);
+    XPixmap_toImage((const XPixmap*)&bitmap, &image);
+    expect_true(XImage_format(&image) == XImageFormat_MonoLSB &&
+                XImage_colorCount(&image) == 2 &&
+                XImage_color(&image, 0) == bitmapColors[0] &&
+                XImage_color(&image, 1) == bitmapColors[1] &&
+                XImage_pixelIndex(&image, 0, 0) == 0,
+                "bitmap size constructor creates a MonoLSB color0/color1 image");
+    XImage_deinit_base(&image);
+
+    /* qbitmap.cpp:201-214 copies byte-aligned rows and explicitly installs
+       the color0/color1 table before converting the source image. */
+    XBitmap_init(&fromData);
+    XBitmap_fromData(&size, lsbBits, XImageFormat_MonoLSB, &fromData);
+    XImage_init(&image);
+    XPixmap_toImage((const XPixmap*)&fromData, &image);
+    expect_true(XImage_pixelIndex(&image, 0, 0) == 1 &&
+                XImage_pixelIndex(&image, 1, 0) == 0 &&
+                XImage_pixelIndex(&image, 2, 0) == 1 &&
+                XImage_color(&image, 0) == bitmapColors[0] &&
+                XImage_color(&image, 1) == bitmapColors[1],
+                "bitmap fromData preserves little-endian bits and Qt colors");
+    XImage_deinit_base(&image);
+
+    XBitmap_init(&fromMsb);
+    XBitmap_fromData(&size, msbBits, XImageFormat_Mono, &fromMsb);
+    XImage_init(&image);
+    XPixmap_toImage((const XPixmap*)&fromMsb, &image);
+    expect_true(XImage_pixelIndex(&image, 0, 0) == 1 &&
+                XImage_pixelIndex(&image, 1, 0) == 0 &&
+                XImage_pixelIndex(&image, 2, 0) == 1,
+                "bitmap fromData converts XBM/MSB bit order correctly");
+    XImage_deinit_base(&image);
+
+    XBitmap_clear(&fromData);
+    XImage_init(&image);
+    XPixmap_toImage((const XPixmap*)&fromData, &image);
+    expect_true(XImage_pixelIndex(&image, 0, 0) == 0 &&
+                XImage_pixelIndex(&image, 1, 0) == 0 &&
+                XImage_pixelIndex(&image, 2, 0) == 0,
+                "bitmap clear fills Qt::color0 as zero bits");
+    XImage_deinit_base(&image);
+
+    /* qbitmap.cpp:245-257 shallow-copies an existing one-bit pixmap.  The
+       shared platform object must detach when either bitmap is modified. */
+    XBitmap_init(&alias);
+    XBitmap_fromPixmap((const XPixmap*)&fromMsb, &alias);
+    expect_true(XPixmap_isQBitmap((const XPixmap*)&alias) &&
+                XPixmap_cacheKey((const XPixmap*)&alias) ==
+                    XPixmap_cacheKey((const XPixmap*)&fromMsb),
+                "bitmap fromPixmap shares an existing one-bit bitmap");
+    XBitmap_clear(&alias);
+    XImage_init(&image);
+    XPixmap_toImage((const XPixmap*)&fromMsb, &image);
+    expect_true(XImage_pixelIndex(&image, 0, 0) == 1 &&
+                XImage_pixelIndex(&image, 2, 0) == 1,
+                "shared bitmap source is unchanged after destination mutation");
+    XImage_deinit_base(&image);
+
+    XBitmap_fromPixmap(NULL, &alias);
+    expect_true(XPixmap_isNull((const XPixmap*)&alias) &&
+                XPixmap_cacheKey((const XPixmap*)&alias) == 0,
+                "bitmap fromPixmap null input replaces output with null bitmap");
+
+    XBitmap_deinit_base(&alias);
+    XBitmap_deinit_base(&fromMsb);
+    XBitmap_deinit_base(&fromData);
+    XBitmap_deinit_base(&bitmap);
+}
+
 static void test_pixmap_cache_contract(void)
 {
     int oldLimit = XPixmapCache_cacheLimit();
@@ -1606,7 +1955,14 @@ static void test_pixmap_cache_contract(void)
     XPixmapCacheKey_init(&copy);
     XPixmapCacheKey_init(&third);
 
-    /* Key 生命周期：insertKey 后有效，副本共享同一有效性 */
+    /* Qt 允许 setCacheLimit 保留负值；负限制下所有正开销条目均不能插入。 */
+    XPixmapCache_clear();
+    XPixmapCache_setCacheLimit(-50);
+    expect_true(XPixmapCache_cacheLimit() == -50 &&
+                !XPixmapCache_insert_2("negative", &p10),
+                "cache preserves a negative limit and rejects positive-cost inserts");
+
+    /* Key 生命周期：insertKey 后有效，副本共享同一有效性。 */
     XPixmapCache_setCacheLimit(64);
     expect_true(XPixmapCache_insertKey(&p10, &key) &&
                 XPixmapCacheKey_isValid(&key),
@@ -1617,13 +1973,16 @@ static void test_pixmap_cache_contract(void)
                 XPixmap_width(&out) == 10,
                 "cache findKey via a key copy hits the same entry");
 
-    /* replace：沿用原 Key，键与所有副本保持有效 */
+    /*
+     * replace 对标 Qt 6.8 qpixmapcache.h:62-69：先移除旧条目，旧 KeyData
+     * 及其所有副本失效；成功插入后，只有传入的 key 绑定新的 KeyData。
+     */
     expect_true(XPixmapCache_replace(&key, &p20),
                 "cache replace updates the pixmap");
     expect_true(XPixmapCacheKey_isValid(&key) &&
-                XPixmapCacheKey_isValid(&copy) &&
-                XPixmapCacheKey_isValid(&third),
-                "cache replace keeps the key and all copies valid");
+                !XPixmapCacheKey_isValid(&copy) &&
+                !XPixmapCacheKey_isValid(&third),
+                "cache replace invalidates old key copies and rebinds the input key");
     expect_true(XPixmapCache_findKey(&key, &out) &&
                 XPixmap_width(&out) == 20 &&
                 XPixmap_height(&out) == 20,
@@ -1631,8 +1990,9 @@ static void test_pixmap_cache_contract(void)
 
     /* findKey 未命中：键立即失效（Qt 语义） */
     XPixmapCache_clear();
-    expect_true(!XPixmapCache_findKey(&copy, &out) &&
+    expect_true(!XPixmapCache_findKey(&key, &out) &&
                 !XPixmapCacheKey_isValid(&key) &&
+                !XPixmapCacheKey_isValid(&copy) &&
                 !XPixmapCacheKey_isValid(&third),
                 "cache findKey miss invalidates the key and its copies");
 
@@ -1709,78 +2069,88 @@ static void test_pixmap_cache_contract(void)
 #include <math.h>
 #include <stdio.h>
 
-typedef struct CacheStressCtx
+typedef struct CacheThreadProbe
 {
-    unsigned int m_id;
-    unsigned int m_iterations;
-    unsigned int m_findMisses;      /**< 插入后立即查找失败的次数（应为 0） */
-    unsigned int m_keyLifeErrors;   /**< removeKey 后键仍有效的次数（应为 0） */
-} CacheStressCtx;
+    XPixmapCacheKey m_key;          /**< 主线程创建并复制给工作线程的有效 Key */
+    unsigned int m_findRejected;    /**< 工作线程 findKey 被忽略的次数（应为 1） */
+    unsigned int m_insertRejected;  /**< 工作线程 insert 被拒绝的次数（应为 1） */
+    unsigned int m_replaceRejected; /**< 工作线程 replace 被忽略的次数（应为 1） */
+    bool m_keyStillValid;           /**< 工作线程操作后 Key 仍保持有效 */
+} CacheThreadProbe;
 
-static void* cache_stress_worker(void* arg)
+static void* cache_thread_probe_worker(void* arg)
 {
-    CacheStressCtx* ctx = (CacheStressCtx*)arg;
-    unsigned int i;
-    for (i = 0; i < ctx->m_iterations; ++i)
-    {
-        char key[64];
-        XPixmap p;
-        XPixmapCacheKey k;
-        XPixmap_init_ex(&p, 4, 4);
-        XPixmapCacheKey_init(&k);
-        snprintf(key, sizeof(key), "stress_t%u_iter%u", ctx->m_id, i % 32u);
-        XPixmapCache_insert_2(key, &p);
-        XPixmapCache_insert_2(key, &p);   /* 并发覆盖路径 */
-        if (!XPixmapCache_find_2(key, NULL)) ctx->m_findMisses++;
-        XPixmapCache_remove_2(key);
-        if (XPixmapCache_insertKey(&p, &k))
-        {
-            XPixmap q;
-            XPixmap_init(&q);
-            if (!XPixmapCache_findKey(&k, &q)) ctx->m_findMisses++;
-            XPixmap_deinit_base(&q);
-            XPixmapCache_replace(&k, &p);  /* 并发原位替换路径 */
-            XPixmapCache_removeKey(&k);
-            if (XPixmapCacheKey_isValid(&k)) ctx->m_keyLifeErrors++;
-        }
-        XPixmapCacheKey_deinit(&k);
-        XPixmap_deinit_base(&p);
-    }
+    CacheThreadProbe* probe = (CacheThreadProbe*)arg;
+    XPixmap p;
+
+    XPixmap_init_ex(&p, 4, 4);
+
+    /* Qt 的线程门控位于 Key 有效性检查之前，因此有效 Key 不会被改写。 */
+    probe->m_findRejected = !XPixmapCache_findKey(&probe->m_key, NULL);
+    probe->m_keyStillValid = XPixmapCacheKey_isValid(&probe->m_key);
+
+    probe->m_insertRejected = !XPixmapCache_insert_2("worker-only", &p);
+    XPixmapCache_setCacheLimit(1);     /* 非主线程设置被忽略 */
+    XPixmapCache_remove_2("main-only"); /* 非主线程移除被忽略 */
+    XPixmapCache_clear();              /* 非主线程清空被忽略 */
+
+    probe->m_replaceRejected = !XPixmapCache_replace(&probe->m_key, &p);
+    probe->m_keyStillValid = probe->m_keyStillValid &&
+                             XPixmapCacheKey_isValid(&probe->m_key);
+    XPixmap_deinit_base(&p);
     return NULL;
 }
 
 static void test_pixmap_cache_concurrency(void)
 {
-    enum { kThreads = 4, kIterations = 600, kLimit = 4096 };
+    /* QPixmapCache 不是并发缓存：只有应用主线程上的操作才生效。 */
     int oldLimit = XPixmapCache_cacheLimit();
-    pthread_t threads[kThreads];
-    CacheStressCtx ctxs[kThreads];
-    unsigned int i;
-    unsigned int totalMisses = 0;
-    unsigned int totalKeyErrors = 0;
-    XPixmapCache_setCacheLimit(kLimit);
-    for (i = 0; i < kThreads; ++i)
+    pthread_t thread;
+    CacheThreadProbe probe;
+    XPixmap p;
+    XPixmap out;
+    XPixmapCacheKey mainKey;
+    int createResult;
+
+    memset(&probe, 0, sizeof(probe));
+    XPixmap_init_ex(&p, 4, 4);
+    XPixmap_init(&out);
+    XPixmapCacheKey_init(&mainKey);
+    XPixmapCacheKey_init(&probe.m_key);
+
+    XPixmapCache_clear();
+    XPixmapCache_setCacheLimit(64);
+    expect_true(XPixmapCache_insert_2("main-only", &p) &&
+                XPixmapCache_insertKey(&p, &mainKey) &&
+                XPixmapCacheKey_isValid(&mainKey),
+                "cache main-thread setup succeeds");
+    XPixmapCacheKey_copy(&probe.m_key, &mainKey);
+
+    createResult = pthread_create(&thread, NULL, cache_thread_probe_worker, &probe);
+    expect_true(createResult == 0, "cache thread probe creation");
+    if (createResult == 0)
+        pthread_join(thread, NULL);
+
+    if (createResult == 0)
     {
-        ctxs[i].m_id = i;
-        ctxs[i].m_iterations = kIterations;
-        ctxs[i].m_findMisses = 0;
-        ctxs[i].m_keyLifeErrors = 0;
-        expect_true(pthread_create(&threads[i], NULL, cache_stress_worker,
-                                   &ctxs[i]) == 0,
-                    "cache stress thread creation");
+        expect_true(probe.m_findRejected == 1 && probe.m_insertRejected == 1 &&
+                    probe.m_replaceRejected == 1,
+                    "cache worker operations are ignored outside the main thread");
+        expect_true(probe.m_keyStillValid &&
+                    XPixmapCacheKey_isValid(&probe.m_key),
+                    "cache worker operations do not invalidate a valid key");
+        expect_true(XPixmapCache_cacheLimit() == 64 &&
+                    XPixmapCache_find_2("main-only", &out) &&
+                    XPixmapCache_findKey(&mainKey, &out),
+                    "cache main-thread entries and limit survive worker operations");
     }
-    for (i = 0; i < kThreads; ++i)
-    {
-        pthread_join(threads[i], NULL);
-        totalMisses += ctxs[i].m_findMisses;
-        totalKeyErrors += ctxs[i].m_keyLifeErrors;
-    }
+
     XPixmapCache_clear();
     XPixmapCache_setCacheLimit(oldLimit);
-    expect_true(totalMisses == 0,
-                "cache concurrent stress: insert followed by find never misses");
-    expect_true(totalKeyErrors == 0,
-                "cache concurrent stress: removeKey always invalidates the key");
+    XPixmapCacheKey_deinit(&probe.m_key);
+    XPixmapCacheKey_deinit(&mainKey);
+    XPixmap_deinit_base(&out);
+    XPixmap_deinit_base(&p);
 }
 #endif /* __unix__ */
 
@@ -3132,6 +3502,25 @@ static void test_painter_shape_callback_contract(void)
 #endif /* XPAINTER_SHAPE_ON */
 
 #if XPAINTER_POLYGON_ON
+typedef struct PolygonLineCapture
+{
+    int m_calls;
+} PolygonLineCapture;
+
+static bool test_polygon_line_capture(XPainter* painter, int x1, int y1,
+                                       int x2, int y2)
+{
+    PolygonLineCapture* capture = painter
+        ? (PolygonLineCapture*)painter->m_userData : NULL;
+    (void)x1;
+    (void)y1;
+    (void)x2;
+    (void)y2;
+    if (capture)
+        ++capture->m_calls;
+    return true;
+}
+
 static void test_painter_polygon_contract(void)
 {
     XImage image;
@@ -3218,6 +3607,21 @@ static void test_painter_polygon_contract(void)
                 XImage_pixel(&image, 6, 0) == 0xffff0000u &&
                 XImage_pixel(&image, 1, 1) == 0xff000000u,
                 "drawPoints plots each point");
+
+    /* Qt drawPolygon() 即使只有两个顶点也会隐式闭合首尾边；用自定义
+       线回调计数，确保该退化多边形仍发出两条边而不是开放折线。 */
+    {
+        PolygonLineCapture capture;
+        XPoint segment[2] = { { 1, 10 }, { 8, 10 } };
+        capture.m_calls = 0;
+        painter.m_userData = &capture;
+        painter.m_drawLine = test_polygon_line_capture;
+        expect_true(XPainter_drawPolygon(&painter, segment, 2,
+                                         XPainterFillRule_OddEven),
+                    "two-point polygon closes successfully");
+        expect_true(capture.m_calls == 2,
+                    "two-point polygon emits both closing edges");
+    }
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -3492,6 +3896,13 @@ static void test_painter_picture_penstyle_replay_contract(void)
     XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
     expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
                 "dashed line recorded");
+#if XPAINTER_POLYGON_ON
+    {
+        XPoint dashedPolyline[2] = { { 0, 1 }, { 9, 1 } };
+        expect_true(XPainter_drawPolyline(&painter, dashedPolyline, 2),
+                    "dashed polyline recorded");
+    }
+#endif /* XPAINTER_POLYGON_ON */
     expect_true(XPainter_end(&painter), "penstyle record ends");
     expect_true(XPicture_isValidStream(&picture),
                 "dashed stream valid");
@@ -3513,6 +3924,19 @@ static void test_painter_picture_penstyle_replay_contract(void)
     expect_true(XImage_pixel(&target, 5, 0) == 0xff000000u &&
                 XImage_pixel(&target, 6, 0) == 0xff000000u,
                 "dash replay preserves gaps");
+#if XPAINTER_POLYGON_ON
+    /* PdcDrawPolyline/PdcDrawPath are high-level records.  Unlike the
+       ordinary line record, their replay must retain DashLine instead of
+       inheriting the old blanket-solid workaround. */
+    expect_true(XImage_pixel(&target, 0, 1) == 0xffff0000u &&
+                XImage_pixel(&target, 4, 1) == 0xffff0000u &&
+                XImage_pixel(&target, 7, 1) == 0xffff0000u &&
+                XImage_pixel(&target, 9, 1) == 0xffff0000u,
+                "dashed polyline replay paints exact dash segments");
+    expect_true(XImage_pixel(&target, 5, 1) == 0xff000000u &&
+                XImage_pixel(&target, 6, 1) == 0xff000000u,
+                "dashed polyline replay preserves gaps");
+#endif /* XPAINTER_POLYGON_ON */
     expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_DashLine,
                 "replay restores caller pen style");
 
@@ -4883,9 +5307,12 @@ static void test_painter_picture_brush_origin_record(void)
 static void test_painter_picture_brush_record(void)
 {
     XPicture picture;
+    XPicture resetPicture;
     XPainter record;
     XPainter replay;
     XImage target;
+    XPainterGradient gradient;
+    XPainterBrush brush;
 
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
@@ -4918,6 +5345,44 @@ static void test_painter_picture_brush_record(void)
     XPainter_deinit(&record);
     XImage_deinit_base(&target);
     XPicture_deinit_base(&picture);
+
+    /* 渐变载荷不进入固定长度 Picture opcode，但从渐变切回纯色的
+       状态变化可以安全记录。验证回放会清除目标画刷中原有的渐变。 */
+    XPicture_init(&resetPicture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &resetPicture),
+                "brush reset record begins picture");
+    XPainter_setBrushGradient(&record, NULL);
+    expect_true(XPainter_end(&record), "brush reset record ends picture");
+    expect_true(XPicture_isValidStream(&resetPicture) &&
+                XPicture_size(&resetPicture) ==
+                    XPICTURE_HEADER_SIZE +
+                    XPICTURE_RECORD_HEADER_SIZE + 8u,
+                "brush reset emits fixed-size brush record");
+
+    XPainter_init(&replay, NULL);
+    XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
+    XPainter_begin_image(&replay, &target);
+    XPainterGradient_initLinear(&gradient, 0.0f, 0.0f, 1.0f, 0.0f);
+    XPainterGradient_addStop(&gradient, 0.0f, 0xffffffffu);
+    XPainterGradient_addStop(&gradient, 1.0f, 0xff000000u);
+    XPainter_setBrushGradient(&replay, &gradient);
+    expect_true(XPainter_brushStyle(&replay) ==
+                    XPainterBrushStyle_LinearGradientPattern,
+                "brush reset fixture starts with gradient state");
+    expect_true(XPicture_play(&resetPicture, &replay),
+                "brush reset picture replays");
+    XPainter_brush(&replay, &brush);
+    expect_true(XPainter_brushStyle(&replay) == XPainterBrushStyle_SolidPattern,
+                "brush reset replay restores solid style");
+    expect_true(brush.m_gradient.m_stopCount == 0,
+                "brush reset replay clears gradient payload");
+
+    XPainter_end(&replay);
+    XPainter_deinit(&replay);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&resetPicture);
 }
 #endif /* XPAINTER_BRUSH_ON */
 
@@ -5036,6 +5501,110 @@ static void test_painter_picture_view_transform_record(void)
     XPicture_deinit_base(&picture);
 }
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+
+#if XPAINTER_CLIP_ON
+/** @brief 校验 Picture 记录并回放矩形裁剪及启用状态。 */
+static void test_painter_picture_clip_record(void)
+{
+    XPicture picture;
+    XPainter record;
+    XPainter replay;
+    XImage target;
+    XRect clip = { 2, 2, 3, 3 };
+    XRect all = { 0, 0, 8, 8 };
+    XRect corner = { 0, 0, 1, 1 };
+    XRect clipOut;
+
+    XPicture_init(&picture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &picture),
+                "clip record begins picture");
+    XPainter_setClipRect(&record, &clip,
+                         XPainterClipOperation_ReplaceClip);
+    expect_true(XPainter_fillRect(&record, &all, 0xffff0000u),
+                "clip record paints clipped fill");
+    XPainter_setClipping(&record, false);
+    expect_true(XPainter_fillRect(&record, &corner, 0xff0000ffu),
+                "clip record paints after disabling clip");
+    expect_true(XPainter_end(&record), "clip record ends picture");
+    expect_true(XPicture_isValidStream(&picture) &&
+                XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
+                "clip record produces a valid stream");
+
+    XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&replay, NULL);
+    expect_true(XPainter_begin_image(&replay, &target),
+                "clip replay begins image");
+    expect_true(XPicture_play(&picture, &replay),
+                "clip picture replays");
+    expect_true(XImage_pixel(&target, 3, 3) == 0xffff0000u &&
+                XImage_pixel(&target, 1, 1) == 0xff000000u &&
+                XImage_pixel(&target, 0, 0) == 0xff0000ffu,
+                "clip replay preserves enabled and disabled fills");
+    expect_true(!XPainter_hasClipping(&replay),
+                "clip replay restores disabled state");
+    XPainter_clipBoundingRect(&replay, &clipOut);
+    expect_true(clipOut.x == 2 && clipOut.y == 2 &&
+                clipOut.width == 3 && clipOut.height == 3,
+                "clip replay preserves clip bounding rectangle");
+
+    XPainter_end(&replay);
+    XPainter_deinit(&replay);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&picture);
+}
+
+#if XPAINTER_CLIP_REGION_ON
+/** @brief 校验 Picture 记录并回放离散区域裁剪。 */
+static void test_painter_picture_clip_region_record(void)
+{
+    XPicture picture;
+    XPainter record;
+    XPainter replay;
+    XImage target;
+    XRegion region;
+    XRect first = { 1, 1, 2, 2 };
+    XRect second = { 5, 1, 2, 2 };
+    XRect all = { 0, 0, 8, 4 };
+
+    XPicture_init(&picture, -1);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &first);
+    XRegion_addRect(&region, &second);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &picture),
+                "clip-region record begins picture");
+    XPainter_setClipRegion(&record, &region,
+                           XPainterClipOperation_ReplaceClip);
+    expect_true(XPainter_fillRect(&record, &all, 0xff00ff00u),
+                "clip-region record paints disjoint fill");
+    expect_true(XPainter_end(&record), "clip-region record ends picture");
+    expect_true(XPicture_isValidStream(&picture),
+                "clip-region record produces a valid stream");
+
+    XImage_init_ex(&target, 8, 4, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_init(&replay, NULL);
+    expect_true(XPainter_begin_image(&replay, &target),
+                "clip-region replay begins image");
+    expect_true(XPicture_play(&picture, &replay),
+                "clip-region picture replays");
+    expect_true(XImage_pixel(&target, 1, 1) == 0xff00ff00u &&
+                XImage_pixel(&target, 5, 1) == 0xff00ff00u &&
+                XImage_pixel(&target, 3, 1) == 0xff000000u,
+                "clip-region replay preserves disjoint rectangles");
+
+    XPainter_end(&replay);
+    XPainter_deinit(&replay);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XRegion_deinit(&region);
+    XPicture_deinit_base(&picture);
+}
+#endif /* XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON */
 
 
 static void test_icon_matching(void)
@@ -5658,6 +6227,12 @@ static XImageIOHandlerTransformation g_mockTransformation;
 static XString g_mockExpectedWriterDescription;
 static bool g_mockWriterDescriptionCheck;
 static bool g_mockWriterDescriptionMatched;
+static bool g_mockRejectWrite;
+static bool g_mockRejectCreateOnce;
+static bool g_mockEmptyReadSuccess;
+static int g_mockCapabilityCalls;
+static bool g_mockSupportsGamma;
+static float g_mockGamma;
 
 XCLASS_DEFINE_BEGING(TestImageHandler)
 XCLASS_DEFINE_EXTEND_END(TestImageHandler, XImageIOHandler)
@@ -5684,6 +6259,8 @@ static bool VTestImageHandler_read(XImageIOHandler* self, XImage* image)
     (void)self;
     if (!image || g_mockImageWidth <= 0 || g_mockImageHeight <= 0)
         return false;
+    if (g_mockEmptyReadSuccess)
+        return true;
     if (g_mockImageWidth * g_mockImageHeight > 4)
         return false;
     if (!XClassIsVtableNull(image))
@@ -5712,6 +6289,8 @@ static bool VTestImageHandler_write(XImageIOHandler* self, const XImage* image)
                            XChar_CaseSensitive);
     }
     if (!image || XImage_isNull(image))
+        return false;
+    if (g_mockRejectWrite)
         return false;
     g_mockImageWidth = XImage_width(image);
     g_mockImageHeight = XImage_height(image);
@@ -5764,6 +6343,8 @@ static void VTestImageHandler_setOption(XImageIOHandler* self,
 {
     if (option == XImageIOHandlerOption_Description)
         XImageIOHandler_storeOptionValue(self, option, value);
+    else if (option == XImageIOHandlerOption_Gamma && value)
+        g_mockGamma = ((const XImageIOHandlerOptionValue*)value)->real;
 }
 
 static bool VTestImageHandler_supportsOption(const XImageIOHandler* self,
@@ -5772,6 +6353,7 @@ static bool VTestImageHandler_supportsOption(const XImageIOHandler* self,
     (void)self;
     return option == XImageIOHandlerOption_Size ||
            option == XImageIOHandlerOption_Description ||
+           (option == XImageIOHandlerOption_Gamma && g_mockSupportsGamma) ||
            (option == XImageIOHandlerOption_Animation &&
             g_mockSupportsAnimation) ||
            (option == XImageIOHandlerOption_ImageTransformation &&
@@ -5826,6 +6408,7 @@ typedef struct TestImagePlugin
     XStringList* m_keys;
     XStringList* m_filters;
     XStringList* m_mimes;
+    bool m_rejectReadCapability;
 } TestImagePlugin;
 
 static uint32_t VTestImagePlugin_capabilities(const XImageIOPlugin* self,
@@ -5833,13 +6416,17 @@ static uint32_t VTestImagePlugin_capabilities(const XImageIOPlugin* self,
                                               const XString* format)
 {
     char consumed;
-    (void)self;
+    TestImagePlugin* plugin = (TestImagePlugin*)self;
+    ++g_mockCapabilityCalls;
     /* 用于验证注册表遵守 Qt 的设备位置保护契约；真实插件可能读取魔数。 */
     if (g_mockConsumeCapabilities && device)
         (void)XIODevice_read_1(device, &consumed, 1);
     if (g_mockSuffixOnlyCapabilities &&
         (!format || XContainer_isEmpty_base((const XContainer*)format)))
         return 0;
+    if (plugin && plugin->m_rejectReadCapability && format &&
+        !XContainer_isEmpty_base((const XContainer*)format))
+        return (uint32_t)XImageIOPlugin_CanWrite;
     (void)format;
     return (uint32_t)(XImageIOPlugin_CanRead | XImageIOPlugin_CanWrite);
 }
@@ -5851,8 +6438,12 @@ static XImageIOHandler* VTestImagePlugin_create(XImageIOPlugin* self,
     TestImageHandler* handler;
     (void)self;
     (void)format;
-    if (g_mockRejectCreate)
+    if (g_mockRejectCreate || g_mockRejectCreateOnce) {
+        /* 用一次性失败夹具模拟 Qt 工厂首个能力命中后 create() 返回
+           NULL 的情形，验证注册表不会错误选择后续同格式插件。 */
+        g_mockRejectCreateOnce = false;
         return NULL;
+    }
     handler = TestImageHandler_create();
     if (handler)
         XImageIOHandler_setDevice((XImageIOHandler*)handler, device);
@@ -5932,6 +6523,11 @@ static void test_image_handler_registry(void)
 {
     XImageIOHandler baseHandler;
     XImageIOHandlerOptionValue baseOption;
+    XImage allocationImage;
+    XSize emptyAllocationSize = { 0, 1 };
+    XSize validAllocationSize = { 1, 1 };
+    XSize overLimitAllocationSize = { 262145, 1 };
+    int allocationLimit;
     XStringList* readerFormats = XImageReader_supportedImageFormats();
     XStringList* readerMimes = XImageReader_supportedMimeTypes();
     XStringList* readerBmp = XImageReader_imageFormatsForMimeType_2("image/bmp");
@@ -5959,6 +6555,39 @@ static void test_image_handler_registry(void)
                     &baseOption),
                 "base image handler option remains empty after setOption");
     XImageIOHandler_deinit_base(&baseHandler);
+
+    /* 对齐 Qt qimageiohandler.cpp:532-557：空尺寸和非法格式必须在
+       分配前拒绝，失败不能覆盖调用方已有图像；同尺寸同格式则复用
+       原缓冲区并只执行 detach。 */
+    XImage_init(&allocationImage);
+    expect_true(!XImageIOHandler_allocateImage(
+                    &emptyAllocationSize, XImageFormat_ARGB32,
+                    &allocationImage) && XImage_isNull(&allocationImage),
+                "image handler rejects empty allocation size");
+    expect_true(!XImageIOHandler_allocateImage(
+                    &validAllocationSize, XImageFormat_NImageFormats,
+                    &allocationImage) && XImage_isNull(&allocationImage),
+                "image handler rejects invalid allocation format");
+    expect_true(XImageIOHandler_allocateImage(
+                    &validAllocationSize, XImageFormat_ARGB32,
+                    &allocationImage),
+                "image handler allocates valid image");
+    XImage_fill(&allocationImage, 0xff123456u);
+    expect_true(XImageIOHandler_allocateImage(
+                    &validAllocationSize, XImageFormat_ARGB32,
+                    &allocationImage) &&
+                XImage_pixel(&allocationImage, 0, 0) == 0xff123456u,
+                "image handler reuses matching image without clearing pixels");
+    allocationLimit = XImageReader_allocationLimit();
+    XImageReader_setAllocationLimit(1);
+    expect_true(!XImageIOHandler_allocateImage(
+                    &overLimitAllocationSize, XImageFormat_ARGB32,
+                    &allocationImage) && XImage_width(&allocationImage) == 1 &&
+                XImage_height(&allocationImage) == 1 &&
+                XImage_pixel(&allocationImage, 0, 0) == 0xff123456u,
+                "image handler enforces the 32-bit allocation limit");
+    XImageReader_setAllocationLimit(allocationLimit);
+    XImage_deinit_base(&allocationImage);
 
 #if XIMAGECODEC_BMP_ON
     ++formatCount;
@@ -5994,6 +6623,20 @@ static void test_image_handler_registry(void)
                  !XStringList_contains_utf8(readerFormats, "jpeg", XChar_CaseSensitive)),
                 "reader registry omits disabled JPEG format keys");
 #endif
+#if XIMAGEIOPLUGIN_ON && XIMAGECODEC_SVG_ON
+    /* Qt qtsvg/svg.json declares image/svg+xml-compressed for svgz, but the
+       embedded codec intentionally has no gzip reader.  Keep the ordinary
+       SVG MIME visible while refusing to advertise unsupported compression. */
+    expect_true(readerMimes &&
+                XStringList_contains_utf8(readerMimes, "image/svg+xml",
+                                          XChar_CaseSensitive),
+                "reader registry exposes ordinary SVG MIME type");
+    expect_true(readerMimes &&
+                !XStringList_contains_utf8(readerMimes,
+                                           "image/svg+xml-compressed",
+                                           XChar_CaseSensitive),
+                "reader registry omits unsupported compressed SVG MIME type");
+#endif
     expect_true(readerMimes && XStringList_size_base((const XContainer*)readerMimes) ==
                 (size_t)(formatCount -
 #if XIMAGECODEC_JPEG_ON
@@ -6008,6 +6651,19 @@ static void test_image_handler_registry(void)
     expect_true(readerJpeg && XStringList_size_base((const XContainer*)readerJpeg) ==
                 (XIMAGECODEC_JPEG_ON ? 3u : 0u),
                 "reader JPEG MIME lookup exposes jpg/jpeg/jfif aliases");
+#if XIMAGECODEC_JPEG_ON
+    expect_true(readerJpeg &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                                        (XVector*)readerJpeg, 0),
+                                    "jpg", XChar_CaseSensitive) &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                                        (XVector*)readerJpeg, 1),
+                                    "jpeg", XChar_CaseSensitive) &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                                        (XVector*)readerJpeg, 2),
+                                    "jfif", XChar_CaseSensitive),
+                "reader MIME lookup preserves Qt plugin key order");
+#endif
     expect_true(readerUpperBmp && XStringList_size_base((const XContainer*)readerUpperBmp) == 0,
                 "reader MIME lookup keeps Qt case-sensitive MIME semantics");
     format = writerFormats ? (const XString*)XStringList_at_base((const XVector*)writerFormats, 0) : NULL;
@@ -6059,16 +6715,17 @@ static void test_image_reader_decide_format_state(void)
     XImageReader_init(&reader);
     expect_true(XImageReader_autoDetectImageFormat(&reader),
                 "image reader enables auto detection by default");
-    XImageReader_setAutoDetectImageFormat(&reader, false);
     XImageReader_setFormat_2(&reader, "unsupported-format");
     XImageReader_setDecideFormatFromContent(&reader, true);
     expect_true(XImageReader_decideFormatFromContent(&reader),
                 "image reader enables content-based format decision");
-    expect_true(!XImageReader_autoDetectImageFormat(&reader),
-                "content decision does not mutate auto-detect state");
+    expect_true(XImageReader_autoDetectImageFormat(&reader),
+                "content decision leaves auto-detect state unchanged");
     XImageReader_setDecideFormatFromContent(&reader, false);
     expect_true(!XImageReader_decideFormatFromContent(&reader),
                 "image reader disables content-based format decision");
+    expect_true(XImageReader_autoDetectImageFormat(&reader),
+                "disabling content decision leaves auto-detect enabled");
     XImageReader_deinit_base(&reader);
 
     XImageReader_init_file_2(&fileReader, "xgui_reader_lifecycle_missing.bmp", NULL);
@@ -6410,6 +7067,8 @@ static void test_image_plugin_registry_integration(void)
                         "Title: Example\n\nAuthor: Alice");
     g_mockWriterDescriptionCheck = true;
     g_mockWriterDescriptionMatched = false;
+    g_mockSupportsGamma = true;
+    g_mockGamma = -1.0f;
     XImageWriter_init_file_2(&writer, fileName, "mock");
     expect_true(XImageWriter_canWrite(&writer), "plugin writer canWrite reports mock");
     expect_true(XImageWriter_supportsOption(&writer,
@@ -6421,8 +7080,12 @@ static void test_image_plugin_registry_integration(void)
     expect_true(ok, "plugin writer receives image through registry");
     expect_true(g_mockWriterDescriptionMatched,
                 "writer simplifies and forwards Description metadata");
+    expect_true(g_mockGamma == 0.0f,
+                "writer forwards Qt default Gamma option to supporting handler");
     XImageWriter_deinit_base(&writer);
     g_mockWriterDescriptionCheck = false;
+    g_mockSupportsGamma = false;
+    g_mockGamma = 0.0f;
     XString_deinit_base((XClass*)&g_mockExpectedWriterDescription);
 
     XImage_init(&loaded);
@@ -6501,6 +7164,33 @@ static void test_image_plugin_registry_integration(void)
                     XImage_pixel(&loaded, 0, 1) == 0xffaabbccu &&
                     XImage_pixel(&loaded, 1, 1) == 0xff445566u,
                 "reader autoTransform rotates plugin image clockwise");
+
+    /* Qt QImageReader::read(QImage*) 不会在调用处理器前清空输出；处理器
+       返回失败且未修改图像时，调用方仍可观察到原有内容。 */
+    g_mockImageWidth = 3;
+    g_mockImageHeight = 2; /* 测试处理器在超过 4 像素时直接失败。 */
+    {
+        uint32_t preservedPixel = XImage_pixel(&loaded, 0, 0);
+        int preservedWidth = XImage_width(&loaded);
+        int preservedHeight = XImage_height(&loaded);
+        expect_true(!XImageReader_read(&reader, &loaded) &&
+                    XImage_width(&loaded) == preservedWidth &&
+                    XImage_height(&loaded) == preservedHeight &&
+                    XImage_pixel(&loaded, 0, 0) == preservedPixel,
+                    "reader preserves output image when handler read fails");
+    }
+    /* Qt 直接返回 handler->read() 的成功标志；即使处理器报告成功但
+       没有填充输出图像，read(QImage*) 仍返回 true。 */
+    g_mockEmptyReadSuccess = true;
+    XImage_deinit_base(&loaded);
+    XImage_init(&loaded);
+    expect_true(XImageReader_read(&reader, &loaded),
+                "reader preserves handler success flag for empty output");
+    expect_true(XImage_isNull(&loaded),
+                "successful empty handler output remains empty");
+    g_mockEmptyReadSuccess = false;
+    g_mockImageWidth = 2;
+    g_mockImageHeight = 2;
 
     XImageReader_deinit_base(&reader);
     g_mockSupportsAnimation = false;
@@ -6675,6 +7365,200 @@ static void test_image_plugin_registry_integration(void)
             }
         }
     }
+    /* Qt 的显式格式路径中，首个声明 CanRead 的插件即使 create() 返回
+       NULL 也会停止外部插件遍历；随后才按格式尝试内置处理器。两个同键
+       插件可区分“错误继续选择第二个插件”的回归。 */
+    {
+        TestImagePlugin* firstPlugin = TestImagePlugin_create();
+        TestImagePlugin* secondPlugin = TestImagePlugin_create();
+        XString* firstKey = NULL;
+        XString* secondKey = NULL;
+        XString* probeName = XString_create_utf8("xgui_duplicate_plugin_probe.bin");
+        XFile* probeDevice = NULL;
+        XImageIOHandler* selectedHandler = NULL;
+        bool firstAdded = false;
+        bool secondAdded = false;
+        if (firstPlugin) {
+            firstKey = (XString*)XStringList_at_base(
+                (XVector*)firstPlugin->m_keys, 0);
+            if (firstKey)
+                XString_assign_utf8(firstKey, "bmp");
+            firstAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)firstPlugin);
+        }
+        if (secondPlugin) {
+            secondKey = (XString*)XStringList_at_base(
+                (XVector*)secondPlugin->m_keys, 0);
+            if (secondKey)
+                XString_assign_utf8(secondKey, "bmp");
+            secondAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)secondPlugin);
+        }
+        if (probeName) {
+            probeDevice = XFile_create_2(probeName);
+            if (probeDevice && XIODevice_open_base((XIODevice*)probeDevice,
+                                                    XIODevice_WriteOnly)) {
+                const char marker = 'x';
+                (void)XIODevice_write_1((XIODevice*)probeDevice, &marker, 1);
+                XIODevice_close_base((XIODevice*)probeDevice);
+                (void)XIODevice_open_base((XIODevice*)probeDevice,
+                                          XIODevice_ReadOnly);
+            }
+        }
+        g_mockImageWidth = 1;
+        g_mockImageHeight = 1;
+        g_mockImagePixels[0] = 0xffe1e2e3u;
+        firstPlugin->m_rejectReadCapability = false;
+        g_mockCapabilityCalls = 0;
+        g_mockRejectCreateOnce = true;
+        {
+            XString* explicitBmp = XString_create_utf8("bmp");
+            selectedHandler = probeDevice
+                ? XImagePluginRegistry_createReadHandlerEx(
+                    (XIODevice*)probeDevice, explicitBmp, false, false)
+                : NULL;
+            if (explicitBmp)
+                XString_delete_base((XClass*)explicitBmp);
+        }
+        expect_true(firstAdded,
+                    "first duplicate external format plugin registers");
+        expect_true(secondAdded,
+                    "second duplicate external format plugin registers");
+        expect_true(selectedHandler == NULL,
+                    "first external create failure stops duplicate format plugin traversal");
+        expect_true(g_mockRejectCreateOnce == false,
+                    "duplicate format traversal invokes only the first plugin factory");
+        expect_true(g_mockCapabilityCalls == 1,
+                    "duplicate format capability is checked in registration order");
+        firstPlugin->m_rejectReadCapability = true;
+        g_mockCapabilityCalls = 0;
+        {
+            XString* explicitBmp = XString_create_utf8("bmp");
+            if (selectedHandler) {
+                XImageIOHandler_delete_base(selectedHandler);
+                selectedHandler = NULL;
+            }
+            selectedHandler = probeDevice
+                ? XImagePluginRegistry_createReadHandlerEx(
+                    (XIODevice*)probeDevice, explicitBmp, false, false)
+                : NULL;
+            if (explicitBmp)
+                XString_delete_base((XClass*)explicitBmp);
+        }
+        expect_true(selectedHandler == NULL,
+                    "disabled autodetect rejects first same-key plugin without fallback traversal");
+        expect_true(g_mockCapabilityCalls == 1,
+                    "disabled autodetect does not probe a second same-key plugin");
+        firstPlugin->m_rejectReadCapability = false;
+        g_mockCapabilityCalls = 0;
+        g_mockRejectCreateOnce = true;
+        {
+            XString* emptyFormat = XString_create();
+            if (selectedHandler) {
+                XImageIOHandler_delete_base(selectedHandler);
+                selectedHandler = NULL;
+            }
+            selectedHandler = probeDevice
+                ? XImagePluginRegistry_createReadHandlerEx(
+                    (XIODevice*)probeDevice, emptyFormat, true, true)
+                : NULL;
+            if (emptyFormat)
+                XString_delete_base((XClass*)emptyFormat);
+        }
+        expect_true(selectedHandler == NULL,
+                    "content probe stops after first plugin create failure");
+        expect_true(g_mockRejectCreateOnce == false,
+                    "content probe invokes only the first plugin factory");
+        expect_true(g_mockCapabilityCalls == 1,
+                    "content probe does not query a second plugin after create failure");
+        g_mockCapabilityCalls = 0;
+        g_mockRejectCreateOnce = true;
+        {
+            XString* rejectedBmp = XString_create_utf8("bmp");
+            if (selectedHandler) {
+                XImageIOHandler_delete_base(selectedHandler);
+                selectedHandler = NULL;
+            }
+            selectedHandler = probeDevice
+                ? XImagePluginRegistry_createReadHandlerContentFallback(
+                    (XIODevice*)probeDevice, rejectedBmp)
+                : NULL;
+            if (rejectedBmp)
+                XString_delete_base((XClass*)rejectedBmp);
+        }
+        expect_true(selectedHandler == NULL,
+                    "suffix fallback stops after first remaining plugin create failure");
+        expect_true(g_mockRejectCreateOnce == false,
+                    "suffix fallback invokes only the first remaining plugin factory");
+        expect_true(g_mockCapabilityCalls == 1,
+                    "suffix fallback does not query later plugins after create failure");
+        if (selectedHandler)
+            XImageIOHandler_delete_base(selectedHandler);
+        if (probeDevice) {
+            XIODevice_close_base((XIODevice*)probeDevice);
+            XClass_delete_base((XClass*)probeDevice);
+        }
+        g_mockRejectCreateOnce = false;
+        if (firstAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)firstPlugin);
+        if (secondAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)secondPlugin);
+        if (firstPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)firstPlugin);
+        if (secondPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)secondPlugin);
+        if (probeName) {
+            XFile_remove_static(probeName);
+            XString_delete_base((XClass*)probeName);
+        }
+    }
+    /* Qt QImageWriter::write() 在已选处理器拒绝图像时立即失败；不能再
+       退回通用 XImage_save_2()，否则同名 BMP 插件失败时会被内置编码器
+       静默写出，调用方无法观察到插件错误。 */
+    {
+        TestImagePlugin* writeFailPlugin = TestImagePlugin_create();
+        XString* writeFailKey = NULL;
+        XImageWriter writeFailWriter;
+        XImage writeFailSource;
+        const char* writeFailFile = "xgui_external_write_fail.bmp";
+        bool writeFailAdded = false;
+        XString* writeFailName = XString_create_utf8(writeFailFile);
+        if (writeFailPlugin) {
+            writeFailKey = (XString*)XStringList_at_base(
+                (XVector*)writeFailPlugin->m_keys, 0);
+            if (writeFailKey)
+                XString_assign_utf8(writeFailKey, "bmp");
+            writeFailAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)writeFailPlugin);
+        }
+        g_mockImageWidth = 1;
+        g_mockImageHeight = 1;
+        g_mockImagePixels[0] = 0xff123456u;
+        XImage_init_ex(&writeFailSource, 1, 1, XImageFormat_ARGB32);
+        XImage_setPixel(&writeFailSource, 0, 0, 0xffabcdefu);
+        g_mockRejectWrite = true;
+        if (writeFailName)
+            XFile_remove_static(writeFailName);
+        XImageWriter_init_file_2(&writeFailWriter, writeFailFile, "bmp");
+        expect_true(writeFailAdded && !XImageWriter_write(&writeFailWriter,
+                                                          &writeFailSource),
+                    "writer returns failure when selected plugin rejects image");
+        expect_true(XImageWriter_error(&writeFailWriter) == XImageWriterError_UnknownError,
+                    "writer preserves the previous error code when handler write fails");
+        expect_true(strcmp(XImageWriter_errorString_2(&writeFailWriter), "Unknown error") == 0,
+                    "writer preserves the previous error text when handler write fails");
+        XImageWriter_deinit_base(&writeFailWriter);
+        XImage_deinit_base(&writeFailSource);
+        g_mockRejectWrite = false;
+        if (writeFailAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)writeFailPlugin);
+        if (writeFailPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)writeFailPlugin);
+        if (writeFailName) {
+            XFile_remove_static(writeFailName);
+            XString_delete_base((XClass*)writeFailName);
+        }
+    }
     /* Qt qimagereader.cpp 在 capabilities()/create() 后恢复非顺序设备位置。 */
     {
         XFile* seedFile = XFile_create_2(fileNameObject);
@@ -6745,6 +7629,39 @@ static void test_image_plugin_registry_integration(void)
                     "cleared registry restores built-in image plugin");
         if (bmpFormat) XString_delete_base((XClass*)bmpFormat);
     }
+#if XIMAGEPLUGINREGISTRY_CAPACITY > 0
+    /* 固定容量注册表在首次查询前也必须为内置处理器保留一个槽位；否则
+       外部插件先占满数组后，Qt 所要求的内置格式永远无法加入注册表。 */
+    {
+        TestImagePlugin* fillers[XIMAGEPLUGINREGISTRY_CAPACITY];
+        XString* bmpFormat = XString_create_utf8("bmp");
+        int fillerCount = 0;
+        int i;
+        memset(fillers, 0, sizeof(fillers));
+        XImagePluginRegistry_clear();
+        for (i = 0; i < XIMAGEPLUGINREGISTRY_CAPACITY; ++i) {
+            TestImagePlugin* filler = TestImagePlugin_create();
+            if (!filler) break;
+            if (XImagePluginRegistry_addPlugin((XImageIOPlugin*)filler)) {
+                fillers[fillerCount++] = filler;
+            } else {
+                XImageIOPlugin_delete_base((XImageIOPlugin*)filler);
+                break;
+            }
+        }
+        expect_true(fillerCount == XIMAGEPLUGINREGISTRY_CAPACITY - 1,
+                    "registry reserves capacity for builtin image plugin");
+        expect_true(bmpFormat && XImagePluginRegistry_supportsReadFormat(bmpFormat) &&
+                    XImagePluginRegistry_pluginCount() == XIMAGEPLUGINREGISTRY_CAPACITY,
+                    "builtin image plugin joins a registry filled by external plugins");
+        for (i = 0; i < fillerCount; ++i) {
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)fillers[i]);
+            XImageIOPlugin_delete_base((XImageIOPlugin*)fillers[i]);
+        }
+        if (bmpFormat) XString_delete_base((XClass*)bmpFormat);
+        XImagePluginRegistry_clear();
+    }
+#endif /* XIMAGEPLUGINREGISTRY_CAPACITY > 0 */
 #else
     expect_true(true, "plugin registry integration is disabled by XIMAGEIOPLUGIN_ON");
 #endif /* XIMAGEIOPLUGIN_ON */
@@ -7002,6 +7919,27 @@ static void test_codec_bmp_malformed(void)
                       "RLE8 mismatch with 24 bit depth rejected");
     bmp_expect_reject(bmp_make(60, 54, 40, 1, 1, 1, 32, 3),
                       "BITFIELDS without mask block rejected");
+    /* Qt 读取完整但全零的 RGB 掩码块，三个通道按位域规则解为黑色，
+       而不是因掩码值为零拒绝整个图像。 */
+    b = bmp_make(70, 66, 40, 1, 1, 1, 16, 3);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        bmp_le32(d + 54, 0);
+        bmp_le32(d + 58, 0);
+        bmp_le32(d + 62, 0);
+        d[66] = 0;
+        d[67] = 0;
+        d[68] = 0;
+        d[69] = 0;
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_pixel(&out, 0, 0) == 0xff000000u,
+                "BITFIELDS 全零掩码按 Qt 解码为黑色");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
     bmp_expect_reject(bmp_make(60, 54, 40, 1, 1, 1, 8, 0),
                       "truncated 8-bit palette rejected");
     bmp_expect_reject(bmp_make(56, 54, 40, 2, 1, 1, 24, 0),
@@ -7035,6 +7973,9 @@ static void test_codec_bmp_malformed(void)
     b = bmp_make(824, 822, 40, 2, 1, 1, 8, 1);
     if (b) {
         uint8_t* d = XByteArray_data(b);
+        /* Windows INFOHEADER 的每个调色板项占 4 字节；只声明一项，
+           让高偏移 RLE 数据不被调色板边界检查误判为截断。 */
+        bmp_le32(d + 46, 1);
         d[822] = 3;   /* 计数超过宽度，余下应被钳到当前行尾 */
         d[823] = 1;
     }
@@ -7048,18 +7989,89 @@ static void test_codec_bmp_malformed(void)
                 "RLE8 overrun clamps to current row like Qt");
     XImage_deinit_base(&out);
     if (b) XByteArray_delete_base((XClass*)b);
+
+#if XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON
+    /* Qt 在 RLE8 绝对模式中先把计数 4 钳为当前行剩余宽度 2，
+       因而只有两个 payload 字节且没有 EOB 时仍能返回已解码图像；
+       该夹具专门防止实现按原始计数错误要求四个字节。 */
+    b = bmp_make(62, 58, 40, 2, 1, 1, 8, 1);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        bmp_le32(d + 46, 1);
+        d[58] = 0; d[59] = 4; /* 绝对模式，原始计数超出当前行 */
+        d[60] = 1; d[61] = 2; /* 仅提供钳制后的两个索引，无 EOB */
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out) &&
+                XImage_pixelIndex(&out, 0, 0) == 1 &&
+                XImage_pixelIndex(&out, 1, 0) == 2,
+                "RLE8 绝对模式按 Qt 行余量截断并接受流尾");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+#endif /* XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON */
+
+    /* RLE4 绝对模式的 5 像素 payload 按 Qt 规则补齐到字边界；缺少
+       该填充字节会吞掉下一条命令并破坏后续行。值 2/0x02 在 Qt 中
+       是 Delta 控制码，不能伪造为两像素绝对块。 */
+    b = bmp_make(134, 118, 40, 5, 2, 1, 4, 2);
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        /* 16 项 Windows 调色板：索引 1..10 分别写入可辨识颜色。 */
+        d[57] = 0x00; d[58] = 0x00; d[59] = 0xff;
+        d[60] = 0x00; d[61] = 0xff; d[62] = 0x00;
+        d[63] = 0xff; d[64] = 0x00; d[65] = 0x00;
+        d[66] = 0xff; d[67] = 0xff; d[68] = 0xff;
+        d[69] = 0x00; d[70] = 0xff; d[71] = 0xff;
+        d[72] = 0xff; d[73] = 0xff; d[74] = 0x00;
+        d[75] = 0x00; d[76] = 0x00; d[77] = 0xff;
+        d[78] = 0x80; d[79] = 0x80; d[80] = 0x80;
+        d[81] = 0x40; d[82] = 0x40; d[83] = 0x40;
+        d[84] = 0xc0; d[85] = 0xc0; d[86] = 0xc0;
+        /* 首行写入底行 1..5，补齐后行尾；再写顶行 6..10，补齐后图像结束。 */
+        d[118] = 0x00; d[119] = 0x05; d[120] = 0x12;
+        d[121] = 0x34; d[122] = 0x50;
+        d[123] = 0x00; /* RLE4 绝对模式字对齐填充 */
+        d[124] = 0x00; d[125] = 0x00;
+        d[126] = 0x00; d[127] = 0x05; d[128] = 0x67;
+        d[129] = 0x89; d[130] = 0xa0;
+        d[131] = 0x00; /* RLE4 绝对模式字对齐填充 */
+        d[132] = 0x00; d[133] = 0x01;
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(XByteArray_data(b),
+                                        XByteArray_size_base((const XContainer*)b),
+                                        XImageCodecFormat_Bmp, &out),
+                "RLE4 five-pixel absolute rows decode");
+    expect_true(!XImage_isNull(&out) &&
+                XImage_pixelIndex(&out, 0, 0) == 6 &&
+                XImage_pixelIndex(&out, 1, 0) == 7 &&
+                XImage_pixelIndex(&out, 2, 0) == 8 &&
+                XImage_pixelIndex(&out, 3, 0) == 9 &&
+                XImage_pixelIndex(&out, 4, 0) == 10 &&
+                XImage_pixelIndex(&out, 0, 1) == 1 &&
+                XImage_pixelIndex(&out, 1, 1) == 2 &&
+                XImage_pixelIndex(&out, 2, 1) == 3 &&
+                XImage_pixelIndex(&out, 3, 1) == 4 &&
+                XImage_pixelIndex(&out, 4, 1) == 5,
+                "RLE4 absolute rows consume Qt word padding");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON */
 
 #if XIMAGECODEC_BMP_INDEXED_ON
     /* Qt 使用 biClrUsed 限制调色板读取数量；1 位图输出 Mono，并在
        颜色表亮度顺序相反时翻转存储位与颜色表。 */
-    b = bmp_make(64, 60, 40, 8, 1, 1, 1, 0);
+    b = bmp_make(66, 62, 40, 8, 1, 1, 1, 0);
     if (b) {
         uint8_t* d = XByteArray_data(b);
         bmp_le32(d + 46, 2);
         d[54] = 0xff; d[55] = 0xff; d[56] = 0xff;
-        d[57] = 0; d[58] = 0; d[59] = 0;
-        d[60] = 0x80; /* 索引 1：黑色 */
+        d[57] = 0;
+        d[58] = 0; d[59] = 0; d[60] = 0;
+        d[61] = 0;
+        d[62] = 0x80; /* 索引 1：黑色 */
     }
     XImage_init(&out);
     expect_true(b && XImageCodec_decode(XByteArray_data(b),
@@ -7073,13 +8085,15 @@ static void test_codec_bmp_malformed(void)
     XImage_deinit_base(&out);
     if (b) XByteArray_delete_base((XClass*)b);
 
-    b = bmp_make(64, 60, 40, 8, 1, 1, 1, 0);
+    b = bmp_make(66, 62, 40, 8, 1, 1, 1, 0);
     if (b) {
         uint8_t* d = XByteArray_data(b);
         bmp_le32(d + 46, 2);
         d[54] = 0; d[55] = 0; d[56] = 0;
-        d[57] = 0xff; d[58] = 0xff; d[59] = 0xff;
-        d[60] = 0x40; /* 索引 0/1：较暗颜色在首像素，Qt 会交换索引与颜色表 */
+        d[57] = 0;
+        d[58] = 0xff; d[59] = 0xff; d[60] = 0xff;
+        d[61] = 0;
+        d[62] = 0x40; /* 索引 0/1：较暗颜色在首像素，Qt 会交换索引与颜色表 */
     }
     XImage_init(&out);
     expect_true(b && XImageCodec_decode(XByteArray_data(b),
@@ -7092,12 +8106,13 @@ static void test_codec_bmp_malformed(void)
     XImage_deinit_base(&out);
     if (b) XByteArray_delete_base((XClass*)b);
 
-    b = bmp_make(61, 57, 40, 8, 1, 1, 1, 0);
+    b = bmp_make(62, 58, 40, 8, 1, 1, 1, 0);
     if (b) {
         uint8_t* d = XByteArray_data(b);
         bmp_le32(d + 46, 1);
         d[54] = 0; d[55] = 0; d[56] = 0;
         d[57] = 0;
+        d[58] = 0;
     }
     XImage_init(&out);
     expect_true(b && XImageCodec_decode(XByteArray_data(b),
@@ -7107,6 +8122,35 @@ static void test_codec_bmp_malformed(void)
                 XImage_colorCount(&out) == 1 &&
                 XImage_pixel(&out, 0, 0) == 0xff000000u,
                 "1-bit BMP honors a reduced biClrUsed palette");
+    XImage_deinit_base(&out);
+    if (b) XByteArray_delete_base((XClass*)b);
+#endif /* XIMAGECODEC_BMP_INDEXED_ON */
+}
+
+/**
+ * @brief 校验 Qt BMP 位域的位复制缩放规则。
+ * @details qbmphandler.cpp:138-176 的 calc_scale/apply_scale 对 5/6 位
+ *          通道使用重复高位填充，而非四舍五入除法；例如 RGB555 的
+ *          红色字段值 3 应展开为 24（0x18），不是 25（0x19）。
+ */
+static void test_codec_bmp_mask_scaling(void)
+{
+#if XIMAGECODEC_BMP_INDEXED_ON
+    XByteArray* b = bmp_make(58, 54, 40, 1, 1, 1, 16, 0);
+    XImage out;
+    if (b) {
+        uint8_t* d = XByteArray_data(b);
+        /* RGB555 的默认红色掩码位于 10..14，值 3 的原始像素为 0x0c00。 */
+        d[54] = 0x00;
+        d[55] = 0x0c;
+    }
+    XImage_init(&out);
+    expect_true(b && XImageCodec_decode(
+                    XByteArray_data(b),
+                    XByteArray_size_base((const XContainer*)b),
+                    XImageCodecFormat_Bmp, &out) &&
+                XImage_pixel(&out, 0, 0) == 0xff180000u,
+                "RGB555 mask scaling follows Qt bit replication");
     XImage_deinit_base(&out);
     if (b) XByteArray_delete_base((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON */
@@ -7256,6 +8300,7 @@ static void test_codec_reject_malformed(void)
     XImage out;
     XImage nullImage;
     XByteArray* encoded = NULL;
+    XByteArray* prefixedJpeg = NULL;
 
     XImage_init(&out);
     XImage_init(&nullImage);
@@ -7277,6 +8322,34 @@ static void test_codec_reject_malformed(void)
                 "null image encode rejected");
     expect_true(encoded && !XImageCodec_encode(&nullImage, XImageCodecFormat_Png, -1, encoded),
                 "null (empty) XImage encode rejected");
+#if XIMAGECODEC_PNG_ON
+    /* PNG 关键块 CRC 损坏必须由 Qt/libpng 语义拒绝，而不是继续解码。 */
+    {
+        XImage pngSource;
+        XByteArray* corruptPng = XByteArray_create();
+        XImage_init_ex(&pngSource, 1, 1, XImageFormat_ARGB32);
+        XImage_fill(&pngSource, 0xff336699u);
+        expect_true(corruptPng &&
+                    XImageCodec_encode(&pngSource, XImageCodecFormat_Png,
+                                       -1, corruptPng),
+                    "PNG CRC 夹具编码成功");
+        if (corruptPng) {
+            size_t pngSize = XByteArray_size_base((const XContainer*)corruptPng);
+            uint8_t* pngData = XByteArray_data(corruptPng);
+            /* PNG 签名后 IHDR 的 CRC 位于固定偏移 29..32。 */
+            expect_true(pngData && pngSize >= 33u,
+                        "PNG CRC 夹具长度有效");
+            if (pngData && pngSize >= 33u) {
+                pngData[32] ^= 0x01u;
+                expect_true(!XImageCodec_decode(pngData, pngSize,
+                                                XImageCodecFormat_Png, &out),
+                            "PNG 关键块 CRC 损坏被拒绝");
+            }
+            XByteArray_delete_base((XClass*)corruptPng);
+        }
+        XImage_deinit_base(&pngSource);
+    }
+#endif /* XIMAGECODEC_PNG_ON */
 #if XIMAGECODEC_JPEG_ON
     /* JPEG 已有内置后端：正常图像编码应成功，空图像仍应被拒绝 */
     {
@@ -7285,6 +8358,35 @@ static void test_codec_reject_malformed(void)
         XImage_fill(&jpegSrc, 0xff336699u);
         expect_true(XImageCodec_encode(&jpegSrc, XImageCodecFormat_Jpeg, 75, encoded),
                     "JPEG 编码应成功");
+        /* Qt 6.8 QJpegHandler::canRead() 只接受设备起始处的 FF D8；
+           在有效 JPEG 前插入垃圾后，自动探测与显式 JPEG 解码都必须拒绝，
+           不能让 jpegNextMarker() 跳过前导字节伪造成功。 */
+        prefixedJpeg = XByteArray_create();
+        if (prefixedJpeg && encoded) {
+            size_t encodedSize = XByteArray_size_base(
+                (const XContainer*)encoded);
+            if (encodedSize <= SIZE_MAX - 2u &&
+                XByteArray_resize_base((XVector*)prefixedJpeg,
+                                       encodedSize + 2u)) {
+                uint8_t* prefixedData = XByteArray_data(prefixedJpeg);
+                prefixedData[0] = 0xde;
+                prefixedData[1] = 0xad;
+                memcpy(prefixedData + 2u, XByteArray_data(encoded),
+                       encodedSize);
+                expect_true(XImageCodec_detect(prefixedData,
+                                               encodedSize + 2u) ==
+                                XImageCodecFormat_Unknown &&
+                            !XImageCodec_decode(prefixedData,
+                                                encodedSize + 2u,
+                                                XImageCodecFormat_Jpeg,
+                                                &out),
+                            "JPEG 前导垃圾按 Qt SOI 边界拒绝");
+            } else {
+                expect_true(false, "JPEG 前导垃圾夹具分配成功");
+            }
+        } else {
+            expect_true(false, "JPEG 前导垃圾夹具创建成功");
+        }
         expect_true(!XImageCodec_encode(&out, XImageCodecFormat_Jpeg, -1, encoded),
                     "JPEG 空图像编码被拒绝");
         XImage_deinit_base(&jpegSrc);
@@ -7293,6 +8395,7 @@ static void test_codec_reject_malformed(void)
     XImage_deinit_base(&out);
     XImage_deinit_base(&nullImage);
     if (encoded) XByteArray_delete_base((XClass*)encoded);
+    if (prefixedJpeg) XByteArray_delete_base((XClass*)prefixedJpeg);
 }
 
 static void test_codec_detect_only(void)
@@ -7334,6 +8437,105 @@ static void test_codec_detect_only(void)
                 "格式名解析大小写/别名/未知");
     XImage_deinit_base(&out);
 }
+
+#if XIMAGECODEC_SVG_ON
+/*
+ * Qt 的 SVG 插件会把 UTF-8、UTF-16LE/BE 和 UTF-32LE/BE 文件全部交给
+ * QXmlStreamReader；本夹具用同一份 ASCII SVG 生成五种实际字节流，验证
+ * 嵌入式转换器不会把 UTF-16/32 的零字节误当作 C 字符串结束，并且在
+ * 有/无矢量渲染裁剪时都能得到相同的根元素尺寸。
+ */
+static void test_codec_svg_text_encodings(void)
+{
+    static const char svg[] =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"3\">"
+        "<rect width=\"2\" height=\"3\" fill=\"#112233\"/></svg>";
+    uint8_t utf8[512];
+    uint8_t utf16le[1024];
+    uint8_t utf16be[1024];
+    uint8_t utf32le[2048];
+    uint8_t utf32be[2048];
+    size_t sourceSize = strlen(svg);
+    size_t i;
+    size_t size;
+    XImage image;
+
+    /* UTF-8 直接输入（无 BOM）是 Qt 测试中的基础编码。 */
+    memcpy(utf8, svg, sourceSize);
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(utf8, sourceSize,
+                                   XImageCodecFormat_Svg, &image) &&
+                XImage_width(&image) == 2 && XImage_height(&image) == 3,
+                "SVG UTF-8 编码解码尺寸正确");
+    expect_true(XImageCodec_detect(utf8, sourceSize) == XImageCodecFormat_Svg,
+                "SVG UTF-8 编码自动探测正确");
+    XImage_deinit_base(&image);
+
+    /* UTF-16LE/BE：前两个字节为 BOM，ASCII 代码单元扩展为两个字节。 */
+    utf16le[0] = 0xff; utf16le[1] = 0xfe;
+    utf16be[0] = 0xfe; utf16be[1] = 0xff;
+    for (i = 0; i < sourceSize; ++i) {
+        uint16_t cp = (uint16_t)(unsigned char)svg[i];
+        utf16le[2u + i * 2u] = (uint8_t)cp;
+        utf16le[3u + i * 2u] = (uint8_t)(cp >> 8);
+        utf16be[2u + i * 2u] = (uint8_t)(cp >> 8);
+        utf16be[3u + i * 2u] = (uint8_t)cp;
+    }
+    size = sourceSize * 2u + 2u;
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(utf16le, size,
+                                   XImageCodecFormat_Svg, &image) &&
+                XImage_width(&image) == 2 && XImage_height(&image) == 3,
+                "SVG UTF-16LE 编码解码尺寸正确");
+    expect_true(XImageCodec_detect(utf16le, size) == XImageCodecFormat_Svg,
+                "SVG UTF-16LE 编码自动探测正确");
+    XImage_deinit_base(&image);
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(utf16be, size,
+                                   XImageCodecFormat_Svg, &image) &&
+                XImage_width(&image) == 2 && XImage_height(&image) == 3,
+                "SVG UTF-16BE 编码解码尺寸正确");
+    expect_true(XImageCodec_detect(utf16be, size) == XImageCodecFormat_Svg,
+                "SVG UTF-16BE 编码自动探测正确");
+    XImage_deinit_base(&image);
+
+    /* UTF-32LE/BE：前四个字节为 BOM，每个 ASCII 字符占一个标量值。 */
+    utf32le[0] = 0xff; utf32le[1] = 0xfe;
+    utf32le[2] = 0x00; utf32le[3] = 0x00;
+    utf32be[0] = 0x00; utf32be[1] = 0x00;
+    utf32be[2] = 0xfe; utf32be[3] = 0xff;
+    for (i = 0; i < sourceSize; ++i) {
+        uint32_t cp = (uint32_t)(unsigned char)svg[i];
+        size_t le = 4u + i * 4u;
+        size_t be = 4u + i * 4u;
+        utf32le[le] = (uint8_t)cp;
+        utf32le[le + 1u] = (uint8_t)(cp >> 8);
+        utf32le[le + 2u] = (uint8_t)(cp >> 16);
+        utf32le[le + 3u] = (uint8_t)(cp >> 24);
+        utf32be[be] = (uint8_t)(cp >> 24);
+        utf32be[be + 1u] = (uint8_t)(cp >> 16);
+        utf32be[be + 2u] = (uint8_t)(cp >> 8);
+        utf32be[be + 3u] = (uint8_t)cp;
+    }
+    size = sourceSize * 4u + 4u;
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(utf32le, size,
+                                   XImageCodecFormat_Svg, &image) &&
+                XImage_width(&image) == 2 && XImage_height(&image) == 3,
+                "SVG UTF-32LE 编码解码尺寸正确");
+    expect_true(XImageCodec_detect(utf32le, size) == XImageCodecFormat_Svg,
+                "SVG UTF-32LE 编码自动探测正确");
+    XImage_deinit_base(&image);
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(utf32be, size,
+                                   XImageCodecFormat_Svg, &image) &&
+                XImage_width(&image) == 2 && XImage_height(&image) == 3,
+                "SVG UTF-32BE 编码解码尺寸正确");
+    expect_true(XImageCodec_detect(utf32be, size) == XImageCodecFormat_Svg,
+                "SVG UTF-32BE 编码自动探测正确");
+    XImage_deinit_base(&image);
+}
+#endif /* XIMAGECODEC_SVG_ON */
 
 static void test_codec_decode_real_assets(void)
 {
@@ -7428,7 +8630,9 @@ static void test_codec_png_palette_round_trip(void)
     XImage_deinit_base(&decoded);
     if (encoded) XByteArray_delete_base((XClass*)encoded);
 
-    /* 半透明 Indexed8：编码时写 tRNS，解码应展开为 ARGB32 且保留 Alpha */
+    /* 半透明 Indexed8：Qt qpnghandler.cpp:258-286 在读取 tRNS 后仍
+       保持 Indexed8 存储，透明度写入颜色表；像素索引不会被展开为
+       ARGB32。这里同时检查索引、颜色表 Alpha 以及 color() 结果。 */
     {
         static const uint32_t alphaPalette[4] = {
             0x80ff0000u, 0xff00ff00u, 0xff0000ffu, 0x40ffff00u
@@ -7446,8 +8650,15 @@ static void test_codec_png_palette_round_trip(void)
                                        XByteArray_size_base((const XContainer*)encoded),
                                        XImageCodecFormat_Png, &decoded),
                     "半透明 Indexed8 编码/解码成功");
-        expect_true(XImage_format(&decoded) == XImageFormat_ARGB32,
-                    "含 tRNS 调色板 PNG 解码展开为 ARGB32");
+        expect_true(XImage_format(&decoded) == XImageFormat_Indexed8,
+                    "含 tRNS 调色板 PNG 解码仍保持 Indexed8");
+        got = XImage_colorTable(&decoded, gotPalette, 4);
+        expect_true(got == 4 && !memcmp(gotPalette, alphaPalette, sizeof(alphaPalette)),
+                    "tRNS 透明度写入 Indexed8 颜色表");
+        expect_true(XImage_pixelIndex(&decoded, 0, 0) == 0 &&
+                    XImage_pixelIndex(&decoded, 1, 0) == 1 &&
+                    XImage_pixelIndex(&decoded, 0, 1) == 3,
+                    "tRNS 调色板像素索引保持不变");
         expect_true(XImage_pixel(&decoded, 0, 0) == 0x80ff0000u &&
                     XImage_pixel(&decoded, 1, 0) == 0xff00ff00u &&
                     XImage_pixel(&decoded, 0, 1) == 0x40ffff00u,
@@ -7469,19 +8680,19 @@ static void test_codec_png_extended_assets(void)
         uint32_t p0, p1, p2;   /* (0,0) (2,0) (0,2) 等关键点，0 表示按格式校验 */
     };
     static const struct Case cases[] = {
-        {"codec_palette8.png", 6, 4, XImageFormat_ARGB32,
+        {"codec_palette8.png", 6, 4, XImageFormat_Indexed8,
          0xffff0000u, 0x000000ffu, 0x0000ff00u},
-        {"codec_palette_trns.png", 6, 4, XImageFormat_ARGB32,
+        {"codec_palette_trns.png", 6, 4, XImageFormat_Indexed8,
          0xffff0000u, 0x000000ffu, 0xff00ff00u},
         {"codec_palette_fullalpha.png", 6, 4, XImageFormat_Indexed8,
          0xffff0000u, 0x000000ffu, 0xff00ff00u},
-        {"codec_palette1.png", 8, 2, XImageFormat_Indexed8,
+        {"codec_palette1.png", 8, 2, XImageFormat_Mono,
          0xffff0000u, 0xffffffffu, 0xff00ff00u},
         {"codec_palette2.png", 8, 2, XImageFormat_Indexed8,
          0xffff0000u, 0xff0000ffu, 0xffffffffu},
         {"codec_palette4.png", 8, 2, XImageFormat_Indexed8,
          0xffff0000u, 0xff00ff00u, 0xffffffffu},
-        {"codec_gray1.png", 8, 2, XImageFormat_ARGB32,
+        {"codec_gray1.png", 8, 2, XImageFormat_Mono,
          0xff000000u, 0xffffffffu, 0xff000000u},
         {"codec_gray2.png", 8, 2, XImageFormat_ARGB32,
          0xff000000u, 0xffaa5555u, 0xffffffffu},
@@ -7610,8 +8821,8 @@ static void test_codec_bmp_extended_assets(void)
          {0,0,0x88ff0000u}, {3,1,0x80102030u}, {2,0,0x880000ffu}, {1,1,0xff000000u}},
         {"codec_bmp_v5rgb.bmp", 4, 2, XImageFormat_ARGB32,
          {0,0,0x88ff0000u}, {3,1,0x80102030u}, {0,1,0xffffffffu}, {3,0,0x00ffffffu}},
-        {"codec_bmp_v5indexed.bmp", 4, 2, XImageFormat_ARGB32,
-         {0,0,0xffff0000u}, {1,0,0x000000ffu}, {0,1,0xffffffffu}, {1,1,0x8800ff00u}},
+        {"codec_bmp_v5indexed.bmp", 4, 2, XImageFormat_Indexed8,
+         {0,0,0xffff0000u}, {1,0,0xff0000ffu}, {0,1,0xffffffffu}, {1,1,0xff00ff00u}},
         {"codec_bmp_core12.bmp", 4, 2, XImageFormat_RGB888,
          {0,0,0xff00ff00u}, {0,1,0xff800000u}, {3,0,0xff00ff00u}, {3,1,0xff800000u}},
         {"codec_bmp_topdown.bmp", 3, 3, XImageFormat_RGB888,
@@ -7629,7 +8840,7 @@ static void test_codec_bmp_extended_assets(void)
             expect_true(asset != NULL &&
                         !XImage_loadFromData_2(&image, asset->data,
                                                (int)asset->size, "bmp"),
-                        "Qt BMP reader rejects 2-bit palette assets");
+                        "Qt BMP reader rejects 2-bit palette asset");
             XImage_deinit_base(&image);
             continue;
         }
@@ -8068,6 +9279,14 @@ static void test_codec_gif_animation(void)
             XImageReader_init_file_2(&reader, "xgui_movie_anim.gif", "gif");
             XImage_init(&first);
             XImage_init(&second);
+            expect_true(XImageReader_currentImageNumber(&reader) == -1,
+                        "XImageReader GIF 首次 read 前帧号为 -1");
+            expect_true(XImageReader_supportsAnimation(&reader) &&
+                        XImageReader_currentImageNumber(&reader) == -1,
+                        "XImageReader GIF 准备动画后帧号仍为 -1");
+            expect_true(XImageReader_canRead(&reader) &&
+                        XImageReader_nextImageDelay(&reader) == 100,
+                        "XImageReader GIF 读前仍可读且默认延迟为 100ms");
             expect_true(XImageReader_read(&reader, &first) &&
                         XImageReader_currentImageNumber(&reader) == 0 &&
                         XImage_pixel(&first, 2, 0) == 0xff000000u,
@@ -8076,9 +9295,43 @@ static void test_codec_gif_animation(void)
                         XImageReader_currentImageNumber(&reader) == 1 &&
                         XImage_pixel(&second, 2, 0) == 0xffffffffu,
                         "XImageReader 连续 read 自动推进到下一帧");
+            {
+                XImage third;
+                XImage fourth;
+                XImage afterLast;
+                XImage_init(&third);
+                XImage_init(&fourth);
+                XImage_init(&afterLast);
+                expect_true(XImageReader_read(&reader, &third) &&
+                            XImageReader_currentImageNumber(&reader) == 2,
+                            "XImageReader 连续 read 自动推进到第 3 帧");
+                expect_true(XImageReader_read(&reader, &fourth) &&
+                            XImageReader_currentImageNumber(&reader) == 3,
+                            "XImageReader 连续 read 自动推进到末帧");
+                expect_true(!XImageReader_read(&reader, &afterLast) &&
+                            !XImageReader_canRead(&reader) &&
+                            XImageReader_currentImageNumber(&reader) == 3,
+                            "XImageReader 末帧之后 read 返回失败并保持帧号");
+                XImage_deinit_base(&third);
+                XImage_deinit_base(&fourth);
+                XImage_deinit_base(&afterLast);
+            }
             XImage_deinit_base(&first);
             XImage_deinit_base(&second);
             XImageReader_deinit_base(&reader);
+        }
+        {
+            XImageReader jumpReader;
+            XImage jumped;
+            XImageReader_init_file_2(&jumpReader, "xgui_movie_anim.gif", "gif");
+            XImage_init(&jumped);
+            expect_true(XImageReader_jumpToImage(&jumpReader, 2) &&
+                        XImageReader_read(&jumpReader, &jumped) &&
+                        XImageReader_currentImageNumber(&jumpReader) == 2 &&
+                        XImage_pixel(&jumped, 3, 0) == 0xffffffffu,
+                        "XImageReader jumpToImage 后 read 返回目标帧");
+            XImage_deinit_base(&jumped);
+            XImageReader_deinit_base(&jumpReader);
         }
         XMovie_init_file_2(&movie, "xgui_movie_anim.gif", "gif");
         expect_true(XMovie_frameCount(&movie) == 4 &&
@@ -8199,6 +9452,27 @@ static void test_codec_upper_layer_devices(void)
     XImage_deinit_base(&source);
 }
 
+/* Qt 的 SVG 处理器允许 XML 声明/注释出现在根元素之前；前缀超过
+ * QImageReader 的短签名窥视长度时，格式名仍必须由处理器返回。 */
+static void test_image_reader_long_svg_prelude(void)
+{
+    static const char svg[] =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!-- 012345678901234567890123456789012345678901234567890123456789 -->\n"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>\n";
+    const char* format;
+    XString* fileName;
+
+    expect_true(test_replace_text_file("xgui_long_svg_prelude.svg", svg),
+                "long SVG XML 前缀夹具写入成功");
+    format = XImageReader_imageFormat_2("xgui_long_svg_prelude.svg");
+    expect_true(format && strcmp(format, "svg") == 0,
+                "长 XML 前缀仍由图像处理器返回 SVG 格式名");
+    fileName = XString_create_utf8("xgui_long_svg_prelude.svg");
+    XFile_remove_static(fileName);
+    if (fileName) XString_delete_base((XClass*)fileName);
+}
+
 #endif /* XIMAGECODEC_ON */
 static void test_image_pixel_contract(void)
 {
@@ -8206,6 +9480,8 @@ static void test_image_pixel_contract(void)
     XImage premultiplied;
     XImage converted;
     XImage indexed;
+    XImage indexedColorTransformed;
+    XImage mono;
     XImage grayscale;
     XImage cmyk;
     XImage pm64;
@@ -8213,6 +9489,11 @@ static void test_image_pixel_contract(void)
     XImage grayTransformed;
     XImage reinterpret;
     XImage reinterpretCopy;
+    XImage monoSwap;
+    XImage gray8;
+    XImage gray8Swap;
+    XImage alpha8;
+    XImage alpha8Swap;
     XImage copy;
     const uint32_t customPalette[2] = { 0xff000000u, 0xffffffffu };
     uint32_t largePalette[257];
@@ -8250,16 +9531,17 @@ static void test_image_pixel_contract(void)
                     "QColorSpace returns predefined chromaticities");
         {
             XPointF whitePoint = XColorSpace_whitePoint(&named);
-            expect_true(fabsf(whitePoint.x - 0.3127f) < 1.0e-5f &&
-                        fabsf(whitePoint.y - 0.3290f) < 1.0e-5f,
-                        "QColorSpace returns the predefined D65 white point");
+            expect_true(fabsf(whitePoint.x - 0.31271f) < 1.0e-6f &&
+                        fabsf(whitePoint.y - 0.32902f) < 1.0e-6f,
+                        "QColorSpace returns Qt's exact predefined D65 white point");
+            XColorSpace_setDescription(&named, "user white point");
             XColorSpace_setWhitePoint(&named, (XPointF){ 0.3457f, 0.3585f });
             whitePoint = XColorSpace_whitePoint(&named);
             expect_true(XColorSpace_primaries(&named) == XColorSpacePrimaries_Custom &&
                         fabsf(whitePoint.x - 0.3457f) < 1.0e-5f &&
                         fabsf(whitePoint.y - 0.3585f) < 1.0e-5f &&
-                        XColorSpace_description(&named)[0] == '\0',
-                        "QColorSpace setWhitePoint resets named metadata");
+                        strcmp(XColorSpace_description(&named), "user white point") == 0,
+                        "QColorSpace setWhitePoint preserves user description");
         }
         named = XColorSpace_create_named(XColorSpaceNamed_AdobeRgb);
         expect_true(XColorSpace_isValid(&named) &&
@@ -8317,19 +9599,47 @@ static void test_image_pixel_contract(void)
                         XColorSpace_transferFunction(&source) == XColorSpaceTransfer_SRgb &&
                         strcmp(XColorSpace_description(&copy), "Linear sRGB") == 0,
                         "QColorSpace withTransferFunction identifies Linear sRGB without mutating source");
+            XColorSpace_setDescription(&copy, "before named primaries");
             XColorSpace_setPrimaries(&copy, XColorSpacePrimaries_Bt2020);
             expect_true(XColorSpace_primaries(&copy) == XColorSpacePrimaries_Bt2020 &&
                         XColorSpace_colorModel(&copy) == XColorSpaceModel_Rgb &&
-                        XColorSpace_description(&copy)[0] == '\0',
-                        "QColorSpace setPrimaries resets description and keeps RGB model");
+                        strcmp(XColorSpace_description(&copy), "before named primaries") == 0,
+                        "QColorSpace setPrimaries preserves user description and RGB model");
+            XColorSpace_setDescription(&copy, "");
+            /* Qt qcolorspace.cpp:277-322 identifies BT.2020 only with its
+               BT.2020 transfer curve; this copy still uses Linear, so its
+               automatic description is intentionally empty. */
+            expect_true(strcmp(XColorSpace_description(&copy), "") == 0,
+                        "QColorSpace unknown primaries/transfer has no automatic description");
+            {
+                XColorSpacePrimariesData custom = {
+                    { 0.3457f, 0.3585f }, { 0.680f, 0.320f },
+                    { 0.265f, 0.690f }, { 0.150f, 0.060f }
+                };
+                XColorSpace_setDescription(&copy, "before custom primaries");
+                XColorSpace_setPrimariesData(&copy, &custom);
+                expect_true(XColorSpace_primaries(&copy) == XColorSpacePrimaries_Custom &&
+                            XColorSpace_primariesData(&copy, &primaries) &&
+                            fabsf(primaries.m_whitePoint.x - 0.3457f) < 1.0e-5f &&
+                            strcmp(XColorSpace_description(&copy), "before custom primaries") == 0,
+                            "QColorSpace custom primaries preserve user text and coordinates");
+                custom.m_bluePoint.y = 0.0f;
+                XColorSpace_setPrimariesData(&copy, &custom);
+                expect_true(fabsf(XColorSpace_whitePoint(&copy).x - 0.3457f) < 1.0e-5f,
+                            "QColorSpace invalid custom primaries are ignored");
+            }
             XColorSpace_setTransferFunction(&copy, XColorSpaceTransfer_Custom, 0.0f);
             expect_true(XColorSpace_transferFunction(&copy) == XColorSpaceTransfer_Linear,
                         "QColorSpace setTransferFunction Custom is ignored");
             XColorSpace described = XColorSpace_sRgb();
+            XColorSpace_setDescription(&described, "before transfer edit");
             XColorSpace_setTransferFunction(&described,
                                             XColorSpaceTransfer_SRgb, 0.0f);
+            expect_true(strcmp(XColorSpace_description(&described), "before transfer edit") == 0,
+                        "QColorSpace transfer edit preserves user description");
+            XColorSpace_setDescription(&described, "");
             expect_true(strcmp(XColorSpace_description(&described), "sRGB") == 0,
-                        "QColorSpace raw zero gamma does not clear unchanged description");
+                        "QColorSpace transfer edit restores automatic description after clear");
         }
         {
             XColorSpace gammaA = XColorSpace_create_ex(
@@ -8345,12 +9655,18 @@ static void test_image_pixel_contract(void)
     XImage_init(&copy);
     XImage_init(&pm64);
     XImage_init(&converted);
+    XImage_init(&indexedColorTransformed);
     XImage_init(&grayscale);
     XImage_init(&cmyk);
     XImage_init(&sameSpace);
     XImage_init(&grayTransformed);
     XImage_init(&reinterpret);
     XImage_init(&reinterpretCopy);
+    XImage_init(&monoSwap);
+    XImage_init(&gray8);
+    XImage_init(&gray8Swap);
+    XImage_init(&alpha8);
+    XImage_init(&alpha8Swap);
     XImage_init_ex(&premultiplied, 1, 1, XImageFormat_ARGB32_Premultiplied);
     XImage_setText_2(&premultiplied, "foo", "bar");
     XImage_setText_2(&premultiplied, "foo2", "bar2");
@@ -8383,6 +9699,9 @@ static void test_image_pixel_contract(void)
                 (XPointF){ 0.3127f, 0.3290f },
                 XColorSpaceTransfer_Linear, 0.0f);
             XColorSpace resultSpace;
+            /* 使用非灰色样本确认 QColorSpace 的 RGB->XYZ->Gray 矩阵路径
+             * 确实计算相对亮度，而不是仅复制某一个 RGB 通道。 */
+            XImage_setPixel(&premultiplied, 0, 0, 0xffff0000u);
             transform.m_source = XColorSpace_sRgb();
             transform.m_target = targetGray;
             XImage_applyColorTransform(&premultiplied, &transform,
@@ -8393,6 +9712,42 @@ static void test_image_pixel_contract(void)
                         XImage_format(&grayTransformed) == XImageFormat_Grayscale8 &&
                         XColorSpace_colorModel(&resultSpace) == XColorSpaceModel_Gray,
                         "QImage explicit RGB to grayscale format transform is accepted");
+            {
+                const uint32_t grayPixel = XImage_pixel(&grayTransformed, 0, 0);
+                expect_true((grayPixel & 0x00ffffffu) >= 0x00320000u &&
+                            (grayPixel & 0x00ffffffu) <= 0x003a3a3au &&
+                            ((grayPixel >> 16) & 0xffu) == ((grayPixel >> 8) & 0xffu) &&
+                            ((grayPixel >> 8) & 0xffu) == (grayPixel & 0xffu),
+                            "QImage color transform applies RGB primaries before grayscale luma");
+            }
+        }
+        {
+            XColorSpace targetGray = XColorSpace_create_gray(
+                (XPointF){ 0.3127f, 0.3290f },
+                XColorSpaceTransfer_Linear, 0.0f);
+            XImage explicitFormat;
+            XColorSpace explicitSpace;
+            XImage_init(&explicitFormat);
+            XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
+                                            XImageFormat_Grayscale8, 0,
+                                            &explicitFormat);
+            explicitSpace = XImage_colorSpace(&explicitFormat);
+            expect_true(!XImage_isNull(&explicitFormat) &&
+                        XImage_format(&explicitFormat) == XImageFormat_Grayscale8 &&
+                        XColorSpace_colorModel(&explicitSpace) == XColorSpaceModel_Gray,
+                        "QImage explicit color-space conversion selects requested grayscale format");
+            XImage_deinit_base(&explicitFormat);
+            XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
+                                            XImageFormat_ARGB32, 0,
+                                            &explicitFormat);
+            expect_true(XImage_isNull(&explicitFormat),
+                        "QImage explicit color-space conversion rejects incompatible RGB format");
+            explicitSpace = XImage_colorSpace(&premultiplied);
+            expect_true(!XImage_convertToColorSpace_ex(&premultiplied, targetGray,
+                                                       XImageFormat_ARGB32, 0) &&
+                        XImage_format(&premultiplied) == XImageFormat_ARGB32_Premultiplied &&
+                        XColorSpace_isSRgb(&explicitSpace),
+                        "QImage incompatible in-place color-space conversion leaves source unchanged");
         }
     }
     XImage_setDevicePixelRatio(&premultiplied, 2.0f);
@@ -8507,10 +9862,61 @@ static void test_image_pixel_contract(void)
     expect_true(XImage_pixel(&copy, 0, 0) == 0x80eeddccu,
                 "mirrored uses pixel coordinates for RGBA images");
 
+    {
+        const uint32_t monoPalette[2] = { 0xff102030u, 0xff405060u };
+        int64_t monoKey;
+        XImage_init_ex(&mono, 1, 1, XImageFormat_Mono);
+        XImage_setColorTable(&mono, monoPalette, 2);
+        XImage_setPixel(&mono, 0, 0, 1);
+        XImage_rgbSwapped(&mono, &monoSwap);
+        expect_true(XImage_pixelIndex(&monoSwap, 0, 0) == 1 &&
+                    XImage_color(&monoSwap, 0) == 0xff302010u &&
+                    XImage_color(&monoSwap, 1) == 0xff605040u,
+                    "rgbSwapped exchanges Mono color-table channels and keeps indices");
+        monoKey = XImage_cacheKey(&mono);
+        XImage_mirroredInPlace(&mono, false, false);
+        expect_true(XImage_cacheKey(&mono) == monoKey,
+                    "mirroredInPlace no-op preserves Mono image cache key");
+    }
+    XImage_init_ex(&gray8, 1, 1, XImageFormat_Grayscale8);
+    XImage_setPixel(&gray8, 0, 0, 0x7fu);
+    XImage_rgbSwapped(&gray8, &gray8Swap);
+    expect_true(XImage_cacheKey(&gray8Swap) == XImage_cacheKey(&gray8) &&
+                XImage_pixel(&gray8Swap, 0, 0) == XImage_pixel(&gray8, 0, 0),
+                "rgbSwapped shares Grayscale8 data without changing pixels");
+    XImage_init_ex(&alpha8, 1, 1, XImageFormat_Alpha8);
+    XImage_setPixel(&alpha8, 0, 0, 0x55u);
+    XImage_rgbSwapped(&alpha8, &alpha8Swap);
+    expect_true(XImage_cacheKey(&alpha8Swap) == XImage_cacheKey(&alpha8) &&
+                XImage_pixel(&alpha8Swap, 0, 0) == XImage_pixel(&alpha8, 0, 0),
+                "rgbSwapped shares Alpha8 data without changing pixels");
+
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
     XImage_setColorSpace(&indexed, XColorSpace_sRgb());
     expect_true(XImage_hasColorSpace(&indexed),
                 "indexed image accepts an RGB color space");
+    {
+        const uint32_t palette[2] = { 0xff804020u, 0xff102030u };
+        const uint32_t firstColor = palette[0];
+        XColorSpace displayP3 = XColorSpace_create_named(XColorSpaceNamed_DisplayP3);
+        XImage indexedSource;
+        XImage_init(&indexedSource);
+        XImage_init_ex(&indexedSource, 2, 1, XImageFormat_Indexed8);
+        XImage_setColorTable(&indexedSource, palette, 2);
+        XImage_setColorSpace(&indexedSource, XColorSpace_sRgb());
+        XImage_setPixel(&indexedSource, 0, 0, 0);
+        XImage_setPixel(&indexedSource, 1, 0, 1);
+        XImage_convertedToColorSpace(&indexedSource, displayP3, 0,
+                                     &indexedColorTransformed);
+        expect_true(!XImage_isNull(&indexedColorTransformed) &&
+                    XImage_format(&indexedColorTransformed) == XImageFormat_Indexed8 &&
+                    XImage_pixelIndex(&indexedColorTransformed, 0, 0) == 0 &&
+                    XImage_pixelIndex(&indexedColorTransformed, 1, 0) == 1 &&
+                    XImage_color(&indexedColorTransformed, 0) != firstColor &&
+                    XImage_color(&indexedSource, 0) == firstColor,
+                    "QImage Indexed color transform updates the palette and preserves indices");
+        XImage_deinit_base(&indexedSource);
+    }
     XImage_init_ex(&grayscale, 1, 1, XImageFormat_Grayscale8);
     XImage_setColorSpace(&grayscale, XColorSpace_sRgb());
     expect_true(XImage_hasColorSpace(&grayscale),
@@ -8625,12 +10031,19 @@ static void test_image_pixel_contract(void)
     XImage_deinit_base(&converted);
     XImage_deinit_base(&premultiplied);
     XImage_deinit_base(&indexed);
+    XImage_deinit_base(&indexedColorTransformed);
     XImage_deinit_base(&grayscale);
     XImage_deinit_base(&cmyk);
     XImage_deinit_base(&sameSpace);
     XImage_deinit_base(&grayTransformed);
     XImage_deinit_base(&reinterpret);
     XImage_deinit_base(&reinterpretCopy);
+    XImage_deinit_base(&mono);
+    XImage_deinit_base(&monoSwap);
+    XImage_deinit_base(&gray8);
+    XImage_deinit_base(&gray8Swap);
+    XImage_deinit_base(&alpha8);
+    XImage_deinit_base(&alpha8Swap);
     XImage_deinit_base(&rgba);
 }
 
@@ -8648,8 +10061,17 @@ static void test_image_mask_qt_semantics(void)
     XImage mono;
     XImage rgbMask;
     XImage rgbMaskOut;
+    XImage premultipliedMaskSource;
+    XImage premultipliedMask;
+    XImage premultipliedHeuristicSource;
+    XImage premultipliedHeuristicMask;
     XImage heuristic;
     XImage heuristicLoose;
+    XImage diffuseSource;
+    XImage diffuseMask;
+    uint32_t maskColors[2];
+    XPoint sourceOffset;
+    XPoint maskOffset;
 
     XImage_init(&image);
     XImage_init(&alphaMask);
@@ -8657,21 +10079,54 @@ static void test_image_mask_qt_semantics(void)
     XImage_init(&mono);
     XImage_init(&rgbMask);
     XImage_init(&rgbMaskOut);
+    XImage_init(&premultipliedMaskSource);
+    XImage_init(&premultipliedMask);
+    XImage_init(&premultipliedHeuristicSource);
+    XImage_init(&premultipliedHeuristicMask);
     XImage_init(&heuristic);
     XImage_init(&heuristicLoose);
+    XImage_init(&diffuseSource);
+    XImage_init(&diffuseMask);
 
     XImage_init_ex(&image, 3, 1, XImageFormat_ARGB32);
     XImage_setPixel(&image, 0, 0, 0x01336699u);
     XImage_setPixel(&image, 1, 0, 0x80336699u);
     XImage_setPixel(&image, 2, 0, 0xff336699u);
+    sourceOffset.x = 17;
+    sourceOffset.y = -9;
+    XImage_setDotsPerMeterX(&image, 1234);
+    XImage_setDotsPerMeterY(&image, 2345);
+    XImage_setOffset(&image, &sourceOffset);
     XImage_createAlphaMask(&image, 0, &alphaMask);
+    XImage_offset(&alphaMask, &maskOffset);
     expect_true(XImage_format(&alphaMask) == XImageFormat_MonoLSB &&
                 XImage_pixelIndex(&alphaMask, 0, 0) == 0 &&
                 XImage_pixelIndex(&alphaMask, 1, 0) == 1 &&
                 XImage_pixelIndex(&alphaMask, 2, 0) == 1 &&
                 XImage_pixel(&alphaMask, 0, 0) == 0xffffffffu &&
-                XImage_pixel(&alphaMask, 2, 0) == 0xff000000u,
-                "QImage createAlphaMask uses MonoLSB and the 128 alpha threshold");
+                XImage_pixel(&alphaMask, 2, 0) == 0xff000000u &&
+                XImage_dotsPerMeterX(&alphaMask) == 1234 &&
+                XImage_dotsPerMeterY(&alphaMask) == 2345 &&
+                maskOffset.x == 0 && maskOffset.y == 0,
+                "QImage createAlphaMask uses MonoLSB, threshold, and physical metadata only");
+
+    /* Qt qimage_conversions.cpp:1625-1627 的 OrderedAlphaDither 使用
+       16x16 Bayer 阈值；首个矩阵值为 1，因此 Alpha=1 在 (0,0) 会被保留，
+       与默认 128 阈值结果不同。 */
+    XImage_createAlphaMask(&image, 0x00000004u, &alphaMask);
+    expect_true(XImage_pixelIndex(&alphaMask, 0, 0) == 1,
+                "QImage createAlphaMask honors ordered alpha dithering");
+
+    /* Qt qimage_conversions.cpp:1630-1634 的 DiffuseAlphaDither 将误差
+       传播到右邻像素；两个 Alpha=127 像素在默认阈值下均为透明，而扩散
+       后第二个像素应被选为不透明。 */
+    XImage_init_ex(&diffuseSource, 2, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&diffuseSource, 0, 0, 0x7f000000u);
+    XImage_setPixel(&diffuseSource, 1, 0, 0x7f000000u);
+    XImage_createAlphaMask(&diffuseSource, 0x00000008u, &diffuseMask);
+    expect_true(XImage_pixelIndex(&diffuseMask, 0, 0) == 0 &&
+                XImage_pixelIndex(&diffuseMask, 1, 0) == 1,
+                "QImage createAlphaMask honors diffuse alpha dithering");
 
     XImage_init_ex(&rgb32, 1, 1, XImageFormat_RGB32);
     XImage_createAlphaMask(&rgb32, 0, &alphaMask);
@@ -8692,6 +10147,12 @@ static void test_image_mask_qt_semantics(void)
 
     XImage_createMaskFromColor(&image, 0xff336699u, XImageMask_InColor, &rgbMask);
     XImage_createMaskFromColor(&image, 0xff336699u, XImageMask_OutColor, &rgbMaskOut);
+    maskColors[0] = 0;
+    maskColors[1] = 0;
+    expect_true(XImage_colorCount(&rgbMask) == 2 &&
+                XImage_colorTable(&rgbMask, maskColors, 2) == 2 &&
+                maskColors[0] == 0xff000000u && maskColors[1] == 0xffffffffu,
+                "QImage createMaskFromColor keeps MonoLSB black/white palette");
     expect_true(XImage_format(&rgbMask) == XImageFormat_MonoLSB &&
                 XImage_pixelIndex(&rgbMask, 0, 0) == 0 &&
                 XImage_pixelIndex(&rgbMask, 1, 0) == 0 &&
@@ -8700,6 +10161,34 @@ static void test_image_mask_qt_semantics(void)
                 XImage_pixelIndex(&rgbMaskOut, 2, 0) == 0 &&
                 XImage_constBits(&rgbMaskOut)[0] == 0xfbu,
                 "QImage createMaskFromColor compares full ARGB and supports inversion");
+
+    XImage_init_ex(&premultipliedMaskSource, 1, 1,
+                   XImageFormat_ARGB32_Premultiplied);
+    XImage_setPixel(&premultipliedMaskSource, 0, 0, 0x80ff0000u);
+    XImage_createMaskFromColor(&premultipliedMaskSource, 0x80ff0000u,
+                               XImageMask_InColor, &premultipliedMask);
+    expect_true(XImage_pixelIndex(&premultipliedMask, 0, 0) == 0,
+                "QImage createMaskFromColor compares raw depth-32 storage");
+    XImage_createMaskFromColor(&premultipliedMaskSource, 0x80800000u,
+                               XImageMask_InColor, &premultipliedMask);
+    expect_true(XImage_pixelIndex(&premultipliedMask, 0, 0) == 1,
+                "QImage createMaskFromColor matches premultiplied storage bytes");
+
+    /* Qt's createHeuristicMask() PIX macro reads the raw depth-32 storage
+       and ignores Alpha.  Two valid premultiplied colors below therefore
+       have the same raw RGB bytes despite different public un-premultiplied
+       values; the center must be treated as background, not as an object. */
+    XImage_init_ex(&premultipliedHeuristicSource, 3, 3,
+                   XImageFormat_ARGB32_Premultiplied);
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 3; ++x)
+            XImage_setPixel(&premultipliedHeuristicSource, x, y,
+                            0x407f0000u);
+    XImage_setPixel(&premultipliedHeuristicSource, 1, 1, 0x803f0000u);
+    XImage_createHeuristicMask(&premultipliedHeuristicSource, true,
+                               &premultipliedHeuristicMask);
+    expect_true(XImage_pixelIndex(&premultipliedHeuristicMask, 1, 1) == 0,
+                "QImage createHeuristicMask compares raw premultiplied RGB");
 
     XImage_deinit_base(&image);
     XImage_init_ex(&image, 5, 5, XImageFormat_ARGB32);
@@ -8721,8 +10210,14 @@ static void test_image_mask_qt_semantics(void)
 
     XImage_deinit_base(&heuristicLoose);
     XImage_deinit_base(&heuristic);
+    XImage_deinit_base(&diffuseMask);
+    XImage_deinit_base(&diffuseSource);
     XImage_deinit_base(&rgbMaskOut);
     XImage_deinit_base(&rgbMask);
+    XImage_deinit_base(&premultipliedMask);
+    XImage_deinit_base(&premultipliedMaskSource);
+    XImage_deinit_base(&premultipliedHeuristicMask);
+    XImage_deinit_base(&premultipliedHeuristicSource);
     XImage_deinit_base(&mono);
     XImage_deinit_base(&rgb32);
     XImage_deinit_base(&alphaMask);
@@ -8741,6 +10236,12 @@ static void test_image_format_mapping_and_color_fill(void)
     XImage indexed;
     XImage mono;
     XImage highDepth;
+    XImage alphaTarget;
+    XImage alphaSource;
+    XImage alphaTarget16;
+    XImage alphaSmallSource;
+    XImage alphaTarget8;
+    XImage alphaIndexed;
     XPixelFormat pixelFormat;
     XPixelFormat legacyPixelFormat;
     XColor color;
@@ -8769,8 +10270,10 @@ static void test_image_format_mapping_and_color_fill(void)
     expect_true(pixelFormat.m_model == XPixelFormatModel_Alpha &&
                 pixelFormat.m_alphaUsage == XPixelFormatAlpha_Uses &&
                 pixelFormat.m_alphaSize == 8 &&
-                !pixelFormat.m_premultiplied,
-                "QImage Alpha8 uses the non-premultiplied alpha-only pixel model");
+                pixelFormat.m_premultiplied,
+                "QImage Alpha8 preserves Qt's premultiplied alpha-only pixel model");
+    expect_true(XImageFormat_isPremultiplied(XImageFormat_Alpha8),
+                "QImage Alpha8 premultiplied query matches its pixel format descriptor");
     pixelFormat = XImageFormat_toPixelFormat(XImageFormat_RGBX8888);
     expect_true(pixelFormat.m_alphaSize == 8 &&
                 pixelFormat.m_alphaUsage == XPixelFormatAlpha_Ignores &&
@@ -8789,6 +10292,60 @@ static void test_image_format_mapping_and_color_fill(void)
     expect_true(pixelFormat.m_byteOrder == XPixelFormatByteOrder_LittleEndian,
                 "QPixelFormat resolves CurrentSystemEndian to little endian");
 #endif
+    expect_true(XImageFormat_bytesPerLine(3, XImageFormat_Mono) == 4 &&
+                XImageFormat_bytesPerLine(5, XImageFormat_RGB888) == 16 &&
+                XImageFormat_bytesPerLine(0, XImageFormat_RGB32) == 0 &&
+                XImageFormat_bytesPerLine(-1, XImageFormat_RGB32) == 0,
+                "QImage bytesPerLine uses 32-bit scanline alignment and rejects nonpositive widths");
+    expect_true(XImageFormat_bytesPerLine(16777215, XImageFormat_RGBX32FPx4) == 268435440 &&
+                XImageFormat_bytesPerLine(16777216, XImageFormat_RGBX32FPx4) == 0,
+                "QImage bytesPerLine keeps calculateImageParameters width overflow boundary");
+
+    /* Qt qimage.cpp:4550-4580 first chooses qt_alphaVersionForPainting(),
+       then performs DestinationIn.  Verify both format-preserving upgrade
+       and multiplication of an already present alpha channel. */
+    XImage_init_ex(&alphaTarget, 1, 1, XImageFormat_ARGB32_Premultiplied);
+    XImage_setPixel(&alphaTarget, 0, 0, 0xff804020u);
+    XImage_init_ex(&alphaSource, 1, 1, XImageFormat_Alpha8);
+    XImage_bits(&alphaSource)[0] = 0x80u;
+    expect_true(XImage_setAlphaChannel(&alphaTarget, &alphaSource) &&
+                XImage_format(&alphaTarget) == XImageFormat_ARGB32_Premultiplied &&
+                (XImage_pixel(&alphaTarget, 0, 0) & 0xff000000u) == 0x80000000u,
+                "QImage setAlphaChannel keeps a premultiplied target format");
+    expect_true(XImage_setAlphaChannel(&alphaTarget, &alphaSource) &&
+                (XImage_pixel(&alphaTarget, 0, 0) & 0xff000000u) == 0x40000000u,
+                "QImage setAlphaChannel multiplies an existing alpha channel");
+
+    /* qimage_p.h:297-302 maps Format_Alpha8 to ARGB32_Premultiplied before
+       painting; retaining Alpha8 here would diverge from Qt's format result. */
+    XImage_init_ex(&alphaTarget8, 1, 1, XImageFormat_Alpha8);
+    XImage_bits(&alphaTarget8)[0] = 0x40u;
+    expect_true(XImage_setAlphaChannel(&alphaTarget8, &alphaSource) &&
+                XImage_format(&alphaTarget8) == XImageFormat_ARGB32_Premultiplied &&
+                (XImage_pixel(&alphaTarget8, 0, 0) & 0xff000000u) == 0x20000000u,
+                "QImage setAlphaChannel upgrades Alpha8 to ARGB32 premultiplied");
+
+    /* qimage_p.h:265-310 preserves the native alpha-capable depth where a
+       compatible format exists; RGB16 therefore becomes ARGB8565PM. */
+    XImage_init_ex(&alphaTarget16, 1, 1, XImageFormat_RGB16);
+    XImage_fill(&alphaTarget16, 0x0000ffffu);
+    expect_true(XImage_setAlphaChannel(&alphaTarget16, &alphaSource) &&
+                XImage_format(&alphaTarget16) == XImageFormat_ARGB8565_Premultiplied &&
+                (XImage_pixel(&alphaTarget16, 0, 0) & 0xff000000u) == 0x80000000u,
+                "QImage setAlphaChannel preserves the RGB16 alpha upgrade");
+
+    /* Qt draws a differently sized source into the target rectangle.  The
+       lightweight C99 implementation uses nearest-neighbor sampling for
+       this path, so a 1x1 source must cover every target pixel. */
+    XImage_init_ex(&alphaSmallSource, 1, 1, XImageFormat_Alpha8);
+    XImage_bits(&alphaSmallSource)[0] = 0x80u;
+    XImage_deinit_base(&alphaTarget16);
+    XImage_init_ex(&alphaTarget16, 2, 2, XImageFormat_RGB32);
+    XImage_fill(&alphaTarget16, 0xff336699u);
+    expect_true(XImage_setAlphaChannel(&alphaTarget16, &alphaSmallSource) &&
+                (XImage_pixel(&alphaTarget16, 0, 0) & 0xff000000u) == 0x80000000u &&
+                (XImage_pixel(&alphaTarget16, 1, 1) & 0xff000000u) == 0x80000000u,
+                "QImage setAlphaChannel scales a smaller source over the target");
 
     XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32_Premultiplied);
     color = XColor_create_rgb(0x33, 0x66, 0x99, 0x80);
@@ -8806,6 +10363,44 @@ static void test_image_format_mapping_and_color_fill(void)
                 "QImage fill(QColor) stores premultiplied RGB without double conversion");
     }
 
+    /* Qt qimage.cpp:1847-1960 keeps QRgba64 components for RGBA64 fills;
+       the low eight bits must survive instead of being narrowed through
+       the compatibility ARGB32 value. */
+    {
+        XImage highFill64;
+        XColor precise = XColor_create();
+        uint16_t stored[4];
+        XImage_init(&highFill64);
+        XImage_init_ex(&highFill64, 1, 1, XImageFormat_RGBA64);
+        precise.m_spec = XColor_Rgb;
+        precise.m_comp1 = 0x1234u;
+        precise.m_comp2 = 0x5678u;
+        precise.m_comp3 = 0x9abcu;
+        precise.m_alpha = 0xdef0u;
+        XImage_fillColor(&highFill64, &precise);
+        memcpy(stored, XImage_constBits(&highFill64), sizeof(stored));
+        expect_true(stored[0] == precise.m_comp1 &&
+                    stored[1] == precise.m_comp2 &&
+                    stored[2] == precise.m_comp3 &&
+                    stored[3] == precise.m_alpha,
+                    "QImage fill(QColor) preserves native RGBA64 precision");
+        XImage_deinit_base(&highFill64);
+    }
+    {
+        XImage rawFillX64;
+        uint16_t storedX64[4];
+        XImage_init(&rawFillX64);
+        XImage_init_ex(&rawFillX64, 1, 1, XImageFormat_RGBX64);
+        XImage_fill(&rawFillX64, 0x80112233u);
+        memcpy(storedX64, XImage_constBits(&rawFillX64), sizeof(storedX64));
+        expect_true(storedX64[0] == 0x1111u &&
+                    storedX64[1] == 0x2222u &&
+                    storedX64[2] == 0x3333u &&
+                    storedX64[3] == 0x8080u,
+                    "QImage fill(uint) preserves RGBX64 input alpha storage");
+        XImage_deinit_base(&rawFillX64);
+    }
+
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
     XImage_setColorTable(&indexed, palette, 2);
     XImage_fillColor(&indexed, &color);
@@ -8815,6 +10410,31 @@ static void test_image_format_mapping_and_color_fill(void)
     XImage_fillColor(&indexed, &color);
     expect_true(XImage_pixelIndex(&indexed, 0, 0) == 1,
                 "QImage fill(QColor) selects an exact indexed palette entry");
+    /* Qt qimage.cpp:2609-2614 leaves Indexed8 pixels unchanged when the
+       requested index is outside the current color table. */
+    XImage_setPixel(&indexed, 0, 0, 1);
+    XImage_setPixel(&indexed, 0, 0, 2);
+    expect_true(XImage_pixelIndex(&indexed, 0, 0) == 1,
+                "QImage setPixel rejects Indexed8 indices beyond the palette");
+    expect_true(XImage_pixelIndex(&indexed, -1, 0) == -12345 &&
+                XImage_pixelIndex(NULL, 0, 0) == -12345,
+                "QImage pixelIndex uses the invalid-coordinate sentinel");
+    expect_true(XImage_pixel(&indexed, -1, 0) == 12345u &&
+                XImage_pixel(NULL, 0, 0) == 12345u,
+                "QImage pixel uses the invalid-coordinate sentinel");
+
+    XImage_init_ex(&alphaIndexed, 1, 1, XImageFormat_Indexed8);
+    {
+        const uint32_t alphaPalette[2] = {0xff112233u, 0x80112233u};
+        XImage_setColorTable(&alphaIndexed, alphaPalette, 2);
+        XImage_setPixel(&alphaIndexed, 0, 0, 0);
+        expect_true(XImage_hasAlphaChannel(&alphaIndexed) &&
+                    !XImage_hasAlpha(&alphaIndexed),
+                    "QImage indexed alpha channel notices transparent palette entries");
+        XImage_setPixel(&alphaIndexed, 0, 0, 1);
+        expect_true(XImage_hasAlpha(&alphaIndexed),
+                    "QImage indexed alpha reports a pixel using the transparent entry");
+    }
 
     XImage_init_ex(&mono, 1, 1, XImageFormat_Mono);
     color = XColor_create_rgb(0xff, 0xff, 0xff, 0xff);
@@ -8825,6 +10445,11 @@ static void test_image_format_mapping_and_color_fill(void)
     XImage_fillColor(&mono, &color);
     expect_true(XImage_pixelIndex(&mono, 0, 0) == 0,
                 "QImage fill(QColor) maps non-white monochrome colors to color0");
+    /* Qt qimage.cpp:2593-2608 likewise rejects Mono/MonoLSB indices above 1. */
+    XImage_setPixel(&mono, 0, 0, 1);
+    XImage_setPixel(&mono, 0, 0, 2);
+    expect_true(XImage_pixelIndex(&mono, 0, 0) == 1,
+                "QImage setPixel rejects monochrome indices above one");
 
     /* QImage::pixelColor() keeps the native 16-bit value for these formats;
        exercise the same contract instead of accepting an 8-bit truncation. */
@@ -8840,6 +10465,19 @@ static void test_image_format_mapping_and_color_fill(void)
                     highColor.m_comp3 == gray16 &&
                     highColor.m_alpha == 0xffffu,
                     "QImage pixelColor preserves Grayscale16 channels");
+        {
+            XColor preciseGray = XColor_create();
+            uint16_t storedGray = 0;
+            preciseGray.m_spec = XColor_Rgb;
+            preciseGray.m_comp1 = 0x1234u;
+            preciseGray.m_comp2 = 0x1234u;
+            preciseGray.m_comp3 = 0x1234u;
+            preciseGray.m_alpha = 0xffffu;
+            XImage_fillColor(&highDepth, &preciseGray);
+            memcpy(&storedGray, XImage_constBits(&highDepth), sizeof(storedGray));
+            expect_true(storedGray == 0x1234u,
+                        "QImage fill(QColor) preserves gray16 channel precision");
+        }
     }
     XImage_deinit_base(&highDepth);
     XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64);
@@ -8856,6 +10494,47 @@ static void test_image_format_mapping_and_color_fill(void)
                     "QImage pixelColor preserves RGBA64 channels");
     }
     XImage_deinit_base(&highDepth);
+    XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64);
+    {
+        XColor precise = XColor_create();
+        uint16_t stored[4];
+        precise.m_spec = XColor_Rgb;
+        precise.m_comp1 = 0x1234u;
+        precise.m_comp2 = 0x5678u;
+        precise.m_comp3 = 0x9abcu;
+        precise.m_alpha = 0xdef0u;
+        XImage_setPixelColor(&highDepth, 0, 0, &precise);
+        memcpy(stored, XImage_constBits(&highDepth), sizeof(stored));
+        expect_true(stored[0] == precise.m_comp1 &&
+                    stored[1] == precise.m_comp2 &&
+                    stored[2] == precise.m_comp3 &&
+                    stored[3] == precise.m_alpha,
+                    "QImage setPixelColor preserves native RGBA64 precision");
+    }
+    XImage_deinit_base(&highDepth);
+    XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64_Premultiplied);
+    {
+        XColor precise = XColor_create();
+        uint16_t stored[4];
+        precise.m_spec = XColor_Rgb;
+        precise.m_comp1 = 0xffffu;
+        precise.m_comp2 = 0x8000u;
+        precise.m_comp3 = 0x1234u;
+        precise.m_alpha = 0x8000u;
+        XImage_setPixelColor(&highDepth, 0, 0, &precise);
+        memcpy(stored, XImage_constBits(&highDepth), sizeof(stored));
+        expect_true(stored[0] == 0x8000u && stored[1] == 0x4000u &&
+                    stored[2] == 0x091au && stored[3] == 0x8000u,
+                    "QImage setPixelColor premultiplies RGBA64 channels");
+    }
+    XImage_deinit_base(&highDepth);
+
+    XImage_deinit_base(&alphaTarget16);
+    XImage_deinit_base(&alphaSmallSource);
+    XImage_deinit_base(&alphaTarget8);
+    XImage_deinit_base(&alphaIndexed);
+    XImage_deinit_base(&alphaSource);
+    XImage_deinit_base(&alphaTarget);
 
     XImage_mirror(&image, false, false);
     XImage_rgbSwap(&image);
@@ -8878,6 +10557,9 @@ static void test_image_text_metadata_sorted_map(void)
     XImage image;
     XImage copy;
     XImage mirrored;
+    XImage scaled;
+    XImage sameSize;
+    XImage nullRectCopy;
     XStringList* textKeys;
     XStringList* emptyTextKeys;
     const XString* textKey0;
@@ -8887,9 +10569,14 @@ static void test_image_text_metadata_sorted_map(void)
     const char* text3;
     const char* allText;
     XColorSpace mirroredSpace;
+    XColorSpace nullRectSpace;
+    XColorSpace imageSpace;
 
     XImage_init(&copy);
     XImage_init(&mirrored);
+    XImage_init(&scaled);
+    XImage_init(&sameSize);
+    XImage_init(&nullRectCopy);
     XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32);
     XImage_setColorSpace(&image, XColorSpace_sRgb());
     XImage_setText_2(&image, "zeta", "1");
@@ -8948,6 +10635,9 @@ static void test_image_text_metadata_sorted_map(void)
     expect_true(allText &&
                 strcmp(allText, ": empty\n\nalpha: 22\n\nempty-value: \n\nzeta: 1") == 0,
                 "text(\"\") aggregates all text in sorted key order");
+    expect_true(XImage_text_2(&image, NULL) &&
+                strcmp(XImage_text_2(&image, NULL), allText) == 0,
+                "NULL UTF-8 text key follows QImage default empty-key aggregation");
 
     XImage_mirrored(&image, true, false, &mirrored);
     mirroredSpace = XImage_colorSpace(&mirrored);
@@ -8955,6 +10645,50 @@ static void test_image_text_metadata_sorted_map(void)
                     XColorSpace_isSRgb(&mirroredSpace) &&
                     strcmp(XImage_text_2(&mirrored, "alpha"), "22") == 0,
                 "QImage mirrored preserves color space and text metadata");
+
+    XImage_scaled(&image, 2, 2, 0, 0, &scaled);
+    {
+        XColorSpace scaledSpace = XImage_colorSpace(&scaled);
+        expect_true(!XImage_isNull(&scaled) &&
+                    XColorSpace_isSRgb(&scaledSpace) &&
+                    XImage_textCount(&scaled) == 4 &&
+                    strcmp(XImage_text_2(&scaled, "alpha"), "22") == 0 &&
+                    XImage_devicePixelRatio(&scaled) == 1.0f &&
+                    XImage_dotsPerMeterX(&scaled) ==
+                        XImage_dotsPerMeterX(&image),
+                    "QImage scaled preserves color space and image metadata");
+    }
+    XImage_scaled(&image, 1, 1, 0, 0, &sameSize);
+    expect_true(!XImage_isNull(&sameSize) &&
+                XImage_cacheKey(&sameSize) == XImage_cacheKey(&image),
+                "QImage scaled at the same size preserves implicit sharing");
+
+    /* Qt scaledToWidth/Height 返回空图像时也会替换目标对象；验证目标
+       已有像素时不会因直接 init 覆盖 m_data 而泄漏旧共享引用。 */
+    XImage_scaledToWidth(&image, 0, 0, &sameSize);
+    expect_true(XImage_isNull(&sameSize),
+                "QImage scaledToWidth rejects non-positive width and clears destination");
+    XImage_scaledToHeight(&image, -1, 0, &scaled);
+    expect_true(XImage_isNull(&scaled),
+                "QImage scaledToHeight rejects non-positive height and clears destination");
+
+    {
+        /* Qt QRect::isNull() treats a zero-by-zero rectangle as the whole
+         * image request, even when its origin is non-zero (qimage.cpp:
+         * 1218-1240).  This must not be confused with a one-sided empty
+         * rectangle, which returns a null image. */
+        const XRect nullRect = { 37, -11, 0, 0 };
+        XImage_copyRect(&image, &nullRect, &nullRectCopy);
+        nullRectSpace = XImage_colorSpace(&nullRectCopy);
+        imageSpace = XImage_colorSpace(&image);
+        expect_true(!XImage_isNull(&nullRectCopy) &&
+                    XImage_width(&nullRectCopy) == XImage_width(&image) &&
+                    XImage_height(&nullRectCopy) == XImage_height(&image) &&
+                    XImage_pixel(&nullRectCopy, 0, 0) == XImage_pixel(&image, 0, 0) &&
+                    XColorSpace_equals(&nullRectSpace, &imageSpace) &&
+                    strcmp(XImage_text_2(&nullRectCopy, "alpha"), "22") == 0,
+                "QImage copy treats a null QRect as a full metadata-preserving copy");
+    }
 
     XImage_copy_base(&copy, &image);
     copyTextKey0 = XImage_textKey_const(&copy, 0);
@@ -8967,6 +10701,9 @@ static void test_image_text_metadata_sorted_map(void)
 
     XImage_deinit_base(&copy);
     XImage_deinit_base(&mirrored);
+    XImage_deinit_base(&scaled);
+    XImage_deinit_base(&sameSize);
+    XImage_deinit_base(&nullRectCopy);
     XImage_deinit_base(&image);
 }
 
@@ -9011,6 +10748,9 @@ static void test_image_gray_and_metadata_noop_contract(void)
     XImage_init_ex(&gray, 1, 1, XImageFormat_Grayscale8);
     expect_true(XImage_allGray(&gray) && XImage_isGrayscale(&gray),
                 "QImage native grayscale formats report both gray predicates");
+    expect_true(XImage_dotsPerMeterX(&gray) == 3780 &&
+                    XImage_dotsPerMeterY(&gray) == 3780,
+                "QImage new image defaults to 96 DPI (3780 dots per meter)");
 
     key = XImage_cacheKey(&gray);
     XImage_setDotsPerMeterX(&gray, 0);
@@ -9848,6 +11588,9 @@ static void test_window_contract(void)
     XPointF ptf;
     XSize sz;
     XSurfaceFormat fmt;
+    XSurfaceFormat savedDefaultFormat;
+    XSurfaceFormat requestedDefaultFormat;
+    XWindow* defaultFormatWindow;
 #if XSCREEN_ON
     XScreen* screen;
 #endif /* XSCREEN_ON */
@@ -9956,6 +11699,21 @@ static void test_window_contract(void)
                 "requestedFormat 保留显式字段");
     expect_true(XWindow_format(w0).m_redBufferSize == 8,
                 "format 合并后保留显式字段");
+
+    /* Qt qwindow.cpp:216-237 reads the process default when a new window is
+       initialized.  Save and restore the global value so this contract test
+       does not leak state into subsequent window or surface-format checks. */
+    savedDefaultFormat = XSurfaceFormat_defaultFormat();
+    requestedDefaultFormat = savedDefaultFormat;
+    requestedDefaultFormat.m_redBufferSize = 13;
+    XSurfaceFormat_setDefaultFormat(&requestedDefaultFormat);
+    defaultFormatWindow = XWindow_create();
+    expect_true(defaultFormatWindow != NULL &&
+                XWindow_requestedFormat(defaultFormatWindow).m_redBufferSize == 13,
+                "新窗口读取进程级默认表面格式");
+    if (defaultFormatWindow)
+        XWindow_delete_base((XClass*)defaultFormatWindow);
+    XSurfaceFormat_setDefaultFormat(&savedDefaultFormat);
 
     /* 标志位 */
     XWindow_setFlag(w0, XWindowType_FramelessWindowHint, true);
@@ -11651,8 +13409,10 @@ static void test_gui_application_contract(void)
             XImage gbsImg;
             XRegion gbsRegion;
             XRegion gbsStatic;
+            XRegion gbsPublicStatic;
             XRect gbsRect = { 0, 0, 3, 4 };
             XRect gbsStaticRect = { 0, 0, 2, 1 };
+            XRect gbsOutsideStaticRect = { -2, -3, 10, 10 };
             XImage* gbsDev = NULL;
             XPainter gbsPainter;
             XPoint gbsOff;
@@ -11666,6 +13426,7 @@ static void test_gui_application_contract(void)
             gsize = XBackingStore_size(gbks);
             gbsDev = XBackingStore_paintDevice(gbks);
             expect_true(gsize.width == 3 && gsize.height == 4 &&
+                        XBackingStore_handle(gbks) != NULL &&
                         gbsDev != NULL &&
                         XImage_width(gbsDev) == 3 &&
                         XImage_height(gbsDev) == 4 &&
@@ -11715,8 +13476,23 @@ static void test_gui_application_contract(void)
             expect_true(gbsStatic.count >= 1 &&
                         gbsStatic.rects[0].width == 2 &&
                         gbsStatic.rects[0].height == 1,
-                        "staticContents 返回裁剪后区域");
+                        "staticContents 返回已设置区域");
             XRegion_deinit(&gbsStatic);
+
+            /* Qt QBackingStore::setStaticContents 只保存公共状态；后端
+             * 可以为当前图像裁剪提示，但 staticContents() 仍返回原区域。 */
+            XRegion_init(&gbsStatic);
+            XRegion_addRect(&gbsStatic, &gbsOutsideStaticRect);
+            XBackingStore_setStaticContents(gbks, &gbsStatic);
+            XRegion_deinit(&gbsStatic);
+            gbsPublicStatic = XBackingStore_staticContents(gbks);
+            expect_true(gbsPublicStatic.count == 1 &&
+                        gbsPublicStatic.rects[0].x == -2 &&
+                        gbsPublicStatic.rects[0].y == -3 &&
+                        gbsPublicStatic.rects[0].width == 10 &&
+                        gbsPublicStatic.rects[0].height == 10,
+                        "staticContents 保留未裁剪的公共区域快照");
+            XRegion_deinit(&gbsPublicStatic);
             XBackingStore_setStaticContents(gbks, NULL);
             expect_true(!XBackingStore_hasStaticContents(gbks),
                         "清除静态内容后 hasStaticContents false");
@@ -15073,6 +16849,7 @@ int main(void)
     test_geometry_contract();
     test_pixmap_scroll_and_bitmap_alias();
     test_pixmap_mask_lifecycle();
+    test_bitmap_qt_contract();
     test_pixmap_lifecycle();
     test_icon_sizes();
     test_icon_matching();
@@ -15082,6 +16859,7 @@ int main(void)
     test_icon_theme_engine_contract();
     test_icon_engine_hook_contract();
     test_icon_paint_visual_alignment();
+    test_icon_default_theme_search_path();
 #if XIMAGECODEC_ON
     test_icon_add_file_size();
     test_icon_theme_index_inherits();
@@ -15148,6 +16926,12 @@ int main(void)
 #if XPAINTER_VIEW_TRANSFORM_ON
     test_painter_picture_view_transform_record();
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+#if XPAINTER_CLIP_ON
+    test_painter_picture_clip_record();
+#if XPAINTER_CLIP_REGION_ON
+    test_painter_picture_clip_region_record();
+#endif /* XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON */
     test_image_reader_decide_format_state();
     test_image_reader_allocation_limit();
 #if XIMAGECODEC_ON
@@ -15159,6 +16943,7 @@ int main(void)
     test_codec_reject_malformed();
 #if XIMAGECODEC_BMP_ON
     test_codec_bmp_malformed();
+    test_codec_bmp_mask_scaling();
     test_codec_bmp_alpha_semantics();
     test_image_reader_malformed_bmp();
     test_image_reader_invalid_clip_rect();
@@ -15171,6 +16956,9 @@ int main(void)
 #if XIMAGECODEC_JPEG_ON
     test_codec_jpeg_extended_assets();
 #endif /* XIMAGECODEC_JPEG_ON */
+#if XIMAGECODEC_SVG_ON
+    test_codec_svg_text_encodings();
+#endif /* XIMAGECODEC_SVG_ON */
 #if XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON
     test_codec_svg_vector_render();
 #endif
@@ -15179,6 +16967,7 @@ int main(void)
 #endif
     test_codec_upper_layer_files();
     test_codec_upper_layer_devices();
+    test_image_reader_long_svg_prelude();
 #endif /* XIMAGECODEC_ON */
     test_image_pixel_contract();
     test_image_mask_qt_semantics();

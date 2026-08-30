@@ -50,8 +50,14 @@ static XSurfaceFormat XSurfaceFormat_makeDefault(void)
 
 XSurfaceFormat XSurfaceFormat_create(void)
 {
-    if (g_defaultFormatSet)
-        return g_defaultFormat;
+    /*
+     * Qt keeps QSurfaceFormat's value constructor independent from the
+     * process-wide defaultFormat().  The latter is consumed by QWindow and
+     * QOpenGLContext initialization, while every new QSurfaceFormat starts
+     * with QSurfaceFormatPrivate's built-in 2.0 defaults.  Do not return
+     * g_defaultFormat here: doing so would make a later setDefaultFormat()
+     * silently change the meaning of ordinary value construction.
+     */
     return XSurfaceFormat_makeDefault();
 }
 
@@ -156,7 +162,10 @@ XSurfaceFormatSwapBehavior XSurfaceFormat_swapBehavior(const XSurfaceFormat* sel
 
 bool XSurfaceFormat_hasAlpha(const XSurfaceFormat* self)
 {
-    return self && self->m_alphaBufferSize >= 0;
+    /* Qt qsurfaceformat.cpp:428-437 defines alpha presence as a strictly
+       positive buffer size.  The default value -1 and an explicit zero-bit
+       request both therefore mean that no alpha buffer is available. */
+    return self && self->m_alphaBufferSize > 0;
 }
 
 /* ==================== 渲染配置 ==================== */
@@ -235,7 +244,11 @@ void XSurfaceFormat_setStereo(XSurfaceFormat* self, bool enable)
 
 bool XSurfaceFormat_stereo(const XSurfaceFormat* self)
 {
-    return self ? self->m_stereo : false;
+    /* Qt's inline stereo() delegates to testOption(StereoBuffers), so the
+       option bit is the source of truth rather than the C compatibility
+       cache m_stereo. */
+    return self && (self->m_options &
+                    (XSurfaceFormatOptions)XSurfaceFormat_StereoBuffers) != 0;
 }
 
 /* ==================== 格式选项 ==================== */
@@ -313,7 +326,10 @@ void XSurfaceFormat_setDefaultFormat(const XSurfaceFormat* format)
 
 XSurfaceFormat XSurfaceFormat_defaultFormat(void)
 {
-    return XSurfaceFormat_create();
+    /* This accessor is the only read path for the process-wide default.  It
+       must remain distinct from XSurfaceFormat_create(), which models the
+       ordinary QSurfaceFormat value constructor. */
+    return g_defaultFormatSet ? g_defaultFormat : XSurfaceFormat_makeDefault();
 }
 
 /* ==================== 相等比较 ==================== */
@@ -321,6 +337,11 @@ XSurfaceFormat XSurfaceFormat_defaultFormat(void)
 bool XSurfaceFormat_equals(const XSurfaceFormat* lhs, const XSurfaceFormat* rhs)
 {
     if (!lhs || !rhs) return lhs == rhs;
+    /* Keep the exact field set used by Qt 6.8 qsurfaceformat.cpp:827-842.
+       Qt's operator== intentionally does not compare renderableType or
+       colorSpace (nor this C-only cached m_stereo field); those values are
+       retained by the struct and accessors but are outside QSurfaceFormat's
+       equality contract. */
     return lhs->m_options == rhs->m_options &&
            lhs->m_redBufferSize == rhs->m_redBufferSize &&
            lhs->m_greenBufferSize == rhs->m_greenBufferSize &&
@@ -330,13 +351,10 @@ bool XSurfaceFormat_equals(const XSurfaceFormat* lhs, const XSurfaceFormat* rhs)
            lhs->m_stencilBufferSize == rhs->m_stencilBufferSize &&
            lhs->m_samples == rhs->m_samples &&
            lhs->m_swapBehavior == rhs->m_swapBehavior &&
-           lhs->m_renderableType == rhs->m_renderableType &&
            lhs->m_profile == rhs->m_profile &&
            lhs->m_majorVersion == rhs->m_majorVersion &&
            lhs->m_minorVersion == rhs->m_minorVersion &&
-           lhs->m_swapInterval == rhs->m_swapInterval &&
-           lhs->m_stereo == rhs->m_stereo &&
-           XColorSpace_equals(&lhs->m_colorSpace, &rhs->m_colorSpace);
+           lhs->m_swapInterval == rhs->m_swapInterval;
 }
 
 #endif /* XSURFACEFORMAT_ON */

@@ -131,9 +131,46 @@ static size_t pngSampleBytes(int bitDepth)
 static size_t pngRowBytes(int width, int bitDepth, int channels)
 {
     int bitsPerPixel = bitDepth * channels;
-    if (bitsPerPixel < 8)
+    if (width <= 0 || bitDepth <= 0 || channels <= 0)
+        return 0;
+    if (bitsPerPixel < 8) {
+        if ((size_t)width > (SIZE_MAX - 7u) / (size_t)bitsPerPixel)
+            return 0;
         return ((size_t)width * (size_t)bitsPerPixel + 7u) / 8u;
+    }
+    if ((size_t)width > SIZE_MAX / pngSampleBytes(bitDepth) /
+                        (size_t)channels)
+        return 0;
     return (size_t)width * pngSampleBytes(bitDepth) * (size_t)channels;
+}
+
+/* 判断 PNG chunk 名称是否符合 libpng 的四字母约束。
+ * qpnghandler.cpp 通过 libpng 的 png_read_chunk_header() 读取所有块；
+ * libpng 在 pngrutil.c:153-170 会拒绝非 ASCII 字母以及第三个字节为小写
+ * 的名称。这里保持相同的保留位检查，避免把畸形名称误当作可忽略扩展。
+ */
+static bool pngChunkTypeValid(const uint8_t* type)
+{
+    int i;
+    if (!type) return false;
+    for (i = 0; i < 4; ++i) {
+        if (!((type[i] >= (uint8_t)'A' && type[i] <= (uint8_t)'Z') ||
+              (type[i] >= (uint8_t)'a' && type[i] <= (uint8_t)'z')))
+            return false;
+    }
+    return type[2] >= (uint8_t)'A' && type[2] <= (uint8_t)'Z';
+}
+
+/* PNG 的关键块 CRC 错误会使 Qt 使用的 libpng 直接报错；可选块的 CRC
+ * 错误在默认配置下只是警告，因此这里只对关键块执行硬失败校验。PLTE
+ * 对灰度图是可忽略的辅助块，保持 libpng 对其 CRC 的宽松处理。 */
+static bool pngChunkCrcValid(const uint8_t* type, const uint8_t* data,
+                             size_t size, bool required)
+{
+    uint32_t stored;
+    if (!required) return true;
+    stored = XImageCodecInternal_readU32BE(data + size);
+    return pngChunkCrc((const char*)type, data, size) == stored;
 }
 
 /* 从打包位中取出第 px 个样本（子 8 位深，MSB 优先）。 */
@@ -162,6 +199,8 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     int paletteCount = 0, trnsCount = 0;
     uint16_t trnsGray = 0, trnsR = 0, trnsG = 0, trnsB = 0;
     bool haveTrnsGray = false, haveTrnsRgb = false;
+    bool haveIHDR = false, havePLTE = false, haveIDAT = false,
+         haveIEND = false, haveTrns = false, idatEnded = false;
     XImage temp;
     bool ok = false;
 
@@ -170,54 +209,150 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     memset(palette, 0, sizeof(palette));
     memset(trnsAlpha, 0, sizeof(trnsAlpha));
 
-    while (pos + 12 <= size) {
+    while (pos <= size && size - pos >= 12u) {
         uint32_t length = XImageCodecInternal_readU32BE(data + pos);
         const uint8_t* type = data + pos + 4;
+        const uint8_t* chunkData;
+        bool isCritical;
+        /* PNG 的 chunk 长度字段虽然占 32 位，但最高位必须为零；
+         * libpng 的 png_read_chunk_header() 在 pngrutil.c:207-215
+         * 会先拒绝 31 位以上长度，避免后续跳过/分配发生溢出。 */
+        if (length > 0x7fffffffu) goto fail;
         if (length > size - pos - 12) goto fail;
-        if (!memcmp(type, "IHDR", 4) && length >= 13) {
+        chunkData = data + pos + 8;
+        isCritical = type[0] >= (uint8_t)'A' && type[0] <= (uint8_t)'Z';
+        if (!pngChunkTypeValid(type)) goto fail;
+        /* IHDR、IDAT 以及调色板图中的 PLTE 是关键数据，CRC 错误须
+         * 失败。libpng 的 png_handle_IEND() 明确以
+         * png_crc_finish_critical(..., 1) 按可选块处理 IEND，
+         * 因而 IEND 的 CRC 只产生警告；非调色板图的 PLTE 同理。依据
+         * pngrutil.c:1041-1044、1082-1107。 */
+        if (isCritical && memcmp(type, "IEND", 4) != 0 &&
+            (memcmp(type, "PLTE", 4) != 0 || colorType == PNG_CT_PALETTE) &&
+            !pngChunkCrcValid(type, chunkData, length, true))
+            goto fail;
+        if (!haveIHDR && memcmp(type, "IHDR", 4) != 0) goto fail;
+        /* libpng 在遇到 IDAT 以外的块后进入 PNG_AFTER_IDAT 状态；其后
+         * 再出现 IDAT 会在 png_read_end 中被报告 benign warning 并丢弃。
+         * 保持该状态，复现 pngread.c:699-744 的流式块顺序处理。 */
+        if (haveIDAT && memcmp(type, "IDAT", 4) != 0)
+            idatEnded = true;
+        if (!memcmp(type, "IHDR", 4)) {
+            /* libpng 的 CDIHDR 规则（pngrutil.c:3069-3075）要求 IHDR
+             * 只能出现一次且长度必须精确为 13 字节。 */
+            if (haveIHDR || length != 13u) goto fail;
             width = XImageCodecInternal_readU32BE(data + pos + 8);
             height = XImageCodecInternal_readU32BE(data + pos + 12);
             bitDepth = data[pos + 16]; colorType = data[pos + 17];
             compression = data[pos + 18]; filter = data[pos + 19];
             interlace = data[pos + 20];
-        } else if (!memcmp(type, "PLTE", 4) && length <= 768u &&
-                   (length % 3u) == 0u) {
+            haveIHDR = true;
+        } else if (!memcmp(type, "PLTE", 4)) {
+            /* png_handle_PLTE() 对非调色板图把 PLTE 当作可选块：灰度
+             * 图直接忽略；RGB/RGBA 图只有首个、位置正确且长度合法的
+             * PLTE 才会保存，重复、越界或位置不对仅发 benign warning
+             * 并继续（pngrutil.c:987-1017、1073-1084）。这些图像的
+             * 实际像素不依赖 PLTE，故对被忽略的块跳过其负载即可。 */
+            if ((colorType & 2u) == 0u ||
+                (colorType != PNG_CT_PALETTE &&
+                 (havePLTE || haveIDAT || haveTrns || length > 768u ||
+                  (length % 3u) != 0u))) {
+                /* RGB/RGBA 的空 PLTE 会进入 png_set_PLTE(0) 并触发
+                 * png_error("Invalid palette")，而灰度图的同一块在
+                 * png_handle_PLTE() 中仅被忽略；保持两者差异。 */
+                if ((colorType == PNG_CT_RGB || colorType == PNG_CT_RGBA) &&
+                    length == 0u)
+                    goto fail;
+                pos += (size_t)length + 12;
+                continue;
+            }
+            /* 调色板图的 PLTE 是关键数据，重复、越界或出现在 IDAT
+             * 之后会走 png_chunk_error（pngrutil.c:992-1002、1073-1077）。 */
+            if (havePLTE || haveIDAT || length == 0u || length > 768u ||
+                (length % 3u) != 0u)
+                goto fail;
             const uint8_t* p = data + pos + 8;
             paletteCount = (int)(length / 3u);
+            {
+                int maxPalette = bitDepth <= 8 ? 1 << bitDepth : 256;
+                if (paletteCount > maxPalette)
+                    paletteCount = maxPalette;
+            }
             for (int i = 0; i < paletteCount; ++i) {
                 palette[i] = 0xff000000u |
                     ((uint32_t)p[i * 3] << 16) |
                     ((uint32_t)p[i * 3 + 1] << 8) |
                     (uint32_t)p[i * 3 + 2];
             }
+            havePLTE = true;
         } else if (!memcmp(type, "tRNS", 4)) {
+            /* tRNS 是 ancillary。libpng 对重复、位置、长度和 CRC
+             * 异常均走 benign warning（pngrutil.c:1705-1771），读取仍
+             * 可继续；只有完整且位置正确的块才改变透明语义。 */
+            if (haveTrns || haveIDAT ||
+                !pngChunkCrcValid(type, chunkData, length, true)) {
+                pos += (size_t)length + 12;
+                continue;
+            }
             const uint8_t* p = data + pos + 8;
             if (colorType == PNG_CT_PALETTE) {
+                /* png_handle_tRNS (libpng:1739-1753) 要求先有 PLTE，且
+                 * 透明表非空、长度不超过有效调色板项数。 */
+                if (!havePLTE || length == 0u || length > (uint32_t)paletteCount) {
+                    pos += (size_t)length + 12;
+                    continue;
+                }
                 trnsCount = (int)length;
-                if (trnsCount > 256) goto fail;
                 for (int i = 0; i < trnsCount; ++i)
                     trnsAlpha[i] = p[i];
-            } else if (colorType == PNG_CT_GRAY && length >= 2u) {
+            } else if (colorType == PNG_CT_GRAY && length == 2u) {
                 trnsGray = (uint16_t)XImageCodecInternal_readU16BE(p);
                 haveTrnsGray = true;
-            } else if (colorType == PNG_CT_RGB && length >= 6u) {
+            } else if (colorType == PNG_CT_RGB && length == 6u) {
                 trnsR = (uint16_t)XImageCodecInternal_readU16BE(p);
                 trnsG = (uint16_t)XImageCodecInternal_readU16BE(p + 2);
                 trnsB = (uint16_t)XImageCodecInternal_readU16BE(p + 4);
                 haveTrnsRgb = true;
+            } else if (colorType != PNG_CT_GRAY && colorType != PNG_CT_RGB) {
+                pos += (size_t)length + 12;
+                continue;
+            } else {
+                /* 灰度/RGB 的长度不精确时，libpng 只警告并忽略。 */
+                pos += (size_t)length + 12;
+                continue;
             }
+            haveTrns = true;
         } else if (!memcmp(type, "IDAT", 4)) {
-            uint8_t* next = (uint8_t*)XRealloc_System(idat, idatSize + length);
-            if (!next) goto fail;
-            idat = next;
-            memcpy(idat + idatSize, data + pos + 8, length);
-            idatSize += length;
-        } else if (!memcmp(type, "IEND", 4)) break;
+            if (!haveIHDR ||
+                (colorType == PNG_CT_PALETTE && !havePLTE))
+                goto fail;
+            if (!idatEnded) {
+                if (length > SIZE_MAX - idatSize) goto fail;
+                uint8_t* next = (uint8_t*)XRealloc_System(idat, idatSize + length);
+                if (!next) goto fail;
+                idat = next;
+                memcpy(idat + idatSize, data + pos + 8, length);
+                idatSize += length;
+                haveIDAT = true;
+            }
+        } else if (!memcmp(type, "IEND", 4)) {
+            if (!haveIHDR || !haveIDAT) goto fail;
+            /* png_handle_IEND() 将非零长度和 CRC 作为 benign warning，
+             * 仍设置 PNG_HAVE_IEND 并结束读取（pngrutil.c:1097-1109）。 */
+            haveIEND = true;
+            pos += 12u;
+            break;
+        } else if (isCritical) {
+            /* 未知关键块正是 libpng:2980-2981 的硬错误条件；不能像
+             * ancillary 扩展块一样静默跳过。 */
+            goto fail;
+        }
         pos += (size_t)length + 12;
     }
 
     /* 头字段校验 */
-    if (!width || !height || width > INT_MAX || height > INT_MAX ||
+    if (!haveIHDR || !haveIDAT || !haveIEND || !width || !height ||
+        width > INT_MAX || height > INT_MAX ||
         compression != 0 || filter != 0 || !idatSize ||
         (interlace != 0 && interlace != 1))
         goto fail;
@@ -283,21 +418,30 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 ph = height > (uint32_t)pngAdam7StartY[i]
                     ? ((size_t)height - (size_t)pngAdam7StartY[i] + ph - 1) / ph : 0;
                 if (pw && ph) {
-                    size_t stride = pngRowBytes((int)pw, bitDepth, channels) + 1;
-                    if (stride < 1 ||
-                        ph > (size_t)UINT_MAX / stride) goto fail;
+                    size_t rowBytes = pngRowBytes((int)pw, bitDepth, channels);
+                    size_t stride;
+                    if (!rowBytes || rowBytes == SIZE_MAX) goto fail;
+                    stride = rowBytes + 1u;
+                    if ((uintmax_t)stride * (uintmax_t)ph >
+                        (uintmax_t)UINT_MAX) goto fail;
                     passData[i] = stride * ph;
                 }
             }
         } else
 #endif
         {
+            size_t rowBytes = pngRowBytes((int)width, bitDepth, channels);
             passCount = 1;
-            passData[0] = (pngRowBytes((int)width, bitDepth, channels) + 1) *
-                          (size_t)height;
+            if (!rowBytes || rowBytes == SIZE_MAX ||
+                (uintmax_t)(rowBytes + 1u) * (uintmax_t)height >
+                    (uintmax_t)UINT_MAX)
+                goto fail;
+            passData[0] = (rowBytes + 1u) * (size_t)height;
         }
-        for (int i = 0; i < passCount; ++i)
+        for (int i = 0; i < passCount; ++i) {
+            if (passData[i] > SIZE_MAX - rawSize) goto fail;
             rawSize += passData[i];
+        }
         if (rawSize == 0 || rawSize > UINT_MAX) goto fail;
     }
 
@@ -305,7 +449,8 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     if (!raw) goto fail;
     {
         uLongf inflated = (uLongf)rawSize;
-        if (uncompress(raw, &inflated, idat, (uLong)idatSize) != Z_OK ||
+        if ((uintmax_t)idatSize > (uintmax_t)ULONG_MAX ||
+            uncompress(raw, &inflated, idat, (uLong)idatSize) != Z_OK ||
             inflated != rawSize)
             goto fail;
     }
@@ -351,10 +496,17 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
 #endif
             if (pw == 0 || ph == 0) continue;
             {
-                size_t stride = pngRowBytes((int)pw, bitDepth, channels) + 1;
-                size_t passBytes = stride * ph;
+                size_t rowBytes = pngRowBytes((int)pw, bitDepth, channels);
+                size_t stride;
+                size_t passBytes;
                 const uint8_t* passRaw = raw + offset;
                 uint16_t* dst = samples;
+                if (!rowBytes || rowBytes == SIZE_MAX) goto fail;
+                stride = rowBytes + 1u;
+                if ((uintmax_t)stride * (uintmax_t)ph >
+                    (uintmax_t)SIZE_MAX)
+                    goto fail;
+                passBytes = stride * ph;
                 if (!pngUnfilter((uint8_t*)passRaw, (int)pw, (int)ph,
                                  stride, channels * sampleBytes,
                                  bitDepth * channels))
@@ -392,26 +544,37 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     /* 输出图像。 */
 #if XIMAGECODEC_PNG_PALETTE_ON
     if (colorType == PNG_CT_PALETTE) {
-        bool hasAlpha = false;
-        for (int i = 0; i < paletteCount; ++i)
-            if (trnsCount > i && trnsAlpha[i] < 255u) { hasAlpha = true; break; }
-        if (hasAlpha) {
-            XImage_init_ex(&temp, (int)width, (int)height, XImageFormat_ARGB32);
+        uint32_t indexedColors[256];
+        int i;
+        /* Qt qpnghandler.cpp:258-286 对调色板 PNG 始终保留索引存储：
+         * 位深为 1 时使用 Format_Mono，其余位深使用 Format_Indexed8。
+         * tRNS 只更新颜色表中的 Alpha，不会把图像改成 ARGB32；这样
+         * image.colorCount()/pixelIndex() 与 Qt 一致，透明调色板项仍可
+         * 通过 color() 观察到。 */
+        for (i = 0; i < paletteCount; ++i) {
+            uint8_t alpha = trnsCount > i ? trnsAlpha[i] : 255u;
+            indexedColors[i] = (palette[i] & 0x00ffffffu) |
+                               ((uint32_t)alpha << 24);
+        }
+        if (bitDepth == 1) {
+            uint32_t monoColors[2] = {0xff000000u, 0xff000000u};
+            XImage_init_ex(&temp, (int)width, (int)height,
+                           XImageFormat_Mono);
             if (XImage_isNull(&temp)) goto fail;
-            for (int y = 0; y < (int)height; ++y) {
-                for (int x = 0; x < (int)width; ++x) {
-                    int idx = samples[(size_t)y * width + x];
-                    uint32_t c = idx < paletteCount ? palette[idx] : 0u;
-                    uint8_t a = (trnsCount > idx) ? trnsAlpha[idx] : 255u;
-                    XImage_setPixel(&temp, x, y, (c & 0x00ffffffu) |
-                        ((uint32_t)a << 24));
-                }
-            }
+            /* Qt 为 Format_Mono 始终建立两个颜色表槽位；畸形输入若仅
+             * 提供一个 PLTE 项，第二项仍保留默认黑色而不是缩短表。 */
+            for (i = 0; i < paletteCount && i < 2; ++i)
+                monoColors[i] = indexedColors[i];
+            XImage_setColorTable(&temp, monoColors, 2);
+            for (int y = 0; y < (int)height; ++y)
+                for (int x = 0; x < (int)width; ++x)
+                    XImage_setPixel(&temp, x, y,
+                                    (uint32_t)samples[(size_t)y * width + x]);
         } else {
             XImage_init_ex(&temp, (int)width, (int)height,
                            XImageFormat_Indexed8);
             if (XImage_isNull(&temp)) goto fail;
-            XImage_setColorTable(&temp, palette, paletteCount);
+            XImage_setColorTable(&temp, indexedColors, paletteCount);
             for (int y = 0; y < (int)height; ++y) {
                 for (int x = 0; x < (int)width; ++x) {
                     int idx = samples[(size_t)y * width + x];
@@ -421,18 +584,42 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
         }
     } else
 #endif
+    if (colorType == PNG_CT_GRAY && bitDepth == 1) {
+        /* Qt qpnghandler.cpp:203-218 先调用 png_set_invert_mono()，
+         * 再以 Format_Mono 分配，并约定颜色表索引 0 为白、索引 1
+         * 为黑。samples 保存的是反滤波后的 PNG 原始样本，所以写入
+         * XImage 前必须反转 0/1，才能与 libpng 的位反转结果相同。
+         * 灰度 tRNS 的样本值来自 qpnghandler.cpp:211-218，透明度只
+         * 作用于对应颜色表项，不改变像素索引。 */
+        XImage_init_ex(&temp, (int)width, (int)height, XImageFormat_Mono);
+        if (XImage_isNull(&temp)) goto fail;
+        {
+            uint32_t monoColors[2] = {0xffffffffu, 0xff000000u};
+            if (haveTrnsGray && trnsGray < 2u)
+                monoColors[trnsGray] = 0x00000000u;
+            XImage_setColorTable(&temp, monoColors, 2);
+        }
+        for (int y = 0; y < (int)height; ++y)
+            for (int x = 0; x < (int)width; ++x)
+                XImage_setPixel(&temp, x, y,
+                                1u - (uint32_t)samples[(size_t)y * width + x]);
+    } else
 #if XIMAGECODEC_PNG_16BIT_ON
     if (bitDepth == 16) {
-        XImageFormat fmt = colorType == PNG_CT_GRAY
+        bool hasTransparentColor = (colorType == PNG_CT_GRAY &&
+                                    haveTrnsGray) ||
+                                   (colorType == PNG_CT_RGB && haveTrnsRgb);
+        XImageFormat fmt = colorType == PNG_CT_GRAY && !hasTransparentColor
             ? XImageFormat_Grayscale16
             : XImageFormat_RGBA64;
-        if (colorType == PNG_CT_RGB) fmt = XImageFormat_RGBX64;
+        if (colorType == PNG_CT_RGB && !hasTransparentColor)
+            fmt = XImageFormat_RGBX64;
         XImage_init_ex(&temp, (int)width, (int)height, fmt);
         if (XImage_isNull(&temp)) goto fail;
         for (int y = 0; y < (int)height; ++y) {
             uint8_t* row = XImage_scanLine(&temp, y);
             const uint16_t* src = samples + (size_t)y * width * (size_t)channels;
-            if (channels == 1) {
+            if (channels == 1 && !hasTransparentColor) {
                 for (int x = 0; x < (int)width; ++x) {
                     uint16_t v = src[x];
                     memcpy(row + (size_t)x * 2, &v, 2);
@@ -441,14 +628,27 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 for (int x = 0; x < (int)width; ++x) {
                     uint16_t tmp[4];
                     int c;
-                    for (c = 0; c < (int)channels; ++c) tmp[c] = src[x * channels + c];
-                    if (colorType == PNG_CT_GRAY_ALPHA) {
+                    for (c = 0; c < (int)channels; ++c)
+                        tmp[c] = src[x * channels + c];
+                    if (colorType == PNG_CT_GRAY && hasTransparentColor) {
+                        /* 与 qpnghandler.cpp:220-239 相同，16 位灰度
+                         * tRNS 必须扩展成 RGB+A，而非丢弃透明样本。 */
+                        uint16_t gray = tmp[0];
+                        tmp[0] = tmp[1] = tmp[2] = gray;
+                        tmp[3] = gray == trnsGray ? 0u : 0xffffu;
+                    } else if (colorType == PNG_CT_RGB && hasTransparentColor) {
+                        /* qpnghandler.cpp:228-239 对 RGB tRNS 采用
+                         * RGBA64；透明色比较的是未缩放的 16 位样本。 */
+                        tmp[3] = tmp[0] == trnsR && tmp[1] == trnsG &&
+                                 tmp[2] == trnsB ? 0u : 0xffffu;
+                    } else if (colorType == PNG_CT_GRAY_ALPHA) {
                         /* 灰度+Alpha：RGB 三通道复制灰度值，Alpha 通道保留。 */
                         uint16_t gray = tmp[0], alpha = tmp[1];
                         tmp[1] = tmp[2] = gray;
                         tmp[3] = alpha;
                     }
-                    if (colorType == PNG_CT_RGB) tmp[3] = 0xffffu;
+                    if (colorType == PNG_CT_RGB && !hasTransparentColor)
+                        tmp[3] = 0xffffu;
                     for (c = 0; c < 4; ++c)
                         memcpy(row + (size_t)x * 8 + (size_t)c * 2, &tmp[c], 2);
                 }

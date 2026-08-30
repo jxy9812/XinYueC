@@ -373,6 +373,8 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(XImageIOPlugin* self,
                                                     const XString* format)
 {
     XImageBuiltinHandler* handler;
+    XImageCodecFormat detected;
+    XString* detectedName;
     (void)self;
     handler = XImageBuiltinHandler_create();
     if (handler) {
@@ -382,6 +384,20 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(XImageIOPlugin* self,
            must also be able to write through the returned object. */
         if (format && !XContainer_isEmpty_base((const XContainer*)format))
             XImageIOHandler_setFormat(&handler->m_base, format);
+        else if (device) {
+            /* Qt's content-probe path returns a handler whose format() is the
+               format accepted by canRead().  Keep that result visible to
+               QImageReader::imageFormat() even when SVG/XML has a long
+               prologue that is not contained in the caller's short peek. */
+            detected = builtin_detectWithDevice(device);
+            if (detected != XImageCodecFormat_Unknown) {
+                detectedName = XImageCodec_formatName(detected);
+                if (detectedName) {
+                    XImageIOHandler_setFormat(&handler->m_base, detectedName);
+                    XString_delete_base((XClass*)detectedName);
+                }
+            }
+        }
     }
     return (XImageIOHandler*)handler;
 }

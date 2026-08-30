@@ -3,9 +3,10 @@
  * @brief      XPixmapCache 全局像素图缓存类（对标 Qt 6.8 QPixmapCache）
  * @author     XinYueC 团队
  * @note       提供全局像素图缓存功能，支持通过字符串键或 Key 对象管理缓存项。
- *             缓存采用 LRU（最近最少使用）淘汰策略，所有缓存结构操作均为
- *             线程安全（使用原子自旋锁保护），Key 的引用计数与有效性标记
- *             使用原子操作，支持多线程并发查找/插入/替换/移除。
+ *             缓存采用 LRU（最近最少使用）淘汰策略。内部链表由原子自旋锁
+ *             保护，但和 Qt 6.8 一样，公共缓存操作只在主线程生效；工作线程
+ *             的查找、插入、替换、限制、移除和清空都会被忽略。Key 的引用计数
+ *             与有效性标记使用原子操作，允许安全地观察生命周期状态。
  ******************************************************************************/
 #ifndef XPIXMAPCACHE_H
 #define XPIXMAPCACHE_H
@@ -91,13 +92,14 @@ void XPixmapCacheKey_swap(XPixmapCacheKey* a, XPixmapCacheKey* b);
 /**
  * @brief      XPixmapCache 全局像素图缓存类（对标 Qt 6.8 QPixmapCache）
  * @note       所有方法均为静态函数，提供全局缓存管理。
- *             缓存结构内部使用原子自旋锁保护，所有公开 API 均可
- *             在多线程环境下安全调用（Key 相关 API 仅操作原子数据，亦线程安全）。
+ *             缓存结构内部使用原子自旋锁保护，但所有实际缓存 API 均有主线程
+ *             限制，与 Qt 6.8 的 QPixmapCache 一致。工作线程调用时，查询返回
+ *             失败，设置/移除/清空请求不产生任何效果。
  */
 
 /**
  * @brief      获取缓存大小限制（KB）
- * @return 缓存大小限制（KB）
+ * @return 主线程上的缓存大小限制（KB）；工作线程调用返回 0
  */
 int XPixmapCache_cacheLimit();
 
@@ -105,7 +107,8 @@ int XPixmapCache_cacheLimit();
  * @brief      设置缓存大小限制（KB）
  * @param limit 缓存大小限制（KB）
  * @note       限制为 0 时表示禁用缓存：所有插入请求被拒绝，已有缓存项被清空。
- *             设置限制后立即按 LRU 顺序修剪超出限制的缓存项。
+ *             负值按 Qt 语义原样保留，并使所有正开销插入请求失败；设置限制后
+ *             立即按 LRU 顺序修剪超出限制的缓存项。工作线程设置会被忽略。
  */
 void XPixmapCache_setCacheLimit(int limit);
 
@@ -154,11 +157,12 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key);
 
 /**
  * @brief      替换缓存中的像素图（通过 Key 对象）
- * @param key    缓存键指针（替换后仍保持有效，且键的所有副本保持有效）
+ * @param key    缓存键指针；成功后绑定到新条目的新 KeyData，旧副本失效
  * @param pixmap 新的像素图指针
  * @return 替换成功返回 true
- * @note       对标 Qt：替换沿用原 Key 数据，键在替换后依然有效；
- *             若键已失效或像素图超过缓存限制则返回 false。
+ * @note       对标 Qt 6.8 头文件内联实现：先移除旧条目，使 key 及所有旧副本
+ *             失效；再插入新条目并把新 KeyData 绑定到传入 key。若键已失效、
+ *             工作线程调用、像素图超过缓存限制或插入失败则返回 false。
  */
 bool XPixmapCache_replace(XPixmapCacheKey* key, const XPixmap* pixmap);
 

@@ -94,23 +94,50 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
                                          XIconState state, XSize* out)
 {
     XPixmap pixmap;
+    XVector available;
     int target;
+    bool preserveAspect = false;
+    size_t i;
     (void)mode;
     (void)state;
     if (!out) return;
     out->width = 0;
     out->height = 0;
     if (!self || !size || size->width <= 0 || size->height <= 0) return;
-    if (self->m_iconName && XIconInternal_themeHasScalable(
-            XString_toUtf8(self->m_iconName))) {
-        /* QIconLoaderEngine returns the complete requested rectangle for a
-           scalable entry (SVG), rather than reducing it to a square. */
+    target = size->width < size->height ? size->width : size->height;
+    if (self->m_iconName && XIconInternal_themeUsesScalableEntry(
+            XString_toUtf8(self->m_iconName), target)) {
+        /* Qt qiconloader.cpp:878-880 only returns the complete requested
+           rectangle after entryForSize() selected a Scalable entry.  A
+           theme may register both a fixed PNG and a scalable SVG; checking
+           whether any scalable directory exists would incorrectly make the
+           fixed entry return the rectangle as well. */
         *out = *size;
         return;
     }
+    /* Qt QIconLoaderEngine::actualSize() 对 Fallback 条目委托给
+       QIcon(entry->filename).actualSize()。独立回退文件可能是非方形图像，
+       此时必须沿用 QPixmapIconEngine::adjustSize() 的宽高比，而不能像
+       主题目录条目一样强制返回正方形。availableThemeSizes() 已复用同一
+       主题搜索顺序；只有查询结果包含非方形尺寸时才进入该回退分支，避免
+       主题固定/阈值条目的方形契约被实际文件内容改变。 */
+    XVector_init(&available, sizeof(XSize), true);
+    if (self->m_iconName && XIconInternal_availableThemeSizes(
+            XString_toUtf8(self->m_iconName), &available)) {
+        for (i = 0; i < XVector_size_base((const XContainer*)&available); ++i) {
+            const XSize* availableSize = (const XSize*)XVector_at_base(
+                &available, (int64_t)i);
+            if (availableSize && availableSize->width > 0 &&
+                availableSize->height > 0 &&
+                availableSize->width != availableSize->height) {
+                preserveAspect = true;
+                break;
+            }
+        }
+    }
+    XVector_deinit_base((XClass*)&available);
     /* QIconLoaderEngine::entryForSize() matches the smaller edge of the
        requested rectangle; fixed/threshold entries never exceed it. */
-    target = size->width < size->height ? size->width : size->height;
     XPixmap_init(&pixmap);
     if (!XIconInternal_resolveThemePixmapSourceSize(
             XString_toUtf8(self->m_iconName), target, &pixmap) ||
@@ -118,10 +145,20 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
         out->width = 0;
         out->height = 0;
     } else {
-        int source = XPixmap_width(&pixmap) < XPixmap_height(&pixmap)
-                   ? XPixmap_width(&pixmap) : XPixmap_height(&pixmap);
-        if (source > target) source = target;
-        if (source > 0) {
+        int sourceWidth = XPixmap_width(&pixmap);
+        int sourceHeight = XPixmap_height(&pixmap);
+        if (preserveAspect) {
+            double scale = 1.0;
+            if (sourceWidth > size->width || sourceHeight > size->height) {
+                scale = (double)size->width / sourceWidth;
+                if ((double)size->height / sourceHeight < scale)
+                    scale = (double)size->height / sourceHeight;
+            }
+            out->width = (int)(sourceWidth * scale + 0.5);
+            out->height = (int)(sourceHeight * scale + 0.5);
+        } else {
+            int source = sourceWidth < sourceHeight ? sourceWidth : sourceHeight;
+            if (source > target) source = target;
             out->width = source;
             out->height = source;
         }
@@ -218,8 +255,15 @@ static void VXIconThemeEngine_availableSizes(const XIconThemeEngine* self,
 
 static XString* VXIconThemeEngine_iconName(const XIconThemeEngine* self)
 {
-    return self && self->m_iconName
-        ? XString_create_copy(self->m_iconName) : XString_create();
+    XString* matched;
+    if (!self || !self->m_iconName) return XString_create();
+    /* Qt QIconLoaderEngine::iconName() 返回 QThemeIconInfo::iconName，
+       即短横线回退后实际登记的名称，而非始终返回请求字符串。 */
+    matched = XIconInternal_resolveThemeIconName(
+        XString_toUtf8(self->m_iconName));
+    if (matched) return matched;
+    /* 保留项目既有未命中引擎的名称可见性，避免改变兼容 API。 */
+    return XString_create_copy(self->m_iconName);
 }
 
 static bool VXIconThemeEngine_isNull(const XIconThemeEngine* self)

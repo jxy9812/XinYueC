@@ -386,7 +386,11 @@ void XWindow_init(XWindow* self)
     memset(self->m_data, 0, sizeof(XWindowPrivate));
     XRegion_init(&self->m_data->m_mask);
 #if XSURFACEFORMAT_ON
-    self->m_data->m_format = XSurfaceFormat_create();
+    /* Qt qwindow.cpp:216-237 initializes requestedFormat from the
+       process-wide QSurfaceFormat::defaultFormat(), rather than from a new
+       value object.  Keep windows created after setDefaultFormat() aligned
+       with that process-level policy while preserving the crop fallback. */
+    self->m_data->m_format = XSurfaceFormat_defaultFormat();
 #else
     self->m_data->m_format = XWindow_mergeFormat(NULL);
 #endif

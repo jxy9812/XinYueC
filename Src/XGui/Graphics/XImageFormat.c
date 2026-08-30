@@ -46,7 +46,10 @@ static const XImageFormatInfo g_formatInfo[] = {
     {XImageFormat_A2BGR30_Premultiplied,        32,  true,  true,  "A2BGR30_Premultiplied",        4},
     {XImageFormat_RGB30,                       32,  false, false, "RGB30",                        4},
     {XImageFormat_A2RGB30_Premultiplied,        32,  true,  true,  "A2RGB30_Premultiplied",        4},
-    {XImageFormat_Alpha8,                       8,  true,  false, "Alpha8",                       4},
+    /* Qt qimage.cpp:6229-6241 describes Alpha8 as a premultiplied
+       alpha-only layout; keep the fast format query consistent with
+       XImageFormat_toPixelFormat(). */
+    {XImageFormat_Alpha8,                       8,  true,  true,  "Alpha8",                       4},
     {XImageFormat_Grayscale8,                   8,  false, false, "Grayscale8",                    4},
     {XImageFormat_RGBX64,                      64,  false, false, "RGBX64",                       4},
     {XImageFormat_RGBA64,                      64,  true,  false, "RGBA64",                       4},
@@ -108,11 +111,18 @@ int XImageFormat_bytesPerLineAlignment(XImageFormat format)
 int XImageFormat_bytesPerLine(int width, XImageFormat format)
 {
     const XImageFormatInfo* info = XImageFormat_info(format);
-    if (!info || width <= 0)
+    if (!info || info->bitDepth <= 0 || width <= 0)
         return 0;
 
-    /* QImage-owned buffers use 32-bit aligned scanlines. Keep the
-       calculation wide so hostile dimensions cannot wrap to a small size. */
+    /* Qt 的 calculateImageParameters() 在计算字节数后仍保留一个
+       32 位宽度上限：width 不能超过 (INT_MAX - 31) / depth。这个
+       看似比最终 bytesPerLine 更严格的检查用于禁止后续以 int 计算
+       width * depth 时发生溢出；不能只依赖 64 位临时值来放宽它。 */
+    if ((int64_t)width > ((int64_t)INT_MAX - 31) / info->bitDepth)
+        return 0;
+
+    /* QImage 自有缓冲区使用 32 位对齐的扫描行。使用宽临时值避免
+       位数相乘或加上对齐余量时先在 int 中回绕成小尺寸。 */
     const int64_t bitsPerLine = (int64_t)width * info->bitDepth;
     const int64_t bytesPerLine = ((bitsPerLine + 31) / 32) * 4;
     return bytesPerLine > 0 && bytesPerLine <= INT_MAX ? (int)bytesPerLine : 0;
@@ -321,7 +331,11 @@ XPixelFormat XImageFormat_toPixelFormat(XImageFormat format)
             return XPixelFormat_make(XPixelFormatModel_Alpha, 0, 0, 0, 0, 0, 8,
                                      XPixelFormatAlpha_Uses,
                                      XPixelFormatAlpha_AtBeginning,
-                                     XPixelFormatAlpha_NotPremultiplied,
+                                     /* Qt qimage.cpp:6229-6241 marks the
+                                        alpha-only layout as Premultiplied;
+                                        retain that descriptor even though
+                                        no RGB channel exists to multiply. */
+                                     XPixelFormatAlpha_Premultiplied,
                                      XPixelFormatType_UnsignedByte);
         case XImageFormat_Grayscale8:
             return XPixelFormat_make(XPixelFormatModel_Gray, 8, 0, 0, 0, 0, 0,

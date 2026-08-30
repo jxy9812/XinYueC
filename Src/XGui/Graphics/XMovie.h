@@ -3,7 +3,7 @@
  * @brief      XMovie 动画图像控制类（对标 Qt 6.8 QMovie）。
  * @details    XMovie 使用 XImageReader 读取图像帧，并通过 XObject 信号
  *             报告状态和帧变化。GIF 在启用 XIMAGECODEC_GIF_ANIM_ON 时提供
- *             多帧、延迟与循环次数；其它格式保持单帧语义。
+ *             多帧、延迟与循环次数；其它格式保持单帧或已知多帧语义。
  */
 #ifndef XMOVIE_H
 #define XMOVIE_H
@@ -355,15 +355,16 @@ int XMovie_speed(const XMovie* self);
  */
 void XMovie_setSpeed(XMovie* self, int percentSpeed);
 /**
- * @brief 返回缩放尺寸；未设置时宽高为 0。
+ * @brief 返回缩放尺寸；未设置时宽高为 -1。
  * @param self 对象指针。
  * @param out 输出尺寸指针。
  */
 void XMovie_scaledSize(const XMovie* self, XSize* out);
 /**
- * @brief 设置读取器缩放尺寸；对象复制尺寸值。
+ * @brief 设置读取器缩放尺寸；对象复制尺寸值。Qt 允许宽或高为 -1/0，
+ *        由读取器按原图比例补齐另一维；设置属性本身不清空当前帧。
  * @param self 目标对象指针。
- * @param size 缩放尺寸指针；可为 NULL 清除缩放。
+ * @param size 缩放尺寸指针；必须非 NULL，当前轻量读取器没有单独的清除接口。
  */
 void XMovie_setScaledSize(XMovie* self, const XSize* size);
 /**
@@ -380,18 +381,18 @@ XMovieCacheMode XMovie_cacheMode(const XMovie* self);
 void XMovie_setCacheMode(XMovie* self, XMovieCacheMode mode);
 
 /**
- * @brief 同步读取首帧并开始播放；单帧源完成后立即发出 finished。
+ * @brief 读取下一帧并开始播放；暂停状态只恢复播放，运行状态重复调用无操作。
  * @param self 目标对象指针。
  */
 void XMovie_start(XMovie* self);
 /**
- * @brief 尝试跳转下一帧；单帧源始终返回 false。
+ * @brief 尝试跳转下一帧；遇到动画循环时按 loopCount 回到第 0 帧。
  * @param self 目标对象指针。
  * @return 成功跳转返回 true，否则返回 false。
  */
 bool XMovie_jumpToNextFrame(XMovie* self);
 /**
- * @brief 设置暂停状态；没有运行中的播放时不产生虚假动画状态。
+ * @brief 设置暂停状态；暂停 NotRunning 无操作，恢复时进入 Running。
  * @param self 目标对象指针。
  * @param paused 是否暂停。
  */

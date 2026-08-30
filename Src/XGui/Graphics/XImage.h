@@ -265,6 +265,20 @@ bool XImage_hasColorSpace(const XImage* self);
  */
 void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
                                   uint32_t flags, XImage* out);
+
+/**
+ * @brief 将图像转换到目标色彩空间和指定像素格式并返回新图像。
+ * @param self 源图像对象指针。
+ * @param colorSpace 目标色彩空间，必须是有效的目标空间。
+ * @param format 输出像素格式，必须有效且与目标色彩模型兼容。
+ * @param flags 图像格式转换标志。
+ * @param out 输出图像对象指针；参数无效或转换失败时输出空图像。
+ * @note 对标 Qt 6.8 `QImage::convertedToColorSpace(colorSpace, format, flags)`；
+ *       与不带格式的重载不同，Invalid 格式不会自动选择中间格式。
+ */
+void XImage_convertedToColorSpace_ex(const XImage* self, XColorSpace colorSpace,
+                                     XImageFormat format, uint32_t flags,
+                                     XImage* out);
 /**
  * @brief 就地转换图像到目标色彩空间。
  * @param self 目标图像对象指针。
@@ -274,6 +288,20 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
  */
 bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
                                 uint32_t flags);
+
+/**
+ * @brief 就地转换图像到目标色彩空间和指定像素格式。
+ * @param self 目标图像对象指针。
+ * @param colorSpace 目标色彩空间，必须是有效的目标空间。
+ * @param format 输出像素格式，必须有效且与目标色彩模型兼容。
+ * @param flags 图像格式转换标志。
+ * @return 转换成功返回 true；源图像、目标空间或格式无效/不兼容时返回 false，
+ *         且原图像保持不变。
+ * @note 对标 Qt 6.8 `QImage::convertToColorSpace(colorSpace, format, flags)`；
+ *       当目标空间与当前空间相同仍会执行指定格式转换。
+ */
+bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
+                                   XImageFormat format, uint32_t flags);
 
 /**
  * @brief 应用显式颜色变换并输出指定像素格式。
@@ -381,14 +409,24 @@ int XImage_colorTable(const XImage* self, uint32_t* out, int maxCount);
 /** @brief 设置索引图像颜色表。 */
 void XImage_setColorTable(XImage* self, const uint32_t* colors, int count);
 
-/** @brief 用另一幅图像的 Alpha 通道替换当前图像 Alpha。 */
+/**
+ * @brief 使用另一幅图像的 Alpha 通道合成当前图像。
+ * @param self 目标图像对象指针；必要时按 Qt 的 Alpha 版本升级格式。
+ * @param alphaChannel Alpha 来源图像；Alpha8 直接使用其字节，其它格式
+ *                    先按 Qt 规则转换为灰度强度。
+ * @return 参数、像素存储均有效且合成完成时返回 true；内存分配或格式
+ *         转换失败时返回 false。
+ * @note 目标已有 Alpha 时采用 DestinationIn 语义，将新旧 Alpha 相乘，
+ *       不会覆盖已有透明度。目标与来源尺寸不同时，嵌入式实现使用
+ *       最近邻采样近似 Qt QPainter 的平滑缩放路径。
+ */
 bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel);
 
 /**
  * @brief      根据图像 Alpha 通道创建一位 MonoLSB 掩码。
  * @param self 源图像对象指针；为空或 RGB32 时输出空图像。
- * @param flags 图像转换标志；当前实现保留 Qt 默认阈值模式（Alpha 大于等于
- *              128 生成不透明位），其他抖动标志在便携实现中暂不展开。
+ * @param flags 图像转换标志；flags=0 使用 128 阈值；OrderedAlphaDither 使用
+ *              16x16 Bayer 矩阵；DiffuseAlphaDither 使用误差扩散。
  * @param out 输出掩码图像指针；已有内容会先释放，掩码颜色表为白色/黑色。
  * @note 深度为 1 的 Mono/MonoLSB 图像会先转为 Indexed8，使原颜色表中的
  *       Alpha 分量参与阈值判断；输出始终使用小端位序 MonoLSB。
@@ -405,9 +443,10 @@ void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out);
 void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out);
 
 /**
- * @brief      根据完整 ARGB 颜色值创建 MonoLSB 掩码。
+ * @brief      根据 Qt 的颜色匹配规则创建 MonoLSB 掩码。
  * @param self 源图像对象指针；为空时输出空图像。
- * @param color 要匹配的 0xAARRGGBB 颜色，Alpha 也参与比较。
+ * @param color 要匹配的颜色值；非 32 位格式按 pixel() 的 0xAARRGGBB
+ *              比较，32 位格式按扫描行的原始四字节存储值比较。
  * @param mode InColor 将匹配像素设为不透明，OutColor 将匹配像素设为透明。
  * @param out 输出掩码图像指针；已有内容会先释放，并复制物理元数据。
  */
@@ -488,7 +527,7 @@ int XImage_sizeInBytes(const XImage* self);
  * @param self 目标 XImage 对象指针
  * @param x    像素 x 坐标
  * @param y    像素 y 坐标
- * @return 像素索引值
+ * @return 有效坐标返回像素索引；空图像或越界坐标返回 Qt 兼容哨兵 -12345。
  */
 int XImage_pixelIndex(const XImage* self, int x, int y);
 
@@ -497,7 +536,8 @@ int XImage_pixelIndex(const XImage* self, int x, int y);
  * @param self 目标 XImage 对象指针
  * @param x    像素 x 坐标
  * @param y    像素 y 坐标
- * @return ARGB 颜色值（0xAARRGGBB）
+ * @return 有效坐标返回 ARGB 颜色值（0xAARRGGBB）；空图像或越界坐标返回
+ *         Qt 兼容哨兵 12345。
  */
 uint32_t XImage_pixel(const XImage* self, int x, int y);
 
@@ -798,7 +838,7 @@ XString* XImage_text(const XImage* self, const XString* key);
 /**
  * @brief 使用 UTF-8 键获取文本元数据值的兼容重载。
  * @param self 图像对象指针。
- * @param key UTF-8 编码的元数据键。
+ * @param key UTF-8 编码的元数据键；传入 NULL 等价于 Qt 默认的空键，返回全部文本聚合结果。
  * @return 内部文本值的 UTF-8 指针，由图像对象持有，不得释放；空图像或未找到时返回空串。
  */
 const char* XImage_text_2(const XImage* self, const char* key);

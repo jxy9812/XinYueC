@@ -157,6 +157,8 @@ bool XImageReader_autoDetectImageFormat(const XImageReader* self);
  * @brief      设置是否根据内容决定格式
  * @param self    目标 XImageReader 对象指针
  * @param enabled 是否忽略显式格式和文件扩展名并按设备内容决定格式
+ * @note       该标志独立于 autoDetectImageFormat；传入 true 或 false 均不改写
+ *             自动探测状态。按内容选择处理器时，读取器内部会优先使用该标志。
  */
 void XImageReader_setDecideFormatFromContent(XImageReader* self, bool enabled);
 

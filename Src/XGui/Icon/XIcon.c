@@ -268,6 +268,73 @@ static void XIconPrivate_addFileEntry(XIconPrivate* d, const XString* fileName,
     XIconPrivate_touch(d);
 }
 
+/* 对标 Qt 6.8 QPixmapIconEngine::addFile() 的无尺寸分支
+ * （qicon.cpp:447-493）：无尺寸请求不是“只读第一帧”，而是登记资源
+ * 中的全部图像。处理器能够报告 Size 时登记文件名和每一帧尺寸，像素
+ * 仍然延迟到取图时加载；否则按帧读取并立即保存像素图。项目在关闭
+ * XImageIOPlugin 的裁剪配置下没有长期持有的处理器，此时
+ * XImageReader_read() 会重复走单帧内置加载路径，必须退回一次
+ * XPixmap_load()，否则枚举会无界重复。 */
+static void XIconPrivate_addFileEntries(XIconPrivate* d,
+                                         const XString* fileName,
+                                         XIconMode mode, XIconState state)
+{
+    XImageReader reader;
+    XSize size;
+    bool hasSize;
+    int imageCount;
+    int frame;
+    if (!d || !fileName || XContainer_isEmpty_base((const XContainer*)fileName))
+        return;
+    if (!XIconPrivate_canReadFile(fileName))
+        return;
+
+    XImageReader_init_file(&reader, fileName, NULL);
+    hasSize = XImageReader_supportsOption(&reader, XImageIOHandlerOption_Size);
+    if (hasSize) {
+        /* Size 选项只查询当前帧的尺寸，不消费图像数据。 */
+        do {
+            XImageReader_size(&reader, &size);
+            if (size.width > 0 && size.height > 0)
+                XIconPrivate_addFileEntry(d, fileName, size.width, size.height,
+                                          mode, state);
+        } while (XImageReader_jumpToNextImage(&reader));
+        XImageReader_deinit_base(&reader);
+        return;
+    }
+
+    /* imageCount() 是轻量处理器对多帧能力的边界：默认处理器返回 1，
+       动画处理器返回实际帧数；返回负值表示裁剪内置加载路径，不应
+       对永远成功的单帧 fallback read() 做 while 循环。 */
+    imageCount = XImageReader_imageCount(&reader);
+    if (imageCount <= 0) {
+        XPixmap pixmap;
+        XPixmap_init(&pixmap);
+        if (XPixmap_load(&pixmap, fileName, NULL, 0))
+            XIconPrivate_addEntry(d, &pixmap, mode, state);
+        XPixmap_deinit_base(&pixmap);
+        XImageReader_deinit_base(&reader);
+        return;
+    }
+
+    for (frame = 0; frame < imageCount; ++frame) {
+        XImage image;
+        XPixmap pixmap;
+        XImage_init(&image);
+        if (!XImageReader_read(&reader, &image)) {
+            XImage_deinit_base(&image);
+            break;
+        }
+        XPixmap_init(&pixmap);
+        XPixmap_init_image(&pixmap, &image, 0);
+        if (!XPixmap_isNull(&pixmap))
+            XIconPrivate_addEntry(d, &pixmap, mode, state);
+        XPixmap_deinit_base(&pixmap);
+        XImage_deinit_base(&image);
+    }
+    XImageReader_deinit_base(&reader);
+}
+
 /* ========== 虚函数实现 ========== */
 
 static void VXIcon_copy(XIcon* dest, const XIcon* src)
@@ -348,12 +415,15 @@ void XIcon_init_file_2(XIcon* self, const char* fileName)
 void XIcon_init_file(XIcon* self, const XString* fileName)
 {
     XIcon_init(self);
-    if (self && self->m_data) XIconPrivate_setName_2(self->m_data, fileName);
-    XPixmap pixmap;
-    XPixmap_init_file(&pixmap, fileName, NULL, 0);
-    if (!XPixmap_isNull(&pixmap))
-        XIconPrivate_addEntry(self->m_data, &pixmap, XIconMode_Normal, XIconState_Off);
-    XPixmap_deinit_base(&pixmap);
+    if (!self || !self->m_data || !fileName ||
+        XContainer_isEmpty_base((const XContainer*)fileName))
+        return;
+    /* Qt QIcon(fileName) 只把文件加入引擎，像素在第一次取图时再加载
+       （qicon.cpp:764-785）。名称要与引擎分开保存，便于 name() 在
+       加载失败时仍保持调用方传入的文件名语义。 */
+    XIconPrivate_setName_2(self->m_data, fileName);
+    XIconPrivate_addFileEntries(self->m_data, fileName, XIconMode_Normal,
+                                XIconState_Off);
 }
 
 void XIcon_init_engine(XIcon* self, XIconEngine* engine)
@@ -593,6 +663,27 @@ static void XIconPrivate_ensureWritableForLazyLoad(XIcon* self)
     }
 }
 
+/* 对标 QPixmapIconEngine::removePixmapEntry()：懒加载失败后删除失效
+ * 文件条目，使后续 isNull()/availableSizes() 不再把无法解码的资源当作
+ * 有效像素图；调用方必须已经通过写时分离取得独占私有数据。 */
+static void XIconPrivate_removeEntry(XIconPrivate* d,
+                                     const XIconEntry* target)
+{
+    size_t i;
+    if (!d || !target) return;
+    for (i = 0; i < XVector_size_base((XContainer*)&d->m_entries); ++i)
+    {
+        const XIconEntry* entry = (const XIconEntry*)XVector_at_base(
+            &d->m_entries, (int64_t)i);
+        if (entry == target)
+        {
+            XVector_remove_base(&d->m_entries, (int64_t)i, 1);
+            XIconPrivate_touch(d);
+            return;
+        }
+    }
+}
+
 /* 对标 QPixmapIconEngine::adjustSize()：物理资源超过请求尺寸时按比例缩小，
  * 否则保留原始物理尺寸。 */
 static void XIconPrivate_adjustSize(int expectedWidth, int expectedHeight,
@@ -799,7 +890,10 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
     if (best->m_fileName && !best->m_loaded &&
         !XIconPrivate_loadFileEntry((XIconPrivate*)d, (XIconEntry*)best,
                                      width, height, devicePixelRatio))
+    {
+        XIconPrivate_removeEntry((XIconPrivate*)d, best);
         return;
+    }
     actual.width = XPixmap_width(&best->m_pixmap);
     actual.height = XPixmap_height(&best->m_pixmap);
     XIconPrivate_adjustSize(targetWidth, targetHeight,
@@ -932,9 +1026,19 @@ void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, 
         XIconEngine_actualSize_base(self->m_data->m_engine, &requested, mode, state, out);
         return;
     }
+    /* QIcon::actualSize() 通过 bestMatch() 触发懒加载；共享图标在此处
+       修改条目前先分离，避免 const 查询改变其它副本的缓存生命周期。 */
+    XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
     const XIconEntry* best = XIconPrivate_bestEntryScale(
         self->m_data, width, height, 1.0f, mode, state);
     if (!best) return;
+    if (best->m_fileName && !best->m_loaded &&
+        !XIconPrivate_loadFileEntry(self->m_data, (XIconEntry*)best,
+                                    width, height, 1.0f))
+    {
+        XIconPrivate_removeEntry(self->m_data, best);
+        return;
+    }
     XSize sourceSize;
     XIconPrivate_entryLogicalSize(best, &sourceSize);
     int sourceWidth = sourceSize.width;
@@ -985,6 +1089,9 @@ void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
         XIconEngine_actualSize_base(self->m_data->m_engine, &requested,
                                     mode, state, &actual);
     } else {
+        /* 高 DPI actualSize 同样复用 bestMatch() 的懒加载语义；先对
+           共享私有数据做写时分离，再允许加载成功的条目更新缓存。 */
+        XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
         const XIconEntry* best = XIconPrivate_bestEntryScale(
             self->m_data, targetWidth, targetHeight, 1.0f, mode, state);
         if (!best) return;
@@ -992,7 +1099,10 @@ void XIcon_actualSizeRatio(const XIcon* self, int width, int height,
             !XIconPrivate_loadFileEntry((XIconPrivate*)self->m_data,
                                          (XIconEntry*)best,
                                          targetWidth, targetHeight, 1.0f))
+        {
+            XIconPrivate_removeEntry(self->m_data, best);
             return;
+        }
         actual.width = XPixmap_width(&best->m_pixmap);
         actual.height = XPixmap_height(&best->m_pixmap);
         XIconPrivate_adjustSize(targetWidth, targetHeight,
@@ -1103,16 +1213,9 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
                                   mode, state);
         return;
     }
-    XPixmap pixmap;
-    XPixmap_init(&pixmap);
-    if (!XPixmap_load(&pixmap, fileName, NULL, 0))
-    {
-        XPixmap_deinit_base(&pixmap);
-        return;
-    }
-    if (!XPixmap_isNull(&pixmap))
-        XIconPrivate_addEntry(self->m_data, &pixmap, mode, state);
-    XPixmap_deinit_base(&pixmap);
+    /* Qt 的无效 QSize 表示“加入文件中的全部帧”，而不是只读第一帧；
+       文件构造和显式 addFile 的语义保持一致。 */
+    XIconPrivate_addFileEntries(self->m_data, fileName, mode, state);
 }
 
 void XIcon_availableSizes(const XIcon* self, XIconMode mode, XIconState state, void* out)
@@ -1184,6 +1287,13 @@ static void XIcon_fromThemeImpl(const XString* nameString,
         created = XString_create_utf8(utf8Name);
         nameString = created;
     }
+    /* QIcon::fromTheme() 返回新值；C 接口通过 out 写回时必须先释放
+       调用方已有的私有数据，否则每次复用同一输出对象都会遗失一次
+       XIconPrivate 引用。部分 Qt 兼容夹具直接把未初始化栈对象作为 out，
+       此时其中的虚表字段可能是随机值，不能仅用“非 NULL”判定后调用析构；
+       只有明确绑定 XIcon 虚表的对象才允许释放。 */
+    if (XClassGetVtable(out) == XIcon_class_init())
+        XIcon_deinit_base(out);
     XIcon_init(out);
     if (nameString) {
         nameUtf8 = XString_toUtf8(nameString);
@@ -1212,8 +1322,25 @@ static void XIcon_fromThemeImpl(const XString* nameString,
     }
 fromTheme_done:
     if (created) XString_delete_base((XClass*)created);
-    if (XIcon_isNull(out) && fallback)
-        XIcon_copy_base(out, fallback);
+    if (fallback) {
+        bool useFallback = XIcon_isNull(out);
+        /* Qt 6.8 QIcon::fromTheme(name, fallback) treats an engine with no
+           available sizes as unusable even when isNull() is false.  The
+           latter occurs for registered theme files whose decoding is
+           deferred (or fails later), so query the default Normal/Off set
+           before returning the theme engine. */
+        if (!useFallback) {
+            XVector available;
+            XVector_init(&available, sizeof(XSize), true);
+            XIcon_availableSizes(out, XIconMode_Normal, XIconState_Off,
+                                 &available);
+            useFallback = XVector_size_base(
+                (const XContainer*)&available) == 0;
+            XVector_deinit_base((XClass*)&available);
+        }
+        if (useFallback)
+            XIcon_copy_base(out, fallback);
+    }
 }
 
 void XIcon_fromTheme_2(const char* name, const XIcon* fallback, XIcon* out)
@@ -1237,15 +1364,22 @@ bool XIcon_hasThemeIcon_2(const char* name)
 bool XIcon_hasThemeIcon(const XString* name)
 {
     const char* nameUtf8;
+    XString* resolvedName;
+    bool matched;
     if (!name || XString_isEmpty_base((const XContainer*)name)) return false;
     nameUtf8 = XString_toUtf8(name);
     /* Qt QIcon::hasThemeIcon() delegates to fromTheme().  Absolute paths are
        handled by fromTheme() as ordinary file icons whose engine has no
        theme name, so they must not be reported as theme icons. */
     if (!nameUtf8 || nameUtf8[0] == '/' || nameUtf8[0] == ':') return false;
-    /* 与 QIcon::hasThemeIcon() 的 QIconLoaderEngine::isNull() 一致：
-       文件条目已登记即可命中，实际解码延迟到 pixmap()/paint()。 */
-    return XIconInternal_themeHasIcon(nameUtf8);
+    /* Qt 6.8 的 hasThemeIcon() 比较 fromTheme(name).name() 与原始请求。
+       因此短横线回退到较短名称时，虽然 fromTheme() 可绘制图标，
+       hasThemeIcon() 仍必须返回 false；仅 exact 命中才算主题图标可用。 */
+    resolvedName = XIconInternal_resolveThemeIconName(nameUtf8);
+    matched = resolvedName && XString_equals_utf8(
+        resolvedName, nameUtf8, XChar_CaseSensitive);
+    if (resolvedName) XString_delete_base((XClass*)resolvedName);
+    return matched;
 }
 
 static const char* XIcon_themeIconNameUtf8(XIconThemeIcon icon)
@@ -1287,8 +1421,17 @@ bool XIcon_hasThemeIconType(XIconThemeIcon icon)
 XStringList* XIcon_themeSearchPaths()
 {
     XStringList* copy = XStringList_create();
-    if (copy && g_iconThemeSearchPaths)
-        XStringList_copy_base((XClass*)copy, (const XClass*)g_iconThemeSearchPaths);
+    if (!copy) return NULL;
+    if (g_iconThemeSearchPaths &&
+        XStringList_size_base((const XContainer*)g_iconThemeSearchPaths) > 0) {
+        XStringList_copy_base((XClass*)copy,
+                              (const XClass*)g_iconThemeSearchPaths);
+    } else {
+        /* Qt QIconLoader::themeSearchPaths() 在用户未设置路径时始终
+           附加内置资源目录，空列表也必须保持该默认项。平台主题路径
+           由 XGui 的 Drive 层提供；公共层至少保留可移植的 :/icons。 */
+        XStringList_push_back_utf8(copy, ":/icons");
+    }
     return copy;
 }
 

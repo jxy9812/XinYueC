@@ -6,6 +6,7 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include <string.h>
+#include <limits.h>
 
 struct XMoviePrivate
 {
@@ -23,6 +24,12 @@ struct XMoviePrivate
     XMovieCacheMode     m_cacheMode;         /**< 缓存策略。 */
     int                 m_speed;             /**< 播放速度百分比。 */
     int                 m_currentFrame;      /**< 当前帧编号，未加载时为 -1。 */
+    int                 m_nextFrame;         /**< 下一次读取的帧编号。 */
+    int                 m_greatestFrame;     /**< 已成功读取的最大帧编号。 */
+    int                 m_nextDelay;         /**< 当前帧对应的下一帧延迟。 */
+    int                 m_playCounter;       /**< 剩余循环次数，-1 表示尚未开始计数。 */
+    bool                m_haveReadAll;       /**< 是否已经确认读完所有帧。 */
+    bool                m_isFirstIteration;  /**< 是否仍处于第一次循环。 */
 };
 
 static void VXMovie_deinit(XMovie* self);
@@ -38,6 +45,25 @@ static void XMovie_clearCurrent(XMoviePrivate* data)
     XPixmap_init(&data->m_currentPixmap);
     memset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
     data->m_currentFrame = -1;
+}
+
+/*
+ * Qt 6.8 QMoviePrivate::reset()（qmovie.cpp:250-263）只重置播放游标和
+ * 已读帧状态，不销毁 currentPixmap 或 frameRect。这样换设备/文件后，
+ * currentFrameNumber 会回到 -1，但 currentImage() 仍表示最近一次已显示的
+ * 图像；同时下一次 start() 必须从第 0 帧重新请求。XMovie 没有 Qt 的定时器
+ * 和 QMap 帧缓存，仍保留这些状态以保证同步跳帧接口的可观察语义一致。
+ */
+static void XMovie_resetPlayback(XMoviePrivate* data)
+{
+    if (!data) return;
+    data->m_currentFrame = -1;
+    data->m_nextFrame = 0;
+    data->m_greatestFrame = -1;
+    data->m_nextDelay = 0;
+    data->m_playCounter = -1;
+    data->m_haveReadAll = false;
+    data->m_isFirstIteration = true;
 }
 
 static void XMovie_clearPrivate(XMoviePrivate* data)
@@ -121,19 +147,35 @@ static XImageReader* XMovie_cloneReader(const XImageReader* source)
     return copy;
 }
 
-static bool XMovie_loadFrame(XMovie* self, int frameNumber)
+static int XMovie_speedAdjustedDelay(int delay, int speed)
+{
+    if (!speed) return 0;
+    /* Qt 使用 qint64 计算后再转 int；这样 INT_MIN 等合法 speed 不会
+       先在 int 乘法中溢出。 */
+    return (int)(((int64_t)delay * (int64_t)100) / (int64_t)speed);
+}
+
+static bool XMovie_loadFrame(XMovie* self, int frameNumber, bool emitSignals)
 {
     XMoviePrivate* data;
     XImage image;
     XRect oldRect;
     bool resized;
     int frameCount;
+    bool sequential;
     if (!self || !(data = self->m_data) || !data->m_reader || frameNumber < 0)
         return false;
     frameCount = XImageReader_imageCount(data->m_reader);
-    if (frameCount <= 0 || frameNumber >= frameCount)
+    /* QMovie 支持 imageCount() 尚未知的动画格式；只有正数帧数才是
+       可用于边界检查的确定值（qmovie.cpp:315-316, 549-556）。 */
+    if (frameCount > 0 && frameNumber >= frameCount)
         return false;
-    if (!XImageReader_jumpToImage(data->m_reader, frameNumber)) {
+    sequential = frameNumber == data->m_currentFrame + 1 &&
+                 frameNumber == data->m_nextFrame;
+    /* 连续读取时直接交给 reader->read()，避免先 jump 再 read 改变动画
+       处理器的内部游标；非连续跳转才对应 Qt infoForFrame() 的
+       jumpToImage() 路径（qmovie.cpp:323-365）。 */
+    if (!sequential && !XImageReader_jumpToImage(data->m_reader, frameNumber)) {
         XMovie_captureReaderError(self);
         return false;
     }
@@ -150,14 +192,31 @@ static bool XMovie_loadFrame(XMovie* self, int frameNumber)
     XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
     XImage_rect(&data->m_currentImage, &data->m_frameRect);
     data->m_currentFrame = frameNumber;
+    data->m_nextFrame = frameNumber == INT_MAX ? INT_MAX : frameNumber + 1;
+    if (frameNumber > data->m_greatestFrame)
+        data->m_greatestFrame = frameNumber;
+    data->m_haveReadAll = false;
+    if (XImageReader_supportsAnimation(data->m_reader)) {
+        if (data->m_speed)
+            data->m_nextDelay = XMovie_speedAdjustedDelay(
+                XImageReader_nextImageDelay(data->m_reader), data->m_speed);
+    } else {
+        /* 非动画的多帧格式没有可靠的帧延迟，Qt 固定采用 1000ms。 */
+        if (data->m_speed)
+            data->m_nextDelay = XMovie_speedAdjustedDelay(1000, data->m_speed);
+    }
     XMovie_captureReaderError(self);
     resized = oldRect.width != data->m_frameRect.width ||
               oldRect.height != data->m_frameRect.height;
-    if (resized && oldRect.width != 0 && oldRect.height != 0)
+    if (emitSignals && resized)
         XMovie_resized_signal(self, &(XSize){data->m_frameRect.width,
                                              data->m_frameRect.height});
-    XMovie_frameChanged_signal(self, frameNumber);
-    XMovie_updated_signal(self, &data->m_frameRect);
+    if (emitSignals) {
+        /* Qt _q_loadNextFrame() 的顺序是 resized -> updated ->
+           frameChanged（qmovie.cpp:482-488）。 */
+        XMovie_updated_signal(self, &data->m_frameRect);
+        XMovie_frameChanged_signal(self, frameNumber);
+    }
     return true;
 }
 
@@ -200,6 +259,15 @@ void XMovie_init(XMovie* self)
     self->m_data->m_cacheMode = XMovieCacheMode_CacheNone;
     self->m_data->m_speed = 100;
     self->m_data->m_currentFrame = -1;
+    /* QSize 的默认值是 (-1,-1)，表示尚未请求缩放；这与 Qt
+       QImageReader/QMovie 的属性初值一致。 */
+    self->m_data->m_scaledSize.width = -1;
+    self->m_data->m_scaledSize.height = -1;
+    self->m_data->m_nextFrame = 0;
+    self->m_data->m_greatestFrame = -1;
+    self->m_data->m_nextDelay = 0;
+    self->m_data->m_playCounter = -1;
+    self->m_data->m_isFirstIteration = true;
 }
 
 void XMovie_init_device(XMovie* self, XIODevice* device, const XString* format)
@@ -311,6 +379,12 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
     self->m_data->m_cacheMode = source->m_cacheMode;
     self->m_data->m_speed = source->m_speed;
     self->m_data->m_currentFrame = source->m_currentFrame;
+    self->m_data->m_nextFrame = source->m_nextFrame;
+    self->m_data->m_greatestFrame = source->m_greatestFrame;
+    self->m_data->m_nextDelay = source->m_nextDelay;
+    self->m_data->m_playCounter = source->m_playCounter;
+    self->m_data->m_haveReadAll = source->m_haveReadAll;
+    self->m_data->m_isFirstIteration = source->m_isFirstIteration;
 }
 
 static void VXMovie_move(XMovie* self, XMovie* other)
@@ -331,10 +405,10 @@ void XMovie_setDevice(XMovie* self, XIODevice* device)
 {
     if (!self || !self->m_data || !self->m_data->m_reader) return;
     XMovie_stop(self);
-    XMovie_clearCurrent(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
     XImageReader_setDevice(self->m_data->m_reader, device);
+    XMovie_resetPlayback(self->m_data);
     XMovie_setError(self, XImageReaderError_UnknownError, NULL);
 }
 
@@ -349,11 +423,11 @@ void XMovie_setFileName(XMovie* self, const XString* fileName)
     XString* copy;
     if (!self || !self->m_data || !self->m_data->m_reader) return;
     XMovie_stop(self);
-    XMovie_clearCurrent(self->m_data);
     copy = fileName ? XString_create_copy(fileName) : NULL;
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = copy;
     XImageReader_setFileName(self->m_data->m_reader, fileName);
+    XMovie_resetPlayback(self->m_data);
     XMovie_setError(self, XImageReaderError_UnknownError, NULL);
 }
 
@@ -382,7 +456,6 @@ void XMovie_setFormat(XMovie* self, const XString* format)
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
     self->m_data->m_format = copy;
     XImageReader_setFormat(self->m_data->m_reader, format);
-    XMovie_clearCurrent(self->m_data);
 }
 void XMovie_setFormat_2(XMovie* self, const char* format)
 {
@@ -432,8 +505,14 @@ void XMovie_currentPixmap(const XMovie* self, XPixmap* out)
     if (self && self->m_data) XPixmap_copy_base(out, &self->m_data->m_currentPixmap);
 }
 bool XMovie_isValid(const XMovie* self)
-{ return self && self->m_data && self->m_data->m_reader &&
-         XImageReader_canRead(self->m_data->m_reader); }
+{
+    if (!self || !self->m_data || !self->m_data->m_reader) return false;
+    /* 读出至少一帧后，即使顺序设备已经到达 EOF，QMovie 仍然有效；
+       这是 QMoviePrivate::isValid() 的 greatestFrameNumber 快路径
+       （qmovie.cpp:512-527）。 */
+    if (self->m_data->m_greatestFrame >= 0) return true;
+    return XImageReader_canRead(self->m_data->m_reader);
+}
 XImageReaderError XMovie_lastError(const XMovie* self)
 { return self && self->m_data ? self->m_data->m_error : XImageReaderError_UnknownError; }
 XString* XMovie_lastErrorString(const XMovie* self)
@@ -448,20 +527,35 @@ const char* XMovie_lastErrorString_2(const XMovie* self)
 
 bool XMovie_jumpToFrame(XMovie* self, int frameNumber)
 {
-    return XMovie_loadFrame(self, frameNumber);
+    XMoviePrivate* data;
+    if (!self || !(data = self->m_data) || frameNumber < 0) return false;
+    if (data->m_currentFrame == frameNumber) return true;
+    data->m_nextFrame = frameNumber;
+    return XMovie_loadFrame(self, frameNumber, true);
 }
 int XMovie_loopCount(const XMovie* self)
 { return self && self->m_data && self->m_data->m_reader ? XImageReader_loopCount(self->m_data->m_reader) : 0; }
 int XMovie_frameCount(const XMovie* self)
-{ return self && self->m_data && self->m_data->m_reader ? XImageReader_imageCount(self->m_data->m_reader) : 0; }
+{
+    int count;
+    if (!self || !self->m_data || !self->m_data->m_reader) return 0;
+    count = XImageReader_imageCount(self->m_data->m_reader);
+    if (count > 0) return count;
+    return self->m_data->m_haveReadAll && self->m_data->m_greatestFrame >= 0
+        ? self->m_data->m_greatestFrame + 1 : 0;
+}
 int XMovie_nextFrameDelay(const XMovie* self)
-{ return self && self->m_data && self->m_data->m_reader ? XImageReader_nextImageDelay(self->m_data->m_reader) : 0; }
+{ return self && self->m_data ? self->m_data->m_nextDelay : 0; }
 int XMovie_currentFrameNumber(const XMovie* self)
 { return self && self->m_data ? self->m_data->m_currentFrame : -1; }
 int XMovie_speed(const XMovie* self)
 { return self && self->m_data ? self->m_data->m_speed : 100; }
 void XMovie_setSpeed(XMovie* self, int percentSpeed)
-{ if (self && self->m_data) self->m_data->m_speed = percentSpeed < 0 ? 0 : percentSpeed; }
+{
+    /* QMovie 将 speed 作为普通 int 属性保存；Qt 测试明确覆盖 0、
+       INT_MIN 和 INT_MAX（tst_qmovie.cpp:75-82），不能把负数归零。 */
+    if (self && self->m_data) self->m_data->m_speed = percentSpeed;
+}
 void XMovie_scaledSize(const XMovie* self, XSize* out)
 {
     if (!out) return;
@@ -473,7 +567,6 @@ void XMovie_setScaledSize(XMovie* self, const XSize* size)
     if (!self || !self->m_data || !size) return;
     self->m_data->m_scaledSize = *size;
     if (self->m_data->m_reader) XImageReader_setScaledSize(self->m_data->m_reader, size);
-    XMovie_clearCurrent(self->m_data);
 }
 XMovieCacheMode XMovie_cacheMode(const XMovie* self)
 { return self && self->m_data ? self->m_data->m_cacheMode : XMovieCacheMode_CacheNone; }
@@ -482,60 +575,97 @@ void XMovie_setCacheMode(XMovie* self, XMovieCacheMode mode)
 
 void XMovie_start(XMovie* self)
 {
-    XString* message;
+    XMoviePrivate* data;
+    XRect oldRect;
+    bool resized;
     if (!self || !self->m_data) return;
-    if (!XMovie_isValid(self)) {
-        message = XString_create_utf8("Image source is not readable");
-        XMovie_setError(self, XImageReaderError_UnsupportedFormatError, message);
-        if (message) XString_delete_base((XClass*)message);
-        XMovie_error_signal(self, XMovie_lastError(self));
+    data = self->m_data;
+    /* qmovie.cpp:944-952：运行中重复 start() 无操作，暂停状态只恢复
+       播放，不重新读取第 0 帧。 */
+    if (data->m_state == XMovieState_Running) return;
+    if (data->m_state == XMovieState_Paused) {
+        XMovie_setPaused(self, false);
         return;
     }
-    if (!XMovie_loadFrame(self, 0)) {
+    /* QMovie 的第一帧由 _q_loadNextFrame(true) 读取。它先进入 Running
+       并发出 started，再发出 resized/updated/frameChanged；C99 版本无事件
+       循环，后续帧由 jumpToNextFrame() 驱动（qmovie.cpp:468-506）。 */
+    oldRect = data->m_frameRect;
+    if (!XMovie_loadFrame(self, data->m_nextFrame, false)) {
+        XMovie_captureReaderError(self);
         XMovie_error_signal(self, XMovie_lastError(self));
+        XMovie_finished_signal(self);
         return;
     }
     XMovie_setState(self, XMovieState_Running);
     XMovie_started_signal(self);
-    /* 单帧源可以同步完成；动画源保持 Running，由调用方通过
-       jumpToNextFrame 或外部定时器驱动下一帧，避免伪造线程/平台定时器。 */
-    if (XMovie_frameCount(self) <= 1) {
-        XMovie_setState(self, XMovieState_NotRunning);
-        XMovie_finished_signal(self);
-    }
+    resized = oldRect.width != data->m_frameRect.width ||
+              oldRect.height != data->m_frameRect.height;
+    if (resized)
+        XMovie_resized_signal(self, &(XSize){data->m_frameRect.width,
+                                             data->m_frameRect.height});
+    XMovie_updated_signal(self, &data->m_frameRect);
+    XMovie_frameChanged_signal(self, data->m_currentFrame);
 }
 
 bool XMovie_jumpToNextFrame(XMovie* self)
 {
     XMoviePrivate* data;
     int frame;
+    int count;
+    int loops;
     if (!self || !(data = self->m_data) || !data->m_reader) return false;
-    if (!XImageReader_jumpToNextImage(data->m_reader)) {
-        if (data->m_state == XMovieState_Running) {
+    frame = data->m_currentFrame < 0 ? 0 : data->m_currentFrame + 1;
+    count = XMovie_frameCount(self);
+    if (count > 0 && frame >= count) {
+        /* QMoviePrivate::next() 遇到 end marker 后按照 loopCount 决定
+           是否重置到第 0 帧（qmovie.cpp:428-447）。 */
+        if (data->m_isFirstIteration) {
+            data->m_playCounter = XMovie_loopCount(self);
+            data->m_isFirstIteration = false;
+        }
+        loops = data->m_playCounter;
+        if (loops == 0) {
+            data->m_haveReadAll = true;
+            if (data->m_state != XMovieState_Paused) {
+                XMovie_setState(self, XMovieState_NotRunning);
+                XMovie_finished_signal(self);
+            }
+            return false;
+        }
+        if (loops > 0) --data->m_playCounter;
+        frame = 0;
+    }
+    if (!XMovie_loadFrame(self, frame, true)) {
+        XMovie_captureReaderError(self);
+        if (data->m_state != XMovieState_Paused) {
             XMovie_setState(self, XMovieState_NotRunning);
             XMovie_finished_signal(self);
         }
         return false;
     }
-    frame = XImageReader_currentImageNumber(data->m_reader);
-    return XMovie_loadFrame(self, frame);
+    return true;
 }
 void XMovie_setPaused(XMovie* self, bool paused)
 {
     if (!self || !self->m_data) return;
     if (paused) {
-        if (self->m_data->m_state == XMovieState_Running)
+        if (self->m_data->m_state == XMovieState_NotRunning) return;
+        if (self->m_data->m_state != XMovieState_Paused)
             XMovie_setState(self, XMovieState_Paused);
-    } else if (self->m_data->m_state == XMovieState_Paused) {
-        /* Resume the current decoded frame.  Restarting from frame zero would
-         * violate QMovie pause/resume semantics for multi-frame GIFs. */
+    } else {
+        if (self->m_data->m_state == XMovieState_Running) return;
         XMovie_setState(self, XMovieState_Running);
     }
 }
 void XMovie_stop(XMovie* self)
 {
     if (!self || !self->m_data) return;
+    if (self->m_data->m_state == XMovieState_NotRunning) return;
     XMovie_setState(self, XMovieState_NotRunning);
+    /* Qt stop() 保留当前帧，只把下一次 start() 的游标放回 0
+       （qmovie.cpp:964-972）。 */
+    self->m_data->m_nextFrame = 0;
 }
 
 static void XMovie_emit(XMovie* self, size_t signal, XVarList* args)

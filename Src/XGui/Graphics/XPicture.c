@@ -31,7 +31,10 @@ enum
     XPICTURE_MAX_POINTS = 65535,
     XPICTURE_PATH_HEADER_SIZE = 8,
     XPICTURE_PATH_ELEMENT_SIZE = 12,
-    XPICTURE_MAX_PATH_ELEMENTS = 65535
+    XPICTURE_MAX_PATH_ELEMENTS = 65535,
+    XPICTURE_CLIP_REGION_HEADER_SIZE = 8,
+    XPICTURE_CLIP_RECT_SIZE = 16,
+    XPICTURE_MAX_CLIP_RECTS = 65535
 };
 
 static uint16_t XPicture_getU16(const uint8_t* p)
@@ -213,16 +216,21 @@ static bool XPicture_validatePathPayload(const uint8_t* payload,
         if (!isfinite(XPicture_getF32(element + 4)) ||
             !isfinite(XPicture_getF32(element + 8)))
             return false;
-        if (type == (uint32_t)XPainterPathElement_CurveTo)
-            pendingCurveData = 2u;
-        else if (type == (uint32_t)XPainterPathElement_CurveToData)
+        if (pendingCurveData != 0u)
         {
-            if (pendingCurveData == 0u)
+            /* QPainterPath stores every cubic curve as one CurveTo followed
+               immediately by two CurveToData elements.  Ending the pending
+               sequence on MoveTo/LineTo, or starting another CurveTo before
+               both data elements arrive, would make the stream appear valid
+               here while XPicture_rebuildPath() necessarily rejects it. */
+            if (type != (uint32_t)XPainterPathElement_CurveToData)
                 return false;
             --pendingCurveData;
         }
-        else
-            pendingCurveData = 0u;
+        else if (type == (uint32_t)XPainterPathElement_CurveTo)
+            pendingCurveData = 2u;
+        else if (type == (uint32_t)XPainterPathElement_CurveToData)
+            return false;
     }
     return pendingCurveData == 0u;
 }
@@ -257,7 +265,7 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (length > size - offset) return false;
         payload = bytes + offset;
         if (opcode < XPictureOpcode_DrawLine ||
-            opcode > XPictureOpcode_SetViewTransformEnabled)
+            opcode > XPictureOpcode_SetClipRegion)
             return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
             (opcode == XPictureOpcode_SetPen && length != 20u) ||
@@ -271,6 +279,8 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
             (opcode == XPictureOpcode_SetViewport && length != 16u) ||
             (opcode == XPictureOpcode_SetViewTransformEnabled &&
              length != 4u) ||
+            (opcode == XPictureOpcode_SetClipEnabled && length != 4u) ||
+            (opcode == XPictureOpcode_SetClipRect && length != 20u) ||
             (opcode == XPictureOpcode_SetBackgroundColor && length != 4u) ||
             (opcode == XPictureOpcode_SetBackgroundMode && length != 4u) ||
             (opcode == XPictureOpcode_SetBrush && length != 8u) ||
@@ -336,6 +346,36 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (opcode == XPictureOpcode_SetViewTransformEnabled &&
             XPicture_getU32(payload) > 1u)
             return false;
+#if XPAINTER_CLIP_ON
+        if (opcode == XPictureOpcode_SetClipEnabled &&
+            XPicture_getU32(payload) > 1u)
+            return false;
+        if (opcode == XPictureOpcode_SetClipRect &&
+            XPicture_getU32(payload + 16u) > 2u)
+            return false;
+#if XPAINTER_CLIP_REGION_ON
+        if (opcode == XPictureOpcode_SetClipRegion)
+        {
+            uint32_t count;
+            uint64_t required;
+            if (length < XPICTURE_CLIP_REGION_HEADER_SIZE) return false;
+            count = XPicture_getU32(payload + 0u);
+            required = (uint64_t)XPICTURE_CLIP_REGION_HEADER_SIZE +
+                       (uint64_t)count * XPICTURE_CLIP_RECT_SIZE;
+            if (count > XPICTURE_MAX_CLIP_RECTS ||
+                required != length || XPicture_getU32(payload + 4u) > 2u)
+                return false;
+        }
+#else
+        if (opcode == XPictureOpcode_SetClipRegion)
+            return false;
+#endif /* XPAINTER_CLIP_REGION_ON */
+#else
+        if (opcode == XPictureOpcode_SetClipEnabled ||
+            opcode == XPictureOpcode_SetClipRect ||
+            opcode == XPictureOpcode_SetClipRegion)
+            return false;
+#endif /* XPAINTER_CLIP_ON */
         offset += length;
     }
     return offset == size && commandBytes == offset - XPICTURE_HEADER_SIZE;
@@ -835,6 +875,69 @@ bool XPicture_recordSetViewTransformEnabled(XPicture* self, bool enabled)
                                  payload, sizeof(payload));
 }
 
+bool XPicture_recordSetClipEnabled(XPicture* self, bool enabled)
+{
+    uint8_t payload[4];
+    if (!self) return false;
+    /* Qt QPicturePaintEngine::updateClipEnabled() writes a fixed boolean
+       command (qpaintengine_pic.cpp:152-159).  Keep the wire value explicit
+       so malformed streams cannot depend on host bool width. */
+    XPicture_putU32(payload, enabled ? 1u : 0u);
+    return XPicture_appendRecord(self, XPictureOpcode_SetClipEnabled,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetClipRect(XPicture* self, const XRect* rect,
+                                int operation)
+{
+    uint8_t payload[20];
+    if (!self || !rect || operation < 0 || operation > 2) return false;
+    /* 矩形裁剪是 QRegion 的单矩形子集；保留逻辑坐标和 ClipOperation，
+       由回放目标的当前变换重新映射，符合 Qt 状态命令的时序语义。 */
+    XPicture_putI32(payload + 0u, rect->x);
+    XPicture_putI32(payload + 4u, rect->y);
+    XPicture_putI32(payload + 8u, rect->width);
+    XPicture_putI32(payload + 12u, rect->height);
+    XPicture_putU32(payload + 16u, (uint32_t)operation);
+    return XPicture_appendRecord(self, XPictureOpcode_SetClipRect,
+                                 payload, sizeof(payload));
+}
+
+bool XPicture_recordSetClipRegion(XPicture* self, const XRegion* region,
+                                  int operation)
+{
+    uint64_t payloadSize64;
+    uint32_t count;
+    uint8_t* payload;
+    int i;
+    bool ok;
+    if (!self || !region || operation < 0 || operation > 2 ||
+        region->count < 0 || region->count > XPICTURE_MAX_CLIP_RECTS)
+        return false;
+    count = (uint32_t)region->count;
+    if (count != 0u && !region->rects) return false;
+    payloadSize64 = (uint64_t)XPICTURE_CLIP_REGION_HEADER_SIZE +
+                    (uint64_t)count * XPICTURE_CLIP_RECT_SIZE;
+    if (payloadSize64 > UINT32_MAX) return false;
+    payload = (uint8_t*)XMalloc_System((size_t)payloadSize64);
+    if (!payload) return false;
+    XPicture_putU32(payload + 0u, count);
+    XPicture_putU32(payload + 4u, (uint32_t)operation);
+    for (i = 0; i < region->count; ++i)
+    {
+        uint8_t* dest = payload + XPICTURE_CLIP_REGION_HEADER_SIZE +
+                        (uint32_t)i * XPICTURE_CLIP_RECT_SIZE;
+        XPicture_putI32(dest + 0u, region->rects[i].x);
+        XPicture_putI32(dest + 4u, region->rects[i].y);
+        XPicture_putI32(dest + 8u, region->rects[i].width);
+        XPicture_putI32(dest + 12u, region->rects[i].height);
+    }
+    ok = XPicture_appendRecord(self, XPictureOpcode_SetClipRegion,
+                               payload, (uint32_t)payloadSize64);
+    XFree_System(payload);
+    return ok;
+}
+
 bool XPicture_recordSetBackgroundColor(XPicture* self, uint32_t color)
 {
     uint8_t payload[4];
@@ -1256,8 +1359,9 @@ static bool XPicture_rebuildPath(const uint8_t* payload, XPainterPath* path)
 #endif /* XPAINTER_PATH_ON */
 
 /*
- * 录制时虚线/点线已被拆分为若干实线段；回放时若画笔仍为虚线样式会被
- * 二次拆分，因此回放期间强制改用实线画笔，结束后恢复调用方原样式。
+ * Picture 录制后端对普通 DrawLine 会把虚线/点线拆分为若干实线段，
+ * 但 DrawPolyline/DrawPath 仍以一个高层命令保存，回放时必须保留记录
+ * 中的画笔样式，以便这些高层命令继续按 Qt QPicture 语义绘制。
  */
 static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
 {
@@ -1284,6 +1388,9 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                后端上再次追加 SetPen 命令。 */
             painter->m_state.m_penColor = XPicture_getU32(payload + 0);
 #if XPAINTER_PENSTYLE_ON
+            /* 普通 DrawLine 直接派发到底层回调，不会再次经过
+               XPainter_drawLine() 的样式拆分；Polyline/Path 的回放
+               则需要读取该样式来复现 Qt 的高层命令行为。 */
             painter->m_state.m_penStyle =
                 (XPainterPenStyle)XPicture_getI32(payload + 4);
             painter->m_state.m_penWidth = XPicture_getI32(payload + 8);
@@ -1400,6 +1507,53 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
             ok = true;
         }
+#if XPAINTER_CLIP_ON
+        else if (opcode == XPictureOpcode_SetClipEnabled)
+        {
+            /* QPicture emits a separate enabled flag after the clip region
+               update.  Use the public setter while replay is marked to avoid
+               recursively appending a record to a Picture destination. */
+            XPainter_setClipping(painter, XPicture_getU32(payload) != 0u);
+            ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetClipRect)
+        {
+            XRect rect;
+            rect.x = (int)XPicture_getI32(payload + 0u);
+            rect.y = (int)XPicture_getI32(payload + 4u);
+            rect.width = (int)XPicture_getI32(payload + 8u);
+            rect.height = (int)XPicture_getI32(payload + 12u);
+            XPainter_setClipRect(painter, &rect,
+                                 (XPainterClipOperation)XPicture_getU32(payload + 16u));
+            ok = true;
+        }
+#if XPAINTER_CLIP_REGION_ON
+        else if (opcode == XPictureOpcode_SetClipRegion)
+        {
+            uint32_t count = XPicture_getU32(payload + 0u);
+            uint32_t operation = XPicture_getU32(payload + 4u);
+            XRegion region;
+            uint32_t i;
+            XRegion_init(&region);
+            for (i = 0; i < count; ++i)
+            {
+                const uint8_t* source = payload +
+                    XPICTURE_CLIP_REGION_HEADER_SIZE +
+                    i * XPICTURE_CLIP_RECT_SIZE;
+                XRect rect;
+                rect.x = (int)XPicture_getI32(source + 0u);
+                rect.y = (int)XPicture_getI32(source + 4u);
+                rect.width = (int)XPicture_getI32(source + 8u);
+                rect.height = (int)XPicture_getI32(source + 12u);
+                XRegion_addRect(&region, &rect);
+            }
+            XPainter_setClipRegion(painter, &region,
+                                   (XPainterClipOperation)operation);
+            XRegion_deinit(&region);
+            ok = true;
+        }
+#endif /* XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON */
         else if (opcode == XPictureOpcode_SetBackgroundColor)
         {
             /* QPicture playback restores PdcSetBkColor as a solid brush.
@@ -1669,13 +1823,19 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
 bool XPicture_play(const XPicture* self, XPainter* painter)
 {
     bool ok;
+    bool savedReplaying = false;
 #if XPAINTER_PENSTYLE_ON
     XPainterPenStyle savedStyle = painter
         ? painter->m_state.m_penStyle : XPainterPenStyle_SolidLine;
-    if (painter)
-        painter->m_state.m_penStyle = XPainterPenStyle_SolidLine;
 #endif /* XPAINTER_PENSTYLE_ON */
+    if (painter)
+    {
+        savedReplaying = painter->m_replaying;
+        painter->m_replaying = true;
+    }
     ok = XPicture_play_inner(self, painter);
+    if (painter)
+        painter->m_replaying = savedReplaying;
 #if XPAINTER_PENSTYLE_ON
     if (painter)
         painter->m_state.m_penStyle = savedStyle;

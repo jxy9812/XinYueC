@@ -258,8 +258,9 @@ XPointF XColorSpace_whitePoint(const XColorSpace* self);
  * @brief 设置色彩空间白点的 CIE xy 坐标。
  * @param self 待修改的色彩空间指针。
  * @param whitePoint 新白点坐标；必须满足 CIE xy 有限范围约束。
- * @note 修改会将预定义原色标记为 Custom，并清除命名空间和描述文本；当前
- *       C99 值类型不保存 Qt 的色彩适应矩阵，因此只更新可见白点元数据。
+ * @note 修改会将预定义原色标记为 Custom，并清除命名空间和自动描述；通过
+ *       XColorSpace_setDescription 设置的用户描述按 Qt 语义保留。当前 C99
+ *       值类型不保存 Qt 的色彩适应矩阵，因此只更新可见白点元数据。
  */
 void XColorSpace_setWhitePoint(XColorSpace* self, XPointF whitePoint);
 
@@ -267,17 +268,29 @@ void XColorSpace_setWhitePoint(XColorSpace* self, XPointF whitePoint);
  * @brief 将原色集合替换为预定义原色。
  * @param self 待修改的色彩空间指针。
  * @param primaries 新的原色集合；Custom 不执行修改。
- * @note 修改会清除命名空间和描述文本，并保留当前传递函数。
+ * @note 修改会清除命名空间和自动描述，并保留用户描述及当前传递函数。
  */
 void XColorSpace_setPrimaries(XColorSpace* self,
                               XColorSpacePrimaries primaries);
+
+/**
+ * @brief 将原色设置为自定义的四组 CIE xy 色度坐标。
+ * @param self 待修改的色彩空间指针。
+ * @param primaries 白点及红、绿、蓝三原色坐标；四个坐标均须有效。
+ * @note 对标 Qt 6.8 `QColorSpace::setPrimaries(white, red, green, blue)`。
+ *       设置后原色标记为 Custom，清除命名空间和自动描述但保留用户描述，
+ *       并保留当前传递函数；若传递函数尚未完成，色彩空间仍保持无效但保留
+ *       元数据。
+ */
+void XColorSpace_setPrimariesData(XColorSpace* self,
+                                  const XColorSpacePrimariesData* primaries);
 
 /**
  * @brief 修改色彩空间的传递函数。
  * @param self 待修改的色彩空间指针。
  * @param transferFunction 新传递函数；Custom 不执行修改。
  * @param gamma Gamma 函数伽马值；传入非正值时使用实现的默认近似值。
- * @note 修改会清除命名空间和描述文本，并保持原色及颜色模型。
+ * @note 修改会清除命名空间和自动描述，并保持用户描述、原色及颜色模型。
  */
 void XColorSpace_setTransferFunction(
     XColorSpace* self,

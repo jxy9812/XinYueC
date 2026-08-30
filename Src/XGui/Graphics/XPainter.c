@@ -1789,6 +1789,41 @@ static void painterRecord_viewTransformEnabled(XPainter* self)
 }
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
 
+#if XPAINTER_CLIP_ON
+/* Qt QPicturePaintEngine 序列化裁剪状态时分别写入启用标志和裁剪区域
+   （qpaintengine_pic.cpp:152-159、247-269）。回放期间直接调用同一
+   XPainter setter，但 m_replaying 会抑制再次向 Picture 追加记录。 */
+static void painterRecord_clipEnabled(XPainter* self)
+{
+    if (!self || self->m_replaying ||
+        self->m_deviceKind != XPainterDevice_Picture || !self->m_picture)
+        return;
+    (void)XPicture_recordSetClipEnabled(self->m_picture,
+                                        self->m_state.m_hasClip);
+}
+
+static void painterRecord_clipRect(XPainter* self, const XRect* rect,
+                                   XPainterClipOperation operation)
+{
+    if (!self || self->m_replaying ||
+        self->m_deviceKind != XPainterDevice_Picture || !self->m_picture)
+        return;
+    (void)XPicture_recordSetClipRect(self->m_picture, rect, (int)operation);
+}
+
+#if XPAINTER_CLIP_REGION_ON
+static void painterRecord_clipRegion(XPainter* self, const XRegion* region,
+                                     XPainterClipOperation operation)
+{
+    if (!self || self->m_replaying ||
+        self->m_deviceKind != XPainterDevice_Picture || !self->m_picture)
+        return;
+    (void)XPicture_recordSetClipRegion(self->m_picture, region,
+                                       (int)operation);
+}
+#endif /* XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON */
+
 /* Qt QPicturePaintEngine::updateBackground() records PdcSetBkColor as a
    separate fixed-color command (qpaintengine_pic.cpp:219-231).  Keep this
    record independent of the optional background-brush feature so cropped
@@ -2461,6 +2496,24 @@ static void painterEllipseParams(const XRect* rect, float* cx, float* cy,
     *rx = (float)rect->width * 0.5f;
     *ry = (float)rect->height * 0.5f;
 }
+
+/**
+ * @brief      将圆弧跨度限制为 Qt 路径引擎支持的一整圆范围。
+ * @param spanAngle 输入的跨度，单位为十六分之一度。
+ * @return       限制到 [-5760, 5760] 后的跨度。
+ *
+ * Qt 6.8 的 qt_curves_for_arc() 在生成贝塞尔曲线前会把超过一整圆的
+ * sweepLength 截断为正负 360 度。XPainter 的图像后端使用折线近似路径，
+ * 因此也必须先截断，否则大跨度会重复描边，尤其会改变虚线画笔的相位。
+ * 便携 shape 回调仍接收原始 opcode 参数，由回调自行决定其协议语义。
+ */
+static int painterClampArcSpan(int spanAngle)
+{
+    const int fullCircle = 360 * 16;
+    if (spanAngle > fullCircle) return fullCircle;
+    if (spanAngle < -fullCircle) return -fullCircle;
+    return spanAngle;
+}
 #endif /* XPAINTER_POLYGON_ON || XPAINTER_SHAPE_ON || XPAINTER_PATH_ON */
 
 /* ========== XPainter 公开 API ========== */
@@ -2471,6 +2524,7 @@ void XPainter_init(XPainter* self, void* userData)
     memset(self, 0, sizeof(*self));
     self->m_userData = userData;
     painterDefaultState(&self->m_state);
+    self->m_replaying = false;
     self->m_initialized = true;
 }
 
@@ -2591,6 +2645,7 @@ bool XPainter_end(XPainter* self)
 #if XPAINTER_PATH_ON
     self->m_drawPath = NULL;
 #endif
+    self->m_replaying = false;
     painterDefaultState(&self->m_state);
     return wasActive;
 }
@@ -3569,7 +3624,9 @@ static bool painterDrawPolyLineFloat(XPainter* self,
                                painterRound(uys[i + 1])))
             return false;
     }
-    if (close && n > 2)
+    /* 闭合请求对两点多边形同样有效：Qt 会把末点重新连接到首点，
+       因而产生与正向边重合的反向边；开放折线传 close=false，不受影响。 */
+    if (close && n >= 2)
         return XPainter_drawLine(self, painterRound(uxs[n - 1]),
                                  painterRound(uys[n - 1]),
                                  painterRound(uxs[0]),
@@ -3630,7 +3687,7 @@ bool XPainter_drawArc(XPainter* self, const XRect* rect,
                                  startAngle, spanAngle, false, 0, 0);
     painterEllipseParams(&normalized, &cx, &cy, &rx, &ry);
     deg0 = (float)startAngle / 16.0f;
-    degS = (float)spanAngle / 16.0f;
+    degS = (float)painterClampArcSpan(spanAngle) / 16.0f;
     painterArcPoints(cx, cy, rx, ry,
                      deg0 * XPAINTER_DEG_TO_RAD, degS * XPAINTER_DEG_TO_RAD,
                      32, xs, ys, &n);
@@ -3666,7 +3723,7 @@ bool XPainter_drawPie(XPainter* self, const XRect* rect,
                                  painterBrushShouldFill(self), 0, 0);
     painterEllipseParams(&normalized, &cx, &cy, &rx, &ry);
     deg0 = (float)startAngle / 16.0f;
-    degS = (float)spanAngle / 16.0f;
+    degS = (float)painterClampArcSpan(spanAngle) / 16.0f;
     painterArcPoints(cx, cy, rx, ry,
                      deg0 * XPAINTER_DEG_TO_RAD, degS * XPAINTER_DEG_TO_RAD,
                      32, xs, ys, &n);
@@ -3712,7 +3769,7 @@ bool XPainter_drawChord(XPainter* self, const XRect* rect,
                                  painterBrushShouldFill(self), 0, 0);
     painterEllipseParams(&normalized, &cx, &cy, &rx, &ry);
     deg0 = (float)startAngle / 16.0f;
-    degS = (float)spanAngle / 16.0f;
+    degS = (float)painterClampArcSpan(spanAngle) / 16.0f;
     painterArcPoints(cx, cy, rx, ry,
                      deg0 * XPAINTER_DEG_TO_RAD, degS * XPAINTER_DEG_TO_RAD,
                      32, xs, ys, &n);
@@ -3841,7 +3898,12 @@ bool XPainter_drawPolygon(XPainter* self, const XPoint* points, int count,
     if (count >= 3 && painterBrushShouldFill(self))
         if (!painterFillPolygonShape(self, count, xs, ys, fillRule))
             return false;
-    return painterDrawPolyLineFloat(self, xs, ys, count, count >= 3);
+    /* Qt QPainter::drawPolygon() 将首点隐式连接到末点，即使仅给出
+       两个顶点也会形成闭合轮廓（第二条边与第一条边重合）。保持
+       count==2 的闭合语义，避免与 QPaintEngineEx::drawPolygon()
+       （qpainter.cpp:4558-4588、qpaintengineex.cpp:903-912）不一致；
+       三点及以上仍按通常多边形闭合。 */
+    return painterDrawPolyLineFloat(self, xs, ys, count, count >= 2);
 }
 
 bool XPainter_drawConvexPolygon(XPainter* self, const XPoint* points,
@@ -4578,6 +4640,10 @@ void XPainter_setBrushGradient(XPainter* self, const XPainterGradient* gradient)
         /* 无渐变时保持现有 QBrush 颜色；仅清空渐变载荷。 */
         memset(&self->m_state.m_brush.m_gradient, 0,
                sizeof(self->m_state.m_brush.m_gradient));
+        /* Qt QPainter::setBrush() 会标记 DirtyBrush。渐变载荷不能由
+           当前固定长度 Picture opcode 表达，但切回纯色样式可以安全
+           记录；否则回放到已有渐变状态时会错误保留旧渐变。 */
+        painterRecord_brush(self);
         return;
     }
     /* QBrush(const QGradient&) 以 QColor() 构造画刷，color().rgb() 按
@@ -4706,6 +4772,7 @@ void XPainter_setClipRect(XPainter* self, const XRect* rect,
         self->m_state.m_hasClipRect = true;
         self->m_state.m_clipOperation = XPainterClipOperation_NoClip;
         self->m_state.m_hasClip = false;
+        painterRecord_clipRect(self, rect, operation);
         return;
     }
     if (!painterMapClipRect(&self->m_state, rect, &mapped)) return;
@@ -4742,6 +4809,7 @@ void XPainter_setClipRect(XPainter* self, const XRect* rect,
     self->m_state.m_hasClipRect = true;
     self->m_state.m_clipOperation = operation;
     self->m_state.m_hasClip = operation != XPainterClipOperation_NoClip;
+    painterRecord_clipRect(self, rect, operation);
 }
 
 bool XPainter_hasClipping(const XPainter* self)
@@ -4760,6 +4828,7 @@ void XPainter_setClipping(XPainter* self, bool enable)
                        XPainterClipOperation_NoClip))
         return;
     self->m_state.m_hasClip = enable;
+    painterRecord_clipEnabled(self);
 }
 
 void XPainter_clipBoundingRect(const XPainter* self, XRect* out)
@@ -4834,6 +4903,7 @@ void XPainter_setClipRegion(XPainter* self, const XRegion* region,
         self->m_state.m_hasClipRect = true;
         self->m_state.m_clipOperation = XPainterClipOperation_NoClip;
         self->m_state.m_hasClip = false;
+        painterRecord_clipRegion(self, region, operation);
         XRegion_deinit(&mapped);
         return;
     }
@@ -4857,6 +4927,7 @@ void XPainter_setClipRegion(XPainter* self, const XRegion* region,
     self->m_state.m_hasClipRect = true;
     self->m_state.m_clipOperation = operation;
     self->m_state.m_hasClip = operation != XPainterClipOperation_NoClip;
+    painterRecord_clipRegion(self, region, operation);
     XRegion_deinit(&mapped);
 }
 

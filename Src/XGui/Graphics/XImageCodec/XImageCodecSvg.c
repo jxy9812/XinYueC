@@ -135,6 +135,158 @@ done:
     return ok;
 }
 
+/*
+ * 将 XML 字节流规范化为 UTF-8 窄字符串。
+ *
+ * Qt 的 SVG 图像处理器把普通输入交给 QXmlStreamReader（
+ * qsvgiohandler.cpp:62-65），因此 Qt 的 SVG 插件测试会接受 UTF-8、
+ * UTF-16LE/BE 以及 UTF-32LE/BE（qsvgplugin/tst_qsvgplugin.cpp:124-165）。
+ * 本文件的轻量 DOM 解析器只接受窄字符；此前直接 memcpy 原始输入时，
+ * UTF-16/32 中的零字节会被当作字符串结尾或标签内容，合法 SVG 会被
+ * 错误拒绝。这里仅实现 XML 常见的 BOM/字节序识别和 Unicode 标量值
+ * 转换，不引入完整 XML 库，符合嵌入式构建约束。
+ *
+ * 输出容量按输入大小的两倍加一分配：UTF-16 的单个代码单元最多产生
+ * 三个 UTF-8 字节，UTF-32 的单个代码单元最多产生四个字节，因此该容量
+ * 对所有受支持输入足够。所有单元边界、代理项和整数溢出都先检查，
+ * 防止截断输入被当作有效 SVG 继续解析。
+ */
+static bool svgDecodeXmlText(const uint8_t* data, size_t size,
+                             char** outText, size_t* outSize)
+{
+    const size_t sizeMax = (size_t)-1;
+    size_t offset = 0;
+    size_t unit = 1;
+    bool little = true;
+    bool encoded = false;
+    size_t capacity;
+    size_t used = 0;
+    char* text;
+    if (!data || !size || !outText || !outSize) return false;
+
+    /* BOM 优先于启发式字节序判断；顺序必须先检查四字节 BOM。 */
+    if (size >= 4 && data[0] == 0xff && data[1] == 0xfe &&
+        data[2] == 0x00 && data[3] == 0x00) {
+        offset = 4; unit = 4; little = true; encoded = true;
+    } else if (size >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
+               data[2] == 0xfe && data[3] == 0xff) {
+        offset = 4; unit = 4; little = false; encoded = true;
+    } else if (size >= 2 && data[0] == 0xff && data[1] == 0xfe) {
+        offset = 2; unit = 2; little = true; encoded = true;
+    } else if (size >= 2 && data[0] == 0xfe && data[1] == 0xff) {
+        offset = 2; unit = 2; little = false; encoded = true;
+    } else if (size >= 3 && data[0] == 0xef && data[1] == 0xbb &&
+               data[2] == 0xbf) {
+        /* UTF-8 BOM 不是多字节转换输入，只需剔除。 */
+        offset = 3;
+    } else if (size >= 4 && data[0] == '<' && data[1] == 0x00 &&
+               data[2] == 0x00 && data[3] == 0x00) {
+        offset = 0; unit = 4; little = true; encoded = true;
+    } else if (size >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
+               data[2] == 0x00 && data[3] == '<') {
+        offset = 0; unit = 4; little = false; encoded = true;
+    } else if (size >= 2 && data[0] == '<' && data[1] == 0x00) {
+        offset = 0; unit = 2; little = true; encoded = true;
+    } else if (size >= 2 && data[0] == 0x00 && data[1] == '<') {
+        offset = 0; unit = 2; little = false; encoded = true;
+    }
+
+    if (offset > size || (size - offset) % unit != 0) return false;
+    if (size > (sizeMax - 1) / 2) return false;
+    capacity = size * 2 + 1;
+    text = (char*)XMalloc_System(capacity);
+    if (!text) return false;
+
+    if (!encoded) {
+        /* XML 中嵌入 NUL 不合法；拒绝它可避免后续 strstr 截断输入。 */
+        if (memchr(data + offset, 0, size - offset) != NULL) {
+            XFree_System(text);
+            return false;
+        }
+        memcpy(text, data + offset, size - offset);
+        used = size - offset;
+    } else {
+        size_t pos = offset;
+        while (pos < size) {
+            uint32_t cp;
+            size_t encodedSize;
+            if (unit == 2) {
+                uint32_t first = little ?
+                    (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) :
+                    ((uint32_t)data[pos] << 8) | (uint32_t)data[pos + 1];
+                pos += 2;
+                if (first >= 0xd800u && first <= 0xdbffu) {
+                    uint32_t second;
+                    if (pos >= size) { XFree_System(text); return false; }
+                    second = little ?
+                        (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) :
+                        ((uint32_t)data[pos] << 8) | (uint32_t)data[pos + 1];
+                    if (second < 0xdc00u || second > 0xdfffu) {
+                        XFree_System(text);
+                        return false;
+                    }
+                    pos += 2;
+                    cp = 0x10000u + ((first - 0xd800u) << 10) +
+                         (second - 0xdc00u);
+                } else if (first >= 0xdc00u && first <= 0xdfffu) {
+                    XFree_System(text);
+                    return false;
+                } else {
+                    cp = first;
+                }
+            } else {
+                cp = little ?
+                    (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) |
+                    ((uint32_t)data[pos + 2] << 16) |
+                    ((uint32_t)data[pos + 3] << 24) :
+                    ((uint32_t)data[pos] << 24) |
+                    ((uint32_t)data[pos + 1] << 16) |
+                    ((uint32_t)data[pos + 2] << 8) | (uint32_t)data[pos + 3];
+                pos += 4;
+                if (cp > 0x10ffffu || (cp >= 0xd800u && cp <= 0xdfffu)) {
+                    XFree_System(text);
+                    return false;
+                }
+            }
+            if (cp == 0 || cp <= 0x7fu) {
+                encodedSize = 1;
+            } else if (cp <= 0x7ffu) {
+                encodedSize = 2;
+            } else if (cp <= 0xffffu) {
+                encodedSize = 3;
+            } else {
+                encodedSize = 4;
+            }
+            if (used > capacity - encodedSize - 1) {
+                XFree_System(text);
+                return false;
+            }
+            if (cp == 0) {
+                XFree_System(text);
+                return false;
+            } else if (encodedSize == 1) {
+                text[used++] = (char)cp;
+            } else if (encodedSize == 2) {
+                text[used++] = (char)(0xc0u | (cp >> 6));
+                text[used++] = (char)(0x80u | (cp & 0x3fu));
+            } else if (encodedSize == 3) {
+                text[used++] = (char)(0xe0u | (cp >> 12));
+                text[used++] = (char)(0x80u | ((cp >> 6) & 0x3fu));
+                text[used++] = (char)(0x80u | (cp & 0x3fu));
+            } else {
+                text[used++] = (char)(0xf0u | (cp >> 18));
+                text[used++] = (char)(0x80u | ((cp >> 12) & 0x3fu));
+                text[used++] = (char)(0x80u | ((cp >> 6) & 0x3fu));
+                text[used++] = (char)(0x80u | (cp & 0x3fu));
+            }
+        }
+    }
+    text[used] = '\0';
+    *outText = text;
+    *outSize = used;
+    return true;
+}
+
 #if XIMAGECODEC_SVG_VECTOR_ON
 /* ===================================================================== */
 /* SVG 矢量渲染器（自包含、零第三方依赖）                                  */
@@ -2881,12 +3033,16 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
     SvgArena arena;
     SvgNode* root;
     const char* v;
+    char* text;
+    size_t textSize;
     double dims[2] = {0.0, 0.0};
     double widthD = 0.0, heightD = 0.0;
     int ok = 0;
     if (!data || !size || !width || !height) return false;
+    if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
     svgArenaInit(&arena);
-    root = svgParseDom((const char*)data, size, &arena);
+    root = svgParseDom(text, textSize, &arena);
+    XFree_System(text);
     if (!root || strcmp(root->m_name, "svg") != 0) {
         svgArenaCleanup(&arena);
         return false;
@@ -2917,30 +3073,28 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
     return ok != 0;
 #else
     char* text;
+    size_t textSize;
     const char* widthAttr = NULL;
     const char* heightAttr = NULL;
     const char* viewBox = NULL;
     double widthD = 0.0, heightD = 0.0;
     if (!data || !size || !width || !height) return false;
-    text = (char*)XMalloc_System(size + 1);
-    if (!text) return false;
-    memcpy(text, data, size);
-    text[size] = '\0';
+    if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
     widthAttr = strstr(text, "width");
     heightAttr = strstr(text, "height");
     viewBox = strstr(text, "viewBox");
     if (widthAttr &&
-        (size_t)(widthAttr - text) < size) {
+        (size_t)(widthAttr - text) < textSize) {
         double v;
         if (svgParseLengthSimple(widthAttr + 5, &v) && v > 0.0) widthD = v;
     }
     if (heightAttr &&
-        (size_t)(heightAttr - text) < size) {
+        (size_t)(heightAttr - text) < textSize) {
         double v;
         if (svgParseLengthSimple(heightAttr + 6, &v) && v > 0.0) heightD = v;
     }
     if ((widthD <= 0.0 || heightD <= 0.0) && viewBox &&
-        (size_t)(viewBox - text) < size) {
+        (size_t)(viewBox - text) < textSize) {
         double values[4] = {0.0, 0.0, 0.0, 0.0};
         int n = 0;
         if (svgParseNumberListSimple(viewBox + 7, values, 4, &n) &&
@@ -2978,11 +3132,9 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
     const char* marker = "data:image/png;base64,";
     const uint8_t* p;
     char* text;
+    size_t textSize;
     if (!data || !out || !size) return false;
-    text = (char*)XMalloc_System(size + 1);
-    if (!text) return false;
-    memcpy(text, data, size);
-    text[size] = '\0';
+    if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
 
     /* 形态 1：内嵌 PNG 位图（编码路径的产物，逐像素还原）。 */
     p = (const uint8_t*)strstr(text, marker);
@@ -2992,7 +3144,7 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         bool result;
         p += strlen(marker);
         end = (const uint8_t*)strchr((const char*)p, '"');
-        if (!end) end = (const uint8_t*)text + size;
+        if (!end) end = (const uint8_t*)text + textSize;
         encoded = svgBase64Decode(p, (size_t)(end - p));
         result = encoded &&
                  XImageCodecInternal_decodePng(
@@ -3005,7 +3157,7 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
 
 #if XIMAGECODEC_SVG_VECTOR_ON
     /* 形态 2：矢量渲染。 */
-    if (svgVectorDecode(text, size, out)) {
+    if (svgVectorDecode(text, textSize, out)) {
         XFree_System(text);
         return true;
     }
@@ -3016,13 +3168,13 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         int width, height;
         uint32_t color;
         XImage temp;
-        width = svgNumber((const uint8_t*)text, size, "width", 0);
-        height = svgNumber((const uint8_t*)text, size, "height", 0);
+        width = svgNumber((const uint8_t*)text, textSize, "width", 0);
+        height = svgNumber((const uint8_t*)text, textSize, "height", 0);
         if (width <= 0 || height <= 0 || width > INT_MAX || height > INT_MAX) {
             XFree_System(text);
             return false;
         }
-        color = svgColor((const uint8_t*)text, size);
+        color = svgColor((const uint8_t*)text, textSize);
         XImage_init_ex(&temp, width, height, XImageFormat_ARGB32);
         if (XImage_isNull(&temp)) {
             XFree_System(text);

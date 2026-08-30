@@ -4,10 +4,12 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImageIOHandler.h"
+#include "XImageReader.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include <string.h>
+#include <limits.h>
 
 /**
  * @brief      XImageIOHandler 私有数据
@@ -304,9 +306,86 @@ void XImageIOHandler_currentImageRect_base(const XImageIOHandler* self, XRect* o
     XClassGetVirtualFunc(self, EXImageIOHandler_CurrentImageRect, void(*)(const XImageIOHandler*, XRect*))(self, out);
 }
 
+/*
+ * 按 Qt 6.8 QImageData::calculateImageParameters() 的规则计算图像分配量。
+ * QImageIOHandler::allocateImage() 使用不低于 32 位的有效深度检查限制，
+ * 即使目标格式本身只有 1/8 位，也必须按 GUI 最终常用的 32 位估算。
+ * 同时保留 XImage 的 int 行跨度/总字节数边界，避免通过检查后在本地
+ * XImageData_create() 中发生截断。依据 qimageiohandler.cpp:532-557、
+ * qimage_p.h:88-115。
+ */
+static bool XImageIOHandler_calculateAllocation(const XSize* size,
+                                                XImageFormat format,
+                                                uint64_t* totalSize)
+{
+    uint64_t depth;
+    uint64_t bitsPerLine;
+    uint64_t bytesPerLine;
+    uint64_t actualBytesPerLine;
+    uint64_t actualTotalSize;
+
+    if (!size || !totalSize || size->width <= 0 || size->height <= 0 ||
+        format <= XImageFormat_Invalid || format >= XImageFormat_NImageFormats)
+        return false;
+
+    depth = (uint64_t)XImageFormat_bitDepth(format);
+    if (depth < 32u) depth = 32u;
+    /* 对齐 Qt 的 width > (INT_MAX - 31) / depth 溢出拒绝分支。 */
+    if (depth == 0u || (uint64_t)size->width >
+        ((uint64_t)INT_MAX - 31u) / depth)
+        return false;
+    bitsPerLine = (uint64_t)size->width * depth;
+    if (bitsPerLine > UINT64_MAX - 31u)
+        return false;
+    bytesPerLine = ((bitsPerLine + 31u) >> 5) << 2;
+    if (bytesPerLine == 0u || (uint64_t)size->height >
+        UINT64_MAX / bytesPerLine)
+        return false;
+    *totalSize = (uint64_t)size->height * bytesPerLine;
+
+    /* XImageData 使用 int 保存行跨度和 sizeInBytes，先拒绝本实现无法
+       表示的实际格式存储量；这不会放宽 Qt 的 allocationLimit 检查。 */
+    actualBytesPerLine = (uint64_t)XImageFormat_bytesPerLine(size->width, format);
+    if (actualBytesPerLine == 0u || (uint64_t)size->height >
+        (uint64_t)INT_MAX / actualBytesPerLine)
+        return false;
+    actualTotalSize = (uint64_t)size->height * actualBytesPerLine;
+    return actualTotalSize > 0u && actualTotalSize <= (uint64_t)INT_MAX;
+}
+
 bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImage* image)
 {
-    if (!size || !image) return false;
+    uint64_t totalSize;
+    int allocationLimitMb;
+    uint64_t limitBytes;
+
+    if (!size || !image || !XImageIOHandler_calculateAllocation(size, format,
+                                                                  &totalSize))
+        return false;
+
+    /* 与 Qt 相同：同尺寸同格式只 detach，避免无谓地重建像素缓冲区；
+       复用路径不重新应用 allocationLimit，因为没有新的分配。 */
+    if (XImage_width(image) == size->width &&
+        XImage_height(image) == size->height &&
+        XImage_format(image) == format) {
+        XImage_detach(image);
+        return !XImage_isNull(image);
+    }
+
+    allocationLimitMb = XImageReader_allocationLimit();
+    if (allocationLimitMb > 0) {
+        limitBytes = (uint64_t)(unsigned)allocationLimitMb * (uint64_t)1024u *
+                     (uint64_t)1024u;
+        /* Qt 以 totalSize >> 20 和余数比较；直接比较字节数等价且不会
+           在恰好 MB 边界时误放行。 */
+        if (totalSize > limitBytes)
+            return false;
+    }
+
+    /* Qt 只有通过全部参数与限制校验后才替换输出图像，失败时保留
+       调用方原有内容。XImage 的 C 输出对象通常已初始化，释放旧数据
+       后再建立新对象，避免覆盖 m_data 造成泄漏。 */
+    XImage_deinit_base(image);
     XImage_init_ex(image, size->width, size->height, format);
     return !XImage_isNull(image);
 }

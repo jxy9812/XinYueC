@@ -60,15 +60,31 @@ static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color);
 static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb);
 static uint16_t XImage_load16(const uint8_t* p);
 static void XImage_store16(uint8_t* p, uint16_t value);
+static uint32_t XImage_load32(const uint8_t* p);
 static void XImage_store32(uint8_t* p, uint32_t value);
 static uint16_t XImage_floatToHalf(float value);
 static float XImage_halfToFloat(uint16_t value);
 static uint16_t XImage_unpremultiply16(uint16_t value, uint16_t alpha);
 static uint16_t XImage_premultiply16(uint16_t value, uint16_t alpha);
+static void XImage_writePixelColor16(XImageData* d, int x, int y,
+                                     uint16_t red, uint16_t green,
+                                     uint16_t blue, uint16_t alpha);
 static XColor XImage_colorFrom16(uint16_t red, uint16_t green,
                                  uint16_t blue, uint16_t alpha);
 static void XImage_detachMetadata(XImage* self);
 bool XImage_allGray(const XImage* self);
+
+/**
+ * @brief 获取嵌入式图像对象使用的默认水平/垂直分辨率。
+ * @return 按 Qt 6.8 默认 96 DPI 换算得到的每米点数。
+ * @note Qt 在 QImageData 构造时以 qt_defaultDpiX/Y() * 100 / 2.54
+ *       初始化 dpmx/dpmy；XScreen 的默认逻辑 DPI 同样为 96，因此在
+ *       不暴露平台 DPI 查询的嵌入式实现中使用对应的固定换算值。
+ */
+static int XImage_defaultDotsPerMeter(void)
+{
+    return (int)(96.0f * 100.0f / 2.54f + 0.5f);
+}
 
 static int64_t XImageData_nextCacheKey(void)
 {
@@ -287,6 +303,9 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     d->m_format = format;
     d->m_colorSpace = XColorSpace_create();
     d->m_depth = depth;
+    /* 对齐 Qt qimage.cpp:92-100 的 QImageData 默认 dpmx/dpmy。 */
+    d->m_dpmX = XImage_defaultDotsPerMeter();
+    d->m_dpmY = XImage_defaultDotsPerMeter();
     d->m_devicePixelRatio = 1.0f;
     d->m_cleanupFunc = cleanupFunc;
     d->m_cleanupInfo = cleanupInfo;
@@ -647,6 +666,31 @@ static bool XImage_colorSpaceTargetCompatible(const XImage* self,
     return XImage_colorSpaceTargetCompatibleModel(dataModel, colorSpace);
 }
 
+/* 对标 Qt 6.8 toPixelFormat(format).colorModel() 的目标格式检查。 */
+static bool XImage_colorSpaceTargetCompatibleFormat(XImageFormat format,
+                                                     const XColorSpace* colorSpace)
+{
+    XPixelFormat pixel;
+    XColorSpaceColorModel model;
+    if (format <= XImageFormat_Invalid ||
+        format >= XImageFormat_NImageFormats || !colorSpace)
+        return false;
+    /* 先验证枚举范围，再查格式表；Qt 的 Invalid/越界格式必须直接
+       返回失败，不能让不可信调用者触发格式表越界读取。 */
+    pixel = XImageFormat_toPixelFormat(format);
+    switch (pixel.m_model)
+    {
+        case XPixelFormatModel_Gray: model = XColorSpaceModel_Gray; break;
+        case XPixelFormatModel_CMYK: model = XColorSpaceModel_Cmyk; break;
+        case XPixelFormatModel_Alpha: model = XColorSpaceModel_Undefined; break;
+        case XPixelFormatModel_Indexed:
+        case XPixelFormatModel_RGB:
+        case XPixelFormatModel_BGR: model = XColorSpaceModel_Rgb; break;
+        default: model = XColorSpaceModel_Undefined; break;
+    }
+    return XImage_colorSpaceTargetCompatibleModel(model, colorSpace);
+}
+
 void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
 {
     if (!self || !self->m_data) return;
@@ -709,6 +753,270 @@ static uint8_t XImage_colorSpaceChannel(float value)
     return (uint8_t)(value * 255.0f + 0.5f);
 }
 
+/*
+ * Qt QColorSpace 将每个 RGB 原色的 xy 色度转换为 XYZ 列向量，再用白点
+ * 反解出三个缩放因子（qcolorspace.cpp:87-103）。XColorSpace 没有引入
+ * Qt 的私有 QColorMatrix，而是在这里按相同的行主序矩阵临时计算，避免
+ * 把 GUI 私有实现细节暴露到公共 C99 结构体中。
+ */
+static void XImage_matrixMap(const float matrix[9], const float input[3],
+                             float output[3]);
+
+static void XImage_matrixMultiply(const float left[9], const float right[9],
+                                  float output[9])
+{
+    int row, column;
+    for (row = 0; row < 3; ++row)
+        for (column = 0; column < 3; ++column)
+        {
+            float value = 0.0f;
+            int index;
+            for (index = 0; index < 3; ++index)
+                value += left[row * 3 + index] * right[index * 3 + column];
+            output[row * 3 + column] = value;
+        }
+}
+
+static bool XImage_colorSpacePrimariesMatrix(const XColorSpace* colorSpace,
+                                             float matrix[9])
+{
+    XColorSpacePrimariesData primaries;
+    float red[3], green[3], blue[3], white[3], inverse[9];
+    float scale[3];
+    if (!colorSpace || XColorSpace_colorModel(colorSpace) != XColorSpaceModel_Rgb ||
+        !XColorSpace_primariesData(colorSpace, &primaries))
+        return false;
+    if (!(primaries.m_redPoint.y > 0.0f) ||
+        !(primaries.m_greenPoint.y > 0.0f) ||
+        !(primaries.m_bluePoint.y > 0.0f) ||
+        !(primaries.m_whitePoint.y > 0.0f))
+        return false;
+    red[0] = primaries.m_redPoint.x / primaries.m_redPoint.y;
+    red[1] = 1.0f;
+    red[2] = (1.0f - primaries.m_redPoint.x - primaries.m_redPoint.y) /
+             primaries.m_redPoint.y;
+    green[0] = primaries.m_greenPoint.x / primaries.m_greenPoint.y;
+    green[1] = 1.0f;
+    green[2] = (1.0f - primaries.m_greenPoint.x - primaries.m_greenPoint.y) /
+              primaries.m_greenPoint.y;
+    blue[0] = primaries.m_bluePoint.x / primaries.m_bluePoint.y;
+    blue[1] = 1.0f;
+    blue[2] = (1.0f - primaries.m_bluePoint.x - primaries.m_bluePoint.y) /
+             primaries.m_bluePoint.y;
+    white[0] = primaries.m_whitePoint.x / primaries.m_whitePoint.y;
+    white[1] = 1.0f;
+    white[2] = (1.0f - primaries.m_whitePoint.x - primaries.m_whitePoint.y) /
+               primaries.m_whitePoint.y;
+    matrix[0] = red[0]; matrix[1] = green[0]; matrix[2] = blue[0];
+    matrix[3] = red[1]; matrix[4] = green[1]; matrix[5] = blue[1];
+    matrix[6] = red[2]; matrix[7] = green[2]; matrix[8] = blue[2];
+    {
+        const float determinant = matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7]) -
+                                  matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6]) +
+                                  matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6]);
+        if (!isfinite((double)determinant) || fabsf(determinant) < 1.0e-8f)
+            return false;
+        inverse[0] = (matrix[4] * matrix[8] - matrix[5] * matrix[7]) / determinant;
+        inverse[1] = (matrix[2] * matrix[7] - matrix[1] * matrix[8]) / determinant;
+        inverse[2] = (matrix[1] * matrix[5] - matrix[2] * matrix[4]) / determinant;
+        inverse[3] = (matrix[5] * matrix[6] - matrix[3] * matrix[8]) / determinant;
+        inverse[4] = (matrix[0] * matrix[8] - matrix[2] * matrix[6]) / determinant;
+        inverse[5] = (matrix[2] * matrix[3] - matrix[0] * matrix[5]) / determinant;
+        inverse[6] = (matrix[3] * matrix[7] - matrix[4] * matrix[6]) / determinant;
+        inverse[7] = (matrix[1] * matrix[6] - matrix[0] * matrix[7]) / determinant;
+        inverse[8] = (matrix[0] * matrix[4] - matrix[1] * matrix[3]) / determinant;
+    }
+    scale[0] = inverse[0] * white[0] + inverse[1] * white[1] + inverse[2] * white[2];
+    scale[1] = inverse[3] * white[0] + inverse[4] * white[1] + inverse[5] * white[2];
+    scale[2] = inverse[6] * white[0] + inverse[7] * white[1] + inverse[8] * white[2];
+    if (!isfinite((double)scale[0]) || !isfinite((double)scale[1]) ||
+        !isfinite((double)scale[2]))
+        return false;
+    matrix[0] *= scale[0]; matrix[1] *= scale[1]; matrix[2] *= scale[2];
+    matrix[3] *= scale[0]; matrix[4] *= scale[1]; matrix[5] *= scale[2];
+    matrix[6] *= scale[0]; matrix[7] *= scale[1]; matrix[8] *= scale[2];
+    return true;
+}
+
+static bool XImage_matrixInverse(const float matrix[9], float inverse[9])
+{
+    const float determinant = matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7]) -
+                              matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6]) +
+                              matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6]);
+    if (!isfinite((double)determinant) || fabsf(determinant) < 1.0e-8f)
+        return false;
+    inverse[0] = (matrix[4] * matrix[8] - matrix[5] * matrix[7]) / determinant;
+    inverse[1] = (matrix[2] * matrix[7] - matrix[1] * matrix[8]) / determinant;
+    inverse[2] = (matrix[1] * matrix[5] - matrix[2] * matrix[4]) / determinant;
+    inverse[3] = (matrix[5] * matrix[6] - matrix[3] * matrix[8]) / determinant;
+    inverse[4] = (matrix[0] * matrix[8] - matrix[2] * matrix[6]) / determinant;
+    inverse[5] = (matrix[2] * matrix[3] - matrix[0] * matrix[5]) / determinant;
+    inverse[6] = (matrix[3] * matrix[7] - matrix[4] * matrix[6]) / determinant;
+    inverse[7] = (matrix[1] * matrix[6] - matrix[0] * matrix[7]) / determinant;
+    inverse[8] = (matrix[0] * matrix[4] - matrix[1] * matrix[3]) / determinant;
+    return true;
+}
+
+static void XImage_matrixMap(const float matrix[9], const float input[3],
+                             float output[3])
+{
+    output[0] = matrix[0] * input[0] + matrix[1] * input[1] + matrix[2] * input[2];
+    output[1] = matrix[3] * input[0] + matrix[4] * input[1] + matrix[5] * input[2];
+    output[2] = matrix[6] * input[0] + matrix[7] * input[1] + matrix[8] * input[2];
+}
+
+/* 对齐 QColorMatrix::chromaticAdaptation()：Bradford 将任意白点映射到
+ * D50，供 source/target 矩阵在同一个 PCS 中组合。 */
+static bool XImage_chromaticAdaptationToD50(XPointF whitePoint, float matrix[9])
+{
+    static const float bradford[9] = {
+        0.8951f, -0.7502f, 0.0389f, 0.2664f, 1.7135f, -0.0685f,
+        -0.1614f, 0.0367f, 1.0296f
+    };
+    static const float bradfordInverse[9] = {
+        0.9869929f, 0.4323053f, -0.0085287f, -0.1470543f, 0.5183603f,
+        0.0400428f, 0.1599627f, 0.0492912f, 0.9684867f
+    };
+    const float sourceWhite[3] = {
+        whitePoint.x / whitePoint.y, 1.0f,
+        (1.0f - whitePoint.x - whitePoint.y) / whitePoint.y
+    };
+    const float destinationWhite[3] = {
+        0.34567f / 0.35850f, 1.0f,
+        (1.0f - 0.34567f - 0.35850f) / 0.35850f
+    };
+    float sourceCone[3], destinationCone[3];
+    if (!(whitePoint.y > 0.0f) || !isfinite((double)whitePoint.x) ||
+        !isfinite((double)whitePoint.y))
+        return false;
+    XImage_matrixMap(bradford, sourceWhite, sourceCone);
+    XImage_matrixMap(bradford, destinationWhite, destinationCone);
+    if (fabsf(sourceCone[0]) < 1.0e-8f || fabsf(sourceCone[1]) < 1.0e-8f ||
+        fabsf(sourceCone[2]) < 1.0e-8f)
+        return false;
+    {
+        float diagonal[9] = {
+            destinationCone[0] / sourceCone[0], 0.0f, 0.0f,
+            0.0f, destinationCone[1] / sourceCone[1], 0.0f,
+            0.0f, 0.0f, destinationCone[2] / sourceCone[2]
+        };
+        float temporary[9];
+        XImage_matrixMultiply(diagonal, bradford, temporary);
+        XImage_matrixMultiply(bradfordInverse, temporary, matrix);
+    }
+    return true;
+}
+
+/* 返回 Qt QColorSpacePrivate::toXyz 的等效矩阵。RGB 空间先由原色和
+ * 白点得到 RGB->XYZ 矩阵，再将白点适配到 D50；灰度空间的三个输入轴
+ * 都指向它的白点向量，等价于 Qt loadGray() 的 source whitePoint 路径。 */
+static bool XImage_colorSpaceToXyz(const XColorSpace* colorSpace,
+                                   float matrix[9])
+{
+    XColorSpaceColorModel model;
+    float adaptation[9];
+    if (!colorSpace || !XColorSpace_isValid(colorSpace)) return false;
+    model = XColorSpace_colorModel(colorSpace);
+    if (model == XColorSpaceModel_Rgb)
+    {
+        if (!XImage_colorSpacePrimariesMatrix(colorSpace, matrix)) return false;
+        {
+            XColorSpacePrimariesData primaries;
+            float adapted[9];
+            if (!XColorSpace_primariesData(colorSpace, &primaries) ||
+                !XImage_chromaticAdaptationToD50(primaries.m_whitePoint,
+                                                 adaptation))
+                return false;
+            XImage_matrixMultiply(adaptation, matrix, adapted);
+            memcpy(matrix, adapted, sizeof(adapted));
+        }
+        return true;
+    }
+    if (model == XColorSpaceModel_Gray)
+    {
+        const XPointF whitePoint = XColorSpace_whitePoint(colorSpace);
+        const float white[3] = {
+            whitePoint.x / whitePoint.y, 1.0f,
+            (1.0f - whitePoint.x - whitePoint.y) / whitePoint.y
+        };
+        float adaptedWhite[3];
+        if (!XImage_chromaticAdaptationToD50(whitePoint, adaptation)) return false;
+        XImage_matrixMap(adaptation, white, adaptedWhite);
+        matrix[0] = adaptedWhite[0]; matrix[1] = adaptedWhite[0]; matrix[2] = adaptedWhite[0];
+        matrix[3] = adaptedWhite[1]; matrix[4] = adaptedWhite[1]; matrix[5] = adaptedWhite[1];
+        matrix[6] = adaptedWhite[2]; matrix[7] = adaptedWhite[2]; matrix[8] = adaptedWhite[2];
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 将一个 32 位 ARGB 颜色通过已经准备好的矩阵完成色彩转换。
+ * @param argb 源颜色，通道顺序为 0xAARRGGBB。
+ * @param sourceSpace 源色彩空间。
+ * @param targetSpace 目标色彩空间。
+ * @param sourceMatrix 源色彩空间到 D50 XYZ 的矩阵。
+ * @param targetInverse 目标矩阵的逆矩阵，灰度目标时为目标适配矩阵的逆。
+ * @param sourceIsRgb 源色彩空间是否为 RGB 模型。
+ * @param targetIsRgb 目标色彩空间是否为 RGB 模型。
+ * @return 转换后的 32 位 ARGB 颜色，Alpha 通道保持不变。
+ * @note 该辅助函数使用与逐像素路径相同的 8 位量化规则，供
+ *       Indexed/Mono 调色板逐项转换复用。Qt 6.8 在 qimage.cpp:5211-5217
+ *       对 Indexed 数据变换的是颜色表，而不是图像中保存的索引字节。
+ */
+static uint32_t XImage_convertColorSpaceColor(
+    uint32_t argb, const XColorSpace* sourceSpace,
+    const XColorSpace* targetSpace, const float sourceMatrix[9],
+    const float targetInverse[9], bool sourceIsRgb, bool targetIsRgb)
+{
+    float sourceLinear[3], xyz[3], targetLinear[3];
+    const float r = XImage_decodeTransfer(
+        (float)((argb >> 16) & 0xffu) / 255.0f,
+        sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+    const float g = XImage_decodeTransfer(
+        (float)((argb >> 8) & 0xffu) / 255.0f,
+        sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+    const float b = XImage_decodeTransfer(
+        (float)(argb & 0xffu) / 255.0f,
+        sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+    sourceLinear[0] = r;
+    sourceLinear[1] = g;
+    sourceLinear[2] = b;
+    if (!sourceIsRgb)
+        sourceLinear[1] = sourceLinear[2] = r;
+    XImage_matrixMap(sourceMatrix, sourceLinear, xyz);
+    if (targetIsRgb)
+        XImage_matrixMap(targetInverse, xyz, targetLinear);
+    else
+    {
+        /* Qt 的灰度输出使用目标白点适配后的 Y 分量。 */
+        XImage_matrixMap(targetInverse, xyz, targetLinear);
+        targetLinear[0] = targetLinear[1];
+        targetLinear[2] = targetLinear[1];
+    }
+    return (argb & 0xff000000u) |
+           ((uint32_t)XImage_colorSpaceChannel(XImage_encodeTransfer(
+               targetLinear[0], targetSpace->m_transferFunction,
+               targetSpace->m_gamma)) << 16) |
+           ((uint32_t)XImage_colorSpaceChannel(XImage_encodeTransfer(
+               targetLinear[1], targetSpace->m_transferFunction,
+               targetSpace->m_gamma)) << 8) |
+           (uint32_t)XImage_colorSpaceChannel(XImage_encodeTransfer(
+               targetLinear[2], targetSpace->m_transferFunction,
+               targetSpace->m_gamma));
+}
+
+/**
+ * @brief 判断像素格式是否通过颜色表保存颜色索引。
+ * @param format 待判断的 XImage 像素格式。
+ * @return Indexed8、Mono 或 MonoLSB 返回 true，否则返回 false。
+ */
+static bool XImage_isIndexedColorFormat(XImageFormat format)
+{
+    return format == XImageFormat_Indexed8 ||
+           format == XImageFormat_Mono || format == XImageFormat_MonoLSB;
+}
+
 static void XImage_convertColorSpacePixels(const XImage* source,
                                            XImage* target,
                                            XColorSpace sourceSpace,
@@ -716,31 +1024,71 @@ static void XImage_convertColorSpacePixels(const XImage* source,
 {
     const bool sourceKnown = XColorSpace_isValid(&sourceSpace);
     const bool targetKnown = XColorSpace_isValid(&targetSpace);
+    const bool sourceIsRgb = XColorSpace_colorModel(&sourceSpace) == XColorSpaceModel_Rgb;
+    const bool targetIsRgb = XColorSpace_colorModel(&targetSpace) == XColorSpaceModel_Rgb;
+    float sourceMatrix[9], targetMatrix[9], targetInverse[9];
     if (!source || !target || !sourceKnown || !targetKnown) return;
     if (XColorSpace_equals(&sourceSpace, &targetSpace)) return;
+    if (!XImage_colorSpaceToXyz(&sourceSpace, sourceMatrix) ||
+        !XImage_colorSpaceToXyz(&targetSpace, targetMatrix))
+        return;
+    if (targetIsRgb && !XImage_matrixInverse(targetMatrix, targetInverse))
+        return;
+    if (!targetIsRgb)
+    {
+        const XPointF targetWhitePoint = XColorSpace_whitePoint(&targetSpace);
+        float targetAdaptation[9];
+        if (!XImage_chromaticAdaptationToD50(targetWhitePoint,
+                                             targetAdaptation) ||
+            !XImage_matrixInverse(targetAdaptation, targetInverse))
+            return;
+    }
+
+    /* Qt 6.8 qimage.cpp:5211-5217 对 Indexed color model 只变换调色板，
+     * 保存的索引位不能当作 RGB 值写回。XImage_setPixel() 对索引格式的
+     * 参数含义本来就是“索引”，若把变换后的 ARGB 直接传入会只保留低
+     * 字节，既破坏索引又无法改变颜色。目标可能是另一种索引格式，先
+     * 保持源格式的调色板语义，调用者再按 Qt 的中间格式规则转换。 */
+    if (source->m_data && target->m_data &&
+        XImage_isIndexedColorFormat(source->m_data->m_format) &&
+        XImage_isIndexedColorFormat(target->m_data->m_format))
+    {
+        const int sourceCount = source->m_data->m_colorCount;
+        const int targetCount = target->m_data->m_colorCount;
+        const int count = sourceCount < targetCount ? sourceCount : targetCount;
+        XImage_detach(target);
+        if (!XImage_isDetached(target)) return;
+        if (source->m_data->m_colorTable && target->m_data->m_colorTable &&
+            count > 0)
+        {
+            for (int i = 0; i < count; ++i)
+                target->m_data->m_colorTable[i] =
+                    XImage_convertColorSpaceColor(
+                        source->m_data->m_colorTable[i], &sourceSpace,
+                        &targetSpace, sourceMatrix, targetInverse,
+                        sourceIsRgb, targetIsRgb);
+        }
+        return;
+    }
+
     const int width = XImage_width(source), height = XImage_height(source);
     for (int y = 0; y < height; ++y)
     {
         for (int x = 0; x < width; ++x)
         {
             const uint32_t argb = XImage_pixel(source, x, y);
-            const float r = XImage_encodeTransfer(
-                XImage_decodeTransfer((float)((argb >> 16) & 0xffu) / 255.0f,
-                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
-                targetSpace.m_transferFunction, targetSpace.m_gamma);
-            const float g = XImage_encodeTransfer(
-                XImage_decodeTransfer((float)((argb >> 8) & 0xffu) / 255.0f,
-                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
-                targetSpace.m_transferFunction, targetSpace.m_gamma);
-            const float b = XImage_encodeTransfer(
-                XImage_decodeTransfer((float)(argb & 0xffu) / 255.0f,
-                                      sourceSpace.m_transferFunction, sourceSpace.m_gamma),
-                targetSpace.m_transferFunction, targetSpace.m_gamma);
-            XImage_setPixel(target, x, y,
-                            (argb & 0xff000000u) |
-                            ((uint32_t)XImage_colorSpaceChannel(r) << 16) |
-                            ((uint32_t)XImage_colorSpaceChannel(g) << 8) |
-                            XImage_colorSpaceChannel(b));
+            const uint32_t converted = XImage_convertColorSpaceColor(
+                argb, &sourceSpace, &targetSpace, sourceMatrix, targetInverse,
+                sourceIsRgb, targetIsRgb);
+            if (!targetIsRgb &&
+                (XImage_format(target) == XImageFormat_Grayscale8 ||
+                 XImage_format(target) == XImageFormat_Grayscale16))
+            {
+                XImage_writePixelValue(target->m_data, x, y,
+                                       converted);
+                continue;
+            }
+            XImage_setPixel(target, x, y, converted);
         }
     }
 }
@@ -788,6 +1136,31 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
     XImage_setColorSpace(out, colorSpace);
 }
 
+void XImage_convertedToColorSpace_ex(const XImage* self, XColorSpace colorSpace,
+                                     XImageFormat format, uint32_t flags,
+                                     XImage* out)
+{
+    XColorTransform transform;
+    if (!out) return;
+    if (!self || !self->m_data ||
+        !XColorSpace_isValid(&self->m_data->m_colorSpace) ||
+        !XColorSpace_isValidTarget(&colorSpace) ||
+        !XImage_colorSpaceTargetCompatibleFormat(format, &colorSpace))
+    {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
+    if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace))
+    {
+        XImage_convertToFormat(self, format, flags, out);
+        return;
+    }
+    transform.m_source = self->m_data->m_colorSpace;
+    transform.m_target = colorSpace;
+    XImage_applyColorTransform(self, &transform, format, flags, out);
+}
+
 bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
                                 uint32_t flags)
 {
@@ -810,11 +1183,36 @@ bool XImage_convertToColorSpace(XImage* self, XColorSpace colorSpace,
     return true;
 }
 
+bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
+                                   XImageFormat format, uint32_t flags)
+{
+    XImage converted;
+    if (!self || !self->m_data ||
+        !XColorSpace_isValid(&self->m_data->m_colorSpace) ||
+        !XColorSpace_isValidTarget(&colorSpace) ||
+        !XImage_colorSpaceTargetCompatibleFormat(format, &colorSpace))
+        return false;
+    if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace))
+        return XImage_convertToFormatInPlace(self, format, flags);
+    XImage_init(&converted);
+    XImage_convertedToColorSpace_ex(self, colorSpace, format, flags, &converted);
+    if (XImage_isNull(&converted))
+    {
+        XImage_deinit_base(&converted);
+        return false;
+    }
+    XImage_deinit_base(self);
+    XImage_move_base(self, &converted);
+    XImage_deinit_base(&converted);
+    return true;
+}
+
 void XImage_applyColorTransform(const XImage* self, const XColorTransform* transform,
                                 XImageFormat format, uint32_t flags, XImage* out)
 {
     XColorSpace source;
     XImageFormat outputFormat = format;
+    XImageFormat transformFormat = format;
     if (!self || !out || !transform ||
         !XColorSpace_isValidTarget(&transform->m_target))
     {
@@ -886,8 +1284,31 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
             return;
         }
     }
+
+    /* Qt 6.8 qimage.cpp:5467-5527 先选择可直接执行颜色变换的中间格式，
+     * 最后再转换为调用者要求的格式。Indexed/Mono 的颜色变换尤其需要
+     * 先保留索引格式以变换颜色表；非索引图像则先转到 ARGB32，避免把
+     * 变换后的 ARGB 值误当作 Indexed8 的索引写入。 */
+    if (outputFormat != XImageFormat_Invalid &&
+        XImage_isIndexedColorFormat(outputFormat))
+    {
+        transformFormat = XImage_isIndexedColorFormat(XImage_format(self))
+            ? XImage_format(self) : XImageFormat_ARGB32;
+    }
     XImage_copy_base(out, self);
-    if (outputFormat != XImageFormat_Invalid && outputFormat != XImage_format(out))
+    if (transformFormat != XImageFormat_Invalid &&
+        transformFormat != XImage_format(out))
+    {
+        XImage converted;
+        XImage_init(&converted);
+        XImage_convertToFormat(out, transformFormat, flags, &converted);
+        XImage_move_base(out, &converted);
+        XImage_deinit_base(&converted);
+    }
+    XImage_convertColorSpacePixels(self, out, source, transform->m_target);
+
+    if (outputFormat != XImageFormat_Invalid &&
+        outputFormat != XImage_format(out))
     {
         XImage converted;
         XImage_init(&converted);
@@ -895,7 +1316,6 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         XImage_move_base(out, &converted);
         XImage_deinit_base(&converted);
     }
-    XImage_convertColorSpacePixels(self, out, source, transform->m_target);
     XImage_setColorSpace(out, transform->m_target);
 }
 
@@ -1055,8 +1475,10 @@ void XImage_fill(XImage* self, uint32_t pixel)
         const float r = ((float)((pixel >> 16) & 0xffu)) / 255.0f;
         const float g = ((float)((pixel >> 8) & 0xffu)) / 255.0f;
         const float b = ((float)(pixel & 0xffu)) / 255.0f;
-        const float a = d->m_format == XImageFormat_RGBX16FPx4
-            ? 1.0f : ((float)((pixel >> 24) & 0xffu)) / 255.0f;
+        /* QImage::fill(uint) uses QRgbaFloat16::fromArgb32(pixel) for
+         * RGBX16FPx4 too; unlike fill(QColor), it does not force X alpha to
+         * opaque. Keep the storage value supplied by the caller. */
+        const float a = ((float)((pixel >> 24) & 0xffu)) / 255.0f;
         for (y = 0; y < d->m_height; ++y)
             for (x = 0; x < d->m_width; ++x)
             {
@@ -1072,8 +1494,9 @@ void XImage_fill(XImage* self, uint32_t pixel)
         const uint16_t r = (uint16_t)(((pixel >> 16) & 0xffu) * 257u);
         const uint16_t g = (uint16_t)(((pixel >> 8) & 0xffu) * 257u);
         const uint16_t b = (uint16_t)((pixel & 0xffu) * 257u);
-        const uint16_t a = d->m_format == XImageFormat_RGBX64
-            ? 0xffffu : (uint16_t)(((pixel >> 24) & 0xffu) * 257u);
+        /* Qt qimage.cpp:1792-1795 constructs RGBX64 fromArgb32(pixel)
+         * without the opaque OR used by setPixel(). */
+        const uint16_t a = (uint16_t)(((pixel >> 24) & 0xffu) * 257u);
         for (y = 0; y < d->m_height; ++y)
             for (x = 0; x < d->m_width; ++x)
             {
@@ -1087,8 +1510,9 @@ void XImage_fill(XImage* self, uint32_t pixel)
         const float r = ((float)((pixel >> 16) & 0xffu)) / 255.0f;
         const float g = ((float)((pixel >> 8) & 0xffu)) / 255.0f;
         const float b = ((float)(pixel & 0xffu)) / 255.0f;
-        const float a = d->m_format == XImageFormat_RGBX32FPx4
-            ? 1.0f : ((float)((pixel >> 24) & 0xffu)) / 255.0f;
+        /* As with the 16-bit float layout, fill(uint) preserves the caller's
+         * ARGB alpha in the X component (qimage.cpp:1802-1806). */
+        const float a = ((float)((pixel >> 24) & 0xffu)) / 255.0f;
         for (y = 0; y < d->m_height; ++y)
             for (x = 0; x < d->m_width; ++x)
             {
@@ -1135,12 +1559,14 @@ void XImage_fill(XImage* self, uint32_t pixel)
 void XImage_fillColor(XImage* self, const XColor* color)
 {
     XImageData* d;
+    XColor rgb;
     uint32_t argb;
     int x, y;
     if (!self || !self->m_data || !color || !XColor_isValid(color)) return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
     d = self->m_data;
+    XColor_toRgb(color, &rgb);
     argb = ((uint32_t)XColor_alpha(color) << 24) |
            ((uint32_t)XColor_red(color) << 16) |
            ((uint32_t)XColor_green(color) << 8) |
@@ -1174,6 +1600,30 @@ void XImage_fillColor(XImage* self, const XColor* color)
             memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
                    (int)(uint8_t)index, (size_t)d->m_width);
     }
+    else if (d->m_format == XImageFormat_BGR30 ||
+             d->m_format == XImageFormat_RGB30 ||
+             d->m_format == XImageFormat_A2BGR30_Premultiplied ||
+             d->m_format == XImageFormat_A2RGB30_Premultiplied ||
+             d->m_format == XImageFormat_RGBX64 ||
+             d->m_format == XImageFormat_RGBA64 ||
+             d->m_format == XImageFormat_RGBA64_Premultiplied ||
+             d->m_format == XImageFormat_RGBX16FPx4 ||
+             d->m_format == XImageFormat_RGBA16FPx4 ||
+             d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ||
+             d->m_format == XImageFormat_RGBX32FPx4 ||
+             d->m_format == XImageFormat_RGBA32FPx4 ||
+             d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ||
+             d->m_format == XImageFormat_Grayscale16)
+    {
+        /* Qt qimage.cpp:1847-1960 uses QRgba64/getRgbF for high precision
+         * formats.  Keep the native 16-bit components instead of narrowing
+         * through rgba(), which would discard the low eight bits. */
+        for (y = 0; y < d->m_height; ++y)
+            for (x = 0; x < d->m_width; ++x)
+                XImage_writePixelColor16(d, x, y, rgb.m_comp1,
+                                         rgb.m_comp2, rgb.m_comp3,
+                                         rgb.m_alpha);
+    }
     else
     {
         for (y = 0; y < d->m_height; ++y)
@@ -1183,15 +1633,33 @@ void XImage_fillColor(XImage* self, const XColor* color)
     XImageData_markDirty(d);
 }
 
+static bool XImage_colorTableHasAlpha(const XImageData* data)
+{
+    if (!data || (data->m_format != XImageFormat_Mono &&
+                  data->m_format != XImageFormat_MonoLSB &&
+                  data->m_format != XImageFormat_Indexed8) ||
+        !data->m_colorTable || data->m_colorCount <= 0)
+        return false;
+    for (int i = 0; i < data->m_colorCount; ++i)
+        if ((data->m_colorTable[i] >> 24) != 0xffu)
+            return true;
+    return false;
+}
+
 bool XImage_hasAlphaChannel(const XImage* self)
 {
-    return (self && self->m_data) ? XImageFormat_hasAlpha(self->m_data->m_format) : false;
+    if (!self || !self->m_data) return false;
+    /* Qt qimage.cpp:4591-4600 treats indexed formats specially: an alpha
+       entry anywhere in the color table makes hasAlphaChannel() true, even
+       when no pixel currently references that entry. */
+    return XImageFormat_hasAlpha(self->m_data->m_format) ||
+           XImage_colorTableHasAlpha(self->m_data);
 }
 
 bool XImage_hasAlpha(const XImage* self)
 {
     if (!self || !self->m_data) return false;
-    if (!XImageFormat_hasAlpha(self->m_data->m_format))
+    if (!XImage_hasAlphaChannel(self))
         return false;
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)
@@ -1278,6 +1746,7 @@ XColor XImage_pixelColor(const XImage* self, int x, int y)
 
 void XImage_setPixelColor(XImage* self, int x, int y, const XColor* color)
 {
+    XColor rgb;
     if (!color || !XColor_isValid(color)) return;
     if (!self || !self->m_data) return;
     /* QImage refuses QColor writes to monochrome and paletted storage;
@@ -1286,39 +1755,204 @@ void XImage_setPixelColor(XImage* self, int x, int y, const XColor* color)
         self->m_data->m_format == XImageFormat_MonoLSB ||
         self->m_data->m_format == XImageFormat_Indexed8)
         return;
-    XImage_setPixel(self, x, y, XColor_rgba(color));
+    if (!XImage_valid(self, x, y)) return;
+    XColor_toRgb(color, &rgb);
+    if (self->m_data->m_format == XImageFormat_BGR30 ||
+        self->m_data->m_format == XImageFormat_RGB30 ||
+        self->m_data->m_format == XImageFormat_A2BGR30_Premultiplied ||
+        self->m_data->m_format == XImageFormat_A2RGB30_Premultiplied ||
+        self->m_data->m_format == XImageFormat_RGBX64 ||
+        self->m_data->m_format == XImageFormat_RGBA64 ||
+        self->m_data->m_format == XImageFormat_RGBA64_Premultiplied ||
+        self->m_data->m_format == XImageFormat_RGBX16FPx4 ||
+        self->m_data->m_format == XImageFormat_RGBA16FPx4 ||
+        self->m_data->m_format == XImageFormat_RGBA16FPx4_Premultiplied ||
+        self->m_data->m_format == XImageFormat_RGBX32FPx4 ||
+        self->m_data->m_format == XImageFormat_RGBA32FPx4 ||
+        self->m_data->m_format == XImageFormat_RGBA32FPx4_Premultiplied)
+    {
+        /* Qt uses QColor::rgba64()/getRgbF() for these layouts.  Keep the
+         * native components instead of narrowing through an ARGB32 value. */
+        XImage_detach(self);
+        if (!XImage_isDetached(self)) return;
+        XImage_writePixelColor16(self->m_data, x, y, rgb.m_comp1,
+                                 rgb.m_comp2, rgb.m_comp3, rgb.m_alpha);
+        XImageData_markDirty(self->m_data);
+        return;
+    }
+    XImage_setPixel(self, x, y, XColor_rgba(&rgb));
+}
+
+/*
+ * 对应 Qt 6.8 qimage_p.h:265-310 的 qt_alphaVersion()。
+ * QImage::setAlphaChannel() 不是简单地把无 Alpha 图像升级为 ARGB32，
+ * 而是尽量保留原来的通道深度和布局。例如 RGB16 要升级为
+ * ARGB8565_Premultiplied，RGBX64 要升级为 RGBA64_Premultiplied。这样
+ * DestinationIn 合成不会在调用接口时无故丢失源图像的格式精度。
+ */
+static XImageFormat XImage_alphaVersionForPainting(XImageFormat format)
+{
+    switch (format)
+    {
+        case XImageFormat_RGB32:
+        case XImageFormat_ARGB32:
+            return XImageFormat_ARGB32_Premultiplied;
+        case XImageFormat_RGB16:
+            return XImageFormat_ARGB8565_Premultiplied;
+        case XImageFormat_RGB555:
+            return XImageFormat_ARGB8555_Premultiplied;
+        case XImageFormat_RGB666:
+            return XImageFormat_ARGB6666_Premultiplied;
+        case XImageFormat_RGB444:
+            return XImageFormat_ARGB4444_Premultiplied;
+        case XImageFormat_RGBX8888:
+        case XImageFormat_RGBA8888:
+            return XImageFormat_RGBA8888_Premultiplied;
+        case XImageFormat_BGR30:
+            return XImageFormat_A2BGR30_Premultiplied;
+        case XImageFormat_RGB30:
+            return XImageFormat_A2RGB30_Premultiplied;
+        case XImageFormat_RGBX64:
+        case XImageFormat_RGBA64:
+        case XImageFormat_Grayscale16:
+            return XImageFormat_RGBA64_Premultiplied;
+        case XImageFormat_RGBX16FPx4:
+        case XImageFormat_RGBA16FPx4:
+            return XImageFormat_RGBA16FPx4_Premultiplied;
+        case XImageFormat_RGBX32FPx4:
+        case XImageFormat_RGBA32FPx4:
+            return XImageFormat_RGBA32FPx4_Premultiplied;
+        case XImageFormat_ARGB32_Premultiplied:
+        case XImageFormat_ARGB8565_Premultiplied:
+        case XImageFormat_ARGB8555_Premultiplied:
+        case XImageFormat_ARGB6666_Premultiplied:
+        case XImageFormat_ARGB4444_Premultiplied:
+        case XImageFormat_RGBA8888_Premultiplied:
+        case XImageFormat_A2BGR30_Premultiplied:
+        case XImageFormat_A2RGB30_Premultiplied:
+        case XImageFormat_RGBA64_Premultiplied:
+        case XImageFormat_RGBA16FPx4_Premultiplied:
+        case XImageFormat_RGBA32FPx4_Premultiplied:
+            return format;
+        default:
+            /* Mono、MonoLSB、Indexed8、Alpha8、RGB888、BGR888、Grayscale8 和 CMYK8888
+               没有同深度的可绘制 Alpha 版本，Qt 统一选择 ARGB32PM。 */
+            return XImageFormat_ARGB32_Premultiplied;
+    }
 }
 
 bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
 {
-    if (!self || !self->m_data || !alphaChannel || !alphaChannel->m_data ||
-        self->m_data->m_width != alphaChannel->m_data->m_width ||
-        self->m_data->m_height != alphaChannel->m_data->m_height)
+    XImage sourceCopy;
+    XImage sourceImage;
+    const XImage* source;
+    XImageFormat targetFormat;
+    int targetWidth;
+    int targetHeight;
+    bool sourceImageInitialized = false;
+
+    if (!self || !self->m_data || !self->m_data->m_data ||
+        !alphaChannel || !alphaChannel->m_data || !alphaChannel->m_data->m_data)
         return false;
-    if (!XImage_hasAlphaChannel(self))
+
+    /* Qt 先以值语义保存 alphaChannel。特别是 self == alphaChannel 时，
+       后续的格式升级和写入不能改变我们随后要读取的源 Alpha。 */
+    XImage_init(&sourceCopy);
+    if ((const XImage*)self == alphaChannel)
+    {
+        XImage_copy_base(&sourceCopy, alphaChannel);
+        if (!sourceCopy.m_data)
+            return false;
+        source = &sourceCopy;
+    }
+    else
+    {
+        source = alphaChannel;
+    }
+
+    targetFormat = XImage_alphaVersionForPainting(self->m_data->m_format);
+    if (targetFormat != self->m_data->m_format)
     {
         XImage converted;
         XImage_init(&converted);
-        XImage_convertToFormat(self, XImageFormat_ARGB32, 0, &converted);
-        if (XImage_isNull(&converted)) return false;
-        XImage_deinit_base(self);
-        self->m_data = converted.m_data;
-        converted.m_data = NULL;
+        XImage_convertToFormat(self, targetFormat, 0, &converted);
+        if (XImage_isNull(&converted))
+        {
+            XImage_deinit_base(&sourceCopy);
+            return false;
+        }
+        XImage_move_base(self, &converted);
         XImage_deinit_base(&converted);
     }
     XImage_detach(self);
-    if (!XImage_isDetached(self)) return false;
-    for (int y = 0; y < self->m_data->m_height; ++y)
-        for (int x = 0; x < self->m_data->m_width; ++x)
+    if (!XImage_isDetached(self))
+    {
+        XImage_deinit_base(&sourceCopy);
+        return false;
+    }
+
+    /* qimage.cpp:4569-4576 使用 Alpha8 原图，或把其它来源先转换成
+       Grayscale8，再 reinterpretAsFormat(Alpha8)。重解释只改变格式，
+       不修改字节，因此 8 位灰度索引图的原始索引语义也得到保留。 */
+    XImage_init(&sourceImage);
+    if (XImage_format(source) == XImageFormat_Alpha8)
+    {
+        XImage_copy_base(&sourceImage, source);
+        sourceImageInitialized = sourceImage.m_data != NULL;
+    }
+    else if (XImage_depth(source) == 8 && XImage_isGrayscale(source))
+    {
+        XImage_copy_base(&sourceImage, source);
+        sourceImageInitialized = sourceImage.m_data != NULL &&
+                                 XImage_reinterpretAsFormat(&sourceImage,
+                                                            XImageFormat_Alpha8);
+    }
+    else
+    {
+        XImage_convertToFormat(source, XImageFormat_Grayscale8, 0, &sourceImage);
+        sourceImageInitialized = sourceImage.m_data != NULL &&
+                                 XImage_reinterpretAsFormat(&sourceImage,
+                                                            XImageFormat_Alpha8);
+    }
+    if (!sourceImageInitialized)
+    {
+        XImage_deinit_base(&sourceImage);
+        XImage_deinit_base(&sourceCopy);
+        return false;
+    }
+
+    targetWidth = self->m_data->m_width;
+    targetHeight = self->m_data->m_height;
+    for (int y = 0; y < targetHeight; ++y)
+        for (int x = 0; x < targetWidth; ++x)
         {
-            uint32_t color = XImage_pixel(self, x, y);
-            uint32_t source = XImage_pixel(alphaChannel, x, y);
-            uint8_t alpha = XImage_hasAlphaChannel(alphaChannel)
-                ? (uint8_t)(source >> 24) : XImage_luma(source);
+            const int sourceWidth = XImage_width(&sourceImage);
+            const int sourceHeight = XImage_height(&sourceImage);
+            /* QPainter 的非同尺寸路径启用 SmoothPixmapTransform。XGui
+               没有 QPainter 光栅管线，这里使用中心附近的最近邻采样，
+               对常见 1x1 alpha 图像和同尺寸路径保持精确；复杂缩放的
+               插值仍是嵌入式实现边界。 */
+            const int sourceX = sourceWidth == targetWidth ? x :
+                                (int)(((int64_t)x * sourceWidth) / targetWidth);
+            const int sourceY = sourceHeight == targetHeight ? y :
+                                (int)(((int64_t)y * sourceHeight) / targetHeight);
+            const uint32_t color = XImage_pixel(self, x, y);
+            const uint32_t sourcePixel = XImage_pixel(&sourceImage,
+                                                      sourceX, sourceY);
+            const uint8_t oldAlpha = (uint8_t)(color >> 24);
+            const uint8_t newAlpha = (uint8_t)(sourcePixel >> 24);
+            /* DestinationIn 的源 alpha 与目标 alpha 相乘；旧实现直接
+               覆盖 alpha，在连续调用 setAlphaChannel() 时会错误地把
+               第一次设置完全丢掉。Qt 的 8 位饱和乘法等价于下式。 */
+            const uint8_t composedAlpha = (uint8_t)(((unsigned)oldAlpha *
+                                                     newAlpha + 127u) / 255u);
             XImage_writePixelValue(self->m_data, x, y,
-                                   (color & 0x00ffffffu) | ((uint32_t)alpha << 24));
+                                   (color & 0x00ffffffu) |
+                                   ((uint32_t)composedAlpha << 24));
         }
     XImageData_markDirty(self->m_data);
+    XImage_deinit_base(&sourceImage);
+    XImage_deinit_base(&sourceCopy);
     return true;
 }
 
@@ -1341,13 +1975,166 @@ static void XImage_initMask(const XImage* source, XImage* out,
         const uint32_t qtColors[2] = {0xffffffffu, 0xff000000u};
         XImage_setColorTable(out, qtColors, 2);
     }
-    /* 掩码只继承物理元数据；Qt 的 copyPhysicalMetadata() 不传播文本、
-       色彩空间或原图颜色表。 */
+    /* 掩码只继承物理元数据；Qt qimage.cpp:3123、3242、3289 调用的
+       copyPhysicalMetadata() 只复制 dpmX/dpmY/devicePixelRatio，不传播
+       offset、文本、色彩空间或原图颜色表。offset 属于 copyMetadata()，
+       不应从源图像泄漏到掩码。 */
     out->m_data->m_dpmX = source->m_data->m_dpmX;
     out->m_data->m_dpmY = source->m_data->m_dpmY;
     out->m_data->m_devicePixelRatio = source->m_data->m_devicePixelRatio;
-    out->m_data->m_offsetX = source->m_data->m_offsetX;
-    out->m_data->m_offsetY = source->m_data->m_offsetY;
+}
+
+/* Qt's alpha dither flags are part of Qt::ImageConversionFlag.  XImage keeps
+ * the public flag type as uint32_t, so retain the Qt bit values locally. */
+#define XIMAGE_ALPHA_DITHER_MASK    0x0000000cu
+#define XIMAGE_ORDERED_ALPHA_DITHER 0x00000004u
+#define XIMAGE_DIFFUSE_ALPHA_DITHER 0x00000008u
+
+static uint8_t XImage_alphaMaskAlpha(const XImage* self, int x, int y)
+{
+    const XImageData* data;
+    const uint8_t* line;
+    if (!self || !self->m_data || !self->m_data->m_data ||
+        x < 0 || y < 0 || x >= self->m_data->m_width ||
+        y >= self->m_data->m_height)
+        return 0;
+    data = self->m_data;
+    line = data->m_data + (size_t)y * (size_t)data->m_bytesPerLine;
+    if (data->m_depth == 32)
+        /* qimage_conversions.cpp reads *(const uint *)p >> 24 for d == 32. */
+        return (uint8_t)(XImage_load32(line + (size_t)x * 4u) >> 24);
+    if (data->m_depth == 8)
+    {
+        if (data->m_format == XImageFormat_Alpha8)
+            return line[x];
+        if (data->m_format == XImageFormat_Indexed8 && data->m_colorTable &&
+            line[x] < (unsigned)data->m_colorCount)
+            return (uint8_t)(data->m_colorTable[line[x]] >> 24);
+    }
+    return (uint8_t)(XImage_pixel(self, x, y) >> 24);
+}
+
+static uint32_t XImage_heuristicRgb(const XImage* self, int x, int y)
+{
+    const XImageData* data;
+    const uint8_t* line;
+    if (!self || !self->m_data || !self->m_data->m_data ||
+        x < 0 || y < 0 || x >= self->m_data->m_width ||
+        y >= self->m_data->m_height)
+        return 0;
+    data = self->m_data;
+    if (data->m_depth == 32)
+    {
+        line = data->m_data + (size_t)y * (size_t)data->m_bytesPerLine;
+        /* qimage.cpp's PIX macro intentionally does not un-premultiply. */
+        return XImage_load32(line + (size_t)x * 4u) & 0x00ffffffu;
+    }
+    return XImage_pixel(self, x, y) & 0x00ffffffu;
+}
+
+static const uint8_t XImage_bayerMatrix[16][16] = {
+    { 0x01, 0xc0, 0x30, 0xf0, 0x0c, 0xcc, 0x3c, 0xfc,
+      0x03, 0xc3, 0x33, 0xf3, 0x0f, 0xcf, 0x3f, 0xff },
+    { 0x80, 0x40, 0xb0, 0x70, 0x8c, 0x4c, 0xbc, 0x7c,
+      0x83, 0x43, 0xb3, 0x73, 0x8f, 0x4f, 0xbf, 0x7f },
+    { 0x20, 0xe0, 0x10, 0xd0, 0x2c, 0xec, 0x1c, 0xdc,
+      0x23, 0xe3, 0x13, 0xd3, 0x2f, 0xef, 0x1f, 0xdf },
+    { 0xa0, 0x60, 0x90, 0x50, 0xac, 0x6c, 0x9c, 0x5c,
+      0xa3, 0x63, 0x93, 0x53, 0xaf, 0x6f, 0x9f, 0x5f },
+    { 0x08, 0xc8, 0x38, 0xf8, 0x04, 0xc4, 0x34, 0xf4,
+      0x0b, 0xcb, 0x3b, 0xfb, 0x07, 0xc7, 0x37, 0xf7 },
+    { 0x88, 0x48, 0xb8, 0x78, 0x84, 0x44, 0xb4, 0x74,
+      0x8b, 0x4b, 0xbb, 0x7b, 0x87, 0x47, 0xb7, 0x77 },
+    { 0x28, 0xe8, 0x18, 0xd8, 0x24, 0xe4, 0x14, 0xd4,
+      0x2b, 0xeb, 0x1b, 0xdb, 0x27, 0xe7, 0x17, 0xd7 },
+    { 0xa8, 0x68, 0x98, 0x58, 0xa4, 0x64, 0x94, 0x54,
+      0xab, 0x6b, 0x9b, 0x7b, 0xa7, 0x67, 0x97, 0x57 },
+    { 0x02, 0xc2, 0x32, 0xf2, 0x0e, 0xce, 0x3e, 0xfe,
+      0x01, 0xc1, 0x31, 0xf1, 0x0d, 0xcd, 0x3d, 0xfd },
+    { 0x82, 0x42, 0xb2, 0x72, 0x8e, 0x4e, 0xbe, 0x7e,
+      0x81, 0x41, 0xb1, 0x71, 0x8d, 0x4d, 0xbd, 0x7d },
+    { 0x22, 0xe2, 0x12, 0xd2, 0x2e, 0xee, 0x1e, 0xde,
+      0x21, 0xe1, 0x11, 0xd1, 0x2d, 0xed, 0x1d, 0xdd },
+    { 0xa2, 0x62, 0x92, 0x52, 0xae, 0x6e, 0x9e, 0x5e,
+      0xa1, 0x61, 0x91, 0x51, 0xad, 0x6d, 0x9d, 0x5d },
+    { 0x0a, 0xca, 0x3a, 0xfa, 0x06, 0xc6, 0x36, 0xf6,
+      0x09, 0xc9, 0x39, 0xf9, 0x05, 0xc5, 0x35, 0xf5 },
+    { 0x8a, 0x4a, 0xba, 0x7a, 0x86, 0x46, 0xb6, 0x76,
+      0x89, 0x49, 0xb9, 0x79, 0x85, 0x45, 0xb5, 0x75 },
+    { 0x2a, 0xea, 0x1a, 0xda, 0x26, 0xe6, 0x16, 0xd6,
+      0x29, 0xe9, 0x19, 0xd9, 0x25, 0xe5, 0x15, 0xd5 },
+    { 0xaa, 0x6a, 0x9a, 0x5a, 0xa6, 0x66, 0x96, 0x56,
+      0xa9, 0x69, 0x99, 0x59, 0xa5, 0x65, 0x95, 0x55 }
+};
+
+static bool XImage_alphaMaskDitherPixel(const XImage* self, int x, int y,
+                                         uint32_t flags)
+{
+    const uint8_t alpha = XImage_alphaMaskAlpha(self, x, y);
+    if ((flags & XIMAGE_ALPHA_DITHER_MASK) == XIMAGE_ORDERED_ALPHA_DITHER)
+    {
+        /* dither_to_Mono() uses 255 - alpha for 8-bit source data. */
+        if (self && self->m_data && self->m_data->m_depth == 8)
+            return (uint8_t)(255u - alpha) <
+                   XImage_bayerMatrix[x & 15][y & 15];
+        return alpha >= XImage_bayerMatrix[x & 15][y & 15];
+    }
+    return alpha >= 128u;
+}
+
+static bool XImage_alphaMaskDither(const XImage* self, uint32_t flags,
+                                   XImage* out)
+{
+    const int width = self->m_data->m_width;
+    const int height = self->m_data->m_height;
+    const uint32_t alphaMode = flags & XIMAGE_ALPHA_DITHER_MASK;
+    if (alphaMode != XIMAGE_DIFFUSE_ALPHA_DITHER)
+    {
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+                XImage_writePixelIndex(out->m_data, x, y,
+                                       XImage_alphaMaskDitherPixel(self, x, y,
+                                                                    flags) ? 1u : 0u);
+        return true;
+    }
+
+    if ((size_t)width > SIZE_MAX / (2u * sizeof(int)))
+        return false;
+    int* line1 = (int*)XMalloc_System((size_t)width * 2u * sizeof(int));
+    if (!line1)
+        return false;
+    int* line2 = line1 + width;
+    for (int x = 0; x < width; ++x)
+        line2[x] = 255 - XImage_alphaMaskAlpha(self, x, 0);
+    for (int y = 0; y < height; ++y)
+    {
+        int* swap = line1;
+        line1 = line2;
+        line2 = swap;
+        if (y + 1 < height)
+            for (int x = 0; x < width; ++x)
+                line2[x] = 255 - XImage_alphaMaskAlpha(self, x, y + 1);
+        for (int x = 0; x < width; ++x)
+        {
+            const int value = line1[x];
+            const int error = value < 128 ? value : value - 255;
+            if (value < 128)
+                XImage_writePixelIndex(out->m_data, x, y, 1u);
+            if (x + 1 < width)
+                line1[x + 1] += (error * 7 + 8) >> 4;
+            if (y + 1 < height)
+            {
+                line2[x] += (error * 5 + 8) >> 4;
+                if (x > 0) line2[x - 1] += (error * 3 + 8) >> 4;
+                if (x + 1 < width) line2[x + 1] += (error + 0) -
+                                                        (((error * 7 + 8) >> 4) +
+                                                         ((error * 5 + 8) >> 4) +
+                                                         ((error * 3 + 8) >> 4));
+            }
+        }
+    }
+    XFree_System(line1 < line2 ? line1 : line2);
+    return true;
 }
 
 void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
@@ -1378,14 +2165,18 @@ void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
     }
     XImage_initMask(self, out, true);
     if (!out || !out->m_data || !self || !self->m_data) return;
-    for (int y = 0; y < self->m_data->m_height; ++y)
-        for (int x = 0; x < self->m_data->m_width; ++x)
-        {
-            uint32_t alpha = XImage_pixel(self, x, y) >> 24;
-            /* Qt 的默认 AlphaDither 为阈值模式，alpha >= 128 才生成
-               不透明位；不能把任意非零 Alpha 都视为不透明。 */
-            XImage_writePixelIndex(out->m_data, x, y, alpha >= 128u ? 1u : 0u);
-        }
+    /* Qt qimage_conversions.cpp:1611-1634 根据 AlphaDither_Mask 选择
+       Threshold、Ordered 或 Diffuse；默认 flags=0 仍落到 Threshold，
+       但显式标志不能被入口静默丢弃。辅助函数同时处理 Alpha8、Indexed8
+       调色板 Alpha 以及深度 32 的原始 Alpha 字节。 */
+    if (!XImage_alphaMaskDither(self, flags, out))
+    {
+        /* QImage's failed allocation produces a null result rather than a
+           partially initialized mask. */
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
     XImageData_markDirty(out->m_data);
 }
 
@@ -1433,7 +2224,13 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         if (!XImage_isNull(&image32))
             XImage_createHeuristicMask(&image32, clipTight, out);
         else
-            XImage_initMask(self, out, true);
+        {
+            /* Qt qimage.cpp:3158-3161 returns the result of the temporary
+               RGB32 image directly; if that conversion fails, the temporary
+               image is null and the mask factory must also return null. */
+            if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+            XImage_init(out);
+        }
         XImage_deinit_base(&image32);
         return;
     }
@@ -1445,17 +2242,17 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
 
     /* 与 Qt PIX 宏一致：启发式掩码忽略 Alpha，仅比较 RGB。四角投票
        选择背景色，再从四条边向内剥离连通背景。 */
-    background = XImage_pixel(self, 0, 0) & 0x00ffffffu;
-    if (background != (XImage_pixel(self, width - 1, 0) & 0x00ffffffu) &&
-        background != (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) &&
-        background != (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu))
+    background = XImage_heuristicRgb(self, 0, 0);
+    if (background != XImage_heuristicRgb(self, width - 1, 0) &&
+        background != XImage_heuristicRgb(self, 0, height - 1) &&
+        background != XImage_heuristicRgb(self, width - 1, height - 1))
     {
-        background = XImage_pixel(self, width - 1, 0) & 0x00ffffffu;
-        if (background != (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu) &&
-            background != (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) &&
-            (XImage_pixel(self, 0, height - 1) & 0x00ffffffu) ==
-                (XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu))
-            background = XImage_pixel(self, width - 1, height - 1) & 0x00ffffffu;
+        background = XImage_heuristicRgb(self, width - 1, 0);
+        if (background != XImage_heuristicRgb(self, width - 1, height - 1) &&
+            background != XImage_heuristicRgb(self, 0, height - 1) &&
+            XImage_heuristicRgb(self, 0, height - 1) ==
+                XImage_heuristicRgb(self, width - 1, height - 1))
+            background = XImage_heuristicRgb(self, width - 1, height - 1);
     }
 
     /* 输出初始为全不透明，队列中的位清零即表示已剥离的透明背景。 */
@@ -1465,10 +2262,20 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         return;
     count = (size_t)width * (size_t)height;
     if (count > SIZE_MAX / sizeof(size_t))
+    {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
         return;
+    }
     queue = (size_t*)XMalloc_System(count * sizeof(size_t));
     if (!queue)
+    {
+        /* QImage returns a null image when the mask allocation fails; do not
+           expose the provisional all-opaque buffer as a successful result. */
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
         return;
+    }
     head = 0;
     tail = 0;
 #define XIMAGE_QUEUE_BACKGROUND(px, py) \
@@ -1476,7 +2283,7 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         int _qx = (px); int _qy = (py); \
         if (_qx >= 0 && _qy >= 0 && _qx < width && _qy < height && \
             XImage_maskBit(out->m_data, _qx, _qy) && \
-            ((XImage_pixel(self, _qx, _qy) & 0x00ffffffu) == background)) { \
+            (XImage_heuristicRgb(self, _qx, _qy) == background)) { \
             XImage_maskSetBit(out->m_data, _qx, _qy, false); \
             queue[tail++] = (size_t)_qy * (size_t)width + (size_t)_qx; \
         } \
@@ -1509,7 +2316,7 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         /* Qt 在非紧致模式下把非背景像素的四邻域也标为不透明。 */
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
-                if ((XImage_pixel(self, x, y) & 0x00ffffffu) != background)
+                if (XImage_heuristicRgb(self, x, y) != background)
                 {
                     XImage_maskSetBit(out->m_data, x - 1, y, true);
                     XImage_maskSetBit(out->m_data, x + 1, y, true);
@@ -1523,16 +2330,35 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
 void XImage_createMaskFromColor(const XImage* self, uint32_t color,
                                 XImageMaskMode mode, XImage* out)
 {
+    static const uint32_t qtMaskColors[2] = {0xff000000u, 0xffffffffu};
+    const bool raw32 = self && self->m_data && self->m_data->m_depth == 32;
     XImage_initMask(self, out, false);
     if (!out || !out->m_data || !self || !self->m_data) return;
+    /* Qt QImageData::create() initializes a MonoLSB table as color0=black,
+       color1=white (qimage.cpp:126-135); createMaskFromColor retains that
+       default table, unlike the alpha/heuristic factories which replace it
+       with their white/black mask convention. */
+    XImage_setColorTable(out, qtMaskColors, 2);
     memset(out->m_data->m_data, 0,
            (size_t)out->m_data->m_bytesPerLine *
            (size_t)out->m_data->m_height);
     for (int y = 0; y < self->m_data->m_height; ++y)
         for (int x = 0; x < self->m_data->m_width; ++x)
         {
-            /* Qt 比较完整 QRgb（包括 Alpha），而不是仅比较 RGB。 */
-            bool equal = XImage_pixel(self, x, y) == color;
+            bool equal;
+            if (raw32)
+            {
+                /* Qt qimage.cpp:3270-3285 对 depth=32 直接比较扫描行的
+                   存储值。这个细节对 ARGB32_Premultiplied 很重要：传入
+                   的 QRgb 不会先被反预乘，必须按实际四字节布局比较。 */
+                const uint8_t* line = XImage_constScanLine(self, y);
+                equal = line && XImage_load32(line + (size_t)x * 4u) == color;
+            }
+            else
+            {
+                /* 非 32 位格式使用 Qt 的 pixel() 路径比较完整 ARGB。 */
+                equal = XImage_pixel(self, x, y) == color;
+            }
             XImage_writePixelIndex(out->m_data, x, y, equal ? 1u : 0u);
         }
     if (mode == XImageMask_OutColor)
@@ -1592,11 +2418,14 @@ int XImage_sizeInBytes(const XImage* self)
 
 int XImage_pixelIndex(const XImage* self, int x, int y)
 {
-    if (!self || !self->m_data || !self->m_data->m_data) return -1;
+    /* Qt qimage.cpp:2448-2460 returns the diagnostic sentinel -12345 for
+       a null image or an out-of-range coordinate.  Keep the public C API's
+       invalid-coordinate result observable instead of collapsing it to -1. */
+    if (!self || !self->m_data || !self->m_data->m_data) return -12345;
     if (x < 0 || x >= self->m_data->m_width || y < 0 || y >= self->m_data->m_height)
-        return -1;
+        return -12345;
     const uint8_t* line = XImage_constScanLine(self, y);
-    if (!line) return -1;
+    if (!line) return -12345;
     if (self->m_data->m_format == XImageFormat_Indexed8)
         return line[x];
     if (self->m_data->m_format == XImageFormat_Mono ||
@@ -1709,6 +2538,146 @@ static uint16_t XImage_unpremultiply16(uint16_t value, uint16_t alpha)
     if (alpha == 0 || alpha == 65535) return value;
     result = ((uint64_t)value * 65535u + alpha / 2u) / alpha;
     return (uint16_t)(result > 65535u ? 65535u : result);
+}
+
+static uint16_t XImage_repremultiply30(uint16_t value, uint16_t alpha)
+{
+    uint16_t unpremultiplied;
+    uint16_t reducedAlpha;
+    if (alpha == 0 || alpha == 65535)
+        return value;
+    unpremultiplied = XImage_unpremultiply16(value, alpha);
+    reducedAlpha = (uint16_t)(21845u * ((unsigned)alpha >> 14));
+    return XImage_premultiply16(unpremultiplied, reducedAlpha);
+}
+
+static void XImage_writePixelColor16(XImageData* d, int x, int y,
+                                     uint16_t red, uint16_t green,
+                                     uint16_t blue, uint16_t alpha)
+{
+    uint8_t* line;
+    uint8_t* pixel;
+    float redF, greenF, blueF, alphaF;
+    if (!d || !d->m_data || x < 0 || y < 0 || x >= d->m_width || y >= d->m_height)
+        return;
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    switch (d->m_format)
+    {
+        case XImageFormat_BGR30:
+        case XImageFormat_RGB30:
+        {
+            uint32_t value = ((uint32_t)red >> 6) |
+                             (((uint32_t)green >> 6) << 10) |
+                             (((uint32_t)blue >> 6) << 20) | 0xc0000000u;
+            if (d->m_format == XImageFormat_RGB30)
+                value = ((uint32_t)red >> 6) << 20 |
+                        ((uint32_t)green >> 6) << 10 |
+                        ((uint32_t)blue >> 6) | 0xc0000000u;
+            XImage_store32(line + (size_t)x * 4u, value);
+            return;
+        }
+        case XImageFormat_A2BGR30_Premultiplied:
+        case XImageFormat_A2RGB30_Premultiplied:
+        {
+            uint16_t premultRed = XImage_premultiply16(red, alpha);
+            uint16_t premultGreen = XImage_premultiply16(green, alpha);
+            uint16_t premultBlue = XImage_premultiply16(blue, alpha);
+            uint32_t packedRed = (uint32_t)(XImage_repremultiply30(premultRed, alpha) >> 6);
+            uint32_t packedGreen = (uint32_t)(XImage_repremultiply30(premultGreen, alpha) >> 6);
+            uint32_t packedBlue = (uint32_t)(XImage_repremultiply30(premultBlue, alpha) >> 6);
+            uint32_t packedAlpha = (uint32_t)(alpha >> 14);
+            uint32_t value;
+            if (d->m_format == XImageFormat_A2BGR30_Premultiplied)
+                value = (packedAlpha << 30) | (packedBlue << 20) |
+                        (packedGreen << 10) | packedRed;
+            else
+                value = (packedAlpha << 30) | (packedRed << 20) |
+                        (packedGreen << 10) | packedBlue;
+            XImage_store32(line + (size_t)x * 4u, value);
+            return;
+        }
+        case XImageFormat_RGBX64:
+        case XImageFormat_RGBA64:
+        case XImageFormat_RGBA64_Premultiplied:
+            pixel = line + (size_t)x * 8u;
+            if (d->m_format == XImageFormat_RGBA64_Premultiplied)
+            {
+                XImage_store16(pixel, XImage_premultiply16(red, alpha));
+                XImage_store16(pixel + 2u, XImage_premultiply16(green, alpha));
+                XImage_store16(pixel + 4u, XImage_premultiply16(blue, alpha));
+            }
+            else
+            {
+                XImage_store16(pixel, red);
+                XImage_store16(pixel + 2u, green);
+                XImage_store16(pixel + 4u, blue);
+            }
+            XImage_store16(pixel + 6u, d->m_format == XImageFormat_RGBX64 ? 65535u : alpha);
+            return;
+        case XImageFormat_Grayscale16:
+        {
+            uint16_t gray;
+            /* Qt's destStore64Gray16 keeps an already-gray QRgba64 channel
+             * verbatim. Preserve that branch before the 8-bit fallback so
+             * values such as 0x1234 do not become 0x1212. For a colored
+             * value retain the compact implementation's sRGB luma model,
+             * widened directly to the native 16-bit range. */
+            if (red == green && red == blue)
+                gray = red;
+            else
+            {
+                uint64_t weighted = 299u * (uint64_t)red +
+                                    587u * (uint64_t)green +
+                                    114u * (uint64_t)blue + 500u;
+                gray = (uint16_t)(weighted / 1000u);
+            }
+            XImage_store16(line + (size_t)x * 2u, gray);
+            (void)alpha;
+            return;
+        }
+        case XImageFormat_RGBX16FPx4:
+        case XImageFormat_RGBA16FPx4:
+        case XImageFormat_RGBA16FPx4_Premultiplied:
+            redF = (float)red / 65535.0f;
+            greenF = (float)green / 65535.0f;
+            blueF = (float)blue / 65535.0f;
+            alphaF = d->m_format == XImageFormat_RGBX16FPx4
+                ? 1.0f : (float)alpha / 65535.0f;
+            if (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied)
+            {
+                redF *= alphaF;
+                greenF *= alphaF;
+                blueF *= alphaF;
+            }
+            pixel = line + (size_t)x * 8u;
+            XImage_store16(pixel, XImage_floatToHalf(redF));
+            XImage_store16(pixel + 2u, XImage_floatToHalf(greenF));
+            XImage_store16(pixel + 4u, XImage_floatToHalf(blueF));
+            XImage_store16(pixel + 6u, XImage_floatToHalf(alphaF));
+            return;
+        case XImageFormat_RGBX32FPx4:
+        case XImageFormat_RGBA32FPx4:
+        case XImageFormat_RGBA32FPx4_Premultiplied:
+            redF = (float)red / 65535.0f;
+            greenF = (float)green / 65535.0f;
+            blueF = (float)blue / 65535.0f;
+            alphaF = d->m_format == XImageFormat_RGBX32FPx4
+                ? 1.0f : (float)alpha / 65535.0f;
+            if (d->m_format == XImageFormat_RGBA32FPx4_Premultiplied)
+            {
+                redF *= alphaF;
+                greenF *= alphaF;
+                blueF *= alphaF;
+            }
+            pixel = line + (size_t)x * 16u;
+            memcpy(pixel, &redF, sizeof(float));
+            memcpy(pixel + 4u, &greenF, sizeof(float));
+            memcpy(pixel + 8u, &blueF, sizeof(float));
+            memcpy(pixel + 12u, &alphaF, sizeof(float));
+            return;
+        default:
+            return;
+    }
 }
 
 /**
@@ -2152,13 +3121,28 @@ static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOr
 
 uint32_t XImage_pixel(const XImage* self, int x, int y)
 {
-    return (self && self->m_data) ? XImage_readPixelValue(self->m_data, x, y) : 0;
+    /* Qt qimage.cpp:2489-2495 returns 12345 when the coordinate is invalid.
+       Internal callers validate coordinates before sampling, so preserving
+       this sentinel only changes the documented public boundary behavior. */
+    if (!self || !self->m_data || !XImage_valid(self, x, y))
+        return 12345u;
+    return XImage_readPixelValue(self->m_data, x, y);
 }
 
 void XImage_setPixel(XImage* self, int x, int y, uint32_t indexOrRgb)
 {
     if (!self || !self->m_data || !self->m_data->m_data) return;
     if (x < 0 || x >= self->m_data->m_width || y < 0 || y >= self->m_data->m_height)
+        return;
+    /* Qt qimage.cpp:2593-2614 rejects out-of-range palette indices instead
+       of truncating them to the storage width.  Keep the existing pixel
+       untouched for invalid Mono/MonoLSB and Indexed8 requests. */
+    if ((self->m_data->m_format == XImageFormat_Mono ||
+         self->m_data->m_format == XImageFormat_MonoLSB) && indexOrRgb > 1u)
+        return;
+    if (self->m_data->m_format == XImageFormat_Indexed8 &&
+        indexOrRgb >= (uint32_t)(self->m_data->m_colorCount < 0
+                                 ? 0 : self->m_data->m_colorCount))
         return;
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
@@ -2191,7 +3175,18 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
     XImage_init(out);
     int w = self->m_data->m_width, h = self->m_data->m_height;
     int rx = 0, ry = 0, rw = w, rh = h;
-    if (rect) { rx = rect->x; ry = rect->y; rw = rect->width; rh = rect->height; }
+    /* QRect::isNull() is distinct from isEmpty(): a rectangle with both
+       dimensions equal to zero means "copy the whole image", regardless of
+       its origin.  This is the overload's documented Qt behavior
+       (qimage.cpp:1218-1240), while a rectangle with only one zero or a
+       negative dimension remains an empty request below. */
+    if (rect && !(rect->width == 0 && rect->height == 0))
+    {
+        rx = rect->x;
+        ry = rect->y;
+        rw = rect->width;
+        rh = rect->height;
+    }
     if (rw <= 0 || rh <= 0) return;
     XImage_init_ex(out, rw, rh, self->m_data->m_format);
     if (!out->m_data) return;
@@ -2404,12 +3399,22 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
 void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
 {
     if (!self || !self->m_data) return;
+    /* Qt qimage.cpp:3504-3507 在没有变换或图像只有一个像素时直接返回。
+     * 该快路径必须保留当前共享数据和 cacheKey，不能为了“原地”接口额外
+     * 克隆一份相同图像。 */
+    if ((!horizontal && !vertical) ||
+        (self->m_data->m_width <= 1 && self->m_data->m_height <= 1))
+        return;
     XImage temp;
     XImage_init(&temp);
     XImage_mirrored(self, horizontal, vertical, &temp);
-    XImage_deinit_base(self);
-    self->m_data = temp.m_data;
-    temp.m_data = NULL;
+    if (temp.m_data)
+    {
+        XImage_deinit_base(self);
+        self->m_data = temp.m_data;
+        temp.m_data = NULL;
+    }
+    XImage_deinit_base(&temp);
 }
 
 void XImage_mirror(XImage* self, bool horizontal, bool vertical)
@@ -2434,6 +3439,16 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
         return;
     }
     if (!out) return;
+    if (self && self->m_data && self->m_data->m_data &&
+        (self->m_data->m_format == XImageFormat_Alpha8 ||
+         self->m_data->m_format == XImageFormat_Grayscale8 ||
+         self->m_data->m_format == XImageFormat_Grayscale16))
+    {
+        /* Qt qimage.cpp:3584-3588 返回 *this；这些格式没有可交换的
+         * 红蓝通道，必须共享原数据而不是制造新的 cacheKey。 */
+        XImage_copy_base(out, self);
+        return;
+    }
     if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
     XImage_init(out);
     if (!self || !self->m_data || !self->m_data->m_data) return;
@@ -2441,7 +3456,12 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
     if (!out->m_data) return;
     int w = self->m_data->m_width;
     int h = self->m_data->m_height;
-    if (self->m_data->m_format == XImageFormat_Indexed8 && out->m_data->m_colorTable)
+    /* Qt qimage.cpp:3595-3601 对 Mono、MonoLSB 与 Indexed8 统一交换调色表；
+     * 位图索引本身不变，只有颜色表中的红蓝分量互换。 */
+    if ((self->m_data->m_format == XImageFormat_Indexed8 ||
+         self->m_data->m_format == XImageFormat_Mono ||
+         self->m_data->m_format == XImageFormat_MonoLSB) &&
+        out->m_data->m_colorTable)
     {
         for (int i = 0; i < out->m_data->m_colorCount; ++i)
         {
@@ -2452,7 +3472,9 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
     }
     else if (self->m_data->m_format != XImageFormat_Mono &&
              self->m_data->m_format != XImageFormat_MonoLSB &&
-             self->m_data->m_format != XImageFormat_Alpha8)
+             self->m_data->m_format != XImageFormat_Alpha8 &&
+             self->m_data->m_format != XImageFormat_Grayscale8 &&
+             self->m_data->m_format != XImageFormat_Grayscale16)
     {
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x)
@@ -2535,14 +3557,22 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
         if (targetWidth < 1) targetWidth = 1;
         if (targetHeight < 1) targetHeight = 1;
     }
+    /* Qt QImage::scaled() returns *this when the requested size resolves to
+     * the current size (qimage.cpp:3009-3031).  Preserve implicit sharing and
+     * cacheKey in that case instead of allocating an identical pixel buffer. */
+    if (targetWidth == sw && targetHeight == sh)
+    {
+        XImage_copy_base(out, self);
+        return;
+    }
     out->m_data = XImageData_create(targetWidth, targetHeight, self->m_data->m_format,
                                      0, NULL, NULL, NULL);
     if (!out->m_data) return;
-    out->m_data->m_dpmX = self->m_data->m_dpmX;
-    out->m_data->m_dpmY = self->m_data->m_dpmY;
-    out->m_data->m_devicePixelRatio = self->m_data->m_devicePixelRatio;
-    out->m_data->m_offsetX = self->m_data->m_offsetX;
-    out->m_data->m_offsetY = self->m_data->m_offsetY;
+    /* Qt QImage::scaled() delegates to transformed(), whose output receives
+     * the complete copyMetadata() set.  Keep color space and text metadata
+     * alongside physical resolution, DPR and offset; copying only the latter
+     * silently changes the meaning of a scaled image. */
+    XImageData_copyMetadata(out->m_data, self->m_data);
     if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System((size_t)self->m_data->m_colorCount * sizeof(uint32_t));
@@ -2587,10 +3617,21 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
 void XImage_scaledToWidth(const XImage* self, int width, uint32_t mode, XImage* out)
 {
     if (!out) return;
-    if (!self || !self->m_data || width <= 0) { XImage_init(out); return; }
+    /* Qt QImage::scaledToWidth() returns a null image for a null source or
+       non-positive width.  Replace an existing destination safely instead
+       of reinitializing it over a live shared-data reference. */
+    if (!self || !self->m_data || width <= 0) {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
     int64_t scaledHeight = ((int64_t)self->m_data->m_height * width + self->m_data->m_width / 2) / self->m_data->m_width;
     if (scaledHeight < 1) scaledHeight = 1;
-    if (scaledHeight > INT_MAX) { XImage_init(out); return; }
+    if (scaledHeight > INT_MAX) {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
     int height = (int)scaledHeight;
     XImage_scaled(self, width, height, 0, mode, out);
 }
@@ -2598,10 +3639,20 @@ void XImage_scaledToWidth(const XImage* self, int width, uint32_t mode, XImage* 
 void XImage_scaledToHeight(const XImage* self, int height, uint32_t mode, XImage* out)
 {
     if (!out) return;
-    if (!self || !self->m_data || height <= 0) { XImage_init(out); return; }
+    /* 与 scaledToWidth() 相同，非法高度必须安全地把已存在的目标
+       替换为空图像，不能覆盖其 m_data 指针造成泄漏。 */
+    if (!self || !self->m_data || height <= 0) {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
     int64_t scaledWidth = ((int64_t)self->m_data->m_width * height + self->m_data->m_height / 2) / self->m_data->m_height;
     if (scaledWidth < 1) scaledWidth = 1;
-    if (scaledWidth > INT_MAX) { XImage_init(out); return; }
+    if (scaledWidth > INT_MAX) {
+        if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
+        XImage_init(out);
+        return;
+    }
     int width = (int)scaledWidth;
     XImage_scaled(self, width, height, 0, mode, out);
 }
@@ -2898,9 +3949,10 @@ const char* XImage_text_2(const XImage* self, const char* key)
     XString* aggregated;
     static const char emptyUtf8[] = "";
     /* QImage::text() 返回值类型是 QString：空图像、空键和缺失键均为
-       空字符串，而不是可区分的空指针。 */
-    if (!self || !self->m_data || !key) return emptyUtf8;
-    keyString = XString_create_utf8(key);
+       空字符串，而不是可区分的空指针。兼容重载中的 NULL 键等价于
+       默认构造的空 QString，因此也必须走全部文本聚合分支。 */
+    if (!self || !self->m_data) return emptyUtf8;
+    keyString = XString_create_utf8(key ? key : "");
     if (!keyString) return NULL;
     if (XString_isEmpty_base((const XContainer*)keyString))
     {

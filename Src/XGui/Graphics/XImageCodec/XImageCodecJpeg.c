@@ -2016,7 +2016,12 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
     bool ok = false;
     int pendingMarker = 0;
 
-    if (!data || size < 4 || !out) return false;
+    /* Qt 6.8 的 QJpegHandler::canRead(QIODevice*) 只接受文件起始处的
+     * SOI 标记（qjpeghandler.cpp:1092-1102）。显式指定 JPEG 格式时也
+     * 必须保持同样的边界：不能让 jpegNextMarker() 跳过前导垃圾后把
+     * 非 JPEG 数据误认成有效图像。 */
+    if (!data || size < 4 || !out || data[0] != 0xff || data[1] != 0xd8)
+        return false;
     memset(&ctx, 0, sizeof(ctx));
     /* 算术条件表默认（JPEG 规范 F.1.4.2：L=0, U=1, K=5） */
     for (int i = 0; i < 4; ++i) {

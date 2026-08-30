@@ -260,7 +260,14 @@ void XStyleHints_setContextMenuTrigger(XStyleHints* self, XStyleHintsContextMenu
 
 int XStyleHints_wheelScrollLines(const XStyleHints* self)
 {
-    return (self && self->m_data) ? self->m_data->m_wheelScrollLines : 0;
+    /* Qt 6.8 qstylehints.cpp:618-624 规定只有正数覆盖值有效；零和负数
+       表示尚未取得有效覆盖值，应重新查询平台主题。XStyleHints 是本项目
+       的嵌入式值对象，没有桌面主题查询层，因此这里回落到与初始化相同
+       的嵌入式默认值 3，而不是把无效覆盖值暴露给调用者。 */
+    if (!self || !self->m_data)
+        return 0;
+    return self->m_data->m_wheelScrollLines > 0
+               ? self->m_data->m_wheelScrollLines : 3;
 }
 
 void XStyleHints_setWheelScrollLines(XStyleHints* self, int scrollLines)

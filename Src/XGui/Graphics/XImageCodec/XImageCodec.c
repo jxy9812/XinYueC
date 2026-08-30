@@ -32,6 +32,87 @@ static bool codec_is_name(const XString* format, const char* expected)
     return value[i] == '\0' && expected[i] == '\0';
 }
 
+#if XIMAGECODEC_SVG_ON
+/*
+ * 为 SVG 头部探测生成有界 ASCII 视图。
+ * Qt 的 QSvgTinyDocument::hasSvgHeader() 使用 QTextStream 读取探测缓冲区，
+ * 因而 UTF-8、UTF-16 和 UTF-32 都可以参与同一套 <svg/DOCTYPE 判断；门面
+ * 不能直接把 UTF-16/32 的零字节交给 strstr，否则自动 Handler 发现会比显式
+ * SVG 解码少支持一组合法输入。这里仅转换头部所需的 ASCII 字符，非 ASCII
+ * 标量折叠为 '?'，并限制最多 4096 个输入字节，避免不可信设备的无界扫描。
+ */
+static size_t codec_svg_prepareProbe(const uint8_t* data, size_t size,
+                                     char* out, size_t capacity)
+{
+    size_t offset = 0;
+    size_t unit = 1;
+    bool little = true;
+    bool encoded = false;
+    size_t available;
+    size_t count;
+    size_t unitIndex = 0;
+    size_t used = 0;
+    if (!data || !size || !out || capacity < 2) return 0;
+
+    if (size >= 4 && data[0] == 0xff && data[1] == 0xfe &&
+        data[2] == 0x00 && data[3] == 0x00) {
+        offset = 4; unit = 4; encoded = true;
+    } else if (size >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
+               data[2] == 0xfe && data[3] == 0xff) {
+        offset = 4; unit = 4; little = false; encoded = true;
+    } else if (size >= 2 && data[0] == 0xff && data[1] == 0xfe) {
+        offset = 2; unit = 2; encoded = true;
+    } else if (size >= 2 && data[0] == 0xfe && data[1] == 0xff) {
+        offset = 2; unit = 2; little = false; encoded = true;
+    } else if (size >= 3 && data[0] == 0xef && data[1] == 0xbb &&
+               data[2] == 0xbf) {
+        offset = 3;
+    } else if (size >= 4 && data[0] == '<' && data[1] == 0x00 &&
+               data[2] == 0x00 && data[3] == 0x00) {
+        unit = 4; encoded = true;
+    } else if (size >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
+               data[2] == 0x00 && data[3] == '<') {
+        unit = 4; little = false; encoded = true;
+    } else if (size >= 2 && data[0] == '<' && data[1] == 0x00) {
+        unit = 2; encoded = true;
+    } else if (size >= 2 && data[0] == 0x00 && data[1] == '<') {
+        unit = 2; little = false; encoded = true;
+    }
+
+    if (!encoded) {
+        count = size - offset;
+        if (count > capacity - 1) count = capacity - 1;
+        memcpy(out, data + offset, count);
+        out[count] = '\0';
+        return count;
+    }
+    if (offset > size || (size - offset) % unit != 0) return 0;
+    available = (size - offset) / unit;
+    count = available < capacity - 1 ? available : capacity - 1;
+    while (unitIndex < count) {
+        size_t pos = offset + unitIndex * unit;
+        uint32_t cp;
+        if (unit == 2) {
+            cp = little ?
+                (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) :
+                ((uint32_t)data[pos] << 8) | (uint32_t)data[pos + 1];
+        } else {
+            cp = little ?
+                (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) |
+                ((uint32_t)data[pos + 2] << 16) |
+                ((uint32_t)data[pos + 3] << 24) :
+                ((uint32_t)data[pos] << 24) |
+                ((uint32_t)data[pos + 1] << 16) |
+                ((uint32_t)data[pos + 2] << 8) | (uint32_t)data[pos + 3];
+        }
+        out[used++] = cp <= 0x7fu ? (char)cp : '?';
+        ++unitIndex;
+    }
+    out[used] = '\0';
+    return used;
+}
+#endif /* XIMAGECODEC_SVG_ON */
+
 XImageCodecFormat XImageCodec_formatFromName(const XString* format)
 {
     if (!format || XContainer_isEmpty_base((const XContainer*)format))
@@ -93,9 +174,15 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
 #endif
 #if XIMAGECODEC_SVG_ON
     {
+        char probe[4097];
+        size_t probeSize = codec_svg_prepareProbe(data, size, probe,
+                                                  sizeof(probe));
         size_t pos = 0;
         size_t scan;
         bool prefixed = false;
+        if (!probeSize) return XImageCodecFormat_Unknown;
+        data = (const uint8_t*)probe;
+        size = probeSize;
         /* Accept BOM/ASCII whitespace before an XML declaration or root SVG.
          * This is common for hand-authored files and remains bounded so format
          * probing never scans an untrusted large buffer. */

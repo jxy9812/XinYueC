@@ -52,8 +52,20 @@ static bool XImageReader_parseAllocationEnvironment(const char* text, int* value
     bool negative = false;
     bool hasDigit = false;
 
-    /* qEnvironmentVariableIntValue 限制缓冲区长度以覆盖所有合法 int。 */
-    if (!text || !value || strlen(text) > 13u) return false;
+    size_t maxLength;
+    unsigned int bitCount = 0;
+    unsigned int bitProbe = UINT_MAX;
+
+    /* qEnvironmentVariableIntValue() 先按
+       (numeric_limits<uint>::digits + 2) / 3 + sign + "0" 前缀
+       限制字符串长度（qtenvironmentvariables.cpp:196-222）。用 UINT_MAX
+       计算 value bits，避免把 32 位实现的魔数误用于其它 C99 平台。 */
+    do {
+        ++bitCount;
+        bitProbe >>= 1;
+    } while (bitProbe != 0);
+    maxLength = (size_t)((bitCount + 2u) / 3u + 2u);
+    if (!text || !value || strlen(text) > maxLength) return false;
     cursor = text;
     end = text + strlen(text);
     while (cursor < end && XImageReader_asciiSpace(*cursor)) ++cursor;
@@ -76,7 +88,8 @@ static bool XImageReader_parseAllocationEnvironment(const char* text, int* value
     } else {
         base = 10;
     }
-    limit = negative ? 2147483648ULL : 2147483647ULL;
+    limit = negative ? (unsigned long long)INT_MAX + 1ULL
+                     : (unsigned long long)INT_MAX;
     while (cursor < end) {
         int digit = XImageReader_digitValue(*cursor);
         if (digit < 0 || digit >= base) break;
@@ -90,7 +103,17 @@ static bool XImageReader_parseAllocationEnvironment(const char* text, int* value
     while (cursor < end && XImageReader_asciiSpace(*cursor)) ++cursor;
     /* Qt 的有符号转换允许 -0，其他负值才会被 allocationLimit() 忽略。 */
     if (cursor != end || (negative && magnitude != 0)) return false;
-    *value = (int)magnitude;
+    /* Casting INT_MAX + 1 to int is implementation-defined in C.  Qt's
+       integer helper accepts INT_MIN, so spell out that endpoint and keep
+       the remaining negation within the representable range. */
+    if (negative) {
+        if (magnitude == (unsigned long long)INT_MAX + 1ULL)
+            *value = INT_MIN;
+        else
+            *value = -(int)magnitude;
+    } else {
+        *value = (int)magnitude;
+    }
     return true;
 }
 
@@ -698,8 +721,8 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
                               "Unsupported image format");
         return NULL;
     }
-    /* Qt 的 decideFormatFromContent 只忽略显式格式/扩展名，仍保留
-       autoDetectImageFormat 的独立状态；内容探测通过空格式交给插件。 */
+    /* decideFormatFromContent 只改变处理器筛选时是否忽略格式和扩展名；
+       autoDetectImageFormat 是独立状态，内容模式仍通过空格式交给插件。 */
     hasExplicitFormat = !data->m_decideFromContent && data->m_format &&
         !XContainer_isEmpty_base((const XContainer*)data->m_format);
     handlerFormat = hasExplicitFormat ? data->m_format : NULL;
@@ -1006,7 +1029,10 @@ bool XImageReader_autoDetectImageFormat(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_autoDetectFormat : true; }
 
 void XImageReader_setDecideFormatFromContent(XImageReader* self, bool enabled)
-{ if (self && self->m_data) self->m_data->m_decideFromContent = enabled; }
+{
+    if (!self || !self->m_data) return;
+    self->m_data->m_decideFromContent = enabled;
+}
 
 bool XImageReader_decideFormatFromContent(const XImageReader* self)
 { return (self && self->m_data) ? self->m_data->m_decideFromContent : false; }
@@ -1408,6 +1434,18 @@ XStringList* XImageReader_supportedSubTypes(const XImageReader* self)
 bool XImageReader_canRead(const XImageReader* self)
 {
     if (!self || !self->m_data) return false;
+#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
+    /* 动画缓存建立后，设备可能已被 readAll() 消费到末尾；此时缓存本身
+       就是 QGifHandler 尚可读取帧的状态，不能再用设备位置重复探测。 */
+    if (self->m_data->m_animation) {
+        if (self->m_data->m_imageJumpPending)
+            return self->m_data->m_currentImageNumber >= 0 &&
+                   self->m_data->m_currentImageNumber <
+                       self->m_data->m_animation->frameCount;
+        return self->m_data->m_currentImageNumber + 1 <
+               self->m_data->m_animation->frameCount;
+    }
+#endif
     if (XImageReader_ensureHandler((XImageReader*)self))
         return XImageIOHandler_canRead_base(self->m_data->m_handler);
 #if XIMAGEIOPLUGIN_ON
@@ -1540,8 +1578,9 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                            &optionValue);
         }
     }
-    if (!XClassIsVtableNull(out)) XImage_deinit_base(out);
-    XImage_init(out);
+    /* Qt QImageReader::read(QImage*) 直接把调用方图像交给处理器；读取
+       失败时若处理器未触碰输出，原图仍应保留。处理器/编解码器负责在
+       成功分配时替换或复用输出，不能由读取器预先清空。 */
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     animationPrepared = XImageReader_prepareAnimation(self);
     if (animationPrepared) {
@@ -1561,9 +1600,15 @@ bool XImageReader_read(XImageReader* self, XImage* out)
     }
 #endif
     /* 已成功建立 GIF 动画缓存时，读完最后一帧必须像 QGifHandler 一样
-       直接返回失败，不能再退回普通单帧处理器重复首帧。 */
-    if (animationPrepared && !loadedByHandler)
+       直接返回失败，不能再退回普通单帧处理器重复首帧。Qt 在 handler
+       的 read() 返回失败时会统一设置 InvalidDataError（对应
+       qimagereader.cpp:1211-1218），因此动画缓存耗尽也要保留同样的
+       可观察错误状态。 */
+    if (animationPrepared && !loadedByHandler) {
+        XImageReader_setError(self, XImageReaderError_InvalidDataError,
+                              "Unable to read image data");
         return false;
+    }
     if (!loadedByHandler)
         XImageReader_ensureHandler(self);
     if (!loadedByHandler && self->m_data->m_handler)
@@ -1714,7 +1759,9 @@ bool XImageReader_read(XImageReader* self, XImage* out)
     }
     if (self->m_data->m_autoTransform)
         XImageReader_applyAutoTransform(out, XImageReader_transformation(self));
-    return !XImage_isNull(out);
+    /* Qt 返回处理器/解码器的成功标志，而不是依据输出图像是否为空
+       再次推断；处理器若返回 true 但留下空图，调用方仍观察到成功。 */
+    return true;
 }
 
 bool XImageReader_jumpToNextImage(XImageReader* self)
@@ -1778,6 +1825,9 @@ int XImageReader_nextImageDelay(const XImageReader* self)
         int frame = self->m_data->m_currentImageNumber;
         if (frame >= 0 && frame < self->m_data->m_animation->frameCount)
             return self->m_data->m_animation->frames[frame].delayMs;
+        /* QGifHandler 构造时 nextDelay 为 100；首次 read() 前尚无当前帧，
+           因而应返回该默认值，而不是因设备已缓存消费而回落到失败路径。 */
+        return 100;
     }
 #endif
     if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
@@ -1787,7 +1837,11 @@ int XImageReader_nextImageDelay(const XImageReader* self)
 int XImageReader_currentImageNumber(const XImageReader* self)
 {
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
-    if (self && self->m_data && self->m_data->m_animation)
+    /* QGifHandler 在首次 read() 前的 frameNumber 为 -1。主动准备 GIF
+       缓存后再返回状态，避免尚未建立缓存时落到基类默认值 0。 */
+    if (self && self->m_data &&
+        XImageReader_prepareAnimation((XImageReader*)self) &&
+        self->m_data->m_animation)
         return self->m_data->m_currentImageNumber;
 #endif
     if (!self || !self->m_data || !XImageReader_ensureHandler((XImageReader*)self))
@@ -1996,10 +2050,10 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
         }
     }
 #endif
-    /* Match Qt's value-returning API: an unknown MIME type is an empty list,
-       rather than a list containing an unrelated fallback format. */
-    XStringList_sort(result, XChar_CaseSensitive);
-    XStringList_removeDuplicates(result);
+    /* Qt 6.8 QImageReaderWriterHelpers::imageFormatsForMimeType() preserves
+       the built-in table/plugin metadata order.  Do not sort this result:
+       JPEG's declared Qt plugin order is jpg, jpeg, jfif.  The append helper
+       already removes duplicate keys while retaining their first position. */
     return result;
 }
 
