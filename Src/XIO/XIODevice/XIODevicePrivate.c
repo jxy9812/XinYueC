@@ -193,6 +193,13 @@ int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, X
             int64_t n = XIODevice_read_1(device, temp, toRead);
             if (n > 0) {
                 XRingBuffer_write(defaultReadBuf, temp, n);
+            } else if (n < 0 && available > 0) {
+                /* QIODevice::peek() 不得消费已有缓存。部分后端在
+                   缓存字节读尽且底层已经 EOF 时返回负值；read_1()
+                   此时已把 available 字节写入 temp，但不会报告这段
+                   前缀长度。将其放回环形缓冲，保证连续的格式/尺寸
+                   探测仍能看到同一数据。 */
+                XRingBuffer_write(defaultReadBuf, temp, (size_t)available);
             }
             XFree_System(temp);
         }
@@ -200,6 +207,8 @@ int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, X
 
     int64_t peekLen = XRingBuffer_available(defaultReadBuf);
     if (peekLen > maxlen) peekLen = maxlen;
+    if (peekLen <= 0)
+        return 0;
     return XRingBuffer_peek(defaultReadBuf, data, peekLen);
 }
 

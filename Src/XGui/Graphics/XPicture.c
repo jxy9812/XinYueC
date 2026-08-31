@@ -6,6 +6,7 @@
 #include "XPicture.h"
 #include "XPainter.h"
 #include "XImage.h"
+#include "XPixmap.h"
 #include "XIODevice.h"
 #include "XByteArray.h"
 #include "XFile.h"
@@ -34,7 +35,11 @@ enum
     XPICTURE_MAX_PATH_ELEMENTS = 65535,
     XPICTURE_CLIP_REGION_HEADER_SIZE = 8,
     XPICTURE_CLIP_RECT_SIZE = 16,
-    XPICTURE_MAX_CLIP_RECTS = 65535
+    XPICTURE_MAX_CLIP_RECTS = 65535,
+    XPICTURE_TILED_EXTRA_SIZE = 24,
+    XPICTURE_PIXMAP_EXTRA_SIZE = 24,
+    XPICTURE_FONT_FIXED_SIZE = 8,
+    XPICTURE_MAX_FONT_TEXT = 4096
 };
 
 static uint16_t XPicture_getU16(const uint8_t* p)
@@ -129,13 +134,15 @@ static bool XPicture_magicMatches(const uint8_t* data, uint32_t size)
            memcmp(data, g_xpictureMagic, XPICTURE_MAGIC_SIZE) == 0;
 }
 
-static bool XPicture_validateImagePayload(const uint8_t* payload, uint32_t length)
+static bool XPicture_validateImagePayloadEx(const uint8_t* payload,
+                                            uint32_t length,
+                                            uint32_t extraSize)
 {
     uint32_t width, height, bytesPerLine, imageSize, colorCount;
     uint64_t required;
     float dpr;
     uint32_t dprBits;
-    if (!payload || length < XPICTURE_IMAGE_FIXED_SIZE) return false;
+    if (!payload || length < XPICTURE_IMAGE_FIXED_SIZE + extraSize) return false;
     width = XPicture_getU32(payload + 8);
     height = XPicture_getU32(payload + 12);
     bytesPerLine = XPicture_getU32(payload + 20);
@@ -151,10 +158,15 @@ static bool XPicture_validateImagePayload(const uint8_t* payload, uint32_t lengt
         return false;
     required = (uint64_t)XPICTURE_IMAGE_FIXED_SIZE +
                (uint64_t)colorCount * 4u + imageSize;
-    if (required != length) return false;
+    if (required + extraSize != length) return false;
     if ((uint64_t)bytesPerLine * height != imageSize || imageSize > (uint32_t)INT_MAX)
         return false;
     return true;
+}
+
+static bool XPicture_validateImagePayload(const uint8_t* payload, uint32_t length)
+{
+    return XPicture_validateImagePayloadEx(payload, length, 0u);
 }
 
 static bool XPicture_validatePointsPayload(const uint8_t* payload,
@@ -265,9 +277,10 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (length > size - offset) return false;
         payload = bytes + offset;
         if (opcode < XPictureOpcode_DrawLine ||
-            opcode > XPictureOpcode_SetClipRegion)
+            opcode > XPictureOpcode_DrawPoint)
             return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
+            (opcode == XPictureOpcode_DrawPoint && length != 8u) ||
             (opcode == XPictureOpcode_SetPen && length != 20u) ||
             (opcode == XPictureOpcode_SetOpacity && length != 4u) ||
             (opcode == XPictureOpcode_SetCompositionMode && length != 4u) ||
@@ -287,8 +300,28 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
             (opcode == XPictureOpcode_FillRect && length != 20u) ||
             (opcode == XPictureOpcode_DrawImage &&
              !XPicture_validateImagePayload(payload, length)) ||
+            (opcode == XPictureOpcode_DrawTiledPixmap &&
+             !XPicture_validateImagePayloadEx(payload, length,
+                                              XPICTURE_TILED_EXTRA_SIZE)) ||
+            (opcode == XPictureOpcode_DrawPixmap &&
+             !XPicture_validateImagePayloadEx(payload, length,
+                                              XPICTURE_PIXMAP_EXTRA_SIZE)) ||
             ((opcode == XPictureOpcode_Save || opcode == XPictureOpcode_Restore) && length != 0u))
             return false;
+        if (opcode == XPictureOpcode_SetFont)
+        {
+            uint32_t fontLength;
+            if (length < XPICTURE_FONT_FIXED_SIZE) return false;
+            fontLength = XPicture_getU32(payload);
+            if (fontLength > XPICTURE_MAX_FONT_TEXT ||
+                (uint64_t)fontLength + XPICTURE_FONT_FIXED_SIZE != length)
+                return false;
+            /* XFont_fromString() consumes a NUL-terminated snapshot.  Keep
+               the stream unambiguous and require the payload to be raw text. */
+            if (fontLength != 0u &&
+                memchr(payload + XPICTURE_FONT_FIXED_SIZE, 0, fontLength) != NULL)
+                return false;
+        }
         if (opcode == XPictureOpcode_SetOpacity)
         {
             float opacity = XPicture_getF32(payload);
@@ -376,6 +409,22 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
             opcode == XPictureOpcode_SetClipRegion)
             return false;
 #endif /* XPAINTER_CLIP_ON */
+#if XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON
+        if (opcode == XPictureOpcode_DrawTiledPixmap)
+        {
+            const uint8_t* extra = payload + length - XPICTURE_TILED_EXTRA_SIZE;
+            if (XPicture_getU32(extra + 8u) > (uint32_t)INT_MAX ||
+                XPicture_getU32(extra + 12u) > (uint32_t)INT_MAX)
+                return false;
+        }
+#else
+        if (opcode == XPictureOpcode_DrawTiledPixmap)
+            return false;
+#endif /* XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON */
+#if !(XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON)
+        if (opcode == XPictureOpcode_DrawPixmap)
+            return false;
+#endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
         offset += length;
     }
     return offset == size && commandBytes == offset - XPICTURE_HEADER_SIZE;
@@ -747,6 +796,24 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2)
     return true;
 }
 
+bool XPicture_recordDrawPoint(XPicture* self, int x, int y)
+{
+    uint8_t payload[8];
+    XRect bounds;
+    if (!self) return false;
+    XPicture_putI32(payload + 0, x);
+    XPicture_putI32(payload + 4, y);
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPoint, payload,
+                               sizeof(payload)))
+        return false;
+    bounds.x = x;
+    bounds.y = y;
+    bounds.width = 1;
+    bounds.height = 1;
+    XPicture_updateBounds(self, &bounds);
+    return true;
+}
+
 bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
                            int width, int cap, int join)
 {
@@ -759,6 +826,47 @@ bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
     XPicture_putI32(payload + 16, join);
     return XPicture_appendRecord(self, XPictureOpcode_SetPen, payload,
                                  sizeof(payload));
+}
+
+bool XPicture_recordSetFont(XPicture* self, const XFont* font)
+{
+    XString* snapshot;
+    const char* utf8;
+    size_t length;
+    uint8_t* payload;
+    bool ok;
+    if (!self) return false;
+    /* A zero-length payload is the explicit NULL/default-font state. */
+    if (!font)
+    {
+        uint8_t reset[XPICTURE_FONT_FIXED_SIZE] = { 0, 0, 0, 0,
+                                                    0xff, 0xff, 0xff, 0xff };
+        return XPicture_appendRecord(self, XPictureOpcode_SetFont,
+                                     reset, sizeof(reset));
+    }
+    snapshot = XFont_toString(font);
+    if (!snapshot) return false;
+    utf8 = XString_toUtf8(snapshot);
+    length = utf8 ? strlen(utf8) : 0u;
+    if (!utf8 || length == 0u || length > XPICTURE_MAX_FONT_TEXT)
+    {
+        XString_delete_base((XClass*)snapshot);
+        return false;
+    }
+    payload = (uint8_t*)XMalloc_System(length + XPICTURE_FONT_FIXED_SIZE);
+    if (!payload)
+    {
+        XString_delete_base((XClass*)snapshot);
+        return false;
+    }
+    XPicture_putU32(payload, (uint32_t)length);
+    XPicture_putI32(payload + 4u, XFont_pixelSize(font));
+    memcpy(payload + XPICTURE_FONT_FIXED_SIZE, utf8, length);
+    ok = XPicture_appendRecord(self, XPictureOpcode_SetFont, payload,
+                               (uint32_t)(length + XPICTURE_FONT_FIXED_SIZE));
+    XFree_System(payload);
+    XString_delete_base((XClass*)snapshot);
+    return ok;
 }
 
 bool XPicture_recordSetOpacity(XPicture* self, float opacity)
@@ -1278,6 +1386,152 @@ bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y)
     return true;
 }
 
+bool XPicture_recordDrawTiledPixmap(XPicture* self, const XImage* image,
+                                    const XRect* rect, const XPoint* offset)
+{
+    XSize size;
+    XPoint zeroOffset;
+    int bytesPerLine, imageSize, colorCount, i;
+    uint64_t payloadSize64;
+    uint8_t* payload;
+    uint32_t dprBits;
+    float dpr;
+    const uint8_t* bits;
+    uint32_t extraOffset;
+    if (!self || !image || !rect || XImage_isNull(image)) return false;
+    if (rect->width <= 0 || rect->height <= 0) return true;
+    XImage_size(image, &size);
+    bytesPerLine = XImage_bytesPerLine(image);
+    imageSize = XImage_sizeInBytes(image);
+    colorCount = XImage_colorCount(image);
+    bits = XImage_constBits(image);
+    if (size.width <= 0 || size.height <= 0 || bytesPerLine <= 0 || imageSize <= 0 ||
+        !bits || colorCount < 0 || colorCount > 65536 ||
+        !((dpr = XImage_devicePixelRatio(image)) > 0.0f) || !isfinite(dpr))
+        return false;
+    payloadSize64 = (uint64_t)XPICTURE_IMAGE_FIXED_SIZE +
+                    (uint64_t)colorCount * 4u + (uint32_t)imageSize +
+                    XPICTURE_TILED_EXTRA_SIZE;
+    if (payloadSize64 > UINT32_MAX) return false;
+    payload = (uint8_t*)XMalloc_System((size_t)payloadSize64);
+    if (!payload) return false;
+    memset(payload, 0, (size_t)payloadSize64);
+    XPicture_putI32(payload + 0, rect->x);
+    XPicture_putI32(payload + 4, rect->y);
+    XPicture_putU32(payload + 8, (uint32_t)size.width);
+    XPicture_putU32(payload + 12, (uint32_t)size.height);
+    XPicture_putU32(payload + 16, (uint32_t)XImage_format(image));
+    XPicture_putU32(payload + 20, (uint32_t)bytesPerLine);
+    XPicture_putU32(payload + 24, (uint32_t)imageSize);
+    memcpy(&dprBits, &dpr, sizeof(dprBits));
+    XPicture_putU32(payload + 28, dprBits);
+    XPicture_putI32(payload + 32, XImage_dotsPerMeterX(image));
+    XPicture_putI32(payload + 36, XImage_dotsPerMeterY(image));
+    XImage_offset(image, &zeroOffset);
+    XPicture_putI32(payload + 40, zeroOffset.x);
+    XPicture_putI32(payload + 44, zeroOffset.y);
+    XPicture_putU32(payload + 48, (uint32_t)colorCount);
+    for (i = 0; i < colorCount; ++i)
+        XPicture_putU32(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)i * 4u,
+                        XImage_color(image, i));
+    memcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
+           bits, (size_t)imageSize);
+    extraOffset = XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u +
+                  (uint32_t)imageSize;
+    XPicture_putI32(payload + extraOffset + 0u, rect->x);
+    XPicture_putI32(payload + extraOffset + 4u, rect->y);
+    XPicture_putU32(payload + extraOffset + 8u, (uint32_t)rect->width);
+    XPicture_putU32(payload + extraOffset + 12u, (uint32_t)rect->height);
+    XPicture_putI32(payload + extraOffset + 16u,
+                    offset ? offset->x : 0);
+    XPicture_putI32(payload + extraOffset + 20u,
+                    offset ? offset->y : 0);
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawTiledPixmap, payload,
+                               (uint32_t)payloadSize64))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updateBounds(self, rect);
+    return true;
+}
+
+#if XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON
+bool XPicture_recordDrawPixmap(XPicture* self, const XImage* image,
+                               const XRect* targetRect,
+                               const XRect* sourceRect)
+{
+    XSize size;
+    XPoint imageOffset;
+    int bytesPerLine, imageSize, colorCount, i;
+    uint64_t payloadSize64;
+    uint8_t* payload;
+    uint32_t dprBits;
+    float dpr;
+    const uint8_t* bits;
+    uint32_t extraOffset;
+    if (!self || !image || !targetRect || !sourceRect || XImage_isNull(image))
+        return false;
+    if (targetRect->width == 0 || targetRect->height == 0)
+        return true;
+    XImage_size(image, &size);
+    bytesPerLine = XImage_bytesPerLine(image);
+    imageSize = XImage_sizeInBytes(image);
+    colorCount = XImage_colorCount(image);
+    bits = XImage_constBits(image);
+    dpr = XImage_devicePixelRatio(image);
+    if (size.width <= 0 || size.height <= 0 || bytesPerLine <= 0 || imageSize <= 0 ||
+        !bits || colorCount < 0 || colorCount > 65536 || !(dpr > 0.0f) ||
+        !isfinite(dpr))
+        return false;
+    payloadSize64 = (uint64_t)XPICTURE_IMAGE_FIXED_SIZE +
+                    (uint64_t)colorCount * 4u + (uint32_t)imageSize +
+                    XPICTURE_PIXMAP_EXTRA_SIZE;
+    if (payloadSize64 > UINT32_MAX) return false;
+    payload = (uint8_t*)XMalloc_System((size_t)payloadSize64);
+    if (!payload) return false;
+    memset(payload, 0, (size_t)payloadSize64);
+    XPicture_putI32(payload + 0, targetRect->x);
+    XPicture_putI32(payload + 4, targetRect->y);
+    XPicture_putU32(payload + 8, (uint32_t)size.width);
+    XPicture_putU32(payload + 12, (uint32_t)size.height);
+    XPicture_putU32(payload + 16, (uint32_t)XImage_format(image));
+    XPicture_putU32(payload + 20, (uint32_t)bytesPerLine);
+    XPicture_putU32(payload + 24, (uint32_t)imageSize);
+    memcpy(&dprBits, &dpr, sizeof(dprBits));
+    XPicture_putU32(payload + 28, dprBits);
+    XPicture_putI32(payload + 32, XImage_dotsPerMeterX(image));
+    XPicture_putI32(payload + 36, XImage_dotsPerMeterY(image));
+    XImage_offset(image, &imageOffset);
+    XPicture_putI32(payload + 40, imageOffset.x);
+    XPicture_putI32(payload + 44, imageOffset.y);
+    XPicture_putU32(payload + 48, (uint32_t)colorCount);
+    for (i = 0; i < colorCount; ++i)
+        XPicture_putU32(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)i * 4u,
+                        XImage_color(image, i));
+    memcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
+           bits, (size_t)imageSize);
+    extraOffset = XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u +
+                  (uint32_t)imageSize;
+    XPicture_putI32(payload + extraOffset + 0u, targetRect->width);
+    XPicture_putI32(payload + extraOffset + 4u, targetRect->height);
+    XPicture_putI32(payload + extraOffset + 8u, sourceRect->x);
+    XPicture_putI32(payload + extraOffset + 12u, sourceRect->y);
+    XPicture_putI32(payload + extraOffset + 16u, sourceRect->width);
+    XPicture_putI32(payload + extraOffset + 20u, sourceRect->height);
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawPixmap, payload,
+                               (uint32_t)payloadSize64))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    XPicture_updateBounds(self, targetRect);
+    return true;
+}
+#endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
+
 void XPicture_clearCommands(XPicture* self)
 {
     if (!self || !self->m_data) return;
@@ -1400,6 +1654,40 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 (XPainterPenJoinStyle)XPicture_getI32(payload + 16);
 #endif /* XPAINTER_PENSTYLE_ON */
             ok = true;
+        }
+        else if (opcode == XPictureOpcode_SetFont)
+        {
+            uint32_t fontLength = XPicture_getU32(payload);
+            int pixelSize = (int)XPicture_getI32(payload + 4u);
+            XFont font;
+            bool parsed = true;
+            XFont_init(&font);
+            if (fontLength != 0u)
+            {
+                char* snapshot = (char*)XMalloc_System((size_t)fontLength + 1u);
+                if (!snapshot)
+                    parsed = false;
+                else
+                {
+                    memcpy(snapshot, payload + XPICTURE_FONT_FIXED_SIZE,
+                           fontLength);
+                    snapshot[fontLength] = '\0';
+                    parsed = XFont_fromString(&font, snapshot);
+                    XFree_System(snapshot);
+                }
+            }
+            if (parsed && fontLength != 0u)
+                XFont_setPixelSize(&font, pixelSize);
+            if (parsed)
+            {
+                /* Do not call XPainter_setFont(): replay is deliberately
+                   silent and must not append another SetFont record. */
+                XFont_deinit_base((XClass*)&painter->m_state.m_font);
+                XFont_move_base((XClass*)&painter->m_state.m_font,
+                                (XClass*)&font);
+                ok = true;
+            }
+            XFont_deinit_base((XClass*)&font);
         }
         else if (opcode == XPictureOpcode_SetOpacity)
         {
@@ -1590,6 +1878,12 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                    sizeof(painter->m_state.m_brush.m_gradient));
 #endif /* XPAINTER_BRUSH_ON */
             ok = true;
+        }
+        else if (opcode == XPictureOpcode_DrawPoint)
+        {
+            ok = XPainter_drawPoint(painter,
+                                    (int)XPicture_getI32(payload + 0u),
+                                    (int)XPicture_getI32(payload + 4u));
         }
         else if (opcode == XPictureOpcode_DrawLine)
         {
@@ -1814,6 +2108,134 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                                     (int)XPicture_getI32(payload + 4));
             XImage_deinit_base(&image);
         }
+#if XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON
+        else if (opcode == XPictureOpcode_DrawPixmap)
+        {
+            uint32_t width = XPicture_getU32(payload + 8);
+            uint32_t height = XPicture_getU32(payload + 12);
+            XImageFormat format = (XImageFormat)XPicture_getU32(payload + 16);
+            uint32_t bytesPerLine = XPicture_getU32(payload + 20);
+            uint32_t imageSize = XPicture_getU32(payload + 24);
+            uint32_t colorCount = XPicture_getU32(payload + 48);
+            uint32_t dprBits = XPicture_getU32(payload + 28);
+            uint32_t extraOffset = XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u + imageSize;
+            const uint8_t* imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
+            uint8_t* imageBytes = (uint8_t*)XMalloc_System(imageSize);
+            float dpr;
+            XImage image;
+            XPixmap pixmap;
+            XRect targetRect;
+            XRect sourceRect;
+            bool drawOk;
+            uint32_t i;
+            if (!painter->m_drawImage || !imageBytes) return false;
+            memcpy(imageBytes, imageData, imageSize);
+            XImage_init_ex_2(&image, (int)width, (int)height, format,
+                             (int64_t)bytesPerLine, imageBytes,
+                             XPicture_imageDataCleanup, imageBytes);
+            if (XImage_isNull(&image))
+            {
+                XFree_System(imageBytes);
+                return false;
+            }
+            memcpy(&dpr, &dprBits, sizeof(dpr));
+            XImage_setDevicePixelRatio(&image, dpr);
+            XImage_setDotsPerMeterX(&image, (int)XPicture_getI32(payload + 32));
+            XImage_setDotsPerMeterY(&image, (int)XPicture_getI32(payload + 36));
+            {
+                XPoint imageOffset;
+                imageOffset.x = (int)XPicture_getI32(payload + 40);
+                imageOffset.y = (int)XPicture_getI32(payload + 44);
+                XImage_setOffset(&image, &imageOffset);
+            }
+            if (colorCount != 0)
+            {
+                XImage_setColorCount(&image, (int)colorCount);
+                for (i = 0; i < colorCount; ++i)
+                    XImage_setColor(&image, (int)i,
+                                    XPicture_getU32(payload + XPICTURE_IMAGE_FIXED_SIZE + i * 4u));
+            }
+            XPixmap_init(&pixmap);
+            XPixmap_fromImage(&image, XPixmapImageConversion_NoFormatConversion,
+                              &pixmap);
+            targetRect.x = (int)XPicture_getI32(payload + 0u);
+            targetRect.y = (int)XPicture_getI32(payload + 4u);
+            targetRect.width = (int)XPicture_getI32(payload + extraOffset + 0u);
+            targetRect.height = (int)XPicture_getI32(payload + extraOffset + 4u);
+            sourceRect.x = (int)XPicture_getI32(payload + extraOffset + 8u);
+            sourceRect.y = (int)XPicture_getI32(payload + extraOffset + 12u);
+            sourceRect.width = (int)XPicture_getI32(payload + extraOffset + 16u);
+            sourceRect.height = (int)XPicture_getI32(payload + extraOffset + 20u);
+            drawOk = !XPixmap_isNull(&pixmap) &&
+                     XPainter_drawPixmapRect(painter, &targetRect, &pixmap,
+                                             &sourceRect);
+            XPixmap_deinit_base(&pixmap);
+            XImage_deinit_base(&image);
+            ok = drawOk;
+        }
+#endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
+#if XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON
+        else if (opcode == XPictureOpcode_DrawTiledPixmap)
+        {
+            uint32_t width = XPicture_getU32(payload + 8);
+            uint32_t height = XPicture_getU32(payload + 12);
+            XImageFormat format = (XImageFormat)XPicture_getU32(payload + 16);
+            uint32_t bytesPerLine = XPicture_getU32(payload + 20);
+            uint32_t imageSize = XPicture_getU32(payload + 24);
+            uint32_t colorCount = XPicture_getU32(payload + 48);
+            uint32_t dprBits = XPicture_getU32(payload + 28);
+            uint32_t extraOffset = XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u + imageSize;
+            const uint8_t* imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
+            uint8_t* imageBytes = (uint8_t*)XMalloc_System(imageSize);
+            float dpr;
+            XImage image;
+            XPixmap pixmap;
+            XRect rect;
+            XPoint offsetPoint;
+            uint32_t i;
+            if (!painter->m_drawImage || !imageBytes) return false;
+            memcpy(imageBytes, imageData, imageSize);
+            XImage_init_ex_2(&image, (int)width, (int)height, format,
+                             (int64_t)bytesPerLine, imageBytes,
+                             XPicture_imageDataCleanup, imageBytes);
+            if (XImage_isNull(&image))
+            {
+                XFree_System(imageBytes);
+                return false;
+            }
+            memcpy(&dpr, &dprBits, sizeof(dpr));
+            XImage_setDevicePixelRatio(&image, dpr);
+            XImage_setDotsPerMeterX(&image, (int)XPicture_getI32(payload + 32));
+            XImage_setDotsPerMeterY(&image, (int)XPicture_getI32(payload + 36));
+            {
+                XPoint imageOffset;
+                imageOffset.x = (int)XPicture_getI32(payload + 40);
+                imageOffset.y = (int)XPicture_getI32(payload + 44);
+                XImage_setOffset(&image, &imageOffset);
+            }
+            if (colorCount != 0)
+            {
+                XImage_setColorCount(&image, (int)colorCount);
+                for (i = 0; i < colorCount; ++i)
+                    XImage_setColor(&image, (int)i,
+                                    XPicture_getU32(payload + XPICTURE_IMAGE_FIXED_SIZE + i * 4u));
+            }
+            XPixmap_init(&pixmap);
+            XPixmap_fromImage(&image, XPixmapImageConversion_NoFormatConversion,
+                              &pixmap);
+            rect.x = (int)XPicture_getI32(payload + extraOffset + 0u);
+            rect.y = (int)XPicture_getI32(payload + extraOffset + 4u);
+            rect.width = (int)XPicture_getI32(payload + extraOffset + 8u);
+            rect.height = (int)XPicture_getI32(payload + extraOffset + 12u);
+            offsetPoint.x = (int)XPicture_getI32(payload + extraOffset + 16u);
+            offsetPoint.y = (int)XPicture_getI32(payload + extraOffset + 20u);
+            ok = !XPixmap_isNull(&pixmap) &&
+                 XPainter_drawTiledPixmap(painter, &rect, &pixmap,
+                                          &offsetPoint);
+            XPixmap_deinit_base(&pixmap);
+            XImage_deinit_base(&image);
+        }
+#endif /* XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON */
         if (!ok) return false;
         offset += length;
     }
@@ -1849,8 +2271,22 @@ bool XPicture_load(XPicture* self, const XString* fileName)
     if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
     file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); XPicture_reset(self); return false; }
     bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
-    if (bytes && size > 0 && size <= UINT32_MAX && ((!XPicture_magicMatches(XByteArray_data(bytes), (uint32_t)size)) || XPicture_validateStreamData((const char*)XByteArray_data(bytes), (uint32_t)size))) { XPicture_setData(self, (const char*)XByteArray_data(bytes), (uint32_t)size); success = XPicture_size(self) == (uint32_t)size; }
-    if (bytes) XByteArray_delete_base((XClass*)bytes); if (!success) XPicture_reset(self); return success;
+    if (bytes && size <= UINT32_MAX)
+    {
+        /* Qt QPicture::load(QString) delegates to load(QIODevice*) after a
+           successful open.  The device overload stores the complete byte
+           array before checkFormat(); a non-empty but malformed stream is
+           therefore retained (isNull() stays false) while the return value
+           reports failure.  Only an open/read failure has the explicit
+           empty-picture path above. */
+        XPicture_setData(self, (const char*)XByteArray_data(bytes),
+                         (uint32_t)size);
+        success = XPicture_isValidStream(self);
+    }
+    if (bytes) XByteArray_delete_base((XClass*)bytes);
+    if (!bytes || size > UINT32_MAX)
+        XPicture_reset(self);
+    return success;
 }
 
 bool XPicture_load_2(XPicture* self, const char* fileName)
@@ -1869,33 +2305,26 @@ bool XPicture_load_device(XPicture* self, XIODevice* device)
     if (!self || !self->m_data || !device) return false;
     bytes = XIODevice_readAll_3(device);
     size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
-    if (bytes && size <= UINT32_MAX && size != 0)
+    if (bytes && size <= UINT32_MAX)
     {
-        const char* data = XByteArray_constData(bytes);
-        if ((!XPicture_magicMatches((const uint8_t*)data, (uint32_t)size) ||
-             XPicture_validateStreamData(data, (uint32_t)size)))
-        {
-            XPicture_setData(self, data, (uint32_t)size);
-            success = XPicture_size(self) == (uint32_t)size;
-        }
+        /* Match Qt's QPicture::load(QIODevice*): setData() precedes
+           checkFormat(), so malformed non-empty bytes remain observable via
+           data()/size() even though the operation returns false. */
+        XPicture_setData(self, XByteArray_constData(bytes), (uint32_t)size);
+        success = XPicture_isValidStream(self);
     }
     if (bytes) XByteArray_delete_base((XClass*)bytes);
-    if (!success) XPicture_reset(self);
+    if (!bytes || size > UINT32_MAX)
+        XPicture_reset(self);
     return success;
 }
 
 bool XPicture_save(const XPicture* self, const XString* fileName)
 {
-    XFile* file; size_t size; bool success;
+    XFile* file; bool success;
     if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
-    if (XPicture_magicMatches((const uint8_t*)self->m_data->m_data,
-                              self->m_data->m_dataSize) &&
-        !XPicture_validateStreamData(self->m_data->m_data,
-                                     self->m_data->m_dataSize))
-        return false;
     file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) { if (file) XClass_delete_base((XClass*)file); return false; }
-    size = self->m_data->m_dataSize;
-    success = size == 0 || XIODevice_write_1((XIODevice*)file, self->m_data->m_data, (int64_t)size) == (int64_t)size;
+    success = XPicture_save_device(self, (XIODevice*)file);
     XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file);
     return success;
 }
@@ -1910,18 +2339,15 @@ bool XPicture_save_2(const XPicture* self, const char* fileName)
 
 bool XPicture_save_device(const XPicture* self, XIODevice* device)
 {
-    int64_t written;
     uint32_t size;
     if (!self || !self->m_data || !device) return false;
-    if (XPicture_magicMatches((const uint8_t*)self->m_data->m_data,
-                              self->m_data->m_dataSize) &&
-        !XPicture_validateStreamData(self->m_data->m_data,
-                                     self->m_data->m_dataSize))
-        return false;
     size = self->m_data->m_dataSize;
-    if (size == 0) return XIODevice_flush(device);
-    written = XIODevice_write_1(device, self->m_data->m_data, size);
-    return written == (int64_t)size && XIODevice_flush(device);
+    /* Qt 6.8 QPicture::save(QIODevice*) 只把数据交给 QIODevice::write，
+     * 不检查短写/错误返回，也不额外调用 flush；设备指针和记录状态有效
+     * 即视为保存成功。保持该语义，避免把设备层策略泄漏到 Picture API。 */
+    if (size != 0)
+        (void)XIODevice_write_1(device, self->m_data->m_data, size);
+    return true;
 }
 
 void XPicture_detach(XPicture* self)

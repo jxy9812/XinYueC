@@ -9,15 +9,16 @@
 static uint32_t VXImageIOPlugin_capabilities(const XImageIOPlugin* self,
                                              XIODevice* device, const XString* format)
 { (void)self; (void)device; (void)format; return 0; }
-static XImageIOHandler* VXImageIOPlugin_create(XImageIOPlugin* self, XIODevice* device,
+static XImageIOHandler* VXImageIOPlugin_create(const XImageIOPlugin* self,
+                                               XIODevice* device,
                                                const XString* format)
 { (void)self; (void)device; (void)format; return NULL; }
 static XStringList* VXImageIOPlugin_keys(const XImageIOPlugin* self)
-{ (void)self; return XStringList_create(); }
+{ (void)self; return NULL; }
 static XStringList* VXImageIOPlugin_nameFilters(const XImageIOPlugin* self)
-{ (void)self; return XStringList_create(); }
+{ (void)self; return NULL; }
 static XStringList* VXImageIOPlugin_mimeTypes(const XImageIOPlugin* self)
-{ (void)self; return XStringList_create(); }
+{ (void)self; return NULL; }
 static void VXImageIOPlugin_deinit(XImageIOPlugin* self)
 { if (self) XClass_Deinit_Parent(XObject, (XObject*)self); }
 
@@ -56,16 +57,17 @@ uint32_t XImageIOPlugin_capabilities_base(const XImageIOPlugin* self,
                                           XIODevice* device, const XString* format)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_Capabilities,
     uint32_t(*)(const XImageIOPlugin*,XIODevice*,const XString*))(self,device,format) : 0; }
-XImageIOHandler* XImageIOPlugin_create_base(XImageIOPlugin* self, XIODevice* device,
+XImageIOHandler* XImageIOPlugin_create_base(const XImageIOPlugin* self,
+                                            XIODevice* device,
                                             const XString* format)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_Create,
-    XImageIOHandler*(*)(XImageIOPlugin*,XIODevice*,const XString*))(self,device,format) : NULL; }
+    XImageIOHandler*(*)(const XImageIOPlugin*,XIODevice*,const XString*))(self,device,format) : NULL; }
 XStringList* XImageIOPlugin_keys_base(const XImageIOPlugin* self)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_Keys,
-    XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }
+    XStringList*(*)(const XImageIOPlugin*))(self) : NULL; }
 XStringList* XImageIOPlugin_nameFilters_base(const XImageIOPlugin* self)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_NameFilters,
-    XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }
+    XStringList*(*)(const XImageIOPlugin*))(self) : NULL; }
 XStringList* XImageIOPlugin_mimeTypes_base(const XImageIOPlugin* self)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_MimeTypes,
-    XStringList*(*)(const XImageIOPlugin*))(self) : XStringList_create(); }
+    XStringList*(*)(const XImageIOPlugin*))(self) : NULL; }

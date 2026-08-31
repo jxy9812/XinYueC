@@ -704,6 +704,9 @@ bool XPainter_eraseRect(XPainter* self, const XRect* rect);
 
 /**
  * @brief      绘制图像（对标 QPainter::drawImage，最近邻采样）。
+ * @details    图像设备像素比有效且绑定 XImage 光栅设备时，物理宽高
+ *             会按 devicePixelRatio 换算为逻辑目标尺寸；绑定 XPicture
+ *             时保留原始图像与坐标，回放到光栅设备后再执行该换算。
  * @param self 绘制器指针。
  * @param image 源图像；NULL 返回 false，空图像视为无操作返回 true。
  * @param x 目标左上角 X 坐标。

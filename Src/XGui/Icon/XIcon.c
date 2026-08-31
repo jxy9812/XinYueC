@@ -1021,13 +1021,19 @@ void XIcon_actualSize(const XIcon* self, int width, int height, XIconMode mode, 
     if (!out) return;
     out->width = 0;
     out->height = 0;
-    if (!self || !self->m_data || width <= 0 || height <= 0) return;
+    if (!self || !self->m_data) return;
     if (self->m_data->m_engine)
     {
+        /* Qt QIcon::actualSize() passes every QSize through in the normal-DPI
+           path; the base QIconEngine implementation returns it unchanged.
+           Keep zero and negative components observable for engine-backed
+           icons, while the file-entry path below still requires a usable
+           positive lookup rectangle. */
         XSize requested = { width, height };
         XIconEngine_actualSize_base(self->m_data->m_engine, &requested, mode, state, out);
         return;
     }
+    if (width <= 0 || height <= 0) return;
     /* QIcon::actualSize() 通过 bestMatch() 触发懒加载；共享图标在此处
        修改条目前先分离，避免 const 查询改变其它副本的缓存生命周期。 */
     XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
@@ -1135,7 +1141,7 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     int drawX;
     int drawY;
     bool saved = false;
-    if (!self || !target || w <= 0 || h <= 0) return;
+    if (!self || !self->m_data || !target) return;
 #if XPAINTER_LAYOUT_DIRECTION_ON
     /* 对齐 Qt QGuiApplicationPrivate::visualAlignment：没有水平位时补左对齐，
        RTL 且未指定 Absolute 时交换 Left/Right；Auto 方向不强制交换。 */
@@ -1149,7 +1155,12 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     }
 #endif /* XPAINTER_LAYOUT_DIRECTION_ON */
     XIcon_actualSize(self, w, h, mode, state, &actual);
-    if (actual.width <= 0 || actual.height <= 0) return;
+    /* Qt 6.8 qicon.cpp:1017-1040 仍会把引擎的 actualSize() 结果传给
+       paint()，即使请求矩形含有非正尺寸；只有无引擎的便携像素回退
+       需要正尺寸才能生成图像。 */
+    if (!self->m_data->m_engine &&
+        (w <= 0 || h <= 0 || actual.width <= 0 || actual.height <= 0))
+        return;
     drawX = x;
     drawY = y;
     /* Qt::Alignment values are used as a portable bit mask here: Left=1,
@@ -1496,12 +1507,32 @@ const char* XIcon_themeName_2()
 }
 void XIcon_setThemeName_2(const char* name)
 {
+    bool hadUserTheme = g_iconThemeName &&
+        !XString_isEmpty_base((const XContainer*)g_iconThemeName);
     XIcon_replaceString(&g_iconThemeName, name);
+    /* Qt QIconLoader::setThemeName() restores system search paths when a
+       non-empty user theme is cleared.  The portable layer has no platform
+       system-path query; dropping the explicit list lets themeSearchPaths()
+       lazily provide its :/icons default instead. */
+    if (hadUserTheme && (!g_iconThemeName ||
+                         XString_isEmpty_base((const XContainer*)g_iconThemeName)))
+    {
+        if (g_iconThemeSearchPaths)
+            XStringList_clear_base((XContainer*)g_iconThemeSearchPaths);
+    }
     XIconScaledPixmapCache_clear();
 }
 void XIcon_setThemeName(const XString* name)
 {
+    bool hadUserTheme = g_iconThemeName &&
+        !XString_isEmpty_base((const XContainer*)g_iconThemeName);
     XIcon_replaceString_2(&g_iconThemeName, name);
+    if (hadUserTheme && (!g_iconThemeName ||
+                         XString_isEmpty_base((const XContainer*)g_iconThemeName)))
+    {
+        if (g_iconThemeSearchPaths)
+            XStringList_clear_base((XContainer*)g_iconThemeSearchPaths);
+    }
     XIconScaledPixmapCache_clear();
 }
 XString* XIcon_fallbackThemeName()

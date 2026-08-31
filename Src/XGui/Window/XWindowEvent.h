@@ -59,13 +59,14 @@ extern "C" {
 /* ========================================================================== */
 /** @brief 焦点变化原因（对标 Qt::FocusReason）。
  * @details 与 Qt::FocusReason 取值一一对应：鼠标操作、Tab 键、反向 Tab、
- *          窗口激活、快捷键、菜单栏、其他程序原因、无原因。 */
+ *          窗口激活、弹出窗口、快捷键、菜单栏、其他程序原因、无原因。 */
 typedef enum XFocusReason
 {
     XFocusReason_Mouse = 0,        /**< 鼠标点击引起的焦点变化。 */
     XFocusReason_Tab,              /**< Tab 键向前导航引起的焦点变化。 */
     XFocusReason_Backtab,          /**< 反向 Tab（Shift+Tab）导航引起的焦点变化。 */
     XFocusReason_ActiveWindow,     /**< 活动窗口切换引起的焦点变化。 */
+    XFocusReason_Popup,            /**< 弹出窗口切换引起的焦点变化。 */
     XFocusReason_Shortcut,         /**< 快捷键引起的焦点变化。 */
     XFocusReason_MenuBar,          /**< 菜单栏导航引起的焦点变化。 */
     XFocusReason_Other,            /**< 其他程序原因。 */

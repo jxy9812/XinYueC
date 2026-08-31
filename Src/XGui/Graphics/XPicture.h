@@ -16,6 +16,7 @@ extern "C" {
 #include "XGeometry.h"
 #include "XTypes.h"
 #include "XString.h"
+#include "XPainter_config.h"
 
 typedef struct XIODevice XIODevice;
 
@@ -23,6 +24,7 @@ typedef struct XIODevice XIODevice;
 typedef struct XImage XImage;
 typedef struct XPainter XPainter;
 typedef struct XImageTransform XImageTransform;
+typedef struct XFont XFont;
 struct XPainterPath;
 
 /* 流常量属于 XGui C ABI；无论主机架构如何，字节流始终采用小端序。 */
@@ -57,7 +59,11 @@ typedef enum XPictureOpcode
     XPictureOpcode_SetViewTransformEnabled = 22, /**< 视图变换启用状态。 */
     XPictureOpcode_SetClipEnabled = 23, /**< 裁剪启用状态（对标 PdcSetClipEnabled）。 */
     XPictureOpcode_SetClipRect = 24, /**< 矩形裁剪（对标 PdcSetClipRegion 的矩形子集）。 */
-    XPictureOpcode_SetClipRegion = 25 /**< 区域裁剪（对标 PdcSetClipRegion）。 */
+    XPictureOpcode_SetClipRegion = 25, /**< 区域裁剪（对标 PdcSetClipRegion）。 */
+    XPictureOpcode_DrawTiledPixmap = 26, /**< 平铺像素图（对标 PdcDrawTiledPixmap）。 */
+    XPictureOpcode_DrawPixmap = 27, /**< 矩形像素图（对标 PdcDrawPixmap）。 */
+    XPictureOpcode_SetFont = 28, /**< 字体状态（对标 PdcSetFont）。 */
+    XPictureOpcode_DrawPoint = 29 /**< 单点绘制（对标 PdcDrawPoint）。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -228,6 +234,14 @@ bool XPicture_play(const XPicture* self, XPainter* painter);
  */
 bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
 /**
+ * @brief 记录单点绘制命令（对标 Qt QPicture 的 PdcDrawPoint）。
+ * @param self 目标图片对象指针。
+ * @param x 点的 X 坐标。
+ * @param y 点的 Y 坐标。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPoint(XPicture* self, int x, int y);
+/**
  * @brief 记录完整画笔状态命令（对标 Qt QPicturePaintEngine::updatePen）。
  * @param self 目标图片对象指针。
  * @param color 画笔 ARGB32 颜色。
@@ -239,6 +253,15 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
  */
 bool XPicture_recordSetPen(XPicture* self, uint32_t color, int style,
                            int width, int cap, int join);
+/**
+ * @brief 记录当前字体状态（对标 Qt QPicture 的 PdcSetFont）。
+ * @param self 目标图片对象指针。
+ * @param font 要记录的字体；NULL 表示恢复默认字体。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 便携快照复用 XFont_toString()，保存家族、字号、字重和样式等
+ *       当前点阵文字后端实际使用的属性；复杂 Qt 字体引擎属性不在此流中。
+ */
+bool XPicture_recordSetFont(XPicture* self, const XFont* font);
 /**
  * @brief 记录绘制器整体不透明度。
  * @param self 目标图片对象指针。
@@ -418,6 +441,29 @@ bool XPicture_recordDrawPath(XPicture* self, int pathOp,
  */
 bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y);
 /**
+ * @brief 记录平铺像素图命令。
+ * @param self 目标图片对象指针。
+ * @param image 平铺用源图像，需包含完整像素及设备像素比元数据。
+ * @param rect 目标逻辑矩形；宽度或高度不大于零时按无操作处理。
+ * @param offset 平铺起始偏移，按逻辑像素解释；NULL 等价于零偏移。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawTiledPixmap(XPicture* self, const XImage* image,
+                                    const XRect* rect, const XPoint* offset);
+#if XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON
+/**
+ * @brief 记录带目标矩形和源矩形的像素图绘制命令。
+ * @param self 目标图片对象指针。
+ * @param image 像素图对应的源图像，记录时复制全部像素和元数据。
+ * @param targetRect 目标逻辑矩形；不取得所有权。
+ * @param sourceRect 源物理像素矩形；不取得所有权。
+ * @return 命令写入成功返回 true，否则返回 false。
+ */
+bool XPicture_recordDrawPixmap(XPicture* self, const XImage* image,
+                               const XRect* targetRect,
+                               const XRect* sourceRect);
+#endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
+/**
  * @brief 记录保存绘制状态命令。
  * @param self 目标图片对象指针。
  * @return 命令写入成功返回 true，否则返回 false。
@@ -447,7 +493,8 @@ bool XPicture_isValidStream(const XPicture* self);
  * @brief      从文件加载绘图记录
  * @param self     目标 XPicture 对象指针
  * @param fileName 文件名
- * @return 加载成功返回 true
+ * @return 加载成功返回 true；文件无法打开时返回 false 并将图片置为空；文件已打开
+ *         但流格式无效时返回 false，同时保留已读的非空数据供 size()/data() 查询。
  */
 bool XPicture_load(XPicture* self, const XString* fileName);
 /**
@@ -462,7 +509,9 @@ bool XPicture_load_2(XPicture* self, const char* fileName);
  * @brief 从 XIODevice 读取绘图记录。
  * @param self 目标图片对象指针。
  * @param device 输入设备指针，由调用方持有。
- * @return 读取成功返回 true，否则返回 false。
+ * @return 读取成功返回 true，否则返回 false。与 Qt 6.8 一致，设备读取到的非空
+ *         畸形流会保留在对象中，仅通过返回值和 XPicture_isValidStream() 报告失败；
+ *         空流或读取失败会得到空图片。
  */
 bool XPicture_load_device(XPicture* self, XIODevice* device);
 
@@ -470,22 +519,25 @@ bool XPicture_load_device(XPicture* self, XIODevice* device);
  * @brief      保存绘图记录到文件
  * @param self     目标 XPicture 对象指针
  * @param fileName 文件名
- * @return 保存成功返回 true
+ * @return 文件名有效且设备成功打开时返回 true；Qt 6.8 不检查后续设备写入结果，
+ *         因此短写或写入错误不会改变返回值。
  */
 bool XPicture_save(const XPicture* self, const XString* fileName);
 /**
  * @brief 使用 UTF-8 文件名保存图片的兼容重载。
  * @param self 源图片对象指针。
  * @param fileName UTF-8 编码的目标文件名。
- * @return 保存成功返回 true，失败返回 false。
+ * @return 文件名有效且设备成功打开时返回 true；设备写入短写或错误不会改变返回值，
+ *         参数无效或打开失败时返回 false。
  */
 bool XPicture_save_2(const XPicture* self, const char* fileName);
 
 /**
- * @brief 将绘图记录写入 XIODevice。
- * @param self 源图片对象指针。
- * @param device 输出设备指针，由调用方持有。
- * @return 写入成功返回 true，否则返回 false。
+ * @brief 将绘图记录写入设备。
+ * @param self 目标绘图记录对象指针。
+ * @param device 接收字节流的设备指针。
+ * @return 记录和设备指针有效时返回 true；Qt 6.8 不检查设备 write 的短写或错误返回，
+ *         本接口同样不检查，也不会额外调用 flush；参数无效时返回 false。
  */
 bool XPicture_save_device(const XPicture* self, XIODevice* device);
 

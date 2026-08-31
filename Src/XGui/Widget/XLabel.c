@@ -1754,12 +1754,31 @@ static void VXLabel_focusInEvent(XWidget* self, XEvent* event)
                       void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
-/** @brief 焦点离开：交父类默认处理。 */
+/** @brief 焦点离开：按 Qt 焦点原因清除文本选区后交父类处理。 */
 static void VXLabel_focusOutEvent(XWidget* self, XEvent* event)
 {
-    if (self && event)
-        XClass_Parent(XFrame, EXWidget_FocusOutEvent,
-                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+    XLabel* label = (XLabel*)self;
+    XFocusReason reason = XFocusReason_Other;
+    bool keepSelection = false;
+    if (!self || !event) return;
+#if XWINDOWEVENT_ON
+    if (XFocusEvent_lostFocus((const XFocusEvent*)event))
+        reason = XFocusEvent_reason((const XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
+    /* QLabelPrivate::focusOutEvent 保留活动窗口/弹出窗口切换时的选区，
+       其他失焦原因清除 QTextControl 选区。嵌入式实现没有 QTextControl，
+       但程序化选区仍应遵循同一可观察规则。 */
+    keepSelection = reason == XFocusReason_ActiveWindow ||
+                    reason == XFocusReason_Popup;
+    if (label && label->m_selectionStart >= 0 && !keepSelection) {
+        label->m_selectionStart = -1;
+        label->m_selectionLength = 0;
+        label->m_selectionAnchor = -1;
+        label->m_textSelecting = false;
+        XWidget_update((XWidget*)label);
+    }
+    XClass_Parent(XFrame, EXWidget_FocusOutEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 深拷贝：父类拷贝后深拷文本/绘图记录/链接，像素图共享。 */

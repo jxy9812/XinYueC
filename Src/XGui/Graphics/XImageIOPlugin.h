@@ -93,13 +93,14 @@ uint32_t XImageIOPlugin_capabilities_base(const XImageIOPlugin* self,
  * @param format 图像格式名；可为 NULL 以便插件自动识别。
  * @return 新建的 XImageIOHandler 指针；不支持时返回 NULL。
  */
-XImageIOHandler* XImageIOPlugin_create_base(XImageIOPlugin* self, XIODevice* device,
+XImageIOHandler* XImageIOPlugin_create_base(const XImageIOPlugin* self,
+                                            XIODevice* device,
                                             const XString* format);
 
 /**
  * @brief 获取插件支持的格式键列表。
  * @param self 插件指针。
- * @return XStringList 指针；返回对象由插件管理，调用方不得释放。
+ * @return 插件元数据列表指针；由插件管理，调用方不得释放。未提供元数据时返回 NULL。
  */
 XStringList* XImageIOPlugin_keys_base(const XImageIOPlugin* self);
 
@@ -107,14 +108,14 @@ XStringList* XImageIOPlugin_keys_base(const XImageIOPlugin* self);
  * @brief 获取插件支持的 MIME 类型列表，每个元素与 keys_base 返回的
  *        格式键一一对应；列出该格式对应的 image/* MIME 类型。
  * @param self 插件指针。
- * @return XStringList 指针；返回对象由插件管理，调用方不得释放。
+ * @return 插件元数据列表指针；由插件管理，调用方不得释放。未提供元数据时返回 NULL。
  */
 XStringList* XImageIOPlugin_mimeTypes_base(const XImageIOPlugin* self);
 
 /**
  * @brief 获取插件支持的文件名过滤器列表。
  * @param self 插件指针。
- * @return XStringList 指针；返回对象由插件管理，调用方不得释放。
+ * @return 插件元数据列表指针；由插件管理，调用方不得释放。未提供元数据时返回 NULL。
  */
 XStringList* XImageIOPlugin_nameFilters_base(const XImageIOPlugin* self);
 

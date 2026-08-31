@@ -588,7 +588,28 @@ static bool XFont_load_lvgl_bin_glyph(const char* filePath, uint32_t cp,
         goto failed;
     XFile_setFileName(file, path);
     if (!XFile_open_2(file, XIODevice_ReadOnly, 0))
-        goto failed;
+    {
+        /* 回归程序既可从仓库根目录直接运行，也可由 CTest 从 build/
+           目录运行。配置的 ../Library/XFont 在后者有效，前者需要去掉
+           前导 ../；仅在首个打开失败且确实为相对上级路径时尝试该回退。 */
+        if (filePath[0] == '.' && filePath[1] == '.' &&
+            (filePath[2] == '/' || filePath[2] == '\\'))
+        {
+            const char* alternatePath = filePath + 3;
+            XClass_delete_base((XClass*)file);
+            XClass_delete_base((XClass*)path);
+            file = NULL;
+            path = XString_create_utf8(alternatePath);
+            file = path ? XFile_create() : NULL;
+            if (!path || !file)
+                goto failed;
+            XFile_setFileName(file, path);
+            if (!XFile_open_2(file, XIODevice_ReadOnly, 0))
+                goto failed;
+        }
+        else
+            goto failed;
+    }
     bytes = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
     if (!bytes)

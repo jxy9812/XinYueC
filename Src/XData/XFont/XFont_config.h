@@ -72,7 +72,7 @@
  *          编译选项覆盖为实际文件系统挂载目录，例如 "0:/font"。
  */
 #ifndef XFONT_EXTERNAL_FONT_DIR
-#define XFONT_EXTERNAL_FONT_DIR "D:/code/CMake/XinYueC/Library/XFont"
+#define XFONT_EXTERNAL_FONT_DIR "../Library/XFont"
 #endif
 
 /** @brief 外挂字库完整路径的最大长度（含结尾的 NUL）。 */

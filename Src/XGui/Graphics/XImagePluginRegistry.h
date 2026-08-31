@@ -86,6 +86,18 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
     bool autoDetectImageFormat, bool decideFormatFromContent);
 
 /**
+ * @brief 按 Qt 后缀插件优先规则创建读取处理器。
+ * @param device 待读取设备，不能为 NULL。
+ * @param suffixFormat 已从文件名取得的后缀格式，不能为空。
+ * @return 新建处理器，所有权交给调用方；没有匹配处理器时返回 NULL。
+ * @note 先尝试首个声明该后缀的外部插件；其工厂失败后跳过该插件，再
+ *       尝试后续首个能力命中插件，最后由内置处理器接管。这对应 Qt
+ *       QImageReader 的 suffixPluginIndex 与自动探测两个阶段。
+ */
+XImageIOHandler* XImagePluginRegistry_createReadHandlerSuffix(
+    XIODevice* device, const XString* suffixFormat);
+
+/**
  * @brief 后缀处理器拒绝内容后按内容创建回退处理器。
  * @param device 待读取设备，不能为 NULL。
  * @param rejectedFormat 已拒绝的后缀格式；可为 NULL，表示无须跳过外部插件。

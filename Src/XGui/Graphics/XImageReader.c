@@ -763,9 +763,16 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     }
 #if XIMAGEIOPLUGIN_ON
     if (device) {
-        data->m_handler = XImagePluginRegistry_createReadHandlerEx(
-            device, handlerFormat, data->m_autoDetectFormat,
-            data->m_decideFromContent);
+        /* 文件名后缀存在且允许自动探测时，Qt 先单独尝试
+           suffixPluginIndex，再在后续插件阶段跳过该插件；不能把两步
+           合并成普通格式遍历，否则首个后缀工厂失败时会漏掉后续同键插件。 */
+        data->m_handler = suffixFormat && data->m_autoDetectFormat &&
+            !data->m_decideFromContent
+            ? XImagePluginRegistry_createReadHandlerSuffix(device,
+                                                            suffixFormat)
+            : XImagePluginRegistry_createReadHandlerEx(
+                  device, handlerFormat, data->m_autoDetectFormat,
+                  data->m_decideFromContent);
         /* Qt 在文件后缀命中插件后仍调用处理器 canRead()；错误后缀时
            销毁该处理器并继续按内容探测。保存设备位置，避免自定义插件
            的 canRead() 消费窥视数据影响后续处理。 */
@@ -996,13 +1003,17 @@ const XString* XImageReader_format_const(const XImageReader* self)
     XImageReader_ensureHandler((XImageReader*)self);
     if (data->m_handler) {
         /* QImageReader::format() 只有在处理器确认 canRead() 后才返回
-           处理器格式；处理器存在但无法读取时必须返回空格式。 */
+           处理器格式；处理器存在但无法读取时必须返回空格式。
+           即使 canRead() 成功但处理器格式为空，也必须返回空格式，不能
+           再用设备签名探测结果替代。Qt 6.8 qimagereader.cpp:636-645
+           直接返回 handler->format()，不再进入第二种探测路径。 */
         if (!XImageIOHandler_canRead_base(data->m_handler))
             return NULL;
         handlerFormat = XImageIOHandler_format_const(data->m_handler);
         if (handlerFormat &&
             !XContainer_isEmpty_base((const XContainer*)handlerFormat))
             return handlerFormat;
+        return NULL;
     }
     device = data->m_device ? data->m_device : data->m_fileDevice;
     if (!device) return NULL;
@@ -1085,7 +1096,18 @@ void XImageReader_setFileName_2(XImageReader* self, const char* fileName)
 }
 
 const XString* XImageReader_fileName_const(const XImageReader* self)
-{ return (self && self->m_data) ? self->m_data->m_fileName : NULL; }
+{
+    XIODevice* device;
+    if (!self || !self->m_data) return NULL;
+    if (self->m_data->m_fileName) return self->m_data->m_fileName;
+
+    /* Qt QImageReader::fileName() 仅对 QFile 设备返回设备文件名；
+       其它 QIODevice 即使内部携带自定义名称也必须保持空字符串语义。 */
+    device = self->m_data->m_device;
+    if (device && XClassGetVtable(device) == XFile_class_init())
+        return XFileDevice_fileName_base((XFileDevice*)device);
+    return NULL;
+}
 
 XString* XImageReader_fileName(const XImageReader* self)
 {
@@ -1112,10 +1134,15 @@ void XImageReader_size(const XImageReader* self, XSize* out)
                                               XImageIOHandlerOption_Size, out);
         return;
     }
+#if !XIMAGEIOPLUGIN_ON
+    /* 插件发现开启时，Qt 的 supportsOption(Size) 在处理器创建失败后
+       直接返回 false；不能绕过处理器再按裸文件头推导尺寸。插件裁剪
+       关闭时保留 XImageCodec 的嵌入式读取路径。 */
     if (XImageReader_probeSize((XImageReader*)self)) {
         out->width = self->m_data->m_sizeW;
         out->height = self->m_data->m_sizeH;
     }
+#endif
 }
 
 XImageFormat XImageReader_imageFormatValue(const XImageReader* self)
@@ -1491,7 +1518,28 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                               "Unsupported image format");
         return false;
     }
-    XImageReader_size(self, &requestedSize);
+    /* Qt QImageReader::read() 先初始化处理器，再只在单边缩放时查询
+       Size；普通读取不能因通用流程而触发处理器的 Size 选项副作用。
+       插件裁剪关闭时没有处理器可供 allocateImage() 预检，因此仍查询
+       内置编解码器可探测的原始尺寸。 */
+#if XIMAGEIOPLUGIN_ON
+    if (!XImageReader_ensureHandler(self)) {
+        if (self->m_data->m_error == XImageReaderError_UnknownError)
+            XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
+                                  "Unsupported image format");
+        return false;
+    }
+#else
+    (void)XImageReader_ensureHandler(self);
+#endif
+    requestedSize.width = 0;
+    requestedSize.height = 0;
+    scaledSize.width = self->m_data->m_scaledW;
+    scaledSize.height = self->m_data->m_scaledH;
+    if ((scaledSize.width <= 0 && scaledSize.height > 0) ||
+        (scaledSize.height <= 0 && scaledSize.width > 0) ||
+        (!XIMAGEIOPLUGIN_ON && !self->m_data->m_handler))
+        XImageReader_size(self, &requestedSize);
     {
         int allocationLimitMb = XImageReader_effectiveAllocationLimit();
         if (allocationLimitMb > 0 && requestedSize.width > 0 &&
@@ -1507,8 +1555,6 @@ bool XImageReader_read(XImageReader* self, XImage* out)
             }
         }
     }
-    scaledSize.width = self->m_data->m_scaledW;
-    scaledSize.height = self->m_data->m_scaledH;
     if ((scaledSize.width <= 0 && scaledSize.height > 0) ||
         (scaledSize.height <= 0 && scaledSize.width > 0)) {
         /* Qt 在只给出一个维度时按原始尺寸保持宽高比。 */
@@ -1619,6 +1665,18 @@ bool XImageReader_read(XImageReader* self, XImage* out)
             return false;
         }
     }
+#if XIMAGEIOPLUGIN_ON
+    /* Qt QImageReader::read() returns immediately when initHandler() could
+       not create a handler; it never falls through to QImage::load().  The
+       direct codec path below is reserved for the plugin-cropped build. */
+    if (!loadedByHandler) {
+        if (!self->m_data->m_handler &&
+            self->m_data->m_error == XImageReaderError_UnknownError)
+            XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
+                                  "Unsupported image format");
+        return false;
+    }
+#else
     if (!loadedByHandler && self->m_data->m_fileName)
     {
         /* 无显式格式时，Qt 仅在关闭自动探测的严格模式下拒绝；自动探测
@@ -1632,9 +1690,18 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                   "The requested image format has no built-in decoder");
             return false;
         }
-        if (!XImage_load_2(out, XString_toUtf8(self->m_data->m_fileName),
-                         self->m_data->m_decideFromContent ? NULL :
-                         XString_toUtf8(self->m_data->m_format))) {
+        {
+            XImage loaded;
+            bool ok;
+            XImage_init(&loaded);
+            ok = XImage_load_2(&loaded,
+                               XString_toUtf8(self->m_data->m_fileName),
+                               self->m_data->m_decideFromContent ? NULL :
+                               XString_toUtf8(self->m_data->m_format));
+            if (ok)
+                XImage_move_base(out, &loaded);
+            XImage_deinit_base(&loaded);
+            if (!ok) {
             if (!XFile_exists_static(self->m_data->m_fileName))
                 XImageReader_setError(self, XImageReaderError_FileNotFoundError,
                                       "Image file could not be opened");
@@ -1643,15 +1710,24 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                       "Image data is invalid or unsupported");
             }
             return false;
+            }
         }
     }
     else if (!loadedByHandler && self->m_data->m_device) {
         XByteArray* bytes = XIODevice_readAll_3(self->m_data->m_device);
         int64_t size = bytes ? (int64_t)XByteArray_size_base((const XContainer*)bytes) : 0;
-        bool ok = bytes && size <= INT_MAX &&
-                  XImage_loadFromData_2(out, (const uint8_t*)XByteArray_data(bytes),
-                                      (int)size, self->m_data->m_decideFromContent ? NULL :
-                                      XString_toUtf8(self->m_data->m_format));
+        XImage loaded;
+        bool ok;
+        XImage_init(&loaded);
+        ok = bytes && size <= INT_MAX &&
+             XImage_loadFromData_2(&loaded,
+                                   (const uint8_t*)XByteArray_data(bytes),
+                                   (int)size,
+                                   self->m_data->m_decideFromContent ? NULL :
+                                   XString_toUtf8(self->m_data->m_format));
+        if (ok)
+            XImage_move_base(out, &loaded);
+        XImage_deinit_base(&loaded);
         if (bytes) XByteArray_delete_base((XClass*)bytes);
         if (!ok) {
             XImageReader_setError(self, XImageReaderError_InvalidDataError,
@@ -1662,6 +1738,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         XImageReader_setError(self, XImageReaderError_DeviceError, "No image source is set");
         return false;
     }
+#endif
 
     /* 对处理器不支持的选项提供 Qt 兼容的软件回退，执行顺序为
        clip -> scale -> scaledClip；处理器已支持的步骤不重复执行。 */
@@ -1928,13 +2005,55 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
     XImageIOHandler* handler;
     XByteArray* bytes;
     const char* result = NULL;
+    XString* suffix = NULL;
+    const XString* fileName = NULL;
     if (!device) return XString_create();
     /* Qt QImageReader::imageFormat(QIODevice*) 先创建空格式处理器，再
        调用其 canRead()，只有处理器确认内容可读时才接受其 format()；不能
-       仅凭插件 capabilities() 宣称支持某个格式。内置处理器没有可报告
-       的格式名时，再由下面的签名探测返回固定编解码器名称。 */
+       仅凭插件 capabilities() 宣称支持某个格式。Qt 6.8
+       qimagereader.cpp:1458-1467 中，只要 handler 已创建就不会再回落到
+       设备签名探测，因此 canRead() 成功但 format() 为空仍须返回空格式，
+       不能把其它格式的签名误报为该处理器格式。 */
 #if XIMAGEIOPLUGIN_ON
-    handler = XImagePluginRegistry_createReadHandlerEx(device, NULL, true, false);
+    /* QImageReader::imageFormat(QIODevice*) 对 QFile 设备同样执行文件后缀
+       优先阶段；普通 QIODevice 没有文件名时才直接进入内容探测。使用
+       XFile 的虚表身份限定该行为，避免把任意自定义 FileDevice 的名称
+       误当作 QFile。 */
+    if (XClassGetVtable(device) == XFile_class_init()) {
+        fileName = XFileDevice_fileName_base((XFileDevice*)device);
+        if (fileName)
+            suffix = XImageReader_fileSuffix(fileName);
+    }
+    handler = suffix
+        ? XImagePluginRegistry_createReadHandlerSuffix(device, suffix)
+        : XImagePluginRegistry_createReadHandlerEx(device, NULL, true, false);
+    /* 后缀处理器必须先确认内容；拒绝后由注册表跳过同一首个外部插件，
+       再按内容尝试其它外部插件及内置处理器。 */
+    if (handler && suffix) {
+        int64_t pos = XIODevice_isSequential(device) ? -1
+            : XIODevice_pos_base(device);
+        bool canRead = XImageIOHandler_canRead_base(handler);
+        if (pos >= 0)
+            (void)XIODevice_seek_base(device, pos);
+        if (!canRead) {
+            XImageIOHandler_delete_base(handler);
+            handler = NULL;
+            handler = XImagePluginRegistry_createReadHandlerContentFallback(
+                device, suffix);
+        }
+    }
+    if (!handler && suffix) {
+        /* 工厂在后缀阶段直接返回 NULL 时同样必须跳过该后缀插件；
+           无文件后缀的普通设备已经由通用 Ex 入口完成内容探测。 */
+        handler = XImagePluginRegistry_createReadHandlerContentFallback(
+            device, suffix);
+    }
+    if (suffix)
+        XString_delete_base((XClass*)suffix);
+    /* QImageReader::imageFormat(QIODevice*) 的 createReadHandlerHelper()
+       在外部插件阶段之后仍会继续尝试内置处理器；通用 Ex 入口为了保持
+       首个内容插件 create() 失败时的停止语义而不会执行该内置阶段，故在
+       此专用静态查询路径补做一次无后缀内容回退。 */
     if (handler) {
         if (XImageIOHandler_canRead_base(handler)) {
             const XString* handlerFormat =
@@ -1947,6 +2066,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
             }
         }
         XImageIOHandler_delete_base(handler);
+        return XString_create();
     }
 #else
     (void)handler;

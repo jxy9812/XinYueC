@@ -7,9 +7,9 @@
  *              格式算法不依赖 XImageReader、XImageWriter 或 XPixmap，
  *              上层图像类（XImage、XPixmap、XImageReader、XImageWriter 等）
  *              统一调用本模块的 XImageCodec_* 公共 API 完成编解码。
- *              五种格式可通过 XImageCodec_config.h 中的 XIMAGECODEC_BMP_ON /
- *              XIMAGECODEC_PNG_ON / XIMAGECODEC_JPEG_ON / XIMAGECODEC_GIF_ON /
- *              XIMAGECODEC_SVG_ON 独立裁剪，XIMAGECODEC_ON 为模块总开关。
+ *              BMP/DIB 共用 XIMAGECODEC_BMP_ON 开关；PNG/JPEG/GIF/SVG 可通过
+ *              XImageCodec_config.h 中的对应开关独立裁剪，XIMAGECODEC_ON
+ *              为模块总开关。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XIMAGECODEC_H
@@ -35,6 +35,7 @@ typedef enum XImageCodecFormat
 {
     XImageCodecFormat_Unknown = 0, /**< 未知/无效格式。 */
     XImageCodecFormat_Bmp,         /**< Windows BMP（24/32 位无压缩，含 Alpha）。 */
+    XImageCodecFormat_Dib,         /**< Windows DIB（不含 14 字节 BMP 文件头，仅显式格式）。 */
     XImageCodecFormat_Png,         /**< PNG（8 位灰度/灰度+Alpha/RGB/RGBA）。 */
     XImageCodecFormat_Jpeg,        /**< JPEG（基线+渐进/算术/12 位/CMYK 解码，YCbCr 4:2:0 编码）。 */
     XImageCodecFormat_Gif,         /**< GIF（GIF87a/GIF89a 静态首帧；XIMAGECODEC_GIF_ANIM_ON 开启时含多帧动画）。 */

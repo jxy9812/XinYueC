@@ -731,7 +731,9 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format);
  * @param data   图像数据指针
  * @param len    数据长度
  * @param format 图像格式字符串（NULL 表示自动检测）
- * @return 加载成功返回 true，失败返回 false
+ * @return 加载成功返回 true；失败返回 false，并将目标图像置为空
+ * @note 显式提供的未知格式名不会回落到内容探测；调用方应先用
+ *       XImage_init 初始化目标对象。
  */
 bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const XString* format);
 /**
@@ -740,7 +742,9 @@ bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const XStri
  * @param data 图像数据缓冲区。
  * @param len 缓冲区字节数。
  * @param format UTF-8 编码的格式名；可为 NULL 以自动检测。
- * @return 加载成功返回 true，失败返回 false。
+ * @return 加载成功返回 true；失败返回 false，并将目标图像置为空。
+ * @note 显式提供的未知格式名不会回落到内容探测；调用方应先用
+ *       XImage_init 初始化目标对象。
  */
 bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const char* format);
 

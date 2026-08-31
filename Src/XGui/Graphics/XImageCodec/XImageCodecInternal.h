@@ -113,12 +113,29 @@ bool XImageCodecInternal_appendBytes(XByteArray* out,
 bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out);
 
 /**
+ * @brief 解码不含 BMP 文件头的 DIB 数据到 XImage。
+ * @param data 输入 DIB 数据；不能为 NULL。
+ * @param size 输入数据字节数。
+ * @param out  输出图像对象，成功后由调用者负责释放。
+ * @return 成功返回 true。
+ */
+bool XImageCodecInternal_decodeDib(const uint8_t* data, size_t size, XImage* out);
+
+/**
  * @brief 将 XImage 编码为 BMP 数据。
  * @param image 输入图像；不能为 NULL。
  * @param out   输出字节数组；不能为 NULL。
  * @return 成功返回 true。
  */
 bool XImageCodecInternal_encodeBmp(const XImage* image, XByteArray* out);
+
+/**
+ * @brief 将 XImage 编码为不含 BMP 文件头的 DIB 数据。
+ * @param image 输入图像；不能为 NULL。
+ * @param out   输出字节数组；不能为 NULL。
+ * @return 成功返回 true。
+ */
+bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out);
 #endif /* XIMAGECODEC_BMP_ON */
 
 #if XIMAGECODEC_PNG_ON

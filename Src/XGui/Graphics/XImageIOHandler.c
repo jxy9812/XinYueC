@@ -178,9 +178,15 @@ XIODevice* XImageIOHandler_device(const XImageIOHandler* self)
 
 void XImageIOHandler_setFormat(XImageIOHandler* self, const XString* format)
 {
-    if (!self || !self->m_data) return;
-    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
-    self->m_data->m_format = format ? XString_create_copy(format) : NULL;
+    XImageIOHandler_setFormat_const((const XImageIOHandler*)self, format);
+}
+
+void XImageIOHandler_setFormat_const(const XImageIOHandler* self, const XString* format)
+{
+    XImageIOHandlerPrivate* data;
+    if (!self || !(data = self->m_data)) return;
+    if (data->m_format) XString_delete_base((XClass*)data->m_format);
+    data->m_format = format ? XString_create_copy(format) : NULL;
 }
 
 void XImageIOHandler_setFormat_2(XImageIOHandler* self, const char* format)
@@ -353,11 +359,25 @@ static bool XImageIOHandler_calculateAllocation(const XSize* size,
     return actualTotalSize > 0u && actualTotalSize <= (uint64_t)INT_MAX;
 }
 
-bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImage* image)
+bool XImageIOHandler_checkAllocation(const XSize* size, XImageFormat format)
 {
     uint64_t totalSize;
     int allocationLimitMb;
     uint64_t limitBytes;
+
+    if (!XImageIOHandler_calculateAllocation(size, format, &totalSize))
+        return false;
+    allocationLimitMb = XImageReader_allocationLimit();
+    if (allocationLimitMb <= 0)
+        return true;
+    limitBytes = (uint64_t)(unsigned)allocationLimitMb * (uint64_t)1024u *
+                 (uint64_t)1024u;
+    return totalSize <= limitBytes;
+}
+
+bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImage* image)
+{
+    uint64_t totalSize;
 
     if (!size || !image || !XImageIOHandler_calculateAllocation(size, format,
                                                                   &totalSize))
@@ -372,15 +392,7 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
         return !XImage_isNull(image);
     }
 
-    allocationLimitMb = XImageReader_allocationLimit();
-    if (allocationLimitMb > 0) {
-        limitBytes = (uint64_t)(unsigned)allocationLimitMb * (uint64_t)1024u *
-                     (uint64_t)1024u;
-        /* Qt 以 totalSize >> 20 和余数比较；直接比较字节数等价且不会
-           在恰好 MB 边界时误放行。 */
-        if (totalSize > limitBytes)
-            return false;
-    }
+    if (!XImageIOHandler_checkAllocation(size, format)) return false;
 
     /* Qt 只有通过全部参数与限制校验后才替换输出图像，失败时保留
        调用方原有内容。XImage 的 C 输出对象通常已初始化，释放旧数据

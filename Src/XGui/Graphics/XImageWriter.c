@@ -7,6 +7,7 @@
 #include "XImageCodec.h"
 #include "XImagePluginRegistry.h"
 #include "XFile.h"
+#include "XSaveFile.h"
 #include "XByteArray.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -571,7 +572,22 @@ void XImageWriter_setFileName_2(XImageWriter* self, const char* fileName)
 }
 
 const XString* XImageWriter_fileName_const(const XImageWriter* self)
-{ return (self && self->m_data) ? self->m_data->m_fileName : NULL; }
+{
+    XIODevice* device;
+    if (!self || !self->m_data) return NULL;
+    if (self->m_data->m_fileName) return self->m_data->m_fileName;
+
+    /* Qt QImageWriter::fileName() 对任意 QFileDevice 返回设备文件名；
+       C99 层通过 XFile/XSaveFile 的虚表身份实现同一借用语义。 */
+    device = self->m_data->m_device;
+    if (device && (XClassGetVtable(device) == XFile_class_init()
+#if XSAVEFILE_ON
+                   || XClassGetVtable(device) == XSaveFile_class_init()
+#endif
+                   ))
+        return XFileDevice_fileName_base((XFileDevice*)device);
+    return NULL;
+}
 
 XString* XImageWriter_fileName(const XImageWriter* self)
 {

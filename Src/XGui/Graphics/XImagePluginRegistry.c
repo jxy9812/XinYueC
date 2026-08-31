@@ -340,10 +340,12 @@ static void XImagePluginRegistry_setupHandler(XImageIOHandler* handler,
                                               XIODevice* device,
                                               const XString* format)
 {
+    (void)format;
     if (!handler) return;
+    /* Qt 的 QImageIOPlugin::create() 返回已由插件自行配置的处理器；
+       QImageReader 不会在工厂返回后强制覆盖 handler->format()。内置
+       处理器需要的格式由其 create() 实现设置，外部插件则保留自身语义。 */
     XImageIOHandler_setDevice(handler, device);
-    if (format && !XContainer_isEmpty_base((const XContainer*)format))
-        XImageIOHandler_setFormat(handler, format);
 }
 
 XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
@@ -402,15 +404,16 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
             }
         } else {
             /* 自动探测分支对应 qimagereader.cpp:226-239：遍历所有插件，
-               但只在首个声明 CanRead 的插件上调用 create() 并结束此阶段。
-               create() 返回 NULL 时同样不能继续第二个能力命中插件。 */
+               但动态插件 keyMap 不包含内置处理器；只在首个声明 CanRead
+               的外部插件上调用 create() 并结束此阶段。内置处理器在下面
+               的独立格式阶段尝试。 */
             for (i = 0; i < g_pluginCount; ++i) {
                 XImageIOPlugin* plugin = g_plugins[i];
+                if (plugin == XImageBuiltinPlugin_instance())
+                    continue;
                 uint32_t actual = XImagePluginRegistry_capabilitiesUtf8(
                     plugin, device, XString_toUtf8(effectiveFormat));
-                if ((actual & (uint32_t)XImageIOPlugin_CanRead) != 0 &&
-                    XImagePluginRegistry_pluginHasKey(plugin,
-                                                      XString_toUtf8(effectiveFormat))) {
+                if ((actual & (uint32_t)XImageIOPlugin_CanRead) != 0) {
                     if (!rejectedFormatPlugin)
                         rejectedFormatPlugin = plugin;
                     {
@@ -447,18 +450,20 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
         }
     }
     if (!handler && (autoDetectImageFormat || decideFormatFromContent)) {
+        /* Qt qimagereader.cpp:318-337 的插件内容阶段只遍历外部
+           imageformats 插件；内置处理器在该阶段结束后由独立循环探测。
+           外部首个 CanRead 插件的 create() 返回 NULL 时仍需结束外部
+           阶段，但不能因此跳过后续的内置内容回退。 */
         for (i = 0; i < g_pluginCount; ++i) {
             XImageIOPlugin* plugin = g_plugins[i];
-            if (!decideFormatFromContent && plugin == rejectedFormatPlugin)
+            if (plugin == XImageBuiltinPlugin_instance())
                 continue;
             uint32_t wanted = (uint32_t)XImageIOPlugin_CanRead;
             uint32_t actual = XImagePluginRegistry_capabilitiesUtf8(plugin, device, NULL);
             if ((actual & wanted) != 0) {
-                /* 内置插件把空格式作为“按内容识别”标志；若沿用文件后缀，
-                   错误后缀会把正确的内容锁死在错误解码器上。外部插件仍
-                   按 Qt 的 testFormat 约定收到推导出的后缀。 */
-                const XString* createFormat = decideFormatFromContent ? NULL :
-                    (plugin == XImageBuiltinPlugin_instance() ? NULL : effectiveFormat);
+                /* 外部插件按 Qt 的 testFormat 约定收到推导出的格式；
+                   忽略格式名的路径则传空格式。 */
+                const XString* createFormat = decideFormatFromContent ? NULL : effectiveFormat;
                 int64_t pos = XImagePluginRegistry_needsPositionRestore(plugin)
                     ? XImagePluginRegistry_savePos(device) : -1;
                 handler = XImageIOPlugin_create_base(plugin, device, createFormat);
@@ -469,14 +474,113 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
                 }
                 /* Qt qimagereader.cpp:258-275 在内容探测阶段同样只尝试
                    首个声明 CanRead 的插件；工厂返回 NULL 也结束遍历，
-                   不得把失败继续转交给后续插件。 */
+                   不得把失败继续转交给后续外部插件。 */
                 break;
             }
         }
+        /* Qt qimagereader.cpp:340-413 随后独立遍历内置处理器。即使
+           外部插件声明可读但 create() 失败，也必须给内置 BMP/PNG/SVG
+           等处理器一次按内容识别的机会。 */
+        if (!handler) {
+            XImageIOPlugin* builtin = XImageBuiltinPlugin_instance();
+            if (builtin &&
+                (XImagePluginRegistry_capabilitiesUtf8(builtin, device, NULL) &
+                 (uint32_t)XImageIOPlugin_CanRead) != 0) {
+                handler = XImageIOPlugin_create_base(builtin, device, NULL);
+                if (handler)
+                    XImagePluginRegistry_setupHandler(handler, device, NULL);
+            }
+        }
     }
-    handler = NULL;
 done:
     if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+    XImagePluginRegistry_unlock(mutex);
+    return handler;
+}
+
+XImageIOHandler* XImagePluginRegistry_createReadHandlerSuffix(
+    XIODevice* device, const XString* suffixFormat)
+{
+    XImagePluginRegistryMutex mutex;
+    XString* normalizedFormat;
+    const char* formatUtf8;
+    XImageIOPlugin* builtin;
+    XImageIOHandler* handler = NULL;
+    int suffixIndex = -1;
+    int i;
+    if (!device || XImagePluginRegistry_formatEmpty(suffixFormat)) return NULL;
+    mutex = XImagePluginRegistry_lock();
+    XImagePluginRegistry_ensureBuiltin();
+    normalizedFormat = XImagePluginRegistry_normalizedFormat(suffixFormat);
+    if (!normalizedFormat) {
+        XImagePluginRegistry_unlock(mutex);
+        return NULL;
+    }
+    formatUtf8 = XString_toUtf8(normalizedFormat);
+    builtin = XImageBuiltinPlugin_instance();
+
+    /* QImageReader 首先只处理 QFactoryLoader 中 keyMap.key(suffix) 对应的
+       首个外部插件；内置处理器不属于 suffixPluginIndex。 */
+    for (i = 0; i < g_pluginCount; ++i) {
+        XImageIOPlugin* plugin = g_plugins[i];
+        if (plugin != builtin &&
+            XImagePluginRegistry_pluginHasKey(plugin, formatUtf8)) {
+            suffixIndex = i;
+            break;
+        }
+    }
+    if (suffixIndex >= 0) {
+        XImageIOPlugin* plugin = g_plugins[suffixIndex];
+        if ((XImagePluginRegistry_capabilitiesUtf8(
+                 plugin, device, formatUtf8) &
+             (uint32_t)XImageIOPlugin_CanRead) != 0) {
+            int64_t pos = XImagePluginRegistry_savePos(device);
+            handler = XImageIOPlugin_create_base(plugin, device,
+                                                 normalizedFormat);
+            XImagePluginRegistry_restorePos(device, pos);
+            if (handler) {
+                XImagePluginRegistry_setupHandler(handler, device,
+                                                  normalizedFormat);
+                goto done;
+            }
+        }
+    }
+
+    /* 自动探测阶段跳过 suffixPluginIndex，只在首个剩余能力命中插件
+       上调用 create()；工厂失败也必须结束外部阶段。 */
+    for (i = 0; i < g_pluginCount; ++i) {
+        XImageIOPlugin* plugin = g_plugins[i];
+        if (i == suffixIndex || plugin == builtin)
+            continue;
+        if ((XImagePluginRegistry_capabilitiesUtf8(
+                 plugin, device, formatUtf8) &
+             (uint32_t)XImageIOPlugin_CanRead) != 0) {
+            int64_t pos = XImagePluginRegistry_savePos(device);
+            handler = XImageIOPlugin_create_base(plugin, device,
+                                                 normalizedFormat);
+            XImagePluginRegistry_restorePos(device, pos);
+            if (handler) {
+                XImagePluginRegistry_setupHandler(handler, device,
+                                                  normalizedFormat);
+                goto done;
+            }
+            break;
+        }
+    }
+
+    /* 外部阶段结束后，Qt 才创建内置后缀处理器。 */
+    if (builtin && XImagePluginRegistry_pluginHasKey(builtin, formatUtf8) &&
+        (XImagePluginRegistry_capabilitiesUtf8(
+             builtin, device, formatUtf8) &
+         (uint32_t)XImageIOPlugin_CanRead) != 0) {
+        handler = XImageIOPlugin_create_base(builtin, device,
+                                             normalizedFormat);
+        if (handler)
+            XImagePluginRegistry_setupHandler(handler, device,
+                                              normalizedFormat);
+    }
+done:
+    XString_delete_base((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return handler;
 }
@@ -656,6 +760,10 @@ XString* XImagePluginRegistry_detectReadFormat(XIODevice* device)
         for (j = 0; j < count; ++j) {
             XString* key = (XString*)XStringList_at_base((XVector*)keys, j);
             const char* keyUtf8 = XString_toUtf8(key);
+            /* DIB has no file signature and is accepted only when the caller
+             * explicitly requests the internal format. */
+            if (plugin == XImageBuiltinPlugin_instance() && keyUtf8 &&
+                strcmp(keyUtf8, "dib") == 0) continue;
             if (keyUtf8 && XImagePluginRegistry_pluginSupports(plugin, true,
                                                                 device, keyUtf8) &&
                 XImagePluginRegistry_pluginCanRead(plugin, device, key)) {
@@ -700,6 +808,10 @@ XStringList* XImagePluginRegistry_supportedImageFormats(bool readOnly)
         for (j = 0; j < count; ++j) {
             XString* keyObject = (XString*)XStringList_at_base((XVector*)keys, j);
             const char* key = XString_toUtf8(keyObject);
+            /* Qt's explicit DIB handler is an internal format and is not
+             * included in supportedImageFormats(). */
+            if (plugin == XImageBuiltinPlugin_instance() && key &&
+                strcmp(key, "dib") == 0) continue;
             if (key && XImagePluginRegistry_pluginSupports(plugin, readOnly, NULL, key))
                 XImagePluginRegistry_appendUniqueUtf8(result, key);
         }
@@ -837,6 +949,9 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
     XIODevice* device, const XString* format,
     bool autoDetectImageFormat, bool decideFormatFromContent)
 { (void)device; (void)format; (void)autoDetectImageFormat; (void)decideFormatFromContent; return NULL; }
+XImageIOHandler* XImagePluginRegistry_createReadHandlerSuffix(
+    XIODevice* device, const XString* suffixFormat)
+{ (void)device; (void)suffixFormat; return NULL; }
 XImageIOHandler* XImagePluginRegistry_createWriteHandler(XIODevice* device, const XString* format)
 { (void)device; (void)format; return NULL; }
 bool XImagePluginRegistry_supportsReadFormat(const XString* format) { (void)format; return false; }

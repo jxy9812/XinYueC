@@ -24,9 +24,9 @@
  *             整个公共 API 裁剪。XPushButton 依赖 XWIDGET_ON（父类能力）
  *             与 XSTRING_ON（文本存储）；XICON_ON 关闭时图标接口保持
  *             空图标回退语义。
- * @note       近似边界：QAbstractButton 的按钮组（autoExclusive 仅保存
- *             标志，按钮互斥登记未实现）、快捷键、样式表/主题 bevel 与
- *             自动重复定时器不实现；autoDefault 已实现父对话框链自动
+ * @note       近似边界：QAbstractButton 的显式 QButtonGroup 登记、快捷键、
+ *             样式表/主题 bevel 未实现；autoExclusive 已
+ *             按同一父控件的自动互斥按钮组实现；autoDefault 已实现父对话框链自动
  *             解析（对标 Qt 6.8 QPushButtonPrivate::dialogParent）；菜单
  *             关联（setMenu/menu/showMenu）已实现但真实平台弹层未接入；
  *             hitButton 按控件矩形命中（Qt bevel 区域在无主题时可视为
@@ -92,18 +92,20 @@ typedef struct XPushButton
     bool                m_down;            /**< 是否处于按下面板状态。 */
     bool                m_pressed;         /**< 内部按下状态（鼠标/键盘命中期间）。 */
     bool                m_autoRepeat;      /**< 是否允许按住自动重复。 */
-    bool                m_autoExclusive;   /**< 是否自动互斥（仅保存标志）。 */
+    bool                m_autoExclusive;   /**< 是否自动互斥（同一父控件下的按钮互斥）。 */
     bool                m_flat;            /**< 是否为扁平按钮。 */
     bool                m_defaultButton;   /**< 是否为对话框默认按钮。 */
     XPushButtonAutoDefault m_autoDefault;  /**< 自动默认三态。 */
     int                 m_autoRepeatDelay; /**< 自动重复开始延迟（毫秒；默认 300）。 */
     int                 m_autoRepeatInterval; /**< 自动重复间隔（毫秒；默认 100）。 */
+    XTimerId            m_repeatTimer;       /**< 自动重复定时器 ID；无效时为 XTIMER_INVALID_ID。 */
+    XTimerId            m_animateTimer;      /**< 动画点击释放定时器 ID；无效时为 XTIMER_INVALID_ID。 */
     XMenu*              m_menu;            /**< 关联弹出菜单（借用指针；不拥有）。 */
 } XPushButton;
 
 /* ==================== 生命周期（对标 QPushButton/QAbstractButton 构造析构） ==================== */
 
-/** @brief XPushButton 类虚函数表初始化（重载 Event/Paint/Change/Mouse/Key/Focus/Copy/Move/Deinit）。 */
+/** @brief XPushButton 类虚函数表初始化（重载 Event/Paint/Change/Mouse/Key/Focus/Timer/Copy/Move/Deinit）。 */
 XVtable* XPushButton_class_init(void);
 
 /**
@@ -205,7 +207,8 @@ void XPushButton_toggle(XPushButton* self);
 bool XPushButton_isDown(const XPushButton* self);
 /**
  * @brief      设置按下面板状态（对标 QAbstractButton::setDown）。
- * @details    只改变 m_down 并重绘，不直接发射 pressed/clicked 信号。
+ * @details    只改变 m_down 并重绘，不直接发射 pressed/clicked 信号；启用
+ *             autoRepeat 且进入按下状态时按 autoRepeatDelay 启动定时器。
  */
 void XPushButton_setDown(XPushButton* self, bool down);
 
@@ -223,7 +226,7 @@ int XPushButton_autoRepeatInterval(const XPushButton* self);
 void XPushButton_setAutoRepeatInterval(XPushButton* self, int interval);
 /** @brief 查询自动互斥标志（对标 QAbstractButton::autoExclusive；默认 false）。 */
 bool XPushButton_autoExclusive(const XPushButton* self);
-/** @brief 设置自动互斥标志（当前仅保存状态，不登记按钮组）。 */
+/** @brief 设置自动互斥标志（同一父控件下的自动互斥按钮按 Qt 规则联动）。 */
 void XPushButton_setAutoExclusive(XPushButton* self, bool exclusive);
 
 /* ==================== 点击/命中（对标 QAbstractButton） ==================== */
@@ -237,8 +240,9 @@ void XPushButton_setAutoExclusive(XPushButton* self, bool exclusive);
 void XPushButton_click(XPushButton* self);
 /**
  * @brief      动画点击（对标 QAbstractButton::animateClick）。
- * @details    本实现无动画定时器，语义为立即 click()；嵌入式裁剪下不
- *             占用事件循环。
+ * @details    立即进入按下状态并发射一次 pressed()，100ms 后由事件循环
+ *             发射 released()/clicked()；重复调用会重置释放定时器。
+ *             禁用按钮不执行任何操作。
  */
 void XPushButton_animateClick(XPushButton* self);
 /**

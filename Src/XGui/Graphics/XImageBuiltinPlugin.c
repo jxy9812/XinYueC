@@ -6,6 +6,7 @@
  ******************************************************************************/
 #include "XImageBuiltinPlugin.h"
 #include "XImageCodec.h"
+#include "XImageCodecInternal.h"
 #include "XImageIOHandler.h"
 #include "XContainer.h"
 #include "XByteArray.h"
@@ -17,12 +18,12 @@
 
 static const char* const g_builtinFormats[] =
     /* Qt JPEG 插件元数据声明 jpg/jpeg/jfif 三个格式键，三者共享 MIME。 */
-    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg" };
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg", "dib" };
 static const char* const g_builtinMimeTypes[] =
     { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
-      "image/gif", "image/svg+xml" };
+      "image/gif", "image/svg+xml", "" };
 static const char* const g_builtinNameFilters[] =
-    { "*.bmp", "*.png", "*.jpg", "*.jpeg", "*.jfif", "*.gif", "*.svg" };
+    { "*.bmp", "*.png", "*.jpg", "*.jpeg", "*.jfif", "*.gif", "*.svg", "" };
 
 XCLASS_DEFINE_BEGING(XImageBuiltinHandler)
 XCLASS_DEFINE_EXTEND_END(XImageBuiltinHandler, XImageIOHandler)
@@ -150,6 +151,40 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
         format = builtin_detectWithDevice(XImageIOHandler_device(self));
     if (format == XImageCodecFormat_Bmp)
         return builtin_bmpImageFormat(XImageIOHandler_device(self));
+    if (format == XImageCodecFormat_Dib) {
+        XByteArray* bytes = XIODevice_peek_3(XImageIOHandler_device(self), 70);
+        const uint8_t* data;
+        size_t size;
+        uint32_t dibSize;
+        uint16_t bpp;
+        uint32_t compression = 0;
+        uint32_t alphaMask = 0;
+        if (!bytes) return XImageFormat_Invalid;
+        data = (const uint8_t*)XByteArray_data(bytes);
+        size = (size_t)XByteArray_size_base((const XContainer*)bytes);
+        if (!data || size < 12u) {
+            XByteArray_delete_base((XClass*)bytes);
+            return XImageFormat_Invalid;
+        }
+        dibSize = XImageCodecInternal_readU32LE(data);
+        if (dibSize == 12u) bpp = XImageCodecInternal_readU16LE(data + 10u);
+        else if ((dibSize == 40u || dibSize == 64u || dibSize == 108u || dibSize == 124u) && size >= 30u) {
+            bpp = XImageCodecInternal_readU16LE(data + 14u);
+            compression = XImageCodecInternal_readU32LE(data + 16u);
+            if (dibSize >= 108u && size >= 56u)
+                alphaMask = XImageCodecInternal_readU32LE(data + 52u);
+        } else {
+            XByteArray_delete_base((XClass*)bytes);
+            return XImageFormat_Invalid;
+        }
+        XByteArray_delete_base((XClass*)bytes);
+        if (bpp == 32u && (compression == 3u || compression == 4u) &&
+            alphaMask != 0u)
+            return XImageFormat_ARGB32;
+        if (bpp >= 24u) return XImageFormat_RGB32;
+        if (bpp >= 4u) return XImageFormat_Indexed8;
+        return XImageFormat_Mono;
+    }
     /* The portable codec facade currently normalizes non-BMP decoded output
        to ARGB32; keep that as the handler's conservative image format. */
     if (format != XImageCodecFormat_Unknown)
@@ -163,11 +198,27 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
 static bool builtin_supportsOption(const XImageIOHandler* self,
                                    XImageIOHandlerOption option)
 {
+    XIODevice* device;
     XImageCodecFormat format;
     if (!self) return false;
     format = builtin_formatFromString(XImageIOHandler_format_const(self));
     if (format == XImageCodecFormat_Unknown)
         format = builtin_detectWithDevice(XImageIOHandler_device(self));
+
+    /* Qt QGifHandler only exposes Animation for sequential devices; Size is
+       available for random-access devices after scanning frame headers.  GIF
+       deliberately does not expose ImageFormat, unlike BMP/PNG/JPEG/SVG. */
+    if (format == XImageCodecFormat_Gif) {
+#if XIMAGECODEC_GIF_ANIM_ON
+        if (option == XImageIOHandlerOption_Animation)
+            return true;
+#endif
+        if (option == XImageIOHandlerOption_Size) {
+            device = XImageIOHandler_device(self);
+            return device && !XIODevice_isSequential(device);
+        }
+        return false;
+    }
     if (option == XImageIOHandlerOption_Size ||
         option == XImageIOHandlerOption_ImageFormat)
         return format != XImageCodecFormat_Unknown;
@@ -223,6 +274,7 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
     XIODevice* device;
     XImageCodecFormat format;
     XImageCodecFormat detected;
+    XString* detectedName;
     if (!self) return false;
     device = XImageIOHandler_device(self);
     if (!device) return false;
@@ -231,10 +283,20 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
         format = builtin_detectWithDevice(device);
     if (format == XImageCodecFormat_Unknown || !XImageCodec_canDecode(format))
         return false;
-    /* Qt treats the explicit format as a hint.  A readable handler still has
+    /* Qt treats the explicit BMP format as a hint.  A readable handler still has
      * to validate the device contents before accepting unrelated bytes. */
     detected = builtin_detectWithDevice(device);
-    return detected == format;
+    if (format != XImageCodecFormat_Dib && detected != format) return false;
+    /* QImageIOHandler::canRead() is const but the Qt base class deliberately
+       exposes a const setFormat() overload so a handler can publish its
+       canonical format after content probing. */
+    detectedName = format == XImageCodecFormat_Dib
+        ? XString_create_utf8("dib") : XImageCodec_formatName(detected);
+    if (detectedName) {
+        XImageIOHandler_setFormat_const(self, detectedName);
+        XString_delete_base((XClass*)detectedName);
+    }
+    return true;
 }
 
 static bool VXImageBuiltinHandler_read(XImageIOHandler* self, XImage* image)
@@ -252,10 +314,27 @@ static bool VXImageBuiltinHandler_read(XImageIOHandler* self, XImage* image)
         format = XImageCodec_detect(
             (const uint8_t*)XByteArray_data(bytes),
             (size_t)XByteArray_size_base((const XContainer*)bytes));
-    if (format != XImageCodecFormat_Unknown && XImageCodec_canDecode(format))
+    /* 便携编解码器在 read() 内部直接建立 XImage，无法像 Qt 的
+       QImageIOHandler 子类那样调用 allocateImage()。压缩字节已经读入后，
+       先从同一缓冲区取得尺寸，再按不低于 32 位的有效深度执行检查，
+       随后才进入像素解码；这样不重复窥视设备，也保留顺序设备语义。 */
+    if (format != XImageCodecFormat_Unknown && XImageCodec_canDecode(format)) {
+        XSize imageSize;
+        imageSize.width = 0;
+        imageSize.height = 0;
+        if (XImageCodec_probeSize(
+                (const uint8_t*)XByteArray_data(bytes),
+                (size_t)XByteArray_size_base((const XContainer*)bytes),
+                format, &imageSize.width, &imageSize.height) &&
+            !XImageIOHandler_checkAllocation(&imageSize,
+                                              XImageFormat_ARGB32)) {
+            XByteArray_delete_base((XClass*)bytes);
+            return false;
+        }
         ok = XImageCodec_decode((const uint8_t*)XByteArray_data(bytes),
                                 (size_t)XByteArray_size_base((const XContainer*)bytes),
                                 format, image);
+    }
     XByteArray_delete_base((XClass*)bytes);
     return ok;
 }
@@ -357,7 +436,7 @@ static uint32_t VXImageBuiltinPlugin_capabilities(const XImageIOPlugin* self,
         detected = builtin_detectWithDevice(device);
         /* Writing does not inspect the output device.  Reading does, as
          * required by QImageIOPlugin::capabilities(). */
-        if (detected != requested)
+        if (requested != XImageCodecFormat_Dib && detected != requested)
             capability &= ~(uint32_t)XImageIOPlugin_CanRead;
         return capability;
     }
@@ -368,7 +447,7 @@ static uint32_t VXImageBuiltinPlugin_capabilities(const XImageIOPlugin* self,
         ? (uint32_t)XImageIOPlugin_CanRead : 0;
 }
 
-static XImageIOHandler* VXImageBuiltinPlugin_create(XImageIOPlugin* self,
+static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
                                                     XIODevice* device,
                                                     const XString* format)
 {

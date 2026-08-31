@@ -356,22 +356,16 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         }
     }
 
-    /* 像素数据区域整体越界检查。RLE 流长度与 stride*height 无关，
-     * 只需保证流起始偏移合法，剩余边界由 bmpRleDecode 逐步校验。 */
-    {
-        bool rleComp = compression == 1 || compression == 2;
-        if (rleComp) {
-            if ((uint64_t)offset > size) return false;
-        } else {
-            size_t stride = (((size_t)width * bpp) + 31u) / 32u * 4u;
-            size_t minRowBytes = bpp >= 8
-                ? (size_t)width * ((size_t)bpp / 8u)
-                : (((size_t)width * (size_t)bpp) + 7u) / 8u;
-            if (stride < minRowBytes) return false;
-            if ((uint64_t)offset + stride * (uint64_t)height > size)
-                return false;
-        }
-    }
+    /* 像素数据区域检查。RLE 流长度与 stride*height 无关，只需保证流
+     * 起始偏移落在实际像素数据之前，剩余边界由 bmpRleDecode 逐步校验。
+     * Qt qbmphandler.cpp:212-214 在进入逐行读取前先用 atEnd() 拒绝
+     * 没有任何像素字节的设备；offset==size 不能被当作全零图像接受。
+     * Qt
+     * qbmphandler.cpp:373-377/532-535/548-552 对未压缩像素行
+     * 读取不足时退出当前行循环但仍返回已分配图像；因此这里不能再以
+     * stride*height 要求整个文件完整，只需拒绝落在文件末尾之后的偏移。
+     * 每行循环会单独检查剩余字节并安全停止。 */
+    if ((uint64_t)offset >= size) return false;
 
     /* 索引色：先解码到索引缓冲区。 */
     if (bpp <= 8) {
@@ -389,12 +383,18 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                               height, indexBuffer))
                 goto bmp_done;
         } else {
-            for (int y = 0; y < height; ++y) {
-                int srcY = bottomUp ? height - 1 - y : y;
-                const uint8_t* src =
-                    data + offset + stride * (size_t)srcY;
+            for (int fileY = 0; fileY < height; ++fileY) {
+                int destY = bottomUp ? height - 1 - fileY : fileY;
+                size_t rowOffset;
+                const uint8_t* src;
+                if ((size_t)fileY > (SIZE_MAX - (size_t)offset) / stride)
+                    break;
+                rowOffset = (size_t)offset + stride * (size_t)fileY;
+                if (rowOffset > size || stride > size - rowOffset)
+                    break;
+                src = data + rowOffset;
                 for (int x = 0; x < width; ++x)
-                    indexBuffer[(size_t)y * width + x] =
+                    indexBuffer[(size_t)destY * width + x] =
                         bmpPackedIndex(src, (size_t)x, bpp);
             }
         }
@@ -471,9 +471,16 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                                      : XImageFormat_RGB888;
         XImage_init_ex(&temp, width, height, fmt);
         if (XImage_isNull(&temp)) goto bmp_done;
-        for (int y = 0; y < height; ++y) {
-            int srcY = bottomUp ? height - 1 - y : y;
-            const uint8_t* src = data + offset + stride * (size_t)srcY;
+        for (int fileY = 0; fileY < height; ++fileY) {
+            int destY = bottomUp ? height - 1 - fileY : fileY;
+            size_t rowOffset;
+            const uint8_t* src;
+            if ((size_t)fileY > (SIZE_MAX - (size_t)offset) / stride)
+                break;
+            rowOffset = (size_t)offset + stride * (size_t)fileY;
+            if (rowOffset > size || stride > size - rowOffset)
+                break;
+            src = data + rowOffset;
             for (int x = 0; x < width; ++x) {
                 uint32_t c;
                 if (bpp == 16) {
@@ -503,7 +510,10 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                     uint32_t v = XImageCodecInternal_readU32LE(
                         src + (size_t)x * 4u);
                     uint8_t r, g, b, a;
-                    if (hasMasks && (maskR | maskG | maskB)) {
+                    /* Qt 对 BI_BITFIELDS 始终按声明掩码解码；即使 RGB
+                     * 掩码全为零，也会把三个通道解为 0，而不是退回
+                     * 到普通 BI_RGB 的 0x00RRGGBB 解释。 */
+                    if (hasMasks) {
                         r = bmpMaskTo8(v, maskR);
                         g = bmpMaskTo8(v, maskG);
                         b = bmpMaskTo8(v, maskB);
@@ -521,7 +531,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                     c = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
                         ((uint32_t)g << 8) | b;
                 }
-                XImage_setPixel(&temp, x, y, c);
+                XImage_setPixel(&temp, x, destY, c);
             }
         }
     }
@@ -537,6 +547,79 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
 
 bmp_done:
     if (indexBuffer) XFree_System(indexBuffer);
+    return ok;
+}
+
+/*
+ * Qt 的 QBmpHandler::DibFormat 不读取 14 字节文件头。现有 BMP 解码器
+ * 已完整覆盖 DIB 信息头、调色板、掩码和像素转换，因此这里仅构造一个
+ * 临时的、边界受检的 BMP 文件头，把 bfOffBits 设为 Qt DIB 分支计算的
+ * 像素起点，再复用同一实现。DIB 不支持自动魔数探测，只能由显式格式
+ * 名称进入本函数。
+ */
+bool XImageCodecInternal_decodeDib(const uint8_t* data, size_t size, XImage* out)
+{
+    uint32_t dib;
+    uint16_t bpp = 0;
+    uint32_t compression = 0;
+    uint32_t sizeImage = 0;
+    uint32_t clrUsed = 0;
+    size_t pixelOffset;
+    size_t total;
+    uint8_t* wrapped;
+    bool ok;
+    if (!data || !out || size < 12u || size > (size_t)UINT32_MAX - 14u)
+        return false;
+    dib = XImageCodecInternal_readU32LE(data);
+    if (dib == 12u) {
+        if (size < 12u) return false;
+        bpp = XImageCodecInternal_readU16LE(data + 10u);
+    } else if (dib == 40u || dib == 64u || dib == 108u || dib == 124u) {
+        if (size < (size_t)dib) return false;
+        bpp = XImageCodecInternal_readU16LE(data + 14u);
+        compression = XImageCodecInternal_readU32LE(data + 16u);
+        sizeImage = XImageCodecInternal_readU32LE(data + 20u);
+        clrUsed = XImageCodecInternal_readU32LE(data + 32u);
+    } else {
+        /* decodeBmp() preserves Qt's old-header compatibility branch; for
+         * offset calculation an unknown header has no optional fields. */
+        pixelOffset = (size_t)dib;
+        goto wrap;
+    }
+
+    /* qbmphandler.cpp:757-778: a non-zero biSizeImage that fits the
+     * available DIB buffer takes precedence over masks and palettes. */
+    if (sizeImage > 0u && (size_t)sizeImage < size)
+        pixelOffset = size - (size_t)sizeImage;
+    else {
+        pixelOffset = (size_t)dib;
+        if ((bpp == 16u || bpp == 32u) && compression == 3u)
+            pixelOffset += 12u;
+        else if ((bpp == 16u || bpp == 32u) && compression == 4u)
+            pixelOffset += 16u;
+        if (bpp <= 8u) {
+            size_t entries = clrUsed ? (size_t)clrUsed : ((size_t)1u << bpp);
+            if (entries == 0u || entries > 256u ||
+                entries > (SIZE_MAX - pixelOffset) / (dib == 12u ? 3u : 4u))
+                return false;
+            pixelOffset += entries * (dib == 12u ? 3u : 4u);
+        }
+    }
+
+wrap:
+    if (pixelOffset > size || pixelOffset > (size_t)UINT32_MAX - 14u)
+        return false;
+    total = size + 14u;
+    wrapped = (uint8_t*)XMalloc_System(total);
+    if (!wrapped) return false;
+    memset(wrapped, 0, 14u);
+    XImageCodecInternal_writeU16LE(wrapped, 0x4d42u);
+    XImageCodecInternal_writeU32LE(wrapped + 2u, (uint32_t)total);
+    XImageCodecInternal_writeU32LE(wrapped + 10u,
+                                   (uint32_t)(pixelOffset + 14u));
+    memcpy(wrapped + 14u, data, size);
+    ok = XImageCodecInternal_decodeBmp(wrapped, total, out);
+    XFree_System(wrapped);
     return ok;
 }
 
@@ -597,6 +680,182 @@ bool XImageCodecInternal_encodeBmp(const XImage* image, XByteArray* out)
             if (withAlpha) dst[x * 4 + 3] = (uint8_t)(c >> 24);
         }
     }
+    return true;
+}
+
+bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
+{
+    const XImage* source = image;
+    XImage converted;
+    XImageFormat format;
+    int width;
+    int height;
+    int depth;
+    int colorCount;
+    int bitsPerLine;
+    size_t bpl;
+    size_t bplBmp;
+    size_t colorBytes;
+    size_t imageBytes;
+    size_t total;
+    int nbits;
+    bool hasConverted = false;
+    uint8_t* dst;
+    int y;
+    if (!image || !out || XImage_isNull(image)) return false;
+
+    /* Qt QBmpHandler::write() normalizes unsupported source formats before
+     * computing the DIB layout. Keep the conversion in project-owned XImage
+     * APIs so no codec path needs a second pixel representation. */
+    format = XImage_format(image);
+    if (format == XImageFormat_MonoLSB ||
+        format == XImageFormat_Alpha8 || format == XImageFormat_Grayscale8 ||
+        (format != XImageFormat_Mono && format != XImageFormat_Indexed8 &&
+         format != XImageFormat_RGB32 && format != XImageFormat_ARGB32)) {
+        XImage_init(&converted);
+        if (format == XImageFormat_MonoLSB)
+            XImage_convertToFormat(image, XImageFormat_Mono, 0u, &converted);
+        else if (format == XImageFormat_Alpha8 ||
+                 format == XImageFormat_Grayscale8)
+            XImage_convertToFormat(image, XImageFormat_Indexed8, 0u, &converted);
+        else
+            XImage_convertToFormat(image,
+                                   XImage_hasAlphaChannel(image) ?
+                                       XImageFormat_ARGB32 : XImageFormat_RGB32,
+                                   0u, &converted);
+        if (XImage_isNull(&converted)) {
+            XImage_deinit_base(&converted);
+            return false;
+        }
+        source = &converted;
+        hasConverted = true;
+    }
+
+    width = XImage_width(source);
+    height = XImage_height(source);
+    depth = XImage_depth(source);
+    colorCount = XImage_colorCount(source);
+    if (width <= 0 || height <= 0 || depth <= 0 || depth > 32 ||
+        colorCount < 0 || colorCount > 256) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    if ((size_t)width > (SIZE_MAX - 31u) / (size_t)depth) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    if (((size_t)width * (size_t)depth + 31u) / 32u > (size_t)INT_MAX) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    bitsPerLine = (int)(((size_t)width * (size_t)depth + 31u) / 32u);
+    if ((size_t)bitsPerLine > SIZE_MAX / 4u) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    bpl = (size_t)bitsPerLine * 4u;
+    bplBmp = bpl;
+    nbits = depth;
+    if (depth == 8 && colorCount <= 16) {
+        if (bpl > SIZE_MAX - 1u || (bpl + 1u) / 2u > SIZE_MAX - 3u) {
+            if (hasConverted) XImage_deinit_base(&converted);
+            return false;
+        }
+        bplBmp = ((bpl + 1u) / 2u + 3u) & ~((size_t)3u);
+        nbits = 4;
+    } else if (depth == 32) {
+        if ((size_t)width > (SIZE_MAX - 31u) / 24u) {
+            if (hasConverted) XImage_deinit_base(&converted);
+            return false;
+        }
+        bplBmp = (((size_t)width * 24u + 31u) / 32u) * 4u;
+        nbits = 24;
+    }
+    if ((size_t)height > SIZE_MAX / bplBmp) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    imageBytes = bplBmp * (size_t)height;
+    colorBytes = depth == 32 ? 0u : (size_t)colorCount * 4u;
+    if (imageBytes > UINT32_MAX || imageBytes > SIZE_MAX - 40u ||
+        colorBytes > SIZE_MAX - 40u - imageBytes) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    total = 40u + colorBytes + imageBytes;
+    if (!XByteArray_resize_base((XVector*)out, total)) {
+        if (hasConverted) XImage_deinit_base(&converted);
+        return false;
+    }
+    dst = XByteArray_data(out);
+    memset(dst, 0, total);
+    XImageCodecInternal_writeU32LE(dst, 40u);
+    XImageCodecInternal_writeU32LE(dst + 4u, (uint32_t)width);
+    XImageCodecInternal_writeU32LE(dst + 8u, (uint32_t)height);
+    XImageCodecInternal_writeU16LE(dst + 12u, 1u);
+    XImageCodecInternal_writeU16LE(dst + 14u, (uint16_t)nbits);
+    XImageCodecInternal_writeU32LE(dst + 16u, 0u);
+    XImageCodecInternal_writeU32LE(dst + 20u, (uint32_t)imageBytes);
+    XImageCodecInternal_writeU32LE(dst + 24u,
+                                   XImage_dotsPerMeterX(source) ?
+                                       (uint32_t)XImage_dotsPerMeterX(source) : 2834u);
+    XImageCodecInternal_writeU32LE(dst + 28u,
+                                   XImage_dotsPerMeterY(source) ?
+                                       (uint32_t)XImage_dotsPerMeterY(source) : 2834u);
+    XImageCodecInternal_writeU32LE(dst + 32u, (uint32_t)colorCount);
+    XImageCodecInternal_writeU32LE(dst + 36u, (uint32_t)colorCount);
+    if (depth != 32) {
+        int i;
+        for (i = 0; i < colorCount; ++i) {
+            uint32_t color = XImage_color(source, i);
+            uint8_t* entry = dst + 40u + (size_t)i * 4u;
+            entry[0] = (uint8_t)color;
+            entry[1] = (uint8_t)(color >> 8);
+            entry[2] = (uint8_t)(color >> 16);
+        }
+    }
+    if (nbits == 1 || nbits == 8) {
+        int sourceBpl = XImage_bytesPerLine(source);
+        if (sourceBpl < 0 || (size_t)sourceBpl < bpl) {
+            if (hasConverted) XImage_deinit_base(&converted);
+            return false;
+        }
+        for (y = height - 1; y >= 0; --y) {
+            const uint8_t* pixels = XImage_constScanLine(source, y);
+            if (!pixels) {
+                if (hasConverted) XImage_deinit_base(&converted);
+                return false;
+            }
+            memcpy(dst + 40u + colorBytes + (size_t)(height - 1 - y) * bplBmp,
+                   pixels, bpl);
+        }
+    } else {
+        for (y = height - 1; y >= 0; --y) {
+            uint8_t* row = dst + 40u + colorBytes +
+                           (size_t)(height - 1 - y) * bplBmp;
+            int x;
+            if (nbits == 4) {
+                const uint8_t* pixels = XImage_constScanLine(source, y);
+                if (!pixels || XImage_bytesPerLine(source) < width) {
+                    if (hasConverted) XImage_deinit_base(&converted);
+                    return false;
+                }
+                for (x = 0; x < width / 2; ++x)
+                    row[x] = (uint8_t)((pixels[x * 2] << 4) |
+                                       (pixels[x * 2 + 1] & 0x0fu));
+                if (width & 1) row[width / 2] = (uint8_t)(
+                    pixels[width - 1] << 4);
+            } else {
+                for (x = 0; x < width; ++x) {
+                    uint32_t color = XImage_pixel(source, x, y);
+                    row[x * 3] = (uint8_t)color;
+                    row[x * 3 + 1] = (uint8_t)(color >> 8);
+                    row[x * 3 + 2] = (uint8_t)(color >> 16);
+                }
+            }
+        }
+    }
+    if (hasConverted) XImage_deinit_base(&converted);
     return true;
 }
 

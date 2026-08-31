@@ -28,6 +28,57 @@ static void themeEngine_pixmapForSize(const XIconThemeEngine* self,
         out);
 }
 
+/**
+ * @brief      取得主题引擎绘制目标的设备像素比。
+ * @param target 绘制器；仅图像设备提供目标 DPR。
+ * @return 有效的正设备像素比；未知或非法值按 1.0 返回。
+ * @note       Qt QIconLoaderEngine::paint() 从 painter->device() 读取 DPR；
+ *             Picture 设备和自定义设备在便携层没有可查询的 DPR，按 1.0 处理。
+ */
+static float themeEngine_devicePixelRatio(const XPainter* target)
+{
+    float ratio = 1.0f;
+    if (target && target->m_deviceKind == XPainterDevice_Image &&
+        target->m_image)
+        ratio = XImage_devicePixelRatio(target->m_image);
+    if (!(ratio > 0.0f) || !isfinite(ratio)) ratio = 1.0f;
+    return ratio;
+}
+
+/**
+ * @brief      将逻辑矩形按设备像素比换算为物理整数矩形。
+ * @param logical 逻辑目标矩形。
+ * @param ratio 设备像素比。
+ * @param out 输出物理矩形。
+ * @return 换算结果在 int 范围内且宽高为正时返回 true。
+ */
+static bool themeEngine_scaleRect(const XRect* logical, float ratio,
+                                  XRect* out)
+{
+    double x;
+    double y;
+    double width;
+    double height;
+    if (!logical || !out || !(ratio > 0.0f) || !isfinite(ratio) ||
+        logical->width <= 0 || logical->height <= 0)
+        return false;
+    x = (double)logical->x * (double)ratio;
+    y = (double)logical->y * (double)ratio;
+    width = (double)logical->width * (double)ratio;
+    height = (double)logical->height * (double)ratio;
+    if (!isfinite(x) || !isfinite(y) || !isfinite(width) ||
+        !isfinite(height) || x > (double)INT_MAX || x < (double)INT_MIN ||
+        y > (double)INT_MAX || y < (double)INT_MIN ||
+        width > (double)INT_MAX || height > (double)INT_MAX)
+        return false;
+    /* QRect/QTransform 的整数栅格化采用最近整数；负位置向远离零方向取整。 */
+    out->x = (int)(x >= 0.0 ? floor(x + 0.5) : ceil(x - 0.5));
+    out->y = (int)(y >= 0.0 ? floor(y + 0.5) : ceil(y - 0.5));
+    out->width = (int)floor(width + 0.5);
+    out->height = (int)floor(height + 0.5);
+    return out->width > 0 && out->height > 0;
+}
+
 static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
                                     void* painter, const XRect* rect,
                                     XIconMode mode, XIconState state)
@@ -38,17 +89,27 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
     const XPixmap* drawPixmap;
     XImage image;
     XRect sourceRect;
+    XRect physicalRect;
+    const XRect* drawRect = rect;
+    float deviceRatio;
     int targetSize;
     bool saved = false;
     (void)state;
     if (!self || !target || !rect || !target->m_drawImage) return;
+    deviceRatio = themeEngine_devicePixelRatio(target);
+    if (deviceRatio != 1.0f) {
+        if (!themeEngine_scaleRect(rect, deviceRatio, &physicalRect)) return;
+        drawRect = &physicalRect;
+    }
     XPixmap_init(&pixmap);
     XPixmap_init(&scaled);
     drawPixmap = &pixmap;
-    /* Qt 6.8 QIconLoaderEngine::paint() 将 rect.size() 交给 pixmap()；
-       entryForSize() 以矩形较小边匹配主题目录，不能按宽度单独选图。
-       主题图标随后仍需铺满目标矩形，因此仅改变资源选择尺寸。 */
-    targetSize = rect->width < rect->height ? rect->width : rect->height;
+    /* Qt 6.8 qiconloader.cpp:783-788 先以 painter 设备 DPR 将
+       rect.size() 换成物理像素，再把逻辑矩形交给 drawPixmap()；便携
+       XPainter 的图像设备坐标直接对应物理像素，因此这里同时换算位置和
+       尺寸，Picture/自定义设备仍保持 1.0 的原有逻辑坐标。 */
+    targetSize = drawRect->width < drawRect->height
+        ? drawRect->width : drawRect->height;
     themeEngine_pixmapForSize(self, targetSize, 1, targetSize, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
@@ -60,9 +121,9 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
             XPixmap_move_base(&pixmap, &styled);
         }
         XPixmap_deinit_base(&styled);
-        if (XPixmap_width(&pixmap) != rect->width ||
-            XPixmap_height(&pixmap) != rect->height) {
-            XPixmap_scaled(&pixmap, rect->width, rect->height,
+        if (XPixmap_width(&pixmap) != drawRect->width ||
+            XPixmap_height(&pixmap) != drawRect->height) {
+            XPixmap_scaled(&pixmap, drawRect->width, drawRect->height,
                            0, 0, &scaled);
             if (!XPixmap_isNull(&scaled)) drawPixmap = &scaled;
         }
@@ -74,13 +135,13 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         sourceRect.width = XPixmap_width(drawPixmap);
         sourceRect.height = XPixmap_height(drawPixmap);
 #if XPAINTER_IMAGE_RECT_ON
-        if (XImage_width(&image) == rect->width &&
-            XImage_height(&image) == rect->height)
-            target->m_drawImage(target, &image, rect->x, rect->y);
+        if (XImage_width(&image) == drawRect->width &&
+            XImage_height(&image) == drawRect->height)
+            target->m_drawImage(target, &image, drawRect->x, drawRect->y);
         else
-            XPainter_drawImageRect(target, rect, &image, &sourceRect);
+            XPainter_drawImageRect(target, drawRect, &image, &sourceRect);
 #else
-        target->m_drawImage(target, &image, rect->x, rect->y);
+        target->m_drawImage(target, &image, drawRect->x, drawRect->y);
 #endif
         if (saved && target->m_restore) target->m_restore(target);
         XImage_deinit_base(&image);
@@ -96,6 +157,8 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
     XPixmap pixmap;
     XVector available;
     int target;
+    int declaredSize = 0;
+    int declaredDistance = INT_MAX;
     bool preserveAspect = false;
     size_t i;
     (void)mode;
@@ -133,6 +196,24 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
                 preserveAspect = true;
                 break;
             }
+            /* Qt QIconLoaderEngine::actualSize() uses the selected
+               QIconDirInfo::size metadata, not the decoded file dimensions.
+               Keep the closest declared square size so a malformed or
+               undersized file cannot make a fixed theme entry report a
+               smaller logical size than its index.theme contract. */
+            if (!preserveAspect && availableSize &&
+                availableSize->width == availableSize->height &&
+                availableSize->width > 0) {
+                int distance = availableSize->width > target
+                    ? availableSize->width - target
+                    : target - availableSize->width;
+                if (distance < declaredDistance) {
+                    declaredDistance = distance;
+                    declaredSize = availableSize->width;
+                }
+                if (distance == 0)
+                    break;
+            }
         }
     }
     XVector_deinit_base((XClass*)&available);
@@ -157,7 +238,8 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
             out->width = (int)(sourceWidth * scale + 0.5);
             out->height = (int)(sourceHeight * scale + 0.5);
         } else {
-            int source = sourceWidth < sourceHeight ? sourceWidth : sourceHeight;
+            int source = declaredSize > 0 ? declaredSize :
+                (sourceWidth < sourceHeight ? sourceWidth : sourceHeight);
             if (source > target) source = target;
             out->width = source;
             out->height = source;

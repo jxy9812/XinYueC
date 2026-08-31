@@ -119,6 +119,7 @@ XImageCodecFormat XImageCodec_formatFromName(const XString* format)
         return XImageCodecFormat_Unknown;
 #if XIMAGECODEC_BMP_ON
     if (codec_is_name(format, "bmp")) return XImageCodecFormat_Bmp;
+    if (codec_is_name(format, "dib")) return XImageCodecFormat_Dib;
 #endif
 #if XIMAGECODEC_PNG_ON
     if (codec_is_name(format, "png")) return XImageCodecFormat_Png;
@@ -224,6 +225,7 @@ static const char* codec_formatNameUtf8(XImageCodecFormat format)
 {
     switch (format) {
         case XImageCodecFormat_Bmp: return "bmp";
+        case XImageCodecFormat_Dib: return "dib";
         case XImageCodecFormat_Png: return "png";
         case XImageCodecFormat_Jpeg: return "jpeg";
         case XImageCodecFormat_Gif: return "gif";
@@ -329,6 +331,38 @@ bool XImageCodec_probeSize(const uint8_t* data, size_t size,
                 signedWidth > INT_MAX || signedHeight == INT32_MIN)
                 return false;
             if (signedHeight < 0) signedHeight = -signedHeight;
+            if ((uint64_t)(uint32_t)signedWidth *
+                    (uint64_t)(uint32_t)signedHeight > 16384ull * 16384ull)
+                return false;
+            *width = (int)signedWidth;
+            *height = (int)signedHeight;
+            return true;
+        }
+#endif
+#if XIMAGECODEC_BMP_ON
+        case XImageCodecFormat_Dib: {
+            uint32_t dib;
+            int32_t signedWidth;
+            int32_t signedHeight;
+            if (size < 12 || !width || !height) return false;
+            dib = XImageCodecInternal_readU32LE(data);
+            if (dib == 12u) {
+                signedWidth = (int16_t)XImageCodecInternal_readU16LE(data + 4);
+                signedHeight = (int16_t)XImageCodecInternal_readU16LE(data + 6);
+            } else {
+                if (size < (size_t)dib || (dib != 40u && dib != 64u &&
+                                  dib != 108u && dib != 124u)) return false;
+                signedWidth = (int32_t)XImageCodecInternal_readU32LE(data + 4);
+                signedHeight = (int32_t)XImageCodecInternal_readU32LE(data + 8);
+            }
+            if (signedWidth <= 0 || signedHeight == 0 ||
+                signedWidth > INT_MAX || signedHeight == INT32_MIN)
+                return false;
+            if (signedHeight < 0) signedHeight = -signedHeight;
+            if (signedHeight > INT_MAX) return false;
+            if ((uint64_t)(uint32_t)signedWidth *
+                    (uint64_t)(uint32_t)signedHeight > 16384ull * 16384ull)
+                return false;
             *width = (int)signedWidth;
             *height = (int)signedHeight;
             return true;
@@ -380,6 +414,7 @@ bool XImageCodec_canDecode(XImageCodecFormat format)
 {
 #if XIMAGECODEC_BMP_ON
     if (format == XImageCodecFormat_Bmp) return true;
+    if (format == XImageCodecFormat_Dib) return true;
 #endif
 #if XIMAGECODEC_PNG_ON
     if (format == XImageCodecFormat_Png) return true;
@@ -400,6 +435,7 @@ bool XImageCodec_canEncode(XImageCodecFormat format)
 {
 #if XIMAGECODEC_BMP_ON
     if (format == XImageCodecFormat_Bmp) return true;
+    if (format == XImageCodecFormat_Dib) return true;
 #endif
 #if XIMAGECODEC_PNG_ON
     if (format == XImageCodecFormat_Png) return true;
@@ -426,6 +462,10 @@ bool XImageCodec_decode(const uint8_t* data, size_t size,
 #if XIMAGECODEC_BMP_ON
         case XImageCodecFormat_Bmp:
             return XImageCodecInternal_decodeBmp(data, size, out);
+#endif
+#if XIMAGECODEC_BMP_ON
+        case XImageCodecFormat_Dib:
+            return XImageCodecInternal_decodeDib(data, size, out);
 #endif
 #if XIMAGECODEC_PNG_ON
         case XImageCodecFormat_Png:
@@ -457,6 +497,10 @@ bool XImageCodec_encode(const XImage* image, XImageCodecFormat format,
 #if XIMAGECODEC_BMP_ON
         case XImageCodecFormat_Bmp:
             return XImageCodecInternal_encodeBmp(image, out);
+#endif
+#if XIMAGECODEC_BMP_ON
+        case XImageCodecFormat_Dib:
+            return XImageCodecInternal_encodeDib(image, out);
 #endif
 #if XIMAGECODEC_PNG_ON
         case XImageCodecFormat_Png:

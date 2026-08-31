@@ -3838,20 +3838,39 @@ bool XImage_load(XImage* self, const XString* fileName, const XString* format)
 
 bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const char* format)
 {
-    XString* type = NULL;
+    XImage decoded;
     bool result = false;
-    if (!self || !data || len <= 0) return false;
+    if (!self) return false;
+    /* QImage::loadFromData() assigns the temporary result back to *this;
+     * failed decoding therefore invalidates the destination instead of
+     * leaving stale pixels.  Decode into a temporary first so a partially
+     * written codec can never leak data into the caller's image. */
+    XImage_init(&decoded);
+    if (!data || len <= 0) goto failed;
 #if XIMAGECODEC_ON
     {
         XImageCodecFormat codecFormat = XImageCodec_formatFromName_2(format);
-        type = (format && format[0]) ? XString_create_utf8(format) : NULL;
+        /* An explicit format is authoritative in Qt.  Unknown names fail
+         * directly; content probing is reserved for an omitted/empty name. */
+        if (format && format[0] && codecFormat == XImageCodecFormat_Unknown)
+            goto failed;
         if (codecFormat == XImageCodecFormat_Unknown)
             codecFormat = XImageCodec_detect(data, (size_t)len);
-        result = XImageCodec_decode(data, (size_t)len, codecFormat, self);
+        result = XImageCodec_decode(data, (size_t)len, codecFormat, &decoded);
     }
 #endif
-    if (type) XString_delete_base((XClass*)type);
-    return result;
+    if (!result) goto failed;
+    if (!XClassIsVtableNull(self)) XImage_deinit_base(self);
+    XImage_init(self);
+    XImage_move_base(self, &decoded);
+    XImage_deinit_base(&decoded);
+    return true;
+
+failed:
+    XImage_deinit_base(&decoded);
+    if (!XClassIsVtableNull(self)) XImage_deinit_base(self);
+    XImage_init(self);
+    return false;
 }
 
 bool XImage_loadFromData(XImage* self, const uint8_t* data, int len, const XString* format)

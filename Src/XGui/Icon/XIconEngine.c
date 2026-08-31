@@ -142,10 +142,12 @@ static void VXIconEngine_virtualHook(const XIconEngine* self, int id, void* data
         physical.height = (int)(height + 0.5);
     }
     if (physical.width <= 0 || physical.height <= 0) return;
+    /* Qt 6.8 qiconengine.cpp:236-247 只把物理尺寸的 pixmap() 结果写入
+       参数，不在 virtual_hook() 内改写 DPR；QIcon::pixmap() 会在钩子返回
+       后依据实际像素尺寸统一设置设备像素比。这里保持同一层次的职责，
+       直接调用引擎的 pixmap() 虚函数并保留其返回对象的 DPR。 */
     XIconEngine_pixmap_base(self, &physical, argument->mode, argument->state,
                             argument->pixmap);
-    if (!XPixmap_isNull(argument->pixmap))
-        XPixmap_setDevicePixelRatio(argument->pixmap, scale);
 }
 
 static void VXIconEngine_deinit(XIconEngine* self)

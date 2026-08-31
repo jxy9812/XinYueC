@@ -2696,6 +2696,14 @@ bool XPainter_drawLine_2(XPainter* self, const XPoint* p1, const XPoint* p2)
 
 bool XPainter_drawPoint(XPainter* self, int x, int y)
 {
+    if (!self || self->m_deviceKind == XPainterDevice_None)
+        return false;
+    /* Qt QPicturePaintEngine::drawPoint() writes a dedicated PdcDrawPoint
+       command.  Keep the command distinct from DrawLine so a recorded stream
+       preserves the original operation and its point bounds. */
+    if (self->m_deviceKind == XPainterDevice_Picture && self->m_picture &&
+        !self->m_replaying)
+        return XPicture_recordDrawPoint(self->m_picture, x, y);
     return XPainter_drawLine(self, x, y, x, y);
 }
 
@@ -2856,7 +2864,9 @@ bool XPainter_drawRects(XPainter* self, const XRect* rects, int rectCount)
     int i;
     if (!self) return false;
     if (!rects || rectCount <= 0) return true;
-    if (self->m_deviceKind == XPainterDevice_None || !self->m_drawLine)
+    /* 与单个 drawRect 保持一致：批量接口也允许后端只提供画刷填充
+       回调；Qt drawRects 在无画笔时仍应完成填充或成功空操作。 */
+    if (self->m_deviceKind == XPainterDevice_None)
         return false;
     for (i = 0; i < rectCount; ++i)
         if (!XPainter_drawRect(self, &rects[i]))
@@ -2946,6 +2956,10 @@ bool XPainter_eraseRect(XPainter* self, const XRect* rect)
 }
 bool XPainter_drawImage(XPainter* self, const XImage* image, int x, int y)
 {
+#if XPAINTER_IMAGE_RECT_ON
+    int width;
+    int height;
+#endif /* XPAINTER_IMAGE_RECT_ON */
     if (!self) return false;
     if (!image) return false;
     if (XImage_isNull(image) || XImage_width(image) <= 0 ||
@@ -2953,6 +2967,35 @@ bool XPainter_drawImage(XPainter* self, const XImage* image, int x, int y)
         return true;
     if (self->m_deviceKind == XPainterDevice_None || !self->m_drawImage)
         return false;
+
+#if XPAINTER_IMAGE_RECT_ON
+    /* QPainter::drawImage(QPointF, QImage) 将图像物理尺寸除以 DPR
+       作为逻辑目标尺寸（Qt 6.8 qpaintengine_raster.cpp 也沿用此
+       约定）。记录器必须保留原始图像元数据，因此只在已经绑定
+       XImage 的光栅路径中改用矩形重载。 */
+    if (self->m_deviceKind == XPainterDevice_Image)
+    {
+        float scale = XImage_devicePixelRatio(image);
+        if (scale > 0.0f && isfinite(scale) && scale != 1.0f)
+        {
+            XRect target;
+            XRect source;
+            width = XImage_width(image);
+            height = XImage_height(image);
+            target.x = x;
+            target.y = y;
+            target.width = painterRound((float)width / scale);
+            target.height = painterRound((float)height / scale);
+            source.x = 0;
+            source.y = 0;
+            source.width = width;
+            source.height = height;
+            if (target.width <= 0 || target.height <= 0)
+                return true;
+            return XPainter_drawImageRect(self, &target, image, &source);
+        }
+    }
+#endif /* XPAINTER_IMAGE_RECT_ON */
     return self->m_drawImage(self, image, x, y);
 }
 
@@ -3063,6 +3106,34 @@ bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y)
     }
 
 #if XPAINTER_IMAGE_RECT_ON
+    if (self->m_deviceKind == XPainterDevice_Picture &&
+        self->m_picture && !self->m_replaying)
+    {
+        XRect target;
+        XRect source;
+        target.x = x;
+        target.y = y;
+        target.width = width;
+        target.height = height;
+        scale = XPixmap_devicePixelRatio(pixmap);
+        if (!(scale > 0.0f) || !isfinite(scale)) scale = 1.0f;
+        if (scale != 1.0f)
+        {
+            target.width = painterRound((float)width / scale);
+            target.height = painterRound((float)height / scale);
+        }
+        source.x = 0;
+        source.y = 0;
+        source.width = width;
+        source.height = height;
+        ok = XPicture_recordDrawPixmap(self->m_picture, &image,
+                                       &target, &source);
+        XImage_deinit_base(&image);
+        return ok;
+    }
+#endif /* XPAINTER_IMAGE_RECT_ON */
+
+#if XPAINTER_IMAGE_RECT_ON
     scale = XPixmap_devicePixelRatio(pixmap);
     /* QPainter::drawPixmap(QPointF, QPixmap) sends a physical pixmap to a
        logical rectangle whose dimensions are divided by devicePixelRatio. */
@@ -3118,6 +3189,16 @@ bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
         XImage_deinit_base(&image);
         return true;
     }
+#if XPAINTER_IMAGE_RECT_ON
+    if (self->m_deviceKind == XPainterDevice_Picture &&
+        self->m_picture && !self->m_replaying)
+    {
+        ok = XPicture_recordDrawPixmap(self->m_picture, &image,
+                                       targetRect, sourceRect);
+        XImage_deinit_base(&image);
+        return ok;
+    }
+#endif /* XPAINTER_IMAGE_RECT_ON */
     ok = XPainter_drawImageRect(self, targetRect, &image, sourceRect);
     XImage_deinit_base(&image);
     return ok;
@@ -3150,6 +3231,29 @@ bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
     if (!self || !rect || !pixmap) return false;
     if (XPixmap_isNull(pixmap) || rect->width <= 0 || rect->height <= 0)
         return true;
+
+    /* Qt QPicturePaintEngine::drawTiledPixmap() stores one command carrying
+       the source pixmap, logical target rectangle and offset.  Keep that
+       command intact for portable recordings; replaying into another
+       painter deliberately falls through to the normal tile expansion. */
+    if (self->m_deviceKind == XPainterDevice_Picture &&
+        self->m_picture && !self->m_replaying)
+    {
+        XImage recordedImage;
+        bool recorded;
+        XImage_init(&recordedImage);
+        XPixmap_toImage(pixmap, &recordedImage);
+        if (XImage_isNull(&recordedImage))
+        {
+            XImage_deinit_base(&recordedImage);
+            return true;
+        }
+        recorded = XPicture_recordDrawTiledPixmap(self->m_picture,
+                                                   &recordedImage,
+                                                   rect, offset);
+        XImage_deinit_base(&recordedImage);
+        return recorded;
+    }
 
     physicalWidth = XPixmap_width(pixmap);
     physicalHeight = XPixmap_height(pixmap);
@@ -3235,6 +3339,13 @@ void XPainter_setFont(XPainter* self, const XFont* font)
         XFont_copy_base(&self->m_state.m_font, font);
     else
         XFont_init(&self->m_state.m_font);
+    /* Qt QPicturePaintEngine::updateFont() serializes the complete font
+       whenever the font state changes (qpaintengine_pic.cpp:208-216).
+       The portable snapshot deliberately records after the local state is
+       updated, and replay restores state directly without recursing. */
+    if (self->m_deviceKind == XPainterDevice_Picture && self->m_picture &&
+        !self->m_replaying)
+        (void)XPicture_recordSetFont(self->m_picture, font);
 }
 
 const XFont* XPainter_font(const XPainter* self)
@@ -6142,6 +6253,11 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     table = painterBitmapFont(&self->m_state.m_font);
     scale = painterBitmapScaleForFont(&self->m_state.m_font);
     charW = painter8x16Metric(table.m_width, scale);
+    /* Qt 在没有可用字体引擎时仍将文本绘制视为成功的空操作。远端
+       XFont 配置允许关闭所有内置 provider，此时度量为零；先退出可
+       避免后续布局宽度除零，并保持设备状态不变。 */
+    if (table.m_width <= 0 || table.m_height <= 0 || charW <= 0)
+        return true;
     lineCap = (int)(sizeof(lines) / sizeof(lines[0]));
     wrap = (flags & XPAINTER_TEXT_WORD_WRAP) != 0u;
     wrapAnywhere = (flags & XPAINTER_TEXT_WRAP_ANYWHERE) != 0u;

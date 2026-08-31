@@ -168,6 +168,17 @@ XIODevice* XImageIOHandler_device(const XImageIOHandler* self);
  * @param format 格式字符串
  */
 void XImageIOHandler_setFormat(XImageIOHandler* self, const XString* format);
+
+/**
+ * @brief 在常量处理器上下文中设置图像格式。
+ * @param self 目标处理器对象指针；其内部格式缓存允许在 const 探测路径更新。
+ * @param format 格式字符串；传入 NULL 表示清空格式。
+ * @note 对标 Qt 6.8 `QImageIOHandler::setFormat(const QByteArray&) const`，
+ *       供 `canRead() const` 在识别成功后回写规范格式名；仅修改处理器内部
+ *       可变状态，不改变设备或其它选项。
+ */
+void XImageIOHandler_setFormat_const(const XImageIOHandler* self, const XString* format);
+
 /**
  * @brief 使用 UTF-8 格式名设置图像格式的兼容重载。
  * @param self 目标处理器对象指针。
@@ -325,6 +336,17 @@ void XImageIOHandler_currentImageRect_base(const XImageIOHandler* self, XRect* o
  *       上限，且失败不会覆盖输出图像。
  */
 bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImage* image);
+
+/**
+ * @brief 检查图像分配参数是否满足 Qt 的内存上限与整数边界。
+ * @param size 目标图像尺寸；宽度和高度必须都大于零。
+ * @param format 目标像素格式；必须是有效的 XImageFormat 值。
+ * @return 参数可表示且不超过 XImageReader 当前分配上限时返回 true，
+ *         否则返回 false；该函数不创建或修改任何 XImage 对象。
+ * @note 供具体图像处理器在读取前执行与 QImageIOHandler::allocateImage
+ *       相同的前置检查，尤其适用于不直接调用 allocateImage 的便携编解码器。
+ */
+bool XImageIOHandler_checkAllocation(const XSize* size, XImageFormat format);
 
 #ifdef __cplusplus
 }
