@@ -5,6 +5,7 @@
  ******************************************************************************/
 #include "XImage.h"
 #include "XImageCodec.h"
+#include "XImageCodecInternal.h"
 #include "XImageFormat.h"
 #include "XAtomic.h"
 #include "XClass.h"
@@ -22,6 +23,148 @@
 
 /* ========== 私有数据结构 ========== */
 
+/*
+ * ICC/LUT 数据不能放进按值复制的 XColorSpace。这个不可变侧车只由
+ * XImageData 持有，所有权由引用计数管理；外部接口只接受输入副本或
+ * 写出副本，避免把资源生命周期暴露为裸指针。
+ */
+#define XIMAGE_PROFILE_MAX_ICC_BYTES (16u * 1024u * 1024u)
+#define XIMAGE_PROFILE_MAX_LUT_ELEMENTS 65536u
+
+typedef struct XImageColorProfileResource
+{
+    XAtomic_int32_t m_refCount;
+    XByteArray* m_iccData;
+    uint8_t* m_lutData[3];
+    uint32_t m_lutElements[3];
+    uint8_t m_lutBits[3];
+    bool m_lutTwoWay[3];
+} XImageColorProfileResource;
+
+static void XImageColorProfileResource_unref(XImageColorProfileResource* resource);
+
+static void XImageColorProfileResource_ref(XImageColorProfileResource* resource)
+{
+    if (resource)
+        XAtomic_fetch_add_int32(&resource->m_refCount, 1,
+                                XAtomic_MemoryOrder_SeqCst);
+}
+
+static bool XImageColorProfileResource_validateLut(const void* data,
+                                                   uint32_t elements,
+                                                   uint8_t bits,
+                                                   bool twoWay)
+{
+    size_t bytesPerElement;
+    uint32_t i;
+    uint32_t previous = 0;
+    if (elements == 0)
+        return data == NULL && bits == 0;
+    if (!data || elements < 2u || elements > XIMAGE_PROFILE_MAX_LUT_ELEMENTS)
+        return false;
+    if (bits != 8u && bits != 16u)
+        return false;
+    bytesPerElement = bits / 8u;
+    if ((size_t)elements > SIZE_MAX / bytesPerElement ||
+        (size_t)elements * bytesPerElement > XIMAGE_PROFILE_MAX_ICC_BYTES)
+        return false;
+    if (!twoWay)
+        return true;
+    /* Two-way tables must be monotonic so that inverse lookup is defined. */
+    for (i = 0; i < elements; ++i)
+    {
+        uint32_t value;
+        if (bits == 8u)
+            value = ((const uint8_t*)data)[i];
+        else
+        {
+            uint16_t sample;
+            memcpy(&sample, (const uint8_t*)data + (size_t)i * 2u,
+                   sizeof(sample));
+            value = sample;
+        }
+        if (i != 0 && value < previous)
+            return false;
+        previous = value;
+    }
+    return true;
+}
+
+static XImageColorProfileResource* XImageColorProfileResource_create(
+    const XImageColorProfileSpec* spec)
+{
+    XImageColorProfileResource* resource;
+    int channel;
+    bool hasLut = false;
+
+    if (!spec || spec->m_iccSize > XIMAGE_PROFILE_MAX_ICC_BYTES ||
+        (spec->m_iccSize != 0 && !spec->m_iccData))
+        return NULL;
+    for (channel = 0; channel < 3; ++channel)
+    {
+        if (!XImageColorProfileResource_validateLut(
+                spec->m_lutData[channel], spec->m_lutElements[channel],
+                spec->m_lutBits[channel], spec->m_lutTwoWay[channel]))
+            return NULL;
+        if (spec->m_lutElements[channel] != 0)
+            hasLut = true;
+    }
+    if (spec->m_iccSize == 0 && !hasLut)
+        return NULL;
+
+    resource = (XImageColorProfileResource*)XMalloc_System(sizeof(*resource));
+    if (!resource)
+        return NULL;
+    memset(resource, 0, sizeof(*resource));
+    XAtomic_init(resource->m_refCount, 1);
+    if (spec->m_iccSize != 0)
+    {
+        resource->m_iccData = XByteArray_create_with_data(
+            (const char*)spec->m_iccData, spec->m_iccSize);
+        if (!resource->m_iccData ||
+            XByteArray_size_base((const XContainer*)resource->m_iccData) !=
+                spec->m_iccSize)
+        {
+            XImageColorProfileResource_unref(resource);
+            return NULL;
+        }
+    }
+    for (channel = 0; channel < 3; ++channel)
+    {
+        size_t bytes;
+        if (spec->m_lutElements[channel] == 0)
+            continue;
+        bytes = (size_t)spec->m_lutElements[channel] *
+                (size_t)(spec->m_lutBits[channel] / 8u);
+        resource->m_lutData[channel] = (uint8_t*)XMalloc_System(bytes);
+        if (!resource->m_lutData[channel])
+        {
+            XImageColorProfileResource_unref(resource);
+            return NULL;
+        }
+        memcpy(resource->m_lutData[channel], spec->m_lutData[channel], bytes);
+        resource->m_lutElements[channel] = spec->m_lutElements[channel];
+        resource->m_lutBits[channel] = spec->m_lutBits[channel];
+        resource->m_lutTwoWay[channel] = spec->m_lutTwoWay[channel];
+    }
+    return resource;
+}
+
+static void XImageColorProfileResource_unref(XImageColorProfileResource* resource)
+{
+    int channel;
+    if (!resource)
+        return;
+    if (XAtomic_fetch_add_int32(&resource->m_refCount, -1,
+                                XAtomic_MemoryOrder_SeqCst) != 1)
+        return;
+    if (resource->m_iccData)
+        XByteArray_delete_base((XClass*)resource->m_iccData);
+    for (channel = 0; channel < 3; ++channel)
+        XFree_System(resource->m_lutData[channel]);
+    XFree_System(resource);
+}
+
 /**
  * @brief      XImage 图像数据私有结构体
  * @note       使用引用计数管理，支持写时复制（COW）
@@ -35,6 +178,7 @@ typedef struct XImageData
     int              m_bytesPerLine;     /**< 每行字节数 */
     XImageFormat     m_format;           /**< 像素格式 */
     XColorSpace      m_colorSpace;       /**< 色彩空间描述 */
+    XImageColorProfileResource* m_colorProfile; /**< ICC/LUT 不可变资源侧车 */
     int              m_colorCount;       /**< 颜色表颜色数量 */
     uint32_t*        m_colorTable;       /**< 颜色表指针 */
     int              m_dpmX;             /**< X 方向分辨率（点/米） */
@@ -56,6 +200,7 @@ typedef struct XImageData
 static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
 
 static uint8_t XImage_luma(uint32_t color);
+static uint32_t XImage_readPixelValue(const XImageData* d, int x, int y);
 static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color);
 static void XImage_writePixelIndex(XImageData* d, int x, int y, uint32_t indexOrRgb);
 static uint16_t XImage_load16(const uint8_t* p);
@@ -116,6 +261,19 @@ static void XImageData_clearTextAll(XImageData* d)
 }
 
 /**
+ * @brief 清除图像数据关联的 ICC/LUT 资源。
+ * @param d 图像私有数据；允许为空。
+ * @note 资源使用独立引用计数管理，清除只影响当前数据对象。
+ */
+static void XImageData_clearColorProfile(XImageData* d)
+{
+    if (!d || !d->m_colorProfile)
+        return;
+    XImageColorProfileResource_unref(d->m_colorProfile);
+    d->m_colorProfile = NULL;
+}
+
+/**
  * @brief 反初始化图像文本元数据。
  * @param d 待反初始化的图像数据对象。
  * @note XStringList 的 clear 仅改变元素数量；最终释放前必须逐项反初始化
@@ -170,6 +328,12 @@ static void XImageData_copyMetadata(XImageData* dst, const XImageData* src)
     dst->m_offsetX = src->m_offsetX;
     dst->m_offsetY = src->m_offsetY;
     dst->m_colorSpace = src->m_colorSpace;
+    if (dst != src && dst->m_colorProfile)
+        XImageColorProfileResource_unref(dst->m_colorProfile);
+    if (dst != src)
+        dst->m_colorProfile = src->m_colorProfile;
+    if (dst != src && dst->m_colorProfile)
+        XImageColorProfileResource_ref(dst->m_colorProfile);
     count = (int)XStringList_size_base((const XContainer*)&src->m_textKeys);
     for (int i = 0; i < count; ++i)
     {
@@ -370,6 +534,7 @@ static void XImageData_unref(XImageData* d)
         }
         if (d->m_colorTable)
             XFree_System(d->m_colorTable);
+        XImageColorProfileResource_unref(d->m_colorProfile);
         XImageData_deinitText(d);
         XFree_System(d);
     }
@@ -700,6 +865,7 @@ void XImage_setColorSpace(XImage* self, XColorSpace colorSpace)
     /* Qt 的 setColorSpace() 只分离元数据；唯一数据的 cacheKey 不变。 */
     XImage_detachMetadata(self);
     if (!XImage_isDetached(self)) return;
+    XImageData_clearColorProfile(self->m_data);
     self->m_data->m_colorSpace = colorSpace;
 }
 
@@ -708,16 +874,137 @@ bool XImage_hasColorSpace(const XImage* self)
     return self && self->m_data && XColorSpace_isValid(&self->m_data->m_colorSpace);
 }
 
+bool XImageCodecInternal_setColorProfile(XImage* self,
+                                         const XImageColorProfileSpec* spec)
+{
+    XImageColorProfileResource* replacement = NULL;
+    bool hasData = false;
+    bool malformedEmpty = false;
+    int channel;
+    if (!self || !self->m_data)
+        return false;
+    if (spec)
+    {
+        if (spec->m_iccSize != 0)
+            hasData = true;
+        else if (spec->m_iccData)
+            malformedEmpty = true;
+        for (channel = 0; channel < 3; ++channel)
+        {
+            hasData = hasData || spec->m_lutElements[channel] != 0;
+            if (spec->m_lutElements[channel] == 0 &&
+                (spec->m_lutData[channel] || spec->m_lutBits[channel] != 0 ||
+                 spec->m_lutTwoWay[channel]))
+                malformedEmpty = true;
+        }
+        if (malformedEmpty)
+            return false;
+    }
+    if (hasData)
+    {
+        replacement = XImageColorProfileResource_create(spec);
+        if (!replacement)
+            return false;
+    }
+    /* Detach before replacing metadata so aliases retain their resource. */
+    XImage_detachMetadata(self);
+    if (!XImage_isDetached(self))
+    {
+        XImageColorProfileResource_unref(replacement);
+        return false;
+    }
+    XImageData_clearColorProfile(self->m_data);
+    self->m_data->m_colorProfile = replacement;
+    return true;
+}
+
+bool XImageCodecInternal_copyIccProfile(const XImage* self, XByteArray* out)
+{
+    size_t size = 0;
+    if (!self || !self->m_data || !out)
+        return false;
+    if (self->m_data->m_colorProfile && self->m_data->m_colorProfile->m_iccData)
+        size = XByteArray_size_base((const XContainer*)
+                                    self->m_data->m_colorProfile->m_iccData);
+    if (!XByteArray_resize_base((XVector*)out, size))
+        return false;
+    if (size)
+        memcpy(XByteArray_data(out),
+               XByteArray_data(self->m_data->m_colorProfile->m_iccData),
+               size);
+    return true;
+}
+
+bool XImageCodecInternal_copyLut(const XImage* self, int channel,
+                                 void* out, size_t outBytes,
+                                 uint32_t* elements, uint8_t* bits,
+                                 bool* twoWay)
+{
+    const XImageColorProfileResource* resource;
+    size_t bytes;
+    if (!self || !self->m_data || channel < 0 || channel >= 3)
+        return false;
+    resource = self->m_data->m_colorProfile;
+    if (!resource || resource->m_lutElements[channel] == 0)
+    {
+        if (elements) *elements = 0;
+        if (bits) *bits = 0;
+        if (twoWay) *twoWay = false;
+        return true;
+    }
+    if (elements) *elements = resource->m_lutElements[channel];
+    if (bits) *bits = resource->m_lutBits[channel];
+    if (twoWay) *twoWay = resource->m_lutTwoWay[channel];
+    bytes = (size_t)resource->m_lutElements[channel] *
+            (size_t)(resource->m_lutBits[channel] / 8u);
+    if (!out || outBytes < bytes)
+        return false;
+    memcpy(out, resource->m_lutData[channel], bytes);
+    return true;
+}
+
 static float XImage_decodeTransfer(float value, XColorSpaceTransferFunction transfer,
                                    float gamma)
 {
+    /* QColorTransferFunction keeps the extended-range result of HDR curves;
+       in particular PQ(1) is 64 and HLG(1) is 12.  Clamping the input at
+       one would silently turn those transfers into identity at the white
+       point.  Zero is handled explicitly because the PQ expression has a
+       negative denominator at its mathematical endpoint. */
     if (value <= 0.0f) return 0.0f;
-    if (value >= 1.0f) return 1.0f;
     switch (transfer)
     {
         case XColorSpaceTransfer_Linear: return value;
+        case XColorSpaceTransfer_Gamma:
+            return powf(value, gamma > 0.0f ? gamma : 1.0f);
         case XColorSpaceTransfer_SRgb:
-            return value <= 0.04045f ? value / 12.92f : powf((value + 0.055f) / 1.055f, 2.4f);
+            return value < 0.04045f ? value / 12.92f : powf((value + 0.055f) / 1.055f, 2.4f);
+        case XColorSpaceTransfer_ProPhotoRgb:
+            return value < (16.0f / 512.0f) ? value / 16.0f : powf(value, 1.8f);
+        case XColorSpaceTransfer_Bt2020:
+            return value < 0.08145f ? value / 4.5f :
+                powf((value + 0.0993f) / 1.0993f, 2.2f);
+        case XColorSpaceTransfer_St2084:
+        {
+            const float c1 = 107.0f / 128.0f;
+            const float c2 = 2413.0f / 128.0f;
+            const float c3 = 2392.0f / 128.0f;
+            const float m1 = 1305.0f / 8192.0f;
+            const float m2 = 2523.0f / 32.0f;
+            const float powered = powf(value, 1.0f / m2);
+            /* This is the Qt 6.8 qcolortransfergeneric_p.h expression.
+               It intentionally follows Qt's endpoint behavior. */
+            return powf((c1 - powered) / (c3 * powered - c2),
+                        1.0f / m1) * 64.0f;
+        }
+        case XColorSpaceTransfer_Hlg:
+        {
+            const float a = 0.17883277f;
+            const float b = 1.0f - 4.0f * a;
+            const float c = 0.55991073f;
+            return value < 0.5f ? value * value * 4.0f :
+                expf((value - c) / a) + b;
+        }
         case XColorSpaceTransfer_Gamma22:
         case XColorSpaceTransfer_Gamma28:
             return powf(value, gamma > 0.0f ? gamma :
@@ -730,13 +1017,39 @@ static float XImage_decodeTransfer(float value, XColorSpaceTransferFunction tran
 static float XImage_encodeTransfer(float value, XColorSpaceTransferFunction transfer,
                                    float gamma)
 {
+    /* Keep extended linear luminance for HDR destinations.  The final pixel
+       writer performs the format-specific clamp/quantization where needed. */
     if (value <= 0.0f) return 0.0f;
-    if (value >= 1.0f) return 1.0f;
     switch (transfer)
     {
         case XColorSpaceTransfer_Linear: return value;
+        case XColorSpaceTransfer_Gamma:
+            return powf(value, 1.0f / (gamma > 0.0f ? gamma : 1.0f));
         case XColorSpaceTransfer_SRgb:
-            return value <= 0.0031308f ? value * 12.92f : 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
+            return value < 0.0031308f ? value * 12.92f : 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
+        case XColorSpaceTransfer_ProPhotoRgb:
+            return value < (1.0f / 512.0f) ? value * 16.0f : powf(value, 1.0f / 1.8f);
+        case XColorSpaceTransfer_Bt2020:
+            return value < 0.0181f ? value * 4.5f :
+                1.0993f * powf(value, 1.0f / 2.2f) - 0.0993f;
+        case XColorSpaceTransfer_St2084:
+        {
+            const float c1 = 107.0f / 128.0f;
+            const float c2 = 2413.0f / 128.0f;
+            const float c3 = 2392.0f / 128.0f;
+            const float m1 = 1305.0f / 8192.0f;
+            const float m2 = 2523.0f / 32.0f;
+            const float powered = powf(value * (1.0f / 64.0f), m1);
+            return powf((c1 + c2 * powered) / (1.0f + c3 * powered), m2);
+        }
+        case XColorSpaceTransfer_Hlg:
+        {
+            const float a = 0.17883277f;
+            const float b = 1.0f - 4.0f * a;
+            const float c = 0.55991073f;
+            return value > 1.0f ? a * logf(value - b) + c :
+                sqrtf(value * 0.25f);
+        }
         case XColorSpaceTransfer_Gamma22:
         case XColorSpaceTransfer_Gamma28:
             return powf(value, 1.0f / (gamma > 0.0f ? gamma :
@@ -983,7 +1296,13 @@ static uint32_t XImage_convertColorSpaceColor(
     sourceLinear[1] = g;
     sourceLinear[2] = b;
     if (!sourceIsRgb)
-        sourceLinear[1] = sourceLinear[2] = r;
+    {
+        /* Qt QColorTransform::loadGray() maps one scalar through the
+           colorspace white point.  The gray matrix stores that white point
+           in its first column, so duplicating the scalar into all three
+           columns would multiply luminance by three. */
+        sourceLinear[1] = sourceLinear[2] = 0.0f;
+    }
     XImage_matrixMap(sourceMatrix, sourceLinear, xyz);
     if (targetIsRgb)
         XImage_matrixMap(targetInverse, xyz, targetLinear);
@@ -1004,6 +1323,321 @@ static uint32_t XImage_convertColorSpaceColor(
            (uint32_t)XImage_colorSpaceChannel(XImage_encodeTransfer(
                targetLinear[2], targetSpace->m_transferFunction,
                targetSpace->m_gamma));
+}
+
+/**
+ * @brief 通过色彩空间矩阵转换三个浮点颜色分量。
+ * @param source 源颜色分量，范围通常为 0~1；HDR 输入可暂时超过 1。
+ * @param sourceSpace 源色彩空间描述。
+ * @param targetSpace 目标色彩空间描述。
+ * @param sourceMatrix 源空间到 PCS D50 XYZ 的矩阵。
+ * @param targetInverse 目标空间矩阵的逆矩阵。
+ * @param sourceIsRgb 源空间是否为 RGB 模型。
+ * @param targetIsRgb 目标空间是否为 RGB 模型。
+ * @param target 输出目标颜色分量。
+ * @note 与 8 位兼容路径使用相同矩阵和传递函数，但保留原始通道精度，
+ *       用于 Qt QRgba64/Grayscale16 对应的存储格式。
+ */
+static void XImage_convertColorSpaceComponents(
+    const float source[3], const XColorSpace* sourceSpace,
+    const XColorSpace* targetSpace, const float sourceMatrix[9],
+    const float targetInverse[9], bool sourceIsRgb, bool targetIsRgb,
+    bool extended, float target[3])
+{
+    float sourceLinear[3], xyz[3], targetLinear[3];
+    if (extended)
+    {
+        const float sourceSign[3] = {
+            source[0] < 0.0f ? -1.0f : 1.0f,
+            source[1] < 0.0f ? -1.0f : 1.0f,
+            source[2] < 0.0f ? -1.0f : 1.0f
+        };
+        sourceLinear[0] = sourceSign[0] * XImage_decodeTransfer(
+            fabsf(source[0]), sourceSpace->m_transferFunction,
+            sourceSpace->m_gamma);
+        sourceLinear[1] = sourceSign[1] * XImage_decodeTransfer(
+            fabsf(source[1]), sourceSpace->m_transferFunction,
+            sourceSpace->m_gamma);
+        sourceLinear[2] = sourceSign[2] * XImage_decodeTransfer(
+            fabsf(source[2]), sourceSpace->m_transferFunction,
+            sourceSpace->m_gamma);
+    }
+    else
+    {
+        sourceLinear[0] = XImage_decodeTransfer(
+            source[0], sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+        sourceLinear[1] = XImage_decodeTransfer(
+            source[1], sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+        sourceLinear[2] = XImage_decodeTransfer(
+            source[2], sourceSpace->m_transferFunction, sourceSpace->m_gamma);
+    }
+    if (!sourceIsRgb)
+    {
+        /* 灰度矩阵的三列均为白点向量，只需保留一个亮度标量。 */
+        sourceLinear[1] = sourceLinear[2] = 0.0f;
+    }
+    XImage_matrixMap(sourceMatrix, sourceLinear, xyz);
+    if (targetIsRgb)
+        XImage_matrixMap(targetInverse, xyz, targetLinear);
+    else
+    {
+        XImage_matrixMap(targetInverse, xyz, targetLinear);
+        targetLinear[0] = targetLinear[1];
+        targetLinear[2] = targetLinear[1];
+    }
+    if (extended)
+    {
+        const float targetSign[3] = {
+            targetLinear[0] < 0.0f ? -1.0f : 1.0f,
+            targetLinear[1] < 0.0f ? -1.0f : 1.0f,
+            targetLinear[2] < 0.0f ? -1.0f : 1.0f
+        };
+        target[0] = targetSign[0] * XImage_encodeTransfer(
+            fabsf(targetLinear[0]), targetSpace->m_transferFunction,
+            targetSpace->m_gamma);
+        target[1] = targetSign[1] * XImage_encodeTransfer(
+            fabsf(targetLinear[1]), targetSpace->m_transferFunction,
+            targetSpace->m_gamma);
+        target[2] = targetSign[2] * XImage_encodeTransfer(
+            fabsf(targetLinear[2]), targetSpace->m_transferFunction,
+            targetSpace->m_gamma);
+    }
+    else
+    {
+        target[0] = XImage_encodeTransfer(targetLinear[0],
+                                          targetSpace->m_transferFunction,
+                                          targetSpace->m_gamma);
+        target[1] = XImage_encodeTransfer(targetLinear[1],
+                                          targetSpace->m_transferFunction,
+                                          targetSpace->m_gamma);
+        target[2] = XImage_encodeTransfer(targetLinear[2],
+                                          targetSpace->m_transferFunction,
+                                          targetSpace->m_gamma);
+    }
+}
+
+/** @brief 判断图像是否使用可直接保留 16 位颜色通道的格式。 */
+static bool XImage_isNative16ColorFormat(XImageFormat format)
+{
+    return format == XImageFormat_Grayscale16 ||
+           format == XImageFormat_RGBX64 ||
+           format == XImageFormat_RGBA64 ||
+           format == XImageFormat_RGBA64_Premultiplied;
+}
+
+/**
+ * @brief 读取图像的原生 16 位 RGB/灰度通道。
+ * @param d 图像私有数据。
+ * @param x 像素 X 坐标。
+ * @param y 像素 Y 坐标。
+ * @param red 输出红色或灰度通道。
+ * @param green 输出绿色通道。
+ * @param blue 输出蓝色通道。
+ * @param alpha 输出 Alpha 通道。
+ * @return 格式受支持且坐标有效返回 true，否则返回 false。
+ */
+static bool XImage_readNative16(const XImageData* d, int x, int y,
+                                uint16_t* red, uint16_t* green,
+                                uint16_t* blue, uint16_t* alpha)
+{
+    const uint8_t* line;
+    const uint8_t* pixel;
+    if (!d || !d->m_data || !red || !green || !blue || !alpha ||
+        x < 0 || y < 0 || x >= d->m_width || y >= d->m_height ||
+        !XImage_isNative16ColorFormat(d->m_format))
+        return false;
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    if (d->m_format == XImageFormat_Grayscale16)
+    {
+        *red = *green = *blue = XImage_load16(line + (size_t)x * 2u);
+        *alpha = 65535u;
+        return true;
+    }
+    pixel = line + (size_t)x * 8u;
+    *red = XImage_load16(pixel);
+    *green = XImage_load16(pixel + 2u);
+    *blue = XImage_load16(pixel + 4u);
+    *alpha = d->m_format == XImageFormat_RGBX64
+        ? 65535u : XImage_load16(pixel + 6u);
+    if (d->m_format == XImageFormat_RGBA64_Premultiplied)
+    {
+        *red = XImage_unpremultiply16(*red, *alpha);
+        *green = XImage_unpremultiply16(*green, *alpha);
+        *blue = XImage_unpremultiply16(*blue, *alpha);
+    }
+    return true;
+}
+
+/** @brief 将 0~1 的浮点颜色通道量化为 Qt QRgba64 使用的 16 位值。 */
+static uint16_t XImage_colorSpaceChannel16(float value)
+{
+    if (!(value > 0.0f)) return 0;
+    if (value >= 1.0f) return 65535u;
+    return (uint16_t)(value * 65535.0f + 0.5f);
+}
+
+/**
+ * @brief 将原生 16 位颜色通道写入目标格式。
+ * @param d 目标图像私有数据。
+ * @param x 像素 X 坐标。
+ * @param y 像素 Y 坐标。
+ * @param red 未预乘红色通道。
+ * @param green 未预乘绿色通道。
+ * @param blue 未预乘蓝色通道。
+ * @param alpha 未预乘 Alpha 通道。
+ * @return 目标为原生 16 位颜色格式且写入成功返回 true。
+ */
+static bool XImage_writeNative16(XImageData* d, int x, int y,
+                                 uint16_t red, uint16_t green,
+                                 uint16_t blue, uint16_t alpha)
+{
+    if (!d || !XImage_isNative16ColorFormat(d->m_format)) return false;
+    XImage_writePixelColor16(d, x, y, red, green, blue, alpha);
+    return true;
+}
+
+/** @brief 判断像素格式是否使用原生半精度或单精度浮点通道。 */
+static bool XImage_isNativeFloatColorFormat(XImageFormat format)
+{
+    return format == XImageFormat_RGBX16FPx4 ||
+           format == XImageFormat_RGBA16FPx4 ||
+           format == XImageFormat_RGBA16FPx4_Premultiplied ||
+           format == XImageFormat_RGBX32FPx4 ||
+           format == XImageFormat_RGBA32FPx4 ||
+           format == XImageFormat_RGBA32FPx4_Premultiplied;
+}
+
+/**
+ * @brief 读取可参与色彩变换的原生高精度浮点通道。
+ * @param d 图像私有数据。
+ * @param x 像素 X 坐标。
+ * @param y 像素 Y 坐标。
+ * @param red 输出未预乘红色分量。
+ * @param green 输出未预乘绿色分量。
+ * @param blue 输出未预乘蓝色分量。
+ * @param alpha 输出 Alpha 分量；RGBX 格式固定为 1。
+ * @return 读取成功返回 true，否则返回 false。
+ * @note 同时接受 16 位整数源，便于 RGBA64 到 FP32 的转换保留源精度。
+ */
+static bool XImage_readNativeFloat(const XImageData* d, int x, int y,
+                                   float* red, float* green,
+                                   float* blue, float* alpha)
+{
+    const uint8_t* line;
+    const uint8_t* pixel;
+    if (!d || !d->m_data || !red || !green || !blue || !alpha ||
+        x < 0 || y < 0 || x >= d->m_width || y >= d->m_height)
+        return false;
+    if (XImage_isNative16ColorFormat(d->m_format))
+    {
+        uint16_t channel[4];
+        if (!XImage_readNative16(d, x, y, &channel[0], &channel[1],
+                                 &channel[2], &channel[3]))
+            return false;
+        *red = (float)channel[0] / 65535.0f;
+        *green = (float)channel[1] / 65535.0f;
+        *blue = (float)channel[2] / 65535.0f;
+        *alpha = (float)channel[3] / 65535.0f;
+        return true;
+    }
+    if (!XImage_isNativeFloatColorFormat(d->m_format))
+    {
+        /* Qt QColorTransform promotes ordinary 8-bit/packed sources to a
+           floating intermediate when the destination is a floating format.
+           Reuse the public ARGB interpretation here so Indexed/Mono and
+           grayscale sources retain their existing palette semantics. */
+        const uint32_t argb = XImage_readPixelValue(d, x, y);
+        *red = (float)((argb >> 16) & 0xffu) / 255.0f;
+        *green = (float)((argb >> 8) & 0xffu) / 255.0f;
+        *blue = (float)(argb & 0xffu) / 255.0f;
+        *alpha = (float)(argb >> 24) / 255.0f;
+        return true;
+    }
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    if (d->m_format <= XImageFormat_RGBA16FPx4_Premultiplied)
+    {
+        pixel = line + (size_t)x * 8u;
+        *red = XImage_halfToFloat(XImage_load16(pixel));
+        *green = XImage_halfToFloat(XImage_load16(pixel + 2u));
+        *blue = XImage_halfToFloat(XImage_load16(pixel + 4u));
+        *alpha = d->m_format == XImageFormat_RGBX16FPx4
+            ? 1.0f : XImage_halfToFloat(XImage_load16(pixel + 6u));
+    }
+    else
+    {
+        pixel = line + (size_t)x * 16u;
+        memcpy(red, pixel, sizeof(float));
+        memcpy(green, pixel + 4u, sizeof(float));
+        memcpy(blue, pixel + 8u, sizeof(float));
+        *alpha = d->m_format == XImageFormat_RGBX32FPx4
+            ? 1.0f : 0.0f;
+        if (d->m_format != XImageFormat_RGBX32FPx4)
+            memcpy(alpha, pixel + 12u, sizeof(float));
+    }
+    if (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ||
+        d->m_format == XImageFormat_RGBA32FPx4_Premultiplied)
+    {
+        if (*alpha > 0.0f)
+        {
+            *red /= *alpha;
+            *green /= *alpha;
+            *blue /= *alpha;
+        }
+        else
+            *red = *green = *blue = 0.0f;
+    }
+    return true;
+}
+
+/**
+ * @brief 将浮点颜色通道写入原生半精度或单精度格式。
+ * @param d 目标图像私有数据。
+ * @param x 像素 X 坐标。
+ * @param y 像素 Y 坐标。
+ * @param red 未预乘红色分量。
+ * @param green 未预乘绿色分量。
+ * @param blue 未预乘蓝色分量。
+ * @param alpha 未预乘 Alpha 分量。
+ * @return 目标格式受支持且写入成功返回 true，否则返回 false。
+ * @note 半精度目标按 Qt qfloat16 规则量化；单精度目标保留完整 C99 float。
+ */
+static bool XImage_writeNativeFloat(XImageData* d, int x, int y,
+                                    float red, float green,
+                                    float blue, float alpha)
+{
+    uint8_t* line;
+    uint8_t* pixel;
+    float storageAlpha;
+    if (!d || !d->m_data || x < 0 || y < 0 || x >= d->m_width ||
+        y >= d->m_height || !XImage_isNativeFloatColorFormat(d->m_format))
+        return false;
+    storageAlpha = (d->m_format == XImageFormat_RGBX16FPx4 ||
+                    d->m_format == XImageFormat_RGBX32FPx4) ? 1.0f : alpha;
+    if (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ||
+        d->m_format == XImageFormat_RGBA32FPx4_Premultiplied)
+    {
+        red *= storageAlpha;
+        green *= storageAlpha;
+        blue *= storageAlpha;
+    }
+    line = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine;
+    if (d->m_format <= XImageFormat_RGBA16FPx4_Premultiplied)
+    {
+        pixel = line + (size_t)x * 8u;
+        XImage_store16(pixel, XImage_floatToHalf(red));
+        XImage_store16(pixel + 2u, XImage_floatToHalf(green));
+        XImage_store16(pixel + 4u, XImage_floatToHalf(blue));
+        XImage_store16(pixel + 6u, XImage_floatToHalf(storageAlpha));
+    }
+    else
+    {
+        pixel = line + (size_t)x * 16u;
+        memcpy(pixel, &red, sizeof(float));
+        memcpy(pixel + 4u, &green, sizeof(float));
+        memcpy(pixel + 8u, &blue, sizeof(float));
+        memcpy(pixel + 12u, &storageAlpha, sizeof(float));
+    }
+    return true;
 }
 
 /**
@@ -1067,6 +1701,72 @@ static void XImage_convertColorSpacePixels(const XImage* source,
                         source->m_data->m_colorTable[i], &sourceSpace,
                         &targetSpace, sourceMatrix, targetInverse,
                         sourceIsRgb, targetIsRgb);
+        }
+        return;
+    }
+
+    /* Qt 6.8 qimage.cpp:5219-5289 对 QRgba64/Grayscale16 直接使用原生
+     * 16 位通道变换；若先调用 XImage_pixel()，低 8 位会被永久丢失。
+     * 浮点源也先提升到同一中间值，再由整数目标在最后一步量化，避免
+     * FP -> RGBA64 转换额外经过 8 位窄化。 */
+    if (source->m_data && target->m_data &&
+        XImage_isNative16ColorFormat(target->m_data->m_format) &&
+        (XImage_isNative16ColorFormat(source->m_data->m_format) ||
+         XImage_isNativeFloatColorFormat(source->m_data->m_format)))
+    {
+        const int width = XImage_width(source), height = XImage_height(source);
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                float sourceFloat[4], targetFloat[3];
+                if (!XImage_readNativeFloat(source->m_data, x, y,
+                                            &sourceFloat[0], &sourceFloat[1],
+                                            &sourceFloat[2], &sourceFloat[3]))
+                    continue;
+                XImage_convertColorSpaceComponents(
+                    sourceFloat, &sourceSpace, &targetSpace,
+                    sourceMatrix, targetInverse, sourceIsRgb, targetIsRgb,
+                    false, targetFloat);
+                XImage_writeNative16(
+                    target->m_data, x, y,
+                    XImage_colorSpaceChannel16(targetFloat[0]),
+                    XImage_colorSpaceChannel16(targetFloat[1]),
+                    XImage_colorSpaceChannel16(targetFloat[2]),
+                    XImage_colorSpaceChannel16(sourceFloat[3]));
+            }
+        }
+        return;
+    }
+
+    /* Qt 6.8 qimage.cpp:5268-5289 对浮点精度图像直接应用
+     * QColorTransform，不能先经 XImage_pixel() 量化到 8 位。目标为浮点
+     * 格式时，16 位整数源也可无损提升为浮点中间值；目标半精度的最后一步
+     * 由 qfloat16 等价转换完成。这样 FP32/HDR 通道不会被兼容路径截断。 */
+    if (source->m_data && target->m_data &&
+        XImage_isNativeFloatColorFormat(target->m_data->m_format))
+    {
+        const int width = XImage_width(source), height = XImage_height(source);
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                float sourceFloat[4], sourceRgb[3], targetRgb[3];
+                if (!XImage_readNativeFloat(source->m_data, x, y,
+                                            &sourceFloat[0], &sourceFloat[1],
+                                            &sourceFloat[2], &sourceFloat[3]))
+                    continue;
+                sourceRgb[0] = sourceFloat[0];
+                sourceRgb[1] = sourceFloat[1];
+                sourceRgb[2] = sourceFloat[2];
+                XImage_convertColorSpaceComponents(
+                    sourceRgb, &sourceSpace, &targetSpace,
+                    sourceMatrix, targetInverse, sourceIsRgb, targetIsRgb,
+                    true, targetRgb);
+                XImage_writeNativeFloat(target->m_data, x, y,
+                                        targetRgb[0], targetRgb[1], targetRgb[2],
+                                        sourceFloat[3]);
+            }
         }
         return;
     }
@@ -1305,6 +2005,12 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         XImage_move_base(out, &converted);
         XImage_deinit_base(&converted);
     }
+    /* XImage_copy_base() above intentionally shares the source data.  A
+       color transform writes every destination pixel, so detach the output
+       first whenever it is a distinct image; otherwise converting a copied
+       RGBA32FPx4 image would mutate the caller's source in place. */
+    if (out != self)
+        XImage_detach(out);
     XImage_convertColorSpacePixels(self, out, source, transform->m_target);
 
     if (outputFormat != XImageFormat_Invalid &&
@@ -3272,6 +3978,33 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
             bool sourceMono = self->m_data->m_format == XImageFormat_Mono ||
                               self->m_data->m_format == XImageFormat_MonoLSB;
             bool targetMono = format == XImageFormat_Mono || format == XImageFormat_MonoLSB;
+            /* Keep a high-precision intermediate whenever the destination
+             * can represent one.  This covers mixed-format conversions such
+             * as ARGB32 -> RGBA32FPx4 and RGBA32FPx4 -> RGBA64; routing those
+             * through XImage_readColorValue() would quantize the source to
+             * eight bits before the destination writer sees it. */
+            if (XImage_isNativeFloatColorFormat(format) ||
+                XImage_isNative16ColorFormat(format))
+            {
+                float sourceFloat[4];
+                if (XImage_readNativeFloat(self->m_data, x, y,
+                                           &sourceFloat[0], &sourceFloat[1],
+                                           &sourceFloat[2], &sourceFloat[3]))
+                {
+                    if (XImage_isNativeFloatColorFormat(format))
+                        XImage_writeNativeFloat(out->m_data, x, y,
+                                                sourceFloat[0], sourceFloat[1],
+                                                sourceFloat[2], sourceFloat[3]);
+                    else
+                        XImage_writeNative16(
+                            out->m_data, x, y,
+                            XImage_colorSpaceChannel16(sourceFloat[0]),
+                            XImage_colorSpaceChannel16(sourceFloat[1]),
+                            XImage_colorSpaceChannel16(sourceFloat[2]),
+                            XImage_colorSpaceChannel16(sourceFloat[3]));
+                }
+                continue;
+            }
             /* A monochrome image may legitimately have no color table.  Keep
              * its stored bit when converting between packed formats instead
              * of routing through pixel(), which returns zero for that case. */
@@ -3886,9 +4619,36 @@ bool XImage_save_2(const XImage* self, const char* fileName, const char* format,
     if (!type) { const char* dot = strrchr(fileName, '.'); extension = dot ? XString_create_utf8(dot + 1) : NULL; }
 #if XIMAGECODEC_ON
     {
-        XImageCodecFormat codecFormat = XImageCodec_formatFromName(type ? type : extension);
+        const XString* selectedType = type ? type : extension;
+        XImageCodecFormat codecFormat = XImageCodec_formatFromName(selectedType);
+        bool encoded = false;
         file = path ? XFile_create_2(path) : NULL; bytes = XByteArray_create();
-        ok = file && bytes && codecFormat != XImageCodecFormat_Unknown && XImageCodec_encode(self, codecFormat, quality, bytes) && XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create) && XIODevice_write_1((XIODevice*)file, (const char*)XByteArray_data(bytes), (int64_t)XByteArray_size_base((const XContainer*)bytes)) == (int64_t)XByteArray_size_base((const XContainer*)bytes);
+#if XIMAGECODEC_PPM_ON
+        if (codecFormat == XImageCodecFormat_Ppm)
+            encoded = bytes && XImageCodecInternal_encodePpmSubtype(
+                self, XString_toUtf8(selectedType), bytes);
+        else
+#endif
+#if XIMAGECODEC_XBM_ON
+        if (codecFormat == XImageCodecFormat_Xbm)
+            encoded = bytes && XImageCodecInternal_encodeXbmNamed(
+                self, fileName, bytes);
+        else
+#endif
+#if XIMAGECODEC_XPM_ON
+        if (codecFormat == XImageCodecFormat_Xpm)
+            encoded = bytes && XImageCodecInternal_encodeXpmNamed(
+                self, fileName, bytes);
+        else
+#endif
+            encoded = bytes && XImageCodec_encode(self, codecFormat, quality, bytes);
+        ok = file && encoded && codecFormat != XImageCodecFormat_Unknown &&
+             XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly |
+                                 XIODevice_Truncate | XIODevice_Create) &&
+             XIODevice_write_1((XIODevice*)file,
+                 (const char*)XByteArray_data(bytes),
+                 (int64_t)XByteArray_size_base((const XContainer*)bytes)) ==
+                 (int64_t)XByteArray_size_base((const XContainer*)bytes);
     }
 #endif
     if (file) { XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); } if (bytes) XByteArray_delete_base((XClass*)bytes); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); if (extension) XString_delete_base((XClass*)extension); return ok;
@@ -3922,7 +4682,31 @@ bool XImage_saveDevice_2(const XImage* self, XIODevice* device, const char* form
     XString* type = format ? XString_create_utf8(format) : NULL; XByteArray* bytes = XByteArray_create(); bool openedHere = false, ok = false;
 #if XIMAGECODEC_ON
     { XImageCodecFormat codecFormat = XImageCodec_formatFromName(type);
-    if (self && device && bytes && codecFormat != XImageCodecFormat_Unknown && XImageCodec_encode(self, codecFormat, quality, bytes)) { if (!XIODevice_isOpen(device)) { openedHere = XIODevice_open_base(device, XIODevice_WriteOnly | XIODevice_Truncate); } else openedHere = false; ok = (XIODevice_isWritable(device) && XIODevice_write_1(device, (const char*)XByteArray_data(bytes), (int64_t)XByteArray_size_base((const XContainer*)bytes)) == (int64_t)XByteArray_size_base((const XContainer*)bytes)); if (openedHere) XIODevice_close_base(device); } }
+      bool encoded = false;
+#if XIMAGECODEC_PPM_ON
+      if (codecFormat == XImageCodecFormat_Ppm)
+          encoded = bytes && XImageCodecInternal_encodePpmSubtype(
+              self, XString_toUtf8(type), bytes);
+      else
+#endif
+#if XIMAGECODEC_XPM_ON
+      if (codecFormat == XImageCodecFormat_Xpm)
+          encoded = bytes && XImageCodecInternal_encodeXpmNamed(
+              self, XString_toUtf8(type), bytes);
+      else
+#endif
+          encoded = bytes && XImageCodec_encode(self, codecFormat, quality, bytes);
+      if (self && device && codecFormat != XImageCodecFormat_Unknown && encoded) {
+          if (!XIODevice_isOpen(device))
+              openedHere = XIODevice_open_base(device,
+                  XIODevice_WriteOnly | XIODevice_Truncate);
+          ok = XIODevice_isWritable(device) &&
+               XIODevice_write_1(device, (const char*)XByteArray_data(bytes),
+                   (int64_t)XByteArray_size_base((const XContainer*)bytes)) ==
+                   (int64_t)XByteArray_size_base((const XContainer*)bytes);
+          if (openedHere) XIODevice_close_base(device);
+      }
+    }
 #endif
     if (bytes) XByteArray_delete_base((XClass*)bytes); if (type) XString_delete_base((XClass*)type); return ok;
 }

@@ -27,12 +27,18 @@
 #include "XImageCodecInternal.h"
 #include "XImage.h"
 #include "XMemory.h"
+#include "XStringList.h"
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_JPEG_ON
+
+/* JPEG ancillary 元数据上限：与 XImage ICC 侧车及 PNG 处理保持一致。 */
+#define JPEG_MAX_ICC_PROFILE (16u * 1024u * 1024u)
+#define JPEG_MAX_TEXT_ITEMS 1024u
+#define JPEG_MAX_TEXT_BYTES (16u * 1024u * 1024u)
 
 /* ====================================================================== */
 /* 常量表                                                                   */
@@ -512,7 +518,276 @@ typedef struct JpegCtx
     JpegArith          arith;        /**< 算术熵解码器（算术模式使用） */
     int                frBlkW;       /**< 该分量块网格宽（块单元） */
     int                frBlkH;       /**< 该分量块网格高（块单元） */
+    XStringList        textKeys;     /**< COM 文本键列表（按出现顺序暂存） */
+    XStringList        textValues;   /**< COM 文本值列表，与键一一对应 */
+    size_t             textBytes;    /**< 已接受的 COM 文本 UTF-8 字节数 */
+    uint8_t*           iccProfile;   /**< APP2 ICC 原始 profile 拼接缓冲区 */
+    size_t             iccSize;      /**< ICC 原始字节数 */
+    size_t             iccCapacity;  /**< ICC 缓冲区容量 */
+    int                exifTransformation; /**< EXIF Orientation 映射到 Qt 变换枚举 */
 } JpegCtx;
+
+/* 释放 JPEG 解析期间收集的 ancillary metadata。 */
+static void jpegFreeMetadata(JpegCtx* ctx)
+{
+    if (!ctx) return;
+    XStringList_deinit_base((XClass*)&ctx->textKeys);
+    XStringList_deinit_base((XClass*)&ctx->textValues);
+    if (ctx->iccProfile) XFree_System(ctx->iccProfile);
+    ctx->iccProfile = NULL;
+    ctx->iccSize = 0;
+    ctx->iccCapacity = 0;
+    ctx->textBytes = 0;
+}
+
+/* 将 COM marker 转换为 Qt QJpegHandler 的键值对语义。 */
+static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
+{
+    char* utf8;
+    XString* source;
+    XString* key;
+    XString* value;
+    XString* simplified;
+    const char* text;
+    const char* separator;
+    const char* firstSpace;
+    size_t sourceLen;
+    if (!ctx || !data || len == 0 || len > JPEG_MAX_TEXT_BYTES)
+        return true; /* 空/超限 ancillary 块按 benign 语义忽略。 */
+    if (ctx->textBytes > JPEG_MAX_TEXT_BYTES - len)
+        return true;
+    utf8 = (char*)XMalloc_System(len + 1u);
+    if (!utf8) return true;
+    memcpy(utf8, data, len);
+    utf8[len] = '\0';
+    source = XString_create_utf8(utf8);
+    XFree_System(utf8);
+    if (!source) return true;
+    text = XString_toUtf8(source);
+    sourceLen = XString_toUtf8_length(source);
+    if (!text || sourceLen == 0) {
+        XClass_delete_base((XClass*)source);
+        return true;
+    }
+    separator = strstr(text, ": ");
+    firstSpace = strchr(text, ' ');
+    if (!separator || (firstSpace && firstSpace < separator)) {
+        key = XString_create_utf8("Description");
+        value = XString_create_copy(source);
+    } else {
+        size_t keyLen = (size_t)(separator - text);
+        char* keyUtf8 = (char*)XMalloc_System(keyLen + 1u);
+        if (!keyUtf8) {
+            XClass_delete_base((XClass*)source);
+            return true;
+        }
+        memcpy(keyUtf8, text, keyLen);
+        keyUtf8[keyLen] = '\0';
+        key = XString_create_utf8(keyUtf8);
+        XFree_System(keyUtf8);
+        value = XString_create_utf8(separator + 2);
+    }
+    XClass_delete_base((XClass*)source);
+    if (!key || !value) {
+        if (key) XClass_delete_base((XClass*)key);
+        if (value) XClass_delete_base((XClass*)value);
+        return true;
+    }
+    simplified = XString_simplified(value);
+    if (simplified) {
+        XClass_delete_base((XClass*)value);
+        value = simplified;
+    }
+    text = XString_toUtf8(value);
+    if (XStringList_size_base((const XContainer*)&ctx->textKeys) >=
+            (int64_t)JPEG_MAX_TEXT_ITEMS ||
+        !text || ctx->textBytes > JPEG_MAX_TEXT_BYTES -
+            XString_toUtf8_length(value)) {
+        XClass_delete_base((XClass*)key);
+        XClass_delete_base((XClass*)value);
+        return true;
+    }
+    XStringList_push_back_utf8(&ctx->textKeys, XString_toUtf8(key));
+    XStringList_push_back_utf8(&ctx->textValues, text);
+    ctx->textBytes += XString_toUtf8_length(value);
+    XClass_delete_base((XClass*)key);
+    XClass_delete_base((XClass*)value);
+    return true;
+}
+
+/* 收集 JPEG APP2 中的 ICC_PROFILE 分段。 */
+static bool jpegParseIcc(const uint8_t* data, size_t len, JpegCtx* ctx)
+{
+    size_t part;
+    uint8_t* replacement;
+    if (!ctx || !data || len < 14u ||
+        memcmp(data, "ICC_PROFILE\0", 12u) != 0)
+        return true;
+    part = len - 14u;
+    if (part == 0 || part > JPEG_MAX_ICC_PROFILE ||
+        ctx->iccSize > JPEG_MAX_ICC_PROFILE - part)
+        return true;
+    if (ctx->iccSize + part > ctx->iccCapacity) {
+        size_t capacity = ctx->iccCapacity ? ctx->iccCapacity : 4096u;
+        while (capacity < ctx->iccSize + part) {
+            if (capacity > JPEG_MAX_ICC_PROFILE / 2u) {
+                capacity = ctx->iccSize + part;
+                break;
+            }
+            capacity *= 2u;
+        }
+        replacement = (uint8_t*)XMalloc_System(capacity);
+        if (!replacement) return true;
+        if (ctx->iccProfile && ctx->iccSize)
+            memcpy(replacement, ctx->iccProfile, ctx->iccSize);
+        if (ctx->iccProfile) XFree_System(ctx->iccProfile);
+        ctx->iccProfile = replacement;
+        ctx->iccCapacity = capacity;
+    }
+    memcpy(ctx->iccProfile + ctx->iccSize, data + 14u, part);
+    ctx->iccSize += part;
+    return true;
+}
+
+/* 前置声明：Exif 段解析复用 JPEG 大端长度读取器。 */
+static int jpegReadBe16(const uint8_t* data, size_t len, size_t* pos);
+
+/* Exif/TIFF 16 位读取；offset 已在调用方完成边界检查。 */
+static bool jpegExifRead16(const uint8_t* data, size_t len, size_t offset,
+                           bool little, uint16_t* value)
+{
+    if (!data || !value || offset > len || len - offset < 2u) return false;
+    *value = little
+        ? (uint16_t)((uint16_t)data[offset] |
+                     ((uint16_t)data[offset + 1u] << 8))
+        : (uint16_t)(((uint16_t)data[offset] << 8) |
+                     (uint16_t)data[offset + 1u]);
+    return true;
+}
+
+/* Exif/TIFF 32 位读取；offset 已在调用方完成边界检查。 */
+static bool jpegExifRead32(const uint8_t* data, size_t len, size_t offset,
+                           bool little, uint32_t* value)
+{
+    if (!data || !value || offset > len || len - offset < 4u) return false;
+    if (little) {
+        *value = (uint32_t)data[offset] |
+                 ((uint32_t)data[offset + 1u] << 8) |
+                 ((uint32_t)data[offset + 2u] << 16) |
+                 ((uint32_t)data[offset + 3u] << 24);
+    } else {
+        *value = ((uint32_t)data[offset] << 24) |
+                 ((uint32_t)data[offset + 1u] << 16) |
+                 ((uint32_t)data[offset + 2u] << 8) |
+                 (uint32_t)data[offset + 3u];
+    }
+    return true;
+}
+
+/* 读取单个 APP1 Exif 负载中的 Orientation。
+ * 返回 -1 表示 Exif/TIFF 结构非法，0 表示没有 Orientation，1..8 表示值。 */
+static int jpegExifOrientation(const uint8_t* data, size_t len)
+{
+    const size_t tiff = 6u;
+    size_t ifd;
+    size_t previousEnd = tiff + 8u;
+    bool little;
+    uint16_t marker;
+    uint32_t offset;
+    int depth;
+    if (!data || len < tiff + 8u || memcmp(data, "Exif\0\0", 6u) != 0)
+        return 0;
+    if (data[tiff] == 'I' && data[tiff + 1u] == 'I') little = true;
+    else if (data[tiff] == 'M' && data[tiff + 1u] == 'M') little = false;
+    else return -1;
+    if (!jpegExifRead16(data, len, tiff + 2u, little, &marker) ||
+        marker != 42u || !jpegExifRead32(data, len, tiff + 4u,
+                                         little, &offset))
+        return -1;
+    if (offset > (uint32_t)(len - tiff) ||
+        (size_t)offset > SIZE_MAX - tiff)
+        return -1;
+    ifd = tiff + (size_t)offset;
+    /* Qt limits traversal to ten IFDs and disallows seeking backwards. */
+    for (depth = 0; depth < 10; ++depth) {
+        uint16_t count;
+        size_t entries;
+        size_t entriesBytes;
+        size_t end;
+        uint32_t nextOffset;
+        uint16_t i;
+        if (ifd < previousEnd || !jpegExifRead16(data, len, ifd,
+                                                 little, &count))
+            return -1;
+        entries = ifd + 2u;
+        if (entries > len || (size_t)count > (len - entries) / 12u)
+            return -1;
+        entriesBytes = (size_t)count * 12u;
+        end = entries + entriesBytes;
+        if (end > len || end > SIZE_MAX - 4u) return -1;
+        for (i = 0; i < count; ++i) {
+            size_t entry = entries + (size_t)i * 12u;
+            uint16_t tag, type;
+            uint32_t components;
+            uint16_t value;
+            if (!jpegExifRead16(data, len, entry, little, &tag) ||
+                !jpegExifRead16(data, len, entry + 2u, little, &type) ||
+                !jpegExifRead32(data, len, entry + 4u, little, &components) ||
+                !jpegExifRead16(data, len, entry + 8u, little, &value))
+                return -1;
+            if (tag == 0x0112u) {
+                if (components != 1u || type != 3u || value < 1u || value > 8u)
+                    return -1;
+                return (int)value;
+            }
+        }
+        if (!jpegExifRead32(data, len, end, little, &nextOffset)) return -1;
+        previousEnd = end + 4u;
+        if (nextOffset == 0u) return 0;
+        if (nextOffset > (uint32_t)(len - tiff) ||
+            (size_t)nextOffset > SIZE_MAX - tiff)
+            return -1;
+        ifd = tiff + (size_t)nextOffset;
+    }
+    return -1;
+}
+
+/* EXIF Orientation 到 QImageIOHandler::Transformation 的映射。 */
+static int jpegExifToTransformation(int orientation)
+{
+    switch (orientation) {
+    case 2: return 1; /* Mirror */
+    case 3: return 3; /* Rotate180 */
+    case 4: return 2; /* Flip */
+    case 5: return 6; /* FlipAndRotate90 */
+    case 6: return 4; /* Rotate90 */
+    case 7: return 5; /* MirrorAndRotate90 */
+    case 8: return 7; /* Rotate270 */
+    default: return 0; /* normal/unknown */
+    }
+}
+
+/* 解析 APP1 段并保存首个合法方向；Exif 结构错误按 Qt benign 元数据处理。 */
+static bool jpegParseExifMarker(const uint8_t* data, size_t len, size_t* pos,
+                                JpegCtx* ctx)
+{
+    int segLen;
+    size_t end;
+    int orientation;
+    if (!data || !pos || *pos + 2u > len) return false;
+    segLen = jpegReadBe16(data, len, pos);
+    if (segLen < 2) return false;
+    end = *pos + (size_t)(segLen - 2);
+    if (end > len) return false;
+    if (ctx && ctx->exifTransformation == 0) {
+        orientation = jpegExifOrientation(data + *pos,
+                                          (size_t)(segLen - 2));
+        if (orientation > 0)
+            ctx->exifTransformation = jpegExifToTransformation(orientation);
+    }
+    *pos = end;
+    return true;
+}
 
 /* 当前位置读取 16 位大端整数。 */
 static int jpegReadBe16(const uint8_t* data, size_t len, size_t* pos)
@@ -543,6 +818,38 @@ static bool jpegSkipMarker(const uint8_t* data, size_t len, size_t* pos)
     segLen = jpegReadBe16(data, len, pos);
     if (segLen < 2 || *pos + (size_t)(segLen - 2) > len) return false;
     *pos += (size_t)(segLen - 2);
+    return true;
+}
+
+/* 解析 COM 段并收集文本；结构错误按 JPEG 主体错误处理。 */
+static bool jpegParseComMarker(const uint8_t* data, size_t len, size_t* pos,
+                               JpegCtx* ctx)
+{
+    int segLen;
+    size_t end;
+    if (!data || !pos || *pos + 2u > len) return false;
+    segLen = jpegReadBe16(data, len, pos);
+    if (segLen < 2) return false;
+    end = *pos + (size_t)(segLen - 2);
+    if (end > len) return false;
+    (void)jpegParseComment(data + *pos, (size_t)(segLen - 2), ctx);
+    *pos = end;
+    return true;
+}
+
+/* 解析 APP2 ICC 段；非 ICC 的 APP2 数据直接忽略。 */
+static bool jpegParseApp2Marker(const uint8_t* data, size_t len, size_t* pos,
+                                JpegCtx* ctx)
+{
+    int segLen;
+    size_t end;
+    if (!data || !pos || *pos + 2u > len) return false;
+    segLen = jpegReadBe16(data, len, pos);
+    if (segLen < 2) return false;
+    end = *pos + (size_t)(segLen - 2);
+    if (end > len) return false;
+    (void)jpegParseIcc(data + *pos, (size_t)(segLen - 2), ctx);
+    *pos = end;
     return true;
 }
 
@@ -1996,6 +2303,27 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
         XImage_setDotsPerMeterX(out, ctx->densityX * 100);
         XImage_setDotsPerMeterY(out, ctx->densityY * 100);
     }
+    /* QJpegHandler 将 COM 文本和 ICC 原始字节附加到最终 QImage；像素
+       数据已经转移到 out 后再写元数据，避免破坏输出图像的 COW 资源。 */
+    if (ctx->iccProfile && ctx->iccSize) {
+        XImageColorProfileSpec profile;
+        memset(&profile, 0, sizeof(profile));
+        profile.m_iccData = ctx->iccProfile;
+        profile.m_iccSize = ctx->iccSize;
+        (void)XImageCodecInternal_setColorProfile(out, &profile);
+    }
+    {
+        int64_t textCount = XStringList_size_base(
+            (const XContainer*)&ctx->textKeys);
+        int64_t i;
+        for (i = 0; i < textCount; ++i) {
+            XString* key = (XString*)XStringList_at_base(
+                (XVector*)&ctx->textKeys, i);
+            XString* value = (XString*)XStringList_at_base(
+                (XVector*)&ctx->textValues, i);
+            if (key && value) XImage_setText(out, key, value);
+        }
+    }
     return true;
 }
 
@@ -2023,13 +2351,15 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
     if (!data || size < 4 || !out || data[0] != 0xff || data[1] != 0xd8)
         return false;
     memset(&ctx, 0, sizeof(ctx));
+    XStringList_init(&ctx.textKeys);
+    XStringList_init(&ctx.textValues);
     /* 算术条件表默认（JPEG 规范 F.1.4.2：L=0, U=1, K=5） */
     for (int i = 0; i < 4; ++i) {
         ctx.arithDcL[i] = 0;
         ctx.arithDcU[i] = 1;
         ctx.arithAcK[i] = 5;
     }
-    if (jpegNextMarker(data, size, &pos) != 0xD8) return false; /* SOI */
+    if (jpegNextMarker(data, size, &pos) != 0xD8) goto done; /* SOI */
 
     for (;;) {
         int marker;
@@ -2042,7 +2372,7 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
         }
         if (marker == 0xDA) { /* SOS：解析并执行一段扫描 */
             JpegScan scan;
-            if (!ctx.frame.parsed) return false;
+            if (!ctx.frame.parsed) goto done;
             if (!jpegParseSos(data, size, &pos, &ctx.frame, &scan))
                 goto done;
             if (!jpegRunScan(&ctx, &scan, data, size, &pos))
@@ -2077,9 +2407,18 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
         } else if (marker == 0xE0) {
             if (!jpegParseJfif(data, size, &pos, &ctx))
                 goto done;
+        } else if (marker == 0xE1) {
+            if (!jpegParseExifMarker(data, size, &pos, &ctx))
+                goto done;
+        } else if (marker == 0xE2) {
+            if (!jpegParseApp2Marker(data, size, &pos, &ctx))
+                goto done;
+        } else if (marker == 0xFE) {
+            if (!jpegParseComMarker(data, size, &pos, &ctx))
+                goto done;
         } else if (marker >= 0xC0 && marker <= 0xCF &&
                    marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
-            if (ctx.frame.parsed) return false; /* 分层 JPEG 多帧不支持 */
+            if (ctx.frame.parsed) goto done; /* 分层 JPEG 多帧不支持 */
             if (!jpegParseSof(data, size, &pos, marker, &ctx.frame))
                 goto done;
             if (!jpegAllocatePlanes(&ctx)) goto done;
@@ -2094,7 +2433,46 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
 
 done:
     jpegFreePlanes(&ctx);
+    jpegFreeMetadata(&ctx);
     return ok;
+}
+
+bool XImageCodecInternal_probeJpegTransformation(const uint8_t* data,
+                                                 size_t size,
+                                                 int* transformation)
+{
+    size_t pos = 2u;
+    if (transformation) *transformation = 0;
+    if (!data || !transformation || size < 4u ||
+        data[0] != 0xff || data[1] != 0xd8)
+        return false;
+    while (pos < size) {
+        int marker = jpegNextMarker(data, size, &pos);
+        if (marker < 0) return false;
+        if (marker == 0xd9 || marker == 0xda) return true;
+        if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7))
+            continue;
+        if (marker == 0xe1) {
+            int segLen;
+            size_t end;
+            int orientation;
+            if (pos + 2u > size) return false;
+            segLen = jpegReadBe16(data, size, &pos);
+            if (segLen < 2) return false;
+            end = pos + (size_t)(segLen - 2);
+            if (end > size) return false;
+            orientation = jpegExifOrientation(data + pos,
+                                              (size_t)(segLen - 2));
+            if (orientation > 1 && orientation <= 8) {
+                *transformation = jpegExifToTransformation(orientation);
+                return true;
+            }
+            pos = end;
+            continue;
+        }
+        if (!jpegSkipMarker(data, size, &pos)) return false;
+    }
+    return true;
 }
 /* 编码器：位写出器（MSB 在前，0xFF 后自动补 0x00）                          */
 /* ====================================================================== */
@@ -2257,6 +2635,119 @@ static bool jpegAppendApp0(XByteArray* out)
         0, 0                      /* 缩略图宽高 */
     };
     return jpegAppendSegment(out, 0xE0, body, sizeof(body));
+}
+
+/* 将单条 XImage 文本元数据编码为 JPEG COM（Qt 使用 UTF-8）。 */
+static bool jpegAppendComment(XByteArray* out, const XString* key,
+                              const XString* value)
+{
+    const char* keyUtf8 = key ? XString_toUtf8(key) : "";
+    const char* valueUtf8 = value ? XString_toUtf8(value) : "";
+    size_t keyLen = keyUtf8 ? XString_toUtf8_length(key) : 0u;
+    size_t valueLen = valueUtf8 ? XString_toUtf8_length(value) : 0u;
+    size_t separator = keyLen ? 2u : 0u;
+    size_t keyWritten = keyLen;
+    size_t valueWritten = valueLen;
+    size_t total;
+    uint8_t* payload;
+    bool ok;
+    if (!out || !valueUtf8) return false;
+    /* Qt truncates the complete COM payload to maxMarkerSize instead of
+       rejecting the image.  Preserve the key prefix whenever possible and
+       spend the remaining marker budget on its value. */
+    if (keyWritten > 65533u) {
+        keyWritten = 65533u;
+        separator = 0u;
+        valueWritten = 0u;
+    } else if (keyWritten + separator > 65533u) {
+        separator = 0u;
+    }
+    if (keyWritten + separator > 65533u) return false;
+    if (valueWritten > 65533u - keyWritten - separator)
+        valueWritten = 65533u - keyWritten - separator;
+    if (keyWritten + separator + valueWritten == 0u)
+        return false;
+    total = keyWritten + separator + valueWritten;
+    payload = (uint8_t*)XMalloc_System(total);
+    if (!payload) return false;
+    if (keyWritten) {
+        memcpy(payload, keyUtf8, keyWritten);
+        if (separator) {
+            payload[keyWritten] = ':';
+            payload[keyWritten + 1u] = ' ';
+        }
+    }
+    if (valueWritten)
+        memcpy(payload + keyWritten + separator, valueUtf8, valueWritten);
+    ok = jpegAppendSegment(out, 0xFE, payload, total);
+    XFree_System(payload);
+    return ok;
+}
+
+/* 将 XImage 文本键值按 Qt QImageWriter 的顺序写入 COM marker。 */
+static bool jpegAppendTexts(XByteArray* out, const XImage* image)
+{
+    int count;
+    int i;
+    if (!out || !image) return false;
+    count = XImage_textCount(image);
+    for (i = 0; i < count; ++i) {
+        const XString* key = XImage_textKey_const(image, i);
+        const XString* value = key ? XImage_text_const(image, key) : NULL;
+        if (!key || !value) continue;
+        if (!jpegAppendComment(out, key, value)) return false;
+    }
+    return true;
+}
+
+/* 将 ICC 原始 profile 按 JPEG APP2 ICC_PROFILE 规范分段写出。 */
+static bool jpegAppendIccProfile(XByteArray* out, const XImage* image)
+{
+    XByteArray* profile;
+    size_t size;
+    size_t maxPart = 65533u - 14u;
+    size_t markers;
+    size_t offset = 0u;
+    uint8_t* payload;
+    bool ok = true;
+    if (!out || !image) return false;
+    profile = XByteArray_create();
+    if (!profile) return false;
+    if (!XImageCodecInternal_copyIccProfile(image, profile)) {
+        XByteArray_delete_base((XClass*)profile);
+        return false;
+    }
+    size = XByteArray_size_base((const XContainer*)profile);
+    if (size == 0u) {
+        XByteArray_delete_base((XClass*)profile);
+        return true;
+    }
+    markers = (size + maxPart - 1u) / maxPart;
+    if (markers == 0u || markers > 255u) {
+        XByteArray_delete_base((XClass*)profile);
+        return false;
+    }
+    payload = (uint8_t*)XMalloc_System(14u + maxPart);
+    if (!payload) {
+        XByteArray_delete_base((XClass*)profile);
+        return false;
+    }
+    memcpy(payload, "ICC_PROFILE\0", 12u);
+    while (offset < size) {
+        size_t part = size - offset;
+        if (part > maxPart) part = maxPart;
+        payload[12] = (uint8_t)((offset / maxPart) + 1u);
+        payload[13] = (uint8_t)markers;
+        memcpy(payload + 14u, XByteArray_data(profile) + offset, part);
+        if (!jpegAppendSegment(out, 0xE2, payload, 14u + part)) {
+            ok = false;
+            break;
+        }
+        offset += part;
+    }
+    XFree_System(payload);
+    XByteArray_delete_base((XClass*)profile);
+    return ok;
 }
 
 /* 追加 SOF0 段：8 位精度的 YCbCr 4:2:0 基线顺序帧。 */
@@ -2495,6 +2986,8 @@ bool XImageCodecInternal_encodeJpeg(const XImage* image, int quality,
         if (!XImageCodecInternal_appendBytes(out, soi, 2)) goto done;
     }
     if (!jpegAppendApp0(out)) goto done;
+    if (!jpegAppendTexts(out, image)) goto done;
+    if (!jpegAppendIccProfile(out, image)) goto done;
     if (!jpegAppendDqt(out, qLum, 0)) goto done;
     if (!jpegAppendDqt(out, qChr, 1)) goto done;
     if (!jpegAppendSof0(out, width, height)) goto done;

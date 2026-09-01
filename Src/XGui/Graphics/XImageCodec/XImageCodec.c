@@ -3,11 +3,13 @@
  * @file       XImageCodec.c
  * @brief      XImageCodec 统一编解码门面：格式注册、识别与分发。
  * @note       各格式实现分别位于 XImageCodecBmp.c / XImageCodecPng.c /
- *              XImageCodecGif.c / XImageCodecJpeg.c / XImageCodecSvg.c，
+ *              XImageCodecGif.c / XImageCodecJpeg.c / XImageCodecSvg.c /
+ *              XImageCodecIco.c，
  *              公共入口统一为 XImageCodec_* 系列 API；上层图像类（XImage、
  *              XPixmap、XImageReader、XImageWriter 等）只调用本模块公共接口。
  *              格式裁剪见 XImageCodec_config.h（总开关 XIMAGECODEC_ON，
- *              各格式 XIMAGECODEC_BMP_ON / PNG_ON / JPEG_ON / GIF_ON / SVG_ON）。
+ *              各格式 XIMAGECODEC_BMP_ON / PNG_ON / JPEG_ON / GIF_ON /
+ *              PPM_ON / XBM_ON / SVG_ON / ICO_ON）。
  */
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
@@ -121,6 +123,10 @@ XImageCodecFormat XImageCodec_formatFromName(const XString* format)
     if (codec_is_name(format, "bmp")) return XImageCodecFormat_Bmp;
     if (codec_is_name(format, "dib")) return XImageCodecFormat_Dib;
 #endif
+#if XIMAGECODEC_ICO_ON
+    if (codec_is_name(format, "ico") || codec_is_name(format, "cur"))
+        return XImageCodecFormat_Ico;
+#endif
 #if XIMAGECODEC_PNG_ON
     if (codec_is_name(format, "png")) return XImageCodecFormat_Png;
 #endif
@@ -132,6 +138,21 @@ XImageCodecFormat XImageCodec_formatFromName(const XString* format)
 #endif
 #if XIMAGECODEC_GIF_ON
     if (codec_is_name(format, "gif")) return XImageCodecFormat_Gif;
+#endif
+#if XIMAGECODEC_PPM_ON
+    if (codec_is_name(format, "pbm") ||
+        codec_is_name(format, "pbmraw") ||
+        codec_is_name(format, "pgm") ||
+        codec_is_name(format, "pgmraw") ||
+        codec_is_name(format, "ppm") ||
+        codec_is_name(format, "ppmraw"))
+        return XImageCodecFormat_Ppm;
+#endif
+#if XIMAGECODEC_XBM_ON
+    if (codec_is_name(format, "xbm")) return XImageCodecFormat_Xbm;
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (codec_is_name(format, "xpm")) return XImageCodecFormat_Xpm;
 #endif
 #if XIMAGECODEC_SVG_ON
     if (codec_is_name(format, "svg") ||
@@ -173,49 +194,82 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
         (!memcmp(data, "GIF87a", 6) || !memcmp(data, "GIF89a", 6)))
         return XImageCodecFormat_Gif;
 #endif
+#if XIMAGECODEC_PPM_ON
+    /* QPpmHandler::canRead() intentionally probes only the first two bytes;
+       malformed headers are rejected later by read_pbm_header(). */
+    if (size >= 2 && data[0] == 'P' && data[1] >= '1' && data[1] <= '6')
+        return XImageCodecFormat_Ppm;
+#endif
+#if XIMAGECODEC_XBM_ON
+    {
+        int width;
+        int height;
+        if (XImageCodecInternal_probeXbmSize(data, size, &width, &height))
+            return XImageCodecFormat_Xbm;
+    }
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (size >= 6 && memcmp(data, "/* XPM", 6) == 0)
+        return XImageCodecFormat_Xpm;
+#endif
 #if XIMAGECODEC_SVG_ON
     {
         char probe[4097];
         size_t probeSize = codec_svg_prepareProbe(data, size, probe,
                                                   sizeof(probe));
+        const uint8_t* svgData = (const uint8_t*)probe;
+        size_t svgSize = probeSize;
         size_t pos = 0;
         size_t scan;
         bool prefixed = false;
+        /* QSvgTinyDocument::isLikelySvg() recognizes gzip SVGZ by its
+         * standard magic before XML header probing.  Decompression and
+         * validation remain in the SVG handler; malformed gzip therefore
+         * reports the format but fails during decode, matching Qt's split
+         * canRead/read behavior. */
+        if (size >= 2 && data[0] == 0x1fu && data[1] == 0x8bu)
+            return XImageCodecFormat_Svg;
         if (!probeSize) return XImageCodecFormat_Unknown;
-        data = (const uint8_t*)probe;
-        size = probeSize;
         /* Accept BOM/ASCII whitespace before an XML declaration or root SVG.
          * This is common for hand-authored files and remains bounded so format
          * probing never scans an untrusted large buffer. */
-        if (size >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf)
+        if (svgSize >= 3 && svgData[0] == 0xef && svgData[1] == 0xbb && svgData[2] == 0xbf)
             pos = 3;
-        while (pos < size && (data[pos] == ' ' || data[pos] == '\t' ||
-                              data[pos] == '\r' || data[pos] == '\n')) ++pos;
-        if (size - pos >= 4 && data[pos] == '<' && data[pos + 1] == 's' &&
-            data[pos + 2] == 'v' && data[pos + 3] == 'g')
+        while (pos < svgSize && (svgData[pos] == ' ' || svgData[pos] == '\t' ||
+                                 svgData[pos] == '\r' || svgData[pos] == '\n')) ++pos;
+        if (svgSize - pos >= 4 && svgData[pos] == '<' && svgData[pos + 1] == 's' &&
+            svgData[pos + 2] == 'v' && svgData[pos + 3] == 'g')
             return XImageCodecFormat_Svg;
-        if (size - pos >= 13 && data[pos] == '<' && data[pos + 1] == '!' &&
-            memcmp(data + pos, "<!DOCTYPE svg", 13) == 0)
+        if (svgSize - pos >= 13 && svgData[pos] == '<' && svgData[pos + 1] == '!' &&
+            memcmp(svgData + pos, "<!DOCTYPE svg", 13) == 0)
             return XImageCodecFormat_Svg;
         /* QSvgTinyDocument::hasSvgHeader() accepts an XML declaration or
          * leading comment only when the same bounded prefix also contains
          * an SVG root/doctype.  Do the same instead of accepting every XML
          * document as an image. */
-        if (size - pos >= 5 && data[pos] == '<' && data[pos + 1] == '?')
-            prefixed = memcmp(data + pos, "<?xml", 5) == 0;
-        else if (size - pos >= 4 && data[pos] == '<' && data[pos + 1] == '!' &&
-                 data[pos + 2] == '-' && data[pos + 3] == '-')
+        if (svgSize - pos >= 5 && svgData[pos] == '<' && svgData[pos + 1] == '?')
+            prefixed = memcmp(svgData + pos, "<?xml", 5) == 0;
+        else if (svgSize - pos >= 4 && svgData[pos] == '<' && svgData[pos + 1] == '!' &&
+                 svgData[pos + 2] == '-' && svgData[pos + 3] == '-')
             prefixed = true;
         if (prefixed) {
-            for (scan = pos + 1; scan <= size - 4; ++scan) {
-                if (data[scan] == '<' && data[scan + 1] == 's' &&
-                    data[scan + 2] == 'v' && data[scan + 3] == 'g')
+            for (scan = pos + 1; scan <= svgSize - 4; ++scan) {
+                if (svgData[scan] == '<' && svgData[scan + 1] == 's' &&
+                    svgData[scan + 2] == 'v' && svgData[scan + 3] == 'g')
                     return XImageCodecFormat_Svg;
-                if (size - scan >= 13 && data[scan] == '<' &&
-                    memcmp(data + scan, "<!DOCTYPE svg", 13) == 0)
+                if (svgSize - scan >= 13 && svgData[scan] == '<' &&
+                    memcmp(svgData + scan, "<!DOCTYPE svg", 13) == 0)
                     return XImageCodecFormat_Svg;
             }
         }
+    }
+#endif
+#if XIMAGECODEC_ICO_ON
+    {
+        int width;
+        int height;
+        if (XImageCodecInternal_probeIcoSize(data, size, &width, &height))
+            return XImageCodecFormat_Ico;
     }
 #endif
     return XImageCodecFormat_Unknown;
@@ -229,7 +283,11 @@ static const char* codec_formatNameUtf8(XImageCodecFormat format)
         case XImageCodecFormat_Png: return "png";
         case XImageCodecFormat_Jpeg: return "jpeg";
         case XImageCodecFormat_Gif: return "gif";
+        case XImageCodecFormat_Ppm: return "ppm";
+        case XImageCodecFormat_Xbm: return "xbm";
+        case XImageCodecFormat_Xpm: return "xpm";
         case XImageCodecFormat_Svg: return "svg";
+        case XImageCodecFormat_Ico: return "ico";
         default: return NULL;
     }
 }
@@ -401,9 +459,25 @@ bool XImageCodec_probeSize(const uint8_t* data, size_t size,
         case XImageCodecFormat_Jpeg:
             return codec_probeJpegSize(data, size, width, height);
 #endif
+#if XIMAGECODEC_PPM_ON
+        case XImageCodecFormat_Ppm:
+            return XImageCodecInternal_probePpmSize(data, size, width, height);
+#endif
+#if XIMAGECODEC_XBM_ON
+        case XImageCodecFormat_Xbm:
+            return XImageCodecInternal_probeXbmSize(data, size, width, height);
+#endif
+#if XIMAGECODEC_XPM_ON
+        case XImageCodecFormat_Xpm:
+            return XImageCodecInternal_probeXpmSize(data, size, width, height);
+#endif
 #if XIMAGECODEC_SVG_ON
         case XImageCodecFormat_Svg:
             return XImageCodecInternal_probeSvgSize(data, size, width, height);
+#endif
+#if XIMAGECODEC_ICO_ON
+        case XImageCodecFormat_Ico:
+            return XImageCodecInternal_probeIcoSize(data, size, width, height);
 #endif
         default:
             return false;
@@ -425,8 +499,20 @@ bool XImageCodec_canDecode(XImageCodecFormat format)
 #if XIMAGECODEC_GIF_ON
     if (format == XImageCodecFormat_Gif) return true;
 #endif
+#if XIMAGECODEC_PPM_ON
+    if (format == XImageCodecFormat_Ppm) return true;
+#endif
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm) return true;
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (format == XImageCodecFormat_Xpm) return true;
+#endif
 #if XIMAGECODEC_SVG_ON
     if (format == XImageCodecFormat_Svg) return true;
+#endif
+#if XIMAGECODEC_ICO_ON
+    if (format == XImageCodecFormat_Ico) return true;
 #endif
     return false;
 }
@@ -446,8 +532,20 @@ bool XImageCodec_canEncode(XImageCodecFormat format)
 #if XIMAGECODEC_GIF_ON
     if (format == XImageCodecFormat_Gif) return true;
 #endif
+#if XIMAGECODEC_PPM_ON
+    if (format == XImageCodecFormat_Ppm) return true;
+#endif
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm) return true;
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (format == XImageCodecFormat_Xpm) return true;
+#endif
 #if XIMAGECODEC_SVG_ON
     if (format == XImageCodecFormat_Svg) return true;
+#endif
+#if XIMAGECODEC_ICO_ON
+    if (format == XImageCodecFormat_Ico) return true;
 #endif
     return false;
 }
@@ -479,9 +577,25 @@ bool XImageCodec_decode(const uint8_t* data, size_t size,
         case XImageCodecFormat_Jpeg:
             return XImageCodecInternal_decodeJpeg(data, size, out);
 #endif
+#if XIMAGECODEC_PPM_ON
+        case XImageCodecFormat_Ppm:
+            return XImageCodecInternal_decodePpm(data, size, out);
+#endif
+#if XIMAGECODEC_XBM_ON
+        case XImageCodecFormat_Xbm:
+            return XImageCodecInternal_decodeXbm(data, size, out);
+#endif
+#if XIMAGECODEC_XPM_ON
+        case XImageCodecFormat_Xpm:
+            return XImageCodecInternal_decodeXpm(data, size, out);
+#endif
 #if XIMAGECODEC_SVG_ON
         case XImageCodecFormat_Svg:
             return XImageCodecInternal_decodeSvg(data, size, out);
+#endif
+#if XIMAGECODEC_ICO_ON
+        case XImageCodecFormat_Ico:
+            return XImageCodecInternal_decodeIco(data, size, out);
 #endif
         default:
             return false;
@@ -514,9 +628,25 @@ bool XImageCodec_encode(const XImage* image, XImageCodecFormat format,
         case XImageCodecFormat_Jpeg:
             return XImageCodecInternal_encodeJpeg(image, quality, out);
 #endif
+#if XIMAGECODEC_PPM_ON
+        case XImageCodecFormat_Ppm:
+            return XImageCodecInternal_encodePpm(image, out);
+#endif
+#if XIMAGECODEC_XBM_ON
+        case XImageCodecFormat_Xbm:
+            return XImageCodecInternal_encodeXbmNamed(image, "image", out);
+#endif
+#if XIMAGECODEC_XPM_ON
+        case XImageCodecFormat_Xpm:
+            return XImageCodecInternal_encodeXpmNamed(image, "image", out);
+#endif
 #if XIMAGECODEC_SVG_ON
         case XImageCodecFormat_Svg:
             return XImageCodecInternal_encodeSvg(image, out);
+#endif
+#if XIMAGECODEC_ICO_ON
+        case XImageCodecFormat_Ico:
+            return XImageCodecInternal_encodeIco(image, out);
 #endif
         default:
             return false;

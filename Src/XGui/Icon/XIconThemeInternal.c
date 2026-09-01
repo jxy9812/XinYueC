@@ -436,7 +436,7 @@ static bool theme_tryDir(const char* root, const char* theme, const char* name,
     char path[1024];
     size_t extIndex;
     int dirSize;
-    bool loaded = false;
+    bool present = false;
     if (!root || !root[0] || !theme || !theme[0] || !name || !name[0])
         return false;
     dirSize = theme_parseSize(sizeDir);
@@ -446,12 +446,15 @@ static bool theme_tryDir(const char* root, const char* theme, const char* name,
         if (!theme_extAllowed(ext)) continue;
         theme_buildDirPath(path, sizeof(path), root, theme, sizeDir, context,
                            name, ext);
-        if (theme_loadFile(path, out)) {
-            loaded = true;
-            break;
-        }
+        /* Qt creates the entry from QFile::exists() and decodes it lazily.
+           A present but malformed file therefore still shadows parent themes
+           and later extensions; only the first present extension is selected. */
+        if (!theme_fileExists(path)) continue;
+        present = true;
+        (void)theme_loadFile(path, out);
+        break;
     }
-    if (!loaded) return false;
+    if (!present) return false;
     if (distance)
         *distance = (dirSize > 0) ? (sizeDir[0] == 's' ? 0 :
                                      theme_sizeDistance(target, dirSize)) : 0;
@@ -968,7 +971,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
     const ThemeDirInfo* info;
     size_t extIndex;
     char path[1024];
-    bool loaded = false;
+    bool present = false;
     if (!ctx || !root || !theme || !name) return false;
     if (dirIndex >= ctx->m_metaCount || !ctx->m_dirs) return false;
     if (formatPriority) *formatPriority = INT_MAX;
@@ -987,13 +990,17 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
         if (!theme_extAllowed(ext)) continue;
         snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
                  name, ext);
-        if (theme_loadFile(path, out)) {
-            loaded = true;
-            if (formatPriority) *formatPriority = theme_extPriority(ext);
-            break;
-        }
+        /* qiconloader.cpp records the first existing extension before any
+           decode.  Preserve that entry even when loading fails, so a broken
+           local icon suppresses inherited icons and remains visible to
+           isNull()/availableSizes(). */
+        if (!theme_fileExists(path)) continue;
+        present = true;
+        if (formatPriority) *formatPriority = theme_extPriority(ext);
+        (void)theme_loadFile(path, out);
+        break;
     }
-    if (!loaded) return false;
+    if (!present) return false;
     if (distance) *distance = theme_dirDistance(info, target, iconScale);
     return true;
 }
@@ -1712,21 +1719,19 @@ static bool theme_searchThemeExists(const XStringList* paths,
     return local;
 }
 
-static bool theme_scaledToSize(XPixmap* pixmap, int target)
+static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
+                                   int targetHeight)
 {
     int w;
     int h;
-    int targetWidth;
-    int targetHeight;
     XPixmap scaled;
-    if (!pixmap || XPixmap_isNull(pixmap) || target <= 1) return false;
+    if (!pixmap || XPixmap_isNull(pixmap) || targetWidth <= 0 ||
+        targetHeight <= 0) return false;
     w = XPixmap_width(pixmap);
     h = XPixmap_height(pixmap);
     if (w <= 0 || h <= 0) return false;
     /* 对齐 Qt QPixmapIconEngine::adjustSize(expected, source)：小于请求
        尺寸的回退文件保持原尺寸，只有超出请求边界时才按比例缩小。 */
-    targetWidth = target;
-    targetHeight = target;
     if (w <= targetWidth && h <= targetHeight) return true;
     XPixmap_init(&scaled);
     /* aspectMode=1 是 KeepAspectRatio；这样 7x5 文件在 18x18 请求下
@@ -1742,12 +1747,16 @@ static bool theme_scaledToSize(XPixmap* pixmap, int target)
     return false;
 }
 
+static bool theme_scaledToSize(XPixmap* pixmap, int target)
+{
+    return theme_scaledToSizeRect(pixmap, target, target);
+}
+
 static bool theme_dirHasIcon(const char* root, const char* theme,
                              const char* dir, const char* name)
 {
     size_t extIndex;
     char path[1024];
-    XPixmap candidate;
     if (!root || !root[0] || !theme || !theme[0] || !dir || !dir[0] ||
         !name || !name[0])
         return false;
@@ -1759,12 +1768,9 @@ static bool theme_dirHasIcon(const char* root, const char* theme,
         if (!theme_extAllowed(ext)) continue;
         snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
                  name, ext);
-        XPixmap_init(&candidate);
-        if (theme_loadFile(path, &candidate)) {
-            XPixmap_deinit_base(&candidate);
-            return true;
-        }
-        XPixmap_deinit_base(&candidate);
+        /* availableSizes()/isNull() operate on registered entries and must
+           not decode the image just to answer an existence query. */
+        if (theme_fileExists(path)) return true;
     }
     return false;
 }
@@ -1988,7 +1994,12 @@ static bool theme_loadLegacy(const XStringList* paths, const char* theme,
             } else {
                 theme_buildRootPath(filePath, sizeof(filePath), root, name, ext);
             }
-            if (theme_loadFile(filePath, out)) return true;
+            /* The direct legacy path is lazy as well: once the first
+               supported file exists, later formats and parent themes must not
+               replace it merely because decoding will fail on demand. */
+            if (!theme_fileExists(filePath)) continue;
+            (void)theme_loadFile(filePath, out);
+            return true;
         }
     }
     return false;
@@ -2099,7 +2110,8 @@ static bool theme_collectFallbackSizes(const XStringList* paths,
 }
 
 static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
-                                                 int iconScale, int outputSize,
+                                                 int iconScale, int outputWidth,
+                                                 int outputHeight,
                                                  XPixmap* out,
                                                  bool scaleToSize)
 {
@@ -2116,7 +2128,8 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     if (!name || !name[0] || !out) return false;
     if (size <= 0) size = 48;
     if (iconScale <= 0) iconScale = 1;
-    if (outputSize <= 0) outputSize = size;
+    if (outputWidth <= 0) outputWidth = size;
+    if (outputHeight <= 0) outputHeight = outputWidth;
     XPixmap_init(out);
 
     /* QIcon::fromTheme() only treats an absolute path as a file icon.  This
@@ -2127,7 +2140,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     if (name[0] == '/' || name[0] == ':') {
         if (theme_loadFile(name, out)) {
             if (scaleToSize)
-                theme_scaledToSize(out, outputSize);
+                theme_scaledToSizeRect(out, outputWidth, outputHeight);
             return true;
         }
         return false;
@@ -2176,7 +2189,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     found = any && !XPixmap_isNull(&best);
     if (found) {
         if (scaleToSize)
-            theme_scaledToSize(&best, outputSize);
+            theme_scaledToSizeRect(&best, outputWidth, outputHeight);
         if (out) {
             XPixmap_move_base(out, &best);
             XPixmap_deinit_base(&best);
@@ -2194,7 +2207,8 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
 bool XIconInternal_resolveThemePixmapSize(const char* name, int size,
                                           XPixmap* out)
 {
-    return theme_resolveThemePixmapSizeInternal(name, size, 1, size, out, true);
+    return theme_resolveThemePixmapSizeInternal(name, size, 1, size, size,
+                                                out, true);
 }
 
 bool XIconInternal_resolveThemePixmapSizeScale(const char* name, int size,
@@ -2202,14 +2216,26 @@ bool XIconInternal_resolveThemePixmapSizeScale(const char* name, int size,
                                                XPixmap* out)
 {
     return theme_resolveThemePixmapSizeInternal(name, size, iconScale,
-                                                outputSize, out, true);
+                                                outputSize, outputSize, out,
+                                                true);
+}
+
+bool XIconInternal_resolveThemePixmapSizeScaleRect(const char* name, int size,
+                                                   int iconScale,
+                                                   int outputWidth,
+                                                   int outputHeight,
+                                                   XPixmap* out)
+{
+    return theme_resolveThemePixmapSizeInternal(name, size, iconScale,
+                                                outputWidth, outputHeight, out,
+                                                true);
 }
 
 bool XIconInternal_resolveThemePixmapSourceSize(const char* name, int size,
                                                 XPixmap* out)
 {
-    return theme_resolveThemePixmapSizeInternal(name, size, 1, size, out,
-                                                false);
+    return theme_resolveThemePixmapSizeInternal(name, size, 1, size, size,
+                                                out, false);
 }
 
 bool XIconInternal_resolveThemePixmap(const char* name, XPixmap* out)

@@ -63,7 +63,8 @@ typedef enum XPictureOpcode
     XPictureOpcode_DrawTiledPixmap = 26, /**< 平铺像素图（对标 PdcDrawTiledPixmap）。 */
     XPictureOpcode_DrawPixmap = 27, /**< 矩形像素图（对标 PdcDrawPixmap）。 */
     XPictureOpcode_SetFont = 28, /**< 字体状态（对标 PdcSetFont）。 */
-    XPictureOpcode_DrawPoint = 29 /**< 单点绘制（对标 PdcDrawPoint）。 */
+    XPictureOpcode_DrawPoint = 29, /**< 单点绘制（对标 PdcDrawPoint）。 */
+    XPictureOpcode_DrawText = 30 /**< 文本绘制（对标 PdcDrawTextItem）。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -241,6 +242,20 @@ bool XPicture_recordDrawLine(XPicture* self, int x1, int y1, int x2, int y2);
  * @return 命令写入成功返回 true，否则返回 false。
  */
 bool XPicture_recordDrawPoint(XPicture* self, int x, int y);
+/**
+ * @brief 记录 UTF-8 单行文本绘制命令。
+ * @param self 目标图片对象指针。
+ * @param x 文本左侧 X 坐标。
+ * @param baselineY 文本基线 Y 坐标。
+ * @param utf8 以 NUL 结尾的 UTF-8 文本；空字符串按无操作处理。
+ * @param color 文本 ARGB32 颜色。
+ * @param font 记录时使用的点阵字体；用于更新 Picture 边界，可为 NULL。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 文本字节数限制为 4096，流中保存原始 UTF-8，不保存主机指针。
+ */
+bool XPicture_recordDrawText(XPicture* self, int x, int baselineY,
+                             const char* utf8, uint32_t color,
+                             const XFont* font);
 /**
  * @brief 记录完整画笔状态命令（对标 Qt QPicturePaintEngine::updatePen）。
  * @param self 目标图片对象指针。

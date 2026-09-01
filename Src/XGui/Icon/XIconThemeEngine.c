@@ -1,9 +1,9 @@
 /******************************************************************************
  * @file       XIconThemeEngine.c
  * @brief      XIconThemeEngine 主题图标引擎实现（对标 Qt 6.8 QIconLoaderEngine）。
- * @note       取图时通过 XIconInternal_resolveThemePixmapSize 按目标尺寸
- *             解析主题文件，并按需缩放到方形目标尺寸；SVG 支持由 XGui
- *             图像编解码配置裁剪。
+ * @note       取图时通过 XIconInternal_resolveThemePixmapSize 按目标矩形
+ *             解析主题文件，并按需保持宽高比缩放；SVG 支持由 XGui 图像
+ *             编解码配置裁剪。
  ******************************************************************************/
 #include "XIconThemeEngine.h"
 #include "XIconThemeInternal.h"
@@ -19,14 +19,46 @@
 
 static void themeEngine_pixmapForSize(const XIconThemeEngine* self,
                                       int targetSize, int iconScale,
-                                      int outputSize, XPixmap* out)
+                                      int outputWidth, int outputHeight,
+                                      XPixmap* out)
 {
     if (!self || !self->m_iconName || !out || targetSize <= 0 ||
-        iconScale <= 0 || outputSize <= 0) return;
-    XIconInternal_resolveThemePixmapSizeScale(
-        XString_toUtf8(self->m_iconName), targetSize, iconScale, outputSize,
-        out);
+        iconScale <= 0 || outputWidth <= 0 || outputHeight <= 0) return;
+    XIconInternal_resolveThemePixmapSizeScaleRect(
+        XString_toUtf8(self->m_iconName), targetSize, iconScale, outputWidth,
+        outputHeight, out);
 }
+
+/* 对标 QIconPrivate::pixmapDevicePixelRatio()，根据实际像素数修正 DPR。 */
+static float themeEngine_pixmapDevicePixelRatio(float displayRatio,
+                                                int requestedWidth,
+                                                int requestedHeight,
+                                                int actualWidth,
+                                                int actualHeight)
+{
+    double targetWidth;
+    double targetHeight;
+    double adjusted;
+    if (!(displayRatio > 0.0f) || !isfinite(displayRatio) ||
+        requestedWidth <= 0 || requestedHeight <= 0 || actualWidth <= 0 ||
+        actualHeight <= 0)
+        return 1.0f;
+    targetWidth = floor((double)requestedWidth * displayRatio + 0.5);
+    targetHeight = floor((double)requestedHeight * displayRatio + 0.5);
+    if (targetWidth <= 0.0 || targetHeight <= 0.0) return 1.0f;
+    if ((actualWidth == (int)targetWidth && actualHeight <= (int)targetHeight) ||
+        (actualWidth <= (int)targetWidth && actualHeight == (int)targetHeight))
+        return displayRatio;
+    adjusted = displayRatio * 0.5 *
+        ((double)actualWidth / targetWidth +
+         (double)actualHeight / targetHeight);
+    return adjusted > 1.0 ? (float)adjusted : 1.0f;
+}
+
+static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
+                                           const XSize* size, XIconMode mode,
+                                           XIconState state, float scale,
+                                           XPixmap* out);
 
 /**
  * @brief      取得主题引擎绘制目标的设备像素比。
@@ -110,7 +142,8 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
        尺寸，Picture/自定义设备仍保持 1.0 的原有逻辑坐标。 */
     targetSize = drawRect->width < drawRect->height
         ? drawRect->width : drawRect->height;
-    themeEngine_pixmapForSize(self, targetSize, 1, targetSize, &pixmap);
+    themeEngine_pixmapForSize(self, targetSize, 1, drawRect->width,
+                              drawRect->height, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
         XPixmap_init(&styled);
@@ -252,25 +285,9 @@ static void VXIconThemeEngine_pixmap(const XIconThemeEngine* self,
                                      const XSize* size, XIconMode mode,
                                      XIconState state, XPixmap* out)
 {
-    XPixmap styled;
-    int target;
-    (void)state;
-    if (!out) return;
-    XPixmap_init(out);
-    if (!self || !size || size->width <= 0 || size->height <= 0) return;
-    /* QIconLoaderEngine::entryForSize() matches the smaller request edge. */
-    target = size->width < size->height ? size->width : size->height;
-    themeEngine_pixmapForSize(self, target, 1, target, out);
-    if (!XPixmap_isNull(out)) {
-        XPixmap_init(&styled);
-        XIconStyleHelper_apply(mode, out, &styled);
-        if (!XPixmap_isNull(&styled))
-        {
-            XPixmap_deinit_base(out);
-            XPixmap_move_base(out, &styled);
-        }
-        XPixmap_deinit_base(&styled);
-    }
+    /* Qt 6.8 QIconLoaderEngine::pixmap() 直接委托 scaledPixmap(..., 1.0)，
+       因而普通 DPI 也必须走 PixmapEntry 的缩放、样式和缓存键路径。 */
+    VXIconThemeEngine_scaledPixmap(self, size, mode, state, 1.0f, out);
 }
 
 static void VXIconThemeEngine_addPixmap(XIconThemeEngine* self,
@@ -362,8 +379,11 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
                                            XPixmap* out)
 {
     int target;
+    int physicalWidth;
+    int physicalHeight;
     float ratio = scale;
-    double physical;
+    double physicalWidthValue;
+    double physicalHeightValue;
     double dprScaled;
     const char* iconName;
     int dprThousand;
@@ -376,10 +396,15 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
         !(scale > 0.0f) || !isfinite(scale)) return;
     /* The theme entry is selected from min(width,height), then scaled in
        physical pixels; this keeps non-square requests within the target. */
-    physical = (double)(size->width < size->height
-                        ? size->width : size->height) * (double)ratio + 0.5;
-    if (physical > (double)INT_MAX) return;
-    target = (int)physical;
+    physicalWidthValue = (double)size->width * (double)ratio + 0.5;
+    physicalHeightValue = (double)size->height * (double)ratio + 0.5;
+    if (physicalWidthValue > (double)INT_MAX ||
+        physicalHeightValue > (double)INT_MAX)
+        return;
+    physicalWidth = (int)physicalWidthValue;
+    physicalHeight = (int)physicalHeightValue;
+    target = (int)((size->width < size->height ? size->width : size->height) *
+                   (double)ratio + 0.5);
     if (target <= 0) return;
     scaleCeil = ceil((double)ratio);
     if (scaleCeil > (double)INT_MAX) return;
@@ -389,15 +414,10 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
     dprScaled = (double)ratio * 1000.0 + 0.5;
     dprThousand = dprScaled > (double)INT_MAX
         ? INT_MAX : (int)dprScaled;
-    if (iconName && XIconScaledPixmapCache_find(
-            "qt_icon_theme/", iconName,
-            XIconStyleHelper_paletteCacheKey(), mode, target, target,
-            dprThousand, out))
-        return;
     themeEngine_pixmapForSize(self,
                               size->width < size->height ? size->width :
                               size->height,
-                              iconScale, target, out);
+                              iconScale, physicalWidth, physicalHeight, out);
     if (!XPixmap_isNull(out)) {
         XPixmap styled;
         XPixmap_init(&styled);
@@ -408,7 +428,25 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
             XPixmap_move_base(out, &styled);
         }
         XPixmap_deinit_base(&styled);
-        XPixmap_setDevicePixelRatio(out, ratio);
+        {
+            float calculated = themeEngine_pixmapDevicePixelRatio(
+                ratio, size->width, size->height, XPixmap_width(out),
+                XPixmap_height(out));
+            XPixmap_setDevicePixelRatio(out, calculated);
+            /* QIconLoaderEngine::PixmapEntry::pixmap() 以 adjustSize() 后的
+               实际像素尺寸及计算 DPR 组成缓存键。主题资源可能小于请求尺寸，
+               此时计算 DPR 会低于请求比例，不能提前用请求键查找。 */
+            dprScaled = (double)calculated * 1000.0 + 0.5;
+            dprThousand = dprScaled > (double)INT_MAX
+                ? INT_MAX : (int)dprScaled;
+            if (iconName && XIconScaledPixmapCache_find(
+                    "qt_icon_theme/", iconName,
+                    XIconStyleHelper_paletteCacheKey(), mode,
+                    XPixmap_width(out), XPixmap_height(out), dprThousand,
+                    out)) {
+                return;
+            }
+        }
         if (iconName)
             XIconScaledPixmapCache_insert(
                 "qt_icon_theme/", iconName,

@@ -26,6 +26,27 @@ extern "C" {
 #endif
 
 /**
+ * @brief 动态图像插件发现回调类型。
+ * @param userData 注册回调时传入的用户数据；注册表只借用该指针。
+ * @return 本轮发现已经完成返回 true；返回 false 表示下次查询仍可重试。
+ * @note 回调运行在注册表内部锁范围内，不能长时间阻塞。平台目录扫描、
+ *       动态库加载以及插件对象生命周期由 Drive/ 实现；Src/XGui 不调用
+ *       平台 API。回调可调用 XImagePluginRegistry_addPlugin()。
+ */
+typedef bool (*XImagePluginRegistryDiscoverCallback)(void* userData);
+
+/**
+ * @brief 设置平台中立的动态图像插件发现入口。
+ * @param callback 发现回调；传入 NULL 表示关闭动态发现。
+ * @param userData 传给回调的用户数据；可为 NULL，注册表只借用。
+ * @note 每次设置都会使发现状态失效；下一次注册表查询时重新调用回调。
+ *       回调返回 true 后，本轮只调用一次；返回 false 时后续查询允许重试。
+ *       该接口不取得回调或用户数据所有权，销毁用户数据前必须先清除回调。
+ */
+void XImagePluginRegistry_setPluginDiscoveryCallback(
+    XImagePluginRegistryDiscoverCallback callback, void* userData);
+
+/**
  * @brief 清空注册表中的显式插件。
  * @details 该操作不释放插件对象；下次访问注册表时会重新发现内置插件。
  *          这与 Qt 内置 imageformats 处理器始终可用的行为一致。
@@ -123,6 +144,17 @@ XImageIOHandler* XImagePluginRegistry_createWriteHandler(XIODevice* device,
  * @return 至少一个插件声明支持读取该格式时返回 true。
  */
 bool XImagePluginRegistry_supportsReadFormat(const XString* format);
+
+/**
+ * @brief 查询指定可读格式的图像处理器是否支持某个选项。
+ * @param format 格式名；格式名按 Qt 规则进行大小写不敏感匹配。
+ * @param option 要查询的处理器选项，例如 Animation。
+ * @return 注册表中该格式的首个可读处理器支持此选项时返回 true。
+ * @note 该接口用于没有实际输入设备的能力发现路径；插件的 create()
+ *       必须允许 device 为 NULL，仅查询选项，不执行读写操作。
+ */
+bool XImagePluginRegistry_supportsReadOption(const XString* format,
+                                             XImageIOHandlerOption option);
 
 /**
  * @brief 查询插件注册表能否写出指定格式。

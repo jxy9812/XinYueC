@@ -22,8 +22,9 @@
  *             - 交互：LinksAccessibleByMouse 下悬停发 linkHovered、
  *               按下再释放于同一链接发 linkActivated；openExternalLinks
  *               置真时仍只发信号（无平台浏览器 API）；
- *             - 选择：setSelection 为程序化子集（UTF-16 码元偏移，仅
- *               影响绘制）；mouse 拖选与键盘选择为受限未实现项；
+ *             - 选择：setSelection 为程序化子集（UTF-16 码元偏移），并
+ *               支持鼠标拖选、左键双击选词及方向键/Home/End/Ctrl+A
+ *               键盘选择；所有路径共享同一 UTF-16 选择状态；
  *             - 复用：几何/尺寸策略/焦点/光标/调色板/事件分发等全部走
  *               XWidget / XFrame 公共 API 与虚槽；容器、字符串、像素图、
  *               绘图记录、影片、信号机制均复用库内既有实现，不重复
@@ -1400,6 +1401,71 @@ static void label_selectFromAnchor(XLabel* self, int pos)
     XWidget_update((XWidget*)self);
 }
 
+/** @brief 判断 UTF-16 码元是否属于双击选词时的“词字符”。
+ *  @details ASCII 字母、数字和下划线按 Qt 文本控制器的常见词边界处理；
+ *           非 ASCII 字符整体视为词字符，但 CJK/全角标点区间按分隔符处理。
+ *           该轻量分类不依赖平台 Unicode 数据库，适合嵌入式构建。 */
+static bool label_isWordUnit(uint16_t unit)
+{
+    if ((unit >= (uint16_t)'a' && unit <= (uint16_t)'z') ||
+        (unit >= (uint16_t)'A' && unit <= (uint16_t)'Z') ||
+        (unit >= (uint16_t)'0' && unit <= (uint16_t)'9') ||
+        unit == (uint16_t)'_')
+        return true;
+    if (unit < 0x80u)
+        return false;
+    /* 常见 CJK 与全角标点范围不属于词字符；其余非 ASCII 码元（包括
+       汉字、假名和代理项）连续选择，确保 UTF-16 代理对不会被截断。 */
+    if ((unit >= 0x3000u && unit <= 0x303Fu) ||
+        (unit >= 0xFE30u && unit <= 0xFE6Fu) ||
+        (unit >= 0xFF00u && unit <= 0xFF65u))
+        return false;
+    return true;
+}
+
+/** @brief 双击选中当前位置所在词（对标 QTextControl::selectWord）。
+ *  @details 位置由现有布局映射为 UTF-16 码元偏移，选择结果仍写入
+ *           m_selectionStart/m_selectionLength，因此 selectedText()、绘制
+ *           高亮以及后续 Shift 方向键都复用同一套状态。 */
+static void label_selectWordAt(XLabel* self, int pos)
+{
+    const uint16_t* utf16;
+    size_t total;
+    int start;
+    int end;
+    bool word;
+    if (!self || !self->m_isTextLabel || !self->m_displayText)
+        return;
+    utf16 = XString_toUtf16(self->m_displayText);
+    total = XString_toUtf16_length(self->m_displayText);
+    if (!utf16 || total == 0)
+        return;
+    if (pos < 0) pos = 0;
+    if ((size_t)pos >= total) pos = (int)total - 1;
+    word = label_isWordUnit(utf16[pos]);
+    /* 双击空格/标点时，若左侧紧邻词字符，Qt 会把光标落点归入左词；
+       否则选中当前位置的单个分隔码元，避免产生空选择。 */
+    if (!word && pos > 0 && label_isWordUnit(utf16[pos - 1])) {
+        --pos;
+        word = true;
+    }
+    start = pos;
+    end = pos + 1;
+    if (word) {
+        while (start > 0 && label_isWordUnit(utf16[start - 1]))
+            --start;
+        while ((size_t)end < total && label_isWordUnit(utf16[end]))
+            ++end;
+    }
+    self->m_selectionStart = start;
+    self->m_selectionLength = end - start;
+    /* 锚点放在词首，使后续键盘移动把光标视为词尾，符合 QTextCursor
+       在双击选词后的方向键扩展语义。 */
+    self->m_selectionAnchor = start;
+    self->m_textSelecting = false;
+    XWidget_update((XWidget*)self);
+}
+
 /** @brief 返回当前文本光标位置（选择区另一端点；未选择时按起点+长度）。 */
 static int label_currentCursor(const XLabel* self)
 {
@@ -1670,11 +1736,28 @@ static void VXLabel_mouseMoveEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 鼠标双击：受限项，忽略（选择/链接双击语义未实现）。 */
+/** @brief 鼠标双击：可选文本时选中当前词，否则交由父类处理。 */
 static void VXLabel_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
-    (void)self;
-    if (event) XEvent_ignore(event);
+    XLabel* label = (XLabel*)self;
+    XMouseEvent* me;
+    int pos;
+    if (!self || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)
+        return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
+        label->m_isTextLabel &&
+        (label->m_textInteractionFlags &
+         XLabelTextInteraction_TextSelectableByMouse)) {
+        pos = label_posToUtf16(label, &me->m_position);
+        label_selectWordAt(label, pos);
+        XWidget_setFocus((XWidget*)label);
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XFrame, EXWidget_MouseDoubleClickEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /** @brief 键盘选择：方向键/Home/End 移动，Shift 扩展，Ctrl+A 全选。 */

@@ -10,6 +10,8 @@
  *                polyline/polygon/path/text、linearGradient/radialGradient、
  *                viewBox、transforms、填充/描边/透明度，零第三方依赖；
  *             3. 纯色矩形栅格化（历史兼容路径，矢量渲染失败或关闭时使用）。
+ *             普通 SVG 之外，输入端支持 Qt SVG 插件同样接受的 gzip/SVGZ
+ *             封装，解压后复用上述三种路径。
  *             编码输出内嵌 PNG 的 SVG。Base64 编解码复用库内 XBase64 模块。
  *              只通过 XImageCodecInternal_decodeSvg/encodeSvg 对外暴露，
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
@@ -19,6 +21,7 @@
 #include "XImageCodecInternal.h"
 #include "XMemory.h"
 #include "XBase64.h"
+#include "zlib.h"
 #include <ctype.h>
 #include <limits.h>
 #include <math.h>
@@ -28,6 +31,108 @@
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_SVG_ON
+
+/* gzip SVG 输入的有界解压参数。Qt 的 QSvgTinyDocument 使用 zlib
+ * MAX_WBITS+16 识别 gzip 头，并允许连续 gzip member；嵌入式实现同时
+ * 限制输入和输出总量，避免把畸形压缩流当作无限资源消耗。 */
+#define SVG_GZIP_MAX_INPUT  (64u * 1024u * 1024u)
+#define SVG_GZIP_MAX_OUTPUT (64u * 1024u * 1024u)
+#define SVG_GZIP_CHUNK      (16u * 1024u)
+
+static bool svgIsGzip(const uint8_t* data, size_t size)
+{
+    return data && size >= 2 && data[0] == 0x1fu && data[1] == 0x8bu;
+}
+
+/* 将 gzip（可含多个 member）解压为项目内存块。 */
+static bool svgInflateGzip(const uint8_t* data, size_t size,
+                           uint8_t** out, size_t* outSize)
+{
+    z_stream stream;
+    uint8_t* buffer;
+    size_t capacity = SVG_GZIP_CHUNK;
+    size_t used = 0;
+    unsigned members = 0;
+    int result;
+    bool ok = false;
+    if (!svgIsGzip(data, size) || !out || !outSize ||
+        size > (size_t)SVG_GZIP_MAX_INPUT)
+        return false;
+    buffer = (uint8_t*)XMalloc_System(capacity);
+    if (!buffer) return false;
+    memset(&stream, 0, sizeof(stream));
+    result = inflateInit2(&stream, MAX_WBITS + 16);
+    if (result != Z_OK) {
+        XFree_System(buffer);
+        return false;
+    }
+    stream.next_in = (Bytef*)data;
+    stream.avail_in = (uInt)size;
+    for (;;) {
+        size_t before;
+        if (used == capacity) {
+            size_t next = capacity;
+            uint8_t* resized;
+            if (next >= (size_t)SVG_GZIP_MAX_OUTPUT) {
+                result = Z_MEM_ERROR;
+                break;
+            }
+            if (next > (size_t)SVG_GZIP_MAX_OUTPUT / 2u)
+                next = (size_t)SVG_GZIP_MAX_OUTPUT;
+            else
+                next *= 2u;
+            resized = (uint8_t*)XRealloc_System(buffer, next);
+            if (!resized) {
+                result = Z_MEM_ERROR;
+                break;
+            }
+            buffer = resized;
+            capacity = next;
+        }
+        stream.next_out = buffer + used;
+        stream.avail_out = (uInt)(capacity - used);
+        before = used;
+        result = inflate(&stream, Z_NO_FLUSH);
+        used += (capacity - before) - stream.avail_out;
+        if (used > (size_t)SVG_GZIP_MAX_OUTPUT) {
+            result = Z_MEM_ERROR;
+            break;
+        }
+        if (result == Z_STREAM_END) {
+            Bytef* remainingIn;
+            uInt remaining;
+            if (stream.avail_in == 0) {
+                ok = true;
+                break;
+            }
+            /* Qt 允许 gzip 串联 member；保留未消费输入后重置窗口。 */
+            if (++members > 16u) {
+                result = Z_DATA_ERROR;
+                break;
+            }
+            remainingIn = stream.next_in;
+            remaining = stream.avail_in;
+            result = inflateReset2(&stream, MAX_WBITS + 16);
+            if (result != Z_OK) break;
+            stream.next_in = remainingIn;
+            stream.avail_in = remaining;
+            continue;
+        }
+        if (result != Z_OK) break;
+        if (stream.avail_in == 0 && stream.avail_out != 0) {
+            result = Z_BUF_ERROR;
+            break;
+        }
+    }
+    inflateEnd(&stream);
+    if (!ok) {
+        XFree_System(buffer);
+        return false;
+    }
+    *out = buffer;
+    *outSize = used;
+    return true;
+}
 
 /* SVG 尺寸属性取值（十进制非负整数）。 */
 static int svgNumber(const uint8_t* data, size_t size,
@@ -3039,6 +3144,16 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
     double widthD = 0.0, heightD = 0.0;
     int ok = 0;
     if (!data || !size || !width || !height) return false;
+    if (svgIsGzip(data, size)) {
+        uint8_t* inflated = NULL;
+        size_t inflatedSize = 0;
+        bool result = svgInflateGzip(data, size, &inflated, &inflatedSize);
+        if (!result) return false;
+        result = XImageCodecInternal_probeSvgSize(inflated, inflatedSize,
+                                                  width, height);
+        XFree_System(inflated);
+        return result;
+    }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
     svgArenaInit(&arena);
     root = svgParseDom(text, textSize, &arena);
@@ -3079,6 +3194,16 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
     const char* viewBox = NULL;
     double widthD = 0.0, heightD = 0.0;
     if (!data || !size || !width || !height) return false;
+    if (svgIsGzip(data, size)) {
+        uint8_t* inflated = NULL;
+        size_t inflatedSize = 0;
+        bool result = svgInflateGzip(data, size, &inflated, &inflatedSize);
+        if (!result) return false;
+        result = XImageCodecInternal_probeSvgSize(inflated, inflatedSize,
+                                                  width, height);
+        XFree_System(inflated);
+        return result;
+    }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
     widthAttr = strstr(text, "width");
     heightAttr = strstr(text, "height");
@@ -3134,6 +3259,15 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
     char* text;
     size_t textSize;
     if (!data || !out || !size) return false;
+    if (svgIsGzip(data, size)) {
+        uint8_t* inflated = NULL;
+        size_t inflatedSize = 0;
+        bool result = svgInflateGzip(data, size, &inflated, &inflatedSize);
+        if (!result) return false;
+        result = XImageCodecInternal_decodeSvg(inflated, inflatedSize, out);
+        XFree_System(inflated);
+        return result;
+    }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
 
     /* 形态 1：内嵌 PNG 位图（编码路径的产物，逐像素还原）。 */

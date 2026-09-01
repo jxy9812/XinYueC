@@ -39,7 +39,9 @@ enum
     XPICTURE_TILED_EXTRA_SIZE = 24,
     XPICTURE_PIXMAP_EXTRA_SIZE = 24,
     XPICTURE_FONT_FIXED_SIZE = 8,
-    XPICTURE_MAX_FONT_TEXT = 4096
+    XPICTURE_MAX_FONT_TEXT = 4096,
+    XPICTURE_TEXT_FIXED_SIZE = 16,
+    XPICTURE_MAX_TEXT = 4096
 };
 
 static uint16_t XPicture_getU16(const uint8_t* p)
@@ -277,10 +279,15 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (length > size - offset) return false;
         payload = bytes + offset;
         if (opcode < XPictureOpcode_DrawLine ||
-            opcode > XPictureOpcode_DrawPoint)
+            opcode > XPictureOpcode_DrawText)
             return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
             (opcode == XPictureOpcode_DrawPoint && length != 8u) ||
+            (opcode == XPictureOpcode_DrawText &&
+             (length < XPICTURE_TEXT_FIXED_SIZE ||
+              XPicture_getU32(payload + 12u) > XPICTURE_MAX_TEXT ||
+              (uint64_t)XPICTURE_TEXT_FIXED_SIZE +
+                  XPicture_getU32(payload + 12u) != length)) ||
             (opcode == XPictureOpcode_SetPen && length != 20u) ||
             (opcode == XPictureOpcode_SetOpacity && length != 4u) ||
             (opcode == XPictureOpcode_SetCompositionMode && length != 4u) ||
@@ -320,6 +327,16 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
                the stream unambiguous and require the payload to be raw text. */
             if (fontLength != 0u &&
                 memchr(payload + XPICTURE_FONT_FIXED_SIZE, 0, fontLength) != NULL)
+                return false;
+        }
+        if (opcode == XPictureOpcode_DrawText)
+        {
+            uint32_t textLength = XPicture_getU32(payload + 12u);
+            /* 文本是原始 UTF-8 字节，禁止在负载中嵌入 NUL，避免回放
+               时把记录截断并与长度字段产生两套语义。 */
+            if (textLength != 0u &&
+                memchr(payload + XPICTURE_TEXT_FIXED_SIZE, 0,
+                       textLength) != NULL)
                 return false;
         }
         if (opcode == XPictureOpcode_SetOpacity)
@@ -811,6 +828,51 @@ bool XPicture_recordDrawPoint(XPicture* self, int x, int y)
     bounds.width = 1;
     bounds.height = 1;
     XPicture_updateBounds(self, &bounds);
+    return true;
+}
+
+bool XPicture_recordDrawText(XPicture* self, int x, int baselineY,
+                             const char* utf8, uint32_t color,
+                             const XFont* font)
+{
+    size_t textLength = 0u;
+    uint8_t* payload;
+    XRect bounds;
+    int width;
+    int height;
+    if (!self || !utf8) return false;
+    /* Avoid an unbounded strlen() walk when a caller passes an oversized
+       buffer: the portable stream has a fixed, documented text limit. */
+    while (utf8[textLength] != '\0')
+    {
+        if (textLength == XPICTURE_MAX_TEXT) return false;
+        ++textLength;
+    }
+    if (textLength == 0u) return true;
+    payload = (uint8_t*)XMalloc_System(XPICTURE_TEXT_FIXED_SIZE + textLength);
+    if (!payload) return false;
+    XPicture_putI32(payload + 0u, x);
+    XPicture_putI32(payload + 4u, baselineY);
+    XPicture_putU32(payload + 8u, color);
+    XPicture_putU32(payload + 12u, (uint32_t)textLength);
+    memcpy(payload + XPICTURE_TEXT_FIXED_SIZE, utf8, textLength);
+    if (!XPicture_appendRecord(self, XPictureOpcode_DrawText, payload,
+                               (uint32_t)(XPICTURE_TEXT_FIXED_SIZE + textLength)))
+    {
+        XFree_System(payload);
+        return false;
+    }
+    XFree_System(payload);
+    width = XPainter_textWidth(font, utf8);
+    height = XPainter_textHeight(font);
+    if (width > 0 && height > 0)
+    {
+        bounds.x = x;
+        bounds.y = baselineY - height;
+        bounds.width = width;
+        bounds.height = height;
+        XPicture_updateBounds(self, &bounds);
+    }
     return true;
 }
 
@@ -1884,6 +1946,19 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             ok = XPainter_drawPoint(painter,
                                     (int)XPicture_getI32(payload + 0u),
                                     (int)XPicture_getI32(payload + 4u));
+        }
+        else if (opcode == XPictureOpcode_DrawText)
+        {
+            uint32_t textLength = XPicture_getU32(payload + 12u);
+            char* text = (char*)XMalloc_System((size_t)textLength + 1u);
+            if (!text) return false;
+            memcpy(text, payload + XPICTURE_TEXT_FIXED_SIZE, textLength);
+            text[textLength] = '\0';
+            ok = XPainter_drawText(painter,
+                                   (int)XPicture_getI32(payload + 0u),
+                                   (int)XPicture_getI32(payload + 4u),
+                                   text, XPicture_getU32(payload + 8u));
+            XFree_System(text);
         }
         else if (opcode == XPictureOpcode_DrawLine)
         {

@@ -135,10 +135,21 @@ static int XImageReader_effectiveAllocationLimit(void)
 /* Qt JPEG 插件公开 jpg、jpeg、jfif 三个格式键；保持读取器在插件
    裁剪关闭时也能发现同一组别名，MIME 列表随后按值去重。 */
 static const char* const g_imageReaderFormats[] =
-    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg" };
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif",
+      "pbm", "pgm", "ppm", "xbm", "xpm", "svg",
+#if XIMAGECODEC_ICO_ON
+      "ico", "cur",
+#endif
+    };
 static const char* const g_imageReaderMimeTypes[] =
     { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
-      "image/gif", "image/svg+xml" };
+      "image/gif", "image/x-portable-bitmap", "image/x-portable-graymap",
+      "image/x-portable-pixmap",
+      "image/x-xbitmap", "image/x-xpixmap", "image/svg+xml",
+#if XIMAGECODEC_ICO_ON
+      "image/vnd.microsoft.icon", "image/vnd.microsoft.icon",
+#endif
+    };
 
 static XStringList* XImageReader_makeStringList(const char* const* values, size_t count)
 {
@@ -156,7 +167,7 @@ static void XImageReader_makeStringList_prefix(XStringList* result, const char* 
     if (!result || !values) return;
     for (i = 0; i < count; ++i) {
         if (values[i] && values[i][0] &&
-            !XStringList_contains_utf8(result, values[i], XChar_CaseInsensitive))
+            !XStringList_contains_utf8(result, values[i], XChar_CaseSensitive))
             XStringList_push_back_utf8(result, values[i]);
     }
 }
@@ -182,7 +193,7 @@ static XStringList* XImageReader_supportedFormats(void)
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);
@@ -210,7 +221,13 @@ static bool XImageReader_mimeIsBmp(const char* mimeType)
 static const char* XImageReader_detectSignature(const unsigned char* data, size_t size)
 {
 #if XIMAGECODEC_ON
-    return XImageCodec_formatName_2(XImageCodec_detect(data, size));
+    XImageCodecFormat format = XImageCodec_detect(data, size);
+    if (format == XImageCodecFormat_Ppm && size >= 2) {
+        if (data[1] == '1' || data[1] == '4') return "pbm";
+        if (data[1] == '2' || data[1] == '5') return "pgm";
+        return "ppm";
+    }
+    return XImageCodec_formatName_2(format);
 #else
     (void)data;
     (void)size;
@@ -808,6 +825,13 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     (void)device;
 #endif
     if (suffixFormat) XString_delete_base((XClass*)suffixFormat);
+    /* Qt QImageReaderPrivate::initHandler() 只要处理器工厂最终返回
+       nullptr，就统一报告 UnsupportedFormatError。设备打开失败等更早
+       产生的 DeviceError/FileNotFoundError 必须保持不变，因此仅覆盖
+       尚未设置错误的状态。 */
+    if (!data->m_handler && data->m_error == XImageReaderError_UnknownError)
+        XImageReader_setError(self, XImageReaderError_UnsupportedFormatError,
+                              "Unsupported image format");
     return NULL;
 }
 
@@ -2071,13 +2095,23 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
 #else
     (void)handler;
 #endif
-    bytes = XIODevice_peek_3(device, 16);
+    /* QSvgTinyDocument::hasSvgHeader()窥视最多 4096 字节；静态查询也
+       必须允许 XML 声明、注释与根节点之间存在较长前缀。其它格式的
+       处理器只读取自身所需的短头部，不会因扩大窥视窗口改变结果。 */
+    bytes = XIODevice_peek_3(device, 4096);
     if (bytes) {
         result = XImageReader_detectSignature(
             (const unsigned char*)XByteArray_data(bytes),
             (size_t)XByteArray_size_base((const XContainer*)bytes));
         XByteArray_delete_base((XClass*)bytes);
     }
+#if !XIMAGEIOPLUGIN_ON && XIMAGECODEC_SVG_ON
+    /* SVG 仅通过 Qt SVG 图像处理器提供公共 imageFormat() 结果；裁剪掉
+       XImageIOPlugin 后虽然 codec facade 仍可直接读写 SVG，但没有处理器
+       可返回格式名，不能在静态查询中伪造支持。 */
+    if (result && strcmp(result, "svg") == 0)
+        result = NULL;
+#endif
     return result ? XString_create_utf8(result) : XString_create();
 }
 
@@ -2124,7 +2158,7 @@ XStringList* XImageReader_supportedMimeTypes()
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);
@@ -2146,11 +2180,19 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
         if (XImageReader_mimeEquals(mime, "image/bmp") && XImageReader_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageReader_makeStringList_prefix(result, value, 1); }
         if (XImageReader_mimeEquals(mime, "image/png") && XImageReader_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageReader_makeStringList_prefix(result, value, 1); }
         if (XImageReader_mimeEquals(mime, "image/gif") && XImageReader_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/x-portable-bitmap") && XImageReader_isSupportedFormat("pbm")) { const char* value[] = {"pbm"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/x-portable-graymap") && XImageReader_isSupportedFormat("pgm")) { const char* value[] = {"pgm"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/x-portable-pixmap") && XImageReader_isSupportedFormat("ppm")) { const char* value[] = {"ppm"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/x-xbitmap") && XImageReader_isSupportedFormat("xbm")) { const char* value[] = {"xbm"}; XImageReader_makeStringList_prefix(result, value, 1); }
+        if (XImageReader_mimeEquals(mime, "image/x-xpixmap") && XImageReader_isSupportedFormat("xpm")) { const char* value[] = {"xpm"}; XImageReader_makeStringList_prefix(result, value, 1); }
         if (XImageReader_mimeEquals(mime, "image/jpeg") && XImageReader_isSupportedFormat("jpeg")) {
             const char* value[] = {"jpg", "jpeg", "jfif"};
             XImageReader_makeStringList_prefix(result, value, 3);
         }
         if (XImageReader_mimeEquals(mime, "image/svg+xml") && XImageReader_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageReader_makeStringList_prefix(result, value, 1); }
+#if XIMAGECODEC_ICO_ON
+        if (XImageReader_mimeEquals(mime, "image/vnd.microsoft.icon") && XImageReader_isSupportedFormat("ico")) { const char* value[] = {"ico", "cur"}; XImageReader_makeStringList_prefix(result, value, 2); }
+#endif
     }
 #if XIMAGEIOPLUGIN_ON
     {
@@ -2163,7 +2205,7 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);

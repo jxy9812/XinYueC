@@ -5,6 +5,7 @@
  ******************************************************************************/
 #include "XImageWriter.h"
 #include "XImageCodec.h"
+#include "XImageCodecInternal.h"
 #include "XImagePluginRegistry.h"
 #include "XFile.h"
 #include "XSaveFile.h"
@@ -18,10 +19,21 @@
 
 /* Keep writer discovery aligned with XImageCodec capabilities. */
 static const char* const g_imageWriterFormats[] =
-    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg" };
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif",
+      "pbm", "pgm", "ppm", "xbm", "xpm", "svg",
+#if XIMAGECODEC_ICO_ON
+      "ico", "cur",
+#endif
+    };
 static const char* const g_imageWriterMimeTypes[] =
     { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
-      "image/gif", "image/svg+xml" };
+      "image/gif", "image/x-portable-bitmap", "image/x-portable-graymap",
+      "image/x-portable-pixmap",
+      "image/x-xbitmap", "image/x-xpixmap", "image/svg+xml",
+#if XIMAGECODEC_ICO_ON
+      "image/vnd.microsoft.icon", "image/vnd.microsoft.icon",
+#endif
+    };
 
 static XStringList* XImageWriter_makeStringList(const char* const* values, size_t count)
 {
@@ -39,7 +51,7 @@ static void XImageWriter_makeStringList_prefix(XStringList* result, const char* 
     if (!result || !values) return;
     for (i = 0; i < count; ++i) {
         if (values[i] && values[i][0] &&
-            !XStringList_contains_utf8(result, values[i], XChar_CaseInsensitive))
+            !XStringList_contains_utf8(result, values[i], XChar_CaseSensitive))
             XStringList_push_back_utf8(result, values[i]);
     }
 }
@@ -65,7 +77,7 @@ static XStringList* XImageWriter_supportedFormats(void)
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);
@@ -166,20 +178,42 @@ static void XImageWriter_removeNewFileOnFailure(XImageWriter* self,
     (void)XFile_remove_static(data->m_fileName);
 }
 
+/* Qt derives an empty writer format from any QFileDevice assigned through
+   setDevice(), not only from the writer's internally-owned QFile.  Keep this
+   lookup in one place so handler discovery, canWrite(), and direct codecs use
+   identical file-name semantics. */
+static const XString* XImageWriter_fileNameForFormat(
+    const XImageWriterPrivate* data)
+{
+    XIODevice* device;
+    if (!data) return NULL;
+    if (data->m_fileName) return data->m_fileName;
+    device = data->m_device;
+    if (device && (XClassGetVtable(device) == XFile_class_init()
+#if XSAVEFILE_ON
+                   || XClassGetVtable(device) == XSaveFile_class_init()
+#endif
+                   ))
+        return XFileDevice_fileName_base((XFileDevice*)device);
+    return NULL;
+}
+
 static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
 {
     const XString* format;
+    const XString* fileName;
     if (!self || !self->m_data) return XString_create();
     format = self->m_data->m_format;
     if (format && !XContainer_isEmpty_base((const XContainer*)format))
         return XString_create_copy(format);
-    if (self->m_data->m_fileName) {
-        const char* fileName = XString_toUtf8(self->m_data->m_fileName);
-        const char* base = fileName ? strrchr(fileName, '/') : NULL;
+    fileName = XImageWriter_fileNameForFormat(self->m_data);
+    if (fileName) {
+        const char* fileNameUtf8 = XString_toUtf8(fileName);
+        const char* base = fileNameUtf8 ? strrchr(fileNameUtf8, '/') : NULL;
         const char* dot;
-        const char* backslash = fileName ? strrchr(fileName, '\\') : NULL;
+        const char* backslash = fileNameUtf8 ? strrchr(fileNameUtf8, '\\') : NULL;
         if (backslash && (!base || backslash > base)) base = backslash;
-        base = base ? base + 1 : fileName;
+        base = base ? base + 1 : fileNameUtf8;
         dot = base ? strrchr(base, '.') : NULL;
         if (dot && dot[1]) return XString_create_utf8(dot + 1);
     }
@@ -573,20 +607,10 @@ void XImageWriter_setFileName_2(XImageWriter* self, const char* fileName)
 
 const XString* XImageWriter_fileName_const(const XImageWriter* self)
 {
-    XIODevice* device;
     if (!self || !self->m_data) return NULL;
-    if (self->m_data->m_fileName) return self->m_data->m_fileName;
-
     /* Qt QImageWriter::fileName() 对任意 QFileDevice 返回设备文件名；
        C99 层通过 XFile/XSaveFile 的虚表身份实现同一借用语义。 */
-    device = self->m_data->m_device;
-    if (device && (XClassGetVtable(device) == XFile_class_init()
-#if XSAVEFILE_ON
-                   || XClassGetVtable(device) == XSaveFile_class_init()
-#endif
-                   ))
-        return XFileDevice_fileName_base((XFileDevice*)device);
-    return NULL;
+    return XImageWriter_fileNameForFormat(self->m_data);
 }
 
 XString* XImageWriter_fileName(const XImageWriter* self)
@@ -724,6 +748,7 @@ void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* tex
 bool XImageWriter_canWrite(const XImageWriter* self)
 {
     const char* format;
+    const XString* fileNameForFormat;
     bool removeOnFailure = false;
     if (!self || !self->m_data) return false;
     if (!self->m_data->m_device &&
@@ -760,11 +785,12 @@ bool XImageWriter_canWrite(const XImageWriter* self)
     format = self->m_data->m_format ?
         XString_toUtf8(self->m_data->m_format) : NULL;
     if (!format || !format[0]) {
-        /* A filename-backed writer derives the format from its suffix even
-           though Qt exposes the internally-owned QFile through device(). */
-        if ((!self->m_data->m_fileName && self->m_data->m_device) ||
+        /* QFileDevice-backed writers derive the format from the device suffix,
+           including caller-owned QFile/QSaveFile instances. */
+        fileNameForFormat = XImageWriter_fileNameForFormat(self->m_data);
+        if (!fileNameForFormat ||
             !XImageWriter_fileLooksSupported(
-                XString_toUtf8(self->m_data->m_fileName))) {
+                XString_toUtf8(fileNameForFormat))) {
             XImageWriter_setError((XImageWriter*)self,
                                    XImageWriterError_UnsupportedFormatError,
                                    "Unsupported image format");
@@ -804,7 +830,9 @@ bool XImageWriter_canWrite(const XImageWriter* self)
 bool XImageWriter_write(XImageWriter* self, const XImage* image)
 {
     XImage transformed;
+    XString* resolvedFormat = NULL;
     const XImage* source = image;
+    const char* effectiveFormat = NULL;
     bool transformedInitialized = false;
     bool handlerAttempted = false;
     bool wrote = false;
@@ -872,14 +900,54 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
         source = &transformed;
         transformedInitialized = true;
     }
+
+    /* With plugins disabled, the direct codec path still follows Qt's
+       QFileDevice suffix inference.  Resolve the borrowed device/file name
+       once and use that effective format for both device and file writes. */
+    effectiveFormat = self->m_data->m_format
+        ? XString_toUtf8(self->m_data->m_format) : NULL;
+    if (!effectiveFormat || !effectiveFormat[0]) {
+        resolvedFormat = XImageWriter_resolveFormatForHandler(self);
+        effectiveFormat = resolvedFormat ? XString_toUtf8(resolvedFormat) : NULL;
+    }
     if (!self->m_data->m_fileName && !self->m_data->m_device) {
         XImageWriter_setError(self, XImageWriterError_DeviceError, "Device is not set");
     } else if (!self->m_data->m_fileName) {
         XByteArray* bytes = XByteArray_create();
 #if XIMAGECODEC_ON
-        XImageCodecFormat format = XImageCodec_formatFromName(self->m_data->m_format);
-        bool ok = bytes && XImageCodec_encode(source, format, self->m_data->m_quality, bytes) &&
-                  XImageWriter_writeDevice(self->m_data->m_device, bytes);
+        XImageCodecFormat format = XImageCodec_formatFromName_2(effectiveFormat);
+        bool ok = false;
+        bool encoded = false;
+#if XIMAGECODEC_XBM_ON
+        const XString* fileNameForFormat = XImageWriter_fileNameForFormat(self->m_data);
+        const char* xbmName = fileNameForFormat
+            ? XString_toUtf8(fileNameForFormat) : NULL;
+#endif
+#if XIMAGECODEC_XPM_ON
+        const XString* xpmFileName = XImageWriter_fileNameForFormat(self->m_data);
+        const char* xpmName = xpmFileName ? XString_toUtf8(xpmFileName) : NULL;
+#endif
+#if XIMAGECODEC_PPM_ON
+        if (format == XImageCodecFormat_Ppm)
+            encoded = bytes && XImageCodecInternal_encodePpmSubtype(
+                source, effectiveFormat, bytes);
+        else
+#endif
+#if XIMAGECODEC_XBM_ON
+        if (format == XImageCodecFormat_Xbm)
+            encoded = bytes && XImageCodecInternal_encodeXbmNamed(
+                source, xbmName && xbmName[0] ? xbmName : "image", bytes);
+        else
+#endif
+#if XIMAGECODEC_XPM_ON
+        if (format == XImageCodecFormat_Xpm)
+            encoded = bytes && XImageCodecInternal_encodeXpmNamed(
+                source, xpmName && xpmName[0] ? xpmName : "image", bytes);
+        else
+#endif
+            encoded = bytes && XImageCodec_encode(
+                source, format, self->m_data->m_quality, bytes);
+        ok = encoded && XImageWriter_writeDevice(self->m_data->m_device, bytes);
 #else
         bool ok = false;
 #endif
@@ -890,7 +958,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
         else
             wrote = true;
     } else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
-                              XString_toUtf8(self->m_data->m_format), self->m_data->m_quality)) {
+                              effectiveFormat, self->m_data->m_quality)) {
         XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
     } else {
         wrote = true;
@@ -899,6 +967,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
        initial Unknown error string therefore remains observable until a new
        failure replaces it. */
     if (transformedInitialized) XImage_deinit_base(&transformed);
+    if (resolvedFormat) XString_delete_base((XClass*)resolvedFormat);
     return wrote;
 }
 
@@ -957,7 +1026,7 @@ XStringList* XImageWriter_supportedMimeTypes()
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);
@@ -978,11 +1047,19 @@ XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType)
         if (XImageWriter_mimeEquals(mime, "image/bmp") && XImageWriter_isSupportedFormat("bmp")) { const char* value[] = {"bmp"}; XImageWriter_makeStringList_prefix(result, value, 1); }
         if (XImageWriter_mimeEquals(mime, "image/png") && XImageWriter_isSupportedFormat("png")) { const char* value[] = {"png"}; XImageWriter_makeStringList_prefix(result, value, 1); }
         if (XImageWriter_mimeEquals(mime, "image/gif") && XImageWriter_isSupportedFormat("gif")) { const char* value[] = {"gif"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/x-portable-bitmap") && XImageWriter_isSupportedFormat("pbm")) { const char* value[] = {"pbm"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/x-portable-graymap") && XImageWriter_isSupportedFormat("pgm")) { const char* value[] = {"pgm"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/x-portable-pixmap") && XImageWriter_isSupportedFormat("ppm")) { const char* value[] = {"ppm"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/x-xbitmap") && XImageWriter_isSupportedFormat("xbm")) { const char* value[] = {"xbm"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+        if (XImageWriter_mimeEquals(mime, "image/x-xpixmap") && XImageWriter_isSupportedFormat("xpm")) { const char* value[] = {"xpm"}; XImageWriter_makeStringList_prefix(result, value, 1); }
         if (XImageWriter_mimeEquals(mime, "image/jpeg") && XImageWriter_isSupportedFormat("jpeg")) {
             const char* value[] = {"jpg", "jpeg", "jfif"};
             XImageWriter_makeStringList_prefix(result, value, 3);
         }
         if (XImageWriter_mimeEquals(mime, "image/svg+xml") && XImageWriter_isSupportedFormat("svg")) { const char* value[] = {"svg"}; XImageWriter_makeStringList_prefix(result, value, 1); }
+#if XIMAGECODEC_ICO_ON
+        if (XImageWriter_mimeEquals(mime, "image/vnd.microsoft.icon") && XImageWriter_isSupportedFormat("ico")) { const char* value[] = {"ico", "cur"}; XImageWriter_makeStringList_prefix(result, value, 2); }
+#endif
     }
 #if XIMAGEIOPLUGIN_ON
     {
@@ -995,7 +1072,7 @@ XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType)
                 XString* item = (XString*)XStringList_at_base((XVector*)plugin, j);
                 const char* value = XString_toUtf8(item);
                 if (value && value[0] &&
-                    !XStringList_contains_utf8(result, value, XChar_CaseInsensitive))
+                    !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
             XStringList_delete_base((XClass*)plugin);

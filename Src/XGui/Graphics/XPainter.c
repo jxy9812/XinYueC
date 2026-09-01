@@ -4152,6 +4152,14 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
         return false;
     if (!utf8 || utf8[0] == '\0')
         return true; /* 空文本视为无操作成功 */
+    /* QPicturePaintEngine writes one text command rather than exposing the
+       glyph rasterization as implementation-detail rectangles.  During
+       replay m_replaying suppresses this branch, so the same command is
+       rendered exactly once on the destination painter. */
+    if (self->m_deviceKind == XPainterDevice_Picture && self->m_picture &&
+        !self->m_replaying)
+        return XPicture_recordDrawText(self->m_picture, x, baselineY,
+                                       utf8, color, &self->m_state.m_font);
     table = painterBitmapFont(&self->m_state.m_font);
     scale = painterBitmapScaleForFont(&self->m_state.m_font);
     {
