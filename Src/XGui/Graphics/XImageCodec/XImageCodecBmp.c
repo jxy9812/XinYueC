@@ -196,7 +196,8 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
     uint32_t rgbAlphaMask = 0;
     bool bottomUp, hasMasks = false, hasV45 = false;
     bool coreHeader;
-    size_t palettePos, paletteEntries = 0, paletteEntryBytes = 3;
+    size_t palettePos, dataStart, pixelPos;
+    size_t paletteEntries = 0, paletteEntryBytes = 3;
     uint32_t palette[256];
     uint8_t* indexBuffer = NULL;
     XImage temp;
@@ -324,7 +325,11 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
 
     /* 调色板（仅索引色）：位于 DIB 头（及可选掩码）之后。 */
     palettePos = 14 + (size_t)dib;
-    if (hasMasks && !hasV45) palettePos += (size_t)(bpp == 32 ? 16 : 12);
+    /* Qt qbmphandler.cpp:255-264：BI_BITFIELDS（压缩值 3）只读取
+     * RGB 三个掩码；即使像素为 32 位也不会读取第四个 Alpha 掩码。
+     * 第四个掩码仅属于未被 Qt read_dib_infoheader() 接受的
+     * BI_ALPHABITFIELDS（压缩值 4）。 */
+    if (hasMasks && !hasV45) palettePos += 12u;
     /* Qt qbmphandler.cpp:306 对除 12 字节 Core Header 外的索引 BMP
      * 读取四字节调色板条目；第 4 字节只被消费，不参与 qRgb()。
      * 40 字节 Windows INFOHEADER 同样优先使用四字节条目。项目早期
@@ -346,6 +351,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
             if (palettePos + (i + 1) * paletteEntryBytes > size)
                 return false;
         }
+        dataStart = palettePos + needEntries * paletteEntryBytes;
         paletteEntries = needEntries;
         for (size_t i = 0; i < needEntries; ++i) {
             const uint8_t* p = data + palettePos + i * paletteEntryBytes;
@@ -354,18 +360,29 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
              * 设置颜色表，第四个保留字节（通常写为零）始终被忽略。 */
             palette[i] = c;
         }
+    } else {
+        dataStart = palettePos;
     }
 
     /* 像素数据区域检查。RLE 流长度与 stride*height 无关，只需保证流
      * 起始偏移落在实际像素数据之前，剩余边界由 bmpRleDecode 逐步校验。
      * Qt qbmphandler.cpp:212-214 在进入逐行读取前先用 atEnd() 拒绝
-     * 没有任何像素字节的设备；offset==size 不能被当作全零图像接受。
+     * 没有任何像素字节的设备（头部末尾正好等于文件尾）；但如果头部
+     * 后仍有尾字节，offset==size 会在 Qt 中 seek 到文件尾并保留零填充
+     * 图像，不能把这两种情况混为一谈。
      * Qt
      * qbmphandler.cpp:373-377/532-535/548-552 对未压缩像素行
      * 读取不足时退出当前行循环但仍返回已分配图像；因此这里不能再以
-     * stride*height 要求整个文件完整，只需拒绝落在文件末尾之后的偏移。
-     * 每行循环会单独检查剩余字节并安全停止。 */
-    if ((uint64_t)offset >= size) return false;
+     * stride*height 要求整个文件完整。每行循环会单独检查剩余字节并
+     * 安全停止，偏移落在文件尾之后时同样保留零填充结果。 */
+    /* Qt qbmphandler.cpp:365-367 只有在 bfOffBits 大于已经读取的
+     * 调色板/掩码位置时才 seek；偏移过小会继续从当前游标读取，不能
+     * 回读文件头。初始游标到达文件尾时则由 212-214 拒绝；若游标
+     * 仍有尾字节而 bfOffBits 指向文件尾之后，Qt 分配零填充图像并让
+     * 后续读行失败后成功返回，这里保留该边界行为。 */
+    if (dataStart >= size) return false;
+    pixelPos = (size_t)offset;
+    if (pixelPos < dataStart) pixelPos = dataStart;
 
     /* 索引色：先解码到索引缓冲区。 */
     if (bpp <= 8) {
@@ -379,7 +396,8 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         /* 未覆盖到的剩余像素补 0：RLE 流允许不显式铺满整行，未写区域按索引 0 处理。 */
         memset(indexBuffer, 0, count);
         if (rle) {
-            if (!bmpRleDecode(data + offset, size - offset, bpp, width,
+            if (pixelPos < size &&
+                !bmpRleDecode(data + pixelPos, size - pixelPos, bpp, width,
                               height, indexBuffer))
                 goto bmp_done;
         } else {
@@ -387,9 +405,9 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                 int destY = bottomUp ? height - 1 - fileY : fileY;
                 size_t rowOffset;
                 const uint8_t* src;
-                if ((size_t)fileY > (SIZE_MAX - (size_t)offset) / stride)
+                if ((size_t)fileY > (SIZE_MAX - pixelPos) / stride)
                     break;
-                rowOffset = (size_t)offset + stride * (size_t)fileY;
+                rowOffset = pixelPos + stride * (size_t)fileY;
                 if (rowOffset > size || stride > size - rowOffset)
                     break;
                 src = data + rowOffset;
@@ -475,9 +493,9 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
             int destY = bottomUp ? height - 1 - fileY : fileY;
             size_t rowOffset;
             const uint8_t* src;
-            if ((size_t)fileY > (SIZE_MAX - (size_t)offset) / stride)
+            if ((size_t)fileY > (SIZE_MAX - pixelPos) / stride)
                 break;
-            rowOffset = (size_t)offset + stride * (size_t)fileY;
+            rowOffset = pixelPos + stride * (size_t)fileY;
             if (rowOffset > size || stride > size - rowOffset)
                 break;
             src = data + rowOffset;
@@ -661,6 +679,14 @@ bool XImageCodecInternal_encodeBmp(const XImage* image, XByteArray* out)
     XImageCodecInternal_writeU16LE(header + 28, bpp);
     XImageCodecInternal_writeU32LE(header + 30, withAlpha ? 3u : 0u);
     XImageCodecInternal_writeU32LE(header + 34, (uint32_t)imageBytes);
+    /* Qt QBmpHandler::write_dib() stores dots-per-meter in the INFOHEADER
+     * and uses 2834 (72 DPI) only when the source has no explicit value. */
+    XImageCodecInternal_writeU32LE(header + 38,
+                                   XImage_dotsPerMeterX(image) ?
+                                       (uint32_t)XImage_dotsPerMeterX(image) : 2834u);
+    XImageCodecInternal_writeU32LE(header + 42,
+                                   XImage_dotsPerMeterY(image) ?
+                                       (uint32_t)XImage_dotsPerMeterY(image) : 2834u);
     if (withAlpha) {
         XImageCodecInternal_writeU32LE(header + 54, 0x00ff0000u);
         XImageCodecInternal_writeU32LE(header + 58, 0x0000ff00u);

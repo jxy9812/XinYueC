@@ -16,4 +16,16 @@ bool XPlatformThemeDriver_detect(bool* dark, char* name, size_t capacity)
     if (name && capacity) { strncpy(name, "windows", capacity - 1); name[capacity - 1] = '\0'; }
     return found;
 }
+bool XPlatformThemeDriver_iconSearchPaths(bool fallback, XStringList* out)
+{
+    (void)fallback;
+    (void)out;
+    return false;
+}
+bool XPlatformThemeDriver_iconThemeName(bool fallback, char* name, size_t capacity)
+{
+    (void)fallback;
+    if (name && capacity) name[0] = '\0';
+    return false;
+}
 #endif

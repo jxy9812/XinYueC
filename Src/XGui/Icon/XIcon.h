@@ -43,59 +43,193 @@ typedef enum XIconMode
  */
 typedef enum XIconState
 {
-    XIconState_Off,      /**< 关闭状态 */
-    XIconState_On        /**< 开启状态 */
+    XIconState_On,       /**< 开启状态 */
+    XIconState_Off       /**< 关闭状态 */
 } XIconState;
 
-/** @brief Qt 6.8 QIcon::ThemeIcon 的可移植枚举映射。 */
+/**
+ * @brief Qt 6.8 QIcon::ThemeIcon 的可移植枚举映射。
+ * @note 前 150 项必须保持与 Qt 6.8 的声明顺序一致；NThemeIcons
+ *       表示 Qt 标准项数量。其后的 Legacy 项仅用于兼容 XinYueC
+ *       旧版本名称，不参与 Qt 标准序号。
+ */
 typedef enum XIconThemeIcon
 {
+    XIconThemeIcon_AddressBookNew, /**< 新建地址簿。 */
+    XIconThemeIcon_ApplicationExit, /**< 退出应用程序。 */
+    XIconThemeIcon_AppointmentNew, /**< 新建约会。 */
+    XIconThemeIcon_CallStart, /**< 开始通话。 */
+    XIconThemeIcon_CallStop, /**< 停止通话。 */
+    XIconThemeIcon_ContactNew, /**< 新建联系人。 */
     XIconThemeIcon_DocumentNew, /**< 新建文档。 */
     XIconThemeIcon_DocumentOpen, /**< 打开文档。 */
+    XIconThemeIcon_DocumentOpenRecent, /**< 打开最近文档。 */
+    XIconThemeIcon_DocumentPageSetup, /**< 文档页面设置。 */
+    XIconThemeIcon_DocumentPrint, /**< 打印文档。 */
+    XIconThemeIcon_DocumentPrintPreview, /**< 打印预览。 */
+    XIconThemeIcon_DocumentProperties, /**< 文档属性。 */
+    XIconThemeIcon_DocumentRevert, /**< 还原文档。 */
     XIconThemeIcon_DocumentSave, /**< 保存文档。 */
     XIconThemeIcon_DocumentSaveAs, /**< 文档另存为。 */
-    XIconThemeIcon_DocumentPrint, /**< 打印文档。 */
-    XIconThemeIcon_DocumentClose, /**< 关闭文档。 */
-    XIconThemeIcon_DocumentProperties, /**< 文档属性。 */
-    XIconThemeIcon_DocumentPreview, /**< 文档预览。 */
-    XIconThemeIcon_DocumentEdit, /**< 编辑文档。 */
-    XIconThemeIcon_DocumentView, /**< 查看文档。 */
-    XIconThemeIcon_DocumentReload, /**< 重新加载文档。 */
-    XIconThemeIcon_Folder, /**< 文件夹。 */
-    XIconThemeIcon_FolderOpen, /**< 打开的文件夹。 */
+    XIconThemeIcon_DocumentSend, /**< 发送文档。 */
+    XIconThemeIcon_EditClear, /**< 清除编辑内容。 */
+    XIconThemeIcon_EditCopy, /**< 复制编辑内容。 */
+    XIconThemeIcon_EditCut, /**< 剪切编辑内容。 */
+    XIconThemeIcon_EditDelete, /**< 删除编辑内容。 */
+    XIconThemeIcon_EditFind, /**< 查找编辑内容。 */
+    XIconThemeIcon_EditPaste, /**< 粘贴编辑内容。 */
+    XIconThemeIcon_EditRedo, /**< 重做编辑操作。 */
+    XIconThemeIcon_EditSelectAll, /**< 全选编辑内容。 */
+    XIconThemeIcon_EditUndo, /**< 撤销编辑操作。 */
     XIconThemeIcon_FolderNew, /**< 新建文件夹。 */
-    XIconThemeIcon_User, /**< 用户。 */
-    XIconThemeIcon_UserGroup, /**< 用户组。 */
-    XIconThemeIcon_UserAdd, /**< 添加用户。 */
-    XIconThemeIcon_UserRemove, /**< 删除用户。 */
-    XIconThemeIcon_GoPrevious, /**< 上一项。 */
+    XIconThemeIcon_FormatIndentLess, /**< 减少缩进。 */
+    XIconThemeIcon_FormatIndentMore, /**< 增加缩进。 */
+    XIconThemeIcon_FormatJustifyCenter, /**< 居中对齐。 */
+    XIconThemeIcon_FormatJustifyFill, /**< 两端对齐。 */
+    XIconThemeIcon_FormatJustifyLeft, /**< 左对齐。 */
+    XIconThemeIcon_FormatJustifyRight, /**< 右对齐。 */
+    XIconThemeIcon_FormatTextDirectionLtr, /**< 从左到右文字方向。 */
+    XIconThemeIcon_FormatTextDirectionRtl, /**< 从右到左文字方向。 */
+    XIconThemeIcon_FormatTextBold, /**< 粗体文字。 */
+    XIconThemeIcon_FormatTextItalic, /**< 斜体文字。 */
+    XIconThemeIcon_FormatTextUnderline, /**< 下划线文字。 */
+    XIconThemeIcon_FormatTextStrikethrough, /**< 删除线文字。 */
+    XIconThemeIcon_GoDown, /**< 向下导航。 */
+    XIconThemeIcon_GoHome, /**< 返回主目录。 */
     XIconThemeIcon_GoNext, /**< 下一项。 */
-    XIconThemeIcon_GoUp, /**< 向上。 */
-    XIconThemeIcon_GoDown, /**< 向下。 */
-    XIconThemeIcon_MediaPlay, /**< 播放。 */
-    XIconThemeIcon_MediaPause, /**< 暂停。 */
-    XIconThemeIcon_MediaStop, /**< 停止。 */
-    XIconThemeIcon_MediaRecord, /**< 录制。 */
-    XIconThemeIcon_MediaSeekForward, /**< 快进。 */
-    XIconThemeIcon_MediaSeekBackward, /**< 快退。 */
-    XIconThemeIcon_MediaSkipForward, /**< 跳过下一项。 */
-    XIconThemeIcon_MediaSkipBackward, /**< 跳过上一项。 */
+    XIconThemeIcon_GoPrevious, /**< 上一项。 */
+    XIconThemeIcon_GoUp, /**< 向上导航。 */
+    XIconThemeIcon_HelpAbout, /**< 关于帮助。 */
+    XIconThemeIcon_HelpFaq, /**< 帮助常见问题。 */
+    XIconThemeIcon_InsertImage, /**< 插入图像。 */
+    XIconThemeIcon_InsertLink, /**< 插入链接。 */
+    XIconThemeIcon_InsertText, /**< 插入文本。 */
+    XIconThemeIcon_ListAdd, /**< 向列表添加项。 */
+    XIconThemeIcon_ListRemove, /**< 从列表删除项。 */
+    XIconThemeIcon_MailForward, /**< 转发邮件。 */
+    XIconThemeIcon_MailMarkImportant, /**< 标记邮件重要。 */
+    XIconThemeIcon_MailMarkRead, /**< 标记邮件已读。 */
+    XIconThemeIcon_MailMarkUnread, /**< 标记邮件未读。 */
+    XIconThemeIcon_MailMessageNew, /**< 新建邮件。 */
+    XIconThemeIcon_MailReplyAll, /**< 回复所有收件人。 */
+    XIconThemeIcon_MailReplySender, /**< 回复发件人。 */
+    XIconThemeIcon_MailSend, /**< 发送邮件。 */
     XIconThemeIcon_MediaEject, /**< 弹出媒体。 */
-    XIconThemeIcon_ViewRefresh, /**< 刷新视图。 */
-    XIconThemeIcon_ViewList, /**< 列表视图。 */
-    XIconThemeIcon_ViewGrid, /**< 网格视图。 */
-    XIconThemeIcon_ViewDetails, /**< 详细视图。 */
-    XIconThemeIcon_ViewSidebar, /**< 侧边栏视图。 */
+    XIconThemeIcon_MediaPlaybackPause, /**< 暂停播放。 */
+    XIconThemeIcon_MediaPlaybackStart, /**< 开始播放。 */
+    XIconThemeIcon_MediaPlaybackStop, /**< 停止播放。 */
+    XIconThemeIcon_MediaRecord, /**< 录制媒体。 */
+    XIconThemeIcon_MediaSeekBackward, /**< 向后搜寻媒体。 */
+    XIconThemeIcon_MediaSeekForward, /**< 向前搜寻媒体。 */
+    XIconThemeIcon_MediaSkipBackward, /**< 跳过上一媒体项。 */
+    XIconThemeIcon_MediaSkipForward, /**< 跳过下一媒体项。 */
+    XIconThemeIcon_ObjectRotateLeft, /**< 向左旋转对象。 */
+    XIconThemeIcon_ObjectRotateRight, /**< 向右旋转对象。 */
+    XIconThemeIcon_ProcessStop, /**< 停止进程。 */
+    XIconThemeIcon_SystemLockScreen, /**< 锁定屏幕。 */
+    XIconThemeIcon_SystemLogOut, /**< 注销系统。 */
+    XIconThemeIcon_SystemSearch, /**< 搜索系统。 */
+    XIconThemeIcon_SystemReboot, /**< 重启系统。 */
+    XIconThemeIcon_SystemShutdown, /**< 关闭系统。 */
+    XIconThemeIcon_ToolsCheckSpelling, /**< 检查拼写。 */
     XIconThemeIcon_ViewFullscreen, /**< 全屏视图。 */
+    XIconThemeIcon_ViewRefresh, /**< 刷新视图。 */
     XIconThemeIcon_ViewRestore, /**< 恢复视图。 */
     XIconThemeIcon_WindowClose, /**< 关闭窗口。 */
-    XIconThemeIcon_WindowMinimize, /**< 最小化窗口。 */
-    XIconThemeIcon_WindowMaximize, /**< 最大化窗口。 */
-    XIconThemeIcon_WindowRestore, /**< 恢复窗口。 */
-    XIconThemeIcon_ApplicationExit, /**< 退出应用程序。 */
-    XIconThemeIcon_Help, /**< 帮助。 */
-    XIconThemeIcon_HelpAbout, /**< 关于帮助。 */
-    XIconThemeIcon_PreferencesDesktop, /**< 桌面首选项。 */
+    XIconThemeIcon_WindowNew, /**< 新建窗口。 */
+    XIconThemeIcon_ZoomFitBest, /**< 最佳适配缩放。 */
+    XIconThemeIcon_ZoomIn, /**< 放大视图。 */
+    XIconThemeIcon_ZoomOut, /**< 缩小视图。 */
+    XIconThemeIcon_AudioCard, /**< 声卡设备。 */
+    XIconThemeIcon_AudioInputMicrophone, /**< 麦克风设备。 */
+    XIconThemeIcon_Battery, /**< 电池设备。 */
+    XIconThemeIcon_CameraPhoto, /**< 照相机设备。 */
+    XIconThemeIcon_CameraVideo, /**< 摄像机设备。 */
+    XIconThemeIcon_CameraWeb, /**< 网络摄像头。 */
+    XIconThemeIcon_Computer, /**< 计算机设备。 */
+    XIconThemeIcon_DriveHarddisk, /**< 硬盘设备。 */
+    XIconThemeIcon_DriveOptical, /**< 光盘驱动器。 */
+    XIconThemeIcon_InputGaming, /**< 游戏输入设备。 */
+    XIconThemeIcon_InputKeyboard, /**< 键盘设备。 */
+    XIconThemeIcon_InputMouse, /**< 鼠标设备。 */
+    XIconThemeIcon_InputTablet, /**< 手写板设备。 */
+    XIconThemeIcon_MediaFlash, /**< 闪存媒体。 */
+    XIconThemeIcon_MediaOptical, /**< 光学媒体。 */
+    XIconThemeIcon_MediaTape, /**< 磁带媒体。 */
+    XIconThemeIcon_MultimediaPlayer, /**< 多媒体播放器。 */
+    XIconThemeIcon_NetworkWired, /**< 有线网络。 */
+    XIconThemeIcon_NetworkWireless, /**< 无线网络。 */
+    XIconThemeIcon_Phone, /**< 电话设备。 */
+    XIconThemeIcon_Printer, /**< 打印机设备。 */
+    XIconThemeIcon_Scanner, /**< 扫描仪设备。 */
+    XIconThemeIcon_VideoDisplay, /**< 视频显示设备。 */
+    XIconThemeIcon_AppointmentMissed, /**< 错过的约会。 */
+    XIconThemeIcon_AppointmentSoon, /**< 即将到来的约会。 */
+    XIconThemeIcon_AudioVolumeHigh, /**< 高音量。 */
+    XIconThemeIcon_AudioVolumeLow, /**< 低音量。 */
+    XIconThemeIcon_AudioVolumeMedium, /**< 中等音量。 */
+    XIconThemeIcon_AudioVolumeMuted, /**< 静音音量。 */
+    XIconThemeIcon_BatteryCaution, /**< 电池警告。 */
+    XIconThemeIcon_BatteryLow, /**< 电量低。 */
+    XIconThemeIcon_DialogError, /**< 错误对话框。 */
+    XIconThemeIcon_DialogInformation, /**< 信息对话框。 */
+    XIconThemeIcon_DialogPassword, /**< 密码对话框。 */
+    XIconThemeIcon_DialogQuestion, /**< 问题对话框。 */
+    XIconThemeIcon_DialogWarning, /**< 警告对话框。 */
+    XIconThemeIcon_FolderDragAccept, /**< 文件夹接受拖放。 */
+    XIconThemeIcon_FolderOpen, /**< 打开的文件夹。 */
+    XIconThemeIcon_FolderVisiting, /**< 正在访问的文件夹。 */
+    XIconThemeIcon_ImageLoading, /**< 图像加载中。 */
+    XIconThemeIcon_ImageMissing, /**< 图像缺失。 */
+    XIconThemeIcon_MailAttachment, /**< 邮件附件。 */
+    XIconThemeIcon_MailUnread, /**< 未读邮件。 */
+    XIconThemeIcon_MailRead, /**< 已读邮件。 */
+    XIconThemeIcon_MailReplied, /**< 已回复邮件。 */
+    XIconThemeIcon_MediaPlaylistRepeat, /**< 重复播放列表。 */
+    XIconThemeIcon_MediaPlaylistShuffle, /**< 随机播放列表。 */
+    XIconThemeIcon_NetworkOffline, /**< 网络离线。 */
+    XIconThemeIcon_PrinterPrinting, /**< 打印机正在打印。 */
+    XIconThemeIcon_SecurityHigh, /**< 高安全级别。 */
+    XIconThemeIcon_SecurityLow, /**< 低安全级别。 */
+    XIconThemeIcon_SoftwareUpdateAvailable, /**< 有可用软件更新。 */
+    XIconThemeIcon_SoftwareUpdateUrgent, /**< 软件更新紧急。 */
+    XIconThemeIcon_SyncError, /**< 同步错误。 */
+    XIconThemeIcon_SyncSynchronizing, /**< 正在同步。 */
+    XIconThemeIcon_UserAvailable, /**< 用户在线可用。 */
+    XIconThemeIcon_UserOffline, /**< 用户离线。 */
+    XIconThemeIcon_WeatherClear, /**< 晴朗天气。 */
+    XIconThemeIcon_WeatherClearNight, /**< 晴朗夜间天气。 */
+    XIconThemeIcon_WeatherFewClouds, /**< 少云天气。 */
+    XIconThemeIcon_WeatherFewCloudsNight, /**< 少云夜间天气。 */
+    XIconThemeIcon_WeatherFog, /**< 雾天天气。 */
+    XIconThemeIcon_WeatherShowers, /**< 阵雨天气。 */
+    XIconThemeIcon_WeatherSnow, /**< 降雪天气。 */
+    XIconThemeIcon_WeatherStorm, /**< 暴风天气。 */
+    XIconThemeIcon_NThemeIcons, /**< Qt 标准主题图标数量。 */
+
+    /* 以下名称是旧版 XIconThemeIcon 的兼容扩展。 */
+    XIconThemeIcon_DocumentClose, /**< 旧版关闭文档名称。 */
+    XIconThemeIcon_DocumentPreview, /**< 旧版文档预览名称。 */
+    XIconThemeIcon_DocumentEdit, /**< 旧版编辑文档名称。 */
+    XIconThemeIcon_DocumentView, /**< 旧版查看文档名称。 */
+    XIconThemeIcon_DocumentReload, /**< 旧版重新加载文档名称。 */
+    XIconThemeIcon_Folder, /**< 旧版文件夹名称。 */
+    XIconThemeIcon_User, /**< 旧版用户名称。 */
+    XIconThemeIcon_UserGroup, /**< 旧版用户组名称。 */
+    XIconThemeIcon_UserAdd, /**< 旧版添加用户名称。 */
+    XIconThemeIcon_UserRemove, /**< 旧版删除用户名称。 */
+    XIconThemeIcon_MediaPlay, /**< 旧版开始播放名称。 */
+    XIconThemeIcon_MediaPause, /**< 旧版暂停播放名称。 */
+    XIconThemeIcon_MediaStop, /**< 旧版停止播放名称。 */
+    XIconThemeIcon_ViewList, /**< 旧版列表视图名称。 */
+    XIconThemeIcon_ViewGrid, /**< 旧版网格视图名称。 */
+    XIconThemeIcon_ViewDetails, /**< 旧版详细视图名称。 */
+    XIconThemeIcon_ViewSidebar, /**< 旧版侧边栏名称。 */
+    XIconThemeIcon_WindowMinimize, /**< 旧版最小化窗口名称。 */
+    XIconThemeIcon_WindowMaximize, /**< 旧版最大化窗口名称。 */
+    XIconThemeIcon_WindowRestore, /**< 旧版恢复窗口名称。 */
+    XIconThemeIcon_Help, /**< 旧版帮助名称。 */
+    XIconThemeIcon_PreferencesDesktop, /**< 旧版桌面首选项名称。 */
     XIconThemeIcon_Invalid = -1 /**< 无效枚举值。 */
 } XIconThemeIcon;
 
@@ -443,10 +577,9 @@ XString* XIcon_themeIconName(XIconThemeIcon icon);
 
 /**
  * @brief 获取主题搜索路径列表。
- * @return 新建的搜索路径列表；调用方负责释放。用户路径为空时至少
- *         返回 Qt 兼容的 `:/icons` 内置资源目录。
- * @note 平台提供的系统主题路径需由调用方通过设置接口显式注入；返回
- *       的默认资源项不会写回用户路径存储。
+ * @return 新建的搜索路径列表；调用方负责释放。用户路径为空时先取
+ *         Drive 平台主题路径，再附加 Qt 兼容的 `:/icons` 内置资源目录。
+ * @note 返回的系统路径和默认资源项不会写回用户显式路径存储。
  */
 XStringList* XIcon_themeSearchPaths();
 

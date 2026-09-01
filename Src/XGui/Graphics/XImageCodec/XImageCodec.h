@@ -2,12 +2,14 @@
  * @file       XImageCodec.h
  * @brief      独立图像编解码算法统一接口。
  * @note       各格式算法分别实现于 XImageCodecBmp.c / XImageCodecPng.c /
- *              XImageCodecGif.c / XImageCodecSvg.c / XImageCodecJpeg.c，
+ *              XImageCodecGif.c / XImageCodecPpm.c / XImageCodecXbm.c /
+ *              XImageCodecSvg.c / XImageCodecIco.c /
+ *              XImageCodecJpeg.c，
  *              通过本接口统一集成；
  *              格式算法不依赖 XImageReader、XImageWriter 或 XPixmap，
  *              上层图像类（XImage、XPixmap、XImageReader、XImageWriter 等）
  *              统一调用本模块的 XImageCodec_* 公共 API 完成编解码。
- *              BMP/DIB 共用 XIMAGECODEC_BMP_ON 开关；PNG/JPEG/GIF/SVG 可通过
+ *              BMP/DIB 共用 XIMAGECODEC_BMP_ON 开关；PNG/JPEG/GIF/PPM/XBM/SVG/ICO 可通过
  *              XImageCodec_config.h 中的对应开关独立裁剪，XIMAGECODEC_ON
  *              为模块总开关。
  * @author     XinYueC 团队
@@ -39,7 +41,11 @@ typedef enum XImageCodecFormat
     XImageCodecFormat_Png,         /**< PNG（8 位灰度/灰度+Alpha/RGB/RGBA）。 */
     XImageCodecFormat_Jpeg,        /**< JPEG（基线+渐进/算术/12 位/CMYK 解码，YCbCr 4:2:0 编码）。 */
     XImageCodecFormat_Gif,         /**< GIF（GIF87a/GIF89a 静态首帧；XIMAGECODEC_GIF_ANIM_ON 开启时含多帧动画）。 */
-    XImageCodecFormat_Svg          /**< SVG（内嵌 PNG、纯色矩形；XIMAGECODEC_SVG_VECTOR_ON 开启时含矢量渲染）。 */
+    XImageCodecFormat_Ppm,         /**< PPM 家族（P1-P6，含 PBM/PGM/PPM ASCII 与二进制变体）。 */
+    XImageCodecFormat_Xbm,         /**< X11 XBM（MonoLSB 十六进制位图）。 */
+    XImageCodecFormat_Xpm,         /**< X11 XPM（C 字符串数组，含调色板与透明色）。 */
+    XImageCodecFormat_Svg,         /**< SVG（内嵌 PNG、纯色矩形；XIMAGECODEC_SVG_VECTOR_ON 开启时含矢量渲染）。 */
+    XImageCodecFormat_Ico          /**< ICO/CUR（首个目录条目、PNG 或 24/32 位 DIB）。 */
 } XImageCodecFormat;
 
 /**

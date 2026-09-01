@@ -157,9 +157,14 @@ XString* XClipboard_text(XClipboard* self, XClipboardMode mode)
         return NULL;
     mode = clipboard_normalizeMode(mode);
     data = &self->m_data->m_modes[mode];
-    if (!data->m_text)
-        return NULL;
-    return XString_create_copy(data->m_text);
+    if (data->m_text)
+        return XString_create_copy(data->m_text);
+#if XMIMEDATA_ON
+    /* Qt 通过 mimeData()->text() 读取 setMimeData() 写入的纯文本。 */
+    if (data->m_mime && XMimeData_hasText(data->m_mime))
+        return XMimeData_text(data->m_mime);
+#endif /* XMIMEDATA_ON */
+    return NULL;
 }
 
 XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode mode)
@@ -172,9 +177,16 @@ XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode m
         return NULL;
     mode = clipboard_normalizeMode(mode);
     data = &self->m_data->m_modes[mode];
-    if (!data->m_text)
+    if (data->m_text)
+        text = XString_create_copy(data->m_text);
+#if XMIMEDATA_ON
+    else if (data->m_mime && XMimeData_hasText(data->m_mime))
+        text = XMimeData_text(data->m_mime);
+#endif /* XMIMEDATA_ON */
+    else
         return NULL;
-    text = XString_create_copy(data->m_text);
+    if (!text)
+        return NULL;
     if (subtype)
         *subtype = XString_create_utf8("plain");
     return text;
@@ -182,6 +194,17 @@ XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode m
 
 void XClipboard_setText(XClipboard* self, const XString* text, XClipboardMode mode)
 {
+#if XMIMEDATA_ON
+    XMimeData* mime;
+    if (!self || !self->m_data)
+        return;
+    /* QClipboard::setText() 的 Qt 实现先构造 QMimeData，再转移所有权。 */
+    mime = XMimeData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!mime)
+        return;
+    XMimeData_setText(mime, text);
+    XClipboard_setMimeData(self, mime, mode);
+#else
     XClipboardModeData* data;
     if (!self || !self->m_data)
         return;
@@ -193,6 +216,7 @@ void XClipboard_setText(XClipboard* self, const XString* text, XClipboardMode mo
         data->m_text = XString_create_utf8("");
     data->m_owns = true;
     clipboard_emitChanged(self, mode);
+#endif /* XMIMEDATA_ON */
 }
 
 const XMimeData* XClipboard_mimeData(const XClipboard* self, XClipboardMode mode)

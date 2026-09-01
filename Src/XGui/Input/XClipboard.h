@@ -155,7 +155,9 @@ XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode m
 /**
  * @brief      设置指定模式的纯文本（对标 QClipboard::setText）。
  * @details    深拷贝文本、标记本进程所有权并发射 changed(mode)；
- *             同时清除该模式旧 MIME 对象（仅保留文本语义）。
+ *             MIME 开启时按 Qt 语义创建新的 XMimeData，登记 text/plain 后
+ *             通过 setMimeData() 转移所有权，因此 mimeData() 与 text() 保持
+ *             同一份文本；MIME 裁剪关闭时退化为独立的 m_text 存储。
  * @param      self 目标对象；可为 NULL。
  * @param      text UTF-8 文本；可为 NULL（等价空串）。
  * @param      mode 目标模式。

@@ -2,7 +2,7 @@
  * @file       XImageBuiltinPlugin.h
  * @brief      XImageCodec 内置图像插件（对标 Qt 6.8 图像格式插件的注册方式）。
  * @details    通过 XImageIOPlugin 接口把 XImageCodec 支持的 BMP/PNG/JPEG/
- *              GIF/SVG 统一暴露给 XImagePluginRegistry，使 XImageReader 与
+ *              GIF/PPM/XBM/SVG 统一暴露给 XImagePluginRegistry，使 XImageReader 与
  *              XImageWriter 可以像加载外部插件一样按注册表发现内置算法。
  ******************************************************************************/
 #ifndef XIMAGEBUILTINPLUGIN_H

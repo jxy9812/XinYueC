@@ -18,6 +18,7 @@
 #include "XIconStyleHelper.h"
 #include "XImageReader.h"
 #include "XAlignment.h"
+#include "XPlatformTheme.h"
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -97,6 +98,40 @@ static XStringList* g_iconFallbackSearchPaths;
 static XString* g_iconThemeName;
 static XString* g_iconFallbackThemeName;
 
+/*
+ * QIconLoader asks QPlatformTheme for these values lazily.  Keep that
+ * boundary in Drive: XIcon only receives copied XString/XStringList data and
+ * remains free of POSIX, Win32, or desktop-toolkit APIs.  Search-path
+ * providers are queried once per cached default list, matching Qt's
+ * QIconLoader state; theme names remain provider-backed while no user
+ * override is active.
+ */
+static bool XIcon_platformIconSearchPaths(bool fallback, XStringList* out)
+{
+#if XPLATFORMINTEGRATION_ON
+    return XPlatformThemeDriver_iconSearchPaths(fallback, out);
+#else
+    (void)fallback;
+    (void)out;
+    return false;
+#endif
+}
+
+static const char* XIcon_platformThemeName(bool fallback)
+{
+    static char name[2][128];
+    size_t index = fallback ? 1u : 0u;
+#if XPLATFORMINTEGRATION_ON
+    name[index][0] = '\0';
+    (void)XPlatformThemeDriver_iconThemeName(fallback, name[index],
+                                             sizeof(name[index]));
+#else
+    (void)fallback;
+    name[index][0] = '\0';
+#endif
+    return name[index];
+}
+
 static void XIcon_replaceString(XString** destination, const char* value)
 {
     XString* replacement = value ? XString_create_utf8(value) : NULL;
@@ -116,6 +151,17 @@ static XStringList* XIcon_paths(bool fallback)
     XStringList** paths = fallback ? &g_iconFallbackSearchPaths : &g_iconThemeSearchPaths;
     if (!*paths) *paths = XStringList_create();
     return *paths;
+}
+
+/* Qt QIconLoader::setThemeName() 在清除用户主题时恢复平台搜索路径，
+ * 这里保留同样的“无资源目录附加项”边界；资源目录仅由后续的
+ * themeSearchPaths() 空列表初始化分支附加。 */
+static void XIcon_restoreSystemThemeSearchPaths(void)
+{
+    XStringList* paths = XIcon_paths(false);
+    if (!paths) return;
+    XStringList_clear_base((XContainer*)paths);
+    (void)XIcon_platformIconSearchPaths(false, paths);
 }
 
 static void XIconPrivate_touch(XIconPrivate* d)
@@ -1401,19 +1447,71 @@ bool XIcon_hasThemeIcon(const XString* name)
 static const char* XIcon_themeIconNameUtf8(XIconThemeIcon icon)
 {
     static const char* const names[] = {
-        "document-new", "document-open", "document-save", "document-save-as",
-        "document-print", "document-close", "document-properties", "document-preview",
-        "document-edit", "document-view", "document-reload", "folder", "folder-open",
-        "folder-new", "user", "user-group", "user-add", "user-remove", "go-previous",
-        "go-next", "go-up", "go-down", "media-playback-start", "media-playback-pause",
-        "media-playback-stop", "media-record", "media-seek-forward", "media-seek-backward",
-        "media-skip-forward", "media-skip-backward", "media-eject", "view-refresh",
-        "view-list", "view-grid", "view-details", "view-sidebar", "view-fullscreen",
-        "view-restore", "window-close", "window-minimize", "window-maximize", "window-restore",
-        "application-exit", "help-browser", "help-about", "preferences-desktop"
+        "address-book-new", "application-exit", "appointment-new", "call-start",
+        "call-stop", "contact-new", "document-new", "document-open",
+        "document-open-recent", "document-page-setup", "document-print",
+        "document-print-preview", "document-properties", "document-revert",
+        "document-save", "document-save-as", "document-send", "edit-clear",
+        "edit-copy", "edit-cut", "edit-delete", "edit-find", "edit-paste",
+        "edit-redo", "edit-select-all", "edit-undo", "folder-new",
+        "format-indent-less", "format-indent-more", "format-justify-center",
+        "format-justify-fill", "format-justify-left", "format-justify-right",
+        "format-text-direction-ltr", "format-text-direction-rtl", "format-text-bold",
+        "format-text-italic", "format-text-underline", "format-text-strikethrough",
+        "go-down", "go-home", "go-next", "go-previous", "go-up", "help-about",
+        "help-faq", "insert-image", "insert-link", "insert-text", "list-add",
+        "list-remove", "mail-forward", "mail-mark-important", "mail-mark-read",
+        "mail-mark-unread", "mail-message-new", "mail-reply-all", "mail-reply-sender",
+        "mail-send", "media-eject", "media-playback-pause", "media-playback-start",
+        "media-playback-stop", "media-record", "media-seek-backward", "media-seek-forward",
+        "media-skip-backward", "media-skip-forward", "object-rotate-left",
+        "object-rotate-right", "process-stop", "system-lock-screen", "system-log-out",
+        "system-search", "system-reboot", "system-shutdown", "tools-check-spelling",
+        "view-fullscreen", "view-refresh", "view-restore", "window-close", "window-new",
+        "zoom-fit-best", "zoom-in", "zoom-out", "audio-card", "audio-input-microphone",
+        "battery", "camera-photo", "camera-video", "camera-web", "computer",
+        "drive-harddisk", "drive-optical", "input-gaming", "input-keyboard", "input-mouse",
+        "input-tablet", "media-flash", "media-optical", "media-tape", "multimedia-player",
+        "network-wired", "network-wireless", "phone", "printer", "scanner", "video-display",
+        "appointment-missed", "appointment-soon", "audio-volume-high", "audio-volume-low",
+        "audio-volume-medium", "audio-volume-muted", "battery-caution", "battery-low",
+        "dialog-error", "dialog-information", "dialog-password", "dialog-question",
+        "dialog-warning", "folder-drag-accept", "folder-open", "folder-visiting",
+        "image-loading", "image-missing", "mail-attachment", "mail-unread", "mail-read",
+        "mail-replied", "media-playlist-repeat", "media-playlist-shuffle", "network-offline",
+        "printer-printing", "security-high", "security-low", "software-update-available",
+        "software-update-urgent", "sync-error", "sync-synchronizing", "user-available",
+        "user-offline", "weather-clear", "weather-clear-night", "weather-few-clouds",
+        "weather-few-clouds-night", "weather-fog", "weather-showers", "weather-snow",
+        "weather-storm"
     };
-    return icon >= 0 && icon < (XIconThemeIcon)(sizeof(names) / sizeof(names[0]))
-        ? names[icon] : NULL;
+    if (icon >= 0 && icon < XIconThemeIcon_NThemeIcons)
+        return names[icon];
+    switch (icon) {
+    case XIconThemeIcon_DocumentClose: return "document-close";
+    case XIconThemeIcon_DocumentPreview: return "document-preview";
+    case XIconThemeIcon_DocumentEdit: return "document-edit";
+    case XIconThemeIcon_DocumentView: return "document-view";
+    case XIconThemeIcon_DocumentReload: return "document-reload";
+    case XIconThemeIcon_Folder: return "folder";
+    case XIconThemeIcon_User: return "user";
+    case XIconThemeIcon_UserGroup: return "user-group";
+    case XIconThemeIcon_UserAdd: return "user-add";
+    case XIconThemeIcon_UserRemove: return "user-remove";
+    case XIconThemeIcon_MediaPlay: return "media-playback-start";
+    case XIconThemeIcon_MediaPause: return "media-playback-pause";
+    case XIconThemeIcon_MediaStop: return "media-playback-stop";
+    case XIconThemeIcon_ViewList: return "view-list";
+    case XIconThemeIcon_ViewGrid: return "view-grid";
+    case XIconThemeIcon_ViewDetails: return "view-details";
+    case XIconThemeIcon_ViewSidebar: return "view-sidebar";
+    case XIconThemeIcon_WindowMinimize: return "window-minimize";
+    case XIconThemeIcon_WindowMaximize: return "window-maximize";
+    case XIconThemeIcon_WindowRestore: return "window-restore";
+    case XIconThemeIcon_Help: return "help-browser";
+    case XIconThemeIcon_PreferencesDesktop: return "preferences-desktop";
+    default: return NULL;
+    }
 }
 
 XString* XIcon_themeIconName(XIconThemeIcon icon)
@@ -1436,18 +1534,18 @@ bool XIcon_hasThemeIconType(XIconThemeIcon icon)
 
 XStringList* XIcon_themeSearchPaths()
 {
+    XStringList* paths = XIcon_paths(false);
     XStringList* copy = XStringList_create();
     if (!copy) return NULL;
-    if (g_iconThemeSearchPaths &&
-        XStringList_size_base((const XContainer*)g_iconThemeSearchPaths) > 0) {
-        XStringList_copy_base((XClass*)copy,
-                              (const XClass*)g_iconThemeSearchPaths);
-    } else {
-        /* Qt QIconLoader::themeSearchPaths() 在用户未设置路径时始终
-           附加内置资源目录，空列表也必须保持该默认项。平台主题路径
-           由 XGui 的 Drive 层提供；公共层至少保留可移植的 :/icons。 */
-        XStringList_push_back_utf8(copy, ":/icons");
+    if (paths && XStringList_size_base((const XContainer*)paths) == 0) {
+        /* Qt QIconLoader::themeSearchPaths() 在用户未设置路径时先取
+           QPlatformTheme::IconThemeSearchPaths，再始终附加 :/icons，
+           并将结果缓存到 m_iconDirs。 */
+        XIcon_platformIconSearchPaths(false, paths);
+        XStringList_push_back_utf8(paths, ":/icons");
     }
+    if (paths)
+        XStringList_copy_base((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1472,9 +1570,13 @@ void XIcon_setThemeSearchPaths_2(const XStringList* paths)
 
 XStringList* XIcon_fallbackSearchPaths()
 {
+    XStringList* paths = XIcon_paths(true);
     XStringList* copy = XStringList_create();
-    if (copy && g_iconFallbackSearchPaths)
-        XStringList_copy_base((XClass*)copy, (const XClass*)g_iconFallbackSearchPaths);
+    if (!copy) return NULL;
+    if (paths && XStringList_size_base((const XContainer*)paths) == 0)
+        (void)XIcon_platformIconSearchPaths(true, paths);
+    if (paths)
+        XStringList_copy_base((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1499,11 +1601,26 @@ void XIcon_setFallbackSearchPaths_2(const XStringList* paths)
 
 XString* XIcon_themeName()
 {
-    return g_iconThemeName ? XString_create_copy(g_iconThemeName) : XString_create();
+    const char* systemName;
+    if (g_iconThemeName && !XString_isEmpty_base(
+            (const XContainer*)g_iconThemeName))
+        return XString_create_copy(g_iconThemeName);
+    systemName = XIcon_platformThemeName(false);
+    if (!systemName || !systemName[0])
+        systemName = XIcon_platformThemeName(true);
+    return systemName && systemName[0] ? XString_create_utf8(systemName) :
+        XString_create();
 }
 const char* XIcon_themeName_2()
 {
-    return g_iconThemeName ? XString_toUtf8(g_iconThemeName) : "";
+    if (g_iconThemeName && !XString_isEmpty_base(
+            (const XContainer*)g_iconThemeName))
+        return XString_toUtf8(g_iconThemeName);
+    {
+        const char* systemName = XIcon_platformThemeName(false);
+        return systemName && systemName[0] ? systemName :
+            XIcon_platformThemeName(true);
+    }
 }
 void XIcon_setThemeName_2(const char* name)
 {
@@ -1511,15 +1628,11 @@ void XIcon_setThemeName_2(const char* name)
         !XString_isEmpty_base((const XContainer*)g_iconThemeName);
     XIcon_replaceString(&g_iconThemeName, name);
     /* Qt QIconLoader::setThemeName() restores system search paths when a
-       non-empty user theme is cleared.  The portable layer has no platform
-       system-path query; dropping the explicit list lets themeSearchPaths()
-       lazily provide its :/icons default instead. */
+       non-empty user theme is cleared.  The platform list is installed
+       immediately; :/icons is appended only when that restored list is empty. */
     if (hadUserTheme && (!g_iconThemeName ||
                          XString_isEmpty_base((const XContainer*)g_iconThemeName)))
-    {
-        if (g_iconThemeSearchPaths)
-            XStringList_clear_base((XContainer*)g_iconThemeSearchPaths);
-    }
+        XIcon_restoreSystemThemeSearchPaths();
     XIconScaledPixmapCache_clear();
 }
 void XIcon_setThemeName(const XString* name)
@@ -1529,19 +1642,25 @@ void XIcon_setThemeName(const XString* name)
     XIcon_replaceString_2(&g_iconThemeName, name);
     if (hadUserTheme && (!g_iconThemeName ||
                          XString_isEmpty_base((const XContainer*)g_iconThemeName)))
-    {
-        if (g_iconThemeSearchPaths)
-            XStringList_clear_base((XContainer*)g_iconThemeSearchPaths);
-    }
+        XIcon_restoreSystemThemeSearchPaths();
     XIconScaledPixmapCache_clear();
 }
 XString* XIcon_fallbackThemeName()
 {
-    return g_iconFallbackThemeName ? XString_create_copy(g_iconFallbackThemeName) : XString_create();
+    const char* systemName;
+    if (g_iconFallbackThemeName && !XString_isEmpty_base(
+            (const XContainer*)g_iconFallbackThemeName))
+        return XString_create_copy(g_iconFallbackThemeName);
+    systemName = XIcon_platformThemeName(true);
+    return systemName && systemName[0] ? XString_create_utf8(systemName) :
+        XString_create();
 }
 const char* XIcon_fallbackThemeName_2()
 {
-    return g_iconFallbackThemeName ? XString_toUtf8(g_iconFallbackThemeName) : "";
+    if (g_iconFallbackThemeName && !XString_isEmpty_base(
+            (const XContainer*)g_iconFallbackThemeName))
+        return XString_toUtf8(g_iconFallbackThemeName);
+    return XIcon_platformThemeName(true);
 }
 void XIcon_setFallbackThemeName_2(const char* name)
 {

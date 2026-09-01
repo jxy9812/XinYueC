@@ -45,6 +45,279 @@ static uint32_t pngChunkCrc(const char type[4], const uint8_t* data, size_t size
     return crc;
 }
 
+/* PNG iCCP 的 profile 数据使用 zlib wrapper 压缩。Qt 交给 libpng 后再
+ * 传入 QColorSpace::fromIccProfile()；这里先做有界解压，保留原始 ICC
+ * 字节供 XImage 的内部资源侧车保存。 */
+#define PNG_MAX_ICC_PROFILE (16u * 1024u * 1024u)
+#define PNG_MAX_TEXT_BYTES  (16u * 1024u * 1024u)
+#define PNG_MAX_TEXT_ITEMS  1024u
+
+/* 受上限约束地解压 ancillary 文本/ICC 数据，避免压缩炸弹耗尽内存。
+ * PNG 文本允许空字符串，因此解压成功但长度为零时也返回 true。 */
+static bool pngInflateBounded(const uint8_t* data, size_t size,
+                              uint8_t** out, size_t* outSize,
+                              size_t maxOutput)
+{
+    size_t capacity = 4096u;
+    uint8_t* buffer = NULL;
+    if (!data || !size || !out || !outSize ||
+        maxOutput == 0 || size > (size_t)ULONG_MAX)
+        return false;
+    if (capacity > maxOutput) capacity = maxOutput;
+    while (capacity <= maxOutput) {
+        uLongf decodedSize;
+        int result;
+        buffer = (uint8_t*)XMalloc_System(capacity);
+        if (!buffer) return false;
+        decodedSize = (uLongf)capacity;
+        result = uncompress(buffer, &decodedSize, data, (uLong)size);
+        if (result == Z_OK) {
+            *out = buffer;
+            *outSize = (size_t)decodedSize;
+            return true;
+        }
+        XFree_System(buffer);
+        buffer = NULL;
+        if (result != Z_BUF_ERROR || capacity == maxOutput)
+            return false;
+        if (capacity > maxOutput / 2u)
+            capacity = maxOutput;
+        else
+            capacity *= 2u;
+    }
+    return false;
+}
+
+static bool pngInflateIccProfile(const uint8_t* data, size_t size,
+                                 uint8_t** out, size_t* outSize)
+{
+    if (!pngInflateBounded(data, size, out, outSize,
+                           (size_t)PNG_MAX_ICC_PROFILE))
+        return false;
+    if (!*outSize) {
+        XFree_System(*out);
+        *out = NULL;
+        return false;
+    }
+    return true;
+}
+
+/* 将一个文本键值副本加入临时列表；XStringList 会深复制元素。 */
+static bool pngAppendTextPair(XStringList* keys, XStringList* values,
+                              XString* key, XString* value)
+{
+    size_t index;
+    if (!keys || !values || !key || !value) return false;
+    index = XStringList_size_base((const XContainer*)keys);
+    if (!XStringList_insert_base((XVector*)keys, (int64_t)index, key))
+        return false;
+    if (!XStringList_insert_base((XVector*)values, (int64_t)index, value)) {
+        XStringList_remove_base((XVector*)keys, (int64_t)index, 1);
+        return false;
+    }
+    return true;
+}
+
+/* 解析 tEXt/zTXt/iTXt。无效块按 libpng 的 benign warning 语义忽略，
+ * 但结构合法且解压成功的文本会保存为 XImage UTF-8 元数据。 */
+static bool pngParseTextChunk(const char type[4], const uint8_t* data,
+                              size_t size, XStringList* keys,
+                              XStringList* values, size_t* totalBytes)
+{
+    size_t keyLen = 0, textOffset, textLen;
+    uint8_t* inflated = NULL;
+    XString* key = NULL;
+    XString* value = NULL;
+    bool compressed = false, itxt = false;
+    if (!type || !data || !size || !keys || !values || !totalBytes)
+        return false;
+    while (keyLen < size && data[keyLen] != 0) {
+        if (keyLen >= 79u) return false;
+        ++keyLen;
+    }
+    if (keyLen == 0 || keyLen >= size) return false;
+    textOffset = keyLen + 1u;
+    if (!memcmp(type, "tEXt", 4)) {
+        textLen = size - textOffset;
+    } else if (!memcmp(type, "zTXt", 4)) {
+        if (textOffset >= size || data[textOffset] != 0) return false;
+        compressed = true;
+        textOffset += 1u;
+        if (textOffset >= size) return false;
+        textLen = size - textOffset;
+    } else if (!memcmp(type, "iTXt", 4)) {
+        size_t languageEnd, translatedEnd;
+        uint8_t compressionFlag, compressionMethod;
+        if (textOffset + 2u > size) return false;
+        compressionFlag = data[textOffset++];
+        compressionMethod = data[textOffset++];
+        if (compressionFlag > 1u || compressionMethod != 0u) return false;
+        languageEnd = textOffset;
+        while (languageEnd < size && data[languageEnd] != 0) ++languageEnd;
+        if (languageEnd >= size) return false;
+        translatedEnd = languageEnd + 1u;
+        while (translatedEnd < size && data[translatedEnd] != 0) ++translatedEnd;
+        if (translatedEnd >= size) return false;
+        textOffset = translatedEnd + 1u;
+        compressed = compressionFlag != 0;
+        itxt = true;
+        textLen = size - textOffset;
+    } else {
+        return false;
+    }
+    if (*totalBytes > (size_t)PNG_MAX_TEXT_BYTES -
+                     (textLen > (size_t)PNG_MAX_TEXT_BYTES
+                          ? (size_t)PNG_MAX_TEXT_BYTES : textLen))
+        return false;
+    if (compressed) {
+        size_t decodedLen = 0;
+        if (!pngInflateBounded(data + textOffset, textLen, &inflated,
+                               &decodedLen, (size_t)PNG_MAX_TEXT_BYTES) ||
+            decodedLen > (size_t)PNG_MAX_TEXT_BYTES - *totalBytes)
+            goto done;
+        textOffset = 0;
+        textLen = decodedLen;
+    }
+    key = XString_create_with_length_latin1(data, keyLen);
+    value = itxt
+        ? XString_create_with_length_utf8(compressed ? (const char*)inflated
+                                                     : (const char*)data + textOffset,
+                                          textLen)
+        : XString_create_with_length_latin1(compressed ? inflated
+                                                          : data + textOffset,
+                                            textLen);
+    if (key && value &&
+        XStringList_size_base((const XContainer*)keys) < PNG_MAX_TEXT_ITEMS &&
+        pngAppendTextPair(keys, values, key, value)) {
+        *totalBytes += textLen;
+    }
+done:
+    if (key) XString_delete_base((XClass*)key);
+    if (value) XString_delete_base((XClass*)value);
+    if (inflated) XFree_System(inflated);
+    return key != NULL && value != NULL;
+}
+
+/* 解析 iCCP 块的名称、压缩方法及 profile 负载。名称只用于 Qt 描述
+ * 回退，当前内部侧车保存原始 profile，不把名称伪装成颜色空间描述。 */
+static bool pngParseIccProfile(const uint8_t* data, size_t size,
+                               uint8_t** profile, size_t* profileSize)
+{
+    size_t nameSize = 0;
+    if (!data || size < 3u || !profile || !profileSize) return false;
+    while (nameSize < size && data[nameSize] != 0) {
+        if (nameSize >= 79u) return false;
+        ++nameSize;
+    }
+    if (nameSize == 0 || nameSize >= size || nameSize + 2u >= size ||
+        data[nameSize + 1u] != 0)
+        return false;
+    return pngInflateIccProfile(data + nameSize + 2u,
+                                size - nameSize - 2u,
+                                profile, profileSize);
+}
+
+static bool pngAppendChunk(XByteArray* out, const char type[4],
+                           const uint8_t* data, size_t size);
+
+/* 将图像内部保存的 ICC profile 写成 PNG iCCP 块。没有 profile 时返回
+ * true 且不追加任何块；这样普通图像的编码路径保持原有字节布局。 */
+static bool pngAppendColorProfile(const XImage* image, XByteArray* out)
+{
+    XByteArray* profile = NULL;
+    uint8_t* compressed = NULL;
+    uint8_t* payload = NULL;
+    const uint8_t* profileData;
+    const char* description;
+    XColorSpace colorSpace;
+    size_t profileSize, nameSize = 0, payloadSize;
+    uLongf compressedSize;
+    bool ok = true;
+    if (!image || !out) return false;
+    profile = XByteArray_create();
+    if (!profile) return false;
+    if (!XImageCodecInternal_copyIccProfile(image, profile)) {
+        XByteArray_delete_base((XClass*)profile);
+        return false;
+    }
+    profileSize = XByteArray_size_base((const XContainer*)profile);
+    if (profileSize == 0) {
+        XByteArray_delete_base((XClass*)profile);
+        return true;
+    }
+    profileData = (const uint8_t*)XByteArray_data(profile);
+    colorSpace = XImage_colorSpace(image);
+    description = XColorSpace_description(&colorSpace);
+    if (!description || !description[0]) description = "Custom";
+    while (description[nameSize] && nameSize < 79u) {
+        unsigned char ch = (unsigned char)description[nameSize];
+        if (ch < 0x20u || ch > 0x7eu) break;
+        ++nameSize;
+    }
+    if (nameSize == 0) {
+        description = "Custom";
+        nameSize = 6u;
+    }
+    if (profileSize > (size_t)ULONG_MAX ||
+        compressBound((uLong)profileSize) > (uLong)UINT32_MAX -
+                           (uLong)(nameSize + 2u)) {
+        ok = false;
+        goto done;
+    }
+    compressedSize = compressBound((uLong)profileSize);
+    compressed = (uint8_t*)XMalloc_System((size_t)compressedSize);
+    payloadSize = nameSize + 2u + (size_t)compressedSize;
+    payload = (uint8_t*)XMalloc_System(payloadSize);
+    if (!compressed || !payload) {
+        ok = false;
+        goto done;
+    }
+    memcpy(payload, description, nameSize);
+    payload[nameSize] = 0;
+    payload[nameSize + 1u] = 0; /* PNG compression method: zlib */
+    if (compress2(compressed, &compressedSize, profileData,
+                  (uLong)profileSize, Z_DEFAULT_COMPRESSION) != Z_OK) {
+        ok = false;
+        goto done;
+    }
+    memcpy(payload + nameSize + 2u, compressed, (size_t)compressedSize);
+    ok = pngAppendChunk(out, "iCCP", payload,
+                        nameSize + 2u + (size_t)compressedSize);
+done:
+    if (compressed) XFree_System(compressed);
+    if (payload) XFree_System(payload);
+    XByteArray_delete_base((XClass*)profile);
+    return ok;
+}
+
+/* 写出 Qt QImage 使用的物理元数据。pHYs 的单位固定为米；oFFs 的单位
+ * 固定为像素。没有设置对应元数据时不追加块，以保持普通 PNG 的布局。 */
+static bool pngAppendPhysicalMetadata(const XImage* image, XByteArray* out)
+{
+    uint8_t payload[9];
+    XPoint offset;
+    int dpmX, dpmY;
+    if (!image || !out) return false;
+    XImage_offset(image, &offset);
+    if (offset.x != 0 || offset.y != 0) {
+        XImageCodecInternal_writeU32BE(payload, (uint32_t)(int32_t)offset.x);
+        XImageCodecInternal_writeU32BE(payload + 4, (uint32_t)(int32_t)offset.y);
+        payload[8] = 0; /* PNG_OFFSET_PIXEL */
+        if (!pngAppendChunk(out, "oFFs", payload, sizeof(payload)))
+            return false;
+    }
+    dpmX = XImage_dotsPerMeterX(image);
+    dpmY = XImage_dotsPerMeterY(image);
+    if (dpmX > 0 || dpmY > 0) {
+        XImageCodecInternal_writeU32BE(payload, (uint32_t)(dpmX > 0 ? dpmX : 0));
+        XImageCodecInternal_writeU32BE(payload + 4, (uint32_t)(dpmY > 0 ? dpmY : 0));
+        payload[8] = 1; /* PNG_RESOLUTION_METER */
+        if (!pngAppendChunk(out, "pHYs", payload, sizeof(payload)))
+            return false;
+    }
+    return true;
+}
+
 /* 写一个完整的 PNG chunk。 */
 static bool pngAppendChunk(XByteArray* out, const char type[4],
                            const uint8_t* data, size_t size)
@@ -59,6 +332,142 @@ static bool pngAppendChunk(XByteArray* out, const char type[4],
         return false;
     XImageCodecInternal_writeU32BE(crcData, pngChunkCrc(type, data, size));
     return XImageCodecInternal_appendBytes(out, crcData, sizeof(crcData));
+}
+
+/* 依据 Qt qpnghandler.cpp::set_text 的阈值和编码选择写出一个文本块。
+ * 关键词按 PNG 规范限制为 1..79 个 Latin-1 字节；XImage 的 UTF-8 键若
+ * 含非 ASCII 字节则跳过，避免产生 libpng 会拒绝的非法关键字。 */
+static bool pngAppendTextChunk(XByteArray* out, const char* key,
+                               size_t keyLen, const char* value,
+                               size_t valueLen)
+{
+    bool needsItxt = false;
+    bool compressText;
+    uint8_t* compressed = NULL;
+    uint8_t* payload = NULL;
+    size_t prefix, payloadSize;
+    uLongf compressedSize = 0;
+    const char* chunkType;
+    size_t i;
+    if (!out || !key || !value || keyLen == 0 || keyLen > 79u ||
+        valueLen > (size_t)PNG_MAX_TEXT_BYTES)
+        return false;
+    for (i = 0; i < keyLen; ++i) {
+        unsigned char ch = (unsigned char)key[i];
+        if (ch == 0 || ch > 0x7fu) return true; /* 非法键直接忽略 */
+    }
+    for (i = 0; i < valueLen; ++i) {
+        unsigned char ch = (unsigned char)value[i];
+        if (ch >= 0x80u || (ch < 0x20u && ch != '\n')) {
+            needsItxt = true;
+            break;
+        }
+    }
+    compressText = valueLen >= 40u;
+    if (needsItxt) {
+        /* keyword\0, compression flag/method, language="UTF-8"\0,
+         * translated keyword (same key)\0, text. */
+        prefix = keyLen + 1u + 2u + 6u + keyLen + 1u;
+        if (compressText) {
+            if (compressBound((uLong)valueLen) > (uLong)SIZE_MAX - prefix)
+                return false;
+            compressedSize = compressBound((uLong)valueLen);
+            compressed = (uint8_t*)XMalloc_System((size_t)compressedSize);
+            if (!compressed || compress2(compressed, &compressedSize,
+                                         (const uint8_t*)value,
+                                         (uLong)valueLen,
+                                         Z_DEFAULT_COMPRESSION) != Z_OK)
+                goto done;
+            payloadSize = prefix + (size_t)compressedSize;
+        } else {
+            if (valueLen > SIZE_MAX - prefix) return false;
+            payloadSize = prefix + valueLen;
+        }
+        chunkType = "iTXt";
+    } else {
+        /* tEXt: keyword\0 + Latin-1 text；zTXt: keyword\0 + method +
+         * zlib stream。这里 value 已确认是 ASCII，等价于 Latin-1。 */
+        prefix = keyLen + 1u + (compressText ? 2u : 0u);
+        if (compressText) {
+            if (compressBound((uLong)valueLen) > (uLong)SIZE_MAX - prefix)
+                return false;
+            compressedSize = compressBound((uLong)valueLen);
+            compressed = (uint8_t*)XMalloc_System((size_t)compressedSize);
+            if (!compressed || compress2(compressed, &compressedSize,
+                                         (const uint8_t*)value,
+                                         (uLong)valueLen,
+                                         Z_DEFAULT_COMPRESSION) != Z_OK)
+                goto done;
+            payloadSize = prefix + (size_t)compressedSize;
+            chunkType = "zTXt";
+        } else {
+            if (valueLen > SIZE_MAX - prefix) return false;
+            payloadSize = prefix + valueLen;
+            chunkType = "tEXt";
+        }
+    }
+    if (payloadSize > UINT32_MAX) goto done;
+    payload = (uint8_t*)XMalloc_System(payloadSize ? payloadSize : 1u);
+    if (!payload) goto done;
+    memcpy(payload, key, keyLen);
+    payload[keyLen] = 0;
+    if (!strcmp(chunkType, "iTXt")) {
+        size_t at = keyLen + 1u;
+        payload[at++] = compressText ? 1u : 0u;
+        payload[at++] = 0u;
+        memcpy(payload + at, "UTF-8", 5u);
+        at += 5u;
+        payload[at++] = 0u;
+        memcpy(payload + at, key, keyLen);
+        at += keyLen;
+        payload[at++] = 0u;
+        if (compressText)
+            memcpy(payload + at, compressed, (size_t)compressedSize);
+        else if (valueLen)
+            memcpy(payload + at, value, valueLen);
+    } else if (!strcmp(chunkType, "zTXt")) {
+        size_t at = keyLen + 1u;
+        payload[at++] = 0u;
+        memcpy(payload + at, compressed, (size_t)compressedSize);
+    } else if (valueLen) {
+        memcpy(payload + keyLen + 1u, value, valueLen);
+    }
+    {
+        bool ok = pngAppendChunk(out, chunkType, payload, payloadSize);
+        if (payload) XFree_System(payload);
+        if (compressed) XFree_System(compressed);
+        return ok;
+    }
+done:
+    if (payload) XFree_System(payload);
+    if (compressed) XFree_System(compressed);
+    return false;
+}
+
+/* 将 XImage 文本元数据逐项写出。Qt 的 QMap 已按键排序；XImage_setText
+ * 同样维护大小写敏感升序，因此直接按索引遍历即可保持稳定顺序。 */
+static bool pngAppendTexts(const XImage* image, XByteArray* out)
+{
+    int count, i;
+    if (!image || !out) return false;
+    count = XImage_textCount(image);
+    for (i = 0; i < count; ++i) {
+        const XString* key = XImage_textKey_const(image, i);
+        const XString* value;
+        const char* keyUtf8;
+        const char* valueUtf8;
+        if (!key) continue;
+        value = XImage_text_const(image, key);
+        if (!value) continue;
+        keyUtf8 = XString_toUtf8(key);
+        valueUtf8 = XString_toUtf8(value);
+        if (!keyUtf8 || !valueUtf8) continue;
+        if (!pngAppendTextChunk(out, keyUtf8,
+                                XString_toUtf8_length(key), valueUtf8,
+                                XString_toUtf8_length(value)))
+            return false;
+    }
+    return true;
 }
 
 /* 对已解压的扫描行做 PNG 反滤波（Filter 0..4）。
@@ -196,11 +605,23 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     int channels = 0, maxValue = 0;
     uint32_t palette[256];
     uint8_t trnsAlpha[256];
+    uint8_t* iccProfile = NULL;
+    size_t iccProfileSize = 0;
     int paletteCount = 0, trnsCount = 0;
     uint16_t trnsGray = 0, trnsR = 0, trnsG = 0, trnsB = 0;
     bool haveTrnsGray = false, haveTrnsRgb = false;
     bool haveIHDR = false, havePLTE = false, haveIDAT = false,
          haveIEND = false, haveTrns = false, idatEnded = false;
+    bool haveIcc = false, haveSrgb = false, haveGamma = false,
+         haveChrm = false;
+    bool havePhys = false, haveOffset = false;
+    uint32_t gammaRaw = 0;
+    uint32_t pixelsPerMeterX = 0, pixelsPerMeterY = 0;
+    int32_t offsetX = 0, offsetY = 0;
+    XColorSpacePrimariesData chrm;
+    XStringList textKeys;
+    XStringList textValues;
+    size_t textBytes = 0;
     XImage temp;
     bool ok = false;
 
@@ -208,6 +629,9 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
         return false;
     memset(palette, 0, sizeof(palette));
     memset(trnsAlpha, 0, sizeof(trnsAlpha));
+    memset(&chrm, 0, sizeof(chrm));
+    XStringList_init(&textKeys);
+    XStringList_init(&textValues);
 
     while (pos <= size && size - pos >= 12u) {
         uint32_t length = XImageCodecInternal_readU32BE(data + pos);
@@ -322,6 +746,71 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 continue;
             }
             haveTrns = true;
+        } else if (!memcmp(type, "iCCP", 4)) {
+            /* png_handle_iCCP() 只接受首个 profile；重复块发出警告并
+             * 保留先出现的数据。压缩失败按无效 profile 忽略，像 Qt
+             * fromIccProfile() 返回无效 QColorSpace 时仍继续读图。 */
+            if (!haveIcc && pngParseIccProfile(chunkData, length,
+                                               &iccProfile, &iccProfileSize))
+                haveIcc = true;
+        } else if (!memcmp(type, "sRGB", 4)) {
+            /* sRGB 的 rendering intent 不影响 QImage 色彩空间，但值必须
+             * 在 PNG 规范 0..3 范围内；libpng 对非法值只报告错误并忽略。 */
+            if (!haveSrgb && length == 1u && chunkData[0] <= 3u)
+                haveSrgb = true;
+        } else if (!memcmp(type, "gAMA", 4)) {
+            /* gAMA 用 1e5 倍定点保存文件 gamma，Qt 传入的是其倒数。 */
+            if (!haveGamma && length == 4u) {
+                uint32_t rawGamma = XImageCodecInternal_readU32BE(chunkData);
+                if (rawGamma != 0u) {
+                    gammaRaw = rawGamma;
+                    haveGamma = true;
+                }
+            }
+        } else if (!memcmp(type, "cHRM", 4)) {
+            /* cHRM 八个 1e5 倍定点坐标按 Qt 的 QPointF 传入；最终
+             * 有效性由 XColorSpace_create_custom() 的范围校验负责。 */
+            if (!haveChrm && length == 32u) {
+                chrm.m_whitePoint.x = (float)XImageCodecInternal_readU32BE(chunkData) / 100000.0f;
+                chrm.m_whitePoint.y = (float)XImageCodecInternal_readU32BE(chunkData + 4) / 100000.0f;
+                chrm.m_redPoint.x = (float)XImageCodecInternal_readU32BE(chunkData + 8) / 100000.0f;
+                chrm.m_redPoint.y = (float)XImageCodecInternal_readU32BE(chunkData + 12) / 100000.0f;
+                chrm.m_greenPoint.x = (float)XImageCodecInternal_readU32BE(chunkData + 16) / 100000.0f;
+                chrm.m_greenPoint.y = (float)XImageCodecInternal_readU32BE(chunkData + 20) / 100000.0f;
+                chrm.m_bluePoint.x = (float)XImageCodecInternal_readU32BE(chunkData + 24) / 100000.0f;
+                chrm.m_bluePoint.y = (float)XImageCodecInternal_readU32BE(chunkData + 28) / 100000.0f;
+                haveChrm = true;
+            }
+        } else if (!memcmp(type, "pHYs", 4)) {
+            /* qpnghandler.cpp 通过 png_get_x/y_pixels_per_meter() 读取
+             * 米制分辨率；非米制 pHYs 不改变 QImage 的 DPM。 */
+            if (!havePhys && length == 9u &&
+                pngChunkCrcValid(type, chunkData, length, true) &&
+                chunkData[8] == 1u) {
+                pixelsPerMeterX = XImageCodecInternal_readU32BE(chunkData);
+                pixelsPerMeterY = XImageCodecInternal_readU32BE(chunkData + 4);
+                havePhys = true;
+            }
+        } else if (!memcmp(type, "oFFs", 4)) {
+            /* Qt 仅在 unit_type == PNG_OFFSET_PIXEL 时设置 offset；负值
+             * 通过有符号 32 位 TIFF/PNG 字段原样保留。 */
+            if (!haveOffset && length == 9u &&
+                pngChunkCrcValid(type, chunkData, length, true) &&
+                chunkData[8] == 0u) {
+                offsetX = (int32_t)XImageCodecInternal_readU32BE(chunkData);
+                offsetY = (int32_t)XImageCodecInternal_readU32BE(chunkData + 4);
+                haveOffset = true;
+            }
+        } else if (!memcmp(type, "tEXt", 4) ||
+                   !memcmp(type, "zTXt", 4) ||
+                   !memcmp(type, "iTXt", 4)) {
+            /* Qt 通过 libpng 在 info/end 两阶段读取文本；坏 CRC 的
+             * ancillary 块只告警并忽略，合法重复键由 XImage_setText
+             * 在转移阶段按最后一次出现的值覆盖。 */
+            if (pngChunkCrcValid(type, chunkData, length, true))
+                (void)pngParseTextChunk((const char*)type, chunkData,
+                                        length, &textKeys, &textValues,
+                                        &textBytes);
         } else if (!memcmp(type, "IDAT", 4)) {
             if (!haveIHDR ||
                 (colorType == PNG_CT_PALETTE && !havePLTE))
@@ -693,12 +1182,73 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
             }
         }
     }
+    /* Qt 的色彩空间优先级为 iCCP > sRGB > gAMA+cHRM。iCCP 的语义
+     * 解析由后续 profile 解析器负责；当前先确保原始资源不丢失。 */
+    if (!haveIcc && haveSrgb) {
+        XImage_setColorSpace(&temp, XColorSpace_sRgb());
+    } else if (!haveIcc && haveGamma) {
+        XColorSpace colorSpace;
+        float gamma = 100000.0f / (float)gammaRaw;
+        if (haveChrm)
+            colorSpace = XColorSpace_create_custom(&chrm,
+                                                   XColorSpaceTransfer_Gamma,
+                                                   gamma);
+        else
+            colorSpace = XColorSpace_create_ex(XColorSpacePrimaries_SRgb,
+                                                XColorSpaceTransfer_Gamma,
+                                                gamma);
+        if (XColorSpace_isValid(&colorSpace))
+            XImage_setColorSpace(&temp, colorSpace);
+    }
+    if (haveIcc) {
+        XImageColorProfileSpec profileSpec;
+        memset(&profileSpec, 0, sizeof(profileSpec));
+        profileSpec.m_iccData = iccProfile;
+        profileSpec.m_iccSize = iccProfileSize;
+        (void)XImageCodecInternal_setColorProfile(&temp, &profileSpec);
+    }
+    if (havePhys) {
+        /* XImage 使用 int，与 Qt QImage 的公开 API 相同；超出 int 范围
+         * 的 PNG 值无法表达时按上限截断，避免实现定义的窄化溢出。 */
+        XImage_setDotsPerMeterX(&temp,
+                                pixelsPerMeterX > (uint32_t)INT_MAX
+                                    ? INT_MAX : (int)pixelsPerMeterX);
+        XImage_setDotsPerMeterY(&temp,
+                                pixelsPerMeterY > (uint32_t)INT_MAX
+                                    ? INT_MAX : (int)pixelsPerMeterY);
+    }
+    if (haveOffset) {
+        XPoint imageOffset;
+        imageOffset.x = (int)offsetX;
+        imageOffset.y = (int)offsetY;
+        XImage_setOffset(&temp, &imageOffset);
+    }
+    {
+        size_t textCount = XStringList_size_base((const XContainer*)&textKeys);
+        size_t i;
+        for (i = 0; i < textCount; ++i) {
+            const XString* key = (const XString*)XStringList_at_base(
+                (XVector*)&textKeys, (int64_t)i);
+            const XString* value = (const XString*)XStringList_at_base(
+                (XVector*)&textValues, (int64_t)i);
+            if (key && value) XImage_setText(&temp, key, value);
+        }
+    }
+    XStringList_deinit_base((XClass*)&textKeys);
+    XStringList_deinit_base((XClass*)&textValues);
+    if (iccProfile) {
+        XFree_System(iccProfile);
+        iccProfile = NULL;
+    }
     XImage_deinit_base(out);
     out->m_data = temp.m_data;
     temp.m_data = NULL;
     ok = true;
 
 fail:
+    XStringList_deinit_base((XClass*)&textKeys);
+    XStringList_deinit_base((XClass*)&textValues);
+    if (iccProfile) XFree_System(iccProfile);
     if (samples) XFree_System(samples);
     if (raw) XFree_System(raw);
     if (idat) XFree_System(idat);
@@ -772,6 +1322,9 @@ static bool pngEncodeIndexed(const XImage* image, XByteArray* out)
         goto done;
     if (trnsLen > 0 && !pngAppendChunk(out, "tRNS", trns, (size_t)trnsLen))
         goto done;
+    if (!pngAppendColorProfile(image, out)) goto done;
+    if (!pngAppendPhysicalMetadata(image, out)) goto done;
+    if (!pngAppendTexts(image, out)) goto done;
     if (!pngAppendChunk(out, "IDAT", compressed, (size_t)compressedSize) ||
         !pngAppendChunk(out, "IEND", NULL, 0))
         goto done;
@@ -832,6 +1385,9 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
     ihdr[8] = 8; ihdr[9] = 6;
     if (!XImageCodecInternal_appendBytes(out, "\x89PNG\r\n\x1a\n", 8) ||
         !pngAppendChunk(out, "IHDR", ihdr, sizeof(ihdr)) ||
+        !pngAppendColorProfile(image, out) ||
+        !pngAppendPhysicalMetadata(image, out) ||
+        !pngAppendTexts(image, out) ||
         !pngAppendChunk(out, "IDAT", compressed, (size_t)compressedSize) ||
         !pngAppendChunk(out, "IEND", NULL, 0))
         goto done;

@@ -17,13 +17,32 @@
 #if XIMAGEIOPLUGIN_ON
 
 static const char* const g_builtinFormats[] =
-    /* Qt JPEG 插件元数据声明 jpg/jpeg/jfif 三个格式键，三者共享 MIME。 */
-    { "bmp", "png", "jpg", "jpeg", "jfif", "gif", "svg", "dib" };
+    /* Qt 公共支持列表只列规范键；JPEG 别名和 PPM raw 子类型仍在
+       capabilities/create 中接受，但不作为独立插件键枚举。 */
+    { "bmp", "png", "jpg", "jpeg", "jfif", "gif",
+      "pbm", "pgm", "ppm",
+      "xbm", "xpm", "svg",
+#if XIMAGECODEC_ICO_ON
+      "ico", "cur",
+#endif
+      "dib" };
 static const char* const g_builtinMimeTypes[] =
     { "image/bmp", "image/png", "image/jpeg", "image/jpeg", "image/jpeg",
-      "image/gif", "image/svg+xml", "" };
+      "image/gif", "image/x-portable-bitmap", "image/x-portable-graymap",
+      "image/x-portable-pixmap",
+      "image/x-xbitmap", "image/x-xpixmap", "image/svg+xml",
+#if XIMAGECODEC_ICO_ON
+      "image/vnd.microsoft.icon", "image/vnd.microsoft.icon",
+#endif
+      "" };
 static const char* const g_builtinNameFilters[] =
-    { "*.bmp", "*.png", "*.jpg", "*.jpeg", "*.jfif", "*.gif", "*.svg", "" };
+    { "*.bmp", "*.png", "*.jpg", "*.jpeg", "*.jfif", "*.gif",
+      "*.pbm", "*.pgm", "*.ppm",
+      "*.xbm", "*.xpm", "*.svg",
+#if XIMAGECODEC_ICO_ON
+      "*.ico", "*.cur",
+#endif
+      "" };
 
 XCLASS_DEFINE_BEGING(XImageBuiltinHandler)
 XCLASS_DEFINE_EXTEND_END(XImageBuiltinHandler, XImageIOHandler)
@@ -185,11 +204,105 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
         if (bpp >= 4u) return XImageFormat_Indexed8;
         return XImageFormat_Mono;
     }
+    if (format == XImageCodecFormat_Ppm) {
+        XByteArray* bytes = XIODevice_peek_3(XImageIOHandler_device(self), 2);
+        const uint8_t* data;
+        size_t size;
+        uint8_t type;
+        if (!bytes) return XImageFormat_Invalid;
+        data = (const uint8_t*)XByteArray_data(bytes);
+        size = (size_t)XByteArray_size_base((const XContainer*)bytes);
+        if (!data || size < 2 || data[0] != 'P' ||
+            data[1] < '1' || data[1] > '6') {
+            XByteArray_delete_base((XClass*)bytes);
+            return XImageFormat_Invalid;
+        }
+        type = data[1];
+        XByteArray_delete_base((XClass*)bytes);
+        return (type == '1' || type == '4')
+            ? XImageFormat_Mono
+            : ((type == '2' || type == '5')
+                ? XImageFormat_Grayscale8 : XImageFormat_RGB32);
+    }
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm)
+        return XImageFormat_MonoLSB;
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (format == XImageCodecFormat_Xpm) {
+        XByteArray* bytes = XIODevice_peek_3(XImageIOHandler_device(self), 512);
+        int width = 0;
+        int height = 0;
+        if (!bytes) return XImageFormat_Invalid;
+        XImageFormat imageFormat = XImageFormat_Invalid;
+        if (!XImageCodecInternal_probeXpmImageFormat(
+                (const uint8_t*)XByteArray_data(bytes),
+                (size_t)XByteArray_size_base((const XContainer*)bytes),
+                &width, &height, &imageFormat)) {
+            XByteArray_delete_base((XClass*)bytes);
+            return XImageFormat_Invalid;
+        }
+        XByteArray_delete_base((XClass*)bytes);
+        /* QXpmHandler reports Indexed8 for <=256 colors and Invalid for
+           larger palettes until the complete table has been consumed. */
+        return imageFormat;
+    }
+#endif
+#if XIMAGECODEC_ICO_ON
+    if (format == XImageCodecFormat_Ico) {
+        XByteArray* bytes = XIODevice_peek_3(XImageIOHandler_device(self), 32);
+        int width = 0;
+        int height = 0;
+        uint16_t bitCount = 0;
+        if (!bytes) return XImageFormat_Invalid;
+        if (!XImageCodecInternal_probeIcoSize(
+                (const uint8_t*)XByteArray_data(bytes),
+                (size_t)XByteArray_size_base((const XContainer*)bytes),
+                &width, &height)) {
+            XByteArray_delete_base((XClass*)bytes);
+            return XImageFormat_Invalid;
+        }
+        if (XByteArray_size_base((const XContainer*)bytes) >= 14u)
+            bitCount = XImageCodecInternal_readU16LE(
+                (const uint8_t*)XByteArray_data(bytes) + 12u);
+        XByteArray_delete_base((XClass*)bytes);
+        /* Qt's QIcoHandler::option(ImageFormat) reports the directory
+           bit-count: 1-bit mono, 24-bit RGB32, 32-bit ARGB32, and indexed
+           for the remaining palette depths. */
+        if (bitCount == 1u || bitCount == 2u)
+            return XImageFormat_Mono;
+        if (bitCount == 24u)
+            return XImageFormat_RGB32;
+        if (bitCount == 32u)
+            return XImageFormat_ARGB32;
+        return XImageFormat_Indexed8;
+    }
+#endif
     /* The portable codec facade currently normalizes non-BMP decoded output
        to ARGB32; keep that as the handler's conservative image format. */
     if (format != XImageCodecFormat_Unknown)
         return XImageFormat_ARGB32;
     return XImageFormat_Invalid;
+}
+
+/* 从随机访问 JPEG 设备的头部读取 Qt 风格的 EXIF 方向变换。 */
+static XImageIOHandlerTransformation builtin_jpegTransformation(XIODevice* device)
+{
+    XByteArray* bytes;
+    int transformation = 0;
+    bool ok;
+    if (!device || XIODevice_isSequential(device))
+        return XImageIOHandlerTransformation_None;
+    bytes = XIODevice_peek_3(device, 262144);
+    if (!bytes) return XImageIOHandlerTransformation_None;
+    ok = XImageCodecInternal_probeJpegTransformation(
+        (const uint8_t*)XByteArray_data(bytes),
+        (size_t)XByteArray_size_base((const XContainer*)bytes),
+        &transformation);
+    XByteArray_delete_base((XClass*)bytes);
+    return ok && transformation >= 0 && transformation <= 7
+        ? (XImageIOHandlerTransformation)transformation
+        : XImageIOHandlerTransformation_None;
 }
 
 /* 选项支持必须随具体格式变化。Qt 的 QBmpHandler 只声明 Size 和
@@ -219,6 +332,29 @@ static bool builtin_supportsOption(const XImageIOHandler* self,
         }
         return false;
     }
+    if (format == XImageCodecFormat_Ppm) {
+        return option == XImageIOHandlerOption_Size ||
+               option == XImageIOHandlerOption_ImageFormat ||
+               option == XImageIOHandlerOption_SubType;
+    }
+    if (format == XImageCodecFormat_Jpeg &&
+        option == XImageIOHandlerOption_ImageTransformation) {
+        device = XImageIOHandler_device(self);
+        return device && XIODevice_isReadable(device);
+    }
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm) {
+        return option == XImageIOHandlerOption_Name ||
+               option == XImageIOHandlerOption_Size ||
+               option == XImageIOHandlerOption_ImageFormat;
+    }
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (format == XImageCodecFormat_Xpm)
+        return option == XImageIOHandlerOption_Name ||
+               option == XImageIOHandlerOption_Size ||
+               option == XImageIOHandlerOption_ImageFormat;
+#endif
     if (option == XImageIOHandlerOption_Size ||
         option == XImageIOHandlerOption_ImageFormat)
         return format != XImageCodecFormat_Unknown;
@@ -269,6 +405,56 @@ static bool builtin_writeBytes(XIODevice* device, const XByteArray* bytes)
     return XIODevice_flush(device);
 }
 
+#if XIMAGECODEC_XBM_ON
+/*
+ * 对齐 Qt 6.8 QXbmHandler::canRead(QIODevice*)：XBM 没有固定魔数，
+ * 处理器必须在保持设备位置不变的前提下解析完整的随机访问设备，
+ * 并拒绝正文中的非法十六进制字节。先做尺寸/分配上限检查，避免畸形
+ * 文件在能力探测阶段触发不受控的大块分配；随后复用同一解码器验证
+ * 首个数据行和截断正文语义。顺序设备由调用方按 Qt 规则提前拒绝。
+ */
+static bool builtin_validateXbmDevice(XIODevice* device)
+{
+    int64_t position;
+    int64_t totalSize;
+    int64_t remaining;
+    int width = 0;
+    int height = 0;
+    XSize imageSize;
+    XByteArray* bytes;
+    XImage image;
+    bool valid;
+
+    if (!device || XIODevice_isSequential(device))
+        return false;
+    position = XIODevice_pos_base(device);
+    totalSize = XIODevice_size_base(device);
+    if (position < 0 || totalSize <= position)
+        return false;
+    remaining = totalSize - position;
+    bytes = XIODevice_peek_3(device, remaining);
+    if (!bytes)
+        return false;
+    valid = XImageCodecInternal_probeXbmSize(
+        (const uint8_t*)XByteArray_data(bytes),
+        (size_t)XByteArray_size_base((const XContainer*)bytes),
+        &width, &height);
+    imageSize.width = width;
+    imageSize.height = height;
+    if (valid)
+        valid = XImageIOHandler_checkAllocation(&imageSize,
+                                                 XImageFormat_MonoLSB);
+    XImage_init(&image);
+    if (valid)
+        valid = XImageCodecInternal_decodeXbm(
+            (const uint8_t*)XByteArray_data(bytes),
+            (size_t)XByteArray_size_base((const XContainer*)bytes), &image);
+    XImage_deinit_base(&image);
+    XByteArray_delete_base((XClass*)bytes);
+    return valid;
+}
+#endif /* XIMAGECODEC_XBM_ON */
+
 static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
 {
     XIODevice* device;
@@ -283,10 +469,20 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
         format = builtin_detectWithDevice(device);
     if (format == XImageCodecFormat_Unknown || !XImageCodec_canDecode(format))
         return false;
+    /* QXbmHandler rejects sequential devices because probing requires a
+       complete parse followed by seeking back to the original position. */
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm && XIODevice_isSequential(device))
+        return false;
+#endif
     /* Qt treats the explicit BMP format as a hint.  A readable handler still has
      * to validate the device contents before accepting unrelated bytes. */
     detected = builtin_detectWithDevice(device);
     if (format != XImageCodecFormat_Dib && detected != format) return false;
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm && !builtin_validateXbmDevice(device))
+        return false;
+#endif
     /* QImageIOHandler::canRead() is const but the Qt base class deliberately
        exposes a const setFormat() overload so a handler can publish its
        canonical format after content probing. */
@@ -343,21 +539,50 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
 {
     XIODevice* device;
     XImageCodecFormat format;
+    const char* formatName;
+#if XIMAGECODEC_XBM_ON
+    const char* xbmName = "image";
+#endif
     XByteArray* bytes;
     int quality = -1;
     XImageIOHandlerOptionValue value;
     bool ok = false;
+    bool encoded = false;
     if (!self || !image || !(device = XImageIOHandler_device(self)))
         return false;
     format = XImageCodec_formatFromName_2(XImageIOHandler_format_2(self));
     if (format == XImageCodecFormat_Unknown || !XImageCodec_canEncode(format))
         return false;
+    formatName = XImageIOHandler_format_2(self);
     memset(&value, 0, sizeof(value));
     if (XImageIOHandler_optionValue(self, XImageIOHandlerOption_Quality, &value))
         quality = value.integer;
+#if XIMAGECODEC_XBM_ON
+    memset(&value, 0, sizeof(value));
+    if (format == XImageCodecFormat_Xbm &&
+        XImageIOHandler_optionValue(self, XImageIOHandlerOption_Name, &value) &&
+        value.string && XString_toUtf8(value.string) && XString_toUtf8(value.string)[0])
+        xbmName = XString_toUtf8(value.string);
+#endif
     bytes = XByteArray_create();
     if (!bytes) return false;
-    if (XImageCodec_encode(image, format, quality, bytes))
+#if XIMAGECODEC_PPM_ON
+    if (format == XImageCodecFormat_Ppm)
+        encoded = XImageCodecInternal_encodePpmSubtype(image, formatName, bytes);
+    else
+#endif
+#if XIMAGECODEC_XBM_ON
+    if (format == XImageCodecFormat_Xbm)
+        encoded = XImageCodecInternal_encodeXbmNamed(image, xbmName, bytes);
+    else
+#endif
+#if XIMAGECODEC_XPM_ON
+    if (format == XImageCodecFormat_Xpm)
+        encoded = XImageCodecInternal_encodeXpmNamed(image, formatName, bytes);
+    else
+#endif
+        encoded = XImageCodec_encode(image, format, quality, bytes);
+    if (encoded)
         ok = builtin_writeBytes(device, bytes);
     XByteArray_delete_base((XClass*)bytes);
     return ok;
@@ -368,7 +593,8 @@ static void VXImageBuiltinHandler_setOption(XImageIOHandler* self,
                                              const void* value)
 {
     if (builtin_supportsOption(self, option) &&
-        option == XImageIOHandlerOption_Quality)
+        (option == XImageIOHandlerOption_Quality ||
+         option == XImageIOHandlerOption_Name))
         XImageIOHandler_storeOptionValue(self, option, value);
 }
 
@@ -377,11 +603,40 @@ static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
                                          void* out)
 {
     XImageIOHandlerOptionValue* value = (XImageIOHandlerOptionValue*)out;
+#if XIMAGECODEC_XBM_ON
+    if (option == XImageIOHandlerOption_Name && value &&
+        builtin_supportsOption(self, option)) {
+        XImageIOHandlerOptionValue stored;
+        memset(&stored, 0, sizeof(stored));
+        if (!XImageIOHandler_optionValue(self, option, &stored)) return false;
+        value->string = stored.string;
+        return value->string != NULL;
+    }
+#endif
     if (option == XImageIOHandlerOption_Size && value)
         return builtin_imageSize((XImageIOHandler*)self, &value->size);
     if (option == XImageIOHandlerOption_Quality && value &&
         builtin_supportsOption(self, option))
         return XImageIOHandler_optionValue(self, option, value);
+    /* Qt QGifHandler::option(Animation) returns true whenever the handler
+       advertises Animation, including before the first frame is read. */
+    if (option == XImageIOHandlerOption_Animation && value &&
+        builtin_supportsOption(self, option)) {
+        value->boolean = true;
+        return true;
+    }
+    if (option == XImageIOHandlerOption_SubType && value &&
+        builtin_supportsOption(self, option)) {
+        value->string = XImageIOHandler_format_const(self);
+        return value->string && !XContainer_isEmpty_base(
+            (const XContainer*)value->string);
+    }
+    if (option == XImageIOHandlerOption_ImageTransformation && value &&
+        builtin_supportsOption(self, option)) {
+        value->transformation = builtin_jpegTransformation(
+            XImageIOHandler_device(self));
+        return true;
+    }
     if (option != XImageIOHandlerOption_ImageFormat || !value)
         return false;
     value->format = builtin_imageFormat((XImageIOHandler*)self);
@@ -471,6 +726,25 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
             detected = builtin_detectWithDevice(device);
             if (detected != XImageCodecFormat_Unknown) {
                 detectedName = XImageCodec_formatName(detected);
+                if (detected == XImageCodecFormat_Ppm) {
+                    XByteArray* head = XIODevice_peek_3(device, 2);
+                    const uint8_t* raw = head
+                        ? (const uint8_t*)XByteArray_data(head) : NULL;
+                    size_t rawSize = head
+                        ? (size_t)XByteArray_size_base((const XContainer*)head) : 0;
+                    if (raw && rawSize >= 2) {
+                        const char* subtype = (raw[1] == '1' || raw[1] == '4')
+                            ? "pbm" : ((raw[1] == '2' || raw[1] == '5')
+                                ? "pgm" : "ppm");
+                        XString* subtypeString = XString_create_utf8(subtype);
+                        if (subtypeString) {
+                            if (detectedName)
+                                XString_delete_base((XClass*)detectedName);
+                            detectedName = subtypeString;
+                        }
+                    }
+                    if (head) XByteArray_delete_base((XClass*)head);
+                }
                 if (detectedName) {
                     XImageIOHandler_setFormat(&handler->m_base, detectedName);
                     XString_delete_base((XClass*)detectedName);

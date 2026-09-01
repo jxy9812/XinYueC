@@ -5,6 +5,10 @@
 #include "XMovie.h"
 #include "XMemory.h"
 #include "XVarList.h"
+#include "XImageCodec.h"
+#if XIMAGEIOPLUGIN_ON
+#include "XImagePluginRegistry.h"
+#endif
 #include <string.h>
 #include <limits.h>
 
@@ -63,6 +67,20 @@ static void XMovie_resetPlayback(XMoviePrivate* data)
     data->m_nextDelay = 0;
     data->m_playCounter = -1;
     data->m_haveReadAll = false;
+    data->m_isFirstIteration = true;
+}
+
+/*
+ * Qt QMoviePrivate::_q_loadNextFrame()（qmovie.cpp:492-506）在播放结束
+ * 或非暂停读取失败时，只复位下一帧、循环计数和首次迭代标志；当前帧
+ * 仍保留给 currentImage()/currentPixmap()。与 resetPlayback() 不同，
+ * 这里不能清除已经显示的帧或已确认的 haveReadAll 状态。
+ */
+static void XMovie_resetAfterFinish(XMoviePrivate* data)
+{
+    if (!data) return;
+    data->m_nextFrame = 0;
+    data->m_playCounter = -1;
     data->m_isFirstIteration = true;
 }
 
@@ -399,7 +417,46 @@ static void VXMovie_move(XMovie* self, XMovie* other)
 }
 
 
-XStringList* XMovie_supportedFormats(void) { return XImageReader_supportedImageFormats(); }
+static bool XMovie_formatSupportsAnimation(const XString* format)
+{
+#if XIMAGEIOPLUGIN_ON
+    if (XImagePluginRegistry_supportsReadOption(
+            format, XImageIOHandlerOption_Animation))
+        return true;
+#endif
+#if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
+    /* 插件裁剪关闭时，动画能力由便携 GIF codec 直接提供；插件开启时
+       注册表路径已先覆盖内置处理器和 Drive 插件。 */
+    return XImageCodec_formatFromName(format) == XImageCodecFormat_Gif;
+#else
+    (void)format;
+    return false;
+#endif
+}
+
+XStringList* XMovie_supportedFormats(void)
+{
+    XStringList* all = XImageReader_supportedImageFormats();
+    XStringList* result = XStringList_create();
+    int64_t count;
+    int64_t i;
+    if (!result) {
+        if (all) XStringList_delete_base((XClass*)all);
+        return NULL;
+    }
+    if (!all) return result;
+    count = XStringList_size_base((const XContainer*)all);
+    for (i = 0; i < count; ++i) {
+        XString* format = (XString*)XStringList_at_base((XVector*)all, i);
+        const char* utf8 = format ? XString_toUtf8(format) : NULL;
+        if (format && utf8 && XMovie_formatSupportsAnimation(format))
+            XStringList_push_back_utf8(result, utf8);
+    }
+    XStringList_delete_base((XClass*)all);
+    XStringList_sort(result, XChar_CaseSensitive);
+    XStringList_removeDuplicates(result);
+    return result;
+}
 
 void XMovie_setDevice(XMovie* self, XIODevice* device)
 {
@@ -594,6 +651,7 @@ void XMovie_start(XMovie* self)
     if (!XMovie_loadFrame(self, data->m_nextFrame, false)) {
         XMovie_captureReaderError(self);
         XMovie_error_signal(self, XMovie_lastError(self));
+        XMovie_resetAfterFinish(data);
         XMovie_finished_signal(self);
         return;
     }
@@ -628,6 +686,7 @@ bool XMovie_jumpToNextFrame(XMovie* self)
         if (loops == 0) {
             data->m_haveReadAll = true;
             if (data->m_state != XMovieState_Paused) {
+                XMovie_resetAfterFinish(data);
                 XMovie_setState(self, XMovieState_NotRunning);
                 XMovie_finished_signal(self);
             }
@@ -639,6 +698,7 @@ bool XMovie_jumpToNextFrame(XMovie* self)
     if (!XMovie_loadFrame(self, frame, true)) {
         XMovie_captureReaderError(self);
         if (data->m_state != XMovieState_Paused) {
+            XMovie_resetAfterFinish(data);
             XMovie_setState(self, XMovieState_NotRunning);
             XMovie_finished_signal(self);
         }

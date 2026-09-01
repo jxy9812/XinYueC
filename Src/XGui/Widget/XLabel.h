@@ -86,8 +86,8 @@ typedef enum XLabelTextFormat
 typedef enum XLabelTextInteractionFlag
 {
     XLabelTextInteraction_NoTextInteraction          = 0x00, /**< 无交互。 */
-    XLabelTextInteraction_TextSelectableByMouse      = 0x01, /**< 鼠标可选（选择渲染仅程序化）。 */
-    XLabelTextInteraction_TextSelectableByKeyboard   = 0x02, /**< 键盘可选（未实现的受限项）。 */
+    XLabelTextInteraction_TextSelectableByMouse      = 0x01, /**< 鼠标可选（拖选与双击选词）。 */
+    XLabelTextInteraction_TextSelectableByKeyboard   = 0x02, /**< 键盘可选（方向键、Home/End、Ctrl+A）。 */
     XLabelTextInteraction_LinksAccessibleByMouse     = 0x04, /**< 鼠标可访问链接（默认）。 */
     XLabelTextInteraction_LinksAccessibleByKeyboard  = 0x08, /**< 键盘可访问链接（未实现的受限项）。 */
     XLabelTextInteraction_TextEditable               = 0x10  /**< 可编辑（未实现的受限项）。 */
@@ -396,7 +396,8 @@ void XLabel_setTextInteractionFlags(XLabel* self,
  * @details    参数为显示文本（剥离富文本标记后的可见文本）的 UTF-16
  *             代码单元偏移：start 为起点、length 为长度；start 与
  *             length 任一为 -1 时清除选择。选择仅影响绘制（Highlight /
- *             HighlightedText 着色），mouse 拖选与键盘选择为受限未实现项。
+ *             HighlightedText 着色）；鼠标拖选、双击选词与键盘选择均更新
+ *             同一选择状态，可继续通过 selectedText() 读取。
  * @param      start  起点（UTF-16 码元，从 0 开始）。
  * @param      length 长度（UTF-16 码元）。
  */

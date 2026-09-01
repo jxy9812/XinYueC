@@ -12,8 +12,15 @@
  *                                   扩展：渐进 SOF2、12 位、算术编码、CMYK/YCCK）
  *          4. XIMAGECODEC_GIF_ON   - GIF（GIF87a/GIF89a、全局/局部调色板、透明色；
  *                                   扩展：多帧动画 GCE 延迟/处置 + Netscape 循环）
- *          5. XIMAGECODEC_SVG_ON   - SVG（基础：内嵌 PNG / 纯色矩形栅格化；
+ *          5. XIMAGECODEC_PPM_ON   - PPM/PBM/PGM（P1-P6 ASCII 与二进制变体；
+ *                                   P4/P5/P6 子类型写出）
+ *          6. XIMAGECODEC_XBM_ON   - X11 XBM（MonoLSB 头部、十六进制位图；
+ *                                   支持读取和写出）
+ *          7. XIMAGECODEC_XPM_ON   - X11 XPM（C 字符串数组、调色板、透明色；
+ *                                   支持读取和写出）
+ *          8. XIMAGECODEC_SVG_ON   - SVG/SVGZ（普通 XML、gzip 压缩 SVG；
  *                                   扩展：路径/形状/文字/渐变/变换等矢量渲染）
+ *          9. XIMAGECODEC_ICO_ON   - ICO/CUR（首个条目、嵌入 PNG、1/4/8/24/32 位 DIB）
  *
  *        模块总开关 XIMAGECODEC_ON 在 XGuiConfig.h 中统一定义，此处仅
  *        提供兜底默认值；置 0 时裁剪整个 XImageCodec 对外公共 API 和全部
@@ -132,9 +139,29 @@ extern "C" {
 #define XIMAGECODEC_GIF_ANIM_ON 1
 #endif
 
+/** @brief PPM 家族（P1-P6：PBM/PGM/PPM ASCII 与二进制变体）。 */
+#ifndef XIMAGECODEC_PPM_ON
+#define XIMAGECODEC_PPM_ON 1
+#endif
+
+/** @brief X11 XBM 位图格式（MonoLSB 头部与十六进制字节数组）。 */
+#ifndef XIMAGECODEC_XBM_ON
+#define XIMAGECODEC_XBM_ON 1
+#endif
+
+/** @brief X11 XPM 彩色图格式（C 字符串数组、调色板与透明色）。 */
+#ifndef XIMAGECODEC_XPM_ON
+#define XIMAGECODEC_XPM_ON 1
+#endif
+
 /** @brief SVG 格式（基础：内嵌 PNG 或纯色矩形栅格化）。 */
 #ifndef XIMAGECODEC_SVG_ON
 #define XIMAGECODEC_SVG_ON 1
+#endif
+
+/** @brief Windows ICO/CUR 格式（首个目录条目、嵌入 PNG、24/32 位 DIB）。 */
+#ifndef XIMAGECODEC_ICO_ON
+#define XIMAGECODEC_ICO_ON 1
 #endif
 
 /** @brief SVG 扩展：矢量渲染（路径/矩形/圆/椭圆/线/折线/多边形、

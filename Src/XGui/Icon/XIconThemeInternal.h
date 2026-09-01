@@ -21,6 +21,12 @@ bool XIconInternal_resolveThemePixmapSize(const char* name, int size, XPixmap* o
 bool XIconInternal_resolveThemePixmapSizeScale(const char* name, int size,
                                                int iconScale, int outputSize,
                                                XPixmap* out);
+/* 按逻辑尺寸和整数目录倍率选择主题资源，并按完整物理宽高缩放。 */
+bool XIconInternal_resolveThemePixmapSizeScaleRect(const char* name, int size,
+                                                   int iconScale,
+                                                   int outputWidth,
+                                                   int outputHeight,
+                                                   XPixmap* out);
 /* 按主题选择源图标但不放大或缩小，用于 actualSize 获取固定资源尺寸。 */
 bool XIconInternal_resolveThemePixmapSourceSize(const char* name, int size,
                                                 XPixmap* out);
