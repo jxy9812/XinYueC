@@ -486,7 +486,7 @@ XString* XImageReader_imageFormat(const XString* fileName);
 /**
  * @brief 使用 UTF-8 文件名探测图像格式的兼容重载。
  * @param fileName UTF-8 编码的文件名。
- * @return UTF-8 格式名指针，由内部静态表持有；失败时返回 NULL，不得释放。
+ * @return UTF-8 格式名指针，由内部静态缓存持有（最多 255 个字节）；失败时返回 NULL，不得释放。
  */
 const char* XImageReader_imageFormat_2(const char* fileName);
 
@@ -499,7 +499,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device);
 /**
  * @brief 从设备探测图像格式并返回 UTF-8 兼容指针。
  * @param device 输入设备指针，由调用方持有。
- * @return UTF-8 格式名指针，由内部缓存持有；失败时返回 NULL。
+ * @return UTF-8 格式名指针，由内部缓存持有（最多 255 个字节）；失败时返回 NULL。
  */
 const char* XImageReader_imageFormatDevice_2(XIODevice* device);
 

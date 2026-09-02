@@ -271,6 +271,22 @@ static void test_picture_malformed_state_records(void)
                 "picture validator rejects invalid background mode");
     XPicture_deinit_base(&picture);
 
+#if XPAINTER_BRUSH_ON
+    {
+        XPainterGradient gradient;
+        XPicture_init(&picture, -1);
+        XPainterGradient_initLinear(&gradient, 0.0f, 0.0f, 4.0f, 0.0f);
+        XPainterGradient_addStop(&gradient, 0.0f, 0xffffffffu);
+        expect_true(XPicture_recordSetBrushGradient(&picture, &gradient),
+                    "malformed-gradient fixture records gradient");
+        /* Picture header (40) + record header (8) + fixed gradient payload
+           (48) reaches the first stop position at byte 96. */
+        expect_true(test_picture_invalid_u32(&picture, 96u, 0x7fc00000u),
+                    "picture validator rejects NaN gradient stop position");
+        XPicture_deinit_base(&picture);
+    }
+#endif /* XPAINTER_BRUSH_ON */
+
     XPicture_init(&picture, -1);
     expect_true(XPicture_recordDrawText(&picture, 0, 12, "A", 0xffffffffu,
                                         NULL),
@@ -965,6 +981,33 @@ static void test_icon_theme_index_inherits(void)
         XIcon_deinit_base(&shadow);
     }
 
+    /* Qt 以 index.theme 文件是否存在决定主题解析模式；即使
+       Directories 为空，也不能回退到传统 48x48/apps 目录。 */
+    expect_true(test_make_theme_dir(tmpRoot, "IndexedEmpty/48x48/apps"),
+                "empty index fixture creates legacy directory");
+    expect_true(test_write_text_file(
+                    "xgui_icon_theme_tmp/IndexedEmpty/index.theme",
+                    "[Icon Theme]\nName=IndexedEmpty\nDirectories=\n"),
+                "empty index fixture writes authoritative metadata");
+    XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xffcc6633u);
+    expect_true(XImage_save_2(
+                    &image,
+                    "xgui_icon_theme_tmp/IndexedEmpty/48x48/apps/legacy-shadow.bmp",
+                    "BMP", -1),
+                "empty index fixture writes legacy shadow icon");
+    XImage_deinit_base(&image);
+    XIcon_setThemeName_2("IndexedEmpty");
+    XIcon_setFallbackThemeName_2("");
+    XPixmap_init(&pixmap);
+    expect_true(!XIconInternal_resolveThemePixmapSize(
+                        "legacy-shadow", 48, &pixmap) &&
+                    !XIcon_hasThemeIcon_2("legacy-shadow"),
+                "empty index suppresses legacy directory probing");
+    XPixmap_deinit_base(&pixmap);
+    XIcon_setThemeName_2("Child");
+    XIcon_setFallbackThemeName_2("hicolor");
+
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSize(
                     "example-icon-tool", 48, &pixmap),
@@ -1008,6 +1051,99 @@ static void test_icon_theme_index_inherits(void)
     if (oldFallback) XString_delete_base((XClass*)oldFallback);
     if (newPaths) XStringList_delete_base((XClass*)newPaths);
 }
+
+#if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
+/** @brief 验证多个主题根目录同尺寸 PNG 条目的 Qt 插入顺序。 */
+static void test_icon_theme_search_root_order(void)
+{
+    const char* firstRoot = "xgui_icon_theme_root_first_tmp";
+    const char* secondRoot = "xgui_icon_theme_root_second_tmp";
+    const char* firstFile =
+        "xgui_icon_theme_root_first_tmp/Base/48x48/apps/root-order.png";
+    const char* secondFile =
+        "xgui_icon_theme_root_second_tmp/Base/48x48/apps/root-order.png";
+    XString* firstRootString = XString_create_utf8(firstRoot);
+    XString* secondRootString = XString_create_utf8(secondRoot);
+    XDir* firstDir = firstRootString ? XDir_create_2(firstRootString) : NULL;
+    XDir* secondDir = secondRootString ? XDir_create_2(secondRootString) : NULL;
+    XStringList* oldPaths = XIcon_themeSearchPaths_2();
+    XStringList* oldFallbackPaths = XIcon_fallbackSearchPaths_2();
+    XString* oldTheme = XIcon_themeName();
+    XString* oldFallback = XIcon_fallbackThemeName();
+    XStringList* paths = XStringList_create();
+    XStringList* emptyFallback = XStringList_create();
+    XImage image;
+    XPixmap pixmap;
+    bool ok;
+
+    if (firstDir) XDir_removeRecursively(firstDir);
+    if (secondDir) XDir_removeRecursively(secondDir);
+    expect_true(firstDir && secondDir &&
+                    test_make_theme_dir(firstRoot, "Base/48x48/apps") &&
+                    test_make_theme_dir(secondRoot, "Base/48x48/apps") &&
+                    test_write_text_file(
+                        "xgui_icon_theme_root_first_tmp/Base/index.theme",
+                        "[Icon Theme]\nName=Base\n"
+                        "Directories=48x48/apps\n\n"
+                        "[48x48/apps]\nSize=48\nType=Fixed\n") &&
+                    test_write_text_file(
+                        "xgui_icon_theme_root_second_tmp/Base/index.theme",
+                        "[Icon Theme]\nName=Base\n"
+                        "Directories=48x48/apps\n\n"
+                        "[48x48/apps]\nSize=48\nType=Fixed\n"),
+                "多根主题顺序夹具创建并写入 index.theme");
+
+    XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xff336699u);
+    expect_true(XImage_save_2(&image, firstFile, "PNG", -1),
+                "多根主题顺序夹具写入首个 PNG");
+    XImage_fill(&image, 0xffcc6633u);
+    expect_true(XImage_save_2(&image, secondFile, "PNG", -1),
+                "多根主题顺序夹具写入后置 PNG");
+    XImage_deinit_base(&image);
+
+    if (paths) {
+        XStringList_push_back_utf8(paths, firstRoot);
+        XStringList_push_back_utf8(paths, secondRoot);
+    }
+    XIcon_setThemeSearchPaths(paths);
+    XIcon_setFallbackSearchPaths(emptyFallback);
+    XIcon_setThemeName_2("Base");
+    XIcon_setFallbackThemeName_2("");
+    XPixmap_init(&pixmap);
+    ok = XIconInternal_resolveThemePixmapSize("root-order", 48, &pixmap);
+    expect_true(ok, "多根主题顺序解析图标成功");
+    if (ok) {
+        XImage_init(&image);
+        XPixmap_toImage(&pixmap, &image);
+        expect_true((XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0xcc6633u,
+                    "同尺寸 PNG 后置主题根覆盖前置根");
+        XImage_deinit_base(&image);
+    }
+    XPixmap_deinit_base(&pixmap);
+
+    XIcon_setThemeSearchPaths(oldPaths);
+    XIcon_setFallbackSearchPaths(oldFallbackPaths);
+    XIcon_setThemeName(oldTheme);
+    XIcon_setFallbackThemeName(oldFallback);
+    if (firstDir) {
+        XDir_removeRecursively(firstDir);
+        XDir_delete_base((XClass*)firstDir);
+    }
+    if (secondDir) {
+        XDir_removeRecursively(secondDir);
+        XDir_delete_base((XClass*)secondDir);
+    }
+    if (firstRootString) XString_delete_base((XClass*)firstRootString);
+    if (secondRootString) XString_delete_base((XClass*)secondRootString);
+    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
+    if (oldTheme) XString_delete_base((XClass*)oldTheme);
+    if (oldFallback) XString_delete_base((XClass*)oldFallback);
+    if (paths) XStringList_delete_base((XClass*)paths);
+    if (emptyFallback) XStringList_delete_base((XClass*)emptyFallback);
+}
+#endif /* XIMAGECODEC_ON && XIMAGECODEC_PNG_ON */
 
 /** @brief 验证没有 index.theme 时，fallbackThemeName 仍从主题搜索路径加载传统图标。 */
 static void test_icon_theme_fallback_legacy_search_path(void)
@@ -1408,6 +1544,63 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XVector_deinit_base((XClass*)&sizes);
         XIcon_deinit_base(&sizedIcon);
     }
+    /* Qt QIconLoaderEngine::availableSizes() 遍历每个已登记条目，不像
+       QPixmapIconEngine 那样对尺寸做 contains() 去重；同一逻辑尺寸在
+       两个 contentDirs 中出现时，返回列表应保留两个项目。 */
+    expect_true(test_make_theme_dir(tmpRoot, "Base/48x48/places"),
+                "theme engine duplicate-size fixture creates second directory");
+    XImage_init_ex(&source, 48, 48, XImageFormat_ARGB32);
+    XImage_fill(&source, 0xff6633ccu);
+    expect_true(XImage_save_2(
+                    &source,
+                    "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/"
+                    "duplicate-icon.bmp",
+                    "BMP", -1),
+                "theme engine duplicate-size fixture writes first icon");
+    expect_true(XImage_save_2(
+                    &source,
+                    "xgui_icon_theme_engine_paint_tmp/Base/48x48/places/"
+                    "duplicate-icon.bmp",
+                    "BMP", -1),
+                "theme engine duplicate-size fixture writes second icon");
+    XImage_deinit_base(&source);
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\n"
+                    "Directories=48x48/apps,48x48/places\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\n"
+                    "Context=Applications\n\n"
+                    "[48x48/places]\nSize=48\nType=Fixed\n"
+                    "Context=Places\n"),
+                "theme engine duplicate-size fixture rewrites metadata");
+    XIcon_setThemeSearchPaths(newPaths);
+    {
+        XIcon duplicateIcon;
+        XIconThemeEngine* duplicateEngine;
+        XVector duplicateSizes;
+        XSize* first;
+        XSize* second;
+        duplicateEngine = XIconThemeEngine_create_2_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, "duplicate-icon");
+        XIcon_init_engine(&duplicateIcon, (XIconEngine*)duplicateEngine);
+        XVector_init(&duplicateSizes, sizeof(XSize), true);
+        XIcon_availableSizes(&duplicateIcon, XIconMode_Normal,
+                             XIconState_Off, &duplicateSizes);
+        first = (XSize*)XVector_at_base(&duplicateSizes, 0);
+        second = (XSize*)XVector_at_base(&duplicateSizes, 1);
+        expect_true(XVector_size_base((const XContainer*)&duplicateSizes) == 2 &&
+                    first && second && first->width == 48 && first->height == 48 &&
+                    second->width == 48 && second->height == 48,
+                    "theme engine availableSizes preserves duplicate directory entries");
+        XVector_deinit_base((XClass*)&duplicateSizes);
+        XIcon_deinit_base(&duplicateIcon);
+    }
+    expect_true(test_replace_text_file(
+                    "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
+                    "[Icon Theme]\nName=Base\nDirectories=48x48/apps\n\n"
+                    "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n"),
+                "theme engine duplicate-size fixture restores metadata");
+    XIcon_setThemeSearchPaths(newPaths);
     expect_true(test_replace_text_file(
                     "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
                     "[Icon Theme]\nName=Base\nDirectories=48x48/apps\n\n"
@@ -5690,6 +5883,13 @@ static void test_painter_text_flags_contract(void)
     expect_true(XPainter_testRenderHint(&painter,
                                         XPainterRenderHint_Antialiasing),
                 "setRenderHint enables Antialiasing");
+    expect_true(XPainter_testRenderHint(
+                    &painter,
+                    (XPainterRenderHint)(XPainterRenderHint_Antialiasing |
+                                         XPainterRenderHint_TextAntialiasing)),
+                "testRenderHint matches any bit in a combined mask");
+    expect_true(!XPainter_testRenderHint(&painter, (XPainterRenderHint)0),
+                "testRenderHint rejects a zero mask");
     XPainter_setRenderHints(&painter,
                             XPainterRenderHint_Antialiasing |
                             XPainterRenderHint_TextAntialiasing,
@@ -6447,6 +6647,7 @@ static void test_painter_picture_brush_origin_record(void)
 static void test_painter_picture_brush_record(void)
 {
     XPicture picture;
+    XPicture gradientPicture;
     XPicture resetPicture;
     XPainter record;
     XPainter replay;
@@ -6486,8 +6687,46 @@ static void test_painter_picture_brush_record(void)
     XImage_deinit_base(&target);
     XPicture_deinit_base(&picture);
 
-    /* 渐变载荷不进入固定长度 Picture opcode，但从渐变切回纯色的
-       状态变化可以安全记录。验证回放会清除目标画刷中原有的渐变。 */
+    /* 渐变画刷使用独立便携 opcode 保存类型、几何参数和停止点；回放后
+       应恢复完整的 XPainterGradient 子集，而不是退化成纯色。 */
+    XPicture_init(&gradientPicture, -1);
+    XPainter_init(&record, NULL);
+    expect_true(XPainter_begin_picture(&record, &gradientPicture),
+                "gradient brush record begins picture");
+    XPainterGradient_initLinear(&gradient, 1.0f, 2.0f, 9.0f, 10.0f);
+    XPainterGradient_addStop(&gradient, 0.0f, 0xff112233u);
+    XPainterGradient_addStop(&gradient, 1.0f, 0xffaabbccu);
+    XPainter_setBrushGradient(&record, &gradient);
+    expect_true(XPainter_end(&record), "gradient brush record ends picture");
+    expect_true(XPicture_isValidStream(&gradientPicture) &&
+                    XPicture_size(&gradientPicture) ==
+                        XPICTURE_HEADER_SIZE + XPICTURE_RECORD_HEADER_SIZE +
+                        48u + 2u * 8u,
+                "gradient brush emits variable-size gradient record");
+    XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
+    XPainter_init(&replay, NULL);
+    expect_true(XPainter_begin_image(&replay, &target),
+                "gradient brush replay begins image");
+    expect_true(XPicture_play(&gradientPicture, &replay),
+                "gradient brush picture replays");
+    XPainter_brush(&replay, &brush);
+    expect_true(brush.m_style == XPainterBrushStyle_LinearGradientPattern &&
+                    brush.m_gradient.m_startX == 1.0f &&
+                    brush.m_gradient.m_startY == 2.0f &&
+                    brush.m_gradient.m_endX == 9.0f &&
+                    brush.m_gradient.m_endY == 10.0f &&
+                    brush.m_gradient.m_stopCount == 2 &&
+                    brush.m_gradient.m_stops[0].m_color == 0xff112233u &&
+                    brush.m_gradient.m_stops[1].m_color == 0xffaabbccu,
+                "gradient brush replay restores geometry and stops");
+    XPainter_end(&replay);
+    XPainter_deinit(&replay);
+    XPainter_deinit(&record);
+    XImage_deinit_base(&target);
+    XPicture_deinit_base(&gradientPicture);
+
+    /* 从渐变切回纯色仍使用固定长度基础画刷命令；验证回放会清除目标
+       画刷中原有的渐变载荷。 */
     XPicture_init(&resetPicture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &resetPicture),
@@ -7075,6 +7314,14 @@ static void test_icon_theme_engine_contract(void)
     XIconThemeEngine* engine;
     XIconEngine* clone;
 
+    /* Qt QIcon::hasThemeIcon(QString()) compares the empty request with the
+       empty theme-engine name and returns true; a NULL C pointer remains an
+       absent request and returns false. */
+    expect_true(XIcon_hasThemeIcon_2(""),
+                "hasThemeIcon preserves Qt empty-name comparison behavior");
+    expect_true(!XIcon_hasThemeIcon_2(NULL),
+                "hasThemeIcon rejects a NULL name pointer");
+
     XPixmap_init_ex(&fallbackPixmap, 4, 4);
     XIcon_init_pixmap(&fallbackIcon, &fallbackPixmap);
 
@@ -7083,18 +7330,23 @@ static void test_icon_theme_engine_contract(void)
 
     XIcon_fromTheme_2("__xinyuec_no_such_theme_icon__", NULL, &missing);
     expect_true(XIcon_isNull(&missing), "theme icon without fallback is null");
+    {
+        const char* missingName = XIcon_name_2(&missing);
+        expect_true(!missingName || missingName[0] == '\0',
+                    "theme icon public name is empty when lookup misses");
+    }
 
     engine = XIconThemeEngine_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                           "__xinyuec_no_such_theme_icon__");
     expect_true(engine != NULL, "theme engine create");
     name = XIconEngine_iconName_base((const XIconEngine*)engine);
-    expect_true(name != NULL && !XString_isEmpty_base((const XContainer*)name),
-                "theme engine iconName");
+    expect_true(name != NULL && XString_isEmpty_base((const XContainer*)name),
+                "theme engine iconName is empty when lookup misses");
     key = XIconEngine_key_base((const XIconEngine*)engine);
     expect_true(key != NULL && !XString_isEmpty_base((const XContainer*)key),
                 "theme engine key");
-    expect_true(key && strcmp(XString_toUtf8(key), "QIconLoaderEngine") == 0,
-                "theme engine key matches Qt QIconLoaderEngine");
+    expect_true(key && strcmp(XString_toUtf8(key), "QThemeIconEngine") == 0,
+                "theme engine key matches Qt QThemeIconEngine");
     clone = XIconEngine_clone_base((const XIconEngine*)engine);
     expect_true(clone != NULL, "theme engine clone");
     if (clone) XIconEngine_delete_base(clone);
@@ -7108,17 +7360,134 @@ static void test_icon_theme_engine_contract(void)
     XPixmap_deinit_base(&fallbackPixmap);
 }
 
+#if XFILE_ON && XIMAGECODEC_ON
+/** @brief 验证主题图标引擎按 Qt QDataStream 规则流化 UTF-16 名称。 */
+static void test_icon_theme_engine_serialization(void)
+{
+    const char* path = "xgui_icon_theme_engine_stream.tmp";
+    uint8_t malformedOdd[4] = { 0, 0, 0, 3 };
+    uint8_t malformedExtended[4] = { 0xff, 0xff, 0xff, 0xfe };
+    XString* pathString = XString_create_utf8(path);
+    XString* sourceName = XString_create_utf8("主题/图标");
+    XIconThemeEngine source;
+    XIconThemeEngine loaded;
+    XFile file;
+    bool opened;
+    bool wrote;
+    bool read;
+
+    expect_true(pathString && sourceName,
+                "theme engine stream fixture allocates names");
+    if (!pathString || !sourceName) {
+        if (sourceName) XString_delete_base((XClass*)sourceName);
+        if (pathString) XString_delete_base((XClass*)pathString);
+        return;
+    }
+
+    XFile_remove_static(pathString);
+    XIconThemeEngine_init(&source, sourceName);
+    XFile_init_2(&file, pathString);
+    opened = XFile_open_2(&file,
+                          XIODevice_WriteOnly | XIODevice_Truncate |
+                              XIODevice_Create, 0);
+    wrote = opened && XIconEngine_write_base((XIconEngine*)&source,
+                                             (XIODevice*)&file);
+    expect_true(wrote, "theme engine writes Qt-compatible UTF-16 stream");
+    XIODevice_close_base((XIODevice*)&file);
+    XClass_deinit_base((XClass*)&file);
+
+    XIconThemeEngine_init(&loaded, NULL);
+    XFile_init_2(&file, pathString);
+    opened = XFile_open_2(&file, XIODevice_ReadOnly, 0);
+    read = opened && XIconEngine_read_base((XIconEngine*)&loaded,
+                                           (XIODevice*)&file);
+    expect_true(read && loaded.m_iconName &&
+                    XString_equals_utf8(loaded.m_iconName, "主题/图标",
+                                        XChar_CaseSensitive),
+                "theme engine reads UTF-16 name with Qt byte order");
+    XIODevice_close_base((XIODevice*)&file);
+    XClass_deinit_base((XClass*)&file);
+    XIconThemeEngine_deinit_base(&loaded);
+    XIconThemeEngine_deinit_base(&source);
+
+    /* Qt length prefixes are byte counts; odd UTF-16 lengths are invalid. */
+    expect_true(test_write_binary_file(path, malformedOdd,
+                                       sizeof(malformedOdd), true),
+                "theme engine writes malformed odd-length fixture");
+    XIconThemeEngine_init(&loaded, NULL);
+    XFile_init_2(&file, pathString);
+    opened = XFile_open_2(&file, XIODevice_ReadOnly, 0);
+    read = opened && XIconEngine_read_base((XIconEngine*)&loaded,
+                                           (XIODevice*)&file);
+    expect_true(!read, "theme engine rejects odd UTF-16 byte length");
+    XIODevice_close_base((XIODevice*)&file);
+    XClass_deinit_base((XClass*)&file);
+    XIconThemeEngine_deinit_base(&loaded);
+
+    expect_true(test_write_binary_file(path, malformedExtended,
+                                       sizeof(malformedExtended), true),
+                "theme engine writes malformed extended-length fixture");
+    XIconThemeEngine_init(&loaded, NULL);
+    XFile_init_2(&file, pathString);
+    opened = XFile_open_2(&file, XIODevice_ReadOnly, 0);
+    read = opened && XIconEngine_read_base((XIconEngine*)&loaded,
+                                           (XIODevice*)&file);
+    expect_true(!read, "theme engine rejects unsupported extended length");
+    XIODevice_close_base((XIODevice*)&file);
+    XClass_deinit_base((XClass*)&file);
+    XIconThemeEngine_deinit_base(&loaded);
+
+    XFile_remove_static(pathString);
+    XString_delete_base((XClass*)sourceName);
+    XString_delete_base((XClass*)pathString);
+}
+#endif /* XFILE_ON && XIMAGECODEC_ON */
+
 static void test_icon_engine_hook_contract(void)
 {
     XIconEngine* engine;
     XIcon icon;
     XPixmap pixmap;
     XIconEngineScaledPixmapArgument argument;
+    XString* key;
+    XString* name;
+    XVector sizes;
+    XSize requested = { 5, 7 };
+    XSize availableSize = { 1, 1 };
     bool isNull = true;
 
     engine = XIconEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     expect_true(engine != NULL, "icon engine base create for hook contract");
     if (!engine) return;
+
+    /* Qt 6.8 QIconEngine 的基类默认契约：空 key/name、空尺寸列表、
+       isNull() 为 false；这些默认值由派生引擎按需覆盖。 */
+    key = XIconEngine_key_base(engine);
+    name = XIconEngine_iconName_base(engine);
+    XVector_init(&sizes, sizeof(XSize), true);
+    XVector_push_back_1_base(&sizes, &availableSize);
+    expect_true(key && XString_isEmpty_base((const XContainer*)key),
+                "base icon engine key is empty");
+    expect_true(name && XString_isEmpty_base((const XContainer*)name),
+                "base icon engine iconName is empty");
+    XIconEngine_availableSizes_base(engine, XIconMode_Normal,
+                                    XIconState_Off, &sizes);
+    expect_true(XVector_size_base((const XContainer*)&sizes) == 0,
+                "base icon engine availableSizes is empty");
+    expect_true(!XIconEngine_isNull_base(engine),
+                "base icon engine isNull defaults to false");
+    expect_true(!XIconEngine_read_base(engine, NULL) &&
+                !XIconEngine_write_base(engine, NULL),
+                "base icon engine read/write default to false");
+    XIconEngine_pixmap_base(engine, &requested, XIconMode_Normal,
+                            XIconState_Off, &pixmap);
+    expect_true(!XPixmap_isNull(&pixmap) && XPixmap_width(&pixmap) == 5 &&
+                XPixmap_height(&pixmap) == 7,
+                "base icon engine pixmap uses requested dimensions");
+    if (key) XString_delete_base((XClass*)key);
+    if (name) XString_delete_base((XClass*)name);
+    XPixmap_deinit_base(&pixmap);
+    XVector_deinit_base((XClass*)&sizes);
 
     XIcon_init_engine(&icon, engine);
     {
@@ -7215,6 +7584,66 @@ static void test_icon_paint_visual_alignment(void)
     expect_true((XImage_pixel(&target, 16, 0) & 0x00ffffffu) == 0x336699u &&
                 (XImage_pixel(&target, 15, 0) & 0x00ffffffu) == 0x0u,
                 "icon paint Leading alignment mirrors to the visual right in RTL");
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+
+    /* Qt qicon.cpp:1030-1038 computes center offsets by separately dividing
+       the rectangle and icon sizes; this differs from (delta / 2) for odd
+       dimensions (6/2 - 3/2 == 2, while 3/2 == 1). */
+    {
+        XPixmap oddSource;
+        XIcon oddIcon;
+        XImage_fill(&target, background);
+        XPixmap_init_ex(&oddSource, 3, 3);
+        XPixmap_fill(&oddSource, pixelColor);
+        XIcon_init_pixmap(&oddIcon, &oddSource);
+        expect_true(XPainter_begin_image(&painter, &target),
+                    "icon paint odd center begins image");
+        XIcon_paint(&oddIcon, &painter, 0, 0, 6, 6, XAlignment_Center,
+                    XIconMode_Normal, XIconState_Off);
+        expect_true(XPainter_end(&painter), "icon paint odd center ends image");
+        expect_true((XImage_pixel(&target, 2, 2) & 0x00ffffffu) == 0x336699u &&
+                    (XImage_pixel(&target, 1, 1) & 0x00ffffffu) == 0x0u,
+                    "icon paint odd center uses Qt separate integer division");
+        XIcon_deinit_base(&oddIcon);
+        XPixmap_deinit_base(&oddSource);
+    }
+
+    /* Qt visualAlignment includes AlignAbsolute in AlignHorizontal_Mask:
+       Absolute-only therefore remains at the physical origin, while a value
+       with no horizontal bit receives the default Left alignment. */
+    XImage_fill(&target, background);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint default alignment begins image");
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, 0u,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter), "icon paint default alignment ends image");
+    expect_true((XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+                "icon paint no horizontal flag defaults to physical left");
+
+    XImage_fill(&target, background);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint absolute alignment begins LTR image");
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    XPainter_setLayoutDirection(&painter, XPainterLayoutDirection_LeftToRight);
+#endif /* XPAINTER_LAYOUT_DIRECTION_ON */
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Absolute,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter),
+                "icon paint absolute alignment ends LTR image");
+    expect_true((XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+                "icon paint AlignAbsolute-only stays at physical left in LTR");
+
+#if XPAINTER_LAYOUT_DIRECTION_ON
+    XImage_fill(&target, background);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "icon paint absolute alignment begins RTL image");
+    XPainter_setLayoutDirection(&painter, XPainterLayoutDirection_RightToLeft);
+    XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Absolute,
+                XIconMode_Normal, XIconState_Off);
+    expect_true(XPainter_end(&painter),
+                "icon paint absolute alignment ends RTL image");
+    expect_true((XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+                "icon paint AlignAbsolute-only stays at physical left in RTL");
 #endif /* XPAINTER_LAYOUT_DIRECTION_ON */
 
     /* QIcon::paint 的状态保存必须成对发生；没有 save 回调时不能误调用 restore。 */
@@ -7434,6 +7863,7 @@ static int g_mockCapabilityCalls;
 static int g_mockSizeOptionCalls;
 static bool g_mockSupportsGamma;
 static float g_mockGamma;
+static int g_mockCanReadCalls;
 
 XCLASS_DEFINE_BEGING(TestImageHandler)
 XCLASS_DEFINE_EXTEND_END(TestImageHandler, XImageIOHandler)
@@ -7447,6 +7877,7 @@ typedef struct TestImageHandler
 static bool VTestImageHandler_canRead(const XImageIOHandler* self)
 {
     const XString* format = XImageIOHandler_format_const(self);
+    ++g_mockCanReadCalls;
     if (g_mockRejectSuffixCanRead && format &&
         XString_equals_utf8(format, "bmp", XChar_CaseInsensitive))
         return false;
@@ -7793,15 +8224,44 @@ static void test_image_handler_registry(void)
     XStringList* readerBmp = XImageReader_imageFormatsForMimeType_2("image/bmp");
     XStringList* readerJpeg = XImageReader_imageFormatsForMimeType_2("image/jpeg");
     XStringList* readerPpm = XImageReader_imageFormatsForMimeType_2("image/x-portable-pixmap");
+    XStringList* readerSvgz = XImageReader_imageFormatsForMimeType_2("image/svg+xml-compressed");
     XStringList* readerUpperBmp = XImageReader_imageFormatsForMimeType_2("IMAGE/BMP");
     XStringList* writerFormats = XImageWriter_supportedImageFormats();
     XStringList* writerUnknown = XImageWriter_imageFormatsForMimeType_2("image/png");
     XStringList* writerJpeg = XImageWriter_imageFormatsForMimeType_2("image/jpeg");
     XStringList* writerPpm = XImageWriter_imageFormatsForMimeType_2("image/x-portable-pixmap");
+    XStringList* writerSvgz = XImageWriter_imageFormatsForMimeType_2("image/svg+xml-compressed");
     XStringList* writerUpperPng = XImageWriter_imageFormatsForMimeType_2("IMAGE/PNG");
     const XString* format;
     int formatCount = 0;
+    int writerFormatCount;
     int mimeCount;
+
+#if !XIMAGEIOPLUGIN_ON
+    /* Qt QImageWriter creates a built-in handler for supportsOption() even
+       before a device is assigned.  The no-plugin crop uses direct codecs,
+       so the writer must preserve the same capability result and still keep
+       canWrite() in DeviceError until a device is provided. */
+#if XIMAGECODEC_BMP_ON
+    {
+        XImageWriter cropWriter;
+        XImageWriter_init(&cropWriter);
+        XImageWriter_setFormat_2(&cropWriter, "bmp");
+        expect_true(XImageWriter_supportsOption(
+                        &cropWriter, XImageIOHandlerOption_Size) &&
+                    XImageWriter_supportsOption(
+                        &cropWriter, XImageIOHandlerOption_ImageFormat),
+                    "no-plugin writer exposes built-in BMP options before device");
+        expect_true(!XImageWriter_supportsOption(
+                        &cropWriter, XImageIOHandlerOption_Quality),
+                    "no-plugin writer keeps unsupported BMP quality disabled");
+        expect_true(!XImageWriter_canWrite(&cropWriter) &&
+                    XImageWriter_error(&cropWriter) == XImageWriterError_DeviceError,
+                    "no-plugin writer still rejects missing device");
+        XImageWriter_deinit_base(&cropWriter);
+    }
+#endif /* XIMAGECODEC_BMP_ON */
+#endif /* !XIMAGEIOPLUGIN_ON */
 
     /* QImageIOHandler 基类 setOption() 为空操作，不能凭调用痕迹报告支持。 */
     XImageIOHandler_init(&baseHandler);
@@ -7919,7 +8379,7 @@ static void test_image_handler_registry(void)
     ++formatCount;
 #endif
 #if XIMAGECODEC_SVG_ON
-    ++formatCount;
+    formatCount += 2; /* Qt SVG 插件公开 svg 与只读 svgz 两个格式键。 */
 #endif
 #if XIMAGECODEC_PPM_ON
     formatCount += 3; /* Qt 内置表只公开规范键 pbm、pgm、ppm；raw 为可接受子类型。 */
@@ -7934,6 +8394,10 @@ static void test_image_handler_registry(void)
     formatCount += 2; /* Qt ICO 插件公开 ico 与 cur 两个格式键。 */
 #endif
     mimeCount = formatCount;
+    writerFormatCount = formatCount;
+#if XIMAGECODEC_SVG_ON
+    --writerFormatCount; /* 内置编码器只写普通 SVG，不写 gzip 封装。 */
+#endif
 #if XIMAGECODEC_JPEG_ON
     mimeCount -= 2; /* jpg/jpeg/jfif 共享 image/jpeg MIME。 */
 #endif
@@ -8000,22 +8464,61 @@ static void test_image_handler_registry(void)
                 "reader registry omits disabled JPEG format keys");
 #endif
 #if XIMAGEIOPLUGIN_ON && XIMAGECODEC_SVG_ON
-    /* Qt qtsvg/svg.json declares image/svg+xml-compressed for svgz, but the
-       embedded codec intentionally has no gzip reader.  Keep the ordinary
-       SVG MIME visible while refusing to advertise unsupported compression. */
+    /* Qt qtsvg/svg.json declares separate MIME entries for svg and svgz. */
     expect_true(readerMimes &&
                 XStringList_contains_utf8(readerMimes, "image/svg+xml",
                                           XChar_CaseSensitive),
                 "reader registry exposes ordinary SVG MIME type");
     expect_true(readerMimes &&
-                !XStringList_contains_utf8(readerMimes,
+                XStringList_contains_utf8(readerMimes,
                                            "image/svg+xml-compressed",
                                            XChar_CaseSensitive),
-                "reader registry omits unsupported compressed SVG MIME type");
+                "reader registry exposes compressed SVG MIME type");
+#endif
+#if XIMAGECODEC_SVG_ON
+    expect_true(readerFormats &&
+                XStringList_contains_utf8(readerFormats, "svgz",
+                                          XChar_CaseSensitive),
+                "reader registry exposes Qt SVGZ format key");
+    expect_true(readerSvgz &&
+                XStringList_size_base((const XContainer*)readerSvgz) == 1u &&
+                XString_equals_utf8((const XString*)XStringList_at_base(
+                                        (XVector*)readerSvgz, 0),
+                                    "svgz", XChar_CaseSensitive),
+                "reader SVGZ MIME lookup resolves compressed format key");
+#else
+    expect_true(!readerSvgz ||
+                XStringList_size_base((const XContainer*)readerSvgz) == 0u,
+                "reader SVGZ MIME lookup omits disabled codec");
 #endif
     expect_true(readerMimes && XStringList_size_base((const XContainer*)readerMimes) ==
                 (size_t)mimeCount,
                 "reader registry exposes built-in MIME types");
+#if XIMAGECODEC_PPM_ON
+    expect_true(readerMimes &&
+                XStringList_contains_utf8(readerMimes,
+                                          "image/x-portable-bitmap",
+                                          XChar_CaseSensitive) &&
+                XStringList_contains_utf8(readerMimes,
+                                          "image/x-portable-graymap",
+                                          XChar_CaseSensitive) &&
+                XStringList_contains_utf8(readerMimes,
+                                          "image/x-portable-pixmap",
+                                          XChar_CaseSensitive),
+                "reader MIME list exposes Qt PPM/PBM/PGM mappings");
+#endif
+#if XIMAGECODEC_XBM_ON
+    expect_true(readerMimes &&
+                XStringList_contains_utf8(readerMimes, "image/x-xbitmap",
+                                          XChar_CaseSensitive),
+                "reader MIME list exposes Qt XBM mapping");
+#endif
+#if XIMAGECODEC_XPM_ON
+    expect_true(readerMimes &&
+                XStringList_contains_utf8(readerMimes, "image/x-xpixmap",
+                                          XChar_CaseSensitive),
+                "reader MIME list exposes Qt XPM mapping");
+#endif
     expect_true(readerBmp && XStringList_size_base((const XContainer*)readerBmp) == 1,
                 "reader MIME lookup resolves exact MIME type");
     expect_true(readerJpeg && XStringList_size_base((const XContainer*)readerJpeg) ==
@@ -8054,8 +8557,15 @@ static void test_image_handler_registry(void)
     expect_true(readerUpperBmp && XStringList_size_base((const XContainer*)readerUpperBmp) == 0,
                 "reader MIME lookup keeps Qt case-sensitive MIME semantics");
     format = writerFormats ? (const XString*)XStringList_at_base((const XVector*)writerFormats, 0) : NULL;
-    expect_true(writerFormats && XStringList_size_base((const XContainer*)writerFormats) == (size_t)formatCount && format &&
+    expect_true(writerFormats && XStringList_size_base((const XContainer*)writerFormats) == (size_t)writerFormatCount && format &&
                 XString_equals_utf8(format, "bmp", XChar_CaseSensitive), "writer registry exposes BMP codec");
+    expect_true(!writerFormats ||
+                !XStringList_contains_utf8(writerFormats, "svgz",
+                                           XChar_CaseSensitive),
+                "writer registry keeps SVGZ read-only");
+    expect_true(writerSvgz &&
+                XStringList_size_base((const XContainer*)writerSvgz) == 0u,
+                "writer SVGZ MIME lookup rejects read-only format");
     expect_true(writerUnknown && XStringList_size_base((const XContainer*)writerUnknown) == 1,
                 "writer MIME lookup returns the matching codec format");
     expect_true(writerJpeg && XStringList_size_base((const XContainer*)writerJpeg) ==
@@ -8086,11 +8596,13 @@ static void test_image_handler_registry(void)
     if (readerBmp) XStringList_delete_base((XClass*)readerBmp);
     if (readerJpeg) XStringList_delete_base((XClass*)readerJpeg);
     if (readerPpm) XStringList_delete_base((XClass*)readerPpm);
+    if (readerSvgz) XStringList_delete_base((XClass*)readerSvgz);
     if (readerUpperBmp) XStringList_delete_base((XClass*)readerUpperBmp);
     if (writerFormats) XStringList_delete_base((XClass*)writerFormats);
     if (writerUnknown) XStringList_delete_base((XClass*)writerUnknown);
     if (writerJpeg) XStringList_delete_base((XClass*)writerJpeg);
     if (writerPpm) XStringList_delete_base((XClass*)writerPpm);
+    if (writerSvgz) XStringList_delete_base((XClass*)writerSvgz);
     if (writerUpperPng) XStringList_delete_base((XClass*)writerUpperPng);
 }
 
@@ -8118,6 +8630,19 @@ static void test_image_reader_decide_format_state(void)
     XImage strictImage;
     XRect emptyRect;
 
+    /* Qt QImageReader::canRead() 在完全没有设备时先报告 DeviceError；
+       该错误优先于关闭自动探测时的空格式拒绝。 */
+    {
+        XImageReader noDeviceReader;
+        XImageReader_init(&noDeviceReader);
+        XImageReader_setAutoDetectImageFormat(&noDeviceReader, false);
+        expect_true(!XImageReader_canRead(&noDeviceReader) &&
+                    XImageReader_error(&noDeviceReader) ==
+                        XImageReaderError_DeviceError,
+                    "reader reports device error before empty-format rejection when no device is set");
+        XImageReader_deinit_base(&noDeviceReader);
+    }
+
 #if XIMAGEIOPLUGIN_ON && XIMAGECODEC_BMP_ON
     {
         XImageReader strictNoFormatReader;
@@ -8140,6 +8665,28 @@ static void test_image_reader_decide_format_state(void)
                     "reader size stays invalid when Qt handler initialization fails");
         XImageReader_deinit_base(&strictNoFormatReader);
 
+        /* Qt treats an explicitly assigned empty QByteArray exactly like an
+           unset format: disabling autodetection must not fall through to a
+           content probe, even when decideFormatFromContent is also enabled. */
+        {
+            XImageReader strictEmptyFormatReader;
+            XImage strictEmptyFormatImage;
+            XImageReader_init_file_2(&strictEmptyFormatReader,
+                                     "xgui_reader_strict_no_format.bmp", "bmp");
+            XImageReader_setFormat_2(&strictEmptyFormatReader, "");
+            XImageReader_setAutoDetectImageFormat(&strictEmptyFormatReader, false);
+            XImageReader_setDecideFormatFromContent(&strictEmptyFormatReader, true);
+            XImage_init(&strictEmptyFormatImage);
+            expect_true(!XImageReader_canRead(&strictEmptyFormatReader) &&
+                        XImageReader_error(&strictEmptyFormatReader) ==
+                            XImageReaderError_UnsupportedFormatError &&
+                        !XImageReader_read(&strictEmptyFormatReader,
+                                           &strictEmptyFormatImage),
+                        "reader rejects explicit empty format when autodetect is disabled");
+            XImage_deinit_base(&strictEmptyFormatImage);
+            XImageReader_deinit_base(&strictEmptyFormatReader);
+        }
+
         XImageReader_init_file_2(&strictUnknownReader,
                                  "xgui_reader_strict_no_format.bmp", "unknown");
         XImageReader_setAutoDetectImageFormat(&strictUnknownReader, false);
@@ -8148,6 +8695,11 @@ static void test_image_reader_decide_format_state(void)
                     XImageReader_error(&strictUnknownReader) ==
                         XImageReaderError_UnsupportedFormatError,
                     "reader canRead reports unsupported explicit format");
+        expect_true(!XImageReader_supportsOption(
+                        &strictUnknownReader, XImageIOHandlerOption_Size) &&
+                    XImageReader_error(&strictUnknownReader) ==
+                        XImageReaderError_UnsupportedFormatError,
+                    "reader supportsOption preserves unsupported format error");
         expect_true(!XImageReader_read(&strictUnknownReader, &strictUnknownImage) &&
                     XImageReader_error(&strictUnknownReader) ==
                         XImageReaderError_UnsupportedFormatError,
@@ -8177,6 +8729,69 @@ static void test_image_reader_decide_format_state(void)
     expect_true(XImageReader_autoDetectImageFormat(&reader),
                 "disabling content decision leaves auto-detect enabled");
     XImageReader_deinit_base(&reader);
+
+#if !XIMAGEIOPLUGIN_ON
+    {
+        XImageReader croppedUnknownReader;
+        XFile croppedUnknownFile;
+        XImage croppedUnknownFixture;
+        XString* croppedUnknownName = XString_create_utf8(
+            "xgui_reader_cropped_unknown.bmp");
+        XImage_init_ex(&croppedUnknownFixture, 1, 1, XImageFormat_ARGB32);
+        XImage_setPixel(&croppedUnknownFixture, 0, 0, 0xff102030u);
+        expect_true(XImage_save_2(&croppedUnknownFixture,
+                                  "xgui_reader_cropped_unknown.bmp",
+                                  "bmp", -1),
+                    "writes fixture for cropped unknown-format error");
+        XFile_init_2(&croppedUnknownFile, croppedUnknownName);
+        XIODevice_open_base((XIODevice*)&croppedUnknownFile,
+                            XIODevice_ReadOnly);
+        XImageReader_init_device_2(&croppedUnknownReader,
+                                   (XIODevice*)&croppedUnknownFile,
+                                   "unsupported-format");
+        XImageReader_setAutoDetectImageFormat(&croppedUnknownReader, false);
+        expect_true(!XImageReader_canRead(&croppedUnknownReader) &&
+                    XImageReader_error(&croppedUnknownReader) ==
+                        XImageReaderError_UnsupportedFormatError,
+                    "cropped reader reports unsupported explicit format");
+        XImageReader_deinit_base(&croppedUnknownReader);
+#if XIMAGECODEC_BMP_ON && XIMAGECODEC_PNG_ON
+        {
+            XImageReader matchingReader;
+            XImageReader mismatchReader;
+            XImage mismatchImage;
+            XImageReader_init_file_2(&matchingReader,
+                                     "xgui_reader_cropped_unknown.bmp",
+                                     "bmp");
+            XImageReader_setAutoDetectImageFormat(&matchingReader, false);
+            expect_true(XImageReader_canRead(&matchingReader),
+                        "cropped reader accepts an explicit format matching the device signature");
+            XImageReader_deinit_base(&matchingReader);
+
+            /* Qt 的显式格式处理器仍须验证内容；仅因 png codec 可用，
+               不能把 BMP 数据报告为可读。 */
+            XImageReader_init_file_2(&mismatchReader,
+                                     "xgui_reader_cropped_unknown.bmp",
+                                     "png");
+            XImageReader_setAutoDetectImageFormat(&mismatchReader, false);
+            expect_true(!XImageReader_canRead(&mismatchReader),
+                        "cropped reader rejects an explicit format mismatching the device signature");
+            XImage_init(&mismatchImage);
+            expect_true(!XImageReader_read(&mismatchReader, &mismatchImage),
+                        "cropped reader does not decode a mismatched explicit format");
+            XImage_deinit_base(&mismatchImage);
+            XImageReader_deinit_base(&mismatchReader);
+        }
+#endif
+        XIODevice_close_base((XIODevice*)&croppedUnknownFile);
+        XClass_deinit_base((XClass*)&croppedUnknownFile);
+        XImage_deinit_base(&croppedUnknownFixture);
+        if (croppedUnknownName)
+            XFile_remove_static(croppedUnknownName);
+        if (croppedUnknownName)
+            XString_delete_base((XClass*)croppedUnknownName);
+    }
+#endif
 
     XImageReader_init_file_2(&fileReader, "xgui_reader_lifecycle_missing.bmp", NULL);
     expect_true(XImageReader_device(&fileReader) != NULL,
@@ -8531,6 +9146,32 @@ static void test_image_plugin_registry_integration(void)
     plugin = TestImagePlugin_create();
     expect_true(plugin != NULL, "mock plugin is created");
     if (!plugin) return;
+    /* QFactoryLoader 的图像插件键表默认大小写敏感；用户格式虽然会
+       先转小写，但插件元数据中的大写键不应因此被错误命中。 */
+    {
+        TestImagePlugin* upperPlugin = TestImagePlugin_create();
+        XString* upperKey = NULL;
+        XString* lowerQuery = XString_create_utf8("uppermock");
+        bool upperAdded = false;
+        if (upperPlugin) {
+            upperKey = (XString*)XStringList_at_base(
+                (XVector*)upperPlugin->m_keys, 0);
+            if (upperKey)
+                XString_assign_utf8(upperKey, "UPPERMOCK");
+            upperAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)upperPlugin);
+        }
+        expect_true(upperAdded && lowerQuery &&
+                    !XImagePluginRegistry_supportsReadFormat(lowerQuery) &&
+                    !XImagePluginRegistry_supportsWriteFormat(lowerQuery),
+                    "plugin metadata keys remain case-sensitive like Qt");
+        if (upperAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)upperPlugin);
+        if (upperPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)upperPlugin);
+        if (lowerQuery)
+            XString_delete_base((XClass*)lowerQuery);
+    }
     expect_true(XImagePluginRegistry_addPlugin((XImageIOPlugin*)plugin),
                 "mock plugin registers into registry");
     {
@@ -8565,6 +9206,65 @@ static void test_image_plugin_registry_integration(void)
                 XImageWriter_error(&writer) == XImageWriterError_DeviceError,
                 "writer still rejects canWrite without a device");
     XImageWriter_deinit_base(&writer);
+
+    /* C 字符串兼容重载必须保留合法的长插件格式键，不能复用旧的
+       16 字节临时缓存而静默截断。 */
+    {
+        static const char longFormat[] = "xinyue-long-format-123";
+        TestImagePlugin* longPlugin = TestImagePlugin_create();
+        XString* longKey = NULL;
+        XString* longFileName = XString_create_utf8(
+            "xgui_long_format.xinyue-long-format-123");
+        XFile* longFile = NULL;
+        bool longAdded = false;
+        const char* detectedLongFormat;
+        if (longPlugin) {
+            longKey = (XString*)XStringList_at_base(
+                (XVector*)longPlugin->m_keys, 0);
+            if (longKey)
+                XString_assign_utf8(longKey, longFormat);
+            longAdded = XImagePluginRegistry_addPlugin(
+                (XImageIOPlugin*)longPlugin);
+        }
+        longFile = longFileName ? XFile_create_2(longFileName) : NULL;
+        if (longFile && XIODevice_open_base((XIODevice*)longFile,
+                                            XIODevice_WriteOnly)) {
+            char marker = 'x';
+            (void)XIODevice_write_1((XIODevice*)longFile, &marker, 1);
+            XIODevice_close_base((XIODevice*)longFile);
+        }
+        g_mockImageWidth = 1;
+        g_mockImageHeight = 1;
+        g_mockPluginSetsFormat = true;
+        detectedLongFormat = XImageReader_imageFormat_2(
+            "xgui_long_format.xinyue-long-format-123");
+        expect_true(longAdded && detectedLongFormat &&
+                    strcmp(detectedLongFormat, longFormat) == 0,
+                    "imageFormat UTF-8 overload preserves long plugin keys");
+        {
+            const char* detectedLongDevice = NULL;
+            if (longFile &&
+                XIODevice_open_base((XIODevice*)longFile,
+                                    XIODevice_ReadOnly))
+                detectedLongDevice = XImageReader_imageFormatDevice_2(
+                    (XIODevice*)longFile);
+            expect_true(longAdded && detectedLongDevice &&
+                        strcmp(detectedLongDevice, longFormat) == 0,
+                        "imageFormatDevice UTF-8 overload preserves long plugin keys");
+            if (longFile && XIODevice_isOpen((XIODevice*)longFile))
+                XIODevice_close_base((XIODevice*)longFile);
+        }
+        g_mockPluginSetsFormat = false;
+        if (longFile) XClass_delete_base((XClass*)longFile);
+        if (longFileName) {
+            XFile_remove_static(longFileName);
+            XString_delete_base((XClass*)longFileName);
+        }
+        if (longAdded)
+            XImagePluginRegistry_removePlugin((XImageIOPlugin*)longPlugin);
+        if (longPlugin)
+            XImageIOPlugin_delete_base((XImageIOPlugin*)longPlugin);
+    }
 
     formats = XImageReader_supportedImageFormats();
     expect_true(formats != NULL &&
@@ -8900,6 +9600,7 @@ static void test_image_plugin_registry_integration(void)
         if (staticSuffixDevice)
             (void)XIODevice_open_base((XIODevice*)staticSuffixDevice,
                                       XIODevice_ReadOnly);
+        g_mockCanReadCalls = 0;
         if (staticSuffixDevice && XIODevice_isOpen((XIODevice*)staticSuffixDevice))
             staticSuffixFormat = XImageReader_imageFormatDevice(
                 (XIODevice*)staticSuffixDevice);
@@ -8907,6 +9608,8 @@ static void test_image_plugin_registry_integration(void)
                     XString_equals_utf8(staticSuffixFormat, "bmp",
                                         XChar_CaseInsensitive),
                     "static imageFormat honors QFile suffix priority and builtin fallback");
+        expect_true(g_mockCanReadCalls == 1,
+                    "static imageFormat checks a rejected suffix handler only once");
         if (staticSuffixFormat)
             XString_delete_base((XClass*)staticSuffixFormat);
         if (staticSuffixDevice) {
@@ -9469,6 +10172,34 @@ static void test_image_codec_round_trip(void)
     expect_true(XImage_load_2(&decoded, "xgui_codec.png", "png") && XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2,
                 "XImage delegates PNG file load to codec");
     { XString* codecFile = XString_create_utf8("xgui_codec.png"); XFile_remove_static(codecFile); if (codecFile) XString_delete_base((XClass*)codecFile); }
+#if XIMAGECODEC_PNG_ON
+    /* QImage::save() 将空格式与 NULL 格式同样按文件后缀推断；覆盖
+       C 接口调用方常见的显式空字符串输入。 */
+    expect_true(XImage_save_2(&source, "xgui_codec_empty_format.png", "", -1),
+                "XImage save with empty format honors PNG suffix");
+    {
+        XString* codecFile = XString_create_utf8("xgui_codec_empty_format.png");
+        XFile_remove_static(codecFile);
+        if (codecFile) XString_delete_base((XClass*)codecFile);
+    }
+#endif /* XIMAGECODEC_PNG_ON */
+#if XIMAGECODEC_XPM_ON
+    /* QImage::load(fileName, nullptr) 先按最终文件后缀选择处理器；
+       XPM 没有可靠的二进制魔数，因此仅做内容探测会漏掉此路径。 */
+    expect_true(XImage_save_2(&source, "xgui_codec_auto.xpm", "xpm", -1),
+                "XImage writes XPM fixture for automatic suffix loading");
+    XImage_deinit_base(&decoded);
+    XImage_init(&decoded);
+    expect_true(XImage_load_2(&decoded, "xgui_codec_auto.xpm", NULL) &&
+                    XImage_width(&decoded) == 3 &&
+                    XImage_height(&decoded) == 2,
+                "XImage load without format honors XPM filename suffix");
+    {
+        XString* codecFile = XString_create_utf8("xgui_codec_auto.xpm");
+        XFile_remove_static(codecFile);
+        if (codecFile) XString_delete_base((XClass*)codecFile);
+    }
+#endif /* XIMAGECODEC_XPM_ON */
     XImage_deinit_base(&decoded);
     XImage_deinit_base(&source);
 }
@@ -10006,6 +10737,98 @@ static void test_codec_ppm_family(void)
         XImage_deinit_base(&image);
         remove(path);
     }
+#if XIMAGEIOPLUGIN_ON
+    /* Qt 的内置 QPpmHandler 接受 raw 子类型作为显式格式，但不会把它们
+       加入 supportedImageFormats()。验证注册表仍能创建该处理器，读取时
+       接受请求的 raw 子类型并在 canRead() 后规范化为文件头子类型。 */
+    {
+        const char* rawInputPath = "xgui_ppm_raw_alias_input.dat";
+        const char* rawOutputPath = "xgui_pbm_raw_alias_output.dat";
+        XImageReader rawReader;
+        XImageWriter rawWriter;
+        XImage rawImage;
+        XImage rawSource;
+        XString* rawInputName = XString_create_utf8(rawInputPath);
+        XString* rawOutputName = XString_create_utf8(rawOutputPath);
+        expect_true(test_write_binary_file(rawInputPath, p6,
+                                           sizeof(p6), true),
+                    "PPM raw 别名读取夹具写入成功");
+        XImageReader_init_file_2(&rawReader, rawInputPath, "ppmraw");
+        expect_true(XImageReader_canRead(&rawReader) &&
+                        XImageReader_subType_2(&rawReader) &&
+                        strcmp(XImageReader_subType_2(&rawReader), "ppm") == 0,
+                    "显式 ppmraw 读取后按文件头规范化为 ppm 子类型");
+        XImage_init(&rawImage);
+        expect_true(XImageReader_read(&rawReader, &rawImage) &&
+                        XImage_pixel(&rawImage, 0, 0) == 0xffff0000u,
+                    "显式 ppmraw 通过内置处理器读取 P6 像素");
+        XImage_deinit_base(&rawImage);
+        XImageReader_deinit_base(&rawReader);
+
+        /* QPpmHandler::setOption(SubType) 必须复制 QVariant 内容；把
+           option(SubType) 返回的借用字符串原样传回时也不能先释放源值。 */
+        {
+            XImageIOPlugin* builtin = XImageBuiltinPlugin_instance();
+            XString* probeFormat = XString_create_utf8("PBMRAW");
+            XFile probeFile;
+            XImageIOHandler* probeHandler = NULL;
+            XImageIOHandlerOptionValue borrowed;
+            XImageIOHandlerOptionValue copied;
+            bool probeOpened = false;
+            XFile_init_2(&probeFile, rawOutputName);
+            probeOpened = XFile_open_2(&probeFile, XIODevice_WriteOnly, 0);
+            if (probeOpened && builtin && probeFormat)
+                probeHandler = XImageIOPlugin_create_base(
+                    builtin, (XIODevice*)&probeFile, probeFormat);
+            memset(&borrowed, 0, sizeof(borrowed));
+            expect_true(probeOpened && probeHandler &&
+                            XImageIOHandler_option_base(
+                                probeHandler, XImageIOHandlerOption_SubType,
+                                &borrowed) && borrowed.string,
+                        "PPM 处理器返回可借用的 SubType 字符串");
+            if (probeHandler && borrowed.string)
+                XImageIOHandler_setOption_base(
+                    probeHandler, XImageIOHandlerOption_SubType, &borrowed);
+            memset(&copied, 0, sizeof(copied));
+            expect_true(probeHandler &&
+                            XImageIOHandler_option_base(
+                                probeHandler, XImageIOHandlerOption_SubType,
+                                &copied) && copied.string &&
+                            strcmp(XString_toUtf8(copied.string), "pbmraw") == 0,
+                        "SubType 自引用 setOption 深拷贝后仍保持值");
+            if (probeHandler) XImageIOHandler_delete_base(probeHandler);
+            if (probeOpened) XIODevice_close_base((XIODevice*)&probeFile);
+            XClass_deinit_base((XClass*)&probeFile);
+            if (probeFormat) XString_delete_base((XClass*)probeFormat);
+        }
+
+        XImage_init_ex(&rawSource, 2, 1, XImageFormat_ARGB32);
+        XImage_setPixel(&rawSource, 0, 0, 0xff000000u);
+        XImage_setPixel(&rawSource, 1, 0, 0xffffffffu);
+        XImageWriter_init_file_2(&rawWriter, rawOutputPath, "pbmraw");
+        expect_true(XImageWriter_write(&rawWriter, &rawSource),
+                    "显式 pbmraw 通过内置处理器写出 P4");
+        XImageWriter_deinit_base(&rawWriter);
+        XImage_deinit_base(&rawSource);
+        XImageReader_init_file_2(&rawReader, rawOutputPath, "pbmraw");
+        XImage_init(&rawImage);
+        expect_true(XImageReader_read(&rawReader, &rawImage) &&
+                        XImage_width(&rawImage) == 2 &&
+                        XImage_pixel(&rawImage, 0, 0) == 0xff000000u &&
+                        XImage_pixel(&rawImage, 1, 0) == 0xffffffffu,
+                    "显式 pbmraw 写出结果可由同一内置别名读取");
+        XImage_deinit_base(&rawImage);
+        XImageReader_deinit_base(&rawReader);
+        if (rawInputName) {
+            XFile_remove_static(rawInputName);
+            XString_delete_base((XClass*)rawInputName);
+        }
+        if (rawOutputName) {
+            XFile_remove_static(rawOutputName);
+            XString_delete_base((XClass*)rawOutputName);
+        }
+    }
+#endif /* XIMAGEIOPLUGIN_ON */
 #else
     expect_true(true, "PPM 家族已由 XIMAGECODEC_PPM_ON 裁剪");
 #endif /* XIMAGECODEC_PPM_ON */
@@ -10199,6 +11022,29 @@ static void test_codec_xpm(void)
         "\"2 0 1 1\",\n"
         "\". c None\",\n"
         "};\n";
+    static const uint8_t alphaHex[] =
+        "/* XPM */\n"
+        "static char *icon[] = {\n"
+        "\"1 1 1 1\",\n"
+        "\". c #804080c0\",\n"
+        "\".\"\n"
+        "};\n";
+    static const uint8_t duplicateKey[] =
+        "/* XPM */\n"
+        "static char *icon[] = {\n"
+        "\"1 1 2 1\",\n"
+        "\". c #ff0000\",\n"
+        "\". c #00ff00\",\n"
+        "\".\"\n"
+        "};\n";
+    static const uint8_t hashCollision[] =
+        "/* XPM */\n"
+        "static char *icon[] = {\n"
+        "\"1 1 2 5\",\n"
+        "\"aaaaa c #ff0000\",\n"
+        "\"baaaa c #00ff00\",\n"
+        "\"aaaaa\"\n"
+        "};\n";
     XImage image;
     XImage decoded;
     XImage fileDecoded;
@@ -10271,6 +11117,29 @@ static void test_codec_xpm(void)
         XByteArray_delete_base((XClass*)encoded);
         encoded = NULL;
     }
+    XImage_deinit_base(&image);
+
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(hashCollision, sizeof(hashCollision) - 1u,
+                                   XImageCodecFormat_Xpm, &image) &&
+                XImage_pixelIndex(&image, 0, 0) == 1 &&
+                XImage_color(&image, 1) == 0xff00ff00u,
+                "XPM 哈希碰撞按 Qt QMap 键覆盖为后出现颜色");
+    XImage_deinit_base(&image);
+
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(alphaHex, sizeof(alphaHex) - 1u,
+                                   XImageCodecFormat_Xpm, &image) &&
+                XImage_pixel(&image, 0, 0) == 0xff804080u,
+                "XPM 按 Qt 规则去除 ImageMagick 尾部 alpha");
+    XImage_deinit_base(&image);
+
+    XImage_init(&image);
+    expect_true(XImageCodec_decode(duplicateKey, sizeof(duplicateKey) - 1u,
+                                   XImageCodecFormat_Xpm, &image) &&
+                XImage_pixelIndex(&image, 0, 0) == 1 &&
+                XImage_color(&image, 1) == 0xff00ff00u,
+                "XPM 重复像素键按 Qt QMap 插入语义以后出现颜色覆盖");
     XImage_deinit_base(&image);
 
     XImage_init(&image);
@@ -11513,6 +12382,25 @@ static void test_codec_svg_gzip(void)
                 XImage_pixel(&image, 1, 1) == 0xff224466u,
                 "SVGZ gzip decodes vector content");
     XImage_deinit_base(&image);
+
+    /* QImageReader::imageFormat() reports the compressed plugin key when the
+       imageformats plugin layer is enabled; the no-plugin crop deliberately
+       keeps this static Handler query unavailable. */
+#if XIMAGEIOPLUGIN_ON
+    {
+        static const char path[] = "xgui_svgz_format_probe.svgz";
+        const char* detected;
+        expect_true(test_write_binary_file(path, gzip, gzipSize, true),
+                    "SVGZ format probe fixture written");
+        detected = XImageReader_imageFormat_2(path);
+        expect_true(detected && strcmp(detected, "svgz") == 0,
+                    "reader content probe preserves SVGZ format key");
+        remove(path);
+    }
+#else
+    expect_true(XImageReader_imageFormat_2("xgui_svgz_format_probe.svgz") == NULL,
+                "no-plugin crop does not expose SVGZ static Handler query");
+#endif
 }
 #endif /* XIMAGECODEC_SVG_ON */
 
@@ -11986,6 +12874,203 @@ static void test_codec_png_text_metadata(void)
     XByteArray_delete_base((XClass*)encoded);
     XImage_deinit_base(&source);
 }
+
+/* 对照 Qt 6.8 QImageWriter::setText()/QPngHandler::write：写入器把多次
+ * setText() 记录合并为 Description，PNG 端再解析为排序后的文本键值。
+ * 该夹具走文件设备，因而同时覆盖插件处理器和裁剪后的直写路径。 */
+static void test_codec_png_writer_description(void)
+{
+    const char* path = "xgui_png_writer_description.png";
+    XImage source;
+    XImage decoded;
+    XImageWriter writer;
+    XImageReader reader;
+    XString* pathString;
+    XImage decorated;
+    XString* description;
+
+    XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&source, 0, 0, 0xff204060u);
+    description = XString_create_utf8("Title: writer title\n\nDescription: writer description");
+    XImage_init(&decorated);
+    XImage_copy_base(&decorated, &source);
+    expect_true(description && XImage_applyTextDescription(&decorated, description) &&
+                strcmp(XImage_text_2(&decorated, "Title"), "writer title") == 0 &&
+                strcmp(XImage_text_2(&decorated, "Description"), "writer description") == 0,
+                "PNG Description 文本内部解析成功");
+    if (description) XString_delete_base((XClass*)description);
+    XImage_deinit_base(&decorated);
+    XImageWriter_init_file_2(&writer, path, "png");
+    XImageWriter_setText_2(&writer, "Title", "  writer title  ");
+    XImageWriter_setText_2(&writer, "Description", "  writer description  ");
+    {
+        bool canWrite = XImageWriter_canWrite(&writer);
+        bool didWrite = XImageWriter_write(&writer, &source);
+        expect_true(canWrite && didWrite,
+                "QImageWriter PNG Description 文件写入成功");
+    }
+    XImageWriter_deinit_base(&writer);
+
+    XImageReader_init_file_2(&reader, path, "png");
+#if XIMAGEIOPLUGIN_ON
+    {
+        XStringList* textKeys = XImageReader_textKeys(&reader);
+        expect_true(textKeys && XStringList_contains_utf8(textKeys, "Title",
+                                                          XChar_CaseSensitive) &&
+                    XStringList_contains_utf8(textKeys, "Description",
+                                              XChar_CaseSensitive),
+                    "QImageReader 在 read 前暴露 PNG 文本键");
+        expect_true(!strcmp(XImageReader_text_2(&reader, "Title"),
+                            "writer title") &&
+                    !strcmp(XImageReader_text_2(&reader, "Description"),
+                            "writer description"),
+                    "QImageReader 在 read 前返回 PNG 文本值");
+        if (textKeys) XStringList_delete_base((XClass*)textKeys);
+    }
+#else
+    /* 裁剪掉 XImageIOPlugin 后没有 QPngHandler 实例，Qt 兼容层不伪造
+       Reader 的文本元数据查询；直写/直读 codec 仍在下方单独验证。 */
+    expect_true(true, "no-plugin crop leaves PNG Reader text metadata unavailable");
+#endif
+    XImageReader_deinit_base(&reader);
+
+    XImage_init(&decoded);
+    expect_true(XImage_load_2(&decoded, path, "png"),
+                "QImageWriter PNG Description 输出可读");
+    expect_true(strcmp(XImage_text_2(&decoded, "Title"), "writer title") == 0 &&
+                strcmp(XImage_text_2(&decoded, "Description"),
+                       "writer description") == 0,
+                "QImageWriter Description 键值按 Qt simplified 规则往返");
+    XImage_deinit_base(&decoded);
+    XImage_deinit_base(&source);
+    pathString = XString_create_utf8(path);
+    if (pathString) {
+        XFile_remove_static(pathString);
+        XString_delete_base((XClass*)pathString);
+    }
+}
+
+/* 对照 Qt 6.8 qpnghandler.cpp::write_png_image：compression 优先于
+ * quality，并按 [0,100] 映射到 zlib [0,9]；gamma=2.2 写为 1/2.2*100000。 */
+static void test_codec_png_writer_options(void)
+{
+    XImage source;
+    XByteArray* fast = NULL;
+    XByteArray* slow = NULL;
+    XByteArray* gamma = NULL;
+    const uint8_t* bytes;
+    size_t size, i;
+    bool hasGamma = false;
+    uint32_t gammaValue = 0;
+
+    XImage_init_ex(&source, 64, 64, XImageFormat_ARGB32);
+    for (i = 0; i < 64u * 64u; ++i)
+        XImage_setPixel(&source, (int)(i % 64u), (int)(i / 64u),
+                        0xff204060u);
+    fast = XByteArray_create();
+    slow = XByteArray_create();
+    gamma = XByteArray_create();
+    expect_true(fast && slow && gamma &&
+                XImageCodecInternal_encodePngOptions(&source, -1, 0, 0.0f,
+                                                      NULL, fast) &&
+                XImageCodecInternal_encodePngOptions(&source, -1, 100, 0.0f,
+                                                      NULL, slow),
+                "PNG CompressionRatio 选项编码成功");
+    expect_true(fast && slow &&
+                XByteArray_size_base((const XContainer*)fast) !=
+                    XByteArray_size_base((const XContainer*)slow),
+                "PNG CompressionRatio 0/100 映射为不同 zlib 等级");
+    expect_true(gamma &&
+                XImageCodecInternal_encodePngOptions(&source, -1, -1, 2.2f,
+                                                      NULL, gamma),
+                "PNG Gamma 选项编码成功");
+    if (gamma) {
+        bytes = (const uint8_t*)XByteArray_data(gamma);
+        size = XByteArray_size_base((const XContainer*)gamma);
+        for (i = 8u; i + 12u <= size;) {
+            uint32_t length = XImageCodecInternal_readU32BE(bytes + i);
+            if (length > size - i - 12u) break;
+            if (!memcmp(bytes + i + 4u, "gAMA", 4u) && length == 4u) {
+                gammaValue = XImageCodecInternal_readU32BE(bytes + i + 8u);
+                hasGamma = true;
+                break;
+            }
+            i += 12u + (size_t)length;
+        }
+    }
+    expect_true(hasGamma && gammaValue == 45455u,
+                "PNG Gamma 2.2 写出 Qt 兼容 gAMA 定点值");
+    if (fast) XByteArray_delete_base((XClass*)fast);
+    if (slow) XByteArray_delete_base((XClass*)slow);
+    if (gamma) XByteArray_delete_base((XClass*)gamma);
+    XImage_deinit_base(&source);
+}
+
+#if XIMAGEIOPLUGIN_ON
+/* 对照 Qt 6.8 QPngHandler::option(Gamma)：读侧返回文件 gAMA 的倒数
+ * （编码器写入 1/gamma），且查询不应消费 QFile 的当前位置。该夹具
+ * 直接走注册表处理器，覆盖内置插件的创建、头部预扫描和选项回传。 */
+static void test_codec_png_reader_gamma(void)
+{
+    const char* path = "xgui_png_reader_gamma.png";
+    XImage source;
+    XByteArray* encoded = NULL;
+    XString* pathString = NULL;
+    XFile* file = NULL;
+    XImageIOHandler* handler = NULL;
+    XImageIOHandlerOptionValue value;
+    bool wrote;
+    int64_t initialPos = -1;
+    int64_t queriedPos = -1;
+
+    XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&source, 0, 0, 0xff304050u);
+    encoded = XByteArray_create();
+    expect_true(encoded &&
+                XImageCodecInternal_encodePngOptions(&source, -1, -1,
+                                                      2.2f, NULL, encoded),
+                "PNG Gamma 读侧夹具编码成功");
+    pathString = XString_create_utf8(path);
+    wrote = encoded && pathString && test_write_binary_file(
+        path, XByteArray_data(encoded),
+        (size_t)XByteArray_size_base((const XContainer*)encoded), true);
+    expect_true(wrote, "PNG Gamma 读侧夹具写入文件成功");
+    if (wrote)
+        file = XFile_create_2(pathString);
+    if (file)
+        expect_true(XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly),
+                    "PNG Gamma 读侧文件设备打开成功");
+    if (file) {
+        initialPos = XIODevice_pos_base((XIODevice*)file);
+        handler = XImagePluginRegistry_createReadHandler(
+            (XIODevice*)file, NULL);
+    }
+    expect_true(handler && XImageIOHandler_supportsOption_base(
+                    handler, XImageIOHandlerOption_Gamma),
+                "PNG 内置处理器声明 Gamma 读取选项");
+    memset(&value, 0, sizeof(value));
+    if (handler)
+        expect_true(XImageIOHandler_option_base(
+                        handler, XImageIOHandlerOption_Gamma, &value) &&
+                    fabs((double)value.real - (1.0 / 2.2)) < 0.00001,
+                    "PNG QPngHandler::option(Gamma) 返回文件 gamma 倒数");
+    if (file)
+        queriedPos = XIODevice_pos_base((XIODevice*)file);
+    expect_true(initialPos >= 0 && queriedPos == initialPos,
+                "PNG Gamma 选项查询保持文件设备位置");
+    if (handler) XImageIOHandler_delete_base(handler);
+    if (file) {
+        XIODevice_close_base((XIODevice*)file);
+        XClass_delete_base((XClass*)file);
+    }
+    if (pathString) {
+        XFile_remove_static(pathString);
+        XString_delete_base((XClass*)pathString);
+    }
+    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XImage_deinit_base(&source);
+}
+#endif /* XIMAGEIOPLUGIN_ON */
 
 static void test_codec_png_physical_metadata(void)
 {
@@ -13315,8 +14400,24 @@ static void test_image_pixel_contract(void)
                             (grayPixel & 0x00ffffffu) <= 0x003a3a3au &&
                             ((grayPixel >> 16) & 0xffu) == ((grayPixel >> 8) & 0xffu) &&
                             ((grayPixel >> 8) & 0xffu) == (grayPixel & 0xffu),
-                            "QImage color transform applies RGB primaries before grayscale luma");
+                        "QImage color transform applies RGB primaries before grayscale luma");
             }
+        }
+        {
+            XColorTransform identity;
+            const int64_t before = XImage_cacheKey(&premultiplied);
+            identity.m_source = XColorSpace_sRgb();
+            identity.m_target = XColorSpace_sRgb();
+            XImage_applyColorTransform(&premultiplied, &identity,
+                                       XImageFormat_Invalid, 0, &sameSpace);
+            expect_true(!XImage_isNull(&sameSpace) &&
+                        XImage_cacheKey(&sameSpace) == before &&
+                        XImage_cacheKey(&premultiplied) == before,
+                        "QImage identity color transform preserves shared cache key");
+            XImage_applyColorTransform(&premultiplied, &identity,
+                                       XImageFormat_Invalid, 0, &premultiplied);
+            expect_true(XImage_cacheKey(&premultiplied) == before,
+                        "QImage in-place identity color transform is a no-op");
         }
         {
             XColorSpace targetGray = XColorSpace_create_gray(
@@ -16684,6 +17785,59 @@ static void test_gui_application_contract(void)
                     "screenAt 空区域返回 NULL");
         dpr = XGuiApplication_devicePixelRatio();
         expect_true(dpr > 1.99f && dpr < 2.01f, "devicePixelRatio 取主屏 2.0");
+
+#if XIMAGECODEC_ON
+        /* Qt qicon.cpp:1178-1181 在 QPixmapIconEngine 登记基础文件后，
+           按 qt_findAtNxFile()（:2015-2047）追加 @2x 兄弟；验证文件构造
+           也继承主屏 DPR，并由 reader 将兄弟像素标记为 2.0。 */
+        {
+            XImage baseImage;
+            XImage highImage;
+            XIcon fileIcon;
+            XVector iconSizes;
+            XPixmap iconPixmap;
+            XSize* firstSize;
+            XSize* secondSize;
+            XImage_init_ex(&baseImage, 2, 2, XImageFormat_ARGB32);
+            XImage_fill(&baseImage, 0xff224466u);
+            XImage_init_ex(&highImage, 4, 4, XImageFormat_ARGB32);
+            XImage_fill(&highImage, 0xff6688aau);
+            expect_true(XImage_save_2(&baseImage, "xgui_icon_atnx.bmp",
+                                      "BMP", -1),
+                        "icon @Nx fixture writes base image");
+            expect_true(XImage_save_2(&highImage, "xgui_icon_atnx@2x.bmp",
+                                      "BMP", -1),
+                        "icon @Nx fixture writes 2x image");
+            XIcon_init_file_2(&fileIcon, "xgui_icon_atnx.bmp");
+            XVector_init(&iconSizes, sizeof(XSize), true);
+            XIcon_availableSizes(&fileIcon, XIconMode_Normal,
+                                 XIconState_Off, &iconSizes);
+            firstSize = XVector_size_base((const XContainer*)&iconSizes) > 0
+                ? (XSize*)XVector_at_base(&iconSizes, 0) : NULL;
+            secondSize = XVector_size_base((const XContainer*)&iconSizes) > 1
+                ? (XSize*)XVector_at_base(&iconSizes, 1) : NULL;
+            expect_true(XVector_size_base((const XContainer*)&iconSizes) == 2 &&
+                        firstSize && secondSize &&
+                        firstSize->width == 2 && firstSize->height == 2 &&
+                        secondSize->width == 4 && secondSize->height == 4,
+                        "icon file constructor appends @2x available size");
+            XPixmap_init(&iconPixmap);
+            XIcon_pixmapRatio(&fileIcon, 2, 2, 2.0f,
+                              XIconMode_Normal, XIconState_Off,
+                              &iconPixmap);
+            expect_true(XPixmap_width(&iconPixmap) == 4 &&
+                        XPixmap_height(&iconPixmap) == 4 &&
+                        XPixmap_devicePixelRatio(&iconPixmap) == 2.0f,
+                        "icon @2x candidate selected for 2.0 DPR request");
+            XPixmap_deinit_base(&iconPixmap);
+            XVector_deinit_base((XClass*)&iconSizes);
+            XIcon_deinit_base(&fileIcon);
+            XImage_deinit_base(&highImage);
+            XImage_deinit_base(&baseImage);
+            remove("xgui_icon_atnx@2x.bmp");
+            remove("xgui_icon_atnx.bmp");
+        }
+#endif /* XIMAGECODEC_ON */
 
         XGuiApplication_setPrimaryScreen(s2);
         expect_true(XGuiApplication_primaryScreen() == s2 &&
@@ -21065,10 +22219,16 @@ int main(void)
     test_icon_scaled_pixmap_cache();
     test_icon_style_helper();
     test_icon_theme_engine_contract();
+#if XFILE_ON && XIMAGECODEC_ON
+    test_icon_theme_engine_serialization();
+#endif /* XFILE_ON && XIMAGECODEC_ON */
     test_icon_engine_hook_contract();
     test_icon_paint_visual_alignment();
     test_icon_default_theme_search_path();
     test_icon_platform_theme_defaults();
+#if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
+    test_icon_theme_search_root_order();
+#endif /* XIMAGECODEC_ON && XIMAGECODEC_PNG_ON */
 #if XIMAGECODEC_ON
 #if XIMAGEIOPLUGIN_ON
     test_icon_add_file_size();
@@ -21189,6 +22349,11 @@ int main(void)
     test_codec_png_extended_assets();
     test_codec_png_color_metadata();
     test_codec_png_text_metadata();
+    test_codec_png_writer_description();
+    test_codec_png_writer_options();
+#if XIMAGEIOPLUGIN_ON
+    test_codec_png_reader_gamma();
+#endif /* XIMAGEIOPLUGIN_ON */
     test_codec_png_physical_metadata();
 #endif /* XIMAGECODEC_PNG_ON */
     test_codec_bmp_extended_assets();

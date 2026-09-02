@@ -334,7 +334,7 @@ typedef enum XPainterBrushStyle
     XPainterBrushStyle_LinearGradientPattern = 15,/**< 线性渐变色 */
     XPainterBrushStyle_RadialGradientPattern = 16,/**< 径向渐变色 */
     XPainterBrushStyle_ConicalGradientPattern = 17,/**< 锥形渐变色 */
-    XPainterBrushStyle_TexturePattern = 24        /**< 纹理图案（当前退化为纯色） */
+    XPainterBrushStyle_TexturePattern = 24        /**< 纹理图案（需图像资源，当前不支持） */
 } XPainterBrushStyle;
 
 /** @brief 渐变色类型（对标 Qt 6.8 QGradient::Type）。 */
@@ -1284,8 +1284,9 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
  * @brief 设置画刷样式（对标 QBrush::setStyle）；未激活或非法样式时忽略。
  * @param self 绘制器指针。
  * @param style 画刷样式；数值与 Qt::BrushStyle 一致。
- * @note Dense/Hor/Ver/Diag 图案和 TexturePattern 在软件后端退化为当前
- *       纯色，渐变样式使用 XPainter_setBrushGradient 提供的渐变参数。
+ * @note Dense/Hor/Ver/Diag 图案在软件后端按当前纯色近似；TexturePattern
+ *       需要独立图像资源，当前接口不接受该样式并保持原画刷不变。渐变样式
+ *       使用 XPainter_setBrushGradient 提供的渐变参数。
  */
 void XPainter_setBrushStyle(XPainter* self, XPainterBrushStyle style);
 /** @brief 获取当前画刷样式。 */

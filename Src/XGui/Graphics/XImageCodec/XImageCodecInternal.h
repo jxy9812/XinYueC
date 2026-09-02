@@ -205,6 +205,61 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
  * @return 成功返回 true。
  */
 bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out);
+
+/**
+ * @brief 按 PNG 处理器选项编码图像。
+ * @param image 输入图像；不能为 NULL。
+ * @param quality 兼容质量值；仅在 compression 小于零时参与压缩等级映射。
+ * @param compression 压缩比值（0..100）；小于零表示未设置。
+ * @param gamma 文件 Gamma 值；大于零时写出 gAMA 块，零表示不写出。
+ * @param description Description 描述字符串；NULL 或空字符串表示不额外合并。
+ * @param out 输出字节数组；不能为 NULL。
+ * @return 成功返回 true；参数非法或资源不足返回 false。
+ * @note quality/compression 映射严格对应 Qt QPngHandler 的 [0,100] 到
+ *       zlib [0,9] 规则；compression 优先于 quality。
+ */
+bool XImageCodecInternal_encodePngOptions(const XImage* image,
+                                          int quality, int compression,
+                                          float gamma,
+                                          const XString* description,
+                                          XByteArray* out);
+
+/**
+ * @brief 将图像及 QImageWriter 的 Description 选项编码为 PNG。
+ * @param image 输入图像；不能为 NULL。
+ * @param description 写入器描述字符串；NULL 表示没有额外描述。
+ * @param out 输出字节数组；不能为 NULL。
+ * @return 成功返回 true。
+ * @note 描述键按 Qt QMap 规则与图像自带文本合并，描述键优先。
+ */
+bool XImageCodecInternal_encodePngDescription(const XImage* image,
+                                              const XString* description,
+                                              XByteArray* out);
+
+/**
+ * @brief 从 PNG 数据的文本块提取 Qt 风格 Description 字符串。
+ * @param data 输入 PNG 数据；不能为 NULL。
+ * @param size 输入数据字节数。
+ * @param out 输出描述字符串，调用前应已初始化；不能为 NULL。
+ * @return 解析完成返回 true，PNG 结构无效或输出失败返回 false。
+ * @note 仅扫描文本块并受固定总字节数/条目数上限约束，不解码像素。
+ */
+bool XImageCodecInternal_extractPngDescription(const uint8_t* data,
+                                               size_t size,
+                                               XString* out);
+
+/**
+ * @brief 从 PNG 头部提取 Qt QPngHandler 的文件 Gamma 选项。
+ * @param data 输入 PNG 数据；不能为 NULL。
+ * @param size 输入数据字节数。
+ * @param out 输出文件 Gamma 值（gAMA 原始值除以 100000）；不能为 NULL。
+ * @return 找到首个合法头部 gAMA 返回 true，否则返回 false。
+ * @note 只扫描首个 IDAT 之前的块，保持 QPngHandler::option(Gamma) 的
+ *       readPngHeader 语义，不解码像素，也不修改输入数据。
+ */
+bool XImageCodecInternal_extractPngGamma(const uint8_t* data,
+                                         size_t size,
+                                         float* out);
 #endif /* XIMAGECODEC_PNG_ON */
 
 #if XIMAGECODEC_GIF_ON

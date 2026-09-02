@@ -41,7 +41,8 @@ enum
     XPICTURE_FONT_FIXED_SIZE = 8,
     XPICTURE_MAX_FONT_TEXT = 4096,
     XPICTURE_TEXT_FIXED_SIZE = 16,
-    XPICTURE_MAX_TEXT = 4096
+    XPICTURE_MAX_TEXT = 4096,
+    XPICTURE_GRADIENT_FIXED_SIZE = 48
 };
 
 static uint16_t XPicture_getU16(const uint8_t* p)
@@ -115,6 +116,54 @@ static bool XPicture_payloadFloatsAreFinite(const uint8_t* payload,
     }
     return true;
 }
+
+#if XPAINTER_BRUSH_ON
+/* 验证渐变负载中与当前类型相关的几何值及停止点。未使用的几何槽位
+   允许为任意字节，记录端会将其清零，避免把未初始化数据写入流。 */
+static bool XPicture_validateGradientPayload(const uint8_t* payload,
+                                             uint32_t length)
+{
+    uint32_t type;
+    uint32_t count;
+    uint32_t i;
+    uint64_t expected;
+    if (!payload || length < XPICTURE_GRADIENT_FIXED_SIZE) return false;
+    type = XPicture_getU32(payload + 0u);
+    count = XPicture_getU32(payload + 44u);
+    if (type > (uint32_t)XPainterGradientType_Conical ||
+        count > (uint32_t)XPAINTER_GRADIENT_MAX_STOPS)
+        return false;
+    expected = (uint64_t)XPICTURE_GRADIENT_FIXED_SIZE +
+               (uint64_t)count * 8u;
+    if (expected != (uint64_t)length) return false;
+    if (type == (uint32_t)XPainterGradientType_Linear &&
+        (!isfinite(XPicture_getF32(payload + 4u)) ||
+         !isfinite(XPicture_getF32(payload + 8u)) ||
+         !isfinite(XPicture_getF32(payload + 12u)) ||
+         !isfinite(XPicture_getF32(payload + 16u))))
+        return false;
+    if (type == (uint32_t)XPainterGradientType_Radial &&
+        (!isfinite(XPicture_getF32(payload + 20u)) ||
+         !isfinite(XPicture_getF32(payload + 24u)) ||
+         !isfinite(XPicture_getF32(payload + 28u)) ||
+         !isfinite(XPicture_getF32(payload + 32u)) ||
+         !isfinite(XPicture_getF32(payload + 36u))))
+        return false;
+    if (type == (uint32_t)XPainterGradientType_Conical &&
+        (!isfinite(XPicture_getF32(payload + 20u)) ||
+         !isfinite(XPicture_getF32(payload + 24u)) ||
+         !isfinite(XPicture_getF32(payload + 40u))))
+        return false;
+    for (i = 0; i < count; ++i)
+    {
+        float position = XPicture_getF32(
+            payload + XPICTURE_GRADIENT_FIXED_SIZE + i * 8u);
+        if (!isfinite(position) || position < 0.0f || position > 1.0f)
+            return false;
+    }
+    return true;
+}
+#endif /* XPAINTER_BRUSH_ON */
 
 static uint32_t XPicture_checksum(const uint8_t* data, uint32_t size)
 {
@@ -279,7 +328,7 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
         if (length > size - offset) return false;
         payload = bytes + offset;
         if (opcode < XPictureOpcode_DrawLine ||
-            opcode > XPictureOpcode_DrawText)
+            opcode > XPictureOpcode_SetBrushGradient)
             return false;
         if ((opcode == XPictureOpcode_DrawLine && length != 16u) ||
             (opcode == XPictureOpcode_DrawPoint && length != 8u) ||
@@ -304,6 +353,12 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
             (opcode == XPictureOpcode_SetBackgroundColor && length != 4u) ||
             (opcode == XPictureOpcode_SetBackgroundMode && length != 4u) ||
             (opcode == XPictureOpcode_SetBrush && length != 8u) ||
+#if XPAINTER_BRUSH_ON
+            (opcode == XPictureOpcode_SetBrushGradient &&
+             !XPicture_validateGradientPayload(payload, length)) ||
+#else
+            opcode == XPictureOpcode_SetBrushGradient ||
+#endif
             (opcode == XPictureOpcode_FillRect && length != 20u) ||
             (opcode == XPictureOpcode_DrawImage &&
              !XPicture_validateImagePayload(payload, length)) ||
@@ -1147,6 +1202,69 @@ bool XPicture_recordSetBrush(XPicture* self, int style, uint32_t color)
                                  payload, sizeof(payload));
 }
 
+#if XPAINTER_BRUSH_ON
+bool XPicture_recordSetBrushGradient(XPicture* self,
+                                     const XPainterGradient* gradient)
+{
+    uint8_t payload[XPICTURE_GRADIENT_FIXED_SIZE +
+                    XPAINTER_GRADIENT_MAX_STOPS * 8u];
+    float geometry[10];
+    uint32_t count;
+    uint32_t i;
+    uint32_t length;
+    if (!self || !gradient ||
+        gradient->m_type < XPainterGradientType_Linear ||
+        gradient->m_type > XPainterGradientType_Conical ||
+        gradient->m_stopCount < 0 ||
+        gradient->m_stopCount > XPAINTER_GRADIENT_MAX_STOPS)
+        return false;
+    memset(geometry, 0, sizeof(geometry));
+    if (gradient->m_type == XPainterGradientType_Linear)
+    {
+        geometry[0] = gradient->m_startX;
+        geometry[1] = gradient->m_startY;
+        geometry[2] = gradient->m_endX;
+        geometry[3] = gradient->m_endY;
+    }
+    else if (gradient->m_type == XPainterGradientType_Radial)
+    {
+        geometry[4] = gradient->m_centerX;
+        geometry[5] = gradient->m_centerY;
+        geometry[6] = gradient->m_focalX;
+        geometry[7] = gradient->m_focalY;
+        geometry[8] = gradient->m_radius;
+    }
+    else
+    {
+        geometry[4] = gradient->m_centerX;
+        geometry[5] = gradient->m_centerY;
+        geometry[9] = gradient->m_angleDeg;
+    }
+    for (i = 0; i < 10u; ++i)
+        if (!isfinite(geometry[i])) return false;
+    count = (uint32_t)gradient->m_stopCount;
+    memset(payload, 0, sizeof(payload));
+    XPicture_putU32(payload + 0u, (uint32_t)gradient->m_type);
+    for (i = 0; i < 10u; ++i)
+        XPicture_putF32(payload + 4u + i * 4u, geometry[i]);
+    XPicture_putU32(payload + 44u, count);
+    for (i = 0; i < count; ++i)
+    {
+        const XPainterGradientStop* stop = &gradient->m_stops[i];
+        if (!isfinite(stop->m_position) || stop->m_position < 0.0f ||
+            stop->m_position > 1.0f)
+            return false;
+        XPicture_putF32(payload + XPICTURE_GRADIENT_FIXED_SIZE + i * 8u,
+                        stop->m_position);
+        XPicture_putU32(payload + XPICTURE_GRADIENT_FIXED_SIZE + i * 8u + 4u,
+                        stop->m_color);
+    }
+    length = XPICTURE_GRADIENT_FIXED_SIZE + count * 8u;
+    return XPicture_appendRecord(self, XPictureOpcode_SetBrushGradient,
+                                 payload, length);
+}
+#endif /* XPAINTER_BRUSH_ON */
+
 bool XPicture_recordFillRect(XPicture* self, const XRect* rect, uint32_t color)
 {
     uint8_t payload[20];
@@ -1928,6 +2046,45 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
 #endif /* XPAINTER_BACKGROUND_ON */
             ok = true;
         }
+#if XPAINTER_BRUSH_ON
+        else if (opcode == XPictureOpcode_SetBrushGradient)
+        {
+            XPainterGradient* gradient = &painter->m_state.m_brush.m_gradient;
+            uint32_t count = XPicture_getU32(payload + 44u);
+            uint32_t i;
+            gradient->m_type = (XPainterGradientType)XPicture_getU32(payload);
+            gradient->m_startX = XPicture_getF32(payload + 4u);
+            gradient->m_startY = XPicture_getF32(payload + 8u);
+            gradient->m_endX = XPicture_getF32(payload + 12u);
+            gradient->m_endY = XPicture_getF32(payload + 16u);
+            gradient->m_centerX = XPicture_getF32(payload + 20u);
+            gradient->m_centerY = XPicture_getF32(payload + 24u);
+            gradient->m_focalX = XPicture_getF32(payload + 28u);
+            gradient->m_focalY = XPicture_getF32(payload + 32u);
+            gradient->m_radius = XPicture_getF32(payload + 36u);
+            gradient->m_angleDeg = XPicture_getF32(payload + 40u);
+            gradient->m_stopCount = (int)count;
+            for (i = 0; i < count; ++i)
+            {
+                gradient->m_stops[i].m_position = XPicture_getF32(
+                    payload + XPICTURE_GRADIENT_FIXED_SIZE + i * 8u);
+                gradient->m_stops[i].m_color = XPicture_getU32(
+                    payload + XPICTURE_GRADIENT_FIXED_SIZE + i * 8u + 4u);
+            }
+            painter->m_state.m_brushColor = 0xff000000u;
+            painter->m_state.m_brush.m_color = 0xff000000u;
+            if (gradient->m_type == XPainterGradientType_Radial)
+                painter->m_state.m_brush.m_style =
+                    XPainterBrushStyle_RadialGradientPattern;
+            else if (gradient->m_type == XPainterGradientType_Conical)
+                painter->m_state.m_brush.m_style =
+                    XPainterBrushStyle_ConicalGradientPattern;
+            else
+                painter->m_state.m_brush.m_style =
+                    XPainterBrushStyle_LinearGradientPattern;
+            ok = true;
+        }
+#endif /* XPAINTER_BRUSH_ON */
         else if (opcode == XPictureOpcode_SetBrush)
         {
             painter->m_state.m_brushColor = XPicture_getU32(payload + 4u);

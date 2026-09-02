@@ -186,7 +186,9 @@ static bool xpm_hexColor(const char* value, size_t length, uint32_t* color)
     } else if (digits == 6u || digits == 8u) {
         size_t offset = digits == 8u ? 2u : 0u;
         if (digits == 8u)
-            components[3] = xpm_hexDigit((unsigned char)value[1]) * 17 +
+            /* Qt QColor 的 #AARRGGBB 分支把 alpha 当作普通两位
+               十六进制整数；不能套用 #RGB 的 0x11 扩展规则。 */
+            components[3] = xpm_hexDigit((unsigned char)value[1]) * 16 +
                             xpm_hexDigit((unsigned char)value[2]);
         components[0] = xpm_hexDigit((unsigned char)value[1u + offset]) * 16 +
                         xpm_hexDigit((unsigned char)value[2u + offset]);
@@ -979,10 +981,10 @@ static int xpm_findColor(const XImageCodecXpmColor* colors, int count,
     uint32_t hash = xpm_hash(key, length);
     int i;
     if (!colors || !key || length > 15u) return -1;
-    for (i = 0; i < count; ++i)
-        if (colors[i].m_hash == hash &&
-            memcmp(colors[i].m_key, key, length) == 0 &&
-            colors[i].m_key[length] == '\0')
+    /* Qt 使用 QMap<quint64, int> 仅以 32 位 xpmHash 作为键；重复键以及
+       不同字符串的哈希碰撞均由后出现的颜色覆盖，不能再比较原始键。 */
+    for (i = count - 1; i >= 0; --i)
+        if (colors[i].m_hash == hash)
             return i;
     return -1;
 }

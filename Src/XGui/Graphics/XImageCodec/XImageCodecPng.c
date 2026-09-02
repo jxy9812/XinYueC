@@ -118,6 +118,11 @@ static bool pngAppendTextPair(XStringList* keys, XStringList* values,
     return true;
 }
 
+/* 文本元数据预扫描复用解码器后部定义的块名称/CRC 校验器。 */
+static bool pngChunkTypeValid(const uint8_t* type);
+static bool pngChunkCrcValid(const uint8_t* type, const uint8_t* data,
+                             size_t size, bool required);
+
 /* 解析 tEXt/zTXt/iTXt。无效块按 libpng 的 benign warning 语义忽略，
  * 但结构合法且解压成功的文本会保存为 XImage UTF-8 元数据。 */
 static bool pngParseTextChunk(const char type[4], const uint8_t* data,
@@ -196,6 +201,141 @@ done:
     if (value) XString_delete_base((XClass*)value);
     if (inflated) XFree_System(inflated);
     return key != NULL && value != NULL;
+}
+
+/* 将已解析的文本列表按 QPngHandler::readPngTexts() 格式拼接为
+ * Description；后续由 qt_getImageTextFromDescription 等价逻辑再次解析。 */
+static bool pngBuildDescription(const XStringList* keys,
+                                const XStringList* values, XString* out)
+{
+    size_t count;
+    size_t i;
+    if (!keys || !values || !out) return false;
+    count = XStringList_size_base((const XContainer*)keys);
+    if (count != XStringList_size_base((const XContainer*)values)) return false;
+    for (i = 0; i < count; ++i) {
+        const XString* key = (const XString*)XStringList_at_base(
+            (XVector*)keys, (int64_t)i);
+        const XString* value = (const XString*)XStringList_at_base(
+            (XVector*)values, (int64_t)i);
+        XString* simplified;
+        const char* keyUtf8;
+        const char* valueUtf8;
+        if (!key || !value) continue;
+        simplified = XString_simplified(value);
+        if (!simplified) return false;
+        keyUtf8 = XString_toUtf8(key);
+        valueUtf8 = XString_toUtf8(simplified);
+        if (!keyUtf8 || !valueUtf8 ||
+            (!XString_isEmpty_base((const XContainer*)out) &&
+             !XString_append_utf8(out, "\n\n")) ||
+            !XString_append_with_length_utf8(out, keyUtf8,
+                                             XString_toUtf8_length(key)) ||
+            !XString_append_utf8(out, ": ") ||
+            !XString_append_with_length_utf8(out, valueUtf8,
+                                             XString_toUtf8_length(simplified))) {
+            XString_delete_base((XClass*)simplified);
+            return false;
+        }
+        XString_delete_base((XClass*)simplified);
+    }
+    return true;
+}
+
+bool XImageCodecInternal_extractPngDescription(const uint8_t* data,
+                                               size_t size,
+                                               XString* out)
+{
+    size_t pos = 8u;
+    XStringList keys;
+    XStringList values;
+    size_t textBytes = 0;
+    bool haveIhdr = false;
+    bool haveIdat = false;
+    bool ok = false;
+    if (!data || size < 8u || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+        return false;
+    XStringList_init(&keys);
+    XStringList_init(&values);
+    while (pos <= size && size - pos >= 12u) {
+        uint32_t length = XImageCodecInternal_readU32BE(data + pos);
+        const uint8_t* type = data + pos + 4u;
+        const uint8_t* chunkData = data + pos + 8u;
+        if (length > 0x7fffffffu || length > size - pos - 12u ||
+            !pngChunkTypeValid(type))
+            goto done;
+        if (!haveIhdr && memcmp(type, "IHDR", 4) != 0)
+            goto done;
+        if (!memcmp(type, "IHDR", 4)) {
+            if (haveIhdr || length != 13u ||
+                !pngChunkCrcValid(type, chunkData, length, true))
+                goto done;
+            haveIhdr = true;
+        } else if (!memcmp(type, "IDAT", 4)) {
+            if (!haveIhdr || !pngChunkCrcValid(type, chunkData, length, true))
+                goto done;
+            haveIdat = true;
+        } else if (!memcmp(type, "tEXt", 4) ||
+                   !memcmp(type, "zTXt", 4) ||
+                   !memcmp(type, "iTXt", 4)) {
+            /* QPngHandler reads both info_ptr and end_info, so ancillary
+             * text after IDAT is visible as well as text before IDAT. */
+            if (pngChunkCrcValid(type, chunkData, length, true))
+                (void)pngParseTextChunk((const char*)type, chunkData, length,
+                                         &keys, &values, &textBytes);
+        } else if (!memcmp(type, "IEND", 4)) {
+            if (!haveIhdr || !haveIdat || length != 0u)
+                goto done;
+            ok = pngBuildDescription(&keys, &values, out);
+            goto done;
+        }
+        pos += (size_t)length + 12u;
+    }
+done:
+    XStringList_deinit_base((XClass*)&keys);
+    XStringList_deinit_base((XClass*)&values);
+    return ok;
+}
+
+bool XImageCodecInternal_extractPngGamma(const uint8_t* data,
+                                         size_t size,
+                                         float* out)
+{
+    size_t pos = 8u;
+    bool haveIhdr = false;
+    bool haveIdat = false;
+    if (!data || size < 8u || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+        return false;
+    *out = 0.0f;
+    while (pos <= size && size - pos >= 12u) {
+        uint32_t length = XImageCodecInternal_readU32BE(data + pos);
+        const uint8_t* type = data + pos + 4u;
+        const uint8_t* chunkData = data + pos + 8u;
+        if (length > 0x7fffffffu || length > size - pos - 12u ||
+            !pngChunkTypeValid(type))
+            return false;
+        if (!haveIhdr && memcmp(type, "IHDR", 4) != 0)
+            return false;
+        if (!memcmp(type, "IHDR", 4)) {
+            if (haveIhdr || length != 13u ||
+                !pngChunkCrcValid(type, chunkData, length, true))
+                return false;
+            haveIhdr = true;
+        } else if (!memcmp(type, "IDAT", 4)) {
+            if (!haveIhdr || !pngChunkCrcValid(type, chunkData, length, true))
+                return false;
+            haveIdat = true;
+        } else if (!haveIdat && !memcmp(type, "gAMA", 4) && length == 4u &&
+                   pngChunkCrcValid(type, chunkData, length, true)) {
+            uint32_t raw = XImageCodecInternal_readU32BE(chunkData);
+            if (raw != 0u) {
+                *out = (float)raw / 100000.0f;
+                return *out > 0.0f;
+            }
+        }
+        pos += (size_t)length + 12u;
+    }
+    return false;
 }
 
 /* 解析 iCCP 块的名称、压缩方法及 profile 负载。名称只用于 Qt 描述
@@ -288,6 +428,41 @@ done:
     if (payload) XFree_System(payload);
     XByteArray_delete_base((XClass*)profile);
     return ok;
+}
+
+/* 判断图像是否带有 ICC profile。Qt 在存在 iCCP 时不再额外写 gAMA；
+ * 这里复用图像内部侧车复制接口，仅复制元数据，不触碰像素数据。 */
+static bool pngImageHasIccProfile(const XImage* image)
+{
+    XByteArray* profile;
+    bool result;
+    if (!image) return false;
+    profile = XByteArray_create();
+    if (!profile) return false;
+    result = XImageCodecInternal_copyIccProfile(image, profile) &&
+             XByteArray_size_base((const XContainer*)profile) > 0;
+    XByteArray_delete_base((XClass*)profile);
+    return result;
+}
+
+/* 写出 Qt QPNGImageWriter::setGamma() 使用的 gAMA 块。参数是旧式
+ * handler gamma；PNG 文件中保存其倒数乘以 100000 的定点值。 */
+static bool pngAppendGamma(const XImage* image, XByteArray* out, float gamma)
+{
+    uint8_t payload[4];
+    float fileGamma;
+    uint32_t encoded;
+    if (!image || !out || !(gamma > 0.0f) || gamma != gamma ||
+        pngImageHasIccProfile(image))
+        return true;
+    fileGamma = 1.0f / gamma;
+    if (!(fileGamma > 0.0f) || fileGamma != fileGamma ||
+        fileGamma > 42949.67295f)
+        return false;
+    encoded = (uint32_t)(fileGamma * 100000.0f + 0.5f);
+    if (encoded == 0u) return false;
+    XImageCodecInternal_writeU32BE(payload, encoded);
+    return pngAppendChunk(out, "gAMA", payload, sizeof(payload));
 }
 
 /* 写出 Qt QImage 使用的物理元数据。pHYs 的单位固定为米；oFFs 的单位
@@ -456,7 +631,10 @@ static bool pngAppendTexts(const XImage* image, XByteArray* out)
         const XString* value;
         const char* keyUtf8;
         const char* valueUtf8;
-        if (!key) continue;
+        /* qt_getImageText() intentionally excludes QImage's empty key when
+           constructing PNG text chunks; an empty writer key is represented
+           by the Description pseudo-key instead. */
+        if (!key || XString_isEmpty_base((const XContainer*)key)) continue;
         value = XImage_text_const(image, key);
         if (!value) continue;
         keyUtf8 = XString_toUtf8(key);
@@ -1257,7 +1435,8 @@ fail:
 
 #if XIMAGECODEC_PNG_PALETTE_ON
 /* 将 Indexed8 图像编码为调色板 PNG（ColorType 3 + PLTE + tRNS）。 */
-static bool pngEncodeIndexed(const XImage* image, XByteArray* out)
+static bool pngEncodeIndexed(const XImage* image, int compressionLevel,
+                             float gamma, XByteArray* out)
 {
     uint8_t ihdr[13];
     uint8_t* raw = NULL;
@@ -1309,7 +1488,7 @@ static bool pngEncodeIndexed(const XImage* image, XByteArray* out)
     compressedSize = compressBound((uLong)rawSize);
     compressed = (uint8_t*)XMalloc_System((size_t)compressedSize);
     if (!compressed || compress2(compressed, &compressedSize, raw,
-                                 (uLong)rawSize, Z_DEFAULT_COMPRESSION) != Z_OK)
+                                 (uLong)rawSize, compressionLevel) != Z_OK)
         goto done;
     if (!XByteArray_resize_base((XVector*)out, 0)) goto done;
     memset(ihdr, 0, sizeof(ihdr));
@@ -1323,6 +1502,7 @@ static bool pngEncodeIndexed(const XImage* image, XByteArray* out)
     if (trnsLen > 0 && !pngAppendChunk(out, "tRNS", trns, (size_t)trnsLen))
         goto done;
     if (!pngAppendColorProfile(image, out)) goto done;
+    if (!pngAppendGamma(image, out, gamma)) goto done;
     if (!pngAppendPhysicalMetadata(image, out)) goto done;
     if (!pngAppendTexts(image, out)) goto done;
     if (!pngAppendChunk(out, "IDAT", compressed, (size_t)compressedSize) ||
@@ -1338,7 +1518,24 @@ done:
 }
 #endif /* XIMAGECODEC_PNG_PALETTE_ON */
 
-bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
+static int pngCompressionLevel(int quality, int compression)
+{
+    int mapped = compression;
+    if (mapped >= 0) {
+        if (mapped > 100) mapped = 100;
+    } else if (quality >= 0) {
+        mapped = 100 - (quality > 100 ? 100 : quality);
+    }
+    if (mapped >= 0)
+        return (mapped * 9) / 91;
+    return Z_DEFAULT_COMPRESSION;
+}
+
+bool XImageCodecInternal_encodePngOptions(const XImage* image,
+                                          int quality, int compression,
+                                          float gamma,
+                                          const XString* description,
+                                          XByteArray* out)
 {
     uint8_t ihdr[13];
     uint8_t* raw = NULL;
@@ -1347,13 +1544,32 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
     uLongf compressedSize;
     int width, height;
     bool ok = false;
+    XImage decorated;
+    const XImage* source = image;
+    bool decoratedInitialized = false;
+    int compressionLevel;
     if (!image || !out || XImage_isNull(image)) return false;
+    if (description &&
+        !XString_isEmpty_base((const XContainer*)description)) {
+        XImage_init(&decorated);
+        XImage_copy_base(&decorated, image);
+        if (!decorated.m_data ||
+            !XImage_applyTextDescription(&decorated, description)) {
+            XImage_deinit_base(&decorated);
+            return false;
+        }
+        source = &decorated;
+        decoratedInitialized = true;
+    }
+    compressionLevel = pngCompressionLevel(quality, compression);
 #if XIMAGECODEC_PNG_PALETTE_ON
-    if (XImage_format(image) == XImageFormat_Indexed8) {
-        return pngEncodeIndexed(image, out);
+    if (XImage_format(source) == XImageFormat_Indexed8) {
+        bool indexedOk = pngEncodeIndexed(source, compressionLevel, gamma, out);
+        if (decoratedInitialized) XImage_deinit_base(&decorated);
+        return indexedOk;
     }
 #endif
-    width = XImage_width(image); height = XImage_height(image);
+    width = XImage_width(source); height = XImage_height(source);
     if (width <= 0 || height <= 0 ||
         (size_t)width > (SIZE_MAX - 1) / 4 ||
         (size_t)height > SIZE_MAX / ((size_t)width * 4 + 1))
@@ -1366,7 +1582,7 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
         uint8_t* row = raw + (size_t)y * stride;
         row[0] = 0;
         for (int x = 0; x < width; ++x) {
-            uint32_t c = XImage_pixel(image, x, y);
+            uint32_t c = XImage_pixel(source, x, y);
             row[1 + x * 4] = (uint8_t)(c >> 16);
             row[2 + x * 4] = (uint8_t)(c >> 8);
             row[3 + x * 4] = (uint8_t)c;
@@ -1376,7 +1592,7 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
     compressedSize = compressBound((uLong)rawSize);
     compressed = (uint8_t*)XMalloc_System((size_t)compressedSize);
     if (!compressed || compress2(compressed, &compressedSize, raw,
-                                 (uLong)rawSize, Z_DEFAULT_COMPRESSION) != Z_OK)
+                                 (uLong)rawSize, compressionLevel) != Z_OK)
         goto done;
     if (!XByteArray_resize_base((XVector*)out, 0)) goto done;
     memset(ihdr, 0, sizeof(ihdr));
@@ -1385,9 +1601,10 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
     ihdr[8] = 8; ihdr[9] = 6;
     if (!XImageCodecInternal_appendBytes(out, "\x89PNG\r\n\x1a\n", 8) ||
         !pngAppendChunk(out, "IHDR", ihdr, sizeof(ihdr)) ||
-        !pngAppendColorProfile(image, out) ||
-        !pngAppendPhysicalMetadata(image, out) ||
-        !pngAppendTexts(image, out) ||
+        !pngAppendColorProfile(source, out) ||
+        !pngAppendGamma(source, out, gamma) ||
+        !pngAppendPhysicalMetadata(source, out) ||
+        !pngAppendTexts(source, out) ||
         !pngAppendChunk(out, "IDAT", compressed, (size_t)compressedSize) ||
         !pngAppendChunk(out, "IEND", NULL, 0))
         goto done;
@@ -1395,7 +1612,22 @@ bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
 done:
     if (raw) XFree_System(raw);
     if (compressed) XFree_System(compressed);
+    if (decoratedInitialized) XImage_deinit_base(&decorated);
     return ok;
+}
+
+bool XImageCodecInternal_encodePng(const XImage* image, XByteArray* out)
+{
+    return XImageCodecInternal_encodePngOptions(image, -1, -1, 0.0f,
+                                                NULL, out);
+}
+
+bool XImageCodecInternal_encodePngDescription(const XImage* image,
+                                              const XString* description,
+                                              XByteArray* out)
+{
+    return XImageCodecInternal_encodePngOptions(image, -1, -1, 0.0f,
+                                                description, out);
 }
 
 #endif /* XIMAGECODEC_PNG_ON */

@@ -1935,6 +1935,27 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         }
         return;
     }
+    /* Qt QColorTransform::isIdentity() returns without touching pixels.  The
+       portable transform carries only source/target spaces, so equal spaces
+       are the representable identity case.  Preserve implicit sharing when
+       no output format conversion is requested; an explicit format still
+       follows Qt's identity path and performs that conversion. */
+    if (XColorSpace_equals(&source, &transform->m_target))
+    {
+        if (format == XImageFormat_Invalid || format == XImage_format(self))
+        {
+            if (out != self)
+                XImage_copy_base(out, self);
+            return;
+        }
+        if (out == self)
+        {
+            (void)XImage_convertToFormatInPlace(out, format, flags);
+            return;
+        }
+        XImage_convertToFormat(self, format, flags, out);
+        return;
+    }
     if (outputFormat == XImageFormat_Invalid &&
         !XImage_colorSpaceTargetCompatible(self, &transform->m_target))
     {
@@ -4554,14 +4575,79 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
 
 bool XImage_load_2(XImage* self, const char* fileName, const char* format)
 {
-    XString* path; XString* type; XFile* file; XByteArray* bytes; bool result;
+    XString* path;
+    XFile* file;
+    XByteArray* bytes;
+    XImage decoded;
+    bool result = false;
+    bool hasExplicitFormat;
     if (!self || !fileName) return false;
-    path = XString_create_utf8(fileName); type = format ? XString_create_utf8(format) : NULL;
+    path = XString_create_utf8(fileName);
     file = path ? XFile_create_2(path) : NULL;
-    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); return false; }
-    bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file);
-    result = bytes && XByteArray_size_base((const XContainer*)bytes) <= INT_MAX && XImage_loadFromData(self, XByteArray_data(bytes), (int)XByteArray_size_base((const XContainer*)bytes), type);
-    if (bytes) XByteArray_delete_base((XClass*)bytes); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); return result;
+    if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
+        if (file) XClass_delete_base((XClass*)file);
+        if (path) XString_delete_base((XClass*)path);
+        return false;
+    }
+    bytes = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XClass_delete_base((XClass*)file);
+    if (!bytes || XByteArray_size_base((const XContainer*)bytes) > INT_MAX) {
+        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        if (path) XString_delete_base((XClass*)path);
+        return false;
+    }
+
+    /* QImage::load(fileName, nullptr) 先让读取器依据最终路径后缀选取
+       处理器，后缀处理器拒绝数据时再回退到文件头探测。直接把文件
+       内容交给 XImage_loadFromData() 会跳过这一步，XPM 等无可靠二进制
+       魔数的格式因此无法获得 Qt 的后缀优先行为。 */
+    XImage_init(&decoded);
+    hasExplicitFormat = format && format[0];
+    if (hasExplicitFormat) {
+        result = XImage_loadFromData_2(
+            &decoded, XByteArray_data(bytes),
+            (int)XByteArray_size_base((const XContainer*)bytes), format);
+    } else {
+        const char* base = strrchr(fileName, '/');
+        const char* backslash = strrchr(fileName, '\\');
+        const char* dot;
+        const char* suffix = NULL;
+        if (backslash && (!base || backslash > base))
+            base = backslash;
+        base = base ? base + 1 : fileName;
+        dot = strrchr(base, '.');
+        if (dot && dot[1])
+            suffix = dot + 1;
+        if (suffix && XImageCodec_formatFromName_2(suffix) !=
+                          XImageCodecFormat_Unknown) {
+            result = XImage_loadFromData_2(
+                &decoded, XByteArray_data(bytes),
+                (int)XByteArray_size_base((const XContainer*)bytes), suffix);
+        }
+        if (!result) {
+            /* 每次失败都将临时图像恢复为空，随后按内容探测；这也
+               保持 XImage_loadFromData_2() 的失败失效契约。 */
+            XImage_deinit_base(&decoded);
+            XImage_init(&decoded);
+            result = XImage_loadFromData_2(
+                &decoded, XByteArray_data(bytes),
+                (int)XByteArray_size_base((const XContainer*)bytes), NULL);
+        }
+    }
+    if (result) {
+        if (!XClassIsVtableNull(self)) XImage_deinit_base(self);
+        XImage_init(self);
+        XImage_move_base(self, &decoded);
+    } else {
+        /* 与 QImage::load() 一致，失败结果替换为 null 图像。 */
+        if (!XClassIsVtableNull(self)) XImage_deinit_base(self);
+        XImage_init(self);
+    }
+    XImage_deinit_base(&decoded);
+    XByteArray_delete_base((XClass*)bytes);
+    if (path) XString_delete_base((XClass*)path);
+    return result;
 }
 
 bool XImage_load(XImage* self, const XString* fileName, const XString* format)
@@ -4615,8 +4701,20 @@ bool XImage_save_2(const XImage* self, const char* fileName, const char* format,
 {
     XString* path; XString* type; XString* extension = NULL; XFile* file = NULL; XByteArray* bytes = NULL; bool ok = false;
     if (!self || !fileName) return false;
-    path = XString_create_utf8(fileName); type = format ? XString_create_utf8(format) : NULL;
-    if (!type) { const char* dot = strrchr(fileName, '.'); extension = dot ? XString_create_utf8(dot + 1) : NULL; }
+    path = XString_create_utf8(fileName);
+    /* QImageWriter treats a null or empty QByteArray format identically:
+       when writing a file, both select the final filename suffix. */
+    type = (format && format[0]) ? XString_create_utf8(format) : NULL;
+    if (!type) {
+        const char* base = strrchr(fileName, '/');
+        const char* backslash = strrchr(fileName, '\\');
+        const char* dot;
+        if (backslash && (!base || backslash > base))
+            base = backslash;
+        base = base ? base + 1 : fileName;
+        dot = strrchr(base, '.');
+        extension = dot && dot[1] ? XString_create_utf8(dot + 1) : NULL;
+    }
 #if XIMAGECODEC_ON
     {
         const XString* selectedType = type ? type : extension;
@@ -4858,6 +4956,87 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
         return;
     }
     XImageData_clearTextAll(self->m_data);
+}
+
+bool XImage_applyTextDescription(XImage* self, const XString* description)
+{
+    XStringList* pairs;
+    int64_t count;
+    int64_t i;
+    if (!self || !self->m_data || !description)
+        return false;
+    if (XString_isEmpty_base((const XContainer*)description))
+        return true;
+    /* QImage's helper tokenizes by two newlines and ignores empty records
+       after trimming.  The portable split helper has the same effective
+       result for this separator while preserving UTF-16 code-unit indexes. */
+    pairs = XString_split_utf8(description, "\n\n", XChar_CaseSensitive);
+    if (!pairs)
+        return false;
+    count = (int64_t)XStringList_size_base((const XContainer*)pairs);
+    for (i = 0; i < count; ++i)
+    {
+        XString* pair = (XString*)XStringList_at_base((XVector*)pairs, i);
+        XString* simplified;
+        XString* key = NULL;
+        XString* value = NULL;
+        int64_t colonIndex;
+        int64_t spaceIndex;
+        if (!pair)
+            continue;
+        simplified = XString_simplified(pair);
+        if (!simplified || XString_isEmpty_base((const XContainer*)simplified))
+        {
+            if (simplified) XString_delete_base((XClass*)simplified);
+            continue;
+        }
+        colonIndex = XString_indexOf_char(pair, (XChar)':', 0,
+                                          XChar_CaseSensitive);
+        spaceIndex = XString_indexOf_char(pair, (XChar)' ', 0,
+                                          XChar_CaseSensitive);
+        if (colonIndex >= 0 && spaceIndex < colonIndex)
+        {
+            key = XString_create_utf8("Description");
+            value = simplified;
+            simplified = NULL;
+        }
+        else
+        {
+            size_t valuePos;
+            size_t pairLength;
+            key = XString_left(pair, colonIndex >= 0
+                                      ? (size_t)colonIndex : SIZE_MAX);
+            if (key)
+            {
+                XString* keyCheck = XString_simplified(key);
+                if (!keyCheck || XString_isEmpty_base((const XContainer*)keyCheck))
+                {
+                    if (keyCheck) XString_delete_base((XClass*)keyCheck);
+                    XString_delete_base((XClass*)key);
+                    key = NULL;
+                }
+                else
+                    XString_delete_base((XClass*)keyCheck);
+            }
+            valuePos = colonIndex >= 0 ? (size_t)colonIndex + 2u : 1u;
+            pairLength = XString_length_base((const XContainer*)pair);
+            value = XString_mid(pair, valuePos,
+                                valuePos < pairLength ? pairLength - valuePos : 0u);
+            if (value)
+            {
+                XString* normalized = XString_simplified(value);
+                XString_delete_base((XClass*)value);
+                value = normalized;
+            }
+        }
+        if (key && value)
+            XImage_setText(self, key, value);
+        if (key) XString_delete_base((XClass*)key);
+        if (value) XString_delete_base((XClass*)value);
+        if (simplified) XString_delete_base((XClass*)simplified);
+    }
+    XStringList_delete_base((XClass*)pairs);
+    return true;
 }
 
 /* ========== 辅助数据 ========== */

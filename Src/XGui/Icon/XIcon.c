@@ -17,6 +17,10 @@
 #include "XIconScaledPixmapCache.h"
 #include "XIconStyleHelper.h"
 #include "XImageReader.h"
+#include "XFile.h"
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h"
+#endif
 #include "XAlignment.h"
 #include "XPlatformTheme.h"
 #include <limits.h>
@@ -144,6 +148,64 @@ static void XIcon_replaceString_2(XString** destination, const XString* value)
     XString* replacement = value ? XString_create_copy(value) : NULL;
     if (*destination) XString_delete_base((XClass*)*destination);
     *destination = replacement;
+}
+
+/* 对标 Qt qicon.cpp:2015-2047 的 qt_findAtNxFile()。候选文件名只在
+ * 图标模块内生成，避免把高 DPI 兄弟查找规则泄漏到通用图像读取器。 */
+static XString* XIcon_findAtNxFile(const XString* baseFileName,
+                                   float targetDevicePixelRatio)
+{
+    const char* source;
+    size_t sourceLength;
+    size_t dotIndex;
+    size_t prefixLength;
+    size_t suffixLength;
+    int first;
+    static int disableNxImageLoading = -1;
+    if (!baseFileName || !(targetDevicePixelRatio > 1.0f) ||
+        !isfinite(targetDevicePixelRatio))
+        return NULL;
+    /* Qt 使用函数内 static，只在第一次调用时读取环境变量。 */
+    if (disableNxImageLoading < 0) {
+        const char* disable = getenv("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
+        disableNxImageLoading = disable && disable[0] ? 1 : 0;
+    }
+    if (disableNxImageLoading) return NULL;
+    source = XString_toUtf8(baseFileName);
+    sourceLength = source ? strlen(source) : 0u;
+    if (!source || sourceLength == 0u || sourceLength > 1019u) return NULL;
+
+    /* QString::lastIndexOf('.') 按完整路径查找；保留 Qt 的 .9.* 特例。 */
+    {
+        const char* dot = strrchr(source, '.');
+        dotIndex = dot ? (size_t)(dot - source) : sourceLength;
+    }
+    if (dotIndex >= 2u && source[dotIndex - 2u] == '.' &&
+        source[dotIndex - 1u] == '9')
+        dotIndex -= 2u;
+    prefixLength = dotIndex;
+    suffixLength = sourceLength - dotIndex;
+    if (prefixLength + suffixLength + 3u >= 1024u) return NULL;
+    first = (int)ceilf(targetDevicePixelRatio);
+    if (first > 9) first = 9;
+    if (first < 2) first = 2;
+    for (int n = first; n > 1; --n) {
+        char candidate[1024];
+        XString* candidateString;
+        size_t length = prefixLength + 3u + suffixLength;
+        memcpy(candidate, source, prefixLength);
+        candidate[prefixLength] = '@';
+        candidate[prefixLength + 1u] = (char)('0' + n);
+        candidate[prefixLength + 2u] = 'x';
+        memcpy(candidate + prefixLength + 3u, source + dotIndex, suffixLength);
+        candidate[length] = '\0';
+        candidateString = XString_create_utf8(candidate);
+        if (candidateString && XFile_exists_static(candidateString))
+            return candidateString;
+        if (candidateString)
+            XString_delete_base((XClass*)candidateString);
+    }
+    return NULL;
 }
 
 static XStringList* XIcon_paths(bool fallback)
@@ -383,6 +445,31 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
     XImageReader_deinit_base(&reader);
 }
 
+/* 在基础文件登记后追加 Qt 约定的高 DPI 兄弟文件。 */
+static void XIconPrivate_addAtNx(XIconPrivate* d, const XString* fileName,
+                                 int width, int height,
+                                 XIconMode mode, XIconState state)
+{
+    XString* sibling;
+#if XGUIAPPLICATION_ON
+    float dpr = XGuiApplication_devicePixelRatio();
+#else
+    float dpr = 1.0f;
+#endif
+    if (!d || !fileName) return;
+    sibling = XIcon_findAtNxFile(fileName, dpr);
+    if (!sibling) return;
+    if (d->m_engine) {
+        XSize size = {width, height};
+        XIconEngine_addFile_base(d->m_engine, sibling, &size, mode, state);
+    } else if (width >= 0 && height >= 0) {
+        XIconPrivate_addFileEntry(d, sibling, width, height, mode, state);
+    } else {
+        XIconPrivate_addFileEntries(d, sibling, mode, state);
+    }
+    XString_delete_base((XClass*)sibling);
+}
+
 /* ========== 虚函数实现 ========== */
 
 static void VXIcon_copy(XIcon* dest, const XIcon* src)
@@ -472,6 +559,8 @@ void XIcon_init_file(XIcon* self, const XString* fileName)
     XIconPrivate_setName_2(self->m_data, fileName);
     XIconPrivate_addFileEntries(self->m_data, fileName, XIconMode_Normal,
                                 XIconState_Off);
+    XIconPrivate_addAtNx(self->m_data, fileName, -1, -1,
+                         XIconMode_Normal, XIconState_Off);
 }
 
 void XIcon_init_engine(XIcon* self, XIconEngine* engine)
@@ -1211,9 +1300,11 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     drawY = y;
     /* Qt::Alignment values are used as a portable bit mask here: Left=1,
      * Right=2, HCenter=4, Top=32, Bottom=64, VCenter=128. */
+    /* QIcon::paint() uses QRect::width()/2 - size.width()/2 rather than
+       (width - size.width())/2; the order matters for odd dimensions. */
     if ((alignment & 2u) != 0u) drawX += w - actual.width;
-    else if ((alignment & 4u) != 0u) drawX += (w - actual.width) / 2;
-    if ((alignment & 128u) != 0u) drawY += (h - actual.height) / 2;
+    else if ((alignment & 4u) != 0u) drawX += w / 2 - actual.width / 2;
+    if ((alignment & 128u) != 0u) drawY += h / 2 - actual.height / 2;
     else if ((alignment & 64u) != 0u) drawY += h - actual.height;
     if (self && self->m_data && self->m_data->m_engine) {
         XRect rect = {drawX, drawY, actual.width, actual.height};
@@ -1259,9 +1350,18 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
 {
     if (!self || !self->m_data || !fileName) return;
     if (self->m_data->m_engine) {
+        XString* key;
         XSize size = {width, height};
         XIcon_detach(self);
         XIconEngine_addFile_base(self->m_data->m_engine, fileName, &size, mode, state);
+        key = XIconEngine_key_base(self->m_data->m_engine);
+        if (key && XString_equals_utf8(key, "svg", XChar_CaseSensitive)) {
+            XString_delete_base((XClass*)key);
+            XIconPrivate_touch(self->m_data);
+            return;
+        }
+        if (key) XString_delete_base((XClass*)key);
+        XIconPrivate_addAtNx(self->m_data, fileName, width, height, mode, state);
         XIconPrivate_touch(self->m_data);
         return;
     }
@@ -1273,11 +1373,13 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
     {
         XIconPrivate_addFileEntry(self->m_data, fileName, width, height,
                                   mode, state);
+        XIconPrivate_addAtNx(self->m_data, fileName, width, height, mode, state);
         return;
     }
     /* Qt 的无效 QSize 表示“加入文件中的全部帧”，而不是只读第一帧；
        文件构造和显式 addFile 的语义保持一致。 */
     XIconPrivate_addFileEntries(self->m_data, fileName, mode, state);
+    XIconPrivate_addAtNx(self->m_data, fileName, width, height, mode, state);
 }
 
 void XIcon_availableSizes(const XIcon* self, XIconMode mode, XIconState state, void* out)
@@ -1428,7 +1530,13 @@ bool XIcon_hasThemeIcon(const XString* name)
     const char* nameUtf8;
     XString* resolvedName;
     bool matched;
-    if (!name || XString_isEmpty_base((const XContainer*)name)) return false;
+    if (!name) return false;
+    /* Qt QIcon::hasThemeIcon() compares fromTheme(name).name() with the
+       request verbatim.  An empty QString therefore compares equal to the
+       empty theme-engine name and returns true, even though the resulting
+       icon is null; preserve that observable Qt edge case for an empty
+       XString while still treating a NULL pointer as no request. */
+    if (XString_isEmpty_base((const XContainer*)name)) return true;
     nameUtf8 = XString_toUtf8(name);
     /* Qt QIcon::hasThemeIcon() delegates to fromTheme().  Absolute paths are
        handled by fromTheme() as ordinary file icons whose engine has no

@@ -25,6 +25,7 @@ typedef struct XImage XImage;
 typedef struct XPainter XPainter;
 typedef struct XImageTransform XImageTransform;
 typedef struct XFont XFont;
+typedef struct XPainterGradient XPainterGradient;
 struct XPainterPath;
 
 /* 流常量属于 XGui C ABI；无论主机架构如何，字节流始终采用小端序。 */
@@ -64,7 +65,8 @@ typedef enum XPictureOpcode
     XPictureOpcode_DrawPixmap = 27, /**< 矩形像素图（对标 PdcDrawPixmap）。 */
     XPictureOpcode_SetFont = 28, /**< 字体状态（对标 PdcSetFont）。 */
     XPictureOpcode_DrawPoint = 29, /**< 单点绘制（对标 PdcDrawPoint）。 */
-    XPictureOpcode_DrawText = 30 /**< 文本绘制（对标 PdcDrawTextItem）。 */
+    XPictureOpcode_DrawText = 30, /**< 文本绘制（对标 PdcDrawTextItem）。 */
+    XPictureOpcode_SetBrushGradient = 31 /**< 渐变画刷（对标 QBrush/QGradient）。 */
 } XPictureOpcode;
 
 /* ========== XPicture 虚函数表枚举 ========== */
@@ -320,6 +322,19 @@ bool XPicture_recordSetBackgroundMode(XPicture* self, int mode);
  *       固定负载中编码，调用方应为这些样式保留原有边界语义。
  */
 bool XPicture_recordSetBrush(XPicture* self, int style, uint32_t color);
+#if XPAINTER_BRUSH_ON
+/**
+ * @brief 记录渐变画刷的便携固定负载。
+ * @param self 目标图片对象指针。
+ * @param gradient 渐变描述；停止点数量不能超过 XPAINTER_GRADIENT_MAX_STOPS。
+ * @return 命令写入成功返回 true，否则返回 false。
+ * @note 仅保存线性、径向和锥形渐变的几何参数与停止点，不保存 Qt
+ *       的 spread、坐标模式、插值模式和画刷变换；纹理画刷仍由基础
+ *       画刷边界处理。
+ */
+bool XPicture_recordSetBrushGradient(XPicture* self,
+                                     const XPainterGradient* gradient);
+#endif /* XPAINTER_BRUSH_ON */
 /**
  * @brief 记录世界变换矩阵及其启用状态。
  * @param self 目标图片对象指针。

@@ -851,6 +851,16 @@ const char* XImage_text_2(const XImage* self, const char* key);
 void XImage_setText(XImage* self, const XString* key, const XString* value);
 
 /**
+ * @brief 将 QImageWriter 的 Description 字符串合并到图像文本元数据。
+ * @param self 目标图像对象指针；函数会按需执行写时分离。
+ * @param description 按“键: 值”及两个换行分隔的描述字符串；NULL 或空串无操作。
+ * @return 描述解析及元数据写入成功返回 true，参数或内存不足返回 false。
+ * @note 描述项会覆盖同名图像键，键和值遵循 Qt simplified 语义；该函数供
+ *       图像处理器和写入器内部使用，不改变 XImage 的公开文本访问规则。
+ */
+bool XImage_applyTextDescription(XImage* self, const XString* description);
+
+/**
  * @brief 获取对象持有的文本元数据引用，不复制。
  * @param self 图像对象指针。
  * @param key XString 元数据键。

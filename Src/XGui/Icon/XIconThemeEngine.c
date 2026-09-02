@@ -315,9 +315,10 @@ static void VXIconThemeEngine_addFile(XIconThemeEngine* self,
 static XString* VXIconThemeEngine_key(const XIconThemeEngine* self)
 {
     (void)self;
-    /* Qt 6.8 QIconLoaderEngine::key() 返回固定引擎类型名；图标名称由
-       iconName() 单独提供，不能拼进 key，否则引擎类型无法稳定识别。 */
-    return XString_create_utf8("QIconLoaderEngine");
+    /* XIconThemeEngine 由 XIcon_fromTheme() 创建，对应 Qt 6.8 的
+       QThemeIconEngine，而不是其内部代理的 QIconLoaderEngine。Qt 以该
+       key 区分序列化引擎类型；图标名称由 iconName() 单独提供。 */
+    return XString_create_utf8("QThemeIconEngine");
 }
 
 static XIconEngine* VXIconThemeEngine_clone(const XIconThemeEngine* self)
@@ -327,19 +328,143 @@ static XIconEngine* VXIconThemeEngine_clone(const XIconThemeEngine* self)
         XCLASS_DEFAULT_MEMORY_TYPE, self->m_iconName);
 }
 
+/* QDataStream::writeBytes() 使用大端 quint32 长度和原始 UTF-16 字节。
+   主题名称通常很短，便携实现保留普通长度范围并拒绝扩展长度，避免在
+   嵌入式目标上引入不受控的 64 位分配。 */
+static bool themeEngine_writeBe32(XIODevice* device, uint32_t value)
+{
+    uint8_t bytes[4];
+    bytes[0] = (uint8_t)(value >> 24);
+    bytes[1] = (uint8_t)(value >> 16);
+    bytes[2] = (uint8_t)(value >> 8);
+    bytes[3] = (uint8_t)value;
+    return XIODevice_write_1(device, (const char*)bytes, 4) == 4;
+}
+
+static bool themeEngine_readExact(XIODevice* device, uint8_t* data,
+                                  size_t length)
+{
+    size_t offset = 0;
+    if (!device || (!data && length)) return false;
+    while (offset < length) {
+        int64_t got = XIODevice_read_1(
+            device, (char*)data + offset, (int64_t)(length - offset));
+        if (got <= 0 || (size_t)got > length - offset) return false;
+        offset += (size_t)got;
+    }
+    return true;
+}
+
+static bool themeEngine_writeExact(XIODevice* device, const uint8_t* data,
+                                   size_t length)
+{
+    size_t offset = 0;
+    if (!device || (!data && length)) return false;
+    while (offset < length) {
+        int64_t wrote = XIODevice_write_1(
+            device, (const char*)data + offset, (int64_t)(length - offset));
+        if (wrote <= 0 || (size_t)wrote > length - offset) return false;
+        offset += (size_t)wrote;
+    }
+    return true;
+}
+
 static bool VXIconThemeEngine_read(XIconThemeEngine* self, XIODevice* device)
 {
-    (void)self;
-    (void)device;
-    return false;
+    uint8_t lengthBytes[4];
+    uint32_t byteLength;
+    size_t unitCount;
+    uint8_t* raw = NULL;
+    uint16_t* utf16 = NULL;
+    XString* name = NULL;
+    size_t i;
+    if (!self || !device || !themeEngine_readExact(device, lengthBytes, 4))
+        return false;
+    byteLength = ((uint32_t)lengthBytes[0] << 24) |
+        ((uint32_t)lengthBytes[1] << 16) |
+        ((uint32_t)lengthBytes[2] << 8) | (uint32_t)lengthBytes[3];
+    /* Qt NullCode represents a null QString. */
+    if (byteLength == UINT32_MAX) {
+        if (self->m_iconName)
+            XString_delete_base((XClass*)self->m_iconName);
+        self->m_iconName = NULL;
+        return true;
+    }
+    /* 0xfffffffe is QDataStream's extended-size marker. */
+    if (byteLength >= UINT32_MAX - 1u ||
+        byteLength > 4u * 1024u * 1024u || (byteLength & 1u))
+        return false;
+    if (byteLength == 0) {
+        name = XString_create();
+        if (!name) return false;
+    } else {
+        unitCount = (size_t)byteLength / sizeof(uint16_t);
+        raw = (uint8_t*)XMalloc_System((size_t)byteLength);
+        utf16 = (uint16_t*)XMalloc_System(unitCount * sizeof(uint16_t));
+        if (!raw || !utf16 || !themeEngine_readExact(device, raw,
+                                                       (size_t)byteLength)) {
+            if (raw) XFree_System(raw);
+            if (utf16) XFree_System(utf16);
+            return false;
+        }
+        for (i = 0; i < unitCount; ++i) {
+            /* XString's portable setter is NUL-terminated; reject embedded
+               NULs instead of silently truncating a Qt QString payload. */
+            if (raw[i * 2u] == 0 && raw[i * 2u + 1u] == 0) {
+                XFree_System(raw);
+                XFree_System(utf16);
+                return false;
+            }
+            utf16[i] = (uint16_t)(((uint16_t)raw[i * 2u] << 8) |
+                                  (uint16_t)raw[i * 2u + 1u]);
+        }
+        name = XString_create();
+        if (name && !XString_setUtf16(name, utf16, unitCount)) {
+            XString_delete_base((XClass*)name);
+            name = NULL;
+        }
+        XFree_System(raw);
+        XFree_System(utf16);
+        if (!name) return false;
+    }
+    if (self->m_iconName)
+        XString_delete_base((XClass*)self->m_iconName);
+    self->m_iconName = name;
+    return true;
 }
 
 static bool VXIconThemeEngine_write(const XIconThemeEngine* self,
                                     XIODevice* device)
 {
-    (void)self;
-    (void)device;
-    return false;
+    const uint16_t* utf16;
+    size_t unitCount;
+    size_t byteLength;
+    uint8_t* bytes = NULL;
+    size_t i;
+    bool ok;
+    if (!self || !device) return false;
+    if (!self->m_iconName)
+        return themeEngine_writeBe32(device, UINT32_MAX);
+    unitCount = XString_toUtf16_length(self->m_iconName);
+    if (unitCount > (size_t)(4u * 1024u * 1024u) / sizeof(uint16_t) ||
+        unitCount > (size_t)(UINT32_MAX - 2u) / sizeof(uint16_t))
+        return false;
+    byteLength = unitCount * sizeof(uint16_t);
+    if (!themeEngine_writeBe32(device, (uint32_t)byteLength)) return false;
+    if (byteLength == 0) return true;
+    utf16 = XString_utf16(self->m_iconName);
+    bytes = (uint8_t*)XMalloc_System(byteLength);
+    if (!utf16 || !bytes) {
+        if (bytes) XFree_System(bytes);
+        return false;
+    }
+    for (i = 0; i < unitCount; ++i) {
+        bytes[i * 2u] = (uint8_t)(utf16[i] >> 8);
+        bytes[i * 2u + 1u] = (uint8_t)utf16[i];
+    }
+    ok = themeEngine_writeExact(device, bytes, byteLength);
+    XFree_System(bytes);
+    return ok;
 }
 
 static void VXIconThemeEngine_availableSizes(const XIconThemeEngine* self,
@@ -361,8 +486,10 @@ static XString* VXIconThemeEngine_iconName(const XIconThemeEngine* self)
     matched = XIconInternal_resolveThemeIconName(
         XString_toUtf8(self->m_iconName));
     if (matched) return matched;
-    /* 保留项目既有未命中引擎的名称可见性，避免改变兼容 API。 */
-    return XString_create_copy(self->m_iconName);
+    /* QThemeIconEngine 通过 QProxyIconEngine::iconName() 委托底层
+       QIconLoaderEngine；底层没有任何条目时 iconName() 返回空字符串，
+       不能把未命中的请求名伪装成已解析名称。 */
+    return XString_create();
 }
 
 static bool VXIconThemeEngine_isNull(const XIconThemeEngine* self)

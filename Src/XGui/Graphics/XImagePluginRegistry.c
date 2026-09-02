@@ -185,7 +185,22 @@ static bool XImagePluginRegistry_pluginHasKey(XImageIOPlugin* plugin, const char
     XStringList* keys;
     if (!plugin || !key) return false;
     keys = XImageIOPlugin_keys_base(plugin);
-    return keys && XStringList_contains_utf8(keys, key, XChar_CaseInsensitive);
+    /* QImageReaderWriterHelpers 的 QFactoryLoader 使用默认
+       Qt::CaseSensitive 键表；调用方已经把用户格式规范化为小写，
+       因此这里不能再把插件元数据键按大小写不敏感匹配。否则声明
+       大写键的插件会在 Qt 中不可见，却被本地注册表错误选中。 */
+    if (keys && XStringList_contains_utf8(keys, key, XChar_CaseSensitive))
+        return true;
+    /* QImageReader/QImageWriter 的内置 QPpmHandler 接受 raw 子类型，
+       但 Qt 的公共 supportedImageFormats() 只列 pbm/pgm/ppm 三个规范键。
+       别名不加入插件元数据列表，只在显式格式匹配和处理器创建时视为
+       内置插件键，避免改变公开格式枚举及 MIME 反查结果。 */
+    if (plugin == XImageBuiltinPlugin_instance()) {
+        return strcmp(key, "pbmraw") == 0 ||
+               strcmp(key, "pgmraw") == 0 ||
+               strcmp(key, "ppmraw") == 0;
+    }
+    return false;
 }
 
 static void XImagePluginRegistry_setupHandler(XImageIOHandler* handler,
@@ -209,10 +224,21 @@ static const char* XImagePluginRegistry_fallbackMime(const char* format)
         XImagePluginRegistry_mimeEquals(format, "jpg") ||
         XImagePluginRegistry_mimeEquals(format, "jfif")) return "image/jpeg";
     if (XImagePluginRegistry_mimeEquals(format, "gif")) return "image/gif";
+    /* Qt 6.8 内置格式表将便携位图、灰度图、像素图以及 X11 位图/像素图
+       分别映射到以下 MIME。插件元数据缺失时仍须保持同一反查结果。 */
+    if (XImagePluginRegistry_mimeEquals(format, "pbm"))
+        return "image/x-portable-bitmap";
+    if (XImagePluginRegistry_mimeEquals(format, "pgm"))
+        return "image/x-portable-graymap";
+    if (XImagePluginRegistry_mimeEquals(format, "ppm"))
+        return "image/x-portable-pixmap";
+    if (XImagePluginRegistry_mimeEquals(format, "xbm"))
+        return "image/x-xbitmap";
+    if (XImagePluginRegistry_mimeEquals(format, "xpm"))
+        return "image/x-xpixmap";
     if (XImagePluginRegistry_mimeEquals(format, "svg")) return "image/svg+xml";
-    /* Qt 6.8 qtsvg/svg.json 为压缩 SVG 使用独立 MIME 类型。这里仅为
-       元数据缺失的插件提供回退值，不会把 svgz 加入本地内置格式列表；
-       当前 XImageCodec 没有 gzip 解码路径，因此不能虚假宣传 svgz 能力。 */
+    /* Qt 6.8 qtsvg/svg.json 为压缩 SVG 使用独立 MIME 类型；元数据缺失时
+       仍需提供该规范回退值，供内置 gzip 解码器和外部插件保持一致。 */
     if (XImagePluginRegistry_mimeEquals(format, "svgz"))
         return "image/svg+xml-compressed";
     if (XImagePluginRegistry_mimeEquals(format, "ico") ||

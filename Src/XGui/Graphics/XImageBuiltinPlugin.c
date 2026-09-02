@@ -21,7 +21,7 @@ static const char* const g_builtinFormats[] =
        capabilities/create 中接受，但不作为独立插件键枚举。 */
     { "bmp", "png", "jpg", "jpeg", "jfif", "gif",
       "pbm", "pgm", "ppm",
-      "xbm", "xpm", "svg",
+      "xbm", "xpm", "svg", "svgz",
 #if XIMAGECODEC_ICO_ON
       "ico", "cur",
 #endif
@@ -31,6 +31,7 @@ static const char* const g_builtinMimeTypes[] =
       "image/gif", "image/x-portable-bitmap", "image/x-portable-graymap",
       "image/x-portable-pixmap",
       "image/x-xbitmap", "image/x-xpixmap", "image/svg+xml",
+      "image/svg+xml-compressed",
 #if XIMAGECODEC_ICO_ON
       "image/vnd.microsoft.icon", "image/vnd.microsoft.icon",
 #endif
@@ -38,7 +39,7 @@ static const char* const g_builtinMimeTypes[] =
 static const char* const g_builtinNameFilters[] =
     { "*.bmp", "*.png", "*.jpg", "*.jpeg", "*.jfif", "*.gif",
       "*.pbm", "*.pgm", "*.ppm",
-      "*.xbm", "*.xpm", "*.svg",
+      "*.xbm", "*.xpm", "*.svg", "*.svgz",
 #if XIMAGECODEC_ICO_ON
       "*.ico", "*.cur",
 #endif
@@ -50,6 +51,8 @@ XCLASS_DEFINE_EXTEND_END(XImageBuiltinHandler, XImageIOHandler)
 typedef struct XImageBuiltinHandler
 {
     XImageIOHandler m_base; /**< 基类成员；必须是第一个。 */
+    XString* m_description; /**< PNG Description 选项；由处理器独占。 */
+    XString* m_subType; /**< PPM 子类型选项；由处理器独占。 */
 } XImageBuiltinHandler;
 
 XCLASS_DEFINE_BEGING(XImageBuiltinPlugin)
@@ -74,14 +77,20 @@ static uint32_t builtin_capabilityForFormat(const XString* format)
 {
     XImageCodecFormat codecFormat;
     uint32_t capability = 0;
+    const char* formatUtf8;
+    bool svgz;
     if (!format || XContainer_isEmpty_base((const XContainer*)format))
         return 0;
+    formatUtf8 = XString_toUtf8(format);
+    svgz = formatUtf8 && strcmp(formatUtf8, "svgz") == 0;
     codecFormat = builtin_formatFromString(format);
     if (codecFormat == XImageCodecFormat_Unknown)
         return 0;
     if (XImageCodec_canDecode(codecFormat))
         capability |= (uint32_t)XImageIOPlugin_CanRead;
-    if (XImageCodec_canEncode(codecFormat))
+    /* The embedded SVG encoder emits plain XML; Qt's svgz key is read-only
+       here until a gzip writer is added. */
+    if (!svgz && XImageCodec_canEncode(codecFormat))
         capability |= (uint32_t)XImageIOPlugin_CanWrite;
     return capability;
 }
@@ -103,6 +112,29 @@ static XImageCodecFormat builtin_detectWithDevice(XIODevice* device)
         XByteArray_delete_base((XClass*)header);
     }
     return format;
+}
+
+/* QPpmHandler::canRead() 返回的子类型由 P[1] 决定，而不是由调用方
+ * 请求的 pbmraw/pgmraw/ppmraw 别名决定。该辅助函数只窥视两个字节，
+ * 不改变设备位置，也不分配临时字符串。 */
+static const char* builtin_ppmSubtypeName(XIODevice* device)
+{
+    XByteArray* bytes;
+    const uint8_t* data;
+    size_t size;
+    const char* subtype = NULL;
+    if (!device) return NULL;
+    bytes = XIODevice_peek_3(device, 2);
+    if (!bytes) return NULL;
+    data = (const uint8_t*)XByteArray_data(bytes);
+    size = (size_t)XByteArray_size_base((const XContainer*)bytes);
+    if (data && size >= 2 && data[0] == 'P') {
+        if (data[1] == '1' || data[1] == '4') subtype = "pbm";
+        else if (data[1] == '2' || data[1] == '5') subtype = "pgm";
+        else if (data[1] == '3' || data[1] == '6') subtype = "ppm";
+    }
+    XByteArray_delete_base((XClass*)bytes);
+    return subtype;
 }
 
 /* 按 Qt QBmpHandler::option(ImageFormat) 规则从 BMP 信息头推导像素格式。
@@ -306,8 +338,8 @@ static XImageIOHandlerTransformation builtin_jpegTransformation(XIODevice* devic
 }
 
 /* 选项支持必须随具体格式变化。Qt 的 QBmpHandler 只声明 Size 和
- * ImageFormat，而 PNG/JPEG 还声明 Quality；这里不把尚未由便携编码器
- * 实际实现的 Description、CompressionRatio 等选项伪装成已支持。 */
+ * ImageFormat，而 PNG/JPEG 还声明 Quality；PNG 的 Description、Gamma 和
+ * CompressionRatio 由便携处理器实际接入并在读写两侧分别反映。 */
 static bool builtin_supportsOption(const XImageIOHandler* self,
                                    XImageIOHandlerOption option)
 {
@@ -361,6 +393,14 @@ static bool builtin_supportsOption(const XImageIOHandler* self,
     if (option == XImageIOHandlerOption_Quality)
         return format == XImageCodecFormat_Png ||
                format == XImageCodecFormat_Jpeg;
+    /* QPngHandler forwards Description, Gamma and CompressionRatio to
+       libpng; the portable PNG path stores Description and accepts the
+       scalar controls where the encoder can represent them. */
+    if (format == XImageCodecFormat_Png &&
+        (option == XImageIOHandlerOption_Description ||
+         option == XImageIOHandlerOption_Gamma ||
+         option == XImageIOHandlerOption_CompressionRatio))
+        return true;
     return false;
 }
 
@@ -461,10 +501,15 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
     XImageCodecFormat format;
     XImageCodecFormat detected;
     XString* detectedName;
+    const XString* requestedName;
+    const char* requestedUtf8;
+    bool compressedSvg = false;
     if (!self) return false;
     device = XImageIOHandler_device(self);
     if (!device) return false;
-    format = builtin_formatFromString(XImageIOHandler_format_const(self));
+    requestedName = XImageIOHandler_format_const(self);
+    requestedUtf8 = XString_toUtf8(requestedName);
+    format = builtin_formatFromString(requestedName);
     if (format == XImageCodecFormat_Unknown)
         format = builtin_detectWithDevice(device);
     if (format == XImageCodecFormat_Unknown || !XImageCodec_canDecode(format))
@@ -479,6 +524,18 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
      * to validate the device contents before accepting unrelated bytes. */
     detected = builtin_detectWithDevice(device);
     if (format != XImageCodecFormat_Dib && detected != format) return false;
+#if XIMAGECODEC_SVG_ON
+    if (format == XImageCodecFormat_Svg) {
+        XByteArray* svgHeader = XIODevice_peek_3(device, 2);
+        const uint8_t* raw = svgHeader
+            ? (const uint8_t*)XByteArray_data(svgHeader) : NULL;
+        size_t rawSize = svgHeader
+            ? (size_t)XByteArray_size_base((const XContainer*)svgHeader) : 0;
+        compressedSvg = (requestedUtf8 && strcmp(requestedUtf8, "svgz") == 0) ||
+            (raw && rawSize >= 2 && raw[0] == 0x1fu && raw[1] == 0x8bu);
+        if (svgHeader) XByteArray_delete_base((XClass*)svgHeader);
+    }
+#endif
 #if XIMAGECODEC_XBM_ON
     if (format == XImageCodecFormat_Xbm && !builtin_validateXbmDevice(device))
         return false;
@@ -487,7 +544,27 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
        exposes a const setFormat() overload so a handler can publish its
        canonical format after content probing. */
     detectedName = format == XImageCodecFormat_Dib
-        ? XString_create_utf8("dib") : XImageCodec_formatName(detected);
+        ? XString_create_utf8("dib") :
+        (compressedSvg ? XString_create_utf8("svgz") :
+         XImageCodec_formatName(detected));
+    /* QPpmHandler::canRead() publishes the canonical subtype determined by
+       P[1] (pbm, pgm, or ppm), even when the caller requested a raw alias. */
+    if (format == XImageCodecFormat_Ppm) {
+        const char* subtype = builtin_ppmSubtypeName(device);
+        if (subtype) {
+            XString* canonical = XString_create_utf8(subtype);
+            XImageBuiltinHandler* mutableHandler =
+                (XImageBuiltinHandler*)self;
+            if (canonical) {
+                if (detectedName)
+                    XString_delete_base((XClass*)detectedName);
+                detectedName = canonical;
+                if (mutableHandler->m_subType)
+                    XString_delete_base((XClass*)mutableHandler->m_subType);
+                mutableHandler->m_subType = XString_create_copy(canonical);
+            }
+        }
+    }
     if (detectedName) {
         XImageIOHandler_setFormat_const(self, detectedName);
         XString_delete_base((XClass*)detectedName);
@@ -544,7 +621,12 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
     const char* xbmName = "image";
 #endif
     XByteArray* bytes;
+    XImage described;
+    bool describedInitialized = false;
+    const XImage* source = image;
     int quality = -1;
+    int compression = -1;
+    float gamma = 0.0f;
     XImageIOHandlerOptionValue value;
     bool ok = false;
     bool encoded = false;
@@ -554,9 +636,53 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
     if (format == XImageCodecFormat_Unknown || !XImageCodec_canEncode(format))
         return false;
     formatName = XImageIOHandler_format_2(self);
+    /* QImageWriter applies SubType immediately before write(); the PPM
+       handler writes that selected subtype rather than the generic format
+       key.  The option value is borrowed from XImageWriterPrivate and is
+       valid for the duration of this call. */
+    if (format == XImageCodecFormat_Ppm) {
+        XImageIOHandlerOptionValue subtypeValue;
+        memset(&subtypeValue, 0, sizeof(subtypeValue));
+        if (XImageIOHandler_optionValue(self,
+                                        XImageIOHandlerOption_SubType,
+                                        &subtypeValue) &&
+            subtypeValue.string &&
+            !XContainer_isEmpty_base((const XContainer*)subtypeValue.string))
+            formatName = XString_toUtf8(subtypeValue.string);
+    }
+    bytes = XByteArray_create();
+    if (!bytes) return false;
     memset(&value, 0, sizeof(value));
     if (XImageIOHandler_optionValue(self, XImageIOHandlerOption_Quality, &value))
         quality = value.integer;
+    memset(&value, 0, sizeof(value));
+    if (XImageIOHandler_optionValue(self,
+                                    XImageIOHandlerOption_CompressionRatio,
+                                    &value))
+        compression = value.integer;
+    memset(&value, 0, sizeof(value));
+    if (XImageIOHandler_optionValue(self, XImageIOHandlerOption_Gamma, &value))
+        gamma = value.real;
+    if (format == XImageCodecFormat_Png) {
+        XImageIOHandlerOptionValue descriptionValue;
+        memset(&descriptionValue, 0, sizeof(descriptionValue));
+        if (XImageIOHandler_option_base(self,
+                                        XImageIOHandlerOption_Description,
+                                        &descriptionValue) &&
+            descriptionValue.string &&
+            !XContainer_isEmpty_base((const XContainer*)descriptionValue.string)) {
+            XImage_init(&described);
+            XImage_copy_base(&described, image);
+            if (!described.m_data ||
+                !XImage_applyTextDescription(&described, descriptionValue.string)) {
+                XImage_deinit_base(&described);
+                XByteArray_delete_base((XClass*)bytes);
+                return false;
+            }
+            source = &described;
+            describedInitialized = true;
+        }
+    }
 #if XIMAGECODEC_XBM_ON
     memset(&value, 0, sizeof(value));
     if (format == XImageCodecFormat_Xbm &&
@@ -564,8 +690,6 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
         value.string && XString_toUtf8(value.string) && XString_toUtf8(value.string)[0])
         xbmName = XString_toUtf8(value.string);
 #endif
-    bytes = XByteArray_create();
-    if (!bytes) return false;
 #if XIMAGECODEC_PPM_ON
     if (format == XImageCodecFormat_Ppm)
         encoded = XImageCodecInternal_encodePpmSubtype(image, formatName, bytes);
@@ -581,10 +705,16 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
         encoded = XImageCodecInternal_encodeXpmNamed(image, formatName, bytes);
     else
 #endif
-        encoded = XImageCodec_encode(image, format, quality, bytes);
+    if (format == XImageCodecFormat_Png)
+        encoded = XImageCodecInternal_encodePngOptions(
+            source, quality, compression, gamma, NULL, bytes);
+    else
+        encoded = XImageCodec_encode(source, format, quality, bytes);
     if (encoded)
         ok = builtin_writeBytes(device, bytes);
     XByteArray_delete_base((XClass*)bytes);
+    if (describedInitialized)
+        XImage_deinit_base(&described);
     return ok;
 }
 
@@ -594,8 +724,38 @@ static void VXImageBuiltinHandler_setOption(XImageIOHandler* self,
 {
     if (builtin_supportsOption(self, option) &&
         (option == XImageIOHandlerOption_Quality ||
-         option == XImageIOHandlerOption_Name))
+         option == XImageIOHandlerOption_Name ||
+         option == XImageIOHandlerOption_Gamma ||
+         option == XImageIOHandlerOption_CompressionRatio))
         XImageIOHandler_storeOptionValue(self, option, value);
+    else if (builtin_supportsOption(self, option) &&
+             option == XImageIOHandlerOption_SubType && value) {
+        XImageBuiltinHandler* handler = (XImageBuiltinHandler*)self;
+        const XImageIOHandlerOptionValue* optionValue =
+            (const XImageIOHandlerOptionValue*)value;
+        XString* replacement = optionValue->string
+            ? XString_toLower(optionValue->string) : NULL;
+        /* 先复制再释放旧值，允许调用方把 option() 返回的借用字符串
+           原样传回 setOption()，避免自引用时产生悬空读取。 */
+        if (optionValue->string && !replacement)
+            return;
+        if (handler->m_subType)
+            XString_delete_base((XClass*)handler->m_subType);
+        handler->m_subType = replacement;
+    }
+    else if (builtin_supportsOption(self, option) &&
+             option == XImageIOHandlerOption_Description && value) {
+        XImageBuiltinHandler* handler = (XImageBuiltinHandler*)self;
+        const XImageIOHandlerOptionValue* optionValue =
+            (const XImageIOHandlerOptionValue*)value;
+        XString* replacement = optionValue->string
+            ? XString_create_copy(optionValue->string) : NULL;
+        if (optionValue->string && !replacement)
+            return;
+        if (handler->m_description)
+            XString_delete_base((XClass*)handler->m_description);
+        handler->m_description = replacement;
+    }
 }
 
 static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
@@ -618,6 +778,16 @@ static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
     if (option == XImageIOHandlerOption_Quality && value &&
         builtin_supportsOption(self, option))
         return XImageIOHandler_optionValue(self, option, value);
+    if (option == XImageIOHandlerOption_Description && value &&
+        builtin_supportsOption(self, option)) {
+        const XImageBuiltinHandler* handler = (const XImageBuiltinHandler*)self;
+        value->string = handler->m_description;
+        return true;
+    }
+    if ((option == XImageIOHandlerOption_Gamma ||
+         option == XImageIOHandlerOption_CompressionRatio) && value &&
+        builtin_supportsOption(self, option))
+        return XImageIOHandler_optionValue(self, option, value);
     /* Qt QGifHandler::option(Animation) returns true whenever the handler
        advertises Animation, including before the first frame is read. */
     if (option == XImageIOHandlerOption_Animation && value &&
@@ -627,7 +797,10 @@ static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
     }
     if (option == XImageIOHandlerOption_SubType && value &&
         builtin_supportsOption(self, option)) {
-        value->string = XImageIOHandler_format_const(self);
+        const XImageBuiltinHandler* handler =
+            (const XImageBuiltinHandler*)self;
+        value->string = handler->m_subType
+            ? handler->m_subType : XImageIOHandler_format_const(self);
         return value->string && !XContainer_isEmpty_base(
             (const XContainer*)value->string);
     }
@@ -649,10 +822,25 @@ static bool VXImageBuiltinHandler_supportsOption(const XImageIOHandler* self,
     return builtin_supportsOption(self, option);
 }
 
+static void VXImageBuiltinHandler_deinit(XImageIOHandler* self)
+{
+    XImageBuiltinHandler* handler;
+    if (!self) return;
+    handler = (XImageBuiltinHandler*)self;
+    if (handler->m_description)
+        XString_delete_base((XClass*)handler->m_description);
+    if (handler->m_subType)
+        XString_delete_base((XClass*)handler->m_subType);
+    handler->m_description = NULL;
+    handler->m_subType = NULL;
+    XClass_Deinit_Parent(XImageIOHandler, self);
+}
+
 static XVtable* XImageBuiltinHandler_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XImageBuiltinHandler)
     XVTABLE_INHERIT_XCLASS(XImageIOHandler);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXImageBuiltinHandler_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_CanRead, VXImageBuiltinHandler_canRead);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Read, VXImageBuiltinHandler_read);
     XVTABLE_OVERLOAD_DEFAULT(EXImageIOHandler_Write, VXImageBuiltinHandler_write);
@@ -673,6 +861,75 @@ static XImageBuiltinHandler* XImageBuiltinHandler_create(void)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
     return self;
+}
+
+/* 读取 PNG 文本描述供 QImageReader::textKeys()/text() 使用。仅对可读
+ * 设备执行窥探，写设备不会把已有缓冲区误当作输入；解码器内部有固定
+ * 文本上限，避免元数据查询导致无界分配。 */
+static void builtin_loadPngDescription(XImageBuiltinHandler* handler)
+{
+#if XIMAGECODEC_PNG_ON
+    XIODevice* device;
+    int64_t totalSize;
+    XByteArray* bytes;
+    XString* description;
+    if (!handler || !handler->m_base.m_data ||
+        XImageCodec_formatFromName_2(XString_toUtf8(
+            XImageIOHandler_format_const(&handler->m_base))) != XImageCodecFormat_Png)
+        return;
+    device = XImageIOHandler_device(&handler->m_base);
+    if (!device || !XIODevice_isReadable(device)) return;
+    totalSize = XIODevice_size_base(device);
+    if (totalSize <= 0 || totalSize > (int64_t)(16u * 1024u * 1024u)) return;
+    bytes = XIODevice_peek_3(device, totalSize);
+    if (!bytes) return;
+    description = XString_create();
+    if (description && XImageCodecInternal_extractPngDescription(
+            (const uint8_t*)XByteArray_data(bytes),
+            (size_t)XByteArray_size_base((const XContainer*)bytes), description) &&
+        !XString_isEmpty_base((const XContainer*)description))
+        handler->m_description = description;
+    else if (description)
+        XString_delete_base((XClass*)description);
+    XByteArray_delete_base((XClass*)bytes);
+#else
+    (void)handler;
+#endif
+}
+
+/* 读取 PNG 头部 gAMA，供 QImageReader 在 read() 前查询 Gamma。显式
+ * setOption(Gamma) 会写入基类选项并在 option() 中优先返回。 */
+static void builtin_loadPngGamma(XImageBuiltinHandler* handler)
+{
+#if XIMAGECODEC_PNG_ON
+    XIODevice* device;
+    int64_t totalSize;
+    XByteArray* bytes;
+    float gamma = 0.0f;
+    XImageIOHandlerOptionValue value;
+    if (!handler || !handler->m_base.m_data ||
+        XImageCodec_formatFromName_2(XString_toUtf8(
+            XImageIOHandler_format_const(&handler->m_base))) != XImageCodecFormat_Png)
+        return;
+    device = XImageIOHandler_device(&handler->m_base);
+    if (!device || !XIODevice_isReadable(device) || XIODevice_isSequential(device))
+        return;
+    totalSize = XIODevice_size_base(device);
+    if (totalSize <= 0 || totalSize > (int64_t)(16u * 1024u * 1024u)) return;
+    bytes = XIODevice_peek_3(device, totalSize);
+    if (!bytes) return;
+    if (XImageCodecInternal_extractPngGamma(
+            (const uint8_t*)XByteArray_data(bytes),
+            (size_t)XByteArray_size_base((const XContainer*)bytes), &gamma)) {
+        memset(&value, 0, sizeof(value));
+        value.real = gamma;
+        XImageIOHandler_storeOptionValue(&handler->m_base,
+                                          XImageIOHandlerOption_Gamma, &value);
+    }
+    XByteArray_delete_base((XClass*)bytes);
+#else
+    (void)handler;
+#endif
 }
 
 static uint32_t VXImageBuiltinPlugin_capabilities(const XImageIOPlugin* self,
@@ -716,9 +973,13 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
         /* QImageIOPlugin::create() must return a fully initialized handler;
            registry callers may add the same format again, but direct callers
            must also be able to write through the returned object. */
-        if (format && !XContainer_isEmpty_base((const XContainer*)format))
+        if (format && !XContainer_isEmpty_base((const XContainer*)format)) {
             XImageIOHandler_setFormat(&handler->m_base, format);
-        else if (device) {
+            /* Qt's built-in QPpmHandler receives setOption(SubType,
+               testFormat) at construction time, including raw aliases. */
+            if (builtin_formatFromString(format) == XImageCodecFormat_Ppm)
+                handler->m_subType = XString_toLower(format);
+        } else if (device) {
             /* Qt's content-probe path returns a handler whose format() is the
                format accepted by canRead().  Keep that result visible to
                QImageReader::imageFormat() even when SVG/XML has a long
@@ -726,6 +987,22 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
             detected = builtin_detectWithDevice(device);
             if (detected != XImageCodecFormat_Unknown) {
                 detectedName = XImageCodec_formatName(detected);
+                if (detected == XImageCodecFormat_Svg) {
+                    XByteArray* svgHeader = XIODevice_peek_3(device, 2);
+                    const uint8_t* raw = svgHeader
+                        ? (const uint8_t*)XByteArray_data(svgHeader) : NULL;
+                    size_t rawSize = svgHeader
+                        ? (size_t)XByteArray_size_base((const XContainer*)svgHeader) : 0;
+                    if (raw && rawSize >= 2 && raw[0] == 0x1fu && raw[1] == 0x8bu) {
+                        XString* compressedName = XString_create_utf8("svgz");
+                        if (compressedName) {
+                            if (detectedName)
+                                XString_delete_base((XClass*)detectedName);
+                            detectedName = compressedName;
+                        }
+                    }
+                    if (svgHeader) XByteArray_delete_base((XClass*)svgHeader);
+                }
                 if (detected == XImageCodecFormat_Ppm) {
                     XByteArray* head = XIODevice_peek_3(device, 2);
                     const uint8_t* raw = head
@@ -747,10 +1024,14 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
                 }
                 if (detectedName) {
                     XImageIOHandler_setFormat(&handler->m_base, detectedName);
+                    if (detected == XImageCodecFormat_Ppm)
+                        handler->m_subType = XString_create_copy(detectedName);
                     XString_delete_base((XClass*)detectedName);
                 }
             }
         }
+        builtin_loadPngDescription(handler);
+        builtin_loadPngGamma(handler);
     }
     return (XImageIOHandler*)handler;
 }

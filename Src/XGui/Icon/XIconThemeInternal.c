@@ -125,6 +125,18 @@ static bool theme_fileExists(const char* path)
     return exists;
 }
 
+/* Qt QIconTheme 以 index.theme 文件是否存在决定主题是否进入索引模式；
+ * 即使索引内容损坏或 Directories 为空，也不能退回旧式尺寸/上下文目录。 */
+static bool theme_indexExists(const char* root, const char* theme)
+{
+    char path[1024];
+    int written;
+    if (!root || !root[0] || !theme || !theme[0]) return false;
+    written = snprintf(path, sizeof(path), "%s/%s/index.theme", root, theme);
+    if (written < 0 || (size_t)written >= sizeof(path)) return false;
+    return theme_fileExists(path);
+}
+
 static bool theme_extAllowed(const char* ext)
 {
 #if XICON_THEME_SVG_AVAILABLE
@@ -665,7 +677,10 @@ static bool themeContext_prepareDirs(ThemeContext* self)
         count * sizeof(ThemeDirInfo)) : NULL;
     if (count && !self->m_meta) return false;
     self->m_metaCount = count;
-    memset(self->m_meta, 0, count * sizeof(ThemeDirInfo));
+    /* C 标准不允许把 NULL 作为 memset 目标，即使长度为零；空主题
+       目录列表在 UBSan 下也必须保持合法。 */
+    if (count)
+        memset(self->m_meta, 0, count * sizeof(ThemeDirInfo));
     for (i = 0; i < count; ++i) {
         const XString* nameStr = (const XString*)XStringList_at_base(
             (const XVector*)self->m_dirs, (int64_t)i);
@@ -1228,6 +1243,7 @@ static bool theme_selectEntryType(const XStringList* paths,
     ThemeContext ctx;
     XStringList* parents = NULL;
     bool parsed = false;
+    bool indexPresent = false;
     bool local = false;
     bool selectedScalable = false;
     size_t pathIndex;
@@ -1244,8 +1260,10 @@ static bool theme_selectEntryType(const XStringList* paths,
             (const XVector*)paths, (int64_t)pathIndex);
         const char* root = rootString ? XString_toUtf8(rootString) : NULL;
         if (!root || !root[0]) continue;
+        if (theme_indexExists(root, theme)) indexPresent = true;
         if (!parsed && theme_parseIndexFile(root, theme, &ctx)) parsed = true;
     }
+    if (indexPresent) parsed = true;
     if (parsed) {
         local = theme_selectParsedEntryType(&ctx, paths, theme, name, target, 1,
                                             genericFallback, &selectedScalable);
@@ -1310,12 +1328,13 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                                  const char* root, const char* theme,
                                  const char* name, int target, int iconScale,
                                  bool skipGenericContext,
-                                 XPixmap* best, int* bestDistance)
+                                 XPixmap* best, int* bestDistance,
+                                 int* globalFormatPriority, size_t rootIndex,
+                                 size_t* bestRootIndex,
+                                 size_t* bestDirIndex)
 {
     size_t di;
     bool found = false;
-    bool foundExact = false;
-    int bestFormatPriority = INT_MAX;
     if (!ctx) return false;
 
     /* QIconLoaderEngine::entryForSize() gives exact Scale/size matches a
@@ -1334,18 +1353,35 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
                                        iconScale, &candidate, &distance,
                                        &formatPriority)) {
-            if (distance == 0 &&
-                (!foundExact || formatPriority < bestFormatPriority)) {
+            bool replace = false;
+            if (distance == 0) {
+                if (*bestDistance != 0 || formatPriority < *globalFormatPriority)
+                    replace = true;
+                else if (formatPriority == *globalFormatPriority) {
+                    if (formatPriority == 0) {
+                        replace = rootIndex > *bestRootIndex ||
+                            (rootIndex == *bestRootIndex &&
+                             di > *bestDirIndex);
+                    } else {
+                        replace = rootIndex < *bestRootIndex ||
+                            (rootIndex == *bestRootIndex &&
+                             di < *bestDirIndex);
+                    }
+                }
+                found = true;
+            }
+            if (replace) {
                 if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
                 XPixmap_move_base(best, &candidate);
                 *bestDistance = 0;
-                bestFormatPriority = formatPriority;
-                foundExact = true;
+                *globalFormatPriority = formatPriority;
+                *bestRootIndex = rootIndex;
+                *bestDirIndex = di;
             }
         }
         XPixmap_deinit_base(&candidate);
     }
-    if (foundExact) return true;
+    if (*bestDistance == 0) return true;
 
     /* No exact match: choose the first minimum-distance entry, as Qt does. */
     for (di = 0; di < ctx->m_metaCount; ++di) {
@@ -1360,15 +1396,32 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
                                        iconScale, &candidate, &distance,
                                        &formatPriority) &&
-            (distance < *bestDistance ||
-             (distance == *bestDistance &&
-              formatPriority < bestFormatPriority))) {
-            if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
-            XPixmap_move_base(best, &candidate);
+            *bestDistance != 0) {
+            bool replace = distance < *bestDistance;
+            if (!replace && distance == *bestDistance) {
+                if (formatPriority < *globalFormatPriority)
+                    replace = true;
+                else if (formatPriority == *globalFormatPriority) {
+                    if (formatPriority == 0)
+                        replace = rootIndex > *bestRootIndex ||
+                            (rootIndex == *bestRootIndex &&
+                             di > *bestDirIndex);
+                    else
+                        replace = rootIndex < *bestRootIndex ||
+                            (rootIndex == *bestRootIndex &&
+                             di < *bestDirIndex);
+                }
+            }
+            if (replace) {
+                if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
+                XPixmap_move_base(best, &candidate);
+                *bestDistance = distance;
+                *globalFormatPriority = formatPriority;
+                *bestRootIndex = rootIndex;
+                *bestDirIndex = di;
+                found = true;
+            }
             XPixmap_deinit_base(&candidate);
-            *bestDistance = distance;
-            bestFormatPriority = formatPriority;
-            found = true;
         } else {
             XPixmap_deinit_base(&candidate);
         }
@@ -1462,10 +1515,14 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     ThemeContext ctx;
     XPixmap best;
     int bestDistance = INT_MAX;
+    int bestFormatPriority = INT_MAX;
+    size_t bestRootIndex = 0;
+    size_t bestDirIndex = 0;
     XStringList* parents = NULL;
     size_t pathIndex;
     size_t parentIndex;
     bool parsed = false;
+    bool indexPresent = false;
     bool local = false;
     bool foundParent = false;
     bool dashFound = false;
@@ -1481,9 +1538,13 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             (const XVector*)paths, (int64_t)pathIndex);
         const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
         if (!root || !root[0]) continue;
+        if (theme_indexExists(root, theme)) indexPresent = true;
         if (!parsed && theme_parseIndexFile(root, theme, &ctx))
             parsed = true;
     }
+
+    /* An existing but malformed/empty index.theme is still authoritative. */
+    if (indexPresent) parsed = true;
 
     XPixmap_init(&best);
     if (parsed) {
@@ -1498,7 +1559,8 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             if (!root || !root[0]) continue;
             if (theme_tryParsedTheme(&ctx, root, theme, name, target, iconScale,
                                      genericFallback,
-                                     &best, &bestDistance)) {
+                                     &best, &bestDistance, &bestFormatPriority,
+                                     pathIndex, &bestRootIndex, &bestDirIndex)) {
                 local = true;
             }
         }
@@ -1602,6 +1664,7 @@ static bool theme_searchThemeExists(const XStringList* paths,
     size_t dirIndex;
     size_t parentIndex;
     bool parsed = false;
+    bool indexPresent = false;
     bool local = false;
     if (!paths || !theme || !theme[0] || !name || !name[0] || !visited ||
         theme_visitContains(visited, theme))
@@ -1614,9 +1677,11 @@ static bool theme_searchThemeExists(const XStringList* paths,
             (const XVector*)paths, (int64_t)pathIndex);
         const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
         if (!root || !root[0]) continue;
+        if (theme_indexExists(root, theme)) indexPresent = true;
         if (!parsed && theme_parseIndexFile(root, theme, &ctx))
             parsed = true;
     }
+    if (indexPresent) parsed = true;
     if (parsed) {
         for (dirIndex = 0; dirIndex < ctx.m_metaCount && !local; ++dirIndex) {
             const ThemeDirInfo* info = &ctx.m_meta[dirIndex];
@@ -1775,17 +1840,13 @@ static bool theme_dirHasIcon(const char* root, const char* theme,
     return false;
 }
 
-static void theme_appendSizeUnique(XVector* out, int size)
+/* QIconLoaderEngine::availableSizes() 按登记条目逐项追加尺寸，不做去重。
+ * 同一主题在不同 contentDirs 中登记相同逻辑尺寸时，Qt 会保留重复项；
+ * 这里不能复用 QPixmapIconEngine 那种 contains() 去重语义。 */
+static void theme_appendSize(XVector* out, int size)
 {
-    size_t i;
     XSize value;
     if (!out || size <= 0) return;
-    for (i = 0; i < XVector_size_base((const XContainer*)out); ++i) {
-        const XSize* existing = (const XSize*)XVector_at_base(out,
-                                                               (int64_t)i);
-        if (existing && existing->width == size && existing->height == size)
-            return;
-    }
     value.width = size;
     value.height = size;
     XVector_push_back_1_base(out, &value);
@@ -1831,9 +1892,11 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
                     (const XVector*)paths, (int64_t)pathIndex);
                 const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
                 if (theme_dirHasIcon(root, theme, dir, name)) {
-                    theme_appendSizeUnique(out, logicalSize);
+                    /* QIconTheme keeps one entry per content directory.  Do
+                       not stop at the first search root: duplicate roots
+                       remain observable through availableSizes(). */
+                    theme_appendSize(out, logicalSize);
                     found = true;
-                    break;
                 }
             }
         }
@@ -1853,7 +1916,7 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
                     char dir[64];
                     snprintf(dir, sizeof(dir), "%s", theme_size_dirs[dirIndex]);
                     if (theme_dirHasIcon(root, theme, dir, name)) {
-                        theme_appendSizeUnique(out, logicalSize);
+                        theme_appendSize(out, logicalSize);
                         found = true;
                         sizeFound = true;
                         break;

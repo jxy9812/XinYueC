@@ -1881,6 +1881,20 @@ static void painterRecord_brush(XPainter* self)
                                   self->m_state.m_brushColor);
 }
 
+/* Qt updateBrush() carries the complete QBrush object.  The portable
+   gradient opcode stores the embedded XPainterGradient subset so Picture
+   replay retains geometry and stop colors without depending on QDataStream. */
+#if XPAINTER_BRUSH_ON
+static void painterRecord_brushGradient(XPainter* self)
+{
+    if (!self || self->m_deviceKind != XPainterDevice_Picture ||
+        !self->m_picture)
+        return;
+    (void)XPicture_recordSetBrushGradient(
+        self->m_picture, &self->m_state.m_brush.m_gradient);
+}
+#endif /* XPAINTER_BRUSH_ON */
+
 
 /* ========== 画笔样式（虚线/点线） ========== */
 
@@ -5366,6 +5380,7 @@ void XPainter_setBrushGradient(XPainter* self, const XPainterGradient* gradient)
                 XPainterBrushStyle_LinearGradientPattern;
             break;
     }
+    painterRecord_brushGradient(self);
 }
 
 void XPainter_brush(const XPainter* self, XPainterBrush* out)
@@ -5960,8 +5975,10 @@ XPainterRenderHints XPainter_renderHints(const XPainter* self)
 bool XPainter_testRenderHint(const XPainter* self, XPainterRenderHint hint)
 {
     XPainterRenderHints mask = (XPainterRenderHints)hint;
-    return self && self->m_deviceKind != XPainterDevice_None && mask != 0u &&
-           (self->m_state.m_renderHints & mask) == mask;
+    /* Qt 6.8 QPainter::testRenderHint() 在头文件中直接返回
+       bool(renderHints() & hint)：组合掩码只需命中任一位，零掩码自然为假。 */
+    return self && self->m_deviceKind != XPainterDevice_None &&
+           (self->m_state.m_renderHints & mask) != 0u;
 }
 #endif /* XPAINTER_RENDERHINT_ON */
 

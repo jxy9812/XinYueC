@@ -271,6 +271,93 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
     return NULL;
 }
 
+#if !XIMAGEIOPLUGIN_ON
+/*
+ * 无插件裁剪时没有 QImageIOHandler 实例可供 supportsOption() 调用；
+ * 仍需根据直接编解码器的格式能力返回稳定结果。这里与
+ * XImageBuiltinPlugin 的支持表保持一致，只报告便携层真正处理的选项，
+ * 不把尚未接入的元数据或压缩控制伪装成已支持。
+ */
+static bool XImageWriter_builtinSupportsOption(const XImageWriter* self,
+                                               XImageIOHandlerOption option)
+{
+#if XIMAGECODEC_ON
+    const XString* formatString;
+    XString* resolvedFormat = NULL;
+    const char* format;
+    XImageCodecFormat codec;
+    bool supported = false;
+    if (!self || !self->m_data) return false;
+    formatString = self->m_data->m_format;
+    if (!formatString || XContainer_isEmpty_base((const XContainer*)formatString)) {
+        resolvedFormat = XImageWriter_resolveFormatForHandler(self);
+        formatString = resolvedFormat;
+    }
+    format = XString_toUtf8(formatString);
+    codec = XImageCodec_formatFromName_2(format);
+    if (XImageCodec_canEncode(codec)) {
+        switch (codec) {
+        case XImageCodecFormat_Gif:
+#if XIMAGECODEC_GIF_ANIM_ON
+            /* QGifHandler advertises Animation even without a device. */
+            supported = option == XImageIOHandlerOption_Animation;
+#endif
+            break;
+        case XImageCodecFormat_Ppm:
+            supported = option == XImageIOHandlerOption_Size ||
+                        option == XImageIOHandlerOption_ImageFormat ||
+                        option == XImageIOHandlerOption_SubType;
+            break;
+        case XImageCodecFormat_Xbm:
+            supported = option == XImageIOHandlerOption_Name ||
+                        option == XImageIOHandlerOption_Size ||
+                        option == XImageIOHandlerOption_ImageFormat;
+            break;
+        case XImageCodecFormat_Xpm:
+            supported = option == XImageIOHandlerOption_Name ||
+                        option == XImageIOHandlerOption_Size ||
+                        option == XImageIOHandlerOption_ImageFormat;
+            break;
+        case XImageCodecFormat_Jpeg:
+            /* The direct JPEG path currently stores only quality; transform
+             * remains device-dependent just like the built-in handler. */
+            if (option == XImageIOHandlerOption_ImageTransformation) {
+                XIODevice* device = XImageWriter_device(self);
+                supported = device && XIODevice_isReadable(device);
+            } else {
+                supported = option == XImageIOHandlerOption_Quality ||
+                            option == XImageIOHandlerOption_Size ||
+                            option == XImageIOHandlerOption_ImageFormat;
+            }
+            break;
+        case XImageCodecFormat_Png:
+            /* QPngHandler advertises Description, Gamma and CompressionRatio;
+             * the direct path now serializes all three scalar controls. */
+            supported = option == XImageIOHandlerOption_Description ||
+                        option == XImageIOHandlerOption_Gamma ||
+                        option == XImageIOHandlerOption_CompressionRatio ||
+                        option == XImageIOHandlerOption_Quality ||
+                        option == XImageIOHandlerOption_Size ||
+                        option == XImageIOHandlerOption_ImageFormat;
+            break;
+        default:
+            supported = option == XImageIOHandlerOption_Size ||
+                        option == XImageIOHandlerOption_ImageFormat ||
+                        (option == XImageIOHandlerOption_Quality &&
+                         codec == XImageCodecFormat_Png);
+            break;
+        }
+    }
+    if (resolvedFormat) XString_delete_base((XClass*)resolvedFormat);
+    return supported;
+#else
+    (void)self;
+    (void)option;
+    return false;
+#endif
+}
+#endif /* !XIMAGEIOPLUGIN_ON */
+
 static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
                                               const XImageWriterPrivate* data)
 {
@@ -945,6 +1032,13 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
                 source, xpmName && xpmName[0] ? xpmName : "image", bytes);
         else
 #endif
+#if XIMAGECODEC_PNG_ON
+        if (format == XImageCodecFormat_Png)
+            encoded = bytes && XImageCodecInternal_encodePngOptions(
+                source, self->m_data->m_quality, self->m_data->m_compression,
+                self->m_data->m_gamma, self->m_data->m_description, bytes);
+        else
+#endif
             encoded = bytes && XImageCodec_encode(
                 source, format, self->m_data->m_quality, bytes);
         ok = encoded && XImageWriter_writeDevice(self->m_data->m_device, bytes);
@@ -957,11 +1051,24 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
                                   "Image could not be written to the device");
         else
             wrote = true;
-    } else if (!XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
-                              effectiveFormat, self->m_data->m_quality)) {
-        XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
     } else {
-        wrote = true;
+        bool fileOk = false;
+#if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
+        if (XImageCodec_formatFromName_2(effectiveFormat) == XImageCodecFormat_Png) {
+            XByteArray* bytes = XByteArray_create();
+            bool encoded = bytes && XImageCodecInternal_encodePngOptions(
+                source, self->m_data->m_quality, self->m_data->m_compression,
+                self->m_data->m_gamma, self->m_data->m_description, bytes);
+            fileOk = encoded && XImageWriter_writeDevice(self->m_data->m_device, bytes);
+            if (bytes) XByteArray_delete_base((XClass*)bytes);
+        } else
+#endif
+            fileOk = XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
+                                   effectiveFormat, self->m_data->m_quality);
+        if (!fileOk)
+            XImageWriter_setError(self, XImageWriterError_DeviceError, "Image could not be written");
+        else
+            wrote = true;
     }
     /* QImageWriter::write() does not clear a previous error on success; the
        initial Unknown error string therefore remains observable until a new
@@ -991,6 +1098,10 @@ bool XImageWriter_supportsOption(const XImageWriter* self, XImageIOHandlerOption
     XImageIOHandler* handler;
     if (!self || !self->m_data) return false;
     handler = XImageWriter_ensureHandler((XImageWriter*)self);
+#if !XIMAGEIOPLUGIN_ON
+    if (XImageWriter_builtinSupportsOption(self, option))
+        return true;
+#endif
     if (!handler) {
         XImageWriter_setError((XImageWriter*)self,
                                XImageWriterError_UnsupportedFormatError,
