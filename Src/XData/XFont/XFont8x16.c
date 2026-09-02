@@ -424,6 +424,6 @@ static const XFontBitmapProvider g_xfont8x16_provider = {
 
 bool XFont8x16_register(void)
 {
-    return XFont_registerBitmapProvider(&g_xfont8x16_provider);
+    return XFontBitmapFace_registerProvider(&g_xfont8x16_provider);
 }
 #endif /* XFONT_BUILTIN_8X16_ON */

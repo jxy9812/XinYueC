@@ -48,9 +48,23 @@ struct XPlatformBackingStore
 {
     XWindow* m_window;                        /**< 绑定窗口（借用，不持有）。 */
     XImage m_image;                           /**< 内部软件帧缓冲（拥有）。 */
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage m_image2;                          /**< 双缓冲的第二帧缓冲。 */
+#endif
+    unsigned m_activeIndex;                   /**< 当前绘制/提交缓冲索引。 */
+    void* m_buffer1;                           /**< 外部第一块缓冲（借用）。 */
+    void* m_buffer2;                           /**< 外部第二块缓冲（借用）。 */
+    size_t m_bufferSize;                       /**< 外部每块缓冲容量。 */
+    bool m_externalBuffers;                    /**< 是否使用外部缓冲。 */
+    bool m_buffersInitialized;                 /**< 外部绑定是否已完成一次。 */
     XSize m_size;                             /**< 当前缓冲尺寸。 */
     XRegion m_staticContents;                 /**< 静态内容区域集合。 */
     XRegion m_paintRegion;                    /**< beginPaint 登记的绘制区。 */
+    int m_tileCursorX;                        /**< 下一个 tile 的 X 网格坐标。 */
+    int m_tileCursorY;                        /**< 下一个 tile 的 Y 网格坐标。 */
+    XRect m_currentTile;                      /**< 当前 tile 的窗口矩形。 */
+    XPoint m_paintOrigin;                     /**< 当前 tile 原点。 */
+    bool m_tileActive;                        /**< 当前是否存在可提交 tile。 */
     XPlatformBackingStorePresentFn m_present; /**< present 回调（借用）。 */
     void* m_userData;                         /**< present 回调用户数据（借用）。 */
     void* m_nativeTarget;                     /**< 原生目标窗口（HWND，借用）。 */
@@ -155,6 +169,96 @@ static void xpbs_win32_clipRegion(const XRegion* region, int w, int h,
     }
 }
 
+static XImage* xpbs_win32_activeImage(XPlatformBackingStore* self)
+{
+    if (!self) return NULL;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    return self->m_activeIndex == 0u ? &self->m_image : &self->m_image2;
+#else
+    return &self->m_image;
+#endif
+}
+
+static XImage* xpbs_win32_inactiveImage(XPlatformBackingStore* self)
+{
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    if (!self) return NULL;
+    return self->m_activeIndex == 0u ? &self->m_image2 : &self->m_image;
+#else
+    (void)self;
+    return NULL;
+#endif
+}
+
+static void xpbs_win32_syncImage(const XImage* source, XImage* target)
+{
+    int width;
+    int height;
+    const uint8_t* sbuf;
+    uint8_t* dbuf;
+    int bpl;
+    int row;
+    if (!source || !target || !source->m_data || !target->m_data) return;
+    width = XImage_width(source);
+    height = XImage_height(source);
+    if (width <= 0 || height <= 0 || width != XImage_width(target) ||
+        height != XImage_height(target)) return;
+    sbuf = XImage_constBits(source);
+    dbuf = XImage_bits(target);
+    bpl = XImage_bytesPerLine(source);
+    if (!sbuf || !dbuf || bpl <= 0 || XImage_bytesPerLine(target) != bpl)
+        return;
+    for (row = 0; row < height; ++row)
+        memcpy(dbuf + (int64_t)row * bpl, sbuf + (int64_t)row * bpl,
+               (size_t)bpl);
+}
+
+static bool xpbs_win32_bufferSizeValid(const XSize* size, size_t bufferSize)
+{
+    size_t required = XPlatformBackingStore_requiredBufferSize(size);
+    return required == 0 ? (!size || size->width <= 0 || size->height <= 0)
+                         : bufferSize >= required;
+}
+
+size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
+{
+    size_t stride;
+    if (!size || size->width <= 0 || size->height <= 0) return 0;
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    {
+        int bw = size->width < XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH ?
+                 size->width : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
+        int bh = size->height < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ?
+                 size->height : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT;
+        stride = (size_t)XImageFormat_bytesPerLine(bw, XPBS_WIN32_IMAGE_FORMAT);
+        if (stride == 0 || (size_t)bh > SIZE_MAX / stride) return 0;
+        return stride * (size_t)bh;
+    }
+#else
+    stride = (size_t)XImageFormat_bytesPerLine(size->width,
+                                                XPBS_WIN32_IMAGE_FORMAT);
+    if (stride == 0 || (size_t)size->height > SIZE_MAX / stride) return 0;
+    return stride * (size_t)size->height;
+#endif
+}
+
+static void xpbs_win32_initConfiguredImage(XImage* image, int width, int height,
+                                             void* buffer, size_t bufferSize)
+{
+    int stride;
+    if (!image) return;
+    if (width <= 0 || height <= 0) return;
+    if (buffer)
+    {
+        stride = XImageFormat_bytesPerLine(width, XPBS_WIN32_IMAGE_FORMAT);
+        XImage_init_ex_2(image, width, height, XPBS_WIN32_IMAGE_FORMAT,
+                         stride, (uint8_t*)buffer, NULL, NULL);
+        (void)bufferSize;
+    }
+    else
+        XImage_init_ex(image, width, height, XPBS_WIN32_IMAGE_FORMAT);
+}
+
 /** @brief 用指定颜色填充集合内的全部矩形。 */
 static void xpbs_win32_fillRegion(XImage* image, const XRegion* region,
                                   uint32_t color)
@@ -219,16 +323,16 @@ fail:
 
 /** @brief 把脏矩形的 XImage 行同步进 DIB（两缓冲字节序一致，逐行拷贝）。 */
 static void xpbs_win32_syncDirtyRect(struct XPlatformBackingStore* store,
-                                     const XRect* rect)
+                                     const XImage* image, const XRect* rect)
 {
     const uint8_t* sbuf;
     uint8_t* dbuf;
     int bpl;
     int row;
-    if (!store || !store->m_dibBits || !rect || !store->m_image.m_data) return;
-    sbuf = XImage_constBits(&store->m_image);
+    if (!store || !store->m_dibBits || !rect || !image || !image->m_data) return;
+    sbuf = XImage_constBits(image);
     dbuf = store->m_dibBits;
-    bpl = XImage_bytesPerLine(&store->m_image);
+    bpl = XImage_bytesPerLine(image);
     if (!sbuf || !dbuf || bpl <= 0) return;
     for (row = 0; row < rect->height; ++row)
         memcpy(dbuf + (int64_t)(rect->y + row) * bpl + (int64_t)rect->x * 4,
@@ -236,13 +340,20 @@ static void xpbs_win32_syncDirtyRect(struct XPlatformBackingStore* store,
                (size_t)rect->width * 4u);
 }
 
-/** @brief 从内存 DC 把脏区 BitBlt 到目标窗口 DC。 */
-static void xpbs_win32_presentDirtyRect(struct XPlatformBackingStore* store,
-                                        const XRect* rect)
+/** @brief 从内存 DC 把一帧脏区提交到目标窗口 DC。
+ * @details 取得/释放目标 DC 是一次刷新中最昂贵的部分。DIRECT/FULL
+ *          模式先同步所有脏矩形，再复用同一个 DC 完成全部 BitBlt，
+ *          对齐 LVGL Windows 在最后一次 flush 中一次提交 framebuffer 的
+ *          行为。 */
+static void xpbs_win32_presentRegion(struct XPlatformBackingStore* store,
+                                     const XRegion* region)
 {
     HWND hwnd;
     HDC winDC;
-    if (!store || !store->m_memDC || !rect) return;
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    int i;
+#endif
+    if (!store || !store->m_memDC || !region || region->count <= 0) return;
     hwnd = (HWND)store->m_nativeTarget;
 #if XPLATFORMNATIVEWINDOW_ON
     /* 兜底：未显式登记原生目标（setNativeTargetWindow）时，若窗口已挂接
@@ -254,8 +365,36 @@ static void xpbs_win32_presentDirtyRect(struct XPlatformBackingStore* store,
     if (!hwnd || !IsWindow(hwnd)) return;
     winDC = GetDC(hwnd);
     if (!winDC) return;
-    BitBlt(winDC, rect->x, rect->y, rect->width, rect->height,
-           store->m_memDC, rect->x, rect->y, SRCCOPY);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    for (i = 0; i < region->count; ++i) {
+        const XRect* rect = &region->rects[i];
+        if (rect->width > 0 && rect->height > 0)
+            BitBlt(winDC, rect->x, rect->y, rect->width, rect->height,
+                   store->m_memDC, rect->x, rect->y, SRCCOPY);
+    }
+#else
+    /* DIRECT/FULL hold a complete persistent framebuffer. Presenting it with
+     * one GDI transfer follows the LVGL Windows driver's last-flush path.
+     * SetDIBitsToDevice also avoids re-entering WM_PAINT on Windows builds
+     * where blitting from a selected memory DC invalidates the target window. */
+    {
+        BITMAPINFO bmi;
+        int width = store->m_size.width;
+        int height = store->m_size.height;
+        if (width > 0 && height > 0 && store->m_dibBits) {
+            memset(&bmi, 0, sizeof(bmi));
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = width;
+            bmi.bmiHeader.biHeight = -height;
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            SetDIBitsToDevice(winDC, 0, 0, (DWORD)width, (DWORD)height,
+                              0, 0, 0, (UINT)height, store->m_dibBits,
+                              &bmi, DIB_RGB_COLORS);
+        }
+    }
+#endif
     ReleaseDC(hwnd, winDC);
 }
 
@@ -268,9 +407,22 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
     if (!store) return NULL;
     store->m_window = window;
     XImage_init(&store->m_image);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage_init(&store->m_image2);
+#endif
     XRegion_init(&store->m_staticContents);
     XRegion_init(&store->m_paintRegion);
     XSize_init(&store->m_size, 0, 0);
+#if XGUI_BACKINGSTORE_BUFFER_SIZE > 0
+    if (!XPlatformBackingStore_setBuffers(
+            store, (void*)XGUI_BACKINGSTORE_BUFFER1,
+            (void*)XGUI_BACKINGSTORE_BUFFER2,
+            (size_t)XGUI_BACKINGSTORE_BUFFER_SIZE))
+    {
+        XPlatformBackingStore_delete(store);
+        return NULL;
+    }
+#endif
     return store;
 }
 
@@ -283,6 +435,13 @@ void XPlatformBackingStore_delete(XPlatformBackingStore* self)
         XImage_deinit_base(&self->m_image);
         XImage_init(&self->m_image);
     }
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    if (self->m_image2.m_data)
+    {
+        XImage_deinit_base(&self->m_image2);
+        XImage_init(&self->m_image2);
+    }
+#endif
     XRegion_deinit(&self->m_staticContents);
     XRegion_init(&self->m_staticContents);
     XRegion_deinit(&self->m_paintRegion);
@@ -299,14 +458,106 @@ XWindow* XPlatformBackingStore_window(const XPlatformBackingStore* self)
 
 XImage* XPlatformBackingStore_paintDevice(XPlatformBackingStore* self)
 {
-    return (self && self->m_image.m_data) ? &self->m_image : NULL;
+    XImage* image = xpbs_win32_activeImage(self);
+    return (image && image->m_data) ? image : NULL;
+}
+
+bool XPlatformBackingStore_nextTile(XPlatformBackingStore* self,
+                                    XRect* tileRect)
+{
+    XImage* image;
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    int tileW, tileH, x, y, i;
+#endif
+    if (!self || !tileRect || !self->m_beginPaintActive) return false;
+    image = xpbs_win32_activeImage(self);
+    if (!image || !image->m_data) return false;
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    tileW = XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
+    tileH = XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT;
+    while (self->m_tileCursorY < self->m_size.height) {
+        x = self->m_tileCursorX;
+        y = self->m_tileCursorY;
+        self->m_tileCursorX += tileW;
+        if (self->m_tileCursorX >= self->m_size.width) {
+            self->m_tileCursorX = 0;
+            self->m_tileCursorY += tileH;
+        }
+        tileRect->x = x; tileRect->y = y;
+        tileRect->width = (x + tileW <= self->m_size.width) ? tileW : self->m_size.width - x;
+        tileRect->height = (y + tileH <= self->m_size.height) ? tileH : self->m_size.height - y;
+        for (i = 0; i < self->m_paintRegion.count; ++i) {
+            XRect hit;
+            if (xpbs_win32_intersect(tileRect, &self->m_paintRegion.rects[i], &hit)) {
+                XImage_fill(image, 0u);
+                self->m_currentTile = *tileRect;
+                self->m_paintOrigin.x = x; self->m_paintOrigin.y = y;
+                self->m_tileActive = true;
+                return true;
+            }
+        }
+    }
+    return false;
+#else
+    if (self->m_tileActive || self->m_size.width <= 0 || self->m_size.height <= 0)
+        return false;
+    tileRect->x = 0; tileRect->y = 0;
+    tileRect->width = self->m_size.width; tileRect->height = self->m_size.height;
+    self->m_currentTile = *tileRect;
+    self->m_paintOrigin.x = 0; self->m_paintOrigin.y = 0;
+    self->m_tileActive = true;
+    return true;
+#endif
+}
+
+XPoint XPlatformBackingStore_paintOrigin(const XPlatformBackingStore* self)
+{
+    XPoint out;
+    XPoint_init(&out, 0, 0);
+    if (self) out = self->m_paintOrigin;
+    return out;
 }
 
 bool XPlatformBackingStore_toImage(XPlatformBackingStore* self, XImage* out)
 {
     if (!self || !out)
         return false;
-    return xpbs_win32_deepCopy(&self->m_image, out);
+    return xpbs_win32_deepCopy(xpbs_win32_activeImage(self), out);
+}
+
+bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
+                                       void* buffer1, void* buffer2,
+                                       size_t bufferSize)
+{
+    XSize size;
+    bool clear;
+    if (!self) return false;
+    if (self->m_buffersInitialized)
+        return self->m_buffer1 == buffer1 && self->m_buffer2 == buffer2 &&
+               self->m_bufferSize == bufferSize;
+    clear = !buffer1 && !buffer2 && bufferSize == 0;
+    if (clear)
+        return true;
+    if (!clear)
+    {
+        if (!buffer1 || bufferSize == 0 ||
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+            !buffer2 ||
+#else
+            buffer2 ||
+#endif
+            !xpbs_win32_bufferSizeValid(&self->m_size, bufferSize))
+            return false;
+    }
+    self->m_buffer1 = clear ? NULL : buffer1;
+    self->m_buffer2 = clear ? NULL : buffer2;
+    self->m_bufferSize = clear ? 0 : bufferSize;
+    self->m_externalBuffers = !clear;
+    self->m_buffersInitialized = true;
+    size = self->m_size;
+    self->m_size.width = -1;
+    XPlatformBackingStore_resize(self, &size);
+    return true;
 }
 
 /* ==================== 绘制流程 ==================== */
@@ -318,8 +569,11 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     XRect full;
     XPoint zero;
     const XPoint* off = offset;
+    XImage* image;
+    XImage* inactive;
     int i;
-    if (!self || !self->m_image.m_data) return;
+    if (!self || !(image = xpbs_win32_activeImage(self)) || !image->m_data)
+        return;
     if (!off)
     {
         XPoint_init(&zero, 0, 0);
@@ -327,64 +581,165 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     }
     if (region && !XRegion_isEmpty(region))
     {
-        xpbs_win32_clipRegion(region, XImage_width(&self->m_image),
-                              XImage_height(&self->m_image), &effective);
+        xpbs_win32_clipRegion(region, XImage_width(image),
+                              XImage_height(image), &effective);
     }
     else
     {
         XRegion_init(&effective);
         full.x = 0; full.y = 0;
-        full.width = XImage_width(&self->m_image);
-        full.height = XImage_height(&self->m_image);
+        full.width = XImage_width(image);
+        full.height = XImage_height(image);
         if (full.width > 0 && full.height > 0)
             XRegion_addRect(&effective, &full);
     }
-    /* 平台差异提交点：同步 DIB 并 BitBlt 到目标窗口，再触发 present。 */
+    /* FULL 始终提交整屏；DIRECT 在提交后同步另一帧缓冲。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+    XRegion_clear(&effective);
+    full.x = 0; full.y = 0;
+    full.width = XImage_width(image); full.height = XImage_height(image);
+    if (full.width > 0 && full.height > 0) XRegion_addRect(&effective, &full);
+#endif
+    inactive = xpbs_win32_inactiveImage(self);
     for (i = 0; i < effective.count; ++i)
     {
-        xpbs_win32_syncDirtyRect(self, &effective.rects[i]);
-        xpbs_win32_presentDirtyRect(self, &effective.rects[i]);
+        xpbs_win32_syncDirtyRect(self, image, &effective.rects[i]);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_DIRECT || \
+    XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        if (inactive)
+            xpbs_win32_copyRectPixels(image, effective.rects[i].x,
+                                      effective.rects[i].y, inactive,
+                                      effective.rects[i].x,
+                                      effective.rects[i].y,
+                                      effective.rects[i].width,
+                                      effective.rects[i].height);
+#endif
     }
+    /* Win32 uses the persistent DIB/memory DC for the native target. Keep the
+     * submit outside the rectangle loop so a frame acquires one target DC. */
+    xpbs_win32_presentRegion(self, &effective);
     if (!XRegion_isEmpty(&effective) && self->m_present)
         self->m_present(self->m_userData, self, &effective, off);
+ #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    self->m_activeIndex ^= 1u;
+ #endif
     (void)window; /* 目标窗口由 setNativeTargetWindow 登记，参数保持 Qt 签名。 */
     XRegion_deinit(&effective);
+}
+
+void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* window,
+                                      const XRect* tileRect, const XPoint* offset)
+{
+    XRegion region;
+    XPoint origin;
+    XRect presentedRect;
+    XImage* image;
+    if (!self || !tileRect || !(image = xpbs_win32_activeImage(self)) ||
+        !image->m_data || tileRect->width <= 0 || tileRect->height <= 0)
+        return;
+    origin.x = tileRect->x;
+    origin.y = tileRect->y;
+    if (offset) { origin.x += offset->x; origin.y += offset->y; }
+    /* tile image 的绘制坐标始终从 (0, 0) 起，而 presentedRect 用目标
+       窗口坐标表达。XPlatformNativeWindow_present 通过 origin 将二者映射，
+       因此不能把 tileRect 直接作为源图像区域传入。 */
+    presentedRect.x = origin.x;
+    presentedRect.y = origin.y;
+    presentedRect.width = tileRect->width;
+    presentedRect.height = tileRect->height;
+    XRegion_init(&region);
+    XRegion_addRect(&region, &presentedRect);
+#if XPLATFORMNATIVEWINDOW_ON
+    if (window && XPlatformNativeWindow_winId(window) != 0)
+        XPlatformNativeWindow_present(window, image, &region, &origin);
+    else
+#endif
+    if (self->m_present)
+        self->m_present(self->m_userData, self, &region, &origin);
+    self->m_tileActive = false;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    self->m_activeIndex ^= 1u;
+#endif
+    XRegion_deinit(&region);
 }
 
 void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size)
 {
     XImage oldImage;
+    XImage* active;
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
     XRect oldRect;
     XRect newRect;
     XRect overlap;
+#endif
     XRegion cropped;
     int ow, oh, w, h;
     if (!self || !size) return;
     w = size->width;
     h = size->height;
     if (w < 0 || h < 0) return;
+    if (self->m_externalBuffers &&
+        !xpbs_win32_bufferSizeValid(size, self->m_bufferSize))
+        return;
     if (w == self->m_size.width && h == self->m_size.height) return;
+    active = xpbs_win32_activeImage(self);
     /* 先快照旧内容，重建 XImage 缓冲，再同步重建 GDI 表面。 */
     XImage_init(&oldImage);
-    if (self->m_image.m_data)
-        XImage_copy_base(&oldImage, &self->m_image);
+    if (active && active->m_data)
+        XImage_copy_base(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
     XImage_deinit_base(&self->m_image);
     XImage_init(&self->m_image);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage_deinit_base(&self->m_image2);
+    XImage_init(&self->m_image2);
+#endif
     if (w > 0 && h > 0)
-        XImage_init_ex(&self->m_image, w, h, XPBS_WIN32_IMAGE_FORMAT);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        xpbs_win32_initConfiguredImage(&self->m_image,
+            w < XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH ? w : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH,
+            h < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ? h : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT,
+            self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
+#else
+        xpbs_win32_initConfiguredImage(&self->m_image, w, h,
+            self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
+#endif
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    if (w > 0 && h > 0)
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        xpbs_win32_initConfiguredImage(&self->m_image2,
+            w < XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH ? w : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH,
+            h < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ? h : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT,
+            self->m_externalBuffers ? self->m_buffer2 : NULL, self->m_bufferSize);
+#else
+        xpbs_win32_initConfiguredImage(&self->m_image2, w, h,
+            self->m_externalBuffers ? self->m_buffer2 : NULL, self->m_bufferSize);
+#endif
+#endif
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
     if (oldImage.m_data && self->m_image.m_data)
     {
         oldRect.x = 0; oldRect.y = 0; oldRect.width = ow; oldRect.height = oh;
         newRect.x = 0; newRect.y = 0; newRect.width = w;  newRect.height = h;
         if (xpbs_win32_intersect(&oldRect, &newRect, &overlap))
+        {
             xpbs_win32_copyRectPixels(&oldImage, 0, 0, &self->m_image,
                                       0, 0, overlap.width, overlap.height);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+            xpbs_win32_copyRectPixels(&oldImage, 0, 0, &self->m_image2,
+                                      0, 0, overlap.width, overlap.height);
+#endif
+        }
     }
+#endif
     XImage_deinit_base(&oldImage);
     self->m_size.width = w;
     self->m_size.height = h;
+    self->m_activeIndex = 0u;
+    self->m_tileCursorX = 0;
+    self->m_tileCursorY = 0;
+    self->m_tileActive = false;
     xpbs_win32_releaseSurface(self);
     if (w > 0 && h > 0)
         xpbs_win32_createSurface(self);
@@ -398,17 +753,26 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
                                   const XRegion* area, int dx, int dy)
 {
+    XImage* image;
+    XImage* inactive;
     XRegion clip;
     XRegion dest;
     XRegion vacated;
     XImage snapshot;
     int w, h, i;
     XRect dstRect;
-    if (!self || !self->m_image.m_data) return false;
+    if (!self || !(image = xpbs_win32_activeImage(self)) || !image->m_data)
+        return false;
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    if (self->m_size.width > XImage_width(image) ||
+        self->m_size.height > XImage_height(image))
+        return false;
+#endif
+    inactive = xpbs_win32_inactiveImage(self);
     if (!area || XRegion_isEmpty(area)) return false;
     if (dx == 0 && dy == 0) return true;
-    w = XImage_width(&self->m_image);
-    h = XImage_height(&self->m_image);
+    w = XImage_width(image);
+    h = XImage_height(image);
     if (w <= 0 || h <= 0) return false;
     xpbs_win32_clipRegion(area, w, h, &clip);
     if (XRegion_isEmpty(&clip))
@@ -429,23 +793,24 @@ bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
     XRegion_init(&vacated);
     XRegion_subtracted(&clip, &dest, &vacated);
     XImage_init(&snapshot);
-    if (xpbs_win32_deepCopy(&self->m_image, &snapshot))
+    if (xpbs_win32_deepCopy(image, &snapshot))
     {
         for (i = 0; i < dest.count; ++i)
             xpbs_win32_copyRectPixels(&snapshot,
                                       dest.rects[i].x - dx,
                                       dest.rects[i].y - dy,
-                                      &self->m_image,
+                                      image,
                                       dest.rects[i].x,
                                       dest.rects[i].y,
                                       dest.rects[i].width,
                                       dest.rects[i].height);
-        xpbs_win32_fillRegion(&self->m_image, &vacated, 0u);
+            xpbs_win32_fillRegion(image, &vacated, 0u);
     }
     XImage_deinit_base(&snapshot);
     XRegion_deinit(&dest);
     XRegion_deinit(&vacated);
     XRegion_deinit(&clip);
+    if (inactive) xpbs_win32_syncImage(image, inactive);
     return true;
 }
 
@@ -455,20 +820,44 @@ void XPlatformBackingStore_beginPaint(XPlatformBackingStore* self,
     int w, h;
     if (!self) return;
     XRegion_clear(&self->m_paintRegion);
-    if (self->m_image.m_data)
+    {
+        XImage* image = xpbs_win32_activeImage(self);
+        if (image && image->m_data)
     {
         XRect full;
-        w = XImage_width(&self->m_image);
-        h = XImage_height(&self->m_image);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        w = self->m_size.width;
+        h = self->m_size.height;
+#else
+        w = XImage_width(image);
+        h = XImage_height(image);
+#endif
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+        region = NULL;
+#endif
+ #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        xpbs_win32_clipRegion(region, self->m_size.width, self->m_size.height,
+                              &self->m_paintRegion);
+ #else
         xpbs_win32_clipRegion(region, w, h, &self->m_paintRegion);
+ #endif
         if (XRegion_isEmpty(&self->m_paintRegion))
         {
-            full.x = 0; full.y = 0; full.width = w; full.height = h;
+            full.x = 0; full.y = 0;
+ #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+            full.width = self->m_size.width; full.height = self->m_size.height;
+ #else
+            full.width = w; full.height = h;
+ #endif
             if (w > 0 && h > 0)
                 XRegion_addRect(&self->m_paintRegion, &full);
         }
     }
+    }
     self->m_beginPaintActive = 1u;
+    self->m_tileCursorX = 0;
+    self->m_tileCursorY = 0;
+    self->m_tileActive = false;
 }
 
 void XPlatformBackingStore_endPaint(XPlatformBackingStore* self)
@@ -487,15 +876,23 @@ void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
     if (!self) return;
     XRegion_clear(&self->m_staticContents);
     if (!region || XRegion_isEmpty(region)) return;
-    if (self->m_image.m_data)
     {
-        w = XImage_width(&self->m_image);
-        h = XImage_height(&self->m_image);
-        xpbs_win32_clipRegion(region, w, h, &self->m_staticContents);
-    }
-    else
-    {
-        XRegion_copy(region, &self->m_staticContents);
+        XImage* image = xpbs_win32_activeImage((XPlatformBackingStore*)self);
+        if (image && image->m_data)
+        {
+ #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+            w = self->m_size.width;
+            h = self->m_size.height;
+ #else
+            w = XImage_width(image);
+            h = XImage_height(image);
+ #endif
+            xpbs_win32_clipRegion(region, w, h, &self->m_staticContents);
+        }
+        else
+        {
+            XRegion_copy(region, &self->m_staticContents);
+        }
     }
 }
 

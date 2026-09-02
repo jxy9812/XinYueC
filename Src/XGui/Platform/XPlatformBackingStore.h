@@ -33,6 +33,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "XGuiConfig.h"
 #include "XTypes.h"
 #include "XGeometry.h"
@@ -97,6 +98,20 @@ XWindow* XPlatformBackingStore_window(const XPlatformBackingStore* self);
 XImage* XPlatformBackingStore_paintDevice(XPlatformBackingStore* self);
 
 /**
+ * @brief      返回下一块待绘制 tile，并准备当前 tile buffer。
+ * @details    PARTIAL 模式按配置的 tile 尺寸遍历 beginPaint() 登记的
+ *             窗口坐标脏区；其它模式只返回一次整幅窗口区域。成功后
+ *             paintDevice() 指向当前 tile，调用方绘制完成后必须调用
+ *             XPlatformBackingStore_flushTile()。
+ */
+bool XPlatformBackingStore_nextTile(XPlatformBackingStore* self,
+                                     XRect* tileRect);
+
+/** @brief 查询当前 tile 在窗口坐标中的原点；未开始 tile 时返回 (0,0)。 */
+XPoint XPlatformBackingStore_paintOrigin(
+        const XPlatformBackingStore* self);
+
+/**
  * @brief      返回后备存储内容的图像深拷贝（对标 toImage()）。
  * @details    out 必须由调用方持有；函数内部把内部缓冲按像素逐一复制到
  *             out（out 现有内容被释放）。格式与内部缓冲一致。
@@ -124,6 +139,16 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self,
                                  XWindow* window,
                                  const XRegion* region,
                                  const XPoint* offset);
+/**
+ * @brief      提交当前 tile buffer 到窗口。
+ * @param      tileRect 当前 tile 在窗口坐标中的完整矩形；不能为空。
+ * @note       PARTIAL 模式下源图像坐标从 (0,0) 开始，平台提交目标从
+ *             tileRect 的窗口坐标开始；提交完成后可复用下一片 buffer。
+ */
+void XPlatformBackingStore_flushTile(XPlatformBackingStore* self,
+                                     XWindow* window,
+                                     const XRect* tileRect,
+                                     const XPoint* offset);
 
 /**
  * @brief      按新尺寸重建后备缓冲（对标 QPlatformBackingStore::resize）。
@@ -221,6 +246,26 @@ void XPlatformBackingStore_setNativeTargetWindow(
 void XPlatformBackingStore_setPresentCallback(
         XPlatformBackingStore* self,
         XPlatformBackingStorePresentFn callback, void* userData);
+
+/**
+ * @brief      登记调用方提供的原始帧缓冲。
+ * @details    buffer1/buffer2 只在后备存储使用期间借用，平台不会释放或
+ *             扩容它们。bufferSize 是每块缓冲的字节容量；当前 XGui 控件
+ *             绘制使用整屏坐标，因此容量必须覆盖 resize() 后的整幅
+ *             ARGB32 预乘图像。传入三个空值可恢复平台内部自动分配。
+ * @param      self       目标句柄；可为 NULL。
+ * @param      buffer1    第一块缓冲；清除外部缓冲时传 NULL。
+ * @param      buffer2    第二块缓冲；双缓冲配置下不能为空。
+ * @param      bufferSize 每块缓冲容量（字节）；使用内部分配时传 0。
+ * @return     参数和当前尺寸均可用并登记成功返回 true；同样参数的
+ *             重复登记返回 true，不同参数的重复绑定返回 false。
+ */
+bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
+                                       void* buffer1, void* buffer2,
+                                       size_t bufferSize);
+
+/** @brief 计算指定尺寸所需的单块整屏 ARGB32 缓冲字节数。 */
+size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
 
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 

@@ -46,6 +46,22 @@
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
+/** @brief 通过 XFontFace 读取当前字体的点阵度量。 */
+static bool label_faceBitmapInfo(const XFont* font, XFontBitmapInfo* info)
+{
+    const XFontFace* face;
+    XFontFaceInfo faceInfo;
+    if (!info)
+        return false;
+    face = XFont_face(font);
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    if (!face || !XFontFace_info_base(face, font, &faceInfo) ||
+        faceInfo.m_kind != XFontFace_Bitmap)
+        return false;
+    *info = faceInfo.m_bitmap;
+    return true;
+}
+
 /* ==================== 内部类型与工具 ==================== */
 
 /** @brief 一行文本的布局记录（UTF-8 字节区间 + 像素宽度）。 */
@@ -155,7 +171,7 @@ static int label_pixelSize(const XLabel* self)
     memset(&info, 0, sizeof(info));
     info.m_height = XFONT8X16_HEIGHT;
     info.m_rowBytes = 1;
-    (void)XFont_bitmapFontInfo(&f, &info);
+    (void)label_faceBitmapInfo(&f, &info);
     px = XFont_bitmapPixelSize(&f, info.m_height);
     XFont_deinit_base(&f);
     return px;
@@ -176,7 +192,7 @@ static XFontBitmapInfo label_bitmapInfo(const XLabel* self)
     if (!self)
         return info;
     f = XWidget_font((XWidget*)self);
-    (void)XFont_bitmapFontInfo(&f, &info);
+    (void)label_faceBitmapInfo(&f, &info);
     XFont_deinit_base(&f);
     return info;
 }
@@ -193,7 +209,7 @@ static float label_scale(const XLabel* self)
     info.m_height = XFONT8X16_HEIGHT;
     info.m_rowBytes = 1;
     info.m_bpp = 1;
-    (void)XFont_bitmapFontInfo(&f, &info);
+    (void)label_faceBitmapInfo(&f, &info);
     sc = (float)(XFont_pixelSize(&f) > 0 ? XFont_pixelSize(&f) : info.m_height) /
          (float)(info.m_height > 0 ? info.m_height : 1);
     XFont_deinit_base(&f);
@@ -722,7 +738,7 @@ static void label_layoutSegment(const char* utf8, int start, int end,
     bitmapInfo.m_descent = XFONT8X16_DESCENT;
     bitmapInfo.m_rowBytes = 1;
     bitmapInfo.m_bpp = 1;
-    (void)XFont_bitmapFontInfo(font, &bitmapInfo);
+    (void)label_faceBitmapInfo(font, &bitmapInfo);
     scale = (float)(XFont_pixelSize(font) > 0 ? XFont_pixelSize(font) : bitmapInfo.m_height) /
             (float)(bitmapInfo.m_height > 0 ? bitmapInfo.m_height : 1);
     if (!(scale > 0.0f)) scale = 1.0f;
@@ -1078,7 +1094,7 @@ static void label_drawLine(XPainter* painter, const char* utf8,
     bitmapInfo.m_rowBytes = 1;
     bitmapInfo.m_bpp = 1;
     if (fnt)
-        (void)XFont_bitmapFontInfo(fnt, &bitmapInfo);
+        (void)label_faceBitmapInfo(fnt, &bitmapInfo);
     scale = (fnt ? (float)(XFont_pixelSize(fnt) > 0 ? XFont_pixelSize(fnt) : bitmapInfo.m_height) /
                     (float)(bitmapInfo.m_height > 0 ? bitmapInfo.m_height : 1) : 1);
     if (!(scale > 0.0f)) scale = 1.0f;

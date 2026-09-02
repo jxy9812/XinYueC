@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
-#include "XFont.h"
+#include "XFontBitmapFace.h"
 
 #if XFONT_BUILTIN_32X32_ON
 bool XFont32x32_register(void);

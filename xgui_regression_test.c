@@ -14,6 +14,10 @@
 #include "XBitmap.h"
 #include "XGeometry.h"
 #include "XFont.h"
+#include "XFontBitmapFace.h"
+#if XFONT_OUTLINE_ON
+#include "XFontOutlineFace.h"
+#endif
 #include "XFont8x16.h"
 #include "XFont16x16.h"
 #include "XFont32x32.h"
@@ -104,6 +108,11 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 
 static int s_failures = 0;
 
+#if XIMAGECODEC_ON
+static bool test_write_binary_file(const char* path, const void* data,
+                                   size_t size, bool replace);
+#endif
+
 static void expect_true(bool condition, const char* name)
 {
     if (!condition) {
@@ -151,6 +160,238 @@ static size_t test_png_insert_chunk(const uint8_t* source, size_t sourceSize,
     return sourceSize + chunkSize;
 }
 #endif /* XIMAGECODEC_PNG_ON */
+
+static bool test_font_bitmap_info(const XFont* font, XFontBitmapInfo* info)
+{
+    const XFontFace* face;
+    XFontFaceInfo faceInfo;
+    if (!info)
+        return false;
+    face = XFont_face(font);
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    if (!face || XFontFace_kind(face) != XFontFace_Bitmap ||
+        !XFontFace_info_base(face, font, &faceInfo) ||
+        faceInfo.m_kind != XFontFace_Bitmap)
+        return false;
+    *info = faceInfo.m_bitmap;
+    return true;
+}
+
+static bool test_font_bitmap_load(const XFont* font, uint32_t codepoint,
+                                  XFontGlyphDsc* dsc, unsigned char* out,
+                                  size_t outSize)
+{
+    const XFontFace* face;
+    if (!dsc || (out && outSize == 0u) || (!out && outSize != 0u))
+        return false;
+    face = XFont_face(font);
+    return face && XFontFace_kind(face) == XFontFace_Bitmap &&
+           XFontFace_loadBitmapGlyph_base(face, font, codepoint, dsc, out,
+                                          outSize);
+}
+
+static bool test_font_outline_info(const XFont* font, XFontOutlineInfo* info)
+{
+    const XFontFace* face;
+    XFontFaceInfo faceInfo;
+    if (!info)
+        return false;
+    face = XFont_face(font);
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    if (!face || XFontFace_kind(face) != XFontFace_Outline ||
+        !XFontFace_info_base(face, font, &faceInfo) ||
+        faceInfo.m_kind != XFontFace_Outline)
+        return false;
+    *info = faceInfo.m_outline;
+    return true;
+}
+
+static bool test_font_outline_load(const XFont* font, uint32_t codepoint,
+                                   XFontOutlineGlyphMetrics* metrics,
+                                   const XFontOutlineSink* sink)
+{
+    const XFontFace* face;
+    if (!metrics)
+        return false;
+    face = XFont_face(font);
+    return face && XFontFace_kind(face) == XFontFace_Outline &&
+           XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
+                                           sink);
+}
+
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+static bool test_outline_glyph(uint32_t codepoint,
+                               XFontOutlineGlyphMetrics* metrics,
+                               const XFontOutlineSink* sink,
+                               void* userData)
+{
+    (void)userData;
+    if (!metrics) return false;
+    memset(metrics, 0, sizeof(*metrics));
+    metrics->advance = 1000;
+    metrics->xMin = 100;
+    metrics->yMin = 0;
+    metrics->xMax = 900;
+    metrics->yMax = 800;
+    if (codepoint != (uint32_t)'A' || !sink)
+        return true;
+    if (sink->moveTo && !sink->moveTo(sink->userData, 100.0f, 0.0f)) return false;
+    if (sink->lineTo && !sink->lineTo(sink->userData, 500.0f, 800.0f)) return false;
+    if (sink->lineTo && !sink->lineTo(sink->userData, 900.0f, 0.0f)) return false;
+    if (sink->close && !sink->close(sink->userData)) return false;
+    return true;
+}
+
+static void test_painter_outline_font(void)
+{
+    static const XFontOutlineProvider provider = {
+        "XOutlineTest", { 1000, 800, 200, 0 }, test_outline_glyph, NULL
+    };
+    static const XFontOutlineProvider directProvider = {
+        "XOutlineDirect", { 1000, 800, 200, 0 }, test_outline_glyph, NULL
+    };
+    XFont font;
+    XFontOutlineInfo info;
+    XFontOutlineGlyphMetrics metrics;
+    const XFontFace* face;
+    XFontFaceInfo faceInfo;
+    XImage image;
+    XPainter painter;
+    int colored = 0;
+    int row;
+    int col;
+
+    expect_true(XFontOutlineFace_registerProvider(&provider),
+                "outline provider registers");
+    XFont_init(&font);
+    XFont_setFamily(&font, "XOutlineTest");
+    XFont_setPixelSize(&font, 20);
+    expect_true(test_font_outline_info(&font, &info) && info.unitsPerEm == 1000 &&
+                    info.ascent == 800 && info.descent == 200,
+                "outline provider exposes design metrics");
+    expect_true(test_font_outline_load(&font, (uint32_t)'A', &metrics, NULL) &&
+                    metrics.advance == 1000 && metrics.xMax == 900,
+                "outline provider exposes glyph metrics");
+    face = XFont_face(&font);
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    expect_true(face && XFontFace_kind(face) == XFontFace_Outline &&
+                XFontFace_info_base(face, &font, &faceInfo) &&
+                faceInfo.m_kind == XFontFace_Outline &&
+                faceInfo.m_outline.unitsPerEm == 1000,
+                "font face 父类接口选择轮廓子类");
+
+    {
+        XFont directFont;
+        XFontOutlineGlyphMetrics directMetrics;
+        const XFontFace* directFace;
+        expect_true(XFontOutlineFace_registerProvider(&directProvider),
+                    "outline 子类直接注册 provider");
+        XFont_init(&directFont);
+        XFont_setFamily(&directFont, "XOutlineDirect");
+        directFace = XFont_face(&directFont);
+        memset(&directMetrics, 0, sizeof(directMetrics));
+        expect_true(directFace && XFontFace_kind(directFace) == XFontFace_Outline &&
+                        XFontFace_loadOutlineGlyph_base(
+                            directFace, &directFont, (uint32_t)'A',
+                            &directMetrics, NULL) &&
+                        directMetrics.advance == 1000,
+                    "outline 子类注册接入父类虚函数");
+        XFont_deinit_base(&directFont);
+    }
+
+    XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "outline painter begins raster");
+    XPainter_setFont(&painter, &font);
+    expect_true(XPainter_drawText(&painter, 2, 24, "A", 0xff0080ffu),
+                "outline glyph draws with operation color");
+    expect_true(XPainter_textWidth(&font, "A") == 20 &&
+                    XPainter_textAscent(&font) == 16 &&
+                    XPainter_textDescent(&font) == 4,
+                "outline metrics scale from unitsPerEm");
+    for (row = 0; row < 32; ++row)
+        for (col = 0; col < 32; ++col)
+            if (XImage_pixel(&image, col, row) == 0xff0080ffu)
+                ++colored;
+    expect_true(colored > 0, "outline path reaches raster image");
+
+#if XFONT_BUILTIN_OUTLINE_ON
+    {
+        XFont commonFont;
+        XFontOutlineInfo commonInfo;
+        XFontOutlineGlyphMetrics commonMetrics;
+        XFont_init(&commonFont);
+        XFont_setFamily(&commonFont, "XFontOutlineCommon");
+        XFont_setPixelSize(&commonFont, 20);
+        expect_true(test_font_outline_info(&commonFont, &commonInfo) &&
+                        commonInfo.unitsPerEm == 1000 &&
+                        commonInfo.ascent == 1160,
+                    "内置常用汉字轮廓字库提供度量");
+        expect_true(test_font_outline_load(&commonFont, 0x4E2Du,
+                                           &commonMetrics, NULL) &&
+                        commonMetrics.advance > 0,
+                    "内置常用汉字轮廓字库读取汉字");
+        expect_true(test_font_outline_load(&commonFont, 0x4F60u,
+                                           &commonMetrics, NULL) &&
+                        commonMetrics.advance > 0,
+                    "内置轮廓字库包含常用字");
+        XImage_fillRect(&image, NULL, 0xffffffffu);
+        colored = 0;
+        XPainter_setFont(&painter, &commonFont);
+        expect_true(XPainter_drawText(&painter, 2, 24,
+                                      "\xE4\xB8\xAD\xE6\x96\x87",
+                                      0xff0080ffu),
+                                      "内置中文轮廓字形完成栅格化");
+        for (row = 0; row < 32; ++row)
+            for (col = 0; col < 32; ++col)
+                if (XImage_pixel(&image, col, row) != 0xffffffffu)
+                    ++colored;
+        expect_true(colored > 0, "内置中文轮廓字形实际写入像素");
+        XFont_deinit_base(&commonFont);
+    }
+#endif /* XFONT_BUILTIN_OUTLINE_ON */
+
+#if XFONT_OUTLINE_FILE_ON && XIMAGECODEC_ON
+    {
+        /* Minimal XFO1 triangle fixture: one cmap entry, one glyph, four
+           commands. It exercises the same file path used by PC deployments. */
+        static const uint8_t xfo[] = {
+            'X','F','O','1', 1,0, 0,0, 0xe8,0x03, 0x20,0x03, 0xc8,0x00, 0,0,
+            1,0, 1,0, 36,0,0,0, 44,0,0,0, 64,0,0,0, 16,0,0,0,
+            0x41,0,0,0, 0,0, 0,0,
+            0xe8,0x03,0,0, 100,0, 0,0, 0x84,0x03, 0x20,0x03,
+            0,0,0,0, 4,0, 0,0,
+            0, 100,0, 0,0, 1, 0x90,1, 0x20,3,
+            1, 0x90,1, 0xe0,0xfc, 4
+        };
+        const char* fileName = "xgui_outline_test.xfo";
+        XFont fileFont;
+        XFontOutlineInfo fileInfo;
+        XFontOutlineGlyphMetrics fileMetrics;
+        expect_true(test_write_binary_file(fileName, xfo, sizeof(xfo), true),
+                    "XFO1 fixture writes");
+        XFont_init(&fileFont);
+        XFont_setFamily(&fileFont, fileName);
+        expect_true(test_font_outline_info(&fileFont, &fileInfo) &&
+                        fileInfo.unitsPerEm == 1000,
+                    "XFO1 file header parses");
+        expect_true(test_font_outline_load(&fileFont, (uint32_t)'A',
+                                           &fileMetrics, NULL) &&
+                        fileMetrics.advance == 1000 && fileMetrics.yMax == 800,
+                    "XFO1 file glyph parses");
+        XFont_deinit_base(&fileFont);
+        remove(fileName);
+    }
+#endif /* XFONT_OUTLINE_FILE_ON && XIMAGECODEC_ON */
+
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+    XFont_deinit_base(&font);
+}
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 static void test_picture_put_u32(uint8_t* p, uint32_t value)
 {
@@ -1876,8 +2117,8 @@ static void test_font_lvgl_bin_files(void)
     memset(&info, 0, sizeof(info));
     memset(&dsc, 0, sizeof(dsc));
     memset(glyph, 0, sizeof(glyph));
-    expect_true(XFont_bitmapFontInfo(&font, &info) &&
-                    XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &dsc,
+    expect_true(test_font_bitmap_info(&font, &info) &&
+                    test_font_bitmap_load(&font, (uint32_t)'A', &dsc,
                                           glyph, sizeof(glyph)) &&
                     info.m_width == 8 && info.m_height == 16 &&
                     info.m_bpp == 1 && dsc.adv_w == 128 &&
@@ -1887,8 +2128,8 @@ static void test_font_lvgl_bin_files(void)
     memset(&info, 0, sizeof(info));
     memset(&dsc, 0, sizeof(dsc));
     memset(glyph, 0, sizeof(glyph));
-    infoOk = XFont_bitmapFontInfo(&font, &info);
-    glyphOk = XFont_bitmapLoadGlyph(&font, 0x4E2Du, &dsc,
+    infoOk = test_font_bitmap_info(&font, &info);
+    glyphOk = test_font_bitmap_load(&font, 0x4E2Du, &dsc,
                                     glyph, sizeof(glyph));
     glyphHasInk = false;
     for (glyphIndex = 0u; glyphIndex < sizeof(glyph); ++glyphIndex)
@@ -1904,8 +2145,8 @@ static void test_font_lvgl_bin_files(void)
     memset(&info, 0, sizeof(info));
     memset(&dsc, 0, sizeof(dsc));
     memset(glyph, 0, sizeof(glyph));
-    expect_true(XFont_bitmapFontInfo(&font, &info) &&
-                    XFont_bitmapLoadGlyph(&font, 0x4E2Du, &dsc,
+    expect_true(test_font_bitmap_info(&font, &info) &&
+                    test_font_bitmap_load(&font, 0x4E2Du, &dsc,
                                           glyph, sizeof(glyph)) &&
                     info.m_width == 32 && info.m_height == 40 &&
                     info.m_bpp == 2 && dsc.adv_w > 0 && dsc.box_w > 0,
@@ -1919,7 +2160,7 @@ static void test_font_lvgl_bin_files(void)
         memset(&info, 0, sizeof(info));
         expect_true(pathLength > 0 &&
                         (size_t)pathLength < sizeof(fullPath) &&
-                        XFont_bitmapFontInfo(&font, &info) &&
+                        test_font_bitmap_info(&font, &info) &&
                         info.m_width == 16 && info.m_bpp == 2,
                     "XFont_setFamily 支持外挂字库完整路径");
     }
@@ -5162,7 +5403,7 @@ static void test_painter_text_antialiasing_contract(void)
     expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
                 "scaled text draws with antialiasing");
     memset(&glyphDsc, 0, sizeof(glyphDsc));
-    expect_true(XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &glyphDsc,
+    expect_true(test_font_bitmap_load(&font, (uint32_t)'A', &glyphDsc,
                                         glyph, sizeof(glyph)),
                 "generic LVGL glyph reader loads ASCII");
     for (row = 0; row < glyphDsc.box_h; ++row)
@@ -5194,7 +5435,7 @@ static void test_painter_text_antialiasing_contract(void)
     XFont_setPixelSize(&font, 32);
 
     memset(&glyphDsc, 0, sizeof(glyphDsc));
-    expect_true(XFont_bitmapLoadGlyph(&font, 0x4E2Du, &glyphDsc,
+    expect_true(test_font_bitmap_load(&font, 0x4E2Du, &glyphDsc,
                                         glyph, sizeof(glyph)),
                 "generic LVGL glyph reader loads UTF-8 中文码点");
     expect_true(glyphDsc.box_w == XFONT8X16_WIDTH &&
@@ -5277,11 +5518,11 @@ static void test_painter_native_32x32_font(void)
     memset(&info, 0, sizeof(info));
     memset(&dsc, 0, sizeof(dsc));
     memset(glyph, 0, sizeof(glyph));
-    expect_true(XFont_bitmapFontInfo(&font, &info) &&
+    expect_true(test_font_bitmap_info(&font, &info) &&
                     info.m_width == 32 && info.m_height == 40 &&
                     info.m_bpp == 2,
                 "32x32 provider exposes native LVGL metrics");
-    expect_true(XFont_bitmapLoadGlyph(&font, (uint32_t)'A', &dsc,
+    expect_true(test_font_bitmap_load(&font, (uint32_t)'A', &dsc,
                                       glyph, sizeof(glyph)) &&
                     dsc.box_w > 0 && dsc.box_h > 0,
                 "32x32 provider loads native LVGL glyph");
@@ -5461,6 +5702,28 @@ static void test_painter_path_contract(void)
                 "multi-subpath interiors filled");
     expect_true(XImage_pixel(&image, 10, 3) == 0xff000000u,
                 "multi-subpath gap remains empty");
+
+    /* 复合轮廓：内子路径应形成空洞，而不是被单独填成实心。 */
+    XPainterPath_deinit(&path);
+    XPainterPath_init(&path);
+    expect_true(XPainterPath_moveTo(&path, 2.0f, 2.0f) &&
+                    XPainterPath_lineTo(&path, 18.0f, 2.0f) &&
+                    XPainterPath_lineTo(&path, 18.0f, 18.0f) &&
+                    XPainterPath_lineTo(&path, 2.0f, 18.0f) &&
+                    XPainterPath_closeSubpath(&path),
+                "compound path outer contour");
+    expect_true(XPainterPath_moveTo(&path, 6.0f, 6.0f) &&
+                    XPainterPath_lineTo(&path, 14.0f, 6.0f) &&
+                    XPainterPath_lineTo(&path, 14.0f, 14.0f) &&
+                    XPainterPath_lineTo(&path, 6.0f, 14.0f) &&
+                    XPainterPath_closeSubpath(&path),
+                "compound path inner contour");
+    XImage_fillRect(&image, NULL, 0xff000000u);
+    expect_true(XPainter_fillPath(&painter, &path),
+                "compound path fill");
+    expect_true(XImage_pixel(&image, 4, 4) == 0xffff0000u &&
+                    XImage_pixel(&image, 10, 10) == 0xff000000u,
+                "compound path preserves inner hole");
 
     /* 空路径与重复元素的 QPainterPath 边界行为。 */
     XPainterPath_deinit(&path);
@@ -17312,12 +17575,22 @@ GUI_APP_NOARG_SLOT(displayNameSlot, applicationDisplayNameChanged)
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
 /** @brief 平台后备存储 present 回调探测数据（flush 触发计数）。 */
 static int g_backingStorePresentCount = 0;
+static XRect g_backingStorePresentRect;
+static XPoint g_backingStorePresentOffset;
 static void gui_app_probe_backingStorePresent(
         void* userData, XPlatformBackingStore* store,
         const XRegion* flushedRegion, const XPoint* offset)
 {
-    (void)userData; (void)store; (void)flushedRegion; (void)offset;
+    (void)userData; (void)store;
     ++g_backingStorePresentCount;
+    if (flushedRegion && flushedRegion->count > 0)
+        g_backingStorePresentRect = flushedRegion->rects[0];
+    else
+        XRect_init(&g_backingStorePresentRect, 0, 0, 0, 0);
+    if (offset)
+        g_backingStorePresentOffset = *offset;
+    else
+        XPoint_init(&g_backingStorePresentOffset, 0, 0);
 }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 
@@ -17917,28 +18190,62 @@ static void test_gui_application_contract(void)
         XFont_init(&defaultFont);
         memset(&bitmapInfo, 0, sizeof(bitmapInfo));
         expect_true(strcmp(XFont_family(&defaultFont), XFONT_DEFAULT_FAMILY) == 0 &&
-                    XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
+                    test_font_bitmap_info(&defaultFont, &bitmapInfo) &&
                     bitmapInfo.m_width == XFONT8X16_WIDTH &&
                     bitmapInfo.m_height == XFONT8X16_HEIGHT,
                     "font 默认家族与点阵字库度量");
         XFont_setFamily(&defaultFont, "XFont8x16");
-        expect_true(XFont_bitmapFontInfo(&defaultFont, &bitmapInfo),
+        expect_true(test_font_bitmap_info(&defaultFont, &bitmapInfo),
                     "font setFamily 选择点阵字库");
         XFont_setFamily(&defaultFont, "Regression4x4");
         memset(&bitmapInfo, 0, sizeof(bitmapInfo));
         {
             unsigned char providerGlyph[XFONT_BITMAP_MAX_HEIGHT];
             XFontGlyphDsc glyphDsc;
+            const XFontFace* face;
+            XFontFaceInfo faceInfo;
             memset(providerGlyph, 0, sizeof(providerGlyph));
             memset(&glyphDsc, 0, sizeof(glyphDsc));
-            expect_true(XFont_registerBitmapProvider(&g_testBitmapProvider) &&
-                        XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
+            expect_true(XFontBitmapFace_registerProvider(&g_testBitmapProvider) &&
+                        test_font_bitmap_info(&defaultFont, &bitmapInfo) &&
                         bitmapInfo.m_width == 4 && bitmapInfo.m_height == 4 &&
-                        XFont_bitmapLoadGlyph(&defaultFont, (uint32_t)'A',
+                        test_font_bitmap_load(&defaultFont, (uint32_t)'A',
                                                 &glyphDsc, providerGlyph,
                                                 sizeof(providerGlyph)) &&
                         providerGlyph[0] == 0x06u && providerGlyph[2] == 0x0Fu,
                         "font 注册并选择外部 provider");
+            face = XFont_face(&defaultFont);
+            memset(&faceInfo, 0, sizeof(faceInfo));
+            expect_true(face && XFontFace_kind(face) == XFontFace_Bitmap &&
+                        XFontFace_info_base(face, &defaultFont, &faceInfo) &&
+                        faceInfo.m_kind == XFontFace_Bitmap &&
+                        faceInfo.m_bitmap.m_width == 4,
+                        "font face 父类接口选择点阵子类");
+
+            {
+                XFontBitmapProvider directProvider = g_testBitmapProvider;
+                XFont directFont;
+                XFontGlyphDsc directDsc;
+                unsigned char directGlyph[XFONT_BITMAP_MAX_HEIGHT];
+                const XFontFace* directFace;
+                directProvider.m_family = "RegressionDirect4x4";
+                expect_true(XFontBitmapFace_registerProvider(&directProvider),
+                            "点阵子类直接注册 provider");
+                XFont_init(&directFont);
+                XFont_setFamily(&directFont, directProvider.m_family);
+                memset(&directDsc, 0, sizeof(directDsc));
+                memset(directGlyph, 0, sizeof(directGlyph));
+                directFace = XFont_face(&directFont);
+                expect_true(directFace &&
+                                XFontFace_kind(directFace) == XFontFace_Bitmap &&
+                                XFontFace_loadBitmapGlyph_base(
+                                    directFace, &directFont, (uint32_t)'A',
+                                    &directDsc, directGlyph,
+                                    sizeof(directGlyph)) &&
+                                directGlyph[0] == 0x06u,
+                            "点阵子类注册接入父类虚函数");
+                XFont_deinit_base(&directFont);
+            }
         }
         XFont_setFamily(&defaultFont, "XFont16x16");
         {
@@ -17949,8 +18256,8 @@ static void test_gui_application_contract(void)
             bool hasInk = false;
             memset(&glyphDsc, 0, sizeof(glyphDsc));
             memset(glyph16, 0, sizeof(glyph16));
-            if (XFont_bitmapFontInfo(&defaultFont, &bitmapInfo) &&
-                XFont_bitmapLoadGlyph(&defaultFont, 0x4E2Du, &glyphDsc,
+            if (test_font_bitmap_info(&defaultFont, &bitmapInfo) &&
+                test_font_bitmap_load(&defaultFont, 0x4E2Du, &glyphDsc,
                                         glyph16, sizeof(glyph16)))
             {
                 for (i = 0; i < sizeof(glyph16); ++i)
@@ -18553,6 +18860,57 @@ static void test_gui_application_contract(void)
                             gni, "paintdevice", gpbs) == (void*)gppDev,
                         "平台后端 resize 后绘制设备有效且原生资源可见");
         }
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        {
+            XSize tileSize;
+            XRegion tileDirty;
+            XRect tile;
+            XRect secondTileDirty;
+            XImage* tileDevice;
+
+            XSize_init(&tileSize, XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH + 1,
+                       1);
+            XPlatformBackingStore_resize(gpbs, &tileSize);
+            secondTileDirty.x = XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
+            secondTileDirty.y = 0;
+            secondTileDirty.width = 1;
+            secondTileDirty.height = 1;
+            XRegion_init(&tileDirty);
+            XRegion_addRect(&tileDirty, &secondTileDirty);
+            XPlatformBackingStore_beginPaint(gpbs, &tileDirty);
+            expect_true(XPlatformBackingStore_nextTile(gpbs, &tile) &&
+                        tile.x == secondTileDirty.x && tile.y == 0 &&
+                        tile.width == 1 && tile.height == 1,
+                        "PARTIAL 跳过无交集 tile 并返回第二个局部缓冲块");
+            tileDevice = XPlatformBackingStore_paintDevice(gpbs);
+            expect_true(tileDevice && XImage_width(tileDevice) ==
+                        XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH &&
+                        XImage_height(tileDevice) == 1,
+                        "PARTIAL 使用配置的小块局部绘制缓冲");
+            if (tileDevice)
+                XImage_fillRect(tileDevice, &(XRect){0, 0, 1, 1},
+                                0xff112233u);
+            g_backingStorePresentCount = 0;
+            XRect_init(&g_backingStorePresentRect, 0, 0, 0, 0);
+            XPoint_init(&g_backingStorePresentOffset, 0, 0);
+            XPlatformBackingStore_setPresentCallback(
+                gpbs, gui_app_probe_backingStorePresent, NULL);
+            XPlatformBackingStore_flushTile(gpbs, NULL, &tile, NULL);
+            expect_true(g_backingStorePresentCount == 1 &&
+                        g_backingStorePresentRect.x == secondTileDirty.x &&
+                        g_backingStorePresentRect.y == 0 &&
+                        g_backingStorePresentRect.width == 1 &&
+                        g_backingStorePresentRect.height == 1 &&
+                        g_backingStorePresentOffset.x == secondTileDirty.x &&
+                        g_backingStorePresentOffset.y == 0,
+                        "PARTIAL tile 提交使用局部源坐标和正确窗口目标坐标");
+            XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
+            XPlatformBackingStore_endPaint(gpbs);
+            XRegion_deinit(&tileDirty);
+            XSize_init(&tileSize, 3, 4);
+            XPlatformBackingStore_resize(gpbs, &tileSize);
+        }
+#endif /* XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL */
         gbks = XBackingStore_create(gpwin);
         expect_true(gbks != NULL && XBackingStore_window(gbks) == gpwin,
                     "XBackingStore 创建并绑定窗口");
@@ -18568,6 +18926,10 @@ static void test_gui_application_contract(void)
             XImage* gbsDev = NULL;
             XPainter gbsPainter;
             XPoint gbsOff;
+            unsigned char gbsExternal[3u * 4u * 4u];
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+            unsigned char gbsExternal2[3u * 4u * 4u];
+#endif
 
             gsize = XBackingStore_size(gbks);
             expect_true(gsize.width == 0 && gsize.height == 0 &&
@@ -18584,6 +18946,26 @@ static void test_gui_application_contract(void)
                         XImage_height(gbsDev) == 4 &&
                         XImage_format(gbsDev) == XImageFormat_ARGB32_Premultiplied,
                         "resize 后 size/绘制设备格式正确");
+
+            /* LVGL 风格的调用方缓冲：XBackingStore 只借用这块内存。 */
+            memset(gbsExternal, 0, sizeof(gbsExternal));
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+            memset(gbsExternal2, 0, sizeof(gbsExternal2));
+#endif
+            expect_true(XBackingStore_requiredBufferSize(&gsize) ==
+                            sizeof(gbsExternal) &&
+                        XBackingStore_setBuffers(gbks, gbsExternal,
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+                                                 gbsExternal2,
+#else
+                                                 NULL,
+#endif
+                                                 sizeof(gbsExternal)) &&
+                        XBackingStore_paintDevice(gbks) != NULL &&
+                        XImage_constBits(XBackingStore_paintDevice(gbks)) ==
+                            gbsExternal,
+                        "setBuffers 使用调用方提供的帧缓冲");
+            gbsDev = XBackingStore_paintDevice(gbks);
 
             /* beginPaint/endPaint + XPainter 直接绘制到内部缓冲 */
             XRegion_init(&gbsRegion);
@@ -22281,6 +22663,9 @@ int main(void)
     test_painter_text_layout_contract();
     test_painter_text_flags_contract();
 #endif /* XPAINTER_TEXTLAYOUT_ON */
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    test_painter_outline_font();
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 #if XPAINTER_RENDERHINT_ON
     test_painter_text_antialiasing_contract();
 #endif /* XPAINTER_RENDERHINT_ON */

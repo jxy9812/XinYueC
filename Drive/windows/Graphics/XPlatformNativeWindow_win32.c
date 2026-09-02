@@ -109,11 +109,11 @@ static char* xpwn_imeUtf8(const wchar_t* text, int wcharCount)
     bytes = WideCharToMultiByte(CP_UTF8, 0, text, wcharCount,
                                 NULL, 0, NULL, NULL);
     if (bytes <= 0) return NULL;
-    utf8 = (char*)XMalloc_System((size_t)bytes + 1u);
+    utf8 = (char*)XMalloc_Hybrid((size_t)bytes + 1u);
     if (!utf8) return NULL;
     if (WideCharToMultiByte(CP_UTF8, 0, text, wcharCount, utf8, bytes,
                             NULL, NULL) != bytes) {
-        XFree_System(utf8);
+        XFree_Hybrid(utf8);
         return NULL;
     }
     utf8[bytes] = '\0';
@@ -129,15 +129,15 @@ static char* xpwn_imeCompositionString(HIMC context, DWORD index)
     if (!context) return NULL;
     bytes = ImmGetCompositionStringW(context, index, NULL, 0);
     if (bytes <= 0) return NULL;
-    wide = (wchar_t*)XMalloc_System((size_t)bytes + sizeof(wchar_t));
+    wide = (wchar_t*)XMalloc_Hybrid((size_t)bytes + sizeof(wchar_t));
     if (!wide) return NULL;
     if (ImmGetCompositionStringW(context, index, wide, (DWORD)bytes) != bytes) {
-        XFree_System(wide);
+        XFree_Hybrid(wide);
         return NULL;
     }
     wide[bytes / (LONG)sizeof(wchar_t)] = L'\0';
     utf8 = xpwn_imeUtf8(wide, bytes / (LONG)sizeof(wchar_t));
-    XFree_System(wide);
+    XFree_Hybrid(wide);
     return utf8;
 }
 
@@ -154,20 +154,20 @@ static char* xpwn_dropFilesUriList(HDROP drop)
         UINT length = DragQueryFileW(drop, i, NULL, 0);
         capacity += (size_t)length * 4u + 12u;
     }
-    result = (char*)XMalloc_System(capacity);
+    result = (char*)XMalloc_Hybrid(capacity);
     if (!result) return NULL;
     result[0] = '\0';
     for (i = 0; i < count; ++i) {
         UINT length = DragQueryFileW(drop, i, NULL, 0);
-        wchar_t* path = (wchar_t*)XMalloc_System(((size_t)length + 1u) * sizeof(wchar_t));
+        wchar_t* path = (wchar_t*)XMalloc_Hybrid(((size_t)length + 1u) * sizeof(wchar_t));
         char* utf8;
         if (!path) continue;
         DragQueryFileW(drop, i, path, length + 1u);
         utf8 = xpwn_imeUtf8(path, (int)length);
-        XFree_System(path);
+        XFree_Hybrid(path);
         if (!utf8) continue;
         if (used + strlen(utf8) + 10u >= capacity) {
-            XFree_System(utf8);
+            XFree_Hybrid(utf8);
             break;
         }
         memcpy(result + used, "file:///", 8u);
@@ -177,7 +177,7 @@ static char* xpwn_dropFilesUriList(HDROP drop)
         result[used++] = '\r';
         result[used++] = '\n';
         result[used] = '\0';
-        XFree_System(utf8);
+        XFree_Hybrid(utf8);
     }
     return result;
 }
@@ -548,6 +548,12 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         XRect rect;
         if (BeginPaint(hwnd, &ps) != 0) {
             r = ps.rcPaint;
+            /* EndPaint must validate the system update region before XGui
+             * submits its persistent backing DIB. Presenting with a second
+             * DC while BeginPaint is active leaves the original update region
+             * pending on some Win32 paths and continuously re-enters
+             * WM_PAINT. */
+            EndPaint(hwnd, &ps);
             if (entry && entry->m_window && !IsRectEmpty(&r)) {
                 XRegion_init(&region);
                 rect.x = r.left;
@@ -560,7 +566,6 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                                                          &region);
                 XRegion_deinit(&region);
             }
-            EndPaint(hwnd, &ps);
         }
         return 0;
     }
@@ -636,7 +641,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 (XPoint){ point.x, point.y },
                 &(XPoint){ global.x, global.y }, "text/uri-list",
                 uriList ? uriList : "");
-            if (uriList) XFree_System(uriList);
+            if (uriList) XFree_Hybrid(uriList);
             DragFinish(drop);
         }
         return 0;
@@ -660,8 +665,8 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 (void)XWindowSystemInterface_handleInputMethodEvent(
                     entry->m_window, preedit ? preedit : "",
                     commit ? commit : "", 0, 0, cursor, cursor);
-                if (preedit) XFree_System(preedit);
-                if (commit) XFree_System(commit);
+                if (preedit) XFree_Hybrid(preedit);
+                if (commit) XFree_Hybrid(commit);
                 ImmReleaseContext(hwnd, imeContext);
             }
         }
@@ -1099,10 +1104,10 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
-    pixels = (uint8_t*)XMalloc_System((size_t)width * (size_t)height * 4u);
+    pixels = (uint8_t*)XMalloc_Hybrid((size_t)width * (size_t)height * 4u);
     if (!pixels || GetDIBits(memoryDc, bitmap, 0, (UINT)height, pixels,
                              &info, DIB_RGB_COLORS) != (UINT)height) {
-        if (pixels) XFree_System(pixels);
+        if (pixels) XFree_Hybrid(pixels);
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(bitmap);
         DeleteDC(memoryDc);
@@ -1111,7 +1116,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     }
     XImage_init_ex(&image, width, height, XImageFormat_ARGB32_Premultiplied);
     if (XImage_isNull(&image)) {
-        XFree_System(pixels);
+        XFree_Hybrid(pixels);
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(bitmap);
         DeleteDC(memoryDc);
@@ -1127,7 +1132,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
                             ((uint32_t)pixel[1] << 8) | pixel[0]);
         }
     }
-    XFree_System(pixels);
+    XFree_Hybrid(pixels);
     SelectObject(memoryDc, oldBitmap);
     DeleteObject(bitmap);
     DeleteDC(memoryDc);
@@ -1172,7 +1177,7 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id)
 
 /** @brief 把 XImage 的一块矩形按行重排为等宽 packed 32bpp DIB 并提交。 */
 static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
-                             const XRect* srect)
+                             const XRect* srect, int dstX, int dstY)
 {
     const uint8_t* sbuf;
     int srcBpl;
@@ -1187,7 +1192,7 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     sbuf = XImage_constBits(image);
     srcBpl = XImage_bytesPerLine(image);
     if (!sbuf || srcBpl <= 0) return false;
-    buf = (uint8_t*)XMalloc_System((size_t)w * 4u * (size_t)h);
+    buf = (uint8_t*)XMalloc_Hybrid((size_t)w * 4u * (size_t)h);
     if (!buf) return false;
     /* 按行拷贝：目标 packed（行宽 w*4），源行宽可任意（含 4 字节对齐垫）。 */
     for (row = 0; row < h; ++row) {
@@ -1206,13 +1211,13 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     bmi.bmiHeader.biCompression = BI_RGB;
     hdc = GetDC(entry->m_hwnd);
     if (!hdc) {
-        XFree_System(buf);
+        XFree_Hybrid(buf);
         return false;
     }
-    SetDIBitsToDevice(hdc, srect->x, srect->y, (DWORD)w, (DWORD)h,
+    SetDIBitsToDevice(hdc, dstX, dstY, (DWORD)w, (DWORD)h,
                       0, 0, 0, (UINT)h, buf, &bmi, DIB_RGB_COLORS);
     ReleaseDC(entry->m_hwnd, hdc);
-    XFree_System(buf);
+    XFree_Hybrid(buf);
     return true;
 }
 
@@ -1229,12 +1234,24 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     int i;
     bool any = false;
     if (!window || !image) return false;
-    if (!xpwn_ensureInstance()) return false;
+    /* XRegion_copy 会先释放目标旧存储；非空 region 路径同样必须先
+       初始化临时区域，避免把未初始化的 rects 指针交给 XFree_System。 */
+    XRegion_init(&effective);
+    if (!xpwn_ensureInstance()) {
+        XRegion_deinit(&effective);
+        return false;
+    }
     entry = xpwn_findByXWindow(window);
-    if (!entry || !entry->m_hwnd) return false;
+    if (!entry || !entry->m_hwnd) {
+        XRegion_deinit(&effective);
+        return false;
+    }
     imgW = XImage_width(image);
     imgH = XImage_height(image);
-    if (imgW <= 0 || imgH <= 0) return false;
+    if (imgW <= 0 || imgH <= 0) {
+        XRegion_deinit(&effective);
+        return false;
+    }
 
     /* 裁剪脏区：region 为 NULL/空按整幅；offset 为缓冲相对窗口偏移。 */
     if (!offset) {
@@ -1257,12 +1274,15 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     }
     for (i = 0; i < effective.count; ++i) {
         XRect srect;
+        XRect drect;
         srect.x = effective.rects[i].x - off->x;
         srect.y = effective.rects[i].y - off->y;
         srect.width = effective.rects[i].width;
         srect.height = effective.rects[i].height;
         if (!xpwn_clipRectToImage(&srect, imgW, imgH, &srect)) continue;
-        if (xpwn_presentRect(entry, image, &srect)) any = true;
+        drect.x = srect.x + off->x;
+        drect.y = srect.y + off->y;
+        if (xpwn_presentRect(entry, image, &srect, drect.x, drect.y)) any = true;
     }
     XRegion_deinit(&effective);
     return any;

@@ -4,29 +4,14 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XFont.h"
-#if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
+#if XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_OUTLINE_FILE_ON)
 #include "XFile.h"
 #include "XByteArray.h"
-#endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
+#endif /* XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_OUTLINE_FILE_ON) */
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-/* 字库注册装配由 XFontRegistration.c 提供；不公开额外头文件。 */
-void XFont_registerProviders(void);
-
-static XFontBitmapProvider g_bitmapProviders[XFONT_MAX_BITMAP_PROVIDERS];
-static size_t g_bitmapProviderCount;
-static bool g_bitmapProvidersInitialized;
-
-static int XFont_bitmapRowBytes(const XFontBitmapInfo* info)
-{
-    if (!info || info->m_width < 1 ||
-        (info->m_bpp != 1 && info->m_bpp != 2 && info->m_bpp != 3 &&
-         info->m_bpp != 4 && info->m_bpp != 8))
-        return 0;
-    return (info->m_width * info->m_bpp + 7) / 8;
-}
+#include <limits.h>
 
 static int XFont_glyphRowBytes(const XFontGlyphDsc* dsc, int bpp)
 {
@@ -37,30 +22,6 @@ static int XFont_glyphRowBytes(const XFontGlyphDsc* dsc, int bpp)
 }
 
 /* LVGL fmt_txt stores a glyph as one continuous MSB-first bit stream. */
-static size_t XFont_glyphPackedBytes(const XFontGlyphDsc* dsc, int bpp)
-{
-    size_t bits;
-    if (!dsc || dsc->box_w == 0 || dsc->box_h == 0 ||
-        (bpp != 1 && bpp != 2 && bpp != 3 && bpp != 4 && bpp != 8))
-        return 0;
-    bits = (size_t)dsc->box_w * (size_t)dsc->box_h * (size_t)bpp;
-    return (bits + 7u) / 8u;
-}
-
-static unsigned XFont_readPackedPixel(const uint8_t* data, size_t bit,
-                                      int bpp)
-{
-    unsigned value = 0;
-    int i;
-    for (i = 0; i < bpp; ++i)
-    {
-        size_t current = bit + (size_t)i;
-        value = (value << 1) |
-                ((data[current / 8u] >> (7u - (unsigned)(current % 8u))) & 1u);
-    }
-    return value;
-}
-
 static void XFont_writePackedPixel(uint8_t* data, size_t bit, int bpp,
                                    unsigned value)
 {
@@ -72,58 +33,6 @@ static void XFont_writePackedPixel(uint8_t* data, size_t bit, int bpp,
         if ((value & (1u << (bpp - 1 - i))) != 0u)
             data[current / 8u] |= mask;
     }
-}
-
-/* Expand LVGL's continuous stream to the row-aligned XFont bitmap contract. */
-static void XFont_unpackGlyph(const uint8_t* source, uint8_t* dest,
-                              const XFontGlyphDsc* dsc, int bpp,
-                              int rowBytes)
-{
-    int y;
-    memset(dest, 0, (size_t)rowBytes * (size_t)dsc->box_h);
-    for (y = 0; y < dsc->box_h; ++y)
-    {
-        int x;
-        for (x = 0; x < dsc->box_w; ++x)
-        {
-            size_t sourceBit = ((size_t)y * (size_t)dsc->box_w +
-                                (size_t)x) * (size_t)bpp;
-            size_t destBit = ((size_t)y * (size_t)rowBytes * 8u) +
-                             (size_t)x * (size_t)bpp;
-            XFont_writePackedPixel(dest, destBit, bpp,
-                                   XFont_readPackedPixel(source, sourceBit,
-                                                          bpp));
-        }
-    }
-}
-
-static void XFont_ensureBitmapProviders(void)
-{
-    if (g_bitmapProvidersInitialized)
-        return;
-    /* Mark ready before dispatch so provider registration cannot recurse. */
-    g_bitmapProvidersInitialized = true;
-    XFont_registerProviders();
-}
-
-static const XFontBitmapProvider* XFont_findBitmapProvider(const char* family)
-{
-    size_t i;
-    if (!family || !family[0])
-        return NULL;
-    XFont_ensureBitmapProviders();
-    for (i = 0; i < g_bitmapProviderCount; ++i)
-    {
-        if (strcmp(g_bitmapProviders[i].m_family, family) == 0)
-            return &g_bitmapProviders[i];
-    }
-    return NULL;
-}
-
-static const XFontBitmapProvider* XFont_firstBitmapProvider(void)
-{
-    XFont_ensureBitmapProviders();
-    return g_bitmapProviderCount > 0 ? &g_bitmapProviders[0] : NULL;
 }
 
 #if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
@@ -191,45 +100,405 @@ static bool XFont_externalBinPath(const char* family, char* path,
 }
 #endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
 
-bool XFont_registerBitmapProvider(const XFontBitmapProvider* provider)
+#if XFONT_OUTLINE_ON
+#if XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON
+enum
 {
-    size_t i;
-    if (!provider || !provider->m_family || !provider->m_family[0] ||
-        (!provider->m_loadGlyph && !provider->m_data) ||
-        provider->m_info.m_width < 1 ||
-        provider->m_info.m_width > XFONT_BITMAP_MAX_WIDTH ||
-        provider->m_info.m_height < 1 ||
-        provider->m_info.m_height > XFONT_BITMAP_MAX_HEIGHT ||
-        provider->m_info.m_ascent < 0 || provider->m_info.m_descent < 0 ||
-        (provider->m_info.m_bpp != 1 && provider->m_info.m_bpp != 2 &&
-         provider->m_info.m_bpp != 3 && provider->m_info.m_bpp != 4 &&
-         provider->m_info.m_bpp != 8) ||
-        provider->m_info.m_ascent + provider->m_info.m_descent >
-            provider->m_info.m_height)
+    XFONT_XFO1_HEADER_SIZE = 36,
+    XFONT_XFO1_CMAP_ENTRY_SIZE = 8,
+    XFONT_XFO1_GLYPH_ENTRY_SIZE = 20
+};
+
+static uint16_t XFont_xfoLe16(const unsigned char* data)
+{
+    return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+static int16_t XFont_xfoLe16s(const unsigned char* data)
+{
+    return (int16_t)XFont_xfoLe16(data);
+}
+
+static uint32_t XFont_xfoLe32(const unsigned char* data)
+{
+    return ((uint32_t)data[0]) | ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static bool XFont_xfoHeader(const unsigned char* data, size_t size,
+                            XFontOutlineInfo* info, uint16_t* cmapCountOut,
+                            uint16_t* glyphCountOut,
+                            size_t* cmapOffset, size_t* glyphOffset,
+                            size_t* commandOffset, size_t* commandSize)
+{
+    uint32_t cmap, glyph, commands, commandLength;
+    uint16_t cmapCount, glyphCount;
+    if (!data || size < XFONT_XFO1_HEADER_SIZE ||
+        memcmp(data, "XFO1", 4) != 0 || XFont_xfoLe16(data + 4) != 1u)
         return false;
-    if (provider->m_info.m_rowBytes != XFont_bitmapRowBytes(&provider->m_info) ||
-        provider->m_info.m_rowBytes < 1 ||
-        provider->m_info.m_rowBytes > XFONT_BITMAP_MAX_ROW_BYTES)
+    cmapCount = XFont_xfoLe16(data + 16);
+    glyphCount = XFont_xfoLe16(data + 18);
+    cmap = XFont_xfoLe32(data + 20);
+    glyph = XFont_xfoLe32(data + 24);
+    commands = XFont_xfoLe32(data + 28);
+    commandLength = XFont_xfoLe32(data + 32);
+    if (cmapCount == 0u || glyphCount == 0u || cmap < XFONT_XFO1_HEADER_SIZE ||
+        glyph < cmap || commands < glyph || cmap > size || glyph > size || commands > size ||
+        commandLength > size - commands ||
+        (size_t)cmapCount > (size - cmap) / XFONT_XFO1_CMAP_ENTRY_SIZE ||
+        (size_t)glyphCount > (size - glyph) / XFONT_XFO1_GLYPH_ENTRY_SIZE ||
+        cmap + (size_t)cmapCount * XFONT_XFO1_CMAP_ENTRY_SIZE > glyph ||
+        glyph + (size_t)glyphCount * XFONT_XFO1_GLYPH_ENTRY_SIZE > commands)
         return false;
-    if (provider->m_data &&
-        (provider->m_data->bpp != (uint16_t)provider->m_info.m_bpp ||
-         provider->m_data->bitmap_format != 0 || !provider->m_data->glyph_dsc ||
-         !provider->m_data->cmaps || provider->m_data->cmap_num == 0))
+    if (XFont_xfoLe16(data + 8) == 0u || XFont_xfoLe16s(data + 10) < 0 ||
+        XFont_xfoLe16s(data + 12) < 0 || XFont_xfoLe16s(data + 14) < 0)
         return false;
-    XFont_ensureBitmapProviders();
-    for (i = 0; i < g_bitmapProviderCount; ++i)
+    if (info)
     {
-        if (strcmp(g_bitmapProviders[i].m_family, provider->m_family) == 0)
+        info->unitsPerEm = (int)XFont_xfoLe16(data + 8);
+        info->ascent = (int)XFont_xfoLe16s(data + 10);
+        info->descent = (int)XFont_xfoLe16s(data + 12);
+        info->lineGap = (int)XFont_xfoLe16s(data + 14);
+    }
+    if (cmapCountOut) *cmapCountOut = cmapCount;
+    if (glyphCountOut) *glyphCountOut = glyphCount;
+    if (cmapOffset) *cmapOffset = (size_t)cmap;
+    if (glyphOffset) *glyphOffset = (size_t)glyph;
+    if (commandOffset) *commandOffset = (size_t)commands;
+    if (commandSize) *commandSize = (size_t)commandLength;
+    return true;
+}
+
+static bool XFont_xfoFindGlyph(const unsigned char* data, size_t cmapOffset,
+                               uint16_t cmapCount, uint16_t glyphCount,
+                               uint32_t codepoint, uint16_t* glyphId)
+{
+    uint16_t i;
+    if (!data || !glyphId)
+        return false;
+    for (i = 0; i < cmapCount; ++i)
+    {
+        const unsigned char* entry = data + cmapOffset +
+                                     (size_t)i * XFONT_XFO1_CMAP_ENTRY_SIZE;
+        if (XFont_xfoLe32(entry) == codepoint)
         {
-            g_bitmapProviders[i] = *provider;
+            uint16_t id = XFont_xfoLe16(entry + 4);
+            if (id >= glyphCount)
+                return false;
+            *glyphId = id;
             return true;
         }
     }
-    if (g_bitmapProviderCount >= XFONT_MAX_BITMAP_PROVIDERS)
+    return false;
+}
+
+static int16_t XFont_xfoReadDelta(const unsigned char* data, size_t* pos,
+                                  size_t end, bool* ok)
+{
+    int16_t value;
+    if (!data || !pos || !ok || *pos > end || end - *pos < 2u)
+    {
+        if (ok) *ok = false;
+        return 0;
+    }
+    value = XFont_xfoLe16s(data + *pos);
+    *pos += 2u;
+    return value;
+}
+
+static bool XFont_xfoEmitCommands(const unsigned char* data, size_t start,
+                                  size_t end, uint16_t count,
+                                  const XFontOutlineSink* sink)
+{
+    size_t pos = start;
+    int32_t x = 0, y = 0;
+    uint16_t i;
+    bool ok = true;
+    if (!data || start > end || count > XFONT_OUTLINE_MAX_COMMANDS)
         return false;
-    g_bitmapProviders[g_bitmapProviderCount++] = *provider;
+    /* Metrics-only queries do not need to decode the command stream. */
+    if (!sink)
+        return true;
+    for (i = 0; i < count; ++i)
+    {
+        unsigned opcode;
+        if (pos >= end) return false;
+        opcode = data[pos++];
+        if (opcode == XFontOutline_MoveTo || opcode == XFontOutline_LineTo)
+        {
+            int16_t dx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t dy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            if (!ok) return false;
+            x += dx; y += dy;
+            if (sink)
+            {
+                if (opcode == XFontOutline_MoveTo)
+                {
+                    if (sink->moveTo && !sink->moveTo(sink->userData,
+                                                       (float)x, (float)y))
+                        return false;
+                }
+                else if (sink->lineTo && !sink->lineTo(sink->userData,
+                                                       (float)x, (float)y))
+                    return false;
+            }
+        }
+        else if (opcode == XFontOutline_QuadTo)
+        {
+#if XFONT_OUTLINE_QUADRATIC_ON
+            int16_t cdx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t cdy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t edx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t edy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int32_t cx, cy;
+            if (!ok) return false;
+            cx = x + cdx; cy = y + cdy;
+            x = cx + edx; y = cy + edy;
+            if (sink && sink->quadTo && !sink->quadTo(sink->userData,
+                                                       (float)cx, (float)cy,
+                                                       (float)x, (float)y))
+                return false;
+#else
+            return false;
+#endif /* XFONT_OUTLINE_QUADRATIC_ON */
+        }
+        else if (opcode == XFontOutline_CubicTo)
+        {
+#if XFONT_OUTLINE_CUBIC_ON
+            int16_t c1dx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t c1dy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t c2dx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t c2dy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t edx = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int16_t edy = XFont_xfoReadDelta(data, &pos, end, &ok);
+            int32_t c1x, c1y, c2x, c2y;
+            if (!ok) return false;
+            c1x = x + c1dx; c1y = y + c1dy;
+            c2x = c1x + c2dx; c2y = c1y + c2dy;
+            x = c2x + edx; y = c2y + edy;
+            if (sink && sink->cubicTo &&
+                !sink->cubicTo(sink->userData, (float)c1x, (float)c1y,
+                               (float)c2x, (float)c2y,
+                               (float)x, (float)y))
+                return false;
+#else
+            return false;
+#endif /* XFONT_OUTLINE_CUBIC_ON */
+        }
+        else if (opcode == XFontOutline_Close)
+        {
+            if (sink && sink->close && !sink->close(sink->userData))
+                return false;
+        }
+        else
+            return false;
+    }
+    return pos <= end;
+}
+
+static bool XFont_readFileBytes(const char* filePath, XByteArray** outBytes)
+{
+    XString* path = NULL;
+    XFile* file = NULL;
+    XByteArray* bytes = NULL;
+    if (!filePath || !filePath[0] || !outBytes)
+        return false;
+    *outBytes = NULL;
+    path = XString_create_utf8(filePath);
+    file = path ? XFile_create() : NULL;
+    if (!path || !file)
+        goto failed;
+    XFile_setFileName(file, path);
+    if (!XFile_open_2(file, XIODevice_ReadOnly, 0))
+    {
+        if (filePath[0] == '.' && filePath[1] == '.' &&
+            (filePath[2] == '/' || filePath[2] == '\\'))
+        {
+            const char* alternatePath = filePath + 3;
+            XClass_delete_base((XClass*)file);
+            XClass_delete_base((XClass*)path);
+            file = NULL;
+            path = XString_create_utf8(alternatePath);
+            file = path ? XFile_create() : NULL;
+            if (!path || !file)
+                goto failed;
+            XFile_setFileName(file, path);
+            if (!XFile_open_2(file, XIODevice_ReadOnly, 0))
+                goto failed;
+        }
+        else
+            goto failed;
+    }
+    bytes = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    if (!bytes)
+        goto failed;
+    *outBytes = bytes;
+    XClass_delete_base((XClass*)file);
+    XClass_delete_base((XClass*)path);
+    return true;
+failed:
+    if (bytes) XClass_delete_base((XClass*)bytes);
+    if (file) XClass_delete_base((XClass*)file);
+    if (path) XClass_delete_base((XClass*)path);
+    return false;
+}
+
+static bool XFont_hasXfoSuffix(const char* name)
+{
+    size_t length;
+    if (!name) return false;
+    length = strlen(name);
+    return length >= 4u && name[length - 4u] == '.' &&
+           (name[length - 3u] == 'x' || name[length - 3u] == 'X') &&
+           (name[length - 2u] == 'f' || name[length - 2u] == 'F') &&
+           (name[length - 1u] == 'o' || name[length - 1u] == 'O');
+}
+
+static bool XFont_outlinePath(const char* family, char* path, size_t pathSize)
+{
+    const char* dir = XFONT_EXTERNAL_OUTLINE_FONT_DIR;
+    size_t length;
+    int written;
+    const char* p;
+    bool direct = false;
+    if (!family || !family[0] || !path || pathSize == 0u || !dir)
+        return false;
+    for (p = family; *p; ++p)
+        if (*p == '/' || *p == '\\' || *p == ':') { direct = true; break; }
+    if (direct || XFont_hasXfoSuffix(family))
+        written = snprintf(path, pathSize, "%s%s", family,
+                           XFont_hasXfoSuffix(family) ? "" : ".xfo");
+    else
+    {
+        length = strlen(dir);
+        written = snprintf(path, pathSize, "%s%s%s.xfo", dir,
+                           length > 0u && (dir[length - 1u] == '/' ||
+                                           dir[length - 1u] == '\\') ? "" :
+                                                                          "/",
+                           family);
+    }
+    if (written < 0 || (size_t)written >= pathSize)
+    {
+        path[0] = '\0';
+        return false;
+    }
     return true;
 }
+
+static bool XFont_loadXfo1Glyph(const char* filePath, uint32_t codepoint,
+                                XFontOutlineInfo* info,
+                                XFontOutlineGlyphMetrics* metrics,
+                                const XFontOutlineSink* sink)
+{
+    XByteArray* bytes = NULL;
+    const unsigned char* data;
+    size_t size, cmapOffset, glyphOffset, commandOffset, commandSize;
+    uint16_t cmapCount, glyphCount, glyphId;
+    const unsigned char* entry;
+    uint32_t relative;
+    uint16_t commandCount;
+    bool ok;
+    if (!XFont_readFileBytes(filePath, &bytes)) return false;
+    size = XByteArray_size_base((XContainer*)bytes);
+    data = XByteArray_data(bytes);
+    ok = XFont_xfoHeader(data, size, info, &cmapCount, &glyphCount, &cmapOffset,
+                         &glyphOffset, &commandOffset, &commandSize) &&
+         XFont_xfoFindGlyph(data, cmapOffset, cmapCount, glyphCount, codepoint,
+                            &glyphId);
+    if (!ok) goto failed;
+    entry = data + glyphOffset + (size_t)glyphId * XFONT_XFO1_GLYPH_ENTRY_SIZE;
+    if (XFont_xfoLe32(entry) > (uint32_t)INT_MAX)
+        goto failed;
+    if (metrics)
+    {
+        metrics->advance = (int)XFont_xfoLe32(entry);
+        metrics->xMin = XFont_xfoLe16s(entry + 4);
+        metrics->yMin = XFont_xfoLe16s(entry + 6);
+        metrics->xMax = XFont_xfoLe16s(entry + 8);
+        metrics->yMax = XFont_xfoLe16s(entry + 10);
+    }
+    relative = XFont_xfoLe32(entry + 12);
+    commandCount = XFont_xfoLe16(entry + 16);
+    if (relative > commandSize || commandCount > XFONT_OUTLINE_MAX_COMMANDS)
+        goto failed;
+    if (!XFont_xfoEmitCommands(data, commandOffset + relative,
+                               commandOffset + commandSize,
+                               commandCount, sink))
+        goto failed;
+    XClass_delete_base((XClass*)bytes);
+    return true;
+failed:
+    XClass_delete_base((XClass*)bytes);
+    return false;
+}
+
+static bool XFont_loadXfo1Info(const char* filePath, XFontOutlineInfo* info)
+{
+    XByteArray* bytes = NULL;
+    const unsigned char* data;
+    size_t size;
+    bool ok;
+    if (!info || !XFont_readFileBytes(filePath, &bytes)) return false;
+    size = XByteArray_size_base((XContainer*)bytes);
+    data = XByteArray_data(bytes);
+    ok = XFont_xfoHeader(data, size, info, NULL, NULL, NULL, NULL, NULL, NULL);
+    XClass_delete_base((XClass*)bytes);
+    return ok;
+}
+#endif /* XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON */
+
+bool XFontOutlineFace_fileInfo(const XFont* self, XFontOutlineInfo* info)
+{
+    const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
+    if (!info) return false;
+    if (!family || !family[0]) family = XFONT_DEFAULT_FAMILY;
+#if XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON
+    {
+        char path[XFONT_EXTERNAL_FONT_PATH_MAX];
+        if (XFont_outlinePath(family, path, sizeof(path)) &&
+            XFont_loadXfo1Info(path, info))
+            return true;
+    }
+#endif
+    return false;
+}
+
+bool XFontOutlineFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
+                                    XFontOutlineGlyphMetrics* metrics,
+                                    const XFontOutlineSink* sink)
+{
+    const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
+    if (!metrics) return false;
+    if (!family || !family[0]) family = XFONT_DEFAULT_FAMILY;
+#if XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON
+    {
+        char path[XFONT_EXTERNAL_FONT_PATH_MAX];
+        if (XFont_outlinePath(family, path, sizeof(path)))
+        {
+            XFontOutlineInfo info;
+            if (XFont_loadXfo1Glyph(path, codepoint, &info, metrics, sink))
+                return true;
+        }
+    }
+#endif
+    return false;
+}
+#else
+bool XFontOutlineFace_fileInfo(const XFont* self, XFontOutlineInfo* info)
+{
+    (void)self; (void)info;
+    return false;
+}
+
+bool XFontOutlineFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
+                                    XFontOutlineGlyphMetrics* metrics,
+                                    const XFontOutlineSink* sink)
+{
+    (void)self; (void)codepoint; (void)metrics; (void)sink;
+    return false;
+}
+#endif /* XFONT_OUTLINE_ON */
 
 /* ========== 内部静态虚函数实现 ========== */
 
@@ -859,229 +1128,53 @@ failed:
 }
 #endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
 
-bool XFont_bitmapFontInfo(const XFont* self, XFontBitmapInfo* info)
+bool XFontBitmapFace_fileInfo(const XFont* self, XFontBitmapInfo* info)
 {
     const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
-    const XFontBitmapProvider* provider;
+#if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
+    char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
+    XFontBitmapInfo fileInfo;
     if (!info)
         return false;
     if (!family || !family[0])
         family = XFONT_DEFAULT_FAMILY;
-    provider = XFont_findBitmapProvider(family);
-    if (provider)
-    {
-        *info = provider->m_info;
-        return true;
-    }
-#if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
-    if (family[0])
-    {
-        char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
-        XFontBitmapInfo fileInfo;
-        memset(&fileInfo, 0, sizeof(fileInfo));
-        if (XFont_externalBinPath(family, filePath, sizeof(filePath)) &&
-            XFont_load_lvgl_bin_glyph(filePath, 0u, &fileInfo, NULL, NULL, 0))
-        {
-            *info = fileInfo;
-            return true;
-        }
-    }
-#endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
-    provider = XFont_firstBitmapProvider();
-    if (!provider)
+    memset(&fileInfo, 0, sizeof(fileInfo));
+    if (!XFont_externalBinPath(family, filePath, sizeof(filePath)) ||
+        !XFont_load_lvgl_bin_glyph(filePath, 0u, &fileInfo, NULL, NULL, 0u))
         return false;
-    *info = provider->m_info;
+    *info = fileInfo;
     return true;
-}
-
-static bool XFont_findGlyphInData(const XFontBitmapData* data, uint32_t cp,
-                                  XFontGlyphDsc* dsc)
-{
-    uint16_t i;
-    if (!data || !data->glyph_dsc || !data->cmaps || !dsc ||
-        data->bitmap_format != 0)
-        return false;
-    for (i = 0; i < data->cmap_num; ++i)
-    {
-        const XFontCmap* cmap = &data->cmaps[i];
-        uint32_t relative;
-        uint32_t glyphId;
-        if (cp < cmap->range_start ||
-            cp - cmap->range_start >= cmap->range_length)
-            continue;
-        relative = cp - cmap->range_start;
-        switch (cmap->type)
-        {
-        case XFontCmapFormat0Full:
-            glyphId = (uint32_t)cmap->glyph_id_start + relative;
-            if (cmap->glyph_id_ofs_list)
-                glyphId += ((const uint8_t*)cmap->glyph_id_ofs_list)[relative];
-            break;
-        case XFontCmapFormat0Tiny:
-            glyphId = (uint32_t)cmap->glyph_id_start + relative;
-            if (cmap->glyph_id_ofs_list)
-                glyphId += ((const uint8_t*)cmap->glyph_id_ofs_list)[relative];
-            break;
-        case XFontCmapSparseFull:
-        case XFontCmapSparseTiny:
-        {
-            uint16_t lo = 0;
-            uint16_t hi = cmap->list_length;
-            const uint16_t* list = cmap->unicode_list;
-            while (lo < hi)
-            {
-                uint16_t mid = (uint16_t)(lo + (hi - lo) / 2u);
-                if (list[mid] < relative) lo = (uint16_t)(mid + 1u);
-                else hi = mid;
-            }
-            if (lo >= cmap->list_length || list[lo] != relative)
-                continue;
-            glyphId = (uint32_t)cmap->glyph_id_start + lo;
-            if (cmap->glyph_id_ofs_list)
-                glyphId += (cmap->type == XFontCmapSparseTiny
-                                ? ((const uint8_t*)cmap->glyph_id_ofs_list)[lo]
-                                : ((const uint16_t*)cmap->glyph_id_ofs_list)[lo]);
-            break;
-        }
-        default:
-            continue;
-        }
-        if (glyphId == 0u)
-            return false;
-        *dsc = data->glyph_dsc[glyphId];
-        return true;
-    }
+#else
+    (void)family;
+    (void)info;
     return false;
-}
-
-int XFont_bitmapGlyphRowBytes(const XFontGlyphDsc* dsc, int bpp)
-{
-    return XFont_glyphRowBytes(dsc, bpp);
-}
-
-static bool XFont_findBitmapGlyphDsc(const XFont* self, uint32_t cp,
-                                     XFontGlyphDsc* dsc)
-{
-    const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
-    const XFontBitmapProvider* provider;
-    if (!dsc) return false;
-    if (!family || !family[0]) family = XFONT_DEFAULT_FAMILY;
-    provider = XFont_findBitmapProvider(family);
-    if (provider && provider->m_data &&
-        XFont_findGlyphInData(provider->m_data, cp, dsc))
-        return true;
-    /* Callback providers expose a regular cell. Their data can still be
-       consumed through the LVGL-shaped API by using the provider metrics. */
-    if (provider && provider->m_loadGlyph)
-    {
-        dsc->bitmap_index = 0;
-        dsc->adv_w = (uint32_t)provider->m_info.m_width * 16u;
-        dsc->box_w = (uint8_t)provider->m_info.m_width;
-        dsc->box_h = (uint8_t)provider->m_info.m_height;
-        dsc->ofs_x = 0;
-        dsc->ofs_y = (int8_t)-provider->m_info.m_descent;
-        return true;
-    }
-#if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
-    if (provider == NULL && family[0])
-    {
-        char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
-        XFontBitmapInfo fileInfo;
-        memset(&fileInfo, 0, sizeof(fileInfo));
-        if (XFont_externalBinPath(family, filePath, sizeof(filePath)) &&
-            XFont_load_lvgl_bin_glyph(filePath, cp, &fileInfo, dsc, NULL, 0))
-        {
-            return true;
-        }
-    }
 #endif
-    provider = XFont_firstBitmapProvider();
-    if (!provider) return false;
-    if (provider->m_data)
-        return XFont_findGlyphInData(provider->m_data, cp, dsc);
-    if (provider->m_loadGlyph)
-    {
-        dsc->bitmap_index = 0;
-        dsc->adv_w = (uint32_t)provider->m_info.m_width * 16u;
-        dsc->box_w = (uint8_t)provider->m_info.m_width;
-        dsc->box_h = (uint8_t)provider->m_info.m_height;
-        dsc->ofs_x = 0;
-        dsc->ofs_y = (int8_t)-provider->m_info.m_descent;
-        return true;
-    }
-    return false;
 }
 
-bool XFont_bitmapLoadGlyph(const XFont* self, uint32_t cp,
-                           XFontGlyphDsc* dsc, unsigned char* out,
-                           size_t outSize)
+bool XFontBitmapFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
+                                   XFontGlyphDsc* dsc, unsigned char* out,
+                                   size_t outSize)
 {
-    XFontBitmapInfo info;
     const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
-    const XFontBitmapProvider* provider;
-    size_t rowBytes;
-    size_t bitmapSize;
-    if (!dsc || (out && outSize == 0) || (!out && outSize != 0) ||
-        !XFont_bitmapFontInfo(self, &info) ||
-        !XFont_findBitmapGlyphDsc(self, cp, dsc))
-        return false;
-    if (!out)
-        return true;
-    provider = XFont_findBitmapProvider(family);
-    if (provider && provider->m_data &&
-        XFont_findGlyphInData(provider->m_data, cp, dsc))
-    {
-        rowBytes = (size_t)XFont_glyphRowBytes(dsc, info.m_bpp);
-        bitmapSize = rowBytes * (size_t)dsc->box_h;
-        if (!provider->m_data->glyph_bitmap || outSize < bitmapSize)
-            return false;
-        if (XFont_glyphPackedBytes(dsc, info.m_bpp) == bitmapSize)
-            memcpy(out, provider->m_data->glyph_bitmap + dsc->bitmap_index,
-                   bitmapSize);
-        else
-            XFont_unpackGlyph(provider->m_data->glyph_bitmap +
-                                  dsc->bitmap_index,
-                              out, dsc, info.m_bpp, (int)rowBytes);
-        if (bitmapSize < outSize) memset(out + bitmapSize, 0,
-                                         outSize - bitmapSize);
-        return true;
-    }
-    rowBytes = (size_t)info.m_rowBytes;
-    bitmapSize = rowBytes * (size_t)info.m_height;
-    if (outSize < bitmapSize)
-        return false;
-    if (provider && provider->m_loadGlyph &&
-        provider->m_loadGlyph(cp, out, outSize))
-        return true;
 #if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
-    if (!provider && family[0])
-    {
-        char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
-        if (XFont_externalBinPath(family, filePath, sizeof(filePath)) &&
-            XFont_load_lvgl_bin_glyph(filePath, cp, &info, dsc, out, outSize))
-            return true;
-    }
-#endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
-    provider = XFont_firstBitmapProvider();
-    if (provider && provider->m_data)
-    {
-        rowBytes = (size_t)XFont_glyphRowBytes(dsc, info.m_bpp);
-        bitmapSize = rowBytes * (size_t)dsc->box_h;
-        if (!provider->m_data->glyph_bitmap || outSize < bitmapSize)
-            return false;
-        if (XFont_glyphPackedBytes(dsc, info.m_bpp) == bitmapSize)
-            memcpy(out, provider->m_data->glyph_bitmap + dsc->bitmap_index,
-                   bitmapSize);
-        else
-            XFont_unpackGlyph(provider->m_data->glyph_bitmap +
-                                  dsc->bitmap_index,
-                              out, dsc, info.m_bpp, (int)rowBytes);
-        if (bitmapSize < outSize) memset(out + bitmapSize, 0,
-                                         outSize - bitmapSize);
-        return true;
-    }
-    return provider && provider->m_loadGlyph &&
-           provider->m_loadGlyph(cp, out, outSize);
+    char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
+    XFontBitmapInfo fileInfo;
+    if (!dsc || (out && outSize == 0u) || (!out && outSize != 0u))
+        return false;
+    if (!family || !family[0])
+        family = XFONT_DEFAULT_FAMILY;
+    memset(&fileInfo, 0, sizeof(fileInfo));
+    return XFont_externalBinPath(family, filePath, sizeof(filePath)) &&
+           XFont_load_lvgl_bin_glyph(filePath, codepoint, &fileInfo, dsc,
+                                     out, outSize);
+#else
+    (void)family;
+    (void)codepoint;
+    (void)dsc;
+    (void)out;
+    (void)outSize;
+    return false;
+#endif
 }
 
 /* ========== 属性访问 ========== */

@@ -6,6 +6,7 @@
 #include "XBackingStore.h"
 #include "XMemory.h"
 #include "XString.h"
+#include "XImageFormat.h"
 #include <string.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -114,6 +115,22 @@ XImage* XBackingStore_paintDevice(XBackingStore* self)
     return XPlatformBackingStore_paintDevice(platform);
 }
 
+bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect)
+{
+    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    if (!platform || !tileRect) return false;
+    return XPlatformBackingStore_nextTile(platform, tileRect);
+}
+
+XPoint XBackingStore_paintOrigin(const XBackingStore* self)
+{
+    XPoint out;
+    XPoint_init(&out, 0, 0);
+    if (!self || !self->m_data || !self->m_data->m_platform)
+        return out;
+    return XPlatformBackingStore_paintOrigin(self->m_data->m_platform);
+}
+
 XPlatformBackingStore* XBackingStore_handle(const XBackingStore* self)
 {
     /* QBackingStore::handle() 在首次调用时创建平台对象，之后只返回同一
@@ -145,6 +162,25 @@ void XBackingStore_resize(XBackingStore* self, const XSize* size)
         XPlatformBackingStore_setStaticContents(
             platform, &self->m_data->m_staticContents);
     }
+}
+
+bool XBackingStore_setBuffers(XBackingStore* self,
+                              void* buffer1, void* buffer2,
+                              size_t bufferSize)
+{
+    XPlatformBackingStore* platform;
+    if (!self || !self->m_data) return false;
+    platform = XBackingStore_handle(self);
+    if (!platform) return false;
+    if (!XPlatformBackingStore_setBuffers(platform, buffer1, buffer2,
+                                          bufferSize))
+        return false;
+    return true;
+}
+
+size_t XBackingStore_requiredBufferSize(const XSize* size)
+{
+    return XPlatformBackingStore_requiredBufferSize(size);
 }
 
 XSize XBackingStore_size(const XBackingStore* self)
@@ -186,6 +222,15 @@ void XBackingStore_flush(XBackingStore* self, const XRegion* region,
      * 非空 window 才表示一次子窗口提交；平台层不能替公共层补这个默认。 */
     if (!window) window = self->m_data->m_window;
     XPlatformBackingStore_flush(platform, window, region, offset);
+}
+
+void XBackingStore_flushTile(XBackingStore* self, XWindow* window,
+                             const XRect* tileRect, const XPoint* offset)
+{
+    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    if (!platform || !tileRect) return;
+    if (!window) window = self->m_data->m_window;
+    XPlatformBackingStore_flushTile(platform, window, tileRect, offset);
 }
 
 void XBackingStore_setStaticContents(XBackingStore* self, const XRegion* region)

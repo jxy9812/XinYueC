@@ -952,14 +952,18 @@ bool XDeviceFile_mkdir(const XString* path, bool recursive)
     bool result = true;
     while (*p) {
         if (*p == '\\') {
+            XString* partialPath;
+            wchar_t* wpath;
             *p = '\0';
-            wchar_t* wpath = XStringToWidePath(path);
+            partialPath = XString_create_utf8(pathCopy);
+            wpath = partialPath ? XStringToWidePath(partialPath) : NULL;
             if (wpath) {
                 if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {
                     if (!CreateDirectoryW(wpath, NULL)) result = false;
                 }
                 XFree_System(wpath);
             }
+            if (partialPath) XString_delete_base((XClass*)partialPath);
             *p = '\\';
         }
         p++;
@@ -1020,7 +1024,7 @@ void* XDeviceDir_platformOpen(const XString* path)
     XString_append_utf8(searchPathStr, "\\*");
     
     wchar_t* wpath = XStringToWidePath(searchPathStr);
-    XString_delete_base(searchPathStr);
+    XString_delete_base((XClass*)searchPathStr);
     if (!wpath) return NULL;
     
     struct DirIteratorData* iter = (struct DirIteratorData*)XMalloc_System(sizeof(struct DirIteratorData));
@@ -1852,7 +1856,7 @@ bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userDa
             XString* path = XString_create_utf8(drivePath);
             if (!path) return false;
             bool cont = callback(path, userData);
-            XString_delete_base(path);
+            XString_delete_base((XClass*)path);
             if (!cont) return false;
         }
     }

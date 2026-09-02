@@ -5,7 +5,8 @@
 #include "XFont8x16.h"
 #include "XFont16x16.h"
 #include "XFont32x32.h"
-void XFont_registerProviders(void)
+#include "XFontOutlineCommon.h"
+void XFontFace_registerBuiltinProviders(void)
 {
 #if XFONT_BUILTIN_8X16_ON
     (void)XFont8x16_register();
@@ -16,4 +17,7 @@ void XFont_registerProviders(void)
 #if XFONT_BUILTIN_32X32_ON
     (void)XFont32x32_register();
 #endif /* XFONT_BUILTIN_32X32_ON */
+#if XFONT_BUILTIN_OUTLINE_ON
+    (void)XFontOutlineCommon_register();
+#endif /* XFONT_BUILTIN_OUTLINE_ON */
 }

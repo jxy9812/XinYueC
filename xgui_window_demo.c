@@ -22,6 +22,7 @@
  ******************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "CXinYueConfig.h"
@@ -38,6 +39,14 @@
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+#include "XPerformanceOverlay.h"
+#endif
+#if defined(_WIN32)
+#include <windows.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif
@@ -47,6 +56,14 @@
 
 #if XGUIAPPLICATION_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
     XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
+
+/* The demo follows the scalable built-in face whenever it is compiled in.
+   A clipped embedded build keeps the existing bitmap fallback. */
+#if XFONT_BUILTIN_OUTLINE_ON
+#define XGUI_DEMO_DEFAULT_FONT_FAMILY "XFontOutlineCommon"
+#else
+#define XGUI_DEMO_DEFAULT_FONT_FAMILY XFONT_DEFAULT_FAMILY
+#endif
 
 /* ==================== 演示窗口子类 ==================== */
 
@@ -60,6 +77,12 @@ typedef struct DemoWin
     XBackingStore*  m_store; /**< 后备存储借用指针（随窗口生命周期）。 */
     bool            m_closed; /**< CloseEvent 被接受后置真，驱动主循环退出。 */
     bool            m_buttonDown; /**< XPushButton 当前是否处于按下状态。 */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    int64_t m_lastNetworkPollUsecs; /**< 最近一次主机网络计数采样时刻。 */
+#endif
+#endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton     m_button; /**< 常驻按钮控件：输入与信号都走控件自身。 */
 #endif
@@ -79,6 +102,10 @@ typedef struct DemoWin
 #endif
 } DemoWin;
 
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+static int64_t demo_monotonicUsecs(void);
+#endif
+
 /* ---------------- 绘制 ----------------
  * 全部使用 ARGB32 预乘颜色：软件光栅化 + XBackingStore 上屏，
  * 与平台（X11/Win32）无关。 */
@@ -92,6 +119,27 @@ static void demo_fill_rect(XPainter* painter, int x, int y, int w, int h,
     XRect_init(&rect, x, y, w, h);
     XPainter_fillRect(painter, &rect, argb);
 }
+
+/** @brief 将 demo 使用的 XFont 默认家族设置为当前可用的内置字库。 */
+static void demo_apply_default_font(XFont* font)
+{
+    if (font)
+        XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
+}
+
+#if XWIDGET_ON
+/** @brief 将 demo 默认字体应用到一个控件，供控件内部文字绘制使用。 */
+static void demo_set_widget_default_font(XWidget* widget)
+{
+    XFont font;
+    if (!widget)
+        return;
+    XFont_init(&font);
+    demo_apply_default_font(&font);
+    XWidget_setFont(widget, &font);
+    XFont_deinit_base(&font);
+}
+#endif /* XWIDGET_ON */
 
 /** @brief 画棋盘格纹理：验证亚像素级脏区提交正确性。 */
 static void demo_draw_checker(XPainter* painter, int x0, int y0,
@@ -122,7 +170,7 @@ static void demo_draw_checker(XPainter* painter, int x0, int y0,
  * @param height 标签可用高度。
  * @param text 要显示的 UTF-8 文本。
  * @param pixelSize 标签文字像素高度，16 为原始点阵字号，32 为两倍放大。
- * @param family 点阵字库 family；NULL 使用当前默认字库。
+ * @param family 字库 family；NULL 使用 demo 当前默认字库。
  */
 static void demo_draw_label(XPainter* painter, int x, int y, int width,
                             int height, const char* text, int pixelSize,
@@ -132,10 +180,10 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
     if (!painter || width <= 0 || height <= 0) return;
     memset(&label, 0, sizeof(label));
     XLabel_init(&label, NULL, 0);
-    if (family)
     {
         XFont labelFont = XWidget_font((XWidget*)&label);
-        XFont_setFamily(&labelFont, family);
+        XFont_setFamily(&labelFont,
+                        family ? family : XGUI_DEMO_DEFAULT_FONT_FAMILY);
         XWidget_setFont((XWidget*)&label, &labelFont);
         XFont_deinit_base(&labelFont);
     }
@@ -152,6 +200,118 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
+/* ==================== 性能悬浮层 ==================== */
+
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+
+/** @brief 初始化性能悬浮层；标签保持隐藏，由 demo 在后备存储上叠加绘制。 */
+static void demo_performance_init(DemoWin* self)
+{
+    if (!self) return;
+    XPerformanceOverlay_init(&self->m_performanceOverlay, NULL, 0);
+    XPerformanceOverlay_setFontFamily(&self->m_performanceOverlay,
+                                      XGUI_DEMO_DEFAULT_FONT_FAMILY);
+    XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 14);
+}
+
+/** @brief 在窗口右上角绘制性能悬浮层；其面积固定，不参与布局和鼠标命中。 */
+static void demo_performance_draw(DemoWin* self, XPainter* painter, int w, int h)
+{
+    if (!self || !painter || w <= 0 || h <= 0) return;
+    XPerformanceOverlay_draw(&self->m_performanceOverlay, painter, w, h);
+}
+
+static void demo_performance_deinit(DemoWin* self)
+{
+    if (!self) return;
+    XPerformanceOverlay_deinit_base(&self->m_performanceOverlay);
+}
+
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+/** @brief 读取主机所有非回环接口的累计收发字节数。 */
+static bool demo_network_counters(uint64_t* rxBytes, uint64_t* txBytes)
+{
+    if (!rxBytes || !txBytes) return false;
+    *rxBytes = 0;
+    *txBytes = 0;
+#if defined(_WIN32)
+    {
+        PMIB_IFTABLE table;
+        DWORD tableBytes = 0;
+        DWORD result;
+        DWORD i;
+        (void)GetIfTable(NULL, &tableBytes, FALSE);
+        if (tableBytes < sizeof(*table))
+            return false;
+        table = (PMIB_IFTABLE)malloc(tableBytes);
+        if (!table)
+            return false;
+        result = GetIfTable(table, &tableBytes, FALSE);
+        if (result != NO_ERROR)
+        {
+            free(table);
+            return false;
+        }
+        for (i = 0; i < table->dwNumEntries; ++i)
+        {
+            const MIB_IFROW* row = &table->table[i];
+            if (row->dwType == MIB_IF_TYPE_LOOPBACK)
+                continue;
+            *rxBytes += (uint64_t)row->dwInOctets;
+            *txBytes += (uint64_t)row->dwOutOctets;
+        }
+        free(table);
+        return true;
+    }
+#elif defined(__linux__)
+    {
+        FILE* file = fopen("/proc/net/dev", "r");
+        char line[512];
+        bool found = false;
+        if (!file) return false;
+        while (fgets(line, sizeof(line), file))
+        {
+            char* colon = strchr(line, ':');
+            char* name;
+            char* cursor;
+            char* end;
+            int field;
+            uint64_t rx = 0;
+            uint64_t tx = 0;
+            if (!colon) continue;
+            *colon = '\0';
+            name = line;
+            while (*name == ' ' || *name == '\t') ++name;
+            if (strcmp(name, "lo") == 0) continue;
+            cursor = colon + 1;
+            for (field = 0; field < 16; ++field)
+            {
+                unsigned long long value;
+                while (*cursor == ' ' || *cursor == '\t') ++cursor;
+                value = strtoull(cursor, &end, 10);
+                if (end == cursor) break;
+                if (field == 0) rx = (uint64_t)value;
+                if (field == 8) tx = (uint64_t)value;
+                cursor = end;
+            }
+            if (field == 16)
+            {
+                *rxBytes += rx;
+                *txBytes += tx;
+                found = true;
+            }
+        }
+        fclose(file);
+        return found;
+    }
+#else
+    return false;
+#endif
+}
+#endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
+
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 /** @brief 重绘整个窗口：resize 后备存储 -> 绘制 -> flush 提交原生窗口。 */
 static void demo_repaint(DemoWin* self)
 {
@@ -160,16 +320,21 @@ static void demo_repaint(DemoWin* self)
     XPainter painter;
     XRegion region;
     XRect rc;
-    XPoint offset;
     XSize size;
     int w;
     int h;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    int64_t frameStartUsecs;
+#endif
     if (!self) return;
     w = XWindow_width((XWindow*)self);
     h = XWindow_height((XWindow*)self);
     if (w <= 0 || h <= 0) return;
     store = self->m_store;
     if (!store) return;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    frameStartUsecs = demo_monotonicUsecs();
+#endif
 
     /* 1) 按窗口客户区尺寸调整后备缓冲（尺寸未变时内部为 no-op）。 */
     XSize_init(&size, w, h);
@@ -180,9 +345,17 @@ static void demo_repaint(DemoWin* self)
     XRect_init(&rc, 0, 0, w, h);
     XRegion_addRect(&region, &rc);
     XBackingStore_beginPaint(store, &region);
-    XPainter_init(&painter, NULL);
-    dev = XBackingStore_paintDevice(store);
-    if (dev && XPainter_begin_image(&painter, dev)) {
+    while (XBackingStore_nextTile(store, &rc)) {
+        XPainter_init(&painter, NULL);
+        dev = XBackingStore_paintDevice(store);
+        if (dev && XPainter_begin_image(&painter, dev)) {
+            if (rc.x != 0 || rc.y != 0)
+                XPainter_translate(&painter, (float)-rc.x, (float)-rc.y);
+        XFont painterFont;
+        XFont_init(&painterFont);
+        demo_apply_default_font(&painterFont);
+        XPainter_setFont(&painter, &painterFont);
+        XFont_deinit_base(&painterFont);
         /* 背景。 */
         demo_fill_rect(&painter, 0, 0, w, h, 0xfff4f6f8u);
         /* 顶部标题栏条。 */
@@ -194,10 +367,10 @@ static void demo_repaint(DemoWin* self)
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
         demo_draw_label(&painter, 246, 70, 238, 20,
                         "XLabel 1x \xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95", 16,
-                        "XFont8x16");
+                        XGUI_DEMO_DEFAULT_FONT_FAMILY);
         demo_draw_label(&painter, 246, 106, 238, 40,
                         "XLabel 32px \xE4\xB8\xAD\xE6\x96\x87", 40,
-                        "XFont32x32");
+                        XGUI_DEMO_DEFAULT_FONT_FAMILY);
 #else
         /* 组件被嵌入式配置裁剪时保留面板，便于确认裁剪后的可视状态。 */
         XPainter_drawText(&painter, 246, 92, "XLabel disabled", 0xff202020u);
@@ -279,14 +452,124 @@ static void demo_repaint(DemoWin* self)
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
         /* 状态栏。 */
         demo_fill_rect(&painter, 0, h - 28, w, 28, 0xff3a3a3au);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        demo_performance_draw(self, &painter, w, h);
+#endif
         XPainter_end(&painter);
+        }
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        XBackingStore_flushTile(store, (XWindow*)self, &rc, NULL);
+#else
+        /* DIRECT/FULL 只有一个完整帧 tile；结束本次绘制后跳出遍历，
+           由循环外统一 endPaint/flush，避免重复结束绘制区间。 */
+        break;
+#endif
     }
     XBackingStore_endPaint(store);
-
-    /* 3) 把整窗脏区提交到原生窗口（X11 XPutImage / Win32 BitBlt）。 */
-    XPoint_init(&offset, 0, 0);
-    XBackingStore_flush(store, &region, (XWindow*)self, &offset);
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    /* DIRECT/FULL use the persistent full-frame DIB. Submit only after the
+       entire paint interval instead of routing a complete frame through the
+       PARTIAL tile presenter. */
+    XBackingStore_flush(store, &region, (XWindow*)self, NULL);
+#endif
     XRegion_deinit(&region);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    {
+        int64_t frameEndUsecs = demo_monotonicUsecs();
+        XPerformanceOverlay_updateFrame(&self->m_performanceOverlay,
+                                        frameStartUsecs, frameEndUsecs);
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+        if (self->m_lastNetworkPollUsecs <= 0 ||
+            frameEndUsecs - self->m_lastNetworkPollUsecs >=
+                (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL)
+        {
+            uint64_t rxBytes = 0;
+            uint64_t txBytes = 0;
+            bool available = demo_network_counters(&rxBytes, &txBytes);
+            XPerformanceOverlay_updateNetwork(
+                &self->m_performanceOverlay, available, rxBytes, txBytes,
+                frameEndUsecs);
+            self->m_lastNetworkPollUsecs = frameEndUsecs;
+        }
+#endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
+    }
+#endif
+}
+
+/** @brief 返回单调微秒计时，用于真实窗口绘制基准。 */
+static int64_t demo_monotonicUsecs(void)
+{
+#if defined(_WIN32)
+    static LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    if (frequency.QuadPart == 0)
+        QueryPerformanceFrequency(&frequency);
+    if (frequency.QuadPart != 0 && QueryPerformanceCounter(&counter))
+        return counter.QuadPart * 1000000LL / frequency.QuadPart;
+#endif
+    return XDateTime_currentMSecsSinceEpoch() * 1000LL;
+}
+
+/**
+ * @brief 持续运行真实窗口重绘，统计图形路径的吞吐与最长帧。
+ * @details 固定尺寸模式每帧直接完整绘制 demo；尺寸切换模式则交替调用
+ *          Win32 SetWindowPos，WM_SIZE 同步进入 resizeEvent 并完成一次
+ *          完整绘制。两种模式都包含 XBackingStore、XPainter 和 GDI 提交。
+ */
+static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
+                                   bool resizeWindow)
+{
+    const int normalWidth = 520;
+    const int normalHeight = 360;
+    const int largeWidth = 960;
+    const int largeHeight = 720;
+    int64_t start;
+    int64_t now;
+    int64_t frameStart;
+    int64_t frameUsecs;
+    int64_t longestUsecs = 0;
+    int64_t elapsedUsecs;
+    unsigned frameCount = 0;
+    bool large = false;
+    if (!self || durationSeconds <= 0)
+        return;
+
+    /* 排除窗口首次 show/expose 和首个 DIB 创建成本。 */
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    demo_repaint(self);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+
+    start = demo_monotonicUsecs();
+    do {
+        frameStart = demo_monotonicUsecs();
+        if (resizeWindow) {
+            large = !large;
+            XWindow_setGeometry((XWindow*)self, 60, 60,
+                                large ? largeWidth : normalWidth,
+                                large ? largeHeight : normalHeight);
+        }
+        else {
+            demo_repaint(self);
+        }
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        frameUsecs = demo_monotonicUsecs() - frameStart;
+        if (frameUsecs > longestUsecs)
+            longestUsecs = frameUsecs;
+        ++frameCount;
+        now = demo_monotonicUsecs();
+    } while (!self->m_closed &&
+             now - start < (int64_t)durationSeconds * 1000000LL);
+
+    elapsedUsecs = now - start;
+    if (elapsedUsecs <= 0)
+        elapsedUsecs = 1;
+    XPrintf("XGuiWindowDemo: benchmark mode=%s frames=%u elapsed=%.3fs "
+            "fps=%.1f avg=%.3fms longest=%.3fms\n",
+            resizeWindow ? "resize" : "repaint", frameCount,
+            (double)elapsedUsecs / 1000000.0,
+            (double)frameCount * 1000000.0 / (double)elapsedUsecs,
+            (double)elapsedUsecs / (double)frameCount / 1000.0,
+            (double)longestUsecs / 1000.0);
 }
 
 /* ==================== 信号槽 ==================== */
@@ -595,12 +878,17 @@ static DemoWin* DemoWin_create(void)
     XClassSetVtable(self, DemoWin);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_performance_init(self);
+#endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton_init(&self->m_button, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_button);
     XPushButton_setText_2(&self->m_button, "XPushButton");
     XWidget_setGeometry((XWidget*)&self->m_button, 246, 190, 128, 36);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_init(&self->m_linkLabel, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_linkLabel);
     XLabel_setText_2(&self->m_linkLabel, "Released");
     XLabel_setTextPixelSize(&self->m_linkLabel, 16);
     XLabel_setAlignment(&self->m_linkLabel, XAlignment_Left | XAlignment_Top);
@@ -620,11 +908,13 @@ static DemoWin* DemoWin_create(void)
     /* DemoWin 的基类是 XWindow 而非 XWidget；页面由布局管理几何，
        绘制时由演示窗口显式调用，因此不能把 XWindow 强转为父控件。 */
     XLabel_init(&self->m_stackPageOne, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_stackPageOne);
     XLabel_setText_2(&self->m_stackPageOne, "Stacked page 1");
     XLabel_setTextPixelSize(&self->m_stackPageOne, 16);
     XLabel_setAlignment(&self->m_stackPageOne,
                         XAlignment_HCenter | XAlignment_VCenter);
     XLabel_init(&self->m_stackPageTwo, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_stackPageTwo);
     XLabel_setText_2(&self->m_stackPageTwo, "Stacked page 2");
     XLabel_setTextPixelSize(&self->m_stackPageTwo, 16);
     XLabel_setAlignment(&self->m_stackPageTwo,
@@ -635,9 +925,11 @@ static DemoWin* DemoWin_create(void)
                              (XWidget*)&self->m_stackPageTwo);
 #if XPUSHBUTTON_ON
     XPushButton_init(&self->m_stackPrevButton, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_stackPrevButton);
     XPushButton_setText_2(&self->m_stackPrevButton, "< Prev");
     XWidget_setGeometry((XWidget*)&self->m_stackPrevButton, 32, 274, 78, 30);
     XPushButton_init(&self->m_stackNextButton, NULL, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_stackNextButton);
     XPushButton_setText_2(&self->m_stackNextButton, "Next >");
     XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 120, 274, 78, 30);
     XObject_connect_1((XObject*)&self->m_stackPrevButton,
@@ -664,11 +956,31 @@ int main(int argc, char* argv[])
     DemoWin* win;
     XBackingStore* store;
     int autoSeconds;
+    int benchmarkSeconds;
+    bool benchmarkResize;
+    int argi;
     int64_t startMsec;
     bool ok;
 
-    autoSeconds = (argc > 1) ? atoi(argv[1]) : 0;
+    autoSeconds = 0;
+    benchmarkSeconds = 0;
+    benchmarkResize = false;
+    for (argi = 1; argi < argc; ++argi) {
+        if (strcmp(argv[argi], "--benchmark") == 0 && argi + 1 < argc) {
+            benchmarkSeconds = atoi(argv[++argi]);
+            benchmarkResize = false;
+        }
+        else if (strcmp(argv[argi], "--benchmark-resize") == 0 &&
+                 argi + 1 < argc) {
+            benchmarkSeconds = atoi(argv[++argi]);
+            benchmarkResize = true;
+        }
+        else {
+            autoSeconds = atoi(argv[argi]);
+        }
+    }
     if (autoSeconds < 0) autoSeconds = 0;
+    if (benchmarkSeconds < 0) benchmarkSeconds = 0;
 
     /* 1) 初始化 XGuiApplication（进程内单例）。 */
     app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
@@ -723,14 +1035,22 @@ int main(int argc, char* argv[])
            (double)XWindow_width((XWindow*)win),
            (double)XWindow_height((XWindow*)win));
 
+    if (benchmarkSeconds > 0) {
+        demo_runFrameBenchmark(win, benchmarkSeconds, benchmarkResize);
+    }
     while (!win->m_closed) {
         int64_t nowMsec;
+        if (benchmarkSeconds > 0)
+            break;
         if (autoSeconds > 0) {
             nowMsec = XDateTime_currentMSecsSinceEpoch();
             if ((nowMsec - startMsec) / 1000 >= (int64_t)autoSeconds) break;
         }
-        XGuiApplication_waitForEvents(50); /* 平台消息泵（X11/Win32）+ 队列等待。 */
+        XGuiApplication_waitForEvents(16); /* 平台消息泵（X11/Win32）+ 队列等待。 */
         XGuiApplication_processEvents(XEventLoop_AllEvents);
+        /* 空闲 demo 也持续产生帧，供性能悬浮层完成采样与刷新。 */
+        if (!win->m_closed)
+            demo_repaint(win);
     }
 
     XPrintf("XGuiWindowDemo: 退出事件循环（关闭=%s 自动退出=%d）\n",
@@ -744,6 +1064,9 @@ int main(int argc, char* argv[])
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_deinit_base(&win->m_linkLabel);
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_performance_deinit(win);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #if XPUSHBUTTON_ON

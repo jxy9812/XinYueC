@@ -34,9 +34,12 @@ typedef struct PainterBitmapFontTable
     int m_descent;
     int m_rowBytes;
     int m_bpp;
+    int m_unitsPerEm;
 } PainterBitmapFontTable;
 static PainterBitmapFontTable painterBitmapFont(const XFont* font);
 static float painterBitmapScaleForFont(const XFont* font);
+static float painterBitmapScaleForTable(const XFont* font,
+                                        const PainterBitmapFontTable* table);
 static uint32_t painter8x16DecodeNext(const char** p);
 static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                        int baselineY, uint32_t color,
@@ -47,6 +50,18 @@ static int painter8x16GlyphAdvance(const XFontGlyphDsc* dsc,
                                    const PainterBitmapFontTable* table,
                                    float scale);
 static uint32_t painter8x16DecodeNextBounded(const char** p, const char* end);
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+static bool painterPathDraw(XPainter* self, const XPainterPath* path,
+                            bool fill, bool stroke, float offsetX,
+                            float offsetY);
+static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
+                                      const PainterBitmapFontTable* table,
+                                      float scale);
+static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
+                                    uint32_t cp, uint32_t color, float scale,
+                                    XFontOutlineGlyphMetrics* outMetrics,
+                                    XPainterPath* reusablePath);
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 /* ========== 内部常量 ========== */
 
@@ -2163,12 +2178,22 @@ static uint32_t painterGradientColor(const XPainterGradient* g, float x, float y
 #if XPAINTER_POLYGON_ON || XPAINTER_SHAPE_ON || XPAINTER_PATH_ON
 /** @brief 内部多边形顶点上限（椭圆采样与扫描填充共用）。 */
 #define XPAINTER_POLY_MAX_POINTS 128
-
+/** @brief 常见路径扁平化使用的栈内临时顶点容量。 */
+#define XPAINTER_PATH_STACK_POINTS 96
 typedef struct XPainterFillCrossing
 {
     float m_x;
     int m_direction;
 } XPainterFillCrossing;
+
+/** @brief 路径复合填充使用的单个子路径视图。 */
+typedef struct PainterPathFillContour
+{
+    float* m_xs;
+    float* m_ys;
+    int m_count;
+    bool m_closed;
+} PainterPathFillContour;
 
 /** @brief 按填充规则把排序后的交点转换为成对填充区间。 */
 static int painterBuildFillSpans(XPainterFillCrossing* crossings, int count,
@@ -2222,12 +2247,29 @@ static bool painterScanFillUser(XPainter* self, int n,
                                 uint32_t color, bool gradient,
                                 XPainterFillRule fillRule)
 {
-    XPainterFillCrossing crossings[XPAINTER_POLY_MAX_POINTS];
-    float spans[XPAINTER_POLY_MAX_POINTS];
+    XPainterFillCrossing* crossings;
+    float* spans;
     float minY, maxY;
     int y0, y1, py;
     int i;
+    void* heapStorage = NULL;
+    size_t crossingBytes;
+    size_t spanBytes;
+    size_t storageBytes;
     if (!self || !uxs || !uys || n < 3) return self != NULL;
+    if ((size_t)n > ((size_t)-1) / sizeof(*crossings) ||
+        (size_t)n > ((size_t)-1) / sizeof(*spans))
+        return false;
+    crossingBytes = (size_t)n * sizeof(*crossings);
+    spanBytes = (size_t)n * sizeof(*spans);
+    if (crossingBytes > ((size_t)-1) - spanBytes) return false;
+    storageBytes = crossingBytes + spanBytes;
+    /* 交点数量随调用方顶点数增长，不能把固定容量数组放在栈上；
+       交点和跨度共用一次 Hybrid 分配，减少分配次数。 */
+    heapStorage = XMalloc_Hybrid(storageBytes);
+    if (!heapStorage) return false;
+    crossings = (XPainterFillCrossing*)heapStorage;
+    spans = (float*)((unsigned char*)heapStorage + crossingBytes);
     minY = maxY = uys[0];
     for (i = 1; i < n; ++i)
     {
@@ -2235,7 +2277,11 @@ static bool painterScanFillUser(XPainter* self, int n,
         if (uys[i] > maxY) maxY = uys[i];
     }
     if (!painterSpanPixelRange(minY, maxY, &y0, &y1))
+    {
+        if (heapStorage)
+            XFree_Hybrid(heapStorage);
         return true;
+    }
     for (py = y0; py <= y1; ++py)
     {
         float yc = (float)py + 0.5f;
@@ -2251,7 +2297,6 @@ static bool painterScanFillUser(XPainter* self, int n,
                 crossings[xc].m_x = uxs[j] + t * (uxs[k] - uxs[j]);
                 crossings[xc].m_direction = by > ay ? 1 : -1;
                 ++xc;
-                if (xc == XPAINTER_POLY_MAX_POINTS) break;
             }
         }
         if (xc >= 2)
@@ -2277,38 +2322,42 @@ static bool painterScanFillUser(XPainter* self, int n,
                     float right = spans[j + 1];
                     int xl;
                     int xr;
-                if (painterSpanPixelRange(left, right, &xl, &xr))
-                {
-                    XRect r;
-                    uint32_t fc = color;
-                    if (gradient)
+                    if (painterSpanPixelRange(left, right, &xl, &xr))
                     {
+                        XRect r;
+                        uint32_t fc = color;
+                        if (gradient)
+                        {
 #if XPAINTER_BRUSH_ON
-                        const XPainterGradient* g = &self->m_state.m_brush.m_gradient;
-                        fc = painterGradientColor(
-                                g,
-                                (float)(xl + xr) * 0.5f -
+                            const XPainterGradient* g = &self->m_state.m_brush.m_gradient;
+                            fc = painterGradientColor(
+                                    g,
+                                    (float)(xl + xr) * 0.5f -
 #if XPAINTER_BRUSH_ORIGIN_ON
-                                    self->m_state.m_brushOriginX,
+                                        self->m_state.m_brushOriginX,
 #else
-                                    0.0f,
+                                        0.0f,
 #endif
-                                (float)py -
+                                    (float)py -
 #if XPAINTER_BRUSH_ORIGIN_ON
-                                    self->m_state.m_brushOriginY);
+                                        self->m_state.m_brushOriginY);
 #else
-                                    0.0f);
+                                        0.0f);
 #endif
 #endif /* XPAINTER_BRUSH_ON */
+                        }
+                        r.x = xl; r.y = py; r.width = xr - xl + 1; r.height = 1;
+                        if (!XPainter_fillRect(self, &r, fc))
+                        {
+                            if (heapStorage) XFree_Hybrid(heapStorage);
+                            return false;
+                        }
                     }
-                    r.x = xl; r.y = py; r.width = xr - xl + 1; r.height = 1;
-                    if (!XPainter_fillRect(self, &r, fc))
-                        return false;
-                }
                 }
             }
         }
     }
+    if (heapStorage) XFree_Hybrid(heapStorage);
     return true;
 }
 
@@ -2327,23 +2376,54 @@ static bool painterScanFillDevice(XPainter* self, int n,
                                   XPainterFillRule fillRule)
 {
     XImageTransform transform;
-    float dtx[XPAINTER_POLY_MAX_POINTS];
-    float dty[XPAINTER_POLY_MAX_POINTS];
+    float* dtx;
+    float* dty;
+    XPainterFillCrossing* crossings;
+    float* spans;
     float minX, maxX, minY, maxY;
     int px0, px1, py0, py1;
     int py;
     int i;
     XImageTransform inverse;
     bool haveInverse = false;
+    uint32_t solidColor = 0u;
+    bool bulkSolid = false;
+    void* heapStorage = NULL;
+    size_t dtxBytes;
+    size_t dtyBytes;
+    size_t crossingBytes;
+    size_t spanBytes;
+    size_t storageBytes;
     if (!self || !self->m_image || !uxs || !uys || n < 3)
         return self != NULL;
-    if (!painterEffectiveTransform(&self->m_state, &transform))
+    if ((size_t)n > ((size_t)-1) / sizeof(*dtx) ||
+        (size_t)n > ((size_t)-1) / sizeof(*crossings))
         return false;
+    dtxBytes = (size_t)n * sizeof(*dtx);
+    dtyBytes = (size_t)n * sizeof(*dty);
+    crossingBytes = (size_t)n * sizeof(*crossings);
+    spanBytes = (size_t)n * sizeof(*spans);
+    if (dtxBytes > ((size_t)-1) - dtyBytes) return false;
+    storageBytes = dtxBytes + dtyBytes;
+    if (storageBytes > ((size_t)-1) - crossingBytes) return false;
+    storageBytes += crossingBytes;
+    if (storageBytes > ((size_t)-1) - spanBytes) return false;
+    storageBytes += spanBytes;
+    /* 设备空间的四组临时数组也放入同一 Hybrid 块，避免绘制线程栈
+       随多边形复杂度增长。 */
+    heapStorage = XMalloc_Hybrid(storageBytes);
+    if (!heapStorage) return false;
+    dtx = (float*)heapStorage;
+    dty = dtx + n;
+    crossings = (XPainterFillCrossing*)(dty + n);
+    spans = (float*)(crossings + n);
+    if (!painterEffectiveTransform(&self->m_state, &transform))
+        goto fail;
     for (i = 0; i < n; ++i)
     {
         float a, b;
         if (!painterMapPoint(&transform, uxs[i], uys[i], &a, &b))
-            return false;
+            goto fail;
         dtx[i] = a; dty[i] = b;
     }
     minX = maxX = dtx[0];
@@ -2357,18 +2437,25 @@ static bool painterScanFillDevice(XPainter* self, int n,
     }
     if (!painterSpanPixelRange(minX, maxX, &px0, &px1) ||
         !painterSpanPixelRange(minY, maxY, &py0, &py1))
-        return true;
+        goto done;
     if (px0 < 0) px0 = 0;
     if (py0 < 0) py0 = 0;
     if (px1 >= XImage_width(self->m_image)) px1 = XImage_width(self->m_image) - 1;
     if (py1 >= XImage_height(self->m_image)) py1 = XImage_height(self->m_image) - 1;
     if (gradient)
         haveInverse = painterMatrixInvert(&transform, &inverse);
+    if (!gradient)
+    {
+        solidColor = painterApplyOpacity(color, self->m_state.m_opacity);
+        bulkSolid = self->m_state.m_compositionMode ==
+                        XPainterCompositionMode_Source ||
+                    (self->m_state.m_compositionMode ==
+                         XPainterCompositionMode_SourceOver &&
+                     ((solidColor >> 24) & 255u) == 255u);
+    }
     for (py = py0; py <= py1; ++py)
     {
         float yc = (float)py + 0.5f;
-        XPainterFillCrossing crossings[XPAINTER_POLY_MAX_POINTS];
-        float spans[XPAINTER_POLY_MAX_POINTS];
         int xc = 0;
         int j;
         for (j = 0; j < n; ++j)
@@ -2381,7 +2468,6 @@ static bool painterScanFillDevice(XPainter* self, int n,
                 crossings[xc].m_x = dtx[j] + t * (dtx[k] - dtx[j]);
                 crossings[xc].m_direction = by > ay ? 1 : -1;
                 ++xc;
-                if (xc == XPAINTER_POLY_MAX_POINTS) break;
             }
         }
         if (xc < 2) continue;
@@ -2408,7 +2494,56 @@ static bool painterScanFillDevice(XPainter* self, int n,
                 continue;
             if (xl < px0) xl = px0;
             if (xr > px1) xr = px1;
-            for (px = xl; px <= xr; ++px)
+            if (bulkSolid && xl <= xr)
+            {
+                bool clipped = false;
+#if XPAINTER_CLIP_ON
+                clipped = self->m_state.m_hasClip;
+#endif /* XPAINTER_CLIP_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+                if (clipped && self->m_state.m_clipRegion.count != 1)
+                {
+                    for (px = xl; px <= xr; ++px)
+                        if (XRegion_contains(&self->m_state.m_clipRegion,
+                                             px, py))
+                            painterRaster_putPixel(self, px, py, solidColor);
+                }
+                else if (clipped)
+                {
+                    XRect clip = self->m_state.m_clipRegion.rects[0];
+                    if (xl < clip.x) xl = clip.x;
+                    if (xr >= clip.x + clip.width)
+                        xr = clip.x + clip.width - 1;
+                    if (xl <= xr && py >= clip.y &&
+                        py < clip.y + clip.height)
+                    {
+                        XRect span = { xl, py, xr - xl + 1, 1 };
+                        XImage_fillRect(self->m_image, &span, solidColor);
+                    }
+                }
+#else
+                if (clipped)
+                {
+                    int clipLeft = self->m_state.m_clipRect.x;
+                    int clipRight = clipLeft + self->m_state.m_clipRect.width - 1;
+                    if (xl < clipLeft) xl = clipLeft;
+                    if (xr > clipRight) xr = clipRight;
+                    if (xl <= xr && py >= self->m_state.m_clipRect.y &&
+                        py < self->m_state.m_clipRect.y +
+                                      self->m_state.m_clipRect.height)
+                    {
+                        XRect span = { xl, py, xr - xl + 1, 1 };
+                        XImage_fillRect(self->m_image, &span, solidColor);
+                    }
+                }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+                else
+                {
+                    XRect span = { xl, py, xr - xl + 1, 1 };
+                    XImage_fillRect(self->m_image, &span, solidColor);
+                }
+            }
+            else for (px = xl; px <= xr; ++px)
             {
                 uint32_t fc;
                 if (gradient && haveInverse)
@@ -2437,15 +2572,20 @@ static bool painterScanFillDevice(XPainter* self, int n,
 #endif /* XPAINTER_BRUSH_ON */
                 }
                 else
-                {
-                    fc = painterApplyOpacity(color, self->m_state.m_opacity);
-                }
+                    fc = gradient ? painterApplyOpacity(color,
+                                                        self->m_state.m_opacity)
+                                  : solidColor;
                 painterRaster_putPixel(self, px, py, fc);
             }
         }
         }
     }
+done:
+    if (heapStorage) XFree_Hybrid(heapStorage);
     return true;
+fail:
+    if (heapStorage) XFree_Hybrid(heapStorage);
+    return false;
 }
 
 /**
@@ -2484,6 +2624,298 @@ static bool painterFillPolygonShape(XPainter* self, int n,
     }
     return painterScanFillUser(self, n, uxs, uys, brushColor, gradient,
                                fillRule);
+}
+
+/**
+ * @brief      一次填充包含多个子路径的复合轮廓。
+ * @details    字形通常由外轮廓和一个或多个内轮廓组成。各轮廓必须在
+ *             同一条扫描线上共同参与奇偶规则，否则内轮廓会被当作普通
+ *             实心多边形填上。这里保留每个子路径的边界，但在扫描线中
+ *             合并所有交点，从而正确保留字母的 counter（内部空洞）。
+ */
+static bool painterFillPathContours(XPainter* self,
+                                   const PainterPathFillContour* contours,
+                                   int contourCount,
+                                   XPainterFillRule fillRule)
+{
+    PainterPathFillContour* workContours = NULL;
+    XPainterFillCrossing* crossings = NULL;
+    float* spans = NULL;
+    float* mappedXs = NULL;
+    float* mappedYs = NULL;
+    size_t totalPoints = 0;
+    size_t pointBytes;
+    size_t viewBytes;
+    size_t crossingBytes;
+    size_t spanBytes;
+    float minY = 0.0f;
+    float maxY = 0.0f;
+    int y0;
+    int y1;
+    int c;
+    bool haveBounds = false;
+    bool device;
+    XImageTransform transform;
+    XImageTransform inverse;
+    bool haveInverse = false;
+    uint32_t brushColor;
+    bool gradient = false;
+
+    if (!self || !contours || contourCount <= 0 ||
+        self->m_deviceKind == XPainterDevice_None)
+        return false;
+
+#if XPAINTER_BRUSH_ON
+    brushColor = self->m_state.m_brush.m_color;
+    gradient = self->m_state.m_brush.m_style ==
+                   XPainterBrushStyle_LinearGradientPattern ||
+               self->m_state.m_brush.m_style ==
+                   XPainterBrushStyle_RadialGradientPattern ||
+               self->m_state.m_brush.m_style ==
+                   XPainterBrushStyle_ConicalGradientPattern;
+#else
+    brushColor = self->m_state.m_brushColor;
+#endif
+
+    if ((size_t)contourCount > ((size_t)-1) / sizeof(*workContours))
+        return false;
+    viewBytes = (size_t)contourCount * sizeof(*workContours);
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        if (!contour->m_xs || !contour->m_ys || contour->m_count < 0)
+            return false;
+        if ((size_t)contour->m_count > ((size_t)-1) - totalPoints)
+            return false;
+        totalPoints += (size_t)contour->m_count;
+    }
+    if (totalPoints < 3 ||
+        totalPoints > ((size_t)-1) / sizeof(*crossings) ||
+        totalPoints > ((size_t)-1) / sizeof(*spans))
+        return true;
+    crossingBytes = totalPoints * sizeof(*crossings);
+    spanBytes = totalPoints * sizeof(*spans);
+
+    workContours = (PainterPathFillContour*)XMalloc_Hybrid(viewBytes);
+    crossings = (XPainterFillCrossing*)XMalloc_Hybrid(crossingBytes);
+    spans = (float*)XMalloc_Hybrid(spanBytes);
+    if (!workContours || !crossings || !spans)
+        goto fail;
+
+    device = self->m_deviceKind == XPainterDevice_Image;
+    if (device)
+    {
+        if (totalPoints > ((size_t)-1) / (sizeof(float) * 2u))
+            goto fail;
+        pointBytes = totalPoints * sizeof(float) * 2u;
+        mappedXs = (float*)XMalloc_Hybrid(pointBytes);
+        if (!mappedXs)
+            goto fail;
+        mappedYs = mappedXs + totalPoints;
+        if (!painterEffectiveTransform(&self->m_state, &transform))
+            goto fail;
+    }
+
+    {
+        size_t pointOffset = 0;
+        for (c = 0; c < contourCount; ++c)
+        {
+            const PainterPathFillContour* source = &contours[c];
+            PainterPathFillContour* target = &workContours[c];
+            int i;
+            target->m_count = source->m_count;
+            target->m_closed = source->m_closed;
+            if (device)
+            {
+                target->m_xs = mappedXs + pointOffset;
+                target->m_ys = mappedYs + pointOffset;
+                for (i = 0; i < source->m_count; ++i)
+                {
+                    if (!painterMapPoint(&transform, source->m_xs[i],
+                                         source->m_ys[i],
+                                         &target->m_xs[i],
+                                         &target->m_ys[i]))
+                        goto fail;
+                }
+            }
+            else
+            {
+                target->m_xs = source->m_xs;
+                target->m_ys = source->m_ys;
+            }
+            for (i = 0; i < target->m_count; ++i)
+            {
+                float y = target->m_ys[i];
+                if (!isfinite(y))
+                    goto fail;
+                if (!haveBounds)
+                {
+                    minY = maxY = y;
+                    haveBounds = true;
+                }
+                else
+                {
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+            pointOffset += (size_t)source->m_count;
+        }
+    }
+
+    if (!haveBounds || !painterSpanPixelRange(minY, maxY, &y0, &y1))
+        goto done;
+    if (device)
+    {
+        if (y0 < 0) y0 = 0;
+        if (y1 >= XImage_height(self->m_image))
+            y1 = XImage_height(self->m_image) - 1;
+        if (y0 > y1)
+            goto done;
+        if (gradient)
+            haveInverse = painterMatrixInvert(&transform, &inverse);
+    }
+
+    for (int py = y0; py <= y1; ++py)
+    {
+        float yc = (float)py + 0.5f;
+        int crossingCount = 0;
+        int j;
+        for (c = 0; c < contourCount; ++c)
+        {
+            const PainterPathFillContour* contour = &workContours[c];
+            if (contour->m_count < 2)
+                continue;
+            for (j = 0; j < contour->m_count; ++j)
+            {
+                int k = (j + 1) % contour->m_count;
+                float ay = contour->m_ys[j];
+                float by = contour->m_ys[k];
+                if ((ay <= yc && by > yc) || (by <= yc && ay > yc))
+                {
+                    float t = (yc - ay) / (by - ay);
+                    crossings[crossingCount].m_x =
+                        contour->m_xs[j] + t *
+                        (contour->m_xs[k] - contour->m_xs[j]);
+                    crossings[crossingCount].m_direction = by > ay ? 1 : -1;
+                    ++crossingCount;
+                }
+            }
+        }
+        if (crossingCount < 2)
+            continue;
+        for (j = 1; j < crossingCount; ++j)
+        {
+            XPainterFillCrossing key = crossings[j];
+            int k = j - 1;
+            while (k >= 0 && crossings[k].m_x > key.m_x)
+            {
+                crossings[k + 1] = crossings[k];
+                --k;
+            }
+            crossings[k + 1] = key;
+        }
+        {
+            int spanCount = painterBuildFillSpans(crossings, crossingCount,
+                                                   fillRule, spans);
+            for (j = 0; j + 1 < spanCount; j += 2)
+            {
+                int xl;
+                int xr;
+                if (!painterSpanPixelRange(spans[j], spans[j + 1],
+                                           &xl, &xr))
+                    continue;
+                if (!device)
+                {
+                    XRect r;
+                    uint32_t color = brushColor;
+                    if (gradient)
+                    {
+#if XPAINTER_BRUSH_ON
+                        const XPainterGradient* g =
+                            &self->m_state.m_brush.m_gradient;
+                        color = painterGradientColor(
+                            g, (float)(xl + xr) * 0.5f -
+#if XPAINTER_BRUSH_ORIGIN_ON
+                            self->m_state.m_brushOriginX,
+#else
+                            0.0f,
+#endif
+                            (float)py -
+#if XPAINTER_BRUSH_ORIGIN_ON
+                            self->m_state.m_brushOriginY);
+#else
+                            0.0f);
+#endif
+#endif
+                    }
+                    r.x = xl;
+                    r.y = py;
+                    r.width = xr - xl + 1;
+                    r.height = 1;
+                    if (!XPainter_fillRect(self, &r, color))
+                        goto fail;
+                }
+                else
+                {
+                    int width = XImage_width(self->m_image);
+                    int height = XImage_height(self->m_image);
+                    int px;
+                    if (xl < 0) xl = 0;
+                    if (xr >= width) xr = width - 1;
+                    if (xl > xr || py < 0 || py >= height)
+                        continue;
+                    for (px = xl; px <= xr; ++px)
+                    {
+                        uint32_t color = brushColor;
+                        if (gradient && haveInverse)
+                        {
+#if XPAINTER_BRUSH_ON
+                            float ux;
+                            float uy;
+                            if (painterMapPoint(&inverse, (float)px + 0.5f,
+                                                (float)py + 0.5f,
+                                                &ux, &uy))
+                            {
+                                color = painterGradientColor(
+                                    &self->m_state.m_brush.m_gradient,
+                                    ux -
+#if XPAINTER_BRUSH_ORIGIN_ON
+                                    self->m_state.m_brushOriginX,
+#else
+                                    0.0f,
+#endif
+                                    uy -
+#if XPAINTER_BRUSH_ORIGIN_ON
+                                    self->m_state.m_brushOriginY);
+#else
+                                    0.0f);
+#endif
+                            }
+#endif
+                        }
+                        painterRaster_putPixel(
+                            self, px, py,
+                            painterApplyOpacity(color,
+                                                self->m_state.m_opacity));
+                    }
+                }
+            }
+        }
+    }
+
+done:
+    XFree_Hybrid(mappedXs);
+    XFree_Hybrid(workContours);
+    XFree_Hybrid(crossings);
+    XFree_Hybrid(spans);
+    return true;
+fail:
+    XFree_Hybrid(mappedXs);
+    XFree_Hybrid(workContours);
+    XFree_Hybrid(crossings);
+    XFree_Hybrid(spans);
+    return false;
 }
 
 /**
@@ -4093,28 +4525,446 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
 static PainterBitmapFontTable painterBitmapFont(const XFont* font)
 {
     PainterBitmapFontTable table;
-    XFontBitmapInfo info;
+    XFontFaceInfo faceInfo;
+    const XFontFace* face;
     memset(&table, 0, sizeof(table));
-    if (XFont_bitmapFontInfo(font, &info))
+    face = XFont_face(font);
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    if (face && XFontFace_info_base(face, font, &faceInfo) &&
+        faceInfo.m_kind == XFontFace_Outline)
     {
-        table.m_width = info.m_width;
-        table.m_height = info.m_height;
-        table.m_ascent = info.m_ascent;
-        table.m_descent = info.m_descent;
-        table.m_rowBytes = info.m_rowBytes;
-        table.m_bpp = info.m_bpp;
+        XFontOutlineGlyphMetrics metrics;
+        memset(&metrics, 0, sizeof(metrics));
+        /* Use a representative glyph for layout's tab/character width;
+           actual advances are queried per codepoint below. */
+        if (!XFontFace_loadOutlineGlyph_base(face, font, (uint32_t)'M',
+                                             &metrics, NULL) ||
+            metrics.advance <= 0)
+            metrics.advance = faceInfo.m_outline.unitsPerEm / 2;
+        table.m_width = metrics.advance;
+        table.m_height = faceInfo.m_outline.ascent +
+                         faceInfo.m_outline.descent +
+                         faceInfo.m_outline.lineGap;
+        table.m_ascent = faceInfo.m_outline.ascent;
+        table.m_descent = faceInfo.m_outline.descent;
+        table.m_unitsPerEm = faceInfo.m_outline.unitsPerEm;
+        table.m_rowBytes = 0;
+        table.m_bpp = 0; /* marks an outline table */
+        return table;
+    }
+    if (face && faceInfo.m_kind == XFontFace_Bitmap)
+    {
+        table.m_width = faceInfo.m_bitmap.m_width;
+        table.m_height = faceInfo.m_bitmap.m_height;
+        table.m_ascent = faceInfo.m_bitmap.m_ascent;
+        table.m_descent = faceInfo.m_bitmap.m_descent;
+        table.m_rowBytes = faceInfo.m_bitmap.m_rowBytes;
+        table.m_bpp = faceInfo.m_bitmap.m_bpp;
+        table.m_unitsPerEm = 0;
     }
     return table;
 }
 
 /** @brief 由 XFont_setPixelSize() 计算实际位图缩放因子。 */
+static float painterBitmapScaleForTable(const XFont* font,
+                                        const PainterBitmapFontTable* table)
+{
+    int target = XFont_pixelSize(font);
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table && table->m_bpp == 0 && table->m_unitsPerEm > 0)
+    {
+        if (target <= 0)
+        {
+            double pointSize = XFont_pointSizeF(font);
+            if (pointSize > 0.0)
+                target = (int)(pointSize * (96.0 / 72.0) + 0.5);
+        }
+        if (target <= 0)
+            target = table->m_unitsPerEm;
+        return (float)target / (float)table->m_unitsPerEm;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+    if (target <= 0) target = table ? table->m_height : 0;
+    return (float)target / (float)(table && table->m_height > 0
+                                       ? table->m_height : 1);
+}
+
 static float painterBitmapScaleForFont(const XFont* font)
 {
     PainterBitmapFontTable table = painterBitmapFont(font);
-    int target = XFont_pixelSize(font);
-    if (target <= 0) target = table.m_height;
-    return (float)target / (float)(table.m_height > 0 ? table.m_height : 1);
+    return painterBitmapScaleForTable(font, &table);
 }
+
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+typedef struct PainterOutlinePathSink
+{
+    XPainterPath* m_path;
+    float m_originX;
+    float m_baselineY;
+    float m_scale;
+} PainterOutlinePathSink;
+
+static float painterOutlineX(const PainterOutlinePathSink* sink, float x)
+{
+    return sink->m_originX + x * sink->m_scale;
+}
+
+static float painterOutlineY(const PainterOutlinePathSink* sink, float y)
+{
+    return sink->m_baselineY - y * sink->m_scale;
+}
+
+static bool painterOutlineMoveTo(void* userData, float x, float y)
+{
+    PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
+    return sink && sink->m_path &&
+           XPainterPath_moveTo(sink->m_path, painterOutlineX(sink, x),
+                               painterOutlineY(sink, y));
+}
+
+static bool painterOutlineLineTo(void* userData, float x, float y)
+{
+    PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
+    return sink && sink->m_path &&
+           XPainterPath_lineTo(sink->m_path, painterOutlineX(sink, x),
+                               painterOutlineY(sink, y));
+}
+
+static bool painterOutlineQuadTo(void* userData, float cx, float cy,
+                                 float x, float y)
+{
+    PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
+    return sink && sink->m_path &&
+           XPainterPath_quadTo(sink->m_path, painterOutlineX(sink, cx),
+                               painterOutlineY(sink, cy),
+                               painterOutlineX(sink, x), painterOutlineY(sink, y));
+}
+
+static bool painterOutlineCubicTo(void* userData, float c1x, float c1y,
+                                  float c2x, float c2y, float x, float y)
+{
+    PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
+    return sink && sink->m_path &&
+           XPainterPath_cubicTo(sink->m_path, painterOutlineX(sink, c1x),
+                                painterOutlineY(sink, c1y),
+                                painterOutlineX(sink, c2x),
+                                painterOutlineY(sink, c2y),
+                                painterOutlineX(sink, x), painterOutlineY(sink, y));
+}
+
+static bool painterOutlineClose(void* userData)
+{
+    PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
+    return sink && sink->m_path && XPainterPath_closeSubpath(sink->m_path);
+}
+
+/* Keep the element allocation of the largest glyph in a text run. */
+static void painterOutlinePathReset(XPainterPath* path)
+{
+    if (!path) return;
+    path->m_elementCount = 0;
+    path->m_currentX = 0.0f;
+    path->m_currentY = 0.0f;
+    path->m_subpathStartX = 0.0f;
+    path->m_subpathStartY = 0.0f;
+    path->m_requireMoveTo = false;
+}
+
+#if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+typedef struct PainterOutlinePathCacheEntry
+{
+    const XFontFace* m_face;
+    uint32_t m_codepoint;
+    uint32_t m_scaleKey;
+    uint32_t m_stamp;
+    XFontOutlineGlyphMetrics m_metrics;
+    XPainterPath m_path;
+    bool m_valid;
+} PainterOutlinePathCacheEntry;
+
+static PainterOutlinePathCacheEntry g_outlinePathCache[
+    XFONT_OUTLINE_CACHE_ENTRIES];
+static uint32_t g_outlinePathCacheStamp;
+
+static uint32_t painterOutlineScaleKey(float scale)
+{
+    double value;
+    if (!(scale > 0.0f) || !isfinite(scale)) return 0u;
+    value = (double)scale * 65536.0;
+    if (value >= 4294967294.0) return 0xfffffffeu;
+    return (uint32_t)(value + 0.5);
+}
+
+static PainterOutlinePathCacheEntry* painterOutlineCacheFind(
+    const XFontFace* face, uint32_t codepoint, uint32_t scaleKey)
+{
+    int i;
+    if (!face || scaleKey == 0u) return NULL;
+    for (i = 0; i < XFONT_OUTLINE_CACHE_ENTRIES; ++i)
+    {
+        PainterOutlinePathCacheEntry* entry = &g_outlinePathCache[i];
+        if (entry->m_valid && entry->m_face == face &&
+            entry->m_codepoint == codepoint &&
+            entry->m_scaleKey == scaleKey)
+        {
+            entry->m_stamp = ++g_outlinePathCacheStamp;
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static PainterOutlinePathCacheEntry* painterOutlineCacheSlot(void)
+{
+    PainterOutlinePathCacheEntry* slot = NULL;
+    uint32_t oldest = UINT_MAX;
+    int i;
+    for (i = 0; i < XFONT_OUTLINE_CACHE_ENTRIES; ++i)
+    {
+        PainterOutlinePathCacheEntry* entry = &g_outlinePathCache[i];
+        if (!entry->m_valid) return entry;
+        if (entry->m_stamp < oldest)
+        {
+            oldest = entry->m_stamp;
+            slot = entry;
+        }
+    }
+    return slot;
+}
+
+static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
+                                    uint32_t codepoint, float scale,
+                                    float originX, float baselineY,
+                                    XPainterPath* path,
+                                    XFontOutlineGlyphMetrics* metrics)
+{
+    PainterOutlinePathSink context;
+    XFontOutlineSink sink;
+    if (!face || !path || !metrics || !(scale > 0.0f) ||
+        !isfinite(scale))
+        return false;
+    XPainterPath_init(path);
+    context.m_path = path;
+    context.m_originX = originX;
+    context.m_baselineY = baselineY;
+    context.m_scale = scale;
+    memset(&sink, 0, sizeof(sink));
+    sink.userData = &context;
+    sink.moveTo = painterOutlineMoveTo;
+    sink.lineTo = painterOutlineLineTo;
+    sink.quadTo = painterOutlineQuadTo;
+    sink.cubicTo = painterOutlineCubicTo;
+    sink.close = painterOutlineClose;
+    memset(metrics, 0, sizeof(*metrics));
+    if (!XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
+                                         &sink))
+    {
+        XPainterPath_deinit(path);
+        return false;
+    }
+    return true;
+}
+
+static PainterOutlinePathCacheEntry* painterOutlineCacheLoad(
+    const XFontFace* face, const XFont* font, uint32_t codepoint, float scale)
+{
+    PainterOutlinePathCacheEntry* entry;
+    XPainterPath path;
+    XFontOutlineGlyphMetrics metrics;
+    uint32_t scaleKey = painterOutlineScaleKey(scale);
+    if (!face || !face->m_family || !face->m_family[0] || scaleKey == 0u)
+        return NULL;
+    entry = painterOutlineCacheFind(face, codepoint, scaleKey);
+    if (entry) return entry;
+    if (!painterOutlineBuildPath(face, font, codepoint, scale, 0.0f, 0.0f,
+                                 &path, &metrics))
+        return NULL;
+    entry = painterOutlineCacheSlot();
+    if (!entry)
+    {
+        XPainterPath_deinit(&path);
+        return NULL;
+    }
+    if (entry->m_valid)
+        XPainterPath_deinit(&entry->m_path);
+    entry->m_face = face;
+    entry->m_codepoint = codepoint;
+    entry->m_scaleKey = scaleKey;
+    entry->m_stamp = ++g_outlinePathCacheStamp;
+    entry->m_metrics = metrics;
+    entry->m_path = path;
+    entry->m_valid = true;
+    return entry;
+}
+#endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+
+static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
+                                      const PainterBitmapFontTable* table,
+                                      float scale)
+{
+    XFontOutlineGlyphMetrics metrics;
+    float value;
+    if (XFontFace_loadOutlineGlyph_base(XFont_face(font), font, cp,
+                                        &metrics, NULL) &&
+        metrics.advance > 0)
+    {
+        value = (float)metrics.advance * scale;
+        return value < 1.0f ? 1 : (int)(value + 0.5f);
+    }
+    return painter8x16Metric(table ? table->m_width : 0, scale);
+}
+
+static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
+                                    uint32_t cp, uint32_t color, float scale,
+                                    XFontOutlineGlyphMetrics* outMetrics,
+                                    XPainterPath* reusablePath)
+{
+    XPainterPath localPath;
+    XPainterPath* path;
+    PainterOutlinePathSink context;
+    XFontOutlineSink sink;
+    XFontOutlineGlyphMetrics metrics;
+    const XFontFace* face;
+#if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    PainterOutlinePathCacheEntry* cached = NULL;
+#endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+    bool ok;
+    if (!painter || scale <= 0.0f || !isfinite(scale)) return false;
+    face = XFont_face(&painter->m_state.m_font);
+#if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    /* The cache stores user-space paths rooted at (0, 0).  Only use it for
+       the software image backend: picture paths are handed to a high-level
+       recorder and must retain their original per-call coordinates. */
+    if (painter->m_deviceKind == XPainterDevice_Image && face &&
+        face->m_family && face->m_family[0])
+        cached = painterOutlineCacheLoad(face, &painter->m_state.m_font, cp,
+                                         scale);
+    if (cached)
+    {
+        if (outMetrics) *outMetrics = cached->m_metrics;
+#if XPAINTER_BRUSH_ON
+        if (painter->m_deviceKind != XPainterDevice_Image)
+        {
+            ok = XPainter_save(painter);
+            if (ok)
+            {
+                XPainter_setBrush(painter, color);
+                ok = XPainter_fillPath(painter, &cached->m_path);
+                if (!XPainter_restore(painter)) ok = false;
+            }
+        }
+        else
+        {
+            XPainterBrush savedBrush = painter->m_state.m_brush;
+            uint32_t savedBrushColor = painter->m_state.m_brushColor;
+            painter->m_state.m_brushColor = color;
+            painter->m_state.m_brush.m_color = color;
+            painter->m_state.m_brush.m_style = XPainterBrushStyle_SolidPattern;
+            memset(&painter->m_state.m_brush.m_gradient, 0,
+                   sizeof(painter->m_state.m_brush.m_gradient));
+            ok = painterPathDraw(painter, &cached->m_path, true, false,
+                                 (float)x, (float)baselineY);
+            painter->m_state.m_brush = savedBrush;
+            painter->m_state.m_brushColor = savedBrushColor;
+        }
+#else
+        if (painter->m_deviceKind != XPainterDevice_Image)
+        {
+            ok = XPainter_save(painter);
+            if (ok)
+            {
+                painter->m_state.m_brushColor = color;
+                ok = XPainter_fillPath(painter, &cached->m_path);
+                if (!XPainter_restore(painter)) ok = false;
+            }
+        }
+        else
+        {
+            uint32_t savedBrushColor = painter->m_state.m_brushColor;
+            painter->m_state.m_brushColor = color;
+            ok = painterPathDraw(painter, &cached->m_path, true, false,
+                                 (float)x, (float)baselineY);
+            painter->m_state.m_brushColor = savedBrushColor;
+        }
+#endif /* XPAINTER_BRUSH_ON */
+        return ok;
+    }
+#endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+    memset(&metrics, 0, sizeof(metrics));
+    path = reusablePath ? reusablePath : &localPath;
+    if (reusablePath)
+        painterOutlinePathReset(path);
+    else
+        XPainterPath_init(path);
+    context.m_path = path;
+    context.m_originX = (float)x;
+    context.m_baselineY = (float)baselineY;
+    context.m_scale = scale;
+    memset(&sink, 0, sizeof(sink));
+    sink.userData = &context;
+    sink.moveTo = painterOutlineMoveTo;
+    sink.lineTo = painterOutlineLineTo;
+    sink.quadTo = painterOutlineQuadTo;
+    sink.cubicTo = painterOutlineCubicTo;
+    sink.close = painterOutlineClose;
+    ok = XFontFace_loadOutlineGlyph_base(
+        XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
+        cp, &metrics, &sink);
+    if (outMetrics) *outMetrics = metrics;
+    if (ok && XPainterPath_elementCount(path) > 0)
+    {
+        /* Text color is an operation parameter. Only the brush state is
+           changed temporarily; saving the complete painter would copy the
+           font and clip region for every glyph. */
+#if XPAINTER_BRUSH_ON
+        if (painter->m_deviceKind != XPainterDevice_Image)
+        {
+            ok = XPainter_save(painter);
+            if (ok)
+            {
+                XPainter_setBrush(painter, color);
+                ok = XPainter_fillPath(painter, path);
+                if (!XPainter_restore(painter)) ok = false;
+            }
+        }
+        else
+        {
+            XPainterBrush savedBrush = painter->m_state.m_brush;
+            uint32_t savedBrushColor = painter->m_state.m_brushColor;
+            painter->m_state.m_brushColor = color;
+            painter->m_state.m_brush.m_color = color;
+            painter->m_state.m_brush.m_style = XPainterBrushStyle_SolidPattern;
+            memset(&painter->m_state.m_brush.m_gradient, 0,
+                   sizeof(painter->m_state.m_brush.m_gradient));
+            ok = XPainter_fillPath(painter, path);
+            painter->m_state.m_brush = savedBrush;
+            painter->m_state.m_brushColor = savedBrushColor;
+        }
+#else
+        if (painter->m_deviceKind != XPainterDevice_Image)
+        {
+            ok = XPainter_save(painter);
+            if (ok)
+            {
+                painter->m_state.m_brushColor = color;
+                ok = XPainter_fillPath(painter, path);
+                if (!XPainter_restore(painter)) ok = false;
+            }
+        }
+        else
+        {
+            uint32_t savedBrushColor = painter->m_state.m_brushColor;
+            painter->m_state.m_brushColor = color;
+            ok = XPainter_fillPath(painter, path);
+            painter->m_state.m_brushColor = savedBrushColor;
+        }
+#endif /* XPAINTER_BRUSH_ON */
+    }
+    if (!reusablePath)
+        XPainterPath_deinit(path);
+    return ok;
+}
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 static int painter8x16GlyphAdvance(const XFontGlyphDsc* dsc,
                                    const PainterBitmapFontTable* table,
@@ -4132,8 +4982,13 @@ static int painterCodepointAdvance(const XFont* font,
                                    const PainterBitmapFontTable* table,
                                    float scale, uint32_t cp)
 {
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table && table->m_bpp == 0)
+        return painterOutlineGlyphAdvance(font, cp, table, scale);
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     XFontGlyphDsc dsc;
-    return XFont_bitmapLoadGlyph(font, cp, &dsc, NULL, 0)
+    return XFontFace_loadBitmapGlyph_base(XFont_face(font), font, cp, &dsc,
+                                          NULL, 0)
         ? painter8x16GlyphAdvance(&dsc, table, scale)
         : painter8x16Metric(table ? table->m_width : 0, scale);
 }
@@ -4143,15 +4998,21 @@ static bool painterLoadGlyph(const XFont* font, uint32_t cp,
                              XFontGlyphDsc* dsc, unsigned char* data,
                              size_t dataSize)
 {
-    XFontBitmapInfo info;
+    XFontFaceInfo faceInfo;
+    const XFontFace* face;
     if (!table || !dsc || !data ||
-        !XFont_bitmapLoadGlyph(font, cp, dsc, data, dataSize))
+        !(face = XFont_face(font)) ||
+        !XFontFace_loadBitmapGlyph_base(face, font, cp, dsc, data, dataSize))
         return false;
-    if (!XFont_bitmapFontInfo(font, &info)) return false;
+    memset(&faceInfo, 0, sizeof(faceInfo));
+    if (!XFontFace_info_base(face, font, &faceInfo) ||
+        faceInfo.m_kind != XFontFace_Bitmap)
+        return false;
     table->m_width = dsc->box_w;
     table->m_height = dsc->box_h;
-    table->m_rowBytes = XFont_bitmapGlyphRowBytes(dsc, info.m_bpp);
-    table->m_bpp = info.m_bpp;
+    table->m_rowBytes = XFontFace_bitmapGlyphRowBytes_base(
+        face, font, dsc, faceInfo.m_bitmap.m_bpp);
+    table->m_bpp = faceInfo.m_bitmap.m_bpp;
     return table->m_width > 0 && table->m_height > 0 && table->m_rowBytes > 0;
 }
 
@@ -4162,6 +5023,11 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
 {
     PainterBitmapFontTable table;
     float scale;
+    void* reusableOutlinePath = NULL;
+    bool outlinePathInitialized = false;
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    XPainterPath outlinePathStorage;
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return false;
     if (!utf8 || utf8[0] == '\0')
@@ -4175,7 +5041,15 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
         return XPicture_recordDrawText(self->m_picture, x, baselineY,
                                        utf8, color, &self->m_state.m_font);
     table = painterBitmapFont(&self->m_state.m_font);
-    scale = painterBitmapScaleForFont(&self->m_state.m_font);
+    scale = painterBitmapScaleForTable(&self->m_state.m_font, &table);
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table.m_bpp == 0)
+    {
+        XPainterPath_init(&outlinePathStorage);
+        reusableOutlinePath = &outlinePathStorage;
+        outlinePathInitialized = true;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     {
         const char* p = utf8;
         while (*p != '\0')
@@ -4189,6 +5063,24 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
                 x += painter8x16Metric(table.m_width, scale); /* 控制字符：占位不画 */
                 continue;
             }
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+            if (table.m_bpp == 0)
+            {
+                XFontOutlineGlyphMetrics metrics;
+                bool drawn;
+                memset(&metrics, 0, sizeof(metrics));
+                drawn = painterDrawOutlineGlyph(self, x, baselineY, cp, color,
+                                                scale, &metrics,
+                                                outlinePathInitialized
+                                                    ? reusableOutlinePath : NULL);
+                if (drawn && metrics.advance > 0)
+                    x += painter8x16Metric(metrics.advance, scale);
+                else
+                    x += painterOutlineGlyphAdvance(&self->m_state.m_font, cp,
+                                                    &table, scale);
+                continue;
+            }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
             {
                 unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
                                          XFONT_BITMAP_MAX_ROW_BYTES];
@@ -4204,6 +5096,10 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
             if (cp < 0x20u) continue;
         }
     }
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (outlinePathInitialized)
+        XPainterPath_deinit(&outlinePathStorage);
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     return true;
 }
 
@@ -4215,16 +5111,12 @@ int XPainter_textWidth(const XFont* font, const char* utf8)
     int width = 0;
     if (!utf8)
         return 0;
-    scale = painterBitmapScaleForFont(font);
+    scale = painterBitmapScaleForTable(font, &table);
     p = utf8;
     while (*p != '\0' && *p != '\n')
     {
         uint32_t cp = painter8x16DecodeNext(&p);
-        XFontGlyphDsc dsc;
-        if (XFont_bitmapLoadGlyph(font, cp, &dsc, NULL, 0))
-            width += painter8x16GlyphAdvance(&dsc, &table, scale);
-        else
-            width += painter8x16Metric(table.m_width, scale);
+        width += painterCodepointAdvance(font, &table, scale, cp);
     }
     return width;
 }
@@ -4232,21 +5124,22 @@ int XPainter_textWidth(const XFont* font, const char* utf8)
 int XPainter_textHeight(const XFont* font)
 {
     PainterBitmapFontTable table = painterBitmapFont(font);
-    return XFont_pixelSize(font) > 0 ? XFont_pixelSize(font) : table.m_height;
+    return painter8x16Metric(table.m_height,
+                             painterBitmapScaleForTable(font, &table));
 }
 
 int XPainter_textAscent(const XFont* font)
 {
     PainterBitmapFontTable table = painterBitmapFont(font);
     return painter8x16Metric(table.m_ascent,
-                             painterBitmapScaleForFont(font));
+                             painterBitmapScaleForTable(font, &table));
 }
 
 int XPainter_textDescent(const XFont* font)
 {
     PainterBitmapFontTable table = painterBitmapFont(font);
     return painter8x16Metric(table.m_descent,
-                             painterBitmapScaleForFont(font));
+                             painterBitmapScaleForTable(font, &table));
 }
 
 int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
@@ -4271,7 +5164,15 @@ int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
     if (!drawable)
         return adv;
     table = painterBitmapFont(&self->m_state.m_font);
-    scale = painterBitmapScaleForFont(&self->m_state.m_font);
+    scale = painterBitmapScaleForTable(&self->m_state.m_font, &table);
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table.m_bpp == 0)
+    {
+        (void)painterDrawOutlineGlyph(self, x, baselineY, cp, color, scale,
+                                      NULL, NULL);
+        return adv;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     {
         unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
                                  XFONT_BITMAP_MAX_ROW_BYTES];
@@ -4296,7 +5197,7 @@ int XPainter_textWidthRange(const XFont* font, const char* utf8,
     int width = 0;
     if (!utf8 || startByte < 0)
         return 0;
-    scale = painterBitmapScaleForFont(font);
+    scale = painterBitmapScaleForTable(font, &table);
     p = utf8 + startByte;
     end = utf8 + endByte;
     if (endByte >= 0 && end < p)
@@ -4921,6 +5822,7 @@ typedef struct PainterPathVertices
     float* ys;
     int m_count;
     int m_capacity;
+    bool m_heapStorage;
 } PainterPathVertices;
 
 static bool painterPathVerticesPush(PainterPathVertices* v, float x, float y)
@@ -4932,14 +5834,40 @@ static bool painterPathVerticesPush(PainterPathVertices* v, float x, float y)
     if (v->m_count >= v->m_capacity)
     {
         newCapacity = v->m_capacity > 0 ? v->m_capacity * 2 : 64;
-        nx = (float*)XRealloc_System(v->xs, (size_t)newCapacity * sizeof(float));
-        if (!nx) return false;
-        /* 先提交 xs：realloc 可能已经释放旧地址；即使 ys 扩容
-           失败，调用方也能沿着新 xs 指针统一释放现场。 */
-        v->xs = nx;
-        ny = (float*)XRealloc_System(v->ys, (size_t)newCapacity * sizeof(float));
-        if (!ny) return false;
-        v->ys = ny;
+        if (v->m_heapStorage)
+        {
+            nx = (float*)XRealloc_Hybrid(
+                v->xs, (size_t)newCapacity * sizeof(float));
+            if (!nx) return false;
+            /* 先提交 xs：realloc 可能已经释放旧地址；即使 ys 扩容
+               失败，调用方也能沿着新 xs 指针统一释放现场。 */
+            v->xs = nx;
+            ny = (float*)XRealloc_Hybrid(
+                v->ys, (size_t)newCapacity * sizeof(float));
+            if (!ny) return false;
+            v->ys = ny;
+        }
+        else
+        {
+            nx = (float*)XMalloc_Hybrid(
+                (size_t)newCapacity * sizeof(float));
+            if (!nx) return false;
+            ny = (float*)XMalloc_Hybrid(
+                (size_t)newCapacity * sizeof(float));
+            if (!ny)
+            {
+                XFree_Hybrid(nx);
+                return false;
+            }
+            if (v->m_count > 0)
+            {
+                memcpy(nx, v->xs, (size_t)v->m_count * sizeof(float));
+                memcpy(ny, v->ys, (size_t)v->m_count * sizeof(float));
+            }
+            v->xs = nx;
+            v->ys = ny;
+            v->m_heapStorage = true;
+        }
         v->m_capacity = newCapacity;
     }
     v->xs[v->m_count] = x;
@@ -4957,8 +5885,11 @@ static void painterPathVerticesReset(PainterPathVertices* v)
 static void painterPathVerticesFree(PainterPathVertices* v)
 {
     if (!v) return;
-    XFree_System(v->xs);
-    XFree_System(v->ys);
+    if (v->m_heapStorage)
+    {
+        XFree_Hybrid(v->xs);
+        XFree_Hybrid(v->ys);
+    }
     memset(v, 0, sizeof(*v));
 }
 
@@ -4969,7 +5900,35 @@ static bool painterPathFlattenCubic(PainterPathVertices* v,
                                     float ex, float ey)
 {
     int i;
-    const int segments = 24;
+    int segments = 4;
+    float dx = ex - sx;
+    float dy = ey - sy;
+    float length = sqrtf(dx * dx + dy * dy);
+    float flatness;
+    float d1;
+    float d2;
+
+    /* Curves are already in device coordinates when they reach this helper.
+       Choose the subdivision count from the control-point deviation so small
+       text does not pay the cost of a 24-segment approximation. */
+    if (length > 1.0e-5f)
+    {
+        d1 = fabsf((c1x - sx) * dy - (c1y - sy) * dx) / length;
+        d2 = fabsf((c2x - sx) * dy - (c2y - sy) * dx) / length;
+        flatness = d1 > d2 ? d1 : d2;
+    }
+    else
+    {
+        d1 = fabsf(c1x - sx) + fabsf(c1y - sy);
+        d2 = fabsf(c2x - sx) + fabsf(c2y - sy);
+        flatness = d1 > d2 ? d1 : d2;
+    }
+    /* At typical UI sizes a sub-pixel curve error is not observable.  Keep
+       the small-font path to four/eight samples and reserve the denser
+       approximation for genuinely large or strongly curved glyphs. */
+    if (flatness > 1.5f) segments = 8;
+    if (flatness > 5.0f) segments = 16;
+    if (flatness > 16.0f) segments = 24;
     for (i = 1; i <= segments; ++i)
     {
         float t = (float)i / (float)segments;
@@ -4988,10 +5947,81 @@ static bool painterPathPointsEqual(float x1, float y1, float x2, float y2)
     return fabsf(x1 - x2) <= 1.0e-5f && fabsf(y1 - y2) <= 1.0e-5f;
 }
 
+/** @brief 复制一个已展平的子路径，供复合填充和延后描边使用。 */
+static bool painterPathFillContourAppend(
+    PainterPathFillContour** contours, int* count, int* capacity,
+    const PainterPathVertices* vertices, bool closed)
+{
+    PainterPathFillContour* grown;
+    float* xs;
+    float* ys;
+    int newCapacity;
+    size_t bytes;
+    if (!contours || !count || !capacity || !vertices ||
+        vertices->m_count < 2)
+        return true;
+    if (*count >= *capacity)
+    {
+        newCapacity = *capacity > 0 ? *capacity * 2 : 8;
+        if (newCapacity <= *capacity ||
+            (size_t)newCapacity > ((size_t)-1) / sizeof(**contours))
+            return false;
+        grown = (PainterPathFillContour*)XRealloc_Hybrid(
+            *contours, (size_t)newCapacity * sizeof(**contours));
+        if (!grown)
+            return false;
+        *contours = grown;
+        *capacity = newCapacity;
+    }
+    if ((size_t)vertices->m_count > ((size_t)-1) / sizeof(float))
+        return false;
+    bytes = (size_t)vertices->m_count * sizeof(float);
+    xs = (float*)XMalloc_Hybrid(bytes);
+    ys = (float*)XMalloc_Hybrid(bytes);
+    if (!xs || !ys)
+    {
+        XFree_Hybrid(xs);
+        XFree_Hybrid(ys);
+        return false;
+    }
+    memcpy(xs, vertices->xs, bytes);
+    memcpy(ys, vertices->ys, bytes);
+    (*contours)[*count].m_xs = xs;
+    (*contours)[*count].m_ys = ys;
+    (*contours)[*count].m_count = vertices->m_count;
+    (*contours)[*count].m_closed = closed;
+    ++*count;
+    return true;
+}
+
+/** @brief 释放路径复合填充的子路径副本。 */
+static void painterPathFillContoursFree(PainterPathFillContour** contours,
+                                        int* count, int* capacity)
+{
+    int i;
+    if (!contours || !*contours)
+        return;
+    for (i = 0; count && i < *count; ++i)
+    {
+        XFree_Hybrid((*contours)[i].m_xs);
+        XFree_Hybrid((*contours)[i].m_ys);
+    }
+    XFree_Hybrid(*contours);
+    *contours = NULL;
+    if (count) *count = 0;
+    if (capacity) *capacity = 0;
+}
+
 static bool painterPathDraw(XPainter* self, const XPainterPath* path,
-                            bool fill, bool stroke)
+                            bool fill, bool stroke, float offsetX,
+                            float offsetY)
 {
     PainterPathVertices v;
+    float stackXs[XPAINTER_PATH_STACK_POINTS];
+    float stackYs[XPAINTER_PATH_STACK_POINTS];
+    PainterPathFillContour* contours = NULL;
+    int contourCount = 0;
+    int contourCapacity = 0;
     int i;
     bool closed = false;
     float px;
@@ -4999,29 +6029,31 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
     if (!self) return false;
     if (!path || path->m_elementCount == 0) return true;
     if (self->m_deviceKind == XPainterDevice_None) return false;
-    memset(&v, 0, sizeof(v));
-    painterPathVerticesReset(&v);
+    v.xs = stackXs;
+    v.ys = stackYs;
+    v.m_count = 0;
+    v.m_capacity = XPAINTER_PATH_STACK_POINTS;
+    v.m_heapStorage = false;
     for (i = 0; i < path->m_elementCount; ++i)
     {
         const XPainterPathElement* e = &path->m_elements[i];
         switch (e->m_type)
         {
             case XPainterPathElement_MoveTo:
-                if (fill && v.m_count >= 3)
-                    if (!painterFillPolygonShape(self, v.m_count, v.xs, v.ys,
-                                                 XPainterFillRule_OddEven))
-                        goto fail;
-                if (stroke && v.m_count >= 2 &&
-                    !painterDrawPolyLineFloat(self, v.xs, v.ys, v.m_count, closed))
+                if ((fill || stroke) &&
+                    !painterPathFillContourAppend(&contours, &contourCount,
+                                                  &contourCapacity, &v, closed))
                     goto fail;
                 /* Qt moveTo() 隐式结束前一子路径；新子路径不能复用旧顶点，
                    否则填充/描边会在两个几何体之间产生虚假连接。 */
                 painterPathVerticesReset(&v);
-                if (!painterPathVerticesPush(&v, e->m_x1, e->m_y1)) goto fail;
+                if (!painterPathVerticesPush(&v, e->m_x1 + offsetX,
+                                             e->m_y1 + offsetY)) goto fail;
                 closed = false;
                 break;
             case XPainterPathElement_LineTo:
-                if (!painterPathVerticesPush(&v, e->m_x1, e->m_y1)) goto fail;
+                if (!painterPathVerticesPush(&v, e->m_x1 + offsetX,
+                                             e->m_y1 + offsetY)) goto fail;
                 if (v.m_count >= 2 && painterPathPointsEqual(
                         v.xs[v.m_count - 1], v.ys[v.m_count - 1],
                         v.xs[0], v.ys[0]))
@@ -5037,11 +6069,11 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
                 px = v.xs[v.m_count - 1];
                 py = v.ys[v.m_count - 1];
                 if (!painterPathFlattenCubic(
-                        &v, px, py, e->m_x1, e->m_y1,
-                        path->m_elements[i + 1].m_x1,
-                        path->m_elements[i + 1].m_y1,
-                        path->m_elements[i + 2].m_x1,
-                        path->m_elements[i + 2].m_y1))
+                    &v, px, py, e->m_x1 + offsetX, e->m_y1 + offsetY,
+                        path->m_elements[i + 1].m_x1 + offsetX,
+                        path->m_elements[i + 1].m_y1 + offsetY,
+                        path->m_elements[i + 2].m_x1 + offsetX,
+                        path->m_elements[i + 2].m_y1 + offsetY))
                     goto fail;
                 if (v.m_count >= 2 && painterPathPointsEqual(
                         v.xs[v.m_count - 1], v.ys[v.m_count - 1],
@@ -5056,16 +6088,28 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
                 break;
         }
     }
-    if (fill && v.m_count >= 3)
-        if (!painterFillPolygonShape(self, v.m_count, v.xs, v.ys,
-                                     XPainterFillRule_OddEven))
-            goto fail;
-    if (stroke && v.m_count >= 2 &&
-        !painterDrawPolyLineFloat(self, v.xs, v.ys, v.m_count, closed))
+    if ((fill || stroke) &&
+        !painterPathFillContourAppend(&contours, &contourCount,
+                                      &contourCapacity, &v, closed))
         goto fail;
+    if (fill && contourCount > 0 &&
+        !painterFillPathContours(self, contours, contourCount,
+                                 XPainterFillRule_OddEven))
+        goto fail;
+    if (stroke)
+    {
+        for (i = 0; i < contourCount; ++i)
+            if (!painterDrawPolyLineFloat(self, contours[i].m_xs,
+                                          contours[i].m_ys,
+                                          contours[i].m_count,
+                                          contours[i].m_closed))
+                goto fail;
+    }
+    painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
     painterPathVerticesFree(&v);
     return true;
 fail:
+    painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
     painterPathVerticesFree(&v);
     return false;
 }
@@ -5087,7 +6131,7 @@ static bool painterPathDrawDispatch(XPainter* self, const XPainterPath* path,
     if (self->m_deviceKind == XPainterDevice_None) return false;
     if (self->m_drawPath)
         return self->m_drawPath(self, op, path);
-    return painterPathDraw(self, path, fill, stroke);
+    return painterPathDraw(self, path, fill, stroke, 0.0f, 0.0f);
 }
 
 bool XPainter_drawPath(XPainter* self, const XPainterPath* path)
@@ -6122,8 +7166,34 @@ static int painterDrawCodepoint(XPainter* self,
                                  const PainterBitmapFontTable* table,
                                  float scale, int x, int baselineY,
                                  uint32_t cp, uint32_t color,
-                                 bool underline)
+                                 bool underline,
+                                 void* outlinePath)
 {
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table && table->m_bpp == 0)
+    {
+        XFontOutlineGlyphMetrics metrics;
+        int advance;
+        bool drawn;
+        memset(&metrics, 0, sizeof(metrics));
+        drawn = painterDrawOutlineGlyph(self, x, baselineY, cp, color, scale,
+                                        &metrics, (XPainterPath*)outlinePath);
+        advance = drawn && metrics.advance > 0
+                      ? painter8x16Metric(metrics.advance, scale)
+                      : painterOutlineGlyphAdvance(&self->m_state.m_font, cp,
+                                                   table, scale);
+        if (underline)
+        {
+            XRect r;
+            r.x = x;
+            r.y = baselineY + painter8x16Metric(table->m_descent, scale);
+            r.width = advance;
+            r.height = painter8x16Metric(1, scale);
+            XPainter_fillRect(self, &r, color);
+        }
+        return advance;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
                              XFONT_BITMAP_MAX_ROW_BYTES];
     XFontGlyphDsc dsc;
@@ -6155,7 +7225,8 @@ static void painterDrawTextRun(XPainter* self,
                                const char* start, const char* end,
                                uint32_t color,
                                bool expandTabs, int justifyExtra,
-                               int mnemonicMode)
+                               int mnemonicMode,
+                               void* outlinePath)
 {
     const char* p = start;
     int col = 0;
@@ -6202,13 +7273,14 @@ static void painterDrawTextRun(XPainter* self,
                 if (fc == '&')
                 {
                     x += painterDrawCodepoint(self, table, scale, x, baselineY,
-                                              '&', color, false);
+                                              '&', color, false, outlinePath);
                     ++col;
                     p = following;
                     continue;
                 }
                 x += painterDrawCodepoint(self, table, scale, x, baselineY,
-                                          fc, color, mnemonicMode == 1);
+                                          fc, color, mnemonicMode == 1,
+                                          outlinePath);
                 ++col;
                 p = following;
                 continue;
@@ -6229,7 +7301,7 @@ static void painterDrawTextRun(XPainter* self,
             ++spaceDrawn;
         }
         x += painterDrawCodepoint(self, table, scale, x, baselineY,
-                                  cp, color, false);
+                                  cp, color, false, outlinePath);
         ++col;
         p = next;
     }
@@ -6265,6 +7337,11 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     bool visualLeft;
     bool visualRight;
     int mnemonicMode;
+    void* reusableOutlinePath = NULL;
+    bool outlinePathInitialized = false;
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    XPainterPath outlinePathStorage;
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
     if (!self || self->m_deviceKind == XPainterDevice_None)
         return false;
@@ -6276,7 +7353,7 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
         return true;
 
     table = painterBitmapFont(&self->m_state.m_font);
-    scale = painterBitmapScaleForFont(&self->m_state.m_font);
+    scale = painterBitmapScaleForTable(&self->m_state.m_font, &table);
     charW = painter8x16Metric(table.m_width, scale);
     /* Qt 在没有可用字体引擎时仍将文本绘制视为成功的空操作。远端
        XFont 配置允许关闭所有内置 provider，此时度量为零；先退出可
@@ -6428,6 +7505,14 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     else
         yTop = rect->y; /* 默认顶对齐 */
 
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table.m_bpp == 0)
+    {
+        XPainterPath_init(&outlinePathStorage);
+        reusableOutlinePath = &outlinePathStorage;
+        outlinePathInitialized = true;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     for (i = 0; i < lineCount; ++i)
     {
         int lineW = painterTextLinePixelWidth(&self->m_state.m_font, &table,
@@ -6451,9 +7536,15 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
 
          painterDrawTextRun(self, &table, scale, x, baselineY,
                            lines[i].m_start, lines[i].m_end, color,
-                           expandTabs, justifyExtra, mnemonicMode);
+                           expandTabs, justifyExtra, mnemonicMode,
+                           outlinePathInitialized ? reusableOutlinePath : NULL);
         yTop += lineH;
     }
+
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (outlinePathInitialized)
+        XPainterPath_deinit(&outlinePathStorage);
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 #if XPAINTER_CLIP_ON
     if (restoreClip)

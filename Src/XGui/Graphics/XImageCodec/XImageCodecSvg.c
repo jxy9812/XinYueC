@@ -32,6 +32,10 @@
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_SVG_ON
 
+/* SVG 常见形状很小，扫描线和变换坐标优先使用调用栈工作区。 */
+#define SVG_FILL_CROSS_STACK_COUNT 128
+#define SVG_SHAPE_STACK_POINTS 64
+
 /* gzip SVG 输入的有界解压参数。Qt 的 QSvgTinyDocument 使用 zlib
  * MAX_WBITS+16 识别 gzip 头，并允许连续 gzip member；嵌入式实现同时
  * 限制输入和输出总量，避免把畸形压缩流当作无限资源消耗。 */
@@ -58,12 +62,12 @@ static bool svgInflateGzip(const uint8_t* data, size_t size,
     if (!svgIsGzip(data, size) || !out || !outSize ||
         size > (size_t)SVG_GZIP_MAX_INPUT)
         return false;
-    buffer = (uint8_t*)XMalloc_System(capacity);
+    buffer = (uint8_t*)XMalloc_Hybrid(capacity);
     if (!buffer) return false;
     memset(&stream, 0, sizeof(stream));
     result = inflateInit2(&stream, MAX_WBITS + 16);
     if (result != Z_OK) {
-        XFree_System(buffer);
+        XFree_Hybrid(buffer);
         return false;
     }
     stream.next_in = (Bytef*)data;
@@ -81,7 +85,7 @@ static bool svgInflateGzip(const uint8_t* data, size_t size,
                 next = (size_t)SVG_GZIP_MAX_OUTPUT;
             else
                 next *= 2u;
-            resized = (uint8_t*)XRealloc_System(buffer, next);
+            resized = (uint8_t*)XRealloc_Hybrid(buffer, next);
             if (!resized) {
                 result = Z_MEM_ERROR;
                 break;
@@ -126,7 +130,7 @@ static bool svgInflateGzip(const uint8_t* data, size_t size,
     }
     inflateEnd(&stream);
     if (!ok) {
-        XFree_System(buffer);
+        XFree_Hybrid(buffer);
         return false;
     }
     *out = buffer;
@@ -187,24 +191,24 @@ static XByteArray* svgBase64Decode(const uint8_t* data, size_t size)
     XByteArray* out;
     int result;
     if (!data || !size) return NULL;
-    clean = (uint8_t*)XMalloc_System(size);
+    clean = (uint8_t*)XMalloc_Hybrid(size);
     if (!clean) return NULL;
     for (size_t i = 0; i < size; ++i) {
         if (!isspace(data[i])) clean[cleanSize++] = data[i];
     }
     if (!cleanSize) {
-        XFree_System(clean);
+        XFree_Hybrid(clean);
         return NULL;
     }
     capacity = XBase64_decoded_size((const char*)clean, cleanSize);
     out = XByteArray_create();
     if (!out) {
-        XFree_System(clean);
+        XFree_Hybrid(clean);
         return NULL;
     }
     if (capacity && !XByteArray_resize_base((XVector*)out, capacity)) {
         XByteArray_delete_base((XClass*)out);
-        XFree_System(clean);
+        XFree_Hybrid(clean);
         return NULL;
     }
     actual = capacity;
@@ -214,10 +218,10 @@ static XByteArray* svgBase64Decode(const uint8_t* data, size_t size)
         (actual != capacity &&
          !XByteArray_resize_base((XVector*)out, actual))) {
         XByteArray_delete_base((XClass*)out);
-        XFree_System(clean);
+        XFree_Hybrid(clean);
         return NULL;
     }
-    XFree_System(clean);
+    XFree_Hybrid(clean);
     return out;
 }
 
@@ -229,14 +233,14 @@ static bool svgBase64Append(XByteArray* out, const uint8_t* data, size_t size)
     bool ok = false;
     if (!out || (!data && size)) return false;
     capacity = XBase64_encoded_size(size);
-    encoded = (char*)XMalloc_System(capacity);
+    encoded = (char*)XMalloc_Hybrid(capacity);
     if (!encoded) return false;
     written = capacity;
     if (XBase64_encode(data, size, encoded, &written) != 0) goto done;
     ok = XImageCodecInternal_appendBytes(out, encoded,
                                          written > 0 ? written - 1 : 0);
 done:
-    XFree_System(encoded);
+    XFree_Hybrid(encoded);
     return ok;
 }
 
@@ -299,13 +303,13 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
     if (offset > size || (size - offset) % unit != 0) return false;
     if (size > (sizeMax - 1) / 2) return false;
     capacity = size * 2 + 1;
-    text = (char*)XMalloc_System(capacity);
+    text = (char*)XMalloc_Hybrid(capacity);
     if (!text) return false;
 
     if (!encoded) {
         /* XML 中嵌入 NUL 不合法；拒绝它可避免后续 strstr 截断输入。 */
         if (memchr(data + offset, 0, size - offset) != NULL) {
-            XFree_System(text);
+            XFree_Hybrid(text);
             return false;
         }
         memcpy(text, data + offset, size - offset);
@@ -322,19 +326,19 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
                 pos += 2;
                 if (first >= 0xd800u && first <= 0xdbffu) {
                     uint32_t second;
-                    if (pos >= size) { XFree_System(text); return false; }
+                    if (pos >= size) { XFree_Hybrid(text); return false; }
                     second = little ?
                         (uint32_t)data[pos] | ((uint32_t)data[pos + 1] << 8) :
                         ((uint32_t)data[pos] << 8) | (uint32_t)data[pos + 1];
                     if (second < 0xdc00u || second > 0xdfffu) {
-                        XFree_System(text);
+                        XFree_Hybrid(text);
                         return false;
                     }
                     pos += 2;
                     cp = 0x10000u + ((first - 0xd800u) << 10) +
                          (second - 0xdc00u);
                 } else if (first >= 0xdc00u && first <= 0xdfffu) {
-                    XFree_System(text);
+                    XFree_Hybrid(text);
                     return false;
                 } else {
                     cp = first;
@@ -349,7 +353,7 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
                     ((uint32_t)data[pos + 2] << 8) | (uint32_t)data[pos + 3];
                 pos += 4;
                 if (cp > 0x10ffffu || (cp >= 0xd800u && cp <= 0xdfffu)) {
-                    XFree_System(text);
+                    XFree_Hybrid(text);
                     return false;
                 }
             }
@@ -363,11 +367,11 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
                 encodedSize = 4;
             }
             if (used > capacity - encodedSize - 1) {
-                XFree_System(text);
+                XFree_Hybrid(text);
                 return false;
             }
             if (cp == 0) {
-                XFree_System(text);
+                XFree_Hybrid(text);
                 return false;
             } else if (encodedSize == 1) {
                 text[used++] = (char)cp;
@@ -1091,10 +1095,10 @@ static void svgShapeInit(SvgShape* s)
 
 static void svgShapeCleanup(SvgShape* s)
 {
-    if (s->m_x) XFree_System(s->m_x);
-    if (s->m_y) XFree_System(s->m_y);
-    if (s->m_subStart) XFree_System(s->m_subStart);
-    if (s->m_subClosed) XFree_System(s->m_subClosed);
+    if (s->m_x) XFree_Hybrid(s->m_x);
+    if (s->m_y) XFree_Hybrid(s->m_y);
+    if (s->m_subStart) XFree_Hybrid(s->m_subStart);
+    if (s->m_subClosed) XFree_Hybrid(s->m_subClosed);
     memset(s, 0, sizeof(SvgShape));
 }
 
@@ -1102,16 +1106,15 @@ static bool svgShapeAppendPoint(SvgShape* s, double x, double y)
 {
     if (s->m_count == s->m_cap) {
         int newCap = s->m_cap ? s->m_cap * 2 : SVG_POINT_CHUNK;
-        double* nx = (double*)XRealloc_System(s->m_x,
+        double* nx = (double*)XRealloc_Hybrid(s->m_x,
                                               (size_t)newCap * sizeof(double));
         double* ny;
         if (!nx) return false;
-        ny = (double*)XRealloc_System(s->m_y, (size_t)newCap * sizeof(double));
-        if (!ny) {
-            XFree_System(nx);
-            return false;
-        }
+        /* Commit each successful realloc before attempting its sibling.  A
+           moving realloc may already have released the old pointer. */
         s->m_x = nx;
+        ny = (double*)XRealloc_Hybrid(s->m_y, (size_t)newCap * sizeof(double));
+        if (!ny) return false;
         s->m_y = ny;
         s->m_cap = newCap;
     }
@@ -1125,17 +1128,14 @@ static bool svgShapeBeginSub(SvgShape* s)
 {
     if (s->m_subCount == s->m_subCap) {
         int newCap = s->m_subCap ? s->m_subCap * 2 : 16;
-        int* ns = (int*)XRealloc_System(s->m_subStart,
+        int* ns = (int*)XRealloc_Hybrid(s->m_subStart,
                                         (size_t)newCap * sizeof(int));
         bool* nc;
         if (!ns) return false;
-        nc = (bool*)XRealloc_System(s->m_subClosed,
-                                    (size_t)newCap * sizeof(bool));
-        if (!nc) {
-            XFree_System(ns);
-            return false;
-        }
         s->m_subStart = ns;
+        nc = (bool*)XRealloc_Hybrid(s->m_subClosed,
+                                    (size_t)newCap * sizeof(bool));
+        if (!nc) return false;
         s->m_subClosed = nc;
         s->m_subCap = newCap;
     }
@@ -2276,14 +2276,19 @@ static bool svgFillDevice(SvgRenderer* r,
                           const double* dx, const double* dy, int count,
                           int subCount, const int* subStart,
                           bool useGradient, const SvgGradient* grad,
-                          uint32_t color, double alphaMul,
-                          const SvgMatrix* inv, const double* bbox)
+                           uint32_t color, double alphaMul,
+                           const SvgMatrix* inv, const double* bbox)
 {
+    double crossStack[SVG_FILL_CROSS_STACK_COUNT];
     double* crosses;
+    bool heapCrosses = false;
+    int crossCapacity;
     double minY, maxY;
     int y0, y1, y;
     int i, s;
-    if (count < 3) return true;
+    if (count < 3 || subCount < 1) return true;
+    if (count > INT_MAX - subCount) return false;
+    crossCapacity = count + subCount;
     minY = dy[0]; maxY = dy[0];
     for (i = 1; i < count; ++i) {
         if (dy[i] < minY) minY = dy[i];
@@ -2294,8 +2299,14 @@ static bool svgFillDevice(SvgRenderer* r,
     if (y0 < 0) y0 = 0;
     if (y1 > r->m_height) y1 = r->m_height;
     if (y0 >= y1) return true;
-    crosses = (double*)XMalloc_System((size_t)(count + subCount) *
-                                      sizeof(double));
+    if (crossCapacity <= SVG_FILL_CROSS_STACK_COUNT)
+        crosses = crossStack;
+    else
+    {
+        crosses = (double*)XMalloc_Hybrid((size_t)crossCapacity *
+                                          sizeof(double));
+        heapCrosses = true;
+    }
     if (!crosses) return false;
     for (y = y0; y < y1; ++y) {
         int n = 0;
@@ -2366,7 +2377,8 @@ static bool svgFillDevice(SvgRenderer* r,
             }
         }
     }
-    XFree_System(crosses);
+    if (heapCrosses)
+        XFree_Hybrid(crosses);
     (void)subStart;
     return true;
 }
@@ -2466,8 +2478,11 @@ static bool svgStrokeDevice(SvgRenderer* r,
 static bool svgRenderShape(SvgRenderer* r, const SvgShape* shape,
                            const SvgStyle* st, const SvgMatrix* ctm)
 {
+    double dxStack[SVG_SHAPE_STACK_POINTS];
+    double dyStack[SVG_SHAPE_STACK_POINTS];
     double* dx;
     double* dy;
+    bool heapCoordinates = false;
     double userBBox[4];
     SvgMatrix inv;
     bool useGradFill = false, useGradStroke = false;
@@ -2475,12 +2490,21 @@ static bool svgRenderShape(SvgRenderer* r, const SvgShape* shape,
     int i, s;
     double alphaMulFill, alphaMulStroke;
     if (!shape || shape->m_count < 2) return true;
-    dx = (double*)XMalloc_System((size_t)shape->m_count * sizeof(double));
-    dy = (double*)XMalloc_System((size_t)shape->m_count * sizeof(double));
-    if (!dx || !dy) {
-        if (dx) XFree_System(dx);
-        if (dy) XFree_System(dy);
-        return false;
+    if (shape->m_count <= SVG_SHAPE_STACK_POINTS)
+    {
+        dx = dxStack;
+        dy = dyStack;
+    }
+    else
+    {
+        dx = (double*)XMalloc_Hybrid((size_t)shape->m_count * sizeof(double));
+        dy = (double*)XMalloc_Hybrid((size_t)shape->m_count * sizeof(double));
+        heapCoordinates = true;
+        if (!dx || !dy) {
+            if (dx) XFree_Hybrid(dx);
+            if (dy) XFree_Hybrid(dy);
+            return false;
+        }
     }
     svgShapeBBox(shape, userBBox);
     for (i = 0; i < shape->m_count; ++i)
@@ -2524,8 +2548,11 @@ static bool svgRenderShape(SvgRenderer* r, const SvgShape* shape,
                         useGradStroke ? &inv : NULL,
                         useGradStroke ? userBBox : NULL);
     }
-    XFree_System(dx);
-    XFree_System(dy);
+    if (heapCoordinates)
+    {
+        XFree_Hybrid(dx);
+        XFree_Hybrid(dy);
+    }
     (void)s;
     return true;
 }
@@ -3151,13 +3178,13 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
         if (!result) return false;
         result = XImageCodecInternal_probeSvgSize(inflated, inflatedSize,
                                                   width, height);
-        XFree_System(inflated);
+        XFree_Hybrid(inflated);
         return result;
     }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
     svgArenaInit(&arena);
     root = svgParseDom(text, textSize, &arena);
-    XFree_System(text);
+    XFree_Hybrid(text);
     if (!root || strcmp(root->m_name, "svg") != 0) {
         svgArenaCleanup(&arena);
         return false;
@@ -3201,7 +3228,7 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
         if (!result) return false;
         result = XImageCodecInternal_probeSvgSize(inflated, inflatedSize,
                                                   width, height);
-        XFree_System(inflated);
+        XFree_Hybrid(inflated);
         return result;
     }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
@@ -3228,7 +3255,7 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
             if (heightD <= 0.0) heightD = values[3];
         }
     }
-    XFree_System(text);
+    XFree_Hybrid(text);
     if (widthD <= 0.0 || heightD <= 0.0 || widthD > (double)INT_MAX ||
         heightD > (double)INT_MAX)
         return false;
@@ -3265,7 +3292,7 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         bool result = svgInflateGzip(data, size, &inflated, &inflatedSize);
         if (!result) return false;
         result = XImageCodecInternal_decodeSvg(inflated, inflatedSize, out);
-        XFree_System(inflated);
+        XFree_Hybrid(inflated);
         return result;
     }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
@@ -3285,14 +3312,14 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
                      XByteArray_data(encoded),
                      XByteArray_size_base((const XContainer*)encoded), out);
         if (encoded) XByteArray_delete_base((XClass*)encoded);
-        XFree_System(text);
+        XFree_Hybrid(text);
         return result;
     }
 
 #if XIMAGECODEC_SVG_VECTOR_ON
     /* 形态 2：矢量渲染。 */
     if (svgVectorDecode(text, textSize, out)) {
-        XFree_System(text);
+        XFree_Hybrid(text);
         return true;
     }
 #endif /* XIMAGECODEC_SVG_VECTOR_ON */
@@ -3305,13 +3332,13 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         width = svgNumber((const uint8_t*)text, textSize, "width", 0);
         height = svgNumber((const uint8_t*)text, textSize, "height", 0);
         if (width <= 0 || height <= 0 || width > INT_MAX || height > INT_MAX) {
-            XFree_System(text);
+            XFree_Hybrid(text);
             return false;
         }
         color = svgColor((const uint8_t*)text, textSize);
         XImage_init_ex(&temp, width, height, XImageFormat_ARGB32);
         if (XImage_isNull(&temp)) {
-            XFree_System(text);
+            XFree_Hybrid(text);
             return false;
         }
         for (int y = 0; y < height; ++y)
@@ -3321,7 +3348,7 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         out->m_data = temp.m_data;
         temp.m_data = NULL;
     }
-    XFree_System(text);
+    XFree_Hybrid(text);
     return true;
 }
 

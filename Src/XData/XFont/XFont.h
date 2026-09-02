@@ -15,105 +15,8 @@ extern "C" {
 #include <stddef.h>
 #include "XClass.h"
 #include "XFont_config.h"
+#include "XFontFace.h"
 #include "XString.h"
-
-/** @brief XFont 点阵字库的行度量及缺省字形度量，单位均为像素。 */
-typedef struct XFontBitmapInfo
-{
-    int m_width;       /**< 字形宽度；不得超过 XFONT_BITMAP_MAX_WIDTH。 */
-    int m_height;      /**< 字形行数；不得超过 XFONT_BITMAP_MAX_HEIGHT。 */
-    int m_ascent;      /**< 基线以上高度；范围为 0 到 m_height。 */
-    int m_descent;     /**< 基线以下高度；范围为 0 到 m_height。 */
-    int m_rowBytes;    /**< 每行字节数；由宽度和 bpp 决定。 */
-    int m_bpp;         /**< 每像素位数；按 LVGL fmt_txt 支持 1/2/4/8bpp。 */
-} XFontBitmapInfo;
-
-/**
- * @brief LVGL fmt_txt 字形描述的无依赖镜像。
- * @details 字段名称、顺序和位宽与 LVGL 的
- *          lv_font_fmt_txt_glyph_dsc_t 保持一致，XFont 不需要包含 LVGL
- *          头文件。bitmap_index 指向 glyph_bitmap，adv_w 为 8.4 定点数。
- */
-typedef struct XFontGlyphDsc
-{
-#if XFONT_LVGL_FMT_TXT_LARGE
-    uint32_t bitmap_index;
-    uint32_t adv_w;
-    uint16_t box_w;
-    uint16_t box_h;
-    int16_t ofs_x;
-    int16_t ofs_y;
-#else
-    uint32_t bitmap_index : 20;
-    uint32_t adv_w : 12;
-    uint8_t box_w;
-    uint8_t box_h;
-    int8_t ofs_x;
-    int8_t ofs_y;
-#endif
-} XFontGlyphDsc;
-
-/** @brief LVGL fmt_txt cmap 类型。数值与 LVGL 保持一致。 */
-typedef enum XFontCmapType
-{
-    XFontCmapFormat0Full = 0,
-    XFontCmapSparseFull = 1,
-    XFontCmapFormat0Tiny = 2,
-    XFontCmapSparseTiny = 3
-} XFontCmapType;
-
-/** @brief LVGL fmt_txt 字符映射描述。 */
-typedef struct XFontCmap
-{
-    uint32_t range_start;
-    uint16_t range_length;
-    uint16_t glyph_id_start;
-    const uint16_t* unicode_list;
-    const void* glyph_id_ofs_list;
-    uint16_t list_length;
-    /* Keep the enum member, alignment, and size identical to LVGL. */
-    XFontCmapType type;
-} XFontCmap;
-
-/**
- * @brief LVGL fmt_txt 字体数据描述的无依赖镜像。
- * @details 可将 LVGL 生成的 glyph_bitmap、glyph_dsc 和 cmaps 指针直接
- *          填入该结构；bitmap_format 目前支持 LVGL 的 plain(0) 格式。
- */
-typedef struct XFontBitmapData
-{
-    const uint8_t* glyph_bitmap;
-    const XFontGlyphDsc* glyph_dsc;
-    const XFontCmap* cmaps;
-    const void* kern_dsc;
-    uint16_t kern_scale;
-    uint16_t cmap_num : 9;
-    uint16_t bpp : 4;
-    uint16_t kern_classes : 1;
-    uint16_t bitmap_format : 2;
-} XFontBitmapData;
-
-/**
- * @brief XFont 点阵字库 provider。
- * @details m_family 为静态存储期的家族名；注册表只保存该指针，不复制
- *          字符串。m_data 非空时使用 LVGL fmt_txt 数据；m_loadGlyph 仅
- *          用于文件字库和需要动态取字形的后端。二者都不需要 LVGL 运行时。
- */
-typedef struct XFontBitmapProvider
-{
-    const char* m_family;
-    XFontBitmapInfo m_info;
-    const XFontBitmapData* m_data;
-    bool (*m_loadGlyph)(uint32_t cp, unsigned char* out, size_t outSize);
-} XFontBitmapProvider;
-
-/** @brief 把 LVGL 的 lv_font_t 描述转换为 XFont provider 初始化项。 */
-#define XFONT_BITMAP_PROVIDER_FROM_LVGL(familyName, lvglFontPtr, glyphWidth, glyphRowBytes, glyphBpp) \
-    { (familyName), \
-      { (glyphWidth), (lvglFontPtr)->line_height, \
-        (lvglFontPtr)->line_height - (lvglFontPtr)->base_line, \
-        (lvglFontPtr)->base_line, (glyphRowBytes), (glyphBpp) }, \
-      (const XFontBitmapData*)(lvglFontPtr)->dsc, NULL }
 
 /* ========== XFont 虚函数表枚举 ========== */
 XCLASS_DEFINE_BEGING(XFont)
@@ -360,8 +263,10 @@ const char* XFont_family(const XFont* self);
  * @brief      设置字体家族名称
  * @param self   目标 XFont 对象指针
  * @param family 字体家族名称（例如 "XFont8x16" 使用已注册字库）；若名称未注册，
- *               则按 XFONT_EXTERNAL_FONT_DIR/<family>.bin 查找外挂字库；也可
- *               传入外挂字库完整路径（可带或不带 ".bin" 后缀）。
+ *               则按 XFONT_EXTERNAL_FONT_DIR/<family>.bin 查找外挂点阵字库；
+ *               也可传入外挂字库完整路径（可带或不带 ".bin" 后缀）。轮廓
+ *               字库使用同一属性传入 .xfo 路径或家族名，并按
+ *               XFONT_EXTERNAL_OUTLINE_FONT_DIR/<family>.xfo 查找。
  */
 void XFont_setFamily(XFont* self, const char* family);
 
@@ -420,36 +325,6 @@ int XFont_pixelSize(const XFont* self);
  * @param pixelSize 像素大小
  */
 void XFont_setPixelSize(XFont* self, int pixelSize);
-
-/**
- * @brief 查询 XFont 当前选择的点阵字库。
- * @param self 字体对象；NULL 使用默认字库。
- * @param info 调用方提供的度量输出空间。
- * @return 找到可用字库返回 true，否则返回 false，info 保持不变。
- */
-bool XFont_bitmapFontInfo(const XFont* self, XFontBitmapInfo* info);
-
-/**
- * @brief 查找字形并按需读取其 LVGL 紧凑位图。
- * @details dsc 必须非空；out 可为 NULL，此时只查询 descriptor，不复制
- *          位图。LVGL 的连续 bit 流会被展开为每行对齐的输出，行跨度为
- *          ceil(box_w * bpp / 8)，不是字体的最大宽度。这样查询和加载共用
- *          一个入口，避免重复 API。
- */
-bool XFont_bitmapLoadGlyph(const XFont* self, uint32_t cp,
-                           XFontGlyphDsc* dsc, unsigned char* out,
-                           size_t outSize);
-
-/** @brief 计算 LVGL bpp 点阵字形每行的存储字节数。 */
-int XFont_bitmapGlyphRowBytes(const XFontGlyphDsc* dsc, int bpp);
-
-/**
- * @brief 注册一个静态点阵字库 provider。
- * @param provider provider 描述；其中 family 字符串必须保持有效。
- * @return 注册或替换成功返回 true；参数、度量或容量非法返回 false。
- * @note 同名 provider 会替换旧注册；调用应发生在多线程启动前。
- */
-bool XFont_registerBitmapProvider(const XFontBitmapProvider* provider);
 
 /* ========== 点阵字体显示尺寸算法（内置位图字体共用小工具） ========== */
 

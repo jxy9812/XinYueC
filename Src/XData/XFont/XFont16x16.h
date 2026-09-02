@@ -13,7 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "XFont.h"
+#include "XFontBitmapFace.h"
 
 #define XFONT16X16_WIDTH 16
 #define XFONT16X16_HEIGHT 16

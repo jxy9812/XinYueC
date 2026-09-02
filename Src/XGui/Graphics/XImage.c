@@ -30,6 +30,9 @@
  */
 #define XIMAGE_PROFILE_MAX_ICC_BYTES (16u * 1024u * 1024u)
 #define XIMAGE_PROFILE_MAX_LUT_ELEMENTS 65536u
+/* 小型临时工作区直接放在调用栈；大图像再回退到 Hybrid。 */
+#define XIMAGE_ALPHA_DITHER_STACK_WIDTH 64
+#define XIMAGE_HEURISTIC_QUEUE_STACK_COUNT 256
 
 typedef struct XImageColorProfileResource
 {
@@ -2827,9 +2830,18 @@ static bool XImage_alphaMaskDither(const XImage* self, uint32_t flags,
 
     if ((size_t)width > SIZE_MAX / (2u * sizeof(int)))
         return false;
-    int* line1 = (int*)XMalloc_System((size_t)width * 2u * sizeof(int));
-    if (!line1)
-        return false;
+    int lineStack[XIMAGE_ALPHA_DITHER_STACK_WIDTH * 2];
+    int* line1;
+    bool heapLines = false;
+    if (width <= XIMAGE_ALPHA_DITHER_STACK_WIDTH)
+        line1 = lineStack;
+    else
+    {
+        line1 = (int*)XMalloc_Hybrid((size_t)width * 2u * sizeof(int));
+        heapLines = true;
+        if (!line1)
+            return false;
+    }
     int* line2 = line1 + width;
     for (int x = 0; x < width; ++x)
         line2[x] = 255 - XImage_alphaMaskAlpha(self, x, 0);
@@ -2860,7 +2872,8 @@ static bool XImage_alphaMaskDither(const XImage* self, uint32_t flags,
             }
         }
     }
-    XFree_System(line1 < line2 ? line1 : line2);
+    if (heapLines)
+        XFree_Hybrid(line1 < line2 ? line1 : line2);
     return true;
 }
 
@@ -2941,6 +2954,8 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
     size_t head;
     size_t tail;
     size_t* queue;
+    size_t queueStack[XIMAGE_HEURISTIC_QUEUE_STACK_COUNT];
+    bool heapQueue = false;
     if (self && self->m_data && self->m_data->m_depth != 32)
     {
         /* Qt 6.8 首先把非 32 位源图像转换为 RGB32，再运行启发式算法；
@@ -2994,7 +3009,13 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         XImage_init(out);
         return;
     }
-    queue = (size_t*)XMalloc_System(count * sizeof(size_t));
+    if (count <= XIMAGE_HEURISTIC_QUEUE_STACK_COUNT)
+        queue = queueStack;
+    else
+    {
+        queue = (size_t*)XMalloc_Hybrid(count * sizeof(size_t));
+        heapQueue = true;
+    }
     if (!queue)
     {
         /* QImage returns a null image when the mask allocation fails; do not
@@ -3036,7 +3057,8 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
         XIMAGE_QUEUE_BACKGROUND(x, y + 1);
     }
 #undef XIMAGE_QUEUE_BACKGROUND
-    XFree_System(queue);
+    if (heapQueue)
+        XFree_Hybrid(queue);
 
     if (!clipTight)
     {
@@ -5309,6 +5331,49 @@ void XImage_fillRect(XImage* self, const XRect* rect, uint32_t color)
     rx = (int)left64; ry = (int)top64; rw = (int)(right64 - left64); rh = (int)(bottom64 - top64);
     XImage_detach(self);
     if (!XImage_isDetached(self)) return;
+
+    /* The raster backend uses premultiplied ARGB32 for its framebuffers.
+     * Keep the general format conversion below for uncommon image formats,
+     * but write the common 32-bit packed formats in one tight row loop.  The
+     * old path dispatched through XImage_writePixelValue for every pixel,
+     * which made clearing a full window needlessly expensive. */
+    if (self->m_data->m_format == XImageFormat_ARGB32_Premultiplied ||
+        self->m_data->m_format == XImageFormat_ARGB32 ||
+        self->m_data->m_format == XImageFormat_RGB32)
+    {
+        uint8_t a = (uint8_t)(color >> 24);
+        uint8_t r = (uint8_t)(color >> 16);
+        uint8_t g = (uint8_t)(color >> 8);
+        uint8_t b = (uint8_t)color;
+        uint32_t value = color;
+        int y;
+        if (self->m_data->m_format == XImageFormat_ARGB32_Premultiplied)
+            value = ((uint32_t)a << 24) |
+                    ((((uint32_t)r * a + 127u) / 255u) << 16) |
+                    ((((uint32_t)g * a + 127u) / 255u) << 8) |
+                    (((uint32_t)b * a + 127u) / 255u);
+        else if (self->m_data->m_format == XImageFormat_RGB32)
+            value |= 0xff000000u;
+        for (y = ry; y < ry + rh; ++y)
+        {
+            uint8_t* line = self->m_data->m_data +
+                            (size_t)y * (size_t)self->m_data->m_bytesPerLine +
+                            (size_t)rx * 4u;
+            int x;
+            if ((((uintptr_t)line) & (sizeof(uint32_t) - 1u)) == 0u)
+            {
+                uint32_t* pixels = (uint32_t*)line;
+                for (x = 0; x < rw; ++x)
+                    pixels[x] = value;
+            }
+            else
+            {
+                for (x = 0; x < rw; ++x)
+                    XImage_store32(line + (size_t)x * 4u, value);
+            }
+        }
+        return;
+    }
     for (int y = ry; y < ry + rh; y++)
         for (int x = rx; x < rx + rw; x++)
             XImage_writePixelValue(self->m_data, x, y, color);

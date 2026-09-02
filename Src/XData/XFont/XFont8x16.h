@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include "XFont.h"
+#include "XFontBitmapFace.h"
 
 /** @brief 8x16 点阵字体的字形宽度（像素）。 */
 #define XFONT8X16_WIDTH 8

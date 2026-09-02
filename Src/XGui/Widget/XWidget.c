@@ -3298,7 +3298,14 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region)
     if (!self || !region) return;
     XWidget_addDirtyRegion(self, region);
     top = XWidget_topLevel(self);
-    if (!top || !top->m_isWindow || top->m_dirty.count <= 0) return;
+    if (!top) return;
+    /* 无原生窗口的控件树同样需要满足 repaint() 的同步 paintEvent
+       语义。此时没有可提交的后备存储，直接在本地坐标递归分派即可。 */
+    if (!top->m_isWindow) {
+        XWidget_paintTree(self, region);
+        return;
+    }
+    if (top->m_dirty.count <= 0) return;
     XWidget_flushBackingStore(top, &top->m_dirty);
 }
 
@@ -3333,7 +3340,16 @@ XImage* XWidget_paintDevice(const XWidget* self)
 
 XPoint XWidget_paintOffset(const XWidget* self)
 {
-    return XWidget_accumulateOffset(self);
+    XPoint offset = XWidget_accumulateOffset(self);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
+    XBackingStore* store = XWidget_backingStore(self);
+    if (store) {
+        XPoint origin = XBackingStore_paintOrigin(store);
+        offset.x -= origin.x;
+        offset.y -= origin.y;
+    }
+#endif
+    return offset;
 }
 
 XSize XWidget_size_hw(const XWidget* self)
@@ -3399,17 +3415,49 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XSize_init(&size, top->m_windowRect.width, top->m_windowRect.height);
     XBackingStore_resize(store, &size);
     XRegion_init(&whole);
+ #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+    {
+        contents = top->m_contentsRect;
+        XRegion_addRect(&whole, &contents);
+    }
+ #else
     if (region && region->count > 0)
         XRegion_copy(region, &whole);
     else {
         contents = top->m_contentsRect;
         XRegion_addRect(&whole, &contents);
     }
+ #endif
     if (whole.count > 0) {
+        /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
+           paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
+        if (!XBackingStore_paintDevice(store)) {
+            XWidget_paintTree(top, &whole);
+        }
+        else {
         XBackingStore_beginPaint(store, &whole);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        {
+            XRect tile;
+            while (XBackingStore_nextTile(store, &tile)) {
+                XRegion tileRegion;
+                /* XWidget_paintTree 接收的是区域集合。不能把 XRect 直接
+                 * 强转传入，否则第二个 tile 的 x/y 会被解释为 count/指针。 */
+                XRegion_init(&tileRegion);
+                XRegion_addRect(&tileRegion, &tile);
+                XWidget_paintTree(top, &tileRegion);
+                XRegion_deinit(&tileRegion);
+                XBackingStore_flushTile(store, (XWindow*)top->m_windowHandle,
+                                        &tile, NULL);
+            }
+            XBackingStore_endPaint(store);
+        }
+#else
         XWidget_paintTree(top, &whole);
         XBackingStore_endPaint(store);
         XBackingStore_flush(store, &whole, (XWindow*)top->m_windowHandle, NULL);
+#endif
+        }
     }
     XRegion_deinit(&whole);
     /* 已上屏脏区清空（绘制期间新并入的脏区保留，下次刷新处理）。 */

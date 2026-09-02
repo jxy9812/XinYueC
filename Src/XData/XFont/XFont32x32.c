@@ -117635,6 +117635,6 @@ static const XFontBitmapProvider g_xfont32x32_provider = {
 
 bool XFont32x32_register(void)
 {
-    return XFont_registerBitmapProvider(&g_xfont32x32_provider);
+    return XFontBitmapFace_registerProvider(&g_xfont32x32_provider);
 }
 #endif /* XFONT_BUILTIN_32X32_ON */

@@ -319,7 +319,7 @@ static char* xpwn_readXdndData(Window window, Atom property)
     (void)actualType;
     (void)bytesAfter;
     if (raw && format == 8) {
-        data = (char*)XMalloc_System((size_t)itemCount + 1u);
+        data = (char*)XMalloc_Hybrid((size_t)itemCount + 1u);
         if (data) {
             memcpy(data, raw, (size_t)itemCount);
             data[itemCount] = '\0';
@@ -1044,7 +1044,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                     NULL,
                     entry->m_dragTarget == g_xpwnTextUriList ? "text/uri-list" :
                     "text/plain", dropped);
-                XFree_System(dropped);
+                XFree_Hybrid(dropped);
             }
             xpwn_sendXdndFinished(entry, accepted);
             xpwn_resetXdnd(entry);
@@ -1649,7 +1649,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
              g_xpwnVisual->green_mask == 0x0000ff00u &&
              g_xpwnVisual->blue_mask == 0x000000ffu;
     bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
-    buffer = (uint8_t*)XMalloc_System((size_t)bufBpl * (size_t)imgH);
+    buffer = (uint8_t*)XMalloc_Hybrid((size_t)bufBpl * (size_t)imgH);
     /* 构造临时 XImage：借出 buffer 计算偏移后立即回收指针，避免 Xlib
        擅自 free 调用方缓冲。 */
     ximg->data = (char*)buffer;
@@ -1680,7 +1680,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     }
     ximg->data = NULL;
     XDestroyImage(ximg);
-    XFree_System(buffer);
+    XFree_Hybrid(buffer);
     XRegion_deinit(&effective);
     if (any) XFlush(g_xpwnDisplay);
     return any;

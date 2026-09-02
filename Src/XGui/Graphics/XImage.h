@@ -551,6 +551,17 @@ uint32_t XImage_pixel(const XImage* self, int x, int y);
 void XImage_setPixel(XImage* self, int x, int y, uint32_t indexOrRgb);
 
 /**
+ * @brief      写入一个已确保唯一的像素，不执行写时复制或版本更新。
+ * @details    仅供 XPainter 等已建立批量绘制区间的内部光栅路径使用；
+ *             调用方必须在批量写入前调用 XImage_detach()，完成后调用
+ *             XImage_markDirty()。普通代码应使用 XImage_setPixel()。
+ */
+void XImage_setPixelFast(XImage* self, int x, int y, uint32_t indexOrRgb);
+
+/** @brief 标记图像像素内容已修改（批量写入结束时调用）。 */
+void XImage_markDirty(XImage* self);
+
+/**
  * @brief      判断指定坐标是否在图像有效区域内
  * @param self 目标 XImage 对象指针
  * @param x    像素 x 坐标

@@ -610,7 +610,7 @@ static void XBoxLayout_calcMetrics(const XBoxLayout* self, XSize* minOut,
     if (maxOut) XSize_init(maxOut, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
     if (!self || !self->m_base.m_items) return;
     count = (int)self->m_base.m_itemCount;
-    geom = (XBoxGeom*)XMalloc_System((size_t)(count ? count : 1) *
+    geom = (XBoxGeom*)XMalloc_Hybrid((size_t)(count ? count : 1) *
                                      sizeof(XBoxGeom));
     if (!geom) return;
     spacing = XBoxLayout_collectGeom(self, geom);
@@ -682,7 +682,7 @@ static void XBoxLayout_calcMetrics(const XBoxLayout* self, XSize* minOut,
         if (mainExpanding) *mainExpanding = mainExp;
         if (crossExpanding) *crossExpanding = hExpAcc;
     }
-    XFree_System(geom);
+    XFree_Hybrid(geom);
 }
 
 static XSize VXBoxLayout_sizeHint(const XLayoutItem* item)
@@ -783,7 +783,7 @@ static int XBoxLayout_doHeightForWidth(const XBoxLayout* self, int width,
     if (!self) return -1;
     if (!VXBoxLayout_hasHeightForWidth((const XLayoutItem*)self)) return -1;
     n = (int)self->m_base.m_itemCount;
-    geom = (XBoxGeom*)XMalloc_System((size_t)(n ? n : 1) * sizeof(XBoxGeom));
+    geom = (XBoxGeom*)XMalloc_Hybrid((size_t)(n ? n : 1) * sizeof(XBoxGeom));
     if (!geom) return -1;
     spacing = XBoxLayout_collectGeom(self, geom);
     margin = XLayout_contentsMargins((const XLayout*)self);
@@ -792,8 +792,8 @@ static int XBoxLayout_doHeightForWidth(const XBoxLayout* self, int width,
     inner = width - marginsL - marginsR;
     if (inner < 0) inner = 0;
     if (XBoxLayout_isHorizontal(self)) {
-        int* sizes = (int*)XMalloc_System((size_t)(n ? n : 1) * sizeof(int));
-        if (!sizes) { XFree_System(geom); return -1; }
+        int* sizes = (int*)XMalloc_Hybrid((size_t)(n ? n : 1) * sizeof(int));
+        if (!sizes) { XFree_Hybrid(geom); return -1; }
         XBoxLayout_qGeomCalc(geom, 0, n, 0, inner, -1);
         for (i = 0; i < n; ++i) {
             int h;
@@ -811,7 +811,7 @@ static int XBoxLayout_doHeightForWidth(const XBoxLayout* self, int width,
             if (h < 0) h = 0;
             if (h > result) result = h;
         }
-        XFree_System(sizes);
+        XFree_Hybrid(sizes);
     } else {
         int countActive = 0;
         for (i = 0; i < n; ++i) {
@@ -837,7 +837,7 @@ static int XBoxLayout_doHeightForWidth(const XBoxLayout* self, int width,
             if (countActive > 1) result += spacing;
         }
     }
-    XFree_System(geom);
+    XFree_Hybrid(geom);
     result += margin.top + margin.bottom;
     {
         XSize minSize = XLayoutItem_minimumSize_base((const XLayoutItem*)self);
@@ -952,7 +952,7 @@ static void VXBoxLayout_setGeometry(XLayout* self, const XRect* rect)
              : *rect;
     inner = XLayout_contentsRectForRect((const XLayout*)self, &cr);
     n = (int)self->m_itemCount;
-    geom = (XBoxGeom*)XMalloc_System((size_t)(n ? n : 1) * sizeof(XBoxGeom));
+    geom = (XBoxGeom*)XMalloc_Hybrid((size_t)(n ? n : 1) * sizeof(XBoxGeom));
     if (!geom) return;
     (void)XBoxLayout_collectGeom((const XBoxLayout*)self, geom);
     horizontal = XBoxLayout_isHorizontal(box);
@@ -1020,7 +1020,7 @@ static void VXBoxLayout_setGeometry(XLayout* self, const XRect* rect)
         }
         XLayoutItem_setGeometry_base(item, &cell);
     }
-    XFree_System(geom);
+    XFree_Hybrid(geom);
     self->m_isDirty = 0;
     self->m_activated = 1;
 }

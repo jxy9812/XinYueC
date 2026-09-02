@@ -761,7 +761,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     if (!bytes) goto done;
 
     len = (size_t)XByteArray_size_base((const XContainer*)bytes);
-    text = (char*)XMalloc_System(len + 1);
+    text = (char*)XMalloc_Hybrid(len + 1);
     if (!text) goto done;
     if (len) memcpy(text, XByteArray_data(bytes), len);
     text[len] = '\0';
@@ -906,7 +906,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     themeContext_finalizeDirs(out);
     ok = true;
 done:
-    if (text) XFree_System(text);
+    if (text) XFree_Hybrid(text);
     if (bytes) XByteArray_delete_base((XClass*)bytes);
     if (fileName) XString_delete_base((XClass*)fileName);
     return ok;

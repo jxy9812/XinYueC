@@ -14,7 +14,11 @@
 
 /** @brief 是否把内置 8x16（含常用中文）点阵字库编译进固件。 */
 #ifndef XFONT_BUILTIN_8X16_ON
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+#define XFONT_BUILTIN_8X16_ON 1
+#else
 #define XFONT_BUILTIN_8X16_ON 0
+#endif
 #endif
 
 /** @brief 是否把内置 LVGL fmt_txt 16px 2bpp 字库编译进固件。 */
@@ -30,6 +34,68 @@
 /** @brief XFont 位图 provider 注册表容量；按嵌入式固件实际字库数量调整。 */
 #ifndef XFONT_MAX_BITMAP_PROVIDERS
 #define XFONT_MAX_BITMAP_PROVIDERS 8
+#endif
+
+/** @brief 是否启用轮廓字体 provider/API；关闭后裁剪轮廓解析和绘制支持。 */
+#ifndef XFONT_OUTLINE_ON
+#define XFONT_OUTLINE_ON 1
+#endif
+
+/** @brief 轮廓 provider 注册表容量；嵌入式可按实际字体数量缩小。 */
+#ifndef XFONT_MAX_OUTLINE_PROVIDERS
+#define XFONT_MAX_OUTLINE_PROVIDERS 4
+#endif
+
+/** @brief 单个 XFO1 字形允许的最大命令数；用于限制损坏文件的内存/CPU开销。 */
+#ifndef XFONT_OUTLINE_MAX_COMMANDS
+#define XFONT_OUTLINE_MAX_COMMANDS 2048
+#endif
+
+/** @brief 是否编译 XFO1 二次贝塞尔命令支持。 */
+#ifndef XFONT_OUTLINE_QUADRATIC_ON
+#define XFONT_OUTLINE_QUADRATIC_ON 1
+#endif
+
+/** @brief 是否编译 XFO1 三次贝塞尔命令支持。 */
+#ifndef XFONT_OUTLINE_CUBIC_ON
+#define XFONT_OUTLINE_CUBIC_ON 1
+#endif
+
+/** @brief 是否启用轮廓字形路径缓存；缓存按字库、码点和字号复用。 */
+#ifndef XFONT_OUTLINE_CACHE_ON
+#define XFONT_OUTLINE_CACHE_ON 1
+#endif
+
+/** @brief 轮廓路径缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
+#ifndef XFONT_OUTLINE_CACHE_ENTRIES
+#define XFONT_OUTLINE_CACHE_ENTRIES 24
+#endif
+
+/**
+ * @brief 是否把内置 XFontOutlineCommon 轮廓字库编译进目标。
+ * @details 该开关同时控制 ASCII/标点和 GB2312 一级常用汉字两个数据块；
+ *          字库数据约 1.6 MiB，默认关闭以保持基础库体积，桌面端可通过
+ *          -DXFONT_BUILTIN_OUTLINE_ON=1 开启，嵌入式按需裁剪。
+ */
+#ifndef XFONT_BUILTIN_OUTLINE_ON
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+#define XFONT_BUILTIN_OUTLINE_ON 1
+#else
+#define XFONT_BUILTIN_OUTLINE_ON 0
+#endif
+#endif
+
+#if !XFONT_OUTLINE_ON
+#undef XFONT_BUILTIN_OUTLINE_ON
+#define XFONT_BUILTIN_OUTLINE_ON 0
+#undef XFONT_OUTLINE_FILE_ON
+#define XFONT_OUTLINE_FILE_ON 0
+#undef XFONT_OUTLINE_QUADRATIC_ON
+#define XFONT_OUTLINE_QUADRATIC_ON 0
+#undef XFONT_OUTLINE_CUBIC_ON
+#define XFONT_OUTLINE_CUBIC_ON 0
+#undef XFONT_OUTLINE_CACHE_ON
+#define XFONT_OUTLINE_CACHE_ON 0
 #endif
 
 /**
@@ -53,6 +119,10 @@
 #ifndef XFONT_LVGL8_FILE_ON
 #define XFONT_LVGL8_FILE_ON XFONT_FILE_ON
 #endif
+#if !XFONT_FILE_ON
+#undef XFONT_LVGL8_FILE_ON
+#define XFONT_LVGL8_FILE_ON 0
+#endif
 
 /**
  * @brief 是否启用 LVGL 9 外挂字库后端。
@@ -65,6 +135,22 @@
 #endif
 
 /**
+ * @brief 是否启用 XFO1 外挂轮廓字库文件。
+ * @details 该功能依赖 XFile，并受 XFONT_OUTLINE_ON 总开关约束。
+ */
+#ifndef XFONT_OUTLINE_FILE_ON
+#if XFONT_OUTLINE_ON && XFONT_FILE_ON
+#define XFONT_OUTLINE_FILE_ON 1
+#else
+#define XFONT_OUTLINE_FILE_ON 0
+#endif
+#endif
+#if !XFONT_OUTLINE_ON || !XFONT_FILE_ON
+#undef XFONT_OUTLINE_FILE_ON
+#define XFONT_OUTLINE_FILE_ON 0
+#endif
+
+/**
  * @brief 外挂 LVGL 二进制字库目录。
  * @details XFont_setFamily() 对未注册的普通名称接收不含扩展名的文件名，
  *          并在该目录下查找 "<family>.bin"；包含盘符或目录分隔符的输入
@@ -73,6 +159,11 @@
  */
 #ifndef XFONT_EXTERNAL_FONT_DIR
 #define XFONT_EXTERNAL_FONT_DIR "../Library/XFont"
+#endif
+
+/** @brief XFO1 外挂轮廓字库目录；默认与点阵字库目录相同。 */
+#ifndef XFONT_EXTERNAL_OUTLINE_FONT_DIR
+#define XFONT_EXTERNAL_OUTLINE_FONT_DIR XFONT_EXTERNAL_FONT_DIR
 #endif
 
 /** @brief 外挂字库完整路径的最大长度（含结尾的 NUL）。 */

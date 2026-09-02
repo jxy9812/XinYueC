@@ -13,6 +13,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformBackingStore.h"
+#include <stddef.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
 
@@ -43,6 +44,22 @@ XImage* XPlatformBackingStore_paintDevice(XPlatformBackingStore* self)
 {
     (void)self;
     return NULL;
+}
+
+bool XPlatformBackingStore_nextTile(XPlatformBackingStore* self,
+                                     XRect* tileRect)
+{
+    (void)self; (void)tileRect;
+    return false;
+}
+
+XPoint XPlatformBackingStore_paintOrigin(
+        const XPlatformBackingStore* self)
+{
+    XPoint out;
+    (void)self;
+    XPoint_init(&out, 0, 0);
+    return out;
 }
 
 bool XPlatformBackingStore_toImage(XPlatformBackingStore* self, XImage* out)
@@ -85,6 +102,14 @@ void XPlatformBackingStore_endPaint(XPlatformBackingStore* self)
     (void)self;
 }
 
+void XPlatformBackingStore_flushTile(XPlatformBackingStore* self,
+                                     XWindow* window,
+                                     const XRect* tileRect,
+                                     const XPoint* offset)
+{
+    (void)self; (void)window; (void)tileRect; (void)offset;
+}
+
 /* ==================== 静态内容 ==================== */
 
 void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
@@ -116,6 +141,20 @@ void XPlatformBackingStore_setPresentCallback(
         XPlatformBackingStorePresentFn callback, void* userData)
 {
     (void)self; (void)callback; (void)userData;
+}
+
+bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
+                                       void* buffer1, void* buffer2,
+                                       size_t bufferSize)
+{
+    (void)self; (void)buffer1; (void)buffer2; (void)bufferSize;
+    return false;
+}
+
+size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
+{
+    (void)size;
+    return 0;
 }
 
 void XPlatformBackingStore_setNativeTargetWindow(

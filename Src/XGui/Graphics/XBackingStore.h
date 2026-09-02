@@ -5,7 +5,7 @@
  * @details    XBackingStore 继承 XObject，是 XWindow 的离屏后备帧缓冲：
  *             - 构造时经 XGuiApplication 平台集成层创建平台后端
  *               （XPlatformBackingStore，实现位于 Drive 平台目录）；
- *             - paintDevice() 返回内部 XImage 软件缓冲，配合
+ *             - paintDevice() 返回当前 XImage 软件缓冲，配合
  *               XPainter_begin_image 可直接绘制，无需任何平台图形 API；
  *             - resize() 记录逻辑尺寸并请求平台重建缓冲；beginPaint()/
  *               endPaint() 界定绘制区间；scroll() 在缓冲内位移；
@@ -28,6 +28,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "XGuiConfig.h"
 #include "XClass.h"
 #include "XObject.h"
@@ -128,6 +129,42 @@ XWindow* XBackingStore_window(const XBackingStore* self);
  */
 XImage* XBackingStore_paintDevice(XBackingStore* self);
 
+/** @brief 获取并准备下一块待绘制 tile；成功后 paintDevice() 指向该 tile。 */
+bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect);
+
+/** @brief 返回当前 tile 原点，用于把窗口坐标映射到局部 buffer。 */
+XPoint XBackingStore_paintOrigin(const XBackingStore* self);
+
+/**
+ * @brief      登记调用方提供的原始帧缓冲（对标 LVGL 的 set_buffers）。
+ * @details    缓冲内存由调用方分配和保持有效，XBackingStore 只借用，
+ *             不会释放。PARTIAL 模式下 bufferSize 只需容纳一个配置尺寸
+ *             的 tile；DIRECT/FULL 模式需要容纳整幅 ARGB32 图像。
+ *             配置的双缓冲需要 buffer2。
+ *             平台启动缓冲可由 XGuiConfig.h 的
+ *             XGUI_BACKINGSTORE_BUFFER1/2/BUFFER_SIZE 配置并在平台对象
+ *             创建时自动登记。显式调用本函数也应在首次 resize/绘制前
+ *             完成；同一个后端只接受一次有效绑定，后续重复调用同样
+ *             参数是幂等成功，不同参数会失败。
+ * @param      self       目标对象；可为 NULL。
+ * @param      buffer1    第一块缓冲；不能为空。
+ * @param      buffer2    第二块缓冲；单缓冲可为 NULL。绑定后不能更换。
+ * @param      bufferSize 每块缓冲容量（字节）。
+ * @return     登记成功返回 true；参数、容量或重复绑定不满足返回 false。
+ */
+bool XBackingStore_setBuffers(XBackingStore* self,
+                              void* buffer1, void* buffer2,
+                              size_t bufferSize);
+
+/**
+ * @brief      计算后备存储指定尺寸所需的单块缓冲字节数。
+ * @details    当前平台后备存储使用 ARGB32 预乘格式；PARTIAL 返回一个
+ *             tile 所需容量，DIRECT/FULL 返回整屏容量。
+ * @param      size 尺寸；NULL 或非正尺寸返回 0。
+ * @return     单块缓冲所需字节数；溢出或无效格式返回 0。
+ */
+size_t XBackingStore_requiredBufferSize(const XSize* size);
+
 /**
  * @brief      返回平台后备存储句柄（对标 QBackingStore::handle）。
  * @details    句柄由 XBackingStore 持有，调用方只可借用，不能释放或修改
@@ -202,6 +239,10 @@ void XBackingStore_endPaint(XBackingStore* self);
  */
 void XBackingStore_flush(XBackingStore* self, const XRegion* region,
                          XWindow* window, const XPoint* offset);
+
+/** @brief 将当前 tile buffer 提交到窗口的 tileRect 位置。 */
+void XBackingStore_flushTile(XBackingStore* self, XWindow* window,
+                             const XRect* tileRect, const XPoint* offset);
 
 /* ==================== 静态内容（对标 QBackingStore） ==================== */
 

@@ -453,11 +453,11 @@ static void XGridLayout_distributeSpan(XGridGeom* out,
     if (!out || start > end) return;
     n = end - start + 1;
     if (n <= 0) return;
-    temp = (XGridGeom*)XMalloc_System((size_t)n * sizeof(XGridGeom));
-    sizes = (int*)XMalloc_System((size_t)n * sizeof(int));
+    temp = (XGridGeom*)XMalloc_Hybrid((size_t)n * sizeof(XGridGeom));
+    sizes = (int*)XMalloc_Hybrid((size_t)n * sizeof(int));
     if (!temp || !sizes) {
-        XFree_System(temp);
-        XFree_System(sizes);
+        XFree_Hybrid(temp);
+        XFree_Hybrid(sizes);
         return;
     }
     for (i = 0; i < n; ++i) {
@@ -508,8 +508,8 @@ static void XGridLayout_distributeSpan(XGridGeom* out,
         for (i = start; i <= end; ++i)
             if (out[i].stretch <= 0) out[i].stretch = spanStretch;
     }
-    XFree_System(temp);
-    XFree_System(sizes);
+    XFree_Hybrid(temp);
+    XFree_Hybrid(sizes);
 }
 
 /** @brief 收集一行/列线的尺寸数据（isColumn=true 收集列）。 */
@@ -693,9 +693,9 @@ static XSize VXGridLayout_maximumSize(const XLayoutItem* item)
     if (self->m_base.m_itemCount > 0) {
         int cols = self->m_columnCount;
         int rows = self->m_rowCount;
-        XGridGeom* cg = (XGridGeom*)XMalloc_System(
+        XGridGeom* cg = (XGridGeom*)XMalloc_Hybrid(
             (size_t)(cols ? cols : 1) * sizeof(XGridGeom));
-        XGridGeom* rg = (XGridGeom*)XMalloc_System(
+        XGridGeom* rg = (XGridGeom*)XMalloc_Hybrid(
             (size_t)(rows ? rows : 1) * sizeof(XGridGeom));
         int hs = XLayout_effectiveSpacing((const XLayout*)self);
         int vs = hs;
@@ -735,8 +735,8 @@ static XSize VXGridLayout_maximumSize(const XLayoutItem* item)
             if (sum < 0) sum = 0;
             out.height = sum;
         }
-        XFree_System(cg);
-        XFree_System(rg);
+        XFree_Hybrid(cg);
+        XFree_Hybrid(rg);
     }
     return out;
 }
@@ -751,9 +751,9 @@ static XLayoutExpandingDirections VXGridLayout_expandingDirections(
     XGridGeom* rg = NULL;
     int j;
     if (!self) return out;
-    cg = (XGridGeom*)XMalloc_System((size_t)(self->m_columnCount ? self->m_columnCount : 1)
+    cg = (XGridGeom*)XMalloc_Hybrid((size_t)(self->m_columnCount ? self->m_columnCount : 1)
                                     * sizeof(XGridGeom));
-    rg = (XGridGeom*)XMalloc_System((size_t)(self->m_rowCount ? self->m_rowCount : 1)
+    rg = (XGridGeom*)XMalloc_Hybrid((size_t)(self->m_rowCount ? self->m_rowCount : 1)
                                     * sizeof(XGridGeom));
     if (cg)
         XGridLayout_collectLines(self, true, cg, self->m_columnCount);
@@ -765,8 +765,8 @@ static XLayoutExpandingDirections VXGridLayout_expandingDirections(
     if (rg)
         for (j = 0; j < self->m_rowCount; ++j)
             if (rg[j].expanding) { out |= XLayoutExpandingDirection_Vertical; break; }
-    XFree_System(cg);
-    XFree_System(rg);
+    XFree_Hybrid(cg);
+    XFree_Hybrid(rg);
     return out;
 }
 
@@ -799,7 +799,7 @@ static void XGridLayout_prepareColumns(const XGridLayout* self, int width,
     XGridGeom* cg;
     int j;
     if (!self || !colSizes || cols <= 0) return;
-    cg = (XGridGeom*)XMalloc_System((size_t)cols * sizeof(XGridGeom));
+    cg = (XGridGeom*)XMalloc_Hybrid((size_t)cols * sizeof(XGridGeom));
     if (!cg) {
         for (j = 0; j < cols; ++j) { colSizes[j] = 0; if (colPos) colPos[j] = 0; }
         return;
@@ -808,7 +808,7 @@ static void XGridLayout_prepareColumns(const XGridLayout* self, int width,
     XGridLayout_allocate(cg, cols, hSpacing, width, colSizes);
     if (colPos)
         XGridLayout_computePositions(colSizes, cg, cols, hSpacing, 0, colPos);
-    XFree_System(cg);
+    XFree_Hybrid(cg);
 }
 
 /* ==================== 几何分配（核心） ==================== */
@@ -845,23 +845,23 @@ static void VXGridLayout_setGeometry(XLayout* self, const XRect* rect)
     vSpacing = (grid->m_vSpacing >= 0) ? grid->m_vSpacing
                                        : XLayout_effectiveSpacing(self);
     if (cols > 0) {
-        colGeom = (XGridGeom*)XMalloc_System((size_t)cols * sizeof(XGridGeom));
-        colSizes = (int*)XMalloc_System((size_t)cols * sizeof(int));
-        colPos = (int*)XMalloc_System((size_t)cols * sizeof(int));
+        colGeom = (XGridGeom*)XMalloc_Hybrid((size_t)cols * sizeof(XGridGeom));
+        colSizes = (int*)XMalloc_Hybrid((size_t)cols * sizeof(int));
+        colPos = (int*)XMalloc_Hybrid((size_t)cols * sizeof(int));
     }
     if (rows > 0) {
-        rowGeom = (XGridGeom*)XMalloc_System((size_t)rows * sizeof(XGridGeom));
-        rowSizes = (int*)XMalloc_System((size_t)rows * sizeof(int));
-        rowPos = (int*)XMalloc_System((size_t)rows * sizeof(int));
+        rowGeom = (XGridGeom*)XMalloc_Hybrid((size_t)rows * sizeof(XGridGeom));
+        rowSizes = (int*)XMalloc_Hybrid((size_t)rows * sizeof(int));
+        rowPos = (int*)XMalloc_Hybrid((size_t)rows * sizeof(int));
     }
     if ((cols > 0 && (!colGeom || !colSizes || !colPos)) ||
         (rows > 0 && (!rowGeom || !rowSizes || !rowPos))) {
-        XFree_System(colGeom);
-        XFree_System(colSizes);
-        XFree_System(colPos);
-        XFree_System(rowGeom);
-        XFree_System(rowSizes);
-        XFree_System(rowPos);
+        XFree_Hybrid(colGeom);
+        XFree_Hybrid(colSizes);
+        XFree_Hybrid(colPos);
+        XFree_Hybrid(rowGeom);
+        XFree_Hybrid(rowSizes);
+        XFree_Hybrid(rowPos);
         return;
     }
     if (cols > 0) {
@@ -903,12 +903,12 @@ static void VXGridLayout_setGeometry(XLayout* self, const XRect* rect)
         XRect_init(&r, x, y, w, h);
         XLayoutItem_setGeometry_base(item, &r);
     }
-    XFree_System(colGeom);
-    XFree_System(colSizes);
-    XFree_System(colPos);
-    XFree_System(rowGeom);
-    XFree_System(rowSizes);
-    XFree_System(rowPos);
+    XFree_Hybrid(colGeom);
+    XFree_Hybrid(colSizes);
+    XFree_Hybrid(colPos);
+    XFree_Hybrid(rowGeom);
+    XFree_Hybrid(rowSizes);
+    XFree_Hybrid(rowPos);
     self->m_isDirty = 0;
     self->m_activated = 1;
 }
@@ -932,12 +932,12 @@ static XSize XGridLayout_computeHint(const XGridLayout* self, bool minMode)
         int j;
         int active;
         if (cols > 0)
-            cg = (XGridGeom*)XMalloc_System((size_t)cols * sizeof(XGridGeom));
+            cg = (XGridGeom*)XMalloc_Hybrid((size_t)cols * sizeof(XGridGeom));
         if (rows > 0)
-            rg = (XGridGeom*)XMalloc_System((size_t)rows * sizeof(XGridGeom));
+            rg = (XGridGeom*)XMalloc_Hybrid((size_t)rows * sizeof(XGridGeom));
         if ((cols > 0 && !cg) || (rows > 0 && !rg)) {
-            XFree_System(cg);
-            XFree_System(rg);
+            XFree_Hybrid(cg);
+            XFree_Hybrid(rg);
             return out;
         }
         if (cg) XGridLayout_collectLines(self, true, cg, cols);
@@ -964,8 +964,8 @@ static XSize XGridLayout_computeHint(const XGridLayout* self, bool minMode)
         if (acc < 0) acc = 0;
         if (acc > XWIDGET_MAX_SIZE) acc = XWIDGET_MAX_SIZE;
         out.height = (int)acc;
-        XFree_System(cg);
-        XFree_System(rg);
+        XFree_Hybrid(cg);
+        XFree_Hybrid(rg);
     }
     {
         /* 内容边距解析：未设置（-1）按 0 处理，与 Qt 无样式默认一致。 */
@@ -1011,15 +1011,15 @@ static int XGridLayout_doHeightForWidth(const XLayout* self, int width,
     }
     if (inner < 0) inner = 0;
     if (cols > 0) {
-        colSizes = (int*)XMalloc_System((size_t)cols * sizeof(int));
-        colPos = (int*)XMalloc_System((size_t)cols * sizeof(int));
+        colSizes = (int*)XMalloc_Hybrid((size_t)cols * sizeof(int));
+        colPos = (int*)XMalloc_Hybrid((size_t)cols * sizeof(int));
     }
     if (rows > 0)
-        rowGeom = (XGridGeom*)XMalloc_System((size_t)rows * sizeof(XGridGeom));
+        rowGeom = (XGridGeom*)XMalloc_Hybrid((size_t)rows * sizeof(XGridGeom));
     if ((cols > 0 && (!colSizes || !colPos)) || (rows > 0 && !rowGeom)) {
-        XFree_System(colSizes);
-        XFree_System(colPos);
-        XFree_System(rowGeom);
+        XFree_Hybrid(colSizes);
+        XFree_Hybrid(colPos);
+        XFree_Hybrid(rowGeom);
         return -1;
     }
     if (cols > 0)
@@ -1083,11 +1083,11 @@ static int XGridLayout_doHeightForWidth(const XLayout* self, int width,
         }
         {
             long long lineTotal = 0;
-            rowSizes = (int*)XMalloc_System((size_t)rows * sizeof(int));
+            rowSizes = (int*)XMalloc_Hybrid((size_t)rows * sizeof(int));
             if (!rowSizes) {
-                XFree_System(colSizes);
-                XFree_System(colPos);
-                XFree_System(rowGeom);
+                XFree_Hybrid(colSizes);
+                XFree_Hybrid(colPos);
+                XFree_Hybrid(rowGeom);
                 return -1;
             }
             /* heightForWidth 只有宽度输入：行高按“首选所需高度”协商，
@@ -1118,10 +1118,10 @@ static int XGridLayout_doHeightForWidth(const XLayout* self, int width,
         XMargins margin = XLayout_contentsMargins(self);
         result += margin.top + margin.bottom;
     }
-    XFree_System(colSizes);
-    XFree_System(colPos);
-    XFree_System(rowGeom);
-    XFree_System(rowSizes);
+    XFree_Hybrid(colSizes);
+    XFree_Hybrid(colPos);
+    XFree_Hybrid(rowGeom);
+    XFree_Hybrid(rowSizes);
     return result;
 }
 
