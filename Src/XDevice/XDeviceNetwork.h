@@ -186,6 +186,16 @@ int XDeviceNetwork_lastError(void);
  */
 char* XDeviceNetwork_errorString(int errorCode);
 
+/**
+ * @brief 读取主机所有非回环接口的累计收发字节数。
+ * @param rxBytes 输出累计接收字节数；失败时清零。不可为 NULL。
+ * @param txBytes 输出累计发送字节数；失败时清零。不可为 NULL。
+ * @return 成功返回 true；平台后端不支持或读取失败返回 false。
+ * @note 返回各接口开机以来的累计计数器，调用方应自行计算相邻两次采样
+ *       差值以获得速率。
+ */
+bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes);
+
 /* =========================================================================
  * DNS
  * ========================================================================= */

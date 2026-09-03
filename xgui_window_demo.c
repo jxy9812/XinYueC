@@ -35,7 +35,7 @@
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
-#include "XNetworkStats.h"
+#include "XDeviceNetwork.h"
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XPerformanceOverlay.h"
 #endif
@@ -650,7 +650,7 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
                 (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
             uint64_t rxBytes = 0;
             uint64_t txBytes = 0;
-            bool available = XNetworkStats_readCounters(&rxBytes, &txBytes);
+            bool available = XDeviceNetwork_getNetworkCounters(&rxBytes, &txBytes);
             XPerformanceOverlay_updateNetwork(&demo->m_performanceOverlay,
                                               available, rxBytes, txBytes,
                                               frameEndUsecs);

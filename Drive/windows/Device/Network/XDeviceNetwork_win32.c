@@ -359,6 +359,46 @@ char* XDeviceNetwork_errorString(int errorCode)
     return buf;
 }
 
+bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
+{
+    PMIB_IFTABLE table;
+    DWORD tableBytes = 0;
+    DWORD result;
+    DWORD i;
+
+    if (!rxBytes || !txBytes)
+        return false;
+    *rxBytes = 0;
+    *txBytes = 0;
+
+    (void)GetIfTable(NULL, &tableBytes, FALSE);
+    if (tableBytes < sizeof(*table))
+        return false;
+
+    table = (PMIB_IFTABLE)XMalloc_System(tableBytes);
+    if (!table)
+        return false;
+
+    result = GetIfTable(table, &tableBytes, FALSE);
+    if (result != NO_ERROR)
+    {
+        XMemory_free(table, XMEMORY_TYPE_SYSTEM);
+        return false;
+    }
+
+    for (i = 0; i < table->dwNumEntries; ++i)
+    {
+        const MIB_IFROW* row = &table->table[i];
+        if (row->dwType == MIB_IF_TYPE_LOOPBACK)
+            continue;
+        *rxBytes += (uint64_t)row->dwInOctets;
+        *txBytes += (uint64_t)row->dwOutOctets;
+    }
+
+    XMemory_free(table, XMEMORY_TYPE_SYSTEM);
+    return true;
+}
+
 /* =========================================================================
  * 套接字私有数据结构（平台无关基类 + Win32 扩展）
  * ========================================================================= */

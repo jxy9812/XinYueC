@@ -323,6 +323,79 @@ char* XDeviceNetwork_errorString(int errorCode)
     return buf;
 }
 
+#if defined(__linux__)
+bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
+{
+    FILE* file;
+    char line[512];
+    bool found = false;
+
+    if (!rxBytes || !txBytes)
+        return false;
+    *rxBytes = 0;
+    *txBytes = 0;
+
+    file = fopen("/proc/net/dev", "r");
+    if (!file)
+        return false;
+
+    while (fgets(line, sizeof(line), file))
+    {
+        char* colon = strchr(line, ':');
+        char* name;
+        char* cursor;
+        char* end;
+        int field;
+        uint64_t rx = 0;
+        uint64_t tx = 0;
+
+        if (!colon)
+            continue;
+        *colon = '\0';
+        name = line;
+        while (*name == ' ' || *name == '\t')
+            ++name;
+        if (strcmp(name, "lo") == 0)
+            continue;
+
+        cursor = colon + 1;
+        for (field = 0; field < 16; ++field)
+        {
+            unsigned long long value;
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+            value = strtoull(cursor, &end, 10);
+            if (end == cursor)
+                break;
+            if (field == 0)
+                rx = (uint64_t)value;
+            if (field == 8)
+                tx = (uint64_t)value;
+            cursor = end;
+        }
+
+        if (field == 16)
+        {
+            *rxBytes += rx;
+            *txBytes += tx;
+            found = true;
+        }
+    }
+
+    fclose(file);
+    return found;
+}
+#else
+bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
+{
+    if (rxBytes)
+        *rxBytes = 0;
+    if (txBytes)
+        *txBytes = 0;
+    return false;
+}
+#endif /* __linux__ */
+
 /* =========================================================================
  * 套接字私有数据结构（平台无关基类 + POSIX 扩展）
  * 对标 Windows XDeviceNetworkContextWin32
