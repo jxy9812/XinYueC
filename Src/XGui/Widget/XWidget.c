@@ -48,6 +48,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWidget.h"
+#include "XWidget_Protected.h"
 #include "XVarList.h"
 #include <string.h>
 #if XWINDOWEVENT_ON
@@ -55,6 +56,7 @@
 #endif /* XWINDOWEVENT_ON */
 #include "XGuiApplication.h"
 #include "XImage.h"
+#include "XPainter.h"
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
 #if XLAYOUT_ON
@@ -520,6 +522,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     XRect contents;
     bool wasPending;
     if (!self || !region || !self->m_updatesEnabled) return;
+    self->m_contentCacheDirty = true;
     top = XWidget_topLevel(self);
     if (!top) return;
     /* QWidget::update() 只合并脏区；同一轮事件循环内已有 UpdateRequest
@@ -1136,6 +1139,8 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     XIcon_init(&self->m_icon);
     XRegion_init(&self->m_dirty);
     XRegion_init(&self->m_staticContents);
+    self->m_contentCache = NULL;
+    self->m_contentCacheDirty = true;
     if (parent) {
         XObject_setParent(&self->m_class, (XObject*)parent);
         self->m_isWindow = (self->m_windowFlags &
@@ -1159,6 +1164,17 @@ XWidget* XWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
+}
+
+/** @brief 释放控件内容离屏缓存并把脏标记复位为待重建。 */
+static void XWidget_freeContentCache(XWidget* self)
+{
+    if (!self) return;
+    if (self->m_contentCache) {
+        XImage_delete_base(self->m_contentCache);
+        self->m_contentCache = NULL;
+    }
+    self->m_contentCacheDirty = true;
 }
 
 /** @brief 释放控件自身资源（不释放子控件；XObject 基类 Deinit 负责子树与父登记）。 */
@@ -1200,6 +1216,7 @@ static void VXWidget_deinit(XWidget* self)
     XIcon_deinit_base(&self->m_icon);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
+    XWidget_freeContentCache(self);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
         XBackingStore_delete_base(self->m_backingStore);
@@ -1228,6 +1245,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     XFont_deinit_base(&self->m_font);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
+    XWidget_freeContentCache(self);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
     self->m_windowFlags = other->m_windowFlags;
     self->m_attributes = other->m_attributes;
@@ -1288,6 +1306,8 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     /* 窗口句柄与后备存储一律置空（拷贝构造不清平台资源）。 */
     self->m_windowHandle = NULL;
     self->m_backingStore = NULL;
+    self->m_contentCache = NULL;
+    self->m_contentCacheDirty = true;
 #if XWINDOW_ON && XACCESSIBLE_ON
     if (!self->m_accessible)
         self->m_accessible = XAccessible_createForWidget(self);
@@ -1313,6 +1333,8 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #endif /* XCURSOR_ON */
     self->m_windowHandle = other->m_windowHandle; other->m_windowHandle = NULL;
     self->m_backingStore = other->m_backingStore; other->m_backingStore = NULL;
+    self->m_contentCache = NULL;      other->m_contentCache = NULL;
+    self->m_contentCacheDirty = true; other->m_contentCacheDirty = true;
 #if XWINDOW_ON && XACCESSIBLE_ON
     self->m_accessible = XAccessible_createForWidget(self);
     if (other->m_accessible) {
@@ -3381,9 +3403,93 @@ XPoint XWidget_paintOffset(const XWidget* self)
     return offset;
 }
 
-XSize XWidget_size_hw(const XWidget* self)
+void XWidget_invalidateContentCache(XWidget* self)
 {
-    return XWidget_size(self);
+    if (self) self->m_contentCacheDirty = true;
+}
+
+bool XWidget_contentCacheUsable(const XWidget* self, int width, int height)
+{
+    if (!self || !self->m_contentCache || self->m_contentCacheDirty)
+        return false;
+    return XImage_width(self->m_contentCache) == width &&
+           XImage_height(self->m_contentCache) == height;
+}
+
+XImage* XWidget_contentCacheImage(const XWidget* self)
+{
+    return self ? self->m_contentCache : NULL;
+}
+
+XImage* XWidget_beginContentCache(XWidget* self, int width, int height)
+{
+    if (!self || width <= 0 || height <= 0) return NULL;
+    if (self->m_contentCache &&
+        XImage_width(self->m_contentCache) == width &&
+        XImage_height(self->m_contentCache) == height)
+        return self->m_contentCache;
+    if (self->m_contentCache) {
+        XImage_delete_base(self->m_contentCache);
+        self->m_contentCache = NULL;
+    }
+    self->m_contentCache = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self->m_contentCache)
+        return NULL;
+    XImage_init_ex(self->m_contentCache, width, height, XImageFormat_ARGB32);
+    if (XImage_isNull(self->m_contentCache)) {
+        XImage_delete_base(self->m_contentCache);
+        self->m_contentCache = NULL;
+        return NULL;
+    }
+    self->m_contentCacheDirty = true;
+    return self->m_contentCache;
+}
+
+void XWidget_markContentCacheReady(XWidget* self)
+{
+    if (self) self->m_contentCacheDirty = false;
+}
+
+bool XWidget_drawContentCached(XWidget* self, XPainter* target,
+                               int x, int y, int width, int height,
+                               XWidgetContentDrawProc drawContent,
+                               void* userData)
+{
+    XImage* cache;
+    XPainter cachePainter;
+    bool drawn;
+    if (!self || !target || width <= 0 || height <= 0 || !drawContent)
+        return false;
+    cache = XWidget_contentCacheImage(self);
+    if (XWidget_contentCacheUsable(self, width, height) && cache &&
+        !XImage_isNull(cache))
+        return XPainter_drawImage(target, cache, x, y);
+    cache = XWidget_beginContentCache(self, width, height);
+    if (cache)
+    {
+        XPainter_init(&cachePainter, NULL);
+        if (XPainter_begin_image(&cachePainter, cache))
+        {
+            drawn = drawContent(self, &cachePainter, userData);
+            XPainter_end(&cachePainter);
+            XPainter_deinit(&cachePainter);
+            if (drawn)
+            {
+                XWidget_markContentCacheReady(self);
+                return XPainter_drawImage(target, cache, x, y);
+            }
+            return false;
+        }
+        XPainter_deinit(&cachePainter);
+    }
+    if (XPainter_save(target))
+    {
+        XPainter_translate(target, (float)x, (float)y);
+        drawn = drawContent(self, target, userData);
+        XPainter_restore(target);
+        return drawn;
+    }
+    return false;
 }
 
 /** @brief 递归绘制控件树：region 为控件本地坐标脏区，裁剪后平移递归子控件。 */

@@ -30,6 +30,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XFrame.h"
+#include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEventType.h"
 #include "XEvent.h"

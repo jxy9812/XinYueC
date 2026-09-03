@@ -33,6 +33,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XLabel.h"
+#include "XWidget_Protected.h"
 #include "XFont.h"
 #include "XMemory.h"
 #include "XEventType.h"

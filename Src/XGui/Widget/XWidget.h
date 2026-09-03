@@ -89,6 +89,8 @@ typedef struct XBackingStore XBackingStore;
 typedef struct XApplication XApplication;
 /** @brief XImage 前向声明（paintDevice 返回值；具体 API 由 XImage.h 提供）。 */
 typedef struct XImage XImage;
+/** @brief XPainter 前向声明（内容缓存绘制回调；具体 API 由 XPainter.h 提供）。 */
+typedef struct XPainter XPainter;
 /** @brief XWidget 控件对象前向声明（XWidgetEventSlot / 虚表枚举早于完整定义）。 */
 typedef struct XWidget XWidget;
 /** @brief XWidgetWindow 顶层桥接窗口前向声明（XWindow 子类，内部实现）。 */
@@ -471,6 +473,8 @@ typedef struct XWidget
     XAccessible*            m_accessible;      /**< 控件可访问节点（拥有）。 */
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
     XBackingStore*          m_backingStore;    /**< 顶层后备存储（拥有）。 */
+    XImage*                 m_contentCache;    /**< 控件内容离屏缓存（拥有；NULL=未启用/未分配）。 */
+    bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */
 #if XLAYOUT_ON
@@ -797,21 +801,6 @@ XSize XWidget_sizeHint(const XWidget* self);
  * @return     挂接布局的总最小尺寸提示，或控件保存的提示；空指针返回 (-1,-1)。
  */
 XSize XWidget_minimumSizeHint(const XWidget* self);
-/**
- * @brief      设置尺寸提示（布局子系统接入前的存储位；QWidget 子类通过
- *             override sizeHint() 提供，本实现以存储位等价提供）。
- * @param      self 目标控件；可为 NULL。
- * @param      hint 新尺寸提示；可为 NULL。
- * @return     无返回值；参数无效时不执行操作。
- */
-void XWidget_setSizeHint(XWidget* self, const XSize* hint);
-/**
- * @brief      设置最小尺寸提示（布局子系统接入前的存储位）。
- * @param      self 目标控件；可为 NULL。
- * @param      hint 新最小尺寸提示；可为 NULL。
- * @return     无返回值；参数无效时不执行操作。
- */
-void XWidget_setMinimumSizeHint(XWidget* self, const XSize* hint);
 
 /**
  * @brief      查询控件按宽度计算的高度（对标 QWidget::heightForWidth）。
@@ -826,16 +815,6 @@ int XWidget_heightForWidth(const XWidget* self, int width);
  * @return     控件布局、回调或尺寸策略支持按宽度计算高度时返回 true。
  */
 bool XWidget_hasHeightForWidth(const XWidget* self);
-/**
- * @brief      设置控件按宽度计算的高度回调。
- * @param      self 目标控件；可为 NULL。
- * @param      handler 回调函数；可为 NULL 以清除回调。
- * @param      userData 回调上下文指针；由调用方管理生命周期。
- * @return     无返回值。
- */
-void XWidget_setHeightForWidthHandler(XWidget* self,
-                                      XWidgetHeightForWidthHandler handler,
-                                      void* userData);
 
 /** @brief 查询尺寸策略（对标 QWidget::sizePolicy）。 */
 XWidgetSizePolicy XWidget_sizePolicy(const XWidget* self);
@@ -1204,22 +1183,6 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region);
 
 /** @brief 返回顶层控件的后备存储（对标 QWidget::backingStore；无则 NULL）。 */
 XBackingStore* XWidget_backingStore(const XWidget* self);
-/**
- * @brief      返回绘制设备（对标 QBackingStore::paintDevice 的控件入口）。
- * @details    顶层控件返回后备存储内部 XImage；子控件返回顶层后备存储
- *             XImage（配合 XWidget_paintOffset 完成平移）。未显示或无
- *             后备存储返回 NULL。只能在后备存储 beginPaint/endPaint
- *             之间使用。
- */
-XImage* XWidget_paintDevice(const XWidget* self);
-/**
- * @brief      返回控件在顶层后备存储中的原点偏移（像素）。
- * @details    供 paintEvent 内 XPainter_translate 使用，把子控件本地坐标
- *             平移到后备存储坐标。
- */
-XPoint XWidget_paintOffset(const XWidget* self);
-/** @brief 查询控件尺寸（内部便捷接口；同 XWidget_size）。 */
-XSize XWidget_size_hw(const XWidget* self);
 
 /* ==================== 布局挂接（对标 QWidget::layout/setLayout） ==================== */
 
@@ -1246,180 +1209,6 @@ XLayout* XWidget_layout(const XWidget* self);
 void XWidget_setLayout(XWidget* self, XLayout* layout);
 #endif /* XLAYOUT_ON */
 
-/* ==================== 事件分派（对标 QWidget protected 事件虚函数） ==================== */
-
-/**
- * @brief      控件事件总入口（对标 QWidget::event）。
- * @details    按 XEventType 分派到 18 个事件虚函数；未识别事件回退
- *             XObject 默认 Event 实现。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 待分派事件；可为 NULL。
- * @return     事件已处理返回 true。
- */
-bool XWidget_event_base(XWidget* self, XEvent* event);
-
-/**
- * @brief      绘制事件槽（对标 QWidget::paintEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 绘制事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_paintEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      调整大小事件槽（对标 QWidget::resizeEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 调整大小事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_resizeEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      移动事件槽（对标 QWidget::moveEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 移动事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_moveEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      关闭事件槽（对标 QWidget::closeEvent；默认接受）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 关闭事件；可为 NULL。
- * @return     无返回值；默认处理接受关闭事件。
- */
-void XWidget_closeEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      焦点进入事件槽（对标 QWidget::focusInEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 焦点进入事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_focusInEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      焦点离开事件槽（对标 QWidget::focusOutEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 焦点离开事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_focusOutEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      指针进入事件槽（对标 QWidget::enterEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 指针进入事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_enterEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      指针离开事件槽（对标 QWidget::leaveEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 指针离开事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_leaveEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      键盘按下事件槽（对标 QWidget::keyPressEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 键盘按下事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_keyPressEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      键盘释放事件槽（对标 QWidget::keyReleaseEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 键盘释放事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_keyReleaseEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      输入法组合/提交事件槽（对标 QWidget::inputMethodEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 输入法事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_inputMethodEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      拖放进入事件槽（对标 QWidget::dragEnterEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 拖放进入事件；可为 NULL。
- * @return     无返回值；禁用状态不在 QWidget::event 的丢弃列表中。
- */
-void XWidget_dragEnterEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      拖放移动事件槽（对标 QWidget::dragMoveEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 拖放移动事件；可为 NULL。
- * @return     无返回值；禁用状态不在 QWidget::event 的丢弃列表中。
- */
-void XWidget_dragMoveEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      拖放离开事件槽（对标 QWidget::dragLeaveEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 拖放离开事件；可为 NULL。
- * @return     无返回值；禁用状态不在 QWidget::event 的丢弃列表中。
- */
-void XWidget_dragLeaveEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      放下事件槽（对标 QWidget::dropEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 放下事件；可为 NULL。
- * @return     无返回值；是否接受由 acceptDrops 属性决定。
- */
-void XWidget_dropEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      鼠标按下事件槽（对标 QWidget::mousePressEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 鼠标按下事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_mousePressEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      鼠标释放事件槽（对标 QWidget::mouseReleaseEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 鼠标释放事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_mouseReleaseEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      鼠标双击事件槽（对标 QWidget::mouseDoubleClickEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 鼠标双击事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_mouseDoubleClickEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      鼠标移动事件槽（对标 QWidget::mouseMoveEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 鼠标移动事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_mouseMoveEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      滚轮事件槽（对标 QWidget::wheelEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 滚轮事件；可为 NULL。
- * @return     无返回值；禁用控件的事件由 event_base 丢弃。
- */
-void XWidget_wheelEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      显示事件槽（对标 QWidget::showEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 显示事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_showEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      隐藏事件槽（对标 QWidget::hideEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 隐藏事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_hideEvent_base(XWidget* self, XEvent* event);
-/**
- * @brief      属性/状态变更事件槽（对标 QWidget::changeEvent）。
- * @param      self 接收事件的控件；可为 NULL。
- * @param      event 状态变更事件；可为 NULL。
- * @return     无返回值。
- */
-void XWidget_changeEvent_base(XWidget* self, XEvent* event);
-
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 
 /**
@@ -1443,33 +1232,6 @@ void* XWidget_windowIconChanged_signal(XWidget* self, XIcon* icon);
  * @return     信号标识或发射结果指针。
  */
 void* XWidget_customContextMenuRequested_signal(XWidget* self, const XPoint* pos);
-
-/* ==================== 平台/测试接入钩子（内部） ==================== */
-
-/**
- * @brief      顶层控件窗口几何变化钩子（XWidgetWindow 事件桥调用）。
- * @details    由平台 ConfigureNotify/GeometryChange 驱动，同步几何字段并
- *             派发 move/resize 事件。
- * @param      self 顶层控件；可为 NULL。
- * @param      geometry 平台报告的新几何；可为 NULL。
- * @param      oldSize 平台报告的旧尺寸；可为 NULL。
- */
-void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
-                                 const XSize* oldSize);
-/**
- * @brief      顶层控件可见状态变化钩子（XWidgetWindow 事件桥调用）。
- * @param      self 顶层控件；可为 NULL。
- * @param      visible 新显式可见状态。
- */
-void XWidget_applyWindowVisibility(XWidget* self, bool visible);
-/**
- * @brief      顶层控件后备存储刷新入口：把脏区放到离屏缓冲并上屏。
- * @details    paintEvent 由平台/应用事件环触发后集中调用；子控件脏区
- *             已折算到顶层坐标。无后备存储时自动按控件尺寸创建。
- * @param      self 顶层控件；可为 NULL。
- * @param      region 待刷新的顶层区域；可为 NULL 表示整窗。
- */
-void XWidget_flushBackingStore(XWidget* self, const XRegion* region);
 
 #endif /* XWIDGET_ON */
 

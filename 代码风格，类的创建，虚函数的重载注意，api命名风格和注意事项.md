@@ -735,6 +735,7 @@ void XXmlDomElement_setAttribute(XXmlDomElement* self,
 - [ ] 返回的借用指针、新对象和空句柄语义清楚，释放责任明确。
 - [ ] 编码、索引单位、线程安全、NULL 和失败时对象状态已经写明。
 - [ ] 注释与实际实现一致；修改 API 行为时同步更新注释和测试。
+- [ ] 公开头文件只声明公有 API；protected/内部接口已迁入 `XClassName_Protected.h`，调用方已显式 include。
 
 ---
 
@@ -1027,6 +1028,30 @@ XVtable* XClass_class_init(void)
 int64_t XIODevice_readData_base(XIODevice* device, char* data, int64_t maxSize);
 int64_t XIODevice_writeData_base(XIODevice* device, const char* data, int64_t maxSize);
 ```
+
+### 保护头文件规范（`XClassName_Protected.h`）
+
+保护头文件集中放置 Qt 中属于 `protected` 或内部实现的接口，只供子类与内部实现使用，不写入公开头文件，也不对外公开。
+
+#### 职责与迁移范围
+
+| API 类别 | 存放位置 | 示例 |
+|---|---|---|
+| 公开查询/设置 API | `XClassName.h` | `XWidget_sizeHint`、`XWidget_minimumSizeHint`、`XWidget_heightForWidth`、`XWidget_backingStore` |
+| Qt protected 子类重载入口/事件分派 | `XClassName_Protected.h` | `XWidget_event_base`、`XWidget_paintEvent_base`、`XWidget_resizeEvent_base` |
+| 子类/内部绘制辅助 | `XClassName_Protected.h` | `XWidget_setSizeHint`、`XWidget_paintDevice`、`XWidget_paintOffset`、`XWidget_drawContentCached` |
+| 内容缓存/离屏缓存辅助 | `XClassName_Protected.h` | `XWidget_beginContentCache`、`XWidget_markContentCacheReady` |
+| 平台/桥接内部钩子 | `XClassName_Protected.h` | `XWidget_applyWindowGeometry`、`XWidget_applyWindowVisibility`、`XWidget_flushBackingStore` |
+
+#### 硬性约定
+
+1. **文件命名**：固定为 `XClassName_Protected.h`，例如 `XWidget_Protected.h`、`XIODevice_Protected.h`。
+2. **公开头文件只放公有 API**：`XClassName.h` 不得声明 `*_base` 事件分派、`setSizeHint` 一类子类存储位、内部绘制设备、内容缓存内部入口或平台钩子；普通用户 API 头文件链不能传递引入 `XClassName_Protected.h`。
+3. **Protected 头文件内部自包含**：`XClassName_Protected.h` 必须 `#include "XClassName.h"`，并保留自己的头文件保护宏。
+4. **注释标准同公开头文件**：保护接口也必须写中文 Doxygen `@brief/@param/@return`；在文件头 `@details` 标明“仅供子类和内部实现使用，不对外公开”。
+5. **使用者必须显式 include**：任何调用保护接口的 `.c` 文件都应显式 `#include "XClassName_Protected.h"`，不得依赖间接传递；新类创建时必须同步放置该头文件。
+6. **迁移接口必须同步更新调用方**：把接口从公开头文件移入 Protected 后，用 `rg` 或等效工具扫描全部调用方并逐个补 include，按新头文件结构重新构建验证。
+7. **与 Qt 对照时不要把公开查询接口误移**：如 `sizeHint`、`minimumSizeHint`、`heightForWidth`、`hasHeightForWidth`、`backingStore` 等 Qt 公开查询函数保持公开；只有 Qt protected 虚函数、内部存储位和平台/桥接钩子才进入 Protected。
 
 ---
 

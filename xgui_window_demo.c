@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       xgui_window_demo.c
  * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
  * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
@@ -30,6 +30,7 @@
 #include "XDateTime.h"
 #include "XGuiApplication.h"
 #include "XWidget.h"
+#include "XWidget_Protected.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
 #include "XImage.h"
@@ -329,23 +330,31 @@ static bool demo_rectsIntersect(const XRect* first, const XRect* second)
 
 /** @brief 将静态场景中对应 tile 的 32 位像素直接复制到后备绘制设备。 */
 static bool demo_copyStaticTile(const XImage* scene, XImage* tile,
-                                const XRect* tileRect)
+                                const XRect* tileRect, const XPoint* offset)
 {
     const uint8_t* source;
     uint8_t* target;
     size_t rowBytes;
+    int targetX;
+    int targetY;
     int row;
     if (!scene || !tile || !tileRect || tileRect->x < 0 || tileRect->y < 0 ||
         tileRect->width <= 0 || tileRect->height <= 0 ||
         tileRect->x + tileRect->width > XImage_width(scene) ||
         tileRect->y + tileRect->height > XImage_height(scene) ||
-        tileRect->width > XImage_width(tile) ||
-        tileRect->height > XImage_height(tile) || XImage_depth(scene) != 32 ||
-        XImage_depth(tile) != 32)
+        XImage_depth(scene) != 32 || XImage_depth(tile) != 32)
+        return false;
+    targetX = tileRect->x + (offset ? offset->x : 0);
+    targetY = tileRect->y + (offset ? offset->y : 0);
+    if (targetX < 0 || targetY < 0 ||
+        targetX + tileRect->width > XImage_width(tile) ||
+        targetY + tileRect->height > XImage_height(tile))
         return false;
     source = XImage_constBits(scene);
     target = XImage_bits(tile);
     if (!source || !target) return false;
+    target += (size_t)targetY * (size_t)XImage_bytesPerLine(tile) +
+              (size_t)targetX * 4u;
     rowBytes = (size_t)tileRect->width * 4u;
     for (row = 0; row < tileRect->height; ++row) {
         memcpy(target + (size_t)row * (size_t)XImage_bytesPerLine(tile),
@@ -364,29 +373,49 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     XImage* device;
     XPainter painter;
     XPoint offset;
+    XRect dirty;
     XRect tile;
     int width;
     int height;
-    (void)event;
     if (!self) return;
     width = XWidget_width(&self->m_base);
     height = XWidget_height(&self->m_base);
     if (width <= 0 || height <= 0) return;
     device = XWidget_paintDevice(&self->m_base);
     if (!device) return;
+    offset = XWidget_paintOffset(&self->m_base);
+    if (event && XEvent_type(event) == XEVENT_TYPE_PAINT)
+        dirty = XPaintEvent_rect((const XPaintEvent*)event);
+    else
+        XRect_init(&dirty, 0, 0, width, height);
+    /* 事件脏区是控件本地坐标；转成静态场景坐标并裁剪到窗口内，
+       这样常态刷新只复制悬浮层所在小块，而不是整帧 memcpy。 */
+    dirty.x += offset.x;
+    dirty.y += offset.y;
+    if (dirty.x < 0) {
+        dirty.width += dirty.x;
+        dirty.x = 0;
+    }
+    if (dirty.y < 0) {
+        dirty.height += dirty.y;
+        dirty.y = 0;
+    }
+    if (dirty.x + dirty.width > width)
+        dirty.width = width - dirty.x;
+    if (dirty.y + dirty.height > height)
+        dirty.height = height - dirty.y;
+    if (dirty.width <= 0 || dirty.height <= 0) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, device)) {
         XPainter_deinit(&painter);
         return;
     }
-    offset = XWidget_paintOffset(&self->m_base);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-    XRect_init(&tile, -offset.x, -offset.y,
-               XImage_width(device), XImage_height(device));
+    tile = dirty;
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
     if (!demo_updateStaticScene(self, width, height) ||
-        !demo_copyStaticTile(&self->m_staticScene, device, &tile))
+        !demo_copyStaticTile(&self->m_staticScene, device, &tile, &offset))
         demo_drawStaticScene(self, &painter, width, height);
 #else
     demo_drawStaticScene(self, &painter, width, height);

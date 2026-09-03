@@ -3,12 +3,18 @@
  * @brief      XGui 性能悬浮层控件实现。
  ******************************************************************************/
 #include "XPerformanceOverlay.h"
+#include "XWidget_Protected.h"
 #include "XFont.h"
+#include "XImage.h"
 #include "XMemory.h"
 #include <stdio.h>
 #include <string.h>
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+
+static bool performanceOverlay_drawContent(XWidget* widget,
+                                           XPainter* painter,
+                                           void* userData);
 
 static void performanceOverlay_updateText(XPerformanceOverlay* self)
 {
@@ -549,19 +555,34 @@ void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter)
     int x;
     int y;
     XRect geo;
+    int width;
+    int height;
+    XWidget* widget;
     if (!self || !painter) return;
     geo = XPerformanceOverlay_geometry(self);
     x = geo.x;
     y = geo.y;
-    {
-        XRect rect = { x, y, geo.width, geo.height };
-        XPainter_fillRect(painter, &rect, self->m_backgroundColor);
-    }
-    if (XPainter_save(painter)) {
-        XPainter_translate(painter, (float)x, (float)y);
-        XLabel_drawContents(&self->m_base, painter);
-        XPainter_restore(painter);
-    }
+    width = geo.width;
+    height = geo.height;
+    if (width <= 0 || height <= 0) return;
+    widget = (XWidget*)&self->m_base;
+    (void)XWidget_drawContentCached(widget, painter, x, y, width, height,
+                                    performanceOverlay_drawContent, self);
+}
+
+/** @brief 按内容坐标系（0,0 起点）绘制悬浮层外观。 */
+static bool performanceOverlay_drawContent(XWidget* widget,
+                                           XPainter* painter,
+                                           void* userData)
+{
+    XPerformanceOverlay* self;
+    XRect rect;
+    self = (XPerformanceOverlay*)userData;
+    if (!self || !painter) return false;
+    XRect_init(&rect, 0, 0, XWidget_width(widget), XWidget_height(widget));
+    XPainter_fillRect(painter, &rect, self->m_backgroundColor);
+    XLabel_drawContents(&self->m_base, painter);
+    return true;
 }
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */

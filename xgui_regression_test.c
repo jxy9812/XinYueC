@@ -70,6 +70,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #endif /* XSCREEN_ON && XPLATFORMNATIVEWINDOW_ON */
 #if XWIDGET_ON
 #include "XWidget.h"
+#include "XWidget_Protected.h"
 #endif /* XWIDGET_ON */
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XLabel.h"

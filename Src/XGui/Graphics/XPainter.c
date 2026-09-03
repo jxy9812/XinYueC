@@ -1289,6 +1289,103 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
 /**
  * @brief      软件光栅绘制图像（最近邻采样，支持变换）。
  */
+static bool painterRaster_blitImageSameFormat(XPainter* self,
+                                              const XImage* image,
+                                              int x, int y,
+                                              int width, int height,
+                                              uint8_t opacity,
+                                              XPainterCompositionMode mode)
+{
+    XImageFormat srcFormat;
+    XImageFormat dstFormat;
+    const uint8_t* src;
+    uint8_t* dst;
+    int srcBpl;
+    int dstBpl;
+    int destW;
+    int destH;
+    int sx0;
+    int sy0;
+    int dx0;
+    int dy0;
+    int cw;
+    int ch;
+    int sy;
+    if (!self || !self->m_image || !image) return false;
+    if (mode != XPainterCompositionMode_Source &&
+        (mode != XPainterCompositionMode_SourceOver || opacity != 255u))
+        return false;
+    srcFormat = XImage_format(image);
+    dstFormat = XImage_format(self->m_image);
+    if (srcFormat != dstFormat &&
+        !((srcFormat == XImageFormat_ARGB32 &&
+           dstFormat == XImageFormat_ARGB32_Premultiplied) ||
+          (srcFormat == XImageFormat_ARGB32_Premultiplied &&
+           dstFormat == XImageFormat_ARGB32)))
+        return false;
+    switch (srcFormat)
+    {
+        case XImageFormat_ARGB32:
+        case XImageFormat_ARGB32_Premultiplied:
+        case XImageFormat_RGB32:
+        case XImageFormat_RGBX8888:
+            break;
+        default:
+            return false;
+    }
+    src = XImage_constBits(image);
+    dst = XImage_bits(self->m_image);
+    if (!src || !dst) return false;
+    srcBpl = XImage_bytesPerLine(image);
+    dstBpl = XImage_bytesPerLine(self->m_image);
+    destW = XImage_width(self->m_image);
+    destH = XImage_height(self->m_image);
+    if (srcBpl < width * 4 || dstBpl < destW * 4) return false;
+    sx0 = 0; sy0 = 0; dx0 = x; dy0 = y;
+    cw = width; ch = height;
+    if (dx0 < 0) { sx0 = -dx0; cw += dx0; dx0 = 0; }
+    if (dy0 < 0) { sy0 = -dy0; ch += dy0; dy0 = 0; }
+    if (dx0 + cw > destW) cw = destW - dx0;
+    if (dy0 + ch > destH) ch = destH - dy0;
+    if (cw <= 0 || ch <= 0) return true;
+    for (sy = 0; sy < ch; ++sy)
+    {
+        const uint32_t* srcRow = (const uint32_t*)(src +
+            (size_t)(sy + sy0) * (size_t)srcBpl + (size_t)sx0 * 4u);
+        uint32_t* dstRow = (uint32_t*)(dst +
+            (size_t)(sy + dy0) * (size_t)dstBpl + (size_t)dx0 * 4u);
+        if (mode == XPainterCompositionMode_Source &&
+            srcFormat == dstFormat)
+        {
+            memcpy(dstRow, srcRow, (size_t)cw * 4u);
+            continue;
+        }
+        {
+            int px;
+            bool rowOpaque = true;
+            for (px = 0; px < cw; ++px)
+            {
+                if (((srcRow[px] >> 24u) & 0xffu) != 0xffu)
+                {
+                    rowOpaque = false;
+                    break;
+                }
+            }
+            if (rowOpaque)
+            {
+                memcpy(dstRow, srcRow, (size_t)cw * 4u);
+            }
+            else
+            {
+                for (px = 0; px < cw; ++px)
+                    painterRaster_putPixel(self, dx0 + px, dy0 + sy,
+                                           srcRow[px]);
+            }
+        }
+    }
+    return true;
+}
+
 static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                                     int x, int y)
 {
@@ -1308,6 +1405,18 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
     if (painterMatrixIsIdentity(&transform))
     {
         int sy;
+#if XPAINTER_CLIP_ON
+        if (!state->m_hasClip &&
+            painterRaster_blitImageSameFormat(self, image, x, y, width, height,
+                                              opacity,
+                                              state->m_compositionMode))
+            return true;
+#else
+        if (painterRaster_blitImageSameFormat(self, image, x, y, width, height,
+                                              opacity,
+                                              state->m_compositionMode))
+            return true;
+#endif
         for (sy = 0; sy < height; ++sy)
         {
             int sx;

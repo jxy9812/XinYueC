@@ -23,6 +23,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPushButton.h"
+#include "XWidget_Protected.h"
 #include "XPainter.h"
 #include "XPalette.h"
 #include "XColor.h"
