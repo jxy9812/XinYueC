@@ -23,10 +23,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#if !defined(_WIN32)
-#include <time.h>
-#endif
-
 #include "CXinYueConfig.h"
 #include "XPrintf.h"
 #include "XObject.h"
@@ -39,13 +35,9 @@
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
+#include "XNetworkStats.h"
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XPerformanceOverlay.h"
-#endif
-#if defined(_WIN32)
-#include <windows.h>
-#include <iphlpapi.h>
-#pragma comment(lib, "iphlpapi.lib")
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
@@ -224,7 +216,7 @@ static void demo_performance_init(DemoWin* self)
     XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 14);
     XPerformanceOverlay_setPresetPosition(
         &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-        520, 360, 8);
+        520, 360, 0);
     XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
 }
 
@@ -250,89 +242,6 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
     return position.x >= geo.x && position.x < geo.x + geo.width &&
            position.y >= geo.y && position.y < geo.y + geo.height;
 }
-
-#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
-/** @brief 读取主机所有非回环接口的累计收发字节数。 */
-static bool demo_network_counters(uint64_t* rxBytes, uint64_t* txBytes)
-{
-    if (!rxBytes || !txBytes) return false;
-    *rxBytes = 0;
-    *txBytes = 0;
-#if defined(_WIN32)
-    {
-        PMIB_IFTABLE table;
-        DWORD tableBytes = 0;
-        DWORD result;
-        DWORD i;
-        (void)GetIfTable(NULL, &tableBytes, FALSE);
-        if (tableBytes < sizeof(*table))
-            return false;
-        table = (PMIB_IFTABLE)malloc(tableBytes);
-        if (!table)
-            return false;
-        result = GetIfTable(table, &tableBytes, FALSE);
-        if (result != NO_ERROR)
-        {
-            free(table);
-            return false;
-        }
-        for (i = 0; i < table->dwNumEntries; ++i)
-        {
-            const MIB_IFROW* row = &table->table[i];
-            if (row->dwType == MIB_IF_TYPE_LOOPBACK)
-                continue;
-            *rxBytes += (uint64_t)row->dwInOctets;
-            *txBytes += (uint64_t)row->dwOutOctets;
-        }
-        free(table);
-        return true;
-    }
-#elif defined(__linux__)
-    {
-        FILE* file = fopen("/proc/net/dev", "r");
-        char line[512];
-        bool found = false;
-        if (!file) return false;
-        while (fgets(line, sizeof(line), file))
-        {
-            char* colon = strchr(line, ':');
-            char* name;
-            char* cursor;
-            char* end;
-            int field;
-            uint64_t rx = 0;
-            uint64_t tx = 0;
-            if (!colon) continue;
-            *colon = '\0';
-            name = line;
-            while (*name == ' ' || *name == '\t') ++name;
-            if (strcmp(name, "lo") == 0) continue;
-            cursor = colon + 1;
-            for (field = 0; field < 16; ++field)
-            {
-                unsigned long long value;
-                while (*cursor == ' ' || *cursor == '\t') ++cursor;
-                value = strtoull(cursor, &end, 10);
-                if (end == cursor) break;
-                if (field == 0) rx = (uint64_t)value;
-                if (field == 8) tx = (uint64_t)value;
-                cursor = end;
-            }
-            if (field == 16)
-            {
-                *rxBytes += rx;
-                *txBytes += tx;
-                found = true;
-            }
-        }
-        fclose(file);
-        return found;
-    }
-#else
-    return false;
-#endif
-}
-#endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -518,22 +427,7 @@ static void demo_repaint(DemoWin* self)
 /** @brief 返回单调微秒计时，用于真实窗口绘制基准。 */
 static int64_t demo_monotonicUsecs(void)
 {
-#if defined(_WIN32)
-    static LARGE_INTEGER frequency;
-    LARGE_INTEGER counter;
-    if (frequency.QuadPart == 0)
-        QueryPerformanceFrequency(&frequency);
-    if (frequency.QuadPart != 0 && QueryPerformanceCounter(&counter))
-        return counter.QuadPart * 1000000LL / frequency.QuadPart;
-#elif defined(CLOCK_MONOTONIC)
-    {
-        struct timespec value;
-        if (clock_gettime(CLOCK_MONOTONIC, &value) == 0)
-            return (int64_t)value.tv_sec * 1000000LL +
-                   (int64_t)value.tv_nsec / 1000LL;
-    }
-#endif
-    /* Keep the demo usable on platforms without a monotonic clock. */
+    /* 统一走 XDateTime 提供的跨平台时钟，避免在 demo 里散落平台时钟 API。 */
     return XDateTime_currentNSecsSinceEpoch() / 1000LL;
 }
 
@@ -731,7 +625,7 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
         XPerformanceOverlay_setPresetPosition(
             &demo->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-            XWidget_width(self), XWidget_height(self), 8);
+            XWidget_width(self), XWidget_height(self), 0);
     }
 #endif
     demo_repaint(demo);
@@ -756,7 +650,7 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
                 (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
             uint64_t rxBytes = 0;
             uint64_t txBytes = 0;
-            bool available = demo_network_counters(&rxBytes, &txBytes);
+            bool available = XNetworkStats_readCounters(&rxBytes, &txBytes);
             XPerformanceOverlay_updateNetwork(&demo->m_performanceOverlay,
                                               available, rxBytes, txBytes,
                                               frameEndUsecs);
