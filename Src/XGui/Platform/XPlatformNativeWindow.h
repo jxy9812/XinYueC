@@ -47,6 +47,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XTypes.h"
 #include "XGeometry.h"
+#include "XEvent.h"
 #if XPLATFORMNATIVEWINDOW_ON
 
 /** @brief 平台原生窗口连接类型（供 nativeConnection 区分平台）。 */
@@ -207,6 +208,18 @@ bool XPlatformNativeWindow_processPendingEvents(void);
  * @return     true 就绪并注入了事件；false 超时、被打断或不可用。
  */
 bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds);
+
+/**
+ * @brief      查询原生输入设备当前按下的修饰键。
+ * @details    此接口是 XPlatformIntegration 键盘查询的后端契约：Linux X11
+ *             从 Display 的键盘映射读取，Windows 从 GetKeyState 读取；不具备
+ *             原生输入后端的嵌入式实现返回 false，调用方据此回退事件缓存。
+ *             公共 GUI 层不得直接调用平台 API。
+ * @param      outModifiers 成功时写入 XKeyboardModifiers；不可为 NULL。
+ * @return     true 已获得即时设备状态；false 后端不可用或参数无效。
+ */
+bool XPlatformNativeWindow_queryKeyboardModifiers(
+        XKeyboardModifiers* outModifiers);
 
 /* ==================== 上屏（平台后端提供） ==================== */
 

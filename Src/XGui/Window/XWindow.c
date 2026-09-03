@@ -40,6 +40,9 @@
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
+#if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON
+#include "XPlatformIntegration.h"
+#endif /* XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON */
 #if XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #endif /* XPLATFORMNATIVEWINDOW_ON */
@@ -648,9 +651,19 @@ void XWindow_createHandle(XWindow* self)
     XWindowPrivate* data;
     if (!self || !(data = self->m_data) || data->m_created) return;
     data->m_created = true;
+#if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON
+    /* 对齐 QWindow::create(): 应用拥有的平台集成层在此按需创建平台窗口。
+       应用代码只需调用 show()/setVisible(true)，无需触及平台工厂。 */
+    if (!data->m_platform) {
+        XGuiApplication* app = XGuiApplication_instance();
+        if (app && app->m_platformIntegration)
+            (void)XPlatformIntegration_createPlatformWindow(
+                app->m_platformIntegration, self);
+    }
+#endif /* XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON */
 #if XPLATFORMNATIVEWINDOW_ON
-    /* 已挂接真实原生窗口（平台后端注入）时，创建系统窗口并接管真实 WId；
-       创建失败/未挂接则继续回落嵌入式自增虚拟 WId 行为。 */
+    /* 平台窗口已由应用集成层自动挂接时，创建系统窗口并接管真实 WId；
+       创建失败/无平台后端则继续回落嵌入式自增虚拟 WId 行为。 */
     if (data->m_platform && data->m_nativeWindowAttached) {
         if (XPlatformNativeWindow_create(self)) {
             data->m_winId = XPlatformNativeWindow_winId(self);

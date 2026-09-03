@@ -497,7 +497,8 @@ XWindowState XPlatformIntegration_defaultWindowState(
 
 /**
  * @brief      查询当前键盘修饰键（对标 queryKeyboardModifiers）。
- * @details    转发 XGuiApplication_queryKeyboardModifiers()（程序化状态）。
+ * @details    优先经 XPlatformNativeWindow 后端查询输入设备的即时状态；无
+ *             原生后端时回退到 XGuiApplication 最后派发事件的缓存状态。
  * @return     当前修饰键位组合。
  */
 XKeyboardModifiers XPlatformIntegration_queryKeyboardModifiers(

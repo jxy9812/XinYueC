@@ -126,20 +126,10 @@ XApplication* XApplication_create_ex(XMemoryType memory, int argc, char** argv);
  */
 XApplication* XApplication_instance(void);
 
-/* ==================== 事件循环（对标 QApplication::exec / quit） ==================== */
+/* ==================== 事件循环（直接复用父类 API） ==================== */
 
-/**
- * @brief      进入主事件循环（对标 QApplication::exec）。
- * @details    委托 XCoreApplication_exec；返回后调用方按返回码退出流程。
- * @return     退出码（XCoreApplication::exec 语义）。
- */
-int XApplication_exec(void);
-
-/**
- * @brief      请求退出事件循环（对标 QApplication::quit）。
- * @details    委托 XCoreApplication_quit（exit(0)）。
- */
-void XApplication_quit(void);
+#define XApplication_exec XGuiApplication_exec
+#define XApplication_quit XGuiApplication_quit
 
 /* ==================== 控件注册表（对标 QApplication::widgetAt / topLevelWidgets） ==================== */
 

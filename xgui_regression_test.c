@@ -13,6 +13,7 @@
 #include "XDir.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
+#include "XAlignment.h"
 #include "XFont.h"
 #include "XFontBitmapFace.h"
 #if XFONT_OUTLINE_ON
@@ -73,6 +74,9 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 #include "XLabel.h"
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+#include "XPerformanceOverlay.h"
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #if XWIDGET_ON && XFRAME_ON
 #include "XFrame.h"
 #endif /* XWIDGET_ON && XFRAME_ON */
@@ -621,6 +625,22 @@ static size_t image_count_non_background(const XImage* image,
     for (y = 0; y < XImage_height(image); ++y) {
         for (x = 0; x < XImage_width(image); ++x) {
             if (XImage_pixel(image, x, y) != background)
+                ++count;
+        }
+    }
+    return count;
+}
+
+/** @brief 统计图像中与指定 ARGB 颜色完全一致的像素数量。 */
+static size_t image_count_color(const XImage* image, uint32_t color)
+{
+    size_t count = 0;
+    int x;
+    int y;
+    if (!image) return 0;
+    for (y = 0; y < XImage_height(image); ++y) {
+        for (x = 0; x < XImage_width(image); ++x) {
+            if (XImage_pixel(image, x, y) == color)
                 ++count;
         }
     }
@@ -17758,6 +17778,7 @@ static void test_gui_application_contract(void)
     XVector* list;
     size_t i;
     float dpr;
+    XKeyboardModifiers queriedModifiers;
 
     /* ---------------- 生命周期与单例 ---------------- */
 
@@ -18057,7 +18078,8 @@ static void test_gui_application_contract(void)
         expect_true(XGuiApplication_screenAt(&(XPoint){2000, 2000}) == NULL,
                     "screenAt 空区域返回 NULL");
         dpr = XGuiApplication_devicePixelRatio();
-        expect_true(dpr > 1.99f && dpr < 2.01f, "devicePixelRatio 取主屏 2.0");
+        expect_true(dpr > 1.99f && dpr < 2.01f,
+                    "devicePixelRatio 返回全部屏幕最高值 2.0");
 
 #if XIMAGECODEC_ON
         /* Qt qicon.cpp:1178-1181 在 QPixmapIconEngine 登记基础文件后，
@@ -18117,12 +18139,16 @@ static void test_gui_application_contract(void)
                     g_guiAppProbe.primaryScreenChanged == 2,
                     "切换主屏再次发射");
         dpr = XGuiApplication_devicePixelRatio();
-        expect_true(dpr > 1.49f && dpr < 1.51f, "devicePixelRatio 跟随主屏");
+        expect_true(dpr > 1.99f && dpr < 2.01f,
+                    "devicePixelRatio 不随较低 DPR 主屏切换而降低");
 
         XGuiApplication_screenRemoved(s1);
         expect_true(g_guiAppProbe.screenRemoved == 1 &&
                     g_guiAppProbe.lastScreen == s1,
                     "screenRemoved 发射并注销");
+        dpr = XGuiApplication_devicePixelRatio();
+        expect_true(dpr > 1.49f && dpr < 1.51f,
+                    "最高 DPR 屏幕移除后重新计算为剩余屏幕值");
         XGuiApplication_screenRemoved(s2);
         expect_true(g_guiAppProbe.screenRemoved == 2 &&
                     XGuiApplication_primaryScreen() == NULL,
@@ -18368,20 +18394,28 @@ static void test_gui_application_contract(void)
 
     /* ---------------- 输入状态 / 布局方向 ---------------- */
 
+    queriedModifiers = XGuiApplication_queryKeyboardModifiers();
     expect_true(XGuiApplication_keyboardModifiers() ==
                 XKeyboardModifier_NoModifier &&
-                XGuiApplication_queryKeyboardModifiers() ==
-                XKeyboardModifier_NoModifier,
-                "键盘修饰键默认 0");
+                (queriedModifiers & ~(XKeyboardModifier_ShiftModifier |
+                                       XKeyboardModifier_ControlModifier |
+                                       XKeyboardModifier_AltModifier |
+                                       XKeyboardModifier_MetaModifier |
+                                       XKeyboardModifier_KeypadModifier)) == 0,
+                "键盘修饰键缓存默认 0，原生查询只返回已定义位");
     XGuiApplication_setKeyboardModifiers(
         (XKeyboardModifiers)(XKeyboardModifier_ControlModifier |
                              XKeyboardModifier_ShiftModifier));
+    queriedModifiers = XGuiApplication_queryKeyboardModifiers();
     expect_true(XGuiApplication_keyboardModifiers() ==
                 (XKeyboardModifiers)(XKeyboardModifier_ControlModifier |
                                      XKeyboardModifier_ShiftModifier) &&
-                XGuiApplication_queryKeyboardModifiers() ==
-                XGuiApplication_keyboardModifiers(),
-                "键盘修饰键设置/查询");
+                (queriedModifiers & ~(XKeyboardModifier_ShiftModifier |
+                                       XKeyboardModifier_ControlModifier |
+                                       XKeyboardModifier_AltModifier |
+                                       XKeyboardModifier_MetaModifier |
+                                       XKeyboardModifier_KeypadModifier)) == 0,
+                "事件缓存和原生键盘查询分别保持有效状态");
 
     expect_true(XGuiApplication_mouseButtons() == XMouseButton_NoButton,
                 "鼠标键默认 0");
@@ -18404,9 +18438,48 @@ static void test_gui_application_contract(void)
                 XGuiApplication_isLeftToRight(),
                 "setLayoutDirection(LTR) 再次发射");
     XGuiApplication_setLayoutDirection(XGuiLayoutDirection_Auto);
-    expect_true(XGuiApplication_layoutDirection() == XGuiLayoutDirection_Auto &&
-                g_guiAppProbe.layoutDirectionChanged == 3,
-                "Auto 方向保留");
+    expect_true(XGuiApplication_layoutDirection() == XGuiLayoutDirection_LeftToRight &&
+                g_guiAppProbe.layoutDirectionChanged == 2,
+                "Auto 方向解析为默认语言的有效 LTR，未变化不发信号");
+#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+    {
+        XPlatformNativeInterface* native =
+            XGuiApplication_platformNativeInterface();
+        XPlatformIntegration* integration = native ?
+            XPlatformNativeInterface_integration(native) : NULL;
+        XPlatformInputContext* inputContext = integration ?
+            XPlatformIntegration_inputContext(integration) : NULL;
+        expect_true(inputContext != NULL,
+                    "Auto 布局方向可取得平台输入上下文");
+        if (inputContext) {
+            XPlatformInputContext_setLocale(inputContext, "ar_SA");
+            expect_true(XGuiApplication_layoutDirection() ==
+                            XGuiLayoutDirection_RightToLeft &&
+                        XGuiApplication_isRightToLeft() &&
+                        g_guiAppProbe.layoutDirectionChanged == 3,
+                        "Auto 随平台阿拉伯语变更为 RTL 并发射有效方向");
+            XPlatformInputContext_setLocale(inputContext, "C");
+            expect_true(XGuiApplication_layoutDirection() ==
+                            XGuiLayoutDirection_LeftToRight &&
+                        XGuiApplication_isLeftToRight() &&
+                        g_guiAppProbe.layoutDirectionChanged == 4,
+                        "Auto 随平台语言变更恢复为 LTR");
+            XGuiApplication_setLayoutDirection(XGuiLayoutDirection_RightToLeft);
+            expect_true(g_guiAppProbe.layoutDirectionChanged == 5 &&
+                        XGuiApplication_isRightToLeft(),
+                        "显式 RTL 请求发射且生效");
+            XPlatformInputContext_setLocale(inputContext, "ar_SA");
+            XPlatformInputContext_setLocale(inputContext, "C");
+            expect_true(XGuiApplication_isRightToLeft() &&
+                        g_guiAppProbe.layoutDirectionChanged == 5,
+                        "显式 RTL 不受平台语言变更覆盖");
+            XGuiApplication_setLayoutDirection(XGuiLayoutDirection_Auto);
+            expect_true(XGuiApplication_isLeftToRight() &&
+                        g_guiAppProbe.layoutDirectionChanged == 6,
+                        "显式 RTL 切回 Auto 后恢复平台 LTR");
+        }
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
 
     /* ---------------- styleHints / clipboard 惰性单例 ---------------- */
 
@@ -18669,7 +18742,7 @@ static void test_gui_application_contract(void)
                         XWindowState_NoState,
                     "defaultWindowState 默认普通状态");
         expect_true(!XPlatformIntegration_beep(gpi), "beep 冒烟恒 false");
-        /* quit() 会触发应用退出，测试中不调用；sync() 亦跳过以免刷新副作用。 */
+        /* quit() 会触发应用退出，测试中不调用。 */
 
         /* 输入上下文：默认状态 + 输入面板显隐 + 动作转发冒烟 */
         gctx = XPlatformIntegration_inputContext(gpi);
@@ -19823,15 +19896,15 @@ static void test_window_event_loop(void)
     XWindowSystemInterface_handleLeaveEvent((XWindow*)w);
     expect_true(w->leaveCount == 1, "leave 槽收到离开事件");
 
-    /* ---- post + flush 队列闭环 ---- */
+    /* ---- post + sync 队列闭环：sync 必须先处理应用事件，再同步平台。 ---- */
     {
         XPaintEvent* postPaint = XPaintEvent_create(XEVENT_TYPE_PAINT, &reg);
         expect_true(postPaint != NULL, "post 绘制事件创建");
         if (postPaint) {
             XGuiApplication_postEvent((XObject*)w, (XEvent*)postPaint, 0);
-            XWindowSystemInterface_flushWindowSystemEvents(XEventLoop_AllEvents);
+            XGuiApplication_sync();
             expect_true(w->paintCount == 2,
-                        "postEvent + flushWindowSystemEvents 闭环派发");
+                        "postEvent + sync 首轮应用事件派发");
         }
     }
 
@@ -21897,6 +21970,175 @@ static void test_label_contract(void)
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+/** @brief XPerformanceOverlay 位置、统计文本和拖拽固定契约测试。 */
+static void test_performance_overlay_contract(void)
+{
+    XPerformanceOverlay overlay;
+    XImage image;
+    XPainter painter;
+    XRect geo;
+    XPoint position;
+    XSize size;
+    const XString* text;
+    static const XPerformanceOverlayPosition positions[] = {
+        XPerformanceOverlayPosition_TopLeft,
+        XPerformanceOverlayPosition_TopCenter,
+        XPerformanceOverlayPosition_TopRight,
+        XPerformanceOverlayPosition_CenterLeft,
+        XPerformanceOverlayPosition_Center,
+        XPerformanceOverlayPosition_CenterRight,
+        XPerformanceOverlayPosition_BottomLeft,
+        XPerformanceOverlayPosition_BottomCenter,
+        XPerformanceOverlayPosition_BottomRight
+    };
+    static const XPoint expected[] = {
+        { 7, 7 }, { 120, 7 }, { 233, 7 },
+        { 7, 80 }, { 120, 80 }, { 233, 80 },
+        { 7, 153 }, { 120, 153 }, { 233, 153 }
+    };
+    size_t i;
+
+    memset(&overlay, 0, sizeof(overlay));
+    XPerformanceOverlay_init(&overlay, NULL, 0);
+    expect_true(XWidget_updatesEnabled((XWidget*)&overlay.m_base),
+                "性能悬浮层初始化保持更新使能");
+    expect_true(XPerformanceOverlay_isMovable(&overlay) &&
+                !XPerformanceOverlay_isFixed(&overlay),
+                "性能悬浮层默认可移动且未固定");
+
+    XPerformanceOverlay_setSize(&overlay, 80, 40);
+    size = XPerformanceOverlay_size(&overlay);
+    expect_true(size.width == 80 && size.height == 40,
+                "性能悬浮层复用 XWidget 尺寸 API");
+    for (i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
+        XPerformanceOverlay_setPresetPosition(&overlay, positions[i],
+                                               320, 200, 7);
+        position = XPerformanceOverlay_position(&overlay);
+        expect_true(position.x == expected[i].x && position.y == expected[i].y,
+                    "性能悬浮层九宫格位置计算");
+    }
+    XPerformanceOverlay_setPresetPosition(
+        &overlay, XPerformanceOverlayPosition_TopLeft, 320, 200, -5);
+    position = XPerformanceOverlay_position(&overlay);
+    expect_true(position.x == 0 && position.y == 0,
+                "性能悬浮层负边距按零处理");
+    XPerformanceOverlay_setPresetPosition(
+        &overlay, XPerformanceOverlayPosition_BottomRight, 40, 30, 7);
+    position = XPerformanceOverlay_position(&overlay);
+    expect_true(position.x == 0 && position.y == 0,
+                "性能悬浮层大于客户区时位置钳位");
+
+    XPerformanceOverlay_setPosition(&overlay, 17, 23);
+    {
+        const int64_t sampleWindowUsecs =
+#if XGUI_PERFORMANCE_OVERLAY_UPDATE_MS > 0
+            (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL;
+#else
+            250000LL;
+#endif
+        const int64_t frameUsecs = 10000;
+        const int64_t baseUsecs = 1000000;
+        XPerformanceOverlay_updateFrame(&overlay,
+                                        baseUsecs,
+                                        baseUsecs + frameUsecs);
+        XPerformanceOverlay_updateFrame(
+            &overlay, baseUsecs + sampleWindowUsecs / 3,
+            baseUsecs + sampleWindowUsecs / 3 + frameUsecs);
+        XPerformanceOverlay_updateFrame(
+            &overlay, baseUsecs + sampleWindowUsecs * 2 / 3,
+            baseUsecs + sampleWindowUsecs * 2 / 3 + frameUsecs);
+        XPerformanceOverlay_updateFrame(
+            &overlay, baseUsecs + sampleWindowUsecs - frameUsecs,
+            baseUsecs + sampleWindowUsecs);
+    }
+    text = XLabel_text(&overlay.m_base);
+    expect_true(overlay.m_fps > 15.9 && overlay.m_fps < 16.1 &&
+                overlay.m_frameMs > 9.99 && overlay.m_frameMs < 10.01 &&
+                overlay.m_maxFrameMs > 9.99 && overlay.m_maxFrameMs < 10.01,
+                "性能悬浮层按采样窗口计算 FPS 和帧耗时");
+    expect_true(text != NULL && strstr(XString_toUtf8(text), "FPS 16.0") != NULL,
+                "性能悬浮层显示计算后的 FPS 数值");
+    expect_true(text != NULL &&
+                    strstr(XString_toUtf8(text), "帧耗时") != NULL,
+                "性能悬浮层使用中文帧耗时标签");
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    XPerformanceOverlay_updateNetwork(&overlay, true, 0, 0, 1000000);
+    XPerformanceOverlay_updateNetwork(&overlay, true,
+                                      3u * 1024u * 1024u,
+                                      512u * 1024u, 2000000);
+    text = XLabel_text(&overlay.m_base);
+    expect_true(text != NULL &&
+                    strstr(XString_toUtf8(text), "下载 3.0 MB/s") != NULL &&
+                    strstr(XString_toUtf8(text), "上传 512.0 KB/s") != NULL,
+                "性能悬浮层网络中文标签并按方向切换 KB/s 和 MB/s");
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_FPS_ON && \
+    XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON && \
+    XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    expect_true(XPerformanceOverlay_isFpsVisible(&overlay) &&
+                    XPerformanceOverlay_isFrameTimeVisible(&overlay) &&
+                    XPerformanceOverlay_isNetworkVisible(&overlay),
+                "性能悬浮层默认显示所有已编译指标");
+    XPerformanceOverlay_setFpsVisible(&overlay, false);
+    XPerformanceOverlay_setFrameTimeVisible(&overlay, false);
+    text = XLabel_text(&overlay.m_base);
+    expect_true(!XPerformanceOverlay_isFpsVisible(&overlay) &&
+                    !XPerformanceOverlay_isFrameTimeVisible(&overlay) &&
+                    text != NULL &&
+                    strstr(XString_toUtf8(text), "FPS") == NULL &&
+                    strstr(XString_toUtf8(text), "帧耗时") == NULL &&
+                    strstr(XString_toUtf8(text), "下载") != NULL,
+                "性能悬浮层 API 可只显示网络速率");
+    XPerformanceOverlay_setNetworkVisible(&overlay, false);
+    XPerformanceOverlay_setFpsVisible(&overlay, true);
+    text = XLabel_text(&overlay.m_base);
+    expect_true(XPerformanceOverlay_isFpsVisible(&overlay) &&
+                    !XPerformanceOverlay_isNetworkVisible(&overlay) &&
+                    text != NULL &&
+                    strstr(XString_toUtf8(text), "FPS") != NULL &&
+                    strstr(XString_toUtf8(text), "下载") == NULL,
+                "性能悬浮层 API 可只显示 FPS");
+    XPerformanceOverlay_setFrameTimeVisible(&overlay, true);
+    XPerformanceOverlay_setNetworkVisible(&overlay, true);
+#endif
+
+    expect_true(XPerformanceOverlay_beginDrag(&overlay, 22, 28) &&
+                XPerformanceOverlay_isDragging(&overlay),
+                "性能悬浮层命中后开始拖拽");
+    expect_true(XPerformanceOverlay_dragTo(&overlay, 310, 190, 320, 200),
+                "性能悬浮层拖拽更新位置");
+    position = XPerformanceOverlay_position(&overlay);
+    expect_true(position.x == 240 && position.y == 160,
+                "性能悬浮层拖拽位置限制在客户区");
+    XPerformanceOverlay_endDrag(&overlay);
+    XPerformanceOverlay_setFixed(&overlay, true);
+    expect_true(!XPerformanceOverlay_beginDrag(&overlay, 245, 165),
+                "固定后的性能悬浮层拒绝拖拽");
+    XPerformanceOverlay_setFixed(&overlay, false);
+
+    XPerformanceOverlay_setSize(&overlay, 80, 40);
+    XPerformanceOverlay_setPosition(&overlay, 240, 160);
+    XImage_init_ex(&image, 320, 200, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFFFFFFFFu);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "性能悬浮层离屏绘制绑定图像");
+    XPerformanceOverlay_draw(&overlay, &painter);
+    expect_true(XPainter_end(&painter), "性能悬浮层离屏绘制结束");
+    XPainter_deinit(&painter);
+    geo = XPerformanceOverlay_geometry(&overlay);
+    expect_true(geo.x == 240 && geo.y == 160 && geo.width == 80 &&
+                geo.height == 40 &&
+                image_count_non_background(&image, 0xFFFFFFFFu) > 0,
+                "性能悬浮层绘制使用当前几何且产生像素");
+    expect_true(image_count_color(&image, 0xfff2f6f8u) > 0,
+                "性能悬浮层绘制 FPS 前景文字");
+    XImage_deinit_base(&image);
+    XPerformanceOverlay_deinit_base(&overlay);
+}
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 #if XWIDGET_ON && XPUSHBUTTON_ON
 typedef struct ButtonProbe
 {
@@ -22790,6 +23032,9 @@ int main(void)
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     test_label_contract();
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    test_performance_overlay_contract();
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
     test_pushbutton_contract();
     test_pushbutton_auto_exclusive_group();

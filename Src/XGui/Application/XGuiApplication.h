@@ -176,7 +176,8 @@ typedef struct XGuiApplication
     XWindow* m_focusWindow;               /**< 焦点窗口（借用指针）。 */
     XWindow* m_modalWindow;               /**< 模态窗口（借用指针）。 */
     XObject* m_focusObject;               /**< 焦点对象（借用指针）。 */
-    XGuiLayoutDirection  m_layoutDirection;    /**< 布局方向。 */
+    XGuiLayoutDirection  m_layoutDirection;    /**< 当前有效布局方向（恒为 LTR 或 RTL）。 */
+    XGuiLayoutDirection  m_requestedLayoutDirection; /**< 调用方请求方向；Auto 时由平台语言解析。 */
     XGuiApplicationState m_applicationState;   /**< 应用状态。 */
     XGuiDpiRoundingPolicy m_dpiPolicy;         /**< 高分屏缩放取整策略。 */
     XKeyboardModifiers   m_keyboardModifiers;  /**< 当前键盘修饰键。 */
@@ -190,6 +191,7 @@ typedef struct XGuiApplication
     XClipboard*  m_clipboard;             /**< 剪贴板惰性单例（拥有）。 */
 #if XPLATFORMINTEGRATION_ON
     XPlatformIntegration* m_platformIntegration; /**< 平台集成层（拥有，init 时创建）。 */
+    XHandle m_nativeEventPump; /**< 主事件分发器中的原生事件泵登记句柄。 */
 #endif /* XPLATFORMINTEGRATION_ON */
 #if XINPUTMETHOD_ON
     XInputMethod* m_inputMethod;          /**< 输入法惰性单例（拥有，与集成层双向绑定）。 */
@@ -406,8 +408,9 @@ XVector* XGuiApplication_screens(void);
 XScreen* XGuiApplication_screenAt(const XPoint* pos);
 
 /**
- * @brief      获取主屏幕设备像素比（对标 QGuiApplication::devicePixelRatio）。
- * @return     主屏幕 devicePixelRatio（未设置时 1.0）。
+ * @brief      获取应用设备像素比（对标 QGuiApplication::devicePixelRatio）。
+ * @details    返回当前所有屏幕 devicePixelRatio 的最大值；未登记屏幕时返回 1.0。
+ * @return     应用 devicePixelRatio。
  */
 float XGuiApplication_devicePixelRatio(void);
 
@@ -499,7 +502,8 @@ XKeyboardModifiers XGuiApplication_keyboardModifiers(void);
 
 /**
  * @brief      查询键盘修饰键（对标 QGuiApplication::queryKeyboardModifiers）。
- * @details    无真实输入后端，与 keyboardModifiers 返回同一程序化状态。
+ * @details    经 XPlatformIntegration 查询原生输入设备的即时状态；无原生
+ *             后端或后端不可用时回退到最后一个已派发事件的程序化状态。
  * @return     修饰键位掩码。
  */
 XKeyboardModifiers XGuiApplication_queryKeyboardModifiers(void);
@@ -526,14 +530,24 @@ void XGuiApplication_setMouseButtons(XMouseButton buttons);
 
 /**
  * @brief      设置布局方向（对标 QGuiApplication::setLayoutDirection）。
- * @details    变更时发射 layoutDirectionChanged。
+ * @details    Auto 不作为可观察的布局结果保存；它会按平台输入上下文的当前
+ *             语言解析为有效 LTR/RTL，并且仅在有效方向变化时发射信号。
  * @param      direction 目标方向。
  */
 void XGuiApplication_setLayoutDirection(XGuiLayoutDirection direction);
 
 /**
+ * @brief      通知平台输入方向已改变。
+ * @details    仅由 XPlatformInputContext 等平台抽象层调用。当应用请求方向为
+ *             Auto 时，重新解析有效 LTR/RTL，并且仅在有效方向变化时发射
+ *             layoutDirectionChanged；显式 LTR/RTL 请求不会受此通知影响。
+ *             应用业务代码不应直接调用本函数。
+ */
+void XGuiApplication_notifyPlatformInputDirectionChanged(void);
+
+/**
  * @brief      获取布局方向（对标 QGuiApplication::layoutDirection）。
- * @return     当前方向。
+ * @return     当前有效方向，恒为 LeftToRight 或 RightToLeft。
  */
 XGuiLayoutDirection XGuiApplication_layoutDirection(void);
 
@@ -641,67 +655,20 @@ XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void);
 
 /* ==================== 事件循环 / 通知（对标 QGuiApplication::exec / notify） ==================== */
 
-/**
- * @brief      进入主事件循环（对标 QGuiApplication::exec）。
- * @return     退出返回码。
- */
-int XGuiApplication_exec(void);
+/** @brief 复用 XCoreApplication 的事件循环 API，不重复声明转发函数。 */
+#define XGuiApplication_exec XCoreApplication_exec
+#define XGuiApplication_quit XCoreApplication_quit
 
-/**
- * @brief      通知分发事件（对标 QGuiApplication::notify）。
- * @details    走 XCoreApplication 虚表 Notify 槽（XGuiApplication 未重载，
- *             与 XCoreApplication 分发逻辑一致）。
- * @param      receiver 接收对象；可为 NULL。
- * @param      e 事件指针；可为 NULL。
- * @return     true 已处理，false 未处理。
- */
-bool XGuiApplication_notify(XObject* receiver, XEvent* e);
+/** @brief 复用 XCoreApplication 的通知入口。 */
+#define XGuiApplication_notify XCoreApplication_notify_base
 
-/* ==================== 事件发送/投递（对标 QCoreApplication::sendEvent 等，统一从 GUI 应用入口调用） ==================== */
+/* ==================== 事件发送/投递（直接复用 XCoreApplication） ==================== */
 
-/**
- * @brief      直接发送事件给接收者（对标 QCoreApplication::sendEvent）。
- * @details    XGuiApplication 继承 XCoreApplication 的静态事件 API 在 C
- *             语言中不可继承调用，故提供此转发包装，统一 GUI 层事件
- *             投递入口；语义与 XCoreApplication_sendEvent 完全一致。
- * @param      receiver 接收对象；可为 NULL。
- * @param      e 事件指针；可为 NULL。
- * @return     true 已处理，false 未处理。
- */
-bool XGuiApplication_sendEvent(XObject* receiver, XEvent* e);
-
-/**
- * @brief      投递事件到事件队列（对标 QCoreApplication::postEvent）。
- * @param      receiver 接收对象。
- * @param      e 事件指针；投递成功后所有权转移给事件队列。
- * @param      priority 队列优先级（数值越大越先派发）。
- */
-void XGuiApplication_postEvent(XObject* receiver, XEvent* e, int priority);
-
-/**
- * @brief      立即发送已投递的事件（对标 QCoreApplication::sendPostedEvents）。
- * @param      receiver 过滤接收对象；NULL 表示全部对象。
- * @param      eventType 过滤事件类型；XEVENT_TYPE_NONE 表示全部类型。
- */
-void XGuiApplication_sendPostedEvents(XObject* receiver, XEventType eventType);
-
-/**
- * @brief      移除已投递的事件（对标 QCoreApplication::removePostedEvents）。
- * @param      receiver 过滤接收对象；NULL 表示全部对象。
- * @param      eventType 过滤事件类型；XEVENT_TYPE_NONE 表示全部类型。
- *             匹配的事件析构，不再派发。
- */
-void XGuiApplication_removePostedEvents(XObject* receiver, XEventType eventType);
-
-/**
- * @brief      发送自发事件（对标 QCoreApplication::sendSpontaneousEvent）。
- * @details    平台注入（XWindowSystemInterface）使用本入口注入真实平台
- *             产生的自发事件，QEvent::spontaneous 语义为 true。
- * @param      receiver 接收对象。
- * @param      e 事件指针。
- * @return     true 已处理，false 未处理。
- */
-bool XGuiApplication_sendSpontaneousEvent(XObject* receiver, XEvent* e);
+#define XGuiApplication_sendEvent XCoreApplication_sendEvent
+#define XGuiApplication_postEvent XCoreApplication_postEvent
+#define XGuiApplication_sendPostedEvents XCoreApplication_sendPostedEvents
+#define XGuiApplication_removePostedEvents XCoreApplication_removePostedEvents
+#define XGuiApplication_sendSpontaneousEvent XCoreApplication_sendSpontaneousEvent
 
 /**
  * @brief      处理等待中的事件（对标 QCoreApplication::processEvents）。
@@ -755,8 +722,9 @@ void XGuiApplication_setSessionState(bool restored, bool saving, const char* id,
 
 /**
  * @brief      同步窗口系统状态（对标 QGuiApplication::sync）。
- * @details    当前无平台窗口后端，实现为空操作；未来平台接入后在此冲刷
- *             窗口系统命令队列。
+ * @details    依次处理应用事件、调用具备 SyncState 能力的平台同步、再次
+ *             处理应用事件并冲刷窗口系统事件队列，与 Qt 6.8 的 sync 顺序
+ *             一致；无平台同步能力时仅完成首轮应用事件处理。
  */
 void XGuiApplication_sync(void);
 

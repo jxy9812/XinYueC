@@ -73,6 +73,11 @@
 #ifndef XPLATFORMBACKINGSTORE_ON
 #define XPLATFORMBACKINGSTORE_ON 1
 #endif
+/* 后备存储模式在下方即需根据原生窗口能力选择，因此默认值必须先于
+ * 该选择定义；调用方通过编译选项预先置 0 时仍可裁剪原生窗口路径。 */
+#ifndef XPLATFORMNATIVEWINDOW_ON
+#define XPLATFORMNATIVEWINDOW_ON 1
+#endif
 
 /* 后备存储渲染模式（参考 LVGL 9 的 PARTIAL/DIRECT/FULL）。
  * PARTIAL：使用小块 tile buffer，逐片绘制并提交；DIRECT：整屏双缓冲，
@@ -81,10 +86,10 @@
 #define XGUI_BACKINGSTORE_RENDER_MODE_DIRECT  1
 #define XGUI_BACKINGSTORE_RENDER_MODE_FULL    2
 #ifndef XGUI_BACKINGSTORE_RENDER_MODE
-#if defined(_WIN32)
-/* Win32 desktop follows the LVGL Windows simulator: a persistent full-size
- * framebuffer is rendered directly and submitted once per frame. Embedded
- * targets can override this to PARTIAL at compile time. */
+#if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON)
+/* 桌面原生窗口需要持久整帧缓冲：先在完整帧上合成脏区，再一次提交，
+ * 与 Qt QBackingStore 的可见帧边界一致。PARTIAL tile 会逐块 present，
+ * 在 X11 的高频小区域更新中可见为闪烁；嵌入式目标仍可显式覆写为 PARTIAL。 */
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #else
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -93,7 +98,7 @@
 
 /* DIRECT/FULL 模式使用的整屏缓冲数量；至少 1，DIRECT 推荐 2。 */
 #ifndef XGUI_BACKINGSTORE_BUFFER_COUNT
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON)
 #define XGUI_BACKINGSTORE_BUFFER_COUNT 2
 #else
 #define XGUI_BACKINGSTORE_BUFFER_COUNT 1
@@ -264,9 +269,6 @@
 #endif
 
 /* 原生窗口与系统无障碍平台后端。 */
-#ifndef XPLATFORMNATIVEWINDOW_ON
-#define XPLATFORMNATIVEWINDOW_ON 1
-#endif
 #ifndef XPLATFORMNATIVEWINDOW_X11_ON
 #define XPLATFORMNATIVEWINDOW_X11_ON 1
 #endif

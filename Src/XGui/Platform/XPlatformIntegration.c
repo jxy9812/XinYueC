@@ -668,11 +668,18 @@ XKeyboardModifiers XPlatformIntegration_queryKeyboardModifiers(
         const XPlatformIntegration* self)
 {
     (void)self;
+#if XPLATFORMNATIVEWINDOW_ON
+    {
+        XKeyboardModifiers modifiers;
+        if (XPlatformNativeWindow_queryKeyboardModifiers(&modifiers))
+            return modifiers;
+    }
+#endif /* XPLATFORMNATIVEWINDOW_ON */
 #if XGUIAPPLICATION_ON
-    /* 转发程序化修饰键状态。 */
-    return XGuiApplication_queryKeyboardModifiers();
+    /* 嵌入式和未连接显示服务器时保留最后已派发事件的状态。 */
+    return XGuiApplication_keyboardModifiers();
 #else /* !XGUIAPPLICATION_ON */
-    return 0;
+    return XKeyboardModifier_NoModifier;
 #endif /* XGUIAPPLICATION_ON */
 }
 

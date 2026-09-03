@@ -49,6 +49,10 @@
 #include "XGeometry.h"
 #include "XFont.h"
 #include "XEvent.h"
+#include "XAbstractEventDispatcher.h"
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+#include "XWindowSystemInterface.h"
+#endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON */
 #include <string.h>
 
 #if XGUIAPPLICATION_ON
@@ -56,6 +60,18 @@
 /* ==================== 前向声明与辅助函数 ==================== */
 
 static void VXGuiApplication_deinit(XGuiApplication* app);
+
+#if XPLATFORMINTEGRATION_ON
+/** @brief 主事件分发器回调：把平台原生事件注入公共事件队列。 */
+static bool XGuiApplication_pumpNativeEvents(void* userData)
+{
+    XGuiApplication* app = (XGuiApplication*)userData;
+    if (!app || !app->m_platformIntegration)
+        return false;
+    return XPlatformIntegration_processNativeEvents(
+        app->m_platformIntegration);
+}
+#endif /* XPLATFORMINTEGRATION_ON */
 
 /** @brief 深拷贝字符串；输入为 NULL 时返回 NULL。 */
 static XString* XGuiApplication_cloneString(const XString* source)
@@ -84,6 +100,25 @@ static void XGuiApplication_emit(XGuiApplication* self, size_t signal,
     else if (args) XVarList_delete(args);
 }
 
+/** @brief 将 Auto 布局方向解析为平台当前语言对应的有效方向。 */
+static XGuiLayoutDirection XGuiApplication_resolveAutoLayoutDirection(
+        const XGuiApplication* app)
+{
+#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+    XPlatformInputContext* inputContext;
+    if (app && app->m_platformIntegration) {
+        inputContext = XPlatformIntegration_inputContext(
+            app->m_platformIntegration);
+        if (inputContext && XPlatformInputContext_inputDirection(inputContext) ==
+                XInputMethodLayoutDirection_RightToLeft)
+            return XGuiLayoutDirection_RightToLeft;
+    }
+#else
+    (void)app;
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
+    return XGuiLayoutDirection_LeftToRight;
+}
+
 #if XCURSOR_ON
 /** @brief 深拷贝光标；输入为 NULL 时拷贝一个空光标对象。 */
 static XCursor* XGuiApplication_cloneCursor(const XCursor* cursor)
@@ -102,8 +137,7 @@ XVtable* XGuiApplication_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XGuiApplication)
     XVTABLE_INHERIT_XCLASS(XCoreApplication);
-    /* 仅重载析构；Notify/Event 沿用 XCoreApplication 的父类分发，避免
-       与 XGuiApplication_notify 公开函数互相调用造成递归。 */
+    /* 仅重载析构；Notify/Event 沿用 XCoreApplication 的父类分发。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXGuiApplication_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -148,6 +182,7 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
     /* Qt 6.8 QGuiApplication 默认值。 */
     app->m_quitOnLastWindowClosed = true;
     app->m_desktopSettingsAware = true;
+    app->m_requestedLayoutDirection = XGuiLayoutDirection_Auto;
     app->m_layoutDirection = XGuiLayoutDirection_LeftToRight;
     app->m_applicationState = XGuiApplicationState_Inactive;
     app->m_dpiPolicy = XGuiDpiRoundingPolicy_Unset;
@@ -160,6 +195,13 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
 #if XPLATFORMINTEGRATION_ON
     app->m_platformIntegration =
         XPlatformIntegration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    /* XGuiApplication_exec() 复用 XCoreApplication 的事件循环。将原生
+     * 平台事件源挂入其现有轮询链后，exec 会自动处理 X11 Expose/Configure/
+     * 输入等事件；应用端不需要再手写 wait/processEvents 循环。 */
+    if (app->m_platformIntegration)
+        app->m_nativeEventPump = XAbstractEventDispatcher_addPollCallback(
+            XGuiApplication_pumpNativeEvents, app);
+    app->m_layoutDirection = XGuiApplication_resolveAutoLayoutDirection(app);
 #endif /* XPLATFORMINTEGRATION_ON */
 }
 
@@ -203,6 +245,10 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
     }
 #endif /* XINPUTMETHOD_ON */
 #if XPLATFORMINTEGRATION_ON
+    if (app->m_nativeEventPump) {
+        XAbstractEventDispatcher_removePollCallback(app->m_nativeEventPump);
+        app->m_nativeEventPump = NULL;
+    }
     if (app->m_platformIntegration) {
         XPlatformIntegration_delete_base(app->m_platformIntegration);
         app->m_platformIntegration = NULL;
@@ -526,8 +572,17 @@ XScreen* XGuiApplication_screenAt(const XPoint* pos)
 
 float XGuiApplication_devicePixelRatio(void)
 {
-    XScreen* primary = XScreen_primaryScreen();
-    return primary ? XScreen_devicePixelRatio(primary) : 1.0f;
+    XVector* screens = XScreen_screens();
+    float maximum = 1.0f;
+    size_t i;
+    if (!screens) return maximum;
+    for (i = 0; i < XVector_size_base((const XContainer*)screens); ++i) {
+        XScreen* screen = XVector_At_Base(screens, (int64_t)i, XScreen*);
+        float ratio = XScreen_devicePixelRatio(screen);
+        if (ratio > maximum) maximum = ratio;
+    }
+    XVector_delete_base((XClass*)screens);
+    return maximum;
 }
 
 void XGuiApplication_screenAdded(XScreen* screen)
@@ -684,8 +739,13 @@ XKeyboardModifiers XGuiApplication_keyboardModifiers(void)
 
 XKeyboardModifiers XGuiApplication_queryKeyboardModifiers(void)
 {
-    /* 无真实输入后端：返回程序化状态。 */
-    return XGuiApplication_keyboardModifiers();
+    XGuiApplication* app = XGuiApplication_instance();
+#if XPLATFORMINTEGRATION_ON
+    if (app && app->m_platformIntegration)
+        return XPlatformIntegration_queryKeyboardModifiers(
+            app->m_platformIntegration);
+#endif /* XPLATFORMINTEGRATION_ON */
+    return app ? app->m_keyboardModifiers : XKeyboardModifier_NoModifier;
 }
 
 void XGuiApplication_setKeyboardModifiers(XKeyboardModifiers modifiers)
@@ -711,9 +771,28 @@ void XGuiApplication_setMouseButtons(XMouseButton buttons)
 void XGuiApplication_setLayoutDirection(XGuiLayoutDirection direction)
 {
     XGuiApplication* app = XGuiApplication_instance();
-    if (!app || app->m_layoutDirection == direction) return;
-    app->m_layoutDirection = direction;
-    XGuiApplication_layoutDirectionChanged_signal(app, direction);
+    XGuiLayoutDirection effective;
+    if (!app || (direction != XGuiLayoutDirection_LeftToRight &&
+                 direction != XGuiLayoutDirection_RightToLeft &&
+                 direction != XGuiLayoutDirection_Auto)) return;
+    app->m_requestedLayoutDirection = direction;
+    effective = direction == XGuiLayoutDirection_Auto
+        ? XGuiApplication_resolveAutoLayoutDirection(app) : direction;
+    if (app->m_layoutDirection == effective) return;
+    app->m_layoutDirection = effective;
+    XGuiApplication_layoutDirectionChanged_signal(app, effective);
+}
+
+void XGuiApplication_notifyPlatformInputDirectionChanged(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    XGuiLayoutDirection effective;
+    if (!app || app->m_requestedLayoutDirection != XGuiLayoutDirection_Auto)
+        return;
+    effective = XGuiApplication_resolveAutoLayoutDirection(app);
+    if (app->m_layoutDirection == effective) return;
+    app->m_layoutDirection = effective;
+    XGuiApplication_layoutDirectionChanged_signal(app, effective);
 }
 
 XGuiLayoutDirection XGuiApplication_layoutDirection(void)
@@ -894,57 +973,13 @@ XGuiDpiRoundingPolicy XGuiApplication_highDpiScaleFactorRoundingPolicy(void)
     return app ? app->m_dpiPolicy : XGuiDpiRoundingPolicy_Unset;
 }
 
-/* ==================== 事件循环 / 通知 ==================== */
-
-int XGuiApplication_exec(void)
-{
-    return XCoreApplication_exec();
-}
-
-bool XGuiApplication_notify(XObject* receiver, XEvent* e)
-{
-    /* vtable Notify 槽为继承的 VXCoreApplication_notify；本公开函数直接
-       转发基类分发入口，保证语义一致且不递归。 */
-    return XCoreApplication_notify_base(receiver, e);
-}
-
-/* ==================== 事件发送/投递（统一 GUI 层事件入口） ==================== */
-
-bool XGuiApplication_sendEvent(XObject* receiver, XEvent* e)
-{
-    return XCoreApplication_sendEvent(receiver, e);
-}
-
-void XGuiApplication_postEvent(XObject* receiver, XEvent* e, int priority)
-{
-    XCoreApplication_postEvent(receiver, e, priority);
-}
-
-void XGuiApplication_sendPostedEvents(XObject* receiver, XEventType eventType)
-{
-    XCoreApplication_sendPostedEvents(receiver, eventType);
-}
-
-void XGuiApplication_removePostedEvents(XObject* receiver, XEventType eventType)
-{
-    XCoreApplication_removePostedEvents(receiver, eventType);
-}
-
-bool XGuiApplication_sendSpontaneousEvent(XObject* receiver, XEvent* e)
-{
-    return XCoreApplication_sendSpontaneousEvent(receiver, e);
-}
-
 void XGuiApplication_processEvents(XEventLoopProcessEventsFlags flags)
 {
 #if XPLATFORMINTEGRATION_ON
     XGuiApplication* app = XGuiApplication_instance();
-    /* 对标 Qt：先泵空平台原生事件源（X11 Expose/Configure/Focus/Close、
-       Win32 WndProc 消息），再处理公共事件队列，形成「平台事件 -> 事件
-       分发 -> 窗口重绘/上屏」的完整闭环。 */
+    /* 原生事件由 XAbstractEventDispatcher 的轮询回调统一泵空；这里不再
+       重复调用平台后端，避免每次 processEvents 扫描两遍 X11/Win32 队列。 */
     if (app && app->m_platformIntegration) {
-        XPlatformIntegration_processNativeEvents(
-            app->m_platformIntegration);
 #if XWINDOW_ON && XACCESSIBLE_ON
         XPlatformAccessibility_processEvents((XPlatformAccessibility*)
             XPlatformIntegration_accessibility(app->m_platformIntegration));
@@ -1016,13 +1051,20 @@ void XGuiApplication_setSessionState(bool restored, bool saving,
 
 void XGuiApplication_sync(void)
 {
+    /* Qt 6.8: 先交付已排队应用事件，再同步窗口系统，随后交付同步产生的事件。 */
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
 #if XPLATFORMINTEGRATION_ON
     XGuiApplication* app = XGuiApplication_instance();
-    /* 对标 QGuiApplication::sync：仅当平台声明 SyncState 能力时冲刷。 */
+    /* 对标 QGuiApplication::sync：仅当平台声明 SyncState 能力时同步并冲刷。 */
     if (app && app->m_platformIntegration &&
         XPlatformIntegration_hasCapability(app->m_platformIntegration,
-            XPlatformIntegrationCapability_SyncState))
+            XPlatformIntegrationCapability_SyncState)) {
         XPlatformIntegration_sync(app->m_platformIntegration);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+        XWindowSystemInterface_flushWindowSystemEvents(XEventLoop_AllEvents);
+#endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON */
+    }
 #endif /* XPLATFORMINTEGRATION_ON */
 }
 

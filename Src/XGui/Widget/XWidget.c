@@ -518,9 +518,14 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     int i;
     XPoint offset;
     XRect contents;
+    bool wasPending;
     if (!self || !region || !self->m_updatesEnabled) return;
     top = XWidget_topLevel(self);
     if (!top) return;
+    /* QWidget::update() 只合并脏区；同一轮事件循环内已有 UpdateRequest
+       时不能为每次调用额外投递 PAINT，否则高频小区域刷新会退化为队列风暴。 */
+    wasPending = XWidget_attrTest(&top->m_attributes,
+                                  XWidgetAttribute_PendingUpdate);
     offset = XWidget_paintOffset(self);
     contents = self->m_contentsRect;
     translated = XRegion_intersectRect(region, &contents);
@@ -529,7 +534,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
         XRegion_addRect(&top->m_dirty, &translated.rects[i]);
     XRegion_deinit(&translated);
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
-    if (top->m_windowHandle && top->m_visible) {
+    if (!wasPending && top->m_windowHandle && top->m_visible) {
         XEvent* event = XWidget_createPaintEvent(top);
         if (event)
             XCoreApplication_postEvent((XObject*)top->m_windowHandle, event, 0);
@@ -971,6 +976,21 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
         XSize oldSize = XResizeEvent_oldSize(re);
         XRect geometry = XWindow_geometry((XWindow*)self);
         XWidget_applyWindowGeometry(top, &geometry, &oldSize);
+        return true;
+    }
+    case XEVENT_TYPE_EXPOSE: {
+        XRegion region;
+        XRect rect;
+        /* 原生窗口首次映射或重新暴露后，服务器端像素不再可靠。即使
+         * X11 只报告最后一块 Expose，也必须把顶层后备存储完整合成并
+         * 提交；否则高频局部 update 只能补回悬浮层等脏区，留下黑底。
+         * 这对应 QWidgetWindow 收到 expose 后重建可见窗口内容的边界。 */
+        XRegion_init(&region);
+        rect = XWidget_rect(top);
+        XRegion_addRect(&region, &rect);
+        XWidget_flushBackingStore(top, &region);
+        XRegion_deinit(&region);
+        XEvent_accept(event);
         return true;
     }
     case XEVENT_TYPE_PAINT: {
@@ -2375,12 +2395,21 @@ bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
 
 void XWidget_setVisible(XWidget* self, bool visible)
 {
+    bool wasVisible;
     if (!self) return;
     if (self->m_inShow) return;
+    wasVisible = self->m_visible != 0;
     if (self->m_isWindow) {
         /* 顶层控件：惰性创建桥接窗口后再映射/取消映射。 */
         if (visible && !self->m_windowHandle)
             XWidget_createWindow(self);
+        /* QWidget 首次映射前必须有一帧完整的初始内容。此前子控件构造时
+         * 留下的局部 update 不能代替首帧：双缓冲 DIRECT 模式会正确保留
+         * 它们，却只提交那些局部矩形，导致新 X11 窗口的其余像素未定义。
+         * 此处仅在从隐藏转为可见时合并根客户区；随后仍由正常事件循环
+         * 异步提交，后续高频 update 保持局部刷新。 */
+        if (visible && !wasVisible)
+            XWidget_update(self);
         if (self->m_windowHandle && !self->m_inShow) {
             self->m_inShow = 1;
             XWindow_setVisible((XWindow*)self->m_windowHandle, visible);

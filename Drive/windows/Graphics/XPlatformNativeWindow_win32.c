@@ -862,6 +862,14 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
     return XPlatformNativeWindow_processPendingEvents();
 }
 
+bool XPlatformNativeWindow_queryKeyboardModifiers(
+        XKeyboardModifiers* outModifiers)
+{
+    if (!outModifiers || !xpwn_ensureInstance()) return false;
+    *outModifiers = xpwn_translateModifiers();
+    return true;
+}
+
 /* ==================== 可用性与生命周期（平台后端提供） ==================== */
 
 bool XPlatformNativeWindow_isAvailable(void)

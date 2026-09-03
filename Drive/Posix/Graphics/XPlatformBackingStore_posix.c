@@ -682,7 +682,9 @@ void XPlatformBackingStore_beginPaint(XPlatformBackingStore* self,
 {
     int w, h;
     if (!self) return;
-    XRegion_clear(&self->m_paintRegion);
+    /* xpbs_posix_clipRegion() initializes its output.  Releasing the prior
+       backing allocation first prevents a repeated paint from losing it. */
+    XRegion_deinit(&self->m_paintRegion);
     {
         XImage* image = xpbs_posix_activeImage(self);
         if (image && image->m_data)
@@ -737,7 +739,8 @@ void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
 {
     int w, h;
     if (!self) return;
-    XRegion_clear(&self->m_staticContents);
+    /* The clipping helper initializes its output region. */
+    XRegion_deinit(&self->m_staticContents);
     if (!region || XRegion_isEmpty(region)) return;
     {
         XImage* image = xpbs_posix_activeImage((XPlatformBackingStore*)self);

@@ -1447,6 +1447,31 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
     return XPlatformNativeWindow_processPendingEvents();
 }
 
+bool XPlatformNativeWindow_queryKeyboardModifiers(
+        XKeyboardModifiers* outModifiers)
+{
+    char keymap[32];
+    KeyCode keyCode;
+    XKeyboardModifiers modifiers = XKeyboardModifier_NoModifier;
+    if (!outModifiers || !xpwn_ensureConnection()) return false;
+    XQueryKeymap(g_xpwnDisplay, keymap);
+#define XPWN_KEYSYM_PRESSED(symbol) \
+    ((keyCode = XKeysymToKeycode(g_xpwnDisplay, (symbol))) != 0 && \
+     (((unsigned char)keymap[keyCode >> 3] & (unsigned char)(1u << (keyCode & 7))) != 0))
+    if (XPWN_KEYSYM_PRESSED(XK_Shift_L) || XPWN_KEYSYM_PRESSED(XK_Shift_R))
+        modifiers |= XKeyboardModifier_ShiftModifier;
+    if (XPWN_KEYSYM_PRESSED(XK_Control_L) || XPWN_KEYSYM_PRESSED(XK_Control_R))
+        modifiers |= XKeyboardModifier_ControlModifier;
+    if (XPWN_KEYSYM_PRESSED(XK_Alt_L) || XPWN_KEYSYM_PRESSED(XK_Alt_R))
+        modifiers |= XKeyboardModifier_AltModifier;
+    if (XPWN_KEYSYM_PRESSED(XK_Meta_L) || XPWN_KEYSYM_PRESSED(XK_Meta_R) ||
+        XPWN_KEYSYM_PRESSED(XK_Super_L) || XPWN_KEYSYM_PRESSED(XK_Super_R))
+        modifiers |= XKeyboardModifier_MetaModifier;
+#undef XPWN_KEYSYM_PRESSED
+    *outModifiers = modifiers;
+    return true;
+}
+
 /* ==================== 出站拖放（XDND 源端） ==================== */
 
 struct XPlatformDrag { int unused; };

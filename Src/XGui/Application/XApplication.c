@@ -92,19 +92,6 @@ XApplication* XApplication_instance(void)
     return g_xapp;
 }
 
-/* ==================== 事件循环（委托 XCoreApplication） ==================== */
-
-int XApplication_exec(void)
-{
-    /* QApplication::exec 即 QCoreApplication::exec；事件循环本体在核心层。 */
-    return XCoreApplication_exec();
-}
-
-void XApplication_quit(void)
-{
-    XCoreApplication_quit();
-}
-
 /* ==================== 控件注册表 ==================== */
 
 void XApplication_registerTopLevelWidget(XWidget* widget)

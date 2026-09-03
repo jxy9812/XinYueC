@@ -466,6 +466,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->m_hrtimerGroup = NULL;
     dp->notifiers = NULL;
     dp->m_ioRing = NULL;
+    dp->m_pollCallbacks = NULL;
     XAtomic_init(dp->m_interrupt, false);
     dp->m_threadData = NULL;
     /* 进程级时间轮只由 XDeviceTimer 初始化；每线程红黑树保持按需创建。 */
@@ -492,6 +493,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
 {
+    XAbstractEventDispatcher_PollEntry* pollEntry;
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
@@ -514,6 +516,14 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
         dp->m_consoleTransport = NULL;
     }
 #endif
+    /* 事件循环不再运行时，已注销和仍登记的回调都不能再依赖下一轮懒回收。 */
+    pollEntry = (XAbstractEventDispatcher_PollEntry*)dp->m_pollCallbacks;
+    while (pollEntry) {
+        XAbstractEventDispatcher_PollEntry* next = pollEntry->m_next;
+        XFree_System(pollEntry);
+        pollEntry = next;
+    }
+    dp->m_pollCallbacks = NULL;
     /* 高精度红黑树由 XDeviceTimer 统一管理，但实例仍归当前调度器所有。 */
     if (dp->notifiers)
     {

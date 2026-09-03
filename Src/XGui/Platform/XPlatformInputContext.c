@@ -380,6 +380,10 @@ void XPlatformInputContext_setInputDirection(
     if (self->m_data->m_inputDirection == direction) return;
     self->m_data->m_inputDirection = direction;
     XPlatformInputContext_emitInputDirectionChanged(self, direction);
+#if XGUIAPPLICATION_ON
+    /* 由 GUI 应用层根据 Auto 请求解析有效方向，平台后端不触碰布局策略。 */
+    XGuiApplication_notifyPlatformInputDirectionChanged();
+#endif /* XGUIAPPLICATION_ON */
 }
 
 void XPlatformInputContext_emitInputDirectionChanged(

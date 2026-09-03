@@ -3,12 +3,11 @@
  * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
  * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
  *             - XGuiApplication_create_ex 初始化应用单例；
- *             - 经平台原生接口拿到 XPlatformIntegration；
- *             - XPlatformIntegration_createPlatformWindow 挂接原生窗口
- *               （X11 Window / Win32 HWND，XWindow_createHandle 惰性创建）；
- *             - XBackingStore 离屏缓冲 + XPainter 软件光栅化绘制；
+ *             - 顶层 XWidget 的 showNormal() 惰性创建内部 XWidgetWindow，
+ *               再由该桥接窗口创建平台窗口（X11 Window / Win32 HWND）；
+ *             - XWidget 首次绘制时创建离屏缓冲，并由 XPainter 软件光栅化；
  *             - XWindowSystemInterface 事件注入（Expose/Resize/Close）；
- *             - XGuiApplication_waitForEvents + processEvents 事件泵；
+ *             - XGuiApplication_exec 标准事件循环与对象定时器刷新；
  *             - WM 删除（标题栏 X）触发 CloseEvent -> 接受后关闭退出。
  *             窗口绘制完全走 XImage/XPainter 软件路径，不依赖任何平台
  *             图形 API；平台差异全部隔离在 Drive 后端。
@@ -24,6 +23,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#if !defined(_WIN32)
+#include <time.h>
+#endif
 
 #include "CXinYueConfig.h"
 #include "XPrintf.h"
@@ -31,11 +33,9 @@
 #include "XEvent.h"
 #include "XDateTime.h"
 #include "XGuiApplication.h"
-#include "XPlatformNativeInterface.h"
-#include "XPlatformIntegration.h"
+#include "XWidget.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
-#include "XBackingStore.h"
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
@@ -54,7 +54,7 @@
 #include "XStackedLayout.h"
 #endif
 
-#if XGUIAPPLICATION_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
+#if XGUIAPPLICATION_ON && XWIDGET_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
     XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
 
 /* The demo follows the scalable built-in face whenever it is compiled in.
@@ -65,18 +65,30 @@
 #define XGUI_DEMO_DEFAULT_FONT_FAMILY XFONT_DEFAULT_FAMILY
 #endif
 
+/* Desktop demo 默认缓存静态控件场景；资源受限目标可显式设为 0。 */
+#ifndef XGUI_DEMO_STATIC_SCENE_CACHE_ON
+#define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
+#endif
+
+/* 由标准事件循环中的精确定时器驱动性能采样和画面提交。 */
+#ifndef XGUI_DEMO_FRAME_INTERVAL_MS
+#define XGUI_DEMO_FRAME_INTERVAL_MS 1
+#endif
+
 /* ==================== 演示窗口子类 ==================== */
 
 XCLASS_DEFINE_BEGING(DemoWin)
-XCLASS_DEFINE_EXTEND_END(DemoWin, XWindow)
+XCLASS_DEFINE_EXTEND_END(DemoWin, XWidget)
 
-/** @brief 演示窗口：持有后备存储引用与关闭标志。 */
+/** @brief 演示顶层控件：XWidget 负责窗口桥接、后备存储和控件树。 */
 typedef struct DemoWin
 {
-    XWindow         m_base;  /**< 基类；必须是第一个成员。 */
-    XBackingStore*  m_store; /**< 后备存储借用指针（随窗口生命周期）。 */
-    bool            m_closed; /**< CloseEvent 被接受后置真，驱动主循环退出。 */
-    bool            m_buttonDown; /**< XPushButton 当前是否处于按下状态。 */
+    XWidget         m_base;  /**< 顶层控件基类；必须是第一个成员。 */
+    XImage          m_staticScene; /**< 不含性能悬浮层的静态场景缓存。 */
+    bool            m_staticSceneDirty; /**< 静态场景需重新生成。 */
+    XTimerId        m_frameTimer; /**< 性能采样与刷新定时器。 */
+    XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
+    bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
@@ -96,8 +108,6 @@ typedef struct DemoWin
 #if XPUSHBUTTON_ON
     XPushButton     m_stackPrevButton; /**< 堆叠布局上一页按钮。 */
     XPushButton     m_stackNextButton; /**< 堆叠布局下一页按钮。 */
-    bool            m_stackPrevDown; /**< 上一页按钮当前是否处于按下状态。 */
-    bool            m_stackNextDown; /**< 下一页按钮当前是否处于按下状态。 */
 #endif
 #endif
 } DemoWin;
@@ -107,7 +117,7 @@ static int64_t demo_monotonicUsecs(void);
 #endif
 
 /* ---------------- 绘制 ----------------
- * 全部使用 ARGB32 预乘颜色：软件光栅化 + XBackingStore 上屏，
+ * 全部使用 ARGB32 预乘颜色：软件光栅化由 XWidget 后备存储统一上屏，
  * 与平台（X11/Win32）无关。 */
 
 /** @brief 填充一个矩形（坐标自动裁剪到窗口内）。 */
@@ -204,7 +214,7 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
-/** @brief 初始化性能悬浮层；标签保持隐藏，由 demo 在后备存储上叠加绘制。 */
+/** @brief 初始化性能悬浮层；位置由控件保留，demo 在后备存储上叠加绘制。 */
 static void demo_performance_init(DemoWin* self)
 {
     if (!self) return;
@@ -212,19 +222,33 @@ static void demo_performance_init(DemoWin* self)
     XPerformanceOverlay_setFontFamily(&self->m_performanceOverlay,
                                       XGUI_DEMO_DEFAULT_FONT_FAMILY);
     XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 14);
+    XPerformanceOverlay_setPresetPosition(
+        &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
+        520, 360, 8);
+    XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
 }
 
-/** @brief 在窗口右上角绘制性能悬浮层；其面积固定，不参与布局和鼠标命中。 */
-static void demo_performance_draw(DemoWin* self, XPainter* painter, int w, int h)
+/** @brief 绘制性能悬浮层；位置来自控件 geometry。 */
+static void demo_performance_draw(DemoWin* self, XPainter* painter)
 {
-    if (!self || !painter || w <= 0 || h <= 0) return;
-    XPerformanceOverlay_draw(&self->m_performanceOverlay, painter, w, h);
+    if (!self || !painter) return;
+    XPerformanceOverlay_draw(&self->m_performanceOverlay, painter);
 }
 
 static void demo_performance_deinit(DemoWin* self)
 {
     if (!self) return;
     XPerformanceOverlay_deinit_base(&self->m_performanceOverlay);
+}
+
+/** @brief 判断窗口客户区坐标是否命中性能悬浮层。 */
+static bool demo_performance_contains(DemoWin* self, XPoint position)
+{
+    XRect geo;
+    if (!self) return false;
+    geo = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
+    return position.x >= geo.x && position.x < geo.x + geo.width &&
+           position.y >= geo.y && position.y < geo.y + geo.height;
 }
 
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
@@ -312,190 +336,185 @@ static bool demo_network_counters(uint64_t* rxBytes, uint64_t* txBytes)
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
-/** @brief 重绘整个窗口：resize 后备存储 -> 绘制 -> flush 提交原生窗口。 */
-static void demo_repaint(DemoWin* self)
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+/** @brief 绘制不随性能采样变化的 Demo 场景。 */
+static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 {
-    XBackingStore* store;
-    XImage* dev;
-    XPainter painter;
-    XRegion region;
-    XRect rc;
-    XSize size;
-    int w;
-    int h;
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    int64_t frameStartUsecs;
-#endif
-    if (!self) return;
-    w = XWindow_width((XWindow*)self);
-    h = XWindow_height((XWindow*)self);
-    if (w <= 0 || h <= 0) return;
-    store = self->m_store;
-    if (!store) return;
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    frameStartUsecs = demo_monotonicUsecs();
-#endif
+    XFont painterFont;
+    if (!self || !painter || w <= 0 || h <= 0) return;
+    XFont_init(&painterFont);
+    demo_apply_default_font(&painterFont);
+    XPainter_setFont(painter, &painterFont);
+    XFont_deinit_base(&painterFont);
 
-    /* 1) 按窗口客户区尺寸调整后备缓冲（尺寸未变时内部为 no-op）。 */
-    XSize_init(&size, w, h);
-    XBackingStore_resize(store, &size);
+    demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);
+    demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);
+    demo_draw_checker(painter, 20, 60, 8, 5, 24);
+    demo_fill_rect(painter, 230, 60, 270, 100, 0xffdcefe2u);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_draw_label(painter, 246, 70, 238, 20,
+                    "XLabel 1x \xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95", 16,
+                    XGUI_DEMO_DEFAULT_FONT_FAMILY);
+    demo_draw_label(painter, 246, 106, 238, 40,
+                    "XLabel 32px \xE4\xB8\xAD\xE6\x96\x87", 40,
+                    XGUI_DEMO_DEFAULT_FONT_FAMILY);
+#else
+    XPainter_drawText(painter, 246, 92, "XLabel disabled", 0xff202020u);
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
-    /* 2) 进入绘制区间，把 XPainter 绑定到后备缓冲的 XImage 上。 */
-    XRegion_init(&region);
-    XRect_init(&rc, 0, 0, w, h);
-    XRegion_addRect(&region, &rc);
-    XBackingStore_beginPaint(store, &region);
-    while (XBackingStore_nextTile(store, &rc)) {
-        XPainter_init(&painter, NULL);
-        dev = XBackingStore_paintDevice(store);
-        if (dev && XPainter_begin_image(&painter, dev)) {
-            if (rc.x != 0 || rc.y != 0)
-                XPainter_translate(&painter, (float)-rc.x, (float)-rc.y);
-        XFont painterFont;
-        XFont_init(&painterFont);
-        demo_apply_default_font(&painterFont);
-        XPainter_setFont(&painter, &painterFont);
-        XFont_deinit_base(&painterFont);
-        /* 背景。 */
-        demo_fill_rect(&painter, 0, 0, w, h, 0xfff4f6f8u);
-        /* 顶部标题栏条。 */
-        demo_fill_rect(&painter, 0, 0, w, 40, 0xff1f4e79u);
-        /* 中部棋盘格纹理。 */
-        demo_draw_checker(&painter, 20, 60, 8, 5, 24);
-        /* GUI 控件可视化测试面板：同一文字的原始字号与两倍字号。 */
-        demo_fill_rect(&painter, 230, 60, 270, 100, 0xffdcefe2u);
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-        demo_draw_label(&painter, 246, 70, 238, 20,
-                        "XLabel 1x \xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95", 16,
-                        XGUI_DEMO_DEFAULT_FONT_FAMILY);
-        demo_draw_label(&painter, 246, 106, 238, 40,
-                        "XLabel 32px \xE4\xB8\xAD\xE6\x96\x87", 40,
-                        XGUI_DEMO_DEFAULT_FONT_FAMILY);
-#else
-        /* 组件被嵌入式配置裁剪时保留面板，便于确认裁剪后的可视状态。 */
-        XPainter_drawText(&painter, 246, 92, "XLabel disabled", 0xff202020u);
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
-        /* XPushButton 可视化面板：常驻按钮 + 联动标签，按下/松开通过信号槽切换。 */
-        demo_fill_rect(&painter, 230, 180, 270, 100, 0xffe6eef7u);
-#if XWIDGET_ON && XPUSHBUTTON_ON
-        {
-            XRect geo = XWidget_geometry((XWidget*)&self->m_button);
-            if (XPainter_save(&painter)) {
-                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
-                XPushButton_drawContents(&self->m_button, &painter);
-                XPainter_restore(&painter);
-            }
-        }
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-        {
-            XRect geo = XWidget_geometry((XWidget*)&self->m_linkLabel);
-            if (XPainter_save(&painter)) {
-                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
-                XLabel_drawContents(&self->m_linkLabel, &painter);
-                XPainter_restore(&painter);
-            }
-        }
-#else
-        XPainter_drawText(&painter, 382, 204,
-                          self->m_buttonDown ? "Pressed" : "Released",
-                          0xff202020u);
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
-#else
-        XPainter_drawText(&painter, 246, 212, "XPushButton disabled",
-                          0xff202020u);
-#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+    demo_fill_rect(painter, 230, 180, 270, 100, 0xffe6eef7u);
+#if !XPUSHBUTTON_ON
+    XPainter_drawText(painter, 246, 212, "XPushButton disabled", 0xff202020u);
+#endif /* !XPUSHBUTTON_ON */
+
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-        /* 堆叠布局面板：页面控件由同一窗口父对象管理，布局只分配页面几何。 */
-        demo_fill_rect(&painter, 20, 180, 190, 140, 0xffffedcfu);
-        XPainter_drawText(&painter, 32, 202, "XStackedLayout", 0xff202020u);
-        {
-            XRect stackRect;
-            XWidget* current;
-            XRect geo;
-            XRect_init(&stackRect, 32, 220, 166, 48);
-            demo_fill_rect(&painter, stackRect.x, stackRect.y,
-                           stackRect.width, stackRect.height, 0xffffffffu);
-            XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
-                                          &stackRect);
-            current = XStackedLayout_currentWidget(&self->m_stackLayout);
-            if (current) {
-                geo = XWidget_geometry(current);
-                if (XPainter_save(&painter)) {
-                    XPainter_translate(&painter, (float)geo.x, (float)geo.y);
-                    XLabel_drawContents((XLabel*)current, &painter);
-                    XPainter_restore(&painter);
-                }
-            }
-        }
-#if XPUSHBUTTON_ON
-        {
-            XRect geo;
-            geo = XWidget_geometry((XWidget*)&self->m_stackPrevButton);
-            if (XPainter_save(&painter)) {
-                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
-                XPushButton_drawContents(&self->m_stackPrevButton, &painter);
-                XPainter_restore(&painter);
-            }
-            geo = XWidget_geometry((XWidget*)&self->m_stackNextButton);
-            if (XPainter_save(&painter)) {
-                XPainter_translate(&painter, (float)geo.x, (float)geo.y);
-                XPushButton_drawContents(&self->m_stackNextButton, &painter);
-                XPainter_restore(&painter);
-            }
-        }
-#endif /* XPUSHBUTTON_ON */
-#else
-        /* 堆叠布局被裁剪时保留面板占位，便于截图确认裁剪结果。 */
-        demo_fill_rect(&painter, 20, 180, 190, 100, 0xffffedcfu);
-        XPainter_drawText(&painter, 32, 232, "XStackedLayout disabled",
-                          0xff202020u);
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
-        /* 状态栏。 */
-        demo_fill_rect(&painter, 0, h - 28, w, 28, 0xff3a3a3au);
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
-        demo_performance_draw(self, &painter, w, h);
-#endif
-        XPainter_end(&painter);
-        }
-#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
-        XBackingStore_flushTile(store, (XWindow*)self, &rc, NULL);
-#else
-        /* DIRECT/FULL 只有一个完整帧 tile；结束本次绘制后跳出遍历，
-           由循环外统一 endPaint/flush，避免重复结束绘制区间。 */
-        break;
-#endif
-    }
-    XBackingStore_endPaint(store);
-#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
-    /* DIRECT/FULL use the persistent full-frame DIB. Submit only after the
-       entire paint interval instead of routing a complete frame through the
-       PARTIAL tile presenter. */
-    XBackingStore_flush(store, &region, (XWindow*)self, NULL);
-#endif
-    XRegion_deinit(&region);
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_fill_rect(painter, 20, 180, 190, 140, 0xffffedcfu);
+    XPainter_drawText(painter, 32, 202, "XStackedLayout", 0xff202020u);
     {
-        int64_t frameEndUsecs = demo_monotonicUsecs();
-        XPerformanceOverlay_updateFrame(&self->m_performanceOverlay,
-                                        frameStartUsecs, frameEndUsecs);
-#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
-        if (self->m_lastNetworkPollUsecs <= 0 ||
-            frameEndUsecs - self->m_lastNetworkPollUsecs >=
-                (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL)
-        {
-            uint64_t rxBytes = 0;
-            uint64_t txBytes = 0;
-            bool available = demo_network_counters(&rxBytes, &txBytes);
-            XPerformanceOverlay_updateNetwork(
-                &self->m_performanceOverlay, available, rxBytes, txBytes,
-                frameEndUsecs);
-            self->m_lastNetworkPollUsecs = frameEndUsecs;
-        }
-#endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
+        XRect stackRect;
+        XRect_init(&stackRect, 32, 220, 166, 48);
+        demo_fill_rect(painter, stackRect.x, stackRect.y,
+                       stackRect.width, stackRect.height, 0xffffffffu);
+        XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
+                                      &stackRect);
     }
-#endif
+#else
+    demo_fill_rect(painter, 20, 180, 190, 100, 0xffffedcfu);
+    XPainter_drawText(painter, 32, 232, "XStackedLayout disabled", 0xff202020u);
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+    demo_fill_rect(painter, 0, h - 28, w, 28, 0xff3a3a3au);
 }
 
+/** @brief 尺寸或控件状态变化后重建静态场景缓存。 */
+static bool demo_updateStaticScene(DemoWin* self, int w, int h)
+{
+    XPainter painter;
+    if (!self || w <= 0 || h <= 0) return false;
+    if (!self->m_staticSceneDirty &&
+        XImage_width(&self->m_staticScene) == w &&
+        XImage_height(&self->m_staticScene) == h)
+        return true;
+    if (self->m_staticScene.m_data)
+        XImage_deinit_base(&self->m_staticScene);
+    XImage_init_ex(&self->m_staticScene, w, h, XImageFormat_ARGB32);
+    if (XImage_isNull(&self->m_staticScene)) return false;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, &self->m_staticScene)) {
+        XPainter_deinit(&painter);
+        return false;
+    }
+    demo_drawStaticScene(self, &painter, w, h);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    self->m_staticSceneDirty = false;
+    return true;
+}
+
+static bool demo_rectsIntersect(const XRect* first, const XRect* second)
+{
+    return first && second && first->x < second->x + second->width &&
+           second->x < first->x + first->width &&
+           first->y < second->y + second->height &&
+           second->y < first->y + first->height;
+}
+
+/** @brief 将静态场景中对应 tile 的 32 位像素直接复制到后备绘制设备。 */
+static bool demo_copyStaticTile(const XImage* scene, XImage* tile,
+                                const XRect* tileRect)
+{
+    const uint8_t* source;
+    uint8_t* target;
+    size_t rowBytes;
+    int row;
+    if (!scene || !tile || !tileRect || tileRect->x < 0 || tileRect->y < 0 ||
+        tileRect->width <= 0 || tileRect->height <= 0 ||
+        tileRect->x + tileRect->width > XImage_width(scene) ||
+        tileRect->y + tileRect->height > XImage_height(scene) ||
+        tileRect->width > XImage_width(tile) ||
+        tileRect->height > XImage_height(tile) || XImage_depth(scene) != 32 ||
+        XImage_depth(tile) != 32)
+        return false;
+    source = XImage_constBits(scene);
+    target = XImage_bits(tile);
+    if (!source || !target) return false;
+    rowBytes = (size_t)tileRect->width * 4u;
+    for (row = 0; row < tileRect->height; ++row) {
+        memcpy(target + (size_t)row * (size_t)XImage_bytesPerLine(tile),
+               source + (size_t)(tileRect->y + row) *
+                            (size_t)XImage_bytesPerLine(scene) +
+                            (size_t)tileRect->x * 4u,
+               rowBytes);
+    }
+    return true;
+}
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
+
+/** @brief 重绘整个窗口：resize 后备存储 -> 绘制 -> flush 提交原生窗口。 */
+static void demo_paintScene(DemoWin* self, XEvent* event)
+{
+    XImage* device;
+    XPainter painter;
+    XPoint offset;
+    XRect tile;
+    int width;
+    int height;
+    (void)event;
+    if (!self) return;
+    width = XWidget_width(&self->m_base);
+    height = XWidget_height(&self->m_base);
+    if (width <= 0 || height <= 0) return;
+    device = XWidget_paintDevice(&self->m_base);
+    if (!device) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, device)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(&self->m_base);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    XRect_init(&tile, -offset.x, -offset.y,
+               XImage_width(device), XImage_height(device));
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+    if (!demo_updateStaticScene(self, width, height) ||
+        !demo_copyStaticTile(&self->m_staticScene, device, &tile))
+        demo_drawStaticScene(self, &painter, width, height);
+#else
+    demo_drawStaticScene(self, &painter, width, height);
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    {
+        XRect overlay = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
+        if (demo_rectsIntersect(&tile, &overlay))
+            demo_performance_draw(self, &painter);
+    }
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
+static void demo_repaint(DemoWin* self)
+{
+    XRect dirty;
+    if (!self) return;
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+    if (self->m_staticSceneDirty ||
+        XImage_width(&self->m_staticScene) != XWidget_width(&self->m_base) ||
+        XImage_height(&self->m_staticScene) != XWidget_height(&self->m_base)) {
+        dirty = XWidget_rect(&self->m_base);
+    }
+    else
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
+    {
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+        dirty = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
+#else
+        dirty = XWidget_rect(&self->m_base);
+#endif
+    }
+    XWidget_updateRect(&self->m_base, &dirty);
+}
 /** @brief 返回单调微秒计时，用于真实窗口绘制基准。 */
 static int64_t demo_monotonicUsecs(void)
 {
@@ -506,15 +525,23 @@ static int64_t demo_monotonicUsecs(void)
         QueryPerformanceFrequency(&frequency);
     if (frequency.QuadPart != 0 && QueryPerformanceCounter(&counter))
         return counter.QuadPart * 1000000LL / frequency.QuadPart;
+#elif defined(CLOCK_MONOTONIC)
+    {
+        struct timespec value;
+        if (clock_gettime(CLOCK_MONOTONIC, &value) == 0)
+            return (int64_t)value.tv_sec * 1000000LL +
+                   (int64_t)value.tv_nsec / 1000LL;
+    }
 #endif
-    return XDateTime_currentMSecsSinceEpoch() * 1000LL;
+    /* Keep the demo usable on platforms without a monotonic clock. */
+    return XDateTime_currentNSecsSinceEpoch() / 1000LL;
 }
 
 /**
  * @brief 持续运行真实窗口重绘，统计图形路径的吞吐与最长帧。
  * @details 固定尺寸模式每帧直接完整绘制 demo；尺寸切换模式则交替调用
  *          Win32 SetWindowPos，WM_SIZE 同步进入 resizeEvent 并完成一次
- *          完整绘制。两种模式都包含 XBackingStore、XPainter 和 GDI 提交。
+ *          完整绘制。两种模式都经过 XWidget 的后备存储、XPainter 和平台提交。
  */
 static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
                                    bool resizeWindow)
@@ -544,7 +571,7 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
         frameStart = demo_monotonicUsecs();
         if (resizeWindow) {
             large = !large;
-            XWindow_setGeometry((XWindow*)self, 60, 60,
+            XWidget_setGeometry(&self->m_base, 60, 60,
                                 large ? largeWidth : normalWidth,
                                 large ? largeHeight : normalHeight);
         }
@@ -572,6 +599,44 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
             (double)longestUsecs / 1000.0);
 }
 
+/** @brief 停止 Demo 自己注册的定时器，避免对象销毁后继续派发刷新事件。 */
+static void demo_stopTimers(DemoWin* self)
+{
+    if (!self) return;
+    if (self->m_frameTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_frameTimer);
+        self->m_frameTimer = XTIMER_INVALID_ID;
+    }
+    if (self->m_autoQuitTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_autoQuitTimer);
+        self->m_autoQuitTimer = XTIMER_INVALID_ID;
+    }
+}
+
+/** @brief 标准事件循环中的刷新和自动退出定时器处理。 */
+static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
+{
+    DemoWin* self = (DemoWin*)object;
+    XTimerId timerId;
+    if (!self || !event) return;
+    timerId = XTimerEvent_timerId(event);
+    if (timerId == self->m_frameTimer) {
+        if (!self->m_closed)
+            demo_repaint(self);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    if (timerId == self->m_autoQuitTimer) {
+        demo_stopTimers(self);
+        self->m_closed = true;
+        XGuiApplication_quit();
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XClass_Parent(XObject, EXObject_TimerEvent,
+                  void(*)(XObject*, XTimerEvent*))(object, event);
+}
+
 /* ==================== 信号槽 ==================== */
 
 #if XWIDGET_ON && XPUSHBUTTON_ON
@@ -581,10 +646,10 @@ static void demo_button_pressedSlot(XObject* receiver, XVarList* args)
     DemoWin* self = (DemoWin*)receiver;
     (void)args;
     if (!self) return;
-    self->m_buttonDown = true;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_setText_2(&self->m_linkLabel, "Pressed");
 #endif
+    self->m_staticSceneDirty = true;
     demo_repaint(self);
 }
 
@@ -594,10 +659,10 @@ static void demo_button_releasedSlot(XObject* receiver, XVarList* args)
     DemoWin* self = (DemoWin*)receiver;
     (void)args;
     if (!self) return;
-    self->m_buttonDown = false;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_setText_2(&self->m_linkLabel, "Released");
 #endif
+    self->m_staticSceneDirty = true;
     demo_repaint(self);
 }
 
@@ -617,6 +682,7 @@ static void demo_stack_prev_clickedSlot(XObject* receiver, XVarList* args)
     else --index;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     XPrintf("XGuiWindowDemo: stacked page=%d (prev)\n", index);
+    self->m_staticSceneDirty = true;
     demo_repaint(self);
 }
 
@@ -634,6 +700,7 @@ static void demo_stack_next_clickedSlot(XObject* receiver, XVarList* args)
     index = (index + 1) % count;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     XPrintf("XGuiWindowDemo: stacked page=%d (next)\n", index);
+    self->m_staticSceneDirty = true;
     demo_repaint(self);
 }
 #endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
@@ -641,229 +708,221 @@ static void demo_stack_next_clickedSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 事件槽重载 ==================== */
 
-/** @brief CloseEvent：接受关闭并置标志，主循环随后退出。 */
-static void VDemoWin_closeEvent(XWindow* self, XEvent* event)
+/** @brief CloseEvent：接受关闭，停止刷新并退出应用事件循环。 */
+static void VDemoWin_closeEvent(XWidget* self, XEvent* event)
 {
-    /* 注意：XWindow_xxxEvent_base 在框架里是虚派发（会再次进入本覆写），
-       必须用 XClass_Parent 显式调用父类默认实现，避免无限递归。 */
-    XClass_Parent(XWindow, EXWindow_CloseEvent, XWindowEventSlot)(self, event);
-    ((DemoWin*)self)->m_closed = true;
+    DemoWin* demo = (DemoWin*)self;
+    XClass_Parent(XWidget, EXWidget_CloseEvent,
+                  void(*)(XWidget*, XEvent*))(self, event);
+    demo_stopTimers(demo);
+    demo->m_closed = true;
+    XGuiApplication_quit();
     if (event) XEvent_accept(event);
 }
 
-/** @brief ExposeEvent：区域可见，整窗重绘。 */
-static void VDemoWin_exposeEvent(XWindow* self, XEvent* event)
+/** @brief ResizeEvent：更新固定悬浮层锚点，并让控件树提交新尺寸画面。 */
+static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 {
-    XClass_Parent(XWindow, EXWindow_ExposeEvent, XWindowEventSlot)(self, event);
-    demo_repaint((DemoWin*)self);
+    DemoWin* demo = (DemoWin*)self;
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void(*)(XWidget*, XEvent*))(self, event);
+    demo->m_staticSceneDirty = true;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
+        XPerformanceOverlay_setPresetPosition(
+            &demo->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
+            XWidget_width(self), XWidget_height(self), 8);
+    }
+#endif
+    demo_repaint(demo);
 }
 
-/** @brief ResizeEvent：尺寸变化，整窗重绘。 */
-static void VDemoWin_resizeEvent(XWindow* self, XEvent* event)
+/** @brief PaintEvent：根控件背景与性能悬浮层；子控件由 XWidget 自动递归绘制。 */
+static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
 {
-    XClass_Parent(XWindow, EXWindow_ResizeEvent, XWindowEventSlot)(self, event);
-    demo_repaint((DemoWin*)self);
-}
-
-/** @brief PaintEvent：显式绘制请求（本演示与 Expose 同路整窗刷新）。 */
-static void VDemoWin_paintEvent(XWindow* self, XEvent* event)
-{
-    XClass_Parent(XWindow, EXWindow_PaintEvent, XWindowEventSlot)(self, event);
-    demo_repaint((DemoWin*)self);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    DemoWin* demo = (DemoWin*)self;
+    int64_t frameStartUsecs = demo_monotonicUsecs();
+#endif
+    demo_paintScene((DemoWin*)self, event);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    {
+        int64_t frameEndUsecs = demo_monotonicUsecs();
+        XPerformanceOverlay_updateFrame(&demo->m_performanceOverlay,
+                                        frameStartUsecs, frameEndUsecs);
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+        if (demo->m_lastNetworkPollUsecs <= 0 ||
+            frameEndUsecs - demo->m_lastNetworkPollUsecs >=
+                (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
+            uint64_t rxBytes = 0;
+            uint64_t txBytes = 0;
+            bool available = demo_network_counters(&rxBytes, &txBytes);
+            XPerformanceOverlay_updateNetwork(&demo->m_performanceOverlay,
+                                              available, rxBytes, txBytes,
+                                              frameEndUsecs);
+            demo->m_lastNetworkPollUsecs = frameEndUsecs;
+        }
+#endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
+    }
+#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON */
 }
 
 /** @brief KeyPressEvent：打印键码/修饰键/自动重复（真实输入闭环验证）。 */
-static void VDemoWin_keyPressEvent(XWindow* self, XEvent* event)
+static void VDemoWin_keyPressEvent(XWidget* self, XEvent* event)
 {
-    XKeyEvent* ke;
-    XClass_Parent(XWindow, EXWindow_KeyPressEvent, XWindowEventSlot)(self, event);
-    ke = (XKeyEvent*)event;
+    XKeyEvent* key = (XKeyEvent*)event;
+    (void)self;
+    if (!key) return;
     printf("XGuiWindowDemo: keyPress key=%d modifiers=0x%x autoRepeat=%d\n",
-           XKeyEvent_key(ke), (unsigned)XKeyEvent_modifiers(ke),
-           (int)XKeyEvent_autoRepeat(ke));
+           XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key),
+           (int)XKeyEvent_autoRepeat(key));
 }
 
 /** @brief KeyReleaseEvent：打印释放键码。 */
-static void VDemoWin_keyReleaseEvent(XWindow* self, XEvent* event)
+static void VDemoWin_keyReleaseEvent(XWidget* self, XEvent* event)
 {
-    XKeyEvent* ke;
-    XClass_Parent(XWindow, EXWindow_KeyReleaseEvent, XWindowEventSlot)(self, event);
-    ke = (XKeyEvent*)event;
+    XKeyEvent* key = (XKeyEvent*)event;
+    (void)self;
+    if (!key) return;
     printf("XGuiWindowDemo: keyRelease key=%d modifiers=0x%x\n",
-           XKeyEvent_key(ke), (unsigned)XKeyEvent_modifiers(ke));
+           XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key));
 }
 
-/** @brief MousePressEvent：打印触发键/按下集合/坐标。 */
-static void VDemoWin_mousePressEvent(XWindow* self, XEvent* event)
+/** @brief MousePressEvent：背景区域处理性能悬浮层；子控件由自身接收事件。 */
+static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
 {
-    XMouseEvent* me;
-#if XWIDGET_ON && XPUSHBUTTON_ON
-    XRect geo;
-    XPoint pos;
-#endif
-    XClass_Parent(XWindow, EXWindow_MousePressEvent, XWindowEventSlot)(self, event);
-    me = (XMouseEvent*)event;
+    DemoWin* demo = (DemoWin*)self;
+    XMouseEvent* mouse = (XMouseEvent*)event;
+    if (!mouse) return;
     printf("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
-           (int)XMouseEvent_button(me), (unsigned)XMouseEvent_buttons(me),
-           (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
-#if XWIDGET_ON && XPUSHBUTTON_ON
-    geo = XWidget_geometry((XWidget*)&((DemoWin*)self)->m_button);
-    pos = XMouseEvent_position(me);
-    if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
-        pos.x >= geo.x && pos.x < geo.x + geo.width &&
-        pos.y >= geo.y && pos.y < geo.y + geo.height) {
-        DemoWin* win = (DemoWin*)self;
-        if (!win->m_buttonDown) {
-            XPushButton_setDown(&win->m_button, true);
-            XPushButton_pressed_signal(&win->m_button);
-        }
-    }
-#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+           (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
+           (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
-        DemoWin* win = (DemoWin*)self;
-        XRect prevGeo = XWidget_geometry((XWidget*)&win->m_stackPrevButton);
-        XRect nextGeo = XWidget_geometry((XWidget*)&win->m_stackNextButton);
-        if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
-            pos.x >= prevGeo.x && pos.x < prevGeo.x + prevGeo.width &&
-            pos.y >= prevGeo.y && pos.y < prevGeo.y + prevGeo.height) {
-            if (!win->m_stackPrevDown) {
-                win->m_stackPrevDown = true;
-                XPushButton_setDown(&win->m_stackPrevButton, true);
-                XPushButton_pressed_signal(&win->m_stackPrevButton);
+        XPoint position = XMouseEvent_position(mouse);
+        if (demo_performance_contains(demo, position)) {
+            if (XMouseEvent_button(mouse) == XMouseButton_RightButton) {
+                XPerformanceOverlay_setFixed(
+                    &demo->m_performanceOverlay,
+                    !XPerformanceOverlay_isFixed(&demo->m_performanceOverlay));
+                XPrintf("XGuiWindowDemo: performance overlay fixed=%s\n",
+                        XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)
+                            ? "true" : "false");
+                demo_repaint(demo);
+            } else if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
+                (void)XPerformanceOverlay_beginDrag(
+                    &demo->m_performanceOverlay, position.x, position.y);
             }
-        } else if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
-                   pos.x >= nextGeo.x && pos.x < nextGeo.x + nextGeo.width &&
-                   pos.y >= nextGeo.y && pos.y < nextGeo.y + nextGeo.height) {
-            if (!win->m_stackNextDown) {
-                win->m_stackNextDown = true;
-                XPushButton_setDown(&win->m_stackNextButton, true);
-                XPushButton_pressed_signal(&win->m_stackNextButton);
-            }
+            XEvent_accept(event);
         }
     }
-#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 #endif
 }
 
-/** @brief MouseReleaseEvent：打印释放键/坐标。 */
-static void VDemoWin_mouseReleaseEvent(XWindow* self, XEvent* event)
+/** @brief MouseReleaseEvent：结束性能悬浮层拖动。 */
+static void VDemoWin_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
-    XMouseEvent* me;
-    XClass_Parent(XWindow, EXWindow_MouseReleaseEvent, XWindowEventSlot)(self, event);
-    me = (XMouseEvent*)event;
-    printf("XGuiWindowDemo: mouseRelease button=%d buttons=0x%x pos=(%d,%d)\n",
-           (int)XMouseEvent_button(me), (unsigned)XMouseEvent_buttons(me),
-           (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
-#if XWIDGET_ON && XPUSHBUTTON_ON
-    if (XMouseEvent_button(me) == XMouseButton_LeftButton &&
-        ((DemoWin*)self)->m_buttonDown) {
-        DemoWin* win = (DemoWin*)self;
-        XPushButton_setDown(&win->m_button, false);
-        XPushButton_released_signal(&win->m_button);
+    DemoWin* demo = (DemoWin*)self;
+    XMouseEvent* mouse = (XMouseEvent*)event;
+    if (!mouse) return;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
+        XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
+        XPerformanceOverlay_endDrag(&demo->m_performanceOverlay);
+        demo_repaint(demo);
+        XEvent_accept(event);
     }
-#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    {
-        DemoWin* win = (DemoWin*)self;
-        XPoint pos = XMouseEvent_position(me);
-        XRect prevGeo = XWidget_geometry((XWidget*)&win->m_stackPrevButton);
-        XRect nextGeo = XWidget_geometry((XWidget*)&win->m_stackNextButton);
-        bool prevHit = pos.x >= prevGeo.x && pos.x < prevGeo.x + prevGeo.width &&
-                       pos.y >= prevGeo.y && pos.y < prevGeo.y + prevGeo.height;
-        bool nextHit = pos.x >= nextGeo.x && pos.x < nextGeo.x + nextGeo.width &&
-                       pos.y >= nextGeo.y && pos.y < nextGeo.y + nextGeo.height;
-        if (win->m_stackPrevDown) {
-            win->m_stackPrevDown = false;
-            XPushButton_setDown(&win->m_stackPrevButton, false);
-            XPushButton_released_signal(&win->m_stackPrevButton);
-            if (prevHit)
-                XPushButton_clicked_signal(&win->m_stackPrevButton, false);
-        }
-        if (win->m_stackNextDown) {
-            win->m_stackNextDown = false;
-            XPushButton_setDown(&win->m_stackNextButton, false);
-            XPushButton_released_signal(&win->m_stackNextButton);
-            if (nextHit)
-                XPushButton_clicked_signal(&win->m_stackNextButton, false);
-        }
-    }
-#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 #endif
 }
 
 /** @brief MouseDoubleClickEvent：打印双击键/坐标。 */
-static void VDemoWin_mouseDoubleClickEvent(XWindow* self, XEvent* event)
+static void VDemoWin_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
-    XMouseEvent* me;
-    XClass_Parent(XWindow, EXWindow_MouseDoubleClickEvent, XWindowEventSlot)(self, event);
-    me = (XMouseEvent*)event;
+    XMouseEvent* mouse = (XMouseEvent*)event;
+    (void)self;
+    if (!mouse) return;
     printf("XGuiWindowDemo: mouseDoubleClick button=%d pos=(%d,%d)\n",
-           (int)XMouseEvent_button(me),
-           (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
+           (int)XMouseEvent_button(mouse),
+           (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
 }
 
-/** @brief MouseMoveEvent：打印坐标与按下集合。 */
-static void VDemoWin_mouseMoveEvent(XWindow* self, XEvent* event)
+/** @brief MouseMoveEvent：拖动性能悬浮层时更新其位置。 */
+static void VDemoWin_mouseMoveEvent(XWidget* self, XEvent* event)
 {
-    XMouseEvent* me;
-    XClass_Parent(XWindow, EXWindow_MouseMoveEvent, XWindowEventSlot)(self, event);
-    me = (XMouseEvent*)event;
-    printf("XGuiWindowDemo: mouseMove buttons=0x%x pos=(%d,%d)\n",
-           (unsigned)XMouseEvent_buttons(me),
-           (int)XMouseEvent_position(me).x, (int)XMouseEvent_position(me).y);
+    DemoWin* demo = (DemoWin*)self;
+    XMouseEvent* mouse = (XMouseEvent*)event;
+    if (!mouse) return;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    if (XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
+        XMouseButton buttons = XMouseEvent_buttons(mouse);
+        if ((buttons & XMouseButton_LeftButton) != 0) {
+            if (XPerformanceOverlay_dragTo(
+                    &demo->m_performanceOverlay,
+                    XMouseEvent_position(mouse).x,
+                    XMouseEvent_position(mouse).y,
+                    XWidget_width(self), XWidget_height(self)))
+                demo_repaint(demo);
+            XEvent_accept(event);
+        } else {
+            XPerformanceOverlay_endDrag(&demo->m_performanceOverlay);
+        }
+    }
+#endif
 }
 
 /** @brief WheelEvent：打印滚轮角度增量与坐标。 */
-static void VDemoWin_wheelEvent(XWindow* self, XEvent* event)
+static void VDemoWin_wheelEvent(XWidget* self, XEvent* event)
 {
-    XWheelEvent* we;
+    XWheelEvent* wheel = (XWheelEvent*)event;
     XPoint delta;
-    XClass_Parent(XWindow, EXWindow_WheelEvent, XWindowEventSlot)(self, event);
-    we = (XWheelEvent*)event;
-    delta = XWheelEvent_angleDelta(we);
+    (void)self;
+    if (!wheel) return;
+    delta = XWheelEvent_angleDelta(wheel);
     printf("XGuiWindowDemo: wheel delta=(%d,%d) pos=(%d,%d)\n",
            (int)delta.x, (int)delta.y,
-           (int)XWheelEvent_position(we).x, (int)XWheelEvent_position(we).y);
+           (int)XWheelEvent_position(wheel).x,
+           (int)XWheelEvent_position(wheel).y);
 }
 
 /** @brief EnterEvent：打印进入坐标（局部+全局）。 */
-static void VDemoWin_enterEvent(XWindow* self, XEvent* event)
+static void VDemoWin_enterEvent(XWidget* self, XEvent* event)
 {
-    XEnterEvent* ee;
+    XEnterEvent* enter = (XEnterEvent*)event;
     XPoint global;
-    XClass_Parent(XWindow, EXWindow_EnterEvent, XWindowEventSlot)(self, event);
-    ee = (XEnterEvent*)event;
-    global = XEnterEvent_globalPosition(ee);
+    (void)self;
+    if (!enter) return;
+    global = XEnterEvent_globalPosition(enter);
     printf("XGuiWindowDemo: enter pos=(%d,%d) global=(%d,%d)\n",
-           (int)XEnterEvent_position(ee).x, (int)XEnterEvent_position(ee).y,
+           (int)XEnterEvent_position(enter).x, (int)XEnterEvent_position(enter).y,
            (int)global.x, (int)global.y);
 }
 
 /** @brief LeaveEvent：打印离开通知。 */
-static void VDemoWin_leaveEvent(XWindow* self, XEvent* event)
+static void VDemoWin_leaveEvent(XWidget* self, XEvent* event)
 {
-    XClass_Parent(XWindow, EXWindow_LeaveEvent, XWindowEventSlot)(self, event);
+    (void)self;
+    (void)event;
     printf("XGuiWindowDemo: leave\n");
 }
-
 /** @brief 演示窗口类虚表初始化。 */
 static XVtable* DemoWin_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(DemoWin)
-    XVTABLE_INHERIT_XCLASS(XWindow);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_CloseEvent, VDemoWin_closeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_ExposeEvent, VDemoWin_exposeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_ResizeEvent, VDemoWin_resizeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_PaintEvent, VDemoWin_paintEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_KeyPressEvent, VDemoWin_keyPressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_KeyReleaseEvent, VDemoWin_keyReleaseEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_MousePressEvent, VDemoWin_mousePressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_MouseReleaseEvent, VDemoWin_mouseReleaseEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_MouseDoubleClickEvent,
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VDemoWin_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VDemoWin_closeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VDemoWin_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VDemoWin_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VDemoWin_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent, VDemoWin_keyReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VDemoWin_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VDemoWin_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VDemoWin_mouseDoubleClickEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_MouseMoveEvent, VDemoWin_mouseMoveEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_WheelEvent, VDemoWin_wheelEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_EnterEvent, VDemoWin_enterEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWindow_LeaveEvent, VDemoWin_leaveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VDemoWin_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VDemoWin_wheelEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_EnterEvent, VDemoWin_enterEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VDemoWin_leaveEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -874,20 +933,24 @@ static DemoWin* DemoWin_create(void)
         sizeof(DemoWin), XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
     memset(self, 0, sizeof(DemoWin));
-    XWindow_init(&self->m_base);
+    XWidget_init(&self->m_base, NULL, 0);
     XClassSetVtable(self, DemoWin);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
+    XImage_init(&self->m_staticScene);
+    self->m_staticSceneDirty = true;
+    self->m_frameTimer = XTIMER_INVALID_ID;
+    self->m_autoQuitTimer = XTIMER_INVALID_ID;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton_init(&self->m_button, NULL, 0);
+    XPushButton_init(&self->m_button, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_button);
     XPushButton_setText_2(&self->m_button, "XPushButton");
     XWidget_setGeometry((XWidget*)&self->m_button, 246, 190, 128, 36);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_init(&self->m_linkLabel, NULL, 0);
+    XLabel_init(&self->m_linkLabel, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_linkLabel);
     XLabel_setText_2(&self->m_linkLabel, "Released");
     XLabel_setTextPixelSize(&self->m_linkLabel, 16);
@@ -902,18 +965,23 @@ static DemoWin* DemoWin_create(void)
                       (size_t)XPushButton_released_signal(NULL),
                       (XObject*)self, demo_button_releasedSlot,
                       XConnectionType_Direct);
+    /* 与 QWidget 一样，不由布局管理的子控件需显式 show()；父窗口显示
+     * 时会把它们转为实际可见。 */
+    XWidget_show((XWidget*)&self->m_button);
+#if XFRAME_ON && XLABEL_ON
+    XWidget_show((XWidget*)&self->m_linkLabel);
+#endif
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout_init(&self->m_stackLayout);
-    /* DemoWin 的基类是 XWindow 而非 XWidget；页面由布局管理几何，
-       绘制时由演示窗口显式调用，因此不能把 XWindow 强转为父控件。 */
-    XLabel_init(&self->m_stackPageOne, NULL, 0);
+    /* 页面和按钮均是根控件的子控件，由 XWidget 控件树自动绘制与命中。 */
+    XLabel_init(&self->m_stackPageOne, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPageOne);
     XLabel_setText_2(&self->m_stackPageOne, "Stacked page 1");
     XLabel_setTextPixelSize(&self->m_stackPageOne, 16);
     XLabel_setAlignment(&self->m_stackPageOne,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XLabel_init(&self->m_stackPageTwo, NULL, 0);
+    XLabel_init(&self->m_stackPageTwo, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPageTwo);
     XLabel_setText_2(&self->m_stackPageTwo, "Stacked page 2");
     XLabel_setTextPixelSize(&self->m_stackPageTwo, 16);
@@ -924,11 +992,11 @@ static DemoWin* DemoWin_create(void)
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_stackPageTwo);
 #if XPUSHBUTTON_ON
-    XPushButton_init(&self->m_stackPrevButton, NULL, 0);
+    XPushButton_init(&self->m_stackPrevButton, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPrevButton);
     XPushButton_setText_2(&self->m_stackPrevButton, "< Prev");
     XWidget_setGeometry((XWidget*)&self->m_stackPrevButton, 32, 274, 78, 30);
-    XPushButton_init(&self->m_stackNextButton, NULL, 0);
+    XPushButton_init(&self->m_stackNextButton, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackNextButton);
     XPushButton_setText_2(&self->m_stackNextButton, "Next >");
     XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 120, 274, 78, 30);
@@ -940,6 +1008,8 @@ static DemoWin* DemoWin_create(void)
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_next_clickedSlot,
                       XConnectionType_Direct);
+    XWidget_show((XWidget*)&self->m_stackPrevButton);
+    XWidget_show((XWidget*)&self->m_stackNextButton);
 #endif /* XPUSHBUTTON_ON */
 #endif
     return self;
@@ -950,17 +1020,12 @@ static DemoWin* DemoWin_create(void)
 int main(int argc, char* argv[])
 {
     XGuiApplication* app;
-    XPlatformNativeInterface* gni;
-    XPlatformIntegration* gpi;
-    XPlatformWindow* pw;
     DemoWin* win;
-    XBackingStore* store;
     int autoSeconds;
     int benchmarkSeconds;
     bool benchmarkResize;
     int argi;
-    int64_t startMsec;
-    bool ok;
+    int eventLoopResult;
 
     autoSeconds = 0;
     benchmarkSeconds = 0;
@@ -989,76 +1054,56 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    /* 2) 创建演示窗口并设置标题/几何（原生窗口在首次显示时惰性创建）。 */
+    /* 2) 创建演示窗口并设置标题/几何。show() 会在框架内部惰性创建平台窗口。 */
     win = DemoWin_create();
     if (!win) {
         XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
         XGuiApplication_delete_base(app);
         return 1;
     }
-    XWindow_setTitle_2((XWindow*)win, "XinYueC GUI 控件可视化测试 (X11/Win32)");
-    XWindow_setGeometry((XWindow*)win, 60, 60, 520, 360);
-
-    /* 3) 挂接平台原生接口与平台窗口句柄。 */
-    gni = XGuiApplication_platformNativeInterface();
-    gpi = (gni) ? XPlatformNativeInterface_integration(gni) : NULL;
-    if (!gni || !gpi) {
-        XPrintf("XGuiWindowDemo: 平台原生接口不可用（XPLATFORMNATIVEWINDOW_ON?）\n");
-        XWindow_delete_base((XClass*)win);
-        XGuiApplication_delete_base(app);
-        return 1;
+    {
+        XString* title = XString_create_utf8(
+            "XinYueC GUI 控件可视化测试 (X11/Win32)");
+        XWidget_setWindowTitle(&win->m_base, title);
+        XString_delete_base((XClass*)title);
     }
-    pw = XPlatformIntegration_createPlatformWindow(gpi, (XWindow*)win);
-    if (!pw) {
-        XPrintf("XGuiWindowDemo: createPlatformWindow 失败\n");
-        XWindow_delete_base((XClass*)win);
-        XGuiApplication_delete_base(app);
-        return 1;
-    }
+    XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
 
-    /* 4) 创建后备存储：paintDevice 为 XImage 软件缓冲，随后 XPainter 直绘。 */
-    store = XBackingStore_create((XWindow*)win);
-    if (!store) {
-        XPrintf("XGuiWindowDemo: XBackingStore_create 失败\n");
-        XWindow_delete_base((XClass*)win);
-        XGuiApplication_delete_base(app);
-        return 1;
-    }
-    win->m_store = store;
+    /* 3) 显示窗口：触发框架内部的惰性平台窗口创建并进入事件循环。 */
+    XWidget_showNormal(&win->m_base);
+    XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",
+           (double)XWidget_width(&win->m_base),
+           (double)XWidget_height(&win->m_base));
 
-    /* 5) 显示窗口：触发惰性创建原生窗口并进入事件循环。 */
-    XWindow_showNormal((XWindow*)win);
-    startMsec = XDateTime_currentMSecsSinceEpoch();
-    ok = XPlatformIntegration_isNativeWindowAvailable(gpi);
-    XPrintf("XGuiWindowDemo: 原生窗口可用=%s 屏幕尺寸=%.0fx%.0f\n",
-           ok ? "是" : "否",
-           (double)XWindow_width((XWindow*)win),
-           (double)XWindow_height((XWindow*)win));
-
+    eventLoopResult = 0;
     if (benchmarkSeconds > 0) {
         demo_runFrameBenchmark(win, benchmarkSeconds, benchmarkResize);
-    }
-    while (!win->m_closed) {
-        int64_t nowMsec;
-        if (benchmarkSeconds > 0)
-            break;
-        if (autoSeconds > 0) {
-            nowMsec = XDateTime_currentMSecsSinceEpoch();
-            if ((nowMsec - startMsec) / 1000 >= (int64_t)autoSeconds) break;
+    } else {
+        win->m_frameTimer = XObject_startTimer_ms(
+            (XObject*)win, XGUI_DEMO_FRAME_INTERVAL_MS,
+            XTimerType_PreciseTimer);
+        if (win->m_frameTimer == XTIMER_INVALID_ID) {
+            XPrintf("XGuiWindowDemo: 性能刷新定时器创建失败\n");
+            eventLoopResult = 2;
         }
-        XGuiApplication_waitForEvents(16); /* 平台消息泵（X11/Win32）+ 队列等待。 */
-        XGuiApplication_processEvents(XEventLoop_AllEvents);
-        /* 空闲 demo 也持续产生帧，供性能悬浮层完成采样与刷新。 */
-        if (!win->m_closed)
-            demo_repaint(win);
+        if (autoSeconds > 0) {
+            win->m_autoQuitTimer = XObject_startTimer_ms(
+                (XObject*)win, (uint64_t)autoSeconds * 1000u,
+                XTimerType_CoarseTimer);
+            if (win->m_autoQuitTimer == XTIMER_INVALID_ID) {
+                XPrintf("XGuiWindowDemo: 自动退出定时器创建失败\n");
+                eventLoopResult = 2;
+            }
+        }
+        if (eventLoopResult == 0)
+            eventLoopResult = XGuiApplication_exec();
     }
 
-    XPrintf("XGuiWindowDemo: 退出事件循环（关闭=%s 自动退出=%d）\n",
-           win->m_closed ? "是" : "否", autoSeconds);
+    XPrintf("XGuiWindowDemo: 退出事件循环（关闭=%s 自动退出=%d 返回=%d）\n",
+           win->m_closed ? "是" : "否", autoSeconds, eventLoopResult);
 
-    /* 6) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
-    XBackingStore_delete_base((XClass*)store);
-    win->m_store = NULL;
+    /* 4) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
+    demo_stopTimers(win);
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton_deinit_base(&win->m_button);
 #endif
@@ -1068,17 +1113,22 @@ int main(int argc, char* argv[])
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_deinit(win);
 #endif
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+    XImage_deinit_base(&win->m_staticScene);
+#endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #if XPUSHBUTTON_ON
     XPushButton_deinit_base(&win->m_stackPrevButton);
     XPushButton_deinit_base(&win->m_stackNextButton);
 #endif
+    XLabel_deinit_base(&win->m_stackPageOne);
+    XLabel_deinit_base(&win->m_stackPageTwo);
     XStackedLayout_deinit_base(&win->m_stackLayout);
 #endif
-    XWindow_delete_base((XClass*)win);
+    XWidget_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);
     XPrintf("XGuiWindowDemo: 已退出\n");
-    return 0;
+    return eventLoopResult;
 }
 
 #else /* 开关裁剪 */

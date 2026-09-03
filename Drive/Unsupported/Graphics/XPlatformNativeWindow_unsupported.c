@@ -123,6 +123,13 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
     return false;
 }
 
+bool XPlatformNativeWindow_queryKeyboardModifiers(
+        XKeyboardModifiers* outModifiers)
+{
+    (void)outModifiers;
+    return false;
+}
+
 /* ==================== 上屏（恒 false，无窗口可提交） ==================== */
 
 bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,

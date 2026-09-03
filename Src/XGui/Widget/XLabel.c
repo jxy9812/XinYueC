@@ -865,8 +865,9 @@ static int label_layout(const char* utf8, int availWidth, bool wrap,
     int segStart = 0;
     LabelLine* lines;
     if (cap < 1) cap = 1;
+    /* 文本长度决定布局行数组大小；超过固定多级池最大块时回退系统分配。 */
     lines = (LabelLine*)XMemory_malloc(
-        sizeof(LabelLine) * (size_t)cap, XMEMORY_TYPE_MULTIPOOL);
+        sizeof(LabelLine) * (size_t)cap, XMEMORY_TYPE_HYBRID);
     if (!lines) { if (outLines) *outLines = NULL; return 0; }
     while (1) {
         int segEnd = segStart;
@@ -908,7 +909,7 @@ static void label_textBlockSize(const XLabel* self, int layoutWidth,
         if (lines[i].m_width > w) w = lines[i].m_width;
     if (outWidth) *outWidth = w;
     if (outHeight) *outHeight = n * label_lineHeight(self);
-    XMemory_free(lines, XMEMORY_TYPE_MULTIPOOL);
+    XMemory_free(lines, XMEMORY_TYPE_HYBRID);
 }
 
 /* ==================== 尺寸计算（对标 QLabelPrivate::sizeForWidth） ==================== */
@@ -1179,7 +1180,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
                                         layout.m_lines[i].m_start,
                                         layout.m_lines[i].m_end);
     }
-    XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+    XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
 }
 
 /* ==================== 链接命中测试 ==================== */
@@ -1205,7 +1206,7 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
     if (layout.m_lineCount <= 0 || !layout.m_lines) return -1;
     if (pos->y < layout.m_rect.y ||
         pos->y >= layout.m_rect.y + layout.m_rect.height) {
-        XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+        XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
         return -1;
     }
     {
@@ -1214,7 +1215,7 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
             ? (pos->y - layout.m_rect.y) / lineHeight : 0;
     }
     if (lineIndex < 0 || lineIndex >= layout.m_lineCount) {
-        XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+        XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
         return -1;
     }
     utf8 = XString_toUtf8(self->m_displayText);
@@ -1223,7 +1224,7 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
                             label_visualAlignment(self, self->m_alignment));
         int lw = layout.m_lines[lineIndex].m_width;
         if (pos->x < x || pos->x >= x + lw) {
-            XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+            XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
             return -1;
         }
         {
@@ -1257,11 +1258,11 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
     for (li = 0; li < self->m_linkCount; ++li) {
         if (byte >= self->m_links[li].m_start &&
             byte < self->m_links[li].m_end) {
-            XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+            XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
             return li;
         }
     }
-    XMemory_free(layout.m_lines, XMEMORY_TYPE_MULTIPOOL);
+    XMemory_free(layout.m_lines, XMEMORY_TYPE_HYBRID);
     return -1;
 }
 

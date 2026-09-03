@@ -1,6 +1,6 @@
 # XGui 进度文档
 
-> 最后更新：2026-09-02 Asia/Shanghai
+> 最后更新：2026-09-03 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
 
@@ -23,16 +23,28 @@ XGui 布局系统核心 API 已按 Qt 6.8 对齐：PC 端功能可用，嵌入�
   `bin/XGuiRegression_Test`
 - 分支/提交约定：默认分支前缀 `codex/`；**不要 push**（除非用户明确要求）
 
-### 2.1 运行回归测试
+### 2.1 XGui 子类接口规则
+
+- 子类若只是继承父类已有 API，头文件直接用宏别名复用父类函数，不再声明或
+  实现同义包装函数；调用约定和参数保持父类一致。
+- 只有增加了子类状态、参数或行为，或者覆盖后语义确实不同，才保留子类函数；
+  例如 `XGridLayout_setSpacing/spacing` 操作独立的水平/垂直网格间距，不归入
+  父类 `XLayout` 间距接口的简单转发。
+- 后续扫描按“继承关系 -> 头文件声明 -> C 实现 -> 引用 -> 默认/裁剪构建”顺序执行，
+  并保留现有未提交改动。
+
+### 2.2 运行回归测试
 
 ```bash
 # 仓库根运行
 ./bin/XGuiRegression_Test
 ```
 
-当前结果：**XGui 回归测试全部通过**。运行时仍会输出既有的窗口参数提示
-（无效 transient parent、忽略 WindowActive）及一次空对象诊断日志，但不影响
-测试结果。
+当前结果：本轮定向构建通过；完整回归仍有仓库既有的 2 项 LVGL/CJK 字形夹具
+失败（`generic LVGL glyph reader loads UTF-8 中文码点`、`8x16 provider
+exposes the registered CJK glyph metrics`），悬浮层新增断言未失败。运行时仍会
+输出既有的窗口参数提示（无效 transient parent、忽略 WindowActive）及空对象
+诊断日志。
 
 ## 3. 已完成工作概览
 
@@ -11501,3 +11513,141 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
 - **边界**：该修正只影响 `testRenderHint` 的组合掩码判定，不改变 `setRenderHint(s)`
   的状态记录、便携 Picture opcode 或各后端实际抗锯齿/平滑实现；动态插件、原生
   QPicture/QDataStream 互操作和完整 ICC 色彩管理仍按既有裁剪边界处理。
+
+### 10.473 2026-09-03 Dme 性能悬浮层显示、定位与固定拖拽
+
+- **问题原因**：`XPerformanceOverlay` 更新统计文字时曾关闭自身更新，初始化时也
+  保持关闭；`XLabel_setText_2()` 虽然改了文本对象，但刷新/脏区链路被截断，导致
+  FPS 文字偶尔出现后在下一帧消失。demo 之前还在每次绘制时重新计算右上角位置，
+  无法保留调用方指定位置。
+- **实现范围**：移除悬浮层内部对 `updatesEnabled` 的关闭，`draw()` 只按当前
+  `XWidget` geometry 绘制，不再覆盖位置或尺寸。`position/size/move/resize` 直接
+  复用 `XWidget` 的继承宏；新增 `XPerformanceOverlayPosition` 九宫格枚举（四角、
+  四边中点、中心，并提供 `Top/Bottom/Left/Right` 别名）和
+  `XPerformanceOverlay_setPresetPosition()`，调用方传入客户区宽高和边距即可定位。
+- **交互范围**：保留任意坐标 `XPerformanceOverlay_setPosition()` 宏；新增移动开关、
+  固定开关和 begin/drag/end 拖拽会话 API。Dme 窗口中左键拖动悬浮层，右键切换固定，
+  固定状态用右上角标记显示，拖动位置保留在后续重绘中。
+- **回归覆盖**：`xgui_regression_test.c` 新增九个常用位置、负边距/超大控件钳位、
+  更新使能、FPS 文本持久化、拖拽边界、固定拒绝拖拽及离屏像素绘制断言。
+- **验证结果**：默认配置目标 `XinYueCS`、`XGuiRegression_Test`、
+  `XGuiWindowDemo_Test` 完成构建；完整回归新增悬浮层断言通过，但整体仍受上述
+  2 项既有 LVGL/CJK 字形夹具失败影响。裁剪配置需继续验证。
+- `build-gui-crop` 重新配置后，裁剪配置下的 `XinYueCS` 与
+  `XGuiWindowDemo_Test` 完成构建；`XGuiRegression_Test` 仍被工程原有的未裁剪
+  `XAlignment_*` 测试引用阻断，错误与悬浮层无关。默认构建已在裁剪验证后重新执行，
+  恢复 `bin/XGuiRegression_Test` 为默认配置产物。
+
+### 10.474 2026-09-03 XGui 父类接口宏扫描
+
+- **扫描范围**：按当前 XGui 继承链检查 `XGuiApplication/XCoreApplication`、
+  `XApplication/XGuiApplication`、`XBoxLayout/XLayout`、`XGridLayout/XLayout`、
+  `XStackedLayout/XLayout`、`XBitmap/XPixmap`、`XPushButton/XWidget`、
+  `XLabel/XFrame`、`XPerformanceOverlay/XLabel` 和
+  `XIconThemeEngine/XIconEngine` 的头文件声明与 C 实现。
+- **已修复**：`XGuiApplication` 的 `exec/quit/notify/sendEvent/postEvent`、
+  `sendPostedEvents/removePostedEvents/sendSpontaneousEvent` 改为父类宏；
+  `XApplication` 的 `exec/quit` 改为父类宏；`XPerformanceOverlay` 的
+  `setTextPixelSize` 改为 `XLabel` 父类宏，同时删除对应转发实现。
+- **保留项**：`XGridLayout_setSpacing/spacing` 使用独立的水平/垂直间距字段；
+  `XFrame/XLabel/XPushButton/XBoxLayout/XStackedLayout` 的尺寸提示和虚函数
+  是子类算法覆盖，不属于同义包装，继续保留。
+- **后续规则**：新增或修改 XGui 子类时，父类已有且参数/行为完全一致的 API
+  只写宏别名；只有新增状态、参数、行为或明确覆盖父类语义时才新增函数。
+
+### 10.475 2026-09-03 性能悬浮层文字、网络本地化与显示开关
+
+- **修复**：长状态文本会使 `XLabel` 的布局行数组超过固定多级池的 512 字节上限，
+  原分配失败后只留下悬浮层背景和固定标记。布局行数组改用混合分配类型并以相同
+  类型释放，保留小块池分配并允许大文本回退系统分配。
+- **网络显示**：网络行使用中文“下载/上传”；收发方向独立在 `1024 KB/s` 阈值处
+  切换到 `MB/s`，例如“下载 3.0 MB/s 上传 512.0 KB/s”。网络计数不可用时显示
+  “下载 无 上传 无”。
+- **类 API**：`XPerformanceOverlay` 新增 `setFpsVisible/isFpsVisible`、
+  `setFrameTimeVisible/isFrameTimeVisible` 和
+  `setNetworkVisible/isNetworkVisible`。默认三项均显示；调用方关闭帧耗时和网络即可
+  仅显示 FPS，关闭 FPS 和帧耗时即可仅显示网络，切换会立即刷新文本且不停止采样。
+- **Demo 默认位置**：`XGuiWindowDemo_Test` 初始化时将悬浮层预设为右下角并固定；
+  窗口缩放时，固定状态会以最新客户区宽高重新定位到右下角；右键解锁并手动拖动后，
+  缩放不会覆盖用户位置。
+- **绘制性能**：Demo 将不随采样变化的控件场景缓存为完整 `XImage`；后续分块提交
+  直接逐行复制对应像素，只在命中悬浮层的 tile 上重新绘制文字。每个 tile 的
+  `XPainter` 完成绘制后也会反初始化，避免默认字体状态按帧积累。缓存由
+  `XGUI_DEMO_STATIC_SCENE_CACHE_ON` 控制，默认开启；按钮、分页和窗口尺寸变化会
+  自动使其失效并重建。
+- **事件循环与实时帧率**：Demo 正常路径由 `XGuiApplication_exec()` 驱动；`DemoWin`
+  通过 `XObject_startTimer_ms()` 注册 `XGUI_DEMO_FRAME_INTERVAL_MS`（默认 1ms）的精确
+  刷新定时器，自动退出使用独立的粗粒度定时器。关闭事件或自动退出会先停止两个定时器
+  再调用 `quit()`，不再用手写的 `wait/process/repaint` 循环驱动窗口。X11 520x360 实窗
+  截图显示 `FPS 140.9`；资源受限调用方可提高刷新间隔。
+- **Qt 平台边界**：`XWindow_createHandle()` 对齐 `QWindow::create()`，从当前
+  `XGuiApplication` 持有的 `XPlatformIntegration` 惰性创建平台窗口。因此应用代码只需
+  创建应用和窗口、调用 `show()`/`showNormal()` 与 `XGuiApplication_exec()`；不应显式调用
+  `XPlatformIntegration_createPlatformWindow()`。Demo 的 `XBackingStore` 也改为窗口首次
+  绘制时创建，不再由 `main` 组装平台对象或绘制设备。
+- **后备存储释放**：Posix 后端的区域裁剪函数会初始化输出对象；`beginPaint()` 与
+  `setStaticContents()` 因而须先反初始化旧的区域缓冲，再交给裁剪函数重建。该修正消除
+  定时刷新时遗失旧矩形数组的按帧泄漏；ASan/LSan 的演示泄漏汇总从 58,867 字节降至
+  54,459 字节，剩余项来自既有窗口、控件和字体资源链路。
+- **回归和实窗验证**：回归覆盖中文网络标签、下载/上传独立 KB/s/MB/s 换算、默认全显、
+  仅网络、仅 FPS，以及实际前景文字像素。默认目标与全量构建通过；实际 X11 窗口截图
+  确认右下角显示“FPS / 帧耗时 / 下载 / 上传”，网络行未截断且缩放后保持锚定。
+- **剩余问题**：默认直接回归与 CTest 仍只失败于两项既有 LVGL/CJK 字形夹具断言。
+  `build-gui-crop` 的库和 demo 已完成构建；其回归目标仍由既有未裁剪
+  `XAlignment_*` 引用阻断。ASan/LSan 全量回归还报告既有 PNG/zlib UBSan 空指针诊断
+  以及 102319 字节、466 次分配泄漏，不能宣称工程全局无泄漏。Demo 的 1 秒 ASan/LSan
+  自动退出运行仍有 54,459 字节、34 次分配的既有残留；逐 tile `XPainter` 状态不再随帧数
+  累计。
+
+### 10.476 2026-09-03 X11 exec 重绘恢复与悬浮层视觉复核
+
+- **事件循环修复**：`XGuiApplication` 将平台原生事件泵登记到已有的
+  `XAbstractEventDispatcher` 轮询链。因此 `XGuiApplication_exec()` 会处理 X11
+  的 Expose、Configure 与输入事件，应用端无须再维护 `wait/processEvents` 循环。
+  顶层 `XWidget` 收到 Expose 后会以完整客户区重新合成并提交后备存储，修正最小化、
+  映射或缩放后只有局部内容恢复的问题。
+- **绘制与窗口模型**：Demo 是 `XWidget` 顶层控件，平台窗口仍由内部的
+  `XWidgetWindow : XWindow` 管理；`main` 仅创建 `XGuiApplication` 和 Demo，调用
+  `showNormal()`、`XGuiApplication_exec()`。静态场景缓存只包含背景和面板，按钮与分页
+  控件继续走普通 `XWidget` 绘制、命中测试和信号路径。Linux 原生窗口默认启用
+  `DIRECT` 双缓冲；`PARTIAL`、`DIRECT`、`FULL` 三种后备存储模式均保留，嵌入式默认
+  仍为 `PARTIAL`。
+- **悬浮层**：固定到右下角与缩放时重新锚定继续保留；删除了右上角仅用于表示固定状态的
+  装饰方块，固定和拖动 API 的语义不变。
+- **实测**：真实 X11 截图确认 520x360 的完整窗口和右下角悬浮层均无遗漏；再缩放至
+  680x460 后，控件内容仍完整且悬浮层位于新的右下角。最终复测的正常 1 秒基准为
+  `318.4 FPS`（平均 `3.140 ms`）；持续缩放基准为 `32.6 FPS`（平均 `30.700 ms`），
+  后者每帧需要重建整张后备存储。
+- **验证状态**：默认全量构建通过。默认 CTest 仍只失败两项既有 CJK 字形夹具断言：
+  `generic LVGL glyph reader loads UTF-8 中文码点` 与
+  `8x16 provider exposes the registered CJK glyph metrics`。`build-gui-crop` 的库和
+  Demo 构建通过，Demo 在 GUI 开关关闭时按预期以状态 2 退出；其回归目标仍在既有
+  `XAlignment_Left/Center/Absolute` 未裁剪引用处编译失败。ASan/LSan Demo 自动退出不再
+  报告框架事件泵的 32 字节泄漏；剩余 `630 bytes / 6 allocations` 均来自系统
+  `libfontconfig` 进程级缓存，故不能把进程整体报告为零泄漏。
+
+### 10.477 2026-09-03 XGuiApplication Qt 6.8 显示、输入与同步语义
+
+- **Qt 对照**：依据本机 Qt 6.8.3 `qtbase/src/gui/kernel/qguiapplication.cpp`，
+  `devicePixelRatio()` 改为返回全部屏幕 DPR 的最大值；`queryKeyboardModifiers()`
+  只经平台输入抽象查询即时设备状态；`sync()` 按“先处理应用事件、平台同步、再处理
+  事件、最后冲刷窗口系统事件”的顺序执行。
+- **布局方向**：`XGuiApplication` 区分调用方请求方向和当前有效方向。`Auto` 通过
+  `XPlatformInputContext` 的抽象方向解析为 LTR/RTL；区域语言改变时由输入上下文通知
+  应用并立即发射 `layoutDirectionChanged`，显式 LTR/RTL 请求不受该通知覆盖。
+- **原生边界**：键盘修饰键的 X11 `XQueryKeymap`、Windows `GetKeyState` 仅存在于
+  `Drive/*/Graphics/XPlatformNativeWindow_*` 后端；`XGuiApplication` 和
+  `XPlatformIntegration` 只依赖平台抽象契约，Unsupported 后端返回 false 并回退事件
+  缓存，满足嵌入式适配边界。
+- **回归覆盖**：新增多屏 DPR 最大值、X11/缓存键盘查询、Auto 方向随区域变化、同步前置
+  事件处理以及无控件裁剪配置的编译覆盖；`XAlignment.h` 改为测试显式依赖，避免裁剪
+  后因间接包含消失而误报链接失败。
+- **验证结果**：默认 `build` 的 `XinYueCS`、`XGuiRegression_Test`、
+  `XGuiWindowDemo_Test` 构建通过；`build-gui-crop` 三目标构建通过。默认与裁剪 CTest
+  均只失败既有两项 CJK 字形夹具（`generic LVGL glyph reader loads UTF-8 中文码点`、
+  `8x16 provider exposes the registered CJK glyph metrics`），新增 XGuiApplication
+  断言未失败。
+- **内存检查**：ASan/LSan 全量回归仍报告既有 zlib `trees.c:873` 空指针 UBSan 诊断和
+  `102255 bytes / 465 allocations` 泄漏，栈位于既有 XPainter/XImageReader 及系统 GLX、
+  fontconfig；ASan/LSan 演示自动退出为 `630 bytes / 6 allocations`，均为系统
+  fontconfig 缓存。当前不能宣称全工程无未定义行为或无泄漏。

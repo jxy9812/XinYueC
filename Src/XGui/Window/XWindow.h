@@ -406,9 +406,10 @@ void XWindow_setVisibility(XWindow* self, XWindowVisibility visibility);
 
 /**
  * @brief      创建平台窗口资源（对标 QWindow::create）。
- * @details    无平台后端时分配递增的窗口 id（占位）；窗口仍保持隐藏，
- *             直到 setVisible(true)/show()。已创建时是 no-op。命名避开
- *             构造函数宏 XWindow_create()，采用 _createHandle 下划线后缀。
+ * @details    由窗口内部向当前 XGuiApplication 的平台集成层请求并挂接平台
+ *             窗口；无平台后端时分配递增的窗口 id（占位）。窗口仍保持隐藏，
+ *             直到 setVisible(true)/show()。已创建时是 no-op。命名避开构造
+ *             函数宏 XWindow_create()，采用 _createHandle 下划线后缀。
  * @param      self 目标窗口；可为 NULL。
  */
 void XWindow_createHandle(XWindow* self);

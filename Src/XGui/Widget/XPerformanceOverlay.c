@@ -18,37 +18,55 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
     if (!self) return;
     text[0] = '\0';
 #if XGUI_PERFORMANCE_OVERLAY_FPS_ON
-    n = snprintf(text + used, sizeof(text) - used, "FPS %.1f", self->m_fps);
-    if (n > 0)
-        used += (size_t)n < sizeof(text) - used
-                    ? (size_t)n : sizeof(text) - used - 1;
+    if (self->m_fpsVisible) {
+        n = snprintf(text + used, sizeof(text) - used, "FPS %.1f", self->m_fps);
+        if (n > 0)
+            used += (size_t)n < sizeof(text) - used
+                        ? (size_t)n : sizeof(text) - used - 1;
+    }
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
-    if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
-    n = snprintf(text + used, sizeof(text) - used, "Frame %.2f/%.2f ms",
-                 self->m_frameMs, self->m_maxFrameMs);
-    if (n > 0)
-        used += (size_t)n < sizeof(text) - used
-                    ? (size_t)n : sizeof(text) - used - 1;
+    if (self->m_frameTimeVisible) {
+        if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
+        n = snprintf(text + used, sizeof(text) - used, "帧耗时 %.2f/%.2f ms",
+                     self->m_frameMs, self->m_maxFrameMs);
+        if (n > 0)
+            used += (size_t)n < sizeof(text) - used
+                        ? (size_t)n : sizeof(text) - used - 1;
+    }
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
-    if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
-    if (self->m_networkAvailable)
-        n = snprintf(text + used, sizeof(text) - used,
-                     "NET RX %.1f TX %.1f KB/s",
-                     self->m_networkRxKbps, self->m_networkTxKbps);
-    else
-        n = snprintf(text + used, sizeof(text) - used,
-                     "NET RX n/a TX n/a");
-    if (n > 0)
-        used += (size_t)n < sizeof(text) - used
-                    ? (size_t)n : sizeof(text) - used - 1;
+    if (self->m_networkVisible) {
+        if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
+        if (self->m_networkAvailable) {
+            double downloadRate = self->m_networkRxKbps;
+            double uploadRate = self->m_networkTxKbps;
+            const char* downloadUnit = "KB/s";
+            const char* uploadUnit = "KB/s";
+            if (downloadRate >= 1024.0) {
+                downloadRate /= 1024.0;
+                downloadUnit = "MB/s";
+            }
+            if (uploadRate >= 1024.0) {
+                uploadRate /= 1024.0;
+                uploadUnit = "MB/s";
+            }
+            n = snprintf(text + used, sizeof(text) - used,
+                         "下载 %.1f %s 上传 %.1f %s",
+                         downloadRate, downloadUnit, uploadRate, uploadUnit);
+        } else {
+            n = snprintf(text + used, sizeof(text) - used,
+                         "下载 无 上传 无");
+        }
+        if (n > 0)
+            used += (size_t)n < sizeof(text) - used
+                        ? (size_t)n : sizeof(text) - used - 1;
+    }
 #endif
     if (used == 0)
         (void)snprintf(text, sizeof(text), "Perf disabled");
     else
         text[used] = '\0';
-    XWidget_setUpdatesEnabled((XWidget*)&self->m_base, false);
     XLabel_setText_2(&self->m_base, text);
 }
 
@@ -75,9 +93,14 @@ static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
     self->m_networkRxKbps = other->m_networkRxKbps;
     self->m_networkTxKbps = other->m_networkTxKbps;
     self->m_backgroundColor = other->m_backgroundColor;
-    self->m_overlayWidth = other->m_overlayWidth;
-    self->m_overlayHeight = other->m_overlayHeight;
-    self->m_overlayMargin = other->m_overlayMargin;
+    self->m_fpsVisible = other->m_fpsVisible;
+    self->m_frameTimeVisible = other->m_frameTimeVisible;
+    self->m_networkVisible = other->m_networkVisible;
+    self->m_movable = other->m_movable;
+    self->m_fixed = other->m_fixed;
+    self->m_dragging = false;
+    self->m_dragOffsetX = other->m_dragOffsetX;
+    self->m_dragOffsetY = other->m_dragOffsetY;
 }
 
 static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
@@ -102,9 +125,14 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     self->m_networkRxKbps = other->m_networkRxKbps;
     self->m_networkTxKbps = other->m_networkTxKbps;
     self->m_backgroundColor = other->m_backgroundColor;
-    self->m_overlayWidth = other->m_overlayWidth;
-    self->m_overlayHeight = other->m_overlayHeight;
-    self->m_overlayMargin = other->m_overlayMargin;
+    self->m_fpsVisible = other->m_fpsVisible;
+    self->m_frameTimeVisible = other->m_frameTimeVisible;
+    self->m_networkVisible = other->m_networkVisible;
+    self->m_movable = other->m_movable;
+    self->m_fixed = other->m_fixed;
+    self->m_dragging = other->m_dragging;
+    self->m_dragOffsetX = other->m_dragOffsetX;
+    self->m_dragOffsetY = other->m_dragOffsetY;
     other->m_sampleStartUsecs = 0;
     other->m_sampleUsecs = 0;
     other->m_maxUsecs = 0;
@@ -118,6 +146,14 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     other->m_networkTxBytes = 0;
     other->m_networkRxKbps = 0.0;
     other->m_networkTxKbps = 0.0;
+    other->m_fpsVisible = true;
+    other->m_frameTimeVisible = true;
+    other->m_networkVisible = true;
+    other->m_movable = true;
+    other->m_fixed = false;
+    other->m_dragging = false;
+    other->m_dragOffsetX = 0;
+    other->m_dragOffsetY = 0;
 }
 
 static void VXPerformanceOverlay_deinit(XPerformanceOverlay* self)
@@ -145,10 +181,10 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
     XLabel_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XPerformanceOverlay);
     self->m_backgroundColor = 0xd9000000u;
-    self->m_overlayWidth = 180;
-    self->m_overlayHeight = 60;
-    self->m_overlayMargin = 8;
-    XWidget_setUpdatesEnabled((XWidget*)&self->m_base, false);
+    self->m_fpsVisible = true;
+    self->m_frameTimeVisible = true;
+    self->m_networkVisible = true;
+    self->m_movable = true;
     XLabel_setMargin(&self->m_base, 4);
     XLabel_setAlignment(&self->m_base, XAlignment_Left | XAlignment_Top);
     XFrame_setFrameStyle((XFrame*)&self->m_base,
@@ -163,8 +199,7 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
                       XColor_create_argb(0xfff2f6f8u));
     XWidget_setPalette((XWidget*)&self->m_base, &palette);
 #endif
-    XWidget_setGeometry((XWidget*)&self->m_base, 0, 0,
-                        self->m_overlayWidth, self->m_overlayHeight);
+    XWidget_setGeometry((XWidget*)&self->m_base, 0, 0, 180, 60);
     XPerformanceOverlay_reset(self);
 }
 
@@ -196,11 +231,203 @@ void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
     XFont_deinit_base(&font);
 }
 
-void XPerformanceOverlay_setTextPixelSize(XPerformanceOverlay* self,
-                                          int pixelHeight)
+void XPerformanceOverlay_setFpsVisible(XPerformanceOverlay* self,
+                                       bool visible)
+{
+#if XGUI_PERFORMANCE_OVERLAY_FPS_ON
+    if (!self || self->m_fpsVisible == visible) return;
+    self->m_fpsVisible = visible;
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)visible;
+#endif
+}
+
+bool XPerformanceOverlay_isFpsVisible(const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_FPS_ON
+    return self ? self->m_fpsVisible : false;
+#else
+    (void)self;
+    return false;
+#endif
+}
+
+void XPerformanceOverlay_setFrameTimeVisible(XPerformanceOverlay* self,
+                                             bool visible)
+{
+#if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
+    if (!self || self->m_frameTimeVisible == visible) return;
+    self->m_frameTimeVisible = visible;
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)visible;
+#endif
+}
+
+bool XPerformanceOverlay_isFrameTimeVisible(
+    const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
+    return self ? self->m_frameTimeVisible : false;
+#else
+    (void)self;
+    return false;
+#endif
+}
+
+void XPerformanceOverlay_setNetworkVisible(XPerformanceOverlay* self,
+                                           bool visible)
+{
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    if (!self || self->m_networkVisible == visible) return;
+    self->m_networkVisible = visible;
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)visible;
+#endif
+}
+
+bool XPerformanceOverlay_isNetworkVisible(const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    return self ? self->m_networkVisible : false;
+#else
+    (void)self;
+    return false;
+#endif
+}
+
+void XPerformanceOverlay_setPresetPosition(XPerformanceOverlay* self,
+                                           XPerformanceOverlayPosition position,
+                                           int windowWidth, int windowHeight,
+                                           int margin)
+{
+    XRect geo;
+    int x;
+    int y;
+    int maxX;
+    int maxY;
+    if (!self || windowWidth <= 0 || windowHeight <= 0) return;
+    if (margin < 0) margin = 0;
+    geo = XPerformanceOverlay_geometry(self);
+    switch (position) {
+    case XPerformanceOverlayPosition_TopLeft:
+        x = margin; y = margin; break;
+    case XPerformanceOverlayPosition_TopCenter:
+        x = (windowWidth - geo.width) / 2; y = margin; break;
+    case XPerformanceOverlayPosition_TopRight:
+        x = windowWidth - geo.width - margin; y = margin; break;
+    case XPerformanceOverlayPosition_CenterLeft:
+        x = margin; y = (windowHeight - geo.height) / 2; break;
+    case XPerformanceOverlayPosition_Center:
+        x = (windowWidth - geo.width) / 2;
+        y = (windowHeight - geo.height) / 2;
+        break;
+    case XPerformanceOverlayPosition_CenterRight:
+        x = windowWidth - geo.width - margin;
+        y = (windowHeight - geo.height) / 2;
+        break;
+    case XPerformanceOverlayPosition_BottomLeft:
+        x = margin; y = windowHeight - geo.height - margin; break;
+    case XPerformanceOverlayPosition_BottomCenter:
+        x = (windowWidth - geo.width) / 2;
+        y = windowHeight - geo.height - margin;
+        break;
+    case XPerformanceOverlayPosition_BottomRight:
+        x = windowWidth - geo.width - margin;
+        y = windowHeight - geo.height - margin;
+        break;
+    default:
+        return;
+    }
+    maxX = windowWidth - geo.width;
+    maxY = windowHeight - geo.height;
+    if (maxX < 0) maxX = 0;
+    if (maxY < 0) maxY = 0;
+    if (x < 0) x = 0;
+    else if (x > maxX) x = maxX;
+    if (y < 0) y = 0;
+    else if (y > maxY) y = maxY;
+    XPerformanceOverlay_setPosition(self, x, y);
+}
+
+void XPerformanceOverlay_setMovable(XPerformanceOverlay* self, bool movable)
 {
     if (!self) return;
-    XLabel_setTextPixelSize(&self->m_base, pixelHeight);
+    self->m_movable = movable;
+    if (!movable) self->m_dragging = false;
+}
+
+bool XPerformanceOverlay_isMovable(const XPerformanceOverlay* self)
+{
+    return self ? self->m_movable : false;
+}
+
+void XPerformanceOverlay_setFixed(XPerformanceOverlay* self, bool fixed)
+{
+    if (!self) return;
+    self->m_fixed = fixed;
+    if (fixed) self->m_dragging = false;
+}
+
+bool XPerformanceOverlay_isFixed(const XPerformanceOverlay* self)
+{
+    return self ? self->m_fixed : false;
+}
+
+bool XPerformanceOverlay_beginDrag(XPerformanceOverlay* self, int x, int y)
+{
+    XRect geo;
+    if (!self || !self->m_movable || self->m_fixed) return false;
+    geo = XPerformanceOverlay_geometry(self);
+    if (x < geo.x || y < geo.y || x >= geo.x + geo.width ||
+        y >= geo.y + geo.height)
+        return false;
+    self->m_dragOffsetX = x - geo.x;
+    self->m_dragOffsetY = y - geo.y;
+    self->m_dragging = true;
+    return true;
+}
+
+bool XPerformanceOverlay_dragTo(XPerformanceOverlay* self, int x, int y,
+                                int windowWidth, int windowHeight)
+{
+    XRect geo;
+    int newX;
+    int newY;
+    if (!self || !self->m_dragging || self->m_fixed) return false;
+    geo = XWidget_geometry((XWidget*)&self->m_base);
+    newX = x - self->m_dragOffsetX;
+    newY = y - self->m_dragOffsetY;
+    if (windowWidth > 0) {
+        if (geo.width >= windowWidth) newX = 0;
+        else if (newX < 0) newX = 0;
+        else if (newX + geo.width > windowWidth)
+            newX = windowWidth - geo.width;
+    }
+    if (windowHeight > 0) {
+        if (geo.height >= windowHeight) newY = 0;
+        else if (newY < 0) newY = 0;
+        else if (newY + geo.height > windowHeight)
+            newY = windowHeight - geo.height;
+    }
+    if (geo.x == newX && geo.y == newY) return false;
+    XPerformanceOverlay_setPosition(self, newX, newY);
+    return true;
+}
+
+void XPerformanceOverlay_endDrag(XPerformanceOverlay* self)
+{
+    if (self) self->m_dragging = false;
+}
+
+bool XPerformanceOverlay_isDragging(const XPerformanceOverlay* self)
+{
+    return self ? self->m_dragging : false;
 }
 
 void XPerformanceOverlay_reset(XPerformanceOverlay* self)
@@ -228,8 +455,22 @@ void XPerformanceOverlay_updateFrame(XPerformanceOverlay* self,
 {
     int64_t frameUsecs;
     int64_t interval;
+    int64_t updateUsecs;
     if (!self || frameStartUsecs <= 0 || nowUsecs < frameStartUsecs)
         return;
+
+    /* A caller must provide one monotonic time domain.  If the source was
+       reset or moved backwards, discard the partial window before counting
+       the first frame in the new domain. */
+    if (self->m_sampleStartUsecs > 0 &&
+        (frameStartUsecs < self->m_sampleStartUsecs ||
+         nowUsecs < self->m_sampleStartUsecs)) {
+        self->m_sampleStartUsecs = 0;
+        self->m_sampleUsecs = 0;
+        self->m_maxUsecs = 0;
+        self->m_sampleFrames = 0;
+    }
+
     frameUsecs = nowUsecs - frameStartUsecs;
     if (self->m_sampleStartUsecs <= 0)
         self->m_sampleStartUsecs = frameStartUsecs;
@@ -238,7 +479,12 @@ void XPerformanceOverlay_updateFrame(XPerformanceOverlay* self,
         self->m_maxUsecs = frameUsecs;
     ++self->m_sampleFrames;
     interval = nowUsecs - self->m_sampleStartUsecs;
-    if (interval >= (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL &&
+#if XGUI_PERFORMANCE_OVERLAY_UPDATE_MS > 0
+    updateUsecs = (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL;
+#else
+    updateUsecs = 1;
+#endif
+    if (interval >= updateUsecs &&
         self->m_sampleFrames > 0) {
         self->m_fps = (double)self->m_sampleFrames * 1000000.0 /
                       (double)interval;
@@ -298,28 +544,17 @@ void XPerformanceOverlay_updateNetwork(XPerformanceOverlay* self,
     performanceOverlay_updateText(self);
 }
 
-void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter,
-                              int windowWidth, int windowHeight)
+void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter)
 {
     int x;
     int y;
     XRect geo;
-    if (!self || !painter || windowWidth <= 0 || windowHeight <= 0) return;
-    x = windowWidth - self->m_overlayWidth - self->m_overlayMargin;
-    y = self->m_overlayMargin;
-    if (x < self->m_overlayMargin) x = self->m_overlayMargin;
-    if (y + self->m_overlayHeight > windowHeight)
-        y = windowHeight - self->m_overlayHeight - self->m_overlayMargin;
-    if (y < self->m_overlayMargin) y = self->m_overlayMargin;
-    geo = XWidget_geometry((XWidget*)&self->m_base);
-    if (geo.x != x || geo.y != y || geo.width != self->m_overlayWidth ||
-        geo.height != self->m_overlayHeight) {
-        XWidget_setUpdatesEnabled((XWidget*)&self->m_base, false);
-        XWidget_setGeometry((XWidget*)&self->m_base, x, y,
-                            self->m_overlayWidth, self->m_overlayHeight);
-    }
+    if (!self || !painter) return;
+    geo = XPerformanceOverlay_geometry(self);
+    x = geo.x;
+    y = geo.y;
     {
-        XRect rect = { x, y, self->m_overlayWidth, self->m_overlayHeight };
+        XRect rect = { x, y, geo.width, geo.height };
         XPainter_fillRect(painter, &rect, self->m_backgroundColor);
     }
     if (XPainter_save(painter)) {
