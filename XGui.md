@@ -11651,3 +11651,338 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   `102255 bytes / 465 allocations` 泄漏，栈位于既有 XPainter/XImageReader 及系统 GLX、
   fontconfig；ASan/LSan 演示自动退出为 `630 bytes / 6 allocations`，均为系统
   fontconfig 缓存。当前不能宣称全工程无未定义行为或无泄漏。
+
+### 10.478 2026-09-03 XWidget Z 序与显式 Tab 链对齐
+
+- **Qt 对照**：依据本机 Qt 6.8.3
+  `qtbase/src/widgets/kernel/qwidget.cpp`：
+  `QWidget::raise/lower/stackUnder` 在 `qwidget.cpp:11981-12120`，
+  `QWidget::setTabOrder` 在 `qwidget.cpp:7020-7095`，焦点链
+  `focusNext/focusPrevious` 与 `focusNextPrevChild` 相关实现位于
+  `qwidget.cpp:6816-6870`、`13381-13416`。
+- **新增 API**：`XWidget.h` 公开新增 `XWidget_raise`、`XWidget_lower`、
+  `XWidget_stackUnder` 与 `XWidget_setTabOrder`，并在 `XWidget`
+  结构体末尾维护显式 `m_focusNext/m_focusPrev` 单跳 Tab 链。
+- **Z 序实现**：普通子控件按 Qt 语义重排父 `children` 中的控件顺序——
+  `raise` 移到兄弟控件最后、`lower` 移到最前、`stackUnder` 按
+  `from < to` 时 `--to` 的规则放置到目标之下；重排后更新父控件脏区并
+  发送 `ZOrderChange` 事件。顶层控件仅在有 `XWindow` 句柄时调用后端
+  `XWindow_raise/lower` 提层，不会直接触达平台 API。既有的
+  `XWidget_childAt` 逆序命中和 `paintTree` 按列表顺序绘制与新序一致。
+- **显式 Tab 链实现**：`XWidget_setTabOrder` 拒绝空指针、同控件、
+  `NoFocus` 焦点策略或不同顶层窗口的配对；成功后写入 `first->next`
+  与 `second->prev`。`XWidget_focusNextChild/focusPreviousChild`
+  先检查显式单跳链（要求同窗且仍为可 Tab 聚焦候选），否则回退到原有
+  文档序收集逻辑。控件析构时 `XWidget_unlinkFocusChain` 会摘除自身，
+  copy/move 不复制链引用，避免悬空。
+- **回归覆盖**：`xgui_regression_test.c` 新增 `test_widget_zorder_contract`
+  （重叠子控件下默认上层命中、raise/lower/stackUnder 后命中变化）与
+  `test_widget_focus_tab_order`（默认文档序、显式链前进/后退、跨窗
+  `setTabOrder` 不覆盖既有链）。
+- **验证结果**：默认 `build` 的 `XGuiRegression_Test` 构建通过；
+  完整回归仍只失败既有两项 LVGL/CJK 字形夹具断言
+  （`generic LVGL glyph reader loads UTF-8 中文码点`、
+  `8x16 provider exposes the registered CJK glyph metrics`），
+  新增 Z 序与 Tab 链断言均通过。`build-gui-crop` 配置裁剪 `XWIDGET_ON=0`，
+  本批 XWidget 改动不参与该裁剪构建。
+- **近似/未覆盖**：仍不是 Qt 完整 focus proxy / 复合控件焦点链；
+  显式链只保存 next/prev 单跳，未设置的控件继续按文档序导航；
+  原生平台 z-order 仅在有 `XWindow` 句柄时提层，嵌入式无句柄路径只
+  维护子控件绘制/命中顺序。
+
+### 10.479 2026-09-03 XWidget 字符串元数据、输入法提示、遮罩与焦点代理对齐
+
+- **Qt 对照**：依据本机 Qt 6.8.3
+  `qtbase/src/widgets/kernel/qwidget.cpp`：
+  `statusTip/whatsThis/accessibleName/accessibleDescription` 属性读写位于
+  `qwidget.cpp:11755-11880`；`windowRole` 位于 `qwidget.cpp:6329-6350`；
+  `inputMethodHints` 位于 `qwidget.cpp:9995-10030`；`styleSheet` 位于
+  `qwidget.cpp:2550-2605`；`setMask/clearMask/mask` 位于
+  `qwidget.cpp:13088-13225`；`setFocusProxy/focusProxy` 位于
+  `qwidget.cpp:6407-6470`。
+- **新增 API（字符串/输入法/样式表）**：`XWidget.h` 公开新增
+  `XWidget_statusTip/setStatusTip`、`XWidget_whatsThis/setWhatsThis`、
+  `XWidget_accessibleName/setAccessibleName`、
+  `XWidget_accessibleDescription/setAccessibleDescription`、
+  `XWidget_windowRole/setWindowRole`、
+  `XWidget_inputMethodHints/setInputMethodHints`、
+  `XWidget_styleSheet/setStyleSheet`；`XWidget` 结构体新增对应拥有型
+  `XString*` 字段与 `m_inputMethodHints`。设置名称/描述/工具提示时按
+  既有无障碍通道发送 `XAccessibleEvent`。设置 `NULL` 清空文本。
+  样式表仅存储/查询，不解释样式规则。
+- **遮罩实现对 Qt 的近似**：公开新增 `XWidget_mask`（返回区域深拷贝）、
+  `XWidget_hasMask`、`XWidget_setMask`、`XWidget_clearMask`。遮罩影响
+  命中测试（`childAt` 与顶层指针事件分派跳过遮罩外点）和绘制递归
+  （阻塞在 `paintTree` 中按控件自身遮罩裁剪，遮罩外不派发 paint 也不
+  递归后代）。顶层控件存在 `XWidgetWindow` 句柄时把遮罩同步到
+  `XWindow_setMask`；无句柄时先存储，由 `createWindow` 补推。
+- **焦点代理实现对 Qt 的近似**：公开新增 `XWidget_focusProxy` 与
+  `XWidget_setFocusProxy`。`setFocus()` 实际把焦点落到最深层代理；
+  `hasFocus()` 对拥有代理的控件返回 true；`clearFocus()` 仅在该控件
+  （或代理）确实持有焦点时清除。代理销毁时模块内维护的注册表自动把
+  所有指向该代理的 `m_focusProxy` 置空，避免悬空引用；copy/move 不复制
+  借用代理指针，move 时转移登记关系。
+- **回归覆盖**：`xgui_regression_test.c` 新增
+  `test_widget_string_metadata_contract`（空/NULL 清空/设置查询/输入法
+  组合位）、`test_widget_mask_contract`（无遮罩命中、遮罩外穿透、mask()
+  深拷贝、clearMask 恢复）与 `test_widget_focus_proxy_contract`（默认无
+  代理、查询/设置、拒绝代理环、setFocus 落到最深代理、owner 显示持有、
+  clearFocus 经代理清除、代理销毁后自动摘除）。
+- **验证结果**：默认 `build` 的 `XGuiRegression_Test` 构建通过；完整
+  回归仍只失败既有两项 LVGL/CJK 字形夹具断言
+  （`generic LVGL glyph reader loads UTF-8 中文码点`、
+  `8x16 provider exposes the registered CJK glyph metrics`），新增
+  字符串元数据、遮罩与焦点代理断言均通过。`build-gui-crop` 配置裁剪
+  `XWIDGET_ON=0`，本批 XWidget 改动不参与该裁剪构建。
+- **近似/未覆盖**：`focusProxy` 不重排复合控件在焦点链中的位置（Qt 在
+  setFocusProxy 时会把复合控件插入自身子控件之前/父控件之后）；`windowRole`
+  只存储不推送到 X11 原生窗口；样式表只存储不解释；遮罩区域替换仅按
+  “空态变化或两次非空”触发刷新与原生窗口同步，未做区域相等短路。
+
+### 10.480 2026-09-04 XWidget 祖先查询、焦点链查询、可见区域与输入抓取对齐
+
+- **Qt 对照**：依据本机 Qt 6.8.3
+  `qtbase/src/widgets/kernel/qwidget.cpp`：
+  `nativeParentWidget` 位于 `qwidget.cpp:4358-4364`，
+  `topLevelWidget` 位于 `qwidget.cpp:4366`，
+  `setWindowIconText` 位于 `qwidget.cpp:6106-6118`，
+  `nextInFocusChain/previousInFocusChain` 位于
+  `qwidget.cpp:6884-6898`，`visibleRegion` 位于
+  `qwidget.cpp:8716-8729`，`grabMouse/releaseMouse` 位于
+  `qwidget.cpp:12807-12851`，`grabKeyboard/releaseKeyboard` 位于
+  `qwidget.cpp:12875-12900`。
+- **新增 API（祖先/窗口文本）**：`XWidget.h` 公开新增
+  `XWidget_nativeParentWidget`、`XWidget_topLevelWidget`、
+  `XWidget_windowIconText/setWindowIconText` 与
+  `XWidget_windowIconTextChanged_signal`。`nativeParentWidget()` 沿父链
+  返回最近持有桥接窗口句柄的祖先；未创建本地窗口句柄的祖先返回 NULL
+  （对标 Qt 行为）。`topLevelWidget()` 等价于既有 `window()`。
+  `windowIconText` 仅存储/查询并发射变化信号，不推送到平台窗口
+  （Qt 6.1 起已废弃该属性）。
+- **焦点链查询**：公开新增 `XWidget_nextInFocusChain` /
+  `XWidget_previousInFocusChain`，把原本 `focusStep` 内部的候选计算抽成
+  `XWidget_focusChainTarget`：优先使用显式 Tab 链（同窗且仍为可聚焦
+  候选），否则按文档序收集可 Tab 控件列表并环形前/后取目标；焦点前后
+  步进函数复用同一实现。与 Qt 一样，查询只返回候选、不改动焦点。
+- **可见区域**：公开新增 `XWidget_visibleRegion`：以自身 content rect
+  与自身 mask 求交，沿父链逐级与祖先 content rect / mask 求交，最后转回
+  局部坐标（等价于把控件各有效矩形映射回本地）。当前不扣除同层不透明
+  兄弟控件覆盖（Qt 的 `subtractOpaqueSiblings`）。
+- **鼠标/键盘抓取**：公开新增 `XWidget_grabMouse/releaseMouse/
+  mouseGrabber` 与 `XWidget_grabKeyboard/releaseKeyboard/
+  keyboardGrabber`。顶层桥接窗口指针事件分派先检查抓取控件：鼠标抓取后
+  命中测试被绕过，把事件直接投递给抓取控件（坐标仍按抓取控件局部换算）；
+  键盘抓取优先于全局焦点控件。抓取控件隐藏或销毁时自动解除挂接；释放
+  仅对当前抓取者生效。`grabMouse` 要求控件可见且已有顶层窗口。
+- **回归覆盖**：`xgui_regression_test.c` 新增
+  `test_widget_extended_alignment_contract`，覆盖图标文本往返/清空、
+  顶层与最近原生祖先查询、自身+父遮罩下的 `visibleRegion`、
+  `next/previousInFocusChain` 文档序轮回、鼠标抓取直投/释放恢复命中、
+  键盘抓取优先于焦点控件/释放回到焦点控件、隐藏抓取控件自动解除。
+- **验证结果**：默认 `build` 的 `XGuiRegression_Test` 构建并通过；完整
+  回归仅剩既有两项 LVGL/CJK 字形夹具断言失败
+  （`generic LVGL glyph reader loads UTF-8 中文码点`、
+  `8x16 provider exposes the registered CJK glyph metrics`），本轮新增
+  祖先查询、焦点链、可见区域与抓取断言全部通过。`build-gui-crop` 配置
+  裁剪 `XWIDGET_ON=0`，本批 XWidget 改动不参与该裁剪构建。
+- **近似/未覆盖**：`windowIconText` 仅存储，不推送到原生 X11 窗口；
+  `visibleRegion` 不扣除同层不透明兄弟控件覆盖；
+  `nativeParentWidget` 依赖顶层桥接窗口句柄存在（嵌入式无句柄时返回
+  NULL）；焦点链查询优先显式单跳链，未设置链时按文档序导航，仍不重排
+  复合控件焦点链。
+
+---
+
+## 2026-09-04 XWidget 虚函数分派风格修复（代码风格指南第八条）
+
+- **背景**：对照
+  `代码风格，类的创建，虚函数的重载注意，api命名风格和注意事项.md`
+  与 `Src/XClass/XObject` 的正确范式，`XWidget_event_base` 之前把事件
+  switch 分派写进 base 入口本身，而 `VXWidget_event`（EXObject_Event
+  虚表实现）又反向调用 `XWidget_event_base`，不符合“`*_base` 只经虚函数
+  表调度”的约束。
+- **XWidget.h / XWidget_Protected.h**：
+  - `XWidget_event_base(self, event)` 改为宏复用 `XObject_event_base`
+    （`#define XWidget_event_base(self,event) XObject_event_base((XObject*)(self),(event))`），
+    不再在 XWidget 内单独实现该函数；
+  - 事件虚函数数量文档由 17/18 修正为 23，并补全 inputMethod / drag /
+    drop / changeEvent 列表。
+- **XWidget.c**：
+  - 事件总入口的 switch 分派下沉到 `VXWidget_event`（XWidget 对
+    `EXObject_Event` 的虚表实现），包含禁用控件输入丢弃逻辑与默认回退
+    `XClass_Parent(XObject, EXObject_Event, ...)`；
+  - 23 个 `XWidget_*Event_base` 出口统一改为 `XClassGetVirtualFunc`
+    直接读取虚表槽位并做空槽保护；移除不再使用的
+    `XWidget_dispatchEventSlot` 辅助函数。
+- **XFrame.c（递归断点）**：`VXFrame_event` 原调用 `XWidget_event_base`
+  会经对象虚表再次进入自身造成栈溢出；改为直接 `XClass_Parent(XWidget,
+  EXObject_Event, ...)` 调用父类 XWidget 的 Event 槽（VXWidget_event）。
+- **验证结果**：默认 `build` 的 `XGuiRegression_Test` 构建通过，回归测试
+  仅剩既有两项 CJK/LVGL 字形夹具失败，未出现栈溢出/虚函数递归；
+  尚未进行 ASan/LSan 与裁剪构建验证。
+
+---
+
+## 2026-09-04 XGui 全模块虚函数风格扫描（对照编码风格文档）
+
+- **扫描范围**：`Src/XGui` 全部模块，逐一定位 `*_base` 定义与事件虚表实现
+  （`VX*_event`），重点核对三件事：base 入口是否只经虚表调度、继承自父类
+  的虚函数是否宏复用、子类重载后调用父类逻辑是否用 `XClass_Parent(...)`
+  直接调父类槽位（避免经对象虚表再次进入子类自身造成递归）。
+- **已核对无问题的模块**：
+  - `XLayoutItem`：sizeHint/minimumSize/maximumSize/expandingDirections/
+    isEmpty/setGeometry/geometry/widget/layout/hasHeightForWidth/
+    heightForWidth/minimumHeightForWidth/invalidate/controlTypes/
+    spacerItem 全部为纯虚表调度 + 默认返回值，符合规范。
+  - `XLayout`：addItem/itemAt/takeAt/count/replaceItemAt 为纯虚表调度。
+  - `XImageIOPlugin`：capabilities/create/keys/nameFilters/mimeTypes 为纯虚表调度。
+  - `XImageIOHandler`：canRead/read/write/option/setOption/supportsOption/
+    jumpToNextImage/jumpToImage/loopCount/imageCount/nextImageDelay/
+    currentImageNumber/currentImageRect 为纯虚表调度 + ISNULL/空槽保护。
+  - `XIconEngine` / `XIconEnginePlugin`：paint/actualSize/pixmap/addPixmap/
+    addFile/key/clone/read/write/availableSizes/iconName/isNull/scaledPixmap/
+    virtualHook 均为纯虚表调度；`createEngine_2_base` 是 UTF-8 兼容转发，
+    只负责临时 XString 转换后转发，不持有长期状态。
+  - `XWidget` 子类 `XFrame/XLabel/XPushButton`：父类 Event 槽调用已全部使用
+    `XClass_Parent(XFrame/XWidget, EXObject_Event, ...)` 直接调父类槽位，
+    未出现经对象虚表再次进入子类自身的情况。
+- **修复项**：
+  - `XWindow_event_base` 原为 `XWindow.c` 中的单独实现函数，等价重复
+    `XObject_event_base` 的虚表分派；已改为 `XWindow.h` 宏复用
+    `#define XWindow_event_base(self,event) XObject_event_base((XObject*)(self),(event))`，
+    并从 `XWindow.c` 删除重复定义。`XWindow_*Event_base`（expose/resize/
+    paint/.../tablet）仍按自有槽位分派，符合规范。
+  - `XWidget_event_base` 已按用户要求从公共 `XWidget.h` 移到
+    `XWidget_Protected.h`（保护权限，仅子类/内部使用）。
+- **验证结果**：默认 `build` 全量编译通过；`XGuiRegression_Test` 回归仅剩
+  既有两项 CJK/LVGL 字形夹具失败，未出现虚拟表递归/栈溢出。`build-asan`
+  仅复现既有 ~102KB 泄漏（Mesa/fontconfig/XFont 等）。裁剪构建 `build-gui-crop`
+  通过（XWIDGET_ON=0 不参与 XWidget 改动）。
+
+---
+
+## 2026-09-04 XGui 保护/私有 API 分离头文件（对照 Qt 6.8 protected 判定）
+
+- **判定依据（本机 Qt 6.8.3 源码）**：
+  - `QWindow`：`event` 及 `exposeEvent/resizeEvent/paintEvent/moveEvent/
+    focusInEvent/focusOutEvent/showEvent/hideEvent/closeEvent/键盘/鼠标/滚轮/
+    touch/tablet/inputMethod/拖放/nativeEvent` 均属 protected，使用
+    `Src/XGui/Window/XWindow_Protected.h` 暴露对应 `*_base` 入口。
+  - `QLayoutItem`：`widget()`、`layout()`、`spacerItem()`、`controlTypes()`
+    在 `qlayoutitem.h` 的 `protected:` 段之后，属 protected；其余 sizeHint/
+    minimumSize/maximumSize/setGeometry/geometry/isEmpty/hasHeightForWidth/
+    heightForWidth/minimumHeightForWidth/invalidate 和 alignment 属 public。
+  - `QImageIOHandler/QImageIOPlugin/QIconEngine` 的虚函数在 Qt 中均为
+    public，因此 `XImageIOHandler/XImageIOPlugin/XIconEngine/XIconEnginePlugin`
+    的 base 入口继续保留在公共头文件（不需要迁移）。
+- **新增保护头文件**：
+  - `Src/XGui/Window/XWindow_Protected.h`：迁移 `XWindow_event_base` 宏、
+    22 个窗口事件槽 base 入口、`XWindow_nativeEvent_base`。
+  - `Src/XGui/XLayout/XLayoutItem_Protected.h`：迁移
+    `XLayoutItem_widget_base`、`XLayoutItem_layout_base`、
+    `XLayoutItem_controlTypes_base`、`XLayoutItem_spacerItem_base`。
+- **公共头文件同步收紧**：
+  - `XWindow.h` 删除上述 protected 事件声明，改为注释指引；
+  - `XLayoutItem.h` 删除上述 4 个 protected 声明，改为注释指引；
+  - 相关 `.c`（XWindow/XLayoutItem/XBoxLayout/XGridLayout/XLayout/
+    XStackedLayout）与回归测试补充 include 保护头。
+- **验证结果**：默认 `build` 全量编译通过；`XGuiRegression_Test` 仍仅剩
+  既有 2 项 CJK/LVGL 字形夹具失败。尚未覆盖的“内部私有函数下移”类工作以
+  上述 Qt protected 判定为准继续分批次推进（如 Layout/Platform 内部私有
+  接口迁移）。
+- 两个新增保护头均已用 `#if XWINDOW_ON` / `#if XLAYOUT_ON` 自守（裁剪
+  XWINDOW_ON/XLAYOUT_ON 时声明整体为空），因此 `build-gui-crop` 裁剪构建
+  同默认构建一样通过；`XGuiRegression_Test` 仅剩既有 2 项 CJK/LVGL 字形
+  夹具失败。
+
+---
+
+## 2026-09-04 XGui 内存接口与虚函数行为审计（续）
+
+- **内存接口约束**：全量扫描 `Src/XGui/*.c` 未发现 `malloc/calloc/realloc/
+  free/strdup/strndup/aligned_alloc/posix_memalign` 等裸 CRT 分配调用；
+  XGui 全部堆分配/释放均走项目内存入口（`XMemory_malloc/XMemory_free`、
+  `XMalloc_System/XFree_System`、`XMalloc_Hybrid/XFree_Hybrid`、
+  `XRealloc_System/XRealloc_Hybrid` 等）。此项作为嵌入式可用要求保持硬约束
+  写入文档，后续新增 XGui 代码不得直接调用系统分配器。
+- **虚函数行为延续**：上一轮已完成的 `*_base` 只分派/宏复用、子类重载用
+  `XClass_Parent`、保护头拆分规则继续适用；本轮在内存审计覆盖范围内回读
+  了 XApplication/XGuiApplication、XImageWriter/XImageReader/XMovie/
+  XImageIOHandler/XScreen/XWindow/XMimeData/XLabel/XPushButton 等 setter
+  的生命周期，替换字符串前均先释放旧值。
+- **本轮修复**：
+  1. `Src/XGui/Widget/XWidget.c`：`XWidget_setWindowTitle` 与
+     `XWidget_setWindowIconText` 原先直接 `self->m_xxx = copy`，未释放旧的
+     拥有字符串；重复赋值或 `NULL` 清空都会泄漏。现改为先比较变化再替换，
+     旧字符串经 `XWidget_freeString` 释放，信号/X11 同步语义不变。
+  2. `Src/XGui/Widget/XWidget.c`：`XWidget_visibleRegion` 中局部
+     `XRegion clip`/`XRegion maskClip` 未初始化即参与 `region_replace`
+     （会对垃圾地址释放），循环内重复用 `clip` 也没有先释放旧区，造成
+     非法释放/泄漏。重写为显式所有权：临时区每次分配后先 `deinit` 旧值，
+     转移给 `out` 后立即复位临时区，避免与 `out` 共享缓冲后被二次释放。
+  3. `Src/XGui/Graphics/XImageBuiltinPlugin.c`：PPM 子类型路径重复赋值
+     `handler->m_subType` 前补释放旧值，避免同一 handler 多次读取时泄漏。
+- **回归覆盖**：`xgui_regression_test.c` 的
+  `test_widget_extended_alignment_contract` 扩展为 `setWindowIconText`
+  连续两次赋值（第一段 → 第二段 → NULL）后再销毁控件，供 ASan 判泄漏。
+- **验证结果**：
+  - 默认 `build`：`XinYueCS`、`XGuiRegression_Test` 构建通过；
+    `./bin/XGuiRegression_Test` 仍只剩既有 2 项 CJK/LVGL 字形夹具失败。
+  - 裁剪构建 `build-gui-crop`（`XWIDGET_ON=0`/`XFRAME_ON=0`/`XLABEL_ON=0`）：
+    静态库与回归构建通过，回归结果同样只剩既有 2 项失败。
+  - ASan/LSan（`build-asan`）：不再出现 `XWidget_visibleRegion` 段错误；
+    泄漏汇总从修复前 `102431 bytes/468 alloc` 降到 `102287 bytes/466 alloc`，
+    XWidget setter 的 `windowIconText` 泄漏已消失；剩余条目与既有基线
+    ~102KB/466（Mesa/fontconfig、XPainter/XImageReader 字体家族等）一致，
+    不宣称全局无泄漏。当前环境未安装 Valgrind。
+- **边界**：`XWidget_visibleRegion` 仍不扣除同层不透明兄弟控件覆盖（沿用
+  10.480 近似说明）；动态插件发现、原生 QPicture/QDataStream 互操作与完整
+  ICC 色彩管理继续按既有裁剪边界处理。
+
+## 2026-09-04 绝对零泄漏收敛（ASan/LSan 汇报清零）
+
+- **目标**：`XGuiRegression_Test` 在 AddressSanitizer+LeakSanitizer 下不再有任何
+  项目侧泄漏。经逐条根因修复后，ASan/LSan 汇总已从最初的 ~102KB/468 项降到
+  **0 项项目泄漏**；仅剩的两类第三方进程期缓存（fontconfig 全局字体缓存、
+  libGLX_mesa 驱动缓存）随库加载保留，无法由项目代码安全回收，已用
+  LSAN 抑制文件显式标注，不让它们污染“零泄漏”结论。
+- **项目侧泄漏根因与修复**：
+  1. `Src/XContainer/XString/XString.c`：`XString_deinitCache` 只释放了各编码
+     缓存槽位的数据，未释放缓存数组本身，也未把 `m_cache` 置空；现在释放数组
+     并置空。此前所有调用过 `toUtf8/toUtf16/toUtf32/toGbk...` 的 XString 在
+     销毁时都会漏缓存数组。
+  2. `Src/XContainer/XString/XString_virtual.c`：`VXClass_copy`/`VXClass_move`
+     覆盖已有目标时，直接把 `m_cache` 置空或接管，旧缓存数组未释放；现已在
+     覆盖前 `XString_deinitCache(object)`。
+  3. `Src/XGui/Graphics/XImage.c`：`XImage_init_ex/_2` 会调用 `XImage_init`
+     把 `XImage_create_ex` 设置的堆所有权（`m_is_heap`）与内存方法清零，导致
+     `XImage_delete_base` 不释放堆结构体（每个 create_ex+init_ex 漏 32 字节）。
+     现改为先暂存现有 `Class_Memory/Class_IsHeap`，init 后恢复。
+  4. `Src/XGui/Widget/XWidget.c`：`XWidget_setWindowTitle/setWindowIconText`
+     替换旧字符串不释放旧值；`XWidget_visibleRegion` 的局部 XRegion 未初始化
+     就参与释放、循环里旧区未先释放。均已在上一段修复。
+  5. `xgui_regression_test.c`：`test_painter_draw_picture_align`、
+    `test_painter_picture_penstyle_replay_contract`、
+    `test_painter_record_play_contract` 对同一 `XPainter` 在未 deinit 时重复
+    `XPainter_init`，`test_gui_application_contract` 对 `gbsPainter` end 后
+    未 deinit，都会让 XPainter 默认字体泄漏；已在重复 init 前补
+    `XPainter_deinit`、在 backingStore end 后补 deinit。
+- **验证命令（ASan/LSan 零项目泄漏）**：
+  ```bash
+  cmake -S . -B build-asan -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+  cmake --build build-asan -j"$(nproc)" --target XinYueCS XGuiRegression_Test
+  ASAN_OPTIONS=detect_leaks=1:halt_on_error=0 \
+  LSAN_OPTIONS=suppressions=$PWD/Tools/xgui.lsan.supp \
+  UBSAN_OPTIONS=halt_on_error=0 ./bin/XGuiRegression_Test
+  ```
+  LSan 输出：`Suppressions used:`，无 Direct/Indirect leak 条目、无项目路径栈；
+  `git diff --check` 干净。
+- **抑制范围**（`Tools/xgui.lsan.supp`）：仅匹配
+  `libfontconfig.so.*` 与 `libGLX_mesa.so.*` 的分配栈；不匹配任何项目源码路径，
+  因此项目代码的任何新泄漏仍会被 LSan 报告，不会被抑制掩盖。
+- **功能回归**：默认 `build` 与裁剪 `build-gui-crop`（`XWIDGET_ON=0/...`）构建
+  通过；`XGuiRegression_Test` 仍只剩既有 2 项 CJK/LVGL 字形夹具失败，与泄漏
+  检查无关。当前环境未安装 Valgrind，以 ASan/LSan 为准。
+- **边界**：ASan/LSan 功能检查通过，UBSan 仍报告 Library/zlib 既有
+  `trees.c:873` 空指针诊断（第三方 zlib，不属于本项目代码）；动态插件发现、
+  原生 QPicture/QDataStream 互操作与完整 ICC 色彩管理继续按既有裁剪边界处理。

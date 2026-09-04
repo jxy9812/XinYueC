@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageBuiltinPlugin.c
  * @brief      XImageCodec 内置图像插件实现。
  * @note       插件把 XImageCodec 的格式发现、解码与编码能力包装成 Qt 风格
@@ -1024,8 +1024,11 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
                 }
                 if (detectedName) {
                     XImageIOHandler_setFormat(&handler->m_base, detectedName);
-                    if (detected == XImageCodecFormat_Ppm)
+                    if (detected == XImageCodecFormat_Ppm) {
+                        if (handler->m_subType)
+                            XString_delete_base((XClass*)handler->m_subType);
                         handler->m_subType = XString_create_copy(detectedName);
+                    }
                     XString_delete_base((XClass*)detectedName);
                 }
             }

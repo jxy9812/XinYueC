@@ -1,0 +1,5 @@
+# 第三方库进程期保持的全局缓存（非项目泄漏）：
+#  - fontconfig 全局配置/字体缓存（FcInit/FcConfig 生命周期随进程）
+#  - Mesa/GLX 驱动上下文与字体相关缓存（libGLX_mesa 随库加载保留）
+leak:*libfontconfig.so.*
+leak:*libGLX_mesa.so.*

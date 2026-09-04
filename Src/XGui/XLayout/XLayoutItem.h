@@ -230,19 +230,7 @@ void XLayoutItem_setGeometry_base(XLayoutItem* self, const XRect* rect);
  */
 XRect XLayoutItem_geometry_base(const XLayoutItem* self);
 
-/**
- * @brief      返回条目承载的控件（对标 QLayoutItem::widget）。
- * @param      self 目标条目；可为 NULL。
- * @return     控件借用指针；条目不是控件条目时返回 NULL。
- */
-XWidget* XLayoutItem_widget_base(const XLayoutItem* self);
 
-/**
- * @brief      返回条目承载的子布局（对标 QLayoutItem::layout）。
- * @param      self 目标条目；可为 NULL。
- * @return     子布局借用指针；条目不是布局时返回 NULL。
- */
-XLayout* XLayoutItem_layout_base(const XLayoutItem* self);
 
 /**
  * @brief      查询条目是否支持 heightForWidth（对标 QLayoutItem::hasHeightForWidth）。
@@ -276,24 +264,12 @@ int XLayoutItem_minimumHeightForWidth_base(const XLayoutItem* self, int width);
  */
 void XLayoutItem_invalidate_base(XLayoutItem* self);
 
-/**
- * @brief      返回条目包含的控件类型位集（对标 QSizePolicy::controlTypes）。
- * @param      self 目标条目；可为 NULL。
- * @return     XWidgetSizePolicyControlType 位组合；失败返回 DefaultType。
- */
-XWidgetSizePolicyControlTypes XLayoutItem_controlTypes_base(const XLayoutItem* self);
 
-/**
- * @brief      返回条目对应的空白条目（对标 QLayoutItem::spacerItem）。
- * @details    类型安全下转：如果条目是 XSpacerItem（含子类）则返回
- *             指向它的 XSpacerItem 指针，否则返回 NULL（对标 Qt 的
- *             spacerItem() 虚函数，基类返回 nullptr、QSpacerItem 返回
- *             this）。布局引擎可用该函数区分“用户传入的空白”与普通
- *             条目；XBoxLayout 的 magic 空白检测也会用到它。
- * @param      self 目标条目；可为 NULL。
- * @return     空白条目指针；条目不是空白或失败时返回 NULL。
+
+/*
+ * QLayoutItem 中受保护的虚函数入口（widget/layout/controlTypes/spacerItem）
+ * 已迁移至保护头文件 XLayoutItem_Protected.h，仅供子类与布局引擎内部使用。
  */
-XSpacerItem* XLayoutItem_spacerItem_base(const XLayoutItem* self);
 
 /* ==================== 对齐访问（对标 QLayoutItem::alignment/setAlignment） ==================== */
 

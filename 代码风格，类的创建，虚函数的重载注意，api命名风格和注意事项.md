@@ -449,6 +449,85 @@ XVtable* XExample_class_init(void)
    XClassGetVirtualFunc(obj, EXClass_Deinit, void(*)(XExample*))(obj);
    ```
 
+### `*_base` 调度入口：只调虚函数表，不写业务逻辑
+
+- `XType_xxx_base` 是所有虚函数（`EXType_Xxx` 槽位）的统一调度入口。函数体内不要写业务逻辑，只能做三件事：
+  1. 空指针/虚表检查（`ISNULL` / `XClassGetVtable`）；
+  2. 通过 `XClassGetVirtualFunc(self, EXType_Xxx, 函数签名)(self, ...)` 调用对象虚表中对应槽位；
+  3. 返回被调用槽位的结果。
+- 具体的业务逻辑只放在类内 `static VXType_xxx` 虚函数实现里，并且只通过 `Xxx_class_init()` 注册到虚表；对外调用一律走 `*_base`。
+
+```c
+// 类自己新增的虚函数：base 入口只经虚表分派
+bool XExample_event_base(XExample* self, XEvent* e)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return false;
+    return XClassGetVirtualFunc(self, EXExample_Event,
+                                bool(*)(XExample*, XEvent*))(self, e);
+}
+```
+
+- `void` 返回值的槽位可以先判断槽是否已实现，避免调用空槽函数：
+
+```c
+void XExample_childEvent_base(XExample* self, XChildEvent* event)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
+    if (!XClassGetVirtualFunc(self, EXExample_ChildEvent, bool))
+        return;
+    XClassGetVirtualFunc(self, EXExample_ChildEvent,
+                         void(*)(XExample*, XChildEvent*))(self, event);
+}
+```
+
+### 继承父类已有虚函数：直接宏复用，禁止写重复转发函数
+
+- 子类没有新增逻辑、只是沿用父类已有虚函数时，**不要**在 `.c` 里写一个同名转发函数，应该在子类头文件里用宏直接替换：
+
+```c
+// 子类 XWidgetHead 继承 XHead 的 Event 虚函数入口
+#define XWidgetHead_event_base(self, event) \
+    XHead_event_base((XHead*)(self), (event))
+```
+
+- 生命周期入口同样如此：`XType_deinit_base / XType_delete_base /
+  XType_copy_base / XType_move_base` 一律宏复用父类。
+- 如果某虚函数本来就从父类继承而来（例如 XWidget 的 Event 继承自 XObject），
+  子类也不必重新实现 `XType_event_base`，直接宏替换成父类的 base 入口即可。
+- 只有子类**新增了槽位**或**确实要改变行为/参数**时，才保留子类自己的
+  `*_base` 函数或在虚表中注册新的 `VXChild_xxx`。
+
+### 子类重载虚函数后调用父类实现：必须用 XClass_Parent
+
+- 子类确实要重载某个虚函数时，才实现 `VXChild_xxx` 并通过
+  `XVTABLE_OVERLOAD_DEFAULT` 注册。
+- 在子类槽位内部需要“先执行父类逻辑 / 后执行父类逻辑”时，必须用
+  `XClass_Parent(父类, 槽位, 函数签名)` 直接调用**父类槽位**，不能调用
+  对象自身的 `xxx_base`，否则会经对象虚表再次进入子类自己造成递归/栈溢出。
+
+```c
+static bool VXFrame_event(XWidget* self, XEvent* event)
+{
+    bool result;
+    // ...子类前置逻辑...
+    result = XClass_Parent(XWidget, EXObject_Event,
+                           bool(*)(XObject*, XEvent*))((XObject*)self, event);
+    // ...子类后置逻辑...
+    return result;
+}
+```
+
+### 虚函数实现/使用风格检查清单
+
+1. `*_base` 入口只查表、只分派或宏复用父类，不写业务逻辑；
+2. 子类继承父类已有虚函数时用宏替换，不重复写 C 转发包装；
+3. 子类重载后调用父类实现用 `XClass_Parent(...)`，不用对象自身 `*_base`；
+4. 业务逻辑统一放在 `static VXxx_xxx` 实现中，只在 `class_init` 注册；
+5. `void` 槽位做空槽保护，返回默认值或直接 `return`；
+6. 头文件只暴露 `XType_xxx_base` 宏或声明，不暴露内部 `VXxx_xxx`。
+
 ---
 
 ## 对象生命周期管理

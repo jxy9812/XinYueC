@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
  * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
@@ -95,6 +95,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 
 #if XLAYOUT_ON
 #include "XLayoutItem.h"
+#include "XLayoutItem_Protected.h"
 #include "XLayout.h"
 #endif /* XLAYOUT_ON */
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
@@ -4405,6 +4406,7 @@ static void test_painter_draw_picture_align(void)
     /* 回放到新位置：坐标 (4,3) 起绘制。 */
     XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff00ff00u);
+    XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_image(&painter, &target), "drawPicture target begin");
     /* XPicture 回放沿用调用者当前画笔颜色（与本项目既有录制语义一致）。 */
@@ -5059,6 +5061,7 @@ static void test_painter_picture_penstyle_replay_contract(void)
 
     XImage_init_ex(&target, 12, 2, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
+    XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_image(&painter, &target),
                 "penstyle replay starts");
@@ -6412,6 +6415,7 @@ static void test_painter_record_play_contract(void)
 
     /* 用软件光栅后端回放（先设置与录制时一致的画笔） */
     XImage_init_ex(&target, 10, 10, XImageFormat_ARGB32);
+    XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_image(&painter, &target),
                 "painter begins image replay");
@@ -16572,6 +16576,7 @@ static void test_screen_contract(void)
 
 #include "XCoreApplication.h"
 #include "XWindow.h"
+#include "XWindow_Protected.h"
 
 /** @brief XWindow 信号探测数据（19 个信号全量连接计数）。 */
 typedef struct WindowProbe
@@ -19054,6 +19059,7 @@ static void test_gui_application_contract(void)
                             "backingStore 绘制绿色像素");
             }
             expect_true(XPainter_end(&gbsPainter), "backingStore painter end");
+            XPainter_deinit(&gbsPainter); /* end 会重建默认字体状态，需 deinit 释放 */
             XBackingStore_endPaint(gbks);
             expect_true(XImage_pixel(gbsDev, 1, 1) == 0xff00ff00u,
                         "绘制结果写入内部缓冲");
@@ -21209,6 +21215,620 @@ static void test_grid_layout_replace_item(void)
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
 }
 
+/** @brief XWidget Z 序 API（raise/lower/stackUnder）回归测试。 */
+static void test_widget_zorder_contract(void)
+{
+#if XWIDGET_ON
+    TestWidget* parent;
+    TestWidget* a;
+    TestWidget* b;
+    TestWidget* c;
+    XPoint p;
+
+    parent = TestWidget_create(NULL);
+    a = TestWidget_create(&parent->m_base);
+    b = TestWidget_create(&parent->m_base);
+    c = TestWidget_create(&parent->m_base);
+    expect_true(parent && a && b && c, "Z 序测试控件创建");
+    if (!parent || !a || !b || !c) return;
+
+    XWidget_setGeometry(&parent->m_base, 0, 0, 300, 100);
+    /* 三个子控件完全重叠，childAt 只取决于 Z 序。 */
+    XWidget_setGeometry(&a->m_base, 0, 0, 50, 50);
+    XWidget_setGeometry(&b->m_base, 0, 0, 50, 50);
+    XWidget_setGeometry(&c->m_base, 0, 0, 50, 50);
+    XWidget_show(&parent->m_base);
+    XWidget_show(&a->m_base);
+    XWidget_show(&b->m_base);
+    XWidget_show(&c->m_base);
+
+    XPoint_init(&p, 10, 10);
+    expect_true(XWidget_childAt(&parent->m_base, &p) == &c->m_base,
+                "默认子控件后创建者命中在上层 (c)");
+
+    /* raise(a)：a 移到顶部，重叠点由 a 命中。 */
+    XWidget_raise(&a->m_base);
+    expect_true(XWidget_childAt(&parent->m_base, &p) == &a->m_base,
+                "raise() 后命中最上层 (a)");
+
+    /* lower(a)：a 回到最底层，顶部命中回到 c。 */
+    XWidget_lower(&a->m_base);
+    expect_true(XWidget_childAt(&parent->m_base, &p) == &c->m_base,
+                "lower() 后顶部命中回到 (c)");
+
+    /* stackUnder(c, b)：把 c 放到 b 之下，顶部命中变为 b。 */
+    XWidget_stackUnder(&c->m_base, &b->m_base);
+    expect_true(XWidget_childAt(&parent->m_base, &p) == &b->m_base,
+                "stackUnder(c,b) 后顶部命中 (b)");
+
+    XWidget_delete_base((XClass*)c);
+    XWidget_delete_base((XClass*)b);
+    XWidget_delete_base((XClass*)a);
+    XWidget_delete_base((XClass*)parent);
+#endif /* XWIDGET_ON */
+}
+/** @brief XWidget 显式 Tab 链（setTabOrder/focusNextChild/focusPreviousChild）回归。 */
+static void test_widget_focus_tab_order(void)
+{
+#if XWIDGET_ON
+    TestWidget* parent;
+    TestWidget* a;
+    TestWidget* b;
+    TestWidget* c;
+    TestWidget* otherRoot;
+    TestWidget* d;
+
+    parent = TestWidget_create(NULL);
+    a = TestWidget_create(&parent->m_base);
+    b = TestWidget_create(&parent->m_base);
+    c = TestWidget_create(&parent->m_base);
+    expect_true(parent && a && b && c, "Tab 链测试控件创建");
+    if (!parent || !a || !b || !c) return;
+
+    otherRoot = TestWidget_create(NULL);
+    d = TestWidget_create(otherRoot ? &otherRoot->m_base : NULL);
+    expect_true(otherRoot && d, "Tab 链跨窗测试控件创建");
+    if (!otherRoot || !d) {
+        if (c) XWidget_delete_base((XClass*)c);
+        if (b) XWidget_delete_base((XClass*)b);
+        if (a) XWidget_delete_base((XClass*)a);
+        if (parent) XWidget_delete_base((XClass*)parent);
+        return;
+    }
+
+    XWidget_setGeometry(&parent->m_base, 0, 0, 400, 120);
+    XWidget_setGeometry(&a->m_base, 0, 0, 40, 30);
+    XWidget_setGeometry(&b->m_base, 50, 0, 40, 30);
+    XWidget_setGeometry(&c->m_base, 100, 0, 40, 30);
+    XWidget_setFocusPolicy(&a->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_setFocusPolicy(&b->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_setFocusPolicy(&c->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_show(&parent->m_base);
+    XWidget_show(&a->m_base);
+    XWidget_show(&b->m_base);
+    XWidget_show(&c->m_base);
+
+    /* 未设置显式链前：文档顺序 a -> b -> c。 */
+    expect_true(XWidget_focusNextChild(&a->m_base) &&
+                XWidget_focusWidget(&a->m_base) == &b->m_base,
+                "Tab 默认文档序 a->b");
+
+    /* setTabOrder(a,c) 与 setTabOrder(c,b) 建立 a->c->b 显式链。 */
+    XWidget_setTabOrder(&a->m_base, &c->m_base);
+    XWidget_setTabOrder(&c->m_base, &b->m_base);
+    expect_true(XWidget_focusNextChild(&a->m_base) &&
+                XWidget_focusWidget(&a->m_base) == &c->m_base,
+                "显式 Tab 链 a->c");
+    expect_true(XWidget_focusNextChild(&c->m_base) &&
+                XWidget_focusWidget(&c->m_base) == &b->m_base,
+                "显式 Tab 链 c->b");
+    expect_true(XWidget_focusPreviousChild(&b->m_base) &&
+                XWidget_focusWidget(&b->m_base) == &c->m_base,
+                "显式 Tab 链后退 b->c");
+    expect_true(XWidget_focusPreviousChild(&c->m_base) &&
+                XWidget_focusWidget(&c->m_base) == &a->m_base,
+                "显式 Tab 链后退 c->a");
+
+    /* 跨顶层窗口的 setTabOrder 应被拒绝，链保持原状。 */
+    XWidget_setTabOrder(&a->m_base, &d->m_base);
+    /* 仍应从 a 到 c（旧链未被跨窗调用覆盖）。 */
+    XWidget_focusNextChild(&a->m_base);
+    expect_true(XWidget_focusWidget(&a->m_base) == &c->m_base,
+                "跨窗 setTabOrder 不覆盖既有链");
+
+    XWidget_delete_base((XClass*)d);
+    XWidget_delete_base((XClass*)otherRoot);
+    XWidget_delete_base((XClass*)c);
+    XWidget_delete_base((XClass*)b);
+    XWidget_delete_base((XClass*)a);
+    XWidget_delete_base((XClass*)parent);
+#endif /* XWIDGET_ON */
+}
+/** @brief XWidget 字符串元数据与输入法提示（状态提示/What's This/无障碍/窗口角色/样式表）回归。 */
+static void test_widget_string_metadata_contract(void)
+{
+#if XWIDGET_ON
+    TestWidget* w;
+    XString* s;
+
+    w = TestWidget_create(NULL);
+    expect_true(w != NULL, "字符串元数据测试控件创建");
+    if (!w) return;
+
+    /* 默认空 */
+    expect_true(XWidget_statusTip(&w->m_base) == NULL &&
+                XWidget_whatsThis(&w->m_base) == NULL &&
+                XWidget_accessibleName(&w->m_base) == NULL &&
+                XWidget_accessibleDescription(&w->m_base) == NULL &&
+                XWidget_windowRole(&w->m_base) == NULL &&
+                XWidget_styleSheet(&w->m_base) == NULL,
+                "字符串元数据默认均为空");
+
+    s = XString_create_utf8("status-tip");
+    XWidget_setStatusTip(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_statusTip(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_statusTip(&w->m_base)),
+                       "status-tip") == 0,
+                "statusTip 设置/查询");
+    XWidget_setStatusTip(&w->m_base, NULL);
+    expect_true(XWidget_statusTip(&w->m_base) == NULL, "statusTip 清空");
+
+    s = XString_create_utf8("whats-this-help");
+    XWidget_setWhatsThis(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_whatsThis(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_whatsThis(&w->m_base)),
+                       "whats-this-help") == 0,
+                "whatsThis 设置/查询");
+    XWidget_setWhatsThis(&w->m_base, NULL);
+    expect_true(XWidget_whatsThis(&w->m_base) == NULL, "whatsThis 清空");
+
+    s = XString_create_utf8("access-name");
+    XWidget_setAccessibleName(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_accessibleName(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_accessibleName(&w->m_base)),
+                       "access-name") == 0,
+                "accessibleName 设置/查询");
+    XWidget_setAccessibleName(&w->m_base, NULL);
+    expect_true(XWidget_accessibleName(&w->m_base) == NULL,
+                "accessibleName 清空");
+
+    s = XString_create_utf8("access-desc");
+    XWidget_setAccessibleDescription(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_accessibleDescription(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_accessibleDescription(&w->m_base)),
+                       "access-desc") == 0,
+                "accessibleDescription 设置/查询");
+    XWidget_setAccessibleDescription(&w->m_base, NULL);
+    expect_true(XWidget_accessibleDescription(&w->m_base) == NULL,
+                "accessibleDescription 清空");
+
+    s = XString_create_utf8("app-main");
+    XWidget_setWindowRole(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_windowRole(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_windowRole(&w->m_base)),
+                       "app-main") == 0,
+                "windowRole 设置/查询");
+    XWidget_setWindowRole(&w->m_base, NULL);
+    expect_true(XWidget_windowRole(&w->m_base) == NULL, "windowRole 清空");
+
+    s = XString_create_utf8("QPushButton#go { background: red; }");
+    XWidget_setStyleSheet(&w->m_base, s);
+    XString_delete_base((XClass*)s);
+    expect_true(XWidget_styleSheet(&w->m_base) &&
+                strcmp(XString_toUtf8(XWidget_styleSheet(&w->m_base)),
+                       "QPushButton#go { background: red; }") == 0,
+                "styleSheet 设置/查询");
+    XWidget_setStyleSheet(&w->m_base, NULL);
+    expect_true(XWidget_styleSheet(&w->m_base) == NULL, "styleSheet 清空");
+
+    /* 输入法提示位组合。 */
+    expect_true(XWidget_inputMethodHints(&w->m_base) == 0, "inputMethodHints 默认 0");
+    XWidget_setInputMethodHints(
+        &w->m_base,
+        (XInputMethodHints)(XInputMethodHint_HiddenText |
+                            XInputMethodHint_DigitsOnly));
+    expect_true(XWidget_inputMethodHints(&w->m_base) ==
+                    (XInputMethodHints)(0x1u | 0x10000u),
+                "inputMethodHints 组合位");
+    XWidget_setInputMethodHints(&w->m_base, 0);
+    expect_true(XWidget_inputMethodHints(&w->m_base) == 0,
+                "inputMethodHints 清空");
+
+    XWidget_delete_base((XClass*)w);
+#endif /* XWIDGET_ON */
+}
+/** @brief XWidget 形状遮罩（mask/setMask/clearMask）回归。 */
+static void test_widget_mask_contract(void)
+{
+#if XWIDGET_ON
+    TestWidget* parent;
+    TestWidget* a;
+    TestWidget* b;
+    XPoint p10;
+    XPoint p70;
+    XRegion region;
+    XRegion got;
+
+    parent = TestWidget_create(NULL);
+    a = TestWidget_create(&parent->m_base);
+    b = TestWidget_create(&parent->m_base);
+    expect_true(parent && a && b, "遮罩测试控件创建");
+    if (!parent || !a || !b) return;
+
+    XWidget_setGeometry(&parent->m_base, 0, 0, 300, 100);
+    XWidget_setGeometry(&a->m_base, 0, 0, 100, 100);
+    XWidget_setGeometry(&b->m_base, 50, 0, 100, 100);
+    XWidget_show(&parent->m_base);
+    XWidget_show(&a->m_base);
+    XWidget_show(&b->m_base);
+
+    XPoint_init(&p10, 10, 10);
+    XPoint_init(&p70, 70, 10);
+    expect_true(XWidget_childAt(&parent->m_base, &p10) == &a->m_base,
+                "无遮罩时 (10,10) 命中 a");
+    expect_true(XWidget_childAt(&parent->m_base, &p70) == &b->m_base,
+                "无遮罩时 (70,10) 命中最上面 b");
+
+    /* 给 a 设置不覆盖 (70,10) 的遮罩：该点应穿透 a 命中 b。 */
+    XRegion_init(&region);
+    {
+        XRect r;
+        XRect_init(&r, 0, 0, 40, 100);
+        XRegion_addRect(&region, &r);
+    }
+    expect_true(!XWidget_hasMask(&a->m_base), "遮罩默认无");
+    XWidget_setMask(&a->m_base, &region);
+    expect_true(XWidget_hasMask(&a->m_base), "setMask 后有遮罩");
+    got = XWidget_mask(&a->m_base);
+    expect_true(got.count == 1 && got.rects &&
+                got.rects[0].width == 40 && got.rects[0].height == 100,
+                "mask() 返回遮罩深拷贝");
+    XRegion_deinit(&got);
+    expect_true(XWidget_childAt(&parent->m_base, &p10) == &a->m_base,
+                "遮罩内 (10,10) 仍命中 a");
+    expect_true(XWidget_childAt(&parent->m_base, &p70) == &b->m_base,
+                "遮罩外 (70,10) 穿透 a 命中 b");
+    XRegion_deinit(&region);
+
+    /* clearMask 恢复原命中行为。 */
+    XWidget_clearMask(&a->m_base);
+    expect_true(!XWidget_hasMask(&a->m_base), "clearMask 已清除");
+    expect_true(XWidget_childAt(&parent->m_base, &p10) == &a->m_base,
+                "清除遮罩后 (10,10) 仍命中 a");
+
+    XWidget_delete_base((XClass*)b);
+    XWidget_delete_base((XClass*)a);
+    XWidget_delete_base((XClass*)parent);
+#endif /* XWIDGET_ON */
+}
+/** @brief XWidget 焦点代理（focusProxy/setFocusProxy）回归。 */
+static void test_widget_focus_proxy_contract(void)
+{
+#if XWIDGET_ON
+    TestWidget* parent;
+    TestWidget* owner;
+    TestWidget* proxy;
+
+    parent = TestWidget_create(NULL);
+    owner = TestWidget_create(&parent->m_base);
+    proxy = TestWidget_create(&parent->m_base);
+    expect_true(parent && owner && proxy, "焦点代理测试控件创建");
+    if (!parent || !owner || !proxy) return;
+
+    XWidget_setGeometry(&parent->m_base, 0, 0, 400, 120);
+    XWidget_setGeometry(&owner->m_base, 0, 0, 40, 30);
+    XWidget_setGeometry(&proxy->m_base, 50, 0, 40, 30);
+    XWidget_setFocusPolicy(&owner->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_setFocusPolicy(&proxy->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_show(&parent->m_base);
+    XWidget_show(&owner->m_base);
+    XWidget_show(&proxy->m_base);
+
+    expect_true(XWidget_focusProxy(&owner->m_base) == NULL,
+                "默认无焦点代理");
+    XWidget_setFocusProxy(&owner->m_base, &proxy->m_base);
+    expect_true(XWidget_focusProxy(&owner->m_base) == &proxy->m_base,
+                "setFocusProxy 后查询到代理");
+
+    /* 拒绝形成焦点代理环。 */
+    XWidget_setFocusProxy(&proxy->m_base, &owner->m_base);
+    expect_true(XWidget_focusProxy(&proxy->m_base) == NULL,
+                "setFocusProxy 拒绝代理环");
+
+    expect_true(!XWidget_hasFocus(&owner->m_base) &&
+                !XWidget_hasFocus(&proxy->m_base),
+                "设置代理前尚未获得焦点");
+    XWidget_setFocus(&owner->m_base);
+    expect_true(XWidget_hasFocus(&owner->m_base) &&
+                XWidget_hasFocus(&proxy->m_base),
+                "setFocus 落到最深代理同时 owner 显示持有焦点");
+    XWidget_clearFocus(&owner->m_base);
+    expect_true(!XWidget_hasFocus(&owner->m_base) &&
+                !XWidget_hasFocus(&proxy->m_base),
+                "clearFocus 经代理清除全局焦点");
+
+    /* 代理销毁后自动摘除，避免悬空引用。 */
+    XWidget_setFocusProxy(&owner->m_base, &proxy->m_base);
+    XWidget_delete_base((XClass*)proxy);
+    expect_true(XWidget_focusProxy(&owner->m_base) == NULL,
+                "代理销毁后 owner 不再持有代理");
+
+    XWidget_delete_base((XClass*)owner);
+    XWidget_delete_base((XClass*)parent);
+#endif /* XWIDGET_ON */
+}
+
+/* ---- 扩展对齐回归辅助：带鼠标/键盘计数并记录局部坐标的控件子类 ---- */
+XCLASS_DEFINE_BEGING(GrabProbeWidget)
+XCLASS_DEFINE_EXTEND_END(GrabProbeWidget, XWidget)
+
+/** @brief 抓取探测控件：记录鼠标按下/移动与按键事件及局部坐标。 */
+typedef struct GrabProbeWidget
+{
+    XWidget m_base;                 /**< 基类；必须是第一个成员。 */
+    int mousePressCount;            /**< mousePress 槽计数。 */
+    int mouseMoveCount;             /**< mouseMove 槽计数。 */
+    int keyPressCount;              /**< keyPress 槽计数。 */
+    XPoint lastPosition;            /**< 最近一次鼠标事件局部坐标。 */
+} GrabProbeWidget;
+
+static void VGrabProbe_mousePressEvent(XWidget* self, XEvent* event)
+{
+    GrabProbeWidget* g = (GrabProbeWidget*)self;
+    ++g->mousePressCount;
+#if XWINDOWEVENT_ON
+    g->lastPosition = XMouseEvent_position((XMouseEvent*)event);
+#else
+    (void)event;
+#endif
+    if (event) XEvent_accept(event);
+}
+
+static void VGrabProbe_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    GrabProbeWidget* g = (GrabProbeWidget*)self;
+    ++g->mouseMoveCount;
+#if XWINDOWEVENT_ON
+    g->lastPosition = XMouseEvent_position((XMouseEvent*)event);
+#else
+    (void)event;
+#endif
+    if (event) XEvent_accept(event);
+}
+
+static void VGrabProbe_keyPressEvent(XWidget* self, XEvent* event)
+{
+    GrabProbeWidget* g = (GrabProbeWidget*)self;
+    ++g->keyPressCount;
+    if (event) XEvent_accept(event);
+}
+
+static XVtable* GrabProbeWidget_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(GrabProbeWidget)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VGrabProbe_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VGrabProbe_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VGrabProbe_keyPressEvent);
+    return XVTABLE_DEFAULT;
+}
+
+static GrabProbeWidget* GrabProbeWidget_create(XWidget* parent)
+{
+    GrabProbeWidget* self =
+        (GrabProbeWidget*)XMemory_malloc(sizeof(GrabProbeWidget),
+                                         XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(GrabProbeWidget));
+    XWidget_init(&self->m_base, parent, 0);
+    XClassSetVtable(self, GrabProbeWidget);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+/** @brief XWidget 扩展对齐：图标文本/祖先查询/焦点链/可见区域/抓取回归。 */
+static void test_widget_extended_alignment_contract(void)
+{
+#if XWIDGET_ON
+    GrabProbeWidget* pivot;
+    GrabProbeWidget* left;
+    GrabProbeWidget* right;
+    TestWidget* clipRoot;
+    TestWidget* clipChild;
+    XString* iconText;
+    XString* iconText2;
+    const XString* gotText;
+    XRegion region;
+    XRegion gotRegion;
+    XRect r;
+    XMouseEvent press;
+    XMouseEvent press2;
+    XMouseEvent press3;
+    XKeyEvent key;
+    XWindow* bridge;
+
+    /* ---------- 窗口图标文本（Qt 已废弃，仅存储） ---------- */
+    pivot = GrabProbeWidget_create(NULL);
+    left = GrabProbeWidget_create(&pivot->m_base);
+    right = GrabProbeWidget_create(&pivot->m_base);
+    expect_true(pivot && left && right, "扩展对齐测试控件创建");
+    if (!pivot || !left || !right) return;
+
+    iconText = XString_create_utf8("window-icon-text");
+    XWidget_setWindowIconText(&left->m_base, iconText);
+    gotText = XWidget_windowIconText(&left->m_base);
+    expect_true(gotText != NULL &&
+                XString_equals_utf8(gotText, "window-icon-text",
+                                    XChar_CaseSensitive),
+                "setWindowIconText/getWindowIconText 往返");
+    /* 重复赋值：旧字符串必须在替换时释放（ASan 门槛），且值正确切换。 */
+    iconText2 = XString_create_utf8("window-icon-text-2");
+    expect_true(iconText2 != NULL, "第二段图标文本创建");
+    XWidget_setWindowIconText(&left->m_base, iconText2);
+    gotText = XWidget_windowIconText(&left->m_base);
+    expect_true(gotText != NULL &&
+                XString_equals_utf8(gotText, "window-icon-text-2",
+                                    XChar_CaseSensitive),
+                "setWindowIconText 重复赋值后取到新值");
+    XWidget_setWindowIconText(&left->m_base, NULL);
+    expect_true(XWidget_windowIconText(&left->m_base) == NULL,
+                "setWindowIconText(NULL) 清除图标文本");
+    if (iconText) XString_delete_base((XClass*)iconText);
+    if (iconText2) XString_delete_base((XClass*)iconText2);
+
+    /* ---------- nativeParentWidget / topLevelWidget ---------- */
+    XWidget_setGeometry(&pivot->m_base, 0, 0, 300, 100);
+    XWidget_setGeometry(&left->m_base, 0, 0, 60, 50);
+    XWidget_setGeometry(&right->m_base, 100, 0, 60, 50);
+    expect_true(XWidget_topLevelWidget(&left->m_base) == &pivot->m_base,
+                "topLevelWidget 返回顶层控件");
+    expect_true(XWidget_nativeParentWidget(&left->m_base) == NULL,
+                "顶层未创建窗口句柄前 nativeParentWidget 返回 NULL");
+    XWidget_show(&pivot->m_base);
+    XWidget_show(&left->m_base);
+    XWidget_show(&right->m_base);
+    expect_true(XWidget_nativeParentWidget(&left->m_base) == &pivot->m_base,
+                "顶层创建窗口句柄后 nativeParentWidget 返回最近带句柄祖先");
+
+    /* ---------- visibleRegion：自身/祖先遮罩与父矩形裁剪 ---------- */
+    XWidget_clearMask(&left->m_base);
+    gotRegion = XWidget_visibleRegion(&left->m_base);
+    expect_true(gotRegion.count == 1 &&
+                gotRegion.rects && gotRegion.rects[0].width == 60 &&
+                gotRegion.rects[0].height == 50,
+                "visibleRegion 默认返回自身内容区");
+    XRegion_deinit(&gotRegion);
+
+    XRegion_init(&region);
+    XRect_init(&r, 0, 0, 30, 50);
+    XRegion_addRect(&region, &r);
+    XWidget_setMask(&left->m_base, &region);
+    gotRegion = XWidget_visibleRegion(&left->m_base);
+    expect_true(gotRegion.count == 1 &&
+                gotRegion.rects && gotRegion.rects[0].width == 30 &&
+                gotRegion.rects[0].height == 50,
+                "visibleRegion 受自身 mask 裁剪");
+    XRegion_deinit(&gotRegion);
+    XRegion_deinit(&region);
+    XWidget_clearMask(&left->m_base);
+
+    clipRoot = TestWidget_create(NULL);
+    clipChild = TestWidget_create(&clipRoot->m_base);
+    expect_true(clipRoot && clipChild, "可见区域裁剪测试控件创建");
+    if (clipRoot && clipChild) {
+        XWidget_setGeometry(&clipRoot->m_base, 0, 0, 100, 100);
+        XWidget_setGeometry(&clipChild->m_base, 95, 0, 20, 30);
+        XWidget_show(&clipRoot->m_base);
+        XWidget_show(&clipChild->m_base);
+        gotRegion = XWidget_visibleRegion(&clipChild->m_base);
+        expect_true(gotRegion.count == 1 &&
+                    gotRegion.rects && gotRegion.rects[0].width == 5 &&
+                    gotRegion.rects[0].height == 30,
+                    "visibleRegion 受父控件矩形裁剪");
+        XRegion_deinit(&gotRegion);
+    }
+    if (clipChild) XWidget_delete_base((XClass*)clipChild);
+    if (clipRoot) XWidget_delete_base((XClass*)clipRoot);
+
+    /* ---------- 焦点链查询 ---------- */
+    XWidget_setFocusPolicy(&left->m_base, XWidgetFocusPolicy_StrongFocus);
+    XWidget_setFocusPolicy(&right->m_base, XWidgetFocusPolicy_StrongFocus);
+    expect_true(XWidget_nextInFocusChain(&right->m_base) == &left->m_base,
+                "nextInFocusChain 文档序轮回");
+    expect_true(XWidget_previousInFocusChain(&left->m_base) == &right->m_base,
+                "previousInFocusChain 文档序轮回");
+
+#if XWINDOWEVENT_ON && XWINDOW_ON
+    /* ---------- 鼠标/键盘抓取直投 ---------- */
+    bridge = XWidget_windowHandle(&pivot->m_base);
+    expect_true(bridge != NULL, "show 后顶层已有桥接窗口句柄");
+
+    XWidget_clearMask(&left->m_base);
+    XMouseEvent_init(&press, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                     (XPoint){110, 10});
+    XWidget_grabMouse(NULL); /* 无操作，保证从清空状态开始 */
+    XWidget_releaseMouse(&left->m_base);
+    XWidget_releaseMouse(&right->m_base);
+    expect_true(XWidget_mouseGrabber() == NULL, "默认无鼠标抓取");
+    if (bridge) {
+        XWindow_event_base((XWindow*)bridge, (XEvent*)&press);
+        expect_true(right->mousePressCount == 1 &&
+                    left->mousePressCount == 0,
+                    "无抓取时按命中测试投递到右控件");
+
+        XWidget_grabMouse(&right->m_base);
+        expect_true(XWidget_mouseGrabber() == &right->m_base,
+                    "grabMouse 后 mouseGrabber 查询到抓取控件");
+        XMouseEvent_init(&press2, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                         (XPoint){ 10, 10 });
+        XWindow_event_base((XWindow*)bridge, (XEvent*)&press2);
+        expect_true(right->mousePressCount == 2 &&
+                    left->mousePressCount == 0 &&
+                    right->lastPosition.x == -90 &&
+                    right->lastPosition.y == 10,
+                    "grabMouse 后命中区域之外的点仍投递抓取控件");
+        XWidget_releaseMouse(&right->m_base);
+        expect_true(XWidget_mouseGrabber() == NULL,
+                    "releaseMouse 后 mouseGrabber 为空");
+        XMouseEvent_init(&press3, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                         (XPoint){ 10, 10 });
+        XWindow_event_base((XWindow*)bridge, (XEvent*)&press3);
+        expect_true(left->mousePressCount == 1 &&
+                    right->mousePressCount == 2 &&
+                    left->lastPosition.x == 10 &&
+                    left->lastPosition.y == 10,
+                    "releaseMouse 后恢复命中测试投递到左控件");
+        XMouseEvent_deinit_base((XClass*)&press3);
+
+        /* 键盘抓取：优先于焦点控件；释放后回到焦点控件。 */
+        XWidget_setFocus(&right->m_base);
+        XWidget_grabKeyboard(&left->m_base);
+        expect_true(XWidget_keyboardGrabber() == &left->m_base,
+                    "grabKeyboard 后 keyboardGrabber 查询到抓取控件");
+        XKeyEvent_init(&key, XEVENT_TYPE_KEY_PRESS, XKey_Space,
+                       XKeyboardModifier_NoModifier);
+        XWindow_event_base((XWindow*)bridge, (XEvent*)&key);
+        expect_true(left->keyPressCount == 1 && right->keyPressCount == 0,
+                    "grabKeyboard 后即使焦点在 right 也投递到 left");
+        XWidget_releaseKeyboard(&left->m_base);
+        expect_true(XWidget_keyboardGrabber() == NULL,
+                    "releaseKeyboard 后 keyboardGrabber 为空");
+        XWindow_event_base((XWindow*)bridge, (XEvent*)&key);
+        expect_true(right->keyPressCount == 1 &&
+                    left->keyPressCount == 1,
+                    "releaseKeyboard 后按焦点控件投递到 right");
+        XKeyEvent_deinit_base((XClass*)&key);
+        XMouseEvent_deinit_base((XClass*)&press2);
+
+        /* 隐藏抓取控件自动解除鼠标/键盘抓取。 */
+        XWidget_grabMouse(&right->m_base);
+        XWidget_hide(&right->m_base);
+        expect_true(XWidget_mouseGrabber() == NULL,
+                    "隐藏抓取控件自动解除鼠标抓取");
+        XWidget_show(&right->m_base);
+        XWidget_grabKeyboard(&left->m_base);
+        XWidget_hide(&left->m_base);
+        expect_true(XWidget_keyboardGrabber() == NULL,
+                    "隐藏抓取控件自动解除键盘抓取");
+        XWidget_show(&left->m_base);
+    }
+    XMouseEvent_deinit_base((XClass*)&press);
+#endif /* XWINDOWEVENT_ON && XWINDOW_ON */
+
+    XWidget_delete_base((XClass*)right);
+    XWidget_delete_base((XClass*)left);
+    XWidget_delete_base((XClass*)pivot);
+#endif /* XWIDGET_ON */
+}
 /** @brief 布局挂控控件集成：setLayout/自动 reparent/show 激活/隐藏收缩。 */
 static void test_layout_widget_integration(void)
 {
@@ -23026,6 +23646,12 @@ int main(void)
 #endif /* XGUIAPPLICATION_ON */
 #if XWIDGET_ON
     test_widget_contract();
+    test_widget_zorder_contract();
+    test_widget_focus_tab_order();
+    test_widget_string_metadata_contract();
+    test_widget_mask_contract();
+    test_widget_focus_proxy_contract();
+    test_widget_extended_alignment_contract();
 #endif /* XWIDGET_ON */
 #if XWIDGET_ON && XFRAME_ON
     test_frame_contract();

@@ -23,6 +23,7 @@
  ******************************************************************************/
 #include "XGridLayout.h"
 #include "XLayout_Internal.h"
+#include "XLayoutItem_Protected.h"
 #include "XWidget.h"
 #include "XMemory.h"
 #include <string.h>

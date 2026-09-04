@@ -89,14 +89,16 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
 /* ==================== 事件分派（对标 QWidget protected 事件虚函数） ==================== */
 
 /**
- * @brief      控件事件总入口（对标 QWidget::event）。
- * @details    按 XEventType 分派到 18 个事件虚函数；未识别事件回退
- *             XObject 默认 Event 实现。
+ * @brief      控件事件总入口（对标 QWidget::event；继承自 XObject，宏复用）。
+ * @details    按 XEventType 分派到 23 个事件虚函数；未识别事件回退
+ *             XObject 默认 Event 实现。此入口属 protected 接口，只暴露给
+ *             子类/内部实现使用，宏定义放在本保护头文件。
  * @param      self 接收事件的控件；可为 NULL。
  * @param      event 待分派事件；可为 NULL。
  * @return     事件已处理返回 true。
  */
-bool XWidget_event_base(XWidget* self, XEvent* event);
+#define XWidget_event_base(self, event) \
+    XObject_event_base((XObject*)(self), (event))
 /** @brief 绘制事件槽（对标 QWidget::paintEvent）。 */
 void XWidget_paintEvent_base(XWidget* self, XEvent* event);
 /** @brief 调整大小事件槽（对标 QWidget::resizeEvent）。 */

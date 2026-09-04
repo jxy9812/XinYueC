@@ -15,6 +15,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XLayoutItem.h"
+#include "XLayoutItem_Protected.h"
 #include "XLayout_Internal.h"
 #include "XMemory.h"
 #include <string.h>

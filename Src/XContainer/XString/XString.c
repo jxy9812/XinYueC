@@ -2463,6 +2463,12 @@ void XString_deinitCache(XString* str)
     }
     str->m_cache[0].m_data = NULL;
     str->m_cache[0].m_length = 0;
+    /* 释放缓存数组本体：此前只释放了各槽位数据，漏掉由
+       XString_initCache 分配的缓存容器，会导致一切用过
+       toUtf8/toUtf16/toUtf32/toGbk/toLocal8Bit 的 XString
+       在销毁时泄漏 80 字节。 */
+    XContainer_free(str, str->m_cache);
+    str->m_cache = NULL;
 }
 
 static void XString_initCache(XString* str)

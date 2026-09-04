@@ -651,8 +651,17 @@ void XImage_init(XImage* self)
 
 void XImage_init_ex(XImage* self, int width, int height, XImageFormat format)
 {
+    XMemory* oldMemory;
+    bool oldHeap;
     if (ISNULL(self, "XImage")) return;
+    /* XImage_create_ex 已设置堆所有权与内存方法；XImage_init 会把它们清零，
+       这里先暂存再恢复，保证堆对象在 delete_base 时按堆释放，
+       栈对象（oldHeap=false）仍然保持非堆语义。 */
+    oldMemory = Class_Memory(self);
+    oldHeap = Class_IsHeap(self);
     XImage_init(self);
+    if (oldMemory) Class_Memory(self) = oldMemory;
+    Class_IsHeap(self) = oldHeap;
     self->m_data = XImageData_create(width, height, format, 0, NULL, NULL, NULL);
     if (self->m_data) self->m_data->m_devicePixelRatio = 1.0f;
 }
@@ -661,8 +670,14 @@ void XImage_init_ex_2(XImage* self, int width, int height, XImageFormat format,
                       int64_t bytesPerLine, uint8_t* data,
                       void (*cleanupFunction)(void*), void* cleanupInfo)
 {
+    XMemory* oldMemory;
+    bool oldHeap;
     if (ISNULL(self, "XImage")) return;
+    oldMemory = Class_Memory(self);
+    oldHeap = Class_IsHeap(self);
     XImage_init(self);
+    if (oldMemory) Class_Memory(self) = oldMemory;
+    Class_IsHeap(self) = oldHeap;
     self->m_data = XImageData_create(width, height, format, bytesPerLine, data, cleanupFunction, cleanupInfo);
     if (self->m_data) self->m_data->m_devicePixelRatio = 1.0f;
 }

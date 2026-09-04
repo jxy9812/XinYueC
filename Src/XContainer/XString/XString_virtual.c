@@ -238,6 +238,9 @@ static void VXClass_copy(XString* object, const XString* src)
 
     XContainerSize(object) = XContainerSize(src);
     XContainerCapacity(object) = XContainerCapacity(src);
+    /* 覆盖已有目标：原目标若已生成编码缓存（toUtf8 等），必须先释放缓存
+       数组与其槽位数据，否则直接置 NULL 会泄漏 80 字节数组 + 计数数据。 */
+    XString_deinitCache(object);
     object->m_cache = NULL;
 }
 
@@ -259,6 +262,8 @@ static void VXClass_move(XString* object, XString* src)
     XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
     XContainerSize(object) = XContainerSize(src);
     XContainerCapacity(object) = XContainerCapacity(src);
+    /* 目标已有旧缓存时先释放，再接管源缓存属主。 */
+    XString_deinitCache(object);
     object->m_cache = src->m_cache;
 
     // 清空源对象（使其处于有效但为空的状态）

@@ -36,6 +36,7 @@
  ******************************************************************************/
 #include "XBoxLayout.h"
 #include "XLayout_Internal.h"
+#include "XLayoutItem_Protected.h"
 #include "XMemory.h"
 #include <string.h>
 

@@ -451,7 +451,10 @@ static bool VXFrame_event(XWidget* self, XEvent* event)
     type = XEvent_type(event);
     if (type == XEVENT_TYPE_PARENT_CHANGE)
         XFrame_updateFrameWidth((XFrame*)self);
-    result = XWidget_event_base(self, event);
+    /* 调用父类 Event 槽（VXWidget_event），避免经对象虚表再次进入
+     * VXFrame_event 造成递归。 */
+    result = XClass_Parent(XWidget, EXObject_Event,
+                           bool(*)(XObject*, XEvent*))((XObject*)self, event);
     if (type == XEVENT_TYPE_POLISH)
         XFrame_updateFrameWidth((XFrame*)self);
     return result;

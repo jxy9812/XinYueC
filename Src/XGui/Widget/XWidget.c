@@ -31,12 +31,16 @@
  *                递归子控件（区域逐层裁剪）-> endPaint -> flush 上屏 ->
  *                清空脏区，默认 paintEvent 按 autoFillBackground 填充
  *                XPaletteColorRole_Window 底色；
- *              - 事件分派：XWidget_event_base 按 XEventType 分派到 18 个
+ *              - 事件分派：XWidget_event_base 继承自 XObject（宏复用
+ *                XObject_event_base），经虚表 EXObject_Event 进入
+ *                VXWidget_event；VXWidget_event 按 XEventType 分派到 23 个
  *                事件虚函数槽（paintEvent/resizeEvent/moveEvent/closeEvent/
  *                focusInEvent/focusOutEvent/enterEvent/leaveEvent/keyPressEvent/
- *                keyReleaseEvent/mousePressEvent/mouseReleaseEvent/
+ *                keyReleaseEvent/inputMethodEvent/dragEnterEvent/dragMoveEvent/
+ *                dragLeaveEvent/dropEvent/mousePressEvent/mouseReleaseEvent/
  *                mouseDoubleClickEvent/mouseMoveEvent/wheelEvent/showEvent/
- *                hideEvent），未识别事件回退 XObject 默认 Event 实现；
+ *                hideEvent/changeEvent），未识别事件回退 XObject 默认
+ *                Event 实现；
  *                鼠标/滚轮/进入事件经 XWidget_childAt 命中测试改写局部坐标
  *                后投递，未接受事件可沿父链冒泡（位置逐层换算）。
  *             本模块不依赖任何平台 API；窗口/后备存储/平台差异全部由
@@ -106,6 +110,25 @@ typedef struct XWidgetWindow
 /** @brief 模块静态焦点控件；控件域内全局唯一（对标 QApplication::focusWidget）。 */
 static XWidget* g_focusWidget = NULL;
 
+/** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
+static XWidget* g_mouseGrabWidget = NULL;
+/** @brief 模块静态键盘抓取控件（对标 QApplication::keyboardGrabber）。 */
+static XWidget* g_keyboardGrabWidget = NULL;
+
+/** @brief 焦点代理注册条目：owner 的 m_focusProxy 指向 proxy（借用）。
+ * @details 用于代理销毁时自动摘除所有持有该代理的控件，避免悬空指针；
+ *          生命周期与 XWidget 实例一致，不随模块注册表驱动线程变化。 */
+typedef struct XFocusProxyEntry
+{
+    XWidget*                owner;   /**< 持有代理的控件。 */
+    XWidget*                proxy;   /**< 被持有为代理的控件。 */
+    struct XFocusProxyEntry* next;   /**< 下一项。 */
+    struct XFocusProxyEntry* prev;   /**< 上一项。 */
+} XFocusProxyEntry;
+
+/** @brief 焦点代理注册表头（单链表；条目随 owner/proxy 生命周期登记清理）。 */
+static XFocusProxyEntry* g_focusProxyEntries = NULL;
+
 /* ==================== 静态函数前向声明 ==================== */
 
 /** @brief 属性位置位/清位（对标 QWidget::setAttribute 内部实现）。 */
@@ -129,6 +152,9 @@ static void XWidget_destroyWindow(XWidget* top);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
+static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
+static void XFocusProxy_register(XWidget* owner);
+static void XFocusProxy_cleanupFor(XWidget* self);
 static void XWidget_propagateEnabled(XWidget* self, bool enabled);
 static XEvent* XWidget_createPaintEvent(const XWidget* source);
 static void XWidget_propagateLayoutDirection(XWidget* self,
@@ -248,6 +274,10 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
         } else {
             if (g_focusWidget == self)
                 XWidget_clearFocusBase(self, XFocusReason_Other);
+            if (g_mouseGrabWidget == self)
+                g_mouseGrabWidget = NULL;
+            if (g_keyboardGrabWidget == self)
+                g_keyboardGrabWidget = NULL;
             XWidget_sendShowHide(self, false);
         }
     }
@@ -414,6 +444,8 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     if (top->m_windowFilePath)
         XWindow_setFilePath(window, top->m_windowFilePath);
     XWindow_setOpacity(window, top->m_windowOpacity);
+    if (top->m_mask.count > 0)
+        XWindow_setMask(window, &top->m_mask);
     XWindow_setModality(window, top->m_windowModality);
     XWindow_setWindowStates(window, top->m_windowState);
     XWindow_setMinimumSize(window, &top->m_minimumSize);
@@ -844,8 +876,20 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
     pos = XWidget_eventPosition(event);
-    target = XWidget_childAt(top, &pos);
-    if (!target) target = top;
+    if (g_mouseGrabWidget &&
+        XWidget_topLevel(g_mouseGrabWidget) == top) {
+        /* 鼠标抓取：直接投递抓取控件，不再按命中测试分派（对标 QWidget grabMouse）。 */
+        target = g_mouseGrabWidget;
+    } else {
+        target = XWidget_childAt(top, &pos);
+        if (!target) {
+            const XRegion* topMask = top ? &top->m_mask : NULL;
+            /* 顶层自身有遮罩且点不在遮罩内时不再回退到顶层（对该点不派发）。 */
+            if (!topMask || topMask->count <= 0 ||
+                XRegion_contains(topMask, pos.x, pos.y))
+                target = top;
+        }
+    }
     w = target;
     while (w) {
         XPoint off = XWidget_accumulateOffset(w);
@@ -869,7 +913,9 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
 {
     XWidget* target;
     if (!top || !event) return false;
-    target = g_focusWidget;
+    target = g_keyboardGrabWidget;
+    if (!target || XWidget_topLevel(target) != top)
+        target = g_focusWidget;
     if (!target || XWidget_topLevel(target) != top) target = (XWidget*)top;
     if (target) {
         XWidget_sendEvent(target, event);
@@ -878,20 +924,7 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
     return XWidget_event_base((XWidget*)top, event);
 }
 
-/* ==================== 事件虚表基础分派 ==================== */
-
-/** @brief 通过对象虚函数表安全调用指定事件槽；槽缺失时静默忽略。 */
-static void XWidget_dispatchEventSlot(XWidget* self, size_t offset, XEvent* event)
-{
-    XVtable* vt;
-    void* fn;
-    if (!self || !event) return;
-    vt = XClassGetVtable(self);
-    fn = vt ? XVtable_at(vt, offset) : NULL;
-    if (fn) ((void(*)(XWidget*, XEvent*))fn)(self, event);
-}
-
-/* ==================== 17 个默认事件槽（对标 QWidget 默认实现） ==================== */
+/* ==================== 23 个默认事件槽（对标 QWidget 默认实现） ==================== */
 
 /** @brief 默认绘制槽：autoFillBackground 时用活动组 Window 色填充绘制矩形。 */
 static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
@@ -1125,6 +1158,17 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_windowOpacity = 1.0f;
     self->m_heightForWidthHandler = NULL;
     self->m_heightForWidthUserData = NULL;
+    self->m_focusNext = NULL;
+    self->m_focusPrev = NULL;
+    self->m_focusProxy = NULL;
+    self->m_windowIconText = NULL;
+    self->m_statusTip = NULL;
+    self->m_whatsThis = NULL;
+    self->m_accessibleName = NULL;
+    self->m_accessibleDescription = NULL;
+    self->m_windowRole = NULL;
+    self->m_styleSheet = NULL;
+    self->m_inputMethodHints = 0;
     self->m_windowState = XWindowState_NoState;
     self->m_windowModality = XWindowModality_NonModal;
     self->m_sizePolicy = XWidgetSizePolicy_create();
@@ -1141,6 +1185,7 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     XRegion_init(&self->m_staticContents);
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
+    XRegion_init(&self->m_mask);
     if (parent) {
         XObject_setParent(&self->m_class, (XObject*)parent);
         self->m_isWindow = (self->m_windowFlags &
@@ -1177,10 +1222,106 @@ static void XWidget_freeContentCache(XWidget* self)
     self->m_contentCacheDirty = true;
 }
 
+/** @brief 把 self 从显式 Tab 链中摘除，避免析构后留下悬空引用。 */
+static void XWidget_unlinkFocusChain(XWidget* self)
+{
+    if (!self) return;
+    if (self->m_focusPrev && self->m_focusPrev->m_focusNext == self)
+        self->m_focusPrev->m_focusNext = self->m_focusNext;
+    if (self->m_focusNext && self->m_focusNext->m_focusPrev == self)
+        self->m_focusNext->m_focusPrev = self->m_focusPrev;
+    self->m_focusNext = NULL;
+    self->m_focusPrev = NULL;
+}
+
+/** @brief 返回控件焦点链最深层的代理；无代理返回 NULL。 */
+static XWidget* XWidget_deepestFocusProxy(const XWidget* self)
+{
+    XWidget* cur;
+    uint32_t guard;
+    if (!self) return NULL;
+    cur = self->m_focusProxy;
+    guard = 0;
+    while (cur && cur->m_focusProxy && guard < 64u) {
+        cur = cur->m_focusProxy;
+        ++guard;
+    }
+    return cur;
+}
+
+/** @brief 判断 owner 是否已有焦点代理注册条目。 */
+static bool XFocusProxy_hasEntry(const XWidget* owner)
+{
+    XFocusProxyEntry* e;
+    for (e = g_focusProxyEntries; e; e = e->next)
+        if (e->owner == owner) return true;
+    return false;
+}
+
+/** @brief 为 owner 的 m_focusProxy（非 NULL）登记注册表条目；重复登记忽略。 */
+static void XFocusProxy_register(XWidget* owner)
+{
+    XFocusProxyEntry* e;
+    if (!owner || !owner->m_focusProxy || XFocusProxy_hasEntry(owner)) return;
+    e = (XFocusProxyEntry*)XMemory_malloc(sizeof(XFocusProxyEntry),
+                                          XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!e) return;
+    memset(e, 0, sizeof(XFocusProxyEntry));
+    e->owner = owner;
+    e->proxy = owner->m_focusProxy;
+    e->next = g_focusProxyEntries;
+    if (g_focusProxyEntries) g_focusProxyEntries->prev = e;
+    g_focusProxyEntries = e;
+}
+
+/** @brief 移除 owner 的注册条目（不改写 m_focusProxy）。 */
+static void XFocusProxy_unregisterOwner(XWidget* owner)
+{
+    XFocusProxyEntry* e;
+    if (!owner) return;
+    e = g_focusProxyEntries;
+    while (e) {
+        XFocusProxyEntry* next;
+        XFocusProxyEntry* prev;
+        if (e->owner == owner) {
+            prev = e->prev;
+            next = e->next;
+            if (prev) prev->next = next; else g_focusProxyEntries = next;
+            if (next) next->prev = prev;
+            XMemory_free(e, XCLASS_DEFAULT_MEMORY_TYPE);
+            return;
+        }
+        e = e->next;
+    }
+}
+
+/** @brief 控件销毁清理：移除 owner==self 的条目，并把仍指向 self 的代理字段清空后摘除。 */
+static void XFocusProxy_cleanupFor(XWidget* self)
+{
+    XFocusProxyEntry* e;
+    if (!self) return;
+    e = g_focusProxyEntries;
+    while (e) {
+        XFocusProxyEntry* next = e->next;
+        if (e->owner == self || e->proxy == self) {
+            if (e->proxy == self && e->owner != self)
+                e->owner->m_focusProxy = NULL;
+            if (e->prev) e->prev->next = e->next; else g_focusProxyEntries = e->next;
+            if (e->next) e->next->prev = e->prev;
+            XMemory_free(e, XCLASS_DEFAULT_MEMORY_TYPE);
+            e = next;
+            continue;
+        }
+        e = next;
+    }
+ }
+
 /** @brief 释放控件自身资源（不释放子控件；XObject 基类 Deinit 负责子树与父登记）。 */
 static void VXWidget_deinit(XWidget* self)
 {
     if (!self) return;
+    XWidget_unlinkFocusChain(self);
+    XFocusProxy_cleanupFor(self);
 #if XLAYOUT_ON
     if (self->m_layout) {
         XLayout_detachWidget(self->m_layout);
@@ -1203,9 +1344,20 @@ static void VXWidget_deinit(XWidget* self)
         XObject_setParent((XObject*)self, NULL);
     if (g_focusWidget == self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
+    if (g_mouseGrabWidget == self)
+        g_mouseGrabWidget = NULL;
+    if (g_keyboardGrabWidget == self)
+        g_keyboardGrabWidget = NULL;
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
+    XWidget_freeString(&self->m_windowIconText);
     XWidget_freeString(&self->m_windowFilePath);
+    XWidget_freeString(&self->m_statusTip);
+    XWidget_freeString(&self->m_whatsThis);
+    XWidget_freeString(&self->m_accessibleName);
+    XWidget_freeString(&self->m_accessibleDescription);
+    XWidget_freeString(&self->m_windowRole);
+    XWidget_freeString(&self->m_styleSheet);
 #if XCURSOR_ON
     if (self->m_cursor) {
         XCursor_delete_base((XClass*)self->m_cursor);
@@ -1217,6 +1369,7 @@ static void VXWidget_deinit(XWidget* self)
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     XWidget_freeContentCache(self);
+    XRegion_deinit(&self->m_mask);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
         XBackingStore_delete_base(self->m_backingStore);
@@ -1232,8 +1385,11 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XWidget_init(self, NULL, 0);
     /* 释放目标已有资源（copy 自动 init 未初始化目标后进入增量路径）。 */
+    XFocusProxy_unregisterOwner(self);
+    self->m_focusProxy = NULL;
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
+    XWidget_freeString(&self->m_windowIconText);
     XWidget_freeString(&self->m_windowFilePath);
 #if XCURSOR_ON
     if (self->m_cursor) {
@@ -1278,6 +1434,8 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_minimumSizeHint = other->m_minimumSizeHint;
     self->m_heightForWidthHandler = other->m_heightForWidthHandler;
     self->m_heightForWidthUserData = other->m_heightForWidthUserData;
+    self->m_focusNext = NULL;
+    self->m_focusPrev = NULL;
     self->m_sizePolicy = other->m_sizePolicy;
     self->m_normalGeometry = other->m_normalGeometry;
     self->m_windowState = other->m_windowState;
@@ -1286,7 +1444,15 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_windowOpacity = other->m_windowOpacity;
     self->m_toolTip = XWidget_copyString(other->m_toolTip);
     self->m_windowTitle = XWidget_copyString(other->m_windowTitle);
+    self->m_windowIconText = XWidget_copyString(other->m_windowIconText);
     self->m_windowFilePath = XWidget_copyString(other->m_windowFilePath);
+    self->m_statusTip = XWidget_copyString(other->m_statusTip);
+    self->m_whatsThis = XWidget_copyString(other->m_whatsThis);
+    self->m_accessibleName = XWidget_copyString(other->m_accessibleName);
+    self->m_accessibleDescription = XWidget_copyString(other->m_accessibleDescription);
+    self->m_windowRole = XWidget_copyString(other->m_windowRole);
+    self->m_styleSheet = XWidget_copyString(other->m_styleSheet);
+    self->m_inputMethodHints = other->m_inputMethodHints;
 #if XPALETTE_ON
     XPalette_copy(&self->m_palette, &other->m_palette);
 #else
@@ -1303,6 +1469,9 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #endif /* XCURSOR_ON */
     XRegion_copy(&other->m_dirty, &self->m_dirty);
     XRegion_copy(&other->m_staticContents, &self->m_staticContents);
+    XRegion_deinit(&self->m_mask);
+    XRegion_init(&self->m_mask);
+    XRegion_copy(&other->m_mask, &self->m_mask);
     /* 窗口句柄与后备存储一律置空（拷贝构造不清平台资源）。 */
     self->m_windowHandle = NULL;
     self->m_backingStore = NULL;
@@ -1327,7 +1496,18 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     /* 拥有指针转移 */
     self->m_toolTip = other->m_toolTip;         other->m_toolTip = NULL;
     self->m_windowTitle = other->m_windowTitle; other->m_windowTitle = NULL;
+    self->m_windowIconText = other->m_windowIconText; other->m_windowIconText = NULL;
     self->m_windowFilePath = other->m_windowFilePath; other->m_windowFilePath = NULL;
+    self->m_statusTip = other->m_statusTip;       other->m_statusTip = NULL;
+    self->m_whatsThis = other->m_whatsThis;       other->m_whatsThis = NULL;
+    self->m_accessibleName = other->m_accessibleName; other->m_accessibleName = NULL;
+    self->m_accessibleDescription = other->m_accessibleDescription; other->m_accessibleDescription = NULL;
+    self->m_windowRole = other->m_windowRole;     other->m_windowRole = NULL;
+    self->m_styleSheet = other->m_styleSheet;     other->m_styleSheet = NULL;
+    self->m_inputMethodHints = other->m_inputMethodHints; other->m_inputMethodHints = 0;
+    XFocusProxy_unregisterOwner(other);
+    self->m_focusProxy = other->m_focusProxy; other->m_focusProxy = NULL;
+    XFocusProxy_register(self);
 #if XCURSOR_ON
     self->m_cursor = other->m_cursor;           other->m_cursor = NULL;
 #endif /* XCURSOR_ON */
@@ -1358,10 +1538,15 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     XRegion_deinit(&self->m_staticContents);
     self->m_staticContents = other->m_staticContents;
     XRegion_init(&other->m_staticContents);
+    XRegion_deinit(&self->m_mask);
+    self->m_mask = other->m_mask;
+    XRegion_init(&other->m_mask);
     /* 普通值字段整体转移 */
     self->m_windowFlags = other->m_windowFlags;
     self->m_attributes = other->m_attributes;
     self->m_focusPolicy = other->m_focusPolicy;
+    self->m_focusNext = NULL;
+    self->m_focusPrev = NULL;
     self->m_contextMenuPolicy = other->m_contextMenuPolicy;
     self->m_layoutDirection = other->m_layoutDirection;
     self->m_isWindow = other->m_isWindow;
@@ -1406,10 +1591,122 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     other->m_windowFlags = 0;
 }
 
-/** @brief 控件事件总入口（EXObject_Event 重载槽）。 */
+/** @brief 控件事件总入口（EXObject_Event 重载槽，按事件类型分派）。 */
 static bool VXWidget_event(XWidget* self, XEvent* event)
 {
-    return XWidget_event_base(self, event);
+    XEventType type;
+    if (!self || !event) return false;
+    type = XEvent_type(event);
+    /* QWidget::event 丢弃禁用控件的数位板、触摸、鼠标、键盘、滚轮及
+     * 上下文菜单输入；返回 false 让上层派发器按现有传播规则继续处理。 */
+    if (!XWidget_isEnabled(self)) {
+        switch (type) {
+        case XEVENT_TYPE_TABLET_PRESS:
+        case XEVENT_TYPE_TABLET_RELEASE:
+        case XEVENT_TYPE_TABLET_MOVE:
+        case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
+        case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
+        case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
+        case XEVENT_TYPE_MOUSE_MOVE:
+        case XEVENT_TYPE_TOUCH_BEGIN:
+        case XEVENT_TYPE_TOUCH_UPDATE:
+        case XEVENT_TYPE_TOUCH_END:
+        case XEVENT_TYPE_TOUCH_CANCEL:
+        case XEVENT_TYPE_WHEEL:
+        case XEVENT_TYPE_KEY_PRESS:
+        case XEVENT_TYPE_KEY_RELEASE:
+        case XEVENT_TYPE_CONTEXT_MENU:
+            return false;
+        default:
+            break;
+        }
+    }
+    switch (type) {
+    case XEVENT_TYPE_PAINT:
+        XWidget_paintEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_RESIZE:
+        XWidget_resizeEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_MOVE:
+        XWidget_moveEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_CLOSE:
+        XWidget_closeEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_FOCUS_IN:
+        XWidget_focusInEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_FOCUS_OUT:
+        XWidget_focusOutEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_ENTER:
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
+                        true);
+        XWidget_enterEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_LEAVE:
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
+                        false);
+        XWidget_leaveEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_KEY_PRESS:
+        XWidget_keyPressEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_KEY_RELEASE:
+        XWidget_keyReleaseEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_INPUT_METHOD:
+        XWidget_inputMethodEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_DRAG_ENTER:
+        XWidget_dragEnterEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_DRAG_MOVE:
+        XWidget_dragMoveEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_DRAG_LEAVE:
+        XWidget_dragLeaveEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_DROP:
+        XWidget_dropEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
+        XWidget_mousePressEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
+        XWidget_mouseReleaseEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
+        XWidget_mouseDoubleClickEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_MOUSE_MOVE:
+        XWidget_mouseMoveEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_WHEEL:
+        XWidget_wheelEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_SHOW:
+        XWidget_showEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_HIDE:
+        XWidget_hideEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_LOCALE_CHANGE:
+    case XEVENT_TYPE_LANGUAGE_CHANGE:
+    case XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE:
+    case XEVENT_TYPE_STYLE_CHANGE:
+    case XEVENT_TYPE_FONT_CHANGE:
+    case XEVENT_TYPE_ENABLED_CHANGE:
+    case XEVENT_TYPE_WINDOW_STATE_CHANGE:
+    case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
+        XWidget_changeEvent_base(self, event);
+        return true;
+    default:
+        /* 未识别事件回退 XObject 默认 Event 实现（对标 QWidget::event 尾部）。 */
+        return XClass_Parent(XObject, EXObject_Event,
+                             bool(*)(XObject*, XEvent*))((XObject*)self, event);
+    }
 }
 
 /* ==================== 属性与窗口标志 ==================== */
@@ -2182,6 +2479,9 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
     size_t n;
     size_t i;
     if (!self || !point) return NULL;
+    if (self->m_mask.count > 0 && self->m_mask.rects &&
+        !XRegion_contains(&self->m_mask, point->x, point->y))
+        return NULL;
     children = XObject_children((XObject*)self);
     n = children ? XVector_size_base((const XContainer*)children) : 0;
     /* 逆序命中：后入栈的子控件绘制在上层（对标 Qt 子控件 Z 序）。 */
@@ -2217,6 +2517,183 @@ XWidget* XWidget_childAtGlobal(const XWidget* self, const XPoint* globalPoint)
     if (!self || !globalPoint) return NULL;
     local = XWidget_mapFromGlobal(self, globalPoint);
     return XWidget_childAt(self, &local);
+}
+
+
+/* ==================== 遮罩（对标 QWidget::mask/setMask/clearMask） ==================== */
+
+XRegion XWidget_mask(const XWidget* self)
+{
+    XRegion out;
+    XRegion_init(&out);
+    if (self)
+        XRegion_copy(&self->m_mask, &out);
+    return out;
+}
+
+bool XWidget_hasMask(const XWidget* self)
+{
+    return self && self->m_mask.count > 0;
+}
+
+void XWidget_setMask(XWidget* self, const XRegion* region)
+{
+    bool nowEmpty;
+    bool wasEmpty;
+    if (!self) return;
+    wasEmpty = self->m_mask.count <= 0;
+    nowEmpty = (!region || region->count <= 0);
+    if (!nowEmpty) {
+        XRegion_deinit(&self->m_mask);
+        XRegion_init(&self->m_mask);
+        XRegion_copy(region, &self->m_mask);
+    } else {
+        XRegion_deinit(&self->m_mask);
+        XRegion_init(&self->m_mask);
+    }
+    /* 空态变化或两次均为非空（可能内容不同）都触发刷新并同步原生窗口。 */
+    if ((wasEmpty != nowEmpty) || (!wasEmpty && !nowEmpty)) {
+        if (self->m_isWindow && self->m_windowHandle)
+            XWindow_setMask((XWindow*)self->m_windowHandle,
+                            nowEmpty ? NULL : &self->m_mask);
+        XWidget_update(self);
+    }
+}
+
+void XWidget_clearMask(XWidget* self)
+{
+    if (!self) return;
+    XWidget_setMask(self, NULL);
+}
+
+/* ==================== Z 序（对标 QWidget::raise/lower/stackUnder） ==================== */
+
+/** @brief 返回 children 列表中 target 控件（XWidget）的索引；找不到或非控件返回 -1。 */
+static int64_t XWidget_widgetVectorIndex(const XVector* children,
+                                         const XWidget* target)
+{
+    size_t n;
+    size_t i;
+    if (!children || !target) return -1;
+    n = XVector_size_base((const XContainer*)children);
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        if (child && child->is_widget && (XWidget*)child == target)
+            return (int64_t)i;
+    }
+    return -1;
+}
+
+/** @brief 返回 children 列表中第一个 XWidget 子控件的索引；无则返回 -1。 */
+static int64_t XWidget_firstWidgetVectorIndex(const XVector* children)
+{
+    size_t n;
+    size_t i;
+    if (!children) return -1;
+    n = XVector_size_base((const XContainer*)children);
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
+        if (child && child->is_widget) return (int64_t)i;
+    }
+    return -1;
+}
+
+/** @brief 返回 children 列表中最后一个 XWidget 子控件的索引；无则返回 -1。 */
+static int64_t XWidget_lastWidgetVectorIndex(const XVector* children)
+{
+    size_t n;
+    size_t i;
+    if (!children) return -1;
+    n = XVector_size_base((const XContainer*)children);
+    for (i = n; i > 0; --i) {
+        XObject* child = *(XObject**)XVector_at_base(children, (int64_t)(i - 1));
+        if (child && child->is_widget) return (int64_t)(i - 1);
+    }
+    return -1;
+}
+
+/** @brief 顶层控件 Z 序变更：请求原生窗口提升/降低并发送事件。 */
+static void XWidget_emitZOrderChange(XWidget* self)
+{
+    XEvent event;
+    if (!self) return;
+    XEvent_init(&event, XEVENT_TYPE_Z_ORDER_CHANGE);
+    XWidget_event_base(self, &event);
+}
+
+void XWidget_raise(XWidget* self)
+{
+    const XVector* children;
+    XWidget* parent;
+    int64_t from;
+    int64_t last;
+    if (!self) return;
+    if (self->m_isWindow) {
+#if XWINDOW_ON
+        if (self->m_windowHandle)
+            XWindow_raise((XWindow*)self->m_windowHandle);
+#endif /* XWINDOW_ON */
+        XWidget_emitZOrderChange(self);
+        return;
+    }
+    parent = XWidget_parentWidget(self);
+    if (!parent) return;
+    children = XObject_children((XObject*)parent);
+    from = XWidget_widgetVectorIndex(children, self);
+    last = XWidget_lastWidgetVectorIndex(children);
+    if (from < 0 || last < 0 || from == last) return;
+    XVector_move((XVector*)children, from, last);
+    XWidget_updateRect(parent, &self->m_windowRect);
+    XWidget_emitZOrderChange(self);
+}
+
+void XWidget_lower(XWidget* self)
+{
+    const XVector* children;
+    XWidget* parent;
+    int64_t from;
+    int64_t first;
+    if (!self) return;
+    if (self->m_isWindow) {
+#if XWINDOW_ON
+        if (self->m_windowHandle)
+            XWindow_lower((XWindow*)self->m_windowHandle);
+#endif /* XWINDOW_ON */
+        XWidget_emitZOrderChange(self);
+        return;
+    }
+    parent = XWidget_parentWidget(self);
+    if (!parent) return;
+    children = XObject_children((XObject*)parent);
+    from = XWidget_widgetVectorIndex(children, self);
+    first = XWidget_firstWidgetVectorIndex(children);
+    if (from < 0 || first < 0 || from == first) return;
+    XVector_move((XVector*)children, from, first);
+    XWidget_updateRect(parent, &self->m_windowRect);
+    XWidget_emitZOrderChange(self);
+}
+
+void XWidget_stackUnder(XWidget* self, XWidget* other)
+{
+    const XVector* children;
+    XWidget* parent;
+    int64_t from;
+    int64_t to;
+    if (!self || !other || self == other) return;
+    if (self->m_isWindow || other->m_isWindow) return;
+    parent = XWidget_parentWidget(self);
+    if (!parent || XWidget_parentWidget(other) != parent) return;
+    children = XObject_children((XObject*)parent);
+    from = XWidget_widgetVectorIndex(children, self);
+    to = XWidget_widgetVectorIndex(children, other);
+    if (from < 0 || to < 0) return;
+    /* 对齐 QWidget::stackUnder：目标在其上方时，把 self 插到目标之前。 */
+    if (from < to)
+        --to;
+    if (from == to) return;
+    XVector_move((XVector*)children, from, to);
+    XWidget_updateRect(parent, &self->m_windowRect);
+    XWidget_emitZOrderChange(self);
 }
 
 XRect XWidget_childrenRect(const XWidget* self)
@@ -2273,6 +2750,21 @@ bool XWidget_isAncestorOf(const XWidget* self, const XWidget* child)
 }
 
 XWidget* XWidget_window(const XWidget* self)
+{
+    return XWidget_topLevel(self);
+}
+
+XWidget* XWidget_nativeParentWidget(const XWidget* self)
+{
+    XWidget* parent;
+    if (!self) return NULL;
+    parent = (XWidget*)XObject_parent((XObject*)self);
+    while (parent && !parent->m_windowHandle)
+        parent = (XWidget*)XObject_parent((XObject*)parent);
+    return parent;
+}
+
+XWidget* XWidget_topLevelWidget(const XWidget* self)
 {
     return XWidget_topLevel(self);
 }
@@ -2623,6 +3115,7 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title)
     else
         changed = (old != copy); /* 一个为 NULL、一个非 NULL 视为变化。 */
     self->m_windowTitle = copy;
+    XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
     if (!changed) return;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setTitle((XWindow*)self->m_windowHandle, self->m_windowTitle);
@@ -2632,32 +3125,27 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title)
 #endif
 }
 
-XIcon XWidget_windowIcon(const XWidget* self)
+const XString* XWidget_windowIconText(const XWidget* self)
 {
-    XIcon out;
-    XIcon_init(&out);
-    if (self)
-        XIcon_copy_base(&out, &self->m_icon);
-    return out;
+    return self ? self->m_windowIconText : NULL;
 }
 
-void XWidget_setWindowIcon(XWidget* self, const XIcon* icon)
+void XWidget_setWindowIconText(XWidget* self, const XString* text)
 {
+    XString* old;
+    XString* copy;
     bool changed;
     if (!self) return;
-    if (icon && !XIcon_isNull(icon)) {
-        changed = true;
-        XIcon_copy_base(&self->m_icon, icon);
-    } else {
-        /* 空图标：清空恢复默认（对标 QWidget::setWindowIcon(QIcon())）。 */
-        changed = !XIcon_isNull(&self->m_icon);
-        XIcon_deinit_base(&self->m_icon);
-        XIcon_init(&self->m_icon);
-    }
-    if (self->m_isWindow && self->m_windowHandle)
-        XWindow_setIcon((XWindow*)self->m_windowHandle, &self->m_icon);
+    copy = XWidget_copyString(text);
+    old = self->m_windowIconText;
+    if (old && copy)
+        changed = !XString_equals(old, copy, XChar_CaseSensitive);
+    else
+        changed = (old != copy); /* 一个为 NULL、一个非 NULL 视为变化。 */
+    self->m_windowIconText = copy;
+    XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
     if (changed)
-        XWidget_windowIconChanged_signal(self, &self->m_icon);
+        XWidget_windowIconTextChanged_signal(self, self->m_windowIconText);
 }
 
 const XString* XWidget_windowFilePath(const XWidget* self)
@@ -2787,7 +3275,12 @@ void XWidget_setFocusPolicy(XWidget* self, XWidgetFocusPolicy policy)
 
 bool XWidget_hasFocus(const XWidget* self)
 {
-    return self && g_focusWidget == self;
+    XWidget* proxy;
+    XWidget* target;
+    if (!self) return false;
+    proxy = XWidget_deepestFocusProxy(self);
+    target = proxy ? proxy : (XWidget*)self;
+    return g_focusWidget == target;
 }
 
 XWidget* XWidget_focusWidget(const XWidget* self)
@@ -2812,25 +3305,33 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
     XFocusEvent event;
 #endif /* XWINDOWEVENT_ON */
     XWidget* top;
+    XWidget* focusTarget;
     if (!self) return;
     if (!self->m_enabled ||
         XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Disabled) ||
         XWidget_attrTest(&self->m_attributes, XWidgetAttribute_ForceDisabled))
         return;
+    /* 对标 QWidget::setFocus：焦点真正落在最深层焦点代理上。 */
+    focusTarget = XWidget_deepestFocusProxy(self);
+    if (!focusTarget) focusTarget = self;
+    if (!focusTarget->m_enabled ||
+        XWidget_attrTest(&focusTarget->m_attributes, XWidgetAttribute_Disabled) ||
+        XWidget_attrTest(&focusTarget->m_attributes, XWidgetAttribute_ForceDisabled))
+        return;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top) return;
     if (top->m_windowHandle && !XWindow_isActive((XWindow*)top->m_windowHandle))
         XWindow_requestActivate((XWindow*)top->m_windowHandle);
-    if (g_focusWidget == self) return;
+    if (g_focusWidget == focusTarget) return;
     if (g_focusWidget)
         XWidget_clearFocusBase(g_focusWidget, reason);
-    g_focusWidget = self;
+    g_focusWidget = focusTarget;
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
-    XApplication_setFocusWidget(self);
+    XApplication_setFocusWidget(focusTarget);
 #endif /* XAPPLICATION_ON */
 #if XWINDOWEVENT_ON
     XFocusEvent_init(&event, XEVENT_TYPE_FOCUS_IN, reason);
-    XWidget_event_base(self, (XEvent*)&event);
+    XWidget_event_base(focusTarget, (XEvent*)&event);
     XFocusEvent_deinit_base(&event);
 #endif /* XWINDOWEVENT_ON */
 }
@@ -2838,22 +3339,75 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
 void XWidget_clearFocus(XWidget* self)
 {
     XWidget* focus;
-    if (!self) return;
+    if (!self || !XWidget_hasFocus(self)) return;
     focus = XWidget_focusWidget(self);
     if (focus)
         XWidget_clearFocusBase(focus, XFocusReason_Other);
 }
 
+XWidget* XWidget_focusProxy(const XWidget* self)
+{
+    return self ? self->m_focusProxy : NULL;
+}
+
+void XWidget_setFocusProxy(XWidget* self, XWidget* proxy)
+{
+    XWidget* cur;
+    bool hadFocus;
+    uint32_t guard;
+    if (!self) return;
+    hadFocus = XWidget_hasFocus(self);
+    if (proxy) {
+        /* 拒绝形成焦点代理环（对标 QWidget::setFocusProxy 的链检查）。 */
+        guard = 0;
+        for (cur = proxy; cur && guard < 64u; cur = cur->m_focusProxy, ++guard) {
+            if (cur == self)
+                return;
+        }
+    }
+    XFocusProxy_unregisterOwner(self);
+    self->m_focusProxy = proxy;
+    if (proxy)
+        XFocusProxy_register(self);
+    /* Qt 在“焦点控件已经是本控件（或其代理）”时会把焦点移到新代理。 */
+    if (hadFocus)
+        XWidget_setFocus(self);
+}
+
+void XWidget_setTabOrder(XWidget* first, XWidget* second)
+{
+    XWidget* firstTop;
+    XWidget* secondTop;
+    if (!first || !second || first == second) return;
+    /* 对标 QWidget::setTabOrder：不接受 NoFocus 控件，且两控件必须同窗。 */
+    if (first->m_focusPolicy == XWidgetFocusPolicy_NoFocus ||
+        second->m_focusPolicy == XWidgetFocusPolicy_NoFocus)
+        return;
+    firstTop = XWidget_topLevel(first);
+    secondTop = XWidget_topLevel(second);
+    if (!firstTop || !secondTop || firstTop != secondTop) return;
+    /* C 适配只维护显式 next/prev 单跳链接；未设置的控件仍按文档序导航。 */
+    first->m_focusNext = second;
+    second->m_focusPrev = first;
+}
+
+/** @brief 判断控件是否可作为 Tab 链中的显式/文档序焦点候选（与收集规则一致）。 */
+static bool XWidget_focusChainCandidate(const XWidget* self)
+{
+    return self && self->m_enabled &&
+           (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
+           self->m_explicitShow && !self->m_isWindow;
+}
+
 /** @brief 深度优先收集可 Tab 聚焦子控件（不含顶层自身；顺序即绘制顺序）。 */
+
 static void XWidget_collectTabFocusable(const XWidget* self, XVector* out)
 {
     const XVector* children;
     size_t n;
     size_t i;
     if (!self || !out) return;
-    if (self->m_enabled &&
-        (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-        self->m_explicitShow && !self->m_isWindow) {
+    if (XWidget_focusChainCandidate(self)) {
         XWidget* w = (XWidget*)self;
         XVector_push_back_1_base(out, &w);
     }
@@ -2866,25 +3420,33 @@ static void XWidget_collectTabFocusable(const XWidget* self, XVector* out)
     }
 }
 
-/** @brief 焦点前进/后退公共实现：按文档顺序取下一个/上一个可聚焦控件。 */
-static bool XWidget_focusStep(XWidget* self, bool forward)
+/** @brief 计算焦点链下一个/上一个目标（不改焦点；优先显式 Tab 链，其次文档序）。 */
+static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
 {
     XWidget* top;
+    XWidget* linked;
     XVector* list;
     size_t n;
     size_t i;
     size_t cur;
     XWidget* target;
-    if (!self) return false;
+    if (!self) return NULL;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
-    if (!top) return false;
+    if (!top) return NULL;
+    /* 1. 显式 setTabOrder 链：同窗且仍是可聚焦候选时优先使用。 */
+    linked = forward ? self->m_focusNext : self->m_focusPrev;
+    if (linked && linked != self &&
+        XWidget_topLevel(linked) == top &&
+        XWidget_focusChainCandidate(linked))
+        return linked;
+    /* 2. 未设置显式链（或显式链失效）时退回文档顺序。 */
     list = XVector_create(sizeof(XWidget*));
-    if (!list) return false;
+    if (!list) return NULL;
     XWidget_collectTabFocusable((const XWidget*)top, list);
     n = XVector_size_base((const XContainer*)list);
     if (n == 0) {
         XVector_delete_base((XClass*)list);
-        return false;
+        return NULL;
     }
     cur = n; /* 未找到当前控件时从头/尾开始。 */
     for (i = 0; i < n; ++i) {
@@ -2902,11 +3464,26 @@ static bool XWidget_focusStep(XWidget* self, bool forward)
         break;
     }
     XVector_delete_base((XClass*)list);
-    if (target) {
+    return target;
+}
+
+/** @brief 焦点前进/后退公共实现：优先显式 Tab 链，其次按文档序取候选。 */
+static bool XWidget_focusStep(XWidget* self, bool forward)
+{
+    XWidget* target = XWidget_focusChainTarget(self, forward);
+    if (target)
         XWidget_setFocus(target);
-        return true;
-    }
-    return false;
+    return target != NULL;
+}
+
+XWidget* XWidget_nextInFocusChain(const XWidget* self)
+{
+    return XWidget_focusChainTarget((XWidget*)self, true);
+}
+
+XWidget* XWidget_previousInFocusChain(const XWidget* self)
+{
+    return XWidget_focusChainTarget((XWidget*)self, false);
 }
 
 bool XWidget_focusNextChild(XWidget* self)
@@ -2961,6 +3538,43 @@ void XWidget_setAcceptDrops(XWidget* self, bool enable)
 {
     if (!self) return;
     self->m_acceptDrops = enable ? 1 : 0;
+}
+
+void XWidget_grabMouse(XWidget* self)
+{
+    XWidget* top;
+    if (!self || !self->m_visible) return;
+    top = XWidget_topLevel(self);
+    if (!top) return;
+    g_mouseGrabWidget = self;
+}
+
+void XWidget_releaseMouse(XWidget* self)
+{
+    if (self && g_mouseGrabWidget == self)
+        g_mouseGrabWidget = NULL;
+}
+
+XWidget* XWidget_mouseGrabber(void)
+{
+    return g_mouseGrabWidget;
+}
+
+void XWidget_grabKeyboard(XWidget* self)
+{
+    if (!self || !self->m_visible) return;
+    g_keyboardGrabWidget = self;
+}
+
+void XWidget_releaseKeyboard(XWidget* self)
+{
+    if (self && g_keyboardGrabWidget == self)
+        g_keyboardGrabWidget = NULL;
+}
+
+XWidget* XWidget_keyboardGrabber(void)
+{
+    return g_keyboardGrabWidget;
 }
 
 XWidgetContextMenuPolicy XWidget_contextMenuPolicy(const XWidget* self)
@@ -3182,6 +3796,109 @@ void XWidget_setToolTipDuration(XWidget* self, int msec)
     self->m_toolTipDuration = msec;
 }
 
+/* ==================== 状态提示/What's This/无障碍/窗口角色/输入法/样式表 ==== */
+
+const XString* XWidget_statusTip(const XWidget* self)
+{
+    return self ? self->m_statusTip : NULL;
+}
+
+void XWidget_setStatusTip(XWidget* self, const XString* tip)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(tip);
+    XWidget_freeString(&self->m_statusTip);
+    self->m_statusTip = copy;
+}
+
+const XString* XWidget_whatsThis(const XWidget* self)
+{
+    return self ? self->m_whatsThis : NULL;
+}
+
+void XWidget_setWhatsThis(XWidget* self, const XString* text)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(text);
+    XWidget_freeString(&self->m_whatsThis);
+    self->m_whatsThis = copy;
+}
+
+const XString* XWidget_accessibleName(const XWidget* self)
+{
+    return self ? self->m_accessibleName : NULL;
+}
+
+void XWidget_setAccessibleName(XWidget* self, const XString* name)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(name);
+    XWidget_freeString(&self->m_accessibleName);
+    self->m_accessibleName = copy;
+#if XWINDOW_ON && XACCESSIBLE_ON
+    XPlatformAccessibility_notifyWidget(XAccessibleEvent_NameChanged, self);
+#endif
+}
+
+const XString* XWidget_accessibleDescription(const XWidget* self)
+{
+    return self ? self->m_accessibleDescription : NULL;
+}
+
+void XWidget_setAccessibleDescription(XWidget* self, const XString* description)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(description);
+    XWidget_freeString(&self->m_accessibleDescription);
+    self->m_accessibleDescription = copy;
+#if XWINDOW_ON && XACCESSIBLE_ON
+    XPlatformAccessibility_notifyWidget(XAccessibleEvent_DescriptionChanged, self);
+#endif
+}
+
+const XString* XWidget_windowRole(const XWidget* self)
+{
+    return self ? self->m_windowRole : NULL;
+}
+
+void XWidget_setWindowRole(XWidget* self, const XString* role)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(role);
+    XWidget_freeString(&self->m_windowRole);
+    self->m_windowRole = copy;
+}
+
+XInputMethodHints XWidget_inputMethodHints(const XWidget* self)
+{
+    return self ? self->m_inputMethodHints : 0;
+}
+
+void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints)
+{
+    if (!self) return;
+    self->m_inputMethodHints = hints;
+}
+
+const XString* XWidget_styleSheet(const XWidget* self)
+{
+    return self ? self->m_styleSheet : NULL;
+}
+
+void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet)
+{
+    XString* copy;
+    if (!self) return;
+    copy = XWidget_copyString(styleSheet);
+    XWidget_freeString(&self->m_styleSheet);
+    self->m_styleSheet = copy;
+}
+
 XFont XWidget_font(const XWidget* self)
 {
     XFont out;
@@ -3360,6 +4077,55 @@ void XWidget_repaintRegion(XWidget* self, const XRegion* region)
     XWidget_flushBackingStore(top, &top->m_dirty);
 }
 
+XRegion XWidget_visibleRegion(const XWidget* self)
+{
+    XRegion out;
+    XRegion next;
+    XRegion maskClip;
+    const XWidget* node;
+    XPoint offset;
+    XRegion_init(&out);
+    if (!self) {
+        return out;
+    }
+    XRegion_addRect(&out, &self->m_contentsRect);
+    if (self->m_mask.count > 0 && self->m_mask.rects) {
+        XRegion_init(&maskClip);
+        XRegion_intersected(&out, &self->m_mask, &maskClip);
+        XRegion_deinit(&out);
+        out = maskClip;
+        XRegion_init(&maskClip); /* 转移后复位，避免双 ownership 或未初始化释放 */
+    }
+    XPoint_init(&offset, 0, 0);
+    node = (const XWidget*)XObject_parent((XObject*)self);
+    if (node) {
+        XRegion_translateInline(&out, self->m_windowRect.x, self->m_windowRect.y);
+        offset.x += self->m_windowRect.x;
+        offset.y += self->m_windowRect.y;
+    }
+    while (node) {
+        /* next 始终是新分配结果；转移后不再在循环外释放，避免与 out 共享缓冲。 */
+        next = XRegion_intersectRect(&out, &node->m_contentsRect);
+        XRegion_deinit(&out);
+        out = next;
+        if (node->m_mask.count > 0 && node->m_mask.rects) {
+            XRegion_init(&maskClip);
+            XRegion_intersected(&out, &node->m_mask, &maskClip);
+            XRegion_deinit(&out);
+            out = maskClip;
+            XRegion_init(&maskClip); /* 转移后复位 */
+        }
+        if (node->m_isWindow)
+            break;
+        XRegion_translateInline(&out, node->m_windowRect.x, node->m_windowRect.y);
+        offset.x += node->m_windowRect.x;
+        offset.y += node->m_windowRect.y;
+        node = (const XWidget*)XObject_parent((XObject*)node);
+    }
+    XRegion_translateInline(&out, -offset.x, -offset.y);
+    return out;
+}
+
 XBackingStore* XWidget_backingStore(const XWidget* self)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -3496,13 +4262,26 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
 static void XWidget_paintTree(XWidget* widget, const XRegion* region)
 {
     const XVector* children;
+    XRegion maskClipped;
+    const XRegion* paintRegion;
     size_t n;
     size_t i;
     if (!widget || !region || region->count <= 0) return;
+    /* 控件自身遮罩参与所有绘制裁剪：遮罩外像素不进入 paintEvent 与后代。 */
+    paintRegion = region;
+    XRegion_init(&maskClipped);
+    if (widget->m_mask.count > 0 && widget->m_mask.rects) {
+        XRegion_intersected(region, &widget->m_mask, &maskClipped);
+        if (maskClipped.count <= 0) {
+            XRegion_deinit(&maskClipped);
+            return;
+        }
+        paintRegion = &maskClipped;
+    }
     if (widget->m_updatesEnabled && !widget->m_inPaintEvent) {
         XPaintEvent event;
         widget->m_inPaintEvent = 1;
-        XPaintEvent_init(&event, XEVENT_TYPE_PAINT, region);
+        XPaintEvent_init(&event, XEVENT_TYPE_PAINT, paintRegion);
         XWidget_paintEvent_base(widget, (XEvent*)&event);
         XPaintEvent_deinit_base(&event);
         widget->m_inPaintEvent = 0;
@@ -3518,14 +4297,16 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
         w = (XWidget*)child;
         if (!w->m_visible || !w->m_updatesEnabled) continue;
         childRect = w->m_windowRect;
-        clipped = XRegion_intersectRect(region, &childRect);
+        clipped = XRegion_intersectRect(paintRegion, &childRect);
         if (clipped.count > 0) {
             XRegion_translateInline(&clipped, -childRect.x, -childRect.y);
             XWidget_paintTree(w, &clipped);
         }
         XRegion_deinit(&clipped);
     }
+    XRegion_deinit(&maskClipped);
 }
+
 
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
@@ -3607,131 +4388,22 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 
 /* ==================== 事件分派（对标 QWidget::event） ==================== */
 
-bool XWidget_event_base(XWidget* self, XEvent* event)
-{
-    XEventType type;
-    if (!self || !event) return false;
-    type = XEvent_type(event);
-    /* QWidget::event 丢弃禁用控件的数位板、触摸、鼠标、键盘、滚轮及
-     * 上下文菜单输入；返回 false 让上层派发器按现有传播规则继续处理。 */
-    if (!XWidget_isEnabled(self)) {
-        switch (type) {
-        case XEVENT_TYPE_TABLET_PRESS:
-        case XEVENT_TYPE_TABLET_RELEASE:
-        case XEVENT_TYPE_TABLET_MOVE:
-        case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
-        case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
-        case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
-        case XEVENT_TYPE_MOUSE_MOVE:
-        case XEVENT_TYPE_TOUCH_BEGIN:
-        case XEVENT_TYPE_TOUCH_UPDATE:
-        case XEVENT_TYPE_TOUCH_END:
-        case XEVENT_TYPE_TOUCH_CANCEL:
-        case XEVENT_TYPE_WHEEL:
-        case XEVENT_TYPE_KEY_PRESS:
-        case XEVENT_TYPE_KEY_RELEASE:
-        case XEVENT_TYPE_CONTEXT_MENU:
-            return false;
-        default:
-            break;
-        }
-    }
-    switch (type) {
-    case XEVENT_TYPE_PAINT:
-        XWidget_paintEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_RESIZE:
-        XWidget_resizeEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_MOVE:
-        XWidget_moveEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_CLOSE:
-        XWidget_closeEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_FOCUS_IN:
-        XWidget_focusInEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_FOCUS_OUT:
-        XWidget_focusOutEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_ENTER:
-        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
-                        true);
-        XWidget_enterEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_LEAVE:
-        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
-                        false);
-        XWidget_leaveEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_KEY_PRESS:
-        XWidget_keyPressEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_KEY_RELEASE:
-        XWidget_keyReleaseEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_INPUT_METHOD:
-        XWidget_inputMethodEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_DRAG_ENTER:
-        XWidget_dragEnterEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_DRAG_MOVE:
-        XWidget_dragMoveEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_DRAG_LEAVE:
-        XWidget_dragLeaveEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_DROP:
-        XWidget_dropEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_MOUSE_BUTTON_PRESS:
-        XWidget_mousePressEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
-        XWidget_mouseReleaseEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
-        XWidget_mouseDoubleClickEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_MOUSE_MOVE:
-        XWidget_mouseMoveEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_WHEEL:
-        XWidget_wheelEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_SHOW:
-        XWidget_showEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_HIDE:
-        XWidget_hideEvent_base(self, event);
-        return true;
-    case XEVENT_TYPE_LOCALE_CHANGE:
-    case XEVENT_TYPE_LANGUAGE_CHANGE:
-    case XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE:
-    case XEVENT_TYPE_STYLE_CHANGE:
-    case XEVENT_TYPE_FONT_CHANGE:
-    case XEVENT_TYPE_ENABLED_CHANGE:
-    case XEVENT_TYPE_WINDOW_STATE_CHANGE:
-    case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
-        XWidget_changeEvent_base(self, event);
-        return true;
-    default:
-        /* 未识别事件回退 XObject 默认 Event 实现（对标 QWidget::event 尾部）。 */
-        return XClass_Parent(XObject, EXObject_Event,
-                             bool(*)(XObject*, XEvent*))((XObject*)self, event);
-    }
-}
+/*
+ * XWidget_event_base 继承自 XObject（对标 QObject::event），按文档约定在
+ * XWidget.h 中直接宏复用：XWidget_event_base(self, event) 展开为
+ * XObject_event_base((XObject*)(self), (event))，经虚表 EXObject_Event 槽位
+ * 分派到 VXWidget_event（按事件类型分发到 23 个控件事件虚函数）。
+ */
 
-/* ==================== 18 个公开事件槽入口（XWidget_*_base） ==================== */
+/* ==================== 23 个公开事件槽入口（XWidget_*_base） ==================== */
 
 /** @brief 生成公开事件槽入口：经对象虚表安全调用对应槽位。 */
 #define XWIDGET_VT_DISPATCH(FuncName, SlotEnum) \
 void XWidget_##FuncName##_base(XWidget* self, XEvent* event) \
 { \
-    if (!self || !event) return; \
-    XWidget_dispatchEventSlot(self, (size_t)(SlotEnum), event); \
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return; \
+    if (!XClassGetVirtualFunc(self, SlotEnum, bool)) return; \
+    XClassGetVirtualFunc(self, SlotEnum, void(*)(XWidget*, XEvent*))(self, event); \
 }
 
 XWIDGET_VT_DISPATCH(paintEvent, EXWidget_PaintEvent)
@@ -3786,6 +4458,16 @@ void* XWidget_windowIconChanged_signal(XWidget* self, XIcon* icon)
     XWidget_emit(self, (size_t)XWidget_windowIconChanged_signal,
                  XVarList_Create(XVar(XIcon*, icon)));
     return (void*)(size_t)XWidget_windowIconChanged_signal;
+}
+
+void* XWidget_windowIconTextChanged_signal(XWidget* self, const XString* text)
+{
+    XString* value;
+    if (!self) return (void*)(size_t)XWidget_windowIconTextChanged_signal;
+    value = (XString*)text;
+    XWidget_emit(self, (size_t)XWidget_windowIconTextChanged_signal,
+                 XVarList_Create(XVar(XString*, value)));
+    return (void*)(size_t)XWidget_windowIconTextChanged_signal;
 }
 
 void* XWidget_customContextMenuRequested_signal(XWidget* self, const XPoint* pos)

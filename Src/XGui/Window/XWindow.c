@@ -31,6 +31,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWindow.h"
+#include "XWindow_Protected.h"
 #include "XAccessible.h"
 #if XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"
@@ -1925,12 +1926,12 @@ static bool VXWindow_event(XWindow* self, XEvent* event)
     return true;
 }
 
-bool XWindow_event_base(XWindow* self, XEvent* event)
-{
-    if (!self || !event) return false;
-    return XClassGetVirtualFunc(self, EXObject_Event,
-                                bool(*)(XWindow*, XEvent*))(self, event);
-}
+/*
+ * XWindow_event_base 继承自 XObject（对标 QObject::event），按文档约定在
+ * XWindow.h 中直接宏复用：XWindow_event_base(self, event) 展开为
+ * XObject_event_base((XObject*)(self), (event))，经虚表 EXObject_Event 槽位
+ * 分派到 VXWindow_event（按事件类型分发到窗口事件虚函数）。
+ */
 
 #define XWINDOW_DEFINE_EVENT_BASE(Name, Type) \
     void XWindow_##Name##_base(XWindow* self, XEvent* event) \
