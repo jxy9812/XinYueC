@@ -2,7 +2,7 @@
 #include "XTcpServer.h"
 #include "XTcpSocket.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XByteArray.h"
 #include "XCoreApplication.h"
 #include "XHostAddress.h"
@@ -818,7 +818,7 @@ typedef struct {
     bool (*func)(void);
 } TestCase;
 
-// XAction_setAction 需要的签名是 void(*)(void)，包装一下
+// XTestMenu_setActionFunction 需要的签名是 void(*)(void)，包装一下
 static void wrap_create_destroy(void) { test_create_destroy(); }
 static void wrap_listen(void) { test_listen(); }
 static void wrap_close(void) { test_close(); }
@@ -835,27 +835,27 @@ static void wrap_max_pending_connections(void) { test_max_pending_connections();
 static void wrap_server_address(void) { test_server_address(); }
 static void wrap_auto_close_on_destroy(void) { test_auto_close_on_destroy(); }
 
-void XMenu_XTcpServerTest(XMenu* root)
+void XTestMenu_XTcpServerTest(XTestMenu* root)
 {
     /* 先注册菜单，再执行自动测试 */
-    XMenu* menu = XMenu_create("TCP Server 测试");
+    XTestMenu* menu = XTestMenu_create("TCP Server 测试");
     if (!menu) return;
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
     /* 注册菜单项（供交互式测试使用）*/
     XAction* a;
-    a = XMenu_addAction(menu, "创建/销毁测试");              XAction_setAction(a, wrap_create_destroy);
-    a = XMenu_addAction(menu, "listen 测试");                XAction_setAction(a, wrap_listen);
-    a = XMenu_addAction(menu, "close 测试");                 XAction_setAction(a, wrap_close);
-    a = XMenu_addAction(menu, "连接管理配置测试");           XAction_setAction(a, wrap_connection_management);
-    a = XMenu_addAction(menu, "基本连接接受测试");           XAction_setAction(a, wrap_accept_connection);
-    a = XMenu_addAction(menu, "waitForNewConnection 测试");  XAction_setAction(a, wrap_wait_for_new_connection);
-    a = XMenu_addAction(menu, "暂停/恢复接受测试");          XAction_setAction(a, wrap_pause_resume_accepting);
-    a = XMenu_addAction(menu, "数据收发测试");               XAction_setAction(a, wrap_data_transfer);
-    a = XMenu_addAction(menu, "多连接测试");                 XAction_setAction(a, wrap_multiple_connections);
-    a = XMenu_addAction(menu, "setSocketDescriptor 测试");   XAction_setAction(a, wrap_set_socket_descriptor);
-    a = XMenu_addAction(menu, "错误处理测试");               XAction_setAction(a, wrap_error_handling);
-    a = XMenu_addAction(menu, "代理设置测试");               XAction_setAction(a, wrap_proxy);
-    a = XMenu_addAction(menu, "最大待处理连接限制测试");     XAction_setAction(a, wrap_max_pending_connections);
-    a = XMenu_addAction(menu, "服务器地址测试");             XAction_setAction(a, wrap_server_address);
-    a = XMenu_addAction(menu, "销毁时自动关闭测试");         XAction_setAction(a, wrap_auto_close_on_destroy);
+    a = XTestMenu_addAction(menu, "创建/销毁测试");              XTestMenu_setActionFunction(a, wrap_create_destroy);
+    a = XTestMenu_addAction(menu, "listen 测试");                XTestMenu_setActionFunction(a, wrap_listen);
+    a = XTestMenu_addAction(menu, "close 测试");                 XTestMenu_setActionFunction(a, wrap_close);
+    a = XTestMenu_addAction(menu, "连接管理配置测试");           XTestMenu_setActionFunction(a, wrap_connection_management);
+    a = XTestMenu_addAction(menu, "基本连接接受测试");           XTestMenu_setActionFunction(a, wrap_accept_connection);
+    a = XTestMenu_addAction(menu, "waitForNewConnection 测试");  XTestMenu_setActionFunction(a, wrap_wait_for_new_connection);
+    a = XTestMenu_addAction(menu, "暂停/恢复接受测试");          XTestMenu_setActionFunction(a, wrap_pause_resume_accepting);
+    a = XTestMenu_addAction(menu, "数据收发测试");               XTestMenu_setActionFunction(a, wrap_data_transfer);
+    a = XTestMenu_addAction(menu, "多连接测试");                 XTestMenu_setActionFunction(a, wrap_multiple_connections);
+    a = XTestMenu_addAction(menu, "setSocketDescriptor 测试");   XTestMenu_setActionFunction(a, wrap_set_socket_descriptor);
+    a = XTestMenu_addAction(menu, "错误处理测试");               XTestMenu_setActionFunction(a, wrap_error_handling);
+    a = XTestMenu_addAction(menu, "代理设置测试");               XTestMenu_setActionFunction(a, wrap_proxy);
+    a = XTestMenu_addAction(menu, "最大待处理连接限制测试");     XTestMenu_setActionFunction(a, wrap_max_pending_connections);
+    a = XTestMenu_addAction(menu, "服务器地址测试");             XTestMenu_setActionFunction(a, wrap_server_address);
+    a = XTestMenu_addAction(menu, "销毁时自动关闭测试");         XTestMenu_setActionFunction(a, wrap_auto_close_on_destroy);
 }

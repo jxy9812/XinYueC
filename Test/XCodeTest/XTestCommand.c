@@ -2,7 +2,7 @@
  * @file XTestCommand.c
  * @brief 将测试入口转换为 XConsoleShell 的 Test 命令。
  * @details
- * 这里仅调度已有的公开测试入口；旧的 XMenuTest 仍保留给历史代码链接，
+ * 这里仅调度已有的公开测试入口；旧的 XTestMenuTest 仍保留给历史代码链接，
  * 但不再由 main 默认启动。命令参数和输出均使用 Shell 公共 API。
  */
 
@@ -18,7 +18,7 @@
 #include "XProtocolTest.h"
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
-#include "XMenuTest.h"
+#include "XTestMenuTest.h"
 #include "XPrintf.h"
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
 #include "XMemory.h"
@@ -83,7 +83,7 @@ static int xtest_run_all(XConsoleShell* shell)
 
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
 typedef struct XTestRemoteMenuContext {
-    XMenuTestRemoteSession* menu;
+    XTestMenuTestRemoteSession* menu;
 } XTestRemoteMenuContext;
 
 static void xtest_remote_menu_destroy(XConsoleShell* shell,
@@ -96,7 +96,7 @@ static void xtest_remote_menu_destroy(XConsoleShell* shell,
 #if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
     if (session) session->suppressPrompt = false;
 #endif
-    XMenuTestRemoteSession_destroy(context->menu);
+    XTestMenuTestRemoteSession_destroy(context->menu);
     XFree_System(context);
 }
 
@@ -105,14 +105,14 @@ static XConsoleResult xtest_remote_menu_line(
     const char* line, size_t length, void* userData)
 {
     XTestRemoteMenuContext* context = (XTestRemoteMenuContext*)userData;
-    XMenuTestRemoteResult result;
+    XTestMenuTestRemoteResult result;
     if (!shell || !session || !context || !context->menu)
         return XConsoleResult_InvalidArgument;
-    result = XMenuTestRemoteSession_processLine(context->menu, line, length);
-    if (result == XMenuTestRemoteResult_Active)
+    result = XTestMenuTestRemoteSession_processLine(context->menu, line, length);
+    if (result == XTestMenuTestRemoteResult_Active)
         return XConsoleResult_MoreOutput;
     xtest_remote_menu_destroy(shell, session, context);
-    return result == XMenuTestRemoteResult_Finished ?
+    return result == XTestMenuTestRemoteResult_Finished ?
                XConsoleResult_Ok : XConsoleResult_Failed;
 }
 #endif
@@ -131,13 +131,13 @@ static int xtest_run_menu(XConsoleShell* shell, XConsoleShellSession* session)
      */
     if (restartAsync && !XConsoleShell_stopAsync(shell, UINT32_MAX))
         return XConsoleResult_Failed;
-    result = XMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
+    result = XTestMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
     if (restartAsync && !XConsoleShell_startAsync(shell))
         return XConsoleResult_Failed;
     return result;
 #else
     (void)shell;
-    return XMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
+    return XTestMenuTest_run() == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
 #endif
 }
 
@@ -155,7 +155,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
             XTestRemoteMenuContext* context =
                 (XTestRemoteMenuContext*)XCalloc_System(1, sizeof(*context));
             if (!context) return XConsoleResult_ResourceLimit;
-            context->menu = XMenuTestRemoteSession_create();
+            context->menu = XTestMenuTestRemoteSession_create();
             if (!context->menu ||
                 !XConsoleShell_setInputLineHandler(
                     shell, session, xtest_remote_menu_line, context)) {
@@ -165,7 +165,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
 #if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
             session->suppressPrompt = true;
 #endif
-            XMenuTestRemoteSession_show(context->menu);
+            XTestMenuTestRemoteSession_show(context->menu);
             return XConsoleResult_MoreOutput;
         }
 #endif

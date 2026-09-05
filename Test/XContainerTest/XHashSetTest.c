@@ -3,7 +3,7 @@
 #include"XHashSet.h"
 #include"XVector.h"
 #include"XCompare.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -168,13 +168,13 @@ void XHashSetTest(void)
     XHashSetTest_All();
 }
 
-void XMenu_XHashSetTest(XMenu* root)
+void XTestMenu_XHashSetTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XHashSet(无序集合)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XHashSet(无序集合)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
-        XAction_setAction(action, XHashSetTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
+        XTestMenu_setActionFunction(action, XHashSetTest_All);
     }
 }
 #endif

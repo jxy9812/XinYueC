@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XWidget.c
  * @brief      XWidget 控件基类实现（对标 Qt 6.8 QWidget 的嵌入式 API）。
  * @details    本文件实现 XWidget 已覆盖行为的 Qt 6.8 语义，逐一与 Qt 6.8
@@ -938,6 +938,19 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
     pos = XWidget_eventPosition(event);
+    if (g_mouseGrabWidget) {
+        XWidget* grabTop = XWidget_topLevel(g_mouseGrabWidget);
+        if (grabTop && grabTop != top) {
+            /* 跨顶层窗口的全局鼠标抓取（如弹出菜单的模态关闭）：把事件
+             * 坐标换算到抓取窗口的坐标系后转投，使点击其它窗口也能送达
+             * 抓取控件（对标 QWidget::grabMouse 的全局语义；平台
+             * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。 */
+            XPoint global = XWidget_mapToGlobal(top, &pos);
+            XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+            XWidget_eventSetPosition(event, &local);
+            return XWidget_dispatchPointerEvent(grabTop, event);
+        }
+    }
     if (g_mouseGrabWidget &&
         XWidget_topLevel(g_mouseGrabWidget) == top) {
         /* 鼠标抓取：直接投递抓取控件，不再按命中测试分派（对标 QWidget grabMouse）。 */

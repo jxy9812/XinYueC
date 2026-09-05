@@ -5,7 +5,7 @@
 #include<stdlib.h>
 #include"XLockFreeQueue.h"
 #include"XThread.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -219,17 +219,17 @@ static void XLFQAllTest(void)
 }
 #endif
 
-void XMenu_XLockFreeQueueTest(XMenu* root)
+void XTestMenu_XLockFreeQueueTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XLockFreeQueue(无锁环形队列)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XLockFreeQueue(无锁环形队列)");
+    XTestMenu_addMenu(root, menu);
 #if XLockFreeQueue_ON
-    { XAction* a = XMenu_addAction(menu, "【全部测试(不含并发)】"); XAction_setAction(a, (Action)XLFQAllTest); }
-    { XAction* a = XMenu_addAction(menu, "基础 FIFO / Qt 别名"); XAction_setAction(a, (Action)XLFQBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "isFull 边界"); XAction_setAction(a, (Action)XLFQFullTest); }
-    { XAction* a = XMenu_addAction(menu, "大量数据(单线程 100000)"); XAction_setAction(a, (Action)XLFQBulkTest); }
+    { XAction* a = XTestMenu_addAction(menu, "【全部测试(不含并发)】"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFQAllTest); }
+    { XAction* a = XTestMenu_addAction(menu, "基础 FIFO / Qt 别名"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFQBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "isFull 边界"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFQFullTest); }
+    { XAction* a = XTestMenu_addAction(menu, "大量数据(单线程 100000)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFQBulkTest); }
 #if XTHREAD_ON
-    { XAction* a = XMenu_addAction(menu, "并发多生产/多消费"); XAction_setAction(a, (Action)XLFQConcurrentTest); }
+    { XAction* a = XTestMenu_addAction(menu, "并发多生产/多消费"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFQConcurrentTest); }
 #endif // XTHREAD_ON
 #endif
 }

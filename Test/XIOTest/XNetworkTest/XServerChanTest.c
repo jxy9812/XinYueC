@@ -210,14 +210,14 @@ static void xserverchan_test_all(XVariant* data)
     xserverchan_test_live_send();
 }
 
-void XServerChanTest_registerAll(XMenu* root)
+void XServerChanTest_registerAll(XTestMenu* root)
 {
-    XMenu* menu;
+    XTestMenu* menu;
     XAction* action;
     if (!root) return;
-    menu = XMenu_create("XServerChan(Server酱客户端)");
+    menu = XTestMenu_create("XServerChan(Server酱客户端)");
     if (!menu) return;
-    XMenu_addMenu(root, menu);
-    action = XMenu_addAction(menu, "类生命周期、表单发送和响应解析");
-    if (action) XAction_setAction(action, xserverchan_test_all);
+    XTestMenu_addMenu(root, menu);
+    action = XTestMenu_addAction(menu, "类生命周期、表单发送和响应解析");
+    if (action) XTestMenu_setActionFunction(action, xserverchan_test_all);
 }

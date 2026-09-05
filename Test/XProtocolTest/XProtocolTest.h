@@ -4,15 +4,16 @@
 extern "C" {
 #endif
 #include"CXinYueConfig.h"
+#include "XTestMenu.h"
 #include"XClass.h"
 #if DEMOTEST
 	//协议栈
-	void XMenu_XProtocolTest(XMenu* root);
-	void XMenu_XDataFrameCommTest(XMenu* root);
-	void XMenu_TJCHMICommTest(XMenu* root);
-	void XMenu_XModbusTest(XMenu* root);
-	void XMenu_XMqttTest(XMenu* root);
-	void XMenu_XCanTest(XMenu* root);
+	void XTestMenu_XProtocolTest(XTestMenu* root);
+	void XTestMenu_XDataFrameCommTest(XTestMenu* root);
+	void XTestMenu_TJCHMICommTest(XTestMenu* root);
+	void XTestMenu_XModbusTest(XTestMenu* root);
+	void XTestMenu_XMqttTest(XTestMenu* root);
+	void XTestMenu_XCanTest(XTestMenu* root);
 
 	void XModbusRtuSerialClientTest();
 	void XModbusTcpClientTest();

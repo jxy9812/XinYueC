@@ -1,6 +1,6 @@
 ﻿#include"XCodeTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XThread.h"
@@ -73,13 +73,13 @@ void XThreadTest()
 	}
 }
 
-void XMenu_XThreadTest(XMenu* root)
+void XTestMenu_XThreadTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XThread(线程)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XThread(线程)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XThreadTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XThreadTest);
 	}
 }
 #endif // XTHREAD_ON

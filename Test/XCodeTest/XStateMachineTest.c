@@ -7,7 +7,7 @@
 #include "XHistoryState.h"
 #include "XKeyEventTransition.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XMouseEventTransition.h"
 #include "XObject.h"
 #include "XPrintf.h"
@@ -1194,14 +1194,14 @@ void XHistoryState_Test(void)
     XStateMachineTest_shallowHistory();
     XStateMachineTest_end();
 }
-void XMenu_XStateMachineTest(XMenu* root)
+void XTestMenu_XStateMachineTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XStateMachine（状态机）");
-    XMenu_addMenu(root, menu);
-    XAction_setAction(XMenu_addAction(menu, "对象事件转换"),
+    XTestMenu* menu = XTestMenu_create("XStateMachine（状态机）");
+    XTestMenu_addMenu(root, menu);
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "对象事件转换"),
         XStateMachineEventTest);
-    XAction_setAction(XMenu_addAction(menu, "信号转换与运行语义"),
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "信号转换与运行语义"),
         XStateMachineSignalTest);
-    XAction_setAction(XMenu_addAction(menu, "深历史与浅历史"),
+    XTestMenu_setActionFunction(XTestMenu_addAction(menu, "深历史与浅历史"),
         XHistoryState_Test);
 }

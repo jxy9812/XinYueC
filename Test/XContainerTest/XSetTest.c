@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XSet.h"
 #include"XVector.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -164,13 +164,13 @@ void XSetTest(void)
     XSetTest_All();
 }
 
-void XMenu_XSetTest(XMenu* root)
+void XTestMenu_XSetTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XSet(有序集合)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XSet(有序集合)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
-        XAction_setAction(action, XSetTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
+        XTestMenu_setActionFunction(action, XSetTest_All);
     }
 }
 #endif

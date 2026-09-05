@@ -2,7 +2,7 @@
 #include"XString.h"
 #include"zlib.h"
 #include"XByteArray.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include<string.h>
@@ -35,16 +35,16 @@ void zlibByteArrayTest()
 	XByteArray_delete_base(decompress_buff);
 	XCoreApplication_quit();
 }
-void XMenu_zlibTest(XMenu* root)
+void XTestMenu_zlibTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("zlib(zlibTest)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("zlib(zlibTest)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, zlibTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, zlibTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "XByteArray");
-		XAction_setAction(action, zlibByteArrayTest);
+		XAction* action = XTestMenu_addAction(menu, "XByteArray");
+		XTestMenu_setActionFunction(action, zlibByteArrayTest);
 	}
 }

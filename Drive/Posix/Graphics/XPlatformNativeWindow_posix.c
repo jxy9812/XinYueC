@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPlatformNativeWindow_posix.c
  * @brief      Linux X11 平台原生窗口后端（对标 Qt 6.8 的 xcb 平台窗口插件）。
  * @details    本文件实现 XPlatformNativeWindow 契约的 Linux X11 端：
@@ -1087,6 +1087,16 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
+    /* 弹出菜单等 Popup 窗口按 override-redirect 创建：不经窗口管理器
+     * 装饰（无标题栏/关闭按钮），弹出时直接覆盖显示，对齐 Qt::Popup
+     * 语义。 */
+    {
+        XWindowType winType = XWindow_type(window);
+        if (winType == XWindowType_Popup ||
+            (winType & XWindowType_FramelessWindowHint) != 0) {
+            attr.override_redirect = True;
+        }
+    }
     /* 输入事件掩码：键盘/鼠标按键/指针移动/进出均需在创建窗口时声明，
        否则 X 服务器不会向本窗口投递对应事件。滚轮事件(Button4/5)走
        ButtonPress 通道，进入/离开用于 Qt 对齐的 enter/leave 语义。 */
@@ -1098,7 +1108,8 @@ bool XPlatformNativeWindow_create(XWindow* window)
                          RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
                          geom.x, geom.y, (unsigned)w, (unsigned)h, 0,
                          g_xpwnDepth, InputOutput, g_xpwnVisual,
-                         CWBackPixel | CWBorderPixel | CWColormap | CWEventMask,
+                         CWBackPixel | CWBorderPixel | CWColormap |
+                             CWEventMask | CWOverrideRedirect,
                          &attr);
     if (!xwin) return false;
 

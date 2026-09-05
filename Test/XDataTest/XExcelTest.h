@@ -11,9 +11,10 @@
 extern "C" {
 #endif
 #include "CXinYueConfig.h"
+#include "XTestMenu.h"
 #include "XClass.h"
 #if DEMOTEST
-	void XMenu_XExcelTest(XMenu* root);
+	void XTestMenu_XExcelTest(XTestMenu* root);
 #endif
 #ifdef __cplusplus
 }

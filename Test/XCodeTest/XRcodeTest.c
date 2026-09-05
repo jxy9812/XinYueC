@@ -1,6 +1,6 @@
 ﻿#include"XCodeTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XRcode.h"
@@ -15,12 +15,12 @@ void XRcodeTest()
 	XCoreApplication_quit();
 }
 
-void XMenu_XRcodeTest(XMenu* root)
+void XTestMenu_XRcodeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XRcode(二维码)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XRcode(二维码)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XRcodeTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XRcodeTest);
 	}
 }

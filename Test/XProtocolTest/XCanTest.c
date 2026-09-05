@@ -11,7 +11,7 @@
 #include "XCanFrameProcessor.h"
 #include "XCanDbcFileParser.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include "XString.h"
@@ -1966,44 +1966,44 @@ static void XCanBusDeviceTest(void)
  * @brief XCan 协议栈综合测试入口
  * @details 注册所有 XCan 测试到菜单
  ******************************************************************************************/
-void XMenu_XCanTest(XMenu* root)
+void XTestMenu_XCanTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCan(can)");
+    XTestMenu* menu = XTestMenu_create("XCan(can)");
     {
-        XAction* action = XMenu_addAction(menu, "CanBusFrame单元测试");
-        XAction_setAction(action, XCanBusFrameTest);
+        XAction* action = XTestMenu_addAction(menu, "CanBusFrame单元测试");
+        XTestMenu_setActionFunction(action, XCanBusFrameTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanBusDeviceInfo单元测试");
-        XAction_setAction(action, XCanBusDeviceInfoTest);
+        XAction* action = XTestMenu_addAction(menu, "CanBusDeviceInfo单元测试");
+        XTestMenu_setActionFunction(action, XCanBusDeviceInfoTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanSignalDescription单元测试");
-        XAction_setAction(action, XCanSignalDescriptionTest);
+        XAction* action = XTestMenu_addAction(menu, "CanSignalDescription单元测试");
+        XTestMenu_setActionFunction(action, XCanSignalDescriptionTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanMessageDescription单元测试");
-        XAction_setAction(action, XCanMessageDescriptionTest);
+        XAction* action = XTestMenu_addAction(menu, "CanMessageDescription单元测试");
+        XTestMenu_setActionFunction(action, XCanMessageDescriptionTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanUniqueIdDescription单元测试");
-        XAction_setAction(action, XCanUniqueIdDescriptionTest);
+        XAction* action = XTestMenu_addAction(menu, "CanUniqueIdDescription单元测试");
+        XTestMenu_setActionFunction(action, XCanUniqueIdDescriptionTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanFrameProcessor单元测试");
-        XAction_setAction(action, XCanFrameProcessorTest);
+        XAction* action = XTestMenu_addAction(menu, "CanFrameProcessor单元测试");
+        XTestMenu_setActionFunction(action, XCanFrameProcessorTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanDbcFileParser单元测试");
-        XAction_setAction(action, XCanDbcFileParserTest);
+        XAction* action = XTestMenu_addAction(menu, "CanDbcFileParser单元测试");
+        XTestMenu_setActionFunction(action, XCanDbcFileParserTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanBus单例单元测试");
-        XAction_setAction(action, XCanBusTest);
+        XAction* action = XTestMenu_addAction(menu, "CanBus单例单元测试");
+        XTestMenu_setActionFunction(action, XCanBusTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "CanBusDevice单元测试");
-        XAction_setAction(action, XCanBusDeviceTest);
+        XAction* action = XTestMenu_addAction(menu, "CanBusDevice单元测试");
+        XTestMenu_setActionFunction(action, XCanBusDeviceTest);
     }
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
 }

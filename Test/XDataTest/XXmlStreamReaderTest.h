@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 #include "CXinYueConfig.h"
+#include "XTestMenu.h"
 #include "XClass.h"
 #include <stdbool.h>
 
@@ -17,7 +18,7 @@ extern "C" {
 bool XXmlStreamReaderTest_runAll(void);
 
 #if DEMOTEST
-void XMenu_XXmlStreamReaderTest(XMenu* root);
+void XTestMenu_XXmlStreamReaderTest(XTestMenu* root);
 #endif
 #ifdef __cplusplus
 }

@@ -1,7 +1,7 @@
 ﻿#include "XPrintf.h"
 #include "XCodeTest.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XCommandLineParser.h"
@@ -379,12 +379,12 @@ void XCommandLineParserTest(XVariant* variant)
     XPrintf("========================================\n");
 }
 
-void XMenu_XCommandLineParserTest(XMenu* root)
+void XTestMenu_XCommandLineParserTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCommandLineParser");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XCommandLineParser");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "Qt 对齐测试");
-        XAction_setAction(action, XCommandLineParserTest);
+        XAction* action = XTestMenu_addAction(menu, "Qt 对齐测试");
+        XTestMenu_setActionFunction(action, XCommandLineParserTest);
     }
 }

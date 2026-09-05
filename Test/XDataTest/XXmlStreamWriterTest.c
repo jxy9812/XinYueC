@@ -11,7 +11,7 @@
 #include"XString.h"
 #include"XByteArray.h"
 #include"XFile.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -1791,68 +1791,68 @@ static bool test_qt_edge_semantics(void)
     return all_pass;
 }
 /* ==================== 菜单注册 ==================== */
-void XMenu_XXmlStreamWriterTest(XMenu* root)
+void XTestMenu_XXmlStreamWriterTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XXmlStreamWriterTest");
-    XMenu_addMenu(root, menu);
-    XAction* action = XMenu_addAction(menu, "全面测试");
-    XAction_setAction(action, XXmlStreamWriterTest_all);
-    action = XMenu_addAction(menu, "创建和删除");
-    XAction_setAction(action, test_create_delete_wrapper);
-    action = XMenu_addAction(menu, "初始化和反初始化");
-    XAction_setAction(action, test_init_deinit_wrapper);
-    action = XMenu_addAction(menu, "写文档开始");
-    XAction_setAction(action, test_write_start_document_wrapper);
-    action = XMenu_addAction(menu, "写文档结束");
-    XAction_setAction(action, test_write_end_document_wrapper);
-    action = XMenu_addAction(menu, "写元素");
-    XAction_setAction(action, test_write_start_end_element_wrapper);
-    action = XMenu_addAction(menu, "空元素");
-    XAction_setAction(action, test_write_empty_element_wrapper);
-    action = XMenu_addAction(menu, "写属性");
-    XAction_setAction(action, test_write_attribute_wrapper);
-    action = XMenu_addAction(menu, "写属性列表");
-    XAction_setAction(action, test_write_attributes_wrapper);
-    action = XMenu_addAction(menu, "写字符数据");
-    XAction_setAction(action, test_write_characters_wrapper);
-    action = XMenu_addAction(menu, "CDATA");
-    XAction_setAction(action, test_write_cdata_wrapper);
-    action = XMenu_addAction(menu, "注释");
-    XAction_setAction(action, test_write_comment_wrapper);
-    action = XMenu_addAction(menu, "处理指令");
-    XAction_setAction(action, test_write_processing_instruction_wrapper);
-    action = XMenu_addAction(menu, "实体引用");
-    XAction_setAction(action, test_write_entity_reference_wrapper);
-    action = XMenu_addAction(menu, "DTD");
-    XAction_setAction(action, test_write_dtd_wrapper);
-    action = XMenu_addAction(menu, "命名空间");
-    XAction_setAction(action, test_write_namespace_wrapper);
-    action = XMenu_addAction(menu, "默认命名空间");
-    XAction_setAction(action, test_write_default_namespace_wrapper);
-    action = XMenu_addAction(menu, "文本元素");
-    XAction_setAction(action, test_write_text_element_wrapper);
-    action = XMenu_addAction(menu, "自动格式化");
-    XAction_setAction(action, test_auto_formatting_wrapper);
-    action = XMenu_addAction(menu, "toString/ByteArray");
-    XAction_setAction(action, test_to_string_bytearray_wrapper);
-    action = XMenu_addAction(menu, "错误处理");
-    XAction_setAction(action, test_has_error_wrapper);
-    action = XMenu_addAction(menu, "拷贝和移动");
-    XAction_setAction(action, test_copy_move_wrapper);
-    action = XMenu_addAction(menu, "未初始化目标拷贝/移动");
-    XAction_setAction(action, test_uninitialized_copy_move_wrapper);
-    action = XMenu_addAction(menu, "复杂文档");
-    XAction_setAction(action, test_complex_document_wrapper);
-    action = XMenu_addAction(menu, "写入当前 Token");
-    XAction_setAction(action, test_write_current_token_wrapper);
-    action = XMenu_addAction(menu, "读取器与写入器往返");
-    XAction_setAction(action, test_reader_writer_roundtrip_wrapper);
-    action = XMenu_addAction(menu, "NULL安全");
-    XAction_setAction(action, test_null_safety_wrapper);
-    action = XMenu_addAction(menu, "QIODevice 输出");
-    XAction_setAction(action, test_device_output_wrapper);
-    action = XMenu_addAction(menu, "Qt 文档边界/设备错误");
-    XAction_setAction(action, test_qt_edge_semantics_wrapper);
+    XTestMenu* menu = XTestMenu_create("XXmlStreamWriterTest");
+    XTestMenu_addMenu(root, menu);
+    XAction* action = XTestMenu_addAction(menu, "全面测试");
+    XTestMenu_setActionFunction(action, XXmlStreamWriterTest_all);
+    action = XTestMenu_addAction(menu, "创建和删除");
+    XTestMenu_setActionFunction(action, test_create_delete_wrapper);
+    action = XTestMenu_addAction(menu, "初始化和反初始化");
+    XTestMenu_setActionFunction(action, test_init_deinit_wrapper);
+    action = XTestMenu_addAction(menu, "写文档开始");
+    XTestMenu_setActionFunction(action, test_write_start_document_wrapper);
+    action = XTestMenu_addAction(menu, "写文档结束");
+    XTestMenu_setActionFunction(action, test_write_end_document_wrapper);
+    action = XTestMenu_addAction(menu, "写元素");
+    XTestMenu_setActionFunction(action, test_write_start_end_element_wrapper);
+    action = XTestMenu_addAction(menu, "空元素");
+    XTestMenu_setActionFunction(action, test_write_empty_element_wrapper);
+    action = XTestMenu_addAction(menu, "写属性");
+    XTestMenu_setActionFunction(action, test_write_attribute_wrapper);
+    action = XTestMenu_addAction(menu, "写属性列表");
+    XTestMenu_setActionFunction(action, test_write_attributes_wrapper);
+    action = XTestMenu_addAction(menu, "写字符数据");
+    XTestMenu_setActionFunction(action, test_write_characters_wrapper);
+    action = XTestMenu_addAction(menu, "CDATA");
+    XTestMenu_setActionFunction(action, test_write_cdata_wrapper);
+    action = XTestMenu_addAction(menu, "注释");
+    XTestMenu_setActionFunction(action, test_write_comment_wrapper);
+    action = XTestMenu_addAction(menu, "处理指令");
+    XTestMenu_setActionFunction(action, test_write_processing_instruction_wrapper);
+    action = XTestMenu_addAction(menu, "实体引用");
+    XTestMenu_setActionFunction(action, test_write_entity_reference_wrapper);
+    action = XTestMenu_addAction(menu, "DTD");
+    XTestMenu_setActionFunction(action, test_write_dtd_wrapper);
+    action = XTestMenu_addAction(menu, "命名空间");
+    XTestMenu_setActionFunction(action, test_write_namespace_wrapper);
+    action = XTestMenu_addAction(menu, "默认命名空间");
+    XTestMenu_setActionFunction(action, test_write_default_namespace_wrapper);
+    action = XTestMenu_addAction(menu, "文本元素");
+    XTestMenu_setActionFunction(action, test_write_text_element_wrapper);
+    action = XTestMenu_addAction(menu, "自动格式化");
+    XTestMenu_setActionFunction(action, test_auto_formatting_wrapper);
+    action = XTestMenu_addAction(menu, "toString/ByteArray");
+    XTestMenu_setActionFunction(action, test_to_string_bytearray_wrapper);
+    action = XTestMenu_addAction(menu, "错误处理");
+    XTestMenu_setActionFunction(action, test_has_error_wrapper);
+    action = XTestMenu_addAction(menu, "拷贝和移动");
+    XTestMenu_setActionFunction(action, test_copy_move_wrapper);
+    action = XTestMenu_addAction(menu, "未初始化目标拷贝/移动");
+    XTestMenu_setActionFunction(action, test_uninitialized_copy_move_wrapper);
+    action = XTestMenu_addAction(menu, "复杂文档");
+    XTestMenu_setActionFunction(action, test_complex_document_wrapper);
+    action = XTestMenu_addAction(menu, "写入当前 Token");
+    XTestMenu_setActionFunction(action, test_write_current_token_wrapper);
+    action = XTestMenu_addAction(menu, "读取器与写入器往返");
+    XTestMenu_setActionFunction(action, test_reader_writer_roundtrip_wrapper);
+    action = XTestMenu_addAction(menu, "NULL安全");
+    XTestMenu_setActionFunction(action, test_null_safety_wrapper);
+    action = XTestMenu_addAction(menu, "QIODevice 输出");
+    XTestMenu_setActionFunction(action, test_device_output_wrapper);
+    action = XTestMenu_addAction(menu, "Qt 文档边界/设备错误");
+    XTestMenu_setActionFunction(action, test_qt_edge_semantics_wrapper);
 }
 
 /* ==================== 全量测试 ==================== */

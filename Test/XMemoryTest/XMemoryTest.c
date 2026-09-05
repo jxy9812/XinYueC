@@ -1,9 +1,9 @@
 ﻿#include"XMemoryTest.h"
-#include"XMenu.h"
-void XMenu_XMemoryTest(XMenu* root)
+#include"XTestMenu.h"
+void XTestMenu_XMemoryTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XMemory");
-	XMenu_addMenu(root, menu);
-	XMenu_XMultiPoolTest(menu);
-	XMenu_XVariablePoolTest(menu);
+	XTestMenu* menu = XTestMenu_create("XMemory");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XMultiPoolTest(menu);
+	XTestMenu_XVariablePoolTest(menu);
 }

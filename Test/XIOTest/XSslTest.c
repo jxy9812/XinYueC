@@ -17,7 +17,7 @@
 #include "XByteArray.h"
 #include "XCoreApplication.h"
 #include "XDateTime.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XPrintf.h"
 #include "XThread.h"
 #include "XTcpServer.h"
@@ -4067,14 +4067,14 @@ static void xssl_test_run_all_wrapper(XVariant* data)
     XSslTest_runAll();
 }
 
-void XMenu_XSslTest(XMenu* root)
+void XTestMenu_XSslTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XSsl(离线回归)");
+    XTestMenu* menu = XTestMenu_create("XSsl(离线回归)");
     XAction* action;
     if (!menu) return;
-    XMenu_addMenu(root, menu);
-    action = XMenu_addAction(menu, "XSsl/XSslSocket 全部测试");
-    if (action) XAction_setAction(action, xssl_test_run_all_wrapper);
+    XTestMenu_addMenu(root, menu);
+    action = XTestMenu_addAction(menu, "XSsl/XSslSocket 全部测试");
+    if (action) XTestMenu_setActionFunction(action, xssl_test_run_all_wrapper);
 }
 
 #endif /* DEMOTEST */

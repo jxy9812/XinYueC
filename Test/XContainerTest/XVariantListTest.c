@@ -5,7 +5,7 @@
 #include"XStringList.h"
 #include"XMap.h"
 #include"XHashMap.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -149,25 +149,25 @@ void XVariantListTest_stringList()
 	}
 	XCoreApplication_quit();
 }
-void XMenu_XVariantListTest(XMenu* root)
+void XTestMenu_XVariantListTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XVariantList(变体数组)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XVariantList(变体数组)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XVariantListTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XVariantListTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "list测试");
-		XAction_setAction(action, XVariantListTest_list);
+		XAction* action = XTestMenu_addAction(menu, "list测试");
+		XTestMenu_setActionFunction(action, XVariantListTest_list);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "map测试");
-		XAction_setAction(action, XVariantListTest_map);
+		XAction* action = XTestMenu_addAction(menu, "map测试");
+		XTestMenu_setActionFunction(action, XVariantListTest_map);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "stringList测试");
-		XAction_setAction(action, XVariantListTest_stringList);
+		XAction* action = XTestMenu_addAction(menu, "stringList测试");
+		XTestMenu_setActionFunction(action, XVariantListTest_stringList);
 	}
 }
 #endif

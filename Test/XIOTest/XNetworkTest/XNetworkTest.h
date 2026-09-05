@@ -1,18 +1,18 @@
 ﻿#ifndef XNETWORKTEST_H
 #define XNETWORKTEST_H
 
-#include "XMenu.h"
+#include "XTestMenu.h"
 
 // 网络接口测试
-void XMenu_XNetworkInterfaceTest(XMenu* root);
+void XTestMenu_XNetworkInterfaceTest(XTestMenu* root);
 
 // 地址条目测试
-void XMenu_XNetworkAddressEntryTest(XMenu* root);
+void XTestMenu_XNetworkAddressEntryTest(XTestMenu* root);
 
 // 网络代理测试
-void XMenu_XNetworkProxyTest(XMenu* root);
+void XTestMenu_XNetworkProxyTest(XTestMenu* root);
 
 // 网络测试菜单
-void XMenu_XNetworkTest(XMenu* root);
+void XTestMenu_XNetworkTest(XTestMenu* root);
 
 #endif // XNETWORKTEST_H

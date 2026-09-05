@@ -1,7 +1,7 @@
 ﻿#include"XIOTest.h"
 #include"XSerialPort.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -52,12 +52,12 @@ void XSerialPortTest()
     XCoreApplication_exec();*/
 }
 
-void XMenu_XSerialPortTest(XMenu* root)
+void XTestMenu_XSerialPortTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XSerialPort(串口)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XSerialPort(串口)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XSerialPortTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XSerialPortTest);
     }
 }

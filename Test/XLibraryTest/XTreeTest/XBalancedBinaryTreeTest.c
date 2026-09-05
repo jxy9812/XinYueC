@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XBalancedBinaryTree.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -88,13 +88,13 @@ void XBalancedBinaryTreeTest()
 #endif
 	//XCoreApplication_quit();
 }
-void XMenu_XBalancedBinaryTreeTest(XMenu* root)
+void XTestMenu_XBalancedBinaryTreeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XBalancedBinaryTree(平衡二叉树)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XBalancedBinaryTree(平衡二叉树)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XBalancedBinaryTreeTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XBalancedBinaryTreeTest);
 	}
 }
 

@@ -1,6 +1,6 @@
 ﻿#include"XCharTest.h"
 #include"XChar.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -892,34 +892,34 @@ static void XCharTest_all(XVariant* data)
     TEST_INFO("========== 测试结果: %d 通过, %d 失败 ==========", pass, fail);
 }
 
-void XMenu_XCharTest(XMenu* root)
+void XTestMenu_XCharTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCharTest");
-    XMenu_addMenu(root, menu);
-    XAction* action = XMenu_addAction(menu, "全部测试");
-    XAction_setAction(action, XCharTest_all);
-    action = XMenu_addAction(menu, "创建函数");
-    XAction_setAction(action, test_create_functions_wrapper);
-    action = XMenu_addAction(menu, "Unicode信息");
-    XAction_setAction(action, test_unicode_info_wrapper);
-    action = XMenu_addAction(menu, "字符分类");
-    XAction_setAction(action, test_char_classification_wrapper);
-    action = XMenu_addAction(menu, "大小写转换");
-    XAction_setAction(action, test_case_conversion_wrapper);
-    action = XMenu_addAction(menu, "代理对");
-    XAction_setAction(action, test_surrogate_pair_wrapper);
-    action = XMenu_addAction(menu, "镜像与方向");
-    XAction_setAction(action, test_mirror_direction_wrapper);
-    action = XMenu_addAction(menu, "UCS-4重载");
-    XAction_setAction(action, test_ucs4_overload_wrapper);
-    action = XMenu_addAction(menu, "数值转换");
-    XAction_setAction(action, test_numeric_conversion_wrapper);
-    action = XMenu_addAction(menu, "UTF-8转换");
-    XAction_setAction(action, test_utf8_stream_wrapper);
-    action = XMenu_addAction(menu, "UTF-16转换");
-    XAction_setAction(action, test_utf16_stream_wrapper);
-    action = XMenu_addAction(menu, "GBK转换");
-    XAction_setAction(action, test_gbk_stream_wrapper);
-    action = XMenu_addAction(menu, "SpecialCharacter");
-    XAction_setAction(action, test_special_character_wrapper);
+    XTestMenu* menu = XTestMenu_create("XCharTest");
+    XTestMenu_addMenu(root, menu);
+    XAction* action = XTestMenu_addAction(menu, "全部测试");
+    XTestMenu_setActionFunction(action, XCharTest_all);
+    action = XTestMenu_addAction(menu, "创建函数");
+    XTestMenu_setActionFunction(action, test_create_functions_wrapper);
+    action = XTestMenu_addAction(menu, "Unicode信息");
+    XTestMenu_setActionFunction(action, test_unicode_info_wrapper);
+    action = XTestMenu_addAction(menu, "字符分类");
+    XTestMenu_setActionFunction(action, test_char_classification_wrapper);
+    action = XTestMenu_addAction(menu, "大小写转换");
+    XTestMenu_setActionFunction(action, test_case_conversion_wrapper);
+    action = XTestMenu_addAction(menu, "代理对");
+    XTestMenu_setActionFunction(action, test_surrogate_pair_wrapper);
+    action = XTestMenu_addAction(menu, "镜像与方向");
+    XTestMenu_setActionFunction(action, test_mirror_direction_wrapper);
+    action = XTestMenu_addAction(menu, "UCS-4重载");
+    XTestMenu_setActionFunction(action, test_ucs4_overload_wrapper);
+    action = XTestMenu_addAction(menu, "数值转换");
+    XTestMenu_setActionFunction(action, test_numeric_conversion_wrapper);
+    action = XTestMenu_addAction(menu, "UTF-8转换");
+    XTestMenu_setActionFunction(action, test_utf8_stream_wrapper);
+    action = XTestMenu_addAction(menu, "UTF-16转换");
+    XTestMenu_setActionFunction(action, test_utf16_stream_wrapper);
+    action = XTestMenu_addAction(menu, "GBK转换");
+    XTestMenu_setActionFunction(action, test_gbk_stream_wrapper);
+    action = XTestMenu_addAction(menu, "SpecialCharacter");
+    XTestMenu_setActionFunction(action, test_special_character_wrapper);
 }

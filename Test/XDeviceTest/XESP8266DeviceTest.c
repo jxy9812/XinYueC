@@ -2,7 +2,7 @@
 #include "XESP8266Wifi.h"
 #include "XATComm.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
@@ -1273,20 +1273,20 @@ static void XESP8266WifiTest_automatedMenu(XVariant* data)
 
 // ========== 菜单注册 ==========
 
-void XMenu_XESP8266WifiTest(XMenu* root)
+void XTestMenu_XESP8266WifiTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XESP8266Wifi(AT指令WiFi)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XESP8266Wifi(AT指令WiFi)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "自动化串口回归测试 (COM8)");
-        XAction_setAction(action, XESP8266WifiTest_automatedMenu);
+        XAction* action = XTestMenu_addAction(menu, "自动化串口回归测试 (COM8)");
+        XTestMenu_setActionFunction(action, XESP8266WifiTest_automatedMenu);
     }
     {
-        XAction* action = XMenu_addAction(menu, "TCP 客户端测试");
-        XAction_setAction(action, XESP8266WifiTest_tcpClient);
+        XAction* action = XTestMenu_addAction(menu, "TCP 客户端测试");
+        XTestMenu_setActionFunction(action, XESP8266WifiTest_tcpClient);
     }
     {
-        XAction* action = XMenu_addAction(menu, "TCP 服务器测试");
-        XAction_setAction(action, XESP8266WifiTest_tcpServer);
+        XAction* action = XTestMenu_addAction(menu, "TCP 服务器测试");
+        XTestMenu_setActionFunction(action, XESP8266WifiTest_tcpServer);
     }
 }

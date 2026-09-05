@@ -1,7 +1,7 @@
 ﻿#include "XPrintf.h"
 #include "XCodeTest.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XEvent.h"
@@ -530,12 +530,12 @@ void XCoreApplicationTest(XVariant* variant)
     XPrintf("========================================\n");
 }
 
-void XMenu_XCoreApplicationTest(XMenu* root)
+void XTestMenu_XCoreApplicationTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCoreApplication");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XCoreApplication");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "Qt 对齐测试");
-        XAction_setAction(action, XCoreApplicationTest);
+        XAction* action = XTestMenu_addAction(menu, "Qt 对齐测试");
+        XTestMenu_setActionFunction(action, XCoreApplicationTest);
     }
 }

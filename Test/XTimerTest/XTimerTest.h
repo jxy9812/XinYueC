@@ -4,11 +4,12 @@
 extern "C" {
 #endif
 #include"CXinYueConfig.h"
+#include "XTestMenu.h"
 #include"XClass.h"
 #if DEMOTEST
-	void XMenu_XTimerTest(XMenu* root);
-	void XMenu_XTimerTimeWheelTest(XMenu* root);
-	void XMenu_XHrTimerTest(XMenu* root);
+	void XTestMenu_XTimerTest(XTestMenu* root);
+	void XTestMenu_XTimerTimeWheelTest(XTestMenu* root);
+	void XTestMenu_XHrTimerTest(XTestMenu* root);
 	void XTimerTimeWheelTest();
 #endif // DEMOTEST
 

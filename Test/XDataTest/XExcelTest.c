@@ -29,7 +29,7 @@
 #include "XString.h"
 #include "XByteArray.h"
 #include "XVector.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include <stdbool.h>
@@ -901,21 +901,21 @@ static void extended_wrapper(XVariant* data)
     XExcelExtendedTest_runAll();
 }
 
-void XMenu_XExcelTest(XMenu* root)
+void XTestMenu_XExcelTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XExcelTest");
+    XTestMenu* menu = XTestMenu_create("XExcelTest");
     XAction* action;
 
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
 
-    action = XMenu_addAction(menu, "01 数据类型与保存加载往返");
-    XAction_setAction(action, data_flow_wrapper);
-    action = XMenu_addAction(menu, "02 布局图片图表往返");
-    XAction_setAction(action, feature_flow_wrapper);
-    action = XMenu_addAction(menu, "03 Office 人工检查工作簿");
-    XAction_setAction(action, office_flow_wrapper);
-    action = XMenu_addAction(menu, "04 执行全部完整流程");
-    XAction_setAction(action, run_all_wrapper);
-    action = XMenu_addAction(menu, "05 扩展 XML ZIP 支持流程");
-    XAction_setAction(action, extended_wrapper);
+    action = XTestMenu_addAction(menu, "01 数据类型与保存加载往返");
+    XTestMenu_setActionFunction(action, data_flow_wrapper);
+    action = XTestMenu_addAction(menu, "02 布局图片图表往返");
+    XTestMenu_setActionFunction(action, feature_flow_wrapper);
+    action = XTestMenu_addAction(menu, "03 Office 人工检查工作簿");
+    XTestMenu_setActionFunction(action, office_flow_wrapper);
+    action = XTestMenu_addAction(menu, "04 执行全部完整流程");
+    XTestMenu_setActionFunction(action, run_all_wrapper);
+    action = XTestMenu_addAction(menu, "05 扩展 XML ZIP 支持流程");
+    XTestMenu_setActionFunction(action, extended_wrapper);
 }

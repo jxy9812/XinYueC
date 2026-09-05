@@ -1,27 +1,27 @@
 ﻿#include"XLibraryTest.h"
-#include"XMenu.h"
-void XMenu_XLibraryTest(XMenu* root)
+#include"XTestMenu.h"
+void XTestMenu_XLibraryTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("库");
-	XMenu_addMenu(root, menu);
-	XMenu_FindTest(menu);
-	XMenu_XTreeTest(menu);
-	XMenu_XBase64Test(menu);
-	XMenu_zlibTest(menu);
+	XTestMenu* menu = XTestMenu_create("库");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_FindTest(menu);
+	XTestMenu_XTreeTest(menu);
+	XTestMenu_XBase64Test(menu);
+	XTestMenu_zlibTest(menu);
 }
 
-void XMenu_XTreeTest(XMenu* root)
+void XTestMenu_XTreeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("树结构");
-	XMenu_addMenu(root, menu);
-	XMenu_XBinaryTreeTest(menu);
-	XMenu_XBalancedBinaryTreeTest(menu);
-	XMenu_XRedBlackTreeTest(menu);
+	XTestMenu* menu = XTestMenu_create("树结构");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XBinaryTreeTest(menu);
+	XTestMenu_XBalancedBinaryTreeTest(menu);
+	XTestMenu_XRedBlackTreeTest(menu);
 }
 
-void XMenu_FindTest(XMenu* root)
+void XTestMenu_FindTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("查询算法");
-	XMenu_addMenu(root, menu);
-	XMenu_XBinarySearchTest(menu);
+	XTestMenu* menu = XTestMenu_create("查询算法");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XBinarySearchTest(menu);
 }

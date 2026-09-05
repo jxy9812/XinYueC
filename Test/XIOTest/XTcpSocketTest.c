@@ -1,7 +1,7 @@
 ﻿#include "XIOTest.h"
 #include "XTcpSocket.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XByteArray.h"
 #include "XCoreApplication.h"
 #include "XHostAddress.h"
@@ -282,16 +282,16 @@ static void XTcpSocketClientTest(void)
 
 // ==================== 菜单注册 ====================
 
-void XMenu_XTcpSocketTest(XMenu* root)
+void XTestMenu_XTcpSocketTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XTcpSocket(TCP套接字)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XTcpSocket(TCP套接字)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "TCP连接测试");
-        XAction_setAction(action, XTcpSocketConnectTest);
+        XAction* action = XTestMenu_addAction(menu, "TCP连接测试");
+        XTestMenu_setActionFunction(action, XTcpSocketConnectTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "TCP客户端");
-        XAction_setAction(action, XTcpSocketClientTest);
+        XAction* action = XTestMenu_addAction(menu, "TCP客户端");
+        XTestMenu_setActionFunction(action, XTcpSocketClientTest);
     }
 }

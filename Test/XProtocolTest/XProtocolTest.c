@@ -1,11 +1,11 @@
 ﻿#include"XProtocolTest.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
-void XMenu_XProtocolTest(XMenu* root)
+void XTestMenu_XProtocolTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("协议栈");
-	XMenu_addMenu(root, menu);
-	XMenu_XModbusTest(menu);
-	XMenu_XMqttTest(menu);
-	XMenu_XCanTest(menu);
+	XTestMenu* menu = XTestMenu_create("协议栈");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XModbusTest(menu);
+	XTestMenu_XMqttTest(menu);
+	XTestMenu_XCanTest(menu);
 }

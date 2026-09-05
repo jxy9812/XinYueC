@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XFind.h"
 #include"XVector.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -24,13 +24,13 @@ void XBinarySearchTest()
 #endif
 	//XCoreApplication_quit();
 }
-void XMenu_XBinarySearchTest(XMenu* root)
+void XTestMenu_XBinarySearchTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XBinarySearch(二分查找)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XBinarySearch(二分查找)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XBinarySearchTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XBinarySearchTest);
 	}
 }
 #endif

@@ -1,18 +1,18 @@
 ﻿#include "XNetworkTest.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XFtpTest.h"
 #include "XHttpTest.h"
 #include "XServerChanTest.h"
 
-void XMenu_XNetworkTest(XMenu* root)
+void XTestMenu_XNetworkTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("网络(Network)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("网络(Network)");
+    XTestMenu_addMenu(root, menu);
 
     // 添加网络相关测试
-    XMenu_XNetworkInterfaceTest(menu);
-    XMenu_XNetworkAddressEntryTest(menu);
-    XMenu_XNetworkProxyTest(menu);
+    XTestMenu_XNetworkInterfaceTest(menu);
+    XTestMenu_XNetworkAddressEntryTest(menu);
+    XTestMenu_XNetworkProxyTest(menu);
     XFtpTest_registerAll(menu);
     XHttpTest_registerAll(menu);
     XServerChanTest_registerAll(menu);

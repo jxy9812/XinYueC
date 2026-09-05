@@ -3,7 +3,7 @@
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XDateTime.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include <string.h>
 #include <stdint.h>
@@ -736,36 +736,36 @@ static void XVariablePoolTest_stress_wrapper(XVariant* data) { (void)data; XVari
 static void XVariablePoolTest_performance_wrapper(XVariant* data) { (void)data; XVariablePoolTest_performance(); }
 static void XVariablePoolTest_all_wrapper(XVariant* data) { (void)data; XVariablePoolTest(); }
 
-void XMenu_XVariablePoolTest(XMenu* root)
+void XTestMenu_XVariablePoolTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XVariablePool(TLSF详细测试)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XVariablePool(TLSF详细测试)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "综合测试(全部12项)");
-        XAction_setAction(action, XVariablePoolTest_all_wrapper);
-        action = XMenu_addAction(menu, "1. 初始化参数和容量边界");
-        XAction_setAction(action, XVariablePoolTest_initBoundary_wrapper);
-        action = XMenu_addAction(menu, "2. 16字节对齐和不同申请尺寸");
-        XAction_setAction(action, XVariablePoolTest_alignment_wrapper);
-        action = XMenu_addAction(menu, "3. malloc calloc NULL和基础释放");
-        XAction_setAction(action, XVariablePoolTest_basic_wrapper);
-        action = XMenu_addAction(menu, "4. 空闲块切分和容量统计");
-        XAction_setAction(action, XVariablePoolTest_split_wrapper);
-        action = XMenu_addAction(menu, "5. 前邻后邻和双侧合并");
-        XAction_setAction(action, XVariablePoolTest_coalesce_wrapper);
-        action = XMenu_addAction(menu, "6. 外部碎片和最大连续空间");
-        XAction_setAction(action, XVariablePoolTest_fragmentation_wrapper);
-        action = XMenu_addAction(menu, "7. realloc四种路径");
-        XAction_setAction(action, XVariablePoolTest_realloc_wrapper);
-        action = XMenu_addAction(menu, "8. 重复释放和非法指针");
-        XAction_setAction(action, XVariablePoolTest_invalidFree_wrapper);
-        action = XMenu_addAction(menu, "9. 锁回调成对调用");
-        XAction_setAction(action, XVariablePoolTest_lockCallback_wrapper);
-        action = XMenu_addAction(menu, "10. 堆模式已有内存和栈模式");
-        XAction_setAction(action, XVariablePoolTest_dynamic_wrapper);
-        action = XMenu_addAction(menu, "11. 随机申请释放压力");
-        XAction_setAction(action, XVariablePoolTest_stress_wrapper);
-        action = XMenu_addAction(menu, "12. TLSF性能统计");
-        XAction_setAction(action, XVariablePoolTest_performance_wrapper);
+        XAction* action = XTestMenu_addAction(menu, "综合测试(全部12项)");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_all_wrapper);
+        action = XTestMenu_addAction(menu, "1. 初始化参数和容量边界");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_initBoundary_wrapper);
+        action = XTestMenu_addAction(menu, "2. 16字节对齐和不同申请尺寸");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_alignment_wrapper);
+        action = XTestMenu_addAction(menu, "3. malloc calloc NULL和基础释放");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_basic_wrapper);
+        action = XTestMenu_addAction(menu, "4. 空闲块切分和容量统计");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_split_wrapper);
+        action = XTestMenu_addAction(menu, "5. 前邻后邻和双侧合并");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_coalesce_wrapper);
+        action = XTestMenu_addAction(menu, "6. 外部碎片和最大连续空间");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_fragmentation_wrapper);
+        action = XTestMenu_addAction(menu, "7. realloc四种路径");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_realloc_wrapper);
+        action = XTestMenu_addAction(menu, "8. 重复释放和非法指针");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_invalidFree_wrapper);
+        action = XTestMenu_addAction(menu, "9. 锁回调成对调用");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_lockCallback_wrapper);
+        action = XTestMenu_addAction(menu, "10. 堆模式已有内存和栈模式");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_dynamic_wrapper);
+        action = XTestMenu_addAction(menu, "11. 随机申请释放压力");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_stress_wrapper);
+        action = XTestMenu_addAction(menu, "12. TLSF性能统计");
+        XTestMenu_setActionFunction(action, XVariablePoolTest_performance_wrapper);
     }
 }

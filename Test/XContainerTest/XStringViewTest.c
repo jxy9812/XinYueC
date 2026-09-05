@@ -8,7 +8,7 @@
 #if DEMOTEST
 #include "XStringView.h"
 #include "XString.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include <string.h>
@@ -441,57 +441,57 @@ void XStringViewTest(void)
     XStringViewTest_All();
 }
 
-void XMenu_XStringViewTest(XMenu* root)
+void XTestMenu_XStringViewTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("StringView(字符串视图)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("StringView(字符串视图)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全部测试");
-        XAction_setAction(action, XStringViewTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全部测试");
+        XTestMenu_setActionFunction(action, XStringViewTest_All);
     }
     {
-        XAction* action = XMenu_addAction(menu, "构造与创建");
-        XAction_setAction(action, XStringViewTest_Create);
+        XAction* action = XTestMenu_addAction(menu, "构造与创建");
+        XTestMenu_setActionFunction(action, XStringViewTest_Create);
     }
     {
-        XAction* action = XMenu_addAction(menu, "基本访问");
-        XAction_setAction(action, XStringViewTest_Access);
+        XAction* action = XTestMenu_addAction(menu, "基本访问");
+        XTestMenu_setActionFunction(action, XStringViewTest_Access);
     }
     {
-        XAction* action = XMenu_addAction(menu, "子视图");
-        XAction_setAction(action, XStringViewTest_SubView);
+        XAction* action = XTestMenu_addAction(menu, "子视图");
+        XTestMenu_setActionFunction(action, XStringViewTest_SubView);
     }
     {
-        XAction* action = XMenu_addAction(menu, "原地修改");
-        XAction_setAction(action, XStringViewTest_Modify);
+        XAction* action = XTestMenu_addAction(menu, "原地修改");
+        XTestMenu_setActionFunction(action, XStringViewTest_Modify);
     }
     {
-        XAction* action = XMenu_addAction(menu, "查找");
-        XAction_setAction(action, XStringViewTest_Find);
+        XAction* action = XTestMenu_addAction(menu, "查找");
+        XTestMenu_setActionFunction(action, XStringViewTest_Find);
     }
     {
-        XAction* action = XMenu_addAction(menu, "比较");
-        XAction_setAction(action, XStringViewTest_Compare);
+        XAction* action = XTestMenu_addAction(menu, "比较");
+        XTestMenu_setActionFunction(action, XStringViewTest_Compare);
     }
     {
-        XAction* action = XMenu_addAction(menu, "修剪");
-        XAction_setAction(action, XStringViewTest_Trim);
+        XAction* action = XTestMenu_addAction(menu, "修剪");
+        XTestMenu_setActionFunction(action, XStringViewTest_Trim);
     }
     {
-        XAction* action = XMenu_addAction(menu, "数值转换");
-        XAction_setAction(action, XStringViewTest_NumConvert);
+        XAction* action = XTestMenu_addAction(menu, "数值转换");
+        XTestMenu_setActionFunction(action, XStringViewTest_NumConvert);
     }
     {
-        XAction* action = XMenu_addAction(menu, "迭代器");
-        XAction_setAction(action, XStringViewTest_Iterator);
+        XAction* action = XTestMenu_addAction(menu, "迭代器");
+        XTestMenu_setActionFunction(action, XStringViewTest_Iterator);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Null/空边界");
-        XAction_setAction(action, XStringViewTest_NullEmpty);
+        XAction* action = XTestMenu_addAction(menu, "Null/空边界");
+        XTestMenu_setActionFunction(action, XStringViewTest_NullEmpty);
     }
     {
-        XAction* action = XMenu_addAction(menu, "toString");
-        XAction_setAction(action, XStringViewTest_ToString);
+        XAction* action = XTestMenu_addAction(menu, "toString");
+        XTestMenu_setActionFunction(action, XStringViewTest_ToString);
     }
 }
 #endif

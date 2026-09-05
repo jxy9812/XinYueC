@@ -1,5 +1,5 @@
 ﻿#include"XTimerTest.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XTimer.h"
 #include"XDateTime.h"
@@ -70,18 +70,18 @@ void XTimerTest()
 
 	XCoreApplication_quit();
 }
-void XMenu_XTimerTest(XMenu* root)
+void XTestMenu_XTimerTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("定时器");
-	XMenu_addMenu(root, menu);
-	XMenu_XTimerTimeWheelTest(menu);
-	XMenu_XHrTimerTest(menu);
+	XTestMenu* menu = XTestMenu_create("定时器");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XTimerTimeWheelTest(menu);
+	XTestMenu_XHrTimerTest(menu);
 	{
-		XMenu* tmenu = XMenu_create("XTimer(定时器)");
-		XMenu_addMenu(menu, tmenu);
+		XTestMenu* tmenu = XTestMenu_create("XTimer(定时器)");
+		XTestMenu_addMenu(menu, tmenu);
 		{
-			XAction* action = XMenu_addAction(tmenu, "主测试");
-			XAction_setAction(action, XTimerTest);
+			XAction* action = XTestMenu_addAction(tmenu, "主测试");
+			XTestMenu_setActionFunction(action, XTimerTest);
 		}
 	}
 }

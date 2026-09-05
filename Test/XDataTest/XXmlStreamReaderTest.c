@@ -9,7 +9,7 @@
 #include "XString.h"
 #include "XByteArray.h"
 #include "XFile.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XPrintf.h"
@@ -1830,82 +1830,82 @@ bool XXmlStreamReaderTest_runAll(void)
 
 /* ==================== 菜单注册 ==================== */
 #if DEMOTEST
-void XMenu_XXmlStreamReaderTest(XMenu* root)
+void XTestMenu_XXmlStreamReaderTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XXmlStreamReaderTest");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XXmlStreamReaderTest");
+    XTestMenu_addMenu(root, menu);
 
-    XAction* action = XMenu_addAction(menu, "全部测试");
-    XAction_setAction(action, test_run_all_wrapper);
-    action = XMenu_addAction(menu, "创建和删除");
-    XAction_setAction(action, test_create_delete_wrapper);
-    action = XMenu_addAction(menu, "初始化和反初始化");
-    XAction_setAction(action, test_init_deinit_wrapper);
-    action = XMenu_addAction(menu, "引发错误");
-    XAction_setAction(action, test_raise_error_wrapper);
-    action = XMenu_addAction(menu, "错误检测");
-    XAction_setAction(action, test_has_error_wrapper);
-    action = XMenu_addAction(menu, "实体扩展限制");
-    XAction_setAction(action, test_entity_expansion_limit_wrapper);
-    action = XMenu_addAction(menu, "NULL安全");
-    XAction_setAction(action, test_null_safety_wrapper);
-    action = XMenu_addAction(menu, "DTD符号声明API");
-    XAction_setAction(action, test_notation_declarations_api_wrapper);
-    action = XMenu_addAction(menu, "DTD实体声明API");
-    XAction_setAction(action, test_entity_declarations_api_wrapper);
-    action = XMenu_addAction(menu, "实体解析器");
-    XAction_setAction(action, test_entity_resolver_wrapper);
-    action = XMenu_addAction(menu, "DTD 声明内容/实体解析器");
-    XAction_setAction(action, test_dtd_declaration_values_wrapper);
-    action = XMenu_addAction(menu, "QIODevice 输入");
-    XAction_setAction(action, test_device_input_wrapper);
-    action = XMenu_addAction(menu, "DTD 拷贝/移动");
-    XAction_setAction(action, test_dtd_copy_move_wrapper);
-    action = XMenu_addAction(menu, "QIODevice 分块输入");
-    XAction_setAction(action, test_incremental_device_input_wrapper);
-    action = XMenu_addAction(menu, "UTF-8/16/32 编码输入");
-    XAction_setAction(action, test_encoded_input_wrapper);
-    action = XMenu_addAction(menu, "命名空间声明列表");
-    XAction_setAction(action, test_namespace_declarations_api_wrapper);
-    action = XMenu_addAction(menu, "未初始化目标拷贝/移动");
-    XAction_setAction(action, test_uninitialized_copy_move_wrapper);
-    action = XMenu_addAction(menu, "行/列/字符偏移");
-    XAction_setAction(action, test_line_column_offset_wrapper);
-    action = XMenu_addAction(menu, "standalone 声明");
-    XAction_setAction(action, test_standalone_declaration_wrapper);
-    action = XMenu_addAction(menu, "PI target/data");
-    XAction_setAction(action, test_processing_instruction_fields_wrapper);
-    action = XMenu_addAction(menu, "命名空间开关");
-    XAction_setAction(action, test_namespace_processing_wrapper);
-    action = XMenu_addAction(menu, "额外命名空间声明");
-    XAction_setAction(action, test_extra_namespace_declaration_wrapper);
-    action = XMenu_addAction(menu, "基础 XML 解析");
-    XAction_setAction(action, test_basic_xml_parse_wrapper);
-    action = XMenu_addAction(menu, "属性导航");
-    XAction_setAction(action, test_attributes_navigation_wrapper);
-    action = XMenu_addAction(menu, "XML 流值类型与列表别名");
-    XAction_setAction(action, test_stream_value_types_wrapper);
-    action = XMenu_addAction(menu, "嵌套元素");
-    XAction_setAction(action, test_nested_elements_wrapper);
-    action = XMenu_addAction(menu, "CDATA/注释");
-    XAction_setAction(action, test_cdata_comment_wrapper);
-    action = XMenu_addAction(menu, "实体引用");
-    XAction_setAction(action, test_entity_reference_wrapper);
-    action = XMenu_addAction(menu, "DTD 声明");
-    XAction_setAction(action, test_dtd_declaration_wrapper);
-    action = XMenu_addAction(menu, "skipCurrentElement");
-    XAction_setAction(action, test_skip_current_element_wrapper);
-    action = XMenu_addAction(menu, "readNextStartElement");
-    XAction_setAction(action, test_read_next_start_element_wrapper);
-    action = XMenu_addAction(menu, "readElementText");
-    XAction_setAction(action, test_read_element_text_wrapper);
-    action = XMenu_addAction(menu, "Qt 集合深拷贝和修改");
-    XAction_setAction(action, test_qt_collection_copy_and_mutation_wrapper);
-    action = XMenu_addAction(menu, "非法 XML");
-    XAction_setAction(action, test_invalid_xml_wrapper);
-    action = XMenu_addAction(menu, "clear/setDevice 配置保留");
-    XAction_setAction(action, test_reset_preserves_configuration_wrapper);
-    action = XMenu_addAction(menu, "拆分 BOM 和单字节编码");
-    XAction_setAction(action, test_split_bom_and_single_byte_encoding_wrapper);
+    XAction* action = XTestMenu_addAction(menu, "全部测试");
+    XTestMenu_setActionFunction(action, test_run_all_wrapper);
+    action = XTestMenu_addAction(menu, "创建和删除");
+    XTestMenu_setActionFunction(action, test_create_delete_wrapper);
+    action = XTestMenu_addAction(menu, "初始化和反初始化");
+    XTestMenu_setActionFunction(action, test_init_deinit_wrapper);
+    action = XTestMenu_addAction(menu, "引发错误");
+    XTestMenu_setActionFunction(action, test_raise_error_wrapper);
+    action = XTestMenu_addAction(menu, "错误检测");
+    XTestMenu_setActionFunction(action, test_has_error_wrapper);
+    action = XTestMenu_addAction(menu, "实体扩展限制");
+    XTestMenu_setActionFunction(action, test_entity_expansion_limit_wrapper);
+    action = XTestMenu_addAction(menu, "NULL安全");
+    XTestMenu_setActionFunction(action, test_null_safety_wrapper);
+    action = XTestMenu_addAction(menu, "DTD符号声明API");
+    XTestMenu_setActionFunction(action, test_notation_declarations_api_wrapper);
+    action = XTestMenu_addAction(menu, "DTD实体声明API");
+    XTestMenu_setActionFunction(action, test_entity_declarations_api_wrapper);
+    action = XTestMenu_addAction(menu, "实体解析器");
+    XTestMenu_setActionFunction(action, test_entity_resolver_wrapper);
+    action = XTestMenu_addAction(menu, "DTD 声明内容/实体解析器");
+    XTestMenu_setActionFunction(action, test_dtd_declaration_values_wrapper);
+    action = XTestMenu_addAction(menu, "QIODevice 输入");
+    XTestMenu_setActionFunction(action, test_device_input_wrapper);
+    action = XTestMenu_addAction(menu, "DTD 拷贝/移动");
+    XTestMenu_setActionFunction(action, test_dtd_copy_move_wrapper);
+    action = XTestMenu_addAction(menu, "QIODevice 分块输入");
+    XTestMenu_setActionFunction(action, test_incremental_device_input_wrapper);
+    action = XTestMenu_addAction(menu, "UTF-8/16/32 编码输入");
+    XTestMenu_setActionFunction(action, test_encoded_input_wrapper);
+    action = XTestMenu_addAction(menu, "命名空间声明列表");
+    XTestMenu_setActionFunction(action, test_namespace_declarations_api_wrapper);
+    action = XTestMenu_addAction(menu, "未初始化目标拷贝/移动");
+    XTestMenu_setActionFunction(action, test_uninitialized_copy_move_wrapper);
+    action = XTestMenu_addAction(menu, "行/列/字符偏移");
+    XTestMenu_setActionFunction(action, test_line_column_offset_wrapper);
+    action = XTestMenu_addAction(menu, "standalone 声明");
+    XTestMenu_setActionFunction(action, test_standalone_declaration_wrapper);
+    action = XTestMenu_addAction(menu, "PI target/data");
+    XTestMenu_setActionFunction(action, test_processing_instruction_fields_wrapper);
+    action = XTestMenu_addAction(menu, "命名空间开关");
+    XTestMenu_setActionFunction(action, test_namespace_processing_wrapper);
+    action = XTestMenu_addAction(menu, "额外命名空间声明");
+    XTestMenu_setActionFunction(action, test_extra_namespace_declaration_wrapper);
+    action = XTestMenu_addAction(menu, "基础 XML 解析");
+    XTestMenu_setActionFunction(action, test_basic_xml_parse_wrapper);
+    action = XTestMenu_addAction(menu, "属性导航");
+    XTestMenu_setActionFunction(action, test_attributes_navigation_wrapper);
+    action = XTestMenu_addAction(menu, "XML 流值类型与列表别名");
+    XTestMenu_setActionFunction(action, test_stream_value_types_wrapper);
+    action = XTestMenu_addAction(menu, "嵌套元素");
+    XTestMenu_setActionFunction(action, test_nested_elements_wrapper);
+    action = XTestMenu_addAction(menu, "CDATA/注释");
+    XTestMenu_setActionFunction(action, test_cdata_comment_wrapper);
+    action = XTestMenu_addAction(menu, "实体引用");
+    XTestMenu_setActionFunction(action, test_entity_reference_wrapper);
+    action = XTestMenu_addAction(menu, "DTD 声明");
+    XTestMenu_setActionFunction(action, test_dtd_declaration_wrapper);
+    action = XTestMenu_addAction(menu, "skipCurrentElement");
+    XTestMenu_setActionFunction(action, test_skip_current_element_wrapper);
+    action = XTestMenu_addAction(menu, "readNextStartElement");
+    XTestMenu_setActionFunction(action, test_read_next_start_element_wrapper);
+    action = XTestMenu_addAction(menu, "readElementText");
+    XTestMenu_setActionFunction(action, test_read_element_text_wrapper);
+    action = XTestMenu_addAction(menu, "Qt 集合深拷贝和修改");
+    XTestMenu_setActionFunction(action, test_qt_collection_copy_and_mutation_wrapper);
+    action = XTestMenu_addAction(menu, "非法 XML");
+    XTestMenu_setActionFunction(action, test_invalid_xml_wrapper);
+    action = XTestMenu_addAction(menu, "clear/setDevice 配置保留");
+    XTestMenu_setActionFunction(action, test_reset_preserves_configuration_wrapper);
+    action = XTestMenu_addAction(menu, "拆分 BOM 和单字节编码");
+    XTestMenu_setActionFunction(action, test_split_bom_and_single_byte_encoding_wrapper);
 }
 #endif

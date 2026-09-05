@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XVector.h"
 #include"XFunctionCallback.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -634,77 +634,77 @@ void XVectorAllTest(void)
 	//XCoreApplication_quit();
 }
 
-void XMenu_XVectorTest(XMenu* root)
+void XTestMenu_XVectorTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XVector(数组)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XVector(数组)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* a = XMenu_addAction(menu, "【全部测试】");
-		XAction_setAction(a, XVectorAllTest);
+		XAction* a = XTestMenu_addAction(menu, "【全部测试】");
+		XTestMenu_setActionFunction(a, XVectorAllTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "创建与初始化");
-		XAction_setAction(a, XVectorCreateTest);
+		XAction* a = XTestMenu_addAction(menu, "创建与初始化");
+		XTestMenu_setActionFunction(a, XVectorCreateTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "容量与大小");
-		XAction_setAction(a, XVectorCapacityTest);
+		XAction* a = XTestMenu_addAction(menu, "容量与大小");
+		XTestMenu_setActionFunction(a, XVectorCapacityTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "元素访问");
-		XAction_setAction(a, XVectorAccessTest);
+		XAction* a = XTestMenu_addAction(menu, "元素访问");
+		XTestMenu_setActionFunction(a, XVectorAccessTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "头部操作");
-		XAction_setAction(a, XVectorFrontOpsTest);
+		XAction* a = XTestMenu_addAction(menu, "头部操作");
+		XTestMenu_setActionFunction(a, XVectorFrontOpsTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "尾部操作");
-		XAction_setAction(a, XVectorBackOpsTest);
+		XAction* a = XTestMenu_addAction(menu, "尾部操作");
+		XTestMenu_setActionFunction(a, XVectorBackOpsTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "插入操作");
-		XAction_setAction(a, XVectorInsertTest);
+		XAction* a = XTestMenu_addAction(menu, "插入操作");
+		XTestMenu_setActionFunction(a, XVectorInsertTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "删除操作");
-		XAction_setAction(a, XVectorRemoveTest);
+		XAction* a = XTestMenu_addAction(menu, "删除操作");
+		XTestMenu_setActionFunction(a, XVectorRemoveTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "取出元素(take)");
-		XAction_setAction(a, XVectorTakeTest);
+		XAction* a = XTestMenu_addAction(menu, "取出元素(take)");
+		XTestMenu_setActionFunction(a, XVectorTakeTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "替换操作");
-		XAction_setAction(a, XVectorReplaceTest);
+		XAction* a = XTestMenu_addAction(menu, "替换操作");
+		XTestMenu_setActionFunction(a, XVectorReplaceTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "排序与查找");
-		XAction_setAction(a, XVectorSortFindTest);
+		XAction* a = XTestMenu_addAction(menu, "排序与查找");
+		XTestMenu_setActionFunction(a, XVectorSortFindTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "比较");
-		XAction_setAction(a, XVectorCompareTest);
+		XAction* a = XTestMenu_addAction(menu, "比较");
+		XTestMenu_setActionFunction(a, XVectorCompareTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "COW与共享");
-		XAction_setAction(a, XVectorCowTest);
+		XAction* a = XTestMenu_addAction(menu, "COW与共享");
+		XTestMenu_setActionFunction(a, XVectorCowTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "子向量(slice/mid)");
-		XAction_setAction(a, XVectorSliceTest);
+		XAction* a = XTestMenu_addAction(menu, "子向量(slice/mid)");
+		XTestMenu_setActionFunction(a, XVectorSliceTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "移动与交换");
-		XAction_setAction(a, XVectorMoveSwapTest);
+		XAction* a = XTestMenu_addAction(menu, "移动与交换");
+		XTestMenu_setActionFunction(a, XVectorMoveSwapTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "填充与赋值");
-		XAction_setAction(a, XVectorFillTest);
+		XAction* a = XTestMenu_addAction(menu, "填充与赋值");
+		XTestMenu_setActionFunction(a, XVectorFillTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "安全与类型检查");
-		XAction_setAction(a, XVectorSafetyTest);
+		XAction* a = XTestMenu_addAction(menu, "安全与类型检查");
+		XTestMenu_setActionFunction(a, XVectorSafetyTest);
 	}
 }
 #endif

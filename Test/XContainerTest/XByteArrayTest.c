@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XByteArray.h"
 #include"XByteArrayView.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -464,13 +464,13 @@ void XByteArrayTest(void)
     XByteArrayTest_All();
 }
 
-void XMenu_XByteArrayTest(XMenu* root)
+void XTestMenu_XByteArrayTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XByteArray(字节数组)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XByteArray(字节数组)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全量测试(基础+Qt别名+编解码+压力)");
-        XAction_setAction(action, XByteArrayTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全量测试(基础+Qt别名+编解码+压力)");
+        XTestMenu_setActionFunction(action, XByteArrayTest_All);
     }
 }
 #endif

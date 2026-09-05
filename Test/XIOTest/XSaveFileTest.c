@@ -1,6 +1,6 @@
 ﻿#include"XIOTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XSaveFile.h"
@@ -182,12 +182,12 @@ void XSaveFileTest()
     XPrintf_3("\n=== XSaveFile 测试完成 ===\n");
 }
 
-void XMenu_XSaveFileTest(XMenu* root)
+void XTestMenu_XSaveFileTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XSaveFile(安全文件保存)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XSaveFile(安全文件保存)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XSaveFileTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XSaveFileTest);
     }
 }

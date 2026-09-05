@@ -3,7 +3,7 @@
 #include"XString.h"
 #include"XStringView.h"
 #include"XStringList.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -1221,77 +1221,77 @@ static void XStringAllTest(void)
     //XCoreApplication_quit();
 }
 
-void XMenu_XStringTest(XMenu* root)
+void XTestMenu_XStringTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("字符串(XString)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("字符串(XString)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* a = XMenu_addAction(menu, "【全部测试】");
-		XAction_setAction(a, XStringAllTest);
+		XAction* a = XTestMenu_addAction(menu, "【全部测试】");
+		XTestMenu_setActionFunction(a, XStringAllTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "创建与初始化");
-		XAction_setAction(a, XStringCreateTest);
+		XAction* a = XTestMenu_addAction(menu, "创建与初始化");
+		XTestMenu_setActionFunction(a, XStringCreateTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "容量与大小");
-		XAction_setAction(a, XStringCapacityTest);
+		XAction* a = XTestMenu_addAction(menu, "容量与大小");
+		XTestMenu_setActionFunction(a, XStringCapacityTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "元素访问");
-		XAction_setAction(a, XStringAccessTest);
+		XAction* a = XTestMenu_addAction(menu, "元素访问");
+		XTestMenu_setActionFunction(a, XStringAccessTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "追加/前置/插入");
-		XAction_setAction(a, XStringAppendPrependInsertTest);
+		XAction* a = XTestMenu_addAction(menu, "追加/前置/插入");
+		XTestMenu_setActionFunction(a, XStringAppendPrependInsertTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "删除");
-		XAction_setAction(a, XStringRemoveTest);
+		XAction* a = XTestMenu_addAction(menu, "删除");
+		XTestMenu_setActionFunction(a, XStringRemoveTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "替换");
-		XAction_setAction(a, XStringReplaceTest);
+		XAction* a = XTestMenu_addAction(menu, "替换");
+		XTestMenu_setActionFunction(a, XStringReplaceTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "查找与比较");
-		XAction_setAction(a, XStringFindCompareTest);
+		XAction* a = XTestMenu_addAction(menu, "查找与比较");
+		XTestMenu_setActionFunction(a, XStringFindCompareTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "编码转换");
-		XAction_setAction(a, XStringConvertTest);
+		XAction* a = XTestMenu_addAction(menu, "编码转换");
+		XTestMenu_setActionFunction(a, XStringConvertTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "数值转换");
-		XAction_setAction(a, XStringNumTest);
+		XAction* a = XTestMenu_addAction(menu, "数值转换");
+		XTestMenu_setActionFunction(a, XStringNumTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "子串操作");
-		XAction_setAction(a, XStringSubstringTest);
+		XAction* a = XTestMenu_addAction(menu, "子串操作");
+		XTestMenu_setActionFunction(a, XStringSubstringTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "原地修改");
-		XAction_setAction(a, XStringInplaceTest);
+		XAction* a = XTestMenu_addAction(menu, "原地修改");
+		XTestMenu_setActionFunction(a, XStringInplaceTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "拆分与拼接");
-		XAction_setAction(a, XStringSplitJoinTest);
+		XAction* a = XTestMenu_addAction(menu, "拆分与拼接");
+		XTestMenu_setActionFunction(a, XStringSplitJoinTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "Qt高级对齐");
-		XAction_setAction(a, XStringQtAdvancedTest);
+		XAction* a = XTestMenu_addAction(menu, "Qt高级对齐");
+		XTestMenu_setActionFunction(a, XStringQtAdvancedTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "赋值与拷贝");
-		XAction_setAction(a, XStringAssignTest);
+		XAction* a = XTestMenu_addAction(menu, "赋值与拷贝");
+		XTestMenu_setActionFunction(a, XStringAssignTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "迭代器");
-		XAction_setAction(a, XStringIteratorTest);
+		XAction* a = XTestMenu_addAction(menu, "迭代器");
+		XTestMenu_setActionFunction(a, XStringIteratorTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "NULL安全");
-		XAction_setAction(a, XStringSafetyTest);
+		XAction* a = XTestMenu_addAction(menu, "NULL安全");
+		XTestMenu_setActionFunction(a, XStringSafetyTest);
 	}
 }
 #endif

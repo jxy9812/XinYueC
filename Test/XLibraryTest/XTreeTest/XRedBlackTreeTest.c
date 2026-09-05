@@ -3,7 +3,7 @@
 #include"XRedBlackTree.h"
 #include"XCompare.h"
 #include<stdio.h>
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -73,13 +73,13 @@ void XRedBlackTreeTest()
 #endif
 	XCoreApplication_quit();
 }
-void XMenu_XRedBlackTreeTest(XMenu* root)
+void XTestMenu_XRedBlackTreeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XRedBlackTree(红黑树)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XRedBlackTree(红黑树)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XRedBlackTreeTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XRedBlackTreeTest);
 	}
 }
 #endif

@@ -1,6 +1,6 @@
 ﻿#include"XIOTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XFile.h"
@@ -1634,12 +1634,12 @@ void XFileTest()
     }
 }
 
-void XMenu_XFileTest(XMenu* root)
+void XTestMenu_XFileTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XFile(文件操作)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XFile(文件操作)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "完整API测试");
-        XAction_setAction(action, XFileTest);
+        XAction* action = XTestMenu_addAction(menu, "完整API测试");
+        XTestMenu_setActionFunction(action, XFileTest);
     }
 }

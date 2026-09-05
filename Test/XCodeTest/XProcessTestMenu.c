@@ -4,7 +4,7 @@
  */
 
 #include "XCodeTest.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 
 static void XProcessTest_runAll_wrapper(XVariant* data)
@@ -13,14 +13,14 @@ static void XProcessTest_runAll_wrapper(XVariant* data)
     XProcessTest_runAll();
 }
 
-void XMenu_XProcessTest(XMenu* root)
+void XTestMenu_XProcessTest(XTestMenu* root)
 {
-    XMenu* menu;
+    XTestMenu* menu;
     XAction* action;
     if (!root) return;
-    menu = XMenu_create("XProcess(Qt6.8)");
+    menu = XTestMenu_create("XProcess(Qt6.8)");
     if (!menu) return;
-    XMenu_addMenu(root, menu);
-    action = XMenu_addAction(menu, "全量测试");
-    if (action) XAction_setAction(action, XProcessTest_runAll_wrapper);
+    XTestMenu_addMenu(root, menu);
+    action = XTestMenu_addAction(menu, "全量测试");
+    if (action) XTestMenu_setActionFunction(action, XProcessTest_runAll_wrapper);
 }

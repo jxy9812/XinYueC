@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XBitArray.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -140,13 +140,13 @@ static void XBitArrayTest_All(void)
     //XCoreApplication_quit();
 }
 
-void XMenu_XBitArrayTest(XMenu* root)
+void XTestMenu_XBitArrayTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XBitArray(位数组)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XBitArray(位数组)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全量测试(基础+Qt别名+Qt新API+压力)");
-        XAction_setAction(action, XBitArrayTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全量测试(基础+Qt别名+Qt新API+压力)");
+        XTestMenu_setActionFunction(action, XBitArrayTest_All);
     }
 }
 #endif

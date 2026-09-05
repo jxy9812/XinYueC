@@ -23,7 +23,7 @@
 #include "XBitArray.h"
 #include "XRingChunk.h"
 #include "XRingBuffer.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XPrintf.h"
@@ -309,11 +309,11 @@ static void XContainerMemoryPoolTest(void)
     //XCoreApplication_quit();
 }
 
-void XMenu_XContainerMemoryTest(XMenu* root)
+void XTestMenu_XContainerMemoryTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("内存池归属与生命周期");
-    XMenu_addMenu(root, menu);
-    XAction* action = XMenu_addAction(menu, "三种内存池与 copy/move");
-    XAction_setAction(action, (Action)XContainerMemoryPoolTest);
+    XTestMenu* menu = XTestMenu_create("内存池归属与生命周期");
+    XTestMenu_addMenu(root, menu);
+    XAction* action = XTestMenu_addAction(menu, "三种内存池与 copy/move");
+    XTestMenu_setActionFunction(action, (XTestMenuActionFunc)XContainerMemoryPoolTest);
 }
 #endif

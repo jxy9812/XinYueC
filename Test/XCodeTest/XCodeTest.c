@@ -1,26 +1,27 @@
-﻿#include"XCodeTest.h"
-#include"XMenu.h"
-void XMenu_XCodeTest(XMenu* root)
+#include"XCodeTest.h"
+#include"XTestMenu.h"
+void XTestMenu_XCodeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("代码");
-	XMenu_addMenu(root, menu);
-	XMenu_XRcodeTest(menu);
-	XMenu_XDebugTest(menu);
-	XMenu_XStateMachineTest(menu);
+	XTestMenu* menu = XTestMenu_create("代码");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XRcodeTest(menu);
+	XTestMenu_XDebugTest(menu);
+	XTestMenu_XStateMachineTest(menu);
 #if XTHREAD_ON
-	XMenu_XThreadTest(menu);
+	XTestMenu_XThreadTest(menu);
 #endif
 #if XTHREADPOOL_ON
-	XMenu_XThreadPoolTest(menu);
+	XTestMenu_XThreadPoolTest(menu);
 #endif
-	XMenu_XDateTimeTest(menu);
-	XMenu_XCryptographicHashTest(menu);
-	XMenu_XCryptographicPrimitiveTest(menu);
-	XMenu_XRandomGeneratorTest(menu);
-XMenu_XCoreApplicationTest(menu);
-	XMenu_XCommandLineParserTest(menu);
-	XMenu_XRegularExpressionTest(menu);
-	XMenu_XProcessTest(menu);
-	XMenu_XConsoleShellTest(menu);
-	XMenu_XConsoleShellBackendTest(menu);
+	XTestMenu_XDateTimeTest(menu);
+	XTestMenu_XCryptographicHashTest(menu);
+	XTestMenu_XCryptographicPrimitiveTest(menu);
+	XTestMenu_XRandomGeneratorTest(menu);
+	XTestMenu_XActionTest(menu);
+	XTestMenu_XCoreApplicationTest(menu);
+	XTestMenu_XCommandLineParserTest(menu);
+	XTestMenu_XRegularExpressionTest(menu);
+	XTestMenu_XProcessTest(menu);
+	XTestMenu_XConsoleShellTest(menu);
+	XTestMenu_XConsoleShellBackendTest(menu);
 }

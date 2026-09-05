@@ -6,7 +6,7 @@
 #ifndef XHTTPTEST_H
 #define XHTTPTEST_H
 
-#include "XMenu.h"
+#include "XTestMenu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +17,7 @@ extern "C" {
  * @param root 父菜单；不能为 NULL。
  * @return 无。
  */
-void XHttpTest_registerAll(XMenu* root);
+void XHttpTest_registerAll(XTestMenu* root);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,6 @@
 ﻿#include"XCodeTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XThreadPool.h"
@@ -52,13 +52,13 @@ void XThreadPoolTest()
 	}
 }
 
-void XMenu_XThreadPoolTest(XMenu* root)
+void XTestMenu_XThreadPoolTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XThreadPool(线程池)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XThreadPool(线程池)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XThreadPoolTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XThreadPoolTest);
 	}
 }
 #endif // XTHREADPOOL_ON

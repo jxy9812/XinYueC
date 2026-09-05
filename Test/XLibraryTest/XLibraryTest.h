@@ -4,23 +4,24 @@
 extern "C" {
 #endif
 #include"CXinYueConfig.h"
+#include "XTestMenu.h"
 #include"XClass.h"
 #if DEMOTEST
-	void XMenu_XLibraryTest(XMenu* root);
+	void XTestMenu_XLibraryTest(XTestMenu* root);
 	//查询算法
-	void XMenu_FindTest(XMenu* root);
-	void XMenu_XBinarySearchTest(XMenu* root);
+	void XTestMenu_FindTest(XTestMenu* root);
+	void XTestMenu_XBinarySearchTest(XTestMenu* root);
 	//树
-	void XMenu_XTreeTest(XMenu* root);
-	void XMenu_XBinaryTreeTest(XMenu* root);
-	void XMenu_XBalancedBinaryTreeTest(XMenu* root);
-	void XMenu_XRedBlackTreeTest(XMenu* root);
+	void XTestMenu_XTreeTest(XTestMenu* root);
+	void XTestMenu_XBinaryTreeTest(XTestMenu* root);
+	void XTestMenu_XBalancedBinaryTreeTest(XTestMenu* root);
+	void XTestMenu_XRedBlackTreeTest(XTestMenu* root);
 	//CJson
-	void XMenu_CJsonTest(XMenu* root);
+	void XTestMenu_CJsonTest(XTestMenu* root);
 	//Base64
-	void XMenu_XBase64Test(XMenu* root);
+	void XTestMenu_XBase64Test(XTestMenu* root);
 	//zlib
-	void XMenu_zlibTest(XMenu* root);
+	void XTestMenu_zlibTest(XTestMenu* root);
 	void cJsonTest();
 	void cJsonXContainerTest();
 	void XBase64Test();

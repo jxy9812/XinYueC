@@ -5,13 +5,13 @@
 #ifndef XFTP_TEST_H
 #define XFTP_TEST_H
 
-#include "XMenu.h"
+#include "XTestMenu.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void XFtpTest_registerAll(XMenu* menu);
+void XFtpTest_registerAll(XTestMenu* menu);
 
 #ifdef __cplusplus
 }

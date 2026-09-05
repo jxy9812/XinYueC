@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XRingBuffer.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -188,13 +188,13 @@ void XRingBufferTest()
         XPrintf("\n=== All XRingBuffer Tests Completed Successfully! ===\n");
 	}
 }
-void XMenu_XRingBufferTest(XMenu* root)
+void XTestMenu_XRingBufferTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XRingBuffer(环形缓冲区)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XRingBuffer(环形缓冲区)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XRingBufferTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XRingBufferTest);
 	}
 }
 #endif

@@ -2,7 +2,7 @@
 #include"XString.h"
 #include"XBase64.h"
 #include"XByteArray.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -33,12 +33,12 @@ void XBase64Test()
 		XByteArray_delete_base(fromBase64);
 	//XCoreApplication_quit();
 }
-void XMenu_XBase64Test(XMenu* root)
+void XTestMenu_XBase64Test(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XBase64(base64)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XBase64(base64)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XBase64Test);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XBase64Test);
 	}
 }

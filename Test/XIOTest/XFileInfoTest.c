@@ -1,6 +1,6 @@
 ﻿#include"XIOTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XFileInfo.h"
@@ -190,12 +190,12 @@ void XFileInfoTest()
     XPrintf_3("\n=== XFileInfo 测试完成 ===\n");
 }
 
-void XMenu_XFileInfoTest(XMenu* root)
+void XTestMenu_XFileInfoTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XFileInfo(文件信息)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XFileInfo(文件信息)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XFileInfoTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XFileInfoTest);
     }
 }

@@ -1,7 +1,7 @@
 ﻿#include "XIOTest.h"
 #include "XUdpSocket.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XByteArray.h"
 #include "XCoreApplication.h"
 #include "XHostAddress.h"
@@ -498,24 +498,24 @@ static void XUdpSocketClientTest(void)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
-void XMenu_XUdpSocketTest(XMenu* root)
+void XTestMenu_XUdpSocketTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XUdpSocket(UDP套接字)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XUdpSocket(UDP套接字)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "基本收发测试");
-        XAction_setAction(action, XUdpSocketBasicTest);
+        XAction* action = XTestMenu_addAction(menu, "基本收发测试");
+        XTestMenu_setActionFunction(action, XUdpSocketBasicTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "广播测试");
-        XAction_setAction(action, XUdpSocketBroadcastTest);
+        XAction* action = XTestMenu_addAction(menu, "广播测试");
+        XTestMenu_setActionFunction(action, XUdpSocketBroadcastTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "多播测试");
-        XAction_setAction(action, XUdpSocketMulticastTest);
+        XAction* action = XTestMenu_addAction(menu, "多播测试");
+        XTestMenu_setActionFunction(action, XUdpSocketMulticastTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "UDP客户端");
-        XAction_setAction(action, XUdpSocketClientTest);
+        XAction* action = XTestMenu_addAction(menu, "UDP客户端");
+        XTestMenu_setActionFunction(action, XUdpSocketClientTest);
     }
 }

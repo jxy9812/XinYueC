@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XLockFreeList.h"
 #include"XCompare.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -711,54 +711,54 @@ static void XLockFreeListAllTest(void)
 	//XCoreApplication_quit();
 }
 
-void XMenu_XLockFreeListTest(XMenu* root)
+void XTestMenu_XLockFreeListTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XLockFreeList(单向无锁链表)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XLockFreeList(单向无锁链表)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* a = XMenu_addAction(menu, "【全部测试(不含并发)】");
-		XAction_setAction(a, (Action)XLockFreeListAllTest);
+		XAction* a = XTestMenu_addAction(menu, "【全部测试(不含并发)】");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListAllTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "创建与初始化");
-		XAction_setAction(a, (Action)XLockFreeListCreateTest);
+		XAction* a = XTestMenu_addAction(menu, "创建与初始化");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListCreateTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "插入操作");
-		XAction_setAction(a, (Action)XLockFreeListInsertTest);
+		XAction* a = XTestMenu_addAction(menu, "插入操作");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListInsertTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "删除操作(含removeAll/One/If)");
-		XAction_setAction(a, (Action)XLockFreeListRemoveTest);
+		XAction* a = XTestMenu_addAction(menu, "删除操作(含removeAll/One/If)");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListRemoveTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "查找与访问(含indexOf/lastIndexOf)");
-		XAction_setAction(a, (Action)XLockFreeListAccessTest);
+		XAction* a = XTestMenu_addAction(menu, "查找与访问(含indexOf/lastIndexOf)");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListAccessTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "迭代器");
-		XAction_setAction(a, (Action)XLockFreeListIteratorTest);
+		XAction* a = XTestMenu_addAction(menu, "迭代器");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListIteratorTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "复制/移动/交换/排序");
-		XAction_setAction(a, (Action)XLockFreeListCompareTest);
+		XAction* a = XTestMenu_addAction(menu, "复制/移动/交换/排序");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListCompareTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "原子pop(pop_and_copy/move_front)");
-		XAction_setAction(a, (Action)XLockFreeListPopAtomicTest);
+		XAction* a = XTestMenu_addAction(menu, "原子pop(pop_and_copy/move_front)");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListPopAtomicTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "边界与安全检查");
-		XAction_setAction(a, (Action)XLockFreeListSafetyTest);
+		XAction* a = XTestMenu_addAction(menu, "边界与安全检查");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListSafetyTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "排序压力/演示");
-		XAction_setAction(a, (Action)XLockFreeListSortDemo);
+		XAction* a = XTestMenu_addAction(menu, "排序压力/演示");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListSortDemo);
 	}
 	{
 #if XTHREAD_ON
-		XAction* a = XMenu_addAction(menu, "并发多生产/多消费");
-		XAction_setAction(a, (Action)XLockFreeListConcurrentTest);
+		XAction* a = XTestMenu_addAction(menu, "并发多生产/多消费");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLockFreeListConcurrentTest);
 #endif // XTHREAD_ON
 	}
 }

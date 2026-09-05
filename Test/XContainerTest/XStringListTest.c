@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XString.h"
 #include"XStringList.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -514,17 +514,17 @@ void XStringListTest()
 	//XCoreApplication_quit();
 }
 
-void XMenu_XStringListTest(XMenu* root)
+void XTestMenu_XStringListTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XStringList(字符串数组)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XStringList(字符串数组)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XStringListTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XStringListTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "Qt对齐(sort/filter/contains)");
-		XAction_setAction(action, XStringListQtAlignTest);
+		XAction* action = XTestMenu_addAction(menu, "Qt对齐(sort/filter/contains)");
+		XTestMenu_setActionFunction(action, XStringListQtAlignTest);
 	}
 }
 #endif

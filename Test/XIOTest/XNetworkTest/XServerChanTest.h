@@ -6,7 +6,7 @@
 #ifndef XSERVERCHANTEST_H
 #define XSERVERCHANTEST_H
 
-#include "XMenu.h"
+#include "XTestMenu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +17,7 @@ extern "C" {
  * - @param root 父菜单；不能为 NULL。
  * - @return 无。
  */
-void XServerChanTest_registerAll(XMenu* root);
+void XServerChanTest_registerAll(XTestMenu* root);
 
 #ifdef __cplusplus
 }

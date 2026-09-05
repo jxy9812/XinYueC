@@ -2,7 +2,7 @@
 #include"XMultiPool.h"
 #include"XThread.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -634,37 +634,37 @@ void XMultiPoolTest(void) {
 }
 
 // ==================== 菜单注册 ====================
-void XMenu_XMultiPoolTest(XMenu* root) {
-    XMenu* menu = XMenu_create("XMultiPool(多级内存池)");
-    XMenu_addMenu(root, menu);
+void XTestMenu_XMultiPoolTest(XTestMenu* root) {
+    XTestMenu* menu = XTestMenu_create("XMultiPool(多级内存池)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "综合测试(全部)");
-        XAction_setAction(action, XMultiPoolTest_wrapper);
+        XAction* action = XTestMenu_addAction(menu, "综合测试(全部)");
+        XTestMenu_setActionFunction(action, XMultiPoolTest_wrapper);
         
-        XAction* action1 = XMenu_addAction(menu, "基础功能测试");
-        XAction_setAction(action1, test_basic_function_wrapper);
+        XAction* action1 = XTestMenu_addAction(menu, "基础功能测试");
+        XTestMenu_setActionFunction(action1, test_basic_function_wrapper);
         
-        XAction* action2 = XMenu_addAction(menu, "连续申请释放测试");
-        XAction_setAction(action2, test_continuous_alloc_free_wrapper);
+        XAction* action2 = XTestMenu_addAction(menu, "连续申请释放测试");
+        XTestMenu_setActionFunction(action2, test_continuous_alloc_free_wrapper);
         
-        XAction* action3 = XMenu_addAction(menu, "内存池耗尽测试");
-        XAction_setAction(action3, test_pool_exhaustion_wrapper);
+        XAction* action3 = XTestMenu_addAction(menu, "内存池耗尽测试");
+        XTestMenu_setActionFunction(action3, test_pool_exhaustion_wrapper);
         
-        XAction* action4 = XMenu_addAction(menu, "边界条件测试");
-        XAction_setAction(action4, test_boundary_conditions_wrapper);
+        XAction* action4 = XTestMenu_addAction(menu, "边界条件测试");
+        XTestMenu_setActionFunction(action4, test_boundary_conditions_wrapper);
         
-        XAction* action5 = XMenu_addAction(menu, "2的幂容量回归测试");
-        XAction_setAction(action5, test_power_of_two_capacity_wrapper);
+        XAction* action5 = XTestMenu_addAction(menu, "2的幂容量回归测试");
+        XTestMenu_setActionFunction(action5, test_power_of_two_capacity_wrapper);
 
-        XAction* action6 = XMenu_addAction(menu, "性能测试");
-        XAction_setAction(action6, test_performance_wrapper);
+        XAction* action6 = XTestMenu_addAction(menu, "性能测试");
+        XTestMenu_setActionFunction(action6, test_performance_wrapper);
 
 #if XTHREAD_ON
-        XAction* action7 = XMenu_addAction(menu, "多线程压力测试");
-        XAction_setAction(action7, test_multithread_stress_wrapper);
+        XAction* action7 = XTestMenu_addAction(menu, "多线程压力测试");
+        XTestMenu_setActionFunction(action7, test_multithread_stress_wrapper);
 #endif // XTHREAD_ON
 
-        XAction* action8 = XMenu_addAction(menu, "全局池测试");
-        XAction_setAction(action8, test_global_pool_wrapper);
+        XAction* action8 = XTestMenu_addAction(menu, "全局池测试");
+        XTestMenu_setActionFunction(action8, test_global_pool_wrapper);
     }
 }

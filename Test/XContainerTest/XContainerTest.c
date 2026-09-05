@@ -1,78 +1,78 @@
 ﻿#include"XContainerTest.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 
-void XMenu_XContainerTest(XMenu* root)
+void XTestMenu_XContainerTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("容器");
-	XMenu_addMenu(root, menu);
-	XMenu_XStringTest(menu);
-	XMenu_VectorTest(menu);
-	XMenu_ListTest(menu);
-	XMenu_XStackTest(menu);
-	XMenu_QueueTest(menu);
-	XMenu_MapTest(menu);
-	XMenu_SetTest(menu);
-	XMenu_XJsonTest(menu);
-	XMenu_XBsonTest(menu);
+	XTestMenu* menu = XTestMenu_create("容器");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XStringTest(menu);
+	XTestMenu_VectorTest(menu);
+	XTestMenu_ListTest(menu);
+	XTestMenu_XStackTest(menu);
+	XTestMenu_QueueTest(menu);
+	XTestMenu_MapTest(menu);
+	XTestMenu_SetTest(menu);
+	XTestMenu_XJsonTest(menu);
+	XTestMenu_XBsonTest(menu);
 
-	XMenu_XRingChunkTest(menu);
-	XMenu_XRingBufferTest(menu);
+	XTestMenu_XRingChunkTest(menu);
+	XTestMenu_XRingBufferTest(menu);
 
 	// 视图测试
-	XMenu_XViewTest(menu);
+	XTestMenu_XViewTest(menu);
 }
-void XMenu_VectorTest(XMenu* root)
+void XTestMenu_VectorTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("Vector(数组)");
-	XMenu_addMenu(root, menu);
-	XMenu_XVectorTest(menu);
-	XMenu_XStringListTest(menu);
-	XMenu_XVariantListTest(menu);
-	XMenu_XByteArrayTest(menu);
-	XMenu_XBitArrayTest(menu);
-	XMenu_XContainerMemoryTest(menu);
+	XTestMenu* menu = XTestMenu_create("Vector(数组)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XVectorTest(menu);
+	XTestMenu_XStringListTest(menu);
+	XTestMenu_XVariantListTest(menu);
+	XTestMenu_XByteArrayTest(menu);
+	XTestMenu_XBitArrayTest(menu);
+	XTestMenu_XContainerMemoryTest(menu);
 }
-void XMenu_ListTest(XMenu* root)
+void XTestMenu_ListTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("List(链表)");
-	XMenu_addMenu(root, menu);
-	XMenu_XListDLinkedTest(menu);
-	XMenu_XListSLinkedTest(menu);
-	XMenu_XLockFreeListTest(menu);
+	XTestMenu* menu = XTestMenu_create("List(链表)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XListDLinkedTest(menu);
+	XTestMenu_XListSLinkedTest(menu);
+	XTestMenu_XLockFreeListTest(menu);
 }
-void XMenu_QueueTest(XMenu* root)
+void XTestMenu_QueueTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("Queue(队列)");
-	XMenu_addMenu(root, menu);
-	XMenu_XCircularQueueTest(menu);
-	XMenu_XLockFreeQueueTest(menu);
-	XMenu_XPriorityQueueTest(menu);
-	XMenu_XQueueTest(menu);
+	XTestMenu* menu = XTestMenu_create("Queue(队列)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XCircularQueueTest(menu);
+	XTestMenu_XLockFreeQueueTest(menu);
+	XTestMenu_XPriorityQueueTest(menu);
+	XTestMenu_XQueueTest(menu);
 }
-void XMenu_MapTest(XMenu* root)
+void XTestMenu_MapTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("Map(映射)");
-	XMenu_addMenu(root, menu);
-	XMenu_XMapTest(menu);
-	XMenu_XHashMapTest(menu);
-}
-
-void XMenu_SetTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("Set(集合)");
-	XMenu_addMenu(root, menu);
-	XMenu_XSetTest(menu);
-	XMenu_XHashSetTest(menu);
+	XTestMenu* menu = XTestMenu_create("Map(映射)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XMapTest(menu);
+	XTestMenu_XHashMapTest(menu);
 }
 
-void XMenu_XViewTest(XMenu* root)
+void XTestMenu_SetTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("View(视图)");
-	XMenu_addMenu(root, menu);
-	XMenu_XByteArrayViewTest(menu);
-	XMenu_XStringViewTest(menu);
-	XMenu_XLatin1StringViewTest(menu);
-	XMenu_XUtf8StringViewTest(menu);
-	XMenu_XAnyStringViewTest(menu);
+	XTestMenu* menu = XTestMenu_create("Set(集合)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XSetTest(menu);
+	XTestMenu_XHashSetTest(menu);
+}
+
+void XTestMenu_XViewTest(XTestMenu* root)
+{
+	XTestMenu* menu = XTestMenu_create("View(视图)");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XByteArrayViewTest(menu);
+	XTestMenu_XStringViewTest(menu);
+	XTestMenu_XLatin1StringViewTest(menu);
+	XTestMenu_XUtf8StringViewTest(menu);
+	XTestMenu_XAnyStringViewTest(menu);
 }

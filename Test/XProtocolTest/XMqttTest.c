@@ -12,7 +12,7 @@
 #include "XMqttSubscription.h"
 #include "XMqttServer.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include "XCoreApplication.h"
@@ -1517,88 +1517,88 @@ static void XMqttDataLayoutTestMenu(void)
 /* ========================================================================
  * 菜单注册
  * ======================================================================== */
-void XMenu_XMqttTest(XMenu* root)
+void XTestMenu_XMqttTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XMqtt(mqtt)");
+    XTestMenu* menu = XTestMenu_create("XMqtt(mqtt)");
     {
-        XAction* action = XMenu_addAction(menu, "TopicName单元测试");
-        XAction_setAction(action, XMqttTopicNameTest);
+        XAction* action = XTestMenu_addAction(menu, "TopicName单元测试");
+        XTestMenu_setActionFunction(action, XMqttTopicNameTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "TopicFilter单元测试");
-        XAction_setAction(action, XMqttTopicFilterTest);
+        XAction* action = XTestMenu_addAction(menu, "TopicFilter单元测试");
+        XTestMenu_setActionFunction(action, XMqttTopicFilterTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "StringPair单元测试");
-        XAction_setAction(action, XMqttStringPairTest);
+        XAction* action = XTestMenu_addAction(menu, "StringPair单元测试");
+        XTestMenu_setActionFunction(action, XMqttStringPairTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "UserProperties单元测试");
-        XAction_setAction(action, XMqttUserPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "UserProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttUserPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Message单元测试");
-        XAction_setAction(action, XMqttMessageTest);
+        XAction* action = XTestMenu_addAction(menu, "Message单元测试");
+        XTestMenu_setActionFunction(action, XMqttMessageTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "PublishProperties单元测试");
-        XAction_setAction(action, XMqttPublishPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "PublishProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttPublishPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "MessageStatusProperties单元测试");
-        XAction_setAction(action, XMqttMessageStatusPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "MessageStatusProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttMessageStatusPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "ConnectionProperties单元测试");
-        XAction_setAction(action, XMqttConnectionPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "ConnectionProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttConnectionPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "SubscriptionProperties单元测试");
-        XAction_setAction(action, XMqttSubscriptionPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "SubscriptionProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttSubscriptionPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "AuthenticationProperties单元测试");
-        XAction_setAction(action, XMqttAuthenticationPropertiesTest);
+        XAction* action = XTestMenu_addAction(menu, "AuthenticationProperties单元测试");
+        XTestMenu_setActionFunction(action, XMqttAuthenticationPropertiesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Subscription单元测试");
-        XAction_setAction(action, XMqttSubscriptionTest);
+        XAction* action = XTestMenu_addAction(menu, "Subscription单元测试");
+        XTestMenu_setActionFunction(action, XMqttSubscriptionTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Client单元测试");
-        XAction_setAction(action, XMqttClientTest);
+        XAction* action = XTestMenu_addAction(menu, "Client单元测试");
+        XTestMenu_setActionFunction(action, XMqttClientTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "位域/联合体数据结构测试");
-        XAction_setAction(action, XMqttDataLayoutTestMenu);
+        XAction* action = XTestMenu_addAction(menu, "位域/联合体数据结构测试");
+        XTestMenu_setActionFunction(action, XMqttDataLayoutTestMenu);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Qt6.8公开API与协议回归");
-        XAction_setAction(action, XMqttPublicApiTest);
+        XAction* action = XTestMenu_addAction(menu, "Qt6.8公开API与协议回归");
+        XTestMenu_setActionFunction(action, XMqttPublicApiTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "XMqttServer 协议引擎单元测试");
-        XAction_setAction(action, XMqttServerUnitTestMenu);
+        XAction* action = XTestMenu_addAction(menu, "XMqttServer 协议引擎单元测试");
+        XTestMenu_setActionFunction(action, XMqttServerUnitTestMenu);
     }
     {
-        XAction* action = XMenu_addAction(menu, "XMqttTcpServer API 单元测试");
-        XAction_setAction(action, XMqttTcpServerApiUnitTestMenu);
+        XAction* action = XTestMenu_addAction(menu, "XMqttTcpServer API 单元测试");
+        XTestMenu_setActionFunction(action, XMqttTcpServerApiUnitTestMenu);
     }
     {
-        XAction* action = XMenu_addAction(menu, "双进程 TCP 客户端/服务器联调测试");
-        XAction_setAction(action, XMqttTcpInteropTestMenu);
+        XAction* action = XTestMenu_addAction(menu, "双进程 TCP 客户端/服务器联调测试");
+        XTestMenu_setActionFunction(action, XMqttTcpInteropTestMenu);
     }
     {
-        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 服务器（固定端口 18885）");
-        XAction_setAction(action, XMqttTcpServerIntegrationTest);
+        XAction* action = XTestMenu_addAction(menu, "真实 TCP MQTT 服务器（固定端口 18885）");
+        XTestMenu_setActionFunction(action, XMqttTcpServerIntegrationTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "真实 TCP MQTT 客户端联调");
-        XAction_setAction(action, XMqttTcpClientIntegrationTest);
+        XAction* action = XTestMenu_addAction(menu, "真实 TCP MQTT 客户端联调");
+        XTestMenu_setActionFunction(action, XMqttTcpClientIntegrationTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "MQTT 生命周期泄漏回归");
-        XAction_setAction(action, XMqttMemoryLifecycleTest);
+        XAction* action = XTestMenu_addAction(menu, "MQTT 生命周期泄漏回归");
+        XTestMenu_setActionFunction(action, XMqttMemoryLifecycleTest);
     }
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
 }

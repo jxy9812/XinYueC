@@ -2,7 +2,7 @@
 #include "XNetworkAddressEntry.h"
 #include "XHostAddress.h"
 #include "XString.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include <stdio.h>
 
@@ -388,44 +388,44 @@ static void XNetworkAddressEntry_comprehensiveTest(void)
 
 // ==================== 菜单注册 ====================
 
-void XMenu_XNetworkAddressEntryTest(XMenu* root)
+void XTestMenu_XNetworkAddressEntryTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XNetworkAddressEntry(地址条目)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XNetworkAddressEntry(地址条目)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "综合测试");
-        XAction_setAction(action, XNetworkAddressEntry_comprehensiveTest);
+        XAction* action = XTestMenu_addAction(menu, "综合测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_comprehensiveTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "创建测试");
-        XAction_setAction(action, XNetworkAddressEntry_createTest);
+        XAction* action = XTestMenu_addAction(menu, "创建测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_createTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "属性测试");
-        XAction_setAction(action, XNetworkAddressEntry_propertyTest);
+        XAction* action = XTestMenu_addAction(menu, "属性测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_propertyTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "生命周期测试");
-        XAction_setAction(action, XNetworkAddressEntry_lifetimeTest);
+        XAction* action = XTestMenu_addAction(menu, "生命周期测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_lifetimeTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "DNS资格测试");
-        XAction_setAction(action, XNetworkAddressEntry_dnsTest);
+        XAction* action = XTestMenu_addAction(menu, "DNS资格测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_dnsTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "地址类型测试");
-        XAction_setAction(action, XNetworkAddressEntry_typeTest);
+        XAction* action = XTestMenu_addAction(menu, "地址类型测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_typeTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "比较测试");
-        XAction_setAction(action, XNetworkAddressEntry_compareTest);
+        XAction* action = XTestMenu_addAction(menu, "比较测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_compareTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "复制测试");
-        XAction_setAction(action, XNetworkAddressEntry_copyTest);
+        XAction* action = XTestMenu_addAction(menu, "复制测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_copyTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "交换测试");
-        XAction_setAction(action, XNetworkAddressEntry_swapTest);
+        XAction* action = XTestMenu_addAction(menu, "交换测试");
+        XTestMenu_setActionFunction(action, XNetworkAddressEntry_swapTest);
     }
 }

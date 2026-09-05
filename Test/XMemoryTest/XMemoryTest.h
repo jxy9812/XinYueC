@@ -4,12 +4,13 @@
 extern "C" {
 #endif
 #include"CXinYueConfig.h"
+#include "XTestMenu.h"
 #include"XClass.h"
 #if DEMOTEST
-	void XMenu_XMemoryTest(XMenu* root);
-	void XMenu_XMultiPoolTest(XMenu* root);
+	void XTestMenu_XMemoryTest(XTestMenu* root);
+	void XTestMenu_XMultiPoolTest(XTestMenu* root);
 	void XVariablePoolTest(void);
-	void XMenu_XVariablePoolTest(XMenu* root);
+	void XTestMenu_XVariablePoolTest(XTestMenu* root);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

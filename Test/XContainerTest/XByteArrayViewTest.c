@@ -8,7 +8,7 @@
 #if DEMOTEST
 #include "XByteArrayView.h"
 #include "XByteArray.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include <string.h>
@@ -522,57 +522,57 @@ void XByteArrayViewTest(void)
     XByteArrayViewTest_All();
 }
 
-void XMenu_XByteArrayViewTest(XMenu* root)
+void XTestMenu_XByteArrayViewTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("ByteArrayView(字节数组视图)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("ByteArrayView(字节数组视图)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全部测试");
-        XAction_setAction(action, XByteArrayViewTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全部测试");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_All);
     }
     {
-        XAction* action = XMenu_addAction(menu, "构造与创建");
-        XAction_setAction(action, XByteArrayViewTest_Create);
+        XAction* action = XTestMenu_addAction(menu, "构造与创建");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Create);
     }
     {
-        XAction* action = XMenu_addAction(menu, "基本访问");
-        XAction_setAction(action, XByteArrayViewTest_Access);
+        XAction* action = XTestMenu_addAction(menu, "基本访问");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Access);
     }
     {
-        XAction* action = XMenu_addAction(menu, "子视图");
-        XAction_setAction(action, XByteArrayViewTest_SubView);
+        XAction* action = XTestMenu_addAction(menu, "子视图");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_SubView);
     }
     {
-        XAction* action = XMenu_addAction(menu, "原地修改");
-        XAction_setAction(action, XByteArrayViewTest_Modify);
+        XAction* action = XTestMenu_addAction(menu, "原地修改");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Modify);
     }
     {
-        XAction* action = XMenu_addAction(menu, "查找");
-        XAction_setAction(action, XByteArrayViewTest_Find);
+        XAction* action = XTestMenu_addAction(menu, "查找");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Find);
     }
     {
-        XAction* action = XMenu_addAction(menu, "比较");
-        XAction_setAction(action, XByteArrayViewTest_Compare);
+        XAction* action = XTestMenu_addAction(menu, "比较");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Compare);
     }
     {
-        XAction* action = XMenu_addAction(menu, "修剪");
-        XAction_setAction(action, XByteArrayViewTest_Trim);
+        XAction* action = XTestMenu_addAction(menu, "修剪");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Trim);
     }
     {
-        XAction* action = XMenu_addAction(menu, "数值转换");
-        XAction_setAction(action, XByteArrayViewTest_NumConvert);
+        XAction* action = XTestMenu_addAction(menu, "数值转换");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_NumConvert);
     }
     {
-        XAction* action = XMenu_addAction(menu, "UTF-8检测");
-        XAction_setAction(action, XByteArrayViewTest_Utf8Check);
+        XAction* action = XTestMenu_addAction(menu, "UTF-8检测");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Utf8Check);
     }
     {
-        XAction* action = XMenu_addAction(menu, "迭代器");
-        XAction_setAction(action, XByteArrayViewTest_Iterator);
+        XAction* action = XTestMenu_addAction(menu, "迭代器");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_Iterator);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Null/空边界");
-        XAction_setAction(action, XByteArrayViewTest_NullEmpty);
+        XAction* action = XTestMenu_addAction(menu, "Null/空边界");
+        XTestMenu_setActionFunction(action, XByteArrayViewTest_NullEmpty);
     }
 }
 #endif

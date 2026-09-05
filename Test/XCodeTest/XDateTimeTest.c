@@ -1,7 +1,7 @@
 ﻿#include "XPrintf.h"
 #include"XCodeTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XDateTime.h"
@@ -173,12 +173,12 @@ void XDateTimeTest()
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
-void XMenu_XDateTimeTest(XMenu* root)
+void XTestMenu_XDateTimeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XDateTime(日期时间)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XDateTime(日期时间)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XDateTimeTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XDateTimeTest);
 	}
 }

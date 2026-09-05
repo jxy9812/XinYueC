@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XCircularQueue.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -175,18 +175,18 @@ static void XCQAllTest(void)
 }
 #endif
 
-void XMenu_XCircularQueueTest(XMenu* root)
+void XTestMenu_XCircularQueueTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCircularQueue(环形队列)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XCircularQueue(环形队列)");
+    XTestMenu_addMenu(root, menu);
 #if XCircularQueue_ON
-    { XAction* a = XMenu_addAction(menu, "【全部测试】"); XAction_setAction(a, (Action)XCQAllTest); }
-    { XAction* a = XMenu_addAction(menu, "基础 FIFO / Qt 别名"); XAction_setAction(a, (Action)XCQBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "环绕 (wraparound)"); XAction_setAction(a, (Action)XCQWrapTest); }
-    { XAction* a = XMenu_addAction(menu, "自动扩容 1.5×"); XAction_setAction(a, (Action)XCQAutoExpansionTest); }
-    { XAction* a = XMenu_addAction(menu, "isFull / 满时行为"); XAction_setAction(a, (Action)XCQFullTest); }
-    { XAction* a = XMenu_addAction(menu, "remove(v,n)"); XAction_setAction(a, (Action)XCQRemoveTest); }
-    { XAction* a = XMenu_addAction(menu, "压力 1000 轮"); XAction_setAction(a, (Action)XCQBulkTest); }
+    { XAction* a = XTestMenu_addAction(menu, "【全部测试】"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQAllTest); }
+    { XAction* a = XTestMenu_addAction(menu, "基础 FIFO / Qt 别名"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "环绕 (wraparound)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQWrapTest); }
+    { XAction* a = XTestMenu_addAction(menu, "自动扩容 1.5×"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQAutoExpansionTest); }
+    { XAction* a = XTestMenu_addAction(menu, "isFull / 满时行为"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQFullTest); }
+    { XAction* a = XTestMenu_addAction(menu, "remove(v,n)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQRemoveTest); }
+    { XAction* a = XTestMenu_addAction(menu, "压力 1000 轮"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XCQBulkTest); }
 #endif
 }
 #endif

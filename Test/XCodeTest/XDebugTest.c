@@ -1,6 +1,6 @@
 ﻿#include"XCodeTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XInfo.h"
@@ -27,12 +27,12 @@ void XDebugTest()
 	//XCoreApplication_quit();
 }
 
-void XMenu_XDebugTest(XMenu* root)
+void XTestMenu_XDebugTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XDebug(调试器)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XDebug(调试器)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XDebugTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XDebugTest);
 	}
 }

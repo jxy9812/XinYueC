@@ -4,50 +4,51 @@
 extern "C" {
 #endif
 #include"CXinYueConfig.h"
+#include "XTestMenu.h"
 #include"XClass.h"
 #if DEMOTEST
 	//容器主菜单
-	void XMenu_XContainerTest(XMenu* root);
+	void XTestMenu_XContainerTest(XTestMenu* root);
 
 	//数组
-	void XMenu_VectorTest(XMenu* root);
-	void XMenu_XVectorTest(XMenu* root);
-	void XMenu_XStringListTest(XMenu* root);
-	void XMenu_XVariantListTest(XMenu* root);
-	void XMenu_XByteArrayTest(XMenu* root);
-	void XMenu_XBitArrayTest(XMenu* root);
-	void XMenu_XContainerMemoryTest(XMenu* root);
+	void XTestMenu_VectorTest(XTestMenu* root);
+	void XTestMenu_XVectorTest(XTestMenu* root);
+	void XTestMenu_XStringListTest(XTestMenu* root);
+	void XTestMenu_XVariantListTest(XTestMenu* root);
+	void XTestMenu_XByteArrayTest(XTestMenu* root);
+	void XTestMenu_XBitArrayTest(XTestMenu* root);
+	void XTestMenu_XContainerMemoryTest(XTestMenu* root);
 
-	void XMenu_ListTest(XMenu* root);
-	void XMenu_XListDLinkedTest(XMenu* root);
-	void XMenu_XListSLinkedTest(XMenu* root);
-	void XMenu_XLockFreeListTest(XMenu* root);
+	void XTestMenu_ListTest(XTestMenu* root);
+	void XTestMenu_XListDLinkedTest(XTestMenu* root);
+	void XTestMenu_XListSLinkedTest(XTestMenu* root);
+	void XTestMenu_XLockFreeListTest(XTestMenu* root);
 
 	//栈
-	void XMenu_XStackTest(XMenu* root);
+	void XTestMenu_XStackTest(XTestMenu* root);
 	//队列
-	void XMenu_QueueTest(XMenu* root);
-	void XMenu_XCircularQueueTest(XMenu* root);
-	void XMenu_XLockFreeQueueTest(XMenu* root);
-	void XMenu_XPriorityQueueTest(XMenu* root);
-	void XMenu_XQueueTest(XMenu* root);
-	void XMenu_XPriorityMapQueueTest(XMenu* root);
+	void XTestMenu_QueueTest(XTestMenu* root);
+	void XTestMenu_XCircularQueueTest(XTestMenu* root);
+	void XTestMenu_XLockFreeQueueTest(XTestMenu* root);
+	void XTestMenu_XPriorityQueueTest(XTestMenu* root);
+	void XTestMenu_XQueueTest(XTestMenu* root);
+	void XTestMenu_XPriorityMapQueueTest(XTestMenu* root);
 	//映射 Map
-	void XMenu_MapTest(XMenu* root);
-	void XMenu_XMapTest(XMenu* root);
-	void XMenu_XHashMapTest(XMenu* root);
+	void XTestMenu_MapTest(XTestMenu* root);
+	void XTestMenu_XMapTest(XTestMenu* root);
+	void XTestMenu_XHashMapTest(XTestMenu* root);
 	//集合 set
-	void XMenu_SetTest(XMenu* root);
-	void XMenu_XSetTest(XMenu* root);
-	void XMenu_XHashSetTest(XMenu* root);
+	void XTestMenu_SetTest(XTestMenu* root);
+	void XTestMenu_XSetTest(XTestMenu* root);
+	void XTestMenu_XHashSetTest(XTestMenu* root);
 
-	void XMenu_XRingChunkTest(XMenu* root);
-	void XMenu_XRingBufferTest(XMenu* root);
+	void XTestMenu_XRingChunkTest(XTestMenu* root);
+	void XTestMenu_XRingBufferTest(XTestMenu* root);
 	//字符串
-	void XMenu_XStringTest(XMenu* root);
+	void XTestMenu_XStringTest(XTestMenu* root);
 
-	void XMenu_XJsonTest(XMenu* root);
-	void XMenu_XBsonTest(XMenu* root);
+	void XTestMenu_XJsonTest(XTestMenu* root);
+	void XTestMenu_XBsonTest(XTestMenu* root);
 
 	//字符串数组测试
 	void XStringListTest();
@@ -69,12 +70,12 @@ extern "C" {
 	void XJsonObjectTest();
 
 	// ==================== 视图测试 ====================
-	void XMenu_XViewTest(XMenu* root);
-	void XMenu_XByteArrayViewTest(XMenu* root);
-	void XMenu_XStringViewTest(XMenu* root);
-	void XMenu_XLatin1StringViewTest(XMenu* root);
-	void XMenu_XUtf8StringViewTest(XMenu* root);
-	void XMenu_XAnyStringViewTest(XMenu* root);
+	void XTestMenu_XViewTest(XTestMenu* root);
+	void XTestMenu_XByteArrayViewTest(XTestMenu* root);
+	void XTestMenu_XStringViewTest(XTestMenu* root);
+	void XTestMenu_XLatin1StringViewTest(XTestMenu* root);
+	void XTestMenu_XUtf8StringViewTest(XTestMenu* root);
+	void XTestMenu_XAnyStringViewTest(XTestMenu* root);
 
 	void XByteArrayViewTest(void);
 	void XStringViewTest(void);

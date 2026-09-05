@@ -173,12 +173,18 @@
 
 /**
  * @brief 新建 XFont 未指定家族时使用的默认字体家族名称。
- * @details 可以配置为已注册的 provider 名称，例如 "XFont8x16"；外挂字库
- *          使用不含 ".bin" 后缀的文件名，并由 XFONT_EXTERNAL_FONT_DIR
- *          指定搜索目录。
+ * @details 默认使用轮廓字库 XFontOutlineCommon（含 ASCII/标点与 GB2312
+ *          一级常用汉字，文本渲染默认支持中文）；XFont8x16 点阵仅在轮廓
+ *          字库被裁剪时作为回退。可以配置为其它已注册 provider 名称，
+ *          例如外挂字库使用不含 ".bin" 后缀的文件名，并由
+ *          XFONT_EXTERNAL_FONT_DIR 指定搜索目录。
  */
 #ifndef XFONT_DEFAULT_FAMILY
+#if XFONT_OUTLINE_ON
+#define XFONT_DEFAULT_FAMILY "XFontOutlineCommon"
+#else
 #define XFONT_DEFAULT_FAMILY "XFont8x16"
+#endif
 #endif
 
 /* 点阵 provider 的最大单元尺寸。位图按行存储，每行字节数由宽度向上

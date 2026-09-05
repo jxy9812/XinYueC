@@ -1,7 +1,7 @@
 ﻿#include "XNetworkTest.h"
 #include "XNetworkProxy.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XString.h"
 #include "XHostAddress.h"
@@ -577,57 +577,57 @@ static void XNetworkProxy_comprehensiveTest(void)
 
 // ==================== 菜单注册 ====================
 
-void XMenu_XNetworkProxyTest(XMenu* root)
+void XTestMenu_XNetworkProxyTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XNetworkProxy(网络代理)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XNetworkProxy(网络代理)");
+    XTestMenu_addMenu(root, menu);
     
     {
-        XAction* action = XMenu_addAction(menu, "综合测试");
-        XAction_setAction(action, XNetworkProxy_comprehensiveTest);
+        XAction* action = XTestMenu_addAction(menu, "综合测试");
+        XTestMenu_setActionFunction(action, XNetworkProxy_comprehensiveTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "ProxyQuery基础测试");
-        XAction_setAction(action, testProxyQuery_basic);
+        XAction* action = XTestMenu_addAction(menu, "ProxyQuery基础测试");
+        XTestMenu_setActionFunction(action, testProxyQuery_basic);
     }
     {
-        XAction* action = XMenu_addAction(menu, "ProxyQuery Setter测试");
-        XAction_setAction(action, testProxyQuery_setters);
+        XAction* action = XTestMenu_addAction(menu, "ProxyQuery Setter测试");
+        XTestMenu_setActionFunction(action, testProxyQuery_setters);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Proxy基础测试");
-        XAction_setAction(action, testProxy_basic);
+        XAction* action = XTestMenu_addAction(menu, "Proxy基础测试");
+        XTestMenu_setActionFunction(action, testProxy_basic);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Proxy类型测试");
-        XAction_setAction(action, testProxy_types);
+        XAction* action = XTestMenu_addAction(menu, "Proxy类型测试");
+        XTestMenu_setActionFunction(action, testProxy_types);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Proxy能力测试");
-        XAction_setAction(action, testProxy_capabilities);
+        XAction* action = XTestMenu_addAction(menu, "Proxy能力测试");
+        XTestMenu_setActionFunction(action, testProxy_capabilities);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Proxy Setter测试");
-        XAction_setAction(action, testProxy_setters);
+        XAction* action = XTestMenu_addAction(menu, "Proxy Setter测试");
+        XTestMenu_setActionFunction(action, testProxy_setters);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Proxy拷贝测试");
-        XAction_setAction(action, testProxy_copy);
+        XAction* action = XTestMenu_addAction(menu, "Proxy拷贝测试");
+        XTestMenu_setActionFunction(action, testProxy_copy);
     }
     {
-        XAction* action = XMenu_addAction(menu, "应用级代理测试");
-        XAction_setAction(action, testProxy_applicationProxy);
+        XAction* action = XTestMenu_addAction(menu, "应用级代理测试");
+        XTestMenu_setActionFunction(action, testProxy_applicationProxy);
     }
     {
-        XAction* action = XMenu_addAction(menu, "ProxyFactory基础测试");
-        XAction_setAction(action, testProxyFactory_basic);
+        XAction* action = XTestMenu_addAction(menu, "ProxyFactory基础测试");
+        XTestMenu_setActionFunction(action, testProxyFactory_basic);
     }
     {
-        XAction* action = XMenu_addAction(menu, "系统代理配置测试");
-        XAction_setAction(action, testProxyFactory_systemConfig);
+        XAction* action = XTestMenu_addAction(menu, "系统代理配置测试");
+        XTestMenu_setActionFunction(action, testProxyFactory_systemConfig);
     }
     {
-        XAction* action = XMenu_addAction(menu, "应用级工厂测试");
-        XAction_setAction(action, testProxyFactory_applicationFactory);
+        XAction* action = XTestMenu_addAction(menu, "应用级工厂测试");
+        XTestMenu_setActionFunction(action, testProxyFactory_applicationFactory);
     }
 }

@@ -1,6 +1,6 @@
 ﻿#include "XCodeTest.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XRandomGenerator.h"
 #include <stdio.h>
@@ -268,12 +268,12 @@ void XRandomGeneratorTest(void)
     XPrintf("\n=== 所有XRandomGenerator测试完成 ===\n");
 }
 
-void XMenu_XRandomGeneratorTest(XMenu* root)
+void XTestMenu_XRandomGeneratorTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XRandomGenerator(随机数生成器)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XRandomGenerator(随机数生成器)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XRandomGeneratorTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XRandomGeneratorTest);
     }
 }

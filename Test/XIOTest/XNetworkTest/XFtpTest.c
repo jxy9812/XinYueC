@@ -12,7 +12,7 @@
 #include "XThread.h"
 #include "XCoreApplication.h"
 #include "XObject.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -522,18 +522,18 @@ WRAP_ACTION(test_xftp_e2e_rename_remove)
 WRAP_ACTION(test_xftp_e2e_raw)
 
 #define ADD_TEST(menu, name, fn) do {                       \
-        XAction* a = XMenu_addAction(menu, name);           \
-        if (a) XAction_setAction(a, wrap_##fn);             \
+        XAction* a = XTestMenu_addAction(menu, name);           \
+        if (a) XTestMenu_setActionFunction(a, wrap_##fn);             \
     } while (0)
 
 /**
  * @brief 将全部 XFtp 测试注册到 root 菜单的 "XFtp(FTP客户端)" 子菜单下
  */
-void XFtpTest_registerAll(XMenu* root)
+void XFtpTest_registerAll(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XFtp(FTP客户端)");
+    XTestMenu* menu = XTestMenu_create("XFtp(FTP客户端)");
     if (!menu) return;
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
 
     /* 单元测试（不需服务器） */
     ADD_TEST(menu, "01 创建与销毁",                test_xftp_create_destroy);

@@ -12,7 +12,7 @@
 #include "XJsonDocument.h"
 #include "XJsonObject.h"
 #include "XJsonValue.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XString.h"
 #include "XVariant.h"
 #include "XVariantList.h"
@@ -735,20 +735,20 @@ static void XBsonTest_runInvalid(void)
 	XBsonTest_runSelected(false, false, false, false, true);
 }
 
-void XMenu_XBsonTest(XMenu* root)
+void XTestMenu_XBsonTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XBson(Bson)");
-	XMenu_addMenu(root, menu);
-	XAction* all = XMenu_addAction(menu, "运行全部 XBson 测试");
-	XAction_setAction(all, XBsonTest_runAll);
-	XAction* standard = XMenu_addAction(menu, "BSON 标准字节与全部类型");
-	XAction_setAction(standard, XBsonTest_runStandard);
-	XAction* api = XMenu_addAction(menu, "文档、数组和值 API");
-	XAction_setAction(api, XBsonTest_runApi);
-	XAction* json = XMenu_addAction(menu, "XBson 与 XJson 双向转换");
-	XAction_setAction(json, XBsonTest_runJson);
-	XAction* invalid = XMenu_addAction(menu, "非法 BSON 输入");
-	XAction_setAction(invalid, XBsonTest_runInvalid);
+	XTestMenu* menu = XTestMenu_create("XBson(Bson)");
+	XTestMenu_addMenu(root, menu);
+	XAction* all = XTestMenu_addAction(menu, "运行全部 XBson 测试");
+	XTestMenu_setActionFunction(all, XBsonTest_runAll);
+	XAction* standard = XTestMenu_addAction(menu, "BSON 标准字节与全部类型");
+	XTestMenu_setActionFunction(standard, XBsonTest_runStandard);
+	XAction* api = XTestMenu_addAction(menu, "文档、数组和值 API");
+	XTestMenu_setActionFunction(api, XBsonTest_runApi);
+	XAction* json = XTestMenu_addAction(menu, "XBson 与 XJson 双向转换");
+	XTestMenu_setActionFunction(json, XBsonTest_runJson);
+	XAction* invalid = XTestMenu_addAction(menu, "非法 BSON 输入");
+	XTestMenu_setActionFunction(invalid, XBsonTest_runInvalid);
 }
 
 #endif

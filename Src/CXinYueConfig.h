@@ -1,4 +1,4 @@
-﻿#ifndef CXINYUECONFIG_H
+#ifndef CXINYUECONFIG_H
 #define CXINYUECONFIG_H
 
 #ifdef __cplusplus
@@ -80,6 +80,16 @@ extern "C" {
 #include"XClassConfig.h"
 #include"XContainerConfig.h"
 #include"XProcessConfig.h"
+
+/* ========================================================================== */
+/*                              XAction 动作模块开关                              */
+/* ========================================================================== */
+/** @brief XAction 模块总开关；置 0 时裁剪 XAction 公共 API 及其实现。
+ * @note 该模块对标 Qt 6.8 QAction，位于 XCode 层、依赖 XObject 信号体系；
+ *       关闭后依赖 XAction 的 Test/XTestMenu 测试菜单相关能力也需同步裁剪。 */
+#ifndef XACTION_ON
+#define XACTION_ON 1
+#endif
 
 
 /* ========================================================================== */

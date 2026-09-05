@@ -1,6 +1,6 @@
 ﻿#include"XTimerTest.h"
 #include"XTimeWheelGroup.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -265,22 +265,22 @@ void XTimerTimeWheelTest()
 	//while(true) XTimeWheelGroup_handler_base(wheel);
 }
 
-void XMenu_XTimerTimeWheelTest(XMenu* root)
+void XTestMenu_XTimerTimeWheelTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XTimerTimeWheel(时间轮定时器)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XTimerTimeWheel(时间轮定时器)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XTimerTimeWheelTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XTimerTimeWheelTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "取消回收回归测试");
-		XAction_setAction(action, XTimerTimeWheelCancelRegressionTest);
+		XAction* action = XTestMenu_addAction(menu, "取消回收回归测试");
+		XTestMenu_setActionFunction(action, XTimerTimeWheelCancelRegressionTest);
 	}
 	{
 #if XTHREAD_ON
-		XAction* action = XMenu_addAction(menu, "MPSC多线程回归测试");
-		XAction_setAction(action, XTimerTimeWheelMpscRegressionTest);
+		XAction* action = XTestMenu_addAction(menu, "MPSC多线程回归测试");
+		XTestMenu_setActionFunction(action, XTimerTimeWheelMpscRegressionTest);
 #endif // XTHREAD_ON
 	}
 }

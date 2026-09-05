@@ -8,7 +8,7 @@
 #include "XString.h"
 #include "XXmlStreamReader.h"
 #include "XFile.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include "XVariant.h"
@@ -1212,11 +1212,11 @@ static void xdom_run_all_wrapper(XVariant* data)
     XDomTest_runAll();
 }
 
-void XMenu_XDomTest(XMenu* root)
+void XTestMenu_XDomTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XDomTest");
-    XMenu_addMenu(root, menu);
-    XAction* action = XMenu_addAction(menu, "全部测试");
-    XAction_setAction(action, xdom_run_all_wrapper);
+    XTestMenu* menu = XTestMenu_create("XDomTest");
+    XTestMenu_addMenu(root, menu);
+    XAction* action = XTestMenu_addAction(menu, "全部测试");
+    XTestMenu_setActionFunction(action, xdom_run_all_wrapper);
 }
 #endif

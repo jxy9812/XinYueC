@@ -1,6 +1,6 @@
 ﻿#include "XCodeTest.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XByteArray.h"
 #include "XCryptographic.h"
@@ -469,12 +469,12 @@ void XCryptographicHashTest(void)
     XPrintf("\n=== All XCryptographicHash tests completed ===\n");
 }
 
-void XMenu_XCryptographicHashTest(XMenu* root)
+void XTestMenu_XCryptographicHashTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCryptographicHash(加密哈希)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XCryptographicHash(加密哈希)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XCryptographicHashTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XCryptographicHashTest);
     }
 }

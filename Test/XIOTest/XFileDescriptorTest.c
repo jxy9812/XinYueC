@@ -14,7 +14,7 @@
 
 #include "XIOTest.h"
 #include "XMemory.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XCoreApplication.h"
 #include "XFileDescriptor.h"
@@ -213,12 +213,12 @@ void XFileDescriptorTest(void)
  * 注册到菜单
  * ============================================================================ */
 
-void XMenu_XFileDescriptorTest(XMenu* root)
+void XTestMenu_XFileDescriptorTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XFileDescriptor(描述符表)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XFileDescriptor(描述符表)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "完整测试");
-        XAction_setAction(action, XFileDescriptorTest);
+        XAction* action = XTestMenu_addAction(menu, "完整测试");
+        XTestMenu_setActionFunction(action, XFileDescriptorTest);
     }
 }

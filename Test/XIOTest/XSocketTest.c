@@ -3,7 +3,7 @@
 #include"XTcpSocket.h"
 #include"XSslSocket.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XByteArray.h"
 #include"XCoreApplication.h"
@@ -216,20 +216,20 @@ void XSocketTest()
 	XTcpSocket_write_1(socket,"hello",6);
 	XCoreApplication_exec();
 }
-void XMenu_XSocketTest(XMenu* root)
+void XTestMenu_XSocketTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XSocket(网络客户端)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XSocket(网络客户端)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XSocketTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XSocketTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "百度外网测试");
-		XAction_setAction(action, XSocketTest_Baidu);
+		XAction* action = XTestMenu_addAction(menu, "百度外网测试");
+		XTestMenu_setActionFunction(action, XSocketTest_Baidu);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "百度HTTPS测试");
-		XAction_setAction(action, XSocketTest_BaiduHttps);
+		XAction* action = XTestMenu_addAction(menu, "百度HTTPS测试");
+		XTestMenu_setActionFunction(action, XSocketTest_BaiduHttps);
 	}
 }

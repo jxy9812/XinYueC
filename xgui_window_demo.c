@@ -55,6 +55,9 @@
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
 #include "XCommandLinkButton.h"
 #endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+#include "XToolButton.h"
+#endif
 #include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
@@ -119,6 +122,11 @@ typedef struct DemoWin
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
     XCommandLinkButton m_commandLink; /**< 页面 0：命令链接按钮（双行描述）。 */
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+    XToolButton     m_toolButton; /**< 页面 0：工具按钮（默认动作 + 弹出菜单）。 */
+    XAction         m_toolAction; /**< 工具按钮默认动作（嵌入）。 */
+    XMenu           m_toolMenu; /**< 工具按钮弹出菜单（嵌入）。 */
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
     XCheckBox       m_checkBox; /**< 页面 1：三态复选框。 */
@@ -618,6 +626,31 @@ static const char* demo_page_name(int index)
     return kNames[index];
 }
 
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+/** @brief 按当前窗口尺寸更新标题栏/状态栏标签几何（resize 时调用）。
+ * @details 标题栏基底位于 (0,0,w,40)、状态栏基底位于 (0,h-26,w,26)，
+ *          文本标签必须跟随窗口尺寸重新定位，否则改变窗口大小后状态栏
+ *          文本会与底部黑色矩形错位或超出可视区域。 */
+static void demo_layout_chrome(DemoWin* self)
+{
+    int width;
+    int height;
+    int labelWidth;
+
+    if (!self) return;
+    width = XWidget_width(&self->m_base);
+    height = XWidget_height(&self->m_base);
+    if (width < 0) width = 0;
+    if (height < 0) height = 0;
+    labelWidth = width > 16 ? width - 16 : 0;
+    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, 0,
+                        labelWidth, 40);
+    if (height >= 26)
+        XWidget_setGeometry((XWidget*)&self->m_statusLabel, 16,
+                            height - 26, labelWidth, 26);
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 /** @brief 按当前窗口尺寸重新分配主内容区几何（切换页面/resize 时调用）。 */
 static void demo_layout_content(DemoWin* self)
 {
@@ -715,6 +748,52 @@ static void demo_commandlink_clickedSlot(XObject* receiver, XVarList* args)
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+/** @brief 页面 1 工具按钮 clicked 槽：弹出关联菜单并更新状态栏。 */
+static void demo_toolbutton_clickedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    (void)args;
+    if (!self) return;
+    XToolButton_showMenu(&self->m_toolButton);
+    demo_set_status(self, "工具按钮：弹出菜单");
+}
+
+/** @brief 页面 1 工具按钮 triggered(XAction*) 槽：显示默认动作被触发。 */
+static void demo_toolbutton_triggeredSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    (void)args;
+    if (!self) return;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_linkLabel, "工具按钮：触发默认动作");
+#endif
+    demo_set_status(self, "工具按钮：触发默认动作");
+}
+
+/** @brief 页面 1 工具按钮菜单 triggered(XAction*) 槽：显示选中的菜单项。 */
+static void demo_toolmenu_triggeredSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XVarList_args_1(args, XAction*, action);
+    const char* text = NULL;
+
+    if (!self) return;
+    if (action)
+        text = XString_toUtf8(XAction_text_const(action));
+    if (!text)
+        text = "";
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "工具按钮菜单：%s", text);
+        XLabel_setText_2(&self->m_linkLabel, buf);
+    }
+#endif
+    demo_set_status(self, text);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON */
+
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 /** @brief 页面 3 内层上一页按钮 clicked 槽：循环切换内层堆叠。 */
 static void demo_stack_prev_clickedSlot(XObject* receiver, XVarList* args)
@@ -810,6 +889,9 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
     demo->m_staticSceneDirty = true;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_layout_chrome(demo);
+#endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     demo_layout_content(demo);
 #endif
@@ -1103,7 +1185,7 @@ static DemoWin* DemoWin_create(void)
     XLabel_setText_2(&self->m_linkLabel, "就绪");
     XLabel_setTextPixelSize(&self->m_linkLabel, 16);
     XLabel_setAlignment(&self->m_linkLabel, XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40, 180, 420, 24);
+    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40, 212, 420, 24);
     XWidget_show((XWidget*)&self->m_linkLabel);
 #endif
 #endif
@@ -1121,6 +1203,41 @@ static DemoWin* DemoWin_create(void)
                       (XObject*)self, demo_commandlink_clickedSlot,
                       XConnectionType_Direct);
     XWidget_show((XWidget*)&self->m_commandLink);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+    /* ---- 页面 0：工具按钮（默认动作 + 弹出菜单） ---- */
+    XAction_init(&self->m_toolAction);
+    XAction_setText_2(&self->m_toolAction, "工具按钮");
+    XToolButton_init(&self->m_toolButton, (XWidget*)&self->m_pageButtons, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_toolButton);
+    XAbstractButton_setText_2((XAbstractButton*)&self->m_toolButton,
+                              "工具按钮");
+    XToolButton_setToolButtonStyle(
+        &self->m_toolButton, XToolButtonStyle_TextBesideIcon);
+    XToolButton_setDefaultAction(&self->m_toolButton, &self->m_toolAction);
+    XWidget_setGeometry((XWidget*)&self->m_toolButton, 40, 168, 150, 32);
+    XObject_connect_1((XObject*)&self->m_toolButton,
+                      (size_t)XToolButton_triggered_signal(NULL, NULL),
+                      (XObject*)self, demo_toolbutton_triggeredSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_toolButton,
+                      (size_t)XAbstractButton_clicked_signal(NULL, false),
+                      (XObject*)self, demo_toolbutton_clickedSlot,
+                      XConnectionType_Direct);
+    XWidget_show((XWidget*)&self->m_toolButton);
+    /* 弹出菜单：打开 / 另存为 / 分隔 / 退出。 */
+    XMenu_init(&self->m_toolMenu, NULL);
+    /* 菜单默认字体改为轮廓字库（含 GB2312 汉字），否则中文条目无法渲染。 */
+    demo_set_widget_default_font((XWidget*)&self->m_toolMenu);
+    XMenu_addAction_2(&self->m_toolMenu, "打开");
+    XMenu_addAction_2(&self->m_toolMenu, "另存为");
+    XMenu_addSeparator(&self->m_toolMenu);
+    XMenu_addAction_2(&self->m_toolMenu, "退出");
+    XToolButton_setMenu(&self->m_toolButton, &self->m_toolMenu);
+    XObject_connect_1((XObject*)&self->m_toolMenu,
+                      (size_t)XMenu_triggered_signal(NULL, NULL),
+                      (XObject*)self, demo_toolmenu_triggeredSlot,
+                      XConnectionType_Direct);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
     /* ---- 页面 2：选择演示 ---- */
@@ -1310,6 +1427,9 @@ int main(int argc, char* argv[])
         XString_delete_base((XClass*)title);
     }
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_layout_chrome(win);
+#endif
 
     /* 3) 显示窗口：触发框架内部的惰性平台窗口创建并进入事件循环。 */
     XWidget_showNormal(&win->m_base);
@@ -1357,6 +1477,12 @@ int main(int argc, char* argv[])
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
     XCommandLinkButton_deinit_base(&win->m_commandLink);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
+    /* 先解绑工具按钮（断开与默认动作/菜单的连接），再释放菜单与动作。 */
+    XToolButton_deinit_base(&win->m_toolButton);
+    XMenu_deinit_base(&win->m_toolMenu);
+    XAction_deinit_base(&win->m_toolAction);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_deinit_base(&win->m_linkLabel);

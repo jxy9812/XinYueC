@@ -6,7 +6,7 @@
 #include"XStack.h"
 #include"XLockFreeStack.h"
 #include"XThread.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -329,22 +329,22 @@ static void XStackAllTest(void)
 }
 #endif /* XStack_ON */
 
-void XMenu_XStackTest(XMenu* root)
+void XTestMenu_XStackTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XStack(栈)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XStack(栈)");
+    XTestMenu_addMenu(root, menu);
 #if XStack_ON
-    { XAction* a = XMenu_addAction(menu, "【全部测试(不含并发)】"); XAction_setAction(a, (Action)XStackAllTest); }
-    { XAction* a = XMenu_addAction(menu, "XStack 基础 LIFO / Qt 别名"); XAction_setAction(a, (Action)XStackBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "XStack 移动语义压栈"); XAction_setAction(a, (Action)XStackMoveTest); }
-    { XAction* a = XMenu_addAction(menu, "XStack 变长元素(字符串)"); XAction_setAction(a, (Action)XStackStringTest); }
-    { XAction* a = XMenu_addAction(menu, "XStack 压力(10000)"); XAction_setAction(a, (Action)XStackBulkTest); }
-    { XAction* a = XMenu_addAction(menu, "XStack clear"); XAction_setAction(a, (Action)XStackClearTest); }
-    { XAction* a = XMenu_addAction(menu, "XLockFreeStack 基础 LIFO / Qt 别名"); XAction_setAction(a, (Action)XLFSBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "XLockFreeStack isFull 边界"); XAction_setAction(a, (Action)XLFSFullTest); }
-    { XAction* a = XMenu_addAction(menu, "XLockFreeStack 大量数据(单线程 100000)"); XAction_setAction(a, (Action)XLFSBulkTest); }
+    { XAction* a = XTestMenu_addAction(menu, "【全部测试(不含并发)】"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackAllTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XStack 基础 LIFO / Qt 别名"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XStack 移动语义压栈"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackMoveTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XStack 变长元素(字符串)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackStringTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XStack 压力(10000)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackBulkTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XStack clear"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XStackClearTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XLockFreeStack 基础 LIFO / Qt 别名"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFSBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XLockFreeStack isFull 边界"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFSFullTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XLockFreeStack 大量数据(单线程 100000)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFSBulkTest); }
 #if XTHREAD_ON
-    { XAction* a = XMenu_addAction(menu, "XLockFreeStack 并发多生产/多消费"); XAction_setAction(a, (Action)XLFSConcurrentTest); }
+    { XAction* a = XTestMenu_addAction(menu, "XLockFreeStack 并发多生产/多消费"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XLFSConcurrentTest); }
 #endif // XTHREAD_ON
 #endif
 }

@@ -1,9 +1,9 @@
 ﻿#include "XDeviceTest.h"
-#include"XMenu.h"
-void XMenu_XDeviceTest(XMenu* root)
+#include"XTestMenu.h"
+void XTestMenu_XDeviceTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("设备");
-	XMenu_addMenu(root, menu);
-	XMenu_XESP8266WifiTest(menu);
+	XTestMenu* menu = XTestMenu_create("设备");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XESP8266WifiTest(menu);
 }
 

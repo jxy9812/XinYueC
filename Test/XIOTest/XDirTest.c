@@ -1,6 +1,6 @@
 ﻿#include"XIOTest.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XDir.h"
@@ -349,16 +349,16 @@ void XDirTest_fatfs(void)
     XPrintf_3("\n=== Fatfs 驱动器测试完成 ===\n");
 }
 
-void XMenu_XDirTest(XMenu* root)
+void XTestMenu_XDirTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XDir(目录操作)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XDir(目录操作)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XDirTest);
+        XAction* action = XTestMenu_addAction(menu, "主测试");
+        XTestMenu_setActionFunction(action, XDirTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Fatfs驱动器测试");
-        XAction_setAction(action, XDirTest_fatfs);
+        XAction* action = XTestMenu_addAction(menu, "Fatfs驱动器测试");
+        XTestMenu_setActionFunction(action, XDirTest_fatfs);
     }
 }

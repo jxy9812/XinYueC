@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include "CXinYueConfig.h"
+#include "XTestMenu.h"
 #include "XClass.h"
 #include <stdbool.h>
 
@@ -27,7 +28,7 @@ bool XDomTest_runAll(void);
  * @param      root 根菜单；函数只借用该菜单，不负责释放。
  * @return     无。
  */
-void XMenu_XDomTest(XMenu* root);
+void XTestMenu_XDomTest(XTestMenu* root);
 #endif
 
 #ifdef __cplusplus

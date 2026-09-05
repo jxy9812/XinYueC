@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XListSLinked.h"
 #include"XCompare.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -644,45 +644,45 @@ static void XListSLinkedAllTest(void)
 	//XCoreApplication_quit();
 }
 
-void XMenu_XListSLinkedTest(XMenu* root)
+void XTestMenu_XListSLinkedTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XListSLinked(单向链表)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XListSLinked(单向链表)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* a = XMenu_addAction(menu, "【全部测试】");
-		XAction_setAction(a, (Action)XListSLinkedAllTest);
+		XAction* a = XTestMenu_addAction(menu, "【全部测试】");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedAllTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "创建与初始化");
-		XAction_setAction(a, (Action)XListSLinkedCreateTest);
+		XAction* a = XTestMenu_addAction(menu, "创建与初始化");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedCreateTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "插入操作");
-		XAction_setAction(a, (Action)XListSLinkedInsertTest);
+		XAction* a = XTestMenu_addAction(menu, "插入操作");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedInsertTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "删除操作");
-		XAction_setAction(a, (Action)XListSLinkedRemoveTest);
+		XAction* a = XTestMenu_addAction(menu, "删除操作");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedRemoveTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "查找与访问");
-		XAction_setAction(a, (Action)XListSLinkedAccessTest);
+		XAction* a = XTestMenu_addAction(menu, "查找与访问");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedAccessTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "取出元素(take)");
-		XAction_setAction(a, (Action)XListSLinkedTakeTest);
+		XAction* a = XTestMenu_addAction(menu, "取出元素(take)");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedTakeTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "比较/复制/交换/排序");
-		XAction_setAction(a, (Action)XListSLinkedCompareTest);
+		XAction* a = XTestMenu_addAction(menu, "比较/复制/交换/排序");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedCompareTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "迭代器");
-		XAction_setAction(a, (Action)XListSLinkedIteratorTest);
+		XAction* a = XTestMenu_addAction(menu, "迭代器");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedIteratorTest);
 	}
 	{
-		XAction* a = XMenu_addAction(menu, "边界与安全检查");
-		XAction_setAction(a, (Action)XListSLinkedSafetyTest);
+		XAction* a = XTestMenu_addAction(menu, "边界与安全检查");
+		XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XListSLinkedSafetyTest);
 	}
 }
 #endif

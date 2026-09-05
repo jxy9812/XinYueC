@@ -4,7 +4,7 @@
 #include"XVector.h"
 #include"XPair.h"
 #include"XCompare.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -170,13 +170,13 @@ void XMapTest(void)
     XMapTest_All();
 }
 
-void XMenu_XMapTest(XMenu* root)
+void XTestMenu_XMapTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XMap(有序映射)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XMap(有序映射)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
-        XAction_setAction(action, XMapTest_All);
+        XAction* action = XTestMenu_addAction(menu, "全量测试(基础+Qt别名+压力)");
+        XTestMenu_setActionFunction(action, XMapTest_All);
     }
 }
 #endif

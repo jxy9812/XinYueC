@@ -1,6 +1,6 @@
 ﻿#include"XTimerTest.h"
 #include"XHrTimerGroup.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -132,12 +132,12 @@ void XHrTimerTest()
 	//while(true) XTimeWheelGroup_handler_base(wheel);
 }
 
-void XMenu_XHrTimerTest(XMenu* root)
+void XTestMenu_XHrTimerTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XHrTimer(高精度定时器组)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XHrTimer(高精度定时器组)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XHrTimerTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XHrTimerTest);
 	}
 }

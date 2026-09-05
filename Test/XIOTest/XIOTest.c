@@ -1,21 +1,21 @@
 ﻿#include"XIOTest.h"
 #include"XNetworkTest.h"
-#include"XMenu.h"
-void XMenu_XIOTest(XMenu* root)
+#include"XTestMenu.h"
+void XTestMenu_XIOTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("IO");
-	XMenu_addMenu(root, menu);
-	XMenu_XNetworkTest(menu);
-	XMenu_XSerialPortTest(menu);
-	XMenu_XSocketTest(menu);
-	XMenu_XSslTest(menu);
-	XMenu_XTcpServerTest(menu);
-	XMenu_XUdpSocketTest(menu);
-	XMenu_XTcpSocketTest(menu);
-	XMenu_XHostInfoTest(menu);
-	XMenu_XDirTest(menu);
-	XMenu_XFileTest(menu);
-	XMenu_XFileInfoTest(menu);
-	XMenu_XSaveFileTest(menu);
-	XMenu_XFileDescriptorTest(menu);
+	XTestMenu* menu = XTestMenu_create("IO");
+	XTestMenu_addMenu(root, menu);
+	XTestMenu_XNetworkTest(menu);
+	XTestMenu_XSerialPortTest(menu);
+	XTestMenu_XSocketTest(menu);
+	XTestMenu_XSslTest(menu);
+	XTestMenu_XTcpServerTest(menu);
+	XTestMenu_XUdpSocketTest(menu);
+	XTestMenu_XTcpSocketTest(menu);
+	XTestMenu_XHostInfoTest(menu);
+	XTestMenu_XDirTest(menu);
+	XTestMenu_XFileTest(menu);
+	XTestMenu_XFileInfoTest(menu);
+	XTestMenu_XSaveFileTest(menu);
+	XTestMenu_XFileDescriptorTest(menu);
 }

@@ -241,6 +241,12 @@
 #ifndef XCOMMANDLINKBUTTON_ON
 #define XCOMMANDLINKBUTTON_ON 1
 #endif
+#ifndef XMENU_ON
+#define XMENU_ON 1
+#endif
+#ifndef XTOOLBUTTON_ON
+#define XTOOLBUTTON_ON 1
+#endif
 #ifndef XLAYOUT_ON
 #define XLAYOUT_ON 1
 #endif
@@ -312,6 +318,10 @@
 #define XRADIOBUTTON_ON 0
 #undef XCOMMANDLINKBUTTON_ON
 #define XCOMMANDLINKBUTTON_ON 0
+#undef XMENU_ON
+#define XMENU_ON 0
+#undef XTOOLBUTTON_ON
+#define XTOOLBUTTON_ON 0
 #endif
 #if !XABSTRACTBUTTON_ON
 #undef XPUSHBUTTON_ON
@@ -320,10 +330,19 @@
 #define XCHECKBOX_ON 0
 #undef XRADIOBUTTON_ON
 #define XRADIOBUTTON_ON 0
+#undef XTOOLBUTTON_ON
+#define XTOOLBUTTON_ON 0
 #endif
 #if !XPUSHBUTTON_ON
 #undef XCOMMANDLINKBUTTON_ON
 #define XCOMMANDLINKBUTTON_ON 0
+#endif
+/* XPushButton 的菜单关联字段依赖 XMenu；XMenu 裁剪时连带裁剪。 */
+#if !XMENU_ON
+#undef XPUSHBUTTON_ON
+#define XPUSHBUTTON_ON 0
+#undef XTOOLBUTTON_ON
+#define XTOOLBUTTON_ON 0
 #endif
 #if !XFRAME_ON
 #undef XLABEL_ON

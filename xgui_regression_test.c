@@ -88,6 +88,12 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#if XWIDGET_ON && XMENU_ON
+#include "XMenu.h"
+#endif /* XWIDGET_ON && XMENU_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
+#include "XToolButton.h"
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XAccessible.h"
 #include "XPlatformAccessibility.h"
@@ -3897,12 +3903,19 @@ static void test_painter_raster_contract(void)
                     "background brush setter/getter matches Qt state");
         XImage_fillRect(&image, NULL, 0u);
         XPainter_setBackgroundMode(&painter, XPainterBackgroundMode_Opaque);
-        expect_true(XPainter_drawText(&painter, 0, 16, " ", 0xffffffffu),
-                    "opaque text accepts blank glyph");
-        expect_true(XImage_pixel(&image, 0,
-                                 16 - XPainter_textAscent(NULL)) ==
-                        0xff204060u,
-                    "opaque text fills glyph cell from background brush");
+        {
+            XFont layoutFont;
+            XFont_init(&layoutFont);
+            XFont_setFamily(&layoutFont, "XFont8x16");
+            XPainter_setFont(&painter, &layoutFont);
+            expect_true(XPainter_drawText(&painter, 0, 16, " ", 0xffffffffu),
+                        "opaque text accepts blank glyph");
+            expect_true(XImage_pixel(&image, 0,
+                                     16 - XPainter_textAscent(&layoutFont)) ==
+                            0xff204060u,
+                        "opaque text fills glyph cell from background brush");
+            XFont_deinit_base(&layoutFont);
+        }
     }
 #endif /* XPAINTER_BRUSH_ON */
     XPainter_setBackgroundMode(&painter, XPainterBackgroundMode_Opaque);
@@ -5322,6 +5335,11 @@ static void test_painter_text_layout_contract(void)
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_image(&painter, &image),
                 "text layout painter begins raster");
+    XFont layoutFont;
+    XFont_init(&layoutFont);
+    XFont_setFamily(&layoutFont, "XFont8x16");
+    XPainter_setFont(&painter, &layoutFont);
+    XFont_deinit_base(&layoutFont);
     XPainter_setPen(&painter, 0xffffffffu);
     XPainter_setPenWidth(&painter, 1);
 
@@ -5424,6 +5442,7 @@ static void test_painter_text_antialiasing_contract(void)
     XImage_fillRect(&image, NULL, 0xffffffffu);
     XPainter_init(&painter, NULL);
     XFont_init(&font);
+    XFont_setFamily(&font, "XFont8x16");
     XFont_setPixelSize(&font, 32);
     expect_true(XPainter_begin_image(&painter, &image),
                 "text antialias painter begins raster");
@@ -6166,6 +6185,11 @@ static void test_painter_text_flags_contract(void)
 #endif /* XPAINTER_RENDERHINT_ON */
     expect_true(XPainter_begin_image(&painter, &image),
                 "text flags painter begins raster");
+    XFont layoutFont;
+    XFont_init(&layoutFont);
+    XFont_setFamily(&layoutFont, "XFont8x16");
+    XPainter_setFont(&painter, &layoutFont);
+    XFont_deinit_base(&layoutFont);
 #if XPAINTER_RENDERHINT_ON
     expect_true(XPainter_renderHints(&painter) ==
                 XPainterRenderHint_TextAntialiasing,
@@ -18352,10 +18376,8 @@ static void test_gui_application_contract(void)
         XFont_init(&defaultFont);
         memset(&bitmapInfo, 0, sizeof(bitmapInfo));
         expect_true(strcmp(XFont_family(&defaultFont), XFONT_DEFAULT_FAMILY) == 0 &&
-                    test_font_bitmap_info(&defaultFont, &bitmapInfo) &&
-                    bitmapInfo.m_width == XFONT8X16_WIDTH &&
-                    bitmapInfo.m_height == XFONT8X16_HEIGHT,
-                    "font 默认家族与点阵字库度量");
+                        strcmp(XFont_family(&defaultFont), "XFontOutlineCommon") == 0,
+                    "font 默认家族为轮廓字库");
         XFont_setFamily(&defaultFont, "XFont8x16");
         expect_true(test_font_bitmap_info(&defaultFont, &bitmapInfo),
                     "font setFamily 选择点阵字库");
@@ -23500,7 +23522,7 @@ static void test_pushbutton_contract(void)
     expect_true(XPushButton_isFlat(zero),
                 "XPushButton setFlat true");
 
-    menu = XMenu_create("Options");
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, "Options");
     expect_true(menu != NULL, "按钮菜单测试对象创建");
     if (menu) {
         XPushButton_setMenu(zero, menu);
@@ -23509,7 +23531,7 @@ static void test_pushbutton_contract(void)
         XPushButton_setMenu(zero, NULL);
         expect_true(XPushButton_menu(zero) == NULL,
                     "XPushButton setMenu(NULL) 清空");
-        XMenu_delete(menu);
+        XMenu_delete_base(menu);
     }
 
     XPushButton_setText_2(zero, "B");
@@ -23854,6 +23876,269 @@ static void test_pushbutton_auto_default_dialog_parent(void)
 }
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 
+#if XWIDGET_ON && XMENU_ON
+static int g_xmenuTriggeredCount;
+static XAction* g_xmenuTriggeredAction;
+
+static void test_xmenu_triggered_slot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, XAction*, action);
+    ++g_xmenuTriggeredCount;
+    g_xmenuTriggeredAction = action;
+}
+
+/** @brief XMenu（对标 Qt 6.8 QMenu）动作容器与 triggered 转发契约测试。 */
+static void test_menu_contract(void)
+{
+    XMenu* menu;
+    XMenu* sub;
+    XAction* open;
+    XAction* save;
+    XAction* separator;
+    XAction* subEntry;
+    const XVector* actions;
+    const XString* title;
+    XPoint pos;
+    XAction* at;
+
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, "文件");
+    expect_true(menu != NULL, "XMenu create_ex 成功");
+    expect_true(XMenu_isEmpty(menu), "新建菜单为空");
+    if (!menu)
+        return;
+
+    open = XMenu_addAction_2(menu, "打开");
+    save = XMenu_addAction_2(menu, "另存为");
+    separator = XMenu_addSeparator(menu);
+    sub = XMenu_addMenu_2(menu, "最近文件");
+    expect_true(open != NULL && save != NULL && separator != NULL &&
+                    sub != NULL,
+                "addAction/addSeparator/addMenu_2 均创建成功");
+
+    title = XMenu_title_const(menu);
+    expect_true(title != NULL && XString_equals_utf8(title, "文件",
+                                                     XChar_CaseSensitive),
+                "title 存取一致");
+    XMenu_setTitle_2(menu, "文件(&F)");
+    expect_true(XMenu_title_const(menu) != NULL &&
+                    XString_equals_utf8(XMenu_title_const(menu), "文件(&F)",
+                                        XChar_CaseSensitive),
+                "setTitle_2 生效");
+
+    actions = XMenu_actions(menu);
+    expect_true(actions != NULL && XVector_size_base(actions) == 4,
+                "菜单包含 4 个动作条目");
+
+    subEntry = *(XAction**)XVector_at_base(actions, 3);
+    expect_true(subEntry != NULL && XAction_menu(subEntry) == sub,
+                "addMenu_2 的动作经 XAction_menu 关联子菜单");
+
+    pos.x = 0;
+    pos.y = 5;
+    at = XMenu_actionAt(menu, &pos);
+    expect_true(at == open, "actionAt 命中首个条目");
+    pos.y = 65;
+    at = XMenu_actionAt(menu, &pos);
+    expect_true(at == subEntry, "actionAt 命中末个条目");
+
+    expect_true(XMenu_menuAction(menu) != NULL, "menuAction 懒创建成功");
+    expect_true(XMenu_defaultAction(menu) == NULL, "默认无 defaultAction");
+    XMenu_setDefaultAction(menu, open);
+    expect_true(XMenu_defaultAction(menu) == open, "defaultAction 往返");
+
+    g_xmenuTriggeredCount = 0;
+    g_xmenuTriggeredAction = NULL;
+    XObject_connect_2((XObject*)menu, XSignal(XMenu_triggered_signal),
+                      test_xmenu_triggered_slot);
+    XAction_trigger(open);
+    expect_true(g_xmenuTriggeredCount == 1 &&
+                    g_xmenuTriggeredAction == open,
+                "动作触发经菜单转发 triggered(action) 一次");
+
+    XMenu_delete_base(menu);
+    expect_true(true, "菜单删除释放动作与子菜单（无崩溃/泄漏）");
+}
+
+/** @brief XMenu 栈对象生命周期（init/deinit_base 成对）契约测试。 */
+static void test_menu_stack_lifecycle(void)
+{
+    XMenu menu;
+
+    memset(&menu, 0, sizeof(menu));
+    XMenu_init(&menu, NULL);
+    XMenu_addAction_2(&menu, "A");
+    expect_true(XMenu_actions(&menu) != NULL &&
+                    XVector_size_base(XMenu_actions(&menu)) == 1,
+                "栈菜单 init 后 addAction 生效");
+    XMenu_deinit_base(&menu);
+    expect_true(true, "栈菜单 deinit_base 释放动作（无崩溃/泄漏）");
+}
+
+/** @brief XMenu 离屏绘制契约测试：动作文本/分隔条确实渲染到图像。 */
+static void test_menu_draw_contents(void)
+{
+    XMenu menu;
+    XImage image;
+    XPainter painter;
+    int nonbg = 0;
+    int x;
+    int y;
+    int w;
+    int h;
+
+    memset(&menu, 0, sizeof(menu));
+    XMenu_init(&menu, NULL);
+    XWidget_setGeometry((XWidget*)&menu, 0, 0, 160, 80);
+    XMenu_addAction_2(&menu, "打开文件");
+    XMenu_addAction_2(&menu, "另存为");
+    XMenu_addSeparator(&menu);
+    XMenu_addAction_2(&menu, "退出");
+
+    XImage_init_ex(&image, 160, 80, XImageFormat_ARGB32);
+    XImage_fill(&image, 0xFF000000u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "菜单离屏绘制绑定图像");
+    XMenu_drawContents(&menu, &painter);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+
+    w = XImage_width(&image);
+    h = XImage_height(&image);
+    for (y = 0; y < h; ++y) {
+        for (x = 0; x < w; ++x) {
+            uint32_t p = XImage_pixel(&image, x, y);
+            uint32_t r = (p >> 16) & 0xffu;
+            uint32_t g = (p >> 8) & 0xffu;
+            uint32_t b = p & 0xffu;
+            if (!(r > 235u && g > 235u && b > 235u))
+                ++nonbg;
+        }
+    }
+    expect_true(nonbg > 0, "菜单离屏绘制产生非背景内容（文字/分隔条）");
+
+    /* 逐行检查：4 个条目行（0/20/40/60，行高 20）都应渲染出内容，
+     * 防止只绘制了第一行而其余行空白。 */
+    {
+        int row;
+        int rowNonbg[4] = {0, 0, 0, 0};
+
+        for (row = 0; row < 4; ++row) {
+            int yy;
+            for (yy = row * 20; yy < (row + 1) * 20; ++yy) {
+                for (x = 0; x < w; ++x) {
+                    uint32_t p = XImage_pixel(&image, x, yy);
+                    uint32_t r = (p >> 16) & 0xffu;
+                    uint32_t g = (p >> 8) & 0xffu;
+                    uint32_t b = p & 0xffu;
+                    if (!(r > 235u && g > 235u && b > 235u))
+                        ++rowNonbg[row];
+                }
+            }
+            XPrintf("  [菜单] 第 %d 行非背景像素=%d\n", row, rowNonbg[row]);
+        }
+        expect_true(rowNonbg[0] > 0 && rowNonbg[1] > 0 &&
+                        rowNonbg[2] > 0 && rowNonbg[3] > 0,
+                    "菜单离屏绘制四个条目行均有内容");
+    }
+
+    XImage_deinit_base(&image);
+    XMenu_deinit_base(&menu);
+}
+#endif /* XWIDGET_ON && XMENU_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
+static int g_xtbTriggeredCount;
+static XAction* g_xtbTriggeredAction;
+
+static void test_xtb_triggered_slot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, XAction*, action);
+    ++g_xtbTriggeredCount;
+    g_xtbTriggeredAction = action;
+}
+
+/** @brief XToolButton（对标 Qt 6.8 QToolButton）默认动作联动契约测试。 */
+static void test_toolbutton_contract(void)
+{
+    XToolButton button;
+    XAction* action;
+    XMenu* menu;
+
+    memset(&button, 0, sizeof(button));
+    XToolButton_init(&button, NULL, 0);
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    expect_true(action != NULL, "XAction create_ex 成功");
+    XAction_setText_2(action, "动作A");
+    XAction_setCheckable(action, true);
+
+    XToolButton_setDefaultAction(&button, action);
+    expect_true(XAbstractButton_text((XAbstractButton*)&button) != NULL &&
+                    XString_equals_utf8(
+                        XAbstractButton_text((XAbstractButton*)&button),
+                        "动作A", XChar_CaseSensitive),
+                "setDefaultAction 镜像文本到按钮");
+    expect_true(XAbstractButton_isCheckable((XAbstractButton*)&button),
+                "setDefaultAction 镜像 checkable 到按钮");
+
+    g_xtbTriggeredCount = 0;
+    g_xtbTriggeredAction = NULL;
+    XObject_connect_2((XObject*)&button, XSignal(XToolButton_triggered_signal),
+                      test_xtb_triggered_slot);
+
+    XAbstractButton_click((XAbstractButton*)&button);
+    expect_true(g_xtbTriggeredCount == 1 && g_xtbTriggeredAction == action,
+                "按钮点击触发默认动作并转发 triggered(action)");
+    expect_true(XAction_isChecked(action), "点击后动作已选中");
+    expect_true(XAbstractButton_isChecked((XAbstractButton*)&button),
+                "动作选中状态镜像回按钮");
+
+    XAction_setEnabled(action, false);
+    expect_true(!XWidget_isEnabled((XWidget*)&button),
+                "动作禁用镜像到按钮");
+    XAction_setEnabled(action, true);
+    expect_true(XWidget_isEnabled((XWidget*)&button),
+                "动作启用镜像到按钮");
+
+    XToolButton_setToolButtonStyle(&button,
+                                   XToolButtonStyle_TextUnderIcon);
+    expect_true(XToolButton_toolButtonStyle(&button) ==
+                    XToolButtonStyle_TextUnderIcon,
+                "toolButtonStyle 往返");
+    XToolButton_setAutoRaise(&button, true);
+    expect_true(XToolButton_autoRaise(&button), "autoRaise 往返");
+    XToolButton_setArrowType(&button, XToolButtonArrowType_Down);
+    expect_true(XToolButton_arrowType(&button) == XToolButtonArrowType_Down,
+                "arrowType 往返");
+    XToolButton_setPopupMode(&button,
+                             XToolButtonPopupMode_InstantPopup);
+    expect_true(XToolButton_popupMode(&button) ==
+                    XToolButtonPopupMode_InstantPopup,
+                "popupMode 往返");
+
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, "菜单");
+    expect_true(menu != NULL, "XMenu create_ex 成功");
+    XToolButton_setMenu(&button, menu);
+    expect_true(XToolButton_menu(&button) == menu, "setMenu/menu 往返");
+    XToolButton_setMenu(&button, NULL);
+    expect_true(XToolButton_menu(&button) == NULL, "setMenu(NULL) 清空");
+
+    expect_true(XToolButton_sizeHint(&button).width > 0 &&
+                    XToolButton_sizeHint(&button).height > 0,
+                "sizeHint 非零");
+
+    XAction_delete_base(action);
+    expect_true(XToolButton_defaultAction(&button) == NULL,
+                "动作销毁后按钮自动解绑 defaultAction");
+
+    XMenu_delete_base(menu);
+    XToolButton_deinit_base(&button);
+    expect_true(true, "XToolButton 栈对象生命周期完成（无崩溃/泄漏）");
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
+
 int main(void)
 {
     test_geometry_contract();
@@ -24079,6 +24364,14 @@ int main(void)
     test_pushbutton_label_signal_slot_link();
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#if XWIDGET_ON && XMENU_ON
+    test_menu_contract();
+    test_menu_stack_lifecycle();
+    test_menu_draw_contents();
+#endif /* XWIDGET_ON && XMENU_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
+    test_toolbutton_contract();
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
 #if XLAYOUT_ON
     test_layout_item_contract();
     test_layout_widget_integration();

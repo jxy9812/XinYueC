@@ -12233,3 +12233,250 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   `noexcept` 类型属性，也不改变 `XImage` 既有隐式共享和写时复制规则。
   动态插件发现、原生 QPicture/QDataStream 互操作、完整 ICC 色彩管理及
   `XPushButton` 仍按文档既有裁剪/并行修改边界处理。
+
+## 2026-09-05 XAction 完整对标 QAction（XCode 层，跨模块记录）
+
+- **说明**：本段记录 Src/XCode/XAction 的动作类重构。QAction 属 QtGui，
+  但 XAction 按项目分层位于 XCode（不依赖 XGui），故在 XGui 进度文档
+  跨模块登记其对标范围与裁剪边界。
+- **重构前**：XAction 是「text + Action 回调 + XVariant* data」的裸 C
+  结构体，仅被 XMenu 消费，不对标 QAction 的状态机与信号。
+- **重构后**：XAction 改为继承 XObject（XClass 虚表 + 信号槽体系），
+  对标 Qt 6.8 QAction 的核心语义：
+  - 文本族：text/iconText/toolTip/statusTip/whatsThis（XString 主版本 +
+    UTF-8 `_2` 兼容重载；读取提供拷贝版与 `_const` 借用版），内容变化
+    发射 changed；
+  - 状态：checkable/checked/toggle（isChecked 需可选中，qaction.cpp
+    :861-916）、enabled/setDisabled/resetEnabled 与 visible 联动
+    （qaction.cpp:929-1056，不可见强制禁用、显式禁用忽略 trigger）、
+    separator/priority/menuRole/iconVisibleInMenu/
+    shortcutVisibleInContextMenu；
+  - 数据：data/setData，按项目 XVariant 惯例采用指针所有权转移（Qt 为
+    QVariant 值拷贝，差异已文档化），指针变化发射 changed；
+  - 激活：trigger/activate(Trigger|Hover)/hover；可选中动作触发前翻转
+    checked 再发 triggered(checked)（qaction.cpp:1084-1113）；
+  - 信号：changed、enabledChanged(bool)、checkableChanged(bool)、
+    visibleChanged()、triggered(bool)、hovered()、toggled(bool)；
+  - 生命周期：class_init/init(_2)/create/create_ex/create_copy/
+    create_move/deinit_base/delete_base；复制/移动统一走全局 XCopy/XMove
+    （经虚表分派到 VXAction_copy/VXAction_move，只复制属性字段，不复制
+    信号连接与父子关系）；父对象级联释放子动作。
+- **旧接口移除**：按项目约束彻底删除旧的 `Action` 回调 typedef 与
+  XAction_setAction/getAction/getText/getData/delete 以及
+  XAction_create(text)/XAction_init(action,text) 等非规范入口；生命周期
+  统一为 init/_2 + deinit_base/delete_base，不声明非 base 的
+  copy/move/deinit 转发 API，也不声明 *_copy_base/*_move_base（统一用
+  XCopy/XMove）。
+- **菜单绑定下沉**：XAction 不承载函数指针回调；「菜单动作运行测试
+  函数」改由 XMenu 层经 triggered 信号完成：XMenu_addAction 内部把动作
+  triggered 信号连接到调度槽，XMenu_setActionFunction(action, func) 把
+  func 存入动作的用户数据槽并随 trigger 调用。全部 82 个测试菜单文件的
+  430 处 XAction_setAction 机械迁移为 XMenu_setActionFunction；
+  XMenuTest 的 MenuData 改用本地处理器类型，不再依赖 XAction 的 Action
+  typedef。
+- **开关**：新增 XACTION_ON（CXinYueConfig.h，默认 1）；置 0 裁剪整个
+  XAction，依赖它的 XMenu 动作能力需同步裁剪。
+- **回归覆盖**：Test/XCodeTest/XActionTest.c 新增 XActionTest 综合测试
+  （XMenu_XActionTest 注册到测试菜单），覆盖默认属性、文本族 changed
+  计数、checkable/checked/toggle、enabled/visible 联动与 resetEnabled、
+  trigger 的 triggered/toggled 顺序与显式禁用忽略、hover、
+  separator/priority/menuRole 等属性、XCopy/XMove 与 create_copy/
+  create_move、父对象级联释放、data 所有权，以及 XMenu_setActionFunction
+  的菜单绑定与解绑。
+- **裁剪边界（按项目约束，XCode 不依赖 XGui）**：QAction 的 icon
+  （XIcon 在 XGui/Icon）、font（XFont 在 XData/XFont）、shortcut(s)/
+  shortcutContext/autoRepeat（无 XKeySequence）、actionGroup/
+  associatedObjects（无 XActionGroup）与 showStatusText（依赖
+  QStatusTipEvent 窗口栈）不在本类提供；menu/setMenu 关联已通过 XGui
+  层 QMenu 对齐的 XMenu 以前向声明指针提供，后续如需对齐其它项应按
+  相应模块独立推进。
+
+## 2026-09-05 XMenu 完全对齐 QMenu 与 XToolButton 对齐 QToolButton
+
+- **说明**：本段记录 XMenu 重构与 XToolButton 新增。QMenu/QToolButton
+  均属 QtWidgets；XMenu 按 QMenu 对齐落在 XGui 层（XWidget 派生），
+  控制台测试菜单另行改名迁移，二者互不冲突。
+
+### XMenu：从 XCode 树结构重构为 XGui 的 QMenu 对齐 Widget
+
+- **旧 XMenu 移除**：Src/XCode/XMenu 树形控制台菜单（XHTreeNode 基类）
+  已删除；「控制台测试菜单」改名 XTestMenu 迁移到 Test/XTestMenu/ 仅供
+  测试系统自用（类型/函数/文件/守卫全部 XTestMenu 前缀，152 个测试文件
+  与 XTestMenuTest 渲染器统一迁移），XMenu 名字让给 QMenu 对齐实现。
+- **新 XMenu（Src/XGui/Widget/XMenu.{h,c}）**：继承 XWidget，对标
+  Qt 6.8 QMenu：
+  - 动作容器：addAction/addAction_2/addMenu/addMenu_2/addSeparator/
+    clear/isEmpty/actions/actionAt/menuAction；
+  - 属性：title/setTitle(_2)、defaultAction/setDefaultAction、
+    activeAction/setActiveAction、separatorsCollapsible、
+    toolTipsVisible、tearOffEnabled；
+  - 弹出：popup(pos)/exec()（顶层窗口显示，点击条目触发动作并关闭，
+    exec 阻塞事件循环返回被选动作）；
+  - 信号：aboutToShow/aboutToHide/triggered(XAction*)/hovered(XAction*)；
+  - 交互：绘制列表（高亮/分隔条/子菜单箭头）、鼠标点击与悬停高亮、
+    键盘 Up/Down 移动、Enter 触发、Escape 关闭；
+  - 动作由菜单拥有（释放级联），子菜单经 XWidget_setParent 登记子控件、
+    XAction_setMenu 关联入口动作，父菜单释放时级联释放。
+- **XAction 补充**：新增 menu/setMenu（前向声明 XMenu*，不破坏 XCode
+  不依赖 XGui 的分层）；菜单销毁自动解除关联（destroyed 信号），
+  copy/move/deinit 同步处理关联。
+- **开关**：XMENU_ON（XGuiConfig.h，默认 1，依赖 XWIDGET_ON；关闭时
+  连带裁剪 XPushButton/XToolButton 的菜单能力）。
+
+### XToolButton：对齐 Qt 6.8 QToolButton
+
+- **实现（Src/XGui/Widget/XToolButton.{h,c}）**：继承 XAbstractButton：
+  - 默认动作：setDefaultAction/defaultAction，动作的文本/可选中/选中/
+    启用镜像到按钮（changed/toggled/enabledChanged/destroyed 信号联动），
+    按钮点击触发动作，动作 triggered 转发为按钮 triggered(XAction*)；
+  - 外观：toolButtonStyle（IconOnly/TextOnly/TextBesideIcon/
+    TextUnderIcon/FollowStyle，FollowStyle 按 TextBesideIcon 处理）、
+    autoRaise、arrowType（NoArrow/Up/Down/Left/Right）；
+  - 菜单：setMenu/menu、popupMode（DelayedPopup/MenuButtonPopup/
+    InstantPopup）、showMenu（弹出 XMenu，菜单 aboutToHide 恢复按下状态）；
+  - 尺寸：sizeHint/minimumSizeHint 按样式与图标/文本内容计算；
+  - 绘制：按样式排布图标与文本、autoRaise 边框策略、菜单/箭头指示。
+- **已知差异（记录）**：有默认动作且按钮可选中时，基类 click 会先翻转
+  按钮自身 checked 再触发动作，最终状态经动作镜像覆盖一致，但 toggled
+  信号可能多发一次；弹出位置使用当前鼠标位置（0,0 兜底），未实现
+  QKeySequence 快捷键、样式表与 tear-off 平台菜单。
+- **开关**：XTOOLBUTTON_ON（XGuiConfig.h，默认 1，依赖
+  XABSTRACTBUTTON_ON 与 XMENU_ON）。
+
+### 回归与验证
+
+- xgui_regression_test.c 新增 test_menu_contract（动作容器/actionAt/
+  menuAction/defaultAction/triggered 转发/子菜单关联/级联释放）、
+  test_menu_stack_lifecycle（栈对象 init/deinit_base 成对）、
+  test_toolbutton_contract（setDefaultAction 双向镜像、点击触发、
+  动作销毁解绑、样式/autoRaise/arrowType/popupMode/menu 往返、sizeHint、
+  栈对象生命周期）。
+- 验证：cmake --build build -j2 通过；XGuiRegression_Test 退出码 0
+  （XGui regression tests passed）；ctest 1/1 通过；Test 控制台菜单
+  （改名 XTestMenu 后）路径 Test → 代码 → XAction(QAction 对标) →
+  主测试 78 项断言全部通过。
+
+## 13. 下一阶段 GUI 模块计划（源码扫描建议）
+
+本节基于当前 XGui 源码、工作区现有控件以及本机 Qt 6.8.3 源码扫描结果整理。Qt 对照源码位于：
+
+- /home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/widgets
+- /home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/dialogs
+- /home/xinyue/Qt/6.8.3/Src/qtbase/src/widgets/itemviews
+- /home/xinyue/Qt/6.8.3/Src/qtbase/src/gui
+
+当前 XGui 的窗口、事件、软件绘制、图像、布局、输入法、剪贴板、拖放、无障碍和平台适配已经具备基础闭环；控件层主要覆盖 XWidget/XFrame/XLabel、按钮族以及正在完善的 XAction/XMenu/XToolButton。下一阶段应优先补齐可组合应用所需的控件和交互模型。
+
+### 13.1 P0：菜单、工具栏与主窗口体系
+
+建议新增：
+
+- XMenuBar，对标 QMenuBar；
+- XToolBar，对标 QToolBar；
+- XMainWindow，对标 QMainWindow；
+- XStatusBar，对标 QStatusBar；
+- XActionGroup，对标 QActionGroup。
+
+先完善现有 XMenu 的真实交互闭环：键盘导航、Esc 关闭、子菜单切换、悬停高亮、失焦关闭、动作状态同步，以及 XPushButton/XToolButton 的平台弹出菜单。当前 XPushButton.h 已记录菜单 API 存在但真实平台弹层仍需接入；Src/XGui/Widget/XMenu.h、Src/XGui/Widget/XToolButton.h 和 Src/XCode/XAction/XAction.h 是主要入口。
+
+推荐实现顺序：XMenu popup 完整化 -> XMenuBar -> XToolBar -> XMainWindow/XStatusBar -> XActionGroup 与快捷键。
+
+验收目标：可以构建带菜单栏、工具栏、状态栏和多页面内容的真实桌面应用。
+
+### 13.2 P1：文本输入控件
+
+建议新增：
+
+- XLineEdit；
+- XValidator；
+- XTextEdit 或 XPlainTextEdit；
+- XCompleter。
+
+第一阶段只实现单行编辑，覆盖键盘输入、输入法预编辑/提交、光标移动、选择、剪贴板、Home/End、Ctrl+A/C/V/X/Z、鼠标拖选、占位文本、最大长度、验证和焦点链。不要在第一阶段直接进入完整富文本编辑器。
+
+主要依赖关系：XLineEdit -> XWidget 焦点/键盘事件 -> XInputMethod -> XClipboard/XMimeData -> XPainter 文本布局 -> XValidator。
+
+Qt 对照重点为 qlineedit、qwidgetlinecontrol_p、qabstractspinbox 和 qvalidator。当前基础代码主要位于 Src/XGui/Widget/XWidget.h、Src/XGui/Input/XInputMethod.h、Src/XGui/Input/XClipboard.h 和 Src/XGui/Widget/XLabel.h。
+
+验收目标：可以完成搜索框、设置项编辑和设备参数输入。
+
+### 13.3 P1：对话框与文件选择器
+
+结合当前 codex/xdevice-file-platform 分支，建议新增：
+
+- XDialog；
+- XDialogButtonBox；
+- XMessageBox；
+- XInputDialog；
+- XFileDialog；
+- XFileSystemModel。
+
+优先实现 XDialog -> XDialogButtonBox -> XMessageBox -> XFileDialog。文件对话框第一阶段可定位为设备文件选择控件，支持当前目录、文件/目录列表、目录进入返回、文件名、过滤器、打开/保存/选择目录，并接入 XDevice/XDir/XFile。
+
+验收目标：可以完成设备文件浏览、打开、保存和目录选择流程；嵌入式模式可使用固定根目录或虚拟文件系统。
+
+### 13.4 P2：模型、列表、树与表格
+
+建议先建立模型/视图基础，再扩展具体视图：
+
+1. XAbstractItemModel；
+2. XModelIndex；
+3. XItemSelectionModel；
+4. XListView；
+5. XTreeView；
+6. XTableView；
+7. XHeaderView 和 delegate。
+
+其中 XFileSystemModel + XTreeView/XListView 可直接服务于 XFileDialog 和设备浏览器。该部分应放在 XLineEdit 与基础对话框之后，避免模型、选择、滚动、delegate 和编辑器同时引入。
+
+### 13.5 P2：数值、状态和页面导航控件
+
+建议按以下顺序补齐普通设置页面能力：
+
+XProgressBar -> XSlider -> XScrollBar -> XSpinBox -> XComboBox -> XTabWidget -> XSplitter。
+
+XTabWidget 可以复用现有 XStackedLayout，收益较高；XComboBox 依赖 popup、列表和键盘导航，应放在 XMenu/XListView 之后。
+
+可作为同批次补充的控件包括 XDoubleSpinBox、XDial、XGroupBox 和 XTabBar。
+
+### 13.6 P2：统一样式系统
+
+当前已经有 XPalette、XStyleHints 和 XPlatformTheme，但控件样式仍由控件分别绘制。建议在控件数量增加前引入最小样式层：
+
+- XStyle；
+- XStyleOption；
+- XStylePainter；
+- XCommonStyle；
+- XStyleFactory。
+
+第一阶段只统一按钮、checkbox/radio indicator、菜单项、line edit、scrollbar、tab 和 progress bar 的 hover、pressed、disabled、focus 状态，不追求完整复刻 Qt Fusion。
+
+### 13.7 推荐实施路线
+
+#### 阶段 A：桌面应用骨架
+
+XMenu popup 完整化、XMenuBar、XToolBar、XMainWindow、XStatusBar、XActionGroup。
+
+#### 阶段 B：输入与对话框
+
+XLineEdit、XValidator、XDialog、XDialogButtonBox、XMessageBox、XInputDialog。
+
+#### 阶段 C：文件与数据浏览
+
+XAbstractItemModel、XItemSelectionModel、XListView、XTreeView、XFileSystemModel、XFileDialog。
+
+#### 阶段 D：状态控件与统一样式
+
+XProgressBar、XSlider、XScrollBar、XSpinBox、XComboBox、XTabWidget、XStyle。
+
+### 13.8 暂不优先
+
+暂不建议优先实现 XGraphicsView/XGraphicsScene、完整富文本编辑器、XCalendarWidget、XFontDialog/XColorDialog、XDockWidget、XMDIArea、XSystemTrayIcon、XWizard 和完整 OpenGL/Vulkan Widget 封装。这些模块要么依赖更大的模型体系，要么属于桌面高级功能，当前对嵌入式 GUI 和设备文件业务的直接收益较低。
+
+### 13.9 本阶段推荐的单一切入点
+
+如果以 XGui 桌面应用完整度为目标，下一步从 XMenu 真实弹出交互开始，随后实现 XMenuBar + XToolBar + XMainWindow。
+
+如果以当前设备文件平台业务为目标，下一步从 XLineEdit + XDialog + XFileSystemModel + XTreeView/XListView + XFileDialog 开始。
+
+本计划只记录推荐路线，不表示上述模块已经实现；后续每个模块仍需按现有约定补充配置开关、C99 API、回归测试、裁剪构建验证和 Qt 6.8.3 行为边界说明。

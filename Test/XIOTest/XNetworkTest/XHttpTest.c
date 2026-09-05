@@ -2081,35 +2081,35 @@ static void xhttp_test_all(XVariant* data)
     XPrintf("XHttp 本地核心行为测试通过\n");
 }
 
-void XHttpTest_registerAll(XMenu* root)
+void XHttpTest_registerAll(XTestMenu* root)
 {
-    XMenu* menu;
+    XTestMenu* menu;
     XAction* action;
     if (!root)
         return;
-    menu = XMenu_create("XHttp(HTTP客户端)");
+    menu = XTestMenu_create("XHttp(HTTP客户端)");
     if (!menu)
         return;
-    XMenu_addMenu(root, menu);
-    action = XMenu_addAction(menu, "核心头部、请求、MIME和响应解析");
+    XTestMenu_addMenu(root, menu);
+    action = XTestMenu_addAction(menu, "核心头部、请求、MIME和响应解析");
     if (action)
-        XAction_setAction(action, xhttp_test_all);
-    action = XMenu_addAction(menu, "管理器本地 HTTP（需 127.0.0.1:18080）");
+        XTestMenu_setActionFunction(action, xhttp_test_all);
+    action = XTestMenu_addAction(menu, "管理器本地 HTTP（需 127.0.0.1:18080）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_local);
-    action = XMenu_addAction(menu, "管理器重定向（需本地测试服务）");
+        XTestMenu_setActionFunction(action, xhttp_test_manager_local);
+    action = XTestMenu_addAction(menu, "管理器重定向（需本地测试服务）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_redirect);
-    action = XMenu_addAction(menu, "管理器 Basic 认证重发（需本地测试服务）");
+        XTestMenu_setActionFunction(action, xhttp_test_manager_redirect);
+    action = XTestMenu_addAction(menu, "管理器 Basic 认证重发（需本地测试服务）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_authentication);
-    action = XMenu_addAction(menu, "管理器 Digest 优先认证重发（需本地测试服务）");
+        XTestMenu_setActionFunction(action, xhttp_test_manager_authentication);
+    action = XTestMenu_addAction(menu, "管理器 Digest 优先认证重发（需本地测试服务）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_digest_authentication);
-    action = XMenu_addAction(menu, "管理器 Basic 回退认证（需本地测试服务）");
+        XTestMenu_setActionFunction(action, xhttp_test_manager_digest_authentication);
+    action = XTestMenu_addAction(menu, "管理器 Basic 回退认证（需本地测试服务）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_authentication_fallback);
-    action = XMenu_addAction(menu, "管理器 NTLMv2 两阶段认证（需本地测试服务）");
+        XTestMenu_setActionFunction(action, xhttp_test_manager_authentication_fallback);
+    action = XTestMenu_addAction(menu, "管理器 NTLMv2 两阶段认证（需本地测试服务）");
     if (action)
-        XAction_setAction(action, xhttp_test_manager_ntlm_authentication);
+        XTestMenu_setActionFunction(action, xhttp_test_manager_ntlm_authentication);
 }

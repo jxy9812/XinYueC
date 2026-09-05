@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 #include "CXinYueConfig.h"
+#include "XTestMenu.h"
 #include "XClass.h"
 #include <stdbool.h>
 /** @brief 执行 JSON 与 Qt 行为对齐测试。 @return 成功返回 0，失败返回非 0。 */
@@ -19,8 +20,8 @@ int XSqlTest_run(void);
 /** @brief 执行 Data 模块中可非交互判定的本地全量回归测试。 */
 bool XDataTest_runAll(void);
 #if DEMOTEST
-	void XMenu_XJsonQtAlignmentTest(XMenu* root);
-	void XMenu_XDataTest(XMenu* root);
+	void XTestMenu_XJsonQtAlignmentTest(XTestMenu* root);
+	void XTestMenu_XDataTest(XTestMenu* root);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

@@ -4,7 +4,7 @@
 #include"XPriorityQueue.h"
 #include"XSort.h"
 #include"XVector.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -197,27 +197,27 @@ static void XPriorityQueueAllTest(void)
     //XCoreApplication_quit();
 }
 
-void XMenu_XQueueTest(XMenu* root)
+void XTestMenu_XQueueTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XQueue(普通队列)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XQueue(普通队列)");
+    XTestMenu_addMenu(root, menu);
 #if XQueue_ON
-    { XAction* a = XMenu_addAction(menu, "【全部测试】"); XAction_setAction(a, (Action)XQueueAllTest); }
-    { XAction* a = XMenu_addAction(menu, "基础 FIFO / Qt 别名"); XAction_setAction(a, (Action)XQueueBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "移动语义入队"); XAction_setAction(a, (Action)XQueueMoveTest); }
-    { XAction* a = XMenu_addAction(menu, "大量数据(10000)"); XAction_setAction(a, (Action)XQueueBulkTest); }
+    { XAction* a = XTestMenu_addAction(menu, "【全部测试】"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XQueueAllTest); }
+    { XAction* a = XTestMenu_addAction(menu, "基础 FIFO / Qt 别名"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XQueueBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "移动语义入队"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XQueueMoveTest); }
+    { XAction* a = XTestMenu_addAction(menu, "大量数据(10000)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XQueueBulkTest); }
 #endif
 }
 
-void XMenu_XPriorityQueueTest(XMenu* root)
+void XTestMenu_XPriorityQueueTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XPriorityQueue(优先队列)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XPriorityQueue(优先队列)");
+    XTestMenu_addMenu(root, menu);
 #if XPriorityQueue_ON
-    { XAction* a = XMenu_addAction(menu, "【全部测试】"); XAction_setAction(a, (Action)XPriorityQueueAllTest); }
-    { XAction* a = XMenu_addAction(menu, "大顶堆(演示)"); XAction_setAction(a, (Action)XPriorityQueueBasicTest); }
-    { XAction* a = XMenu_addAction(menu, "小顶堆(升序优先)"); XAction_setAction(a, (Action)XPriorityQueueAscTest); }
-    { XAction* a = XMenu_addAction(menu, "remove(v,n)"); XAction_setAction(a, (Action)XPriorityQueueRemoveTest); }
+    { XAction* a = XTestMenu_addAction(menu, "【全部测试】"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XPriorityQueueAllTest); }
+    { XAction* a = XTestMenu_addAction(menu, "大顶堆(演示)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XPriorityQueueBasicTest); }
+    { XAction* a = XTestMenu_addAction(menu, "小顶堆(升序优先)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XPriorityQueueAscTest); }
+    { XAction* a = XTestMenu_addAction(menu, "remove(v,n)"); XTestMenu_setActionFunction(a, (XTestMenuActionFunc)XPriorityQueueRemoveTest); }
 #endif
 }
 #endif

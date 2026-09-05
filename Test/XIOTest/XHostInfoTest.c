@@ -1,7 +1,7 @@
 ﻿#include"XIOTest.h"
 #include"XHostInfo.h"
 #include"XMemory.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XString.h"
 #include"XCoreApplication.h"
@@ -194,24 +194,24 @@ static void XHostInfo_comprehensiveTest(void)
 
 // ==================== 菜单注册 ====================
 
-void XMenu_XHostInfoTest(XMenu* root)
+void XTestMenu_XHostInfoTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XHostInfo(DNS查询)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XHostInfo(DNS查询)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "综合测试");
-		XAction_setAction(action, XHostInfo_comprehensiveTest);
+		XAction* action = XTestMenu_addAction(menu, "综合测试");
+		XTestMenu_setActionFunction(action, XHostInfo_comprehensiveTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "本地主机信息");
-		XAction_setAction(action, XHostInfo_localInfoTest);
+		XAction* action = XTestMenu_addAction(menu, "本地主机信息");
+		XTestMenu_setActionFunction(action, XHostInfo_localInfoTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "同步DNS查询");
-		XAction_setAction(action, XHostInfo_syncLookupTest);
+		XAction* action = XTestMenu_addAction(menu, "同步DNS查询");
+		XTestMenu_setActionFunction(action, XHostInfo_syncLookupTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "异步DNS查询");
-		XAction_setAction(action, XHostInfo_asyncLookupTest);
+		XAction* action = XTestMenu_addAction(menu, "异步DNS查询");
+		XTestMenu_setActionFunction(action, XHostInfo_asyncLookupTest);
 	}
 }

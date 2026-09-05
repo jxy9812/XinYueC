@@ -10,7 +10,7 @@
 #include "XAction.h"
 #include "XByteArray.h"
 #include "XCryptographic.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XPrintf.h"
 #include <string.h>
 
@@ -3241,14 +3241,14 @@ static void XCryptographicPrimitive_test_all_wrapper(XVariant* data)
     XCryptographicPrimitiveTest_runAll();
 }
 
-void XMenu_XCryptographicPrimitiveTest(XMenu* root)
+void XTestMenu_XCryptographicPrimitiveTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XCryptographic(密码原语)");
+    XTestMenu* menu = XTestMenu_create("XCryptographic(密码原语)");
     XAction* action;
     if (!menu) return;
-    XMenu_addMenu(root, menu);
-    action = XMenu_addAction(menu, "AES-GCM/CCM/HKDF 全部测试");
-    if (action) XAction_setAction(action, XCryptographicPrimitive_test_all_wrapper);
+    XTestMenu_addMenu(root, menu);
+    action = XTestMenu_addAction(menu, "AES-GCM/CCM/HKDF 全部测试");
+    if (action) XTestMenu_setActionFunction(action, XCryptographicPrimitive_test_all_wrapper);
 }
 
 #endif /* DEMOTEST */

@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XBinaryTree.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -59,13 +59,13 @@ void XBinaryTreeTest()
 	}
 	//XCoreApplication_quit();
 }
-void XMenu_XBinaryTreeTest(XMenu* root)
+void XTestMenu_XBinaryTreeTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XBinaryTree(二叉树)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XBinaryTree(二叉树)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XBinaryTreeTest);
+		XAction* action = XTestMenu_addAction(menu, "主测试");
+		XTestMenu_setActionFunction(action, XBinaryTreeTest);
 	}
 }
 #endif

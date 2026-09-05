@@ -6,7 +6,7 @@
 #include"XJsonArray.h"
 #include"XJsonValue.h"
 #include"XJsonDocument.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -123,17 +123,17 @@ void XJsonArrayTest()
 	}
 	//XCoreApplication_quit();
 }
-void XMenu_XJsonTest(XMenu* root)
+void XTestMenu_XJsonTest(XTestMenu* root)
 {
-	XMenu* menu = XMenu_create("XJson(json)");
-	XMenu_addMenu(root, menu);
+	XTestMenu* menu = XTestMenu_create("XJson(json)");
+	XTestMenu_addMenu(root, menu);
 	{
-		XAction* action = XMenu_addAction(menu, "XJsonObject");
-		XAction_setAction(action, XJsonObjectTest);
+		XAction* action = XTestMenu_addAction(menu, "XJsonObject");
+		XTestMenu_setActionFunction(action, XJsonObjectTest);
 	}
 	{
-		XAction* action = XMenu_addAction(menu, "XJsonArray");
-		XAction_setAction(action, XJsonArrayTest);
+		XAction* action = XTestMenu_addAction(menu, "XJsonArray");
+		XTestMenu_setActionFunction(action, XJsonArrayTest);
 	}
 }
 #endif

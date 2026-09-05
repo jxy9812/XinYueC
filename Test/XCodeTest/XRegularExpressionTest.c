@@ -6,7 +6,7 @@
 #include "XRegularExpressionTest.h"
 #include "XRegularExpression.h"
 #include "XRegularExpressionValidator.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XPrintf.h"
 #include "XString.h"
@@ -891,26 +891,26 @@ static void XRegularExpression_test_thread_wrapper(XVariant* data)
 }
 #endif // XTHREAD_ON
 
-void XMenu_XRegularExpressionTest(XMenu* root)
+void XTestMenu_XRegularExpressionTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XRegularExpression(Qt6.8)");
-    XMenu_addMenu(root, menu);
-    XAction* action = XMenu_addAction(menu, "全部测试");
-    XAction_setAction(action, XRegularExpression_test_all_wrapper);
-    action = XMenu_addAction(menu, "生命周期/拷贝/移动");
-    XAction_setAction(action, XRegularExpression_test_lifecycle_wrapper);
-    action = XMenu_addAction(menu, "普通匹配/捕获组");
-    XAction_setAction(action, XRegularExpression_test_match_wrapper);
-    action = XMenu_addAction(menu, "全局匹配迭代器");
-    XAction_setAction(action, XRegularExpression_test_global_wrapper);
-    action = XMenu_addAction(menu, "空匹配/Unicode/部分匹配边界");
-    XAction_setAction(action, XRegularExpression_test_edge_wrapper);
-    action = XMenu_addAction(menu, "转义/通配符/校验器");
-    XAction_setAction(action, XRegularExpression_test_conversion_wrapper);
-    action = XMenu_addAction(menu, "XString/XStringList消费者");
-    XAction_setAction(action, XRegularExpression_test_string_consumers_wrapper);
+    XTestMenu* menu = XTestMenu_create("XRegularExpression(Qt6.8)");
+    XTestMenu_addMenu(root, menu);
+    XAction* action = XTestMenu_addAction(menu, "全部测试");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_all_wrapper);
+    action = XTestMenu_addAction(menu, "生命周期/拷贝/移动");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_lifecycle_wrapper);
+    action = XTestMenu_addAction(menu, "普通匹配/捕获组");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_match_wrapper);
+    action = XTestMenu_addAction(menu, "全局匹配迭代器");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_global_wrapper);
+    action = XTestMenu_addAction(menu, "空匹配/Unicode/部分匹配边界");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_edge_wrapper);
+    action = XTestMenu_addAction(menu, "转义/通配符/校验器");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_conversion_wrapper);
+    action = XTestMenu_addAction(menu, "XString/XStringList消费者");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_string_consumers_wrapper);
 #if XTHREAD_ON
-    action = XMenu_addAction(menu, "并发只读匹配");
-    XAction_setAction(action, XRegularExpression_test_thread_wrapper);
+    action = XTestMenu_addAction(menu, "并发只读匹配");
+    XTestMenu_setActionFunction(action, XRegularExpression_test_thread_wrapper);
 #endif // XTHREAD_ON
 }

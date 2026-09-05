@@ -3,7 +3,7 @@
 #include "XHostAddress.h"
 #include "XString.h"
 #include "XVector.h"
-#include "XMenu.h"
+#include "XTestMenu.h"
 #include "XAction.h"
 #include "XMemory.h"
 #include <stdio.h>
@@ -342,36 +342,36 @@ static void XNetworkInterface_comprehensiveTest(void)
 
 // ==================== 菜单注册 ====================
 
-void XMenu_XNetworkInterfaceTest(XMenu* root)
+void XTestMenu_XNetworkInterfaceTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XNetworkInterface(网络接口)");
-    XMenu_addMenu(root, menu);
+    XTestMenu* menu = XTestMenu_create("XNetworkInterface(网络接口)");
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "综合测试");
-        XAction_setAction(action, XNetworkInterface_comprehensiveTest);
+        XAction* action = XTestMenu_addAction(menu, "综合测试");
+        XTestMenu_setActionFunction(action, XNetworkInterface_comprehensiveTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "获取所有网络接口");
-        XAction_setAction(action, XNetworkInterface_allInterfacesTest);
+        XAction* action = XTestMenu_addAction(menu, "获取所有网络接口");
+        XTestMenu_setActionFunction(action, XNetworkInterface_allInterfacesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "获取所有IP地址");
-        XAction_setAction(action, XNetworkInterface_allAddressesTest);
+        XAction* action = XTestMenu_addAction(menu, "获取所有IP地址");
+        XTestMenu_setActionFunction(action, XNetworkInterface_allAddressesTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "按名称查找接口");
-        XAction_setAction(action, XNetworkInterface_interfaceFromNameTest);
+        XAction* action = XTestMenu_addAction(menu, "按名称查找接口");
+        XTestMenu_setActionFunction(action, XNetworkInterface_interfaceFromNameTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "按索引查找接口");
-        XAction_setAction(action, XNetworkInterface_interfaceFromIndexTest);
+        XAction* action = XTestMenu_addAction(menu, "按索引查找接口");
+        XTestMenu_setActionFunction(action, XNetworkInterface_interfaceFromIndexTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "名称与索引转换");
-        XAction_setAction(action, XNetworkInterface_nameIndexConversionTest);
+        XAction* action = XTestMenu_addAction(menu, "名称与索引转换");
+        XTestMenu_setActionFunction(action, XNetworkInterface_nameIndexConversionTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "复制测试");
-        XAction_setAction(action, XNetworkInterface_copyTest);
+        XAction* action = XTestMenu_addAction(menu, "复制测试");
+        XTestMenu_setActionFunction(action, XNetworkInterface_copyTest);
     }
 }

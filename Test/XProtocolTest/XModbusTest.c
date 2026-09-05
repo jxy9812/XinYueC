@@ -7,7 +7,7 @@
 #include"XCrc.h"
 #include"XTimerGroupBase.h"
 #include"XSwitchDeviceModbus.h"
-#include"XMenu.h"
+#include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
@@ -859,28 +859,28 @@ void XModbusAduTest(void)
     XPrintf("========== XModbusAdu 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
 }
 
-void XMenu_XModbusTest(XMenu* root)
+void XTestMenu_XModbusTest(XTestMenu* root)
 {
-    XMenu* menu = XMenu_create("XModbus(modbus)");
+    XTestMenu* menu = XTestMenu_create("XModbus(modbus)");
     {
-        XAction* action = XMenu_addAction(menu, "CommEvent单元测试");
-        XAction_setAction(action, XModbusCommEventTest);
+        XAction* action = XTestMenu_addAction(menu, "CommEvent单元测试");
+        XTestMenu_setActionFunction(action, XModbusCommEventTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "Adu单元测试");
-        XAction_setAction(action, XModbusAduTest);
+        XAction* action = XTestMenu_addAction(menu, "Adu单元测试");
+        XTestMenu_setActionFunction(action, XModbusAduTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "公共 API 回归测试");
-        XAction_setAction(action, XModbusPublicApiTest);
+        XAction* action = XTestMenu_addAction(menu, "公共 API 回归测试");
+        XTestMenu_setActionFunction(action, XModbusPublicApiTest);
     }
-    XMenu_addMenu(root, menu);
+    XTestMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "RtuSerialClient测试");
-        XAction_setAction(action, XModbusRtuSerialClientTest);
+        XAction* action = XTestMenu_addAction(menu, "RtuSerialClient测试");
+        XTestMenu_setActionFunction(action, XModbusRtuSerialClientTest);
     }
     {
-        XAction* action = XMenu_addAction(menu, "TcpClient测试");
-        XAction_setAction(action, XModbusTcpClientTest);
+        XAction* action = XTestMenu_addAction(menu, "TcpClient测试");
+        XTestMenu_setActionFunction(action, XModbusTcpClientTest);
     }
 }
