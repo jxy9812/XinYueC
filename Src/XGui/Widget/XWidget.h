@@ -558,8 +558,7 @@ XVtable* XWidget_class_init(void);
 void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 使用默认内存类型创建控件（headless 父对象语义同 init）。 */
-#define XWidget_create(parent, flags) \
-    XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+#define XWidget_create(parent, flags)  XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
  * @brief      使用指定内存类型创建控件。
  * @param      memory 对象内存类型。

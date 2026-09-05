@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractButton.h
  * @brief      XAbstractButton 抽象按钮基类（对标 Qt 6.8 QAbstractButton）。
  * @details    XAbstractButton 继承 XWidget，集中提供 QPushButton、QCheckBox、
@@ -129,8 +129,7 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的对象
  *             由调用方拥有，必须使用 XAbstractButton_delete_base 释放。
  */
-#define XAbstractButton_create(parent, flags) \
-    XAbstractButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+#define XAbstractButton_create(parent, flags)  XAbstractButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 
 /**
  * @brief      使用指定内存类型创建并初始化按钮对象。
@@ -153,8 +152,7 @@ XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
  * @note       调用后 self 不再是可用的已初始化对象；不得重复调用，也不得
  *             在未初始化存储上调用。
  */
-#define XAbstractButton_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
+#define XAbstractButton_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      释放按钮对象资源并按对象所有权删除其存储空间。
@@ -163,8 +161,7 @@ XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
  * @return     无返回值；堆对象会先执行虚表析构，再由创建时的内存方法释放；
  *             栈对象不应使用此宏，栈对象请使用 XAbstractButton_deinit_base。
  */
-#define XAbstractButton_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
+#define XAbstractButton_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本与图标（对标 QAbstractButton） ==================== */
 

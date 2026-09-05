@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XWidget_Protected.h
  * @brief      XWidget 基类保护接口（仅供子类与内部实现使用）。
  * @details    本文件集中声明 Qt QWidget 中属于 protected 的事件虚函数、
@@ -97,8 +97,7 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
  * @param      event 待分派事件；可为 NULL。
  * @return     事件已处理返回 true。
  */
-#define XWidget_event_base(self, event) \
-    XObject_event_base((XObject*)(self), (event))
+#define XWidget_event_base(self, event)  XObject_event_base((XObject*)(self), (event))
 /** @brief 绘制事件槽（对标 QWidget::paintEvent）。 */
 void XWidget_paintEvent_base(XWidget* self, XEvent* event);
 /** @brief 调整大小事件槽（对标 QWidget::resizeEvent）。 */

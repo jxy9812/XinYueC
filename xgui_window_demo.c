@@ -33,6 +33,7 @@
 #include "XGuiApplication.h"
 #include "XWidget.h"
 #include "XWidget_Protected.h"
+#include "XImage.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
 #include "XImage.h"
@@ -45,6 +46,16 @@
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+#include "XCheckBox.h"
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+#include "XRadioButton.h"
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+#include "XCommandLinkButton.h"
+#endif
+#include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
 #endif
@@ -79,25 +90,53 @@ typedef struct DemoWin
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
+    const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
+    int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
     int64_t m_lastNetworkPollUsecs; /**< 最近一次主机网络计数采样时刻。 */
 #endif
 #endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel          m_titleLabel; /**< 顶部标题栏文本（深蓝背景，白字）。 */
+    XLabel          m_statusLabel; /**< 底部状态栏文本（页面名/交互反馈）。 */
+#endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_button; /**< 常驻按钮控件：输入与信号都走控件自身。 */
+    XPushButton     m_pageNav[3]; /**< 页面切换按钮：按钮/选择/堆叠演示。 */
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（3 个演示页面）。 */
+    XWidget         m_pageButtons; /**< 页面 0：按钮演示容器。 */
+    XWidget         m_pageChoices; /**< 页面 1：选择演示容器。 */
+    XWidget         m_pageStacked; /**< 页面 2：堆叠演示容器。 */
+#endif
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    XPushButton     m_button; /**< 页面 0：常驻按钮（点击/信号演示）。 */
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel          m_linkLabel; /**< 常驻联动标签：按下/松开文本由按钮信号槽更新。 */
+    XLabel          m_linkLabel; /**< 页面 0：按钮信号联动标签。 */
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+    XCommandLinkButton m_commandLink; /**< 页面 0：命令链接按钮（双行描述）。 */
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+    XCheckBox       m_checkBox; /**< 页面 1：三态复选框。 */
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+    XRadioButton    m_radioA; /**< 页面 1：单选按钮 A（互斥组）。 */
+    XRadioButton    m_radioB; /**< 页面 1：单选按钮 B。 */
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel          m_choiceLabel; /**< 页面 1：选择状态联动标签。 */
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    XStackedLayout  m_stackLayout; /**< 堆叠页面布局：展示 StackOne 页面切换策略。 */
-    XLabel          m_stackPageOne; /**< 堆叠布局第一个页面控件。 */
-    XLabel          m_stackPageTwo; /**< 堆叠布局第二个页面控件。 */
+    XLabel          m_stackPageOne; /**< 页面 2：内层堆叠第一个页面。 */
+    XLabel          m_stackPageTwo; /**< 页面 2：内层堆叠第二个页面。 */
+    XStackedLayout  m_stackLayoutInner; /**< 页面 2：内层堆叠演示。 */
 #if XPUSHBUTTON_ON
-    XPushButton     m_stackPrevButton; /**< 堆叠布局上一页按钮。 */
-    XPushButton     m_stackNextButton; /**< 堆叠布局下一页按钮。 */
+    XPushButton     m_stackPrevButton; /**< 页面 2：内层上一页按钮。 */
+    XPushButton     m_stackNextButton; /**< 页面 2：内层下一页按钮。 */
 #endif
 #endif
 } DemoWin;
@@ -244,7 +283,9 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-/** @brief 绘制不随性能采样变化的 Demo 场景。 */
+/** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
+ * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色，
+ *          右上角保留一小块棋盘格用于验证脏区提交。 */
 static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 {
     XFont painterFont;
@@ -254,42 +295,11 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     XPainter_setFont(painter, &painterFont);
     XFont_deinit_base(&painterFont);
 
-    demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);
-    demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);
-    demo_draw_checker(painter, 20, 60, 8, 5, 24);
-    demo_fill_rect(painter, 230, 60, 270, 100, 0xffdcefe2u);
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    demo_draw_label(painter, 246, 70, 238, 20,
-                    "XLabel 1x \xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95", 16,
-                    XGUI_DEMO_DEFAULT_FONT_FAMILY);
-    demo_draw_label(painter, 246, 106, 238, 40,
-                    "XLabel 32px \xE4\xB8\xAD\xE6\x96\x87", 40,
-                    XGUI_DEMO_DEFAULT_FONT_FAMILY);
-#else
-    XPainter_drawText(painter, 246, 92, "XLabel disabled", 0xff202020u);
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
-
-    demo_fill_rect(painter, 230, 180, 270, 100, 0xffe6eef7u);
-#if !XPUSHBUTTON_ON
-    XPainter_drawText(painter, 246, 212, "XPushButton disabled", 0xff202020u);
-#endif /* !XPUSHBUTTON_ON */
-
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    demo_fill_rect(painter, 20, 180, 190, 140, 0xffffedcfu);
-    XPainter_drawText(painter, 32, 202, "XStackedLayout", 0xff202020u);
-    {
-        XRect stackRect;
-        XRect_init(&stackRect, 32, 220, 166, 48);
-        demo_fill_rect(painter, stackRect.x, stackRect.y,
-                       stackRect.width, stackRect.height, 0xffffffffu);
-        XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
-                                      &stackRect);
-    }
-#else
-    demo_fill_rect(painter, 20, 180, 190, 100, 0xffffedcfu);
-    XPainter_drawText(painter, 32, 232, "XStackedLayout disabled", 0xff202020u);
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
-    demo_fill_rect(painter, 0, h - 28, w, 28, 0xff3a3a3au);
+    demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
+    demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);      /* 标题栏基底 */
+    demo_fill_rect(painter, 0, h - 26, w, 26, 0xff3a3a3au); /* 状态栏基底 */
+    demo_draw_checker(painter, w - 116, 84, 2, 2, 24);      /* 右上角装饰 */
+    /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
 
 /** @brief 尺寸或控件状态变化后重建静态场景缓存。 */
@@ -519,6 +529,8 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
             (double)longestUsecs / 1000.0);
 }
 
+static void demo_stopTimers(DemoWin* self);
+
 /** @brief 事件循环轮询回调：每轮 processEvents 请求一次重绘，代替 1ms
  *         帧定时器，刷新频率只受事件循环调度速度限制。 */
 static bool demo_framePump(void* userData)
@@ -527,6 +539,23 @@ static bool demo_framePump(void* userData)
     if (!demo || demo->m_closed)
         return false;
     demo_repaint(demo);
+    /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。 */
+    if (demo->m_screenshotPath) {
+        if (++demo->m_screenshotFrames >= 3) {
+            XImage* device = XWidget_paintDevice(&demo->m_base);
+            if (device) {
+                XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
+                        demo->m_screenshotPath);
+                if (!XImage_save_2(device, demo->m_screenshotPath,
+                                   "PNG", 95))
+                    XPrintf("XGuiWindowDemo: 截图保存失败\n");
+            }
+            demo_stopTimers(demo);
+            demo->m_closed = true;
+            XGuiApplication_quit();
+            return false;
+        }
+    }
     return true;
 }
 
@@ -564,35 +593,130 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
 
 /* ==================== 信号槽 ==================== */
 
+/** @brief 更新底部状态栏文本并触发重绘。 */
+static void demo_set_status(DemoWin* self, const char* text)
+{
+    if (!self || !text) return;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_statusLabel, text);
+#endif
+    self->m_staticSceneDirty = true;
+    demo_repaint(self);
+}
+
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/** @brief 页面名称表（与导航按钮一一对应，中文）。 */
+static const char* demo_page_name(int index)
+{
+    static const char* const kNames[3] = {
+        "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
+        "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
+        "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA"  /* 堆叠演示 */
+    };
+    if (index < 0 || index > 2)
+        return kNames[0];
+    return kNames[index];
+}
+
+/** @brief 按当前窗口尺寸重新分配主内容区几何（切换页面/resize 时调用）。 */
+static void demo_layout_content(DemoWin* self)
+{
+    XRect content;
+    int width;
+    int height;
+    int contentWidth;
+    int contentHeight;
+    if (!self) return;
+    width = XWidget_width(&self->m_base);
+    height = XWidget_height(&self->m_base);
+    contentWidth = width - 24;
+    contentHeight = height - 78 - 28;
+    if (contentWidth < 0) contentWidth = 0;
+    if (contentHeight < 0) contentHeight = 0;
+    XRect_init(&content, 12, 78, contentWidth, contentHeight);
+    XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
+                                 &content);
+}
+
+/** @brief 切换主内容页面：更新堆叠布局当前页、重新分配几何并更新状态栏。 */
+static void demo_switchPage(DemoWin* self, int index)
+{
+    if (!self) return;
+    if (index < 0) index = 0;
+    if (index > 2) index = 2;
+    XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
+    /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
+       重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
+    demo_layout_content(self);
+    XPrintf("XGuiWindowDemo: switch page=%d (%s)\n", index,
+            demo_page_name(index));
+    demo_set_status(self, demo_page_name(index));
+}
+#endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+#if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/** @brief 页面 1（按钮演示）导航按钮 clicked 槽。 */
+static void demo_nav0Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 0);
+}
+/** @brief 页面 2（选择演示）导航按钮 clicked 槽。 */
+static void demo_nav1Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 1);
+}
+/** @brief 页面 3（堆叠演示）导航按钮 clicked 槽。 */
+static void demo_nav2Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 2);
+}
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
 #if XWIDGET_ON && XPUSHBUTTON_ON
-/** @brief 按钮 pressed 信号槽：置按下状态并更新联动标签。 */
+/** @brief 页面 1 常驻按钮 pressed 信号槽：更新联动标签与状态栏。 */
 static void demo_button_pressedSlot(XObject* receiver, XVarList* args)
 {
     DemoWin* self = (DemoWin*)receiver;
     (void)args;
     if (!self) return;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_setText_2(&self->m_linkLabel, "Pressed");
+    XLabel_setText_2(&self->m_linkLabel, "按钮：按下");
 #endif
-    self->m_staticSceneDirty = true;
-    demo_repaint(self);
+    demo_set_status(self, "按钮：按下");
 }
 
-/** @brief 按钮 released 信号槽：清除按下状态并更新联动标签。 */
+/** @brief 页面 1 常驻按钮 released 信号槽：更新联动标签与状态栏。 */
 static void demo_button_releasedSlot(XObject* receiver, XVarList* args)
 {
     DemoWin* self = (DemoWin*)receiver;
     (void)args;
     if (!self) return;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_setText_2(&self->m_linkLabel, "Released");
+    XLabel_setText_2(&self->m_linkLabel, "按钮：释放");
 #endif
-    self->m_staticSceneDirty = true;
-    demo_repaint(self);
+    demo_set_status(self, "按钮：释放");
 }
 
-#if XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-/** @brief 上一页按钮 clicked 槽：循环切换到堆叠布局的上一页。 */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+/** @brief 页面 1 命令链接按钮 clicked 槽：更新联动标签与状态栏。 */
+static void demo_commandlink_clickedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    (void)args;
+    if (!self) return;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_linkLabel, "命令链接：点击");
+#endif
+    demo_set_status(self, "命令链接：点击");
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
+#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/** @brief 页面 3 内层上一页按钮 clicked 槽：循环切换内层堆叠。 */
 static void demo_stack_prev_clickedSlot(XObject* receiver, XVarList* args)
 {
     DemoWin* self = (DemoWin*)receiver;
@@ -600,18 +724,17 @@ static void demo_stack_prev_clickedSlot(XObject* receiver, XVarList* args)
     int count;
     (void)args;
     if (!self) return;
-    index = XStackedLayout_currentIndex(&self->m_stackLayout);
-    count = XStackedLayout_count(&self->m_stackLayout);
+    index = XStackedLayout_currentIndex(&self->m_stackLayoutInner);
+    count = XStackedLayout_count(&self->m_stackLayoutInner);
     if (count <= 0) return;
     if (index <= 0) index = count - 1;
     else --index;
-    XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
-    XPrintf("XGuiWindowDemo: stacked page=%d (prev)\n", index);
-    self->m_staticSceneDirty = true;
-    demo_repaint(self);
+    XStackedLayout_setCurrentIndex(&self->m_stackLayoutInner, index);
+    XPrintf("XGuiWindowDemo: inner stacked page=%d (prev)\n", index);
+    demo_set_status(self, index == 0 ? "内层页面 1" : "内层页面 2");
 }
 
-/** @brief 下一页按钮 clicked 槽：循环切换到堆叠布局的下一页。 */
+/** @brief 页面 3 内层下一页按钮 clicked 槽：循环切换内层堆叠。 */
 static void demo_stack_next_clickedSlot(XObject* receiver, XVarList* args)
 {
     DemoWin* self = (DemoWin*)receiver;
@@ -619,17 +742,52 @@ static void demo_stack_next_clickedSlot(XObject* receiver, XVarList* args)
     int count;
     (void)args;
     if (!self) return;
-    index = XStackedLayout_currentIndex(&self->m_stackLayout);
-    count = XStackedLayout_count(&self->m_stackLayout);
+    index = XStackedLayout_currentIndex(&self->m_stackLayoutInner);
+    count = XStackedLayout_count(&self->m_stackLayoutInner);
     if (count <= 0) return;
     index = (index + 1) % count;
-    XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
-    XPrintf("XGuiWindowDemo: stacked page=%d (next)\n", index);
-    self->m_staticSceneDirty = true;
-    demo_repaint(self);
+    XStackedLayout_setCurrentIndex(&self->m_stackLayoutInner, index);
+    XPrintf("XGuiWindowDemo: inner stacked page=%d (next)\n", index);
+    demo_set_status(self, index == 0 ? "内层页面 1" : "内层页面 2");
 }
-#endif /* XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
-#endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+/** @brief 页面 2 复选框 checkStateChanged 槽：更新选择状态标签与状态栏。 */
+static void demo_checkbox_stateSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    const char* text = "复选框：未选中";
+    if (!self || !args) return;
+    XVarList_args_1(args, int, state);
+    switch (state) {
+    case 1: text = "复选框：部分选中"; break;
+    case 2: text = "复选框：已选中"; break;
+    default: text = "复选框：未选中"; break;
+    }
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_choiceLabel, text);
+#endif
+    demo_set_status(self, text);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+/** @brief 页面 2 单选按钮 toggled 槽：更新选择状态标签与状态栏。 */
+static void demo_radio_toggledSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    const char* text;
+    (void)args;
+    if (!self) return;
+    text = XRadioButton_isChecked(&self->m_radioA) ? "单选：A"
+                                                   : "单选：B";
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_setText_2(&self->m_choiceLabel, text);
+#endif
+    demo_set_status(self, text);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
 
 /* ==================== 事件槽重载 ==================== */
 
@@ -645,13 +803,16 @@ static void VDemoWin_closeEvent(XWidget* self, XEvent* event)
     if (event) XEvent_accept(event);
 }
 
-/** @brief ResizeEvent：更新固定悬浮层锚点，并让控件树提交新尺寸画面。 */
+/** @brief ResizeEvent：更新固定悬浮层锚点、主内容区几何，并让控件树提交新尺寸画面。 */
 static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 {
     DemoWin* demo = (DemoWin*)self;
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
     demo->m_staticSceneDirty = true;
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    demo_layout_content(demo);
+#endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
         XPerformanceOverlay_setPresetPosition(
@@ -869,19 +1030,64 @@ static DemoWin* DemoWin_create(void)
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
-#if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton_init(&self->m_button, &self->m_base, 0);
-    demo_set_widget_default_font((XWidget*)&self->m_button);
-    XPushButton_setText_2(&self->m_button, "XPushButton");
-    XWidget_setGeometry((XWidget*)&self->m_button, 246, 190, 128, 36);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_init(&self->m_linkLabel, &self->m_base, 0);
-    demo_set_widget_default_font((XWidget*)&self->m_linkLabel);
-    XLabel_setText_2(&self->m_linkLabel, "Released");
-    XLabel_setTextPixelSize(&self->m_linkLabel, 16);
-    XLabel_setAlignment(&self->m_linkLabel, XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 382, 190, 108, 36);
+    /* 顶部标题栏文本（深蓝背景由静态场景绘制，白字覆盖其上）。 */
+    XLabel_init(&self->m_titleLabel, &self->m_base, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_titleLabel);
+    XLabel_setText_2(&self->m_titleLabel, "XGui 控件演示");
+    XLabel_setTextPixelSize(&self->m_titleLabel, 18);
+    XLabel_setAlignment(&self->m_titleLabel,
+                        XAlignment_Left | XAlignment_VCenter);
+    XWidget_setForegroundRole((XWidget*)&self->m_titleLabel,
+                              XPaletteColorRole_HighlightedText);
+    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, 0, 420, 40);
+    XWidget_show((XWidget*)&self->m_titleLabel);
 #endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 主内容堆叠：三个演示页面容器（可见性由 XStackedLayout 管理）。 */
+    XStackedLayout_init(&self->m_stackLayout);
+    XWidget_init(&self->m_pageButtons, &self->m_base, 0);
+    XWidget_init(&self->m_pageChoices, &self->m_base, 0);
+    XWidget_init(&self->m_pageStacked, &self->m_base, 0);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_pageButtons);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_pageChoices);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_pageStacked);
+#endif
+#if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 页面切换导航按钮（标题栏下方一行）。 */
+    {
+        static const char* const kNavTexts[3] = {
+            "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
+            "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
+            "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA"  /* 堆叠演示 */
+        };
+        static void (*const kNavSlots[3])(XObject*, XVarList*) = {
+            demo_nav0Slot, demo_nav1Slot, demo_nav2Slot
+        };
+        int nav;
+        for (nav = 0; nav < 3; ++nav) {
+            XPushButton* button = &self->m_pageNav[nav];
+            XPushButton_init(button, &self->m_base, 0);
+            demo_set_widget_default_font((XWidget*)button);
+            XPushButton_setText_2(button, kNavTexts[nav]);
+            XWidget_setGeometry((XWidget*)button, 12 + nav * 104, 44, 96, 26);
+            XObject_connect_1((XObject*)button,
+                              (size_t)XPushButton_clicked_signal(NULL, false),
+                              (XObject*)self, kNavSlots[nav],
+                              XConnectionType_Direct);
+            XWidget_show((XWidget*)button);
+        }
+    }
+#endif
+#if XWIDGET_ON && XPUSHBUTTON_ON
+    /* ---- 页面 1：按钮演示 ---- */
+    XPushButton_init(&self->m_button, (XWidget*)&self->m_pageButtons, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_button);
+    XPushButton_setText_2(&self->m_button, "按钮");
+    XWidget_setGeometry((XWidget*)&self->m_button, 40, 48, 180, 36);
     XObject_connect_1((XObject*)&self->m_button,
                       (size_t)XPushButton_pressed_signal(NULL),
                       (XObject*)self, demo_button_pressedSlot,
@@ -890,41 +1096,107 @@ static DemoWin* DemoWin_create(void)
                       (size_t)XPushButton_released_signal(NULL),
                       (XObject*)self, demo_button_releasedSlot,
                       XConnectionType_Direct);
-    /* 与 QWidget 一样，不由布局管理的子控件需显式 show()；父窗口显示
-     * 时会把它们转为实际可见。 */
     XWidget_show((XWidget*)&self->m_button);
-#if XFRAME_ON && XLABEL_ON
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_init(&self->m_linkLabel, (XWidget*)&self->m_pageButtons, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_linkLabel);
+    XLabel_setText_2(&self->m_linkLabel, "就绪");
+    XLabel_setTextPixelSize(&self->m_linkLabel, 16);
+    XLabel_setAlignment(&self->m_linkLabel, XAlignment_Left | XAlignment_Top);
+    XWidget_setGeometry((XWidget*)&self->m_linkLabel, 40, 180, 420, 24);
     XWidget_show((XWidget*)&self->m_linkLabel);
 #endif
 #endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+    XCommandLinkButton_init(&self->m_commandLink,
+                            (XWidget*)&self->m_pageButtons, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_commandLink);
+    XCommandLinkButton_setText_2(&self->m_commandLink,
+                                 "命令链接按钮");
+    XCommandLinkButton_setDescription_2(&self->m_commandLink,
+                                        "带标题与描述的按钮");
+    XWidget_setGeometry((XWidget*)&self->m_commandLink, 40, 104, 320, 54);
+    XObject_connect_1((XObject*)&self->m_commandLink,
+                      (size_t)XCommandLinkButton_clicked_signal(NULL, false),
+                      (XObject*)self, demo_commandlink_clickedSlot,
+                      XConnectionType_Direct);
+    XWidget_show((XWidget*)&self->m_commandLink);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+    /* ---- 页面 2：选择演示 ---- */
+    XCheckBox_init(&self->m_checkBox, (XWidget*)&self->m_pageChoices, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_checkBox);
+    XCheckBox_setText_2(&self->m_checkBox, "复选框（三态）");
+    XCheckBox_setTristate(&self->m_checkBox, true);
+    XCheckBox_setCheckState(&self->m_checkBox, XCheckState_PartiallyChecked);
+    XWidget_setGeometry((XWidget*)&self->m_checkBox, 40, 48, 220, 26);
+    XObject_connect_1((XObject*)&self->m_checkBox,
+                      (size_t)XCheckBox_checkStateChanged_signal(
+                          NULL, XCheckState_Unchecked),
+                      (XObject*)self, demo_checkbox_stateSlot,
+                      XConnectionType_Direct);
+    XWidget_show((XWidget*)&self->m_checkBox);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+    XRadioButton_init(&self->m_radioA, (XWidget*)&self->m_pageChoices, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_radioA);
+    XRadioButton_setText_2(&self->m_radioA, "选项 A");
+    XWidget_setGeometry((XWidget*)&self->m_radioA, 40, 88, 120, 22);
+    XRadioButton_setChecked(&self->m_radioA, true);
+    XRadioButton_init(&self->m_radioB, (XWidget*)&self->m_pageChoices, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_radioB);
+    XRadioButton_setText_2(&self->m_radioB, "选项 B");
+    XWidget_setGeometry((XWidget*)&self->m_radioB, 180, 88, 120, 22);
+    XObject_connect_1((XObject*)&self->m_radioA,
+                      (size_t)XRadioButton_toggled_signal(NULL, false),
+                      (XObject*)self, demo_radio_toggledSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_radioB,
+                      (size_t)XRadioButton_toggled_signal(NULL, false),
+                      (XObject*)self, demo_radio_toggledSlot,
+                      XConnectionType_Direct);
+    XWidget_show((XWidget*)&self->m_radioA);
+    XWidget_show((XWidget*)&self->m_radioB);
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_init(&self->m_choiceLabel, (XWidget*)&self->m_pageChoices, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_choiceLabel);
+    XLabel_setText_2(&self->m_choiceLabel, "就绪");
+    XLabel_setTextPixelSize(&self->m_choiceLabel, 16);
+    XLabel_setAlignment(&self->m_choiceLabel, XAlignment_Left | XAlignment_Top);
+    XWidget_setGeometry((XWidget*)&self->m_choiceLabel, 40, 124, 420, 24);
+    XWidget_show((XWidget*)&self->m_choiceLabel);
+#endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    XStackedLayout_init(&self->m_stackLayout);
-    /* 页面和按钮均是根控件的子控件，由 XWidget 控件树自动绘制与命中。 */
-    XLabel_init(&self->m_stackPageOne, &self->m_base, 0);
+    /* ---- 页面 3：堆叠演示（内层堆叠 + 上一页/下一页按钮） ---- */
+    XStackedLayout_init(&self->m_stackLayoutInner);
+    XLabel_init(&self->m_stackPageOne, (XWidget*)&self->m_pageStacked, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPageOne);
-    XLabel_setText_2(&self->m_stackPageOne, "Stacked page 1");
+    XLabel_setText_2(&self->m_stackPageOne, "内层页面 1");
     XLabel_setTextPixelSize(&self->m_stackPageOne, 16);
     XLabel_setAlignment(&self->m_stackPageOne,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XLabel_init(&self->m_stackPageTwo, &self->m_base, 0);
+    XLabel_init(&self->m_stackPageTwo, (XWidget*)&self->m_pageStacked, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPageTwo);
-    XLabel_setText_2(&self->m_stackPageTwo, "Stacked page 2");
+    XLabel_setText_2(&self->m_stackPageTwo, "内层页面 2");
     XLabel_setTextPixelSize(&self->m_stackPageTwo, 16);
     XLabel_setAlignment(&self->m_stackPageTwo,
                         XAlignment_HCenter | XAlignment_VCenter);
-    XStackedLayout_addWidget(&self->m_stackLayout,
+    XStackedLayout_addWidget(&self->m_stackLayoutInner,
                              (XWidget*)&self->m_stackPageOne);
-    XStackedLayout_addWidget(&self->m_stackLayout,
+    XStackedLayout_addWidget(&self->m_stackLayoutInner,
                              (XWidget*)&self->m_stackPageTwo);
 #if XPUSHBUTTON_ON
-    XPushButton_init(&self->m_stackPrevButton, &self->m_base, 0);
+    XPushButton_init(&self->m_stackPrevButton,
+                     (XWidget*)&self->m_pageStacked, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackPrevButton);
-    XPushButton_setText_2(&self->m_stackPrevButton, "< Prev");
-    XWidget_setGeometry((XWidget*)&self->m_stackPrevButton, 32, 274, 78, 30);
-    XPushButton_init(&self->m_stackNextButton, &self->m_base, 0);
+    XPushButton_setText_2(&self->m_stackPrevButton, "上一页");
+    XWidget_setGeometry((XWidget*)&self->m_stackPrevButton, 40, 170, 90, 28);
+    XPushButton_init(&self->m_stackNextButton,
+                     (XWidget*)&self->m_pageStacked, 0);
     demo_set_widget_default_font((XWidget*)&self->m_stackNextButton);
-    XPushButton_setText_2(&self->m_stackNextButton, "Next >");
-    XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 120, 274, 78, 30);
+    XPushButton_setText_2(&self->m_stackNextButton, "下一页");
+    XWidget_setGeometry((XWidget*)&self->m_stackNextButton, 136, 170, 90, 28);
     XObject_connect_1((XObject*)&self->m_stackPrevButton,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)self, demo_stack_prev_clickedSlot,
@@ -936,6 +1208,33 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_stackPrevButton);
     XWidget_show((XWidget*)&self->m_stackNextButton);
 #endif /* XPUSHBUTTON_ON */
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。 */
+    XLabel_init(&self->m_statusLabel, &self->m_base, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
+    XLabel_setText_2(&self->m_statusLabel, "就绪");
+    XLabel_setTextPixelSize(&self->m_statusLabel, 14);
+    XLabel_setAlignment(&self->m_statusLabel,
+                        XAlignment_Left | XAlignment_VCenter);
+    XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
+                              XPaletteColorRole_HighlightedText);
+    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 16, 334, 460, 26);
+    XWidget_show((XWidget*)&self->m_statusLabel);
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 主内容区几何（标题栏 40 + 导航按钮 34 之后）与内层堆叠几何。 */
+    {
+        XRect content;
+        XRect inner;
+        XRect_init(&content, 12, 78, 496, 252);
+        XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
+                                     &content);
+        XRect_init(&inner, 40, 44, 320, 110);
+        XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayoutInner,
+                                     &inner);
+    }
+    XStackedLayout_setCurrentIndex(&self->m_stackLayout, 0);
 #endif
     return self;
 }
@@ -949,12 +1248,16 @@ int main(int argc, char* argv[])
     int autoSeconds;
     int benchmarkSeconds;
     bool benchmarkResize;
+    const char* screenshotPath;
+    int screenshotPage;
     int argi;
     int eventLoopResult;
 
     autoSeconds = 0;
     benchmarkSeconds = 0;
     benchmarkResize = false;
+    screenshotPath = NULL;
+    screenshotPage = 0;
     for (argi = 1; argi < argc; ++argi) {
         if (strcmp(argv[argi], "--benchmark") == 0 && argi + 1 < argc) {
             benchmarkSeconds = atoi(argv[++argi]);
@@ -964,6 +1267,13 @@ int main(int argc, char* argv[])
                  argi + 1 < argc) {
             benchmarkSeconds = atoi(argv[++argi]);
             benchmarkResize = true;
+        }
+        else if (strcmp(argv[argi], "--screenshot") == 0 &&
+                 argi + 1 < argc) {
+            screenshotPath = argv[++argi];
+        }
+        else if (strcmp(argv[argi], "--page") == 0 && argi + 1 < argc) {
+            screenshotPage = atoi(argv[++argi]);
         }
         else {
             autoSeconds = atoi(argv[argi]);
@@ -986,9 +1296,16 @@ int main(int argc, char* argv[])
         XGuiApplication_delete_base(app);
         return 1;
     }
+    win->m_screenshotPath = screenshotPath;
+    win->m_screenshotFrames = 0;
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 截图模式可指定初始页面（配合 --screenshot <file> --page <N>）。 */
+    if (screenshotPath && screenshotPage > 0)
+        demo_switchPage(win, screenshotPage);
+#endif
     {
         XString* title = XString_create_utf8(
-            "XinYueC GUI 控件可视化测试 (X11/Win32)");
+            "XinYueC 控件可视化测试");
         XWidget_setWindowTitle(&win->m_base, title);
         XString_delete_base((XClass*)title);
     }
@@ -1031,17 +1348,28 @@ int main(int argc, char* argv[])
 
     /* 4) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
     demo_stopTimers(win);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_deinit_base(&win->m_statusLabel);
+    XLabel_deinit_base(&win->m_titleLabel);
+#endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton_deinit_base(&win->m_button);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+    XCommandLinkButton_deinit_base(&win->m_commandLink);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel_deinit_base(&win->m_linkLabel);
 #endif
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    demo_performance_deinit(win);
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+    XCheckBox_deinit_base(&win->m_checkBox);
 #endif
-#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-    XImage_deinit_base(&win->m_staticScene);
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+    XRadioButton_deinit_base(&win->m_radioA);
+    XRadioButton_deinit_base(&win->m_radioB);
+#endif
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    XLabel_deinit_base(&win->m_choiceLabel);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #if XPUSHBUTTON_ON
@@ -1050,7 +1378,26 @@ int main(int argc, char* argv[])
 #endif
     XLabel_deinit_base(&win->m_stackPageOne);
     XLabel_deinit_base(&win->m_stackPageTwo);
+    XStackedLayout_deinit_base(&win->m_stackLayoutInner);
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    XWidget_deinit_base(&win->m_pageStacked);
+    XWidget_deinit_base(&win->m_pageChoices);
+    XWidget_deinit_base(&win->m_pageButtons);
     XStackedLayout_deinit_base(&win->m_stackLayout);
+#endif
+#if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    {
+        int nav;
+        for (nav = 0; nav < 3; ++nav)
+            XPushButton_deinit_base(&win->m_pageNav[nav]);
+    }
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    demo_performance_deinit(win);
+#endif
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+    XImage_deinit_base(&win->m_staticScene);
 #endif
     XWidget_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);

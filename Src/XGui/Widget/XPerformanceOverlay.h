@@ -74,8 +74,7 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
                               XWidgetFlags flags);
 
 /** @brief 使用默认内存类型创建性能悬浮层。 */
-#define XPerformanceOverlay_create(parent, flags) \
-    XPerformanceOverlay_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+#define XPerformanceOverlay_create(parent, flags)  XPerformanceOverlay_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 
 /** @brief 使用指定内存类型创建性能悬浮层。 */
 XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
@@ -83,30 +82,22 @@ XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
                                                     XWidgetFlags flags);
 
 /** @brief 通过 XClass 入口反初始化/删除/复制/移动性能悬浮层。 */
-#define XPerformanceOverlay_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-#define XPerformanceOverlay_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
+#define XPerformanceOverlay_deinit_base(self)  XClass_deinit_base((XClass*)(self))
+#define XPerformanceOverlay_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* 几何 API 属于 XWidget，悬浮层只提供类型安全的继承宏，不重复声明函数。 */
-#define XPerformanceOverlay_geometry(self) \
-    XWidget_geometry((const XWidget*)&((self)->m_base))
-#define XPerformanceOverlay_setPosition(self, x, y) \
-    XWidget_move((XWidget*)&((self)->m_base), (x), (y))
-#define XPerformanceOverlay_position(self) \
-    XWidget_pos((const XWidget*)&((self)->m_base))
-#define XPerformanceOverlay_setSize(self, width, height) \
-    XWidget_resize((XWidget*)&((self)->m_base), (width), (height))
-#define XPerformanceOverlay_size(self) \
-    XWidget_size((const XWidget*)&((self)->m_base))
+#define XPerformanceOverlay_geometry(self)  XWidget_geometry((const XWidget*)&((self)->m_base))
+#define XPerformanceOverlay_setPosition(self, x, y)  XWidget_move((XWidget*)&((self)->m_base), (x), (y))
+#define XPerformanceOverlay_position(self)  XWidget_pos((const XWidget*)&((self)->m_base))
+#define XPerformanceOverlay_setSize(self, width, height)  XWidget_resize((XWidget*)&((self)->m_base), (width), (height))
+#define XPerformanceOverlay_size(self)  XWidget_size((const XWidget*)&((self)->m_base))
 
 /** @brief 设置悬浮层使用的字体家族；字符串会被复制。 */
 void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
                                        const char* family);
 
 /** @brief 设置悬浮层文字像素高度。 */
-#define XPerformanceOverlay_setTextPixelSize(self, pixelHeight) \
-    XLabel_setTextPixelSize((XLabel*)(self), (pixelHeight))
+#define XPerformanceOverlay_setTextPixelSize(self, pixelHeight)  XLabel_setTextPixelSize((XLabel*)(self), (pixelHeight))
 
 /** @brief 设置是否显示 FPS；编译时裁剪 FPS 时该调用为 no-op。 */
 void XPerformanceOverlay_setFpsVisible(XPerformanceOverlay* self,

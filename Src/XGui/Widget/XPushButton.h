@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPushButton.h
  * @brief      XPushButton 按钮控件（对标 Qt 6.8 QPushButton，继承 XAbstractButton）。
  * @details    XPushButton 继承 XAbstractButton（对齐 Qt 的
@@ -131,119 +131,91 @@ XPushButton* XPushButton_create_ex(XMemoryType memory, XWidget* parent,
 /* ==================== 继承 XAbstractButton 的公共 API（宏别名保持原名称） ==================== */
 
 /** @brief 查询按钮文本（对标 QAbstractButton::text；返回借用指针，生命周期同对象）。 */
-#define XPushButton_text(self) \
-    XAbstractButton_text((const XAbstractButton*)(self))
+#define XPushButton_text(self)  XAbstractButton_text((const XAbstractButton*)(self))
 /**
  * @brief      设置按钮文本（对标 QAbstractButton::setText）。
  * @details    与当前文本相同则为无操作；否则深拷贝新文本，经基类
  *             contentChanged 虚槽刷新本类 sizeHint 后更新几何与重绘。
  * @param      text 新文本；NULL 视为空。
  */
-#define XPushButton_setText(self, text) \
-    XAbstractButton_setText((XAbstractButton*)(self), (text))
+#define XPushButton_setText(self, text)  XAbstractButton_setText((XAbstractButton*)(self), (text))
 /** @brief 设置按钮文本（UTF-8 C 字符串便利版本，含 '\0' 结尾）。 */
-#define XPushButton_setText_2(self, utf8) \
-    XAbstractButton_setText_2((XAbstractButton*)(self), (utf8))
+#define XPushButton_setText_2(self, utf8)  XAbstractButton_setText_2((XAbstractButton*)(self), (utf8))
 
 /** @brief 返回按钮图标（对标 QAbstractButton::icon；按值返回共享数据）。 */
-#define XPushButton_icon(self) \
-    XAbstractButton_icon((const XAbstractButton*)(self))
+#define XPushButton_icon(self)  XAbstractButton_icon((const XAbstractButton*)(self))
 /**
  * @brief      设置按钮图标（对标 QAbstractButton::setIcon）。
  * @details    复制图标值；经基类 contentChanged 虚槽刷新尺寸提示后更新
  *             几何与重绘。
  * @param      icon 源图标指针；NULL 或空图标会清空按钮图标。
  */
-#define XPushButton_setIcon(self, icon) \
-    XAbstractButton_setIcon((XAbstractButton*)(self), (icon))
+#define XPushButton_setIcon(self, icon)  XAbstractButton_setIcon((XAbstractButton*)(self), (icon))
 
 /** @brief 查询按钮图标渲染尺寸（对标 QAbstractButton::iconSize）。 */
-#define XPushButton_iconSize(self) \
-    XAbstractButton_iconSize((const XAbstractButton*)(self))
+#define XPushButton_iconSize(self)  XAbstractButton_iconSize((const XAbstractButton*)(self))
 /**
  * @brief      设置按钮图标渲染尺寸（对标 QAbstractButton::setIconSize）。
  * @param      size 目标尺寸；NULL 或宽高不大于 0 表示恢复默认。
  */
-#define XPushButton_setIconSize(self, size) \
-    XAbstractButton_setIconSize((XAbstractButton*)(self), (size))
+#define XPushButton_setIconSize(self, size)  XAbstractButton_setIconSize((XAbstractButton*)(self), (size))
 
 /** @brief 查询按钮是否可选中（对标 QAbstractButton::isCheckable，默认 false）。 */
-#define XPushButton_isCheckable(self) \
-    XAbstractButton_isCheckable((const XAbstractButton*)(self))
+#define XPushButton_isCheckable(self)  XAbstractButton_isCheckable((const XAbstractButton*)(self))
 /** @brief 设置按钮是否可选中（对标 QAbstractButton::setCheckable）。 */
-#define XPushButton_setCheckable(self, checkable) \
-    XAbstractButton_setCheckable((XAbstractButton*)(self), (checkable))
+#define XPushButton_setCheckable(self, checkable)  XAbstractButton_setCheckable((XAbstractButton*)(self), (checkable))
 /** @brief 查询按钮是否选中（对标 QAbstractButton::isChecked，默认 false）。 */
-#define XPushButton_isChecked(self) \
-    XAbstractButton_isChecked((const XAbstractButton*)(self))
+#define XPushButton_isChecked(self)  XAbstractButton_isChecked((const XAbstractButton*)(self))
 /** @brief 设置按钮选中状态（对标 QAbstractButton::setChecked）。 */
-#define XPushButton_setChecked(self, checked) \
-    XAbstractButton_setChecked((XAbstractButton*)(self), (checked))
+#define XPushButton_setChecked(self, checked)  XAbstractButton_setChecked((XAbstractButton*)(self), (checked))
 /** @brief 切换选中状态并发射 toggled（对标 QAbstractButton::toggle）。 */
-#define XPushButton_toggle(self) \
-    XAbstractButton_toggle((XAbstractButton*)(self))
+#define XPushButton_toggle(self)  XAbstractButton_toggle((XAbstractButton*)(self))
 
 /** @brief 查询按下面板状态（对标 QAbstractButton::isDown，默认 false）。 */
-#define XPushButton_isDown(self) \
-    XAbstractButton_isDown((const XAbstractButton*)(self))
+#define XPushButton_isDown(self)  XAbstractButton_isDown((const XAbstractButton*)(self))
 /** @brief 设置按下面板状态（对标 QAbstractButton::setDown）。 */
-#define XPushButton_setDown(self, down) \
-    XAbstractButton_setDown((XAbstractButton*)(self), (down))
+#define XPushButton_setDown(self, down)  XAbstractButton_setDown((XAbstractButton*)(self), (down))
 
 /** @brief 查询是否允许按住自动重复（对标 QAbstractButton::autoRepeat，默认 false）。 */
-#define XPushButton_autoRepeat(self) \
-    XAbstractButton_autoRepeat((const XAbstractButton*)(self))
+#define XPushButton_autoRepeat(self)  XAbstractButton_autoRepeat((const XAbstractButton*)(self))
 /** @brief 设置是否允许按住自动重复（对标 QAbstractButton::setAutoRepeat）。 */
-#define XPushButton_setAutoRepeat(self, repeat) \
-    XAbstractButton_setAutoRepeat((XAbstractButton*)(self), (repeat))
+#define XPushButton_setAutoRepeat(self, repeat)  XAbstractButton_setAutoRepeat((XAbstractButton*)(self), (repeat))
 /** @brief 查询自动重复开始延迟（毫秒；默认 300）。 */
-#define XPushButton_autoRepeatDelay(self) \
-    XAbstractButton_autoRepeatDelay((const XAbstractButton*)(self))
+#define XPushButton_autoRepeatDelay(self)  XAbstractButton_autoRepeatDelay((const XAbstractButton*)(self))
 /** @brief 设置自动重复开始延迟（毫秒；按 Qt 语义保存调用方整数）。 */
-#define XPushButton_setAutoRepeatDelay(self, delay) \
-    XAbstractButton_setAutoRepeatDelay((XAbstractButton*)(self), (delay))
+#define XPushButton_setAutoRepeatDelay(self, delay)  XAbstractButton_setAutoRepeatDelay((XAbstractButton*)(self), (delay))
 /** @brief 查询自动重复间隔（毫秒；默认 100）。 */
-#define XPushButton_autoRepeatInterval(self) \
-    XAbstractButton_autoRepeatInterval((const XAbstractButton*)(self))
+#define XPushButton_autoRepeatInterval(self)  XAbstractButton_autoRepeatInterval((const XAbstractButton*)(self))
 /** @brief 设置自动重复间隔（毫秒；按 Qt 语义保存调用方整数）。 */
-#define XPushButton_setAutoRepeatInterval(self, interval) \
-    XAbstractButton_setAutoRepeatInterval((XAbstractButton*)(self), (interval))
+#define XPushButton_setAutoRepeatInterval(self, interval)  XAbstractButton_setAutoRepeatInterval((XAbstractButton*)(self), (interval))
 /** @brief 查询自动互斥标志（对标 QAbstractButton::autoExclusive；默认 false）。 */
-#define XPushButton_autoExclusive(self) \
-    XAbstractButton_autoExclusive((const XAbstractButton*)(self))
+#define XPushButton_autoExclusive(self)  XAbstractButton_autoExclusive((const XAbstractButton*)(self))
 /** @brief 设置自动互斥标志（同一父控件下的自动互斥按钮按 Qt 规则联动）。 */
-#define XPushButton_setAutoExclusive(self, exclusive) \
-    XAbstractButton_setAutoExclusive((XAbstractButton*)(self), (exclusive))
+#define XPushButton_setAutoExclusive(self, exclusive)  XAbstractButton_setAutoExclusive((XAbstractButton*)(self), (exclusive))
 
 /**
  * @brief      程序化点击按钮（对标 QAbstractButton::click）。
  * @details    禁用时直接返回；启用时按 pressed、down、nextCheckState、
  *             released、clicked 顺序执行，选中状态变化时发射 toggled。
  */
-#define XPushButton_click(self) \
-    XAbstractButton_click((XAbstractButton*)(self))
+#define XPushButton_click(self)  XAbstractButton_click((XAbstractButton*)(self))
 /**
  * @brief      动画点击（对标 QAbstractButton::animateClick）。
  * @details    立即进入按下状态并发射一次 pressed()，100ms 后由事件循环
  *             发射 released()/clicked()；重复调用会重置释放定时器。
  */
-#define XPushButton_animateClick(self) \
-    XAbstractButton_animateClick((XAbstractButton*)(self))
+#define XPushButton_animateClick(self)  XAbstractButton_animateClick((XAbstractButton*)(self))
 
 /* ==================== 信号（继承 XAbstractButton，宏别名保持原名称） ==================== */
 
 /** @brief 按下信号（对标 QAbstractButton::pressed）。 */
-#define XPushButton_pressed_signal(self) \
-    XAbstractButton_pressed_signal((XAbstractButton*)(self))
+#define XPushButton_pressed_signal(self)  XAbstractButton_pressed_signal((XAbstractButton*)(self))
 /** @brief 释放信号（对标 QAbstractButton::released）。 */
-#define XPushButton_released_signal(self) \
-    XAbstractButton_released_signal((XAbstractButton*)(self))
+#define XPushButton_released_signal(self)  XAbstractButton_released_signal((XAbstractButton*)(self))
 /** @brief 点击信号（对标 QAbstractButton::clicked(bool)，参数为点击后的 checked 状态）。 */
-#define XPushButton_clicked_signal(self, checked) \
-    XAbstractButton_clicked_signal((XAbstractButton*)(self), (checked))
+#define XPushButton_clicked_signal(self, checked)  XAbstractButton_clicked_signal((XAbstractButton*)(self), (checked))
 /** @brief 选中变化信号（对标 QAbstractButton::toggled(bool)，参数为变化后的 checked 状态）。 */
-#define XPushButton_toggled_signal(self, checked) \
-    XAbstractButton_toggled_signal((XAbstractButton*)(self), (checked))
+#define XPushButton_toggled_signal(self, checked)  XAbstractButton_toggled_signal((XAbstractButton*)(self), (checked))
 
 /* ==================== 命中（QAbstractButton protected，经虚表分派） ==================== */
 

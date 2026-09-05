@@ -12048,3 +12048,122 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   本次未跑 ASan/LSan 与裁剪构建（XABSTRACTBUTTON_ON=0 时 XPUSHBUTTON_ON
   已在 XGuiConfig.h 强制裁剪）。本环境 VS2026 Ninja 生成器无法启动子进程
   （构建卡死），因此使用 VS2026 的 MSBuild 生成器完成验证。
+
+---
+
+## 2026-09-05 XCheckBox / XRadioButton / XCommandLinkButton 按钮控件扩展
+
+- **目标**：在 XAbstractButton 基类之上新增 Qt 6.8 三系按钮控件子类——
+  XCheckBox（三态复选框）、XRadioButton（自动互斥单选按钮）、
+  XCommandLinkButton（命令链接按钮），全部复用基类状态/事件/信号/定时器
+  实现，只实现各自特有部分；同时统一按钮类头文件的宏别名风格（去掉 `\`
+  续行，单行书写），并接入 xgui_window_demo 进行界面测试。
+- **Qt 源码依据（本机 6.8.3）**：
+  - `qcheckbox.cpp:117`：QCheckBox init 默认 checkable=true；`347-356`：
+    nextCheckState 三态按 (state+1)%3 循环，非三态交基类；`328-342`：
+    checkStateSet 同步并发出 checkStateChanged；`217-251`：setCheckState
+    用 blockRefresh 抑制基类路径重复发信号；
+  - `qradiobutton.cpp:35-38`：QRadioButton init 默认 checkable=true、
+    autoExclusive=true、前景角色 WindowText；
+  - `qcommandlinkbutton.cpp:178-193`：QCommandLinkButton init 尺寸策略
+    Preferred/Preferred+PushButton、图标尺寸 20x20；
+  - `qcheckbox.h:47`/`qradiobutton.h:32`：hitButton 按 SE_CheckBoxClickRect/
+    SE_RadioButtonClickRect（indicator 区域）命中。
+- **实现范围**：
+  - 新增 `Src/XGui/Widget/XCheckBox.{h,c}`：继承 XAbstractButton；tristate
+    三态模型（基类 m_checked 为真值源，PartiallyChecked 用 tristate+noChange
+    表达，checkState() 派生计算）；重载 CheckStateSet/NextCheckState/
+    HitButton/ContentChanged/PaintEvent/Copy/Move；XCheckState 枚举数值对齐
+    Qt::CheckState；checkStateChanged 信号；indicator 13x13 方块绘制（勾/横线
+    用 drawLine）与 indicator 矩形命中；sizeHint 按 QCommonStyle 数值；
+  - 新增 `Src/XGui/Widget/XRadioButton.{h,c}`：继承 XAbstractButton；构造默认
+    checkable=true、autoExclusive=true、前景 WindowText；重载
+    HitButton/ContentChanged/PaintEvent；圆形 indicator（drawEllipse 双圈）
+    与选中圆点（中心方块近似）；互斥由基类 autoExclusive + 派生登记表提供；
+  - 新增 `Src/XGui/Widget/XCommandLinkButton.{h,c}`：继承 XPushButton；
+    description 描述文本（拥有 XString，copy/move/deinit 走 XClass_Parent）；
+    构造默认图标 20x20、尺寸策略 Preferred/Preferred+PushButton；重载
+    ContentChanged/PaintEvent/Copy/Move/Deinit；绘制 Window 背景 + 左侧大
+    图标 + 标题/描述双行文本（描述用 PlaceholderText 淡化色）+ 右侧箭头；
+  - `Src/XGui/XGuiConfig.h`：新增 XCHECKBOX_ON/XRADIOBUTTON_ON/
+    XCOMMANDLINKBUTTON_ON 开关；XCHECKBOX/XRADIOBUTTON 依赖
+    XABSTRACTBUTTON_ON，XCOMMANDLINKBUTTON 依赖 XPUSHBUTTON_ON，主依赖块与
+    XGUI_ON=0 块同步裁剪；
+  - 宏别名风格统一：`XAbstractButton.h`/`XPushButton.h`/`XPerformanceOverlay.h`/
+    `XWidget.h`/`XWidget_Protected.h` 及三个新头文件中 `#define ... \` 续行
+    宏别名改为单行书写（预处理语义不变）；
+  - `xgui_window_demo.c`：DemoWin 新增 m_checkBox（三态初始为
+    PartiallyChecked）、m_radioA/m_radioB（默认互斥组，A 初始选中）、
+    m_commandLink（含描述文本）；连接 checkStateChanged/toggled/clicked
+    信号到联动标签与重绘；init/show/deinit 完整接入。
+- **验证结果**：VS2026（MSBuild 生成器，out/build/x64-VS2026）重新配置后
+  构建 XGuiRegression_Test 与 XGuiWindowDemo_Test 通过；
+  `bin/Debug/XGuiRegression_Test.exe` 输出 `XGui regression tests passed`；
+  `bin/Debug/XGuiWindowDemo_Test.exe 3` 正常启动/绘制/自动退出（返回 0）；
+  `--benchmark 2` 模式 2391 帧/2s（≈1195 fps，avg 0.837ms）渲染稳定。
+- **边界**：XCommandLinkButton 的 heightForWidth（描述按宽度换行计算高度）
+  与 SP_CommandLink 标准图标未实现；checkbox/radio 的悬停效果、快捷键与
+  样式 bevel 未实现；XRadioButton 选中圆点用中心方块近似（点阵后端无实心
+  椭圆原语）；本次未给三个新控件补充 xgui_regression_test.c 回归用例与
+  ASan/LSan 检查（后续按需补充）。
+
+---
+
+## 2026-09-05 xgui_window_demo 界面重构：标题栏 + 堆叠多页面布局
+
+- **背景**：上一轮把三个按钮控件接入 demo 时控件散落在固定坐标上且与旧
+  静态场景内容重叠，界面显示混乱。本轮按用户要求重构为"标题栏 + 页面导航
+  + 堆叠多页面"的可视化布局。
+- **实现范围**（`xgui_window_demo.c`）：
+  - **DemoWin 结构体重构**：新增 m_titleLabel（顶部标题栏，深蓝背景白字）、
+    m_statusLabel（底部状态栏，深灰背景白字）、m_pageNav[3]（页面切换按钮）、
+    主 m_stackLayout（3 个演示页面容器 m_pageButtons/m_pageChoices/m_pageStacked），
+    页面内控件全部改为页面容器的子控件（相对坐标，不再散落根控件上）；
+  - **页面内容**：
+    - 页面 0 按钮演示：XPushButton + XCommandLinkButton（标题/描述双行）+
+      信号联动标签；
+    - 页面 1 选择演示：XCheckBox（三态初始 PartiallyChecked）+ Radio A/B
+      （autoExclusive 互斥组）+ 选择状态标签；
+    - 页面 2 堆叠演示：内层 XStackedLayout（两个页面标签）+ Prev/Next 按钮，
+      演示嵌套堆叠与页面切换；
+  - **导航**：demo_switchPage 切换主堆叠 currentIndex 并更新状态栏与打印；
+    三个导航按钮各自连接独立 clicked 槽；
+  - **静态场景简化**：demo_drawStaticScene 只画窗口背景、标题栏基底、状态栏
+    基底与右上角棋盘格装饰，删除旧的散乱静态标签/按钮区域（改由真实子控件
+    接管）；VDemoWin_resizeEvent 按窗口尺寸校准主内容区几何；
+  - **调试参数**：新增 `--screenshot <file>`（渲染 3 帧后把窗口后备存储保存
+    为 PNG 并退出）与 `--page <N>`（截图模式指定初始页面），用于无头验证
+    布局与逐页截图。
+- **验证结果**：
+  - VS2026（MSBuild 生成器）重新构建 XGuiWindowDemo_Test 通过；
+  - `XGuiWindowDemo_Test --screenshot <f> --page 0/1/2` 生成三页截图；用
+    System.Drawing 逐像素抽样确认：标题栏 #1F4E79、状态栏 #3A3A3A、三个导航
+    按钮（y=44..70）与页面内 XPushButton/CheckBox indicator/Radio/内层
+    Stacked/Prev-Next 均位于预期坐标，页面切换后内容随之变化；
+  - `XGuiWindowDemo_Test 3` 正常启动/绘制/自动退出（返回 0）；`--benchmark 2`
+    模式 14057 帧/2s（≈7028 fps，avg 0.142ms）渲染稳定；
+  - `XGuiRegression_Test` 仍输出 `XGui regression tests passed`。
+- **边界**：demo 界面为固定 520x360 设计，页面内控件用固定几何（未引入页面
+  内 XBoxLayout 动态布局）；命令链接按钮背景与窗口背景存在调色板默认色差
+  （EFEFEF vs F4F6F8，可接受）；性能悬浮层仍显示于右下角，截图右下角像素为
+  悬浮层内容。
+- **修复**：
+  1. 首次截图后经逐像素扫描发现左上角标题重叠（静态场景 XPainter_drawText
+     中文标题与 m_titleLabel 英文标题叠印），已删除静态场景标题行、只保留
+     XLabel 标题；修复后三页截图标题栏均为单段白字英文标题（x=19..169，
+     y=14..26 垂直居中），状态栏 "Ready"（x=17..55）正常；
+  2. 导航按钮文本改为中文（按钮演示/选择演示/堆叠演示），页面名
+     demo_page_name 同步中文；
+  3. 修复页面 2/3 切换后空白：XStackedLayout 的 VXStackedLayout_setGeometry
+     在 StackOne 模式下只给当前页面分配几何，setCurrentIndex 切换后新页面
+     容器几何保持 0x0 导致内容不可见；demo_switchPage 在切换后调用新增的
+     demo_layout_content 重新分配主内容区几何（resizeEvent 也复用该辅助），
+     修复后三页内容区非背景像素分别为 7628/4438/2965，页面 1 的
+     CheckBox indicator（#FFFFFF）与 Radio、页面 2 的内层 Stacked 与
+     Prev/Next 按钮均位于预期坐标；
+  4. 界面控件文本全部中文化：标题栏 "XGui 控件演示"、状态栏 "就绪"、
+     页面 1 按钮 "按钮"/"命令链接按钮"（描述"带标题与描述的按钮"）、
+     页面 2 复选框 "复选框（三态）"/"选项 A"/"选项 B"、页面 3 "内层页面 1/2"/
+     "上一页"/"下一页"，slot 状态文本（"按钮：按下/释放"、"命令链接：点击"、
+     "复选框：未选中/部分选中/已选中"、"单选：A/B"）与窗口标题
+     "XinYueC 控件可视化测试" 同步中文；截图像素验证中文笔画正常渲染。
