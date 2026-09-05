@@ -93,7 +93,8 @@ static bool checkbox_hasIconSize(const XCheckBox* self)
 /** @brief 发射携带选中状态的信号；无接收者时立即释放参数列表。 */
 static void checkbox_emitState(XCheckBox* self, XCheckState state)
 {
-    XVarList* args = XVarList_Create(XVar(int, (int)state));
+    int checked = (int)state;
+    XVarList* args = XVarList_Create(XVar(int, checked));
 
     if (!args)
         return;

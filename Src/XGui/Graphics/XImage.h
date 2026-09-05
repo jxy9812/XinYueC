@@ -216,6 +216,36 @@ void XImage_size(const XImage* self, XSize* out);
 void XImage_rect(const XImage* self, XRect* out);
 
 /**
+ * @brief      比较两幅图像的内容是否相等（对标 Qt 6.8 QImage::operator==）。
+ * @details    先比较尺寸、像素格式和色彩空间，再比较像素内容；文本、分辨率、
+ *             设备像素比、偏移等元数据不参与比较。索引图像按颜色表解析后的
+ *             颜色比较，RGB32 忽略未定义的 Alpha 存储字节，其余格式逐行比较
+ *             有效像素字节而忽略扫描线填充字节。
+ * @param left  左侧图像对象指针；与 right 同时为空时返回 true。
+ * @param right 右侧图像对象指针。
+ * @return      两幅图像内容相等时返回 true，否则返回 false。
+ */
+bool XImage_equals(const XImage* left, const XImage* right);
+
+/**
+ * @brief      比较两幅图像的内容是否不同（对标 Qt 6.8 QImage::operator!=）。
+ * @param left  左侧图像对象指针。
+ * @param right 右侧图像对象指针。
+ * @return      两幅图像内容不相等时返回 true，否则返回 false。
+ */
+bool XImage_notEquals(const XImage* left, const XImage* right);
+
+/**
+ * @brief 交换两幅图像的隐式共享数据（对标 Qt 6.8 QImage::swap）。
+ * @details 仅交换图像数据指针，不修改两个对象各自的 XClass 虚表、内存
+ *          类型或堆对象标志；交换后引用计数保持不变，调用方仍拥有两个
+ *          XImage 对象。任一指针为空时函数不执行任何操作。
+ * @param left 左侧图像对象指针。
+ * @param right 右侧图像对象指针。
+ */
+void XImage_swap(XImage* left, XImage* right);
+
+/**
  * @brief      获取图像位深度
  * @param self 目标 XImage 对象指针
  * @return 每个像素的位数

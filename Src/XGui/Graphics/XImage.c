@@ -735,6 +735,107 @@ void XImage_rect(const XImage* self, XRect* out)
     }
 }
 
+bool XImage_equals(const XImage* left, const XImage* right)
+{
+    int width;
+    int height;
+    int depth;
+    int y;
+    /* Qt first accepts the same object or the same implicitly-shared data. */
+    if (left == right || (left && right && left->m_data == right->m_data))
+        return true;
+    if (!left || !right)
+        return false;
+    /* XImage_init leaves m_data null; two independent empty images therefore
+       have the same null contents, matching Qt's shared null QImageData. */
+    if (!left->m_data || !right->m_data)
+        return left->m_data == right->m_data;
+    if (!left->m_data->m_data || !right->m_data->m_data)
+        return false;
+    if (left->m_data->m_width != right->m_data->m_width ||
+        left->m_data->m_height != right->m_data->m_height ||
+        left->m_data->m_format != right->m_data->m_format ||
+        !XColorSpace_equals(&left->m_data->m_colorSpace,
+                            &right->m_data->m_colorSpace))
+        return false;
+
+    width = left->m_data->m_width;
+    height = left->m_data->m_height;
+    /* Qt qimage.cpp:4013-4030 compares indexed/monochrome images after
+       resolving each index through its color table, so different index
+       numbers can still represent equal image contents. */
+    if (left->m_data->m_format < XImageFormat_ARGB32)
+    {
+        int x;
+        for (y = 0; y < height; ++y)
+            for (x = 0; x < width; ++x)
+                if (XImage_readPixelValue(left->m_data, x, y) !=
+                    XImage_readPixelValue(right->m_data, x, y))
+                    return false;
+        return true;
+    }
+
+    /* QImage::operator== has a dedicated RGB32 path (qimage.cpp:4041-4051)
+       because its alpha byte is explicitly undefined. */
+    if (left->m_data->m_format == XImageFormat_RGB32)
+    {
+        int x;
+        for (y = 0; y < height; ++y)
+        {
+            const uint8_t* leftLine = left->m_data->m_data +
+                (size_t)y * (size_t)left->m_data->m_bytesPerLine;
+            const uint8_t* rightLine = right->m_data->m_data +
+                (size_t)y * (size_t)right->m_data->m_bytesPerLine;
+            for (x = 0; x < width; ++x)
+                if ((XImage_load32(leftLine + (size_t)x * 4u) & 0x00ffffffu) !=
+                    (XImage_load32(rightLine + (size_t)x * 4u) & 0x00ffffffu))
+                    return false;
+        }
+        return true;
+    }
+
+    /* For formats with fully-defined storage, Qt compares only the bytes
+       belonging to each pixel and ignores row padding when strides differ
+       (qimage.cpp:4013-4040). */
+    depth = XImageFormat_bitDepth(left->m_data->m_format);
+    if (depth <= 0)
+        return false;
+    {
+        const size_t rowBytes = ((size_t)width * (size_t)depth) / 8u;
+        for (y = 0; y < height; ++y)
+        {
+            const uint8_t* leftLine = left->m_data->m_data +
+                (size_t)y * (size_t)left->m_data->m_bytesPerLine;
+            const uint8_t* rightLine = right->m_data->m_data +
+                (size_t)y * (size_t)right->m_data->m_bytesPerLine;
+            if (memcmp(leftLine, rightLine, rowBytes) != 0)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool XImage_notEquals(const XImage* left, const XImage* right)
+{
+    return !XImage_equals(left, right);
+}
+
+/**
+ * @brief 交换两幅图像的数据指针。
+ * @details Qt 的 QImage::swap 只交换隐式共享数据指针；不能调用移动操作，
+ *          因为移动会把右侧对象清空而不是完成双向交换。保留各自 XClass
+ *          元数据也使堆对象和栈对象可以安全混用。
+ */
+void XImage_swap(XImage* left, XImage* right)
+{
+    XImageData* data;
+    if (!left || !right || left == right)
+        return;
+    data = left->m_data;
+    left->m_data = right->m_data;
+    right->m_data = data;
+}
+
 int XImage_depth(const XImage* self)
 {
     return (self && self->m_data) ? self->m_data->m_depth : 0;

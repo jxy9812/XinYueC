@@ -14384,6 +14384,132 @@ static void test_image_reader_long_svg_prelude(void)
 }
 
 #endif /* XIMAGECODEC_ON */
+
+/**
+ * @brief 验证 QImage::operator==/operator!= 的内容比较语义。
+ * @details Qt 6.8 只把尺寸、格式、色彩空间和像素内容纳入比较；文本、
+ * 分辨率、设备像素比和偏移等元数据不影响结果。索引格式比较解析后的
+ * 颜色，RGB32 比较时忽略未定义的 Alpha 字节，带行填充的图像只比较
+ * 每行有效像素字节。
+ */
+static void test_image_equals_qt_semantics(void)
+{
+    XImage argbLeft;
+    XImage argbRight;
+    XImage indexedLeft;
+    XImage indexedRight;
+    XImage rgbLeft;
+    XImage rgbRight;
+    XImage paddedLeft;
+    XImage paddedRight;
+    XImage swapLeft;
+    XImage swapRight;
+    uint8_t paddedBytesLeft[8] = { 0x11u, 0x22u, 0x33u, 0xaau,
+                                   0, 0, 0, 0 };
+    uint8_t paddedBytesRight[8] = { 0x11u, 0x22u, 0x33u, 0xbbu,
+                                    0, 0, 0, 0 };
+    uint8_t* rgbBits;
+
+    XImage_init(&argbLeft);
+    XImage_init(&argbRight);
+    XImage_init(&indexedLeft);
+    XImage_init(&indexedRight);
+    XImage_init(&rgbLeft);
+    XImage_init(&rgbRight);
+    XImage_init(&paddedLeft);
+    XImage_init(&paddedRight);
+    XImage_init(&swapLeft);
+    XImage_init(&swapRight);
+
+    XImage_init_ex(&argbLeft, 2, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&argbLeft, 0, 0, 0x80402010u);
+    XImage_setPixel(&argbLeft, 1, 0, 0xff102030u);
+    XCopy(&argbRight, &argbLeft);
+    expect_true(XImage_equals(&argbLeft, &argbRight) &&
+                !XImage_notEquals(&argbLeft, &argbRight),
+                "QImage equality accepts shared pixel data");
+    XImage_setText_2(&argbRight, "ignored", "metadata");
+    XImage_setDevicePixelRatio(&argbRight, 2.0f);
+    XImage_setDotsPerMeterX(&argbRight, 1234);
+    XImage_setOffset(&argbRight, &(XPoint){ 7, -3 });
+    expect_true(XImage_equals(&argbLeft, &argbRight),
+                "QImage equality ignores non-color metadata");
+    XImage_setColorSpace(&argbLeft, XColorSpace_sRgb());
+    expect_true(!XImage_equals(&argbLeft, &argbRight),
+                "QImage equality includes color space");
+    XImage_setColorSpace(&argbRight, XColorSpace_sRgb());
+    XImage_setPixel(&argbRight, 1, 0, 0xff102031u);
+    expect_true(XImage_notEquals(&argbLeft, &argbRight),
+                "QImage equality detects changed ARGB content");
+
+    XImage_init_ex(&indexedLeft, 1, 1, XImageFormat_Indexed8);
+    XImage_init_ex(&indexedRight, 1, 1, XImageFormat_Indexed8);
+    XImage_setColorTable(&indexedLeft,
+                         (const uint32_t[]){ 0xffff0000u, 0xff0000ffu }, 2);
+    XImage_setColorTable(&indexedRight,
+                         (const uint32_t[]){ 0xff0000ffu, 0xffff0000u }, 2);
+    XImage_setPixel(&indexedLeft, 0, 0, 0u);
+    XImage_setPixel(&indexedRight, 0, 0, 1u);
+    expect_true(XImage_equals(&indexedLeft, &indexedRight),
+                "QImage indexed equality compares resolved palette colors");
+    XImage_setColor(&indexedRight, 1, 0xff00ff00u);
+    expect_true(XImage_notEquals(&indexedLeft, &indexedRight),
+                "QImage indexed equality detects changed palette colors");
+
+    XImage_init_ex(&rgbLeft, 1, 1, XImageFormat_RGB32);
+    XImage_init_ex(&rgbRight, 1, 1, XImageFormat_RGB32);
+    rgbBits = XImage_bits(&rgbLeft);
+    if (rgbBits) memcpy(rgbBits, &(uint32_t){ 0x80112233u }, sizeof(uint32_t));
+    rgbBits = XImage_bits(&rgbRight);
+    if (rgbBits) memcpy(rgbBits, &(uint32_t){ 0xff112233u }, sizeof(uint32_t));
+    expect_true(XImage_equals(&rgbLeft, &rgbRight),
+                "QImage RGB32 equality ignores undefined alpha storage");
+    rgbBits = XImage_bits(&rgbRight);
+    if (rgbBits) memcpy(rgbBits, &(uint32_t){ 0xff112234u }, sizeof(uint32_t));
+    expect_true(XImage_notEquals(&rgbLeft, &rgbRight),
+                "QImage RGB32 equality compares RGB storage bits");
+
+    XImage_init_ex_2(&paddedLeft, 1, 1, XImageFormat_RGB888,
+                     8, paddedBytesLeft, NULL, NULL);
+    XImage_init_ex_2(&paddedRight, 1, 1, XImageFormat_RGB888,
+                     8, paddedBytesRight, NULL, NULL);
+    expect_true(XImage_equals(&paddedLeft, &paddedRight),
+                "QImage equality ignores scanline padding bytes");
+    paddedBytesRight[2] = 0x34u;
+    expect_true(XImage_notEquals(&paddedLeft, &paddedRight),
+                "QImage equality compares all active scanline bytes");
+
+    XImage_init_ex(&swapLeft, 1, 1, XImageFormat_RGB32);
+    XImage_setPixel(&swapLeft, 0, 0, 0xff102030u);
+    XImage_init_ex(&swapRight, 2, 1, XImageFormat_ARGB32);
+    XImage_setPixel(&swapRight, 0, 0, 0x80405060u);
+    XImage_setPixel(&swapRight, 1, 0, 0xff708090u);
+    XImage_swap(&swapLeft, &swapRight);
+    expect_true(XImage_width(&swapLeft) == 2 &&
+                XImage_pixel(&swapLeft, 1, 0) == 0xff708090u &&
+                XImage_width(&swapRight) == 1 &&
+                (XImage_pixel(&swapRight, 0, 0) & 0x00ffffffu) == 0x00102030u,
+                "QImage swap exchanges only image data");
+    XImage_swap(&swapLeft, &swapLeft);
+    expect_true(XImage_width(&swapLeft) == 2 &&
+                XImage_pixel(&swapLeft, 0, 0) == 0x80405060u,
+                "QImage self swap is a no-op");
+    XImage_swap(&swapLeft, NULL);
+    expect_true(XImage_width(&swapLeft) == 2,
+                "XImage swap ignores a null operand");
+
+    XImage_deinit_base(&paddedRight);
+    XImage_deinit_base(&paddedLeft);
+    XImage_deinit_base(&swapRight);
+    XImage_deinit_base(&swapLeft);
+    XImage_deinit_base(&rgbRight);
+    XImage_deinit_base(&rgbLeft);
+    XImage_deinit_base(&indexedRight);
+    XImage_deinit_base(&indexedLeft);
+    XImage_deinit_base(&argbRight);
+    XImage_deinit_base(&argbLeft);
+}
+
 static void test_image_pixel_contract(void)
 {
     XImage rgba;
@@ -23904,6 +24030,7 @@ int main(void)
     test_image_reader_long_svg_prelude();
 #endif /* XIMAGECODEC_ON */
     test_image_pixel_contract();
+    test_image_equals_qt_semantics();
     test_image_color_transform_native_precision();
     test_image_color_transform_float_precision();
 #if XIMAGECODEC_ON

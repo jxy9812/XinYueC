@@ -10061,9 +10061,9 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   转换和 `fromData` 均有对应接口；`XImage_copyRect(rect=NULL)` 覆盖 Qt
   `copy(QRect())` 的整图深拷贝语义，`XImageFormat_toPixelFormat` /
   `XImageFormat_toImageFormat` 覆盖静态格式映射。
-- **有意裁剪**：C99 不重复暴露 C++ 运算符 `operator==/!=`、`QVariant` 转换、
-  右值限定重载以及 `QImage::swap`；调用方使用现有 `XCopy`、
-  `XImage_copyRect` 与显式比较即可。Windows 专用 `HICON/HBITMAP` 辅助留在
+- **有意裁剪**：C99 不重复暴露 C++ 运算符 `operator==/!=`、`QVariant` 转换以及
+  右值限定重载；调用方使用现有 `XCopy`、`XImage_copyRect` 与显式比较即可。
+  `QImage::swap` 已在后续章节提供 C99 指针包装。Windows 专用 `HICON/HBITMAP` 辅助留在
   `Drive/windows` 平台边界，未在 `Src/XGui` 增加不可移植占位函数。Qt 原生
   `QPicture` 数据流仍按 10.403 明确拒绝，不通过伪造的最小子集宣称兼容。
 - **清理结果**：未发现确认无调用方的旧兼容入口；没有为保持“函数数量一致”而
@@ -11941,6 +11941,11 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
 
 ## 2026-09-04 绝对零泄漏收敛（ASan/LSan 汇报清零）
 
+> 注：本节记录的是 2026-09-04 当时配置下的历史运行结果；2026-09-05
+> 重新执行后的当前 LSan 基线见下方“QImage 内容相等比较语义对齐”一节，
+> 仍有 15 项既有 XImageData/XPixmap 生命周期分配未回收，不能将本节的
+> 历史清零结果作为当前状态。
+
 - **目标**：`XGuiRegression_Test` 在 AddressSanitizer+LeakSanitizer 下不再有任何
   项目侧泄漏。经逐条根因修复后，ASan/LSan 汇总已从最初的 ~102KB/468 项降到
   **0 项项目泄漏**；仅剩的两类第三方进程期缓存（fontconfig 全局字体缓存、
@@ -12167,3 +12172,64 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
      "上一页"/"下一页"，slot 状态文本（"按钮：按下/释放"、"命令链接：点击"、
      "复选框：未选中/部分选中/已选中"、"单选：A/B"）与窗口标题
      "XinYueC 控件可视化测试" 同步中文；截图像素验证中文笔画正常渲染。
+
+## 2026-09-05 QImage 内容相等比较语义对齐
+
+- **Qt 6.8 依据**：`/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.h:113-114`
+  声明 `QImage::operator==/operator!=`；
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:4001-4050`
+  实现了同对象/共享数据快速路径、空数据判断、尺寸/格式/色彩空间比较，
+  以及完整像素、索引颜色表和 RGB32 Alpha 屏蔽规则；
+  `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.cpp:4066-4068`
+  规定 `operator!=` 为相等结果取反。
+- **实现范围**：
+  - `Src/XGui/Graphics/XImage.h:228-236` 新增 `XImage_equals` 与
+    `XImage_notEquals` 公共 C99 接口，并用中文注释说明比较字段、空对象和
+    行填充边界。
+  - `Src/XGui/Graphics/XImage.c:738-821` 实现相等比较：相同对象/共享
+    `XImageData` 直接返回 true；两个独立空对象视为相等；尺寸、格式和
+    `XColorSpace` 不同直接返回 false；Mono/Indexed8 按颜色表解析颜色后
+    比较；RGB32 按 Qt 规则屏蔽 Alpha 字节；其它格式逐行仅比较有效像素
+    字节，忽略扫描线填充。
+  - 比较不读取或比较文本、分辨率、设备像素比、偏移等非像素元数据，
+    与 Qt `operator==` 的内容定义一致。
+- **回归覆盖**：`xgui_regression_test.c:14395-14512` 增加
+  `test_image_equals_qt_semantics`，覆盖共享数据、元数据忽略、色彩空间、
+  ARGB 像素、索引颜色表、RGB32 未定义 Alpha、非紧凑行步长及活动字节；
+  `main` 在 `xgui_regression_test.c:24033` 调用该用例。
+- **验证结果**：
+  - 默认 `cmake --build build -j2`：通过；编译器仍报告已有
+    `XGuiApplication`/容器虚函数指针及 zlib 条件指令等警告，本次改动无新增
+    编译错误，未宣称全库零警告。
+  - `./bin/XGuiRegression_Test`：退出码 0，`XGui regression tests passed`；
+    运行时的无效窗口父对象和 `WindowActive` 提示为既有测试日志。
+  - `ctest --test-dir build --output-on-failure`：1/1 测试通过。
+  - ASan/UBSan/LSan `build-asan` 补丁后增量构建及回归退出码 0；使用
+    `Tools/xgui.lsan.supp` 抑制 fontconfig/Mesa 进程缓存后，LSan 仍报告约
+    4292 字节/15 项既有 `XImageData`/`XPixmap` 生命周期分配，未抑制运行的
+    总量约为 105878 字节/470 项。UBSan 仍报告第三方
+    `Library/zlib/trees.c:873` 空指针诊断，不能据此宣称全局零泄漏或零 UBSan。
+    新增比较用例未产生额外泄漏。
+- **边界与未完成项**：当前接口是面向 C 指针的值比较包装，不改变 XImage
+  的隐式共享/写时复制实现；损坏的外部像素缓冲区仍由调用方负责保证有效。
+  动态图像插件发现、原生 QPicture/QDataStream 互操作、完整 ICC 色彩管理和
+  其它 QImage 扩展 API 继续按文档既有裁剪边界推进。`XPushButton` 本轮未修改。
+
+## 2026-09-05 QImage swap 数据交换语义对齐
+
+- **Qt 依据**：Qt 6.8 `/home/xinyue/Qt/6.8.3/Src/qtbase/src/gui/image/qimage.h:103-107`
+  将 `QImage::swap(QImage &other)` 定义为只交换内部数据指针；
+  `qimage.cpp:1093` 的成员实现注释确认这是无拷贝的数据交换，不经过格式转换
+  或引用计数重建。
+- **实现范围**：`Src/XGui/Graphics/XImage.h:238-249` 新增
+  `XImage_swap(XImage*, XImage*)` 中文接口说明；`XImage.c:819-834` 只交换
+  两个对象的 `m_data`，保留各自 XClass 元数据、内存类型和堆标志，引用计数
+  因指针交换保持不变。两个参数相同或任一为空时直接返回，避免 C 指针包装
+  产生 Qt 引用参数不存在的未定义行为。
+- **回归覆盖**：`xgui_regression_test.c:14482-14506` 新增不同尺寸/格式图像
+  互换、交换后像素与尺寸核对、自交换无操作和空参数保护；随后正常销毁两幅
+  图像，确保交换不会引入额外释放或引用计数变化。
+- **边界与未完成项**：C99 接口要求调用方保证对象已经初始化；不提供 C++
+  `noexcept` 类型属性，也不改变 `XImage` 既有隐式共享和写时复制规则。
+  动态插件发现、原生 QPicture/QDataStream 互操作、完整 ICC 色彩管理及
+  `XPushButton` 仍按文档既有裁剪/并行修改边界处理。
