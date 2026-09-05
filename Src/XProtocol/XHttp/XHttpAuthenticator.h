@@ -80,8 +80,6 @@ XHttpAuthenticator* XHttpAuthenticator_create_move(XHttpAuthenticator* other);
 
 #define XHttpAuthenticator_deinit_base XClass_deinit_base
 #define XHttpAuthenticator_delete_base XClass_delete_base
-#define XHttpAuthenticator_copy_base XClass_copy_base
-#define XHttpAuthenticator_move_base XClass_move_base
 
 /**
  * - @brief 设置服务端解析出的认证挑战。

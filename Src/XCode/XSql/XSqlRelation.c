@@ -113,9 +113,9 @@ static void VXSqlRelation_move(XSqlRelation* dest, XSqlRelation* src)
     dest->m_tableName = src->m_tableName; dest->m_indexColumn = src->m_indexColumn; dest->m_displayColumn = src->m_displayColumn;
     src->m_tableName = NULL; src->m_indexColumn = NULL; src->m_displayColumn = NULL;
 }
-XSqlRelation* XSqlRelation_create_copy(const XSqlRelation* other) { if (!other) return NULL; XSqlRelation* result = XSqlRelation_create(); if (result) XSqlRelation_copy_base(result, other); return result; }
-XSqlRelation* XSqlRelation_create_move(XSqlRelation* other) { if (!other) return NULL; XSqlRelation* result = XSqlRelation_create(); if (result) XSqlRelation_move_base(result, other); return result; }
-void XSqlRelation_swap(XSqlRelation* left, XSqlRelation* right) { if (!left || !right || left == right) return; XSqlRelation* tmp = XSqlRelation_create_move(left); XSqlRelation_move_base(left, right); XSqlRelation_move_base(right, tmp); XSqlRelation_delete_base(tmp); }
+XSqlRelation* XSqlRelation_create_copy(const XSqlRelation* other) { if (!other) return NULL; XSqlRelation* result = XSqlRelation_create(); if (result) XCopy(result, other); return result; }
+XSqlRelation* XSqlRelation_create_move(XSqlRelation* other) { if (!other) return NULL; XSqlRelation* result = XSqlRelation_create(); if (result) XMove(result, other); return result; }
+void XSqlRelation_swap(XSqlRelation* left, XSqlRelation* right) { if (!left || !right || left == right) return; XSqlRelation* tmp = XSqlRelation_create_move(left); XMove(left, right); XMove(right, tmp); XSqlRelation_delete_base(tmp); }
 void XSqlRelation_setTableName(XSqlRelation* relation, const XString* tableName) { if (!relation) return; if (relation->m_tableName) XString_delete_base(relation->m_tableName); relation->m_tableName = tableName ? XString_create_copy(tableName) : NULL; }
 void XSqlRelation_setIndexColumn(XSqlRelation* relation, const XString* indexColumn) { if (!relation) return; if (relation->m_indexColumn) XString_delete_base(relation->m_indexColumn); relation->m_indexColumn = indexColumn ? XString_create_copy(indexColumn) : NULL; }
 void XSqlRelation_setDisplayColumn(XSqlRelation* relation, const XString* displayColumn) { if (!relation) return; if (relation->m_displayColumn) XString_delete_base(relation->m_displayColumn); relation->m_displayColumn = displayColumn ? XString_create_copy(displayColumn) : NULL; }

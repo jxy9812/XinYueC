@@ -1,4 +1,4 @@
-#include "XDeviceNetwork.h"
+﻿#include "XDeviceNetwork.h"
 #include "XAbstractSocket.h"
 #include "XIODevice.h"
 #include "XIODevicePrivate.h"
@@ -223,7 +223,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_peerPort = nopts->m_peerPort;
     XHostAddress_init(&ctx->m_peerAddress);
     if (nopts->m_peerAddress) {
-        XClass_copy_base((XClass*)&ctx->m_peerAddress,
+        XCopy((XClass*)&ctx->m_peerAddress,
                          (const XClass*)nopts->m_peerAddress);
         ctx->m_hasPeerAddress = true;
     }

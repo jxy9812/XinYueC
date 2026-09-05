@@ -95,7 +95,7 @@ static XIcon* XGuiApplication_cloneIcon(const XIcon* icon)
     if (!icon) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XIcon_copy_base(copy, icon);
+    XCopy(copy, icon);
     return copy;
 }
 
@@ -135,7 +135,7 @@ static XCursor* XGuiApplication_cloneCursor(const XCursor* cursor)
     XCursor* copy = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
     if (cursor)
-        XCursor_copy_base(copy, cursor);
+        XCopy(copy, cursor);
     return copy;
 }
 #endif /* XCURSOR_ON */
@@ -772,7 +772,7 @@ void XGuiApplication_setFont(const XFont* font)
         replacement = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                       NULL, -1, -1, false);
         if (!replacement) return;
-        XFont_copy_base(replacement, font);
+        XCopy(replacement, font);
     }
     if (app->m_font) XFont_delete_base(app->m_font);
     app->m_font = replacement;
@@ -786,7 +786,7 @@ XFont* XGuiApplication_font(void)
     if (!app || !app->m_font) return NULL;
     copy = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, -1, false);
     if (!copy) return NULL;
-    XFont_copy_base(copy, app->m_font);
+    XCopy(copy, app->m_font);
     return copy;
 }
 

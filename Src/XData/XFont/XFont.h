@@ -224,20 +224,6 @@ void XFont_init_ex(XFont* self, const char* family, int pointSize, int weight, b
 /* ========== XClass 生命周期与虚函数调度 ========== */
 
 /**
- * @brief 深拷贝字体资源到目标对象。
- * @param self 目标对象；未初始化时虚函数会先调用 XFont_init。
- * @param other 源对象；只读借用，不取得所有权。
- * @return 无；self 与 other 相同或任一指针为 NULL 时不执行。
- */
-#define XFont_copy_base XClass_copy_base
-/**
- * @brief 转移字体资源到目标对象并清空源对象。
- * @param self 目标对象；未初始化时虚函数会先调用 XFont_init。
- * @param other 源对象；移动后仍需调用 XFont_deinit_base，家族和样式指针为空。
- * @return 无；self 与 other 相同或任一指针为 NULL 时不执行。
- */
-#define XFont_move_base XClass_move_base
-/**
  * @brief 反初始化字体对象并释放其拥有的字符串资源。
  * @param self 已由 XFont_init 初始化的栈对象；NULL 时不执行。
  * @return 无；反初始化后必须重新 init 才能使用。

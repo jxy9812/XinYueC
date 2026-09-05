@@ -162,7 +162,7 @@ static XCursor* XWindow_copyCursor(const XCursor* value)
     if (!value) return NULL;
     copy = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCursor_copy_base(copy, value);
+    XCopy(copy, value);
     return copy;
 }
 
@@ -200,7 +200,7 @@ static XIcon* XWindow_copyIcon(const XIcon* value)
     if (!value) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XIcon_copy_base(copy, value);
+    XCopy(copy, value);
     return copy;
 }
 
@@ -591,7 +591,7 @@ XWindow* XWindow_create_copy(const XWindow* other)
     if (!other) return NULL;
     self = XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XWindow_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -601,7 +601,7 @@ XWindow* XWindow_create_move(XWindow* other)
     if (!other) return NULL;
     self = XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XWindow_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 

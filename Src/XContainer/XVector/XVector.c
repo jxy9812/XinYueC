@@ -848,7 +848,7 @@ XVector* XVector_create_copy(const XVector* other)
         return NULL;
     XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
     XVector* v = XVector_create_ex(memory, (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
-    XVector_copy_base(v, other);
+    XCopy(v, other);
     return v;
 }
 
@@ -858,7 +858,7 @@ XVector* XVector_create_move(XVector* other)
         return NULL;
     XVector* v = XVector_create_ex(XContainer_memory_type(other),
         (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
-    XVector_move_base(v, other);
+    XMove(v, other);
     return v;
 }
 

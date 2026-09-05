@@ -154,16 +154,6 @@ void XHashMap_setVariant_ref(XVariant* var, XHashMap* map);
 */
 #define XHashMap_delete_base XMapBase_delete_base
 /**
-* @brief 拷贝容器（基础版本）
-* @note 继承自XMapBase的拷贝操作，复制源容器的所有元素
-*/
-#define XHashMap_copy_base XMapBase_copy_base
-/**
-* @brief 移动容器资源（基础版本，转移所有权）
-* @note 继承自XMapBase的移动操作，接管源容器的资源，源容器失效
-*/
-#define XHashMap_move_base XMapBase_move_base
-/**
 * @brief 反初始化容器（基础版本）
 * @note 继承自XMapBase的反初始化操作，释放资源但不释放容器本身
 */

@@ -152,8 +152,6 @@ XVtable* XFileInfo_class_init(void);
 
 #define XFileInfo_delete_base    XClass_delete_base
 #define XFileInfo_deinit_base    XClass_deinit_base
-#define XFileInfo_copy_base      XClass_copy_base
-#define XFileInfo_move_base      XClass_move_base
 
 XFileInfo* XFileInfo_create_1(void);
 XFileInfo* XFileInfo_create_2(const XString* path);

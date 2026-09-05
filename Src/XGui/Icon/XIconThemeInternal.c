@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconThemeInternal.c
  * @brief      XIcon 主题图标资源解析实现（对标 Qt 6.8 QIconLoader 简化版）。
  * @note       本文件提供内部主题文件发现、index.theme 目录元数据解析与
@@ -103,7 +103,7 @@ static bool theme_loadFile(const char* path, XPixmap* out)
     ok = XPixmap_load_2(&candidate, path, NULL, 0) &&
          !XPixmap_isNull(&candidate);
     if (ok && out) {
-        XPixmap_move_base(out, &candidate);
+        XMove(out, &candidate);
         XPixmap_deinit_base(&candidate);
     } else {
         XPixmap_deinit_base(&candidate);
@@ -1391,7 +1391,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 found = true;
             }
             if (replace) {
-                XPixmap_move_base(best, &candidate);
+                XMove(best, &candidate);
                 XPixmap_deinit_base(&candidate);
                 *bestDistance = 0;
                 *globalFormatPriority = formatPriority;
@@ -1434,7 +1434,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 }
             }
             if (replace) {
-                XPixmap_move_base(best, &candidate);
+                XMove(best, &candidate);
                 XPixmap_deinit_base(&candidate);
                 *bestDistance = distance;
                 *globalFormatPriority = formatPriority;
@@ -1600,7 +1600,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             XPixmap_init(&candidate);
             if (theme_tryTheme(root, theme, name, target, &candidate,
                                &distance) && distance < bestDistance) {
-                XPixmap_move_base(&best, &candidate);
+                XMove(&best, &candidate);
                 XPixmap_deinit_base(&candidate);
                 bestDistance = distance;
                 local = true;
@@ -1613,7 +1613,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
 
     if (local) {
         if (out)
-            XPixmap_move_base(out, &best);
+            XMove(out, &best);
         XPixmap_deinit_base(&best);
         theme_visitPop(visited);
         themeContext_deinit(&ctx);
@@ -1823,7 +1823,7 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
        保持为 18x13，而不是被拉伸成 18x18。 */
     XPixmap_scaled(pixmap, targetWidth, targetHeight, 1, 0, &scaled);
     if (!XPixmap_isNull(&scaled)) {
-        XPixmap_move_base(pixmap, &scaled);
+        XMove(pixmap, &scaled);
         XPixmap_deinit_base(&scaled);
         return true;
     }
@@ -2273,7 +2273,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
         if (scaleToSize)
             theme_scaledToSizeRect(&best, outputWidth, outputHeight);
         if (out) {
-            XPixmap_move_base(out, &best);
+            XMove(out, &best);
             XPixmap_deinit_base(&best);
         } else {
             XPixmap_deinit_base(&best);

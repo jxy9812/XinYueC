@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconThemeEngine.c
  * @brief      XIconThemeEngine 主题图标引擎实现（对标 Qt 6.8 QIconLoaderEngine）。
  * @note       取图时通过 XIconInternal_resolveThemePixmapSize 按目标矩形
@@ -150,7 +150,7 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, &pixmap, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_move_base(&pixmap, &styled);
+            XMove(&pixmap, &styled);
         }
         XPixmap_deinit_base(&styled);
         if (XPixmap_width(&pixmap) != drawRect->width ||
@@ -549,7 +549,7 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_move_base(out, &styled);
+            XMove(out, &styled);
         }
         XPixmap_deinit_base(&styled);
         {

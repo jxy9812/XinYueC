@@ -471,13 +471,13 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             {
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XImage_copy_base(&snapshot, &canvas);
+                XCopy(&snapshot, &canvas);
                 if (XImage_isNull(&snapshot)) {
                     XImage_deinit_base(&snapshot);
                     XFree_System(compressed);
                     goto done;
                 }
-                XImage_move_base(&previous, &snapshot);
+                XMove(&previous, &snapshot);
             }
 
             if ((size_t)width > (size_t)-1 / (size_t)height)
@@ -517,12 +517,12 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 /* 单帧模式：首帧已合成，捕获当前画布后结束。 */
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XImage_copy_base(&snapshot, &canvas);
+                XCopy(&snapshot, &canvas);
                 if (XImage_isNull(&snapshot)) {
                     XImage_deinit_base(&snapshot);
                     goto done;
                 }
-                XImage_move_base(singleOut, &snapshot);
+                XMove(singleOut, &snapshot);
                 ok = true;
                 break;
             }
@@ -531,7 +531,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             if (count < maxFrames) {
                 XImageCodecFrame* frame = &frames[count];
                 XImage_init(&frame->image);
-                XImage_copy_base(&frame->image, &canvas);
+                XCopy(&frame->image, &canvas);
                 if (XImage_isNull(&frame->image)) {
                     XImage_deinit_base(&frame->image);
                     goto done;
@@ -562,12 +562,12 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             } else if (pendingDisposal == 3) {
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XImage_copy_base(&snapshot, &previous);
+                XCopy(&snapshot, &previous);
                 if (XImage_isNull(&snapshot)) {
                     XImage_deinit_base(&snapshot);
                     goto done;
                 }
-                XImage_move_base(&canvas, &snapshot);
+                XMove(&canvas, &snapshot);
             }
             /* 透明索引和处置方式只影响紧随其后的图像描述。Qt 的
                nextDelay 则由 QGifHandler 持有，只有再次遇到 GCE 才更新；

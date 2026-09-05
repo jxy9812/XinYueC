@@ -932,7 +932,7 @@ XXmlStreamWriter* XXmlStreamWriter_create_copy(const XXmlStreamWriter* other)
     if (!other) return NULL;
     XXmlStreamWriter* self = XXmlStreamWriter_create();
     if (!self) return NULL;
-    XXmlStreamWriter_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -941,7 +941,7 @@ XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other)
     if (!other) return NULL;
     XXmlStreamWriter* self = XXmlStreamWriter_create();
     if (!self) return NULL;
-    XXmlStreamWriter_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 

@@ -151,21 +151,7 @@ void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
 
 // 基础操作宏定义（继承自XContainer）
 
-/**
- * @brief 容器对象拷贝的基础实现
- * @details 通过虚函数调用执行容器对象的深拷贝，支持多态。
- * @param object 目标容器对象指针
- * @param src 源容器对象指针
- */
-#define XRingChunk_copy_base                XContainer_copy_base
 
-/**
-* @brief 容器对象移动的基础实现
-* @details 通过虚函数调用执行容器对象的移动语义，支持多态。
-* @param object 目标容器对象指针
-* @param src 源容器对象指针
-*/
-#define XRingChunk_move_base                XContainer_move_base
 
 /**
 * @brief 容器对象反初始化的基础实现

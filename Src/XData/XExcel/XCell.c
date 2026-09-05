@@ -49,7 +49,7 @@ XCell* XCell_copy(const XCell* other)
     if (other->m_value)
     {
         self->m_value = XString_create();
-        if (self->m_value) XString_copy_base(self->m_value, other->m_value);
+        if (self->m_value) XCopy(self->m_value, other->m_value);
     }
     if (other->m_format) self->m_format = other->m_format;
     if (other->m_formula) self->m_formula = XCellFormula_copy(other->m_formula);

@@ -45,7 +45,7 @@ XMqttMessage* XMqttMessage_create_copy(const XMqttMessage* other)
 {
     if (!other) return NULL;
     XMqttMessage* msg = XMqttMessage_create();
-    if (msg) XMqttMessage_copy_base(msg, other);
+    if (msg) XCopy(msg, other);
     return msg;
 }
 

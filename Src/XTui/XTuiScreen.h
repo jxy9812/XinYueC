@@ -87,9 +87,6 @@ void XTuiScreen_init(XTuiScreen* screen);
 XTuiScreen* XTuiScreen_create_ex(XMemoryType memory, int width, int height);
 
 #define XTuiScreen_delete_base XClass_delete_base /**< 释放堆对象。 */
-#define XTuiScreen_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
-#define XTuiScreen_copy_base   XClass_copy_base   /**< 拷贝。 */
-#define XTuiScreen_move_base   XClass_move_base   /**< 移动。 */
 
 /**
  * @brief 调整屏幕尺寸；新区域清空，原有内容保留。

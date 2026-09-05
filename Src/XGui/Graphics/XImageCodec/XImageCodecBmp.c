@@ -561,7 +561,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
      * 新建图像的默认 3937 dots/meter 一致。 */
     XImage_setDotsPerMeterX(&temp, pelsPerMeterX);
     XImage_setDotsPerMeterY(&temp, pelsPerMeterY);
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     ok = true;
 
 bmp_done:

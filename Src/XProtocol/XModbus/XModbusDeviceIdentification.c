@@ -37,8 +37,8 @@ void XModbusDeviceIdentification_init(XModbusDeviceIdentification* id) {
     XClass_init((XClass*)id);
     XClassGetVtable(id) = XModbusDeviceIdentification_class_init();
     id->m_objects = XMap_Create(int, XByteArray,int_compare); 
-    XContainerSetDataCopyMethod(id->m_objects, XByteArray_copy_base);
-    XContainerSetDataMoveMethod(id->m_objects, XByteArray_move_base);
+    XContainerSetDataCopyMethod(id->m_objects, XClass_copy_base);
+    XContainerSetDataMoveMethod(id->m_objects, XClass_move_base);
     XContainerSetDataDeinitMethod(id->m_objects, XByteArray_deinit_base);
     id->m_conformityLevel = XModbusDeviceIdentification_BasicConformityLevel;
 }

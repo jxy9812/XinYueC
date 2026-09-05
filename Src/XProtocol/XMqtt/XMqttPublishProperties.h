@@ -133,8 +133,6 @@ const XString* XMqttPublishProperties_contentType_const(const XMqttPublishProper
 XString* XMqttPublishProperties_contentType(const XMqttPublishProperties* prop);
 void XMqttPublishProperties_setContentType(XMqttPublishProperties* prop, const char* type);
 
-#define XMqttPublishProperties_copy_base   XClass_copy_base
-#define XMqttPublishProperties_move_base   XClass_move_base
 #define XMqttPublishProperties_deinit_base XClass_deinit_base
 #define XMqttPublishProperties_delete_base XClass_delete_base
 
@@ -191,8 +189,6 @@ XString* XMqttMessageStatusProperties_reason(const XMqttMessageStatusProperties*
 const XMqttUserProperties* XMqttMessageStatusProperties_userProperties_const(const XMqttMessageStatusProperties* prop);
 XMqttUserProperties* XMqttMessageStatusProperties_userProperties(const XMqttMessageStatusProperties* prop);
 
-#define XMqttMessageStatusProperties_copy_base   XClass_copy_base
-#define XMqttMessageStatusProperties_move_base   XClass_move_base
 #define XMqttMessageStatusProperties_deinit_base XClass_deinit_base
 #define XMqttMessageStatusProperties_delete_base XClass_delete_base
 

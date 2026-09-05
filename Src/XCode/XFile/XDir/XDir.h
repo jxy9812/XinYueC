@@ -123,8 +123,6 @@ XVtable* XDir_class_init(void);
 
 #define XDir_delete_base    XClass_delete_base
 #define XDir_deinit_base    XClass_deinit_base
-#define XDir_copy_base      XClass_copy_base
-#define XDir_move_base      XClass_move_base
 
 /**
  * @brief 创建一个指向当前目录的 XDir 对象

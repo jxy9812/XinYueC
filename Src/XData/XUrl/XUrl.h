@@ -132,18 +132,7 @@ XUrl* XUrl_create_ex(XMemoryType memory, const XString* urlString, XUrl_ParsingM
  */
 void XUrl_init(XUrl* self);
 
-/**
- * @brief      初始化 XUrl 实例（从字符串）
- * @param self      待初始化的 XUrl 对象指针
- * @param urlString URL 字符串
- * @param mode      解析模式
- */
-void XUrl_init_ex(XUrl* self, const XString* urlString, XUrl_ParsingMode mode);
 
-/* ========== 虚函数调度 ========== */
-
-#define  XUrl_copy_base            XClass_copy_base
-#define  XUrl_move_base            XClass_move_base
 #define  XUrl_deinit_base          XClass_deinit_base
 #define  XUrl_delete_base          XClass_delete_base
 

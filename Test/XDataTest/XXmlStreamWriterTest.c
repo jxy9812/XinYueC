@@ -1201,7 +1201,7 @@ static bool test_copy_move(void)
         /* 使用XClass框架的拷贝 */
         XClass* cls1 = (XClass*)w1;
         XClass* cls2 = (XClass*)&w2;
-        XClass_copy_base(cls2, cls1);
+        XCopy(cls2, cls1);
         TEST_PASS("XClass_copy 拷贝成功");
 
         XXmlStreamWriter_deinit_base(&w2);
@@ -1221,7 +1221,7 @@ static bool test_copy_move(void)
 
         XClass* cls1 = (XClass*)w1;
         XClass* cls2 = (XClass*)&w2;
-        XClass_move_base(cls2, cls1);
+        XMove(cls2, cls1);
         TEST_PASS("XClass_move 移动成功");
 
         XXmlStreamWriter_deinit_base(&w2);
@@ -1241,7 +1241,7 @@ static bool test_copy_move(void)
         memset(&w2, 0, sizeof(w2));
         XXmlStreamWriter_init(&w2);
 
-        XClass_copy_base((XClass*)&w2, (XClass*)w1);
+        XCopy((XClass*)&w2, (XClass*)w1);
 
         const char* original = XXmlStreamWriter_toString(w1);
         const char* copied = XXmlStreamWriter_toString(&w2);
@@ -1308,7 +1308,7 @@ static bool test_uninitialized_copy_move(void)
     memset(copied, 0, sizeof(XXmlStreamWriter) + 4096);
     memset(moved, 0, sizeof(XXmlStreamWriter) + 4096);
 
-    XClass_copy_base((XClass*)copied, (const XClass*)source);
+    XCopy((XClass*)copied, (const XClass*)source);
     const char* copiedText = XXmlStreamWriter_toString(copied);
     if (expectedText[0] && copiedText && strcmp(expectedText, copiedText) == 0) {
         TEST_PASS("写入器拷贝自动初始化空目标");
@@ -1320,7 +1320,7 @@ static bool test_uninitialized_copy_move(void)
     XFree_System(copied);
     copied = NULL;
 
-    XClass_move_base((XClass*)moved, (XClass*)source);
+    XMove((XClass*)moved, (XClass*)source);
     const char* movedText = XXmlStreamWriter_toString(moved);
     if (expectedText[0] && movedText && strcmp(expectedText, movedText) == 0) {
         TEST_PASS("写入器移动自动初始化空目标");

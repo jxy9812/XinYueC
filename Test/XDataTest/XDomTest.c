@@ -566,7 +566,7 @@ static bool test_handle_semantics(void)
     XDomNode_delete_base(appended);
 
     XDomElement copiedTarget = {0};
-    XDomElement_copy_base(&copiedTarget, original);
+    XCopy(&copiedTarget, original);
     XDomElement_setAttribute_utf8(&copiedTarget, "shared", "yes");
     XDomNode* copiedNode = XDomElement_toNode(&copiedTarget);
     XDomNodeList* copiedChildren = XDomNode_childNodes(copiedNode);
@@ -577,7 +577,7 @@ static bool test_handle_semantics(void)
     else { TEST_FAIL("浅拷贝", "复制句柄没有共享底层 DOM 数据"); all_pass = false; }
 
     XDomElement movedTarget = {0};
-    XDomElement_move_base(&movedTarget, &copiedTarget);
+    XMove(&movedTarget, &copiedTarget);
     XDomNode* movedNode = XDomElement_toNode(&movedTarget);
     XDomNode* movedSourceNode = XDomElement_toNode(&copiedTarget);
     if (movedNode && !XDomNode_isNull(movedNode) &&

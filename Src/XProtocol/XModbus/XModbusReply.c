@@ -154,7 +154,7 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply) {
 void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit) {
     if (!reply) return;
     if (reply->m_result) {
-        XModbusDataUnit_copy_base(reply->m_result, unit);
+        XCopy(reply->m_result, unit);
     }
     else
     {
@@ -166,7 +166,7 @@ void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* uni
 {
     if (!reply) return;
     if (reply->m_result) {
-        XModbusDataUnit_move_base(reply->m_result, unit);
+        XMove(reply->m_result, unit);
     }
     else
     {
@@ -189,7 +189,7 @@ void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * un
 void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response) {
     if (!reply) return;
     if (reply->m_rawResult) 
-        XModbusResponse_copy_base(reply->m_rawResult, response);
+        XCopy(reply->m_rawResult, response);
     else
         reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_copy((XModbusPdu*)response);
 }
@@ -198,7 +198,7 @@ void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* 
 {
     if (!reply) return;
     if (reply->m_rawResult)
-        XModbusResponse_move_base(reply->m_rawResult, response);
+        XMove(reply->m_rawResult, response);
     else
         reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_move((XModbusPdu*)response);
 }

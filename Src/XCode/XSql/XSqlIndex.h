@@ -49,10 +49,6 @@ XSqlIndex* XSqlIndex_create_move(XSqlIndex* other);
 #define XSqlIndex_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlIndex_create 系列函数返回的索引对象。 */
 #define XSqlIndex_delete_base XClass_delete_base
-/** @brief 将索引对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlIndex_copy_base XClass_copy_base
-/** @brief 将索引对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlIndex_move_base XClass_move_base
 
 /** @brief 交换两个索引对象内容。 @param left 左索引；不能为 NULL。 @param right 右索引；不能为 NULL。 @return 无；字段、名称与排序方向一并交换。 */
 void XSqlIndex_swap(XSqlIndex* left, XSqlIndex* right);

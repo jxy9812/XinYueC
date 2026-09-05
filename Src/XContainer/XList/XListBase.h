@@ -341,21 +341,7 @@ void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 * @brief 通用容器操作接口（继承自XContainer）
 */
 
-/**
-* @brief 拷贝链表（深拷贝）
-* @param this_stackOne 目标链表指针
-* @param this_stackTwo 源链表指针
-* @note 宏定义，等价于XContainer_copy_base，拷贝所有元素到目标链表
-*/
-#define XListBase_copy_base				XContainer_copy_base	
 
-/**
-* @brief 移动链表资源（所有权转移）
-* @param this_stackOne 目标链表指针
-* @param this_stackTwo 源链表指针
-* @note 宏定义，等价于XContainer_move_base，转移资源所有权，避免深拷贝
-*/
-#define XListBase_move_base				XContainer_move_base	
 
 /**
 * @brief 销毁链表内部资源（保留实例本身）

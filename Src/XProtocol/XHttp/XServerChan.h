@@ -95,8 +95,6 @@ XServerChanResult* XServerChanResult_create_move(XServerChanResult* other);
 /** @brief 结果对象的反初始化、删除、拷贝和移动调度入口。 */
 #define XServerChanResult_deinit_base XClass_deinit_base
 #define XServerChanResult_delete_base XClass_delete_base
-#define XServerChanResult_copy_base XClass_copy_base
-#define XServerChanResult_move_base XClass_move_base
 
 /**
  * - @brief 获取 Server酱返回的 code。
@@ -197,8 +195,6 @@ XServerChan* XServerChan_create_move(XServerChan* other);
 /** @brief 客户端的反初始化、删除、拷贝和移动调度入口。 */
 #define XServerChan_deinit_base XClass_deinit_base
 #define XServerChan_delete_base XClass_delete_base
-#define XServerChan_copy_base XClass_copy_base
-#define XServerChan_move_base XClass_move_base
 
 /**
  * - @brief 设置 SendKey。

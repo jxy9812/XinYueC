@@ -69,8 +69,8 @@ void XModbusServer_init(XModbusServer* server)
     server->m_dataMap = XModbusDataUnitMap_create();
     server->m_options = XMap_Create(int, XVariant, int_compare);
     if (server->m_options) {
-        XContainerSetDataCopyMethod(server->m_options, XVariant_copy_base);
-        XContainerSetDataMoveMethod(server->m_options, XVariant_move_base);
+        XContainerSetDataCopyMethod(server->m_options, XClass_copy_base);
+        XContainerSetDataMoveMethod(server->m_options, XClass_move_base);
         XContainerSetDataDeinitMethod(server->m_options, XVariant_deinit_base);
     }
 }
@@ -981,14 +981,14 @@ static bool VXModbusServer_setMap(XModbusServer* server, XModbusDataUnitMap* map
     if (type == XFuncParamType_Copy)
     {
         if (server->m_dataMap)
-            XMap_copy_base(server->m_dataMap, map);
+            XCopy(server->m_dataMap, map);
         else
             server->m_dataMap = XMap_create_copy(map);
     }
     else  if (type == XFuncParamType_Move)
     {
         if (server->m_dataMap)
-            XMap_move_base(server->m_dataMap, map);
+            XMove(server->m_dataMap, map);
         else
             server->m_dataMap = XMap_create_move(map);
     }

@@ -574,19 +574,7 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
  * 内存管理宏 - XModbusPdu
  ******************************************************************************************/
 
-/**
- * @brief 复制PDU
- * @param dest 目标PDU
- * @param src 源PDU
- */
-#define XModbusPdu_copy_base        XClass_copy_base
 
-/**
- * @brief 移动PDU
- * @param dest 目标PDU
- * @param src 源PDU
- */
-#define XModbusPdu_move_base        XClass_move_base
 
 /**
  * @brief 析构PDU
@@ -604,19 +592,7 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 * 内存管理宏 - XModbusRequest
 ******************************************************************************************/
 
-/**
- * @brief 复制请求
- * @param dest 目标请求
- * @param src 源请求
- */
-#define XModbusRequest_copy_base        XModbusPdu_copy_base
 
-/**
- * @brief 移动请求
- * @param dest 目标请求
- * @param src 源请求
- */
-#define XModbusRequest_move_base        XModbusPdu_move_base
 
 /**
  * @brief 析构请求
@@ -634,19 +610,7 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 * 内存管理宏 - XModbusResponse
 ******************************************************************************************/
 
-/**
- * @brief 复制响应
- * @param dest 目标响应
- * @param src 源响应
- */
-#define XModbusResponse_copy_base       XModbusPdu_copy_base
 
-/**
-* @brief 移动响应
-* @param dest 目标响应
-* @param src 源响应
-*/
-#define XModbusResponse_move_base       XModbusPdu_move_base
 
 /**
 * @brief 析构响应
@@ -664,19 +628,7 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 * 内存管理宏 - XModbusExceptionResponse
 ******************************************************************************************/
 
-/**
- * @brief 复制异常响应
- * @param dest 目标异常响应
- * @param src 源异常响应
- */
-#define XModbusExceptionResponse_copy_base      XModbusResponse_copy_base
 
-/**
-* @brief 移动异常响应
-* @param dest 目标异常响应
-* @param src 源异常响应
-*/
-#define XModbusExceptionResponse_move_base      XModbusResponse_move_base
 
 /**
 * @brief 析构异常响应

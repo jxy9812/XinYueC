@@ -172,16 +172,6 @@ void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 #define XVariantList_resize_base		XVector_resize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 拷贝列表（深拷贝，基础版本）
-* @note 基于XVector的接口，复制源列表的所有元素到当前列表
-*/
-#define XVariantList_copy_base			XVector_copy_base
-/**
-* @brief 移动列表资源（基础版本）
-* @note 基于XVector的接口，转移源列表的资源所有权到当前列表
-*/
-#define XVariantList_move_base			XVector_move_base
-/**
 * @brief 反初始化列表（基础版本）
 * @note 基于XVector的接口，释放内部资源但不销毁实例本身
 */

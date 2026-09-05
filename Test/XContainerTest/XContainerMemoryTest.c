@@ -64,7 +64,7 @@ static void XContainerMemory_checkVectorSemantics(void)
 
     XVector target;
     XVector_init(&target, sizeof(int), false);
-    XVector_copy_base(&target, source);
+    XCopy(&target, source);
     XContainerMemory_check("Vector 非COW copy目标池", (XClass*)&target,
         XCLASS_DEFAULT_MEMORY_TYPE);
     XVector_deinit_base(&target);
@@ -74,14 +74,14 @@ static void XContainerMemory_checkVectorSemantics(void)
     XVector cowTarget;
     XVector_init(&cowTarget, sizeof(int), true);
     Set_Class_Memory(&cowTarget, XMEMORY_TYPE_MULTIPOOL);
-    XVector_copy_base(&cowTarget, cowSource);
+    XCopy(&cowTarget, cowSource);
     XContainerMemory_check("Vector COW 同池copy", (XClass*)&cowTarget,
         XMEMORY_TYPE_MULTIPOOL);
     XVector_deinit_base(&cowTarget);
 
     XVector differentPoolTarget;
     XVector_init(&differentPoolTarget, sizeof(int), true);
-    XVector_copy_base(&differentPoolTarget, cowSource);
+    XCopy(&differentPoolTarget, cowSource);
     bool rejected = XVector_size_base(&differentPoolTarget) == 0;
     if (rejected)
         g_memory_test_passed++;
@@ -97,7 +97,7 @@ static void XContainerMemory_checkVectorSemantics(void)
     XVector moveTarget;
     XVector_init(&moveTarget, sizeof(int), false);
     Set_Class_Memory(&moveTarget, XMEMORY_TYPE_MULTIPOOL);
-    XVector_move_base(&moveTarget, moveSource);
+    XMove(&moveTarget, moveSource);
     bool moved = XVector_size_base(&moveTarget) == 1 &&
         XVector_size_base(moveSource) == 0 &&
         Class_Memory(&moveTarget) == XMemory_method(XMEMORY_TYPE_MULTIPOOL);
@@ -120,7 +120,7 @@ static void XContainerMemory_checkMapSemantics(void)
 
     XMap target;
     XMap_init(&target, sizeof(int), sizeof(int), int_compare, true);
-    XMap_copy_base(&target, source);
+    XCopy(&target, source);
     bool rejected = XMap_size_base(&target) == 0;
     if (rejected)
         g_memory_test_passed++;
@@ -130,7 +130,7 @@ static void XContainerMemory_checkMapSemantics(void)
     XMap_deinit_base(&target);
 
     Set_Class_Memory(&target, XMEMORY_TYPE_MULTIPOOL);
-    XMap_copy_base(&target, source);
+    XCopy(&target, source);
     bool copied = XMap_size_base(&target) == 1 &&
         Class_Memory(&target) == XMemory_method(XMEMORY_TYPE_MULTIPOOL);
     if (copied)

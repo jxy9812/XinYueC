@@ -124,8 +124,6 @@ bool XMqttTopicFilter_less(const XMqttTopicFilter* a, const XMqttTopicFilter* b)
  */
 size_t XMqttTopicFilter_hash(const XMqttTopicFilter* filter, size_t seed);
 
-#define XMqttTopicFilter_copy_base   XClass_copy_base
-#define XMqttTopicFilter_move_base   XClass_move_base
 #define XMqttTopicFilter_deinit_base XClass_deinit_base
 #define XMqttTopicFilter_delete_base XClass_delete_base
 

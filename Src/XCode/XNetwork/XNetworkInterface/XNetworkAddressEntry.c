@@ -34,9 +34,9 @@ static void VXNetworkAddressEntry_copy(XNetworkAddressEntry* dest, const XNetwor
     XHostAddress_deinit_base(&dest->broadcast);
     
     // 复制源对象的值
-    XHostAddress_copy_base(&dest->ip, &src->ip);
-    XHostAddress_copy_base(&dest->netmask, &src->netmask);
-    XHostAddress_copy_base(&dest->broadcast, &src->broadcast);
+    XCopy(&dest->ip, &src->ip);
+    XCopy(&dest->netmask, &src->netmask);
+    XCopy(&dest->broadcast, &src->broadcast);
     dest->broadcastIsValid = src->broadcastIsValid;
     
     dest->preferredLifetime = src->preferredLifetime;
@@ -56,9 +56,9 @@ static void VXNetworkAddressEntry_move(XNetworkAddressEntry* dest, XNetworkAddre
         XNetworkAddressEntry_init(dest);
    
     // 移动语义：转移资源
-    XHostAddress_move_base(&dest->ip, &src->ip);
-    XHostAddress_move_base(&dest->netmask, &src->netmask);
-    XHostAddress_move_base(&dest->broadcast, &src->broadcast);
+    XMove(&dest->ip, &src->ip);
+    XMove(&dest->netmask, &src->netmask);
+    XMove(&dest->broadcast, &src->broadcast);
     dest->broadcastIsValid = src->broadcastIsValid;
     
     dest->preferredLifetime = src->preferredLifetime;
@@ -127,7 +127,7 @@ XNetworkAddressEntry* XNetworkAddressEntry_createWithIp(const XHostAddress* ip)
     if (!entry) return NULL;
     
     if (ip) {
-        XHostAddress_copy_base(&entry->ip, ip);
+        XCopy(&entry->ip, ip);
     }
     
     return entry;
@@ -141,15 +141,15 @@ XNetworkAddressEntry* XNetworkAddressEntry_createFull(const XHostAddress* ip,
     if (!entry) return NULL;
     
     if (ip) {
-        XHostAddress_copy_base(&entry->ip, ip);
+        XCopy(&entry->ip, ip);
     }
     
     if (netmask) {
-        XHostAddress_copy_base(&entry->netmask, netmask);
+        XCopy(&entry->netmask, netmask);
     }
     
     if (broadcast) {
-        XHostAddress_copy_base(&entry->broadcast, broadcast);
+        XCopy(&entry->broadcast, broadcast);
         entry->broadcastIsValid = true;
     }
     
@@ -177,7 +177,7 @@ const XHostAddress* XNetworkAddressEntry_ip(const XNetworkAddressEntry* entry)
 void XNetworkAddressEntry_setIp(XNetworkAddressEntry* entry, const XHostAddress* ip)
 {
     if (!entry || !ip) return;
-    XHostAddress_copy_base(&entry->ip, ip);
+    XCopy(&entry->ip, ip);
 }
 
 const XHostAddress* XNetworkAddressEntry_netmask(const XNetworkAddressEntry* entry)
@@ -188,7 +188,7 @@ const XHostAddress* XNetworkAddressEntry_netmask(const XNetworkAddressEntry* ent
 void XNetworkAddressEntry_setNetmask(XNetworkAddressEntry* entry, const XHostAddress* netmask)
 {
     if (!entry || !netmask) return;
-    XHostAddress_copy_base(&entry->netmask, netmask);
+    XCopy(&entry->netmask, netmask);
     //memcpy(&entry->netmask, netmask, sizeof(XHostAddress));
 }
 
@@ -203,7 +203,7 @@ void XNetworkAddressEntry_setBroadcast(XNetworkAddressEntry* entry, const XHostA
     if (!entry) return;
     
     if (broadcast) {
-        XHostAddress_copy_base(&entry->broadcast, broadcast);
+        XCopy(&entry->broadcast, broadcast);
         entry->broadcastIsValid = true;
     } else {
         entry->broadcastIsValid = false;

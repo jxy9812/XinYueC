@@ -145,16 +145,6 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 #define XCircularQueue_typeSize_base		XQueueBase_typeSize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 拷贝容器
-* @note 基于XQueueBase的接口，复制源队列的所有元素和状态
-*/
-#define XCircularQueue_copy_base			XQueueBase_copy_base
-/**
-* @brief 移动容器资源
-* @note 基于XQueueBase的接口，转移源队列的资源所有权至当前队列
-*/
-#define XCircularQueue_move_base			XQueueBase_move_base
-/**
 * @brief 反初始化容器
 * @note 基于XQueueBase的接口，释放队列资源但不销毁实例本身
 */

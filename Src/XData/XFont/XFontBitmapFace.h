@@ -34,12 +34,6 @@ void XFontBitmapFace_initFile(XFontBitmapFace* self);
 /** @brief 初始化点阵 face 类虚函数表。 */
 XVtable* XFontBitmapFace_class_init(void);
 
-/** @brief 通过 XClass 虚表复制点阵 face。 */
-#define XFontBitmapFace_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 通过 XClass 虚表移动点阵 face。 */
-#define XFontBitmapFace_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 通过 XClass 虚表反初始化点阵 face。 */
 #define XFontBitmapFace_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 通过 XClass 虚表删除堆上的点阵 face。 */

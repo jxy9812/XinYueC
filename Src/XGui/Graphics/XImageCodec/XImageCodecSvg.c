@@ -3041,7 +3041,7 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
         }
     }
     svgArenaCleanup(&arena);
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     return true;
 }
 
@@ -3348,7 +3348,7 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
                 XImage_setPixel(&temp, x, y, color);
-        XImage_move_base(out, &temp);
+        XMove(out, &temp);
     }
     XFree_Hybrid(text);
     return true;

@@ -132,10 +132,6 @@ XScreen* XScreen_create_move(XScreen* other);
 #define XScreen_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XScreen 对象。 */
 #define XScreen_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 通过 XClass 虚表深拷贝 XScreen；未初始化的目标会先自动初始化。 */
-#define XScreen_copy_base(self, other)     XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 通过 XClass 虚表移动 XScreen；移动后源对象 m_data 为空。 */
-#define XScreen_move_base(self, other)     XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 屏幕注册表（未来由 XGuiApplication 接管） ==================== */
 

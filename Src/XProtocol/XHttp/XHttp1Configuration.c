@@ -74,7 +74,7 @@ XHttp1Configuration* XHttp1Configuration_create_copy(const XHttp1Configuration* 
     if (!other)
         return NULL;
     self = XHttp1Configuration_create();
-    if (self) XClass_copy_base((XClass*)self, (const XClass*)other);
+    if (self) XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -84,7 +84,7 @@ XHttp1Configuration* XHttp1Configuration_create_move(XHttp1Configuration* other)
     if (!other)
         return NULL;
     self = XHttp1Configuration_create();
-    if (self) XClass_move_base((XClass*)self, (XClass*)other);
+    if (self) XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

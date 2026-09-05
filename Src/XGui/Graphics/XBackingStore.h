@@ -118,12 +118,6 @@ void XBackingStore_reinit(XBackingStore* self, XWindow* window);
  */
 XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window);
 
-/** @brief 通过 XClass 虚表释放 XBackingStore 资源（栈/外部存储对象使用）。 */
-#define XBackingStore_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 通过 XClass 虚表移动 XBackingStore 资源。 @param self 目标对象指针。 @param other 源对象指针。 */
-#define XBackingStore_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 #define XBackingStore_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XBackingStore 对象。 */
 #define XBackingStore_delete_base(self) XClass_delete_base((XClass*)(self))

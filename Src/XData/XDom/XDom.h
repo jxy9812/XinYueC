@@ -377,13 +377,11 @@ XVtable* XDomImplementation_class_init(void);
 
 /**
  * @brief      声明 DOM 类型的标准生命周期 API。
- * @details      `copy_base` 和 `move_base` 会先检查目标、源和目标 vtable；目标未初始化时
+ * @details      `XCopy` 和 `XMove` 会先检查目标、源和目标 vtable；目标未初始化时
  *             自动调用完整的 Type_init。移动成功后源对象仍可反初始化，但内部句柄为空。
  * @param      Type DOM 类型名称；该宏只在头文件内部用于生成声明。
  * @param      self init、deinit_base 和 delete_base 操作的目标句柄；可为 NULL 时按对应 API 规则处理。
  * @param      other create_copy 或 create_move 的源句柄；调用期间只借用，移动后源句柄为空。
- * @param      dest copy_base 或 move_base 的目标句柄；未初始化时由函数完成初始化。
- * @param      src copy_base 或 move_base 的源句柄；调用期间只借用，不能与 dest 重叠。
  * @return      create、create_copy 和 create_move 返回新堆句柄，失败返回 NULL；其余生命周期
  *             API 无返回值，class_init 返回共享且不由调用者释放的虚函数表。
  * @note      堆对象必须使用对应 Type_delete_base；栈对象必须成对调用 Type_init 和 Type_deinit_base。
@@ -394,9 +392,7 @@ XVtable* XDomImplementation_class_init(void);
     Type* Type##_create_copy(const Type* other); \
     Type* Type##_create_move(Type* other); \
     void Type##_deinit_base(Type* self); \
-    void Type##_delete_base(Type* self); \
-    void Type##_copy_base(Type* dest, const Type* src); \
-    void Type##_move_base(Type* dest, Type* src)
+    void Type##_delete_base(Type* self)
 
 XDOM_DECLARE_LIFECYCLE(XDomNode);
 XDOM_DECLARE_LIFECYCLE(XDomNodeList);

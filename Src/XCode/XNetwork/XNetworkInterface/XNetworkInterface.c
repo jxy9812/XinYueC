@@ -71,7 +71,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->name) 
     {
         if (dest->name)
-            XString_copy_base(dest->name, src->name);
+            XCopy(dest->name, src->name);
         else
             dest->name = XString_create_copy(src->name);
     }
@@ -79,7 +79,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->humanReadableName) 
     {
         if (dest->humanReadableName)
-            XString_copy_base(dest->humanReadableName, src->humanReadableName);
+            XCopy(dest->humanReadableName, src->humanReadableName);
         else
             dest->humanReadableName = XString_create_copy(src->humanReadableName);
     }
@@ -87,7 +87,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->hardwareAddress)
     {
         if (dest->hardwareAddress)
-            XString_copy_base(dest->hardwareAddress, src->hardwareAddress);
+            XCopy(dest->hardwareAddress, src->hardwareAddress);
         else
             dest->hardwareAddress = XString_create_copy(src->hardwareAddress);
     }
@@ -96,7 +96,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->addressEntries) 
     {
         if (dest->addressEntries)
-            XVector_copy_base(dest->addressEntries, src->addressEntries);
+            XCopy(dest->addressEntries, src->addressEntries);
         else
             dest->addressEntries = XVector_create_copy(src->addressEntries);
     }
@@ -145,8 +145,8 @@ void XNetworkInterface_init(XNetworkInterface* iface)
     XClass_init((XClass*)iface);
     XClassGetVtable(iface) = XNetworkInterface_class_init();
     iface->addressEntries = XVector_create(sizeof(XNetworkAddressEntry));
-    XContainerSetDataCopyMethod(iface->addressEntries, XNetworkAddressEntry_copy_base);
-    XContainerSetDataMoveMethod(iface->addressEntries, XNetworkAddressEntry_move_base);
+    XContainerSetDataCopyMethod(iface->addressEntries, XClass_copy_base);
+    XContainerSetDataMoveMethod(iface->addressEntries, XClass_move_base);
     XContainerSetDataDeinitMethod(iface->addressEntries, XNetworkAddressEntry_deinit_base);
     iface->type = XNetworkInterface_Unknown;
     iface->isValid = false;
@@ -169,7 +169,7 @@ XNetworkInterface* XNetworkInterface_create_copy(const XNetworkInterface* other)
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
     
-    XNetworkInterface_copy_base(iface, other);
+    XCopy(iface, other);
     return iface;
 }
 
@@ -180,7 +180,7 @@ XNetworkInterface* XNetworkInterface_create_move(const XNetworkInterface* other)
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
 
-    XNetworkInterface_move_base(iface, other);
+    XMove(iface, other);
     return iface;
 }
 
@@ -252,8 +252,8 @@ XVector* XNetworkInterface_allAddresses(void)
 {
     XVector* addresses = XVector_create(sizeof(XHostAddress));
     if (!addresses) return NULL;
-    XContainerSetDataCopyMethod(addresses, XHostAddress_copy_base);
-    XContainerSetDataMoveMethod(addresses, XHostAddress_move_base);
+    XContainerSetDataCopyMethod(addresses, XClass_copy_base);
+    XContainerSetDataMoveMethod(addresses, XClass_move_base);
     XContainerSetDataDeinitMethod(addresses, XHostAddress_deinit_base);
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces) return addresses;
@@ -286,8 +286,8 @@ XVector* XNetworkInterface_allInterfaces(void)
 {
     XVector* result = XVector_create(sizeof(XNetworkInterface));
     if (!result) return NULL;
-    XContainerSetDataCopyMethod(result, XNetworkInterface_copy_base);
-    XContainerSetDataMoveMethod(result, XNetworkInterface_move_base);
+    XContainerSetDataCopyMethod(result, XClass_copy_base);
+    XContainerSetDataMoveMethod(result, XClass_move_base);
     XContainerSetDataDeinitMethod(result, XNetworkInterface_deinit_base);
     XDeviceNetworkInterfaceIterator iter = XDeviceNetwork_enumInterfacesBegin();
     if (!iter) {

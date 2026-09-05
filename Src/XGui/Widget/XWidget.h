@@ -573,10 +573,6 @@ XWidget* XWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
 #define XWidget_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XWidget 对象。 */
 #define XWidget_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 深拷贝（对标 QWidget 拷贝构造语义的子集；不复制父/窗口句柄）。 */
-#define XWidget_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动语义（转移资源所有权；源对象归零）。 */
-#define XWidget_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 属性与窗口标志（对标 QWidget） ==================== */
 

@@ -47,16 +47,6 @@ void XJsonArray_init(XJsonArray* array);
 */
 #define XJsonArray_rcopy_base						XVector_rcopy_base
 /**
-* @brief 基于XVector的拷贝基础操作
-* @details 调用XVector的拷贝接口实现数组元素的深拷贝
-*/
-#define XJsonArray_copy_base						XVector_copy_base	
-/**
-* @brief 基于XVector的移动基础操作
-* @details 调用XVector的移动接口实现数组资源的所有权转移
-*/
-#define XJsonArray_move_base						XVector_move_base	
-/**
 * @brief 基于XVector的反初始化基础操作
 * @details 调用XVector的反初始化接口，释放内部元素资源但保留数组实例
 */

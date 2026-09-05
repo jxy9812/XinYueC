@@ -3,7 +3,7 @@
  * @brief      XCursor 光标类实现（对标 Qt 6.8 QCursor）。
  * @details    本文件实现 XCursor 的光标形状、位图/掩码/像素图自定义光标、
  *             热点与进程级光标位置。复制语义与 Qt 隐式共享的 QCursor 对齐：
- *             XCursor_copy_base 深拷贝全部自定义资源（位图/掩码/像素图），
+ *             XCopy 深拷贝全部自定义资源（位图/掩码/像素图），
  *             移动语义转移资源并使源对象回到默认空光标。进程级光标位置
  *             保存在静态变量中，无平台输入后端时由 XCursor_setPos 维护。
  * @note       模块总开关 XCURSOR_ON 定义于 XGuiConfig.h；置 0 时本文件
@@ -31,7 +31,7 @@ static struct XBitmap* XCursor_copyBitmap(const struct XBitmap* source)
     if (!source) return NULL;
     copy = XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XBitmap_copy_base(copy, source);
+    XCopy(copy, source);
     return copy;
 }
 
@@ -42,7 +42,7 @@ static struct XPixmap* XCursor_copyPixmap(const struct XPixmap* source)
     if (!source) return NULL;
     copy = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XPixmap_copy_base(copy, source);
+    XCopy(copy, source);
     return copy;
 }
 

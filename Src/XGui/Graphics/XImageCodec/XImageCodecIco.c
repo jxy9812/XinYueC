@@ -1,4 +1,4 @@
-/*****************************************************************************/
+﻿/*****************************************************************************/
 /**
  * @file       XImageCodecIco.c
  * @brief      XImageCodec ICO/CUR 图标编解码实现。
@@ -240,7 +240,7 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
     }
     /* Qt keeps a 32-bit ICO payload in an alpha-capable image and applies
        the AND mask for 24-bit payloads. */
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     return true;
 }
 

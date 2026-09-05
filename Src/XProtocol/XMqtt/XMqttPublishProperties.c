@@ -33,7 +33,7 @@ XMqttPublishProperties* XMqttPublishProperties_create_copy(const XMqttPublishPro
 {
     if (!other) return NULL;
     XMqttPublishProperties* p = XMqttPublishProperties_create();
-    if (p) XMqttPublishProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 
@@ -182,7 +182,7 @@ XMqttMessageStatusProperties* XMqttMessageStatusProperties_create_copy(const XMq
 {
     if (!other) return NULL;
     XMqttMessageStatusProperties* p = XMqttMessageStatusProperties_create();
-    if (p) XMqttMessageStatusProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 

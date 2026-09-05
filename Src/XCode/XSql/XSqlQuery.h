@@ -84,10 +84,6 @@ void XSqlQuery_swap(XSqlQuery* left, XSqlQuery* right);
 #define XSqlQuery_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlQuery_create 系列函数返回的查询对象。 */
 #define XSqlQuery_delete_base XClass_delete_base
-/** @brief 将查询对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlQuery_copy_base XClass_copy_base
-/** @brief 将查询对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlQuery_move_base XClass_move_base
 
 /** @brief 判断查询是否位于有效记录。 @param query 查询对象；可为 NULL。 @return 位于有效记录返回 true，否则返回 false。 */
 bool XSqlQuery_isValid(const XSqlQuery* query);

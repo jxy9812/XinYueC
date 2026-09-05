@@ -400,7 +400,7 @@ static void XLockFreeListCompareTest(void)
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
 		XContainerSetCompare(d, int_compare);
-		XLockFreeList_copy_base(d, s);
+		XCopy(d, s);
 		XLockFreeListPrintInt(s, "copy后 src: ");
 		XLockFreeListPrintInt(d, "copy后 dst: ");
 		XPrintf("  期望 src/dst 均为 7 8 9\n");
@@ -412,7 +412,7 @@ static void XLockFreeListCompareTest(void)
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
 		XContainerSetCompare(d, int_compare);
-		XLockFreeList_move_base(d, s);
+		XMove(d, s);
 		XLockFreeListPrintInt(d, "move后 dst: ");
 		XPrintf("move后 src.isEmpty=%s (期望:是)\n",
 			XLockFreeList_isEmpty_base(s) ? "是" : "否");

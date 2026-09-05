@@ -318,10 +318,6 @@ void XWindow_init_parent(XWindow* self, XWindow* parent);
 
 /** @brief 删除堆上的 XWindow 对象（虚表调用析构语义）。 */
 #define XWindow_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 深拷贝 XWindow（对标 QWindow 复制值语义的属性快照）；未初始化目标自动初始化。 */
-#define XWindow_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动 XWindow；移动后源对象为空窗口（保留已绑定的事件连接语义除外）。 */
-#define XWindow_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /** @brief 使用默认内存类型在堆上创建空 XWindow。 @return 新对象指针；失败返回 NULL。 */
 #define XWindow_create() XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)

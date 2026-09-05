@@ -135,20 +135,6 @@ void XPicture_swap(XPicture* self, XPicture* other);
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-/**
- * @brief 通过 XClass 虚表复制绘图记录。
- * @param self 目标绘图记录对象指针。
- * @param other 源绘图记录对象指针。
- */
-#define XPicture_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动绘图记录。
- * @param self 目标绘图记录对象指针。
- * @param other 源绘图记录对象指针；移动后源对象为空。
- */
-#define XPicture_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放

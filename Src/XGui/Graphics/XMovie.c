@@ -219,7 +219,7 @@ static bool XMovie_loadFrame(XMovie* self, int frameNumber, bool emitSignals)
         return false;
     }
     oldRect = data->m_frameRect;
-    XImage_move_base(&data->m_currentImage, &image);
+    XMove(&data->m_currentImage, &image);
     XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
     XImage_rect(&data->m_currentImage, &data->m_frameRect);
     data->m_currentFrame = frameNumber;
@@ -405,8 +405,8 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
     XMovie_clearPrivate(self->m_data);
     memset(self->m_data, 0, sizeof(XMoviePrivate));
     self->m_data->m_reader = XMovie_cloneReader(source->m_reader);
-    XImage_copy_base(&self->m_data->m_currentImage, &source->m_currentImage);
-    XPixmap_copy_base(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
+    XCopy(&self->m_data->m_currentImage, &source->m_currentImage);
+    XCopy(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
     self->m_data->m_backgroundColor = source->m_backgroundColor;
     self->m_data->m_frameRect = source->m_frameRect;
     self->m_data->m_scaledSize = source->m_scaledSize;
@@ -573,7 +573,7 @@ void XMovie_currentImage(const XMovie* self, XImage* out)
 {
     if (!out) return;
     if (self && self->m_data)
-        XImage_copy_base(out, &self->m_data->m_currentImage);
+        XCopy(out, &self->m_data->m_currentImage);
     else
         XImage_init(out);
 }
@@ -581,7 +581,7 @@ void XMovie_currentPixmap(const XMovie* self, XPixmap* out)
 {
     if (!out) return;
     if (self && self->m_data)
-        XPixmap_copy_base(out, &self->m_data->m_currentPixmap);
+        XCopy(out, &self->m_data->m_currentPixmap);
     else
         XPixmap_init(out);
 }

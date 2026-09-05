@@ -235,16 +235,10 @@ XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_move(XRe
  */
 #define XRegularExpression_deinit_base XClass_deinit_base
 #define XRegularExpression_delete_base XClass_delete_base
-#define XRegularExpression_copy_base XClass_copy_base
-#define XRegularExpression_move_base XClass_move_base
 #define XRegularExpressionMatch_deinit_base XClass_deinit_base
 #define XRegularExpressionMatch_delete_base XClass_delete_base
-#define XRegularExpressionMatch_copy_base XClass_copy_base
-#define XRegularExpressionMatch_move_base XClass_move_base
 #define XRegularExpressionMatchIterator_deinit_base XClass_deinit_base
 #define XRegularExpressionMatchIterator_delete_base XClass_delete_base
-#define XRegularExpressionMatchIterator_copy_base XClass_copy_base
-#define XRegularExpressionMatchIterator_move_base XClass_move_base
 
 /* ============================== QRegularExpression 对齐 API ============================== */
 

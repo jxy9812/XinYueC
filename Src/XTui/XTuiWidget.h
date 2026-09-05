@@ -60,9 +60,6 @@ void XTuiWidget_init(XTuiWidget* widget);
 XTuiWidget* XTuiWidget_create_ex(XMemoryType memory);
 
 #define XTuiWidget_delete_base XClass_delete_base /**< 释放堆对象。 */
-#define XTuiWidget_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
-#define XTuiWidget_copy_base   XClass_copy_base   /**< 拷贝。 */
-#define XTuiWidget_move_base   XClass_move_base   /**< 移动。 */
 
 /* ==================== 虚函数调度入口 ==================== */
 

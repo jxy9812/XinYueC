@@ -115,7 +115,7 @@ static void xpbs_posix_copyRectPixels(const XImage* src, int sx, int sy,
                 (size_t)w * 4u);
 }
 
-/** @brief 把源图像深拷贝到目标图像（XImage_copy_base 为共享引用，不能用）。 */
+/** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。 */
 static bool xpbs_posix_deepCopy(const XImage* src, XImage* dst)
 {
     const uint8_t* sbuf;
@@ -512,7 +512,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     /* 先快照旧内容（共享引用），再重建缓冲，最后回拷左上重叠区。 */
     XImage_init(&oldImage);
     if (active && active->m_data)
-        XImage_copy_base(&oldImage, active);
+        XCopy(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
     if (w > 0 && h > 0)

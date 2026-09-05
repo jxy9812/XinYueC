@@ -138,7 +138,7 @@ XServerChanResult* XServerChanResult_create_copy(const XServerChanResult* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChanResult_create();
     if (!self) return NULL;
-    XServerChanResult_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -148,7 +148,7 @@ XServerChanResult* XServerChanResult_create_move(XServerChanResult* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChanResult_create();
     if (!self) return NULL;
-    XServerChanResult_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 
@@ -434,7 +434,7 @@ XServerChan* XServerChan_create_copy(const XServerChan* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChan_create();
     if (!self) return NULL;
-    XServerChan_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -444,7 +444,7 @@ XServerChan* XServerChan_create_move(XServerChan* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChan_create();
     if (!self) return NULL;
-    XServerChan_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 

@@ -85,7 +85,7 @@ XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 	if (!unit) return NULL;
 	XModbusDataUnit* newUnit = XModbusDataUnit_create();
 	if (!newUnit) return NULL;
-	XModbusDataUnit_copy_base(newUnit,unit);
+	XCopy(newUnit,unit);
 	return newUnit;
 }
 
@@ -94,7 +94,7 @@ XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit)
 	if (!unit) return NULL;
 	XModbusDataUnit* newUnit = XModbusDataUnit_create();
 	if (!newUnit) return NULL;
-	XModbusDataUnit_move_base(newUnit, unit);
+	XMove(newUnit, unit);
 	return newUnit;
 }
 
@@ -307,8 +307,8 @@ XModbusDataUnitMap* XModbusDataUnitMap_create()
 	XModbusDataUnitMap* map = XMap_Create(XModbusRegisterType, XModbusDataUnit,int_compare);
 	if (map)
 	{
-		XContainerSetDataCopyMethod(map, XModbusDataUnit_copy_base);
-		XContainerSetDataMoveMethod(map, XModbusDataUnit_move_base);
+		XContainerSetDataCopyMethod(map, XClass_copy_base);
+		XContainerSetDataMoveMethod(map, XClass_move_base);
 		XContainerSetDataDeinitMethod(map, XModbusDataUnit_deinit_base);
 	}
 	return map;

@@ -85,8 +85,6 @@ XHttp2Frame* XHttp2Frame_create_ex(XMemoryType memory, uint8_t type, uint8_t fla
                                    const XByteArray* payload);
 #define XHttp2Frame_deinit_base XClass_deinit_base
 #define XHttp2Frame_delete_base XClass_delete_base
-#define XHttp2Frame_copy_base XClass_copy_base
-#define XHttp2Frame_move_base XClass_move_base
 
 /**
  * - @brief 设置帧载荷。

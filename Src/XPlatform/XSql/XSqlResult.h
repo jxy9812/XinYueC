@@ -114,10 +114,6 @@ XSqlResult* XSqlResult_create_ex(XMemoryType memory,  const XSqlDriver* driver);
 #define XSqlResult_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlResult_create 系列函数返回的结果对象。 */
 #define XSqlResult_delete_base XClass_delete_base
-/** @brief 将结果对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlResult_copy_base XClass_copy_base
-/** @brief 将结果对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlResult_move_base XClass_move_base
 
 /**
  * @brief 获取当前游标位置。

@@ -240,11 +240,6 @@ void XModbusDeviceIdentification_setConformityLevel(XModbusDeviceIdentification*
  */
 XModbusDeviceIdentification* XModbusDeviceIdentification_fromByteArray(const uint8_t* data, size_t size);
 
-/******************************************************************************************
- * 内存管理宏
- ******************************************************************************************/
-#define XModbusDeviceIdentification_copy_base XClass_copy_base
-#define XModbusDeviceIdentification_move_base XClass_move_base
 #define XModbusDeviceIdentification_deinit_base XClass_deinit_base
 #define XModbusDeviceIdentification_delete_base XClass_delete_base
 

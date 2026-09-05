@@ -63,7 +63,7 @@ XVariant* XVariant_create_copy(const XVariant* copy)
 	if (!copy)return NULL;
 	XVariant* var = XVariant_create_null();
 	if (var && copy)
-		XVariant_copy_base(var, copy);
+		XCopy(var, copy);
 	return var;
 }
 
@@ -71,7 +71,7 @@ XVariant* XVariant_create_move(XVariant* move)
 {
 	XVariant* var = XVariant_create_null();
 	if (var && move)
-		XVariant_move_base(var, move);
+		XMove(var, move);
 	return var;
 }
 
@@ -449,7 +449,7 @@ void XVariant_setValue(XVariant* var,const XVariant* newVar)
 {
 	/*if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
 		return;*/
-	return XVariant_copy_base(var, newVar);
+	return XCopy(var, newVar);
 		//setValue(var,NULL,);
 }
 

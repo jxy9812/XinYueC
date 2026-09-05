@@ -548,7 +548,7 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
                 XRingChunk_capacity_base(*srcChunkPtr));
             if (newChunk)
             {
-                XRingChunk_copy_base(newChunk, *srcChunkPtr);
+                XCopy(newChunk, *srcChunkPtr);
                 XVector_push_back_1_base(object->m_chunks, &newChunk);
             }
         }

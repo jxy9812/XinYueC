@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XBsonArray, sizeof(XBsonArray), XBsonArray_copy_base,
-	XBsonArray_move_base, XBsonArray_clear_base, XBsonArray_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XBsonArray, sizeof(XBsonArray), XClass_copy_base,
+	XClass_move_base, XBsonArray_clear_base, XBsonArray_deinit_base,
 	NULL, "XBsonArray");
 
 /* BSON 数组以 XVector 保存值，序列化时键必须为连续十进制索引。 */
@@ -26,7 +26,7 @@ XBsonArray* XBsonArray_create_copy(const XBsonArray* other)
 	if (!other) return NULL;
 	XBsonArray* array = XBsonArray_create();
 	if (!array) return NULL;
-	XBsonArray_copy_base(array, other);
+	XCopy(array, other);
 	return array;
 }
 
@@ -35,7 +35,7 @@ XBsonArray* XBsonArray_create_move(XBsonArray* other)
 	if (!other) return NULL;
 	XBsonArray* array = XBsonArray_create();
 	if (!array) return NULL;
-	XBsonArray_move_base(array, other);
+	XMove(array, other);
 	return array;
 }
 
@@ -216,7 +216,7 @@ XVariant* XBsonArray_toVariant(const XBsonArray* arr)
 		return NULL;
 	}
 	XBsonArray_init((XBsonArray*)var->m_data);
-	XBsonArray_copy_base((XBsonArray*)var->m_data, arr);
+	XCopy((XBsonArray*)var->m_data, arr);
 	return var;
 }
 
@@ -229,7 +229,7 @@ XVariant* XBsonArray_toVariant_move(XBsonArray* arr)
 		return NULL;
 	}
 	XBsonArray_init((XBsonArray*)var->m_data);
-	XBsonArray_move_base((XBsonArray*)var->m_data, arr);
+	XMove((XBsonArray*)var->m_data, arr);
 	return var;
 }
 
@@ -274,13 +274,13 @@ static bool XBsonArray_prepareVariant(XVariant* variant)
 void XBsonArray_setVariant(XVariant* variant, const XBsonArray* array)
 {
 	if (array && XBsonArray_prepareVariant(variant))
-		XBsonArray_copy_base((XBsonArray*)variant->m_data, array);
+		XCopy((XBsonArray*)variant->m_data, array);
 }
 
 void XBsonArray_setVariant_move(XVariant* variant, XBsonArray* array)
 {
 	if (array && XBsonArray_prepareVariant(variant))
-		XBsonArray_move_base((XBsonArray*)variant->m_data, array);
+		XMove((XBsonArray*)variant->m_data, array);
 }
 
 void XBsonArray_setVariant_ref(XVariant* variant, XBsonArray* array)

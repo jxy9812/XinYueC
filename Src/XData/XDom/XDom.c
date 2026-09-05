@@ -961,7 +961,7 @@ XVtable* XDomImplementation_class_init(void)
         if (!other) return NULL; \
         Type* self = Type##_create(); \
         if (!self) return NULL; \
-        Type##_copy_base(self, other); \
+        XCopy(self, other); \
         return self; \
     } \
     Type* Type##_create_move(Type* other) \
@@ -969,7 +969,7 @@ XVtable* XDomImplementation_class_init(void)
         if (!other) return NULL; \
         Type* self = Type##_create(); \
         if (!self) return NULL; \
-        Type##_move_base(self, other); \
+        XMove(self, other); \
         return self; \
     } \
     void Type##_deinit_base(Type* self) \
@@ -979,14 +979,6 @@ XVtable* XDomImplementation_class_init(void)
     void Type##_delete_base(Type* self) \
     { \
         if (self) XClass_delete_base((XClass*)self); \
-    } \
-    void Type##_copy_base(Type* dest, const Type* src) \
-    { \
-        if (dest && src) XClass_copy_base((XClass*)dest, (const XClass*)src); \
-    } \
-    void Type##_move_base(Type* dest, Type* src) \
-    { \
-        if (dest && src) XClass_move_base((XClass*)dest, (XClass*)src); \
     }
 
 XDOM_DEFINE_LIFECYCLE(XDomNode)
@@ -1029,7 +1021,7 @@ XDomImplementation* XDomImplementation_create_copy(const XDomImplementation* oth
     if (!other || XClassIsVtableNull((const XClass*)other)) return NULL;
     XDomImplementation* self = XDomImplementation_create();
     if (!self) return NULL;
-    XDomImplementation_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -1038,7 +1030,7 @@ XDomImplementation* XDomImplementation_create_move(XDomImplementation* other)
     if (!other || XClassIsVtableNull((XClass*)other)) return NULL;
     XDomImplementation* self = XDomImplementation_create();
     if (!self) return NULL;
-    XDomImplementation_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 
@@ -1050,16 +1042,6 @@ void XDomImplementation_deinit_base(XDomImplementation* self)
 void XDomImplementation_delete_base(XDomImplementation* self)
 {
     if (self) XClass_delete_base((XClass*)self);
-}
-
-void XDomImplementation_copy_base(XDomImplementation* dest, const XDomImplementation* src)
-{
-    if (dest && src) XClass_copy_base((XClass*)dest, (const XClass*)src);
-}
-
-void XDomImplementation_move_base(XDomImplementation* dest, XDomImplementation* src)
-{
-    if (dest && src) XClass_move_base((XClass*)dest, (XClass*)src);
 }
 
 /* QDomDocument 默认构造后是 null；首次工厂调用或 setContent 时再分配实现。 */
@@ -1085,7 +1067,7 @@ XDomDocument* XDomDocument_create_copy(const XDomDocument* other)
     if (!other || XClassIsVtableNull((const XClass*)other)) return NULL;
     XDomDocument* self = XDomDocument_create();
     if (!self) return NULL;
-    XDomDocument_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -1094,7 +1076,7 @@ XDomDocument* XDomDocument_create_move(XDomDocument* other)
     if (!other || XClassIsVtableNull((XClass*)other)) return NULL;
     XDomDocument* self = XDomDocument_create();
     if (!self) return NULL;
-    XDomDocument_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 
@@ -1106,16 +1088,6 @@ void XDomDocument_deinit_base(XDomDocument* self)
 void XDomDocument_delete_base(XDomDocument* self)
 {
     if (self) XClass_delete_base((XClass*)self);
-}
-
-void XDomDocument_copy_base(XDomDocument* dest, const XDomDocument* src)
-{
-    if (dest && src) XClass_copy_base((XClass*)dest, (const XClass*)src);
-}
-
-void XDomDocument_move_base(XDomDocument* dest, XDomDocument* src)
-{
-    if (dest && src) XClass_move_base((XClass*)dest, (XClass*)src);
 }
 
 static void xxml_dom_assign_new_handle(XDomNodePrivate** target,

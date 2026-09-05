@@ -135,21 +135,7 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity);
 * @brief 通用容器操作接口（拷贝、移动、销毁等）
 */
 
-/**
-* @brief 拷贝栈（从源栈拷贝到目标栈）
-* @param this_stackOne 目标栈指针
-* @param this_stackTwo 源栈指针
-* @note 宏定义，深拷贝所有元素
-*/
-#define XStack_copy_base         XStackBase_copy_base
 
-/**
-* @brief 移动容器资源（复用XVector的移动逻辑）
-* @param this_stackOne 目标栈指针
-* @param this_stackTwo 源栈指针
-* @note 宏定义，转移资源所有权，避免深拷贝
-*/
-#define XStack_move_base         XStackBase_move_base
 
 /**
 * @brief 销毁栈（释放内部资源，保留实例本身）

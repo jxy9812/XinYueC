@@ -1547,13 +1547,13 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #else
     self->m_palette = other->m_palette;
 #endif
-    XFont_copy_base(&self->m_font, &other->m_font);
-    XIcon_copy_base(&self->m_icon, &other->m_icon);
+    XCopy(&self->m_font, &other->m_font);
+    XCopy(&self->m_icon, &other->m_icon);
 #if XCURSOR_ON
     if (other->m_cursor) {
         self->m_cursor = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (self->m_cursor)
-            XCursor_copy_base(self->m_cursor, other->m_cursor);
+            XCopy(self->m_cursor, other->m_cursor);
     }
 #endif /* XCURSOR_ON */
     XRegion_copy(&other->m_dirty, &self->m_dirty);
@@ -1611,8 +1611,8 @@ static void VXWidget_move(XWidget* self, XWidget* other)
         other->m_accessible = NULL;
     }
 #endif
-    XIcon_move_base(&self->m_icon, &other->m_icon);
-    XFont_move_base(&self->m_font, &other->m_font);
+    XMove(&self->m_icon, &other->m_icon);
+    XMove(&self->m_font, &other->m_font);
 #if XLAYOUT_ON
     /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。 */
     self->m_layout = other->m_layout;
@@ -3806,7 +3806,7 @@ XCursor XWidget_cursor(const XWidget* self)
     XCursor out;
     XCursor_init(&out); /* 默认 ArrowCursor；与 Qt 未设置时语义一致。 */
     if (self && self->m_cursor)
-        XCursor_copy_base(&out, self->m_cursor);
+        XCopy(&out, self->m_cursor);
     return out;
 #else
     XCursor out;
@@ -3825,7 +3825,7 @@ void XWidget_setCursor(XWidget* self, const XCursor* cursor)
         self->m_cursor = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (!self->m_cursor) return;
     }
-    XCursor_copy_base(self->m_cursor, cursor);
+    XCopy(self->m_cursor, cursor);
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, true);
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (top && top->m_windowHandle)
@@ -3991,7 +3991,7 @@ XFont XWidget_font(const XWidget* self)
     XFont_init(&out);
     if (!self)
         return out;
-    XFont_copy_base(&out, &self->m_font);
+    XCopy(&out, &self->m_font);
     return out;
 }
 
@@ -4000,8 +4000,8 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     XFont temp;
     if (!self || !font) return;
     XFont_init(&temp);
-    XFont_copy_base(&temp, font);
-    XFont_move_base(&self->m_font, &temp);
+    XCopy(&temp, font);
+    XMove(&self->m_font, &temp);
     XWidget_updateGeometry(self);
     XWidget_update(self);
 }

@@ -121,7 +121,7 @@ XSqlRecord* XSqlRecord_create_copy(const XSqlRecord* other)
 {
     if (!other) return NULL;
     XSqlRecord* result = XSqlRecord_create();
-    if (result) XSqlRecord_copy_base(result, other);
+    if (result) XCopy(result, other);
     return result;
 }
 
@@ -129,7 +129,7 @@ XSqlRecord* XSqlRecord_create_move(XSqlRecord* other)
 {
     if (!other) return NULL;
     XSqlRecord* result = XSqlRecord_create();
-    if (result) XSqlRecord_move_base(result, other);
+    if (result) XMove(result, other);
     return result;
 }
 
@@ -138,8 +138,8 @@ void XSqlRecord_swap(XSqlRecord* left, XSqlRecord* right)
     if (!left || !right || left == right) return;
     XSqlRecord* temp = XSqlRecord_create_move(left);
     if (!temp) return;
-    XSqlRecord_move_base(left, right);
-    XSqlRecord_move_base(right, temp);
+    XMove(left, right);
+    XMove(right, temp);
     XSqlRecord_delete_base(temp);
 }
 

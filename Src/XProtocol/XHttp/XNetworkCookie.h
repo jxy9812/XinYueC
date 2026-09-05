@@ -99,8 +99,6 @@ void XNetworkCookie_init(XNetworkCookie* self);
 /** @brief Cookie 生命周期与值语义入口。 */
 #define XNetworkCookie_deinit_base XClass_deinit_base
 #define XNetworkCookie_delete_base XClass_delete_base
-#define XNetworkCookie_copy_base XClass_copy_base
-#define XNetworkCookie_move_base XClass_move_base
 
 /**
  * - @brief 设置 Cookie 名称。

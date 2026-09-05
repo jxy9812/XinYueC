@@ -2297,7 +2297,7 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
         XImage_deinit_base(&temp);
         return false; /* 不支持的组件数量 */
     }
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     if (ctx->densityUnit == 1) {
         /* 2.54 cm/in = 127/50 cm/in，按 Qt 的正数截断语义计算。 */
         XImage_setDotsPerMeterX(out, (ctx->densityX * 5000) / 127);

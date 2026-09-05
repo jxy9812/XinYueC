@@ -610,7 +610,7 @@ void XCoreApplication_setLibraryPaths(const XStringList* paths)
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
     if (!app->m_paths) app->m_paths = XStringList_create();
-    XString_copy_base(app->m_paths, paths);
+    XCopy(app->m_paths, paths);
 }
 
 const XStringList* XCoreApplication_libraryPaths(void)

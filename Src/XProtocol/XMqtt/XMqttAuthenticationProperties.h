@@ -142,8 +142,6 @@ XMqttUserProperties* XMqttAuthenticationProperties_userProperties(const XMqttAut
  */
 void XMqttAuthenticationProperties_setUserProperties(XMqttAuthenticationProperties* prop, const XMqttUserProperties* user);
 
-#define XMqttAuthenticationProperties_copy_base   XClass_copy_base
-#define XMqttAuthenticationProperties_move_base   XClass_move_base
 #define XMqttAuthenticationProperties_deinit_base XClass_deinit_base
 #define XMqttAuthenticationProperties_delete_base XClass_delete_base
 

@@ -271,9 +271,9 @@ static void VXSqlResult_copy(XSqlResult* dest, const XSqlResult* src)
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlResult_init(dest, src->m_driver);
     dest->m_driver = src->m_driver;
-    XSqlError_copy_base(&dest->m_lastError, &src->m_lastError);
-    XSqlRecord_copy_base(&dest->m_record, &src->m_record);
-    XVariant_copy_base(&dest->m_lastInsertId, &src->m_lastInsertId);
+    XCopy(&dest->m_lastError, &src->m_lastError);
+    XCopy(&dest->m_record, &src->m_record);
+    XCopy(&dest->m_lastInsertId, &src->m_lastInsertId);
     xsql_result_assign_string(&dest->m_lastQuery, src->m_lastQuery);
     xsql_result_assign_string(&dest->m_executedQuery, src->m_executedQuery);
     xsql_result_clear_bindings(dest);
@@ -400,7 +400,7 @@ static void VXSqlResult_bindValueName(XSqlResult* result, const XString* name, c
 }
 static void VXSqlResult_setAt(XSqlResult* result, int at) { if (result) result->m_at = at; }
 static void VXSqlResult_setActive(XSqlResult* result, bool active) { if (result) { if (active) xsql_result_assign_string(&result->m_executedQuery, result->m_lastQuery); result->m_active = active; } }
-static void VXSqlResult_setLastError(XSqlResult* result, const XSqlError* error) { if (result && error) XSqlError_copy_base(&result->m_lastError, error); }
+static void VXSqlResult_setLastError(XSqlResult* result, const XSqlError* error) { if (result && error) XCopy(&result->m_lastError, error); }
 static void VXSqlResult_setQuery(XSqlResult* result, const XString* query) { if (result) xsql_result_assign_string(&result->m_lastQuery, query); }
 static void VXSqlResult_setSelect(XSqlResult* result, bool select) { if (result) result->m_select = select; }
 static void VXSqlResult_setForwardOnly(XSqlResult* result, bool forwardOnly) { if (result) result->m_forwardOnly = forwardOnly; }
@@ -438,9 +438,9 @@ static void VXSqlResult_move(XSqlResult* dest, XSqlResult* src)
     if (XClassIsVtableNull(dest)) XSqlResult_init(dest, src->m_driver);
     XSqlResult_clear(dest);
     dest->m_driver = src->m_driver;
-    XSqlError_move_base(&dest->m_lastError, &src->m_lastError);
-    XSqlRecord_move_base(&dest->m_record, &src->m_record);
-    XVariant_move_base(&dest->m_lastInsertId, &src->m_lastInsertId);
+    XMove(&dest->m_lastError, &src->m_lastError);
+    XMove(&dest->m_record, &src->m_record);
+    XMove(&dest->m_lastInsertId, &src->m_lastInsertId);
     dest->m_lastQuery = src->m_lastQuery;
     dest->m_executedQuery = src->m_executedQuery;
     dest->m_boundValues = src->m_boundValues;

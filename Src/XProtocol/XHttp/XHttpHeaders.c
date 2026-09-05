@@ -285,7 +285,7 @@ XHttpHeaders* XHttpHeaders_create_copy(const XHttpHeaders* other)
     XHttpHeaders* self = XHttpHeaders_create();
     if (!self)
         return NULL;
-    XClass_copy_base((XClass*)self, (const XClass*)other);
+    XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -296,7 +296,7 @@ XHttpHeaders* XHttpHeaders_create_move(XHttpHeaders* other)
     XHttpHeaders* self = XHttpHeaders_create();
     if (!self)
         return NULL;
-    XClass_move_base((XClass*)self, (XClass*)other);
+    XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

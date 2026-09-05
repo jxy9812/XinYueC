@@ -187,7 +187,7 @@ XHostAddress* XHostAddress_create_ex(XMemoryType memory) {
 
 XHostAddress* XHostAddress_create_copy(const XHostAddress* other) {
     XHostAddress* addr = XHostAddress_create();
-    if (addr && other) XClass_copy_base(addr, other);
+    if (addr && other) XCopy(addr, other);
     return addr;
 }
 
@@ -441,7 +441,7 @@ bool XHostAddress_parseSubnet(const char* subnetStr, XHostAddress* host, int* pr
 
     if (!tmp || XHostAddress_isNull(tmp)) { XHostAddress_delete_base(tmp); return false; }
 
-    XClass_move_base(host, tmp);
+    XMove(host, tmp);
     XHostAddress_delete_base(tmp);
     *prefixLen = prefix;
     return true;

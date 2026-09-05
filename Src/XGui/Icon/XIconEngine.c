@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconEngine.c
  * @brief      XIconEngine 图标引擎抽象类实现。
  ******************************************************************************/
@@ -54,7 +54,7 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
         /* pixmap_base() 已经清空调用方输出；先在临时像素图中接管图像，
            再移动到输出，避免 XPixmap_init_image() 对输出进行第二次 reset。 */
         XPixmap_init_image(&generated, &image, 0);
-        XPixmap_move_base(out, &generated);
+        XMove(out, &generated);
         XPixmap_deinit_base(&generated);
     }
     XPainter_deinit(&painter);

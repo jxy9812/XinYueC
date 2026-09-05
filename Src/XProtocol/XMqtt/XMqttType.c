@@ -136,8 +136,8 @@ XMqttUserProperties* XMqttUserProperties_create(void)
     XMqttUserProperties* props = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttStringPair), true);
     if (props) {
         /* 直接用 XMqttStringPair 的虚函数 copy/move/deinit 作为容器元素回调 */
-        XContainerSetDataCopyMethod(props, (XCDataCopyMethod)XMqttStringPair_copy_base);
-        XContainerSetDataMoveMethod(props, (XCDataMoveMethod)XMqttStringPair_move_base);
+        XContainerSetDataCopyMethod(props, (XCDataCopyMethod)XClass_copy_base);
+        XContainerSetDataMoveMethod(props, (XCDataMoveMethod)XClass_move_base);
         XContainerSetDataDeinitMethod(props, (XCDataDeinitMethod)XMqttStringPair_deinit_base);
     }
     return props;

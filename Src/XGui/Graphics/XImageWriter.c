@@ -468,7 +468,7 @@ static bool XImageWriter_applyTransformation(const XImage* image,
        output operation. */
     XImage_init(out);
     if (transformation == XImageIOHandlerTransformation_None) {
-        XImage_copy_base(out, image);
+        XCopy(out, image);
         return !XImage_isNull(out);
     }
     sourceWidth = XImage_width(image);

@@ -193,6 +193,14 @@ void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
 
+/** @brief 调用对象的多态拷贝操作，并统一转换为 XClass 句柄。 */
+#define XCopy(Object, Source) \
+	XClass_copy_base((XClass*)(Object), (const XClass*)(Source))
+/** @brief 调用对象的多态移动操作，并统一转换为 XClass 句柄。 */
+#define XMove(Object, Source) \
+	XClass_move_base((XClass*)(Object), (XClass*)(Source))
+/* 回调槽位需要函数指针时，直接使用 XClass_copy_base/XClass_move_base。 */
+
 /** @brief 兼容 C++ 风格的保护区标记；C 语言中不产生任何代码。 */
 #define Protected 
 

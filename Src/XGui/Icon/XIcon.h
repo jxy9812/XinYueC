@@ -310,20 +310,6 @@ void XIcon_init_engine(XIcon* self, XIconEngine* engine);
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-/**
- * @brief 通过 XClass 虚表复制图标。
- * @param self 目标图标对象指针。
- * @param other 源图标对象指针。
- */
-#define XIcon_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动图标。
- * @param self 目标图标对象指针。
- * @param other 源图标对象指针；移动后源对象为空。
- */
-#define XIcon_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放

@@ -1424,7 +1424,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
         XFree_System(iccProfile);
         iccProfile = NULL;
     }
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     ok = true;
 
 fail:
@@ -1557,7 +1557,7 @@ bool XImageCodecInternal_encodePngOptions(const XImage* image,
     if (description &&
         !XString_isEmpty_base((const XContainer*)description)) {
         XImage_init(&decorated);
-        XImage_copy_base(&decorated, image);
+        XCopy(&decorated, image);
         if (!decorated.m_data ||
             !XImage_applyTextDescription(&decorated, description)) {
             XImage_deinit_base(&decorated);

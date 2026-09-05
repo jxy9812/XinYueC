@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPerformanceOverlay.h
  * @brief      XGui 性能悬浮层控件。
  * @details    XPerformanceOverlay 继承 XLabel，提供可裁剪的 FPS、帧耗时和
@@ -87,10 +87,6 @@ XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
     XClass_deinit_base((XClass*)(self))
 #define XPerformanceOverlay_delete_base(self) \
     XClass_delete_base((XClass*)(self))
-#define XPerformanceOverlay_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-#define XPerformanceOverlay_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* 几何 API 属于 XWidget，悬浮层只提供类型安全的继承宏，不重复声明函数。 */
 #define XPerformanceOverlay_geometry(self) \

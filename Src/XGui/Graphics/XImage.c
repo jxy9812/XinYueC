@@ -668,7 +668,7 @@ bool XImage_reinit_ex(XImage* self, int width, int height, XImageFormat format)
         XImage_deinit_base(&replacement);
         return false;
     }
-    XImage_move_base(self, &replacement);
+    XMove(self, &replacement);
     XImage_deinit_base(&replacement);
     return true;
 }
@@ -1829,7 +1829,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
         XImage_convertToColorSpace(out, colorSpace, flags);
         return;
     }
-    XImage_copy_base(out, self);
+    XCopy(out, self);
     /* Qt changes to a color-capable format when the source model cannot
      * represent the target color space (for example CMYK -> RGB).  The
      * current XColorSpace value type describes RGB spaces only, so ARGB32 is
@@ -1845,7 +1845,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
             XImage_deinit_base(&converted);
             return;
         }
-        XImage_move_base(out, &converted);
+        XMove(out, &converted);
     }
     XImage_convertColorSpacePixels(self, out, self->m_data->m_colorSpace, colorSpace);
     XImage_setColorSpace(out, colorSpace);
@@ -1915,7 +1915,7 @@ bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
         XImage_deinit_base(&converted);
         return false;
     }
-    XImage_move_base(self, &converted);
+    XMove(self, &converted);
     return true;
 }
 
@@ -1950,7 +1950,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         if (format == XImageFormat_Invalid || format == XImage_format(self))
         {
             if (out != self)
-                XImage_copy_base(out, self);
+                XCopy(out, self);
             return;
         }
         if (out == self)
@@ -2015,16 +2015,16 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         transformFormat = XImage_isIndexedColorFormat(XImage_format(self))
             ? XImage_format(self) : XImageFormat_ARGB32;
     }
-    XImage_copy_base(out, self);
+    XCopy(out, self);
     if (transformFormat != XImageFormat_Invalid &&
         transformFormat != XImage_format(out))
     {
         XImage converted;
         XImage_init(&converted);
         XImage_convertToFormat(out, transformFormat, flags, &converted);
-        XImage_move_base(out, &converted);
+        XMove(out, &converted);
     }
-    /* XImage_copy_base() above intentionally shares the source data.  A
+    /* XCopy() above intentionally shares the source data.  A
        color transform writes every destination pixel, so detach the output
        first whenever it is a distinct image; otherwise converting a copied
        RGBA32FPx4 image would mutate the caller's source in place. */
@@ -2038,7 +2038,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         XImage converted;
         XImage_init(&converted);
         XImage_convertToFormat(out, outputFormat, flags, &converted);
-        XImage_move_base(out, &converted);
+        XMove(out, &converted);
     }
     XImage_setColorSpace(out, transform->m_target);
 }
@@ -2584,7 +2584,7 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     XImage_init(&sourceCopy);
     if ((const XImage*)self == alphaChannel)
     {
-        XImage_copy_base(&sourceCopy, alphaChannel);
+        XCopy(&sourceCopy, alphaChannel);
         if (!sourceCopy.m_data)
             return false;
         source = &sourceCopy;
@@ -2605,7 +2605,7 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
             XImage_deinit_base(&sourceCopy);
             return false;
         }
-        XImage_move_base(self, &converted);
+        XMove(self, &converted);
     }
     XImage_detach(self);
     if (!XImage_isDetached(self))
@@ -2620,12 +2620,12 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     XImage_init(&sourceImage);
     if (XImage_format(source) == XImageFormat_Alpha8)
     {
-        XImage_copy_base(&sourceImage, source);
+        XCopy(&sourceImage, source);
         sourceImageInitialized = sourceImage.m_data != NULL;
     }
     else if (XImage_depth(source) == 8 && XImage_isGrayscale(source))
     {
-        XImage_copy_base(&sourceImage, source);
+        XCopy(&sourceImage, source);
         sourceImageInitialized = sourceImage.m_data != NULL &&
                                  XImage_reinterpretAsFormat(&sourceImage,
                                                             XImageFormat_Alpha8);
@@ -3904,7 +3904,7 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
         XImage temp;
         XImage_init(&temp);
         XImage_copyRect(self, rect, &temp);
-        XImage_move_base(out, &temp);
+        XMove(out, &temp);
         return;
     }
     int w = self->m_data->m_width, h = self->m_data->m_height;
@@ -3959,7 +3959,7 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
         XImage temp;
         XImage_init(&temp);
         XImage_convertToFormat(self, format, flags, &temp);
-        XImage_move_base(out, &temp);
+        XMove(out, &temp);
         return;
     }
     XImage_deinit_base(out);
@@ -4074,7 +4074,7 @@ bool XImage_convertToFormatInPlace(XImage* self, XImageFormat format, uint32_t f
         XImage_deinit_base(&temp);
         return false;
     }
-    XImage_move_base(self, &temp);
+    XMove(self, &temp);
     return true;
 }
 
@@ -4102,7 +4102,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
     if (self && out && (!horizontal && !vertical ||
                         (self->m_data && self->m_data->m_width <= 1 && self->m_data->m_height <= 1)))
     {
-        if ((const XImage*)out != self) XImage_copy_base(out, self);
+        if ((const XImage*)out != self) XCopy(out, self);
         return;
     }
     if (self && (const XImage*)out == self)
@@ -4111,7 +4111,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
         XImage_init(&temp);
         XImage_mirrored(self, horizontal, vertical, &temp);
         if (temp.m_data)
-            XImage_move_base(out, &temp);
+            XMove(out, &temp);
         return;
     }
     if (!out) return;
@@ -4167,7 +4167,7 @@ void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
     XImage_init(&temp);
     XImage_mirrored(self, horizontal, vertical, &temp);
     if (temp.m_data)
-        XImage_move_base(self, &temp);
+        XMove(self, &temp);
 }
 
 void XImage_mirror(XImage* self, bool horizontal, bool vertical)
@@ -4183,7 +4183,7 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
         XImage_init(&temp);
         XImage_rgbSwapped(self, &temp);
         if (temp.m_data)
-            XImage_move_base(out, &temp);
+            XMove(out, &temp);
         return;
     }
     if (!out) return;
@@ -4194,7 +4194,7 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
     {
         /* Qt qimage.cpp:3584-3588 返回 *this；这些格式没有可交换的
          * 红蓝通道，必须共享原数据而不是制造新的 cacheKey。 */
-        XImage_copy_base(out, self);
+        XCopy(out, self);
         return;
     }
     XImage_deinit_base(out);
@@ -4261,7 +4261,7 @@ void XImage_rgbSwappedInPlace(XImage* self)
         XImage_deinit_base(&temp);
         return;
     }
-    XImage_move_base(self, &temp);
+    XMove(self, &temp);
 }
 
 void XImage_rgbSwap(XImage* self)
@@ -4277,7 +4277,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
         XImage temp;
         XImage_init(&temp);
         XImage_scaled(self, width, height, aspectMode, mode, &temp);
-        XImage_move_base(out, &temp);
+        XMove(out, &temp);
         return;
     }
     XImage_deinit_base(out);
@@ -4303,7 +4303,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
      * cacheKey in that case instead of allocating an identical pixel buffer. */
     if (targetWidth == sw && targetHeight == sh)
     {
-        XImage_copy_base(out, self);
+        XCopy(out, self);
         return;
     }
     out->m_data = XImageData_create(targetWidth, targetHeight, self->m_data->m_format,
@@ -4508,7 +4508,7 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
     {
         XImage sourceCopy;
         XImage_init(&sourceCopy);
-        XImage_copy_base(&sourceCopy, self);
+        XCopy(&sourceCopy, self);
         XImage_transformed(&sourceCopy, matrix, mode, out);
         XImage_deinit_base(&sourceCopy);
         return;
@@ -4617,7 +4617,7 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
         }
     }
     if (result) {
-        XImage_move_base(self, &decoded);
+        XMove(self, &decoded);
     } else {
         /* 与 QImage::load() 一致，失败结果替换为 null 图像。 */
         XImage_deinit_base(self);
@@ -4657,7 +4657,7 @@ bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const cha
     }
 #endif
     if (!result) goto failed;
-    XImage_move_base(self, &decoded);
+    XMove(self, &decoded);
     return true;
 
 failed:
@@ -4911,7 +4911,7 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
         {
             XString* target = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textValues, i);
             if (!target) return;
-            XString_copy_base((XClass*)target, (const XClass*)value);
+            XCopy((XClass*)target, (const XClass*)value);
             XImageData_clearTextAll(self->m_data);
             return;
         }

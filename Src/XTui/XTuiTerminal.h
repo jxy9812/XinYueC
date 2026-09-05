@@ -57,9 +57,6 @@ void XTuiTerminal_init(XTuiTerminal* terminal);
 XTuiTerminal* XTuiTerminal_create_ex(XMemoryType memory);
 
 #define XTuiTerminal_delete_base XClass_delete_base /**< 释放堆对象。 */
-#define XTuiTerminal_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
-#define XTuiTerminal_copy_base   XClass_copy_base   /**< 拷贝。 */
-#define XTuiTerminal_move_base   XClass_move_base   /**< 移动。 */
 
 /**
  * @brief 注册输出回调。

@@ -127,7 +127,7 @@ void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_Conn
 
     //移动
     if (dev->m_params[parameter]) {
-        XVariant_copy_base(dev->m_params[parameter], value);
+        XCopy(dev->m_params[parameter], value);
     }
     else
     {
@@ -144,7 +144,7 @@ void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice
 
     //移动
     if (dev->m_params[parameter]) {
-        XVariant_move_base(dev->m_params[parameter], value);
+        XMove(dev->m_params[parameter], value);
     }
     else
     {

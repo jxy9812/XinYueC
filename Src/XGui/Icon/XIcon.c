@@ -49,7 +49,7 @@ static void XIconEntry_copy(void* destination, const void* source)
     const XIconEntry* src = (const XIconEntry*)source;
     XIconEntry* dest = (XIconEntry*)destination;
     if (!dest || !src) return;
-    XPixmap_copy_base(&dest->m_pixmap, &src->m_pixmap);
+    XCopy(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName
         ? XString_create_copy(src->m_fileName) : NULL;
     dest->m_requestedSize = src->m_requestedSize;
@@ -63,7 +63,7 @@ static void XIconEntry_move(void* destination, const void* source)
     XIconEntry* dest = (XIconEntry*)destination;
     XIconEntry* src = (XIconEntry*)source;
     if (!dest || !src) return;
-    XPixmap_move_base(&dest->m_pixmap, &src->m_pixmap);
+    XMove(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName;
     src->m_fileName = NULL;
     dest->m_requestedSize = src->m_requestedSize;
@@ -323,7 +323,7 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
             XString_delete_base((XClass*)existing->m_fileName);
             existing->m_fileName = NULL;
         }
-        XPixmap_copy_base(&existing->m_pixmap, pixmap);
+        XCopy(&existing->m_pixmap, pixmap);
         existing->m_requestedSize.width = 0;
         existing->m_requestedSize.height = 0;
         existing->m_loaded = true;
@@ -332,7 +332,7 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
     }
     memset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
-    XPixmap_copy_base(&entry.m_pixmap, pixmap);
+    XCopy(&entry.m_pixmap, pixmap);
     entry.m_mode = mode;
     entry.m_state = state;
     entry.m_loaded = true;
@@ -742,11 +742,11 @@ static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry,
                 exact = true;
                 break;
             }
-            XImage_copy_base(&previous, &image);
+            XCopy(&previous, &image);
             XImage_deinit_base(&image);
         }
         if (!exact && XImage_isNull(&image) && !XImage_isNull(&previous)) {
-            XImage_move_base(&image, &previous);
+            XMove(&image, &previous);
         }
         ok = readAny || !XImage_isNull(&image);
     }
@@ -1038,7 +1038,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
             "qt_icon_scale/", sourceKey, paletteKey, mode,
             actual.width, actual.height, dprThousand, out))
         return;
-    XPixmap_copy_base(out, &best->m_pixmap);
+    XCopy(out, &best->m_pixmap);
     if (actual.width != XPixmap_width(&best->m_pixmap) ||
         actual.height != XPixmap_height(&best->m_pixmap))
     {
@@ -1048,7 +1048,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
                        &scaled);
         if (!XPixmap_isNull(&scaled))
         {
-            XPixmap_move_base(out, &scaled);
+            XMove(out, &scaled);
         }
         else
             XPixmap_deinit_base(&scaled);
@@ -1060,7 +1060,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_move_base(out, &styled);
+            XMove(out, &styled);
         }
         else
             XPixmap_deinit_base(&styled);
@@ -1500,7 +1500,7 @@ fromTheme_done:
             XVector_deinit_base((XClass*)&available);
         }
         if (useFallback)
-            XIcon_copy_base(out, fallback);
+            XCopy(out, fallback);
     }
 }
 
@@ -1650,7 +1650,7 @@ XStringList* XIcon_themeSearchPaths()
         XStringList_push_back_utf8(paths, ":/icons");
     }
     if (paths)
-        XStringList_copy_base((XClass*)copy, (const XClass*)paths);
+        XCopy((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1664,7 +1664,7 @@ void XIcon_setThemeSearchPaths(const XStringList* source)
     XStringList* destination = XIcon_paths(false);
     if (destination == source) return;
     XStringList_clear_base((XContainer*)destination);
-    if (source) XStringList_copy_base((XClass*)destination, (const XClass*)source);
+    if (source) XCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
 }
 
@@ -1681,7 +1681,7 @@ XStringList* XIcon_fallbackSearchPaths()
     if (paths && XStringList_size_base((const XContainer*)paths) == 0)
         (void)XIcon_platformIconSearchPaths(true, paths);
     if (paths)
-        XStringList_copy_base((XClass*)copy, (const XClass*)paths);
+        XCopy((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1695,7 +1695,7 @@ void XIcon_setFallbackSearchPaths(const XStringList* source)
     XStringList* destination = XIcon_paths(true);
     if (destination == source) return;
     XStringList_clear_base((XContainer*)destination);
-    if (source) XStringList_copy_base((XClass*)destination, (const XClass*)source);
+    if (source) XCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
 }
 

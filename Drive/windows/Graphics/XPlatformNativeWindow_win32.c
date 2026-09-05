@@ -1156,7 +1156,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
         XImage_deinit_base(&image);
         return NULL;
     }
-    XPixmap_move_base(result, &captured);
+    XMove(result, &captured);
     XPixmap_deinit_base(&captured);
     XImage_deinit_base(&image);
     return result;

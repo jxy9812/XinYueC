@@ -1923,7 +1923,7 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
     if (other->m_picture)
         self->m_picture = XPicture_create_copy(other->m_picture,
                                                XCLASS_DEFAULT_MEMORY_TYPE);
-    XPixmap_copy_base(&self->m_pixmap, &other->m_pixmap);
+    XCopy(&self->m_pixmap, &other->m_pixmap);
     self->m_movie = other->m_movie;
     self->m_buddy = other->m_buddy;
     if (other->m_linkCount > 0) {
@@ -1980,7 +1980,7 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     self->m_resourceProvider = other->m_resourceProvider;
     self->m_resourceProviderUserData = other->m_resourceProviderUserData;
     self->m_picture = other->m_picture; other->m_picture = NULL;
-    XPixmap_move_base(&self->m_pixmap, &other->m_pixmap);
+    XMove(&self->m_pixmap, &other->m_pixmap);
     XPixmap_init(&other->m_pixmap); /* 源像素图保留有效 vtable，可安全析构 */
     self->m_movie = other->m_movie; other->m_movie = NULL;
     self->m_buddy = other->m_buddy; other->m_buddy = NULL;
@@ -2211,7 +2211,7 @@ XPixmap XLabel_pixmap(const XLabel* self)
     XPixmap out;
     XPixmap_init(&out);
     if (self)
-        XPixmap_copy_base(&out, &self->m_pixmap);
+        XCopy(&out, &self->m_pixmap);
     return out;
 }
 
@@ -2222,7 +2222,7 @@ void XLabel_setPixmap(XLabel* self, const XPixmap* pixmap)
         return; /* 同一共享数据：无操作 */
     label_clearContents(self);
     if (pixmap && !XPixmap_isNull(pixmap))
-        XPixmap_copy_base(&self->m_pixmap, pixmap);
+        XCopy(&self->m_pixmap, pixmap);
     label_updateLabel(self);
 }
 
@@ -2350,7 +2350,7 @@ void XLabel_setTextPixelSize(XLabel* self, int pixelHeight)
     if (pixelHeight <= 0) pixelHeight = label_bitmapInfo(self).m_height;
     /* 写入基类 XFont.pixelSize，再经 XWidget_setFont 统一刷新 */
     XFont_init(&font);
-    XFont_copy_base(&font, &source);
+    XCopy(&font, &source);
     XFont_deinit_base(&source);
     XFont_setPixelSize(&font, pixelHeight);
     XWidget_setFont((XWidget*)self, &font);

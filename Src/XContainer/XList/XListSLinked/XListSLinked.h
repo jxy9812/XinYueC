@@ -298,20 +298,6 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
 */
 #define XListSLinked_sort_base						XListBase_sort_base
 /**
-* @brief 拷贝链表（深拷贝）
-* @param this_list 目标链表指针
-* @param src 源链表指针
-* @note 拷贝源链表所有元素到目标链表，内部调用XListBase实现
-*/
-#define XListSLinked_copy_base				        XListBase_copy_base	
-/**
-* @brief 移动链表（所有权转移）
-* @param this_list 目标链表指针
-* @param src 源链表指针
-* @note 将源链表的元素和状态转移到目标链表，源链表清空，内部调用XListBase实现
-*/
-#define XListSLinked_move_base				        XListBase_move_base	
-/**
 * @brief 反初始化链表
 * @param this_list 链表实例指针
 * @note 释放链表内部资源（节点和数据），保留链表实例本身内存，内部调用XListBase实现

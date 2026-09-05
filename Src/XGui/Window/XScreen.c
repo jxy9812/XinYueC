@@ -298,7 +298,7 @@ XScreen* XScreen_create_copy(const XScreen* other)
     if (!other) return NULL;
     self = XScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XScreen_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -308,7 +308,7 @@ XScreen* XScreen_create_move(XScreen* other)
     if (!other) return NULL;
     self = XScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XScreen_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 

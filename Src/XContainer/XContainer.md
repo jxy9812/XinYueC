@@ -143,10 +143,10 @@ typedef struct XContainer
 
 以下API适用于所有继承自XContainer的容器。
 
-##### XContainer_copy_base
+##### XCopy
 
 ```c
-void XContainer_copy_base(XContainer* dest, const XContainer* src)
+void XCopy(XContainer* dest, const XContainer* src)
 ```
 
 深拷贝容器内容。
@@ -161,10 +161,10 @@ void XContainer_copy_base(XContainer* dest, const XContainer* src)
 
 ---
 
-##### XContainer_move_base
+##### XMove
 
 ```c
-void XContainer_move_base(XContainer* dest, XContainer* src)
+void XMove(XContainer* dest, XContainer* src)
 ```
 
 移动容器资源(转移所有权)。
@@ -6022,10 +6022,10 @@ void XHashMap_clear_base(XHashMap* map)
 
 ---
 
-##### XHashMap_copy_base
+##### XCopy
 
 ```c
-void XHashMap_copy_base(XHashMap* dest, const XHashMap* src)
+void XCopy(XHashMap* dest, const XHashMap* src)
 ```
 
 拷贝另一个哈希映射的内容。
@@ -6038,10 +6038,10 @@ void XHashMap_copy_base(XHashMap* dest, const XHashMap* src)
 
 ---
 
-##### XHashMap_move_base
+##### XMove
 
 ```c
-void XHashMap_move_base(XHashMap* dest, XHashMap* src)
+void XMove(XHashMap* dest, XHashMap* src)
 ```
 
 移动另一个哈希映射的资源。

@@ -130,10 +130,6 @@ XCursor* XCursor_create_pixmap(const struct XPixmap* pixmap,
 #define XCursor_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XCursor 对象。 */
 #define XCursor_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 深拷贝 XCursor（对标 QCursor 拷贝构造）；未初始化目标自动初始化。 */
-#define XCursor_copy_base(self, other)     XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动 XCursor；移动后源对象为空光标。 */
-#define XCursor_move_base(self, other)     XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      返回光标形状（对标 QCursor::shape）。

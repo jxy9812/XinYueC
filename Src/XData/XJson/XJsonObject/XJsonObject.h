@@ -251,16 +251,6 @@ XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash);
 */
 #define XJsonObject_keys_base					XMap_keys_base
 /**
-* @brief 深拷贝XJsonObject（基础接口）
-* @details 直接调用XMap_copy_base，拷贝整个键值对集合
-*/
-#define XJsonObject_copy_base					XMap_copy_base	
-/**
-* @brief 移动XJsonObject资源（基础接口）
-* @details 直接调用XMap_move_base，转移资源所有权
-*/
-#define XJsonObject_move_base					XMap_move_base	
-/**
 * @brief 反初始化XJsonObject（基础接口，释放内部资源，不释放实例本身）
 * @details 直接调用XMap_deinit_base
 */

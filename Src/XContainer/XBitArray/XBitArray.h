@@ -167,19 +167,7 @@ const char* XBitArray_bits(const XBitArray* array);
  */
 void XBitArray_truncate(XBitArray* array, int64_t pos);
 
-/**
- * @brief 复用XContainer的复制容器内容实现
- * @param dest 目标容器
- * @param src 源容器
- */
-#define XBitArray_copy_base          XContainer_copy_base
 
-/**
- * @brief 复用XContainer的移动容器资源实现
- * @param dest 目标容器
- * @param src 源容器（资源会被转移）
- */
-#define XBitArray_move_base          XContainer_move_base
 
 /**
  * @brief 复用XContainer的反初始化容器实现

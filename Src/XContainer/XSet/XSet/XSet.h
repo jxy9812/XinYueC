@@ -131,16 +131,6 @@ void XSet_init(XSet* this_set, const size_t keyTypeSize, XCompare compare, bool 
 #define XSet_typeSize_base XSetBase_typeSize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 拷贝集合（深拷贝）
-* @note 基于XSetBase的接口，复制源集合的所有元素和状态到当前集合
-*/
-#define XSet_copy_base XSetBase_copy_base
-/**
-* @brief 移动集合资源
-* @note 基于XSetBase的接口，转移源集合的资源所有权到当前集合
-*/
-#define XSet_move_base XSetBase_move_base
-/**
 * @brief 反初始化集合
 * @note 基于XSetBase的接口，释放内部资源但不销毁实例本身
 */

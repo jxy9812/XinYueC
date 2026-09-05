@@ -284,10 +284,6 @@ void XDevice_unref(XDevice* self);
 #define XDevice_deinit_base XClass_deinit_base
 /** @brief 复用 XClass 的 delete 基类虚函数实现。 */
 #define XDevice_delete_base XClass_delete_base
-/** @brief 复用 XClass 的 copy 基类虚函数实现。 */
-#define XDevice_copy_base   XClass_copy_base
-/** @brief 复用 XClass 的 move 基类虚函数实现。 */
-#define XDevice_move_base   XClass_move_base
 
 /* ============================================================================
  * 统一公共门面 API

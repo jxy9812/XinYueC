@@ -6,8 +6,8 @@
 #include <limits.h>
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XBsonDocument, sizeof(XBsonDocument), XBsonDocument_copy_base,
-	XBsonDocument_move_base, XBsonDocument_clear_base, XBsonDocument_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XBsonDocument, sizeof(XBsonDocument), XClass_copy_base,
+	XClass_move_base, XBsonDocument_clear_base, XBsonDocument_deinit_base,
 	NULL, "XBsonDocument");
 
 /* BSON 文档保持元素原始顺序，并允许同名键重复出现。 */
@@ -39,7 +39,7 @@ void XBsonElement_copy(XBsonElement* dest, const XBsonElement* src)
 		XString_init(&dest->m_key);
 	else
 		XString_deinit_base(&dest->m_key);
-	XString_copy_base(&dest->m_key, &src->m_key);
+	XCopy(&dest->m_key, &src->m_key);
 	XBsonValue_copy(&dest->m_value, &src->m_value);
 }
 
@@ -50,7 +50,7 @@ void XBsonElement_move(XBsonElement* dest, XBsonElement* src)
 		XString_init(&dest->m_key);
 	else
 		XString_deinit_base(&dest->m_key);
-	XString_move_base(&dest->m_key, &src->m_key);
+	XMove(&dest->m_key, &src->m_key);
 	XBsonValue_move(&dest->m_value, &src->m_value);
 }
 
@@ -83,7 +83,7 @@ XBsonDocument* XBsonDocument_create_copy(const XBsonDocument* other)
 	if (!other) return NULL;
 	XBsonDocument* doc = XBsonDocument_create();
 	if (!doc) return NULL;
-	XBsonDocument_copy_base(doc, other);
+	XCopy(doc, other);
 	return doc;
 }
 
@@ -92,7 +92,7 @@ XBsonDocument* XBsonDocument_create_move(XBsonDocument* other)
 	if (!other) return NULL;
 	XBsonDocument* doc = XBsonDocument_create();
 	if (!doc) return NULL;
-	XBsonDocument_move_base(doc, other);
+	XMove(doc, other);
 	return doc;
 }
 
@@ -116,7 +116,7 @@ bool XBsonDocument_append(XBsonDocument* doc, const XString* key,
 		return false;
 	XBsonElement element;
 	XBsonElement_init(&element);
-	XString_copy_base(&element.m_key, key);
+	XCopy(&element.m_key, key);
 	XBsonValue_copy(&element.m_value, value);
 	bool result = XVector_push_back_move_1_base((XVector*)doc, &element);
 	XBsonElement_deinit(&element);
@@ -133,7 +133,7 @@ bool XBsonDocument_append_move(XBsonDocument* doc, XString* key,
 		return false;
 	XBsonElement element;
 	XBsonElement_init(&element);
-	XString_move_base(&element.m_key, key);
+	XMove(&element.m_key, key);
 	XBsonValue_move(&element.m_value, value);
 	bool result = XVector_push_back_move_1_base((XVector*)doc, &element);
 	XBsonElement_deinit(&element);
@@ -286,7 +286,7 @@ bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc,
 	if (!doc || !key || !array) return false;
 	XBsonValue* value = XBsonValue_create(XBSON_TYPE_ARRAY);
 	if (!value) return false;
-	XBsonArray_move_base(value->data.arr, array);
+	XMove(value->data.arr, array);
 	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
 	XBsonValue_delete(value);
 	return result;
@@ -310,7 +310,7 @@ bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc,
 	if (!doc || !key || !newDoc) return false;
 	XBsonValue* value = XBsonValue_create(XBSON_TYPE_DOCUMENT);
 	if (!value) return false;
-	XBsonDocument_move_base(value->data.doc, newDoc);
+	XMove(value->data.doc, newDoc);
 	bool result = XBsonDocument_insert_keyUtf8_value_move(doc, key, value);
 	XBsonValue_delete(value);
 	return result;
@@ -422,7 +422,7 @@ static void XBsonDocument_stringCopy(void* dest, const void* src)
 	if (!d || !src) return;
 	if (XClassIsVtableNull(d)) XString_init(d);
 	else XString_deinit_base(d);
-	XString_copy_base(d, (const XString*)src);
+	XCopy(d, (const XString*)src);
 }
 
 static void XBsonDocument_stringMove(void* dest, void* src)
@@ -431,7 +431,7 @@ static void XBsonDocument_stringMove(void* dest, void* src)
 	if (!d || !src) return;
 	if (XClassIsVtableNull(d)) XString_init(d);
 	else XString_deinit_base(d);
-	XString_move_base(d, (XString*)src);
+	XMove(d, (XString*)src);
 }
 
 static void XBsonDocument_stringDeinit(void* data)
@@ -651,7 +651,7 @@ XVariant* XBsonDocument_toVariant(const XBsonDocument* doc)
 		return NULL;
 	}
 	XBsonDocument_init((XBsonDocument*)var->m_data);
-	XBsonDocument_copy_base((XBsonDocument*)var->m_data, doc);
+	XCopy((XBsonDocument*)var->m_data, doc);
 	return var;
 }
 
@@ -665,7 +665,7 @@ XVariant* XBsonDocument_toVariant_move(XBsonDocument* doc)
 		return NULL;
 	}
 	XBsonDocument_init((XBsonDocument*)var->m_data);
-	XBsonDocument_move_base((XBsonDocument*)var->m_data, doc);
+	XMove((XBsonDocument*)var->m_data, doc);
 	return var;
 }
 
@@ -710,13 +710,13 @@ static bool XBsonDocument_prepareVariant(XVariant* variant)
 void XBsonDocument_setVariant(XVariant* variant, const XBsonDocument* doc)
 {
 	if (doc && XBsonDocument_prepareVariant(variant))
-		XBsonDocument_copy_base((XBsonDocument*)variant->m_data, doc);
+		XCopy((XBsonDocument*)variant->m_data, doc);
 }
 
 void XBsonDocument_setVariant_move(XVariant* variant, XBsonDocument* doc)
 {
 	if (doc && XBsonDocument_prepareVariant(variant))
-		XBsonDocument_move_base((XBsonDocument*)variant->m_data, doc);
+		XMove((XBsonDocument*)variant->m_data, doc);
 }
 
 void XBsonDocument_setVariant_ref(XVariant* variant, XBsonDocument* doc)

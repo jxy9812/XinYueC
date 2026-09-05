@@ -18,8 +18,8 @@ void XCanFrameProcessor_ParseResult_init(XCanFrameProcessor_ParseResult* result)
     memset(result, 0, sizeof(XCanFrameProcessor_ParseResult));
     result->m_uniqueId = 0;
     result->m_signalValues = XMap_create(sizeof(XString), sizeof(XVariant), XString_compare);
-    XMapBaseSetKeyCopyMethod(result->m_signalValues, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(result->m_signalValues, XString_move_base);
+    XMapBaseSetKeyCopyMethod(result->m_signalValues, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(result->m_signalValues, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(result->m_signalValues, XString_deinit_base);
 }
 

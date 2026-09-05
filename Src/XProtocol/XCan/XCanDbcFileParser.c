@@ -728,8 +728,8 @@ static bool parseSignal(XCanDbcFileParser* parser, const char* data)
         }
 
         XMap* muxSignals = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
-        XMapBaseSetKeyCopyMethod(muxSignals, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(muxSignals, XString_move_base);
+        XMapBaseSetKeyCopyMethod(muxSignals, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(muxSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(muxSignals, XString_deinit_base);
         XMapBase_insert_base((XMapBase*)muxSignals, &dummyKey, &muxRange);
 
@@ -1014,8 +1014,8 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
         memset(&newSigDesc, 0, sizeof(newSigDesc));
         /* 使用 XMap_init 初始化 */
         XMap* tmpMap = XMap_create(sizeof(XString), sizeof(XCanDbcFileParser_ValueDescriptions), XString_compare);
-        XMapBaseSetKeyCopyMethod(tmpMap, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(tmpMap, XString_move_base);
+        XMapBaseSetKeyCopyMethod(tmpMap, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(tmpMap, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(tmpMap, XString_deinit_base);
 
         XCanBus_UniqueId uidKey = uid;

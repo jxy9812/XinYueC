@@ -8,8 +8,8 @@
 #include "XRedBlackTree.h"
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XHashMap, sizeof(XHashMap), XHashMap_copy_base,
-	XHashMap_move_base, XHashMap_clear_base, XHashMap_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XHashMap, sizeof(XHashMap), XClass_copy_base,
+	XClass_move_base, XHashMap_clear_base, XHashMap_deinit_base,
 	NULL, "XHashMap<XString,XVariant>");
 
 XVariant* XHashMap_toVariant(const XHashMap* map)
@@ -22,7 +22,7 @@ XVariant* XHashMap_toVariant(const XHashMap* map)
 		return NULL;
 	XHashMap_init((XHashMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	              XContainerTypeSize(map), map->m_hash, XContainerCompare(map), XContainerIsCow(map));
-	XHashMap_copy_base(XVariant_data(var), map);
+	XCopy(XVariant_data(var), map);
 	return var;
 }
 
@@ -36,7 +36,7 @@ XVariant* XHashMap_toVariant_move(XHashMap* map)
 		return NULL;
 	XHashMap_init((XHashMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	              XContainerTypeSize(map), map->m_hash, XContainerCompare(map), XContainerIsCow(map));
-	XHashMap_move_base(XVariant_data(var), map);
+	XMove(XVariant_data(var), map);
 	return var;
 }
 
@@ -103,14 +103,14 @@ void XHashMap_setVariant(XVariant* var, const XHashMap* map)
 {
 	if (!XHashMap_prepareVariant(var, map))
 		return;
-	XHashMap_copy_base(XVariant_data(var), map);
+	XCopy(XVariant_data(var), map);
 }
 
 void XHashMap_setVariant_move(XVariant* var, XHashMap* map)
 {
 	if (!XHashMap_prepareVariant(var, map))
 		return;
-	XHashMap_move_base(XVariant_data(var), map);
+	XMove(XVariant_data(var), map);
 }
 
 void XHashMap_setVariant_ref(XVariant* var, XHashMap* map)
@@ -770,7 +770,7 @@ XHashMap* XHashMap_create_copy(const XHashMap* other)
     XHashMap* map = XHashMap_create_ex(memory, ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
         other->m_hash, XContainerCompare(other), XContainerIsCow(other));
     if (!map) return NULL;
-    XHashMap_copy_base(map, other);
+    XCopy(map, other);
     return map;
 }
 XHashMap* XHashMap_create_move(XHashMap* other)
@@ -779,7 +779,7 @@ XHashMap* XHashMap_create_move(XHashMap* other)
     XHashMap* map = XHashMap_create_ex(XContainer_memory_type(other), ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other),
         other->m_hash, XContainerCompare(other), XContainerIsCow(other));
     if (!map) return NULL;
-    XHashMap_move_base(map, other);
+    XMove(map, other);
     return map;
 }
 void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow)
@@ -799,11 +799,11 @@ XVariantHashMap* XHashMap_create_XVariantHashMap()
         sizeof(XString), sizeof(XVariant), XString_hash, XString_compare, true);
     if (hash == NULL)
         return NULL;
-    XMapBaseSetKeyCopyMethod(hash, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(hash, XString_move_base);
+    XMapBaseSetKeyCopyMethod(hash, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(hash, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(hash, XString_deinit_base);
-    XContainerSetDataCopyMethod(hash, XVariant_copy_base);
-    XContainerSetDataMoveMethod(hash, XVariant_move_base);
+    XContainerSetDataCopyMethod(hash, XClass_copy_base);
+    XContainerSetDataMoveMethod(hash, XClass_move_base);
     XContainerSetDataDeinitMethod(hash, XVariant_deinit_base);
     return hash;
 }

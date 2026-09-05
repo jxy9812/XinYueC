@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageCodecXbm.c
  * @brief      XBM（X11 Bitmap）图像编解码实现，对齐 Qt 6.8 QXbmHandler。
  * @note       XBM 是 C 源码形式的单色位图：头部由两个 #define 行组成，
@@ -216,7 +216,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
             cursor = current + 4u;
         }
     }
-    XImage_move_base(out, &image);
+    XMove(out, &image);
     return true;
 }
 

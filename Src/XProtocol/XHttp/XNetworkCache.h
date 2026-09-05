@@ -70,8 +70,6 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_move(XNetworkCacheMetaData* 
 
 #define XNetworkCacheMetaData_deinit_base XClass_deinit_base
 #define XNetworkCacheMetaData_delete_base XClass_delete_base
-#define XNetworkCacheMetaData_copy_base XClass_copy_base
-#define XNetworkCacheMetaData_move_base XClass_move_base
 
 /**
  * - @brief 设置缓存 URL。

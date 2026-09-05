@@ -107,7 +107,7 @@ XRingChunk* XRingChunk_create_copy(XRingChunk* src)
 {
     if (!src)return NULL;
     XRingChunk* chunk = XRingChunk_create(XRingChunk_capacity_base(src));
-    XRingChunk_copy_base(chunk, src);
+    XCopy(chunk, src);
     return chunk;
 }
 

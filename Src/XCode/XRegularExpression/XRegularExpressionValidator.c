@@ -19,8 +19,8 @@ static void VXRegularExpressionValidator_copy(XRegularExpressionValidator* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionValidator_init(dest);
-    XRegularExpression_copy_base(&dest->m_originalExpression, &src->m_originalExpression);
-    XRegularExpression_copy_base(&dest->m_usedExpression, &src->m_usedExpression);
+    XCopy(&dest->m_originalExpression, &src->m_originalExpression);
+    XCopy(&dest->m_usedExpression, &src->m_usedExpression);
 }
 
 static void VXRegularExpressionValidator_move(XRegularExpressionValidator* dest,
@@ -28,8 +28,8 @@ static void VXRegularExpressionValidator_move(XRegularExpressionValidator* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionValidator_init(dest);
-    XRegularExpression_move_base(&dest->m_originalExpression, &src->m_originalExpression);
-    XRegularExpression_move_base(&dest->m_usedExpression, &src->m_usedExpression);
+    XMove(&dest->m_originalExpression, &src->m_originalExpression);
+    XMove(&dest->m_usedExpression, &src->m_usedExpression);
 }
 
 XVtable* XRegularExpressionValidator_class_init(void)
@@ -71,7 +71,7 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_copy(
     if (!other) return NULL;
     XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
     if (!validator) return NULL;
-    XRegularExpressionValidator_copy_base(validator, other);
+    XCopy(validator, other);
     return validator;
 }
 
@@ -81,7 +81,7 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_move(
     if (!other) return NULL;
     XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
     if (!validator) return NULL;
-    XRegularExpressionValidator_move_base(validator, other);
+    XMove(validator, other);
     return validator;
 }
 
@@ -102,8 +102,8 @@ void XRegularExpressionValidator_setRegularExpression(XRegularExpressionValidato
 {
     if (!validator) return;
     if (expression) {
-        XRegularExpression_copy_base(&validator->m_originalExpression, expression);
-        XRegularExpression_copy_base(&validator->m_usedExpression, expression);
+        XCopy(&validator->m_originalExpression, expression);
+        XCopy(&validator->m_usedExpression, expression);
     } else {
         XRegularExpression_setPattern_utf8(&validator->m_originalExpression, "");
         XRegularExpression_setPatternOptions(&validator->m_originalExpression,

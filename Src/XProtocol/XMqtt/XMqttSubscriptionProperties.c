@@ -33,7 +33,7 @@ XMqttSubscriptionProperties* XMqttSubscriptionProperties_create_copy(const XMqtt
 {
     if (!other) return NULL;
     XMqttSubscriptionProperties* p = XMqttSubscriptionProperties_create();
-    if (p) XMqttSubscriptionProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 
@@ -115,7 +115,7 @@ XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create_copy(const X
 {
     if (!other) return NULL;
     XMqttUnsubscriptionProperties* p = XMqttUnsubscriptionProperties_create();
-    if (p) XMqttUnsubscriptionProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 

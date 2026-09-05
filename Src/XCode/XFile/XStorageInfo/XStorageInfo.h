@@ -87,8 +87,6 @@ XVtable* XStorageInfo_class_init(void);
 
 #define XStorageInfo_delete_base    XClass_delete_base
 #define XStorageInfo_deinit_base    XClass_deinit_base
-#define XStorageInfo_copy_base      XClass_copy_base
-#define XStorageInfo_move_base      XClass_move_base
 
 /**
  * @brief 默认构造函数

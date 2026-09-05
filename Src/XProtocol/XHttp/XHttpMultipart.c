@@ -134,7 +134,7 @@ XHttpPart* XHttpPart_create_copy(const XHttpPart* other)
         return NULL;
     self = XHttpPart_create();
     if (self)
-        XClass_copy_base((XClass*)self, (const XClass*)other);
+        XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -145,7 +145,7 @@ XHttpPart* XHttpPart_create_move(XHttpPart* other)
         return NULL;
     self = XHttpPart_create();
     if (self)
-        XClass_move_base((XClass*)self, (XClass*)other);
+        XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

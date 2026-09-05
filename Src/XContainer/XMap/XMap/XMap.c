@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XMap, sizeof(XMap), XMap_copy_base, XMap_move_base,
+XVARIANT_TYPE_OPS_DEFINE(XMap, sizeof(XMap), XClass_copy_base, XClass_move_base,
 	XMap_clear_base, XMap_deinit_base, NULL, "XMap<XString,XVariant>");
 
 XVariant* XMap_toVariant(const XMap* map)
@@ -22,7 +22,7 @@ XVariant* XMap_toVariant(const XMap* map)
 		return NULL;
 	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
-	XMap_copy_base(XVariant_data(var), map);
+	XCopy(XVariant_data(var), map);
 	return var;
 }
 
@@ -36,7 +36,7 @@ XVariant* XMap_toVariant_move(XMap* map)
 		return NULL;
 	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
-	XMap_move_base(XVariant_data(var), map);
+	XMove(XVariant_data(var), map);
 	return var;
 }
 
@@ -101,14 +101,14 @@ void XMap_setVariant(XVariant* var, const XMap* map)
 {
 	if (!XMap_prepareVariant(var, map))
 		return;
-	XMap_copy_base(XVariant_data(var), map);
+	XCopy(XVariant_data(var), map);
 }
 
 void XMap_setVariant_move(XVariant* var, XMap* map)
 {
 	if (!XMap_prepareVariant(var, map))
 		return;
-	XMap_move_base(XVariant_data(var), map);
+	XMove(XVariant_data(var), map);
 }
 
 void XMap_setVariant_ref(XVariant* var, XMap* map)
@@ -667,7 +667,7 @@ XMap* XMap_create_copy(const XMap* other)
     XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
     XMap* map = XMap_create_ex(memory, ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other), XContainerIsCow(other));
     if (map == NULL) return NULL;
-    XMap_copy_base(map, other);
+    XCopy(map, other);
     return map;
 }
 XMap* XMap_create_move(XMap* other)
@@ -675,7 +675,7 @@ XMap* XMap_create_move(XMap* other)
     if (other == NULL) return NULL;
     XMap* map = XMap_create_ex(XContainer_memory_type(other), ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other), XContainerIsCow(other));
     if (map == NULL) return NULL;
-    XMap_move_base(map, other);
+    XMove(map, other);
     return map;
 }
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
@@ -722,12 +722,12 @@ XVariantMap* XMap_create_XVariantMap()
     XContainerSetDataMoveMethod(map, XMapBase_XVariantMapMoveMethod);
     XContainerSetDataDeinitMethod(map, XMapBase_XVariantMapDeinitMethod);*/
 
-    XMapBaseSetKeyCopyMethod(map, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(map, XString_move_base);
+    XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(map, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(map, XString_deinit_base);
 
-    XContainerSetDataCopyMethod(map, XVariant_copy_base);
-    XContainerSetDataMoveMethod(map, XVariant_move_base);
+    XContainerSetDataCopyMethod(map, XClass_copy_base);
+    XContainerSetDataMoveMethod(map, XClass_move_base);
     XContainerSetDataDeinitMethod(map, XVariant_deinit_base);
 
     return map;

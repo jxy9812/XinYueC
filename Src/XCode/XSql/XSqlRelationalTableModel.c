@@ -255,7 +255,7 @@ static void VXSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, 
     record = model->m_parent.m_database
         ? XSqlDatabase_record_utf8(model->m_parent.m_database, tableName) : NULL;
     if (record) {
-        XSqlRecord_move_base(&model->m_baseRecord, record);
+        XMove(&model->m_baseRecord, record);
         XSqlRecord_delete_base(record);
     }
     XClass_Parent(XSqlTableModel, EXSqlTableModel_SetTable,

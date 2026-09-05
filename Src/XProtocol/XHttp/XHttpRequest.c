@@ -282,7 +282,7 @@ XHttpRequest* XHttpRequest_create_copy(const XHttpRequest* other)
         return NULL;
     XHttpRequest* self = XHttpRequest_create();
     if (self)
-        XClass_copy_base((XClass*)self, (const XClass*)other);
+        XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -292,7 +292,7 @@ XHttpRequest* XHttpRequest_create_move(XHttpRequest* other)
         return NULL;
     XHttpRequest* self = XHttpRequest_create();
     if (self)
-        XClass_move_base((XClass*)self, (XClass*)other);
+        XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

@@ -352,7 +352,7 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
        output is marked as a bitmap. */
     if (XPixmap_depth(pixmap) == 1 && XPixmap_isQBitmap(pixmap))
     {
-        XPixmap_copy_base((XPixmap*)out, pixmap);
+        XCopy((XPixmap*)out, pixmap);
         XClassSetVtable(out, XBitmap);
         return;
     }

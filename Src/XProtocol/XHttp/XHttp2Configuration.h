@@ -72,8 +72,6 @@ XHttp2Configuration* XHttp2Configuration_create_move(XHttp2Configuration* other)
 /** @brief 配置生命周期和值语义入口。 */
 #define XHttp2Configuration_deinit_base XClass_deinit_base
 #define XHttp2Configuration_delete_base XClass_delete_base
-#define XHttp2Configuration_copy_base XClass_copy_base
-#define XHttp2Configuration_move_base XClass_move_base
 
 /**
  * - @brief 设置 server push 开关。

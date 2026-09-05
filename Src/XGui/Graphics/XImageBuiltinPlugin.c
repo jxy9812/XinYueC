@@ -672,7 +672,7 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
             descriptionValue.string &&
             !XContainer_isEmpty_base((const XContainer*)descriptionValue.string)) {
             XImage_init(&described);
-            XImage_copy_base(&described, image);
+            XCopy(&described, image);
             if (!described.m_data ||
                 !XImage_applyTextDescription(&described, descriptionValue.string)) {
                 XImage_deinit_base(&described);

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconEnginePlugin.h
  * @brief      XIconEnginePlugin 图标引擎插件工厂（对标 Qt 6.8）。
  ******************************************************************************/
@@ -48,12 +48,6 @@ void XIconEnginePlugin_init(XIconEnginePlugin* self);
  */
 /** @brief 通过 XClass 虚表释放插件资源。 @param self 待释放的插件指针。 */
 #define XIconEnginePlugin_deinit_base(self) XClass_deinit_base((XClass*)(self))
-/** @brief 深拷贝图标引擎插件配置。 */
-#define XIconEnginePlugin_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动图标引擎插件配置。 */
-#define XIconEnginePlugin_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief 删除堆上分配的插件实例。

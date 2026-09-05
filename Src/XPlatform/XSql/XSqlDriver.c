@@ -371,7 +371,7 @@ static bool VXSqlDriver_cancelQuery(XSqlDriver* driver) { (void)driver; return f
 static int VXSqlDriver_maximumIdentifierLength(const XSqlDriver* driver, XSqlIdentifierType type) { (void)driver; (void)type; return INT_MAX; }
 static void VXSqlDriver_setOpen(XSqlDriver* driver, bool open) { if (driver) driver->m_open = open; }
 static void VXSqlDriver_setOpenError(XSqlDriver* driver, bool error) { if (driver) { driver->m_openError = error; if (error) driver->m_open = false; } }
-static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && error) XSqlError_copy_base(&driver->m_lastError, error); }
+static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && error) XCopy(&driver->m_lastError, error); }
 
 void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
                                      XSqlNotificationSource source,

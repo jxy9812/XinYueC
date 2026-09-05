@@ -66,22 +66,6 @@ XStackedLayout* XStackedLayout_create(XWidget* parent);
 #define XStackedLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的堆叠布局对象。 */
 #define XStackedLayout_delete_base(self) XClass_delete_base((XClass*)(self))
-/**
- * @brief 深拷贝布局配置，不复制页面条目树。
- * @details self 与 other 必须是同一具体堆叠布局类型且都已由
- *          XStackedLayout_init 或创建函数初始化；操作复用目标对象，
- *          不检查或初始化未构造的存储。
- */
-#define XStackedLayout_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 移动布局及页面条目所有权。
- * @details self 与 other 必须是同一具体堆叠布局类型且都已由
- *          XStackedLayout_init 或创建函数初始化；操作复用目标对象并释放
- *          其原有页面条目，不检查或初始化未构造的存储。
- */
-#define XStackedLayout_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief 向末尾追加页面控件（对标 QStackedLayout::addWidget）。

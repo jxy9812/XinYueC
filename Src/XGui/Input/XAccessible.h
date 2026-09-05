@@ -63,10 +63,6 @@ XAccessible* XAccessible_createApplication_ex(XMemoryType memory);
     XAccessible_createApplication_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #define XAccessible_delete_base(self) XClass_delete_base((XClass*)(self))
 #define XAccessible_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XAccessible_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-#define XAccessible_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 bool XAccessible_isValid(const XAccessible* self);
 XAccessibleRole XAccessible_role(const XAccessible* self);
 XRect XAccessible_rect(const XAccessible* self);

@@ -855,7 +855,7 @@ static bool hostTcpResolveLocalAddress(XHostAddress* out)
         if (candidate && XHostAddress_protocol(candidate) == XHostAddress_IPv4Protocol &&
             !XHostAddress_isNull(candidate) && !XHostAddress_isLoopback(candidate) &&
             !XHostAddress_isLinkLocal(candidate)) {
-            XHostAddress_copy_base(out, candidate);
+            XCopy(out, candidate);
             XVector_delete_base(addresses);
             return true;
         }

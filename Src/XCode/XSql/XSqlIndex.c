@@ -127,7 +127,7 @@ XSqlIndex* XSqlIndex_create_copy(const XSqlIndex* other)
 {
     if (!other) return NULL;
     XSqlIndex* result = XSqlIndex_create();
-    if (result) XSqlIndex_copy_base(result, other);
+    if (result) XCopy(result, other);
     return result;
 }
 
@@ -135,7 +135,7 @@ XSqlIndex* XSqlIndex_create_move(XSqlIndex* other)
 {
     if (!other) return NULL;
     XSqlIndex* result = XSqlIndex_create();
-    if (result) XSqlIndex_move_base(result, other);
+    if (result) XMove(result, other);
     return result;
 }
 
@@ -144,8 +144,8 @@ void XSqlIndex_swap(XSqlIndex* left, XSqlIndex* right)
     if (!left || !right || left == right) return;
     XSqlIndex* temp = XSqlIndex_create_move(left);
     if (!temp) return;
-    XSqlIndex_move_base(left, right);
-    XSqlIndex_move_base(right, temp);
+    XMove(left, right);
+    XMove(right, temp);
     XSqlIndex_delete_base(temp);
 }
 

@@ -139,10 +139,6 @@ XPushButton* XPushButton_create_ex(XMemoryType memory, XWidget* parent,
 #define XPushButton_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XPushButton 对象。 */
 #define XPushButton_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 深拷贝（文本深拷、图标按值拷贝；不复制父/窗口句柄）。 */
-#define XPushButton_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动语义（转移资源所有权；源对象内容字段归构造默认值）。 */
-#define XPushButton_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 文本（对标 QAbstractButton text/setText） ==================== */
 

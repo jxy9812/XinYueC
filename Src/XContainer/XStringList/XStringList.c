@@ -5,8 +5,8 @@
 #include<string.h>
 #include"XString.h"
 
-XVARIANT_TYPE_OPS_DEFINE(XStringList, sizeof(XStringList), XStringList_copy_base,
-	XStringList_move_base, XStringList_clear_base, XStringList_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XStringList, sizeof(XStringList), XClass_copy_base,
+	XClass_move_base, XStringList_clear_base, XStringList_deinit_base,
 	NULL, "XStringList");
 
 XVariant* XStringList_toVariant(const XStringList* list)
@@ -18,7 +18,7 @@ XVariant* XStringList_toVariant(const XStringList* list)
 	if (!var)
 		return NULL;
 	XStringList_init((XStringList*)XVariant_data(var));
-	XStringList_copy_base(XVariant_data(var), list);
+	XCopy(XVariant_data(var), list);
 	return var;
 }
 
@@ -31,7 +31,7 @@ XVariant* XStringList_toVariant_move(XStringList* list)
 	if (!var)
 		return NULL;
 	XStringList_init((XStringList*)XVariant_data(var));
-	XStringList_move_base(XVariant_data(var), list);
+	XMove(XVariant_data(var), list);
 	return var;
 }
 
@@ -94,14 +94,14 @@ void XStringList_setVariant(XVariant* var, const XStringList* list)
 {
 	if (!list || !XStringList_prepareVariant(var))
 		return;
-	XStringList_copy_base(XVariant_data(var), list);
+	XCopy(XVariant_data(var), list);
 }
 
 void XStringList_setVariant_move(XVariant* var, XStringList* list)
 {
 	if (!list || !XStringList_prepareVariant(var))
 		return;
-	XStringList_move_base(XVariant_data(var), list);
+	XMove(XVariant_data(var), list);
 }
 
 void XStringList_setVariant_ref(XVariant* var, XStringList* list)
@@ -149,7 +149,7 @@ XStringList* XStringList_create_copy(const XStringList* other)
 	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if(list==NULL)
 		return NULL;
-	XStringList_copy_base(list,other);
+	XCopy(list,other);
 	return list;
 }
 XStringList* XStringList_create_move(XStringList* other)
@@ -159,7 +159,7 @@ XStringList* XStringList_create_move(XStringList* other)
 	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
-	XStringList_move_base(list, other);
+	XMove(list, other);
 	return list;
 }
 void XStringList_init(XStringList* strList)

@@ -96,7 +96,7 @@ static void VXSqlQuery_copy(XSqlQuery* dest, const XSqlQuery* src)
             ? XSqlDriver_createResult_base(src->m_result->m_driver)
             : XSqlResult_create(NULL);
         if (dest->m_result) {
-            XSqlResult_copy_base(dest->m_result, src->m_result);
+            XCopy(dest->m_result, src->m_result);
             dest->m_ownsResult = true;
         }
     }
@@ -113,15 +113,15 @@ static void VXSqlQuery_move(XSqlQuery* dest, XSqlQuery* src)
     src->m_ownsResult = false;
 }
 
-XSqlQuery* XSqlQuery_create_copy(const XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XSqlQuery_copy_base(result, other); return result; }
-XSqlQuery* XSqlQuery_create_move(XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XSqlQuery_move_base(result, other); return result; }
+XSqlQuery* XSqlQuery_create_copy(const XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XCopy(result, other); return result; }
+XSqlQuery* XSqlQuery_create_move(XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XMove(result, other); return result; }
 void XSqlQuery_swap(XSqlQuery* left, XSqlQuery* right)
 {
     if (!left || !right || left == right) return;
     XSqlQuery* temp = XSqlQuery_create_move(left);
     if (!temp) return;
-    XSqlQuery_move_base(left, right);
-    XSqlQuery_move_base(right, temp);
+    XMove(left, right);
+    XMove(right, temp);
     XSqlQuery_delete_base(temp);
 }
 bool XSqlQuery_isValid(const XSqlQuery* query) { return query && query->m_result && XSqlResult_isValid(query->m_result); }

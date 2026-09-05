@@ -130,16 +130,6 @@ XLockFreeQueue* XLockFreeQueue_create_ex(XMemoryType memory,  size_t typeSize, s
 #define XLockFreeQueue_typeSize_base		XQueueBase_typeSize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 拷贝容器
-* @note 复用XQueueBase的接口，复制源队列的所有元素和状态，线程安全
-*/
-#define XLockFreeQueue_copy_base			XQueueBase_copy_base
-/**
-* @brief 移动容器资源
-* @note 复用XQueueBase的接口，转移源队列的资源所有权至当前队列
-*/
-#define XLockFreeQueue_move_base			XQueueBase_move_base
-/**
 * @brief 反初始化容器
 * @note 复用XQueueBase的接口，释放队列资源但不销毁实例本身
 */

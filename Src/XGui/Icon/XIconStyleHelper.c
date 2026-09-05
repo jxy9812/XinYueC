@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconStyleHelper.c
  * @brief      XIcon 样式态生成内部实现。
  * @details    Disabled 使用 QCommonStyle::generatedIconPixmap() 的灰度映射
@@ -187,7 +187,7 @@ void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out)
 {
     if (!out || !base || XPixmap_isNull(base)) return;
     if (mode != XIconMode_Disabled && mode != XIconMode_Selected) {
-        XPixmap_copy_base(out, base);
+        XCopy(out, base);
         return;
     }
 #if XGUIAPPLICATION_ON && XPALETTE_ON
@@ -197,6 +197,6 @@ void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out)
     else
         styleSelected(base, &palette, out);
 #else
-    XPixmap_copy_base(out, base);
+    XCopy(out, base);
 #endif
 }

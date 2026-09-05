@@ -80,7 +80,7 @@ static void XListSLinkedCreateTest(void)
 		XListSLinked* src = XListSLinkedMakeInt(arr, 3);
 		XListSLinked* copy = XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), true);
 		XContainerSetCompare(copy, int_compare);
-		XListSLinked_copy_base(copy, src);
+		XCopy(copy, src);
 		XPrintf("copy_base: copy.size=%zu, src.size=%zu\n",
 			XListSLinked_size_base(copy), XListSLinked_size_base(src));
 		XListSLinkedPrintInt(copy, "  copy: ");
@@ -96,7 +96,7 @@ static void XListSLinkedCreateTest(void)
 		XListSLinked* src = XListSLinkedMakeInt(arr, 3);
 		XListSLinked* moved = XListSLinked_Create(int);
 		XContainerSetCompare(moved, int_compare);
-		XListSLinked_move_base(moved, src);
+		XMove(moved, src);
 		XPrintf("move_base: moved.size=%zu, src.isEmpty=%s\n",
 			XListSLinked_size_base(moved),
 			XListSLinked_isEmpty_base(src) ? "是" : "否");
@@ -618,7 +618,7 @@ static void XListSLinkedSafetyTest(void)
 		XContainerSetCompare(other, double_compare);
 		double dv = 3.14;
 		XListSLinked_push_back_base(other, &dv);
-		XListSLinked_copy_base(li, other);
+		XCopy(li, other);
 		XPrintf("类型不一致: copy后li.size未变=%s, push_back类型不一致=%s（均应否）\n",
 			XListSLinked_size_base(li) == 3 ? "是" : "否",
 			XListSLinked_push_back_base(li, &dv) ? "是" : "否");

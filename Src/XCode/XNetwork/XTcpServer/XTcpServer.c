@@ -286,7 +286,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	XHostAddress listenAddr;
 	XHostAddress_init(&listenAddr);
 	if (address) {
-		XHostAddress_copy_base(&listenAddr, address);
+		XCopy(&listenAddr, address);
 	} else {
 		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnySpecial);
 	}
@@ -311,7 +311,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 		return false;
 	}
 	XHostAddress_deinit_base(&server->serverAddress);
-	XHostAddress_copy_base(&server->serverAddress, &listenAddr);
+	XCopy(&server->serverAddress, &listenAddr);
 	XHostAddress_deinit_base(&listenAddr);
 	memset(&value, 0, sizeof(value));
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {

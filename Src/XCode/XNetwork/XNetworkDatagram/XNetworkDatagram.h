@@ -86,8 +86,6 @@ void XNetworkDatagram_deinit(XNetworkDatagram* dgram);
 
 #define XNetworkDatagram_delete_base    XClass_delete_base
 #define XNetworkDatagram_deinit_base    XClass_deinit_base
-#define XNetworkDatagram_copy_base      XClass_copy_base
-#define XNetworkDatagram_move_base      XClass_move_base
 
 /**
  * @brief 初始化虚函数表。

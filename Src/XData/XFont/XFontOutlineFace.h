@@ -34,12 +34,6 @@ void XFontOutlineFace_initFile(XFontOutlineFace* self);
 /** @brief 初始化轮廓 face 类虚函数表。 */
 XVtable* XFontOutlineFace_class_init(void);
 
-/** @brief 通过 XClass 虚表复制轮廓 face。 */
-#define XFontOutlineFace_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 通过 XClass 虚表移动轮廓 face。 */
-#define XFontOutlineFace_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 通过 XClass 虚表反初始化轮廓 face。 */
 #define XFontOutlineFace_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 通过 XClass 虚表删除堆上的轮廓 face。 */

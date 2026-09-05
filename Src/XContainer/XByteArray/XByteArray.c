@@ -6,8 +6,8 @@
 #include "XByteArrayView.h"
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XByteArray, sizeof(XByteArray), XByteArray_copy_base,
-	XByteArray_move_base, XByteArray_clear_base, XByteArray_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XByteArray, sizeof(XByteArray), XClass_copy_base,
+	XClass_move_base, XByteArray_clear_base, XByteArray_deinit_base,
 	XByteArray_compare, "XByteArray");
 uint8_t * XByteArray_data(XByteArray* other);
 
@@ -20,7 +20,7 @@ XVariant* XByteArray_toVariant(const XByteArray* array)
 	if (!var)
 		return NULL;
 	XByteArray_init((XByteArray*)XVariant_data(var), true);
-	XByteArray_copy_base(XVariant_data(var), array);
+	XCopy(XVariant_data(var), array);
 	return var;
 }
 
@@ -33,7 +33,7 @@ XVariant* XByteArray_toVariant_move(XByteArray* array)
 	if (!var)
 		return NULL;
 	XByteArray_init((XByteArray*)XVariant_data(var), true);
-	XByteArray_move_base(XVariant_data(var), array);
+	XMove(XVariant_data(var), array);
 	return var;
 }
 
@@ -96,14 +96,14 @@ void XByteArray_setVariant(XVariant* var, const XByteArray* array)
 {
 	if (!array || !XByteArray_prepareVariant(var))
 		return;
-	XByteArray_copy_base(XVariant_data(var), array);
+	XCopy(XVariant_data(var), array);
 }
 
 void XByteArray_setVariant_move(XVariant* var, XByteArray* array)
 {
 	if (!array || !XByteArray_prepareVariant(var))
 		return;
-	XByteArray_move_base(XVariant_data(var), array);
+	XMove(XVariant_data(var), array);
 }
 
 void XByteArray_setVariant_ref(XVariant* var, XByteArray* array)
@@ -170,7 +170,7 @@ XByteArray* XByteArray_create_copy(const XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
-	XByteArray_copy_base(v, other);
+	XCopy(v, other);
 	return v;
 }
 
@@ -179,7 +179,7 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
-	XByteArray_move_base(v, other);
+	XMove(v, other);
 	return v;
 }
 

@@ -566,7 +566,7 @@ int64_t XStringView_indexOf_regularExpression(const XStringView* self,
     bool hasMatch = XRegularExpressionMatch_hasMatch(result);
     int64_t position = hasMatch ?
             XRegularExpressionMatch_capturedStart(result, 0) : -1;
-    if (match && hasMatch) XRegularExpressionMatch_copy_base(match, result);
+    if (match && hasMatch) XCopy(match, result);
     XRegularExpressionMatch_delete_base(result);
     return position;
 }
@@ -609,7 +609,7 @@ int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
         last = current;
         resultPosition = position;
     }
-    if (match && last) XRegularExpressionMatch_copy_base(match, last);
+    if (match && last) XCopy(match, last);
     if (last) XRegularExpressionMatch_delete_base(last);
     XRegularExpressionMatchIterator_delete_base(iterator);
     return resultPosition;

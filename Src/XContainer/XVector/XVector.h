@@ -651,16 +651,6 @@ size_t XVector_maxSize(size_t typeSize);
 #define XVector_value(this_vector, index, defaultValue) \
 	(((index) >= 0 && (size_t)(index) < XVector_size_base(this_vector)) ? XVector_at_base(this_vector, index) : (void*)(defaultValue))
 /**
- * @brief 复用XContainer的接口，拷贝容器（深拷贝源向量到目标向量）
- * @note 宏实现，等价于XContainer_copy_base；目标向量需先init
- */
-#define XVector_copy_base							XContainer_copy_base	
-/**
- * @brief 复用XContainer的接口，移动容器资源（转移源向量所有权，源向量变空）
- * @note 宏实现，等价于XContainer_move_base
- */
-#define XVector_move_base							XContainer_move_base	
-/**
  * @brief 复用XContainer的接口，析构容器（释放资源，可重复调用）
  * @note 宏实现，等价于XContainer_deinit_base
  */

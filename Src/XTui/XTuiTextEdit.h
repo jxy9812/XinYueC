@@ -53,9 +53,6 @@ void XTuiTextEdit_init(XTuiTextEdit* edit);
 XTuiTextEdit* XTuiTextEdit_create_ex(XMemoryType memory);
 
 #define XTuiTextEdit_delete_base XClass_delete_base /**< 释放堆对象。 */
-#define XTuiTextEdit_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
-#define XTuiTextEdit_copy_base   XClass_copy_base   /**< 拷贝。 */
-#define XTuiTextEdit_move_base   XClass_move_base   /**< 移动。 */
 
 /** @brief 设置文本（深拷贝 UTF-8）。 */
 void XTuiTextEdit_setText(XTuiTextEdit* edit, const char* text);

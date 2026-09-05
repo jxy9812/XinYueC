@@ -324,7 +324,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_copy(const XNetworkRequest
 {
     if (!other) return NULL;
     XNetworkRequestFactory* self = XNetworkRequestFactory_create();
-    if (self) XClass_copy_base((XClass*)self, (const XClass*)other);
+    if (self) XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -332,7 +332,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_move(XNetworkRequestFactor
 {
     if (!other) return NULL;
     XNetworkRequestFactory* self = XNetworkRequestFactory_create();
-    if (self) XClass_move_base((XClass*)self, (XClass*)other);
+    if (self) XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

@@ -514,7 +514,7 @@ XEvent* VXEvent_default_clone(const XEvent* event)
 	XClassGetVtable(copy) = XClassGetVtable(event);
 	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
 	Set_Class_IsHeap(copy, true);
-	XClass_copy_base(copy, event);
+	XCopy(copy, event);
 	return copy;
 }
 
@@ -537,7 +537,7 @@ static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
 	XClassGetVtable(copy) = XClassGetVtable(event);
 	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
 	Set_Class_IsHeap(copy, true);
-	XClass_copy_base(copy, event);
+	XCopy(copy, event);
 	return (XEvent*)copy;
 }
 
@@ -561,6 +561,6 @@ static XEvent* VXMouseEvent_clone(const XMouseEvent* event)
 	XClassGetVtable(copy) = XClassGetVtable(event);
 	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
 	Set_Class_IsHeap(copy, true);
-	XClass_copy_base(copy, event);
+	XCopy(copy, event);
 	return (XEvent*)copy;
 }

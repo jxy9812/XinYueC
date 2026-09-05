@@ -105,20 +105,6 @@ void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other);
  * @param dest 目标对象指针
  * @param src  源对象指针
  */
-/**
- * @brief 通过 XClass 虚表复制位图。
- * @param self 目标位图对象指针，可为未初始化对象。
- * @param other 源位图对象指针。
- */
-#define XBitmap_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动位图。
- * @param self 目标位图对象指针，可为未初始化对象。
- * @param other 源位图对象指针；移动后资源归目标所有。
- */
-#define XBitmap_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      虚函数调度：释放

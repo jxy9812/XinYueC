@@ -396,7 +396,7 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_copy(const XNetworkCacheMeta
     if (!other)
         return NULL;
     self = XNetworkCacheMetaData_create();
-    if (self) XClass_copy_base((XClass*)self, (const XClass*)other);
+    if (self) XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -406,7 +406,7 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_move(XNetworkCacheMetaData* 
     if (!other)
         return NULL;
     self = XNetworkCacheMetaData_create();
-    if (self) XClass_move_base((XClass*)self, (XClass*)other);
+    if (self) XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

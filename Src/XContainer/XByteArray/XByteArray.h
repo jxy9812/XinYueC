@@ -247,12 +247,6 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 
 //============================= 容器操作 =============================
 
-/**
-* @brief 复用XVector的接口，复制另一个数组的内容到当前数组
-* @param this_One 目标数组
-* @param this_Two 源数组（被复制的数组）
-*/
-#define XByteArray_copy_base						XVector_copy_base
 
 /**
 * @brief 复用XVector的接口，逆序复制另一个数组的内容到当前数组
@@ -261,12 +255,6 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 */
 #define XByteArray_rcopy_base						XVector_rcopy_base
 
-/**
-* @brief 复用XVector的接口，转移另一个数组的资源到当前数组
-* @param this_One 目标数组
-* @param this_Two 源数组（资源被转移后会被清空）
-*/
-#define XByteArray_move_base						XVector_move_base
 
 /**
 * @brief 复用XVector的接口，交换两个数组的内容

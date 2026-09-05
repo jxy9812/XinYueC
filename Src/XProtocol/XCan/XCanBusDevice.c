@@ -186,7 +186,7 @@ void XCanBusDevice_setConfigurationParameter(XCanBusDevice* dev,
         if (entry && entry->m_key == key) {
             // 更新现有值
             if (entry->m_value) {
-                XVariant_copy_base((XVariant*)entry->m_value, (const XVariant*)value);
+                XCopy((XVariant*)entry->m_value, (const XVariant*)value);
             } else {
                 entry->m_value = XVariant_create_copy((const XVariant*)value);
             }

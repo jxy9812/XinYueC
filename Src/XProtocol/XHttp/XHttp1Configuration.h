@@ -60,8 +60,6 @@ XHttp1Configuration* XHttp1Configuration_create_move(XHttp1Configuration* other)
 /** @brief 配置生命周期和值语义入口。 */
 #define XHttp1Configuration_deinit_base XClass_deinit_base
 #define XHttp1Configuration_delete_base XClass_delete_base
-#define XHttp1Configuration_copy_base XClass_copy_base
-#define XHttp1Configuration_move_base XClass_move_base
 
 /**
  * - @brief 设置每主机连接数。

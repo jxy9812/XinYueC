@@ -101,8 +101,6 @@ void XHttp2HeaderList_init(XHttp2HeaderList* self);
 XHttp2HeaderList* XHttp2HeaderList_create_ex(XMemoryType memory);
 #define XHttp2HeaderList_deinit_base XClass_deinit_base
 #define XHttp2HeaderList_delete_base XClass_delete_base
-#define XHttp2HeaderList_copy_base XClass_copy_base
-#define XHttp2HeaderList_move_base XClass_move_base
 
 /**
  * - @brief 初始化有状态 HPACK 解码器。
@@ -116,8 +114,6 @@ void XHttp2HeaderDecoder_init(XHttp2HeaderDecoder* self);
 XHttp2HeaderDecoder* XHttp2HeaderDecoder_create_ex(XMemoryType memory);
 #define XHttp2HeaderDecoder_deinit_base XClass_deinit_base
 #define XHttp2HeaderDecoder_delete_base XClass_delete_base
-#define XHttp2HeaderDecoder_copy_base XClass_copy_base
-#define XHttp2HeaderDecoder_move_base XClass_move_base
 
 /**
  * - @brief 初始化有状态 HPACK 编码器。
@@ -131,8 +127,6 @@ void XHttp2HeaderEncoder_init(XHttp2HeaderEncoder* self);
 XHttp2HeaderEncoder* XHttp2HeaderEncoder_create_ex(XMemoryType memory);
 #define XHttp2HeaderEncoder_deinit_base XClass_deinit_base
 #define XHttp2HeaderEncoder_delete_base XClass_delete_base
-#define XHttp2HeaderEncoder_copy_base XClass_copy_base
-#define XHttp2HeaderEncoder_move_base XClass_move_base
 
 /**
  * - @brief 设置对端 SETTINGS_HEADER_TABLE_SIZE 上限。

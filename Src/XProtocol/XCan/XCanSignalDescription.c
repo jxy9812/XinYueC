@@ -257,8 +257,8 @@ XMap* XCanSignalDescription_multiplexSignals(const XCanSignalDescription* sig)
 {
     if (!sig || !sig->m_multiplexSignals) {
         XMap* map = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
-        XMapBaseSetKeyCopyMethod(map, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(map, XString_move_base);
+        XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(map, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(map, XClass_deinit_base);
         return map;
     }
@@ -288,8 +288,8 @@ void XCanSignalDescription_addMultiplexSignal(XCanSignalDescription* sig,
     if (!sig || !name || !ranges) return;
     if (!sig->m_multiplexSignals) {
         sig->m_multiplexSignals = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
-        XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XString_move_base);
+        XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(sig->m_multiplexSignals, XClass_deinit_base);
     }
 
@@ -310,8 +310,8 @@ void XCanSignalDescription_addMultiplexSignal_value(XCanSignalDescription* sig,
     if (!sig || !name || !value) return;
     if (!sig->m_multiplexSignals) {
         sig->m_multiplexSignals = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
-        XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XString_move_base);
+        XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(sig->m_multiplexSignals, XClass_deinit_base);
     }
 

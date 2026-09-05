@@ -1333,8 +1333,8 @@ XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilt
         return NULL;
     }
     
-    XContainerSetDataCopyMethod(result, (XCDataCopyMethod)XFileInfo_copy_base);
-    XContainerSetDataMoveMethod(result, (XCDataMoveMethod)XFileInfo_move_base);
+    XContainerSetDataCopyMethod(result, (XCDataCopyMethod)XClass_copy_base);
+    XContainerSetDataMoveMethod(result, (XCDataMoveMethod)XClass_move_base);
     XContainerSetDataDeinitMethod(result, (XCDataDeinitMethod)XFileInfo_deinit_base);
     
     size_t count = XStringList_size_base(names);

@@ -217,17 +217,7 @@ const XBitArray* XModbusDataUnit_values2_const(const XModbusDataUnit* unit);
 */
 bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 
-/**
-* @brief 基类拷贝宏（继承自XClass）
-* @details 复用XClass的拷贝基础逻辑，实现XModbusDataUnit的拷贝特性
-*/
-#define XModbusDataUnit_copy_base			XClass_copy_base
 
-/**
-* @brief 基类移动宏（继承自XClass）
-* @details 复用XClass的移动基础逻辑，实现XModbusDataUnit的移动特性
-*/
-#define XModbusDataUnit_move_base			XClass_move_base
 
 /**
 * @brief 基类析构宏（继承自XClass）

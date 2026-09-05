@@ -440,7 +440,7 @@ int XMqttPublicApiTest_run(void)
     /* 值类型 move 自赋值必须保持对象有效，避免清空自身资源。 */
     XMqttTopicName* moveName = XMqttTopicName_create("move/topic");
     if (moveName) {
-        XMqttTopicName_move_base(moveName, moveName);
+        XMove(moveName, moveName);
         MQTT_CHECK(XMqttTopicName_isValid(moveName) &&
                    XString_equals_utf8(XMqttTopicName_name_const(moveName),
                                        "move/topic", XChar_CaseSensitive),

@@ -216,19 +216,7 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 */
 #define	XStringList_resize_base									XVector_resize_base
 
-/**
-* @brief 拷贝一个XStringList对象
-* @param strList 指向要拷贝的XStringList对象的指针
-* @return 成功返回新拷贝的XStringList指针，失败返回NULL
-*/
-#define XStringList_copy_base									XVector_copy_base	
 
-/**
-* @brief 移动一个XStringList对象的内容（转移所有权）
-* @param dest 指向目标XStringList对象的指针
-* @param src 指向源XStringList对象的指针
-*/
-#define XStringList_move_base									XVector_move_base	
 
 /**
 * @brief 反初始化XStringList对象（释放资源但保留对象本身）

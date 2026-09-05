@@ -1,4 +1,4 @@
-# XGui 进度文档
+﻿# XGui 进度文档
 
 > 最后更新：2026-09-03 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
@@ -5610,7 +5610,7 @@ build-crop-painter-off -j1` 全量构建、`./bin/XGuiRegression_Test` 和 CTest
   反初始化对象。
 - `Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:1322-1398` 和
   `Drive/windows/Graphics/XPlatformNativeWindow_win32.c:1036-1149` 的真实抓屏路径
-  先在栈上调用 `XPixmap_init_image()`，再用 `XPixmap_move_base()` 转移到
+  先在栈上调用 `XPixmap_init_image()`，再用 `XMove()` 转移到
   `XPixmap_create()` 返回的堆对象；这样不读取未初始化栈对象的虚表，也不会因
   `XPixmap_init_image()` 清零堆对象而丢失 `delete_base()` 所需的堆标志。
 - `Src/XGui/Graphics/XPixmap.h:88-97` 补充初始化前置条件的中文注释，明确重复
@@ -7197,7 +7197,7 @@ PNG/XPM/SVG 文件回退；`:764-853` 规定目录尺寸的精确匹配、最近
 `:1478-1533,4082-4173,4184-4240`。
 
 实现范围：`Src/XGui/Graphics/XImage.c` 的 `XImage_scaled()` 在有效目标尺寸等于源尺寸时
-调用 `XImage_copy_base()`，保留隐式共享、`cacheKey` 及源图像所有权语义；普通缩放完成后
+调用 `XCopy()`，保留隐式共享、`cacheKey` 及源图像所有权语义；普通缩放完成后
 调用现有 `XImageData_copyMetadata()`，现在完整保留 `dotsPerMeterX/Y`、设备像素比、偏移、
 色彩空间和文本元数据，而不再只复制前四项。`xgui_regression_test.c` 文本元数据夹具新增
 2x2 缩放后的元数据断言，以及 1x1 同尺寸缩放的 `cacheKey` 共享断言。
@@ -9979,7 +9979,7 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   `qimage.cpp:5199-5290,5467-5540` 先建立目标图像，再把变换写入目标，不能
   反向修改源图像。
 - **问题与修复**：`XImage_applyColorTransform()` 原先通过
-  `XImage_copy_base(out, self)` 共享像素数据后，直接进入浮点/16 位写回分支；
+  `XCopy(out, self)` 共享像素数据后，直接进入浮点/16 位写回分支；
   当源和目标格式相同，目标没有经过格式转换，导致写回同时修改源图像。现于
   `Src/XGui/Graphics/XImage.c:1755-1761` 在目标对象与源对象不同的情况下调用
   `XImage_detach(out)`，保持 COW 独立写入；原地转换仍按 Qt 语义使用同一对象并
@@ -10062,7 +10062,7 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   `copy(QRect())` 的整图深拷贝语义，`XImageFormat_toPixelFormat` /
   `XImageFormat_toImageFormat` 覆盖静态格式映射。
 - **有意裁剪**：C99 不重复暴露 C++ 运算符 `operator==/!=`、`QVariant` 转换、
-  右值限定重载以及 `QImage::swap`；调用方使用现有 `XImage_copy_base`、
+  右值限定重载以及 `QImage::swap`；调用方使用现有 `XCopy`、
   `XImage_copyRect` 与显式比较即可。Windows 专用 `HICON/HBITMAP` 辅助留在
   `Drive/windows` 平台边界，未在 `Src/XGui` 增加不可移植占位函数。Qt 原生
   `QPicture` 数据流仍按 10.403 明确拒绝，不通过伪造的最小子集宣称兼容。

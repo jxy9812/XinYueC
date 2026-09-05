@@ -1390,8 +1390,8 @@ XVector* XDeviceNetwork_lookupName(const XString* name)
         freeaddrinfo(result);
         return NULL;
     }
-    XContainerSetDataMoveMethod(vec, XHostAddress_move_base);
-    XContainerSetDataCopyMethod(vec, XHostAddress_copy_base);
+    XContainerSetDataMoveMethod(vec, XClass_move_base);
+    XContainerSetDataCopyMethod(vec, XClass_copy_base);
     XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
     /* 遍历解析结果，填充地址向量 */
     struct addrinfo* p = result;

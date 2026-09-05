@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XPlatformAccessibility.h
  * @brief      辅助功能平台桥接契约（公共层无平台 API）。
  * @details    该对象拥有进程级 XAccessible 应用根，并把对象树变化交给
@@ -49,10 +49,6 @@ XPlatformAccessibility* XPlatformAccessibility_create_ex(XMemoryType memory);
     XPlatformAccessibility_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #define XPlatformAccessibility_delete_base(self) XClass_delete_base((XClass*)(self))
 #define XPlatformAccessibility_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XPlatformAccessibility_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-#define XPlatformAccessibility_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 XAccessible* XPlatformAccessibility_root(const XPlatformAccessibility* self);
 bool XPlatformAccessibility_isActive(const XPlatformAccessibility* self);

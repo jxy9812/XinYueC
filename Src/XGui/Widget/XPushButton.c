@@ -437,7 +437,7 @@ XIcon XPushButton_icon(const XPushButton* self)
     XIcon out;
     XIcon_init(&out);
     if (self)
-        XIcon_copy_base(&out, &self->m_icon);
+        XCopy(&out, &self->m_icon);
     return out;
 }
 
@@ -446,7 +446,7 @@ void XPushButton_setIcon(XPushButton* self, const XIcon* icon)
     if (!self) return;
     XIcon_deinit_base(&self->m_icon);
     if (icon && !XIcon_isNull(icon))
-        XIcon_copy_base(&self->m_icon, icon);
+        XCopy(&self->m_icon, icon);
     pushbutton_refreshSizeHint(self);
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
@@ -1135,7 +1135,7 @@ static void VXPushButton_copy(XPushButton* self, const XPushButton* other)
     XIcon_deinit_base(&self->m_icon);
     self->m_text = other->m_text ? XString_create_copy(other->m_text)
                                  : XString_create();
-    XIcon_copy_base(&self->m_icon, &other->m_icon);
+    XCopy(&self->m_icon, &other->m_icon);
     self->m_iconSize = other->m_iconSize;
     self->m_checkable = other->m_checkable;
     self->m_checked = other->m_checked;
@@ -1167,7 +1167,7 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
         self->m_text = NULL;
     }
     self->m_text = other->m_text;
-    XIcon_move_base(&self->m_icon, &other->m_icon);
+    XMove(&self->m_icon, &other->m_icon);
     other->m_text = XString_create();
     self->m_iconSize = other->m_iconSize;
     other->m_iconSize.width = 0;

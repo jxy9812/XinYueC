@@ -50,7 +50,6 @@ XRestReply* XRestReply_create_copy(const XRestReply* other);
 
 #define XRestReply_deinit_base XClass_deinit_base
 #define XRestReply_delete_base XClass_delete_base
-#define XRestReply_copy_base XClass_copy_base
 
 /**
  * - @brief 获取被包装的 HTTP 响应。

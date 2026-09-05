@@ -265,17 +265,7 @@ static inline void XContainer_free(const XContainer* object, void* ptr)
  */
 #define XContainerSetCompare(object, compare) (((XContainer*)(object))->m_compare = compare)
 
-/**
-* @brief 拷贝操作的基础实现
-* @details 复用基类XClass的拷贝逻辑，作为容器拷贝的默认实现
-*/
-#define XContainer_copy_base XClass_copy_base
 
-/**
-* @brief 移动操作的基础实现
-* @details 复用基类XClass的移动逻辑，作为容器移动的默认实现
-*/
-#define XContainer_move_base XClass_move_base
 
 /**
 * @brief 销毁操作的基础实现

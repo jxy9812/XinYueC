@@ -50,18 +50,6 @@ void XBsonArray_init(XBsonArray* array);
 */
 #define XBsonArray_rcopy_base						XVector_rcopy_base
 /**
-* @brief 拷贝操作，映射到XVector_copy_base
-* @param dest 目标XBsonArray
-* @param src 源XBsonArray
-*/
-#define XBsonArray_copy_base						XVector_copy_base	
-/**
-* @brief 移动操作，映射到XVector_move_base（转移资源所有权）
-* @param dest 目标XBsonArray
-* @param src 源XBsonArray
-*/
-#define XBsonArray_move_base						XVector_move_base	
-/**
 * @brief 反初始化操作，映射到XVector_deinit_base（释放内部资源，不释放实例本身）
 * @param array XBsonArray实例指针
 */

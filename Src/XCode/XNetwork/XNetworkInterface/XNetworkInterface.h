@@ -130,8 +130,6 @@ XVtable* XNetworkInterface_class_init(void);
 
 #define XNetworkInterface_delete_base    XClass_delete_base
 #define XNetworkInterface_deinit_base    XClass_deinit_base
-#define XNetworkInterface_copy_base      XClass_copy_base
-#define XNetworkInterface_move_base      XClass_move_base
 
 // ==================== 属性访问器 ====================
 

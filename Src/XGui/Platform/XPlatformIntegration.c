@@ -92,7 +92,7 @@ static XIcon* integration_cloneIcon(const XIcon* icon)
     if (!icon) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XIcon_copy_base(copy, icon);
+    XCopy(copy, icon);
     return copy;
 }
 

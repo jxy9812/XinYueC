@@ -377,7 +377,7 @@ bool XTuiScreen_copyFrom(XTuiScreen* dest, const XTuiScreen* src)
 {
     if (!dest || !src)
         return false;
-    XClass_copy_base(dest, (const XClass*)src);
+    XCopy(dest, (const XClass*)src);
     return true;
 }
 

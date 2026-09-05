@@ -358,7 +358,7 @@ XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu)
 {
     if (!pdu) return NULL;
     XModbusPdu* newPdu = XModbusPdu_create();
-    if (newPdu) XModbusPdu_copy_base(newPdu,pdu);
+    if (newPdu) XCopy(newPdu,pdu);
     return newPdu;
 }
 
@@ -366,7 +366,7 @@ XModbusPdu* XModbusPdu_create_move(XModbusPdu* pdu)
 {
     if (!pdu) return NULL;
     XModbusPdu* newPdu = XModbusPdu_create();
-    if (newPdu) XModbusPdu_move_base(newPdu, pdu);
+    if (newPdu) XMove(newPdu, pdu);
     return newPdu;
 }
 
@@ -406,7 +406,7 @@ XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req)
 {
     if (!req)return NULL;
     XModbusRequest* newReq = XModbusRequest_create();
-    if (newReq)XModbusRequest_copy_base(newReq,req);
+    if (newReq)XCopy(newReq,req);
     return newReq;
 }
 
@@ -414,7 +414,7 @@ XModbusRequest* XModbusRequest_create_move(XModbusRequest* req)
 {
     if (!req)return NULL;
     XModbusRequest* newReq = XModbusRequest_create();
-    if (newReq)XModbusRequest_move_base(newReq, req);
+    if (newReq)XMove(newReq, req);
     return newReq;
 }
 
@@ -450,13 +450,13 @@ XModbusResponse* XModbusResponse_create_ex(XMemoryType memory)
 XModbusResponse* XModbusResponse_create_copy(XModbusResponse* response)
 {
     XModbusResponse* resp = XModbusResponse_create();
-    if (resp)XModbusResponse_copy_base(resp, response);
+    if (resp)XCopy(resp, response);
     return resp;
 }
 XModbusResponse* XModbusResponse_create_move(XModbusResponse* response)
 {
     XModbusResponse* resp = XModbusResponse_create();
-    if (resp)XModbusResponse_move_base(resp, response);
+    if (resp)XMove(resp, response);
     return resp;
 }
 XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code) {
@@ -487,14 +487,14 @@ XModbusExceptionResponse* XModbusExceptionResponse_create_ex(XMemoryType memory)
 XModbusExceptionResponse* XModbusExceptionResponse_create_copy(const XModbusExceptionResponse* res)
 {
     XModbusExceptionResponse* newExc = XModbusExceptionResponse_create();
-    if (newExc)XModbusExceptionResponse_copy_base(newExc,res);
+    if (newExc)XCopy(newExc,res);
     return newExc;
 }
 
 XModbusExceptionResponse* XModbusExceptionResponse_create_move(XModbusExceptionResponse* res)
 {
     XModbusExceptionResponse* newExc = XModbusExceptionResponse_create();
-    if (newExc)XModbusExceptionResponse_move_base(newExc, res);
+    if (newExc)XMove(newExc, res);
     return newExc;
 }
 
@@ -546,7 +546,7 @@ void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src)
     if (XClassIsVtableNull(pdu))
         XModbusPdu_init(pdu);
     pdu->m_code = src->m_code;
-    XByteArray_copy_base(pdu->m_data,src->m_data);
+    XCopy(pdu->m_data,src->m_data);
 }
 
 void VXModbusPdu_move(XModbusPdu * pdu, XModbusPdu * src)

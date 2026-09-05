@@ -82,7 +82,7 @@ static void VXMimeData_copy(XMimeData* self, const XMimeData* other)
     if (source->m_image) {
         target->m_image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (target->m_image)
-            XImage_copy_base(target->m_image, source->m_image);
+            XCopy(target->m_image, source->m_image);
     }
     if (source->m_custom) {
         size_t n = XVector_size_base((const XContainer*)source->m_custom);
@@ -328,7 +328,7 @@ XImage* XMimeData_imageData(const XMimeData* self)
     image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!image)
         return NULL;
-    XImage_copy_base(image, self->m_data->m_image);
+    XCopy(image, self->m_data->m_image);
     return image;
 }
 
@@ -340,7 +340,7 @@ void XMimeData_setImageData(XMimeData* self, const XImage* image)
     if (image) {
         copy = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (copy)
-            XImage_copy_base(copy, image);
+            XCopy(copy, image);
     }
     if (self->m_data->m_image)
         XImage_delete_base((XClass*)self->m_data->m_image);

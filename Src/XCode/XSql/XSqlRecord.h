@@ -43,10 +43,6 @@ XSqlRecord* XSqlRecord_create_move(XSqlRecord* other);
 #define XSqlRecord_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRecord_create 系列函数返回的记录对象。 */
 #define XSqlRecord_delete_base XClass_delete_base
-/** @brief 将记录对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlRecord_copy_base XClass_copy_base
-/** @brief 将记录对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlRecord_move_base XClass_move_base
 
 /** @brief 交换两个记录对象内容。 @param left 左记录；不能为 NULL。 @param right 右记录；不能为 NULL。 @return 无；字段数组所有权一并交换。 */
 void XSqlRecord_swap(XSqlRecord* left, XSqlRecord* right);

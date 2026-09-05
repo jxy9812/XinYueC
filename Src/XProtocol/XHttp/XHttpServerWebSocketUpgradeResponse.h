@@ -73,7 +73,6 @@ XHttpServerWebSocketUpgradeResponse* XHttpServerWebSocketUpgradeResponse_create_
     const XHttpServerWebSocketUpgradeResponse* other);
 #define XHttpServerWebSocketUpgradeResponse_deinit_base XClass_deinit_base
 #define XHttpServerWebSocketUpgradeResponse_delete_base XClass_delete_base
-#define XHttpServerWebSocketUpgradeResponse_copy_base XClass_copy_base
 /**
  * - @brief 获取升级判定类型。
  * - @param self 升级判定对象；可为 NULL。

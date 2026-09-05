@@ -86,8 +86,6 @@ void XHttpPart_init(XHttpPart* self);
  */
 #define XHttpPart_deinit_base XClass_deinit_base
 #define XHttpPart_delete_base XClass_delete_base
-#define XHttpPart_copy_base XClass_copy_base
-#define XHttpPart_move_base XClass_move_base
 
 /**
  * - @brief 设置原始 MIME 头。

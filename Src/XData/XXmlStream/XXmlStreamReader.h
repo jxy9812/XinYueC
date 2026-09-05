@@ -569,8 +569,6 @@ XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other);
  */
 void XXmlStreamReader_init(XXmlStreamReader* self);
 
-#define  XXmlStreamReader_copy_base             XClass_copy_base
-#define  XXmlStreamReader_move_base             XClass_move_base
 #define  XXmlStreamReader_deinit_base           XClass_deinit_base
 #define  XXmlStreamReader_delete_base           XClass_delete_base
 

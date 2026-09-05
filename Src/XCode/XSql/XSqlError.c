@@ -111,7 +111,7 @@ XSqlError* XSqlError_create_copy(const XSqlError* other)
 {
     if (!other) return NULL;
     XSqlError* result = XSqlError_create(NULL, NULL, XSqlErrorType_NoError, NULL);
-    if (result) XSqlError_copy_base(result, other);
+    if (result) XCopy(result, other);
     return result;
 }
 
@@ -119,7 +119,7 @@ XSqlError* XSqlError_create_move(XSqlError* other)
 {
     if (!other) return NULL;
     XSqlError* result = XSqlError_create(NULL, NULL, XSqlErrorType_NoError, NULL);
-    if (result) XSqlError_move_base(result, other);
+    if (result) XMove(result, other);
     return result;
 }
 
@@ -128,8 +128,8 @@ void XSqlError_swap(XSqlError* left, XSqlError* right)
     if (!left || !right || left == right) return;
     XSqlError* temp = XSqlError_create_move(left);
     if (!temp) return;
-    XSqlError_move_base(left, right);
-    XSqlError_move_base(right, temp);
+    XMove(left, right);
+    XMove(right, temp);
     XSqlError_delete_base(temp);
 }
 

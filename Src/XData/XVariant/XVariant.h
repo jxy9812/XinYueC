@@ -499,10 +499,6 @@ size_t XVariant_dataSize(XVariant* var);
  * @param type 数据类型。
  */
 void XVariant_setDataRef(XVariant* var, void* data, size_t dataSize, int type);
-/** @brief 深复制既有变体。 @param var 目标变体；不能为 NULL。 @param other 源变体；借用，不能为 NULL。 @return 基础复制入口返回值由 XClass 约定。 */
-#define XVariant_copy_base			XClass_copy_base
-/** @brief 移动既有变体。 @param var 目标变体；不能为 NULL。 @param other 源变体；借用，不能为 NULL。 @return 基础移动入口返回值由 XClass 约定。 */
-#define XVariant_move_base			XClass_move_base
 /** @brief 反初始化变体并释放其内部数据。 @param var 变体对象；不能为 NULL。 @return 无。 */
 #define XVariant_deinit_base		XClass_deinit_base
 /** @brief 释放由 XVariant_create 系列函数返回的变体。 @param var 变体对象所有权。 @return 无。 */

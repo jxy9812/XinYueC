@@ -81,8 +81,6 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_move(XRegularExp
  */
 #define XRegularExpressionValidator_deinit_base XClass_deinit_base
 #define XRegularExpressionValidator_delete_base XClass_delete_base
-#define XRegularExpressionValidator_copy_base XClass_copy_base
-#define XRegularExpressionValidator_move_base XClass_move_base
 
 /**
  * @brief 获取当前正则表达式的副本。

@@ -131,8 +131,6 @@ const XMqttPublishProperties* XMqttMessage_publishProperties_const(const XMqttMe
  */
 bool XMqttMessage_equal(const XMqttMessage* a, const XMqttMessage* b);
 
-#define XMqttMessage_copy_base   XClass_copy_base
-#define XMqttMessage_move_base   XClass_move_base
 #define XMqttMessage_deinit_base XClass_deinit_base
 #define XMqttMessage_delete_base XClass_delete_base
 

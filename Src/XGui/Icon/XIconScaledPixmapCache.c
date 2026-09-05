@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconScaledPixmapCache.c
  * @brief      XIcon 缩放像素图缓存内部辅助实现。
  * @author     XinYueC 团队
@@ -46,7 +46,7 @@ bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
         XPixmap_deinit_base(&cached);
         return false;
     }
-    XPixmap_copy_base(out, &cached);
+    XCopy(out, &cached);
     XPixmap_deinit_base(&cached);
     return true;
 }

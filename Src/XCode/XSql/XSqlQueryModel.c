@@ -310,7 +310,7 @@ static void xsql_model_load_query(XSqlQueryModel* model)
         return;
     record = XSqlQuery_record(&model->m_query);
     if (record) {
-        XSqlRecord_move_base(&model->m_record, record);
+        XMove(&model->m_record, record);
         XSqlRecord_delete_base(record);
     }
     driver = XSqlQuery_driver(&model->m_query);
@@ -410,7 +410,7 @@ XSqlModelIndex XSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlMode
         ? XClassGetVirtualFunc(model, EXSqlQueryModel_IndexInQuery, XSqlModelIndex(*)(const XSqlQueryModel*, XSqlModelIndex))(model, item)
         : item;
 }
-void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error) { if (model && error) XSqlError_copy_base(&model->m_lastError, error); }
+void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error) { if (model && error) XCopy(&model->m_lastError, error); }
 static void VXSqlQueryModel_queryChange(XSqlQueryModel* model) { (void)model; }
 void XSqlQueryModel_queryChange(XSqlQueryModel* model)
 {

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconEngine.h
  * @brief      XIconEngine 图标引擎抽象类（对标 Qt 6.8 QIconEngine）。
  * @note       引擎对象由传给 XIcon_init_engine 的指针转移所有权；派生类
@@ -86,20 +86,6 @@ XIconEngine* XIconEngine_create_ex(XMemoryType memory);
  */
 void XIconEngine_init(XIconEngine* self);
 
-/**
- * @brief 通过 XClass 虚表复制图标引擎。
- * @param self 目标图标引擎指针。
- * @param other 源图标引擎指针。
- */
-#define XIconEngine_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动图标引擎。
- * @param self 目标图标引擎指针。
- * @param other 源图标引擎指针；移动后源对象为空。
- */
-#define XIconEngine_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief 释放图标引擎实例资源的基类调度接口。

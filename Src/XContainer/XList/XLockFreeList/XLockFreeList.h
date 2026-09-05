@@ -237,16 +237,6 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
 */
 #define XLockFreeList_sort_base                    XListBase_sort_base
 /**
-* @brief 拷贝链表（基础版本）
-* @note 继承自XListBase的拷贝操作，通过宏重命名实现接口统一
-*/
-#define XLockFreeList_copy_base                    XListBase_copy_base
-/**
-* @brief 移动链表（基础版本，转移所有权）
-* @note 继承自XListBase的移动操作，通过宏重命名实现接口统一
-*/
-#define XLockFreeList_move_base                    XListBase_move_base
-/**
 * @brief 反初始化链表（基础版本）
 * @note 继承自XListBase的反初始化操作，释放资源但不释放链表本身
 */

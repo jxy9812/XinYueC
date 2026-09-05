@@ -104,17 +104,7 @@ XXmlStreamWriter* XXmlStreamWriter_create_byteArray(XByteArray* array);
  */
 XXmlStreamWriter* XXmlStreamWriter_create_string(XString* string);
 
-/**
- * @brief      创建并关联 XIODevice 的 Writer。
- * @param      device 输出设备，只借用，Writer 不负责打开、关闭或释放。
- * @return     新 Writer；调用方使用 XXmlStreamWriter_delete_base 释放。
- */
-XXmlStreamWriter* XXmlStreamWriter_create_device(struct XIODevice* device);
 
-/* ========== 虚函数调度 ========== */
-
-#define  XXmlStreamWriter_copy_base             XClass_copy_base
-#define  XXmlStreamWriter_move_base             XClass_move_base
 #define  XXmlStreamWriter_deinit_base           XClass_deinit_base
 #define  XXmlStreamWriter_delete_base           XClass_delete_base
 

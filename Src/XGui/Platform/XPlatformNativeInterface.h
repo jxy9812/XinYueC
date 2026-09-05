@@ -104,12 +104,6 @@ XPlatformNativeInterface* XPlatformNativeInterface_create_ex(XMemoryType memory)
 
 /** @brief 通过 XClass 虚表释放 XPlatformNativeInterface 资源（栈/外部存储对象使用）。 */
 #define XPlatformNativeInterface_deinit_base(self) XClass_deinit_base((XClass*)(self))
-/** @brief 深拷贝 XPlatformNativeInterface 资源。 */
-#define XPlatformNativeInterface_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动 XPlatformNativeInterface 资源。 */
-#define XPlatformNativeInterface_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 删除堆上的 XPlatformNativeInterface 对象。 */
 #define XPlatformNativeInterface_delete_base(self) XClass_delete_base((XClass*)(self))
 

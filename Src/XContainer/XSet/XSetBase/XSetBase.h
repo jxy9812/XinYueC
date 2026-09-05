@@ -171,17 +171,7 @@ XVector* XSetBase_keys_base(const XSetBase* this_set);
 
 // ========================= 继承与工具方法 =========================
 
-/**
-* @brief 拷贝容器（继承自XContainer）
-* @note 宏定义，等价于XContainer_copy_base，实现容器的深拷贝
-*/
-#define XSetBase_copy_base				    XContainer_copy_base	
 
-/**
-* @brief 移动容器资源（继承自XContainer）
-* @note 宏定义，等价于XContainer_move_base，转移容器资源所有权
-*/
-#define XSetBase_move_base				    XContainer_move_base	
 
 /**
 * @brief 释放容器资源（继承自XContainer）

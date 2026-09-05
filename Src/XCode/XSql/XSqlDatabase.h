@@ -131,10 +131,6 @@ XSqlDatabase* XSqlDatabase_create_move(XSqlDatabase* other);
 #define XSqlDatabase_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlDatabase_create 系列函数返回的数据库句柄。 */
 #define XSqlDatabase_delete_base XClass_delete_base
-/** @brief 将数据库句柄深复制到既有目标对象的基础复制入口。 */
-#define XSqlDatabase_copy_base XClass_copy_base
-/** @brief 将数据库句柄资源移入既有目标对象的基础移动入口。 */
-#define XSqlDatabase_move_base XClass_move_base
 
 /**
  * @brief 按驱动枚举添加连接。

@@ -3291,7 +3291,7 @@ XXmlStreamReader* XXmlStreamReader_create_copy(const XXmlStreamReader* other)
     if (!other) return NULL;
     XXmlStreamReader* self = XXmlStreamReader_create();
     if (!self) return NULL;
-    XXmlStreamReader_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -3300,7 +3300,7 @@ XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other)
     if (!other) return NULL;
     XXmlStreamReader* self = XXmlStreamReader_create();
     if (!self) return NULL;
-    XXmlStreamReader_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 

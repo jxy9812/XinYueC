@@ -423,7 +423,7 @@ void XAbstractSocket_setLocalAddress(XAbstractSocket* sock, const XHostAddress* 
 {
     if (sock && address)
     {
-        XHostAddress_copy_base(&sock->localAddress, address);
+        XCopy(&sock->localAddress, address);
     }
 }
 
@@ -435,7 +435,7 @@ void XAbstractSocket_setPeerPort(XAbstractSocket* sock, uint16_t port)
 void XAbstractSocket_setPeerAddress(XAbstractSocket* sock, const XHostAddress* address)
 {
     if (sock && address) {
-        XHostAddress_copy_base(&sock->peerAddress, address);
+        XCopy(&sock->peerAddress, address);
     }
 }
 

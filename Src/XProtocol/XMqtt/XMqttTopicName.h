@@ -121,8 +121,6 @@ bool XMqttTopicName_less(const XMqttTopicName* a, const XMqttTopicName* b);
  */
 size_t XMqttTopicName_hash(const XMqttTopicName* name, size_t seed);
 
-#define XMqttTopicName_copy_base   XClass_copy_base
-#define XMqttTopicName_move_base   XClass_move_base
 #define XMqttTopicName_deinit_base XClass_deinit_base
 #define XMqttTopicName_delete_base XClass_delete_base
 

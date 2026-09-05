@@ -81,8 +81,6 @@ XHstsPolicy* XHstsPolicy_create_move(XHstsPolicy* other);
 /** @brief HSTS 策略生命周期和值语义入口。 */
 #define XHstsPolicy_deinit_base XClass_deinit_base
 #define XHstsPolicy_delete_base XClass_delete_base
-#define XHstsPolicy_copy_base XClass_copy_base
-#define XHstsPolicy_move_base XClass_move_base
 
 /**
  * - @brief 设置策略主机。

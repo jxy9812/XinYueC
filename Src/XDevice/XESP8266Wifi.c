@@ -518,7 +518,7 @@ XHostAddress* XESP8266Wifi_getLocalIP(XESP8266Wifi* device, int msecs) {
   /*  if (XATComm_sendCommand(base, "AT+CIFSR", XESP8266_Op_GetLocalIP, msecs)) {
         if (!XHostAddress_isNull(&device->m_localIP)) {
             XHostAddress* addr = XMalloc_System(sizeof(XHostAddress));
-            XHostAddress_init(addr); XClass_copy_base(addr, &device->m_localIP); return addr;
+            XHostAddress_init(addr); XCopy(addr, &device->m_localIP); return addr;
         }
     }*/
     // 2. WIFI GOT IP 后 AT+CIPSTA? 可能短暂返回 "busy p..."，在调用方
@@ -532,7 +532,7 @@ XHostAddress* XESP8266Wifi_getLocalIP(XESP8266Wifi* device, int msecs) {
             XHostAddress* addr = XMalloc_System(sizeof(XHostAddress));
             if (!addr) return NULL;
             XHostAddress_init(addr);
-            XClass_copy_base(addr, &device->m_localIP);
+            XCopy(addr, &device->m_localIP);
             return addr;
         }
         if (msecs < 0) break;

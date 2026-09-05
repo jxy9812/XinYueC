@@ -109,7 +109,7 @@ XHstsPolicy* XHstsPolicy_create_copy(const XHstsPolicy* other)
         return NULL;
     self = XHstsPolicy_create();
     if (self)
-        XClass_copy_base((XClass*)self, (const XClass*)other);
+        XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -120,7 +120,7 @@ XHstsPolicy* XHstsPolicy_create_move(XHstsPolicy* other)
         return NULL;
     self = XHstsPolicy_create();
     if (self)
-        XClass_move_base((XClass*)self, (XClass*)other);
+        XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

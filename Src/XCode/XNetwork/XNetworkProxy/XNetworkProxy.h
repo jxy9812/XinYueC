@@ -239,8 +239,6 @@ bool XNetworkProxyQuery_equal(const XNetworkProxyQuery* a, const XNetworkProxyQu
 
 #define XNetworkProxyQuery_deinit_base    XClass_deinit_base
 #define XNetworkProxyQuery_delete_base    XClass_delete_base
-#define XNetworkProxyQuery_copy_base      XClass_copy_base
-#define XNetworkProxyQuery_move_base      XClass_move_base
 
 // =============== XNetworkProxy 虚函数表定义 ===============
 
@@ -307,8 +305,6 @@ XNetworkProxy* XNetworkProxy_create_2(XNetworkProxy_ProxyType type, const XStrin
 
 #define XNetworkProxy_deinit_base    XClass_deinit_base
 #define XNetworkProxy_delete_base    XClass_delete_base
-#define XNetworkProxy_copy_base      XClass_copy_base
-#define XNetworkProxy_move_base      XClass_move_base
 
 /**
  * @brief 深拷贝一个 XNetworkProxy 实例。
@@ -498,8 +494,6 @@ XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory,  XNetwo
 
 #define XNetworkProxyFactory_deinit_base    XClass_deinit_base
 #define XNetworkProxyFactory_delete_base    XClass_delete_base
-#define XNetworkProxyFactory_copy_base      XClass_copy_base
-#define XNetworkProxyFactory_move_base      XClass_move_base
 
 /**
  * @brief 使用工厂查询代理配置。

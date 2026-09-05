@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageCodecPpm.c
  * @brief      PPM/PBM/PGM（P1-P6）便携图像编解码实现。
  * @note       对齐 Qt 6.8 QPpmHandler 的头部、尺寸探测和像素语义；输入
@@ -293,7 +293,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
         XImage_setColor(&temp, 0, 0xffffffffu);
         XImage_setColor(&temp, 1, 0xff000000u);
     }
-    XImage_move_base(out, &temp);
+    XMove(out, &temp);
     return true;
 }
 

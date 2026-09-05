@@ -101,16 +101,6 @@ XQueue* XQueue_create_ex(XMemoryType memory,  size_t typeSize);
 #define XQueue_isFull_base				XQueueBase_isFull_base
 // ------------------------------ 容器管理（继承自XQueueBase/XContainer） ------------------------------
 /**
-* @brief 拷贝容器（继承自基类）
-* @note 复用XQueueBase的XQueueBase_copy_base，复制源队列的所有元素
-*/
-#define XQueue_copy_base				XQueueBase_copy_base
-/**
-* @brief 移动容器资源（继承自基类）
-* @note 复用XQueueBase的XQueueBase_move_base，转移源队列的资源所有权
-*/
-#define XQueue_move_base				XQueueBase_move_base
-/**
 * @brief 反初始化容器（继承自基类）
 * @note 复用XQueueBase的XQueueBase_deinit_base，释放资源但不销毁实例本身
 */

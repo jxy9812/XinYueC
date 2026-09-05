@@ -39,8 +39,8 @@ void XCanBus_init(XCanBus* canBus)
 
     /* 创建插件映射表：键为 XString，值为 XCanBus_PluginEntry */
     canBus->m_plugins = XMap_create(sizeof(XString), sizeof(XCanBus_PluginEntry), XString_compare);
-    XMapBaseSetKeyCopyMethod(canBus->m_plugins, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(canBus->m_plugins, XString_move_base);
+    XMapBaseSetKeyCopyMethod(canBus->m_plugins, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(canBus->m_plugins, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(canBus->m_plugins, XClass_deinit_base);
 }
 

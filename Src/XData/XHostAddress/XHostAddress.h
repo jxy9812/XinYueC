@@ -112,8 +112,6 @@ XHostAddress* XHostAddress_create_fromSpecial(XHostAddress_SpecialAddress specia
 
 #define XHostAddress_delete_base    XClass_delete_base
 #define XHostAddress_deinit_base    XClass_deinit_base
-#define XHostAddress_copy_base      XClass_copy_base
-#define XHostAddress_move_base      XClass_move_base
 
 // ==================== 赋值 ====================
 

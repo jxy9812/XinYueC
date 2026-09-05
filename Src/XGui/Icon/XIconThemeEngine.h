@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconThemeEngine.h
  * @brief      XIconThemeEngine 主题图标引擎（对标 Qt 6.8 QIconLoaderEngine）。
  * @note       引擎按主题名称在 XDG 主题目录中按需解析像素图并缩放，
@@ -68,21 +68,7 @@ void XIconThemeEngine_init(XIconThemeEngine* self, const XString* iconName);
  */
 void XIconThemeEngine_init_2(XIconThemeEngine* self, const char* iconName);
 
-/**
- * @brief 通过 XClass 虚表复制主题图标引擎。
- * @param self  目标主题图标引擎指针。
- * @param other 源主题图标引擎指针。
- */
-#define XIconThemeEngine_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
 
-/**
- * @brief 通过 XClass 虚表移动主题图标引擎。
- * @param self  目标主题图标引擎指针。
- * @param other 源主题图标引擎指针；移动后源对象为空。
- */
-#define XIconThemeEngine_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief 通过 XClass 虚表释放主题图标引擎资源。

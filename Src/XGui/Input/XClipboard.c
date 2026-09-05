@@ -294,7 +294,7 @@ void XClipboard_setPixmap(XClipboard* self, const XPixmap* pixmap, XClipboardMod
         return;
     copy = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (copy) {
-        XPixmap_copy_base(copy, pixmap);
+        XCopy(copy, pixmap);
         XPixmap_toImage(copy, image);
         XPixmap_delete_base((XClass*)copy);
     }

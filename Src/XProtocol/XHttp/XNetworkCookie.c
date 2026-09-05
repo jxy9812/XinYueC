@@ -180,7 +180,7 @@ XNetworkCookie* XNetworkCookie_create_copy(const XNetworkCookie* other)
     if (!other)
         return NULL;
     self = XNetworkCookie_create_empty();
-    if (self) XClass_copy_base((XClass*)self, (const XClass*)other);
+    if (self) XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -190,7 +190,7 @@ XNetworkCookie* XNetworkCookie_create_move(XNetworkCookie* other)
     if (!other)
         return NULL;
     self = XNetworkCookie_create_empty();
-    if (self) XClass_move_base((XClass*)self, (XClass*)other);
+    if (self) XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

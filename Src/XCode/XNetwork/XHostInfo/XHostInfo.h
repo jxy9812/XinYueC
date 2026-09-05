@@ -72,11 +72,9 @@ XVtable* XHostInfo_class_init(void);
 
 #define XHostInfo_delete_base    XClass_delete_base
 #define XHostInfo_deinit_base    XClass_deinit_base
-#define XHostInfo_copy_base      XClass_copy_base
 
 #undef XHostInfo_create
 #define XHostInfo_create() XHostInfo_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XHostInfo_move_base      XClass_move_base
 
 // ==================== 属性访问器 ====================
 

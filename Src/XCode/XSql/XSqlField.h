@@ -87,10 +87,6 @@ XSqlField* XSqlField_create_move(XSqlField* other);
 #define XSqlField_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlField_create 系列函数返回的字段对象。 */
 #define XSqlField_delete_base XClass_delete_base
-/** @brief 将字段对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlField_copy_base XClass_copy_base
-/** @brief 将字段对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlField_move_base XClass_move_base
 
 /** @brief 交换两个字段对象内容。 @param left 左字段；不能为 NULL。 @param right 右字段；不能为 NULL。 @return 无；元数据、当前值和默认值一并交换。 */
 void XSqlField_swap(XSqlField* left, XSqlField* right);

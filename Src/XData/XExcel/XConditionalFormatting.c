@@ -80,9 +80,9 @@ XConditionalFormatting* XConditionalFormatting_copy(const XConditionalFormatting
         dst.m_stdDev = src->m_stdDev;
         dst.m_showData = src->m_showData;
         dst.m_stopIfTrue = src->m_stopIfTrue;
-        if (src->m_formula1) { dst.m_formula1 = XString_create(); XString_copy_base(dst.m_formula1, src->m_formula1); }
-        if (src->m_formula2) { dst.m_formula2 = XString_create(); XString_copy_base(dst.m_formula2, src->m_formula2); }
-        if (src->m_formula3) { dst.m_formula3 = XString_create(); XString_copy_base(dst.m_formula3, src->m_formula3); }
+        if (src->m_formula1) { dst.m_formula1 = XString_create(); XCopy(dst.m_formula1, src->m_formula1); }
+        if (src->m_formula2) { dst.m_formula2 = XString_create(); XCopy(dst.m_formula2, src->m_formula2); }
+        if (src->m_formula3) { dst.m_formula3 = XString_create(); XCopy(dst.m_formula3, src->m_formula3); }
         if (src->m_text) dst.m_text = XString_create_copy(src->m_text);
         if (src->m_timePeriod) dst.m_timePeriod = XString_create_copy(src->m_timePeriod);
         bool copied = (!src->m_format || dst.m_format) &&

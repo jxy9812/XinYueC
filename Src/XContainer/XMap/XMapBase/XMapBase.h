@@ -210,17 +210,7 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 
 // ========================= 继承与工具方法 =========================
 
-/**
-* @brief 拷贝容器（继承自XContainer）
-* @note 宏定义，等价于XContainer_copy_base
-*/
-#define XMapBase_copy_base				XContainer_copy_base	
 
-/**
-* @brief 移动容器资源（继承自XContainer）
-* @note 宏定义，等价于XContainer_move_base
-*/
-#define XMapBase_move_base				XContainer_move_base	
 
 /**
 * @brief 释放容器资源（继承自XContainer）

@@ -149,21 +149,6 @@ void XLayout_init(XLayout* self);
 #define XLayout_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的布局对象。 */
 #define XLayout_delete_base(self)  XClass_delete_base((XClass*)(self))
-/**
- * @brief 通过 XClass 虚表深拷贝布局（仅复制配置与标量字段，不复制条目树）。
- * @details self 与 other 必须是同一具体布局类型且都已由对应的 *_init 或
- *          创建函数初始化；该操作复用目标对象，不检查或初始化未构造的存储。
- */
-#define XLayout_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动布局（转移内部条目数组所有权）。
- * @details self 与 other 必须是同一具体布局类型且都已由对应的 *_init 或
- *          创建函数初始化；该操作复用目标对象并释放其原有拥有条目，
- *          不检查或初始化未构造的存储。
- */
-#define XLayout_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 条目管理虚函数（对标 QLayout 纯虚函数） ==================== */
 

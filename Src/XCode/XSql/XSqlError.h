@@ -80,10 +80,6 @@ XSqlError* XSqlError_create_move(XSqlError* other);
 #define XSqlError_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlError_create 系列函数返回的错误对象。 */
 #define XSqlError_delete_base XClass_delete_base
-/** @brief 将错误对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlError_copy_base XClass_copy_base
-/** @brief 将错误对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlError_move_base XClass_move_base
 
 /** @brief 交换两个错误对象内容。 @param left 左错误对象；不能为 NULL。 @param right 右错误对象；不能为 NULL。 @return 无；三个文本与错误类型一并交换。 */
 void XSqlError_swap(XSqlError* left, XSqlError* right);

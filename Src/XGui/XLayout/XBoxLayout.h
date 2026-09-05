@@ -124,21 +124,6 @@ XBoxLayout* XBoxLayout_create(XBoxLayoutDirection direction, XWidget* parent);
 #define XBoxLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的盒式布局对象。 */
 #define XBoxLayout_delete_base(self) XClass_delete_base((XClass*)(self))
-/**
- * @brief 深拷贝盒式布局配置，不复制条目树。
- * @details self 与 other 必须是同一具体盒式布局类型且都已由 XBoxLayout_init
- *          或创建函数初始化；操作复用目标对象，不检查或初始化未构造的存储。
- */
-#define XBoxLayout_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 移动盒式布局及条目所有权。
- * @details self 与 other 必须是同一具体盒式布局类型且都已由 XBoxLayout_init
- *          或创建函数初始化；操作复用目标对象并释放其原有伸展/条目资源，
- *          不检查或初始化未构造的存储。
- */
-#define XBoxLayout_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 方向访问 ==================== */
 

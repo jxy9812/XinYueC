@@ -173,7 +173,7 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
     if (!info) return NULL;
     
     XHostInfo_init(info);
-    XHostInfo_copy_base(info, other);
+    XCopy(info, other);
     
     return info;
 }

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPerformanceOverlay.c
  * @brief      XGui 性能悬浮层控件实现。
  ******************************************************************************/
@@ -230,7 +230,7 @@ void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
     if (!self) return;
     source = XWidget_font((XWidget*)&self->m_base);
     XFont_init(&font);
-    XFont_copy_base(&font, &source);
+    XCopy(&font, &source);
     XFont_deinit_base(&source);
     XFont_setFamily(&font, family);
     XWidget_setFont((XWidget*)&self->m_base, &font);

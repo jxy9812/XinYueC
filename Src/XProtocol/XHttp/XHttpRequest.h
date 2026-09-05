@@ -176,8 +176,6 @@ XHttpRequest* XHttpRequest_create_move(XHttpRequest* other);
  */
 #define XHttpRequest_deinit_base XClass_deinit_base
 #define XHttpRequest_delete_base XClass_delete_base
-#define XHttpRequest_copy_base XClass_copy_base
-#define XHttpRequest_move_base XClass_move_base
 
 /**
  * - @brief 获取请求 URL 的借用只读指针。

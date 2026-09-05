@@ -95,12 +95,6 @@ XPlatformWindow* XPlatformWindow_create_ex(XMemoryType memory, XWindow* window);
 
 /** @brief 通过 XClass 虚表释放 XPlatformWindow 资源（栈/外部存储对象使用）。 */
 #define XPlatformWindow_deinit_base(self) XClass_deinit_base((XClass*)(self))
-/** @brief 深拷贝 XPlatformWindow 资源。 */
-#define XPlatformWindow_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动 XPlatformWindow 资源。 */
-#define XPlatformWindow_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 /** @brief 删除堆上的 XPlatformWindow 对象。 */
 #define XPlatformWindow_delete_base(self) XClass_delete_base((XClass*)(self))
 

@@ -277,7 +277,7 @@ XSqlDatabase* XSqlDatabase_create_copy(const XSqlDatabase* other)
 {
     if (!other) return NULL;
     XSqlDatabase* result = XSqlDatabase_create();
-    if (result) XSqlDatabase_copy_base(result, other);
+    if (result) XCopy(result, other);
     return result;
 }
 
@@ -285,7 +285,7 @@ XSqlDatabase* XSqlDatabase_create_move(XSqlDatabase* other)
 {
     if (!other) return NULL;
     XSqlDatabase* result = XSqlDatabase_create();
-    if (result) XSqlDatabase_move_base(result, other);
+    if (result) XMove(result, other);
     return result;
 }
 

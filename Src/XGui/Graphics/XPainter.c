@@ -699,7 +699,7 @@ static bool painterStatePush(XPainter* self)
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
         *saved = self->m_state;
         XFont_init(&fontCopy);
-        XFont_copy_base(&fontCopy, &saved->m_font);
+        XCopy(&fontCopy, &saved->m_font);
         saved->m_font = fontCopy;
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         saved->m_clipRegion = reusableRegion;
@@ -734,7 +734,7 @@ static void painterStatePop(XPainter* self)
         XRegion currentRegion = self->m_state.m_clipRegion;
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
         XFont_init(&fontCopy);
-        XFont_copy_base(&fontCopy, &saved->m_font);
+        XCopy(&fontCopy, &saved->m_font);
         self->m_state = *saved;
         self->m_state.m_font = fontCopy;
         XFont_deinit_base(&saved->m_font);
@@ -3954,10 +3954,10 @@ void XPainter_setFont(XPainter* self, const XFont* font)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     if (font)
-        XFont_copy_base(&self->m_state.m_font, font);
+        XCopy(&self->m_state.m_font, font);
     else {
         /* NULL 表示恢复默认字体；只有这个分支需要先释放旧字符串，
-           XFont_copy_base() 自身已经负责替换目标资源。 */
+           XCopy() 自身已经负责替换目标资源。 */
         XFont_deinit_base(&self->m_state.m_font);
         XFont_init(&self->m_state.m_font);
     }

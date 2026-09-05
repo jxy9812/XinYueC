@@ -322,19 +322,19 @@ static void VXUrl_copy(XUrl* dest, const XUrl* src)
         !dest->m_path || !dest->m_query || !dest->m_fragment || !dest->m_userInfo ||
         !dest->m_authority)
         return;
-    if (src->m_scheme) XString_copy_base(dest->m_scheme, src->m_scheme);
+    if (src->m_scheme) XCopy(dest->m_scheme, src->m_scheme);
     else XString_clear_base(dest->m_scheme);
-    if (src->m_userName) XString_copy_base(dest->m_userName, src->m_userName);
+    if (src->m_userName) XCopy(dest->m_userName, src->m_userName);
     else XString_clear_base(dest->m_userName);
-    if (src->m_password) XString_copy_base(dest->m_password, src->m_password);
+    if (src->m_password) XCopy(dest->m_password, src->m_password);
     else XString_clear_base(dest->m_password);
-    if (src->m_host) XString_copy_base(dest->m_host, src->m_host);
+    if (src->m_host) XCopy(dest->m_host, src->m_host);
     else XString_clear_base(dest->m_host);
-    if (src->m_path) XString_copy_base(dest->m_path, src->m_path);
+    if (src->m_path) XCopy(dest->m_path, src->m_path);
     else XString_clear_base(dest->m_path);
-    if (src->m_query) XString_copy_base(dest->m_query, src->m_query);
+    if (src->m_query) XCopy(dest->m_query, src->m_query);
     else XString_clear_base(dest->m_query);
-    if (src->m_fragment) XString_copy_base(dest->m_fragment, src->m_fragment);
+    if (src->m_fragment) XCopy(dest->m_fragment, src->m_fragment);
     else XString_clear_base(dest->m_fragment);
     /* 缓存由 const 访问按需重建，复制时不能共享临时视图。 */
     XString_clear_base(dest->m_userInfo);
@@ -357,13 +357,13 @@ static void VXUrl_move(XUrl* dest, XUrl* src)
         !src->m_userInfo || !src->m_authority)
         return;
     /* 移动各字符串内容，源 URL 仍保持已初始化且可继续使用。 */
-    XString_move_base(dest->m_scheme, src->m_scheme);
-    XString_move_base(dest->m_userName, src->m_userName);
-    XString_move_base(dest->m_password, src->m_password);
-    XString_move_base(dest->m_host, src->m_host);
-    XString_move_base(dest->m_path, src->m_path);
-    XString_move_base(dest->m_query, src->m_query);
-    XString_move_base(dest->m_fragment, src->m_fragment);
+    XMove(dest->m_scheme, src->m_scheme);
+    XMove(dest->m_userName, src->m_userName);
+    XMove(dest->m_password, src->m_password);
+    XMove(dest->m_host, src->m_host);
+    XMove(dest->m_path, src->m_path);
+    XMove(dest->m_query, src->m_query);
+    XMove(dest->m_fragment, src->m_fragment);
     XString_clear_base(dest->m_userInfo);
     XString_clear_base(dest->m_authority);
     XString_clear_base(src->m_userInfo);
@@ -393,7 +393,7 @@ XUrl* XUrl_create_copy(const XUrl* other)
     if (!other) return NULL;
     XUrl* self = XUrl_create();
     if (!self) return NULL;
-    XUrl_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -402,7 +402,7 @@ XUrl* XUrl_create_move(XUrl* other)
     if (!other) return NULL;
     XUrl* self = XUrl_create();
     if (!self) return NULL;
-    XUrl_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 
@@ -442,7 +442,7 @@ void XUrl_init_ex(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
     XUrl_setUrl(self, urlString, mode);
 }
 
-/* XUrl_copy / XUrl_move / XUrl_copy_base / XUrl_move_base / XUrl_deinit_base / XUrl_delete_base
+/* XUrl_copy / XUrl_move / XCopy / XMove / XUrl_deinit_base / XUrl_delete_base
    通过宏映射到 XClass_*_base，使用前需确保目标已初始化（XUrl_init） */
 
 /* ========== 虚函数调度 ========== */
@@ -786,7 +786,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     if (!self || !out) return;
     if (!relative || XString_isEmpty_base(relative)) {
         XUrl_init(out);
-        XUrl_copy_base(out, self);
+        XCopy(out, self);
         return;
     }
     const char* relUtf8 = XString_toUtf8(relative);

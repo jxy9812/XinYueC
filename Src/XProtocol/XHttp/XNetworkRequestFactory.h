@@ -116,8 +116,6 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_move(XNetworkRequestFactor
 
 #define XNetworkRequestFactory_deinit_base XClass_deinit_base
 #define XNetworkRequestFactory_delete_base XClass_delete_base
-#define XNetworkRequestFactory_copy_base XClass_copy_base
-#define XNetworkRequestFactory_move_base XClass_move_base
 
 /**
  * - @brief 获取基础 URL 副本。

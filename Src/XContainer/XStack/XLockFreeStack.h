@@ -156,17 +156,7 @@ XLockFreeStack* XLockFreeStack_create_ex(XMemoryType memory,  size_t typeSize, s
 
 // ------------------------------ 容器管理 ------------------------------
 
-/**
-* @brief 拷贝容器
-* @note 复用XStackBase的接口，复制源栈的所有元素和状态，线程安全
-*/
-#define XLockFreeStack_copy_base            XStackBase_copy_base
 
-/**
-* @brief 移动容器资源
-* @note 复用XStackBase的接口，转移源栈的资源所有权至当前栈
-*/
-#define XLockFreeStack_move_base            XStackBase_move_base
 
 /**
 * @brief 反初始化容器

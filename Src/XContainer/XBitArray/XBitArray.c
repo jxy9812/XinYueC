@@ -232,7 +232,7 @@ XBitArray* XBitArray_create_copy(const XBitArray* other) {
         XContainer_memory_type((const XContainer*)other) : XCLASS_DEFAULT_MEMORY_TYPE;
     XBitArray* array = XBitArray_create_ex(memory, 0, XContainerIsCow((XBitArray*)other));
     if (array) {
-        XBitArray_copy_base(array, other);
+        XCopy(array, other);
     }
     return array;
 }
@@ -242,7 +242,7 @@ XBitArray* XBitArray_create_move(XBitArray* other) {
     XBitArray* array = XBitArray_create_ex(XContainer_memory_type((const XContainer*)other),
         0, XContainerIsCow(other));
     if (array) {
-        XBitArray_move_base(array, other);
+        XMove(array, other);
     }
     return array;
 }

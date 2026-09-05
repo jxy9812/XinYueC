@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageCodecXpm.c
  * @brief      XPM（X11 Pixmap）图像编解码实现，对齐 Qt 6.8 QXpmHandler。
  * @note       XPM 是 C 源码形式的彩色图像。实现支持 Qt 处理器使用的
@@ -1101,7 +1101,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
         XFree_System(line);
     }
     XFree_System(colors);
-    XImage_move_base(out, &image);
+    XMove(out, &image);
     return true;
 }
 

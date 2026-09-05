@@ -1752,7 +1752,7 @@ static bool test_uninitialized_copy_move(void)
     memset(copied, 0, sizeof(XXmlStreamReader) + 4096);
     memset(moved, 0, sizeof(XXmlStreamReader) + 4096);
 
-    XClass_copy_base((XClass*)copied, (const XClass*)source);
+    XCopy((XClass*)copied, (const XClass*)source);
     if (XXmlStreamReader_tokenType(copied) == XXmlStream_StartElement &&
         XString_equals_utf8(XXmlStreamReader_name(copied), "root", XChar_CaseSensitive)) {
         TEST_PASS("读取器拷贝自动初始化空目标");
@@ -1762,7 +1762,7 @@ static bool test_uninitialized_copy_move(void)
     }
     XXmlStreamReader_deinit_base(copied);
 
-    XClass_move_base((XClass*)moved, source);
+    XMove((XClass*)moved, source);
     if (XXmlStreamReader_tokenType(moved) == XXmlStream_StartElement &&
         XString_equals_utf8(XXmlStreamReader_name(moved), "root", XChar_CaseSensitive)) {
         TEST_PASS("读取器移动自动初始化空目标");

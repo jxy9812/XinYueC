@@ -128,7 +128,7 @@ XHttpAuthenticator* XHttpAuthenticator_create_copy(const XHttpAuthenticator* oth
         return NULL;
     result = XHttpAuthenticator_create();
     if (result)
-        XHttpAuthenticator_copy_base((XClass*)result, (const XClass*)other);
+        XCopy((XClass*)result, (const XClass*)other);
     return result;
 }
 
@@ -139,7 +139,7 @@ XHttpAuthenticator* XHttpAuthenticator_create_move(XHttpAuthenticator* other)
         return NULL;
     result = XHttpAuthenticator_create();
     if (result)
-        XHttpAuthenticator_move_base((XClass*)result, (XClass*)other);
+        XMove((XClass*)result, (XClass*)other);
     return result;
 }
 

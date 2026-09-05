@@ -171,8 +171,6 @@ XVector* XBsonDocument_keys_base(const XBsonDocument* doc);
 /* 旧接口兼容别名。按键查找返回第一个元素索引，按索引擦除。 */
 #define XBsonDocument_find_base XBsonDocument_indexOf
 #define XBsonDocument_erase_base(doc,index) XBsonDocument_removeAt((doc),(index))
-#define XBsonDocument_copy_base XVector_copy_base
-#define XBsonDocument_move_base XVector_move_base
 #define XBsonDocument_deinit_base XVector_deinit_base
 #define XBsonDocument_delete_base XVector_delete_base
 #define XBsonDocument_clear_base XVector_clear_base

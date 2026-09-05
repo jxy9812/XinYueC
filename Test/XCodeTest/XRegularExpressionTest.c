@@ -801,8 +801,8 @@ static bool XRegularExpression_test_hash_map(void)
     XHashMap* map = XHashMap_create(sizeof(XRegularExpression), sizeof(int),
                                     XRegularExpression_hash, XRegularExpression_compare);
     XREGEX_REQUIRE(map != NULL, "regular expression hash map", "正则哈希映射创建失败");
-    XMapBaseSetKeyCopyMethod(map, XRegularExpression_copy_base);
-    XMapBaseSetKeyMoveMethod(map, XRegularExpression_move_base);
+    XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(map, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(map, XRegularExpression_deinit_base);
     int value = 68;
     XREGEX_REQUIRE(XHashMap_insert_base(map, expression, &value),

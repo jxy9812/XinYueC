@@ -13,8 +13,8 @@ int32_t XJsonArray_compare(const XJsonArray* lhs, const XJsonArray* rhs)
         ? XCompare_Equality : XCompare_Other;
 }
 
-XVARIANT_TYPE_OPS_DEFINE(XJsonArray, sizeof(XJsonArray), XJsonArray_copy_base,
-	XJsonArray_move_base, XJsonArray_clear_base, XJsonArray_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XJsonArray, sizeof(XJsonArray), XClass_copy_base,
+	XClass_move_base, XJsonArray_clear_base, XJsonArray_deinit_base,
 	XJsonArray_compare, "XJsonArray");
 
 XJsonArray* XJsonArray_create_ex(XMemoryType memory)
@@ -31,7 +31,7 @@ XJsonArray* XJsonArray_create_copy(XJsonArray* copy)
 {
     XJsonArray* array = XJsonArray_create();
     if (array&& copy)
-        XJsonArray_copy_base(array,copy);
+        XCopy(array,copy);
     return array;
 }
 
@@ -39,7 +39,7 @@ XJsonArray* XJsonArray_create_move(XJsonArray* move)
 {
     XJsonArray* array = XJsonArray_create();
     if (array && move)
-        XJsonArray_move_base(array, move);
+        XMove(array, move);
     return array;
 }
 
@@ -116,7 +116,7 @@ XVariant* XJsonArray_toVariant(const XJsonArray* arr)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
     XJsonArray_init(var->m_data);
-    XJsonArray_copy_base(var->m_data, arr);
+    XCopy(var->m_data, arr);
     return var;
 }
 XVariant* XJsonArray_toVariant_move(XJsonArray* arr)
@@ -125,7 +125,7 @@ XVariant* XJsonArray_toVariant_move(XJsonArray* arr)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
     XJsonArray_init(var->m_data);
-    XJsonArray_move_base(var->m_data, arr);
+    XMove(var->m_data, arr);
     return var;
 }
 XVariant* XJsonArray_toVariant_ref(XJsonArray* arr)
@@ -171,13 +171,13 @@ static bool XJsonArray_prepareVariant(XVariant* variant)
 void XJsonArray_setVariant(XVariant* variant, const XJsonArray* array)
 {
     if (array && XJsonArray_prepareVariant(variant))
-        XJsonArray_copy_base((XJsonArray*)variant->m_data, array);
+        XCopy((XJsonArray*)variant->m_data, array);
 }
 
 void XJsonArray_setVariant_move(XVariant* variant, XJsonArray* array)
 {
     if (array && XJsonArray_prepareVariant(variant))
-        XJsonArray_move_base((XJsonArray*)variant->m_data, array);
+        XMove((XJsonArray*)variant->m_data, array);
 }
 
 void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array)

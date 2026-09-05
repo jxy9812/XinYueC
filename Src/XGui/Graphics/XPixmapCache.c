@@ -384,7 +384,7 @@ bool XPixmapCache_find(const XString* key, XPixmap* pixmap)
         if (entry->m_hasStringKey && entry->m_key &&
             XString_equals(entry->m_key, key, XChar_CaseSensitive))
         {
-            if (pixmap) XPixmap_copy_base(pixmap, &entry->m_pixmap);
+            if (pixmap) XCopy(pixmap, &entry->m_pixmap);
             touchEntry(link);
             found = true;
             break;
@@ -421,7 +421,7 @@ bool XPixmapCache_findKey(const XPixmapCacheKey* key, XPixmap* pixmap)
         XCacheEntry* entry = *link;
         if (entry->m_keyData == key->m_data)
         {
-            if (pixmap) XPixmap_copy_base(pixmap, &entry->m_pixmap);
+            if (pixmap) XCopy(pixmap, &entry->m_pixmap);
             touchEntry(link);
             found = true;
             break;
@@ -458,7 +458,7 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
     entry->m_key = XString_create_copy(key);
     if (!entry->m_key) { XFree_System(entry); cacheLockRelease(); return false; }
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
-    XPixmap_copy_base(&entry->m_pixmap, pixmap);
+    XCopy(&entry->m_pixmap, pixmap);
     entry->m_size = cost;
     entry->m_hasStringKey = true;
     entry->m_next = g_cache.m_head;
@@ -521,7 +521,7 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
     }
     memset(entry, 0, sizeof(XCacheEntry));
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
-    XPixmap_copy_base(&entry->m_pixmap, pixmap);
+    XCopy(&entry->m_pixmap, pixmap);
     entry->m_keyData = keyData;
     entry->m_size = cost;
     entry->m_next = g_cache.m_head;

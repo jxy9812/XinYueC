@@ -95,10 +95,6 @@ XSqlRelation* XSqlRelation_create_move(XSqlRelation* other);
 #define XSqlRelation_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelation_create 系列函数返回的关系对象。 */
 #define XSqlRelation_delete_base XClass_delete_base
-/** @brief 将关系对象深复制到既有目标对象的基础复制入口。 */
-#define XSqlRelation_copy_base XClass_copy_base
-/** @brief 将关系对象资源移入既有目标对象的基础移动入口。 */
-#define XSqlRelation_move_base XClass_move_base
 /**
  * @brief 交换两个关系对象内容。
  * @param left 左关系；不能为 NULL。

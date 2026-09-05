@@ -33,7 +33,7 @@ XMqttLastWillProperties* XMqttLastWillProperties_create_copy(const XMqttLastWill
 {
     if (!other) return NULL;
     XMqttLastWillProperties* p = XMqttLastWillProperties_create();
-    if (p) XMqttLastWillProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 
@@ -143,7 +143,7 @@ XMqttConnectionProperties* XMqttConnectionProperties_create_copy(const XMqttConn
 {
     if (!other) return NULL;
     XMqttConnectionProperties* p = XMqttConnectionProperties_create();
-    if (p) XMqttConnectionProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 
@@ -262,7 +262,7 @@ XMqttServerConnectionProperties* XMqttServerConnectionProperties_create_copy(con
 {
     if (!other) return NULL;
     XMqttServerConnectionProperties* p = XMqttServerConnectionProperties_create();
-    if (p) XMqttServerConnectionProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 
@@ -300,7 +300,7 @@ static void VSCP_copy(XMqttServerConnectionProperties* dest, const XMqttServerCo
         if (dest->m_serverReference) XString_delete_base(dest->m_serverReference);
         dest->m_reason = NULL; dest->m_responseInformation = NULL; dest->m_serverReference = NULL;
     }
-    XMqttConnectionProperties_copy_base((XMqttConnectionProperties*)dest, (const XMqttConnectionProperties*)src);
+    XCopy((XMqttConnectionProperties*)dest, (const XMqttConnectionProperties*)src);
     dest->m_valid = src->m_valid;
     dest->m_availableProperties = src->m_availableProperties;
     dest->m_maximumQoS = src->m_maximumQoS;
@@ -325,7 +325,7 @@ static void VSCP_move(XMqttServerConnectionProperties* dest, XMqttServerConnecti
     if (dest->m_reason) XString_delete_base(dest->m_reason);
     if (dest->m_responseInformation) XString_delete_base(dest->m_responseInformation);
     if (dest->m_serverReference) XString_delete_base(dest->m_serverReference);
-    XMqttConnectionProperties_move_base(&dest->m_base, &src->m_base);
+    XMove(&dest->m_base, &src->m_base);
     dest->m_valid = src->m_valid; dest->m_availableProperties = src->m_availableProperties;
     dest->m_maximumQoS = src->m_maximumQoS; dest->m_retainAvailable = src->m_retainAvailable;
     dest->m_clientIdAssigned = src->m_clientIdAssigned; dest->m_reason = src->m_reason;

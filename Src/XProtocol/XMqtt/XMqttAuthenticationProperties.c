@@ -31,7 +31,7 @@ XMqttAuthenticationProperties* XMqttAuthenticationProperties_create_copy(const X
 {
     if (!other) return NULL;
     XMqttAuthenticationProperties* p = XMqttAuthenticationProperties_create();
-    if (p) XMqttAuthenticationProperties_copy_base(p, other);
+    if (p) XCopy(p, other);
     return p;
 }
 

@@ -2356,7 +2356,7 @@ static void test_pixmap_lifecycle(void)
     }
 
     memset(&copied, 0, sizeof(copied));
-    XPixmap_copy_base(&copied, &source);
+    XCopy(&copied, &source);
     expect_true(XPixmap_width(&copied) == 2 && XPixmap_height(&copied) == 3,
                 "copy_base initializes an uninitialized destination");
 
@@ -2736,7 +2736,7 @@ static void test_pixmap_mask_lifecycle(void)
     XPixmap_init_ex(&source, 3, 2);
     XPixmap_fill(&source, 0xff336699u);
     XPixmap_init(&target);
-    XPixmap_copy_base(&target, &source);
+    XCopy(&target, &source);
     expect_true(!XPixmap_isDetached(&source),
                 "pixmap copy shares storage before mask mutation");
 
@@ -13181,7 +13181,7 @@ static void test_codec_png_writer_description(void)
     XImage_setPixel(&source, 0, 0, 0xff204060u);
     description = XString_create_utf8("Title: writer title\n\nDescription: writer description");
     XImage_init(&decorated);
-    XImage_copy_base(&decorated, &source);
+    XCopy(&decorated, &source);
     expect_true(description && XImage_applyTextDescription(&decorated, description) &&
                 strcmp(XImage_text_2(&decorated, "Title"), "writer title") == 0 &&
                 strcmp(XImage_text_2(&decorated, "Description"), "writer description") == 0,
@@ -14821,7 +14821,7 @@ static void test_image_pixel_contract(void)
     XImage_setPixel(&rgba, 1, 0, 0x80112233u);
     expect_true(XImage_hasAlpha(&rgba), "alpha detection covers RGBA8888");
     XImage_setDevicePixelRatio(&rgba, 2.0f);
-    XImage_copy_base(&copy, &rgba);
+    XCopy(&copy, &rgba);
     expect_true(XImage_devicePixelRatio(&copy) == 2.0f,
                 "device pixel ratio survives image copy");
     {
@@ -15001,7 +15001,7 @@ static void test_image_pixel_contract(void)
                     XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
                     XImage_cacheKey(&reinterpret) == reinterpretKey,
                     "reinterpretAsFormat rejects a different storage depth");
-        XImage_copy_base(&reinterpretCopy, &reinterpret);
+        XCopy(&reinterpretCopy, &reinterpret);
         expect_true(XImage_reinterpretAsFormat(&reinterpretCopy, XImageFormat_RGB32) &&
                     XImage_format(&reinterpretCopy) == XImageFormat_RGB32 &&
                     XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
@@ -15283,7 +15283,7 @@ static void test_image_color_profile_sidecar(void)
                                              NULL, NULL, NULL),
                 "LUT 输出缓冲区不足时报告失败");
 
-    XImage_copy_base(&clone, &source);
+    XCopy(&clone, &source);
     expect_true(XImageCodecInternal_copyIccProfile(&clone, &aliasIccOut) &&
                 XByteArray_size_base((const XContainer*)&aliasIccOut) == sizeof(iccData) &&
                 memcmp(XByteArray_data(&aliasIccOut), iccData, sizeof(iccData)) == 0,
@@ -15292,7 +15292,7 @@ static void test_image_color_profile_sidecar(void)
     memset(&replacement, 0, sizeof(replacement));
     replacement.m_iccData = replacementIcc;
     replacement.m_iccSize = sizeof(replacementIcc);
-    XImage_copy_base(&alias, &source);
+    XCopy(&alias, &source);
     expect_true(XImageCodecInternal_setColorProfile(&alias, &replacement) &&
                 XImageCodecInternal_copyIccProfile(&alias, &aliasIccOut) &&
                 XByteArray_size_base((const XContainer*)&aliasIccOut) == sizeof(replacementIcc) &&
@@ -15980,7 +15980,7 @@ static void test_image_text_metadata_sorted_map(void)
                 "QImage copy treats a null QRect as a full metadata-preserving copy");
     }
 
-    XImage_copy_base(&copy, &image);
+    XCopy(&copy, &image);
     copyTextKey0 = XImage_textKey_const(&copy, 0);
     expect_true(XImage_textCount(&copy) == 4 &&
                 copyTextKey0 && XString_isEmpty_base((const XContainer*)copyTextKey0) &&
@@ -16068,7 +16068,7 @@ static void test_image_gray_and_metadata_noop_contract(void)
                 "QImage repeated offset write is a no-op");
 
     XImage_init(&shared);
-    XImage_copy_base(&shared, &gray);
+    XCopy(&shared, &gray);
     XImage_setText_2(&shared, "Description", "detached gray image");
     expect_true(XImage_cacheKey(&shared) != key &&
                     XImage_cacheKey(&gray) == key &&
@@ -18343,7 +18343,7 @@ static void test_gui_application_contract(void)
         XFont_init_ex(&moveSource, "Move Sans", 17, XFont_Bold, true);
         XFont_setStyleName(&moveSource, "Moved Style");
         XFont_init_ex(&moveDest, "Old Sans", 9, XFont_Normal, false);
-        XFont_move_base(&moveDest, &moveSource);
+        XMove(&moveDest, &moveSource);
         expect_true(strcmp(XFont_family(&moveDest), "Move Sans") == 0 &&
                     strcmp(XFont_styleName(&moveDest), "Moved Style") == 0 &&
                     XFont_pointSize(&moveDest) == 17 &&
@@ -20208,7 +20208,7 @@ static void test_widget_contract(void)
         XWidget_setWindowTitle(src, title);
         XString_delete_base((XClass*)title);
         memset(&dst, 0, sizeof(dst));
-        XWidget_copy_base(&dst, src);
+        XCopy(&dst, src);
         rect = XWidget_geometry(&dst);
         expect_true(rect.x == 7 && rect.y == 8 &&
                     rect.width == 99 && rect.height == 66,
@@ -20223,7 +20223,7 @@ static void test_widget_contract(void)
                     "copy_base 复制标题");
         XString_delete_base((XClass*)title);
         memset(&mover, 0, sizeof(mover));
-        XWidget_move_base(&mover, src);
+        XMove(&mover, src);
         rect = XWidget_geometry(&mover);
         expect_true(rect.x == 7 && rect.y == 8 &&
                     rect.width == 99 && rect.height == 66,
@@ -20995,13 +20995,13 @@ static void test_grid_layout_contract(void)
         expect_true(XGridLayout_rowCount(&src) == 1 &&
                     XGridLayout_columnCount(&src) == 1, "src 网格 1x1");
         XGridLayout_init(&copy);
-        XClass_copy_base((XClass*)&copy, (const XClass*)&src);
+        XCopy((XClass*)&copy, (const XClass*)&src);
         expect_true(XLayout_count_base((XLayout*)&copy) == 0 &&
                     XGridLayout_columnCount(&copy) == 0 &&
                     XLayout_count_base((XLayout*)&src) == 1,
                     "copy 不复制条目树");
         XGridLayout_init(&moved);
-        XClass_move_base((XClass*)&moved, (XClass*)&src);
+        XMove((XClass*)&moved, (XClass*)&src);
         expect_true(XLayout_count_base((XLayout*)&moved) == 1 &&
                     XGridLayout_rowCount(&moved) == 1 &&
                     XGridLayout_columnCount(&moved) == 1 &&

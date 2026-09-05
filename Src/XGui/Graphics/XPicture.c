@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPicture.c
  * @brief      XPicture 绘图指令记录与回放类实现（对标 Qt 6.8 QPicture）
  * @author     XinYueC 团队
@@ -655,7 +655,7 @@ XPicture* XPicture_create_copy(const XPicture* other, XMemoryType memory)
     if (!other) return NULL;
     self = XPicture_create_ex(memory);
     if (!self) return NULL;
-    XPicture_copy_base(self, other);
+    XCopy(self, other);
     return self;
 }
 
@@ -665,7 +665,7 @@ XPicture* XPicture_create_move(XPicture* other, XMemoryType memory)
     if (!other) return NULL;
     self = XPicture_create_ex(memory);
     if (!self) return NULL;
-    XPicture_move_base(self, other);
+    XMove(self, other);
     return self;
 }
 
@@ -1890,11 +1890,11 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             {
                 /* Do not call XPainter_setFont(): replay is deliberately
                    silent and must not append another SetFont record. */
-                XFont_move_base((XClass*)&painter->m_state.m_font,
+                XMove((XClass*)&painter->m_state.m_font,
                                 (XClass*)&font);
                 ok = true;
             }
-            /* XFont_move_base() leaves the source initialized with empty
+            /* XMove() leaves the source initialized with empty
                owned strings; keep the temporary's lifecycle paired on both
                the success and parse-failure paths. */
             XFont_deinit_base((XClass*)&font);

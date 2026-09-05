@@ -167,7 +167,7 @@ static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image,
     }
     memset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
-    XImage_copy_base(&d->m_image, source);
+    XCopy(&d->m_image, source);
     d->m_devicePixelRatio = XImage_devicePixelRatio(source);
     d->m_serialNumber = g_pixmapSerialCounter;
     d->m_cacheKey = XPlatformPixmap_nextCacheKey();
@@ -543,7 +543,7 @@ void XPixmap_createHeuristicMask(const XPixmap* self, bool clipTight, XPixmap* o
     {
         XImage tight;
         XImage_init(&tight);
-        XImage_copy_base(&tight, &maskImage);
+        XCopy(&tight, &maskImage);
         XImage_detach(&maskImage);
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
@@ -752,7 +752,7 @@ void XPixmap_toImage(const XPixmap* self, XImage* out)
     if (!out) return;
     XImage_init(out);
     if (!self || !self->m_data) return;
-    XImage_copy_base(out, &self->m_data->m_image);
+    XCopy(out, &self->m_data->m_image);
     if (out->m_data)
         XImage_setDevicePixelRatio(out, self->m_data->m_devicePixelRatio);
 }
@@ -997,7 +997,7 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
     {
         XImage oldImage;
         XImage_init(&oldImage);
-        XImage_copy_base(&oldImage, &self->m_data->m_image);
+        XCopy(&oldImage, &self->m_data->m_image);
         XPixmap_detach(self);
         XImage_detach(&self->m_data->m_image);
         const int bpp = XImage_depth(&oldImage);

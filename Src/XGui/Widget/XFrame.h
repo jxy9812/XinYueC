@@ -169,20 +169,6 @@ XFrame* XFrame_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags
  * @return     无返回值。
  */
 #define XFrame_delete_base(self) XClass_delete_base((XClass*)(self))
-/**
- * @brief      深拷贝 XFrame 的控件与边框字段。
- * @param      self 目标对象；不可与 other 相同。
- * @param      other 源对象；不可为 NULL。
- * @return     无返回值；父对象、窗口句柄和后备存储不复制。
- */
-#define XFrame_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief      移动 XFrame 的控件与边框字段。
- * @param      self 目标对象；不可与 other 相同。
- * @param      other 源对象；不可为 NULL。
- * @return     无返回值；源对象的边框字段恢复为构造默认值。
- */
-#define XFrame_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 样式属性（对标 QFrame public API） ==================== */
 

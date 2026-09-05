@@ -103,8 +103,6 @@ void XMqttStringPair_setValue(XMqttStringPair* pair, const char* v);
  */
 bool XMqttStringPair_equal(const XMqttStringPair* a, const XMqttStringPair* b);
 
-#define XMqttStringPair_copy_base   XClass_copy_base
-#define XMqttStringPair_move_base   XClass_move_base
 #define XMqttStringPair_deinit_base XClass_deinit_base
 #define XMqttStringPair_delete_base XClass_delete_base
 

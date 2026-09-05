@@ -137,16 +137,6 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 #define XPriorityQueue_typeSize_base			XQueueBase_typeSize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 拷贝容器（基于基类实现）
-* @note 复用XQueueBase的接口，复制源队列的所有元素和状态
-*/
-#define XPriorityQueue_copy_base				XQueueBase_copy_base
-/**
-* @brief 移动容器资源（基于基类实现）
-* @note 复用XQueueBase的接口，转移源队列的资源所有权至当前队列
-*/
-#define XPriorityQueue_move_base				XQueueBase_move_base
-/**
 * @brief 反初始化容器（基于基类实现）
 * @note 复用XQueueBase的接口，释放队列资源但不销毁实例本身
 */

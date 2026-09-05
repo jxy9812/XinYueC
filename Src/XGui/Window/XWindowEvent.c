@@ -590,7 +590,7 @@ static XEvent* VXWheelEvent_clone(const XWheelEvent* event)
     XClassGetVtable(copy) = XClassGetVtable(event);
     Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
-    XClass_copy_base((XClass*)copy, (const XClass*)event);
+    XCopy((XClass*)copy, (const XClass*)event);
     return (XEvent*)copy;
 }
 
@@ -682,7 +682,7 @@ static XEvent* VXEnterEvent_clone(const XEnterEvent* event)
     XClassGetVtable(copy) = XClassGetVtable(event);
     Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
-    XClass_copy_base((XClass*)copy, (const XClass*)event);
+    XCopy((XClass*)copy, (const XClass*)event);
     return (XEvent*)copy;
 }
 

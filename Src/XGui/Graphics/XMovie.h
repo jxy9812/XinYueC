@@ -150,20 +150,6 @@ XMovie* XMovie_create_file_ex_2(XMemoryType memory, const char* fileName, const 
 /** @brief 深拷贝 XMovie；目标未初始化时会先初始化，源对象为空时不执行。 */
 /** @brief 移动 XMovie；目标未初始化时会先初始化，源对象移动后为空。 */
 /** @brief 通过虚表执行深拷贝。 */
-/**
- * @brief 通过 XClass 虚表复制动画对象。
- * @param self 目标动画对象指针。
- * @param other 源动画对象指针。
- */
-#define XMovie_copy_base(self, other) \
-    XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/**
- * @brief 通过 XClass 虚表移动动画对象。
- * @param self 目标动画对象指针。
- * @param other 源动画对象指针；移动后源对象为空。
- */
-#define XMovie_move_base(self, other) \
-    XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief 返回当前支持的图像格式列表。

@@ -14,8 +14,8 @@ int32_t XJsonObject_compare(const XJsonObject* lhs, const XJsonObject* rhs)
         ? XCompare_Equality : XCompare_Other;
 }
 
-XVARIANT_TYPE_OPS_DEFINE(XJsonObject, sizeof(XJsonObject), XJsonObject_copy_base,
-	XJsonObject_move_base, XJsonObject_clear_base, XJsonObject_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XJsonObject, sizeof(XJsonObject), XClass_copy_base,
+	XClass_move_base, XJsonObject_clear_base, XJsonObject_deinit_base,
 	XJsonObject_compare, "XJsonObject");
 
 XJsonObject* XJsonObject_create_ex(XMemoryType memory)
@@ -32,7 +32,7 @@ XJsonObject* XJsonObject_create_copy(XJsonObject* copy)
 {
     XJsonObject* object = XJsonObject_create();
     if (object && copy)
-        XJsonObject_copy_base(object, copy);
+        XCopy(object, copy);
     return object;
 }
 
@@ -40,7 +40,7 @@ XJsonObject* XJsonObject_create_move(XJsonObject* move)
 {
     XJsonObject* object = XJsonObject_create();
     if (object && move)
-        XJsonObject_move_base(object, move);
+        XMove(object, move);
     return object;
 }
 
@@ -50,8 +50,8 @@ void XJsonObject_init(XJsonObject* object)
         return;
     XMap_init(object, sizeof(XString), sizeof(XJsonValue), XString_compare, true);
 
-    XMapBaseSetKeyCopyMethod(object, XString_copy_base);
-    XMapBaseSetKeyMoveMethod(object, XString_move_base);
+    XMapBaseSetKeyCopyMethod(object, XClass_copy_base);
+    XMapBaseSetKeyMoveMethod(object, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(object, XString_deinit_base);
 
     XContainerSetDataCopyMethod(object, XJsonValue_copy);
@@ -477,7 +477,7 @@ XVariant* XJsonObject_toVariant(const XJsonObject* obj)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
     XJsonObject_init(var->m_data);
-    XJsonObject_copy_base(var->m_data, obj);
+    XCopy(var->m_data, obj);
     return var;
 }
 XVariant* XJsonObject_toVariant_move(XJsonObject* obj)
@@ -486,7 +486,7 @@ XVariant* XJsonObject_toVariant_move(XJsonObject* obj)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
     XJsonObject_init(var->m_data);
-    XJsonObject_move_base(var->m_data, obj);
+    XMove(var->m_data, obj);
     return var;
 }
 XVariant* XJsonObject_toVariant_ref(XJsonObject* obj)
@@ -532,13 +532,13 @@ static bool XJsonObject_prepareVariant(XVariant* variant)
 void XJsonObject_setVariant(XVariant* variant, const XJsonObject* object)
 {
     if (object && XJsonObject_prepareVariant(variant))
-        XJsonObject_copy_base((XJsonObject*)variant->m_data, object);
+        XCopy((XJsonObject*)variant->m_data, object);
 }
 
 void XJsonObject_setVariant_move(XVariant* variant, XJsonObject* object)
 {
     if (object && XJsonObject_prepareVariant(variant))
-        XJsonObject_move_base((XJsonObject*)variant->m_data, object);
+        XMove((XJsonObject*)variant->m_data, object);
 }
 
 void XJsonObject_setVariant_ref(XVariant* variant, XJsonObject* object)

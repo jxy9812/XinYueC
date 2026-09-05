@@ -1372,7 +1372,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XTuiVim moved;
         memset(&copy, 0, sizeof(copy));
         memset(&moved, 0, sizeof(moved));
-        XClass_copy_base((XClass*)&copy, (const XClass*)vim);
+        XCopy((XClass*)&copy, (const XClass*)vim);
         XCS_TEST_CHECK(copy.m_lines &&
                        strcmp(XTuiVim_line(&copy, 0), XTuiVim_line(vim, 0)) == 0,
                        "Vim 复制保留文本缓冲");
@@ -1390,7 +1390,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XCS_TEST_CHECK(copy.m_macroState && copy.m_macroState != vim->m_macroState,
                        "Vim 复制深拷贝宏表");
 #endif
-        XClass_move_base((XClass*)&moved, (XClass*)&copy);
+        XMove((XClass*)&moved, (XClass*)&copy);
         XCS_TEST_CHECK(moved.m_lines && copy.m_lines == NULL,
                        "Vim 同内存池移动转移文本缓冲");
 #if XTUI_VIM_HISTORY_ON
@@ -1415,7 +1415,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XConsoleShellTest_vimKey(source, ':');
         XConsoleShellTest_vimKey(source, 'w');
         XConsoleShellTest_vimEnter(source);
-        XClass_move_base((XClass*)target, (XClass*)source);
+        XMove((XClass*)target, (XClass*)source);
         XCS_TEST_CHECK(target->m_commandHistoryState &&
                        source->m_commandHistoryState == NULL,
                        "Vim 跨内存池移动深拷贝历史状态");

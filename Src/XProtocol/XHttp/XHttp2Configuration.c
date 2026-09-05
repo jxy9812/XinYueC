@@ -90,7 +90,7 @@ XHttp2Configuration* XHttp2Configuration_create_copy(const XHttp2Configuration* 
     if (!other)
         return NULL;
     self = XHttp2Configuration_create();
-    if (self) XClass_copy_base((XClass*)self, (const XClass*)other);
+    if (self) XCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -100,7 +100,7 @@ XHttp2Configuration* XHttp2Configuration_create_move(XHttp2Configuration* other)
     if (!other)
         return NULL;
     self = XHttp2Configuration_create();
-    if (self) XClass_move_base((XClass*)self, (XClass*)other);
+    if (self) XMove((XClass*)self, (XClass*)other);
     return self;
 }
 

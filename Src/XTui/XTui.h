@@ -78,9 +78,6 @@ void XTui_init(XTui* tui);
 XTui* XTui_create_ex(XMemoryType memory);
 
 #define XTui_delete_base XClass_delete_base /**< 释放堆对象。 */
-#define XTui_deinit_base XClass_deinit_base /**< 反初始化栈对象。 */
-#define XTui_copy_base   XClass_copy_base   /**< 拷贝。 */
-#define XTui_move_base   XClass_move_base   /**< 移动。 */
 
 /* ==================== 装配 ==================== */
 

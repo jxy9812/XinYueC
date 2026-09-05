@@ -190,8 +190,6 @@ XMqttUserProperties* XMqttLastWillProperties_userProperties(const XMqttLastWillP
  */
 void XMqttLastWillProperties_setUserProperties(XMqttLastWillProperties* prop, const XMqttUserProperties* props);
 
-#define XMqttLastWillProperties_copy_base   XClass_copy_base
-#define XMqttLastWillProperties_move_base   XClass_move_base
 #define XMqttLastWillProperties_deinit_base XClass_deinit_base
 #define XMqttLastWillProperties_delete_base XClass_delete_base
 
@@ -245,8 +243,6 @@ const XByteArray* XMqttConnectionProperties_authenticationData_const(const XMqtt
 XByteArray* XMqttConnectionProperties_authenticationData(const XMqttConnectionProperties* prop);
 void XMqttConnectionProperties_setAuthenticationData(XMqttConnectionProperties* prop, const uint8_t* data, size_t len);
 
-#define XMqttConnectionProperties_copy_base   XClass_copy_base
-#define XMqttConnectionProperties_move_base   XClass_move_base
 #define XMqttConnectionProperties_deinit_base XClass_deinit_base
 #define XMqttConnectionProperties_delete_base XClass_delete_base
 
@@ -438,8 +434,6 @@ const XString* XMqttServerConnectionProperties_serverReference_const(const XMqtt
  */
 XString* XMqttServerConnectionProperties_serverReference(const XMqttServerConnectionProperties* prop);
 
-#define XMqttServerConnectionProperties_copy_base   XClass_copy_base
-#define XMqttServerConnectionProperties_move_base   XClass_move_base
 #define XMqttServerConnectionProperties_deinit_base XClass_deinit_base
 #define XMqttServerConnectionProperties_delete_base XClass_delete_base
 

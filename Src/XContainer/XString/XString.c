@@ -10,8 +10,8 @@
 #include "XStringView.h"
 #include "XCryptographic.h"
 
-XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XString_copy_base,
-	XString_move_base, XString_clear_base, XString_deinit_base,
+XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XClass_copy_base,
+	XClass_move_base, XString_clear_base, XString_deinit_base,
 	XString_compare, "XString");
 
 XVariant* XString_toVariant(const XString* str)
@@ -23,7 +23,7 @@ XVariant* XString_toVariant(const XString* str)
 	if (!var)
 		return NULL;
 	XString_init((XString*)XVariant_data(var));
-	XString_copy_base(XVariant_data(var), str);
+	XCopy(XVariant_data(var), str);
 	return var;
 }
 
@@ -36,7 +36,7 @@ XVariant* XString_toVariant_move(XString* str)
 	if (!var)
 		return NULL;
 	XString_init((XString*)XVariant_data(var));
-	XString_move_base(XVariant_data(var), str);
+	XMove(XVariant_data(var), str);
 	return var;
 }
 
@@ -117,14 +117,14 @@ void XString_setVariant(XVariant* var, const XString* str)
 {
 	if (!str || !XString_prepareVariant(var))
 		return;
-	XString_copy_base(XVariant_data(var), str);
+	XCopy(XVariant_data(var), str);
 }
 
 void XString_setVariant_move(XVariant* var, XString* str)
 {
 	if (!str || !XString_prepareVariant(var))
 		return;
-	XString_move_base(XVariant_data(var), str);
+	XMove(XVariant_data(var), str);
 }
 
 void XString_setVariant_ref(XVariant* var, XString* str)
@@ -207,7 +207,7 @@ int64_t XString_indexOf_regularExpression(const XString* str,
     bool hasMatch = XRegularExpressionMatch_hasMatch(result);
     int64_t position = hasMatch ?
             XRegularExpressionMatch_capturedStart(result, 0) : -1;
-    if (match && hasMatch) XRegularExpressionMatch_copy_base(match, result);
+    if (match && hasMatch) XCopy(match, result);
     XRegularExpressionMatch_delete_base(result);
     return position;
 }
@@ -246,7 +246,7 @@ int64_t XString_lastIndexOf_regularExpression(const XString* str,
         last = current;
         resultPosition = position;
     }
-    if (match && last) XRegularExpressionMatch_copy_base(match, last);
+    if (match && last) XCopy(match, last);
     if (last) XRegularExpressionMatch_delete_base(last);
     XRegularExpressionMatchIterator_delete_base(iterator);
     return resultPosition;
@@ -343,7 +343,7 @@ bool XString_replace_regularExpression(XString* str,
         return false;
     }
     XString_delete_base(suffix);
-    XString_move_base(str, &result);
+    XMove(str, &result);
     XString_deinit_base(&result);
     return true;
 }
@@ -507,7 +507,7 @@ XString* XString_create_copy(const XString* other)
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
 
-    XString_copy_base(str, other);
+    XCopy(str, other);
     Set_Class_IsHeap(str, true);
 
     return str;
@@ -520,7 +520,7 @@ XString* XString_create_move(XString* other)
         XContainer_memory_type((const XContainer*)other));
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
-    XString_move_base(str,other);
+    XMove(str,other);
     Set_Class_IsHeap(str, true);
     return str;
 }

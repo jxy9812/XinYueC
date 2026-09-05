@@ -77,10 +77,6 @@ XMimeData* XMimeData_create_ex(XMemoryType memory);
 #define XMimeData_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XMimeData 对象。 */
 #define XMimeData_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 通过 XClass 虚表深拷贝 XMimeData；未初始化的目标会先自动初始化。 */
-#define XMimeData_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 通过 XClass 虚表移动 XMimeData；移动后源对象私有块为空。 */
-#define XMimeData_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /**
  * @brief      清空全部数据（对标 QMimeData::clear）。

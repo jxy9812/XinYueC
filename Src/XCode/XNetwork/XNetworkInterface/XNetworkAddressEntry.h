@@ -110,8 +110,6 @@ XVtable* XNetworkAddressEntry_class_init(void);
 
 #define XNetworkAddressEntry_delete_base    XClass_delete_base
 #define XNetworkAddressEntry_deinit_base    XClass_deinit_base
-#define XNetworkAddressEntry_copy_base      XClass_copy_base
-#define XNetworkAddressEntry_move_base      XClass_move_base
 
 // ==================== 属性访问器 ====================
 

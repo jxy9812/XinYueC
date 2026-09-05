@@ -212,10 +212,6 @@ XLabel* XLabel_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags
 #define XLabel_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XLabel 对象。 */
 #define XLabel_delete_base(self) XClass_delete_base((XClass*)(self))
-/** @brief 深拷贝（文本/绘图记录/链接深拷，像素图共享；不复制父/窗口句柄）。 */
-#define XLabel_copy_base(self, other) XClass_copy_base((XClass*)(self), (const XClass*)(other))
-/** @brief 移动语义（转移资源所有权；源对象内容字段归构造默认值）。 */
-#define XLabel_move_base(self, other) XClass_move_base((XClass*)(self), (XClass*)(other))
 
 /* ==================== 文本（对标 QLabel text/setText/setNum） ==================== */
 

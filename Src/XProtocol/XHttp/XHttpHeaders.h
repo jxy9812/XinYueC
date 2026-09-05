@@ -272,8 +272,6 @@ XHttpHeaders* XHttpHeaders_create_move(XHttpHeaders* other);
  */
 #define XHttpHeaders_deinit_base XClass_deinit_base
 #define XHttpHeaders_delete_base XClass_delete_base
-#define XHttpHeaders_copy_base XClass_copy_base
-#define XHttpHeaders_move_base XClass_move_base
 
 /**
  * - @brief 以字节数组形式追加一个 HTTP 字段。

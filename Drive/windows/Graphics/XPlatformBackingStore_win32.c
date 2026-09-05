@@ -132,7 +132,7 @@ static void xpbs_win32_copyRectPixels(const XImage* src, int sx, int sy,
                 (size_t)w * 4u);
 }
 
-/** @brief 深拷贝图像（XImage_copy_base 为共享引用，不能用）。 */
+/** @brief 深拷贝图像（XCopy 为共享引用，不能用）。 */
 static bool xpbs_win32_deepCopy(const XImage* src, XImage* dst)
 {
     const uint8_t* sbuf;
@@ -710,7 +710,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     /* 先快照旧内容，重建 XImage 缓冲，再同步重建 GDI 表面。 */
     XImage_init(&oldImage);
     if (active && active->m_data)
-        XImage_copy_base(&oldImage, active);
+        XCopy(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
     XImage_init(&newImage);
@@ -770,10 +770,10 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 #endif
     XImage_deinit_base(&oldImage);
     XImage_deinit_base(&self->m_image);
-    XImage_move_base(&self->m_image, &newImage);
+    XMove(&self->m_image, &newImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     XImage_deinit_base(&self->m_image2);
-    XImage_move_base(&self->m_image2, &newImage2);
+    XMove(&self->m_image2, &newImage2);
 #endif
     self->m_size.width = w;
     self->m_size.height = h;

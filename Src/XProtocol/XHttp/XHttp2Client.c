@@ -41,7 +41,7 @@ static void VXHttp2ClientSession_copy(XHttp2ClientSession* dest,
     }
     if (encoder) {
         XHttp2HeaderEncoder_init(encoder);
-        XClass_copy_base((XClass*)encoder, (const XClass*)src->m_encoder);
+        XCopy((XClass*)encoder, (const XClass*)src->m_encoder);
         Set_Class_IsHeap(encoder, true);
     }
     if (dest->m_configuration)

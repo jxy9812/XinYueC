@@ -181,8 +181,6 @@ void XString_init(XString* str);
 #define XString_Init_Fmt_Utf8(name, ...)     XString _##name,*name=&_##name;XString_init(name);XString_assign_fmt_utf8(name,__VA_ARGS__)
      // -------------------------- 基础操作宏（继承自 XContainer） --------------------------
 
-#define XString_copy_base				    XContainer_copy_base	// 复制对象（基础实现）
-#define XString_move_base				    XContainer_move_base	// 移动对象（基础实现）
 #define XString_deinit_base					XContainer_deinit_base	// 销毁对象（基础实现）
 #define XString_delete_base					XContainer_delete_base	// 删除对象（释放内存）
 #define XString_clear_base				    XContainer_clear_base	// 清空字符串内容

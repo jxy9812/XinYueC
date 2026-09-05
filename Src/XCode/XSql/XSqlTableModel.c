@@ -241,7 +241,7 @@ static void VXSqlTableModel_setTable(XSqlTableModel* model, const char* tableNam
     /* Qt loads the record before select(), so filters and sort columns are usable. */
     record = XSqlDatabase_record(model->m_database, model->m_tableName);
     if (record) {
-        XSqlRecord_move_base(&model->m_parent.m_record, record);
+        XMove(&model->m_parent.m_record, record);
         XSqlRecord_delete_base(record);
     }
     key = XSqlDatabase_primaryIndex(model->m_database, model->m_tableName);
@@ -487,7 +487,7 @@ static void VXSqlTableModel_revertRow(XSqlTableModel* model, int row)
         return;
     }
     if (model->m_dirty[row] && model->m_originalRows[row]) {
-        XSqlRecord_copy_base(model->m_parent.m_rows[row], model->m_originalRows[row]);
+        XCopy(model->m_parent.m_rows[row], model->m_originalRows[row]);
         xsql_table_clear_original(model, row);
     }
     model->m_dirty[row] = false;
@@ -613,7 +613,7 @@ static bool VXSqlTableModel_selectRow(XSqlTableModel* model, int row)
                     XVariant_delete_base(value);
                 }
             }
-            XSqlRecord_copy_base(model->m_parent.m_rows[row], refreshed);
+            XCopy(model->m_parent.m_rows[row], refreshed);
             XSqlRecord_delete_base(refreshed);
         } else {
             result = false;

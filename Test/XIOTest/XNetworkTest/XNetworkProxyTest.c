@@ -141,7 +141,7 @@ static void testProxyQuery_copy(void)
         // 栈上拷贝
         XNetworkProxyQuery copied;
         XNetworkProxyQuery_init(&copied);
-        XNetworkProxyQuery_copy_base(&copied, original);
+        XCopy(&copied, original);
         
         XPrintf("原始查询端口: %d\n", XNetworkProxyQuery_peerPort(original));
         XPrintf("拷贝查询端口: %d\n", XNetworkProxyQuery_peerPort(&copied));
@@ -365,7 +365,7 @@ static void testProxy_copy(void)
         // 栈上拷贝
         XNetworkProxy stackCopy;
         XNetworkProxy_init(&stackCopy);
-        XNetworkProxy_copy_base(&stackCopy, original);
+        XCopy(&stackCopy, original);
         
         XPrintf("栈上拷贝端口: %d\n", XNetworkProxy_port(&stackCopy));
         

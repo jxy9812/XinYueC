@@ -1308,8 +1308,8 @@ static void XCanFrameProcessorTest(void)
 
         // 准备信号值映射
         XMap* signalValues = XMap_create(sizeof(XString), sizeof(XVariant), XString_compare);
-        XMapBaseSetKeyCopyMethod(signalValues, XString_copy_base);
-        XMapBaseSetKeyMoveMethod(signalValues, XString_move_base);
+        XMapBaseSetKeyCopyMethod(signalValues, XClass_copy_base);
+        XMapBaseSetKeyMoveMethod(signalValues, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(signalValues, XString_deinit_base);
 
         XString sigName;
