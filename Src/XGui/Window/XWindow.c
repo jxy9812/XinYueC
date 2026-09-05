@@ -83,6 +83,7 @@ struct XWindowPrivate
     bool m_created;                     /**< 平台窗口资源是否已创建（占位）。 */
     XWindowId m_winId;                  /**< 窗口 id；未创建为 0。 */
     XWindowPlatform* m_platform;        /**< 平台窗口句柄；借用不拥有。 */
+    bool m_platformWindowLinked;        /**< 已确认 m_platform 为 XPlatformWindow。 */
     bool m_nativeWindowAttached;    /**< 是否已挂接真实原生窗口（平台后端注入）。 */
 
     XWindow* m_parentWindow;            /**< 普通父窗口（借用，与 XObject 父同步）。 */
@@ -136,11 +137,21 @@ static XString* XWindow_copyString(const XString* value)
 }
 
 /** @brief 深拷贝替换字符串字段。 @param dst 目标字段。 @param value 源字符串；可为 NULL 清空。 */
-static void XWindow_setString(XString** dst, const XString* value)
+static bool XWindow_setString(XString** dst, const XString* value)
 {
-    XString* copy = XWindow_copyString(value);
+    XString* copy;
+    if (!dst) return false;
+    if (!value) {
+        if (*dst) XString_delete_base((XClass*)*dst);
+        *dst = NULL;
+        return true;
+    }
+    copy = XWindow_copyString(value);
+    /* 深拷贝失败时保留旧值，避免一次内存分配失败破坏现有状态。 */
+    if (!copy) return false;
     if (*dst) XString_delete_base((XClass*)*dst);
     *dst = copy;
+    return true;
 }
 
 #if XCURSOR_ON
@@ -158,7 +169,16 @@ static XCursor* XWindow_copyCursor(const XCursor* value)
 /** @brief 深拷贝替换光标字段。 @param dst 目标字段。 @param value 源光标；可为 NULL 清空。 */
 static void XWindow_setCursorInternal(XCursor** dst, const XCursor* value)
 {
-    XCursor* copy = XWindow_copyCursor(value);
+    XCursor* copy;
+    if (!dst) return;
+    if (!value) {
+        if (*dst) XCursor_delete_base((XClass*)*dst);
+        *dst = NULL;
+        return;
+    }
+    copy = XWindow_copyCursor(value);
+    /* 新光标创建失败时保留旧光标，调用方仍可继续使用窗口。 */
+    if (!copy) return;
     if (*dst) XCursor_delete_base((XClass*)*dst);
     *dst = copy;
 }
@@ -187,10 +207,129 @@ static XIcon* XWindow_copyIcon(const XIcon* value)
 /** @brief 深拷贝替换图标字段。 @param dst 目标字段。 @param value 源图标；可为 NULL 清空。 */
 static void XWindow_setIconInternal(XIcon** dst, const XIcon* value)
 {
-    XIcon* copy = XWindow_copyIcon(value);
+    XIcon* copy;
+    if (!dst) return;
+    if (!value) {
+        if (*dst) XIcon_delete_base(*dst);
+        *dst = NULL;
+        return;
+    }
+    copy = XWindow_copyIcon(value);
+    /* 新图标创建失败时保留旧图标，避免失败路径产生可见状态回退。 */
+    if (!copy) return;
     /* 内部图标由 create_ex 堆分配，需 delete（deinit+释放结构体）。 */
     if (*dst) XIcon_delete_base(*dst);
     *dst = copy;
+}
+
+/**
+ * @brief 把区域复制到已初始化的区域，并报告复制是否完整。
+ * @details XRegion_copy 没有返回值；通过元素数量检查扩容失败。
+ *          XRegion_copy 会复用 out 的已有容量，并在扩容失败时保留
+ *          out 的旧内容。调用方负责对临时 out 调用 XRegion_deinit。
+ */
+static bool XWindow_copyRegion(const XRegion* source, XRegion* out)
+{
+    if (!out) return false;
+    if (!source) {
+        XRegion_clear(out);
+        return true;
+    }
+    if (source->count < 0) return false;
+    if (source->count == 0) {
+        XRegion_clear(out);
+        return true;
+    }
+    if (!source->rects) return false;
+    XRegion_copy(source, out);
+    return out->count == source->count;
+}
+
+/**
+ * @brief 解除窗口在 XObject 中的父关系，并同步清空私有父窗口指针。
+ * @details XWindow 同时保存 XObject.m_parent 和 m_parentWindow；复制/移动
+ *          清理状态前必须先让 XObject 从旧父对象的 children 列表移除，
+ *          否则旧父对象会继续持有已被替换的窗口指针。
+ * @return 成功解除（或原本没有父关系）返回 true；线程/对象状态拒绝时
+ *         返回 false，调用方应保留原对象状态。
+ */
+static bool XWindow_detachObjectParent(XWindow* self)
+{
+    XObject* object;
+    if (!self || !self->m_data) return false;
+    object = (XObject*)self;
+    if (object->m_parent) {
+        XObject_setParent(object, NULL);
+        if (object->m_parent) return false;
+    }
+    self->m_data->m_parentWindow = NULL;
+    return true;
+}
+
+/**
+ * @brief 释放 XWindow 私有块中的拥有资源，但不释放私有块本身。
+ * @param self      所属窗口；平台后端销毁原生资源时需要此指针。
+ * @param keepAccessibleRoot true 时保留现有无障碍根节点。
+ * @details
+ * 复制和移动都需要先清理目标窗口已有资源。这里不调用
+ * VXWindow_deinit，避免连带析构 XObject 基类；m_platform 只是借用指针，
+ * 但在窗口私有块被丢弃前必须解除平台对象对窗口的反向借用。
+ */
+static void XWindow_releasePrivateData(XWindow* self, bool keepAccessibleRoot)
+{
+    XWindowPrivate* data;
+#if XPLATFORMWINDOW_ON
+    XWindowPlatform* platform;
+#endif /* XPLATFORMWINDOW_ON */
+    if (!self || !(data = self->m_data)) return;
+
+#if XPLATFORMWINDOW_ON
+    platform = data->m_platform;
+#endif /* XPLATFORMWINDOW_ON */
+#if XPLATFORMNATIVEWINDOW_ON
+    /* 仅销毁仍处于 created 状态的原生登记；XWindow_destroy 已经完成
+       后端销毁时不再重复调用，但仍会在下面解除平台对象反向借用。 */
+    if (data->m_nativeWindowAttached && data->m_created)
+        XPlatformNativeWindow_destroy(self);
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+#if XPLATFORMWINDOW_ON
+    /* XPlatformIntegration 拥有 XPlatformWindow，XWindow 只负责解除反向借用。
+       只有后端明确标记真实挂接后才可把 m_platform 当作
+       XPlatformWindow 访问；未标记的值可能只是测试用伪句柄。 */
+    if (platform && data->m_platformWindowLinked)
+        XPlatformWindow_setWindow((XPlatformWindow*)platform, NULL);
+#endif /* XPLATFORMWINDOW_ON */
+    data->m_platform = NULL;
+    data->m_platformWindowLinked = false;
+    data->m_nativeWindowAttached = false;
+    data->m_created = false;
+    data->m_winId = 0;
+
+#if XACCESSIBLE_ON
+    if (!keepAccessibleRoot && data->m_accessibleRoot) {
+        XAccessible_delete_base(data->m_accessibleRoot);
+        data->m_accessibleRoot = NULL;
+    }
+#endif /* XACCESSIBLE_ON */
+    if (data->m_title) {
+        XString_delete_base((XClass*)data->m_title);
+        data->m_title = NULL;
+    }
+    if (data->m_filePath) {
+        XString_delete_base((XClass*)data->m_filePath);
+        data->m_filePath = NULL;
+    }
+    if (data->m_icon) {
+        XIcon_delete_base(data->m_icon);
+        data->m_icon = NULL;
+    }
+#if XCURSOR_ON
+    XWindow_clearCursor(data);
+#endif /* XCURSOR_ON */
+    XRegion_deinit(&data->m_mask);
+#if !XACCESSIBLE_ON
+    (void)keepAccessibleRoot;
+#endif /* !XACCESSIBLE_ON */
 }
 
 /** @brief 格式化（合并）请求格式与默认格式：未显式设置字段回退默认。
@@ -436,6 +575,13 @@ XWindow* XWindow_create_ex(XMemoryType memory)
     XWindow_init(self);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
+    /* XWindow_init 可能因私有块分配失败而留下已初始化的基类对象；
+       堆创建接口不能把这个不可用对象返回给调用方。虚析构会先收尾
+       XObject 的线程/信号资源，再按请求的内存方法释放窗口本体。 */
+    if (!self->m_data) {
+        XClass_delete_base((XClass*)self);
+        return NULL;
+    }
     return self;
 }
 
@@ -479,21 +625,8 @@ static void VXWindow_deinit(XWindow* self)
        并读取已释放的标题（访问冲突）。 */
     if (data->m_created)
         XPlatformAccessibility_notifyWindow(XAccessibleEvent_ObjectDestroyed, self);
-    if (data->m_accessibleRoot)
-        XAccessible_delete_base(data->m_accessibleRoot);
  #endif
-    if (data->m_title) XString_delete_base((XClass*)data->m_title);
-    if (data->m_filePath) XString_delete_base((XClass*)data->m_filePath);
-    if (data->m_icon) XIcon_delete_base(data->m_icon);
-#if XCURSOR_ON
-    XWindow_clearCursor(data);
-#endif
-    XRegion_deinit(&data->m_mask);
-#if XPLATFORMNATIVEWINDOW_ON
-    /* 安全网：窗口对象销毁时若仍挂接原生窗口，先归还平台资源（幂等）。 */
-    if (data->m_nativeWindowAttached)
-        XPlatformNativeWindow_destroy(self);
-#endif /* XPLATFORMNATIVEWINDOW_ON */
+    XWindow_releasePrivateData(self, false);
     XFree_System(data);
     self->m_data = NULL;
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -501,99 +634,164 @@ static void VXWindow_deinit(XWindow* self)
 
 static void VXWindow_copy(XWindow* self, const XWindow* other)
 {
+    XWindowPrivate* target;
     XWindowPrivate* source;
+    XRegion copiedMask;
+    XString* copiedTitle = NULL;
+    XString* copiedFilePath = NULL;
+    XIcon* copiedIcon = NULL;
+#if XCURSOR_ON
+    XCursor* copiedCursor = NULL;
+#endif
+#if XACCESSIBLE_ON
+    XAccessible* oldAccessibleRoot;
+#endif /* XACCESSIBLE_ON */
     if (!self || !other || self == other || !(source = other->m_data)) return;
     if (XClassIsVtableNull(self)) XWindow_init(self);
-    if (!self->m_data) return;
-    /* 先释放目标已有资源（与 XMovie_copy 模式一致）。 */
-    if (self->m_data->m_title) XString_delete_base((XClass*)self->m_data->m_title);
-    if (self->m_data->m_filePath) XString_delete_base((XClass*)self->m_data->m_filePath);
-    if (self->m_data->m_icon) XIcon_delete_base(self->m_data->m_icon);
+    if (!(target = self->m_data)) return;
+
+    /*
+     * 先在临时拥有者中准备完整副本。XString/XIcon/XCursor 或区域扩容
+     * 失败时，目标窗口仍保留原有资源和平台绑定，避免半完成复制。
+     */
+    XRegion_init(&copiedMask);
+    copiedTitle = XWindow_copyString(source->m_title);
+    if (source->m_title && !copiedTitle) goto copy_failed;
+    copiedFilePath = XWindow_copyString(source->m_filePath);
+    if (source->m_filePath && !copiedFilePath) goto copy_failed;
+    copiedIcon = XWindow_copyIcon(source->m_icon);
+    if (source->m_icon && !copiedIcon) goto copy_failed;
 #if XCURSOR_ON
-    XWindow_clearCursor(self->m_data);
+    copiedCursor = XWindow_copyCursor(source->m_cursor);
+    if (source->m_cursor && !copiedCursor) goto copy_failed;
 #endif
-    XRegion_deinit(&self->m_data->m_mask);
+    if (!XWindow_copyRegion(&source->m_mask, &copiedMask))
+        goto copy_failed;
+
+    /* 拷贝不继承目标旧父关系；提交前先从 XObject children 列表摘除目标。 */
+    if (!XWindow_detachObjectParent(self)) goto copy_failed;
+#if XACCESSIBLE_ON
+    /* 根节点属于目标对象；资源提交后只需修正它指向的窗口。 */
+    oldAccessibleRoot = target->m_accessibleRoot;
+#endif /* XACCESSIBLE_ON */
+    XWindow_releasePrivateData(self, true);
+    memset(target, 0, sizeof(XWindowPrivate));
+    target->m_mask = copiedMask;
+    target->m_title = copiedTitle;
+    copiedTitle = NULL;
+    target->m_filePath = copiedFilePath;
+    copiedFilePath = NULL;
+    target->m_icon = copiedIcon;
+    copiedIcon = NULL;
+#if XCURSOR_ON
+    target->m_cursor = copiedCursor;
+    copiedCursor = NULL;
+#endif
  #if XACCESSIBLE_ON
-    if (self->m_data->m_accessibleRoot)
-        XAccessible_delete_base(self->m_data->m_accessibleRoot);
- #endif
-    memset(self->m_data, 0, sizeof(XWindowPrivate));
-    XRegion_init(&self->m_data->m_mask);
-    self->m_data->m_title = XWindow_copyString(source->m_title);
-    self->m_data->m_filePath = XWindow_copyString(source->m_filePath);
-    self->m_data->m_icon = XWindow_copyIcon(source->m_icon);
-#if XCURSOR_ON
-    self->m_data->m_cursor = XWindow_copyCursor(source->m_cursor);
-#endif
-    XRegion_copy(&source->m_mask, &self->m_data->m_mask);
-    self->m_data->m_hasMask = source->m_hasMask;
-    self->m_data->m_geometry = source->m_geometry;
-    self->m_data->m_surfaceType = source->m_surfaceType;
-    self->m_data->m_flags = source->m_flags;
-    self->m_data->m_visible = source->m_visible;
-    self->m_data->m_visibility = source->m_visibility;
-    self->m_data->m_exposed = source->m_exposed;
+    target->m_accessibleRoot = oldAccessibleRoot;
+    #endif
+    target->m_hasMask = source->m_hasMask;
+    target->m_geometry = source->m_geometry;
+    target->m_surfaceType = source->m_surfaceType;
+    target->m_flags = source->m_flags;
+    target->m_visible = source->m_visible;
+    target->m_visibility = source->m_visibility;
+    target->m_exposed = source->m_exposed;
     /* A copied window owns no native resources and must receive a fresh id
        only when it is subsequently created. */
-    self->m_data->m_created = false;
-    self->m_data->m_winId = 0;
-    self->m_data->m_platform = NULL;
-    self->m_data->m_nativeWindowAttached = false;
-    self->m_data->m_modality = source->m_modality;
-    self->m_data->m_windowStates = source->m_windowStates;
-    self->m_data->m_positionAutomatic = source->m_positionAutomatic;
-    self->m_data->m_active = source->m_active;
-    self->m_data->m_closing = false;
-    self->m_data->m_format = source->m_format;
-    self->m_data->m_devicePixelRatio = source->m_devicePixelRatio;
-    self->m_data->m_contentOrientation = source->m_contentOrientation;
-    self->m_data->m_opacity = source->m_opacity;
-    self->m_data->m_minimumSize = source->m_minimumSize;
-    self->m_data->m_maximumSize = source->m_maximumSize;
-    self->m_data->m_baseSize = source->m_baseSize;
-    self->m_data->m_sizeIncrement = source->m_sizeIncrement;
-    self->m_data->m_alertMsec = source->m_alertMsec;
-    self->m_data->m_updateRequested = source->m_updateRequested;
+    target->m_created = false;
+    target->m_winId = 0;
+    target->m_platform = NULL;
+    target->m_platformWindowLinked = false;
+    target->m_nativeWindowAttached = false;
+    target->m_modality = source->m_modality;
+    target->m_windowStates = source->m_windowStates;
+    target->m_positionAutomatic = source->m_positionAutomatic;
+    target->m_active = source->m_active;
+    target->m_closing = false;
+    target->m_format = source->m_format;
+    target->m_devicePixelRatio = source->m_devicePixelRatio;
+    target->m_contentOrientation = source->m_contentOrientation;
+    target->m_opacity = source->m_opacity;
+    target->m_minimumSize = source->m_minimumSize;
+    target->m_maximumSize = source->m_maximumSize;
+    target->m_baseSize = source->m_baseSize;
+    target->m_sizeIncrement = source->m_sizeIncrement;
+    target->m_alertMsec = source->m_alertMsec;
+    target->m_updateRequested = source->m_updateRequested;
  #if XACCESSIBLE_ON
-    self->m_data->m_accessibleRoot = XAccessible_createForWindow(self);
+    if (target->m_accessibleRoot)
+        target->m_accessibleRoot->m_window = self;
+    else
+        target->m_accessibleRoot = XAccessible_createForWindow(self);
  #endif
     /* 借用指针：父窗口/瞬态父窗口/屏幕均不深拷贝（Qt 拷贝构造不清父）。 */
-    self->m_data->m_parentWindow = NULL;
-    self->m_data->m_transientParent = NULL;
+    target->m_parentWindow = NULL;
+    target->m_transientParent = NULL;
 #if XSCREEN_ON
-    self->m_data->m_screen = source->m_screen;
+    target->m_screen = source->m_screen;
 #endif
     ((XObject*)self)->is_window = 1;
+    return;
+
+copy_failed:
+    if (copiedTitle) XString_delete_base((XClass*)copiedTitle);
+    if (copiedFilePath) XString_delete_base((XClass*)copiedFilePath);
+    if (copiedIcon) XIcon_delete_base(copiedIcon);
+#if XCURSOR_ON
+    if (copiedCursor) XCursor_delete_base((XClass*)copiedCursor);
+#endif
+    XRegion_deinit(&copiedMask);
 }
 
 static void VXWindow_move(XWindow* self, XWindow* other)
 {
-    bool otherWasRegistered = false;
+    XWindowPrivate* sourceData;
+    XWindow* targetParent;
     if (!self || !other || self == other || !other->m_data) return;
     if (XClassIsVtableNull(self)) XWindow_init(self);
     if (!self->m_data) return;
-    VXWindow_deinit(self);
+    sourceData = other->m_data;
+    /* 原生后端的登记项以 XWindow* 为键，当前公共契约没有把登记项
+       改绑到另一个 XWindow 的接口。直接转移 m_data 会让事件继续投递
+       到 other，且 self 析构时无法注销该登记项；保持两对象原状比制造
+       悬挂平台资源安全。未创建的挂接只包含可重绑的 XPlatformWindow。 */
+    if (sourceData->m_nativeWindowAttached && sourceData->m_created)
+        return;
+    /* XObject 的父链属于目标对象本身；移动私有快照后，目标继续保留
+       原父对象。先摘除源对象，避免源父对象继续保存已被消费的指针。 */
+    targetParent = (XWindow*)((XObject*)self)->m_parent;
+    if (!XWindow_detachObjectParent(other)) return;
+#if XGUIAPPLICATION_ON
+    /* 目标仍是有效 XObject，只移除其窗口注册并释放私有资源。 */
+    XGuiApplication_removeWindow(self);
+#endif /* XGUIAPPLICATION_ON */
+    XWindow_releasePrivateData(self, false);
+    XFree_System(self->m_data);
+    self->m_data = NULL;
 #if XGUIAPPLICATION_ON
     /* Move transfers the private state, so the application registry must
        transfer its borrowed pointer as well.  Otherwise the moved-from
        object (whose m_data becomes NULL) remains in allWindows(). */
-    otherWasRegistered = XGuiApplication_replaceWindow(other, self);
+    if (!XGuiApplication_replaceWindow(other, self))
+        XGuiApplication_addWindow(self);
 #endif /* XGUIAPPLICATION_ON */
-    self->m_data = other->m_data;
+    self->m_data = sourceData;
     other->m_data = NULL;
+    /* 私有父窗口指针必须与未被移动的 XObject.m_parent 一致。 */
+    self->m_data->m_parentWindow = targetParent;
 #if XPLATFORMWINDOW_ON
-    if (self->m_data->m_platform)
+    if (self->m_data->m_platformWindowLinked &&
+        self->m_data->m_platform)
         XPlatformWindow_setWindow((XPlatformWindow*)self->m_data->m_platform, self);
 #endif /* XPLATFORMWINDOW_ON */
  #if XACCESSIBLE_ON
     if (self->m_data->m_accessibleRoot)
-        XAccessible_delete_base(self->m_data->m_accessibleRoot);
-    self->m_data->m_accessibleRoot = XAccessible_createForWindow(self);
+        self->m_data->m_accessibleRoot->m_window = self;
+    else
+        self->m_data->m_accessibleRoot = XAccessible_createForWindow(self);
     #endif
     ((XObject*)self)->is_window = 1;
-#if XGUIAPPLICATION_ON
-    (void)otherWasRegistered;
-#endif /* XGUIAPPLICATION_ON */
 }
 
 /* ==================== 表面与窗口标识 ==================== */
@@ -650,6 +848,9 @@ void XWindow_setVisibility(XWindow* self, XWindowVisibility visibility)
 void XWindow_createHandle(XWindow* self)
 {
     XWindowPrivate* data;
+#if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON
+    XPlatformWindow* platformWindow;
+#endif
     if (!self || !(data = self->m_data) || data->m_created) return;
     data->m_created = true;
 #if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON
@@ -657,9 +858,12 @@ void XWindow_createHandle(XWindow* self)
        应用代码只需调用 show()/setVisible(true)，无需触及平台工厂。 */
     if (!data->m_platform) {
         XGuiApplication* app = XGuiApplication_instance();
-        if (app && app->m_platformIntegration)
-            (void)XPlatformIntegration_createPlatformWindow(
+        if (app && app->m_platformIntegration) {
+            platformWindow = XPlatformIntegration_createPlatformWindow(
                 app->m_platformIntegration, self);
+            if (platformWindow)
+                data->m_platformWindowLinked = true;
+        }
     }
 #endif /* XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON */
 #if XPLATFORMNATIVEWINDOW_ON
@@ -696,7 +900,10 @@ void XWindow_destroy(XWindow* self)
     XWindowPrivate* data;
     if (!self || !(data = self->m_data)) return;
 #if XACCESSIBLE_ON
-    XPlatformAccessibility_notifyWindow(XAccessibleEvent_ObjectDestroyed, self);
+    /* destroy() 可重复调用；只为确实存在的平台窗口发送一次销毁通知，
+       避免无障碍驱动把同一个根节点当作多个对象销毁。 */
+    if (data->m_created)
+        XPlatformAccessibility_notifyWindow(XAccessibleEvent_ObjectDestroyed, self);
 #endif
 #if XPLATFORMNATIVEWINDOW_ON
     if (data->m_created && data->m_nativeWindowAttached)
@@ -704,6 +911,15 @@ void XWindow_destroy(XWindow* self)
     if ((data->m_flags & XWindowType_TypeMask) == XWindowType_ForeignWindow)
         data->m_nativeWindowAttached = false;
 #endif /* XPLATFORMNATIVEWINDOW_ON */
+#if XPLATFORMWINDOW_ON
+    /* 外部窗口销毁后不再复用其平台对象，避免平台登记表继续借用 self。 */
+    if ((data->m_flags & XWindowType_TypeMask) == XWindowType_ForeignWindow &&
+        data->m_platform && data->m_platformWindowLinked) {
+        XPlatformWindow_setWindow((XPlatformWindow*)data->m_platform, NULL);
+        data->m_platform = NULL;
+        data->m_platformWindowLinked = false;
+    }
+#endif /* XPLATFORMWINDOW_ON */
     data->m_created = false;
     data->m_winId = 0;
     data->m_exposed = false;
@@ -714,13 +930,24 @@ void XWindow_destroy(XWindow* self)
 void XWindow_setParent(XWindow* self, XWindow* parent)
 {
     XWindowPrivate* data;
+    XObject* object;
+    XWindow* oldParent;
     if (!self || !(data = self->m_data)) return;
+    object = (XObject*)self;
     /* Qt 6.8：Desktop 类型父窗口视为 NULL（使其成为顶层）。 */
     if (parent && XWindow_type(parent) == XWindowType_Desktop)
         parent = NULL;
-    if (data->m_parentWindow == parent) return;
+    if (data->m_parentWindow == parent && object->m_parent == (XObject*)parent)
+        return;
+    oldParent = data->m_parentWindow;
     data->m_parentWindow = parent;
-    XObject_setParent((XObject*)self, (XObject*)parent);
+    XObject_setParent(object, (XObject*)parent);
+    /* XObject_setParent 可能因线程亲和性/对象状态拒绝请求；不能只更新
+       XWindow 私有副本，否则父查询与 children 列表会永久不一致。 */
+    if (object->m_parent != (XObject*)parent) {
+        data->m_parentWindow = oldParent;
+        return;
+    }
     /* 可见且（父为 NULL 或父已创建平台句柄）时重新应用可见性。 */
     if (data->m_visible && (!parent ||
         (parent->m_data && parent->m_data->m_created)))
@@ -844,7 +1071,7 @@ void XWindow_setTitle(XWindow* self, const XString* title)
         if (!old) return;
         if (XString_equals(old, title, XChar_CaseSensitive)) return;
     }
-    XWindow_setString(&data->m_title, title);
+    if (!XWindow_setString(&data->m_title, title)) return;
     XWindow_windowTitleChanged_signal(self, data->m_title);
 #if XACCESSIBLE_ON
     /* 设置标题通常早于 createHandle；此时不应为无障碍路径查询强制创建
@@ -861,6 +1088,7 @@ void XWindow_setTitle(XWindow* self, const XString* title)
 void XWindow_setTitle_2(XWindow* self, const char* title)
 {
     XString* value = title ? XString_create_utf8(title) : NULL;
+    if (title && !value) return;
     XWindow_setTitle(self, value);
     if (value) XString_delete_base((XClass*)value);
 }
@@ -886,7 +1114,9 @@ void XWindow_setMask(XWindow* self, const XRegion* region)
     XWindowPrivate* data;
     if (!self || !(data = self->m_data)) return;
     if (region) {
-        XRegion_copy(region, &data->m_mask);
+        /* m_mask 已在 XWindow_init 中初始化；复制会复用其矩形容量，
+           扩容失败时 XRegion_copy 保留旧遮罩，故不能先清空或 deinit。 */
+        if (!XWindow_copyRegion(region, &data->m_mask)) return;
         data->m_hasMask = true;
     } else {
         XRegion_clear(&data->m_mask);
@@ -902,8 +1132,8 @@ void XWindow_mask(const XWindow* self, XRegion* out)
         return;
     }
     if (!out) return;
-    XRegion_clear(out);
     if (data->m_hasMask) XRegion_copy(&data->m_mask, out);
+    else XRegion_clear(out);
 }
 
 /* ==================== 激活 / 内容方向 / 设备像素比 ==================== */
@@ -1300,6 +1530,7 @@ void XWindow_setFilePath(XWindow* self, const XString* filePath)
 void XWindow_setFilePath_2(XWindow* self, const char* filePath)
 {
     XString* value = filePath ? XString_create_utf8(filePath) : NULL;
+    if (filePath && !value) return;
     XWindow_setFilePath(self, value);
     if (value) XString_delete_base((XClass*)value);
 }
@@ -1326,10 +1557,89 @@ XWindowPlatform* XWindow_handle(const XWindow* self)
 { return self && self->m_data ? self->m_data->m_platform : NULL; }
 
 void XWindow_setHandle(XWindow* self, XWindowPlatform* handle)
-{ if (self && self->m_data) self->m_data->m_platform = handle; }
+{
+    XWindowPrivate* data;
+    XWindowPlatform* oldHandle;
+    if (!self || !(data = self->m_data)) return;
+    if (data->m_platform == handle) {
+#if XPLATFORMWINDOW_ON
+        if (handle && (data->m_nativeWindowAttached ||
+                       data->m_platformWindowLinked)) {
+            XPlatformWindow_setWindow((XPlatformWindow*)handle, self);
+            data->m_platformWindowLinked = true;
+        }
+#endif /* XPLATFORMWINDOW_ON */
+        return;
+    }
+    oldHandle = data->m_platform;
+#if XPLATFORMWINDOW_ON
+    /* XWindowPlatform 是借用对象；替换前后都同步其反向窗口指针。
+       该 API 仅接受平台后端创建的 XPlatformWindow；在后端尚未
+       标记真实挂接时，调用方可能只是注入测试用伪句柄，不能解引用。 */
+    if (data->m_platformWindowLinked && oldHandle)
+        XPlatformWindow_setWindow((XPlatformWindow*)oldHandle, NULL);
+#endif /* XPLATFORMWINDOW_ON */
+    data->m_platform = handle;
+    data->m_platformWindowLinked = false;
+#if XPLATFORMWINDOW_ON
+    if (data->m_nativeWindowAttached && handle) {
+        XPlatformWindow_setWindow((XPlatformWindow*)handle, self);
+        data->m_platformWindowLinked = true;
+    }
+#endif /* XPLATFORMWINDOW_ON */
+}
 
 void XWindow_setNativeWindowAttached(XWindow* self, bool attached)
-{ if (self && self->m_data) self->m_data->m_nativeWindowAttached = attached; }
+{
+    XWindowPrivate* data;
+    bool wasAttached;
+    if (!self || !(data = self->m_data)) return;
+    wasAttached = data->m_nativeWindowAttached;
+    if (wasAttached == attached) {
+#if XPLATFORMWINDOW_ON
+        /* true 是幂等操作，但可修复平台对象在外部转移后遗漏的反向指针。 */
+        if (attached && data->m_platform) {
+            XPlatformWindow_setWindow((XPlatformWindow*)data->m_platform, self);
+            data->m_platformWindowLinked = true;
+        }
+#endif /* XPLATFORMWINDOW_ON */
+        return;
+    }
+    if (!attached && wasAttached) {
+        /* 解除真实挂接必须先注销后端登记。已创建窗口走公共 destroy，
+           这样同时保留无障碍通知；未创建但仍有登记的异常路径也由后端
+           幂等清理。 */
+        if (data->m_created) {
+            XWindow_destroy(self);
+        } else {
+#if XPLATFORMNATIVEWINDOW_ON
+            XPlatformNativeWindow_destroy(self);
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+        }
+#if XPLATFORMWINDOW_ON
+        if (data->m_platformWindowLinked) {
+            if (data->m_platform)
+                XPlatformWindow_setWindow((XPlatformWindow*)data->m_platform,
+                                          NULL);
+            data->m_platformWindowLinked = false;
+        }
+        if ((data->m_flags & XWindowType_TypeMask) ==
+            XWindowType_ForeignWindow) {
+            data->m_platform = NULL;
+        }
+#endif /* XPLATFORMWINDOW_ON */
+        data->m_created = false;
+        data->m_winId = 0;
+        data->m_exposed = false;
+    }
+    data->m_nativeWindowAttached = attached;
+#if XPLATFORMWINDOW_ON
+    if (attached && data->m_platform) {
+        XPlatformWindow_setWindow((XPlatformWindow*)data->m_platform, self);
+        data->m_platformWindowLinked = true;
+    }
+#endif /* XPLATFORMWINDOW_ON */
+}
 
 bool XWindow_attachForeignHandle(XWindow* self, XWindowId nativeId)
 {

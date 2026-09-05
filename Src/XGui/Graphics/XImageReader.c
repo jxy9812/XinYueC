@@ -1091,9 +1091,13 @@ void XImageReader_init_file_2(XImageReader* self, const char* fileName, const ch
 
 void XImageReader_setFormat(XImageReader* self, const XString* format)
 {
+    XString* copy;
     if (!self || !self->m_data) return;
+    /* format 可能就是 format_const() 返回的内部借用对象。 */
+    copy = format ? XString_create_copy(format) : NULL;
+    if (format && !copy) return;
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
-    self->m_data->m_format = format ? XString_create_copy(format) : NULL;
+    self->m_data->m_format = copy;
 }
 
 void XImageReader_setFormat_2(XImageReader* self, const char* format)
@@ -1191,7 +1195,12 @@ XIODevice* XImageReader_device(const XImageReader* self)
 
 void XImageReader_setFileName(XImageReader* self, const XString* fileName)
 {
+    XString* copy;
     if (!self || !self->m_data) return;
+    /* 先复制，兼容 setFileName(fileName_const(self))；后续释放处理器和
+       自有文件设备时可能间接销毁当前内部文件名。 */
+    copy = fileName ? XString_create_copy(fileName) : NULL;
+    if (fileName && !copy) return;
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageReader_clearAnimation(self->m_data);
 #endif
@@ -1201,7 +1210,7 @@ void XImageReader_setFileName(XImageReader* self, const XString* fileName)
     XImageReader_clearDetectedFormat(self->m_data);
     XImageReader_clearText(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
-    self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
+    self->m_data->m_fileName = copy;
     self->m_data->m_device = NULL;
     if (self->m_data->m_fileName)
         (void)XImageReader_ensureOwnedDevice(self->m_data);
@@ -1507,10 +1516,9 @@ static void XImageReader_applyAutoTransform(
     XImage_init(&rotated);
     XImage_transformed(image, &matrix, 0, &rotated);
     if (!XImage_isNull(&rotated)) {
-        XImage_deinit_base(image);
         XImage_move_base(image, &rotated);
-    }
-    XImage_deinit_base(&rotated);
+    } else
+        XImage_deinit_base(&rotated);
 }
 
 XImageIOHandlerTransformation XImageReader_transformation(const XImageReader* self)
@@ -1855,7 +1863,8 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                XString_toUtf8(self->m_data->m_format));
             if (ok)
                 XImage_move_base(out, &loaded);
-            XImage_deinit_base(&loaded);
+            else
+                XImage_deinit_base(&loaded);
             if (!ok) {
             if (!XFile_exists_static(self->m_data->m_fileName))
                 XImageReader_setError(self, XImageReaderError_FileNotFoundError,
@@ -1882,7 +1891,8 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    XString_toUtf8(self->m_data->m_format));
         if (ok)
             XImage_move_base(out, &loaded);
-        XImage_deinit_base(&loaded);
+        else
+            XImage_deinit_base(&loaded);
         if (bytes) XByteArray_delete_base((XClass*)bytes);
         if (!ok) {
             XImageReader_setError(self, XImageReaderError_InvalidDataError,
@@ -1907,18 +1917,14 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_scaledClipH };
                 XImage_init(&clipped);
                 XImage_copyRect(out, &clipRect, &clipped);
-                XImage_deinit_base(out);
                 XImage_move_base(out, &clipped);
-                XImage_deinit_base(&clipped);
             }
         } else if (!supportScaledClipRect) {
             if (scaledSizeValid) {
                 XImage scaled;
                 XImage_init(&scaled);
                 XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
-                XImage_deinit_base(out);
                 XImage_move_base(out, &scaled);
-                XImage_deinit_base(&scaled);
             }
             if (scaledClipRectValid) {
                 XImage clipped;
@@ -1928,9 +1934,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_scaledClipH };
                 XImage_init(&clipped);
                 XImage_copyRect(out, &clipRect, &clipped);
-                XImage_deinit_base(out);
                 XImage_move_base(out, &clipped);
-                XImage_deinit_base(&clipped);
             }
         }
     } else if (supportScaledSize && clipRectNull) {
@@ -1942,9 +1946,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_scaledClipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XImage_deinit_base(out);
             XImage_move_base(out, &clipped);
-            XImage_deinit_base(&clipped);
         }
     } else if (!supportScaledClipRect) {
         if (!clipRectNull && clipRectValid) {
@@ -1955,17 +1957,13 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_clipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XImage_deinit_base(out);
             XImage_move_base(out, &clipped);
-            XImage_deinit_base(&clipped);
         }
         if (scaledSizeValid) {
             XImage scaled;
             XImage_init(&scaled);
             XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
-            XImage_deinit_base(out);
             XImage_move_base(out, &scaled);
-            XImage_deinit_base(&scaled);
         }
         if (scaledClipRectValid) {
             XImage clipped;
@@ -1975,9 +1973,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_scaledClipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XImage_deinit_base(out);
             XImage_move_base(out, &clipped);
-            XImage_deinit_base(&clipped);
         }
     }
     /* 成功读取后按文件名设置高 DPI 设备像素比；设备输入没有文件名时

@@ -222,7 +222,10 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
         : ((header.m_type == 2 || header.m_type == 5)
             ? XImageFormat_Grayscale8 : XImageFormat_RGB32);
     XImage_init_ex(&temp, header.m_width, header.m_height, outputFormat);
-    if (XImage_isNull(&temp)) return false;
+    if (XImage_isNull(&temp)) {
+        XImage_deinit_base(&temp);
+        return false;
+    }
     ascii = header.m_type <= 3;
     pos = header.m_dataOffset;
     if (header.m_type == 4) {
@@ -290,10 +293,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
         XImage_setColor(&temp, 0, 0xffffffffu);
         XImage_setColor(&temp, 1, 0xff000000u);
     }
-    XImage_deinit_base(out);
-    out->m_data = temp.m_data;
-    temp.m_data = NULL;
-    XImage_deinit_base(&temp);
+    XImage_move_base(out, &temp);
     return true;
 }
 

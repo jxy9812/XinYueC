@@ -2209,7 +2209,10 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
         if (id >= 1 && id <= 4) role[id - 1] = ci;
     }
     XImage_init_ex(&temp, w, h, XImageFormat_ARGB32);
-    if (XImage_isNull(&temp)) return false;
+    if (XImage_isNull(&temp)) {
+        XImage_deinit_base(&temp);
+        return false;
+    }
 
     if (nf == 1) {
         for (int y = 0; y < h; ++y) {
@@ -2287,14 +2290,14 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
             }
         }
 #else
+        XImage_deinit_base(&temp);
         return false; /* CMYK 扩展被裁剪 */
 #endif
     } else {
+        XImage_deinit_base(&temp);
         return false; /* 不支持的组件数量 */
     }
-    XImage_deinit_base(out);
-    out->m_data = temp.m_data;
-    temp.m_data = NULL;
+    XImage_move_base(out, &temp);
     if (ctx->densityUnit == 1) {
         /* 2.54 cm/in = 127/50 cm/in，按 Qt 的正数截断语义计算。 */
         XImage_setDotsPerMeterX(out, (ctx->densityX * 5000) / 127);

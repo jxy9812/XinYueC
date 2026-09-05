@@ -517,7 +517,8 @@ bool XRegion_isEmpty(const XRegion* self);
 /**
  * @brief      复制区域
  * @param self 输入区域
- * @param out  输出区域；与 self 相同时不执行操作
+ * @param out  已初始化的输出区域；与 self 相同时不执行操作
+ * @note       复制会复用 out 的已有容量；扩容失败时保留 out 原有内容。
  */
 void XRegion_copy(const XRegion* self, XRegion* out);
 
@@ -549,7 +550,8 @@ bool XRegion_intersects(const XRegion* self, const XRect* rect);
  * @brief      计算两个区域的联合
  * @param self  左侧区域
  * @param other 右侧区域
- * @param out   输出区域；支持与输入区域别名
+ * @param out   已初始化的输出区域；支持与输入区域别名
+ * @note       输出区域已有容量可复用；输入输出别名时内部使用临时区域。
  */
 void XRegion_united(const XRegion* self, const XRegion* other, XRegion* out);
 
@@ -557,7 +559,8 @@ void XRegion_united(const XRegion* self, const XRegion* other, XRegion* out);
  * @brief      计算两个区域的交集
  * @param self  左侧区域
  * @param other 右侧区域
- * @param out   输出区域；支持与输入区域别名
+ * @param out   已初始化的输出区域；支持与输入区域别名
+ * @note       输出区域已有容量可复用；输入输出别名时内部使用临时区域。
  */
 void XRegion_intersected(const XRegion* self, const XRegion* other, XRegion* out);
 
@@ -565,7 +568,8 @@ void XRegion_intersected(const XRegion* self, const XRegion* other, XRegion* out
  * @brief      从区域中减去另一个区域
  * @param self  被减区域
  * @param other 减数区域
- * @param out   输出差集区域；支持与输入区域别名
+ * @param out   已初始化的输出差集区域；支持与输入区域别名
+ * @note       输出区域已有容量可复用；输入输出别名时内部使用临时区域。
  */
 void XRegion_subtracted(const XRegion* self, const XRegion* other, XRegion* out);
 

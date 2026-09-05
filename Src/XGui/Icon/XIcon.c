@@ -49,7 +49,6 @@ static void XIconEntry_copy(void* destination, const void* source)
     const XIconEntry* src = (const XIconEntry*)source;
     XIconEntry* dest = (XIconEntry*)destination;
     if (!dest || !src) return;
-    XPixmap_init(&dest->m_pixmap);
     XPixmap_copy_base(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName
         ? XString_create_copy(src->m_fileName) : NULL;
@@ -64,7 +63,6 @@ static void XIconEntry_move(void* destination, const void* source)
     XIconEntry* dest = (XIconEntry*)destination;
     XIconEntry* src = (XIconEntry*)source;
     if (!dest || !src) return;
-    XPixmap_init(&dest->m_pixmap);
     XPixmap_move_base(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName;
     src->m_fileName = NULL;
@@ -101,6 +99,13 @@ static XStringList* g_iconThemeSearchPaths;
 static XStringList* g_iconFallbackSearchPaths;
 static XString* g_iconThemeName;
 static XString* g_iconFallbackThemeName;
+
+/* 清空像素图数据但保留已绑定的虚表，避免 deinit 后再次 init。 */
+static void XIcon_preparePixmapOutput(XPixmap* out)
+{
+    if (!out) return;
+    XPixmap_init(out);
+}
 
 /*
  * QIconLoader asks QPlatformTheme for these values lazily.  Keep that
@@ -318,8 +323,6 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
             XString_delete_base((XClass*)existing->m_fileName);
             existing->m_fileName = NULL;
         }
-        XPixmap_deinit_base(&existing->m_pixmap);
-        XPixmap_init(&existing->m_pixmap);
         XPixmap_copy_base(&existing->m_pixmap, pixmap);
         existing->m_requestedSize.width = 0;
         existing->m_requestedSize.height = 0;
@@ -334,8 +337,6 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
     entry.m_state = state;
     entry.m_loaded = true;
     if (!XVector_push_back_move_1_base(&d->m_entries, &entry))
-        XPixmap_deinit_base(&entry.m_pixmap);
-    else
         XPixmap_deinit_base(&entry.m_pixmap);
     XIconPrivate_touch(d);
 }
@@ -372,8 +373,6 @@ static void XIconPrivate_addFileEntry(XIconPrivate* d, const XString* fileName,
     entry.m_state = state;
     entry.m_loaded = false;
     if (!XVector_push_back_move_1_base(&d->m_entries, &entry))
-        XIconEntry_deinit(&entry);
-    else
         XIconEntry_deinit(&entry);
     XIconPrivate_touch(d);
 }
@@ -610,8 +609,6 @@ void XIcon_detach(XIcon* self)
                 XIconEntry_copy(&copy, entry);
                 if (!XVector_push_back_move_1_base(&newData->m_entries, &copy))
                     XIconEntry_deinit(&copy);
-                else
-                    XIconEntry_deinit(&copy);
             }
             newData->m_isMask = self->m_data->m_isMask;
             XIconPrivate_setName(newData, self->m_data->m_name
@@ -745,15 +742,11 @@ static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry,
                 exact = true;
                 break;
             }
-            XImage_deinit_base(&previous);
-            XImage_init(&previous);
             XImage_copy_base(&previous, &image);
             XImage_deinit_base(&image);
-            XImage_init(&image);
         }
         if (!exact && XImage_isNull(&image) && !XImage_isNull(&previous)) {
             XImage_move_base(&image, &previous);
-            XImage_init(&previous);
         }
         ok = readAny || !XImage_isNull(&image);
     }
@@ -765,7 +758,6 @@ static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry,
         return false;
     }
 
-    XPixmap_deinit_base(&entry->m_pixmap);
     XPixmap_init_image(&entry->m_pixmap, &image, 0);
     if (XPixmap_isNull(&entry->m_pixmap)) {
         XImage_deinit_base(&previous);
@@ -1056,11 +1048,10 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
                        &scaled);
         if (!XPixmap_isNull(&scaled))
         {
-            XPixmap_deinit_base(out);
-            out->m_data = scaled.m_data;
-            scaled.m_data = NULL;
+            XPixmap_move_base(out, &scaled);
         }
-        XPixmap_deinit_base(&scaled);
+        else
+            XPixmap_deinit_base(&scaled);
     }
     if (best->m_mode != mode && mode != XIconMode_Normal)
     {
@@ -1069,10 +1060,10 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_deinit_base(out);
             XPixmap_move_base(out, &styled);
         }
-        XPixmap_deinit_base(&styled);
+        else
+            XPixmap_deinit_base(&styled);
     }
     XPixmap_setDevicePixelRatio(out, outputRatio);
     if (!XPixmap_isNull(out))
@@ -1084,15 +1075,17 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
 void XIcon_pixmap(const XIcon* self, int width, int height, XIconMode mode, XIconState state, XPixmap* out)
 {
     if (!out) return;
-    if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
-    XPixmap_init(out);
-    if (!self || !self->m_data || width <= 0 || height <= 0) return;
-    if (self->m_data->m_engine)
+    /* 先把输出变成可用的空 XPixmap：既支持未初始化栈对象，也释放
+       调用方复用的旧数据。engine 只负责填充，不能要求每个 engine
+       实现自行初始化输出参数。 */
+    XIcon_preparePixmapOutput(out);
+    if (self && self->m_data && self->m_data->m_engine)
     {
         XSize requested = { width, height };
         XIconEngine_pixmap_base(self->m_data->m_engine, &requested, mode, state, out);
         return;
     }
+    if (!self || !self->m_data || width <= 0 || height <= 0) return;
     XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
     XIconPrivate_scaledPixmap(self->m_data, width, height, 1.0f,
                               mode, state, out);
@@ -1109,10 +1102,12 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
     int targetWidth;
     int targetHeight;
     if (!out) return;
+    /* 与普通 pixmap() 保持相同的输出参数契约；不能假设自定义 engine
+       会先初始化 out。 */
+    XIcon_preparePixmapOutput(out);
     if (devicePixelRatio <= 0.0f) devicePixelRatio = 1.0f;
     if (self && self->m_data && self->m_data->m_engine) {
         XSize size = {width, height};
-        if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
         if (devicePixelRatio > 1.0f) {
             XIconEngine_scaledPixmap_base(self->m_data->m_engine, &size, mode,
                                           state, devicePixelRatio, out);
@@ -1135,15 +1130,13 @@ void XIcon_pixmapRatio(const XIcon* self, int width, int height, float devicePix
         }
         return;
     }
-    if (!self || !self->m_data)
-        return;
-    if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
-    XPixmap_init(out);
+    if (!self || !self->m_data) return;
     XIconPrivate_ensureWritableForLazyLoad((XIcon*)(uintptr_t)self);
     if (!(devicePixelRatio > 1.0f)) {
         /* Qt keeps the normal-DPI path independent of the requested sub-normal
            ratio and fixes the returned pixmap DPR at one. */
-        XIcon_pixmap(self, width, height, mode, state, out);
+        XIconPrivate_scaledPixmap(self->m_data, width, height, 1.0f,
+                                  mode, state, out);
         if (!XPixmap_isNull(out)) XPixmap_setDevicePixelRatio(out, 1.0f);
         return;
     }
@@ -1451,6 +1444,18 @@ static void XIcon_fromThemeImpl(const XString* nameString,
         created = XString_create_utf8(utf8Name);
         nameString = created;
     }
+    if (nameString) {
+        nameUtf8 = XString_toUtf8(nameString);
+        /* Qt QIcon::fromTheme() 对绝对路径直接构造文件图标；Unix 的 `/`
+           路径和 Qt 资源的 `:/` 路径都不应交给 QIconLoader 当作主题名。
+           该构造函数自身会初始化输出，因此不要先创建一个临时私有数据。 */
+        if (nameUtf8 && (nameUtf8[0] == '/' || nameUtf8[0] == ':')) {
+            if (XClassGetVtable(out) == XIcon_class_init())
+                XIcon_deinit_base(out);
+            XIcon_init_file(out, nameString);
+            goto fromTheme_done;
+        }
+    }
     /* QIcon::fromTheme() 返回新值；C 接口通过 out 写回时必须先释放
        调用方已有的私有数据，否则每次复用同一输出对象都会遗失一次
        XIconPrivate 引用。部分 Qt 兼容夹具直接把未初始化栈对象作为 out，
@@ -1460,14 +1465,6 @@ static void XIcon_fromThemeImpl(const XString* nameString,
         XIcon_deinit_base(out);
     XIcon_init(out);
     if (nameString) {
-        nameUtf8 = XString_toUtf8(nameString);
-        /* Qt QIcon::fromTheme() 对绝对路径直接构造文件图标；Unix 的 `/`
-           路径和 Qt 资源的 `:/` 路径都不应交给 QIconLoader 当作主题名。 */
-        if (nameUtf8 && (nameUtf8[0] == '/' || nameUtf8[0] == ':')) {
-            XIcon_deinit_base(out);
-            XIcon_init_file(out, nameString);
-            goto fromTheme_done;
-        }
         engine = XIconThemeEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                             nameString);
         if (engine && out->m_data) {

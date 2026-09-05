@@ -415,7 +415,7 @@ static const XFontCmap g_xfont8x16_cmaps[] = {
 static const XFontBitmapData g_xfont8x16_data = {
     g_xfont8x16_bitmap, g_xfont8x16_glyph_dsc, g_xfont8x16_cmaps,
     NULL, 16,
-    1, 1, 0, 0
+    2, 1, 0, 0
 };
 
 static const XFontBitmapProvider g_xfont8x16_provider = {

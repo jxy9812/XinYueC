@@ -1065,6 +1065,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
                        : (transparent ? XImageFormat_ARGB32 : XImageFormat_RGB32));
     if (XImage_isNull(&image)) {
         XFree_System(colors);
+        XImage_deinit_base(&image);
         return false;
     }
     XImage_fill(&image, 0u);
@@ -1100,10 +1101,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
         XFree_System(line);
     }
     XFree_System(colors);
-    XImage_deinit_base(out);
-    out->m_data = image.m_data;
-    image.m_data = NULL;
-    XImage_deinit_base(&image);
+    XImage_move_base(out, &image);
     return true;
 }
 

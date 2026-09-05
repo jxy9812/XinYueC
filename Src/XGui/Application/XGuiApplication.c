@@ -61,6 +61,15 @@
 
 static void VXGuiApplication_deinit(XGuiApplication* app);
 
+/*
+ * XCoreApplication 只保存一个基类指针，不能仅凭它的地址或一个非基类
+ * vtable 就判断对象是否带有 XGuiApplication 尾部。该标记只在本类 init
+ * 完成基类初始化后建立，并在本类析构开始时清除，因此读取它不会触碰
+ * 未初始化的调用方栈对象，也不会把未知的 XCoreApplication 派生类当成
+ * GUI 应用处理。
+ */
+static XGuiApplication* g_guiApplication = NULL;
+
 #if XPLATFORMINTEGRATION_ON
 /** @brief 主事件分发器回调：把平台原生事件注入公共事件队列。 */
 static bool XGuiApplication_pumpNativeEvents(void* userData)
@@ -145,24 +154,29 @@ XVtable* XGuiApplication_class_init(void)
 XGuiApplication* XGuiApplication_instance(void)
 {
     XCoreApplication* core = XCoreApplication_instance();
-    if (!core) return NULL;
-    /* A plain XCoreApplication is not layout-compatible with the GUI tail.
-       Do not reinterpret it as XGuiApplication when clients ask for the GUI
-       singleton or attempt to create a GUI app after a core app exists. */
-    if (XClassGetVtable(core) == XCoreApplication_class_init()) return NULL;
-    return (XGuiApplication*)core;
+    if (!core || g_guiApplication != (XGuiApplication*)core)
+        return NULL;
+    return g_guiApplication;
 }
 
 XGuiApplication* XGuiApplication_create_ex(XMemoryType memory, int argc,
                                            char** argv)
 {
+    XGuiApplication* app;
     if (XCoreApplication_instance())
         return XGuiApplication_instance();
 
-    XGuiApplication* app = (XGuiApplication*)XMemory_malloc(sizeof(XGuiApplication), memory);
+    app = (XGuiApplication*)XMemory_malloc(sizeof(XGuiApplication), memory);
     if (!app) return NULL;
 
     XGuiApplication_init(app, argc, argv);
+    /* init 是 void API；若初始化期间单例被其它路径抢先建立，不能把
+       尚未初始化的对象当成成功结果返回，也不能对它调用 XClass_deinit。 */
+    if (XCoreApplication_instance() != (XCoreApplication*)app ||
+        XGuiApplication_instance() != app) {
+        XMemory_free(app, memory);
+        return NULL;
+    }
     Set_Class_Memory(app, memory);
     Set_Class_IsHeap(app, true);
     return app;
@@ -170,7 +184,29 @@ XGuiApplication* XGuiApplication_create_ex(XMemoryType memory, int argc,
 
 void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
 {
+    XCoreApplication* active;
+    XMemory* previousMemory = NULL;
+    bool previousIsHeap = false;
+    bool reinitialize = false;
     if (app == NULL) return;
+
+    /* XClass 的 vtable 不能用于探测未初始化的栈对象。只有全局单例
+       明确指向当前地址时，才可确认这里是一次已初始化对象的重建；
+       其它活动应用则保持单例不变并拒绝本次初始化。 */
+    active = XCoreApplication_instance();
+    if (active && active != (XCoreApplication*)app)
+        return;
+    if (active == (XCoreApplication*)app) {
+        /* XGuiApplication_instance() 只读取已经由 g_app 证明有效的对象，
+           同时拒绝把一个普通 XCoreApplication 当成 GUI 尾部来扩展。 */
+        if (!XGuiApplication_instance())
+            return;
+        previousMemory = Class_Memory(app);
+        previousIsHeap = Class_IsHeap(app);
+        reinitialize = true;
+        /* 派生的 XApplication 也通过当前 vtable 完整清理自己的尾部。 */
+        XClass_deinit_base((XClass*)app);
+    }
 
     /* 先清空 GUI 尾部字段，再由基类初始化统一清零 XGuiApplication 中的
        XObject/XCoreApplication 部分，最后套用本类虚函数表。 */
@@ -178,6 +214,13 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
            sizeof(XGuiApplication) - sizeof(XCoreApplication));
     XCoreApplication_init((XCoreApplication*)app, argc, argv);
     XClassSetVtable(app, XGuiApplication);
+    if (reinitialize) {
+        /* 保留已初始化对象的完整所有权信息；首次初始化则使用
+           XCoreApplication/XClass 建立的默认内存方法和非堆标记。 */
+        Class_Memory(app) = previousMemory ? previousMemory :
+            XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
+        Class_IsHeap(app) = previousIsHeap;
+    }
 
     /* Qt 6.8 QGuiApplication 默认值。 */
     app->m_quitOnLastWindowClosed = true;
@@ -203,13 +246,23 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
             XGuiApplication_pumpNativeEvents, app);
     app->m_layoutDirection = XGuiApplication_resolveAutoLayoutDirection(app);
 #endif /* XPLATFORMINTEGRATION_ON */
+
+    /* 所有成员已经处于可用状态后再发布 GUI 单例，避免初始化回调看到
+       只有 XCoreApplication 已登记、GUI 尾部尚未完成的中间状态。 */
+    g_guiApplication = app;
 }
 
 static void VXGuiApplication_deinit(XGuiApplication* app)
 {
     size_t i;
     size_t n;
-    if (!app) return;
+    if (!app || g_guiApplication != app)
+        return;
+
+    /* 先摘除 GUI 单例标记，防止析构回调重入时再次看到半析构对象。 */
+    g_guiApplication = NULL;
+    if (((XObject*)app)->was_deleted)
+        return;
 
     /* 释放 GUI 尾部拥有的堆资源；借用指针（窗口/焦点/模态）只清空不释放。 */
     if (app->m_displayName) { XString_delete_base(app->m_displayName); app->m_displayName = NULL; }
@@ -237,9 +290,20 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         XVector_delete_base((XClass*)app->m_windows);
         app->m_windows = NULL;
     }
+    app->m_focusWindow = NULL;
+    app->m_modalWindow = NULL;
+    app->m_focusObject = NULL;
 #if XINPUTMETHOD_ON
     /* 输入法先于集成层释放（其绑定输入上下文由集成层拥有）。 */
     if (app->m_inputMethod) {
+#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+        if (app->m_platformIntegration) {
+            XPlatformInputContext* context =
+                XPlatformIntegration_inputContext(app->m_platformIntegration);
+            if (context)
+                XPlatformInputContext_setInputMethod(context, NULL);
+        }
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
         XInputMethod_delete_base(app->m_inputMethod);
         app->m_inputMethod = NULL;
     }
@@ -277,6 +341,7 @@ void XGuiApplication_setApplicationDisplayName(const XString* name)
 {
     XGuiApplication* app = XGuiApplication_instance();
     const XString* oldDisplay;
+    XString* replacement = NULL;
     bool changed;
     if (!app) return;
     oldDisplay = XGuiApplication_applicationDisplayName();
@@ -285,8 +350,12 @@ void XGuiApplication_setApplicationDisplayName(const XString* name)
         changed = !XString_equals(oldDisplay, name, XChar_CaseSensitive);
     if (!name && !oldDisplay) changed = false;
     if (!changed && ((name == NULL) == (app->m_displayName == NULL))) return;
+    if (name) {
+        replacement = XGuiApplication_cloneString(name);
+        if (!replacement) return;
+    }
     if (app->m_displayName) { XString_delete_base(app->m_displayName); app->m_displayName = NULL; }
-    app->m_displayName = XGuiApplication_cloneString(name);
+    app->m_displayName = replacement;
     if (changed) XGuiApplication_applicationDisplayNameChanged_signal(app);
 }
 
@@ -303,9 +372,12 @@ const XString* XGuiApplication_applicationDisplayName(void)
 void XGuiApplication_setDesktopFileName(const XString* name)
 {
     XGuiApplication* app = XGuiApplication_instance();
+    XString* replacement;
     if (!app) return;
+    replacement = XGuiApplication_cloneString(name);
+    if (name && !replacement) return;
     if (app->m_desktopFileName) { XString_delete_base(app->m_desktopFileName); app->m_desktopFileName = NULL; }
-    app->m_desktopFileName = XGuiApplication_cloneString(name);
+    app->m_desktopFileName = replacement;
 }
 
 const XString* XGuiApplication_desktopFileName(void)
@@ -344,7 +416,10 @@ XVector* XGuiApplication_allWindows(void)
     if (!out) return NULL;
     for (size_t i = 0; i < XVector_size_base((const XContainer*)app->m_windows); ++i) {
         XWindow* w = XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
-        if (w) XVector_Push_Back_Base(out, XWindow*, w);
+        if (w && !XVector_push_back_1_base(out, &w)) {
+            XVector_delete_base((XClass*)out);
+            return NULL;
+        }
     }
     return out;
 }
@@ -359,8 +434,11 @@ XVector* XGuiApplication_topLevelWindows(void)
     for (size_t i = 0; i < XVector_size_base((const XContainer*)app->m_windows); ++i) {
         XWindow* w = XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
         if (!w) continue;
-        if (XWindow_parent(w, XWindowAncestor_ExcludeTransients) == NULL)
-            XVector_Push_Back_Base(out, XWindow*, w);
+        if (XWindow_parent(w, XWindowAncestor_ExcludeTransients) == NULL &&
+            !XVector_push_back_1_base(out, &w)) {
+            XVector_delete_base((XClass*)out);
+            return NULL;
+        }
     }
     return out;
 }
@@ -473,9 +551,12 @@ void XGuiApplication_removeWindow(XWindow* win)
 void XGuiApplication_setWindowIcon(const XIcon* icon)
 {
     XGuiApplication* app = XGuiApplication_instance();
+    XIcon* replacement;
     if (!app) return;
-    if (app->m_windowIcon) { XIcon_delete_base(app->m_windowIcon); app->m_windowIcon = NULL; }
-    app->m_windowIcon = XGuiApplication_cloneIcon(icon);
+    replacement = XGuiApplication_cloneIcon(icon);
+    if (icon && !replacement) return;
+    if (app->m_windowIcon) XIcon_delete_base(app->m_windowIcon);
+    app->m_windowIcon = replacement;
 }
 
 XIcon* XGuiApplication_windowIcon(void)
@@ -556,9 +637,10 @@ XVector* XGuiApplication_screens(void)
 
 XScreen* XGuiApplication_screenAt(const XPoint* pos)
 {
-    XVector* list = XScreen_screens();
+    XVector* list;
     XScreen* hit = NULL;
     if (!pos) return NULL;
+    list = XScreen_screens();
     if (!list) return NULL;
     for (size_t i = 0; i < XVector_size_base((const XContainer*)list); ++i) {
         XScreen* s = XVector_At_Base(list, (int64_t)i, XScreen*);
@@ -646,7 +728,8 @@ void XGuiApplication_setOverrideCursor(const XCursor* cursor)
     if (!app || !app->m_overrideStack) return;
     copy = XGuiApplication_cloneCursor(cursor);
     if (!copy) return;
-    XVector_Push_Back_Base(app->m_overrideStack, XCursor*, copy);
+    if (!XVector_push_back_1_base(app->m_overrideStack, &copy))
+        XCursor_delete_base(copy);
 }
 
 void XGuiApplication_changeOverrideCursor(const XCursor* cursor)
@@ -683,15 +766,17 @@ void XGuiApplication_restoreOverrideCursor(void)
 void XGuiApplication_setFont(const XFont* font)
 {
     XGuiApplication* app = XGuiApplication_instance();
+    XFont* replacement = NULL;
     if (!app) return;
-    if (app->m_font) { XFont_delete_base(app->m_font); app->m_font = NULL; }
     if (font) {
-        app->m_font = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+        replacement = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                       NULL, -1, -1, false);
-        if (app->m_font)
-            XFont_copy_base(app->m_font, font);
+        if (!replacement) return;
+        XFont_copy_base(replacement, font);
     }
-    XGuiApplication_fontChanged_signal(app, app->m_font);
+    if (app->m_font) XFont_delete_base(app->m_font);
+    app->m_font = replacement;
+    XGuiApplication_fontChanged_signal(app, replacement);
 }
 
 XFont* XGuiApplication_font(void)
@@ -1038,13 +1123,28 @@ void XGuiApplication_setSessionState(bool restored, bool saving,
                                      const char* id, const char* key)
 {
     XGuiApplication* app = XGuiApplication_instance();
+    XString* replacementId = NULL;
+    XString* replacementKey = NULL;
     if (!app) return;
+
+    if (id) {
+        replacementId = XString_create_utf8(id);
+        if (!replacementId) return;
+    }
+    if (key) {
+        replacementKey = XString_create_utf8(key);
+        if (!replacementKey) {
+            if (replacementId) XString_delete_base(replacementId);
+            return;
+        }
+    }
+
     app->m_isSessionRestored = restored;
     app->m_isSavingSession = saving;
     if (app->m_sessionId) { XString_delete_base(app->m_sessionId); app->m_sessionId = NULL; }
     if (app->m_sessionKey) { XString_delete_base(app->m_sessionKey); app->m_sessionKey = NULL; }
-    if (id) app->m_sessionId = XString_create_utf8(id);
-    if (key) app->m_sessionKey = XString_create_utf8(key);
+    app->m_sessionId = replacementId;
+    app->m_sessionKey = replacementKey;
 }
 
 /* ==================== 同步 ==================== */

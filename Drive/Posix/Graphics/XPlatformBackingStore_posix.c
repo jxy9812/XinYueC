@@ -46,6 +46,7 @@ struct XPlatformBackingStore
     XSize m_size;                             /**< 当前缓冲尺寸。 */
     XRegion m_staticContents;                 /**< 静态内容区域集合。 */
     XRegion m_paintRegion;                    /**< beginPaint 登记的绘制区。 */
+    XRegion m_flushRegion;                    /**< flush 使用的可复用提交区域。 */
     int m_tileCursorX;                        /**< 下一个 tile 的 X 网格坐标。 */
     int m_tileCursorY;                        /**< 下一个 tile 的 Y 网格坐标。 */
     XRect m_currentTile;                      /**< 当前 tile 的窗口矩形。 */
@@ -123,11 +124,11 @@ static bool xpbs_posix_deepCopy(const XImage* src, XImage* dst)
     if (!src || !dst || !src->m_data) return false;
     w = XImage_width(src);
     h = XImage_height(src);
-    if (!XClassIsVtableNull(dst))
-        XImage_deinit_base(dst);
-    XImage_init(dst);
-    XImage_init_ex(dst, w, h, XImage_format(src));
-    if (!dst->m_data) return false;
+    /* dst 可能已经持有图像数据（toImage 可反复复用同一输出）；init_ex
+       只用于首次初始化，不能覆盖已有对象。reinit_ex 先构造临时图像再
+       移动替换，释放旧像素并保留对象的内存方法/堆所有权标记。 */
+    if (!XImage_reinit_ex(dst, w, h, XImage_format(src)))
+        return false;
     sbuf = XImage_constBits(src);
     dbuf = XImage_bits(dst);
     bpl = XImage_bytesPerLine(src);
@@ -137,13 +138,17 @@ static bool xpbs_posix_deepCopy(const XImage* src, XImage* dst)
     return true;
 }
 
-/** @brief 把集合裁剪到图像范围。 */
+/**
+ * @brief 把集合裁剪到图像范围。
+ * @note out 必须已经通过 XRegion_init() 初始化；函数只清空元素并复用
+ *       其已有容量，适合 beginPaint() 的高频调用。
+ */
 static void xpbs_posix_clipRegion(const XRegion* region, int w, int h,
                                   XRegion* out)
 {
     int i;
     XRect clip;
-    XRegion_init(out);
+    XRegion_clear(out);
     if (!region) return;
     for (i = 0; i < region->count; ++i)
     {
@@ -238,7 +243,13 @@ static void xpbs_posix_initConfiguredImage(XImage* image, int width, int height,
 {
     int stride;
     if (!image) return;
-    if (width <= 0 || height <= 0) return;
+    if (width <= 0 || height <= 0)
+    {
+        /* deinit 释放旧像素但保留对象的虚表与堆所有权标记；不能让
+           resize(0, 0) 把旧数据留在对象里。 */
+        XImage_deinit_base(image);
+        return;
+    }
     if (buffer)
     {
         stride = XImageFormat_bytesPerLine(width, XPBS_POSIX_IMAGE_FORMAT);
@@ -264,6 +275,7 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
 #endif
     XRegion_init(&store->m_staticContents);
     XRegion_init(&store->m_paintRegion);
+    XRegion_init(&store->m_flushRegion);
     XSize_init(&store->m_size, 0, 0);
 #if XGUI_BACKINGSTORE_BUFFER_SIZE > 0
     if (!XPlatformBackingStore_setBuffers(
@@ -282,21 +294,14 @@ void XPlatformBackingStore_delete(XPlatformBackingStore* self)
 {
     if (!self) return;
     if (self->m_image.m_data)
-    {
         XImage_deinit_base(&self->m_image);
-        XImage_init(&self->m_image);
-    }
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (self->m_image2.m_data)
-    {
         XImage_deinit_base(&self->m_image2);
-        XImage_init(&self->m_image2);
-    }
 #endif
     XRegion_deinit(&self->m_staticContents);
-    XRegion_init(&self->m_staticContents);
     XRegion_deinit(&self->m_paintRegion);
-    XRegion_init(&self->m_paintRegion);
+    XRegion_deinit(&self->m_flushRegion);
     XFree_System(self);
 }
 
@@ -379,7 +384,6 @@ bool XPlatformBackingStore_toImage(XPlatformBackingStore* self, XImage* out)
 void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
                                  const XRegion* region, const XPoint* offset)
 {
-    XRegion effective;
     XRect full;
     XPoint zero;
     const XPoint* off = offset;
@@ -387,6 +391,7 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     XImage* inactive;
     if (!self || !(image = xpbs_posix_activeImage(self)) || !image->m_data)
         return;
+    XRegion_clear(&self->m_flushRegion);
     if (!off)
     {
         XPoint_init(&zero, 0, 0);
@@ -395,17 +400,16 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     if (region && !XRegion_isEmpty(region))
     {
         xpbs_posix_clipRegion(region, XImage_width(image),
-                              XImage_height(image), &effective);
+                              XImage_height(image), &self->m_flushRegion);
     }
     else
     {
-        XRegion_init(&effective);
         full.x = 0;
         full.y = 0;
         full.width = XImage_width(image);
         full.height = XImage_height(image);
         if (full.width > 0 && full.height > 0)
-            XRegion_addRect(&effective, &full);
+            XRegion_addRect(&self->m_flushRegion, &full);
     }
     /* 平台差异提交点：窗口已挂接真实原生窗口（WId 非 0）时直接把脏区
      * 提交到 X11 窗口（XPutImage）；否则按嵌入式显示驱动回调交给用户
@@ -413,34 +417,35 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     /* FULL 始终提交整屏；DIRECT 在提交后把脏区同步到另一帧缓冲，
        保证下一帧只重绘变化区域即可。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
-    XRegion_clear(&effective);
+    XRegion_clear(&self->m_flushRegion);
     full.x = 0; full.y = 0;
     full.width = XImage_width(image); full.height = XImage_height(image);
-    if (full.width > 0 && full.height > 0) XRegion_addRect(&effective, &full);
+    if (full.width > 0 && full.height > 0)
+        XRegion_addRect(&self->m_flushRegion, &full);
 #endif
     inactive = xpbs_posix_inactiveImage(self);
-    if (!XRegion_isEmpty(&effective)) {
+    if (!XRegion_isEmpty(&self->m_flushRegion)) {
 #if XPLATFORMNATIVEWINDOW_ON
         if (window &&
             XPlatformNativeWindow_winId(window) != 0) {
             XPlatformNativeWindow_present(window, image,
-                                          &effective, off);
+                                          &self->m_flushRegion, off);
         } else
 #endif /* XPLATFORMNATIVEWINDOW_ON */
         if (self->m_present)
-            self->m_present(self->m_userData, self, &effective, off);
+            self->m_present(self->m_userData, self, &self->m_flushRegion, off);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_DIRECT || \
     XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         if (inactive)
         {
             int i;
-            for (i = 0; i < effective.count; ++i)
-                xpbs_posix_copyRectPixels(image, effective.rects[i].x,
-                                          effective.rects[i].y, inactive,
-                                          effective.rects[i].x,
-                                          effective.rects[i].y,
-                                          effective.rects[i].width,
-                                          effective.rects[i].height);
+            for (i = 0; i < self->m_flushRegion.count; ++i)
+                xpbs_posix_copyRectPixels(image, self->m_flushRegion.rects[i].x,
+                                          self->m_flushRegion.rects[i].y, inactive,
+                                          self->m_flushRegion.rects[i].x,
+                                          self->m_flushRegion.rects[i].y,
+                                          self->m_flushRegion.rects[i].width,
+                                          self->m_flushRegion.rects[i].height);
         }
 #endif
     }
@@ -448,13 +453,11 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
     self->m_activeIndex ^= 1u;
  #endif
     (void)window; /* 软件路径下 XWindow 为纯逻辑窗口，无窗口系统句柄可提交。 */
-    XRegion_deinit(&effective);
 }
 
 void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* window,
                                       const XRect* tileRect, const XPoint* offset)
 {
-    XRegion region;
     XPoint origin;
     XRect presentedRect;
     XImage* image;
@@ -471,20 +474,19 @@ void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* windo
     presentedRect.y = origin.y;
     presentedRect.width = tileRect->width;
     presentedRect.height = tileRect->height;
-    XRegion_init(&region);
-    XRegion_addRect(&region, &presentedRect);
+    XRegion_clear(&self->m_flushRegion);
+    XRegion_addRect(&self->m_flushRegion, &presentedRect);
 #if XPLATFORMNATIVEWINDOW_ON
     if (window && XPlatformNativeWindow_winId(window) != 0)
-        XPlatformNativeWindow_present(window, image, &region, &origin);
+        XPlatformNativeWindow_present(window, image, &self->m_flushRegion, &origin);
     else
 #endif
     if (self->m_present)
-        self->m_present(self->m_userData, self, &region, &origin);
+        self->m_present(self->m_userData, self, &self->m_flushRegion, &origin);
     self->m_tileActive = false;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     self->m_activeIndex ^= 1u;
 #endif
-    XRegion_deinit(&region);
 }
 
 void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size)
@@ -513,12 +515,6 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         XImage_copy_base(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
-    XImage_deinit_base(&self->m_image);
-    XImage_init(&self->m_image);
-#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    XImage_deinit_base(&self->m_image2);
-    XImage_init(&self->m_image2);
-#endif
     if (w > 0 && h > 0)
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         xpbs_posix_initConfiguredImage(&self->m_image,
@@ -529,6 +525,8 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         xpbs_posix_initConfiguredImage(&self->m_image, w, h,
             self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
 #endif
+    else
+        XImage_init(&self->m_image);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (w > 0 && h > 0)
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -565,9 +563,8 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     self->m_tileCursorY = 0;
     self->m_tileActive = false;
     /* 静态内容裁到新尺寸（Qt 在 resize 后同样收敛到有效区域）。 */
+    XRegion_init(&cropped);
     xpbs_posix_clipRegion(&self->m_staticContents, w, h, &cropped);
-    XRegion_deinit(&self->m_staticContents);
-    XRegion_init(&self->m_staticContents);
     XRegion_copy(&cropped, &self->m_staticContents);
     XRegion_deinit(&cropped);
 }
@@ -631,6 +628,7 @@ bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
     w = XImage_width(image);
     h = XImage_height(image);
     if (w <= 0 || h <= 0) return false;
+    XRegion_init(&clip);
     xpbs_posix_clipRegion(area, w, h, &clip);
     if (XRegion_isEmpty(&clip))
     {
@@ -682,9 +680,8 @@ void XPlatformBackingStore_beginPaint(XPlatformBackingStore* self,
 {
     int w, h;
     if (!self) return;
-    /* xpbs_posix_clipRegion() initializes its output.  Releasing the prior
-       backing allocation first prevents a repeated paint from losing it. */
-    XRegion_deinit(&self->m_paintRegion);
+    /* xpbs_posix_clipRegion() reuses the initialized output region. */
+    XRegion_clear(&self->m_paintRegion);
     {
         XImage* image = xpbs_posix_activeImage(self);
         if (image && image->m_data)
@@ -739,8 +736,8 @@ void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
 {
     int w, h;
     if (!self) return;
-    /* The clipping helper initializes its output region. */
-    XRegion_deinit(&self->m_staticContents);
+    /* The clipping helper reuses the initialized output region. */
+    XRegion_clear(&self->m_staticContents);
     if (!region || XRegion_isEmpty(region)) return;
     {
         XImage* image = xpbs_posix_activeImage((XPlatformBackingStore*)self);

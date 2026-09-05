@@ -46,8 +46,6 @@ bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
         XPixmap_deinit_base(&cached);
         return false;
     }
-    if (!XClassIsVtableNull(out)) XPixmap_deinit_base(out);
-    XPixmap_init(out);
     XPixmap_copy_base(out, &cached);
     XPixmap_deinit_base(&cached);
     return true;

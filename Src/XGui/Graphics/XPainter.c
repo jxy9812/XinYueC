@@ -623,6 +623,25 @@ static bool painterMapRectCorners(const XImageTransform* matrix, const XRect* re
 
 /* ========== 状态栈（save/restore） ========== */
 
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+/**
+ * @brief      比较两个已初始化区域的逻辑内容。
+ * @details    XRegion_copy() 无返回值；当扩容失败时会保留旧输出，状态栈
+ *             必须据此拒绝一次不完整的 save()，避免保存的其他状态与裁剪
+ *             区域不匹配。
+ */
+static bool painterRegionsEqual(const XRegion* lhs, const XRegion* rhs)
+{
+    if (!lhs || !rhs || lhs->count < 0 || rhs->count < 0 ||
+        lhs->count != rhs->count)
+        return false;
+    if (lhs->count == 0) return true;
+    if (!lhs->rects || !rhs->rects) return false;
+    return memcmp(lhs->rects, rhs->rects,
+                  (size_t)lhs->count * sizeof(XRect)) == 0;
+}
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+
 /**
  * @brief      压入当前状态到状态栈（内部维护动态数组）。
  * @param self 绘制器指针。
@@ -631,6 +650,9 @@ static bool painterMapRectCorners(const XImageTransform* matrix, const XRect* re
 static bool painterStatePush(XPainter* self)
 {
     int newCapacity;
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+    int oldCapacity;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
     XPainterState* newStack;
     if (!self) return false;
     if (!self->m_stateStack)
@@ -640,26 +662,56 @@ static bool painterStatePush(XPainter* self)
         if (!newStack) return false;
         self->m_stateStack = newStack;
         self->m_stateCapacity = XPAINTER_STATE_INITIAL_CAPACITY;
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        {
+            int i;
+            for (i = 0; i < self->m_stateCapacity; ++i)
+                XRegion_init(&self->m_stateStack[i].m_clipRegion);
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
     }
     else if (self->m_stateCount >= self->m_stateCapacity)
     {
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        oldCapacity = self->m_stateCapacity;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
         newCapacity = self->m_stateCapacity * 2;
         newStack = (XPainterState*)XRealloc_System(
             self->m_stateStack, sizeof(XPainterState) * (size_t)newCapacity);
         if (!newStack) return false;
         self->m_stateStack = newStack;
         self->m_stateCapacity = newCapacity;
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        {
+            int i;
+            for (i = oldCapacity; i < newCapacity; ++i)
+                XRegion_init(&self->m_stateStack[i].m_clipRegion);
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
     }
-    self->m_stateStack[self->m_stateCount] = self->m_state;
     {
         XFont fontCopy;
         XPainterState* saved = &self->m_stateStack[self->m_stateCount];
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        /* 栈槽在首次使用或上次 restore() 后仍保留自己的区域容量；先
+           暂存它，避免状态结构体赋值覆盖掉这块可复用存储。 */
+        XRegion reusableRegion = saved->m_clipRegion;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+        *saved = self->m_state;
         XFont_init(&fontCopy);
         XFont_copy_base(&fontCopy, &saved->m_font);
         saved->m_font = fontCopy;
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
-        XRegion_init(&saved->m_clipRegion);
+        saved->m_clipRegion = reusableRegion;
         XRegion_copy(&self->m_state.m_clipRegion, &saved->m_clipRegion);
+        if (!painterRegionsEqual(&self->m_state.m_clipRegion,
+                                 &saved->m_clipRegion))
+        {
+            /* XRegion_copy() 保留旧 out 内容时，不能把这次保存计入栈深度；
+               saved->m_font 已由本次保存初始化，先释放其独立字符串副本。 */
+            XFont_deinit_base(&saved->m_font);
+            return false;
+        }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
     }
     ++self->m_stateCount;
@@ -677,24 +729,49 @@ static void painterStatePop(XPainter* self)
     XFont_deinit_base(&self->m_state.m_font);
     {
         XFont fontCopy;
+        XPainterState* saved = &self->m_stateStack[self->m_stateCount];
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
-        XRegion regionCopy;
-        XRegion_init(&regionCopy);
-        XRegion_copy(&self->m_stateStack[self->m_stateCount].m_clipRegion,
-                     &regionCopy);
-        XRegion_deinit(&self->m_state.m_clipRegion);
+        XRegion currentRegion = self->m_state.m_clipRegion;
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
         XFont_init(&fontCopy);
-        XFont_copy_base(&fontCopy, &self->m_stateStack[self->m_stateCount].m_font);
-        self->m_state = self->m_stateStack[self->m_stateCount];
+        XFont_copy_base(&fontCopy, &saved->m_font);
+        self->m_state = *saved;
         self->m_state.m_font = fontCopy;
-        XFont_deinit_base(&self->m_stateStack[self->m_stateCount].m_font);
+        XFont_deinit_base(&saved->m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
-        self->m_state.m_clipRegion = regionCopy;
-        XRegion_deinit(&self->m_stateStack[self->m_stateCount].m_clipRegion);
-        XRegion_init(&self->m_stateStack[self->m_stateCount].m_clipRegion);
+        /* restore() 弹出的区域转移给当前状态；当前状态原有区域放回
+           栈槽，两个对象都保持已分配容量，供后续 save() 继续复用。 */
+        saved->m_clipRegion = currentRegion;
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
     }
+}
+
+/**
+ * @brief      释放状态栈中已经初始化的资源。
+ * @details    区域槽在容量扩展时全部初始化；字体只在活动栈槽中初始化。
+ *             该函数不重置当前绘制状态，供 end()/deinit() 分别决定后续
+ *             是恢复默认状态还是直接销毁对象。
+ */
+static void painterStateStackRelease(XPainter* self)
+{
+    int i;
+    if (!self) return;
+    if (!self->m_stateStack)
+    {
+        self->m_stateCount = 0;
+        self->m_stateCapacity = 0;
+        return;
+    }
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+    for (i = 0; i < self->m_stateCapacity; ++i)
+        XRegion_deinit(&self->m_stateStack[i].m_clipRegion);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+    for (i = 0; i < self->m_stateCount; ++i)
+        XFont_deinit_base(&self->m_stateStack[i].m_font);
+    XFree_System(self->m_stateStack);
+    self->m_stateStack = NULL;
+    self->m_stateCount = 0;
+    self->m_stateCapacity = 0;
 }
 
 /* ========== 软件光栅后端 ========== */
@@ -3101,7 +3178,8 @@ void XPainter_deinit(XPainter* self)
 {
     if (!self) return;
     if (!self->m_initialized) return;
-    XPainter_end(self);
+    /* 对象即将销毁，无需调用 end() 重建一次默认状态。 */
+    painterStateStackRelease(self);
     XFont_deinit_base(&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
@@ -3174,27 +3252,13 @@ bool XPainter_end(XPainter* self)
     bool wasActive;
     if (!self || !self->m_initialized) return false;
     wasActive = self->m_deviceKind != XPainterDevice_None;
-    {
-        int i;
-        for (i = 0; i < self->m_stateCount; ++i)
-        {
-            XFont_deinit_base(&self->m_stateStack[i].m_font);
-#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
-            XRegion_deinit(&self->m_stateStack[i].m_clipRegion);
-#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
-        }
-    }
+    /* restore() 会把当前状态的区域容量交换回已弹出的栈槽；释放时
+       必须遍历整个已初始化容量，而不是只遍历活动深度。 */
+    painterStateStackRelease(self);
     XFont_deinit_base(&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
-    if (self->m_stateStack)
-    {
-        XFree_System(self->m_stateStack);
-        self->m_stateStack = NULL;
-    }
-    self->m_stateCount = 0;
-    self->m_stateCapacity = 0;
     self->m_deviceKind = XPainterDevice_None;
     self->m_image = NULL;
     self->m_picture = NULL;
@@ -3889,11 +3953,14 @@ bool XPainter_drawPicture(XPainter* self, const XPicture* picture, int x, int y)
 void XPainter_setFont(XPainter* self, const XFont* font)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
-    XFont_deinit_base(&self->m_state.m_font);
     if (font)
         XFont_copy_base(&self->m_state.m_font, font);
-    else
+    else {
+        /* NULL 表示恢复默认字体；只有这个分支需要先释放旧字符串，
+           XFont_copy_base() 自身已经负责替换目标资源。 */
+        XFont_deinit_base(&self->m_state.m_font);
         XFont_init(&self->m_state.m_font);
+    }
     /* Qt QPicturePaintEngine::updateFont() serializes the complete font
        whenever the font state changes (qpaintengine_pic.cpp:208-216).
        The portable snapshot deliberately records after the local state is
@@ -6764,7 +6831,6 @@ void XPainter_setClipRegion(XPainter* self, const XRegion* region,
     {
         /* Preserve the NoClip record for Qt-compatible clip queries while
            marking the operation as disabled for hasClipping(). */
-        XRegion_clear(&self->m_state.m_clipRegion);
         XRegion_copy(&mapped, &self->m_state.m_clipRegion);
         self->m_state.m_clipRect = mappedBounds;
         self->m_state.m_hasClipRect = true;
@@ -6784,7 +6850,6 @@ void XPainter_setClipRegion(XPainter* self, const XRegion* region,
                             &self->m_state.m_clipRegion);
     else
     {
-        XRegion_clear(&self->m_state.m_clipRegion);
         if (operation != XPainterClipOperation_NoClip)
             XRegion_copy(&mapped, &self->m_state.m_clipRegion);
     }

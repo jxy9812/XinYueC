@@ -579,6 +579,8 @@ float XWindow_opacity(const XWindow* self);
 /**
  * @brief      设置窗口形状遮罩（对标 QWindow::setMask）。
  * @details    遮罩以 XRegion 深拷贝存储；传入 NULL 表示清除遮罩。
+ *             对已初始化窗口重复设置时复用内部区域容量；扩容失败时
+ *             保留原遮罩与 m_hasMask 状态。
  * @param      self 目标窗口；可为 NULL。
  * @param      region 遮罩区域；可为 NULL 清除。
  */
@@ -586,8 +588,9 @@ void XWindow_setMask(XWindow* self, const XRegion* region);
 
 /**
  * @brief      返回窗口遮罩（对标 QWindow::mask，输出到调用方提供的 XRegion）。
- * @details    out 必须由调用方先初始化（XRegion_init）或已 deinit；
- *             函数内部先清空再填充拷贝。
+ * @details    out 必须由调用方先初始化（XRegion_init）或已 deinit；有遮罩时
+ *             复制会复用 out 的已有容量，扩容失败时保留 out 原有内容；
+ *             无遮罩时清空 out。
  * @param      self 目标窗口；可为 NULL。
  * @param      out 输出目标；可为 NULL 忽略。
  */

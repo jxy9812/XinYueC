@@ -80,11 +80,26 @@ XVtable* XBackingStore_class_init(void);
  * @details    经 XGuiApplication 集成层创建平台后端；未初始化应用或后端
  *             不可用时 m_data->m_platform 为 NULL，后续 API 安全退化，但
  *             window()、size() 和静态内容快照仍保持公共对象状态。
- *             window 为借用指针，随其生命周期由调用方管理。
- * @param      self   待初始化对象；必须与 XBackingStore_deinit_base 成对调用。
+ *             window 为借用指针，随其生命周期由调用方管理。本函数只接受
+ *             尚未初始化的存储；不会读取或释放 self 中的旧对象状态。
+ * @param      self   尚未初始化的对象；成功或失败后都必须与
+ *                    XBackingStore_deinit_base 成对调用。
  * @param      window 目标 XWindow 借用指针；可为 NULL（纯离屏缓冲）。
  */
 void XBackingStore_init(XBackingStore* self, XWindow* window);
+
+/**
+ * @brief      重新初始化已经存在的后备存储对象。
+ * @details    本函数是显式的 init/reinit 分界：self 必须已经由
+ *             XBackingStore_init 或 XBackingStore_create_ex 初始化且尚未
+ *             反初始化。函数会先释放当前平台后端、静态区域和私有状态，
+ *             再初始化新的对象；对象原有的 XMemory 方法和堆对象标记会被
+ *             保留。未初始化存储不得传入本函数，应使用
+ *             XBackingStore_init，避免读取未定义的对象字段。
+ * @param      self   已初始化且仍然有效的对象。
+ * @param      window 新绑定的 XWindow 借用指针；可为 NULL。
+ */
+void XBackingStore_reinit(XBackingStore* self, XWindow* window);
 
 /**
  * @brief      使用默认内存类型创建绑定指定窗口的后备存储。

@@ -398,7 +398,9 @@ static void VXWidgetItem_copy(XWidgetItem* self, const XWidgetItem* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XWidgetItem_init(self, NULL);
-    self->m_base = other->m_base;
+    self->m_base.m_geometry = other->m_base.m_geometry;
+    self->m_base.m_alignment = other->m_base.m_alignment;
+    self->m_base.m_hasAlignment = other->m_base.m_hasAlignment;
     self->m_widget = other->m_widget;
 }
 
@@ -407,7 +409,9 @@ static void VXWidgetItem_move(XWidgetItem* self, XWidgetItem* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XWidgetItem_init(self, NULL);
-    self->m_base = other->m_base;
+    self->m_base.m_geometry = other->m_base.m_geometry;
+    self->m_base.m_alignment = other->m_base.m_alignment;
+    self->m_base.m_hasAlignment = other->m_base.m_hasAlignment;
     self->m_widget = other->m_widget;
     other->m_widget = NULL;
 }
@@ -504,7 +508,9 @@ static void VXSpacerItem_copy(XSpacerItem* self, const XSpacerItem* other)
     if (XClassIsVtableNull(self))
         XSpacerItem_init(self, 0, 0, XWidgetSizePolicy_Fixed,
                          XWidgetSizePolicy_Fixed);
-    self->m_base = other->m_base;
+    self->m_base.m_geometry = other->m_base.m_geometry;
+    self->m_base.m_alignment = other->m_base.m_alignment;
+    self->m_base.m_hasAlignment = other->m_base.m_hasAlignment;
     self->m_size = other->m_size;
     self->m_hPolicy = other->m_hPolicy;
     self->m_vPolicy = other->m_vPolicy;
@@ -518,7 +524,9 @@ static void VXSpacerItem_move(XSpacerItem* self, XSpacerItem* other)
     if (XClassIsVtableNull(self))
         XSpacerItem_init(self, 0, 0, XWidgetSizePolicy_Fixed,
                          XWidgetSizePolicy_Fixed);
-    self->m_base = other->m_base;
+    self->m_base.m_geometry = other->m_base.m_geometry;
+    self->m_base.m_alignment = other->m_base.m_alignment;
+    self->m_base.m_hasAlignment = other->m_base.m_hasAlignment;
     self->m_size = other->m_size;
     self->m_hPolicy = other->m_hPolicy;
     self->m_vPolicy = other->m_vPolicy;

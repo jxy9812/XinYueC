@@ -7,7 +7,8 @@
  *               再由该桥接窗口创建平台窗口（X11 Window / Win32 HWND）；
  *             - XWidget 首次绘制时创建离屏缓冲，并由 XPainter 软件光栅化；
  *             - XWindowSystemInterface 事件注入（Expose/Resize/Close）；
- *             - XGuiApplication_exec 标准事件循环与对象定时器刷新；
+ *             - XGuiApplication_exec 标准事件循环；常驻刷新注册在事件
+ *               分发器的轮询链上，不受 1ms 定时器粒度限制；
  *             - WM 删除（标题栏 X）触发 CloseEvent -> 接受后关闭退出。
  *             窗口绘制完全走 XImage/XPainter 软件路径，不依赖任何平台
  *             图形 API；平台差异全部隔离在 Drive 后端。
@@ -27,6 +28,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XEvent.h"
+#include "XAbstractEventDispatcher.h"
 #include "XDateTime.h"
 #include "XGuiApplication.h"
 #include "XWidget.h"
@@ -63,11 +65,6 @@
 #define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
 #endif
 
-/* 由标准事件循环中的精确定时器驱动性能采样和画面提交。 */
-#ifndef XGUI_DEMO_FRAME_INTERVAL_MS
-#define XGUI_DEMO_FRAME_INTERVAL_MS 1
-#endif
-
 /* ==================== 演示窗口子类 ==================== */
 
 XCLASS_DEFINE_BEGING(DemoWin)
@@ -79,7 +76,7 @@ typedef struct DemoWin
     XWidget         m_base;  /**< 顶层控件基类；必须是第一个成员。 */
     XImage          m_staticScene; /**< 不含性能悬浮层的静态场景缓存。 */
     bool            m_staticSceneDirty; /**< 静态场景需重新生成。 */
-    XTimerId        m_frameTimer; /**< 性能采样与刷新定时器。 */
+    XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -522,13 +519,24 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
             (double)longestUsecs / 1000.0);
 }
 
-/** @brief 停止 Demo 自己注册的定时器，避免对象销毁后继续派发刷新事件。 */
+/** @brief 事件循环轮询回调：每轮 processEvents 请求一次重绘，代替 1ms
+ *         帧定时器，刷新频率只受事件循环调度速度限制。 */
+static bool demo_framePump(void* userData)
+{
+    DemoWin* demo = (DemoWin*)userData;
+    if (!demo || demo->m_closed)
+        return false;
+    demo_repaint(demo);
+    return true;
+}
+
+/** @brief 注销轮询回调并停止自动退出定时器，避免对象销毁后继续派发刷新事件。 */
 static void demo_stopTimers(DemoWin* self)
 {
     if (!self) return;
-    if (self->m_frameTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)self, self->m_frameTimer);
-        self->m_frameTimer = XTIMER_INVALID_ID;
+    if (self->m_framePump) {
+        XAbstractEventDispatcher_removePollCallback(self->m_framePump);
+        self->m_framePump = NULL;
     }
     if (self->m_autoQuitTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_autoQuitTimer);
@@ -536,19 +544,13 @@ static void demo_stopTimers(DemoWin* self)
     }
 }
 
-/** @brief 标准事件循环中的刷新和自动退出定时器处理。 */
+/** @brief 标准事件循环中的自动退出定时器处理。 */
 static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
 {
     DemoWin* self = (DemoWin*)object;
     XTimerId timerId;
     if (!self || !event) return;
     timerId = XTimerEvent_timerId(event);
-    if (timerId == self->m_frameTimer) {
-        if (!self->m_closed)
-            demo_repaint(self);
-        XEvent_accept((XEvent*)event);
-        return;
-    }
     if (timerId == self->m_autoQuitTimer) {
         demo_stopTimers(self);
         self->m_closed = true;
@@ -862,7 +864,7 @@ static DemoWin* DemoWin_create(void)
     Set_Class_IsHeap(self, true);
     XImage_init(&self->m_staticScene);
     self->m_staticSceneDirty = true;
-    self->m_frameTimer = XTIMER_INVALID_ID;
+    self->m_framePump = NULL;
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
@@ -1002,11 +1004,13 @@ int main(int argc, char* argv[])
     if (benchmarkSeconds > 0) {
         demo_runFrameBenchmark(win, benchmarkSeconds, benchmarkResize);
     } else {
-        win->m_frameTimer = XObject_startTimer_ms(
-            (XObject*)win, XGUI_DEMO_FRAME_INTERVAL_MS,
-            XTimerType_PreciseTimer);
-        if (win->m_frameTimer == XTIMER_INVALID_ID) {
-            XPrintf("XGuiWindowDemo: 性能刷新定时器创建失败\n");
+        /* 把刷新注册到事件分发器轮询链：每次 processEvents 回调一次，
+           不再受 1ms 精确定时器粒度限制；事件循环因此也始终有事件可
+           处理，不会进入无事件休眠。 */
+        win->m_framePump = XAbstractEventDispatcher_addPollCallback(
+            demo_framePump, win);
+        if (!win->m_framePump) {
+            XPrintf("XGuiWindowDemo: 事件循环刷新回调注册失败\n");
             eventLoopResult = 2;
         }
         if (autoSeconds > 0) {

@@ -29,8 +29,8 @@
  *                repaint 同步驱动 XWidget_flushBackingStore；flushBackingStore
  *                确保 XBackingStore 存在后 beginPaint(region) -> 顶层 paintEvent
  *                递归子控件（区域逐层裁剪）-> endPaint -> flush 上屏 ->
- *                清空脏区，默认 paintEvent 按 autoFillBackground 填充
- *                XPaletteColorRole_Window 底色；
+ *                完成区域确认并保留绘制期间新增脏区，默认 paintEvent 按
+ *                autoFillBackground 填充 XPaletteColorRole_Window 底色；
  *              - 事件分派：XWidget_event_base 继承自 XObject（宏复用
  *                XObject_event_base），经虚表 EXObject_Event 进入
  *                VXWidget_event；VXWidget_event 按 XEventType 分派到 23 个
@@ -209,28 +209,65 @@ static XWidget* XWidget_topLevel(const XWidget* self)
 /** @brief 创建与 XWindowEvent 解析约定一致的绘制事件。 */
 static XEvent* XWidget_createPaintEvent(const XWidget* source)
 {
-    XRegion region;
     XRect rect;
     XWidget* top;
     XEvent* event;
     if (!source) return NULL;
-    XRegion_init(&region);
     top = XWidget_topLevel(source);
-    if (top && top->m_dirty.count > 0)
-        XRegion_copy(&top->m_dirty, &region);
-    else {
-        rect = source->m_contentsRect;
-        XRegion_addRect(&region, &rect);
-    }
 #if XWINDOWEVENT_ON
-    event = (XEvent*)XPaintEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                           XEVENT_TYPE_PAINT, &region);
+    if (top && top->m_dirty.count > 0) {
+        /* 构造函数会复制区域；直接传入脏区，避免先复制到临时区域再
+           由事件对象复制一次。 */
+        return (XEvent*)XPaintEvent_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_PAINT, &top->m_dirty);
+    }
+    {
+        rect = source->m_contentsRect;
+        {
+            XRegion region = { &rect, XRect_isEmpty(&rect) ? 0 : 1, 1 };
+            event = (XEvent*)XPaintEvent_create_ex(
+                XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_PAINT, &region);
+        }
+    }
 #else
-    (void)region;
+    (void)top;
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_PAINT);
 #endif /* XWINDOWEVENT_ON */
-    XRegion_deinit(&region);
     return event;
+}
+
+/** @brief 投递顶层控件绘制事件，并报告事件是否确实进入线程队列。 */
+static bool XWidget_postPaintEvent(XWidget* top)
+{
+    XEvent* event;
+    XObject* receiver;
+    int32_t expected;
+    if (!top || !top->m_windowHandle || !top->m_visible)
+        return false;
+    /* PendingUpdate 是脏区状态，不足以防止并发 update() 重复入队；这个
+       独立占位位只代表一个 PAINT 事件。已有事件时请求已经被覆盖，
+       直接视为成功，避免调用方错误清掉仍有效的 PendingUpdate。 */
+    expected = 0;
+    if (!XAtomic_compare_exchange_strong_int32(
+            &top->m_paintEventPosted, &expected, 1,
+            XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
+        return true;
+    receiver = (XObject*)top->m_windowHandle;
+    event = XWidget_createPaintEvent(top);
+    if (!event) {
+        XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                            XAtomic_MemoryOrder_Release);
+        return false;
+    }
+    if (!XCoreApplication_tryPostEvent(receiver, event, 0)) {
+        /* tryPostEvent 失败时不接管 event；由本调用方释放，并保留 dirty
+           与 PendingUpdate，使后续 update/show 能再次尝试投递。 */
+        XEvent_delete_base((XClass*)event);
+        XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                            XAtomic_MemoryOrder_Release);
+        return false;
+    }
+    return true;
 }
 
 /** @brief 判断 self 是否 child 的祖先控件。 */
@@ -295,10 +332,9 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         /* 显示：若窗口句柄存在且 PendingUpdate 则投递 PAINT。 */
         if (self->m_windowHandle &&
             (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_PendingUpdate))) {
-            XEvent* event = XWidget_createPaintEvent(self);
-            if (event)
-                XCoreApplication_postEvent((XObject*)self->m_windowHandle,
-                                           event, 0);
+            if (!XWidget_postPaintEvent(self))
+                XWidget_attrSet(&self->m_attributes,
+                                XWidgetAttribute_PendingUpdate, false);
         }
     } else {
         /* 隐藏：清空焦点并派发 HIDE 事件。 */
@@ -332,10 +368,9 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         widget->m_visible = newVisible ? 1 : 0;
         if (newVisible) {
             if (widget->m_windowHandle) {
-                XEvent* event = XWidget_createPaintEvent(widget);
-                if (event)
-                    XCoreApplication_postEvent((XObject*)widget->m_windowHandle,
-                                               event, 0);
+                if (!XWidget_postPaintEvent(widget))
+                    XWidget_attrSet(&widget->m_attributes,
+                                    XWidgetAttribute_PendingUpdate, false);
             }
             XWidget_sendShowHide(widget, true);
         } else {
@@ -405,18 +440,34 @@ static void XRegion_translateInline(XRegion* region, int dx, int dy)
     }
 }
 
-/** @brief 区域与矩形求交（结果入 out，支持 out 与 self 别名）。 */
-static XRegion XRegion_intersectRect(const XRegion* region, const XRect* rect)
+/** @brief 区域与矩形求交并写入已有输出区域。 */
+static void XRegion_intersectRectInto(const XRegion* region, const XRect* rect,
+                                      XRegion* out)
 {
-    XRegion out;
     int i;
-    XRegion_init(&out);
-    if (!region || !rect || XRect_isEmpty(rect)) return out;
+    if (!out) return;
+    XRegion_clear(out);
+    if (!region || !rect || XRect_isEmpty(rect)) return;
     for (i = 0; i < region->count; ++i) {
         XRect r = XRect_intersected(&region->rects[i], rect);
-        if (!XRect_isEmpty(&r)) XRegion_addRect(&out, &r);
+        if (!XRect_isEmpty(&r)) XRegion_addRect(out, &r);
     }
-    return out;
+}
+
+/** @brief 两个区域求交并写入已有输出区域；调用方保证 out 不与输入别名。 */
+static void XRegion_intersectInto(const XRegion* lhs, const XRegion* rhs,
+                                  XRegion* out)
+{
+    int i;
+    int j;
+    if (!out) return;
+    XRegion_clear(out);
+    if (!lhs || !rhs) return;
+    for (i = 0; i < lhs->count; ++i)
+        for (j = 0; j < rhs->count; ++j) {
+            XRect r = XRect_intersected(&lhs->rects[i], &rhs->rects[j]);
+            if (!XRect_isEmpty(&r)) XRegion_addRect(out, &r);
+        }
 }
 
 /** @brief 创建并登记顶层桥接窗口（惰性；窗口对象由本控件拥有）。 */
@@ -548,32 +599,41 @@ static void XWidget_clearUnderMouseRecursive(XWidget* self)
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
 {
     XWidget* top;
-    XRegion translated;
     int i;
     XPoint offset;
     XRect contents;
-    bool wasPending;
+    const XRegion* source;
+    XRegion sourceCopy;
+    bool copiedSource;
     if (!self || !region || !self->m_updatesEnabled) return;
     self->m_contentCacheDirty = true;
     top = XWidget_topLevel(self);
     if (!top) return;
-    /* QWidget::update() 只合并脏区；同一轮事件循环内已有 UpdateRequest
-       时不能为每次调用额外投递 PAINT，否则高频小区域刷新会退化为队列风暴。 */
-    wasPending = XWidget_attrTest(&top->m_attributes,
-                                  XWidgetAttribute_PendingUpdate);
     offset = XWidget_paintOffset(self);
     contents = self->m_contentsRect;
-    translated = XRegion_intersectRect(region, &contents);
-    XRegion_translateInline(&translated, offset.x, offset.y);
-    for (i = 0; i < translated.count; ++i)
-        XRegion_addRect(&top->m_dirty, &translated.rects[i]);
-    XRegion_deinit(&translated);
-    XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
-    if (!wasPending && top->m_windowHandle && top->m_visible) {
-        XEvent* event = XWidget_createPaintEvent(top);
-        if (event)
-            XCoreApplication_postEvent((XObject*)top->m_windowHandle, event, 0);
+    source = region;
+    copiedSource = false;
+    XRegion_init(&sourceCopy);
+    /* 正常 update 路径直接逐矩形裁剪，避免每次刷新先创建临时区域。
+       只有调用方把顶层脏区本身作为输入时才需要快照，避免边遍历边合并
+       修改输入数组。 */
+    if (region == &top->m_dirty) {
+        XRegion_copy(region, &sourceCopy);
+        source = &sourceCopy;
+        copiedSource = true;
     }
+    for (i = 0; i < source->count; ++i) {
+        XRect clipped = XRect_intersected(&source->rects[i], &contents);
+        if (!XRect_isEmpty(&clipped)) {
+            XRect translated = XRect_translated(&clipped, offset.x, offset.y);
+            XRegion_addRect(&top->m_dirty, &translated);
+        }
+    }
+    if (copiedSource)
+        XRegion_deinit(&sourceCopy);
+    XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
+    if (top->m_windowHandle && top->m_visible)
+        (void)XWidget_postPaintEvent(top);
 }
 
 /** @brief 把局部矩形折算到顶层坐标后并入顶层脏区。 */
@@ -583,10 +643,12 @@ static void XWidget_addDirty(XWidget* self, const XRect* rect)
     XRect r;
     if (!self || !rect) return;
     r = *rect;
-    XRegion_init(&region);
-    XRegion_addRect(&region, &r);
+    /* XWidget_addDirtyRegion 只读输入区域；用栈上单矩形视图避免每次
+       updateRect() 都申请并释放一个临时 XRegion。 */
+    region.rects = &r;
+    region.count = 1;
+    region.capacity = 1;
     XWidget_addDirtyRegion(self, &region);
-    XRegion_deinit(&region);
 }
 
 /* ==================== 尺寸策略（对标 QSizePolicy） ==================== */
@@ -1031,15 +1093,18 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     }
     case XEVENT_TYPE_PAINT: {
         XRegion region;
-        XRegion_init(&region);
+        /* PAINT 事件已被事件循环取出并开始处理，清掉投递占位位，
+           允许本次绘制期间或之后产生的 update() 再次入队。必须先于
+           flush 清零：flush 内部 paintEvent 触发的 update 依赖该位为 0
+           才能重新投递，否则绘制中产生的脏区会被永久吞掉。 */
+        XAtomic_store_int32(&top->m_paintEventPosted, 0,
+                            XAtomic_MemoryOrder_Release);
 #if XWINDOWEVENT_ON
-        {
-            XPaintEvent* pe = (XPaintEvent*)event;
-            XRegion copy = XPaintEvent_region(pe);
-            XRegion_copy(&copy, &region);
-            XRegion_deinit(&copy);
-        }
+        /* XPaintEvent_region 已返回拥有的深拷贝，直接交给 flush，避免
+           再复制一次区域数组。 */
+        region = XPaintEvent_region((XPaintEvent*)event);
 #else
+        XRegion_init(&region);
         {
             XRect rect = XWidget_rect(top);
             XRegion_addRect(&region, &rect);
@@ -1384,13 +1449,40 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XWidget_init(self, NULL, 0);
-    /* 释放目标已有资源（copy 自动 init 未初始化目标后进入增量路径）。 */
+    /* 释放目标已有字符串、字体和缓存；区域对象由 XRegion_copy 复用容量。 */
     XFocusProxy_unregisterOwner(self);
     self->m_focusProxy = NULL;
+    /* 拷贝不继承目标对象的平台资源；目标若已创建过资源，必须先销毁，
+       否则下面置 NULL 会泄漏原生窗口、后备存储和无障碍对象。 */
+    XWidget_destroyWindow(self);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
+    if (self->m_backingStore) {
+        XBackingStore_delete_base(self->m_backingStore);
+        self->m_backingStore = NULL;
+    }
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+#if XWINDOW_ON && XACCESSIBLE_ON
+    if (self->m_accessible) {
+        XAccessible_delete_base(self->m_accessible);
+        self->m_accessible = NULL;
+    }
+#endif /* XWINDOW_ON && XACCESSIBLE_ON */
+#if XLAYOUT_ON
+    if (self->m_layout) {
+        XLayout_detachWidget(self->m_layout);
+        self->m_layout = NULL;
+    }
+#endif /* XLAYOUT_ON */
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
     XWidget_freeString(&self->m_windowIconText);
     XWidget_freeString(&self->m_windowFilePath);
+    XWidget_freeString(&self->m_statusTip);
+    XWidget_freeString(&self->m_whatsThis);
+    XWidget_freeString(&self->m_accessibleName);
+    XWidget_freeString(&self->m_accessibleDescription);
+    XWidget_freeString(&self->m_windowRole);
+    XWidget_freeString(&self->m_styleSheet);
 #if XCURSOR_ON
     if (self->m_cursor) {
         XCursor_delete_base((XClass*)self->m_cursor);
@@ -1398,9 +1490,6 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     }
 #endif /* XCURSOR_ON */
     self->m_cursor = NULL;
-    XFont_deinit_base(&self->m_font);
-    XRegion_deinit(&self->m_dirty);
-    XRegion_deinit(&self->m_staticContents);
     XWidget_freeContentCache(self);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
     self->m_windowFlags = other->m_windowFlags;
@@ -1469,8 +1558,6 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #endif /* XCURSOR_ON */
     XRegion_copy(&other->m_dirty, &self->m_dirty);
     XRegion_copy(&other->m_staticContents, &self->m_staticContents);
-    XRegion_deinit(&self->m_mask);
-    XRegion_init(&self->m_mask);
     XRegion_copy(&other->m_mask, &self->m_mask);
     /* 窗口句柄与后备存储一律置空（拷贝构造不清平台资源）。 */
     self->m_windowHandle = NULL;
@@ -1513,8 +1600,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #endif /* XCURSOR_ON */
     self->m_windowHandle = other->m_windowHandle; other->m_windowHandle = NULL;
     self->m_backingStore = other->m_backingStore; other->m_backingStore = NULL;
-    self->m_contentCache = NULL;      other->m_contentCache = NULL;
-    self->m_contentCacheDirty = true; other->m_contentCacheDirty = true;
+    self->m_contentCache = other->m_contentCache;
+    other->m_contentCache = NULL;
+    self->m_contentCacheDirty = other->m_contentCacheDirty;
+    other->m_contentCacheDirty = true;
 #if XWINDOW_ON && XACCESSIBLE_ON
     self->m_accessible = XAccessible_createForWidget(self);
     if (other->m_accessible) {
@@ -1532,13 +1621,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
         other->m_layout = NULL;
     }
 #endif /* XLAYOUT_ON */
-    XRegion_deinit(&self->m_dirty);
     self->m_dirty = other->m_dirty;
     XRegion_init(&other->m_dirty);
-    XRegion_deinit(&self->m_staticContents);
     self->m_staticContents = other->m_staticContents;
     XRegion_init(&other->m_staticContents);
-    XRegion_deinit(&self->m_mask);
     self->m_mask = other->m_mask;
     XRegion_init(&other->m_mask);
     /* 普通值字段整体转移 */
@@ -1588,6 +1674,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #endif
     /* 基类/父链沿用目标；源对象归零字段 */
     memset((char*)other + sizeof(XObject), 0, sizeof(XWidget) - sizeof(XObject));
+    /* 上面的整体清零不能破坏嵌入式 XClass 对象的析构前提。移动后的
+       源控件不再拥有资源，但仍必须能被 XWidget_delete_base 安全销毁。 */
+    XFont_init(&other->m_font);
+    XIcon_init(&other->m_icon);
     other->m_windowFlags = 0;
 }
 
@@ -2543,14 +2633,10 @@ void XWidget_setMask(XWidget* self, const XRegion* region)
     if (!self) return;
     wasEmpty = self->m_mask.count <= 0;
     nowEmpty = (!region || region->count <= 0);
-    if (!nowEmpty) {
-        XRegion_deinit(&self->m_mask);
-        XRegion_init(&self->m_mask);
+    if (!nowEmpty)
         XRegion_copy(region, &self->m_mask);
-    } else {
-        XRegion_deinit(&self->m_mask);
-        XRegion_init(&self->m_mask);
-    }
+    else
+        XRegion_clear(&self->m_mask);
     /* 空态变化或两次均为非空（可能内容不同）都触发刷新并同步原生窗口。 */
     if ((wasEmpty != nowEmpty) || (!wasEmpty && !nowEmpty)) {
         if (self->m_isWindow && self->m_windowHandle)
@@ -3915,7 +4001,6 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     if (!self || !font) return;
     XFont_init(&temp);
     XFont_copy_base(&temp, font);
-    XFont_deinit_base(&self->m_font);
     XFont_move_base(&self->m_font, &temp);
     XWidget_updateGeometry(self);
     XWidget_update(self);
@@ -4054,10 +4139,15 @@ void XWidget_repaint(XWidget* self)
 void XWidget_repaintRect(XWidget* self, const XRect* rect)
 {
     XRegion region;
-    XRegion_init(&region);
-    XRegion_addRect(&region, rect);
+    XRect value;
+    if (!rect) return;
+    value = *rect;
+    /* repaintRegion 只读取区域；使用栈上单矩形视图，避免同步重绘也
+       产生一次短命的矩形数组分配。 */
+    region.rects = &value;
+    region.count = XRect_isEmpty(&value) ? 0 : 1;
+    region.capacity = 1;
     XWidget_repaintRegion(self, &region);
-    XRegion_deinit(&region);
 }
 
 void XWidget_repaintRegion(XWidget* self, const XRegion* region)
@@ -4085,16 +4175,21 @@ XRegion XWidget_visibleRegion(const XWidget* self)
     const XWidget* node;
     XPoint offset;
     XRegion_init(&out);
+    XRegion_init(&next);
+    XRegion_init(&maskClip);
     if (!self) {
+        XRegion_deinit(&next);
+        XRegion_deinit(&maskClip);
         return out;
     }
     XRegion_addRect(&out, &self->m_contentsRect);
     if (self->m_mask.count > 0 && self->m_mask.rects) {
-        XRegion_init(&maskClip);
-        XRegion_intersected(&out, &self->m_mask, &maskClip);
-        XRegion_deinit(&out);
-        out = maskClip;
-        XRegion_init(&maskClip); /* 转移后复位，避免双 ownership 或未初始化释放 */
+        XRegion_intersectInto(&out, &self->m_mask, &maskClip);
+        {
+            XRegion temp = out;
+            out = maskClip;
+            maskClip = temp;
+        }
     }
     XPoint_init(&offset, 0, 0);
     node = (const XWidget*)XObject_parent((XObject*)self);
@@ -4104,16 +4199,19 @@ XRegion XWidget_visibleRegion(const XWidget* self)
         offset.y += self->m_windowRect.y;
     }
     while (node) {
-        /* next 始终是新分配结果；转移后不再在循环外释放，避免与 out 共享缓冲。 */
-        next = XRegion_intersectRect(&out, &node->m_contentsRect);
-        XRegion_deinit(&out);
-        out = next;
+        XRegion_intersectRectInto(&out, &node->m_contentsRect, &next);
+        {
+            XRegion temp = out;
+            out = next;
+            next = temp;
+        }
         if (node->m_mask.count > 0 && node->m_mask.rects) {
-            XRegion_init(&maskClip);
-            XRegion_intersected(&out, &node->m_mask, &maskClip);
-            XRegion_deinit(&out);
-            out = maskClip;
-            XRegion_init(&maskClip); /* 转移后复位 */
+            XRegion_intersectInto(&out, &node->m_mask, &maskClip);
+            {
+                XRegion temp = out;
+                out = maskClip;
+                maskClip = temp;
+            }
         }
         if (node->m_isWindow)
             break;
@@ -4123,6 +4221,8 @@ XRegion XWidget_visibleRegion(const XWidget* self)
         node = (const XWidget*)XObject_parent((XObject*)node);
     }
     XRegion_translateInline(&out, -offset.x, -offset.y);
+    XRegion_deinit(&next);
+    XRegion_deinit(&maskClip);
     return out;
 }
 
@@ -4194,15 +4294,23 @@ XImage* XWidget_beginContentCache(XWidget* self, int width, int height)
         XImage_width(self->m_contentCache) == width &&
         XImage_height(self->m_contentCache) == height)
         return self->m_contentCache;
+    /* 尺寸变化时复用已有离屏缓存对象：XImage_reinit_ex 先构造临时图像
+       再移动替换，失败时保留旧内容，且不会重置堆对象的内存方法/所有权
+       标记；不要对已持有数据的对象直接调用 XImage_init_ex（会泄漏旧像素
+       并清掉堆标记）。 */
     if (self->m_contentCache) {
-        XImage_delete_base(self->m_contentCache);
-        self->m_contentCache = NULL;
+        self->m_contentCacheDirty = true;
+        if (!XImage_reinit_ex(self->m_contentCache, width, height,
+                              XImageFormat_ARGB32))
+            return NULL;
+        self->m_contentCacheDirty = true;
+        return self->m_contentCache;
     }
     self->m_contentCache = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self->m_contentCache)
         return NULL;
-    XImage_init_ex(self->m_contentCache, width, height, XImageFormat_ARGB32);
-    if (XImage_isNull(self->m_contentCache)) {
+    if (!XImage_reinit_ex(self->m_contentCache, width, height,
+                          XImageFormat_ARGB32)) {
         XImage_delete_base(self->m_contentCache);
         self->m_contentCache = NULL;
         return NULL;
@@ -4263,6 +4371,7 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
 {
     const XVector* children;
     XRegion maskClipped;
+    XRegion clipped;
     const XRegion* paintRegion;
     size_t n;
     size_t i;
@@ -4270,10 +4379,12 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     /* 控件自身遮罩参与所有绘制裁剪：遮罩外像素不进入 paintEvent 与后代。 */
     paintRegion = region;
     XRegion_init(&maskClipped);
+    XRegion_init(&clipped);
     if (widget->m_mask.count > 0 && widget->m_mask.rects) {
-        XRegion_intersected(region, &widget->m_mask, &maskClipped);
+        XRegion_intersectInto(region, &widget->m_mask, &maskClipped);
         if (maskClipped.count <= 0) {
             XRegion_deinit(&maskClipped);
+            XRegion_deinit(&clipped);
             return;
         }
         paintRegion = &maskClipped;
@@ -4291,19 +4402,18 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* w;
-        XRegion clipped;
         XRect childRect;
         if (!child || !child->is_widget) continue;
         w = (XWidget*)child;
         if (!w->m_visible || !w->m_updatesEnabled) continue;
         childRect = w->m_windowRect;
-        clipped = XRegion_intersectRect(paintRegion, &childRect);
+        XRegion_intersectRectInto(paintRegion, &childRect, &clipped);
         if (clipped.count > 0) {
             XRegion_translateInline(&clipped, -childRect.x, -childRect.y);
             XWidget_paintTree(w, &clipped);
         }
-        XRegion_deinit(&clipped);
     }
+    XRegion_deinit(&clipped);
     XRegion_deinit(&maskClipped);
 }
 
@@ -4344,6 +4454,24 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XRegion_addRect(&whole, &contents);
     }
  #endif
+    /*
+     * paint 事件携带的是入队时的脏区快照。先从当前脏区移除本次将要
+     * 绘制的部分，避免把事件入队后新增的区域一并清掉。repaint() 直接
+     * 传入 top->m_dirty 时无需计算差集；绘制期间产生的新 update 会重新
+     * 进入 top->m_dirty，并在函数末尾继续排队。
+     */
+    XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, false);
+    if (whole.count > 0)
+    {
+        if (region == &top->m_dirty || top->m_dirty.count <= 0)
+        {
+            XRegion_clear(&top->m_dirty);
+        }
+        else
+        {
+            XRegion_subtracted(&top->m_dirty, &whole, &top->m_dirty);
+        }
+    }
     if (whole.count > 0) {
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
@@ -4355,17 +4483,18 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
             XRect tile;
+            XRegion tileRegion;
+            XRegion_init(&tileRegion);
             while (XBackingStore_nextTile(store, &tile)) {
-                XRegion tileRegion;
                 /* XWidget_paintTree 接收的是区域集合。不能把 XRect 直接
                  * 强转传入，否则第二个 tile 的 x/y 会被解释为 count/指针。 */
-                XRegion_init(&tileRegion);
+                XRegion_clear(&tileRegion);
                 XRegion_addRect(&tileRegion, &tile);
                 XWidget_paintTree(top, &tileRegion);
-                XRegion_deinit(&tileRegion);
                 XBackingStore_flushTile(store, (XWindow*)top->m_windowHandle,
                                         &tile, NULL);
             }
+            XRegion_deinit(&tileRegion);
             XBackingStore_endPaint(store);
         }
 #else
@@ -4376,10 +4505,25 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         }
     }
     XRegion_deinit(&whole);
-    /* 已上屏脏区清空（绘制期间新并入的脏区保留，下次刷新处理）。 */
-    XRegion_deinit(&top->m_dirty);
-    XRegion_init(&top->m_dirty);
-    XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, false);
+    /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
+    if (top->m_dirty.count > 0)
+    {
+        bool alreadyPending = XWidget_attrTest(
+            &top->m_attributes, XWidgetAttribute_PendingUpdate);
+        XWidget_attrSet(&top->m_attributes,
+                        XWidgetAttribute_PendingUpdate, true);
+        if (!alreadyPending && top->m_windowHandle && top->m_visible)
+        {
+            if (!XWidget_postPaintEvent(top))
+                XWidget_attrSet(&top->m_attributes,
+                                XWidgetAttribute_PendingUpdate, false);
+        }
+    }
+    else
+    {
+        XWidget_attrSet(&top->m_attributes,
+                        XWidgetAttribute_PendingUpdate, false);
+    }
 #else
     (void)self;
     (void)region;

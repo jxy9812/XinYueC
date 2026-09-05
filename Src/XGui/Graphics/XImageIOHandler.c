@@ -184,9 +184,14 @@ void XImageIOHandler_setFormat(XImageIOHandler* self, const XString* format)
 void XImageIOHandler_setFormat_const(const XImageIOHandler* self, const XString* format)
 {
     XImageIOHandlerPrivate* data;
+    XString* copy;
     if (!self || !(data = self->m_data)) return;
+    /* format 允许来自 XImageIOHandler_format_const()；必须先复制，
+       否则释放旧成员后再复制会读取悬空 XString。 */
+    copy = format ? XString_create_copy(format) : NULL;
+    if (format && !copy) return;
     if (data->m_format) XString_delete_base((XClass*)data->m_format);
-    data->m_format = format ? XString_create_copy(format) : NULL;
+    data->m_format = copy;
 }
 
 void XImageIOHandler_setFormat_2(XImageIOHandler* self, const char* format)
@@ -395,8 +400,8 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
     if (!XImageIOHandler_checkAllocation(size, format)) return false;
 
     /* Qt 只有通过全部参数与限制校验后才替换输出图像，失败时保留
-       调用方原有内容。XImage 的 C 输出对象通常已初始化，释放旧数据
-       后再建立新对象，避免覆盖 m_data 造成泄漏。 */
+       调用方原有内容。image 按本 API 契约已完成 XImage_init，因此在
+       init_ex 只初始化当前存储前显式释放原有像素数据。 */
     XImage_deinit_base(image);
     XImage_init_ex(image, size->width, size->height, format);
     return !XImage_isNull(image);

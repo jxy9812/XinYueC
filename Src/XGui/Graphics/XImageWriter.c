@@ -463,6 +463,9 @@ static bool XImageWriter_applyTransformation(const XImage* image,
     int width;
     int height;
     if (!image || !out || XImage_isNull(image)) return false;
+    /* write() passes an uninitialized local temporary.  This helper is not
+       an object-reuse boundary, so establish its XImage state before any
+       output operation. */
     XImage_init(out);
     if (transformation == XImageIOHandlerTransformation_None) {
         XImage_copy_base(out, image);
@@ -597,6 +600,7 @@ void XImageWriter_init(XImageWriter* self)
 
 void XImageWriter_init_device(XImageWriter* self, XIODevice* device, const XString* format)
 {
+    if (!self) return;
     XImageWriter_init(self);
     if (self->m_data)
     {
@@ -615,6 +619,7 @@ void XImageWriter_init_device_2(XImageWriter* self, XIODevice* device, const cha
 
 void XImageWriter_init_file(XImageWriter* self, const XString* fileName, const XString* format)
 {
+    if (!self) return;
     XImageWriter_init(self);
     if (self->m_data)
     {
@@ -637,9 +642,13 @@ void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const ch
 
 void XImageWriter_setFormat(XImageWriter* self, const XString* format)
 {
+    XString* copy;
     if (!self || !self->m_data) return;
+    /* format 可能来自 format_const()，不能先释放旧成员再复制。 */
+    copy = format ? XString_create_copy(format) : NULL;
+    if (format && !copy) return;
     if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
-    self->m_data->m_format = format ? XString_create_copy(format) : NULL;
+    self->m_data->m_format = copy;
 }
 
 void XImageWriter_setFormat_2(XImageWriter* self, const char* format)
@@ -677,11 +686,16 @@ XIODevice* XImageWriter_device(const XImageWriter* self)
 
 void XImageWriter_setFileName(XImageWriter* self, const XString* fileName)
 {
+    XString* copy;
     if (!self || !self->m_data) return;
+    /* fileName 可能来自 fileName_const(self)；复制必须早于释放自有设备
+       和旧文件名，否则输入指针可能已经失效。 */
+    copy = fileName ? XString_create_copy(fileName) : NULL;
+    if (fileName && !copy) return;
     XImageWriter_releaseTransientState(self->m_data);
     XImageWriter_releaseOwnedDevice(self->m_data);
     if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
-    self->m_data->m_fileName = fileName ? XString_create_copy(fileName) : NULL;
+    self->m_data->m_fileName = copy;
     self->m_data->m_device = XImageWriter_ensureOwnedDevice(self->m_data);
 }
 
@@ -933,7 +947,8 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
        a file as a side effect. */
     if (!XImageWriter_canWrite(self)) return false;
 
-    XImageWriter_ensureHandler(self);
+    /* canWrite() 已经完成处理器创建；这里直接复用，避免同一次写入再次
+       执行相同的处理器查找。插件关闭时该调用本来也是空操作。 */
     if (self->m_data->m_handler) {
         handlerAttempted = true;
         if (self->m_data->m_transformation != XImageIOHandlerTransformation_None &&

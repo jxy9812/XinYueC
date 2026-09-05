@@ -150,7 +150,6 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, &pixmap, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_deinit_base(&pixmap);
             XPixmap_move_base(&pixmap, &styled);
         }
         XPixmap_deinit_base(&styled);
@@ -518,7 +517,6 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
     double scaleCeil;
     (void)state;
     if (!out) return;
-    XPixmap_init(out);
     if (!size || size->width <= 0 || size->height <= 0 ||
         !(scale > 0.0f) || !isfinite(scale)) return;
     /* The theme entry is selected from min(width,height), then scaled in
@@ -551,7 +549,6 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XPixmap_deinit_base(out);
             XPixmap_move_base(out, &styled);
         }
         XPixmap_deinit_base(&styled);

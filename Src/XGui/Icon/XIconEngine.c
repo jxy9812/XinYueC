@@ -27,11 +27,11 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
                                 XIconMode mode, XIconState state, XPixmap* out)
 {
     XImage image;
+    XPixmap generated;
     XPainter painter;
     XRect rect;
     bool active;
     if (!out) return;
-    XPixmap_init(out);
     if (!size || size->width <= 0 || size->height <= 0) return;
 
     /* 对标 Qt 6.8 QIconEngine::pixmap：先创建请求尺寸的像素图，
@@ -51,7 +51,11 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
         rect.height = size->height;
         XIconEngine_paint_base(self, &painter, &rect, mode, state);
         XPainter_end(&painter);
-        XPixmap_init_image(out, &image, 0);
+        /* pixmap_base() 已经清空调用方输出；先在临时像素图中接管图像，
+           再移动到输出，避免 XPixmap_init_image() 对输出进行第二次 reset。 */
+        XPixmap_init_image(&generated, &image, 0);
+        XPixmap_move_base(out, &generated);
+        XPixmap_deinit_base(&generated);
     }
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
@@ -99,7 +103,6 @@ static void VXIconEngine_scaledPixmap(const XIconEngine* self, const XSize* size
 {
     XIconEngineScaledPixmapArgument argument;
     if (!out) return;
-    XPixmap_init(out);
     if (!size) return;
     argument.size = *size;
     argument.mode = mode;
@@ -121,9 +124,8 @@ static void VXIconEngine_virtualHook(const XIconEngine* self, int id, void* data
     argument = (XIconEngineScaledPixmapArgument*)data;
     if (!argument->pixmap) return;
     /* QIconEngine::virtual_hook() 通过值语义替换 QPixmap；先释放调用方
-       原有输出，使无效尺寸也得到空像素图而不会残留旧内容。 */
-    if (!XClassIsVtableNull(argument->pixmap))
-        XPixmap_deinit_base(argument->pixmap);
+       原有输出，使无效尺寸也得到空像素图而不会残留旧内容。保留虚表，
+       由 pixmap_base 在需要生成有效结果时继续复用该对象。 */
     XPixmap_init(argument->pixmap);
     if (argument->size.width <= 0 || argument->size.height <= 0)
         return;
@@ -146,8 +148,13 @@ static void VXIconEngine_virtualHook(const XIconEngine* self, int id, void* data
        参数，不在 virtual_hook() 内改写 DPR；QIcon::pixmap() 会在钩子返回
        后依据实际像素尺寸统一设置设备像素比。这里保持同一层次的职责，
        直接调用引擎的 pixmap() 虚函数并保留其返回对象的 DPR。 */
-    XIconEngine_pixmap_base(self, &physical, argument->mode, argument->state,
-                            argument->pixmap);
+    /* scaledPixmap_base() 已经清空输出；这里直接调用像素图虚函数，
+       避免再次经过 pixmap_base() 重复清空同一个输出对象。 */
+    if (self && XClassGetVtable(self))
+        XClassGetVirtualFunc(self, EXIconEngine_Pixmap,
+            void(*)(const XIconEngine*, const XSize*, XIconMode, XIconState,
+                    XPixmap*))(self, &physical, argument->mode, argument->state,
+                               argument->pixmap);
 }
 
 static void VXIconEngine_deinit(XIconEngine* self)

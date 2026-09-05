@@ -457,7 +457,7 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
     memset(entry, 0, sizeof(XCacheEntry));
     entry->m_key = XString_create_copy(key);
     if (!entry->m_key) { XFree_System(entry); cacheLockRelease(); return false; }
-    XPixmap_init(&entry->m_pixmap);
+    /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
     XPixmap_copy_base(&entry->m_pixmap, pixmap);
     entry->m_size = cost;
     entry->m_hasStringKey = true;
@@ -520,7 +520,7 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
         return false;
     }
     memset(entry, 0, sizeof(XCacheEntry));
-    XPixmap_init(&entry->m_pixmap);
+    /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
     XPixmap_copy_base(&entry->m_pixmap, pixmap);
     entry->m_keyData = keyData;
     entry->m_size = cost;

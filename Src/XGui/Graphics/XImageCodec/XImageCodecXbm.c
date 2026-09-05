@@ -179,7 +179,10 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
         return false;
     expected = rowBytes * (size_t)header.m_height;
     XImage_init_ex(&image, header.m_width, header.m_height, XImageFormat_MonoLSB);
-    if (XImage_isNull(&image)) return false;
+    if (XImage_isNull(&image)) {
+        XImage_deinit_base(&image);
+        return false;
+    }
     XImage_fill(&image, 0u);
     XImage_setColorCount(&image, 2);
     XImage_setColor(&image, 0, 0xffffffffu);
@@ -213,10 +216,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
             cursor = current + 4u;
         }
     }
-    XImage_deinit_base(out);
-    out->m_data = image.m_data;
-    image.m_data = NULL;
-    XImage_deinit_base(&image);
+    XImage_move_base(out, &image);
     return true;
 }
 

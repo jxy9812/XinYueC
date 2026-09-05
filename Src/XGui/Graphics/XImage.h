@@ -100,6 +100,19 @@ void XImage_init(XImage* self);
 void XImage_init_ex(XImage* self, int width, int height, XImageFormat format);
 
 /**
+ * @brief      在已有 XImage 对象中安全替换为指定大小和格式的图像。
+ * @details    先构造临时图像，成功后通过移动语义替换目标数据；失败时
+ *             保留目标原有图像。不会重置目标 XClass 的虚表、内存方法或
+ *             堆对象标志，适用于已经初始化或由 XImage_create_ex 创建的对象。
+ * @param self   待替换的 XImage 对象指针
+ * @param width  图像宽度（像素）
+ * @param height 图像高度（像素）
+ * @param format 像素格式
+ * @return       替换成功返回 true；参数非法或分配失败返回 false
+ */
+bool XImage_reinit_ex(XImage* self, int width, int height, XImageFormat format);
+
+/**
  * @brief      使用指定大小和格式创建初始化的 XImage
  * @param self   待初始化的 XImage 对象指针
  * @param width  图像宽度（像素）

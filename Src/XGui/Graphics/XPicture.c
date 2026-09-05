@@ -556,6 +556,11 @@ static XPicturePrivate* XPicturePrivate_clone(const XPicturePrivate* source)
     copy->m_boundingH = source->m_boundingH;
     if (source->m_dataSize != 0)
     {
+        if (!source->m_data)
+        {
+            XPicturePrivate_unref(copy);
+            return NULL;
+        }
         copy->m_data = (char*)XMalloc_System(source->m_dataSize);
         if (!copy->m_data)
         {
@@ -567,6 +572,18 @@ static XPicturePrivate* XPicturePrivate_clone(const XPicturePrivate* source)
         copy->m_dataCapacity = source->m_dataSize;
     }
     return copy;
+}
+
+static bool XPicture_isInitializedObject(const XPicture* self)
+{
+    unsigned char actual[sizeof(void*)];
+    unsigned char expected[sizeof(void*)];
+    XVtable* vtable;
+    if (!self) return false;
+    vtable = XPicture_class_init();
+    memcpy(actual, &self->m_class.m_vtable, sizeof(actual));
+    memcpy(expected, &vtable, sizeof(expected));
+    return memcmp(actual, expected, sizeof(actual)) == 0;
 }
 
 static void XPicture_reset(XPicture* self)
@@ -585,7 +602,7 @@ static void VXPicture_copy(XPicture* dest, const XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
     if (dest == src) return;
-    if (XClassIsVtableNull(dest)) XPicture_init(dest, -1);
+    if (!XPicture_isInitializedObject(dest)) XPicture_init(dest, -1);
     if (dest->m_data)
         XPicturePrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -596,7 +613,7 @@ static void VXPicture_move(XPicture* dest, XPicture* src)
 {
     if (ISNULL(dest, "XPicture") || ISNULL(src, "XPicture")) return;
     if (dest == src) return;
-    if (XClassIsVtableNull(dest)) XPicture_init(dest, -1);
+    if (!XPicture_isInitializedObject(dest)) XPicture_init(dest, -1);
     if (dest->m_data)
         XPicturePrivate_unref(dest->m_data);
     dest->m_data = src->m_data;
@@ -654,10 +671,20 @@ XPicture* XPicture_create_move(XPicture* other, XMemoryType memory)
 
 void XPicture_init(XPicture* self, int formatVersion)
 {
+    XMemory* memory = NULL;
+    bool isHeap = false;
     if (ISNULL(self, "XPicture")) return;
+    if (XPicture_isInitializedObject(self))
+    {
+        memory = Class_Memory(self);
+        isHeap = Class_IsHeap(self);
+        XPicture_deinit_base(self);
+    }
     memset(self, 0, sizeof(XPicture));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XPicture);
+    if (memory) Class_Memory(self) = memory;
+    Class_IsHeap(self) = isHeap;
     self->m_data = XPicturePrivate_create(formatVersion);
 }
 
@@ -665,8 +692,8 @@ void XPicture_swap(XPicture* self, XPicture* other)
 {
     XPicturePrivate* data;
     if (!self || !other || self == other) return;
-    if (XClassIsVtableNull(self)) XPicture_init(self, -1);
-    if (XClassIsVtableNull(other)) XPicture_init(other, -1);
+    if (!XPicture_isInitializedObject(self)) XPicture_init(self, -1);
+    if (!XPicture_isInitializedObject(other)) XPicture_init(other, -1);
     data = self->m_data;
     self->m_data = other->m_data;
     other->m_data = data;
@@ -1863,11 +1890,13 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             {
                 /* Do not call XPainter_setFont(): replay is deliberately
                    silent and must not append another SetFont record. */
-                XFont_deinit_base((XClass*)&painter->m_state.m_font);
                 XFont_move_base((XClass*)&painter->m_state.m_font,
                                 (XClass*)&font);
                 ok = true;
             }
+            /* XFont_move_base() leaves the source initialized with empty
+               owned strings; keep the temporary's lifecycle paired on both
+               the success and parse-failure paths. */
             XFont_deinit_base((XClass*)&font);
         }
         else if (opcode == XPictureOpcode_SetOpacity)
@@ -2324,6 +2353,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
+                XImage_deinit_base(&image);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2370,12 +2400,15 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             bool drawOk;
             uint32_t i;
             if (!painter->m_drawImage || !imageBytes) return false;
+            XPixmap_init(&pixmap);
             memcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
                              (int64_t)bytesPerLine, imageBytes,
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
+                XImage_deinit_base(&image);
+                XPixmap_deinit_base(&pixmap);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2396,7 +2429,6 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                     XImage_setColor(&image, (int)i,
                                     XPicture_getU32(payload + XPICTURE_IMAGE_FIXED_SIZE + i * 4u));
             }
-            XPixmap_init(&pixmap);
             XPixmap_fromImage(&image, XPixmapImageConversion_NoFormatConversion,
                               &pixmap);
             targetRect.x = (int)XPicture_getI32(payload + 0u);
@@ -2435,12 +2467,15 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             XPoint offsetPoint;
             uint32_t i;
             if (!painter->m_drawImage || !imageBytes) return false;
+            XPixmap_init(&pixmap);
             memcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
                              (int64_t)bytesPerLine, imageBytes,
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
+                XImage_deinit_base(&image);
+                XPixmap_deinit_base(&pixmap);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2461,7 +2496,6 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                     XImage_setColor(&image, (int)i,
                                     XPicture_getU32(payload + XPICTURE_IMAGE_FIXED_SIZE + i * 4u));
             }
-            XPixmap_init(&pixmap);
             XPixmap_fromImage(&image, XPixmapImageConversion_NoFormatConversion,
                               &pixmap);
             rect.x = (int)XPicture_getI32(payload + extraOffset + 0u);

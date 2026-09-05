@@ -86,11 +86,24 @@ static bool region_reserve(XRegion* self, int required)
 static void region_replace(XRegion* out, XRegion* replacement)
 {
     if (!out || !replacement || out == replacement) return;
-    XRegion_deinit(out);
-    *out = *replacement;
-    replacement->rects = NULL;
-    replacement->count = 0;
-    replacement->capacity = 0;
+    /* 运算结果通常比输出区域小。容量足够时直接覆盖元素，保留 out
+       的矩形数组，避免每次求交/求并都释放并重新申请。 */
+    if (replacement->count <= out->capacity &&
+        (replacement->count == 0 || out->rects))
+    {
+        if (replacement->count > 0)
+            memcpy(out->rects, replacement->rects,
+                   (size_t)replacement->count * sizeof(XRect));
+        out->count = replacement->count;
+        XRegion_deinit(replacement);
+        return;
+    }
+    {
+        XRegion old = *out;
+        *out = *replacement;
+        *replacement = old;
+    }
+    XRegion_deinit(replacement);
 }
 
 static void region_remove_at(XRegion* self, int index)
@@ -504,9 +517,12 @@ bool XRegion_isEmpty(const XRegion* self)
 void XRegion_copy(const XRegion* self, XRegion* out)
 {
     if (!out || self == out) return;
-    XRegion_deinit(out);
-    XRegion_init(out);
-    if (!self || self->count <= 0 || !region_reserve(out, self->count)) return;
+    /* 先确保容量，再改变元素数量；扩容失败时保留 out 的旧快照。 */
+    if (!self || self->count <= 0 || !self->rects) {
+        XRegion_clear(out);
+        return;
+    }
+    if (!region_reserve(out, self->count)) return;
     memcpy(out->rects, self->rects, (size_t)self->count * sizeof(XRect));
     out->count = self->count;
 }
@@ -556,11 +572,11 @@ bool XRegion_intersects(const XRegion* self, const XRect* rect)
     return false;
 }
 
-void XRegion_addRect(XRegion* self, const XRect* rect)
+static bool region_add_rect(XRegion* self, const XRect* rect)
 {
-    if (!self || !rect || XRect_isEmpty(rect)) return;
+    if (!self || !rect || XRect_isEmpty(rect)) return true;
     XRect value = XRect_normalized(rect);
-    if (XRect_isEmpty(&value)) return;
+    if (XRect_isEmpty(&value)) return true;
     /* Keep folding the new rectangle into every compatible existing one.
      * This makes merging transitive (A joins B, then A+B joins C). */
     for (;;)
@@ -569,7 +585,7 @@ void XRegion_addRect(XRegion* self, const XRect* rect)
         for (int i = self->count - 1; i >= 0; --i)
         {
             XRect current = self->rects[i];
-            if (XRect_containsRect(&current, &value)) return;
+            if (XRect_containsRect(&current, &value)) return true;
             if (!region_rects_can_merge(&current, &value)) continue;
             value = XRect_united(&current, &value);
             region_remove_at(self, i);
@@ -577,33 +593,47 @@ void XRegion_addRect(XRegion* self, const XRect* rect)
         }
         if (!mergedAny) break;
     }
-    if (!region_reserve(self, self->count + 1)) return;
+    if (!region_reserve(self, self->count + 1)) return false;
     self->rects[self->count++] = value;
+    return true;
+}
+
+void XRegion_addRect(XRegion* self, const XRect* rect)
+{
+    (void)region_add_rect(self, rect);
 }
 
 void XRegion_united(const XRegion* self, const XRegion* other, XRegion* out)
 {
     XRegion result;
+    bool success = true;
+    if (!out) return;
     XRegion_init(&result);
-    for (int i = 0; self && i < self->count; ++i) XRegion_addRect(&result, &self->rects[i]);
-    for (int i = 0; other && i < other->count; ++i) XRegion_addRect(&result, &other->rects[i]);
+    for (int i = 0; success && self && i < self->count; ++i)
+        success = region_add_rect(&result, &self->rects[i]);
+    for (int i = 0; success && other && i < other->count; ++i)
+        success = region_add_rect(&result, &other->rects[i]);
+    if (!success) { XRegion_deinit(&result); return; }
     region_replace(out, &result);
 }
 
 void XRegion_intersected(const XRegion* self, const XRegion* other, XRegion* out)
 {
     XRegion result;
+    bool success = true;
+    if (!out) return;
     XRegion_init(&result);
-    for (int i = 0; self && i < self->count; ++i)
-        for (int j = 0; other && j < other->count; ++j)
+    for (int i = 0; success && self && i < self->count; ++i)
+        for (int j = 0; success && other && j < other->count; ++j)
         {
             XRect intersection = XRect_intersected(&self->rects[i], &other->rects[j]);
-            XRegion_addRect(&result, &intersection);
+            success = region_add_rect(&result, &intersection);
         }
+    if (!success) { XRegion_deinit(&result); return; }
     region_replace(out, &result);
 }
 
-static void region_subtract_rect(const XRect* source, const XRect* cutter, XRegion* out)
+static bool region_subtract_rect(const XRect* source, const XRect* cutter, XRegion* out)
 {
     XRect intersection;
     int64_t left;
@@ -614,30 +644,44 @@ static void region_subtract_rect(const XRect* source, const XRect* cutter, XRegi
     int64_t cutTop;
     int64_t cutRight;
     int64_t cutBottom;
-    if (!source || !out) return;
-    if (!XRect_intersects(source, cutter)) { XRegion_addRect(out, source); return; }
+    if (!source || !out) return true;
+    if (!XRect_intersects(source, cutter)) return region_add_rect(out, source);
     intersection = XRect_intersected(source, cutter);
     rect_edges(source, &left, &top, &right, &bottom);
     rect_edges(&intersection, &cutLeft, &cutTop, &cutRight, &cutBottom);
-    if (cutTop > top) { XRect r; rect_from_edges(left, top, right, cutTop, &r); XRegion_addRect(out, &r); }
-    if (cutBottom < bottom) { XRect r; rect_from_edges(left, cutBottom, right, bottom, &r); XRegion_addRect(out, &r); }
-    if (cutLeft > left) { XRect r; rect_from_edges(left, cutTop, cutLeft, cutBottom, &r); XRegion_addRect(out, &r); }
-    if (cutRight < right) { XRect r; rect_from_edges(cutRight, cutTop, right, cutBottom, &r); XRegion_addRect(out, &r); }
+    if (cutTop > top) { XRect r; rect_from_edges(left, top, right, cutTop, &r); if (!region_add_rect(out, &r)) return false; }
+    if (cutBottom < bottom) { XRect r; rect_from_edges(left, cutBottom, right, bottom, &r); if (!region_add_rect(out, &r)) return false; }
+    if (cutLeft > left) { XRect r; rect_from_edges(left, cutTop, cutLeft, cutBottom, &r); if (!region_add_rect(out, &r)) return false; }
+    if (cutRight < right) { XRect r; rect_from_edges(cutRight, cutTop, right, cutBottom, &r); if (!region_add_rect(out, &r)) return false; }
+    return true;
 }
 
 void XRegion_subtracted(const XRegion* self, const XRegion* other, XRegion* out)
 {
     XRegion current;
     XRegion next;
+    bool success = true;
+    if (!out) return;
     XRegion_init(&current);
     XRegion_init(&next);
-    for (int i = 0; self && i < self->count; ++i) XRegion_addRect(&current, &self->rects[i]);
-    for (int j = 0; other && j < other->count && current.count > 0; ++j)
+    for (int i = 0; success && self && i < self->count; ++i)
+        success = region_add_rect(&current, &self->rects[i]);
+    for (int j = 0; success && other && j < other->count && current.count > 0; ++j)
     {
         XRegion_clear(&next);
         for (int i = 0; i < current.count; ++i)
-            region_subtract_rect(&current.rects[i], &other->rects[j], &next);
+            if (!region_subtract_rect(&current.rects[i], &other->rects[j], &next))
+            {
+                success = false;
+                break;
+            }
         { XRegion temp = current; current = next; next = temp; }
+    }
+    if (!success)
+    {
+        XRegion_deinit(&current);
+        XRegion_deinit(&next);
+        return;
     }
     XRegion_deinit(&next);
     region_replace(out, &current);

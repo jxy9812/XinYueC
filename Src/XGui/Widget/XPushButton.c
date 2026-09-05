@@ -445,7 +445,6 @@ void XPushButton_setIcon(XPushButton* self, const XIcon* icon)
 {
     if (!self) return;
     XIcon_deinit_base(&self->m_icon);
-    XIcon_init(&self->m_icon);
     if (icon && !XIcon_isNull(icon))
         XIcon_copy_base(&self->m_icon, icon);
     pushbutton_refreshSizeHint(self);
@@ -1134,7 +1133,6 @@ static void VXPushButton_copy(XPushButton* self, const XPushButton* other)
         self->m_text = NULL;
     }
     XIcon_deinit_base(&self->m_icon);
-    XIcon_init(&self->m_icon);
     self->m_text = other->m_text ? XString_create_copy(other->m_text)
                                  : XString_create();
     XIcon_copy_base(&self->m_icon, &other->m_icon);
@@ -1168,11 +1166,8 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
         XString_delete_base((XClass*)self->m_text);
         self->m_text = NULL;
     }
-    XIcon_deinit_base(&self->m_icon);
-    XIcon_init(&self->m_icon);
     self->m_text = other->m_text;
     XIcon_move_base(&self->m_icon, &other->m_icon);
-    XIcon_init(&other->m_icon);
     other->m_text = XString_create();
     self->m_iconSize = other->m_iconSize;
     other->m_iconSize.width = 0;

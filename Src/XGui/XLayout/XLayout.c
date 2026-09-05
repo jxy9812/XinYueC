@@ -287,14 +287,11 @@ static XLayoutItem* VXLayout_replaceItemAt(XLayout* self, int index,
     return NULL;
 }
 
-/** @brief 释放布局资源：释放内部拥有条目、解除挂接与父布局反向引用。 */
-static void VXLayout_deinit(XLayout* self)
+/** @brief 释放布局当前持有的条目数组及其拥有的条目。 */
+static void XLayout_releaseItems(XLayout* self)
 {
     int i;
     if (!self) return;
-    if (self->m_parentWidget && self->m_parentWidget->m_layout == self)
-        self->m_parentWidget->m_layout = NULL;
-    self->m_parentWidget = NULL;
     for (i = 0; i < self->m_itemCount; ++i) {
         XLayoutItem* item = self->m_items[i];
         if (!item) continue;
@@ -307,6 +304,16 @@ static void VXLayout_deinit(XLayout* self)
     self->m_items = NULL;
     self->m_itemCount = 0;
     self->m_itemCapacity = 0;
+}
+
+/** @brief 释放布局资源：释放内部拥有条目、解除挂接与父布局反向引用。 */
+static void VXLayout_deinit(XLayout* self)
+{
+    if (!self) return;
+    if (self->m_parentWidget && self->m_parentWidget->m_layout == self)
+        self->m_parentWidget->m_layout = NULL;
+    self->m_parentWidget = NULL;
+    XLayout_releaseItems(self);
     self->m_parentLayout = NULL;
     self->m_menuBar = NULL;
     XClass_Deinit_Parent(XLayoutItem, (XLayoutItem*)self);
@@ -316,6 +323,7 @@ static void VXLayout_deinit(XLayout* self)
 static void VXLayout_copy(XLayout* self, const XLayout* other)
 {
     if (!self || !other || self == other) return;
+    /* 目标未初始化（全零内存）时必须先初始化，再复制配置。 */
     if (XClassIsVtableNull(self)) XLayout_init(self);
     self->m_base.m_geometry = other->m_base.m_geometry;
     self->m_base.m_alignment = other->m_base.m_alignment;
@@ -334,8 +342,10 @@ static void VXLayout_move(XLayout* self, XLayout* other)
 {
     int i;
     if (!self || !other || self == other) return;
+    /* 目标未初始化（全零内存）时必须先初始化，再移动条目。 */
     if (XClassIsVtableNull(self)) XLayout_init(self);
-    XFree_System(self->m_items);
+    /* 移动前必须释放目标原有的拥有条目；只释放数组会遗留条目对象。 */
+    XLayout_releaseItems(self);
     self->m_items = other->m_items;
     self->m_itemCount = other->m_itemCount;
     self->m_itemCapacity = other->m_itemCapacity;

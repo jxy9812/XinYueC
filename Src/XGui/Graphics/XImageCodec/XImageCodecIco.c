@@ -186,10 +186,11 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
     /* The AND mask can make 24-bit pixels transparent, so retain an alpha
        capable destination even though the XOR payload itself is opaque. */
     outputFormat = XImageFormat_ARGB32;
-    XImage_init(&temp);
     XImage_init_ex(&temp, width, height, outputFormat);
-    if (XImage_isNull(&temp))
+    if (XImage_isNull(&temp)) {
+        XImage_deinit_base(&temp);
         return false;
+    }
     for (int fileY = 0; fileY < height; ++fileY) {
         int destY = height - 1 - fileY;
             const uint8_t* row = payload + pixelOffset +
@@ -239,10 +240,7 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
     }
     /* Qt keeps a 32-bit ICO payload in an alpha-capable image and applies
        the AND mask for 24-bit payloads. */
-    XImage_deinit_base(out);
-    out->m_data = temp.m_data;
-    temp.m_data = NULL;
-    XImage_deinit_base(&temp);
+    XImage_move_base(out, &temp);
     return true;
 }
 

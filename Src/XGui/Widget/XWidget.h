@@ -523,6 +523,7 @@ typedef struct XWidget
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
     XBackingStore*          m_backingStore;    /**< 顶层后备存储（拥有）。 */
     XImage*                 m_contentCache;    /**< 控件内容离屏缓存（拥有；NULL=未启用/未分配）。 */
+    XAtomic_int32_t         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */

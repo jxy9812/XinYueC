@@ -654,7 +654,6 @@ static void label_clearContents(XLabel* self)
         self->m_picture = NULL;
     }
     XPixmap_deinit_base(&self->m_pixmap);
-    XPixmap_init(&self->m_pixmap);
     self->m_movie = NULL;
     self->m_isTextLabel = false;
     self->m_selectionStart = -1;
@@ -1899,7 +1898,6 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
         XPicture_delete_base(self->m_picture);
         self->m_picture = NULL;
     }
-    XPixmap_deinit_base(&self->m_pixmap);
     XPixmap_init(&self->m_pixmap);
     /* 深拷贝标签字段 */
     self->m_text = XString_create_copy(other->m_text);
@@ -1960,8 +1958,6 @@ static void VXLabel_move(XLabel* self, XLabel* other)
         XPicture_delete_base(self->m_picture);
         self->m_picture = NULL;
     }
-    XPixmap_deinit_base(&self->m_pixmap);
-    XPixmap_init(&self->m_pixmap);
     /* 转移资源 */
     self->m_text = other->m_text; other->m_text = XString_create();
     self->m_displayText = other->m_displayText; other->m_displayText = XString_create();

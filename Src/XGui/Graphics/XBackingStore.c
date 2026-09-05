@@ -93,6 +93,23 @@ void XBackingStore_init(XBackingStore* self, XWindow* window)
     xBackingStore_ensureHandle(self);
 }
 
+void XBackingStore_reinit(XBackingStore* self, XWindow* window)
+{
+    XMemory* memory;
+    bool isHeap;
+    if (!self) return;
+
+    /* 这里只能由已初始化对象调用；不要通过读取 vtable 猜测对象状态。 */
+    memory = Class_Memory(self);
+    isHeap = Class_IsHeap(self);
+    XBackingStore_deinit_base(self);
+    XBackingStore_init(self, window);
+
+    /* init 会清零并恢复默认 XObject 元数据，重建后恢复原有所有权契约。 */
+    if (memory) Class_Memory(self) = memory;
+    Class_IsHeap(self) = isHeap;
+}
+
 XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window)
 {
     XBackingStore* self = (XBackingStore*)XMemory_malloc(sizeof(XBackingStore), memory);
@@ -235,23 +252,19 @@ void XBackingStore_flushTile(XBackingStore* self, XWindow* window,
 
 void XBackingStore_setStaticContents(XBackingStore* self, const XRegion* region)
 {
-    XRegion copy;
     if (!self || !self->m_data) return;
 
     /* QBackingStore::setStaticContents 只把值存到公共私有状态（Qt
-     * qbackingstore.cpp:271-281），不按当前 backing image 裁剪。先复制到
-     * 临时对象并验证容量，避免内存不足时无声破坏调用者之前的快照。 */
-    XRegion_init(&copy);
-    if (region) {
-        XRegion_copy(region, &copy);
-        if (region->count > 0 && copy.count != region->count) {
-            XRegion_deinit(&copy);
-            return;
-        }
-    }
-    XRegion_deinit(&self->m_data->m_staticContents);
-    self->m_data->m_staticContents = copy;
-    XRegion_init(&copy);
+     * qbackingstore.cpp:271-281），不按当前 backing image 裁剪。XRegion_copy
+     * 会先扩容，成功后直接写入，避免每次设置静态区域都释放并重建数组。 */
+    if (region && region->count < 0)
+        return;
+    if (region && region->count > 0 && !region->rects)
+        return;
+    if (region)
+        XRegion_copy(region, &self->m_data->m_staticContents);
+    else
+        XRegion_clear(&self->m_data->m_staticContents);
 
     /* 平台实现可以为 resize/合成建立裁剪后的提示，但这不应改变上方
      * 公共 API 返回的原始快照。NULL 与空区域都传给平台以清除旧提示。 */

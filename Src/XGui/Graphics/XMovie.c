@@ -40,13 +40,23 @@ static void VXMovie_deinit(XMovie* self);
 static void VXMovie_copy(XMovie* self, const XMovie* other);
 static void VXMovie_move(XMovie* self, XMovie* other);
 
+static bool XMovie_isInitializedObject(const XMovie* self)
+{
+    unsigned char actual[sizeof(void*)];
+    unsigned char expected[sizeof(void*)];
+    XVtable* vtable;
+    if (!self) return false;
+    vtable = XMovie_class_init();
+    memcpy(actual, &self->m_class.m_class.m_vtable, sizeof(actual));
+    memcpy(expected, &vtable, sizeof(expected));
+    return memcmp(actual, expected, sizeof(actual)) == 0;
+}
+
 static void XMovie_clearCurrent(XMoviePrivate* data)
 {
     if (!data) return;
     XImage_deinit_base(&data->m_currentImage);
-    XImage_init(&data->m_currentImage);
     XPixmap_deinit_base(&data->m_currentPixmap);
-    XPixmap_init(&data->m_currentPixmap);
     memset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
     data->m_currentFrame = -1;
 }
@@ -111,8 +121,13 @@ static void XMovie_setError(XMovie* self, XImageReaderError error,
     XMoviePrivate* data;
     if (!self || !(data = self->m_data)) return;
     data->m_error = error;
-    if (data->m_errorString) XString_delete_base((XClass*)data->m_errorString);
-    data->m_errorString = message ? XString_create_copy(message) : XString_create();
+    if (!data->m_errorString)
+        data->m_errorString = XString_create();
+    if (!data->m_errorString) return;
+    if (message)
+        XString_assign(data->m_errorString, message);
+    else
+        XString_assign_utf8(data->m_errorString, "");
 }
 
 static void XMovie_captureReaderError(XMovie* self)
@@ -204,9 +219,7 @@ static bool XMovie_loadFrame(XMovie* self, int frameNumber, bool emitSignals)
         return false;
     }
     oldRect = data->m_frameRect;
-    XImage_deinit_base(&data->m_currentImage);
     XImage_move_base(&data->m_currentImage, &image);
-    XImage_deinit_base(&image);
     XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
     XImage_rect(&data->m_currentImage, &data->m_frameRect);
     data->m_currentFrame = frameNumber;
@@ -260,10 +273,20 @@ XMovie* XMovie_create_ex(XMemoryType memory)
 
 void XMovie_init(XMovie* self)
 {
+    XMemory* memory = NULL;
+    bool isHeap = false;
     if (!self) return;
+    if (XMovie_isInitializedObject(self))
+    {
+        memory = Class_Memory(self);
+        isHeap = Class_IsHeap(self);
+        XMovie_deinit_base(self);
+    }
     memset(self, 0, sizeof(XMovie));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XMovie);
+    if (memory) Class_Memory(self) = memory;
+    Class_IsHeap(self) = isHeap;
     self->m_data = (XMoviePrivate*)XMalloc_System(sizeof(XMoviePrivate));
     if (!self->m_data) return;
     memset(self->m_data, 0, sizeof(XMoviePrivate));
@@ -377,14 +400,12 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
 {
     XMoviePrivate* source;
     if (!self || !other || self == other || !(source = other->m_data)) return;
-    if (XClassIsVtableNull(self)) XMovie_init(self);
+    if (!XMovie_isInitializedObject(self)) XMovie_init(self);
     if (!self->m_data) return;
     XMovie_clearPrivate(self->m_data);
     memset(self->m_data, 0, sizeof(XMoviePrivate));
     self->m_data->m_reader = XMovie_cloneReader(source->m_reader);
-    XImage_init(&self->m_data->m_currentImage);
     XImage_copy_base(&self->m_data->m_currentImage, &source->m_currentImage);
-    XPixmap_init(&self->m_data->m_currentPixmap);
     XPixmap_copy_base(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
     self->m_data->m_backgroundColor = source->m_backgroundColor;
     self->m_data->m_frameRect = source->m_frameRect;
@@ -408,10 +429,11 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
 static void VXMovie_move(XMovie* self, XMovie* other)
 {
     if (!self || !other || self == other) return;
-    if (XClassIsVtableNull(self)) XMovie_init(self);
-    if (!self->m_data) return;
-    XMovie_clearPrivate(self->m_data);
-    XFree_System(self->m_data);
+    if (!XMovie_isInitializedObject(self)) XMovie_init(self);
+    if (self->m_data) {
+        XMovie_clearPrivate(self->m_data);
+        XFree_System(self->m_data);
+    }
     self->m_data = other->m_data;
     other->m_data = NULL;
 }
@@ -550,16 +572,18 @@ void XMovie_frameRect(const XMovie* self, XRect* out)
 void XMovie_currentImage(const XMovie* self, XImage* out)
 {
     if (!out) return;
-    if (XClassIsVtableNull(out)) XImage_init(out);
-    else XImage_deinit_base(out);
-    if (self && self->m_data) XImage_copy_base(out, &self->m_data->m_currentImage);
+    if (self && self->m_data)
+        XImage_copy_base(out, &self->m_data->m_currentImage);
+    else
+        XImage_init(out);
 }
 void XMovie_currentPixmap(const XMovie* self, XPixmap* out)
 {
     if (!out) return;
-    if (XClassIsVtableNull(out)) XPixmap_init(out);
-    else XPixmap_deinit_base(out);
-    if (self && self->m_data) XPixmap_copy_base(out, &self->m_data->m_currentPixmap);
+    if (self && self->m_data)
+        XPixmap_copy_base(out, &self->m_data->m_currentPixmap);
+    else
+        XPixmap_init(out);
 }
 bool XMovie_isValid(const XMovie* self)
 {

@@ -624,13 +624,8 @@ static void theme_splitComma(const char* value, XStringList* out)
     }
 }
 
-/**
- * @brief 释放由主题解析器拥有的字符串列表。
- * @param list 待释放的字符串列表；允许传入 NULL。
- * @note XStringList 的基础反初始化不会替列表元素调用析构，因此这里
- *       先逐项释放嵌入 XString，再释放列表容器本身。
- */
-static void theme_stringListDelete(XStringList* list)
+/** @brief 清空主题解析器的字符串列表并保留底层容量。 */
+static void theme_stringListClear(XStringList* list)
 {
     size_t count;
     size_t i;
@@ -647,6 +642,18 @@ static void theme_stringListDelete(XStringList* list)
             XString_deinit_base((XClass*)item);
     }
     XContainerSize((XContainer*)list) = 0;
+}
+
+/**
+ * @brief 释放由主题解析器拥有的字符串列表。
+ * @param list 待释放的字符串列表；允许传入 NULL。
+ * @note XStringList 的基础反初始化不会替列表元素调用析构，因此这里
+ *       先逐项释放嵌入 XString，再释放列表容器本身。
+ */
+static void theme_stringListDelete(XStringList* list)
+{
+    if (!list) return;
+    theme_stringListClear(list);
     XStringList_delete_base((XClass*)list);
 }
 
@@ -665,6 +672,18 @@ static void themeContext_deinit(ThemeContext* self)
     theme_stringListDelete(self->m_parents);
     if (self->m_meta) XFree_System(self->m_meta);
     memset(self, 0, sizeof(*self));
+}
+
+/* 解析同一批搜索路径时只替换目录元数据，列表对象和容量可以继续复用。 */
+static void themeContext_reset(ThemeContext* self)
+{
+    if (!self) return;
+    theme_stringListClear(self->m_dirs);
+    theme_stringListClear(self->m_parents);
+    if (self->m_meta) XFree_System(self->m_meta);
+    self->m_meta = NULL;
+    self->m_metaCount = 0;
+    self->m_valid = false;
 }
 
 static bool themeContext_prepareDirs(ThemeContext* self)
@@ -743,8 +762,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     bool ok = false;
 
     if (!root || !root[0] || !theme || !theme[0] || !out) return false;
-    themeContext_deinit(out);
-    themeContext_init(out);
+    themeContext_reset(out);
     snprintf(filePath, sizeof(filePath), "%s/%s/index.theme", root, theme);
     fileName = XString_create_utf8(filePath);
     if (!fileName) return false;
@@ -1335,7 +1353,9 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
 {
     size_t di;
     bool found = false;
-    if (!ctx) return false;
+    if (!ctx || !best || !bestDistance || !globalFormatPriority ||
+        !bestRootIndex || !bestDirIndex)
+        return false;
 
     /* QIconLoaderEngine::entryForSize() gives exact Scale/size matches a
        separate first pass, independent of directory order or distance. */
@@ -1350,9 +1370,9 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         if (!theme_directoryMatches(&ctx->m_meta[di], target, iconScale))
             continue;
         XPixmap_init(&candidate);
-        if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
-                                       iconScale, &candidate, &distance,
-                                       &formatPriority)) {
+        if (theme_tryParsedDir(ctx, di, root, theme, name, target,
+                               iconScale, &candidate, &distance,
+                               &formatPriority)) {
             bool replace = false;
             if (distance == 0) {
                 if (*bestDistance != 0 || formatPriority < *globalFormatPriority)
@@ -1371,15 +1391,16 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 found = true;
             }
             if (replace) {
-                if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
                 XPixmap_move_base(best, &candidate);
+                XPixmap_deinit_base(&candidate);
                 *bestDistance = 0;
                 *globalFormatPriority = formatPriority;
                 *bestRootIndex = rootIndex;
                 *bestDirIndex = di;
+            } else {
+                XPixmap_deinit_base(&candidate);
             }
         }
-        XPixmap_deinit_base(&candidate);
     }
     if (*bestDistance == 0) return true;
 
@@ -1393,9 +1414,9 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
              ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
             continue;
         XPixmap_init(&candidate);
-        if (best && theme_tryParsedDir(ctx, di, root, theme, name, target,
-                                       iconScale, &candidate, &distance,
-                                       &formatPriority) &&
+        if (theme_tryParsedDir(ctx, di, root, theme, name, target,
+                               iconScale, &candidate, &distance,
+                               &formatPriority) &&
             *bestDistance != 0) {
             bool replace = distance < *bestDistance;
             if (!replace && distance == *bestDistance) {
@@ -1413,15 +1434,16 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 }
             }
             if (replace) {
-                if (!XPixmap_isNull(best)) XPixmap_deinit_base(best);
                 XPixmap_move_base(best, &candidate);
+                XPixmap_deinit_base(&candidate);
                 *bestDistance = distance;
                 *globalFormatPriority = formatPriority;
                 *bestRootIndex = rootIndex;
                 *bestDirIndex = di;
                 found = true;
+            } else {
+                XPixmap_deinit_base(&candidate);
             }
-            XPixmap_deinit_base(&candidate);
         } else {
             XPixmap_deinit_base(&candidate);
         }
@@ -1578,7 +1600,6 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             XPixmap_init(&candidate);
             if (theme_tryTheme(root, theme, name, target, &candidate,
                                &distance) && distance < bestDistance) {
-                if (!XPixmap_isNull(&best)) XPixmap_deinit_base(&best);
                 XPixmap_move_base(&best, &candidate);
                 XPixmap_deinit_base(&candidate);
                 bestDistance = distance;
@@ -1591,10 +1612,9 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     }
 
     if (local) {
-        if (out) {
+        if (out)
             XPixmap_move_base(out, &best);
-            XPixmap_deinit_base(&best);
-        }
+        XPixmap_deinit_base(&best);
         theme_visitPop(visited);
         themeContext_deinit(&ctx);
         return true;
@@ -1724,7 +1744,7 @@ static bool theme_searchThemeExists(const XStringList* paths,
                              sizeof(theme_import_exts[0]); ++extIndex) {
                         const char* ext = theme_import_exts[extIndex];
                         if (!theme_extAllowed(ext)) continue;
-                        if (snprintf(path, sizeof(path), "%s/%s/%s/%s%s",
+                        if (snprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
                                      root, theme, theme_size_dirs[dirIndex],
                                      theme_context_dirs[contextIndex], name,
                                      ext) >= 0 && theme_fileExists(path)) {
@@ -1803,7 +1823,6 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
        保持为 18x13，而不是被拉伸成 18x18。 */
     XPixmap_scaled(pixmap, targetWidth, targetHeight, 1, 0, &scaled);
     if (!XPixmap_isNull(&scaled)) {
-        XPixmap_deinit_base(pixmap);
         XPixmap_move_base(pixmap, &scaled);
         XPixmap_deinit_base(&scaled);
         return true;
@@ -2255,6 +2274,8 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
             theme_scaledToSizeRect(&best, outputWidth, outputHeight);
         if (out) {
             XPixmap_move_base(out, &best);
+            XPixmap_deinit_base(&best);
+        } else {
             XPixmap_deinit_base(&best);
         }
     } else {

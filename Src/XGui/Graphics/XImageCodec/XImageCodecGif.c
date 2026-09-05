@@ -477,10 +477,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                     XFree_System(compressed);
                     goto done;
                 }
-                XImage_deinit_base(&previous);
-                previous.m_data = snapshot.m_data;
-                snapshot.m_data = NULL;
-                XImage_deinit_base(&snapshot);
+                XImage_move_base(&previous, &snapshot);
             }
 
             if ((size_t)width > (size_t)-1 / (size_t)height)
@@ -525,10 +522,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                     XImage_deinit_base(&snapshot);
                     goto done;
                 }
-                XImage_deinit_base(singleOut);
-                singleOut->m_data = snapshot.m_data;
-                snapshot.m_data = NULL;
-                XImage_deinit_base(&snapshot);
+                XImage_move_base(singleOut, &snapshot);
                 ok = true;
                 break;
             }
@@ -573,10 +567,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                     XImage_deinit_base(&snapshot);
                     goto done;
                 }
-                XImage_deinit_base(&canvas);
-                canvas.m_data = snapshot.m_data;
-                snapshot.m_data = NULL;
-                XImage_deinit_base(&snapshot);
+                XImage_move_base(&canvas, &snapshot);
             }
             /* 透明索引和处置方式只影响紧随其后的图像描述。Qt 的
                nextDelay 则由 QGifHandler 持有，只有再次遇到 GCE 才更新；

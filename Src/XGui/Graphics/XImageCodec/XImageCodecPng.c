@@ -801,6 +801,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     XStringList textValues;
     size_t textBytes = 0;
     XImage temp;
+    bool tempInitialized = false;
     bool ok = false;
 
     if (!data || size < 33 || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
@@ -1225,6 +1226,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
         }
         if (bitDepth == 1) {
             uint32_t monoColors[2] = {0xff000000u, 0xff000000u};
+            tempInitialized = true;
             XImage_init_ex(&temp, (int)width, (int)height,
                            XImageFormat_Mono);
             if (XImage_isNull(&temp)) goto fail;
@@ -1238,6 +1240,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                     XImage_setPixel(&temp, x, y,
                                     (uint32_t)samples[(size_t)y * width + x]);
         } else {
+            tempInitialized = true;
             XImage_init_ex(&temp, (int)width, (int)height,
                            XImageFormat_Indexed8);
             if (XImage_isNull(&temp)) goto fail;
@@ -1258,6 +1261,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
          * XImage 前必须反转 0/1，才能与 libpng 的位反转结果相同。
          * 灰度 tRNS 的样本值来自 qpnghandler.cpp:211-218，透明度只
          * 作用于对应颜色表项，不改变像素索引。 */
+        tempInitialized = true;
         XImage_init_ex(&temp, (int)width, (int)height, XImageFormat_Mono);
         if (XImage_isNull(&temp)) goto fail;
         {
@@ -1281,6 +1285,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
             : XImageFormat_RGBA64;
         if (colorType == PNG_CT_RGB && !hasTransparentColor)
             fmt = XImageFormat_RGBX64;
+        tempInitialized = true;
         XImage_init_ex(&temp, (int)width, (int)height, fmt);
         if (XImage_isNull(&temp)) goto fail;
         for (int y = 0; y < (int)height; ++y) {
@@ -1324,6 +1329,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     } else
 #endif
     {
+        tempInitialized = true;
         XImage_init_ex(&temp, (int)width, (int)height, XImageFormat_ARGB32);
         if (XImage_isNull(&temp)) goto fail;
         for (int y = 0; y < (int)height; ++y) {
@@ -1418,12 +1424,11 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
         XFree_System(iccProfile);
         iccProfile = NULL;
     }
-    XImage_deinit_base(out);
-    out->m_data = temp.m_data;
-    temp.m_data = NULL;
+    XImage_move_base(out, &temp);
     ok = true;
 
 fail:
+    if (!ok && tempInitialized) XImage_deinit_base(&temp);
     XStringList_deinit_base((XClass*)&textKeys);
     XStringList_deinit_base((XClass*)&textValues);
     if (iccProfile) XFree_System(iccProfile);

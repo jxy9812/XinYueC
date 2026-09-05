@@ -1124,6 +1124,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     }
     XImage_init_ex(&image, width, height, XImageFormat_ARGB32_Premultiplied);
     if (XImage_isNull(&image)) {
+        XImage_deinit_base(&image);
         XFree_Hybrid(pixels);
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(bitmap);
@@ -1236,28 +1237,23 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     XWNPendingEntry* entry;
     XPoint zero;
     const XPoint* off;
-    XRegion effective;
     XRect full;
+    const XRect* rects;
+    int rectCount;
     int imgW, imgH;
     int i;
     bool any = false;
     if (!window || !image) return false;
-    /* XRegion_copy 会先释放目标旧存储；非空 region 路径同样必须先
-       初始化临时区域，避免把未初始化的 rects 指针交给 XFree_System。 */
-    XRegion_init(&effective);
     if (!xpwn_ensureInstance()) {
-        XRegion_deinit(&effective);
         return false;
     }
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_hwnd) {
-        XRegion_deinit(&effective);
         return false;
     }
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (imgW <= 0 || imgH <= 0) {
-        XRegion_deinit(&effective);
         return false;
     }
 
@@ -1268,31 +1264,27 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     } else {
         off = offset;
     }
-    if (region && !XRegion_isEmpty(region)) {
-        XRegion_copy(region, &effective);
+    if (region && region->rects && region->count > 0) {
+        rects = region->rects;
+        rectCount = region->count;
     } else {
-        XRegion_init(&effective);
         full.x = 0; full.y = 0;
         full.width = imgW; full.height = imgH;
-        XRegion_addRect(&effective, &full);
+        rects = &full;
+        rectCount = 1;
     }
-    if (XRegion_isEmpty(&effective)) {
-        XRegion_deinit(&effective);
-        return false;
-    }
-    for (i = 0; i < effective.count; ++i) {
+    for (i = 0; i < rectCount; ++i) {
         XRect srect;
         XRect drect;
-        srect.x = effective.rects[i].x - off->x;
-        srect.y = effective.rects[i].y - off->y;
-        srect.width = effective.rects[i].width;
-        srect.height = effective.rects[i].height;
+        srect.x = rects[i].x - off->x;
+        srect.y = rects[i].y - off->y;
+        srect.width = rects[i].width;
+        srect.height = rects[i].height;
         if (!xpwn_clipRectToImage(&srect, imgW, imgH, &srect)) continue;
         drect.x = srect.x + off->x;
         drect.y = srect.y + off->y;
         if (xpwn_presentRect(entry, image, &srect, drect.x, drect.y)) any = true;
     }
-    XRegion_deinit(&effective);
     return any;
 }
 

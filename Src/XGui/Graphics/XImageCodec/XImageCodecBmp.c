@@ -201,6 +201,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
     uint32_t palette[256];
     uint8_t* indexBuffer = NULL;
     XImage temp;
+    bool tempInitialized = false;
     bool ok = false;
 
     if (!data || size < 26 || !out || data[0] != 'B' || data[1] != 'M')
@@ -416,6 +417,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
                         bmpPackedIndex(src, (size_t)x, bpp);
             }
         }
+        tempInitialized = true;
         XImage_init_ex(&temp, width, height, fmt);
         if (XImage_isNull(&temp)) goto bmp_done;
         if (fmt == XImageFormat_Indexed8 || fmt == XImageFormat_Mono)
@@ -487,6 +489,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         size_t stride = (((size_t)width * (size_t)bpp) + 31u) / 32u * 4u;
         XImageFormat fmt = bpp == 32 ? XImageFormat_ARGB32
                                      : XImageFormat_RGB888;
+        tempInitialized = true;
         XImage_init_ex(&temp, width, height, fmt);
         if (XImage_isNull(&temp)) goto bmp_done;
         for (int fileY = 0; fileY < height; ++fileY) {
@@ -558,12 +561,11 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
      * 新建图像的默认 3937 dots/meter 一致。 */
     XImage_setDotsPerMeterX(&temp, pelsPerMeterX);
     XImage_setDotsPerMeterY(&temp, pelsPerMeterY);
-    XImage_deinit_base(out);
-    out->m_data = temp.m_data;
-    temp.m_data = NULL;
+    XImage_move_base(out, &temp);
     ok = true;
 
 bmp_done:
+    if (!ok && tempInitialized) XImage_deinit_base(&temp);
     if (indexBuffer) XFree_System(indexBuffer);
     return ok;
 }

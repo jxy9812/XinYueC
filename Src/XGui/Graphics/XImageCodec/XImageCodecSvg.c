@@ -2985,6 +2985,7 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
     double dims[2] = {0.0, 0.0};
     int okCount = 0;
     SvgNode* c;
+    XImage temp;
     memset(&r, 0, sizeof(r));
     svgArenaInit(&arena);
     root = svgParseDom(text, size, &arena);
@@ -3013,32 +3014,34 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
     }
     r.m_width = svgClip((int)(width + 0.5), 1, 16384);
     r.m_height = svgClip((int)(height + 0.5), 1, 16384);
-    XImage_init_ex(out, r.m_width, r.m_height, XImageFormat_ARGB32);
-    if (XImage_isNull(out)) {
+    XImage_init_ex(&temp, r.m_width, r.m_height, XImageFormat_ARGB32);
+    if (XImage_isNull(&temp)) {
+        XImage_deinit_base(&temp);
         svgArenaCleanup(&arena);
         return false;
     }
-    r.m_image = out;
+    r.m_image = &temp;
     r.m_root = root;
     if (!svgCollectGradients(&r, root)) {
         svgArenaCleanup(&arena);
-        XImage_deinit_base(out);
+        XImage_deinit_base(&temp);
         return false;
     }
     if (!svgRootTransform(&r, root, r.m_width, r.m_height, &rootCtm)) {
         svgArenaCleanup(&arena);
-        XImage_deinit_base(out);
+        XImage_deinit_base(&temp);
         return false;
     }
     svgStyleInit(&rootStyle);
     for (c = root->m_first; c; c = c->m_next) {
         if (!svgRenderNode(&r, c, &rootStyle, &rootCtm)) {
             svgArenaCleanup(&arena);
-            XImage_deinit_base(out);
+            XImage_deinit_base(&temp);
             return false;
         }
     }
     svgArenaCleanup(&arena);
+    XImage_move_base(out, &temp);
     return true;
 }
 
@@ -3339,14 +3342,13 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         XImage_init_ex(&temp, width, height, XImageFormat_ARGB32);
         if (XImage_isNull(&temp)) {
             XFree_Hybrid(text);
+            XImage_deinit_base(&temp);
             return false;
         }
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
                 XImage_setPixel(&temp, x, y, color);
-        XImage_deinit_base(out);
-        out->m_data = temp.m_data;
-        temp.m_data = NULL;
+        XImage_move_base(out, &temp);
     }
     XFree_Hybrid(text);
     return true;
