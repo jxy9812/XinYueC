@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
  * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
@@ -81,6 +81,10 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XFRAME_ON
 #include "XFrame.h"
 #endif /* XWIDGET_ON && XFRAME_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON
+#include "XAbstractButton.h"
+#include "XAbstractButton_Protected.h"
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
@@ -22760,6 +22764,280 @@ static void test_performance_overlay_contract(void)
 }
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
+#if XWIDGET_ON && XABSTRACTBUTTON_ON
+typedef struct AbstractButtonProbe
+{
+    XAbstractButton m_base;               /**< XAbstractButton 基类；必须是第一个成员。 */
+    bool            m_acceptHit;          /**< 测试命中钩子的返回值。 */
+    int             m_checkStateSetCount; /**< checkStateSet 调用次数。 */
+    int             m_nextCheckStateCount; /**< nextCheckState 调用次数。 */
+} AbstractButtonProbe;
+
+XCLASS_DEFINE_BEGING(AbstractButtonProbe)
+XCLASS_DEFINE_EXTEND_END(AbstractButtonProbe, XAbstractButton)
+
+typedef struct AbstractButtonSignalProbe
+{
+    int  m_pressed;                       /**< pressed 信号次数。 */
+    int  m_released;                      /**< released 信号次数。 */
+    int  m_clicked;                       /**< clicked 信号次数。 */
+    int  m_toggled;                       /**< toggled 信号次数。 */
+    bool m_lastChecked;                   /**< 最近一个 bool 信号参数。 */
+} AbstractButtonSignalProbe;
+
+static AbstractButtonSignalProbe g_abstractButtonProbe;
+
+static void VAbstractButtonProbe_checkStateSet(XAbstractButton* self)
+{
+    AbstractButtonProbe* probe = (AbstractButtonProbe*)self;
+    if (probe)
+        ++probe->m_checkStateSetCount;
+}
+
+static void VAbstractButtonProbe_nextCheckState(XAbstractButton* self)
+{
+    AbstractButtonProbe* probe = (AbstractButtonProbe*)self;
+    if (probe)
+        ++probe->m_nextCheckStateCount;
+    XAbstractButton_nextCheckState(self);
+}
+
+static bool VAbstractButtonProbe_hitButton(const XAbstractButton* self,
+                                           const XPoint* pos)
+{
+    const AbstractButtonProbe* probe = (const AbstractButtonProbe*)self;
+    return probe && probe->m_acceptHit &&
+           XAbstractButton_hitButton(self, pos);
+}
+
+static XVtable* AbstractButtonProbe_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(AbstractButtonProbe)
+    XVTABLE_INHERIT_XCLASS(XAbstractButton);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_CheckStateSet,
+                             VAbstractButtonProbe_checkStateSet);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_NextCheckState,
+                             VAbstractButtonProbe_nextCheckState);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_HitButton,
+                             VAbstractButtonProbe_hitButton);
+    XAbstractButton_registerClass(XVTABLE_DEFAULT);
+    return XVTABLE_DEFAULT;
+}
+
+static void abstractbutton_probe_init(AbstractButtonProbe* self,
+                                      XWidget* parent)
+{
+    if (!self)
+        return;
+    memset(self, 0, sizeof(*self));
+    XAbstractButton_init(&self->m_base, parent, 0);
+    XClassSetVtable(self, AbstractButtonProbe);
+    self->m_acceptHit = true;
+}
+
+static void abstractbutton_probe_pressedSlot(XObject* sender,
+                                             XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++g_abstractButtonProbe.m_pressed;
+}
+
+static void abstractbutton_probe_releasedSlot(XObject* sender,
+                                              XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++g_abstractButtonProbe.m_released;
+}
+
+static void abstractbutton_probe_clickedSlot(XObject* sender,
+                                             XVarList* args)
+{
+    XVarList_args_1(args, bool, checked);
+    (void)sender;
+    ++g_abstractButtonProbe.m_clicked;
+    g_abstractButtonProbe.m_lastChecked = checked;
+}
+
+static void abstractbutton_probe_toggledSlot(XObject* sender,
+                                             XVarList* args)
+{
+    XVarList_args_1(args, bool, checked);
+    (void)sender;
+    ++g_abstractButtonProbe.m_toggled;
+    g_abstractButtonProbe.m_lastChecked = checked;
+}
+
+/** @brief XAbstractButton 的状态、虚槽、输入和派生类登记契约测试。 */
+static void test_abstractbutton_contract(void)
+{
+    XAbstractButton* button;
+    XAbstractButton copied;
+    XAbstractButton moved;
+    AbstractButtonProbe probe;
+    AbstractButtonProbe first;
+    AbstractButtonProbe second;
+    XWidget parent;
+    XMouseEvent mousePress;
+    XMouseEvent mouseRelease;
+    XKeyEvent keyPress;
+    XKeyEvent keyRelease;
+    XPoint inside = { 12, 12 };
+    XPoint outside = { 120, 80 };
+
+    button = XAbstractButton_create(NULL, 0);
+    expect_true(button != NULL, "XAbstractButton_create 创建");
+    if (!button)
+        return;
+
+    expect_true(XAbstractButton_isInstance((const XObject*)button),
+                "XAbstractButton 可识别直接实例");
+    expect_true(!XAbstractButton_isCheckable(button) &&
+                !XAbstractButton_isChecked(button) &&
+                !XAbstractButton_isDown(button) &&
+                !XAbstractButton_autoRepeat(button) &&
+                XAbstractButton_autoRepeatDelay(button) == 300 &&
+                XAbstractButton_autoRepeatInterval(button) == 100,
+                "XAbstractButton 默认状态");
+    XAbstractButton_setText_2(button, "Parent");
+    expect_true(XAbstractButton_text(button) != NULL &&
+                strcmp(XString_toUtf8(XAbstractButton_text(button)),
+                       "Parent") == 0,
+                "XAbstractButton UTF-8 文本转发");
+
+    memset(&g_abstractButtonProbe, 0, sizeof(g_abstractButtonProbe));
+    XObject_connect_2((XObject*)button,
+                      (size_t)XAbstractButton_pressed_signal(NULL),
+                      abstractbutton_probe_pressedSlot);
+    XObject_connect_2((XObject*)button,
+                      (size_t)XAbstractButton_released_signal(NULL),
+                      abstractbutton_probe_releasedSlot);
+    XObject_connect_2((XObject*)button,
+                      (size_t)XAbstractButton_clicked_signal(NULL, false),
+                      abstractbutton_probe_clickedSlot);
+    XObject_connect_2((XObject*)button,
+                      (size_t)XAbstractButton_toggled_signal(NULL, false),
+                      abstractbutton_probe_toggledSlot);
+    XAbstractButton_setCheckable(button, true);
+    XAbstractButton_click(button);
+    expect_true(XAbstractButton_isChecked(button) &&
+                g_abstractButtonProbe.m_pressed == 1 &&
+                g_abstractButtonProbe.m_released == 1 &&
+                g_abstractButtonProbe.m_clicked == 1 &&
+                g_abstractButtonProbe.m_toggled == 1 &&
+                g_abstractButtonProbe.m_lastChecked,
+                "XAbstractButton click 走完整信号与选中流程");
+
+    XAbstractButton_setDown(button, true);
+    XAbstractButton_setDown(button, false);
+    expect_true(g_abstractButtonProbe.m_pressed == 1 &&
+                g_abstractButtonProbe.m_released == 1,
+                "XAbstractButton setDown 不发射输入信号");
+
+    XWidget_resize((XWidget*)button, 80, 30);
+    XMouseEvent_init(&mousePress, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_mousePressEvent_base((XWidget*)button, (XEvent*)&mousePress);
+    expect_true(XAbstractButton_isDown(button) &&
+                g_abstractButtonProbe.m_pressed == 2,
+                "XAbstractButton 鼠标命中按下");
+    XMouseEvent_init(&mouseRelease, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_mouseReleaseEvent_base((XWidget*)button,
+                                   (XEvent*)&mouseRelease);
+    expect_true(!XAbstractButton_isDown(button) &&
+                !XAbstractButton_isChecked(button) &&
+                g_abstractButtonProbe.m_released == 2 &&
+                g_abstractButtonProbe.m_clicked == 2 &&
+                g_abstractButtonProbe.m_toggled == 2,
+                "XAbstractButton 鼠标释放完成点击");
+
+    XKeyEvent_init(&keyPress, XEVENT_TYPE_KEY_PRESS, XKey_Space,
+                   XKeyboardModifier_NoModifier);
+    XWidget_keyPressEvent_base((XWidget*)button, (XEvent*)&keyPress);
+    XKeyEvent_init(&keyRelease, XEVENT_TYPE_KEY_RELEASE, XKey_Space,
+                   XKeyboardModifier_NoModifier);
+    XWidget_keyReleaseEvent_base((XWidget*)button, (XEvent*)&keyRelease);
+    expect_true(XAbstractButton_isChecked(button) &&
+                g_abstractButtonProbe.m_pressed == 3 &&
+                g_abstractButtonProbe.m_released == 3 &&
+                g_abstractButtonProbe.m_clicked == 3 &&
+                g_abstractButtonProbe.m_toggled == 3,
+                "XAbstractButton 空格键模拟点击");
+
+    memset(&copied, 0, sizeof(copied));
+    memset(&moved, 0, sizeof(moved));
+    XCopy(&copied, button);
+    expect_true(XAbstractButton_text(&copied) != NULL &&
+                strcmp(XString_toUtf8(XAbstractButton_text(&copied)),
+                       "Parent") == 0 &&
+                XAbstractButton_isChecked(&copied),
+                "XAbstractButton copy 复制资源与状态");
+    XMove(&moved, &copied);
+    expect_true(XAbstractButton_text(&moved) != NULL &&
+                strcmp(XString_toUtf8(XAbstractButton_text(&moved)),
+                       "Parent") == 0 &&
+                XAbstractButton_isChecked(&moved),
+                "XAbstractButton move 转移资源与状态");
+
+    abstractbutton_probe_init(&probe, NULL);
+    XWidget_resize((XWidget*)&probe, 80, 30);
+    expect_true(XAbstractButton_isInstance((const XObject*)&probe),
+                "XAbstractButton 登记派生类实例");
+    XAbstractButton_setCheckable(&probe.m_base, true);
+    XAbstractButton_toggle(&probe.m_base);
+    expect_true(probe.m_nextCheckStateCount == 1 &&
+                probe.m_checkStateSetCount == 1 &&
+                XAbstractButton_isChecked(&probe.m_base),
+                "XAbstractButton 通过派生虚槽切换选中");
+
+    probe.m_acceptHit = false;
+    XMouseEvent_init(&mousePress, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_mousePressEvent_base((XWidget*)&probe, (XEvent*)&mousePress);
+    expect_true(!XAbstractButton_isDown(&probe.m_base),
+                "XAbstractButton 派生命中钩子可拒绝按下");
+    probe.m_acceptHit = true;
+    XMouseEvent_init(&mousePress, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, inside);
+    XWidget_mousePressEvent_base((XWidget*)&probe, (XEvent*)&mousePress);
+    XMouseEvent_init(&mouseRelease, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton,
+                     XKeyboardModifier_NoModifier, outside);
+    XWidget_mouseReleaseEvent_base((XWidget*)&probe,
+                                   (XEvent*)&mouseRelease);
+    expect_true(!XAbstractButton_isDown(&probe.m_base),
+                "XAbstractButton 鼠标移出释放取消按下");
+
+    memset(&parent, 0, sizeof(parent));
+    XWidget_init(&parent, NULL, 0);
+    abstractbutton_probe_init(&first, &parent);
+    abstractbutton_probe_init(&second, &parent);
+    XAbstractButton_setCheckable(&first.m_base, true);
+    XAbstractButton_setCheckable(&second.m_base, true);
+    XAbstractButton_setAutoExclusive(&first.m_base, true);
+    XAbstractButton_setAutoExclusive(&second.m_base, true);
+    XAbstractButton_setChecked(&first.m_base, true);
+    XAbstractButton_setChecked(&second.m_base, true);
+    expect_true(!XAbstractButton_isChecked(&first.m_base) &&
+                XAbstractButton_isChecked(&second.m_base),
+                "XAbstractButton 派生类自动互斥组");
+
+    XAbstractButton_deinit_base(&second);
+    XAbstractButton_deinit_base(&first);
+    XWidget_deinit_base(&parent);
+    XAbstractButton_deinit_base(&probe);
+    XAbstractButton_deinit_base(&moved);
+    XAbstractButton_deinit_base(&copied);
+    XAbstractButton_delete_base(button);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
+
 #if XWIDGET_ON && XPUSHBUTTON_ON
 typedef struct ButtonProbe
 {
@@ -22998,8 +23276,8 @@ static void test_pushbutton_contract(void)
     XPushButton_setAutoRepeatInterval(zero, 1);
     XPushButton_setAutoRepeat(zero, true);
     XPushButton_setDown(zero, true);
-    if (zero->m_repeatTimer != XTIMER_INVALID_ID) {
-        XTimerEvent* timerEvent = XTimerEvent_create(zero->m_repeatTimer);
+    if (((XAbstractButton*)zero)->m_repeatTimer != XTIMER_INVALID_ID) {
+        XTimerEvent* timerEvent = XTimerEvent_create(((XAbstractButton*)zero)->m_repeatTimer);
         expect_true(timerEvent != NULL, "XPushButton 自动重复定时器事件创建");
         if (timerEvent) {
             XObject_timerEvent_base((XObject*)zero, timerEvent);
@@ -23012,7 +23290,7 @@ static void test_pushbutton_contract(void)
         }
     }
     XPushButton_setDown(zero, false);
-    expect_true(zero->m_repeatTimer == XTIMER_INVALID_ID,
+    expect_true(((XAbstractButton*)zero)->m_repeatTimer == XTIMER_INVALID_ID,
                 "XPushButton 释放时停止自动重复定时器");
 
     /* Qt 6.8 animateClick：立即置 down 并只发一次 pressed，100ms
@@ -23025,18 +23303,18 @@ static void test_pushbutton_contract(void)
                 g_buttonProbe.released == 0 &&
                 g_buttonProbe.clicked == 0,
                 "XPushButton animateClick 立即按下并发一次 pressed");
-    if (zero->m_animateTimer != XTIMER_INVALID_ID) {
+    if (((XAbstractButton*)zero)->m_animateTimer != XTIMER_INVALID_ID) {
         XPushButton_animateClick(zero);
         expect_true(g_buttonProbe.pressed == 1,
                     "XPushButton animateClick 重置时不重复 pressed");
         {
-            XTimerEvent* timerEvent = XTimerEvent_create(zero->m_animateTimer);
+            XTimerEvent* timerEvent = XTimerEvent_create(((XAbstractButton*)zero)->m_animateTimer);
             expect_true(timerEvent != NULL,
                         "XPushButton animateClick 定时器事件创建");
             if (timerEvent) {
                 XObject_timerEvent_base((XObject*)zero, timerEvent);
                 expect_true(!XPushButton_isDown(zero) &&
-                            zero->m_animateTimer == XTIMER_INVALID_ID &&
+                            ((XAbstractButton*)zero)->m_animateTimer == XTIMER_INVALID_ID &&
                             g_buttonProbe.released == 1 &&
                             g_buttonProbe.clicked == 1,
                             "XPushButton animateClick 定时到期释放并点击");
@@ -23053,11 +23331,11 @@ static void test_pushbutton_contract(void)
     {
         XFocusEvent* focusOut = XFocusEvent_create(XEVENT_TYPE_FOCUS_OUT,
                                                    XFocusReason_Popup);
-        XTimerId timerBefore = zero->m_repeatTimer;
+        XTimerId timerBefore = ((XAbstractButton*)zero)->m_repeatTimer;
         if (focusOut)
             XWidget_focusOutEvent_base((XWidget*)zero, (XEvent*)focusOut);
         expect_true(XPushButton_isDown(zero) &&
-                    zero->m_repeatTimer == timerBefore,
+                    ((XAbstractButton*)zero)->m_repeatTimer == timerBefore,
                     "XPushButton PopupFocusReason 保留按下和重复定时器");
         if (focusOut) XEvent_delete_base((XEvent*)focusOut);
     }
@@ -23067,7 +23345,7 @@ static void test_pushbutton_contract(void)
         if (focusOut)
             XWidget_focusOutEvent_base((XWidget*)zero, (XEvent*)focusOut);
         expect_true(!XPushButton_isDown(zero) &&
-                    zero->m_repeatTimer == XTIMER_INVALID_ID,
+                    ((XAbstractButton*)zero)->m_repeatTimer == XTIMER_INVALID_ID,
                     "XPushButton 普通失焦释放并停止重复定时器");
         if (focusOut) XEvent_delete_base((XEvent*)focusOut);
     }
@@ -23653,6 +23931,9 @@ int main(void)
     test_widget_focus_proxy_contract();
     test_widget_extended_alignment_contract();
 #endif /* XWIDGET_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON
+    test_abstractbutton_contract();
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 #if XWIDGET_ON && XFRAME_ON
     test_frame_contract();
 #endif /* XWIDGET_ON && XFRAME_ON */

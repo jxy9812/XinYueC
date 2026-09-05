@@ -1,4 +1,4 @@
-﻿# XGui 进度文档
+# XGui 进度文档
 
 > 最后更新：2026-09-03 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
@@ -11986,3 +11986,65 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
 - **边界**：ASan/LSan 功能检查通过，UBSan 仍报告 Library/zlib 既有
   `trees.c:873` 空指针诊断（第三方 zlib，不属于本项目代码）；动态插件发现、
   原生 QPicture/QDataStream 互操作与完整 ICC 色彩管理继续按既有裁剪边界处理。
+
+---
+
+## 2026-09-05 XPushButton 继承关系重构：XPushButton : XAbstractButton
+
+- **目标**：把 XPushButton 的继承关系从直接继承 XWidget 改为继承
+  XAbstractButton（对齐 Qt 6.8 的 QPushButton : QAbstractButton），消除
+  XPushButton.c 与 XAbstractButton.c 之间重复的按钮状态/激活/定时器/互斥/
+  输入事件/信号实现，只保留 QPushButton 特有部分，并保持 XPushButton_*
+  公共 API 与既有回归测试兼容（测试/演示调用方零改动）。
+- **Qt 源码依据（本机 6.8.3）**：
+  - `qabstractbutton.h`：QAbstractButton 继承 QWidget，paintEvent 为纯虚，
+    hitButton/checkStateSet/nextCheckState 是 protected 虚函数；
+  - `qpushbutton.h`：QPushButton 继承 QAbstractButton，仅新增
+    sizeHint/minimumSizeHint、autoDefault/default/flat、setMenu/menu/showMenu，
+    重载 event/paintEvent/keyPressEvent/focusInEvent/focusOutEvent/
+    mouseMoveEvent/hitButton；
+  - `qpushbutton.cpp:419-433`：keyPressEvent 只处理 Enter/Return 的默认按钮
+    click，其余按键交给 QAbstractButton::keyPressEvent。
+- **实现范围**：
+  - `Src/XGui/Widget/XAbstractButton.h`：按项目惯例把虚函数表槽位枚举
+    （CheckStateSet/NextCheckState/HitButton）从 XAbstractButton_Protected.h
+    上移到公共头文件，并追加 ContentChanged 内容变更槽位（本实现特有：
+    XWidget 的 sizeHint 是存储位而非虚函数，需派生按钮在内容变化后刷新）；
+  - `Src/XGui/Widget/XAbstractButton_Protected.h`：虚表枚举移出后保留保护
+    回调类型（新增 XAbstractButtonContentChangedSlot）、派生类登记与
+    checkStateSet/nextCheckState/hitButton/contentChanged 默认钩子与
+    `*_base` 分派入口；
+  - `Src/XGui/Widget/XAbstractButton.c`：实现 contentChanged 默认钩子与
+    contentChanged_base 分派；abstractbutton_refresh（setText/setIcon/
+    setIconSize 内容真正变化后）先分派 contentChanged 再刷新几何与重绘；
+  - `Src/XGui/Widget/XPushButton.h`：结构体首成员改为 XAbstractButton m_base，
+    删除与基类重复的 13 个字段（文本/图标/状态位/定时器）；虚表改为
+    `XCLASS_DEFINE_EXTEND_END(XPushButton, XAbstractButton)`；text/icon/
+    checkable/checked/down/autoRepeat/autoExclusive/click/animateClick 与
+    pressed/released/clicked/toggled 信号全部宏别名到 XAbstractButton_*；
+    hitButton 保留 C 函数（基类接口位于保护头，公共头不能引入保护头），
+    实现经 XAbstractButton_hitButton_base 虚表分派；
+  - `Src/XGui/Widget/XPushButton.c`：删除与基类重复的定时器/互斥/click/
+    信号/鼠标键盘焦点事件实现（约一半代码），只保留 QPushButton 特有：
+    autoDefault 父对话框链解析、flat/default、setMenu/menu/showMenu、
+    sizeHint/minimumSizeHint、drawContents/paintEvent、键盘 Return/Enter
+    触发（其余按键经 `XClass_Parent(XAbstractButton, ...)` 交基类）、
+    copy/move/deinit（先调基类槽位再处理本类字段）、重载 ContentChanged
+    槽刷新 sizeHint 存储位；class_init 末尾调用
+    `XAbstractButton_registerClass` 登记派生虚表，使自动互斥/实例识别
+    能认出 XPushButton；
+  - `xgui_regression_test.c`：9 处直接访问 `zero->m_repeatTimer` /
+    `m_animateTimer` 的断言改为 `((XAbstractButton*)zero)->m_xxx`
+    （字段已上移基类）。
+- **验证结果**：VS2026（Visual Studio 18 2026 / MSBuild 生成器，构建目录
+  `out/build/x64-VS2026`）Debug 构建 XGuiRegression_Test 与
+  XGuiWindowDemo_Test 通过；运行 `bin/Debug/XGuiRegression_Test.exe` 输出
+  `XGui regression tests passed`（XWindow/XClass 非致命日志为既有测试路径
+  输出，不影响结果）。
+- **边界**：XPushButton 不再直接重载 event/changeEvent/focusIn/focusOut/
+  mouseMove（Qt 中这些重载只处理对话框默认按钮联动、hover 与菜单恢复；
+  嵌入式无 QDialog 默认按钮管理，行为由 XAbstractButton 基类提供）；
+  hitButton 仍按控件矩形命中（Qt bevel 区域在无主题时可视为控件矩形）；
+  本次未跑 ASan/LSan 与裁剪构建（XABSTRACTBUTTON_ON=0 时 XPUSHBUTTON_ON
+  已在 XGuiConfig.h 强制裁剪）。本环境 VS2026 Ninja 生成器无法启动子进程
+  （构建卡死），因此使用 VS2026 的 MSBuild 生成器完成验证。

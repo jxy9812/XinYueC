@@ -226,6 +226,9 @@
 #ifndef XLABEL_ON
 #define XLABEL_ON 1
 #endif
+#ifndef XABSTRACTBUTTON_ON
+#define XABSTRACTBUTTON_ON 1
+#endif
 #ifndef XPUSHBUTTON_ON
 #define XPUSHBUTTON_ON 1
 #endif
@@ -290,6 +293,12 @@
 #define XFRAME_ON 0
 #undef XLABEL_ON
 #define XLABEL_ON 0
+#undef XABSTRACTBUTTON_ON
+#define XABSTRACTBUTTON_ON 0
+#undef XPUSHBUTTON_ON
+#define XPUSHBUTTON_ON 0
+#endif
+#if !XABSTRACTBUTTON_ON
 #undef XPUSHBUTTON_ON
 #define XPUSHBUTTON_ON 0
 #endif
@@ -358,6 +367,8 @@
 #define XFRAME_ON 0
 #undef XLABEL_ON
 #define XLABEL_ON 0
+#undef XABSTRACTBUTTON_ON
+#define XABSTRACTBUTTON_ON 0
 #undef XPUSHBUTTON_ON
 #define XPUSHBUTTON_ON 0
 #undef XLAYOUT_ON
