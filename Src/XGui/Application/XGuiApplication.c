@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XGuiApplication.c
  * @brief      XGuiApplication GUI 应用类实现（对标 Qt 6.8 QGuiApplication）。
  * @details    本文件实现 XGuiApplication 的全部公开 API：
@@ -41,6 +41,9 @@
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"
 #endif
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpu.h"
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XString.h"
@@ -313,6 +316,13 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         XAbstractEventDispatcher_removePollCallback(app->m_nativeEventPump);
         app->m_nativeEventPump = NULL;
     }
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* 共享 GPU 先于平台集成层释放（其平台上下文经集成层工厂创建）。 */
+    if (app->m_gpu) {
+        XGpu_destroy(app->m_gpu);
+        app->m_gpu = NULL;
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (app->m_platformIntegration) {
         XPlatformIntegration_delete_base(app->m_platformIntegration);
         app->m_platformIntegration = NULL;
@@ -1002,6 +1012,21 @@ void* XGuiApplication_platformFunction(const char* functionName)
     return NULL;
 #endif /* XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEINTERFACE_ON */
 }
+
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+XGpu* XGuiApplication_gpu(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app) return NULL;
+    if (!app->m_gpu) {
+        /* 对齐 Qt QGuiApplication::rhi()：共享渲染入口，惰性创建、应用拥有。
+           Auto 在无窗口表面时优先 Vulkan（OpenGL 需已创建原生表面的窗口）；
+           XGpu_create 内部经集成层工厂创建平台上下文，无可用后端返回 NULL。 */
+        app->m_gpu = XGpu_create(XGpuBackend_Auto, NULL);
+    }
+    return app->m_gpu;
+}
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 /* ==================== 桌面设置 / 退出策略 ==================== */
 

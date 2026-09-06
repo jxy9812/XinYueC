@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPlatformIntegration.h
  * @brief      XPlatformIntegration 平台集成层类（对标 Qt 6.8 QPlatformIntegration
  *             全部公共 API）。
@@ -320,6 +320,10 @@ void* XPlatformIntegration_createPlatformPixmap(
  * @brief      创建平台 OpenGL 上下文（对标 createPlatformOpenGLContext）。
  * @details    context 解释为已创建原生表面的 XWindow*，返回其 OpenGL
  *             平台上下文（调用方以 XPlatformOpenGLContext_destroy 释放）。
+ *             对齐 Qt 的 QPA 链路：QOpenGLContext 经 QPlatformIntegration::
+ *             createPlatformOpenGLContext 创建平台上下文；XinYueC 的
+ *             XGpu_create 统一入口经本工厂转发到 XPlatformGraphics 的
+ *             XPlatformOpenGLContext，再落到 Drive 的 GLX/WGL 驱动。
  *             无桌面图形驱动或窗口尚无原生表面时返回 NULL。
  * @param      self 目标对象；可为 NULL。
  * @param      context XWindow* 借用指针（为兼容既有 void* 工厂签名）。
@@ -600,6 +604,10 @@ void XPlatformIntegration_quit(XPlatformIntegration* self);
  * @brief      创建平台 Vulkan 实例（对标 createPlatformVulkanInstance）。
  * @details    返回 XPlatformVulkanInstance*；实例创建后已完成物理设备
  *             枚举，调用方以 XPlatformVulkanInstance_destroy 释放。
+ *             对齐 Qt 的 QPA 链路：QVulkanInstance 经 QPlatformIntegration::
+ *             createPlatformVulkanInstance 创建平台实例；XinYueC 的
+ *             XGpu_create 统一入口经本工厂转发到 XPlatformGraphics 的
+ *             XPlatformVulkanInstance，再落到 Drive 的 Vulkan 驱动。
  * @return     XPlatformVulkanInstance*；无驱动或创建失败返回 NULL。
  */
 void* XPlatformIntegration_createPlatformVulkanInstance(

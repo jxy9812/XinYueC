@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPainter.h
  * @brief      XPainter 绘图器类（对标 Qt 6.8 QPainter）
  * @author     XinYueC 团队
@@ -28,6 +28,10 @@ extern "C" {
 
 /* XPixmap 仅在像素图适配接口中使用，采用前向声明避免头文件依赖环。 */
 typedef struct XPixmap XPixmap;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+/** @brief GPU 光栅会话前向声明（完整类型由 XGpuRenderBackend.h 提供）。 */
+typedef struct XGpuRenderBackend XGpuRenderBackend;
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 /* XPicture_play() 通过 XPainter 的基础及可选高层回调派发指令；完整回调签名见下。 */
 
@@ -436,6 +440,18 @@ typedef enum XPainterDeviceKind
     XPainterDevice_Picture = 2 /**< 已绑定 XPicture（指令录制） */
 } XPainterDeviceKind;
 
+/**
+ * @brief XPainter 图像设备的实际光栅后端。
+ * @details Raster 始终可用且为默认；Gpu 仅在 XGPU_ON=1、运行时请求且
+ *          OpenGL 会话创建成功时返回。GPU 中途遇到未实现原语后会变回
+ *          Raster，以软件完成本帧剩余命令。
+ */
+typedef enum XPainterRasterBackend
+{
+    XPainterRasterBackend_Raster = 0,
+    XPainterRasterBackend_Gpu = 1
+} XPainterRasterBackend;
+
 #if XPAINTER_LAYOUT_DIRECTION_ON
 /** @brief 文本布局方向（对标 Qt::LayoutDirection）。 */
 typedef enum XPainterLayoutDirection
@@ -540,6 +556,10 @@ typedef struct XPainter
     XPainterDeviceKind m_deviceKind;  /**< 已绑定的设备类型。 */
     XImage* m_image;                  /**< 软件光栅化目标图像（仅 Image 后端）。 */
     XPicture* m_picture;              /**< 指令录制目标图片（仅 Picture 后端）。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpuRenderBackend* m_gpuBackend;  /**< GPU 光栅会话（仅 Image+GPU 后端；拥有会话引用，end 归还）。 */
+    bool m_gpuActive;                 /**< 当前帧是否走 GPU 快速路径（false=软件）。 */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
     /* ========== 绘制状态 ========== */
     XPainterState m_state;            /**< 当前绘制状态。 */
@@ -578,6 +598,9 @@ void XPainter_deinit(XPainter* self);
  *             XPainter_end() 再绑定新图像。图像所有权仍归调用方。
  */
 bool XPainter_begin_image(XPainter* self, XImage* image);
+
+/** @brief 返回当前图像绘制使用的实际后端；非活动绘制器返回 Raster。 */
+XPainterRasterBackend XPainter_rasterBackend(const XPainter* self);
 
 /**
  * @brief      绑定指令录制后端，后续绘制作为指令录制到指定图片。

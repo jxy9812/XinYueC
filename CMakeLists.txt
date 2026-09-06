@@ -300,5 +300,18 @@ else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== XGui GPU 阶段 1 冒烟测试 ====================
+add_executable(XGuiGpu_Test
+    "./xgui_gpu_test.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+add_test(NAME XGuiGpu COMMAND XGuiGpu_Test)
+set_tests_properties(XGuiGpu PROPERTIES
+    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+
 #安装
 include(CMake_Install.cmake)

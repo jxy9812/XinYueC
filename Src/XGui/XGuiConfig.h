@@ -58,6 +58,13 @@
 #ifndef XPLATFORMINTEGRATION_ON
 #define XPLATFORMINTEGRATION_ON 1
 #endif
+/* 统一 GPU 运行时（XGpu）总开关：很多嵌入式目标没有 GPU，置 0 可整体
+ * 裁剪 XGpu 公共层与 XGuiApplication 的共享 GPU 入口（QGuiApplication::
+ * rhi() 对齐物）；XGui 默认软件渲染（XBackingStore）不受影响，XPlatformGraphics
+ * 的平台能力探测（isOpenGLAvailable 等）在无 GPU 平台由 Drive 存根返回 false。 */
+#ifndef XGPU_ON
+#define XGPU_ON 1
+#endif
 #ifndef XPLATFORMNATIVEINTERFACE_ON
 #define XPLATFORMNATIVEINTERFACE_ON 1
 #endif
@@ -394,6 +401,8 @@
 #define XPLATFORMWINDOW_ON 0
 #undef XPLATFORMINPUTCTX_ON
 #define XPLATFORMINPUTCTX_ON 0
+#undef XGPU_ON
+#define XGPU_ON 0
 #undef XBACKINGSTORE_ON
 #define XBACKINGSTORE_ON 0
 #undef XPLATFORMBACKINGSTORE_ON

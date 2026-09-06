@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XPlatformGraphics_win32.c
  * @brief      Windows WGL 与 Vulkan 平台图形后端。
  ****************************************************************************/
@@ -10,6 +10,7 @@
 #include "XMemory.h"
 #include <windows.h>
 #include <GL/gl.h>
+#include <stdint.h>
 #include <string.h>
 
 typedef struct XWin32OpenGLState
@@ -109,9 +110,16 @@ void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState,
                                                  const char* name)
 {
     PROC procedure;
+    uintptr_t raw;
     (void)nativeState;
     if (!name || !*name) return NULL;
     procedure = wglGetProcAddress(name);
+    /* WGL uses small sentinel values for an unsupported entry point.  Treat
+       them as missing before the caller copies the address into a function
+       pointer; invoking one would crash the automatic GPU fallback path. */
+    raw = (uintptr_t)procedure;
+    if (raw == 1u || raw == 2u || raw == 3u || raw == (uintptr_t)-1)
+        procedure = NULL;
     if (!procedure) {
         HMODULE module = GetModuleHandleW(L"opengl32.dll");
         if (module) procedure = GetProcAddress(module, name);
@@ -197,14 +205,19 @@ bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
     XWin32OffscreenState* state;
     PIXELFORMATDESCRIPTOR descriptor;
     int format;
-    (void)width; (void)height;
+    int w;
+    int h;
     if (nativeState) *nativeState = NULL;
     if (!nativeState) return false;
+    /* drawable（窗口）必须与会话渲染尺寸一致：glReadPixels 越界读会破坏
+       驱动内部缓冲；0 尺寸按 1x1 兜底。 */
+    w = width > 0 ? (int)width : 1;
+    h = height > 0 ? (int)height : 1;
     state = (XWin32OffscreenState*)XMalloc_System(sizeof(*state));
     if (!state) return false;
     memset(state, 0, sizeof(*state));
     state->m_window = CreateWindowExW(0, L"STATIC", L"XinYueC Offscreen",
-                                      WS_POPUP, 0, 0, 1, 1, NULL, NULL,
+                                      WS_POPUP, 0, 0, w, h, NULL, NULL,
                                       GetModuleHandleW(NULL), NULL);
     if (!state->m_window) goto failed;
     state->m_dc = GetDC(state->m_window);

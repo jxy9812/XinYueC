@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XPlatformGraphics.c
  * @brief      平台图形公共对象实现；不包含任何平台图形 API。
  ****************************************************************************/
@@ -201,6 +201,15 @@ uint32_t XPlatformOffscreenSurface_width(const XPlatformOffscreenSurface* self)
 uint32_t XPlatformOffscreenSurface_height(const XPlatformOffscreenSurface* self)
 {
     return self ? self->m_height : 0;
+}
+
+void* XPlatformOffscreenSurface_getProcAddress(
+        const XPlatformOffscreenSurface* self, const char* name)
+{
+    if (!XPlatformOffscreenSurface_isValid(self) || !name || !*name) return NULL;
+    /* 离屏上下文 current 时，glX/wgl 全局查询即可解析 FBO/纹理/shader 等
+       扩展函数；nativeState 内容对查询无影响，直接复用 openGLProcAddress。 */
+    return XPlatformGraphicsDriver_openGLProcAddress(self->m_nativeState, name);
 }
 
 #endif /* XPLATFORMINTEGRATION_ON */

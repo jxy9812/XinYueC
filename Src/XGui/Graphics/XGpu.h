@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XGpu.h
  * @brief      统一 GPU 驱动入口。
  * @details    XGpu 把 OpenGL 与 Vulkan 归并为一个平台无关的运行时对象。
@@ -20,7 +20,7 @@ extern "C" {
 typedef struct XWindow XWindow;
 #endif
 
-#if XPLATFORMINTEGRATION_ON
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
 
 /** @brief GPU 后端；Auto 由运行时按表面与可用驱动选择。 */
 typedef enum XGpuBackend
@@ -61,7 +61,7 @@ void XGpu_doneCurrent(XGpu* self);
 bool XGpu_present(XGpu* self);
 void* XGpu_getProcAddress(const XGpu* self, const char* name);
 
-#endif /* XPLATFORMINTEGRATION_ON */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 #ifdef __cplusplus
 }

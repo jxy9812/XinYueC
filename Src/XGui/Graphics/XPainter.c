@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPainter.c
  * @brief      XPainter 绘图器类实现（对标 Qt 6.8 QPainter）
  * @author     XinYueC 团队
@@ -21,9 +21,13 @@
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpuRenderBackend.h"
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+#include <stdlib.h>
 
 /* ========== 文本绘制工具前向声明（drawTextRect 使用，定义在文件末尾文本段） ========== */
 typedef struct PainterBitmapFontTable
@@ -73,6 +77,131 @@ enum { XPAINTER_STATE_INITIAL_CAPACITY = 8 };
 #define XPAINTER_DEG_TO_RAD (3.14159265358979323846f / 180.0f)
 
 /* ========== 内部工具函数 ========== */
+
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+/** @brief 进程级共享 GPU 光栅会话（尺寸不符时重建；创建失败后不再尝试）。 */
+static XGpuRenderBackend* g_xgpuRenderSession = NULL;
+static bool g_xgpuRenderProbeFailed = false;
+static bool g_xgpuRenderAtExitRegistered = false;
+static bool g_xgpuRenderSessionInUse = false;
+static int g_xgpuRenderMode = -1; /* 0=software/default, 1=GPU. */
+
+static bool painterGpuTextEquals(const char* value, const char* expected)
+{
+    unsigned char a;
+    unsigned char b;
+    if (!value || !expected) return false;
+    while (*value && *expected)
+    {
+        a = (unsigned char)*value++;
+        b = (unsigned char)*expected++;
+        if (a >= (unsigned char)'A' && a <= (unsigned char)'Z')
+            a = (unsigned char)(a + ('a' - 'A'));
+        if (b >= (unsigned char)'A' && b <= (unsigned char)'Z')
+            b = (unsigned char)(b + ('a' - 'A'));
+        if (a != b) return false;
+    }
+    return *value == '\0' && *expected == '\0';
+}
+
+/**
+ * @brief 读取 GPU 运行时选择。
+ * @details 软件后端是默认值；设置 XGUI_RENDER_BACKEND=gpu（或
+ *          XGPU_BACKEND=opengl/1）才启用阶段 1 GPU。这样嵌入式产品只需
+ *          保持环境变量未设置即可继续使用软件光栅，同时保留运行时切换
+ *          和显式禁用路径，不增加第二个编译开关。
+ */
+static bool painterGpuRequested(void)
+{
+    const char* value;
+    if (g_xgpuRenderMode >= 0) return g_xgpuRenderMode != 0;
+    value = getenv("XGUI_RENDER_BACKEND");
+    if (!value || !*value) value = getenv("XGPU_BACKEND");
+    g_xgpuRenderMode =
+        painterGpuTextEquals(value, "gpu") ||
+        painterGpuTextEquals(value, "opengl") ||
+        painterGpuTextEquals(value, "1") ||
+        painterGpuTextEquals(value, "true") ||
+        painterGpuTextEquals(value, "on") ? 1 : 0;
+    return g_xgpuRenderMode != 0;
+}
+
+static void painterGpuSessionDestroyAtExit(void)
+{
+    if (g_xgpuRenderSession)
+    {
+        XGpuRenderBackend_destroy(g_xgpuRenderSession);
+        g_xgpuRenderSession = NULL;
+        g_xgpuRenderSessionInUse = false;
+    }
+}
+
+static XGpuRenderBackend* painterGpuSessionAcquire(int width, int height)
+{
+    if (g_xgpuRenderProbeFailed || width <= 0 || height <= 0) return NULL;
+    /* One shared context cannot safely serve two active painters. */
+    if (g_xgpuRenderSessionInUse) return NULL;
+    if (g_xgpuRenderSession &&
+        (XGpuRenderBackend_width(g_xgpuRenderSession) != width ||
+         XGpuRenderBackend_height(g_xgpuRenderSession) != height))
+    {
+        XGpuRenderBackend_destroy(g_xgpuRenderSession);
+        g_xgpuRenderSession = NULL;
+    }
+    if (!g_xgpuRenderSession)
+    {
+        g_xgpuRenderSession = XGpuRenderBackend_create(width, height);
+        if (!g_xgpuRenderSession)
+        {
+            g_xgpuRenderProbeFailed = true; /* 无 GL 驱动：此后保持软件渲染。 */
+            return NULL;
+        }
+        if (!g_xgpuRenderAtExitRegistered)
+        {
+            if (atexit(painterGpuSessionDestroyAtExit) == 0)
+                g_xgpuRenderAtExitRegistered = true;
+        }
+    }
+    return g_xgpuRenderSession;
+}
+
+/** @brief 当前 GPU 帧正常结束：离屏模式 readback 到 XImage；窗口直通模式
+ *         内容保留在 FBO（由 XWidget_repaint/flush 阶段 presentToWindow
+ *         上屏，无需读回）。 */
+static void painterGpuEndFrame(XPainter* self)
+{
+    if (!self || !self->m_gpuActive) return;
+    if (self->m_gpuBackend)
+    {
+        if (!XGpuRenderBackend_isWindowMode(self->m_gpuBackend))
+            XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
+        XGpuRenderBackend_endFrame(self->m_gpuBackend);
+    }
+    self->m_gpuActive = false;
+    g_xgpuRenderSessionInUse = false;
+}
+
+/** @brief GPU 会话遇到非快速路径命令：把已画 FBO 合并到目标 XImage 并
+ *         降级为软件后端（命令顺序保持：已画 GPU 部分先读回，后续命令
+ *         继续软件绘制在 m_image 上）。窗口直通模式下降级后本帧走
+ *         BitBlt 上屏，故同样 readback 合并并标记 degraded。 */
+static void painterGpuFallback(XPainter* self)
+{
+    if (!self || !self->m_gpuActive) return;
+    if (self->m_gpuBackend)
+    {
+        XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
+        XGpuRenderBackend_endFrame(self->m_gpuBackend);
+        XGpuRenderBackend_setFrameDegraded(true);
+    }
+    self->m_gpuActive = false;
+    g_xgpuRenderSessionInUse = false;
+}
+
+#define XPAINTER_GPU_FALLBACK(self) painterGpuFallback(self)
+#else /* !(XPLATFORMINTEGRATION_ON && XGPU_ON) */
+#define XPAINTER_GPU_FALLBACK(self) ((void)(self))
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 /**
  * @brief      恢复 XPainterState 的默认值。
@@ -170,6 +299,25 @@ static bool painterMatrixIsIdentity(const XImageTransform* matrix)
 static const XImageTransform g_painterIdentityTransform = {
     1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f
 };
+
+/** @brief 判断变换矩阵是否为纯平移（单位旋转/缩放 + dx/dy 偏移）。
+ * @return 是纯平移返回 true 并输出偏移；否则 false。 */
+static bool painterMatrixTranslation(const XImageTransform* matrix,
+                                     float* outDx, float* outDy)
+{
+    if (!matrix ||
+        fabsf(matrix->m11 - 1.0f) >= 1.0e-6f ||
+        fabsf(matrix->m12) >= 1.0e-6f ||
+        fabsf(matrix->m21) >= 1.0e-6f ||
+        fabsf(matrix->m22 - 1.0f) >= 1.0e-6f ||
+        fabsf(matrix->m13) >= 1.0e-6f ||
+        fabsf(matrix->m23) >= 1.0e-6f ||
+        fabsf(matrix->m33 - 1.0f) >= 1.0e-6f)
+        return false;
+    if (outDx) *outDx = matrix->dx;
+    if (outDy) *outDy = matrix->dy;
+    return true;
+}
 
 /**
  * @brief      用齐次变换矩阵映射一个点。
@@ -1221,6 +1369,7 @@ static bool painterRaster_drawAxisLine(XPainter* self, int x1, int y1,
 static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2)
 {
+    XPAINTER_GPU_FALLBACK(self);
     XImageTransform transform;
     float fx1, fy1, fx2, fy2;
     int ix1, iy1, ix2, iy2;
@@ -1316,6 +1465,77 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
     int px0, py0, px1, py1;
     if (!self || !self->m_image || !rect) return false;
     state = &self->m_state;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* GPU 快速路径：单位变换 + 矩形裁剪（或无裁剪）+ Source/SourceOver。 */
+    if (self->m_gpuActive)
+    {
+        bool clipOk = true;
+        bool compOk;
+        float tx = 0.0f;
+        float ty = 0.0f;
+        XRect deviceRect;
+        if (!painterEffectiveTransform(state, &transform))
+            return false;
+        if (!painterMatrixIsIdentity(&transform) &&
+            !painterMatrixTranslation(&transform, &tx, &ty))
+        {
+            /* 旋转/缩放等复杂变换：GPU 原语暂不支持，降级软件。 */
+            painterGpuFallback(self);
+        }
+        else
+        {
+            deviceRect = *rect;
+            if (tx != 0.0f || ty != 0.0f)
+            {
+                deviceRect.x += (int)tx;
+                deviceRect.y += (int)ty;
+            }
+#if XPAINTER_CLIP_ON
+            if (state->m_hasClip)
+            {
+#if XPAINTER_CLIP_REGION_ON
+                /* 单矩形 region 可用 scissor；多矩形区域 → 软件。 */
+                if (!XRegion_isEmpty(&state->m_clipRegion) &&
+                    state->m_clipRegion.count > 1)
+                    clipOk = false;
+                else
+#endif /* XPAINTER_CLIP_REGION_ON */
+                if (state->m_clipRect.width <= 0 ||
+                    state->m_clipRect.height <= 0)
+                    clipOk = false;
+            }
+#endif /* XPAINTER_CLIP_ON */
+            compOk =
+                state->m_compositionMode == XPainterCompositionMode_Source ||
+                state->m_compositionMode == XPainterCompositionMode_SourceOver;
+            if (clipOk && compOk)
+            {
+#if XPAINTER_CLIP_ON
+                {
+                    /* 裁剪矩形：单矩形 region 优先（精确），否则包围矩形。 */
+                    XRect clipDevice = state->m_clipRect;
+#if XPAINTER_CLIP_REGION_ON
+                    if (state->m_hasClip &&
+                        state->m_clipRegion.count == 1)
+                        clipDevice = state->m_clipRegion.rects[0];
+#endif /* XPAINTER_CLIP_REGION_ON */
+                    XGpuRenderBackend_setClipRect(
+                        self->m_gpuBackend,
+                        state->m_hasClip ? &clipDevice : NULL);
+                }
+#else
+                XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
+#endif /* XPAINTER_CLIP_ON */
+                XGpuRenderBackend_fillRect(
+                    self->m_gpuBackend, &deviceRect, color, state->m_opacity,
+                    state->m_compositionMode ==
+                        XPainterCompositionMode_SourceOver);
+                return true;
+            }
+            painterGpuFallback(self); /* 非快速路径：合并已画 GPU 部分后转软件。 */
+        }
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (!painterEffectiveTransform(state, &transform))
         return false;
     effective = painterApplyOpacity(color, state->m_opacity);
@@ -1476,6 +1696,46 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
     height = XImage_height(image);
     if (width <= 0 || height <= 0) return true;
     state = &self->m_state;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (self->m_gpuActive)
+    {
+        bool clipOk = true;
+        bool compOk = state->m_compositionMode == XPainterCompositionMode_Source ||
+                      state->m_compositionMode == XPainterCompositionMode_SourceOver;
+        if (!painterEffectiveTransform(state, &transform))
+            return false;
+        if (painterMatrixIsIdentity(&transform))
+        {
+#if XPAINTER_CLIP_ON
+            if (state->m_hasClip)
+            {
+#if XPAINTER_CLIP_REGION_ON
+                if (!XRegion_isEmpty(&state->m_clipRegion))
+                    clipOk = false;
+                else
+#endif /* XPAINTER_CLIP_REGION_ON */
+                if (state->m_clipRect.width <= 0 || state->m_clipRect.height <= 0)
+                    clipOk = false;
+            }
+#endif /* XPAINTER_CLIP_ON */
+            if (clipOk && compOk)
+            {
+#if XPAINTER_CLIP_ON
+                XGpuRenderBackend_setClipRect(
+                    self->m_gpuBackend,
+                    state->m_hasClip ? &state->m_clipRect : NULL);
+#endif /* XPAINTER_CLIP_ON */
+                if (XGpuRenderBackend_drawImage(
+                        self->m_gpuBackend, image, x, y, width, height,
+                        state->m_opacity, state->m_compositionMode ==
+                            XPainterCompositionMode_SourceOver))
+                    return true;
+            }
+        }
+        painterGpuFallback(self);
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    XPAINTER_GPU_FALLBACK(self);
     if (!painterEffectiveTransform(state, &transform))
         return false;
     opacity = painterOpacityByte(state->m_opacity);
@@ -1706,6 +1966,7 @@ static bool painterRaster_drawImageRect(XPainter* self,
                                         const XPainterImageRectParams* params,
                                         const XImage* image)
 {
+    XPAINTER_GPU_FALLBACK(self);
     XImageTransform transform;
     XImageTransform inverse;
     float minX, minY, maxX, maxY;
@@ -2561,6 +2822,7 @@ static bool painterScanFillDevice(XPainter* self, int n,
                                   uint32_t color, bool gradient,
                                   XPainterFillRule fillRule)
 {
+    XPAINTER_GPU_FALLBACK(self);
     XImageTransform transform;
     float* dtx;
     float* dty;
@@ -3178,6 +3440,14 @@ void XPainter_deinit(XPainter* self)
 {
     if (!self) return;
     if (!self->m_initialized) return;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* deinit() is allowed without an explicit end(); close an active GPU
+       frame before releasing the painter state so the shared context is not
+       left current or detached from its target image. */
+    if (self->m_gpuActive)
+        painterGpuEndFrame(self);
+    self->m_gpuBackend = NULL;
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     /* 对象即将销毁，无需调用 end() 重建一次默认状态。 */
     painterStateStackRelease(self);
     XFont_deinit_base(&self->m_state.m_font);
@@ -3212,6 +3482,29 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
 #if XPAINTER_PATH_ON
     self->m_drawPath = NULL;
 #endif
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* GPU 光栅后端：优先使用「当前窗口直通会话」（XWidget_repaint 在绘制前
+       经 XGpuRenderBackend_acquireForWindow 设置，帧末 presentToWindow 直通
+       上屏）；无窗口（离屏控件/测试）回退进程级离屏会话（阶段 1 readback）。
+       任一失败都保持软件。 */
+    self->m_gpuBackend = NULL;
+    self->m_gpuActive = false;
+    if (XGpuRenderBackend_requested() &&
+        !XGpuRenderBackend_frameDegraded() &&
+        XImage_width(image) > 0 && XImage_height(image) > 0)
+    {
+        XGpuRenderBackend* gpu = XGpuRenderBackend_current();
+        if (!gpu)
+            gpu = painterGpuSessionAcquire(XImage_width(image),
+                                           XImage_height(image));
+        if (gpu && XGpuRenderBackend_beginFrameImage(gpu, image))
+        {
+            self->m_gpuBackend = gpu;
+            self->m_gpuActive = true;
+            g_xgpuRenderSessionInUse = !XGpuRenderBackend_isWindowMode(gpu);
+        }
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XPAINTER_VIEW_TRANSFORM_ON
     painterResetViewTransform(self);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
@@ -3247,11 +3540,29 @@ bool XPainter_begin_picture(XPainter* self, XPicture* picture)
     return true;
 }
 
+XPainterRasterBackend XPainter_rasterBackend(const XPainter* self)
+{
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    return self && self->m_gpuActive ? XPainterRasterBackend_Gpu
+                                     : XPainterRasterBackend_Raster;
+#else
+    (void)self;
+    return XPainterRasterBackend_Raster;
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+}
+
 bool XPainter_end(XPainter* self)
 {
     bool wasActive;
     if (!self || !self->m_initialized) return false;
     wasActive = self->m_deviceKind != XPainterDevice_None;
+    /* GPU 帧收尾：全程 GPU（未降级）时 readback 到绑定 XImage；已降级的
+       软件帧无需处理（软件命令已直接写入 m_image）。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (self->m_gpuActive)
+        painterGpuEndFrame(self);
+    self->m_gpuBackend = NULL; /* 进程级会话引用归还，不销毁。 */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     /* restore() 会把当前状态的区域容量交换回已弹出的栈槽；释放时
        必须遍历整个已初始化容量，而不是只遍历活动深度。 */
     painterStateStackRelease(self);
@@ -5192,11 +5503,191 @@ static bool painterLoadGlyph(const XFont* font, uint32_t cp,
     return table->m_width > 0 && table->m_height > 0 && table->m_rowBytes > 0;
 }
 
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+/** @brief 把一个 CPU 点阵字形转换成 alpha 纹理并提交给 GPU。 */
+static bool painterGpuDrawBitmapGlyph(XPainter* self, int x, int baselineY,
+                                      uint32_t color, float scale,
+                                      const PainterBitmapFontTable* table,
+                                      const XFontGlyphDsc* dsc,
+                                      const unsigned char* glyph)
+{
+    float originX;
+    float originY;
+    float glyphWidth;
+    float glyphHeight;
+    int left;
+    int top;
+    int width;
+    int height;
+    uint8_t* alpha;
+    int row;
+    bool antialias;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend || !table ||
+        !dsc || !glyph || !(scale > 0.0f) || !isfinite(scale))
+        return false;
+    originX = (float)x + (float)dsc->ofs_x * scale;
+    originY = painter8x16GlyphOriginY(baselineY, 0.0f, scale, table, dsc);
+    glyphWidth = (float)dsc->box_w * scale;
+    glyphHeight = (float)dsc->box_h * scale;
+    left = painter8x16FloorInt(originX);
+    top = painter8x16FloorInt(originY);
+    width = painter8x16CeilInt(originX + glyphWidth) - left;
+    height = painter8x16CeilInt(originY + glyphHeight) - top;
+    if (width <= 0 || height <= 0) return true;
+    if ((size_t)width > SIZE_MAX / (size_t)height) return false;
+    alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+    if (!alpha) return false;
+#if XPAINTER_RENDERHINT_ON
+    antialias = (table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
+                painter8x16CanAntialias(self);
+#else
+    antialias = false;
+#endif /* XPAINTER_RENDERHINT_ON */
+    for (row = 0; row < height; ++row)
+    {
+        int column;
+        for (column = 0; column < width; ++column)
+        {
+            float coverage;
+            if (antialias)
+                coverage = painter8x16GlyphCoverage(
+                    glyph, table, (float)(left + column) - originX,
+                    (float)(top + row) - originY, scale);
+            else
+            {
+                int sourceX = (int)floorf(
+                    ((float)(left + column) - originX) / scale);
+                int sourceY = (int)floorf(
+                    ((float)(top + row) - originY) / scale);
+                int value = painter8x16MaskValue(glyph, table, sourceX, sourceY);
+                int threshold = table->m_bpp > 1
+                    ? (1 << (table->m_bpp - 1)) : 1;
+                coverage = value >= threshold ? 1.0f : 0.0f;
+            }
+            if (coverage <= 0.0f) alpha[row * width + column] = 0u;
+            else if (coverage >= 1.0f) alpha[row * width + column] = 255u;
+            else alpha[row * width + column] = (uint8_t)(coverage * 255.0f + 0.5f);
+        }
+    }
+    if (!XGpuRenderBackend_drawAlphaBitmap(
+            self->m_gpuBackend, alpha, width, height, width, left, top,
+            color, self->m_state.m_opacity,
+            self->m_state.m_compositionMode == XPainterCompositionMode_SourceOver))
+    {
+        XFree_System(alpha);
+        return false;
+    }
+    XFree_System(alpha);
+    return true;
+}
+
+/** @brief GPU 文本快速路径；轮廓字体、变换和复杂合成回落软件。 */
+static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
+                               const char* utf8, uint32_t color)
+{
+    PainterBitmapFontTable table;
+    float scale;
+    XImageTransform transform;
+    const char* p;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend || !utf8)
+        return false;
+    if (!painterEffectiveTransform(&self->m_state, &transform))
+        return false;
+    /* 支持单位或纯平移（子控件经 translate 定位）；其它变换回退软件。 */
+    if (!painterMatrixIsIdentity(&transform))
+    {
+        float textDx = 0.0f;
+        float textDy = 0.0f;
+        if (!painterMatrixTranslation(&transform, &textDx, &textDy))
+            return false;
+        x += (int)textDx;
+        baselineY += (int)textDy;
+    }
+#if XPAINTER_CLIP_ON
+    if (self->m_state.m_hasClip)
+    {
+#if XPAINTER_CLIP_REGION_ON
+        if (!XRegion_isEmpty(&self->m_state.m_clipRegion) &&
+            self->m_state.m_clipRegion.count > 1)
+            return false; /* 多矩形区域裁剪：GPU 文本暂不支持 → 软件。 */
+#endif /* XPAINTER_CLIP_REGION_ON */
+        if (self->m_state.m_clipRect.width <= 0 ||
+            self->m_state.m_clipRect.height <= 0) return false;
+        {
+            XRect clipDevice = self->m_state.m_clipRect;
+#if XPAINTER_CLIP_REGION_ON
+            if (self->m_state.m_clipRegion.count == 1)
+                clipDevice = self->m_state.m_clipRegion.rects[0];
+#endif /* XPAINTER_CLIP_REGION_ON */
+            XGpuRenderBackend_setClipRect(self->m_gpuBackend, &clipDevice);
+        }
+    }
+    else
+#endif /* XPAINTER_CLIP_ON */
+        XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
+    if (self->m_state.m_compositionMode != XPainterCompositionMode_Source &&
+        self->m_state.m_compositionMode != XPainterCompositionMode_SourceOver)
+        return false;
+    table = painterBitmapFont(&self->m_state.m_font);
+    if (table.m_bpp <= 0) return false;
+    scale = painterBitmapScaleForTable(&self->m_state.m_font, &table);
+    if (!(scale > 0.0f) || !isfinite(scale)) return false;
+    p = utf8;
+    while (*p != '\0')
+    {
+        uint32_t cp;
+        unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
+                                XFONT_BITMAP_MAX_ROW_BYTES];
+        PainterBitmapFontTable glyphTable = table;
+        XFontGlyphDsc dsc;
+        if (*p == '\n') break;
+        cp = painter8x16DecodeNext(&p);
+        if (cp < 0x20u)
+        {
+            x += painter8x16Metric(table.m_width, scale);
+            continue;
+        }
+        if (!painterLoadGlyph(&self->m_state.m_font, cp, &glyphTable, &dsc,
+                              glyphData, sizeof(glyphData)))
+            continue;
+#if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
+        if (self->m_state.m_backgroundMode == XPainterBackgroundMode_Opaque &&
+            self->m_state.m_backgroundBrush.m_style != XPainterBrushStyle_NoBrush)
+        {
+            XRect backgroundRect;
+            backgroundRect.x = x;
+            backgroundRect.y = baselineY - painter8x16Metric(
+                (int)dsc.box_h + (int)dsc.ofs_y, scale);
+            backgroundRect.width = painter8x16Metric(dsc.box_w, scale);
+            backgroundRect.height = painter8x16Metric(dsc.box_h, scale);
+            if (!XPainter_fillRect(self, &backgroundRect,
+                                   self->m_state.m_backgroundBrush.m_color))
+                return false;
+        }
+#endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
+        if (!painterGpuDrawBitmapGlyph(self, x, baselineY, color, scale,
+                                       &glyphTable, &dsc, glyphData))
+            return false;
+        x += painter8x16GlyphAdvance(&dsc, &table, scale);
+    }
+    return true;
+}
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+
 /* ---------- 公开文本 API（字体由 XFont 选择，无字库专用命名） ---------- */
 
 bool XPainter_drawText(XPainter* self, int x, int baselineY,
                        const char* utf8, uint32_t color)
 {
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (self && self->m_gpuActive)
+    {
+        if (painterGpuDrawText(self, x, baselineY, utf8, color))
+            return true;
+        painterGpuFallback(self);
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    XPAINTER_GPU_FALLBACK(self);
     PainterBitmapFontTable table;
     float scale;
     void* reusableOutlinePath = NULL;

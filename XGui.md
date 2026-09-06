@@ -1,26 +1,26 @@
 # XGui 进度文档
 
-> 最后更新：2026-09-03 Asia/Shanghai
+> 最后更新：2026-09-06 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
+> **阅读指引**：当前进度与计划看本文各主节（1-14）；文中大量 `10.x` 子节是
+> 历次会话的逐轮改动日志（2026-08 起，已无维护价值但保留备查），看当前状态
+> 请以主节与最新节为准。
 
 ## 1. 当前任务目标
 
-XGui 布局系统核心 API 已按 Qt 6.8 对齐：PC 端功能可用，嵌入式通过
-`Src/XGui/XLayout/XLayout_config.h` 的宏开关裁剪扩展功能；ICC/LUT 原始资源
-已由 XImage 内部侧车安全保存，ICC 解析和 Qt 原生 Picture 互操作仍保留在文末
-边界说明中。
-
-- 总开关：`XLAYOUT_ON`（在 `Src/CXinYueConfig.h` 统一定义）
-- 子开关：`XLAYOUT_BOX_ON` / `XLAYOUT_GRID_ON` / `XLAYOUT_SPACER_ON` /
-  `XLAYOUT_STACKED_ON` / `XLAYOUT_TOTAL_ON`（PC 桌面扩展 API，关闭可裁剪嵌入式体积）
+XGui 主体（布局/图像/绘制/控件/平台抽象）已按 Qt 6.8 对齐并可裁剪；当前
+主线为 **GPU 光栅渲染后端与直通上屏**（进度见第 14 节，Windows 已实现主体、
+Linux 待续）。总开关 `XGUI_ON` 在 `Src/CXinYueConfig.h`；GUI 子模块开关集中在
+`Src/XGui/XGuiConfig.h`；GPU 裁剪开关 `XGPU_ON`（嵌入式无 GPU 置 0 整体裁剪，
+默认软件渲染不受影响）。
 
 ## 2. 仓库状态
 
-- HEAD：`dd1ad79a`（对齐 XGui Qt 6.8 图像与图标行为）
-- 工作树：**保留本轮未提交改动**，不清理、不丢失、不 push
-- 构建验证入口：`build/`（out-of-source CMake），测试程序
-  `bin/XGuiRegression_Test`
+- 分支：`codex/xdevice-file-platform`
+- 工作树：**保留未提交改动**（含 GPU 渲染后端等近期工作），不清理、不丢失、不 push
+- 构建：Windows 用 `out/build/x64-Debug`（Ninja+MSVC）；Linux 用 `build/`
+  （见第 9 节命令）；测试程序 `bin/XGuiRegression_Test`、`bin/XGuiGpu_Test`
 - 分支/提交约定：默认分支前缀 `codex/`；**不要 push**（除非用户明确要求）
 
 ### 2.1 XGui 子类接口规则
@@ -36,19 +36,19 @@ XGui 布局系统核心 API 已按 Qt 6.8 对齐：PC 端功能可用，嵌入�
 ### 2.2 运行回归测试
 
 ```bash
-# 仓库根运行
+# 仓库根运行（Windows 先经 vcvarsall 注入 MSVC 环境）
 ./bin/XGuiRegression_Test
 ```
 
-当前结果：本轮定向构建通过；完整回归仍有仓库既有的 2 项 LVGL/CJK 字形夹具
-失败（`generic LVGL glyph reader loads UTF-8 中文码点`、`8x16 provider
-exposes the registered CJK glyph metrics`），悬浮层新增断言未失败。运行时仍会
-输出既有的窗口参数提示（无效 transient parent、忽略 WindowActive）及空对象
-诊断日志。
+当前结果：默认构建回归**全绿**（`XGui regression tests passed`）；ASan 回归、
+FULL/PARTIAL 渲染模式变体、`XGPU_ON=0` 无 GPU 裁剪变体均通过；GPU 冒烟
+`XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test` 通过。运行时输出的窗口参数提示
+（无效 transient parent、忽略 WindowActive）及空对象诊断日志为既有测试路径
+预期输出，非失败。
 
 ## 3. 已完成工作概览
 
-### 3.1 图像体系（已纳入 HEAD `dd1ad79a`，本轮继续补齐行为）
+### 3.1 图像体系（已完成）
 
 - XImageCodec 九类格式完整编解码及 ICO 单条目路径：BMP（24/32 无压缩正/倒序）、PNG（8 位
   0/2/4/6 型、反滤波 0~4、无 Adam7、无调色板型）、JPEG（基线 SOF0、
@@ -62,7 +62,7 @@ exposes the registered CJK glyph metrics`），悬浮层新增断言未失败。
   与完整实现，格式互相转化、整体对齐 Qt 图像体系
 - 图像编解码开放接口统一集成在 XImageCodec；上层图像类统一调用其 API
 
-### 3.2 XGui 布局系统（当前进度主体，未提交）
+### 3.2 XGui 布局系统（已完成）
 
 目录 `Src/XGui/XLayout/`：
 
@@ -79,6 +79,12 @@ exposes the registered CJK glyph metrics`），悬浮层新增断言未失败。
 
 另含 XApplication / XWindow（对标 QWindow）/ XWidget / 事件系统、Drive
 平台后端（Linux/Windows）等前期已完成内容。
+
+### 3.2a GPU 渲染后端（近期完成，详见第 14 节）
+
+阶段 1（离屏 GPU 光栅 + readback）与阶段 2（窗口直通上屏，GPU swapBuffers）
+主体已完成并全绿验证；遗留 outline 字体 GPU 文本等问题见第 14.3 节。
+
 
 ### 3.3 XGui 源码目录
 
@@ -12356,7 +12362,7 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
   （改名 XTestMenu 后）路径 Test → 代码 → XAction(QAction 对标) →
   主测试 78 项断言全部通过。
 
-## 13. 下一阶段 GUI 模块计划（源码扫描建议）
+## 15. 下一阶段 GUI 模块计划（源码扫描建议）
 
 本节基于当前 XGui 源码、工作区现有控件以及本机 Qt 6.8.3 源码扫描结果整理。Qt 对照源码位于：
 
@@ -12367,7 +12373,7 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
 
 当前 XGui 的窗口、事件、软件绘制、图像、布局、输入法、剪贴板、拖放、无障碍和平台适配已经具备基础闭环；控件层主要覆盖 XWidget/XFrame/XLabel、按钮族以及正在完善的 XAction/XMenu/XToolButton。下一阶段应优先补齐可组合应用所需的控件和交互模型。
 
-### 13.1 P0：菜单、工具栏与主窗口体系
+### 15.1 P0：菜单、工具栏与主窗口体系
 
 建议新增：
 
@@ -12383,7 +12389,7 @@ CTest，并在本文件追加 Qt 源码行号与实际结果。
 
 验收目标：可以构建带菜单栏、工具栏、状态栏和多页面内容的真实桌面应用。
 
-### 13.2 P1：文本输入控件
+### 15.2 P1：文本输入控件
 
 建议新增：
 
@@ -12400,7 +12406,7 @@ Qt 对照重点为 qlineedit、qwidgetlinecontrol_p、qabstractspinbox 和 qvali
 
 验收目标：可以完成搜索框、设置项编辑和设备参数输入。
 
-### 13.3 P1：对话框与文件选择器
+### 15.3 P1：对话框与文件选择器
 
 结合当前 codex/xdevice-file-platform 分支，建议新增：
 
@@ -12415,7 +12421,7 @@ Qt 对照重点为 qlineedit、qwidgetlinecontrol_p、qabstractspinbox 和 qvali
 
 验收目标：可以完成设备文件浏览、打开、保存和目录选择流程；嵌入式模式可使用固定根目录或虚拟文件系统。
 
-### 13.4 P2：模型、列表、树与表格
+### 15.4 P2：模型、列表、树与表格
 
 建议先建立模型/视图基础，再扩展具体视图：
 
@@ -12429,7 +12435,7 @@ Qt 对照重点为 qlineedit、qwidgetlinecontrol_p、qabstractspinbox 和 qvali
 
 其中 XFileSystemModel + XTreeView/XListView 可直接服务于 XFileDialog 和设备浏览器。该部分应放在 XLineEdit 与基础对话框之后，避免模型、选择、滚动、delegate 和编辑器同时引入。
 
-### 13.5 P2：数值、状态和页面导航控件
+### 15.5 P2：数值、状态和页面导航控件
 
 建议按以下顺序补齐普通设置页面能力：
 
@@ -12439,7 +12445,7 @@ XTabWidget 可以复用现有 XStackedLayout，收益较高；XComboBox 依赖 p
 
 可作为同批次补充的控件包括 XDoubleSpinBox、XDial、XGroupBox 和 XTabBar。
 
-### 13.6 P2：统一样式系统
+### 15.6 P2：统一样式系统
 
 当前已经有 XPalette、XStyleHints 和 XPlatformTheme，但控件样式仍由控件分别绘制。建议在控件数量增加前引入最小样式层：
 
@@ -12451,7 +12457,7 @@ XTabWidget 可以复用现有 XStackedLayout，收益较高；XComboBox 依赖 p
 
 第一阶段只统一按钮、checkbox/radio indicator、菜单项、line edit、scrollbar、tab 和 progress bar 的 hover、pressed、disabled、focus 状态，不追求完整复刻 Qt Fusion。
 
-### 13.7 推荐实施路线
+### 15.7 推荐实施路线
 
 #### 阶段 A：桌面应用骨架
 
@@ -12469,14 +12475,116 @@ XAbstractItemModel、XItemSelectionModel、XListView、XTreeView、XFileSystemMo
 
 XProgressBar、XSlider、XScrollBar、XSpinBox、XComboBox、XTabWidget、XStyle。
 
-### 13.8 暂不优先
+### 15.8 暂不优先
 
 暂不建议优先实现 XGraphicsView/XGraphicsScene、完整富文本编辑器、XCalendarWidget、XFontDialog/XColorDialog、XDockWidget、XMDIArea、XSystemTrayIcon、XWizard 和完整 OpenGL/Vulkan Widget 封装。这些模块要么依赖更大的模型体系，要么属于桌面高级功能，当前对嵌入式 GUI 和设备文件业务的直接收益较低。
 
-### 13.9 本阶段推荐的单一切入点
+### 15.9 本阶段推荐的单一切入点
 
 如果以 XGui 桌面应用完整度为目标，下一步从 XMenu 真实弹出交互开始，随后实现 XMenuBar + XToolBar + XMainWindow。
 
 如果以当前设备文件平台业务为目标，下一步从 XLineEdit + XDialog + XFileSystemModel + XTreeView/XListView + XFileDialog 开始。
 
 本计划只记录推荐路线，不表示上述模块已经实现；后续每个模块仍需按现有约定补充配置开关、C99 API、回归测试、裁剪构建验证和 Qt 6.8.3 行为边界说明。
+
+---
+
+## 14. GPU 渲染后端（Windows 实施记录，Linux 待续） — 2026-09-06
+
+> 本节专记 XGui GPU 光栅化后端与直通上屏的进度。Windows（WGL）已实现并验证
+> 主体，遗留问题计划在 Linux（GLX）继续。设计文档见
+> `docs/superpowers/specs/2026-09-06-xgui-gpu-render-backend-design.md`。
+> 运行时开关：`XGUI_RENDER_BACKEND=gpu`（默认软件）；编译裁剪：`XGPU_ON=0`。
+
+### 14.1 已完成的架构
+
+```
+阶段 1（离屏 readback，已完成并全绿）：
+  XPainter → 离屏 GL 会话（XPlatformOffscreenSurface + FBO）
+    → 帧末 readback 到 XImage → XPutImage/BitBlt 上屏
+  局限：每帧 GPU→CPU 读回（750KB/帧）→ demo 仅 ~188 FPS。
+
+阶段 2（窗口直通上屏，主体完成，对齐 Qt QBackingStoreDefaultCompositor）：
+  XWidget_flushBackingStore → XGpuRenderBackend_acquireForWindow（窗口 GL 上下文
+    XPlatformOpenGLContext，自建离屏 FBO）
+    → XPainter 画到窗口上下文 FBO（持久缓冲，脏区叠加）
+    → XGpuRenderBackend_presentToWindow：全屏 quad 采样 FBO 颜色纹理
+        → 窗口默认帧缓冲 → swapBuffers（零 CPU 上屏）
+```
+
+关键文件（本轮新增/改动）：
+- `Src/XGui/Graphics/XGpuRenderBackend.h/.c`：GPU 会话。离屏模式
+  （`XPlatformOffscreenSurface`）+ 窗口直通模式（`XPlatformOpenGLContext`，
+  `createForWindow`/`presentToWindow`/`isWindowMode`）；GL 函数全部经
+  `getProcAddress` 运行期解析（无平台 GL 头，GLES 可复用）；GLES2 兼容
+  shader（`#ifdef GL_ES precision`）；全局会话管理（acquire/current/
+  degraded/presented/requested/shutdown）。
+- `Src/XGui/Graphics/XPainter.c`：GPU 快速路径支持**纯平移变换**与**单矩形
+  region clip**（子控件 translate/clip 不再强制降级）；fillRect/drawImage/
+  drawText（位图字体经 CPU 字形→alpha→纹理）走 GPU；非快速路径/降级整帧
+  一致回退软件（`frameDegraded` 使后续 painter 不再用 GPU 会话）。
+- `Src/XGui/Widget/XWidget.c`：`flushBackingStore` 增加 GPU 直通分支
+  （present vs BitBlt 自动选择；PARTIAL 模式保持离屏路径）。
+- `Src/XGui/Graphics/XGpuRenderBackend` 全局标志：requested（env 缓存）、
+  frameDegraded、framePresented（截图选内容来源）。
+- `xgui_window_demo.c`：GPU 直通帧截图改从 FBO 读回（GDI 抓屏读不到
+  WGL 双缓冲窗口内容——已确认是验证手段限制，非渲染缺陷）。
+- `xgui_gpu_test.c`（CMake target `XGuiGpu_Test`）：GPU 冒烟测试
+  （fillRect/图像/文本/半透明混合像素断言；`XGUI_RENDER_BACKEND=gpu` 运行）。
+
+### 14.2 Windows 实测结果（AMD Radeon RX 6800 XT）
+
+- 离屏 GL 上下文 vendor/renderer：`ATI Technologies Inc. / AMD Radeon RX 6800 XT`
+  （确认硬件加速，非微软软件 GL）。
+- 位图字体（`XFont8x16`）下 GPU 直通：fillRect 降级 = 0（全 GPU 快速路径）；
+  FBO 与窗口默认帧缓冲读回内容均正确；软/GPU 画面 diff 仅
+  60/187200 像素（0.03%，文本抗锯齿边缘近似差）。
+- 性能：软件 6198 FPS 为「假吞吐」（BitBlt 不等显示）；GPU 直通 122 FPS
+  是真上屏吞吐（受字形每字一次 alpha 生成 + `glTexImage2D` 上传 + swap 限制）。
+  屏幕帧率两者均受 60Hz 刷新限制，不可直接比数字。
+- 回归矩阵：DIRECT / FULL / PARTIAL / ASan / `XGPU_ON=0` 裁剪 全部通过。
+
+### 14.3 遗留问题（Linux 继续任务，按优先级）
+
+1. **outline 字体（demo 默认 `XFontOutlineCommon`）GPU 文本降级路径画面 bug**
+   —— 现状：GPU drawText 只支持位图字体（`table.m_bpp<=0` 返回 false），
+   demo 默认 outline 字体每帧触发降级 → 走 BitBlt；降级帧 XImage 缺文本。
+   证据：软件 outline glyph 实际执行（每帧 76 次，image=520x360），但最终
+   XImage/BitBlt 画面缺标题栏文本。**疑点**：降级 painter 的 readback 目标
+   m_image 与 flush 的 XBackingStore 双缓冲 XImage 可能不一致，或软件 glyph
+   绘制时机/目标问题——需在 Linux 用单缓冲或加日志系统排查。
+2. **outline 字形 GPU 化**（用户已确认方案：CPU 字形光栅→alpha→纹理上传，
+   与位图字体同一 drawAlphaBitmap 路径）——完成后 demo 默认字体可全 GPU。
+3. **位图字形上传缓存/字形图集**（阶段 3）——当前每字形一次 alpha 生成 +
+   `glTexImage2D` 是性能瓶颈。
+4. **Linux/GLX 验证**：Posix 后端（X11 + GLX 离屏 PBuffer）跑通阶段 1/2；
+   建议在 Linux 桌面加 `XGUI_RENDER_BACKEND=gpu` 复跑 demo + 回归 +
+   `xgui_gpu_test`，确认 GLX 的 PBuffer/`XPlatformOpenGLContext` 路径与
+   WGL 一致。
+5. **阶段 2b**：XPainter 直接画窗口默认帧缓冲（去掉「离屏 FBO → quad」一次
+   GPU 拷贝）；阶段 2 采用离屏 FBO + quad 是为保持 XBackingStore 持久缓冲
+   语义的最小改动。
+6. **裁剪与嵌入式**：`XGPU_ON=0` 全裁剪已验证；有 GPU 的嵌入式走同一后端
+   （GLES 路径待真机验证）。
+
+### 14.4 Linux 复现/验证命令
+
+```bash
+# 构建（需 X11 + GL；GLX 后端自动检测）
+cmake -S . -B build -DXINYUE_HAS_X11=ON   # 视项目实际开关
+cmake --build build -j$(nproc)
+
+# GPU 冒烟（软件像素对照 + GPU 后端冒烟）
+XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test
+# demo：软件与 GPU 各跑一次，观察画面一致性与帧率
+./bin/XGuiWindowDemo_Test --benchmark 5
+XGUI_RENDER_BACKEND=gpu ./bin/XGuiWindowDemo_Test --benchmark 5
+# 回归
+./bin/XGuiRegression_Test
+```
+
+关键调试锚点（定位 outline 降级 bug 用）：
+- `painterGpuFallback()`（XPainter.c）：降级点（readback 合并 + degraded）。
+- `painterGpuDrawText()`：outline（`table.m_bpp<=0`）直接 `return false` 处。
+- `XGpuRenderBackend_readback/presentToWindow`（XGpuRenderBackend.c）。
+- `XWidget_flushBackingStore` GPU 分支（XWidget.c）。

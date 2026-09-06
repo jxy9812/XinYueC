@@ -36,6 +36,13 @@
 #include "XImage.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpuRenderBackend.h"
+#endif
+#if XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
+#include "XPlatformNativeWindow.h"
+#endif
+#include "XPixmap.h"
 #include "XImage.h"
 #include "XPainter.h"
 #include "XLabel.h"
@@ -429,8 +436,14 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     tile = dirty;
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-    if (!demo_updateStaticScene(self, width, height) ||
-        !demo_copyStaticTile(&self->m_staticScene, device, &tile, &offset))
+    if (XPainter_rasterBackend(&painter) == XPainterRasterBackend_Gpu) {
+        /* GPU 直通：绘制目标是窗口 GL 帧缓冲而非 XImage，CPU memcpy
+           的静态场景拷贝不生效；直接用 GPU 原语重画静态场景。 */
+        demo_drawStaticScene(self, &painter, width, height);
+    }
+    else if (!demo_updateStaticScene(self, width, height) ||
+             !demo_copyStaticTile(&self->m_staticScene, device, &tile,
+                                  &offset))
         demo_drawStaticScene(self, &painter, width, height);
 #else
     demo_drawStaticScene(self, &painter, width, height);
@@ -547,16 +560,53 @@ static bool demo_framePump(void* userData)
     if (!demo || demo->m_closed)
         return false;
     demo_repaint(demo);
-    /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。 */
+    /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。
+       GPU 直通模式窗口内容在 GL 帧缓冲（GDI 抓窗读不到），直接读回
+       FBO 保存；软件模式抓真实窗口。 */
     if (demo->m_screenshotPath) {
         if (++demo->m_screenshotFrames >= 3) {
-            XImage* device = XWidget_paintDevice(&demo->m_base);
-            if (device) {
-                XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
-                        demo->m_screenshotPath);
-                if (!XImage_save_2(device, demo->m_screenshotPath,
-                                   "PNG", 95))
-                    XPrintf("XGuiWindowDemo: 截图保存失败\n");
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+            /* GPU 直通帧画面在 FBO（读回保存）；降级/软件帧画面在 XImage。 */
+            if (XGpuRenderBackend_requested() &&
+                XGpuRenderBackend_framePresented())
+            {
+                XGpuRenderBackend* session = XGpuRenderBackend_acquireForWindow(
+                    (XWindow*)demo->m_base.m_windowHandle,
+                    XWidget_width(&demo->m_base),
+                    XWidget_height(&demo->m_base));
+                if (session)
+                {
+                    XImage shotImage;
+                    XImage_init(&shotImage);
+                    XImage_init_ex(&shotImage, XWidget_width(&demo->m_base),
+                                   XWidget_height(&demo->m_base),
+                                   XImageFormat_ARGB32);
+                    /* 建立 GL 上下文后再读回 FBO（窗口模式首帧后不清除）。 */
+                    XGpuRenderBackend_beginFrame(session);
+                    XGpuRenderBackend_readback(session, &shotImage);
+                    XGpuRenderBackend_endWindowFrame();
+                    XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
+                            demo->m_screenshotPath);
+                    if (!XImage_save_2(&shotImage, demo->m_screenshotPath,
+                                       "PNG", 95))
+                        XPrintf("XGuiWindowDemo: 截图保存失败\n");
+                    XImage_deinit_base(&shotImage);
+                    demo_stopTimers(demo);
+                    demo->m_closed = true;
+                    XGuiApplication_quit();
+                    return false;
+                }
+            }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+            {
+                XImage* device = XWidget_paintDevice(&demo->m_base);
+                if (device) {
+                    XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
+                            demo->m_screenshotPath);
+                    if (!XImage_save_2(device, demo->m_screenshotPath,
+                                       "PNG", 95))
+                        XPrintf("XGuiWindowDemo: 截图保存失败\n");
+                }
             }
             demo_stopTimers(demo);
             demo->m_closed = true;

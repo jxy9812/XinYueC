@@ -63,6 +63,9 @@
 #include "XPainter.h"
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#include "XGpuRenderBackend.h"
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XLAYOUT_ON
 #include "XLayout.h"
 #include "XLayout_Internal.h"
@@ -4492,6 +4495,16 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             XWidget_paintTree(top, &whole);
         }
         else {
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && \
+    XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        /* GPU 直通（阶段 2）：请求 GPU 时获取窗口直通会话；失败自动回退
+           软件/阶段 1。PARTIAL 模式保持离屏 readback（tile 缓冲语义）。 */
+        XGpuRenderBackend* gpuWindow = NULL;
+        if (XGpuRenderBackend_requested())
+            gpuWindow = XGpuRenderBackend_acquireForWindow(
+                (XWindow*)top->m_windowHandle,
+                top->m_windowRect.width, top->m_windowRect.height);
+#endif /* GPU && !PARTIAL */
         XBackingStore_beginPaint(store, &whole);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
@@ -4513,7 +4526,27 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #else
         XWidget_paintTree(top, &whole);
         XBackingStore_endPaint(store);
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && \
+    XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        if (gpuWindow && !XGpuRenderBackend_frameDegraded())
+        {
+            /* GPU 直通上屏：FBO 内容合成到窗口默认帧缓冲并 swapBuffers，
+               完全绕过 BitBlt/readback。 */
+            XGpuRenderBackend_presentToWindow(gpuWindow);
+            XGpuRenderBackend_setFramePresented(true);
+        }
+        else
+        {
+            /* 软件帧或本帧发生降级（XImage 已由降级路径合并）：走 BitBlt。 */
+            XBackingStore_flush(store, &whole,
+                                (XWindow*)top->m_windowHandle, NULL);
+            XGpuRenderBackend_setFramePresented(false);
+        }
+        if (gpuWindow)
+            XGpuRenderBackend_endWindowFrame();
+#else
         XBackingStore_flush(store, &whole, (XWindow*)top->m_windowHandle, NULL);
+#endif /* GPU && !PARTIAL */
 #endif
         }
     }

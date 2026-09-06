@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XGuiApplication.h
  * @brief      XGuiApplication GUI 应用类（对标 Qt 6.8 QGuiApplication 全部公开 API）。
  * @details    XGuiApplication 继承 XCoreApplication，是进程内唯一的 GUI 应用
@@ -54,6 +54,11 @@ typedef struct XPlatformIntegration XPlatformIntegration;
 /** @brief XPlatformNativeInterface 前向声明回退（开关关闭时 platformNativeInterface() 返回 NULL）。 */
 typedef struct XPlatformNativeInterface XPlatformNativeInterface;
 #endif /* XPLATFORMINTEGRATION_ON */
+/** @brief XGpu 前向声明（共享 GPU 运行时；完整类型由 XGpu.h 提供，
+ *         XGUIAPPLICATION 关闭或 XGPU_ON=0 时 gpu() 返回 NULL）。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+typedef struct XGpu XGpu;
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 #if XINPUTMETHOD_ON
 #include "XInputMethod.h"
@@ -193,6 +198,9 @@ typedef struct XGuiApplication
     XPlatformIntegration* m_platformIntegration; /**< 平台集成层（拥有，init 时创建）。 */
     XHandle m_nativeEventPump; /**< 主事件分发器中的原生事件泵登记句柄。 */
 #endif /* XPLATFORMINTEGRATION_ON */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpu* m_gpu; /**< 共享 GPU 运行时（拥有，惰性创建；对标 QGuiApplication::rhi()）。 */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XINPUTMETHOD_ON
     XInputMethod* m_inputMethod;          /**< 输入法惰性单例（拥有，与集成层双向绑定）。 */
 #endif /* XINPUTMETHOD_ON */
@@ -591,6 +599,18 @@ XPlatformNativeInterface* XGuiApplication_platformNativeInterface(void);
  * @return     已注册函数指针；未注册或平台接口不可用时返回 NULL。
  */
 void* XGuiApplication_platformFunction(const char* functionName);
+
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+/**
+ * @brief      获取共享 GPU 运行时（对标 QGuiApplication::rhi()）。
+ * @details    惰性创建并由应用拥有：首次调用时经平台集成层工厂创建
+ *             （OpenGL/Vulkan 按可用性选择），后续调用返回同一共享实例；
+ *             应用销毁时一并释放。无可用图形后端、未初始化应用或
+ *             XGPU_ON=0（嵌入式无 GPU 裁剪）时返回 NULL。
+ * @return     XGpu* 借用指针；不可用时返回 NULL。
+ */
+XGpu* XGuiApplication_gpu(void);
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 /* ==================== 桌面设置 / 退出策略（对标 QGuiApplication） ==================== */
 

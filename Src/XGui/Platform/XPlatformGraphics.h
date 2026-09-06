@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XPlatformGraphics.h
  * @brief      平台图形上下文与 Vulkan 实例公共契约。
  * @details    本文件只定义平台无关的对象生命周期和操作接口；X11/GLX、
@@ -98,6 +98,18 @@ bool XPlatformOffscreenSurface_makeCurrent(XPlatformOffscreenSurface* self);
 void XPlatformOffscreenSurface_doneCurrent(XPlatformOffscreenSurface* self);
 uint32_t XPlatformOffscreenSurface_width(const XPlatformOffscreenSurface* self);
 uint32_t XPlatformOffscreenSurface_height(const XPlatformOffscreenSurface* self);
+
+/**
+ * @brief      查询离屏 GL 上下文中的扩展函数指针（GPU 渲染后端用）。
+ * @details    调用前需先 XPlatformOffscreenSurface_makeCurrent()；查询结果
+ *             与当前上下文绑定，离屏上下文可同样解析 FBO/纹理/shader 等
+ *             GL 扩展。底层复用 openGLProcAddress Driver（glX/wgl 全局查询）。
+ * @param      self 目标离屏表面；可为 NULL。
+ * @param      name GL 函数名（如 "glGenFramebuffers"）；可为 NULL。
+ * @return     函数指针；上下文无效或名称为空返回 NULL。
+ */
+void* XPlatformOffscreenSurface_getProcAddress(
+        const XPlatformOffscreenSurface* self, const char* name);
 
 #endif /* XPLATFORMINTEGRATION_ON */
 
