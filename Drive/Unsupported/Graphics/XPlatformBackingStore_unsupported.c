@@ -1,168 +1,74 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPlatformBackingStore_unsupported.c
  * @brief      未提供平台后备存储后端的平台存根（XBackingStore 回落路径）。
  * @details    本文件严格遵循 Drive 平台存根惯例（见 XSystem_unsupported.c）：
- *             在既非 Linux 也非 Windows 的平台（FreeRTOS/裸机/其它 RTOS）
- *             上保持 XBackingStore 可链接。所有操作退化为无操作或空值：
- *             create 返回 NULL（XBackingStore_init 已安全容错为"空后端"），
- *             delete/绘制流程/静态内容设置均为无操作，查询类返回空值。
- *             产品需要在该类平台接入显示驱动时，应仿照 Drive/Posix 后端
- *             补充对应平台文件，并把本文件的哨兵守卫改为新平台专属条件。
+ *             软件缓冲逻辑已全部收敛到公共层 Src/XGui/Platform/
+ *             XPlatformBackingStore.c，本文件只提供 no-op Driver 钩子：
+ *             Driver_create 返回 false，公共层 create 据此返回 NULL，
+ *             XBackingStore_init 安全容错为「空后端」。
+ *             在既非 Linux 也非 Windows、且未启用可复用软件后端模板
+ *             （XPLATFORMBACKINGSTORE_SOFTWARE_ON=0）的平台（FreeRTOS/裸机/
+ *             其它 RTOS）上保持 XBackingStore 可链接。产品需要在该类平台
+ *             接入显示驱动时，打开 XPLATFORMBACKINGSTORE_SOFTWARE_ON 使用
+ *             Drive/Software/Graphics/XPlatformBackingStore_software.c 的
+ *             全功能软件后端，只提供 present 回调（显示驱动）即可。
  * @note       模块总开关 XBACKINGSTORE_ON 与 XPLATFORMBACKINGSTORE_ON 定义
  *             于 XGuiConfig.h；本文件同时编译时为二者共同的 1。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformBackingStore.h"
-#include <stddef.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
 
-#if !defined(__linux__) && !defined(_WIN32)
+#if !defined(__linux__) && !defined(_WIN32) && \
+    !XPLATFORMBACKINGSTORE_SOFTWARE_ON
 
-/* ==================== 生命周期（全部无操作/空值） ==================== */
+/* ==================== 平台提交驱动（全部 no-op / 空值） ==================== */
 
-XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
+bool XPlatformBackingStoreDriver_create(void** outState, XWindow* window)
 {
     (void)window;
-    return NULL;
-}
-
-void XPlatformBackingStore_delete(XPlatformBackingStore* self)
-{
-    (void)self;
-}
-
-/* ==================== 访问器 ==================== */
-
-XWindow* XPlatformBackingStore_window(const XPlatformBackingStore* self)
-{
-    (void)self;
-    return NULL;
-}
-
-XImage* XPlatformBackingStore_paintDevice(XPlatformBackingStore* self)
-{
-    (void)self;
-    return NULL;
-}
-
-bool XPlatformBackingStore_nextTile(XPlatformBackingStore* self,
-                                     XRect* tileRect)
-{
-    (void)self; (void)tileRect;
+    if (outState) *outState = NULL;
     return false;
 }
 
-XPoint XPlatformBackingStore_paintOrigin(
-        const XPlatformBackingStore* self)
+void XPlatformBackingStoreDriver_destroy(void* nativeState)
 {
-    XPoint out;
-    (void)self;
-    XPoint_init(&out, 0, 0);
-    return out;
+    (void)nativeState;
 }
 
-bool XPlatformBackingStore_toImage(XPlatformBackingStore* self, XImage* out)
+void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
+                                                 void* nativeWindow)
 {
-    (void)self; (void)out;
-    return false;
+    (void)nativeState; (void)nativeWindow;
 }
 
-/* ==================== 绘制流程 ==================== */
-
-void XPlatformBackingStore_flush(XPlatformBackingStore* self,
-                                 XWindow* window,
-                                 const XRegion* region,
-                                 const XPoint* offset)
+void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
+                                                int width, int height)
 {
-    (void)self; (void)window; (void)region; (void)offset;
+    (void)nativeState; (void)width; (void)height;
 }
 
-void XPlatformBackingStore_resize(XPlatformBackingStore* self,
-                                  const XSize* size)
+void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
+                                         const XImage* image,
+                                         const XRegion* region,
+                                         const XPoint* offset, bool full)
 {
-    (void)self; (void)size;
+    (void)nativeState; (void)window; (void)image;
+    (void)region; (void)offset; (void)full;
 }
 
-bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
-                                  const XRegion* area, int dx, int dy)
+void XPlatformBackingStoreDriver_presentTile(void* nativeState,
+                                             XWindow* window,
+                                             const XImage* image,
+                                             const XRegion* region,
+                                             const XPoint* offset)
 {
-    (void)self; (void)area; (void)dx; (void)dy;
-    return false;
+    (void)nativeState; (void)window; (void)image;
+    (void)region; (void)offset;
 }
 
-void XPlatformBackingStore_beginPaint(XPlatformBackingStore* self,
-                                      const XRegion* region)
-{
-    (void)self; (void)region;
-}
-
-void XPlatformBackingStore_endPaint(XPlatformBackingStore* self)
-{
-    (void)self;
-}
-
-void XPlatformBackingStore_flushTile(XPlatformBackingStore* self,
-                                     XWindow* window,
-                                     const XRect* tileRect,
-                                     const XPoint* offset)
-{
-    (void)self; (void)window; (void)tileRect; (void)offset;
-}
-
-/* ==================== 静态内容 ==================== */
-
-void XPlatformBackingStore_setStaticContents(XPlatformBackingStore* self,
-                                             const XRegion* region)
-{
-    (void)self; (void)region;
-}
-
-XRegion XPlatformBackingStore_staticContents(
-        const XPlatformBackingStore* self)
-{
-    XRegion out;
-    (void)self;
-    XRegion_init(&out);
-    return out;
-}
-
-bool XPlatformBackingStore_hasStaticContents(
-        const XPlatformBackingStore* self)
-{
-    (void)self;
-    return false;
-}
-
-/* ==================== 平台扩展 ==================== */
-
-void XPlatformBackingStore_setPresentCallback(
-        XPlatformBackingStore* self,
-        XPlatformBackingStorePresentFn callback, void* userData)
-{
-    (void)self; (void)callback; (void)userData;
-}
-
-bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
-                                       void* buffer1, void* buffer2,
-                                       size_t bufferSize)
-{
-    (void)self; (void)buffer1; (void)buffer2; (void)bufferSize;
-    return false;
-}
-
-size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
-{
-    (void)size;
-    return 0;
-}
-
-void XPlatformBackingStore_setNativeTargetWindow(
-        XPlatformBackingStore* self, void* nativeWindow)
-{
-    (void)self; (void)nativeWindow;
-}
-
-#endif /* !defined(__linux__) && !defined(_WIN32) */
+#endif /* !defined(__linux__) && !defined(_WIN32) && \
+          !XPLATFORMBACKINGSTORE_SOFTWARE_ON */
 
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */

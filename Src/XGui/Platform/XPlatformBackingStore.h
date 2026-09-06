@@ -1,24 +1,29 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPlatformBackingStore.h
  * @brief      XPlatformBackingStore 平台后备存储契约（对标 Qt 6.8
  *             QPlatformBackingStore）。
  * @details    XPlatformBackingStore 是 XBackingStore 公共类与 Drive 平台
  *             后端之间的最小平台边界，采用「不透明句柄 + 纯函数」形式：
- *             - 句柄类型 XPlatformBackingStore 为不透明结构，具体字段只在
- *               Drive 下各平台后端的同名实现文件中定义，公共层不得访问；
- *             - 首字母为"平台后端提供"，XBackingStore 只通过本头文件声明
- *               的函数操作句柄，不关心句柄内部是软件缓冲、GDI DIB 还是
- *               其它硬件表面；
+ *             - 全部软件缓冲逻辑（双缓冲 XImage、resize/滚动/静态内容/
+ *               tile 遍历/外部缓冲）在公共层共享实现
+ *               （Src/XGui/Platform/XPlatformBackingStore.c）一次性完成，
+ *               句柄类型 XPlatformBackingStore 为不透明结构，公共层不得
+ *               直接访问其字段；
+ *             - 平台差异收敛为 XPlatformBackingStoreDriver_* 提交钩子
+ *               （见文件尾），Drive 后端只需提供这几个钩子，不再重复
+ *               维护缓冲逻辑：Windows 用 GDI DIB + BitBlt、Linux 用
+ *               XPlatformNativeWindow_present（XPutImage）、嵌入式软件
+ *               模板经 present 回调交给显示驱动；
  *             - paintDevice() 直接返回内部 XImage（可被 XPainter 以
  *               XPainter_begin_image 绘制），toImage() 返回其深拷贝；
- *             - flush() 把脏矩形区域提交到窗口，Windows 后端在持有目标
- *               设备环境的条件下经 GDI BitBlt 合成，Linux 后端与嵌入式
- *               通过可选 present 回调把区域交给显示驱动；软件结果一致；
+ *             - flush() 把脏矩形区域提交到窗口，present 回调（显示驱动）
+ *               由公共层统一深拷贝触发；
  *             - resize() 重建缓冲；scroll() 做缓冲内快速位移；
  *               beginPaint()/endPaint()/setStaticContents()/
  *               staticContents()/hasStaticContents() 与 Qt 语义一致。
  *             公共实现/头文件不包含任何平台 API 头；平台差异全部隔离在
- *             Drive/Posix/Graphics、Drive/windows/Graphics 与
+ *             Drive/Posix/Graphics、Drive/windows/Graphics、
+ *             Drive/Software/Graphics（可复用软件模板）与
  *             Drive/Unsupported/Graphics 中，确保嵌入式可裁剪、可链接。
  * @note       模块开关 XBACKINGSTORE_ON 与 XPLATFORMBACKINGSTORE_ON 定义于
  *             XGuiConfig.h；任一处 0 时本契约整体裁剪，XBackingStore
@@ -266,6 +271,75 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
 
 /** @brief 计算指定尺寸所需的单块整屏 ARGB32 缓冲字节数。 */
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
+
+/* ==================== 平台驱动契约（Drive 平台后端提供） ==================== */
+
+/**
+ * @brief      创建平台提交状态（对标 XPlatformGraphicsDriver_* 的 opaque
+ *             nativeState 惯例）。公共层把全部软件缓冲逻辑收敛在本模块，
+ *             平台后端只负责「把脏区提交到真实显示目标」：
+ *             - Posix/X11：present 经 XPlatformNativeWindow_present
+ *               （XPutImage）上屏；
+ *             - Win32/GDI：把脏矩形同步进自顶向下 DIB 后 BitBlt /
+ *               SetDIBitsToDevice 合成到窗口 DC；
+ *             - 嵌入式软件模板（XPLATFORMBACKINGSTORE_SOFTWARE_ON）：
+ *               提交完全交给公共层统一触发的 present 回调（显示驱动）；
+ *             - Unsupported 存根：create 返回 false，XBackingStore 保持
+ *               空后端（公共 create 返回 NULL）。
+ * @param      outState 输出平台提交状态（由 Driver 拥有，经 destroy 释放）；
+ *                      失败/不支持时置 NULL 并返回 false。
+ * @param      window   绑定窗口借用指针；可为 NULL。
+ * @return     true 平台可提供提交能力；false 保持空后端。
+ */
+bool XPlatformBackingStoreDriver_create(void** outState, XWindow* window);
+
+/** @brief 释放平台提交状态（create 成功返回的 nativeState；可 NULL/重复安全）。 */
+void XPlatformBackingStoreDriver_destroy(void* nativeState);
+
+/**
+ * @brief      登记原生目标窗口（对标 setNativeTargetWindow）。
+ * @details    Win32 后端把它视为 HWND，flush 时作为 BitBlt 目标；其它
+ *             平台仅记录借用指针。nativeWindow 为 NULL 表示清除。
+ */
+void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
+                                                 void* nativeWindow);
+
+/**
+ * @brief      通知平台缓冲尺寸已重建（resize 后调用）。
+ * @details    Win32 后端按新尺寸重建 DIB/内存 DC；软件/Posix 后端 no-op。
+ * @param      width/height 当前缓冲尺寸（PARTIAL 模式为 tile 缓冲尺寸）；
+ *             非正尺寸表示缓冲已清空。
+ */
+void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
+                                                int width, int height);
+
+/**
+ * @brief      把 flush 的脏区提交到真实显示目标。
+ * @details    由公共层在完成脏区合并（含 FULL 整屏）与双缓冲同步后调用；
+ *             平台后端只需把 image 的 region 区域上屏，不必处理缓冲维护。
+ *             present 回调（显示驱动）由公共层统一在返回后深拷贝触发。
+ * @param      nativeState 平台提交状态。
+ * @param      window      目标窗口借用指针；可为 NULL（纯离屏）。
+ * @param      image       当前软件帧缓冲（ARGB32 预乘）。
+ * @param      region      脏区集合（窗口坐标，非空）。
+ * @param      offset      缓冲相对窗口的偏移；可为 NULL 按零点处理。
+ * @param      full        是否为 FULL 整屏提交模式。
+ */
+void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
+                                         const XImage* image,
+                                         const XRegion* region,
+                                         const XPoint* offset, bool full);
+
+/**
+ * @brief      提交当前 tile buffer（flushTile 用）。
+ * @details    tile 的源图像坐标始终从 (0,0) 起，offset 即 tile 原点；
+ *             平台后端经 XPlatformNativeWindow_present 或等效路径上屏。
+ */
+void XPlatformBackingStoreDriver_presentTile(void* nativeState,
+                                             XWindow* window,
+                                             const XImage* image,
+                                             const XRegion* region,
+                                             const XPoint* offset);
 
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 

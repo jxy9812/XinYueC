@@ -271,15 +271,24 @@ static bool xpwn_getClientGeometry(HWND hwnd, XRect* out)
 }
 
 /** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
-static void xpwn_adjustWindowRect(const XRect* geometry, RECT* rc)
+static DWORD xpwn_windowStyle(const XWindow* window)
 {
+    if (window && XWindow_type(window) == XWindowType_Popup)
+        return WS_POPUP;
+    return WS_OVERLAPPEDWINDOW;
+}
+
+static void xpwn_adjustWindowRect(const XWindow* window,
+                                  const XRect* geometry, RECT* rc)
+{
+    DWORD style;
     if (!geometry || !rc) return;
     rc->left = geometry->x;
     rc->top = geometry->y;
     rc->right = geometry->x + geometry->width;
     rc->bottom = geometry->y + geometry->height;
-    /* AdjustWindowRectEx 外扩窗口矩形，保证客户区尺寸等于目标几何。 */
-    AdjustWindowRectEx(rc, WS_OVERLAPPEDWINDOW, FALSE, 0);
+    style = xpwn_windowStyle(window);
+    AdjustWindowRectEx(rc, style, FALSE, 0);
 }
 
 /** @brief 把矩形裁剪到图像范围；空矩形返回 false。 */
@@ -895,9 +904,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     geom = XWindow_geometry(window);
     w = geom.width < 1 ? 1 : geom.width;
     h = geom.height < 1 ? 1 : geom.height;
-    xpwn_adjustWindowRect(&geom, &rc);
+    xpwn_adjustWindowRect(window, &geom, &rc);
     hwnd = CreateWindowExW(0, XPWN_CLASS_NAME, L"",
-                           WS_OVERLAPPEDWINDOW,
+                           xpwn_windowStyle(window),
                            rc.left, rc.top,
                            rc.right - rc.left, rc.bottom - rc.top,
                            NULL, NULL, g_xpwnInstance, window);
@@ -986,7 +995,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
         geometry->width == entry->m_client.width &&
         geometry->height == entry->m_client.height)
         return true;
-    xpwn_adjustWindowRect(geometry, &rc);
+    xpwn_adjustWindowRect(window, geometry, &rc);
     SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);

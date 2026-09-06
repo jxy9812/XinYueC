@@ -19651,6 +19651,224 @@ static EventLoopWin* EventLoopWin_create(void)
     return self;
 }
 
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+/** @brief 共享软件核心 present 回调探测数据（共享核心统一深拷贝触发）。 */
+static int g_backingStoreCorePresentCount = 0;
+static int g_backingStoreCorePresentReentered = 0;
+static XRect g_backingStoreCorePresentRect;
+static XPoint g_backingStoreCorePresentOffset;
+static void gui_app_probe_backingStoreCorePresent(
+        void* userData, XPlatformBackingStore* store,
+        const XRegion* flushedRegion, const XPoint* offset)
+{
+    (void)userData;
+    ++g_backingStoreCorePresentCount;
+    if (flushedRegion && flushedRegion->count > 0)
+        g_backingStoreCorePresentRect = flushedRegion->rects[0];
+    else
+        XRect_init(&g_backingStoreCorePresentRect, 0, 0, 0, 0);
+    if (offset)
+        g_backingStoreCorePresentOffset = *offset;
+    else
+        XPoint_init(&g_backingStoreCorePresentOffset, 0, 0);
+    /* 深拷贝防重入验证：回调内再次 flush 不应破坏本次回调收到的区域。 */
+    if (!g_backingStoreCorePresentReentered)
+    {
+        XRect small;
+        XRegion inner;
+        g_backingStoreCorePresentReentered = 1;
+        XRect_init(&small, 0, 0, 1, 1);
+        XRegion_init(&inner);
+        XRegion_addRect(&inner, &small);
+        XPlatformBackingStore_flush(store, NULL, &inner, NULL);
+        XRegion_deinit(&inner);
+        g_backingStoreCorePresentReentered = 0;
+    }
+}
+
+/**
+ * @brief 共享软件核心契约（XPlatformBackingStore.c 统一实现后新增）。
+ * @details 覆盖 resize 保留左上重叠、外部缓冲绑定语义、静态内容平台裁剪、
+ *          flush 脏区合并与 present 回调深拷贝防重入、offset 传递、
+ *          resize(0,0) 清空缓冲；FULL 模式另行断言整屏提交。
+ */
+static void test_backingstore_shared_software_core(void)
+{
+    char argv0[] = "xgui_test";
+    char* argv[] = { argv0, NULL };
+    int argc = 1;
+    XGuiApplication* app;
+    XPlatformNativeInterface* native;
+    XPlatformIntegration* gpi;
+    XPlatformBackingStore* gpbs;
+    XSize size;
+    XImage* dev;
+    XRegion region;
+    XRegion clipped;
+    XRect dirty1;
+    XRect dirty2;
+    XRect fullRect;
+    XPoint offset;
+    size_t required;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    unsigned char extBuffer1[512];
+    unsigned char extBuffer2[512];
+#else
+    unsigned char extBuffer1[512];
+#endif
+
+    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
+    expect_true(app != NULL, "共享核心测试：创建应用");
+    native = XGuiApplication_platformNativeInterface();
+    gpi = native ? XPlatformNativeInterface_integration(native) : NULL;
+    gpbs = gpi ? XPlatformIntegration_createPlatformBackingStore(gpi, NULL)
+               : NULL;
+    expect_true(gpbs != NULL, "共享核心测试：创建平台后端");
+
+    /* ---- A. resize 保留左上重叠内容（DIRECT/FULL；PARTIAL 为 tile 语义） ---- */
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    XSize_init(&size, 4, 4);
+    XPlatformBackingStore_resize(gpbs, &size);
+    dev = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev && XImage_width(dev) == 4 && XImage_height(dev) == 4,
+                "共享核心：resize 4x4 有效");
+    if (dev) XImage_fillRect(dev, &(XRect){1, 1, 1, 1}, 0xff112233u);
+    XSize_init(&size, 3, 3);
+    XPlatformBackingStore_resize(gpbs, &size);
+    dev = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev && XImage_width(dev) == 3 && XImage_height(dev) == 3 &&
+                XImage_pixel(dev, 1, 1) == 0xff112233u,
+                "共享核心：resize 缩小保留左上内容");
+    XSize_init(&size, 6, 6);
+    XPlatformBackingStore_resize(gpbs, &size);
+    dev = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev && XImage_pixel(dev, 1, 1) == 0xff112233u &&
+                XImage_pixel(dev, 5, 5) == 0,
+                "共享核心：resize 扩大保留旧内容且新区域清零");
+#endif /* !PARTIAL */
+
+    /* ---- B. 外部缓冲绑定语义（幂等 / 缺 buffer2 / 容量 / 变更拒绝） ---- */
+    XSize_init(&size, 3, 4);
+    XPlatformBackingStore_resize(gpbs, &size);
+    required = XPlatformBackingStore_requiredBufferSize(&size);
+    expect_true(required > 0 && required <= sizeof(extBuffer1),
+                "共享核心：requiredBufferSize 有效且测试缓冲足够");
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    expect_true(!XPlatformBackingStore_setBuffers(gpbs, extBuffer1, NULL,
+                                                  sizeof(extBuffer1)),
+                "共享核心：双缓冲缺 buffer2 拒绝");
+    expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1, extBuffer2,
+                                                 sizeof(extBuffer1)),
+                "共享核心：双缓冲登记成功");
+    expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1, extBuffer2,
+                                                 sizeof(extBuffer1)),
+                "共享核心：相同参数幂等重复登记成功");
+    expect_true(!XPlatformBackingStore_setBuffers(gpbs, extBuffer1, extBuffer2,
+                                                  sizeof(extBuffer1) + 1),
+                "共享核心：不同参数重复绑定拒绝");
+#else
+    expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1, NULL,
+                                                 sizeof(extBuffer1)),
+                "共享核心：单缓冲登记成功");
+    expect_true(XPlatformBackingStore_setBuffers(gpbs, extBuffer1, NULL,
+                                                 sizeof(extBuffer1)),
+                "共享核心：相同参数幂等重复登记成功");
+    expect_true(!XPlatformBackingStore_setBuffers(gpbs, extBuffer1, NULL,
+                                                  sizeof(extBuffer1) + 1),
+                "共享核心：不同参数重复绑定拒绝");
+#endif
+    dev = XPlatformBackingStore_paintDevice(gpbs);
+    expect_true(dev && XImage_constBits(dev) == (const uint8_t*)extBuffer1,
+                "共享核心：paintDevice 使用调用方提供的缓冲");
+
+    /* ---- C. 静态内容平台提示裁剪（超出缓冲的部分被裁剪） ---- */
+    XRegion_init(&region);
+    XRect_init(&fullRect, -5, -5, 20, 20);
+    XRegion_addRect(&region, &fullRect);
+    XPlatformBackingStore_setStaticContents(gpbs, &region);
+    XRegion_deinit(&region);
+    clipped = XPlatformBackingStore_staticContents(gpbs);
+    expect_true(clipped.count >= 1 && clipped.rects[0].x >= 0 &&
+                clipped.rects[0].y >= 0 &&
+                clipped.rects[0].width <= 3 && clipped.rects[0].height <= 4,
+                "共享核心：静态内容被裁剪到缓冲范围内");
+    XRegion_deinit(&clipped);
+
+    /* ---- E. flush 脏区合并 + present 回调深拷贝防重入 ---- */
+    XRect_init(&dirty1, 1, 1, 1, 1);
+    XRect_init(&dirty2, 2, 2, 1, 1);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &dirty1);
+    XRegion_addRect(&region, &dirty2);
+    g_backingStoreCorePresentCount = 0;
+    g_backingStoreCorePresentReentered = 0;
+    XRect_init(&g_backingStoreCorePresentRect, 0, 0, 0, 0);
+    XPlatformBackingStore_setPresentCallback(
+        gpbs, gui_app_probe_backingStoreCorePresent, NULL);
+    XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
+    /* 外层一次 + 回调内重入一次；重入调用不破坏外层回调收到的区域。
+       FULL 模式回调收到整屏矩形；DIRECT/PARTIAL 收到脏区矩形。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+    expect_true(g_backingStoreCorePresentCount == 2 &&
+                g_backingStoreCorePresentRect.width == 3 &&
+                g_backingStoreCorePresentRect.height == 4,
+                "共享核心：FULL 下 flush 回调收到整屏且深拷贝防重入");
+#else
+    expect_true(g_backingStoreCorePresentCount == 2 &&
+                g_backingStoreCorePresentRect.width == 1 &&
+                g_backingStoreCorePresentRect.height == 1,
+                "共享核心：flush 触发回调且深拷贝防重入");
+#endif
+    XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
+    XRegion_deinit(&region);
+
+    /* ---- D. FULL 模式：小脏区仍整屏提交 ---- */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+    XRect_init(&dirty1, 0, 0, 1, 1);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &dirty1);
+    g_backingStoreCorePresentCount = 0;
+    g_backingStoreCorePresentReentered = 1; /* FULL 下避免重入污染断言 */
+    XPlatformBackingStore_setPresentCallback(
+        gpbs, gui_app_probe_backingStoreCorePresent, NULL);
+    XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
+    expect_true(g_backingStoreCorePresentCount == 1 &&
+                g_backingStoreCorePresentRect.width == 3 &&
+                g_backingStoreCorePresentRect.height == 4,
+                "共享核心：FULL 模式 flush 小脏区仍整屏提交");
+    XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
+    g_backingStoreCorePresentReentered = 0;
+    XRegion_deinit(&region);
+#endif /* FULL */
+
+    /* ---- offset 传递：回调收到缓冲区相对窗口偏移 ---- */
+    XRect_init(&dirty1, 0, 0, 1, 1);
+    XRegion_init(&region);
+    XRegion_addRect(&region, &dirty1);
+    XPoint_init(&offset, 7, 9);
+    g_backingStoreCorePresentCount = 0;
+    g_backingStoreCorePresentReentered = 1;
+    XPlatformBackingStore_setPresentCallback(
+        gpbs, gui_app_probe_backingStoreCorePresent, NULL);
+    XPlatformBackingStore_flush(gpbs, NULL, &region, &offset);
+    expect_true(g_backingStoreCorePresentOffset.x == 7 &&
+                g_backingStoreCorePresentOffset.y == 9,
+                "共享核心：flush 回调收到 offset");
+    XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
+    g_backingStoreCorePresentReentered = 0;
+    XRegion_deinit(&region);
+
+    /* ---- G. resize(0,0) 清空缓冲 ---- */
+    XSize_init(&size, 0, 0);
+    XPlatformBackingStore_resize(gpbs, &size);
+    expect_true(XPlatformBackingStore_paintDevice(gpbs) == NULL,
+                "共享核心：resize 0x0 清空缓冲");
+
+    XPlatformBackingStore_delete(gpbs);
+    XGuiApplication_delete_base(app);
+}
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
+
 static void test_window_event_payloads(void)
 {
     XSize size = { 4, 3 };
@@ -24334,6 +24552,9 @@ int main(void)
 #if XGUIAPPLICATION_ON
     test_gui_application_contract();
 #endif /* XGUIAPPLICATION_ON */
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+    test_backingstore_shared_software_core();
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 #if XWIDGET_ON
     test_widget_contract();
     test_widget_zorder_contract();

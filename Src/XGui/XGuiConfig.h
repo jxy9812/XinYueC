@@ -73,6 +73,13 @@
 #ifndef XPLATFORMBACKINGSTORE_ON
 #define XPLATFORMBACKINGSTORE_ON 1
 #endif
+/* 可复用软件后备存储模板开关（对标 Drive/Unsupported 存根的全功能替代）：
+ * 置 1 时在非 Linux/Windows 平台编译 Drive/Software/Graphics/
+ * XPlatformBackingStore_software.c，提供完整软件缓冲 + present 回调，
+ * 新平台只需登记显示驱动回调即可上屏；置 0 时保持 Unsupported 空后端。 */
+#ifndef XPLATFORMBACKINGSTORE_SOFTWARE_ON
+#define XPLATFORMBACKINGSTORE_SOFTWARE_ON 0
+#endif
 /* 后备存储模式在下方即需根据原生窗口能力选择，因此默认值必须先于
  * 该选择定义；调用方通过编译选项预先置 0 时仍可裁剪原生窗口路径。 */
 #ifndef XPLATFORMNATIVEWINDOW_ON

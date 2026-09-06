@@ -1,10 +1,12 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XBackingStore.h
  * @brief      XBackingStore 后备存储类（对标 Qt 6.8 QBackingStore，实现
  *             全部公开 API）。
  * @details    XBackingStore 继承 XObject，是 XWindow 的离屏后备帧缓冲：
  *             - 构造时经 XGuiApplication 平台集成层创建平台后端
- *               （XPlatformBackingStore，实现位于 Drive 平台目录）；
+ *               （XPlatformBackingStore：软件缓冲主体在公共层
+ *               Src/XGui/Platform/XPlatformBackingStore.c 实现，Drive
+ *               平台目录只提供 XPlatformBackingStoreDriver_* 提交钩子）；
  *             - paintDevice() 返回当前 XImage 软件缓冲，配合
  *               XPainter_begin_image 可直接绘制，无需任何平台图形 API；
  *             - resize() 记录逻辑尺寸并请求平台重建缓冲；beginPaint()/
