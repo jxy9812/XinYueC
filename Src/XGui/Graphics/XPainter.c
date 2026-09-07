@@ -65,7 +65,18 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
                                     uint32_t cp, uint32_t color, float scale,
                                     XFontOutlineGlyphMetrics* outMetrics,
                                     XPainterPath* reusablePath);
+static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
+                                              int baselineY, uint32_t cp,
+                                              uint32_t color, float scale,
+                                              XFontOutlineGlyphMetrics*
+                                                  outMetrics);
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+/** @brief outline 字形 GPU 快速路径声明（定义见 XPAINTER_PATH_ON 段）。 */
+static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
+                                       uint32_t cp, uint32_t color, float scale,
+                                       XFontOutlineGlyphMetrics* outMetrics);
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 /* ========== 内部常量 ========== */
 
@@ -199,6 +210,48 @@ static void painterGpuFallback(XPainter* self)
 }
 
 #define XPAINTER_GPU_FALLBACK(self) painterGpuFallback(self)
+
+#if XPAINTER_CLIP_ON
+/**
+ * @brief      把绘制器状态裁剪同步到 GPU scissor。
+ * @details    单矩形裁剪（或单矩形 region）映射为 scissor；多矩形 region
+ *             与空裁剪矩形超出 GPU 快速路径能力，返回 false 由调用方整帧
+ *             降级软件。无裁剪时清除 scissor。
+ * @return     true 已同步；false 裁剪状态不受支持（调用方应降级）。
+ */
+static bool painterGpuApplyStateClip(XPainter* self)
+{
+    bool hasClip;
+    XRect clipDevice;
+    if (!self || !self->m_gpuBackend) return false;
+    hasClip = self->m_state.m_hasClip;
+#if XPAINTER_CLIP_REGION_ON
+    if (hasClip && !XRegion_isEmpty(&self->m_state.m_clipRegion) &&
+        self->m_state.m_clipRegion.count > 1)
+        return false; /* 多矩形区域裁剪：GPU 原语暂不支持 → 软件。 */
+#endif /* XPAINTER_CLIP_REGION_ON */
+    if (hasClip && (self->m_state.m_clipRect.width <= 0 ||
+                    self->m_state.m_clipRect.height <= 0))
+        return false;
+    clipDevice = self->m_state.m_clipRect;
+#if XPAINTER_CLIP_REGION_ON
+    if (hasClip && self->m_state.m_clipRegion.count == 1)
+        clipDevice = self->m_state.m_clipRegion.rects[0];
+#endif /* XPAINTER_CLIP_REGION_ON */
+    XGpuRenderBackend_setClipRect(self->m_gpuBackend,
+                                  hasClip ? &clipDevice : NULL);
+    return true;
+}
+#else /* !XPAINTER_CLIP_ON */
+/** @brief 无裁剪能力构建：GPU 原语始终清除 scissor。 */
+static bool painterGpuApplyStateClip(XPainter* self)
+{
+    if (!self || !self->m_gpuBackend) return false;
+    XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
+    return true;
+}
+#endif /* XPAINTER_CLIP_ON */
+
 #else /* !(XPLATFORMINTEGRATION_ON && XGPU_ON) */
 #define XPAINTER_GPU_FALLBACK(self) ((void)(self))
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -2642,6 +2695,15 @@ typedef struct PainterPathFillContour
     bool m_closed;
 } PainterPathFillContour;
 
+static int painter8x16FloorInt(float value);
+static int painter8x16CeilInt(float value);
+static bool painterGlyphContoursAlphaCoverage(
+    const PainterPathFillContour* contours, int contourCount, float offsetX,
+    float offsetY, uint8_t* alpha, int width, int height, int subdiv);
+static bool painterFillContoursAntialiased(XPainter* self,
+    const PainterPathFillContour* contours, int contourCount,
+    XPainterFillRule fillRule, uint32_t brushColor, int subdiv);
+
 /** @brief 按填充规则把排序后的交点转换为成对填充区间。 */
 static int painterBuildFillSpans(XPainterFillCrossing* crossings, int count,
                                  XPainterFillRule rule, float* spans)
@@ -2822,7 +2884,6 @@ static bool painterScanFillDevice(XPainter* self, int n,
                                   uint32_t color, bool gradient,
                                   XPainterFillRule fillRule)
 {
-    XPAINTER_GPU_FALLBACK(self);
     XImageTransform transform;
     float* dtx;
     float* dty;
@@ -2883,6 +2944,33 @@ static bool painterScanFillDevice(XPainter* self, int n,
         if (dty[i] < minY) minY = dty[i];
         if (dty[i] > maxY) maxY = dty[i];
     }
+#if XPAINTER_PATH_ON
+    /* AA 提示开启（或 GPU 会话激活）时：设备坐标顶点已就绪，走灰度
+       覆盖图路径——GPU 经 drawAlphaBitmap 提交 FBO，软件经 putPixel
+       混合（含裁剪）。非 AA 的 GPU 帧保持既有整帧降级语义。 */
+    if (!gradient)
+    {
+        bool antialias = false;
+#if XPAINTER_RENDERHINT_ON
+        antialias = (self->m_state.m_renderHints &
+                     XPainterRenderHint_Antialiasing) != 0u;
+#endif /* XPAINTER_RENDERHINT_ON */
+        if (antialias || self->m_gpuActive)
+        {
+            PainterPathFillContour contour;
+            bool filled;
+            contour.m_xs = dtx;
+            contour.m_ys = dty;
+            contour.m_count = n;
+            contour.m_closed = true;
+            filled = painterFillContoursAntialiased(
+                self, &contour, 1, fillRule, color, antialias ? 4 : 1);
+            XFree_Hybrid(heapStorage);
+            return filled;
+        }
+    }
+#endif /* XPAINTER_PATH_ON */
+    XPAINTER_GPU_FALLBACK(self);
     if (!painterSpanPixelRange(minX, maxX, &px0, &px1) ||
         !painterSpanPixelRange(minY, maxY, &py0, &py1))
         goto done;
@@ -3081,6 +3169,125 @@ static bool painterFillPolygonShape(XPainter* self, int n,
  *             实心多边形填上。这里保留每个子路径的边界，但在扫描线中
  *             合并所有交点，从而正确保留字母的 counter（内部空洞）。
  */
+#if XPAINTER_PATH_ON
+/**
+ * @brief      抗锯齿几何填充：设备坐标子路径 → 灰度覆盖图 → 混合/上屏。
+ * @details    与字形灰度共用 `painterGlyphContoursAlphaCoverage`（4x4
+ *             面积子采样，subdiv=1 时为二值覆盖）。软件路径逐像素经
+ *             putPixel 混合（裁剪/合成模式由既有路径处理）；GPU 会话
+ *             活动时经 `XGpuRenderBackend_drawAlphaBitmap` 提交到 FBO
+ *             ——修复 GPU 激活期间 fillPath/polygon 直写 m_image 导致
+ *             的像素丢失（与文本丢失同根因）。几何不进字形图集（形状
+ *             重复率低且尺寸大，直传上传）。
+ * @param      contours 设备坐标子路径数组（调用方已完成变换映射）。
+ * @param      subdiv 每轴子采样数（Antialiasing 时 4，否则 1）。
+ * @return     成功返回 true；分配失败返回 false（调用方回退二值）。
+ */
+static int painter8x16FloorInt(float value);
+static int painter8x16CeilInt(float value);
+static bool painterFillContoursAntialiased(XPainter* self,
+    const PainterPathFillContour* contours, int contourCount,
+    XPainterFillRule fillRule, uint32_t brushColor, int subdiv)
+{
+    float minX = 0.0f;
+    float minY = 0.0f;
+    float maxX = 0.0f;
+    float maxY = 0.0f;
+    bool haveBounds = false;
+    int left;
+    int top;
+    int width;
+    int height;
+    int c;
+    int i;
+    uint8_t* alpha = NULL;
+    uint32_t ink;
+    bool ok;
+    (void)fillRule;
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            float xValue = contour->m_xs[i];
+            float yValue = contour->m_ys[i];
+            if (!isfinite(xValue) || !isfinite(yValue))
+                return false;
+            if (!haveBounds)
+            {
+                minX = maxX = xValue;
+                minY = maxY = yValue;
+                haveBounds = true;
+            }
+            else
+            {
+                if (xValue < minX) minX = xValue;
+                if (xValue > maxX) maxX = xValue;
+                if (yValue < minY) minY = yValue;
+                if (yValue > maxY) maxY = yValue;
+            }
+        }
+    }
+    if (!haveBounds) return true;
+    left = painter8x16FloorInt(minX);
+    top = painter8x16FloorInt(minY);
+    width = painter8x16CeilInt(maxX) - left;
+    height = painter8x16CeilInt(maxY) - top;
+    if (width <= 0 || height <= 0) return true;
+    if ((size_t)width > SIZE_MAX / (size_t)height) return false;
+    alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+    if (!alpha) return false;
+    memset(alpha, 0, (size_t)width * (size_t)height);
+    ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
+                                           -(float)left, -(float)top,
+                                           alpha, width, height, subdiv);
+    if (!ok)
+    {
+        XFree_System(alpha);
+        return false;
+    }
+    ink = painterApplyOpacity(brushColor, self->m_state.m_opacity);
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (self->m_gpuActive)
+    {
+        ok = XGpuRenderBackend_drawAlphaBitmap(
+            self->m_gpuBackend, alpha, width, height, width,
+            left, top, ink, 1.0f,
+            self->m_state.m_compositionMode ==
+                XPainterCompositionMode_SourceOver);
+        XFree_System(alpha);
+        return ok;
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    {
+        int row;
+        for (row = 0; row < height; ++row)
+        {
+            int column;
+            for (column = 0; column < width; ++column)
+            {
+                unsigned coverage = alpha[(size_t)row * (size_t)width +
+                                          (size_t)column];
+                uint32_t pixel;
+                if (coverage == 0u) continue;
+                if (coverage >= 255u) pixel = ink;
+                else
+                {
+                    pixel = (ink & 0x00ffffffu) |
+                            ((uint32_t)((coverage *
+                                ((ink >> 24) & 0xffu) + 127u) / 255u)
+                             << 24);
+                }
+                painterRaster_putPixel(self, left + column, top + row,
+                                       pixel);
+            }
+        }
+    }
+    XFree_System(alpha);
+    return true;
+}
+#endif /* XPAINTER_PATH_ON */
+
 static bool painterFillPathContours(XPainter* self,
                                    const PainterPathFillContour* contours,
                                    int contourCount,
@@ -3210,6 +3417,25 @@ static bool painterFillPathContours(XPainter* self,
             pointOffset += (size_t)source->m_count;
         }
     }
+
+#if XPAINTER_PATH_ON
+    /* 抗锯齿（Antialiasing 提示）或 GPU 会话激活时的填充：光栅化到
+       灰度/二值覆盖图再混合/上屏——GPU 激活时直接 putPixel 会写进
+       m_image 而丢失（帧内容在 FBO）。gradient 笔刷逐像素取色，维持
+       既有直画路径（边界注明）。 */
+    if (device && !gradient)
+    {
+        bool antialias = false;
+#if XPAINTER_RENDERHINT_ON
+        antialias = (self->m_state.m_renderHints &
+                     XPainterRenderHint_Antialiasing) != 0u;
+#endif /* XPAINTER_RENDERHINT_ON */
+        if (antialias || self->m_gpuActive)
+            return painterFillContoursAntialiased(
+                self, workContours, contourCount, fillRule, brushColor,
+                antialias ? 4 : 1);
+    }
+#endif /* XPAINTER_PATH_ON */
 
     if (!haveBounds || !painterSpanPixelRange(minY, maxY, &y0, &y1))
         goto done;
@@ -3366,6 +3592,249 @@ fail:
     return false;
 }
 
+#if XPAINTER_PATH_ON
+/**
+ * @brief      把已展平的路径子路径光栅化为 8 位 alpha 覆盖图。
+ * @details    与 painterFillPathContours 的设备分支使用同一扫描线求交、
+ *             排序与奇偶成对填充算法，保证 GPU 字形覆盖与软件 fillPath
+ *             输出一致；span 覆盖像素写 255，其余保持 0（二值覆盖）。
+ *             该函数只写调用方提供的缓冲，不触碰任何绘制器状态，因此
+ *             可在 GPU 会话活动期间安全使用。
+ * @param      contours 已展平子路径数组（fill/stroke 复合填充同源数据）。
+ * @param      contourCount 子路径数量。
+ * @param      offsetX/offsetY 路径坐标到 alpha 图坐标的平移量。
+ * @param      alpha 目标缓冲（width*height 字节，由调用方分配并清零）。
+ * @return     成功返回 true；参数非法或内存分配失败返回 false。
+ */
+static bool painterGlyphContoursAlpha(const PainterPathFillContour* contours,
+                                      int contourCount,
+                                      float offsetX, float offsetY,
+                                      uint8_t* alpha, int width, int height)
+{
+    return painterGlyphContoursAlphaCoverage(contours, contourCount,
+                                             offsetX, offsetY, alpha,
+                                             width, height, 1);
+}
+
+/**
+ * @brief      路径覆盖光栅化：二值（subdiv=1）或 NxN 面积子采样灰度。
+ * @details    每个像素划分 subdiv x subdiv 个子采样点；对每条子扫描线
+ *             求交、排序并按奇偶规则成对展开，统计落在填充区间内的
+ *             子点数，覆盖率线性映射为 8 位灰度。subdiv=1 时与既有
+ *             二值行为逐字节一致（像素中心单点判定）；subdiv=4 即
+ *             抗锯齿灰度（与 GPU 图集缓存同源，软/GPU 逐像素一致）。
+ *             该函数只写调用方提供的缓冲，不触碰任何绘制器状态。
+ * @param      contours 已展平子路径数组。
+ * @param      contourCount 子路径数量。
+ * @param      offsetX/offsetY 路径坐标到 alpha 图坐标的平移量。
+ * @param      alpha 目标缓冲（width*height 字节，由调用方分配并清零）。
+ * @param      subdiv 每轴子采样数（>=1）。
+ * @return     成功返回 true；参数非法或内存分配失败返回 false。
+ */
+static bool painterGlyphContoursAlphaCoverage(
+    const PainterPathFillContour* contours, int contourCount, float offsetX,
+    float offsetY, uint8_t* alpha, int width, int height, int subdiv)
+{
+    PainterPathFillContour* workContours = NULL;
+    XPainterFillCrossing* crossings = NULL;
+    float* spans = NULL;
+    float* mappedXs = NULL;
+    float* mappedYs = NULL;
+    unsigned* counts = NULL;
+    size_t totalPoints = 0;
+    size_t pointBytes;
+    size_t viewBytes;
+    size_t crossingBytes;
+    size_t spanBytes;
+    float minY = 0.0f;
+    float maxY = 0.0f;
+    int y0;
+    int y1;
+    int c;
+    int i;
+    int py;
+    bool haveBounds = false;
+
+    if (!contours || contourCount <= 0 || !alpha ||
+        width <= 0 || height <= 0 || subdiv < 1)
+        return false;
+    viewBytes = (size_t)contourCount * sizeof(*workContours);
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        if (!contour->m_xs || !contour->m_ys || contour->m_count < 0)
+            return false;
+        if ((size_t)contour->m_count > ((size_t)-1) - totalPoints)
+            return false;
+        totalPoints += (size_t)contour->m_count;
+    }
+    if (totalPoints < 3 ||
+        totalPoints > ((size_t)-1) / sizeof(*crossings) ||
+        totalPoints > ((size_t)-1) / sizeof(*spans))
+        return true; /* 退化路径：无有效覆盖，缓冲保持清零。 */
+    crossingBytes = totalPoints * sizeof(*crossings);
+    spanBytes = totalPoints * sizeof(*spans);
+    if (totalPoints > ((size_t)-1) / (sizeof(float) * 2u))
+        return false;
+    pointBytes = totalPoints * sizeof(float) * 2u;
+    workContours = (PainterPathFillContour*)XMalloc_Hybrid(viewBytes);
+    crossings = (XPainterFillCrossing*)XMalloc_Hybrid(crossingBytes);
+    spans = (float*)XMalloc_Hybrid(spanBytes);
+    mappedXs = (float*)XMalloc_Hybrid(pointBytes);
+    counts = (unsigned*)XMalloc_Hybrid((size_t)width * sizeof(*counts));
+    if (!workContours || !crossings || !spans || !mappedXs || !counts)
+        goto fail;
+    mappedYs = mappedXs + totalPoints;
+    {
+        float* writeXs = mappedXs;
+        float* writeYs = mappedYs;
+        for (c = 0; c < contourCount; ++c)
+        {
+            const PainterPathFillContour* source = &contours[c];
+            PainterPathFillContour* target = &workContours[c];
+            target->m_count = source->m_count;
+            target->m_closed = source->m_closed;
+            target->m_xs = writeXs;
+            target->m_ys = writeYs;
+            for (i = 0; i < source->m_count; ++i)
+            {
+                float x = source->m_xs[i] + offsetX;
+                float y = source->m_ys[i] + offsetY;
+                if (!isfinite(x) || !isfinite(y))
+                    goto fail;
+                writeXs[i] = x;
+                writeYs[i] = y;
+                if (!haveBounds)
+                {
+                    minY = maxY = y;
+                    haveBounds = true;
+                }
+                else
+                {
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+            writeXs += source->m_count;
+            writeYs += source->m_count;
+        }
+    }
+    if (!haveBounds || !painterSpanPixelRange(minY - 0.5f, maxY + 0.5f,
+                                              &y0, &y1))
+        goto done;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= height) y1 = height - 1;
+    for (py = y0; py <= y1; ++py)
+    {
+        int sub;
+        int pxFirst = width;
+        int pxLast = -1;
+        memset(counts, 0, (size_t)width * sizeof(*counts));
+        for (sub = 0; sub < subdiv; ++sub)
+        {
+            float yc = (float)py + ((float)sub + 0.5f) / (float)subdiv -
+                       0.5f;
+            int crossingCount = 0;
+            int j;
+            for (c = 0; c < contourCount; ++c)
+            {
+                const PainterPathFillContour* contour = &workContours[c];
+                if (contour->m_count < 2)
+                    continue;
+                for (j = 0; j < contour->m_count; ++j)
+                {
+                    int k = (j + 1) % contour->m_count;
+                    float ay = contour->m_ys[j];
+                    float by = contour->m_ys[k];
+                    if ((ay <= yc && by > yc) || (by <= yc && ay > yc))
+                    {
+                        float t = (yc - ay) / (by - ay);
+                        crossings[crossingCount].m_x =
+                            contour->m_xs[j] + t *
+                            (contour->m_xs[k] - contour->m_xs[j]);
+                        crossings[crossingCount].m_direction =
+                            by > ay ? 1 : -1;
+                        ++crossingCount;
+                    }
+                }
+            }
+            if (crossingCount < 2)
+                continue;
+            for (j = 1; j < crossingCount; ++j)
+            {
+                XPainterFillCrossing key = crossings[j];
+                int k = j - 1;
+                while (k >= 0 && crossings[k].m_x > key.m_x)
+                {
+                    crossings[k + 1] = crossings[k];
+                    --k;
+                }
+                crossings[k + 1] = key;
+            }
+            {
+                int spanCount = painterBuildFillSpans(crossings,
+                                                      crossingCount,
+                                                      XPainterFillRule_OddEven,
+                                                      spans);
+                for (j = 0; j + 1 < spanCount; j += 2)
+                {
+                    int spanFirst;
+                    int spanLast;
+                    int px;
+                    if (!painterSpanPixelRange(spans[j], spans[j + 1],
+                                               &spanFirst, &spanLast))
+                        continue;
+                    if (spanFirst < 0) spanFirst = 0;
+                    if (spanLast >= width) spanLast = width - 1;
+                    if (spanFirst < pxFirst) pxFirst = spanFirst;
+                    if (spanLast > pxLast) pxLast = spanLast;
+                    for (px = spanFirst; px <= spanLast; ++px)
+                    {
+                        /* 像素 px 覆盖 [px-0.5, px+0.5)：统计落入填充
+                           区间的列子采样点（行方向覆盖率由子扫描线
+                           数量天然计入）。 */
+                        for (i = 0; i < subdiv; ++i)
+                        {
+                            float sx = (float)px - 0.5f +
+                                       ((float)i + 0.5f) / (float)subdiv;
+                            if (sx >= spans[j] && sx < spans[j + 1])
+                                ++counts[px];
+                        }
+                    }
+                }
+            }
+        }
+        if (pxLast >= pxFirst)
+        {
+            unsigned scale = (unsigned)(subdiv * subdiv);
+            for (i = pxFirst; i <= pxLast; ++i)
+            {
+                unsigned coverage = counts[i];
+                if (coverage == 0u) continue;
+                if (coverage >= scale) alpha[py * width + i] = 255u;
+                else alpha[py * width + i] =
+                    (uint8_t)(coverage * 255u / scale);
+            }
+        }
+    }
+
+done:
+    XFree_Hybrid(counts);
+    XFree_Hybrid(mappedXs);
+    XFree_Hybrid(workContours);
+    XFree_Hybrid(crossings);
+    XFree_Hybrid(spans);
+    return true;
+fail:
+    XFree_Hybrid(counts);
+    XFree_Hybrid(mappedXs);
+    XFree_Hybrid(workContours);
+    XFree_Hybrid(crossings);
+    XFree_Hybrid(spans);
+    return false;
+}
+#endif /* XPAINTER_PATH_ON */
+
 /**
  * @brief      计算圆弧上若干采样点。
  * @param cx/cy/rx/ry 椭圆中心与半径。
@@ -3494,6 +3963,17 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
         XImage_width(image) > 0 && XImage_height(image) > 0)
     {
         XGpuRenderBackend* gpu = XGpuRenderBackend_current();
+        if (gpu &&
+            (XGpuRenderBackend_width(gpu) != XImage_width(image) ||
+             XGpuRenderBackend_height(gpu) != XImage_height(image)))
+        {
+            /* 会话渲染缓冲与目标图像尺寸不一致（典型：控件内容缓存离屏
+               图）。缓存内容绝不能借窗口 FBO 绘制：窗口模式帧末不回读，
+               缓存图会保持空白且字形以缓存局部坐标错位叠加进窗口画面。
+               此类绘制器保持软件，缓存结果由主设备绘制器经 drawImage
+               GPU 快速路径整体上传。 */
+            gpu = NULL;
+        }
         if (!gpu)
             gpu = painterGpuSessionAcquire(XImage_width(image),
                                            XImage_height(image));
@@ -5157,6 +5637,44 @@ static void painterOutlinePathReset(XPainterPath* path)
     path->m_requireMoveTo = false;
 }
 
+/**
+ * @brief      按 XFont 轮廓 provider 构建字形路径（设备坐标，含原点偏移）。
+ * @details    缓存开启与关闭的构建路径共用本函数；缓存条目以 (0,0) 为
+ *             原点保存用户空间路径，GPU 字形光栅也复用同一构建入口。
+ */
+static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
+                                    uint32_t codepoint, float scale,
+                                    float originX, float baselineY,
+                                    XPainterPath* path,
+                                    XFontOutlineGlyphMetrics* metrics)
+{
+    PainterOutlinePathSink context;
+    XFontOutlineSink sink;
+    if (!face || !path || !metrics || !(scale > 0.0f) ||
+        !isfinite(scale))
+        return false;
+    XPainterPath_init(path);
+    context.m_path = path;
+    context.m_originX = originX;
+    context.m_baselineY = baselineY;
+    context.m_scale = scale;
+    memset(&sink, 0, sizeof(sink));
+    sink.userData = &context;
+    sink.moveTo = painterOutlineMoveTo;
+    sink.lineTo = painterOutlineLineTo;
+    sink.quadTo = painterOutlineQuadTo;
+    sink.cubicTo = painterOutlineCubicTo;
+    sink.close = painterOutlineClose;
+    memset(metrics, 0, sizeof(*metrics));
+    if (!XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
+                                         &sink))
+    {
+        XPainterPath_deinit(path);
+        return false;
+    }
+    return true;
+}
+
 #if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
 typedef struct PainterOutlinePathCacheEntry
 {
@@ -5219,39 +5737,6 @@ static PainterOutlinePathCacheEntry* painterOutlineCacheSlot(void)
     return slot;
 }
 
-static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
-                                    uint32_t codepoint, float scale,
-                                    float originX, float baselineY,
-                                    XPainterPath* path,
-                                    XFontOutlineGlyphMetrics* metrics)
-{
-    PainterOutlinePathSink context;
-    XFontOutlineSink sink;
-    if (!face || !path || !metrics || !(scale > 0.0f) ||
-        !isfinite(scale))
-        return false;
-    XPainterPath_init(path);
-    context.m_path = path;
-    context.m_originX = originX;
-    context.m_baselineY = baselineY;
-    context.m_scale = scale;
-    memset(&sink, 0, sizeof(sink));
-    sink.userData = &context;
-    sink.moveTo = painterOutlineMoveTo;
-    sink.lineTo = painterOutlineLineTo;
-    sink.quadTo = painterOutlineQuadTo;
-    sink.cubicTo = painterOutlineCubicTo;
-    sink.close = painterOutlineClose;
-    memset(metrics, 0, sizeof(*metrics));
-    if (!XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
-                                         &sink))
-    {
-        XPainterPath_deinit(path);
-        return false;
-    }
-    return true;
-}
-
 static PainterOutlinePathCacheEntry* painterOutlineCacheLoad(
     const XFontFace* face, const XFont* font, uint32_t codepoint, float scale)
 {
@@ -5301,6 +5786,149 @@ static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
     return painter8x16Metric(table ? table->m_width : 0, scale);
 }
 
+static bool painterPathBuildContours(const XPainterPath* path, float offsetX,
+                                     float offsetY,
+                                     PainterPathFillContour** outContours,
+                                     int* outCount, int* outCapacity);
+static void painterPathFillContoursFree(PainterPathFillContour** contours,
+                                        int* count, int* capacity);
+
+/**
+ * @brief      outline 字形的软件抗锯齿光栅（TextAntialiasing 驱动）。
+ * @details    与 GPU 图集路径共用 `painterGlyphContoursAlphaCoverage`
+ *             灰度光栅器（4x4 面积子采样），软/GPU 字形逐像素一致；
+ *             每像素按覆盖率经 putPixel 混合（putPixel 内处理裁剪、
+ *             合成模式与边界）。仅支持单位/纯平移变换（与 GPU 条件
+ *             一致）；其它变换返回 false 由调用方回退既有 fillPath。
+ * @return     true 已绘制；false 不支持（调用方回退）。
+ */
+static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
+                                              int baselineY, uint32_t cp,
+                                              uint32_t color, float scale,
+                                              XFontOutlineGlyphMetrics*
+                                                  outMetrics)
+{
+    XFontOutlineGlyphMetrics metrics;
+    XImageTransform transform;
+    XPainterPath path;
+    PainterPathFillContour* contours = NULL;
+    int contourCount = 0;
+    int contourCapacity = 0;
+    float minX = 0.0f;
+    float minY = 0.0f;
+    float maxX = 0.0f;
+    float maxY = 0.0f;
+    float translateX = 0.0f;
+    float translateY = 0.0f;
+    bool haveBounds = false;
+    bool identity;
+    int left;
+    int top;
+    int width;
+    int height;
+    int c;
+    int i;
+    uint8_t* alpha = NULL;
+    bool ok = false;
+    if (!painter || painter->m_deviceKind != XPainterDevice_Image ||
+        !painter->m_image || !(scale > 0.0f) || !isfinite(scale))
+        return false;
+    if (!painterEffectiveTransform(&painter->m_state, &transform))
+        return false;
+    identity = painterMatrixIsIdentity(&transform);
+    if (!identity &&
+        !painterMatrixTranslation(&transform, &translateX, &translateY))
+        return false;
+    if (!painterOutlineBuildPath(
+            XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
+            cp, scale, (float)x + translateX,
+            (float)baselineY + translateY, &path, &metrics))
+        return false;
+    if (outMetrics) *outMetrics = metrics;
+    ok = painterPathBuildContours(&path, 0.0f, 0.0f, &contours,
+                                  &contourCount, &contourCapacity);
+    XPainterPath_deinit(&path);
+    if (!ok) return false;
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            float xValue = contour->m_xs[i];
+            float yValue = contour->m_ys[i];
+            if (!haveBounds)
+            {
+                minX = maxX = xValue;
+                minY = maxY = yValue;
+                haveBounds = true;
+            }
+            else
+            {
+                if (xValue < minX) minX = xValue;
+                if (xValue > maxX) maxX = xValue;
+                if (yValue < minY) minY = yValue;
+                if (yValue > maxY) maxY = yValue;
+            }
+        }
+    }
+    if (!haveBounds)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true; /* 空白字形：无覆盖。 */
+    }
+    left = painter8x16FloorInt(minX);
+    top = painter8x16FloorInt(minY);
+    width = painter8x16CeilInt(maxX) - left;
+    height = painter8x16CeilInt(maxY) - top;
+    if (width <= 0 || height <= 0 ||
+        (size_t)width > SIZE_MAX / (size_t)height)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return width <= 0 || height <= 0;
+    }
+    alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+    if (!alpha)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return false;
+    }
+    memset(alpha, 0, (size_t)width * (size_t)height);
+    ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
+                                           -(float)left, -(float)top,
+                                           alpha, width, height, 4);
+    painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
+    if (ok)
+    {
+        uint32_t ink = painterApplyOpacity(color, painter->m_state.m_opacity);
+        for (i = 0; i < height && ok; ++i)
+        {
+            int column;
+            for (column = 0; column < width; ++column)
+            {
+                unsigned coverage = alpha[(size_t)i * (size_t)width +
+                                          (size_t)column];
+                uint32_t pixel;
+                if (coverage == 0u) continue;
+                if (coverage >= 255u) pixel = ink;
+                else
+                {
+                    pixel = (ink & 0x00ffffffu) |
+                            ((uint32_t)((coverage *
+                                ((ink >> 24) & 0xffu) + 127u) / 255u)
+                             << 24);
+                }
+                painterRaster_putPixel(painter, left + column, top + i,
+                                       pixel);
+            }
+        }
+    }
+    XFree_System(alpha);
+    return ok;
+}
+
 static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
                                     uint32_t cp, uint32_t color, float scale,
                                     XFontOutlineGlyphMetrics* outMetrics,
@@ -5317,6 +5945,13 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
 #endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
     bool ok;
     if (!painter || scale <= 0.0f || !isfinite(scale)) return false;
+    /* TextAntialiasing（默认开启）时优先软件灰度光栅（与 GPU 图集同源，
+       软/GPU 逐像素一致）；不支持的情形（复杂变换等）回退 fillPath。 */
+    if (painter8x16CanAntialias(painter) &&
+        painter->m_deviceKind == XPainterDevice_Image &&
+        painterDrawOutlineGlyphSoftwareAA(painter, x, baselineY, cp, color,
+                                          scale, outMetrics))
+        return true;
     face = XFont_face(&painter->m_state.m_font);
 #if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
     /* The cache stores user-space paths rooted at (0, 0).  Only use it for
@@ -5504,8 +6139,73 @@ static bool painterLoadGlyph(const XFont* font, uint32_t cp,
 }
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
+/**
+ * @brief      把文本逻辑坐标换算成 GPU 设备坐标。
+ * @details    GPU 文本快速路径只支持单位或纯平移变换（子控件经
+ *             translate 定位）：单位变换原样返回；纯平移把平移量加到
+ *             逻辑坐标上。其它变换（旋转/缩放/错切）返回 false，由调用
+ *             方整帧降级软件。三个 GPU 文本入口（drawText、
+ *             drawTextRect 经 drawCodepoint、drawGlyph）统一走本换算，
+ *             避免坐标双重平移或遗漏平移。
+ * @return     true 已换算；false 变换不受支持（调用方应降级）。
+ */
+static bool painterGpuTextDevicePoint(const XPainter* self, int x, int y,
+                                      int* outX, int* outY)
+{
+    XImageTransform transform;
+    if (!self || !outX || !outY) return false;
+    if (!painterEffectiveTransform(&self->m_state, &transform))
+        return false;
+    if (painterMatrixIsIdentity(&transform))
+    {
+        *outX = x;
+        *outY = y;
+        return true;
+    }
+    {
+        float dx = 0.0f;
+        float dy = 0.0f;
+        if (!painterMatrixTranslation(&transform, &dx, &dy))
+            return false;
+        *outX = x + (int)dx;
+        *outY = y + (int)dy;
+    }
+    return true;
+}
+
+/**
+ * @brief      计算字形覆盖图的 GPU 图集键。
+ * @details    由字体 face 指针、码点与缩放键混合出 64 位键；face 指针在
+ *             进程内唯一，同一 (face, codepoint, scale) 的覆盖图内容唯一，
+ *             图集条目再比对宽高，键冲突概率可忽略。键生命周期限于单个
+ *             GPU 会话（图集随会话销毁），跨会话不比较。
+ */
+static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
+                                   float scale)
+{
+    uint64_t hash = (uint64_t)(uintptr_t)face;
+    uint32_t scaleKey;
+    double scaled;
+    if (!(scale > 0.0f) || !isfinite(scale))
+        scaleKey = 0u;
+    else
+    {
+        scaled = (double)scale * 65536.0;
+        scaleKey = scaled >= 4294967294.0 ? 0xfffffffeu
+                                          : (uint32_t)(scaled + 0.5);
+    }
+    hash ^= hash >> 33;
+    hash *= 0xff51afd7ed558ccdULL;
+    hash ^= hash >> 33;
+    hash ^= (uint64_t)codepoint << 1;
+    hash ^= (uint64_t)scaleKey * 0x9E3779B97F4A7C15ULL;
+    hash ^= hash >> 29;
+    return hash;
+}
+
 /** @brief 把一个 CPU 点阵字形转换成 alpha 纹理并提交给 GPU。 */
-static bool painterGpuDrawBitmapGlyph(XPainter* self, int x, int baselineY,
+static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
+                                      int x, int baselineY,
                                       uint32_t color, float scale,
                                       const PainterBitmapFontTable* table,
                                       const XFontGlyphDsc* dsc,
@@ -5520,6 +6220,7 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, int x, int baselineY,
     int width;
     int height;
     uint8_t* alpha;
+    uint64_t glyphKey;
     int row;
     bool antialias;
     if (!self || !self->m_gpuActive || !self->m_gpuBackend || !table ||
@@ -5535,103 +6236,113 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, int x, int baselineY,
     height = painter8x16CeilInt(originY + glyphHeight) - top;
     if (width <= 0 || height <= 0) return true;
     if ((size_t)width > SIZE_MAX / (size_t)height) return false;
-    alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
-    if (!alpha) return false;
-#if XPAINTER_RENDERHINT_ON
-    antialias = (table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
-                painter8x16CanAntialias(self);
-#else
-    antialias = false;
-#endif /* XPAINTER_RENDERHINT_ON */
-    for (row = 0; row < height; ++row)
+    /* 图集命中：覆盖图已在 GPU，跳过 CPU 采样（alpha 传 NULL）。 */
+    glyphKey = painterGpuGlyphKey(XFont_face(&self->m_state.m_font),
+                                  codepoint, scale);
+    alpha = NULL;
+    if (!XGpuRenderBackend_glyphAtlasContains(self->m_gpuBackend, glyphKey,
+                                              width, height))
     {
-        int column;
-        for (column = 0; column < width; ++column)
+        alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+        if (!alpha) return false;
+#if XPAINTER_RENDERHINT_ON
+        antialias = (table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
+                    painter8x16CanAntialias(self);
+#else
+        antialias = false;
+#endif /* XPAINTER_RENDERHINT_ON */
+        for (row = 0; row < height; ++row)
         {
-            float coverage;
-            if (antialias)
-                coverage = painter8x16GlyphCoverage(
-                    glyph, table, (float)(left + column) - originX,
-                    (float)(top + row) - originY, scale);
-            else
+            int column;
+            for (column = 0; column < width; ++column)
             {
-                int sourceX = (int)floorf(
-                    ((float)(left + column) - originX) / scale);
-                int sourceY = (int)floorf(
-                    ((float)(top + row) - originY) / scale);
-                int value = painter8x16MaskValue(glyph, table, sourceX, sourceY);
-                int threshold = table->m_bpp > 1
-                    ? (1 << (table->m_bpp - 1)) : 1;
-                coverage = value >= threshold ? 1.0f : 0.0f;
+                float coverage;
+                if (antialias)
+                    coverage = painter8x16GlyphCoverage(
+                        glyph, table, (float)(left + column) - originX,
+                        (float)(top + row) - originY, scale);
+                else
+                {
+                    int sourceX = (int)floorf(
+                        ((float)(left + column) - originX) / scale);
+                    int sourceY = (int)floorf(
+                        ((float)(top + row) - originY) / scale);
+                    int value = painter8x16MaskValue(glyph, table, sourceX, sourceY);
+                    int threshold = table->m_bpp > 1
+                        ? (1 << (table->m_bpp - 1)) : 1;
+                    coverage = value >= threshold ? 1.0f : 0.0f;
+                }
+                if (coverage <= 0.0f) alpha[row * width + column] = 0u;
+                else if (coverage >= 1.0f) alpha[row * width + column] = 255u;
+                else alpha[row * width + column] = (uint8_t)(coverage * 255.0f + 0.5f);
             }
-            if (coverage <= 0.0f) alpha[row * width + column] = 0u;
-            else if (coverage >= 1.0f) alpha[row * width + column] = 255u;
-            else alpha[row * width + column] = (uint8_t)(coverage * 255.0f + 0.5f);
         }
     }
-    if (!XGpuRenderBackend_drawAlphaBitmap(
-            self->m_gpuBackend, alpha, width, height, width, left, top,
+    if (!XGpuRenderBackend_drawGlyphAlpha(
+            self->m_gpuBackend, glyphKey,
+            width, height, alpha, width, left, top,
             color, self->m_state.m_opacity,
             self->m_state.m_compositionMode == XPainterCompositionMode_SourceOver))
     {
-        XFree_System(alpha);
+        if (alpha) XFree_System(alpha);
         return false;
     }
-    XFree_System(alpha);
+    if (alpha) XFree_System(alpha);
     return true;
 }
 
-/** @brief GPU 文本快速路径；轮廓字体、变换和复杂合成回落软件。 */
+/** @brief GPU 文本快速路径；变换、复杂合成和不可用字体回落软件。 */
 static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
                                const char* utf8, uint32_t color)
 {
     PainterBitmapFontTable table;
     float scale;
-    XImageTransform transform;
     const char* p;
     if (!self || !self->m_gpuActive || !self->m_gpuBackend || !utf8)
         return false;
-    if (!painterEffectiveTransform(&self->m_state, &transform))
-        return false;
     /* 支持单位或纯平移（子控件经 translate 定位）；其它变换回退软件。 */
-    if (!painterMatrixIsIdentity(&transform))
-    {
-        float textDx = 0.0f;
-        float textDy = 0.0f;
-        if (!painterMatrixTranslation(&transform, &textDx, &textDy))
-            return false;
-        x += (int)textDx;
-        baselineY += (int)textDy;
-    }
-#if XPAINTER_CLIP_ON
-    if (self->m_state.m_hasClip)
-    {
-#if XPAINTER_CLIP_REGION_ON
-        if (!XRegion_isEmpty(&self->m_state.m_clipRegion) &&
-            self->m_state.m_clipRegion.count > 1)
-            return false; /* 多矩形区域裁剪：GPU 文本暂不支持 → 软件。 */
-#endif /* XPAINTER_CLIP_REGION_ON */
-        if (self->m_state.m_clipRect.width <= 0 ||
-            self->m_state.m_clipRect.height <= 0) return false;
-        {
-            XRect clipDevice = self->m_state.m_clipRect;
-#if XPAINTER_CLIP_REGION_ON
-            if (self->m_state.m_clipRegion.count == 1)
-                clipDevice = self->m_state.m_clipRegion.rects[0];
-#endif /* XPAINTER_CLIP_REGION_ON */
-            XGpuRenderBackend_setClipRect(self->m_gpuBackend, &clipDevice);
-        }
-    }
-    else
-#endif /* XPAINTER_CLIP_ON */
-        XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
+    if (!painterGpuTextDevicePoint(self, x, baselineY, &x, &baselineY))
+        return false;
+    if (!painterGpuApplyStateClip(self))
+        return false;
     if (self->m_state.m_compositionMode != XPainterCompositionMode_Source &&
         self->m_state.m_compositionMode != XPainterCompositionMode_SourceOver)
         return false;
     table = painterBitmapFont(&self->m_state.m_font);
-    if (table.m_bpp <= 0) return false;
     scale = painterBitmapScaleForTable(&self->m_state.m_font, &table);
     if (!(scale > 0.0f) || !isfinite(scale)) return false;
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    if (table.m_bpp == 0)
+    {
+        /* outline 字形：与软件路径同一轮廓数据，CPU 光栅为 alpha 覆盖
+           后经 drawAlphaBitmap 上传（对齐位图字形的 GPU 通道）。 */
+        const char* q = utf8;
+        while (*q != '\0')
+        {
+            uint32_t cp;
+            XFontOutlineGlyphMetrics metrics;
+            int advance;
+            if (*q == '\n') break;
+            cp = painter8x16DecodeNext(&q);
+            if (cp < 0x20u)
+            {
+                x += painter8x16Metric(table.m_width, scale);
+                continue;
+            }
+            memset(&metrics, 0, sizeof(metrics));
+            if (!painterGpuDrawOutlineGlyph(self, x, baselineY, cp, color,
+                                            scale, &metrics))
+                return false;
+            advance = metrics.advance > 0
+                          ? painter8x16Metric(metrics.advance, scale)
+                          : painterOutlineGlyphAdvance(&self->m_state.m_font,
+                                                       cp, &table, scale);
+            x += advance;
+        }
+        return true;
+    }
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+    if (table.m_bpp <= 0) return false;
     p = utf8;
     while (*p != '\0')
     {
@@ -5665,7 +6376,7 @@ static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
                 return false;
         }
 #endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
-        if (!painterGpuDrawBitmapGlyph(self, x, baselineY, color, scale,
+        if (!painterGpuDrawBitmapGlyph(self, cp, x, baselineY, color, scale,
                                        &glyphTable, &dsc, glyphData))
             return false;
         x += painter8x16GlyphAdvance(&dsc, &table, scale);
@@ -5835,6 +6546,19 @@ int XPainter_drawGlyph(XPainter* self, int x, int baselineY,
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     if (table.m_bpp == 0)
     {
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+        if (self->m_gpuActive)
+        {
+            int deviceX = x;
+            int deviceY = baselineY;
+            if (painterGpuTextDevicePoint(self, x, baselineY,
+                                          &deviceX, &deviceY) &&
+                painterGpuDrawOutlineGlyph(self, deviceX, deviceY, cp, color,
+                                           scale, NULL))
+                return adv;
+            painterGpuFallback(self); /* 降级后继续软件补画本字形。 */
+        }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
         (void)painterDrawOutlineGlyph(self, x, baselineY, cp, color, scale,
                                       NULL, NULL);
         return adv;
@@ -6679,23 +7403,31 @@ static void painterPathFillContoursFree(PainterPathFillContour** contours,
     if (capacity) *capacity = 0;
 }
 
-static bool painterPathDraw(XPainter* self, const XPainterPath* path,
-                            bool fill, bool stroke, float offsetX,
-                            float offsetY)
+/**
+ * @brief      把 XPainterPath 展平为复合填充子路径（不绘制、不改状态）。
+ * @details    从 painterPathDraw 的遍历逻辑抽取：quad/cubic 曲线按现有
+ *             展平策略折线化，moveTo 隐式结束前一子路径，闭合子路径
+ *             去重末点。fill、stroke 与 GPU 字形光栅共用该入口，保证
+ *             软件路径与 GPU 路径看到同一几何。
+ * @param      path 源路径对象。
+ * @param      offsetX/offsetY 附加平移（用户 → 局部坐标）。
+ * @param      outContours/outCount/outCapacity 输出子路径数组（调用方经
+ *             painterPathFillContoursFree 释放）。
+ * @return     成功返回 true（含空路径）；内存分配失败返回 false 并清理。
+ */
+static bool painterPathBuildContours(const XPainterPath* path, float offsetX,
+                                     float offsetY,
+                                     PainterPathFillContour** outContours,
+                                     int* outCount, int* outCapacity)
 {
     PainterPathVertices v;
     float stackXs[XPAINTER_PATH_STACK_POINTS];
     float stackYs[XPAINTER_PATH_STACK_POINTS];
-    PainterPathFillContour* contours = NULL;
-    int contourCount = 0;
-    int contourCapacity = 0;
     int i;
     bool closed = false;
     float px;
     float py;
-    if (!self) return false;
     if (!path || path->m_elementCount == 0) return true;
-    if (self->m_deviceKind == XPainterDevice_None) return false;
     v.xs = stackXs;
     v.ys = stackYs;
     v.m_count = 0;
@@ -6707,9 +7439,8 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
         switch (e->m_type)
         {
             case XPainterPathElement_MoveTo:
-                if ((fill || stroke) &&
-                    !painterPathFillContourAppend(&contours, &contourCount,
-                                                  &contourCapacity, &v, closed))
+                if (!painterPathFillContourAppend(outContours, outCount,
+                                                  outCapacity, &v, closed))
                     goto fail;
                 /* Qt moveTo() 隐式结束前一子路径；新子路径不能复用旧顶点，
                    否则填充/描边会在两个几何体之间产生虚假连接。 */
@@ -6755,10 +7486,198 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
                 break;
         }
     }
-    if ((fill || stroke) &&
-        !painterPathFillContourAppend(&contours, &contourCount,
-                                      &contourCapacity, &v, closed))
+    if (!painterPathFillContourAppend(outContours, outCount, outCapacity,
+                                      &v, closed))
         goto fail;
+    painterPathVerticesFree(&v);
+    return true;
+fail:
+    painterPathFillContoursFree(outContours, outCount, outCapacity);
+    painterPathVerticesFree(&v);
+    return false;
+}
+
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+/**
+ * @brief      outline 字形 GPU 快速路径：CPU 光栅字形覆盖 → alpha 上传。
+ * @details    与用户确认方案一致：字形轮廓经 XFont provider 输出后按
+ *             软件路径同一扫描线算法光栅化为 8 位 alpha 覆盖图，再经
+ *             XGpuRenderBackend_drawAlphaBitmap 以文本颜色绘制（与位图
+ *             字体共用该 GPU 通道）。变换仅支持单位/纯平移，复杂裁剪、
+ *             合成模式与轮廓加载失败时返回 false，由调用方整帧降级。
+ * @param      outMetrics 可选；回传字形度量（advance 供调用方排布）。
+ * @return     true 字形已提交 GPU（或空白字形无覆盖）；false 需降级软件。
+ */
+static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
+                                       uint32_t cp, uint32_t color, float scale,
+                                       XFontOutlineGlyphMetrics* outMetrics)
+{
+    XFontOutlineGlyphMetrics metrics;
+    const XFontFace* face;
+    const XPainterPath* glyphPath = NULL;
+    XPainterPath localPath;
+    bool localPathValid = false;
+#if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    PainterOutlinePathCacheEntry* cached = NULL;
+#endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+    PainterPathFillContour* contours = NULL;
+    int contourCount = 0;
+    int contourCapacity = 0;
+    float minX = 0.0f;
+    float minY = 0.0f;
+    float maxX = 0.0f;
+    float maxY = 0.0f;
+    bool haveBounds = false;
+    int left;
+    int top;
+    int width;
+    int height;
+    int c;
+    int i;
+    uint8_t* alpha = NULL;
+    uint64_t glyphKey;
+    bool atlasCached;
+    bool glyphAntialias;
+    bool ok;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend ||
+        !(scale > 0.0f) || !isfinite(scale))
+        return false;
+    /* 字形抗锯齿由 TextAntialiasing 渲染提示驱动（与点阵路径一致）。 */
+    glyphAntialias = painter8x16CanAntialias(self);
+    if (self->m_state.m_compositionMode != XPainterCompositionMode_Source &&
+        self->m_state.m_compositionMode != XPainterCompositionMode_SourceOver)
+        return false;
+    if (!painterGpuApplyStateClip(self))
+        return false;
+    face = XFont_face(&self->m_state.m_font);
+    if (!face) return false;
+    memset(&metrics, 0, sizeof(metrics));
+#if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
+    /* 缓存条目以 (0,0) 为基线原点，正合字形局部光栅化需要。 */
+    if (face->m_family && face->m_family[0])
+        cached = painterOutlineCacheLoad(face, &self->m_state.m_font, cp,
+                                         scale);
+    if (cached)
+    {
+        metrics = cached->m_metrics;
+        glyphPath = &cached->m_path;
+    }
+#endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+    if (!glyphPath)
+    {
+        if (!painterOutlineBuildPath(face, &self->m_state.m_font, cp, scale,
+                                     0.0f, 0.0f, &localPath, &metrics))
+            return false;
+        glyphPath = &localPath;
+        localPathValid = true;
+    }
+    if (outMetrics) *outMetrics = metrics;
+    ok = painterPathBuildContours(glyphPath, 0.0f, 0.0f, &contours,
+                                  &contourCount, &contourCapacity);
+    if (localPathValid)
+        XPainterPath_deinit(&localPath);
+    if (!ok) return false;
+    if (contourCount <= 0)
+        return true; /* 空白字形：无覆盖，advance 已回传。 */
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            float xValue = contour->m_xs[i];
+            float yValue = contour->m_ys[i];
+            if (!haveBounds)
+            {
+                minX = maxX = xValue;
+                minY = maxY = yValue;
+                haveBounds = true;
+            }
+            else
+            {
+                if (xValue < minX) minX = xValue;
+                if (xValue > maxX) maxX = xValue;
+                if (yValue < minY) minY = yValue;
+                if (yValue > maxY) maxY = yValue;
+            }
+        }
+    }
+    if (!haveBounds)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true;
+    }
+    left = painter8x16FloorInt(minX);
+    top = painter8x16FloorInt(minY);
+    width = painter8x16CeilInt(maxX) - left;
+    height = painter8x16CeilInt(maxY) - top;
+    if (width <= 0 || height <= 0)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true;
+    }
+    if ((size_t)width > SIZE_MAX / (size_t)height)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return false;
+    }
+    /* 图集命中：覆盖图已在 GPU，跳过 CPU 光栅化（alpha 传 NULL）。 */
+    glyphKey = painterGpuGlyphKey(face, cp, scale);
+    /* AA 与二值覆盖内容不同：键混入 AA 标志位隔离两套缓存。 */
+    if (glyphAntialias) glyphKey ^= 0x5A5A5A5A5A5A5A5AULL;
+    atlasCached = XGpuRenderBackend_glyphAtlasContains(self->m_gpuBackend,
+                                                       glyphKey, width,
+                                                       height);
+    alpha = NULL;
+    if (!atlasCached)
+    {
+        alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+        if (!alpha)
+        {
+            painterPathFillContoursFree(&contours, &contourCount,
+                                        &contourCapacity);
+            return false;
+        }
+        memset(alpha, 0, (size_t)width * (size_t)height);
+        ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
+                                               -(float)left, -(float)top,
+                                               alpha, width, height,
+                                               glyphAntialias ? 4 : 1);
+        if (!ok)
+        {
+            XFree_System(alpha);
+            painterPathFillContoursFree(&contours, &contourCount,
+                                        &contourCapacity);
+            return false;
+        }
+    }
+    painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
+    ok = XGpuRenderBackend_drawGlyphAlpha(
+        self->m_gpuBackend, glyphKey, width, height, alpha, width,
+        x + left, baselineY + top, color, self->m_state.m_opacity,
+        self->m_state.m_compositionMode ==
+            XPainterCompositionMode_SourceOver);
+    if (alpha) XFree_System(alpha);
+    return ok;
+}
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
+
+static bool painterPathDraw(XPainter* self, const XPainterPath* path,
+                            bool fill, bool stroke, float offsetX,
+                            float offsetY)
+{
+    PainterPathFillContour* contours = NULL;
+    int contourCount = 0;
+    int contourCapacity = 0;
+    int i;
+    if (!self) return false;
+    if (!path || path->m_elementCount == 0) return true;
+    if (self->m_deviceKind == XPainterDevice_None) return false;
+    if (!painterPathBuildContours(path, offsetX, offsetY, &contours,
+                                  &contourCount, &contourCapacity))
+        return false;
     if (fill && contourCount > 0 &&
         !painterFillPathContours(self, contours, contourCount,
                                  XPainterFillRule_OddEven))
@@ -6773,11 +7692,9 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
                 goto fail;
     }
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
-    painterPathVerticesFree(&v);
     return true;
 fail:
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
-    painterPathVerticesFree(&v);
     return false;
 }
 
@@ -7841,6 +8758,37 @@ static int painterDrawCodepoint(XPainter* self,
         int advance;
         bool drawn;
         memset(&metrics, 0, sizeof(metrics));
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+        if (self->m_gpuActive)
+        {
+            int deviceX = x;
+            int deviceY = baselineY;
+            memset(&metrics, 0, sizeof(metrics));
+            if (painterGpuTextDevicePoint(self, x, baselineY,
+                                          &deviceX, &deviceY) &&
+                painterGpuDrawOutlineGlyph(self, deviceX, deviceY, cp, color,
+                                           scale, &metrics))
+            {
+                advance = metrics.advance > 0
+                              ? painter8x16Metric(metrics.advance, scale)
+                              : painterOutlineGlyphAdvance(
+                                    &self->m_state.m_font, cp, table, scale);
+                if (underline)
+                {
+                    XRect r;
+                    r.x = x;
+                    r.y = baselineY + painter8x16Metric(table->m_descent,
+                                                        scale);
+                    r.width = advance;
+                    r.height = painter8x16Metric(1, scale);
+                    XPainter_fillRect(self, &r, color);
+                }
+                return advance;
+            }
+            /* GPU 字形失败：合并已画内容并整帧降级后继续软件补画本字形。 */
+            painterGpuFallback(self);
+        }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
         drawn = painterDrawOutlineGlyph(self, x, baselineY, cp, color, scale,
                                         &metrics, (XPainterPath*)outlinePath);
         advance = drawn && metrics.advance > 0
