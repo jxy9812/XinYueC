@@ -88,6 +88,15 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+#include "XCheckBox.h"
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+#include "XRadioButton.h"
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+#include "XCommandLinkButton.h"
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
 #if XWIDGET_ON && XMENU_ON
 #include "XMenu.h"
 #endif /* XWIDGET_ON && XMENU_ON */
@@ -7962,7 +7971,9 @@ static void test_icon_paint_visual_alignment(void)
                 "icon paint AlignAbsolute-only stays at physical left in RTL");
 #endif /* XPAINTER_LAYOUT_DIRECTION_ON */
 
-    /* QIcon::paint 的状态保存必须成对发生；没有 save 回调时不能误调用 restore。 */
+    /* QIcon::paint 的状态保存必须成对发生；没有 save 回调时不能误调用 restore。
+       restoreCalls 在 end 前断言；像素断言放在 end 后——GPU 后端的帧
+       内容在 end/readback 时才落回目标图像，帧中读取对 GPU 无意义。 */
     XImage_fill(&target, background);
     expect_true(XPainter_begin_image(&painter, &target),
                 "icon paint unpaired state begins image");
@@ -7971,10 +7982,11 @@ static void test_icon_paint_visual_alignment(void)
     painter.m_restore = picture_probe_restore;
     XIcon_paint(&icon, &painter, 0, 0, 20, 10, XAlignment_Left,
                 XIconMode_Normal, XIconState_Off);
-    expect_true(probe.restoreCalls == 0 &&
-                (XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+    expect_true(probe.restoreCalls == 0,
                 "icon paint does not restore without a successful save");
     expect_true(XPainter_end(&painter), "icon paint unpaired state ends image");
+    expect_true((XImage_pixel(&target, 0, 0) & 0x00ffffffu) == 0x336699u,
+                "icon paint without save still draws the icon");
 
     XPainter_deinit(&painter);
     XImage_deinit_base(&target);
@@ -23838,6 +23850,257 @@ static void test_pushbutton_auto_exclusive_group(void)
     XWidget_deinit_base(&parent);
 }
 
+#if XWIDGET_ON && XPAINTER_RENDERHINT_ON
+/** @brief Antialiasing 提示驱动的多边形填充灰度边缘 + 默认行为不变。 */
+static void test_painter_polygon_antialias(void)
+{
+    XImage image;
+    XPainter painter;
+    XPoint triangle[3];
+    int x;
+    int y;
+    int lit = 0;
+    int gray = 0;
+    XPoint square[4];
+    int solid = 1;
+    memset(triangle, 0, sizeof(triangle));
+    triangle[0].x = 4;  triangle[0].y = 26;
+    triangle[1].x = 16; triangle[1].y = 6;
+    triangle[2].x = 27; triangle[2].y = 26;
+    XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff202020u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "polygon antialias begins image");
+    XPainter_setRenderHint(&painter, XPainterRenderHint_Antialiasing, true);
+    XPainter_setBrush(&painter, 0xff0000ffu);
+    expect_true(XPainter_drawPolygon(&painter, triangle, 3,
+                                     XPainterFillRule_OddEven),
+                "polygon antialias draws");
+    XPainter_end(&painter);
+    for (y = 0; y < 32; ++y)
+        for (x = 0; x < 32; ++x)
+        {
+            uint32_t pixel = XImage_pixel(&image, x, y);
+            uint32_t rgb = pixel & 0x00ffffffu;
+            if (rgb != 0x202020u)
+            {
+                ++lit;
+                /* 灰度 = 填充红与背景的中间色（排除纯填充、纯黑描边）。 */
+                if (rgb != 0x0000ffu && rgb != 0x000000u) ++gray;
+            }
+        }
+    expect_true(lit > 0, "polygon antialias produces pixels");
+    expect_true(gray > 0,
+                "polygon antialiasing produces gray edge pixels");
+
+    /* 默认（Antialiasing 关）：同形绘制保持既有二值行为。 */
+    XImage_fillRect(&image, NULL, 0xff202020u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "polygon default begins image");
+    XPainter_setBrush(&painter, 0xff0000ffu);
+    square[0].x = 4;  square[0].y = 4;
+    square[1].x = 27; square[1].y = 4;
+    square[2].x = 27; square[2].y = 27;
+    square[3].x = 4;  square[3].y = 27;
+    expect_true(XPainter_drawPolygon(&painter, square, 4,
+                                     XPainterFillRule_OddEven),
+                "polygon default draws");
+    XPainter_end(&painter);
+    for (y = 5; y < 27; ++y)
+        for (x = 5; x < 27; ++x)
+            if ((XImage_pixel(&image, x, y) & 0x00ffffffu) != 0x0000ffu)
+                solid = 0;
+
+    expect_true(solid, "polygon default keeps solid interior");
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+
+/** @brief outline 字形在 TextAntialiasing 下必须产生灰度边缘（AA 光栅）。 */
+static void test_painter_outline_text_antialias(void)
+{
+    XImage image;
+    XPainter painter;
+    int x;
+    int y;
+    int lit = 0;
+    int gray = 0;
+    XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
+    XImage_fillRect(&image, NULL, 0xff202020u);
+    XPainter_init(&painter, NULL);
+    XFont_setPixelSize(&painter.m_state.m_font, 14);
+    expect_true(XPainter_begin_image(&painter, &image),
+                "outline antialias begins image");
+    /* 默认状态含 TextAntialiasing；竖笔画字形 l 有清晰的左右边缘。 */
+    expect_true(XPainter_drawText(&painter, 8, 24, "l", 0xffffffffu),
+                "outline antialias draws text");
+    XPainter_end(&painter);
+    for (y = 0; y < 32; ++y)
+        for (x = 0; x < 32; ++x)
+        {
+            uint32_t pixel = XImage_pixel(&image, x, y);
+            if ((pixel & 0x00ffffffu) != 0x202020u)
+            {
+                ++lit;
+                if ((pixel & 0x00ffffffu) != 0xffffffu) ++gray;
+            }
+        }
+    expect_true(lit > 0, "outline antialias produces text pixels");
+    expect_true(gray > 0,
+                "outline text antialiasing produces gray edge pixels");
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&image);
+}
+#endif /* XWIDGET_ON && XPAINTER_RENDERHINT_ON */
+
+#if XWIDGET_ON
+static void cache_proc_fill_opaque_blue(XWidget* widget, XPainter* painter,
+                                        void* userData)
+{
+    XRect rect = XWidget_rect(widget);
+    (void)userData;
+    XPainter_fillRect(painter, &rect, 0xff0000ffu);
+}
+
+static void cache_proc_fill_translucent_black(XWidget* widget,
+                                               XPainter* painter,
+                                               void* userData)
+{
+    XRect rect = XWidget_rect(widget);
+    (void)userData;
+    XPainter_fillRect(painter, &rect, 0x80000000u);
+}
+
+/** @brief 内容缓存失效重渲染必须从全透明画布开始（对标性能浮层重影根因）：
+ *         半透明外观内容在缓存复用渲染时不得残留上一次内容。 */
+static void test_widget_content_cache_rerender_from_clean(void)
+{
+    XWidget widget;
+    XImage target;
+    XPainter painter;
+    uint32_t pixel;
+    memset(&widget, 0, sizeof(widget));
+    XWidget_init(&widget, NULL, 0);
+    XWidget_resize(&widget, 16, 16);
+    XImage_init_ex(&target, 32, 16, XImageFormat_ARGB32);
+    XImage_fillRect(&target, NULL, 0u);
+    XPainter_init(&painter, NULL);
+    expect_true(XPainter_begin_image(&painter, &target),
+                "content cache test begins painter");
+    expect_true(XWidget_drawContentCached(&widget, &painter, 0, 0, 16, 16,
+                                          cache_proc_fill_opaque_blue, NULL),
+                "content cache first render draws");
+    /* 模拟浮层文本更新：失效缓存后以半透明外观重渲染。第二次 blit 到
+       目标的干净区域，隔离缓存本身的内容（目标混合属绘制器正常语义）。 */
+    XWidget_invalidateContentCache(&widget);
+    expect_true(XWidget_drawContentCached(&widget, &painter, 16, 0, 16, 16,
+                                          cache_proc_fill_translucent_black,
+                                          NULL),
+                "content cache re-render draws");
+    XPainter_end(&painter);
+    pixel = XImage_pixel(&target, 16 + 5, 5);
+    /* 期望：半透明黑 over 透明画布 = 0x80000000；若残留上一次的不透明
+       蓝（0xff0000ff），合成结果会带蓝色分量且不透明。 */
+    expect_true((pixel & 0xff000000u) == 0x80000000u &&
+                    (pixel & 0x00ffffffu) == 0x00000000u,
+                "content cache re-render starts from a clean canvas");
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&target);
+    XWidget_deinit_base(&widget);
+}
+#endif /* XWIDGET_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+/** @brief XCheckBox 三态循环、命中区域和状态信号契约测试。 */
+static void test_checkbox_contract(void)
+{
+    XCheckBox box;
+    XPoint inside = { 6, 13 };
+    XPoint outside = { 80, 13 };
+    memset(&box, 0, sizeof(box));
+    XCheckBox_init(&box, NULL, 0);
+    XCheckBox_setText_2(&box, "选择");
+    XWidget_resize((XWidget*)&box, 120, 26);
+    expect_true(XCheckBox_isCheckable(&box) &&
+                XCheckBox_checkState(&box) == XCheckState_Unchecked,
+                "XCheckBox 默认可选且未选中");
+    expect_true(XCheckBox_hitButton(&box, &inside) &&
+                !XCheckBox_hitButton(&box, &outside),
+                "XCheckBox 只命中 indicator 区域");
+    XCheckBox_setTristate(&box, true);
+    XCheckBox_setCheckState(&box, XCheckState_PartiallyChecked);
+    expect_true(XCheckBox_checkState(&box) == XCheckState_PartiallyChecked,
+                "XCheckBox 可进入三态部分选中");
+    XCheckBox_toggle(&box);
+    expect_true(XCheckBox_checkState(&box) == XCheckState_Checked &&
+                XCheckBox_isChecked(&box),
+                "XCheckBox 三态切换到已选中");
+    XCheckBox_toggle(&box);
+    expect_true(XCheckBox_checkState(&box) == XCheckState_Unchecked &&
+                !XCheckBox_isChecked(&box),
+                "XCheckBox 三态切换到未选中");
+    XCheckBox_deinit_base(&box);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+/** @brief XRadioButton 默认互斥和 indicator 命中契约测试。 */
+static void test_radiobutton_contract(void)
+{
+    XWidget parent;
+    XRadioButton first;
+    XRadioButton second;
+    XPoint inside = { 6, 11 };
+    XPoint outside = { 80, 11 };
+    memset(&parent, 0, sizeof(parent));
+    memset(&first, 0, sizeof(first));
+    memset(&second, 0, sizeof(second));
+    XWidget_init(&parent, NULL, 0);
+    XRadioButton_init(&first, &parent, 0);
+    XRadioButton_init(&second, &parent, 0);
+    XWidget_resize((XWidget*)&first, 120, 22);
+    XWidget_resize((XWidget*)&second, 120, 22);
+    expect_true(XRadioButton_isCheckable(&first) &&
+                XRadioButton_autoExclusive(&first) &&
+                XRadioButton_hitButton(&first, &inside) &&
+                !XRadioButton_hitButton(&first, &outside),
+                "XRadioButton 默认互斥且只命中 indicator");
+    XRadioButton_setChecked(&first, true);
+    XRadioButton_setChecked(&second, true);
+    expect_true(!XRadioButton_isChecked(&first) &&
+                XRadioButton_isChecked(&second),
+                "XRadioButton 同父控件自动互斥");
+    XRadioButton_deinit_base(&second);
+    XRadioButton_deinit_base(&first);
+    XWidget_deinit_base(&parent);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
+
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+/** @brief XCommandLinkButton 描述文本和尺寸契约测试。 */
+static void test_commandlinkbutton_contract(void)
+{
+    XCommandLinkButton button;
+    XSize withoutDescription;
+    XSize withDescription;
+    memset(&button, 0, sizeof(button));
+    XCommandLinkButton_init(&button, NULL, 0);
+    XCommandLinkButton_setText_2(&button, "命令");
+    withoutDescription = XCommandLinkButton_sizeHint(&button);
+    XCommandLinkButton_setDescription_2(&button, "描述");
+    withDescription = XCommandLinkButton_sizeHint(&button);
+    expect_true(XCommandLinkButton_description(&button) != NULL &&
+                strcmp(XString_toUtf8(XCommandLinkButton_description(&button)),
+                       "描述") == 0,
+                "XCommandLinkButton 保存描述文本");
+    expect_true(withDescription.height > withoutDescription.height,
+                "XCommandLinkButton 描述增加建议高度");
+    XCommandLinkButton_deinit_base(&button);
+}
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
+
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 /** @brief XPushButton 与 XLabel 的信号槽联动测试（对标窗口演示中的按压文字切换）。 */
 static void test_pushbutton_label_signal_slot_link(void)
@@ -24618,6 +24881,22 @@ int main(void)
     test_pushbutton_label_signal_slot_link();
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
+#if XWIDGET_ON
+    test_widget_content_cache_rerender_from_clean();
+#endif /* XWIDGET_ON */
+#if XWIDGET_ON && XPAINTER_RENDERHINT_ON
+    test_painter_outline_text_antialias();
+    test_painter_polygon_antialias();
+#endif /* XWIDGET_ON && XPAINTER_RENDERHINT_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
+    test_checkbox_contract();
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
+    test_radiobutton_contract();
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
+    test_commandlinkbutton_contract();
+#endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
 #if XWIDGET_ON && XMENU_ON
     test_menu_contract();
     test_menu_stack_lifecycle();
