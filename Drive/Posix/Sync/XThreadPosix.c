@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XThreadPosix.c
  * @brief XThread POSIX 平台实现（Linux/macOS/BSD）
  */
@@ -6,6 +6,7 @@
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 
 #define _POSIX_C_SOURCE 200809L
+#include <limits.h> /* PTHREAD_STACK_MIN（ARM 交叉编译 sysroot 不经其他头传递） */
 #include "XThread.h"
 #include "XThreadData.h"
 #include "XTask.h"
