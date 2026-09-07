@@ -263,12 +263,16 @@ static void demo_performance_init(DemoWin* self)
 {
     if (!self) return;
     XPerformanceOverlay_init(&self->m_performanceOverlay, NULL, 0);
+    /* 状态栏固定占用窗口底部 26px。把浮层缩至三行文字所需高度，
+       并在状态栏上方保留同样的 26px 间距，避免每帧脏区同时重绘/遮挡
+       状态标签。 */
+    XPerformanceOverlay_setSize(&self->m_performanceOverlay, 180, 54);
     XPerformanceOverlay_setFontFamily(&self->m_performanceOverlay,
                                       XGUI_DEMO_DEFAULT_FONT_FAMILY);
     XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 14);
     XPerformanceOverlay_setPresetPosition(
         &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-        520, 360, 0);
+        520, 360, 26);
     XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
 }
 
@@ -949,7 +953,7 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
         XPerformanceOverlay_setPresetPosition(
             &demo->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-            XWidget_width(self), XWidget_height(self), 0);
+            XWidget_width(self), XWidget_height(self), 26);
     }
 #endif
     demo_repaint(demo);

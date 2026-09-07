@@ -95,6 +95,12 @@ typedef struct XWNPendingEntry
     Window m_win;        /**< X11 原生窗口 id（0 表示空槽）。 */
     XWindow* m_window;   /**< 公共窗口对象借用指针；槽位为空时 NULL。 */
     GC m_gc;             /**< 该窗口专用图形上下文（拥有）。 */
+    X11_XImage* m_presentImage; /**< 复用的 XPutImage 描述符（拥有）。 */
+    uint8_t* m_presentBuffer;   /**< 复用的上屏转换缓冲（拥有）。 */
+    int m_presentWidth;         /**< 描述符对应图像宽度。 */
+    int m_presentHeight;        /**< 描述符对应图像高度。 */
+    int m_presentBytesPerLine;  /**< 描述符对应的缓冲行跨度。 */
+    bool m_presentDirect;       /**< 是否可以直接采用 BGRA8888 布局。 */
     XRect m_client;      /**< 本后端最近一次记录的客户端几何（去重用）。 */
     bool m_keyPressed[256];    /**< 各键码当前按下状态（X11 键码 8..255），用于识别自动重复。 */
     unsigned long m_lastPressTime;    /**< 最近一次非滚轮按键的时间戳（X11 毫秒节拍）。 */
@@ -133,6 +139,24 @@ static Atom g_xpwnTextUriList;
 static Atom g_xpwnTextPlain;
 static Atom g_xpwnXdndData;
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
+
+static void xpwn_releasePresentImage(XWNPendingEntry* entry)
+{
+    if (!entry) return;
+    if (entry->m_presentImage) {
+        /* XDestroyImage 默认会释放 data；缓冲由 XinYueC 的 Hybrid
+           分配器管理，因此先摘除指针再销毁 Xlib 描述符。 */
+        entry->m_presentImage->data = NULL;
+        XDestroyImage(entry->m_presentImage);
+        entry->m_presentImage = NULL;
+    }
+    XFree_Hybrid(entry->m_presentBuffer);
+    entry->m_presentBuffer = NULL;
+    entry->m_presentWidth = 0;
+    entry->m_presentHeight = 0;
+    entry->m_presentBytesPerLine = 0;
+    entry->m_presentDirect = false;
+}
 
 /* 出站 XDND 会话只在 XPlatformDrag_exec 的同步调用期间存在。X11 的
  * SelectionRequest 必须由同一事件泵响应，因此把会话数据暂存在连接级状态。 */
@@ -1198,6 +1222,7 @@ void XPlatformNativeWindow_destroy(XWindow* window)
         XDestroyIC(entry->m_inputContext);
         entry->m_inputContext = NULL;
     }
+    xpwn_releasePresentImage(entry);
     if (entry->m_gc) XFreeGC(g_xpwnDisplay, entry->m_gc);
     /* 外部窗口只解除登记，不取得其 X11 资源的销毁所有权。 */
     if (XWindow_type(window) != XWindowType_ForeignWindow)
@@ -1625,6 +1650,56 @@ cleanup:
 
 /* ==================== 上屏（平台后端提供） ==================== */
 
+static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
+                                      int imgW, int imgH)
+{
+    X11_XImage* ximg;
+    uint8_t* buffer;
+    size_t bufferSize;
+    int bufBpl;
+    bool direct;
+    if (!entry || imgW <= 0 || imgH <= 0)
+        return false;
+    if (entry->m_presentImage && entry->m_presentBuffer &&
+        entry->m_presentWidth == imgW && entry->m_presentHeight == imgH)
+        return true;
+
+    xpwn_releasePresentImage(entry);
+    ximg = XCreateImage(g_xpwnDisplay, g_xpwnVisual, g_xpwnDepth, ZPixmap, 0,
+                        NULL, imgW, imgH, 32, 0);
+    if (!ximg)
+        return false;
+    /* 直拷条件：真 32 位像素 + 标准 BGRA8888 掩码 + 小端字节序（与
+       ARGB32 小端内存布局 [B,G,R,A] 相同）。24 位深含 32 位填充的视觉
+       也能直拷（高 8 位 Alpha 被服务器忽略）。 */
+    direct = ximg->bits_per_pixel == 32 && ximg->byte_order == LSBFirst &&
+             ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
+             g_xpwnVisual->red_mask == 0x00ff0000u &&
+             g_xpwnVisual->green_mask == 0x0000ff00u &&
+             g_xpwnVisual->blue_mask == 0x000000ffu;
+    bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
+    if (bufBpl <= 0 || (size_t)imgH > SIZE_MAX / (size_t)bufBpl) {
+        ximg->data = NULL;
+        XDestroyImage(ximg);
+        return false;
+    }
+    bufferSize = (size_t)bufBpl * (size_t)imgH;
+    buffer = (uint8_t*)XMalloc_Hybrid(bufferSize);
+    if (!buffer) {
+        ximg->data = NULL;
+        XDestroyImage(ximg);
+        return false;
+    }
+    ximg->data = (char*)buffer;
+    entry->m_presentImage = ximg;
+    entry->m_presentBuffer = buffer;
+    entry->m_presentWidth = imgW;
+    entry->m_presentHeight = imgH;
+    entry->m_presentBytesPerLine = bufBpl;
+    entry->m_presentDirect = direct;
+    return true;
+}
+
 bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
                                    const XRegion* region,
                                    const XPoint* offset)
@@ -1667,25 +1742,13 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         rectCount = 1;
     }
 
-    /* XPutImage 载体：32 位对齐位宽。 */
-    ximg = XCreateImage(g_xpwnDisplay, g_xpwnVisual, g_xpwnDepth, ZPixmap, 0,
-                        NULL, imgW, imgH, 32, 0);
-    if (!ximg) {
+    if (!xpwn_preparePresentImage(entry, imgW, imgH)) {
         return false;
     }
-    /* 直拷条件：真 32 位像素 + 标准 BGRA8888 掩码 + 小端字节序（与
-       ARGB32 小端内存布局 [B,G,R,A] 相同）。24 位深含 32 位填充的视觉
-       也能直拷（高 8 位 Alpha 被服务器忽略）。 */
-    direct = ximg->bits_per_pixel == 32 && ximg->byte_order == LSBFirst &&
-             ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
-             g_xpwnVisual->red_mask == 0x00ff0000u &&
-             g_xpwnVisual->green_mask == 0x0000ff00u &&
-             g_xpwnVisual->blue_mask == 0x000000ffu;
-    bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
-    buffer = (uint8_t*)XMalloc_Hybrid((size_t)bufBpl * (size_t)imgH);
-    /* 构造临时 XImage：借出 buffer 计算偏移后立即回收指针，避免 Xlib
-       擅自 free 调用方缓冲。 */
-    ximg->data = (char*)buffer;
+    ximg = entry->m_presentImage;
+    buffer = entry->m_presentBuffer;
+    bufBpl = entry->m_presentBytesPerLine;
+    direct = entry->m_presentDirect;
     for (i = 0; i < rectCount; ++i) {
         XRect srect;
         XRect drect;
@@ -1711,9 +1774,6 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         }
         any = true;
     }
-    ximg->data = NULL;
-    XDestroyImage(ximg);
-    XFree_Hybrid(buffer);
     if (any) XFlush(g_xpwnDisplay);
     return any;
 }
