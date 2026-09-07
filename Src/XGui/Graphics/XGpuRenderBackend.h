@@ -181,6 +181,40 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
                                       float opacity, bool sourceOver);
 
 /**
+ * @brief      绘制任意四顶点纯色 quad（画线快速路径基础原语）。
+ * @details    顶点为设备坐标浮点值（半开像素范围），顶点顺序 TL/TR/
+ *             BL/BR 与既有 quad 一致；颜色为预乘 ARGB32（透明度已
+ *             折入 alpha）。
+ * @param      self 会话。
+ * @param      x1/y1..x4/y4 四顶点设备坐标。
+ * @param      premulColor 预乘 ARGB32 颜色。
+ * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+ * @return     true 已提交；false 参数非法或会话无效。
+ */
+bool XGpuRenderBackend_drawSolidQuad(XGpuRenderBackend* self, float x1,
+                                     float y1, float x2, float y2, float x3,
+                                     float y3, float x4, float y4,
+                                     uint32_t premulColor, bool sourceOver);
+
+/**
+ * @brief      注册/清除命令级同步读回目标（XGUI_GPU_SYNC=1 调试模式）。
+ * @details    XPainter 绑定图像时调用；注册后每个 GPU 原语提交都会把
+ *             渲染目标读回该图像（帧中像素可见，供"绘制后立即断言"的
+ *             回归用例使用）。默认关闭，性能大幅下降，仅用于回归。
+ * @param      target 目标图像（借用）；NULL 清除注册。
+ * @return     无。
+ */
+void XGpuRenderBackend_setSyncTarget(XGpuRenderBackend* self, XImage* target);
+
+/**
+ * @brief      把宿主同步目标图像（setSyncTarget 注册的）整体上传为
+ *             渲染目标内容（XGUI_GPU_SYNC 调试模式专用）。
+ * @param      self 会话。
+ * @return     true 已上传（或无注册目标）；false 会话无效或上传失败。
+ */
+bool XGpuRenderBackend_uploadFrame(XGpuRenderBackend* self, XImage* target);
+
+/**
  * @brief      查询覆盖图是否已在字形图集中（配合 alpha=NULL 的命中绘制，
  *             让调用方在命中时完全跳过 CPU 光栅化）。
  */

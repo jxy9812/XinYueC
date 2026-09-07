@@ -285,6 +285,122 @@ int main(void)
                 XPainter_deinit(&polyPainter);
                 XImage_deinit_base(&polyFrame);
             }
+            /* 画线/描边 GPU 快速路径：轴对齐线与 drawRect 边框零降级、
+               像素精确；斜线回退软件（降级但内容正确）。 */
+            {
+                XImage lineFrame;
+                XPainter linePainter;
+                int x;
+                int y;
+                XImage_init_ex(&lineFrame, 64, 64, XImageFormat_ARGB32);
+                XImage_fillRect(&lineFrame, NULL, 0xff202020u);
+                XPainter_init(&linePainter, NULL);
+                XPainter_begin_image(&linePainter, &lineFrame);
+                if (XPainter_rasterBackend(&linePainter) !=
+                    XPainterRasterBackend_Gpu)
+                {
+                    fprintf(stderr, "gpu-test: line session not gpu\n");
+                    ok = 0;
+                }
+                /* 水平线 y=10, x∈[8,40]（SquareCap 默认无扩展）。 */
+                if (!XPainter_drawLine(&linePainter, 8, 10, 40, 10)) ok = 0;
+                /* 垂直线 x=50, y∈[8,40]。 */
+                if (!XPainter_drawLine(&linePainter, 50, 8, 50, 40)) ok = 0;
+                /* drawRect 边框 (6,44)-(26,60)：四边走线。 */
+                if (!XPainter_drawRect(&linePainter,
+                                       &(XRect){6, 44, 20, 16}))
+                    ok = 0;
+                if (XPainter_rasterBackend(&linePainter) !=
+                    XPainterRasterBackend_Gpu)
+                {
+                    fprintf(stderr, "gpu-test: axis lines degraded\n");
+                    ok = 0;
+                }
+                /* 斜线：经软件光栅局部提交（不整帧降级，会话保持 GPU）。 */
+                if (!XPainter_drawLine(&linePainter, 2, 2, 60, 30)) ok = 0;
+                if (XPainter_rasterBackend(&linePainter) !=
+                    XPainterRasterBackend_Gpu)
+                {
+                    fprintf(stderr, "gpu-test: slanted line degraded\n");
+                    ok = 0;
+                }
+                /* 渐变笔刷：局部提交不降级。 */
+                {
+                    XPainterGradient gradient;
+                    XRect gRect = { 40, 2, 20, 4 };
+                    XPainterGradient_initLinear(&gradient, 40.0f, 4.0f,
+                                                60.0f, 4.0f);
+                    XPainterGradient_addStop(&gradient, 0.0f, 0xffff0000u);
+                    XPainterGradient_addStop(&gradient, 1.0f, 0xff0000ffu);
+                    XPainter_setBrushGradient(&linePainter, &gradient);
+                    if (!XPainter_fillRect_2(&linePainter, &gRect)) ok = 0;
+                    if (XPainter_rasterBackend(&linePainter) !=
+                        XPainterRasterBackend_Gpu)
+                    {
+                        fprintf(stderr, "gpu-test: gradient degraded\n");
+                        ok = 0;
+                    }
+                }
+                XPainter_end(&linePainter);
+                /* 渐变端点颜色采样（局部提交经 FBO，帧末 readback 可见）。 */
+                if (XImage_pixel(&lineFrame, 41, 4) == 0xff202020u)
+                {
+                    fprintf(stderr, "gpu-test: gradient not drawn\n");
+                    ok = 0;
+                }
+                /* 像素断言在 end/readback 之后（GPU 模式帧末才落回目标）。 */
+                {
+                    int bad = 0;
+                    for (x = 8; x <= 40; ++x)
+                        if (XImage_pixel(&lineFrame, x, 10) != 0xff000000u)
+                            ++bad;
+                    for (y = 8; y <= 40; ++y)
+                        if (XImage_pixel(&lineFrame, 50, y) != 0xff000000u)
+                            ++bad;
+                    /* 边框：上/下边 y=44/60 含端点，左右边 x=6/26。 */
+                    for (x = 6; x <= 26; ++x)
+                    {
+                        if (XImage_pixel(&lineFrame, x, 44) != 0xff000000u)
+                            ++bad;
+                        if (XImage_pixel(&lineFrame, x, 60) != 0xff000000u)
+                            ++bad;
+                    }
+                    for (y = 45; y <= 59; ++y)
+                    {
+                        if (XImage_pixel(&lineFrame, 6, y) != 0xff000000u)
+                            ++bad;
+                        if (XImage_pixel(&lineFrame, 26, y) != 0xff000000u)
+                            ++bad;
+                    }
+                    /* 内部不填充。 */
+                    if (XImage_pixel(&lineFrame, 15, 52) != 0xff202020u)
+                        ++bad;
+                    /* 斜线（软件 Bresenham）落在预期带内。 */
+                    {
+                        int found = 0;
+                        for (y = 10; y <= 20; ++y)
+                            if (XImage_pixel(&lineFrame, 30, y) == 0xff000000u)
+                                found = 1;
+                        if (!found) ++bad;
+                    }
+                    if (bad)
+                    {
+                        fprintf(stderr, "gpu-test: line pixels wrong (%d)\n"
+                                "  h10=%08x v50=%08x top=%08x left=%08x "
+                                "in=%08x slash=%08x\n",
+                                bad,
+                                (unsigned)XImage_pixel(&lineFrame, 20, 10),
+                                (unsigned)XImage_pixel(&lineFrame, 50, 20),
+                                (unsigned)XImage_pixel(&lineFrame, 10, 44),
+                                (unsigned)XImage_pixel(&lineFrame, 6, 50),
+                                (unsigned)XImage_pixel(&lineFrame, 15, 52),
+                                (unsigned)XImage_pixel(&lineFrame, 30, 15));
+                        ok = 0;
+                    }
+                }
+                XPainter_deinit(&linePainter);
+                XImage_deinit_base(&lineFrame);
+            }
             XImage_deinit_base(&frame);
             XGpuRenderBackend_destroy(session);
             fprintf(stderr, "gpu-test: atlas done\n");

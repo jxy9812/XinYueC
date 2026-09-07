@@ -280,7 +280,7 @@ set_tests_properties(XGuiRegression PROPERTIES
 # 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
 add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test)
 set_tests_properties(XGuiRegressionGpu PROPERTIES
-    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 
 # ==================== Linux X11 XDND 跨客户端端到端测试 ====================
 # 用独立 Xlib 客户端模拟拖放源，验证 XDND 状态应答、Selection 数据传输和

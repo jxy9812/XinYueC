@@ -211,6 +211,193 @@ static void painterGpuFallback(XPainter* self)
 
 #define XPAINTER_GPU_FALLBACK(self) painterGpuFallback(self)
 
+/**
+ * @brief      GPU 命令级同步读回（XGUI_GPU_SYNC=1 调试模式）。
+ * @details    每个绘制原语提交后立即把 FBO 内容读回目标 XImage——GPU
+ *             帧模型（帧末才可见）与既有"绘制后立即断言像素"的回归
+ *             用例不兼容，该开关让 GPU 环境回归可行。默认关闭，开启时
+ *             性能大幅下降（每命令一次 GPU->CPU 读回）。
+ */
+static bool xgpu_sync_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = getenv("XGUI_GPU_SYNC");
+        requested = value && *value ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+static void xgpu_sync_readback_if_requested(XPainter* self)
+{
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    if (self && self->m_gpuActive && self->m_gpuBackend &&
+        self->m_image && xgpu_sync_requested())
+        XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
+#else
+    (void)self;
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+}
+
+static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
+                                   int x2, int y2);
+
+/** @brief 画线局部提交的命令参数（设备坐标端点）。 */
+typedef struct PainterGpuLineArgs
+{
+    int m_x1; /**< 端点 1 X（设备坐标）。 */
+    int m_y1; /**< 端点 1 Y。 */
+    int m_x2; /**< 端点 2 X。 */
+    int m_y2; /**< 端点 2 Y。 */
+} PainterGpuLineArgs;
+
+/** @brief 画线局部提交回调：重入软件实现（m_gpuActive 已关闭）。 */
+static void painterGpuDrawLineCommand(XPainter* self, void* userData)
+{
+    const PainterGpuLineArgs* args = (const PainterGpuLineArgs*)userData;
+    painterRaster_drawLine(self, args->m_x1, args->m_y1,
+                           args->m_x2, args->m_y2);
+}
+
+/**
+ * @brief      把一个绘制命令以"软件光栅 + GPU 局部提交"执行。
+ * @details    GPU 会话内遇到无快速路径的命令（复杂变换/渐变/斜线/
+ *             RasterOp 等）时，不再整帧降级：在一张全帧尺寸的透明局部
+ *             画布上以既有软件光栅器执行同一命令（m_image 临时切换、
+ *             m_gpuActive 临时关闭——软件路径与纯软件渲染完全同源，
+ *             逐像素一致），画布整体经 drawImage 上传 FBO 后恢复状态。
+ *             裁剪/合成模式/透明度由软件路径按当前状态自然处理。
+ * @param      self 绘制器（须 GPU 会话激活）。
+ * @param      drawCommand 命令执行回调（重入对应命令的软件实现；
+ *             执行期间 m_gpuActive 为 false，不会再次进入本函数）。
+ * @param      userData 命令参数（借用）。
+ * @return     true 局部画布已提交；false 会话无效或提交失败。
+ */
+static bool painterRaster_drawImage(XPainter* self, const XImage* image,
+                                    int x, int y);
+struct XPainterImageRectParams;
+static bool painterRaster_drawImageRect(XPainter* self,
+                                        const struct XPainterImageRectParams* params,
+                                        const XImage* image);
+static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
+                                   uint32_t color);
+
+/** @brief drawImage 局部提交参数。 */
+typedef struct PainterGpuImageArgs
+{
+    const XImage* m_image; /**< 源图像（借用，重入期间有效）。 */
+    int m_x;               /**< 目标 X（设备坐标）。 */
+    int m_y;               /**< 目标 Y。 */
+} PainterGpuImageArgs;
+
+/** @brief drawImage 局部提交回调：重入软件实现。 */
+static void painterGpuDrawImageCommand(XPainter* self, void* userData)
+{
+    const PainterGpuImageArgs* args = (const PainterGpuImageArgs*)userData;
+    painterRaster_drawImage(self, args->m_image, args->m_x, args->m_y);
+}
+
+/** @brief drawImageRect（目标/源矩形/任意变换）局部提交参数。 */
+typedef struct PainterGpuImageRectArgs
+{
+    const struct XPainterImageRectParams* m_params; /**< 绘制参数（借用，重入期间有效）。 */
+    const XImage* m_image;                          /**< 源图像（借用）。 */
+} PainterGpuImageRectArgs;
+
+/** @brief drawImageRect 局部提交回调：重入软件实现（支持旋转/切变/透视）。 */
+static void painterGpuDrawImageRectCommand(XPainter* self, void* userData)
+{
+    const PainterGpuImageRectArgs* args =
+        (const PainterGpuImageRectArgs*)userData;
+    painterRaster_drawImageRect(self, args->m_params, args->m_image);
+}
+
+/** @brief fillRect 局部提交参数（任意合成模式/变换）。 */
+typedef struct PainterGpuFillRectArgs
+{
+    XRect m_rect;        /**< 目标矩形（设备坐标）。 */
+    uint32_t m_color;    /**< 预乘 ARGB32 颜色。 */
+} PainterGpuFillRectArgs;
+
+/** @brief fillRect 局部提交回调：重入软件实现（RasterOp 等全模式）。 */
+static void painterGpuFillRectCommand(XPainter* self, void* userData)
+{
+    const PainterGpuFillRectArgs* args =
+        (const PainterGpuFillRectArgs*)userData;
+    painterRaster_fillRect(self, &args->m_rect, args->m_color);
+}
+
+/** @brief drawText 局部提交参数。 */
+typedef struct PainterGpuTextArgs
+{
+    int m_x;              /**< 基线 X。 */
+    int m_baselineY;      /**< 基线 Y。 */
+    const char* m_utf8;   /**< 文本（借用，重入期间有效）。 */
+    uint32_t m_color;     /**< 文本色。 */
+} PainterGpuTextArgs;
+
+/** @brief drawText 局部提交回调：重入软件实现（任意变换）。 */
+static void painterGpuDrawTextCommand(XPainter* self, void* userData)
+{
+    const PainterGpuTextArgs* args = (const PainterGpuTextArgs*)userData;
+    XPainter_drawText(self, args->m_x, args->m_baselineY,
+                      args->m_utf8, args->m_color);
+}
+
+static bool painterGpuApplyStateClip(XPainter* self);
+
+static bool painterGpuSubmitSoftwareCommand(XPainter* self,
+    void (*drawCommand)(XPainter* self, void* userData), void* userData)
+{
+    XGpuRenderBackend* backend;
+    XImage* savedImage;
+    bool savedGpu;
+    XImage local;
+    bool ok;
+    if (!self || !self->m_gpuActive || !self->m_gpuBackend || !drawCommand)
+        return false;
+    backend = self->m_gpuBackend;
+    savedImage = self->m_image;
+    savedGpu = self->m_gpuActive;
+    XImage_init_ex(&local, backend ? XGpuRenderBackend_width(backend) : 0,
+                   backend ? XGpuRenderBackend_height(backend) : 0,
+                   XImageFormat_ARGB32);
+    if (XImage_isNull(&local)) return false;
+    self->m_image = &local;
+    self->m_gpuActive = false;
+    /* 局部画布以"最新画面"为底：先把宿主图像整体上传 FBO（同步帧中
+       的 CPU 直写，如 XImage_setPixel），再读回作为快照——需要读取
+       既有画面的命令（RasterOp 位运算、非 SourceOver 合成、
+       Destination 保留等）才能正确合成，执行后整帧按 Source 覆盖
+       提交（未绘制区域等于原内容，等价）。 */
+    /* 上传源必须是本 painter 的当前图像（savedImage）：g_xgpuSyncTarget
+       是全局注册（可能被其他 painter 污染，实测曾指向 12x2 图像导致
+       快照内容错误）。 */
+    XGpuRenderBackend_uploadFrame(backend, savedImage);
+    /* 同步当前裁剪状态到 GPU scissor：局部提交的 drawImage/drawAlpha
+       不经原语快速路径，外部路径残留的 scissor 会裁掉整帧覆盖。
+       多矩形/空裁剪（ApplyStateClip 返回 false）时清除 scissor——
+       裁剪由局部画布的软件光栅完成，提交 quad 必须全幅。 */
+    if (!painterGpuApplyStateClip(self))
+        XGpuRenderBackend_setClipRect(backend, NULL);
+    if (!XGpuRenderBackend_readback(backend, &local))
+    {
+        self->m_image = savedImage;
+        self->m_gpuActive = savedGpu;
+        XImage_deinit_base(&local);
+        return false;
+    }
+    drawCommand(self, userData);
+    self->m_image = savedImage;
+    self->m_gpuActive = savedGpu;
+    ok = XGpuRenderBackend_drawImage(backend, &local, 0, 0,
+                                     XImage_width(&local),
+                                     XImage_height(&local), 1.0f, false);
+    XImage_deinit_base(&local);
+    return ok;
+}
+
 #if XPAINTER_CLIP_ON
 /**
  * @brief      把绘制器状态裁剪同步到 GPU scissor。
@@ -1422,7 +1609,6 @@ static bool painterRaster_drawAxisLine(XPainter* self, int x1, int y1,
 static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2)
 {
-    XPAINTER_GPU_FALLBACK(self);
     XImageTransform transform;
     float fx1, fy1, fx2, fy2;
     int ix1, iy1, ix2, iy2;
@@ -1447,6 +1633,89 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
     if (width < 1) width = 1;
     dx = ix2 - ix1;
     dy = iy2 - iy1;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* 画线 GPU 快速路径：Solid 笔 + 非 RoundCap + 轴对齐（水平/垂直）
+       线段以半开像素范围 quad 提交——与软件 drawAxisLine 的像素范围
+       逐像素一致（覆盖控件边框这一最高频场景）。斜线、虚线、圆头与
+       零尺寸点保持整帧降级（光栅差异/复杂栅格，正确性优先）。 */
+    if (self->m_gpuActive)
+    {
+        bool solidLine = true;
+        bool roundCap = false;
+        int half = width / 2;
+        int a0;
+        int a1;
+        int c0;
+#if XPAINTER_PENSTYLE_ON
+        solidLine = self->m_state.m_penStyle == XPainterPenStyle_SolidLine;
+        roundCap = self->m_state.m_penCap == XPainterPenCapStyle_RoundCap;
+#endif /* XPAINTER_PENSTYLE_ON */
+        if (solidLine && !roundCap && width >= 1 &&
+            ((dx == 0) != (dy == 0)))
+        {
+            uint32_t premul;
+            unsigned a = (color >> 24) & 0xffu;
+            float q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y;
+            if (dy == 0)
+            {
+                a0 = ix1 < ix2 ? ix1 : ix2;
+                a1 = ix1 > ix2 ? ix1 : ix2;
+                c0 = iy1 - half;
+#if XPAINTER_PENSTYLE_ON
+                if (self->m_state.m_penCap ==
+                    XPainterPenCapStyle_FlatCap)
+                    --a1;
+                else if (self->m_state.m_penCap ==
+                         XPainterPenCapStyle_SquareCap)
+                {
+                    a0 -= half;
+                    a1 += half;
+                }
+#endif /* XPAINTER_PENSTYLE_ON */
+                q1x = (float)a0;             q1y = (float)c0;
+                q2x = (float)(a1 + 1);       q2y = (float)c0;
+                q3x = (float)a0;             q3y = (float)(c0 + width);
+                q4x = (float)(a1 + 1);       q4y = (float)(c0 + width);
+            }
+            else
+            {
+                a0 = iy1 < iy2 ? iy1 : iy2;
+                a1 = iy1 > iy2 ? iy1 : iy2;
+                c0 = ix1 - half;
+#if XPAINTER_PENSTYLE_ON
+                if (self->m_state.m_penCap ==
+                    XPainterPenCapStyle_FlatCap)
+                    --a1;
+                else if (self->m_state.m_penCap ==
+                         XPainterPenCapStyle_SquareCap)
+                {
+                    a0 -= half;
+                    a1 += half;
+                }
+#endif /* XPAINTER_PENSTYLE_ON */
+                q1x = (float)c0;             q1y = (float)a0;
+                q2x = (float)c0;             q2y = (float)(a1 + 1);
+                q3x = (float)(c0 + width);   q3y = (float)a0;
+                q4x = (float)(c0 + width);   q4y = (float)(a1 + 1);
+            }
+            premul = ((uint32_t)a << 24) |
+                     ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
+                     ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
+                     (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
+            return XGpuRenderBackend_drawSolidQuad(
+                self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
+                premul,
+                self->m_state.m_compositionMode ==
+                    XPainterCompositionMode_SourceOver);
+        }
+        /* 斜线/虚线/圆头/零尺寸点：软件光栅局部提交（不整帧降级）。 */
+        {
+            PainterGpuLineArgs args = { x1, y1, x2, y2 };
+            return painterGpuSubmitSoftwareCommand(
+                self, painterGpuDrawLineCommand, &args);
+        }
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     start = -(width / 2);
     end = start + width;
     if (dx == 0 && dy == 0)
@@ -1561,6 +1830,10 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
             compOk =
                 state->m_compositionMode == XPainterCompositionMode_Source ||
                 state->m_compositionMode == XPainterCompositionMode_SourceOver;
+            /* 半透明色经 GL 预乘管线的舍入序列与 XImage 非预乘整数
+               合成不一致（回归要求精确整值）：半透明色一律局部提交。 */
+            if (compOk && ((color >> 24) != 0xffu))
+                compOk = false;
             if (clipOk && compOk)
             {
 #if XPAINTER_CLIP_ON
@@ -1585,7 +1858,15 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                         XPainterCompositionMode_SourceOver);
                 return true;
             }
-            painterGpuFallback(self); /* 非快速路径：合并已画 GPU 部分后转软件。 */
+        }
+        /* 非快速路径（复杂变换/多矩形裁剪/RasterOp 合成等）：
+           软件光栅局部提交，GPU 会话不降级。 */
+        {
+            PainterGpuFillRectArgs args;
+            args.m_rect = *rect;
+            args.m_color = color;
+            return painterGpuSubmitSoftwareCommand(
+                self, painterGpuFillRectCommand, &args);
         }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -1785,7 +2066,15 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                     return true;
             }
         }
-        painterGpuFallback(self);
+        /* 不支持的形态（复杂变换/合成）：软件光栅局部提交。 */
+        {
+            PainterGpuImageArgs args;
+            args.m_image = image;
+            args.m_x = x;
+            args.m_y = y;
+            return painterGpuSubmitSoftwareCommand(
+                self, painterGpuDrawImageCommand, &args);
+        }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     XPAINTER_GPU_FALLBACK(self);
@@ -2019,7 +2308,18 @@ static bool painterRaster_drawImageRect(XPainter* self,
                                         const XPainterImageRectParams* params,
                                         const XImage* image)
 {
-    XPAINTER_GPU_FALLBACK(self);
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* 任意变换/源矩形的图像绘制无专用 GL 管线：软件光栅局部提交
+       （逐像素一致），GPU 会话不降级。 */
+    if (self->m_gpuActive)
+    {
+        PainterGpuImageRectArgs args;
+        args.m_params = params;
+        args.m_image = image;
+        return painterGpuSubmitSoftwareCommand(
+            self, painterGpuDrawImageRectCommand, &args);
+    }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     XImageTransform transform;
     XImageTransform inverse;
     float minX, minY, maxX, maxY;
@@ -2703,6 +3003,26 @@ static bool painterGlyphContoursAlphaCoverage(
 static bool painterFillContoursAntialiased(XPainter* self,
     const PainterPathFillContour* contours, int contourCount,
     XPainterFillRule fillRule, uint32_t brushColor, int subdiv);
+static bool painterFillPolygonShape(XPainter* self, int n,
+                                    const float* uxs, const float* uys,
+                                    XPainterFillRule fillRule);
+
+/** @brief 渐变多边形局部提交的命令参数（用户坐标顶点）。 */
+typedef struct PainterGpuPolyArgs
+{
+    int m_n;                        /**< 顶点数（>=3）。 */
+    const float* m_uxs;             /**< 顶点 X 数组（借用，重入期间有效）。 */
+    const float* m_uys;             /**< 顶点 Y 数组（借用）。 */
+    XPainterFillRule m_fillRule;    /**< 填充规则。 */
+} PainterGpuPolyArgs;
+
+/** @brief 渐变多边形局部提交回调：重入软件实现。 */
+static void painterGpuPolyCommand(XPainter* self, void* userData)
+{
+    const PainterGpuPolyArgs* args = (const PainterGpuPolyArgs*)userData;
+    painterFillPolygonShape(self, args->m_n, args->m_uxs, args->m_uys,
+                            args->m_fillRule);
+}
 
 /** @brief 按填充规则把排序后的交点转换为成对填充区间。 */
 static int painterBuildFillSpans(XPainterFillCrossing* crossings, int count,
@@ -2957,6 +3277,23 @@ static bool painterScanFillDevice(XPainter* self, int n,
 #endif /* XPAINTER_RENDERHINT_ON */
         if (antialias || self->m_gpuActive)
         {
+            /* Winding 规则（GPU 非 AA）：fillContours 覆盖图忽略
+               fillRule（按 OddEven 填充，绕组抵消），软件 ScanFill
+               的 winding 正确——GPU 会话走局部提交（软件 winding）。 */
+            if (self->m_gpuActive && !antialias &&
+                fillRule == XPainterFillRule_Winding)
+            {
+                PainterGpuPolyArgs args;
+                bool filled;
+                args.m_n = n;
+                args.m_uxs = uxs;
+                args.m_uys = uys;
+                args.m_fillRule = fillRule;
+                filled = painterGpuSubmitSoftwareCommand(
+                    self, painterGpuPolyCommand, &args);
+                XFree_Hybrid(heapStorage);
+                return filled;
+            }
             PainterPathFillContour contour;
             bool filled;
             contour.m_xs = dtx;
@@ -2968,6 +3305,23 @@ static bool painterScanFillDevice(XPainter* self, int n,
             XFree_Hybrid(heapStorage);
             return filled;
         }
+    }
+#endif /* XPAINTER_PATH_ON */
+#if XPAINTER_PATH_ON
+    /* 渐变笔刷无 GPU 快速路径：软件光栅（逐像素取色）局部提交，
+       不整帧降级。 */
+    if (gradient && self->m_gpuActive)
+    {
+        PainterGpuPolyArgs args;
+        bool filled;
+        args.m_n = n;
+        args.m_uxs = uxs;
+        args.m_uys = uys;
+        args.m_fillRule = fillRule;
+        filled = painterGpuSubmitSoftwareCommand(self, painterGpuPolyCommand,
+                                                 &args);
+        XFree_Hybrid(heapStorage);
+        return filled;
     }
 #endif /* XPAINTER_PATH_ON */
     XPAINTER_GPU_FALLBACK(self);
@@ -3057,7 +3411,7 @@ static bool painterScanFillDevice(XPainter* self, int n,
                         XImage_fillRect(self->m_image, &span, solidColor);
                     }
                 }
-#else
+#elif XPAINTER_CLIP_ON
                 if (clipped)
                 {
                     int clipLeft = self->m_state.m_clipRect.x;
@@ -3072,12 +3426,14 @@ static bool painterScanFillDevice(XPainter* self, int n,
                         XImage_fillRect(self->m_image, &span, solidColor);
                     }
                 }
-#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
-                else
+#else
+                /* 无裁剪能力构建：直接填充（clipped 恒为 false）。 */
+                if (!clipped)
                 {
                     XRect span = { xl, py, xr - xl + 1, 1 };
                     XImage_fillRect(self->m_image, &span, solidColor);
                 }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
             }
             else for (px = xl; px <= xr; ++px)
             {
@@ -3250,6 +3606,15 @@ static bool painterFillContoursAntialiased(XPainter* self,
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     if (self->m_gpuActive)
     {
+        /* 把当前裁剪状态同步到 GPU scissor：本路径（多边形/路径填充
+           的覆盖图提交）不经过原语快速路径，文本等其他路径设置的
+           scissor 会残留并裁掉本 quad（实测铁证：清除 scissor 后
+           立即可见）。 */
+        if (!painterGpuApplyStateClip(self))
+        {
+            XFree_System(alpha);
+            return false;
+        }
         ok = XGpuRenderBackend_drawAlphaBitmap(
             self->m_gpuBackend, alpha, width, height, width,
             left, top, ink, 1.0f,
@@ -3988,6 +4353,10 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
 #if XPAINTER_VIEW_TRANSFORM_ON
     painterResetViewTransform(self);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    XGpuRenderBackend_setSyncTarget(self->m_gpuBackend,
+                                    self->m_gpuActive ? image : NULL);
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     return true;
 }
 
@@ -4089,13 +4458,24 @@ void* XPainter_device(const XPainter* self)
 
 bool XPainter_drawLine(XPainter* self, int x1, int y1, int x2, int y2)
 {
+    bool lineOk;
     if (!self || self->m_deviceKind == XPainterDevice_None || !self->m_drawLine)
         return false;
 #if XPAINTER_PENSTYLE_ON
+    /* NoPen：真正的无绘制——提前返回且不触发 GPU 同步（SYNC 模式的
+       读回会用 FBO 旧内容覆盖帧中 CPU 直写，违背 untouched 语义）。 */
+    if (self->m_state.m_penStyle == XPainterPenStyle_NoPen)
+        return true;
     if (self->m_state.m_penStyle != XPainterPenStyle_SolidLine)
-        return painterDrawLineStyled(self, x1, y1, x2, y2);
+    {
+        bool styledOk = painterDrawLineStyled(self, x1, y1, x2, y2);
+        xgpu_sync_readback_if_requested(self);
+        return styledOk;
+    }
 #endif /* XPAINTER_PENSTYLE_ON */
-    return self->m_drawLine(self, x1, y1, x2, y2);
+    lineOk = self->m_drawLine(self, x1, y1, x2, y2);
+    xgpu_sync_readback_if_requested(self);
+    return lineOk;
 }
 
 bool XPainter_drawLine_2(XPainter* self, const XPoint* p1, const XPoint* p2)
@@ -4302,13 +4682,17 @@ bool XPainter_drawLines(XPainter* self, const XPoint* pointPairs, int pairCount)
 }
 bool XPainter_fillRect(XPainter* self, const XRect* rect, uint32_t color)
 {
+    bool fillOk;
     XRect normalized;
+    (void)fillOk;
     if (!self) return false;
     if (!rect) return false;
     if (!painterNormalizeFillRect(rect, &normalized)) return true;
     if (self->m_deviceKind == XPainterDevice_None || !self->m_fillRect)
         return false;
-    return self->m_fillRect(self, &normalized, color);
+    fillOk = self->m_fillRect(self, &normalized, color);
+    xgpu_sync_readback_if_requested(self);
+    return fillOk;
 }
 
 bool XPainter_fillRect_2(XPainter* self, const XRect* rect)
@@ -6239,6 +6623,14 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
     /* 图集命中：覆盖图已在 GPU，跳过 CPU 采样（alpha 传 NULL）。 */
     glyphKey = painterGpuGlyphKey(XFont_face(&self->m_state.m_font),
                                   codepoint, scale);
+    /* AA 与非 AA 覆盖图不同：用不同 key 存储，避免图集缓存污染
+       （AA 存的边缘半覆盖 0x1b 被非 AA 命中复用，导致
+       "disabling text antialiasing restores hard edge" 失败）。 */
+#if XPAINTER_RENDERHINT_ON
+    if ((table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
+        painter8x16CanAntialias(self))
+        glyphKey ^= 0x5A5A5A5A5A5A5A5AULL;
+#endif
     alpha = NULL;
     if (!XGpuRenderBackend_glyphAtlasContains(self->m_gpuBackend, glyphKey,
                                               width, height))
@@ -6395,7 +6787,17 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
     {
         if (painterGpuDrawText(self, x, baselineY, utf8, color))
             return true;
-        painterGpuFallback(self);
+        /* GPU 文本快速路径不支持的形态（复杂变换/多矩形裁剪）：
+           软件光栅局部提交。 */
+        {
+            PainterGpuTextArgs args;
+            args.m_x = x;
+            args.m_baselineY = baselineY;
+            args.m_utf8 = utf8;
+            args.m_color = color;
+            return painterGpuSubmitSoftwareCommand(
+                self, painterGpuDrawTextCommand, &args);
+        }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     XPAINTER_GPU_FALLBACK(self);

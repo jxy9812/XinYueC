@@ -3362,6 +3362,9 @@ static void test_picture_painter_high_level_record_link(void)
     XPainter_setBrush(&image, 0xff0000ffu);
     expect_true(XPicture_play(&picture, &image),
                 "high-level picture replays through software raster");
+    /* 像素断言移到 end 之后：GPU 后端的回放内容在帧末 readback 时才
+       落回目标图像（与纯软件渲染的可见时机一致化）。 */
+    expect_true(XPainter_end(&image), "high-level replay picture ends");
     expect_true(XImage_pixel(&target, 10, 6) == 0xff0000ffu,
                 "replayed ellipse fills recorded brush color");
     expect_true(XImage_pixel(&target, 10, 2) == 0xffff0000u &&
@@ -3379,8 +3382,6 @@ static void test_picture_painter_high_level_record_link(void)
                 XImage_pixel(&target, 22, 14) == 0xffff0000u &&
                 XImage_pixel(&target, 21, 11) == 0xff000000u,
                 "replayed points plot each recorded point only");
-
-    expect_true(XPainter_end(&image), "high-level replay picture ends");
     XPainter_deinit(&image);
     XPainter_deinit(&record);
     XImage_deinit_base(&target);

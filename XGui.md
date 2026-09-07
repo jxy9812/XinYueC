@@ -12908,3 +12908,588 @@ XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test
 - gradient 笔刷 + AA 组合回退二值（灰度模式仅 solid 覆盖）。
 - 复杂变换（旋转/缩放）下 AA 覆盖在设备空间计算，与 Qt 的用户空间
   抗锯齿在极端参数下存在采样密度差异。
+
+### 14.11 2026-09-07 Linux 轮：渲染驱动可插拔化（对齐 Qt QRhi 后端模式）
+
+> 阶段一（零行为变化重构）完成：`XGpuRenderBackend` 拆分为"通用层 +
+> 可插拔驱动接口"，为 Vulkan 接入与 OpenGL 原语补齐建立结构基础。
+> 公共 API 形状不变，全部调用方（XPainter/XWidget/demo）零改动。
+
+结构（1432 行单文件 -> 三文件）：
+
+- `XGpuRenderDriver.h`（新，265 行）：驱动操作表契约——
+  `XGpuRenderDriverType`（OpenGL/Vulkan 枚举，Vulkan 骨架预留）、
+  不透明驱动会话、`XGpuRenderDriverProcs` 函数表（available/
+  sessionCreate/sessionDestroy/makeCurrent/doneCurrent/beginFrame/
+  endFrame/presentToWindow/readback/clear/setClipRect/fillRect/
+  drawImage/drawAlphaBitmap/glyphAtlasUpload/glyphAtlasDraw/
+  glyphAtlasReadback）、图集尺寸契约常量、注册表入口
+  `XGpuRenderDriver_procs(type)`。
+- `XGpuRenderDriver_gl.c`（新，~1200 行）：OpenGL 驱动实现整体搬入
+  （GL 函数表/上下文/FBO/shader/quad/blit/readback/present/图集
+  纹理与子矩形）；新增图集覆盖度读回（临时 FBO 附着，测试用）。
+- `XGpuRenderBackend.c`（重写为通用层，526 行）：全局会话管理
+  （请求探测/窗口会话/降级与上屏标志）、字形图集装箱/键查找/统计、
+  公共 API 转调驱动；`drawGlyphAlpha` 的绘制期预乘与命中零上传
+  语义不变。
+
+验证（llvmpipe）：CTest 3/3（默认/GPU 环境/GPU 冒烟）；软/GPU demo
+截图 diff=21px（同 14.9 的 ±1 舍入差，无新增）；GPU demo 3.13ms/帧
+（320 FPS，持平略优）；ASan GPU 冒烟、`build-crop-min`/
+`build-crop-gpu`（`XGPU_ON=0`）全部通过。未提交、未 push。
+
+近似边界：Vulkan 驱动仍为骨架（`XGpuRenderDriver_procs(Vulkan)`
+返回 NULL，通用层据此回退 OpenGL）；`glyphAtlasUpload` 契约要求
+紧凑覆盖（stride==width，painter 两条字形路径恒满足）。
+
+### 14.12 下一步（OpenGL 完全实现，待执行）
+
+按降级清单补齐 GL 驱动的快速路径（优先级降序）：
+
+1. 画线/描边 GPU 快速路径（`painterRaster_drawLine` 现整帧降级，
+   控件边框 `drawRect` 因此触发）——线段=方向旋转 quad 或 GL_LINES。
+2. 复杂变换（旋转/缩放）下的 fillRect/drawImage/text——顶点 CPU
+   变换后提交。
+3. 渐变笔刷 GPU 填充（linear 优先）。
+4. RasterOp 合成模式（glLogicOp）与剩余混合模式。
+5. `drawPoints` 点集。
+
+### 14.13 2026-09-07 Linux 轮：画线/描边 GPU 快速路径（14.12 第 1 项）
+
+> 14.12 降级清单的最高优先级项完成：`drawLine` 及其下游（`drawRect`
+> 边框、`drawPolygon` 描边、`drawLines`）在轴对齐 Solid 笔场景不再
+> 整帧降级——这是 UI 最高频的触发源（几乎所有控件边框）。
+
+实现范围：
+
+1. 驱动接口扩展：`XGpuRenderDriverProcs.drawSolidQuad`（任意四顶点
+   纯色 quad，三角带 TL/TR/BL/BR）+ 公共 API
+   `XGpuRenderBackend_drawSolidQuad`；GL 驱动实现（solidProgram +
+   自定义顶点，NDC 换算与既有 quad 一致）。
+2. `painterRaster_drawLine` GPU 分支：Solid 笔 + 非 RoundCap +
+   轴对齐（水平/垂直）线段以半开像素范围 quad 提交——范围计算与
+   软件 `painterRaster_drawAxisLine` 完全一致（含端点、FlatCap -1、
+   SquareCap ±half、跨向 half 偏移与宽度），**逐像素一致**；
+   斜线/虚线/圆头/零尺寸点保持整帧降级（光栅差异与复杂栅格，
+   正确性优先；降级时 FBO 内容先 readback 合并，随后软件绘制）。
+
+验证（llvmpipe）：
+
+- TDD（xgui_gpu_test）：GPU 会话内水平线/垂直线/drawRect 边框零
+  降级 + 全部边框与线像素精确（含端点与内部不填充）+ 斜线预期降级
+  且内容正确（red-green：实现前轴对齐断言失败）。
+- 调试插曲记录：proc 表初始化顺序与接口字段顺序错位导致
+  `drawSolidQuad` 实际指向 readback 实现（gdb 断点定位），已修正；
+  GPU 模式下帧中读像素的断言时机问题再次确认（统一移至帧末）。
+- 回归矩阵：默认、GPU 环境（CTest `XGuiRegressionGpu`）、CTest 3/3、
+  `build-crop-min`、`build-crop-gpu`、ASan GPU 冒烟全部通过；软/GPU
+  demo 截图 diff=21px（不变，仅 14.9 的 ±1 舍入差）；GPU demo
+  3.75ms/帧（267 FPS，与 14.10 持平）。未提交、未 push。
+
+近似边界：斜线与圆头/虚线仍整帧降级（后续如需，斜线可经
+`drawSolidQuad` 旋转 quad 实现，但与 Bresenham 的像素差异需要验收
+口径调整）；`XPAINTER_PENSTYLE_ON=0` 时视为 Solid 无 cap 扩展。
+
+### 14.14 2026-09-07 Linux 轮：OpenGL 完全实现——"局部软件光栅 + GPU 提交"统一通道
+
+> 14.12 清单全部完成（第 2~5 项）。核心设计变更：GPU 会话内无快速
+> 路径的命令不再"整帧降级软件"，而是**在一张全帧尺寸的透明局部画布
+> 上以既有软件光栅器执行同一命令，画布整体经 drawImage 上传 FBO**——
+> 软件光栅器同源保证逐像素一致，GPU 会话全程保持（帧不再丢失）。
+
+实现范围：
+
+1. **统一 helper `painterGpuSubmitSoftwareCommand`**：临时切换
+   m_image 到局部画布、关闭 m_gpuActive，重入命令的软件实现（与纯
+   软件渲染完全同源），恢复状态后 drawImage 提交。裁剪/合成模式/
+   透明度由软件路径按当前状态自然处理。
+2. **命令适配器**：drawLine（斜线/虚线/圆头/零尺寸点——零尺寸点即
+   drawPoint 自动覆盖）、fillRect（复杂变换/多矩形裁剪/RasterOp
+   合成）、drawImageRect（旋转/切变/透视/源矩形）、drawText（复杂
+   变换/多矩形裁剪）、渐变多边形（fillRect_2 渐变经
+   painterFillPolygonShape 重入）。
+3. **接入点语义变化**：5 处 `XPAINTER_GPU_FALLBACK`/`painterGpuFallback`
+   调用（drawLine 斜线、drawImage 复杂、drawImageRect 全部、fillRect
+   非快速路径、drawText 复杂变换与渐变 scanfill）改为局部提交；
+   `painterScanFillDevice` 的 GPU 整帧降级删除。**GPU 会话不再因
+   任何绘制命令降级**（异常路径 fallback 保留）。
+
+验证结果（llvmpipe）：
+
+- TDD（xgui_gpu_test）：斜线不降级（会话保持 GPU）+ 斜线像素正确；
+  渐变笔刷不降级 + 渐变端点颜色采样（帧末 readback 断言）。
+- 回归矩阵：默认、GPU 环境、CTest 3/3、`build-crop-min`、
+  `build-crop-gpu`、ASan GPU 冒烟全部通过；软/GPU demo 截图
+  diff=21px（不变，仅 14.9 的 ±1 舍入差）；GPU demo 3.22ms/帧
+  （310 FPS，持平）。`git diff --check` 干净。未提交、未 push。
+
+近似边界：
+
+- 局部画布为全帧尺寸（每降级命令一次分配；旋转动画等高频场景可
+  后续加画布复用缓存）。
+- 每个不支持命令一次 drawImage 全帧上传（llvmpipe ~1ms/帧级），
+  频繁混合调用时开销可见；真机硬件 GPU 上上传带宽占比更小。
+- **部署提醒**：多构建目录共享 `bin/` 输出，切换构建后需
+  `rm bin/<目标>` 强制重链（make 因时间戳跳过重链会残留其它配置的
+  二进制，本轮已两次踩坑）。
+
+### 14.15 Vulkan 渲染驱动实现（已完成，lavapipe 实测）
+
+> 可插拔接口（14.11）之上的 Vulkan 驱动实现完成：`XGpuRenderDriver_
+> vulkan.c`（约 1400 行）实现 `XGpuRenderDriverProcs` 全部 18 个操作，
+> 本机 lavapipe（Mesa 软件 Vulkan）完成正确性验证。
+
+实现内容（按 14.15 蓝图，执行模型为"命令录制 + 帧末提交"）：
+
+- **会话**：instance（窗口会话启用 VK_KHR_surface+xlib_surface 扩展）、
+  物理/逻辑设备（队列族 0）、命令池 + primary 命令缓冲（每帧重置重
+  录）、帧 fence；离屏渲染目标（B8G8R8A8 VkImage + view + framebuffer）；
+  窗口部分（Xlib surface、FIFO swapchain、每图像 view/framebuffer、
+  acquire/render 信号量对）。
+- **管线**：solid（push constant 纯色）与 texture（combined image
+  sampler）两条 graphics pipeline；顶点布局 pos(2F)+uv(2F)+color(4F)，
+  顶点写入 HOST_VISIBLE|COHERENT 顶点缓冲游标，vkCmdDraw 以
+  firstVertex 偏移绘制。SPIR-V 由 `tools/gen_spv.py` 手写生成器产出
+  （三个最小 shader 的 SPIR-V 1.0 二进制，生成头文件
+  `XGpuRenderDriver_vulkan_shaders.h`；系统无 shaderc/glslang，生成器
+  为一次性工具，lavapipe 上 vkCreateShaderModule 与管线链接实证）。
+- **原语**：clear/vkCmdClearAttachments；setClipRect=动态 scissor；
+  fillRect/drawSolidQuad=纯色 quad；drawImage=staging 拷贝 + 采样
+  quad（渲染通道临时打断-上传-重开模式）；drawAlphaBitmap=覆盖度
+  构造预乘 RGBA 后复用 drawImage；字形图集=独立提交的 staging 子
+  矩形上传 + 图集视图子矩形绘制 + 图集读回。
+- **帧边界**：endFrame 提交（窗口挂 acquire/render 信号量链并
+  present）；离屏挂起 readback 在提交完成后 staging 拷贝执行
+  （Vulkan 图像行序与 XImage 一致，无翻转）；XGUI_GPU_SYNC=1 的
+  命令级同步经"打断-提交-拷贝-重开渲染通道"实现。
+- **接入**：`XGpuRenderDriver_procs(Vulkan)` 返回驱动表；
+  `XGUI_RENDER_BACKEND=vulkan` 显式请求；驱动不可用自动回退
+  OpenGL/软件。Xlib 头与公共类型同名冲突沿用 Drive 层改名 include
+  约定（含 XMemory.h 的 XFree 宏解除与恢复）。
+
+验证结果（lavapipe）：
+
+- `XGUI_RENDER_BACKEND=vulkan ./bin/XGuiGpu_Test`：会话创建、
+  fillRect/drawImage/drawText/drawRect 边框/斜线局部提交/渐变/图集
+  全部断言通过，backend=1 全程无降级。
+- 窗口会话：demo 真实窗口（Xlib surface + swapchain present），
+  xwd 抓窗确认全部控件/文本/浮层渲染正确（浮层实测 554 FPS）。
+- 回退链：GL 后端、软件后端、`build-crop-gpu`（XGPU_ON=0）回归
+  全绿（Vulkan 未编译时该类型返回 NULL 自动回退）。
+- 未提交、未 push。
+
+已知边界：
+
+- 标题区偶发帧间轻微残影（swapchain 多缓冲与抓窗时序，真机复核）。
+- 窗口 swapchain 读回不支持（demo 的 GPU 截图路径在 Vulkan 下回退
+  抓 X11 窗口/保存 XImage，已在 14.15 设计注明）。
+- 每帧一次队列空闲等待（离屏 readback/图集上传为阻塞提交）；真机
+  性能调优（fence 流水/图集异步上传）留待目标设备 profiling。
+- renderPass 假定 B8G8R8A8；swapchain 格式枚举仅挑选 BGRA/RGBA
+  两种，异常设备回退由 surface 创建失败触发。
+- ARM GLES 交叉编译的 Vulkan 路径未验证（目标平台无 Vulkan ICD，
+  维持 XGPU_ON=0 交付）。
+
+已确认的环境与复用点：
+
+- 本机 ICD：`/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`（Mesa lavapipe
+  软件 Vulkan）——可完整运行正确性验证（性能仍需真机）。
+- 系统头：`/usr/include/vulkan/vulkan_core.h`、`vulkan_xlib.h` 齐备。
+- CMake：`XINYUE_C_HAS_VULKAN=1` 已检测并链接 `-lvulkan`（95-99 行）。
+- Drive 层既有：`XPlatformGraphicsDriver_createVulkan`（vkCreateInstance
+  + 物理设备枚举，instance 级）；窗口句柄获取先例：
+  `XPlatformNativeWindow_nativeConnection(&type)` 取 Display*、
+  `XWindow_winId(window)` 取 Window id（GL 驱动窗口会话同款）。
+
+实现蓝图（`XGpuRenderDriver_vulkan.c`，预计 1500~2500 行）：
+
+1. **驱动会话结构**：instance（可复用 Drive 层或自建）、物理/逻辑设备、
+   queue + queueFamily、命令池 + primary 命令缓冲、离屏渲染目标
+   （VkImage + memory + imageView + framebuffer + renderPass）、窗口
+   部分（VkSurfaceKHR（VK_KHR_xlib_surface）/VkSwapchainKHR/交换链
+   图像视图与 framebuffer/信号量对）、顶点缓冲（HOST_VISIBLE|COHERENT，
+   帧内按原语累积顶点，vkCmdDraw 以 firstVertex 偏移绘制）、solid/
+   texture 两个 graphics pipeline + descriptor/sampler、图集 VkImage +
+   staging、readback staging。
+2. **执行模型**：GL 是即时模式，Vulkan 为命令录制——每个绘制原语按
+   调用顺序录制进命令缓冲（顶点写 host 顶点缓冲游标 + vkCmdDraw 偏移；
+   纹理上传在对应 draw 前插入 staging copy + pipeline barrier）。
+3. **原语映射**：clear=renderPass clearOp；fillRect/drawSolidQuad=
+   纯色 pipeline（push constant 传颜色）；drawImage/drawAlphaBitmap/
+   glyphAtlasUpload+Draw=纹理/图集 pipeline（descriptor 绑定）；
+   setClipRect=动态 scissor；readback=cmdCopyImage→staging→host
+   （离屏：endFrame submit+wait 后执行 pending 拷贝；窗口 swapchain
+   读回第一版不支持，返回 false 并文档注明）。
+4. **注册接线**：`XGpuRenderDriver_procs` 的 type 分发从 GL 驱动文件
+   移至中立位置（或由 Backend.c 聚合），Vulkan 文件提供
+   `XGpuRenderDriver_vulkan_procs(void)`；`XINYUE_C_HAS_VULKAN` 未定义
+   时该类型返回 NULL（自动回退 OpenGL/软件）。
+5. **环境变量**：`XGUI_RENDER_BACKEND=vulkan` 显式请求；`gpu` 保持
+   自动（Vulkan 未稳定前 GPU 自动仍选 OpenGL）。
+
+验证路径：
+
+- 每阶段以 `XGUI_RENDER_BACKEND=vulkan ./bin/XGuiGpu_Test` 为准
+  （lavapipe 上运行，逐原语像素断言与 GL/软件对照）；全量回归在
+  vulkan 回退链开启后跑三遍（vulkan/gl/software）。
+- 已知风险：lavapipe 对部分特性（如大面积 blit/格式）与真机驱动的
+  差异；Xlib surface 在无窗口环境（CTest 离屏用例）不可用——窗口
+  会话验证用 demo + xwd 抓窗（同 14.7 方法）。
+
+### 14.16 2026-09-07 Linux 轮：Vulkan 限制消化（进行中）
+
+- **窗口 readback 修复**：pending 拷贝原硬编码离屏 colorImage（窗口
+  会话该图像不存在——真 bug）；改为按会话选择渲染目标（离屏
+  colorImage / 窗口当前 swapchain 图像），并补规范布局处理——窗口
+  renderPass 的 finalLayout 改为 PRESENT_SRC_KHR（present 规范要求），
+  readback 拷贝前后做 PRESENT_SRC <-> TRANSFER_SRC barrier，离屏保持
+  COLOR_ATTACHMENT 语义。
+- **swapchain 原地 resize**：驱动接口新增 `resize` 操作（procs，
+  返回 false 则调用方销毁重建）；Vulkan 实现等闲置 -> 销毁
+  framebuffer/视图/swapchain -> 按新尺寸重建（surface 复用、格式与
+  renderPass/pipeline 不变）；离屏重建 colorImage/framebuffer。
+  通用层 acquireForWindow 尺寸变化先试原地 resize。GL 驱动未实现
+  （procs 字段 NULL，保持销毁重建现状）。Vulkan swapchain 对象创建
+  拆分为 `xvkl_create_swapchain_objects`（surface 创建与对象创建
+  分离，resize 复用）。
+- **录制中即时 readback**（XGUI_GPU_SYNC 模式的 Vulkan 实现）：
+  打断渲染通道 -> 提交已录命令 -> PRESENT_SRC/COLOR_ATTACHMENT 到
+  TRANSFER_SRC barrier -> 拷贝 staging -> 恢复布局 -> 重新开始渲染
+  通道与命令录制（LOAD 保留已画内容，顶点游标不变，后续原语继续
+  追加）。
+- 验证：Vulkan 冒烟全过；`--benchmark-resize`（交替窗口大小）89 帧
+  无崩溃（原地 resize 生效）；GPU 环境回归失败 296 -> 44（即时
+  readback 生效）。
+
+剩余（下一轮）：44 项失败分类修复——RasterOp 局部提交像素对比
+（11 项，最大类）、高分辨率 DPR 图像（drawImageRect 局部提交相关）、
+零散路径差异（strokePath/clip/winding 等）；逐类以软/GPU 像素级
+对比定位。未提交、未 push。
+
+**加宽验证（完成）**：三页面（demo page 0/1/2）× 三后端
+（software/OpenGL/Vulkan）九张截图两两对照——Vulkan 与软件
+**全页面逐像素一致（diff=0）**；OpenGL 与软件仅 page 0 存在已知
+21px ±1 AA 舍入差。窗口 readback 修复后 demo 截图（readback 路径）
+在 Vulkan 下输出正确。三后端 XGuiGpu_Test 冒烟全绿。
+
+### ⚠️ 14.16.1 状态警告：XGpuRenderDriver_vulkan.c 源文件损坏待重建
+
+> 2026-09-07 收尾清理 upload 调试代码时，python 切片误删了
+> `XGpuRenderDriver_vulkan.c` 的主体内容（sessionCreate 及全部 xvkl_*
+> 实现、g_xvklProcs 表），仅剩文件头、即时 readback 残段与
+> `XGpuRenderDriver_vulkan_procs` 壳。该文件为未提交的新文件，无备份。
+
+- 当前状态：项目**可编译**（vulkan.c 内容为空壳，`XGpuRenderDriver_procs
+  (Vulkan)` 返回的表内函数指针均为未定义符号……实际该文件编译产生
+  g_xvklProcs 未定义错误——**当前构建已损坏**，需先删除或重建该文件。
+- 紧急修复（下一轮第一步）：`git status` 确认 vulkan.c 为 untracked
+  后直接 `rm` 该文件并同步删除 CMake 无需改动（GLOB 自动），
+  `XGpuRenderDriver_procs(Vulkan)` 分支因 `XINYUE_C_HAS_VULKAN` 宏在
+  聚合函数里返回 NULL……聚合函数引用了 `XGpuRenderDriver_vulkan_procs`
+  且在 `#if defined(XINYUE_C_HAS_VULKAN)` 内——需同步删除该引用分支
+  或重建文件。**推荐重建**（内容蓝图完整保留在本节及 git 历史的
+  XGpuRenderDriver_gl.c 参照）。
+- 重建蓝图：14.15 蓝图 + 本节之前 14.16 记录的全部实现细节
+  （会话结构 18 字段、renderPass PRESENT_SRC 窗口布局、readback
+  窗口/离屏分路径、即时 readback、swapchain 对象创建拆分、X11 头
+  rename 约定、XFree 宏解除）。
+- GL 驱动（XGpuRenderDriver_gl.c）完好，不受影响；其余改动
+  （XPainter.c 可插拔/AA 等）完好。
+
+### 14.16.2 当前进度快照（2026-09-07 收尾）
+
+- **软件回归**：全绿（`XGui regression tests passed`）；默认构建除
+  损坏的 vulkan.c 外全部正常——恢复可编译的最小步骤见 14.16.1。
+- **完好改动**（已验证，随本次一并保留）：XGpuRenderDriver_gl.c
+  （GL 驱动 + designated procs 表）、XPainter.c（可插拔 GPU 分支、
+  局部提交通道、AA 灰度光栅、XGUI_GPU_SYNC 命令级同步）、
+  XWidget.c/XRadioButton.c/XThreadPosix.c、回归与 GPU 测试扩展、
+  CMake XGuiRegressionGpu 项。
+- **OpenGL 后端**：功能完整（14.12 清零 + 14.9/14.10 AA），回归
+  全绿，不受 vulkan.c 损坏影响。
+- **Vulkan 后端**：实现已完成并验证（14.15/14.16），但源文件损坏
+  待重建——重建时以 git 历史的 XGpuRenderDriver_gl.c 为结构参照，
+  按 14.15/14.16 蓝图重写（上轮全部调试结论——X11 头 rename、
+  XFree 宏解除、layout 约定、即时 readback 模式——均已记录在案）。
+- 恢复后验证顺序：默认构建 -> `XGUI_RENDER_BACKEND=vulkan
+  ./bin/XGuiGpu_Test`（lavapipe）-> 窗口 demo + xwd 抓窗 ->
+  三后端回归 -> 提交。
+
+### 14.16.3 重建完成与接手验证（2026-09-07）
+
+- `XGpuRenderDriver_vulkan.c` 已重建（约 2000 行，含 PRESENT_SRC
+  renderPass 布局、swapchain 对象创建拆分、窗口/离屏分路径 readback、
+  resize、即时 readback 等全部 14.15/14.16 设计点）；本轮接手补齐
+  遗漏的 `xvkl_transition_color_for_draw` 帧首屏障 helper 后链接通过。
+- 验证：Vulkan 冒烟全绿（backend=1 全程、图集/AA/画线/渐变专项）；
+  `XGUI_GPU_SYNC=1` 模式下 GL 与 Vulkan 回归失败清单**完全一致**
+  （同为 44 项既有未修项——两 GPU 后端共享同一软件光栅器局部提交，
+  行为同源印证）；窗口会话 xwd 抓窗正确。
+- 三后端九张页面截图对照：**Vulkan 与软件 diff=0**（全页面逐像素
+  一致）；OpenGL 仅 page 0 存在 ±1 AA 舍入差 21px。
+
+### 14.16.4 RasterOp 类修复进展（进行中）
+
+- 已实现 `uploadTargetImage` 驱动操作（GL：colorTexture 重指定上传；
+  Vulkan：打断-提交-整帧 staging 拷贝-重开）+ 通用层
+  `XGpuRenderBackend_uploadFrame` + 原语 API 头部 upload 钩子——
+  XGUI_GPU_SYNC 模式下"帧中 CPU 直写 -> FBO"同步链路已打通
+  （诊断输出确认 upload 执行、目标注册有效）。
+- 最小复现（RasterOp_Xor 单像素）仍失败：软/GPU 对照 GPU 输出为
+  源色 0xff4080ff（期望 dst^src=0x0060c09f）——upload 生效后局部
+  提交链某环节仍丢失 destination，需 gdb 在
+  `painterRaster_fillRect` 分支判定 / helper 快照 readback /
+  putPixel compose / drawImage 覆盖四点断点定位（下一轮第一步）。
+- 修复后预期清零：RasterOp 11 项 + 合成模式约 5 项 + fillRect
+  归一化等关联项。
+
+### 14.16.5 GL 帧画布行翻转修复（RasterOp 11 项清零，44 -> 26）
+
+- **根因（gdb/插桩实证）**：GL 驱动的 `xgpu_upload_image` 与 readback
+  **行序不对称**——上传无翻转（XImage 顶行 -> 纹理 v=0 -> FBO 底行），
+  readback 有翻转（FBO 底行 -> XImage 顶行）：CPU 帧中直写内容经
+  "上传 -> 快照读回"一圈后**上下颠倒**，RasterOp 等依赖既有画面的
+  命令输出错误。正常渲染不受影响（绘制原语的 NDC y 翻转与 readback
+  翻转配平，形成自洽闭环；beginFrameImage 的非均匀背景颠倒因均匀色
+  不可见而长期未暴露）。
+- **修复**：`xgpu_upload_image` 拆分出 flipY 参数——**采样用途**
+  （drawImage 的 sourceTexture）保持无翻转（quad UV 与 NDC 翻转配平）；
+  **帧画布用途**（colorTexture：beginFrameImage/uploadTargetImage）
+  翻转上传（与 readback 对称）。
+- **验证**：RasterOp 全部 14 模式软/GPU 一致（11 项清零）；GPU 回归
+  44 -> 26；默认回归与 GL 冒烟不受影响。
+- 剩余 26 项分类：NoBrush/NoPen 空操作类 5、文本对齐类 4、合成精确
+  类 4、clip/多边形/路径/arc 类 10+、DPR 图像 2——逐类调试下轮继续。
+
+### 14.16.6 本轮调试证据（NoPen 场景，26 项失败的代表性根因）
+
+最小复现（NoPen drawLine 前后）：
+
+- CPU `XImage_fillRect(黑底)` 走 GPU 快速路径（不透明 SourceOver）->
+  quad 进 FBO，**m_image 从未被写**；
+- 断言（帧中读 m_image）读到的仍是 beginFrame 上传的初始透明画布
+  （row2=0x00000000），故 "untouched" 类用例失败。
+- 结论：SYNC 模式当前只挂了"命令后 readback"（读方向），**CPU 直写
+  （写方向）不经 GPU 通道**——双向不配对时：读到的旧、写丢新。
+  RasterOp/合成类由快照底图 + 整帧 Source 覆盖绕过（正确）；纯
+  "untouched" 断言类需要写方向同步。
+
+下一轮方案（按影响排序）：
+
+1. **写方向同步**：在 fillRect/drawLine/drawImage/drawText 公共入口
+   尾部（GPU 激活时）调用 `uploadFrame`（把 m_image 整帧上传 FBO），
+   使"CPU 直写"对后续帧中读取可见——与既有命令后 readback 配对。
+   成本：每命令一次整帧上传（仅 XGUI_GPU_SYNC 回归模式）。
+2. 文本对齐类（RTL/AlignAbsolute/centered/diagonal）：先确认是否被
+   1 覆盖，再查字形图集路径的对齐差异。
+3. RasterOp 11 项已清零；26 项中预计 1 可清零至个位数。
+
+### 14.16.7 本轮进展：44 -> 5 项（NoPen 清零）
+
+- **NoPen 提前返回**：NoPen 是真正的无绘制——提前返回且不触发 GPU
+  同步（SYNC 读回会用 FBO 旧内容覆盖帧中 CPU 直写，违背 untouched
+  语义）。NoPen 两项清零。
+- **剩余 5 项**（GL 与 Vulkan 一致）：extra setClipRegion rejects the
+  region gap、convex polygon fills interior / edge uses current pen
+  （半透明画刷 0xff000080）、winding retains repeated loop、
+  disabling text antialiasing restores hard edge。
+- 初步定位（凸多边形半透明画刷）：局部提交链的字节语义断层——局部
+  画布由软件 compose 写入（非预乘语义），drawImage 上传按预乘直读
+  且 Source 覆盖应保真；需以半透明多边形最小复现做软/GPU 字节对照
+  确认断点（下轮第一步）。
+
+### 14.16.8 半透明多边形调试证据（精确定位到 SYNC 链，修复下轮继续）
+
+回归"extra convex polygon"（半透明画刷 0xff000080）插桩证据链：
+
+1. ScanFillDevice 的局部提交 helper：`filled=1`（成功），helper 的
+   drawImage 提交 + SYNC readback 后 `m_image(3,4)=ffd0d0d0`（灰，
+   非透明）——**局部画布与提交在此点之前是工作的**；
+2. 返回到 drawConvexPolygon/用例层后再读 `m_image(3,4)=00000000`
+   （透明）——**helper 返回后 m_image 又被覆盖**。
+3. 结合 RasterOp 单像素 probe（修复后已通过）：局部提交链本身正确。
+
+定位结论：helper 返回与用例断言之间，**某个 SYNC 钩子再次读回了
+"旧渲染目标内容"覆盖 m_image**——头号嫌疑是 drawImage 内部的
+`xgpu_upload_image(local -> sourceTexture)` 之后、另一 SYNC 点的
+readback 顺序错位，或 `xgpu_sync_readback_if_requested` 在
+drawAlphaBitmap/drawSolidQuad/glyphAtlasDraw 的**重复触发**
+（局部提交内部经公共 API 时钩子再次执行，读回的是打断前状态）。
+下一轮：drawImage 源纹理上传与 SYNC 读回的顺序重排（drawImage
+成功后跳过一次 readback），预期清零剩余 5 项。
+
+### 14.16.9 本轮证据：半透明多边形输出值捕获（下轮定位输入）
+
+XGUI_GPU_SYNC=1（GL）下 "extra convex polygon" 的局部提交实测：
+
+- `after-upload local(7,6)=00003039`：**FBO 快照读回后**，多边形中心
+  (7,6) 的像素为 **0x00 00 30 39**（alpha=0 的错误合成值，非期望的
+  0xff000080 不透明蓝）——快照底（upload 的 m_image）在该点非透明/
+  含前次内容，compose(SourceOver, 0xff000080) 的输出 0x00?030?
+  表明**局部提交的 putPixel compose 输入或规则错误**。
+- `after-command local(7,6)=00003039`：命令执行前后一致——putPixel
+  确实写入了该值（不是丢失，是**值算错**）。
+- 对照：`after-upload/readback local(7,6)=ff202020` 循环（其他用例的
+  正常内容）与 00003039 交替——确认证据来自目标用例。
+
+下轮定位输入（任选其一）：
+
+1. gdb 在 `painterRaster_putPixel(self, px, py, 0x003039xx)` 命中时
+   检查 `painterComposeColor(color, dst, mode)` 的 color/dst 实参
+   （color 应为 0xff000080、dst 应为快照底内容、mode 应为
+   SourceOver）。
+2. 或直接审查局部提交链的 compose 输入：ScanFillDevice 的
+   `solidColor = painterApplyOpacity(color, opacity)` 与 putPixel 的
+   `painterComposeColor(effective, dst, m_compositionMode)`——怀疑
+   m_compositionMode 或 dst 在局部提交重入时非预期。
+
+预期修复后：44 -> 少数（RasterOp 11 项同根因清零）。
+
+### 14.16.10 本轮定位：多边形类失败的真正路径（修复下轮继续）
+
+- **poly 用例实际路径**：ScanFillDevice 的 `antialias || m_gpuActive`
+  分支直接调用 `painterFillContoursAntialiased(subdiv=1)`——该函数
+  GPU 分支**直接 drawAlphaBitmap 提交 CPU 侧 alpha 覆盖图**（不经
+  局部提交 helper）。多边形的局部提交路径（helper）只用于渐变分支。
+- 独立最小复现（16x16 半透明蓝凸多边形）GPU=软件=期望（通过）；
+  回归同一用例失败（全透明）——**上下文差异**：回归中 drawAlphaBitmap
+  提交时的 FBO/会话状态（多 painter 共享会话、SYNC 目标等）仍需查证。
+- 附带修复（已应用）：`XGpuRenderBackend_uploadFrame` 加显式 target
+  参数——helper 传 painter 当前图像（savedImage），消除
+  g_xgpuSyncTarget 全局注册被其他 painter 污染的问题（实测曾被 12x2
+  图像污染，铁证：upload 源 w=12 h=2）。
+- 已修复项累计：RasterOp 11、合成 8、NoPen 2、行翻转连带——GPU 回归
+  44 -> 5 项（GL 与 Vulkan 一致）。
+- 下轮第一步：poly 用例在回归上下文中检查 drawAlphaBitmap 提交
+  （alpha 覆盖图内容/尺寸/ink），确认回归 vs 独立复现的差异源。
+
+### 14.16.11 本轮定位进展（剩余 5 项，poly 类差异源锁定）
+
+- 修复（已落地）：SYNC 目标从全局单例改为 backend 实例字段
+  （`XGpuRenderBackend_setSyncTarget(self, image)`），并删除 helper
+  的兜底残留行——多 painter/多尺寸画布下 12x2 污染（铁证：upload
+  源曾 w=12 h=2）已消除。但 5 项失败未消（非该根因）。
+- poly 用例实证链：回归参数完全复刻的独立复现（8x8 画布、
+  pts={2,2},{10,2},{2,9}、笔刷 0xff000080、描边绿）GPU=软件=期望
+  **全部通过**——回归失败差异锁定为 `test_painter_extra_alignment`
+  函数内的**连续状态**（poly 前有 clip region 段的 save/restore/
+  NoClip）。
+- 下轮：以"clip region save/restore 后 poly"为最小序列复现，逐状态
+  变量（m_hasClip/m_clipRegion/m_clipRect）二分；或 gdb 在
+  `painterFillContoursAntialiased` 的 GPU 分支断点检查 poly 调用时
+  state 各 clip 字段。
+
+### 14.16.12 本轮定位：clip region 下的局部提交链（剩余 5 项的共同差异环节）
+
+- 最小序列复现（clip region setClipRegion -> save/restore -> NoClip ->
+  fillRect 透明 -> drawConvexPolygon）GPU=软件=期望（通过）——单
+  独的 clip 序列不影响 poly。
+- **新增差异环节**：poly 前有 `XPainter_fillRect(&all, 0xff335577)`
+  在 **clip region 激活**（两 disjoint 矩形）下执行——GPU 模式
+  fillRect 的 clipOk 检查失败（region 非单矩形）-> **局部提交
+  helper（快照底 + putPixel(region clip) + 整帧 Source 覆盖）**。
+  "setClipRegion rejects the region gap" 断言（(1,1)(5,1)=蓝、
+  (3,1)=gap 透明）直接对该链失败。
+- 下轮：以"region clip 下 fillRect 局部提交"为焦点——检查 helper
+  内 putPixel 的 region 裁剪（XRegion_contains）在局部画布坐标下
+  的正确性 + 整帧覆盖对 clip 外区域的影响；poly 类 3 项若受同一
+  链状态影响将连带清零。
+
+### 14.16.13 本轮二分与证据（剩余 5 项，poly 链提交成功但断言仍失败）
+
+- 二分过程：clip region 段禁用 -> "setClipRegion rejects the region
+  gap" 恢复（5->4）；clipRect 主段禁用 -> poly 两项恢复（->2 项：
+  winding、text antialiasing）。但**分块禁用**（IntersectClip 块 /
+  setClipping+emptyClip 中块 / translate 块）均不能单独恢复 poly——
+  疑似多块累计状态而非单块根因。
+- 决定性证据：poly 的 drawAlphaBitmap 提交 `ok=1`（成功）且提交后
+  立即 m_image 值正常（ab-post 输出）；断言读到的却是 0x00000000。
+- 关键新矛盾：ab-post 显示提交后 m_image 正常，但断言（相同像素）
+  失败——**提交后与断言之间存在另一个覆盖 m_image 的操作**：
+  poly 内"填充 drawAlphaBitmap"之后还有"描边"——描边的 drawLine
+  走 GPU（轴对齐 drawSolidQuad 或 helper），其 SYNC 钩子可能读回
+  旧内容覆盖 m_image。下一轮：在描边路径（drawSolidQuad/helper）
+  的 SYNC readback 前后对比 m_image，定位覆盖源。
+
+### 14.16.14 修正性证据（poly 失败点锁定在驱动 drawAlphaBitmap 提交链）
+
+- **修正 14.16.13 的错误结论**：上轮"提交后 m_image 正常"是打印
+  筛选条件错误（匹配到其他用例）。本轮精确打印（width==8&&height==7
+  过滤）确认：poly 的 drawAlphaBitmap 提交 **ok=1 但提交后
+  m_image(3,4)=00000000**——填充未落 FBO 或尾部 readback 读回空。
+- 参数实证链（此前 ab-dbg）：覆盖图 a0=255 aMid=255、ink=0xff000080
+  全部正确——失效点在 **通用层/驱动提交链在回归上下文**（独立复现
+  同参数通过）。
+- 回归上下文差异候选：clipRect 主段禁用 -> poly 恢复（组合禁用才
+  有效）——回归上下文运行了大量局部提交链（IntersectClip/emptyClip/
+  transformed fillRect），其 GL 状态（blend/纹理绑定/FBO）可能与
+  drawAlphaBitmap 的路口冲突。下轮：gdb 在 xgld_draw_alpha_bitmap
+  的 draw_quad 前后检查 blend/纹理绑定/FBO 状态，对比独立复现。
+
+### 14.16.15 本轮排查（scissor 排除 + readback 读点歧义）
+
+- scissor 残留假设**排除**：painterGpuApplyStateClip 在每个原语前
+  设置（clip）或清除（NULL）scissor，无跨原语残留；空 clip 返回
+  false 走软件降级（降级前未设置 scissor）。
+- fb-probe 的 glReadPixels 读点有 **GL 原点左下 vs 窗口顶部**的翻转
+  歧义：读 (2,2) 实际读 FBO 底部行——证据无效，需按
+  (x, height-1-y) 重读验证 quad 是否落 FBO。
+- 待办（下轮）：以修正读点重做 fb-probe；若 quad 确实落 FBO 则问题
+  在 SYNC readback 链（翻转/R-B 交换），若未落则在 drawAlphaBitmap
+  GL 状态（当前仍是最可信的回归上下文差异——组合禁用才恢复 poly）。
+
+### 14.16.16 根因突破：scissor 残留（5 -> 1）
+
+- **根因（铁证）**：GL 的 scissor 由 painter 文本路径（ApplyStateClip）
+  设置，**从不主动清除**——poly/路径填充的 drawAlphaBitmap 不经原语
+  快速路径、不调 ApplyStateClip，被残留 scissor 完全裁剪（实验：在
+  drawAlphaBitmap 的 quad 后强制 glDisable(SCISSOR_TEST) 重画 →
+  立即可见 px=000080ff）。
+- **修复 1**：painterFillContoursAntialiased 的 GPU 分支前调
+  ApplyStateClip（同步/清除 scissor）→ convex polygon 两项清零。
+- **修复 2**：局部提交 helper 内同步 scissor（ApplyStateClip 失败=多
+  矩形/空裁剪时清除 scissor 继续——裁剪由局部软件光栅完成，提交
+  quad 必须全幅）→ setClipRegion 两项 + empty ReplaceClip 清零。
+- **修复 3**：Winding 规则（GPU 非 AA）改走局部提交（fillContours
+  覆盖图忽略 fillRule 按 OddEven 填充，绕组抵消）→ winding 清零。
+- **剩余 1 项**：disabling text antialiasing restores hard edge
+  （非 AA outline 字形覆盖图提交后 (4,0) 期望黑）——独立复现选点
+  无效（字体状态不同），需在回归上下文内定位（图集条目坐标/UV 或
+  覆盖图顶部行 coverage）。下轮第一步：回归内复刻 + 打印覆盖图
+  (4,0) 行与图集提交坐标。
+
+### 14.16.17 全部清零：GPU 环境回归 44 → 0 项（三后端全绿）
+
+**GPU 回归（XGUI_GPU_SYNC=1）最终修复清单（本轮 3 个关键修复）：**
+
+1. **位图 glyphKey AA 区分**：位图字形 `painterGpuDrawBitmapGlyph`
+   的 glyphKey 不含 AA 标志——AA 用例存入图集的边缘半覆盖
+   （0x1b）被非 AA 用例命中复用（`alpha=NULL` 跳过重生成）。
+   修复：`if (antialias) glyphKey ^= 0x5A5A...`（与轮廓路径同
+   约定），AA 与非 AA 分开存储。
+2. **drawGlyphAlpha upload 钩子**：通用层 `XGpuRenderBackend_
+   drawGlyphAlpha` 的图集命中路径直接调 `m_driver->glyphAtlasDraw`
+   绕过 upload 钩子——补 `xgpu_sync_upload_if_requested`。
+3. **非 AA 覆盖图二值钳位**：轮廓路径 `painterGlyphContoursAlpha
+   Coverage` 对 subdiv==1 结果钳位到 0/255。
+
+**全部 44 项根因与修复汇总：**
+
+| 类别 | 项数 | 根因 | 修复 |
+|---|---|---|---|
+| RasterOp/合成 | ~14 | GL 帧画布上传行序翻转不对称 + 半透明走预乘管线语义差异 | colorTexture 翻转上传 + 半透明色走局部提交 |
+| NoPen/空操作 | 2 | 无绘制命令的 SYNC readback 覆盖 CPU 直写 | NoPen 提前返回不触发同步 |
+| clip region/clipRect | 3 | 局部提交 helper 的 drawImage 被残留 scissor 裁剪 | helper 内 ApplyStateClip 同步 scissor |
+| convex polygon | 2 | fillContours 路径不调 ApplyStateClip | GPU 分支加 ApplyStateClip |
+| winding | 1 | fillContours 忽略 fillRule（按 OddEven） | GPU 非 AA Winding 走局部提交（软件 ScanFill 正确） |
+| text antialiasing | 1 | glyphKey 无 AA 标志导致图集缓存污染 | AA 键 XOR 区分 + drawGlyphAlpha hook + 二值钳位 |
+| 目标污染 | ~2 | g_xgpuSyncTarget 全局单例被多 painter 污染 | uploadFrame 显式 target 参数 + 实例字段 |
+| 其余 | ~18 | SYNC 单向读回不覆盖帧中 CPU 直写 | 通用层 6 原语 API 头部 upload + 尾部 readback 配对 |
+
+**验证（最终）：**
+- 编译 0 错误
+- `XGuiRegression_Test`（软件）：passed
+- `XGUI_GPU_SYNC=1 XGUI_RENDER_BACKEND=gpu`：passed
+- `XGUI_GPU_SYNC=1 XGUI_RENDER_BACKEND=vulkan`：passed
+- `XGuiGpu_Test`（soft/gl/vk）：全 0
+- **CTest 3/3 全绿**

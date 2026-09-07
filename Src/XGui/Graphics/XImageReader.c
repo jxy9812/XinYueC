@@ -357,11 +357,11 @@ typedef struct XImageReaderPrivate
     int         m_sizeW;             /**< 已探测图像宽度 */
     int         m_sizeH;             /**< 已探测图像高度 */
     bool        m_hasSize;           /**< 是否已探测到图像尺寸 */
+    XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备（GIF 动画与 probe 共用）。 */
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageCodecAnimation* m_animation; /**< GIF 动画缓存；由读取器拥有。 */
     int         m_currentImageNumber; /**< 当前帧编号。 */
     bool        m_imageJumpPending; /**< 是否已定位到下一次 read() 的目标帧。 */
-    XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备。 */
 #endif
 }XImageReaderPrivate;
 
