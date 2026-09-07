@@ -183,10 +183,15 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
 
     XPainter_fillRect(painter, &rect, window);
 
-    /* 圆形 indicator：外侧深色、内侧浅色双圈近似立体感。 */
+    /* 圆形 indicator：外侧深色、内侧浅色双圈近似立体感。
+       XPAINTER_SHAPE_ON=0（硬裁剪）时以矩形描边退化为方框。 */
     ind = radiobutton_indicatorRect(self);
     XPainter_setPen(painter, dark);
+#if XPAINTER_SHAPE_ON
     XPainter_drawEllipse(painter, &ind);
+#else
+    XPainter_drawRect(painter, &ind);
+#endif /* XPAINTER_SHAPE_ON */
     if (ind.width > 2 && ind.height > 2) {
         XRect inner;
         inner.x = ind.x + 1;
@@ -194,13 +199,21 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
         inner.width = ind.width - 2;
         inner.height = ind.height - 2;
         XPainter_setPen(painter, mid);
+#if XPAINTER_SHAPE_ON
         XPainter_drawEllipse(painter, &inner);
+#else
+        XPainter_drawRect(painter, &inner);
+#endif /* XPAINTER_SHAPE_ON */
         inner.x = ind.x + 2;
         inner.y = ind.y + 2;
         inner.width = ind.width - 4;
         inner.height = ind.height - 4;
         XPainter_setPen(painter, light);
+#if XPAINTER_SHAPE_ON
         XPainter_drawEllipse(painter, &inner);
+#else
+        XPainter_drawRect(painter, &inner);
+#endif /* XPAINTER_SHAPE_ON */
     }
 
     /* 选中圆点：中心方块近似（点阵后端无实心椭圆原语）。 */

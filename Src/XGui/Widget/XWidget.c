@@ -4357,6 +4357,12 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
     cache = XWidget_beginContentCache(self, width, height);
     if (cache)
     {
+        XPainter cachePainter;
+        /* 重渲染语义是"重画整个内容"：必须从全透明画布开始。缓存在
+           同尺寸失效重渲染时保留着上一次内容，而内容绘制器的第一笔
+           往往是半透明外观（如性能浮层的暗色底板），不清理会让旧内容
+           透过半透明像素逐帧残留（性能浮层文字重影的根因）。 */
+        XImage_fillRect(cache, NULL, 0u);
         XPainter_init(&cachePainter, NULL);
         if (XPainter_begin_image(&cachePainter, cache))
         {
