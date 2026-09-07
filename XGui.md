@@ -1,6 +1,6 @@
 # XGui 进度文档
 
-> 最后更新：2026-09-06 Asia/Shanghai
+> 最后更新：2026-09-07 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
 > **阅读指引**：当前进度与计划看本文各主节（1-14）；文中大量 `10.x` 子节是
@@ -12546,26 +12546,27 @@ XProgressBar、XSlider、XScrollBar、XSpinBox、XComboBox、XTabWidget、XStyle
 
 ### 14.3 遗留问题（Linux 继续任务，按优先级）
 
-1. **outline 字体（demo 默认 `XFontOutlineCommon`）GPU 文本降级路径画面 bug**
-   —— 现状：GPU drawText 只支持位图字体（`table.m_bpp<=0` 返回 false），
-   demo 默认 outline 字体每帧触发降级 → 走 BitBlt；降级帧 XImage 缺文本。
-   证据：软件 outline glyph 实际执行（每帧 76 次，image=520x360），但最终
-   XImage/BitBlt 画面缺标题栏文本。**疑点**：降级 painter 的 readback 目标
-   m_image 与 flush 的 XBackingStore 双缓冲 XImage 可能不一致，或软件 glyph
-   绘制时机/目标问题——需在 Linux 用单缓冲或加日志系统排查。
-2. **outline 字形 GPU 化**（用户已确认方案：CPU 字形光栅→alpha→纹理上传，
-   与位图字体同一 drawAlphaBitmap 路径）——完成后 demo 默认字体可全 GPU。
-3. **位图字形上传缓存/字形图集**（阶段 3）——当前每字形一次 alpha 生成 +
-   `glTexImage2D` 是性能瓶颈。
-4. **Linux/GLX 验证**：Posix 后端（X11 + GLX 离屏 PBuffer）跑通阶段 1/2；
-   建议在 Linux 桌面加 `XGUI_RENDER_BACKEND=gpu` 复跑 demo + 回归 +
-   `xgui_gpu_test`，确认 GLX 的 PBuffer/`XPlatformOpenGLContext` 路径与
-   WGL 一致。
+1. ~~**outline 字体（demo 默认 `XFontOutlineCommon`）GPU 文本降级路径画面 bug**~~
+   **已定位并修复（见 14.5）**：根因有二——① GPU drawText 只支持位图字体，
+   outline 触发整帧降级；② `drawTextRect`/`drawGlyph` 无 GPU 分支，GPU 活动
+   期间文本直接画进 m_image，随后 readback 用 FBO 内容（无文本）覆盖 m_image。
+   另修复控件内容缓存 painter 误附着窗口会话导致的文本丢失（14.5-4）。
+2. ~~**outline 字形 GPU 化**~~ **已完成（见 14.5）**：CPU 路径光栅 → alpha →
+   纹理上传，与位图字体同一 `drawAlphaBitmap` 路径；demo 默认字体全 GPU。
+3. ~~**位图字形上传缓存/字形图集**（阶段 3）~~ **已完成（见 14.6）**：会话级
+   字形图集 + 命中零上传，GPU 帧耗时 6.3ms → 4.3ms（FPS +37%）。
+4. **Linux/GLX 验证**：Posix 后端（X11 + GLX 离屏 PBuffer）阶段 1/2 已在本
+   机（llvmpipe 软件 GL，无硬件 GPU）跑通；建议在真实硬件 GPU 的 Linux 桌面
+   复跑 `XGUI_RENDER_BACKEND=gpu` demo + 回归 + `xgui_gpu_test` 确认性能。
 5. **阶段 2b**：XPainter 直接画窗口默认帧缓冲（去掉「离屏 FBO → quad」一次
    GPU 拷贝）；阶段 2 采用离屏 FBO + quad 是为保持 XBackingStore 持久缓冲
    语义的最小改动。
-6. **裁剪与嵌入式**：`XGPU_ON=0` 全裁剪已验证；有 GPU 的嵌入式走同一后端
-   （GLES 路径待真机验证）。
+6. **裁剪与嵌入式**：`XGPU_ON=0` 全裁剪已验证（14.5/14.6 复验）；有 GPU 的
+   嵌入式走同一后端（GLES 路径待真机验证）。
+7. ~~**demo 性能浮层重影**~~ **已修复（见 14.6）**：根因是
+   `XWidget_drawContentCached` 复用缓存重渲染时不清空旧内容，半透明外观
+   （浮层 0xd9000000 底板）下旧文本逐帧残留；修复后软/GPU 截图全图
+   diff=0（回归 `test_widget_content_cache_rerender_from_clean`）。
 
 ### 14.4 Linux 复现/验证命令
 
@@ -12588,3 +12589,322 @@ XGUI_RENDER_BACKEND=gpu ./bin/XGuiWindowDemo_Test --benchmark 5
 - `painterGpuDrawText()`：outline（`table.m_bpp<=0`）直接 `return false` 处。
 - `XGpuRenderBackend_readback/presentToWindow`（XGpuRenderBackend.c）。
 - `XWidget_flushBackingStore` GPU 分支（XWidget.c）。
+
+### 14.5 2026-09-07 Linux 轮：outline 字形 GPU 化 + demo 完全接入 GPU
+
+> 本节承接 14.3-1/14.3-2，在 Linux/X11（GLX，llvmpipe 软件 GL）完成 outline
+> 字形 GPU 快速路径，`XGuiWindowDemo_Test` 默认字体（XFontOutlineCommon）
+> 全程 GPU 直通、零降级，除性能浮层外与软件画面逐像素一致。
+
+实现范围（全部在 `Src/XGui/Graphics/XPainter.c` + `xgui_gpu_test.c`）：
+
+1. **outline 字形 GPU 光栅**：新增 `painterGpuDrawOutlineGlyph()`——经
+   `XFontFace_loadOutlineGlyph_base`（优先 `painterOutlineCacheLoad` 路径
+   缓存，键为 face+codepoint+scale）取字形路径，展平为复合填充子路径后
+   用与 `painterFillPathContours` 相同的扫描线/奇偶规则算法写入 8 位
+   alpha 覆盖图（`painterGlyphContoursAlpha`，二值覆盖，与软件 fillPath
+   输出一致），再经 `XGpuRenderBackend_drawAlphaBitmap` 以文本颜色提交
+   GPU——与位图字体共用同一 GPU alpha 通道。
+2. **轮廓构建下沉**：`painterOutlineBuildPath()` 移出
+   `XFONT_OUTLINE_CACHE_ON` 守卫，缓存开/关与 GPU 路径共用同一构建入口。
+3. **路径展平抽取**：从 `painterPathDraw` 抽取
+   `painterPathBuildContours()`（quad/cubic 展平、moveTo 子路径切分、
+   闭合去重逻辑不变），fill/stroke/GPU 字形三者看到同一几何。
+4. **三个 GPU 文本入口统一接入**：新增 `painterGpuTextDevicePoint()`
+   （逻辑坐标 → 设备坐标，仅支持单位/纯平移，否则降级）与
+   `painterGpuApplyStateClip()`（状态裁剪 → scissor，多矩形 region/空
+   矩形降级）；`XPainter_drawText`（painterGpuDrawText 增加 outline 分支）、
+   `XPainter_drawTextRect`（`painterDrawCodepoint` 增加 GPU 分支，失败时
+   合并已画内容降级软件补画）、`XPainter_drawGlyph` 三入口在 GPU 活动
+   期间均走 alpha 上传，不再触发整帧降级，也不再直写 m_image 丢失像素。
+5. **控件内容缓存误附着修复（14.3-1 文本丢失根因之一）**：
+   `XPainter_begin_image` 增加尺寸守卫——`XGpuRenderBackend_current()`
+   会话渲染缓冲尺寸与目标图像不一致时（典型：XLabel/XPushButton/
+   XToolButton/XPerformanceOverlay 等控件内容缓存离屏图）不附着窗口
+   会话，缓存走软件绘制，由主设备绘制器经 `drawImage` GPU 快速路径
+   整体上传。此前缓存 painter 会把缓存局部坐标的字形直接画进窗口 FBO
+   （诊断证据：浮层 "FPS" 字形出现在窗口 (4,15)），且窗口模式帧末不
+   回读导致缓存图空白 → 控件文本丢失。
+6. **GPU 冒烟测试升级**（TDD：先加「outline 文本不降级」断言确认失败，
+   再实现转绿）：`xgui_gpu_test.c` 默认请求 GPU（无 env 时 setenv，无 GL
+   自动回退软件并跳过降级断言）；新增 drawTextRect 用例与「drawText/
+   drawTextRect 后仍为 Gpu 后端」断言。
+
+验证结果（本机 Linux/X11，llvmpipe 软件 GL，DISPLAY=:0）：
+
+- `ctest --test-dir build`：2/2 通过（XGuiRegression、XGuiGpu）。
+- `./bin/XGuiRegression_Test`：默认回归全绿（`XGui regression tests
+  passed`）；ASan（`detect_leaks=0:halt_on_error=1`）全绿。
+- `XGUI_RENDER_BACKEND=gpu ./bin/XGuiRegression_Test`：1 项失败
+  （`icon paint does not restore without a successful save`）——经
+  `git stash` 对照确认为**既有现象**：该用例在 GPU 帧未 end 前直接读
+  m_image 像素，GPU 模式下帧末才 readback，帧中读取无意义；非本轮引入。
+- `XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test`：通过，drawText/drawTextRect
+  全程 backend=Gpu、无降级。
+- demo 对照（`XGuiWindowDemo_Test`）：
+  - 基准：软件 3224 FPS（不等显示的假吞吐）vs GPU 158 FPS（真上屏吞吐，
+    llvmpipe 受每字形光栅+上传限制；硬件 GPU 待测）。
+  - 截图逐像素对比：软件 vs GPU 全图 diff=762px，全部位于性能浮层 bbox
+    （浮层重影，见 14.3-7）；**排除浮层区域后 diff=0**——标题、页签、
+    按钮、命令链接按钮、工具按钮、状态栏全部逐像素一致，零降级。
+- `build-crop-gpu`（`-DXGPU_ON=0`）：配置、构建、回归全绿（裁剪语义
+  不受影响）；已重建默认构建恢复共享 `bin/`。
+- 未提交、未 push；工作树其余未提交改动（posix 窗口上屏复用、
+  xguidemo 调试设计文档、浮层 margin 调整等）保持原样。
+
+近似边界与未完成项：
+
+- GPU outline 字形为二值覆盖（与软件 fillPath 同扫描线算法），不含
+  抗锯齿灰度；软/GPU 文本边缘一致，但与 Qt 光栅引擎的 AA 仍不等同。
+- 每字形一次 CPU 光栅 + `glTexImage2D` 上传（与位图字形路径相同），
+  字形图集/上传缓存见 14.3-3。
+- 浮层重影（14.3-7）与 `XWidget_invalidateContentCache` 未接线、demo
+  静态缓存与持久 FBO 的脏区语义相关，待阶段 2b 一并处理。
+- GPU 环境回归中「帧中读像素」类用例无意义（readback 在帧末），如需
+  GPU 环境回归全绿需逐用例改造断言时机。
+
+### 14.6 2026-09-07 Linux 轮：浮层重影根因修复 + 阶段 3 字形图集
+
+> 承接 14.3-7 与 14.3-3。两项均完成：软/GPU 截图全图 diff=0（重影消除），
+> GPU 帧耗时 6.3ms → 4.3ms（FPS 168 → 231，+37%）。
+
+实现范围：
+
+1. **浮层重影根因修复（`Src/XGui/Widget/XWidget.c`）**：运行时证据表明
+   重影不在 FBO 也不在 m_image，而在**控件内容缓存本身**——导出浮层缓存
+   图可见旧文本（"下载 无 上传 无"）叠加在新文本（"下载 0.0 KB/s …"）下。
+   根因：`XWidget_drawContentCached` 同尺寸失效重渲染时直接复用旧缓存，
+   而内容绘制器第一笔是半透明外观（浮层 0xd9000000 底板），旧内容透过
+   半透明像素逐帧残留。修复：重渲染前 `XImage_fillRect(cache, NULL, 0u)`
+   清空为全透明（语义＝"重画整个内容"）。该 bug 为通用控件路径问题，
+   软件后端同样存在，仅因 3 帧截图内文本未变而未暴露。
+   回归：`test_widget_content_cache_rerender_from_clean`
+   （xgui_regression_test.c，red-green 闭环验证）。
+2. **阶段 3 字形图集（`XGpuRenderBackend.h/.c` + `XPainter.c`）**：
+   - 新增 `XGpuRenderBackend_drawGlyphAlpha`：会话级字形图集（512×512
+     RGBA，行式 shelf 装箱，上限 8192 条目）。缓存**原始覆盖度**
+     （RGBA 四通道同值），绘制期经 `u_modulate` 乘预乘颜色——同一缓存
+     服务任意颜色/透明度。命中时只画子矩形 UV quad（`xgpu_draw_quad_uv`），
+     **零 CPU 转换、零纹理上传**；未命中 `glTexSubImage2D` 局部上传。
+   - 图集满（纵向耗尽或条目超限）整体重置；单字形超图集尺寸回退既有
+     `drawAlphaBitmap` 逐字形上传路径。
+   - 统计：`glyphAtlasUploadCount / glyphAtlasHitCount / resetGlyphAtlas`
+     （测试断言「命中零上传」与重置语义）。
+   - painter 接入：`painterGpuGlyphKey(face, codepoint, scale)` 混合
+     64 位键（face 指针 SGMIX 哈希 × 码点 × 1/65536 定点缩放键），条目
+     比对键+宽高；outline（`painterGpuDrawOutlineGlyph`）与位图
+     （`painterGpuDrawBitmapGlyph`，签名增加 codepoint）两条字形路径
+     全部改走图集。
+   - `xgui_gpu_test.c` 新增图集专项：首绘上传一次、同键换色命中零上传、
+     子矩形像素断言、9000 键压测触发重置后画面与重置计数正确
+     （TDD：先写未定义引用断言确认 RED 再实现）。
+
+验证结果（本机 Linux/X11，llvmpipe 软件 GL）：
+
+- `ctest`：2/2 通过；默认回归、ASan 回归（`detect_leaks=0`）、
+  `XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test`（含图集专项）全部通过。
+- `build-crop-gpu`（`-DXGPU_ON=0`）：构建与回归通过，已重建默认恢复
+  共享 `bin/`。
+- demo 截图：软件 vs GPU **全图 diff=0**（浮层重影消除）。
+- demo 基准：GPU repaint 6.3ms/帧 → **4.3ms/帧**（fps 168 → 231，
+  +37%）；软件 1.65ms/帧（606 FPS，不等显示的假吞吐口径不变）。
+  llvmpipe 下剩余成本为每字形 CPU 光栅 + quad 绘制与帧合成，真机硬件
+  GPU 上图集收益（省上传）占比更大。
+- 未提交、未 push。
+
+近似边界与未完成项：
+
+- 图集条目查找为线性扫描（常规一帧字形数 ≪ 上限，成本可忽略）；若
+  后续 profiler 显示热点，再引入键哈希桶。
+- 图集淘汰为整体重置（可预期、实现简单）；CJK 大字库常驻场景若实测
+  命中率不足，再升级为按帧龄 LRU 逐出。
+- 覆盖度仍为二值/与软件一致的近似（不含 Qt 式 AA 灰度），上轮边界不变。
+- 剩余 GPU 主线：阶段 2b（直画默认帧缓冲）、真机硬件 GPU / GLES 验证。
+
+### 14.7 2026-09-07 Linux 轮：上屏链路测量 + 2b 快路径 + 图集命中零光栅
+
+> 承接 14.3-5（阶段 2b）。先测量后动手：llvmpipe 下帧 4.0ms 中合成 quad
+> 仅 0.15~0.24ms（~5%）、swapBuffers 约 1.1ms（真上屏固有成本）、其余
+> ~2.7ms 为场景绘制本身。**「直画默认帧缓冲」判定不做**：需重构持久缓冲
+> 语义且收益上限 5%。实现两个测量支持的低风险优化，GPU 帧累计
+> 4.3ms → **3.5ms**（fps 231 → **286**；较图集前累计 +66%）。
+
+实现范围：
+
+1. **2b 快路径（`XGpuRenderBackend.c`）**：`presentToWindow` 优先
+   `glBlitFramebuffer`（GL3/GLES3/`glBlitFramebufferNV` 可选加载，
+   READ=FBO / DRAW=默认帧缓冲，1:1 `XGL_NEAREST` 固定功能拷贝——无
+   shader、无采样）；blit 不可用（GLES2）回退既有全屏 quad 采样合成，
+   语义不变。
+2. **图集命中跳过 CPU 光栅**：新增 `XGpuRenderBackend_glyphAtlasContains`；
+   `drawGlyphAlpha` 允许 `alpha=NULL`（命中路径不读取；未命中且 NULL
+   返回 false）。outline/位图两条字形路径先查图集，命中时完全跳过
+   alpha 分配、memset、扫描线填充/采样（outline 仍需路径展平取 bbox；
+   位图命中连采样循环一起跳过）。
+3. **帧级计时插桩**（保留）：`XGPU_PROFILE=1` 时 presentToWindow 输出
+   quad/swap 分段均摊耗时，真机性能定位用，关闭时零成本。
+
+验证结果（llvmpipe）：
+
+- demo 基准：GPU repaint **3.50ms/帧（286 FPS）**（轮前 4.3ms/231）；
+  present quad 不再出现在 profile（blit 路径生效）。
+- **真上屏画面验证**：`xwd -id` 抓取运行中 demo 的 X11 窗口，全部控件、
+  文本与浮层（FPS 332.7）渲染正确——blit 快路径上屏语义确认。
+- `xgui_gpu_test.c` 图集专项扩展：NULL-alpha 命中绘制（零上传）、
+  NULL-alpha 未命中返回 false、`glyphAtlasContains` 命中/未命中/重置
+  后语义，全部通过。
+- 默认回归、CTest 2/2、ASan 回归 + GPU 冒烟（`detect_leaks=0`）、
+  `build-crop-gpu`（`-DXGPU_ON=0`）全部通过；`git diff --check` 干净。
+- 未提交、未 push。
+
+近似边界与未完成项：
+
+- blit 快路径未做自动断言（测试进程无窗口系统直通；上屏正确性由
+  `xwd` 抓窗人工确认 + 与 quad 语义等价性保证），真机验证时复核。
+- 图集条目线性查找与整体重置淘汰维持 14.6 边界。
+
+### 14.8 真机验证：ARM 交叉编译 + qemu 仿真（已完成）与硬件清单（待执行）
+
+**已完成（2026-09-07，本机 armel 工具链 + qemu-user 仿真）**：
+
+- 工具链环境重建：`09-交叉编译/armel-env.sh`（脚本内 `libc6_*_i386.deb`
+  等三处 glob 被引号包住无法展开，需去引号使用；SDK tar 现解压多一层
+  `host/`，已用兼容符号链接 `/tmp/sdk2/{opt,bin,arm-buildroot-linux-gnueabi}
+  -> host/...` 对齐既有 toolchain-armel.cmake 路径）。
+- `XThreadPosix.c` 补 `#include <limits.h>`（PTHREAD_STACK_MIN，既有已知
+  坑，本次修复正式留在工作树）。
+- ARM（armel 软浮点，Linaro GCC 7.3.1）交叉编译：XinYueCS + 回归 +
+  `XGuiGpu_Test` 全部通过——GPU 图集/blit/字形新代码在 ARM 编译器下
+  无错误。
+- qemu-arm 仿真运行：`XGuiGpu_Test`（无 GL -> 软件回退路径，像素断言
+  全过）与完整 `XGuiRegression_Test`（`XGui regression tests passed`）
+  全部通过。
+- 注意：交叉构建与 x86 共享 `bin/` 输出目录，构建后需重编 x86 目标
+  恢复（本轮已恢复并复验）。
+
+**待真实硬件执行（性能与真上屏，无法在本机 llvmpipe 上替代）**：
+
+```bash
+# 1) 硬件 GPU Linux 桌面（NVIDIA/AMD/Intel，GLX 直渲染）
+glxinfo -B                       # 确认 Accelerated: yes
+cmake -S . -B build && cmake --build build -j$(nproc)
+./bin/XGuiRegression_Test
+XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test
+XGUI_RENDER_BACKEND=gpu ./bin/XGuiWindowDemo_Test --benchmark 5
+XGPU_PROFILE=1 XGUI_RENDER_BACKEND=gpu \
+  ./bin/XGuiWindowDemo_Test --benchmark 5      # present quad/swap 分段
+# 真上屏人工核对：控件/文本/浮层画面与软件模式一致
+# （2b blit 路径在真机驱动上的上屏正确性重点复核）
+
+# 2) ARM GLES2 嵌入式（无桌面 GL）
+#    - 确认 XGPU_ON=1 且 OffscreenSurface/OpenGLContext 的 GLES 后端；
+#    - blit 不可用时自动回退 quad（预期路径）；
+#    - 图集/字形路径均为 GLES2 兼容 shader，重点验证 glTexSubImage2D
+#      与 UNPACK_ALIGNMENT=1 行为。
+XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test
+# 命中率抽查：XGPU_PROFILE 观察上传次数在稳定画面下停止增长
+```
+
+验收要点：软/GPU 截图逐像素一致（浮层文本变化除外）、稳定画面下图集
+上传计数收敛、GPU 帧耗时低于软件口径的真上屏帧耗时。
+
+### 14.9 2026-09-07 Linux 轮：GPU 环境回归清零 + XPainter 抗锯齿（第一阶段）
+
+> 承接 14.3 与 10.46 的边界项。两项完成：① `XGUI_RENDER_BACKEND=gpu`
+> 完整回归纳入 CTest 标准矩阵并全绿；② outline 字形抗锯齿（4×4 面积
+> 子采样灰度），软/GPU 逐像素一致（AA 灰度区允许 ±1/255 混合舍入差，
+> 实测 21px，不可感知）。
+
+实现范围：
+
+1. **GPU 环境回归清零**：`icon paint unpaired state` 用例的像素断言移到
+   `XPainter_end` 之后（GPU 后端帧内容在 end/readback 时才落回目标
+   图像，帧中读取对 GPU 无意义；restoreCalls 语义断言保持在 end 前）。
+   CTest 新增 `XGuiRegressionGpu` 项（`XGUI_RENDER_BACKEND=gpu` 环境
+   变体），无 GL 环境自动回退软件、断言按实际会话状态覆盖。
+2. **覆盖光栅器灰度化（`painterGlyphContoursAlphaCoverage`）**：既有
+   `painterGlyphContoursAlpha`（二值）改为薄包装，新增 subdiv 参数的
+   面积子采样实现——每像素 subdiv×subdiv 个子采样点，逐子扫描线求交/
+   排序/奇偶展开后统计子点覆盖率，线性映射 8 位灰度；subdiv=1 与旧
+   二值行为逐字节等价（回归保障）。
+3. **GPU outline 字形 AA**：`painterGpuDrawOutlineGlyph` 由
+   TextAntialiasing 提示驱动（复用 `painter8x16CanAntialias`），开启时
+   灰度光栅入图集；AA 与二值覆盖内容不同，图集键混入 AA 标志位隔离。
+4. **软件 outline 字形 AA**：新增 `painterDrawOutlineGlyphSoftwareAA`——
+   与 GPU 同一灰度光栅器，逐像素按覆盖率经 `painterRaster_putPixel`
+   混合（裁剪/合成模式/透明度由既有路径处理）；仅支持单位/纯平移
+   变换（与 GPU 条件一致），其它变换回退既有 fillPath 二值路径。
+   `painterDrawOutlineGlyph` 在 Image 设备 + TextAntialiasing 时优先
+   走该路径。
+5. **顺带修复（既有问题）**：`XRadioButton` indicator 引用
+   `XPainter_drawEllipse` 但未加 `XPAINTER_SHAPE_ON` 守卫，
+   `build-crop-min`（SHAPE 裁剪）自 9 月 XRadioButton 引入后即链接
+   失败；补 `#if XPAINTER_SHAPE_ON`（裁剪时 `drawRect` 退化）。
+
+验证结果（llvmpipe）：
+
+- AA 生效确认：回归新增 `test_painter_outline_text_antialias`（RED：
+  二值无灰度边缘 → GREEN：灰度像素存在）；demo 截图文字边缘平滑。
+- 软/GPU 一致：demo 截图全图 diff=21px，全部为字形最淡边缘的
+  e8e8e8/e7e7e7（±1/255 整数-浮点混合舍入差，不可感知）；GPU 冒烟
+  （含图集灰度键隔离）通过。
+- 性能：GPU demo repaint 3.30ms/帧（303 FPS）——4×4 灰度光栅在命中
+  图集后非瓶颈。
+- 回归矩阵：默认、GPU 环境（CTest `XGuiRegressionGpu`）、CTest 3/3、
+  ASan（`detect_leaks=0`）+ GPU 冒烟、`build-crop-min`（含
+  XRadioButton 守卫修复）、`build-crop-gpu`（`XGPU_ON=0`）全部通过；
+  `git diff --check` 干净。未提交、未 push。
+
+近似边界与未完成项：
+
+- **几何图元 AA 未做**（本轮范围外）：`Antialiasing` 提示驱动的
+  多边形/路径填充/描边灰度化待下一阶段；`Antialiasing` 默认关闭，
+  几何行为暂不变。
+- 灰度字形光栅为 4×4 子采样（16 档灰度），非 Qt 光栅引擎的解析覆盖；
+  描边/画线仍为二值。
+- 图集 AA 条目与二值条目各占独立缓存位（键隔离），混合使用时图集
+  容量消耗加倍。
+
+### 14.10 2026-09-07 Linux 轮：几何图元抗锯齿（Antialiasing 提示）
+
+> 承接 14.9 边界项。`Antialiasing` 渲染提示驱动的多边形/路径填充灰度
+> 覆盖率光栅完成；顺带将 GPU 会话激活期间的多边形填充从「整帧降级」
+> 改为覆盖图通道（不再丢 GPU 帧）。描边/画线 AA 仍不做（画线无 GPU
+> 快速路径，整帧降级为既有语义）。
+
+实现范围：
+
+1. **共用 helper `painterFillContoursAntialiased`**：设备坐标子路径 →
+   bbox → `painterGlyphContoursAlphaCoverage` 灰度光栅（subdiv=4）→
+   软件逐像素 `painterRaster_putPixel` 混合（裁剪/合成/透明度由既有
+   路径处理）；GPU 会话激活时经 `XGpuRenderBackend_drawAlphaBitmap`
+   提交 FBO（几何不进字形图集：形状重复率低、尺寸大，直传）。
+2. **接入点**：`painterFillPathContours`（fillPath/drawPath/strokePath
+   的填充，device 分支、solid 笔刷）与 `painterScanFillDevice`
+   （drawPolygon/drawConvexPolygon）。判定：`Antialiasing` 提示 →
+   subdiv=4；GPU 激活且无提示 → subdiv=1 二值 buffer 通道（保持覆盖
+   语义、保住 GPU 帧）；gradient 笔刷维持既有直画路径（逐像素取色，
+   边界注明）。`painterScanFillUser`（录制路径）不变。
+3. **裁剪**：AA 依赖 `XPAINTER_PATH_ON`（光栅器所在段）与
+   `XPAINTER_RENDERHINT_ON`（提示枚举）；回归的两个 AA 用例以
+   `XWIDGET_ON && XPAINTER_RENDERHINT_ON` 守卫，`build-crop-min`
+   验证通过。
+
+验证结果（llvmpipe）：
+
+- TDD：`test_painter_polygon_antialias`（RED：AA 开启无灰度边缘 →
+  GREEN）+ 默认行为不变断言（Antialiasing 关时内部纯色、无灰度）。
+- GPU 专项（xgui_gpu_test）：GPU 会话内 `fillPath` AA 三角形产生灰度
+  边缘、零降级。
+- 回归矩阵：默认、GPU 环境（CTest `XGuiRegressionGpu`）、CTest 3/3、
+  `build-crop-min`、`build-crop-gpu`（`XGPU_ON=0`）、ASan（
+  `detect_leaks=0`）全部通过；demo 软/GPU 截图 diff=21px（±1 舍入差，
+  同 14.9）；GPU demo repaint 3.54ms/帧（282 FPS，持平）。
+- 未提交、未 push。
+
+近似边界与未完成项：
+
+- 描边/画线/点集仍为二值（画线 AA 需垂直方向覆盖率计算，另立阶段）。
+- gradient 笔刷 + AA 组合回退二值（灰度模式仅 solid 覆盖）。
+- 复杂变换（旋转/缩放）下 AA 覆盖在设备空间计算，与 Qt 的用户空间
+  抗锯齿在极端参数下存在采样密度差异。
