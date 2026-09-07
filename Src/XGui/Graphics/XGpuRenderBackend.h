@@ -160,6 +160,43 @@ bool XGpuRenderBackend_drawAlphaBitmap(XGpuRenderBackend* self,
                                        bool sourceOver);
 
 /**
+ * @brief      经会话级字形图集绘制 CPU alpha 覆盖图（阶段 3）。
+ * @details    key 唯一标识一份覆盖图（调用方由字体 face/codepoint/缩放
+ *             混合得出）。命中时直接从图集纹理子矩形采样绘制，零 CPU
+ *             转换与零纹理上传；未命中时把覆盖图（RGBA 四通道均为覆盖
+ *             度，颜色在绘制期经 modulate 预乘）上传入集后再绘制——同
+ *             一份缓存可服务任意颜色/透明度。图集满时整体重置（旧条目
+ *             全部失效，随后按需重传）；单字形超过图集尺寸时回退
+ *             drawAlphaBitmap 逐字形上传路径。
+ * @param      key 覆盖图唯一键（相同键+宽高视为同一份覆盖图）。
+ * @param      alpha 覆盖图（每像素 1 字节）；调用方已知命中时可传
+ *             NULL（命中路径不读取 alpha；未命中且 alpha 为 NULL 返回
+ *             false，调用方应回退光栅化后重试）。
+ * @return     true 已提交；false 参数非法或会话无效。
+ */
+bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
+                                      uint64_t key, int width, int height,
+                                      const uint8_t* alpha, int stride,
+                                      int x, int y, uint32_t color,
+                                      float opacity, bool sourceOver);
+
+/**
+ * @brief      查询覆盖图是否已在字形图集中（配合 alpha=NULL 的命中绘制，
+ *             让调用方在命中时完全跳过 CPU 光栅化）。
+ */
+bool XGpuRenderBackend_glyphAtlasContains(const XGpuRenderBackend* self,
+                                          uint64_t key, int width, int height);
+
+/** @brief 清空字形图集条目并复位统计计数（测试/调试；会话销毁自动释放）。 */
+void XGpuRenderBackend_resetGlyphAtlas(XGpuRenderBackend* self);
+
+/** @brief 字形图集累计上传次数（图集满重置后的重传也计入）。 */
+unsigned XGpuRenderBackend_glyphAtlasUploadCount(const XGpuRenderBackend* self);
+
+/** @brief 字形图集累计命中次数。 */
+unsigned XGpuRenderBackend_glyphAtlasHitCount(const XGpuRenderBackend* self);
+
+/**
  * @brief      设置矩形裁剪（设备坐标）；NULL 清除裁剪。
  * @details    阶段 1 仅支持单矩形裁剪（scissor）；复杂裁剪由上层回退软件。
  */

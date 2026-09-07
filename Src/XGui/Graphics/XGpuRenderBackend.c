@@ -8,6 +8,9 @@
  *             转回软件光栅，保证 GPU 不可用时行为不变。
  ******************************************************************************/
 #include "XGpuRenderBackend.h"
+#include "XDateTime.h"
+#include <stdlib.h>
+#include <stdio.h>
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 
@@ -39,6 +42,8 @@ typedef char XglChar;
 #define XGL_SRC_ALPHA              0x0302u
 #define XGL_ONE_MINUS_SRC_ALPHA    0x0303u
 #define XGL_FRAMEBUFFER             0x8D40u
+#define XGL_READ_FRAMEBUFFER        0x8CA8u
+#define XGL_DRAW_FRAMEBUFFER        0x8CA9u
 #define XGL_COLOR_ATTACHMENT0       0x8CE0u
 #define XGL_FRAMEBUFFER_COMPLETE     0x8CD5u
 #define XGL_TEXTURE_2D              0x0DE1u
@@ -65,6 +70,23 @@ typedef char XglChar;
 typedef void (*XglGenObjectsProc)(XglSizei, XglUInt*);
 typedef void (*XglDeleteObjectsProc)(XglSizei, const XglUInt*);
 
+/* ==================== 字形图集（阶段 3） ==================== */
+
+/** @brief 图集纹理边长（像素；512x512 RGBA ≈ 4MB，可容约 4 千个 8px 字形）。 */
+#define XGPU_GLYPH_ATLAS_SIZE 512
+/** @brief 图集条目上限（超出即整体重置，防止条目数组无界增长）。 */
+#define XGPU_GLYPH_ATLAS_MAX_ENTRIES 8192
+
+/** @brief 字形图集条目：键 + 尺寸 + 图集内位置（行式 shelf 装箱）。 */
+typedef struct XGpuGlyphAtlasEntry
+{
+    uint64_t m_key;
+    int m_width;
+    int m_height;
+    int m_x;
+    int m_y;
+} XGpuGlyphAtlasEntry;
+
 /* ==================== 运行期 GL 函数表 ==================== */
 
 struct XGpuRenderBackend
@@ -89,6 +111,20 @@ struct XGpuRenderBackend
 
     uint8_t* m_pixels;
     size_t m_pixelsCapacity;
+
+    void (*glBlitFramebuffer)(XglInt, XglInt, XglInt, XglInt, XglInt, XglInt,
+                              XglInt, XglInt, XglBitfield, XglEnum);
+    bool m_hasBlit;                /**< glBlitFramebuffer 可用（2b 快路径）。 */
+
+    XglUInt m_glyphAtlasTexture;   /**< 字形图集纹理（RGBA 四通道=覆盖度）。 */
+    XGpuGlyphAtlasEntry* m_glyphEntries; /**< 图集条目数组（拥有）。 */
+    int m_glyphEntryCount;
+    int m_glyphEntryCapacity;
+    int m_glyphCursorX;            /**< shelf 装箱当前行游标。 */
+    int m_glyphCursorY;
+    int m_glyphRowHeight;
+    unsigned m_glyphUploads;       /**< 累计上传次数（含重置后重传）。 */
+    unsigned m_glyphHits;          /**< 累计命中次数。 */
 
     void (*glViewport)(XglInt, XglInt, XglSizei, XglSizei);
     void (*glClearColor)(XglFloat, XglFloat, XglFloat, XglFloat);
@@ -356,6 +392,12 @@ static bool xgpu_load_proc_alias(XGpuRenderBackend* self, const char* name,
 
 /* ==================== 资源辅助 ==================== */
 
+static void xgpu_set_blend(XGpuRenderBackend* self, bool sourceOver);
+static bool xgpu_draw_quad_uv(XGpuRenderBackend* self, XglUInt program,
+                              XglUInt texture, float x, float y, float width,
+                              float height, float u0, float v0, float u1,
+                              float v1, const float* color, bool textured);
+
 static bool xgpu_reserve_pixels(XGpuRenderBackend* self, size_t bytes)
 {
     uint8_t* replacement;
@@ -488,6 +530,223 @@ static bool xgpu_upload_alpha(XGpuRenderBackend* self, const uint8_t* alpha,
     return true;
 }
 
+/* ==================== 字形图集（阶段 3） ==================== */
+
+/**
+ * @brief      清空图集条目与装箱游标（纹理内容无需清理，随后按需覆盖）。
+ * @param      resetCounters true 同时清零命中/上传统计（公共 reset 用）。
+ */
+static void xgpu_glyph_atlas_reset(XGpuRenderBackend* self, bool resetCounters)
+{
+    if (!self) return;
+    self->m_glyphEntryCount = 0;
+    self->m_glyphCursorX = 0;
+    self->m_glyphCursorY = 0;
+    self->m_glyphRowHeight = 0;
+    if (resetCounters)
+    {
+        self->m_glyphUploads = 0;
+        self->m_glyphHits = 0;
+    }
+}
+
+/**
+ * @brief      在图集中为 w×h 的字形分配一个位置（行式 shelf 装箱）。
+ * @details    当前行放不下换行；图集纵向放不下或条目数超上限时整体
+ *             重置（旧条目全部失效，重置后仍放不下说明字形大于图集，
+ *             返回 false 由调用方回退逐字形上传路径）。
+ */
+static bool xgpu_glyph_atlas_alloc(XGpuRenderBackend* self, int width,
+                                   int height, int* outX, int* outY)
+{
+    if (width <= 0 || height <= 0 || width > XGPU_GLYPH_ATLAS_SIZE ||
+        height > XGPU_GLYPH_ATLAS_SIZE)
+        return false;
+    if (self->m_glyphCursorX + width > XGPU_GLYPH_ATLAS_SIZE)
+    {
+        self->m_glyphCursorX = 0;
+        self->m_glyphCursorY += self->m_glyphRowHeight;
+        self->m_glyphRowHeight = 0;
+    }
+    if (self->m_glyphCursorY + height > XGPU_GLYPH_ATLAS_SIZE ||
+        self->m_glyphEntryCount >= XGPU_GLYPH_ATLAS_MAX_ENTRIES)
+        xgpu_glyph_atlas_reset(self, false);
+    if (self->m_glyphCursorX + width > XGPU_GLYPH_ATLAS_SIZE)
+    {
+        self->m_glyphCursorX = 0;
+        self->m_glyphCursorY += self->m_glyphRowHeight;
+        self->m_glyphRowHeight = 0;
+    }
+    if (self->m_glyphCursorY + height > XGPU_GLYPH_ATLAS_SIZE)
+        return false;
+    *outX = self->m_glyphCursorX;
+    *outY = self->m_glyphCursorY;
+    self->m_glyphCursorX += width;
+    if (height > self->m_glyphRowHeight)
+        self->m_glyphRowHeight = height;
+    return true;
+}
+
+/**
+ * @brief      在图集条目数组中查找键+尺寸完全匹配的条目。
+ * @details    线性扫描：常规一帧的字形数远小于条目上限，比较成本相对
+ *             每字形一次光栅化+上传可忽略；若后续 profiler 显示热点，
+ *             再引入键哈希桶。
+ */
+static const XGpuGlyphAtlasEntry* xgpu_glyph_atlas_find(
+    const XGpuRenderBackend* self, uint64_t key, int width, int height)
+{
+    int i;
+    for (i = 0; i < self->m_glyphEntryCount; ++i)
+    {
+        const XGpuGlyphAtlasEntry* entry = &self->m_glyphEntries[i];
+        if (entry->m_key == key && entry->m_width == width &&
+            entry->m_height == height)
+            return entry;
+    }
+    return NULL;
+}
+
+/**
+ * @brief      把覆盖图以"RGBA 四通道均为覆盖度"的形式写入上传暂存区。
+ * @details    采样结果 vec4(c,c,c,c) 与预乘颜色 modulate 相乘即得正确的
+ *             预乘输出（rgb = a × 颜色），因此同一份覆盖度缓存可服务
+ *             任意颜色与透明度。
+ */
+static bool xgpu_glyph_atlas_expand_coverage(XGpuRenderBackend* self,
+                                             const uint8_t* alpha, int width,
+                                             int height, int stride)
+{
+    size_t bytes = (size_t)width * (size_t)height * 4u;
+    int y;
+    if (!xgpu_reserve_pixels(self, bytes)) return false;
+    for (y = 0; y < height; ++y)
+    {
+        int x;
+        const uint8_t* source = alpha + (size_t)y * (size_t)stride;
+        uint8_t* row = self->m_pixels + (size_t)y * (size_t)width * 4u;
+        for (x = 0; x < width; ++x)
+        {
+            uint8_t coverage = source[x];
+            row[x * 4] = coverage;
+            row[x * 4 + 1] = coverage;
+            row[x * 4 + 2] = coverage;
+            row[x * 4 + 3] = coverage;
+        }
+    }
+    return true;
+}
+
+bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
+                                      uint64_t key, int width, int height,
+                                      const uint8_t* alpha, int stride,
+                                      int x, int y, uint32_t color,
+                                      float opacity, bool sourceOver)
+{
+    const XGpuGlyphAtlasEntry* entry;
+    XGpuGlyphAtlasEntry* stored;
+    float modulate[4];
+    unsigned colorA;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (!XGpuRenderBackend_isValid(self) || width <= 0 ||
+        height <= 0 || stride < width || (!alpha && !xgpu_glyph_atlas_find(
+            self, key, width, height)))
+        return false;
+    entry = xgpu_glyph_atlas_find(self, key, width, height);
+    if (!entry)
+    {
+        int atlasX = 0;
+        int atlasY = 0;
+        /* 超出图集能力的字形（大于图集或分配失败）回退逐字形上传路径。 */
+        if (!xgpu_glyph_atlas_alloc(self, width, height, &atlasX, &atlasY))
+        {
+            return XGpuRenderBackend_drawAlphaBitmap(
+                self, alpha, width, height, stride, x, y, color, opacity,
+                sourceOver);
+        }
+        if (!xgpu_glyph_atlas_expand_coverage(self, alpha, width, height,
+                                              stride))
+        {
+            return false;
+        }
+        self->glBindTexture(XGL_TEXTURE_2D, self->m_glyphAtlasTexture);
+        self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+        self->glTexSubImage2D(XGL_TEXTURE_2D, 0, atlasX, atlasY, width,
+                              height, XGL_RGBA, XGL_UNSIGNED_BYTE,
+                              self->m_pixels);
+        if (self->m_glyphEntryCount >= self->m_glyphEntryCapacity)
+        {
+            int newCapacity = self->m_glyphEntryCapacity > 0
+                                  ? self->m_glyphEntryCapacity * 2
+                                  : 256;
+            XGpuGlyphAtlasEntry* entries;
+            if (newCapacity > XGPU_GLYPH_ATLAS_MAX_ENTRIES)
+                newCapacity = XGPU_GLYPH_ATLAS_MAX_ENTRIES;
+            entries = (XGpuGlyphAtlasEntry*)XRealloc_System(
+                self->m_glyphEntries,
+                (size_t)newCapacity * sizeof(*entries));
+            if (!entries) return false;
+            self->m_glyphEntries = entries;
+            self->m_glyphEntryCapacity = newCapacity;
+        }
+        stored = &self->m_glyphEntries[self->m_glyphEntryCount++];
+        stored->m_key = key;
+        stored->m_width = width;
+        stored->m_height = height;
+        stored->m_x = atlasX;
+        stored->m_y = atlasY;
+        entry = stored;
+        ++self->m_glyphUploads;
+    }
+    else
+        ++self->m_glyphHits;
+    /* 预乘颜色（透明度折入 alpha）：采样 vec4(c,c,c,c) × modulate 即
+       得 rgb = a × 颜色 的预乘输出，与既有上传路径逐像素等价。 */
+    colorA = (unsigned)((color >> 24) & 0xffu);
+    colorA = (unsigned)(colorA * (unsigned)(opacity * 255.0f + 0.5f) +
+                        127u) / 255u;
+    modulate[0] = (float)xgpu_mul255((unsigned)((color >> 16) & 0xffu),
+                                     (uint8_t)colorA) / 255.0f;
+    modulate[1] = (float)xgpu_mul255((unsigned)((color >> 8) & 0xffu),
+                                     (uint8_t)colorA) / 255.0f;
+    modulate[2] = (float)xgpu_mul255((unsigned)(color & 0xffu),
+                                     (uint8_t)colorA) / 255.0f;
+    modulate[3] = (float)colorA / 255.0f;
+    xgpu_set_blend(self, sourceOver);
+    return xgpu_draw_quad_uv(
+        self, self->m_textureProgram, self->m_glyphAtlasTexture,
+        (float)x, (float)y, (float)width, (float)height,
+        (float)entry->m_x / (float)XGPU_GLYPH_ATLAS_SIZE,
+        (float)entry->m_y / (float)XGPU_GLYPH_ATLAS_SIZE,
+        (float)(entry->m_x + width) / (float)XGPU_GLYPH_ATLAS_SIZE,
+        (float)(entry->m_y + height) / (float)XGPU_GLYPH_ATLAS_SIZE,
+        modulate, true);
+}
+
+bool XGpuRenderBackend_glyphAtlasContains(const XGpuRenderBackend* self,
+                                          uint64_t key, int width, int height)
+{
+    if (!XGpuRenderBackend_isValid(self)) return false;
+    return xgpu_glyph_atlas_find(self, key, width, height) != NULL;
+}
+
+void XGpuRenderBackend_resetGlyphAtlas(XGpuRenderBackend* self)
+{
+    if (!self) return;
+    xgpu_glyph_atlas_reset(self, true);
+}
+
+unsigned XGpuRenderBackend_glyphAtlasUploadCount(const XGpuRenderBackend* self)
+{
+    return self ? self->m_glyphUploads : 0u;
+}
+
+unsigned XGpuRenderBackend_glyphAtlasHitCount(const XGpuRenderBackend* self)
+{
+    return self ? self->m_glyphHits : 0u;
+}
+
 static XglUInt xgpu_compile_shader(XGpuRenderBackend* self, XglEnum type,
                                    const char* source)
 {
@@ -578,29 +837,50 @@ static void xgpu_set_blend(XGpuRenderBackend* self, bool sourceOver)
     self->glBlendFunc(XGL_ONE, XGL_ONE_MINUS_SRC_ALPHA);
 }
 
-static void xgpu_rect_vertices(const XGpuRenderBackend* self, float x, float y,
-                               float width, float height, float* vertices,
-                               bool textured)
+/**
+ * @brief      计算矩形顶点与 UV（全纹理或子矩形）。
+ * @details    顶点排布与既有 quad 一致（三角带 TL/TR/BL/BR）；UV 以图集
+ *             纹理的纹素坐标换算，纹理行 0 位于 v=0（与 glTexSubImage2D
+ *             的行序一致），因此条目上边缘用 v0、下边缘用 v1。
+ */
+static void xgpu_rect_vertices_uv(const XGpuRenderBackend* self, float x,
+                                  float y, float width, float height,
+                                  float* vertices, bool textured, float u0,
+                                  float v0, float u1, float v1)
 {
     float left = x * 2.0f / (float)self->m_width - 1.0f;
     float right = (x + width) * 2.0f / (float)self->m_width - 1.0f;
     float top = 1.0f - y * 2.0f / (float)self->m_height;
     float bottom = 1.0f - (y + height) * 2.0f / (float)self->m_height;
-    float rightUv = textured ? 1.0f : 0.0f;
-    float bottomUv = textured ? 1.0f : 0.0f;
-    vertices[0] = left; vertices[1] = top; vertices[2] = 0.0f; vertices[3] = 0.0f;
-    vertices[4] = right; vertices[5] = top; vertices[6] = rightUv; vertices[7] = 0.0f;
-    vertices[8] = left; vertices[9] = bottom; vertices[10] = 0.0f; vertices[11] = bottomUv;
+    float rightUv = textured ? u1 : 0.0f;
+    float bottomUv = textured ? v1 : 0.0f;
+    vertices[0] = left; vertices[1] = top; vertices[2] = u0; vertices[3] = v0;
+    vertices[4] = right; vertices[5] = top; vertices[6] = rightUv; vertices[7] = v0;
+    vertices[8] = left; vertices[9] = bottom; vertices[10] = u0; vertices[11] = bottomUv;
     vertices[12] = right; vertices[13] = bottom; vertices[14] = rightUv; vertices[15] = bottomUv;
+}
+
+static void xgpu_rect_vertices(const XGpuRenderBackend* self, float x, float y,
+                               float width, float height, float* vertices,
+                               bool textured)
+{
+    xgpu_rect_vertices_uv(self, x, y, width, height, vertices, textured,
+                          0.0f, 0.0f, 1.0f, 1.0f);
 }
 
 static bool xgpu_draw_quad(XGpuRenderBackend* self, XglUInt program,
                            XglUInt texture, float x, float y, float width,
-                           float height, const float* color, bool textured)
+                           float height, const float* color, bool textured);
+
+static bool xgpu_draw_quad_uv(XGpuRenderBackend* self, XglUInt program,
+                              XglUInt texture, float x, float y, float width,
+                              float height, float u0, float v0, float u1,
+                              float v1, const float* color, bool textured)
 {
     float vertices[16];
     if (!self || !program || width <= 0.0f || height <= 0.0f) return false;
-    xgpu_rect_vertices(self, x, y, width, height, vertices, textured);
+    xgpu_rect_vertices_uv(self, x, y, width, height, vertices, textured,
+                          u0, v0, u1, v1);
     self->glUseProgram(program);
     self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
     self->glBufferData(XGL_ARRAY_BUFFER, (XglSizeiptr)sizeof(vertices),
@@ -627,6 +907,14 @@ static bool xgpu_draw_quad(XGpuRenderBackend* self, XglUInt program,
     self->glDisableVertexAttribArray(0);
     self->glDisableVertexAttribArray(1);
     return true;
+}
+
+static bool xgpu_draw_quad(XGpuRenderBackend* self, XglUInt program,
+                           XglUInt texture, float x, float y, float width,
+                           float height, const float* color, bool textured)
+{
+    return xgpu_draw_quad_uv(self, program, texture, x, y, width, height,
+                             0.0f, 0.0f, 1.0f, 1.0f, color, textured);
 }
 
 /* ==================== 生命周期 ==================== */
@@ -691,6 +979,15 @@ static bool xgpu_gl_initialize(XGpuRenderBackend* self, int width, int height)
         return false;
     xgpu_prepare_texture(self, self->m_colorTexture, width, height);
     xgpu_prepare_texture(self, self->m_sourceTexture, width, height);
+    self->glGenTextures(1, &self->m_glyphAtlasTexture);
+    if (!self->m_glyphAtlasTexture) return false;
+    xgpu_prepare_texture(self, self->m_glyphAtlasTexture,
+                         XGPU_GLYPH_ATLAS_SIZE, XGPU_GLYPH_ATLAS_SIZE);
+    /* 2b 快路径：glBlitFramebuffer（GL3/GLES3/扩展）可选；不可用时
+       presentToWindow 回退全屏 quad 采样合成。 */
+    self->m_hasBlit = xgpu_load_proc_alias(
+        self, "glBlitFramebuffer", "glBlitFramebufferNV",
+        &self->glBlitFramebuffer, sizeof(self->glBlitFramebuffer));
     self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
     self->glFramebufferTexture2D(XGL_FRAMEBUFFER, XGL_COLOR_ATTACHMENT0,
                                   XGL_TEXTURE_2D, self->m_colorTexture, 0);
@@ -782,12 +1079,15 @@ void XGpuRenderBackend_destroy(XGpuRenderBackend* self)
             self->glDeleteTextures(1, &self->m_sourceTexture);
         if (self->glDeleteTextures && self->m_colorTexture)
             self->glDeleteTextures(1, &self->m_colorTexture);
+        if (self->glDeleteTextures && self->m_glyphAtlasTexture)
+            self->glDeleteTextures(1, &self->m_glyphAtlasTexture);
         if (self->glDeleteFramebuffers && self->m_framebuffer)
             self->glDeleteFramebuffers(1, &self->m_framebuffer);
         xgpu_done_current(self);
     }
     xgpu_context_destroy(self);
     if (self->m_pixels) XFree_System(self->m_pixels);
+    if (self->m_glyphEntries) XFree_System(self->m_glyphEntries);
     XFree_System(self);
 }
 
@@ -1038,21 +1338,51 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self)
 {
     float vertices[16];
     float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    static unsigned profCount;
+    static double profQuadUs, profSwapUs;
+    int64_t profT0 = 0, profT1 = 0, profT2 = 0;
+    static int profOn = -1;
+    if (profOn < 0)
+    {
+        const char* env = getenv("XGPU_PROFILE");
+        profOn = env && *env ? 1 : 0;
+    }
     if (!XGpuRenderBackend_isValid(self) || !self->m_windowMode ||
         !self->m_windowContext)
         return false;
     if (!XPlatformOpenGLContext_makeCurrent(self->m_windowContext))
         return false;
-    /* 把 FBO 颜色纹理合成到窗口默认帧缓冲（全屏 quad，NDC 直接映射：
-       FBO 与窗口默认帧缓冲同为 GL 左下原点，uv 不翻转）。 */
+    if (profOn) profT0 = XDateTime_currentNSecsSinceEpoch() / 1000;
+    /* 把 FBO 颜色纹理合成到窗口默认帧缓冲。2b 快路径：同尺寸 1:1 时
+       用 glBlitFramebuffer（固定功能拷贝，无采样/无 shader）；blit
+       不可用（GLES2 等）回退全屏 quad 采样（NDC 直接映射：FBO 与窗口
+       默认帧缓冲同为 GL 左下原点，uv 不翻转）。 */
+    self->glDisable(XGL_BLEND);
+    self->glDisable(XGL_SCISSOR_TEST);
+    if (self->m_hasBlit)
+    {
+        /* READ=FBO（持久画面），DRAW=默认帧缓冲；blit 后恢复原绑定。 */
+        self->glBindFramebuffer(XGL_READ_FRAMEBUFFER, self->m_framebuffer);
+        self->glBindFramebuffer(XGL_DRAW_FRAMEBUFFER, 0);
+        self->glViewport(0, 0, self->m_width, self->m_height);
+        self->glBlitFramebuffer(0, 0, self->m_width, self->m_height,
+                                0, 0, self->m_width, self->m_height,
+                                XGL_COLOR_BUFFER_BIT, XGL_NEAREST);
+        self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+        self->glEnable(XGL_BLEND);
+        if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
+        {
+            XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+            return false;
+        }
+        XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+        g_xgpuLastFramePresented = true;
+        return true;
+    }
     vertices[0]  = -1.0f; vertices[1]  =  1.0f; vertices[2]  = 0.0f; vertices[3]  = 1.0f;
     vertices[4]  =  1.0f; vertices[5]  =  1.0f; vertices[6]  = 1.0f; vertices[7]  = 1.0f;
     vertices[8]  = -1.0f; vertices[9]  = -1.0f; vertices[10] = 0.0f; vertices[11] = 0.0f;
     vertices[12] =  1.0f; vertices[13] = -1.0f; vertices[14] = 1.0f; vertices[15] = 0.0f;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
-    self->glViewport(0, 0, self->m_width, self->m_height);
-    self->glDisable(XGL_BLEND);
-    self->glDisable(XGL_SCISSOR_TEST);
     self->glUseProgram(self->m_textureProgram);
     self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
     self->glBufferData(XGL_ARRAY_BUFFER, (XglSizeiptr)sizeof(vertices),
@@ -1072,12 +1402,27 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self)
     self->glDrawArrays(XGL_TRIANGLE_STRIP, 0, 4);
     self->glDisableVertexAttribArray(0);
     self->glDisableVertexAttribArray(1);
+    if (profOn) profT1 = XDateTime_currentNSecsSinceEpoch() / 1000;
     self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
     self->glEnable(XGL_BLEND);
     if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
     {
         XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
         return false;
+    }
+    if (profOn)
+    {
+        profT2 = XDateTime_currentNSecsSinceEpoch() / 1000;
+        profQuadUs += (double)(profT1 - profT0);
+        profSwapUs += (double)(profT2 - profT1);
+        if (++profCount == 300)
+        {
+            fprintf(stderr, "[profile] present avg quad=%.3fms swap=%.3fms "
+                            "(n=%u)\n",
+                    profQuadUs / profCount / 1000.0,
+                    profSwapUs / profCount / 1000.0, profCount);
+            profCount = 0; profQuadUs = 0; profSwapUs = 0;
+        }
     }
     XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
     g_xgpuLastFramePresented = true;
