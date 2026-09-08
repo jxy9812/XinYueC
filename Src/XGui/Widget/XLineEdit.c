@@ -118,6 +118,30 @@ static size_t xlineedit_charCountPrefix(const char* text, size_t byteLen)
     return chars;
 }
 
+/** @brief 计算显示文本前 charCount 个字符的真实像素宽度。
+ * @details 与 XPainter_drawText / posToCursor / cursorRect 使用同一字体
+ *          度量（XPainter_textWidthRange 逐字符累计）：中文等双宽字符
+ *          按真实字形宽计算，西文按单宽；旧实现按「字符数 × 固定 8px」
+ *          估算，中文输入时光标/选区与文字错位。 */
+static int xlineedit_displayWidth(const XFont* font, const char* display,
+                                  size_t charCount)
+{
+    int width = 0;
+    size_t byte = 0;
+    size_t i;
+    if (!font || !display) return 0;
+    for (i = 0; i < charCount && display[byte]; ++i) {
+        size_t next = byte;
+        int charW;
+        ++next;
+        while ((display[next] & 0xC0u) == 0x80u) ++next;
+        charW = XPainter_textWidthRange(font, display, (int)byte, (int)next);
+        if (charW > 0) width += charW;
+        byte = next;
+    }
+    return width;
+}
+
 /** @brief 从字节偏移向前回退到 UTF-8 字符边界（返回新偏移）。 */
 static size_t xlineedit_prevBoundary(const char* text, size_t pos)
 {
@@ -560,26 +584,31 @@ static void xlineedit_updateViewOffset(XLineEdit* self)
     size_t chars;
     size_t curChars;
     if (!self || !self->m_text) return;
-    chars = xlineedit_charCount(self->m_text);
-    curChars = xlineedit_charCountPrefix(self->m_text, self->m_cursor);
-    textStart = (self->m_frame ? 4 : 2) + self->m_textMargins.left;
-    textEnd = XWidget_width((XWidget*)self) - (self->m_frame ? 4 : 2) -
-              self->m_textMargins.right -
-              ((self->m_clearButtonEnabled && self->m_text[0]) ? 18 : 0);
-    if (textEnd <= textStart) textEnd = textStart + 1;
-    visibleW = textEnd - textStart;
-    textW = (int)chars * XLINEEDIT_CHAR_W;
-    if (textW <= visibleW) {
-        self->m_viewOffset = 0;
-        return;
+    {
+        XFont font = XWidget_font((XWidget*)self);
+        chars = xlineedit_charCount(self->m_text);
+        curChars = xlineedit_charCountPrefix(self->m_text, self->m_cursor);
+        textStart = (self->m_frame ? 4 : 2) + self->m_textMargins.left;
+        textEnd = XWidget_width((XWidget*)self) - (self->m_frame ? 4 : 2) -
+                  self->m_textMargins.right -
+                  ((self->m_clearButtonEnabled && self->m_text[0]) ? 18 : 0);
+        if (textEnd <= textStart) textEnd = textStart + 1;
+        visibleW = textEnd - textStart;
+        /* 总宽/光标位都用真实字体宽度（逐字符累计，中文双宽正确），
+           与 drawText 渲染、posToCursor/cursorRect 同度量。 */
+        textW = xlineedit_displayWidth(&font, self->m_text, chars);
+        if (textW <= visibleW) {
+            self->m_viewOffset = 0;
+            return;
+        }
+        cursorX = xlineedit_displayWidth(&font, self->m_text, curChars);
+        lo = cursorX - visibleW + 1;
+        if (lo < 0) lo = 0;
+        hi = textW - visibleW;
+        self->m_viewOffset = cursorX;
+        if (self->m_viewOffset < lo) self->m_viewOffset = lo;
+        if (self->m_viewOffset > hi) self->m_viewOffset = hi;
     }
-    cursorX = (int)curChars * XLINEEDIT_CHAR_W;
-    lo = cursorX - visibleW + 1;
-    if (lo < 0) lo = 0;
-    hi = textW - visibleW;
-    self->m_viewOffset = cursorX;
-    if (self->m_viewOffset < lo) self->m_viewOffset = lo;
-    if (self->m_viewOffset > hi) self->m_viewOffset = hi;
 }
 
 /** @brief 像素 x 对应的光标字节偏移（简化估算度量反解）。 */
@@ -1305,6 +1334,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 
     if (edit->m_text && edit->m_text[0]) {
         int baseX = tx - edit->m_viewOffset;
+        XFont font = XWidget_font(self);
         if (hasSel) {
             char* seg0;
             char* seg1;
@@ -1320,10 +1350,15 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                 xlineedit_splitDisplay(edit, selStart, selEnd,
                                        seg0, seg1, seg2, &c0, &c1, &c2);
                 if (c1 > 0) {
+                    /* 选区/分段定位用真实字体宽度（display 逐字符累计），
+                       中文双宽与西文单宽都与 drawText 渲染对齐。 */
+                    int selX = baseX + xlineedit_displayWidth(&font, display, c0);
+                    int selW = xlineedit_displayWidth(&font, display, c0 + c1) -
+                               xlineedit_displayWidth(&font, display, c0);
                     XRect selRect;
-                    selRect.x = baseX + (int)c0 * XLINEEDIT_CHAR_W;
+                    selRect.x = selX;
                     selRect.y = ty + 1;
-                    selRect.width = (int)c1 * XLINEEDIT_CHAR_W;
+                    selRect.width = selW;
                     selRect.height = r.height - 2;
                     XPainter_fillRect(&painter, &selRect, highlight);
                 }
@@ -1331,11 +1366,13 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                     XPainter_drawText(&painter, baseX, baseline, seg0, text);
                 if (seg1[0])
                     XPainter_drawText(&painter,
-                                      baseX + (int)c0 * XLINEEDIT_CHAR_W,
+                                      baseX + xlineedit_displayWidth(&font,
+                                          display, c0),
                                       baseline, seg1, highlightedText);
                 if (seg2[0])
                     XPainter_drawText(&painter,
-                                      baseX + (int)(c0 + c1) * XLINEEDIT_CHAR_W,
+                                      baseX + xlineedit_displayWidth(&font,
+                                          display, c0 + c1),
                                       baseline, seg2, text);
             }
             XFree_System(seg0);
@@ -1344,13 +1381,18 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         } else {
             XPainter_drawText(&painter, baseX, baseline, display, text);
         }
-        /* 光标：按前缀真实文本宽度定位（与绘制同字体，焦点内常显）。 */
+        /* 光标：按前缀真实文本宽度定位（与绘制同字体，焦点内常显）。
+           K = 光标前对应的显示字符数；displayWidth 按 display 逐字符
+           累计真实宽（Normal 下与按 m_cursor 字节偏移等价；Password
+           掩码字符等宽也正确）。旧实现把字符数当字节偏移传
+           textWidthRange，中文（3 字节/字符、双宽）随输入越来越多地
+           落后于文字。 */
         if (XWidget_hasFocus(self)) {
             XFont font = XWidget_font(self);
             int cx = baseX;
-            cx += XPainter_textWidthRange(&font, display, 0,
-                                          (int)xlineedit_charCountPrefix(
-                                              edit->m_text, edit->m_cursor));
+            cx += xlineedit_displayWidth(
+                &font, display,
+                xlineedit_charCountPrefix(edit->m_text, edit->m_cursor));
             if (cx >= r.x + 1 && cx <= r.x + r.width - 1) {
                 XRect cursor = { cx, ty, XLINEEDIT_CURSOR_W, lineH };
                 XPainter_fillRect(&painter, &cursor, text);
@@ -1626,6 +1668,14 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     self->m_undoCount = 0;
     self->m_redoCount = 0;
     self->m_clipboardText = NULL;
+    /* 内置 action 槽：结构体成员数组，XWidget_init 只清基类部分；不初始化
+       的话 m_actionCount 为堆残留垃圾，首帧绘制会解引用野指针（Debug CRT
+       cdcd 填充模式直接暴露）。撤销/重做栈同为成员指针数组，一并清零。 */
+    self->m_actionCount = 0;
+    memset(self->m_actions, 0, sizeof(self->m_actions));
+    memset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
+    memset(self->m_undoStack, 0, sizeof(self->m_undoStack));
+    memset(self->m_redoStack, 0, sizeof(self->m_redoStack));
     XRect_init(&self->m_clearButtonRect, 0, 0, 0, 0);
     XWidget_setFocusPolicy(self, XWidgetFocusPolicy_ClickFocus);
     xlineedit_updateSizeHints(self);
@@ -1821,9 +1871,22 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
         size_t pc = xlineedit_charCount(self->m_placeholder);
         if (pc > chars) chars = pc;
     }
-    w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
-              self->m_textMargins.right + chars * XLINEEDIT_CHAR_W +
-              ((self->m_clearButtonEnabled) ? 18 : 0));
+    {
+        /* 首选宽度按真实字体度量（取文本与 placeholder 中较宽者），
+           中文双宽不再被按 8px 低估。 */
+        XFont font = XWidget_font((const XWidget*)self);
+        const char* textPtr = self->m_text ? self->m_text : "";
+        const char* phPtr = self->m_placeholder;
+        int textW = xlineedit_displayWidth(&font, textPtr, chars);
+        int phW = self->m_placeholder[0]
+                      ? xlineedit_displayWidth(&font, phPtr,
+                                               xlineedit_charCount(phPtr))
+                      : 0;
+        int contentW = textW > phW ? textW : phW;
+        w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
+                  self->m_textMargins.right + contentW +
+                  ((self->m_clearButtonEnabled) ? 18 : 0));
+    }
     if (w < 40) w = 40;
     h = 14 + self->m_textMargins.top + self->m_textMargins.bottom +
         (self->m_frame ? 4 : 2);
@@ -1866,12 +1929,12 @@ XRect XLineEdit_cursorRect(const XLineEdit* self)
         tx = xlineedit_textStartX(self);
         cx = tx - self->m_viewOffset;
         if (self->m_text) {
-            XString* visible = XString_create_utf8(self->m_text);
-            cx += XPainter_textWidthRange(&font, XString_toUtf8(visible),
-                                          0,
-                                          (int)xlineedit_charCountPrefix(
-                                              self->m_text, self->m_cursor));
-            XString_delete_base((XClass*)visible);
+            /* m_cursor 是 UTF-8 字节偏移，textWidthRange 的区间参数也是
+               字节偏移：直接传 m_cursor。旧实现把「字符数」当「字节偏移」
+               传入，中文（3 字节/字符、双宽字形）下光标随输入越来越多地
+               落后于文字。 */
+            cx += XPainter_textWidthRange(&font, self->m_text, 0,
+                                          (int)self->m_cursor);
         }
         rect.x = cx;
         rect.y = ty + 1;
