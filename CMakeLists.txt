@@ -264,6 +264,11 @@ endif()
 # ==================== XGui 对齐回归测试 ====================
 add_executable(XGuiRegression_Test
     "./xgui_regression_test.c"
+    "./Test/XGuiTest/XLineEditTest.c"
+    "./Test/XGuiTest/XSliderTest.c"
+    "./Test/XGuiTest/XSpinBoxTest.c"
+    "./Test/XGuiTest/XGroupBoxTest.c"
+    "./Test/XGuiTest/XProgressBarTest.c"
 )
 if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)

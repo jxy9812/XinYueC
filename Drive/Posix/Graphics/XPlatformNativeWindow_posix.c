@@ -490,8 +490,24 @@ static bool xpwn_ensureConnection(void)
     g_xpwnTextPlain = XInternAtom(g_xpwnDisplay, "text/plain", False);
     g_xpwnXdndData = XInternAtom(g_xpwnDisplay, "XIN_YUE_C_XDND_DATA", False);
     (void)setlocale(LC_CTYPE, "");
-    (void)XSetLocaleModifiers("");
-    g_xpwnInputMethod = XOpenIM(g_xpwnDisplay, NULL, NULL, NULL);
+    /* 依次尝试常见输入法桥（fcitx/ibus/XIM 默认），环境变量
+       XMODIFIERS 优先；XOpenIM 全部失败时中文输入不可用（西文不受
+       影响），启动日志给出提示。 */
+    {
+        const char* envMods = getenv("XMODIFIERS");
+        const char* candidates[3];
+        int ci;
+        candidates[0] = (envMods && envMods[0]) ? envMods : "@im=ibus";
+        candidates[1] = "@im=fcitx";
+        candidates[2] = "";
+        for (ci = 0; ci < 3 && !g_xpwnInputMethod; ++ci) {
+            (void)XSetLocaleModifiers(candidates[ci]);
+            g_xpwnInputMethod = XOpenIM(g_xpwnDisplay, NULL, NULL, NULL);
+        }
+        if (!g_xpwnInputMethod)
+            XPrintf("XPlatformNativeWindow: XOpenIM 失败——中文输入不可用"
+                    "（请检查 XMODIFIERS/输入法框架）\n");
+    }
     return true;
 }
 
@@ -616,6 +632,7 @@ static int xpwn_translateKey(KeySym keysym)
     case XK_Alt_R:       return XKey_Alt;
     case XK_ISO_Level3_Shift: return XKey_AltGr;
     /* 小键盘：语义复用到主键盘键码（KeypadModifier 由状态位补充）。 */
+    case XK_KP_Space:    return ' ';
     case XK_KP_Enter:    return XKey_Enter;
     case XK_KP_Left:     return XKey_Left;
     case XK_KP_Up:       return XKey_Up;
@@ -786,6 +803,13 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         bool autoRepeat;
         entry = xpwn_findByNativeWindow(ev->xkey.window);
         if (entry && entry->m_window) {
+            /* 标准 XIM 流程：按键先经输入法过滤器（组合键/输入法
+               热键由 IME 内部消费，返回 True 时事件不再下发）。 */
+            if (entry->m_inputContext &&
+                XFilterEvent((X11_XEvent*)ev, entry->m_window)) {
+                delivered = true;
+                break;
+            }
             if (ev->type == KeyPress && entry->m_inputContext) {
                 Status status;
                 KeySym imeKeysym = NoSymbol;
@@ -795,13 +819,31 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                     (int)sizeof(committed) - 1, &imeKeysym, &status);
                 if (bytes > 0) {
                     committed[bytes] = '\0';
-                    if (status == XLookupChars || status == XLookupBoth) {
+                    /* Chars=IME 组合确认（中文），直接提交。Both 时按
+                       keysym 判断：可打印区（<0xff00）信文本（输入法
+                       直接提交的西文/数字），功能键区（>=0xff00，
+                       Backspace/方向等——fcitx 透传时会错给空格文本）
+                       不信文本、交下方 keysym -> KEY_PRESS 正确处理。 */
+                    if (status == XLookupChars ||
+                        (status == XLookupBoth && imeKeysym < (KeySym)0xff00)) {
                         (void)XWindowSystemInterface_handleInputMethodEvent(
                             entry->m_window, "", committed, 0, 0, -1, -1);
+                        if (ev->type == KeyPress) {
+                            delivered = true;
+                            break;
+                        }
                     }
                 }
             }
             keysym = XLookupKeysym((X11_XKeyEvent*)&ev->xkey, 0);
+            /* NumLock 开启时小键盘键的数字 keysym 可能落在第二列；
+               若第一列给出 KP 方向键且 NumLock 修饰有效，再取第二列。 */
+            if ((ev->xkey.state & Mod2Mask) != 0 &&
+                keysym >= (KeySym)0xff80 && keysym <= (KeySym)0xffb9) {
+                KeySym alt = XLookupKeysym((X11_XKeyEvent*)&ev->xkey, 1);
+                if (alt != NoSymbol)
+                    keysym = alt;
+            }
             key = xpwn_translateKey(keysym);
             modifiers = xpwn_translateModifiers(ev->xkey.state);
             if (ev->type == KeyPress) {
@@ -1165,6 +1207,17 @@ bool XPlatformNativeWindow_create(XWindow* window)
             XNPreeditDoneCallback, &doneCallback,
             XNPreeditDrawCallback, &drawCallback,
             NULL);
+        if (!entry->m_inputContext) {
+            /* 回退：部分输入法（ibus/fcitx）不支持 PreeditCallbacks
+               风格，改用 Nothing（无 preedit 回调，提交文本直接走
+               commitString）。 */
+            entry->m_inputContext = XCreateIC(
+                g_xpwnInputMethod,
+                XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+                XNClientWindow, xwin,
+                XNFocusWindow, xwin,
+                NULL);
+        }
     }
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
     title = XWindow_title(window);

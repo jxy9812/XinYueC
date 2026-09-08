@@ -142,6 +142,13 @@
 
 ## 类的创建
 
+> ⚠️ **变更（2026-09-08）**：拷贝/移动不再提供 `*_copy_base`/
+> `*_move_base` 别名宏，**统一使用 `XCopy(dst, src)` / `XMove(dst, src)`**
+> （XClass.h 定义，多态分派到 `VXType_copy/VXType_move` 虚槽）。
+> 本章节及后文的旧示例代码中出现的 `*_copy_base/*_move_base` 调用
+> 一律按此替换阅读；`*_deinit_base/*_delete_base` 保持不变。
+> （文档其余旧示例将随维护逐步替换。）
+
 ### 1. 头文件结构
 
 ```c
@@ -176,12 +183,15 @@ XVtable* XExample_class_init(void);
 // ==================== 构造与析构函数 ====================
 void XExample_init(XExample* obj);
 XExample* XExample_create(void);//无参构造
-XExample* XExample_create_copy(const XExample* other);//拷贝构造
-XExample* XExample_create_move(XExample* other);//移动构造
-#define XExample_deinit_base XClass_deinit_base //反初始化,用宏复用父类
-#define XExample_delete_base XClass_delete_base //释放，用宏复用父类
-#define XExample_copy_base XClass_copy_base //拷贝，用宏复用父类
-#define XExample_move_base XClass_move_base //移动，用宏复用父类
+
+// 反初始化/释放：用宏复用父类
+#define XExample_deinit_base XClass_deinit_base
+#define XExample_delete_base XClass_delete_base
+
+// 拷贝/移动：统一使用 XCopy/XMove（不再提供 *_copy_base/*_move_base
+// 别名宏；见 XClass.h 的定义）：
+//   XCopy(dst, src);   // 多态拷贝，内部经 VXExample_copy 虚槽执行
+//   XMove(dst, src);   // 多态移动，内部经 VXExample_move 虚槽执行
 
 // 继承 XClass 的类型只公开 XType_copy_base/XType_move_base、
 // XType_deinit_base/XType_delete_base，不公开同名的 XType_copy/XType_move/
@@ -485,8 +495,10 @@ void XExample_childEvent_base(XExample* self, XChildEvent* event)
     XHead_event_base((XHead*)(self), (event))
 ```
 
-- 生命周期入口同样如此：`XType_deinit_base / XType_delete_base /
-  XType_copy_base / XType_move_base` 一律宏复用父类。
+- 生命周期入口：`XType_deinit_base / XType_delete_base` 一律宏复用
+  父类；**拷贝/移动不再提供 `*_copy_base/*_move_base` 别名宏**，统一
+  使用 `XCopy(dst, src) / XMove(dst, src)`（XClass.h 定义，多态分派到
+  `VXType_copy/VXType_move` 虚槽）。
 - 如果某虚函数本来就从父类继承而来（例如 XWidget 的 Event 继承自 XObject），
   子类也不必重新实现 `XType_event_base`，直接宏替换成父类的 base 入口即可。
 - 只有子类**新增了槽位**或**确实要改变行为/参数**时，才保留子类自己的
@@ -663,7 +675,7 @@ XExample* dest = XExample_create_move(src);  // src 被清空
 XExample dest, src;
 XExample_init(&dest);
 XExample_init(&src);
-XExample_copy_base(&dest, &src);  // 虚函数内部会兜底 init，调用方仍推荐显式 init
+XCopy(&dest, &src);  // 多态拷贝（虚函数内部会兜底 init，调用方仍推荐显式 init）
 XExample_deinit_base(&dest);
 XExample_deinit_base(&src);
 
@@ -1776,7 +1788,7 @@ if (XClassIsVtableNull(dest)) {
 // ✅ 正确：目标不需要预先 init
 XExample dest, src;
 XExample_init(&src);
-XExample_copy_base(&dest, &src);   // 自动 init dest
+XCopy(&dest, &src);   // 多态拷贝（自动 init dest）
 XExample_deinit_base(&dest);
 XExample_deinit_base(&src);
 

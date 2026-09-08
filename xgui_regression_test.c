@@ -83,6 +83,11 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #endif /* XWIDGET_ON && XFRAME_ON */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 #include "XAbstractButton.h"
+#include "XLineEditTest.h"
+#include "XSliderTest.h"
+#include "XSpinBoxTest.h"
+#include "XGroupBoxTest.h"
+#include "XProgressBarTest.h"
 #include "XAbstractButton_Protected.h"
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
@@ -24601,6 +24606,19 @@ static void test_toolbutton_contract(void)
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
 
+/* ==================== XGui 控件功能测试（XGuiDemo 统一入口） ==================== */
+
+/** @brief 运行六个新控件的全部功能断言（LineEdit/Slider/SpinBox/
+ *         GroupBox/ProgressBar，含键盘鼠标模拟与信号计数）。 */
+static void test_xgui_widgets(void)
+{
+    expect_true(XLineEditTest_runAll(), "XLineEdit 控件功能");
+    expect_true(XSliderTest_runAll(), "XSlider 控件功能");
+    expect_true(XSpinBoxTest_runAll(), "XSpinBox 控件功能");
+    expect_true(XGroupBoxTest_runAll(), "XGroupBox 控件功能");
+    expect_true(XProgressBarTest_runAll(), "XProgressBar 控件功能");
+}
+
 int main(void)
 {
     test_geometry_contract();
@@ -24888,5 +24906,6 @@ int main(void)
         return 1;
     }
     puts("XGui regression tests passed");
+    test_xgui_widgets();
     return 0;
 }

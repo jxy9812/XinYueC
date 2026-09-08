@@ -65,6 +65,21 @@
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
 #include "XToolButton.h"
 #endif
+#if XWIDGET_ON && XGROUPBOX_ON
+#include "XGroupBox.h"
+#endif
+#if XWIDGET_ON && XLINEEDIT_ON
+#include "XLineEdit.h"
+#endif
+#if XWIDGET_ON && XSPINBOX_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
+#include "XSpinBox.h"
+#endif
+#if XWIDGET_ON && XSLIDER_ON && XABSTRACTSLIDER_ON
+#include "XSlider.h"
+#endif
+#if XWIDGET_ON && XPROGRESSBAR_ON
+#include "XProgressBar.h"
+#endif
 #include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
@@ -102,6 +117,8 @@ typedef struct DemoWin
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
+    bool            m_autoTest;         /**< 自动交互测试模式（第 4 页注入事件断言联动）。 */
+    int             m_autoTestFrames;   /**< 自动测试已渲染帧数。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
@@ -113,13 +130,23 @@ typedef struct DemoWin
     XLabel          m_statusLabel; /**< 底部状态栏文本（页面名/交互反馈）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[3]; /**< 页面切换按钮：按钮/选择/堆叠演示。 */
+    XPushButton     m_pageNav[4]; /**< 页面切换按钮：按钮/选择/堆叠/输入演示。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（3 个演示页面）。 */
+    XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（4 个演示页面）。 */
     XWidget         m_pageButtons; /**< 页面 0：按钮演示容器。 */
     XWidget         m_pageChoices; /**< 页面 1：选择演示容器。 */
     XWidget         m_pageStacked; /**< 页面 2：堆叠演示容器。 */
+    XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
+#endif
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+    XGroupBox       m_groupBox;     /**< 页面 3：分组框（标题含子控件）。 */
+    XLineEdit       m_lineEdit;     /**< 页面 3：单行输入。 */
+    XSpinBox        m_spinBox;      /**< 页面 3：数值微调框。 */
+    XSlider         m_slider;       /**< 页面 3：滑块。 */
+    XProgressBar    m_progressBar;  /**< 页面 3：进度条（随滑块联动）。 */
+    XLabel          m_inputStatus;  /**< 页面 3：输入联动状态行。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton     m_button; /**< 页面 0：常驻按钮（点击/信号演示）。 */
@@ -464,6 +491,7 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
 }
 
 /** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
+static void demo_input_autotest(DemoWin* self);
 static void demo_repaint(DemoWin* self)
 {
     XRect dirty;
@@ -558,6 +586,107 @@ static void demo_stopTimers(DemoWin* self);
 
 /** @brief 事件循环轮询回调：每轮 processEvents 请求一次重绘，代替 1ms
  *         帧定时器，刷新频率只受事件循环调度速度限制。 */
+/**
+ * @brief      第 4 页输入控件的图形界面自动化验证。
+ * @details    程序化注入鼠标/键盘事件（经控件事件入口分发，与真实
+ *             输入同路径），断言联动结果：SpinBox 上箭头步进并同步
+ *             滑块/进度条、滑块凹槽点击跳转并回写微调框、单行输入
+ *             键入更新状态行、微调框内字母被数字校验器拒绝。结果以
+ *             XGuiAutoTest: PASS/FAIL 输出，任一断言失败退出码 1。
+ * @param      self 演示窗口。
+ * @return     无返回值。
+ */
+static void demo_input_autotest(DemoWin* self)
+{
+    int failures = 0;
+    XSpinBox* spin = &self->m_spinBox;
+    XSlider* slider = &self->m_slider;
+    XProgressBar* bar = &self->m_progressBar;
+    XLineEdit* edit = &self->m_lineEdit;
+    int spinW = XWidget_width((XWidget*)spin);
+    int spinH = XWidget_height((XWidget*)spin);
+    int sliderW = XWidget_width((XWidget*)slider);
+
+#define DEMO_EXPECT(cond, what) \
+    do { \
+        if (cond) XPrintf("XGuiAutoTest: [PASS] %s\n", what); \
+        else { XPrintf("XGuiAutoTest: [FAIL] %s\n", what); ++failures; } \
+    } while (0)
+
+    /* 1. 点击微调框上箭头：值 0 -> 1（按钮区右 16px 上半）。 */
+    {
+        XMouseEvent me;
+        XPoint pos;
+        XPoint_init(&pos, spinW - 8, spinH / 4);
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, 0, pos);
+        XObject_event_base((XObject*)spin, (XEvent*)&me);
+        DEMO_EXPECT(XSpinBox_value(spin) == 1, "SpinBox 上箭头点击步进到 1");
+        DEMO_EXPECT(XProgressBar_value(bar) == 1, "进度条同步到 1");
+        DEMO_EXPECT(XAbstractSlider_value((XAbstractSlider*)slider) == 1,
+                    "滑块同步到 1");
+    }
+
+    /* 2. 点击滑块凹槽中点：handle 跳转约中值并回写微调框。 */
+    {
+        XMouseEvent me;
+        XPoint p;
+        XPoint_init(&p, sliderW / 2, XWidget_height((XWidget*)slider) / 2);
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, 0, p);
+        XObject_event_base((XObject*)slider, (XEvent*)&me);
+        {
+            int v = XAbstractSlider_value((XAbstractSlider*)slider);
+            DEMO_EXPECT(v >= 45 && v <= 55, "滑块凹槽中点点击跳转中值");
+            DEMO_EXPECT(XSpinBox_value(spin) == v, "微调框与滑块联动");
+            DEMO_EXPECT(XProgressBar_value(bar) == v, "进度条与滑块联动");
+        }
+    }
+
+    /* 3. 单行输入：中文（IME 提交路径）+ 西文键入，保持焦点看光标。 */
+    {
+        XKeyEvent ke;
+        XLineEdit_setText(edit, "");
+        XLineEdit_insert(edit, "\xE4\xB8\xAD"); /* 中（模拟 IME 提交） */
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'a', 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'b', 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        {
+            const char* got = XLineEdit_text(edit);
+            XPrintf("XGuiAutoTest: [dbg] got='%s' len=%d bytes:", got,
+                    (int)strlen(got));
+            {
+                const unsigned char* q = (const unsigned char*)got;
+                while (*q) XPrintf(" %02X", *q++);
+                XPrintf("\n");
+            }
+            DEMO_EXPECT(strcmp(got, "\xE4\xB8\xAD" "ab") == 0, /* 拼接避免 \xADa 贪婪解析 */
+                        "中文+西文混合输入");
+        }
+        XWidget_setFocus((XWidget*)edit); /* 保持焦点：截图看光标位置 */
+    }
+
+    /* 4. 微调框内键入字母 'x'：被数字校验器拒绝（文本不变）。 */
+    {
+        XKeyEvent ke;
+        char before[32];
+        XLineEdit* le = XSpinBox_lineEdit((XAbstractSpinBox*)spin);
+        XSpinBox_setValue(spin, 42);
+        snprintf(before, sizeof(before), "%s", XLineEdit_text(le));
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'x', 0);
+        XObject_event_base((XObject*)le, (XEvent*)&ke);
+        DEMO_EXPECT(strcmp(XLineEdit_text(le), before) == 0,
+                    "微调框键入字母被数字校验器拒绝");
+    }
+
+#undef DEMO_EXPECT
+    XPrintf("XGuiAutoTest: %s\n",
+            failures == 0 ? "PASS" : "FAIL");
+    if (failures)
+        XGuiApplication_quit();
+}
+
 static bool demo_framePump(void* userData)
 {
     DemoWin* demo = (DemoWin*)userData;
@@ -567,6 +696,29 @@ static bool demo_framePump(void* userData)
     /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。
        GPU 直通模式窗口内容在 GL 帧缓冲（GDI 抓窗读不到），直接读回
        FBO 保存；软件模式抓真实窗口。 */
+    /* 自动交互测试：帧 3 注入事件序列并断言联动（updateRect 异步投
+       递 PAINT），帧 5 重绘完成后截图留证并退出（第 4 页输入控件的
+       图形界面验证）。 */
+    if (demo->m_autoTest) {
+        if (demo->m_autoTestFrames == 3) {
+            demo_input_autotest(demo);
+            demo->m_staticSceneDirty = true;
+            demo_repaint(demo);
+        }
+        else if (demo->m_autoTestFrames >= 5) {
+            {
+                XImage* device = XWidget_paintDevice(&demo->m_base);
+                if (device && XImage_save_2(device, "/tmp/demo_autotest_after.png",
+                                            "PNG", 95))
+                    XPrintf("XGuiAutoTest: 交互后截图 /tmp/demo_autotest_after.png\n");
+            }
+            demo_stopTimers(demo);
+            demo->m_closed = true;
+            XGuiApplication_quit();
+            return false;
+        }
+        ++demo->m_autoTestFrames;
+    }
     if (demo->m_screenshotPath) {
         if (++demo->m_screenshotFrames >= 3) {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
@@ -670,12 +822,13 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[3] = {
+    static const char* const kNames[4] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
-        "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA"  /* 堆叠演示 */
+        "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
+        "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA"  /* 输入演示 */
     };
-    if (index < 0 || index > 2)
+    if (index < 0 || index > 3)
         return kNames[0];
     return kNames[index];
 }
@@ -723,6 +876,32 @@ static void demo_layout_content(DemoWin* self)
     XRect_init(&content, 12, 78, contentWidth, contentHeight);
     XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
                                  &content);
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+    /* 页面 4：输入控件按内容区宽度自适应摆位（控件纵向流式排列，
+       宽度跟随内容区，小窗口不溢出）。 */
+    {
+        int w = contentWidth - 24;
+        int innerW;
+        XRect inner;
+        if (w < 120) w = 120;
+        XWidget_setGeometry((XWidget*)&self->m_groupBox,
+                            12, 8, w, 210);
+        inner = XGroupBox_contentsRect(&self->m_groupBox);
+        innerW = inner.width - 24;
+        if (innerW < 80) innerW = 80;
+        XWidget_setGeometry((XWidget*)&self->m_lineEdit,
+                            inner.x + 12, inner.y + 8, innerW, 26);
+        XWidget_setGeometry((XWidget*)&self->m_spinBox,
+                            inner.x + 12, inner.y + 48, innerW, 26);
+        XWidget_setGeometry((XWidget*)&self->m_slider,
+                            inner.x + 12, inner.y + 92, innerW, 28);
+        XWidget_setGeometry((XWidget*)&self->m_progressBar,
+                            inner.x + 12, inner.y + 138, innerW, 24);
+        XWidget_setGeometry((XWidget*)&self->m_inputStatus,
+                            12, 8 + 210 + 8, contentWidth - 12, 24);
+    }
+#endif
 }
 
 /** @brief 切换主内容页面：更新堆叠布局当前页、重新分配几何并更新状态栏。 */
@@ -730,7 +909,7 @@ static void demo_switchPage(DemoWin* self, int index)
 {
     if (!self) return;
     if (index < 0) index = 0;
-    if (index > 2) index = 2;
+    if (index > 3) index = 3;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
@@ -760,7 +939,55 @@ static void demo_nav2Slot(XObject* receiver, XVarList* args)
     (void)args;
     demo_switchPage((DemoWin*)receiver, 2);
 }
+/** @brief 页面 4（输入演示）导航按钮 clicked 槽。 */
+static void demo_nav3Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 3);
+}
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+/** @brief 单行输入文本变化：状态行反馈（可视化行为验证）。 */
+static void demo_input_textChangedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    const char* text;
+    char buf[160];
+    XVarList_args_1(args, const char*, t);
+    if (!self) return;
+    text = t ? t : "";
+    snprintf(buf, sizeof(buf), "\xE6\x96\x87\xE6\x9C\xAC: %s", text); /* 文本: */
+    XLabel_setText_2(&self->m_inputStatus, buf);
+    demo_set_status(self, buf);
+}
+/** @brief 微调框数值变化：同步滑块与进度条。 */
+static void demo_input_spinChangedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int value;
+    XVarList_args_1(args, int, v);
+    if (!self) return;
+    value = v;
+    XAbstractSlider_setValue((XAbstractSlider*)&self->m_slider, value);
+    XProgressBar_setValue(&self->m_progressBar, value);
+}
+/** @brief 滑块数值变化：同步微调框与进度条 + 状态行反馈。 */
+static void demo_input_sliderChangedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int value;
+    char buf[64];
+    XVarList_args_1(args, int, v);
+    if (!self) return;
+    value = v;
+    XSpinBox_setValue(&self->m_spinBox, value);
+    XProgressBar_setValue(&self->m_progressBar, value);
+    snprintf(buf, sizeof(buf), "\xE6\xBB\x91\xE5\x9D\x97: %d", value); /* 滑块: */
+    XLabel_setText_2(&self->m_inputStatus, buf);
+}
+#endif /* 输入演示联动槽 */
 
 #if XWIDGET_ON && XPUSHBUTTON_ON
 /** @brief 页面 1 常驻按钮 pressed 信号槽：更新联动标签与状态栏。 */
@@ -1185,26 +1412,30 @@ static DemoWin* DemoWin_create(void)
     XWidget_init(&self->m_pageButtons, &self->m_base, 0);
     XWidget_init(&self->m_pageChoices, &self->m_base, 0);
     XWidget_init(&self->m_pageStacked, &self->m_base, 0);
+    XWidget_init(&self->m_pageInputs, &self->m_base, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageButtons);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageChoices);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageStacked);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_pageInputs);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 页面切换导航按钮（标题栏下方一行）。 */
     {
-        static const char* const kNavTexts[3] = {
+        static const char* const kNavTexts[4] = {
             "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
             "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
-            "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA"  /* 堆叠演示 */
+            "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
+            "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA"  /* 输入演示 */
         };
-        static void (*const kNavSlots[3])(XObject*, XVarList*) = {
-            demo_nav0Slot, demo_nav1Slot, demo_nav2Slot
+        static void (*const kNavSlots[4])(XObject*, XVarList*) = {
+            demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot
         };
         int nav;
-        for (nav = 0; nav < 3; ++nav) {
+        for (nav = 0; nav < 4; ++nav) {
             XPushButton* button = &self->m_pageNav[nav];
             XPushButton_init(button, &self->m_base, 0);
             demo_set_widget_default_font((XWidget*)button);
@@ -1379,6 +1610,60 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_stackPrevButton);
     XWidget_show((XWidget*)&self->m_stackNextButton);
 #endif /* XPUSHBUTTON_ON */
+
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+    /* ---- 页面 4：输入控件演示（GroupBox 内输入/微调/滑块/进度联动） ---- */
+    XGroupBox_init(&self->m_groupBox, (XWidget*)&self->m_pageInputs, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_groupBox);
+    XGroupBox_setTitle(&self->m_groupBox,
+                         "\xE8\xBE\x93\xE5\x85\xA5\xE6\x8E\xA7\xE4\xBB\xB6"); /* 输入控件 */
+
+    XLineEdit_init(&self->m_lineEdit, (XWidget*)&self->m_groupBox, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_lineEdit);
+    XLineEdit_setPlaceholderText(&self->m_lineEdit,
+        "\xE8\xBE\x93\xE5\x85\xA5\xE6\x96\x87\xE6\x9C\xAC"); /* 输入文本 */
+    XObject_connect_1((XObject*)&self->m_lineEdit,
+                      (size_t)XLineEdit_textChanged_signal(&self->m_lineEdit),
+                      (XObject*)self, demo_input_textChangedSlot,
+                      XConnectionType_Direct);
+
+    XSpinBox_init(&self->m_spinBox, (XWidget*)&self->m_groupBox, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_spinBox);
+    XSpinBox_setRange(&self->m_spinBox, 0, 100);
+    XObject_connect_1((XObject*)&self->m_spinBox,
+                      (size_t)XSpinBox_valueChanged_signal(&self->m_spinBox),
+                      (XObject*)self, demo_input_spinChangedSlot,
+                      XConnectionType_Direct);
+
+    XSlider_init(&self->m_slider, (XWidget*)&self->m_groupBox, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_slider);
+    XAbstractSlider_setRange((XAbstractSlider*)&self->m_slider, 0, 100);
+    XObject_connect_1((XObject*)&self->m_slider,
+                      (size_t)XSlider_valueChanged_signal(&self->m_slider),
+                      (XObject*)self, demo_input_sliderChangedSlot,
+                      XConnectionType_Direct);
+
+    XProgressBar_init(&self->m_progressBar, (XWidget*)&self->m_groupBox, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_progressBar);
+    XProgressBar_setRange(&self->m_progressBar, 0, 100);
+    XProgressBar_setValue(&self->m_progressBar, 30);
+
+    XLabel_init(&self->m_inputStatus, (XWidget*)&self->m_pageInputs, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_inputStatus);
+    XLabel_setText_2(&self->m_inputStatus, "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
+    XLabel_setAlignment(&self->m_inputStatus,
+                        XAlignment_Left | XAlignment_Top);
+
+    /* 布局摆位在 demo_layout_content 中按窗口尺寸自适应（避免固定
+       宽度在小窗口下溢出）。 */
+    XWidget_show((XWidget*)&self->m_groupBox);
+    XWidget_show((XWidget*)&self->m_lineEdit);
+    XWidget_show((XWidget*)&self->m_spinBox);
+    XWidget_show((XWidget*)&self->m_slider);
+    XWidget_show((XWidget*)&self->m_progressBar);
+    XWidget_show((XWidget*)&self->m_inputStatus);
+#endif
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。 */
@@ -1421,6 +1706,7 @@ int main(int argc, char* argv[])
     bool benchmarkResize;
     const char* screenshotPath;
     int screenshotPage;
+    bool autoTest;
     int argi;
     int eventLoopResult;
 
@@ -1428,6 +1714,7 @@ int main(int argc, char* argv[])
     benchmarkSeconds = 0;
     benchmarkResize = false;
     screenshotPath = NULL;
+    autoTest = false;
     screenshotPage = 0;
     for (argi = 1; argi < argc; ++argi) {
         if (strcmp(argv[argi], "--benchmark") == 0 && argi + 1 < argc) {
@@ -1445,6 +1732,9 @@ int main(int argc, char* argv[])
         }
         else if (strcmp(argv[argi], "--page") == 0 && argi + 1 < argc) {
             screenshotPage = atoi(argv[++argi]);
+        }
+        else if (strcmp(argv[argi], "--autotest") == 0) {
+            autoTest = true;
         }
         else {
             autoSeconds = atoi(argv[argi]);
@@ -1469,6 +1759,10 @@ int main(int argc, char* argv[])
     }
     win->m_screenshotPath = screenshotPath;
     win->m_screenshotFrames = 0;
+    win->m_autoTest = autoTest;
+    win->m_autoTestFrames = 0;
+    if (autoTest)
+        demo_switchPage(win, 3); /* 自动测试固定切第 4 页 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 截图模式可指定初始页面（配合 --screenshot <file> --page <N>）。 */
     if (screenshotPath && screenshotPage > 0)
@@ -1563,6 +1857,18 @@ int main(int argc, char* argv[])
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XWidget_deinit_base(&win->m_pageStacked);
     XWidget_deinit_base(&win->m_pageChoices);
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+    XWidget_deinit_base(&win->m_inputStatus);
+    XWidget_deinit_base((XWidget*)&win->m_progressBar);
+    XWidget_deinit_base((XWidget*)&win->m_slider);
+    XWidget_deinit_base((XWidget*)&win->m_spinBox);
+    XWidget_deinit_base((XWidget*)&win->m_lineEdit);
+    XWidget_deinit_base((XWidget*)&win->m_groupBox);
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    XWidget_deinit_base(&win->m_pageInputs);
+#endif
     XWidget_deinit_base(&win->m_pageButtons);
     XStackedLayout_deinit_base(&win->m_stackLayout);
 #endif

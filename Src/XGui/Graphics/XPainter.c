@@ -374,6 +374,7 @@ static bool painterGpuSubmitSoftwareCommand(XPainter* self,
     /* 上传源必须是本 painter 的当前图像（savedImage）：g_xgpuSyncTarget
        是全局注册（可能被其他 painter 污染，实测曾指向 12x2 图像导致
        快照内容错误）。 */
+    { static int cnt = 0; if (++cnt % 50 == 0) fprintf(stderr, "[helper] local-submit x%d\n", cnt); }
     XGpuRenderBackend_uploadFrame(backend, savedImage);
     /* 同步当前裁剪状态到 GPU scissor：局部提交的 drawImage/drawAlpha
        不经原语快速路径，外部路径残留的 scissor 会裁掉整帧覆盖。
@@ -6933,6 +6934,27 @@ int XPainter_textDescent(const XFont* font)
     PainterBitmapFontTable table = painterBitmapFont(font);
     return painter8x16Metric(table.m_descent,
                              painterBitmapScaleForTable(font, &table));
+}
+
+/** @brief 基线到字形可视顶部的距离（outline 用字形盒，点阵回退 ascent）。 */
+int XPainter_textGlyphAscent(const XFont* font)
+{
+    PainterBitmapFontTable table = painterBitmapFont(font);
+    float scale = painterBitmapScaleForTable(font, &table);
+    if (table.m_bpp == 0) {
+        /* outline 表：查询代表字形（'A'）的盒参数，与绘制定位公式
+           （baselineY - (box_h + ofs_y)*scale）同源。 */
+        const XFontFace* face = XFont_face(font);
+        XFontOutlineGlyphMetrics metrics;
+        memset(&metrics, 0, sizeof(metrics));
+        if (face &&
+            XFontFace_loadOutlineGlyph_base(face, font, (uint32_t)'A',
+                                            &metrics, NULL)) {
+            int top = metrics.yMax;
+            return top > 0 ? painter8x16Edge(top, scale) : 0;
+        }
+    }
+    return painter8x16Metric(table.m_ascent, scale);
 }
 
 int XPainter_drawGlyph(XPainter* self, int x, int baselineY,

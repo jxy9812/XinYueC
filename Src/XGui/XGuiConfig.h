@@ -234,6 +234,27 @@
 #ifndef XWIDGET_ON
 #define XWIDGET_ON 1
 #endif
+#ifndef XPROGRESSBAR_ON
+#define XPROGRESSBAR_ON 1
+#endif
+#ifndef XGROUPBOX_ON
+#define XGROUPBOX_ON 1
+#endif
+#ifndef XABSTRACTSLIDER_ON
+#define XABSTRACTSLIDER_ON 1
+#endif
+#ifndef XSLIDER_ON
+#define XSLIDER_ON 1
+#endif
+#ifndef XLINEEDIT_ON
+#define XLINEEDIT_ON 1
+#endif
+#ifndef XABSTRACTSPINBOX_ON
+#define XABSTRACTSPINBOX_ON 1
+#endif
+#ifndef XSPINBOX_ON
+#define XSPINBOX_ON 1
+#endif
 #ifndef XFRAME_ON
 #define XFRAME_ON 1
 #endif
@@ -336,6 +357,11 @@
 #define XMENU_ON 0
 #undef XTOOLBUTTON_ON
 #define XTOOLBUTTON_ON 0
+#endif
+/* XSlider 依赖 XAbstractSlider；抽象基类裁剪时连带裁剪 XSlider。 */
+#if !XABSTRACTSLIDER_ON
+#undef XSLIDER_ON
+#define XSLIDER_ON 0
 #endif
 #if !XABSTRACTBUTTON_ON
 #undef XPUSHBUTTON_ON

@@ -1102,6 +1102,15 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
  * @return 首行宽度（遇 '\n' 停止；等宽字体下 = 字形数 x 字宽 x scale）。
  */
 int XPainter_textWidth(const XFont* font, const char* utf8);
+/**
+ * @brief      返回文本基线到字形可视顶部的距离（含 XFont 字号缩放）。
+ * @details    对 outline 字体取字形描述的 box_h+ofs_y（与绘制路径的
+ *             字形定位公式一致，不含行距）；点阵字体回退为 ascent。
+ *             用于光标等需要与字形视觉顶部精确对齐的场景。
+ * @param font 点阵字体（XFont_setFamily 选字库）；NULL 用默认字库。
+ * @return     基线到字形可视顶部的像素距离。
+ */
+int XPainter_textGlyphAscent(const XFont* font);
 /** @brief 返回指定点阵字体的行高（含 XFont 字号缩放）。 */
 int XPainter_textHeight(const XFont* font);
 /** @brief 返回指定点阵字体的基线以上高度（含缩放）。 */
