@@ -51,7 +51,9 @@ bool XDeviceFile_legacyFlush(XFd fd);
 bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 #ifdef __linux__
 #if XNET_USE_IO_URING
+#if XNET_BUILD_IO_URING  /* 探测宏来自 XNetIoRingPosix.h */
 #include <linux/io_uring.h>
+#endif
 #include <sys/syscall.h>
 #endif
 #endif

@@ -1,6 +1,6 @@
 ﻿/**
  * @file XNetIoRingPosix.c
- * @brief XAbstractNetIoRing Linux 后端实现（io_uring + epoll 双引擎）
+ * @brief XAbstractNetIoRing Linux 后端实现（io_uring/epoll 双引擎）
  *
  * 继承 XAbstractNetIoRing，Linux 5.1+ 内核运行 io_uring 完成型异步
  * I/O；init 时 io_uring_setup 失败（-ENOSYS，Linux 4.x 及以下内核）
@@ -19,7 +19,7 @@
  *   网络 RECV/RECVMSG/SEND/ACCEPT/CONNECT：提交时注册 epoll 兴趣挂起，
  *     就绪即执行非阻塞 IO 并推 CQ 条目（对上层等价完成通知）；
  *   文件 READ/WRITE/FSYNC：提交时同步执行（普通文件 epoll 不适用），
- *     完成入队供 waitCqe 取回；
+ *     完成入队供 waitCqe 立即取回；
  *   唤醒：eventfd 常驻 epoll 集合；定时器：timerfd 以 READ 提交。
  *
  * 外部 API（getSqe/submitSqe/waitCqe/ringFd）双模式分发，调用点
@@ -544,6 +544,10 @@ static void epDeinitCleanup(XNetIoRingPosix* posix) {
 }
 #endif /* XNET_BUILD_EPOLL */
 
+/* 虚函数表枚举：继承 XAbstractNetIoRing（vtable 大小由本宏生成） */
+XCLASS_DEFINE_BEGING(XNetIoRingPosix)
+XCLASS_DEFINE_EXTEND_END(XNetIoRingPosix, XAbstractNetIoRing)
+
 /* ================================================================
  * 重载虚函数实现（双引擎 mode 分发）
  * ================================================================ */
@@ -673,10 +677,6 @@ static void VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj) {
 
     XClass_Deinit_Parent(XAbstractNetIoRing, obj);
 }
-
-/* 虚函数表枚举：继承 XAbstractNetIoRing（vtable 大小由本宏生成） */
-XCLASS_DEFINE_BEGING(XNetIoRingPosix)
-XCLASS_DEFINE_EXTEND_END(XNetIoRingPosix, XAbstractNetIoRing)
 
 /** @brief 虚函数表初始化（双引擎共用同一虚函数表）。 */
 XVtable* XNetIoRingPosix_class_init(void) {

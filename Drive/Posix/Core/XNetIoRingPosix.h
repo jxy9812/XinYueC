@@ -1,10 +1,14 @@
 ﻿/**
  * @file XNetIoRingPosix.h
- * @brief XAbstractNetIoRing Linux io_uring 后端头文件
+ * @brief XAbstractNetIoRing Linux 后端头文件（io_uring/epoll 双引擎）
  *
  * 包含：
- *   1. io_uring 事件上下文类型（对应 Windows XNetIoRingWin32.h）
- *   2. XNetIoRingPosix 类前置声明与 API
+ *   1. 后端编译期能力探测（XNET_HAS_IO_URING_HDR / XNET_BUILD_IO_URING）
+ *   2. 事件上下文类型（对应 Windows XNetIoRingWin32.h）
+ *   3. XNetIoRingPosix 类前置声明与 API
+ *
+ * 低版本工具链（内核头无 linux/io_uring.h）由伪 SQE/cqe 兼容层保证
+ * 编译；运行时后端由 init 回退链决定（io_uring 失败自动回退 epoll）。
  */
 
 #ifndef XNETIORINGPOSIX_H
