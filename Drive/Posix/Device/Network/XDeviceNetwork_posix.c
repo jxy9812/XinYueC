@@ -49,7 +49,9 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #ifdef __linux__
+#if XNET_USE_IO_URING  /* 探测宏来自 XNetIoRingPosix.h；epoll 回退用其伪 SQE 兼容层 */
 #include <linux/io_uring.h>
+#endif
 #endif
 #ifdef HAVE_GSSAPI
 #include <gssapi/gssapi.h>

@@ -3411,6 +3411,14 @@ static bool painterScanFillDevice(XPainter* self, int n,
                         XImage_fillRect(self->m_image, &span, solidColor);
                     }
                 }
+                else
+                {
+                    /* 无裁剪（clipped=0）：整段直接填充。此 else 曾
+                       缺失——无裁剪的 ScanFill 填充（winding/多边形
+                       回归）整段丢失。 */
+                    XRect span = { xl, py, xr - xl + 1, 1 };
+                    XImage_fillRect(self->m_image, &span, solidColor);
+                }
 #elif XPAINTER_CLIP_ON
                 if (clipped)
                 {
@@ -3425,6 +3433,11 @@ static bool painterScanFillDevice(XPainter* self, int n,
                         XRect span = { xl, py, xr - xl + 1, 1 };
                         XImage_fillRect(self->m_image, &span, solidColor);
                     }
+                }
+                else
+                {
+                    XRect span = { xl, py, xr - xl + 1, 1 };
+                    XImage_fillRect(self->m_image, &span, solidColor);
                 }
 #else
                 /* 无裁剪能力构建：直接填充（clipped 恒为 false）。 */

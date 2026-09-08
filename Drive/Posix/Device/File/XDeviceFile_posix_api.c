@@ -50,8 +50,10 @@ int64_t XDeviceFile_legacySeek(XFd fd, int64_t offset, XSeekWhence whence);
 bool XDeviceFile_legacyFlush(XFd fd);
 bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 #ifdef __linux__
+#if XNET_USE_IO_URING
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
+#endif
 #endif
 
 /* io_uring 系统调用号 */

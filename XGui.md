@@ -13493,3 +13493,137 @@ XGUI_GPU_SYNC=1（GL）下 "extra convex polygon" 的局部提交实测：
 - `XGUI_GPU_SYNC=1 XGUI_RENDER_BACKEND=vulkan`：passed
 - `XGuiGpu_Test`（soft/gl/vk）：全 0
 - **CTest 3/3 全绿**
+
+### 14.18 Linux 异步 IO 双内核支持（io_uring/epoll，进行中）
+
+任务：平台异步（XNetIoRingPosix）此前硬依赖 io_uring（Linux 5.1+），
+低版本内核（TPC1071Gi 的 Linux 4.x，内核头无 linux/io_uring.h）无法
+编译。改为宏双路径同时支持。
+
+- **探测宏 XNET_USE_IO_URING**（XNetIoRingPosix.h）：`__has_include
+  (<linux/io_uring.h>)` 且 `LINUX_VERSION_CODE >= 5.1` 为 1；否则 0
+  回退 epoll；`-DXNET_FORCE_EPOLL=1` 强制覆盖。
+- **头文件兼容层**：epoll 模式提供与 io_uring 同名/同布局子集的伪
+  `struct io_uring_sqe`（opcode/fd/addr/len/off/user_data/flags/
+  cancel_flags，64 字节）与真实内核取值的 IORING_OP_* 常量——外部
+  调用点（XDeviceFile_posix_api.c / XDeviceNetwork_posix.c 直接构造
+  SQE：RECV/SEND/ACCEPT/CONNECT/RECVMSG/READ/WRITE/FSYNC/
+  ASYNC_CANCEL）**零修改**。
+- **语义映射**（epoll 路径，同 XNetIoRingPosix 类同 6 虚函数）：
+  网络 RECV/SEND/ACCEPT/CONNECT/RECVMSG = 挂起 + epoll 就绪即执行
+  非阻塞 IO 并推 CQ 条目；文件 READ/WRITE/FSYNC = submitSqe 同步
+  执行；唤醒 eventfd 入 epoll；定时器 timerfd。
+- 已完成：头文件探测宏 + 兼容层、.c 宏包裹（io_uring 路径本机验证
+  编译/冒烟不回归）。待做：epoll 回退路径主体（~450 行）、本机强制
+  epoll 回归、armel 交叉编译（4.x 内核头）验证。
+
+### 14.19 io_uring/epoll 双内核支持（进行中）
+
+- **epoll 回退后端主体完成**（XNetIoRingPosix.c 宏双路径）：
+  - 探测宏 XNET_USE_IO_URING（内核头+版本自动判定，-DXNET_FORCE_EPOLL 覆盖）
+  - 头文件伪 SQE 兼容层（外部调用点零修改：XDeviceFile/XDeviceNetwork
+    直接构造 SQE 的 9 种操作）
+  - epoll 路径：6 虚函数同签名（epoll fd/eventfd 唤醒）、伪 SQE 执行
+    引擎（网络就绪即执行推 CQ 条目、文件 READ/WRITE/FSYNC 同步、
+    ASYNC_CANCEL 挂起移除）、processOneCompletion 重构公共区共用
+  - 外部 XDeviceNetwork/XDeviceFile 的 linux/io_uring.h include 宏化
+  - 回归的 XGpu 测试段清理（模块已删）
+- **验证状态**：本机 io_uring 路径全绿；强制 epoll（build-epoll-net，
+  -DXNET_FORCE_EPOLL=1）回归 1 项失败（winding）。
+- **winding 失败与 XNET 无关**（纯基线对照：撤全部 XNET 修改后
+  winding 仍失败；3 次重跑稳定失败）——上轮"清零"验证时 winding
+  为 flaky 通过。独立复现（doubleLoop+Winding，含 brush）软件与 GPU
+  **一致失败**（都不填）——复现与回归仍差上下文（回归软件通过），
+  下轮从回归软件/GPU 的 winding 值对比 + doubleLoop 轮廓处理入手。
+
+### 14.19.1 winding 双环填充调试（证据链收敛，下轮收尾）
+
+探针（24x14 画布、doubleLoop、NoPen、蓝 brush、Winding）证据链：
+
+1. `py=8 xc=4 spans=2 s0=2 s1=14`——扫描交点 4 个（两竖边各 2 次，
+   winding 语义）、跨度 [2,14] **完全正确**；
+2. `bulk=1 hasClip=0 rc=0`——bulkSolid=true、无裁剪 → 应走
+   `#elif XPAINTER_CLIP_ON` 的 else 直接填充；
+3. **该 else 的 XImage_fillRect(蓝) 执行后 (8,8) 仍黑**——矛盾点
+   收窄到：span 应用后、像素写入之间的环节（fillRect 目标/坐标/
+   或 py 循环后续覆盖）。
+4. 调试打印已就位（[scan-dbg]/[apply2]/[apply-nohip]），下轮在
+   `#elif` 的 else 的 fillRect 前后各加像素读验证（fillRect 前后
+   XImage_pixel(8,8)），一锤定音；同查 py 循环 spanCount=2 时
+   j=0 之后是否有第二个 span 意外覆盖。
+
+### 14.19.2 winding 清零：缺失的 else（GPU 环境回归归零）
+
+**根因（铁证）**：ScanFillDevice 跨度应用的条件链第一段
+（`#if CLIP_ON && CLIP_REGION_ON`）**没有 else**——`clipped=0`
+（无裁剪）时 if/else-if 均不满足 → **整个扫描跨度被静默丢弃**。
+凡经过 ScanFillDevice 且无裁剪的填充（winding/多边形回归）整段
+丢失；有裁剪的用例走前两分支正常，因此此前只表现为 winding 等
+个别失败。上轮"清零"验证时 winding 为 flaky 通过（实为该洞）。
+修复：第一段补 else（clipped=0 直接填充）。
+
+**最终验证（全路径全绿）：**
+- 软件回归 / GPU GL 回归 / GPU Vulkan 回归：passed
+- 强制 epoll（-DXNET_FORCE_EPOLL=1，build-epoll-net）回归：passed
+- 三后端冒烟：全 0
+
+**遗留待办（io_uring/epoll 任务收尾）**：armel 交叉编译验证
+（低版本内核头，验证 XNET_USE_IO_URING 自动回退 epoll 的编译路径）。
+
+### 14.19.3 io_uring/epoll 双内核支持完成
+
+**最终架构**（XNetIoRingPosix.c 合并版，双引擎共存 + 运行时回退）：
+
+- **编译期能力**（XNET_HAS_IO_URING_HDR，`__has_include` 探测）：
+  有头 → 编译 io_uring 引擎（真实类型）；无头 → 伪 SQE/cqe/操作码
+  兼容层（外部调用点零修改）；`-DXNET_FORCE_EPOLL=1` 强制 epoll。
+- **运行时回退链**（XNetIoRingPosix_init）：优先 io_uring_setup
+  （Linux 5.1+ 内核）；失败（-ENOSYS，4.x 内核）自动回退 epoll——
+  **同一份二进制在新旧内核均可用**（m_mode 分发，6 虚函数与外部
+  API 双模式同一入口）。
+- **epoll 引擎语义映射**：网络 RECV/RECVMSG/SEND/ACCEPT/CONNECT
+  挂起 + epoll 就绪即执行非阻塞 IO 推 CQ 条目；文件 READ/WRITE/
+  FSYNC 提交时同步执行；eventfd 唤醒 + timerfd 定时。
+
+**验证**：
+- 本机 io_uring 路径：编译 0 错误 + 回归全绿
+- 强制 epoll 路径（-DXNET_FORCE_EPOLL=1，等价无头工具链编译路径，
+  预处理 diff 证明 io_uring 引擎 0 残留）：编译 0 错误 + 回归全绿
+- 全量：软件回归 / GPU GL / GPU Vulkan / 三后端冒烟 / CTest 3/3
+  全绿
+- armel 交叉编译：沙箱限制无法完整搭建（i386 工具链 interp 依赖
+  系统目录、sudo 被禁、qemu-i386 仿真大程序 SIGSEGV）——**降级为
+  等价验证**：无头工具链编译路径由 FORCE_EPOLL 等价覆盖（预处理
+  diff 铁证）；armel SDK 实测内核头为 3.12（无 io_uring.h）→ 自动
+  走 epoll 编译路径；真机部署按 XGPU_ON=0 同样策略裁剪或用
+  -DXNET_FORCE_EPOLL=1。
+
+### 14.19.4 armel 交叉编译验证完成（任务全部收尾）
+
+- 工具链环境重建（qemu-i386 包装器 + SDK 3.12 内核头 + libpcap），
+  **XinYueCS.a 成功交叉编译**（ARM EABI5 产物验证）。
+- **XNET 探测宏 armel 实测**：`XNET_HAS_IO_URING_HDR=0
+  XNET_BUILD_IO_URING=0 XNET_BUILD_EPOLL=1`——SDK 内核头 3.12
+  （无 io_uring.h）→ **自动走 epoll 编译路径** ✓；io_uring 编译
+  路径由本机（6.1 头）全绿覆盖 + 运行时回退覆盖 4.x 目标内核。
+- 四项验证全达成：本机 io_uring 全绿 / 强制 epoll 全绿 / armel
+  交叉编译通过（epoll 编译路径）/ 外部调用点零修改。
+
+### 14.19.5 NetIoRing 双引擎功能验证（探针实测）
+
+独立探针（build/nioprobe.c，绕过未接线的 XDevice 测试）实测双引擎：
+
+| 用例 | io_uring（本机 5.x） | epoll（-DXNET_FORCE_EPOLL=1） |
+|---|---|---|
+| 文件 WRITE（同步链 getSqe/submitSqe/waitCqe） | PASS (res=17) | PASS (res=17) |
+| 文件 READ（读回校验） | PASS（数据一致） | PASS（数据一致） |
+| eventfd READ（就绪驱动，Timer/信令场景） | PASS (result=8) | PASS (result=8) |
+| socketpair RECV（挂起+就绪执行，epoll 网络核心） | res=3 正确（data 打印待查） | PASS（res=3 data=NET） |
+
+- **io_uring waitCqe 修复**：原单次非阻塞 GETEVENTS 在内核异步完成
+  未到达时误报 -1——改 1ms 阻塞重试循环（100 次）+ 非目标 CQE
+  跳过推进。
+- XDeviceFileTest/XDeviceNetworkTest 系列未纳入验证：main.c 有接线
+  但运行时进入交互式 shell/事件循环（io_uring 与 epoll 模式行为
+  一致，均为预先存在的测试形态问题，与本次改动无关）。
+- 目标平台（低版本 Linux）使用 epoll 路径：**全部用例 PASS**。

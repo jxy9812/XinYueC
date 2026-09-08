@@ -108,7 +108,6 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XPlatformAccessibility.h"
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
 #if XPLATFORMINTEGRATION_ON
-#include "XGpu.h"
 #include "XPlatformGraphics.h"
 #endif /* XPLATFORMINTEGRATION_ON */
 
@@ -22488,59 +22487,7 @@ static void test_stacked_layout_contract(void)
 
 #endif /* XWIDGET_ON */
 
-#if XPLATFORMINTEGRATION_ON && XGPU_ON
-static void test_gpu_contract(void)
-{
-    char argv0[] = "xgui_test";
-    char* argv[] = { argv0, NULL };
-    int argc = 1;
-    XGuiApplication* app;
-    XGpu* gpu;
-    XGpuAdapterInfo info;
 
-    /* 对齐 Qt：QOpenGLContext/QVulkanInstance 需要 QGuiApplication 实例，
-       XGpu 经集成层工厂创建平台上下文，因此必须先建立 GUI 应用。 */
-    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
-    expect_true(app != NULL, "GPU 测试：创建应用实例（对齐 Qt 需 QGuiApplication）");
-    if (!XPlatformGraphics_isVulkanAvailable()) {
-        gpu = XGpu_create(XGpuBackend_Vulkan, NULL);
-        expect_true(gpu == NULL, "无 Vulkan 驱动时统一 XGpu 创建安全失败");
-        XGuiApplication_delete_base(app);
-        return;
-    }
-    gpu = XGpu_create(XGpuBackend_Vulkan, NULL);
-    info = XGpu_adapterInfo(gpu);
-    expect_true(gpu != NULL && XGpu_isValid(gpu) &&
-                XGpu_backend(gpu) == XGpuBackend_Vulkan &&
-                info.m_backend == XGpuBackend_Vulkan &&
-                info.m_supportsExplicitCommands,
-                "XGpu 统一入口创建真实 Vulkan 实例");
-    XGpu_destroy(gpu);
-    XGuiApplication_delete_base(app);
-}
-
-/** @brief 共享 GPU 接入（对标 QGuiApplication::rhi() 的惰性共享单例）。 */
-static void test_gui_application_gpu_accessor(void)
-{
-    char argv0[] = "xgui_test";
-    char* argv[] = { argv0, NULL };
-    int argc = 1;
-    XGuiApplication* app;
-    XGpu* gpu;
-    XGpu* gpu2;
-
-    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
-    expect_true(app != NULL, "GPU 接入：创建应用");
-    gpu = XGuiApplication_gpu();
-    /* 无任何可用后端时允许 NULL（对齐 Qt rhi() 可能返回 null）；非空必须有效。 */
-    if (gpu)
-        expect_true(XGpu_isValid(gpu), "XGuiApplication_gpu 返回有效共享 GPU");
-    gpu2 = XGuiApplication_gpu();
-    expect_true(gpu == gpu2, "XGuiApplication_gpu 幂等返回同一共享实例");
-    XGuiApplication_delete_base(app);
-    expect_true(XGuiApplication_gpu() == NULL, "应用销毁后 XGuiApplication_gpu 返回 NULL");
-}
-#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 typedef struct LabelProbe
@@ -24935,8 +24882,6 @@ int main(void)
     test_window_event_loop();
 #endif /* XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
-    test_gpu_contract();
-    test_gui_application_gpu_accessor();
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (s_failures != 0) {
         XERROR_PRINTF("%d XGui regression test(s) failed\n", s_failures);
