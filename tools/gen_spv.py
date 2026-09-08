@@ -248,5 +248,10 @@ out.append(c_array("kSpvVertex", gen_vertex()))
 out.append(c_array("kSpvFragmentSolid", gen_fragment(False)))
 out.append(c_array("kSpvFragmentTexture", gen_fragment(True)))
 out.append("\n#endif /* XGPURENDERDRIVER_VULKAN_SHADERS_H */\n")
-open("Src/XGui/Graphics/XGpuRenderDriver_vulkan_shaders.h", "w").write("\n".join(out))
+open(
+    "Src/XGui/Graphics/XGpuRenderDriver_vulkan_shaders.h",
+    "w",
+    encoding="utf-8",
+    newline="\n",
+).write("\n".join(out))
 print("shaders header generated")

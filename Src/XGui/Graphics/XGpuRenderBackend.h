@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include "XGuiConfig.h"
 #include "XGeometry.h"
+#include "XGpuRenderDriver.h"
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 
@@ -57,6 +58,17 @@ XGpuRenderBackend* XGpuRenderBackend_createForWindow(XWindow* window,
 
 /** @brief 会话是否为「窗口直通」模式（createForWindow 创建）。 */
 bool XGpuRenderBackend_isWindowMode(const XGpuRenderBackend* self);
+
+/**
+ * @brief      查询会话实际使用的渲染驱动类型。
+ * @details    显式请求 Vulkan 而驱动创建失败时会按 vulkan -> gl ->
+ *             software 有序回退，本查询用于区分真实后端（防"请求
+ *             Vulkan 实际跑 GL/软件"的验证假绿）。
+ * @param      self 目标会话；NULL 返回 OpenGL（软件回退侧无会话对象）。
+ * @return     实际驱动类型枚举。
+ */
+XGpuRenderDriverType XGpuRenderBackend_driverType(
+        const XGpuRenderBackend* self);
 
 /**
  * @brief      把当前 FBO 内容合成到窗口默认帧缓冲并 swapBuffers 上屏。

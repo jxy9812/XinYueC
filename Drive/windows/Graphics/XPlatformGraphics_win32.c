@@ -7,6 +7,7 @@
 #if XPLATFORMINTEGRATION_ON && defined(_WIN32)
 
 #include "XWindow.h"
+#include "XPlatformNativeWindow.h"
 #include "XMemory.h"
 #include <windows.h>
 #include <GL/gl.h>
@@ -128,6 +129,58 @@ void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState,
 }
 
 #if defined(XINYUE_C_HAS_VULKAN)
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_win32.h>
+
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount)
+{
+    /* Win32 窗口表面：VK_KHR_surface 基础扩展 + 平台扩展。 */
+    static const char* const win32SurfaceExtensions[] = {
+        "VK_KHR_surface", "VK_KHR_win32_surface"
+    };
+    if (!outNames || !outCount) return false;
+    *outNames = win32SurfaceExtensions;
+    *outCount = (uint32_t)(sizeof(win32SurfaceExtensions) /
+                           sizeof(win32SurfaceExtensions[0]));
+    return true;
+}
+
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface)
+{
+    VkWin32SurfaceCreateInfoKHR createInfo;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    XPlatformNativeWindowConnectionType connectionType;
+    HINSTANCE instanceHandle;
+    HWND windowHandle;
+    if (!instance || !window || !outSurface) return false;
+    *outSurface = NULL;
+    instanceHandle =
+        (HINSTANCE)XPlatformNativeWindow_nativeConnection(&connectionType);
+    windowHandle = (HWND)(uintptr_t)XWindow_winId(window);
+    if (connectionType != XPlatformNativeWindowConnection_Win32 ||
+        !instanceHandle || !windowHandle || !IsWindow(windowHandle))
+        return false;
+    memset(&createInfo, 0, sizeof(createInfo));
+    createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    createInfo.hinstance = instanceHandle;
+    createInfo.hwnd = windowHandle;
+    if (vkCreateWin32SurfaceKHR((VkInstance)instance, &createInfo, NULL,
+                                &surface) != VK_SUCCESS)
+        return false;
+    *outSurface = (void*)surface;
+    return true;
+}
+
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface)
+{
+    if (!instance || !surface) return;
+    vkDestroySurfaceKHR((VkInstance)instance, (VkSurfaceKHR)surface, NULL);
+}
+
 bool XPlatformGraphicsDriver_vulkanAvailable(void)
 {
     return GetModuleHandleW(L"vulkan-1.dll") != NULL ||
@@ -187,6 +240,24 @@ void XPlatformGraphicsDriver_destroyVulkan(void* nativeState)
 }
 #else
 bool XPlatformGraphicsDriver_vulkanAvailable(void) { return false; }
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount)
+{
+    if (outNames) *outNames = NULL;
+    if (outCount) *outCount = 0;
+    return false;
+}
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface)
+{
+    (void)instance; (void)window;
+    if (outSurface) *outSurface = NULL;
+    return false;
+}
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface)
+{ (void)instance; (void)surface; }
 bool XPlatformGraphicsDriver_createVulkan(void** nativeState,
                                           uint32_t* physicalDeviceCount,
                                           uint32_t* apiVersion)

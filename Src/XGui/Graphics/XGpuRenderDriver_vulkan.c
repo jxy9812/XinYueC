@@ -9,11 +9,12 @@
  *             HOST_VISIBLE|COHERENT 顶点缓冲游标（vkCmdDraw 以
  *             firstVertex 偏移绘制），endFrame 提交并等待 fence 后执行
  *             挂起的 readback 拷贝。Vulkan 图像行序为上到下，与 XImage
- *             一致，readback 无需行翻转。系统头（vulkan_core.h/
- *             vulkan_xlib.h）只出现在本文件内。
+ *             一致，readback 无需行翻转。本文件仅含跨平台 Vulkan 核心
+ *             头（vulkan_core.h）；窗口平台 surface（X11 Xlib / Win32）
+ *             的系统 API 实现位于 Drive（XPlatformGraphicsDriver_*）。
  * @note       仅在 XPLATFORMINTEGRATION_ON && XGPU_ON && XINYUE_C_HAS_VULKAN
- *             时编译；窗口会话依赖 VK_KHR_xlib_surface 扩展，离屏会话
- *             无扩展依赖。
+ *             时编译；窗口会话 surface 扩展由 Drive 平台实现提供，离屏
+ *             会话无扩展依赖。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGpuRenderDriver.h"
@@ -22,36 +23,17 @@
 
 #include "XImage.h"
 #include "XMemory.h"
-#include "XPlatformNativeWindow.h"
+#include "XPlatformGraphics.h"
 #include "XWindow.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* Xlib 的 XImage/XColor/XKeyEvent 等与公共类型同名：沿用 Drive 层的
-   改名 include 约定（用后即 undef）。rename 宏必须先于 vulkan.h——
-   VK_USE_PLATFORM_XLIB_KHR 会让 vulkan_xlib.h 拉入 X11/Xlib.h。本文件
-   只使用 Display/Window（无同名冲突，不 rename）。 */
-#define XImage X11_XImage
-#define XPoint X11_XPoint
-#define XEvent X11_XEvent
-#define XColor X11_XColor
-#define XKeyEvent X11_XKeyEvent
-#define XExposeEvent X11_XExposeEvent
-/* XMemory.h 的 #define XFree XMemory_free 会污染 Xlib 的 XFree 系列
-   声明（vulkan_xlib.h 也会拉入 Xlib.h）：先解除，全部 include 后恢复。 */
-#undef XFree
-#define VK_USE_PLATFORM_XLIB_KHR
+/* 仅包含跨平台 Vulkan SDK 核心头；窗口表面（X11 Xlib / Win32）的系统
+   API 实现位于 Drive（XPlatformGraphicsDriver_createVulkanWindowSurface），
+   本文件不含任何平台窗口系统头。 */
 #include <vulkan/vulkan.h>
-#include <X11/Xlib.h>
-#undef XImage
-#undef XPoint
-#undef XEvent
-#undef XColor
-#undef XKeyEvent
-#undef XExposeEvent
-#define XFree XMemory_free
 
 #include "XGpuRenderDriver_vulkan_shaders.h"
 
@@ -96,7 +78,7 @@ struct XGpuRenderDriverSession
     VkImageLayout m_colorLayout; /**< 离屏图像当前布局。 */
 
     /* 窗口 swapchain。 */
-    VkSurfaceKHR m_surface;      /**< Xlib 窗口表面。 */
+    VkSurfaceKHR m_surface;      /**< 平台窗口表面（Drive 创建，不透明）。 */
     VkSwapchainKHR m_swapchain;  /**< 交换链。 */
     uint32_t m_swapCount;        /**< 交换链图像数。 */
     VkImage m_swapImages[8];     /**< 交换链图像（借用，来自 swapchain）。 */
@@ -476,10 +458,9 @@ static bool xvkl_find_queue_family(XGpuRenderDriverSession* self,
         if (!(props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) continue;
         if (self->m_window)
         {
-            XPlatformNativeWindowConnectionType type;
-            Display* display = (Display*)XPlatformNativeWindow_nativeConnection(&type);
-            if (!display || type != XPlatformNativeWindowConnection_X11 ||
-                !self->m_windowObject || !XWindow_winId(self->m_windowObject) ||
+            /* 连接句柄与窗口有效性由 Drive 的 surface 创建入口校验；
+               这里只需确认已建 surface 的 present 支持。 */
+            if (!self->m_windowObject || !XWindow_winId(self->m_windowObject) ||
                 !self->m_surface ||
                 vkGetPhysicalDeviceSurfaceSupportKHR(self->m_physical, i,
                                                      self->m_surface,
@@ -557,19 +538,31 @@ static bool xvkl_create_device_objects(XGpuRenderDriverSession* self,
     if (!xvkl_create_pipeline(self->m_device, self->m_renderPass,
                               self->m_solidLayout, false, true,
                               &self->m_solidPipeline))
+    {
+        fprintf(stderr, "vulkan: solid blend pipeline failed\n");
         return false;
+    }
     if (!xvkl_create_pipeline(self->m_device, self->m_renderPass,
                               self->m_solidLayout, false, false,
                               &self->m_solidSourcePipeline))
+    {
+        fprintf(stderr, "vulkan: solid source pipeline failed\n");
         return false;
+    }
     if (!xvkl_create_pipeline(self->m_device, self->m_renderPass,
                               self->m_texLayout, true, true,
                               &self->m_texPipeline))
+    {
+        fprintf(stderr, "vulkan: texture blend pipeline failed\n");
         return false;
+    }
     if (!xvkl_create_pipeline(self->m_device, self->m_renderPass,
                               self->m_texLayout, true, false,
                               &self->m_texSourcePipeline))
+    {
+        fprintf(stderr, "vulkan: texture source pipeline failed\n");
         return false;
+    }
     memset(&allocCi, 0, sizeof(allocCi));
     allocCi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocCi.descriptorPool = self->m_descPool;
@@ -610,24 +603,17 @@ static void xvkl_destroy_device_objects(XGpuRenderDriverSession* self)
         vkDestroyRenderPass(self->m_device, self->m_renderPass, NULL);
 }
 
-/** @brief 创建 X11 surface（窗口 Vulkan 会话）。 */
+/** @brief 创建窗口平台 surface（X11/Win32 系统 API 均位于 Drive）。 */
 static bool xvkl_create_surface(XGpuRenderDriverSession* self,
                                 XWindow* window)
 {
-    XPlatformNativeWindowConnectionType type;
-    Display* display;
-    VkXlibSurfaceCreateInfoKHR ci;
-    if (!self || !window) return false;
-    display = (Display*)XPlatformNativeWindow_nativeConnection(&type);
-    if (!display || type != XPlatformNativeWindowConnection_X11 ||
-        !XWindow_winId(window))
+    void* surface = NULL;
+    if (!self || !window || !self->m_instance) return false;
+    if (!XPlatformGraphicsDriver_createVulkanWindowSurface(
+            (void*)self->m_instance, window, &surface))
         return false;
-    memset(&ci, 0, sizeof(ci));
-    ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    ci.dpy = display;
-    ci.window = (Window)XWindow_winId(window);
-    return vkCreateXlibSurfaceKHR(self->m_instance, &ci, NULL,
-                                  &self->m_surface) == VK_SUCCESS;
+    self->m_surface = (VkSurfaceKHR)surface;
+    return true;
 }
 
 /** @brief 创建离屏颜色图像与 framebuffer。 */
@@ -823,6 +809,8 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     VkCommandBufferAllocateInfo cbAi;
     VkFenceCreateInfo fci;
     VkSemaphoreCreateInfo sci;
+    const char* const* surfaceExtensions = NULL;
+    uint32_t extensionCount = 0;
     if (!self) return NULL;
     self->m_window = window != NULL;
     self->m_width = width;
@@ -837,12 +825,14 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     self->m_windowObject = window;
     if (window)
     {
-        /* 窗口会话需要 surface 扩展；实例创建在 surface 之前完成。 */
-        static const char* const extensions[] = {
-            "VK_KHR_surface", "VK_KHR_xlib_surface"
-        };
-        ici.enabledExtensionCount = 2;
-        ici.ppEnabledExtensionNames = extensions;
+        /* 窗口会话需要 surface 扩展（平台相关，由 Drive 查询）；
+           实例创建在 surface 之前完成。 */
+        if (!XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+                &surfaceExtensions, &extensionCount) ||
+            !surfaceExtensions || !extensionCount)
+            goto fail;
+        ici.enabledExtensionCount = extensionCount;
+        ici.ppEnabledExtensionNames = surfaceExtensions;
     }
     if (vkCreateInstance(&ici, NULL, &self->m_instance) != VK_SUCCESS)
         goto fail;
@@ -926,12 +916,18 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         if (!xvkl_create_swapchain(self)) goto fail;
     }
     else if (!xvkl_create_offscreen_target(self))
+    {
+        fprintf(stderr, "vulkan: offscreen target failed\n");
         goto fail;
+    }
     if (!xvkl_create_host_buffer(self->m_device, self->m_physical,
                                  1024u * 1024u, &self->m_vertexBuffer,
                                  &self->m_vertexMemory,
                                  (void**)&self->m_vertexMapped))
+    {
+        fprintf(stderr, "vulkan: vertex buffer failed\n");
         goto fail;
+    }
     self->m_vertexCapacity = 1024u * 1024u / (sizeof(float) * 8u);
     return self;
 
@@ -2053,67 +2049,17 @@ static const XGpuRenderDriverProcs g_xvklProcs =
 static bool xvkl_upload_target_image(XGpuRenderDriverSession* self,
                                      const XImage* image)
 {
-    VkCommandBufferBeginInfo bi;
-    VkSubmitInfo si;
-    VkBufferImageCopy region;
-    VkImageMemoryBarrier toDst;
-    size_t bytes;
+    bool resumeRecording;
     if (!self || !image || XImage_width(image) != self->m_width ||
         XImage_height(image) != self->m_height)
         return false;
-    bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
-    if (!xvkl_stage_pixels(self, bytes)) return false;
-    memcpy(self->m_stagingMapped, XImage_constBits(image), bytes);
-    /* 录制中：结束渲染通道并提交已录命令，再整帧拷贝（渲染通道外）。 */
-    if (self->m_recording)
-    {
-        vkCmdEndRenderPass(self->m_cmd);
-        vkEndCommandBuffer(self->m_cmd);
-        memset(&si, 0, sizeof(si));
-        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &self->m_cmd;
-        vkQueueSubmit(self->m_queue, 1, &si, 0);
-        vkQueueWaitIdle(self->m_queue);
-        self->m_recording = false;
-    }
-    vkResetCommandBuffer(self->m_cmd, 0);
-    vkBeginCommandBuffer(self->m_cmd, &bi);
-    {
-        VkImage imageHandle = self->m_window
-            ? self->m_swapImages[self->m_imageIndex] : self->m_colorImage;
-        memset(&toDst, 0, sizeof(toDst));
-        toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        toDst.srcAccessMask = 0;
-        toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        toDst.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toDst.image = imageHandle;
-        toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        toDst.subresourceRange.levelCount = 1;
-        toDst.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
-                             NULL, 1, &toDst);
-        memset(&region, 0, sizeof(region));
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageExtent.width = (uint32_t)self->m_width;
-        region.imageExtent.height = (uint32_t)self->m_height;
-        region.imageExtent.depth = 1;
-        vkCmdCopyBufferToImage(self->m_cmd, self->m_stagingBuffer, imageHandle,
-                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1,
-                               &region);
-    }
-    vkEndCommandBuffer(self->m_cmd);
-    memset(&si, 0, sizeof(si));
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &self->m_cmd;
-    vkQueueSubmit(self->m_queue, 1, &si, 0);
-    vkQueueWaitIdle(self->m_queue);
+    /* 帧中同步上传：先提交已有绘制，再复用帧首上传的规范 transfer
+       序列（COLOR_ATTACHMENT -> TRANSFER_DST -> COLOR_ATTACHMENT）。
+       上传完成后恢复 render pass，后续绘制仍追加到本帧。 */
+    resumeRecording = self->m_recording;
+    if (resumeRecording && !xvkl_suspend_for_transfer(self)) return false;
+    if (!xvkl_copy_initial_image(self, image)) return false;
+    if (resumeRecording && !xvkl_resume_after_transfer(self)) return false;
     return true;
 }
 

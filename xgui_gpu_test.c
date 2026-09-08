@@ -21,6 +21,12 @@
 #include "XGpuRenderBackend.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#if defined(_MSC_VER)
+/* MSVC CRT 无 setenv；本文件仅在覆盖写语义下使用（overwrite 恒为 1）。 */
+#define setenv(name, value, overwrite) _putenv_s((name), (value))
+#endif
 
 int main(void)
 {
@@ -51,6 +57,24 @@ int main(void)
     backend = XPainter_rasterBackend(&painter);
     fprintf(stderr, "gpu-test: backend=%d\n", (int)backend);
     wasGpu = backend == XPainterRasterBackend_Gpu;
+    /* 驱动类型打印 + 显式 vulkan 请求的防假绿断言：请求 vulkan 时
+       实际驱动必须仍是 Vulkan（有序回退到 GL/软件即判失败）。 */
+    {
+        XGpuRenderBackend* session = XGpuRenderBackend_current();
+        XGpuRenderDriverType driverType =
+            XGpuRenderBackend_driverType(session);
+        const char* requested = getenv("XGUI_RENDER_BACKEND");
+        if (!requested || !*requested) requested = getenv("XGPU_BACKEND");
+        fprintf(stderr, "gpu-test: driverType=%s\n",
+                driverType == XGpuRenderDriver_Vulkan ? "vulkan" : "opengl");
+        if (wasGpu && session && requested &&
+            (strcmp(requested, "vulkan") == 0) &&
+            driverType != XGpuRenderDriver_Vulkan)
+        {
+            fprintf(stderr, "gpu-test: FAIL requested vulkan, got gl\n");
+            ok = 0;
+        }
+    }
     if (!XPainter_fillRect(&painter, &rect, 0xffc04020u)) ok = 0;
     fprintf(stderr, "gpu-test: fill done\n");
     XPainter_setOpacity(&painter, 0.5f);

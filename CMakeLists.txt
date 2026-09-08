@@ -276,14 +276,19 @@ else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 enable_testing()
-add_test(NAME XGuiRegression COMMAND XGuiRegression_Test)
+# 测试以相对路径访问仓库资源（assets/、../Library/XFont 等），其直跑口径
+# 是仓库 bin/ 目录（./bin/XGuiRegression_Test）；CTest 显式对齐该工作目录，
+# 避免构建目录层级（如 out/build/x64-Debug）破坏 ../ 回退。
+add_test(NAME XGuiRegression COMMAND XGuiRegression_Test
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 # CTest 在受控运行环境下会以 ptrace 方式启动子进程；LeakSanitizer 无法在该
 # 环境工作。地址越界检查仍由 ASan 保留，泄漏检查在可直接运行的环境单独执行。
 set_tests_properties(XGuiRegression PROPERTIES
     ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 # GPU 后端下的完整回归变体：无 GL 的环境由后端自动回退软件（断言按
 # 实际会话状态跳过降级项），有 GL 时逐用例覆盖 GPU 快速路径。
-add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test)
+add_test(NAME XGuiRegressionGpu COMMAND XGuiRegression_Test
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin")
 set_tests_properties(XGuiRegressionGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;XGUI_GPU_SYNC=1;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
 

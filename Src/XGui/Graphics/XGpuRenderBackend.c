@@ -45,6 +45,7 @@ struct XGpuRenderBackend
     bool m_windowMode;               /**< 是否窗口直通会话。 */
     bool m_valid;                    /**< 驱动会话创建成功。 */
     const XGpuRenderDriverProcs* m_driver; /**< 驱动操作表（借用，注册表单例）。 */
+    XGpuRenderDriverType m_driverType;     /**< 实际驱动类型（有序回退后的真值）。 */
     XGpuRenderDriverSession* m_session;    /**< 驱动会话（由驱动创建/销毁）。 */
     XImage* m_syncTarget;                  /**< SYNC 读回/上传目标（借用，XGUI_GPU_SYNC 调试模式）。 */
 
@@ -454,6 +455,7 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
     self->m_height = height;
     self->m_windowMode = window != NULL;
     self->m_driver = driver;
+    self->m_driverType = type;
     self->m_session = driver->sessionCreate(window, width, height);
     if (!self->m_session && type == XGpuRenderDriver_Vulkan)
     {
@@ -461,6 +463,7 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
         driver = XGpuRenderDriver_procs(XGpuRenderDriver_OpenGL);
         if (!driver) return NULL;
         self->m_driver = driver;
+        self->m_driverType = XGpuRenderDriver_OpenGL;
         self->m_session = driver->sessionCreate(window, width, height);
     }
     if (!self->m_session)
@@ -496,6 +499,12 @@ void XGpuRenderBackend_destroy(XGpuRenderBackend* self)
 bool XGpuRenderBackend_isWindowMode(const XGpuRenderBackend* self)
 {
     return self && self->m_valid && self->m_windowMode;
+}
+
+XGpuRenderDriverType XGpuRenderBackend_driverType(
+        const XGpuRenderBackend* self)
+{
+    return self ? self->m_driverType : XGpuRenderDriver_OpenGL;
 }
 
 bool XGpuRenderBackend_isValid(const XGpuRenderBackend* self)

@@ -131,6 +131,7 @@ static bool painterGpuRequested(void)
     g_xgpuRenderMode =
         painterGpuTextEquals(value, "gpu") ||
         painterGpuTextEquals(value, "opengl") ||
+        painterGpuTextEquals(value, "vulkan") ||
         painterGpuTextEquals(value, "1") ||
         painterGpuTextEquals(value, "true") ||
         painterGpuTextEquals(value, "on") ? 1 : 0;

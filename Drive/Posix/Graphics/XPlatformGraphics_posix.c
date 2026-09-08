@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XPlatformGraphics_posix.c
  * @brief      Linux GLX 与 Vulkan 平台图形后端。
  * @details    所有系统图形 API 仅位于本文件。公共 Src 层只通过
@@ -255,12 +255,76 @@ void XPlatformGraphicsDriver_doneCurrentOffscreen(void* nativeState) { (void)nat
 #endif
 
 #if defined(XINYUE_C_HAS_VULKAN)
+/* 窗口表面实现需要 Xlib 平台扩展：vulkan_xlib.h 会拉入 Xlib.h，Xlib
+   与公共类型重名的声明沿用 Drive 局部改名约定（用后即 undef）。 */
+#define VK_USE_PLATFORM_XLIB_KHR
+#undef XFree
+#define XImage X11_XImage
+#define XPoint X11_XPoint
+#define XEvent X11_XEvent
+#define XColor X11_XColor
+#define XKeyEvent X11_XKeyEvent
+#define XExposeEvent X11_XExposeEvent
 #include <vulkan/vulkan.h>
+#include <X11/Xlib.h>
+#undef XImage
+#undef XPoint
+#undef XEvent
+#undef XColor
+#undef XKeyEvent
+#undef XExposeEvent
+#define XFree XMemory_free
 
 typedef struct XPosixVulkanState
 {
     VkInstance m_instance;
 } XPosixVulkanState;
+
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount)
+{
+    /* X11 窗口表面：VK_KHR_surface 基础扩展 + Xlib 平台扩展。 */
+    static const char* const xlibSurfaceExtensions[] = {
+        "VK_KHR_surface", "VK_KHR_xlib_surface"
+    };
+    if (!outNames || !outCount) return false;
+    *outNames = xlibSurfaceExtensions;
+    *outCount = (uint32_t)(sizeof(xlibSurfaceExtensions) /
+                           sizeof(xlibSurfaceExtensions[0]));
+    return true;
+}
+
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface)
+{
+    VkXlibSurfaceCreateInfoKHR createInfo;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    XPlatformNativeWindowConnectionType connectionType;
+    Display* display;
+    if (!instance || !window || !outSurface) return false;
+    *outSurface = NULL;
+    display = (Display*)XPlatformNativeWindow_nativeConnection(&connectionType);
+    if (!display || connectionType != XPlatformNativeWindowConnection_X11 ||
+        !XWindow_winId(window))
+        return false;
+    memset(&createInfo, 0, sizeof(createInfo));
+    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+    createInfo.dpy = display;
+    createInfo.window = (Window)XWindow_winId(window);
+    if (vkCreateXlibSurfaceKHR((VkInstance)instance, &createInfo, NULL,
+                               &surface) != VK_SUCCESS)
+        return false;
+    *outSurface = (void*)surface;
+    return true;
+}
+
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface)
+{
+    if (!instance || !surface) return;
+    vkDestroySurfaceKHR((VkInstance)instance, (VkSurfaceKHR)surface, NULL);
+}
 
 bool XPlatformGraphicsDriver_vulkanAvailable(void)
 {
@@ -325,6 +389,24 @@ void XPlatformGraphicsDriver_destroyVulkan(void* nativeState)
 }
 #else
 bool XPlatformGraphicsDriver_vulkanAvailable(void) { return false; }
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount)
+{
+    if (outNames) *outNames = NULL;
+    if (outCount) *outCount = 0;
+    return false;
+}
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface)
+{
+    (void)instance; (void)window;
+    if (outSurface) *outSurface = NULL;
+    return false;
+}
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface)
+{ (void)instance; (void)surface; }
 bool XPlatformGraphicsDriver_createVulkan(void** nativeState,
                                           uint32_t* physicalDeviceCount,
                                           uint32_t* apiVersion)

@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XPlatformGraphics_unsupported.c
  * @brief      无桌面图形后端时的 XPlatformGraphics 安全回退。
  ****************************************************************************/
@@ -21,6 +21,24 @@ bool XPlatformGraphicsDriver_swapBuffersOpenGL(void* nativeState)
 { (void)nativeState; return false; }
 void* XPlatformGraphicsDriver_openGLProcAddress(void* nativeState, const char* name)
 { (void)nativeState; (void)name; return NULL; }
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount)
+{
+    if (outNames) *outNames = NULL;
+    if (outCount) *outCount = 0;
+    return false;
+}
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface)
+{
+    (void)instance; (void)window;
+    if (outSurface) *outSurface = NULL;
+    return false;
+}
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface)
+{ (void)instance; (void)surface; }
 bool XPlatformGraphicsDriver_createVulkan(void** nativeState,
                                           uint32_t* physicalDeviceCount,
                                           uint32_t* apiVersion)

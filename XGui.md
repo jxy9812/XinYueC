@@ -1,6 +1,6 @@
 # XGui 进度文档
 
-> 最后更新：2026-09-07 Asia/Shanghai
+> 最后更新：2026-09-08 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
 > **阅读指引**：当前进度与计划看本文各主节（1-14）；文中大量 `10.x` 子节是
@@ -12786,6 +12786,8 @@ XGUI_RENDER_BACKEND=gpu ./bin/XGuiWindowDemo_Test --benchmark 5
 
 ```bash
 # 1) 硬件 GPU Linux 桌面（NVIDIA/AMD/Intel，GLX 直渲染）
+#    （Windows 硬件 GPU 版已于 2026-09-08 本机 RX 6800 XT 全清单通过，
+#     结果与两处构建修复见 14.20；Linux GLX 版仍待硬件环境执行）
 glxinfo -B                       # 确认 Accelerated: yes
 cmake -S . -B build && cmake --build build -j$(nproc)
 ./bin/XGuiRegression_Test
@@ -13627,3 +13629,147 @@ XGUI_GPU_SYNC=1（GL）下 "extra convex polygon" 的局部提交实测：
   但运行时进入交互式 shell/事件循环（io_uring 与 epoll 模式行为
   一致，均为预先存在的测试形态问题，与本次改动无关）。
 - 目标平台（低版本 Linux）使用 epoll 路径：**全部用例 PASS**。
+
+### 14.20 2026-09-08 Windows 真机验证：AMD Radeon RX 6800 XT 硬件 GPU 全清单通过
+
+> 14.8 待执行清单的第 1 项（硬件 GPU 桌面）在本机 Windows 完成；此前
+> 14.2 的 Windows 实测为早期阶段实现，本轮覆盖 14.5~14.10 全部后续改动
+> （outline 字形 GPU 化、字形图集、2b blit、AA）。
+
+环境与前置：
+
+- 硬件：AMD Radeon RX 6800 XT；WGL 探针实测
+  `GL_RENDERER=AMD Radeon RX 6800 XT`、
+  `GL_VERSION=4.6.0 Compatibility Profile Context 26.8.1.260806`
+  （硬件 ICD 直渲染，非 GDI Generic/llvmpipe）。
+- 构建：`out/build/x64-Debug`（Ninja+MSVC 14.51）。
+- **构建修复 1**：`xgui_gpu_test.c` 用 `setenv`（14.5 引入）在 MSVC
+  无此符号，链接失败（此前 Windows 未重编过该目标）；补
+  `_MSC_VER` 下 `#define setenv(n,v,o) _putenv_s((n),(v))`
+  （本文件 overwrite 恒为 1，语义等价）。
+- **构建修复 2**：CTest `XGuiRegression`/`XGuiRegressionGpu` 增加
+  `WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/bin"`——测试以相对
+  路径访问 `assets/…` 与 `../Library/XFont`，直跑口径是仓库 `bin/`；
+  Linux 构建目录 `build/` 恰好被 `../` 回退掩盖，Windows
+  `out/build/x64-Debug` 两层回退全部落空（资产/字库用例假失败）。
+
+验证结果（全部通过）：
+
+- 软件基线：`./bin/XGuiRegression_Test` 全绿。
+- GPU 冒烟：`./bin/XGuiGpu_Test` backend=1 全程零降级，像素断言
+  （fill/tile/半透明合成/图集）全过，exit=0。
+- GPU 环境回归：`XGUI_RENDER_BACKEND=gpu XGUI_GPU_SYNC=1
+  ./bin/XGuiRegression_Test` 全绿；`ctest` 3/3 全绿。
+  **重要口径**：只设 `XGUI_RENDER_BACKEND=gpu` 不设 `XGUI_GPU_SYNC=1`
+  会得到 296 项假失败——测试大量在帧中读目标图像像素（如
+  `text replay matches direct pixels`×132、RasterOp 位运算×14），
+  GPU 后端帧内容在 end/readback 才落回图像，帧中读取必须开命令级
+  同步；官方环境组以 CTest `XGuiRegressionGpu` 为准（两组变量齐全）。
+- 性能（`--benchmark 5`，repaint 模式，520x360）：
+  - 软件：460.3 FPS，avg 2.173ms/帧（longest 1139ms 为一次性初始化）。
+  - GPU：**616 FPS，avg 1.623ms/帧，longest 11.2ms**（+34% vs 软件）。
+  - `XGPU_PROFILE=1` 无输出＝2b blit 快路径（`glBlitFramebuffer`）
+    在 GL4.6 生效；profile 只覆盖 quad 回退路径（设计如此），blit
+    分段计时暂缺。
+- 真/离屏画面一致性：`--screenshot` 软/GPU 各存一帧，
+  `PngDiffTool` diff=**577/187200（0.31%）**，脚本复核全部差异
+  **max delta=1/255**，且全部位于文本行（标题 y11-27、状态栏
+  y259-270）——与 14.9 的 AA 灰度边缘 ±1/255 混合舍入差口径一致
+  （llvmpipe 时为 21px，硬件 GPU AA 边缘像素更多，仍不可感知）；
+  截图目视控件/文本/浮层全部正确。
+
+边界与遗留：
+
+- `XGPU_PROFILE` 的 blit 路径无 quad/swap 分段计时（如需真机定位
+  blit 成本，可在 2b 分支补同口径计时）。
+- 两处构建修复与本次验证记录均未提交、未 push（沿用仓库约定）。
+
+### 14.21 2026-09-08 轮：Vulkan 驱动 Src/Drive 拆分 + Win32 直通接入 + AMD 驱动 bug 归因
+
+> 承接 14.15/14.16（Vulkan 驱动 lavapipe 实测）与 14.20（Windows 硬件 GPU
+> GL 路径真机验证）。目标：Windows 真机验证 Vulkan 后端。结果：平台拆分
+> 与构建链路全部完成、离屏 Vulkan 链路走到 pipeline 创建，随后被本机
+> AMD 专有驱动的 Vulkan bug 挡住（与 XinYueC 无关，独立探针复现）；
+> 全矩阵待驱动修复后按本节命令复验。
+
+#### 平台 API 拆分（约束：Src/ 不引入平台 API，平台文件只放 Drive/）
+
+1. **`Src/XGui/Graphics/XGpuRenderDriver_vulkan.c`**：删除 Xlib include 块
+   （改名宏、`#undef XFree`、`VK_USE_PLATFORM_XLIB_KHR`、
+   `<X11/Xlib.h>`）与 `XPlatformNativeWindow.h` 依赖；只保留跨平台
+   `<vulkan/vulkan.h>`。窗口 surface 创建改调 Drive 中性入口；
+   `xvkl_find_queue_family` 的 Display/X11 检查移除（连接校验在 Drive
+   创建入口内做）；instance 扩展名改经 Drive 查询（原静态
+   `{"VK_KHR_surface","VK_KHR_xlib_surface"}`）。
+2. **`Src/XGui/Platform/XPlatformGraphics.h`**：新增 3 个平台无关
+   Drive 入口声明（VkInstance/VkSurfaceKHR 以 void* 不透明传递）：
+   `vulkanWindowSurfaceExtensions`（平台 instance 扩展名）/
+   `createVulkanWindowSurface` / `destroyVulkanWindowSurface`。
+3. **`Drive/windows/Graphics/XPlatformGraphics_win32.c`**（新增实现）：
+   `VK_KHR_win32_surface` + `vkCreateWin32SurfaceKHR`（hinstance 来自
+   `XPlatformNativeWindow_nativeConnection`，hwnd 来自
+   `XWindow_winId`）——**Windows Vulkan 窗口直通链路首次接通**
+   （swapchain/present 复用既有平台无关代码）。
+4. **`Drive/Posix/Graphics/XPlatformGraphics_posix.c`**：Xlib surface
+   实现自 Src 原样迁入（rename 宏约定沿用该文件 GL 段模式）。
+5. **`Drive/Unsupported/Graphics/XPlatformGraphics_unsupported.c`**：
+   三入口 stub（返回 false/NULL）。
+6. **`XGpuRenderDriver_vulkan_shaders.h` 判定保留 Src**：SPIR-V 1.0
+   字节码是跨平台二进制（tools/gen_spv.py 生成），非平台 API。
+
+#### 防假绿与构建接入
+
+- 新增 `XGpuRenderBackend_driverType()`（XGpuRenderBackend.h/.c，会话
+  保存有序回退后的真实驱动类型）；`xgui_gpu_test.c` 打印
+  `driverType=` 并在显式 `XGUI_RENDER_BACKEND=vulkan` 时断言实际驱动
+  仍是 Vulkan（防「请求 Vulkan 实际跑 GL」的回退假绿）。
+- 无 SDK 构建方案（本机验证用）：头文件来自 WSL
+  `libvulkan-dev`（1.3.204，拷至 `out/vulkan-headers/`，注意
+  `<vulkan/vulkan.h>` 需要 `vulkan-headers/vulkan/` 目录层级）；
+  导入库由系统 `vulkan-1.dll` 生成（`dumpbin /exports` → `.def` →
+  `lib /def:`，产物 `out/vulkan-1.lib`，275 符号）；配置传
+  `-DVulkan_INCLUDE_DIR=... -DVulkan_LIBRARY=...`。装 SDK 后可替换。
+
+#### 验证结果
+
+- 构建：230/230 全过（Vulkan 驱动与 Win32 surface 编译接入）。
+- 离屏 Vulkan 链路（AMD RX 6800 XT，driver 26.8.1，
+  DRIVER_ID_AMD_PROPRIETARY）：instance 创建 → 物理设备枚举 →
+  device/queue → renderPass → pipelineLayout → shaderModule **全部
+  成功**；`vkCreateGraphicsPipelines` 时驱动内部段错误。
+- **AMD 驱动 bug 归因证据链**：
+  1. cdb 崩溃栈：`amdvlk64!boost::archive::...::load_object_data` /
+     `GetSettingsBlobsAll`（驱动 shader-compiler settings 的 XML 解析
+     路径，非 API 参数校验返回 VK_ERROR，是 AV 崩溃）。
+  2. 独立最小探针（`out/vkprobe.c`，状态照抄驱动实现、零 XinYueC
+     依赖，仅 vulkan.h + shaders 头 + 生成导入库）：同样
+     0xC0000005，无混合/带混合两变体均崩。
+  3. `VK_LOADER_LAYERS_DISABLE='*'`、清 `%LOCALAPPDATA%\AMD\VkCache`
+     均无效；`vulkaninfo --summary` instance/device 枚举正常
+     （GPU0 = RX 6800 XT，仅此一块 Vulkan 设备，无虚拟显卡干扰）。
+  4. 同机 OpenGL 4.6 路径完全正常（14.20 全绿），XGui GL 回归复验
+     通过——故障隔离在 AMD Vulkan 用户态驱动。
+  - 结论：本机 AMD 驱动 Vulkan 组件损坏/错配（26.8.1），进程级崩溃
+    无法在进程内有序回退。修复手段：重装/升级 AMD Adrenalin 驱动
+    （建议出厂重置选项）后复验。
+- GL 路径回归保护：`XGuiGpu_Test` exit=0、`XGuiRegression_Test`
+  全绿（拆分与 Vulkan 接入不影响 GL/软件路径）。
+
+#### 驱动修复后的 Vulkan 复验清单（待执行）
+
+```bash
+# 冒烟（应打印 driverType=vulkan 且 backend=1 全程零降级）
+XGUI_RENDER_BACKEND=vulkan ./bin/XGuiGpu_Test
+# 完整回归（命令级同步）
+XGUI_RENDER_BACKEND=vulkan XGUI_GPU_SYNC=1 ./bin/XGuiRegression_Test
+# 窗口直通（Win32 surface + swapchain 首验）+ profile
+XGUI_RENDER_BACKEND=vulkan ./bin/XGuiWindowDemo_Test --benchmark 5
+# 软/Vulkan 截图逐像素对比（口径同 14.20：±1/255 AA 舍入差）
+./bin/XGuiWindowDemo_Test --screenshot ../out/shot_soft.png
+XGUI_RENDER_BACKEND=vulkan ./bin/XGuiWindowDemo_Test --screenshot ../out/shot_vk.png
+./bin/PngDiffTool.exe ../out/shot_soft.png ../out/shot_vk.png
+```
+
+- CTest `XGuiRegressionVulkan` 项暂缓添加：本机驱动 bug 下会进程崩溃
+  拉红矩阵；待 Vulkan 环境可跑后按 `XGuiRegressionGpu` 模式对称加入。
+- 本轮全部改动未提交、未 push（沿用仓库约定）。

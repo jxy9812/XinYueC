@@ -81,6 +81,34 @@ bool XPlatformGraphicsDriver_createVulkan(void** nativeState,
                                           uint32_t* apiVersion);
 void XPlatformGraphicsDriver_destroyVulkan(void* nativeState);
 
+/**
+ * @brief      查询窗口 Vulkan 表面所需的 instance 扩展名（平台相关，
+ *             如 X11 的 VK_KHR_xlib_surface / Win32 的 VK_KHR_win32_surface，
+ *             均含 VK_KHR_surface 基础扩展）。
+ * @param      outNames 返回扩展名字符串数组（静态存储期，借用指针）。
+ * @param      outCount 返回扩展名数量。
+ * @return     平台支持窗口 Vulkan 表面时返回 true；不支持时两个出参
+ *             均置 0/NULL 并返回 false。
+ */
+bool XPlatformGraphicsDriver_vulkanWindowSurfaceExtensions(
+        const char* const** outNames, uint32_t* outCount);
+
+/**
+ * @brief      为窗口创建平台 Vulkan 表面（X11 Xlib / Win32 surface，
+ *             系统 API 实现仅位于 Drive）。
+ * @param      instance Vulkan VkInstance（不透明传递）。
+ * @param      window 已持有原生句柄的目标窗口。
+ * @param      outSurface 返回 VkSurfaceKHR 句柄（不透明传递）。
+ * @return     创建成功返回 true；平台不支持或创建失败返回 false。
+ */
+bool XPlatformGraphicsDriver_createVulkanWindowSurface(void* instance,
+                                                       XWindow* window,
+                                                       void** outSurface);
+
+/** @brief 销毁由 createVulkanWindowSurface 创建的平台 Vulkan 表面。 */
+void XPlatformGraphicsDriver_destroyVulkanWindowSurface(void* instance,
+                                                        void* surface);
+
 /** @brief 创建可绑定 OpenGL 的离屏表面（默认 1x1，Drive 决定实现）。 */
 bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
                                              void** nativeState);
