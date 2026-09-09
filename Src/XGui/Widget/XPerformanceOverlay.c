@@ -1,9 +1,10 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPerformanceOverlay.c
  * @brief      XGui 性能悬浮层控件实现。
  ******************************************************************************/
 #include "XPerformanceOverlay.h"
 #include "XWidget_Protected.h"
+#include "XEvent.h"
 #include "XFont.h"
 #include "XImage.h"
 #include "XMemory.h"
@@ -15,6 +16,7 @@
 static bool performanceOverlay_drawContent(XWidget* widget,
                                            XPainter* painter,
                                            void* userData);
+static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event);
 
 static void performanceOverlay_updateText(XPerformanceOverlay* self)
 {
@@ -175,6 +177,11 @@ XVtable* XPerformanceOverlay_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXPerformanceOverlay_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXPerformanceOverlay_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPerformanceOverlay_deinit);
+    /* 作为顶层子控件参与控件树绘制：先于兄弟们（业务页面）之下绘制会
+       被不透明兄弟（如 GroupBox）盖住，父控件把它 raise 到末位后由本
+       入口最后绘制，保证悬浮层永远在最上层。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VXPerformanceOverlay_paintEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -568,6 +575,31 @@ void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter)
     widget = (XWidget*)&self->m_base;
     (void)XWidget_drawContentCached(widget, painter, x, y, width, height,
                                     performanceOverlay_drawContent, self);
+}
+
+/** @brief 绘制事件：在控件树中按自身几何绘制（ paintTree 已裁剪到脏区）。 */
+static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event)
+{
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintDevice(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    (void)XWidget_drawContentCached(self, &painter, 0, 0,
+                                    XWidget_width(self),
+                                    XWidget_height(self),
+                                    performanceOverlay_drawContent, self);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
 }
 
 /** @brief 按内容坐标系（0,0 起点）绘制悬浮层外观。 */

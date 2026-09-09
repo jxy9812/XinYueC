@@ -234,8 +234,8 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
                （块内/块外分段裁剪为后续扩展）。 */
             XProgressBar_text(mutableSelf, text, (int)sizeof(text));
             {
-                int textLen = (int)strlen(text);
-                int textW = textLen * 8; /* 估算：每字符 8px（默认点阵） */
+                /* 旋转文本同样按真实字体度量居中（8px 估算会偏出中心）。 */
+                int textW = XPainter_textWidth(XPainter_font(painter), text);
                 int textH = 14;
                 int cx = r.x + bw / 2;
                 int cy = r.y + bh / 2;
@@ -253,69 +253,66 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
             }
         } else {
             XProgressBar_text(mutableSelf, text, (int)sizeof(text));
-            /* 文本宽度未知时用简单中点近似：按字符数估算。 */
+            /* 文本宽度必须按当前字体真实度量测量：轮廓字库的字符步进
+               远大于旧点阵的 8px（'%' 约 15px），用估算宽度做居中与
+               分段裁剪会把 % 字形切掉一角（视觉上变成"9"等残形）。 */
             {
-                int textLen = (int)strlen(text);
-                int textW = textLen * 8; /* 估算：每字符 8px（默认点阵） */
+                int textW = XPainter_textWidth(XPainter_font(painter), text);
                 int textH = 14;
                 int tx = r.x + 1;
+                int ty = r.y + (bh - textH) / 2;
+                int baseline = ty + textH - 2;
                 if (self->m_alignment & XAlignment_Right)
                     tx = r.x + bw - 1 - textW;
                 else if (self->m_alignment & XAlignment_HCenter ||
                          self->m_alignment == 0)
                     tx = r.x + (bw - textW) / 2;
-                {
-                    int ty = r.y + (bh - textH) / 2;
-                    XRect full = { tx, ty, textW, textH };
-                    if (chunkPixel > 0) {
-                        /* 块内段：x < 块右边界用 HighlightedText。 */
-                        XRect inChunk = full;
-                        int chunkRight = fromStart
-                            ? (r.x + 1 + chunkPixel)
-                            : (r.x + (bw - 1));
-                        int chunkLeft = fromStart
-                            ? (r.x + 1)
-                            : (r.x + (bw - 1) - chunkPixel);
-                        inChunk.width = (fromStart
-                            ? (chunkRight - tx)
-                            : (chunkRight - tx));
-                        if (!fromStart) {
-                            inChunk.x = chunkLeft;
-                            inChunk.width = chunkRight - chunkLeft;
-                        }
-                        if (inChunk.width > 0) {
-                            XPainter_setClipRect(painter, &inChunk,
-                                                 XPainterClipOperation_ReplaceClip);
-                            XPainter_setPen(painter, highlightText);
-                            XPainter_drawText(painter, tx, ty + textH - 2,
-                                              text, highlightText);
-                        }
-                        /* 块外段：剩余部分用 WindowText。 */
-                        {
-                            XRect outside = full;
-                            if (fromStart) {
-                                outside.x = chunkRight;
-                                outside.width = full.width -
-                                                inChunk.width;
-                            } else {
-                                outside.width = full.width -
-                                                inChunk.width;
-                            }
-                            if (outside.width > 0) {
-                                XPainter_setClipRect(painter, &outside,
-                                                     XPainterClipOperation_ReplaceClip);
-                                XPainter_setPen(painter, windowText);
-                                XPainter_drawText(painter, tx, ty + textH - 2,
-                                                  text, windowText);
-                            }
-                        }
-                        XPainter_setClipRect(painter, NULL,
-                                             XPainterClipOperation_NoClip);
-                    } else {
-                        XPainter_drawText(painter, tx, ty + textH - 2, text,
+                if (chunkPixel > 0) {
+                    /* 块内段：与进度块的交集用 HighlightedText；块外段：
+                       文本区间减进度块后用 WindowText。两段的裁剪区间都
+                       以真实文本右缘 textRight 为界，避免截断字形。 */
+                    int textRight = tx + textW;
+                    int chunkLeft = fromStart
+                        ? (r.x + 1)
+                        : (r.x + (bw - 1) - chunkPixel);
+                    int chunkRight = fromStart
+                        ? (r.x + 1 + chunkPixel)
+                        : (r.x + (bw - 1));
+                    int insideL = fromStart
+                        ? tx
+                        : (chunkLeft > tx ? chunkLeft : tx);
+                    int insideR = fromStart
+                        ? (chunkRight < textRight ? chunkRight : textRight)
+                        : textRight;
+                    int outsideL = fromStart
+                        ? (chunkRight > tx ? chunkRight : tx)
+                        : tx;
+                    int outsideR = fromStart
+                        ? textRight
+                        : (chunkLeft < textRight ? chunkLeft : textRight);
+                    if (insideR > insideL) {
+                        XRect clip;
+                        XRect_init(&clip, insideL, ty, insideR - insideL,
+                                   textH);
+                        XPainter_setClipRect(painter, &clip,
+                                             XPainterClipOperation_ReplaceClip);
+                        XPainter_drawText(painter, tx, baseline, text,
+                                          highlightText);
+                    }
+                    if (outsideR > outsideL) {
+                        XRect clip;
+                        XRect_init(&clip, outsideL, ty, outsideR - outsideL,
+                                   textH);
+                        XPainter_setClipRect(painter, &clip,
+                                             XPainterClipOperation_ReplaceClip);
+                        XPainter_drawText(painter, tx, baseline, text,
                                           windowText);
                     }
-                    (void)full;
+                    XPainter_setClipRect(painter, NULL,
+                                         XPainterClipOperation_NoClip);
+                } else {
+                    XPainter_drawText(painter, tx, baseline, text,
+                                      windowText);
                 }
             }
         }

@@ -101,6 +101,69 @@
 #define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
 #endif
 
+/* ==================== 状态栏标签子类 ==================== */
+
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+
+XCLASS_DEFINE_BEGING(DemoStatusLabel)
+XCLASS_DEFINE_EXTEND_END(DemoStatusLabel, XLabel)
+
+/** @brief 状态栏标签：先铺不透明深色底再绘制状态文本。
+ * @details 窗口缩小后固定高度的内容控件会向下越界伸进状态栏区域，
+ *          状态栏底色若只靠根背景（静态场景）着色，会被后画的内容
+ *          控件盖住；改为自带底色的子控件并在创建完毕后 raise 到
+ *          内容控件之后，状态栏就永远可见。 */
+typedef struct DemoStatusLabel
+{
+    XLabel m_base; /**< XLabel 基类；必须是第一个成员。 */
+} DemoStatusLabel;
+
+/** @brief 绘制事件：树内按自身几何先填底色，再走标签文本绘制。 */
+static void VDemoStatusLabel_paintEvent(XWidget* self, XEvent* event)
+{
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    XRect rect;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintDevice(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    XRect_init(&rect, 0, 0, XWidget_width(self), XWidget_height(self));
+    XPainter_fillRect(&painter, &rect, 0xff3a3a3au);
+    XLabel_drawContents((XLabel*)self, &painter);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 初始化 DemoStatusLabel 类虚函数表。 */
+XVtable* DemoStatusLabel_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DemoStatusLabel)
+    XVTABLE_INHERIT_XCLASS(XLabel);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VDemoStatusLabel_paintEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 初始化状态栏标签（几何/文本沿用 XLabel 接口）。 */
+void DemoStatusLabel_init(DemoStatusLabel* self, XWidget* parent,
+                          XWidgetFlags flags)
+{
+    if (!self) return;
+    XLabel_init(&self->m_base, parent, flags);
+    XClassSetVtable(self, DemoStatusLabel);
+}
+
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
 /* ==================== 演示窗口子类 ==================== */
 
 XCLASS_DEFINE_BEGING(DemoWin)
@@ -127,7 +190,7 @@ typedef struct DemoWin
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XLabel          m_titleLabel; /**< 顶部标题栏文本（深蓝背景，白字）。 */
-    XLabel          m_statusLabel; /**< 底部状态栏文本（页面名/交互反馈）。 */
+    DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton     m_pageNav[4]; /**< 页面切换按钮：按钮/选择/堆叠/输入演示。 */
@@ -285,11 +348,15 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
-/** @brief 初始化性能悬浮层；位置由控件保留，demo 在后备存储上叠加绘制。 */
+/** @brief 初始化性能悬浮层；作为顶层子控件参与控件树绘制。 */
 static void demo_performance_init(DemoWin* self)
 {
     if (!self) return;
-    XPerformanceOverlay_init(&self->m_performanceOverlay, NULL, 0);
+    XPerformanceOverlay_init(&self->m_performanceOverlay, &self->m_base, 0);
+    /* 悬浮窗自身不接收鼠标：按下/拖动命中测试由 demo 根控件统一处理
+       （见 VDemoWin_mousePressEvent），避免子控件抢先消费事件。 */
+    XWidget_setAttribute((XWidget*)&self->m_performanceOverlay,
+                         XWidgetAttribute_TransparentForMouseEvents, true);
     /* 状态栏固定占用窗口底部 26px。把浮层缩至三行文字所需高度，
        并在状态栏上方保留同样的 26px 间距，避免每帧脏区同时重绘/遮挡
        状态标签。 */
@@ -301,13 +368,6 @@ static void demo_performance_init(DemoWin* self)
         &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
         520, 360, 26);
     XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
-}
-
-/** @brief 绘制性能悬浮层；位置来自控件 geometry。 */
-static void demo_performance_draw(DemoWin* self, XPainter* painter)
-{
-    if (!self || !painter) return;
-    XPerformanceOverlay_draw(&self->m_performanceOverlay, painter);
 }
 
 static void demo_performance_deinit(DemoWin* self)
@@ -343,7 +403,8 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 
     demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
     demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);      /* 标题栏基底 */
-    demo_fill_rect(painter, 0, h - 26, w, 26, 0xff3a3a3au); /* 状态栏基底 */
+    /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
+     * 不能画在根背景里）。 */
     demo_draw_checker(painter, w - 116, 84, 2, 2, 24);      /* 右上角装饰 */
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
@@ -371,14 +432,6 @@ static bool demo_updateStaticScene(DemoWin* self, int w, int h)
     XPainter_deinit(&painter);
     self->m_staticSceneDirty = false;
     return true;
-}
-
-static bool demo_rectsIntersect(const XRect* first, const XRect* second)
-{
-    return first && second && first->x < second->x + second->width &&
-           second->x < first->x + first->width &&
-           first->y < second->y + second->height &&
-           second->y < first->y + first->height;
 }
 
 /** @brief 将静态场景中对应 tile 的 32 位像素直接复制到后备绘制设备。 */
@@ -479,13 +532,9 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
 #else
     demo_drawStaticScene(self, &painter, width, height);
 #endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
-#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    {
-        XRect overlay = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
-        if (demo_rectsIntersect(&tile, &overlay))
-            demo_performance_draw(self, &painter);
-    }
-#endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+    /* 性能悬浮层自改为顶层子控件后由 paintTree 最后绘制（见
+       VXPerformanceOverlay_paintEvent），根背景阶段不再手动叠加，避免
+       业务页面控件（如第 4 页 GroupBox）反向盖住浮层顶部。 */
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -812,7 +861,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 {
     if (!self || !text) return;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_setText_2(&self->m_statusLabel, text);
+    XLabel_setText_2((XLabel*)&self->m_statusLabel, text);
 #endif
     self->m_staticSceneDirty = true;
     demo_repaint(self);
@@ -852,9 +901,10 @@ static void demo_layout_chrome(DemoWin* self)
     labelWidth = width > 16 ? width - 16 : 0;
     XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, 0,
                         labelWidth, 40);
+    /* 状态栏是自带底色的整条子控件，几何必须覆盖整个状态条区域。 */
     if (height >= 26)
-        XWidget_setGeometry((XWidget*)&self->m_statusLabel, 16,
-                            height - 26, labelWidth, 26);
+        XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0,
+                            height - 26, width, 26);
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -1667,15 +1717,18 @@ static DemoWin* DemoWin_create(void)
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。 */
-    XLabel_init(&self->m_statusLabel, &self->m_base, 0);
+    DemoStatusLabel_init(&self->m_statusLabel, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
-    XLabel_setText_2(&self->m_statusLabel, "就绪");
-    XLabel_setTextPixelSize(&self->m_statusLabel, 14);
-    XLabel_setAlignment(&self->m_statusLabel,
+    XLabel_setText_2((XLabel*)&self->m_statusLabel, "就绪");
+    XLabel_setTextPixelSize((XLabel*)&self->m_statusLabel, 14);
+    XLabel_setAlignment((XLabel*)&self->m_statusLabel,
                         XAlignment_Left | XAlignment_VCenter);
+    /* 水平缩进用 indent（16px）：margin 是四边统一的内边距，26px 高的
+     * 状态条减去上下各 16 后内容区高度为负，VCenter 会把文字压出底边。 */
+    XLabel_setIndent((XLabel*)&self->m_statusLabel, 16);
     XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
                               XPaletteColorRole_HighlightedText);
-    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 16, 334, 460, 26);
+    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0, 334, 520, 26);
     XWidget_show((XWidget*)&self->m_statusLabel);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -1691,6 +1744,13 @@ static DemoWin* DemoWin_create(void)
                                      &inner);
     }
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, 0);
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* 压轴层级：先提升状态栏（盖住越界伸入的内容控件），再提升悬浮窗
+       （悬浮窗保持最顶层）。 */
+    XWidget_raise((XWidget*)&self->m_statusLabel);
+    XWidget_raise((XWidget*)&self->m_performanceOverlay);
+    XWidget_show((XWidget*)&self->m_performanceOverlay);
 #endif
     return self;
 }
@@ -1817,7 +1877,7 @@ int main(int argc, char* argv[])
     /* 4) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
     demo_stopTimers(win);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_deinit_base(&win->m_statusLabel);
+    XLabel_deinit_base((XLabel*)&win->m_statusLabel);
     XLabel_deinit_base(&win->m_titleLabel);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
