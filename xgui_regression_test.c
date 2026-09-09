@@ -83,11 +83,15 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #endif /* XWIDGET_ON && XFRAME_ON */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 #include "XAbstractButton.h"
+#include "XLineEdit.h"
 #include "XLineEditTest.h"
 #include "XSliderTest.h"
 #include "XSpinBoxTest.h"
 #include "XGroupBoxTest.h"
 #include "XProgressBarTest.h"
+#include "XDialTest.h"
+#include "XComboBoxTest.h"
+#include "XTabBarTest.h"
 #include "XAbstractButton_Protected.h"
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
@@ -20310,6 +20314,84 @@ static void test_window_event_loop(void)
 
 #endif /* XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON */
 
+#if XWIDGET_ON && XLINEEDIT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON
+
+/* ==================== 输入法提交 → 焦点控件桥接回归 ==================== */
+
+/** @brief 输入法提交桥接回归：IME 提交文本必须经完整事件链上屏。
+ * @details 针对“WSI 输入法入口直接调用窗口输入法槽、绕过应用通知与
+ *          XWidgetWindow 桥接”的历史缺陷回归：创建顶层 XWidget 与子
+ *          XLineEdit，显示并聚焦后，经
+ *          XWindowSystemInterface_handleInputMethodEvent() 注入 UTF-8
+ *          提交文本，断言事件沿“应用自发事件 → 窗口事件入口 → 焦点控件”
+ *          路由，XLineEdit_text() 已追加中文；同时覆盖仅 preedit、
+ *          NULL 窗口等边界。 */
+static void test_widget_ime_commit_bridge(void)
+{
+    char argv0[] = "ime_bridge_test";
+    char* argv[] = { argv0, NULL };
+    int argc = 1;
+    XGuiApplication* app;
+    XWidget* top;
+    XLineEdit* edit;
+    XWindow* window;
+
+    /* 事件链依赖 GUI 应用单例（WSI 注入经 XGuiApplication 分发）。 */
+    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
+    expect_true(app != NULL, "输入法桥接 XGuiApplication 创建");
+    top = XWidget_create(NULL, 0);
+    expect_true(top != NULL, "输入法桥接顶层控件创建");
+    edit = XLineEdit_create(top, 0);
+    expect_true(edit != NULL, "输入法桥接子编辑框创建");
+    if (!app || !top || !edit) {
+        if (top) XWidget_delete_base((XClass*)top);
+        if (app) XGuiApplication_delete_base(app);
+        return;
+    }
+
+    XWidget_resize(top, 300, 200);
+    XWidget_show(top);
+    XWidget_setFocus((XWidget*)edit);
+    expect_true(XWidget_appFocusWidget() == (XWidget*)edit,
+                "聚焦后应用焦点控件为编辑框");
+    window = XWidget_windowHandle(top);
+    expect_true(window != NULL, "顶层控件持有窗口句柄");
+
+    /* 参数防御：NULL 窗口直接拒绝，不派发。 */
+    expect_true(!XWindowSystemInterface_handleInputMethodEvent(
+                    NULL, NULL, "你好", 0, 0, -1, -1),
+                "NULL 窗口的输入法注入被拒绝");
+
+    /* 中文提交上屏：经 WSI → 应用自发事件 → 窗口 → 焦点控件完整链。 */
+    expect_true(XWindowSystemInterface_handleInputMethodEvent(
+                    window, NULL, "你好", 0, 0, -1, -1),
+                "中文提交注入返回已处理");
+    expect_true(strcmp(XLineEdit_text(edit), "你好") == 0,
+                "中文提交在编辑框上屏");
+
+    /* 连续提交按序追加（含全角标点）。 */
+    expect_true(XWindowSystemInterface_handleInputMethodEvent(
+                    window, NULL, "，世界", 0, 0, -1, -1),
+                "第二次提交注入返回已处理");
+    expect_true(strcmp(XLineEdit_text(edit), "你好，世界") == 0,
+                "连续提交按序追加");
+
+    /* 仅组合文本（preedit）第一版不上屏：已提交文本保持不变。 */
+    expect_true(XWindowSystemInterface_handleInputMethodEvent(
+                    window, "拼音", NULL, 0, 0, -1, -1),
+                "仅 preedit 注入返回已处理");
+    expect_true(strcmp(XLineEdit_text(edit), "你好，世界") == 0,
+                "仅 preedit 不改变已提交文本");
+
+    /* 清理：子编辑框随顶层控件一并析构。 */
+    XWidget_delete_base((XClass*)top);
+    XGuiApplication_delete_base(app);
+    expect_true(XGuiApplication_instance() == NULL,
+                "输入法桥接测试后单例清空");
+}
+
+#endif /* XWIDGET_ON && XLINEEDIT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON */
+
 #if XWIDGET_ON
 
 /* ---------------- XWidget 契约测试子类（重载事件槽并计数） ---------------- */
@@ -24617,6 +24699,9 @@ static void test_xgui_widgets(void)
     expect_true(XSpinBoxTest_runAll(), "XSpinBox 控件功能");
     expect_true(XGroupBoxTest_runAll(), "XGroupBox 控件功能");
     expect_true(XProgressBarTest_runAll(), "XProgressBar 控件功能");
+    expect_true(XDialTest_runAll(), "XDial 控件功能");
+    expect_true(XComboBoxTest_runAll(), "XComboBox 控件功能");
+    expect_true(XTabBarTest_runAll(), "XTabBar/XTabWidget 控件功能");
 }
 
 int main(void)
@@ -24898,6 +24983,7 @@ int main(void)
 #if XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON
     test_window_event_payloads();
     test_window_event_loop();
+    test_widget_ime_commit_bridge();
 #endif /* XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */

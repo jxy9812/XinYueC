@@ -167,8 +167,12 @@ bool XWindowSystemInterface_handleInputMethodEvent(
     XString_delete_base((XClass*)preedit);
     XString_delete_base((XClass*)commit);
     if (!event) return false;
+    /* 与其它窗口系统接口事件保持一致：经应用自发事件入口投递，
+       由 XWidgetWindow 桥接到当前焦点控件（例如 XLineEdit）。
+       直接调用窗口槽会绕过 notify/vtable 事件链，导致输入法提交
+       只到达窗口而不会到达实际编辑控件。 */
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window,
-                                                   (XEvent*)event);
+                                                    (XEvent*)event);
     XEvent_delete_base((XEvent*)event);
     return handled;
 }

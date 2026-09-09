@@ -58,6 +58,9 @@ XImage* XWidget_paintDevice(const XWidget* self);
  *             平移到后备存储坐标。
  */
 XPoint XWidget_paintOffset(const XWidget* self);
+
+/** @brief 返回应用当前持有键盘焦点的控件（全局；IME 事件路由用）。 */
+XWidget* XWidget_appFocusWidget(void);
 /**
  * @brief      控件内容绘制回调。
  * @param      self 目标控件。

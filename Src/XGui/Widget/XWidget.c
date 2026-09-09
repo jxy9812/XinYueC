@@ -3395,6 +3395,12 @@ XWidget* XWidget_focusWidget(const XWidget* self)
     return NULL;
 }
 
+/** @brief 返回应用当前持有键盘焦点的控件（全局；对标 QApplication::focusWidget()）。 */
+XWidget* XWidget_appFocusWidget(void)
+{
+    return g_focusWidget;
+}
+
 void XWidget_setFocus(XWidget* self)
 {
     /* QWidget::setFocus() 内联实现使用 Qt::OtherFocusReason。 */

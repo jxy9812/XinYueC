@@ -720,7 +720,6 @@ bool VXCoreApplication_event(XObject* self, XEvent* e)
 bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
 {
     if (!receiver || !event) return true;
-
     if (is_app_closing)
         return true;
 

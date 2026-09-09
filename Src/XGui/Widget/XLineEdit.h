@@ -733,6 +733,9 @@ void* XLineEdit_selectionChanged_signal(XLineEdit* self);
  */
 void* XLineEdit_inputRejected_signal(XLineEdit* self);
 
+/** @brief 返回当前聚焦的 XLineEdit（全局；供平台层 IME 直投。可 NULL）。 */
+XLineEdit* XLineEdit_focusedLineEdit(void);
+
 #ifdef __cplusplus
 }
 #endif

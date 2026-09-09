@@ -13773,3 +13773,165 @@ XGUI_RENDER_BACKEND=vulkan ./bin/XGuiWindowDemo_Test --screenshot ../out/shot_vk
 - CTest `XGuiRegressionVulkan` 项暂缓添加：本机驱动 bug 下会进程崩溃
   拉红矩阵；待 Vulkan 环境可跑后按 `XGuiRegressionGpu` 模式对称加入。
 - 本轮全部改动未提交、未 push（沿用仓库约定）。
+
+### 14.20 中文输入（fcitx5 DBus 输入法前端）——进行中
+
+**背景**：XIM 遗留协议在本环境（Deepin + fcitx5 + 搜狗）下无法工作——
+纯 Xlib XIM 客户端（mini_xim 5 种属性变体实测）的 IC 无法在 fcitx5 核心
+注册（按键透传），而 xterm 能行（fcitx5-xim 对 xterm 的 IC 正常注册）。
+Qt 应用走 fcitx5-qt 插件的 DBus 协议（非 XIM），不受影响。
+
+**已实现的 DBus 输入法前端**（对标 fcitx5-qt 插件协议）：
+- `CreateInputContext(a(ss))` → IC 路径 + 密钥（org.freedesktop.portal.Fcitx /inputmethod）
+- IC 信号订阅：CommitString / PreeditString / ForwardKey / CurrentIM
+- ProcessKeyEvent(keyval, keycode, state, is_release, time) → bool（fcitx 消费返回 true）
+- FocusIn / FocusOut
+- CommitString 到达 filter 后经 handleInputMethodEvent → sendSpontaneousEvent → IME 事件 → 路由到焦点控件
+
+**验证结果**：
+- ProcessKeyEvent -> consumed=1 ✓（fcitx 拦截拼音按键）
+- CommitString 分支进入 ✓（fcitx 提交中文文本到达 filter）
+- commit='你看到' / '了' / '吗' ✓（中文文本正确到达平台层）
+- sendSpontaneousEvent 返回 handled=1 ✓（事件被接受）
+- **但 XLineEdit 的 inputMethodEvent 虚槽未收到事件**（文本未上屏）← 当前卡点
+
+**调试日志**（[ime-dbus] / [ime-route] / [dbg-notify] / [dbg-obj] / [win-dbg2]）：
+- CommitString 分支进入 ✓
+- 事件 type=83 发给 window ✓
+- handled=1 ✓
+- **但 VXWindow_event / VXCoreApplication_notify / XObject_event_base 的
+  入口打印均未出现**——事件在 sendSpontaneousEvent → notifyInternal2 →
+  notify_base → app Notify 虚槽链中某处被吞，未到达 receiver 的虚表
+  Event 槽
+
+**下一步排查**：
+1. 在 XCoreApplication_notify_base 入口加打印，确认函数是否被调
+2. 检查 XGuiApplication 是否有事件过滤器拦截了 IME 事件
+3. 确认 app 对象的 EXCoreApplication_Notify 虚槽注册正确
+4. 或者：改用 dbus_connection_add_filter 的消息级处理直接在
+   CommitString 到达时调用 XLineEdit_insert（绕过事件系统，最短路径）
+
+### 14.22 中文输入续修进度（2026-09-09）
+
+> 本节覆盖 14.20 末尾的“当前卡点/下一步排查”结论。调查已经确认事件
+> 并非被 `notifyInternal2` 吞掉，实际问题是本地调试版本的 WSI 输入法入口
+> 曾直接调用窗口输入法槽，绕过了应用通知与 `XWidgetWindow` 桥接链。
+
+#### 合并与恢复保护
+
+- 已获取并以 fast-forward 合并
+  `origin/codex/xdevice-file-platform`：本地从 `5eacf989` 前进到
+  `9cfde83e`，当前 HEAD 与远端 ahead/behind 为 `0/0`，合并无冲突。
+- 合并前旧 HEAD 已保留在备份分支 `codex/pre-merge-20260909`。
+- 合并后完整本地改动已保存为
+  `stash@{0}: safe checkpoint after remote merge before Chinese input fix 2026-09-09`，
+  随后使用 `stash apply` 恢复到工作树，因此检查点仍保留，可用于误删恢复。
+- 本轮没有提交、没有 push；现有控件开发及其它未提交改动均保留。
+
+#### 根因与运行时证据
+
+- 根因位于本地未提交版本的
+  `XWindowSystemInterface_handleInputMethodEvent()`：调试期间曾改为直接调用
+  `XWindow_inputMethodEvent_base()` 并无条件返回 handled。该调用绕过
+  `XGuiApplication_sendSpontaneousEvent` -> `XCoreApplication_notify` ->
+  receiver 的 `EXObject_Event` 虚槽 -> `XWidgetWindow` ->
+  `XWidget_dispatchKeyEvent`，所以 DBus `CommitString` 虽已到达平台层，焦点
+  `XLineEdit` 仍收不到 `inputMethodEvent`。
+- GDB 在 demo 已聚焦编辑框的同一事件断点验证：走上述直接窗口槽后，文本
+  `中ab` 不变；手动改走 `XCoreApplication_sendSpontaneousEvent` 后，事件依次
+  进入 notify、对象事件入口、窗口/控件桥和 `XLineEdit` 输入法槽，文本变为
+  `中ab好`。这同时证明现有焦点控件分派和 `XLineEdit` UTF-8 提交插入逻辑
+  可以工作。
+- DBus 前端此前已实测 `ProcessKeyEvent` 返回 consumed=1，且
+  `CommitString` 收到 `你看到`、`了`、`吗`；平台输入与中文内容本身没有
+  丢失，问题隔离在 WSI 到控件的分派入口。
+
+#### 当前已修改
+
+- 已把 `XWindowSystemInterface_handleInputMethodEvent()` 恢复为统一的
+  `XGuiApplication_sendSpontaneousEvent()` 投递，并补充注释说明不可直接调用
+  窗口输入法槽。当前有效路径为：
+  `fcitx5 CommitString` -> WSI -> 应用自发事件 -> `XWidgetWindow` ->
+  当前焦点控件 -> `XLineEdit`。
+- 修复前的当前工作树已成功构建
+  `XGuiWindowDemo_Test` 与 `XGuiRegression_Test`；
+  `XGuiWindowDemo_Test --benchmark 1` 退出码为 0，并确认 DBus 输入上下文可创建。
+  该次构建发生在恢复 WSI 事件入口之前，不能作为本次修复后的通过证据。
+
+#### 尚未完成（下次从此处继续）
+
+1. 在 `xgui_regression_test.c` 增加真实桥接回归：创建顶层 `XWidget` 和子
+   `XLineEdit`，显示窗口、设置编辑框焦点，通过
+   `XWindowSystemInterface_handleInputMethodEvent()` 提交 UTF-8 文本，并断言
+   `XLineEdit_text()` 已追加中文。现有 `EventLoopWin` 用例仅覆盖普通
+   `XWindow` 槽，不能防止再次绕过控件桥。
+2. 重新构建 `XGuiWindowDemo_Test`、`XGuiRegression_Test`，运行完整回归；
+   另在 Deepin + fcitx5 + 搜狗环境进行真实拼音输入，确认候选提交能显示在
+   编辑框。未完成这两项前，不把中文输入标记为最终完成。
+3. 验证通过后删除 `[ime-route]`、`[dbg-notify]`、`[dbg-obj]`、
+   `[win-dbg]`、`[ime-dbg2]`、`[le-ime]`、`[hit-dbg]` 等临时诊断输出。
+4. 平台 DBus 实现仍需收尾：把 `strdup/realloc/free` 改为项目内存接口，
+   处理或明确支持 `PreeditString`，并为全局 DBus 连接、输入上下文路径和
+   按键缓冲补齐析构；这些是后续质量项，不影响本次已定位的提交文本路由
+   根因。
+
+### 14.23 中文输入修复完成（2026-09-09，接 14.22）
+
+> 14.22 的待办已完成，中文输入（fcitx5 DBus 提交 → 编辑框上屏）
+> 在本环境验证通过，标记为完成。
+
+#### 回归测试补齐
+
+- `xgui_regression_test.c` 新增 `test_widget_ime_commit_bridge()`
+  （条件 `XWIDGET_ON && XLINEEDIT_ON && XWINDOWSYSTEMINTERFACE_ON &&
+  XGUIAPPLICATION_ON`，在 `test_window_event_loop()` 之后执行）：
+  创建顶层 `XWidget` + 子 `XLineEdit`，显示并 `setFocus`，经
+  `XWindowSystemInterface_handleInputMethodEvent()` 注入，断言：
+  1) `NULL` 窗口注入被拒绝；2) 中文提交「你好」上屏；3) 连续提交
+  「，世界」按序追加为「你好，世界」；4) 仅 preedit「拼音」不改变
+  已提交文本（第一版 preedit 不上屏的既定语义）。该用例防住了
+  「绕过应用通知/控件桥直接调窗口槽」的回归。
+
+#### 平台激活 BadMatch 修复（对齐 Qt 6.8.3 行为）
+
+- 新回归暴露次生问题：`XWidget_setFocus` → `XWindow_requestActivate`
+  → `XPlatformNativeWindow_requestActivate` 对**尚未完成映射**的窗口
+  无条件 `XSetInputFocus`，X 服务端以 `BadMatch (X_SetInputFocus)`
+  中止进程。对齐基准（用户 Qt 6.8.3 源码）
+  `qtbase/src/plugins/platforms/xcb/qxcbwindow.cpp`：
+  `requestActivateWindow()` 在 `!m_mapped` 时置
+  `m_deferredActivation = true` 直接返回，映射完成后补激活。
+- `XPlatformNativeWindow_posix.c` 同步三点：
+  1) `XWNPendingEntry` 新增 `m_deferredActivation`（entry 创建时
+     `memset` 归零，无需额外初始化）；
+  2) `requestActivate` 先 `XGetWindowAttributes` 检查
+     `map_state == IsViewable`，未完全映射时仅置挂起标记并返回
+     false，不发任何 X 请求；
+  3) `xpwn_dispatchEvent` 新增 `MapNotify` 分支：映射完成后补做
+     `XRaiseWindow + XSetInputFocus` 并清挂起标记。
+
+#### 临时诊断输出清理
+
+- 删除全部七类调试打印：`[dbg-obj]`（XObject.c）、`[dbg-notify]`
+  （XCoreApplication.c）、`[win-dbg]`/`[ime-dbg2]`（XWindow.c）、
+  `[le-ime]`（XLineEdit.c）、`[hit-dbg]`（XWidget.c）；
+  `[ime-route]`/`[win-dbg2]` 此前已不存在。grep 确认 Src/ 与
+  Drive/ 无残留。
+
+#### 验证结果
+
+- 重建 `XGuiRegression_Test`、`XGuiWindowDemo_Test` 零错误。
+- `ctest` 3/3 通过：`XGuiRegression`、`XGuiRegressionGpu`
+  （`XGUI_GPU_SYNC=1`）、`XGuiGpu`。
+- 桥接回归在删除调试打印前曾输出 `insert 后 text=你好` /
+  `你好，世界`，与新断言一致；DBus 输入上下文正常创建
+  （IC=/org/freedesktop/portal/inputcontext/N）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+#### 遗留质量项（不阻塞中文输入完成）
+
+- 平台 DBus 实现收尾：`strdup/realloc/free` 换项目内存接口、
+  `PreeditString` 支持（组合文本上屏与 XLineEdit preedit 绘制）、
+  全局 DBus 连接/IC 路径/按键缓冲析构。
+- 候选窗位置（spot location）目前固定 (8,8)，后续应从编辑框光标
+  矩形映射全局坐标。

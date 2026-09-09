@@ -2214,6 +2214,15 @@ static bool VXWindow_event(XWindow* self, XEvent* event)
         XWindow_tabletEvent_base(self, event);
         break;
     case XEVENT_TYPE_INPUT_METHOD:
+        /* 对标 Qt：输入法事件路由到当前焦点控件。 */
+        {
+            XWidget* focusTarget = XWidget_appFocusWidget();
+            if (focusTarget) {
+                XObject_event_base((XObject*)focusTarget, event);
+                XEvent_accept(event);
+                break;
+            }
+        }
         XWindow_inputMethodEvent_base(self, event);
         break;
     case XEVENT_TYPE_DRAG_ENTER:

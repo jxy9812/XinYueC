@@ -54,6 +54,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+/** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标）。 */
+static XLineEdit* g_focusedLineEdit = NULL;
+
 /* 光标竖线宽度与文本估算度量（每字符 8px，与点阵默认一致） */
 #define XLINEEDIT_CURSOR_W 1
 #define XLINEEDIT_CHAR_W   8
@@ -1151,9 +1154,7 @@ static void VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event)
     ime = (XInputMethodEvent*)event;
     commit = ime->m_commitString; /* 直接字段访问（事件拥有，借用）。 */
     if (!commit) return;
-    {
-        XLineEdit_insert(edit, XString_toUtf8(commit));
-    }
+    XLineEdit_insert(edit, XString_toUtf8(commit));
     XEvent_accept(event);
 }
 
@@ -1176,6 +1177,7 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
     }
     XWidget_setFocusPolicy(self, XWidgetFocusPolicy_ClickFocus);
     XWidget_setFocus(self);
+    g_focusedLineEdit = self;
     pos = XMouseEvent_position(me);
     /* 内置 action 命中：触发 action 后返回（不移动光标）。 */
     {
@@ -1320,8 +1322,6 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         /* 行盒垂直居中：ty 为行顶部；绘制基线 = 顶部 + 上伸高度。 */
         ty = (r.height - lineH) / 2;
         baseline = ty + ascent;
-        XPrintf("[le-dbg] h=%d lineH=%d(a=%d d=%d) ty=%d baseline=%d\n",
-                r.height, lineH, ascent, descent, ty, baseline);
         editBaseline = 1;
     }
     if (!editBaseline)
@@ -2382,6 +2382,11 @@ void* XLineEdit_inputRejected_signal(XLineEdit* self)
 {
     (void)self;
     return (void*)(size_t)XLineEdit_inputRejected_signal;
+}
+
+XLineEdit* XLineEdit_focusedLineEdit(void)
+{
+    return g_focusedLineEdit;
 }
 
 #endif /* XWIDGET_ON && XLINEEDIT_ON */

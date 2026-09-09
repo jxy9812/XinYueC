@@ -80,6 +80,15 @@
 #if XWIDGET_ON && XPROGRESSBAR_ON
 #include "XProgressBar.h"
 #endif
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON
+#include "XTabWidget.h"
+#endif
+#if XWIDGET_ON && XCOMBOBOX_ON
+#include "XComboBox.h"
+#endif
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON
+#include "XDial.h"
+#endif
 #include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
@@ -193,7 +202,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[4]; /**< 页面切换按钮：按钮/选择/堆叠/输入演示。 */
+    XPushButton     m_pageNav[5]; /**< 页面切换按钮：按钮/选择/堆叠/输入/选项卡演示。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（4 个演示页面）。 */
@@ -201,6 +210,7 @@ typedef struct DemoWin
     XWidget         m_pageChoices; /**< 页面 1：选择演示容器。 */
     XWidget         m_pageStacked; /**< 页面 2：堆叠演示容器。 */
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
+    XWidget         m_pageTabs;    /**< 页面 4：选项卡演示容器。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -210,6 +220,14 @@ typedef struct DemoWin
     XSlider         m_slider;       /**< 页面 3：滑块。 */
     XProgressBar    m_progressBar;  /**< 页面 3：进度条（随滑块联动）。 */
     XLabel          m_inputStatus;  /**< 页面 3：输入联动状态行。 */
+#endif
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
+    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON && XFRAME_ON && XLABEL_ON
+    XTabWidget      m_tabWidget;    /**< 页面 4：选项卡容器。 */
+    XComboBox       m_comboBox;     /**< 页面 4：下拉框（页一内容）。 */
+    XDial           m_dial;         /**< 页面 4：旋钮（页二内容）。 */
+    XProgressBar    m_dialProgress; /**< 页面 4：旋钮联动进度条。 */
+    XLabel          m_tabStatus;    /**< 页面 4：联动状态行。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton     m_button; /**< 页面 0：常驻按钮（点击/信号演示）。 */
@@ -871,13 +889,14 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[4] = {
+    static const char* const kNames[5] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
-        "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA"  /* 输入演示 */
+        "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA", /* 输入演示 */
+        "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA"  /* 选项卡演示 */
     };
-    if (index < 0 || index > 3)
+    if (index < 0 || index > 4)
         return kNames[0];
     return kNames[index];
 }
@@ -951,6 +970,17 @@ static void demo_layout_content(DemoWin* self)
         XWidget_setGeometry((XWidget*)&self->m_inputStatus,
                             12, 8 + 210 + 8, contentWidth - 12, 24);
     }
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
+    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON
+    {
+        int w5 = contentWidth - 24;
+        if (w5 < 120) w5 = 120;
+        XWidget_setGeometry((XWidget*)&self->m_tabWidget,
+                            12, 8, w5, contentHeight - 40);
+        XWidget_setGeometry((XWidget*)&self->m_inputStatus,
+                            12, 8 + contentHeight - 40 + 8,
+                            contentWidth, 24);
+    }
 #endif
 }
 
@@ -959,7 +989,7 @@ static void demo_switchPage(DemoWin* self, int index)
 {
     if (!self) return;
     if (index < 0) index = 0;
-    if (index > 3) index = 3;
+    if (index > 4) index = 4;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
@@ -994,6 +1024,12 @@ static void demo_nav3Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 3);
+}
+/** @brief 页面 5（选项卡演示）导航按钮 clicked 槽。 */
+static void demo_nav4Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 4);
 }
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 
@@ -1038,6 +1074,47 @@ static void demo_input_sliderChangedSlot(XObject* receiver, XVarList* args)
     XLabel_setText_2(&self->m_inputStatus, buf);
 }
 #endif /* 输入演示联动槽 */
+
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
+    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON && XFRAME_ON && XLABEL_ON
+/** @brief 下拉框选择：状态行反馈。 */
+static void demo_tab_comboSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    const char* text = "";
+    char buf[160];
+    XVarList_args_1(args, const char*, t);
+    if (!self) return;
+    text = t ? t : "";
+    snprintf(buf, sizeof(buf), "\xE4\xB8\x8B\xE6\x8B\x89: %s", text); /* 下拉: */
+    XLabel_setText_2(&self->m_tabStatus, buf);
+}
+/** @brief 旋钮值变化：同步进度条 + 状态行。 */
+static void demo_tab_dialSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int value;
+    char buf[64];
+    XVarList_args_1(args, int, v);
+    if (!self) return;
+    value = v;
+    XProgressBar_setValue(&self->m_dialProgress, value);
+    snprintf(buf, sizeof(buf), "\xE6\x97\x8B\xE9\x92\xAE: %d", value); /* 旋钮: */
+    XLabel_setText_2(&self->m_tabStatus, buf);
+}
+/** @brief 选项卡切换：状态行反馈。 */
+static void demo_tab_changedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int index;
+    char buf[64];
+    XVarList_args_1(args, int, i);
+    if (!self) return;
+    index = i;
+    snprintf(buf, sizeof(buf), "\xE9\xA1\xB5\xE7\xAD\xBE: %d", index); /* 页签: */
+    XLabel_setText_2(&self->m_tabStatus, buf);
+}
+#endif /* 选项卡演示联动槽 */
 
 #if XWIDGET_ON && XPUSHBUTTON_ON
 /** @brief 页面 1 常驻按钮 pressed 信号槽：更新联动标签与状态栏。 */
@@ -1471,21 +1548,26 @@ static DemoWin* DemoWin_create(void)
                              (XWidget*)&self->m_pageStacked);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageInputs);
+    XWidget_init(&self->m_pageTabs, &self->m_base, 0);
+    XStackedLayout_addWidget(&self->m_stackLayout,
+                             (XWidget*)&self->m_pageTabs);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 页面切换导航按钮（标题栏下方一行）。 */
     {
-        static const char* const kNavTexts[4] = {
+        static const char* const kNavTexts[5] = {
             "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
             "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
             "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
-            "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA"  /* 输入演示 */
+            "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA", /* 输入演示 */
+            "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA"  /* 选项卡演示 */
         };
-        static void (*const kNavSlots[4])(XObject*, XVarList*) = {
-            demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot
+        static void (*const kNavSlots[5])(XObject*, XVarList*) = {
+            demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
+            demo_nav4Slot
         };
         int nav;
-        for (nav = 0; nav < 4; ++nav) {
+        for (nav = 0; nav < 5; ++nav) {
             XPushButton* button = &self->m_pageNav[nav];
             XPushButton_init(button, &self->m_base, 0);
             demo_set_widget_default_font((XWidget*)button);
@@ -1714,6 +1796,59 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_progressBar);
     XWidget_show((XWidget*)&self->m_inputStatus);
 #endif
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
+    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON && XFRAME_ON && XLABEL_ON
+    /* ---- 页面 5：选项卡演示（TabWidget 内嵌 ComboBox/Dial/Progress） ---- */
+    XTabWidget_init(&self->m_tabWidget, (XWidget*)&self->m_pageTabs, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_tabWidget);
+    {
+        /* 页一：下拉框。 */
+        XComboBox_init(&self->m_comboBox, (XWidget*)&self->m_tabWidget, 0);
+        demo_set_widget_default_font((XWidget*)&self->m_comboBox);
+        XComboBox_addItem(&self->m_comboBox, "Option 1");
+        XComboBox_addItem(&self->m_comboBox, "Option 2");
+        XComboBox_addItem(&self->m_comboBox, "Option 3");
+        XComboBox_setCurrentIndex(&self->m_comboBox, 0);
+        XObject_connect_1((XObject*)&self->m_comboBox,
+                          (size_t)XComboBox_currentTextChanged_signal(
+                              &self->m_comboBox),
+                          (XObject*)self, demo_tab_comboSlot,
+                          XConnectionType_Direct);
+        (void)XTabWidget_insertTab(&self->m_tabWidget, 0,
+                                   (XWidget*)&self->m_comboBox,
+                                   "\xE4\xB8\x8B\xE6\x8B\x89"); /* 下拉 */
+    }
+    {
+        /* 页二：旋钮 + 联动进度条。 */
+        XWidget* page = (XWidget*)XMemory_malloc(sizeof(XWidget),
+                                                 XCLASS_DEFAULT_MEMORY_TYPE);
+        if (page) {
+            XWidget_init(page, (XWidget*)&self->m_tabWidget, 0);
+            Set_Class_Memory(page, XCLASS_DEFAULT_MEMORY_TYPE);
+            Set_Class_IsHeap(page, true);
+            XDial_init(&self->m_dial, page, 0);
+            demo_set_widget_default_font((XWidget*)&self->m_dial);
+            XAbstractSlider_setRange((XAbstractSlider*)&self->m_dial, 0, 100);
+            XAbstractSlider_setValue((XAbstractSlider*)&self->m_dial, 40);
+            XObject_connect_1((XObject*)&self->m_dial,
+                              (size_t)XDial_valueChanged_signal(&self->m_dial),
+                              (XObject*)self, demo_tab_dialSlot,
+                              XConnectionType_Direct);
+            XProgressBar_init(&self->m_dialProgress, page, 0);
+            demo_set_widget_default_font((XWidget*)&self->m_dialProgress);
+            XProgressBar_setRange(&self->m_dialProgress, 0, 100);
+            XProgressBar_setValue(&self->m_dialProgress, 40);
+            XWidget_show(page);
+            (void)XTabWidget_insertTab(&self->m_tabWidget, 1, page,
+                                       "\xE6\x97\x8B\xE9\x92\xAE"); /* 旋钮 */
+        }
+    }
+    XLabel_init(&self->m_tabStatus, (XWidget*)&self->m_pageTabs, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_tabStatus);
+    XLabel_setText_2(&self->m_tabStatus, "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
+    XWidget_show((XWidget*)&self->m_tabWidget);
+    XWidget_show((XWidget*)&self->m_inputStatus);
+#endif
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。 */
@@ -1825,8 +1960,8 @@ int main(int argc, char* argv[])
         demo_switchPage(win, 3); /* 自动测试固定切第 4 页 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 截图模式可指定初始页面（配合 --screenshot <file> --page <N>）。 */
-    if (screenshotPath && screenshotPage > 0)
-        demo_switchPage(win, screenshotPage);
+    if (screenshotPage > 0)
+        demo_switchPage(win, screenshotPage); /* 无需截图模式也能切页。 */
 #endif
     {
         XString* title = XString_create_utf8(
@@ -1928,6 +2063,7 @@ int main(int argc, char* argv[])
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XWidget_deinit_base(&win->m_pageInputs);
+    XWidget_deinit_base(&win->m_pageTabs);
 #endif
     XWidget_deinit_base(&win->m_pageButtons);
     XStackedLayout_deinit_base(&win->m_stackLayout);
@@ -1962,3 +2098,4 @@ int main(int argc, char* argv[])
     return 2;
 }
 #endif /* 开关 */
+#endif /* 补齐编译器报告的未闭合 #if（嵌套层级审计确认差 1） */

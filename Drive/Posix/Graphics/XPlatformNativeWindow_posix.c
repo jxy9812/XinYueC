@@ -65,6 +65,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
+#include <dbus/dbus.h>
 #undef XImage
 #undef XPoint
 #undef XEvent
@@ -107,11 +108,18 @@ typedef struct XWNPendingEntry
     XMouseButton m_lastPressButton;   /**< 最近一次非滚轮按键的按键。 */
     XPoint m_lastPressPos;            /**< 最近一次非滚轮按键的位置。 */
     XIC m_inputContext;               /**< XIM 输入上下文（拥有；可为 NULL）。 */
+    DBusConnection* m_imeBus;         /**< fcitx5 DBus 输入法会话连接（进程共享）。 */
+    char* m_imeIcPath;                /**< fcitx5 DBus IC 对象路径（拥有；NULL=无）。 */
+    char* m_imeKeybuf;                /**< CreateInputContext 返回的密钥（拥有）。 */
+    XPoint m_spot;                    /**< 预编辑光标位置（客户端坐标，聚焦时同步）。 */
     char m_preedit[1024];             /**< 当前 UTF-8 组合文本。 */
     Window m_dragSource;               /**< 当前 XDND 源窗口；0 表示无会话。 */
     Atom m_dragTarget;                 /**< 已协商的 XDND 数据类型。 */
     XPoint m_dragPosition;             /**< 最近一次拖放位置（窗口坐标）。 */
     bool m_dropPending;                /**< 已请求 Selection，等待 SelectionNotify。 */
+    bool m_deferredActivation;         /**< 窗口未映射期间的激活请求挂起
+                                            （对齐 QXcbWindow::m_deferredActivation，
+                                            MapNotify 后补激活）。 */
 } XWNPendingEntry;
 
 /** @brief 每进程 X11 连接状态。 */
@@ -439,6 +447,267 @@ static bool xpwn_handleDragSelectionRequest(const X11_XEvent* ev)
 }
 
 /** @brief 建立进程级 X11 连接（幂等；失败后不再重试）。 */
+/* ==================== fcitx5 DBus 输入法前端（对标 fcitx5-qt） ====================
+ * XIM 遗留协议在本环境（fcitx5 + imdkit）下 IC 无法在核心注册（按键透传）。
+ * 转用 fcitx5 的 DBus text-input 协议（org.fcitx.Fcitx.InputMethod1，Qt 应用
+ * 同款路径）：CreateInputContext -> IC 对象（FocusIn/ProcessKeyEvent/
+ * CommitString 信号）。libdbus 已是项目链接依赖。 */
+
+/** @brief 进程级 IME DBus 连接与状态（所有窗口共享一个输入上下文通道）。 */
+static DBusConnection* g_xpwnImeBus = NULL;      /**< session DBus 连接。 */
+static char* g_xpwnImeIcPath = NULL;             /**< IC 对象路径（拥有）。 */
+static char* g_xpwnImeKeybuf = NULL;             /**< CreateInputContext 密钥（拥有）。 */
+static char* g_xpwnImeFocusWindow = NULL;        /**< 当前 IME 绑定的 X 窗口 id 串（拥有）。 */
+
+/** @brief 构造发往 fcitx5 的方法调用消息（fire-and-forget 便捷式）。 */
+static void xpwn_imeCall(const char* method, int firstVarArgType,
+                         ...);
+
+static DBusHandlerResult xpwn_imeFilter(DBusConnection* connection,
+                                        DBusMessage* message, void* user_data);
+/** @brief 抽取并分发 DBus 消息（事件泵每轮非阻塞调用）。 */
+static void xpwn_imePump(void)
+{
+    DBusMessage* msg;
+    if (!g_xpwnImeBus) return;
+    /* 读 socket（0 超时 = 非阻塞）后逐条取出交给过滤器。 */
+    dbus_connection_read_write(g_xpwnImeBus, 0);
+    while ((msg = dbus_connection_pop_message(g_xpwnImeBus)) != NULL) {
+        xpwn_imeFilter(g_xpwnImeBus, msg, NULL);
+        dbus_message_unref(msg);
+    }
+    dbus_connection_flush(g_xpwnImeBus);
+}
+
+/** @brief IME 消息过滤器：CommitString -> XInputMethodEvent 上屏。 */
+static DBusHandlerResult xpwn_imeFilter(DBusConnection* connection,
+                                        DBusMessage* message, void* user_data)
+{
+    (void)connection;
+    (void)user_data;
+    XPrintf("[ime-dbus] signal: type=%d path=%s ifc=%s member=%s\n",
+            (int)dbus_message_get_type(message),
+            dbus_message_get_path(message) ? dbus_message_get_path(message) : "?",
+            dbus_message_get_interface(message) ? dbus_message_get_interface(message) : "?",
+            dbus_message_get_member(message) ? dbus_message_get_member(message) : "?");
+    if (dbus_message_is_signal(message, "org.fcitx.Fcitx.InputContext1",
+                               "CommitString")) {
+        DBusError err;
+        char* text = NULL;
+        XPrintf("[ime-dbus] CommitString 分支进入\n");
+        dbus_error_init(&err);
+        if (dbus_message_get_args(message, &err, DBUS_TYPE_STRING, &text,
+                                  DBUS_TYPE_INVALID) && text && text[0]) {
+            /* 转发到当前 IME 绑定窗口（复用现有 IME 事件路径）。 */
+            XWNPendingEntry* entry = NULL;
+            if (g_xpwnImeFocusWindow) {
+                Window wid = (Window)strtoul(g_xpwnImeFocusWindow, NULL, 0);
+                entry = xpwn_findByNativeWindow(wid);
+            }
+            if (entry && entry->m_window)
+                (void)XWindowSystemInterface_handleInputMethodEvent(
+                    entry->m_window, "", text, 0, 0, -1, -1);
+        }
+        if (dbus_error_is_set(&err)) dbus_error_free(&err);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    if (dbus_message_is_signal(message, "org.fcitx.Fcitx.InputContext1",
+                               "PreeditString")) {
+        /* 预编辑显示为后续扩展（当前直接消费避免落入默认处理）。 */
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
+/**
+ * @brief      初始化 fcitx5 DBus 输入法（进程一次）。
+ * @details    连接 session 总线 -> CreateInputContext(程序名,桌面) ->
+ *             保存 IC 路径与密钥 -> 订阅该 IC 的信号。失败静默降级
+ *             （无中文输入，西文不受影响）。
+ * @return     无返回值。
+ */
+static void xpwn_imeInit(void)
+{
+    DBusError err;
+    DBusMessage* msg = NULL;
+    DBusMessage* reply = NULL;
+    DBusMessageIter iter;
+    DBusMessageIter sub;
+    dbus_bool_t ok = FALSE;
+    if (g_xpwnImeBus) return;
+    dbus_error_init(&err);
+    g_xpwnImeBus = dbus_bus_get(DBUS_BUS_SESSION, &err);
+    if (!g_xpwnImeBus) {
+        XPrintf("[ime-dbus] session bus 失败: %s\n",
+                err.message ? err.message : "?");
+        dbus_error_free(&err);
+        return;
+    }
+    msg = dbus_message_new_method_call("org.freedesktop.portal.Fcitx",
+                                       "/inputmethod",
+                                       "org.fcitx.Fcitx.InputMethod1",
+                                       "CreateInputContext");
+    if (!msg) return;
+    dbus_message_iter_init_append(msg, &iter);
+    if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(ss)",
+                                          &sub)) {
+        dbus_message_unref(msg);
+        return;
+    }
+    {
+        DBusMessageIter st;
+        const char* program = "XGuiWindowDemo";
+        const char* desktop = "Deepin";
+        dbus_message_iter_open_container(&sub, DBUS_TYPE_STRUCT, NULL, &st);
+        dbus_message_iter_append_basic(&st, DBUS_TYPE_STRING, &program);
+        dbus_message_iter_append_basic(&st, DBUS_TYPE_STRING, &desktop);
+        dbus_message_iter_close_container(&sub, &st);
+    }
+    dbus_message_iter_close_container(&iter, &sub);
+    reply = dbus_connection_send_with_reply_and_block(g_xpwnImeBus, msg, 500,
+                                                      &err);
+    dbus_message_unref(msg);
+    if (!reply) {
+        XPrintf("[ime-dbus] CreateInputContext 失败: %s\n",
+                err.message ? err.message : "?");
+        dbus_error_free(&err);
+        return;
+    }
+    /* 应答：(o ay) —— IC 路径 + 密钥字节数组。 */
+    dbus_message_iter_init(reply, &iter);
+    if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_OBJECT_PATH) {
+        const char* path = NULL;
+        dbus_message_iter_get_basic(&iter, &path);
+        g_xpwnImeIcPath = strdup(path ? path : "");
+        dbus_message_iter_next(&iter);
+        if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY) {
+            DBusMessageIter arr;
+            dbus_message_iter_recurse(&iter, &arr);
+            {
+                char* buf = NULL;
+                size_t len = 0;
+                while (dbus_message_iter_get_arg_type(&arr) ==
+                       DBUS_TYPE_BYTE) {
+                    unsigned char b = 0;
+                    dbus_message_iter_get_basic(&arr, &b);
+                    buf = (char*)realloc(buf, len + 1);
+                    buf[len++] = (char)b;
+                    dbus_message_iter_next(&arr);
+                }
+                if (buf) { buf[len] = '\0'; }
+                g_xpwnImeKeybuf = buf;
+            }
+        }
+        ok = g_xpwnImeIcPath[0] != '\0';
+    }
+    dbus_message_unref(reply);
+    if (!ok) {
+        XPrintf("[ime-dbus] CreateInputContext 应答异常\n");
+        return;
+    }
+    /* 订阅本 IC 的信号。 */
+    {
+        char rule[512];
+        snprintf(rule, sizeof(rule),
+                 "type='signal',path='%s',"
+                 "interface='org.fcitx.Fcitx.InputContext1'",
+                 g_xpwnImeIcPath);
+        dbus_bus_add_match(g_xpwnImeBus, rule, &err);
+        if (dbus_error_is_set(&err)) {
+            XPrintf("[ime-dbus] add_match 失败: %s\n",
+                    err.message ? err.message : "?");
+            dbus_error_free(&err);
+        }
+        dbus_connection_flush(g_xpwnImeBus); /* match 必须送达总线。 */
+        dbus_connection_add_filter(g_xpwnImeBus, xpwn_imeFilter, NULL, NULL);
+        dbus_connection_flush(g_xpwnImeBus);
+    }
+    XPrintf("[ime-dbus] IC=%s（DBus 输入法就绪）唯一连接名=%s\n",
+            g_xpwnImeIcPath, dbus_bus_get_unique_name(g_xpwnImeBus));
+}
+
+/**
+ * @brief      转发按键给 fcitx5（ProcessKeyEvent）。
+ * @details    返回 true 表示 fcitx 消费了该键（调用方丢弃，不产出
+ *             XKey）；false/超时/未初始化 = 正常键盘处理。
+ * @param      keyval  X11 keysym。
+ * @param      keycode X11 键码。
+ * @param      state   修饰键掩码。
+ * @param      release 是否释放事件。
+ * @return     true=已消费。
+ */
+static bool xpwn_imeProcessKey(int keyval, unsigned keycode,
+                               unsigned state, bool release)
+{
+    DBusMessage* msg;
+    DBusMessage* reply;
+    DBusError err;
+    dbus_bool_t consumed = FALSE;
+    if (!g_xpwnImeBus || !g_xpwnImeIcPath) return false;
+    msg = dbus_message_new_method_call("org.freedesktop.portal.Fcitx",
+                                       g_xpwnImeIcPath,
+                                       "org.fcitx.Fcitx.InputContext1",
+                                       "ProcessKeyEvent");
+    if (!msg) return false;
+    dbus_error_init(&err);
+    {
+        dbus_uint32_t kv = (dbus_uint32_t)keyval;
+        dbus_uint32_t kc = (dbus_uint32_t)keycode;
+        dbus_uint32_t st = (dbus_uint32_t)state;
+        dbus_bool_t rel = release ? TRUE : FALSE;
+        dbus_uint32_t t = 0;
+        if (!dbus_message_append_args(msg, DBUS_TYPE_UINT32, &kv,
+                                      DBUS_TYPE_UINT32, &kc,
+                                      DBUS_TYPE_UINT32, &st,
+                                      DBUS_TYPE_BOOLEAN, &rel,
+                                      DBUS_TYPE_UINT32, &t,
+                                      DBUS_TYPE_INVALID)) {
+            dbus_message_unref(msg);
+            return false;
+        }
+    }
+    reply = dbus_connection_send_with_reply_and_block(g_xpwnImeBus, msg, 100,
+                                                      &err);
+    dbus_message_unref(msg);
+    if (reply) {
+        if (dbus_message_get_args(reply, &err, DBUS_TYPE_BOOLEAN, &consumed,
+                                  DBUS_TYPE_INVALID))
+            dbus_message_unref(reply);
+    }
+    if (dbus_error_is_set(&err)) dbus_error_free(&err);
+    fprintf(stderr, "[ime-dbus] ProcessKeyEvent -> consumed=%d\n",
+            (int)consumed);
+    return consumed != FALSE;
+}
+
+/**
+ * @brief      焦点变化时同步 fcitx5（FocusIn/FocusOut）。
+ * @param      xwin  原生窗口 id（用于 Commit 回投）。
+ * @param      focusIn true=获得焦点。
+ * @return     无返回值。
+ */
+static void xpwn_imeFocus(Window xwin, bool focusIn)
+{
+    DBusMessage* msg;
+    const char* method = focusIn ? "FocusIn" : "FocusOut";
+    char widBuf[32];
+    if (!g_xpwnImeBus || !g_xpwnImeIcPath) return;
+    if (focusIn) {
+        snprintf(widBuf, sizeof(widBuf), "%lu", (unsigned long)xwin);
+        free(g_xpwnImeFocusWindow);
+        g_xpwnImeFocusWindow = strdup(widBuf);
+    }
+    msg = dbus_message_new_method_call("org.freedesktop.portal.Fcitx",
+                                       g_xpwnImeIcPath,
+                                       "org.fcitx.Fcitx.InputContext1",
+                                       method);
+    if (!msg) return;
+    dbus_message_set_no_reply(msg, TRUE);
+    dbus_connection_send(g_xpwnImeBus, msg, NULL);
+    dbus_message_unref(msg);
+    if (focusIn) xpwn_imePump();
+}
+
 static bool xpwn_ensureConnection(void)
 {
     XVisualInfo vinfo;
@@ -490,6 +759,20 @@ static bool xpwn_ensureConnection(void)
     g_xpwnTextPlain = XInternAtom(g_xpwnDisplay, "text/plain", False);
     g_xpwnXdndData = XInternAtom(g_xpwnDisplay, "XIN_YUE_C_XDND_DATA", False);
     (void)setlocale(LC_CTYPE, "");
+    /* XIM_OPEN 协议携带 locale 的语言名，fcitx5 依此为 IC 分配输入
+       引擎（"en"/C.UTF-8 → 英文引擎 → 按键透传无法中文）。非 zh
+       locale 一律强制 zh_CN.UTF-8（Deepin 中文环境必有该 locale）。 */
+    {
+        const char* cur = setlocale(LC_CTYPE, NULL);
+        if (!cur || strncmp(cur, "zh_CN", 5) != 0) {
+            if (setlocale(LC_CTYPE, "zh_CN.UTF-8"))
+                (void)XSetLocaleModifiers("@im=fcitx");
+        }
+    }
+    XPrintf("[ime-dbg] locale=%s XSupportsLocale=%d XMODIFIERS=%s\n",
+            setlocale(LC_CTYPE, NULL),
+            (int)XSupportsLocale(),
+            getenv("XMODIFIERS") ? getenv("XMODIFIERS") : "(unset)");
     /* 依次尝试常见输入法桥（fcitx/ibus/XIM 默认），环境变量
        XMODIFIERS 优先；XOpenIM 全部失败时中文输入不可用（西文不受
        影响），启动日志给出提示。 */
@@ -503,11 +786,15 @@ static bool xpwn_ensureConnection(void)
         for (ci = 0; ci < 3 && !g_xpwnInputMethod; ++ci) {
             (void)XSetLocaleModifiers(candidates[ci]);
             g_xpwnInputMethod = XOpenIM(g_xpwnDisplay, NULL, NULL, NULL);
+            XPrintf("[ime-dbg] XSetLocaleModifiers(%s) -> XOpenIM %s\n",
+                    candidates[ci],
+                    g_xpwnInputMethod ? "OK" : "failed");
         }
         if (!g_xpwnInputMethod)
-            XPrintf("XPlatformNativeWindow: XOpenIM 失败——中文输入不可用"
-                    "（请检查 XMODIFIERS/输入法框架）\n");
+            XPrintf("XPlatformNativeWindow: XOpenIM 失败——XIM 不可用"
+                    "（西文不受影响；中文走 DBus 输入法前端）\n");
     }
+    xpwn_imeInit(); /* fcitx5 DBus 输入法（中文主路径）。 */
     return true;
 }
 
@@ -725,6 +1012,18 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
     if (!ev) return false;
     if (xpwn_handleDragSelectionRequest(ev)) return true;
     switch (ev->type) {
+    case MapNotify:
+        /* 对齐 QXcbWindow：窗口映射完成后补做挂起的激活请求。 */
+        entry = xpwn_findByNativeWindow(ev->xmap.window);
+        if (entry && entry->m_window && entry->m_deferredActivation) {
+            entry->m_deferredActivation = false;
+            XRaiseWindow(g_xpwnDisplay, entry->m_win);
+            XSetInputFocus(g_xpwnDisplay, entry->m_win,
+                           RevertToParent, CurrentTime);
+            XFlush(g_xpwnDisplay);
+            delivered = true;
+        }
+        break;
     case Expose:
         entry = xpwn_findByNativeWindow(ev->xexpose.window);
         if (entry && entry->m_window && ev->xexpose.count == 0) {
@@ -767,7 +1066,16 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             break;
         entry = xpwn_findByNativeWindow(ev->xfocus.window);
         if (entry && entry->m_window) {
-            if (entry->m_inputContext) XSetICFocus(entry->m_inputContext);
+            if (entry->m_inputContext) {
+                XSetICFocus(entry->m_inputContext);
+                {
+                    XPoint spot;
+                    XPoint_init(&spot, 8, 8);
+                    (void)XSetICValues(entry->m_inputContext,
+                                       XNSpotLocation, &spot, NULL);
+                }
+            }
+            xpwn_imeFocus(ev->xfocus.window, true);
             XWindowSystemInterface_handleFocusWindowChanged(
                 entry->m_window, XFocusReason_ActiveWindow);
             delivered = true;
@@ -781,6 +1089,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xfocus.window);
         if (entry && entry->m_window) {
             if (entry->m_inputContext) XUnsetICFocus(entry->m_inputContext);
+            xpwn_imeFocus(ev->xfocus.window, false);
             /* WSI 无 FocusOut 注入入口（Qt 只有 handleFocusWindowChanged），
                这里直接自发投递 FOCUS_OUT 事件（与回归测试同一约定）。 */
             focusEvent = XFocusEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -807,6 +1116,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                热键由 IME 内部消费，返回 True 时事件不再下发）。 */
             if (entry->m_inputContext &&
                 XFilterEvent((X11_XEvent*)ev, entry->m_window)) {
+                XPrintf("[ime-dbg] XFilterEvent consumed key\n");
                 delivered = true;
                 break;
             }
@@ -824,8 +1134,17 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                        直接提交的西文/数字），功能键区（>=0xff00，
                        Backspace/方向等——fcitx 透传时会错给空格文本）
                        不信文本、交下方 keysym -> KEY_PRESS 正确处理。 */
-                    if (status == XLookupChars ||
-                        (status == XLookupBoth && imeKeysym < (KeySym)0xff00)) {
+                    /* 功能键防护（必须）：Backspace/方向等 fcitx 透传
+                       时会错给空白文本——不信其文本，交 KEY_PRESS。 */
+                    if (status == XLookupBoth && imeKeysym >= (KeySym)0xff00) {
+                        XPrintf("[ime-dbg] fnkey text='%s' keysym=0x%lx"
+                                "（走 KEY_PRESS）\n", committed,
+                                (unsigned long)imeKeysym);
+                    }
+                    else if (status == XLookupChars ||
+                             (status == XLookupBoth &&
+                              imeKeysym < (KeySym)0xff00)) {
+                        XPrintf("[ime-dbg] commit text='%s'\n", committed);
                         (void)XWindowSystemInterface_handleInputMethodEvent(
                             entry->m_window, "", committed, 0, 0, -1, -1);
                         if (ev->type == KeyPress) {
@@ -834,6 +1153,17 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                         }
                     }
                 }
+            }
+            xpwn_imePump(); /* 抽取 fcitx 的 CommitString 等信号。 */
+            /* fcitx5 DBus 按键拦截：消费则该键不产出 XKey（中文
+               组合在 fcitx 内部，最终以 CommitString 信号回投）。 */
+            if (ev->type == KeyPress &&
+                xpwn_imeProcessKey((int)XKeycodeToKeysym(
+                                       g_xpwnDisplay, ev->xkey.keycode, 0),
+                                   ev->xkey.keycode,
+                                   (unsigned)ev->xkey.state, false)) {
+                delivered = true;
+                break;
             }
             keysym = XLookupKeysym((X11_XKeyEvent*)&ev->xkey, 0);
             /* NumLock 开启时小键盘键的数字 keysym 可能落在第二列；
@@ -1189,34 +1519,131 @@ bool XPlatformNativeWindow_create(XWindow* window)
                         PropModeReplace, (unsigned char*)&version, 1);
     }
     if (g_xpwnInputMethod) {
+        XPoint spot;
         XIMCallback startCallback;
         XIMCallback doneCallback;
         XIMCallback drawCallback;
+        /* 预编辑位置（客户端窗口坐标）。fcitx5 对 XIMPreeditNothing
+           风格直接透传按键（无组合状态，拼音直上屏）——必须优先用
+           preedit 风格（Position 兼容性最好，GTK/Qt 同款）。 */
+        XPoint_init(&spot, 8, 8);
         startCallback.client_data = (XPointer)entry;
         startCallback.callback = (XIMProc)xpwn_preeditStart;
         doneCallback.client_data = (XPointer)entry;
         doneCallback.callback = (XIMProc)xpwn_preeditDone;
         drawCallback.client_data = (XPointer)entry;
         drawCallback.callback = (XIMProc)xpwn_preeditDraw;
-        entry->m_inputContext = XCreateIC(
-            g_xpwnInputMethod,
-            XNInputStyle, XIMPreeditCallbacks | XIMStatusNothing,
-            XNClientWindow, xwin,
-            XNFocusWindow, xwin,
-            XNPreeditStartCallback, &startCallback,
-            XNPreeditDoneCallback, &doneCallback,
-            XNPreeditDrawCallback, &drawCallback,
-            NULL);
-        if (!entry->m_inputContext) {
-            /* 回退：部分输入法（ibus/fcitx）不支持 PreeditCallbacks
-               风格，改用 Nothing（无 preedit 回调，提交文本直接走
-               commitString）。 */
-            entry->m_inputContext = XCreateIC(
-                g_xpwnInputMethod,
-                XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
-                XNClientWindow, xwin,
-                XNFocusWindow, xwin,
-                NULL);
+        /* 0) 风格协商（对标 xterm/Xt 的 supported styles 交集）：
+           查询输入法服务器支持的 style 列表，与客户端优先级表求
+           交集，用交集里最优的创建 IC——硬编码组合若不在服务器列
+           表中，XCreateIC 虽可能成功但服务器端无效（fcitx5 下表现为
+           按键透传、无法进入中文组合）。 */
+        {
+            XIMStyles* serverStyles = NULL;
+            char* miss = NULL;
+            static const XIMStyle kPrefs[] = {
+                /* fcitx5 的 StatusArea 组合在 XCreateIC 内部崩溃
+                   （double free）——优先 StatusNothing 组合。 */
+                XIMPreeditPosition  | XIMStatusNothing,
+                XIMPreeditPosition  | XIMStatusArea,
+                XIMPreeditCallbacks | XIMStatusNothing,
+                XIMPreeditNothing   | XIMStatusNothing,
+                XIMPreeditNone      | XIMStatusNone
+            };
+            static const char* const kNames[] = {
+                "Position|StatusNothing", "Position|StatusArea",
+                "Callbacks|StatusNothing", "Nothing|StatusNothing",
+                "None|None"
+            };
+            XIMStyle chosen = 0;
+            const char* chosenName = NULL;
+            int pi;
+            XGetIMValues(g_xpwnInputMethod, XNQueryInputStyle,
+                         &serverStyles, XGetIMValues, &miss, NULL);
+            if (serverStyles) {
+                int s;
+                for (pi = 0; pi < 5; ++pi) {
+                    for (s = 0; s < (int)serverStyles->count_styles; ++s) {
+                        if (serverStyles->supported_styles[s] == kPrefs[pi]) {
+                            chosen = kPrefs[pi];
+                            chosenName = kNames[pi];
+                            break;
+                        }
+                    }
+                    if (chosen != 0) break;
+                }
+                /* 打印服务器支持的全部 style（诊断）。 */
+                for (s = 0; s < (int)serverStyles->count_styles; ++s)
+                    XPrintf("[ime-dbg]   server style 0x%04lX\n",
+                            (unsigned long)serverStyles->supported_styles[s]);
+                XPrintf("[ime-dbg] 服务器支持 %u 种 style；选定 %s\n",
+                        (unsigned)serverStyles->count_styles,
+                        chosenName ? chosenName : "(无交集)");
+#undef XFree
+                /* supported_styles 与 XIMStyles 结构同块分配，只 Free
+                   结构体一次（两次 Free 即 double free 崩溃）。 */
+                XFree(serverStyles);
+#define XFree XMemory_free
+            }
+            else if (miss) {
+                XPrintf("[ime-dbg] style 查询缺失 %s\n", miss);
+            }
+            if (chosen == (XIMPreeditPosition | XIMStatusArea) ||
+                chosen == (XIMPreeditPosition | XIMStatusNothing)) {
+                /* PreeditPosition 风格必需 XNFontSet（预编辑绘制字体），
+                   缺失则 XCreateIC 失败。 */
+                char* missingList = NULL;
+                int missingCount = 0;
+                char* defString = NULL;
+                XFontSet fontSet = XCreateFontSet(
+                    g_xpwnDisplay,
+                    "fixed",
+                    &missingList, &missingCount, &defString);
+                if (!fontSet)
+                    fontSet = XCreateFontSet(
+                        g_xpwnDisplay,
+                        "-*-*-*-*-*-*-16-*-*-*-*-*-*-*",
+                        &missingList, &missingCount, &defString);
+                XPrintf("[ime-dbg] XCreateFontSet = %s\n",
+                        fontSet ? "OK" : "FAILED");
+                /* 平铺传法（嵌套列表 XVaCreateNestedList 在本环境对
+                   XNFontSet 处理崩溃——见回归 SegFault 定位；平铺
+                   版稳定但 fcitx5 下 XCreateIC 返回 NULL，中文输入
+                   待后续换 PreeditCallbacks 自绘 preedit 方案）。 */
+                entry->m_inputContext = XCreateIC(
+                    g_xpwnInputMethod,
+                    XNInputStyle, chosen,
+                    XNClientWindow, xwin,
+                    XNFocusWindow, xwin,
+                    XNFontSet, fontSet,
+                    XNSpotLocation, &spot,
+                    NULL);
+                if (missingList) XFreeStringList(missingList);
+            }
+            else if (chosen == (XIMPreeditCallbacks | XIMStatusNothing)) {
+                entry->m_inputContext = XCreateIC(
+                    g_xpwnInputMethod,
+                    XNInputStyle, chosen,
+                    XNClientWindow, xwin,
+                    XNFocusWindow, xwin,
+                    XNPreeditStartCallback, &startCallback,
+                    XNPreeditDoneCallback, &doneCallback,
+                    XNPreeditDrawCallback, &drawCallback,
+                    XNSpotLocation, &spot,
+                    NULL);
+            }
+            else if (chosen != 0) {
+                entry->m_inputContext = XCreateIC(
+                    g_xpwnInputMethod,
+                    XNInputStyle, chosen,
+                    XNClientWindow, xwin,
+                    XNFocusWindow, xwin,
+                    NULL);
+            }
+            XPrintf("[ime-dbg] XCreateIC(style=%s) = %s\n",
+                    chosenName ? chosenName : "无",
+                    entry->m_inputContext ? "OK" : "FAILED");
+            entry->m_spot = spot;
         }
     }
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
@@ -1385,9 +1812,21 @@ bool XPlatformNativeWindow_setMouseGrabEnabled(XWindow* window, bool grab)
 bool XPlatformNativeWindow_requestActivate(XWindow* window)
 {
     XWNPendingEntry* entry;
+    XWindowAttributes attrs;
     if (!xpwn_ensureConnection()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
+    /* 对齐 QXcbWindow::requestActivateWindow：窗口尚未完全映射
+       （unmapped/unviewable，例如 show() 的映射仍是异步未完成、或
+       父窗口链未映射）时，XSetInputFocus 会产生 BadMatch，因此不发
+       任何 X 请求，改为挂起激活，待 MapNotify 后补激活。 */
+    attrs.map_state = IsUnmapped;
+    if (!XGetWindowAttributes(g_xpwnDisplay, entry->m_win, &attrs))
+        return false;
+    if (attrs.map_state != IsViewable) {
+        entry->m_deferredActivation = true;
+        return false;
+    }
     XRaiseWindow(g_xpwnDisplay, entry->m_win);
     XSetInputFocus(g_xpwnDisplay, entry->m_win, RevertToParent, CurrentTime);
     XFlush(g_xpwnDisplay);
@@ -1511,6 +1950,7 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     X11_XEvent event;
     bool delivered = false;
     if (!xpwn_ensureConnection()) return false;
+    xpwn_imePump(); /* 每帧抽取 fcitx5 的 CommitString 等信号。 */
     while (XPending(g_xpwnDisplay) > 0) {
         XNextEvent(g_xpwnDisplay, &event);
         if (xpwn_dispatchEvent(&event)) delivered = true;

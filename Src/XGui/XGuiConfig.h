@@ -246,6 +246,18 @@
 #ifndef XSLIDER_ON
 #define XSLIDER_ON 1
 #endif
+#ifndef XDIAL_ON
+#define XDIAL_ON 1
+#endif
+#ifndef XCOMBOBOX_ON
+#define XCOMBOBOX_ON 1
+#endif
+#ifndef XTABBAR_ON
+#define XTABBAR_ON 1
+#endif
+#ifndef XTABWIDGET_ON
+#define XTABWIDGET_ON 1
+#endif
 #ifndef XLINEEDIT_ON
 #define XLINEEDIT_ON 1
 #endif
